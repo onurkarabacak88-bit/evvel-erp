@@ -731,12 +731,77 @@ def devir_goster(yil: int = None, ay: int = None):
         raise HTTPException(500, str(e))
 
 
+def borc_plan_mutabakat(referans_tarih: Optional[date] = None) -> dict:
+    """Borç ödeme planı self-healing mutabakatı (idempotent — her panel açılışında güvenli).
+
+    Üç düzeltme yapar:
+      1) referans_ay backfill: eski borç planlarına referans_ay yaz (mükerrer index kapsasın).
+      2) Ödenmiş kapat: kasa'da o ay BORC_TAKSIT ödemesi olan ama hâlâ bekleyen plan → 'odendi'.
+         (Borç plandan ÖNCE ödendiyse /ode kapatamamıştı; üretici sonra bekliyor satır üretmişti.)
+      3) Mükerrer iptal: aynı borç+ay için >1 aktif satır → en iyisini tut (ödenmiş > en yeni),
+         diğerlerini 'iptal'. Böylece çift "ödenecek" kaybolur ve unique index kurulabilir.
+    """
+    sonuc = {"backfill": 0, "kapatilan": 0, "mukerrer_iptal": 0}
+    try:
+        with db() as (conn, cur):
+            # 1) referans_ay backfill (borç satırları)
+            cur.execute("""
+                UPDATE odeme_plani
+                SET referans_ay = DATE_TRUNC('month', tarih)
+                WHERE kaynak_tablo='borc_envanteri' AND referans_ay IS NULL AND tarih IS NOT NULL
+            """)
+            sonuc["backfill"] = cur.rowcount or 0
+
+            # 2) Ödenmiş ama bekleyen borç planını kapat (o ayın kasa BORC_TAKSIT ödemesi varsa)
+            cur.execute("""
+                UPDATE odeme_plani op
+                SET durum='odendi',
+                    odenen_tutar = COALESCE(op.odenen_tutar, op.odenecek_tutar),
+                    odeme_tarihi = COALESCE(op.odeme_tarihi, (
+                        SELECT MAX(kh.tarih) FROM kasa_hareketleri kh
+                        WHERE kh.kaynak_tablo='borc_envanteri' AND kh.kaynak_id=op.kaynak_id
+                          AND kh.islem_turu='BORC_TAKSIT' AND kh.kasa_etkisi=TRUE AND kh.durum='aktif'
+                          AND DATE_TRUNC('month', kh.tarih)=DATE_TRUNC('month', op.tarih)))
+                WHERE op.kaynak_tablo='borc_envanteri'
+                  AND op.durum IN ('bekliyor','onay_bekliyor')
+                  AND EXISTS (
+                      SELECT 1 FROM kasa_hareketleri kh
+                      WHERE kh.kaynak_tablo='borc_envanteri' AND kh.kaynak_id=op.kaynak_id
+                        AND kh.islem_turu='BORC_TAKSIT' AND kh.kasa_etkisi=TRUE AND kh.durum='aktif'
+                        AND DATE_TRUNC('month', kh.tarih)=DATE_TRUNC('month', op.tarih))
+            """)
+            sonuc["kapatilan"] = cur.rowcount or 0
+
+            # 3) Mükerrer iptal — aynı borç+ay için 1 aktif satır kalsın (ödenmiş > en yeni)
+            cur.execute("""
+                WITH ranked AS (
+                    SELECT id, ROW_NUMBER() OVER (
+                        PARTITION BY kaynak_id, DATE_TRUNC('month', tarih)
+                        ORDER BY (CASE WHEN durum='odendi' THEN 0 ELSE 1 END), olusturma DESC
+                    ) AS rn
+                    FROM odeme_plani
+                    WHERE kaynak_tablo='borc_envanteri' AND durum <> 'iptal' AND kaynak_id IS NOT NULL
+                )
+                UPDATE odeme_plani op
+                SET durum='iptal',
+                    aciklama = COALESCE(op.aciklama,'') || ' [mükerrer-iptal]'
+                FROM ranked r
+                WHERE op.id = r.id AND r.rn > 1
+            """)
+            sonuc["mukerrer_iptal"] = cur.rowcount or 0
+    except Exception as e:
+        logger.warning(f"borc_plan_mutabakat hatası: {e}")
+    return sonuc
+
+
 def odeme_plani_kontrol(referans_tarih: Optional[date] = None) -> dict:
     """
     Ay plan üretimi için lazy + idempotent koruma.
     Panel çağrısında tetiklenir; eksik plan varsa üretmeyi dener.
     """
     bugun = referans_tarih or bugun_tr()
+    # Self-healing: ödenmiş ama bekleyen / mükerrer borç planlarını düzelt (idempotent)
+    borc_mutabakat = borc_plan_mutabakat(bugun)
     eksik_sabit = eksik_borc = eksik_kart = eksik_personel = 0
     lock_ok = False
 
@@ -832,6 +897,7 @@ def odeme_plani_kontrol(referans_tarih: Optional[date] = None) -> dict:
         "kilit_alindi": lock_ok,
         "uretim_denedi": uretim_denedi,
         "uretilen_adet": uretilen_adet,
+        "borc_mutabakat": borc_mutabakat,
     }
 
 
