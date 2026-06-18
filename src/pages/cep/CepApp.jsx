@@ -771,6 +771,14 @@ function CepDepolar({ onGeri }) {
   const [sipSube, setSipSube] = useState(''); // teslimat şubesi
   const [secim, setSecim] = useState({}); // kalem_kodu -> { ad, adet }
   const [sipNot, setSipNot] = useState('');
+  const [sadeceSecili, setSadeceSecili] = useState(false);
+  // Tik: yoksa ekle (adet 1), varsa çıkar
+  const secTik = (k) => setSecim(m => {
+    const n = { ...m };
+    if (n[k.kalem_kodu]) delete n[k.kalem_kodu];
+    else n[k.kalem_kodu] = { ad: k.kalem_adi, adet: 1 };
+    return n;
+  });
   useEffect(() => { api('/tedarikciler').then(r => setTedarikciler(Array.isArray(r) ? r : (r?.tedarikciler || []))).catch(() => {}); }, []);
 
   const secAdet = (k, delta) => setSecim(m => {
@@ -834,6 +842,8 @@ function CepDepolar({ onGeri }) {
   let kalemler = (data?.kalemler || []).filter(k => !q || (k.kalem_adi || '').toLocaleLowerCase('tr').includes(q));
   // Tek şube modunda: sadece o depoda kaydı olan kalemler
   if (aktif !== 'tumu') kalemler = kalemler.filter(k => k.adetler && k.adetler[aktif] != null);
+  // Sipariş modunda "sadece seçilenler": tiklenenler kalsın, diğerleri kaybolsun
+  if (sipMod && sadeceSecili) kalemler = kalemler.filter(k => secim[k.kalem_kodu]);
 
   // Özet
   const ozetAdet = kalemler.reduce((s, k) => s + (aktif === 'tumu' ? (k.toplam || 0) : (k.adetler[aktif] || 0)), 0);
@@ -892,7 +902,14 @@ function CepDepolar({ onGeri }) {
                 }}>📲 WhatsApp'tan Gönder ({secimList.length})</button>
               );
             })()}
-            <div style={{ fontSize: 10, color: C.t3, textAlign: 'center', marginTop: 5 }}>Kendi WhatsApp'ın açılır, mesaj hazır gelir — sen Gönder'e basarsın.</div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }}>
+              <button onClick={() => setSadeceSecili(v => !v)} disabled={!secimList.length} style={{
+                padding: '6px 10px', borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: secimList.length ? 'pointer' : 'not-allowed',
+                border: `1px solid ${sadeceSecili ? C.mavi : C.border}`,
+                background: sadeceSecili ? C.mavi : C.bg, color: sadeceSecili ? '#fff' : (secimList.length ? C.t2 : C.t3),
+              }}>{sadeceSecili ? '◉ Sadece seçilenler' : '○ Sadece seçilenler'} ({secimList.length})</button>
+              <span style={{ fontSize: 10, color: C.t3, flex: 1, textAlign: 'right', marginLeft: 8 }}>Kendi WhatsApp'ından gider</span>
+            </div>
           </div>
         )}
 
@@ -926,11 +943,16 @@ function CepDepolar({ onGeri }) {
             <div style={{ fontSize: 12, fontWeight: 800, color: C.t3, padding: '8px 2px 4px' }}>{kat} <span style={{ color: C.border }}>({items.length})</span></div>
             {items.map(k => {
               if (aktif === 'tumu') {
+                const sifirT = (k.toplam || 0) === 0;
+                const seciliT = !!secim[k.kalem_kodu];
                 return (
                   <div key={k.kalem_kodu} style={{ padding: '9px 2px', borderTop: `1px solid ${C.border}` }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <span style={{ fontSize: 14, color: C.t1, flex: 1 }}>{k.kalem_adi}</span>
-                      {sipMod ? <SipAdet k={k} secim={secim} secAdet={secAdet} secSet={secSet} />
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      {sipMod && <input type="checkbox" checked={seciliT} onChange={() => secTik(k)} style={{ width: 20, height: 20, accentColor: '#25D366', flex: '0 0 auto' }} />}
+                      <span style={{ fontSize: 14, flex: 1, color: sifirT ? C.kirmizi : C.t1, fontWeight: sifirT ? 700 : 400 }}>
+                        {k.kalem_adi}{sifirT && <span style={{ fontSize: 11, fontWeight: 700 }}> · stok yok</span>}
+                      </span>
+                      {sipMod ? (seciliT && <SipAdet k={k} secim={secim} secAdet={secAdet} secSet={secSet} />)
                         : <span style={{ fontSize: 14, fontWeight: 800, color: C.t1 }}>{k.toplam}</span>}
                     </div>
                     <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 4 }}>
@@ -949,13 +971,18 @@ function CepDepolar({ onGeri }) {
               }
               const adet = k.adetler[aktif] || 0;
               const dusuk = k.min_stok > 0 && adet <= k.min_stok;
+              const sifir = adet === 0;
+              const secili = !!secim[k.kalem_kodu];
               return (
-                <div key={k.kalem_kodu} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 2px', borderTop: `1px solid ${C.border}` }}>
-                  <span style={{ fontSize: 14, color: C.t1, flex: 1 }}>
-                    {k.kalem_adi}{dusuk && <span style={{ fontSize: 11, color: C.kirmizi, fontWeight: 700 }}> · düşük</span>}
+                <div key={k.kalem_kodu} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 2px', borderTop: `1px solid ${C.border}` }}>
+                  {sipMod && <input type="checkbox" checked={secili} onChange={() => secTik(k)} style={{ width: 20, height: 20, accentColor: '#25D366', flex: '0 0 auto' }} />}
+                  <span style={{ fontSize: 14, flex: 1, color: sifir ? C.kirmizi : C.t1, fontWeight: sifir ? 700 : 400 }}>
+                    {k.kalem_adi}
+                    {sifir ? <span style={{ fontSize: 11, fontWeight: 700 }}> · stok yok</span>
+                      : dusuk ? <span style={{ fontSize: 11, color: C.kirmizi, fontWeight: 700 }}> · düşük</span> : null}
                     <span style={{ fontSize: 11, color: C.t3 }}> · depo {adet}</span>
                   </span>
-                  {sipMod ? <SipAdet k={k} secim={secim} secAdet={secAdet} secSet={secSet} />
+                  {sipMod ? (secili && <SipAdet k={k} secim={secim} secAdet={secAdet} secSet={secSet} />)
                     : <span style={{ fontSize: 16, fontWeight: 800, color: dusuk ? C.kirmizi : (adet > 0 ? C.t1 : C.t3) }}>{adet}</span>}
                 </div>
               );
