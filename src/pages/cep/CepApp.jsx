@@ -768,6 +768,7 @@ function CepDepolar({ onGeri }) {
   const [sipMod, setSipMod] = useState(false);
   const [tedarikciler, setTedarikciler] = useState([]);
   const [tedId, setTedId] = useState('');
+  const [sipSube, setSipSube] = useState(''); // teslimat şubesi
   const [secim, setSecim] = useState({}); // kalem_kodu -> { ad, adet }
   const [sipNot, setSipNot] = useState('');
   useEffect(() => { api('/tedarikciler').then(r => setTedarikciler(Array.isArray(r) ? r : [])).catch(() => {}); }, []);
@@ -792,6 +793,8 @@ function CepDepolar({ onGeri }) {
   const waGonder = () => {
     const ted = tedarikciler.find(t => String(t.id) === String(tedId));
     if (!ted) { setHata('Toptancı seçin'); return; }
+    const subeAd = (data?.subeler || []).find(s => s.id === (sipSube || (aktif !== 'tumu' ? aktif : '')))?.ad;
+    if (!subeAd) { setHata('Teslimat şubesi seçin'); return; }
     if (!secimList.length) { setHata('En az bir ürün seçin'); return; }
     const tel = String(ted.telefon || '').replace(/\D/g, '');
     let num = tel;
@@ -799,11 +802,17 @@ function CepDepolar({ onGeri }) {
     if (num.length === 11 && num.startsWith('0')) num = '90' + num.slice(1);
     else if (num.length === 10 && num.startsWith('5')) num = '90' + num;
     if (num.length < 11) { setHata(`${ted.ad} için geçerli telefon yok`); return; }
-    const satirlar = secimList.map(x => `${x.adet}x ${x.ad}`).join('\n');
-    const mesaj = `🛒 Sipariş\n${ted.ad}\n\n${satirlar}${sipNot.trim() ? `\n\nNot: ${sipNot.trim()}` : ''}`;
+    // ── Hazır mesaj şablonu ──
+    const satirlar = secimList.map(x => `• ${x.adet} adet ${x.ad}`).join('\n');
+    const bugun = new Date().toLocaleDateString('tr-TR');
+    const mesaj =
+      `Merhaba ${ted.ad},\n` +
+      `*${subeAd}* şubemiz için sipariş 🛒 (${bugun})\n\n` +
+      `${satirlar}` +
+      `${sipNot.trim() ? `\n\n📝 Not: ${sipNot.trim()}` : ''}\n\n` +
+      `Teşekkürler. 🙏`;
     const url = `https://wa.me/${num}?text=${encodeURIComponent(mesaj)}`;
     window.open(url, '_blank');
-    // Mesajı hazırla, kullanıcı WhatsApp'ta gönderir; modu kapatma (tekrar yollayabilsin)
   };
 
   const yukle = useCallback((sessiz) => {
@@ -853,21 +862,36 @@ function CepDepolar({ onGeri }) {
         {/* Sipariş bar — toptancı seç + gönder (wa.me, senin telefonundan) */}
         {sipMod && (
           <div style={{ background: C.bg2, border: `1px solid ${C.border}`, borderRadius: 12, padding: 10, marginBottom: 8 }}>
-            <select value={tedId} onChange={e => setTedId(e.target.value)} style={{
-              width: '100%', padding: '9px 10px', borderRadius: 8, border: `1px solid ${C.border}`,
-              background: C.bg, color: C.t1, fontSize: 14, boxSizing: 'border-box', marginBottom: 8,
-            }}>
-              <option value="">— Toptancı seç —</option>
-              {tedarikciler.map(t => <option key={t.id} value={t.id} disabled={!t.telefon}>{t.ad}{t.telefon ? '' : ' (telefon yok)'}</option>)}
-            </select>
+            <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+              <select value={tedId} onChange={e => setTedId(e.target.value)} style={{
+                flex: 1, padding: '9px 10px', borderRadius: 8, border: `1px solid ${C.border}`,
+                background: C.bg, color: C.t1, fontSize: 14, boxSizing: 'border-box',
+              }}>
+                <option value="">— Toptancı —</option>
+                {tedarikciler.map(t => <option key={t.id} value={t.id} disabled={!t.telefon}>{t.ad}{t.telefon ? '' : ' (tel yok)'}</option>)}
+              </select>
+              <select value={sipSube || (aktif !== 'tumu' ? aktif : '')} onChange={e => setSipSube(e.target.value)} style={{
+                flex: 1, padding: '9px 10px', borderRadius: 8, border: `1px solid ${C.border}`,
+                background: C.bg, color: C.t1, fontSize: 14, boxSizing: 'border-box',
+              }}>
+                <option value="">— Teslimat şubesi —</option>
+                {subeler.map(s => <option key={s.id} value={s.id}>{s.ad}</option>)}
+              </select>
+            </div>
             <input value={sipNot} onChange={e => setSipNot(e.target.value)} placeholder="Not (opsiyonel)" style={{
               width: '100%', padding: '9px 10px', borderRadius: 8, border: `1px solid ${C.border}`,
               background: C.bg, color: C.t1, fontSize: 14, boxSizing: 'border-box', marginBottom: 8,
             }} />
-            <button onClick={waGonder} disabled={!secimList.length || !tedId} style={{
-              width: '100%', padding: '11px', borderRadius: 9, border: 'none', cursor: (!secimList.length || !tedId) ? 'not-allowed' : 'pointer',
-              background: (!secimList.length || !tedId) ? C.bg3 : '#25D366', color: (!secimList.length || !tedId) ? C.t3 : '#fff', fontWeight: 800, fontSize: 14,
-            }}>📲 WhatsApp'tan Gönder ({secimList.length})</button>
+            {(() => {
+              const subeOk = !!(sipSube || (aktif !== 'tumu' ? aktif : ''));
+              const haz = secimList.length && tedId && subeOk;
+              return (
+                <button onClick={waGonder} disabled={!haz} style={{
+                  width: '100%', padding: '11px', borderRadius: 9, border: 'none', cursor: haz ? 'pointer' : 'not-allowed',
+                  background: haz ? '#25D366' : C.bg3, color: haz ? '#fff' : C.t3, fontWeight: 800, fontSize: 14,
+                }}>📲 WhatsApp'tan Gönder ({secimList.length})</button>
+              );
+            })()}
             <div style={{ fontSize: 10, color: C.t3, textAlign: 'center', marginTop: 5 }}>Kendi WhatsApp'ın açılır, mesaj hazır gelir — sen Gönder'e basarsın.</div>
           </div>
         )}
