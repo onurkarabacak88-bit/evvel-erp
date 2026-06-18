@@ -52,6 +52,10 @@ const C = {
 const bugunTR = () =>
   new Date().toLocaleDateString('tr-TR', { weekday: 'long', day: 'numeric', month: 'long' });
 
+// Cep yalnızca GİDER onaylarını gösterir — kasa hataları (islem_turu'nde KASA geçen)
+// buraya düşmez. Masaüstü Onay Kuyruğu'ndaki "Şube Giderleri" sekmesiyle aynı ayrım.
+const giderOnayMi = (o) => !String(o?.islem_turu || '').toUpperCase().includes('KASA');
+
 // ── Giriş kapısı (mobil) ─────────────────────────────────────────────────────
 function CepGiris({ onGiris }) {
   const [sifre, setSifre] = useState('');
@@ -132,8 +136,8 @@ function CepHome({ sayac, onAc, onCikis, yenile }) {
   const KARTLAR = [
     { id: 'hatirlatmalar', ikon: '🔔', baslik: 'Hatırlatmalar', renk: C.sari,
       sayi: sayac.dikkat, alt: 'Bugün dikkat isteyen' },
-    { id: 'onaylar', ikon: '✅', baslik: 'Onaylar', renk: C.yesil,
-      sayi: sayac.onay, alt: 'Bekleyen onay' },
+    { id: 'onaylar', ikon: '✅', baslik: 'Gider Onayı', renk: C.yesil,
+      sayi: sayac.onay, alt: 'Bekleyen gider' },
     { id: 'denetim', ikon: '🧠', baslik: 'Denetim', renk: C.kirmizi,
       sayi: sayac.anomali, alt: 'Bugün uyarı' },
     { id: 'subeler', ikon: '🏪', baslik: 'Şubeler', renk: C.mavi,
@@ -204,7 +208,7 @@ function CepOnaylar({ onGeri, onDegisti }) {
   const yukle = useCallback(() => {
     setHata('');
     api('/onay-kuyrugu?durum=bekliyor&limit=400')
-      .then(d => setListe(Array.isArray(d) ? d : []))
+      .then(d => setListe(Array.isArray(d) ? d.filter(giderOnayMi) : []))
       .catch(e => { setHata(e.message || 'Yüklenemedi'); setListe([]); });
   }, []);
   useEffect(() => { yukle(); }, [yukle]);
@@ -233,7 +237,7 @@ function CepOnaylar({ onGeri, onDegisti }) {
 
   return (
     <div style={{ minHeight: '100vh', background: C.bg }}>
-      <Baslik baslik="✅ Onaylar" onGeri={onGeri}
+      <Baslik baslik="✅ Gider Onayları" onGeri={onGeri}
         sag={<button onClick={yukle} style={{
           background: 'none', border: 'none', color: C.t3, fontSize: 20, cursor: 'pointer',
         }}>↻</button>} />
@@ -438,10 +442,10 @@ function CepHatirlatmalar({ onGeri, onAc }) {
       const items = [];
       const sayi = (r) => (r.status === 'fulfilled' && Array.isArray(r.value)) ? r.value.length : 0;
 
-      const oNum = sayi(onay);
+      const oNum = (onay.status === 'fulfilled' && Array.isArray(onay.value)) ? onay.value.filter(giderOnayMi).length : 0;
       if (oNum > 0) items.push({
-        ikon: '✅', oncelik: 2, baslik: `${oNum} onay bekliyor`,
-        detay: 'Şube giderleri / kasa onayları', git: 'onaylar', renk: C.yesil,
+        ikon: '✅', oncelik: 2, baslik: `${oNum} gider onayı bekliyor`,
+        detay: 'Şube gider onayları', git: 'onaylar', renk: C.yesil,
       });
 
       const cNum = sayi(ciro);
@@ -525,7 +529,7 @@ export default function CepApp() {
       api('/stok-sayim/bekleyen-onay'),
       api('/is-basvurusu/ozet'),
     ]).then(([onay, ciro, denetim, stok, basvuru]) => {
-      const onayN = (onay.status === 'fulfilled' && Array.isArray(onay.value)) ? onay.value.length : 0;
+      const onayN = (onay.status === 'fulfilled' && Array.isArray(onay.value)) ? onay.value.filter(giderOnayMi).length : 0;
       const ciroN = (ciro.status === 'fulfilled' && Array.isArray(ciro.value)) ? ciro.value.length : 0;
       const anomN = denetim.status === 'fulfilled'
         ? (denetim.value?.subeler || []).reduce((s, r) => s + (Number(r.anomali_sayisi) || 0), 0) : 0;
