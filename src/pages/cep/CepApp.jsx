@@ -200,6 +200,8 @@ function CepHome({ sayac, kasa, onKasa, onAc, onCikis, yenile }) {
       alt: sayac.odeme > 0 ? `${sayac.odeme} ödeme · ${fmt(sayac.odemeTutar)}` : 'Bugün ödeme yok' },
     { id: 'onaylar', ikon: '✅', baslik: 'Gider Onayı', renk: C.yesil,
       sayi: sayac.onay, alt: `${sayac.onay} bekleyen gider` },
+    { id: 'kule', ikon: '🚚', baslik: 'Sipariş Kulesi', renk: C.mavi,
+      sayi: sayac.kule, alt: sayac.kule > 0 ? `${sayac.kule} yönlendir bekliyor` : 'Gelen sipariş & yönlendir' },
     { id: 'depolar', ikon: '📦', baslik: 'Depolar', renk: C.mavi,
       sayi: null, alt: 'Tüm şube stokları' },
     // Denetim kartı şimdilik kapalı (kullanıcı kararı) — component/route dormant duruyor.
@@ -995,10 +997,166 @@ function CepDepolar({ onGeri }) {
 }
 
 // ── Kök bileşen ─────────────────────────────────────────────────────────────
+// ── Sipariş Kontrol Kulesi (gelen sipariş + yönlendir) ──────────────────────
+function CepKule({ onGeri, onDegisti }) {
+  const [data, setData] = useState(null);
+  const [hata, setHata] = useState('');
+  const [tab, setTab] = useState('gelen');       // 'gelen' | 'takip'
+  const [tedarikciler, setTedarikciler] = useState([]);
+  const [yon, setYon] = useState(null);          // yönlendirilecek sipariş
+  const [tedId, setTedId] = useState('');
+  const [mesgul, setMesgul] = useState(false);
+
+  const yukle = useCallback((sessiz) => {
+    if (!sessiz) setHata('');
+    api('/ops/siparis/kontrol-kulesi?gun=30')
+      .then(d => setData(d))
+      .catch(e => { if (!sessiz) { setHata(e.message || 'Yüklenemedi'); setData({ satirlar: [] }); } });
+  }, []);
+  useEffect(() => { yukle(); const t = setInterval(() => yukle(true), 45000); return () => clearInterval(t); }, [yukle]);
+  useEffect(() => { api('/tedarikciler').then(r => setTedarikciler(Array.isArray(r) ? r : (r?.tedarikciler || []))).catch(() => {}); }, []);
+
+  const satirlar = data?.satirlar || [];
+  const gelen = satirlar.filter(s => s.asama === 'bekliyor');
+  const itemsOf = (s) => (Array.isArray(s.kalan_kalemler) && s.kalan_kalemler.length ? s.kalan_kalemler : (s.kalemler || []));
+
+  const waNum = (tel) => {
+    let n = String(tel || '').replace(/\D/g, '');
+    if (n.startsWith('00')) n = n.slice(2);
+    if (n.length === 11 && n.startsWith('0')) n = '90' + n.slice(1);
+    else if (n.length === 10 && n.startsWith('5')) n = '90' + n;
+    return n.length >= 11 ? n : '';
+  };
+
+  const yonlendir = async () => {
+    if (!yon) return;
+    const ted = tedarikciler.find(t => String(t.id) === String(tedId));
+    if (!ted) { alert('Önce toptancı seçin'); return; }
+    const kalemler = itemsOf(yon).map(k => ({ urun_ad: k.urun_ad, adet: Number(k.adet) || 1 })).filter(k => k.urun_ad);
+    if (!kalemler.length) { alert('Gönderilecek kalem yok'); return; }
+    setMesgul(true);
+    try {
+      const r = await api('/ops/siparis/toptanciya-yolla', {
+        method: 'POST',
+        body: { talep_id: yon.id, tedarikci_id: ted.id, tedarikci_ad: ted.ad, kalemler },
+      });
+      // Green API gitmediyse senin telefonundan wa.me ile gönder (Cep deseni)
+      if (!r?.wa_basarili) {
+        const num = waNum(ted.telefon);
+        if (num) {
+          const bugun = new Date().toLocaleDateString('tr-TR');
+          const txt = `🛒 *${yon.sube_adi}* şubesi için sipariş (${bugun})\n\n` +
+            kalemler.map(k => `• ${k.adet} adet ${k.urun_ad}`).join('\n');
+          window.open(`https://wa.me/${num}?text=${encodeURIComponent(txt)}`, '_blank');
+        }
+      }
+      setYon(null); setTedId('');
+      yukle(); onDegisti && onDegisti();
+    } catch (e) { alert('Yönlendirilemedi: ' + (e.message || '')); }
+    finally { setMesgul(false); }
+  };
+
+  const renkAsama = (a) => a === 'bekliyor' ? C.sari : a === 'tamamlandi' ? C.yesil
+    : a === 'uyumsuzluk' ? C.kirmizi : (a === 'iptal' || a === 'gonderilmedi') ? C.t3 : C.mavi;
+
+  const rows = tab === 'gelen' ? gelen : satirlar;
+
+  return (
+    <div style={{ minHeight: '100vh', background: C.bg }}>
+      <Baslik baslik="🚚 Sipariş Kulesi" onGeri={onGeri} sag={
+        <button onClick={() => yukle()} style={{ background: 'none', border: 'none', color: C.t3, fontSize: 20, cursor: 'pointer' }}>↻</button>
+      } />
+      <div style={{ display: 'flex', gap: 8, padding: '10px 14px 4px' }}>
+        {[['gelen', `Gelen (${gelen.length})`], ['takip', 'Takip']].map(([k, lbl]) => (
+          <button key={k} onClick={() => setTab(k)} style={{
+            flex: 1, padding: '10px', borderRadius: 10, cursor: 'pointer', fontWeight: 800, fontSize: 14,
+            border: `1px solid ${tab === k ? C.mavi : C.border}`,
+            background: tab === k ? C.mavi : C.bg2, color: tab === k ? '#fff' : C.t2,
+          }}>{lbl}</button>
+        ))}
+      </div>
+      <div style={{ padding: 14 }}>
+        {data === null && <div style={{ color: C.t3, textAlign: 'center', padding: 30 }}>Yükleniyor…</div>}
+        {hata && <div style={{ color: C.kirmizi, textAlign: 'center', padding: 20 }}>{hata}</div>}
+        {data && rows.length === 0 && (
+          <div style={{ color: C.t3, textAlign: 'center', padding: 40 }}>
+            <div style={{ fontSize: 40, marginBottom: 8 }}>{tab === 'gelen' ? '📭' : '🗂️'}</div>
+            {tab === 'gelen' ? 'Yönlendirilecek sipariş yok.' : 'Açık sipariş yok.'}
+          </div>
+        )}
+        {data && rows.map(s => {
+          const items = itemsOf(s);
+          return (
+            <div key={s.id} style={{
+              background: C.bg2, border: `1px solid ${C.border}`,
+              borderLeft: `4px solid ${renkAsama(s.asama)}`, borderRadius: 14, padding: 14, marginBottom: 12,
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, marginBottom: 6 }}>
+                <span style={{ fontSize: 16, fontWeight: 800, color: C.t1 }}>{s.sube_adi}</span>
+                <span style={{ fontSize: 12, color: C.t3 }}>{String(s.tarih || '').slice(0, 10)}</span>
+              </div>
+              <div style={{ fontSize: 12, fontWeight: 700, color: renkAsama(s.asama), marginBottom: 6 }}>{s.asama_metni || s.asama}</div>
+              <div style={{ fontSize: 13, color: C.t2, lineHeight: 1.5 }}>
+                {items.length ? items.map(k => `${k.adet || ''} ${k.urun_ad}`.trim()).join(' · ') : '—'}
+              </div>
+              {s.kismi_toptanci && (
+                <div style={{ fontSize: 11, color: C.sari, fontWeight: 700, marginTop: 6, lineHeight: 1.4 }}>
+                  🔶 {(s.dagitilan_kalem_adlari || []).join(', ')} yollandı · kalan {(s.kalan_kalemler || []).map(k => k.urun_ad).filter(Boolean).join(', ')}
+                </div>
+              )}
+              {tab === 'gelen' && (
+                <button onClick={() => { setYon(s); setTedId(''); }} style={{
+                  width: '100%', marginTop: 12, padding: '12px', borderRadius: 10, border: 'none',
+                  background: C.mavi, color: '#fff', fontWeight: 800, fontSize: 14, cursor: 'pointer',
+                }}>🚚 Toptancıya Yönlendir</button>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Yönlendir alt-sayfası */}
+      {yon && (
+        <div onClick={e => e.target === e.currentTarget && setYon(null)} style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 50, display: 'flex', alignItems: 'flex-end',
+        }}>
+          <div style={{
+            width: '100%', maxHeight: '85vh', overflowY: 'auto', background: C.bg2,
+            borderTopLeftRadius: 20, borderTopRightRadius: 20, borderTop: `1px solid ${C.border}`, padding: 18,
+          }}>
+            <div style={{ fontSize: 16, fontWeight: 800, color: C.t1, marginBottom: 2 }}>🚚 {yon.sube_adi} → Toptancı</div>
+            <div style={{ fontSize: 12, color: C.t3, marginBottom: 12 }}>Bu kalemler gönderilecek; toptancıyı seç.</div>
+            <div style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 10, padding: 12, marginBottom: 12 }}>
+              {itemsOf(yon).map((k, i) => (
+                <div key={i} style={{ fontSize: 13, color: C.t1, padding: '3px 0' }}>• {k.adet || ''} {k.urun_ad}</div>
+              ))}
+            </div>
+            <select value={tedId} onChange={e => setTedId(e.target.value)} style={{
+              width: '100%', padding: '12px', borderRadius: 10, border: `1px solid ${C.border}`,
+              background: C.bg, color: C.t1, fontSize: 15, boxSizing: 'border-box', marginBottom: 12,
+            }}>
+              <option value="">— Toptancı seç —</option>
+              {tedarikciler.map(t => <option key={t.id} value={t.id}>{t.ad}</option>)}
+            </select>
+            <button disabled={mesgul || !tedId} onClick={yonlendir} style={{
+              width: '100%', padding: '14px', borderRadius: 12, border: 'none',
+              background: (mesgul || !tedId) ? C.bg3 : C.yesil, color: '#fff', fontWeight: 800, fontSize: 15, cursor: 'pointer',
+            }}>{mesgul ? '…' : '✓ Yönlendir & Gönder'}</button>
+            <button onClick={() => setYon(null)} style={{
+              width: '100%', padding: '12px', marginTop: 8, borderRadius: 12, border: 'none',
+              background: 'transparent', color: C.t3, fontWeight: 700, cursor: 'pointer',
+            }}>Vazgeç</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function CepApp() {
   const [girisli, setGirisli] = useState(() => tokenGecerli());
   const [view, setView] = useState('home');
-  const [sayac, setSayac] = useState({ onay: 0, odeme: 0, odemeTutar: 0, ariza: 0 });
+  const [sayac, setSayac] = useState({ onay: 0, odeme: 0, odemeTutar: 0, ariza: 0, kule: 0 });
   const [kasa, setKasa] = useState({ tutar: null, gun: null, hareketler: [] });
   const [kasaModal, setKasaModal] = useState(false);
 
@@ -1009,12 +1167,14 @@ export default function CepApp() {
       api('/kasa'),
       api('/panel'),
       api('/stok-sayim/ariza/liste?durum=acik'),
-    ]).then(([onay, odeme, kasaR, panelR, arizaR]) => {
+      api('/ops/siparis/kontrol-kulesi?gun=30&asama=bekliyor&limit=200'),
+    ]).then(([onay, odeme, kasaR, panelR, arizaR, kuleR]) => {
       const onayN = (onay.status === 'fulfilled' && Array.isArray(onay.value)) ? onay.value.filter(giderOnayMi).length : 0;
       const odemeArr = (odeme.status === 'fulfilled' && Array.isArray(odeme.value)) ? odeme.value : [];
       const odemeTutar = odemeArr.reduce((s, o) => s + (Number(o.tutar) || 0), 0);
       const arizaN = (arizaR.status === 'fulfilled' && Number(arizaR.value?.toplam)) ? Number(arizaR.value.toplam) : 0;
-      setSayac({ onay: onayN, odeme: odemeArr.length, odemeTutar, ariza: arizaN });
+      const kuleN = (kuleR.status === 'fulfilled') ? (Number(kuleR.value?.toplam) || 0) : 0;
+      setSayac({ onay: onayN, odeme: odemeArr.length, odemeTutar, ariza: arizaN, kule: kuleN });
 
       const kTutar = (kasaR.status === 'fulfilled') ? (Number(kasaR.value?.guncel_bakiye) || 0) : null;
       const hareketler = (kasaR.status === 'fulfilled' && Array.isArray(kasaR.value?.hareketler)) ? kasaR.value.hareketler : [];
@@ -1044,6 +1204,8 @@ export default function CepApp() {
     return <CepDenetim onGeri={geri} />;
   if (view === 'demirbas')
     return <CepDemirbas onGeri={geri} />;
+  if (view === 'kule')
+    return <CepKule onGeri={geri} onDegisti={sayaclariYukle} />;
   if (view === 'depolar')
     return <CepDepolar onGeri={geri} />;
   if (view === 'subeler')
