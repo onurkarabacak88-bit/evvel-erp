@@ -138,8 +138,9 @@ function CepHome({ sayac, onAc, onCikis, yenile }) {
       sayi: sayac.dikkat, alt: 'Bugün dikkat isteyen' },
     { id: 'onaylar', ikon: '✅', baslik: 'Gider Onayı', renk: C.yesil,
       sayi: sayac.onay, alt: 'Bekleyen gider' },
-    { id: 'denetim', ikon: '🧠', baslik: 'Denetim', renk: C.kirmizi,
-      sayi: sayac.anomali, alt: 'Bugün uyarı' },
+    // Denetim kartı şimdilik kapalı (aktif kullanılmıyor) — Faz 2'de geri açılacak.
+    // { id: 'denetim', ikon: '🧠', baslik: 'Denetim', renk: C.kirmizi,
+    //   sayi: sayac.anomali, alt: 'Bugün uyarı' },
     { id: 'subeler', ikon: '🏪', baslik: 'Şubeler', renk: C.mavi,
       sayi: null, alt: 'Durum özeti' },
   ];
@@ -454,15 +455,7 @@ function CepHatirlatmalar({ onGeri, onAc }) {
         detay: 'Şube ciro taslakları onay bekliyor', git: null, renk: C.mavi,
       });
 
-      if (denetim.status === 'fulfilled') {
-        const subeler = denetim.value?.subeler || [];
-        const top = subeler.reduce((s, r) => s + (Number(r.anomali_sayisi) || 0), 0);
-        const krit = subeler.filter(r => (r.anomali_sayisi || 0) > 0).map(r => r.sube_ad);
-        if (top > 0) items.push({
-          ikon: '🧠', oncelik: 3, baslik: `${top} denetim uyarısı`,
-          detay: krit.length ? `Şube: ${krit.join(', ')}` : 'Bugünkü denetim', git: 'denetim', renk: C.kirmizi,
-        });
-      }
+      // Denetim dikkat satırı şimdilik kapalı (aktif kullanılmıyor) — Faz 2'de geri açılacak.
 
       const sNum = (stok.status === 'fulfilled') ? (Number(stok.value?.toplam) || 0) : 0;
       if (sNum > 0) items.push({
