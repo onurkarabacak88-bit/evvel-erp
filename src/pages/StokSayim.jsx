@@ -55,7 +55,7 @@ function GorevAta() {
   const [msg, setMsg] = useState({});
   const [bekle, setBekle] = useState(false);
 
-  useEffect(() => { api('/subeler').then((r) => setSubeler(r || [])).catch(() => {}); }, []);
+  useEffect(() => { api('/subeler').then((r) => setSubeler((r || []).filter(x => x.aktif !== false && !x.sezon_kapali))).catch(() => {}); }, []);
   useEffect(() => {
     if (!subeId) { setPersoneller([]); setKalemler([]); return; }
     api(`/gorev/sube-personel/${encodeURIComponent(subeId)}`).then((r) => setPersoneller(r || [])).catch(() => {});
@@ -348,7 +348,7 @@ function DemirbasPaneli() {
   const [kalemler, setKalemler] = useState([]);
   const [msg, setMsg] = useState({});
 
-  useEffect(() => { api('/subeler').then((r) => setSubeler(r || [])).catch(() => {}); }, []);
+  useEffect(() => { api('/subeler').then((r) => setSubeler((r || []).filter(x => x.aktif !== false && !x.sezon_kapali))).catch(() => {}); }, []);
   const yukle = useCallback(() => {
     if (!subeId) { setKalemler([]); return; }
     api(`/stok-sayim/demirbas/durum?sube_id=${encodeURIComponent(subeId)}`).then((r) => setKalemler(r?.kalemler || [])).catch(() => {});

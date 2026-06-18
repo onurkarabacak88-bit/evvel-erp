@@ -469,19 +469,31 @@ function CepSubeler({ onGeri }) {
   const [acilislar, setAcilislar] = useState([]);
   const [beklenenler, setBeklenenler] = useState([]);
   const [acilisKasa, setAcilisKasa] = useState([]);
+  const [subeMeta, setSubeMeta] = useState([]); // /subeler — aktif + sezon_kapali
   const [hata, setHata] = useState('');
-  useEffect(() => {
+  const yukle = useCallback(() => {
     Promise.allSettled([
       api('/ops/kapanis-takip'),
       api('/ops/sube-giris-bugun'),
       api('/ops/acilis-kasa-takip'),
-    ]).then(([kap, gir, ack]) => {
+      api('/subeler'),
+    ]).then(([kap, gir, ack, sub]) => {
       if (kap.status === 'fulfilled') setSubeler(kap.value?.satirlar || []);
       else { setHata('Yüklenemedi'); setSubeler([]); }
       if (gir.status === 'fulfilled') { setGirisler(gir.value?.girisler || []); setAcilislar(gir.value?.acilislar || []); setBeklenenler(gir.value?.beklenenler || []); }
       if (ack.status === 'fulfilled') setAcilisKasa(ack.value?.satirlar || []);
+      if (sub.status === 'fulfilled') setSubeMeta(Array.isArray(sub.value) ? sub.value : []);
     });
   }, []);
+  useEffect(() => { yukle(); }, [yukle]);
+  const kapaliSet = new Set(subeMeta.filter(s => s.sezon_kapali).map(s => s.id));
+
+  const sezonToggle = async (sid, kapat) => {
+    try {
+      await api(`/subeler/${encodeURIComponent(sid)}/sezon`, { method: 'POST', body: { sezon_kapali: kapat } });
+      yukle();
+    } catch (e) { setHata(e.message || 'Hata'); }
+  };
 
   const saat = (ts) => (ts ? String(ts).slice(11, 16) : null);
   const gecMetin = (dk) => dk == null ? null : (dk >= 1 ? `${dk} dk geç` : (dk <= -1 ? `${-dk} dk erken` : 'vaktinde'));
@@ -492,7 +504,7 @@ function CepSubeler({ onGeri }) {
       <div style={{ padding: 14 }}>
         {subeler === null && <div style={{ color: C.t3, textAlign: 'center', padding: 30 }}>Yükleniyor…</div>}
         {hata && <div style={{ color: C.kirmizi, textAlign: 'center', padding: 20 }}>{hata}</div>}
-        {(subeler || []).map(s => {
+        {(subeler || []).filter(s => !kapaliSet.has(s.sube_id)).map(s => {
           const ciro = (Number(s.nakit) || 0) + (Number(s.pos) || 0) + (Number(s.online) || 0);
           const fark = s.nakit_kasa_fark_tl;
           const subeGiris = girisler.filter(g => g.sube_id === s.sube_id);
@@ -586,6 +598,28 @@ function CepSubeler({ onGeri }) {
             </div>
           );
         })}
+
+        {/* Sezon yönetimi — şubeyi sezonluk kapat/aç (kapalı = canlı listede gizli) */}
+        {subeMeta.filter(s => s.aktif !== false).length > 0 && (
+          <div style={{ marginTop: 18, paddingTop: 14, borderTop: `1px solid ${C.border}` }}>
+            <div style={{ fontSize: 12, fontWeight: 800, color: C.t3, marginBottom: 8 }}>SEZON YÖNETİMİ</div>
+            {subeMeta.filter(s => s.aktif !== false).map(s => (
+              <div key={s.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0' }}>
+                <span style={{ fontSize: 14, color: s.sezon_kapali ? C.t3 : C.t1 }}>
+                  {s.ad}{s.sezon_kapali ? ' · sezon kapalı' : ''}
+                </span>
+                <button onClick={() => sezonToggle(s.id, !s.sezon_kapali)} style={{
+                  padding: '6px 12px', borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: 'pointer',
+                  border: `1px solid ${s.sezon_kapali ? C.yesil : C.border}`,
+                  background: s.sezon_kapali ? C.yesil : C.bg2,
+                  color: s.sezon_kapali ? '#fff' : C.t2,
+                }}>
+                  {s.sezon_kapali ? 'Sezonu Aç' : 'Sezonu Kapat'}
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

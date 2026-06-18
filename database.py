@@ -432,6 +432,11 @@ def init_db():
                 IF NOT EXISTS (SELECT 1 FROM information_schema.columns
                     WHERE table_name='subeler' AND column_name='kapanis_sadece_part')
                 THEN ALTER TABLE subeler ADD COLUMN kapanis_sadece_part BOOLEAN NOT NULL DEFAULT FALSE; END IF;
+                -- Sezonluk kapatma (Köyceğiz/Alsancak gibi sezon dışı kapanan şube):
+                -- TRUE ise canlı operasyon görünümünde + atama dropdown'larında gizlenir.
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='subeler' AND column_name='sezon_kapali')
+                THEN ALTER TABLE subeler ADD COLUMN sezon_kapali BOOLEAN NOT NULL DEFAULT FALSE; END IF;
             END $$;
         """)
 

@@ -6589,6 +6589,18 @@ def subeler():
         return [dict(r) for r in cur.fetchall()]
 
 
+@app.post("/api/subeler/{sid}/sezon")
+def sube_sezon_ayarla(sid: str, body: dict = None):
+    """Şubeyi sezonluk KAPAT/AÇ (Köyceğiz/Alsancak sezon dışı). Kapalıyken canlı
+    operasyon görünümünde ve atama dropdown'larında gizlenir. Şube kaydı silinmez."""
+    kapali = bool((body or {}).get("sezon_kapali", True))
+    with db() as (conn, cur):
+        cur.execute("UPDATE subeler SET sezon_kapali=%s WHERE id=%s", (kapali, sid))
+        if cur.rowcount == 0:
+            raise HTTPException(404, "Şube bulunamadı")
+    return {"success": True, "sube_id": sid, "sezon_kapali": kapali}
+
+
 def _sube_katalog_stok_garantile(cur, sube_id: str) -> int:
     """Verilen şube için tüm aktif siparis_urun kayıtlarına karşılık sube_depo_stok satırı ekler.
     Fiziksel havuz ürünleri (su_adet, bardak vb.) atlanır — onlar text-kodlu satırlarla izlenir.
