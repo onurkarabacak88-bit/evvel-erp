@@ -771,7 +771,7 @@ function CepDepolar({ onGeri }) {
   const [sipSube, setSipSube] = useState(''); // teslimat şubesi
   const [secim, setSecim] = useState({}); // kalem_kodu -> { ad, adet }
   const [sipNot, setSipNot] = useState('');
-  useEffect(() => { api('/tedarikciler').then(r => setTedarikciler(Array.isArray(r) ? r : [])).catch(() => {}); }, []);
+  useEffect(() => { api('/tedarikciler').then(r => setTedarikciler(Array.isArray(r) ? r : (r?.tedarikciler || []))).catch(() => {}); }, []);
 
   const secAdet = (k, delta) => setSecim(m => {
     const cur = m[k.kalem_kodu]?.adet || 0;
