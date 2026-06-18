@@ -1323,20 +1323,25 @@ def kapanis_durum(sube_id: str):
 
 
 def otomatik_mesai_kapat(cur, sube_id: str, tarih: str) -> list:
-    """Mesai bitişi + 30 dk geçtiği halde QR çıkışı yapmamış personeli OTOMATİK
+    """Mesai bitişi + 60 dk geçtiği halde QR çıkışı yapmamış personeli OTOMATİK
     kapatır (manuel kapanis-yonetici-kapat'ın otomatiği — Kural 1+2).
 
     - cikis_ts = PLANLANAN bitiş saati (ücret planlanana göre kalsın — kullanıcı
       kararı 2026-06-16), cikis_tip='otomatik' (denetim izi).
     - Bitiş = vardiya_atama.bitis_saat (planlanan); yoksa subeler.kapanis_saati.
       Bitiş bilinmiyorsa GÜVENLİ davranır (otomatik kapatmaz).
+    - GECİKME 60 dk (kullanıcı kararı 2026-06-19): küçük gecikmeleri cezalandırma.
+    - TEK KİŞİ KORUMASI (2026-06-19): Şubeye ikinci personel QR girişi yapmadıysa
+      oto-çıkış DEVRE DIŞI. O tek kişi KAPANIŞÇIdır; oto-çıkış onu kapatırsa kapanış
+      mührü ('kapalis') bloke olur (TEMA 2026-06-18 olayı). Tek kişi kapanışını
+      kendi QR mührüyle yapar; kaydı açık kalır.
     - Kural 4: düşük-ağırlık personel_risk_sinyal yazar (tam puanlama BEKLEMEDE).
     Returns: otomatik kapatılan [{personel_id, ad_soyad}] listesi.
     """
     from datetime import datetime as _dt, timedelta as _td, time as _time_cls
     from tr_saat import dt_now_tr_naive
     import uuid as _uuid
-    GECIKME_DK = 30
+    GECIKME_DK = 60
     try:
         cur.execute(
             """
@@ -1356,6 +1361,20 @@ def otomatik_mesai_kapat(cur, sube_id: str, tarih: str) -> list:
     except Exception:
         return []
     if not rows:
+        return []
+
+    # TEK KİŞİ KORUMASI: O gün şubeye ikinci personel QR girişi yapmadıysa
+    # (distinct personel < 2) hiç kimseyi otomatik kapatma — tek kişi kapanışçıdır.
+    try:
+        cur.execute(
+            "SELECT COUNT(DISTINCT personel_id) AS n FROM gorev_yoklama "
+            "WHERE sube_id=%s AND tarih=%s::date",
+            (sube_id, tarih),
+        )
+        _kisi_sayisi = int(dict(cur.fetchone() or {}).get("n") or 0)
+    except Exception:
+        _kisi_sayisi = 0
+    if _kisi_sayisi < 2:
         return []
     simdi = dt_now_tr_naive()
     try:
@@ -1421,9 +1440,10 @@ def kapanis_bekleyen(sube_id: str):
     yapan (devir yapilmamis) sabahci/ara_vardiya personeli de kapanisini
     muhurleyebilsin diye, gunun sonunda hala acik olan herkesi kapsar.
 
-    OTOMASYON: önce mesai-bitiş + 30dk geçmiş açık yoklamaları otomatik kapatır
+    OTOMASYON: önce mesai-bitiş + 60dk geçmiş açık yoklamaları otomatik kapatır
     (otomatik_mesai_kapat) → çıkış yapmadan giden personel mührü sonsuza dek
-    bloke etmez; mühür kendiliğinden tamamlanabilir hale gelir.
+    bloke etmez; mühür kendiliğinden tamamlanabilir hale gelir. TEK KİŞİLİK günde
+    oto-çıkış devre dışı (tek kişi kapanışçı → kaydı açık kalır, kendi mührünü yapar).
     """
     from tr_saat import is_gunu_tr
     tarih = str(is_gunu_tr())
