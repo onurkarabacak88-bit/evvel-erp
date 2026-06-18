@@ -416,7 +416,34 @@ def ops_sube_giris_bugun(tarih: Optional[str] = None):
             d["bitis_saat"] = str(d["bitis_saat"])[:5] if d.get("bitis_saat") else None
             d["gecikme_dk"] = int(d["gecikme_dk"]) if d.get("gecikme_dk") is not None else None
             rows.append(d)
-    return {"tarih": hedef, "toplam": len(rows), "girisler": rows}
+
+        # ŞUBE AÇILIŞ: planlanan açılış saati (subeler.acilis_saati) vs fiili açılış
+        # event'i (ACILIS tamamlandi) → kaç dk geç. "TEMA 12:00 açılmalıydı, 12:02 açıldı".
+        cur.execute(
+            """
+            SELECT s.id::text AS sube_id, s.ad AS sube_ad,
+                   NULLIF(TRIM(s.acilis_saati), '') AS planlanan,
+                   to_char(MIN(e.cevap_ts) AT TIME ZONE 'Europe/Istanbul', 'HH24:MI') AS fiili_saat,
+                   CASE WHEN NULLIF(TRIM(s.acilis_saati),'') IS NOT NULL AND MIN(e.cevap_ts) IS NOT NULL THEN
+                     ROUND(EXTRACT(EPOCH FROM (
+                       (MIN(e.cevap_ts) AT TIME ZONE 'Europe/Istanbul')::time - NULLIF(TRIM(s.acilis_saati),'')::time
+                     ))/60.0)
+                   END AS gecikme_dk
+            FROM subeler s
+            LEFT JOIN sube_operasyon_event e
+              ON e.sube_id = s.id AND e.tip='ACILIS' AND e.durum='tamamlandi' AND e.tarih = %s
+            WHERE s.aktif = TRUE
+            GROUP BY s.id, s.ad, s.acilis_saati
+            ORDER BY s.ad
+            """,
+            (hedef,),
+        )
+        acilislar = []
+        for r in cur.fetchall():
+            d = dict(r)
+            d["gecikme_dk"] = int(d["gecikme_dk"]) if d.get("gecikme_dk") is not None else None
+            acilislar.append(d)
+    return {"tarih": hedef, "toplam": len(rows), "girisler": rows, "acilislar": acilislar}
 
 
 @router.get("/kasiyer-karne")

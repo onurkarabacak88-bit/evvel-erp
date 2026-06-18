@@ -466,6 +466,7 @@ function CepDenetim({ onGeri }) {
 function CepSubeler({ onGeri }) {
   const [subeler, setSubeler] = useState(null);
   const [girisler, setGirisler] = useState([]);
+  const [acilislar, setAcilislar] = useState([]);
   const [hata, setHata] = useState('');
   useEffect(() => {
     Promise.allSettled([
@@ -474,11 +475,12 @@ function CepSubeler({ onGeri }) {
     ]).then(([kap, gir]) => {
       if (kap.status === 'fulfilled') setSubeler(kap.value?.satirlar || []);
       else { setHata('Yüklenemedi'); setSubeler([]); }
-      if (gir.status === 'fulfilled') setGirisler(gir.value?.girisler || []);
+      if (gir.status === 'fulfilled') { setGirisler(gir.value?.girisler || []); setAcilislar(gir.value?.acilislar || []); }
     });
   }, []);
 
   const saat = (ts) => (ts ? String(ts).slice(11, 16) : null);
+  const gecMetin = (dk) => dk == null ? null : (dk >= 1 ? `${dk} dk geç` : (dk <= -1 ? `${-dk} dk erken` : 'vaktinde'));
 
   return (
     <div style={{ minHeight: '100vh', background: C.bg }}>
@@ -491,12 +493,15 @@ function CepSubeler({ onGeri }) {
           const fark = s.nakit_kasa_fark_tl;
           const subeGiris = girisler.filter(g => g.sube_id === s.sube_id);
           const gecler = subeGiris.filter(g => g.gecikme_dk != null && g.gecikme_dk >= 5);
-          const acilisRenk = s.acildi ? C.yesil : C.t3;
+          const acl = acilislar.find(a => a.sube_id === s.sube_id);
+          const acilisGec = acl?.gecikme_dk;
+          const acilisGecVar = acilisGec != null && acilisGec >= 5;
+          const acilisRenk = !s.acildi ? C.t3 : (acilisGec != null && acilisGec >= 5 ? C.sari : C.yesil);
           return (
             <div key={s.sube_id} style={{
               background: C.bg2, border: `1px solid ${C.border}`, borderRadius: 14,
               padding: 14, marginBottom: 12,
-              borderLeft: `4px solid ${gecler.length ? C.sari : (fark && Math.abs(Number(fark)) > 1 ? C.kirmizi : C.yesil)}`,
+              borderLeft: `4px solid ${(gecler.length || acilisGecVar) ? C.sari : (fark && Math.abs(Number(fark)) > 1 ? C.kirmizi : C.yesil)}`,
             }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
                 <span style={{ fontSize: 16, fontWeight: 800, color: C.t1 }}>{s.sube_adi}</span>
@@ -504,6 +509,12 @@ function CepSubeler({ onGeri }) {
                   {s.acildi ? `açıldı ${saat(s.acilis_ts) || ''}` : 'açılmadı'}{s.kapanis_tamam ? ' · kapandı' : ''}
                 </span>
               </div>
+              {/* Açılış: planlanan vs fiili (12:00 → 12:02 = 2 dk geç) */}
+              {acl?.planlanan && s.acildi && (
+                <div style={{ fontSize: 12, marginBottom: 8, color: acilisGec >= 1 ? C.sari : C.t3 }}>
+                  Açılış planı {acl.planlanan} · {acl.fiili_saat || saat(s.acilis_ts)} → <strong>{gecMetin(acilisGec) || ''}</strong>
+                </div>
+              )}
 
               {/* Kasa farkı + ciro */}
               <div style={{ display: 'flex', gap: 10, marginBottom: 8 }}>
