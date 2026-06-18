@@ -741,7 +741,25 @@ def borc_plan_mutabakat(referans_tarih: Optional[date] = None) -> dict:
       3) Mükerrer iptal: aynı borç+ay için >1 aktif satır → en iyisini tut (ödenmiş > en yeni),
          diğerlerini 'iptal'. Böylece çift "ödenecek" kaybolur ve unique index kurulabilir.
     """
-    sonuc = {"backfill": 0, "kapatilan": 0, "mukerrer_iptal": 0, "hata": None}
+    sonuc = {"backfill": 0, "kapatilan": 0, "mukerrer_iptal": 0, "baslangic_oncesi_iptal": 0, "hata": None}
+
+    # 0) Başlangıç tarihinden ÖNCEKİ bekleyen borç planını iptal et (örn. araba ilk taksit
+    #    1 Temmuz ise yanlışlıkla üretilmiş 1 Haziran satırı temizlenir).
+    try:
+        with db() as (conn, cur):
+            cur.execute("""
+                UPDATE odeme_plani op
+                SET durum='iptal',
+                    aciklama = COALESCE(op.aciklama,'') || ' [başlangıçtan-önce-iptal]'
+                FROM borc_envanteri b
+                WHERE op.kaynak_tablo='borc_envanteri' AND op.kaynak_id = b.id::text
+                  AND op.durum IN ('bekliyor','onay_bekliyor')
+                  AND b.baslangic_tarihi IS NOT NULL
+                  AND op.tarih < b.baslangic_tarihi
+            """)
+            sonuc["baslangic_oncesi_iptal"] = cur.rowcount or 0
+    except Exception as e:
+        sonuc["hata"] = f"baslangic: {e}"; logger.warning(f"borc_plan_mutabakat baslangic: {e}")
 
     # 1) Ödenmiş ama bekleyen borç planını kapat (o ayın kasa BORC_TAKSIT ödemesi varsa)
     try:

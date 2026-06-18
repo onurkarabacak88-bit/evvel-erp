@@ -640,6 +640,13 @@ def aylik_odeme_plani_uret(yil=None, ay=None):
             odeme_gun = min(odeme_gun, son_gun)
             odeme_tarihi = date(yil, ay, odeme_gun)
 
+            # İlk taksit kontrolü: başlangıç tarihinden ÖNCEKİ ay için plan üretme.
+            # (örn. araba kredisi başlangıç 1 Temmuz → Haziran taksiti yok)
+            bas_d = b.get('baslangic_tarihi')
+            if isinstance(bas_d, date) and odeme_tarihi < bas_d:
+                atlanan.append(f"Borç atlandı (başlangıçtan önce): {b['kurum']} {odeme_tarihi}")
+                continue
+
             # Kalan vade kontrolü
             if b['kalan_vade'] is not None and b['kalan_vade'] <= 0:
                 atlanan.append(f"Borç atlandı (bitti): {b['kurum']}")
