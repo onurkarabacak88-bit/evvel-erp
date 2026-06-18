@@ -200,8 +200,7 @@ function CepHome({ sayac, kasa, onKasa, onAc, onCikis, yenile }) {
       alt: sayac.odeme > 0 ? `${sayac.odeme} ödeme · ${fmt(sayac.odemeTutar)}` : 'Bugün ödeme yok' },
     { id: 'onaylar', ikon: '✅', baslik: 'Gider Onayı', renk: C.yesil,
       sayi: sayac.onay, alt: `${sayac.onay} bekleyen gider` },
-    { id: 'denetim', ikon: '🧠', baslik: 'Denetim', renk: C.sari,
-      sayi: null, alt: 'Bugünkü uyarılar' },
+    // Denetim kartı şimdilik kapalı (kullanıcı kararı) — component/route dormant duruyor.
     { id: 'demirbas', ikon: '🛠️', baslik: 'Demirbaş & Arıza', renk: C.kirmizi,
       sayi: sayac.ariza, alt: sayac.ariza > 0 ? `${sayac.ariza} açık arıza` : 'Açık arıza yok' },
     { id: 'subeler', ikon: '🏪', baslik: 'Şubeler', renk: C.mavi,
