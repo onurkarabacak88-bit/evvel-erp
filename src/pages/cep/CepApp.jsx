@@ -1107,6 +1107,46 @@ function CepKule({ onGeri, onDegisti }) {
     }
   };
 
+  // TOPLU: tüm gelen siparişleri öneriye göre toptancıda birleştir (opsiyon — varsayılan değil)
+  const batchKur = () => {
+    const map = {};
+    gelen.forEach(s => {
+      gruplaItems(itemsOf(s)).gruplar.forEach(g => {
+        const b = map[g.ted_id] || (map[g.ted_id] = { ted_id: g.ted_id, ted_ad: g.ted_ad, satirlar: [], kalem: 0 });
+        b.satirlar.push({ talep: s, items: g.items });
+        b.kalem += g.items.length;
+      });
+    });
+    return Object.values(map).sort((a, b) => b.kalem - a.kalem);
+  };
+
+  const batchGonder = async (b) => {
+    setMesgul(true);
+    try {
+      for (const row of b.satirlar) {  // her talebi kaydet — WA YOK (tek birleşik mesaj aşağıda)
+        const kalemler = row.items.map(k => ({ urun_ad: k.urun_ad, adet: Number(k.adet) || 1 })).filter(k => k.urun_ad);
+        if (!kalemler.length) continue;
+        await api('/ops/siparis/toptanciya-yolla', {
+          method: 'POST',
+          body: { talep_id: row.talep.id, tedarikci_id: b.ted_id, tedarikci_ad: b.ted_ad, kalemler, wa_gonder: false },
+        });
+      }
+      const ted = tedarikciler.find(t => String(t.id) === String(b.ted_id));
+      const num = waNum(ted?.telefon);
+      if (num) {  // tek birleşik mesaj — şube kırılımlı
+        const bugun = new Date().toLocaleDateString('tr-TR');
+        const bloklar = b.satirlar.map(row =>
+          `*${row.talep.sube_adi}*\n` + row.items.map(k => `• ${k.adet || ''} ${k.urun_ad}`.trim()).join('\n')
+        ).join('\n\n');
+        window.open(`https://wa.me/${num}?text=${encodeURIComponent(`🛒 Sipariş (${bugun})\n\n${bloklar}`)}`, '_blank');
+      } else {
+        alert(`${b.ted_ad} için telefon yok — kayıt yapıldı, mesajı elle gönder.`);
+      }
+      yukle(); onDegisti && onDegisti();
+    } catch (e) { alert('Toplu gönderim hatası: ' + (e.message || '')); }
+    finally { setMesgul(false); }
+  };
+
   const renkAsama = (a) => a === 'bekliyor' ? C.sari : a === 'tamamlandi' ? C.yesil
     : a === 'uyumsuzluk' ? C.kirmizi : (a === 'iptal' || a === 'gonderilmedi') ? C.t3 : C.mavi;
 
@@ -1116,7 +1156,7 @@ function CepKule({ onGeri, onDegisti }) {
         <button onClick={() => yukle()} style={{ background: 'none', border: 'none', color: C.t3, fontSize: 20, cursor: 'pointer' }}>↻</button>
       } />
       <div style={{ display: 'flex', gap: 8, padding: '10px 14px 4px' }}>
-        {[['gelen', `Gelen (${gelen.length})`], ['takip', 'Takip']].map(([k, lbl]) => (
+        {[['gelen', `Gelen (${gelen.length})`], ['toplu', 'Toplu'], ['takip', 'Takip']].map(([k, lbl]) => (
           <button key={k} onClick={() => setTab(k)} style={{
             flex: 1, padding: '10px', borderRadius: 10, cursor: 'pointer', fontWeight: 800, fontSize: 14,
             border: `1px solid ${tab === k ? C.mavi : C.border}`,
@@ -1193,6 +1233,34 @@ function CepKule({ onGeri, onDegisti }) {
             </div>
           );
         })}
+
+        {/* TOPLU: toptancıya göre birleştir, tek mesaj (opsiyon) */}
+        {data && tab === 'toplu' && (() => {
+          const bl = batchKur();
+          if (!bl.length) return (
+            <div style={{ color: C.t3, textAlign: 'center', padding: 40 }}>
+              <div style={{ fontSize: 40, marginBottom: 8 }}>📦</div>Birleştirilecek (önerili) sipariş yok.
+            </div>
+          );
+          return bl.map(b => (
+            <div key={b.ted_id} style={{ background: C.bg2, border: `1px solid ${C.border}`, borderRadius: 14, padding: 14, marginBottom: 12 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                <span style={{ fontSize: 16, fontWeight: 800, color: C.t1 }}>{b.ted_ad}</span>
+                <span style={{ fontSize: 12, color: C.t3 }}>{b.satirlar.length} şube · {b.kalem} kalem</span>
+              </div>
+              {b.satirlar.map((row, i) => (
+                <div key={i} style={{ fontSize: 13, marginBottom: 4 }}>
+                  <span style={{ color: C.t1, fontWeight: 700 }}>{row.talep.sube_adi}: </span>
+                  <span style={{ color: C.t2 }}>{row.items.map(k => `${k.adet || ''} ${k.urun_ad}`.trim()).join(', ')}</span>
+                </div>
+              ))}
+              <button disabled={mesgul} onClick={() => batchGonder(b)} style={{
+                width: '100%', marginTop: 10, padding: '12px', borderRadius: 10, border: 'none',
+                background: C.yesil, color: '#fff', fontWeight: 800, fontSize: 14, cursor: 'pointer',
+              }}>📨 Tek mesajla yolla ({b.satirlar.length} şube)</button>
+            </div>
+          ));
+        })()}
 
         {/* TAKIP: aşamalı, salt-okur */}
         {data && tab === 'takip' && satirlar.length === 0 && (

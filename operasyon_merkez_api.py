@@ -8915,6 +8915,7 @@ class OpsSiparisToptanciyaYollaBody(BaseModel):
     tedarikci_ad: Optional[str] = None
     not_aciklama: Optional[str] = None
     kalemler: List[OpsSiparisToptanciKalemBody]
+    wa_gonder: bool = True  # Toplu gönderimde False — tek birleşik mesaj Cep'ten gider
 
 
 class OpsSiparisSevkiyatKalemDurum(BaseModel):
@@ -9874,8 +9875,10 @@ def ops_siparis_toptanciya_yolla(body: OpsSiparisToptanciyaYollaBody):
         )
 
         # ── WhatsApp: telefon varsa sipariş listesini tedarikçiye gönder ──
+        # Toplu gönderimde (wa_gonder=False) per-talep göndermeyiz; Cep tek birleşik
+        # mesaj açar (N ayrı mesaj/kota tüketimi olmasın).
         wa_sonuc: Optional[Dict[str, Any]] = None
-        if tedarikci_tel:
+        if tedarikci_tel and body.wa_gonder:
             mesaj = _toptanci_siparis_wa_mesaj(tedarikci_ad, sube_adi, kalemler, notu)
             try:
                 from whatsapp_bildirim import whatsapp_gonder_numara
