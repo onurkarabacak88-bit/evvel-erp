@@ -748,11 +748,19 @@ function CepDepolar({ onGeri }) {
   const [hata, setHata] = useState('');
   const [aktif, setAktif] = useState('tumu'); // 'tumu' | sube_id
   const [ara, setAra] = useState('');
-  useEffect(() => {
+  const [sonGuncel, setSonGuncel] = useState(null);
+  const yukle = useCallback((sessiz) => {
+    if (!sessiz) setHata('');
     api('/ops/depo-stok')
-      .then(d => setData(d))
-      .catch(e => { setHata(e.message || 'Yüklenemedi'); setData({ subeler: [], kalemler: [] }); });
+      .then(d => { setData(d); setSonGuncel(new Date()); })
+      .catch(e => { if (!sessiz) { setHata(e.message || 'Yüklenemedi'); setData({ subeler: [], kalemler: [] }); } });
   }, []);
+  // Canlı: aç açmaz çek + 45 sn'de bir sessiz tazele (stok düştükçe güncellensin)
+  useEffect(() => {
+    yukle();
+    const t = setInterval(() => yukle(true), 45000);
+    return () => clearInterval(t);
+  }, [yukle]);
 
   const subeler = data?.subeler || [];
   const kisa = (ad) => (ad || '').slice(0, 3).toUpperCase();
@@ -770,7 +778,12 @@ function CepDepolar({ onGeri }) {
 
   return (
     <div style={{ minHeight: '100vh', background: C.bg }}>
-      <Baslik baslik="📦 Depolar" onGeri={onGeri} />
+      <Baslik baslik="📦 Depolar" onGeri={onGeri} sag={
+        <button onClick={() => yukle()} title="Yenile" style={{
+          background: C.bg2, border: `1px solid ${C.border}`, borderRadius: 10,
+          color: C.t2, padding: '8px 12px', fontSize: 14, cursor: 'pointer',
+        }}>↻</button>
+      } />
       {/* Şube chip'leri + arama — sticky */}
       <div style={{ position: 'sticky', top: 0, zIndex: 5, background: C.bg, padding: '10px 14px 8px', borderBottom: `1px solid ${C.border}` }}>
         <div style={{ display: 'flex', gap: 6, overflowX: 'auto', paddingBottom: 8 }}>
@@ -786,7 +799,10 @@ function CepDepolar({ onGeri }) {
           width: '100%', padding: '10px 12px', borderRadius: 10, border: `1px solid ${C.border}`,
           background: C.bg2, color: C.t1, fontSize: 15, boxSizing: 'border-box',
         }} />
-        <div style={{ fontSize: 11, color: C.t3, marginTop: 6 }}>{kalemler.length} kalem · {ozetAdet} adet</div>
+        <div style={{ fontSize: 11, color: C.t3, marginTop: 6, display: 'flex', justifyContent: 'space-between' }}>
+          <span>{kalemler.length} kalem · {ozetAdet} adet</span>
+          {sonGuncel && <span>🟢 canlı · {sonGuncel.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}</span>}
+        </div>
       </div>
 
       <div style={{ padding: '8px 14px 28px' }}>
