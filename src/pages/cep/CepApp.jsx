@@ -1009,6 +1009,9 @@ function CepKule({ onGeri, onDegisti }) {
   const [undo, setUndo] = useState(null);        // { talep_id, sube_adi, ted_ad, tam }
   const [oneriler, setOneriler] = useState({});  // urun_norm -> {tedarikci_id, tedarikci_ad, oran, kaynak}
   const [varsayilan, setVarsayilan] = useState(false);  // alt-sayfa: "bunları hep buradan al"
+  const [subeler, setSubeler] = useState([]);
+  const [depoYon, setDepoYon] = useState(null);   // depo-sevk alt-sayfası: { talep, items }
+  const [depoSubeId, setDepoSubeId] = useState('');
 
   const yukle = useCallback((sessiz) => {
     if (!sessiz) setHata('');
@@ -1020,6 +1023,7 @@ function CepKule({ onGeri, onDegisti }) {
   useEffect(() => { api('/tedarikciler').then(r => setTedarikciler(Array.isArray(r) ? r : (r?.tedarikciler || []))).catch(() => {}); }, []);
   const oneriYukle = useCallback(() => { api('/ops/siparis/toptanci-oneri').then(r => setOneriler(r?.oneriler || {})).catch(() => {}); }, []);
   useEffect(() => { oneriYukle(); }, [oneriYukle]);
+  useEffect(() => { api('/subeler').then(r => setSubeler(Array.isArray(r) ? r : [])).catch(() => {}); }, []);
   // Geri-al penceresi 10 sn (Gmail mantığı — ikinci onaya gerek yok)
   useEffect(() => { if (!undo) return; const t = setTimeout(() => setUndo(null), 10000); return () => clearTimeout(t); }, [undo]);
 
@@ -1147,6 +1151,23 @@ function CepKule({ onGeri, onDegisti }) {
     finally { setMesgul(false); }
   };
 
+  // Kendi depomuzdan sevk — kaynak depo şubesini sen seçersin (toptancıya alternatif)
+  const depoSevk = async () => {
+    if (!depoYon || !depoSubeId) return;
+    setMesgul(true);
+    try {
+      await api('/ops/siparis/sevkiyata-gonder', {
+        method: 'POST',
+        body: { talep_id: depoYon.talep.id, hedef_depo_sube_id: depoSubeId },
+      });
+      const dep = subeler.find(x => String(x.id) === String(depoSubeId));
+      setDepoYon(null); setDepoSubeId('');
+      setUndo({ talep_id: depoYon.talep.id, sube_adi: depoYon.talep.sube_adi, ted_ad: `${dep?.ad || 'depo'} (depo)`, tam: false, depo: true });
+      yukle(); onDegisti && onDegisti();
+    } catch (e) { alert('Sevk başlatılamadı: ' + (e.message || '')); }
+    finally { setMesgul(false); }
+  };
+
   const renkAsama = (a) => a === 'bekliyor' ? C.sari : a === 'tamamlandi' ? C.yesil
     : a === 'uyumsuzluk' ? C.kirmizi : (a === 'iptal' || a === 'gonderilmedi') ? C.t3 : C.mavi;
 
@@ -1230,6 +1251,13 @@ function CepKule({ onGeri, onDegisti }) {
                   }}>🚚 Toptancı seç</button>
                 </div>
               )}
+
+              {/* Kendi depomuzdan sevk — toptancıya ALTERNATİF (kaynak depo şubesi seç) */}
+              <button disabled={mesgul} onClick={() => { setDepoYon({ talep: s, items }); setDepoSubeId(''); }} style={{
+                width: '100%', marginTop: 10, padding: '11px', borderRadius: 10,
+                border: `1px solid ${C.mavi}`, background: 'transparent', color: C.mavi,
+                fontWeight: 700, fontSize: 13, cursor: 'pointer',
+              }}>📦 Bunun yerine depodan gönder</button>
             </div>
           );
         })}
@@ -1332,7 +1360,44 @@ function CepKule({ onGeri, onDegisti }) {
         </div>
       )}
 
-      {/* Geri-al penceresi (10 sn) — ikinci onay yerine */}
+      {/* Depo-sevk alt-sayfası — hangi şubenin deposundan sevk edilsin? */}
+      {depoYon && (
+        <div onClick={e => e.target === e.currentTarget && setDepoYon(null)} style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 50, display: 'flex', alignItems: 'flex-end',
+        }}>
+          <div style={{
+            width: '100%', maxHeight: '85vh', overflowY: 'auto', background: C.bg2,
+            borderTopLeftRadius: 20, borderTopRightRadius: 20, borderTop: `1px solid ${C.border}`, padding: 18,
+          }}>
+            <div style={{ fontSize: 16, fontWeight: 800, color: C.t1, marginBottom: 2 }}>📦 {depoYon.talep.sube_adi} → Depodan sevk</div>
+            <div style={{ fontSize: 12, color: C.t3, marginBottom: 12 }}>Hangi şubenin deposundan sevk edilsin?</div>
+            <div style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 10, padding: 12, marginBottom: 12 }}>
+              {depoYon.items.map((k, i) => (
+                <div key={i} style={{ fontSize: 13, color: C.t1, padding: '3px 0' }}>• {k.adet || ''} {k.urun_ad}</div>
+              ))}
+            </div>
+            <select value={depoSubeId} onChange={e => setDepoSubeId(e.target.value)} style={{
+              width: '100%', padding: '12px', borderRadius: 10, border: `1px solid ${C.border}`,
+              background: C.bg, color: C.t1, fontSize: 15, boxSizing: 'border-box', marginBottom: 12,
+            }}>
+              <option value="">— Kaynak depo şubesi —</option>
+              {subeler.filter(x => String(x.id) !== String(depoYon.talep.sube_id)).map(x => (
+                <option key={x.id} value={x.id}>{x.ad}</option>
+              ))}
+            </select>
+            <button disabled={mesgul || !depoSubeId} onClick={depoSevk} style={{
+              width: '100%', padding: '14px', borderRadius: 12, border: 'none',
+              background: (mesgul || !depoSubeId) ? C.bg3 : C.mavi, color: '#fff', fontWeight: 800, fontSize: 15, cursor: 'pointer',
+            }}>{mesgul ? '…' : '✓ Sevk Başlat'}</button>
+            <button onClick={() => setDepoYon(null)} style={{
+              width: '100%', padding: '12px', marginTop: 8, borderRadius: 12, border: 'none',
+              background: 'transparent', color: C.t3, fontWeight: 700, cursor: 'pointer',
+            }}>Vazgeç</button>
+          </div>
+        </div>
+      )}
+
+      {/* Geri-al penceresi (10 sn) — ikinci onay yerine. Depo sevkinde geri-al yok (masaüstü). */}
       {undo && (
         <div style={{
           position: 'fixed', left: 14, right: 14, bottom: 18, zIndex: 60,
@@ -1341,12 +1406,14 @@ function CepKule({ onGeri, onDegisti }) {
           boxShadow: '0 6px 24px rgba(0,0,0,0.4)',
         }}>
           <span style={{ fontSize: 13, color: C.t1, flex: 1 }}>
-            ✓ {undo.sube_adi} → <b>{undo.ted_ad}</b> gönderildi
+            ✓ {undo.sube_adi} → <b>{undo.ted_ad}</b> {undo.depo ? 'sevke verildi' : 'gönderildi'}
           </span>
-          <button onClick={geriAl} style={{
-            background: 'none', border: `1px solid ${C.sari}`, borderRadius: 8,
-            color: C.sari, fontWeight: 800, fontSize: 13, padding: '8px 12px', cursor: 'pointer',
-          }}>↩ Geri Al</button>
+          {!undo.depo && (
+            <button onClick={geriAl} style={{
+              background: 'none', border: `1px solid ${C.sari}`, borderRadius: 8,
+              color: C.sari, fontWeight: 800, fontSize: 13, padding: '8px 12px', cursor: 'pointer',
+            }}>↩ Geri Al</button>
+          )}
         </div>
       )}
     </div>
