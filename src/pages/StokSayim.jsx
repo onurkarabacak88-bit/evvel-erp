@@ -25,7 +25,7 @@ export default function StokSayim() {
     <div style={{ maxWidth: 760, margin: '0 auto', padding: '8px 4px 40px', color: '#1f2430' }}>
       <h2 style={{ fontSize: 20, fontWeight: 800, margin: '4px 0 14px', color: '#1f2430' }}>📋 Stok Sayım</h2>
       <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
-        {[['ata', '➕ Görev Ata'], ['onay', '✅ Onay Bekleyen'], ['aktif', '⏳ Aktif / Kilit']].map(([id, l]) => (
+        {[['ata', '➕ Görev Ata'], ['onay', '✅ Onay Bekleyen'], ['aktif', '⏳ Aktif / Kilit'], ['demirbas', '🪑 Demirbaş'], ['ariza', '🛠️ Arızalar']].map(([id, l]) => (
           <button key={id} onClick={() => setSekme(id)} style={{
             padding: '9px 14px', borderRadius: 9, border: '1px solid ' + (sekme === id ? '#C8956A' : '#d6d6dc'),
             background: sekme === id ? '#C8956A' : '#fff', color: sekme === id ? '#fff' : '#555',
@@ -36,6 +36,8 @@ export default function StokSayim() {
       {sekme === 'ata' && <GorevAta />}
       {sekme === 'onay' && <OnayBekleyen />}
       {sekme === 'aktif' && <AktifGorevler />}
+      {sekme === 'demirbas' && <DemirbasPaneli />}
+      {sekme === 'ariza' && <ArizaListesi />}
     </div>
   );
 }
@@ -333,6 +335,148 @@ function AktifGorevler() {
           );
         })}
       </>}
+    </div>
+  );
+}
+
+// ── 🪑 DEMİRBAŞ (sahip: durum + eksiklik) ─────────────────────────────────────
+const DEM_DURUM = { var: ['Var', '#157347'], eksik: ['Eksik', '#b02a37'], arizali: ['Arızalı', '#d9821f'] };
+
+function DemirbasPaneli() {
+  const [subeler, setSubeler] = useState([]);
+  const [subeId, setSubeId] = useState('');
+  const [kalemler, setKalemler] = useState([]);
+  const [msg, setMsg] = useState({});
+
+  useEffect(() => { api('/subeler').then((r) => setSubeler(r || [])).catch(() => {}); }, []);
+  const yukle = useCallback(() => {
+    if (!subeId) { setKalemler([]); return; }
+    api(`/stok-sayim/demirbas/durum?sube_id=${encodeURIComponent(subeId)}`).then((r) => setKalemler(r?.kalemler || [])).catch(() => {});
+  }, [subeId]);
+  useEffect(() => { yukle(); }, [yukle]);
+
+  const kaydet = async (k, patch) => {
+    const yeni = { ...k, ...patch };
+    setKalemler((arr) => arr.map((x) => (x.id === k.id ? yeni : x)));
+    try {
+      await api('/stok-sayim/demirbas/durum', { method: 'POST', body: {
+        sube_id: subeId, kalem_id: k.id, durum: yeni.durum || 'var',
+        adet: yeni.adet ?? null, hedef_adet: yeni.hedef_adet ?? null,
+        not_aciklama: yeni.not_aciklama || null, guncelleyen_ad: 'Sahip',
+      } });
+    } catch (e) { setMsg({ tip: 'err', t: e.message }); }
+  };
+
+  const eksik = kalemler.filter((k) => k.durum === 'eksik').length;
+  const arizali = kalemler.filter((k) => k.durum === 'arizali').length;
+  const gruplar = {};
+  kalemler.forEach((k) => { const g = k.kategori || 'Diğer'; (gruplar[g] = gruplar[g] || []).push(k); });
+
+  return (
+    <div style={CARD}>
+      <Mesaj m={msg} />
+      <div style={{ marginBottom: 12 }}>
+        <label style={LBL}>Şube</label>
+        <select style={INP} value={subeId} onChange={(e) => setSubeId(e.target.value)}>
+          <option value="">— Şube seç —</option>
+          {subeler.map((s) => <option key={s.id} value={s.id}>{s.ad}</option>)}
+        </select>
+      </div>
+      {subeId && (
+        <div style={{ display: 'flex', gap: 10, marginBottom: 12, fontSize: 13 }}>
+          <span style={{ color: '#b02a37', fontWeight: 800 }}>{eksik} eksik</span>
+          <span style={{ color: '#d9821f', fontWeight: 800 }}>{arizali} arızalı</span>
+          <span style={{ color: '#157347', fontWeight: 800 }}>{kalemler.length - eksik - arizali} var</span>
+        </div>
+      )}
+      {Object.entries(gruplar).map(([kat, items]) => (
+        <div key={kat} style={{ marginBottom: 10 }}>
+          <div style={{ fontSize: 12, fontWeight: 800, color: '#888', padding: '6px 0', borderBottom: '1px solid #eee' }}>{kat}</div>
+          {items.map((k) => (
+            <div key={k.id} style={{ padding: '8px 2px', borderBottom: '1px solid #f3f3f5' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                <span style={{ fontSize: 14, flex: 1 }}>{k.ad}{k.sayilabilir ? <span style={{ color: '#aaa', fontSize: 11 }}> · sayılabilir</span> : null}</span>
+                <div style={{ display: 'flex', gap: 4 }}>
+                  {['var', 'eksik', 'arizali'].map((dv) => {
+                    const [lbl, renk] = DEM_DURUM[dv];
+                    const sec = (k.durum || 'var') === dv;
+                    return (
+                      <button key={dv} onClick={() => kaydet(k, { durum: dv })} style={{
+                        padding: '5px 9px', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer',
+                        border: '1px solid ' + (sec ? renk : '#d6d6dc'),
+                        background: sec ? renk : '#fff', color: sec ? '#fff' : '#777',
+                      }}>{lbl}</button>
+                    );
+                  })}
+                </div>
+              </div>
+              {k.sayilabilir && (
+                <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
+                  <input type="number" placeholder="hedef" defaultValue={k.hedef_adet ?? ''} onBlur={(e) => kaydet(k, { hedef_adet: e.target.value === '' ? null : parseInt(e.target.value, 10) })}
+                    style={{ ...INP, width: 90, padding: '6px 8px' }} />
+                  <input type="number" placeholder="mevcut" defaultValue={k.adet ?? ''} onBlur={(e) => kaydet(k, { adet: e.target.value === '' ? null : parseInt(e.target.value, 10) })}
+                    style={{ ...INP, width: 90, padding: '6px 8px' }} />
+                  {k.hedef_adet != null && k.adet != null && (k.hedef_adet - k.adet) > 0 && (
+                    <span style={{ fontSize: 12, color: '#b02a37', fontWeight: 700, alignSelf: 'center' }}>{k.hedef_adet - k.adet} eksik</span>
+                  )}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── 🛠️ ARIZALAR (sahip: şubeden gelen arıza bildirimleri) ─────────────────────
+function ArizaListesi() {
+  const [arizalar, setArizalar] = useState([]);
+  const [durum, setDurum] = useState('acik');
+  const [msg, setMsg] = useState({});
+
+  const yukle = useCallback(() => {
+    api(`/stok-sayim/ariza/liste?durum=${durum}`).then((r) => setArizalar(r?.arizalar || [])).catch(() => {});
+  }, [durum]);
+  useEffect(() => { yukle(); }, [yukle]);
+
+  const coz = async (a) => {
+    const not = window.prompt('Çözüm notu (opsiyonel):', '');
+    if (not === null) return;
+    try {
+      await api(`/stok-sayim/ariza/${a.id}/coz`, { method: 'POST', body: { cozum_not: not } });
+      setMsg({ tip: 'ok', t: '✅ Çözüldü işaretlendi.' }); yukle();
+    } catch (e) { setMsg({ tip: 'err', t: e.message }); }
+  };
+
+  return (
+    <div style={CARD}>
+      <Mesaj m={msg} />
+      <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+        {[['acik', 'Açık'], ['cozuldu', 'Çözülen']].map(([v, l]) => (
+          <button key={v} onClick={() => setDurum(v)} style={{
+            padding: '7px 12px', borderRadius: 8, fontSize: 13, fontWeight: 700, cursor: 'pointer',
+            border: '1px solid ' + (durum === v ? '#C8956A' : '#d6d6dc'),
+            background: durum === v ? '#C8956A' : '#fff', color: durum === v ? '#fff' : '#666',
+          }}>{l}</button>
+        ))}
+      </div>
+      {arizalar.length === 0 && <div style={{ fontSize: 14, color: '#888', padding: 8 }}>{durum === 'acik' ? 'Açık arıza yok 👍' : 'Çözülen arıza yok.'}</div>}
+      {arizalar.map((a) => (
+        <div key={a.id} style={{ padding: '12px 8px', borderTop: '1px solid #eee' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 700 }}>{a.baslik} {a.kalem_ad ? <span style={{ color: '#888', fontWeight: 400 }}>· {a.kalem_ad}</span> : null}</div>
+              <div style={{ fontSize: 12, color: '#888', marginTop: 2 }}>
+                {a.sube_adi} · {a.alan === 'diger' ? 'Diğer' : 'Demirbaş'}{a.bildiren_ad ? ` · ${a.bildiren_ad}` : ''} · {String(a.olusturma).slice(0, 16)}
+              </div>
+              {a.aciklama && <div style={{ fontSize: 13, marginTop: 4 }}>{a.aciklama}</div>}
+              {a.cozum_not && <div style={{ fontSize: 12, color: '#157347', marginTop: 4 }}>✓ {a.cozum_not}</div>}
+            </div>
+            {durum === 'acik' && <button onClick={() => coz(a)} style={{ ...BTN('#157347'), padding: '7px 12px', fontSize: 12 }}>Çözüldü</button>}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
