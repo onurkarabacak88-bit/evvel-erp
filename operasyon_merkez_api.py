@@ -10172,6 +10172,26 @@ def ops_siparis_toptanci_tercih(body: OpsToptanciTercihBody):
     return {"ok": True, "urun_ad": ad, "tedarikci_id": tid}
 
 
+@router.post("/siparis/toptanci-siparis/{ts_id}/iptal")
+def ops_toptanci_siparis_iptal(ts_id: str):
+    """Tek bir toptancı gönderimini iptal eder (örn. çift tıkta oluşan mükerrer kayıt).
+    durum='iptal' → şube paneli kabul etmez, öğrenen öneri/geçmiş bunu saymaz.
+    operasyon_defter (hash-zincir) DOKUNULMAZ — sadece durum işaretlenir."""
+    sid = (ts_id or "").strip()
+    if not sid:
+        raise HTTPException(400, "toptanci_siparis_id zorunlu")
+    with db() as (conn, cur):
+        cur.execute("SELECT id, talep_id, durum FROM toptanci_siparis WHERE id=%s", (sid,))
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(404, "Toptancı siparişi bulunamadı")
+        if str(dict(row).get("durum") or "") == "iptal":
+            return {"ok": True, "ts_id": sid, "durum": "iptal", "zaten": True}
+        cur.execute("UPDATE toptanci_siparis SET durum='iptal' WHERE id=%s", (sid,))
+        audit(cur, "toptanci_siparis", sid, "OPS_TOPTANCI_SIPARIS_IPTAL")
+    return {"ok": True, "ts_id": sid, "durum": "iptal"}
+
+
 @router.post("/siparis/toptanci-siparis/{ts_id}/whatsapp-yeniden-gonder")
 def ops_toptanci_siparis_wa_yeniden(ts_id: str):
     """Daha önce WhatsApp'tan gönderilememiş (wa_durum='hata') bir toptancı

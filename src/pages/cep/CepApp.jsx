@@ -1081,8 +1081,8 @@ function CepKule({ onGeri, onDegisti }) {
       if (!r?.wa_basarili) {  // Green API gitmediyse senin telefonundan wa.me
         const num = waNum(tel);
         if (num) {
-          const bugun = new Date().toLocaleDateString('tr-TR');
-          const txt = `🛒 *${talep.sube_adi}* şubesi için sipariş (${bugun})\n\n` +
+          const sipTarih = talep.tarih ? new Date(talep.tarih).toLocaleDateString('tr-TR') : new Date().toLocaleDateString('tr-TR');
+          const txt = `🛒 *${talep.sube_adi}* şubesi için sipariş\n📅 Sipariş Tarihi: ${sipTarih}\n\n` +
             kalemler.map(k => `• ${k.adet} adet ${k.urun_ad}`).join('\n');
           window.open(`https://wa.me/${num}?text=${encodeURIComponent(txt)}`, '_blank');
         }
@@ -1141,11 +1141,11 @@ function CepKule({ onGeri, onDegisti }) {
       const ted = tedarikciler.find(t => String(t.id) === String(b.ted_id));
       const num = waNum(ted?.telefon);
       if (num) {  // tek birleşik mesaj — şube kırılımlı
-        const bugun = new Date().toLocaleDateString('tr-TR');
-        const bloklar = b.satirlar.map(row =>
-          `*${row.talep.sube_adi}*\n` + row.items.map(k => `• ${k.adet || ''} ${k.urun_ad}`.trim()).join('\n')
-        ).join('\n\n');
-        window.open(`https://wa.me/${num}?text=${encodeURIComponent(`🛒 Sipariş (${bugun})\n\n${bloklar}`)}`, '_blank');
+        const bloklar = b.satirlar.map(row => {
+          const st = row.talep.tarih ? new Date(row.talep.tarih).toLocaleDateString('tr-TR') : '';
+          return `*${row.talep.sube_adi}*${st ? ` — 📅 ${st}` : ''}\n` + row.items.map(k => `• ${k.adet || ''} ${k.urun_ad}`.trim()).join('\n');
+        }).join('\n\n');
+        window.open(`https://wa.me/${num}?text=${encodeURIComponent(`🛒 Sipariş\n\n${bloklar}`)}`, '_blank');
       } else {
         alert(`${b.ted_ad} için telefon yok — kayıt yapıldı, mesajı elle gönder.`);
       }
