@@ -6623,6 +6623,25 @@ function kapanisEventIdBul() {
 // Kapanış formunu gönderir. otomatik=true ise QR mühürlendiğinde sessizce
 // tetiklenir; hata olursa "Kapanışı Tamamla" butonu tekrar gösterilir ki
 // kullanıcı eksik alanı düzeltip manuel gönderebilsin.
+// Kasa kapanış formu (Adım 1: teslim/sayım/ciro) gönderime hazır mı?
+// QR mühür tamamlanınca OTOMATİK gönderimi yalnızca form HAZIRSA tetiklemek için.
+// (TEMA 2026-06-18: mühür kullanıcının kontrolü dışında bekleyen=0 olunca, kasa
+//  verisi GİRİLMEDEN oto-submit kapanışı bozmuştu.) kapanisGonderSubmit'teki
+// doğrulamaların sessiz/ön kontrolü — fırlatmaz, sadece true/false döner.
+function kapanisKasaFormHazirMi() {
+  try {
+    if (!selVal('kapKimeTeslim')) return false;
+    var teslim = parseNum(inpVal('kapTeslim'));
+    if (teslim == null || teslim < 0) return false;
+    var toplamEl = inpVal('kapToplam').trim();
+    var toplamSay = toplamEl === '' ? null : parseNum(toplamEl);
+    if (toplamSay == null || toplamSay < 0) return false;
+    var n = parseNum(inpVal('kapN'))||0, p2 = parseNum(inpVal('kapP'))||0, o = parseNum(inpVal('kapO'))||0;
+    if (n + p2 + o <= 0) return false;
+    return true;
+  } catch (e) { return false; }
+}
+
 async function kapanisGonderSubmit(otomatik) {
   var btn = document.getElementById('kapGonder');
   setMsg('kapMsg', '', '');
@@ -6737,10 +6756,18 @@ function setKapanisStep(step) {
           clearInterval(_kapQrTimer);
           document.getElementById('kapQrBekle').style.display = 'none';
           document.getElementById('kapQrOnaylandi').style.display = 'block';
-          // QR ile mühürlendi — kapanış otomatik tamamlanır, ayrı bir butona gerek yok.
-          // (Sadece otomatik gönderim hata verirse kapanisGonderSubmit butonu geri gösterir.)
-          document.getElementById('kapGonder').style.display = 'none';
-          kapanisGonderSubmit(true);
+          // QR ile mühürlendi. AMA kasa verisi (teslim/sayım/ciro) GİRİLMEDEN
+          // otomatik gönderME — yoksa eksik/yanlış veriyle kapanış kapanır
+          // (TEMA 2026-06-18 olayı). Form hazırsa kolaylık için oto-gönder;
+          // değilse butonu göster, kullanıcı verileri girip elle tamamlasın.
+          var _kapGonderBtn = document.getElementById('kapGonder');
+          if (kapanisKasaFormHazirMi()) {
+            if (_kapGonderBtn) _kapGonderBtn.style.display = 'none';
+            kapanisGonderSubmit(true);
+          } else {
+            if (_kapGonderBtn) { _kapGonderBtn.style.display = 'flex'; _kapGonderBtn.textContent = '✔ Kapanışı Tamamla'; }
+            setMsg('kapMsg', '🔒 Mühür tamam. Şimdi kasa verilerini gir (Adım 1: teslim, sayım, ciro), sonra "Kapanışı Tamamla"ya bas. Otomatik gönderilmedi.', 'msg-warn');
+          }
         } else {
           // Hâlâ açık (çıkış/QR yapmamış) personel(ler) var → mühür onları bekliyor.
           // İsimleri + "Mesaisini kapat" (yönetici) düğmesi göster.
