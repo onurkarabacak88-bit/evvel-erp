@@ -741,18 +741,22 @@ def borc_plan_mutabakat(referans_tarih: Optional[date] = None) -> dict:
       3) Mükerrer iptal: aynı borç+ay için >1 aktif satır → en iyisini tut (ödenmiş > en yeni),
          diğerlerini 'iptal'. Böylece çift "ödenecek" kaybolur ve unique index kurulabilir.
     """
-    sonuc = {"backfill": 0, "kapatilan": 0, "mukerrer_iptal": 0}
+    sonuc = {"backfill": 0, "kapatilan": 0, "mukerrer_iptal": 0, "hata": None}
+    # 1) referans_ay backfill (borç satırları)
     try:
         with db() as (conn, cur):
-            # 1) referans_ay backfill (borç satırları)
             cur.execute("""
                 UPDATE odeme_plani
-                SET referans_ay = DATE_TRUNC('month', tarih)
+                SET referans_ay = DATE_TRUNC('month', tarih)::date
                 WHERE kaynak_tablo='borc_envanteri' AND referans_ay IS NULL AND tarih IS NOT NULL
             """)
             sonuc["backfill"] = cur.rowcount or 0
+    except Exception as e:
+        sonuc["hata"] = f"backfill: {e}"; logger.warning(f"borc_plan_mutabakat backfill: {e}")
 
-            # 2) Ödenmiş ama bekleyen borç planını kapat (o ayın kasa BORC_TAKSIT ödemesi varsa)
+    # 2) Ödenmiş ama bekleyen borç planını kapat (o ayın kasa BORC_TAKSIT ödemesi varsa)
+    try:
+        with db() as (conn, cur):
             cur.execute("""
                 UPDATE odeme_plani op
                 SET durum='odendi',
@@ -771,8 +775,12 @@ def borc_plan_mutabakat(referans_tarih: Optional[date] = None) -> dict:
                         AND DATE_TRUNC('month', kh.tarih)=DATE_TRUNC('month', op.tarih))
             """)
             sonuc["kapatilan"] = cur.rowcount or 0
+    except Exception as e:
+        sonuc["hata"] = f"kapat: {e}"; logger.warning(f"borc_plan_mutabakat kapat: {e}")
 
-            # 3) Mükerrer iptal — aynı borç+ay için 1 aktif satır kalsın (ödenmiş > en yeni)
+    # 3) Mükerrer iptal — aynı borç+ay için 1 aktif satır kalsın (ödenmiş > en yeni)
+    try:
+        with db() as (conn, cur):
             cur.execute("""
                 WITH ranked AS (
                     SELECT id, ROW_NUMBER() OVER (
@@ -790,7 +798,7 @@ def borc_plan_mutabakat(referans_tarih: Optional[date] = None) -> dict:
             """)
             sonuc["mukerrer_iptal"] = cur.rowcount or 0
     except Exception as e:
-        logger.warning(f"borc_plan_mutabakat hatası: {e}")
+        sonuc["hata"] = f"mukerrer: {e}"; logger.warning(f"borc_plan_mutabakat mukerrer: {e}")
     return sonuc
 
 
