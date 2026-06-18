@@ -200,7 +200,10 @@ function CepHome({ sayac, kasa, onKasa, onAc, onCikis, yenile }) {
       alt: sayac.odeme > 0 ? `${sayac.odeme} ödeme · ${fmt(sayac.odemeTutar)}` : 'Bugün ödeme yok' },
     { id: 'onaylar', ikon: '✅', baslik: 'Gider Onayı', renk: C.yesil,
       sayi: sayac.onay, alt: `${sayac.onay} bekleyen gider` },
-    // Denetim kartı şimdilik kapalı (aktif kullanılmıyor) — Faz 2'de geri açılacak.
+    { id: 'denetim', ikon: '🧠', baslik: 'Denetim', renk: C.sari,
+      sayi: null, alt: 'Bugünkü uyarılar' },
+    { id: 'demirbas', ikon: '🛠️', baslik: 'Demirbaş & Arıza', renk: C.kirmizi,
+      sayi: sayac.ariza, alt: sayac.ariza > 0 ? `${sayac.ariza} açık arıza` : 'Açık arıza yok' },
     { id: 'subeler', ikon: '🏪', baslik: 'Şubeler', renk: C.mavi,
       sayi: null, alt: 'Durum özeti' },
   ];
@@ -577,11 +580,56 @@ function CepOdemeler({ onGeri }) {
   );
 }
 
+// ── Demirbaş & Arıza (alt yapı — şimdilik açık arızalar; sonra zenginleşir) ──
+function CepDemirbas({ onGeri }) {
+  const [liste, setListe] = useState(null);
+  const [hata, setHata] = useState('');
+  useEffect(() => {
+    api('/stok-sayim/ariza/liste?durum=acik')
+      .then(d => setListe(d?.arizalar || []))
+      .catch(e => { setHata(e.message || 'Yüklenemedi'); setListe([]); });
+  }, []);
+
+  return (
+    <div style={{ minHeight: '100vh', background: C.bg }}>
+      <Baslik baslik="🛠️ Demirbaş & Arıza" onGeri={onGeri} />
+      <div style={{ padding: 14 }}>
+        <div style={{ fontSize: 13, fontWeight: 800, color: C.t2, marginBottom: 10 }}>Açık arızalar</div>
+        {liste === null && <div style={{ color: C.t3, textAlign: 'center', padding: 30 }}>Yükleniyor…</div>}
+        {hata && <div style={{ color: C.kirmizi, textAlign: 'center', padding: 20 }}>{hata}</div>}
+        {liste && liste.length === 0 && !hata && (
+          <div style={{ color: C.t3, textAlign: 'center', padding: 40 }}>
+            <div style={{ fontSize: 40, marginBottom: 8 }}>✅</div>
+            Açık arıza yok.
+          </div>
+        )}
+        {(liste || []).map(a => (
+          <div key={a.id} style={{
+            background: C.bg2, border: `1px solid ${C.border}`, borderLeft: `4px solid ${C.kirmizi}`,
+            borderRadius: 14, padding: 14, marginBottom: 12,
+          }}>
+            <div style={{ fontSize: 15, fontWeight: 800, color: C.t1 }}>
+              {a.baslik}{a.kalem_ad ? <span style={{ color: C.t3, fontWeight: 400 }}> · {a.kalem_ad}</span> : null}
+            </div>
+            <div style={{ fontSize: 12, color: C.t3, marginTop: 3 }}>
+              {a.sube_adi} · {a.alan === 'diger' ? 'Diğer' : 'Demirbaş'}{a.bildiren_ad ? ` · ${a.bildiren_ad}` : ''} · {String(a.olusturma).slice(0, 16)}
+            </div>
+            {a.aciklama && <div style={{ fontSize: 13, color: C.t2, marginTop: 5 }}>{a.aciklama}</div>}
+          </div>
+        ))}
+        <div style={{ fontSize: 11, color: C.t3, textAlign: 'center', marginTop: 10, lineHeight: 1.5 }}>
+          Alt yapı kuruldu. Demirbaş eksiklik özeti ve telefondan çözme sonraki adımda eklenecek.
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Kök bileşen ─────────────────────────────────────────────────────────────
 export default function CepApp() {
   const [girisli, setGirisli] = useState(() => tokenGecerli());
   const [view, setView] = useState('home');
-  const [sayac, setSayac] = useState({ onay: 0, odeme: 0, odemeTutar: 0 });
+  const [sayac, setSayac] = useState({ onay: 0, odeme: 0, odemeTutar: 0, ariza: 0 });
   const [kasa, setKasa] = useState({ tutar: null, gun: null, hareketler: [] });
   const [kasaModal, setKasaModal] = useState(false);
 
@@ -591,11 +639,13 @@ export default function CepApp() {
       api('/odeme-plani/bugun'),
       api('/kasa'),
       api('/panel'),
-    ]).then(([onay, odeme, kasaR, panelR]) => {
+      api('/stok-sayim/ariza/liste?durum=acik'),
+    ]).then(([onay, odeme, kasaR, panelR, arizaR]) => {
       const onayN = (onay.status === 'fulfilled' && Array.isArray(onay.value)) ? onay.value.filter(giderOnayMi).length : 0;
       const odemeArr = (odeme.status === 'fulfilled' && Array.isArray(odeme.value)) ? odeme.value : [];
       const odemeTutar = odemeArr.reduce((s, o) => s + (Number(o.tutar) || 0), 0);
-      setSayac({ onay: onayN, odeme: odemeArr.length, odemeTutar });
+      const arizaN = (arizaR.status === 'fulfilled' && Number(arizaR.value?.toplam)) ? Number(arizaR.value.toplam) : 0;
+      setSayac({ onay: onayN, odeme: odemeArr.length, odemeTutar, ariza: arizaN });
 
       const kTutar = (kasaR.status === 'fulfilled') ? (Number(kasaR.value?.guncel_bakiye) || 0) : null;
       const hareketler = (kasaR.status === 'fulfilled' && Array.isArray(kasaR.value?.hareketler)) ? kasaR.value.hareketler : [];
@@ -623,6 +673,8 @@ export default function CepApp() {
     return <CepOnaylar onGeri={geri} onDegisti={sayaclariYukle} />;
   if (view === 'denetim')
     return <CepDenetim onGeri={geri} />;
+  if (view === 'demirbas')
+    return <CepDemirbas onGeri={geri} />;
   if (view === 'subeler')
     return <CepSubeler onGeri={geri} />;
 
