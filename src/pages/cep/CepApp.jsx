@@ -131,8 +131,69 @@ function Baslik({ baslik, onGeri, sag }) {
   );
 }
 
+// ── Güncel Kasa hareketleri modalı (alt-sayfa) ──────────────────────────────
+function CepKasaModal({ kasa, onKapat }) {
+  const hareketler = kasa.hareketler || [];
+  return (
+    <div onClick={e => e.target === e.currentTarget && onKapat()} style={{
+      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 50,
+      display: 'flex', alignItems: 'flex-end',
+    }}>
+      <div style={{
+        width: '100%', maxHeight: '85vh', background: C.bg2,
+        borderTopLeftRadius: 20, borderTopRightRadius: 20, borderTop: `1px solid ${C.border}`,
+        display: 'flex', flexDirection: 'column',
+      }}>
+        <div style={{ padding: '16px 16px 12px', borderBottom: `1px solid ${C.border}` }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontSize: 16, fontWeight: 800, color: C.t1 }}>💰 Kasa Hareketleri</span>
+            <button onClick={onKapat} style={{
+              background: C.bg3, border: 'none', borderRadius: 10, color: C.t2,
+              width: 36, height: 36, fontSize: 16, cursor: 'pointer',
+            }}>✕</button>
+          </div>
+          <div style={{ fontSize: 13, color: C.t3, marginTop: 6 }}>
+            Güncel bakiye: <b style={{ color: kasa.tutar >= 0 ? C.yesil : C.kirmizi }}>
+              {kasa.tutar == null ? '…' : fmt(kasa.tutar)}
+            </b>
+          </div>
+        </div>
+        <div style={{ overflowY: 'auto', padding: '4px 16px 20px' }}>
+          {hareketler.length === 0 && (
+            <div style={{ color: C.t3, textAlign: 'center', padding: 30 }}>Hareket yok.</div>
+          )}
+          {hareketler.slice(0, 30).map((h, i) => {
+            const t = Number(h.tutar) || 0;
+            return (
+              <div key={h.id || i} style={{
+                display: 'flex', justifyContent: 'space-between', gap: 10,
+                padding: '11px 0', borderBottom: `1px solid ${C.border}`,
+              }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, color: C.t1, lineHeight: 1.4 }}>
+                    {h.aciklama || h.islem_turu || '—'}
+                  </div>
+                  <div style={{ fontSize: 11, color: C.t3, marginTop: 2 }}>
+                    {h.islem_turu} · {String(h.tarih || '').slice(0, 10)}
+                  </div>
+                </div>
+                <div style={{
+                  fontSize: 14, fontWeight: 800, whiteSpace: 'nowrap',
+                  color: t >= 0 ? C.yesil : C.kirmizi,
+                }}>
+                  {t >= 0 ? '+' : '−'}{fmt(Math.abs(t))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Ana ekran: kart ızgarası ────────────────────────────────────────────────
-function CepHome({ sayac, onAc, onCikis, yenile }) {
+function CepHome({ sayac, kasa, onKasa, onAc, onCikis, yenile }) {
   const KARTLAR = [
     { id: 'odemeler', ikon: '💸', baslik: 'Bugün Ödemeler', renk: C.kirmizi,
       sayi: sayac.odeme,
@@ -159,6 +220,28 @@ function CepHome({ sayac, onAc, onCikis, yenile }) {
           color: C.t2, padding: '8px 12px', fontSize: 13, cursor: 'pointer',
         }}>Çıkış</button>
       </div>
+
+      {/* Güncel Kasa — CFO'daki gibi, tıkla → hareketler modalı */}
+      <button onClick={onKasa} style={{
+        display: 'block', width: 'calc(100% - 28px)', margin: '4px 14px 12px',
+        textAlign: 'left', cursor: 'pointer', borderRadius: 16, padding: 18,
+        background: 'linear-gradient(135deg, var(--bg2,#1a1d24), var(--bg3,#22262f))',
+        border: `1px solid ${C.border}`,
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span style={{ fontSize: 13, color: C.t3, fontWeight: 600 }}>💰 Güncel Kasa</span>
+          <span style={{ fontSize: 12, color: C.t3 }}>Detay ›</span>
+        </div>
+        <div style={{
+          fontSize: 30, fontWeight: 800, marginTop: 6,
+          color: (kasa.tutar == null) ? C.t3 : (kasa.tutar >= 0 ? C.yesil : C.kirmizi),
+        }}>
+          {kasa.tutar == null ? '…' : fmt(kasa.tutar)}
+        </div>
+        {kasa.gun != null && kasa.gun < 999 && (
+          <div style={{ fontSize: 12, color: C.t3, marginTop: 2 }}>{kasa.gun} gün dayanır</div>
+        )}
+      </button>
 
       <div style={{
         display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, padding: '4px 14px',
@@ -499,16 +582,26 @@ export default function CepApp() {
   const [girisli, setGirisli] = useState(() => tokenGecerli());
   const [view, setView] = useState('home');
   const [sayac, setSayac] = useState({ onay: 0, odeme: 0, odemeTutar: 0 });
+  const [kasa, setKasa] = useState({ tutar: null, gun: null, hareketler: [] });
+  const [kasaModal, setKasaModal] = useState(false);
 
   const sayaclariYukle = useCallback(() => {
     Promise.allSettled([
       api('/onay-kuyrugu?durum=bekliyor&limit=400'),
       api('/odeme-plani/bugun'),
-    ]).then(([onay, odeme]) => {
+      api('/kasa'),
+      api('/panel'),
+    ]).then(([onay, odeme, kasaR, panelR]) => {
       const onayN = (onay.status === 'fulfilled' && Array.isArray(onay.value)) ? onay.value.filter(giderOnayMi).length : 0;
       const odemeArr = (odeme.status === 'fulfilled' && Array.isArray(odeme.value)) ? odeme.value : [];
       const odemeTutar = odemeArr.reduce((s, o) => s + (Number(o.tutar) || 0), 0);
       setSayac({ onay: onayN, odeme: odemeArr.length, odemeTutar });
+
+      const kTutar = (kasaR.status === 'fulfilled') ? (Number(kasaR.value?.guncel_bakiye) || 0) : null;
+      const hareketler = (kasaR.status === 'fulfilled' && Array.isArray(kasaR.value?.hareketler)) ? kasaR.value.hareketler : [];
+      const gun = (panelR.status === 'fulfilled' && panelR.value?.kac_gun_dayanir != null)
+        ? Number(panelR.value.kac_gun_dayanir) : null;
+      setKasa({ tutar: kTutar, gun, hareketler });
     });
   }, []);
 
@@ -535,7 +628,9 @@ export default function CepApp() {
 
   return (
     <div style={{ minHeight: '100vh', background: C.bg, fontFamily: 'Instrument Sans, system-ui, sans-serif' }}>
-      <CepHome sayac={sayac} onAc={setView} onCikis={cikis} yenile={sayaclariYukle} />
+      <CepHome sayac={sayac} kasa={kasa} onKasa={() => setKasaModal(true)}
+        onAc={setView} onCikis={cikis} yenile={sayaclariYukle} />
+      {kasaModal && <CepKasaModal kasa={kasa} onKapat={() => setKasaModal(false)} />}
     </div>
   );
 }
