@@ -468,15 +468,18 @@ function CepSubeler({ onGeri }) {
   const [girisler, setGirisler] = useState([]);
   const [acilislar, setAcilislar] = useState([]);
   const [beklenenler, setBeklenenler] = useState([]);
+  const [acilisKasa, setAcilisKasa] = useState([]);
   const [hata, setHata] = useState('');
   useEffect(() => {
     Promise.allSettled([
       api('/ops/kapanis-takip'),
       api('/ops/sube-giris-bugun'),
-    ]).then(([kap, gir]) => {
+      api('/ops/acilis-kasa-takip'),
+    ]).then(([kap, gir, ack]) => {
       if (kap.status === 'fulfilled') setSubeler(kap.value?.satirlar || []);
       else { setHata('Yüklenemedi'); setSubeler([]); }
       if (gir.status === 'fulfilled') { setGirisler(gir.value?.girisler || []); setAcilislar(gir.value?.acilislar || []); setBeklenenler(gir.value?.beklenenler || []); }
+      if (ack.status === 'fulfilled') setAcilisKasa(ack.value?.satirlar || []);
     });
   }, []);
 
@@ -500,11 +503,15 @@ function CepSubeler({ onGeri }) {
           const acilisRenk = !s.acildi ? C.t3 : (acilisGec != null && acilisGec >= 5 ? C.sari : C.yesil);
           // Vardiyası var ama girmemiş (no-show): vardiyası başlamış (dk_gecti>=5) ve hâlâ yok
           const girmeyenler = beklenenler.filter(b => b.sube_id === s.sube_id && b.dk_gecti != null && b.dk_gecti >= 5);
+          const ak = acilisKasa.find(a => a.sube_id === s.sube_id);
+          const akFarkVar = ak && ak.fark_tl != null && Math.abs(Number(ak.fark_tl)) > 1;
+          const serit = (girmeyenler.length || akFarkVar || (fark && Math.abs(Number(fark)) > 1)) ? C.kirmizi
+            : ((gecler.length || acilisGecVar) ? C.sari : C.yesil);
           return (
             <div key={s.sube_id} style={{
               background: C.bg2, border: `1px solid ${C.border}`, borderRadius: 14,
               padding: 14, marginBottom: 12,
-              borderLeft: `4px solid ${girmeyenler.length ? C.kirmizi : ((gecler.length || acilisGecVar) ? C.sari : (fark && Math.abs(Number(fark)) > 1 ? C.kirmizi : C.yesil))}`,
+              borderLeft: `4px solid ${serit}`,
             }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
                 <span style={{ fontSize: 16, fontWeight: 800, color: C.t1 }}>{s.sube_adi}</span>
@@ -512,12 +519,24 @@ function CepSubeler({ onGeri }) {
                   {s.acildi ? `açıldı ${saat(s.acilis_ts) || ''}` : 'açılmadı'}{s.kapanis_tamam ? ' · kapandı' : ''}
                 </span>
               </div>
-              {/* Açılış: planlanan vs fiili (12:00 → 12:02 = 2 dk geç) */}
+              {/* Açılış: planlanan (ilk vardiya) vs fiili (11:00 → 11:05 = 5 dk geç) */}
               {acl?.planlanan && s.acildi && (
-                <div style={{ fontSize: 12, marginBottom: 8, color: acilisGec >= 1 ? C.sari : C.t3 }}>
-                  Açılış planı {acl.planlanan} · {acl.fiili_saat || saat(s.acilis_ts)} → <strong>{gecMetin(acilisGec) || ''}</strong>
+                <div style={{ fontSize: 12, marginBottom: 6, color: acilisGec >= 1 ? C.sari : C.yesil }}>
+                  Açılış planı {acl.planlanan} · {acl.fiili_saat || saat(s.acilis_ts)} → <strong>{gecMetin(acilisGec) || 'vaktinde'}</strong>
                 </div>
               )}
+              {/* Açılış kasa uyumsuzluğu (sabah sayım vs dünkü devir) */}
+              {(() => {
+                const ak = acilisKasa.find(a => a.sube_id === s.sube_id);
+                if (!ak || ak.fark_tl == null || Math.abs(Number(ak.fark_tl)) <= 1) return null;
+                const f = Number(ak.fark_tl);
+                return (
+                  <div style={{ fontSize: 12, marginBottom: 8, color: C.kirmizi, fontWeight: 700 }}>
+                    ⚠ Açılış kasa farkı: {f > 0 ? `${fmt(f)} fazla` : `${fmt(Math.abs(f))} eksik`}
+                    <span style={{ color: C.t3, fontWeight: 400 }}> (sayım {fmt(ak.acilis_kasa_tl)} · devir {fmt(ak.beklenen_devir_tl)})</span>
+                  </div>
+                );
+              })()}
 
               {/* Kasa farkı + ciro */}
               <div style={{ display: 'flex', gap: 10, marginBottom: 8 }}>

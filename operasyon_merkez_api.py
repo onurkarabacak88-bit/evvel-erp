@@ -419,28 +419,37 @@ def ops_sube_giris_bugun(tarih: Optional[str] = None):
 
         # ŞUBE AÇILIŞ: planlanan açılış saati (subeler.acilis_saati) vs fiili açılış
         # event'i (ACILIS tamamlandi) → kaç dk geç. "TEMA 12:00 açılmalıydı, 12:02 açıldı".
+        # Açılış PLANI = o şubeye o gün planlanan İLK vardiyanın başlangıç saati
+        # (vardiya 11:00 ise açılış 11:00 beklenir). Ayrı subeler.acilis_saati config'ine
+        # bağlı DEĞİL (kullanıcı kararı 2026-06-18). Fiili = ilk ACILIS event'i.
         cur.execute(
             """
             SELECT s.id::text AS sube_id, s.ad AS sube_ad,
-                   NULLIF(TRIM(s.acilis_saati), '') AS planlanan,
+                   plan.planlanan,
                    to_char(MIN(e.cevap_ts) AT TIME ZONE 'Europe/Istanbul', 'HH24:MI') AS fiili_saat,
-                   CASE WHEN NULLIF(TRIM(s.acilis_saati),'') IS NOT NULL AND MIN(e.cevap_ts) IS NOT NULL THEN
+                   CASE WHEN plan.planlanan IS NOT NULL AND MIN(e.cevap_ts) IS NOT NULL THEN
                      ROUND(EXTRACT(EPOCH FROM (
-                       (MIN(e.cevap_ts) AT TIME ZONE 'Europe/Istanbul')::time - NULLIF(TRIM(s.acilis_saati),'')::time
+                       (MIN(e.cevap_ts) AT TIME ZONE 'Europe/Istanbul')::time - plan.planlanan
                      ))/60.0)
                    END AS gecikme_dk
             FROM subeler s
+            LEFT JOIN LATERAL (
+              SELECT MIN(va.baslangic_saat) AS planlanan
+              FROM vardiya_atama va JOIN vardiya_slot sl ON sl.id = va.slot_id
+              WHERE sl.sube_id = s.id AND va.tarih = %s AND COALESCE(va.durum,'') <> 'iptal'
+            ) plan ON TRUE
             LEFT JOIN sube_operasyon_event e
               ON e.sube_id = s.id AND e.tip='ACILIS' AND e.durum='tamamlandi' AND e.tarih = %s
             WHERE s.aktif = TRUE
-            GROUP BY s.id, s.ad, s.acilis_saati
+            GROUP BY s.id, s.ad, plan.planlanan
             ORDER BY s.ad
             """,
-            (hedef,),
+            (hedef, hedef),
         )
         acilislar = []
         for r in cur.fetchall():
             d = dict(r)
+            d["planlanan"] = str(d["planlanan"])[:5] if d.get("planlanan") else None
             d["gecikme_dk"] = int(d["gecikme_dk"]) if d.get("gecikme_dk") is not None else None
             acilislar.append(d)
 
