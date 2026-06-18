@@ -8582,8 +8582,10 @@ function _siparisTakipFiltrele(talepler, key) {
   if (key === 'tumu') return talepler;
   return talepler.filter(function(t){
     var toptanciVerildi = t.sevkiyat_durumu === 'toptanciya_yonlendirildi';
-    if (key === 'bekliyor') return !t.tahsis_ts && t.durum !== 'teslim_edildi' && !toptanciVerildi;
-    if (key === 'hazirlaniyor') return ((t.tahsis_durum === 'tam' || t.tahsis_durum === 'kismi') || t.sevkiyat_durumu === 'kismi_hazirlandi') && t.sevkiyat_durumu !== 'gonderildi' && !toptanciVerildi;
+    // Sahip/operasyon siparişi DEPOYA yönlendirdi → "bekliyor/merkez tahsis" değil, "hazırlanıyor"
+    var depoYon = t.sevkiyat_durumu === 'depoda_hazirlaniyor';
+    if (key === 'bekliyor') return !t.tahsis_ts && t.durum !== 'teslim_edildi' && !toptanciVerildi && !depoYon;
+    if (key === 'hazirlaniyor') return ((t.tahsis_durum === 'tam' || t.tahsis_durum === 'kismi') || t.sevkiyat_durumu === 'kismi_hazirlandi' || depoYon) && t.sevkiyat_durumu !== 'gonderildi' && !toptanciVerildi;
     if (key === 'yolda') return (t.sevkiyat_durumu === 'gonderildi' || toptanciVerildi) && !t.kabul_durum;
     if (key === 'teslim') return t.kabul_durum === 'kabul_tam' || t.durum === 'teslim_edildi';
     if (key === 'sorun') return t.kabul_durum === 'kabul_uyusmazlik' || t.tahsis_durum === 'yok';
@@ -8700,9 +8702,10 @@ async function renderSiparisTakipPanel() {
     // Her adımın durumunu hesapla
     var tahsisCls, tahsisDot, tahsisSub;
     if (!t.tahsis_durum) {
-      // Tahsis kaydı yok ama sipariş ilerlemişse (sevk/kabul) — tahsis fiilen tamamlanmış say
-      if (t.sevkiyat_durumu === 'gonderildi' || t.sevkiyat_durumu === 'toptanciya_yonlendirildi' || t.kabul_durum) {
-        tahsisCls = 'st-done'; tahsisDot = '✓'; tahsisSub = 'Tamamlandı';
+      // Tahsis kaydı yok ama sipariş ilerlemişse (depoya yönlendirildi/sevk/kabul) — tamamlanmış say
+      var depoYonT = (t.sevkiyat_durumu === 'depoda_hazirlaniyor' || t.sevkiyat_durumu === 'kismi_hazirlandi');
+      if (t.sevkiyat_durumu === 'gonderildi' || t.sevkiyat_durumu === 'toptanciya_yonlendirildi' || depoYonT || t.kabul_durum) {
+        tahsisCls = 'st-done'; tahsisDot = '✓'; tahsisSub = depoYonT ? 'Depoya yönlendirildi' : 'Tamamlandı';
       } else {
         tahsisCls = 'st-aktif'; tahsisDot = '⏳'; tahsisSub = 'Merkez onayında';
       }
