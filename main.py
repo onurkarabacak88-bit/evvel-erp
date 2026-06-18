@@ -93,6 +93,16 @@ app.include_router(kart_analiz_router)
 app.include_router(gorev_router)
 app.include_router(is_basvuru_router)
 app.include_router(ev_tasarim_router)
+
+# Finansal Duyu — İZOLE (Akıllı Denetim duyu altyapısı). Modül patlasa bile ana
+# uygulama ayakta kalsın diye try/except ile takılır (kullanıcı izolasyon direktifi).
+try:
+    from finansal_duyu_api import router as finansal_duyu_router
+    app.include_router(finansal_duyu_router)
+except Exception as _fin_duyu_err:
+    logging.getLogger(__name__).warning(
+        f"finansal_duyu modulu yuklenemedi (izole, ana akis etkilenmez): {_fin_duyu_err}"
+    )
 app.include_router(fatura_router)
 app.include_router(stok_sayim_router)
 app.include_router(supplier_payment_router)
