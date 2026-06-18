@@ -960,8 +960,12 @@ function CepDepolar({ onGeri }) {
                     <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 4 }}>
                       {subeler.map(s => {
                         const adet = k.adetler?.[s.id] ?? 0;
+                        const tema = s.id === 'sube-tema';
                         return (
-                          <span key={s.id} style={{
+                          <span key={s.id} style={tema ? {
+                            fontSize: 12, padding: '3px 9px', borderRadius: 7, fontWeight: 800,
+                            background: '#C8956A', color: '#fff', border: '1px solid #d9a878',
+                          } : {
                             fontSize: 11, padding: '2px 7px', borderRadius: 6,
                             background: C.bg3, color: adet > 0 ? C.t2 : C.t3,
                           }}>{kisa(s.ad)} {adet}</span>
