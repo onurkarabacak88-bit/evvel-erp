@@ -443,7 +443,39 @@ def ops_sube_giris_bugun(tarih: Optional[str] = None):
             d = dict(r)
             d["gecikme_dk"] = int(d["gecikme_dk"]) if d.get("gecikme_dk") is not None else None
             acilislar.append(d)
-    return {"tarih": hedef, "toplam": len(rows), "girisler": rows, "acilislar": acilislar}
+
+        # BEKLENEN AMA GİRMEYEN: vardiyası planlı (vardiya_atama) olduğu halde bugün HİÇ
+        # QR girişi (gorev_yoklama) olmayan personel. dk_gecti>0 → vardiyası başladı, hâlâ yok.
+        cur.execute(
+            """
+            SELECT sl.sube_id::text AS sube_id, s.ad AS sube_ad, va.personel_id,
+                   COALESCE(p.ad_soyad, va.personel_id) AS personel_ad,
+                   va.baslangic_saat, va.bitis_saat,
+                   ROUND(EXTRACT(EPOCH FROM (
+                     (NOW() AT TIME ZONE 'Europe/Istanbul')::time - va.baslangic_saat
+                   ))/60.0) AS dk_gecti
+            FROM vardiya_atama va
+            JOIN vardiya_slot sl ON sl.id = va.slot_id
+            JOIN subeler s ON s.id = sl.sube_id
+            LEFT JOIN personel p ON p.id::text = va.personel_id
+            WHERE va.tarih = %s AND COALESCE(va.durum,'') <> 'iptal'
+              AND NOT EXISTS (
+                SELECT 1 FROM gorev_yoklama gy
+                WHERE gy.personel_id = va.personel_id AND gy.tarih = va.tarih
+              )
+            ORDER BY s.ad, va.baslangic_saat
+            """,
+            (hedef,),
+        )
+        beklenenler = []
+        for r in cur.fetchall():
+            d = dict(r)
+            d["baslangic_saat"] = str(d["baslangic_saat"])[:5] if d.get("baslangic_saat") else None
+            d["bitis_saat"] = str(d["bitis_saat"])[:5] if d.get("bitis_saat") else None
+            d["dk_gecti"] = int(d["dk_gecti"]) if d.get("dk_gecti") is not None else None
+            beklenenler.append(d)
+    return {"tarih": hedef, "toplam": len(rows), "girisler": rows,
+            "acilislar": acilislar, "beklenenler": beklenenler}
 
 
 @router.get("/kasiyer-karne")

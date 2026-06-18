@@ -467,6 +467,7 @@ function CepSubeler({ onGeri }) {
   const [subeler, setSubeler] = useState(null);
   const [girisler, setGirisler] = useState([]);
   const [acilislar, setAcilislar] = useState([]);
+  const [beklenenler, setBeklenenler] = useState([]);
   const [hata, setHata] = useState('');
   useEffect(() => {
     Promise.allSettled([
@@ -475,7 +476,7 @@ function CepSubeler({ onGeri }) {
     ]).then(([kap, gir]) => {
       if (kap.status === 'fulfilled') setSubeler(kap.value?.satirlar || []);
       else { setHata('Yüklenemedi'); setSubeler([]); }
-      if (gir.status === 'fulfilled') { setGirisler(gir.value?.girisler || []); setAcilislar(gir.value?.acilislar || []); }
+      if (gir.status === 'fulfilled') { setGirisler(gir.value?.girisler || []); setAcilislar(gir.value?.acilislar || []); setBeklenenler(gir.value?.beklenenler || []); }
     });
   }, []);
 
@@ -497,11 +498,13 @@ function CepSubeler({ onGeri }) {
           const acilisGec = acl?.gecikme_dk;
           const acilisGecVar = acilisGec != null && acilisGec >= 5;
           const acilisRenk = !s.acildi ? C.t3 : (acilisGec != null && acilisGec >= 5 ? C.sari : C.yesil);
+          // Vardiyası var ama girmemiş (no-show): vardiyası başlamış (dk_gecti>=5) ve hâlâ yok
+          const girmeyenler = beklenenler.filter(b => b.sube_id === s.sube_id && b.dk_gecti != null && b.dk_gecti >= 5);
           return (
             <div key={s.sube_id} style={{
               background: C.bg2, border: `1px solid ${C.border}`, borderRadius: 14,
               padding: 14, marginBottom: 12,
-              borderLeft: `4px solid ${(gecler.length || acilisGecVar) ? C.sari : (fark && Math.abs(Number(fark)) > 1 ? C.kirmizi : C.yesil)}`,
+              borderLeft: `4px solid ${girmeyenler.length ? C.kirmizi : ((gecler.length || acilisGecVar) ? C.sari : (fark && Math.abs(Number(fark)) > 1 ? C.kirmizi : C.yesil))}`,
             }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
                 <span style={{ fontSize: 16, fontWeight: 800, color: C.t1 }}>{s.sube_adi}</span>
@@ -547,6 +550,19 @@ function CepSubeler({ onGeri }) {
                 </div>
               ) : (
                 <div style={{ fontSize: 12, color: C.t3, marginTop: 4 }}>Henüz giriş yok</div>
+              )}
+
+              {/* Vardiyası var ama GİRMEMİŞ (no-show) */}
+              {girmeyenler.length > 0 && (
+                <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${C.border}` }}>
+                  <div style={{ fontSize: 11, fontWeight: 800, color: C.kirmizi, marginBottom: 3 }}>⚠ Girmedi ({girmeyenler.length})</div>
+                  {girmeyenler.map((b, i) => (
+                    <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, padding: '3px 0', color: C.kirmizi }}>
+                      <span>{b.personel_ad}{b.baslangic_saat ? ` · ${b.baslangic_saat}-${b.bitis_saat || ''}` : ''}</span>
+                      <span style={{ fontWeight: 800 }}>{b.dk_gecti} dk oldu, yok</span>
+                    </div>
+                  ))}
+                </div>
               )}
             </div>
           );
