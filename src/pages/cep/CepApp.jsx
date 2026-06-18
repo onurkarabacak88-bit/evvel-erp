@@ -463,45 +463,81 @@ function CepDenetim({ onGeri }) {
   );
 }
 
-// ── Şubeler (durum özeti — günlük rapordan) ─────────────────────────────────
+// ── Şubeler (CANLI OPERASYON — açılış/kapanış, kasa farkı, ciro, geç giriş) ──
 function CepSubeler({ onGeri }) {
-  const [data, setData] = useState(null);
+  const [subeler, setSubeler] = useState(null);
+  const [girisler, setGirisler] = useState([]);
   const [hata, setHata] = useState('');
   useEffect(() => {
-    const bugun = new Date().toISOString().slice(0, 10);
-    api(`/ops/truth/gunluk-rapor?tarih=${bugun}`)
-      .then(d => setData(d?.subeler || []))
-      .catch(e => { setHata(e.message || 'Yüklenemedi'); setData([]); });
+    Promise.allSettled([
+      api('/ops/kapanis-takip'),
+      api('/ops/sube-giris-bugun'),
+    ]).then(([kap, gir]) => {
+      if (kap.status === 'fulfilled') setSubeler(kap.value?.satirlar || []);
+      else { setHata('Yüklenemedi'); setSubeler([]); }
+      if (gir.status === 'fulfilled') setGirisler(gir.value?.girisler || []);
+    });
   }, []);
 
-  const durum = (s) => {
-    if (!s.calistirildi) return { t: '⏳ Veri yok', r: C.t3 };
-    if (s.anomali_sayisi >= 3 || s.alarm === 'kritik') return { t: '🔴 Dikkat', r: C.kirmizi };
-    if (s.anomali_sayisi > 0) return { t: '🟡 İzle', r: C.sari };
-    return { t: '🟢 Normal', r: C.yesil };
-  };
+  const saat = (ts) => (ts ? String(ts).slice(11, 16) : null);
 
   return (
     <div style={{ minHeight: '100vh', background: C.bg }}>
-      <Baslik baslik="🏪 Şubeler" onGeri={onGeri} />
+      <Baslik baslik="🏪 Şubeler · Canlı" onGeri={onGeri} />
       <div style={{ padding: 14 }}>
-        {data === null && <div style={{ color: C.t3, textAlign: 'center', padding: 30 }}>Yükleniyor…</div>}
+        {subeler === null && <div style={{ color: C.t3, textAlign: 'center', padding: 30 }}>Yükleniyor…</div>}
         {hata && <div style={{ color: C.kirmizi, textAlign: 'center', padding: 20 }}>{hata}</div>}
-        {(data || []).map(s => {
-          const d = durum(s);
+        {(subeler || []).map(s => {
+          const ciro = (Number(s.nakit) || 0) + (Number(s.pos) || 0) + (Number(s.online) || 0);
+          const fark = s.nakit_kasa_fark_tl;
+          const subeGiris = girisler.filter(g => g.sube_id === s.sube_id);
+          const gecler = subeGiris.filter(g => g.gecikme_dk != null && g.gecikme_dk >= 5);
+          const acilisRenk = s.acildi ? C.yesil : C.t3;
           return (
             <div key={s.sube_id} style={{
               background: C.bg2, border: `1px solid ${C.border}`, borderRadius: 14,
-              padding: 16, marginBottom: 12, display: 'flex', justifyContent: 'space-between',
-              alignItems: 'center',
+              padding: 14, marginBottom: 12,
+              borderLeft: `4px solid ${gecler.length ? C.sari : (fark && Math.abs(Number(fark)) > 1 ? C.kirmizi : C.yesil)}`,
             }}>
-              <div>
-                <div style={{ fontSize: 16, fontWeight: 800, color: C.t1 }}>{s.sube_ad}</div>
-                <div style={{ fontSize: 12, color: C.t3, marginTop: 2 }}>
-                  {s.anomali_sayisi > 0 ? `${s.anomali_sayisi} denetim uyarısı` : 'Uyarı yok'}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                <span style={{ fontSize: 16, fontWeight: 800, color: C.t1 }}>{s.sube_adi}</span>
+                <span style={{ fontSize: 12, fontWeight: 700, color: acilisRenk }}>
+                  {s.acildi ? `açıldı ${saat(s.acilis_ts) || ''}` : 'açılmadı'}{s.kapanis_tamam ? ' · kapandı' : ''}
+                </span>
+              </div>
+
+              {/* Kasa farkı + ciro */}
+              <div style={{ display: 'flex', gap: 10, marginBottom: 8 }}>
+                <div style={{ flex: 1, background: C.bg3, borderRadius: 10, padding: '8px 10px' }}>
+                  <div style={{ fontSize: 11, color: C.t3 }}>Kasa farkı</div>
+                  <div style={{ fontSize: 15, fontWeight: 800, color: fark == null ? C.t3 : (Math.abs(Number(fark)) <= 1 ? C.yesil : (Number(fark) > 0 ? C.kirmizi : C.sari)) }}>
+                    {fark == null ? '—' : (Number(fark) > 0 ? `${fmt(fark)} açık` : Number(fark) < 0 ? `${fmt(Math.abs(Number(fark)))} fazla` : '0 ✓')}
+                  </div>
+                </div>
+                <div style={{ flex: 1, background: C.bg3, borderRadius: 10, padding: '8px 10px' }}>
+                  <div style={{ fontSize: 11, color: C.t3 }}>Ciro</div>
+                  <div style={{ fontSize: 15, fontWeight: 800, color: C.t1 }}>{ciro > 0 ? fmt(ciro) : '—'}</div>
                 </div>
               </div>
-              <span style={{ fontSize: 13, fontWeight: 700, color: d.r }}>{d.t}</span>
+
+              {/* Geç girişler (isim · 09-18 · X dk geç) */}
+              {subeGiris.length > 0 ? (
+                <div style={{ marginTop: 4 }}>
+                  {subeGiris.map((g, i) => {
+                    const gec = g.gecikme_dk != null && g.gecikme_dk >= 5;
+                    return (
+                      <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, padding: '3px 0', color: gec ? C.sari : C.t3 }}>
+                        <span style={{ color: C.t2 }}>{g.personel_ad}{g.baslangic_saat ? ` · ${g.baslangic_saat}-${g.bitis_saat || ''}` : ''}</span>
+                        <span style={{ fontWeight: gec ? 800 : 400 }}>
+                          {g.gecikme_dk == null ? (g.giris_saat || '') : (g.gecikme_dk >= 5 ? `${g.gecikme_dk} dk geç` : (g.gecikme_dk <= -1 ? `${-g.gecikme_dk} dk erken` : 'vaktinde'))}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div style={{ fontSize: 12, color: C.t3, marginTop: 4 }}>Henüz giriş yok</div>
+              )}
             </div>
           );
         })}
