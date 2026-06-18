@@ -371,6 +371,54 @@ def ops_personel_takip_liste(sube_id: Optional[str] = None):
     return {"satirlar": rows}
 
 
+@router.get("/sube-giris-bugun")
+def ops_sube_giris_bugun(tarih: Optional[str] = None):
+    """Bugün şube giriş takibi (cep canlı operasyon): kim girdi, planlanan vardiya saati
+    (09-18), fiili giriş ve kaç dk geç. vardiya_atama (planlanan) ↔ gorev_yoklama (fiili)."""
+    from datetime import date as _date
+    try:
+        hedef = str(_date.fromisoformat(tarih)) if tarih else str(is_gunu_tr())
+    except Exception:
+        hedef = str(is_gunu_tr())
+    with db() as (conn, cur):
+        cur.execute(
+            """
+            SELECT gy.sube_id::text, s.ad AS sube_ad, gy.personel_id,
+                   COALESCE(p.ad_soyad, gy.personel_id) AS personel_ad,
+                   gy.vardiya_tip,
+                   to_char((gy.giris_ts AT TIME ZONE 'Europe/Istanbul'), 'HH24:MI') AS giris_saat,
+                   va.baslangic_saat, va.bitis_saat,
+                   CASE WHEN va.baslangic_saat IS NOT NULL THEN
+                     ROUND(EXTRACT(EPOCH FROM (
+                       (gy.giris_ts AT TIME ZONE 'Europe/Istanbul')::time - va.baslangic_saat
+                     ))/60.0)
+                   END AS gecikme_dk
+            FROM gorev_yoklama gy
+            JOIN subeler s ON s.id = gy.sube_id
+            LEFT JOIN personel p ON p.id::text = gy.personel_id
+            LEFT JOIN LATERAL (
+              SELECT va.baslangic_saat, va.bitis_saat
+              FROM vardiya_atama va
+              WHERE va.personel_id::text = gy.personel_id AND va.tarih = gy.tarih
+                AND COALESCE(va.durum,'') <> 'iptal'
+              ORDER BY ABS(EXTRACT(EPOCH FROM (va.baslangic_saat - (gy.giris_ts AT TIME ZONE 'Europe/Istanbul')::time))) ASC
+              LIMIT 1
+            ) va ON TRUE
+            WHERE gy.tarih = %s
+            ORDER BY s.ad, gy.giris_ts
+            """,
+            (hedef,),
+        )
+        rows = []
+        for r in cur.fetchall():
+            d = dict(r)
+            d["baslangic_saat"] = str(d["baslangic_saat"])[:5] if d.get("baslangic_saat") else None
+            d["bitis_saat"] = str(d["bitis_saat"])[:5] if d.get("bitis_saat") else None
+            d["gecikme_dk"] = int(d["gecikme_dk"]) if d.get("gecikme_dk") is not None else None
+            rows.append(d)
+    return {"tarih": hedef, "toplam": len(rows), "girisler": rows}
+
+
 @router.get("/kasiyer-karne")
 def ops_kasiyer_karne(gun: int = 30, sube_id: Optional[str] = None):
     """Kasiyer doğruluk karnesi — ÖZENSİZLİK ≠ ŞÜPHE ayrımıyla.
