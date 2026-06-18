@@ -41,6 +41,7 @@ import IsBasvuruListesi from './pages/IsBasvuruListesi';
 import Maliyet from './pages/Maliyet';
 import EvTasarim from './pages/EvTasarim';
 import FireFotoYukle from './pages/FireFotoYukle';
+import CepApp from './pages/cep/CepApp';
 import './index.css';
 
 const NAV = [
@@ -236,6 +237,11 @@ function AdminGirisKapisi({ onBasarili }) {
 }
 
 export default function App() {
+  // EVVEL · CEP — işletme sahibi mobil kabuğu (sidebar yok, ayrı kabuk)
+  if (window.location.pathname === '/cep' || window.location.pathname.startsWith('/cep/')) {
+    return <CepApp />;
+  }
+
   // İş başvurusu — mobil form, sidebar yok
   if (window.location.pathname === '/is-basvurusu') {
     return <IsBasvuruForm />;
