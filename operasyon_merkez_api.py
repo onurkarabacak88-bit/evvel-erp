@@ -9788,6 +9788,36 @@ def _toptanci_siparis_wa_mesaj(
 
 
 @router.post("/siparis/toptanciya-yolla")
+def _kanonik_urun_id(cur, kalem_kodu, urun_ad):
+    """V2 — kaynakta kanonik kimlik. Sipariş satırı için siparis_urun.id'yi çöz:
+    (1) kalem_kodu zaten kanonik UUID mi (siparis_urun'da var) → onu;
+    (2) ada göre eşleş (kanonik öncelikli) → onu;
+    (3) çözülemezse None (gerçekten katalog-dışı/yeni ürün → teslim-al ozel__'e düşer).
+    Çözümü kaynağa taşır; teslim-al dedektiflik yapmaz, urun_id'yi direkt okur."""
+    kk = str(kalem_kodu or "").strip()
+    if kk:
+        try:
+            cur.execute("SELECT 1 FROM siparis_urun WHERE id::text=%s LIMIT 1", (kk,))
+            if cur.fetchone():
+                return kk
+        except Exception:
+            pass
+    ad = str(urun_ad or "").strip()
+    if ad:
+        try:
+            cur.execute(
+                "SELECT id::text AS id FROM siparis_urun WHERE lower(btrim(ad))=lower(btrim(%s)) "
+                "ORDER BY (depo_stok_kalem_kodu IS NULL) DESC LIMIT 1",
+                (ad,),
+            )
+            r = cur.fetchone()
+            if r:
+                return str(dict(r)["id"])
+        except Exception:
+            pass
+    return None
+
+
 def ops_siparis_toptanciya_yolla(body: OpsSiparisToptanciyaYollaBody):
     tid = (body.talep_id or "").strip()
     if not tid:
@@ -9858,6 +9888,13 @@ def ops_siparis_toptanciya_yolla(body: OpsSiparisToptanciyaYollaBody):
             _sr = cur.fetchone()
             if _sr:
                 sube_adi = str(dict(_sr).get("ad") or "").strip() or None
+
+        # ── V2: KAYNAKTA KANONİK KİMLİK — her kaleme urun_id damgala. Böylece teslim-al
+        #    (sube_panel teslim payload'ı urun_id'yi geçirince) direkt kanonik okur,
+        #    ozel__ dedektifliğine gerek kalmaz. Çözülemeyen = katalog-dışı → urun_id None
+        #    (teslim-al'daki fallback'ler emniyet ağı olarak DURUYOR, additive).
+        for _k in kalemler:
+            _k["urun_id"] = _kanonik_urun_id(cur, _k.get("kalem_kodu"), _k.get("urun_ad"))
 
         # ── toptanci_siparis (procurement_line): bu tedarikçiye giden gönderim ──
         ts_id = str(uuid.uuid4())

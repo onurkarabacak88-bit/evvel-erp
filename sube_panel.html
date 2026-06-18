@@ -10826,6 +10826,7 @@ var UrunTeslimAl = (function () {
         body.kalemler.push({
           urun_ad: k.urun_ad,
           adet: say,
+          urun_id: k.urun_id || null,          // V2: kanonik kimlik kaynaktan geçer
           kalem_kodu: k.kalem_kodu || null,
           kategori_kod: k.kategori_kod || null,
         });
