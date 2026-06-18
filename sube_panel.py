@@ -3295,8 +3295,24 @@ def sube_urun_sevk(sube_id: str, body: SubeSevkBody):
                     cur, sube_id, depo_kalem, urun_ad, adet_i
                 )
                 continue
-            # urun_id eksik → ozel__ prefixli fallback kalem (migration v5 sonrası oluşmamalı)
-            kalem_kodu = f"ozel__{_norm_ad_tr(urun_ad)}"
+            # urun_id eksik (örn. Cep'ten gelen toptancı siparişi urun_id taşımıyor) →
+            # ÖNCE ada göre kanonik katalog kalemini çöz; ozel__ fallback'e SON çare olarak düş.
+            # Aksi halde teslim alınan ürün ozel__espresso gibi ayrı kaleme yazılıp
+            # kanonik depo "artmadı" görünür (ozel__ kopya tuzağı).
+            kalem_kodu = None
+            try:
+                cur.execute(
+                    "SELECT id FROM siparis_urun WHERE lower(btrim(ad))=lower(btrim(%s)) "
+                    "ORDER BY (depo_stok_kalem_kodu IS NULL) DESC LIMIT 1",
+                    (urun_ad,),
+                )
+                _ur = cur.fetchone()
+                if _ur:
+                    kalem_kodu = depo_kalem_kodu_resolve(cur, str(dict(_ur)["id"]), urun_ad) or None
+            except Exception:
+                kalem_kodu = None
+            if not kalem_kodu:
+                kalem_kodu = f"ozel__{_norm_ad_tr(urun_ad)}"  # son çare
             sube_depo_stok_depo_giris_ekle(cur, sube_id, kalem_kodu, urun_ad, adet_i)
 
         if teslim_durumu == "eksik_var":

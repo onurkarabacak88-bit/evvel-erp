@@ -10180,16 +10180,57 @@ def ops_toptanci_siparis_iptal(ts_id: str):
     sid = (ts_id or "").strip()
     if not sid:
         raise HTTPException(400, "toptanci_siparis_id zorunlu")
+    kapatildi = False
     with db() as (conn, cur):
         cur.execute("SELECT id, talep_id, durum FROM toptanci_siparis WHERE id=%s", (sid,))
         row = cur.fetchone()
         if not row:
             raise HTTPException(404, "Toptancı siparişi bulunamadı")
-        if str(dict(row).get("durum") or "") == "iptal":
-            return {"ok": True, "ts_id": sid, "durum": "iptal", "zaten": True}
-        cur.execute("UPDATE toptanci_siparis SET durum='iptal' WHERE id=%s", (sid,))
-        audit(cur, "toptanci_siparis", sid, "OPS_TOPTANCI_SIPARIS_IPTAL")
-    return {"ok": True, "ts_id": sid, "durum": "iptal"}
+        tid = str(dict(row).get("talep_id") or "")
+        if str(dict(row).get("durum") or "") != "iptal":
+            cur.execute("UPDATE toptanci_siparis SET durum='iptal' WHERE id=%s", (sid,))
+            audit(cur, "toptanci_siparis", sid, "OPS_TOPTANCI_SIPARIS_IPTAL")
+
+        # Mükerrer iptal sonrası TALEP TAMAMLANMA RE-CHECK: bekleyen gönderim kalmadı +
+        # en az bir teslim_alindi + tüm N1 ürünleri dağıtıldı → talebi 'teslim_edildi' kapat.
+        # (Mükerrer 'gonderildi' kaydı kabul anında tamamlanmayı bloke etmişti.)
+        if tid:
+            cur.execute("SELECT durum, kalemler FROM siparis_talep WHERE id=%s", (tid,))
+            trow = cur.fetchone()
+            if trow:
+                td = dict(trow)
+                if str(td.get("durum") or "") not in ("teslim_edildi", "iptal"):
+                    cur.execute(
+                        "SELECT durum, kalemler FROM toptanci_siparis WHERE talep_id=%s AND durum<>'iptal'",
+                        (tid,),
+                    )
+                    ts_rows = [dict(r) for r in (cur.fetchall() or [])]
+                    bekleyen = sum(1 for x in ts_rows if str(x.get("durum") or "") == "gonderildi")
+                    teslim = sum(1 for x in ts_rows if str(x.get("durum") or "") == "teslim_alindi")
+
+                    def _adlar(j):
+                        if isinstance(j, str):
+                            try:
+                                j = json.loads(j)
+                            except Exception:
+                                j = []
+                        return {str((k or {}).get("urun_ad") or "").strip().lower()
+                                for k in (j or []) if (k or {}).get("urun_ad")}
+                    n1 = _adlar(td.get("kalemler"))
+                    disp: set = set()
+                    for x in ts_rows:
+                        disp |= _adlar(x.get("kalemler"))
+                    if bekleyen == 0 and teslim > 0 and not (n1 - disp):
+                        cur.execute(
+                            """UPDATE siparis_talep
+                               SET durum='teslim_edildi',
+                                   kabul_durum=COALESCE(NULLIF(kabul_durum,''),'kabul_tam'),
+                                   kabul_ts=COALESCE(kabul_ts, NOW())
+                               WHERE id=%s AND durum NOT IN ('teslim_edildi','iptal')""",
+                            (tid,),
+                        )
+                        kapatildi = cur.rowcount > 0
+    return {"ok": True, "ts_id": sid, "durum": "iptal", "talep_tamamlandi": kapatildi}
 
 
 @router.post("/siparis/toptanci-siparis/{ts_id}/whatsapp-yeniden-gonder")
