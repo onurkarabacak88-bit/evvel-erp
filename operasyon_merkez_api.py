@@ -9787,7 +9787,6 @@ def _toptanci_siparis_wa_mesaj(
     return bas
 
 
-@router.post("/siparis/toptanciya-yolla")
 def _kanonik_urun_id(cur, kalem_kodu, urun_ad):
     """V2 — kaynakta kanonik kimlik. Sipariş satırı için siparis_urun.id'yi çöz:
     (1) kalem_kodu zaten kanonik UUID mi (siparis_urun'da var) → onu;
@@ -9818,6 +9817,7 @@ def _kanonik_urun_id(cur, kalem_kodu, urun_ad):
     return None
 
 
+@router.post("/siparis/toptanciya-yolla")
 def ops_siparis_toptanciya_yolla(body: OpsSiparisToptanciyaYollaBody):
     tid = (body.talep_id or "").strip()
     if not tid:
