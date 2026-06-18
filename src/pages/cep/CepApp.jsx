@@ -742,6 +742,21 @@ function CepDemirbas({ onGeri }) {
   );
 }
 
+// Sipariş adet kontrolü (−/sayı/+) — depo satırında sipariş modunda
+function SipAdet({ k, secim, secAdet, secSet }) {
+  const adet = secim[k.kalem_kodu]?.adet || 0;
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+      <button onClick={() => secAdet(k, -1)} style={{ width: 30, height: 30, borderRadius: 7, border: `1px solid ${C.border}`, background: C.bg3, color: C.t1, fontSize: 18, fontWeight: 800, cursor: 'pointer' }}>−</button>
+      <input value={adet || ''} onChange={e => secSet(k, e.target.value)} placeholder="0" inputMode="numeric" style={{
+        width: 42, textAlign: 'center', padding: '5px 0', borderRadius: 7, border: `1px solid ${adet > 0 ? '#25D366' : C.border}`,
+        background: C.bg, color: adet > 0 ? '#25D366' : C.t3, fontSize: 15, fontWeight: 800,
+      }} />
+      <button onClick={() => secAdet(k, +1)} style={{ width: 30, height: 30, borderRadius: 7, border: 'none', background: '#25D366', color: '#fff', fontSize: 18, fontWeight: 800, cursor: 'pointer' }}>+</button>
+    </div>
+  );
+}
+
 // ── Depolar (tüm şube depo stoğu — şube seç / tümü karşılaştır / ara) ────────
 function CepDepolar({ onGeri }) {
   const [data, setData] = useState(null);
@@ -749,6 +764,48 @@ function CepDepolar({ onGeri }) {
   const [aktif, setAktif] = useState('tumu'); // 'tumu' | sube_id
   const [ara, setAra] = useState('');
   const [sonGuncel, setSonGuncel] = useState(null);
+  // Sipariş modu (wa.me — senin telefonundan)
+  const [sipMod, setSipMod] = useState(false);
+  const [tedarikciler, setTedarikciler] = useState([]);
+  const [tedId, setTedId] = useState('');
+  const [secim, setSecim] = useState({}); // kalem_kodu -> { ad, adet }
+  const [sipNot, setSipNot] = useState('');
+  useEffect(() => { api('/tedarikciler').then(r => setTedarikciler(Array.isArray(r) ? r : [])).catch(() => {}); }, []);
+
+  const secAdet = (k, delta) => setSecim(m => {
+    const cur = m[k.kalem_kodu]?.adet || 0;
+    const yeni = Math.max(0, cur + delta);
+    const n = { ...m };
+    if (yeni === 0) delete n[k.kalem_kodu];
+    else n[k.kalem_kodu] = { ad: k.kalem_adi, adet: yeni };
+    return n;
+  });
+  const secSet = (k, val) => setSecim(m => {
+    const yeni = Math.max(0, parseInt(val, 10) || 0);
+    const n = { ...m };
+    if (yeni === 0) delete n[k.kalem_kodu];
+    else n[k.kalem_kodu] = { ad: k.kalem_adi, adet: yeni };
+    return n;
+  });
+  const secimList = Object.values(secim);
+
+  const waGonder = () => {
+    const ted = tedarikciler.find(t => String(t.id) === String(tedId));
+    if (!ted) { setHata('Toptancı seçin'); return; }
+    if (!secimList.length) { setHata('En az bir ürün seçin'); return; }
+    const tel = String(ted.telefon || '').replace(/\D/g, '');
+    let num = tel;
+    if (num.startsWith('00')) num = num.slice(2);
+    if (num.length === 11 && num.startsWith('0')) num = '90' + num.slice(1);
+    else if (num.length === 10 && num.startsWith('5')) num = '90' + num;
+    if (num.length < 11) { setHata(`${ted.ad} için geçerli telefon yok`); return; }
+    const satirlar = secimList.map(x => `${x.adet}x ${x.ad}`).join('\n');
+    const mesaj = `🛒 Sipariş\n${ted.ad}\n\n${satirlar}${sipNot.trim() ? `\n\nNot: ${sipNot.trim()}` : ''}`;
+    const url = `https://wa.me/${num}?text=${encodeURIComponent(mesaj)}`;
+    window.open(url, '_blank');
+    // Mesajı hazırla, kullanıcı WhatsApp'ta gönderir; modu kapatma (tekrar yollayabilsin)
+  };
+
   const yukle = useCallback((sessiz) => {
     if (!sessiz) setHata('');
     api('/ops/depo-stok')
@@ -786,6 +843,35 @@ function CepDepolar({ onGeri }) {
       } />
       {/* Şube chip'leri + arama — sticky */}
       <div style={{ position: 'sticky', top: 0, zIndex: 5, background: C.bg, padding: '10px 14px 8px', borderBottom: `1px solid ${C.border}` }}>
+        {/* Sipariş Oluştur toggle */}
+        <button onClick={() => { setSipMod(v => !v); setHata(''); }} style={{
+          width: '100%', padding: '10px', borderRadius: 10, marginBottom: 8, cursor: 'pointer',
+          border: 'none', fontWeight: 800, fontSize: 14,
+          background: sipMod ? C.kirmizi : C.yesil, color: '#fff',
+        }}>{sipMod ? '✕ Siparişi Kapat' : '🛒 Sipariş Oluştur'}</button>
+
+        {/* Sipariş bar — toptancı seç + gönder (wa.me, senin telefonundan) */}
+        {sipMod && (
+          <div style={{ background: C.bg2, border: `1px solid ${C.border}`, borderRadius: 12, padding: 10, marginBottom: 8 }}>
+            <select value={tedId} onChange={e => setTedId(e.target.value)} style={{
+              width: '100%', padding: '9px 10px', borderRadius: 8, border: `1px solid ${C.border}`,
+              background: C.bg, color: C.t1, fontSize: 14, boxSizing: 'border-box', marginBottom: 8,
+            }}>
+              <option value="">— Toptancı seç —</option>
+              {tedarikciler.map(t => <option key={t.id} value={t.id} disabled={!t.telefon}>{t.ad}{t.telefon ? '' : ' (telefon yok)'}</option>)}
+            </select>
+            <input value={sipNot} onChange={e => setSipNot(e.target.value)} placeholder="Not (opsiyonel)" style={{
+              width: '100%', padding: '9px 10px', borderRadius: 8, border: `1px solid ${C.border}`,
+              background: C.bg, color: C.t1, fontSize: 14, boxSizing: 'border-box', marginBottom: 8,
+            }} />
+            <button onClick={waGonder} disabled={!secimList.length || !tedId} style={{
+              width: '100%', padding: '11px', borderRadius: 9, border: 'none', cursor: (!secimList.length || !tedId) ? 'not-allowed' : 'pointer',
+              background: (!secimList.length || !tedId) ? C.bg3 : '#25D366', color: (!secimList.length || !tedId) ? C.t3 : '#fff', fontWeight: 800, fontSize: 14,
+            }}>📲 WhatsApp'tan Gönder ({secimList.length})</button>
+            <div style={{ fontSize: 10, color: C.t3, textAlign: 'center', marginTop: 5 }}>Kendi WhatsApp'ın açılır, mesaj hazır gelir — sen Gönder'e basarsın.</div>
+          </div>
+        )}
+
         <div style={{ display: 'flex', gap: 6, overflowX: 'auto', paddingBottom: 8 }}>
           {[{ id: 'tumu', ad: 'Tümü' }, ...subeler].map(s => (
             <button key={s.id} onClick={() => setAktif(s.id)} style={{
@@ -820,7 +906,8 @@ function CepDepolar({ onGeri }) {
                   <div key={k.kalem_kodu} style={{ padding: '9px 2px', borderTop: `1px solid ${C.border}` }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <span style={{ fontSize: 14, color: C.t1, flex: 1 }}>{k.kalem_adi}</span>
-                      <span style={{ fontSize: 14, fontWeight: 800, color: C.t1 }}>{k.toplam}</span>
+                      {sipMod ? <SipAdet k={k} secim={secim} secAdet={secAdet} secSet={secSet} />
+                        : <span style={{ fontSize: 14, fontWeight: 800, color: C.t1 }}>{k.toplam}</span>}
                     </div>
                     <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 4 }}>
                       {subeler.map(s => {
@@ -842,8 +929,10 @@ function CepDepolar({ onGeri }) {
                 <div key={k.kalem_kodu} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 2px', borderTop: `1px solid ${C.border}` }}>
                   <span style={{ fontSize: 14, color: C.t1, flex: 1 }}>
                     {k.kalem_adi}{dusuk && <span style={{ fontSize: 11, color: C.kirmizi, fontWeight: 700 }}> · düşük</span>}
+                    <span style={{ fontSize: 11, color: C.t3 }}> · depo {adet}</span>
                   </span>
-                  <span style={{ fontSize: 16, fontWeight: 800, color: dusuk ? C.kirmizi : (adet > 0 ? C.t1 : C.t3) }}>{adet}</span>
+                  {sipMod ? <SipAdet k={k} secim={secim} secAdet={secAdet} secSet={secSet} />
+                    : <span style={{ fontSize: 16, fontWeight: 800, color: dusuk ? C.kirmizi : (adet > 0 ? C.t1 : C.t3) }}>{adet}</span>}
                 </div>
               );
             })}
