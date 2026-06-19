@@ -29,6 +29,7 @@ import Tedarikciler from './pages/Tedarikciler';
 import TedarikDosyasi from './pages/TedarikDosyasi';
 import StokSayim from './pages/StokSayim';
 import VeriTemizle from './pages/VeriTemizle.jsx';
+import MerkezTemizlik from './pages/MerkezTemizlik.jsx';
 import OperasyonMerkezi from './pages/OperasyonMerkezi';
 import TruthMotor from './pages/TruthMotor';
 import EvoSatis from './pages/EvoSatis';
@@ -93,6 +94,7 @@ const NAV = [
     { id: 'excel',            label: 'Excel Import',        icon: '📊' },
     { id: 'teslim-kayit',     label: 'Bilgi Teslim',        icon: '📨' },
     { id: 'veri-temizle',     label: 'Veri Temizle',        icon: '🧹' },
+    { id: 'merkez-temizlik',  label: 'Merkez Sipariş Temizliği', icon: '🧹' },
   ]},
   { group: 'Kişisel', gicon: '🏠', items: [
     { id: 'ev-tasarim',       label: 'İşletme/Dükkan Tasarımı', icon: '🏠' },
@@ -135,6 +137,7 @@ const PAGES = {
   'tedarik-dosyasi':  TedarikDosyasi,
   'stok-sayim':       StokSayim,
   'veri-temizle':     VeriTemizle,
+  'merkez-temizlik':  MerkezTemizlik,
   'is-basvurusu':     IsBasvuruListesi,
   'ev-tasarim':       EvTasarim,
 };

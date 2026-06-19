@@ -10334,6 +10334,165 @@ def ops_toptanci_siparis_iptal(ts_id: str):
     return {"ok": True, "ts_id": sid, "durum": "iptal", "talep_tamamlandi": kapatildi}
 
 
+# ── MERKEZ TEST SİPARİŞ TEMİZLİĞİ ────────────────────────────────────────────
+# Telefondan/merkezden verilen DENEME siparişlerini (personel_ad='MERKEZ') sahip
+# kendisi temizleyebilir. Stok geri alma DAHİL tam silme. GUARD: sadece MERKEZ
+# talepleri (gerçek personel siparişleri ASLA buradan silinemez). İzole — kaldırmak
+# = bu iki endpoint'i sil.
+
+@router.get("/siparis/merkez-liste")
+def ops_siparis_merkez_liste(limit: int = 100):
+    """Merkez/telefondan verilen siparişleri listeler (temizlik aracı için)."""
+    with db() as (conn, cur):
+        cur.execute(
+            """
+            SELECT st.id AS talep_id, st.durum AS talep_durum, st.sevkiyat_durumu,
+                   st.olusturma, s.ad AS sube_adi,
+                   ts.id AS ts_id, ts.tedarikci_ad, ts.durum AS ts_durum, ts.kalemler
+            FROM siparis_talep st
+            LEFT JOIN subeler s ON s.id = st.sube_id
+            LEFT JOIN toptanci_siparis ts ON ts.talep_id = st.id
+            WHERE UPPER(COALESCE(st.personel_ad,'')) = 'MERKEZ'
+            ORDER BY st.olusturma DESC
+            LIMIT %s
+            """,
+            (max(1, min(int(limit or 100), 300)),),
+        )
+        rows = [dict(r) for r in (cur.fetchall() or [])]
+    out = []
+    for r in rows:
+        kal = r.get("kalemler")
+        if isinstance(kal, str):
+            try:
+                kal = json.loads(kal)
+            except Exception:
+                kal = []
+        ozet = ", ".join(
+            f"{int((k or {}).get('adet') or 0)} {(k or {}).get('urun_ad') or ''}".strip()
+            for k in (kal or [])[:6] if isinstance(k, dict)
+        )
+        teslim = (str(r.get("ts_durum") or "") == "teslim_alindi"
+                  or str(r.get("talep_durum") or "") == "teslim_edildi")
+        iptalli = str(r.get("ts_durum") or "") == "iptal"
+        out.append({
+            "talep_id": r.get("talep_id"),
+            "ts_id": r.get("ts_id"),
+            "sube_adi": r.get("sube_adi"),
+            "tedarikci_ad": r.get("tedarikci_ad"),
+            "kalem_ozet": ozet,
+            "talep_durum": r.get("talep_durum"),
+            "ts_durum": r.get("ts_durum"),
+            "teslim_alindi": teslim,
+            "iptalli": iptalli,
+            "olusturma": str(r.get("olusturma") or ""),
+        })
+    return {"toplam": len(out), "siparisler": out}
+
+
+@router.post("/siparis/merkez-test-temizle")
+def ops_siparis_merkez_test_temizle(body: dict):
+    """MERKEZ (deneme) siparişini tamamen siler. stok_geri_al=True (vars.) ise teslim
+    alınmış siparişin eklediği stok da Tema deposundan düşülür (URUN_SEVK defterinden
+    simetrik). siparis_talep silinince toptanci_siparis CASCADE düşer; belge_talep +
+    stok_yolda elle temizlenir. GUARD: yalnızca personel_ad='MERKEZ'."""
+    tid = str((body or {}).get("talep_id") or "").strip()
+    stok_geri_al = bool((body or {}).get("stok_geri_al", True))
+    if not tid:
+        raise HTTPException(400, "talep_id zorunlu")
+
+    from operasyon_stok_motor import depo_kalem_kodu_resolve, sube_depo_stok_depo_cikis_dus
+    from operasyon_defter import operasyon_defter_ekle
+
+    geri_alinan: list = []
+    with db() as (conn, cur):
+        cur.execute("SELECT id, personel_ad, sube_id FROM siparis_talep WHERE id=%s", (tid,))
+        st = cur.fetchone()
+        if not st:
+            raise HTTPException(404, "Talep bulunamadı")
+        st = dict(st)
+        if str(st.get("personel_ad") or "").strip().upper() != "MERKEZ":
+            raise HTTPException(409, "Sadece MERKEZ (deneme) siparişleri buradan silinebilir.")
+        sube_id = st.get("sube_id")
+
+        # 1) Stok geri alma — bu talebe ait URUN_SEVK defter kayıtlarını bul, eklenen stoğu düş
+        if stok_geri_al:
+            cur.execute(
+                "SELECT id, sube_id, aciklama FROM operasyon_defter WHERE etiket='URUN_SEVK' AND aciklama LIKE %s",
+                (f"%{tid}%",),
+            )
+            for dr in (cur.fetchall() or []):
+                d = dict(dr)
+                acik = str(d.get("aciklama") or "")
+                pre = "URUN_SEVK_JSON:"
+                if not acik.startswith(pre):
+                    continue
+                try:
+                    obj, _ = json.JSONDecoder().raw_decode(acik[len(pre):])
+                except Exception:
+                    continue
+                if str((obj or {}).get("siparis_talep_id") or "").strip() != tid:
+                    continue
+                # Zaten geri alınmış mı?
+                cur.execute(
+                    "SELECT 1 FROM operasyon_defter WHERE etiket='URUN_SEVK_IPTAL' AND ref_event_id=%s LIMIT 1",
+                    (d.get("id"),),
+                )
+                if cur.fetchone():
+                    continue
+                d_sube = d.get("sube_id") or sube_id
+                ozet_kalem: list = []
+                for it in ((obj or {}).get("kalemler") or []):
+                    if not isinstance(it, dict):
+                        continue
+                    uad = str(it.get("urun_ad") or "").strip()
+                    try:
+                        adet_i = max(0, int(it.get("adet") or 0))
+                    except Exception:
+                        adet_i = 0
+                    uid = str(it.get("urun_id") or "").strip()
+                    if not uad or adet_i <= 0 or not uid:
+                        continue  # urun_id yoksa güvenli ATLA (kanonik olmayan stok riskli)
+                    try:
+                        depo_kalem = depo_kalem_kodu_resolve(cur, uid, uad)
+                    except Exception:
+                        depo_kalem = None
+                    if not depo_kalem:
+                        continue
+                    try:
+                        sube_depo_stok_depo_cikis_dus(cur, d_sube, depo_kalem, uad, adet_i)
+                        geri_alinan.append(f"{adet_i} {uad}")
+                        ozet_kalem.append(f"{adet_i} {uad}")
+                    except Exception:
+                        pass
+                # Ters defter izi (hash-zincir korunur — operasyon_defter_ekle ile)
+                try:
+                    operasyon_defter_ekle(
+                        cur, d_sube, "URUN_SEVK_IPTAL",
+                        "MERKEZ deneme siparişi silindi — stok geri alındı: "
+                        + (", ".join(ozet_kalem[:8]) or "—") + f" | talep {tid}",
+                        ref_event_id=d.get("id"),
+                    )
+                except Exception:
+                    pass
+
+        # 2) Bağlı izole kayıtlar (belge_talep FK'sız — elle sil)
+        try:
+            cur.execute("DELETE FROM belge_talep WHERE talep_id=%s", (tid,))
+        except Exception:
+            pass
+        # 3) Yolda stok satırları
+        try:
+            cur.execute("DELETE FROM stok_yolda WHERE siparis_talep_id=%s", (tid,))
+        except Exception:
+            pass
+        # 4) Talebi sil → toptanci_siparis ON DELETE CASCADE ile düşer
+        cur.execute("DELETE FROM siparis_talep WHERE id=%s", (tid,))
+        audit(cur, "siparis_talep", tid, "OPS_MERKEZ_TEST_TEMIZLE")
+
+    return {"ok": True, "talep_id": tid, "stok_geri_alinan": geri_alinan,
+            "stok_geri_al": stok_geri_al}
+
+
 @router.post("/siparis/toptanci-siparis/{ts_id}/whatsapp-yeniden-gonder")
 def ops_toptanci_siparis_wa_yeniden(ts_id: str):
     """Daha önce WhatsApp'tan gönderilememiş (wa_durum='hata') bir toptancı

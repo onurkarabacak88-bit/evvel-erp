@@ -212,6 +212,8 @@ function CepHome({ sayac, kasa, onKasa, onAc, onCikis, yenile }) {
       sayi: null, alt: 'Tüm şube stokları' },
     { id: 'belge-talep', ikon: '🧾', baslik: 'Fatura Bekleyen', renk: '#f59e0b',
       sayi: sayac.belge, alt: sayac.belge > 0 ? `${sayac.belge} teslimat faturası bekliyor` : 'Fatura bekleyen yok' },
+    { id: 'merkez-sil', ikon: '🧹', baslik: 'Merkez Sipariş Temizliği', renk: C.kirmizi,
+      sayi: null, alt: 'Deneme siparişlerini sil' },
     // Denetim kartı şimdilik kapalı (kullanıcı kararı) — component/route dormant duruyor.
     { id: 'basvurular', ikon: '🧑‍💼', baslik: 'İş Başvuruları', renk: C.mavi,
       sayi: sayac.basvuru, alt: sayac.basvuru > 0 ? `${sayac.basvuru} yeni başvuru` : 'Yeni başvuru yok' },
@@ -863,6 +865,83 @@ function CepBasvurular({ onGeri }) {
                   fontSize: 14, fontWeight: 700, color: C.yesil, textDecoration: 'none',
                 }}>📞 {b.telefon}</a>
               )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ── Merkez Sipariş Temizliği (deneme/sahte siparişleri sil — stok geri al) ───
+function CepMerkezSil({ onGeri }) {
+  const [liste, setListe] = useState(null);
+  const [hata, setHata] = useState('');
+  const [mesgul, setMesgul] = useState('');
+  const [bilgi, setBilgi] = useState('');
+
+  const yukle = useCallback(() => {
+    setHata('');
+    api('/ops/siparis/merkez-liste')
+      .then(d => setListe(Array.isArray(d?.siparisler) ? d.siparisler : []))
+      .catch(e => { setHata(e.message || 'Yüklenemedi'); setListe([]); });
+  }, []);
+  useEffect(() => { yukle(); }, [yukle]);
+
+  const sil = async (s) => {
+    const stokUyari = s.teslim_alindi
+      ? '\n\n⚠️ Bu sipariş TESLİM ALINMIŞ — eklenen stok da Tema deposundan GERİ ALINACAK.'
+      : '';
+    if (!window.confirm(`${s.tedarikci_ad || 'Sipariş'} (${s.sube_adi || ''}) silinsin mi?${stokUyari}\n\nBu işlem geri alınamaz.`)) return;
+    setMesgul(s.talep_id); setHata(''); setBilgi('');
+    try {
+      const r = await api('/ops/siparis/merkez-test-temizle', {
+        method: 'POST', body: { talep_id: s.talep_id, stok_geri_al: true },
+      });
+      const gr = Array.isArray(r?.stok_geri_alinan) ? r.stok_geri_alinan : [];
+      setBilgi(gr.length ? `Silindi · stok geri alındı: ${gr.join(', ')}` : 'Silindi.');
+      yukle();
+    } catch (e) { setHata(e.message || 'Silinemedi'); }
+    finally { setMesgul(''); }
+  };
+
+  const durumEtiket = (s) => {
+    if (s.iptalli) return { t: 'iptal', renk: C.t3 };
+    if (s.teslim_alindi) return { t: 'teslim alındı · stok eklendi', renk: C.yesil };
+    return { t: 'yolda/bekliyor', renk: C.sari };
+  };
+
+  return (
+    <div style={{ minHeight: '100vh', background: C.bg }}>
+      <Baslik baslik="🧹 Merkez Sipariş Temizliği" onGeri={onGeri}
+        sag={<button onClick={yukle} style={{ background: 'none', border: 'none', color: C.t3, fontSize: 20, cursor: 'pointer' }}>↻</button>} />
+      <div style={{ padding: '10px 14px', borderBottom: `1px solid ${C.border}`, fontSize: 12, color: C.t3, lineHeight: 1.5 }}>
+        Telefondan/merkezden verilen deneme siparişleri. Sil dersen sipariş kaydı kalkar; teslim alınmışsa eklenen stok da geri alınır.
+      </div>
+      {bilgi && <div style={{ margin: 14, padding: 10, background: 'rgba(34,197,94,0.12)', borderRadius: 10, color: C.yesil, fontSize: 13 }}>{bilgi}</div>}
+      <div style={{ padding: 14 }}>
+        {liste === null && <div style={{ color: C.t3, textAlign: 'center', padding: 30 }}>Yükleniyor…</div>}
+        {hata && <div style={{ color: C.kirmizi, textAlign: 'center', padding: 16 }}>{hata}</div>}
+        {liste && liste.length === 0 && !hata && (
+          <div style={{ color: C.t3, textAlign: 'center', padding: 40 }}>Merkez siparişi yok.</div>
+        )}
+        {(liste || []).map(s => {
+          const d = durumEtiket(s);
+          return (
+            <div key={s.talep_id} style={{
+              background: C.bg2, border: `1px solid ${C.border}`, borderLeft: `4px solid ${d.renk}`,
+              borderRadius: 14, padding: '12px 14px', marginBottom: 10,
+            }}>
+              <div style={{ fontSize: 15, fontWeight: 800, color: C.t1 }}>{s.tedarikci_ad || 'Tedarikçi yok'}</div>
+              <div style={{ fontSize: 12, color: C.t2, marginTop: 2 }}>{s.sube_adi || ''}{s.kalem_ozet ? ` · ${s.kalem_ozet}` : ''}</div>
+              <div style={{ fontSize: 11, color: d.renk, fontWeight: 700, marginTop: 3 }}>
+                {d.t}{s.olusturma ? ` · ${new Date(s.olusturma).toLocaleDateString('tr-TR')}` : ''}
+              </div>
+              <button onClick={() => sil(s)} disabled={mesgul === s.talep_id} style={{
+                width: '100%', marginTop: 10, background: C.kirmizi, color: '#fff', border: 'none',
+                borderRadius: 10, padding: '11px 0', fontSize: 14, fontWeight: 800,
+                cursor: mesgul === s.talep_id ? 'default' : 'pointer', opacity: mesgul === s.talep_id ? 0.6 : 1,
+              }}>{mesgul === s.talep_id ? 'Siliniyor…' : '🗑️ Sil'}</button>
             </div>
           );
         })}
@@ -1979,6 +2058,8 @@ export default function CepApp() {
     return <CepBelgeTalep onGeri={geri} onDegisti={sayaclariYukle} />;
   if (view === 'basvurular')
     return <CepBasvurular onGeri={geri} />;
+  if (view === 'merkez-sil')
+    return <CepMerkezSil onGeri={geri} />;
   if (view === 'subeler')
     return <CepSubeler onGeri={geri} />;
 
