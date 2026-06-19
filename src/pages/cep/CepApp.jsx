@@ -221,6 +221,8 @@ function CepHome({ sayac, kasa, onKasa, onAc, onCikis, yenile }) {
     // Denetim kartı şimdilik kapalı (kullanıcı kararı) — component/route dormant duruyor.
     { id: 'basvurular', ikon: '🧑‍💼', baslik: 'İş Başvuruları', renk: C.mavi,
       sayi: sayac.basvuru, alt: sayac.basvuru > 0 ? `${sayac.basvuru} yeni başvuru` : 'Yeni başvuru yok' },
+    { id: 'stok-sayim', ikon: '📋', baslik: 'Stok Sayım', renk: C.mavi,
+      sayi: sayac.sayimOnay, alt: sayac.sayimOnay > 0 ? `${sayac.sayimOnay} onay bekliyor` : 'Görev ata / onayla' },
     { id: 'demirbas', ikon: '🛠️', baslik: 'Demirbaş & Arıza', renk: C.kirmizi,
       sayi: sayac.ariza, alt: sayac.ariza > 0 ? `${sayac.ariza} açık arıza` : 'Açık arıza yok' },
     { id: 'subeler', ikon: '🏪', baslik: 'Şubeler', renk: C.mavi,
@@ -1492,6 +1494,220 @@ function CepVadeli({ onGeri }) {
   );
 }
 
+// ── Stok Sayım (sahip: ata / bekleyen onay / aktif görevler) ────────────────
+function CepStokSayim({ onGeri }) {
+  const [alt, setAlt] = useState('onay'); // onay | ata | aktif
+
+  return (
+    <div style={{ minHeight: '100vh', background: C.bg }}>
+      <Baslik baslik="📋 Stok Sayım" onGeri={onGeri} />
+      <div style={{ display: 'flex', gap: 6, padding: '12px 14px', borderBottom: `1px solid ${C.border}` }}>
+        {[['onay', 'Onay Bekleyen'], ['ata', 'Görev Ata'], ['aktif', 'Aktif']].map(([k, etk]) => (
+          <button key={k} onClick={() => setAlt(k)} style={{
+            flex: 1, background: alt === k ? C.mavi : C.bg2, color: alt === k ? '#fff' : C.t2,
+            border: `1px solid ${alt === k ? C.mavi : C.border}`, borderRadius: 10, padding: '9px 0', fontSize: 13, fontWeight: 700, cursor: 'pointer',
+          }}>{etk}</button>
+        ))}
+      </div>
+      {alt === 'onay' && <CepSayimOnay />}
+      {alt === 'ata' && <CepSayimAta />}
+      {alt === 'aktif' && <CepSayimAktif />}
+    </div>
+  );
+}
+
+function CepSayimOnay() {
+  const [liste, setListe] = useState(null);
+  const [hata, setHata] = useState('');
+  const [bilgi, setBilgi] = useState('');
+  const [acik, setAcik] = useState(null);   // detay görev
+  const [satirlar, setSatirlar] = useState([]);
+  const [kararlar, setKararlar] = useState({}); // kalem_kodu -> 'sayim'|'sistem'
+  const [mesgul, setMesgul] = useState(false);
+
+  const yukle = useCallback(() => {
+    api('/stok-sayim/bekleyen-onay').then(r => setListe(r?.gorevler || [])).catch(e => { setHata(e.message || 'Yüklenemedi'); setListe([]); });
+  }, []);
+  useEffect(() => { yukle(); }, [yukle]);
+
+  const detayAc = async (g) => {
+    setHata(''); setBilgi('');
+    try {
+      const d = await api(`/stok-sayim/gorev/${g.id}`);
+      setAcik(d); setSatirlar(d.satirlar || []);
+      setKararlar(Object.fromEntries((d.satirlar || []).filter(s => s.fark !== 0).map(s => [s.kalem_kodu, 'sayim'])));
+    } catch (e) { setHata(e.message || 'Açılamadı'); }
+  };
+
+  const onayla = async () => {
+    setMesgul(true); setHata('');
+    try {
+      const kararList = Object.entries(kararlar).map(([kalem_kodu, karar]) => ({ kalem_kodu, karar }));
+      await api(`/stok-sayim/gorev/${acik.id}/onayla`, { method: 'POST', body: { kararlar: kararList, karar_veren_ad: 'Patron (Cep)' } });
+      setBilgi('Onaylandı — stok güncellendi.'); setAcik(null); yukle();
+    } catch (e) { setHata(e.message || 'Onaylanamadı'); }
+    finally { setMesgul(false); }
+  };
+
+  if (acik) {
+    const farklar = satirlar.filter(s => s.fark !== 0);
+    const kalibrasyon = acik.mod === 'kalibrasyon';
+    return (
+      <div style={{ padding: 14 }}>
+        <button onClick={() => setAcik(null)} style={{ background: 'none', border: 'none', color: C.t3, fontSize: 13, cursor: 'pointer', marginBottom: 8 }}>‹ Listeye dön</button>
+        <div style={{ fontSize: 16, fontWeight: 800, color: C.t1 }}>{acik.sube_adi} · {acik.personel_ad}</div>
+        <div style={{ fontSize: 12, color: C.t3, marginBottom: 12 }}>{kalibrasyon ? '🎯 Kalibrasyon (ilk sayım)' : '🔁 Kontrol'} · {farklar.length} farklı kalem</div>
+        {hata && <div style={{ margin: '6px 0', padding: 8, background: 'rgba(239,68,68,0.12)', borderRadius: 8, color: C.kirmizi, fontSize: 13 }}>{hata}</div>}
+        {farklar.length === 0 && <div style={{ color: C.yesil, padding: 16, textAlign: 'center' }}>✅ Fark yok — sayım sistemle uyumlu.</div>}
+        {farklar.map(s => (
+          <div key={s.kalem_kodu} style={{ background: C.bg2, border: `1px solid ${C.border}`, borderRadius: 12, padding: '10px 12px', marginBottom: 8 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+              <div style={{ fontSize: 14, fontWeight: 700, color: C.t1, flex: 1, minWidth: 0 }}>{s.kalem_adi}</div>
+              <div style={{ fontSize: 12, color: C.t3, whiteSpace: 'nowrap' }}>sistem {s.sistem_adet} → sayım <b style={{ color: C.t1 }}>{s.sayilan_adet}</b> <span style={{ color: s.fark > 0 ? C.yesil : C.kirmizi }}>({s.fark > 0 ? '+' : ''}{s.fark})</span></div>
+            </div>
+            {!kalibrasyon && (
+              <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+                {[['sayim', `Sayımı al (${s.sayilan_adet})`], ['sistem', `Sistemi koru (${s.sistem_adet})`]].map(([k, etk]) => (
+                  <button key={k} onClick={() => setKararlar(p => ({ ...p, [s.kalem_kodu]: k }))} style={{
+                    flex: 1, background: (kararlar[s.kalem_kodu] || 'sayim') === k ? C.mavi : C.bg, color: (kararlar[s.kalem_kodu] || 'sayim') === k ? '#fff' : C.t2,
+                    border: `1px solid ${C.border}`, borderRadius: 8, padding: '7px 0', fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                  }}>{etk}</button>
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
+        <button onClick={onayla} disabled={mesgul} style={{ width: '100%', marginTop: 12, background: C.yesil, color: '#fff', border: 'none', borderRadius: 12, padding: '14px 0', fontSize: 16, fontWeight: 800, cursor: mesgul ? 'default' : 'pointer', opacity: mesgul ? 0.6 : 1 }}>{mesgul ? 'Onaylanıyor…' : '✅ Onayla & Stoğu Güncelle'}</button>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ padding: 14 }}>
+      {bilgi && <div style={{ marginBottom: 10, padding: 10, background: 'rgba(34,197,94,0.12)', borderRadius: 10, color: C.yesil, fontSize: 13 }}>{bilgi}</div>}
+      {hata && <div style={{ marginBottom: 10, padding: 10, background: 'rgba(239,68,68,0.12)', borderRadius: 10, color: C.kirmizi, fontSize: 13 }}>{hata}</div>}
+      {liste === null && <div style={{ color: C.t3, textAlign: 'center', padding: 30 }}>Yükleniyor…</div>}
+      {liste && liste.length === 0 && <div style={{ color: C.t3, textAlign: 'center', padding: 30 }}>Onay bekleyen sayım yok.</div>}
+      {(liste || []).map(g => (
+        <div key={g.id} onClick={() => detayAc(g)} style={{ background: C.bg2, border: `1px solid ${C.border}`, borderLeft: `4px solid ${g.fark_sayisi > 0 ? C.sari : C.yesil}`, borderRadius: 14, padding: '12px 14px', marginBottom: 10, cursor: 'pointer' }}>
+          <div style={{ fontSize: 15, fontWeight: 800, color: C.t1 }}>{g.sube_adi} · {g.personel_ad}</div>
+          <div style={{ fontSize: 12, color: C.t2, marginTop: 3 }}>{g.mod === 'kalibrasyon' ? '🎯 Kalibrasyon' : '🔁 Kontrol'} · {g.kalem_sayisi} kalem</div>
+          <div style={{ fontSize: 12, color: g.fark_sayisi > 0 ? C.sari : C.yesil, fontWeight: 700, marginTop: 3 }}>{g.fark_sayisi > 0 ? `${g.fark_sayisi} farklı kalem — incele` : 'fark yok'}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function CepSayimAta() {
+  const [subeler, setSubeler] = useState([]);
+  const [personeller, setPersoneller] = useState([]);
+  const [subeId, setSubeId] = useState('');
+  const [personelId, setPersonelId] = useState('');
+  const [kapsam, setKapsam] = useState('tam');
+  const [not, setNot] = useState('');
+  const [hata, setHata] = useState('');
+  const [bilgi, setBilgi] = useState('');
+  const [mesgul, setMesgul] = useState(false);
+
+  useEffect(() => { api('/subeler').then(r => setSubeler((r || []).filter(x => x.aktif !== false && !x.sezon_kapali))).catch(() => {}); }, []);
+  useEffect(() => {
+    setPersonelId('');
+    if (!subeId) { setPersoneller([]); return; }
+    api(`/gorev/sube-personel/${encodeURIComponent(subeId)}`).then(r => setPersoneller(r || [])).catch(() => setPersoneller([]));
+  }, [subeId]);
+
+  const ata = async () => {
+    if (!subeId || !personelId) { setHata('Şube ve personel seçin'); return; }
+    setMesgul(true); setHata(''); setBilgi('');
+    try {
+      const r = await api('/stok-sayim/gorev-ata', { method: 'POST', body: { sube_id: subeId, personel_id: personelId, kapsam_tip: kapsam, not_aciklama: not.trim() || null, atayan_ad: 'Patron (Cep)' } });
+      setBilgi(`✅ Atandı — ${r.personel_ad || ''} · ${r.kalem_sayisi} kalem · ${r.mod === 'kalibrasyon' ? 'Kalibrasyon' : 'Kontrol'}. Personel mesai başlatınca ekran kilitlenir.`);
+      setPersonelId(''); setNot('');
+    } catch (e) { setHata(e.message || 'Atanamadı'); }
+    finally { setMesgul(false); }
+  };
+
+  const inp = { width: '100%', background: C.bg, border: `1px solid ${C.border}`, borderRadius: 10, padding: '11px 12px', fontSize: 15, color: C.t1, boxSizing: 'border-box' };
+
+  return (
+    <div style={{ padding: 14 }}>
+      {bilgi && <div style={{ marginBottom: 12, padding: 10, background: 'rgba(34,197,94,0.12)', borderRadius: 10, color: C.yesil, fontSize: 13, lineHeight: 1.5 }}>{bilgi}</div>}
+      {hata && <div style={{ marginBottom: 12, padding: 10, background: 'rgba(239,68,68,0.12)', borderRadius: 10, color: C.kirmizi, fontSize: 13 }}>{hata}</div>}
+
+      <div style={{ fontSize: 12, color: C.t3, marginBottom: 5 }}>Şube</div>
+      <select value={subeId} onChange={e => setSubeId(e.target.value)} style={{ ...inp, marginBottom: 12 }}>
+        <option value="">Şube seçin…</option>
+        {subeler.map(s => <option key={s.id} value={s.id}>{s.ad}</option>)}
+      </select>
+
+      <div style={{ fontSize: 12, color: C.t3, marginBottom: 5 }}>Personel</div>
+      <select value={personelId} onChange={e => setPersonelId(e.target.value)} disabled={!subeId} style={{ ...inp, marginBottom: 12, opacity: subeId ? 1 : 0.5 }}>
+        <option value="">{subeId ? 'Personel seçin…' : 'Önce şube seçin'}</option>
+        {personeller.map(p => <option key={p.id} value={p.id}>{p.ad_soyad}{p.bu_sube ? '' : ` (${p.sube_adi})`}{p.pin_tanimli ? '' : ' · PIN yok'}</option>)}
+      </select>
+
+      <div style={{ fontSize: 12, color: C.t3, marginBottom: 5 }}>Kapsam</div>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+        {[['tam', 'Tam sayım'], ['set', 'Kritik set']].map(([k, etk]) => (
+          <button key={k} onClick={() => setKapsam(k)} style={{ flex: 1, background: kapsam === k ? C.mavi : C.bg, color: kapsam === k ? '#fff' : C.t2, border: `1px solid ${C.border}`, borderRadius: 10, padding: '10px 0', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>{etk}</button>
+        ))}
+      </div>
+      {kapsam === 'set' && <div style={{ fontSize: 11, color: C.t3, marginBottom: 12 }}>Not: kritik set kalemlerini şimdilik masaüstünden seçebilirsin; cepte tam sayım önerilir.</div>}
+
+      <input placeholder="Not (opsiyonel)" value={not} onChange={e => setNot(e.target.value)} style={{ ...inp, marginBottom: 14 }} />
+
+      <button onClick={ata} disabled={mesgul || kapsam === 'set'} style={{ width: '100%', background: kapsam === 'set' ? C.bg2 : C.yesil, color: kapsam === 'set' ? C.t3 : '#fff', border: 'none', borderRadius: 12, padding: '14px 0', fontSize: 16, fontWeight: 800, cursor: (mesgul || kapsam === 'set') ? 'default' : 'pointer', opacity: mesgul ? 0.6 : 1 }}>
+        {mesgul ? 'Atanıyor…' : (kapsam === 'set' ? 'Kritik set masaüstünden' : '📋 Sayım Görevi Ata')}
+      </button>
+    </div>
+  );
+}
+
+function CepSayimAktif() {
+  const [liste, setListe] = useState(null);
+  const [hata, setHata] = useState('');
+  const [bilgi, setBilgi] = useState('');
+  const [mesgul, setMesgul] = useState(false);
+
+  const yukle = useCallback(() => {
+    api('/stok-sayim/gorevler?limit=100').then(r => setListe(r?.gorevler || [])).catch(e => { setHata(e.message || 'Yüklenemedi'); setListe([]); });
+  }, []);
+  useEffect(() => { yukle(); }, [yukle]);
+
+  const kilitAc = async (g) => {
+    if (!window.confirm(`${g.personel_ad || 'Personel'} (${g.sube_adi}) sayım görevini iptal et ve kilidi aç?`)) return;
+    setMesgul(true); setHata('');
+    try { await api(`/stok-sayim/gorev/${g.id}/kilit-ac`, { method: 'POST', body: { neden: 'sahip uzaktan açtı (cep)' } }); setBilgi('Kilit açıldı.'); yukle(); }
+    catch (e) { setHata(e.message || 'Açılamadı'); }
+    finally { setMesgul(false); }
+  };
+
+  const DURUM = { atandi: ['atandı', C.sari], basladi: ['sayımda', C.mavi], tamamlandi: ['onay bekliyor', '#f59e0b'], onaylandi: ['onaylandı', C.yesil] };
+  const aktifler = (liste || []).filter(g => ['atandi', 'basladi', 'tamamlandi'].includes(g.durum));
+
+  return (
+    <div style={{ padding: 14 }}>
+      {bilgi && <div style={{ marginBottom: 10, padding: 10, background: 'rgba(34,197,94,0.12)', borderRadius: 10, color: C.yesil, fontSize: 13 }}>{bilgi}</div>}
+      {hata && <div style={{ marginBottom: 10, padding: 10, background: 'rgba(239,68,68,0.12)', borderRadius: 10, color: C.kirmizi, fontSize: 13 }}>{hata}</div>}
+      {liste === null && <div style={{ color: C.t3, textAlign: 'center', padding: 30 }}>Yükleniyor…</div>}
+      {liste && aktifler.length === 0 && <div style={{ color: C.t3, textAlign: 'center', padding: 30 }}>Aktif sayım görevi yok.</div>}
+      {aktifler.map(g => {
+        const [et, renk] = DURUM[g.durum] || [g.durum, C.t3];
+        return (
+          <div key={g.id} style={{ background: C.bg2, border: `1px solid ${C.border}`, borderLeft: `4px solid ${renk}`, borderRadius: 14, padding: '12px 14px', marginBottom: 10 }}>
+            <div style={{ fontSize: 15, fontWeight: 800, color: C.t1 }}>{g.sube_adi} · {g.personel_ad}</div>
+            <div style={{ fontSize: 12, color: renk, fontWeight: 700, marginTop: 3 }}>{et}{g.mod ? ` · ${g.mod === 'kalibrasyon' ? 'Kalibrasyon' : 'Kontrol'}` : ''}</div>
+            {(g.durum === 'atandi' || g.durum === 'basladi') && (
+              <button onClick={() => kilitAc(g)} disabled={mesgul} style={{ marginTop: 10, width: '100%', background: C.bg, color: C.kirmizi, border: `1px solid ${C.border}`, borderRadius: 10, padding: '9px 0', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>🔓 İptal et & kilidi aç</button>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 // ── Denetim (günlük rapordan) ───────────────────────────────────────────────
 function CepDenetim({ onGeri }) {
   const [data, setData] = useState(null);
@@ -2529,7 +2745,7 @@ function CepKule({ onGeri, onDegisti }) {
 export default function CepApp() {
   const [girisli, setGirisli] = useState(() => tokenGecerli());
   const [view, setView] = useState('home');
-  const [sayac, setSayac] = useState({ onay: 0, odeme: 0, odemeTutar: 0, ariza: 0, kule: 0, ciro: 0, kasaUyum: 0, disKaynak: 0, belge: 0, basvuru: 0 });
+  const [sayac, setSayac] = useState({ onay: 0, odeme: 0, odemeTutar: 0, ariza: 0, kule: 0, ciro: 0, kasaUyum: 0, disKaynak: 0, belge: 0, basvuru: 0, sayimOnay: 0 });
   const [kasa, setKasa] = useState({ tutar: null, gun: null, hareketler: [] });
   const [kasaModal, setKasaModal] = useState(false);
 
@@ -2545,7 +2761,8 @@ export default function CepApp() {
       api('/ops/kasa-uyumsuzluk'),
       api('/belge-talep/bekleyen'),
       api('/is-basvurusu/ozet'),
-    ]).then(([onay, odeme, kasaR, panelR, arizaR, kuleR, ciroR, kuyumR, belgeR, basvuruR]) => {
+      api('/stok-sayim/bekleyen-onay'),
+    ]).then(([onay, odeme, kasaR, panelR, arizaR, kuleR, ciroR, kuyumR, belgeR, basvuruR, sayimR]) => {
       const onayN = (onay.status === 'fulfilled' && Array.isArray(onay.value)) ? onay.value.filter(giderOnayMi).length : 0;
       const odemeArr = (odeme.status === 'fulfilled' && Array.isArray(odeme.value)) ? odeme.value : [];
       const odemeTutar = odemeArr.reduce((s, o) => s + (Number(o.tutar) || 0), 0);
@@ -2556,7 +2773,8 @@ export default function CepApp() {
       const disK = (panelR.status === 'fulfilled') ? (Number(panelR.value?.bu_ay_dis_kaynak) || 0) : 0;
       const belgeN = (belgeR.status === 'fulfilled') ? (Number(belgeR.value?.toplam) || 0) : 0;
       const basvuruN = (basvuruR.status === 'fulfilled') ? (Number(basvuruR.value?.yeni) || 0) : 0;
-      setSayac({ onay: onayN, odeme: odemeArr.length, odemeTutar, ariza: arizaN, kule: kuleN, ciro: ciroN, kasaUyum: kuyumN, disKaynak: disK, belge: belgeN, basvuru: basvuruN });
+      const sayimN = (sayimR.status === 'fulfilled') ? (Number(sayimR.value?.toplam) || 0) : 0;
+      setSayac({ onay: onayN, odeme: odemeArr.length, odemeTutar, ariza: arizaN, kule: kuleN, ciro: ciroN, kasaUyum: kuyumN, disKaynak: disK, belge: belgeN, basvuru: basvuruN, sayimOnay: sayimN });
 
       const kTutar = (kasaR.status === 'fulfilled') ? (Number(kasaR.value?.guncel_bakiye) || 0) : null;
       const hareketler = (kasaR.status === 'fulfilled' && Array.isArray(kasaR.value?.hareketler)) ? kasaR.value.hareketler : [];
@@ -2594,6 +2812,8 @@ export default function CepApp() {
     return <CepOnaylar onGeri={geri} onDegisti={sayaclariYukle} />;
   if (view === 'denetim')
     return <CepDenetim onGeri={geri} />;
+  if (view === 'stok-sayim')
+    return <CepStokSayim onGeri={geri} />;
   if (view === 'demirbas')
     return <CepDemirbas onGeri={geri} />;
   if (view === 'kule')
