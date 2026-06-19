@@ -1081,7 +1081,6 @@ const GIDER_KATEGORILER = ['Nakit Alım', 'Market', 'Fatura', 'Kargo', 'Yemek', 
 
 function CepAnlikGider({ onGeri }) {
   const bugun = () => new Date().toISOString().split('T')[0];
-  const buAy = () => new Date().toISOString().slice(0, 7);
   const [liste, setListe] = useState(null);
   const [hata, setHata] = useState('');
   const [bilgi, setBilgi] = useState('');
@@ -1089,14 +1088,18 @@ function CepAnlikGider({ onGeri }) {
   const [kartlar, setKartlar] = useState([]);
   const [subeler, setSubeler] = useState([]);
   const [formAcik, setFormAcik] = useState(false);
+  const [ayOff, setAyOff] = useState(0); // 0=bu ay, 1=geçen ay…
   const [f, setF] = useState({ tarih: bugun(), kategori: 'Diğer', tutar: '', aciklama: '', sube: 'MERKEZ', odeme_yontemi: 'nakit', kart_id: '' });
+
+  const ayStr = (() => { const t = new Date(); t.setDate(1); t.setMonth(t.getMonth() - ayOff); return t.toISOString().slice(0, 7); })();
+  const ayMetin = (() => { const t = new Date(); t.setDate(1); t.setMonth(t.getMonth() - ayOff); return t.toLocaleDateString('tr-TR', { month: 'long', year: 'numeric' }); })();
 
   const yukle = useCallback(() => {
     setHata('');
-    api(`/anlik-gider?durum=aktif&include_summary=true&ay=${buAy()}`)
+    api(`/anlik-gider?durum=aktif&include_summary=true&ay=${ayStr}`)
       .then(r => setListe(Array.isArray(r) ? r : (r?.satirlar || [])))
       .catch(e => { setHata(e.message || 'Yüklenemedi'); setListe([]); });
-  }, []);
+  }, [ayStr]);
   useEffect(() => { yukle(); }, [yukle]);
   useEffect(() => {
     api('/kartlar').then(r => setKartlar(Array.isArray(r) ? r : [])).catch(() => {});
@@ -1142,10 +1145,17 @@ function CepAnlikGider({ onGeri }) {
     <div style={{ minHeight: '100vh', background: C.bg }}>
       <Baslik baslik="💸 Anlık Gider" onGeri={onGeri}
         sag={<button onClick={yukle} style={{ background: 'none', border: 'none', color: C.t3, fontSize: 20, cursor: 'pointer' }}>↻</button>} />
-      {/* Ay toplamı */}
-      <div style={{ padding: '12px 14px', borderBottom: `1px solid ${C.border}`, textAlign: 'center' }}>
-        <div style={{ fontSize: 12, color: C.t3 }}>Bu ay (aktif giderler)</div>
-        <div style={{ fontSize: 26, fontWeight: 800, color: C.kirmizi, marginTop: 2 }}>{fmt(toplamAy)}</div>
+      {/* Ay gezinme + toplam */}
+      <div style={{ padding: '12px 14px', borderBottom: `1px solid ${C.border}` }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 14, marginBottom: 8 }}>
+          <button onClick={() => setAyOff(a => a + 1)} style={{ background: C.bg2, border: `1px solid ${C.border}`, borderRadius: 8, color: C.t2, padding: '6px 12px', fontSize: 16, cursor: 'pointer' }}>‹</button>
+          <span style={{ fontSize: 14, fontWeight: 700, color: C.t1, minWidth: 130, textAlign: 'center', textTransform: 'capitalize' }}>{ayMetin}</span>
+          <button onClick={() => setAyOff(a => Math.max(0, a - 1))} disabled={ayOff === 0} style={{ background: C.bg2, border: `1px solid ${C.border}`, borderRadius: 8, color: ayOff === 0 ? C.t3 : C.t2, padding: '6px 12px', fontSize: 16, cursor: ayOff === 0 ? 'default' : 'pointer' }}>›</button>
+        </div>
+        <div style={{ textAlign: 'center' }}>
+          <div style={{ fontSize: 12, color: C.t3 }}>Aktif giderler (toplam)</div>
+          <div style={{ fontSize: 26, fontWeight: 800, color: C.kirmizi, marginTop: 2 }}>{fmt(toplamAy)}</div>
+        </div>
       </div>
 
       {bilgi && <div style={{ margin: 14, padding: 10, background: 'rgba(34,197,94,0.12)', borderRadius: 10, color: C.yesil, fontSize: 13 }}>{bilgi}</div>}
