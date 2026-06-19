@@ -819,7 +819,14 @@ function CepBasvurular({ onGeri }) {
     if (s.includes('deger') || s.includes('gorus') || s.includes('mulakat')) return C.mavi;
     return C.sari;
   };
-  const telNorm = (tel) => String(tel || '').replace(/\s/g, '');
+  // Numara gösterimi: başında 0 yoksa biz ekleyelim (10 hane 5'le başlıyorsa → 0...)
+  const telFmt = (tel) => {
+    let d = String(tel || '').replace(/\D/g, '');
+    if (d.startsWith('90') && d.length === 12) d = d.slice(2);
+    if (d.length === 10 && d.startsWith('5')) d = '0' + d;
+    return d || String(tel || '');
+  };
+  const telNorm = (tel) => telFmt(tel);
 
   const ac = (b) => {
     setSecili(b);
@@ -882,7 +889,7 @@ function CepBasvurular({ onGeri }) {
                   display: 'block', textAlign: 'center', marginTop: 10, background: C.bg,
                   border: `1px solid ${C.border}`, borderRadius: 10, padding: '9px 0',
                   fontSize: 14, fontWeight: 700, color: C.yesil, textDecoration: 'none',
-                }}>📞 {b.telefon}</a>
+                }}>📞 {tel}</a>
               )}
             </div>
           );
@@ -939,7 +946,7 @@ function CepBasvuruDetay({ b, onGeri, durumRenk, telNorm }) {
             <a href={`tel:${tel}`} style={{
               display: 'block', textAlign: 'center', marginTop: 12, background: '#25D366',
               borderRadius: 10, padding: '11px 0', fontSize: 14, fontWeight: 800, color: '#fff', textDecoration: 'none',
-            }}>📞 {b.telefon}</a>
+            }}>📞 {tel}</a>
           )}
         </div>
 
