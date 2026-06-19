@@ -3187,6 +3187,14 @@ def sube_urun_sevk(sube_id: str, body: SubeSevkBody):
                     """,
                     (toptanci_siparis_id, siparis_talep_id),
                 )
+                # İZOLE — Belge Talep Motoru: teslim alınınca tedarikçiden fatura PDF'i
+                # kovalamak için bir "belge talep" kaydı aç. Kendi transaction'ında çalışır,
+                # her hata YUTULUR → teslim-al akışını ASLA bozmaz. (Kaldırmak = bu blok sil.)
+                try:
+                    from belge_talep_api import belge_talep_olustur_izole
+                    belge_talep_olustur_izole(toptanci_siparis_id)
+                except Exception:
+                    pass
 
             _yeni_durum = "kabul_uyusmazlik" if (teslim_durumu == "eksik_var") else "teslim_edildi"
             _kabul_durum = "kabul_uyusmazlik" if (teslim_durumu == "eksik_var") else "kabul_tam"

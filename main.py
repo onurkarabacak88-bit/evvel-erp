@@ -104,6 +104,15 @@ except Exception as _fin_duyu_err:
         f"finansal_duyu modulu yuklenemedi (izole, ana akis etkilenmez): {_fin_duyu_err}"
     )
 app.include_router(fatura_router)
+# Belge Talep Motoru — İZOLE (teslim alınınca tedarikçiden fatura PDF kovala).
+# Modül patlasa bile ana uygulama ayakta kalsın (kullanıcı izolasyon direktifi).
+try:
+    from belge_talep_api import router as belge_talep_router
+    app.include_router(belge_talep_router)
+except Exception as _belge_talep_err:
+    logging.getLogger(__name__).warning(
+        f"belge_talep modulu yuklenemedi (izole, ana akis etkilenmez): {_belge_talep_err}"
+    )
 app.include_router(stok_sayim_router)
 app.include_router(supplier_payment_router)
 

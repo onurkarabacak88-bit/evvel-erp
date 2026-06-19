@@ -210,6 +210,8 @@ function CepHome({ sayac, kasa, onKasa, onAc, onCikis, yenile }) {
       sayi: sayac.kule, alt: sayac.kule > 0 ? `${sayac.kule} yönlendir bekliyor` : 'Gelen sipariş & yönlendir' },
     { id: 'depolar', ikon: '📦', baslik: 'Depolar', renk: C.mavi,
       sayi: null, alt: 'Tüm şube stokları' },
+    { id: 'belge-talep', ikon: '🧾', baslik: 'Fatura Bekleyen', renk: '#f59e0b',
+      sayi: sayac.belge, alt: sayac.belge > 0 ? `${sayac.belge} teslimat faturası bekliyor` : 'Fatura bekleyen yok' },
     // Denetim kartı şimdilik kapalı (kullanıcı kararı) — component/route dormant duruyor.
     { id: 'demirbas', ikon: '🛠️', baslik: 'Demirbaş & Arıza', renk: C.kirmizi,
       sayi: sayac.ariza, alt: sayac.ariza > 0 ? `${sayac.ariza} açık arıza` : 'Açık arıza yok' },
@@ -644,6 +646,104 @@ function CepDisKaynak({ onGeri }) {
                   <div style={{ fontSize: 11, color: C.t3, marginTop: 3 }}>{x.tarih}{iptal ? ' · iptal' : ''}</div>
                 </div>
                 <div style={{ fontSize: 16, fontWeight: 800, color: iptal ? C.t3 : C.yesil, whiteSpace: 'nowrap' }}>{fmt(x.tutar)}</div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ── Belge Talep (fatura bekleyen teslimatlar — wa.me ile fatura iste) ────────
+function CepBelgeTalep({ onGeri, onDegisti }) {
+  const [liste, setListe] = useState(null);
+  const [hata, setHata] = useState('');
+  const [mesgul, setMesgul] = useState('');
+
+  const yukle = useCallback(() => {
+    setHata('');
+    api('/belge-talep/bekleyen')
+      .then(d => setListe(Array.isArray(d?.talepler) ? d.talepler : []))
+      .catch(e => { setHata(e.message || 'Yüklenemedi'); setListe([]); });
+  }, []);
+  useEffect(() => { yukle(); }, [yukle]);
+
+  // wa.me numara normalizasyonu (CepDepolar ile aynı kural)
+  const telNorm = (tel) => {
+    let num = String(tel || '').replace(/\D/g, '');
+    if (num.startsWith('00')) num = num.slice(2);
+    if (num.length === 11 && num.startsWith('0')) num = '90' + num.slice(1);
+    else if (num.length === 10 && num.startsWith('5')) num = '90' + num;
+    return num.length >= 11 ? num : '';
+  };
+
+  const faturaIste = async (x) => {
+    const num = telNorm(x.tedarikci_tel);
+    if (!num) { setHata(`${x.tedarikci_ad || 'Tedarikçi'} için geçerli telefon yok`); return; }
+    const tarih = x.teslim_tarihi ? new Date(x.teslim_tarihi).toLocaleDateString('tr-TR') : 'bugünkü';
+    const mesaj =
+      `Merhaba ${x.tedarikci_ad || ''},\n\n` +
+      `*${x.sube_adi || ''}* şubemize ${tarih} tarihli teslimatınız ulaştı. 🙏\n` +
+      `Bu teslimata ait *faturanın PDF nüshasını* iletebilir misiniz?\n\n` +
+      `Teşekkürler.`;
+    window.open(`https://wa.me/${num}?text=${encodeURIComponent(mesaj)}`, '_blank');
+    // İz: mesaj sayısını artır (belge ritmi) — hata olsa da wa.me açıldı
+    try { await api(`/belge-talep/${x.id}/mesaj-gonderildi`, { method: 'POST' }); yukle(); } catch { /* yut */ }
+  };
+
+  const kapat = async (x) => {
+    setMesgul(x.id);
+    try { await api(`/belge-talep/${x.id}/kapat`, { method: 'POST', body: { durum: 'pdf_geldi' } }); yukle(); onDegisti && onDegisti(); }
+    catch (e) { setHata(e.message || 'Kapatılamadı'); }
+    finally { setMesgul(''); }
+  };
+
+  // Yaşa göre renk: <24sa sarı, <72sa turuncu, ≥72sa kırmızı
+  const renk = (s) => s >= 72 ? C.kirmizi : (s >= 24 ? '#f59e0b' : C.sari);
+  const yasMetin = (s) => s < 1 ? 'az önce' : (s < 24 ? `${Math.round(s)} saat önce` : `${Math.floor(s / 24)} gün önce`);
+
+  return (
+    <div style={{ minHeight: '100vh', background: C.bg }}>
+      <Baslik baslik="🧾 Fatura Bekleyen" onGeri={onGeri}
+        sag={<button onClick={yukle} style={{ background: 'none', border: 'none', color: C.t3, fontSize: 20, cursor: 'pointer' }}>↻</button>} />
+      <div style={{ padding: '10px 14px', borderBottom: `1px solid ${C.border}`, fontSize: 12, color: C.t3, lineHeight: 1.5 }}>
+        Şube teslim aldı, faturası henüz gelmedi. Tek dokunuşla toptancıdan PDF faturayı iste.
+      </div>
+      <div style={{ padding: 14 }}>
+        {liste === null && <div style={{ color: C.t3, textAlign: 'center', padding: 30 }}>Yükleniyor…</div>}
+        {hata && <div style={{ color: C.kirmizi, textAlign: 'center', padding: 16 }}>{hata}</div>}
+        {liste && liste.length === 0 && !hata && (
+          <div style={{ color: C.t3, textAlign: 'center', padding: 40 }}>Fatura bekleyen teslimat yok. ✅</div>
+        )}
+        {(liste || []).map(x => {
+          const yas = Number(x.yas_saat) || 0;
+          const bar = renk(yas);
+          const telVar = !!telNorm(x.tedarikci_tel);
+          return (
+            <div key={x.id} style={{
+              background: C.bg2, border: `1px solid ${C.border}`, borderLeft: `4px solid ${bar}`,
+              borderRadius: 14, padding: '12px 14px', marginBottom: 10,
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 15, fontWeight: 800, color: C.t1 }}>{x.tedarikci_ad || 'Tedarikçi'}</div>
+                  <div style={{ fontSize: 12, color: C.t2, marginTop: 2 }}>{x.sube_adi || ''} · {x.teslim_tarihi ? new Date(x.teslim_tarihi).toLocaleDateString('tr-TR') : ''} teslimatı</div>
+                  <div style={{ fontSize: 11, color: C.t3, marginTop: 3 }}>
+                    {yasMetin(yas)}{x.mesaj_sayisi > 0 ? ` · ${x.mesaj_sayisi}× istendi` : ' · henüz istenmedi'}
+                  </div>
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+                <button onClick={() => faturaIste(x)} disabled={!telVar} style={{
+                  flex: 1, background: telVar ? '#25D366' : C.bg, color: telVar ? '#fff' : C.t3,
+                  border: telVar ? 'none' : `1px solid ${C.border}`, borderRadius: 10, padding: '11px 0',
+                  fontSize: 14, fontWeight: 800, cursor: telVar ? 'pointer' : 'default',
+                }}>{telVar ? '📲 Fatura İste' : 'Telefon yok'}</button>
+                <button onClick={() => kapat(x)} disabled={mesgul === x.id} style={{
+                  background: C.bg, color: C.yesil, border: `1px solid ${C.border}`, borderRadius: 10,
+                  padding: '11px 14px', fontSize: 14, fontWeight: 700, cursor: 'pointer',
+                }}>{mesgul === x.id ? '…' : '✓ Geldi'}</button>
               </div>
             </div>
           );
@@ -1690,7 +1790,7 @@ function CepKule({ onGeri, onDegisti }) {
 export default function CepApp() {
   const [girisli, setGirisli] = useState(() => tokenGecerli());
   const [view, setView] = useState('home');
-  const [sayac, setSayac] = useState({ onay: 0, odeme: 0, odemeTutar: 0, ariza: 0, kule: 0, ciro: 0, kasaUyum: 0, disKaynak: 0 });
+  const [sayac, setSayac] = useState({ onay: 0, odeme: 0, odemeTutar: 0, ariza: 0, kule: 0, ciro: 0, kasaUyum: 0, disKaynak: 0, belge: 0 });
   const [kasa, setKasa] = useState({ tutar: null, gun: null, hareketler: [] });
   const [kasaModal, setKasaModal] = useState(false);
 
@@ -1704,7 +1804,8 @@ export default function CepApp() {
       api('/ops/siparis/kontrol-kulesi?gun=30&asama=bekliyor&limit=200'),
       api('/ciro-taslak?durum=bekliyor'),
       api('/ops/kasa-uyumsuzluk'),
-    ]).then(([onay, odeme, kasaR, panelR, arizaR, kuleR, ciroR, kuyumR]) => {
+      api('/belge-talep/bekleyen'),
+    ]).then(([onay, odeme, kasaR, panelR, arizaR, kuleR, ciroR, kuyumR, belgeR]) => {
       const onayN = (onay.status === 'fulfilled' && Array.isArray(onay.value)) ? onay.value.filter(giderOnayMi).length : 0;
       const odemeArr = (odeme.status === 'fulfilled' && Array.isArray(odeme.value)) ? odeme.value : [];
       const odemeTutar = odemeArr.reduce((s, o) => s + (Number(o.tutar) || 0), 0);
@@ -1713,7 +1814,8 @@ export default function CepApp() {
       const ciroN = (ciroR.status === 'fulfilled' && Array.isArray(ciroR.value)) ? ciroR.value.length : 0;
       const kuyumN = (kuyumR.status === 'fulfilled') ? (Number(kuyumR.value?.gun_bekleyen) || 0) : 0;
       const disK = (panelR.status === 'fulfilled') ? (Number(panelR.value?.bu_ay_dis_kaynak) || 0) : 0;
-      setSayac({ onay: onayN, odeme: odemeArr.length, odemeTutar, ariza: arizaN, kule: kuleN, ciro: ciroN, kasaUyum: kuyumN, disKaynak: disK });
+      const belgeN = (belgeR.status === 'fulfilled') ? (Number(belgeR.value?.toplam) || 0) : 0;
+      setSayac({ onay: onayN, odeme: odemeArr.length, odemeTutar, ariza: arizaN, kule: kuleN, ciro: ciroN, kasaUyum: kuyumN, disKaynak: disK, belge: belgeN });
 
       const kTutar = (kasaR.status === 'fulfilled') ? (Number(kasaR.value?.guncel_bakiye) || 0) : null;
       const hareketler = (kasaR.status === 'fulfilled' && Array.isArray(kasaR.value?.hareketler)) ? kasaR.value.hareketler : [];
@@ -1753,6 +1855,8 @@ export default function CepApp() {
     return <CepKule onGeri={geri} onDegisti={sayaclariYukle} />;
   if (view === 'depolar')
     return <CepDepolar onGeri={geri} />;
+  if (view === 'belge-talep')
+    return <CepBelgeTalep onGeri={geri} onDegisti={sayaclariYukle} />;
   if (view === 'subeler')
     return <CepSubeler onGeri={geri} />;
 
