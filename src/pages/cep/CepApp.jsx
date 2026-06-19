@@ -200,6 +200,8 @@ function CepHome({ sayac, kasa, onKasa, onAc, onCikis, yenile }) {
       alt: sayac.odeme > 0 ? `${sayac.odeme} ödeme · ${fmt(sayac.odemeTutar)}` : 'Bugün ödeme yok' },
     { id: 'onaylar', ikon: '✅', baslik: 'Gider Onayı', renk: C.yesil,
       sayi: sayac.onay, alt: `${sayac.onay} bekleyen gider` },
+    { id: 'ciro', ikon: '📋', baslik: 'Ciro Onayı', renk: C.mavi,
+      sayi: sayac.ciro, alt: sayac.ciro > 0 ? `${sayac.ciro} bekleyen ciro` : 'Bekleyen ciro yok' },
     { id: 'kule', ikon: '🚚', baslik: 'Sipariş Kulesi', renk: C.mavi,
       sayi: sayac.kule, alt: sayac.kule > 0 ? `${sayac.kule} yönlendir bekliyor` : 'Gelen sipariş & yönlendir' },
     { id: 'depolar', ikon: '📦', baslik: 'Depolar', renk: C.mavi,
@@ -411,6 +413,95 @@ function CepOnaylar({ onGeri, onDegisti }) {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ── Ciro Onayları (şube kapanış ciro taslakları — onayla/reddet) ─────────────
+function CepCiroOnay({ onGeri, onDegisti }) {
+  const [liste, setListe] = useState(null);
+  const [hata, setHata] = useState('');
+  const [islemId, setIslemId] = useState(null);
+
+  const yukle = useCallback(() => {
+    setHata('');
+    api('/ciro-taslak?durum=bekliyor')
+      .then(d => setListe(Array.isArray(d) ? d : []))
+      .catch(e => { setHata(e.message || 'Yüklenemedi'); setListe([]); });
+  }, []);
+  useEffect(() => { yukle(); }, [yukle]);
+
+  const onayla = async (id) => {
+    setIslemId(id);
+    try {
+      await api(`/ciro-taslak/${id}/onayla`, { method: 'POST', body: {} });
+      setListe(l => (l || []).filter(o => o.id !== id));
+      onDegisti && onDegisti();
+    } catch (e) { alert('Onaylanamadı: ' + (e.message || '')); }
+    finally { setIslemId(null); }
+  };
+
+  const reddetGonder = async (id) => {
+    const neden = window.prompt('Reddetme sebebi (şubeye gider):', '');
+    if (neden === null) return;
+    setIslemId(id);
+    try {
+      await api(`/ciro-taslak/${id}/reddet`, { method: 'POST', body: { neden: (neden || '').trim() || 'Tutar hatalı' } });
+      setListe(l => (l || []).filter(o => o.id !== id));
+      onDegisti && onDegisti();
+    } catch (e) { alert('Reddedilemedi: ' + (e.message || '')); }
+    finally { setIslemId(null); }
+  };
+
+  return (
+    <div style={{ minHeight: '100vh', background: C.bg }}>
+      <Baslik baslik="📋 Ciro Onayları" onGeri={onGeri}
+        sag={<button onClick={yukle} style={{ background: 'none', border: 'none', color: C.t3, fontSize: 20, cursor: 'pointer' }}>↻</button>} />
+      <div style={{ padding: 14 }}>
+        {liste === null && <div style={{ color: C.t3, textAlign: 'center', padding: 30 }}>Yükleniyor…</div>}
+        {hata && <div style={{ color: C.kirmizi, textAlign: 'center', padding: 20 }}>{hata}</div>}
+        {liste && liste.length === 0 && !hata && (
+          <div style={{ color: C.t3, textAlign: 'center', padding: 40 }}>
+            <div style={{ fontSize: 40, marginBottom: 8 }}>🎉</div>
+            Onay bekleyen ciro yok.
+          </div>
+        )}
+        {(liste || []).map(o => {
+          const mesgul = islemId === o.id;
+          const nakit = Number(o.nakit) || 0, pos = Number(o.pos) || 0, online = Number(o.online) || 0;
+          const toplam = nakit + pos + online;
+          return (
+            <div key={o.id} style={{
+              background: C.bg2, border: `1px solid ${C.border}`, borderRadius: 14,
+              padding: 14, marginBottom: 12, opacity: mesgul ? 0.55 : 1,
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                <span style={{ fontSize: 16, fontWeight: 800, color: C.t1 }}>{o.sube_adi}</span>
+                <span style={{ fontSize: 12, color: C.t3 }}>{o.tarih}{o.gonderen_ad ? ` · ${o.gonderen_ad}` : ''}</span>
+              </div>
+              <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                {[['Nakit', nakit], ['POS', pos], ['Online', online]].map(([l, v]) => (
+                  <div key={l} style={{ flex: 1, background: C.bg3, borderRadius: 10, padding: '8px 10px' }}>
+                    <div style={{ fontSize: 11, color: C.t3 }}>{l}</div>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: C.t1 }}>{fmt(v)}</div>
+                  </div>
+                ))}
+              </div>
+              <div style={{ fontSize: 20, fontWeight: 800, color: C.yesil, marginBottom: 12 }}>Toplam {fmt(toplam)}</div>
+              <div style={{ display: 'flex', gap: 10 }}>
+                <button disabled={mesgul} onClick={() => onayla(o.id)} style={{
+                  flex: 1, padding: '13px', borderRadius: 10, border: 'none',
+                  background: C.yesil, color: '#fff', fontWeight: 800, fontSize: 15, cursor: 'pointer',
+                }}>✓ Onayla</button>
+                <button disabled={mesgul} onClick={() => reddetGonder(o.id)} style={{
+                  padding: '13px 18px', borderRadius: 10, border: `1px solid ${C.kirmizi}`,
+                  background: 'transparent', color: C.kirmizi, fontWeight: 700, fontSize: 15, cursor: 'pointer',
+                }}>✕</button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -1431,7 +1522,7 @@ function CepKule({ onGeri, onDegisti }) {
 export default function CepApp() {
   const [girisli, setGirisli] = useState(() => tokenGecerli());
   const [view, setView] = useState('home');
-  const [sayac, setSayac] = useState({ onay: 0, odeme: 0, odemeTutar: 0, ariza: 0, kule: 0 });
+  const [sayac, setSayac] = useState({ onay: 0, odeme: 0, odemeTutar: 0, ariza: 0, kule: 0, ciro: 0 });
   const [kasa, setKasa] = useState({ tutar: null, gun: null, hareketler: [] });
   const [kasaModal, setKasaModal] = useState(false);
 
@@ -1443,13 +1534,15 @@ export default function CepApp() {
       api('/panel'),
       api('/stok-sayim/ariza/liste?durum=acik'),
       api('/ops/siparis/kontrol-kulesi?gun=30&asama=bekliyor&limit=200'),
-    ]).then(([onay, odeme, kasaR, panelR, arizaR, kuleR]) => {
+      api('/ciro-taslak?durum=bekliyor'),
+    ]).then(([onay, odeme, kasaR, panelR, arizaR, kuleR, ciroR]) => {
       const onayN = (onay.status === 'fulfilled' && Array.isArray(onay.value)) ? onay.value.filter(giderOnayMi).length : 0;
       const odemeArr = (odeme.status === 'fulfilled' && Array.isArray(odeme.value)) ? odeme.value : [];
       const odemeTutar = odemeArr.reduce((s, o) => s + (Number(o.tutar) || 0), 0);
       const arizaN = (arizaR.status === 'fulfilled' && Number(arizaR.value?.toplam)) ? Number(arizaR.value.toplam) : 0;
       const kuleN = (kuleR.status === 'fulfilled') ? (Number(kuleR.value?.toplam) || 0) : 0;
-      setSayac({ onay: onayN, odeme: odemeArr.length, odemeTutar, ariza: arizaN, kule: kuleN });
+      const ciroN = (ciroR.status === 'fulfilled' && Array.isArray(ciroR.value)) ? ciroR.value.length : 0;
+      setSayac({ onay: onayN, odeme: odemeArr.length, odemeTutar, ariza: arizaN, kule: kuleN, ciro: ciroN });
 
       const kTutar = (kasaR.status === 'fulfilled') ? (Number(kasaR.value?.guncel_bakiye) || 0) : null;
       const hareketler = (kasaR.status === 'fulfilled' && Array.isArray(kasaR.value?.hareketler)) ? kasaR.value.hareketler : [];
@@ -1473,6 +1566,8 @@ export default function CepApp() {
 
   if (view === 'odemeler')
     return <CepOdemeler onGeri={geri} />;
+  if (view === 'ciro')
+    return <CepCiroOnay onGeri={geri} onDegisti={sayaclariYukle} />;
   if (view === 'onaylar')
     return <CepOnaylar onGeri={geri} onDegisti={sayaclariYukle} />;
   if (view === 'denetim')
