@@ -793,6 +793,7 @@ function CepBasvurular({ onGeri }) {
   const [liste, setListe] = useState(null);
   const [hata, setHata] = useState('');
   const [filtre, setFiltre] = useState('aktif'); // aktif | arsiv
+  const [secili, setSecili] = useState(null);    // detay açılan başvuru
 
   const yukle = useCallback(() => {
     setHata('');
@@ -811,6 +812,16 @@ function CepBasvurular({ onGeri }) {
     return C.sari;
   };
   const telNorm = (tel) => String(tel || '').replace(/\s/g, '');
+
+  const ac = (b) => {
+    setSecili(b);
+    // Görüldü işaretle (YENİ rozetini düşür) — salt-okur dünyada zararsız
+    if (!b.goruldu_ts) {
+      api(`/is-basvurusu/${b.id}/gor`, { method: 'PATCH' }).then(yukle).catch(() => {});
+    }
+  };
+
+  if (secili) return <CepBasvuruDetay b={secili} onGeri={() => setSecili(null)} durumRenk={durumRenk} telNorm={telNorm} />;
 
   return (
     <div style={{ minHeight: '100vh', background: C.bg }}>
@@ -837,9 +848,9 @@ function CepBasvurular({ onGeri }) {
           const subeler = Array.isArray(b.tercih_subeler) ? b.tercih_subeler.join(', ') : '';
           const tel = telNorm(b.telefon);
           return (
-            <div key={b.id} style={{
+            <div key={b.id} onClick={() => ac(b)} style={{
               background: C.bg2, border: `1px solid ${C.border}`, borderLeft: `4px solid ${durumRenk(b.durum)}`,
-              borderRadius: 14, padding: '12px 14px', marginBottom: 10,
+              borderRadius: 14, padding: '12px 14px', marginBottom: 10, cursor: 'pointer',
             }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
                 <div style={{ flex: 1, minWidth: 0 }}>
@@ -859,7 +870,7 @@ function CepBasvurular({ onGeri }) {
                 </div>
               </div>
               {tel && (
-                <a href={`tel:${tel}`} style={{
+                <a href={`tel:${tel}`} onClick={e => e.stopPropagation()} style={{
                   display: 'block', textAlign: 'center', marginTop: 10, background: C.bg,
                   border: `1px solid ${C.border}`, borderRadius: 10, padding: '9px 0',
                   fontSize: 14, fontWeight: 700, color: C.yesil, textDecoration: 'none',
@@ -868,6 +879,117 @@ function CepBasvurular({ onGeri }) {
             </div>
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+// ── İş Başvurusu Detay (skor kırılımı + sinyaller + tüm bilgiler) ───────────
+function CepBasvuruDetay({ b, onGeri, durumRenk, telNorm }) {
+  const skor = b.skor || {};
+  const boyutlar = skor.boyutlar || {};
+  const sinyaller = Array.isArray(skor.sinyaller) ? skor.sinyaller : [];
+  const tel = telNorm(b.telefon);
+  const subeler = Array.isArray(b.tercih_subeler) ? b.tercih_subeler.join(', ') : '';
+  const gunler = Array.isArray(b.musait_gunler) ? b.musait_gunler.join(', ') : '';
+
+  const ETIKET = {
+    pozisyon: 'Pozisyon', calisma_tercihi: 'Çalışma', baslangic: 'Başlangıç',
+    en_erken_saat: 'En erken saat', kahve_deneyim: 'Kahve deneyimi', ulasim: 'Ulaşım',
+    ilce: 'İlçe', dogum_yili: 'Doğum yılı', yasam_durumu: 'Yaşam', egitim_durumu: 'Eğitim',
+  };
+  const satirlar = Object.keys(ETIKET)
+    .map(k => [ETIKET[k], b[k]])
+    .filter(([, v]) => v != null && String(v).trim() !== '');
+
+  const Row = ({ etk, val }) => (
+    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, padding: '7px 0', borderBottom: `1px solid ${C.border}` }}>
+      <span style={{ fontSize: 12, color: C.t3 }}>{etk}</span>
+      <span style={{ fontSize: 13, color: C.t1, fontWeight: 600, textAlign: 'right' }}>{String(val)}</span>
+    </div>
+  );
+
+  return (
+    <div style={{ minHeight: '100vh', background: C.bg }}>
+      <Baslik baslik="🧑‍💼 Başvuru Detayı" onGeri={onGeri} />
+      <div style={{ padding: 14, paddingBottom: 30 }}>
+        {/* Üst kart: ad + skor */}
+        <div style={{ background: C.bg2, border: `1px solid ${C.border}`, borderRadius: 14, padding: 16, marginBottom: 12 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
+            <div>
+              <div style={{ fontSize: 19, fontWeight: 800, color: C.t1 }}>{b.ad_soyad || '—'}</div>
+              <div style={{ fontSize: 12, color: durumRenk(b.durum), fontWeight: 700, marginTop: 3 }}>{b.durum || ''}</div>
+            </div>
+            {skor.toplam != null && (
+              <div style={{ textAlign: 'center' }}>
+                <div style={{ fontSize: 30, fontWeight: 800, color: C.t1, lineHeight: 1 }}>{skor.toplam}</div>
+                <div style={{ fontSize: 10, color: C.t3 }}>/ 100{skor.genel_label ? ` · ${skor.genel_label}` : ''}</div>
+              </div>
+            )}
+          </div>
+          {tel && (
+            <a href={`tel:${tel}`} style={{
+              display: 'block', textAlign: 'center', marginTop: 12, background: '#25D366',
+              borderRadius: 10, padding: '11px 0', fontSize: 14, fontWeight: 800, color: '#fff', textDecoration: 'none',
+            }}>📞 {b.telefon}</a>
+          )}
+        </div>
+
+        {/* Skor boyutları (5 × 20) */}
+        {Object.keys(boyutlar).length > 0 && (
+          <div style={{ background: C.bg2, border: `1px solid ${C.border}`, borderRadius: 14, padding: 16, marginBottom: 12 }}>
+            <div style={{ fontSize: 13, fontWeight: 800, color: C.t1, marginBottom: 10 }}>📊 Skor Kırılımı</div>
+            {Object.keys(boyutlar).map(k => {
+              const d = boyutlar[k] || {};
+              const p = Number(d.puan) || 0;
+              const oran = Math.max(0, Math.min(100, (p / 20) * 100));
+              const renk = p >= 15 ? C.yesil : (p >= 9 ? C.sari : C.kirmizi);
+              return (
+                <div key={k} style={{ marginBottom: 9 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: C.t2, marginBottom: 3 }}>
+                    <span>{d.label || k}</span><span style={{ fontWeight: 700, color: C.t1 }}>{p}/20</span>
+                  </div>
+                  <div style={{ height: 7, background: C.bg, borderRadius: 4, overflow: 'hidden' }}>
+                    <div style={{ width: `${oran}%`, height: '100%', background: renk }} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Sinyaller */}
+        {sinyaller.length > 0 && (
+          <div style={{ background: C.bg2, border: `1px solid ${C.border}`, borderRadius: 14, padding: 16, marginBottom: 12 }}>
+            <div style={{ fontSize: 13, fontWeight: 800, color: C.t1, marginBottom: 8 }}>🚩 Sinyaller</div>
+            {sinyaller.map((s, i) => (
+              <div key={i} style={{
+                fontSize: 13, color: s.tip === 'olumlu' ? C.yesil : C.sari, padding: '4px 0',
+                lineHeight: 1.4,
+              }}>{s.mesaj}</div>
+            ))}
+          </div>
+        )}
+
+        {/* Bilgiler */}
+        <div style={{ background: C.bg2, border: `1px solid ${C.border}`, borderRadius: 14, padding: 16, marginBottom: 12 }}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: C.t1, marginBottom: 6 }}>📋 Bilgiler</div>
+          {subeler && <Row etk="Tercih şubeler" val={subeler} />}
+          {satirlar.map(([etk, val]) => <Row key={etk} etk={etk} val={val} />)}
+          {gunler && <Row etk="Müsait günler" val={gunler} />}
+        </div>
+
+        {/* Tanıtım / not */}
+        {(b.tanitim || b.ek_not) && (
+          <div style={{ background: C.bg2, border: `1px solid ${C.border}`, borderRadius: 14, padding: 16 }}>
+            <div style={{ fontSize: 13, fontWeight: 800, color: C.t1, marginBottom: 8 }}>✍️ Kendini Tanıtımı</div>
+            {b.tanitim && <div style={{ fontSize: 13, color: C.t2, lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>{b.tanitim}</div>}
+            {b.ek_not && <div style={{ fontSize: 12, color: C.t3, marginTop: 8, fontStyle: 'italic' }}>Not: {b.ek_not}</div>}
+            {(b.referans_ad || b.referans_tel) && (
+              <div style={{ fontSize: 12, color: C.t3, marginTop: 8 }}>Referans: {b.referans_ad || ''} {b.referans_tel || ''}</div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
