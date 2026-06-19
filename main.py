@@ -6158,6 +6158,24 @@ def vadeli_ode(vid: str, body: VadeliOdeModel = VadeliOdeModel()):
                 raise HTTPException(400, "Bu vadeli alım zaten tam olarak kasaya işlenmiş, tekrar ödeme yapılamaz.")
         plan = aktif_plan
         if not plan:
+            # SELF-HEAL: aktif ödeme planı yoksa (eski kayıt veya planı 'sistem başlangıcı'
+            # temizliğinde iptal olmuş vadeli) ödeme anında plan üret → "plan bulunamadı"
+            # kırmızı hatası yerine ödeme sorunsuz tamamlanır. vadeli_ekle ile aynı INSERT.
+            pid_yeni = str(uuid.uuid4())
+            cur.execute(
+                """
+                INSERT INTO odeme_plani
+                    (id, kart_id, tarih, referans_ay, odenecek_tutar, asgari_tutar,
+                     aciklama, durum, kaynak_tablo, kaynak_id)
+                VALUES (%s, NULL, %s, DATE_TRUNC('month', %s::date), %s, %s, %s,
+                        'bekliyor', 'vadeli_alimlar', %s)
+                RETURNING id, odenecek_tutar
+                """,
+                (pid_yeni, v['vade_tarihi'], str(v['vade_tarihi']), float(v['tutar']),
+                 float(v['tutar']), f"Vadeli Alım: {v.get('aciklama') or ''}", vid),
+            )
+            plan = cur.fetchone()
+        if not plan:
             raise HTTPException(400, "Bu vadeli alım için ödeme planı bulunamadı")
 
         bugun = str(bugun_tr())
