@@ -1714,12 +1714,14 @@ function CepSayimAktif() {
 function CepVardiyaTakip({ onGeri }) {
   const [veri, setVeri] = useState(null);
   const [vardiyaDisi, setVardiyaDisi] = useState([]);
+  const [izinMap, setIzinMap] = useState({}); // personel_id -> izin[]
   const [hata, setHata] = useState('');
   const [ayOff, setAyOff] = useState(0);
   const [filtre, setFiltre] = useState('aktif'); // aktif | ayrildi | hepsi
   const [secili, setSecili] = useState(null);    // detay modalı
   const bugunStr = new Date().toISOString().slice(0, 10);
-  const izinliBugun = (p) => (p.izin_bildirimleri || []).some(i => String(i.tarih).slice(0, 10) === bugunStr);
+  const izinliBugun = (p) => (izinMap[p.personel_id] || []).some(i =>
+    String(i.baslangic_tarih).slice(0, 10) <= bugunStr && bugunStr <= String(i.bitis_tarih).slice(0, 10));
 
   const d = (() => { const t = new Date(); t.setDate(1); t.setMonth(t.getMonth() - ayOff); return t; })();
   const yil = d.getFullYear();
@@ -1729,11 +1731,19 @@ function CepVardiyaTakip({ onGeri }) {
   const yukle = useCallback(() => {
     setHata('');
     const bugunTarih = new Date().toISOString().slice(0, 10);
+    const ayBas = `${yil}-${String(ay).padStart(2, '0')}-01`;
+    const ayBitis = new Date(yil, ay, 0).toISOString().slice(0, 10); // ayın son günü
     Promise.all([
       api(`/gorev/vardiya-takip?yil=${yil}&ay=${ay}`),
       api(`/gorev/yoklama?tarih=${bugunTarih}&sadece_vardiya_disi=true`).catch(() => []),
-    ]).then(([v, vd]) => { setVeri(v || { personeller: [] }); setVardiyaDisi(Array.isArray(vd) ? vd : []); })
-      .catch(e => { setHata(e.message || 'Yüklenemedi'); setVeri({ personeller: [] }); });
+      api(`/vardiya/v2/izin?baslangic=${ayBas}&bitis=${ayBitis}`).catch(() => ({ izinler: [] })),
+    ]).then(([v, vd, iz]) => {
+      setVeri(v || { personeller: [] });
+      setVardiyaDisi(Array.isArray(vd) ? vd : []);
+      const m = {};
+      for (const i of (iz?.izinler || [])) { (m[i.personel_id] = m[i.personel_id] || []).push(i); }
+      setIzinMap(m);
+    }).catch(e => { setHata(e.message || 'Yüklenemedi'); setVeri({ personeller: [] }); });
   }, [yil, ay]);
   useEffect(() => { yukle(); }, [yukle]);
 
@@ -1821,18 +1831,21 @@ function CepVardiyaTakip({ onGeri }) {
           );
         })}
       </div>
-      {secili && <CepVardiyaModal p={secili} onKapat={() => setSecili(null)} />}
+      {secili && <CepVardiyaModal p={secili} izinler={izinMap[secili.personel_id] || []} onKapat={() => setSecili(null)} />}
     </div>
   );
 }
 
-function CepVardiyaModal({ p, onKapat }) {
+function CepVardiyaModal({ p, izinler = [], onKapat }) {
   const hs = (n) => (Math.round((Number(n) || 0) * 10) / 10) + 's';
   const gunler = (p.gunler || []).filter(g => g.planlanan_saat > 0);
   const son7 = [...gunler].sort((a, b) => String(b.tarih).localeCompare(String(a.tarih))).slice(0, 7);
-  const izinler = p.izin_bildirimleri || [];
   const haft = p.haftalik_izin_detay || [];
   const trGun = (t) => new Date(t).toLocaleDateString('tr-TR', { day: 'numeric', month: 'short', weekday: 'short' });
+  const izinAralik = (iz) => {
+    const b = String(iz.baslangic_tarih).slice(0, 10), s = String(iz.bitis_tarih).slice(0, 10);
+    return b === s ? trGun(b) : `${trGun(b)} → ${trGun(s)}`;
+  };
 
   const Sat = ({ l, v, renk }) => (
     <div style={{ textAlign: 'center', flex: 1 }}>
@@ -1871,8 +1884,8 @@ function CepVardiyaModal({ p, onKapat }) {
             <div style={{ marginBottom: 14 }}>
               {izinler.map((iz, i) => (
                 <div key={i} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, padding: '7px 10px', background: C.bg, borderRadius: 8, marginBottom: 6 }}>
-                  <span style={{ fontSize: 12, color: C.t1, fontWeight: 600 }}>{trGun(iz.tarih)}</span>
-                  <span style={{ fontSize: 11, color: C.t3, textAlign: 'right', flex: 1 }}>{iz.aciklama || iz.tip}</span>
+                  <span style={{ fontSize: 12, color: C.t1, fontWeight: 600 }}>{izinAralik(iz)}</span>
+                  <span style={{ fontSize: 11, color: C.t3, textAlign: 'right', flex: 1 }}>{iz.tip || ''}{iz.gun_kesri && Number(iz.gun_kesri) !== 1 ? ` · ${iz.gun_kesri}g` : ''}{iz.aciklama ? ` · ${iz.aciklama}` : ''}</span>
                 </div>
               ))}
             </div>
