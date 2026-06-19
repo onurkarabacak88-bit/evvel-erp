@@ -1087,6 +1087,8 @@ function CepDepolar({ onGeri }) {
   }, [yukle]);
 
   const subeler = data?.subeler || [];
+  // "yok" sayımı satış şubeleri üzerinden (merkez = kaynak depo, şube değil)
+  const satisSubeler = subeler.filter(s => s.id !== 'sube-merkez');
   const kisa = (ad) => (ad || '').slice(0, 3).toUpperCase();
   const q = ara.trim().toLocaleLowerCase('tr');
   let kalemler = (data?.kalemler || []).filter(k => !q || (k.kalem_adi || '').toLocaleLowerCase('tr').includes(q));
@@ -1193,14 +1195,23 @@ function CepDepolar({ onGeri }) {
             <div style={{ fontSize: 12, fontWeight: 800, color: C.t3, padding: '8px 2px 4px' }}>{kat} <span style={{ color: C.border }}>({items.length})</span></div>
             {items.map(k => {
               if (aktif === 'tumu') {
-                const sifirT = (k.toplam || 0) === 0;
+                // Sipariş modunda SEÇİLEN şube vurgulu (sarı); yoksa TEMA vurgulu (kahve)
+                const vurguSube = (sipMod && sipSube) ? sipSube : 'sube-tema';
+                const vurguRenk = (sipMod && sipSube) ? C.sari : '#C8956A';
+                // Renk: hepsinde yok → kırmızı; bazı şubede yok → sarı
+                const yokSay = satisSubeler.filter(s => (k.adetler?.[s.id] ?? 0) === 0).length;
+                const tumYok = satisSubeler.length > 0 && yokSay >= satisSubeler.length;
+                const bazYok = !tumYok && yokSay > 0;
+                const durumRenk = tumYok ? C.kirmizi : (bazYok ? C.sari : null);
                 const seciliT = !!secim[k.kalem_kodu];
                 return (
                   <div key={k.kalem_kodu} style={{ padding: '9px 2px', borderTop: `1px solid ${C.border}` }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       {sipMod && <input type="checkbox" checked={seciliT} onChange={() => secTik(k)} style={{ width: 20, height: 20, accentColor: '#25D366', flex: '0 0 auto' }} />}
-                      <span style={{ fontSize: 14, flex: 1, color: sifirT ? C.kirmizi : C.t1, fontWeight: sifirT ? 700 : 400 }}>
-                        {k.kalem_adi}{sifirT && <span style={{ fontSize: 11, fontWeight: 700 }}> · stok yok</span>}
+                      <span style={{ fontSize: 14, flex: 1, color: durumRenk || C.t1, fontWeight: durumRenk ? 700 : 400 }}>
+                        {k.kalem_adi}
+                        {tumYok ? <span style={{ fontSize: 11, fontWeight: 700 }}> · stok yok</span>
+                          : bazYok ? <span style={{ fontSize: 11, fontWeight: 700 }}> · {yokSay} şubede yok</span> : null}
                       </span>
                       {sipMod ? (seciliT && <SipAdet k={k} secim={secim} secAdet={secAdet} secSet={secSet} />)
                         : <span style={{ fontSize: 14, fontWeight: 800, color: C.t1 }}>{k.toplam}</span>}
@@ -1208,14 +1219,14 @@ function CepDepolar({ onGeri }) {
                     <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 4 }}>
                       {subeler.map(s => {
                         const adet = k.adetler?.[s.id] ?? 0;
-                        const tema = s.id === 'sube-tema';
+                        const vurgulu = s.id === vurguSube;
                         return (
-                          <span key={s.id} style={tema ? {
+                          <span key={s.id} style={vurgulu ? {
                             fontSize: 12, padding: '3px 9px', borderRadius: 7, fontWeight: 800,
-                            background: '#C8956A', color: '#fff', border: '1px solid #d9a878',
+                            background: vurguRenk, color: '#fff', border: `1px solid ${vurguRenk}`,
                           } : {
                             fontSize: 11, padding: '2px 7px', borderRadius: 6,
-                            background: C.bg3, color: adet > 0 ? C.t2 : C.t3,
+                            background: C.bg3, color: adet > 0 ? C.t2 : C.kirmizi, fontWeight: adet > 0 ? 400 : 700,
                           }}>{kisa(s.ad)} {adet}</span>
                         );
                       })}
