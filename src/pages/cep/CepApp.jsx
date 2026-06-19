@@ -1717,6 +1717,9 @@ function CepVardiyaTakip({ onGeri }) {
   const [hata, setHata] = useState('');
   const [ayOff, setAyOff] = useState(0);
   const [filtre, setFiltre] = useState('aktif'); // aktif | ayrildi | hepsi
+  const [secili, setSecili] = useState(null);    // detay modalı
+  const bugunStr = new Date().toISOString().slice(0, 10);
+  const izinliBugun = (p) => (p.izin_bildirimleri || []).some(i => String(i.tarih).slice(0, 10) === bugunStr);
 
   const d = (() => { const t = new Date(); t.setDate(1); t.setMonth(t.getMonth() - ayOff); return t; })();
   const yil = d.getFullYear();
@@ -1790,11 +1793,13 @@ function CepVardiyaTakip({ onGeri }) {
         {veri && liste.length === 0 && !hata && <div style={{ color: C.t3, textAlign: 'center', padding: 30 }}>Bu ay için kayıt yok.</div>}
         {liste.map(p => {
           const ayrildi = !p.aktif;
+          const izinli = izinliBugun(p);
           return (
-            <div key={p.personel_id} style={{ background: C.bg2, border: `1px solid ${C.border}`, borderRadius: 14, padding: '12px 14px', marginBottom: 10, opacity: ayrildi ? 0.7 : 1 }}>
+            <div key={p.personel_id} onClick={() => setSecili(p)} style={{ background: C.bg2, border: `1px solid ${izinli ? 'rgba(34,197,94,0.4)' : C.border}`, borderLeft: izinli ? `4px solid ${C.yesil}` : `1px solid ${C.border}`, borderRadius: 14, padding: '12px 14px', marginBottom: 10, opacity: ayrildi ? 0.7 : 1, cursor: 'pointer' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
                 <div style={{ fontSize: 15, fontWeight: 800, color: C.t1 }}>
                   {p.ad_soyad}
+                  {izinli && <span style={{ fontSize: 11, fontWeight: 700, color: C.yesil, background: 'rgba(34,197,94,0.14)', borderRadius: 6, padding: '2px 7px', marginLeft: 6 }}>🌴 Bugün izinli</span>}
                   <span style={{ fontSize: 10, color: C.t3, fontWeight: 400, marginLeft: 6 }}>{p.calisma_turu === 'surekli' ? 'Sürekli' : 'Part-time'}</span>
                   {ayrildi && <span style={{ fontSize: 10, color: C.t3, marginLeft: 6 }}>· ayrıldı</span>}
                 </div>
@@ -1815,6 +1820,95 @@ function CepVardiyaTakip({ onGeri }) {
             </div>
           );
         })}
+      </div>
+      {secili && <CepVardiyaModal p={secili} onKapat={() => setSecili(null)} />}
+    </div>
+  );
+}
+
+function CepVardiyaModal({ p, onKapat }) {
+  const hs = (n) => (Math.round((Number(n) || 0) * 10) / 10) + 's';
+  const gunler = (p.gunler || []).filter(g => g.planlanan_saat > 0);
+  const son7 = [...gunler].sort((a, b) => String(b.tarih).localeCompare(String(a.tarih))).slice(0, 7);
+  const izinler = p.izin_bildirimleri || [];
+  const haft = p.haftalik_izin_detay || [];
+  const trGun = (t) => new Date(t).toLocaleDateString('tr-TR', { day: 'numeric', month: 'short', weekday: 'short' });
+
+  const Sat = ({ l, v, renk }) => (
+    <div style={{ textAlign: 'center', flex: 1 }}>
+      <div style={{ fontSize: 15, fontWeight: 800, color: renk || C.t1 }}>{v}</div>
+      <div style={{ fontSize: 10, color: C.t3, marginTop: 2 }}>{l}</div>
+    </div>
+  );
+
+  return (
+    <div onClick={onKapat} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', zIndex: 9999, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: C.bg2, borderTopLeftRadius: 18, borderTopRightRadius: 18, width: '100%', maxWidth: 520, maxHeight: '90vh', overflowY: 'auto', border: `1px solid ${C.border}` }}>
+        {/* Başlık */}
+        <div style={{ position: 'sticky', top: 0, background: C.bg2, borderBottom: `1px solid ${C.border}`, padding: '16px 18px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div>
+            <div style={{ fontSize: 17, fontWeight: 800, color: C.t1 }}>{p.ad_soyad}</div>
+            <div style={{ fontSize: 12, color: C.t3, marginTop: 2 }}>{p.calisma_turu === 'surekli' ? 'Sürekli' : 'Part-time'}{p.aktif === false ? ' · ayrıldı' : ''}</div>
+          </div>
+          <button onClick={onKapat} style={{ background: C.bg, border: `1px solid ${C.border}`, color: C.t2, width: 34, height: 34, borderRadius: 9, fontSize: 16, cursor: 'pointer' }}>✕</button>
+        </div>
+
+        <div style={{ padding: 16 }}>
+          {/* Özet metrikler */}
+          <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+            <Sat l="Plan" v={hs(p.toplam_planlanan_saat)} />
+            <Sat l="Fazla" v={hs(p.toplam_fazla_mesai_saat)} renk={p.toplam_fazla_mesai_saat > 0 ? '#f59e0b' : C.t1} />
+            <Sat l="Gecikme" v={`${p.toplam_gecikme_dk || 0}dk`} renk={p.toplam_gecikme_dk > 0 ? C.kirmizi : C.t1} />
+            <Sat l="Yemek" v={`${p.yemek_ucret_gun || 0}g`} renk={C.yesil} />
+            <Sat l="Net" v={p['net_hakediş'] > 0 ? fmt(Math.round(p['net_hakediş'])) : '—'} renk={C.yesil} />
+          </div>
+
+          {/* İzinler */}
+          <div style={{ fontSize: 12, fontWeight: 800, color: C.t2, marginBottom: 6 }}>🌴 İzin / Devamsızlık</div>
+          {izinler.length === 0 ? (
+            <div style={{ fontSize: 12, color: C.t3, marginBottom: 14 }}>Bu ay kayıtlı izin/devamsızlık yok.</div>
+          ) : (
+            <div style={{ marginBottom: 14 }}>
+              {izinler.map((iz, i) => (
+                <div key={i} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, padding: '7px 10px', background: C.bg, borderRadius: 8, marginBottom: 6 }}>
+                  <span style={{ fontSize: 12, color: C.t1, fontWeight: 600 }}>{trGun(iz.tarih)}</span>
+                  <span style={{ fontSize: 11, color: C.t3, textAlign: 'right', flex: 1 }}>{iz.aciklama || iz.tip}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Haftalık izin durumu */}
+          {haft.length > 0 && (
+            <>
+              <div style={{ fontSize: 12, fontWeight: 800, color: C.t2, marginBottom: 6 }}>📅 Haftalık izin</div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 14 }}>
+                {haft.map((h, i) => (
+                  <span key={i} style={{ fontSize: 11, fontWeight: 600, padding: '4px 8px', borderRadius: 7, color: h.izin_var ? C.yesil : C.kirmizi, background: h.izin_var ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)', border: `1px solid ${h.izin_var ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.3)'}` }}>
+                    {new Date(h.hafta).toLocaleDateString('tr-TR', { day: 'numeric', month: 'short' })} {h.izin_var ? '✓' : '✗ izinsiz'}
+                  </span>
+                ))}
+              </div>
+            </>
+          )}
+
+          {/* Son 7 gün */}
+          <div style={{ fontSize: 12, fontWeight: 800, color: C.t2, marginBottom: 6 }}>🗓️ Son çalışılan günler</div>
+          {son7.length === 0 ? (
+            <div style={{ fontSize: 12, color: C.t3 }}>Kayıt yok.</div>
+          ) : son7.map((g, i) => (
+            <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, padding: '8px 10px', background: C.bg, borderRadius: 8, marginBottom: 6 }}>
+              <span style={{ fontSize: 12, color: C.t1, fontWeight: 600 }}>{trGun(g.tarih)}</span>
+              <span style={{ fontSize: 11, color: C.t3, display: 'flex', gap: 10 }}>
+                <span>{hs(g.planlanan_saat)}</span>
+                {g.gecikme_dk > 0 && <span style={{ color: C.kirmizi }}>⏰ {g.gecikme_dk}dk</span>}
+                {g.fazla_mesai_saat > 0 && <span style={{ color: '#f59e0b' }}>+{hs(g.fazla_mesai_saat)}</span>}
+                {g.yemek_sure_dk != null && <span style={{ color: g.yemek_ucret_hakki ? C.yesil : C.kirmizi }}>🍽️{g.yemek_ucret_hakki ? '✓' : '✗'}</span>}
+                {!g.giris_var && !g.baslangic_gunu && <span style={{ color: C.kirmizi }}>giriş yok</span>}
+              </span>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );
