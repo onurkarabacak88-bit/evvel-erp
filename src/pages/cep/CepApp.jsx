@@ -2563,6 +2563,7 @@ function CepKartlar({ onGeri }) {
   });
   const toplamBorc = (liste || []).reduce((s, k) => s + (Number(k.guncel_borc) || 0), 0);
   const toplamKalan = (liste || []).reduce((s, k) => s + (Number(k.kalan_limit) || 0), 0);
+  const yaklasanSay = (liste || []).filter(k => (Number(k.guncel_borc) || 0) > 0 && k.gun_kaldi != null && k.gun_kaldi <= 7).length;
 
   const odemeRenk = (k) => {
     if ((Number(k.guncel_borc) || 0) <= 0 || k.gun_kaldi == null) return C.t3;
@@ -2586,6 +2587,9 @@ function CepKartlar({ onGeri }) {
           <div style={{ fontSize: 12, color: C.t3 }}>Toplam kart borcu</div>
           <div style={{ fontSize: 28, fontWeight: 800, color: C.kirmizi, marginTop: 2 }}>{fmt(toplamBorc)}</div>
           <div style={{ fontSize: 12, color: C.t3, marginTop: 4 }}>Kalan limit: <b style={{ color: C.yesil }}>{fmt(toplamKalan)}</b></div>
+          {yaklasanSay > 0 && (
+            <div style={{ fontSize: 13, fontWeight: 700, color: C.sari, marginTop: 10 }}>⚠️ {yaklasanSay} kartın son ödeme tarihi 7 gün içinde</div>
+          )}
         </div>
       )}
 
@@ -2613,7 +2617,7 @@ function CepKartlar({ onGeri }) {
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: C.t3, marginTop: 6 }}>
                 <span>Kalan: <b style={{ color: C.t2 }}>{fmt(k.kalan_limit)}</b></span>
                 {borc > 0 && k.gun_kaldi != null && (
-                  <span style={{ color: oRenk, fontWeight: 700 }}>Son ödeme {trTarih(k.son_odeme_tarihi)} · {k.gun_kaldi}g</span>
+                  <span style={{ color: oRenk, fontWeight: 700 }}>{k.gun_kaldi <= 3 ? '🔴' : k.gun_kaldi <= 7 ? '🟡' : '🟢'} Son ödeme {trTarih(k.son_odeme_tarihi)} · {k.gun_kaldi}g</span>
                 )}
               </div>
               {borc > 0 && Number(k.asgari_odeme) > 0 && (
@@ -2634,6 +2638,10 @@ function CepKartlar({ onGeri }) {
               </div>
               <div style={{ fontSize: 13, color: C.t3, marginTop: 6 }}>
                 Borç <b style={{ color: C.kirmizi }}>{fmt(detay.guncel_borc)}</b> · Kalan {fmt(detay.kalan_limit)} · Son ödeme {trTarih(detay.son_odeme_tarihi)}
+              </div>
+              <div style={{ fontSize: 12, color: C.t3, marginTop: 3 }}>
+                Kullanım %{detay.limit_doluluk != null ? Math.round(detay.limit_doluluk) : (Number(detay.limit_tutar) > 0 ? Math.round((Number(detay.guncel_borc) / Number(detay.limit_tutar)) * 100) : 0)}
+                {Number(detay.asgari_odeme) > 0 ? ` · Asgari ${fmt(detay.asgari_odeme)}${detay.asgari_karsilandi ? ' ✓' : ''}` : ''}
               </div>
             </div>
             <div style={{ overflowY: 'auto', padding: '4px 16px 20px' }}>
