@@ -1842,8 +1842,8 @@ function CepVardiyaModal({ p, onKapat }) {
   );
 
   return (
-    <div onClick={onKapat} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', zIndex: 9999, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
-      <div onClick={e => e.stopPropagation()} style={{ background: C.bg2, borderTopLeftRadius: 18, borderTopRightRadius: 18, width: '100%', maxWidth: 520, maxHeight: '90vh', overflowY: 'auto', border: `1px solid ${C.border}` }}>
+    <div onClick={onKapat} style={{ position: 'fixed', inset: 0, background: C.bg, zIndex: 9999, display: 'flex', flexDirection: 'column' }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: C.bg2, width: '100%', maxWidth: 520, margin: '0 auto', height: '100%', display: 'flex', flexDirection: 'column', overflowY: 'auto' }}>
         {/* Başlık */}
         <div style={{ position: 'sticky', top: 0, background: C.bg2, borderBottom: `1px solid ${C.border}`, padding: '16px 18px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
