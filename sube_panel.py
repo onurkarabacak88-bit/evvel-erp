@@ -4635,6 +4635,9 @@ def _siparis_akisi_talep_satir_isle(d: Dict[str, Any]) -> Dict[str, Any]:
     d["kalemler_ozet"] = ozet
     d["kalem_durum_ozet"] = _siparis_kalem_durum_ozet(kd_raw)
     d["id"] = oid
+    # MERKEZ siparişi işareti: patron/Cep siparişi talep'i personel_ad='MERKEZ' damgalar
+    # (merkez-siparis-olustur). Sipariş Takip bunu farklı renk/etiketle gösterir.
+    d["merkez"] = (str(d.get("personel_ad") or "").strip().upper() == "MERKEZ")
     return d
 
 
@@ -4815,6 +4818,7 @@ def sube_siparis_akisi(
         yolda_map = _depo_yolda_teslim_haritasi(cur, sube_id, gun_i)
         q = f"""
             SELECT t.id, t.tarih, t.durum, t.bildirim_saati, t.olusturma,
+                   t.personel_ad,
                    {SD_T} AS sevkiyat_durumu,
 
                    COALESCE(t.hedef_depo_sube_id, t.sevkiyat_sube_id) AS hedef_depo_sube_id,

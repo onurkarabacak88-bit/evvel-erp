@@ -8712,13 +8712,15 @@ async function renderSiparisTakipPanel() {
     var toplamAdet  = kalemler.reduce(function(s, k) { return s + (parseInt(k.adet || k.istenen_adet || 0, 10) || 0); }, 0);
     var tamamlandi  = t.kabul_durum === 'kabul_tam' || t.durum === 'teslim_edildi';
 
-    // ── Kart ──
-    h += '<div class="st-kart">';
+    // ── Kart ── (MERKEZ siparişi farklı renk: indigo şerit + hafif zemin)
+    var _stMerkez = !!t.merkez;
+    h += '<div class="st-kart"' + (_stMerkez ? ' style="border-left:4px solid #6366f1;background:rgba(99,102,241,0.05)"' : '') + '>';
 
     // Başlık: chip + meta
     h += '<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:4px">';
     h += '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">';
     h += '<span class="st-chip" style="background:' + chip.bg + ';border:1px solid ' + chip.border + ';color:' + chip.col + '">' + chip.txt + '</span>';
+    if (_stMerkez) h += '<span style="font-size:11px;font-weight:800;color:#fff;background:#6366f1;padding:2px 8px;border-radius:6px">🏢 MERKEZ</span>';
     h += '<span style="font-size:12px;color:var(--muted)">#' + escHtml(tid) + '…</span>';
     h += '<span style="font-size:12px;color:var(--text3)">📅 ' + escHtml(olusma) + '</span>';
     h += '</div>';
@@ -8784,7 +8786,7 @@ async function renderSiparisTakipPanel() {
     h += '<div class="st-dot">✓</div>';
     h += '<div class="st-lbl">Talep</div>';
     h += '<div class="st-ts">' + escHtml(olusma) + '</div>';
-    h += '<div class="st-sub">Oluşturuldu</div>';
+    h += '<div class="st-sub">' + (_stMerkez ? '🏢 Merkez verdi' : 'Oluşturuldu') + '</div>';
     h += '</div>';
     // Adım 2 — Tahsis
     h += '<div class="st-step ' + tahsisCls + '">';
@@ -10738,11 +10740,18 @@ var UrunTeslimAl = (function () {
         var wa = o.wa_gonderildi ? ' · 📲' : '';
         var mrk = (o.kaynak === 'merkez');
         var mrkRoz = mrk ? '<span style="display:inline-block;font-size:10px;font-weight:800;color:#fff;background:#6366f1;padding:1px 6px;border-radius:5px;margin-right:5px">🏢 MERKEZ</span>' : '';
+        // Kalemler özeti — tıklamadan hangi sipariş olduğu belli olsun (3 sipariş bekliyorsa karışmasın)
+        var _kl = (o.kalemler || []).map(function (k) { return escHtml(k.urun_ad || '') + (k.adet ? ' ×' + k.adet : ''); }).filter(Boolean);
+        var _kalemOzet = _kl.length ? (_kl.slice(0, 6).join(', ') + (_kl.length > 6 ? ' …' : '')) : '';
         cards +=
-          '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;background:var(--bg);border:1px solid ' + (mrk ? '#6366f1' : 'var(--cizgi)') + ';border-radius:10px;padding:10px 12px;margin-bottom:8px">' +
-            '<div>' + mrkRoz + '<b style="font-size:15px">' + escHtml(o.tedarikci_ad || '—') + '</b>' +
-              '<span style="font-size:12px;color:var(--muted)"> · ' + (o.kalem_sayisi || 0) + ' kalem' + wa + '</span></div>' +
-            '<button type="button" class="btn btn-primary btn-sm" data-sv-bekleyen="' + escHtml(o.id) + '">Teslim Al</button>' +
+          '<div style="background:var(--bg);border:1px solid ' + (mrk ? '#6366f1' : 'var(--cizgi)') + ';' + (mrk ? 'border-left:4px solid #6366f1;' : '') + 'border-radius:10px;padding:10px 12px;margin-bottom:8px">' +
+            '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px">' +
+              '<div>' + mrkRoz + '<b style="font-size:15px">' + escHtml(o.tedarikci_ad || '—') + '</b>' +
+                '<span style="font-size:12px;color:var(--muted)"> · ' + (o.kalem_sayisi || 0) + ' kalem' + wa + '</span></div>' +
+              '<button type="button" class="btn btn-primary btn-sm" data-sv-bekleyen="' + escHtml(o.id) + '">Teslim Al</button>' +
+            '</div>' +
+            (mrk ? '<div style="font-size:12px;font-weight:700;color:#6366f1;margin-top:6px">🏢 Bu sipariş MERKEZDEN verilmiştir</div>' : '') +
+            (_kalemOzet ? '<div style="font-size:12px;color:var(--text2);margin-top:4px;line-height:1.45">📋 ' + _kalemOzet + '</div>' : '') +
           '</div>';
       });
       wrap.innerHTML =
