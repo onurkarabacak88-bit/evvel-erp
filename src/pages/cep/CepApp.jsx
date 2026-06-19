@@ -213,6 +213,8 @@ function CepHome({ sayac, kasa, onKasa, onAc, onCikis, yenile }) {
     { id: 'belge-talep', ikon: '🧾', baslik: 'Fatura Bekleyen', renk: '#f59e0b',
       sayi: sayac.belge, alt: sayac.belge > 0 ? `${sayac.belge} teslimat faturası bekliyor` : 'Fatura bekleyen yok' },
     // Denetim kartı şimdilik kapalı (kullanıcı kararı) — component/route dormant duruyor.
+    { id: 'basvurular', ikon: '🧑‍💼', baslik: 'İş Başvuruları', renk: C.mavi,
+      sayi: sayac.basvuru, alt: sayac.basvuru > 0 ? `${sayac.basvuru} yeni başvuru` : 'Yeni başvuru yok' },
     { id: 'demirbas', ikon: '🛠️', baslik: 'Demirbaş & Arıza', renk: C.kirmizi,
       sayi: sayac.ariza, alt: sayac.ariza > 0 ? `${sayac.ariza} açık arıza` : 'Açık arıza yok' },
     { id: 'subeler', ikon: '🏪', baslik: 'Şubeler', renk: C.mavi,
@@ -776,6 +778,91 @@ function CepBelgeTalep({ onGeri, onDegisti }) {
                   textDecoration: 'underline', cursor: 'pointer',
                 }}>fatura dijital değil · elle kapat</button>
               </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ── İş Başvuruları (salt-okur — gelen başvuruları telefondan gör) ───────────
+function CepBasvurular({ onGeri }) {
+  const [liste, setListe] = useState(null);
+  const [hata, setHata] = useState('');
+  const [filtre, setFiltre] = useState('aktif'); // aktif | arsiv
+
+  const yukle = useCallback(() => {
+    setHata('');
+    const q = filtre === 'arsiv' ? '?arsivli=true' : '?arsivli=false';
+    api(`/is-basvurusu${q}`)
+      .then(d => setListe(Array.isArray(d) ? d : []))
+      .catch(e => { setHata(e.message || 'Yüklenemedi'); setListe([]); });
+  }, [filtre]);
+  useEffect(() => { yukle(); }, [yukle]);
+
+  const durumRenk = (d) => {
+    const s = String(d || '').toLowerCase();
+    if (s.includes('olumlu') || s.includes('kabul') || s.includes('alindi')) return C.yesil;
+    if (s.includes('olumsuz') || s.includes('red')) return C.kirmizi;
+    if (s.includes('deger') || s.includes('gorus') || s.includes('mulakat')) return C.mavi;
+    return C.sari;
+  };
+  const telNorm = (tel) => String(tel || '').replace(/\s/g, '');
+
+  return (
+    <div style={{ minHeight: '100vh', background: C.bg }}>
+      <Baslik baslik="🧑‍💼 İş Başvuruları" onGeri={onGeri}
+        sag={<button onClick={yukle} style={{ background: 'none', border: 'none', color: C.t3, fontSize: 20, cursor: 'pointer' }}>↻</button>} />
+      {/* Aktif / Arşiv sekmesi */}
+      <div style={{ display: 'flex', gap: 8, padding: '12px 14px', borderBottom: `1px solid ${C.border}` }}>
+        {[['aktif', 'Aktif'], ['arsiv', 'Arşiv']].map(([k, etk]) => (
+          <button key={k} onClick={() => setFiltre(k)} style={{
+            flex: 1, background: filtre === k ? C.mavi : C.bg2, color: filtre === k ? '#fff' : C.t2,
+            border: `1px solid ${filtre === k ? C.mavi : C.border}`, borderRadius: 10, padding: '9px 0',
+            fontSize: 14, fontWeight: 700, cursor: 'pointer',
+          }}>{etk}</button>
+        ))}
+      </div>
+      <div style={{ padding: 14 }}>
+        {liste === null && <div style={{ color: C.t3, textAlign: 'center', padding: 30 }}>Yükleniyor…</div>}
+        {hata && <div style={{ color: C.kirmizi, textAlign: 'center', padding: 16 }}>{hata}</div>}
+        {liste && liste.length === 0 && !hata && (
+          <div style={{ color: C.t3, textAlign: 'center', padding: 40 }}>{filtre === 'arsiv' ? 'Arşivde başvuru yok.' : 'Aktif başvuru yok.'}</div>
+        )}
+        {(liste || []).map(b => {
+          const yeni = !b.goruldu_ts;
+          const subeler = Array.isArray(b.tercih_subeler) ? b.tercih_subeler.join(', ') : '';
+          const tel = telNorm(b.telefon);
+          return (
+            <div key={b.id} style={{
+              background: C.bg2, border: `1px solid ${C.border}`, borderLeft: `4px solid ${durumRenk(b.durum)}`,
+              borderRadius: 14, padding: '12px 14px', marginBottom: 10,
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 15, fontWeight: 800, color: C.t1, display: 'flex', alignItems: 'center', gap: 6 }}>
+                    {b.ad_soyad || '—'}
+                    {yeni && <span style={{ background: C.kirmizi, color: '#fff', fontSize: 9, fontWeight: 800, padding: '2px 6px', borderRadius: 6 }}>YENİ</span>}
+                    {(b.oncelik === 1 || b.oncelik === 2) && <span style={{ fontSize: 12 }}>{b.oncelik === 1 ? '⭐' : '🔸'}</span>}
+                  </div>
+                  <div style={{ fontSize: 12, color: C.t2, marginTop: 3 }}>{b.pozisyon || 'Pozisyon belirtilmemiş'}{subeler ? ` · ${subeler}` : ''}</div>
+                  <div style={{ fontSize: 11, color: C.t3, marginTop: 3 }}>
+                    {b.ilce || ''}{b.dogum_yili ? ` · ${b.dogum_yili}` : ''}{b.olusturma_ts ? ` · ${new Date(b.olusturma_ts).toLocaleDateString('tr-TR')}` : ''}
+                  </div>
+                </div>
+                <div style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                  {b.skor != null && <div style={{ fontSize: 18, fontWeight: 800, color: C.t1 }}>{b.skor}</div>}
+                  <div style={{ fontSize: 10, color: durumRenk(b.durum), fontWeight: 700, marginTop: 2 }}>{b.durum || ''}</div>
+                </div>
+              </div>
+              {tel && (
+                <a href={`tel:${tel}`} style={{
+                  display: 'block', textAlign: 'center', marginTop: 10, background: C.bg,
+                  border: `1px solid ${C.border}`, borderRadius: 10, padding: '9px 0',
+                  fontSize: 14, fontWeight: 700, color: C.yesil, textDecoration: 'none',
+                }}>📞 {b.telefon}</a>
+              )}
             </div>
           );
         })}
@@ -1821,7 +1908,7 @@ function CepKule({ onGeri, onDegisti }) {
 export default function CepApp() {
   const [girisli, setGirisli] = useState(() => tokenGecerli());
   const [view, setView] = useState('home');
-  const [sayac, setSayac] = useState({ onay: 0, odeme: 0, odemeTutar: 0, ariza: 0, kule: 0, ciro: 0, kasaUyum: 0, disKaynak: 0, belge: 0 });
+  const [sayac, setSayac] = useState({ onay: 0, odeme: 0, odemeTutar: 0, ariza: 0, kule: 0, ciro: 0, kasaUyum: 0, disKaynak: 0, belge: 0, basvuru: 0 });
   const [kasa, setKasa] = useState({ tutar: null, gun: null, hareketler: [] });
   const [kasaModal, setKasaModal] = useState(false);
 
@@ -1836,7 +1923,8 @@ export default function CepApp() {
       api('/ciro-taslak?durum=bekliyor'),
       api('/ops/kasa-uyumsuzluk'),
       api('/belge-talep/bekleyen'),
-    ]).then(([onay, odeme, kasaR, panelR, arizaR, kuleR, ciroR, kuyumR, belgeR]) => {
+      api('/is-basvurusu/ozet'),
+    ]).then(([onay, odeme, kasaR, panelR, arizaR, kuleR, ciroR, kuyumR, belgeR, basvuruR]) => {
       const onayN = (onay.status === 'fulfilled' && Array.isArray(onay.value)) ? onay.value.filter(giderOnayMi).length : 0;
       const odemeArr = (odeme.status === 'fulfilled' && Array.isArray(odeme.value)) ? odeme.value : [];
       const odemeTutar = odemeArr.reduce((s, o) => s + (Number(o.tutar) || 0), 0);
@@ -1846,7 +1934,8 @@ export default function CepApp() {
       const kuyumN = (kuyumR.status === 'fulfilled') ? (Number(kuyumR.value?.gun_bekleyen) || 0) : 0;
       const disK = (panelR.status === 'fulfilled') ? (Number(panelR.value?.bu_ay_dis_kaynak) || 0) : 0;
       const belgeN = (belgeR.status === 'fulfilled') ? (Number(belgeR.value?.toplam) || 0) : 0;
-      setSayac({ onay: onayN, odeme: odemeArr.length, odemeTutar, ariza: arizaN, kule: kuleN, ciro: ciroN, kasaUyum: kuyumN, disKaynak: disK, belge: belgeN });
+      const basvuruN = (basvuruR.status === 'fulfilled') ? (Number(basvuruR.value?.yeni) || 0) : 0;
+      setSayac({ onay: onayN, odeme: odemeArr.length, odemeTutar, ariza: arizaN, kule: kuleN, ciro: ciroN, kasaUyum: kuyumN, disKaynak: disK, belge: belgeN, basvuru: basvuruN });
 
       const kTutar = (kasaR.status === 'fulfilled') ? (Number(kasaR.value?.guncel_bakiye) || 0) : null;
       const hareketler = (kasaR.status === 'fulfilled' && Array.isArray(kasaR.value?.hareketler)) ? kasaR.value.hareketler : [];
@@ -1888,6 +1977,8 @@ export default function CepApp() {
     return <CepDepolar onGeri={geri} />;
   if (view === 'belge-talep')
     return <CepBelgeTalep onGeri={geri} onDegisti={sayaclariYukle} />;
+  if (view === 'basvurular')
+    return <CepBasvurular onGeri={geri} />;
   if (view === 'subeler')
     return <CepSubeler onGeri={geri} />;
 
