@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { api } from '../utils/api';
+import tulipiLogo from '../assets/tulipi-logo.jpg';
 
 const VT_ETIKET = {
   sabahci:     { label: 'Sabahçı',    renk: '#4a9eff' },
@@ -96,8 +97,8 @@ function SiparisEkrani({ oturum, subeBilgi, onKapat }) {
   };
 
   const S = {
-    page: { minHeight: '100vh', background: '#0f1117', color: '#e8e9ec', fontFamily: 'Instrument Sans, sans-serif' },
-    hdr: { padding: '14px 16px', borderBottom: '1px solid #2a2d35', display: 'flex', alignItems: 'center', gap: 10, position: 'sticky', top: 0, background: '#0f1117', zIndex: 10 },
+    page: { minHeight: '100vh', background: '#F4EFE9', color: '#2A241E', fontFamily: 'Instrument Sans, sans-serif' },
+    hdr: { padding: '14px 16px', borderBottom: '1px solid #E6DED4', display: 'flex', alignItems: 'center', gap: 10, position: 'sticky', top: 0, background: '#F4EFE9', zIndex: 10 },
     btn: (renk) => ({ padding: '10px 16px', borderRadius: 8, border: 'none', cursor: 'pointer', fontWeight: 700, fontSize: 14, background: renk, color: '#fff' }),
   };
 
@@ -106,7 +107,7 @@ function SiparisEkrani({ oturum, subeBilgi, onKapat }) {
       <div style={{ textAlign: 'center', padding: 32 }}>
         <div style={{ fontSize: 48, marginBottom: 16 }}>✅</div>
         <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 8 }}>Sipariş Gönderildi!</div>
-        <div style={{ fontSize: 13, color: '#6b6f7a', marginBottom: 24 }}>Merkez siparişini aldı.</div>
+        <div style={{ fontSize: 13, color: '#9C8E7E', marginBottom: 24 }}>Merkez siparişini aldı.</div>
         <button onClick={onKapat} style={S.btn('#C8956A')}>Görevlere Dön</button>
       </div>
     </div>
@@ -117,9 +118,9 @@ function SiparisEkrani({ oturum, subeBilgi, onKapat }) {
       <div style={{ textAlign: 'center', padding: 32, maxWidth: 340 }}>
         <div style={{ fontSize: 40, marginBottom: 16 }}>⚠️</div>
         <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>Açık Sipariş Var</div>
-        <div style={{ fontSize: 13, color: '#6b6f7a', marginBottom: 24, lineHeight: 1.6 }}>{hataMsg}</div>
+        <div style={{ fontSize: 13, color: '#9C8E7E', marginBottom: 24, lineHeight: 1.6 }}>{hataMsg}</div>
         <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}>
-          <button onClick={() => setSonuc(null)} style={{ ...S.btn('#2a2d35'), color: '#e8e9ec' }}>Geri Dön</button>
+          <button onClick={() => setSonuc(null)} style={{ ...S.btn('#E6DED4'), color: '#2A241E' }}>Geri Dön</button>
           <button onClick={() => { setSonuc(null); gonder(true); }} style={S.btn('#f59e0b')}>Yine de Gönder</button>
         </div>
       </div>
@@ -130,10 +131,10 @@ function SiparisEkrani({ oturum, subeBilgi, onKapat }) {
     <div style={S.page}>
       {/* Header */}
       <div style={S.hdr}>
-        <button onClick={onKapat} style={{ background: 'none', border: 'none', color: '#6b6f7a', cursor: 'pointer', fontSize: 20, padding: 0 }}>←</button>
+        <button onClick={onKapat} style={{ background: 'none', border: 'none', color: '#9C8E7E', cursor: 'pointer', fontSize: 20, padding: 0 }}>←</button>
         <div style={{ flex: 1 }}>
           <div style={{ fontWeight: 700, fontSize: 15 }}>📦 Sipariş Ver</div>
-          <div style={{ fontSize: 11, color: '#6b6f7a' }}>{subeBilgi?.ad} · {oturum.ad_soyad}</div>
+          <div style={{ fontSize: 11, color: '#9C8E7E' }}>{subeBilgi?.ad} · {oturum.ad_soyad}</div>
         </div>
         {sepetSayisi > 0 && (
           <div style={{ background: '#C8956A', borderRadius: 20, padding: '3px 10px', fontSize: 12, fontWeight: 700 }}>
@@ -143,15 +144,15 @@ function SiparisEkrani({ oturum, subeBilgi, onKapat }) {
       </div>
 
       {yukleniyor ? (
-        <div style={{ textAlign: 'center', padding: 60, color: '#6b6f7a' }}>
+        <div style={{ textAlign: 'center', padding: 60, color: '#9C8E7E' }}>
           <div className="spinner" style={{ margin: '0 auto 12px' }} />Katalog yükleniyor…
         </div>
       ) : !katalog?.length ? (
-        <div style={{ textAlign: 'center', padding: 60, color: '#6b6f7a' }}>Katalog bulunamadı.</div>
+        <div style={{ textAlign: 'center', padding: 60, color: '#9C8E7E' }}>Katalog bulunamadı.</div>
       ) : (
         <div style={{ paddingBottom: 120 }}>
           {/* Kategori sekmeler */}
-          <div style={{ display: 'flex', gap: 8, padding: '12px 16px', overflowX: 'auto', borderBottom: '1px solid #2a2d35' }}>
+          <div style={{ display: 'flex', gap: 8, padding: '12px 16px', overflowX: 'auto', borderBottom: '1px solid #E6DED4' }}>
             {katalog.map(kat => {
               const seciliSayisi = (kat.items || []).reduce((s, u) => s + (sepet[u.id]?.adet || 0), 0);
               return (
@@ -159,8 +160,8 @@ function SiparisEkrani({ oturum, subeBilgi, onKapat }) {
                   style={{
                     padding: '7px 14px', borderRadius: 20, border: 'none', cursor: 'pointer',
                     fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap', position: 'relative',
-                    background: acikKat === kat.id ? '#C8956A' : '#22262f',
-                    color: acikKat === kat.id ? '#fff' : '#b0b3bc',
+                    background: acikKat === kat.id ? '#C8956A' : '#F7F2EC',
+                    color: acikKat === kat.id ? '#fff' : '#6B5E50',
                   }}>
                   {kat.label || kat.ad}
                   {seciliSayisi > 0 && (
@@ -182,26 +183,26 @@ function SiparisEkrani({ oturum, subeBilgi, onKapat }) {
                 return (
                   <div key={urun.id} style={{
                     display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                    padding: '13px 0', borderBottom: '1px solid #1e2028',
+                    padding: '13px 0', borderBottom: '1px solid #F7F2EC',
                   }}>
                     <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: 14, fontWeight: adet > 0 ? 700 : 400, color: adet > 0 ? '#e8e9ec' : '#b0b3bc' }}>
+                      <div style={{ fontSize: 14, fontWeight: adet > 0 ? 700 : 400, color: adet > 0 ? '#2A241E' : '#6B5E50' }}>
                         {urun.ad}
                       </div>
-                      {urun.aciklama && <div style={{ fontSize: 11, color: '#6b6f7a', marginTop: 2 }}>{urun.aciklama}</div>}
+                      {urun.aciklama && <div style={{ fontSize: 11, color: '#9C8E7E', marginTop: 2 }}>{urun.aciklama}</div>}
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                       {adet > 0 && (
                         <>
                           <button onClick={() => ayarla(kat.db_kategori_id || kat.id, urun, -1)}
-                            style={{ width: 40, height: 40, borderRadius: 8, border: '1px solid #2a2d35', background: '#22262f', color: '#e8e9ec', fontSize: 20, cursor: 'pointer', fontWeight: 700 }}>−</button>
+                            style={{ width: 40, height: 40, borderRadius: 8, border: '1px solid #E6DED4', background: '#F7F2EC', color: '#2A241E', fontSize: 20, cursor: 'pointer', fontWeight: 700 }}>−</button>
                           <span onClick={() => adetCiftTik(kat.db_kategori_id || kat.id, urun, adet)}
                             title="Çift dokun → rakam gir"
                             style={{ fontSize: 18, fontWeight: 800, minWidth: 28, textAlign: 'center', color: '#C8956A', cursor: 'pointer', userSelect: 'none' }}>{adet}</span>
                         </>
                       )}
                       <button onClick={() => ayarla(kat.db_kategori_id || kat.id, urun, +1)}
-                        style={{ width: 40, height: 40, borderRadius: 8, border: 'none', background: adet > 0 ? '#C8956A' : '#2a2d35', color: '#fff', fontSize: 20, cursor: 'pointer', fontWeight: 700 }}>+</button>
+                        style={{ width: 40, height: 40, borderRadius: 8, border: 'none', background: adet > 0 ? '#C8956A' : '#E6DED4', color: '#fff', fontSize: 20, cursor: 'pointer', fontWeight: 700 }}>+</button>
                     </div>
                   </div>
                 );
@@ -218,7 +219,7 @@ function SiparisEkrani({ oturum, subeBilgi, onKapat }) {
                 rows={2}
                 style={{
                   width: '100%', padding: '10px 12px', borderRadius: 8, fontSize: 13,
-                  background: '#1a1d24', border: '1px solid #2a2d35', color: '#e8e9ec',
+                  background: '#FFFFFF', border: '1px solid #E6DED4', color: '#2A241E',
                   resize: 'none', boxSizing: 'border-box',
                 }}
               />
@@ -231,7 +232,7 @@ function SiparisEkrani({ oturum, subeBilgi, onKapat }) {
       {sepetSayisi > 0 && (
         <div style={{
           position: 'fixed', bottom: 0, left: 0, right: 0,
-          padding: '12px 16px', background: '#0f1117', borderTop: '1px solid #2a2d35',
+          padding: '12px 16px', background: '#F4EFE9', borderTop: '1px solid #E6DED4',
         }}>
           {sonuc === 'hata' && (
             <div style={{ fontSize: 12, color: '#e05c5c', marginBottom: 8, textAlign: 'center' }}>{hataMsg}</div>
@@ -309,13 +310,13 @@ function MesaiCikisButon({ oturum, isDevreden }) {
   if (durum === 'qr-onay') return (
     <div style={{
       margin: '8px 16px', padding: '16px', borderRadius: 12,
-      background: '#1a1d24', border: '1px solid rgba(200,149,106,0.4)',
+      background: '#FFFFFF', border: '1px solid rgba(200,149,106,0.4)',
       textAlign: 'center',
     }}>
       <div style={{ fontSize: 13, fontWeight: 700, color: '#C8956A', marginBottom: 4 }}>
         🔒 Çıkışın Onaylandı
       </div>
-      <div style={{ fontSize: 11, color: '#6b6f7a', marginBottom: 12, lineHeight: 1.6 }}>
+      <div style={{ fontSize: 11, color: '#9C8E7E', marginBottom: 12, lineHeight: 1.6 }}>
         Şube QR kodunu okut — onay verildi
       </div>
       {subeQrUrl && (
@@ -327,7 +328,7 @@ function MesaiCikisButon({ oturum, isDevreden }) {
       <button onClick={() => setDurum('onaylandi')}
         style={{
           marginTop: 12, padding: '8px 20px', borderRadius: 8, fontSize: 12,
-          background: 'none', border: '1px solid #2a2d35', color: '#6b6f7a', cursor: 'pointer',
+          background: 'none', border: '1px solid #E6DED4', color: '#9C8E7E', cursor: 'pointer',
         }}>
         Kapat
       </button>
@@ -353,7 +354,7 @@ function MesaiCikisButon({ oturum, isDevreden }) {
     <div style={{
       margin: '8px 16px', padding: '12px 14px', borderRadius: 10,
       background: 'rgba(74,158,255,0.06)', border: '1px solid rgba(74,158,255,0.2)',
-      fontSize: 12, color: '#6b6f7a', textAlign: 'center', lineHeight: 1.6,
+      fontSize: 12, color: '#9C8E7E', textAlign: 'center', lineHeight: 1.6,
     }}>
       ℹ️ Vardiyan, panelden kasa devrini onayladığında otomatik olarak sona erecek.
     </div>
@@ -367,13 +368,13 @@ function MesaiCikisButon({ oturum, isDevreden }) {
 
       {onayModal ? (
         <div style={{
-          padding: '14px', borderRadius: 10, background: '#1a1d24',
-          border: '1px solid #2a2d35',
+          padding: '14px', borderRadius: 10, background: '#FFFFFF',
+          border: '1px solid #E6DED4',
         }}>
-          <div style={{ fontSize: 14, fontWeight: 700, color: '#e8e9ec', marginBottom: 4, textAlign: 'center' }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: '#2A241E', marginBottom: 4, textAlign: 'center' }}>
             Vardiyandan çıkış yapıyorsun
           </div>
-          <div style={{ fontSize: 11, color: '#6b6f7a', marginBottom: 12, textAlign: 'center' }}>
+          <div style={{ fontSize: 11, color: '#9C8E7E', marginBottom: 12, textAlign: 'center' }}>
             Görevlerini tamamladıysan çıkışını onaylayabilirsin.
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
@@ -386,7 +387,7 @@ function MesaiCikisButon({ oturum, isDevreden }) {
               {yukleniyor ? '…' : '✅ Çıkışımı Onayla'}
             </button>
             <button onClick={() => setOnayModal(false)} disabled={yukleniyor}
-              style={{ padding: '12px', borderRadius: 8, border: '1px solid #2a2d35', background: 'none', color: '#6b6f7a', cursor: 'pointer', fontSize: 13 }}>
+              style={{ padding: '12px', borderRadius: 8, border: '1px solid #E6DED4', background: 'none', color: '#9C8E7E', cursor: 'pointer', fontSize: 13 }}>
               ✕
             </button>
           </div>
@@ -494,11 +495,11 @@ function YemekMolasiButon({ oturum }) {
         {yukleniyor ? '…' : durum === 'devam' ? '🍽️ Yemekten Döndüm' : '🍽️ Yemeğe Gidiyorum'}
       </button>
       {durum === 'devam' && (
-        <div style={{ fontSize: 11, color: '#6b6f7a', textAlign: 'center', marginTop: 6 }}>
+        <div style={{ fontSize: 11, color: '#9C8E7E', textAlign: 'center', marginTop: 6 }}>
           Mola sayacı çalışıyor — dönünce tekrar bas
         </div>
       )}
-      {mesaj && <div style={{ fontSize: 12, marginTop: 6, textAlign: 'center', color: '#6b6f7a' }}>{mesaj}</div>}
+      {mesaj && <div style={{ fontSize: 12, marginTop: 6, textAlign: 'center', color: '#9C8E7E' }}>{mesaj}</div>}
     </div>
   );
 }
@@ -525,16 +526,16 @@ function VardiyamEkrani({ oturum }) {
     }).finally(() => setYukleniyor(false));
   }, []);
 
-  const PAGE = { minHeight: '100vh', background: '#0f1117', color: '#e8e9ec', fontFamily: 'Instrument Sans, sans-serif' };
+  const PAGE = { minHeight: '100vh', background: '#F4EFE9', color: '#2A241E', fontFamily: 'Instrument Sans, sans-serif' };
 
   const K = ({ label, val, renk, alt }) => (
     <div style={{
-      background: '#1a1d24', border: '1px solid #2a2d35', borderRadius: 12,
+      background: '#FFFFFF', border: '1px solid #E6DED4', borderRadius: 12,
       padding: '14px 16px', flex: 1, minWidth: 100,
     }}>
-      <div style={{ fontSize: 20, fontWeight: 800, color: renk || '#e8e9ec' }}>{val}</div>
-      <div style={{ fontSize: 11, color: '#b0b3bc', marginTop: 3 }}>{label}</div>
-      {alt && <div style={{ fontSize: 10, color: '#6b6f7a', marginTop: 2 }}>{alt}</div>}
+      <div style={{ fontSize: 20, fontWeight: 800, color: renk || '#2A241E' }}>{val}</div>
+      <div style={{ fontSize: 11, color: '#6B5E50', marginTop: 3 }}>{label}</div>
+      {alt && <div style={{ fontSize: 10, color: '#9C8E7E', marginTop: 2 }}>{alt}</div>}
     </div>
   );
 
@@ -552,9 +553,19 @@ function VardiyamEkrani({ oturum }) {
 
   return (
     <div style={{ ...PAGE, paddingBottom: 40 }}>
+      {/* Marka başlığı */}
+      <div style={{ padding: '14px 18px', borderBottom: '1px solid #E6DED4', display: 'flex', alignItems: 'center', gap: 12, position: 'sticky', top: 0, background: '#F4EFE9', zIndex: 10 }}>
+        <div style={{ width: 42, height: 42, borderRadius: '50%', background: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+          <img src={tulipiLogo} alt="TuliPi" style={{ width: 33, height: 33, objectFit: 'contain' }} />
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 15, fontWeight: 700, color: '#2A241E' }}>{subeBilgi?.ad || 'TuliPi Coffee'}</div>
+          <div style={{ fontSize: 12, color: '#9C8E7E' }}>{oturum.ad_soyad}</div>
+        </div>
+      </div>
       {/* Bugün */}
-      <div style={{ padding: '16px 20px', borderBottom: '1px solid #2a2d35' }}>
-        <div style={{ fontSize: 12, fontWeight: 700, color: '#6b6f7a', marginBottom: 10, letterSpacing: 1 }}>
+      <div style={{ padding: '16px 20px', borderBottom: '1px solid #E6DED4' }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: '#9C8E7E', marginBottom: 10, letterSpacing: 1 }}>
           BUGÜN · {new Date(oturum.tarih).toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', weekday: 'long' })}
         </div>
         {bugun ? (
@@ -565,10 +576,10 @@ function VardiyamEkrani({ oturum }) {
                renk={bugun.gecikme_dk > 0 ? '#e05c5c' : '#4caf84'} />
             <K label="Fazla Mesai"
                val={bugun.fazla_mesai_saat > 0 ? `+${bugun.fazla_mesai_saat.toFixed(1)}s` : '—'}
-               renk={bugun.fazla_mesai_saat > 0 ? '#f59e0b' : '#6b6f7a'} />
+               renk={bugun.fazla_mesai_saat > 0 ? '#f59e0b' : '#9C8E7E'} />
           </div>
         ) : (
-          <div style={{ fontSize: 13, color: '#6b6f7a' }}>Bugün için vardiya kaydı bulunamadı.</div>
+          <div style={{ fontSize: 13, color: '#9C8E7E' }}>Bugün için vardiya kaydı bulunamadı.</div>
         )}
         {bugun?.part_tam_uyari && (
           <div style={{
@@ -584,15 +595,15 @@ function VardiyamEkrani({ oturum }) {
       {/* Bu ay */}
       {aylik && (
         <div style={{ padding: '16px 20px' }}>
-          <div style={{ fontSize: 12, fontWeight: 700, color: '#6b6f7a', marginBottom: 10, letterSpacing: 1 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: '#9C8E7E', marginBottom: 10, letterSpacing: 1 }}>
             BU AY
           </div>
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 10 }}>
             <K label="Toplam Mesai" val={`${aylik.toplam_planlanan_saat?.toFixed(1)}s`} renk="#4a9eff" />
-            <K label="Fazla Mesai" val={aylik.toplam_fazla_mesai_saat > 0 ? `+${aylik.toplam_fazla_mesai_saat.toFixed(1)}s` : '—'} renk={aylik.toplam_fazla_mesai_saat > 0 ? '#f59e0b' : '#6b6f7a'} />
+            <K label="Fazla Mesai" val={aylik.toplam_fazla_mesai_saat > 0 ? `+${aylik.toplam_fazla_mesai_saat.toFixed(1)}s` : '—'} renk={aylik.toplam_fazla_mesai_saat > 0 ? '#f59e0b' : '#9C8E7E'} />
           </div>
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-            <K label="Toplam Gecikme" val={fmtDk(aylik.toplam_gecikme_dk)} renk={aylik.toplam_gecikme_dk > 30 ? '#e05c5c' : '#6b6f7a'} />
+            <K label="Toplam Gecikme" val={fmtDk(aylik.toplam_gecikme_dk)} renk={aylik.toplam_gecikme_dk > 30 ? '#e05c5c' : '#9C8E7E'} />
             <K label="Yemek Ücreti" val={`${aylik.yemek_ucret_gun} gün`} renk="#4caf84"
                alt={aylik.yemek_ucret_tutari > 0 ? `${aylik.yemek_ucret_tutari.toLocaleString('tr-TR')} ₺` : null} />
           </div>
@@ -618,7 +629,7 @@ function VardiyamEkrani({ oturum }) {
               }}>
                 {/* Üst: büyük "şu ana kadar hak edilen" */}
                 <div style={{ padding: '16px 18px 14px' }}>
-                  <div style={{ fontSize: 11, fontWeight: 700, color: '#6b6f7a', letterSpacing: 1, marginBottom: 6 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: '#9C8E7E', letterSpacing: 1, marginBottom: 6 }}>
                     💰 ŞU ANA KADAR HAK ETTİĞİN
                   </div>
                   <div style={{ fontSize: 30, fontWeight: 800, color: '#4caf84', lineHeight: 1.1 }}>
@@ -626,21 +637,21 @@ function VardiyamEkrani({ oturum }) {
                   </div>
                   {!d.ay_tamam && (
                     <>
-                      <div style={{ marginTop: 10, height: 6, borderRadius: 4, background: '#2a2d35', overflow: 'hidden' }}>
+                      <div style={{ marginTop: 10, height: 6, borderRadius: 4, background: '#E6DED4', overflow: 'hidden' }}>
                         <div style={{ height: '100%', width: `${ilerleme}%`, borderRadius: 4,
                           background: 'linear-gradient(90deg, #4caf84, #6fd4a8)', transition: 'width 0.3s' }} />
                       </div>
-                      <div style={{ marginTop: 6, fontSize: 11, color: '#6b6f7a' }}>
+                      <div style={{ marginTop: 6, fontSize: 11, color: '#9C8E7E' }}>
                         Ayın {gecenGun}. günü / {ayGun} gün
                         {d.taban_maas != null && (
-                          <> · Aylık maaşının <strong style={{ color: '#b0b3bc' }}>{fmt2(aylikToplam)}</strong>'sini tamamlarsan ay sonu hakedişin bu olacak</>
+                          <> · Aylık maaşının <strong style={{ color: '#6B5E50' }}>{fmt2(aylikToplam)}</strong>'sini tamamlarsan ay sonu hakedişin bu olacak</>
                         )}
                       </div>
                     </>
                   )}
                   {d.ay_tamam && d.taban_maas != null && (
-                    <div style={{ marginTop: 6, fontSize: 11, color: '#6b6f7a' }}>
-                      Bu ay tamamlandı · Aylık maaşın: <strong style={{ color: '#b0b3bc' }}>{fmt2(d.taban_maas)}</strong>
+                    <div style={{ marginTop: 6, fontSize: 11, color: '#9C8E7E' }}>
+                      Bu ay tamamlandı · Aylık maaşın: <strong style={{ color: '#6B5E50' }}>{fmt2(d.taban_maas)}</strong>
                     </div>
                   )}
                 </div>
@@ -650,45 +661,45 @@ function VardiyamEkrani({ oturum }) {
                   display: 'flex', flexDirection: 'column', gap: 8 }}>
                   {d.taban_maas != null && (
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
-                      <span style={{ color: '#b0b3bc' }}>
+                      <span style={{ color: '#6B5E50' }}>
                         Taban Maaş {!d.ay_tamam ? `(${gecenGun}/${Math.round(ayGun)} gün)` : '(tam ay)'}
                       </span>
-                      <span style={{ color: '#e8e9ec', fontWeight: 600 }}>
+                      <span style={{ color: '#2A241E', fontWeight: 600 }}>
                         {fmt2(d.kazanilan_taban ?? d.taban_maas)}
                       </span>
                     </div>
                   )}
                   {d.calisma_saati != null && (
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
-                      <span style={{ color: '#b0b3bc' }}>Çalışma ({d.calisma_saati}s)</span>
-                      <span style={{ color: '#e8e9ec', fontWeight: 600 }}>{fmt2(d.normal_ucret)}</span>
+                      <span style={{ color: '#6B5E50' }}>Çalışma ({d.calisma_saati}s)</span>
+                      <span style={{ color: '#2A241E', fontWeight: 600 }}>{fmt2(d.normal_ucret)}</span>
                     </div>
                   )}
                   {d.fazla_mesai_saat > 0 && (
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
-                      <span style={{ color: '#b0b3bc' }}>Fazla Mesai ({d.fazla_mesai_saat}s)</span>
+                      <span style={{ color: '#6B5E50' }}>Fazla Mesai ({d.fazla_mesai_saat}s)</span>
                       <span style={{ color: '#f59e0b', fontWeight: 600 }}>+{fmt2(d.fazla_mesai_ucret)}</span>
                     </div>
                   )}
                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
-                    <span style={{ color: '#b0b3bc' }}>🍽️ Yemek ({aylik.yemek_ucret_gun} gün hak kazanıldı)</span>
-                    <span style={{ color: aylik.yemek_ucret_tutari > 0 ? '#4caf84' : '#6b6f7a', fontWeight: 600 }}>
+                    <span style={{ color: '#6B5E50' }}>🍽️ Yemek ({aylik.yemek_ucret_gun} gün hak kazanıldı)</span>
+                    <span style={{ color: aylik.yemek_ucret_tutari > 0 ? '#4caf84' : '#9C8E7E', fontWeight: 600 }}>
                       {aylik.yemek_ucret_tutari > 0 ? '+' + fmt2(aylik.yemek_ucret_tutari) : '0 ₺'}
                     </span>
                   </div>
                   {(d.yol_ucret > 0 || d.yol_ucret_aylik > 0) && (
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
-                      <span style={{ color: '#b0b3bc' }}>
+                      <span style={{ color: '#6B5E50' }}>
                         🚌 Yol {!d.ay_tamam ? `(${gecenGun}/${Math.round(ayGun)} gün)` : ''}
                       </span>
-                      <span style={{ color: '#e8e9ec', fontWeight: 600 }}>+{fmt2(d.yol_ucret)}</span>
+                      <span style={{ color: '#2A241E', fontWeight: 600 }}>+{fmt2(d.yol_ucret)}</span>
                     </div>
                   )}
                   <div style={{
                     display: 'flex', justifyContent: 'space-between',
                     borderTop: '1px solid rgba(76,175,132,0.2)', paddingTop: 8, marginTop: 4,
                   }}>
-                    <span style={{ fontWeight: 800, fontSize: 14, color: '#e8e9ec' }}>ŞU ANA KADAR TOPLAM</span>
+                    <span style={{ fontWeight: 800, fontSize: 14, color: '#2A241E' }}>ŞU ANA KADAR TOPLAM</span>
                     <span style={{ fontWeight: 800, fontSize: 17, color: '#4caf84' }}>{fmt2(d['net_hakediş'])}</span>
                   </div>
                 </div>
@@ -717,8 +728,8 @@ function VardiyamEkrani({ oturum }) {
               <div style={{ fontWeight: 700, color: '#e05c5c', marginBottom: 4 }}>
                 🔴 Haftalık İzin Alacağın Var
               </div>
-              <div style={{ color: '#b0b3bc', fontSize: 12, lineHeight: 1.6 }}>
-                Bu ay <strong style={{ color: '#e8e9ec' }}>{aylik.haftalik_izin_kullanilmadi} hafta</strong> boyunca
+              <div style={{ color: '#6B5E50', fontSize: 12, lineHeight: 1.6 }}>
+                Bu ay <strong style={{ color: '#2A241E' }}>{aylik.haftalik_izin_kullanilmadi} hafta</strong> boyunca
                 haftalık izin kullanmadın. Her çalışanın haftada en az 1 gün dinlenme hakkı var.
                 Yöneticinle konuş.
               </div>
@@ -735,8 +746,8 @@ function VardiyamEkrani({ oturum }) {
                 ℹ️ Geriye Dönük İzin / Devamsızlık Kaydı
               </div>
               {aylik.izin_bildirimleri.map((b, i) => (
-                <div key={i} style={{ color: '#b0b3bc', fontSize: 12, lineHeight: 1.6, marginBottom: i < aylik.izin_bildirimleri.length - 1 ? 6 : 0 }}>
-                  <strong style={{ color: '#e8e9ec' }}>
+                <div key={i} style={{ color: '#6B5E50', fontSize: 12, lineHeight: 1.6, marginBottom: i < aylik.izin_bildirimleri.length - 1 ? 6 : 0 }}>
+                  <strong style={{ color: '#2A241E' }}>
                     {new Date(b.tarih).toLocaleDateString('tr-TR', { day: 'numeric', month: 'long' })}
                   </strong> tarihinde vardiyan olduğu halde yoklama kaydın bulunmadığı için
                   bu gün{' '}
@@ -819,7 +830,7 @@ function KapanisMuhurBandi({ oturum }) {
       display: 'flex', alignItems: 'center', gap: 8,
     }}>
       <div className="spinner" style={{ width: 14, height: 14 }} />
-      <span style={{ fontSize: 11, color: '#6b6f7a' }}>Kapanış durumu kontrol ediliyor…</span>
+      <span style={{ fontSize: 11, color: '#9C8E7E' }}>Kapanış durumu kontrol ediliyor…</span>
     </div>
   );
 
@@ -832,7 +843,7 @@ function KapanisMuhurBandi({ oturum }) {
       <span style={{ fontSize: 20 }}>🔒</span>
       <div>
         <div style={{ fontSize: 13, fontWeight: 800, color: '#4caf84' }}>Kapanış Mühürlendi</div>
-        <div style={{ fontSize: 11, color: '#6b6f7a' }}>Sistem kapanışı kaydetti · {oturum.ad_soyad}</div>
+        <div style={{ fontSize: 11, color: '#9C8E7E' }}>Sistem kapanışı kaydetti · {oturum.ad_soyad}</div>
       </div>
     </div>
   );
@@ -848,7 +859,7 @@ function KapanisMuhurBandi({ oturum }) {
         <div style={{ fontSize: 13, fontWeight: 700, color: '#C8956A', marginBottom: 4 }}>
           🔲 Şube QR'ını Okut
         </div>
-        <div style={{ fontSize: 11, color: '#6b6f7a', marginBottom: 12, lineHeight: 1.6 }}>
+        <div style={{ fontSize: 11, color: '#9C8E7E', marginBottom: 12, lineHeight: 1.6 }}>
           Telefonunla bu QR'ı okut → kapanış otomatik mühürlenir
         </div>
         <div style={{
@@ -857,20 +868,20 @@ function KapanisMuhurBandi({ oturum }) {
         }}>
           <img src={qrUrl} alt="Şube QR" style={{ width: 160, height: 160, display: 'block' }} />
         </div>
-        <div style={{ fontSize: 11, color: '#6b6f7a', marginBottom: 10 }}>
+        <div style={{ fontSize: 11, color: '#9C8E7E', marginBottom: 10 }}>
           Bekleniyor<span style={{ animation: 'none' }}>…</span>
         </div>
         {hata && <div style={{ fontSize: 12, color: '#e05c5c', marginBottom: 8 }}>{hata}</div>}
         <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
           <button onClick={manuelMuhurle} disabled={manuelYukleniyor} style={{
-            padding: '7px 14px', borderRadius: 7, border: '1px solid #2a2d35',
-            background: 'none', color: '#6b6f7a', cursor: 'pointer', fontSize: 11,
+            padding: '7px 14px', borderRadius: 7, border: '1px solid #E6DED4',
+            background: 'none', color: '#9C8E7E', cursor: 'pointer', fontSize: 11,
           }}>
             {manuelYukleniyor ? '…' : 'QR yok, manuel onayla'}
           </button>
           <button onClick={() => setDurum(null)} style={{
-            padding: '7px 14px', borderRadius: 7, border: '1px solid #2a2d35',
-            background: 'none', color: '#6b6f7a', cursor: 'pointer', fontSize: 11,
+            padding: '7px 14px', borderRadius: 7, border: '1px solid #E6DED4',
+            background: 'none', color: '#9C8E7E', cursor: 'pointer', fontSize: 11,
           }}>
             İptal
           </button>
@@ -887,7 +898,7 @@ function KapanisMuhurBandi({ oturum }) {
     }}>
       <div>
         <div style={{ fontSize: 12, fontWeight: 700, color: '#C8956A' }}>🌙 Kapanış Vardiyası</div>
-        <div style={{ fontSize: 11, color: '#6b6f7a' }}>Görevleri tamamla, sonra kapanışı mühürle</div>
+        <div style={{ fontSize: 11, color: '#9C8E7E' }}>Görevleri tamamla, sonra kapanışı mühürle</div>
       </div>
       <button onClick={() => setDurum('qr-goster')} style={{
         padding: '9px 16px', borderRadius: 8, border: 'none', cursor: 'pointer',
@@ -1026,21 +1037,21 @@ function StokSayimKilit({ oturum, subeBilgi, gorev, onBitti }) {
     ? { renk: '#C8956A', metin: '🎯 İLK SAYIM — doğru stoğu sen kuruyorsun' }
     : { renk: '#4caf84', metin: '🔍 KONTROL — sistemle karşılaştırılacak' };
 
-  const PAGE = { minHeight: '100vh', background: '#0f1117', color: '#e8e9ec', fontFamily: 'Instrument Sans, sans-serif' };
+  const PAGE = { minHeight: '100vh', background: '#F4EFE9', color: '#2A241E', fontFamily: 'Instrument Sans, sans-serif' };
   const KEY = {
     fontSize: 28, fontWeight: 800, padding: '18px 0', borderRadius: 14,
-    background: '#1a1d24', border: '1px solid #2a2d35', color: '#e8e9ec', cursor: 'pointer',
+    background: '#FFFFFF', border: '1px solid #E6DED4', color: '#2A241E', cursor: 'pointer',
   };
 
   return (
     <div style={PAGE}>
       <style>{`@keyframes ssKatGiris{from{opacity:0;transform:translateY(-10px) scale(.97)}to{opacity:1;transform:none}}`}</style>
       {/* Kilit başlığı — çıkış yok, başka sekme yok */}
-      <div style={{ padding: '16px 20px', borderBottom: '1px solid #2a2d35', position: 'sticky', top: 0, background: '#0f1117', zIndex: 10 }}>
+      <div style={{ padding: '16px 20px', borderBottom: '1px solid #E6DED4', position: 'sticky', top: 0, background: '#F4EFE9', zIndex: 10 }}>
         <div style={{ fontSize: 16, fontWeight: 800, display: 'flex', alignItems: 'center', gap: 8 }}>
           🔒 ZORUNLU STOK SAYIMI
         </div>
-        <div style={{ fontSize: 12, color: '#6b6f7a', marginTop: 3 }}>
+        <div style={{ fontSize: 12, color: '#9C8E7E', marginTop: 3 }}>
           {subeBilgi?.ad || 'Şube'} · {oturum.ad_soyad} · bitmeden başka işlem yapılamaz
         </div>
         <div style={{ marginTop: 8, fontSize: 12, fontWeight: 700, color: modBilgi.renk }}>{modBilgi.metin}</div>
@@ -1048,11 +1059,11 @@ function StokSayimKilit({ oturum, subeBilgi, gorev, onBitti }) {
 
       {/* İlerleme */}
       <div style={{ padding: '14px 20px 0' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#6b6f7a', marginBottom: 6 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#9C8E7E', marginBottom: 6 }}>
           <span>Ürün {idx + 1} / {toplam}</span>
           <span>{sayilanAdet} sayıldı</span>
         </div>
-        <div style={{ height: 6, borderRadius: 3, background: '#1a1d24', overflow: 'hidden' }}>
+        <div style={{ height: 6, borderRadius: 3, background: '#FFFFFF', overflow: 'hidden' }}>
           <div style={{ height: '100%', width: `${Math.round((sayilanAdet / toplam) * 100)}%`, background: modBilgi.renk, transition: 'width .2s' }} />
         </div>
       </div>
@@ -1066,7 +1077,7 @@ function StokSayimKilit({ oturum, subeBilgi, gorev, onBitti }) {
             border: '1px solid rgba(200,149,106,0.35)', borderRadius: 14, padding: '14px 16px',
           }}>
             <div style={{ fontSize: 18, fontWeight: 800 }}>Şimdi <span style={{ color: '#C8956A' }}>{aktifKat}</span> sayalım!</div>
-            <div style={{ fontSize: 12, color: '#9aa0ab', marginTop: 3 }}>{motiv} · {aktifKat} {katSira}/{katToplam}</div>
+            <div style={{ fontSize: 12, color: '#6B5E50', marginTop: 3 }}>{motiv} · {aktifKat} {katSira}/{katToplam}</div>
           </div>
         )}
 
@@ -1075,7 +1086,7 @@ function StokSayimKilit({ oturum, subeBilgi, gorev, onBitti }) {
           {idx > 0 && (
             <button onClick={() => { setIdx(idx - 1); setKeypadAcik(false); setHata(''); }} style={{
               flex: '0 0 auto', padding: '14px 16px', borderRadius: 12, background: 'none',
-              border: '1px solid #2a2d35', color: '#6b6f7a', fontSize: 14, cursor: 'pointer',
+              border: '1px solid #E6DED4', color: '#9C8E7E', fontSize: 14, cursor: 'pointer',
             }}>← Önceki</button>
           )}
           <button
@@ -1084,8 +1095,8 @@ function StokSayimKilit({ oturum, subeBilgi, gorev, onBitti }) {
             style={{
               flex: 1, padding: '15px', borderRadius: 12, border: 'none', fontSize: 16, fontWeight: 800,
               cursor: (kaydediliyor || !aktifDeger.girildi) ? 'not-allowed' : 'pointer',
-              background: (kaydediliyor || !aktifDeger.girildi) ? '#2a2d35' : (sonUrun ? '#4caf84' : '#C8956A'),
-              color: (kaydediliyor || !aktifDeger.girildi) ? '#6b6f7a' : '#fff',
+              background: (kaydediliyor || !aktifDeger.girildi) ? '#E6DED4' : (sonUrun ? '#4caf84' : '#C8956A'),
+              color: (kaydediliyor || !aktifDeger.girildi) ? '#9C8E7E' : '#fff',
             }}
           >
             {kaydediliyor ? 'Kaydediliyor…' : sonUrun ? '✓ Sayımı Tamamla' : 'Sonraki Ürün →'}
@@ -1093,22 +1104,22 @@ function StokSayimKilit({ oturum, subeBilgi, gorev, onBitti }) {
         </div>
 
         {/* Aktif ürün kartı */}
-        <div style={{ background: '#15181f', border: '1px solid #2a2d35', borderRadius: 16, padding: '20px', textAlign: 'center' }}>
+        <div style={{ background: '#EFE8E0', border: '1px solid #E6DED4', borderRadius: 16, padding: '20px', textAlign: 'center' }}>
           <div style={{ fontSize: 22, fontWeight: 800, marginBottom: 4 }}>{aktif?.kalem_adi || '—'}</div>
-          <div style={{ fontSize: 12, color: '#6b6f7a', marginBottom: 16 }}>Kaç adet? +/− ile say ya da kutuya çift dokun</div>
+          <div style={{ fontSize: 12, color: '#9C8E7E', marginBottom: 16 }}>Kaç adet? +/− ile say ya da kutuya çift dokun</div>
           {/* [−] [sayı kutusu] [+] — iki yolla da girilebilir */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, justifyContent: 'center' }}>
             <button onClick={() => adim(-1)} style={{
-              width: 56, height: 56, borderRadius: 14, border: '1px solid #2a2d35',
-              background: '#22262f', color: '#e8e9ec', fontSize: 28, fontWeight: 800, cursor: 'pointer', flex: '0 0 auto',
+              width: 56, height: 56, borderRadius: 14, border: '1px solid #E6DED4',
+              background: '#F7F2EC', color: '#2A241E', fontSize: 28, fontWeight: 800, cursor: 'pointer', flex: '0 0 auto',
             }}>−</button>
             <div
               onClick={kutuTik}
               style={{
                 flex: 1, fontSize: 44, fontWeight: 900, padding: '14px', borderRadius: 14, cursor: 'pointer',
-                background: keypadAcik ? 'rgba(200,149,106,0.12)' : '#0f1117',
-                border: `2px solid ${aktifDeger.girildi ? '#4caf84' : keypadAcik ? '#C8956A' : '#2a2d35'}`,
-                color: aktifDeger.val === '' ? '#3a3d45' : '#fff',
+                background: keypadAcik ? 'rgba(200,149,106,0.12)' : '#F4EFE9',
+                border: `2px solid ${aktifDeger.girildi ? '#4caf84' : keypadAcik ? '#C8956A' : '#E6DED4'}`,
+                color: aktifDeger.val === '' ? '#DAD0C4' : '#fff',
               }}
             >
               {aktifDeger.val === '' ? '—' : aktifDeger.val}{aktifDeger.girildi ? ' ✓' : ''}
@@ -1127,7 +1138,7 @@ function StokSayimKilit({ oturum, subeBilgi, gorev, onBitti }) {
       {keypadAcik && (
         <div style={{
           position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 60,
-          background: '#0f1117', borderTop: '1px solid #2a2d35',
+          background: '#F4EFE9', borderTop: '1px solid #E6DED4',
           padding: '10px 16px calc(10px + env(safe-area-inset-bottom, 0px))',
           display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8,
           boxShadow: '0 -8px 24px rgba(0,0,0,0.5)',
@@ -1137,7 +1148,7 @@ function StokSayimKilit({ oturum, subeBilgi, gorev, onBitti }) {
           ))}
           <button onClick={() => tusBas('sil')} style={{ ...KEY, padding: '14px 0', fontSize: 22 }}>⌫</button>
           <button onClick={() => tusBas('0')} style={{ ...KEY, padding: '14px 0' }}>0</button>
-          <button onClick={() => setKeypadAcik(false)} style={{ ...KEY, padding: '14px 0', fontSize: 14, color: '#6b6f7a' }}>Kapat ▾</button>
+          <button onClick={() => setKeypadAcik(false)} style={{ ...KEY, padding: '14px 0', fontSize: 14, color: '#9C8E7E' }}>Kapat ▾</button>
         </div>
       )}
     </div>
@@ -1273,11 +1284,11 @@ export default function GorevPersonelSayfasi({ oturum, subeBilgi, onCikis }) {
     />
   );
 
-  const vt = VT_ETIKET[oturum.vardiya_tip] || { label: oturum.vardiya_tip, renk: '#6b6f7a' };
+  const vt = VT_ETIKET[oturum.vardiya_tip] || { label: oturum.vardiya_tip, renk: '#9C8E7E' };
   const tamamYuzde = data ? Math.round((data.tamamlanan / data.toplam) * 100) : 0;
 
   const PAGE = {
-    minHeight: '100vh', background: '#0f1117', color: '#e8e9ec',
+    minHeight: '100vh', background: '#F4EFE9', color: '#2A241E',
     fontFamily: 'Instrument Sans, sans-serif',
   };
 
@@ -1288,21 +1299,21 @@ export default function GorevPersonelSayfasi({ oturum, subeBilgi, onCikis }) {
     return (
       <div style={PAGE}>
         <div style={{
-          padding: '16px 20px', borderBottom: '1px solid #2a2d35',
+          padding: '16px 20px', borderBottom: '1px solid #E6DED4',
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          position: 'sticky', top: 0, background: '#0f1117', zIndex: 10,
+          position: 'sticky', top: 0, background: '#F4EFE9', zIndex: 10,
         }}>
           <div>
             <div style={{ fontSize: 15, fontWeight: 700 }}>
               {subeBilgi?.ad || 'Şube'} · {vt.label}
             </div>
-            <div style={{ fontSize: 11, color: '#6b6f7a', marginTop: 2 }}>
+            <div style={{ fontSize: 11, color: '#9C8E7E', marginTop: 2 }}>
               {oturum.ad_soyad} · {oturum.tarih}
             </div>
           </div>
           <button onClick={onCikis} style={{
-            background: 'none', border: '1px solid #2a2d35', borderRadius: 8,
-            color: '#6b6f7a', padding: '6px 12px', cursor: 'pointer', fontSize: 12,
+            background: 'none', border: '1px solid #E6DED4', borderRadius: 8,
+            color: '#9C8E7E', padding: '6px 12px', cursor: 'pointer', fontSize: 12,
           }}>
             Çıkış
           </button>
@@ -1316,7 +1327,7 @@ export default function GorevPersonelSayfasi({ oturum, subeBilgi, onCikis }) {
           <span style={{ fontSize: 22 }}>🔒</span>
           <div>
             <div style={{ fontSize: 13, fontWeight: 800, color: '#4caf84' }}>Bugünün Kasası Mühürlendi</div>
-            <div style={{ fontSize: 11, color: '#6b6f7a', marginTop: 2, lineHeight: 1.6 }}>
+            <div style={{ fontSize: 11, color: '#9C8E7E', marginTop: 2, lineHeight: 1.6 }}>
               Kapanış kasayı kapattı — bugün için işlem yapılamaz.
               {mesaimAcik ? ' Sadece kendi mesaini bitirebilirsin.' : ''}
             </div>
@@ -1328,8 +1339,8 @@ export default function GorevPersonelSayfasi({ oturum, subeBilgi, onCikis }) {
         ) : (
           <div style={{
             margin: '8px 20px', padding: '12px 14px', borderRadius: 10,
-            background: '#1a1d24', border: '1px solid #2a2d35',
-            fontSize: 12, color: '#6b6f7a', textAlign: 'center', lineHeight: 1.6,
+            background: '#FFFFFF', border: '1px solid #E6DED4',
+            fontSize: 12, color: '#9C8E7E', textAlign: 'center', lineHeight: 1.6,
           }}>
             ✅ Mesain de tamamlandı. İyi günler!
           </div>
@@ -1342,15 +1353,15 @@ export default function GorevPersonelSayfasi({ oturum, subeBilgi, onCikis }) {
     <div style={PAGE}>
       {/* Header */}
       <div style={{
-        padding: '16px 20px', borderBottom: '1px solid #2a2d35',
+        padding: '16px 20px', borderBottom: '1px solid #E6DED4',
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        position: 'sticky', top: 0, background: '#0f1117', zIndex: 10,
+        position: 'sticky', top: 0, background: '#F4EFE9', zIndex: 10,
       }}>
         <div>
           <div style={{ fontSize: 15, fontWeight: 700 }}>
             {subeBilgi?.ad || 'Şube'} · {vt.label}
           </div>
-          <div style={{ fontSize: 11, color: '#6b6f7a', marginTop: 2 }}>
+          <div style={{ fontSize: 11, color: '#9C8E7E', marginTop: 2 }}>
             {oturum.ad_soyad} · {oturum.tarih}
           </div>
         </div>
@@ -1362,8 +1373,8 @@ export default function GorevPersonelSayfasi({ oturum, subeBilgi, onCikis }) {
             📦 Sipariş
           </button>
           <button onClick={onCikis} style={{
-            background: 'none', border: '1px solid #2a2d35', borderRadius: 8,
-            color: '#6b6f7a', padding: '6px 12px', cursor: 'pointer', fontSize: 12,
+            background: 'none', border: '1px solid #E6DED4', borderRadius: 8,
+            color: '#9C8E7E', padding: '6px 12px', cursor: 'pointer', fontSize: 12,
           }}>
             Çıkış
           </button>
@@ -1378,15 +1389,15 @@ export default function GorevPersonelSayfasi({ oturum, subeBilgi, onCikis }) {
 
       {/* İlerleme */}
       {data && (
-        <div style={{ padding: '14px 20px', borderBottom: '1px solid #2a2d35' }}>
+        <div style={{ padding: '14px 20px', borderBottom: '1px solid #E6DED4' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6, fontSize: 12 }}>
-            <span style={{ color: '#b0b3bc' }}>Tamamlanan</span>
+            <span style={{ color: '#6B5E50' }}>Tamamlanan</span>
             <span style={{ fontWeight: 700, color: data.eksik === 0 ? '#4caf84' : vt.renk }}>
               {data.tamamlanan}/{data.toplam}
               {data.eksik === 0 ? ' · Tamamlandı ✓' : ` · ${data.eksik} kaldı`}
             </span>
           </div>
-          <div style={{ height: 6, background: '#2a2d35', borderRadius: 3, overflow: 'hidden' }}>
+          <div style={{ height: 6, background: '#E6DED4', borderRadius: 3, overflow: 'hidden' }}>
             <div style={{
               height: '100%', borderRadius: 3,
               width: `${tamamYuzde}%`,
@@ -1398,12 +1409,12 @@ export default function GorevPersonelSayfasi({ oturum, subeBilgi, onCikis }) {
       )}
 
       {/* Sekmeler */}
-      <div style={{ display: 'flex', borderBottom: '1px solid #2a2d35' }}>
+      <div style={{ display: 'flex', borderBottom: '1px solid #E6DED4' }}>
         {[['gorevler','✅ Görevlerim'], ['vardiyam','⏱️ Vardiyam']].map(([id, label]) => (
           <button key={id} onClick={() => setSekme(id)} style={{
             flex: 1, padding: '12px', border: 'none', cursor: 'pointer',
             background: 'transparent', fontSize: 13, fontWeight: sekme === id ? 700 : 500,
-            color: sekme === id ? '#C8956A' : '#6b6f7a',
+            color: sekme === id ? '#C8956A' : '#9C8E7E',
             borderBottom: sekme === id ? '2px solid #C8956A' : '2px solid transparent',
             transition: 'all 0.15s',
           }}>{label}</button>
@@ -1426,12 +1437,12 @@ export default function GorevPersonelSayfasi({ oturum, subeBilgi, onCikis }) {
       {/* Görev listesi — sadece görevlerim sekmesinde */}
       {sekme !== 'gorevler' ? null : <div style={{ padding: '12px 16px', paddingBottom: 80 }}>
         {yukleniyor ? (
-          <div style={{ textAlign: 'center', padding: 40, color: '#6b6f7a' }}>
+          <div style={{ textAlign: 'center', padding: 40, color: '#9C8E7E' }}>
             <div className="spinner" style={{ margin: '0 auto 12px' }} />
             Görevler yükleniyor…
           </div>
         ) : !data?.gorevler?.length ? (
-          <div style={{ textAlign: 'center', padding: 40, color: '#6b6f7a' }}>
+          <div style={{ textAlign: 'center', padding: 40, color: '#9C8E7E' }}>
             Bu vardiya için görev bulunamadı.
           </div>
         ) : (
@@ -1441,8 +1452,8 @@ export default function GorevPersonelSayfasi({ oturum, subeBilgi, onCikis }) {
               style={{
                 display: 'flex', alignItems: 'center', gap: 14,
                 padding: '14px 12px', borderRadius: 10, marginBottom: 8,
-                background: g.tamamlandi ? 'rgba(76,175,132,0.06)' : '#1a1d24',
-                border: `1px solid ${g.tamamlandi ? 'rgba(76,175,132,0.25)' : '#2a2d35'}`,
+                background: g.tamamlandi ? 'rgba(76,175,132,0.06)' : '#FFFFFF',
+                border: `1px solid ${g.tamamlandi ? 'rgba(76,175,132,0.25)' : '#E6DED4'}`,
                 cursor: islem[g.id] ? 'wait' : 'pointer',
                 transition: 'all 0.15s',
                 opacity: islem[g.id] ? 0.6 : 1,
@@ -1450,7 +1461,7 @@ export default function GorevPersonelSayfasi({ oturum, subeBilgi, onCikis }) {
             >
               <div style={{
                 width: 24, height: 24, borderRadius: 6, flexShrink: 0,
-                border: `2px solid ${g.tamamlandi ? '#4caf84' : '#6b6f7a'}`,
+                border: `2px solid ${g.tamamlandi ? '#4caf84' : '#9C8E7E'}`,
                 background: g.tamamlandi ? '#4caf84' : 'transparent',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                 transition: 'all 0.15s',
@@ -1460,18 +1471,18 @@ export default function GorevPersonelSayfasi({ oturum, subeBilgi, onCikis }) {
               <div style={{ flex: 1 }}>
                 <div style={{
                   fontSize: 14, fontWeight: 500,
-                  color: g.tamamlandi ? '#6b6f7a' : '#e8e9ec',
+                  color: g.tamamlandi ? '#9C8E7E' : '#2A241E',
                   textDecoration: g.tamamlandi ? 'line-through' : 'none',
                   lineHeight: 1.35,
                 }}>
                   {g.gorev}
                 </div>
-                <div style={{ fontSize: 11, color: '#6b6f7a', marginTop: 3 }}>
-                  <span style={{ background: '#22262f', borderRadius: 4, padding: '1px 6px', marginRight: 6 }}>{g.alan}</span>
+                <div style={{ fontSize: 11, color: '#9C8E7E', marginTop: 3 }}>
+                  <span style={{ background: '#F7F2EC', borderRadius: 4, padding: '1px 6px', marginRight: 6 }}>{g.alan}</span>
                   {g.siklik}
                 </div>
               </div>
-              <span style={{ fontSize: 11, color: '#2a2d35', fontWeight: 700, flexShrink: 0 }}>{g.sira}</span>
+              <span style={{ fontSize: 11, color: '#E6DED4', fontWeight: 700, flexShrink: 0 }}>{g.sira}</span>
             </div>
           ))
         )}

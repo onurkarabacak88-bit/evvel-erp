@@ -1,6 +1,39 @@
 import { useState, useEffect } from 'react';
 import { api } from '../utils/api';
 import GorevPersonelSayfasi from './GorevPersonelSayfasi';
+import tulipiLogo from '../assets/tulipi-logo.jpg';
+
+// Marka rozeti — logoyu koyu yuvarlak rozete oturt (siyah zemin kasıtlı dursun)
+function MarkaLogo({ size = 56 }) {
+  return (
+    <div style={{
+      width: size, height: size, borderRadius: '50%', background: '#000',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      boxShadow: '0 2px 10px rgba(200,149,106,0.25)', flexShrink: 0,
+    }}>
+      <img src={tulipiLogo} alt="TuliPi Coffee" style={{ width: size * 0.78, height: size * 0.78, objectFit: 'contain' }} />
+    </div>
+  );
+}
+
+// Kişi baş harf rozeti — addan üretilen renkli daire
+const AVATAR_RENK = ['#C8956A', '#4a9eff', '#4caf84', '#e08a5c', '#9b7bd4', '#d4756b'];
+function basHarf(ad) {
+  const p = String(ad || '').trim().split(/\s+/).filter(Boolean);
+  return ((p[0]?.[0] || '') + (p[1]?.[0] || '')).toUpperCase() || '?';
+}
+function Avatar({ ad, size = 44 }) {
+  const s = String(ad || '');
+  let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  const renk = AVATAR_RENK[h % AVATAR_RENK.length];
+  return (
+    <div style={{
+      width: size, height: size, borderRadius: '50%', background: renk + '22',
+      color: renk, display: 'flex', alignItems: 'center', justifyContent: 'center',
+      fontWeight: 700, fontSize: size * 0.36, flexShrink: 0, border: `1.5px solid ${renk}55`,
+    }}>{basHarf(ad)}</div>
+  );
+}
 
 // ── Telefon oturumu — localStorage (QR'sız tekrar giriş) ───────────────────────
 function bugunStr() {
@@ -317,13 +350,14 @@ export default function GorevGiris({ subeId: subeIdProp }) {
   }
 
   const PAGE = {
-    minHeight: '100vh', background: '#0f1117', color: '#e8e9ec',
+    minHeight: '100vh', background: '#F4EFE9', color: '#2A241E',
     display: 'flex', flexDirection: 'column', alignItems: 'center',
     justifyContent: 'center', padding: 24, fontFamily: 'Instrument Sans, sans-serif',
   };
   const KART = {
-    width: '100%', maxWidth: 380, background: '#1a1d24',
-    border: '1px solid #2a2d35', borderRadius: 16, padding: 28,
+    width: '100%', maxWidth: 380, background: '#FFFFFF',
+    border: '1px solid #E6DED4', borderRadius: 20, padding: 28,
+    boxShadow: '0 8px 30px rgba(120,90,60,0.10)',
   };
 
   return (
@@ -351,19 +385,19 @@ export default function GorevGiris({ subeId: subeIdProp }) {
               <div style={{ fontWeight: 700, fontSize: 15, color: '#f59e0b', marginBottom: 2 }}>
                 Çıkış yapmayı unutmuşsun
               </div>
-              <div style={{ fontSize: 13, color: '#cbd5e1', lineHeight: 1.4 }}>{cikisUyari}</div>
-              <div style={{ fontSize: 11, color: '#6b6f7a', marginTop: 6 }}>(kapatmak için dokun)</div>
+              <div style={{ fontSize: 13, color: '#6B5E50', lineHeight: 1.4 }}>{cikisUyari}</div>
+              <div style={{ fontSize: 11, color: '#9C8E7E', marginTop: 6 }}>(kapatmak için dokun)</div>
             </div>
           </div>
         )}
 
         {/* Başlık */}
-        <div style={{ textAlign: 'center', marginBottom: 24 }}>
-          <div style={{ fontSize: 28, marginBottom: 8 }}>☕</div>
-          <div style={{ fontSize: 18, fontWeight: 700 }}>
-            {subeBilgi?.ad || 'Evvel Cafe'}
+        <div style={{ textAlign: 'center', marginBottom: 24, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+          <div style={{ marginBottom: 10 }}><MarkaLogo size={58} /></div>
+          <div style={{ fontSize: 19, fontWeight: 700, color: '#2A241E' }}>
+            {subeBilgi?.ad || 'TuliPi Coffee'}
           </div>
-          <div style={{ fontSize: 12, color: '#6b6f7a', marginTop: 4 }}>
+          <div style={{ fontSize: 12, color: '#9C8E7E', marginTop: 4 }}>
             {adim === 'kapanis-onay-self' ? 'Kapanış Mührü'
             : adim === 'devir-kabul' ? 'Vardiya Devri'
             : adim === 'devir-yap' ? 'Devir Onayı'
@@ -375,22 +409,23 @@ export default function GorevGiris({ subeId: subeIdProp }) {
         {/* ── Şube Seç (QR'sız mod) ── */}
         {adim === 'sube-sec' && (
           <div>
-            <div style={{ fontSize: 13, fontWeight: 600, color: '#b0b3bc', marginBottom: 12 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: '#6B5E50', marginBottom: 12 }}>
               Hangi şube?
             </div>
             {subeler.length === 0 ? (
-              <div style={{ textAlign: 'center', padding: 20, color: '#6b6f7a' }}>
+              <div style={{ textAlign: 'center', padding: 20, color: '#9C8E7E' }}>
                 <div className="spinner" style={{ margin: '0 auto 12px' }} />
               </div>
             ) : subeler.map(s => (
               <button key={s.id} onClick={() => subeSec(s)}
                 style={{
-                  display: 'block', width: '100%', padding: '14px 16px', borderRadius: 10,
-                  marginBottom: 8, cursor: 'pointer', background: '#22262f',
-                  border: '1px solid #2a2d35', color: '#e8e9ec', fontSize: 15,
+                  display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '14px 16px', borderRadius: 12,
+                  marginBottom: 8, cursor: 'pointer', background: '#F7F2EC',
+                  border: '1px solid #E6DED4', color: '#2A241E', fontSize: 15,
                   fontWeight: 600, textAlign: 'left',
                 }}>
-                ☕ {s.ad}
+                <span style={{ width: 26, height: 26, borderRadius: 8, background: 'rgba(200,149,106,0.16)', color: '#C8956A', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14 }}>☕</span>
+                {s.ad}
               </button>
             ))}
           </div>
@@ -398,7 +433,7 @@ export default function GorevGiris({ subeId: subeIdProp }) {
 
         {/* ── Yükleniyor ── */}
         {adim === 'yukleniyor' && (
-          <div style={{ textAlign: 'center', padding: 20, color: '#6b6f7a' }}>
+          <div style={{ textAlign: 'center', padding: 20, color: '#9C8E7E' }}>
             <div className="spinner" style={{ margin: '0 auto 12px' }} />
             Kontrol ediliyor…
           </div>
@@ -415,7 +450,7 @@ export default function GorevGiris({ subeId: subeIdProp }) {
               <div style={{ fontSize: 14, fontWeight: 700, color: '#C8956A', marginBottom: 4 }}>
                 🌙 Açık Kapanış Kaydın Var
               </div>
-              <div style={{ fontSize: 11, color: '#6b6f7a', lineHeight: 1.6 }}>
+              <div style={{ fontSize: 11, color: '#9C8E7E', lineHeight: 1.6 }}>
                 {oturum.ad_soyad} — bugünkü kapanışını şimdi mühürlemek ister misin?
               </div>
             </div>
@@ -426,7 +461,7 @@ export default function GorevGiris({ subeId: subeIdProp }) {
               style={{
                 display: 'block', width: '100%', padding: '14px 16px', borderRadius: 10,
                 marginBottom: 8, cursor: 'pointer', background: 'rgba(200,149,106,0.1)',
-                border: '1px solid rgba(200,149,106,0.4)', color: '#e8e9ec',
+                border: '1px solid rgba(200,149,106,0.4)', color: '#2A241E',
                 fontSize: 15, fontWeight: 600, textAlign: 'left',
               }}>
               {yukleniyor ? '…' : '🔒 Kapanışımı Mühürle'}
@@ -437,8 +472,8 @@ export default function GorevGiris({ subeId: subeIdProp }) {
               disabled={yukleniyor}
               style={{
                 width: '100%', padding: '10px', borderRadius: 8,
-                border: '1px solid #2a2d35', background: 'none',
-                color: '#6b6f7a', cursor: 'pointer', fontSize: 12,
+                border: '1px solid #E6DED4', background: 'none',
+                color: '#9C8E7E', cursor: 'pointer', fontSize: 12,
               }}>
               Hayır, devam et
             </button>
@@ -457,14 +492,14 @@ export default function GorevGiris({ subeId: subeIdProp }) {
               <div style={{ fontSize: 14, fontWeight: 700, color: '#4a9eff', marginBottom: 4 }}>
                 Devri Onayla ve Mesaini Bitir
               </div>
-              <div style={{ fontSize: 12, color: '#b0b3bc', lineHeight: 1.6 }}>
-                Merhaba <strong style={{ color: '#e8e9ec' }}>{pinDogruOturum.ad_soyad}</strong>,<br />
+              <div style={{ fontSize: 12, color: '#6B5E50', lineHeight: 1.6 }}>
+                Merhaba <strong style={{ color: '#2A241E' }}>{pinDogruOturum.ad_soyad}</strong>,<br />
                 panel ekranında doldurduğun bilgiler kaydedildi.
               </div>
             </div>
             {sabahDevirYap.form_ozet && (
-              <div style={{ padding: '12px 14px', borderRadius: 10, marginBottom: 16, background: '#22262f', border: '1px solid #2a2d35' }}>
-                <div style={{ fontSize: 11, color: '#6b6f7a', marginBottom: 8, fontWeight: 600 }}>DEVİR ÖZETİ</div>
+              <div style={{ padding: '12px 14px', borderRadius: 10, marginBottom: 16, background: '#F7F2EC', border: '1px solid #E6DED4' }}>
+                <div style={{ fontSize: 11, color: '#9C8E7E', marginBottom: 8, fontWeight: 600 }}>DEVİR ÖZETİ</div>
                 {[
                   ['💰 Kasadaki Nakit', sabahDevirYap.form_ozet.teslim + ' ₺'],
                   ['🥤 Küçük Bardak', sabahDevirYap.form_ozet.bardak_kucuk],
@@ -473,9 +508,9 @@ export default function GorevGiris({ subeId: subeIdProp }) {
                   ['🎂 Pasta', sabahDevirYap.form_ozet.pasta_adet],
                   ['💧 Su', sabahDevirYap.form_ozet.su_adet],
                 ].map(([lbl, val]) => (
-                  <div key={lbl} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '4px 0', borderBottom: '1px solid #2a2d35' }}>
-                    <span style={{ color: '#b0b3bc' }}>{lbl}</span>
-                    <span style={{ color: '#e8e9ec', fontWeight: 700 }}>{val}</span>
+                  <div key={lbl} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '4px 0', borderBottom: '1px solid #E6DED4' }}>
+                    <span style={{ color: '#6B5E50' }}>{lbl}</span>
+                    <span style={{ color: '#2A241E', fontWeight: 700 }}>{val}</span>
                   </div>
                 ))}
               </div>
@@ -483,12 +518,12 @@ export default function GorevGiris({ subeId: subeIdProp }) {
             {hata && <div style={{ color: '#e05c5c', fontSize: 12, textAlign: 'center', marginBottom: 12 }}>{hata}</div>}
             <button onClick={devirYap} disabled={yukleniyor} style={{
               display: 'block', width: '100%', padding: '18px', borderRadius: 12,
-              cursor: 'pointer', background: yukleniyor ? '#22262f' : 'rgba(74,158,255,0.15)',
+              cursor: 'pointer', background: yukleniyor ? '#F7F2EC' : 'rgba(74,158,255,0.15)',
               border: '2px solid #4a9eff', color: '#4a9eff', fontSize: 17, fontWeight: 800,
             }}>
               {yukleniyor ? '⏳ Kaydediliyor…' : '✅ Devri Yap + Mesaimi Bitir'}
             </button>
-            <div style={{ fontSize: 11, color: '#6b6f7a', textAlign: 'center', marginTop: 10 }}>
+            <div style={{ fontSize: 11, color: '#9C8E7E', textAlign: 'center', marginTop: 10 }}>
               📍 Konumun doğrulanacak — şubede olman gerekiyor
             </div>
           </div>
@@ -499,7 +534,7 @@ export default function GorevGiris({ subeId: subeIdProp }) {
           <div style={{ textAlign: 'center', padding: '20px 0' }}>
             <div style={{ fontSize: 48, marginBottom: 12 }}>✅</div>
             <div style={{ fontSize: 16, fontWeight: 700, color: '#4caf84', marginBottom: 8 }}>Devir Tamamlandı</div>
-            <div style={{ fontSize: 13, color: '#b0b3bc', lineHeight: 1.7 }}>
+            <div style={{ fontSize: 13, color: '#6B5E50', lineHeight: 1.7 }}>
               Mesain sona erdi.<br />Akşamcı devralmayı bekliyor.<br />İyi dinlenmeler! ☕
             </div>
           </div>
@@ -518,15 +553,15 @@ export default function GorevGiris({ subeId: subeIdProp }) {
               <div style={{ fontSize: 14, fontWeight: 700, color: '#f59e0b', marginBottom: 4 }}>
                 Devir Seni Bekliyor
               </div>
-              <div style={{ fontSize: 12, color: '#b0b3bc', lineHeight: 1.6 }}>
-                <strong style={{ color: '#e8e9ec' }}>{bekleyenDevir.devreden_ad}</strong>{' '}
+              <div style={{ fontSize: 12, color: '#6B5E50', lineHeight: 1.6 }}>
+                <strong style={{ color: '#2A241E' }}>{bekleyenDevir.devreden_ad}</strong>{' '}
                 vardiyayı sana devretti.
               </div>
               {bekleyenDevir.not_aciklama && (
                 <div style={{
                   marginTop: 8, padding: '6px 10px', borderRadius: 8,
                   background: 'rgba(255,255,255,0.04)', fontSize: 12,
-                  color: '#e8e9ec', textAlign: 'left',
+                  color: '#2A241E', textAlign: 'left',
                 }}>
                   📝 {bekleyenDevir.not_aciklama}
                 </div>
@@ -535,8 +570,8 @@ export default function GorevGiris({ subeId: subeIdProp }) {
 
             {/* Devir özeti */}
             {bekleyenDevir.form_ozet && (
-              <div style={{ padding: '12px 14px', borderRadius: 10, marginBottom: 16, background: '#22262f', border: '1px solid #2a2d35' }}>
-                <div style={{ fontSize: 11, color: '#6b6f7a', marginBottom: 8, fontWeight: 600 }}>DEVREDİLEN DEĞERLER</div>
+              <div style={{ padding: '12px 14px', borderRadius: 10, marginBottom: 16, background: '#F7F2EC', border: '1px solid #E6DED4' }}>
+                <div style={{ fontSize: 11, color: '#9C8E7E', marginBottom: 8, fontWeight: 600 }}>DEVREDİLEN DEĞERLER</div>
                 {[
                   ['💰 Kasa Nakiti', bekleyenDevir.form_ozet.teslim + ' ₺'],
                   ['🥤 Küçük Bardak', bekleyenDevir.form_ozet.bardak_kucuk],
@@ -545,9 +580,9 @@ export default function GorevGiris({ subeId: subeIdProp }) {
                   ['🎂 Pasta', bekleyenDevir.form_ozet.pasta_adet],
                   ['💧 Su', bekleyenDevir.form_ozet.su_adet],
                 ].map(([lbl, val]) => (
-                  <div key={lbl} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '4px 0', borderBottom: '1px solid #2a2d35' }}>
-                    <span style={{ color: '#b0b3bc' }}>{lbl}</span>
-                    <span style={{ color: '#e8e9ec', fontWeight: 700 }}>{val}</span>
+                  <div key={lbl} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '4px 0', borderBottom: '1px solid #E6DED4' }}>
+                    <span style={{ color: '#6B5E50' }}>{lbl}</span>
+                    <span style={{ color: '#2A241E', fontWeight: 700 }}>{val}</span>
                   </div>
                 ))}
               </div>
@@ -562,8 +597,8 @@ export default function GorevGiris({ subeId: subeIdProp }) {
             {bekleyenDevir.devralan_id ? (
               /* Devir hedefi belli — sadece o kişi kabul edebilir */
               <div>
-                <div style={{ fontSize: 13, fontWeight: 600, color: '#b0b3bc', marginBottom: 10, textAlign: 'center' }}>
-                  Bu devir <strong style={{ color: '#e8e9ec' }}>{bekleyenDevir.devralan_ad}</strong> için bırakıldı.
+                <div style={{ fontSize: 13, fontWeight: 600, color: '#6B5E50', marginBottom: 10, textAlign: 'center' }}>
+                  Bu devir <strong style={{ color: '#2A241E' }}>{bekleyenDevir.devralan_ad}</strong> için bırakıldı.
                 </div>
                 {(() => {
                   const hedef = personelListe.find(p => String(p.id) === String(bekleyenDevir.devralan_id));
@@ -581,14 +616,14 @@ export default function GorevGiris({ subeId: subeIdProp }) {
                     </button>
                   );
                 })()}
-                <div style={{ marginTop: 10, fontSize: 11, color: '#6b6f7a', textAlign: 'center' }}>
+                <div style={{ marginTop: 10, fontSize: 11, color: '#9C8E7E', textAlign: 'center' }}>
                   Bu sen değilsen, hiçbir şeye dokunma — ekranı kapatabilirsin.
                 </div>
               </div>
             ) : (
               <div>
                 {/* Kim geldi? — ad seç (eski/açık devir akışı) */}
-                <div style={{ fontSize: 13, fontWeight: 600, color: '#b0b3bc', marginBottom: 10 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: '#6B5E50', marginBottom: 10 }}>
                   Sen kimsin?
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -613,8 +648,8 @@ export default function GorevGiris({ subeId: subeIdProp }) {
             <button onClick={() => setAdim('pin-giris')}
               style={{
                 marginTop: 14, width: '100%', padding: '9px', borderRadius: 8,
-                border: '1px solid #2a2d35', background: 'none',
-                color: '#6b6f7a', fontSize: 12, cursor: 'pointer',
+                border: '1px solid #E6DED4', background: 'none',
+                color: '#9C8E7E', fontSize: 12, cursor: 'pointer',
               }}>
               🔐 PIN ile giriş (kapanış / yönetici)
             </button>
@@ -635,21 +670,22 @@ export default function GorevGiris({ subeId: subeIdProp }) {
                 ← Devir Kabul ekranına dön
               </button>
             )}
-            <div style={{ fontSize: 13, fontWeight: 600, color: '#b0b3bc', marginBottom: 12 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: '#6B5E50', marginBottom: 12 }}>
               Sen kimsin?
             </div>
             {personelListe.map(p => (
               <button key={p.id}
                 onClick={() => { setSeciliPersonel(p); setPin(''); setHata(''); }}
                 style={{
-                  display: 'block', width: '100%', padding: '14px 16px', borderRadius: 10,
-                  marginBottom: 8, cursor: 'pointer', background: '#22262f',
-                  border: '1px solid #2a2d35', color: '#e8e9ec', fontSize: 15,
+                  display: 'flex', alignItems: 'center', gap: 12, width: '100%', padding: '12px 14px', borderRadius: 12,
+                  marginBottom: 8, cursor: 'pointer', background: '#F7F2EC',
+                  border: '1px solid #E6DED4', color: '#2A241E', fontSize: 15,
                   fontWeight: 600, textAlign: 'left',
                 }}>
-                {p.ad_soyad}
+                <Avatar ad={p.ad_soyad} size={38} />
+                <span style={{ flex: 1 }}>{p.ad_soyad}</span>
                 {!p.pin_tanimli && (
-                  <span style={{ fontSize: 10, color: '#e05c5c', marginLeft: 8 }}>PIN yok</span>
+                  <span style={{ fontSize: 10, color: '#e05c5c' }}>PIN yok</span>
                 )}
               </button>
             ))}
@@ -660,19 +696,20 @@ export default function GorevGiris({ subeId: subeIdProp }) {
         {adim === 'pin-giris' && seciliPersonel && (
           <div>
             <button onClick={() => { setSeciliPersonel(null); setPin(''); setHata(''); }}
-              style={{ background: 'none', border: 'none', color: '#6b6f7a', cursor: 'pointer', fontSize: 13, marginBottom: 16, padding: 0 }}>
+              style={{ background: 'none', border: 'none', color: '#9C8E7E', cursor: 'pointer', fontSize: 13, marginBottom: 16, padding: 0 }}>
               ← Geri
             </button>
-            <div style={{ textAlign: 'center', marginBottom: 24 }}>
-              <div style={{ fontSize: 15, fontWeight: 700 }}>Merhaba, {seciliPersonel.ad_soyad}</div>
-              <div style={{ fontSize: 12, color: '#6b6f7a', marginTop: 4 }}>4 haneli PIN'ini gir</div>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: 24 }}>
+              <div style={{ marginBottom: 8 }}><Avatar ad={seciliPersonel.ad_soyad} size={54} /></div>
+              <div style={{ fontSize: 16, fontWeight: 700, color: '#2A241E' }}>Merhaba, {seciliPersonel.ad_soyad}</div>
+              <div style={{ fontSize: 12, color: '#9C8E7E', marginTop: 4 }}>4 haneli PIN'ini gir</div>
             </div>
             <div style={{ display: 'flex', justifyContent: 'center', gap: 12, marginBottom: 24 }}>
               {[0,1,2,3].map(i => (
                 <div key={i} style={{
                   width: 14, height: 14, borderRadius: '50%',
-                  background: pin.length > i ? '#C8956A' : '#2a2d35',
-                  border: `2px solid ${pin.length > i ? '#C8956A' : '#6b6f7a'}`,
+                  background: pin.length > i ? '#C8956A' : '#E6DED4',
+                  border: `2px solid ${pin.length > i ? '#C8956A' : '#9C8E7E'}`,
                   transition: 'all 0.15s',
                 }} />
               ))}
@@ -688,8 +725,8 @@ export default function GorevGiris({ subeId: subeIdProp }) {
                 <button key={i} onClick={() => pinGir(k)} disabled={yukleniyor}
                   style={{
                     padding: '18px 0', borderRadius: 10, fontSize: k === 'sil' ? 18 : 22,
-                    fontWeight: 600, cursor: 'pointer', background: '#22262f',
-                    border: '1px solid #2a2d35', color: k === 'sil' ? '#6b6f7a' : '#e8e9ec',
+                    fontWeight: 600, cursor: 'pointer', background: '#F7F2EC',
+                    border: '1px solid #E6DED4', color: k === 'sil' ? '#9C8E7E' : '#2A241E',
                   }}>
                   {k === 'sil' ? '⌫' : k}
                 </button>
@@ -703,7 +740,7 @@ export default function GorevGiris({ subeId: subeIdProp }) {
           <div>
             <div style={{ textAlign: 'center', marginBottom: 24 }}>
               <div style={{ fontSize: 15, fontWeight: 700 }}>Hangi vardiya?</div>
-              <div style={{ fontSize: 12, color: '#6b6f7a', marginTop: 4 }}>{pinDogruOturum?.ad_soyad}</div>
+              <div style={{ fontSize: 12, color: '#9C8E7E', marginTop: 4 }}>{pinDogruOturum?.ad_soyad}</div>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               {[
@@ -714,10 +751,10 @@ export default function GorevGiris({ subeId: subeIdProp }) {
                 <button key={vt.id} onClick={() => vardiyaSec(vt.id)}
                   style={{
                     padding: '16px', borderRadius: 10, cursor: 'pointer', textAlign: 'left',
-                    background: '#22262f', border: `1px solid ${vt.renk}33`,
+                    background: '#F7F2EC', border: `1px solid ${vt.renk}33`,
                   }}>
                   <div style={{ fontSize: 15, fontWeight: 700, color: vt.renk }}>{vt.label}</div>
-                  <div style={{ fontSize: 11, color: '#6b6f7a', marginTop: 3 }}>{vt.alt}</div>
+                  <div style={{ fontSize: 11, color: '#9C8E7E', marginTop: 3 }}>{vt.alt}</div>
                 </button>
               ))}
             </div>
