@@ -18,9 +18,11 @@ Kaldırmak: main.py'den router'ı çıkar + urun-sevk'teki tek tetik satırını
 from __future__ import annotations
 
 import logging
+import threading
+import uuid
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel
 
 from database import db
@@ -52,6 +54,8 @@ def _ensure(cur) -> None:
         """
     )
     cur.execute("CREATE INDEX IF NOT EXISTS idx_belge_talep_durum ON belge_talep (durum, olusturma DESC)")
+    # Yüklenen faturanın izi (hangi tedarikci_fatura kaydı bu teslimatı kapattı)
+    cur.execute("ALTER TABLE belge_talep ADD COLUMN IF NOT EXISTS fatura_id TEXT")
 
 
 def belge_talep_olustur_izole(ts_id: str) -> None:
@@ -152,3 +156,110 @@ def belge_talep_kapat(talep_id: str, body: KapatBody = None):
             (durum, tid),
         )
     return {"ok": True, "durum": durum}
+
+
+@router.post("/{talep_id}/fatura-yukle")
+async def belge_talep_fatura_yukle(talep_id: str, dosya: UploadFile = File(...)):
+    """Toptancı WhatsApp'tan faturayı yolladı → sahip cep'ten yükler. Dosya mevcut FATURA
+    boru hattına aktarılır (OCR/maliyet ayrı modül), bu teslimata DAMGALANIR (siparis_talep_id
+    + belge_talep.fatura_id) ve 'fatura geldi' sinyali yakalanır → belge talebi kapanır.
+    Fatura çekirdeği DEĞİŞMEZ; bağ tek yönlü (belge_talep tüketici)."""
+    tid = (talep_id or "").strip()
+    raw = await dosya.read()
+    if not raw:
+        raise HTTPException(400, "Boş dosya")
+
+    with db() as (_, cur):
+        _ensure(cur)
+        cur.execute("SELECT sube_id, talep_id FROM belge_talep WHERE id=%s", (tid,))
+        bt = cur.fetchone()
+    if not bt:
+        raise HTTPException(404, "Belge talep bulunamadı")
+    bt = dict(bt)
+    sube_id = bt.get("sube_id")
+    siparis_talep_id = bt.get("talep_id")
+
+    # Fatura modülü yardımcıları — izole import (modül kapalıysa yükleme reddedilir)
+    try:
+        from fatura_api import (
+            _ensure_tablolar, _ocr_calistir, _pdf_faturalara_bol, fatura_modul_aktif,
+        )
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(503, f"Fatura modülü yüklenemedi: {str(e)[:120]}")
+    if not fatura_modul_aktif():
+        raise HTTPException(503, "Fatura modülü kapalı (FATURA_MODUL=0).")
+
+    ad = (dosya.filename or "").lower()
+    is_pdf = ad.endswith(".pdf") or (dosya.content_type or "").lower() == "application/pdf"
+    fatura_idler: list[str] = []
+    ocr_calisacak: list[str] = []
+
+    with db() as (conn, cur):
+        _ensure_tablolar(cur)
+        if is_pdf:
+            try:
+                faturalar = _pdf_faturalara_bol(raw)
+            except Exception:
+                faturalar = []
+            if faturalar:
+                for f in faturalar:
+                    fno = (f.get("fatura_no") or "").strip() or None
+                    metin = (f.get("metin") or "").strip()
+                    if not metin:
+                        continue
+                    if fno:
+                        cur.execute("SELECT 1 FROM tedarikci_fatura WHERE fatura_no=%s LIMIT 1", (fno,))
+                        if cur.fetchone():
+                            continue
+                    fid = str(uuid.uuid4())
+                    cur.execute(
+                        """
+                        INSERT INTO tedarikci_fatura
+                            (id, sube_id, siparis_talep_id, fatura_no, fatura_tarih, onceki_bakiye,
+                             bakiye_dahil, kaynak_metin, kaynak_tip, durum)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'pdf','ocr_bekliyor')
+                        """,
+                        (fid, sube_id, siparis_talep_id, fno, f.get("fatura_tarih"),
+                         f.get("onceki_bakiye"), f.get("bakiye_dahil"), metin),
+                    )
+                    fatura_idler.append(fid)
+                    ocr_calisacak.append(fid)
+            if not fatura_idler:
+                # Bölünemeyen PDF → ham dosyayı sakla + bağla (manuel işlenebilir kalır)
+                fid = str(uuid.uuid4())
+                cur.execute(
+                    """
+                    INSERT INTO tedarikci_fatura
+                        (id, sube_id, siparis_talep_id, foto, foto_mime, kaynak_tip, durum)
+                    VALUES (%s,%s,%s,%s,'application/pdf','pdf','ocr_bekliyor')
+                    """,
+                    (fid, sube_id, siparis_talep_id, raw),
+                )
+                fatura_idler.append(fid)
+        else:
+            # Görüntü (toptancı foto olarak yolladıysa) → şube foto akışıyla aynı
+            mime = dosya.content_type or "image/jpeg"
+            fid = str(uuid.uuid4())
+            cur.execute(
+                """
+                INSERT INTO tedarikci_fatura
+                    (id, sube_id, siparis_talep_id, foto, foto_mime, durum)
+                VALUES (%s,%s,%s,%s,%s,'ocr_bekliyor')
+                """,
+                (fid, sube_id, siparis_talep_id, raw, mime),
+            )
+            fatura_idler.append(fid)
+            ocr_calisacak.append(fid)
+
+        # 'fatura geldi' sinyali — belge talebini kapat + damga
+        cur.execute(
+            "UPDATE belge_talep SET durum='pdf_geldi', kapanma_ts=NOW(), fatura_id=%s WHERE id=%s",
+            (fatura_idler[0] if fatura_idler else None, tid),
+        )
+        conn.commit()
+
+    # Asenkron OCR — yüklemeyi bekletmeden
+    for fid in ocr_calisacak:
+        threading.Thread(target=_ocr_calistir, args=(fid,), daemon=True).start()
+
+    return {"ok": True, "durum": "pdf_geldi", "fatura_idler": fatura_idler, "ocr": len(ocr_calisacak)}

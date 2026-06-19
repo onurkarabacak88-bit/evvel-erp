@@ -692,9 +692,28 @@ function CepBelgeTalep({ onGeri, onDegisti }) {
     try { await api(`/belge-talep/${x.id}/mesaj-gonderildi`, { method: 'POST' }); yukle(); } catch { /* yut */ }
   };
 
-  const kapat = async (x) => {
+  // Toptancı WhatsApp'tan faturayı yolladı → dosyayı yükle (mevcut fatura boru hattına gider,
+  // bu teslimata damgalanır, 'fatura geldi' sinyali yakalanır → kart kapanır)
+  const faturaYukle = async (x, dosya) => {
+    if (!dosya) return;
+    setMesgul(x.id); setHata('');
+    try {
+      const fd = new FormData();
+      fd.append('dosya', dosya, dosya.name || 'fatura');
+      const res = await fetch(`/api/belge-talep/${x.id}/fatura-yukle`, { method: 'POST', body: fd });
+      if (!res.ok) {
+        const e = await res.json().catch(() => ({}));
+        throw new Error((e && (e.detail || e.mesaj)) || 'Yükleme başarısız');
+      }
+      yukle(); onDegisti && onDegisti();
+    } catch (e) { setHata(typeof e.message === 'string' ? e.message : 'Yükleme başarısız'); }
+    finally { setMesgul(''); }
+  };
+
+  // Dijital fatura yoksa (sadece kâğıt) elle kapat — yedek
+  const elleKapat = async (x) => {
     setMesgul(x.id);
-    try { await api(`/belge-talep/${x.id}/kapat`, { method: 'POST', body: { durum: 'pdf_geldi' } }); yukle(); onDegisti && onDegisti(); }
+    try { await api(`/belge-talep/${x.id}/kapat`, { method: 'POST', body: { durum: 'kapandi' } }); yukle(); onDegisti && onDegisti(); }
     catch (e) { setHata(e.message || 'Kapatılamadı'); }
     finally { setMesgul(''); }
   };
@@ -708,7 +727,7 @@ function CepBelgeTalep({ onGeri, onDegisti }) {
       <Baslik baslik="🧾 Fatura Bekleyen" onGeri={onGeri}
         sag={<button onClick={yukle} style={{ background: 'none', border: 'none', color: C.t3, fontSize: 20, cursor: 'pointer' }}>↻</button>} />
       <div style={{ padding: '10px 14px', borderBottom: `1px solid ${C.border}`, fontSize: 12, color: C.t3, lineHeight: 1.5 }}>
-        Şube teslim aldı, faturası henüz gelmedi. Tek dokunuşla toptancıdan PDF faturayı iste.
+        Şube teslim aldı, faturası henüz gelmedi. Toptancıdan PDF iste; geldiğinde buradan yükle → otomatik maliyete düşer ve kart kapanır.
       </div>
       <div style={{ padding: 14 }}>
         {liste === null && <div style={{ color: C.t3, textAlign: 'center', padding: 30 }}>Yükleniyor…</div>}
@@ -740,10 +759,22 @@ function CepBelgeTalep({ onGeri, onDegisti }) {
                   border: telVar ? 'none' : `1px solid ${C.border}`, borderRadius: 10, padding: '11px 0',
                   fontSize: 14, fontWeight: 800, cursor: telVar ? 'pointer' : 'default',
                 }}>{telVar ? '📲 Fatura İste' : 'Telefon yok'}</button>
-                <button onClick={() => kapat(x)} disabled={mesgul === x.id} style={{
-                  background: C.bg, color: C.yesil, border: `1px solid ${C.border}`, borderRadius: 10,
-                  padding: '11px 14px', fontSize: 14, fontWeight: 700, cursor: 'pointer',
-                }}>{mesgul === x.id ? '…' : '✓ Geldi'}</button>
+                <label style={{
+                  flex: 1, background: C.mavi, color: '#fff', borderRadius: 10, padding: '11px 0',
+                  fontSize: 14, fontWeight: 800, cursor: mesgul === x.id ? 'default' : 'pointer',
+                  textAlign: 'center', opacity: mesgul === x.id ? 0.6 : 1,
+                }}>
+                  {mesgul === x.id ? 'Yükleniyor…' : '📎 Fatura Geldi'}
+                  <input type="file" accept="application/pdf,image/*" style={{ display: 'none' }}
+                    disabled={mesgul === x.id}
+                    onChange={e => { const f = e.target.files && e.target.files[0]; e.target.value = ''; faturaYukle(x, f); }} />
+                </label>
+              </div>
+              <div style={{ textAlign: 'center', marginTop: 6 }}>
+                <button onClick={() => elleKapat(x)} disabled={mesgul === x.id} style={{
+                  background: 'none', border: 'none', color: C.t3, fontSize: 11,
+                  textDecoration: 'underline', cursor: 'pointer',
+                }}>fatura dijital değil · elle kapat</button>
               </div>
             </div>
           );
