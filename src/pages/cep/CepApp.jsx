@@ -223,6 +223,8 @@ function CepHome({ sayac, kasa, onKasa, onAc, onCikis, yenile }) {
       sayi: sayac.basvuru, alt: sayac.basvuru > 0 ? `${sayac.basvuru} yeni başvuru` : 'Yeni başvuru yok' },
     { id: 'stok-sayim', ikon: '📋', baslik: 'Stok Sayım', renk: C.mavi,
       sayi: sayac.sayimOnay, alt: sayac.sayimOnay > 0 ? `${sayac.sayimOnay} onay bekliyor` : 'Görev ata / onayla' },
+    { id: 'vardiya-takip', ikon: '👥', baslik: 'Vardiya Takip', renk: C.mavi,
+      sayi: null, alt: 'Aylık mesai / gecikme' },
     { id: 'demirbas', ikon: '🛠️', baslik: 'Demirbaş & Arıza', renk: C.kirmizi,
       sayi: sayac.ariza, alt: sayac.ariza > 0 ? `${sayac.ariza} açık arıza` : 'Açık arıza yok' },
     { id: 'subeler', ikon: '🏪', baslik: 'Şubeler', renk: C.mavi,
@@ -1708,6 +1710,116 @@ function CepSayimAktif() {
   );
 }
 
+// ── Vardiya Takip (salt-okur — aylık mesai/gecikme/part-tam) ────────────────
+function CepVardiyaTakip({ onGeri }) {
+  const [veri, setVeri] = useState(null);
+  const [vardiyaDisi, setVardiyaDisi] = useState([]);
+  const [hata, setHata] = useState('');
+  const [ayOff, setAyOff] = useState(0);
+  const [filtre, setFiltre] = useState('aktif'); // aktif | ayrildi | hepsi
+
+  const d = (() => { const t = new Date(); t.setDate(1); t.setMonth(t.getMonth() - ayOff); return t; })();
+  const yil = d.getFullYear();
+  const ay = d.getMonth() + 1;
+  const ayMetin = d.toLocaleDateString('tr-TR', { month: 'long', year: 'numeric' });
+
+  const yukle = useCallback(() => {
+    setHata('');
+    const bugunTarih = new Date().toISOString().slice(0, 10);
+    Promise.all([
+      api(`/gorev/vardiya-takip?yil=${yil}&ay=${ay}`),
+      api(`/gorev/yoklama?tarih=${bugunTarih}&sadece_vardiya_disi=true`).catch(() => []),
+    ]).then(([v, vd]) => { setVeri(v || { personeller: [] }); setVardiyaDisi(Array.isArray(vd) ? vd : []); })
+      .catch(e => { setHata(e.message || 'Yüklenemedi'); setVeri({ personeller: [] }); });
+  }, [yil, ay]);
+  useEffect(() => { yukle(); }, [yukle]);
+
+  const hs = (n) => (Math.round((Number(n) || 0) * 10) / 10) + 's';
+  const personeller = veri?.personeller || [];
+  const liste = personeller.filter(p => filtre === 'hepsi' ? true : filtre === 'ayrildi' ? !p.aktif : p.aktif !== false);
+  const ozetFazla = personeller.reduce((s, p) => s + (Number(p.toplam_fazla_mesai_saat) || 0), 0);
+  const ozetPartTam = personeller.filter(p => p.part_tam_gun > 0).length;
+
+  return (
+    <div style={{ minHeight: '100vh', background: C.bg }}>
+      <Baslik baslik="👥 Vardiya Takip" onGeri={onGeri}
+        sag={<button onClick={yukle} style={{ background: 'none', border: 'none', color: C.t3, fontSize: 20, cursor: 'pointer' }}>↻</button>} />
+      {/* Ay gezinme */}
+      <div style={{ padding: '12px 14px', borderBottom: `1px solid ${C.border}` }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 14 }}>
+          <button onClick={() => setAyOff(a => a + 1)} style={{ background: C.bg2, border: `1px solid ${C.border}`, borderRadius: 8, color: C.t2, padding: '6px 12px', fontSize: 16, cursor: 'pointer' }}>‹</button>
+          <span style={{ fontSize: 14, fontWeight: 700, color: C.t1, minWidth: 130, textAlign: 'center', textTransform: 'capitalize' }}>{ayMetin}</span>
+          <button onClick={() => setAyOff(a => Math.max(0, a - 1))} disabled={ayOff === 0} style={{ background: C.bg2, border: `1px solid ${C.border}`, borderRadius: 8, color: ayOff === 0 ? C.t3 : C.t2, padding: '6px 12px', fontSize: 16, cursor: ayOff === 0 ? 'default' : 'pointer' }}>›</button>
+        </div>
+      </div>
+
+      {/* Özet */}
+      {personeller.length > 0 && (
+        <div style={{ display: 'flex', gap: 8, padding: '12px 14px 0' }}>
+          {[[`${personeller.length}`, 'Personel', C.t1], [hs(ozetFazla), 'Fazla mesai', '#f59e0b'], [`${ozetPartTam}`, 'Part-tam', '#f59e0b']].map(([v, l, renk]) => (
+            <div key={l} style={{ flex: 1, background: C.bg2, border: `1px solid ${C.border}`, borderRadius: 10, padding: '10px 8px', textAlign: 'center' }}>
+              <div style={{ fontSize: 16, fontWeight: 800, color: renk }}>{v}</div>
+              <div style={{ fontSize: 10, color: C.t3, marginTop: 2 }}>{l}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Bugün vardiya dışı girişler */}
+      {vardiyaDisi.length > 0 && (
+        <div style={{ margin: '12px 14px 0', border: '1px solid rgba(245,158,11,0.3)', background: 'rgba(245,158,11,0.06)', borderRadius: 12, padding: '10px 12px' }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: '#f59e0b', marginBottom: 6 }}>🔀 Bugün vardiya dışı giriş ({vardiyaDisi.length})</div>
+          {vardiyaDisi.map((g, i) => (
+            <div key={i} style={{ fontSize: 12, color: C.t2, padding: '3px 0' }}>
+              <b style={{ color: C.t1 }}>{g.ad_soyad}</b> · {g.asil_sube_adi || '—'} → <span style={{ color: '#f59e0b' }}>{g.sube_adi}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Filtre */}
+      <div style={{ display: 'flex', gap: 6, padding: '12px 14px 0' }}>
+        {[['aktif', 'Aktif'], ['ayrildi', 'Ayrıldı'], ['hepsi', 'Tümü']].map(([k, l]) => (
+          <button key={k} onClick={() => setFiltre(k)} style={{ flex: 1, background: filtre === k ? C.mavi : C.bg2, color: filtre === k ? '#fff' : C.t2, border: `1px solid ${filtre === k ? C.mavi : C.border}`, borderRadius: 8, padding: '7px 0', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>{l}</button>
+        ))}
+      </div>
+
+      <div style={{ padding: 14 }}>
+        {veri === null && <div style={{ color: C.t3, textAlign: 'center', padding: 30 }}>Yükleniyor…</div>}
+        {hata && <div style={{ color: C.kirmizi, textAlign: 'center', padding: 16 }}>{hata}</div>}
+        {veri && liste.length === 0 && !hata && <div style={{ color: C.t3, textAlign: 'center', padding: 30 }}>Bu ay için kayıt yok.</div>}
+        {liste.map(p => {
+          const ayrildi = !p.aktif;
+          return (
+            <div key={p.personel_id} style={{ background: C.bg2, border: `1px solid ${C.border}`, borderRadius: 14, padding: '12px 14px', marginBottom: 10, opacity: ayrildi ? 0.7 : 1 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                <div style={{ fontSize: 15, fontWeight: 800, color: C.t1 }}>
+                  {p.ad_soyad}
+                  <span style={{ fontSize: 10, color: C.t3, fontWeight: 400, marginLeft: 6 }}>{p.calisma_turu === 'surekli' ? 'Sürekli' : 'Part-time'}</span>
+                  {ayrildi && <span style={{ fontSize: 10, color: C.t3, marginLeft: 6 }}>· ayrıldı</span>}
+                </div>
+                {p['net_hakediş'] != null && <div style={{ fontSize: 14, fontWeight: 800, color: C.yesil, whiteSpace: 'nowrap' }}>{fmt(Math.round(p['net_hakediş']))}</div>}
+              </div>
+              <div style={{ display: 'flex', gap: 14, marginTop: 8, fontSize: 12 }}>
+                <span style={{ color: C.t3 }}>Plan <b style={{ color: C.t1 }}>{hs(p.toplam_planlanan_saat)}</b></span>
+                <span style={{ color: C.t3 }}>Fazla <b style={{ color: p.toplam_fazla_mesai_saat > 0 ? '#f59e0b' : C.t1 }}>{hs(p.toplam_fazla_mesai_saat)}</b></span>
+                <span style={{ color: C.t3 }}>Gecikme <b style={{ color: p.toplam_gecikme_dk > 0 ? C.kirmizi : C.t1 }}>{p.toplam_gecikme_dk || 0} dk</b></span>
+                <span style={{ color: C.t3 }}>Yemek <b style={{ color: C.yesil }}>{p.yemek_ucret_gun || 0}g</b></span>
+              </div>
+              {(p.part_tam_gun > 0 || p.haftalik_izin_kullanilmadi > 0) && (
+                <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
+                  {p.part_tam_gun > 0 && <span style={{ fontSize: 11, fontWeight: 700, color: '#f59e0b', background: 'rgba(245,158,11,0.12)', borderRadius: 6, padding: '2px 8px' }}>{p.part_tam_gun}g part-tam</span>}
+                  {p.haftalik_izin_kullanilmadi > 0 && <span style={{ fontSize: 11, fontWeight: 700, color: C.kirmizi, background: 'rgba(239,68,68,0.12)', borderRadius: 6, padding: '2px 8px' }}>{p.haftalik_izin_kullanilmadi} hafta izinsiz</span>}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ── Denetim (günlük rapordan) ───────────────────────────────────────────────
 function CepDenetim({ onGeri }) {
   const [data, setData] = useState(null);
@@ -2814,6 +2926,8 @@ export default function CepApp() {
     return <CepDenetim onGeri={geri} />;
   if (view === 'stok-sayim')
     return <CepStokSayim onGeri={geri} />;
+  if (view === 'vardiya-takip')
+    return <CepVardiyaTakip onGeri={geri} />;
   if (view === 'demirbas')
     return <CepDemirbas onGeri={geri} />;
   if (view === 'kule')
