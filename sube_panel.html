@@ -10717,10 +10717,12 @@ var UrunTeslimAl = (function () {
               'style="flex:1;display:none;font-size:13px;padding:8px;border-radius:8px" />' +
           '</div>';
       });
+      var _svMerkez = (s.kaynak === 'merkez');
+      var _svMerkezRozet = _svMerkez ? '<span style="display:inline-block;font-size:11px;font-weight:800;color:#fff;background:#6366f1;padding:2px 8px;border-radius:6px;margin-right:6px">🏢 MERKEZ</span>' : '';
       wrap.innerHTML =
-        '<div style="background:var(--bg2);border:2px solid #f59e0b;border-radius:12px;padding:14px;margin-bottom:14px">' +
+        '<div style="background:var(--bg2);border:2px solid ' + (_svMerkez ? '#6366f1' : '#f59e0b') + ';border-radius:12px;padding:14px;margin-bottom:14px">' +
           '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px">' +
-            '<div style="font-size:15px;font-weight:800">📦 ' + escHtml(s.tedarikci_ad || 'Tedarikçi') + ' — beklenen sipariş</div>' +
+            '<div style="font-size:15px;font-weight:800">' + _svMerkezRozet + '📦 ' + escHtml(s.tedarikci_ad || 'Tedarikçi') + ' — ' + (_svMerkez ? 'merkez siparişi' : 'beklenen sipariş') + '</div>' +
             '<button type="button" class="btn btn-secondary btn-sm" data-sv-bekleyen-vazgec>↩︎ Vazgeç</button>' +
           '</div>' +
           '<div style="font-size:12px;color:var(--muted);margin-bottom:8px">Geleni sayın. Beklenenden farklıysa not kutusu açılır — sebebini yazın (kör sayım değil).</div>' +
@@ -10734,9 +10736,11 @@ var UrunTeslimAl = (function () {
       var cards = '';
       _svBeklenenListe.forEach(function (o) {
         var wa = o.wa_gonderildi ? ' · 📲' : '';
+        var mrk = (o.kaynak === 'merkez');
+        var mrkRoz = mrk ? '<span style="display:inline-block;font-size:10px;font-weight:800;color:#fff;background:#6366f1;padding:1px 6px;border-radius:5px;margin-right:5px">🏢 MERKEZ</span>' : '';
         cards +=
-          '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;background:var(--bg);border:1px solid var(--cizgi);border-radius:10px;padding:10px 12px;margin-bottom:8px">' +
-            '<div><b style="font-size:15px">' + escHtml(o.tedarikci_ad || '—') + '</b>' +
+          '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;background:var(--bg);border:1px solid ' + (mrk ? '#6366f1' : 'var(--cizgi)') + ';border-radius:10px;padding:10px 12px;margin-bottom:8px">' +
+            '<div>' + mrkRoz + '<b style="font-size:15px">' + escHtml(o.tedarikci_ad || '—') + '</b>' +
               '<span style="font-size:12px;color:var(--muted)"> · ' + (o.kalem_sayisi || 0) + ' kalem' + wa + '</span></div>' +
             '<button type="button" class="btn btn-primary btn-sm" data-sv-bekleyen="' + escHtml(o.id) + '">Teslim Al</button>' +
           '</div>';

@@ -1038,10 +1038,11 @@ function CepDepolar({ onGeri }) {
   });
   const secimList = Object.values(secim);
 
-  const waGonder = () => {
+  const waGonder = async () => {
     const ted = tedarikciler.find(t => String(t.id) === String(tedId));
     if (!ted) { setHata('Toptancı seçin'); return; }
-    const subeAd = (data?.subeler || []).find(s => s.id === (sipSube || (aktif !== 'tumu' ? aktif : '')))?.ad;
+    const subeId = sipSube || (aktif !== 'tumu' ? aktif : '');
+    const subeAd = (data?.subeler || []).find(s => s.id === subeId)?.ad;
     if (!subeAd) { setHata('Teslimat şubesi seçin'); return; }
     if (!secimList.length) { setHata('En az bir ürün seçin'); return; }
     const tel = String(ted.telefon || '').replace(/\D/g, '');
@@ -1050,7 +1051,15 @@ function CepDepolar({ onGeri }) {
     if (num.length === 11 && num.startsWith('0')) num = '90' + num.slice(1);
     else if (num.length === 10 && num.startsWith('5')) num = '90' + num;
     if (num.length < 11) { setHata(`${ted.ad} için geçerli telefon yok`); return; }
-    // ── Hazır mesaj şablonu ──
+    // 1) MERKEZ SİPARİŞ kaydı — şube takip/kabul/stok için (kalem_kodu = kanonik UUID)
+    const kalemler = Object.entries(secim).map(([kk, v]) => ({ urun_ad: v.ad, adet: v.adet, kalem_kodu: kk }));
+    try {
+      await api('/ops/siparis/merkez-siparis-olustur', {
+        method: 'POST',
+        body: { sube_id: subeId, tedarikci_id: ted.id, kalemler, not_aciklama: sipNot.trim() || null },
+      });
+    } catch (e) { setHata('Merkez kaydı: ' + (e.message || '') + ' (WhatsApp yine de açılıyor)'); }
+    // 2) wa.me — hazır mesaj senin telefonundan
     const satirlar = secimList.map(x => `• ${x.adet} adet ${x.ad}`).join('\n');
     const bugun = new Date().toLocaleDateString('tr-TR');
     const mesaj =
@@ -1059,8 +1068,9 @@ function CepDepolar({ onGeri }) {
       `${satirlar}` +
       `${sipNot.trim() ? `\n\n📝 Not: ${sipNot.trim()}` : ''}\n\n` +
       `Teşekkürler. 🙏`;
-    const url = `https://wa.me/${num}?text=${encodeURIComponent(mesaj)}`;
-    window.open(url, '_blank');
+    window.open(`https://wa.me/${num}?text=${encodeURIComponent(mesaj)}`, '_blank');
+    // 3) temizle (sipariş oluştu)
+    setSecim({}); setSipNot(''); setSadeceSecili(false);
   };
 
   const yukle = useCallback((sessiz) => {

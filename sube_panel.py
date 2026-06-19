@@ -2864,7 +2864,7 @@ def sube_toptanci_siparis_bekleyen(sube_id: str):
                 """
                 SELECT ts.id, ts.talep_id, ts.tedarikci_id, ts.tedarikci_ad,
                        ts.kalemler, ts.not_aciklama, ts.olusturma,
-                       ts.wa_gonderim_ts, ts.wa_durum
+                       ts.wa_gonderim_ts, ts.wa_durum, ts.kaynak
                 FROM toptanci_siparis ts
                 JOIN siparis_talep t ON t.id = ts.talep_id
                 WHERE ts.sube_id = %s
@@ -2889,6 +2889,7 @@ def sube_toptanci_siparis_bekleyen(sube_id: str):
                 {
                     "urun_ad": str(k.get("urun_ad") or "").strip(),
                     "adet": int(k.get("adet") or 0),
+                    "urun_id": k.get("urun_id"),
                     "kalem_kodu": k.get("kalem_kodu"),
                     "kategori_kod": k.get("kategori_kod"),
                 }
@@ -2905,6 +2906,7 @@ def sube_toptanci_siparis_bekleyen(sube_id: str):
                 "not_aciklama": (str(d.get("not_aciklama") or "").strip() or None),
                 "olusturma": str(d.get("olusturma") or "")[:16].replace("T", " "),
                 "wa_gonderildi": (str(d.get("wa_durum") or "") == "gonderildi"),
+                "kaynak": (str(d.get("kaynak") or "sube")),
             })
     return {"siparisler": out}
 

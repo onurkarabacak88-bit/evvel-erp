@@ -2454,6 +2454,9 @@ def init_db():
                 teslim_ts       TIMESTAMPTZ
             )
         """)
+        # İZOLE: Merkez (patron/cep) kaynaklı sipariş ayrımı — 'sube' | 'merkez'.
+        # Şube panelinde "Merkez Siparişi" rozeti için. Kaldırmak istersek zararsız.
+        cur.execute("ALTER TABLE toptanci_siparis ADD COLUMN IF NOT EXISTS kaynak TEXT NOT NULL DEFAULT 'sube'")
         cur.execute("""
             CREATE INDEX IF NOT EXISTS idx_toptanci_siparis_talep
             ON toptanci_siparis (talep_id)

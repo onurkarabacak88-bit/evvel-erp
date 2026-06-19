@@ -532,6 +532,70 @@ def ops_depo_stok():
     return {"subeler": subeler, "toplam_kalem": len(kalemler), "kalemler": kalemler}
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# MERKEZ SİPARİŞ (İZOLE) — patron/cep'ten verilen sipariş. siparis_talep(MERKEZ) +
+# toptanci_siparis(kaynak='merkez') oluşturur → şube teslim-al akışına düşer,
+# "Merkez Siparişi" rozetiyle görünür. Kaldırmak istersek: bu endpoint + rozet sil.
+# ══════════════════════════════════════════════════════════════════════════════
+@router.post("/siparis/merkez-siparis-olustur")
+def ops_merkez_siparis_olustur(body: dict = None):
+    body = body or {}
+    sube_id = str(body.get("sube_id") or "").strip()          # teslimat şubesi
+    tedarikci_id = str(body.get("tedarikci_id") or "").strip()
+    notu = str(body.get("not_aciklama") or "").strip() or None
+    if not sube_id or not tedarikci_id:
+        raise HTTPException(400, "sube_id (teslimat) ve tedarikci_id zorunlu")
+    kalemler = []
+    for k in (body.get("kalemler") or []):
+        ad = str((k or {}).get("urun_ad") or "").strip()
+        try:
+            adet = max(0, int((k or {}).get("adet") or 0))
+        except Exception:
+            adet = 0
+        if not ad or adet <= 0:
+            continue
+        kalemler.append({"urun_ad": ad, "adet": adet,
+                         "kalem_kodu": (str((k or {}).get("kalem_kodu") or "").strip() or None)})
+    if not kalemler:
+        raise HTTPException(400, "En az bir geçerli kalem girilmeli")
+    with db() as (conn, cur):
+        cur.execute("SELECT id, ad, telefon FROM tedarikciler WHERE id=%s AND aktif=TRUE", (tedarikci_id,))
+        tr = cur.fetchone()
+        if not tr:
+            raise HTTPException(404, "Tedarikçi bulunamadı veya pasif")
+        ted = dict(tr)
+        cur.execute("SELECT ad FROM subeler WHERE id=%s", (sube_id,))
+        sr = cur.fetchone()
+        sube_adi = (dict(sr).get("ad") if sr else None) or sube_id
+        # V2: kanonik urun_id damgala (kaynakta çöz)
+        for k in kalemler:
+            k["urun_id"] = _kanonik_urun_id(cur, k.get("kalem_kodu"), k.get("urun_ad"))
+        # 1) siparis_talep — MERKEZ kaynaklı, toptancıya yönlendirilmiş kabul edilir
+        talep_id = str(uuid.uuid4())
+        cur.execute(
+            """
+            INSERT INTO siparis_talep
+                (id, sube_id, durum, personel_ad, not_aciklama, kalemler, sevkiyat_durumu)
+            VALUES (%s,%s,'gonderildi','MERKEZ',%s,%s::jsonb,'toptanciya_yonlendirildi')
+            """,
+            (talep_id, sube_id, notu, json.dumps(kalemler, ensure_ascii=False)),
+        )
+        # 2) toptanci_siparis — kaynak='merkez'; şube teslim-bekleyene düşer
+        ts_id = str(uuid.uuid4())
+        cur.execute(
+            """
+            INSERT INTO toptanci_siparis
+                (id, talep_id, sube_id, tedarikci_id, tedarikci_ad, tedarikci_tel,
+                 kalemler, not_aciklama, durum, kaynak, olusturan_ad)
+            VALUES (%s,%s,%s,%s,%s,%s,%s::jsonb,%s,'gonderildi','merkez','Patron (Cep)')
+            """,
+            (ts_id, talep_id, sube_id, tedarikci_id, ted.get("ad"), ted.get("telefon"),
+             json.dumps(kalemler, ensure_ascii=False), notu),
+        )
+    return {"ok": True, "talep_id": talep_id, "ts_id": ts_id,
+            "sube_adi": sube_adi, "tedarikci_ad": ted.get("ad")}
+
+
 @router.get("/kasiyer-karne")
 def ops_kasiyer_karne(gun: int = 30, sube_id: Optional[str] = None):
     """Kasiyer doğruluk karnesi — ÖZENSİZLİK ≠ ŞÜPHE ayrımıyla.
