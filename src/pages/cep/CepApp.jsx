@@ -204,6 +204,8 @@ function CepHome({ sayac, kasa, onKasa, onAc, onCikis, yenile }) {
       sayi: sayac.ciro, alt: sayac.ciro > 0 ? `${sayac.ciro} bekleyen ciro` : 'Bekleyen ciro yok' },
     { id: 'kasa-uyumsuzluk', ikon: '🔴', baslik: 'Kasa Uyumsuzluğu', renk: C.kirmizi,
       sayi: sayac.kasaUyum, alt: sayac.kasaUyum > 0 ? `${sayac.kasaUyum} açık fark` : 'Bugün fark yok' },
+    { id: 'dis-kaynak', ikon: '🪙', baslik: 'Dış Kaynak', renk: C.yesil,
+      sayi: null, alt: sayac.disKaynak > 0 ? `Bu ay ${fmt(sayac.disKaynak)}` : 'Bu ay gelir yok' },
     { id: 'kule', ikon: '🚚', baslik: 'Sipariş Kulesi', renk: C.mavi,
       sayi: sayac.kule, alt: sayac.kule > 0 ? `${sayac.kule} yönlendir bekliyor` : 'Gelen sipariş & yönlendir' },
     { id: 'depolar', ikon: '📦', baslik: 'Depolar', renk: C.mavi,
@@ -579,6 +581,70 @@ function CepKasaUyumsuzluk({ onGeri }) {
                 </div>
               )}
               {u.okundu && <div style={{ fontSize: 11, color: C.yesil, marginTop: 4, fontWeight: 700 }}>✓ çözüldü</div>}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ── Dış Kaynak Geliri (CFO'daki gibi — bu ay toplam + liste, salt-okur) ──────
+function CepDisKaynak({ onGeri }) {
+  const [liste, setListe] = useState(null);
+  const [hata, setHata] = useState('');
+  const [ayOff, setAyOff] = useState(0); // 0=bu ay, 1=geçen ay...
+  const ayStr = (() => { const t = new Date(); t.setDate(1); t.setMonth(t.getMonth() - ayOff); return t.toISOString().slice(0, 7); })();
+  const ayMetin = (() => { const t = new Date(); t.setDate(1); t.setMonth(t.getMonth() - ayOff); return t.toLocaleDateString('tr-TR', { month: 'long', year: 'numeric' }); })();
+
+  const yukle = useCallback(() => {
+    setHata('');
+    api(`/dis-kaynak?ay=${ayStr}`)
+      .then(d => setListe(Array.isArray(d) ? d : (d?.liste || [])))
+      .catch(e => { setHata(e.message || 'Yüklenemedi'); setListe([]); });
+  }, [ayStr]);
+  useEffect(() => { yukle(); }, [yukle]);
+
+  const aktif = (liste || []).filter(x => x.durum !== 'iptal');
+  const toplam = aktif.reduce((s, x) => s + (Number(x.tutar) || 0), 0);
+
+  return (
+    <div style={{ minHeight: '100vh', background: C.bg }}>
+      <Baslik baslik="🪙 Dış Kaynak Geliri" onGeri={onGeri}
+        sag={<button onClick={yukle} style={{ background: 'none', border: 'none', color: C.t3, fontSize: 20, cursor: 'pointer' }}>↻</button>} />
+      {/* Ay gezinme + toplam */}
+      <div style={{ padding: '12px 14px', borderBottom: `1px solid ${C.border}` }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 14, marginBottom: 10 }}>
+          <button onClick={() => setAyOff(a => a + 1)} style={{ background: C.bg2, border: `1px solid ${C.border}`, borderRadius: 8, color: C.t2, padding: '6px 12px', fontSize: 16, cursor: 'pointer' }}>‹</button>
+          <span style={{ fontSize: 14, fontWeight: 700, color: C.t1, minWidth: 130, textAlign: 'center', textTransform: 'capitalize' }}>{ayMetin}</span>
+          <button onClick={() => setAyOff(a => Math.max(0, a - 1))} disabled={ayOff === 0} style={{ background: C.bg2, border: `1px solid ${C.border}`, borderRadius: 8, color: ayOff === 0 ? C.t3 : C.t2, padding: '6px 12px', fontSize: 16, cursor: ayOff === 0 ? 'default' : 'pointer' }}>›</button>
+        </div>
+        <div style={{ textAlign: 'center' }}>
+          <div style={{ fontSize: 12, color: C.t3 }}>Ciro dışı gelir (toplam)</div>
+          <div style={{ fontSize: 26, fontWeight: 800, color: toplam > 0 ? C.yesil : C.t3, marginTop: 2 }}>{fmt(toplam)}</div>
+        </div>
+      </div>
+
+      <div style={{ padding: 14 }}>
+        {liste === null && <div style={{ color: C.t3, textAlign: 'center', padding: 30 }}>Yükleniyor…</div>}
+        {hata && <div style={{ color: C.kirmizi, textAlign: 'center', padding: 20 }}>{hata}</div>}
+        {liste && liste.length === 0 && !hata && (
+          <div style={{ color: C.t3, textAlign: 'center', padding: 40 }}>Bu ay dış kaynak geliri yok.</div>
+        )}
+        {(liste || []).map(x => {
+          const iptal = x.durum === 'iptal';
+          return (
+            <div key={x.id} style={{
+              background: C.bg2, border: `1px solid ${C.border}`, borderRadius: 14,
+              padding: '12px 14px', marginBottom: 10, opacity: iptal ? 0.5 : 1,
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 14, color: C.t1, lineHeight: 1.4, textDecoration: iptal ? 'line-through' : 'none' }}>{x.aciklama || '—'}</div>
+                  <div style={{ fontSize: 11, color: C.t3, marginTop: 3 }}>{x.tarih}{iptal ? ' · iptal' : ''}</div>
+                </div>
+                <div style={{ fontSize: 16, fontWeight: 800, color: iptal ? C.t3 : C.yesil, whiteSpace: 'nowrap' }}>{fmt(x.tutar)}</div>
+              </div>
             </div>
           );
         })}
@@ -1603,7 +1669,7 @@ function CepKule({ onGeri, onDegisti }) {
 export default function CepApp() {
   const [girisli, setGirisli] = useState(() => tokenGecerli());
   const [view, setView] = useState('home');
-  const [sayac, setSayac] = useState({ onay: 0, odeme: 0, odemeTutar: 0, ariza: 0, kule: 0, ciro: 0, kasaUyum: 0 });
+  const [sayac, setSayac] = useState({ onay: 0, odeme: 0, odemeTutar: 0, ariza: 0, kule: 0, ciro: 0, kasaUyum: 0, disKaynak: 0 });
   const [kasa, setKasa] = useState({ tutar: null, gun: null, hareketler: [] });
   const [kasaModal, setKasaModal] = useState(false);
 
@@ -1625,7 +1691,8 @@ export default function CepApp() {
       const kuleN = (kuleR.status === 'fulfilled') ? (Number(kuleR.value?.toplam) || 0) : 0;
       const ciroN = (ciroR.status === 'fulfilled' && Array.isArray(ciroR.value)) ? ciroR.value.length : 0;
       const kuyumN = (kuyumR.status === 'fulfilled') ? (Number(kuyumR.value?.gun_bekleyen) || 0) : 0;
-      setSayac({ onay: onayN, odeme: odemeArr.length, odemeTutar, ariza: arizaN, kule: kuleN, ciro: ciroN, kasaUyum: kuyumN });
+      const disK = (panelR.status === 'fulfilled') ? (Number(panelR.value?.bu_ay_dis_kaynak) || 0) : 0;
+      setSayac({ onay: onayN, odeme: odemeArr.length, odemeTutar, ariza: arizaN, kule: kuleN, ciro: ciroN, kasaUyum: kuyumN, disKaynak: disK });
 
       const kTutar = (kasaR.status === 'fulfilled') ? (Number(kasaR.value?.guncel_bakiye) || 0) : null;
       const hareketler = (kasaR.status === 'fulfilled' && Array.isArray(kasaR.value?.hareketler)) ? kasaR.value.hareketler : [];
@@ -1653,6 +1720,8 @@ export default function CepApp() {
     return <CepCiroOnay onGeri={geri} onDegisti={sayaclariYukle} />;
   if (view === 'kasa-uyumsuzluk')
     return <CepKasaUyumsuzluk onGeri={geri} />;
+  if (view === 'dis-kaynak')
+    return <CepDisKaynak onGeri={geri} />;
   if (view === 'onaylar')
     return <CepOnaylar onGeri={geri} onDegisti={sayaclariYukle} />;
   if (view === 'denetim')
