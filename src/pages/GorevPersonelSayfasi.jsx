@@ -3,10 +3,43 @@ import { api } from '../utils/api';
 import tulipiLogo from '../assets/tulipi-logo.jpg';
 
 const VT_ETIKET = {
-  sabahci:     { label: 'Sabahçı',    renk: '#4a9eff' },
-  ara_vardiya: { label: 'Ara Vardiya', renk: '#f59e0b' },
-  kapanis:     { label: 'Kapanış',    renk: '#C8956A' },
+  sabahci:     { label: 'Sabahçı',    renk: '#4a9eff', bas: 7,  bit: 15 },
+  ara_vardiya: { label: 'Ara Vardiya', renk: '#f59e0b', bas: 11, bit: 19 },
+  kapanis:     { label: 'Kapanış',    renk: '#C8956A', bas: 15, bit: 23 },
 };
+
+// Vardiya ilerleme halkası — şu anki saate göre mesainin yüzdesi (gerçek veri)
+function VardiyaIlerleme({ vardiyaTip }) {
+  const vt = VT_ETIKET[vardiyaTip];
+  if (!vt || vt.bas == null) return null;
+  const now = new Date();
+  const saat = now.getHours() + now.getMinutes() / 60;
+  const toplam = vt.bit - vt.bas;
+  let gecen = saat - vt.bas;
+  if (gecen < 0) gecen = 0;
+  if (gecen > toplam) gecen = toplam;
+  const oran = toplam > 0 ? gecen / toplam : 0;
+  const kalan = Math.max(0, toplam - gecen);
+  const baslamadi = saat < vt.bas;
+  const bitti = saat >= vt.bit;
+  const R = 30, C2 = 2 * Math.PI * R;
+  const durum = baslamadi ? 'Henüz başlamadı' : bitti ? 'Vardiya bitti' : `${kalan.toFixed(1)} saat kaldı`;
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 16, padding: '14px 16px', background: '#fff', border: '1px solid #E6DED4', borderRadius: 16, marginBottom: 14, boxShadow: '0 4px 16px rgba(120,90,60,0.06)' }}>
+      <svg width="72" height="72" viewBox="0 0 72 72">
+        <circle cx="36" cy="36" r={R} fill="none" stroke="#E6DED4" strokeWidth="7" />
+        <circle cx="36" cy="36" r={R} fill="none" stroke={vt.renk} strokeWidth="7" strokeLinecap="round"
+          strokeDasharray={C2} strokeDashoffset={C2 * (1 - oran)} transform="rotate(-90 36 36)" />
+        <text x="36" y="40" textAnchor="middle" fontSize="16" fontWeight="700" fill="#2A241E">%{Math.round(oran * 100)}</text>
+      </svg>
+      <div style={{ flex: 1 }}>
+        <div style={{ fontSize: 15, fontWeight: 700, color: '#2A241E' }}>{vt.label} vardiyası</div>
+        <div style={{ fontSize: 12, color: '#9C8E7E', marginTop: 2 }}>{String(vt.bas).padStart(2, '0')}:00 – {String(vt.bit).padStart(2, '0')}:00</div>
+        <div style={{ fontSize: 12, fontWeight: 600, color: vt.renk, marginTop: 3 }}>{durum}</div>
+      </div>
+    </div>
+  );
+}
 
 // ── Mobil Sipariş Ekranı ─────────────────────────────────────────────────────
 function SiparisEkrani({ oturum, subeBilgi, onKapat }) {
@@ -573,6 +606,7 @@ function VardiyamEkrani({ oturum }) {
         <div style={{ fontSize: 12, fontWeight: 700, color: '#9C8E7E', marginBottom: 10, letterSpacing: 1 }}>
           BUGÜN · {new Date(oturum.tarih).toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', weekday: 'long' })}
         </div>
+        <VardiyaIlerleme vardiyaTip={oturum.vardiya_tip} />
         {bugun ? (
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
             <K label="Planlanan" val={`${bugun.planlanan_saat?.toFixed(1)}s`} renk="#4a9eff" />
