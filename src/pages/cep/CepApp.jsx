@@ -1268,8 +1268,9 @@ function CepVadeli({ onGeri }) {
   const [bilgi, setBilgi] = useState('');
   const [mesgul, setMesgul] = useState(false);
   const [kartlar, setKartlar] = useState([]);
+  const [tedarikciler, setTedarikciler] = useState([]);
   const [formAcik, setFormAcik] = useState(false);
-  const [f, setF] = useState({ tedarikci: '', aciklama: '', tutar: '', vade_tarihi: '' });
+  const [f, setF] = useState({ tedarikci: '', telefon: '', aciklama: '', tutar: '', vade_tarihi: '' });
   const [odeId, setOdeId] = useState('');        // ödeme paneli açık satır
   const [odeYontem, setOdeYontem] = useState('nakit');
   const [odeKart, setOdeKart] = useState('');
@@ -1281,9 +1282,22 @@ function CepVadeli({ onGeri }) {
       .catch(e => { setHata(e.message || 'Yüklenemedi'); setListe([]); });
   }, [gorunum]);
   useEffect(() => { yukle(); }, [yukle]);
-  useEffect(() => { api('/kartlar').then(r => setKartlar(Array.isArray(r) ? r : [])).catch(() => {}); }, []);
+  const tedYukle = useCallback(() => { api('/tedarikciler').then(r => setTedarikciler(Array.isArray(r) ? r : (r?.tedarikciler || []))).catch(() => {}); }, []);
+  useEffect(() => {
+    api('/kartlar').then(r => setKartlar(Array.isArray(r) ? r : [])).catch(() => {});
+    tedYukle();
+  }, [tedYukle]);
 
-  const set = (k, v) => setF(p => ({ ...p, [k]: v }));
+  // Tedarikçi adı yazıldıkça: kayıtlı bir tedarikçiyle birebir eşleşirse telefonu otomatik doldur
+  const tedBul = (ad) => tedarikciler.find(t => String(t.ad || '').trim().toLowerCase() === String(ad || '').trim().toLowerCase());
+  const set = (k, v) => setF(p => {
+    const n = { ...p, [k]: v };
+    if (k === 'tedarikci') {
+      const t = tedBul(v);
+      if (t && t.telefon && !p.telefon) n.telefon = t.telefon;
+    }
+    return n;
+  });
 
   const _post = async (body) => {
     const res = await api('/vadeli-alimlar', { method: 'POST', body });
@@ -1309,12 +1323,36 @@ function CepVadeli({ onGeri }) {
     if (!f.tedarikci.trim()) { setHata('Tedarikçi girin'); return; }
     if (!tutarN || tutarN <= 0) { setHata('Geçerli tutar girin'); return; }
     if (!f.vade_tarihi) { setHata('Vade tarihi girin'); return; }
+    const tedAd = f.tedarikci.trim();
+    const tel = f.telefon.trim();
     setMesgul(true); setHata(''); setBilgi('');
     try {
-      const res = await _post({ tedarikci: f.tedarikci.trim(), aciklama: f.aciklama.trim(), tutar: tutarN, vade_tarihi: f.vade_tarihi });
+      const res = await _post({ tedarikci: tedAd, aciklama: f.aciklama.trim(), tutar: tutarN, vade_tarihi: f.vade_tarihi });
       if (res) {
-        setBilgi(res.birlestirildi ? `Birleştirildi — toplam ${fmt(res.yeni_toplam)}` : 'Vadeli alım eklendi.');
-        setF({ tedarikci: '', aciklama: '', tutar: '', vade_tarihi: '' });
+        let ekNot = '';
+        // Tedarikçi kayıtlı değilse → listeye ekleme öner + otomatik ekle
+        const kayitli = tedBul(tedAd);
+        if (!kayitli && tedAd.length >= 2) {
+          const telMetin = tel ? ` (tel: ${tel})` : '';
+          if (window.confirm(`"${tedAd}" tedarikçi listesinde yok.${telMetin}\n\nTedarikçi olarak kaydedilsin mi?`)) {
+            try {
+              await api('/tedarikciler', { method: 'POST', body: { ad: tedAd, telefon: tel } });
+              ekNot = ' · tedarikçi listeye eklendi';
+              tedYukle();
+            } catch (e2) { ekNot = ' · (tedarikçi eklenemedi: ' + (e2.message || '') + ')'; }
+          }
+        } else if (kayitli && tel && !String(kayitli.telefon || '').trim()) {
+          // Kayıtlı ama telefonu boştu → girilen telefonu güncelle
+          if (window.confirm(`"${tedAd}" için telefon kayıtlı değil. ${tel} numarası eklensin mi?`)) {
+            try {
+              await api(`/tedarikciler/${kayitli.id}`, { method: 'PUT', body: { ad: kayitli.ad, kategori: kayitli.kategori || '', telefon: tel, aciklama: kayitli.aciklama || '' } });
+              ekNot = ' · telefon güncellendi';
+              tedYukle();
+            } catch { /* yut */ }
+          }
+        }
+        setBilgi((res.birlestirildi ? `Birleştirildi — toplam ${fmt(res.yeni_toplam)}` : 'Vadeli alım eklendi.') + ekNot);
+        setF({ tedarikci: '', telefon: '', aciklama: '', tutar: '', vade_tarihi: '' });
         setFormAcik(false);
         yukle();
       }
@@ -1381,7 +1419,16 @@ function CepVadeli({ onGeri }) {
 
         {formAcik && (
           <div style={{ background: C.bg2, border: `1px solid ${C.border}`, borderRadius: 14, padding: 14, marginBottom: 14 }}>
-            <input placeholder="Tedarikçi" value={f.tedarikci} onChange={e => set('tedarikci', e.target.value)} style={{ ...inp, marginBottom: 10 }} />
+            <input list="cepTedListe" placeholder="Tedarikçi (kayıtlıdan seç veya yaz)" value={f.tedarikci} onChange={e => set('tedarikci', e.target.value)} style={{ ...inp, marginBottom: 8 }} />
+            <datalist id="cepTedListe">
+              {tedarikciler.map(t => <option key={t.id} value={t.ad}>{t.telefon ? `${t.ad} · ${t.telefon}` : t.ad}</option>)}
+            </datalist>
+            {(() => { const t = tedBul(f.tedarikci); return f.tedarikci.trim().length >= 2 && (
+              <div style={{ fontSize: 11, color: t ? C.yesil : C.sari, marginBottom: 8 }}>
+                {t ? '✓ Kayıtlı tedarikçi' : '＋ Yeni — kayıt sonunda listeye eklenebilir'}
+              </div>
+            ); })()}
+            <input type="tel" inputMode="tel" placeholder="Tedarikçi telefonu (opsiyonel)" value={f.telefon} onChange={e => set('telefon', e.target.value)} style={{ ...inp, marginBottom: 10 }} />
             <input placeholder="Açıklama (opsiyonel)" value={f.aciklama} onChange={e => set('aciklama', e.target.value)} style={{ ...inp, marginBottom: 10 }} />
             <input type="number" inputMode="decimal" placeholder="Tutar ₺" value={f.tutar} onChange={e => set('tutar', e.target.value)} style={{ ...inp, fontSize: 20, fontWeight: 800, textAlign: 'center', marginBottom: 10 }} />
             <div style={{ fontSize: 12, color: C.t3, marginBottom: 4 }}>Vade tarihi</div>
