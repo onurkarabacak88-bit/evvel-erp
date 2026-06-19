@@ -206,6 +206,8 @@ function CepHome({ sayac, kasa, onKasa, onAc, onCikis, yenile }) {
       sayi: sayac.kasaUyum, alt: sayac.kasaUyum > 0 ? `${sayac.kasaUyum} açık fark` : 'Bugün fark yok' },
     { id: 'dis-kaynak', ikon: '🪙', baslik: 'Dış Kaynak', renk: C.yesil,
       sayi: null, alt: sayac.disKaynak > 0 ? `Bu ay ${fmt(sayac.disKaynak)}` : 'Bu ay gelir yok' },
+    { id: 'anlik-gider', ikon: '💸', baslik: 'Anlık Gider', renk: C.kirmizi,
+      sayi: null, alt: 'Gider ekle / aylık liste' },
     { id: 'kule', ikon: '🚚', baslik: 'Sipariş Kulesi', renk: C.mavi,
       sayi: sayac.kule, alt: sayac.kule > 0 ? `${sayac.kule} yönlendir bekliyor` : 'Gelen sipariş & yönlendir' },
     { id: 'depolar', ikon: '📦', baslik: 'Depolar', renk: C.mavi,
@@ -1067,6 +1069,179 @@ function CepMerkezSil({ onGeri }) {
             </div>
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+// ── Anlık Gider (telefondan gider ekle — nakit/kart + aylık liste) ──────────
+const GIDER_KATEGORILER = ['Nakit Alım', 'Market', 'Fatura', 'Kargo', 'Yemek', 'Yakıt', 'Bakım', 'Diğer'];
+
+function CepAnlikGider({ onGeri }) {
+  const bugun = () => new Date().toISOString().split('T')[0];
+  const buAy = () => new Date().toISOString().slice(0, 7);
+  const [liste, setListe] = useState(null);
+  const [hata, setHata] = useState('');
+  const [bilgi, setBilgi] = useState('');
+  const [mesgul, setMesgul] = useState(false);
+  const [kartlar, setKartlar] = useState([]);
+  const [subeler, setSubeler] = useState([]);
+  const [formAcik, setFormAcik] = useState(false);
+  const [f, setF] = useState({ tarih: bugun(), kategori: 'Diğer', tutar: '', aciklama: '', sube: 'MERKEZ', odeme_yontemi: 'nakit', kart_id: '' });
+
+  const yukle = useCallback(() => {
+    setHata('');
+    api(`/anlik-gider?durum=aktif&include_summary=true&ay=${buAy()}`)
+      .then(r => setListe(Array.isArray(r) ? r : (r?.satirlar || [])))
+      .catch(e => { setHata(e.message || 'Yüklenemedi'); setListe([]); });
+  }, []);
+  useEffect(() => { yukle(); }, [yukle]);
+  useEffect(() => {
+    api('/kartlar').then(r => setKartlar(Array.isArray(r) ? r : [])).catch(() => {});
+    api('/subeler').then(r => setSubeler(Array.isArray(r) ? r : [])).catch(() => {});
+  }, []);
+
+  const set = (k, v) => setF(p => ({ ...p, [k]: v }));
+
+  const kaydet = async () => {
+    const tutarN = Number(String(f.tutar).replace(',', '.'));
+    if (!tutarN || tutarN <= 0) { setHata('Geçerli tutar girin'); return; }
+    if (f.odeme_yontemi === 'kart' && !f.kart_id) { setHata('Kart seçin'); return; }
+    setMesgul(true); setHata(''); setBilgi('');
+    try {
+      const body = { ...f, tutar: tutarN };
+      if (f.odeme_yontemi === 'nakit') delete body.kart_id;
+      const res = await api('/anlik-gider', { method: 'POST', body });
+      if (res && res.warning) { setHata(res.mesaj || 'Mükerrer olabilir — tekrar deneyin'); setMesgul(false); return; }
+      setBilgi(f.odeme_yontemi === 'kart' ? 'Eklendi — kart borcuna işlendi' : 'Eklendi — kasadan düşüldü');
+      setF({ tarih: bugun(), kategori: 'Diğer', tutar: '', aciklama: '', sube: f.sube, odeme_yontemi: 'nakit', kart_id: '' });
+      setFormAcik(false);
+      yukle();
+    } catch (e) { setHata(e.message || 'Kaydedilemedi'); }
+    finally { setMesgul(false); }
+  };
+
+  const sil = async (g) => {
+    const m = g.odeme_yontemi === 'kart' ? 'İptal et? Kart borcundan düşülecek.' : 'İptal et? Kasaya iade edilecek.';
+    if (!window.confirm(m)) return;
+    setMesgul(true);
+    try { await api(`/anlik-gider/${g.id}`, { method: 'DELETE' }); setBilgi('İptal edildi.'); yukle(); }
+    catch (e) { setHata(e.message || 'İptal edilemedi'); }
+    finally { setMesgul(false); }
+  };
+
+  const aktif = (liste || []).filter(g => g.durum === 'aktif' || !g.durum);
+  const toplamAy = aktif.reduce((s, g) => s + (Number(g.tutar) || 0), 0);
+  const subeChip = ['MERKEZ', ...subeler.map(s => s.ad).filter(Boolean)];
+
+  const inp = { width: '100%', background: C.bg, border: `1px solid ${C.border}`, borderRadius: 10, padding: '11px 12px', fontSize: 15, color: C.t1, boxSizing: 'border-box' };
+
+  return (
+    <div style={{ minHeight: '100vh', background: C.bg }}>
+      <Baslik baslik="💸 Anlık Gider" onGeri={onGeri}
+        sag={<button onClick={yukle} style={{ background: 'none', border: 'none', color: C.t3, fontSize: 20, cursor: 'pointer' }}>↻</button>} />
+      {/* Ay toplamı */}
+      <div style={{ padding: '12px 14px', borderBottom: `1px solid ${C.border}`, textAlign: 'center' }}>
+        <div style={{ fontSize: 12, color: C.t3 }}>Bu ay (aktif giderler)</div>
+        <div style={{ fontSize: 26, fontWeight: 800, color: C.kirmizi, marginTop: 2 }}>{fmt(toplamAy)}</div>
+      </div>
+
+      {bilgi && <div style={{ margin: 14, padding: 10, background: 'rgba(34,197,94,0.12)', borderRadius: 10, color: C.yesil, fontSize: 13 }}>{bilgi}</div>}
+      {hata && <div style={{ margin: 14, padding: 10, background: 'rgba(239,68,68,0.12)', borderRadius: 10, color: C.kirmizi, fontSize: 13 }}>{hata}</div>}
+
+      <div style={{ padding: 14 }}>
+        {!formAcik && (
+          <button onClick={() => { setFormAcik(true); setHata(''); }} style={{
+            width: '100%', background: C.kirmizi, color: '#fff', border: 'none', borderRadius: 12,
+            padding: '14px 0', fontSize: 16, fontWeight: 800, cursor: 'pointer', marginBottom: 14,
+          }}>+ Gider Ekle</button>
+        )}
+
+        {formAcik && (
+          <div style={{ background: C.bg2, border: `1px solid ${C.border}`, borderRadius: 14, padding: 14, marginBottom: 14 }}>
+            <input type="number" inputMode="decimal" placeholder="Tutar ₺" value={f.tutar}
+              onChange={e => set('tutar', e.target.value)} style={{ ...inp, fontSize: 22, fontWeight: 800, textAlign: 'center', marginBottom: 10 }} />
+
+            <div style={{ fontSize: 12, color: C.t3, marginBottom: 5 }}>Kategori</div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
+              {GIDER_KATEGORILER.map(k => (
+                <button key={k} onClick={() => set('kategori', k)} style={{
+                  background: f.kategori === k ? C.mavi : C.bg, color: f.kategori === k ? '#fff' : C.t2,
+                  border: `1px solid ${f.kategori === k ? C.mavi : C.border}`, borderRadius: 20, padding: '6px 12px',
+                  fontSize: 13, fontWeight: 600, cursor: 'pointer',
+                }}>{k}</button>
+              ))}
+            </div>
+
+            <input placeholder="Açıklama (opsiyonel)" value={f.aciklama}
+              onChange={e => set('aciklama', e.target.value)} style={{ ...inp, marginBottom: 12 }} />
+
+            <div style={{ fontSize: 12, color: C.t3, marginBottom: 5 }}>Şube / yer</div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
+              {subeChip.map(s => (
+                <button key={s} onClick={() => set('sube', s)} style={{
+                  background: f.sube === s ? C.mavi : C.bg, color: f.sube === s ? '#fff' : C.t2,
+                  border: `1px solid ${f.sube === s ? C.mavi : C.border}`, borderRadius: 20, padding: '6px 12px',
+                  fontSize: 13, fontWeight: 600, cursor: 'pointer',
+                }}>{s}</button>
+              ))}
+            </div>
+
+            <div style={{ fontSize: 12, color: C.t3, marginBottom: 5 }}>Ödeme</div>
+            <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+              {[['nakit', '💵 Nakit (kasadan)'], ['kart', '💳 Kart (borca)']].map(([k, etk]) => (
+                <button key={k} onClick={() => set('odeme_yontemi', k)} style={{
+                  flex: 1, background: f.odeme_yontemi === k ? C.t1 : C.bg, color: f.odeme_yontemi === k ? C.bg : C.t2,
+                  border: `1px solid ${C.border}`, borderRadius: 10, padding: '10px 0', fontSize: 13, fontWeight: 700, cursor: 'pointer',
+                }}>{etk}</button>
+              ))}
+            </div>
+
+            {f.odeme_yontemi === 'kart' && (
+              <select value={f.kart_id} onChange={e => set('kart_id', e.target.value)} style={{ ...inp, marginBottom: 12 }}>
+                <option value="">Kart seçin…</option>
+                {kartlar.map(k => <option key={k.id} value={k.id}>{k.ad || k.kart_adi || k.banka || k.id}</option>)}
+              </select>
+            )}
+
+            <input type="date" value={f.tarih} onChange={e => set('tarih', e.target.value)} style={{ ...inp, marginBottom: 12 }} />
+
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button onClick={() => { setFormAcik(false); setHata(''); }} style={{
+                flex: 1, background: C.bg, color: C.t2, border: `1px solid ${C.border}`, borderRadius: 10,
+                padding: '12px 0', fontSize: 15, fontWeight: 700, cursor: 'pointer',
+              }}>Vazgeç</button>
+              <button onClick={kaydet} disabled={mesgul} style={{
+                flex: 2, background: C.yesil, color: '#fff', border: 'none', borderRadius: 10,
+                padding: '12px 0', fontSize: 15, fontWeight: 800, cursor: mesgul ? 'default' : 'pointer', opacity: mesgul ? 0.6 : 1,
+              }}>{mesgul ? 'Kaydediliyor…' : 'Kaydet'}</button>
+            </div>
+          </div>
+        )}
+
+        {/* Liste */}
+        {liste === null && <div style={{ color: C.t3, textAlign: 'center', padding: 30 }}>Yükleniyor…</div>}
+        {liste && aktif.length === 0 && <div style={{ color: C.t3, textAlign: 'center', padding: 30 }}>Bu ay gider yok.</div>}
+        {aktif.map(g => (
+          <div key={g.id} style={{
+            background: C.bg2, border: `1px solid ${C.border}`, borderRadius: 14, padding: '12px 14px', marginBottom: 10,
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 14, color: C.t1, fontWeight: 700 }}>{g.aciklama || g.kategori || '—'}</div>
+                <div style={{ fontSize: 11, color: C.t3, marginTop: 3 }}>
+                  {g.kategori}{g.sube ? ` · ${g.sube}` : ''} · {g.odeme_yontemi === 'kart' ? '💳 kart' : '💵 nakit'}{g.tarih ? ` · ${new Date(g.tarih).toLocaleDateString('tr-TR')}` : ''}
+                </div>
+              </div>
+              <div style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                <div style={{ fontSize: 16, fontWeight: 800, color: C.kirmizi }}>{fmt(g.tutar)}</div>
+                <button onClick={() => sil(g)} disabled={mesgul} style={{
+                  background: 'none', border: 'none', color: C.t3, fontSize: 11, textDecoration: 'underline', cursor: 'pointer', marginTop: 2,
+                }}>iptal</button>
+              </div>
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -2166,6 +2341,8 @@ export default function CepApp() {
     return <CepKasaUyumsuzluk onGeri={geri} />;
   if (view === 'dis-kaynak')
     return <CepDisKaynak onGeri={geri} />;
+  if (view === 'anlik-gider')
+    return <CepAnlikGider onGeri={geri} />;
   if (view === 'onaylar')
     return <CepOnaylar onGeri={geri} onDegisti={sayaclariYukle} />;
   if (view === 'denetim')
