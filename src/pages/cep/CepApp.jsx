@@ -208,6 +208,8 @@ function CepHome({ sayac, kasa, onKasa, onAc, onCikis, yenile }) {
       sayi: null, alt: sayac.disKaynak > 0 ? `Bu ay ${fmt(sayac.disKaynak)}` : 'Bu ay gelir yok' },
     { id: 'anlik-gider', ikon: '💸', baslik: 'Anlık Gider', renk: C.kirmizi,
       sayi: null, alt: 'Gider ekle / aylık liste' },
+    { id: 'vadeli', ikon: '🧾', baslik: 'Vadeli Alımlar', renk: '#f59e0b',
+      sayi: null, alt: 'Vadeli borç ekle / öde' },
     { id: 'kule', ikon: '🚚', baslik: 'Sipariş Kulesi', renk: C.mavi,
       sayi: sayac.kule, alt: sayac.kule > 0 ? `${sayac.kule} yönlendir bekliyor` : 'Gelen sipariş & yönlendir' },
     { id: 'depolar', ikon: '📦', baslik: 'Depolar', renk: C.mavi,
@@ -1242,6 +1244,192 @@ function CepAnlikGider({ onGeri }) {
             </div>
           </div>
         ))}
+      </div>
+    </div>
+  );
+}
+
+// ── Vadeli Alımlar (telefondan ekle / öde / iptal) ──────────────────────────
+function CepVadeli({ onGeri }) {
+  const bugun = () => new Date().toISOString().split('T')[0];
+  const [liste, setListe] = useState(null);
+  const [gorunum, setGorunum] = useState('bekliyor'); // bekliyor | odendi
+  const [hata, setHata] = useState('');
+  const [bilgi, setBilgi] = useState('');
+  const [mesgul, setMesgul] = useState(false);
+  const [kartlar, setKartlar] = useState([]);
+  const [formAcik, setFormAcik] = useState(false);
+  const [f, setF] = useState({ tedarikci: '', aciklama: '', tutar: '', vade_tarihi: '' });
+  const [odeId, setOdeId] = useState('');        // ödeme paneli açık satır
+  const [odeYontem, setOdeYontem] = useState('nakit');
+  const [odeKart, setOdeKart] = useState('');
+
+  const yukle = useCallback(() => {
+    setHata('');
+    api(`/vadeli-alimlar?durum=${gorunum}&gun=30`)
+      .then(r => setListe(Array.isArray(r) ? r : (r?.satirlar || [])))
+      .catch(e => { setHata(e.message || 'Yüklenemedi'); setListe([]); });
+  }, [gorunum]);
+  useEffect(() => { yukle(); }, [yukle]);
+  useEffect(() => { api('/kartlar').then(r => setKartlar(Array.isArray(r) ? r : [])).catch(() => {}); }, []);
+
+  const set = (k, v) => setF(p => ({ ...p, [k]: v }));
+
+  const _post = async (body) => {
+    const res = await api('/vadeli-alimlar', { method: 'POST', body });
+    if (res && res.warning && res.kod === 'TEDARIKCI_ACIK_BAKIYE') {
+      const rows = res.mevcut_borc || [];
+      const birlestir = window.confirm(`${res.mesaj || 'Bu tedarikçinin açık borcu var.'}\n\nMevcut borca EKLENSİN mi?\n(İptal = ayrı borç olarak ekle)`);
+      const body2 = birlestir
+        ? { ...body, birlestir_vadeli_id: rows[0]?.id }
+        : { ...body, tedarikci_karari: 'ayri' };
+      return api('/vadeli-alimlar', { method: 'POST', body: body2 });
+    }
+    if (res && res.warning) {
+      if (window.confirm(`${res.mesaj || 'Mükerrer olabilir.'}\n\nYine de eklensin mi?`)) {
+        return api('/vadeli-alimlar', { method: 'POST', body: { ...body, force: true } });
+      }
+      return null;
+    }
+    return res;
+  };
+
+  const kaydet = async () => {
+    const tutarN = Number(String(f.tutar).replace(',', '.'));
+    if (!f.tedarikci.trim()) { setHata('Tedarikçi girin'); return; }
+    if (!tutarN || tutarN <= 0) { setHata('Geçerli tutar girin'); return; }
+    if (!f.vade_tarihi) { setHata('Vade tarihi girin'); return; }
+    setMesgul(true); setHata(''); setBilgi('');
+    try {
+      const res = await _post({ tedarikci: f.tedarikci.trim(), aciklama: f.aciklama.trim(), tutar: tutarN, vade_tarihi: f.vade_tarihi });
+      if (res) {
+        setBilgi(res.birlestirildi ? `Birleştirildi — toplam ${fmt(res.yeni_toplam)}` : 'Vadeli alım eklendi.');
+        setF({ tedarikci: '', aciklama: '', tutar: '', vade_tarihi: '' });
+        setFormAcik(false);
+        yukle();
+      }
+    } catch (e) { setHata(e.message || 'Kaydedilemedi'); }
+    finally { setMesgul(false); }
+  };
+
+  const odeAc = (v) => { setOdeId(v.id); setOdeYontem('nakit'); setOdeKart(''); setHata(''); };
+
+  const ode = async (v) => {
+    if (odeYontem === 'kart' && !odeKart) { setHata('Kart seçin'); return; }
+    setMesgul(true); setHata('');
+    try {
+      await api(`/vadeli-alimlar/${v.id}/ode`, {
+        method: 'POST', body: { odeme_yontemi: odeYontem, kart_id: odeYontem === 'kart' ? odeKart : null },
+      });
+      setBilgi(odeYontem === 'kart' ? 'Ödendi — kart harcamasına eklendi' : 'Ödendi — kasadan düşüldü');
+      setOdeId(''); yukle();
+    } catch (e) { setHata(e.message || 'Ödenemedi'); }
+    finally { setMesgul(false); }
+  };
+
+  const sil = async (v) => {
+    if (!window.confirm(`${v.aciklama || v.tedarikci || 'Bu vadeli alım'} iptal edilsin mi?`)) return;
+    setMesgul(true);
+    try { await api(`/vadeli-alimlar/${v.id}`, { method: 'DELETE' }); setBilgi('İptal edildi.'); yukle(); }
+    catch (e) { setHata(e.message || 'İptal edilemedi'); }
+    finally { setMesgul(false); }
+  };
+
+  const toplam = (liste || []).reduce((s, v) => s + (Number(v.tutar) || 0), 0);
+  const inp = { width: '100%', background: C.bg, border: `1px solid ${C.border}`, borderRadius: 10, padding: '11px 12px', fontSize: 15, color: C.t1, boxSizing: 'border-box' };
+
+  return (
+    <div style={{ minHeight: '100vh', background: C.bg }}>
+      <Baslik baslik="🧾 Vadeli Alımlar" onGeri={onGeri}
+        sag={<button onClick={yukle} style={{ background: 'none', border: 'none', color: C.t3, fontSize: 20, cursor: 'pointer' }}>↻</button>} />
+      {/* Sekme + toplam */}
+      <div style={{ padding: '12px 14px', borderBottom: `1px solid ${C.border}` }}>
+        <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+          {[['bekliyor', 'Bekleyen'], ['odendi', 'Ödenen']].map(([k, etk]) => (
+            <button key={k} onClick={() => setGorunum(k)} style={{
+              flex: 1, background: gorunum === k ? C.mavi : C.bg2, color: gorunum === k ? '#fff' : C.t2,
+              border: `1px solid ${gorunum === k ? C.mavi : C.border}`, borderRadius: 10, padding: '9px 0', fontSize: 14, fontWeight: 700, cursor: 'pointer',
+            }}>{etk}</button>
+          ))}
+        </div>
+        <div style={{ textAlign: 'center' }}>
+          <div style={{ fontSize: 12, color: C.t3 }}>{gorunum === 'bekliyor' ? 'Bekleyen borç (toplam)' : 'Ödenen (toplam)'}</div>
+          <div style={{ fontSize: 24, fontWeight: 800, color: gorunum === 'bekliyor' ? C.kirmizi : C.yesil, marginTop: 2 }}>{fmt(toplam)}</div>
+        </div>
+      </div>
+
+      {bilgi && <div style={{ margin: 14, padding: 10, background: 'rgba(34,197,94,0.12)', borderRadius: 10, color: C.yesil, fontSize: 13 }}>{bilgi}</div>}
+      {hata && <div style={{ margin: 14, padding: 10, background: 'rgba(239,68,68,0.12)', borderRadius: 10, color: C.kirmizi, fontSize: 13 }}>{hata}</div>}
+
+      <div style={{ padding: 14 }}>
+        {gorunum === 'bekliyor' && !formAcik && (
+          <button onClick={() => { setFormAcik(true); setHata(''); }} style={{
+            width: '100%', background: C.kirmizi, color: '#fff', border: 'none', borderRadius: 12,
+            padding: '14px 0', fontSize: 16, fontWeight: 800, cursor: 'pointer', marginBottom: 14,
+          }}>+ Vadeli Alım Ekle</button>
+        )}
+
+        {formAcik && (
+          <div style={{ background: C.bg2, border: `1px solid ${C.border}`, borderRadius: 14, padding: 14, marginBottom: 14 }}>
+            <input placeholder="Tedarikçi" value={f.tedarikci} onChange={e => set('tedarikci', e.target.value)} style={{ ...inp, marginBottom: 10 }} />
+            <input placeholder="Açıklama (opsiyonel)" value={f.aciklama} onChange={e => set('aciklama', e.target.value)} style={{ ...inp, marginBottom: 10 }} />
+            <input type="number" inputMode="decimal" placeholder="Tutar ₺" value={f.tutar} onChange={e => set('tutar', e.target.value)} style={{ ...inp, fontSize: 20, fontWeight: 800, textAlign: 'center', marginBottom: 10 }} />
+            <div style={{ fontSize: 12, color: C.t3, marginBottom: 4 }}>Vade tarihi</div>
+            <input type="date" value={f.vade_tarihi} onChange={e => set('vade_tarihi', e.target.value)} style={{ ...inp, marginBottom: 12 }} />
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button onClick={() => { setFormAcik(false); setHata(''); }} style={{ flex: 1, background: C.bg, color: C.t2, border: `1px solid ${C.border}`, borderRadius: 10, padding: '12px 0', fontSize: 15, fontWeight: 700, cursor: 'pointer' }}>Vazgeç</button>
+              <button onClick={kaydet} disabled={mesgul} style={{ flex: 2, background: C.yesil, color: '#fff', border: 'none', borderRadius: 10, padding: '12px 0', fontSize: 15, fontWeight: 800, cursor: mesgul ? 'default' : 'pointer', opacity: mesgul ? 0.6 : 1 }}>{mesgul ? 'Kaydediliyor…' : 'Kaydet'}</button>
+            </div>
+          </div>
+        )}
+
+        {liste === null && <div style={{ color: C.t3, textAlign: 'center', padding: 30 }}>Yükleniyor…</div>}
+        {liste && liste.length === 0 && <div style={{ color: C.t3, textAlign: 'center', padding: 30 }}>{gorunum === 'bekliyor' ? 'Bekleyen vadeli alım yok.' : 'Ödenen kayıt yok.'}</div>}
+        {(liste || []).map(v => {
+          const gecikti = gorunum === 'bekliyor' && v.vade_tarihi && v.vade_tarihi < bugun();
+          const bar = gecikti ? C.kirmizi : (gorunum === 'odendi' ? C.yesil : C.sari);
+          return (
+            <div key={v.id} style={{ background: C.bg2, border: `1px solid ${C.border}`, borderLeft: `4px solid ${bar}`, borderRadius: 14, padding: '12px 14px', marginBottom: 10 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 14, fontWeight: 800, color: C.t1 }}>{v.tedarikci || v.aciklama || '—'}</div>
+                  {v.tedarikci && v.aciklama && <div style={{ fontSize: 12, color: C.t2, marginTop: 2 }}>{v.aciklama}</div>}
+                  <div style={{ fontSize: 11, color: gecikti ? C.kirmizi : C.t3, fontWeight: gecikti ? 700 : 400, marginTop: 3 }}>
+                    {v.vade_tarihi ? `vade: ${new Date(v.vade_tarihi).toLocaleDateString('tr-TR')}` : ''}{gecikti ? ' · gecikmiş!' : ''}
+                  </div>
+                </div>
+                <div style={{ fontSize: 16, fontWeight: 800, color: bar, whiteSpace: 'nowrap' }}>{fmt(v.tutar)}</div>
+              </div>
+
+              {gorunum === 'bekliyor' && odeId !== v.id && (
+                <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+                  <button onClick={() => odeAc(v)} disabled={mesgul} style={{ flex: 2, background: C.yesil, color: '#fff', border: 'none', borderRadius: 10, padding: '10px 0', fontSize: 14, fontWeight: 800, cursor: 'pointer' }}>✓ Ödendi</button>
+                  <button onClick={() => sil(v)} disabled={mesgul} style={{ flex: 1, background: C.bg, color: C.t3, border: `1px solid ${C.border}`, borderRadius: 10, padding: '10px 0', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>İptal</button>
+                </div>
+              )}
+
+              {gorunum === 'bekliyor' && odeId === v.id && (
+                <div style={{ marginTop: 10, borderTop: `1px solid ${C.border}`, paddingTop: 10 }}>
+                  <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                    {[['nakit', '💵 Nakit'], ['kart', '💳 Kart']].map(([k, etk]) => (
+                      <button key={k} onClick={() => setOdeYontem(k)} style={{ flex: 1, background: odeYontem === k ? C.t1 : C.bg, color: odeYontem === k ? C.bg : C.t2, border: `1px solid ${C.border}`, borderRadius: 10, padding: '9px 0', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>{etk}</button>
+                    ))}
+                  </div>
+                  {odeYontem === 'kart' && (
+                    <select value={odeKart} onChange={e => setOdeKart(e.target.value)} style={{ ...inp, marginBottom: 8 }}>
+                      <option value="">Kart seçin…</option>
+                      {kartlar.map(k => <option key={k.id} value={k.id}>{k.ad || k.kart_adi || k.banka || k.id}</option>)}
+                    </select>
+                  )}
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button onClick={() => setOdeId('')} style={{ flex: 1, background: C.bg, color: C.t2, border: `1px solid ${C.border}`, borderRadius: 10, padding: '10px 0', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>Vazgeç</button>
+                    <button onClick={() => ode(v)} disabled={mesgul} style={{ flex: 2, background: C.yesil, color: '#fff', border: 'none', borderRadius: 10, padding: '10px 0', fontSize: 14, fontWeight: 800, cursor: mesgul ? 'default' : 'pointer', opacity: mesgul ? 0.6 : 1 }}>{mesgul ? '…' : `${fmt(v.tutar)} Öde`}</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -2343,6 +2531,8 @@ export default function CepApp() {
     return <CepDisKaynak onGeri={geri} />;
   if (view === 'anlik-gider')
     return <CepAnlikGider onGeri={geri} />;
+  if (view === 'vadeli')
+    return <CepVadeli onGeri={geri} />;
   if (view === 'onaylar')
     return <CepOnaylar onGeri={geri} onDegisti={sayaclariYukle} />;
   if (view === 'denetim')
