@@ -854,7 +854,7 @@ function CepBasvurular({ onGeri }) {
                   </div>
                 </div>
                 <div style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
-                  {b.skor != null && <div style={{ fontSize: 18, fontWeight: 800, color: C.t1 }}>{b.skor}</div>}
+                  {b.skor && b.skor.toplam != null && <div style={{ fontSize: 18, fontWeight: 800, color: C.t1 }}>{b.skor.toplam}</div>}
                   <div style={{ fontSize: 10, color: durumRenk(b.durum), fontWeight: 700, marginTop: 2 }}>{b.durum || ''}</div>
                 </div>
               </div>
