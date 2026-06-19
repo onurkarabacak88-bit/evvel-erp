@@ -210,6 +210,8 @@ function CepHome({ sayac, kasa, onKasa, onAc, onCikis, yenile }) {
       sayi: null, alt: 'Gider ekle / aylık liste' },
     { id: 'vadeli', ikon: '🧾', baslik: 'Vadeli Alımlar', renk: '#f59e0b',
       sayi: null, alt: 'Vadeli borç ekle / öde' },
+    { id: 'kartlar', ikon: '💳', baslik: 'Kartlar', renk: C.kirmizi,
+      sayi: null, alt: 'Borç · limit · yaklaşan' },
     { id: 'kule', ikon: '🚚', baslik: 'Sipariş Kulesi', renk: C.mavi,
       sayi: sayac.kule, alt: sayac.kule > 0 ? `${sayac.kule} yönlendir bekliyor` : 'Gelen sipariş & yönlendir' },
     { id: 'depolar', ikon: '📦', baslik: 'Depolar', renk: C.mavi,
@@ -2540,6 +2542,124 @@ function CepDepolar({ onGeri }) {
   );
 }
 
+// ── Kartlar (toplam borç + kart kart: borç/limit/yaklaşan ödeme + son hareketler) ──
+function CepKartlar({ onGeri }) {
+  const [liste, setListe] = useState(null);
+  const [hata, setHata] = useState('');
+  const [detay, setDetay] = useState(null);       // seçilen kart (hareketler modalı)
+  const [hareketler, setHareketler] = useState(null);
+
+  useEffect(() => {
+    api('/kartlar')
+      .then(r => setListe(Array.isArray(r) ? r : (r?.kartlar || [])))
+      .catch(e => { setHata(e.message || 'Yüklenemedi'); setListe([]); });
+  }, []);
+
+  // Yaklaşan ödeme üstte (borçlu kartlar gün sırasına göre)
+  const kartlar = (liste || []).slice().sort((a, b) => {
+    const ga = (Number(a.guncel_borc) || 0) > 0 && a.gun_kaldi != null ? a.gun_kaldi : 9999;
+    const gb = (Number(b.guncel_borc) || 0) > 0 && b.gun_kaldi != null ? b.gun_kaldi : 9999;
+    return ga - gb;
+  });
+  const toplamBorc = (liste || []).reduce((s, k) => s + (Number(k.guncel_borc) || 0), 0);
+  const toplamKalan = (liste || []).reduce((s, k) => s + (Number(k.kalan_limit) || 0), 0);
+
+  const odemeRenk = (k) => {
+    if ((Number(k.guncel_borc) || 0) <= 0 || k.gun_kaldi == null) return C.t3;
+    return k.gun_kaldi <= 3 ? C.kirmizi : k.gun_kaldi <= 7 ? C.sari : C.t2;
+  };
+  const trTarih = (s) => s ? new Date(s).toLocaleDateString('tr-TR', { day: '2-digit', month: '2-digit' }) : '—';
+
+  const acDetay = (k) => {
+    setDetay(k); setHareketler(null);
+    api(`/kart-hareketleri?kart_id=${k.id}&limit=40`)
+      .then(r => setHareketler(Array.isArray(r) ? r : []))
+      .catch(() => setHareketler([]));
+  };
+
+  return (
+    <div style={{ minHeight: '100vh', background: C.bg, paddingBottom: 30 }}>
+      <Baslik baslik="💳 Kartlar" onGeri={onGeri} />
+
+      {liste && liste.length > 0 && (
+        <div style={{ margin: 14, padding: 16, borderRadius: 16, background: 'linear-gradient(135deg, var(--bg2,#1a1d24), var(--bg3,#22262f))', border: `1px solid ${C.border}` }}>
+          <div style={{ fontSize: 12, color: C.t3 }}>Toplam kart borcu</div>
+          <div style={{ fontSize: 28, fontWeight: 800, color: C.kirmizi, marginTop: 2 }}>{fmt(toplamBorc)}</div>
+          <div style={{ fontSize: 12, color: C.t3, marginTop: 4 }}>Kalan limit: <b style={{ color: C.yesil }}>{fmt(toplamKalan)}</b></div>
+        </div>
+      )}
+
+      <div style={{ padding: '0 14px 14px' }}>
+        {liste === null && <div style={{ color: C.t3, textAlign: 'center', padding: 30 }}>Yükleniyor…</div>}
+        {hata && <div style={{ color: C.kirmizi, textAlign: 'center', padding: 20 }}>{hata}</div>}
+        {liste && liste.length === 0 && !hata && <div style={{ color: C.t3, textAlign: 'center', padding: 40 }}>Kart yok.</div>}
+        {kartlar.map(k => {
+          const borc = Number(k.guncel_borc) || 0;
+          const limit = Number(k.limit_tutar) || 0;
+          const doluluk = limit > 0 ? Math.min(100, Math.round((borc / limit) * 100)) : 0;
+          const oRenk = odemeRenk(k);
+          return (
+            <button key={k.id} onClick={() => acDetay(k)} style={{
+              width: '100%', textAlign: 'left', background: C.bg2, border: `1px solid ${C.border}`,
+              borderLeft: `4px solid ${oRenk}`, borderRadius: 14, padding: 14, marginBottom: 12, cursor: 'pointer',
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
+                <span style={{ fontSize: 15, fontWeight: 800, color: C.t1 }}>{k.kart_adi || k.banka || 'Kart'}</span>
+                <span style={{ fontSize: 17, fontWeight: 800, color: borc > 0 ? C.kirmizi : C.t3, whiteSpace: 'nowrap' }}>{fmt(borc)}</span>
+              </div>
+              <div style={{ height: 6, background: C.bg3, borderRadius: 3, marginTop: 8, overflow: 'hidden' }}>
+                <div style={{ width: `${doluluk}%`, height: '100%', background: doluluk >= 90 ? C.kirmizi : doluluk >= 70 ? C.sari : C.yesil }} />
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: C.t3, marginTop: 6 }}>
+                <span>Kalan: <b style={{ color: C.t2 }}>{fmt(k.kalan_limit)}</b></span>
+                {borc > 0 && k.gun_kaldi != null && (
+                  <span style={{ color: oRenk, fontWeight: 700 }}>Son ödeme {trTarih(k.son_odeme_tarihi)} · {k.gun_kaldi}g</span>
+                )}
+              </div>
+              {borc > 0 && Number(k.asgari_odeme) > 0 && (
+                <div style={{ fontSize: 11, color: C.t3, marginTop: 3 }}>Asgari: {fmt(k.asgari_odeme)}{k.asgari_karsilandi ? ' ✓ ödendi' : ''}</div>
+              )}
+            </button>
+          );
+        })}
+      </div>
+
+      {detay && (
+        <div onClick={e => e.target === e.currentTarget && setDetay(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 50, display: 'flex', alignItems: 'flex-end' }}>
+          <div style={{ width: '100%', maxHeight: '85vh', background: C.bg2, borderTopLeftRadius: 20, borderTopRightRadius: 20, borderTop: `1px solid ${C.border}`, display: 'flex', flexDirection: 'column' }}>
+            <div style={{ padding: '16px 16px 12px', borderBottom: `1px solid ${C.border}` }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: 16, fontWeight: 800, color: C.t1 }}>💳 {detay.kart_adi || detay.banka}</span>
+                <button onClick={() => setDetay(null)} style={{ background: C.bg3, border: 'none', borderRadius: 10, color: C.t2, width: 36, height: 36, fontSize: 16, cursor: 'pointer' }}>✕</button>
+              </div>
+              <div style={{ fontSize: 13, color: C.t3, marginTop: 6 }}>
+                Borç <b style={{ color: C.kirmizi }}>{fmt(detay.guncel_borc)}</b> · Kalan {fmt(detay.kalan_limit)} · Son ödeme {trTarih(detay.son_odeme_tarihi)}
+              </div>
+            </div>
+            <div style={{ overflowY: 'auto', padding: '4px 16px 20px' }}>
+              {hareketler === null && <div style={{ color: C.t3, textAlign: 'center', padding: 20 }}>Yükleniyor…</div>}
+              {hareketler && hareketler.length === 0 && <div style={{ color: C.t3, textAlign: 'center', padding: 20 }}>Hareket yok.</div>}
+              {(hareketler || []).map((h, i) => {
+                const odeme = h.islem_turu === 'ODEME';
+                const t = Number(h.tutar) || 0;
+                return (
+                  <div key={h.id || i} style={{ display: 'flex', justifyContent: 'space-between', gap: 10, padding: '10px 0', borderBottom: `1px solid ${C.border}` }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13, color: C.t1, lineHeight: 1.4 }}>{h.aciklama || h.islem_turu}</div>
+                      <div style={{ fontSize: 11, color: C.t3, marginTop: 2 }}>{h.islem_turu}{h.taksit_sayisi > 1 ? ` · ${h.taksit_sayisi} taksit` : ''} · {String(h.tarih).slice(0, 10)}</div>
+                    </div>
+                    <div style={{ fontSize: 14, fontWeight: 800, whiteSpace: 'nowrap', color: odeme ? C.yesil : C.kirmizi }}>{odeme ? '−' : '+'}{fmt(Math.abs(t))}</div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Kök bileşen ─────────────────────────────────────────────────────────────
 // ── Sipariş Kontrol Kulesi (gelen sipariş + yönlendir) ──────────────────────
 function CepKule({ onGeri, onDegisti }) {
@@ -3034,6 +3154,8 @@ export default function CepApp() {
     return <CepAnlikGider onGeri={geri} />;
   if (view === 'vadeli')
     return <CepVadeli onGeri={geri} />;
+  if (view === 'kartlar')
+    return <CepKartlar onGeri={geri} />;
   if (view === 'onaylar')
     return <CepOnaylar onGeri={geri} onDegisti={sayaclariYukle} />;
   if (view === 'denetim')
