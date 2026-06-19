@@ -562,6 +562,11 @@ function VardiyamEkrani({ oturum }) {
           <div style={{ fontSize: 15, fontWeight: 700, color: '#2A241E' }}>{subeBilgi?.ad || 'TuliPi Coffee'}</div>
           <div style={{ fontSize: 12, color: '#9C8E7E' }}>{oturum.ad_soyad}</div>
         </div>
+        {VT_ETIKET[oturum.vardiya_tip] && (
+          <span style={{ fontSize: 11, fontWeight: 700, color: VT_ETIKET[oturum.vardiya_tip].renk, background: VT_ETIKET[oturum.vardiya_tip].renk + '1f', border: `1px solid ${VT_ETIKET[oturum.vardiya_tip].renk}40`, borderRadius: 999, padding: '4px 11px', whiteSpace: 'nowrap' }}>
+            {VT_ETIKET[oturum.vardiya_tip].label}
+          </span>
+        )}
       </div>
       {/* Bugün */}
       <div style={{ padding: '16px 20px', borderBottom: '1px solid #E6DED4' }}>

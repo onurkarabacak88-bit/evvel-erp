@@ -16,6 +16,15 @@ function MarkaLogo({ size = 56 }) {
   );
 }
 
+// Saate göre selamlama + o anki vardiya bağlamı
+function selamlamaBilgi() {
+  const h = new Date().getHours();
+  if (h >= 5 && h < 11)  return { selam: 'Günaydın',     vardiya: 'Sabah vardiyası',   saat: '07:00 – 15:00' };
+  if (h >= 11 && h < 16) return { selam: 'İyi günler',    vardiya: 'Ara vardiya',       saat: '11:00 – 19:00' };
+  if (h >= 16 && h < 23) return { selam: 'İyi akşamlar',  vardiya: 'Kapanış vardiyası', saat: '15:00 – 23:00' };
+  return { selam: 'İyi mesailer', vardiya: 'Gece', saat: '' };
+}
+
 // Kişi baş harf rozeti — addan üretilen renkli daire
 const AVATAR_RENK = ['#C8956A', '#4a9eff', '#4caf84', '#e08a5c', '#9b7bd4', '#d4756b'];
 function basHarf(ad) {
@@ -404,6 +413,14 @@ export default function GorevGiris({ subeId: subeIdProp }) {
             : adim === 'devir-yap-tamam' ? 'Mesain Bitti'
             : 'Vardiya Girişi'}
           </div>
+          {(() => { const sb = selamlamaBilgi(); return (
+            <div style={{ marginTop: 12, width: '100%', background: 'rgba(200,149,106,0.10)', border: '1px solid rgba(200,149,106,0.28)', borderRadius: 12, padding: '10px 14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+              <div style={{ textAlign: 'left' }}>
+                <div style={{ fontSize: 14, fontWeight: 700, color: '#8a5a32' }}>{sb.selam} 👋</div>
+                <div style={{ fontSize: 11, color: '#9C8E7E', marginTop: 1 }}>Şu an: {sb.vardiya}{sb.saat ? ` · ${sb.saat}` : ''}</div>
+              </div>
+            </div>
+          ); })()}
         </div>
 
         {/* ── Şube Seç (QR'sız mod) ── */}
