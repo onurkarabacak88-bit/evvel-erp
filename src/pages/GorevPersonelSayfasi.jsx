@@ -1390,34 +1390,44 @@ export default function GorevPersonelSayfasi({ oturum, subeBilgi, onCikis }) {
 
   return (
     <div style={PAGE}>
-      {/* Header */}
+      {/* Header — marka + kişi + vardiya rozeti */}
       <div style={{
-        padding: '16px 20px', borderBottom: '1px solid #E6DED4',
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        padding: '14px 18px', borderBottom: '1px solid #E6DED4',
+        display: 'flex', alignItems: 'center', gap: 12,
         position: 'sticky', top: 0, background: '#F4EFE9', zIndex: 10,
       }}>
-        <div>
-          <div style={{ fontSize: 15, fontWeight: 700 }}>
-            {subeBilgi?.ad || 'Şube'} · {vt.label}
-          </div>
-          <div style={{ fontSize: 11, color: '#9C8E7E', marginTop: 2 }}>
-            {oturum.ad_soyad} · {oturum.tarih}
-          </div>
+        <div style={{ width: 40, height: 40, borderRadius: '50%', background: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+          <img src={tulipiLogo} alt="TuliPi" style={{ width: 31, height: 31, objectFit: 'contain' }} />
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button onClick={() => setSiparisAcik(true)} style={{
-            background: 'rgba(200,149,106,0.12)', border: '1px solid var(--accent-border, rgba(200,149,106,0.3))',
-            borderRadius: 8, color: '#C8956A', padding: '6px 12px', cursor: 'pointer', fontSize: 12, fontWeight: 700,
-          }}>
-            📦 Sipariş
-          </button>
-          <button onClick={onCikis} style={{
-            background: 'none', border: '1px solid #E6DED4', borderRadius: 8,
-            color: '#9C8E7E', padding: '6px 12px', cursor: 'pointer', fontSize: 12,
-          }}>
-            Çıkış
-          </button>
+        {(() => {
+          const _ad = String(oturum.ad_soyad || '').trim().split(/\s+/).filter(Boolean);
+          const _bh = ((_ad[0]?.[0] || '') + (_ad[1]?.[0] || '')).toUpperCase() || '?';
+          return (
+            <div style={{ width: 38, height: 38, borderRadius: '50%', background: (vt.renk || '#C8956A') + '22', color: vt.renk || '#C8956A', border: `1.5px solid ${(vt.renk || '#C8956A')}55`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: 14, flexShrink: 0 }}>{_bh}</div>
+          );
+        })()}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 15, fontWeight: 700, color: '#2A241E' }}>{oturum.ad_soyad}</div>
+          <div style={{ fontSize: 11, color: '#9C8E7E' }}>{subeBilgi?.ad || 'Şube'} · {oturum.tarih}</div>
         </div>
+        <span style={{ fontSize: 11, fontWeight: 700, color: vt.renk, background: (vt.renk || '#C8956A') + '1f', border: `1px solid ${(vt.renk || '#C8956A')}40`, borderRadius: 999, padding: '4px 11px', whiteSpace: 'nowrap', flexShrink: 0 }}>{vt.label}</span>
+        <button onClick={onCikis} aria-label="Çıkış" style={{ background: 'none', border: '1px solid #E6DED4', borderRadius: 8, color: '#9C8E7E', padding: '6px 9px', cursor: 'pointer', fontSize: 14, flexShrink: 0 }}>⎋</button>
+      </div>
+
+      {/* Hızlı işlem — Sipariş Ver (belirgin kart) */}
+      <div style={{ padding: '12px 16px 0' }}>
+        <button onClick={() => setSiparisAcik(true)} style={{
+          width: '100%', display: 'flex', alignItems: 'center', gap: 12, padding: '14px 16px',
+          background: 'rgba(200,149,106,0.10)', border: '1px solid rgba(200,149,106,0.32)',
+          borderRadius: 14, cursor: 'pointer', textAlign: 'left',
+        }}>
+          <span style={{ fontSize: 22 }}>📦</span>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 15, fontWeight: 800, color: '#8a5a32' }}>Sipariş Ver</div>
+            <div style={{ fontSize: 12, color: '#9C8E7E' }}>Eksik ürünleri merkeze bildir</div>
+          </div>
+          <span style={{ fontSize: 18, color: '#C8956A' }}>›</span>
+        </button>
       </div>
 
       {/* Kapanış Mühür Bandı — kapanış vardiyasında her zaman; diğer vardiyalarda
