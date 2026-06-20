@@ -530,15 +530,21 @@ function CepCiroOnay({ onGeri, onDegisti }) {
 function CepKasaUyumsuzluk({ onGeri }) {
   const [data, setData] = useState(null);
   const [hata, setHata] = useState('');
-  const [gun, setGun] = useState(0); // 0=bugün, 1=dün...
+  const [gun, setGun] = useState(0); // 0=bugün(iş günü), 1=dün...
+  const [isGunBaz, setIsGunBaz] = useState(null); // backend'in çözdüğü iş günü (Şubeler ile aynı baz)
   const yukle = useCallback(() => {
     setHata('');
-    const t = new Date(); t.setDate(t.getDate() - gun);
-    const tarih = t.toISOString().slice(0, 10);
-    api(`/ops/kasa-uyumsuzluk?tarih=${tarih}&sadece_bekleyen=false`)
-      .then(d => setData(d))
+    // gün=0 → tarih GÖNDERME: backend is_gunu_tr() kullansın (Şubeler/kapanış-takip ile aynı gün).
+    // Takvim günü yollanırsa gece penceresinde iş günü ile uyuşmaz → fark "kayıp" görünürdü.
+    let url = '/ops/kasa-uyumsuzluk?sadece_bekleyen=false';
+    if (gun > 0 && isGunBaz) {
+      const t = new Date(isGunBaz + 'T00:00:00'); t.setDate(t.getDate() - gun);
+      url += `&tarih=${t.toISOString().slice(0, 10)}`;
+    }
+    api(url)
+      .then(d => { setData(d); if (gun === 0 && d?.tarih) setIsGunBaz(d.tarih); })
       .catch(e => { setHata(e.message || 'Yüklenemedi'); setData({ liste: [] }); });
-  }, [gun]);
+  }, [gun, isGunBaz]);
   useEffect(() => { yukle(); const t = setInterval(yukle, 60000); return () => clearInterval(t); }, [yukle]);
 
   const liste = data?.liste || [];
@@ -553,7 +559,10 @@ function CepKasaUyumsuzluk({ onGeri }) {
       {/* Gün gezinme */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 14, padding: '10px 14px', borderBottom: `1px solid ${C.border}` }}>
         <button onClick={() => setGun(g => g + 1)} style={{ background: C.bg2, border: `1px solid ${C.border}`, borderRadius: 8, color: C.t2, padding: '6px 12px', fontSize: 16, cursor: 'pointer' }}>‹</button>
-        <span style={{ fontSize: 14, fontWeight: 700, color: C.t1, minWidth: 110, textAlign: 'center' }}>{gunMetin}</span>
+        <span style={{ fontSize: 14, fontWeight: 700, color: C.t1, minWidth: 110, textAlign: 'center' }}>
+          {gunMetin}
+          {data?.tarih && <div style={{ fontSize: 10, color: C.t3, fontWeight: 400 }}>{new Date(data.tarih).toLocaleDateString('tr-TR', { day: 'numeric', month: 'short' })} · iş günü</div>}
+        </span>
         <button onClick={() => setGun(g => Math.max(0, g - 1))} disabled={gun === 0} style={{ background: C.bg2, border: `1px solid ${C.border}`, borderRadius: 8, color: gun === 0 ? C.t3 : C.t2, padding: '6px 12px', fontSize: 16, cursor: gun === 0 ? 'default' : 'pointer' }}>›</button>
       </div>
 
