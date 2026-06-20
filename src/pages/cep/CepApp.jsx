@@ -2051,7 +2051,11 @@ function CepSubeler({ onGeri }) {
           const girmeyenler = beklenenler.filter(b => b.sube_id === s.sube_id && b.dk_gecti != null && b.dk_gecti >= 5);
           const ak = acilisKasa.find(a => a.sube_id === s.sube_id);
           const akFarkVar = ak && ak.fark_tl != null && Math.abs(Number(ak.fark_tl)) > 1;
-          const serit = (girmeyenler.length || akFarkVar || (fark && Math.abs(Number(fark)) > 1)) ? C.kirmizi
+          // GERÇEK kasa farkı sadece kapanış denklemi TAM olduğunda sayılır. Gün sürerken
+          // (kısmi) nakit_kasa_fark = "şu an kasada olması gereken" → fark değil, alarm verme.
+          const kasaDenklemTam = !!s.nakit_denkleme_tam;
+          const gercekKasaFark = kasaDenklemTam && fark != null && Math.abs(Number(fark)) > 1;
+          const serit = (girmeyenler.length || akFarkVar || gercekKasaFark) ? C.kirmizi
             : ((gecler.length || acilisGecVar) ? C.sari : C.yesil);
           return (
             <div key={s.sube_id} style={{
@@ -2087,10 +2091,17 @@ function CepSubeler({ onGeri }) {
               {/* Kasa farkı + ciro */}
               <div style={{ display: 'flex', gap: 10, marginBottom: 8 }}>
                 <div style={{ flex: 1, background: C.bg3, borderRadius: 10, padding: '8px 10px' }}>
-                  <div style={{ fontSize: 11, color: C.t3 }}>Kasa farkı</div>
-                  <div style={{ fontSize: 15, fontWeight: 800, color: fark == null ? C.t3 : (Math.abs(Number(fark)) <= 1 ? C.yesil : (Number(fark) > 0 ? C.kirmizi : C.sari)) }}>
-                    {fark == null ? '—' : (Number(fark) > 0 ? `${fmt(fark)} açık` : Number(fark) < 0 ? `${fmt(Math.abs(Number(fark)))} fazla` : '0 ✓')}
-                  </div>
+                  <div style={{ fontSize: 11, color: C.t3 }}>{kasaDenklemTam ? 'Kasa farkı' : 'Kasada olması gereken'}</div>
+                  {!kasaDenklemTam ? (
+                    <div style={{ fontSize: 15, fontWeight: 800, color: C.t2 }}>
+                      {fark == null ? '—' : fmt(fark)}
+                      <span style={{ fontSize: 10, color: C.t3, fontWeight: 600, marginLeft: 4 }}>⏳ gün sürüyor</span>
+                    </div>
+                  ) : (
+                    <div style={{ fontSize: 15, fontWeight: 800, color: fark == null ? C.t3 : (Math.abs(Number(fark)) <= 1 ? C.yesil : (Number(fark) > 0 ? C.kirmizi : C.sari)) }}>
+                      {fark == null ? '—' : (Number(fark) > 0 ? `${fmt(fark)} açık` : Number(fark) < 0 ? `${fmt(Math.abs(Number(fark)))} fazla` : '0 ✓')}
+                    </div>
+                  )}
                 </div>
                 <div style={{ flex: 1, background: C.bg3, borderRadius: 10, padding: '8px 10px' }}>
                   <div style={{ fontSize: 11, color: C.t3 }}>Ciro</div>

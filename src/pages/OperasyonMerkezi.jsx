@@ -9774,12 +9774,18 @@ export default function OperasyonMerkezi() {
                     ? 'Pozitif: denkleme göre kasada tutması gerekenden az nakit (açık).'
                     : 'Negatif: denkleme göre kasada tutması gerekenden fazla nakit (fazla).')
                   : 'Mutlak değer küçük; pratikte dengeli.');
-              const etiketRenk = !buyuk ? 'var(--text3)' : fv > 0 ? '#e85d5d' : '#22c55e';
+              // Kısmi (gün sürüyor) → GERÇEK fark değil, "şu an kasada olması gereken".
+              // Kırmızı/yeşil alarm verme; nötr göster. Alarm sadece TAM denklemede.
+              const kismiNotr = kismi && !tam;
+              const etiketRenk = kismiNotr ? 'var(--text3)' : (!buyuk ? 'var(--text3)' : fv > 0 ? '#e85d5d' : '#22c55e');
+              const sayiStil = kismiNotr
+                ? { fontSize: 12, fontWeight: 700, color: 'var(--text2)' }
+                : farkStil(fark);
               return (
                 <span style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }} title={title}>
-                  <span style={farkStil(fark)}>{fs} ₺</span>
+                  <span style={sayiStil}>{fs} ₺</span>
                   <span style={{ fontSize: 10, fontWeight: 700, color: etiketRenk, whiteSpace: 'nowrap' }}>
-                    {kismi && !tam ? 'Kısmi Δ' : etiket}
+                    {kismiNotr ? '⏳ olması gereken' : etiket}
                   </span>
                 </span>
               );
