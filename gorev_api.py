@@ -732,7 +732,8 @@ def yemek_durum(sube_id: str, personel_id: str):
             return {"durum": "yok", "ucret_hakki": None}
         d = dict(row)
         if d["bitis_ts"] is None:
-            return {"durum": "devam", "baslangic_ts": str(d["baslangic_ts"]), "ucret_hakki": None}
+            return {"durum": "devam", "baslangic_ts": str(d["baslangic_ts"]),
+                    "limit_dk": int(d["yemek_mola_limit_dk"] or 60), "ucret_hakki": None}
         return {
             "durum": "bitti",
             "sure_dk": float(d["sure_dk"] or 0),

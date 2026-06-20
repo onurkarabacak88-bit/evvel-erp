@@ -438,11 +438,14 @@ function MesaiCikisButon({ oturum, isDevreden }) {
   );
 }
 
-// ── Yemek Molası Butonu ──────────────────────────────────────────────────────
+// ── Yemek Molası (durum kartı + canlı sayaç) ─────────────────────────────────
 function YemekMolasiButon({ oturum }) {
   const [durum, setDurum] = useState(null); // null | 'devam' | 'bitti'
   const [sure, setSure] = useState(null);
   const [ucretHakki, setUcretHakki] = useState(null);
+  const [limitDk, setLimitDk] = useState(60);
+  const [baslangic, setBaslangic] = useState(null); // Date — mola başlangıcı (canlı sayaç)
+  const [simdiMs, setSimdiMs] = useState(Date.now());
   const [yukleniyor, setYukleniyor] = useState(false);
   const [mesaj, setMesaj] = useState('');
   const [konum, setKonum] = useState(null);
@@ -463,8 +466,18 @@ function YemekMolasiButon({ oturum }) {
         setDurum(d.durum);
         if (d.sure_dk) setSure(d.sure_dk);
         if (d.ucret_hakki !== null) setUcretHakki(d.ucret_hakki);
+        if (d.limit_dk) setLimitDk(d.limit_dk);
+        if (d.baslangic_ts) setBaslangic(new Date(String(d.baslangic_ts).replace(' ', 'T')));
       }).catch(() => {});
   }, []);
+
+  // Moladayken canlı sayaç (her 30 sn'de bir tik)
+  useEffect(() => {
+    if (durum !== 'devam') return;
+    setSimdiMs(Date.now());
+    const t = setInterval(() => setSimdiMs(Date.now()), 30000);
+    return () => clearInterval(t);
+  }, [durum]);
 
   const tikla = async () => {
     setYukleniyor(true);
@@ -486,6 +499,7 @@ function YemekMolasiButon({ oturum }) {
         setUcretHakki(res.ucret_hakki);
         setMesaj(res.mesaj);
       } else {
+        setBaslangic(new Date());
         setDurum('devam');
       }
     } catch (e) {
@@ -516,29 +530,58 @@ function YemekMolasiButon({ oturum }) {
     </div>
   );
 
+  // MOLADA: durum kartı + canlı geçen süre + "Molayı Bitir"
+  if (durum === 'devam') {
+    const gecenDk = baslangic ? Math.max(0, Math.floor((simdiMs - baslangic.getTime()) / 60000)) : null;
+    const asti = gecenDk != null && gecenDk > limitDk;
+    return (
+      <div style={{
+        margin: '10px 16px', padding: '14px 16px', borderRadius: 14,
+        background: asti ? 'rgba(224,92,92,0.08)' : 'rgba(245,158,11,0.10)',
+        border: `1px solid ${asti ? 'rgba(224,92,92,0.35)' : 'rgba(245,158,11,0.40)'}`,
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <span style={{ fontSize: 26 }}>🍽️</span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 15, fontWeight: 800, color: asti ? '#e05c5c' : '#b5790a' }}>Moladasın</div>
+            <div style={{ fontSize: 12, color: '#9C8E7E', marginTop: 2 }}>
+              {gecenDk != null ? <><strong style={{ color: asti ? '#e05c5c' : '#6B5E50' }}>{gecenDk} dk</strong> geçti · limit {limitDk} dk</> : 'Mola sayacı çalışıyor'}
+            </div>
+          </div>
+          <button onClick={tikla} disabled={yukleniyor} style={{
+            padding: '11px 16px', borderRadius: 10, border: 'none', cursor: 'pointer',
+            background: asti ? '#e05c5c' : '#C8956A', color: '#fff', fontWeight: 800, fontSize: 14, whiteSpace: 'nowrap', flexShrink: 0,
+          }}>
+            {yukleniyor ? '…' : 'Molayı Bitir'}
+          </button>
+        </div>
+        {asti && (
+          <div style={{ fontSize: 11, color: '#e05c5c', marginTop: 8 }}>
+            ⚠️ Limit aşıldı — bu gün yemek ücreti ödenmeyebilir.
+          </div>
+        )}
+        {mesaj && <div style={{ fontSize: 12, marginTop: 8, textAlign: 'center', color: '#9C8E7E' }}>{mesaj}</div>}
+      </div>
+    );
+  }
+
+  // MOLA YOK: başlat butonu
   return (
     <div style={{ margin: '10px 16px' }}>
       <button onClick={tikla} disabled={yukleniyor} style={{
-        width: '100%', padding: '12px', borderRadius: 10, border: 'none', cursor: 'pointer',
-        background: durum === 'devam' ? 'rgba(245,158,11,0.15)' : 'rgba(74,158,255,0.1)',
-        border: `1px solid ${durum === 'devam' ? 'rgba(245,158,11,0.4)' : 'rgba(74,158,255,0.3)'}`,
-        color: durum === 'devam' ? '#f59e0b' : '#4a9eff',
-        fontWeight: 700, fontSize: 14,
+        width: '100%', padding: '12px', borderRadius: 10, cursor: 'pointer',
+        background: 'rgba(74,158,255,0.1)', border: '1px solid rgba(74,158,255,0.3)',
+        color: '#4a9eff', fontWeight: 700, fontSize: 14,
       }}>
-        {yukleniyor ? '…' : durum === 'devam' ? '🍽️ Yemekten Döndüm' : '🍽️ Yemeğe Gidiyorum'}
+        {yukleniyor ? '…' : '🍽️ Yemeğe Gidiyorum'}
       </button>
-      {durum === 'devam' && (
-        <div style={{ fontSize: 11, color: '#9C8E7E', textAlign: 'center', marginTop: 6 }}>
-          Mola sayacı çalışıyor — dönünce tekrar bas
-        </div>
-      )}
       {mesaj && <div style={{ fontSize: 12, marginTop: 6, textAlign: 'center', color: '#9C8E7E' }}>{mesaj}</div>}
     </div>
   );
 }
 
-// ── Vardiyam Ekranı ──────────────────────────────────────────────────────────
-function VardiyamEkrani({ oturum }) {
+// ── Vardiyam / Ay Ekranı (mod='bugun' | 'ay') ────────────────────────────────
+function VardiyamEkrani({ oturum, subeBilgi, mod = 'bugun' }) {
   const [bugun, setBugun] = useState(null);
   const [aylik, setAylik] = useState(null);
   const [yukleniyor, setYukleniyor] = useState(true);
@@ -586,23 +629,9 @@ function VardiyamEkrani({ oturum }) {
 
   return (
     <div style={{ ...PAGE, paddingBottom: 40 }}>
-      {/* Marka başlığı */}
-      <div style={{ padding: '14px 18px', borderBottom: '1px solid #E6DED4', display: 'flex', alignItems: 'center', gap: 12, position: 'sticky', top: 0, background: '#F4EFE9', zIndex: 10 }}>
-        <div style={{ width: 42, height: 42, borderRadius: '50%', background: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-          <img src={tulipiLogo} alt="TuliPi" style={{ width: 33, height: 33, objectFit: 'contain' }} />
-        </div>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 15, fontWeight: 700, color: '#2A241E' }}>{subeBilgi?.ad || 'TuliPi Coffee'}</div>
-          <div style={{ fontSize: 12, color: '#9C8E7E' }}>{oturum.ad_soyad}</div>
-        </div>
-        {VT_ETIKET[oturum.vardiya_tip] && (
-          <span style={{ fontSize: 11, fontWeight: 700, color: VT_ETIKET[oturum.vardiya_tip].renk, background: VT_ETIKET[oturum.vardiya_tip].renk + '1f', border: `1px solid ${VT_ETIKET[oturum.vardiya_tip].renk}40`, borderRadius: 999, padding: '4px 11px', whiteSpace: 'nowrap' }}>
-            {VT_ETIKET[oturum.vardiya_tip].label}
-          </span>
-        )}
-      </div>
       {/* Bugün */}
-      <div style={{ padding: '16px 20px', borderBottom: '1px solid #E6DED4' }}>
+      {mod === 'bugun' && (
+      <div style={{ padding: '16px 20px' }}>
         <div style={{ fontSize: 12, fontWeight: 700, color: '#9C8E7E', marginBottom: 10, letterSpacing: 1 }}>
           BUGÜN · {new Date(oturum.tarih).toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', weekday: 'long' })}
         </div>
@@ -630,9 +659,10 @@ function VardiyamEkrani({ oturum }) {
           </div>
         )}
       </div>
+      )}
 
       {/* Bu ay */}
-      {aylik && (
+      {mod === 'ay' && aylik && (
         <div style={{ padding: '16px 20px' }}>
           <div style={{ fontSize: 12, fontWeight: 700, color: '#9C8E7E', marginBottom: 10, letterSpacing: 1 }}>
             BU AY
@@ -1414,57 +1444,9 @@ export default function GorevPersonelSayfasi({ oturum, subeBilgi, onCikis }) {
         <button onClick={onCikis} aria-label="Çıkış" style={{ background: 'none', border: '1px solid #E6DED4', borderRadius: 8, color: '#9C8E7E', padding: '6px 9px', cursor: 'pointer', fontSize: 14, flexShrink: 0 }}>⎋</button>
       </div>
 
-      {/* Hızlı işlem — Sipariş Ver (belirgin kart) */}
-      <div style={{ padding: '12px 16px 0' }}>
-        <button onClick={() => setSiparisAcik(true)} style={{
-          width: '100%', display: 'flex', alignItems: 'center', gap: 12, padding: '14px 16px',
-          background: 'rgba(200,149,106,0.10)', border: '1px solid rgba(200,149,106,0.32)',
-          borderRadius: 14, cursor: 'pointer', textAlign: 'left',
-        }}>
-          <span style={{ fontSize: 22 }}>📦</span>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 15, fontWeight: 800, color: '#8a5a32' }}>Sipariş Ver</div>
-            <div style={{ fontSize: 12, color: '#9C8E7E' }}>Eksik ürünleri merkeze bildir</div>
-          </div>
-          <span style={{ fontSize: 18, color: '#C8956A' }}>›</span>
-        </button>
-      </div>
-
-      {/* Vardiya zaman ilerlemesi — mesainin neresindeyim (gerçek saat) */}
-      <div style={{ padding: '12px 16px 0' }}>
-        <VardiyaIlerleme vardiyaTip={oturum.vardiya_tip} />
-      </div>
-
-      {/* Kapanış Mühür Bandı — kapanış vardiyasında her zaman; diğer vardiyalarda
-          sadece tek başına açıp-kapatan (devir süreci olmayan) personel için */}
-      {kapanisUygun && (
-        <KapanisMuhurBandi oturum={oturum} />
-      )}
-
-      {/* İlerleme */}
-      {data && (
-        <div style={{ padding: '14px 20px', borderBottom: '1px solid #E6DED4' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6, fontSize: 12 }}>
-            <span style={{ color: '#6B5E50' }}>Tamamlanan</span>
-            <span style={{ fontWeight: 700, color: data.eksik === 0 ? '#4caf84' : vt.renk }}>
-              {data.tamamlanan}/{data.toplam}
-              {data.eksik === 0 ? ' · Tamamlandı ✓' : ` · ${data.eksik} kaldı`}
-            </span>
-          </div>
-          <div style={{ height: 6, background: '#E6DED4', borderRadius: 3, overflow: 'hidden' }}>
-            <div style={{
-              height: '100%', borderRadius: 3,
-              width: `${tamamYuzde}%`,
-              background: data.eksik === 0 ? '#4caf84' : vt.renk,
-              transition: 'width 0.3s ease',
-            }} />
-          </div>
-        </div>
-      )}
-
-      {/* Sekmeler */}
+      {/* Sekmeler — 3 zaman ufku: Şimdi / Vardiyam / Ay (başlığın hemen altında) */}
       <div style={{ display: 'flex', borderBottom: '1px solid #E6DED4' }}>
-        {[['gorevler','✅ Görevlerim'], ['vardiyam','⏱️ Vardiyam']].map(([id, label]) => (
+        {[['gorevler','⚡ Şimdi'], ['vardiyam','⏱️ Vardiyam'], ['ay','💰 Ay']].map(([id, label]) => (
           <button key={id} onClick={() => setSekme(id)} style={{
             flex: 1, padding: '12px', border: 'none', cursor: 'pointer',
             background: 'transparent', fontSize: 13, fontWeight: sekme === id ? 700 : 500,
@@ -1475,72 +1457,120 @@ export default function GorevPersonelSayfasi({ oturum, subeBilgi, onCikis }) {
         ))}
       </div>
 
-      {/* Vardiyam sekmesi */}
-      {sekme === 'vardiyam' && <VardiyamEkrani oturum={oturum} />}
-
-      {/* Yemek Molası + Mesai Çıkış */}
+      {/* ════ ŞİMDİ — aktif operasyon (sipariş, ilerleme, mola, görevler) ════ */}
       {sekme === 'gorevler' && (
         <>
+          {/* Hızlı işlem — Sipariş Ver (belirgin kart) */}
+          <div style={{ padding: '12px 16px 0' }}>
+            <button onClick={() => setSiparisAcik(true)} style={{
+              width: '100%', display: 'flex', alignItems: 'center', gap: 12, padding: '14px 16px',
+              background: 'rgba(200,149,106,0.10)', border: '1px solid rgba(200,149,106,0.32)',
+              borderRadius: 14, cursor: 'pointer', textAlign: 'left',
+            }}>
+              <span style={{ fontSize: 22 }}>📦</span>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 15, fontWeight: 800, color: '#8a5a32' }}>Sipariş Ver</div>
+                <div style={{ fontSize: 12, color: '#9C8E7E' }}>Eksik ürünleri merkeze bildir</div>
+              </div>
+              <span style={{ fontSize: 18, color: '#C8956A' }}>›</span>
+            </button>
+          </div>
+
+          {/* Vardiya zaman ilerlemesi — mesainin neresindeyim (gerçek saat) */}
+          <div style={{ padding: '12px 16px 0' }}>
+            <VardiyaIlerleme vardiyaTip={oturum.vardiya_tip} />
+          </div>
+
+          {/* Kapanış Mühür Bandı — kapanış vardiyasında her zaman; diğer vardiyalarda
+              sadece tek başına açıp-kapatan (devir süreci olmayan) personel için */}
+          {kapanisUygun && <KapanisMuhurBandi oturum={oturum} />}
+
+          {/* İlerleme */}
+          {data && (
+            <div style={{ padding: '14px 20px', borderBottom: '1px solid #E6DED4' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6, fontSize: 12 }}>
+                <span style={{ color: '#6B5E50' }}>Tamamlanan</span>
+                <span style={{ fontWeight: 700, color: data.eksik === 0 ? '#4caf84' : vt.renk }}>
+                  {data.tamamlanan}/{data.toplam}
+                  {data.eksik === 0 ? ' · Tamamlandı ✓' : ` · ${data.eksik} kaldı`}
+                </span>
+              </div>
+              <div style={{ height: 6, background: '#E6DED4', borderRadius: 3, overflow: 'hidden' }}>
+                <div style={{
+                  height: '100%', borderRadius: 3,
+                  width: `${tamamYuzde}%`,
+                  background: data.eksik === 0 ? '#4caf84' : vt.renk,
+                  transition: 'width 0.3s ease',
+                }} />
+              </div>
+            </div>
+          )}
+
+          {/* Yemek Molası + Mesai Çıkış */}
           {oturum.yemek_mola_hakki !== false && <YemekMolasiButon oturum={oturum} />}
-          {/* Kapanış vardiyasında (veya tek başına kapanış yapan personelde) üstteki
-              mühür bandı kullanılır, çıkış butonu tekrar gösterilmez */}
           {oturum.vardiya_tip !== 'kapanis' && !kapanisUygun && <MesaiCikisButon oturum={oturum} isDevreden={isDevreden} />}
+
+          {/* Görev listesi — tamamlananlar alta katlanır */}
+          <div style={{ padding: '12px 16px', paddingBottom: 80 }}>
+            {yukleniyor ? (
+              <div style={{ textAlign: 'center', padding: 40, color: '#9C8E7E' }}>
+                <div className="spinner" style={{ margin: '0 auto 12px' }} />
+                Görevler yükleniyor…
+              </div>
+            ) : !data?.gorevler?.length ? (
+              <div style={{ textAlign: 'center', padding: 40, color: '#9C8E7E' }}>
+                Bu vardiya için görev bulunamadı.
+              </div>
+            ) : (
+              [...data.gorevler].sort((a, b) => (a.tamamlandi === b.tamamlandi ? 0 : a.tamamlandi ? 1 : -1)).map((g) => (
+                <div key={g.id}
+                  onClick={() => toggle(g)}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 14,
+                    padding: '14px 12px', borderRadius: 10, marginBottom: 8,
+                    background: g.tamamlandi ? 'rgba(76,175,132,0.06)' : '#FFFFFF',
+                    border: `1px solid ${g.tamamlandi ? 'rgba(76,175,132,0.25)' : '#E6DED4'}`,
+                    cursor: islem[g.id] ? 'wait' : 'pointer',
+                    transition: 'all 0.15s',
+                    opacity: islem[g.id] ? 0.6 : 1,
+                  }}
+                >
+                  <div style={{
+                    width: 24, height: 24, borderRadius: 6, flexShrink: 0,
+                    border: `2px solid ${g.tamamlandi ? '#4caf84' : '#9C8E7E'}`,
+                    background: g.tamamlandi ? '#4caf84' : 'transparent',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    transition: 'all 0.15s',
+                  }}>
+                    {g.tamamlandi && <span style={{ color: '#fff', fontSize: 14, lineHeight: 1 }}>✓</span>}
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{
+                      fontSize: 14, fontWeight: 500,
+                      color: g.tamamlandi ? '#9C8E7E' : '#2A241E',
+                      textDecoration: g.tamamlandi ? 'line-through' : 'none',
+                      lineHeight: 1.35,
+                    }}>
+                      {g.gorev}
+                    </div>
+                    <div style={{ fontSize: 11, color: '#9C8E7E', marginTop: 3 }}>
+                      <span style={{ background: '#F7F2EC', borderRadius: 4, padding: '1px 6px', marginRight: 6 }}>{g.alan}</span>
+                      {g.siklik}
+                    </div>
+                  </div>
+                  <span style={{ fontSize: 11, color: '#E6DED4', fontWeight: 700, flexShrink: 0 }}>{g.sira}</span>
+                </div>
+              ))
+            )}
+          </div>
         </>
       )}
 
-      {/* Görev listesi — sadece görevlerim sekmesinde */}
-      {sekme !== 'gorevler' ? null : <div style={{ padding: '12px 16px', paddingBottom: 80 }}>
-        {yukleniyor ? (
-          <div style={{ textAlign: 'center', padding: 40, color: '#9C8E7E' }}>
-            <div className="spinner" style={{ margin: '0 auto 12px' }} />
-            Görevler yükleniyor…
-          </div>
-        ) : !data?.gorevler?.length ? (
-          <div style={{ textAlign: 'center', padding: 40, color: '#9C8E7E' }}>
-            Bu vardiya için görev bulunamadı.
-          </div>
-        ) : (
-          data.gorevler.map((g) => (
-            <div key={g.id}
-              onClick={() => toggle(g)}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 14,
-                padding: '14px 12px', borderRadius: 10, marginBottom: 8,
-                background: g.tamamlandi ? 'rgba(76,175,132,0.06)' : '#FFFFFF',
-                border: `1px solid ${g.tamamlandi ? 'rgba(76,175,132,0.25)' : '#E6DED4'}`,
-                cursor: islem[g.id] ? 'wait' : 'pointer',
-                transition: 'all 0.15s',
-                opacity: islem[g.id] ? 0.6 : 1,
-              }}
-            >
-              <div style={{
-                width: 24, height: 24, borderRadius: 6, flexShrink: 0,
-                border: `2px solid ${g.tamamlandi ? '#4caf84' : '#9C8E7E'}`,
-                background: g.tamamlandi ? '#4caf84' : 'transparent',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                transition: 'all 0.15s',
-              }}>
-                {g.tamamlandi && <span style={{ color: '#fff', fontSize: 14, lineHeight: 1 }}>✓</span>}
-              </div>
-              <div style={{ flex: 1 }}>
-                <div style={{
-                  fontSize: 14, fontWeight: 500,
-                  color: g.tamamlandi ? '#9C8E7E' : '#2A241E',
-                  textDecoration: g.tamamlandi ? 'line-through' : 'none',
-                  lineHeight: 1.35,
-                }}>
-                  {g.gorev}
-                </div>
-                <div style={{ fontSize: 11, color: '#9C8E7E', marginTop: 3 }}>
-                  <span style={{ background: '#F7F2EC', borderRadius: 4, padding: '1px 6px', marginRight: 6 }}>{g.alan}</span>
-                  {g.siklik}
-                </div>
-              </div>
-              <span style={{ fontSize: 11, color: '#E6DED4', fontWeight: 700, flexShrink: 0 }}>{g.sira}</span>
-            </div>
-          ))
-        )}
-      </div>}
+      {/* ════ VARDİYAM — bugünkü vardiya özeti ════ */}
+      {sekme === 'vardiyam' && <VardiyamEkrani oturum={oturum} subeBilgi={subeBilgi} mod="bugun" />}
+
+      {/* ════ AY — aylık mesai & hakediş ════ */}
+      {sekme === 'ay' && <VardiyamEkrani oturum={oturum} subeBilgi={subeBilgi} mod="ay" />}
 
       {/* Alt bant */}
       {sekme === 'gorevler' && data?.eksik === 0 && (
