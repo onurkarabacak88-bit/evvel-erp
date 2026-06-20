@@ -2704,6 +2704,8 @@ function CepKule({ onGeri, onDegisti }) {
   const [subeler, setSubeler] = useState([]);
   const [depoYon, setDepoYon] = useState(null);   // depo-sevk alt-sayfası: { talep, items }
   const [depoSubeId, setDepoSubeId] = useState('');
+  const [uyum, setUyum] = useState([]);           // kabul uyumsuzlukları (kapanmış dahil)
+  const [detay, setDetay] = useState(null);       // tıklanan siparişin detay modalı
   const gonderiyorRef = useRef(false);  // SENKRON kilit — çift tıkta iki gönderimi engeller
 
   const yukle = useCallback((sessiz) => {
@@ -2711,6 +2713,10 @@ function CepKule({ onGeri, onDegisti }) {
     api('/ops/siparis/kontrol-kulesi?gun=30')
       .then(d => setData(d))
       .catch(e => { if (!sessiz) { setHata(e.message || 'Yüklenemedi'); setData({ satirlar: [] }); } });
+    // Kabul uyumsuzlukları AYRI çekilir — kapanmış (teslim_edildi) olsa bile görünsün
+    api('/ops/siparis/kontrol-kulesi?gun=30&asama=uyumsuzluk&sadece_acik=false&limit=200')
+      .then(d => setUyum(d?.satirlar || []))
+      .catch(() => {});
   }, []);
   useEffect(() => { yukle(); const t = setInterval(() => yukle(true), 45000); return () => clearInterval(t); }, [yukle]);
   useEffect(() => { api('/tedarikciler').then(r => setTedarikciler(Array.isArray(r) ? r : (r?.tedarikciler || []))).catch(() => {}); }, []);
@@ -2873,7 +2879,7 @@ function CepKule({ onGeri, onDegisti }) {
         <button onClick={() => yukle()} style={{ background: 'none', border: 'none', color: C.t3, fontSize: 20, cursor: 'pointer' }}>↻</button>
       } />
       <div style={{ display: 'flex', gap: 8, padding: '10px 14px 4px' }}>
-        {[['gelen', `Gelen (${gelen.length})`], ['toplu', 'Toplu'], ['takip', 'Takip']].map(([k, lbl]) => (
+        {[['gelen', `Gelen (${gelen.length})`], ['toplu', 'Toplu'], ['takip', uyum.length ? `Takip ⚠${uyum.length}` : 'Takip']].map(([k, lbl]) => (
           <button key={k} onClick={() => setTab(k)} style={{
             flex: 1, padding: '10px', borderRadius: 10, cursor: 'pointer', fontWeight: 800, fontSize: 14,
             border: `1px solid ${tab === k ? C.mavi : C.border}`,
@@ -2987,17 +2993,41 @@ function CepKule({ onGeri, onDegisti }) {
         })()}
 
         {/* TAKIP: aşamalı, salt-okur */}
-        {data && tab === 'takip' && satirlar.length === 0 && (
+        {/* KABUL UYUMSUZLUKLARI — kapanmış olsa bile görünür (en üstte, kırmızı) */}
+        {data && tab === 'takip' && uyum.length > 0 && (
+          <div style={{ marginBottom: 14 }}>
+            <div style={{ fontSize: 13, fontWeight: 800, color: C.kirmizi, marginBottom: 8 }}>⚠ Kabul Uyumsuzlukları ({uyum.length})</div>
+            {uyum.map(s => (
+              <div key={s.id} onClick={() => setDetay(s)} style={{
+                background: 'rgba(239,68,68,0.06)', border: `1px solid rgba(239,68,68,0.3)`,
+                borderLeft: `4px solid ${C.kirmizi}`, borderRadius: 14, padding: 14, marginBottom: 10, cursor: 'pointer',
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                  <span style={{ fontSize: 16, fontWeight: 800, color: C.t1 }}>{s.sube_adi}</span>
+                  <span style={{ fontSize: 12, color: C.t3 }}>{String(s.tarih || '').slice(0, 10)}</span>
+                </div>
+                <div style={{ fontSize: 12, color: C.kirmizi, fontWeight: 700, marginTop: 4 }}>Kabulde eksik/fazla — incele ›</div>
+                <div style={{ fontSize: 12, color: C.t3, marginTop: 4, lineHeight: 1.5 }}>
+                  {s.sevkiyat_personel_ad ? `Sevk: ${s.sevkiyat_personel_ad}` : 'Sevk: —'}
+                  {'  ·  '}{s.kabul_personel_ad ? `Kabul: ${s.kabul_personel_ad}` : 'Kabul: —'}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {data && tab === 'takip' && satirlar.length === 0 && uyum.length === 0 && (
           <div style={{ color: C.t3, textAlign: 'center', padding: 40 }}>
             <div style={{ fontSize: 40, marginBottom: 8 }}>🗂️</div>Açık sipariş yok.
           </div>
         )}
         {data && tab === 'takip' && satirlar.map(s => {
           const items = itemsOf(s);
+          const kimKim = s.sevkiyat_personel_ad || s.kabul_personel_ad;
           return (
-            <div key={s.id} style={{
+            <div key={s.id} onClick={() => setDetay(s)} style={{
               background: C.bg2, border: `1px solid ${C.border}`,
-              borderLeft: `4px solid ${renkAsama(s.asama)}`, borderRadius: 14, padding: 14, marginBottom: 12,
+              borderLeft: `4px solid ${renkAsama(s.asama)}`, borderRadius: 14, padding: 14, marginBottom: 12, cursor: 'pointer',
             }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, marginBottom: 6 }}>
                 <span style={{ fontSize: 16, fontWeight: 800, color: C.t1 }}>{s.sube_adi}</span>
@@ -3007,6 +3037,11 @@ function CepKule({ onGeri, onDegisti }) {
               <div style={{ fontSize: 13, color: C.t2, lineHeight: 1.5 }}>
                 {items.length ? items.map(k => `${k.adet || ''} ${k.urun_ad}`.trim()).join(' · ') : '—'}
               </div>
+              {kimKim && (
+                <div style={{ fontSize: 11, color: C.t3, marginTop: 6 }}>
+                  {s.sevkiyat_personel_ad ? `Sevk: ${s.sevkiyat_personel_ad}` : ''}{s.sevkiyat_personel_ad && s.kabul_personel_ad ? '  ·  ' : ''}{s.kabul_personel_ad ? `Kabul: ${s.kabul_personel_ad}` : ''}
+                </div>
+              )}
               {s.kismi_toptanci && (
                 <div style={{ fontSize: 11, color: C.sari, fontWeight: 700, marginTop: 6, lineHeight: 1.4 }}>
                   🔶 {(s.dagitilan_kalem_adlari || []).join(', ')} yollandı · kalan {(s.kalan_kalemler || []).map(k => k.urun_ad).filter(Boolean).join(', ')}
@@ -3092,6 +3127,63 @@ function CepKule({ onGeri, onDegisti }) {
           </div>
         </div>
       )}
+
+      {/* Sipariş detay modalı — alış (kabul) vs çıkış (sevk) + kim-kim */}
+      {detay && (() => {
+        const yolda = Array.isArray(detay.yolda) ? detay.yolda : [];
+        const items = itemsOf(detay);
+        return (
+          <div onClick={e => e.target === e.currentTarget && setDetay(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.65)', zIndex: 70, display: 'flex', flexDirection: 'column' }}>
+            <div onClick={e => e.stopPropagation()} style={{ background: C.bg2, width: '100%', maxWidth: 520, margin: '0 auto', height: '100%', overflowY: 'auto' }}>
+              <div style={{ position: 'sticky', top: 0, background: C.bg2, borderBottom: `1px solid ${C.border}`, padding: '16px 18px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div>
+                  <div style={{ fontSize: 17, fontWeight: 800, color: C.t1 }}>{detay.sube_adi}</div>
+                  <div style={{ fontSize: 12, color: C.t3, marginTop: 2 }}>{detay.asama_metni || detay.asama} · {String(detay.tarih || '').slice(0, 10)}</div>
+                </div>
+                <button onClick={() => setDetay(null)} style={{ background: C.bg, border: `1px solid ${C.border}`, color: C.t2, width: 34, height: 34, borderRadius: 9, fontSize: 16, cursor: 'pointer' }}>✕</button>
+              </div>
+              <div style={{ padding: 16 }}>
+                {/* Kim sevk etti / kim kabul etti */}
+                <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
+                  <div style={{ flex: 1, background: C.bg, borderRadius: 10, padding: '10px 12px' }}>
+                    <div style={{ fontSize: 11, color: C.t3 }}>🚚 Çıkış (sevk eden)</div>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: C.t1, marginTop: 2 }}>{detay.sevkiyat_personel_ad || detay.tahsis_yapan_ad || '—'}</div>
+                    {detay.sevkiyat_ts && <div style={{ fontSize: 10, color: C.t3 }}>{String(detay.sevkiyat_ts).slice(0, 16).replace('T', ' ')}</div>}
+                  </div>
+                  <div style={{ flex: 1, background: C.bg, borderRadius: 10, padding: '10px 12px' }}>
+                    <div style={{ fontSize: 11, color: C.t3 }}>📥 Alış (kabul eden)</div>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: C.t1, marginTop: 2 }}>{detay.kabul_personel_ad || '—'}</div>
+                    {detay.kabul_ts && <div style={{ fontSize: 10, color: C.t3 }}>{String(detay.kabul_ts).slice(0, 16).replace('T', ' ')}</div>}
+                  </div>
+                </div>
+
+                {/* Kalem kalem: çıkış (sevk) vs alış (kabul) */}
+                <div style={{ fontSize: 12, fontWeight: 800, color: C.t2, marginBottom: 8 }}>Kalem kalem — çıkış vs alış</div>
+                {yolda.length > 0 ? yolda.map((y, i) => {
+                  const sevk = Number(y.sevk_adet) || 0;
+                  const kab = y.kabul_adet == null ? null : Number(y.kabul_adet);
+                  const fark = kab == null ? null : kab - sevk;
+                  return (
+                    <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, padding: '9px 11px', background: C.bg, borderRadius: 10, marginBottom: 6, borderLeft: `3px solid ${fark ? C.kirmizi : C.yesil}` }}>
+                      <span style={{ fontSize: 13, fontWeight: 600, color: C.t1, flex: 1, minWidth: 0 }}>{y.kalem_adi || y.kalem_kodu}</span>
+                      <span style={{ fontSize: 12, color: C.t3, whiteSpace: 'nowrap' }}>çıkış {sevk} → alış <b style={{ color: C.t1 }}>{kab == null ? '—' : kab}</b>{fark ? <span style={{ color: C.kirmizi }}> ({fark > 0 ? '+' : ''}{fark})</span> : <span style={{ color: C.yesil }}> ✓</span>}</span>
+                    </div>
+                  );
+                }) : (
+                  <div style={{ fontSize: 13, color: C.t2, lineHeight: 1.6 }}>
+                    {items.length ? items.map(k => `${k.adet || ''} ${k.urun_ad}`.trim()).join(' · ') : '—'}
+                    <div style={{ fontSize: 11, color: C.t3, marginTop: 8 }}>Bu sipariş toptancıdan geldi (depo sevk satırı yok); kalem bazlı çıkış/alış kıyası depo sevkiyatlarında görünür.</div>
+                  </div>
+                )}
+
+                <div style={{ marginTop: 16, padding: 12, background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.3)', borderRadius: 10, fontSize: 12, color: C.sari, lineHeight: 1.5 }}>
+                  Alış/çıkışı yeniden sormak (düzeltme) ister misin? Bu, kabul/sevk miktarını değiştiren bir işlem — kuralım dersen ayrı bir onaylı düzeltme akışı olarak ekleyebilirim.
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Geri-al penceresi (10 sn) — ikinci onay yerine. Depo sevkinde geri-al yok (masaüstü). */}
       {undo && (
