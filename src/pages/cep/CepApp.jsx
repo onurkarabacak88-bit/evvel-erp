@@ -1639,19 +1639,29 @@ function CepSayimAta() {
   const [hata, setHata] = useState('');
   const [bilgi, setBilgi] = useState('');
   const [mesgul, setMesgul] = useState(false);
+  const [kalemler, setKalemler] = useState([]);     // şube kalemleri (set için)
+  const [secili, setSecili] = useState({});          // kalem_kodu -> true
+  const [arama, setArama] = useState('');
 
   useEffect(() => { api('/subeler').then(r => setSubeler((r || []).filter(x => x.aktif !== false && !x.sezon_kapali))).catch(() => {}); }, []);
   useEffect(() => {
-    setPersonelId('');
-    if (!subeId) { setPersoneller([]); return; }
+    setPersonelId(''); setSecili({});
+    if (!subeId) { setPersoneller([]); setKalemler([]); return; }
     api(`/gorev/sube-personel/${encodeURIComponent(subeId)}`).then(r => setPersoneller(r || [])).catch(() => setPersoneller([]));
+    api(`/stok-sayim/sube-kalemler?sube_id=${encodeURIComponent(subeId)}`).then(r => setKalemler(r?.kalemler || [])).catch(() => setKalemler([]));
   }, [subeId]);
+
+  const seciliListe = kalemler.filter(k => secili[k.kalem_kodu]);
+  const aramaliKalemler = kalemler.filter(k => !arama.trim() || String(k.kalem_adi || '').toLowerCase().includes(arama.trim().toLowerCase()));
 
   const ata = async () => {
     if (!subeId || !personelId) { setHata('Şube ve personel seçin'); return; }
+    if (kapsam === 'set' && seciliListe.length === 0) { setHata('En az bir kalem seçin (kısmi sayım)'); return; }
     setMesgul(true); setHata(''); setBilgi('');
     try {
-      const r = await api('/stok-sayim/gorev-ata', { method: 'POST', body: { sube_id: subeId, personel_id: personelId, kapsam_tip: kapsam, not_aciklama: not.trim() || null, atayan_ad: 'Patron (Cep)' } });
+      const body = { sube_id: subeId, personel_id: personelId, kapsam_tip: kapsam, not_aciklama: not.trim() || null, atayan_ad: 'Patron (Cep)' };
+      if (kapsam === 'set') body.kalemler = seciliListe.map(k => ({ kalem_kodu: k.kalem_kodu, kalem_adi: k.kalem_adi }));
+      const r = await api('/stok-sayim/gorev-ata', { method: 'POST', body });
       const p = personeller.find(x => String(x.id) === String(personelId));
       const subeAd = subeler.find(x => x.id === subeId)?.ad || '';
       if (r.wa_gitti) {
@@ -1668,7 +1678,7 @@ function CepSayimAta() {
           setBilgi(`✅ Atandı — ${r.personel_ad || ''} · ${r.kalem_sayisi} kalem · ${r.mod === 'kalibrasyon' ? 'Kalibrasyon' : 'Kontrol'}. ${p && !p.telefon ? '(Telefon kayıtlı değil — WhatsApp gidemedi)' : 'Personel mesai başlatınca ekran kilitlenir.'}`);
         }
       }
-      setPersonelId(''); setNot('');
+      setPersonelId(''); setNot(''); setSecili({}); setArama('');
     } catch (e) { setHata(e.message || 'Atanamadı'); }
     finally { setMesgul(false); }
   };
@@ -1698,12 +1708,39 @@ function CepSayimAta() {
           <button key={k} onClick={() => setKapsam(k)} style={{ flex: 1, background: kapsam === k ? C.mavi : C.bg, color: kapsam === k ? '#fff' : C.t2, border: `1px solid ${C.border}`, borderRadius: 10, padding: '10px 0', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>{etk}</button>
         ))}
       </div>
-      {kapsam === 'set' && <div style={{ fontSize: 11, color: C.t3, marginBottom: 12 }}>Not: kritik set kalemlerini şimdilik masaüstünden seçebilirsin; cepte tam sayım önerilir.</div>}
+      {/* Kısmi (set) — kalem seçimi */}
+      {kapsam === 'set' && (
+        <div style={{ marginBottom: 12 }}>
+          {!subeId ? (
+            <div style={{ fontSize: 12, color: C.t3 }}>Önce şube seçin.</div>
+          ) : kalemler.length === 0 ? (
+            <div style={{ fontSize: 12, color: C.t3 }}>Bu şubede tanımlı kalem yok.</div>
+          ) : (
+            <>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                <span style={{ fontSize: 12, color: C.t3 }}>Sayılacak kalemleri seç ({seciliListe.length} seçili)</span>
+                <button onClick={() => setSecili(seciliListe.length === kalemler.length ? {} : Object.fromEntries(kalemler.map(k => [k.kalem_kodu, true])))} style={{ background: 'none', border: 'none', color: C.mavi, fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>{seciliListe.length === kalemler.length ? 'Hiçbiri' : 'Tümü'}</button>
+              </div>
+              <input placeholder="Kalem ara…" value={arama} onChange={e => setArama(e.target.value)} style={{ ...inp, marginBottom: 8, fontSize: 14 }} />
+              <div style={{ maxHeight: 280, overflowY: 'auto', border: `1px solid ${C.border}`, borderRadius: 10, background: C.bg }}>
+                {aramaliKalemler.map(k => (
+                  <label key={k.kalem_kodu} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', borderBottom: `1px solid ${C.border}`, cursor: 'pointer' }}>
+                    <input type="checkbox" checked={!!secili[k.kalem_kodu]} onChange={e => setSecili(s => ({ ...s, [k.kalem_kodu]: e.target.checked }))} style={{ width: 18, height: 18, flexShrink: 0 }} />
+                    <span style={{ fontSize: 14, color: C.t1, flex: 1 }}>{k.kalem_adi}</span>
+                    {k.kategori_ad && <span style={{ fontSize: 10, color: C.t3 }}>{k.kategori_ad}</span>}
+                  </label>
+                ))}
+                {aramaliKalemler.length === 0 && <div style={{ padding: 14, fontSize: 12, color: C.t3, textAlign: 'center' }}>Eşleşen kalem yok.</div>}
+              </div>
+            </>
+          )}
+        </div>
+      )}
 
       <input placeholder="Not (opsiyonel)" value={not} onChange={e => setNot(e.target.value)} style={{ ...inp, marginBottom: 14 }} />
 
-      <button onClick={ata} disabled={mesgul || kapsam === 'set'} style={{ width: '100%', background: kapsam === 'set' ? C.bg2 : C.yesil, color: kapsam === 'set' ? C.t3 : '#fff', border: 'none', borderRadius: 12, padding: '14px 0', fontSize: 16, fontWeight: 800, cursor: (mesgul || kapsam === 'set') ? 'default' : 'pointer', opacity: mesgul ? 0.6 : 1 }}>
-        {mesgul ? 'Atanıyor…' : (kapsam === 'set' ? 'Kritik set masaüstünden' : '📋 Sayım Görevi Ata')}
+      <button onClick={ata} disabled={mesgul} style={{ width: '100%', background: C.yesil, color: '#fff', border: 'none', borderRadius: 12, padding: '14px 0', fontSize: 16, fontWeight: 800, cursor: mesgul ? 'default' : 'pointer', opacity: mesgul ? 0.6 : 1 }}>
+        {mesgul ? 'Atanıyor…' : (kapsam === 'set' ? `📋 Kısmi Sayım Ata (${seciliListe.length} kalem)` : '📋 Tam Sayım Görevi Ata')}
       </button>
     </div>
   );
