@@ -1652,16 +1652,21 @@ function CepSayimAta() {
     setMesgul(true); setHata(''); setBilgi('');
     try {
       const r = await api('/stok-sayim/gorev-ata', { method: 'POST', body: { sube_id: subeId, personel_id: personelId, kapsam_tip: kapsam, not_aciklama: not.trim() || null, atayan_ad: 'Patron (Cep)' } });
-      // Personelin telefonu tanımlıysa → wa.me ile haber ver (senin telefonundan)
       const p = personeller.find(x => String(x.id) === String(personelId));
-      const num = cepWaNum(p?.telefon);
       const subeAd = subeler.find(x => x.id === subeId)?.ad || '';
-      if (num) {
-        const msg = `Merhaba ${p?.ad_soyad || ''} 👋\n*${subeAd}* için sana stok sayım görevi atandı 📋\nMesai başlat, QR okut ve ürünleri say. Teşekkürler 🙏`;
-        window.open(`https://wa.me/${num}?text=${encodeURIComponent(msg)}`, '_blank');
-        setBilgi(`✅ Atandı — ${r.personel_ad || ''} · ${r.kalem_sayisi} kalem. WhatsApp açıldı, gönder.`);
+      if (r.wa_gitti) {
+        // Sistem hattı (Green API) otomatik gönderdi — wa.me açma (çift mesaj olmasın)
+        setBilgi(`✅ Atandı — ${r.personel_ad || ''} · ${r.kalem_sayisi} kalem. WhatsApp otomatik gönderildi 📲`);
       } else {
-        setBilgi(`✅ Atandı — ${r.personel_ad || ''} · ${r.kalem_sayisi} kalem · ${r.mod === 'kalibrasyon' ? 'Kalibrasyon' : 'Kontrol'}. ${p && !p.telefon ? '(Bu personelin telefonu kayıtlı değil — WhatsApp gidemedi)' : 'Personel mesai başlatınca ekran kilitlenir.'}`);
+        // Sistem gönderemedi (kota/Green API) → senin telefonundan wa.me fallback
+        const num = cepWaNum(p?.telefon);
+        if (num) {
+          const msg = `Merhaba ${p?.ad_soyad || ''} 👋\n*${subeAd}* için sana stok sayım görevi atandı 📋\nMesai başlat, QR okut ve ürünleri say. Teşekkürler 🙏`;
+          window.open(`https://wa.me/${num}?text=${encodeURIComponent(msg)}`, '_blank');
+          setBilgi(`✅ Atandı — ${r.personel_ad || ''} · ${r.kalem_sayisi} kalem. WhatsApp açıldı, gönder.`);
+        } else {
+          setBilgi(`✅ Atandı — ${r.personel_ad || ''} · ${r.kalem_sayisi} kalem · ${r.mod === 'kalibrasyon' ? 'Kalibrasyon' : 'Kontrol'}. ${p && !p.telefon ? '(Telefon kayıtlı değil — WhatsApp gidemedi)' : 'Personel mesai başlatınca ekran kilitlenir.'}`);
+        }
       }
       setPersonelId(''); setNot('');
     } catch (e) { setHata(e.message || 'Atanamadı'); }

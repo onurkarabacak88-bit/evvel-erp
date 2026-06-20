@@ -232,13 +232,25 @@ def gorev_ata(body: GorevAtaBody):
         if cur.fetchone():
             raise HTTPException(409, "Bu personelde zaten aktif bir sayım görevi var")
 
-        # Personel adı
+        # Personel adı + telefon (telefon → atama sonrası otomatik WhatsApp)
         personel_ad = None
+        personel_tel = None
         try:
-            cur.execute("SELECT ad_soyad FROM personel WHERE id::text=%s", (personel_id,))
+            cur.execute("SELECT ad_soyad, telefon FROM personel WHERE id::text=%s", (personel_id,))
             pr = cur.fetchone()
             if pr:
                 personel_ad = str(dict(pr).get("ad_soyad") or "").strip() or None
+                personel_tel = str(dict(pr).get("telefon") or "").strip() or None
+        except Exception:
+            pass
+
+        # Şube adı (WhatsApp mesajı için)
+        sube_ad = sube_id
+        try:
+            cur.execute("SELECT ad FROM subeler WHERE id=%s", (sube_id,))
+            _sr = cur.fetchone()
+            if _sr:
+                sube_ad = str(dict(_sr).get("ad") or sube_id)
         except Exception:
             pass
 
@@ -288,7 +300,25 @@ def gorev_ata(body: GorevAtaBody):
                 (body.not_aciklama or "").strip() or None,
             ),
         )
-    return {"ok": True, "gorev_id": gid, "mod": mod, "kalem_sayisi": len(kalemler), "personel_ad": personel_ad}
+
+    # Atama sonrası OTOMATİK WhatsApp (sistem hattı) — telefon tanımlıysa. İZOLE: hata
+    # yutar, atamayı asla bozmaz. Kota dolu (466) ise cep wa.me fallback'i devrede kalır.
+    wa_gitti = False
+    if personel_tel:
+        try:
+            from whatsapp_bildirim import whatsapp_gonder_numara
+            _msg = (
+                f"Merhaba {personel_ad or ''} 👋\n"
+                f"*{sube_ad}* için sana stok sayım görevi atandı 📋\n"
+                f"Mesai başlat, QR okut ve ürünleri say. Teşekkürler 🙏"
+            )
+            _r = whatsapp_gonder_numara(personel_tel, _msg)
+            wa_gitti = bool((_r or {}).get("basarili"))
+        except Exception as _e:  # noqa: BLE001
+            logger.warning("sayim atama WhatsApp gonderilemedi (yutuldu): %s", str(_e)[:160])
+
+    return {"ok": True, "gorev_id": gid, "mod": mod, "kalem_sayisi": len(kalemler),
+            "personel_ad": personel_ad, "personel_tel_var": bool(personel_tel), "wa_gitti": wa_gitti}
 
 
 # ────────────────────────────── 2-3) PERSONEL: AKTİF GÖREV (KİLİT) ──────────────────────────────
