@@ -580,14 +580,22 @@ export default function PersonelVardiyaTakip() {
       )}
 
       {/* Genel özet */}
-      {personeller.length > 0 && (
+      {personeller.length > 0 && (() => {
+        const _akt = personeller.filter(p => p.aktif !== false);
+        const _ayr = personeller.filter(p => p.aktif === false);
+        const _tl = (n) => new Intl.NumberFormat('tr-TR').format(Math.round(n)) + '₺';
+        const _net = (arr) => arr.reduce((s, p) => s + (p['net_hakediş'] || 0), 0);
+        const aktifNet = _net(_akt);
+        const ayrilanNet = _net(_ayr);
+        return (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px,1fr))', gap: 10, marginBottom: 16 }}>
           {[
-            { label: 'Toplam Personel', val: personeller.length, renk: 'var(--text1)' },
+            { label: `Aktif Kadro (${_akt.length})`, val: personeller.length + ' kişi', renk: 'var(--text1)' },
+            { label: '✅ Aktif Kadro Hakediş', val: _tl(aktifNet), renk: '#4caf84' },
+            { label: ayrilanNet > 0 ? `↩ Ayrılan Son Hesap (${_ayr.length})` : 'Ayrılan', val: _tl(ayrilanNet), renk: ayrilanNet > 0 ? '#e08a5c' : 'var(--text3)' },
+            { label: 'Toplam (aktif+ayrılan)', val: _tl(aktifNet + ayrilanNet), renk: 'var(--text2)' },
             { label: 'Toplam Fazla Mesai', val: fmt(personeller.reduce((s,p)=>s+p.toplam_fazla_mesai_saat,0))+'s', renk: '#f59e0b' },
-            { label: 'Part-Tam Uyarı', val: personeller.filter(p=>p.part_tam_gun>0).length + ' kişi', renk: '#f59e0b' },
             { label: 'Yemek Ücreti Toplam', val: new Intl.NumberFormat('tr-TR').format(personeller.reduce((s,p)=>s+p.yemek_ucret_tutari,0))+'₺', renk: '#4caf84' },
-        { label: 'Toplam Net Hakediş', val: new Intl.NumberFormat('tr-TR').format(Math.round(personeller.reduce((s,p)=>s+(p['net_hakediş']||0),0)))+'₺', renk: '#4caf84' },
           ].map(k => (
             <div key={k.label} style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 10, padding: '12px 14px' }}>
               <div style={{ fontSize: 18, fontWeight: 800, color: k.renk }}>{k.val}</div>
@@ -595,7 +603,7 @@ export default function PersonelVardiyaTakip() {
             </div>
           ))}
         </div>
-      )}
+        ); })()}
 
       {/* Birikimli Haftalık İzin Alacağı */}
       {izinAlacagi && (() => {
