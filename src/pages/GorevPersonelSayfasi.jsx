@@ -1430,6 +1430,11 @@ export default function GorevPersonelSayfasi({ oturum, subeBilgi, onCikis }) {
         </button>
       </div>
 
+      {/* Vardiya zaman ilerlemesi — mesainin neresindeyim (gerçek saat) */}
+      <div style={{ padding: '12px 16px 0' }}>
+        <VardiyaIlerleme vardiyaTip={oturum.vardiya_tip} />
+      </div>
+
       {/* Kapanış Mühür Bandı — kapanış vardiyasında her zaman; diğer vardiyalarda
           sadece tek başına açıp-kapatan (devir süreci olmayan) personel için */}
       {kapanisUygun && (
