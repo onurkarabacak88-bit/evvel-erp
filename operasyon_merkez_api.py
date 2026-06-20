@@ -6693,6 +6693,15 @@ def ops_kasa_uyumsuzluk_listesi(
     except ValueError:
         raise HTTPException(400, "Geçersiz tarih formatı (YYYY-MM-DD bekleniyor)")
 
+    # SELF-HEAL (İZOLE): bu güne ait açılış farkı var ama ACILIS_KASA_FARK kaydı yoksa
+    # geriye dönük oluştur — Şubeler'de canlı görünen fark Kasa Uyumsuzluk'a da düşsün.
+    # Kendi transaction'ında çalışır, hata yutar; aşağıdaki listeyi ASLA bozmaz.
+    try:
+        from kasa_acilis_backfill import self_heal_gun
+        self_heal_gun(str(hedef_tarih))
+    except Exception:
+        pass
+
     with db() as (_, cur):
         # Defensive: cozum_duzeltilen_tl kolonu yoksa migration henüz çalışmamış,
         # graceful düş — sadece orijinal fark_tl ile çalış.
@@ -6869,6 +6878,15 @@ def ops_kasa_uyumsuzluk_listesi(
         "liste": rows,
         "tolerans": {"normal_tl": 50, "uyari_tl": 200},
     }
+
+
+@router.post("/kasa-uyumsuzluk/acilis-backfill")
+def ops_kasa_uyumsuzluk_acilis_backfill(gun: int = 21, dry_run: bool = False):
+    """Eksik ACILIS_KASA_FARK uyarılarını geriye dönük oluşturur (son `gun` iş günü).
+    dry_run=true → sadece kaç eksik var önizler (yazmaz). İZOLE; mevcut kaydı bozmaz."""
+    from kasa_acilis_backfill import backfill
+    with db() as (_, cur):
+        return backfill(cur, gun=max(1, min(int(gun), 120)), dry_run=bool(dry_run))
 
 
 @router.post("/kasa-uyumsuzluk/{uyari_id}/coz")
