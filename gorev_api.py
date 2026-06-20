@@ -203,7 +203,7 @@ def gorev_sube_personel(sube_id: str):
     """Tüm aktif personel - şube personeli önce, diğerleri sonra."""
     with db() as (conn, cur):
         cur.execute("""
-            SELECT p.id::text, p.ad_soyad,
+            SELECT p.id::text, p.ad_soyad, p.telefon,
                    (p.panel_pin_hash IS NOT NULL AND p.panel_pin_salt IS NOT NULL) AS pin_tanimli,
                    (p.sube_id = %s) AS bu_sube,
                    COALESCE(s.ad, '-') AS sube_adi

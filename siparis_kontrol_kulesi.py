@@ -225,6 +225,8 @@ def _satir_zenginlestir(cur: Any, row: Dict[str, Any],
         "sevkiyat_personel_ad": row.get("sevkiyat_personel_ad"),
         "kabul_ts": str(row.get("kabul_ts") or ""),
         "kabul_personel_ad": row.get("kabul_personel_ad"),
+        "kabul_personel_tel": row.get("kabul_personel_tel"),
+        "sevk_personel_tel": row.get("sevk_personel_tel"),
         "kabul_durum": kabul_durum,
         "kalemler": kalemler,
         "kalem_durumlari": kalem_durumlari,
@@ -301,6 +303,8 @@ def siparis_kontrol_kulesi_yukle(
             st.tahsis_durum, st.tahsis_ts, st.tahsis_yapan_ad,
             st.sevkiyat_ts, st.sevkiyat_personel_ad,
             st.kabul_ts, st.kabul_personel_ad, st.kabul_durum AS kabul_durum_db,
+            pk.telefon AS kabul_personel_tel,
+            ps.telefon AS sevk_personel_tel,
             st.sevkiyat_durumu, st.sevkiyat_durum,
             COALESCE(st.hedef_depo_sube_id, st.sevkiyat_sube_id) AS hedef_depo_sube_id,
             dep.ad AS hedef_depo_sube_adi,
@@ -312,6 +316,8 @@ def siparis_kontrol_kulesi_yukle(
         FROM siparis_talep st
         JOIN subeler s ON s.id = st.sube_id
         LEFT JOIN subeler dep ON dep.id = COALESCE(st.hedef_depo_sube_id, st.sevkiyat_sube_id)
+        LEFT JOIN personel pk ON pk.id = st.kabul_personel_id
+        LEFT JOIN personel ps ON ps.ad_soyad = st.sevkiyat_personel_ad
         WHERE {where}
         ORDER BY
             CASE st.durum

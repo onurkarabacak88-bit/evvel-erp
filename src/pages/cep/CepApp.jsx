@@ -52,6 +52,16 @@ const C = {
 const bugunTR = () =>
   new Date().toLocaleDateString('tr-TR', { weekday: 'long', day: 'numeric', month: 'long' });
 
+// wa.me numara normalizasyonu (TR) — geçerli değilse '' döner
+const cepWaNum = (tel) => {
+  let n = String(tel || '').replace(/\D/g, '');
+  if (n.startsWith('00')) n = n.slice(2);
+  if (n.length === 11 && n.startsWith('0')) n = '90' + n.slice(1);
+  else if (n.length === 10 && n.startsWith('5')) n = '90' + n;
+  else if (n.length === 12 && n.startsWith('90')) { /* zaten */ }
+  return n.length >= 11 ? n : '';
+};
+
 // Cep yalnızca GİDER onaylarını gösterir — kasa hataları (islem_turu'nde KASA geçen)
 // buraya düşmez. Masaüstü Onay Kuyruğu'ndaki "Şube Giderleri" sekmesiyle aynı ayrım.
 const giderOnayMi = (o) => !String(o?.islem_turu || '').toUpperCase().includes('KASA');
@@ -1642,7 +1652,17 @@ function CepSayimAta() {
     setMesgul(true); setHata(''); setBilgi('');
     try {
       const r = await api('/stok-sayim/gorev-ata', { method: 'POST', body: { sube_id: subeId, personel_id: personelId, kapsam_tip: kapsam, not_aciklama: not.trim() || null, atayan_ad: 'Patron (Cep)' } });
-      setBilgi(`✅ Atandı — ${r.personel_ad || ''} · ${r.kalem_sayisi} kalem · ${r.mod === 'kalibrasyon' ? 'Kalibrasyon' : 'Kontrol'}. Personel mesai başlatınca ekran kilitlenir.`);
+      // Personelin telefonu tanımlıysa → wa.me ile haber ver (senin telefonundan)
+      const p = personeller.find(x => String(x.id) === String(personelId));
+      const num = cepWaNum(p?.telefon);
+      const subeAd = subeler.find(x => x.id === subeId)?.ad || '';
+      if (num) {
+        const msg = `Merhaba ${p?.ad_soyad || ''} 👋\n*${subeAd}* için sana stok sayım görevi atandı 📋\nMesai başlat, QR okut ve ürünleri say. Teşekkürler 🙏`;
+        window.open(`https://wa.me/${num}?text=${encodeURIComponent(msg)}`, '_blank');
+        setBilgi(`✅ Atandı — ${r.personel_ad || ''} · ${r.kalem_sayisi} kalem. WhatsApp açıldı, gönder.`);
+      } else {
+        setBilgi(`✅ Atandı — ${r.personel_ad || ''} · ${r.kalem_sayisi} kalem · ${r.mod === 'kalibrasyon' ? 'Kalibrasyon' : 'Kontrol'}. ${p && !p.telefon ? '(Bu personelin telefonu kayıtlı değil — WhatsApp gidemedi)' : 'Personel mesai başlatınca ekran kilitlenir.'}`);
+      }
       setPersonelId(''); setNot('');
     } catch (e) { setHata(e.message || 'Atanamadı'); }
     finally { setMesgul(false); }
@@ -3176,9 +3196,30 @@ function CepKule({ onGeri, onDegisti }) {
                   </div>
                 )}
 
-                <div style={{ marginTop: 16, padding: 12, background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.3)', borderRadius: 10, fontSize: 12, color: C.sari, lineHeight: 1.5 }}>
-                  Alış/çıkışı yeniden sormak (düzeltme) ister misin? Bu, kabul/sevk miktarını değiştiren bir işlem — kuralım dersen ayrı bir onaylı düzeltme akışı olarak ekleyebilirim.
-                </div>
+                {/* Uyumsuzluğu çöz — ilgili personele WhatsApp (senin telefonundan) */}
+                {(() => {
+                  const tarih = String(detay.tarih || '').slice(0, 10);
+                  const kalemMetin = (Array.isArray(detay.yolda) && detay.yolda.length
+                    ? detay.yolda.map(y => `${y.kalem_adi || y.kalem_kodu}: çıkış ${Number(y.sevk_adet) || 0} → alış ${y.kabul_adet == null ? '—' : Number(y.kabul_adet)}`).join('\n')
+                    : items.map(k => `${k.adet || ''} ${k.urun_ad}`.trim()).join(', '));
+                  const sorMesaj = (kim, ad) =>
+                    `Merhaba ${ad || ''} 👋\n*${detay.sube_adi}* ${tarih} teslimatında kabul uyumsuzluğu var 🔴\n\n${kalemMetin}\n\n${kim === 'kabul' ? 'Bu teslimi sen kabul ettin — eksik/fazla neden oluştu, kontrol eder misin?' : 'Bu sevki sen hazırladın — çıkışta bir sorun var mıydı?'} 🙏`;
+                  const wa = (kim, tel, ad) => {
+                    const num = cepWaNum(tel);
+                    if (!num) { alert(`${ad || 'Personel'} için telefon kayıtlı değil (Personel kaydına telefon ekle).`); return; }
+                    window.open(`https://wa.me/${num}?text=${encodeURIComponent(sorMesaj(kim, ad))}`, '_blank');
+                  };
+                  return (
+                    <div style={{ marginTop: 16 }}>
+                      <div style={{ fontSize: 12, fontWeight: 800, color: C.t2, marginBottom: 8 }}>Uyumsuzluğu çöz — sor</div>
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        <button onClick={() => wa('kabul', detay.kabul_personel_tel, detay.kabul_personel_ad)} disabled={!detay.kabul_personel_ad} style={{ flex: 1, background: detay.kabul_personel_ad ? '#25D366' : C.bg, color: detay.kabul_personel_ad ? '#fff' : C.t3, border: detay.kabul_personel_ad ? 'none' : `1px solid ${C.border}`, borderRadius: 10, padding: '11px 0', fontSize: 13, fontWeight: 800, cursor: detay.kabul_personel_ad ? 'pointer' : 'default' }}>📲 Kabul edene sor{detay.kabul_personel_ad ? `\n${detay.kabul_personel_ad}` : ''}</button>
+                        <button onClick={() => wa('sevk', detay.sevk_personel_tel, detay.sevkiyat_personel_ad)} disabled={!detay.sevkiyat_personel_ad} style={{ flex: 1, background: detay.sevkiyat_personel_ad ? C.mavi : C.bg, color: detay.sevkiyat_personel_ad ? '#fff' : C.t3, border: detay.sevkiyat_personel_ad ? 'none' : `1px solid ${C.border}`, borderRadius: 10, padding: '11px 0', fontSize: 13, fontWeight: 800, cursor: detay.sevkiyat_personel_ad ? 'pointer' : 'default' }}>📲 Sevk edene sor{detay.sevkiyat_personel_ad ? `\n${detay.sevkiyat_personel_ad}` : ''}</button>
+                      </div>
+                      <div style={{ fontSize: 11, color: C.t3, marginTop: 8, lineHeight: 1.5 }}>Telefonu kayıtlı personele WhatsApp açılır (senin telefonundan, hazır mesajla). Telefon yoksa Personel kaydına ekle.</div>
+                    </div>
+                  );
+                })()}
               </div>
             </div>
           </div>
