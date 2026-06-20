@@ -414,6 +414,13 @@ def depo_kalem_kodu_resolve(cur: Any, urun_id: str, urun_ad_fallback: str = "") 
             db_ad = str(d.get("ad") or "").strip()
             if db_ad:
                 ad_src = db_ad
+            # 0. FİZİKSEL HAVUZ ürünleri (su, bardak, süt, redbull, soda…) katalog UUID'si
+            #    OLSA BİLE havuz koduyla izlenir. Mimari (bar-ozet/ürün-aç) hep havuz kodu
+            #    kullanır; sevkiyat UUID'ye yazarsa depo İKİYE bölünür (su_adet vs UUID).
+            #    Bu yüzden UUID'den ÖNCE: ad havuz koduna çözülüyorsa o kodu döndür.
+            _sk_havuz = _stok_key_from_urun_ad(ad_src)
+            if _sk_havuz and _sk_havuz in _DEPO_FIZIKSEL_HAVUZ_KODLARI:
+                return _sk_havuz
             # 1. ÜRÜNÜN KENDİ UUID'si HER ZAMAN ÖNCELİKLİDİR.
             #    Havuz mantığı kaldırıldı; depo_stok_kalem_kodu başka bir ürünün UUID'sine
             #    (çapraz bağ) işaret ediyor olsa bile YOK SAYILIR — aksi halde birden fazla

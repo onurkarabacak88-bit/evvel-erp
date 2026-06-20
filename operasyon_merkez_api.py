@@ -6889,6 +6889,50 @@ def ops_kasa_uyumsuzluk_acilis_backfill(gun: int = 21, dry_run: bool = False):
         return backfill(cur, gun=max(1, min(int(gun), 120)), dry_run=bool(dry_run))
 
 
+@router.post("/depo/havuz-birlestir")
+def ops_depo_havuz_birlestir(dry_run: bool = False):
+    """Fiziksel havuz ürünlerinin (su, bardak, süt…) KATALOG UUID'li depo satırlarını
+    HAVUZ koduna (su_adet vb.) birleştirir. resolve düzeltmesinden SONRA bir kez çalışır;
+    geçmişte UUID'ye yazılmış havuz stoklarını tek koda toplar. dry_run=true → önizleme."""
+    from operasyon_stok_motor import _stok_key_from_urun_ad, _DEPO_FIZIKSEL_HAVUZ_KODLARI, _UUID_RE, STOK_LABEL_TR
+    with db() as (conn, cur):
+        cur.execute(
+            """
+            SELECT sd.sube_id::text AS sube_id, sd.kalem_kodu, COALESCE(sd.mevcut_adet,0) AS mevcut_adet,
+                   su.ad AS urun_ad
+            FROM sube_depo_stok sd
+            JOIN siparis_urun su ON su.id = sd.kalem_kodu
+            """
+        )
+        plan = []
+        for r in (cur.fetchall() or []):
+            d = dict(r)
+            kk = str(d.get("kalem_kodu") or "")
+            if not _UUID_RE.match(kk):
+                continue
+            sk = _stok_key_from_urun_ad(str(d.get("urun_ad") or ""))
+            if sk and sk in _DEPO_FIZIKSEL_HAVUZ_KODLARI:
+                plan.append({"sube_id": d["sube_id"], "uuid": kk, "havuz": sk,
+                             "adet": int(d.get("mevcut_adet") or 0), "urun_ad": d.get("urun_ad")})
+        if dry_run:
+            return {"ok": True, "dry_run": True, "satir": len(plan), "plan": plan}
+        tasinan = 0
+        for p in plan:
+            lab = STOK_LABEL_TR.get(p["havuz"]) or p.get("urun_ad") or p["havuz"]
+            cur.execute(
+                """
+                INSERT INTO sube_depo_stok (sube_id, kalem_kodu, kalem_adi, mevcut_adet, rezerve_adet, min_stok)
+                VALUES (%s,%s,%s,%s,0,0)
+                ON CONFLICT (sube_id, kalem_kodu)
+                DO UPDATE SET mevcut_adet = sube_depo_stok.mevcut_adet + EXCLUDED.mevcut_adet, guncelleme = NOW()
+                """,
+                (p["sube_id"], p["havuz"], lab, p["adet"]),
+            )
+            cur.execute("DELETE FROM sube_depo_stok WHERE sube_id=%s AND kalem_kodu=%s", (p["sube_id"], p["uuid"]))
+            tasinan += 1
+        return {"ok": True, "dry_run": False, "tasinan_satir": tasinan}
+
+
 @router.post("/kasa-uyumsuzluk/{uyari_id}/coz")
 def ops_kasa_uyumsuzluk_coz(uyari_id: str, body: KasaUyumsuzlukCozBody = KasaUyumsuzlukCozBody()):
     """
