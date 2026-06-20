@@ -3199,11 +3199,16 @@ function CepKule({ onGeri, onDegisti }) {
                 {/* Uyumsuzluğu çöz — ilgili personele WhatsApp (senin telefonundan) */}
                 {(() => {
                   const tarih = String(detay.tarih || '').slice(0, 10);
-                  const kalemMetin = (Array.isArray(detay.yolda) && detay.yolda.length
-                    ? detay.yolda.map(y => `${y.kalem_adi || y.kalem_kodu}: çıkış ${Number(y.sevk_adet) || 0} → alış ${y.kabul_adet == null ? '—' : Number(y.kabul_adet)}`).join('\n')
-                    : items.map(k => `${k.adet || ''} ${k.urun_ad}`.trim()).join(', '));
+                  // SAYI VERME — sadece ürün adları (uyumsuz olanlar; yoksa tüm kalemler)
+                  const farkliAdlar = (Array.isArray(detay.yolda) && detay.yolda.length)
+                    ? detay.yolda.filter(y => y.kabul_adet != null && (Number(y.kabul_adet) - (Number(y.sevk_adet) || 0)) !== 0).map(y => y.kalem_adi || y.kalem_kodu)
+                    : [];
+                  const adlar = (farkliAdlar.length ? farkliAdlar : items.map(k => k.urun_ad)).filter(Boolean);
+                  const urunMetin = adlar.length ? adlar.join(', ') : 'bu teslimat';
                   const sorMesaj = (kim, ad) =>
-                    `Merhaba ${ad || ''} 👋\n*${detay.sube_adi}* ${tarih} teslimatında kabul uyumsuzluğu var 🔴\n\n${kalemMetin}\n\n${kim === 'kabul' ? 'Bu teslimi sen kabul ettin — eksik/fazla neden oluştu, kontrol eder misin?' : 'Bu sevki sen hazırladın — çıkışta bir sorun var mıydı?'} 🙏`;
+                    kim === 'kabul'
+                      ? `Merhaba ${ad || ''} 👋\n*${detay.sube_adi}* ${tarih} teslimatında *${urunMetin}* alışını kabul etmişsin ama bir uyumsuzluk var 🔴\nTekrar kontrol eder misin? 🙏`
+                      : `Merhaba ${ad || ''} 👋\n*${detay.sube_adi}* ${tarih} teslimatında *${urunMetin}* sevkinde bir uyumsuzluk var 🔴\nTekrar kontrol eder misin? 🙏`;
                   const wa = (kim, tel, ad) => {
                     const num = cepWaNum(tel);
                     if (!num) { alert(`${ad || 'Personel'} için telefon kayıtlı değil (Personel kaydına telefon ekle).`); return; }
