@@ -3207,8 +3207,8 @@ function CepKule({ onGeri, onDegisti }) {
                   const urunMetin = adlar.length ? adlar.join(', ') : 'bu teslimat';
                   const sorMesaj = (kim, ad) =>
                     kim === 'kabul'
-                      ? `Merhaba ${ad || ''} 👋\n*${detay.sube_adi}* ${tarih} teslimatında *${urunMetin}* alışını kabul etmişsin ama bir uyumsuzluk var 🔴\nTekrar kontrol eder misin? 🙏`
-                      : `Merhaba ${ad || ''} 👋\n*${detay.sube_adi}* ${tarih} teslimatında *${urunMetin}* sevkinde bir uyumsuzluk var 🔴\nTekrar kontrol eder misin? 🙏`;
+                      ? `Merhaba ${ad || ''} 👋\n*${detay.sube_adi}* ${tarih} teslimatında *${urunMetin}* alışını kabul etmişsin ama bir uyumsuzluk var 🔴\nTekrar kontrol edip *kaç adet* saydığını bana yazar mısın? 🙏`
+                      : `Merhaba ${ad || ''} 👋\n*${detay.sube_adi}* ${tarih} teslimatında *${urunMetin}* sevkinde bir uyumsuzluk var 🔴\nTekrar kontrol edip *kaç adet* gönderdiğini bana yazar mısın? 🙏`;
                   const wa = (kim, tel, ad) => {
                     const num = cepWaNum(tel);
                     if (!num) { alert(`${ad || 'Personel'} için telefon kayıtlı değil (Personel kaydına telefon ekle).`); return; }
