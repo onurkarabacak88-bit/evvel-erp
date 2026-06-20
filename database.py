@@ -1679,6 +1679,9 @@ def init_db():
                 IF NOT EXISTS (SELECT 1 FROM information_schema.columns
                     WHERE table_name='personel' AND column_name='panel_yonetici')
                 THEN ALTER TABLE personel ADD COLUMN panel_yonetici BOOLEAN NOT NULL DEFAULT FALSE; END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='personel' AND column_name='telefon')
+                THEN ALTER TABLE personel ADD COLUMN telefon TEXT; END IF;
             END $$;
         """)
 

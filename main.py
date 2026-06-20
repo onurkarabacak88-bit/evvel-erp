@@ -4037,6 +4037,7 @@ class PersonelModel(BaseModel):
     baslangic_tarihi: Optional[str] = None  # string olarak alıp None/boş kontrolü yapılır
     sube_id: Optional[str] = None
     notlar: Optional[str] = None
+    telefon: Optional[str] = None
 
     def baslangic_date(self):
         if not self.baslangic_tarihi or self.baslangic_tarihi.strip() == '':
@@ -4121,10 +4122,11 @@ def personel_ekle(p: PersonelModel):
     with db() as (conn, cur):
         pid = str(uuid.uuid4())
         cur.execute("""INSERT INTO personel
-            (id,ad_soyad,gorev,calisma_turu,maas,saatlik_ucret,yemek_ucreti,yol_ucreti,odeme_gunu,baslangic_tarihi,sube_id,notlar)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+            (id,ad_soyad,gorev,calisma_turu,maas,saatlik_ucret,yemek_ucreti,yol_ucreti,odeme_gunu,baslangic_tarihi,sube_id,notlar,telefon)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
             (pid, p.ad_soyad, p.gorev, p.calisma_turu, p.maas, p.saatlik_ucret,
-             p.yemek_ucreti, p.yol_ucreti, p.odeme_gunu, p.baslangic_date(), p.sube_id, p.notlar))
+             p.yemek_ucreti, p.yol_ucreti, p.odeme_gunu, p.baslangic_date(), p.sube_id, p.notlar,
+             (p.telefon or '').strip() or None))
         audit(cur, 'personel', pid, 'INSERT')
     return {"id": pid, "success": True}
 
@@ -4136,10 +4138,10 @@ def personel_guncelle(pid: str, p: PersonelModel):
         if not eski: raise HTTPException(404)
         cur.execute("""UPDATE personel SET ad_soyad=%s,gorev=%s,calisma_turu=%s,maas=%s,
             saatlik_ucret=%s,yemek_ucreti=%s,yol_ucreti=%s,odeme_gunu=%s,
-            baslangic_tarihi=%s,sube_id=%s,notlar=%s WHERE id=%s""",
+            baslangic_tarihi=%s,sube_id=%s,notlar=%s,telefon=%s WHERE id=%s""",
             (p.ad_soyad, p.gorev, p.calisma_turu, p.maas, p.saatlik_ucret,
              p.yemek_ucreti, p.yol_ucreti, p.odeme_gunu, p.baslangic_date(),
-             p.sube_id, p.notlar, pid))
+             p.sube_id, p.notlar, (p.telefon or '').strip() or None, pid))
         audit(cur, 'personel', pid, 'UPDATE', eski=eski)
     return {"success": True}
 

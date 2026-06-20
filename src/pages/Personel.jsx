@@ -4,7 +4,7 @@ import { publishGlobalDataRefresh } from '../utils/globalDataRefresh';
 
 const BOSH = {
   ad_soyad:'', gorev:'', calisma_turu:'surekli', maas:'', saatlik_ucret:'',
-  yemek_ucreti:'', yol_ucreti:'', odeme_gunu:28, baslangic_tarihi:'', sube_id:'', notlar:''
+  yemek_ucreti:'', yol_ucreti:'', odeme_gunu:28, baslangic_tarihi:'', sube_id:'', notlar:'', telefon:''
 };
 
 const AY_ADLARI = ['','Ocak','Şubat','Mart','Nisan','Mayıs','Haziran',
@@ -85,6 +85,7 @@ export default function Personel() {
       sube_id: form.sube_id || null,
       baslangic_tarihi: form.baslangic_tarihi ? form.baslangic_tarihi : null,
       notlar: form.notlar || null,
+      telefon: form.telefon?.trim() || null,
     };
 
   try {
@@ -206,7 +207,7 @@ export default function Personel() {
       maas:p.maas, saatlik_ucret:p.saatlik_ucret, yemek_ucreti:p.yemek_ucreti,
       yol_ucreti:p.yol_ucreti, odeme_gunu:p.odeme_gunu,
       baslangic_tarihi:p.baslangic_tarihi?.slice(0,10)||'',
-      sube_id:p.sube_id||'', notlar:p.notlar||''
+      sube_id:p.sube_id||'', notlar:p.notlar||'', telefon:p.telefon||''
     });
     setDuzenleId(p.id); setShowModal(true);
   }
@@ -600,6 +601,10 @@ export default function Personel() {
                 <div className="form-group">
                   <label>Görev</label>
                   <input placeholder="Kasiyer, Müdür..." value={form.gorev} onChange={e=>setForm({...form,gorev:e.target.value})}/>
+                </div>
+                <div className="form-group">
+                  <label>Telefon</label>
+                  <input type="tel" inputMode="tel" placeholder="05XX XXX XX XX" value={form.telefon} onChange={e=>setForm({...form,telefon:e.target.value})}/>
                 </div>
                 <div className="form-group">
                   <label>Çalışma Türü</label>
