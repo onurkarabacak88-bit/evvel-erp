@@ -1827,32 +1827,47 @@ def kartlar_listele():
                 ORDER BY tarih ASC LIMIT 1""", (k['id'],))
             yaklasan = cur.fetchone()
 
-            # Headline dönem borcu (ekstre varsa donem_borcu, yoksa defter borcu)
-            _period_debt = (round(_ov_borc, 2) if (_ekstre_gercek and _ov_borc is not None) else borc)
-            # Gelecek taksit yükü: Worldcard doğrudan (kalan_taksit); diğerleri kullanılabilir
-            # limitten türetilir (limit − kullanılabilir − dönem borcu).
+            # Gelecek taksit yükü (DÖNGÜ-SABİT, snapshot'tan): Worldcard doğrudan
+            # (kalan_taksit); diğerleri ekstre kesimindeki kullanılabilir limitten türetir
+            # (limit − kullanılabilir − dönem borcu). Ödeme/harcama ile değişmez.
             if _kalan_taksit is not None:
                 _gelecek_taksit = _kalan_taksit
             elif _kull_limit is not None:
-                _gelecek_taksit = max(0.0, limit - _kull_limit - _period_debt)
+                _gelecek_taksit = max(0.0, limit - _kull_limit - float(_ov_borc or 0))
             else:
                 _gelecek_taksit = None
-            # Kalan limit: printed kullanılabilir varsa o; yoksa taksit biliniyorsa
-            # limit − dönem − gelecek taksit; o da yoksa eski tahmin (limit − borç).
-            if _kull_limit is not None:
-                _kalan_limit = _kull_limit
-            elif _gelecek_taksit is not None:
-                _kalan_limit = limit - _period_debt - _gelecek_taksit
+            # ANLIK güncel borç: ekstre dönem borcu + KESİM SONRASI defter hareketleri
+            # (ödeme −, kullanım/harcama +). Böylece defteri değiştirmeden gerçek-zamanlı
+            # borç çıkar; gelecek ay yeni ekstre yüklenince taban kendiliğinden döner.
+            if _ekstre_gercek and _ov_borc is not None:
+                try:
+                    cur.execute("""
+                        SELECT COALESCE(SUM(CASE WHEN islem_turu='ODEME' THEN -tutar ELSE tutar END), 0) AS d
+                        FROM kart_hareketleri
+                        WHERE kart_id=%s AND durum='aktif' AND islem_turu <> 'DEVIR'
+                          AND tarih > %s::date
+                    """, (k['id'], _kesim_for_ov))
+                    _post = float((cur.fetchone() or {}).get('d') or 0)
+                except Exception:
+                    _post = 0.0
+                _anlik = float(_ov_borc) + _post
             else:
-                _kalan_limit = limit - borc
+                _anlik = borc
+            # Kalan limit (GERÇEK ZAMANLI): limit − anlık borç − gelecek taksit yükü
+            if _gelecek_taksit is not None:
+                _kalan_limit = limit - _anlik - _gelecek_taksit
+            else:
+                _kalan_limit = limit - _anlik
             _doluluk = ((limit - _kalan_limit) / limit) if limit > 0 else 0
-            _toplam_taksitli = (_period_debt + _gelecek_taksit) if _gelecek_taksit is not None else None
+            _toplam_taksitli = (_anlik + _gelecek_taksit) if _gelecek_taksit is not None else None
             sonuc.append({**k,
                 "guncel_borc": borc,
+                # ANLIK borç = ekstre dönem borcu + kesim sonrası ödeme/kullanım (gerçek zamanlı).
+                # Ekstresiz kartta defter borcu (borc). Ana gösterilen rakam budur.
+                "anlik_borc": round(_anlik, 2),
                 "kalan_limit": _kalan_limit,
                 "limit_doluluk": _doluluk,
                 # Gerçek (PDF/manuel) ekstre snapshot'ı varsa dönem borcu = ekstre borcu.
-                # Cep gibi tek-rakam gösteren yüzeyler bunu "PDF ile aynı" göstersin diye.
                 "ekstre_gercek": _ekstre_gercek,
                 "donem_borcu": (round(_ov_borc, 2) if _ov_borc is not None else None),
                 # Bankanın yazdığı gerçek kullanılabilir limit (varsa); yoksa None.
@@ -1895,8 +1910,8 @@ def kartlar_listele():
             # Üye taahhüdü = dönem borcu (ekstre varsa) + gelecek taksit yükü → taksitler
             # paylaşılan limitten de düşülsün (göz ardı edilmesin).
             def _committed(u):
-                pd = u.get("donem_borcu") if (u.get("ekstre_gercek") and u.get("donem_borcu") is not None) else u.get("guncel_borc")
-                return float(pd or 0) + float(u.get("gelecek_taksit_anapara") or 0)
+                # Anlık borç (kesim sonrası ödeme/kullanım dahil) + gelecek taksit yükü
+                return float(u.get("anlik_borc") or u.get("guncel_borc") or 0) + float(u.get("gelecek_taksit_anapara") or 0)
             grup_borc = sum(_committed(u) for u in uyeler)
             grup_kalan = grup_limit - grup_borc
             for u in uyeler:

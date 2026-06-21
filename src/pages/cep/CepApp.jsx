@@ -2641,8 +2641,9 @@ function CepKartlar({ onGeri }) {
   // (banka ekstresiyle birebir) gösterilir; yoksa defter borcu (guncel_borc).
   // Defter, büyük "devir" bakiyesini göremediği için ekstreden düşük çıkabiliyordu
   // → cep PDF'ten sapıyordu. "Ekstre = gerçeğin kaynağı".
-  const kartBorc = (k) => (k.ekstre_gercek && k.donem_borcu != null
-    ? Number(k.donem_borcu) : Number(k.guncel_borc)) || 0;
+  // Ana rakam = ANLIK güncel borç (ekstre dönem borcu + kesim sonrası ödeme/kullanım).
+  // Sunucu hesaplar; ekstresiz kartta defter borcuna düşer.
+  const kartBorc = (k) => (k.anlik_borc != null ? Number(k.anlik_borc) : Number(k.guncel_borc)) || 0;
   // Sunucu kalan_limit'i artık kullanılabilir limit + taksit yükünü içerir → direkt kullan.
   const kartKalan = (k) => Number(k.kalan_limit) || 0;
   const kartAsim = (k) => Math.max(0, -kartKalan(k));   // negatifse = limit aşım tutarı
@@ -2741,11 +2742,11 @@ function CepKartlar({ onGeri }) {
                 <button onClick={() => setDetay(null)} style={{ background: C.bg3, border: 'none', borderRadius: 10, color: C.t2, width: 36, height: 36, fontSize: 16, cursor: 'pointer' }}>✕</button>
               </div>
               <div style={{ fontSize: 13, color: C.t3, marginTop: 6 }}>
-                {detay.ekstre_gercek ? 'Dönem borcu' : 'Borç'} <b style={{ color: C.kirmizi }}>{fmt(kartBorc(detay))}</b> · {kartAsim(detay) > 0 ? <span style={{ color: C.kirmizi, fontWeight: 700 }}>Limit aşıldı {fmt(kartAsim(detay))}</span> : <>Kalan {fmt(kartKalan(detay))}</>} · Son ödeme {trTarih(detay.son_odeme_tarihi)}
+                {detay.ekstre_gercek ? 'Güncel borç' : 'Borç'} <b style={{ color: C.kirmizi }}>{fmt(kartBorc(detay))}</b> · {kartAsim(detay) > 0 ? <span style={{ color: C.kirmizi, fontWeight: 700 }}>Limit aşıldı {fmt(kartAsim(detay))}</span> : <>Kalan {fmt(kartKalan(detay))}</>} · Son ödeme {trTarih(detay.son_odeme_tarihi)}
               </div>
-              {detay.ekstre_gercek && Math.abs((Number(detay.donem_borcu) || 0) - (Number(detay.guncel_borc) || 0)) > 1 && (
+              {detay.ekstre_gercek && detay.donem_borcu != null && (
                 <div style={{ fontSize: 11, color: C.t3, marginTop: 2 }}>
-                  Defter bakiyesi: {fmt(detay.guncel_borc)} <span style={{ color: C.t3 }}>(ekstre yüklendi, hareketler henüz eşitlenmedi)</span>
+                  📄 Bu dönem faturası (ekstre): <b style={{ color: C.t2 }}>{fmt(detay.donem_borcu)}</b>
                 </div>
               )}
               <div style={{ fontSize: 12, color: C.t3, marginTop: 3 }}>

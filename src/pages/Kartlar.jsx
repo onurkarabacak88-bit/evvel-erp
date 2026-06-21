@@ -80,7 +80,7 @@ export default function Kartlar() {
   const aktifKartlar = kartlar.filter((k) => k.aktif);
 
   // Üst özet — kart bazlı (bu sayfada anlamlı olan)
-  const toplamBorc = aktifKartlar.reduce((s, k) => s + (parseFloat(k.guncel_borc) || 0), 0);
+  const toplamBorc = aktifKartlar.reduce((s, k) => s + (parseFloat(k.anlik_borc != null ? k.anlik_borc : k.guncel_borc) || 0), 0);
   const toplamLimit = aktifKartlar.reduce((s, k) => s + (parseFloat(k.limit_tutar) || 0), 0);
   const bosLimit = toplamLimit - toplamBorc;
 
@@ -92,7 +92,7 @@ export default function Kartlar() {
       if (sirala === 'ad') return String(a.kart_adi || '').localeCompare(String(b.kart_adi || ''), 'tr');
       if (sirala === 'kullanim') return (b.limit_doluluk || 0) - (a.limit_doluluk || 0);
       if (sirala === 'sonodeme') return (a.gun_kaldi ?? 99) - (b.gun_kaldi ?? 99);
-      return (parseFloat(b.guncel_borc) || 0) - (parseFloat(a.guncel_borc) || 0); // borc (vars.)
+      return (parseFloat(b.anlik_borc != null ? b.anlik_borc : b.guncel_borc) || 0) - (parseFloat(a.anlik_borc != null ? a.anlik_borc : a.guncel_borc) || 0); // borc (vars.)
     });
 
   async function bozukTemizle() {
@@ -196,7 +196,7 @@ export default function Kartlar() {
                 </div>
                 <div style={{ textAlign: 'right' }}>
                   <div className={`amount ${risk === 'red' ? 'amount-neg' : ''}`} style={{ fontSize: 18, fontWeight: 700 }}>
-                    {fmt(k.guncel_borc)}
+                    {fmt(k.anlik_borc != null ? k.anlik_borc : k.guncel_borc)}
                   </div>
                   <div style={{ fontSize: 11, color: 'var(--text3)' }}>güncel borç</div>
                 </div>
