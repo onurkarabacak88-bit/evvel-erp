@@ -1911,10 +1911,15 @@ def _build_sube_panel_payload(cur, sube_id: str) -> dict:
             """,
             (sube_id,),
         )
+        from operasyon_stok_motor import pasta_kalem_kodu_seti, pasta_kalemi_mi
+        _pasta_set = pasta_kalem_kodu_seti(cur)
         stok_alarmlari = []
         for ar in cur.fetchall():
             ad = dict(ar)
             kk = str(ad.get("kalem_kodu") or "")
+            # Pasta/kek MUAF: her zaman tam gelmez, "tükendi" uyarısı gürültü olur
+            if pasta_kalemi_mi(kk, _pasta_set):
+                continue
             urun_adi = ad.get("kalem_adi") or kk
             mesaj = f"{urun_adi} — stokta tükendi. Depodan kontrol edin, sipariş girmeyi unutmayın."
             stok_alarmlari.append(
@@ -3909,6 +3914,9 @@ def sube_urun_ac(sube_id: str, body: SubeUrunAcBody):
 
         # Havuz (STOK_KEYS) döngüsü kaldırıldı — sadece UUID kalemler işlenir.
         # UUID katalog kalemleri (yalnızca AÇILINCA modu depodan düşer)
+        # Pasta/kek MUAF: her zaman tam gelmez → "depo stok azaldı" alarmı yazılmaz
+        from operasyon_stok_motor import pasta_kalem_kodu_seti as _pks, pasta_kalemi_mi as _pkm
+        _pasta_set = _pks(cur)
         _islendi_kalemler: set = set()  # Aynı kalem_kodu'nun tek request'te iki kez düşmesini önler
         for k in acilinca_kalemler:
             uid = str(k.get("urun_id") or "").strip()
@@ -3950,7 +3958,7 @@ def sube_urun_ac(sube_id: str, body: SubeUrunAcBody):
                 (sube_id, kk),
             )
             alarm_r = cur.fetchone()
-            if alarm_r:
+            if alarm_r and not _pkm(kk, _pasta_set):
                 mevcut = int(alarm_r.get("mevcut_adet") or 0)
                 min_s   = int(alarm_r.get("min_stok")   or 0)
                 k_adi   = alarm_r.get("kalem_adi") or k.get("urun_ad") or kk
@@ -4132,7 +4140,7 @@ def sube_urun_bitti(sube_id: str, body: SubeUrunBittiBody):
                 (sube_id, kk),
             )
             alarm_r = cur.fetchone()
-            if alarm_r:
+            if alarm_r and not _pkm(kk, _pasta_set):
                 mevcut = int(alarm_r.get("mevcut_adet") or 0)
                 min_s = int(alarm_r.get("min_stok") or 0)
                 k_adi = alarm_r.get("kalem_adi") or uad or kk

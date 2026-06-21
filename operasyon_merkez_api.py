@@ -43,6 +43,9 @@ from ciro_taslak_api import _taslak_dict
 from operasyon_stok_motor import (
     build_virtual_merkez_uyarilari,
     depo_kalem_kodu_resolve,
+    pasta_kalemi_mi,
+    pasta_kalem_kodu_seti,
+    pasta_stored_stok_alarm_temizle,
     sube_depo_stok_alarm_sonrasi_temizle,
     sube_depo_stok_eski_satir_temizle,
     STOK_KEYS,
@@ -12420,6 +12423,8 @@ def ops_v2_kritik_stok():
     Seviye: KRİZ (0 adet) | KRİTİK (1 adet) | DÜŞÜK (≤ min_stok)
     """
     with db() as (conn, cur):
+        # Pasta artık alarm vermez — önceden yazılmış pasta STOK_ALARM satırlarını temizle
+        pasta_stored_stok_alarm_temizle(cur)
         alarmlar = stok_alarm_kontrol(cur)
         # Bekleyen sipariş sayısı (hangi şubeler sipariş açmış)
         cur.execute("""
@@ -12710,6 +12715,7 @@ def _depo_stok_satir_alarm_mu(
 ) -> bool:
     """
     True = kullanıcıya sinyal ver:
+    - Pasta/kek kalemleri: ASLA alarm yok (her zaman tam gelmez — gürültü)
     - Bardak kalemleri: mevcut < BARDAK_DEPO_ESIK (50 altı)
     - Diğerleri: yalnızca mevcut <= 0 (stok 1 iken alarm yok)
     """
@@ -12717,6 +12723,8 @@ def _depo_stok_satir_alarm_mu(
         m = int(mevcut or 0)
     except (TypeError, ValueError):
         m = 0
+    if pasta_kalemi_mi(kalem_kodu, None, kategori_kod, kategori_ad):
+        return False  # pasta düşük-stok alarmından muaf
     if _depo_kalem_bardak_mi(kalem_adi, kalem_kodu, kategori_kod, kategori_ad):
         return m < BARDAK_DEPO_ESIK
     return m <= 0

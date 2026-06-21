@@ -3711,11 +3711,94 @@ def kullanim_kaydet(cur: Any, sube_id: str,
                         yapan_id, yapan_ad, {"kullanim": kullanim_kalemleri})
 
 
+# ── Pasta (kek/tatlı) — düşük stok alarmından MUAF ───────────────
+# Pasta her zaman tam gelmez; "azaldı/bitti" uyarısı operasyonel gürültü olur.
+# Kullanıcı kararı (2026-06-21): pasta kategorisi depo düşük-stok alarmı VERMEZ.
+# Hem şube ekranı hem merkez PC için tek kaynak: çözümlenmiş kategori = 'pasta'.
+PASTA_KATEGORI_KOD = "pasta"
+
+
+def pasta_kalem_kodu_seti(cur: Any) -> set:
+    """Pasta kategorisindeki kalemlerin depo'da görülebilecek TÜM kodları
+    (siparis_urun.id / norm_ad / depo_stok_kalem_kodu). Depo satırları çoğunlukla
+    UUID (siparis_urun.id) ile tutulduğundan kategori kaynaktan çözülür."""
+    kodlar: set = set()
+    try:
+        cur.execute(
+            """
+            SELECT su.id::text AS id, su.norm_ad, su.depo_stok_kalem_kodu
+            FROM siparis_urun su
+            JOIN siparis_kategori sk ON sk.id = su.kategori_id
+            WHERE sk.kod = %s
+            """,
+            (PASTA_KATEGORI_KOD,),
+        )
+        for row in cur.fetchall() or []:
+            d = dict(row) if not isinstance(row, dict) else row
+            for key in ("id", "norm_ad", "depo_stok_kalem_kodu"):
+                v = str(d.get(key) or "").strip()
+                if v:
+                    kodlar.add(v)
+    except Exception:
+        pass
+    return kodlar
+
+
+def pasta_stored_stok_alarm_temizle(cur: Any) -> int:
+    """Pasta artık alarm vermediği için ÖNCEDEN yazılmış STOK_ALARM satırlarını siler.
+    Bu satırlarda kalem_kodu YOK; mesaj 'Depo stok azaldı: <ad> — ...' formatında →
+    pasta ürün adlarıyla eşleştirilir. Self-heal: hata-yutar, idempotent."""
+    try:
+        cur.execute(
+            """
+            SELECT su.ad FROM siparis_urun su
+            JOIN siparis_kategori sk ON sk.id = su.kategori_id
+            WHERE sk.kod = %s
+            """,
+            (PASTA_KATEGORI_KOD,),
+        )
+        adlar = [str((dict(r) if not isinstance(r, dict) else r).get("ad") or "").strip()
+                 for r in (cur.fetchall() or [])]
+    except Exception:
+        return 0
+    silinen = 0
+    for ad in [a for a in adlar if a]:
+        try:
+            cur.execute(
+                """
+                DELETE FROM sube_operasyon_uyari
+                WHERE tip IN ('STOK_ALARM', 'STOK_BITTI')
+                  AND mesaj ILIKE %s
+                """,
+                (f"Depo stok azaldı: {ad}%",),
+            )
+            silinen += cur.rowcount or 0
+        except Exception:
+            pass
+    return silinen
+
+
+def pasta_kalemi_mi(kalem_kodu: str = "", pasta_set: Optional[set] = None,
+                    kategori_kod: str = "", kategori_ad: str = "") -> bool:
+    """Bir depo kalemi pasta/kek kategorisinde mi (düşük-stok alarmından muaf)?
+    Öncelik: çözümlenmiş kategori → pasta_set (id/norm_ad/depo kodu) → 'pasta_' öneki."""
+    kk = str(kalem_kodu or "").strip()
+    if kategori_kod and str(kategori_kod).strip().lower() == PASTA_KATEGORI_KOD:
+        return True
+    if kategori_ad and "pasta" in str(kategori_ad).lower():
+        return True
+    if pasta_set and kk in pasta_set:
+        return True
+    return kk.lower().startswith("pasta_")
+
+
 # ── Stok Alarmı ──────────────────────────────────────────────────
 
 def stok_alarm_kontrol(cur: Any) -> List[Dict[str, Any]]:
-    """Merkez (merkez_stok_kart) ve şube (sube_depo_stok) alarmları."""
+    """Merkez (merkez_stok_kart) ve şube (sube_depo_stok) alarmları.
+    Pasta kalemleri MUAF — her zaman tam gelmez, düşük-stok gürültü yapar."""
     alarmlar: List[Dict[str, Any]] = []
+    pasta_set = pasta_kalem_kodu_seti(cur)
     # Merkez — mevcut_adet kolonu (yeni)
     cur.execute("""
         SELECT kalem_kodu, kalem_adi,
@@ -3728,6 +3811,8 @@ def stok_alarm_kontrol(cur: Any) -> List[Dict[str, Any]]:
         ORDER BY mevcut_adet ASC, kalem_adi
     """)
     for r in cur.fetchall():
+        if pasta_kalemi_mi(r.get("kalem_kodu"), pasta_set):
+            continue  # pasta düşük-stok alarmı vermez
         m = int(r.get("mevcut_adet") or 0)
         seviye = STOK_ALARM_KRIZ if m == 0 else (STOK_ALARM_KRITIK if m == 1 else STOK_ALARM_DUSUK)
         alarmlar.append({"kaynak": "merkez", "sube_id": None,
@@ -3744,6 +3829,8 @@ def stok_alarm_kontrol(cur: Any) -> List[Dict[str, Any]]:
         ORDER BY s.mevcut_adet ASC, sub.ad, s.kalem_adi
     """)
     for r in cur.fetchall():
+        if pasta_kalemi_mi(r.get("kalem_kodu"), pasta_set):
+            continue  # pasta düşük-stok alarmı vermez
         m = int(r.get("mevcut_adet") or 0)
         seviye = STOK_ALARM_KRIZ if m == 0 else (STOK_ALARM_KRITIK if m == 1 else STOK_ALARM_DUSUK)
         alarmlar.append({"kaynak": "sube", "sube_id": r.get("sube_id"),
