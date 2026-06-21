@@ -162,7 +162,11 @@ def ciro_taslak_onayla(taslak_id: str, body: CiroTaslakOnayTutarlari = CiroTasla
                 "Bu şube için bugün onaylı ciro zaten var — taslak çakışıyor.",
             )
 
-        if _bugun_ciro_var_mi(cur, sube_id):
+        # Bu ek guard yalnızca taslak BUGÜNE aitse anlamlı (geçmiş-gün/Evo önerisi
+        # onaylanırken 'bugün ciro var' diye yanlış bloklamasın — tarihe özel kontrol
+        # yukarıda zaten yapıldı).
+        from tr_saat import is_gunu_tr as _is_gunu_tr
+        if str(t.get("tarih")) == str(_is_gunu_tr()) and _bugun_ciro_var_mi(cur, sube_id):
             raise HTTPException(
                 409,
                 "Bu şube için bugün onaylı ciro zaten var — taslak çakışıyor.",
@@ -271,6 +275,86 @@ def gecmis_gun_ciro_gonder(body: GecmisCiroBody):
     return {"durum": "gonderildi", "sube": sube_ad2, "tarih": body.tarih,
             "nakit": nakit, "pos": pos, "online": online, "toplam": toplam,
             "ciro_id": sonuc.get("id"), "mesaj": "Ciro kaydedildi (ciro + kasa + özet)."}
+
+
+class EksikGunTaraBody(BaseModel):
+    gun_sayisi: int = 10
+    uygula: bool = False         # False → sadece tespit/önizleme (yazmaz)
+
+
+@router.post("/eksik-gun-tara")
+def eksik_gun_ciro_tara(body: EksikGunTaraBody):
+    """DUYU — gece sweep'i: 'açılış VAR ama ciro YOK' geçmiş günleri bulur, Evo'dan
+    satışı çeker, ONAY BEKLEYEN ciro_taslak ÖNERİSİ üretir (kaynak=Evo). Mevcut merkez
+    ciro-taslak onay kuyruğunda görünür, CFO tek tuşla onaylar.
+
+    İLKE (operasyon ≠ finans): KAPANIS event'ine ASLA dokunmaz — 'satış vardı ama
+    personel kapanışı yapmadı' gerçeği korunur. Finansal kayıt SADECE insan onayıyla
+    deftere işler. İdempotent: aktif ciro / bekleyen taslak olan güne öneri üretmez.
+    Hata-yutar: Evo erişilemezse eksik günleri yine de raporlar."""
+    from tr_saat import is_gunu_tr
+    from datetime import timedelta, date as _date
+    import uuid as _uuid
+    bugun = is_gunu_tr()
+    gun_sayisi = max(1, min(int(body.gun_sayisi or 10), 60))
+    with db() as (conn, cur):
+        cur.execute("SELECT id, ad FROM subeler WHERE aktif=TRUE")
+        subeler = [dict(r) for r in cur.fetchall()]
+        adaylar = []  # (sube_id, sube_ad, tarih_str)
+        for k in range(1, gun_sayisi + 1):
+            ts = str(bugun - timedelta(days=k))
+            for s in subeler:
+                sid = s["id"]
+                cur.execute("SELECT 1 FROM sube_acilis WHERE sube_id=%s AND tarih=%s::date AND durum='acildi' LIMIT 1", (sid, ts))
+                if not cur.fetchone():
+                    continue
+                cur.execute("SELECT 1 FROM ciro WHERE sube_id=%s AND tarih=%s::date AND durum='aktif' LIMIT 1", (sid, ts))
+                if cur.fetchone():
+                    continue
+                cur.execute("SELECT 1 FROM ciro_taslak WHERE sube_id=%s AND tarih=%s::date AND durum='bekliyor' LIMIT 1", (sid, ts))
+                if cur.fetchone():
+                    continue
+                adaylar.append((sid, s["ad"], ts))
+        if not adaylar:
+            return {"eksik_gun": 0, "oneriler": [], "mesaj": "Eksik ciro günü yok."}
+        try:
+            from evo_sync import hs_rapor_sube_bazli, _evvel_sube_evo_payload_eslestir
+        except Exception as e:
+            return {"eksik_gun": len(adaylar), "oneriler": [], "evo_hata": str(e),
+                    "mesaj": "Eksik gün var ama Evo modülü yüklenemedi (manuel kontrol)."}
+        evo_cache = {}; evo_hata = None
+        for ts in sorted({a[2] for a in adaylar}):
+            try:
+                dd = _date.fromisoformat(ts)
+                evo_cache[ts] = hs_rapor_sube_bazli(dd, dd)
+            except Exception as e:
+                evo_hata = str(e); evo_cache[ts] = None
+        oneriler = []
+        for sid, sad, ts in adaylar:
+            ev = evo_cache.get(ts)
+            payload = _evvel_sube_evo_payload_eslestir(sad, ev["subeler"]) if (ev and ev.get("subeler")) else None
+            if not payload:
+                oneriler.append({"sube": sad, "tarih": ts, "durum": "evo_veri_yok"}); continue
+            nakit = float(payload.get("nakit") or 0); pos = float(payload.get("kart") or 0)
+            toplam = round(nakit + pos, 2)
+            if toplam <= 0:
+                oneriler.append({"sube": sad, "tarih": ts, "durum": "ciro_sifir"}); continue
+            kayit = {"sube": sad, "tarih": ts, "nakit": nakit, "pos": pos, "toplam": toplam}
+            if body.uygula:
+                cur.execute("""
+                    INSERT INTO ciro_taslak (id, sube_id, tarih, nakit, pos, online, durum, aciklama, gonderen_ad)
+                    VALUES (%s, %s, %s::date, %s, %s, 0, 'bekliyor',
+                            '🤖 Evo oto-denetim — kapanışı girilmemiş gün (onay bekliyor)', 'Evo Oto-Denetim')
+                    ON CONFLICT DO NOTHING
+                """, (str(_uuid.uuid4()), sid, ts, nakit, pos))
+                kayit["durum"] = "oneri_olusturuldu" if cur.rowcount else "zaten_var"
+            else:
+                kayit["durum"] = "onizleme"
+            oneriler.append(kayit)
+    return {"eksik_gun": len(adaylar),
+            "oneri_sayisi": len([o for o in oneriler if o.get("toplam")]),
+            "evo_hata": evo_hata, "oneriler": oneriler,
+            "mesaj": ("Öneriler onay kuyruğuna düştü." if body.uygula else "ÖNİZLEME — yazılmadı.")}
 
 
 @router.post("/{taslak_id}/reddet")
