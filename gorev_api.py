@@ -1540,17 +1540,24 @@ def kapanis_sifirla(sube_id: str):
 class KapanisKisiGeriAlBody(BaseModel):
     personel_ad: str = "merve karabacak"   # isim parçası (ILIKE)
     sube_ad: Optional[str] = None          # None → gazze/tema eşleşir
-    tarih: Optional[str] = None            # None → SADECE en son kapanış kaydı
+    tarih: Optional[str] = None            # None → SADECE en son kayıt; "bugun" → bugünün tarihi
     uygula: bool = False                   # False → sadece önizleme (değiştirmez)
+    sil_giris: bool = False                # True → GİRİŞ (yoklama) kaydını KOMPLE sil; False → sadece kapanış mührünü geri al
 
 
 @router.post("/api/gorev/kapanis-kisi-geri-al")
 def kapanis_kisi_geri_al(body: KapanisKisiGeriAlBody):
-    """Belirli kişinin (ad) belirli şubedeki KAPANIŞ mührünü geri alır:
-    gorev_yoklama'da cikis_tip='kapalis' kaydının cikis_ts/cikis_tip/cikis_gun
-    alanlarını NULL yapar (giriş kaydı korunur, başka veri bozulmaz, ücret
-    planlanan saate bağlı olduğundan etkilenmez). uygula=False → sadece önizleme."""
+    """İki mod:
+    - sil_giris=False (varsayılan): KAPANIŞ mührünü geri al (cikis_ts/tip/gun → NULL,
+      giriş korunur). Sadece cikis_tip='kapalis' kayıtları.
+    - sil_giris=True: kişinin GİRİŞ (yoklama) kaydını KOMPLE siler (giriş+çıkış birlikte).
+      Açık (çıkışsız) girişler de dahil.
+    uygula=False → sadece önizleme (DEĞİŞTİRMEZ). tarih='bugun' → bugünün tarihi."""
+    from tr_saat import is_gunu_tr
     ad = f"%{(body.personel_ad or '').strip().lower()}%"
+    tarih = body.tarih
+    if tarih and tarih.strip().lower() in ("bugun", "bugün", "today"):
+        tarih = str(is_gunu_tr())
     with db() as (conn, cur):
         params = [ad]
         if body.sube_ad:
@@ -1561,9 +1568,16 @@ def kapanis_kisi_geri_al(body: KapanisKisiGeriAlBody):
             params.append("%gazze%")
             params.append("%tema%")
         tarih_filt = ""
-        if body.tarih:
+        if tarih:
             tarih_filt = "AND gy.tarih = %s"
-            params.append(body.tarih)
+            params.append(tarih)
+        # Mod'a göre ek koşul + sıralama
+        if body.sil_giris:
+            extra = ""                       # tüm yoklamalar (açık/kapalı)
+            order = "gy.giris_ts DESC"
+        else:
+            extra = "AND gy.cikis_tip = 'kapalis' AND gy.cikis_ts IS NOT NULL"
+            order = "gy.cikis_ts DESC"
         cur.execute(f"""
             SELECT gy.id::text AS id, gy.tarih::text AS tarih,
                    gy.giris_ts::text AS giris_ts, gy.cikis_ts::text AS cikis_ts,
@@ -1572,19 +1586,25 @@ def kapanis_kisi_geri_al(body: KapanisKisiGeriAlBody):
             JOIN personel p ON p.id = gy.personel_id
             JOIN subeler s ON s.id = gy.sube_id
             WHERE LOWER(p.ad_soyad) LIKE %s
-              {sube_filt} {tarih_filt}
-              AND gy.cikis_tip = 'kapalis' AND gy.cikis_ts IS NOT NULL
-            ORDER BY gy.cikis_ts DESC
+              {sube_filt} {tarih_filt} {extra}
+            ORDER BY {order}
         """, params)
         kayitlar = [dict(r) for r in cur.fetchall()]
         if not kayitlar:
-            return {"bulundu": 0, "kayitlar": [], "mesaj": "Eşleşen kapanış kaydı bulunamadı."}
+            return {"bulundu": 0, "kayitlar": [], "mesaj": "Eşleşen kayıt bulunamadı."}
         if not body.uygula:
             return {"bulundu": len(kayitlar), "onizleme": True,
-                    "mesaj": "ÖNİZLEME — henüz geri alınmadı.", "kayitlar": kayitlar}
+                    "mod": "giris_sil" if body.sil_giris else "kapanis_geri",
+                    "mesaj": "ÖNİZLEME — henüz değiştirilmedi.", "kayitlar": kayitlar}
         # tarih verildiyse o günün tüm eşleşenleri; verilmediyse SADECE en son kayıt
-        hedef = kayitlar if body.tarih else [kayitlar[0]]
+        hedef = kayitlar if tarih else [kayitlar[0]]
         ids = [k["id"] for k in hedef]
+        if body.sil_giris:
+            cur.execute("DELETE FROM gorev_yoklama WHERE id::text = ANY(%s)", (ids,))
+            etk = cur.rowcount
+            conn.commit()
+            return {"bulundu": len(kayitlar), "silindi": etk, "onizleme": False,
+                    "mesaj": f"{etk} giriş (yoklama) kaydı silindi.", "kayitlar": hedef}
         cur.execute("""
             UPDATE gorev_yoklama SET cikis_ts=NULL, cikis_tip=NULL, cikis_gun=NULL
             WHERE id::text = ANY(%s)
