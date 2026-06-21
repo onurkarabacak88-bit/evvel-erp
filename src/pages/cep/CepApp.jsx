@@ -230,6 +230,8 @@ function CepHome({ sayac, kasa, onKasa, onAc, onCikis, yenile }) {
       sayi: sayac.belge, alt: sayac.belge > 0 ? `${sayac.belge} teslimat faturası bekliyor` : 'Fatura bekleyen yok' },
     { id: 'merkez-sil', ikon: '🧹', baslik: 'Merkez Sipariş Temizliği', renk: C.kirmizi,
       sayi: null, alt: 'Deneme siparişlerini sil' },
+    { id: 'kapanis-muhur', ikon: '🔒', baslik: 'Kapanış Mührü (Yönetici)', renk: '#f59e0b',
+      sayi: null, alt: 'Kapanışçı atamadıysa sen ata' },
     // Denetim kartı şimdilik kapalı (kullanıcı kararı) — component/route dormant duruyor.
     { id: 'basvurular', ikon: '🧑‍💼', baslik: 'İş Başvuruları', renk: C.mavi,
       sayi: sayac.basvuru, alt: sayac.basvuru > 0 ? `${sayac.basvuru} yeni başvuru` : 'Yeni başvuru yok' },
@@ -2007,6 +2009,93 @@ function CepVardiyaModal({ p, izinler = [], onKapat }) {
   );
 }
 
+// ── Kapanış Mührü (Yönetici override) — kapanışçı mühür atamadıysa sahip atar ─
+function CepKapanisOverride({ onGeri }) {
+  const [data, setData] = useState(null);
+  const [hata, setHata] = useState('');
+  const [bilgi, setBilgi] = useState('');
+  const [secili, setSecili] = useState(null);     // {sube_id, sube_adi}
+  const [personeller, setPersoneller] = useState(null);
+  const [mesgul, setMesgul] = useState('');
+
+  const yukle = useCallback(() => {
+    setHata('');
+    api('/ops/kapanis-takip').then(d => setData(d)).catch(e => { setHata(e.message || 'Yüklenemedi'); setData({ satirlar: [] }); });
+  }, []);
+  useEffect(() => { yukle(); }, [yukle]);
+
+  const isGunu = data?.is_gunu_tr || data?.tarih || new Date().toISOString().slice(0, 10);
+  const bekleyen = (data?.satirlar || []).filter(s => s.acildi && !s.kapanis_tamam);
+
+  const subeSec = async (s) => {
+    setSecili({ sube_id: s.sube_id, sube_adi: s.sube_adi }); setPersoneller(null); setHata('');
+    try {
+      const r = await api(`/gorev/yoklama?tarih=${isGunu}&sube_id=${encodeURIComponent(s.sube_id)}`);
+      setPersoneller(Array.isArray(r) ? r : (r?.kayitlar || []));
+    } catch (e) { setHata(e.message || 'Personel yüklenemedi'); setPersoneller([]); }
+  };
+
+  const muhurle = async (p) => {
+    const ad = p.ad_soyad || p.personel_ad || 'Personel';
+    if (!window.confirm(`${ad} kapanış mührü olarak işaretlensin mi?\n\nYÖNETİCİ override — telefon QR'ı yerine geçer. Sonra masaüstünden kapanışı tamamlarsın.`)) return;
+    setMesgul(p.personel_id); setHata('');
+    try {
+      const r = await api('/gorev/kapanis-muhur-override', { method: 'POST', body: { sube_id: secili.sube_id, personel_id: p.personel_id, yapan_ad: 'Patron (Cep)' } });
+      setBilgi(`✅ ${r.personel_ad || ad} mührü atandı (önceki: ${r.onceki_cikis_tip || '—'}). Şimdi masaüstünden kapanışı tamamla.`);
+      setSecili(null); setPersoneller(null); yukle();
+    } catch (e) { setHata(e.message || 'Mühürlenemedi'); }
+    finally { setMesgul(''); }
+  };
+
+  const cikisEt = (t) => ({ kapalis: ['mühürledi', C.yesil], kasa_devri: ['devir yaptı', C.mavi], otomatik: ['otomatik kapandı', C.sari] }[t] || [t || 'açık', C.t3]);
+
+  if (secili) {
+    return (
+      <div style={{ minHeight: '100vh', background: C.bg }}>
+        <Baslik baslik={`🔒 ${secili.sube_adi} · Mührü kim atsın`} onGeri={() => { setSecili(null); setPersoneller(null); }} />
+        <div style={{ padding: 14 }}>
+          <div style={{ fontSize: 12, color: C.t3, marginBottom: 12, lineHeight: 1.5 }}>Bugün ({isGunu}) bu şubede çalışan personel. Kapanışı kim mühürlemeli — genelde son devri yapan / kapanışçı:</div>
+          {hata && <div style={{ color: C.kirmizi, padding: 12 }}>{hata}</div>}
+          {personeller === null && <div style={{ color: C.t3, textAlign: 'center', padding: 30 }}>Yükleniyor…</div>}
+          {personeller && personeller.length === 0 && <div style={{ color: C.t3, textAlign: 'center', padding: 30 }}>Bu şubede bugün yoklama yok.</div>}
+          {(personeller || []).map(p => {
+            const [et, renk] = cikisEt(p.cikis_tip);
+            return (
+              <div key={p.personel_id || p.id} style={{ background: C.bg2, border: `1px solid ${C.border}`, borderRadius: 14, padding: '12px 14px', marginBottom: 10 }}>
+                <div style={{ fontSize: 15, fontWeight: 800, color: C.t1 }}>{p.ad_soyad || p.personel_ad}</div>
+                <div style={{ fontSize: 12, color: renk, fontWeight: 700, marginTop: 2 }}>{p.vardiya_tip || ''} · {et}</div>
+                <button onClick={() => muhurle(p)} disabled={mesgul === p.personel_id} style={{ marginTop: 10, width: '100%', background: C.yesil, color: '#fff', border: 'none', borderRadius: 10, padding: '11px 0', fontSize: 14, fontWeight: 800, cursor: 'pointer', opacity: mesgul === p.personel_id ? 0.6 : 1 }}>{mesgul === p.personel_id ? 'Mühürleniyor…' : '🔒 Bu kişiyle mühürle'}</button>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ minHeight: '100vh', background: C.bg }}>
+      <Baslik baslik="🔒 Kapanış Mührü (Yönetici)" onGeri={onGeri}
+        sag={<button onClick={yukle} style={{ background: 'none', border: 'none', color: C.t3, fontSize: 20, cursor: 'pointer' }}>↻</button>} />
+      <div style={{ padding: '10px 14px', borderBottom: `1px solid ${C.border}`, fontSize: 12, color: C.t3, lineHeight: 1.5 }}>
+        Kapanışçı telefonla mührü atamadıysa (ayrıldı / otomatik kapandı / sadece devir yaptı) buradan sen atarsın. Sonra masaüstünden kapanışı tamamlarsın.
+      </div>
+      {bilgi && <div style={{ margin: 14, padding: 10, background: 'rgba(34,197,94,0.12)', borderRadius: 10, color: C.yesil, fontSize: 13, lineHeight: 1.5 }}>{bilgi}</div>}
+      {hata && <div style={{ margin: 14, padding: 10, background: 'rgba(239,68,68,0.12)', borderRadius: 10, color: C.kirmizi, fontSize: 13 }}>{hata}</div>}
+      <div style={{ padding: 14 }}>
+        {data === null && <div style={{ color: C.t3, textAlign: 'center', padding: 30 }}>Yükleniyor…</div>}
+        {data && bekleyen.length === 0 && <div style={{ color: C.t3, textAlign: 'center', padding: 40 }}>Mühür bekleyen şube yok. ✅</div>}
+        {bekleyen.map(s => (
+          <div key={s.sube_id} onClick={() => subeSec(s)} style={{ background: C.bg2, border: `1px solid ${C.border}`, borderLeft: `4px solid ${C.sari}`, borderRadius: 14, padding: '12px 14px', marginBottom: 10, cursor: 'pointer' }}>
+            <div style={{ fontSize: 16, fontWeight: 800, color: C.t1 }}>{s.sube_adi}</div>
+            <div style={{ fontSize: 12, color: C.sari, fontWeight: 700, marginTop: 3 }}>Açık · kapanış mührü bekliyor — mührü ata ›</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ── Denetim (günlük rapordan) ───────────────────────────────────────────────
 function CepDenetim({ onGeri }) {
   const [data, setData] = useState(null);
@@ -3418,6 +3507,8 @@ export default function CepApp() {
     return <CepBasvurular onGeri={geri} />;
   if (view === 'merkez-sil')
     return <CepMerkezSil onGeri={geri} />;
+  if (view === 'kapanis-muhur')
+    return <CepKapanisOverride onGeri={geri} />;
   if (view === 'subeler')
     return <CepSubeler onGeri={geri} />;
 

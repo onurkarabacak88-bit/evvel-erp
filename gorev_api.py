@@ -1521,6 +1521,62 @@ def kapanis_muhurle(body: KapanisMuhurleBody):
     return {"mesaj": "Kapanis muhürlendi.", "zaten_muhürlü": False}
 
 
+class KapanisMuhurOverrideBody(BaseModel):
+    sube_id: str
+    personel_id: str
+    yapan_ad: Optional[str] = None
+
+
+@router.post("/api/gorev/kapanis-muhur-override")
+def kapanis_muhur_override(body: KapanisMuhurOverrideBody):
+    """YÖNETİCİ OVERRIDE (sahip Cep'ten): kapanışçı telefonla mühür atamadıysa
+    (ayrıldı / otomatik kapandı / sadece kasa_devri yaptı), sahip seçtiği personeli
+    kapanış mührü ('kapalis') olarak işaretler → masaüstü kapanışı tamamlanabilir.
+    kapanis-muhurle'den FARKI: KAPALI (cikis_ts dolu) kaydı da mühürler. Önceki
+    cikis_tip operasyon_defter'e iz olarak yazılır (denetim: mührü yönetici attı)."""
+    from tr_saat import is_gunu_tr, dt_now_tr
+    sid = (body.sube_id or "").strip()
+    pid = (body.personel_id or "").strip()
+    if not sid or not pid:
+        raise HTTPException(400, "sube_id ve personel_id zorunlu")
+    tarih = str(is_gunu_tr())
+    with db() as (conn, cur):
+        cur.execute(
+            """SELECT gy.id, gy.cikis_tip, gy.cikis_ts, p.ad_soyad
+               FROM gorev_yoklama gy JOIN personel p ON p.id::text = gy.personel_id
+               WHERE gy.sube_id=%s AND gy.personel_id=%s AND gy.tarih=%s
+               ORDER BY gy.giris_ts DESC LIMIT 1""",
+            (sid, pid, tarih),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(404, "Bu personelin bugün (iş günü) bu şubede yoklaması yok.")
+        d = dict(row)
+        eski_tip = d.get("cikis_tip")
+        if eski_tip == "kapalis":
+            return {"ok": True, "zaten_muhurlu": True, "mesaj": "Bu personel zaten kapanış mührü."}
+        _ts = d.get("cikis_ts") or dt_now_tr()
+        _gun = _ts.date() if hasattr(_ts, "date") else _ts
+        cur.execute(
+            "UPDATE gorev_yoklama SET cikis_tip='kapalis', cikis_ts=%s, cikis_gun=%s WHERE id=%s",
+            (_ts, _gun, d["id"]),
+        )
+        try:
+            from operasyon_defter import operasyon_defter_ekle
+            operasyon_defter_ekle(
+                cur, sid, "KAPANIS_MUHUR_OVERRIDE",
+                f"Kapanış mührü YÖNETİCİ tarafından atandı — personel: {d.get('ad_soyad') or pid} "
+                f"(önceki çıkış tipi: {eski_tip or '—'}) | yapan: {(body.yapan_ad or 'Patron (Cep)')}",
+                personel_id=pid, personel_ad=(d.get("ad_soyad") or None),
+            )
+        except Exception:
+            pass
+        conn.commit()
+    return {"ok": True, "zaten_muhurlu": False,
+            "mesaj": f"Kapanış mührü atandı (yönetici). Artık masaüstünden kapanışı tamamlayabilirsin.",
+            "onceki_cikis_tip": eski_tip, "personel_ad": d.get("ad_soyad")}
+
+
 @router.get("/api/gorev/kapanis-tani")
 def kapanis_tani(sube_ad: str = "tema", bas: str = None, bit: str = None):
     """TANI (salt-okur): bir şubenin tarih aralığında kapanış/açılış durumu.
