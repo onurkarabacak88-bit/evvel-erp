@@ -430,6 +430,14 @@ def init_db():
                 IF NOT EXISTS (SELECT 1 FROM information_schema.columns
                     WHERE table_name='subeler' AND column_name='ortusme_gerekli')
                 THEN ALTER TABLE subeler ADD COLUMN ortusme_gerekli BOOLEAN NOT NULL DEFAULT FALSE; END IF;
+                -- Deterministik KAPANIŞ SORUMLUSU (GPT+kullanıcı tasarımı 2026-06-22):
+                -- "şubeyi kim kapatacak" ad-hoc değil, kasa zincirinden türer. Açılışta
+                -- = sabahçı (açan); kasa devrinde = devralan. Otomatik çıkış BU ALANI
+                -- DEĞİŞTİRMEZ (TEMA kilitlenmesinin kökü). Gün başında açılış sıfırlar.
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='subeler' AND column_name='aktif_kapanis_sorumlusu_personel_id')
+                THEN ALTER TABLE subeler ADD COLUMN aktif_kapanis_sorumlusu_personel_id TEXT;
+                     ALTER TABLE subeler ADD COLUMN aktif_kapanis_sorumlusu_tarih DATE; END IF;
                 IF NOT EXISTS (SELECT 1 FROM information_schema.columns
                     WHERE table_name='subeler' AND column_name='vardiya_yazilsin')
                 THEN ALTER TABLE subeler ADD COLUMN vardiya_yazilsin BOOLEAN NOT NULL DEFAULT TRUE; END IF;

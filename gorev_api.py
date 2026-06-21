@@ -1119,6 +1119,15 @@ def devir_kabul(body: DevirKabulBody):
             SET kabul_eden_id=%s, kabul_ts=%s, durum='onaylandi'
             WHERE id=%s
         """, (body.kabul_eden_id, dt_now_tr(), body.devir_id))
+        # KAPANIŞ SORUMLUSU → devralan (kasa kimdeyse o kapatır). Deterministik zincir.
+        try:
+            cur.execute(
+                "UPDATE subeler SET aktif_kapanis_sorumlusu_personel_id=%s, "
+                "aktif_kapanis_sorumlusu_tarih=%s WHERE id=%s",
+                (str(body.kabul_eden_id), str(is_gunu_tr()), body.sube_id),
+            )
+        except Exception:
+            pass
         conn.commit()
     return {"basarili": True, "mesaj": "Devir kabul edildi. Vardiyaya hos geldin!"}
 
@@ -1242,6 +1251,16 @@ def devir_giris(body: DevirGirisBody):
             SET kabul_eden_id=%s, kabul_ts=%s, durum='onaylandi'
             WHERE id=%s
         """, (body.personel_id, simdi, body.devir_id))
+
+        # KAPANIŞ SORUMLUSU → devralan (QR ile kasayı teslim alan). Deterministik zincir.
+        try:
+            cur.execute(
+                "UPDATE subeler SET aktif_kapanis_sorumlusu_personel_id=%s, "
+                "aktif_kapanis_sorumlusu_tarih=%s WHERE id=%s",
+                (str(body.personel_id), tarih, body.sube_id),
+            )
+        except Exception:
+            pass
 
         # Eğer kapanis_kayit'te bekleyen vardiya devri varsa adim2'yi otomatik tamamla
         from sube_kapanis_dual import kasa_devir_adim2_kaydet, _korumali_yan_etki

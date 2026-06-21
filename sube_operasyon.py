@@ -902,6 +902,18 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                 bildirim_saati=saat_sistem,
             )
 
+            # KAPANIŞ SORUMLUSU — açılışta sabahçı (açan) sorumludur (deterministik zincir
+            # başlangıcı). Gün başında set/reset; iş günü ile damgalanır. Kasa devrinde
+            # devralan'a geçer, otomatik çıkış DEĞİŞTİRMEZ. (GPT+kullanıcı tasarımı.)
+            try:
+                cur.execute(
+                    "UPDATE subeler SET aktif_kapanis_sorumlusu_personel_id=%s, "
+                    "aktif_kapanis_sorumlusu_tarih=%s WHERE id=%s",
+                    (pid_panel, str(is_gunu_tr()), sube_id),
+                )
+            except Exception:
+                pass
+
             # NOT: truth_motor otomatik tetiği KALDIRILDI — açılış transaction'ı içinde
             # bir SQL hatası transaction'ı zehirleyip açılışın geri sarılmasına (overlay
             # takılması) yol açabiliyordu. Akıllı Denetim ayrı/manuel çalıştırılmalı
@@ -1038,7 +1050,23 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                 """, (sube_id, is_gunu_tr()))
                 yoklama_row = cur.fetchone()
                 if not yoklama_row:
-                    raise HTTPException(400, "Kapanış için QR onaylayan kapanış personeli bulunamadı. Lütfen kapanışçı telefonda QR'ı okutup onaylamalı.")
+                    # Deterministik kapanış sorumlusunu adıyla söyle (kim mühürlemeli net olsun)
+                    _sorumlu_ad = None
+                    try:
+                        cur.execute(
+                            """SELECT p.ad_soyad FROM subeler s
+                               JOIN personel p ON p.id::text = s.aktif_kapanis_sorumlusu_personel_id
+                               WHERE s.id=%s AND s.aktif_kapanis_sorumlusu_tarih=%s""",
+                            (sube_id, is_gunu_tr()),
+                        )
+                        _sr = cur.fetchone()
+                        if _sr:
+                            _sorumlu_ad = (_sr.get("ad_soyad") or "").strip() or None
+                    except Exception:
+                        pass
+                    if _sorumlu_ad:
+                        raise HTTPException(400, f"Bugünkü kapatma sorumlusu: {_sorumlu_ad}. Onun telefonda kapanış mührünü atması gerekiyor — ya da Cep'ten '🔒 Kapanış Mührü (Yönetici)' ile mühürle.")
+                    raise HTTPException(400, "Kapanış için QR onaylayan kapanış personeli bulunamadı. Kapanışçı telefonda QR'ı okutup onaylamalı — ya da Cep'ten yönetici override ile mühürle.")
                 onay_ad = (yoklama_row["ad_soyad"]).strip() or "—"
                 pid_panel = str(yoklama_row["personel_id"])
             else:
