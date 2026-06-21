@@ -2722,6 +2722,12 @@ function CepKartlar({ onGeri }) {
               {borc > 0 && Number(k.asgari_odeme) > 0 && (
                 <div style={{ fontSize: 11, color: C.t3, marginTop: 3 }}>Asgari: {fmt(k.asgari_odeme)}{k.asgari_karsilandi ? ' ✓ ödendi' : ''}</div>
               )}
+              {Number(k.gelecek_taksit_anapara) > 0 && (
+                <div style={{ fontSize: 11, color: C.t3, marginTop: 3 }}>
+                  📅 Gelecek taksit yükü: <b style={{ color: C.t2 }}>{fmt(k.gelecek_taksit_anapara)}</b>
+                  {k.toplam_borc_taksitli != null && <> · Taksitlerle toplam: <b style={{ color: C.t2 }}>{fmt(k.toplam_borc_taksitli)}</b></>}
+                </div>
+              )}
             </button>
           );
         })}
@@ -2747,6 +2753,12 @@ function CepKartlar({ onGeri }) {
                 Kullanım %{kartDoluluk(detay)}
                 {Number(detay.asgari_odeme) > 0 ? ` · Asgari ${fmt(detay.asgari_odeme)}${detay.asgari_karsilandi ? ' ✓' : ''}` : ''}
               </div>
+              {Number(detay.gelecek_taksit_anapara) > 0 && (
+                <div style={{ fontSize: 12, color: C.sari, marginTop: 4 }}>
+                  📅 Gelecek taksit yükü: <b>{fmt(detay.gelecek_taksit_anapara)}</b>
+                  {detay.toplam_borc_taksitli != null && <span style={{ color: C.t3 }}> · Taksitlerle toplam borç: <b style={{ color: C.t2 }}>{fmt(detay.toplam_borc_taksitli)}</b></span>}
+                </div>
+              )}
             </div>
             <div style={{ overflowY: 'auto', padding: '4px 16px 20px' }}>
               {hareketler === null && <div style={{ color: C.t3, textAlign: 'center', padding: 20 }}>Yükleniyor…</div>}

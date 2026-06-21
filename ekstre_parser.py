@@ -411,6 +411,20 @@ def kullanilabilir_limit_genel(text: str, num_fn=_num) -> Optional[float]:
     return num_fn(m.group(1)) if m else None
 
 
+# Worldcard (Yapı Kredi) ekstresinde DOĞRUDAN basılan kalan taksit anaparası toplamı.
+# Diğer bankalar bu satırı basmaz → onlarda limit−kullanılabilir−dönem'den türetilir.
+_KALAN_TAKSIT_RE = re.compile(
+    r"[Kk]alan\s+[Tt]oplam\s+[Tt]aksit\s+[Tt]utar\w*\s*:?\s*([\d.,]+)", re.I)
+
+
+def kalan_taksit_tutari_genel(text: str, num_fn=_num) -> Optional[float]:
+    """'Kalan Toplam Taksit Tutarı X' (gelecek taksit yükü). Bulamazsa None."""
+    if not text:
+        return None
+    m = _KALAN_TAKSIT_RE.search(text)
+    return num_fn(m.group(1)) if m else None
+
+
 def parse_ekstre(text: str) -> Dict[str, Any]:
     banka = detect_bank(text)
     if banka == "worldcard":
@@ -433,6 +447,11 @@ def parse_ekstre(text: str) -> Dict[str, Any]:
         kl = kullanilabilir_limit_genel(text)
         if kl is not None:
             res["kullanilabilir_limit"] = kl
+    # Kalan toplam taksit tutarı (Worldcard doğrudan basar; diğerlerinde None)
+    if res.get("kalan_taksit_tutari") is None:
+        kt = kalan_taksit_tutari_genel(text)
+        if kt is not None:
+            res["kalan_taksit_tutari"] = kt
     return res
 
 
@@ -579,6 +598,7 @@ def parse_axess(raw: bytes) -> Dict[str, Any]:
         "asgari_oran": None,
         "limit": limit,
         "kullanilabilir_limit": kullanilabilir_limit_genel(t, _ax_num),
+        "kalan_taksit_tutari": kalan_taksit_tutari_genel(t, _ax_num),
         "onceki_borc": onceki,
         "donem_harcama": round(sum(i["tutar"] for i in islemler if i["tip"] == "HARCAMA"), 2),
         "donem_odeme": round(sum(i["tutar"] for i in islemler if i["tip"] == "ODEME"), 2),

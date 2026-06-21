@@ -278,6 +278,7 @@ def ensure_kart_ekstre_donem(cur) -> None:
             donem_faizi      NUMERIC(14,2) DEFAULT 0,
             kalan_taksit     NUMERIC(14,2),
             kullanilabilir_limit NUMERIC(14,2),
+            kalan_taksit_tutari NUMERIC(14,2),
             kaynak           TEXT DEFAULT 'ekstre',
             olusturma        TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
@@ -287,6 +288,11 @@ def ensure_kart_ekstre_donem(cur) -> None:
     cur.execute(
         "ALTER TABLE kart_ekstre_donem "
         "ADD COLUMN IF NOT EXISTS kullanilabilir_limit NUMERIC(14,2)"
+    )
+    # Kalan toplam taksit tutarı (gelecek taksit yükü — Worldcard doğrudan basar).
+    cur.execute(
+        "ALTER TABLE kart_ekstre_donem "
+        "ADD COLUMN IF NOT EXISTS kalan_taksit_tutari NUMERIC(14,2)"
     )
     cur.execute(
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_kart_ekstre_donem "
