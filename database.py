@@ -438,6 +438,10 @@ def init_db():
                     WHERE table_name='subeler' AND column_name='aktif_kapanis_sorumlusu_personel_id')
                 THEN ALTER TABLE subeler ADD COLUMN aktif_kapanis_sorumlusu_personel_id TEXT;
                      ALTER TABLE subeler ADD COLUMN aktif_kapanis_sorumlusu_tarih DATE; END IF;
+                -- Kapanış hatırlatma WhatsApp izi (gün başına 1 kez gönderilir)
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='subeler' AND column_name='kapanis_hatirlatma_tarih')
+                THEN ALTER TABLE subeler ADD COLUMN kapanis_hatirlatma_tarih DATE; END IF;
                 IF NOT EXISTS (SELECT 1 FROM information_schema.columns
                     WHERE table_name='subeler' AND column_name='vardiya_yazilsin')
                 THEN ALTER TABLE subeler ADD COLUMN vardiya_yazilsin BOOLEAN NOT NULL DEFAULT TRUE; END IF;

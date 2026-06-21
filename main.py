@@ -473,6 +473,82 @@ def _gece_yarisi_scheduler():
             import time as _t
             _t.sleep(300)  # hata olursa 5 dakika bekle, tekrar dene
 
+
+def kapanis_hatirlatma_tara():
+    """Kapanışa ~1 saat kala, o günün KAPANIŞ SORUMLUSUNA WhatsApp hatırlatma gönderir
+    ('kapanış senden bekleniyor'). İZOLE: hata yutar. Gün başına 1 kez (subeler.
+    kapanis_hatirlatma_tarih). Şube zaten mühürlendiyse / sorumlu telefonu yoksa atlar."""
+    try:
+        from tr_saat import is_gunu_tr, dt_now_tr_naive
+        from whatsapp_bildirim import whatsapp_gonder_numara
+    except Exception:
+        return
+    try:
+        now = dt_now_tr_naive()
+    except Exception:
+        return
+    tarih = str(is_gunu_tr())
+    try:
+        with db() as (conn, cur):
+            cur.execute(
+                """SELECT s.id, s.ad, s.kapanis_saati, s.kapanis_hatirlatma_tarih,
+                          p.ad_soyad, p.telefon
+                   FROM subeler s
+                   JOIN personel p ON p.id::text = s.aktif_kapanis_sorumlusu_personel_id
+                   WHERE s.aktif = TRUE AND s.aktif_kapanis_sorumlusu_tarih = %s::date
+                     AND NULLIF(TRIM(s.kapanis_saati), '') IS NOT NULL""",
+                (tarih,),
+            )
+            rows = [dict(r) for r in (cur.fetchall() or [])]
+            for d in rows:
+                if str(d.get("kapanis_hatirlatma_tarih") or "") == tarih:
+                    continue  # bugün zaten gönderildi
+                tel = (d.get("telefon") or "").strip()
+                if not tel:
+                    continue
+                ks = (d.get("kapanis_saati") or "").strip()
+                try:
+                    hh, mm = int(ks.split(":")[0]), int(ks.split(":")[1])
+                except Exception:
+                    continue
+                kapanis_dt = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
+                dk_kala = (kapanis_dt - now).total_seconds() / 60.0
+                if not (40 <= dk_kala <= 80):  # ~1 saat kala penceresi
+                    continue
+                # Zaten mühürlendiyse atla
+                cur.execute(
+                    "SELECT 1 FROM sube_operasyon_event WHERE sube_id=%s AND tip='KAPANIS' "
+                    "AND sira_no=0 AND durum='tamamlandi' AND tarih=%s",
+                    (d["id"], tarih),
+                )
+                if cur.fetchone():
+                    continue
+                msg = (
+                    f"Merhaba {d.get('ad_soyad') or ''} 👋\n"
+                    f"*{d.get('ad')}* bugün senin kapanış sorumluluğunda 🔒\n"
+                    f"Kapanışa ~1 saat kaldı. Kasa sayımı + ciro girip mührü atmayı unutma. Teşekkürler 🙏"
+                )
+                try:
+                    whatsapp_gonder_numara(tel, msg)
+                    cur.execute("UPDATE subeler SET kapanis_hatirlatma_tarih=%s WHERE id=%s", (tarih, d["id"]))
+                    conn.commit()
+                except Exception:
+                    pass
+    except Exception as e:
+        logger.warning(f"⏰ kapanis hatirlatma tara hatasi (yutuldu): {e}")
+
+
+def _kapanis_hatirlatma_scheduler():
+    """Gün-içi periyodik (15 dk): kapanışa ~1 saat kala sorumluya hatırlatma."""
+    import time as _t
+    while True:
+        try:
+            kapanis_hatirlatma_tara()
+        except Exception as e:
+            logger.warning(f"⏰ kapanis hatirlatma scheduler hatasi: {e}")
+        _t.sleep(900)  # 15 dakika
+
+
 @app.on_event("startup")
 def startup():
     init_db()
@@ -585,6 +661,14 @@ def startup():
     _scheduler_thread = threading.Thread(target=_gece_yarisi_scheduler, daemon=True)
     _scheduler_thread.start()
     logger.info("✅ Gece yarısı scheduler başlatıldı")
+
+    # Kapanış hatırlatma scheduler (gün-içi 15 dk) — sorumluya ~1 saat kala WhatsApp
+    try:
+        _kap_hat_thread = threading.Thread(target=_kapanis_hatirlatma_scheduler, daemon=True)
+        _kap_hat_thread.start()
+        logger.info("✅ Kapanış hatırlatma scheduler başlatıldı")
+    except Exception as _e:
+        logger.warning(f"Kapanış hatırlatma scheduler başlatılamadı: {_e}")
 
 def guncelle_borc_envanteri_odeme_plani_sonrasi(cur, plan: dict, ana_para_kismi: float):
     """Kaynak borc_envanteri ise kalan_vade ve toplam_borc güncelle (panel /ode ve onay kuyruğu ortak)."""
