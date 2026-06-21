@@ -1560,8 +1560,31 @@ def kapanis_tani(sube_ad: str = "tema", bas: str = None, bit: str = None):
             GROUP BY tarih ORDER BY tarih
         """, (sid, ilk, son))
         yoklama = [dict(r) for r in cur.fetchall()]
+        # CİRO verisi kayıtlı mı? (ciro_taslak: nakit/pos/online + durum)
+        try:
+            cur.execute("""
+                SELECT tarih::text AS tarih, durum,
+                       nakit::float AS nakit, pos::float AS pos, online::float AS online
+                FROM ciro_taslak WHERE sube_id=%s AND tarih BETWEEN %s::date AND %s::date
+                ORDER BY tarih
+            """, (sid, ilk, son))
+            ciro = [dict(r) for r in cur.fetchall()]
+        except Exception:
+            ciro = []
+        # KULLANILAN ÜRÜN ("düşen") kayıtlı mı? (rapor_gunluk_urun_ozet)
+        try:
+            cur.execute("""
+                SELECT tarih::text AS tarih, COUNT(*) AS kalem,
+                       COALESCE(SUM(kullanilan_adet),0) AS kullanilan
+                FROM rapor_gunluk_urun_ozet WHERE sube_id=%s AND tarih BETWEEN %s::date AND %s::date
+                GROUP BY tarih ORDER BY tarih
+            """, (sid, ilk, son))
+            urun = [dict(r) for r in cur.fetchall()]
+        except Exception:
+            urun = []
     return {"sube": sad2, "sube_id": sid, "aralik": [ilk, son],
-            "kapanis_eventleri": kapanis, "acilislar": acilis, "yoklama": yoklama}
+            "kapanis_eventleri": kapanis, "acilislar": acilis, "yoklama": yoklama,
+            "ciro_taslak": ciro, "kullanilan_urun": urun}
 
 
 @router.get("/api/gorev/vardiya-atama-incele")
