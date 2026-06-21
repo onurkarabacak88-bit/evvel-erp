@@ -1557,7 +1557,9 @@ def kapanis_kisi_geri_al(body: KapanisKisiGeriAlBody):
             sube_filt = "AND LOWER(s.ad) LIKE %s"
             params.append(f"%{body.sube_ad.strip().lower()}%")
         else:
-            sube_filt = "AND (LOWER(s.ad) LIKE '%gazze%' OR LOWER(s.ad) LIKE '%tema%')"
+            sube_filt = "AND (LOWER(s.ad) LIKE %s OR LOWER(s.ad) LIKE %s)"
+            params.append("%gazze%")
+            params.append("%tema%")
         tarih_filt = ""
         if body.tarih:
             tarih_filt = "AND gy.tarih = %s"
