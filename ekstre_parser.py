@@ -393,7 +393,14 @@ def ziraat_faiz_finalize(sonuc: Dict[str, Any], text: str) -> None:
 # da düşülmüş GERÇEK kullanılabilir limit; sistemin 'limit−borç' tahmininden farklı).
 # 'kullanılabilir nakit/avans limiti' satırı ELENİR (arada 'nakit'/'avans' token var →
 # 'kullan…limit' deseni eşleşmez). 'kredi' tokenı opsiyonel kabul edilir.
-_KULL_LIMIT_RE = re.compile(r"kullan\S*\s+(?:kredi\s+)?limit\S*\s*:?\s*([\d.,]+)", re.I)
+# "kullanılabilir [kart/kredi/...] limit(iniz) X" — araya 0-2 nötr kelime girebilir
+# (Ziraat/Enpara "Kart", Garanti yok). 'nakit/avans/nakdi' kelimesi gelirse o satır
+# ELENİR (nakit limitini almayalım). Sayı kelimeye BİTİŞİK olabilir (Axess "Limiti28,705.30")
+# → limit son eki [^\d\s:]* ile (rakam görünce dur). Sayı biçimi (TR/US) num_fn'e bırakılır.
+_KULL_LIMIT_RE = re.compile(
+    r"kullan\w*\s+(?:(?!nakit|nakdi|avans)\w+\s+){0,2}limit[^\d\s:]*\s*:?\s*([\d.,]+)",
+    re.I,
+)
 
 
 def kullanilabilir_limit_genel(text: str, num_fn=_num) -> Optional[float]:
