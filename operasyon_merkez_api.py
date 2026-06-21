@@ -13496,6 +13496,43 @@ def ops_maliyet_gun_gun(
         bugun = date.today()
         tarihler = [(bugun - timedelta(days=i)).isoformat() for i in range(gun)]
 
+        # ── CİRO (günlük, şube bazlı) + KİRA (sabit giderlerden, aylık/30) ──
+        # Operasyonel P&L: Faaliyet Kârı = Ciro − (COGS + personel + anlık gider + kira).
+        # Tahmini kurumlar vergisi = max(0, kâr) × %25, AYRI gösterilir (KDV kârdan DÜŞÜLMEZ).
+        TAHMINI_VERGI_ORANI = 0.25
+        ciro_map: Dict[Tuple[str, str], float] = {}
+        try:
+            _cp: list = [gun - 1]
+            _cf = ""
+            if sube_id:
+                _cf = "AND sube_id = %s"; _cp.append(sube_id)
+            cur.execute(
+                f"""SELECT sube_id::text AS sid, tarih::text AS t,
+                           (COALESCE(nakit,0)+COALESCE(pos,0)+COALESCE(online,0))::numeric AS ciro
+                    FROM ciro
+                    WHERE tarih >= CURRENT_DATE - (%s || ' days')::interval {_cf}""",
+                _cp,
+            )
+            for r in cur.fetchall():
+                d = dict(r); ciro_map[(d["sid"], d["t"])] = float(d.get("ciro") or 0)
+        except Exception:
+            pass
+        kira_gunluk: Dict[str, float] = {}
+        try:
+            cur.execute(
+                """SELECT sube_id::text AS sid, COALESCE(SUM(tutar),0)::numeric AS aylik
+                   FROM sabit_giderler
+                   WHERE aktif = TRUE AND sube_id IS NOT NULL
+                     AND (LOWER(kategori) LIKE %s OR LOWER(gider_adi) LIKE %s)
+                     AND COALESCE(periyot,'aylik')='aylik'
+                   GROUP BY sube_id""",
+                ('%kira%', '%kira%'),
+            )
+            for r in cur.fetchall():
+                d = dict(r); kira_gunluk[d["sid"]] = float(d.get("aylik") or 0) / 30.0
+        except Exception:
+            pass
+
         fiyat_eksik: set = set()
         satirlar = []
         if sube_id:
@@ -13550,7 +13587,24 @@ def ops_maliyet_gun_gun(
                 sube_gider = anlik_gider_map.get((sid, tarih_str), 0.0)
             satir["sube_anlik_gider_tl"] = round(sube_gider, 2)
 
-            satir["genel_toplam"] = round(toplam + pg["maliyet"] + sube_gider, 2)
+            # ── Kira (günlük) + Ciro + P&L (faaliyet kârı − tahmini vergi = net kâr) ──
+            if sid is None:
+                kira_g = sum(kira_gunluk.values())
+                ciro_v = sum(v for (ks, kt), v in ciro_map.items() if kt == tarih_str)
+            else:
+                kira_g = kira_gunluk.get(sid, 0.0)
+                ciro_v = ciro_map.get((sid, tarih_str), 0.0)
+            satir["kira_maliyet_tl"] = round(kira_g, 2)
+            toplam_maliyet = toplam + pg["maliyet"] + sube_gider + kira_g
+            satir["genel_toplam"] = round(toplam_maliyet, 2)
+            satir["ciro_tl"] = round(ciro_v, 2)
+            faaliyet_kari = ciro_v - toplam_maliyet
+            tahmini_vergi = max(0.0, faaliyet_kari) * TAHMINI_VERGI_ORANI
+            satir["faaliyet_kari_tl"] = round(faaliyet_kari, 2)
+            satir["tahmini_vergi_tl"] = round(tahmini_vergi, 2)
+            satir["net_kar_tl"] = round(faaliyet_kari - tahmini_vergi, 2)
+            # Operasyonel marj (net kâr / ciro)
+            satir["net_marj_pct"] = round((satir["net_kar_tl"] / ciro_v) * 100, 1) if ciro_v > 0 else None
 
             satirlar.append(satir)
 
