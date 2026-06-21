@@ -1521,6 +1521,45 @@ def kapanis_muhurle(body: KapanisMuhurleBody):
     return {"mesaj": "Kapanis muhürlendi.", "zaten_muhürlü": False}
 
 
+@router.get("/api/gorev/vardiya-atama-incele")
+def vardiya_atama_incele(personel_ad: str = "merve karabacak", tarih: str = None):
+    """TANI: bir kişinin verilen gündeki vardiya atamalarını (şube + gerçek saat)
+    döner; hangi çiftler çakışıyor gösterir. SALT-OKUR."""
+    from tr_saat import is_gunu_tr
+    t = tarih or str(is_gunu_tr())
+    ad = f"%{(personel_ad or '').strip().lower()}%"
+    with db() as (conn, cur):
+        cur.execute("""
+            SELECT va.id::text AS id, va.tarih::text AS tarih,
+                   va.baslangic_saat::text AS bas, va.bitis_saat::text AS bit,
+                   va.durum, vs.tip AS slot_tip, s.ad AS sube_adi, p.ad_soyad
+            FROM vardiya_atama va
+            JOIN vardiya_slot vs ON vs.id = va.slot_id
+            JOIN subeler s ON s.id = vs.sube_id
+            JOIN personel p ON p.id = va.personel_id
+            WHERE LOWER(p.ad_soyad) LIKE %s AND va.tarih = %s::date
+              AND va.durum IN ('planli','onayli')
+            ORDER BY va.baslangic_saat
+        """, (ad, t))
+        rows = [dict(r) for r in cur.fetchall()]
+    def _dk(s):
+        try:
+            h, m = int(s[:2]), int(s[3:5]); return h*60+m
+        except Exception:
+            return None
+    cakismalar = []
+    for i in range(len(rows)):
+        for j in range(i+1, len(rows)):
+            a, b = rows[i], rows[j]
+            a1, a2 = _dk(a["bas"]), _dk(a["bit"]); b1, b2 = _dk(b["bas"]), _dk(b["bit"])
+            if None in (a1, a2, b1, b2): continue
+            if a2 <= a1: a2 += 1440
+            if b2 <= b1: b2 += 1440
+            if not (a2 <= b1 or b2 <= a1):
+                cakismalar.append(f'{a["sube_adi"]} {a["bas"]}-{a["bit"]} ↔ {b["sube_adi"]} {b["bas"]}-{b["bit"]}')
+    return {"tarih": t, "adet": len(rows), "atamalar": rows, "cakisan_ciftler": cakismalar}
+
+
 @router.post("/api/gorev/kapanis-sifirla")
 def kapanis_sifirla(sube_id: str):
     """Bugunun kapanis-muhurle ile yapilan cikis_ts'ini temizler - tekrar yapilabilir hale getirir."""
