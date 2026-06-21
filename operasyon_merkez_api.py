@@ -13960,18 +13960,33 @@ def ops_maliyet_alis_fiyat_sil(fiyat_id: str):
 
 
 @router.delete("/maliyet/kalem-temizle/{kalem_kodu}")
-def ops_maliyet_kalem_temizle(kalem_kodu: str):
+def ops_maliyet_kalem_temizle(kalem_kodu: str, stok_fiyat_sifirla: bool = False):
     """
     Bir kalem_kodu'na ait TÜM fiyat geçmişini (urun_alis_fiyat) ve fatura eşleştirme
     hafızasını (fatura_kalem_eslestirme) siler — test/yanlış eşleştirme kayıtlarını
-    temizlemek için. sube_depo_stok'taki alis_fiyati_tl alanına dokunmaz.
+    temizlemek için.
+
+    stok_fiyat_sifirla=True ise AYRICA sube_depo_stok.alis_fiyati_tl alanını da NULL'lar
+    (yanlış fiyat stok satırına damgalanmışsa — ozet stok değeri fallback olarak onu
+    kullanıyordu → hayalet stok değerini düzeltir). Stok ADETİNE dokunmaz.
     """
     with db() as (conn, cur):
         cur.execute("DELETE FROM urun_alis_fiyat WHERE kalem_kodu = %s", (kalem_kodu,))
         fiyat_silinen = cur.rowcount
         cur.execute("DELETE FROM fatura_kalem_eslestirme WHERE kalem_kodu = %s", (kalem_kodu,))
         esleme_silinen = cur.rowcount
-    return {"success": True, "fiyat_silinen": fiyat_silinen, "esleme_silinen": esleme_silinen}
+        stok_fiyat_sifirlanan = 0
+        if stok_fiyat_sifirla:
+            try:
+                cur.execute(
+                    "UPDATE sube_depo_stok SET alis_fiyati_tl = NULL WHERE kalem_kodu = %s AND alis_fiyati_tl IS NOT NULL",
+                    (kalem_kodu,),
+                )
+                stok_fiyat_sifirlanan = cur.rowcount
+            except Exception:
+                pass
+    return {"success": True, "fiyat_silinen": fiyat_silinen, "esleme_silinen": esleme_silinen,
+            "stok_fiyat_sifirlanan": stok_fiyat_sifirlanan}
 
 
 # ─── Fatura PDF yükleme + kalem eşleştirme ─────────────────────────────────
