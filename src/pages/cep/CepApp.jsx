@@ -2644,9 +2644,15 @@ function CepKartlar({ onGeri }) {
   const kartBorc = (k) => (k.ekstre_gercek && k.donem_borcu != null
     ? Number(k.donem_borcu) : Number(k.guncel_borc)) || 0;
   const kartKalan = (k) => {
+    // Bankanın yazdığı gerçek kullanılabilir limit (taksit anaparasını da düşer) varsa o
+    if (k.kullanilabilir_limit != null) return Number(k.kullanilabilir_limit) || 0;
     if (k.ortak_grup_uye) return Number(k.kalan_limit) || 0; // ortak limit havuzu → sunucu
     const lim = Number(k.limit_tutar) || 0;
     return lim > 0 ? lim - kartBorc(k) : (Number(k.kalan_limit) || 0);
+  };
+  const kartDoluluk = (k) => {
+    const lim = Number(k.limit_tutar) || 0;
+    return lim > 0 ? Math.min(100, Math.max(0, Math.round(((lim - kartKalan(k)) / lim) * 100))) : 0;
   };
 
   // Yaklaşan ödeme üstte (borçlu kartlar gün sırasına göre)
@@ -2693,8 +2699,7 @@ function CepKartlar({ onGeri }) {
         {liste && liste.length === 0 && !hata && <div style={{ color: C.t3, textAlign: 'center', padding: 40 }}>Kart yok.</div>}
         {kartlar.map(k => {
           const borc = kartBorc(k);
-          const limit = Number(k.limit_tutar) || 0;
-          const doluluk = limit > 0 ? Math.min(100, Math.round((borc / limit) * 100)) : 0;
+          const doluluk = kartDoluluk(k);
           const oRenk = odemeRenk(k);
           return (
             <button key={k.id} onClick={() => acDetay(k)} style={{
@@ -2739,7 +2744,7 @@ function CepKartlar({ onGeri }) {
                 </div>
               )}
               <div style={{ fontSize: 12, color: C.t3, marginTop: 3 }}>
-                Kullanım %{Number(detay.limit_tutar) > 0 ? Math.min(100, Math.round((kartBorc(detay) / Number(detay.limit_tutar)) * 100)) : 0}
+                Kullanım %{kartDoluluk(detay)}
                 {Number(detay.asgari_odeme) > 0 ? ` · Asgari ${fmt(detay.asgari_odeme)}${detay.asgari_karsilandi ? ' ✓' : ''}` : ''}
               </div>
             </div>

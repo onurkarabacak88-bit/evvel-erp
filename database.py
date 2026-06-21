@@ -277,10 +277,17 @@ def ensure_kart_ekstre_donem(cur) -> None:
             donem_odeme      NUMERIC(14,2),
             donem_faizi      NUMERIC(14,2) DEFAULT 0,
             kalan_taksit     NUMERIC(14,2),
+            kullanilabilir_limit NUMERIC(14,2),
             kaynak           TEXT DEFAULT 'ekstre',
             olusturma        TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
     """)
+    # Eski ortamlarda kolon yoksa ekle (bankanın gerçek "kullanılabilir limit"i —
+    # gelecek taksit anaparasını da düştüğü için limit−borç'tan farklı/küçük).
+    cur.execute(
+        "ALTER TABLE kart_ekstre_donem "
+        "ADD COLUMN IF NOT EXISTS kullanilabilir_limit NUMERIC(14,2)"
+    )
     cur.execute(
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_kart_ekstre_donem "
         "ON kart_ekstre_donem (kart_id, donem)"

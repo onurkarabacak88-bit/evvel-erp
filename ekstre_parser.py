@@ -281,6 +281,10 @@ def parse_garanti(text: str) -> Dict[str, Any]:
         "asgari_tutar": _num(g(r"Min\.?\s*Ödeme Tutar[ıi]\s*:?\s*([\d.,]+)")),
         "asgari_oran": None,
         "limit": _num(g(r"Kart Limiti\s*:?\s*([\d.,]+)")),
+        # Bankanın yazdığı GERÇEK kullanılabilir limit (gelecek taksit anaparasını da
+        # düşer → limit−borç'tan farklı). "nakit limitiniz" satırını ELE: kullan...limit
+        # arasında 'nakit' geçen satır eşleşmez.
+        "kullanilabilir_limit": _num(g(r"kullan\S*\s+limit\S*\s+([\d.,]+)\s*TL")),
         "onceki_borc": None,
         "donem_harcama": None,
         "donem_odeme": None,

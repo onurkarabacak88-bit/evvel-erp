@@ -1767,6 +1767,23 @@ def kartlar_listele():
                 bu_ekstre = _ov_borc
                 asgari_odeme = _ov_asgari if _ov_asgari is not None else round(_ov_borc * kart_asgari_orani(k), 2)
 
+            # Bankanın yazdığı GERÇEK kullanılabilir limit (gelecek taksit anaparasını da
+            # düşer → limit−borç'tan küçük olabilir). Varsa kalan_limit = bu.
+            _kull_limit = None
+            try:
+                cur.execute(
+                    """SELECT kullanilabilir_limit FROM kart_ekstre_donem
+                       WHERE kart_id=%s AND donem = DATE_TRUNC('month', %s::date)
+                         AND kullanilabilir_limit IS NOT NULL
+                       ORDER BY olusturma DESC LIMIT 1""",
+                    (k['id'], _kesim_for_ov),
+                )
+                _klr = cur.fetchone()
+                if _klr and _klr.get('kullanilabilir_limit') is not None:
+                    _kull_limit = float(_klr['kullanilabilir_limit'])
+            except Exception:
+                _kull_limit = None
+
             # Gelecek ekstre = bir sonraki kesim için tek çekim + taksit payı.
             # Aktif dönem zaten "şu an açık" olan ekstre; "gelecek" demek
             # aktif dönemden BİR SONRAKİ kesim demek. Aralık:
@@ -1807,14 +1824,21 @@ def kartlar_listele():
                 ORDER BY tarih ASC LIMIT 1""", (k['id'],))
             yaklasan = cur.fetchone()
 
+            # Kalan limit: bankanın gerçek "kullanılabilir limit"i varsa onu kullan
+            # (taksit anaparasını içerir); yoksa eski mantık (limit−borç).
+            _kalan_limit = _kull_limit if _kull_limit is not None else (limit - borc)
+            _doluluk = ((limit - _kalan_limit) / limit) if limit > 0 else 0
             sonuc.append({**k,
                 "guncel_borc": borc,
-                "kalan_limit": limit - borc,
-                "limit_doluluk": borc/limit if limit > 0 else 0,
+                "kalan_limit": _kalan_limit,
+                "limit_doluluk": _doluluk,
                 # Gerçek (PDF/manuel) ekstre snapshot'ı varsa dönem borcu = ekstre borcu.
                 # Cep gibi tek-rakam gösteren yüzeyler bunu "PDF ile aynı" göstersin diye.
                 "ekstre_gercek": _ekstre_gercek,
                 "donem_borcu": (round(_ov_borc, 2) if _ov_borc is not None else None),
+                # Bankanın yazdığı gerçek kullanılabilir limit (varsa); yoksa None.
+                "kullanilabilir_limit": (round(_kull_limit, 2) if _kull_limit is not None else None),
+                "gelecek_taksit_anapara": (round(max(0.0, limit - borc - _kull_limit), 2) if _kull_limit is not None else None),
                 "asgari_odeme": asgari_odeme,
                 "bu_donem_odenen": bu_donem_odenen,
                 "asgari_karsilandi": asgari_odeme > 0 and bu_donem_odenen >= asgari_odeme - 0.01,
@@ -2850,19 +2874,22 @@ def _ekstre_eslesme_mutabakat(sonuc):
                         """
                         INSERT INTO kart_ekstre_donem
                             (kart_id, donem, kesim_tarihi, son_odeme_tarihi, donem_borcu,
-                             asgari_tutar, onceki_borc, donem_harcama, donem_odeme, donem_faizi, kalan_taksit)
-                        VALUES (%s, DATE_TRUNC('month', %s::date), %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                             asgari_tutar, onceki_borc, donem_harcama, donem_odeme, donem_faizi,
+                             kalan_taksit, kullanilabilir_limit)
+                        VALUES (%s, DATE_TRUNC('month', %s::date), %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                         ON CONFLICT (kart_id, donem) DO UPDATE SET
                             kesim_tarihi=EXCLUDED.kesim_tarihi, son_odeme_tarihi=EXCLUDED.son_odeme_tarihi,
                             donem_borcu=EXCLUDED.donem_borcu, asgari_tutar=EXCLUDED.asgari_tutar,
                             onceki_borc=EXCLUDED.onceki_borc, donem_harcama=EXCLUDED.donem_harcama,
                             donem_odeme=EXCLUDED.donem_odeme, donem_faizi=EXCLUDED.donem_faizi,
-                            kalan_taksit=EXCLUDED.kalan_taksit
+                            kalan_taksit=EXCLUDED.kalan_taksit,
+                            kullanilabilir_limit=COALESCE(EXCLUDED.kullanilabilir_limit, kart_ekstre_donem.kullanilabilir_limit)
                         """,
                         (kart["id"], kt, kt, sonuc.get("son_odeme_tarihi"),
                          sonuc.get("donem_borcu"), sonuc.get("asgari_tutar"), sonuc.get("onceki_borc"),
                          sonuc.get("donem_harcama"), sonuc.get("donem_odeme"),
-                         sonuc.get("donem_faizi") or 0, sonuc.get("kalan_taksit")),
+                         sonuc.get("donem_faizi") or 0, sonuc.get("kalan_taksit"),
+                         sonuc.get("kullanilabilir_limit")),
                     )
                     sonuc["donem_kaydedildi"] = True
                 except Exception:
