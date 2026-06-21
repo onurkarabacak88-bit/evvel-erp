@@ -1762,6 +1762,7 @@ def kartlar_listele():
             # dönem borcundan çok düşük çıkabilir (panel ↔ ödeme planı tutarsızlığı).
             _kesim_for_ov = aktif_kesim or kesim_tarihi_hesapla(bugun.year, bugun.month, int(k['kesim_gunu']))
             _ov_borc, _ov_asgari = kart_ekstre_donem_override(cur, k['id'], _kesim_for_ov)
+            _ekstre_gercek = _ov_borc is not None  # PDF/manuel ekstre snapshot'ı var mı?
             if _ov_borc is not None:
                 bu_ekstre = _ov_borc
                 asgari_odeme = _ov_asgari if _ov_asgari is not None else round(_ov_borc * kart_asgari_orani(k), 2)
@@ -1810,6 +1811,10 @@ def kartlar_listele():
                 "guncel_borc": borc,
                 "kalan_limit": limit - borc,
                 "limit_doluluk": borc/limit if limit > 0 else 0,
+                # Gerçek (PDF/manuel) ekstre snapshot'ı varsa dönem borcu = ekstre borcu.
+                # Cep gibi tek-rakam gösteren yüzeyler bunu "PDF ile aynı" göstersin diye.
+                "ekstre_gercek": _ekstre_gercek,
+                "donem_borcu": (round(_ov_borc, 2) if _ov_borc is not None else None),
                 "asgari_odeme": asgari_odeme,
                 "bu_donem_odenen": bu_donem_odenen,
                 "asgari_karsilandi": asgari_odeme > 0 and bu_donem_odenen >= asgari_odeme - 0.01,

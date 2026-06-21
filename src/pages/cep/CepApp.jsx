@@ -2637,18 +2637,30 @@ function CepKartlar({ onGeri }) {
       .catch(e => { setHata(e.message || 'Yüklenemedi'); setListe([]); });
   }, []);
 
+  // Borç gösterimi: GERÇEK (PDF/manuel) ekstre snapshot'ı varsa DÖNEM BORCU
+  // (banka ekstresiyle birebir) gösterilir; yoksa defter borcu (guncel_borc).
+  // Defter, büyük "devir" bakiyesini göremediği için ekstreden düşük çıkabiliyordu
+  // → cep PDF'ten sapıyordu. "Ekstre = gerçeğin kaynağı".
+  const kartBorc = (k) => (k.ekstre_gercek && k.donem_borcu != null
+    ? Number(k.donem_borcu) : Number(k.guncel_borc)) || 0;
+  const kartKalan = (k) => {
+    if (k.ortak_grup_uye) return Number(k.kalan_limit) || 0; // ortak limit havuzu → sunucu
+    const lim = Number(k.limit_tutar) || 0;
+    return lim > 0 ? lim - kartBorc(k) : (Number(k.kalan_limit) || 0);
+  };
+
   // Yaklaşan ödeme üstte (borçlu kartlar gün sırasına göre)
   const kartlar = (liste || []).slice().sort((a, b) => {
-    const ga = (Number(a.guncel_borc) || 0) > 0 && a.gun_kaldi != null ? a.gun_kaldi : 9999;
-    const gb = (Number(b.guncel_borc) || 0) > 0 && b.gun_kaldi != null ? b.gun_kaldi : 9999;
+    const ga = kartBorc(a) > 0 && a.gun_kaldi != null ? a.gun_kaldi : 9999;
+    const gb = kartBorc(b) > 0 && b.gun_kaldi != null ? b.gun_kaldi : 9999;
     return ga - gb;
   });
-  const toplamBorc = (liste || []).reduce((s, k) => s + (Number(k.guncel_borc) || 0), 0);
-  const toplamKalan = (liste || []).reduce((s, k) => s + (Number(k.kalan_limit) || 0), 0);
-  const yaklasanSay = (liste || []).filter(k => (Number(k.guncel_borc) || 0) > 0 && k.gun_kaldi != null && k.gun_kaldi <= 7).length;
+  const toplamBorc = (liste || []).reduce((s, k) => s + kartBorc(k), 0);
+  const toplamKalan = (liste || []).reduce((s, k) => s + kartKalan(k), 0);
+  const yaklasanSay = (liste || []).filter(k => kartBorc(k) > 0 && k.gun_kaldi != null && k.gun_kaldi <= 7).length;
 
   const odemeRenk = (k) => {
-    if ((Number(k.guncel_borc) || 0) <= 0 || k.gun_kaldi == null) return C.t3;
+    if (kartBorc(k) <= 0 || k.gun_kaldi == null) return C.t3;
     return k.gun_kaldi <= 3 ? C.kirmizi : k.gun_kaldi <= 7 ? C.sari : C.t2;
   };
   const trTarih = (s) => s ? new Date(s).toLocaleDateString('tr-TR', { day: '2-digit', month: '2-digit' }) : '—';
@@ -2680,7 +2692,7 @@ function CepKartlar({ onGeri }) {
         {hata && <div style={{ color: C.kirmizi, textAlign: 'center', padding: 20 }}>{hata}</div>}
         {liste && liste.length === 0 && !hata && <div style={{ color: C.t3, textAlign: 'center', padding: 40 }}>Kart yok.</div>}
         {kartlar.map(k => {
-          const borc = Number(k.guncel_borc) || 0;
+          const borc = kartBorc(k);
           const limit = Number(k.limit_tutar) || 0;
           const doluluk = limit > 0 ? Math.min(100, Math.round((borc / limit) * 100)) : 0;
           const oRenk = odemeRenk(k);
@@ -2697,7 +2709,7 @@ function CepKartlar({ onGeri }) {
                 <div style={{ width: `${doluluk}%`, height: '100%', background: doluluk >= 90 ? C.kirmizi : doluluk >= 70 ? C.sari : C.yesil }} />
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: C.t3, marginTop: 6 }}>
-                <span>Kalan: <b style={{ color: C.t2 }}>{fmt(k.kalan_limit)}</b></span>
+                <span>Kalan: <b style={{ color: C.t2 }}>{fmt(kartKalan(k))}</b></span>
                 {borc > 0 && k.gun_kaldi != null && (
                   <span style={{ color: oRenk, fontWeight: 700 }}>{k.gun_kaldi <= 3 ? '🔴' : k.gun_kaldi <= 7 ? '🟡' : '🟢'} Son ödeme {trTarih(k.son_odeme_tarihi)} · {k.gun_kaldi}g</span>
                 )}
@@ -2719,10 +2731,15 @@ function CepKartlar({ onGeri }) {
                 <button onClick={() => setDetay(null)} style={{ background: C.bg3, border: 'none', borderRadius: 10, color: C.t2, width: 36, height: 36, fontSize: 16, cursor: 'pointer' }}>✕</button>
               </div>
               <div style={{ fontSize: 13, color: C.t3, marginTop: 6 }}>
-                Borç <b style={{ color: C.kirmizi }}>{fmt(detay.guncel_borc)}</b> · Kalan {fmt(detay.kalan_limit)} · Son ödeme {trTarih(detay.son_odeme_tarihi)}
+                {detay.ekstre_gercek ? 'Dönem borcu' : 'Borç'} <b style={{ color: C.kirmizi }}>{fmt(kartBorc(detay))}</b> · Kalan {fmt(kartKalan(detay))} · Son ödeme {trTarih(detay.son_odeme_tarihi)}
               </div>
+              {detay.ekstre_gercek && Math.abs((Number(detay.donem_borcu) || 0) - (Number(detay.guncel_borc) || 0)) > 1 && (
+                <div style={{ fontSize: 11, color: C.t3, marginTop: 2 }}>
+                  Defter bakiyesi: {fmt(detay.guncel_borc)} <span style={{ color: C.t3 }}>(ekstre yüklendi, hareketler henüz eşitlenmedi)</span>
+                </div>
+              )}
               <div style={{ fontSize: 12, color: C.t3, marginTop: 3 }}>
-                Kullanım %{detay.limit_doluluk != null ? Math.round(detay.limit_doluluk) : (Number(detay.limit_tutar) > 0 ? Math.round((Number(detay.guncel_borc) / Number(detay.limit_tutar)) * 100) : 0)}
+                Kullanım %{Number(detay.limit_tutar) > 0 ? Math.min(100, Math.round((kartBorc(detay) / Number(detay.limit_tutar)) * 100)) : 0}
                 {Number(detay.asgari_odeme) > 0 ? ` · Asgari ${fmt(detay.asgari_odeme)}${detay.asgari_karsilandi ? ' ✓' : ''}` : ''}
               </div>
             </div>
