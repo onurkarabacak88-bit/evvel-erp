@@ -1521,6 +1521,49 @@ def kapanis_muhurle(body: KapanisMuhurleBody):
     return {"mesaj": "Kapanis muhürlendi.", "zaten_muhürlü": False}
 
 
+@router.get("/api/gorev/kapanis-tani")
+def kapanis_tani(sube_ad: str = "tema", bas: str = None, bit: str = None):
+    """TANI (salt-okur): bir şubenin tarih aralığında kapanış/açılış durumu.
+    Her gün için: açılış, KAPANIS event satırları (sira_no/durum/cevap_ts),
+    personel giriş + kapanış mührü sayısı. Kapanış neden girilmemiş/düşmemiş teşhisi."""
+    from tr_saat import is_gunu_tr
+    son = bit or str(is_gunu_tr())
+    ilk = bas or son
+    sad = f"%{(sube_ad or '').strip().lower()}%"
+    with db() as (conn, cur):
+        cur.execute("SELECT id, ad FROM subeler WHERE LOWER(ad) LIKE %s ORDER BY ad LIMIT 1", (sad,))
+        s = cur.fetchone()
+        if not s:
+            return {"hata": "şube bulunamadı", "sube_ad": sube_ad}
+        sid = s["id"]; sad2 = s["ad"]
+        cur.execute("""
+            SELECT tarih::text AS tarih, sira_no, durum, cevap_ts::text AS cevap_ts
+            FROM sube_operasyon_event
+            WHERE sube_id=%s AND tip='KAPANIS' AND tarih BETWEEN %s::date AND %s::date
+            ORDER BY tarih, sira_no
+        """, (sid, ilk, son))
+        kapanis = [dict(r) for r in cur.fetchall()]
+        try:
+            cur.execute("""
+                SELECT tarih::text AS tarih, durum, acilis_saati
+                FROM sube_acilis WHERE sube_id=%s AND tarih BETWEEN %s::date AND %s::date
+                ORDER BY tarih
+            """, (sid, ilk, son))
+            acilis = [dict(r) for r in cur.fetchall()]
+        except Exception:
+            acilis = []
+        cur.execute("""
+            SELECT tarih::text AS tarih, COUNT(*) AS giris,
+                   COUNT(*) FILTER (WHERE cikis_tip='kapalis') AS kapanis_muhur,
+                   COUNT(*) FILTER (WHERE cikis_ts IS NULL) AS acik_kalan
+            FROM gorev_yoklama WHERE sube_id=%s AND tarih BETWEEN %s::date AND %s::date
+            GROUP BY tarih ORDER BY tarih
+        """, (sid, ilk, son))
+        yoklama = [dict(r) for r in cur.fetchall()]
+    return {"sube": sad2, "sube_id": sid, "aralik": [ilk, son],
+            "kapanis_eventleri": kapanis, "acilislar": acilis, "yoklama": yoklama}
+
+
 @router.get("/api/gorev/vardiya-atama-incele")
 def vardiya_atama_incele(personel_ad: str = "merve karabacak", tarih: str = None):
     """TANI: bir kişinin verilen gündeki vardiya atamalarını (şube + gerçek saat)
