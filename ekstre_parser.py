@@ -389,22 +389,44 @@ def ziraat_faiz_finalize(sonuc: Dict[str, Any], text: str) -> None:
                 break
 
 
+# Bank-agnostik "kullanılabilir limit" — TÜM bankalarda denenir (taksit anaparası
+# da düşülmüş GERÇEK kullanılabilir limit; sistemin 'limit−borç' tahmininden farklı).
+# 'kullanılabilir nakit/avans limiti' satırı ELENİR (arada 'nakit'/'avans' token var →
+# 'kullan…limit' deseni eşleşmez). 'kredi' tokenı opsiyonel kabul edilir.
+_KULL_LIMIT_RE = re.compile(r"kullan\S*\s+(?:kredi\s+)?limit\S*\s*:?\s*([\d.,]+)", re.I)
+
+
+def kullanilabilir_limit_genel(text: str, num_fn=_num) -> Optional[float]:
+    """Metinde 'kullanılabilir limit(iniz) X' yakalar (ilk eşleşme). Bulamazsa None."""
+    if not text:
+        return None
+    m = _KULL_LIMIT_RE.search(text)
+    return num_fn(m.group(1)) if m else None
+
+
 def parse_ekstre(text: str) -> Dict[str, Any]:
     banka = detect_bank(text)
     if banka == "worldcard":
-        return parse_worldcard(text)
-    if banka == "garanti":
-        return parse_garanti(text)
-    if banka == "ziraat":
-        return parse_ziraat(text)
-    if banka == "enpara":
-        return parse_enpara(text)
-    return {
-        "banka_format": banka,
-        "hata": "Bu ekstre formatı metin olarak ayrıştırılamadı "
-                "(Axess gibi taranmış/gömülü-font PDF'ler OCR gerektirir).",
-        "islemler": [],
-    }
+        res = parse_worldcard(text)
+    elif banka == "garanti":
+        res = parse_garanti(text)
+    elif banka == "ziraat":
+        res = parse_ziraat(text)
+    elif banka == "enpara":
+        res = parse_enpara(text)
+    else:
+        return {
+            "banka_format": banka,
+            "hata": "Bu ekstre formatı metin olarak ayrıştırılamadı "
+                    "(Axess gibi taranmış/gömülü-font PDF'ler OCR gerektirir).",
+            "islemler": [],
+        }
+    # Bank-agnostik kullanılabilir limit (bank parser'ı set etmediyse)
+    if res.get("kullanilabilir_limit") is None:
+        kl = kullanilabilir_limit_genel(text)
+        if kl is not None:
+            res["kullanilabilir_limit"] = kl
+    return res
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -549,6 +571,7 @@ def parse_axess(raw: bytes) -> Dict[str, Any]:
         "asgari_tutar": asgari,
         "asgari_oran": None,
         "limit": limit,
+        "kullanilabilir_limit": kullanilabilir_limit_genel(t, _ax_num),
         "onceki_borc": onceki,
         "donem_harcama": round(sum(i["tutar"] for i in islemler if i["tip"] == "HARCAMA"), 2),
         "donem_odeme": round(sum(i["tutar"] for i in islemler if i["tip"] == "ODEME"), 2),
