@@ -314,9 +314,55 @@ export default function Maliyet() {
         )}
       </div>
 
+      {/* ── KÂR-ZARAR (P&L) — Ciro − Maliyet − Tahmini Vergi = Net Kâr ── */}
+      <div className="panel-section-hdr" style={{ marginBottom: 12 }}>
+        <span>💰 Kâr-Zarar (Operasyonel){subeId ? '' : ' — Tüm Şubeler'}</span>
+        <span style={{ fontSize: 10, color: 'var(--text3)' }}>Ciro − Maliyet − Tahmini Vergi (%25) = Net Kâr · KDV düşülmez · resmî muhasebe değil</span>
+      </div>
+      <div style={{ overflowX: 'auto', marginBottom: 16 }}>
+        <table className="tablo">
+          <thead>
+            <tr>
+              <th>Tarih</th>
+              {!subeId && <th>Şube</th>}
+              <th style={{ textAlign: 'right' }}>💵 Ciro</th>
+              <th style={{ textAlign: 'right' }}>📉 Toplam Maliyet</th>
+              <th style={{ textAlign: 'right' }}>Faaliyet Kârı</th>
+              <th style={{ textAlign: 'right' }} title="max(0, faaliyet kârı) × %25">🏛️ Tahmini Vergi</th>
+              <th style={{ textAlign: 'right' }}>✅ NET KÂR</th>
+              <th style={{ textAlign: 'right' }}>Marj</th>
+            </tr>
+          </thead>
+          <tbody>
+            {(gunGunData?.satirlar || []).map((s, i) => {
+              const net = Number(s.net_kar_tl) || 0;
+              const renk = net > 0 ? 'var(--green)' : net < 0 ? 'var(--red)' : 'var(--text3)';
+              return (
+                <tr key={i}>
+                  <td>{fmtDate(s.tarih)}</td>
+                  {!subeId && <td>{s.sube_adi}</td>}
+                  <td style={{ textAlign: 'right', fontWeight: 700 }}>{fmt(s.ciro_tl || 0)}</td>
+                  <td style={{ textAlign: 'right', color: 'var(--text2)' }}>{fmt(s.genel_toplam || 0)}</td>
+                  <td style={{ textAlign: 'right' }}>{fmt(s.faaliyet_kari_tl || 0)}</td>
+                  <td style={{ textAlign: 'right', color: 'var(--text3)' }}>{fmt(s.tahmini_vergi_tl || 0)}</td>
+                  <td style={{ textAlign: 'right', fontWeight: 800, color: renk }}>{fmt(net)}</td>
+                  <td style={{ textAlign: 'right', color: renk }}>{s.net_marj_pct == null ? '—' : `%${s.net_marj_pct}`}</td>
+                </tr>
+              );
+            })}
+            {(!gunGunData?.satirlar || gunGunData.satirlar.length === 0) && (
+              <tr><td colSpan={subeId ? 7 : 8} style={{ textAlign: 'center', color: 'var(--text3)', padding: 16 }}>Veri yok</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+      <div style={{ marginBottom: 16, fontSize: 11, color: 'var(--text3)', lineHeight: 1.5 }}>
+        ⚠️ Faz 1: Maliyet = ürün-aç COGS + personel + anlık gider + kira. Faturalar (elektrik/su/gaz), POS/platform komisyonu, fire, ikram <strong>henüz dahil değil</strong> → net kâr olduğundan <strong>yüksek</strong> görünebilir. Faz 2-3 eklenince gerçeğe iner.
+      </div>
+
       {/* Gün gün maliyet detayı — Ürün Aç (URUN_AC) tüketim verisi × güncel alış fiyatı */}
       <div className="panel-section-hdr" style={{ marginBottom: 12 }}>
-        <span>📅 Gün Gün Maliyet{subeId ? '' : ' — Tüm Şubeler'}</span>
+        <span>📅 Gün Gün Maliyet (Detay){subeId ? '' : ' — Tüm Şubeler'}</span>
         <span style={{ fontSize: 10, color: 'var(--text3)' }}>"Ürün Aç" tüketimi × güncel fiyat — reçete gerekmez</span>
       </div>
       {gunGunData?.fiyat_eksik_kalemler?.length > 0 && (
