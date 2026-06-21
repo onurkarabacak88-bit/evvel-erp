@@ -731,6 +731,16 @@ export default function VardiyaPlanlamaV2() {
   const [raporYukleniyor, setRaporYukleniyor] = useState(false);
   const [devamsizlikIslemId, setDevamsizlikIslemId] = useState(null);
   const [personelMetinFiltre, setPersonelMetinFiltre] = useState('');
+  // ESNEK MOD: açıkken geçiş süresi / günlük-haftalık limit gibi uyarıları otomatik
+  // geçer (override), SADECE gerçek saat çakışmasını engeller. Aynı kişi aynı gün
+  // farklı şubede (çakışmayan saatlerde) tek hamlede atanır.
+  const [esnekMod, setEsnekMod] = useState(() => {
+    try { return localStorage.getItem('vardiya_esnek_mod') === '1'; } catch { return false; }
+  });
+  const esnekModDegistir = useCallback((v) => {
+    setEsnekMod(v);
+    try { localStorage.setItem('vardiya_esnek_mod', v ? '1' : '0'); } catch { /* yok */ }
+  }, []);
   /** null → sol havuz ana `tarih` planıyla aynı; ISO string → o günün personel_havuzu ayrı çekilir */
   const [havuzTarihOverride, setHavuzTarihOverride] = useState(null);
   const [havuzGunPlani, setHavuzGunPlani] = useState(null);
@@ -823,11 +833,11 @@ export default function VardiyaPlanlamaV2() {
     } catch { /* ignore */ }
   }, [subeFilter, havuzTarihOverride, gorunumModu]);
 
-  const tamamlaNormalAtama = useCallback(async (body, transferAtamaId) => {
+  const tamamlaNormalAtama = useCallback(async (body, transferAtamaId, override = false) => {
     if (transferAtamaId) {
       await api(`/vardiya/v2/atama/${transferAtamaId}`, { method: 'DELETE' });
     }
-    await api(V2_ATAMA_POST, { method: 'POST', body: { ...body, override: false } });
+    await api(V2_ATAMA_POST, { method: 'POST', body: { ...body, override } });
     await yukleGun();
     await planGunTazele(body.tarih);
   }, [yukleGun, planGunTazele]);
@@ -851,6 +861,12 @@ export default function VardiyaPlanlamaV2() {
       if (cakismaVar) {
         setHata('Bu personel aynı saatte başka bir slotta zaten atanmış (çakışma).');
         await yukleGun();
+        return;
+      }
+      // ESNEK MOD: çakışma yoksa diğer tüm uyarıları (geçiş süresi, günlük/haftalık
+      // limit) otomatik geç — modal sorma, override ile kaydet.
+      if (esnekMod) {
+        await tamamlaNormalAtama(body, transferAtamaId, true);
         return;
       }
       const needOverride = c.override_gerekir === true
@@ -878,7 +894,7 @@ export default function VardiyaPlanlamaV2() {
       setHata(e.message || 'Atama başarısız');
       await yukleGun();
     }
-  }, [gunPlani, tamamlaNormalAtama, yukleGun]);
+  }, [gunPlani, tamamlaNormalAtama, yukleGun, esnekMod]);
 
   useEffect(() => { yukleSubeler(); }, [yukleSubeler]);
   // Slot kurma derdi olmadan grid'de sürükle-bırak: her şubeye 'Serbest' satırı garantile,
@@ -2947,6 +2963,15 @@ export default function VardiyaPlanlamaV2() {
               )}
             </div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginLeft: 'auto', alignItems: 'center' }}>
+              <label title="Açıkken geçiş süresi / günlük-haftalık limit uyarılarını otomatik geçer; SADECE aynı saatte çakışmayı engeller. Aynı kişiyi aynı gün farklı şubede (çakışmayan saatte) tek hamlede atarsın."
+                style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12, fontWeight: 700,
+                  cursor: 'pointer', padding: '4px 9px', borderRadius: 7,
+                  border: `1px solid ${esnekMod ? 'var(--green)' : 'var(--border)'}`,
+                  background: esnekMod ? 'rgba(46,160,67,0.12)' : 'transparent',
+                  color: esnekMod ? 'var(--green)' : 'var(--text2)' }}>
+                <input type="checkbox" checked={esnekMod} onChange={(e) => esnekModDegistir(e.target.checked)} />
+                ⚡ Esnek mod
+              </label>
               <button type="button" className={gorunumModu === 'gun_matris' ? 'btn btn-sm btn-primary' : 'btn btn-sm btn-secondary'} onClick={() => setGorunumModu('gun_matris')}>Gün × şube</button>
               <button type="button" className={gorunumModu === 'sube_hafta' ? 'btn btn-sm btn-primary' : 'btn btn-sm btn-secondary'} onClick={() => setGorunumModu('sube_hafta')}>Şube × hafta</button>
               <button type="button" className={gorunumModu === 'personel_hafta' ? 'btn btn-sm btn-primary' : 'btn btn-sm btn-secondary'} onClick={() => setGorunumModu('personel_hafta')}>Personel × hafta</button>
