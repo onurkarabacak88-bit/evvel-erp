@@ -221,6 +221,58 @@ def ciro_taslak_onayla(taslak_id: str, body: CiroTaslakOnayTutarlari = CiroTasla
     }
 
 
+class GecmisCiroBody(BaseModel):
+    sube_ad: str = "tema"        # şube adı parçası (ILIKE)
+    tarih: str                   # YYYY-MM-DD (geçmiş gün)
+    nakit: float = 0
+    pos: float = 0
+    online: float = 0
+    uygula: bool = False         # False → sadece önizleme
+
+
+@router.post("/gecmis-gun-gonder")
+def gecmis_gun_ciro_gonder(body: GecmisCiroBody):
+    """Geçmiş bir gün için (kapanışı yapılmamış) ciroyu kaydeder — mevcut onay
+    pipeline'ının çekirdeği (_ciro_insert_aktif_ve_kasa, tarih=geçmiş) ile ciro +
+    kasa + günlük özet üretir. İdempotent: o tarihte aktif ciro varsa eklemez.
+    uygula=False → önizleme (yazmaz)."""
+    sad = f"%{(body.sube_ad or '').strip().lower()}%"
+    nakit = float(body.nakit or 0); pos = float(body.pos or 0); online = float(body.online or 0)
+    toplam = round(nakit + pos + online, 2)
+    if toplam <= 0:
+        raise HTTPException(400, "Tutar 0 — nakit/pos girilmeli")
+    with db() as (conn, cur):
+        cur.execute("SELECT id, ad FROM subeler WHERE LOWER(ad) LIKE %s ORDER BY ad LIMIT 1", (sad,))
+        s = cur.fetchone()
+        if not s:
+            raise HTTPException(404, "Şube bulunamadı")
+        sube_id = s["id"]; sube_ad2 = s["ad"]
+        # İdempotent: o tarihte aktif ciro zaten var mı?
+        cur.execute("SELECT id FROM ciro WHERE sube_id=%s AND tarih=%s::date AND durum='aktif' LIMIT 1",
+                    (sube_id, body.tarih))
+        if cur.fetchone():
+            return {"durum": "zaten_var", "sube": sube_ad2, "tarih": body.tarih,
+                    "mesaj": f"{sube_ad2} {body.tarih} için zaten aktif ciro var — eklenmedi."}
+        if not body.uygula:
+            return {"durum": "onizleme", "sube": sube_ad2, "tarih": body.tarih,
+                    "nakit": nakit, "pos": pos, "online": online, "toplam": toplam,
+                    "mesaj": "ÖNİZLEME — henüz gönderilmedi."}
+        sube = _sube_getir(cur, sube_id)
+        sonuc = _ciro_insert_aktif_ve_kasa(
+            cur, sube, sube_id, nakit, pos, online,
+            f"Geçmiş gün ciro (Evo) — {body.tarih}",
+            audit_etiket="GECMIS_CIRO_EVO", tarih=body.tarih,
+        )
+        try:
+            from rapor_cache import gunluk_ozet_yenile
+            gunluk_ozet_yenile(cur, sube_id, body.tarih, kaynak='gecmis_ciro_evo')
+        except Exception:
+            pass
+    return {"durum": "gonderildi", "sube": sube_ad2, "tarih": body.tarih,
+            "nakit": nakit, "pos": pos, "online": online, "toplam": toplam,
+            "ciro_id": sonuc.get("id"), "mesaj": "Ciro kaydedildi (ciro + kasa + özet)."}
+
+
 @router.post("/{taslak_id}/reddet")
 def ciro_taslak_reddet(taslak_id: str, body: CiroTaslakRedBody):
     neden = (body.neden or "").strip() or "Reddedildi"
