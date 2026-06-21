@@ -564,10 +564,9 @@ function yerelDragSlotDurum(person, slotId, gunTarihi, planGun) {
   if (!person || !planGun?.subeler) return null;
   const row = planSlotSatirBul(planGun, slotId);
   if (!row) return null;
-  const at = person.gun_durumu?.atamalar || [];
-  for (const a of at) {
-    if (yerelAtamaSlotCakisir(a, row.sv)) return 'engel';
-  }
+  // NOT: slotun GENİŞ bandıyla (örn. Serbest 09:00–23:59) yapılan yerel kıyas
+  // yanlış "engel" üretiyordu — gerçek saat saat modalında seçiliyor. Bu yüzden
+  // burada engel döndürmüyoruz; kararı sunucu check'ine (gerçek saatle) bırakıyoruz.
   return 'ok';
 }
 
@@ -1331,9 +1330,10 @@ export default function VardiyaPlanlamaV2() {
       try { e.dataTransfer.dropEffect = 'none'; } catch { /* yok */ }
       return;
     }
-    const pv = dragSlotPreview;
-    const engelMi = pv?.slotId === slotId && pv?.gunTarihi === gunTarihi && pv?.durum === 'engel';
-    e.dataTransfer.dropEffect = engelMi ? 'none' : 'copy';
+    // Drop'u ASLA önizleme yüzünden bloklama: gerçek saat (saat modalı) seçilmeden
+    // çakışma kesin bilinemez (geniş "Serbest" slot bandı yanlış çakışma gösteriyordu).
+    // Gerçek çakışma, saat seçildikten sonra sunucu check'inde yakalanır.
+    e.dataTransfer.dropEffect = 'copy';
     if (previewTimerRef.current) clearTimeout(previewTimerRef.current);
     planlaSlotOnizleme(slotId, gunTarihi);
   }
