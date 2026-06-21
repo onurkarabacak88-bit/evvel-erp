@@ -1234,6 +1234,7 @@ export default function GorevPersonelSayfasi({ oturum, subeBilgi, onCikis }) {
   const [kapanisUygun, setKapanisUygun] = useState(false);
   const [isDevreden, setIsDevreden] = useState(false);
   const [kasaMuhurlu, setKasaMuhurlu] = useState(false);
+  const [kapanisSorumlu, setKapanisSorumlu] = useState(null); // {id, ad}
   const [mesaimAcik, setMesaimAcik] = useState(true);
   // Zorunlu stok sayımı: atanmışsa ekran TAM KİLİTLENİR (sayım dışı her şey kapalı).
   const [sayimGorev, setSayimGorev] = useState(null);
@@ -1280,7 +1281,10 @@ export default function GorevPersonelSayfasi({ oturum, subeBilgi, onCikis }) {
   // kasa mühürlendiyse "Mesaimi Bitir" dışındaki alanlar kilitlenir.
   useEffect(() => {
     api(`/gorev/kapanis-durum?sube_id=${oturum.sube_id}`)
-      .then(r => setKasaMuhurlu(!!r?.kapanis_tamamlandi_bugun))
+      .then(r => {
+        setKasaMuhurlu(!!r?.kapanis_tamamlandi_bugun);
+        if (r?.kapanis_sorumlusu_id) setKapanisSorumlu({ id: String(r.kapanis_sorumlusu_id), ad: r.kapanis_sorumlusu_ad });
+      })
       .catch(() => {});
   }, []); // eslint-disable-line
 
@@ -1480,6 +1484,31 @@ export default function GorevPersonelSayfasi({ oturum, subeBilgi, onCikis }) {
           <div style={{ padding: '12px 16px 0' }}>
             <VardiyaIlerleme vardiyaTip={oturum.vardiya_tip} />
           </div>
+
+          {/* Kapanış sorumlusu — "kasa kimdeyse o kapatır". Mühür atılmadıysa göster. */}
+          {!kasaMuhurlu && kapanisSorumlu && (() => {
+            const benMi = String(kapanisSorumlu.id) === String(oturum.personel_id);
+            return (
+              <div style={{ padding: '12px 16px 0' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px', borderRadius: 14, background: benMi ? 'rgba(200,149,106,0.14)' : '#FFFFFF', border: `1px solid ${benMi ? 'rgba(200,149,106,0.4)' : '#E6DED4'}` }}>
+                  <span style={{ fontSize: 20 }}>🔒</span>
+                  <div style={{ flex: 1 }}>
+                    {benMi ? (
+                      <>
+                        <div style={{ fontSize: 14, fontWeight: 800, color: '#8a5a32' }}>Bugün şubeyi kapatmaktan SEN sorumlusun</div>
+                        <div style={{ fontSize: 12, color: '#9C8E7E', marginTop: 1 }}>Gün sonunda kapanış mührünü sen atacaksın</div>
+                      </>
+                    ) : (
+                      <>
+                        <div style={{ fontSize: 14, fontWeight: 700, color: '#2A241E' }}>Bugün kapatma sorumlusu: {kapanisSorumlu.ad || '—'}</div>
+                        <div style={{ fontSize: 12, color: '#9C8E7E', marginTop: 1 }}>Kasayı en son teslim alan kişi kapatır</div>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
 
           {/* Kapanış Mühür Bandı — kapanış vardiyasında her zaman; diğer vardiyalarda
               sadece tek başına açıp-kapatan (devir süreci olmayan) personel için */}

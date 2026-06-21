@@ -4707,6 +4707,11 @@ def ensure_gorev_tablolari(cur) -> None:
             -- Çıkışın (cikis_ts) GERÇEKLEŞTİĞİ takvim günü — 'tarih' (vardiyanın
             -- atandığı iş günü) ile aynı olmayabilir (örn. gece yarısını geçen
             -- mesai, ertesi gün yapılan kapanış mührü/kasa devri vb.)
+            -- Mühür tipi: NULL/'NORMAL' (personel QR) | 'YONETICI_OVERRIDE' (sahip Cep'ten).
+            -- Denetimde görsel ayrım için (GPT tasarımı: override normalle aynı görünmesin).
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_name='gorev_yoklama' AND column_name='muhur_tipi')
+            THEN ALTER TABLE gorev_yoklama ADD COLUMN muhur_tipi TEXT; END IF;
         END $$;
     """)
     cur.execute("""

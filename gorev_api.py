@@ -1339,7 +1339,25 @@ def kapanis_durum(sube_id: str):
                 (sube_id, tarih),
             )
         bitti = cur.fetchone() is not None
-    return {"kapanis_tamamlandi_bugun": bitti}
+        # Deterministik kapanış sorumlusu (bugünün iş günü için) — personel ekranında
+        # "Bugün kapatma sorumlusu: X" göstermek için. Tarih damgası bugünle eşleşmeli.
+        sorumlu_id = None
+        sorumlu_ad = None
+        try:
+            cur.execute(
+                """SELECT s.aktif_kapanis_sorumlusu_personel_id AS pid, p.ad_soyad
+                   FROM subeler s LEFT JOIN personel p ON p.id::text = s.aktif_kapanis_sorumlusu_personel_id
+                   WHERE s.id=%s AND s.aktif_kapanis_sorumlusu_tarih=%s""",
+                (sube_id, tarih),
+            )
+            _sr = cur.fetchone()
+            if _sr:
+                sorumlu_id = _sr.get("pid")
+                sorumlu_ad = (_sr.get("ad_soyad") or "").strip() or None
+        except Exception:
+            pass
+    return {"kapanis_tamamlandi_bugun": bitti,
+            "kapanis_sorumlusu_id": sorumlu_id, "kapanis_sorumlusu_ad": sorumlu_ad}
 
 
 def otomatik_mesai_kapat(cur, sube_id: str, tarih: str) -> list:
@@ -1533,7 +1551,7 @@ def kapanis_muhurle(body: KapanisMuhurleBody):
         _kapanis_ts = dt_now_tr()
         cur.execute("""
             UPDATE gorev_yoklama
-            SET cikis_ts=%s, cikis_tip='kapalis', cikis_gun=%s
+            SET cikis_ts=%s, cikis_tip='kapalis', cikis_gun=%s, muhur_tipi='NORMAL'
             WHERE id=%s
         """, (_kapanis_ts, _kapanis_ts.date(), row["id"]))
         conn.commit()
@@ -1577,7 +1595,8 @@ def kapanis_muhur_override(body: KapanisMuhurOverrideBody):
         _ts = d.get("cikis_ts") or dt_now_tr()
         _gun = _ts.date() if hasattr(_ts, "date") else _ts
         cur.execute(
-            "UPDATE gorev_yoklama SET cikis_tip='kapalis', cikis_ts=%s, cikis_gun=%s WHERE id=%s",
+            "UPDATE gorev_yoklama SET cikis_tip='kapalis', cikis_ts=%s, cikis_gun=%s, "
+            "muhur_tipi='YONETICI_OVERRIDE' WHERE id=%s",
             (_ts, _gun, d["id"]),
         )
         try:
