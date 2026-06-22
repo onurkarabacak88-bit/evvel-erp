@@ -40,6 +40,7 @@ export default function Maliyet() {
   const [ozelBas, setOzelBas] = useState('');           // Özel aralık başlangıç (YYYY-MM-DD)
   const [ozelBit, setOzelBit] = useState('');           // Özel aralık bitiş
   const [gunGunOnceki, setGunGunOnceki] = useState(null); // önceki eşit pencere (KPI trend için)
+  const [maliyetDetayAcik, setMaliyetDetayAcik] = useState(false); // Toplam Maliyet drill-down
   const [loading, setLoading] = useState(false);
   const [mesaj, setMesaj] = useState(null); // {m, t}
 
@@ -405,13 +406,33 @@ export default function Maliyet() {
           const iyi = artisIyi ? arti : !arti;
           return { ok: arti ? '▲' : '▼', renk: iyi ? 'var(--green)' : 'var(--red)', t: pct == null ? '' : `%${Math.abs(pct).toFixed(0)}` };
         };
-        const kart = (baslik, deger, alt, vurgu, tr) => (
-          <div className="card" style={{ borderTop: vurgu ? `3px solid ${vurgu}` : undefined }}>
+        // Sparkline (kart içi mini trend) — eski→yeni
+        const sparkline = (vals, renk) => {
+          const arr = (vals || []).filter(v => v != null);
+          if (arr.length < 2) return null;
+          const w = 100, h = 22, mn = Math.min(...arr), mx = Math.max(...arr), rng = (mx - mn) || 1;
+          const pts = arr.map((v, i) => `${(i / (arr.length - 1)) * w},${h - ((v - mn) / rng) * (h - 2) - 1}`).join(' ');
+          return <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" style={{ width: '100%', height: 22, marginTop: 4, display: 'block' }}><polyline points={pts} fill="none" stroke={renk} strokeWidth="1.5" vectorEffect="non-scaling-stroke" /></svg>;
+        };
+        const krono = [...rows].reverse();
+        const netSeri = krono.map(s => Number(s.net_kar_tl) || 0);
+        const ciroSeri = krono.map(s => Number(s.ciro_tl) || 0);
+        // Maliyet kovaları (Toplam Maliyet drill-down)
+        const kovalar = [
+          ['Malzeme (ürün-aç)', 'toplam'], ['Personel', 'personel_maliyet_tl'],
+          ['Kira', 'kira_maliyet_tl'], ['Faturalar', 'fatura_maliyet_tl'],
+          ['Abonelikler', 'abonelik_maliyet_tl'], ['POS komisyonu', 'pos_komisyon_tl'],
+          ['Platform komisyonu', 'platform_komisyon_tl'], ['Fire', 'fire_maliyet_tl'],
+          ['İade', 'iade_maliyet_tl'], ['Şube anlık gider', 'sube_anlik_gider_tl'],
+        ].map(([ad, k]) => ({ ad, tutar: topla(k) })).filter(x => x.tutar > 0.005).sort((a, b) => b.tutar - a.tutar);
+        const kart = (baslik, deger, alt, vurgu, tr, spark, tikla) => (
+          <div className="card" onClick={tikla} style={{ borderTop: vurgu ? `3px solid ${vurgu}` : undefined, cursor: tikla ? 'pointer' : undefined }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 6 }}>
               <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 4 }}>{baslik}</div>
               {tr && <span style={{ fontSize: 11, fontWeight: 700, color: tr.renk, whiteSpace: 'nowrap' }}>{tr.ok} {tr.t}</span>}
             </div>
             <div style={{ fontSize: 22, fontWeight: 800, fontFamily: 'var(--font-mono)', color: vurgu || 'var(--text)' }}>{deger}</div>
+            {spark}
             {alt && <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>{alt}</div>}
           </div>
         );
@@ -422,11 +443,30 @@ export default function Maliyet() {
               <span style={{ fontSize: 11, color: 'var(--text3)' }}>{donemLabel}{gunSayisi ? ` · ${gunSayisi} cirolu gün` : ''}{orows.length ? ' · ▲▼ geçen döneme göre' : ''}{subeId ? '' : ' · tüm şubeler'}</span>
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12 }}>
-              {kart('✅ Net Kâr', fmt(netKar), `${gunSayisi} günde`, netRenk, yon(netKar, oNet, true))}
+              {kart('✅ Net Kâr', fmt(netKar), `${gunSayisi} günde`, netRenk, yon(netKar, oNet, true), sparkline(netSeri, netKar >= 0 ? 'var(--green)' : 'var(--red)'))}
               {kart('Marj', marj == null ? '—' : `%${marj.toFixed(1)}`, 'net kâr / ciro', netRenk, marj != null && oMarj != null ? yon(marj, oMarj, true) : null)}
-              {kart('💵 Ciro', fmt(ciro), `günlük ort. ${fmt(ciro / Math.max(1, gunSayisi))}`, undefined, yon(ciro, oCiro, true))}
-              {kart('📉 Toplam Maliyet', fmt(maliyet), 'ürün+kira+komisyon+fire…', undefined, yon(maliyet, oMaliyet, false))}
+              {kart('💵 Ciro', fmt(ciro), `günlük ort. ${fmt(ciro / Math.max(1, gunSayisi))}`, undefined, yon(ciro, oCiro, true), sparkline(ciroSeri, 'var(--accent)'))}
+              {kart('📉 Toplam Maliyet', fmt(maliyet), maliyetDetayAcik ? 'kapat ▴' : 'kırılımı gör ▾', undefined, yon(maliyet, oMaliyet, false), null, () => setMaliyetDetayAcik(v => !v))}
             </div>
+            {maliyetDetayAcik && kovalar.length > 0 && (
+              <div className="card" style={{ marginTop: 10 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 8 }}>📉 Toplam Maliyet kırılımı · {donemLabel}</div>
+                {kovalar.map(k => {
+                  const pct = maliyet > 0 ? (k.tutar / maliyet) * 100 : 0;
+                  return (
+                    <div key={k.ad} style={{ marginBottom: 7 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
+                        <span>{k.ad}</span>
+                        <span style={{ fontFamily: 'var(--font-mono)' }}>{fmt(k.tutar)} · %{pct.toFixed(0)}</span>
+                      </div>
+                      <div style={{ height: 5, background: 'var(--bg3)', borderRadius: 3, overflow: 'hidden', marginTop: 2 }}>
+                        <div style={{ width: `${Math.min(100, pct)}%`, height: '100%', background: 'var(--accent)' }} />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         );
       })()}
