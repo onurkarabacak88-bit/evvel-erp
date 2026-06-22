@@ -14114,6 +14114,45 @@ def ops_maliyet_alis_fiyat_sil(fiyat_id: str):
     return {"success": True, "silinen": silindi}
 
 
+@router.get("/maliyet/kalem-tuketim-hesap")
+def ops_maliyet_kalem_tuketim_hesap(sube_id: str, kalem_kodu: str, baslangic: str):
+    """SALT-OKUR teşhis: bir şubenin bir kalemde, verilen tarihten BUGÜNE kadar
+    operasyon_defter URUN_AC toplamını (depodan kullanıma açılan adet) hesaplar.
+    'Son sayımdan beri ne kadar tüketildi?' sorusunun cevabı (havuz-birleştirme
+    şişmesini gerçek tüketimle ayırmak için)."""
+    import json as _json
+    sid = (sube_id or "").strip()
+    kk = (kalem_kodu or "").strip()
+    toplam_urun_ac = 0
+    gun_sayisi = 0
+    with db() as (conn, cur):
+        cur.execute(
+            """SELECT aciklama FROM operasyon_defter
+               WHERE sube_id=%s AND etiket='URUN_AC' AND tarih >= %s::date
+               ORDER BY olay_ts ASC""",
+            (sid, baslangic),
+        )
+        for row in cur.fetchall():
+            ac = row.get("aciklama") or ""
+            mark = "URUN_AC_JSON:"
+            if mark not in ac:
+                continue
+            try:
+                j = _json.loads(ac.split(mark, 1)[1].strip())
+            except Exception:
+                continue
+            d = j.get("delta") if isinstance(j.get("delta"), dict) else j
+            try:
+                v = int(d.get(kk) or 0)
+            except (TypeError, ValueError):
+                v = 0
+            if v > 0:
+                toplam_urun_ac += v
+                gun_sayisi += 1
+    return {"sube_id": sid, "kalem_kodu": kk, "baslangic": baslangic,
+            "toplam_urun_ac": toplam_urun_ac, "kayit_gun": gun_sayisi}
+
+
 @router.get("/maliyet/eslestirme-liste")
 def ops_maliyet_eslestirme_liste(q: str = ""):
     """Fatura kalem eşleştirme hafızasını listeler (salt-okur, teşhis amaçlı).
