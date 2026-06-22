@@ -13979,6 +13979,69 @@ def ops_maliyet_vergi_ozet(
     }
 
 
+@router.get("/maliyet/kdv-pozisyon")
+def ops_maliyet_kdv_pozisyon(
+    gun: int = Query(30, ge=1, le=92),
+    sube_id: Optional[str] = Query(None),
+):
+    """İZOLE KDV Pozisyonu (P&L DIŞI). Hesaplanan (satış) − İndirilecek (alış) = Ödenecek.
+    KDV ne gelir ne giderdir; devlet adına tahsil/ödeme. KDV %10 (F&B).
+    - Hesaplanan: ciro brüt × 10/110 (SAĞLAM — ciro KDV dahil giriliyor)
+    - İndirilecek: tedarikçi fatura toplamları × 10/110 (TAHMİNİ — fatura net KDV alanı yok)"""
+    _KDV = 0.10
+    _fac = _KDV / (1.0 + _KDV)   # brüt → KDV (dahil tutardan)
+    sf = "AND sube_id::text=%s" if sube_id else ""
+    with db() as (conn, cur):
+        # Hesaplanan KDV — satış (ciro brüt)
+        p = [gun - 1] + ([sube_id] if sube_id else [])
+        cur.execute(
+            f"""SELECT sube_id::text AS sid, COALESCE(SUM(COALESCE(nakit,0)+COALESCE(pos,0)+COALESCE(online,0)),0) AS brut
+                FROM ciro WHERE tarih >= CURRENT_DATE - (%s || ' days')::interval {sf}
+                GROUP BY sube_id""",
+            p,
+        )
+        ciro_map = {r["sid"]: float(r["brut"] or 0) for r in cur.fetchall()}
+        # İndirilecek KDV — alış faturaları (toplam_tutar)
+        p2 = [gun - 1] + ([sube_id] if sube_id else [])
+        cur.execute(
+            f"""SELECT sube_id::text AS sid, COALESCE(SUM(COALESCE(toplam_tutar,0)),0) AS alis
+                FROM tedarikci_fatura
+                WHERE COALESCE(fatura_tarih, olusturma::date) >= CURRENT_DATE - (%s || ' days')::interval {sf}
+                GROUP BY sube_id""",
+            p2,
+        )
+        fatura_map = {r["sid"]: float(r["alis"] or 0) for r in cur.fetchall()}
+        cur.execute("SELECT id::text AS id, ad FROM subeler WHERE COALESCE(aktif,TRUE)=TRUE")
+        ad_map = {r["id"]: r["ad"] for r in cur.fetchall()}
+
+    sids = set(ciro_map) | set(fatura_map)
+    if sube_id:
+        sids = {sube_id}
+    satirlar = []
+    t_hes = t_ind = 0.0
+    for sid in sids:
+        brut = ciro_map.get(sid, 0.0)
+        alis = fatura_map.get(sid, 0.0)
+        hes = brut * _fac
+        ind = alis * _fac
+        satirlar.append({
+            "sube_id": sid, "sube_adi": ad_map.get(sid, sid),
+            "hesaplanan_kdv_tl": round(hes, 2),
+            "indirilecek_kdv_tl": round(ind, 2),
+            "odenecek_kdv_tl": round(hes - ind, 2),
+        })
+        t_hes += hes; t_ind += ind
+    return {
+        "gun": gun, "sube_id": sube_id, "kdv_oran": _KDV,
+        "satirlar": sorted(satirlar, key=lambda x: -x["odenecek_kdv_tl"]),
+        "toplam_hesaplanan_tl": round(t_hes, 2),
+        "toplam_indirilecek_tl": round(t_ind, 2),
+        "toplam_odenecek_tl": round(t_hes - t_ind, 2),
+        "not": "⚠️ Hesaplanan KDV ciro'dan kesin. İndirilecek KDV fatura TOPLAMLARINDAN tahmini "
+               "(fatura ayrı KDV alanı yok, %10 varsayıldı). Kesinlik için faturalarda KDV oranı tutulmalı.",
+    }
+
+
 @router.get("/maliyet/alis-fiyatlari")
 def ops_maliyet_alis_fiyatlari():
     """Tanımlı alış fiyatlarını listeler."""
