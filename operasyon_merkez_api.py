@@ -13792,7 +13792,7 @@ def ops_maliyet_gun_gun(
                 if fiyat is None:
                     fiyat = _fiyat_bul(uid, tarih_str) or (_fiyat_bul(depo_kod, tarih_str) if depo_kod else None)
                 if fiyat is None:
-                    fiyat_eksik.add(depo_kod or uid)
+                    fiyat_eksik.add(uid)  # UID → urun_ad_map ile okunabilir ada çevrilir
                     continue
                 diger_cogs += adet * fiyat
             satir["diger_urun_ac_tl"] = round(diger_cogs, 2)
