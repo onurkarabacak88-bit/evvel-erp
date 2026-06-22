@@ -13944,7 +13944,8 @@ def ops_maliyet_vergi_ozet(
     toplam_kar = 0.0
     for s in subeler:
         try:
-            gg = ops_maliyet_gun_gun(gun=gun, sube_id=s["id"])
+            # bas/bit AÇIKÇA None — yoksa Query() varsayılan nesnesi truthy olup tarih filtresini kırar
+            gg = ops_maliyet_gun_gun(gun=gun, sube_id=s["id"], bas=None, bit=None)
             favok = sum(float(r.get("favok_tl") or 0) for r in gg.get("satirlar", []))
         except Exception:
             favok = 0.0
