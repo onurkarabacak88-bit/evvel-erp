@@ -241,6 +241,8 @@ export default function Maliyet() {
   const _ggCirolu = (gunGunData?.satirlar || []).filter(s => (Number(s.ciro_tl) || 0) > 0);
   const donemKiraTL = _ggCirolu.reduce((a, s) => a + (Number(s.kira_maliyet_tl) || 0), 0);
   const donemPersonelTL = _ggCirolu.reduce((a, s) => a + (Number(s.personel_maliyet_tl) || 0), 0);
+  const donemFaturaTL = _ggCirolu.reduce((a, s) => a + (Number(s.fatura_maliyet_tl) || 0), 0);
+  const donemAbonelikTL = _ggCirolu.reduce((a, s) => a + (Number(s.abonelik_maliyet_tl) || 0), 0);
   const ciroluGunVar = _ggCirolu.length > 0;
 
   // Fiyatlar sekmesindeki forma kalemi doldur + en üste kaydır
@@ -526,6 +528,22 @@ export default function Maliyet() {
             ikon: '👥', acil: true,
             baslik: 'Bu dönemde personel maliyeti yok',
             alt: 'Vardiya/atama görünmüyor → personel gideri 0₺ sayıldı, kâr yüksek görünüyor. Vardiya Planlama’dan ata.',
+            hedef: null,
+          });
+        }
+        if (subeId && ciroluGunVar && donemFaturaTL === 0) {
+          uyarilar.push({
+            ikon: '🧾', acil: true,
+            baslik: 'Fatura gideri girilmemiş (elektrik / su / gaz / internet)',
+            alt: 'Fatura maliyeti 0₺ sayıldı → kâr yüksek görünüyor. Giderler ekranından (sabit gider → fatura) son faturayı gir.',
+            hedef: null,
+          });
+        }
+        if (subeId && ciroluGunVar && donemAbonelikTL === 0) {
+          uyarilar.push({
+            ikon: '🔁', acil: false,
+            baslik: 'Abonelik gideri görünmüyor',
+            alt: 'Aylık abonelik (yazılım, müzik, üyelik vb.) düşmemiş — varsa Giderler ekranından gir; bu şubede abonelik yoksa normal.',
             hedef: null,
           });
         }
