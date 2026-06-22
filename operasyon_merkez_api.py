@@ -13549,15 +13549,24 @@ def ops_maliyet_gun_gun(
         kira_gunluk: Dict[str, float] = {}
         fatura_sabit_gunluk: Dict[str, float] = {}
         abonelik_gunluk: Dict[str, float] = {}
+        # Periyot → GÜN bölücü: tutar / bölücü = günlük pay. Yanlış bölücü = maliyet
+        # şişer/eksilir (3 aylık gideri aylık sanmak 3× şişirir). Tüm periyotlar dahil.
+        _PERIYOT_GUN = {
+            "gunluk": 1.0, "haftalik": 7.0, "aylik": 30.0,
+            "3aylik": 90.0, "6aylik": 180.0, "yillik": 365.0, "1yil": 365.0,
+        }
         try:
             cur.execute(
                 """SELECT sube_id::text AS sid, LOWER(COALESCE(kategori,'')) AS kat,
-                          LOWER(COALESCE(gider_adi,'')) AS ad, COALESCE(tutar,0)::numeric AS tutar
+                          LOWER(COALESCE(gider_adi,'')) AS ad, COALESCE(tutar,0)::numeric AS tutar,
+                          LOWER(COALESCE(periyot,'aylik')) AS periyot
                    FROM sabit_giderler
-                   WHERE aktif = TRUE AND sube_id IS NOT NULL AND COALESCE(periyot,'aylik')='aylik'"""
+                   WHERE aktif = TRUE AND sube_id IS NOT NULL"""
             )
             for r in cur.fetchall():
-                d = dict(r); sidk = d["sid"]; g = float(d.get("tutar") or 0) / 30.0
+                d = dict(r); sidk = d["sid"]
+                bolucu = _PERIYOT_GUN.get(str(d.get("periyot") or "aylik"), 30.0)
+                g = float(d.get("tutar") or 0) / bolucu
                 txt = (d.get("kat") or "") + " " + (d.get("ad") or "")
                 if any(x in txt for x in ("faiz", "finansman", "kredi kart", "kredi taksit", "banka kredisi")):
                     continue  # finansman yükü → operasyonel P&L dışı

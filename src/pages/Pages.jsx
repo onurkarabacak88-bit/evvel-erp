@@ -785,7 +785,10 @@ export function SabitGiderler() {
     }catch(e){toast(e.message,'red');}
   }
 
-  const toplamAylik = liste.filter(g=>g.aktif&&g.periyot==='aylik').reduce((s,g)=>s+(parseFloat(g.tutar)||0),0);
+  // Aylık eşdeğer katsayısı: tutar × katsayı = aylık karşılık (3/6 aylık, yıllık, haftalık dahil)
+  const _PERIYOT_AY = { gunluk:30, haftalik:30/7, aylik:1, '3aylik':1/3, '6aylik':1/6, yillik:1/12, '1yil':1/12 };
+  const _PERIYOT_AD = { gunluk:'Günlük', haftalik:'Haftalık', aylik:'Aylık', '3aylik':'3 Aylık', '6aylik':'6 Aylık', yillik:'Yıllık', '1yil':'Yıllık' };
+  const toplamAylik = liste.filter(g=>g.aktif).reduce((s,g)=>s+((parseFloat(g.tutar)||0)*(_PERIYOT_AY[g.periyot]||1)),0);
   const fmt = v => parseInt(v||0).toLocaleString('tr-TR');
   const ozet = odemeler.ozet || {};
 
@@ -841,7 +844,7 @@ export function SabitGiderler() {
                     : parseInt(g.tutar).toLocaleString('tr-TR') + ' ₺'
                   }
                 </td>
-                <td style={{fontSize:12}}>{g.periyot}</td>
+                <td style={{fontSize:12}}>{_PERIYOT_AD[g.periyot]||g.periyot}</td>
                 <td style={{fontSize:12,color:'var(--text3)'}}>Her ayın {g.odeme_gunu}. günü</td>
                 <td>
                   {g.tip==='degisken'
@@ -1147,7 +1150,7 @@ export function SabitGiderler() {
                 <div className="form-group">
                   <label>Periyot</label>
                   <select value={form.periyot} onChange={e=>setForm({...form,periyot:e.target.value})}>
-                    <option value="aylik">Aylık</option><option value="yillik">Yıllık</option><option value="haftalik">Haftalık</option>
+                    <option value="aylik">Aylık</option><option value="3aylik">3 Aylık</option><option value="6aylik">6 Aylık</option><option value="yillik">Yıllık</option><option value="haftalik">Haftalık</option>
                   </select>
                 </div>
                 <div className="form-group">
