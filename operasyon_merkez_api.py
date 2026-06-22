@@ -13439,9 +13439,12 @@ def ops_maliyet_gun_gun(
             for k, v in delta.items():
                 existing[k] = existing.get(k, 0) + v
             # Havuz-dışı: kalemler[].urun_id → depo kodu; _BAR_KEYS'te OLMAYANLAR
+            # Depo kodu YOKSA (şurup türleri gibi depo_stok_kalem_kodu=None) ürünün KENDİ
+            # UUID'sini kod yap — fiyat urun_alis_fiyat'ta UUID ile kayıtlı, böylece maliyetlenir.
+            # (Havuz kovası "surup"/"sut" zaten fiyatsız=0 → çift sayım olmaz.)
             for uid, adet in _urun_ac_kalem_idler(r["aciklama"] or ""):
-                kod = urun_depo_map.get(uid)
-                if not kod or kod in _BAR_KEYS:
+                kod = urun_depo_map.get(uid) or uid
+                if kod in _BAR_KEYS:
                     continue
                 dm = tuketim_disi_map.setdefault(key, {})
                 dm[kod] = dm.get(kod, 0) + adet
