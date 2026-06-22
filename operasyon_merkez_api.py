@@ -13854,6 +13854,29 @@ def ops_maliyet_gun_gun(
             satir["net_kar_tl"] = round(faaliyet_kari - tahmini_vergi, 2)
             satir["net_marj_pct"] = round((satir["net_kar_tl"] / ciro_v) * 100, 1) if ciro_v > 0 else None
 
+            # ── İZOLE KDV/NET KATMANI (Faz 1, ek alanlar — eski alanlar DEĞİŞMEZ) ──
+            # KDV %10 F&B servis. Ciro KDV DAHİL girilir → net satış = brüt/1.10, biz ayrıştırırız.
+            # Hata olursa eski (brüt) alanlar zaten döner; bu blok sadece EKLER (hata-yutar).
+            try:
+                _KDV = 0.10
+                net_satis = ciro_v / (1.0 + _KDV)
+                hesaplanan_kdv = ciro_v - net_satis
+                brut_kar = net_satis - toplam                      # net satış − ürün maliyeti (COGS)
+                favok = net_satis - toplam_maliyet                 # FAVÖK/EBITDA (faaliyet kârı, vergi öncesi)
+                vergi_net = max(0.0, favok) * TAHMINI_VERGI_ORANI  # şube-bazlı oran Faz 1b'de gelecek
+                net_kar_net = favok - vergi_net
+                satir["kdv_oran"] = _KDV
+                satir["net_satis_tl"] = round(net_satis, 2)
+                satir["hesaplanan_kdv_tl"] = round(hesaplanan_kdv, 2)
+                satir["brut_kar_tl"] = round(brut_kar, 2)
+                satir["brut_marj_pct"] = round((brut_kar / net_satis) * 100, 1) if net_satis > 0 else None
+                satir["favok_tl"] = round(favok, 2)
+                satir["tahmini_vergi_net_tl"] = round(vergi_net, 2)
+                satir["net_kar_net_tl"] = round(net_kar_net, 2)
+                satir["net_marj_net_pct"] = round((net_kar_net / net_satis) * 100, 1) if net_satis > 0 else None
+            except Exception:
+                pass
+
             satirlar.append(satir)
 
     return {
