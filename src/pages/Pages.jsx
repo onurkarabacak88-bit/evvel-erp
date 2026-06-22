@@ -704,7 +704,10 @@ export function SabitGiderler() {
     if(!degisken && (!form.tutar || parseFloat(form.tutar) <= 0)) yeniHatalar.tutar = 'Geçerli bir tutar girin';
     if(!form.odeme_gunu) yeniHatalar.odeme_gunu = 'Zorunlu';
     if(zorunlu && !form.baslangic_tarihi && !duzenleId) yeniHatalar.baslangic_tarihi = 'Zorunlu';
-    if(zorunlu && !form.sube_id) yeniHatalar.sube_id = 'Şube seçimi zorunlu';
+    // Şube: değişken-olmayan (P&L'yi etkileyen) TÜM giderler için zorunlu.
+    // sube_id=NULL gider kâr hesabına HİÇ girmez (backend sube_id IS NOT NULL filtreler)
+    // → şubesiz fatura/abonelik kârı yine şişirir. Bu yüzden şube zorunlu.
+    if(!degisken && !form.sube_id) yeniHatalar.sube_id = 'Şube seçimi zorunlu';
     if(duzenleId && zorunlu && !form.gecerlilik_tarihi) yeniHatalar.gecerlilik_tarihi = 'Hangi aydan itibaren geçerli?';
     setHatalar(yeniHatalar);
     return Object.keys(yeniHatalar).length === 0;
@@ -848,7 +851,14 @@ export function SabitGiderler() {
                       : <span className="badge badge-gray">💵 Nakit</span>
                   }
                 </td>
-                <td style={{fontSize:12}}>{g.sube_adi||'---'}</td>
+                <td style={{fontSize:12}}>
+                  {g.sube_id
+                    ? (g.sube_adi||'---')
+                    : (g.tip==='degisken'
+                        ? '---'
+                        : <span title="Şubesiz gider kâr hesabına girmez — düzenleyip şube seçin" style={{color:'var(--red)',fontWeight:600}}>⚠️ şubesiz</span>)
+                  }
+                </td>
                 <td><span className={`badge ${g.aktif?'badge-green':'badge-gray'}`}>{g.aktif?'Aktif':'Pasif'}</span></td>
                 <td>
                   <div className="flex gap-8">
@@ -1146,11 +1156,12 @@ export function SabitGiderler() {
                   {hatalar.odeme_gunu && <span style={{color:'var(--red)',fontSize:11}}>{hatalar.odeme_gunu}</span>}
                 </div>
                 <div className="form-group">
-                  <label>Şube {ZORUNLU_KATEGORILER.includes(form.kategori)?'*':''}</label>
+                  <label>Şube {form.tip!=='degisken'?'*':''}</label>
                   <select value={form.sube_id} onChange={e=>setForm({...form,sube_id:e.target.value})} style={{borderColor:hatalar.sube_id?'var(--red)':''}}>
                     <option value="">Seçin...</option>{subeler.map(s=><option key={s.id} value={s.id}>{s.ad}</option>)}
                   </select>
                   {hatalar.sube_id && <span style={{color:'var(--red)',fontSize:11}}>{hatalar.sube_id}</span>}
+                  {form.tip!=='degisken' && !hatalar.sube_id && <span style={{color:'var(--text3)',fontSize:10}}>Şubesiz gider kâr hesabına girmez</span>}
                 </div>
                 {!duzenleId && (
                   <div className="form-group">
