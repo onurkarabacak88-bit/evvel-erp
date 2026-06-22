@@ -298,6 +298,40 @@ export default function Maliyet() {
         </div>
       )}
 
+      {/* ── KPI ŞERİDİ — "Bugün para kazandık mı?" (gün-gün veriden hesaplanır) ── */}
+      {(() => {
+        const rows = gunGunData?.satirlar || [];
+        if (!rows.length) return null;
+        const topla = (k) => rows.reduce((a, s) => a + (Number(s[k]) || 0), 0);
+        const ciro = topla('ciro_tl');
+        const maliyet = topla('genel_toplam');
+        const netKar = topla('net_kar_tl');
+        const marj = ciro > 0 ? (netKar / ciro) * 100 : null;
+        const gunSayisi = new Set(rows.map(r => r.tarih)).size || rows.length;
+        const netRenk = netKar > 0 ? 'var(--green)' : netKar < 0 ? 'var(--red)' : undefined;
+        const kart = (baslik, deger, alt, vurgu) => (
+          <div className="card" style={{ borderTop: vurgu ? `3px solid ${vurgu}` : undefined }}>
+            <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 4 }}>{baslik}</div>
+            <div style={{ fontSize: 22, fontWeight: 800, fontFamily: 'var(--font-mono)', color: vurgu || 'var(--text)' }}>{deger}</div>
+            {alt && <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>{alt}</div>}
+          </div>
+        );
+        return (
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
+              <span style={{ fontWeight: 700, fontSize: 14 }}>📊 Genel Bakış</span>
+              <span style={{ fontSize: 11, color: 'var(--text3)' }}>Son {gunSayisi} gün{subeId ? '' : ' · tüm şubeler'}</span>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12 }}>
+              {kart('✅ Net Kâr', fmt(netKar), `${gunSayisi} günde`, netRenk)}
+              {kart('Marj', marj == null ? '—' : `%${marj.toFixed(1)}`, 'net kâr / ciro', netRenk)}
+              {kart('💵 Ciro', fmt(ciro), `günlük ort. ${fmt(ciro / Math.max(1, gunSayisi))}`)}
+              {kart('📉 Toplam Maliyet', fmt(maliyet), 'ürün+kira+komisyon+fire…')}
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Özet kartları */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12, marginBottom: 16 }}>
         <div className="card">
