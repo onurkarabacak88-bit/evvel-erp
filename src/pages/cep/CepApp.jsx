@@ -2953,9 +2953,9 @@ function CepMaliyet({ onGeri }) {
   const [hata, setHata] = useState('');
   const [subeler, setSubeler] = useState([]);
   const [subeId, setSubeId] = useState('');   // '' = tüm şubeler
-  const [seciliGun, setSeciliGun] = useState(() => new Date().toISOString().slice(0, 10));
-
-  const iso = (d) => d.toISOString().slice(0, 10);
+  // YEREL tarih (Y-M-D) — toISOString UTC'ye çevirip gün kaydırıyordu (TR=UTC+3 → ◀ 2 gün atlardı)
+  const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const [seciliGun, setSeciliGun] = useState(() => iso(new Date()));
   const bugunIso = iso(new Date(new Date().setHours(0, 0, 0, 0)));
   const aralik = (dn) => {
     const t = new Date(); t.setHours(0, 0, 0, 0);
