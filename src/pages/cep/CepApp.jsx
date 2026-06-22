@@ -2720,6 +2720,7 @@ function CepMaliyet({ onGeri }) {
   const [donem, setDonem] = useState('7');
   const [rows, setRows] = useState(null);
   const [orows, setOrows] = useState([]);
+  const [fiyatsiz, setFiyatsiz] = useState([]);
   const [hata, setHata] = useState('');
 
   const iso = (d) => d.toISOString().slice(0, 10);
@@ -2744,7 +2745,8 @@ function CepMaliyet({ onGeri }) {
     const ar = aralik(donem), onc = onceki(ar);
     const filt = (d) => (d?.satirlar || []).filter(s => (Number(s.ciro_tl) || 0) > 0);
     api(`/ops/maliyet/gun-gun?bas=${ar.bas}&bit=${ar.bit}`)
-      .then(d => setRows(filt(d))).catch(e => { setHata(e.message || 'Yüklenemedi'); setRows([]); });
+      .then(d => { setRows(filt(d)); setFiyatsiz(d?.fiyat_eksik_kalemler || []); })
+      .catch(e => { setHata(e.message || 'Yüklenemedi'); setRows([]); });
     api(`/ops/maliyet/gun-gun?bas=${onc.bas}&bit=${onc.bit}`)
       .then(d => setOrows(filt(d))).catch(() => setOrows([]));
   }, [donem]);
@@ -2797,6 +2799,14 @@ function CepMaliyet({ onGeri }) {
             {tile('💵 Ciro', fmt(ciro), yon(ciro, oCiro, true))}
             {tile('📉 Toplam Maliyet', fmt(maliyet), yon(maliyet, oMaliyet, false))}
           </div>
+          {fiyatsiz.length > 0 && (
+            <div style={{ margin: '12px 14px 0', padding: '10px 12px', borderRadius: 12, background: 'rgba(239,68,68,0.12)', border: `1px solid rgba(239,68,68,0.4)` }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: C.kirmizi }}>🔴 {fiyatsiz.length} kalem fiyatsız tüketildi</div>
+              <div style={{ fontSize: 11, color: C.t3, marginTop: 3, lineHeight: 1.4 }}>
+                Maliyeti 0₺ sayıldı → kâr olduğundan yüksek görünüyor. Fiyat girişi masaüstü Maliyet → Fiyatlar.
+              </div>
+            </div>
+          )}
           <div style={{ fontSize: 11, color: C.t3, padding: '10px 16px' }}>
             {gun} cirolu gün · tüm şubeler{orows.length ? ' · ▲▼ geçen döneme göre' : ''}
           </div>

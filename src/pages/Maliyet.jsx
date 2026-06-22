@@ -226,6 +226,23 @@ export default function Maliyet() {
     return out;
   })();
 
+  // ── Fiyatı girilmemiş ürünler ──────────────────────────────────────────────
+  // Depo kataloğunda var ama urun_alis_fiyat'ta hiç kaydı olmayan kalemler.
+  // Bunlar tüketilince maliyet 0₺ sayılır → kâr olduğundan yüksek görünür.
+  const fiyatliKodSet = new Set(gruplar.map(g => g.kalem_kodu));
+  const fiyatsizUrunler = stokKalemleri
+    .filter(k => !fiyatliKodSet.has(k.kalem_kodu))
+    .sort((a, b) => (a.kalem_adi || a.kalem_kodu || '').localeCompare(b.kalem_adi || b.kalem_kodu || '', 'tr'));
+  // Dönemde tüketilen ama fiyatsız kalemler (acil — kârı aktif olarak şişiriyor)
+  const tuketilenFiyatsiz = gunGunData?.fiyat_eksik_kalemler || [];
+
+  // Fiyatlar sekmesindeki forma kalemi doldur + en üste kaydır
+  const fiyatFormaDoldur = (kalemKodu, kalemAdi) => {
+    setMaliyetForm(f => ({ ...f, kalem_kodu: kalemKodu, kalem_adi: kalemAdi || kalemKodu, birim_maliyet_tl: '' }));
+    setSekme('fiyatlar');
+    try { window.scrollTo({ top: 0, behavior: 'smooth' }); } catch {}
+  };
+
   const faturaPdfYukle = async (file) => {
     if (!file) return;
     setFaturaYukleniyor(true);
@@ -470,6 +487,44 @@ export default function Maliyet() {
           </div>
         );
       })()}
+
+      {/* ── Genel Bakış: fiyatsız kalem uyarı şeridi (kâr şişme riski) ── */}
+      {sekme === 'genel' && (tuketilenFiyatsiz.length > 0 || fiyatsizUrunler.length > 0) && (
+        <div
+          onClick={() => setSekme('fiyatlar')}
+          style={{
+            marginBottom: 16, padding: '12px 14px', borderRadius: 10, cursor: 'pointer',
+            background: tuketilenFiyatsiz.length > 0 ? 'rgba(239,68,68,0.10)' : 'rgba(234,179,8,0.10)',
+            border: `1px solid ${tuketilenFiyatsiz.length > 0 ? 'rgba(239,68,68,0.45)' : 'rgba(234,179,8,0.45)'}`,
+            display: 'flex', alignItems: 'center', gap: 12,
+          }}
+        >
+          <span style={{ fontSize: 22 }}>{tuketilenFiyatsiz.length > 0 ? '🔴' : '🟡'}</span>
+          <div style={{ flex: 1 }}>
+            {tuketilenFiyatsiz.length > 0 ? (
+              <>
+                <div style={{ fontWeight: 700, fontSize: 14, color: '#ef4444' }}>
+                  Bu dönemde {tuketilenFiyatsiz.length} kalem fiyatsız tüketildi → kâr olduğundan YÜKSEK görünüyor
+                </div>
+                <div style={{ fontSize: 12, color: 'var(--text3)', marginTop: 3 }}>
+                  Maliyeti 0₺ sayıldı: {tuketilenFiyatsiz.slice(0, 6).join(', ')}{tuketilenFiyatsiz.length > 6 ? ` +${tuketilenFiyatsiz.length - 6} kalem` : ''}
+                  {fiyatsizUrunler.length > 0 ? ` · Toplam ${fiyatsizUrunler.length} ürünün fiyatı hiç girilmemiş` : ''}
+                </div>
+              </>
+            ) : (
+              <>
+                <div style={{ fontWeight: 700, fontSize: 14, color: '#eab308' }}>
+                  {fiyatsizUrunler.length} ürünün alış fiyatı hiç girilmemiş
+                </div>
+                <div style={{ fontSize: 12, color: 'var(--text3)', marginTop: 3 }}>
+                  Bu ürünler tüketilirse maliyet 0₺ sayılır ve kâr şişer. Fiyatlar sekmesinden tek tek girebilirsin.
+                </div>
+              </>
+            )}
+          </div>
+          <span style={{ fontSize: 12, color: 'var(--text3)', whiteSpace: 'nowrap' }}>🏷️ Fiyatlar →</span>
+        </div>
+      )}
 
       {/* Özet kartları (Analiz sekmesi) */}
       {sekme === 'analiz' && (
@@ -723,6 +778,45 @@ export default function Maliyet() {
           <option key={k.kalem_kodu} value={k.kalem_kodu}>{k.kalem_adi}</option>
         ))}
       </datalist>
+
+      {/* ── Fiyatı girilmemiş ürünler (eşleştirilmemiş / fiyatsız) ── */}
+      {fiyatsizUrunler.length > 0 && (
+        <>
+          <div className="panel-section-hdr" style={{ marginBottom: 8 }}>
+            <span>⚠️ Fiyatı Girilmemiş Ürünler ({fiyatsizUrunler.length})</span>
+            <span style={{ fontSize: 10, color: 'var(--text3)' }}>Tüketilince maliyet 0₺ sayılır → kâr şişer</span>
+          </div>
+          <div className="card" style={{ marginBottom: 16, padding: 0, overflow: 'hidden' }}>
+            <div style={{ maxHeight: 360, overflowY: 'auto' }}>
+              {fiyatsizUrunler.map((k, i) => {
+                const acil = tuketilenFiyatsiz.includes(k.kalem_adi) || tuketilenFiyatsiz.includes(k.kalem_kodu);
+                return (
+                  <div key={k.kalem_kodu} style={{
+                    display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px',
+                    borderTop: i === 0 ? 'none' : '1px solid var(--border)',
+                    background: acil ? 'rgba(239,68,68,0.07)' : 'transparent',
+                  }}>
+                    <span style={{ fontSize: 13 }}>{acil ? '🔴' : '⚪'}</span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{k.kalem_adi || k.kalem_kodu}</div>
+                      <div style={{ fontSize: 10, color: 'var(--text3)', fontFamily: 'var(--font-mono)' }}>
+                        {k.kalem_kodu}{acil ? ' · bu dönemde tüketildi' : ''}
+                      </div>
+                    </div>
+                    <button className="btn btn-sm" style={{ flexShrink: 0 }} onClick={() => fiyatFormaDoldur(k.kalem_kodu, k.kalem_adi)}>
+                      🏷️ Fiyat gir
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 16 }}>
+            🔴 = bu dönemde tüketilmiş ama fiyatsız (maliyeti aktif olarak eksik hesaplanıyor). ⚪ = katalogda var, henüz fiyat girilmemiş.
+            Faturalardan otomatik gelmeyen ürünlerin fiyatını buradan elle girebilirsin.
+          </div>
+        </>
+      )}
       </>)}
 
       {/* 🔺 Zam Alarmları — eşik üstü fiyat artışı (Akıllı Denetim sinyali) */}
