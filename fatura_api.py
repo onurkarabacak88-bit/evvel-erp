@@ -331,7 +331,8 @@ def _pdf_faturalara_bol(pdf_bytes: bytes) -> List[Dict[str, Any]]:
     sayfalar = _pdf_metin_sayfalar(pdf_bytes)
     faturalar: List[Dict[str, Any]] = []
     for metin in sayfalar:
-        m = re.search(r"Fatura\s*No\s*:?\s*([A-Z0-9]+)", metin or "", re.IGNORECASE)
+        # "Fatura No", "Fatura Numarası", "Fatura No." gibi varyasyonlar; no'da ./- olabilir
+        m = re.search(r"Fatura\s*(?:No|Numaras[ıi]|No\.)\s*:?\s*([A-Z0-9./\-]+)", metin or "", re.IGNORECASE)
         if m:
             _bak = _fatura_bakiye_regex(metin or "")
             faturalar.append({
@@ -347,6 +348,22 @@ def _pdf_faturalara_bol(pdf_bytes: bytes) -> List[Dict[str, Any]]:
             if not faturalar[-1].get("fatura_tarih"):
                 faturalar[-1]["fatura_tarih"] = _fatura_tarih_regex(metin or "")
         # İlk sayfa Fatura No içermiyorsa (kapak vb.) atlanır
+    # FALLBACK: hiç "Fatura No" etiketi yakalanmadı ama PDF'te METİN var
+    # (farklı tedarikçi formatı, ör. DYK) → tüm metni TEK fatura olarak ele al.
+    # Kullanıcı zaten kalemleri tek tek görüp onaylıyor; fatura_no=None (mükerrer
+    # kontrolü atlanır, gerekirse elle silinir). Böylece etiketi standart olmayan
+    # faturalar da "fatura bulunamadı" ile reddedilmez.
+    if not faturalar:
+        birlesik = "\n".join(s for s in sayfalar if s).strip()
+        if birlesik:
+            _bak = _fatura_bakiye_regex(birlesik)
+            faturalar.append({
+                "fatura_no": None,
+                "fatura_tarih": _fatura_tarih_regex(birlesik),
+                "onceki_bakiye": _bak["onceki_bakiye"],
+                "bakiye_dahil": _bak["bakiye_dahil"],
+                "metin": birlesik,
+            })
     return faturalar
 
 
@@ -572,7 +589,13 @@ async def fatura_yukle_pdf(
     except Exception as e:
         raise HTTPException(400, f"PDF okunamadı: {str(e)[:160]}")
     if not faturalar:
-        raise HTTPException(422, "PDF'te fatura bulunamadı ('Fatura No' okunamadı).")
+        raise HTTPException(
+            422,
+            "PDF'te metin bulunamadı — bu bir taranmış/fotoğraf PDF'i olabilir "
+            "(içinde seçilebilir yazı yok). Tedarikçinin gönderdiği gerçek e-fatura "
+            "PDF'ini yükleyin; telefonla çekilmiş fatura için şube panelinden 'foto' "
+            "olarak gönderin (Maliyet PDF yolu vision/OCR kullanmaz).",
+        )
 
     yeni_idler: List[str] = []
     atlanan = 0
