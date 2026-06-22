@@ -14114,6 +14114,267 @@ def ops_maliyet_alis_fiyat_sil(fiyat_id: str):
     return {"success": True, "silinen": silindi}
 
 
+def _medyan(xs: List[float]) -> float:
+    s = sorted(xs)
+    n = len(s)
+    if n == 0:
+        return 0.0
+    m = n // 2
+    return s[m] if n % 2 else (s[m - 1] + s[m]) / 2.0
+
+
+@router.get("/maliyet/guven-skoru")
+def ops_maliyet_guven_skoru(
+    gun: int = Query(7, ge=1, le=31),
+    sube_id: Optional[str] = Query(None),
+):
+    """SALT-OKUR Faz 5 — Güven Skoru + Sapma Motoru. Öneri-only: hiçbir veriyi
+    DEĞİŞTİRMEZ. Maliyetin ne kadar güvenilir olduğunu (kova başına + genel) ve
+    şüpheli sayı/fiyatları (48M/70K plastik bardak olayının kökü) önceden gösterir.
+
+    SAPMA MOTORU iki tip outlier yakalar:
+      - FIYAT_OUTLIER: bir kalemin son alış fiyatı, geçmiş medyanının N katı (karamel→bardak)
+      - ADET_OUTLIER: bir kalemin bir şubedeki stok adedi, diğer şubelerin medyanının N katı (70583)
+    """
+    sid = (sube_id or "").strip() or None
+    FIYAT_KAT = 5.0      # son fiyat > medyan × 5 → şüpheli
+    ADET_KAT = 10.0      # bir şube adedi > diğerlerinin medyanı × 10 → şüpheli
+    ADET_TABAN = 500     # mutlak taban (küçük sayılarda gürültü olmasın)
+    sapmalar: List[Dict[str, Any]] = []
+    kovalar: List[Dict[str, Any]] = []
+
+    with db() as (conn, cur):
+        # ── Şube adları (mesajlar için) ──
+        sube_ad: Dict[str, str] = {}
+        try:
+            cur.execute("SELECT id::text AS sid, ad FROM subeler")
+            for r in cur.fetchall():
+                sube_ad[r["sid"]] = r["ad"]
+        except Exception:
+            pass
+
+        # ── SAPMA 1: Fiyat outlier (urun_alis_fiyat geçmişi) ──
+        try:
+            cur.execute(
+                """SELECT kalem_kodu, kalem_adi, birim_maliyet_tl, gecerli_baslangic
+                   FROM urun_alis_fiyat
+                   WHERE birim_maliyet_tl > 0
+                   ORDER BY kalem_kodu, gecerli_baslangic ASC"""
+            )
+            fiyat_grup: Dict[str, List[Tuple[str, str, float]]] = {}
+            for r in cur.fetchall():
+                d = dict(r)
+                fiyat_grup.setdefault(str(d["kalem_kodu"]), []).append(
+                    (str(d.get("kalem_adi") or ""), str(d.get("gecerli_baslangic") or ""), float(d.get("birim_maliyet_tl") or 0))
+                )
+            for kod, lst in fiyat_grup.items():
+                if len(lst) < 2:
+                    continue
+                son_ad, son_tar, son_fiyat = lst[-1]
+                gecmis = [f for (_, _, f) in lst[:-1] if f > 0]
+                med = _medyan(gecmis)
+                if med > 0 and son_fiyat > med * FIYAT_KAT:
+                    kat = round(son_fiyat / med, 1)
+                    sapmalar.append({
+                        "tip": "FIYAT_OUTLIER",
+                        "kalem_kodu": kod, "kalem_adi": son_ad,
+                        "deger": round(son_fiyat, 2), "beklenen": round(med, 2), "kat": kat,
+                        "siddet": "kritik" if kat >= 20 else "orta",
+                        "mesaj": f"{son_ad}: son alış {son_fiyat:.2f}₺ = geçmiş medyanın ({med:.2f}₺) {kat}× üstü — yanlış fatura eşleştirmesi olabilir",
+                    })
+        except Exception:
+            pass
+
+        # ── SAPMA 2: Adet outlier (çapraz-şube stok karşılaştırma) ──
+        try:
+            cur.execute(
+                """SELECT kalem_kodu, kalem_adi, sube_id::text AS sid, mevcut_adet
+                   FROM sube_depo_stok WHERE COALESCE(mevcut_adet,0) > 0"""
+            )
+            adet_grup: Dict[str, List[Tuple[str, str, float]]] = {}
+            for r in cur.fetchall():
+                d = dict(r)
+                adet_grup.setdefault(str(d["kalem_kodu"]), []).append(
+                    (str(d["sid"]), str(d.get("kalem_adi") or ""), float(d.get("mevcut_adet") or 0))
+                )
+            for kod, lst in adet_grup.items():
+                if len(lst) < 2:
+                    continue
+                for i, (b_sid, b_ad, b_adet) in enumerate(lst):
+                    digerleri = [a for j, (_, _, a) in enumerate(lst) if j != i]
+                    med = _medyan(digerleri)
+                    if med > 0 and b_adet > med * ADET_KAT and b_adet >= ADET_TABAN:
+                        kat = round(b_adet / med, 1)
+                        sapmalar.append({
+                            "tip": "ADET_OUTLIER",
+                            "kalem_kodu": kod, "kalem_adi": b_ad,
+                            "sube_id": b_sid, "sube_ad": sube_ad.get(b_sid, b_sid),
+                            "deger": int(b_adet), "beklenen": int(med), "kat": kat,
+                            "siddet": "kritik" if kat >= 20 else "orta",
+                            "mesaj": f"{b_ad} @ {sube_ad.get(b_sid, b_sid)}: {int(b_adet)} adet = diğer şubelerin medyanının ({int(med)}) {kat}× üstü — sayım/birleştirme hatası olabilir",
+                        })
+        except Exception:
+            pass
+
+        sapmalar.sort(key=lambda x: (0 if x.get("siddet") == "kritik" else 1, -float(x.get("kat") or 0)))
+
+        # ── GÜVEN SKORU (kova başına) ──
+        aktif_subeler: List[str] = []
+        try:
+            if sid:
+                aktif_subeler = [sid]
+            else:
+                cur.execute("SELECT id::text AS sid FROM subeler WHERE COALESCE(aktif, TRUE) = TRUE")
+                aktif_subeler = [r["sid"] for r in cur.fetchall()]
+        except Exception:
+            aktif_subeler = [sid] if sid else []
+        n_sube = max(1, len(aktif_subeler))
+        sube_filt = "AND sube_id::text = %s" if sid else ""
+
+        def _skor_durum(s: float) -> str:
+            return "iyi" if s >= 85 else ("orta" if s >= 60 else "zayif")
+
+        # ciro kovası — kapsama (kaç şube-gün ciro var / beklenen)
+        ciro_skor = 0.0; ciro_msg = "ciro verisi yok"
+        ciro_gun_set: set = set()
+        try:
+            p = [gun - 1] + ([sid] if sid else [])
+            cur.execute(
+                f"""SELECT sube_id::text AS sid, tarih::text AS t FROM ciro
+                    WHERE tarih >= CURRENT_DATE - (%s || ' days')::interval {sube_filt}""",
+                p,
+            )
+            for r in cur.fetchall():
+                ciro_gun_set.add((r["sid"], r["t"]))
+            beklenen = n_sube * gun
+            kapsama = min(1.0, len(ciro_gun_set) / beklenen) if beklenen else 0.0
+            ciro_skor = round(kapsama * 100, 0)
+            ciro_msg = f"{len(ciro_gun_set)}/{beklenen} şube-gün ciro girili"
+        except Exception:
+            pass
+        kovalar.append({"kova": "ciro", "baslik": "Ciro", "skor": ciro_skor,
+                        "durum": _skor_durum(ciro_skor), "mesaj": ciro_msg})
+
+        # COGS (ürün-aç) kovası — ciro olan günlerde ürün-aç var mı
+        cogs_skor = 0.0; cogs_msg = "ürün-aç verisi yok"
+        try:
+            p = [gun - 1] + ([sid] if sid else [])
+            cur.execute(
+                f"""SELECT sube_id::text AS sid, tarih::text AS t FROM operasyon_defter
+                    WHERE etiket='URUN_AC' AND tarih >= CURRENT_DATE - (%s || ' days')::interval {sube_filt}""",
+                p,
+            )
+            urunac_set = {(r["sid"], r["t"]) for r in cur.fetchall()}
+            ciro_pozitif = ciro_gun_set
+            if ciro_pozitif:
+                eksik = [g for g in ciro_pozitif if g not in urunac_set]
+                oran = 1.0 - (len(eksik) / len(ciro_pozitif))
+                cogs_skor = round(oran * 100, 0)
+                cogs_msg = (f"{len(eksik)} şube-günde ciro VAR ama ürün-aç YOK (COGS eksik)"
+                            if eksik else "ciro olan tüm günlerde ürün-aç bildirimi var")
+        except Exception:
+            pass
+        kovalar.append({"kova": "cogs", "baslik": "Ürün-Aç (COGS)", "skor": cogs_skor,
+                        "durum": _skor_durum(cogs_skor), "mesaj": cogs_msg})
+
+        # kira kovası — kaç aktif şubede kira girili
+        kira_skor = 0.0; kira_msg = "kira girili değil"
+        try:
+            cur.execute(
+                """SELECT DISTINCT sube_id::text AS sid FROM sabit_giderler
+                   WHERE aktif = TRUE AND sube_id IS NOT NULL
+                     AND (LOWER(COALESCE(kategori,'')) LIKE %s OR LOWER(COALESCE(gider_adi,'')) LIKE %s)""",
+                ('%kira%', '%kira%'),
+            )
+            kira_subeler = {r["sid"] for r in cur.fetchall()}
+            ilgili = set(aktif_subeler)
+            var = len(ilgili & kira_subeler)
+            kira_skor = round((var / max(1, len(ilgili))) * 100, 0)
+            kira_msg = f"{var}/{len(ilgili)} şubede kira girili" + ("" if var == len(ilgili) else " — eksik şubeler kira girmeli")
+        except Exception:
+            pass
+        kovalar.append({"kova": "kira", "baslik": "Kira", "skor": kira_skor,
+                        "durum": _skor_durum(kira_skor), "mesaj": kira_msg})
+
+        # faturalar kovası — en güncel kira-dışı sabit giderin yaşı
+        fatura_skor = 60.0; fatura_msg = "kira-dışı sabit gider (elektrik/su/gaz) girili değil"
+        try:
+            cur.execute(
+                """SELECT MAX(COALESCE(guncelleme, olusturma)) AS son
+                   FROM sabit_giderler WHERE aktif = TRUE
+                     AND LOWER(COALESCE(kategori,'')) NOT LIKE %s
+                     AND LOWER(COALESCE(gider_adi,'')) NOT LIKE %s""",
+                ('%kira%', '%kira%'),
+            )
+            row = cur.fetchone()
+            if row and row.get("son"):
+                yas = (datetime.now(row["son"].tzinfo) - row["son"]).days if hasattr(row["son"], "tzinfo") else None
+                if yas is None:
+                    fatura_skor = 80.0; fatura_msg = "fatura kalemleri girili"
+                elif yas <= 45:
+                    fatura_skor = 100.0; fatura_msg = f"en güncel fatura {yas} günlük (taze)"
+                elif yas <= 90:
+                    fatura_skor = 70.0; fatura_msg = f"en güncel fatura {yas} günlük (eskimeye başladı)"
+                else:
+                    fatura_skor = 40.0; fatura_msg = f"en güncel fatura {yas} günlük (bayat — güncellenmeli)"
+        except Exception:
+            pass
+        kovalar.append({"kova": "faturalar", "baslik": "Faturalar", "skor": fatura_skor,
+                        "durum": _skor_durum(fatura_skor), "mesaj": fatura_msg})
+
+        # komisyon kovası — deterministik (oran × ciro), her zaman yüksek
+        kom_skor = 100.0
+        try:
+            cur.execute("SELECT COUNT(*) AS n FROM subeler WHERE COALESCE(pos_oran,0) > 0")
+            n_oran = (cur.fetchone() or {}).get("n", 0)
+            kom_msg = f"{n_oran} şubede POS komisyon oranı girili (deterministik)"
+            if not n_oran:
+                kom_skor = 50.0; kom_msg = "POS komisyon oranı girili değil"
+        except Exception:
+            kom_msg = "komisyon deterministik"
+        kovalar.append({"kova": "komisyon", "baslik": "POS/Platform Komisyonu", "skor": kom_skor,
+                        "durum": _skor_durum(kom_skor), "mesaj": kom_msg})
+
+        # fire kovası — dönemde fire bildirimi var mı
+        fire_skor = 60.0; fire_msg = "dönemde fire/iade bildirimi yok (belirsiz — fire olmuyor olabilir)"
+        try:
+            p = [gun - 1] + ([sid] if sid else [])
+            cur.execute(
+                f"""SELECT COUNT(*) AS n FROM sube_fire_bildirim
+                    WHERE tarih >= CURRENT_DATE - (%s || ' days')::interval {sube_filt}""",
+                p,
+            )
+            nf = (cur.fetchone() or {}).get("n", 0)
+            if nf:
+                fire_skor = 100.0; fire_msg = f"dönemde {nf} fire/iade bildirimi kayıtlı"
+        except Exception:
+            pass
+        kovalar.append({"kova": "fire", "baslik": "Fire / İade", "skor": fire_skor,
+                        "durum": _skor_durum(fire_skor), "mesaj": fire_msg})
+
+    # ── GENEL SKOR (ağırlıklı) ──
+    agirlik = {"ciro": 0.30, "cogs": 0.30, "kira": 0.10, "faturalar": 0.10,
+               "komisyon": 0.10, "fire": 0.10}
+    genel = 0.0
+    for k in kovalar:
+        genel += float(k["skor"]) * agirlik.get(k["kova"], 0.0)
+    # sapma varsa genel skoru bir miktar düşür (kritik sapma maliyeti güvenilmez yapar)
+    kritik_sapma = sum(1 for s in sapmalar if s.get("siddet") == "kritik")
+    genel_ham = round(genel, 0)
+    genel_son = max(0, round(genel - kritik_sapma * 10, 0))
+
+    return {
+        "gun": gun, "sube_id": sid,
+        "genel_skor": genel_son,
+        "genel_skor_ham": genel_ham,
+        "kovalar": kovalar,
+        "sapmalar": sapmalar,
+        "sapma_sayisi": len(sapmalar),
+        "kritik_sapma": kritik_sapma,
+        "ozet": (f"{genel_son}/100" + (f" — {len(sapmalar)} şüpheli değer (sapma motoru)" if sapmalar else " — sapma yok")),
+    }
+
+
 @router.get("/maliyet/kalem-tuketim-hesap")
 def ops_maliyet_kalem_tuketim_hesap(sube_id: str, kalem_kodu: str, baslangic: str):
     """SALT-OKUR teşhis: bir şubenin bir kalemde, verilen tarihten BUGÜNE kadar
