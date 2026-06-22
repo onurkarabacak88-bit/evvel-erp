@@ -13500,7 +13500,8 @@ def ops_maliyet_gun_gun(
         # Operasyonel P&L: Faaliyet Kârı = Ciro − (COGS + personel + anlık gider + kira).
         # Tahmini kurumlar vergisi = max(0, kâr) × %25, AYRI gösterilir (KDV kârdan DÜŞÜLMEZ).
         TAHMINI_VERGI_ORANI = 0.25
-        ciro_map: Dict[Tuple[str, str], float] = {}
+        # Ciro — nakit/pos/online AYRI (komisyon hesabı için pos+online lazım)
+        ciro_map: Dict[Tuple[str, str], Dict[str, float]] = {}
         try:
             _cp: list = [gun - 1]
             _cf = ""
@@ -13508,28 +13509,48 @@ def ops_maliyet_gun_gun(
                 _cf = "AND sube_id = %s"; _cp.append(sube_id)
             cur.execute(
                 f"""SELECT sube_id::text AS sid, tarih::text AS t,
-                           (COALESCE(nakit,0)+COALESCE(pos,0)+COALESCE(online,0))::numeric AS ciro
+                           COALESCE(nakit,0)::numeric AS nakit, COALESCE(pos,0)::numeric AS pos,
+                           COALESCE(online,0)::numeric AS online
                     FROM ciro
                     WHERE tarih >= CURRENT_DATE - (%s || ' days')::interval {_cf}""",
                 _cp,
             )
             for r in cur.fetchall():
-                d = dict(r); ciro_map[(d["sid"], d["t"])] = float(d.get("ciro") or 0)
+                d = dict(r)
+                ciro_map[(d["sid"], d["t"])] = {
+                    "ciro": float(d.get("nakit") or 0) + float(d.get("pos") or 0) + float(d.get("online") or 0),
+                    "pos": float(d.get("pos") or 0), "online": float(d.get("online") or 0),
+                }
         except Exception:
             pass
+        # Şube POS / online (platform) komisyon oranları (subeler.pos_oran / online_oran, %)
+        sube_oran: Dict[str, Dict[str, float]] = {}
+        try:
+            cur.execute("SELECT id::text AS sid, COALESCE(pos_oran,0)::numeric AS po, COALESCE(online_oran,0)::numeric AS oo FROM subeler")
+            for r in cur.fetchall():
+                d = dict(r); sube_oran[d["sid"]] = {"pos": float(d.get("po") or 0), "online": float(d.get("oo") or 0)}
+        except Exception:
+            pass
+        # Sabit giderler (şube bazlı, aylık) → günlük. Kira AYRI tutulur (Faz 1);
+        # kira-DIŞI sabit giderler (elektrik/su/gaz/internet/abonelik) Faz 2 fatura kovasıdır.
         kira_gunluk: Dict[str, float] = {}
+        fatura_sabit_gunluk: Dict[str, float] = {}
         try:
             cur.execute(
-                """SELECT sube_id::text AS sid, COALESCE(SUM(tutar),0)::numeric AS aylik
+                """SELECT sube_id::text AS sid,
+                          (LOWER(kategori) LIKE %s OR LOWER(gider_adi) LIKE %s) AS kira_mi,
+                          COALESCE(SUM(tutar),0)::numeric AS aylik
                    FROM sabit_giderler
-                   WHERE aktif = TRUE AND sube_id IS NOT NULL
-                     AND (LOWER(kategori) LIKE %s OR LOWER(gider_adi) LIKE %s)
-                     AND COALESCE(periyot,'aylik')='aylik'
-                   GROUP BY sube_id""",
+                   WHERE aktif = TRUE AND sube_id IS NOT NULL AND COALESCE(periyot,'aylik')='aylik'
+                   GROUP BY sube_id, kira_mi""",
                 ('%kira%', '%kira%'),
             )
             for r in cur.fetchall():
-                d = dict(r); kira_gunluk[d["sid"]] = float(d.get("aylik") or 0) / 30.0
+                d = dict(r); g = float(d.get("aylik") or 0) / 30.0
+                if d.get("kira_mi"):
+                    kira_gunluk[d["sid"]] = kira_gunluk.get(d["sid"], 0.0) + g
+                else:
+                    fatura_sabit_gunluk[d["sid"]] = fatura_sabit_gunluk.get(d["sid"], 0.0) + g
         except Exception:
             pass
 
@@ -13587,15 +13608,30 @@ def ops_maliyet_gun_gun(
                 sube_gider = anlik_gider_map.get((sid, tarih_str), 0.0)
             satir["sube_anlik_gider_tl"] = round(sube_gider, 2)
 
-            # ── Kira (günlük) + Ciro + P&L (faaliyet kârı − tahmini vergi = net kâr) ──
+            # ── Ciro + Faz1 (kira) + Faz2 (faturalar + POS/platform komisyon) + P&L ──
             if sid is None:
                 kira_g = sum(kira_gunluk.values())
-                ciro_v = sum(v for (ks, kt), v in ciro_map.items() if kt == tarih_str)
+                fatura_g = sum(fatura_sabit_gunluk.values())
+                _cm = [v for (ks, kt), v in ciro_map.items() if kt == tarih_str]
+                ciro_v = sum(x["ciro"] for x in _cm)
+                pos_komisyon = sum(x["pos"] * (sube_oran.get(ks, {}).get("pos", 0) / 100.0)
+                                   for (ks, kt), x in ciro_map.items() if kt == tarih_str)
+                platform_komisyon = sum(x["online"] * (sube_oran.get(ks, {}).get("online", 0) / 100.0)
+                                        for (ks, kt), x in ciro_map.items() if kt == tarih_str)
             else:
                 kira_g = kira_gunluk.get(sid, 0.0)
-                ciro_v = ciro_map.get((sid, tarih_str), 0.0)
+                fatura_g = fatura_sabit_gunluk.get(sid, 0.0)
+                _c = ciro_map.get((sid, tarih_str), {"ciro": 0, "pos": 0, "online": 0})
+                ciro_v = _c["ciro"]
+                _or = sube_oran.get(sid, {"pos": 0, "online": 0})
+                pos_komisyon = _c["pos"] * (_or["pos"] / 100.0)
+                platform_komisyon = _c["online"] * (_or["online"] / 100.0)
             satir["kira_maliyet_tl"] = round(kira_g, 2)
-            toplam_maliyet = toplam + pg["maliyet"] + sube_gider + kira_g
+            satir["fatura_maliyet_tl"] = round(fatura_g, 2)
+            satir["pos_komisyon_tl"] = round(pos_komisyon, 2)
+            satir["platform_komisyon_tl"] = round(platform_komisyon, 2)
+            toplam_maliyet = (toplam + pg["maliyet"] + sube_gider + kira_g
+                              + fatura_g + pos_komisyon + platform_komisyon)
             satir["genel_toplam"] = round(toplam_maliyet, 2)
             satir["ciro_tl"] = round(ciro_v, 2)
             faaliyet_kari = ciro_v - toplam_maliyet
@@ -13603,7 +13639,6 @@ def ops_maliyet_gun_gun(
             satir["faaliyet_kari_tl"] = round(faaliyet_kari, 2)
             satir["tahmini_vergi_tl"] = round(tahmini_vergi, 2)
             satir["net_kar_tl"] = round(faaliyet_kari - tahmini_vergi, 2)
-            # Operasyonel marj (net kâr / ciro)
             satir["net_marj_pct"] = round((satir["net_kar_tl"] / ciro_v) * 100, 1) if ciro_v > 0 else None
 
             satirlar.append(satir)

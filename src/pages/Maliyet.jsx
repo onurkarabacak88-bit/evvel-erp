@@ -357,7 +357,7 @@ export default function Maliyet() {
         </table>
       </div>
       <div style={{ marginBottom: 16, fontSize: 11, color: 'var(--text3)', lineHeight: 1.5 }}>
-        ⚠️ Faz 1: Maliyet = ürün-aç COGS + personel + anlık gider + kira. Faturalar (elektrik/su/gaz), POS/platform komisyonu, fire, ikram <strong>henüz dahil değil</strong> → net kâr olduğundan <strong>yüksek</strong> görünebilir. Faz 2-3 eklenince gerçeğe iner.
+        ✅ Faz 2: Maliyet = ürün-aç COGS + personel + anlık gider + kira + <strong>faturalar (sabit giderler /30)</strong> + <strong>POS komisyonu</strong> (kart cirosu × şube oranı) + <strong>platform komisyonu</strong> (online cirosu × oran). ⚠️ Fire, ikram, personel tüketimi, iade <strong>henüz YOK</strong> (Faz 3). POS/platform için şube oranları (pos_oran/online_oran) girili olmalı.
       </div>
 
       {/* Gün gün maliyet detayı — Ürün Aç (URUN_AC) tüketim verisi × güncel alış fiyatı */}
