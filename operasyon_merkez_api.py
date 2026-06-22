@@ -3284,6 +3284,38 @@ def _urun_ac_delta_parse(aciklama: str) -> Dict[str, int]:
     return result
 
 
+def _urun_ac_kalem_idler(aciklama: str) -> List[Tuple[str, int]]:
+    """URUN_AC kalemler[] dizisinden (urun_id, adet) çiftlerini çıkarır — HAVUZ FİLTRESİ YOK.
+    Maliyet motorunun 'ne açıldıysa onu maliyetle' (peçete/kahve türü/özel şurup dahil)
+    kod-bağımsız hesabı için. urun_id → siparis_urun.depo_stok_kalem_kodu → fiyat zinciri."""
+    raw = (aciklama or "")
+    if raw.startswith("URUN_AC_JSON:"):
+        raw = raw[len("URUN_AC_JSON:"):]
+    if " | " in raw:
+        raw = raw.split(" | ", 1)[0].strip()
+    try:
+        obj = json.loads(raw)
+    except Exception:
+        return []
+    if not isinstance(obj, dict):
+        return []
+    kalemler = obj.get("kalemler") or []
+    if not isinstance(kalemler, list):
+        return []
+    out: List[Tuple[str, int]] = []
+    for it in kalemler:
+        if not isinstance(it, dict):
+            continue
+        uid = str(it.get("urun_id") or "").strip()
+        try:
+            adet = max(0, int(it.get("adet") or 0))
+        except (TypeError, ValueError):
+            adet = 0
+        if uid and adet > 0:
+            out.append((uid, adet))
+    return out
+
+
 def _urun_ac_payload_parse(aciklama: str) -> Dict[str, Any]:
     """
     URUN_AC satırındaki JSON payload'ını güvenli parse eder.
@@ -13362,13 +13394,32 @@ def ops_maliyet_gun_gun(
             """,
             params,
         )
+        _urun_ac_rows = cur.fetchall()
+        # urun_id → depo_stok_kalem_kodu (havuz-dışı kalemleri maliyetlemek için)
+        urun_depo_map: Dict[str, str] = {}
+        try:
+            cur.execute("SELECT id::text AS id, depo_stok_kalem_kodu FROM siparis_urun WHERE depo_stok_kalem_kodu IS NOT NULL")
+            for r in cur.fetchall():
+                d = dict(r)
+                urun_depo_map[d["id"]] = str(d["depo_stok_kalem_kodu"])
+        except Exception:
+            pass
         tuketim_map: Dict[Tuple[str, str], Dict[str, int]] = {}
-        for r in cur.fetchall():
+        # Havuz DIŞI tüketim (peçete/kahve türü/özel şurup vb.) — kod-bağımsız maliyet kovası
+        tuketim_disi_map: Dict[Tuple[str, str], Dict[str, int]] = {}
+        for r in _urun_ac_rows:
             key = (r["sube_id"], r["tarih"])
             delta = _urun_ac_delta_parse(r["aciklama"] or "")
             existing = tuketim_map.setdefault(key, {k: 0 for k in _BAR_KEYS})
             for k, v in delta.items():
                 existing[k] = existing.get(k, 0) + v
+            # Havuz-dışı: kalemler[].urun_id → depo kodu; _BAR_KEYS'te OLMAYANLAR
+            for uid, adet in _urun_ac_kalem_idler(r["aciklama"] or ""):
+                kod = urun_depo_map.get(uid)
+                if not kod or kod in _BAR_KEYS:
+                    continue
+                dm = tuketim_disi_map.setdefault(key, {})
+                dm[kod] = dm.get(kod, 0) + adet
 
         # Şube adları
         sube_adlari: Dict[str, str] = {}
@@ -13678,6 +13729,31 @@ def ops_maliyet_gun_gun(
                     kolon_toplam += adet * fiyat
                 satir[kolon_kod] = round(kolon_toplam, 2)
                 toplam += kolon_toplam
+
+            # Havuz DIŞI ürün-aç maliyeti (peçete/kahve türü/özel şurup — kod-bağımsız,
+            # urun_id→depo kodu→son fiyat). Motorun "ne açıldıysa onu maliyetle" düzeltmesi.
+            if sid is None:
+                disi: Dict[str, int] = {}
+                for (k_sid, k_tarih), m in tuketim_disi_map.items():
+                    if k_tarih != tarih_str:
+                        continue
+                    for k, v in m.items():
+                        disi[k] = disi.get(k, 0) + v
+            else:
+                disi = tuketim_disi_map.get((sid, tarih_str), {})
+            diger_cogs = 0.0
+            for kod, adet in disi.items():
+                if adet <= 0:
+                    continue
+                fiyat = fiyat_son_by_kod.get(kod)
+                if fiyat is None:
+                    fiyat = _fiyat_bul(kod, tarih_str)
+                if fiyat is None:
+                    fiyat_eksik.add(kod)
+                    continue
+                diger_cogs += adet * fiyat
+            satir["diger_urun_ac_tl"] = round(diger_cogs, 2)
+            toplam += diger_cogs
             satir["toplam"] = round(toplam, 2)
 
             pg = personel_gun_map.get(tarih_str, {"sayisi": 0, "saat": 0.0, "maliyet": 0.0})
