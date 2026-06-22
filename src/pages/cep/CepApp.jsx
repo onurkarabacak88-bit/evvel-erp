@@ -2825,12 +2825,75 @@ function CepKartlar({ onGeri }) {
   const [hata, setHata] = useState('');
   const [detay, setDetay] = useState(null);       // seçilen kart (hareketler modalı)
   const [hareketler, setHareketler] = useState(null);
+  // ── Ekstre PDF yükleme (WhatsApp'tan gelen ekstreyi telefondan seç) ──
+  const [ekstrePanel, setEkstrePanel] = useState(false);
+  const [yukBusy, setYukBusy] = useState(false);
+  const [ekstreSonuc, setEkstreSonuc] = useState(null);
+  const [ekstreHata, setEkstreHata] = useState('');
+  const [impBusy, setImpBusy] = useState(false);
+  const [impSonuc, setImpSonuc] = useState(null);
+
+  const kartlariYenile = () => api('/kartlar')
+    .then(r => setListe(Array.isArray(r) ? r : (r?.kartlar || [])))
+    .catch(() => {});
 
   useEffect(() => {
     api('/kartlar')
       .then(r => setListe(Array.isArray(r) ? r : (r?.kartlar || [])))
       .catch(e => { setHata(e.message || 'Yüklenemedi'); setListe([]); });
   }, []);
+
+  const ekstreYukle = async (file) => {
+    if (!file) return;
+    setEkstreHata(''); setEkstreSonuc(null); setImpSonuc(null); setYukBusy(true);
+    try {
+      const fd = new FormData();
+      fd.append('dosya', file);
+      const headers = {};
+      try {
+        const mut = (localStorage.getItem('evvelMerkezMutasyonKey') || '').trim();
+        if (mut) headers['X-Evvel-Merkez-Key'] = mut;
+      } catch { /* ignore */ }
+      const res = await fetch('/api/kartlar/ekstre-yukle', { method: 'POST', headers, body: fd });
+      const data = await res.json();
+      if (!res.ok) throw new Error((data && data.detail) || 'Ayrıştırılamadı');
+      setEkstreSonuc(data);
+    } catch (e) { setEkstreHata(e.message || 'Hata'); }
+    finally { setYukBusy(false); }
+  };
+
+  const eksikleriAktar = async () => {
+    const k = ekstreSonuc?.eslesen_kart;
+    if (!k?.id) return;
+    const islemler = (ekstreSonuc.islemler || [])
+      .filter(x => x.durum === 'yeni' && !x.benzer_gider_uyari)
+      .map(x => ({ tarih: x.tarih, tutar: x.tutar, tip: x.tip, aciklama: x.aciklama, kategori: x.kategori,
+        harcama_tipi: x.oneri_tipi || undefined, taksit_sayisi: x.taksit_sayisi || undefined, taksit_anapara: x.taksit_anapara || undefined }));
+    if (!islemler.length) return;
+    setImpBusy(true); setEkstreHata('');
+    try {
+      const d = await api('/kartlar/ekstre-import', { method: 'POST', body: { kart_id: k.id, islemler } });
+      setImpSonuc({ ...d, _aktarilan: islemler.length });
+      setEkstreSonuc(s => ({ ...s, islemler: s.islemler.map(x => (x.durum === 'yeni' && !x.benzer_gider_uyari) ? { ...x, durum: 'eslesti' } : x) }));
+      kartlariYenile();
+    } catch (e) { setEkstreHata(e.message || 'İçe aktarılamadı'); }
+    finally { setImpBusy(false); }
+  };
+
+  const devirKabul = async () => {
+    const k = ekstreSonuc?.eslesen_kart;
+    if (!k?.id) return;
+    setImpBusy(true); setEkstreHata('');
+    try {
+      const d = await api(`/kartlar/${k.id}/manuel-ekstre`, { method: 'POST', body: {
+        donem: ekstreSonuc.kesim_tarihi, son_odeme: ekstreSonuc.son_odeme_tarihi || null,
+        donem_borcu: ekstreSonuc.donem_borcu, asgari_tutar: ekstreSonuc.asgari_tutar || null,
+        faiz_orani: ekstreSonuc.akdi_faiz_yillik || null } });
+      setImpSonuc({ devir: true, yeni_sistem_borc: d.yeni_borc });
+      kartlariYenile();
+    } catch (e) { setEkstreHata(e.message || 'Devir kaydedilemedi'); }
+    finally { setImpBusy(false); }
+  };
 
   // Borç gösterimi: GERÇEK (PDF/manuel) ekstre snapshot'ı varsa DÖNEM BORCU
   // (banka ekstresiyle birebir) gösterilir; yoksa defter borcu (guncel_borc).
@@ -2874,6 +2937,96 @@ function CepKartlar({ onGeri }) {
   return (
     <div style={{ minHeight: '100vh', background: C.bg, paddingBottom: 30 }}>
       <Baslik baslik="💳 Kartlar" onGeri={onGeri} />
+
+      {/* ── Ekstre PDF Yükle (WhatsApp'tan gelen ekstreyi telefondan seç) ── */}
+      <div style={{ margin: '14px 14px 0' }}>
+        <button onClick={() => setEkstrePanel(o => !o)} style={{
+          width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+          background: C.bg2, border: `1px solid ${C.border}`, borderRadius: 14, padding: '14px 16px',
+          color: C.t1, fontSize: 15, fontWeight: 800, cursor: 'pointer',
+        }}>
+          <span>📄 Kart Ekstresi Yükle (PDF)</span>
+          <span style={{ color: C.t3, fontSize: 18 }}>{ekstrePanel ? '−' : '+'}</span>
+        </button>
+
+        {ekstrePanel && (
+          <div style={{ background: C.bg2, border: `1px solid ${C.border}`, borderTop: 'none', borderRadius: '0 0 14px 14px', padding: 16, marginTop: -4 }}>
+            <div style={{ fontSize: 12, color: C.t3, lineHeight: 1.5, marginBottom: 12 }}>
+              Bankadan <b style={{ color: C.t2 }}>WhatsApp / e-posta</b> ile gelen ekstre PDF'ini telefonundan seç.
+              WhatsApp'taki belgeyi önce telefona kaydet, sonra aşağıdan "PDF Seç" → <b style={{ color: C.t2 }}>Belgeler / İndirilenler</b>'den bul.
+            </div>
+
+            <label style={{
+              display: 'block', textAlign: 'center', background: C.kirmizi, color: '#fff',
+              borderRadius: 12, padding: '16px', fontSize: 16, fontWeight: 800, cursor: 'pointer',
+            }}>
+              {yukBusy ? '⏳ Ayrıştırılıyor…' : '📥 PDF Seç'}
+              <input type="file" accept=".pdf,application/pdf" style={{ display: 'none' }} disabled={yukBusy}
+                onChange={e => { ekstreYukle(e.target.files?.[0]); e.target.value = ''; }} />
+            </label>
+
+            {ekstreHata && <div style={{ background: 'rgba(220,53,69,0.12)', color: C.kirmizi, borderRadius: 10, padding: '10px 12px', marginTop: 12, fontSize: 13 }}>⚠️ {ekstreHata}</div>}
+
+            {ekstreSonuc && (() => {
+              const es = ekstreSonuc, eK = es.eslesen_kart, eM = es.mutabakat;
+              const eksikSay = (es.islemler || []).filter(x => x.durum === 'yeni' && !x.benzer_gider_uyari).length;
+              const farkVar = eM && Math.abs(Number(eM.fark) || 0) >= 1;
+              return (
+                <div style={{ marginTop: 14 }}>
+                  {/* Eşleşen kart / mutabakat */}
+                  {eK ? (
+                    <div style={{ background: C.bg3, borderRadius: 12, padding: 12, borderLeft: `4px solid ${eM?.tutar_uyumlu ? C.yesil : C.kirmizi}` }}>
+                      <div style={{ fontSize: 14, fontWeight: 800, color: C.t1 }}>🔗 {eK.kart_adi}</div>
+                      <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+                        {[['Sistem', eM?.sistem_borc], ['Ekstre', eM?.ekstre_borc], ['Fark', eM?.fark]].map(([l, v]) => (
+                          <div key={l} style={{ flex: 1, background: C.bg2, borderRadius: 8, padding: '8px 6px', textAlign: 'center' }}>
+                            <div style={{ fontSize: 10, color: C.t3 }}>{l}</div>
+                            <div style={{ fontSize: 13, fontWeight: 700, color: l === 'Fark' && farkVar ? C.kirmizi : C.t1 }}>{fmt(v)}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={{ background: 'rgba(212,160,40,0.12)', color: C.sari, borderRadius: 12, padding: 12, fontSize: 13 }}>
+                      🔎 Son 4 hane <b>{es.son_dort || '—'}</b> ile eşleşen kart yok. Önce masaüstünden bu kartı ekleyebilirsin.
+                    </div>
+                  )}
+
+                  {/* Ekstre başlık özeti */}
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 10, fontSize: 12, color: C.t3 }}>
+                    <span>Dönem borcu: <b style={{ color: C.t2 }}>{fmt(es.donem_borcu)}</b></span>
+                    {es.son_odeme_tarihi && <span>· Son ödeme: <b style={{ color: C.t2 }}>{es.son_odeme_tarihi}</b></span>}
+                    <span>· İşlem: <b style={{ color: C.t2 }}>{es.islemler?.length || 0}</b></span>
+                    {eksikSay > 0 && <span style={{ color: C.sari }}>· {eksikSay} eksik</span>}
+                  </div>
+
+                  {/* Aksiyon */}
+                  {eK && eksikSay > 0 && (
+                    <button onClick={eksikleriAktar} disabled={impBusy} style={{
+                      width: '100%', marginTop: 12, background: C.yesil, color: '#fff', border: 'none',
+                      borderRadius: 12, padding: 14, fontSize: 15, fontWeight: 800, cursor: 'pointer',
+                    }}>{impBusy ? '⏳…' : `📥 ${eksikSay} eksik işlemi içe aktar`}</button>
+                  )}
+                  {eK && eksikSay === 0 && farkVar && (
+                    <button onClick={devirKabul} disabled={impBusy} style={{
+                      width: '100%', marginTop: 12, background: C.bg3, color: C.t1, border: `1px solid ${C.border}`,
+                      borderRadius: 12, padding: 14, fontSize: 14, fontWeight: 700, cursor: 'pointer',
+                    }}>{impBusy ? '⏳…' : `📌 Borcu açılış/devir olarak kabul et (${fmt(es.donem_borcu)})`}</button>
+                  )}
+
+                  {impSonuc && (
+                    <div style={{ background: 'rgba(40,180,99,0.12)', color: C.yesil, borderRadius: 10, padding: '10px 12px', marginTop: 12, fontSize: 13 }}>
+                      {impSonuc.devir
+                        ? <>📌 Borç devir olarak kaydedildi. Güncel borç: <b>{fmt(impSonuc.yeni_sistem_borc)}</b></>
+                        : <>✅ {impSonuc._aktarilan || impSonuc.yazilan} işlem aktarıldı. Yeni borç: <b>{fmt(impSonuc.yeni_sistem_borc)}</b></>}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+          </div>
+        )}
+      </div>
 
       {liste && liste.length > 0 && (
         <div style={{ margin: 14, padding: 16, borderRadius: 16, background: 'linear-gradient(135deg, var(--bg2,#1a1d24), var(--bg3,#22262f))', border: `1px solid ${C.border}` }}>
