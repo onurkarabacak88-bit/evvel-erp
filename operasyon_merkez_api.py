@@ -13595,6 +13595,7 @@ def ops_maliyet_gun_gun(
         # Operasyonel P&L: Faaliyet Kârı = Ciro − (COGS + personel + anlık gider + kira).
         # Tahmini kurumlar vergisi = max(0, kâr) × %25, AYRI gösterilir (KDV kârdan DÜŞÜLMEZ).
         TAHMINI_VERGI_ORANI = 0.25
+        _SGK_ISVEREN_ORAN = 0.225   # FAZ 4: işveren SGK %20.5 + işsizlik %2 (5p teşvikle %17.5)
         # Ciro — nakit/pos/online AYRI (komisyon hesabı için pos+online lazım)
         ciro_map: Dict[Tuple[str, str], Dict[str, float]] = {}
         try:
@@ -13803,6 +13804,11 @@ def ops_maliyet_gun_gun(
             satir["personel_sayisi"] = pg["sayisi"]
             satir["personel_saat"] = round(pg["saat"], 2)
             satir["personel_maliyet_tl"] = round(pg["maliyet"], 2)
+            # FAZ 4: İşveren SGK payı — devlet mantığı: brüt ücret × (SGK işveren %20.5 + işsizlik %2)
+            # = %22.5. Vardiyadan çalışan personelin maliyeti üzerinden. (5p teşvikle %17.5'e iner —
+            # _SGK_ISVEREN_ORAN'dan ayarlanır.) Personel GERÇEK maliyeti = ücret + işveren SGK.
+            sgk_isveren = pg["maliyet"] * _SGK_ISVEREN_ORAN
+            satir["sgk_isveren_tl"] = round(sgk_isveren, 2)
 
             if sid is None:
                 sube_gider = sum(
@@ -13843,7 +13849,7 @@ def ops_maliyet_gun_gun(
             satir["platform_komisyon_tl"] = round(platform_komisyon, 2)
             satir["fire_maliyet_tl"] = round(fire_g, 2)
             satir["iade_maliyet_tl"] = round(iade_g, 2)
-            toplam_maliyet = (toplam + pg["maliyet"] + sube_gider + kira_g
+            toplam_maliyet = (toplam + pg["maliyet"] + sgk_isveren + sube_gider + kira_g
                               + fatura_g + abonelik_g + pos_komisyon + platform_komisyon + fire_g + iade_g)
             satir["genel_toplam"] = round(toplam_maliyet, 2)
             satir["ciro_tl"] = round(ciro_v, 2)

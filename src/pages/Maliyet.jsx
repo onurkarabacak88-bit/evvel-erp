@@ -512,6 +512,7 @@ export default function Maliyet() {
         // Maliyet kovaları (Toplam Maliyet drill-down)
         const kovalar = [
           ['Malzeme (ürün-aç)', 'toplam'], ['Personel', 'personel_maliyet_tl'],
+          ['İşveren SGK payı', 'sgk_isveren_tl'],
           ['Kira', 'kira_maliyet_tl'], ['Faturalar', 'fatura_maliyet_tl'],
           ['Abonelikler', 'abonelik_maliyet_tl'], ['POS komisyonu', 'pos_komisyon_tl'],
           ['Platform komisyonu', 'platform_komisyon_tl'], ['Fire', 'fire_maliyet_tl'],
