@@ -2981,8 +2981,16 @@ function HizliAksiyonModal({ tip, onKapat, onKaydet }) {
   const bugun = new Date().toISOString().slice(0, 10);
   const [form, setForm] = useState({
     tarih: bugun, tutar: '', aciklama: '', kategori: 'Genel',
-    nakit: '', pos: '', online: '', sube_id: 'sube-merkez'
+    nakit: '', pos: '', online: '', sube_id: ''
   });
+  const [subeler, setSubeler] = useState([]);
+
+  useEffect(() => {
+    if (tip !== 'ciro') return;
+    api('/subeler')
+      .then(r => setSubeler(Array.isArray(r) ? r : (r?.subeler || [])))
+      .catch(() => {});
+  }, [tip]);
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
@@ -2998,6 +3006,7 @@ function HizliAksiyonModal({ tip, onKapat, onKaydet }) {
       const pos = parseFloat(form.pos) || 0;
       const online = parseFloat(form.online) || 0;
       if (nakit + pos + online <= 0) { alert('En az bir tutar girilmeli'); return; }
+      if (!form.sube_id) { alert('Şube seçin — ciro şubeye bağlı kaydedilir'); return; }
       const toplam = nakit + pos + online;
       onKaydet('ciro', { tarih: form.tarih, nakit, pos, online, aciklama: form.aciklama || `Ciro ${toplam.toLocaleString('tr-TR')} ₺`, sube_id: form.sube_id });
     } else if (tip === 'gider') {
@@ -3022,6 +3031,13 @@ function HizliAksiyonModal({ tip, onKapat, onKaydet }) {
           </div>
           {tip === 'ciro' ? (
             <>
+              <div className="form-group">
+                <label>Şube *</label>
+                <select value={form.sube_id} onChange={e => set('sube_id', e.target.value)}>
+                  <option value="">Şube seçin...</option>
+                  {subeler.map(s => <option key={s.id} value={s.id}>{s.ad}</option>)}
+                </select>
+              </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
                 {['nakit', 'pos', 'online'].map(k => (
                   <div className="form-group" key={k}>
