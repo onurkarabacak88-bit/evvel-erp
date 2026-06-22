@@ -41,6 +41,7 @@ export default function Maliyet() {
   const [gunGunData, setGunGunData] = useState(null);
   const [guvenSkoru, setGuvenSkoru] = useState(null);   // Faz 5: güven skoru + sapma motoru
   const [vergiOzet, setVergiOzet] = useState(null);     // Faz 1b: şube bazlı tahmini vergi
+  const [kdvPoz, setKdvPoz] = useState(null);           // Faz 3: KDV pozisyonu (P&L dışı)
   const [guvenAcik, setGuvenAcik] = useState(false);    // detay aç/kapa
   const [sekme, setSekme] = useState('genel');          // genel | analiz | fiyatlar | faturalar
   const [donem, setDonem] = useState('7');              // gun | bugun | 7 | 30 | ay | gecenay | ozel
@@ -171,6 +172,9 @@ export default function Maliyet() {
     // Faz 1b — şube bazlı tahmini vergi (izole; endpoint max 31 gün)
     api(`/ops/maliyet/vergi-ozet?gun=${Math.min(31, _gunLen)}${subeQ}`)
       .then(setVergiOzet).catch(() => setVergiOzet(null));
+    // Faz 3 — KDV pozisyonu (izole, P&L dışı)
+    api(`/ops/maliyet/kdv-pozisyon?gun=${Math.min(92, _gunLen)}${subeQ}`)
+      .then(setKdvPoz).catch(() => setKdvPoz(null));
   };
 
   useEffect(() => { yukle(); }, [subeId, donem, ozelBas, ozelBit, seciliGun]);
@@ -595,6 +599,48 @@ export default function Maliyet() {
                   </table>
                 </div>
                 <div style={{ fontSize: 10.5, color: 'var(--text3)', marginTop: 6, fontStyle: 'italic' }}>{vergiOzet.not}</div>
+              </div>
+            )}
+
+            {/* ── İZOLE: KDV Pozisyonu (P&L DIŞI — devlete ödenecek) — Faz 3 ── */}
+            {kdvPoz && (kdvPoz.satirlar || []).length > 0 && (
+              <div className="card" style={{ marginTop: 14 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8, flexWrap: 'wrap', gap: 6 }}>
+                  <span style={{ fontWeight: 700, fontSize: 13 }}>🧾 KDV Pozisyonu <span style={{ fontWeight: 400, color: 'var(--text3)' }}>(P&L dışı — devlete)</span></span>
+                  <span style={{ fontSize: 11, color: 'var(--text3)' }}>Hesaplanan − İndirilecek = Ödenecek · %{Math.round((kdvPoz.kdv_oran || 0.1) * 100)}</span>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10, marginBottom: 8 }}>
+                  <div style={{ background: 'var(--bg3)', borderRadius: 8, padding: '8px 10px' }}>
+                    <div style={{ fontSize: 11, color: 'var(--text3)' }}>Hesaplanan (satış)</div>
+                    <div style={{ fontFamily: 'var(--font-mono)', fontWeight: 700 }}>{fmt(kdvPoz.toplam_hesaplanan_tl)}</div>
+                  </div>
+                  <div style={{ background: 'var(--bg3)', borderRadius: 8, padding: '8px 10px' }}>
+                    <div style={{ fontSize: 11, color: 'var(--text3)' }}>İndirilecek (alış)</div>
+                    <div style={{ fontFamily: 'var(--font-mono)', fontWeight: 700 }}>{fmt(kdvPoz.toplam_indirilecek_tl)}</div>
+                  </div>
+                  <div style={{ background: 'var(--bg3)', borderRadius: 8, padding: '8px 10px', borderLeft: '3px solid var(--accent)' }}>
+                    <div style={{ fontSize: 11, color: 'var(--text3)' }}>Ödenecek KDV</div>
+                    <div style={{ fontFamily: 'var(--font-mono)', fontWeight: 800, color: 'var(--accent)' }}>{fmt(kdvPoz.toplam_odenecek_tl)}</div>
+                  </div>
+                </div>
+                {!subeId && (
+                  <div className="table-wrap">
+                    <table>
+                      <thead><tr><th>Şube</th><th style={{ textAlign: 'right' }}>Hesaplanan</th><th style={{ textAlign: 'right' }}>İndirilecek</th><th style={{ textAlign: 'right' }}>Ödenecek</th></tr></thead>
+                      <tbody>
+                        {kdvPoz.satirlar.map(s => (
+                          <tr key={s.sube_id || s.sube_adi}>
+                            <td>{s.sube_adi}</td>
+                            <td className="mono" style={{ textAlign: 'right' }}>{fmt(s.hesaplanan_kdv_tl)}</td>
+                            <td className="mono" style={{ textAlign: 'right' }}>{fmt(s.indirilecek_kdv_tl)}</td>
+                            <td className="mono" style={{ textAlign: 'right', fontWeight: 700 }}>{fmt(s.odenecek_kdv_tl)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+                <div style={{ fontSize: 10.5, color: 'var(--text3)', marginTop: 6, fontStyle: 'italic' }}>{kdvPoz.not}</div>
               </div>
             )}
 

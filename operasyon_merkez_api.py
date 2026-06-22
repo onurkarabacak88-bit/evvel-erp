@@ -14025,7 +14025,7 @@ def ops_maliyet_kdv_pozisyon(
         hes = brut * _fac
         ind = alis * _fac
         satirlar.append({
-            "sube_id": sid, "sube_adi": ad_map.get(sid, sid),
+            "sube_id": sid, "sube_adi": ad_map.get(sid) or (sid if sid else "(şubesiz fatura)"),
             "hesaplanan_kdv_tl": round(hes, 2),
             "indirilecek_kdv_tl": round(ind, 2),
             "odenecek_kdv_tl": round(hes - ind, 2),
