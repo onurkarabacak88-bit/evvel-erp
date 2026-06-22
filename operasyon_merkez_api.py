@@ -14114,6 +14114,30 @@ def ops_maliyet_alis_fiyat_sil(fiyat_id: str):
     return {"success": True, "silinen": silindi}
 
 
+@router.get("/maliyet/eslestirme-liste")
+def ops_maliyet_eslestirme_liste(q: str = ""):
+    """Fatura kalem eşleştirme hafızasını listeler (salt-okur, teşhis amaçlı).
+    q verilirse anahtar/kalem_adi/kalem_kodu içinde arar."""
+    with db() as (conn, cur):
+        if q:
+            like = f"%{q.lower()}%"
+            cur.execute(
+                """SELECT anahtar, kalem_kodu, kalem_adi, adet, guncelleme
+                   FROM fatura_kalem_eslestirme
+                   WHERE LOWER(anahtar) LIKE %s OR LOWER(COALESCE(kalem_adi,'')) LIKE %s
+                      OR LOWER(COALESCE(kalem_kodu,'')) LIKE %s
+                   ORDER BY guncelleme DESC""",
+                (like, like, like),
+            )
+        else:
+            cur.execute(
+                """SELECT anahtar, kalem_kodu, kalem_adi, adet, guncelleme
+                   FROM fatura_kalem_eslestirme ORDER BY guncelleme DESC LIMIT 500"""
+            )
+        rows = [dict(r) for r in cur.fetchall()]
+    return {"satirlar": rows, "toplam": len(rows)}
+
+
 @router.delete("/maliyet/kalem-temizle/{kalem_kodu}")
 def ops_maliyet_kalem_temizle(kalem_kodu: str, stok_fiyat_sifirla: bool = False):
     """
