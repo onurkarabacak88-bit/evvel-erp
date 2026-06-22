@@ -751,6 +751,21 @@ _TESLIM_TUR = {
     "diger": "Diğer",
 }
 
+def _eksik_ciro_oneri_ozet(cur) -> list:
+    """Onay bekleyen Evo oto-denetim ciro önerileri — şube bazlı (gün + toplam)."""
+    try:
+        cur.execute("""
+            SELECT s.ad AS sube, COUNT(*) AS gun,
+                   COALESCE(SUM(t.nakit + t.pos + t.online), 0)::float AS toplam
+            FROM ciro_taslak t JOIN subeler s ON s.id = t.sube_id
+            WHERE t.durum='bekliyor' AND t.gonderen_ad='Evo Oto-Denetim'
+            GROUP BY s.ad ORDER BY gun DESC, toplam DESC
+        """)
+        return [dict(r) for r in cur.fetchall()]
+    except Exception:
+        return []
+
+
 def gunluk_ozet_mesaj_olustur(tarih: date | None = None) -> str:
     from tr_saat import bugun_tr
     if tarih is None:
@@ -768,6 +783,7 @@ def gunluk_ozet_mesaj_olustur(tarih: date | None = None) -> str:
         vardiya     = _vardiya_personel(cur, tarih)
         tedarik_zinciri = _tedarik_zinciri_ozet(cur, tarih)
         denetim_ozetleri = _akilli_denetim_ozetleri(cur, tarih)
+        eksik_ciro_oneri = _eksik_ciro_oneri_ozet(cur)
 
     tarih_str = f"{tarih.day} {_AY[tarih.month - 1]}"
     s = [f"🌙 *Evvel — {tarih_str} Günlük Özet*", ""]
@@ -799,6 +815,15 @@ def gunluk_ozet_mesaj_olustur(tarih: date | None = None) -> str:
     s.append(f"  Bugün nakit:  +{_fmt(kasa['bugun_ciro'])}{ciro_trend_str}")
     s.append(f"  Bugün çıkan:  -{_fmt(kasa['cikan'])}")
     s.append("")
+
+    # Eksik ciro — Evo oto-denetim önerileri (kapanış/açılış girilmemiş günler)
+    if eksik_ciro_oneri:
+        top_gun = sum(int(e["gun"]) for e in eksik_ciro_oneri)
+        s.append(f"*⚠️ EKSİK CİRO — {top_gun} gün onay bekliyor*")
+        for e in eksik_ciro_oneri:
+            s.append(f"  {e['sube']:<14} {int(e['gun'])} gün · {_fmt(e['toplam'])}")
+        s.append("  → Evo'dan önerildi; merkez ciro onay kuyruğundan onaylayın")
+        s.append("")
 
     # Anlık giderler
     if giderler:

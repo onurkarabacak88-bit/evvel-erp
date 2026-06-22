@@ -426,6 +426,22 @@ def _gece_yarisi_scheduler():
             except Exception as e:
                 logger.warning(f"⏰ Akıllı Denetim bekleme hatası: {e}")
 
+            # ── EKSİK CİRO GÜVENCE — gece sweep (Evo öneri üret) ──
+            # Personel kapanışı/açılışı unutsa bile: Evo'da satış olan ama Evvel'de
+            # ciro olmayan günleri bulup ONAY BEKLEYEN öneri üretir (deftere yazmaz,
+            # KAPANIS event'e dokunmaz). WhatsApp özetinden ÖNCE çalışır ki mesaj
+            # taze önerileri içersin. Hata-yutar (Evo erişilemezse atlar).
+            try:
+                from ciro_taslak_api import eksik_gun_ciro_tara, EksikGunTaraBody
+                _ek = eksik_gun_ciro_tara(EksikGunTaraBody(gun_sayisi=35, uygula=True))
+                _ekyeni = _ek.get("oneri_sayisi", 0)
+                if _ekyeni:
+                    logger.info(f"⏰ Eksik ciro sweep: {_ekyeni} yeni Evo önerisi onay kuyruğuna düştü")
+                if _ek.get("evo_hata"):
+                    logger.warning(f"⏰ Eksik ciro sweep — Evo erişim sorunu: {_ek.get('evo_hata')}")
+            except Exception as e:
+                logger.warning(f"⏰ Eksik ciro sweep hatası: {e}")
+
             # ── WHATSAPP GÜNLÜK ÖZET — gece 00:30 ──
             try:
                 from whatsapp_bildirim import gunluk_ozet_gonder
