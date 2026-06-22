@@ -236,6 +236,13 @@ export default function Maliyet() {
   // Dönemde tüketilen ama fiyatsız kalemler (acil — kârı aktif olarak şişiriyor)
   const tuketilenFiyatsiz = gunGunData?.fiyat_eksik_kalemler || [];
 
+  // ── Eksik maliyet tespiti (kira / personel girilmemişse de kâr şişer) ──
+  // Sadece cirosu>0 günlerden topla (kapanmamış/eksik gün maliyeti yanıltmasın).
+  const _ggCirolu = (gunGunData?.satirlar || []).filter(s => (Number(s.ciro_tl) || 0) > 0);
+  const donemKiraTL = _ggCirolu.reduce((a, s) => a + (Number(s.kira_maliyet_tl) || 0), 0);
+  const donemPersonelTL = _ggCirolu.reduce((a, s) => a + (Number(s.personel_maliyet_tl) || 0), 0);
+  const ciroluGunVar = _ggCirolu.length > 0;
+
   // Fiyatlar sekmesindeki forma kalemi doldur + en üste kaydır
   const fiyatFormaDoldur = (kalemKodu, kalemAdi) => {
     setMaliyetForm(f => ({ ...f, kalem_kodu: kalemKodu, kalem_adi: kalemAdi || kalemKodu, birim_maliyet_tl: '' }));
@@ -488,43 +495,70 @@ export default function Maliyet() {
         );
       })()}
 
-      {/* ── Genel Bakış: fiyatsız kalem uyarı şeridi (kâr şişme riski) ── */}
-      {sekme === 'genel' && (tuketilenFiyatsiz.length > 0 || fiyatsizUrunler.length > 0) && (
-        <div
-          onClick={() => setSekme('fiyatlar')}
-          style={{
-            marginBottom: 16, padding: '12px 14px', borderRadius: 10, cursor: 'pointer',
-            background: tuketilenFiyatsiz.length > 0 ? 'rgba(239,68,68,0.10)' : 'rgba(234,179,8,0.10)',
-            border: `1px solid ${tuketilenFiyatsiz.length > 0 ? 'rgba(239,68,68,0.45)' : 'rgba(234,179,8,0.45)'}`,
-            display: 'flex', alignItems: 'center', gap: 12,
-          }}
-        >
-          <span style={{ fontSize: 22 }}>{tuketilenFiyatsiz.length > 0 ? '🔴' : '🟡'}</span>
-          <div style={{ flex: 1 }}>
-            {tuketilenFiyatsiz.length > 0 ? (
-              <>
-                <div style={{ fontWeight: 700, fontSize: 14, color: '#ef4444' }}>
-                  Bu dönemde {tuketilenFiyatsiz.length} kalem fiyatsız tüketildi → kâr olduğundan YÜKSEK görünüyor
+      {/* ── Genel Bakış: eksik maliyet uyarıları (kâr şişme riski) ── */}
+      {sekme === 'genel' && (() => {
+        const uyarilar = [];
+        if (tuketilenFiyatsiz.length > 0) {
+          uyarilar.push({
+            ikon: '🔴', acil: true,
+            baslik: `${tuketilenFiyatsiz.length} kalem fiyatsız tüketildi`,
+            alt: `Maliyeti 0₺ sayıldı: ${tuketilenFiyatsiz.slice(0, 5).join(', ')}${tuketilenFiyatsiz.length > 5 ? ` +${tuketilenFiyatsiz.length - 5} kalem` : ''}${fiyatsizUrunler.length > 0 ? ` · toplam ${fiyatsizUrunler.length} ürün fiyatsız` : ''}`,
+            hedef: 'fiyatlar', hedefMetin: '🏷️ Fiyatlar →',
+          });
+        } else if (fiyatsizUrunler.length > 0) {
+          uyarilar.push({
+            ikon: '🟡', acil: false,
+            baslik: `${fiyatsizUrunler.length} ürünün alış fiyatı hiç girilmemiş`,
+            alt: 'Tüketilirse maliyet 0₺ sayılır ve kâr şişer.',
+            hedef: 'fiyatlar', hedefMetin: '🏷️ Fiyatlar →',
+          });
+        }
+        if (subeId && ciroluGunVar && donemKiraTL === 0) {
+          uyarilar.push({
+            ikon: '🏠', acil: true,
+            baslik: 'Bu şube için kira girilmemiş',
+            alt: 'Kira maliyeti 0₺ sayıldı → kâr olduğundan yüksek görünüyor. Giderler ekranından (sabit gider → kira) gir.',
+            hedef: null,
+          });
+        }
+        if (subeId && ciroluGunVar && donemPersonelTL === 0) {
+          uyarilar.push({
+            ikon: '👥', acil: true,
+            baslik: 'Bu dönemde personel maliyeti yok',
+            alt: 'Vardiya/atama görünmüyor → personel gideri 0₺ sayıldı, kâr yüksek görünüyor. Vardiya Planlama’dan ata.',
+            hedef: null,
+          });
+        }
+        if (!uyarilar.length) return null;
+        const acilVar = uyarilar.some(u => u.acil);
+        const renk = acilVar ? '#ef4444' : '#eab308';
+        const bg = acilVar ? 'rgba(239,68,68,0.10)' : 'rgba(234,179,8,0.10)';
+        const bd = acilVar ? 'rgba(239,68,68,0.45)' : 'rgba(234,179,8,0.45)';
+        return (
+          <div style={{ marginBottom: 16, padding: '12px 14px', borderRadius: 10, background: bg, border: `1px solid ${bd}` }}>
+            <div style={{ fontWeight: 700, fontSize: 13, color: renk, marginBottom: uyarilar.length ? 8 : 0 }}>
+              ⚠️ Maliyet eksik görünüyor → kâr olduğundan YÜKSEK olabilir
+            </div>
+            {uyarilar.map((u, i) => (
+              <div key={i}
+                onClick={u.hedef ? () => setSekme(u.hedef) : undefined}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 10,
+                  padding: '7px 0', cursor: u.hedef ? 'pointer' : 'default',
+                  borderTop: i === 0 ? 'none' : '1px solid var(--border)',
+                }}
+              >
+                <span style={{ fontSize: 16, flexShrink: 0 }}>{u.ikon}</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600 }}>{u.baslik}</div>
+                  <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>{u.alt}</div>
                 </div>
-                <div style={{ fontSize: 12, color: 'var(--text3)', marginTop: 3 }}>
-                  Maliyeti 0₺ sayıldı: {tuketilenFiyatsiz.slice(0, 6).join(', ')}{tuketilenFiyatsiz.length > 6 ? ` +${tuketilenFiyatsiz.length - 6} kalem` : ''}
-                  {fiyatsizUrunler.length > 0 ? ` · Toplam ${fiyatsizUrunler.length} ürünün fiyatı hiç girilmemiş` : ''}
-                </div>
-              </>
-            ) : (
-              <>
-                <div style={{ fontWeight: 700, fontSize: 14, color: '#eab308' }}>
-                  {fiyatsizUrunler.length} ürünün alış fiyatı hiç girilmemiş
-                </div>
-                <div style={{ fontSize: 12, color: 'var(--text3)', marginTop: 3 }}>
-                  Bu ürünler tüketilirse maliyet 0₺ sayılır ve kâr şişer. Fiyatlar sekmesinden tek tek girebilirsin.
-                </div>
-              </>
-            )}
+                {u.hedef && <span style={{ fontSize: 11, color: 'var(--text3)', whiteSpace: 'nowrap', flexShrink: 0 }}>{u.hedefMetin}</span>}
+              </div>
+            ))}
           </div>
-          <span style={{ fontSize: 12, color: 'var(--text3)', whiteSpace: 'nowrap' }}>🏷️ Fiyatlar →</span>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Özet kartları (Analiz sekmesi) */}
       {sekme === 'analiz' && (
