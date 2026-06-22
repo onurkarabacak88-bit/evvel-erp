@@ -13342,7 +13342,8 @@ def ops_maliyet_ozet(
 # Gün Gün Maliyet tablosu kolonları: (anahtar, başlık, _BAR_KEYS içindeki kaynak anahtarlar)
 _GUN_GUN_KOLONLAR: List[Tuple[str, str, List[str]]] = [
     ("sut", "Süt", ["sut_litre"]),
-    ("kahve", "Kahve", ["kahve_paket"]),
+    # NOT: "kahve"/kahve_paket kolonu KALDIRILDI (2026-06-22) — kahve artık havuz değil,
+    # her tür kendi UUID'siyle "☕ Diğer Ürün-Aç" kovasında (kod-bağımsız motor) maliyetlenir.
     ("surup", "Şurup", ["surup_adet"]),
     ("bardak_8oz", "8oz Bardak", ["bardak_kucuk"]),
     ("bardak_14oz", "14oz Bardak", ["bardak_buyuk"]),
@@ -13816,7 +13817,8 @@ def ops_maliyet_gun_gun(
     return {
         "gun": gun,
         "sube_id": sube_id,
-        "kolonlar": [{"kod": k, "baslik": b} for k, b, _ in _GUN_GUN_KOLONLAR],
+        "kolonlar": [{"kod": k, "baslik": b} for k, b, _ in _GUN_GUN_KOLONLAR]
+                    + [{"kod": "diger_urun_ac_tl", "baslik": "☕ Diğer Ürün-Aç"}],
         "satirlar": satirlar,
         "fiyat_eksik_kalemler": sorted(
             STOK_LABEL_TR.get(k, k) for k in fiyat_eksik
