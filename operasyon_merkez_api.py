@@ -13439,8 +13439,8 @@ def ops_maliyet_gun_gun(
         tuketim_disi_map: Dict[Tuple[str, str], Dict[str, int]] = {}
         # UUID'ye TAŞINMIŞ havuz kodları — bu havuz kovaları artık COGS'ta sayılmaz;
         # ilgili tüketim ürünün kendi UUID'sinden (disi kovası) maliyetlenir. Kademeli
-        # havuz kaldırma: şurup + süt taşındı; bardak/su/kapak vb. şimdilik havuzda.
-        _UUID_TASINAN_HAVUZ = frozenset({"surup_adet", "sut_litre"})
+        # havuz kaldırma: şurup + süt + KAPAK (8oz/14oz/plastik) taşındı; bardak/su şimdilik havuzda.
+        _UUID_TASINAN_HAVUZ = frozenset({"surup_adet", "sut_litre", "kapak_adet"})
         for r in _urun_ac_rows:
             key = (r["sube_id"], r["tarih"])
             delta = _urun_ac_delta_parse(r["aciklama"] or "")
