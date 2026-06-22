@@ -892,6 +892,14 @@ function CepFaturaOnay({ tick }) {
   const [kayit, setKayit] = useState({});         // kalem_id -> true
   const [foto, setFoto] = useState(null);
   const [hata, setHata] = useState('');
+  const [picker, setPicker] = useState(null);     // {kalemId} — stok kalem seçici modalı açık
+  const [pq, setPq] = useState('');               // seçici arama metni
+
+  const stokAd = useCallback((kod) => {
+    if (!kod) return '';
+    const s = stok.find(x => x.kalem_kodu === kod);
+    return s ? s.kalem_adi : kod;
+  }, [stok]);
 
   const yukleListe = useCallback(() => {
     api('/fatura/bekleyen').then(r => setListe((r && r.satirlar) || [])).catch(() => setListe([]));
@@ -980,9 +988,11 @@ function CepFaturaOnay({ tick }) {
                     <div key={k.id} style={{ background: C.bg3, borderRadius: 10, padding: 10 }}>
                       <div style={{ fontSize: 12, color: C.t2, marginBottom: 6 }}>{k.ocr_ad || '—'}{k.adet != null ? ` ×${k.adet}` : ''}</div>
                       <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                        <input list="cep-depo-kalem" placeholder="stok kodu" value={kod} disabled={ok}
-                          onChange={e => setDuzen(p => ({ ...p, [k.id]: { ...p[k.id], kod: e.target.value } }))}
-                          style={{ flex: 1, minWidth: 0, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, color: C.t1, padding: '9px 10px', fontSize: 13 }} />
+                        <button disabled={ok} onClick={() => { setPicker({ kalemId: k.id }); setPq(''); }}
+                          style={{ flex: 1, minWidth: 0, textAlign: 'left', background: C.bg, border: `1px solid ${kod ? C.border : C.kirmizi}`, borderRadius: 8,
+                            color: kod ? C.t1 : C.t3, padding: '9px 10px', fontSize: 13, cursor: ok ? 'default' : 'pointer', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {kod ? `✓ ${stokAd(kod)}` : '🔍 Stok kalemi seç'}
+                        </button>
                         <input inputMode="decimal" placeholder="₺" value={fy} disabled={ok}
                           onChange={e => setDuzen(p => ({ ...p, [k.id]: { ...p[k.id], fy: e.target.value } }))}
                           style={{ width: 78, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, color: C.t1, padding: '9px 10px', fontSize: 13 }} />
@@ -1008,6 +1018,32 @@ function CepFaturaOnay({ tick }) {
       {foto && (
         <div onClick={() => setFoto(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)', zIndex: 60, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
           <img src={foto} alt="Fatura" onClick={e => e.stopPropagation()} style={{ maxWidth: '96%', maxHeight: '90%', borderRadius: 10, background: '#fff' }} />
+        </div>
+      )}
+
+      {/* Stok kalemi seçici (mobil — datalist yerine arama+dokun) */}
+      {picker && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 70, display: 'flex', alignItems: 'flex-end' }}
+          onClick={e => e.target === e.currentTarget && setPicker(null)}>
+          <div style={{ width: '100%', maxHeight: '80vh', background: C.bg2, borderTopLeftRadius: 20, borderTopRightRadius: 20, borderTop: `1px solid ${C.border}`, display: 'flex', flexDirection: 'column' }}>
+            <div style={{ padding: 14, borderBottom: `1px solid ${C.border}`, display: 'flex', gap: 8, alignItems: 'center' }}>
+              <input autoFocus value={pq} onChange={e => setPq(e.target.value)} placeholder="Stok kalemi ara…"
+                style={{ flex: 1, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 10, color: C.t1, padding: '11px 12px', fontSize: 15 }} />
+              <button onClick={() => setPicker(null)} style={{ background: C.bg3, border: 'none', borderRadius: 10, color: C.t2, width: 40, height: 40, fontSize: 16, cursor: 'pointer' }}>✕</button>
+            </div>
+            <div style={{ overflowY: 'auto', padding: 8 }}>
+              {stok
+                .filter(s => !pq || (s.kalem_adi || '').toLowerCase().includes(pq.toLowerCase()) || (s.kalem_kodu || '').toLowerCase().includes(pq.toLowerCase()))
+                .slice(0, 80)
+                .map(s => (
+                  <button key={s.kalem_kodu} onClick={() => { setDuzen(p => ({ ...p, [picker.kalemId]: { ...p[picker.kalemId], kod: s.kalem_kodu } })); setPicker(null); }}
+                    style={{ width: '100%', textAlign: 'left', background: 'none', border: 'none', borderBottom: `1px solid ${C.border}`, color: C.t1, padding: '13px 10px', fontSize: 14, cursor: 'pointer' }}>
+                    {s.kalem_adi}
+                  </button>
+                ))}
+              {stok.length === 0 && <div style={{ color: C.t3, textAlign: 'center', padding: 20 }}>Stok kataloğu yüklenemedi.</div>}
+            </div>
+          </div>
         </div>
       )}
     </div>
