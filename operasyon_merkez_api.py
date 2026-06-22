@@ -13595,7 +13595,7 @@ def ops_maliyet_gun_gun(
         # Operasyonel P&L: Faaliyet Kârı = Ciro − (COGS + personel + anlık gider + kira).
         # Tahmini kurumlar vergisi = max(0, kâr) × %25, AYRI gösterilir (KDV kârdan DÜŞÜLMEZ).
         TAHMINI_VERGI_ORANI = 0.25
-        _SGK_ISVEREN_ORAN = 0.225   # FAZ 4: işveren SGK %20.5 + işsizlik %2 (5p teşvikle %17.5)
+        _SGK_ISVEREN_ORAN = 0.175   # FAZ 4: işveren SGK %20.5 + işsizlik %2 = %22.5, 5p teşvik (-%5) → %17.5 (kullanıcı teşvik alıyor, 2026-06-23)
         # Ciro — nakit/pos/online AYRI (komisyon hesabı için pos+online lazım)
         ciro_map: Dict[Tuple[str, str], Dict[str, float]] = {}
         try:
