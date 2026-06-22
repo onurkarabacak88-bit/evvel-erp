@@ -417,7 +417,19 @@ export default function Maliyet() {
                   <td>{fmtDate(s.tarih)}</td>
                   {!subeId && <td>{s.sube_adi}</td>}
                   <td style={{ textAlign: 'right', fontWeight: 700 }}>{fmt(s.ciro_tl || 0)}</td>
-                  <td style={{ textAlign: 'right', color: 'var(--text2)' }}>{fmt(s.genel_toplam || 0)}</td>
+                  <td style={{ textAlign: 'right', color: 'var(--text2)', cursor: 'help' }}
+                    title={[
+                      `Kira: ${fmt(s.kira_maliyet_tl || 0)}`,
+                      `Faturalar (elektrik/su/gaz): ${fmt(s.fatura_maliyet_tl || 0)}`,
+                      `Abonelikler: ${fmt(s.abonelik_maliyet_tl || 0)}`,
+                      `POS komisyonu: ${fmt(s.pos_komisyon_tl || 0)}`,
+                      `Platform komisyonu: ${fmt(s.platform_komisyon_tl || 0)}`,
+                      `Fire: ${fmt(s.fire_maliyet_tl || 0)}`,
+                      `İade: ${fmt(s.iade_maliyet_tl || 0)}`,
+                      `Şube anlık gider: ${fmt(s.sube_anlik_gider_tl || 0)}`,
+                      '(+ ürün-aç COGS + personel)',
+                      'Hariç: kart faizi / finansman',
+                    ].join('\n')}>{fmt(s.genel_toplam || 0)}</td>
                   <td style={{ textAlign: 'right' }}>{fmt(s.faaliyet_kari_tl || 0)}</td>
                   <td style={{ textAlign: 'right', color: 'var(--text3)' }}>{fmt(s.tahmini_vergi_tl || 0)}</td>
                   <td style={{ textAlign: 'right', fontWeight: 800, color: renk }}>{fmt(net)}</td>
@@ -432,7 +444,7 @@ export default function Maliyet() {
         </table>
       </div>
       <div style={{ marginBottom: 16, fontSize: 11, color: 'var(--text3)', lineHeight: 1.5 }}>
-        ✅ Faz 3: Maliyet = ürün-aç COGS + personel + anlık gider + kira + faturalar + POS/platform komisyonu + <strong>fire</strong> (fire bildirimi × birim maliyet) + <strong>iade</strong> (iade fişleri × birim maliyet). ⚠️ <strong>İkram</strong> (Evo 0₺/iskonto ayrıştırma) ve <strong>personel tüketimi</strong> henüz dahil değil — ayrı veri kaynağı gerektiriyor (Faz 3.5/Evo). Faz 4: abonelik + finansman + amortisman. Faz 5: güven skoru + sapma motoru.
+        ✅ Maliyet = ürün-aç COGS + personel + anlık gider + kira + faturalar + <strong>abonelikler</strong> + POS/platform komisyonu + fire + iade. <strong>Toplam Maliyet üstüne gelince kırılım görünür.</strong> ❌ <strong>Kart faizi / finansman DAHİL DEĞİL</strong> (işletme üzerine düşen finansman yükü, operasyonel kârı kirletmez). ⚠️ <strong>İkram</strong> (Evo 0₺/iskonto) ve <strong>personel tüketimi</strong> henüz yok (ayrı/Evo kaynak). Faz 5 ✅ güven skoru + sapma motoru.
       </div>
 
       {/* Gün gün maliyet detayı — Ürün Aç (URUN_AC) tüketim verisi × güncel alış fiyatı */}

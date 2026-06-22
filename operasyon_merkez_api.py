@@ -13533,24 +13533,33 @@ def ops_maliyet_gun_gun(
             pass
         # Sabit giderler (şube bazlı, aylık) → günlük. Kira AYRI tutulur (Faz 1);
         # kira-DIŞI sabit giderler (elektrik/su/gaz/internet/abonelik) Faz 2 fatura kovasıdır.
+        # FAZ 4: 3 kovaya AYRIK sınıflandırma + FİNANSMAN DIŞLAMA.
+        #  - kira → kira kovası (Faz 1)
+        #  - abonelik (yazılım/servis aboneliği) → AYRI abonelik kovası (Faz 4, görünür)
+        #  - elektrik/su/gaz/internet vb. → fatura kovası (Faz 2)
+        #  - faiz/finansman/kredi → OPERASYONEL P&L'YE GİRMEZ (işletme üzerine düşen
+        #    finansman yükü; "bugün operasyonel kâr ettik mi?" sorusunu kirletir → kullanıcı kuralı)
         kira_gunluk: Dict[str, float] = {}
         fatura_sabit_gunluk: Dict[str, float] = {}
+        abonelik_gunluk: Dict[str, float] = {}
         try:
             cur.execute(
-                """SELECT sube_id::text AS sid,
-                          (LOWER(kategori) LIKE %s OR LOWER(gider_adi) LIKE %s) AS kira_mi,
-                          COALESCE(SUM(tutar),0)::numeric AS aylik
+                """SELECT sube_id::text AS sid, LOWER(COALESCE(kategori,'')) AS kat,
+                          LOWER(COALESCE(gider_adi,'')) AS ad, COALESCE(tutar,0)::numeric AS tutar
                    FROM sabit_giderler
-                   WHERE aktif = TRUE AND sube_id IS NOT NULL AND COALESCE(periyot,'aylik')='aylik'
-                   GROUP BY sube_id, kira_mi""",
-                ('%kira%', '%kira%'),
+                   WHERE aktif = TRUE AND sube_id IS NOT NULL AND COALESCE(periyot,'aylik')='aylik'"""
             )
             for r in cur.fetchall():
-                d = dict(r); g = float(d.get("aylik") or 0) / 30.0
-                if d.get("kira_mi"):
-                    kira_gunluk[d["sid"]] = kira_gunluk.get(d["sid"], 0.0) + g
+                d = dict(r); sidk = d["sid"]; g = float(d.get("tutar") or 0) / 30.0
+                txt = (d.get("kat") or "") + " " + (d.get("ad") or "")
+                if any(x in txt for x in ("faiz", "finansman", "kredi kart", "kredi taksit", "banka kredisi")):
+                    continue  # finansman yükü → operasyonel P&L dışı
+                if "kira" in txt:
+                    kira_gunluk[sidk] = kira_gunluk.get(sidk, 0.0) + g
+                elif "abonelik" in txt or "abonman" in txt or "abone" in txt:
+                    abonelik_gunluk[sidk] = abonelik_gunluk.get(sidk, 0.0) + g
                 else:
-                    fatura_sabit_gunluk[d["sid"]] = fatura_sabit_gunluk.get(d["sid"], 0.0) + g
+                    fatura_sabit_gunluk[sidk] = fatura_sabit_gunluk.get(sidk, 0.0) + g
         except Exception:
             pass
 
@@ -13672,6 +13681,7 @@ def ops_maliyet_gun_gun(
             if sid is None:
                 kira_g = sum(kira_gunluk.values())
                 fatura_g = sum(fatura_sabit_gunluk.values())
+                abonelik_g = sum(abonelik_gunluk.values())
                 _cm = [v for (ks, kt), v in ciro_map.items() if kt == tarih_str]
                 ciro_v = sum(x["ciro"] for x in _cm)
                 pos_komisyon = sum(x["pos"] * (sube_oran.get(ks, {}).get("pos", 0) / 100.0)
@@ -13683,6 +13693,7 @@ def ops_maliyet_gun_gun(
             else:
                 kira_g = kira_gunluk.get(sid, 0.0)
                 fatura_g = fatura_sabit_gunluk.get(sid, 0.0)
+                abonelik_g = abonelik_gunluk.get(sid, 0.0)
                 _c = ciro_map.get((sid, tarih_str), {"ciro": 0, "pos": 0, "online": 0})
                 ciro_v = _c["ciro"]
                 _or = sube_oran.get(sid, {"pos": 0, "online": 0})
@@ -13692,12 +13703,13 @@ def ops_maliyet_gun_gun(
                 iade_g = iade_map.get((sid, tarih_str), 0.0)
             satir["kira_maliyet_tl"] = round(kira_g, 2)
             satir["fatura_maliyet_tl"] = round(fatura_g, 2)
+            satir["abonelik_maliyet_tl"] = round(abonelik_g, 2)  # FAZ 4: ayrı görünür kova
             satir["pos_komisyon_tl"] = round(pos_komisyon, 2)
             satir["platform_komisyon_tl"] = round(platform_komisyon, 2)
             satir["fire_maliyet_tl"] = round(fire_g, 2)
             satir["iade_maliyet_tl"] = round(iade_g, 2)
             toplam_maliyet = (toplam + pg["maliyet"] + sube_gider + kira_g
-                              + fatura_g + pos_komisyon + platform_komisyon + fire_g + iade_g)
+                              + fatura_g + abonelik_g + pos_komisyon + platform_komisyon + fire_g + iade_g)
             satir["genel_toplam"] = round(toplam_maliyet, 2)
             satir["ciro_tl"] = round(ciro_v, 2)
             faaliyet_kari = ciro_v - toplam_maliyet
