@@ -13326,23 +13326,29 @@ _GUN_GUN_KOLONLAR: List[Tuple[str, str, List[str]]] = [
 
 @router.get("/maliyet/gun-gun")
 def ops_maliyet_gun_gun(
-    gun: int = Query(7, ge=1, le=31),
+    gun: int = Query(7, ge=1, le=92),
     sube_id: Optional[str] = Query(None),
+    bas: Optional[str] = Query(None, description="YYYY-MM-DD — verilirse gün yerine tarih aralığı"),
+    bit: Optional[str] = Query(None, description="YYYY-MM-DD"),
 ):
     """
     Gün Gün Maliyet — şubelerin günlük "Ürün Aç" (URUN_AC) bildirimlerinde
     raporladığı tüketim adetlerini, güncel alış fiyatlarıyla (urun_alis_fiyat)
     çarpıp kalem grubu bazında (süt, kahve, bardak vb.) günlük maliyete çevirir.
 
-    Reçete gerektirmez — şubenin "bugün şunlardan şu kadar açtım" dediği
-    gerçek tüketim verisine dayanır. Fiyatı tanımlanmamış kalemler 0 TL
-    sayılır ve `fiyat_eksik_kalemler` listesinde döner.
+    Reçete gerektirmez. Pencere: bas+bit verilirse o tarih aralığı; yoksa son `gun` gün.
     """
+    from datetime import date as _d, timedelta as _td
+    if bas and bit:
+        _bas, _bit = str(bas)[:10], str(bit)[:10]
+    else:
+        _bit = _d.today().isoformat()
+        _bas = (_d.today() - _td(days=max(0, gun - 1))).isoformat()
     with db() as (conn, cur):
         _ensure_maliyet_tablolari(cur)
 
         sube_filter = "AND sube_id = %s" if sube_id else ""
-        params: list = [gun - 1]
+        params: list = [_bas, _bit]
         if sube_id:
             params.append(sube_id)
 
@@ -13351,7 +13357,7 @@ def ops_maliyet_gun_gun(
             SELECT sube_id::text AS sube_id, tarih::text AS tarih, aciklama
             FROM operasyon_defter
             WHERE etiket='URUN_AC'
-              AND tarih >= CURRENT_DATE - (%s || ' days')::interval
+              AND tarih BETWEEN %s::date AND %s::date
               {sube_filter}
             """,
             params,
@@ -13401,7 +13407,7 @@ def ops_maliyet_gun_gun(
         # — sürekli için taban (maaş/30) + 9.5 saat üstü fazla mesai, part-time
         # için planlanan saat × saatlik ücret, + yol ücretinin günlük payı.
         personel_sube_filter = "AND vs.sube_id = %s" if sube_id else ""
-        personel_params: list = [gun - 1]
+        personel_params: list = [_bas, _bit]
         if sube_id:
             personel_params.append(sube_id)
         cur.execute(
@@ -13414,7 +13420,7 @@ def ops_maliyet_gun_gun(
                    ))/3600.0) AS saat
             FROM vardiya_atama va
             JOIN vardiya_slot vs ON vs.id = va.slot_id
-            WHERE va.tarih >= CURRENT_DATE - (%s || ' days')::interval
+            WHERE va.tarih BETWEEN %s::date AND %s::date
               AND va.durum IN ('planli','onayli')
               {personel_sube_filter}
             GROUP BY va.tarih, va.personel_id
@@ -13440,9 +13446,9 @@ def ops_maliyet_gun_gun(
                 SELECT tarih::text AS tarih, personel_id::text AS personel_id, ucret_hakki
                 FROM yemek_molasi
                 WHERE personel_id::text = ANY(%s)
-                  AND tarih >= CURRENT_DATE - (%s || ' days')::interval
+                  AND tarih BETWEEN %s::date AND %s::date
                 """,
-                (pids, gun - 1),
+                (pids, _bas, _bit),
             )
             for r in cur.fetchall():
                 yemek_hak_map[(r["tarih"], r["personel_id"])] = bool(r["ucret_hakki"])
@@ -13471,7 +13477,7 @@ def ops_maliyet_gun_gun(
         # (sube='MERKEZ'/boş) ve kasa-farkı kaynak düzeltmeleri
         # (kaynak_tablo='kasa_fark_kaynak_duzeltme') hariç tutulur.
         ag_sube_filter = "AND ag.sube = %s" if sube_id else ""
-        ag_params: list = [gun - 1]
+        ag_params: list = [_bas, _bit]
         if sube_id:
             ag_params.append(sube_id)
         cur.execute(
@@ -13481,7 +13487,7 @@ def ops_maliyet_gun_gun(
             FROM anlik_giderler ag
             WHERE ag.durum = 'aktif'
               AND ag.kaynak_tablo IS NULL
-              AND ag.tarih >= CURRENT_DATE - (%s || ' days')::interval
+              AND ag.tarih BETWEEN %s::date AND %s::date
               AND ag.sube IN (SELECT id::text FROM subeler)
               {ag_sube_filter}
             GROUP BY ag.sube, ag.tarih
@@ -13492,9 +13498,10 @@ def ops_maliyet_gun_gun(
         for r in cur.fetchall():
             anlik_gider_map[(r["sube_id"], r["tarih"])] = float(r["tutar"] or 0)
 
-        # Tarih listesi: bugünden geriye `gun` gün, en yeni üstte
-        bugun = date.today()
-        tarihler = [(bugun - timedelta(days=i)).isoformat() for i in range(gun)]
+        # Tarih listesi: [bas, bit] aralığı, en yeni üstte
+        _ed = date.fromisoformat(_bit)
+        _ngun = max(1, (_ed - date.fromisoformat(_bas)).days + 1)
+        tarihler = [(_ed - timedelta(days=i)).isoformat() for i in range(_ngun)]
 
         # ── CİRO (günlük, şube bazlı) + KİRA (sabit giderlerden, aylık/30) ──
         # Operasyonel P&L: Faaliyet Kârı = Ciro − (COGS + personel + anlık gider + kira).
@@ -13503,7 +13510,7 @@ def ops_maliyet_gun_gun(
         # Ciro — nakit/pos/online AYRI (komisyon hesabı için pos+online lazım)
         ciro_map: Dict[Tuple[str, str], Dict[str, float]] = {}
         try:
-            _cp: list = [gun - 1]
+            _cp: list = [_bas, _bit]
             _cf = ""
             if sube_id:
                 _cf = "AND sube_id = %s"; _cp.append(sube_id)
@@ -13512,7 +13519,7 @@ def ops_maliyet_gun_gun(
                            COALESCE(nakit,0)::numeric AS nakit, COALESCE(pos,0)::numeric AS pos,
                            COALESCE(online,0)::numeric AS online
                     FROM ciro
-                    WHERE tarih >= CURRENT_DATE - (%s || ' days')::interval {_cf}""",
+                    WHERE tarih BETWEEN %s::date AND %s::date {_cf}""",
                 _cp,
             )
             for r in cur.fetchall():
@@ -13582,14 +13589,14 @@ def ops_maliyet_gun_gun(
         fire_map: Dict[Tuple[str, str], float] = {}
         iade_map: Dict[Tuple[str, str], float] = {}
         try:
-            _fp: list = [gun - 1]
+            _fp: list = [_bas, _bit]
             _ff = ""
             if sube_id:
                 _ff = "AND sube_id = %s"; _fp.append(sube_id)
             cur.execute(
                 f"""SELECT sube_id::text AS sid, tarih::text AS t, sebep_kodu, kalemler
                     FROM sube_fire_bildirim
-                    WHERE tarih >= CURRENT_DATE - (%s || ' days')::interval {_ff}""",
+                    WHERE tarih BETWEEN %s::date AND %s::date {_ff}""",
                 _fp,
             )
             import json as _fj

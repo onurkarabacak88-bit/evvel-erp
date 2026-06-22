@@ -36,7 +36,10 @@ export default function Maliyet() {
   const [guvenSkoru, setGuvenSkoru] = useState(null);   // Faz 5: güven skoru + sapma motoru
   const [guvenAcik, setGuvenAcik] = useState(false);    // detay aç/kapa
   const [sekme, setSekme] = useState('genel');          // genel | analiz | fiyatlar | faturalar
-  const [donem, setDonem] = useState('7');              // bugun | 7 | 30 | ay  (gün sayısına çevrilir)
+  const [donem, setDonem] = useState('7');              // bugun | 7 | 30 | ay | gecenay | ozel
+  const [ozelBas, setOzelBas] = useState('');           // Özel aralık başlangıç (YYYY-MM-DD)
+  const [ozelBit, setOzelBit] = useState('');           // Özel aralık bitiş
+  const [gunGunOnceki, setGunGunOnceki] = useState(null); // önceki eşit pencere (KPI trend için)
   const [loading, setLoading] = useState(false);
   const [mesaj, setMesaj] = useState(null); // {m, t}
 
@@ -107,31 +110,57 @@ export default function Maliyet() {
     } catch (e) { setMesaj({ m: e.message || 'Onaylanamadı', t: 'error' }); }
   };
 
-  // Dönem → gün sayısı (backend gün-gün ucu max 31 "son N gün" destekler)
-  const donemGun = donem === 'bugun' ? 1 : donem === 'ay' ? new Date().getDate() : (parseInt(donem, 10) || 7);
-  const donemLabel = donem === 'bugun' ? 'Bugün' : donem === 'ay' ? 'Bu Ay' : `Son ${donemGun} gün`;
+  // Dönem → tarih aralığı {bas, bit, label}. Backend bas/bit ile gerçek aralık çeker.
+  const _iso = (d) => d.toISOString().slice(0, 10);
+  const donemAralik = () => {
+    const t = new Date(); t.setHours(0, 0, 0, 0);
+    const g = (n) => { const b = new Date(t); b.setDate(b.getDate() - n); return _iso(b); };
+    if (donem === 'bugun') return { bas: _iso(t), bit: _iso(t), label: 'Bugün' };
+    if (donem === '7') return { bas: g(6), bit: _iso(t), label: 'Son 7 gün' };
+    if (donem === '30') return { bas: g(29), bit: _iso(t), label: 'Son 30 gün' };
+    if (donem === 'ay') return { bas: _iso(new Date(t.getFullYear(), t.getMonth(), 1)), bit: _iso(t), label: 'Bu Ay' };
+    if (donem === 'gecenay') return { bas: _iso(new Date(t.getFullYear(), t.getMonth() - 1, 1)), bit: _iso(new Date(t.getFullYear(), t.getMonth(), 0)), label: 'Geçen Ay' };
+    if (donem === 'ozel' && ozelBas && ozelBit) return { bas: ozelBas, bit: ozelBit, label: 'Özel' };
+    return { bas: g(6), bit: _iso(t), label: 'Son 7 gün' };
+  };
+  const _ar = donemAralik();
+  const donemLabel = _ar.label;
+  // Önceki eşit uzunluktaki pencere (KPI trend kıyası için)
+  const oncekiAralik = (ar) => {
+    const b = new Date(ar.bas + 'T00:00:00'), e = new Date(ar.bit + 'T00:00:00');
+    const len = Math.round((e - b) / 86400000) + 1;
+    const pe = new Date(b); pe.setDate(pe.getDate() - 1);
+    const pb = new Date(pe); pb.setDate(pb.getDate() - (len - 1));
+    return { bas: _iso(pb), bit: _iso(pe) };
+  };
 
   const yukle = () => {
     setLoading(true);
+    const ar = donemAralik();
+    const onc = oncekiAralik(ar);
     const q = subeId ? `?sube_id=${encodeURIComponent(subeId)}` : '';
     const subeQ = subeId ? `&sube_id=${encodeURIComponent(subeId)}` : '';
+    const _gunLen = Math.min(92, Math.round((new Date(ar.bit) - new Date(ar.bas)) / 86400000) + 1);
     Promise.all([
       api('/ops/maliyet/ozet' + q),
       api('/ops/maliyet/alis-fiyatlari'),
       api('/ops/maliyet/stok-kalemleri'),
-      api(`/ops/maliyet/gun-gun?gun=${donemGun}${subeQ}`),
+      api(`/ops/maliyet/gun-gun?bas=${ar.bas}&bit=${ar.bit}${subeQ}`),
     ]).then(([ozet, fiyatlar, kalemler, gunGun]) => {
       setMaliyetData(ozet);
       setMaliyetFiyatlar(fiyatlar?.satirlar || []);
       setStokKalemleri(kalemler?.kalemler || []);
       setGunGunData(gunGun);
     }).catch(() => {}).finally(() => setLoading(false));
+    // Önceki dönem (sadece KPI trend toplamları için)
+    api(`/ops/maliyet/gun-gun?bas=${onc.bas}&bit=${onc.bit}${subeQ}`)
+      .then(setGunGunOnceki).catch(() => setGunGunOnceki(null));
     // Faz 5 — güven skoru + sapma motoru (izole, hata yutar)
-    api(`/ops/maliyet/guven-skoru?gun=${donemGun}${subeQ}`)
+    api(`/ops/maliyet/guven-skoru?gun=${_gunLen}${subeQ}`)
       .then(setGuvenSkoru).catch(() => setGuvenSkoru(null));
   };
 
-  useEffect(() => { yukle(); }, [subeId, donem]);
+  useEffect(() => { yukle(); }, [subeId, donem, ozelBas, ozelBit]);
 
   useEffect(() => {
     if (!mesaj) return;
@@ -281,7 +310,7 @@ export default function Maliyet() {
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
           {/* Dönem seçici (GPT: en eksik #2 — bütün ekran buna bağlı) */}
           <div style={{ display: 'inline-flex', border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
-            {[['bugun', 'Bugün'], ['7', '7 Gün'], ['30', '30 Gün'], ['ay', 'Bu Ay']].map(([id, lbl], i) => (
+            {[['bugun', 'Bugün'], ['7', '7 Gün'], ['30', '30 Gün'], ['ay', 'Bu Ay'], ['gecenay', 'Geçen Ay'], ['ozel', 'Özel']].map(([id, lbl], i) => (
               <button key={id} onClick={() => setDonem(id)} style={{
                 padding: '6px 12px', border: 'none', cursor: 'pointer', fontSize: 12,
                 borderLeft: i === 0 ? 'none' : '1px solid var(--border)',
@@ -291,6 +320,13 @@ export default function Maliyet() {
               }}>{lbl}</button>
             ))}
           </div>
+          {donem === 'ozel' && (
+            <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12 }}>
+              <input type="date" value={ozelBas} onChange={e => setOzelBas(e.target.value)} style={{ padding: '4px 6px' }} />
+              <span style={{ color: 'var(--text3)' }}>→</span>
+              <input type="date" value={ozelBit} onChange={e => setOzelBit(e.target.value)} style={{ padding: '4px 6px' }} />
+            </div>
+          )}
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <label style={{ fontSize: 12, color: 'var(--text3)' }}>Şube:</label>
             <select value={subeId} onChange={e => setSubeId(e.target.value)}>
@@ -342,9 +378,26 @@ export default function Maliyet() {
         const marj = ciro > 0 ? (netKar / ciro) * 100 : null;
         const gunSayisi = new Set(rows.map(r => r.tarih)).size || rows.length;
         const netRenk = netKar > 0 ? 'var(--green)' : netKar < 0 ? 'var(--red)' : undefined;
-        const kart = (baslik, deger, alt, vurgu) => (
+        // Önceki eşit pencere (trend kıyası) — renk değil YÖN (GPT pattern)
+        const orows = gunGunOnceki?.satirlar || [];
+        const oTopla = (k) => orows.reduce((a, s) => a + (Number(s[k]) || 0), 0);
+        const oCiro = oTopla('ciro_tl'), oMaliyet = oTopla('genel_toplam'), oNet = oTopla('net_kar_tl');
+        const oMarj = oCiro > 0 ? (oNet / oCiro) * 100 : null;
+        const yon = (cur, prev, artisIyi) => {
+          if (!orows.length || prev == null) return null;
+          const d = cur - prev;
+          if (Math.abs(d) < 0.005 * (Math.abs(prev) || 1)) return { ok: '▬', renk: 'var(--text3)', t: '%0' };
+          const pct = prev !== 0 ? (d / Math.abs(prev)) * 100 : null;
+          const arti = d > 0;
+          const iyi = artisIyi ? arti : !arti;
+          return { ok: arti ? '▲' : '▼', renk: iyi ? 'var(--green)' : 'var(--red)', t: pct == null ? '' : `%${Math.abs(pct).toFixed(0)}` };
+        };
+        const kart = (baslik, deger, alt, vurgu, tr) => (
           <div className="card" style={{ borderTop: vurgu ? `3px solid ${vurgu}` : undefined }}>
-            <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 4 }}>{baslik}</div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 6 }}>
+              <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 4 }}>{baslik}</div>
+              {tr && <span style={{ fontSize: 11, fontWeight: 700, color: tr.renk, whiteSpace: 'nowrap' }}>{tr.ok} {tr.t}</span>}
+            </div>
             <div style={{ fontSize: 22, fontWeight: 800, fontFamily: 'var(--font-mono)', color: vurgu || 'var(--text)' }}>{deger}</div>
             {alt && <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>{alt}</div>}
           </div>
@@ -353,13 +406,13 @@ export default function Maliyet() {
           <div style={{ marginBottom: 16 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
               <span style={{ fontWeight: 700, fontSize: 14 }}>📊 Genel Bakış</span>
-              <span style={{ fontSize: 11, color: 'var(--text3)' }}>{donemLabel}{gunSayisi ? ` · ${gunSayisi} gün veri` : ''}{subeId ? '' : ' · tüm şubeler'}</span>
+              <span style={{ fontSize: 11, color: 'var(--text3)' }}>{donemLabel}{gunSayisi ? ` · ${gunSayisi} gün veri` : ''}{orows.length ? ' · ▲▼ geçen döneme göre' : ''}{subeId ? '' : ' · tüm şubeler'}</span>
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12 }}>
-              {kart('✅ Net Kâr', fmt(netKar), `${gunSayisi} günde`, netRenk)}
-              {kart('Marj', marj == null ? '—' : `%${marj.toFixed(1)}`, 'net kâr / ciro', netRenk)}
-              {kart('💵 Ciro', fmt(ciro), `günlük ort. ${fmt(ciro / Math.max(1, gunSayisi))}`)}
-              {kart('📉 Toplam Maliyet', fmt(maliyet), 'ürün+kira+komisyon+fire…')}
+              {kart('✅ Net Kâr', fmt(netKar), `${gunSayisi} günde`, netRenk, yon(netKar, oNet, true))}
+              {kart('Marj', marj == null ? '—' : `%${marj.toFixed(1)}`, 'net kâr / ciro', netRenk, marj != null && oMarj != null ? yon(marj, oMarj, true) : null)}
+              {kart('💵 Ciro', fmt(ciro), `günlük ort. ${fmt(ciro / Math.max(1, gunSayisi))}`, undefined, yon(ciro, oCiro, true))}
+              {kart('📉 Toplam Maliyet', fmt(maliyet), 'ürün+kira+komisyon+fire…', undefined, yon(maliyet, oMaliyet, false))}
             </div>
           </div>
         );
