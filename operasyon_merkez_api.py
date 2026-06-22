@@ -13554,6 +13554,66 @@ def ops_maliyet_gun_gun(
         except Exception:
             pass
 
+        # ── FAZ 3: Fire + İade maliyeti (sube_fire_bildirim kalemleri × birim maliyet) ──
+        # sebep_kodu='iade' → iade kovası; diğer sebepler → fire kovası.
+        # Fire kalemleri UUID de olabilir → _BAR_KEYS sınırlı fiyat_gecmisi yetmez;
+        # TÜM kalemlerin son birim maliyetini ayrı çek (fiyat_son_by_kod).
+        fiyat_son_by_kod: Dict[str, float] = {}
+        try:
+            cur.execute(
+                """SELECT DISTINCT ON (kalem_kodu) kalem_kodu, birim_maliyet_tl
+                   FROM urun_alis_fiyat
+                   WHERE (gecerli_bitis IS NULL OR gecerli_bitis >= CURRENT_DATE)
+                   ORDER BY kalem_kodu, gecerli_baslangic DESC"""
+            )
+            for r in cur.fetchall():
+                d = dict(r); fiyat_son_by_kod[str(d.get("kalem_kodu"))] = float(d.get("birim_maliyet_tl") or 0)
+        except Exception:
+            pass
+        fire_map: Dict[Tuple[str, str], float] = {}
+        iade_map: Dict[Tuple[str, str], float] = {}
+        try:
+            _fp: list = [gun - 1]
+            _ff = ""
+            if sube_id:
+                _ff = "AND sube_id = %s"; _fp.append(sube_id)
+            cur.execute(
+                f"""SELECT sube_id::text AS sid, tarih::text AS t, sebep_kodu, kalemler
+                    FROM sube_fire_bildirim
+                    WHERE tarih >= CURRENT_DATE - (%s || ' days')::interval {_ff}""",
+                _fp,
+            )
+            import json as _fj
+            for r in (cur.fetchall() or []):
+                d = dict(r)
+                kl = d.get("kalemler")
+                if isinstance(kl, str):
+                    try: kl = _fj.loads(kl)
+                    except Exception: kl = []
+                if not isinstance(kl, list):
+                    continue
+                tutar = 0.0
+                for it in kl:
+                    if not isinstance(it, dict):
+                        continue
+                    kk = str(it.get("kalem_kodu") or it.get("urun_id") or "").strip()
+                    try: adet = float(it.get("adet") or 0)
+                    except Exception: adet = 0.0
+                    if not kk or adet <= 0:
+                        continue
+                    fiyat = fiyat_son_by_kod.get(kk) or _fiyat_bul(kk, d["t"])
+                    if fiyat:
+                        tutar += adet * fiyat
+                if tutar <= 0:
+                    continue
+                key = (d["sid"], d["t"])
+                if str(d.get("sebep_kodu") or "").strip().lower() == "iade":
+                    iade_map[key] = iade_map.get(key, 0.0) + tutar
+                else:
+                    fire_map[key] = fire_map.get(key, 0.0) + tutar
+        except Exception:
+            pass
+
         fiyat_eksik: set = set()
         satirlar = []
         if sube_id:
@@ -13618,6 +13678,8 @@ def ops_maliyet_gun_gun(
                                    for (ks, kt), x in ciro_map.items() if kt == tarih_str)
                 platform_komisyon = sum(x["online"] * (sube_oran.get(ks, {}).get("online", 0) / 100.0)
                                         for (ks, kt), x in ciro_map.items() if kt == tarih_str)
+                fire_g = sum(v for (ks, kt), v in fire_map.items() if kt == tarih_str)
+                iade_g = sum(v for (ks, kt), v in iade_map.items() if kt == tarih_str)
             else:
                 kira_g = kira_gunluk.get(sid, 0.0)
                 fatura_g = fatura_sabit_gunluk.get(sid, 0.0)
@@ -13626,12 +13688,16 @@ def ops_maliyet_gun_gun(
                 _or = sube_oran.get(sid, {"pos": 0, "online": 0})
                 pos_komisyon = _c["pos"] * (_or["pos"] / 100.0)
                 platform_komisyon = _c["online"] * (_or["online"] / 100.0)
+                fire_g = fire_map.get((sid, tarih_str), 0.0)
+                iade_g = iade_map.get((sid, tarih_str), 0.0)
             satir["kira_maliyet_tl"] = round(kira_g, 2)
             satir["fatura_maliyet_tl"] = round(fatura_g, 2)
             satir["pos_komisyon_tl"] = round(pos_komisyon, 2)
             satir["platform_komisyon_tl"] = round(platform_komisyon, 2)
+            satir["fire_maliyet_tl"] = round(fire_g, 2)
+            satir["iade_maliyet_tl"] = round(iade_g, 2)
             toplam_maliyet = (toplam + pg["maliyet"] + sube_gider + kira_g
-                              + fatura_g + pos_komisyon + platform_komisyon)
+                              + fatura_g + pos_komisyon + platform_komisyon + fire_g + iade_g)
             satir["genel_toplam"] = round(toplam_maliyet, 2)
             satir["ciro_tl"] = round(ciro_v, 2)
             faaliyet_kari = ciro_v - toplam_maliyet

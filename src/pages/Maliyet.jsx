@@ -357,7 +357,7 @@ export default function Maliyet() {
         </table>
       </div>
       <div style={{ marginBottom: 16, fontSize: 11, color: 'var(--text3)', lineHeight: 1.5 }}>
-        ✅ Faz 2: Maliyet = ürün-aç COGS + personel + anlık gider + kira + <strong>faturalar (sabit giderler /30)</strong> + <strong>POS komisyonu</strong> (kart cirosu × şube oranı) + <strong>platform komisyonu</strong> (online cirosu × oran). ⚠️ Fire, ikram, personel tüketimi, iade <strong>henüz YOK</strong> (Faz 3). POS/platform için şube oranları (pos_oran/online_oran) girili olmalı.
+        ✅ Faz 3: Maliyet = ürün-aç COGS + personel + anlık gider + kira + faturalar + POS/platform komisyonu + <strong>fire</strong> (fire bildirimi × birim maliyet) + <strong>iade</strong> (iade fişleri × birim maliyet). ⚠️ <strong>İkram</strong> (Evo 0₺/iskonto ayrıştırma) ve <strong>personel tüketimi</strong> henüz dahil değil — ayrı veri kaynağı gerektiriyor (Faz 3.5/Evo). Faz 4: abonelik + finansman + amortisman. Faz 5: güven skoru + sapma motoru.
       </div>
 
       {/* Gün gün maliyet detayı — Ürün Aç (URUN_AC) tüketim verisi × güncel alış fiyatı */}
