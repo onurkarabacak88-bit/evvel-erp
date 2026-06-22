@@ -13891,6 +13891,93 @@ def ops_maliyet_gun_gun(
     }
 
 
+# ── TÜRKİYE VERGİ MEKANİZMASI (izole, tahmini — resmî beyan değil) ──────────
+# Kurumlar (Ltd/A.Ş.): düz oran. Gelir Vergisi (şahıs): artan oranlı yıllık dilim.
+# 2025 ticari kazanç dilimleri (ayarlardan güncellenebilir hale getirilebilir).
+_KURUMLAR_VERGI_ORAN = 0.25
+_GELIR_VERGISI_DILIMLERI = [   # (üst_sınır, oran) — yıllık kümülatif, son dilim sınırsız
+    (158_000, 0.15),
+    (330_000, 0.20),
+    (800_000, 0.27),
+    (4_300_000, 0.35),
+    (float("inf"), 0.40),
+]
+
+
+def _gelir_vergisi_yillik(yillik_kar: float) -> float:
+    """Şahıs işletmesi — artan oranlı yıllık gelir vergisi (toplam tutar)."""
+    k = max(0.0, float(yillik_kar or 0))
+    if k <= 0:
+        return 0.0
+    vergi = 0.0
+    onceki = 0.0
+    for ust, oran in _GELIR_VERGISI_DILIMLERI:
+        dilim = min(k, ust) - onceki
+        if dilim <= 0:
+            break
+        vergi += dilim * oran
+        onceki = ust
+        if k <= ust:
+            break
+    return vergi
+
+
+@router.get("/maliyet/vergi-ozet")
+def ops_maliyet_vergi_ozet(
+    gun: int = Query(7, ge=1, le=31),
+    sube_id: Optional[str] = Query(None),
+):
+    """İZOLE şube-bazlı TAHMİNİ vergi özeti (Türkiye mekanizması). Resmî beyan DEĞİL.
+    Şirket (Ltd/A.Ş.) → kurumlar %25 düz. Şahıs → gelir vergisi artan dilim (yıllığa
+    annualize edilip efektif oran). FAVÖK (vergi öncesi kâr) gün-gün motorundan alınır."""
+    with db() as (conn, cur):
+        cur.execute(
+            "SELECT id::text AS id, ad, COALESCE(vergi_tipi,'sirket') AS vergi_tipi FROM subeler "
+            "WHERE COALESCE(aktif,TRUE)=TRUE AND id <> 'sube-merkez'"
+            + (" AND id::text=%s" if sube_id else ""),
+            (sube_id,) if sube_id else (),
+        )
+        subeler = [dict(r) for r in cur.fetchall()]
+
+    satirlar = []
+    toplam_vergi = 0.0
+    toplam_kar = 0.0
+    for s in subeler:
+        try:
+            gg = ops_maliyet_gun_gun(gun=gun, sube_id=s["id"])
+            favok = sum(float(r.get("favok_tl") or 0) for r in gg.get("satirlar", []))
+        except Exception:
+            favok = 0.0
+        yillik = favok * (365.0 / gun) if gun > 0 else favok
+        if s["vergi_tipi"] == "sahis":
+            yillik_vergi = _gelir_vergisi_yillik(yillik)
+            yontem = "Gelir Vergisi (artan dilim)"
+        else:
+            yillik_vergi = max(0.0, yillik) * _KURUMLAR_VERGI_ORAN
+            yontem = f"Kurumlar Vergisi %{int(_KURUMLAR_VERGI_ORAN*100)}"
+        donem_vergi = yillik_vergi * (gun / 365.0) if gun > 0 else yillik_vergi
+        efektif = (yillik_vergi / yillik * 100.0) if yillik > 0 else 0.0
+        satirlar.append({
+            "sube_id": s["id"], "sube_adi": s["ad"], "vergi_tipi": s["vergi_tipi"],
+            "yontem": yontem,
+            "vergi_oncesi_kar_tl": round(favok, 2),
+            "tahmini_vergi_tl": round(max(0.0, donem_vergi), 2),
+            "efektif_oran_pct": round(efektif, 1),
+            "vergi_sonrasi_kar_tl": round(favok - max(0.0, donem_vergi), 2),
+        })
+        toplam_vergi += max(0.0, donem_vergi)
+        toplam_kar += favok
+    return {
+        "gun": gun, "sube_id": sube_id,
+        "satirlar": sorted(satirlar, key=lambda x: -x["tahmini_vergi_tl"]),
+        "toplam_vergi_tl": round(toplam_vergi, 2),
+        "toplam_vergi_oncesi_kar_tl": round(toplam_kar, 2),
+        "not": "⚠️ TAHMİNİ — yönetsel gösterge, resmî beyan değil. Geçici vergi/mahsup/istisna hariç. "
+               "Şahıs şubelerde dönem kârı yıllığa oranlanıp artan dilim uygulanır (efektif oran).",
+        "dilimler_2025": [{"ust": (None if u == float('inf') else u), "oran_pct": int(o*100)} for u, o in _GELIR_VERGISI_DILIMLERI],
+    }
+
+
 @router.get("/maliyet/alis-fiyatlari")
 def ops_maliyet_alis_fiyatlari():
     """Tanımlı alış fiyatlarını listeler."""

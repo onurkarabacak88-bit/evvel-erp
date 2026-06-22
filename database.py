@@ -415,6 +415,13 @@ def init_db():
                 IF NOT EXISTS (SELECT 1 FROM information_schema.columns
                     WHERE table_name='subeler' AND column_name='vardiya_yazilsin')
                 THEN ALTER TABLE subeler ADD COLUMN vardiya_yazilsin BOOLEAN NOT NULL DEFAULT TRUE; END IF;
+                -- Vergi tipi: sirket (Ltd/A.Ş. → kurumlar %25 düz) | sahis (gelir vergisi artan dilim)
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='subeler' AND column_name='vergi_tipi')
+                THEN ALTER TABLE subeler ADD COLUMN vergi_tipi TEXT NOT NULL DEFAULT 'sirket';
+                     -- İlk kurulum: Zafer + Köyceğiz şahıs (kullanıcı kararı 2026-06-23, farklı kişiler)
+                     UPDATE subeler SET vergi_tipi='sahis' WHERE id IN ('sube-zafer','sube-koycegiz');
+                END IF;
                 IF NOT EXISTS (SELECT 1 FROM information_schema.columns
                     WHERE table_name='subeler' AND column_name='acilis_saati')
                 THEN ALTER TABLE subeler ADD COLUMN acilis_saati TEXT; END IF;
