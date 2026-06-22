@@ -36,6 +36,7 @@ export default function Maliyet() {
   const [guvenSkoru, setGuvenSkoru] = useState(null);   // Faz 5: güven skoru + sapma motoru
   const [guvenAcik, setGuvenAcik] = useState(false);    // detay aç/kapa
   const [sekme, setSekme] = useState('genel');          // genel | analiz | fiyatlar | faturalar
+  const [donem, setDonem] = useState('7');              // bugun | 7 | 30 | ay  (gün sayısına çevrilir)
   const [loading, setLoading] = useState(false);
   const [mesaj, setMesaj] = useState(null); // {m, t}
 
@@ -106,14 +107,19 @@ export default function Maliyet() {
     } catch (e) { setMesaj({ m: e.message || 'Onaylanamadı', t: 'error' }); }
   };
 
+  // Dönem → gün sayısı (backend gün-gün ucu max 31 "son N gün" destekler)
+  const donemGun = donem === 'bugun' ? 1 : donem === 'ay' ? new Date().getDate() : (parseInt(donem, 10) || 7);
+  const donemLabel = donem === 'bugun' ? 'Bugün' : donem === 'ay' ? 'Bu Ay' : `Son ${donemGun} gün`;
+
   const yukle = () => {
     setLoading(true);
     const q = subeId ? `?sube_id=${encodeURIComponent(subeId)}` : '';
+    const subeQ = subeId ? `&sube_id=${encodeURIComponent(subeId)}` : '';
     Promise.all([
       api('/ops/maliyet/ozet' + q),
       api('/ops/maliyet/alis-fiyatlari'),
       api('/ops/maliyet/stok-kalemleri'),
-      api('/ops/maliyet/gun-gun?gun=7' + (subeId ? `&sube_id=${encodeURIComponent(subeId)}` : '')),
+      api(`/ops/maliyet/gun-gun?gun=${donemGun}${subeQ}`),
     ]).then(([ozet, fiyatlar, kalemler, gunGun]) => {
       setMaliyetData(ozet);
       setMaliyetFiyatlar(fiyatlar?.satirlar || []);
@@ -121,11 +127,11 @@ export default function Maliyet() {
       setGunGunData(gunGun);
     }).catch(() => {}).finally(() => setLoading(false));
     // Faz 5 — güven skoru + sapma motoru (izole, hata yutar)
-    api('/ops/maliyet/guven-skoru?gun=7' + (subeId ? `&sube_id=${encodeURIComponent(subeId)}` : ''))
+    api(`/ops/maliyet/guven-skoru?gun=${donemGun}${subeQ}`)
       .then(setGuvenSkoru).catch(() => setGuvenSkoru(null));
   };
 
-  useEffect(() => { yukle(); }, [subeId]);
+  useEffect(() => { yukle(); }, [subeId, donem]);
 
   useEffect(() => {
     if (!mesaj) return;
@@ -272,12 +278,26 @@ export default function Maliyet() {
     <div className="page">
       <div className="page-header">
         <h1>💰 Maliyet</h1>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <label style={{ fontSize: 12, color: 'var(--text3)' }}>Şube:</label>
-          <select value={subeId} onChange={e => setSubeId(e.target.value)}>
-            <option value="">Tüm Şubeler</option>
-            {subeler.map(s => <option key={s.id} value={s.id}>{s.ad || s.id}</option>)}
-          </select>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+          {/* Dönem seçici (GPT: en eksik #2 — bütün ekran buna bağlı) */}
+          <div style={{ display: 'inline-flex', border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
+            {[['bugun', 'Bugün'], ['7', '7 Gün'], ['30', '30 Gün'], ['ay', 'Bu Ay']].map(([id, lbl], i) => (
+              <button key={id} onClick={() => setDonem(id)} style={{
+                padding: '6px 12px', border: 'none', cursor: 'pointer', fontSize: 12,
+                borderLeft: i === 0 ? 'none' : '1px solid var(--border)',
+                fontWeight: donem === id ? 700 : 500,
+                background: donem === id ? 'var(--accent)' : 'transparent',
+                color: donem === id ? '#fff' : 'var(--text3)',
+              }}>{lbl}</button>
+            ))}
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <label style={{ fontSize: 12, color: 'var(--text3)' }}>Şube:</label>
+            <select value={subeId} onChange={e => setSubeId(e.target.value)}>
+              <option value="">Tüm Şubeler</option>
+              {subeler.map(s => <option key={s.id} value={s.id}>{s.ad || s.id}</option>)}
+            </select>
+          </div>
         </div>
       </div>
 
@@ -333,7 +353,7 @@ export default function Maliyet() {
           <div style={{ marginBottom: 16 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
               <span style={{ fontWeight: 700, fontSize: 14 }}>📊 Genel Bakış</span>
-              <span style={{ fontSize: 11, color: 'var(--text3)' }}>Son {gunSayisi} gün{subeId ? '' : ' · tüm şubeler'}</span>
+              <span style={{ fontSize: 11, color: 'var(--text3)' }}>{donemLabel}{gunSayisi ? ` · ${gunSayisi} gün veri` : ''}{subeId ? '' : ' · tüm şubeler'}</span>
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12 }}>
               {kart('✅ Net Kâr', fmt(netKar), `${gunSayisi} günde`, netRenk)}
