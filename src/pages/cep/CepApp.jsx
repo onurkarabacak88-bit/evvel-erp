@@ -697,6 +697,31 @@ function CepBelgeTalep({ onGeri, onDegisti }) {
   const [liste, setListe] = useState(null);
   const [hata, setHata] = useState('');
   const [mesgul, setMesgul] = useState('');
+  // ── Genel fatura PDF yükleme (WhatsApp'tan gelen faturayı telefondan seç) ──
+  const [fPanel, setFPanel] = useState(false);
+  const [fYukBusy, setFYukBusy] = useState(false);
+  const [fSonuc, setFSonuc] = useState('');
+  const [fHata, setFHata] = useState('');
+
+  const faturaGenelYukle = async (file) => {
+    if (!file) return;
+    setFHata(''); setFSonuc(''); setFYukBusy(true);
+    try {
+      const fd = new FormData();
+      fd.append('pdf', file);
+      const headers = {};
+      try {
+        const mut = (localStorage.getItem('evvelMerkezMutasyonKey') || '').trim();
+        if (mut) headers['X-Evvel-Merkez-Key'] = mut;
+      } catch { /* ignore */ }
+      const res = await fetch('/api/fatura/yukle-pdf', { method: 'POST', headers, body: fd });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error((data && data.detail) || 'PDF işlenemedi');
+      const t = data.toplam_fatura || 0, y = data.yuklenen || 0, a = data.atlanan_mevcut || 0;
+      setFSonuc(`✅ ${t} fatura bulundu · ${y} yeni alındı${a ? ` · ${a} zaten yüklüydü` : ''}. Arka planda okunuyor; fiyat onayı masaüstü Maliyet → Telefon Faturaları'nda.`);
+    } catch (e) { setFHata(e.message || 'PDF işlenemedi'); }
+    finally { setFYukBusy(false); }
+  };
 
   const yukle = useCallback(() => {
     setHata('');
@@ -763,6 +788,37 @@ function CepBelgeTalep({ onGeri, onDegisti }) {
     <div style={{ minHeight: '100vh', background: C.bg }}>
       <Baslik baslik="🧾 Fatura Bekleyen" onGeri={onGeri}
         sag={<button onClick={yukle} style={{ background: 'none', border: 'none', color: C.t3, fontSize: 20, cursor: 'pointer' }}>↻</button>} />
+
+      {/* ── Genel Fatura PDF Yükle (WhatsApp'tan gelen faturayı telefondan seç) ── */}
+      <div style={{ margin: '14px 14px 0' }}>
+        <button onClick={() => setFPanel(o => !o)} style={{
+          width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+          background: C.bg2, border: `1px solid ${C.border}`, borderRadius: 14, padding: '14px 16px',
+          color: C.t1, fontSize: 15, fontWeight: 800, cursor: 'pointer',
+        }}>
+          <span>📄 Fatura PDF Yükle</span>
+          <span style={{ color: C.t3, fontSize: 18 }}>{fPanel ? '−' : '+'}</span>
+        </button>
+        {fPanel && (
+          <div style={{ background: C.bg2, border: `1px solid ${C.border}`, borderTop: 'none', borderRadius: '0 0 14px 14px', padding: 16, marginTop: -4 }}>
+            <div style={{ fontSize: 12, color: C.t3, lineHeight: 1.5, marginBottom: 12 }}>
+              Tedarikçiden <b style={{ color: C.t2 }}>WhatsApp / e-posta</b> ile gelen fatura PDF'ini telefondan seç.
+              Bekleyen bir teslimata bağlı olması gerekmez. WhatsApp belgesini önce telefona kaydet, sonra "PDF Seç" → <b style={{ color: C.t2 }}>Belgeler / İndirilenler</b>.
+            </div>
+            <label style={{
+              display: 'block', textAlign: 'center', background: C.mavi, color: '#fff',
+              borderRadius: 12, padding: 16, fontSize: 16, fontWeight: 800, cursor: fYukBusy ? 'default' : 'pointer', opacity: fYukBusy ? 0.6 : 1,
+            }}>
+              {fYukBusy ? '⏳ İşleniyor…' : '📥 PDF Seç'}
+              <input type="file" accept=".pdf,application/pdf" style={{ display: 'none' }} disabled={fYukBusy}
+                onChange={e => { faturaGenelYukle(e.target.files?.[0]); e.target.value = ''; }} />
+            </label>
+            {fHata && <div style={{ background: 'rgba(220,53,69,0.12)', color: C.kirmizi, borderRadius: 10, padding: '10px 12px', marginTop: 12, fontSize: 13 }}>⚠️ {fHata}</div>}
+            {fSonuc && <div style={{ background: 'rgba(40,180,99,0.12)', color: C.yesil, borderRadius: 10, padding: '10px 12px', marginTop: 12, fontSize: 13, lineHeight: 1.5 }}>{fSonuc}</div>}
+          </div>
+        )}
+      </div>
+
       <div style={{ padding: '10px 14px', borderBottom: `1px solid ${C.border}`, fontSize: 12, color: C.t3, lineHeight: 1.5 }}>
         Şube teslim aldı, faturası henüz gelmedi. Toptancıdan PDF iste; geldiğinde buradan yükle → otomatik maliyete düşer ve kart kapanır.
       </div>
