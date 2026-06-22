@@ -433,15 +433,26 @@ def aylik_odeme_plani_uret(yil=None, ay=None):
                 import calendar
                 odeme_tarihi = date(yil, ay, calendar.monthrange(yil, ay)[1])
 
-            # Periyot kontrolü
-            if g['periyot'] == 'yillik':
+            # Periyot kontrolü — aylık DIŞI periyotlar (yıllık/6 aylık/3 aylık) sadece
+            # başlangıçtan itibaren doğru vade aylarında ödeme planı üretir. Aksi halde
+            # 6 aylık gider her ay borç gibi görünür (kök sorun: motor hepsini aylık sanıyordu).
+            _PERIYOT_AY = {'yillik': 12, '1yil': 12, '6aylik': 6, '3aylik': 3}
+            _per = (g['periyot'] or 'aylik')
+            if _per in _PERIYOT_AY:
                 baslangic = g['baslangic_tarihi']
                 if not baslangic:
-                    # Başlangıç tarihi yoksa yıllık gider üretilemiyor — atla, uyar
-                    atlanan.append(f"Sabit gider atlandı (yıllık, başlangıç tarihi yok): {g['gider_adi']}")
+                    atlanan.append(f"Sabit gider atlandı ({_per}, başlangıç tarihi yok): {g['gider_adi']}")
                     continue
-                if baslangic.month != ay:
-                    atlanan.append(f"Sabit gider atlandı (yıllık): {g['gider_adi']}")
+                ay_fark = (yil - baslangic.year) * 12 + (ay - baslangic.month)
+                if ay_fark < 0 or ay_fark % _PERIYOT_AY[_per] != 0:
+                    # Eskiden aylık sanılıp yanlış üretilmiş bu-ay planını iptal et (self-heal)
+                    cur.execute("""
+                        UPDATE odeme_plani SET durum='iptal'
+                        WHERE kaynak_tablo='sabit_giderler' AND kaynak_id=%s
+                          AND durum IN ('bekliyor','onay_bekliyor')
+                          AND referans_ay = %s
+                    """, (g['id'], date(yil, ay, 1)))
+                    atlanan.append(f"Sabit gider atlandı ({_per}, bu ay vadesi yok): {g['gider_adi']}")
                     continue
 
             # KRİTİK: Artış tarihi geçmişse ödeme planı üretme — güncelleme zorunlu
