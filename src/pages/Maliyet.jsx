@@ -35,6 +35,7 @@ export default function Maliyet() {
   const [gunGunData, setGunGunData] = useState(null);
   const [guvenSkoru, setGuvenSkoru] = useState(null);   // Faz 5: güven skoru + sapma motoru
   const [guvenAcik, setGuvenAcik] = useState(false);    // detay aç/kapa
+  const [sekme, setSekme] = useState('genel');          // genel | analiz | fiyatlar | faturalar
   const [loading, setLoading] = useState(false);
   const [mesaj, setMesaj] = useState(null); // {m, t}
 
@@ -280,6 +281,18 @@ export default function Maliyet() {
         </div>
       </div>
 
+      {/* ── Görev sekmeleri (GPT+kullanıcı tasarımı): farklı zihinsel modlar ── */}
+      <div style={{ display: 'flex', gap: 4, borderBottom: '1px solid var(--border)', marginBottom: 16, flexWrap: 'wrap' }}>
+        {[['genel', '📊 Genel Bakış'], ['analiz', '🔍 Analiz'], ['fiyatlar', '🏷️ Fiyatlar'], ['faturalar', '🧾 Faturalar']].map(([id, lbl]) => (
+          <button key={id} onClick={() => setSekme(id)} style={{
+            padding: '8px 14px', border: 'none', background: 'transparent', cursor: 'pointer',
+            fontSize: 13, fontWeight: sekme === id ? 700 : 500,
+            color: sekme === id ? 'var(--accent)' : 'var(--text3)',
+            borderBottom: sekme === id ? '2px solid var(--accent)' : '2px solid transparent',
+          }}>{lbl}</button>
+        ))}
+      </div>
+
       {mesaj && (
         <div style={{ marginBottom: 12, padding: '8px 12px', borderRadius: 8,
           background: mesaj.t === 'error' ? 'rgba(220,60,60,0.1)' : 'rgba(60,180,90,0.1)',
@@ -299,7 +312,7 @@ export default function Maliyet() {
       )}
 
       {/* ── KPI ŞERİDİ — "Bugün para kazandık mı?" (gün-gün veriden hesaplanır) ── */}
-      {(() => {
+      {sekme === 'genel' && (() => {
         const rows = gunGunData?.satirlar || [];
         if (!rows.length) return null;
         const topla = (k) => rows.reduce((a, s) => a + (Number(s[k]) || 0), 0);
@@ -332,7 +345,8 @@ export default function Maliyet() {
         );
       })()}
 
-      {/* Özet kartları */}
+      {/* Özet kartları (Analiz sekmesi) */}
+      {sekme === 'analiz' && (
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12, marginBottom: 16 }}>
         <div className="card">
           <h3 style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>📦 Stok Değeri{subeId ? ' (şube)' : ' (tüm şubeler)'}</h3>
@@ -352,9 +366,10 @@ export default function Maliyet() {
           </div>
         )}
       </div>
+      )}
 
       {/* ── FAZ 5: GÜVEN SKORU + SAPMA MOTORU (öneri-only, hiçbir şeyi değiştirmez) ── */}
-      {guvenSkoru && (() => {
+      {sekme === 'genel' && guvenSkoru && (() => {
         const skor = guvenSkoru.genel_skor ?? 0;
         const renk = skor >= 85 ? '#22c55e' : (skor >= 60 ? '#eab308' : '#ef4444');
         const durumRenk = (d) => d === 'iyi' ? '#22c55e' : (d === 'orta' ? '#eab308' : '#ef4444');
@@ -424,6 +439,7 @@ export default function Maliyet() {
       })()}
 
       {/* ── KÂR-ZARAR (P&L) — Ciro − Maliyet − Tahmini Vergi = Net Kâr ── */}
+      {sekme === 'genel' && (<>
       <div className="panel-section-hdr" style={{ marginBottom: 12 }}>
         <span>💰 Kâr-Zarar (Operasyonel){subeId ? '' : ' — Tüm Şubeler'}</span>
         <span style={{ fontSize: 10, color: 'var(--text3)' }}>Ciro − Maliyet − Tahmini Vergi (%25) = Net Kâr · KDV düşülmez · resmî muhasebe değil</span>
@@ -480,8 +496,10 @@ export default function Maliyet() {
       <div style={{ marginBottom: 16, fontSize: 11, color: 'var(--text3)', lineHeight: 1.5 }}>
         ✅ Maliyet = ürün-aç COGS + personel + anlık gider + kira + faturalar + <strong>abonelikler</strong> + POS/platform komisyonu + fire + iade. <strong>Toplam Maliyet üstüne gelince kırılım görünür.</strong> ❌ <strong>Kart faizi / finansman DAHİL DEĞİL</strong> (işletme üzerine düşen finansman yükü, operasyonel kârı kirletmez). ⚠️ <strong>İkram</strong> (Evo 0₺/iskonto) ve <strong>personel tüketimi</strong> henüz yok (ayrı/Evo kaynak). Faz 5 ✅ güven skoru + sapma motoru.
       </div>
+      </>)}
 
       {/* Gün gün maliyet detayı — Ürün Aç (URUN_AC) tüketim verisi × güncel alış fiyatı */}
+      {sekme === 'analiz' && (<>
       <div className="panel-section-hdr" style={{ marginBottom: 12 }}>
         <span>📅 Gün Gün Maliyet (Detay){subeId ? '' : ' — Tüm Şubeler'}</span>
         <span style={{ fontSize: 10, color: 'var(--text3)' }}>"Ürün Aç" tüketimi × güncel fiyat — reçete gerekmez</span>
@@ -525,8 +543,10 @@ export default function Maliyet() {
           </tbody>
         </table>
       </div>
+      </>)}
 
-      {/* Fiyat girişi / güncelleme formu */}
+      {/* Fiyat girişi / güncelleme formu (Fiyatlar sekmesi) */}
+      {sekme === 'fiyatlar' && (<>
       <div className="panel-section-hdr" style={{ marginBottom: 12 }}>
         <span>➕ Fiyat Girişi / Güncelleme</span>
       </div>
@@ -577,9 +597,10 @@ export default function Maliyet() {
           <option key={k.kalem_kodu} value={k.kalem_kodu}>{k.kalem_adi}</option>
         ))}
       </datalist>
+      </>)}
 
       {/* 🔺 Zam Alarmları — eşik üstü fiyat artışı (Akıllı Denetim sinyali) */}
-      {zamAlarmlar.length > 0 && (
+      {sekme === 'fiyatlar' && zamAlarmlar.length > 0 && (
         <>
           <div className="panel-section-hdr" style={{ marginBottom: 12 }}>
             <span>🔺 Zam Alarmları</span>
@@ -600,6 +621,8 @@ export default function Maliyet() {
         </>
       )}
 
+      {/* ── FATURALAR sekmesi: PDF yükle + telefon faturaları + foto modal ── */}
+      {sekme === 'faturalar' && (<>
       {/* Fatura PDF yükleme — çok faturalı PDF (e-fatura) */}
       <div className="panel-section-hdr" style={{ marginBottom: 12 }}>
         <span>📄 Fatura PDF Yükle (toplu)</span>
@@ -779,8 +802,10 @@ export default function Maliyet() {
             style={{ maxWidth: '96%', maxHeight: '92%', borderRadius: 10, background: '#fff', boxShadow: '0 12px 48px rgba(0,0,0,.5)' }} />
         </div>
       )}
+      </>)}
 
-      {/* Güncel fiyat listesi + geçmiş/artış görseli */}
+      {/* Güncel fiyat listesi + geçmiş/artış görseli (Fiyatlar sekmesi) */}
+      {sekme === 'fiyatlar' && (<>
       <div className="panel-section-hdr" style={{ marginBottom: 12 }}>
         <span>📑 Güncel Fiyat Listesi</span>
         <span style={{ fontSize: 10, color: 'var(--text3)' }}>Ok ikonuna tıkla → değişim yüzdesi</span>
@@ -859,6 +884,7 @@ export default function Maliyet() {
           })}
         </div>
       )}
+      </>)}
     </div>
   );
 }
