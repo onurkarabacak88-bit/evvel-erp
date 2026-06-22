@@ -532,6 +532,34 @@ export default function Maliyet() {
               {kart('💵 Ciro', fmt(ciro), `günlük ort. ${fmt(ciro / Math.max(1, gunSayisi))}`, undefined, yon(ciro, oCiro, true), sparkline(ciroSeri, 'var(--accent)'))}
               {kart('📉 Toplam Maliyet', fmt(maliyet), maliyetDetayAcik ? 'kapat ▴' : 'kırılımı gör ▾', undefined, yon(maliyet, oMaliyet, false), null, () => setMaliyetDetayAcik(v => !v))}
             </div>
+
+            {/* ── İZOLE: KDV Hariç (Gerçek Marj) katmanı — Faz 1, ayrı alan ── */}
+            {topla('net_satis_tl') > 0 && (() => {
+              const netSatis = topla('net_satis_tl'), hesKdv = topla('hesaplanan_kdv_tl');
+              const brutKar = topla('brut_kar_tl'), favok = topla('favok_tl'), netKarNet = topla('net_kar_net_tl');
+              const brutMarj = netSatis > 0 ? (brutKar / netSatis) * 100 : null;
+              const netMarjNet = netSatis > 0 ? (netKarNet / netSatis) * 100 : null;
+              const nrenk = netKarNet > 0 ? 'var(--green)' : netKarNet < 0 ? 'var(--red)' : undefined;
+              return (
+                <div style={{ marginTop: 14 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
+                    <span style={{ fontWeight: 700, fontSize: 13 }}>💎 KDV Hariç — Gerçek Marj</span>
+                    <span style={{ fontSize: 11, color: 'var(--text3)' }}>ciro KDV dahil girilir, %10 ayrıştırılır · muhasebe katmanı</span>
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 10 }}>
+                    {kart('Net Satış', fmt(netSatis), 'KDV hariç ciro')}
+                    {kart('🏛️ Hesaplanan KDV', fmt(hesKdv), '%10 · devlete')}
+                    {kart('Brüt Kâr', fmt(brutKar), brutMarj == null ? '' : `marj %${brutMarj.toFixed(1)} · ürün maliyeti sonrası`)}
+                    {kart('FAVÖK', fmt(favok), 'faaliyet kârı (vergi öncesi)')}
+                    {kart('✅ Net Kâr (KDV hariç)', fmt(netKarNet), netMarjNet == null ? '' : `net marj %${netMarjNet.toFixed(1)}`, nrenk)}
+                  </div>
+                  <div style={{ fontSize: 10.5, color: 'var(--text3)', marginTop: 6, fontStyle: 'italic' }}>
+                    Bu satır KDV'yi cirodan ayrıştırır (gerçek marj). Üstteki "Net Kâr" eski (brüt) hesap — ikisi yan yana, eski bozulmadı.
+                  </div>
+                </div>
+              );
+            })()}
+
             {maliyetDetayAcik && kovalar.length > 0 && (
               <div className="card" style={{ marginTop: 10 }}>
                 <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 8 }}>📉 Toplam Maliyet kırılımı · {donemLabel}</div>
