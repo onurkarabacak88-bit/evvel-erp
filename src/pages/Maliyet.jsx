@@ -33,6 +33,8 @@ export default function Maliyet() {
   const [maliyetFiyatlar, setMaliyetFiyatlar] = useState([]);
   const [stokKalemleri, setStokKalemleri] = useState([]);
   const [gunGunData, setGunGunData] = useState(null);
+  const [guvenSkoru, setGuvenSkoru] = useState(null);   // Faz 5: güven skoru + sapma motoru
+  const [guvenAcik, setGuvenAcik] = useState(false);    // detay aç/kapa
   const [loading, setLoading] = useState(false);
   const [mesaj, setMesaj] = useState(null); // {m, t}
 
@@ -117,6 +119,9 @@ export default function Maliyet() {
       setStokKalemleri(kalemler?.kalemler || []);
       setGunGunData(gunGun);
     }).catch(() => {}).finally(() => setLoading(false));
+    // Faz 5 — güven skoru + sapma motoru (izole, hata yutar)
+    api('/ops/maliyet/guven-skoru?gun=7' + (subeId ? `&sube_id=${encodeURIComponent(subeId)}` : ''))
+      .then(setGuvenSkoru).catch(() => setGuvenSkoru(null));
   };
 
   useEffect(() => { yukle(); }, [subeId]);
@@ -313,6 +318,76 @@ export default function Maliyet() {
           </div>
         )}
       </div>
+
+      {/* ── FAZ 5: GÜVEN SKORU + SAPMA MOTORU (öneri-only, hiçbir şeyi değiştirmez) ── */}
+      {guvenSkoru && (() => {
+        const skor = guvenSkoru.genel_skor ?? 0;
+        const renk = skor >= 85 ? '#22c55e' : (skor >= 60 ? '#eab308' : '#ef4444');
+        const durumRenk = (d) => d === 'iyi' ? '#22c55e' : (d === 'orta' ? '#eab308' : '#ef4444');
+        const sapmalar = guvenSkoru.sapmalar || [];
+        return (
+          <div style={{ marginBottom: 16, border: `1px solid var(--border)`, borderRadius: 10, padding: 14, background: 'var(--bg2)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 14, cursor: 'pointer' }} onClick={() => setGuvenAcik(v => !v)}>
+              <div style={{ position: 'relative', width: 54, height: 54, flexShrink: 0 }}>
+                <svg viewBox="0 0 36 36" style={{ width: 54, height: 54, transform: 'rotate(-90deg)' }}>
+                  <circle cx="18" cy="18" r="15.5" fill="none" stroke="var(--border)" strokeWidth="3" />
+                  <circle cx="18" cy="18" r="15.5" fill="none" stroke={renk} strokeWidth="3"
+                    strokeDasharray={`${(skor / 100) * 97.4} 97.4`} strokeLinecap="round" />
+                </svg>
+                <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14, fontWeight: 700, color: renk }}>{skor}</div>
+              </div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 600, fontSize: 14 }}>🎯 Maliyet Güven Skoru {guvenSkoru.sube_id ? '' : '— Tüm Şubeler'}</div>
+                <div style={{ fontSize: 12, color: 'var(--text3)', marginTop: 2 }}>
+                  {sapmalar.length > 0
+                    ? <span style={{ color: '#ef4444', fontWeight: 600 }}>⚠️ {sapmalar.length} şüpheli değer yakalandı (sapma motoru)</span>
+                    : <span style={{ color: '#22c55e' }}>✓ Şüpheli değer yok</span>}
+                  {' · '}maliyetin ne kadar güvenilir olduğu
+                </div>
+              </div>
+              <span style={{ fontSize: 12, color: 'var(--text3)' }}>{guvenAcik ? '▲ gizle' : '▼ detay'}</span>
+            </div>
+
+            {guvenAcik && (
+              <div style={{ marginTop: 14 }}>
+                {/* Kovalar */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 8, marginBottom: sapmalar.length ? 14 : 0 }}>
+                  {(guvenSkoru.kovalar || []).map(k => (
+                    <div key={k.kova} style={{ border: '1px solid var(--border)', borderRadius: 8, padding: '8px 10px', background: 'var(--bg)' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ fontSize: 12, fontWeight: 600 }}>{k.baslik}</span>
+                        <span style={{ fontSize: 13, fontWeight: 700, color: durumRenk(k.durum) }}>{k.skor}</span>
+                      </div>
+                      <div style={{ fontSize: 10.5, color: 'var(--text3)', marginTop: 3, lineHeight: 1.35 }}>{k.mesaj}</div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Sapmalar */}
+                {sapmalar.length > 0 && (
+                  <div>
+                    <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 6, color: '#ef4444' }}>🔍 Sapma Motoru — şüpheli değerler (insan kontrolü gerek)</div>
+                    {sapmalar.map((s, i) => (
+                      <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '7px 10px', borderRadius: 7, marginBottom: 5,
+                        background: s.siddet === 'kritik' ? 'rgba(239,68,68,0.10)' : 'rgba(234,179,8,0.08)',
+                        border: `1px solid ${s.siddet === 'kritik' ? 'rgba(239,68,68,0.35)' : 'rgba(234,179,8,0.30)'}` }}>
+                        <span style={{ fontSize: 13 }}>{s.tip === 'FIYAT_OUTLIER' ? '💸' : '📦'}</span>
+                        <div style={{ flex: 1, fontSize: 11.5, lineHeight: 1.4 }}>
+                          <span style={{ fontWeight: 600, color: s.siddet === 'kritik' ? '#ef4444' : '#b45309' }}>{s.kat}× </span>
+                          {s.mesaj}
+                        </div>
+                      </div>
+                    ))}
+                    <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 4, fontStyle: 'italic' }}>
+                      Bu motor sadece UYARIR — hiçbir sayıyı değiştirmez. Doğru olduğundan eminsen yok sayabilirsin.
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {/* ── KÂR-ZARAR (P&L) — Ciro − Maliyet − Tahmini Vergi = Net Kâr ── */}
       <div className="panel-section-hdr" style={{ marginBottom: 12 }}>
