@@ -36,9 +36,10 @@ export default function Maliyet() {
   const [guvenSkoru, setGuvenSkoru] = useState(null);   // Faz 5: güven skoru + sapma motoru
   const [guvenAcik, setGuvenAcik] = useState(false);    // detay aç/kapa
   const [sekme, setSekme] = useState('genel');          // genel | analiz | fiyatlar | faturalar
-  const [donem, setDonem] = useState('7');              // bugun | 7 | 30 | ay | gecenay | ozel
+  const [donem, setDonem] = useState('7');              // gun | bugun | 7 | 30 | ay | gecenay | ozel
   const [ozelBas, setOzelBas] = useState('');           // Özel aralık başlangıç (YYYY-MM-DD)
   const [ozelBit, setOzelBit] = useState('');           // Özel aralık bitiş
+  const [seciliGun, setSeciliGun] = useState(() => new Date().toISOString().slice(0, 10)); // 'Gün' modu — tek gün, ◀▶ gezinir
   const [gunGunOnceki, setGunGunOnceki] = useState(null); // önceki eşit pencere (KPI trend için)
   const [maliyetDetayAcik, setMaliyetDetayAcik] = useState(false); // Toplam Maliyet drill-down
   const [loading, setLoading] = useState(false);
@@ -116,6 +117,7 @@ export default function Maliyet() {
   const donemAralik = () => {
     const t = new Date(); t.setHours(0, 0, 0, 0);
     const g = (n) => { const b = new Date(t); b.setDate(b.getDate() - n); return _iso(b); };
+    if (donem === 'gun') return { bas: seciliGun, bit: seciliGun, label: fmtDate(seciliGun) };
     if (donem === 'bugun') return { bas: _iso(t), bit: _iso(t), label: 'Bugün' };
     if (donem === '7') return { bas: g(6), bit: _iso(t), label: 'Son 7 gün' };
     if (donem === '30') return { bas: g(29), bit: _iso(t), label: 'Son 30 gün' };
@@ -161,7 +163,18 @@ export default function Maliyet() {
       .then(setGuvenSkoru).catch(() => setGuvenSkoru(null));
   };
 
-  useEffect(() => { yukle(); }, [subeId, donem, ozelBas, ozelBit]);
+  useEffect(() => { yukle(); }, [subeId, donem, ozelBas, ozelBit, seciliGun]);
+
+  // 'Gün' modu — ◀ / ▶ ile gün gezin (geleceğe gitme)
+  const _bugunIso = _iso(new Date(new Date().setHours(0, 0, 0, 0)));
+  const gunKaydir = (delta) => {
+    const d = new Date(seciliGun + 'T00:00:00');
+    d.setDate(d.getDate() + delta);
+    const yeni = _iso(d);
+    if (yeni > _bugunIso) return;
+    setDonem('gun');
+    setSeciliGun(yeni);
+  };
 
   useEffect(() => {
     if (!mesaj) return;
@@ -361,7 +374,7 @@ export default function Maliyet() {
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
           {/* Dönem seçici (GPT: en eksik #2 — bütün ekran buna bağlı) */}
           <div style={{ display: 'inline-flex', border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
-            {[['bugun', 'Bugün'], ['7', '7 Gün'], ['30', '30 Gün'], ['ay', 'Bu Ay'], ['gecenay', 'Geçen Ay'], ['ozel', 'Özel']].map(([id, lbl], i) => (
+            {[['gun', 'Gün'], ['bugun', 'Bugün'], ['7', '7 Gün'], ['30', '30 Gün'], ['ay', 'Bu Ay'], ['gecenay', 'Geçen Ay'], ['ozel', 'Özel']].map(([id, lbl], i) => (
               <button key={id} onClick={() => setDonem(id)} style={{
                 padding: '6px 12px', border: 'none', cursor: 'pointer', fontSize: 12,
                 borderLeft: i === 0 ? 'none' : '1px solid var(--border)',
@@ -371,6 +384,15 @@ export default function Maliyet() {
               }}>{lbl}</button>
             ))}
           </div>
+          {/* 'Gün' modu — gün gün ileri/geri */}
+          {donem === 'gun' && (
+            <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
+              <button onClick={() => gunKaydir(-1)} title="Önceki gün" style={{ padding: '4px 10px', cursor: 'pointer', borderRadius: 6, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text1)' }}>◀</button>
+              <input type="date" value={seciliGun} max={_bugunIso} onChange={e => setSeciliGun(e.target.value)} style={{ padding: '4px 6px' }} />
+              <button onClick={() => gunKaydir(1)} disabled={seciliGun >= _bugunIso} title="Sonraki gün"
+                style={{ padding: '4px 10px', cursor: seciliGun >= _bugunIso ? 'not-allowed' : 'pointer', borderRadius: 6, border: '1px solid var(--border)', background: 'transparent', color: seciliGun >= _bugunIso ? 'var(--text3)' : 'var(--text1)', opacity: seciliGun >= _bugunIso ? 0.5 : 1 }}>▶</button>
+            </div>
+          )}
           {donem === 'ozel' && (
             <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12 }}>
               <input type="date" value={ozelBas} onChange={e => setOzelBas(e.target.value)} style={{ padding: '4px 6px' }} />
@@ -378,14 +400,20 @@ export default function Maliyet() {
               <input type="date" value={ozelBit} onChange={e => setOzelBit(e.target.value)} style={{ padding: '4px 6px' }} />
             </div>
           )}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <label style={{ fontSize: 12, color: 'var(--text3)' }}>Şube:</label>
-            <select value={subeId} onChange={e => setSubeId(e.target.value)}>
-              <option value="">Tüm Şubeler</option>
-              {subeler.map(s => <option key={s.id} value={s.id}>{s.ad || s.id}</option>)}
-            </select>
-          </div>
         </div>
+      </div>
+
+      {/* ── Şube sekmeleri (dropdown yerine; tek tıkla şube gez) ── */}
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 14 }}>
+        {[{ id: '', ad: '🏢 Tüm Şubeler' }, ...subeler].map(s => (
+          <button key={s.id || 'all'} onClick={() => setSubeId(s.id)} style={{
+            padding: '6px 14px', borderRadius: 20, cursor: 'pointer', fontSize: 12,
+            fontWeight: subeId === s.id ? 700 : 500,
+            border: `1px solid ${subeId === s.id ? 'var(--accent)' : 'var(--border)'}`,
+            background: subeId === s.id ? 'var(--accent)' : 'transparent',
+            color: subeId === s.id ? '#fff' : 'var(--text2)',
+          }}>{s.ad || s.id}</button>
+        ))}
       </div>
 
       {/* ── Görev sekmeleri (GPT+kullanıcı tasarımı): farklı zihinsel modlar ── */}

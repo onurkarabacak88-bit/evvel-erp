@@ -2951,11 +2951,16 @@ function CepMaliyet({ onGeri }) {
   const [orows, setOrows] = useState([]);
   const [fiyatsiz, setFiyatsiz] = useState([]);
   const [hata, setHata] = useState('');
+  const [subeler, setSubeler] = useState([]);
+  const [subeId, setSubeId] = useState('');   // '' = tüm şubeler
+  const [seciliGun, setSeciliGun] = useState(() => new Date().toISOString().slice(0, 10));
 
   const iso = (d) => d.toISOString().slice(0, 10);
+  const bugunIso = iso(new Date(new Date().setHours(0, 0, 0, 0)));
   const aralik = (dn) => {
     const t = new Date(); t.setHours(0, 0, 0, 0);
     const g = (n) => { const b = new Date(t); b.setDate(b.getDate() - n); return iso(b); };
+    if (dn === 'gun') return { bas: seciliGun, bit: seciliGun };
     if (dn === 'bugun') return { bas: iso(t), bit: iso(t) };
     if (dn === '30') return { bas: g(29), bit: iso(t) };
     if (dn === 'ay') return { bas: iso(new Date(t.getFullYear(), t.getMonth(), 1)), bit: iso(t) };
@@ -2968,17 +2973,29 @@ function CepMaliyet({ onGeri }) {
     const pb = new Date(pe); pb.setDate(pb.getDate() - (len - 1));
     return { bas: iso(pb), bit: iso(pe) };
   };
+  const gunKaydir = (delta) => {
+    const d = new Date(seciliGun + 'T00:00:00'); d.setDate(d.getDate() + delta);
+    const yeni = iso(d);
+    if (yeni > bugunIso) return;
+    setDonem('gun'); setSeciliGun(yeni);
+  };
+  const trGun = (s) => { try { return new Date(s + 'T00:00:00').toLocaleDateString('tr-TR', { day: '2-digit', month: 'short', weekday: 'short' }); } catch { return s; } };
+
+  useEffect(() => {
+    api('/subeler').then(r => setSubeler(Array.isArray(r) ? r : (r?.subeler || []))).catch(() => {});
+  }, []);
 
   useEffect(() => {
     setRows(null); setHata('');
     const ar = aralik(donem), onc = onceki(ar);
+    const sq = subeId ? `&sube_id=${encodeURIComponent(subeId)}` : '';
     const filt = (d) => (d?.satirlar || []).filter(s => (Number(s.ciro_tl) || 0) > 0);
-    api(`/ops/maliyet/gun-gun?bas=${ar.bas}&bit=${ar.bit}`)
+    api(`/ops/maliyet/gun-gun?bas=${ar.bas}&bit=${ar.bit}${sq}`)
       .then(d => { setRows(filt(d)); setFiyatsiz(d?.fiyat_eksik_kalemler || []); })
       .catch(e => { setHata(e.message || 'Yüklenemedi'); setRows([]); });
-    api(`/ops/maliyet/gun-gun?bas=${onc.bas}&bit=${onc.bit}`)
+    api(`/ops/maliyet/gun-gun?bas=${onc.bas}&bit=${onc.bit}${sq}`)
       .then(d => setOrows(filt(d))).catch(() => setOrows([]));
-  }, [donem]);
+  }, [donem, subeId, seciliGun]);
 
   const topla = (arr, k) => (arr || []).reduce((a, s) => a + (Number(s[k]) || 0), 0);
   const ciro = topla(rows, 'ciro_tl'), maliyet = topla(rows, 'genel_toplam'), net = topla(rows, 'net_kar_tl');
@@ -3007,8 +3024,19 @@ function CepMaliyet({ onGeri }) {
   return (
     <div style={{ minHeight: '100vh', background: C.bg, paddingBottom: 30 }}>
       <Baslik baslik="💰 Kâr / Maliyet" onGeri={onGeri} />
-      <div style={{ display: 'flex', gap: 6, padding: '4px 14px 12px', flexWrap: 'wrap' }}>
-        {[['bugun', 'Bugün'], ['7', '7 Gün'], ['30', '30 Gün'], ['ay', 'Bu Ay']].map(([id, l]) => (
+      {/* Şube sekmeleri (yatay kaydır) */}
+      <div style={{ display: 'flex', gap: 6, padding: '2px 14px 8px', overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
+        {[{ id: '', ad: '🏢 Tümü' }, ...subeler].map(s => (
+          <button key={s.id || 'all'} onClick={() => setSubeId(s.id)} style={{
+            padding: '6px 13px', borderRadius: 20, fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0,
+            border: `1px solid ${subeId === s.id ? C.mavi : C.border}`,
+            background: subeId === s.id ? C.mavi : C.bg2, color: subeId === s.id ? '#fff' : C.t2,
+            fontWeight: subeId === s.id ? 700 : 500,
+          }}>{s.ad || s.id}</button>
+        ))}
+      </div>
+      <div style={{ display: 'flex', gap: 6, padding: '0 14px 10px', flexWrap: 'wrap' }}>
+        {[['gun', 'Gün'], ['bugun', 'Bugün'], ['7', '7 Gün'], ['30', '30 Gün'], ['ay', 'Bu Ay']].map(([id, l]) => (
           <button key={id} onClick={() => setDonem(id)} style={{
             padding: '6px 12px', borderRadius: 8, fontSize: 12, cursor: 'pointer',
             border: `1px solid ${donem === id ? C.mavi : C.border}`,
@@ -3017,6 +3045,14 @@ function CepMaliyet({ onGeri }) {
           }}>{l}</button>
         ))}
       </div>
+      {/* 'Gün' modu — gün gün ileri/geri */}
+      {donem === 'gun' && (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 14, padding: '0 14px 12px' }}>
+          <button onClick={() => gunKaydir(-1)} style={{ padding: '8px 16px', borderRadius: 10, fontSize: 16, cursor: 'pointer', border: `1px solid ${C.border}`, background: C.bg2, color: C.t1 }}>◀</button>
+          <div style={{ fontSize: 14, fontWeight: 700, color: C.t1, minWidth: 130, textAlign: 'center' }}>{trGun(seciliGun)}</div>
+          <button onClick={() => gunKaydir(1)} disabled={seciliGun >= bugunIso} style={{ padding: '8px 16px', borderRadius: 10, fontSize: 16, cursor: seciliGun >= bugunIso ? 'not-allowed' : 'pointer', border: `1px solid ${C.border}`, background: C.bg2, color: seciliGun >= bugunIso ? C.t3 : C.t1, opacity: seciliGun >= bugunIso ? 0.5 : 1 }}>▶</button>
+        </div>
+      )}
       {hata && <div style={{ color: C.kirmizi, textAlign: 'center', padding: 16 }}>{hata}</div>}
       {rows === null && <div style={{ color: C.t3, textAlign: 'center', padding: 30 }}>Yükleniyor…</div>}
       {rows && rows.length === 0 && !hata && <div style={{ color: C.t3, textAlign: 'center', padding: 30 }}>Bu dönemde ciro kaydı yok — kâr hesaplanamaz.</div>}
@@ -3037,7 +3073,7 @@ function CepMaliyet({ onGeri }) {
             </div>
           )}
           <div style={{ fontSize: 11, color: C.t3, padding: '10px 16px' }}>
-            {gun} cirolu gün · tüm şubeler{orows.length ? ' · ▲▼ geçen döneme göre' : ''}
+            {gun} cirolu gün · {subeId ? (subeler.find(s => s.id === subeId)?.ad || 'şube') : 'tüm şubeler'}{orows.length ? ' · ▲▼ geçen döneme göre' : ''}
           </div>
           <div style={{ fontSize: 11, color: C.t3, padding: '0 16px', lineHeight: 1.5 }}>
             Operasyonel kâr (KDV düşülmez, kart faizi hariç). Detay + şube kırılımı: masaüstü Maliyet ekranı.
