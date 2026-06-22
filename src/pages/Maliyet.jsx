@@ -40,6 +40,7 @@ export default function Maliyet() {
   const [stokKalemleri, setStokKalemleri] = useState([]);
   const [gunGunData, setGunGunData] = useState(null);
   const [guvenSkoru, setGuvenSkoru] = useState(null);   // Faz 5: güven skoru + sapma motoru
+  const [vergiOzet, setVergiOzet] = useState(null);     // Faz 1b: şube bazlı tahmini vergi
   const [guvenAcik, setGuvenAcik] = useState(false);    // detay aç/kapa
   const [sekme, setSekme] = useState('genel');          // genel | analiz | fiyatlar | faturalar
   const [donem, setDonem] = useState('7');              // gun | bugun | 7 | 30 | ay | gecenay | ozel
@@ -167,6 +168,9 @@ export default function Maliyet() {
     // Faz 5 — güven skoru + sapma motoru (izole, hata yutar)
     api(`/ops/maliyet/guven-skoru?gun=${_gunLen}${subeQ}`)
       .then(setGuvenSkoru).catch(() => setGuvenSkoru(null));
+    // Faz 1b — şube bazlı tahmini vergi (izole; endpoint max 31 gün)
+    api(`/ops/maliyet/vergi-ozet?gun=${Math.min(31, _gunLen)}${subeQ}`)
+      .then(setVergiOzet).catch(() => setVergiOzet(null));
   };
 
   useEffect(() => { yukle(); }, [subeId, donem, ozelBas, ozelBit, seciliGun]);
@@ -559,6 +563,40 @@ export default function Maliyet() {
                 </div>
               );
             })()}
+
+            {/* ── İZOLE: Şube Bazlı Tahmini Vergi (Türkiye mekanizması) — Faz 1b ── */}
+            {vergiOzet && (vergiOzet.satirlar || []).length > 0 && (
+              <div className="card" style={{ marginTop: 14 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8, flexWrap: 'wrap', gap: 6 }}>
+                  <span style={{ fontWeight: 700, fontSize: 13 }}>🏛️ Tahmini Vergi — Şube Bazlı</span>
+                  <span style={{ fontSize: 11, color: 'var(--text3)' }}>şirket %25 kurumlar · şahıs gelir vergisi (artan dilim)</span>
+                </div>
+                <div className="table-wrap">
+                  <table>
+                    <thead><tr>
+                      <th>Şube</th><th>Tip</th><th style={{ textAlign: 'right' }}>Vergi Öncesi</th>
+                      <th style={{ textAlign: 'right' }}>Tahmini Vergi</th><th style={{ textAlign: 'right' }}>Efektif</th>
+                    </tr></thead>
+                    <tbody>
+                      {vergiOzet.satirlar.map(s => (
+                        <tr key={s.sube_id}>
+                          <td>{s.sube_adi}</td>
+                          <td><span className={`badge ${s.vergi_tipi === 'sahis' ? 'badge-yellow' : 'badge-blue'}`} title={s.yontem}>{s.vergi_tipi === 'sahis' ? '👤 Şahıs' : '🏢 Şirket'}</span></td>
+                          <td className="mono" style={{ textAlign: 'right', color: s.vergi_oncesi_kar_tl < 0 ? 'var(--red)' : undefined }}>{fmt(s.vergi_oncesi_kar_tl)}</td>
+                          <td className="mono" style={{ textAlign: 'right', fontWeight: 700 }}>{fmt(s.tahmini_vergi_tl)}</td>
+                          <td className="mono" style={{ textAlign: 'right', color: 'var(--text3)' }}>%{s.efektif_oran_pct}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot><tr style={{ fontWeight: 700, borderTop: '1px solid var(--border)' }}>
+                      <td colSpan={3} style={{ textAlign: 'right' }}>Toplam Tahmini Vergi</td>
+                      <td className="mono" style={{ textAlign: 'right' }}>{fmt(vergiOzet.toplam_vergi_tl)}</td><td></td>
+                    </tr></tfoot>
+                  </table>
+                </div>
+                <div style={{ fontSize: 10.5, color: 'var(--text3)', marginTop: 6, fontStyle: 'italic' }}>{vergiOzet.not}</div>
+              </div>
+            )}
 
             {maliyetDetayAcik && kovalar.length > 0 && (
               <div className="card" style={{ marginTop: 10 }}>
