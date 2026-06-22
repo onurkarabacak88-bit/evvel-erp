@@ -14033,6 +14033,11 @@ def ops_maliyet_stok_kalemleri():
         )
         rows = [dict(r) for r in cur.fetchall()]
 
+    # Emekli/jenerik kodlar — fatura eşleştirme listesinden GİZLE (ürün kalem-kaleme
+    # ayrıştırıldı; jenerik havuz kodu artık seçilmemeli). kahve_paket: kahve türlere bölündü.
+    _EMEKLI_DEPO_KODLAR = {"kahve_paket"}
+    rows = [r for r in rows if str(r.get("kalem_kodu") or "") not in _EMEKLI_DEPO_KODLAR]
+
     # Legacy 'ozel__' yedek kalemleri TEKİLLEŞTİR: aynı adda kanonik (ozel__ olmayan,
     # genelde UUID kodlu, çok-şubeli) bir kalem varsa, ozel__ kopyayı eşleştirme
     # listesinden DÜŞ. Kök sebep: sube_panel urun_id eksikken ozel__<ad> uydururdu
