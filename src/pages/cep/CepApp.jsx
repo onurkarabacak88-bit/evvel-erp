@@ -702,6 +702,7 @@ function CepBelgeTalep({ onGeri, onDegisti }) {
   const [fYukBusy, setFYukBusy] = useState(false);
   const [fSonuc, setFSonuc] = useState('');
   const [fHata, setFHata] = useState('');
+  const [onayTick, setOnayTick] = useState(0);
 
   const faturaGenelYukle = async (file) => {
     if (!file) return;
@@ -718,7 +719,8 @@ function CepBelgeTalep({ onGeri, onDegisti }) {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error((data && data.detail) || 'PDF işlenemedi');
       const t = data.toplam_fatura || 0, y = data.yuklenen || 0, a = data.atlanan_mevcut || 0;
-      setFSonuc(`✅ ${t} fatura bulundu · ${y} yeni alındı${a ? ` · ${a} zaten yüklüydü` : ''}. Arka planda okunuyor; fiyat onayı masaüstü Maliyet → Telefon Faturaları'nda.`);
+      setFSonuc(`✅ ${t} fatura bulundu · ${y} yeni alındı${a ? ` · ${a} zaten yüklüydü` : ''}. Arka planda okunuyor; birkaç saniye içinde aşağıda "📱 Okunan Faturalar"da onayına düşer.`);
+      [4000, 9000, 16000].forEach(ms => setTimeout(() => setOnayTick(n => n + 1), ms));
     } catch (e) { setFHata(e.message || 'PDF işlenemedi'); }
     finally { setFYukBusy(false); }
   };
@@ -872,7 +874,142 @@ function CepBelgeTalep({ onGeri, onDegisti }) {
             </div>
           );
         })}
+
+        {/* Okunan faturaların kalem eşleştirme + fiyat onayı (yükleme döngüsü cepte tamam) */}
+        <CepFaturaOnay tick={onayTick} />
       </div>
+    </div>
+  );
+}
+
+// ── Fatura Onay (okunan faturaları kaleme eşleştir + fiyat onayla — masaüstü "Telefon Faturaları" mobil) ──
+function CepFaturaOnay({ tick }) {
+  const [liste, setListe] = useState(null);
+  const [stok, setStok] = useState([]);
+  const [acik, setAcik] = useState(null);
+  const [detay, setDetay] = useState({});        // id -> {fatura, kalemler}
+  const [duzen, setDuzen] = useState({});         // kalem_id -> {kod, fy}
+  const [kayit, setKayit] = useState({});         // kalem_id -> true
+  const [foto, setFoto] = useState(null);
+  const [hata, setHata] = useState('');
+
+  const yukleListe = useCallback(() => {
+    api('/fatura/bekleyen').then(r => setListe((r && r.satirlar) || [])).catch(() => setListe([]));
+  }, []);
+  useEffect(() => { yukleListe(); }, [yukleListe, tick]);
+  useEffect(() => {
+    api('/ops/maliyet/stok-kalemleri').then(r => setStok((r && r.kalemler) || [])).catch(() => {});
+  }, []);
+
+  const ac = async (id) => {
+    if (acik === id) { setAcik(null); return; }
+    setAcik(id);
+    if (!detay[id]) {
+      try { const d = await api('/fatura/' + encodeURIComponent(id)); setDetay(p => ({ ...p, [id]: d })); }
+      catch (e) { setHata(e.message || 'Açılamadı'); }
+    }
+  };
+
+  const onayla = async (fid, kalem) => {
+    const ed = duzen[kalem.id] || {};
+    const kod = String(ed.kod ?? (kalem.eslesen_stok_kodu || '')).trim();
+    const fy = parseFloat(String(ed.fy ?? (kalem.birim_fiyat ?? '')).replace(',', '.'));
+    if (!kod) { setHata('Stok kodu seç'); return; }
+    if (!(fy >= 0)) { setHata('Geçerli fiyat gir'); return; }
+    setHata('');
+    try {
+      const det = detay[fid];
+      const ted = (det && det.fatura && det.fatura.tedarikci_ad) || null;
+      await api('/fatura/kalem/' + encodeURIComponent(kalem.id) + '/onayla', { method: 'POST', body: {
+        kalem_kodu: kod, kalem_adi: kalem.ocr_ad || kod, birim: kalem.birim || 'adet', birim_maliyet_tl: fy, tedarikci: ted,
+      }});
+      setKayit(p => ({ ...p, [kalem.id]: true }));
+    } catch (e) { setHata(e.message || 'Onaylanamadı'); }
+  };
+
+  const sil = async (id) => {
+    if (!window.confirm('Bu faturayı sil? (Onaylanmış fiyat geçmişine dokunulmaz)')) return;
+    try {
+      const res = await fetch('/api/fatura/' + encodeURIComponent(id), { method: 'DELETE' });
+      if (!res.ok) throw new Error('Silinemedi');
+      setListe(l => (l || []).filter(x => x.id !== id));
+    } catch (e) { setHata(e.message || 'Silinemedi'); }
+  };
+
+  if (liste === null) return null;
+
+  return (
+    <div style={{ marginTop: 18 }}>
+      <div style={{ fontSize: 13, fontWeight: 800, color: C.t2, margin: '0 0 8px' }}>
+        📱 Okunan Faturalar {liste.length > 0 ? `(${liste.length} onay bekliyor)` : ''}
+      </div>
+      <datalist id="cep-depo-kalem">
+        {stok.map(k => <option key={k.kalem_kodu} value={k.kalem_kodu}>{k.kalem_adi}</option>)}
+      </datalist>
+      {hata && <div style={{ background: 'rgba(220,53,69,0.12)', color: C.kirmizi, borderRadius: 10, padding: '8px 12px', marginBottom: 10, fontSize: 12 }}>⚠️ {hata}</div>}
+      {liste.length === 0 && <div style={{ color: C.t3, fontSize: 12, padding: '4px 0 8px' }}>Onay bekleyen okunmuş fatura yok.</div>}
+
+      {liste.map(f => {
+        const open = acik === f.id;
+        const d = detay[f.id];
+        return (
+          <div key={f.id} style={{ background: C.bg2, border: `1px solid ${C.border}`, borderRadius: 14, padding: '10px 12px', marginBottom: 10 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <button onClick={() => setFoto('/api/fatura/' + encodeURIComponent(f.id) + '/foto')}
+                style={{ background: C.bg3, border: 'none', borderRadius: 8, fontSize: 18, padding: '4px 8px', cursor: 'pointer' }}>📷</button>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 14, fontWeight: 800, color: C.t1 }}>{f.tedarikci_ad || '(tedarikçi okunamadı)'}</div>
+                <div style={{ fontSize: 11, color: C.t3 }}>
+                  {f.durum === 'ocr_bekliyor' ? 'OCR sürüyor…' : f.durum === 'ocr_hata' ? '⚠ okunamadı' : (f.fatura_tarih ? String(f.fatura_tarih).slice(0, 10) : '')}
+                  {f.toplam_tutar != null ? ` · ${fmt(f.toplam_tutar)}` : ''}
+                </div>
+              </div>
+              <button onClick={() => ac(f.id)} style={{ background: C.bg3, border: 'none', borderRadius: 8, color: C.t2, padding: '7px 12px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>{open ? 'Kapat' : 'İncele'}</button>
+              <button onClick={() => sil(f.id)} style={{ background: 'none', border: 'none', color: C.kirmizi, fontSize: 16, cursor: 'pointer' }}>🗑</button>
+            </div>
+
+            {open && d && (
+              <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {(d.kalemler || []).length === 0 && <div style={{ fontSize: 12, color: C.t3 }}>OCR kalem bulamadı (📷 ile fotoğrafı kontrol et).</div>}
+                {(d.kalemler || []).map(k => {
+                  const ked = duzen[k.id] || {};
+                  const kod = ked.kod ?? (k.eslesen_stok_kodu || '');
+                  const fy = ked.fy ?? (k.birim_fiyat != null ? String(k.birim_fiyat) : '');
+                  const ok = !!kayit[k.id];
+                  return (
+                    <div key={k.id} style={{ background: C.bg3, borderRadius: 10, padding: 10 }}>
+                      <div style={{ fontSize: 12, color: C.t2, marginBottom: 6 }}>{k.ocr_ad || '—'}{k.adet != null ? ` ×${k.adet}` : ''}</div>
+                      <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                        <input list="cep-depo-kalem" placeholder="stok kodu" value={kod} disabled={ok}
+                          onChange={e => setDuzen(p => ({ ...p, [k.id]: { ...p[k.id], kod: e.target.value } }))}
+                          style={{ flex: 1, minWidth: 0, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, color: C.t1, padding: '9px 10px', fontSize: 13 }} />
+                        <input inputMode="decimal" placeholder="₺" value={fy} disabled={ok}
+                          onChange={e => setDuzen(p => ({ ...p, [k.id]: { ...p[k.id], fy: e.target.value } }))}
+                          style={{ width: 78, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, color: C.t1, padding: '9px 10px', fontSize: 13 }} />
+                        {ok
+                          ? <span style={{ color: C.yesil, fontSize: 18, fontWeight: 800 }}>✓</span>
+                          : <button onClick={() => onayla(f.id, k)} style={{ background: C.yesil, color: '#fff', border: 'none', borderRadius: 8, padding: '9px 12px', fontSize: 13, fontWeight: 800, cursor: 'pointer' }}>Onayla</button>}
+                      </div>
+                      {k.onceki_fiyat != null && k.birim_fiyat != null && (
+                        <div style={{ marginTop: 4, fontSize: 11, color: k.fiyat_degisim > 0 ? C.kirmizi : k.fiyat_degisim < 0 ? C.yesil : C.t3 }}>
+                          {k.fiyat_degisim > 0 ? '🔺' : k.fiyat_degisim < 0 ? '🔻' : '➖'} Önceki {fmt(k.onceki_fiyat)} → {fmt(k.birim_fiyat)}
+                          {k.fiyat_degisim_yuzde != null ? ` (${k.fiyat_degisim > 0 ? '+' : ''}${k.fiyat_degisim_yuzde}%)` : ''}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        );
+      })}
+
+      {foto && (
+        <div onClick={() => setFoto(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)', zIndex: 60, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+          <img src={foto} alt="Fatura" onClick={e => e.stopPropagation()} style={{ maxWidth: '96%', maxHeight: '90%', borderRadius: 10, background: '#fff' }} />
+        </div>
+      )}
     </div>
   );
 }
