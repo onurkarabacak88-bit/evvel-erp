@@ -13421,12 +13421,17 @@ def ops_maliyet_gun_gun(
         )
         _urun_ac_rows = cur.fetchall()
         # urun_id → depo_stok_kalem_kodu (havuz-dışı kalemleri maliyetlemek için)
+        # + urun_id → ad (fiyat_eksik uyarısında UUID yerine okunabilir ad göstermek için)
         urun_depo_map: Dict[str, str] = {}
+        urun_ad_map: Dict[str, str] = {}
         try:
-            cur.execute("SELECT id::text AS id, depo_stok_kalem_kodu FROM siparis_urun WHERE depo_stok_kalem_kodu IS NOT NULL")
+            cur.execute("SELECT id::text AS id, ad, depo_stok_kalem_kodu FROM siparis_urun")
             for r in cur.fetchall():
                 d = dict(r)
-                urun_depo_map[d["id"]] = str(d["depo_stok_kalem_kodu"])
+                if d.get("ad"):
+                    urun_ad_map[d["id"]] = str(d["ad"])
+                if d.get("depo_stok_kalem_kodu"):
+                    urun_depo_map[d["id"]] = str(d["depo_stok_kalem_kodu"])
         except Exception:
             pass
         tuketim_map: Dict[Tuple[str, str], Dict[str, int]] = {}
@@ -13858,7 +13863,7 @@ def ops_maliyet_gun_gun(
                     + [{"kod": "diger_urun_ac_tl", "baslik": "☕ Diğer Ürün-Aç"}],
         "satirlar": satirlar,
         "fiyat_eksik_kalemler": sorted(
-            STOK_LABEL_TR.get(k, k) for k in fiyat_eksik
+            STOK_LABEL_TR.get(k) or urun_ad_map.get(k) or k for k in fiyat_eksik
         ),
     }
 
