@@ -13430,24 +13430,28 @@ def ops_maliyet_gun_gun(
         except Exception:
             pass
         tuketim_map: Dict[Tuple[str, str], Dict[str, int]] = {}
-        # Havuz DIŞI tüketim (peçete/kahve türü/özel şurup vb.) — kod-bağımsız maliyet kovası
+        # Havuz DIŞI tüketim (peçete/kahve türü/özel şurup/süt vb.) — UID bazlı maliyet kovası
         tuketim_disi_map: Dict[Tuple[str, str], Dict[str, int]] = {}
+        # UUID'ye TAŞINMIŞ havuz kodları — bu havuz kovaları artık COGS'ta sayılmaz;
+        # ilgili tüketim ürünün kendi UUID'sinden (disi kovası) maliyetlenir. Kademeli
+        # havuz kaldırma: şurup + süt taşındı; bardak/su/kapak vb. şimdilik havuzda.
+        _UUID_TASINAN_HAVUZ = frozenset({"surup_adet", "sut_litre"})
         for r in _urun_ac_rows:
             key = (r["sube_id"], r["tarih"])
             delta = _urun_ac_delta_parse(r["aciklama"] or "")
             existing = tuketim_map.setdefault(key, {k: 0 for k in _BAR_KEYS})
             for k, v in delta.items():
                 existing[k] = existing.get(k, 0) + v
-            # Havuz-dışı: kalemler[].urun_id → depo kodu; _BAR_KEYS'te OLMAYANLAR
-            # Depo kodu YOKSA (şurup türleri gibi depo_stok_kalem_kodu=None) ürünün KENDİ
-            # UUID'sini kod yap — fiyat urun_alis_fiyat'ta UUID ile kayıtlı, böylece maliyetlenir.
-            # (Havuz kovası "surup"/"sut" zaten fiyatsız=0 → çift sayım olmaz.)
+            # UID bazlı tüketim — ürünün KENDİ UUID'siyle maliyetlenir (kanonik kimlik).
+            # Fiyat: ürünün UUID'si VEYA depo_stok_kalem_kodu'ndan (hangisinde varsa).
+            # Sadece GERÇEK havuz kalemleri (bardak/su gibi depo_kodu _BAR_KEYS'te olup
+            # HENÜZ UUID'ye taşınmamışlar) havuz kovasında sayılır → buraya alınmaz.
             for uid, adet in _urun_ac_kalem_idler(r["aciklama"] or ""):
-                kod = urun_depo_map.get(uid) or uid
-                if kod in _BAR_KEYS:
+                depo_kod = urun_depo_map.get(uid)
+                if depo_kod and depo_kod in _BAR_KEYS and depo_kod not in _UUID_TASINAN_HAVUZ:
                     continue
                 dm = tuketim_disi_map.setdefault(key, {})
-                dm[kod] = dm.get(kod, 0) + adet
+                dm[uid] = dm.get(uid, 0) + adet
 
         # Şube adları
         sube_adlari: Dict[str, str] = {}
@@ -13746,6 +13750,8 @@ def ops_maliyet_gun_gun(
             for kolon_kod, _baslik, kaynaklar in _GUN_GUN_KOLONLAR:
                 kolon_toplam = 0.0
                 for kaynak in kaynaklar:
+                    if kaynak in _UUID_TASINAN_HAVUZ:
+                        continue  # UUID'ye taşındı → disi kovasında maliyetlenir (çift sayma)
                     adet = int(tuketim.get(kaynak) or 0)
                     if adet <= 0:
                         continue
@@ -13770,14 +13776,18 @@ def ops_maliyet_gun_gun(
             else:
                 disi = tuketim_disi_map.get((sid, tarih_str), {})
             diger_cogs = 0.0
-            for kod, adet in disi.items():
+            for uid, adet in disi.items():
                 if adet <= 0:
                     continue
-                fiyat = fiyat_son_by_kod.get(kod)
+                depo_kod = urun_depo_map.get(uid)
+                # Fiyat önceliği: ürünün KENDİ UUID'si → depo_stok_kalem_kodu → tarih-aware
+                fiyat = fiyat_son_by_kod.get(uid)
+                if fiyat is None and depo_kod:
+                    fiyat = fiyat_son_by_kod.get(depo_kod)
                 if fiyat is None:
-                    fiyat = _fiyat_bul(kod, tarih_str)
+                    fiyat = _fiyat_bul(uid, tarih_str) or (_fiyat_bul(depo_kod, tarih_str) if depo_kod else None)
                 if fiyat is None:
-                    fiyat_eksik.add(kod)
+                    fiyat_eksik.add(depo_kod or uid)
                     continue
                 diger_cogs += adet * fiyat
             satir["diger_urun_ac_tl"] = round(diger_cogs, 2)
