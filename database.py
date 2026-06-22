@@ -1886,6 +1886,17 @@ def init_db():
                 THEN ALTER TABLE sabit_giderler ADD COLUMN kart_id TEXT; END IF;
             END $$;
         """)
+        # Migration: periyot CHECK kısıtını genişlet. Eski şema sadece aylik/yillik/haftalik
+        # kabul ediyordu → 3aylik/6aylik 'sabit_giderler_periyot_check' ihlali veriyordu.
+        # Maliyet hesabı bu periyotları doğru günlüğe çeviriyor; kısıt da izin vermeli.
+        cur.execute("""
+            DO $$
+            BEGIN
+                ALTER TABLE sabit_giderler DROP CONSTRAINT IF EXISTS sabit_giderler_periyot_check;
+                ALTER TABLE sabit_giderler ADD CONSTRAINT sabit_giderler_periyot_check
+                    CHECK (periyot IN ('gunluk','haftalik','aylik','3aylik','6aylik','yillik','1yil'));
+            END $$;
+        """)
 
         # ── VADELİ ALIMLAR ─────────────────────────────────────
         cur.execute("""
