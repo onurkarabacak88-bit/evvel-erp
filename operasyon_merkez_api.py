@@ -490,6 +490,30 @@ def ops_sube_giris_bugun(tarih: Optional[str] = None):
             "acilislar": acilislar, "beklenenler": beklenenler}
 
 
+@router.get("/depo-stok-yedek")
+def ops_depo_stok_yedek():
+    """sube_depo_stok HAM dökümü — havuz mantığı kaldırılmadan ÖNCE tam veri yedeği.
+    Hiçbir resolve/gruplama/filtre YOK: tablodaki HER satır (sube_id, kalem_kodu,
+    kalem_adi, mevcut_adet) olduğu gibi döner. Veri kaybına karşı emniyet ağı."""
+    with db() as (_, cur):
+        cur.execute(
+            """
+            SELECT id::text AS id, sube_id::text AS sube_id, kalem_kodu, kalem_adi,
+                   mevcut_adet, COALESCE(guncelleme::text,'') AS guncelleme
+            FROM sube_depo_stok
+            ORDER BY sube_id, kalem_kodu
+            """
+        )
+        rows = [dict(r) for r in (cur.fetchall() or [])]
+    toplam = sum(int(r.get("mevcut_adet") or 0) for r in rows)
+    return {
+        "yedek_zamani": _now_iso() if "_now_iso" in globals() else None,
+        "satir_sayisi": len(rows),
+        "toplam_adet": toplam,
+        "satirlar": rows,
+    }
+
+
 @router.get("/depo-stok")
 def ops_depo_stok():
     """Tüm aktif (sezon açık) şubelerin depo stoğu — tek çağrıda matris. Telefon
