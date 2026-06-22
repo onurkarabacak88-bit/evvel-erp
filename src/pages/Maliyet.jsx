@@ -245,6 +245,30 @@ export default function Maliyet() {
   const donemAbonelikTL = _ggCirolu.reduce((a, s) => a + (Number(s.abonelik_maliyet_tl) || 0), 0);
   const ciroluGunVar = _ggCirolu.length > 0;
 
+  // ── Fatura kalemi → katalog kalemi öneri (eşleşmeyenler için, öneri-only) ──
+  // Faturadaki OCR adından (ör. "8*24 ...FROZEN PİPET") katalogdaki kalemi
+  // (ör. "Pipet") kelime kesişimiyle bulur. Fuzzy değil — ortak KELİME bazlı,
+  // insan onaylar. UUID kodlu kalemleri elle aramak zorunda kalınmasın diye.
+  const _kelimeBol = (s) => (s || '')
+    .toLocaleLowerCase('tr')
+    .replace(/[^a-zçğıöşü0-9 ]/g, ' ')
+    .split(/\s+/)
+    .filter(w => w.length >= 2 && !['ve','ile','adet','baskili','baskılı','li','lı'].includes(w));
+  const kalemOnerisi = (ocrAd) => {
+    const oc = new Set(_kelimeBol(ocrAd));
+    if (!oc.size) return null;
+    let best = null, bestSkor = 0;
+    for (const k of stokKalemleri) {
+      const kw = _kelimeBol(k.kalem_adi);
+      if (!kw.length) continue;
+      const kesisim = kw.filter(w => oc.has(w)).length;
+      if (!kesisim) continue;
+      const skor = kesisim / kw.length;  // katalog adının ne kadarı faturada geçiyor
+      if (skor > bestSkor) { bestSkor = skor; best = k; }
+    }
+    return bestSkor >= 0.5 ? best : null;
+  };
+
   // Fiyatlar sekmesindeki forma kalemi doldur + en üste kaydır
   const fiyatFormaDoldur = (kalemKodu, kalemAdi) => {
     setMaliyetForm(f => ({ ...f, kalem_kodu: kalemKodu, kalem_adi: kalemAdi || kalemKodu, birim_maliyet_tl: '' }));
@@ -1036,6 +1060,7 @@ export default function Maliyet() {
                     const edit = fotoKalemDuzen[k.id] || {};
                     const kod = edit.kalem_kodu ?? (k.eslesen_stok_kodu || '');
                     const fy = edit.birim_maliyet_tl ?? (k.birim_fiyat != null ? String(k.birim_fiyat) : '');
+                    const oneri = !kod && !kayit ? kalemOnerisi(k.ocr_ad) : null;
                     return (
                       <div key={k.id}>
                         <div style={{ display: 'grid', gridTemplateColumns: '1.6fr 1.2fr 1fr auto', gap: 6, alignItems: 'center' }}>
@@ -1050,6 +1075,15 @@ export default function Maliyet() {
                             ? <span style={{ fontSize: 12, color: 'var(--green)', fontWeight: 700, textAlign: 'center' }}>✅</span>
                             : <button className="btn btn-secondary btn-sm" onClick={() => fotoKalemOnayla(f.id, k, kod, fy)}>Onayla</button>}
                         </div>
+                        {oneri && (
+                          <div style={{ marginTop: 3, fontSize: 11 }}>
+                            <button className="btn btn-ghost btn-sm" style={{ color: 'var(--accent)', padding: '1px 6px' }}
+                              title={'Faturadaki "' + (k.ocr_ad || '') + '" bu kaleme benziyor — tıkla, doldur'}
+                              onClick={() => setFotoKalemDuzen(p => ({ ...p, [k.id]: { ...p[k.id], kalem_kodu: oneri.kalem_kodu } }))}>
+                              🔗 Şunu mu demek istedin: <strong>{oneri.kalem_adi}</strong>?
+                            </button>
+                          </div>
+                        )}
                         {k.onceki_fiyat != null && k.birim_fiyat != null && (
                           <div style={{ marginTop: 3, fontSize: 10, color: k.fiyat_degisim > 0 ? 'var(--red)' : k.fiyat_degisim < 0 ? 'var(--green)' : 'var(--text3)' }}>
                             {k.fiyat_degisim > 0 ? '🔺' : k.fiyat_degisim < 0 ? '🔻' : '➖'} Önceki: {fmt(k.onceki_fiyat)} → {fmt(k.birim_fiyat)}
