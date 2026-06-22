@@ -212,6 +212,8 @@ function CepHome({ sayac, kasa, onKasa, onAc, onCikis, yenile }) {
       sayi: sayac.onay, alt: `${sayac.onay} bekleyen gider` },
     { id: 'ciro', ikon: '📋', baslik: 'Ciro Onayı', renk: C.mavi,
       sayi: sayac.ciro, alt: sayac.ciro > 0 ? `${sayac.ciro} bekleyen ciro` : 'Bekleyen ciro yok' },
+    { id: 'maliyet', ikon: '💰', baslik: 'Kâr / Maliyet', renk: C.yesil,
+      sayi: null, alt: 'Net kâr · marj · ciro (P&L)' },
     { id: 'kasa-uyumsuzluk', ikon: '🔴', baslik: 'Kasa Uyumsuzluğu', renk: C.kirmizi,
       sayi: sayac.kasaUyum, alt: sayac.kasaUyum > 0 ? `${sayac.kasaUyum} açık fark` : 'Bugün fark yok' },
     { id: 'dis-kaynak', ikon: '🪙', baslik: 'Dış Kaynak', renk: C.yesil,
@@ -2713,6 +2715,100 @@ function CepDepolar({ onGeri }) {
   );
 }
 
+// ── Kâr / Maliyet — operasyonel P&L (Maliyet ekranıyla aynı veri, telefon için) ──
+function CepMaliyet({ onGeri }) {
+  const [donem, setDonem] = useState('7');
+  const [rows, setRows] = useState(null);
+  const [orows, setOrows] = useState([]);
+  const [hata, setHata] = useState('');
+
+  const iso = (d) => d.toISOString().slice(0, 10);
+  const aralik = (dn) => {
+    const t = new Date(); t.setHours(0, 0, 0, 0);
+    const g = (n) => { const b = new Date(t); b.setDate(b.getDate() - n); return iso(b); };
+    if (dn === 'bugun') return { bas: iso(t), bit: iso(t) };
+    if (dn === '30') return { bas: g(29), bit: iso(t) };
+    if (dn === 'ay') return { bas: iso(new Date(t.getFullYear(), t.getMonth(), 1)), bit: iso(t) };
+    return { bas: g(6), bit: iso(t) };
+  };
+  const onceki = (ar) => {
+    const b = new Date(ar.bas + 'T00:00:00'), e = new Date(ar.bit + 'T00:00:00');
+    const len = Math.round((e - b) / 86400000) + 1;
+    const pe = new Date(b); pe.setDate(pe.getDate() - 1);
+    const pb = new Date(pe); pb.setDate(pb.getDate() - (len - 1));
+    return { bas: iso(pb), bit: iso(pe) };
+  };
+
+  useEffect(() => {
+    setRows(null); setHata('');
+    const ar = aralik(donem), onc = onceki(ar);
+    const filt = (d) => (d?.satirlar || []).filter(s => (Number(s.ciro_tl) || 0) > 0);
+    api(`/ops/maliyet/gun-gun?bas=${ar.bas}&bit=${ar.bit}`)
+      .then(d => setRows(filt(d))).catch(e => { setHata(e.message || 'Yüklenemedi'); setRows([]); });
+    api(`/ops/maliyet/gun-gun?bas=${onc.bas}&bit=${onc.bit}`)
+      .then(d => setOrows(filt(d))).catch(() => setOrows([]));
+  }, [donem]);
+
+  const topla = (arr, k) => (arr || []).reduce((a, s) => a + (Number(s[k]) || 0), 0);
+  const ciro = topla(rows, 'ciro_tl'), maliyet = topla(rows, 'genel_toplam'), net = topla(rows, 'net_kar_tl');
+  const marj = ciro > 0 ? (net / ciro) * 100 : null;
+  const oCiro = topla(orows, 'ciro_tl'), oMaliyet = topla(orows, 'genel_toplam'), oNet = topla(orows, 'net_kar_tl');
+  const oMarj = oCiro > 0 ? (oNet / oCiro) * 100 : null;
+  const gun = new Set((rows || []).map(r => r.tarih)).size;
+  const yon = (c, p, artiIyi) => {
+    if (!orows.length || p == null) return null;
+    const d = c - p;
+    if (Math.abs(d) < 0.005 * (Math.abs(p) || 1)) return { ok: '▬', renk: C.t3, t: '%0' };
+    const pct = p !== 0 ? (d / Math.abs(p)) * 100 : null;
+    const arti = d > 0, iyi = artiIyi ? arti : !arti;
+    return { ok: arti ? '▲' : '▼', renk: iyi ? C.yesil : C.kirmizi, t: pct == null ? '' : `%${Math.abs(pct).toFixed(0)}` };
+  };
+  const tile = (baslik, deger, tr, vurgu) => (
+    <div style={{ background: C.bg2, border: `1px solid ${C.border}`, borderRadius: 14, padding: 14, borderTop: vurgu ? `3px solid ${vurgu}` : undefined }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 6 }}>
+        <span style={{ fontSize: 12, color: C.t3 }}>{baslik}</span>
+        {tr && <span style={{ fontSize: 11, fontWeight: 700, color: tr.renk, whiteSpace: 'nowrap' }}>{tr.ok} {tr.t}</span>}
+      </div>
+      <div style={{ fontSize: 22, fontWeight: 800, marginTop: 4, color: vurgu || C.t1 }}>{deger}</div>
+    </div>
+  );
+
+  return (
+    <div style={{ minHeight: '100vh', background: C.bg, paddingBottom: 30 }}>
+      <Baslik baslik="💰 Kâr / Maliyet" onGeri={onGeri} />
+      <div style={{ display: 'flex', gap: 6, padding: '4px 14px 12px', flexWrap: 'wrap' }}>
+        {[['bugun', 'Bugün'], ['7', '7 Gün'], ['30', '30 Gün'], ['ay', 'Bu Ay']].map(([id, l]) => (
+          <button key={id} onClick={() => setDonem(id)} style={{
+            padding: '6px 12px', borderRadius: 8, fontSize: 12, cursor: 'pointer',
+            border: `1px solid ${donem === id ? C.mavi : C.border}`,
+            background: donem === id ? C.mavi : C.bg2, color: donem === id ? '#fff' : C.t2,
+            fontWeight: donem === id ? 700 : 500,
+          }}>{l}</button>
+        ))}
+      </div>
+      {hata && <div style={{ color: C.kirmizi, textAlign: 'center', padding: 16 }}>{hata}</div>}
+      {rows === null && <div style={{ color: C.t3, textAlign: 'center', padding: 30 }}>Yükleniyor…</div>}
+      {rows && rows.length === 0 && !hata && <div style={{ color: C.t3, textAlign: 'center', padding: 30 }}>Bu dönemde ciro kaydı yok — kâr hesaplanamaz.</div>}
+      {rows && rows.length > 0 && (
+        <>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, padding: '0 14px' }}>
+            {tile('✅ Net Kâr', fmt(net), yon(net, oNet, true), net >= 0 ? C.yesil : C.kirmizi)}
+            {tile('Marj', marj == null ? '—' : `%${marj.toFixed(1)}`, marj != null ? yon(marj, oMarj, true) : null, net >= 0 ? C.yesil : C.kirmizi)}
+            {tile('💵 Ciro', fmt(ciro), yon(ciro, oCiro, true))}
+            {tile('📉 Toplam Maliyet', fmt(maliyet), yon(maliyet, oMaliyet, false))}
+          </div>
+          <div style={{ fontSize: 11, color: C.t3, padding: '10px 16px' }}>
+            {gun} cirolu gün · tüm şubeler{orows.length ? ' · ▲▼ geçen döneme göre' : ''}
+          </div>
+          <div style={{ fontSize: 11, color: C.t3, padding: '0 16px', lineHeight: 1.5 }}>
+            Operasyonel kâr (KDV düşülmez, kart faizi hariç). Detay + şube kırılımı: masaüstü Maliyet ekranı.
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 // ── Kartlar (toplam borç + kart kart: borç/limit/yaklaşan ödeme + son hareketler) ──
 function CepKartlar({ onGeri }) {
   const [liste, setListe] = useState(null);
@@ -3477,6 +3573,8 @@ export default function CepApp() {
     return <CepOdemeler onGeri={geri} />;
   if (view === 'ciro')
     return <CepCiroOnay onGeri={geri} onDegisti={sayaclariYukle} />;
+  if (view === 'maliyet')
+    return <CepMaliyet onGeri={geri} />;
   if (view === 'kasa-uyumsuzluk')
     return <CepKasaUyumsuzluk onGeri={geri} />;
   if (view === 'dis-kaynak')
