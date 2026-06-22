@@ -100,6 +100,9 @@ def _ensure_tablolar(cur) -> None:
     cur.execute("CREATE INDEX IF NOT EXISTS idx_tfk_fatura ON tedarikci_fatura_kalem (fatura_id)")
     # Köprü: e-faturadaki ürün kodu (alias anahtarı için) — onay adımında kullanılır
     cur.execute("ALTER TABLE tedarikci_fatura_kalem ADD COLUMN IF NOT EXISTS ocr_urun_kodu TEXT")
+    # İNSAN ONAYI işareti — onaylanan kalem tekrar onay istemesin (mükerrer fiyat kaydı önlenir).
+    # eslesme_guven=1.0 OCR alias'tan da gelebildiği için ayrı, net bayrak tutulur.
+    cur.execute("ALTER TABLE tedarikci_fatura_kalem ADD COLUMN IF NOT EXISTS onaylandi BOOLEAN NOT NULL DEFAULT FALSE")
     # Fiyat geçmişi — GERÇEK fiyat değil; modülün kendi takip kaydı. Kritik maliyete
     # ancak ayrı Price Approval Service + insan onayı ile bağlanır (Faz 3).
     cur.execute("""
@@ -920,7 +923,7 @@ def fatura_detay(fatura_id: str):
         cur.execute(
             """
             SELECT id, sira, ocr_ad, ocr_urun_kodu, adet, birim, birim_fiyat, satir_toplam,
-                   eslesen_stok_kodu, eslesme_guven
+                   eslesen_stok_kodu, eslesme_guven, onaylandi
             FROM tedarikci_fatura_kalem WHERE fatura_id=%s ORDER BY sira
             """,
             (fatura_id,),
@@ -1048,9 +1051,9 @@ def fatura_kalem_onayla(kalem_id: str, body: FaturaKalemOnayBody):
                 """,
                 (anahtar, kalem, body.kalem_adi or kalem),
             )
-        # 3) Bu satırı eşleşmiş işaretle
+        # 3) Bu satırı eşleşmiş + İNSAN ONAYLI işaretle (tekrar onay istemesin)
         cur.execute(
-            "UPDATE tedarikci_fatura_kalem SET eslesen_stok_kodu=%s, eslesme_guven=1.0 WHERE id=%s",
+            "UPDATE tedarikci_fatura_kalem SET eslesen_stok_kodu=%s, eslesme_guven=1.0, onaylandi=TRUE WHERE id=%s",
             (kalem, kalem_id),
         )
         conn.commit()

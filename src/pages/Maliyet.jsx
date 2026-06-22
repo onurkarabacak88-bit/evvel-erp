@@ -28,6 +28,12 @@ const _gunGunKolonVarsayilan = [
 export default function Maliyet() {
   const [subeler, setSubeler] = useState([]);
   const [subeId, setSubeId] = useState(''); // '' = tüm şubeler
+  const [isMobil, setIsMobil] = useState(typeof window !== 'undefined' && window.innerWidth < 640);
+  useEffect(() => {
+    const h = () => setIsMobil(window.innerWidth < 640);
+    window.addEventListener('resize', h);
+    return () => window.removeEventListener('resize', h);
+  }, []);
 
   const [maliyetData, setMaliyetData] = useState(null);
   const [maliyetFiyatlar, setMaliyetFiyatlar] = useState([]);
@@ -999,7 +1005,7 @@ export default function Maliyet() {
                     {s.ham_metin}
                     {s.miktar != null && <span> · {s.miktar} {s.birim || ''}</span>}
                   </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr auto auto', gap: 8, alignItems: 'center' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: isMobil ? '1fr 1fr' : '2fr 1fr 1fr 1fr auto auto', gap: 8, alignItems: 'center' }}>
                     <input type="text" list="depo-kalem-listesi-sayfa" placeholder="Stok kalem kodu (örn. sut_litre)" value={s.kalem_kodu}
                       onChange={e => faturaSatirGuncelle(idx, 'kalem_kodu', e.target.value)} disabled={kaydedildi} />
                     <input type="text" placeholder="Kalem adı" value={s.kalem_adi}
@@ -1084,14 +1090,14 @@ export default function Maliyet() {
                     <div style={{ fontSize: 12, color: 'var(--text3)' }}>OCR kalem bulamadı (📷 ile fotoğrafı kontrol et).</div>
                   )}
                   {(d.kalemler || []).map(k => {
-                    const kayit = !!fotoKalemKayit[k.id];
+                    const kayit = !!fotoKalemKayit[k.id] || !!k.onaylandi;
                     const edit = fotoKalemDuzen[k.id] || {};
                     const kod = edit.kalem_kodu ?? (k.eslesen_stok_kodu || '');
                     const fy = edit.birim_maliyet_tl ?? (k.birim_fiyat != null ? String(k.birim_fiyat) : '');
                     const oneri = !kod && !kayit ? kalemOnerisi(k.ocr_ad) : null;
                     return (
                       <div key={k.id}>
-                        <div style={{ display: 'grid', gridTemplateColumns: '1.6fr 1.2fr 1fr auto', gap: 6, alignItems: 'center' }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: isMobil ? '1fr' : '1.6fr 1.2fr 1fr auto', gap: 6, alignItems: 'center' }}>
                           <input type="text" list="depo-kalem-listesi-sayfa" placeholder="Stok kodu" value={kod}
                             onChange={e => setFotoKalemDuzen(p => ({ ...p, [k.id]: { ...p[k.id], kalem_kodu: e.target.value } }))} disabled={kayit} />
                           <span style={{ fontSize: 11, color: 'var(--text3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={k.ocr_ad || ''}>
