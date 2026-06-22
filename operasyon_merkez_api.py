@@ -14137,9 +14137,10 @@ def ops_maliyet_guven_skoru(
       - ADET_OUTLIER: bir kalemin bir şubedeki stok adedi, diğer şubelerin medyanının N katı (70583)
     """
     sid = (sube_id or "").strip() or None
-    FIYAT_KAT = 5.0      # son fiyat > medyan × 5 → şüpheli
-    ADET_KAT = 10.0      # bir şube adedi > diğerlerinin medyanı × 10 → şüpheli
-    ADET_TABAN = 500     # mutlak taban (küçük sayılarda gürültü olmasın)
+    FIYAT_KAT = 5.0      # son fiyat > medyan × 5 → şüpheli (kritik)
+    ADET_KAT = 15.0      # bir şube adedi > DİĞER ŞUBELERİN medyanı × 15 → şüpheli (orta)
+    ADET_TABAN = 2000    # mutlak taban (küçük sayılarda gürültü olmasın)
+    ADET_MED_TABAN = 50  # diğer şubeler bu kalemi anlamlı tutuyorsa kıyasla (farklı alım deseni gürültüsü)
     sapmalar: List[Dict[str, Any]] = []
     kovalar: List[Dict[str, Any]] = []
 
@@ -14185,7 +14186,22 @@ def ops_maliyet_guven_skoru(
         except Exception:
             pass
 
-        # ── SAPMA 2: Adet outlier (çapraz-şube stok karşılaştırma) ──
+        # ── SAPMA 2: Adet outlier (ŞUBE↔ŞUBE stok karşılaştırma — DEPO HARİÇ) ──
+        # Hub-spoke: TEMA depo doğası gereği şubelerden çok fazla stok tutar (sevk eder)
+        # → depo kıyas dışı, yoksa her depo kalemi yanlış alarm verir. Sadece şubeler
+        # birbiriyle kıyaslanır; ADET sapması "orta" (heuristik), "kritik" sadece fiyat.
+        depo_subeler: set = set()
+        try:
+            cur.execute("SELECT id::text AS sid FROM subeler WHERE LOWER(COALESCE(sube_tipi,''))='sevkiyat'")
+            depo_subeler = {r["sid"] for r in cur.fetchall()}
+            # Yedek tespit: sevkiyatın baskın kaynağı (>=10 talep) da depo sayılır
+            cur.execute(
+                """SELECT hedef_depo_sube_id AS sid, COUNT(*) AS n FROM siparis_talep
+                   WHERE hedef_depo_sube_id IS NOT NULL GROUP BY hedef_depo_sube_id HAVING COUNT(*) >= 10"""
+            )
+            depo_subeler |= {r["sid"] for r in cur.fetchall() if r.get("sid")}
+        except Exception:
+            pass
         try:
             cur.execute(
                 """SELECT kalem_kodu, kalem_adi, sube_id::text AS sid, mevcut_adet
@@ -14194,24 +14210,27 @@ def ops_maliyet_guven_skoru(
             adet_grup: Dict[str, List[Tuple[str, str, float]]] = {}
             for r in cur.fetchall():
                 d = dict(r)
+                sid_r = str(d["sid"])
+                if sid_r in depo_subeler:        # DEPO kıyas dışı
+                    continue
                 adet_grup.setdefault(str(d["kalem_kodu"]), []).append(
-                    (str(d["sid"]), str(d.get("kalem_adi") or ""), float(d.get("mevcut_adet") or 0))
+                    (sid_r, str(d.get("kalem_adi") or ""), float(d.get("mevcut_adet") or 0))
                 )
             for kod, lst in adet_grup.items():
-                if len(lst) < 2:
+                if len(lst) < 2:                 # en az 2 şube (depo hariç)
                     continue
                 for i, (b_sid, b_ad, b_adet) in enumerate(lst):
                     digerleri = [a for j, (_, _, a) in enumerate(lst) if j != i]
                     med = _medyan(digerleri)
-                    if med > 0 and b_adet > med * ADET_KAT and b_adet >= ADET_TABAN:
+                    if (med >= ADET_MED_TABAN and b_adet > med * ADET_KAT and b_adet >= ADET_TABAN):
                         kat = round(b_adet / med, 1)
                         sapmalar.append({
                             "tip": "ADET_OUTLIER",
                             "kalem_kodu": kod, "kalem_adi": b_ad,
                             "sube_id": b_sid, "sube_ad": sube_ad.get(b_sid, b_sid),
                             "deger": int(b_adet), "beklenen": int(med), "kat": kat,
-                            "siddet": "kritik" if kat >= 20 else "orta",
-                            "mesaj": f"{b_ad} @ {sube_ad.get(b_sid, b_sid)}: {int(b_adet)} adet = diğer şubelerin medyanının ({int(med)}) {kat}× üstü — sayım/birleştirme hatası olabilir",
+                            "siddet": "orta",
+                            "mesaj": f"{b_ad} @ {sube_ad.get(b_sid, b_sid)}: {int(b_adet)} adet = diğer şubelerin medyanının ({int(med)}) {kat}× üstü — sayım hatası olabilir (depo hariç kıyas)",
                         })
         except Exception:
             pass
@@ -14361,7 +14380,8 @@ def ops_maliyet_guven_skoru(
     # sapma varsa genel skoru bir miktar düşür (kritik sapma maliyeti güvenilmez yapar)
     kritik_sapma = sum(1 for s in sapmalar if s.get("siddet") == "kritik")
     genel_ham = round(genel, 0)
-    genel_son = max(0, round(genel - kritik_sapma * 10, 0))
+    # Ceza yumuşak: sadece KRİTİK (fiyat) sapma maliyeti güvenilmez yapar; toplam ceza ≤20
+    genel_son = max(0, round(genel - min(20, kritik_sapma * 8), 0))
 
     return {
         "gun": gun, "sube_id": sid,
