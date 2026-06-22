@@ -89,8 +89,11 @@ PASTA_KEYS: Tuple[str, ...] = STOK_KEYS[16:]
 _DEPO_FIZIKSEL_HAVUZ_KODLARI = frozenset({
     "bardak_kucuk", "bardak_buyuk", "bardak_plastik", "su_adet",
     "redbull_adet", "soda_adet", "cookie_adet", "pasta_adet",
-    "sut_litre", "surup_adet", "kahve_paket", "karton_bardak",
+    "sut_litre", "surup_adet", "karton_bardak",
     "kapak_adet", "pecete_paket", "diger_sarf",
+    # NOT: kahve_paket KASITLI ÇIKARILDI (2026-06-22 kullanıcı kararı) — kahve artık
+    # tek havuz değil, her tür (Espresso/Filtre/Türk/Dibek/Menengiç/Granül) kendi
+    # UUID'siyle ayrı izlenir. resolve step 0 kahveyi artık havuza çözmez → step 1 (kendi UUID).
 })
 
 # Merkez depo kataloğunda GİZLENECEK eski/jenerik kodlar — ürün ayrıştırılmış
