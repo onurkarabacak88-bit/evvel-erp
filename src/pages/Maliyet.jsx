@@ -369,8 +369,21 @@ export default function Maliyet() {
 
       {/* ── KPI ŞERİDİ — "Bugün para kazandık mı?" (gün-gün veriden hesaplanır) ── */}
       {sekme === 'genel' && (() => {
-        const rows = gunGunData?.satirlar || [];
-        if (!rows.length) return null;
+        const tumRows = gunGunData?.satirlar || [];
+        // "Bugün yarım gün" / kapanmamış gün düzeltmesi: cirosu 0 olan günler
+        // (veri eksik / gün kapanmamış) KPI'ya KATILMAZ — birikmiş maliyet yanlış
+        // zarar göstermesin. P&L tablosu (Analiz) yine tüm günleri gösterir.
+        const rows = tumRows.filter(s => (Number(s.ciro_tl) || 0) > 0);
+        if (!tumRows.length) return null;
+        if (!rows.length) return (
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
+              <span style={{ fontWeight: 700, fontSize: 14 }}>📊 Genel Bakış</span>
+              <span style={{ fontSize: 11, color: 'var(--text3)' }}>{donemLabel}{subeId ? '' : ' · tüm şubeler'}</span>
+            </div>
+            <div className="card" style={{ fontSize: 12, color: 'var(--text3)' }}>Bu dönemde henüz ciro kaydı yok — kâr hesaplanamaz.</div>
+          </div>
+        );
         const topla = (k) => rows.reduce((a, s) => a + (Number(s[k]) || 0), 0);
         const ciro = topla('ciro_tl');
         const maliyet = topla('genel_toplam');
@@ -379,7 +392,7 @@ export default function Maliyet() {
         const gunSayisi = new Set(rows.map(r => r.tarih)).size || rows.length;
         const netRenk = netKar > 0 ? 'var(--green)' : netKar < 0 ? 'var(--red)' : undefined;
         // Önceki eşit pencere (trend kıyası) — renk değil YÖN (GPT pattern)
-        const orows = gunGunOnceki?.satirlar || [];
+        const orows = (gunGunOnceki?.satirlar || []).filter(s => (Number(s.ciro_tl) || 0) > 0);
         const oTopla = (k) => orows.reduce((a, s) => a + (Number(s[k]) || 0), 0);
         const oCiro = oTopla('ciro_tl'), oMaliyet = oTopla('genel_toplam'), oNet = oTopla('net_kar_tl');
         const oMarj = oCiro > 0 ? (oNet / oCiro) * 100 : null;
@@ -406,7 +419,7 @@ export default function Maliyet() {
           <div style={{ marginBottom: 16 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
               <span style={{ fontWeight: 700, fontSize: 14 }}>📊 Genel Bakış</span>
-              <span style={{ fontSize: 11, color: 'var(--text3)' }}>{donemLabel}{gunSayisi ? ` · ${gunSayisi} gün veri` : ''}{orows.length ? ' · ▲▼ geçen döneme göre' : ''}{subeId ? '' : ' · tüm şubeler'}</span>
+              <span style={{ fontSize: 11, color: 'var(--text3)' }}>{donemLabel}{gunSayisi ? ` · ${gunSayisi} cirolu gün` : ''}{orows.length ? ' · ▲▼ geçen döneme göre' : ''}{subeId ? '' : ' · tüm şubeler'}</span>
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12 }}>
               {kart('✅ Net Kâr', fmt(netKar), `${gunSayisi} günde`, netRenk, yon(netKar, oNet, true))}
