@@ -234,7 +234,10 @@ export default function Personel() {
       <div className="tabs" style={{marginBottom:16}}>
         <div className={`tab ${maasTab==='liste'?'active':''}`} onClick={()=>setMaasTab('liste')}>Personel Listesi</div>
         <div className={`tab ${maasTab==='aylik'?'active':''}`} onClick={()=>setMaasTab('aylik')}>💰 Aylık Maaş Kayıt</div>
+        <div className={`tab ${maasTab==='hesapla'?'active':''}`} onClick={()=>setMaasTab('hesapla')}>🧮 Maaş Hesapla</div>
       </div>
+
+      {maasTab === 'hesapla' && <MaasHesapla />}
 
       {/* ── PERSONEL LİSTESİ ── */}
       {maasTab === 'liste' && (<>
@@ -744,6 +747,135 @@ export default function Personel() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ── Maaş Hesaplama Aracı ──────────────────────────────────────────────
+// "Bizim matematiğimiz": günlük = maaş/30 + yemek/30 + yol/30 + (9.5 saat üstü
+// fazla mesai: maaş/285 × fazla saat). Çalışılan gün sayısı × günlük.
+// Asgari varsayılanla hazır gelir; her tutar ÇİFT TIKLA değiştirilebilir.
+const ASGARI_MAAS_VARSAYILAN = 22104;   // 2025 net asgari — çift tıkla güncelle
+const ASGARI_YEMEK_VARSAYILAN = 7000;   // aylık yemek (tipik) — çift tıkla güncelle
+
+// Çift tıkla düzenlenebilir tutar alanı (dış bileşen — input focus'u korunur)
+function MaasTutarAlani({ k, label, val, setVal, not, duzenle, setDuzenle }) {
+  return (
+    <div className="form-group" style={{ margin: 0 }}>
+      <label>{label}</label>
+      {duzenle === k ? (
+        <input autoFocus type="number" value={val}
+          onChange={e => setVal(e.target.value)}
+          onBlur={() => setDuzenle(null)}
+          onKeyDown={e => { if (e.key === 'Enter') setDuzenle(null); }} />
+      ) : (
+        <div onDoubleClick={() => setDuzenle(k)} title="çift tıkla değiştir"
+          style={{ padding: '9px 11px', borderRadius: 8, background: 'var(--bg3)', border: '1px solid var(--border)', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span style={{ fontWeight: 700, fontFamily: 'var(--font-mono)' }}>{fmt(Number(val) || 0)} ₺</span>
+          <span style={{ fontSize: 10, color: 'var(--text3)' }}>{not || '✎ çift tıkla'}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MaasHesapla() {
+  const [gun, setGun] = useState(7);
+  const [saat, setSaat] = useState(9.5);
+  const [tur, setTur] = useState('surekli');
+  const [maas, setMaas] = useState(ASGARI_MAAS_VARSAYILAN);
+  const [saatlik, setSaatlik] = useState(150);
+  const [yemek, setYemek] = useState(ASGARI_YEMEK_VARSAYILAN);
+  const [yol, setYol] = useState(0);
+  const [yemekHerGun, setYemekHerGun] = useState(true);
+  const [duzenle, setDuzenle] = useState(null);
+
+  const AYLIK_GUN = 30, STD = 9.5, AYLIK_SAAT = 285, PART_ESIK = 9.4;
+  const surekli = tur === 'surekli';
+  const n = Math.max(0, Number(gun) || 0);
+  const s = Number(saat) || 0;
+  const yolG = (Number(yol) || 0) / AYLIK_GUN;
+  let taban = 0, fazlaSaat = 0, fazlaUcret = 0;
+  if (surekli) {
+    taban = (Number(maas) || 0) / AYLIK_GUN;
+    fazlaSaat = Math.max(0, s - STD);
+    fazlaUcret = fazlaSaat * ((Number(maas) || 0) / AYLIK_SAAT);
+  } else {
+    taban = s * (Number(saatlik) || 0);
+  }
+  const partTam = !surekli && s >= PART_ESIK;
+  const yemekHakF = yemekHerGun && (surekli || partTam);
+  const yemekG = yemekHakF ? (Number(yemek) || 0) / AYLIK_GUN : 0;
+  const gunluk = taban + fazlaUcret + yolG + yemekG;
+  const toplam = gunluk * n;
+
+  const SonucSatir = ({ etiket, tutar, kalin, renk }) => (
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '7px 0', borderBottom: '1px solid var(--border)' }}>
+      <span style={{ fontSize: kalin ? 14 : 13, fontWeight: kalin ? 700 : 400, color: renk }}>{etiket}</span>
+      <span style={{ fontFamily: 'var(--font-mono)', fontSize: kalin ? 16 : 13, fontWeight: kalin ? 800 : 500, color: renk }}>{fmt(tutar)} ₺</span>
+    </div>
+  );
+
+  return (
+    <div style={{ maxWidth: 620 }}>
+      <div className="card" style={{ marginBottom: 14 }}>
+        <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 4 }}>🧮 Maaş Hesapla</div>
+        <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 14 }}>
+          Çalışılan gün sayısını gir → ücreti (yemek dahil) hesaplar. Tutarlar asgari ile hazır; farklıysa <strong>çift tıkla</strong> kendi rakamını yaz.
+        </div>
+
+        {/* Çalışma türü */}
+        <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+          {[['surekli', '👤 Maaşlı (sürekli)'], ['parttime', '⏱️ Saatlik (part-time)']].map(([id, lbl]) => (
+            <button key={id} type="button" onClick={() => setTur(id)} style={{
+              flex: 1, padding: '8px 10px', borderRadius: 8, cursor: 'pointer', fontSize: 12,
+              border: `1px solid ${tur === id ? 'var(--accent)' : 'var(--border)'}`,
+              background: tur === id ? 'var(--accent)' : 'transparent',
+              color: tur === id ? '#fff' : 'var(--text2)', fontWeight: tur === id ? 700 : 500,
+            }}>{lbl}</button>
+          ))}
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px,1fr))', gap: 10, marginBottom: 12 }}>
+          <div className="form-group" style={{ margin: 0 }}>
+            <label>📅 Çalışılan gün</label>
+            <input type="number" min={0} value={gun} onChange={e => setGun(e.target.value)} style={{ fontWeight: 700 }} />
+          </div>
+          <div className="form-group" style={{ margin: 0 }}>
+            <label>Günlük saat</label>
+            <input type="number" step="0.5" value={saat} onChange={e => setSaat(e.target.value)} />
+          </div>
+          {surekli
+            ? <MaasTutarAlani k="maas" label="Aylık maaş" val={maas} setVal={setMaas} not="asgari ✎" duzenle={duzenle} setDuzenle={setDuzenle} />
+            : <MaasTutarAlani k="saatlik" label="Saatlik ücret" val={saatlik} setVal={setSaatlik} not="✎ çift tıkla" duzenle={duzenle} setDuzenle={setDuzenle} />}
+          <MaasTutarAlani k="yemek" label="Yemek (aylık)" val={yemek} setVal={setYemek} not="✎ çift tıkla" duzenle={duzenle} setDuzenle={setDuzenle} />
+          <MaasTutarAlani k="yol" label="Yol (aylık)" val={yol} setVal={setYol} not="✎ çift tıkla" duzenle={duzenle} setDuzenle={setDuzenle} />
+        </div>
+
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--text2)', cursor: 'pointer' }}>
+          <input type="checkbox" checked={yemekHerGun} onChange={e => setYemekHerGun(e.target.checked)} style={{ width: 16, height: 16 }} />
+          Her çalışılan günde yemek hakkı var{!surekli ? ' (part-time: tam gün ≥9,4 saat)' : ''}
+        </label>
+      </div>
+
+      {/* Sonuç */}
+      <div className="card" style={{ borderTop: '3px solid var(--accent)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
+          <span style={{ fontWeight: 700, fontSize: 14 }}>{n} gün × günlük {fmt(gunluk)} ₺</span>
+          <span style={{ fontSize: 11, color: 'var(--text3)' }}>{surekli ? 'maaşlı' : 'saatlik'} · {s} saat/gün</span>
+        </div>
+        <SonucSatir etiket={surekli ? 'Ücret (maaş payı)' : 'Ücret (saat × ücret)'} tutar={taban * n} />
+        {fazlaUcret > 0 && <SonucSatir etiket={`Fazla mesai (${fazlaSaat.toFixed(1)} sa/gün)`} tutar={fazlaUcret * n} />}
+        {yolG > 0 && <SonucSatir etiket="Yol payı" tutar={yolG * n} />}
+        {yemekG > 0 && <SonucSatir etiket="Yemek payı" tutar={yemekG * n} />}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '12px 0 2px' }}>
+          <span style={{ fontSize: 16, fontWeight: 800 }}>= TOPLAM</span>
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 24, fontWeight: 800, color: 'var(--accent)' }}>{fmt(toplam)} ₺</span>
+        </div>
+        <div style={{ fontSize: 10.5, color: 'var(--text3)', marginTop: 8, fontStyle: 'italic' }}>
+          Formül: günlük = maaş/30 + yemek/30 + yol/30 {surekli ? '+ (9,5 saat üstü fazla mesai: maaş/285 × fazla saat)' : '(saatlik: saat × ücret)'}. Vardiya/Maliyet ekranıyla aynı hesap.
+        </div>
+      </div>
     </div>
   );
 }
