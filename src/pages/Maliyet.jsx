@@ -39,6 +39,7 @@ export default function Maliyet() {
   const [maliyetFiyatlar, setMaliyetFiyatlar] = useState([]);
   const [stokKalemleri, setStokKalemleri] = useState([]);
   const [gunGunData, setGunGunData] = useState(null);
+  const [subeOzetler, setSubeOzetler] = useState([]);   // Analiz: şube karşılaştırma kartları
   const [guvenSkoru, setGuvenSkoru] = useState(null);   // Faz 5: güven skoru + sapma motoru
   const [vergiOzet, setVergiOzet] = useState(null);     // Faz 1b: şube bazlı tahmini vergi
   const [kdvPoz, setKdvPoz] = useState(null);           // Faz 3: KDV pozisyonu (P&L dışı)
@@ -179,6 +180,23 @@ export default function Maliyet() {
   };
 
   useEffect(() => { yukle(); }, [subeId, donem, ozelBas, ozelBit, seciliGun]);
+
+  // Analiz sekmesi — TÜM (satış) şubelerin dönem özeti (karşılaştırma kartları için)
+  useEffect(() => {
+    if (sekme !== 'analiz' || !subeler.length) return;
+    const ar = donemAralik();
+    const liste = subeler.filter(s => s.id !== 'sube-merkez');
+    Promise.all(liste.map(s =>
+      api(`/ops/maliyet/gun-gun?bas=${ar.bas}&bit=${ar.bit}&sube_id=${encodeURIComponent(s.id)}`)
+        .then(d => {
+          const sat = d?.satirlar || [];
+          const T = k => sat.reduce((a, x) => a + (Number(x[k]) || 0), 0);
+          const ciro = T('ciro_tl'), gider = T('genel_toplam'), net = T('net_kar_tl');
+          return { sube_id: s.id, ad: s.ad || s.id, ciro, gider, net, marj: ciro > 0 ? (net / ciro) * 100 : null };
+        })
+        .catch(() => ({ sube_id: s.id, ad: s.ad || s.id, ciro: 0, gider: 0, net: 0, marj: null }))
+    )).then(r => setSubeOzetler(r.sort((a, b) => b.ciro - a.ciro))).catch(() => {});
+  }, [sekme, donem, ozelBas, ozelBit, seciliGun, subeler]);
 
   // 'Gün' modu — ◀ / ▶ ile gün gezin (geleceğe gitme)
   const _bugunIso = _iso(new Date(new Date().setHours(0, 0, 0, 0)));
@@ -771,6 +789,42 @@ export default function Maliyet() {
       })()}
 
       {/* Özet kartları (Analiz sekmesi) */}
+      {/* ── Analiz: Şube karşılaştırma kartları (tıkla → o şubeyi seç) ── */}
+      {sekme === 'analiz' && subeOzetler.length > 0 && (<>
+        <div className="panel-section-hdr" style={{ marginBottom: 10 }}>
+          <span>🏢 Şubeler — net kâr / marj</span>
+          <span style={{ fontSize: 10, color: 'var(--text3)' }}>{donemLabel} · karta tıkla → gün gün kırılım</span>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10, marginBottom: 20 }}>
+          {subeOzetler.map(s => {
+            const sec = subeId === s.sube_id;
+            const veri = s.ciro > 0;
+            const poz = s.net >= 0;
+            const renk = !veri ? 'var(--text3)' : (poz ? '#22c55e' : '#ef4444');
+            return (
+              <div key={s.sube_id} onClick={() => setSubeId(sec ? '' : s.sube_id)} style={{
+                cursor: 'pointer', background: 'var(--bg)', borderRadius: 12, padding: '12px 14px',
+                border: sec ? '2px solid var(--accent)' : '1px solid var(--border)',
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                  <span style={{ fontWeight: 600, fontSize: 14 }}>{s.ad}</span>
+                  {sec && <span style={{ fontSize: 10, background: 'var(--accent)', color: '#fff', padding: '2px 8px', borderRadius: 6 }}>seçili</span>}
+                </div>
+                <div style={{ fontSize: 21, fontWeight: 700, fontFamily: 'var(--font-mono)', color: renk }}>
+                  {!veri ? '—' : (poz ? '+' : '') + fmt(s.net)}
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>
+                  {!veri ? 'veri yok' : `marj %${s.marj.toFixed(1)} · ciro ${fmt(s.ciro)}`}
+                </div>
+                <div style={{ height: 5, background: 'var(--bg3)', borderRadius: 3, marginTop: 8, overflow: 'hidden' }}>
+                  <div style={{ width: `${Math.min(100, Math.abs(s.marj || 0))}%`, height: '100%', background: veri ? (poz ? '#22c55e' : '#ef4444') : 'transparent' }} />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </>)}
+
       {sekme === 'analiz' && (
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12, marginBottom: 16 }}>
         <div className="card">
@@ -924,51 +978,85 @@ export default function Maliyet() {
       </>)}
 
       {/* Gün gün maliyet detayı — Ürün Aç (URUN_AC) tüketim verisi × güncel alış fiyatı */}
-      {sekme === 'analiz' && (<>
-      <div className="panel-section-hdr" style={{ marginBottom: 12 }}>
-        <span>📅 Gün Gün Maliyet (Detay){subeId ? '' : ' — Tüm Şubeler'}</span>
-        <span style={{ fontSize: 10, color: 'var(--text3)' }}>"Ürün Aç" tüketimi × güncel fiyat — reçete gerekmez</span>
-      </div>
-      {gunGunData?.fiyat_eksik_kalemler?.length > 0 && (
-        <div style={{ marginBottom: 8, fontSize: 11, color: 'var(--yellow)' }}>
-          ⚠️ Fiyatı tanımlanmamış kalemler (0₺ sayıldı): {gunGunData.fiyat_eksik_kalemler.join(', ')}
-        </div>
-      )}
-      <div style={{ overflowX: 'auto', marginBottom: 16 }}>
-        <table className="tablo">
-          <thead>
-            <tr>
-              <th>Tarih</th>
-              {!subeId && <th>Şube</th>}
-              {(gunGunData?.kolonlar || _gunGunKolonVarsayilan).map(k => <th key={k.kod}>{k.baslik}</th>)}
-              <th>Malzeme Toplamı</th>
-              <th>👥 Personel (kişi)</th>
-              <th>👥 Personel Saat</th>
-              <th>👥 Personel Maliyeti</th>
-              <th title="Şube panelinden girilen ve onaylanan anlık giderler">🧾 Şube Anlık Gider</th>
-              <th>GENEL TOPLAM</th>
-            </tr>
-          </thead>
-          <tbody>
-            {(gunGunData?.satirlar || gunGunTarihler.map(t => ({ tarih: t, sube_adi: subeAdiSecili, _bos: true }))).map((satir, i) => (
-              <tr key={i}>
-                <td>{fmtDate(satir.tarih)}</td>
-                {!subeId && <td>{satir.sube_adi}</td>}
-                {(gunGunData?.kolonlar || _gunGunKolonVarsayilan).map(k => (
-                  <td key={k.kod}>{satir._bos ? '—' : fmt(satir[k.kod] || 0)}</td>
-                ))}
-                <td style={{ fontWeight: 700 }}>{satir._bos ? '—' : fmt(satir.toplam || 0)}</td>
-                <td>{satir._bos ? '—' : (satir.personel_sayisi || 0)}</td>
-                <td>{satir._bos ? '—' : (satir.personel_saat || 0)}</td>
-                <td>{satir._bos ? '—' : fmt(satir.personel_maliyet_tl || 0)}</td>
-                <td>{satir._bos ? '—' : fmt(satir.sube_anlik_gider_tl || 0)}</td>
-                <td style={{ fontWeight: 700, color: 'var(--accent)' }}>{satir._bos ? '—' : fmt(satir.genel_toplam || 0)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      </>)}
+      {sekme === 'analiz' && (() => {
+        const KALEMLER = [
+          ['Malzeme', '#1D9E75', s => Number(s.toplam) || 0],
+          ['Personel', '#378ADD', s => Number(s.personel_maliyet_tl) || 0],
+          ['Kira', '#BA7517', s => Number(s.kira_maliyet_tl) || 0],
+          ['Fatura', '#D85A30', s => Number(s.fatura_maliyet_tl) || 0],
+          ['Komisyon', '#888780', s => (Number(s.pos_komisyon_tl) || 0) + (Number(s.platform_komisyon_tl) || 0)],
+          ['Abonelik', '#7F77DD', s => Number(s.abonelik_maliyet_tl) || 0],
+          ['Fire', '#E24B4A', s => Number(s.fire_maliyet_tl) || 0],
+          ['İade', '#D4537E', s => Number(s.iade_maliyet_tl) || 0],
+          ['Anlık', '#97C459', s => Number(s.sube_anlik_gider_tl) || 0],
+        ];
+        const rows = (gunGunData?.satirlar || []).slice().sort((a, b) => (b.tarih || '').localeCompare(a.tarih || ''));
+        const maxv = Math.max(1, ...rows.map(s => Math.max(Number(s.ciro_tl) || 0, Number(s.genel_toplam) || 0)));
+        const aktifKalemler = KALEMLER.filter(([, , fn]) => rows.some(s => fn(s) > 0));
+        return (
+          <>
+            <div className="panel-section-hdr" style={{ marginBottom: 8 }}>
+              <span>📅 {subeId ? (subeAdiSecili || 'Şube') : 'Tüm Şubeler'} — gün gün gider kırılımı</span>
+              <span style={{ fontSize: 10, color: 'var(--text3)' }}>ciro ▭ vs gider ▭ — aynı ölçek</span>
+            </div>
+            {/* Legend */}
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, marginBottom: 10, fontSize: 11, color: 'var(--text3)' }}>
+              {aktifKalemler.map(([ad, renk]) => (
+                <span key={ad} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <span style={{ width: 9, height: 9, borderRadius: 2, background: renk }} />{ad}
+                </span>
+              ))}
+            </div>
+            {gunGunData?.fiyat_eksik_kalemler?.length > 0 && (
+              <div style={{ marginBottom: 10, fontSize: 11, color: 'var(--yellow)' }}>
+                ⚠️ Fiyatsız (0₺ sayıldı): {gunGunData.fiyat_eksik_kalemler.join(', ')}
+              </div>
+            )}
+            {rows.length === 0 && (
+              <div className="empty" style={{ marginBottom: 16 }}><p>Bu dönemde kayıt yok.</p></div>
+            )}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16 }}>
+              {rows.map((s, i) => {
+                const ciro = Number(s.ciro_tl) || 0;
+                const gider = Number(s.genel_toplam) || 0;
+                const net = Number(s.net_kar_tl) || 0;
+                const neg = net < 0;
+                return (
+                  <div key={i} style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 12, padding: '11px 14px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 9, gap: 8 }}>
+                      <span style={{ fontWeight: 600, fontSize: 13 }}>
+                        {fmtDate(s.tarih)}{!subeId && s.sube_adi ? <span style={{ color: 'var(--text3)', fontWeight: 400 }}> · {s.sube_adi}</span> : ''}
+                      </span>
+                      <span style={{ fontSize: 13, fontWeight: 700, fontFamily: 'var(--font-mono)', padding: '2px 9px', borderRadius: 6, background: neg ? 'rgba(239,68,68,0.12)' : 'rgba(34,197,94,0.12)', color: neg ? '#ef4444' : '#22c55e' }}>
+                        {neg ? '' : '+'}{fmt(net)} ₺
+                      </span>
+                    </div>
+                    {/* Ciro çubuğu */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 5 }}>
+                      <span style={{ fontSize: 11, color: 'var(--text3)', width: 40, flexShrink: 0 }}>ciro</span>
+                      <div style={{ flex: 1, height: 8, background: 'var(--bg3)', borderRadius: 3, overflow: 'hidden' }}>
+                        <div style={{ width: `${(ciro / maxv * 100).toFixed(1)}%`, height: '100%', background: '#1D9E75' }} />
+                      </div>
+                      <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--text2)', width: 62, textAlign: 'right', flexShrink: 0 }}>{fmt(ciro)}</span>
+                    </div>
+                    {/* Gider segment çubuğu */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontSize: 11, color: 'var(--text3)', width: 40, flexShrink: 0 }}>gider</span>
+                      <div style={{ flex: 1, height: 8, background: 'var(--bg3)', borderRadius: 3, overflow: 'hidden', display: 'flex' }}>
+                        {KALEMLER.map(([ad, renk, fn]) => {
+                          const v = fn(s);
+                          return v > 0 ? <div key={ad} title={`${ad}: ${fmt(v)}`} style={{ width: `${(v / maxv * 100).toFixed(1)}%`, height: '100%', background: renk }} /> : null;
+                        })}
+                      </div>
+                      <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--text2)', width: 62, textAlign: 'right', flexShrink: 0 }}>{fmt(gider)}</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        );
+      })()}
 
       {/* Fiyat girişi / güncelleme formu (Fiyatlar sekmesi) */}
       {sekme === 'fiyatlar' && (<>
