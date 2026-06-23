@@ -699,6 +699,12 @@ export default function VardiyaPlanlamaV2() {
   const [gunPlani, setGunPlani] = useState(null);
   const [yukleniyor, setYukleniyor] = useState(false);
   const [hata, setHata] = useState('');
+  // Geçmiş hafta düzenleme kilidi — kasın hatayla geçmişi bozmaması için (PIN ile açılır)
+  const [gecmisKilitAcik, setGecmisKilitAcik] = useState(false);
+  const [pinModal, setPinModal] = useState(false);
+  const [pinDeger, setPinDeger] = useState('');
+  const [pinHata, setPinHata] = useState('');
+  const [pinBusy, setPinBusy] = useState(false);
 
   // Modal state
   /** Yeni slot: `defaultBaslangicSaat` / `defaultBitisSaat` şube açılış-kapanıştan */
@@ -784,6 +790,33 @@ export default function VardiyaPlanlamaV2() {
 
   const pazartesiSecili = useMemo(() => pazartesiIso(tarih), [tarih]);
 
+  // ── Geçmiş hafta kilidi ──────────────────────────────────────────────
+  // Bu haftadan ÖNCEKİ haftalar düzenlemeye kilitli (yanlışlıkla geçmişi bozmamak için).
+  // İşletme PIN'i ile o oturum boyunca açılır.
+  const buHaftaPzt = useMemo(() => pazartesiIso(isoToday()), []);
+  const gecmisHafta = pazartesiSecili < buHaftaPzt;
+  const gecmisKilitli = gecmisHafta && !gecmisKilitAcik;
+  const kilitGuard = useCallback(() => {
+    if (gecmisHafta && !gecmisKilitAcik) {
+      setHata('🔒 Geçmiş hafta kilitli — düzenlemek için PIN ile açın.');
+      setPinModal(true);
+      return true;
+    }
+    return false;
+  }, [gecmisHafta, gecmisKilitAcik]);
+  const pinIleAc = useCallback(async () => {
+    const p = (pinDeger || '').replace(/\s/g, '');
+    if (p.length !== 4) { setPinHata('4 haneli PIN girin'); return; }
+    setPinBusy(true); setPinHata('');
+    try {
+      await api('/vardiya/v2/gecmis-kilit-ac', { method: 'POST', body: { pin: p } });
+      setGecmisKilitAcik(true); setPinModal(false); setPinDeger(''); setHata('');
+    } catch (e) { setPinHata(e.message || 'PIN hatalı'); }
+    finally { setPinBusy(false); }
+  }, [pinDeger]);
+  // Başka haftaya geçince kilit tekrar devreye girsin (her geçmiş hafta ayrı PIN ister)
+  useEffect(() => { setGecmisKilitAcik(false); setPinModal(false); }, [pazartesiSecili]);
+
   const haftaAralikMetin = useMemo(() => {
     const d0 = new Date(`${pazartesiSecili}T12:00:00`);
     const d6 = new Date(d0);
@@ -833,13 +866,18 @@ export default function VardiyaPlanlamaV2() {
   }, [subeFilter, havuzTarihOverride, gorunumModu]);
 
   const tamamlaNormalAtama = useCallback(async (body, transferAtamaId, override = false) => {
+    if (gecmisHafta && !gecmisKilitAcik) {   // geçmiş hafta kilitli → atama/transfer yapma
+      setHata('🔒 Geçmiş hafta kilitli — düzenlemek için PIN ile açın.');
+      setPinModal(true);
+      return;
+    }
     if (transferAtamaId) {
       await api(`/vardiya/v2/atama/${transferAtamaId}`, { method: 'DELETE' });
     }
     await api(V2_ATAMA_POST, { method: 'POST', body: { ...body, override } });
     await yukleGun();
     await planGunTazele(body.tarih);
-  }, [yukleGun, planGunTazele]);
+  }, [yukleGun, planGunTazele, gecmisHafta, gecmisKilitAcik]);
 
   /**
    * Saat seçiminden sonra atama/check.
@@ -1479,6 +1517,7 @@ export default function VardiyaPlanlamaV2() {
   }
 
   async function dropToSlot(slotId, gunTarihi = tarih) {
+    if (kilitGuard()) return;   // geçmiş hafta kilitli → PIN iste
     /** State bazen henüz commit olmadan drop gelir; ref dragstart'ta senkron yazılır */
     const personel = draggedPersonel || draggedRef.current;
     if (!personel) {
@@ -1928,6 +1967,7 @@ export default function VardiyaPlanlamaV2() {
   }
 
   async function atamaIptal(atamaId, silent = false, durum = null) {
+    if (!silent && kilitGuard()) return;   // geçmiş hafta kilitli → PIN iste
     if (!silent) {
       const kilit = String(durum || '') === 'onayli';
       const msg = kilit
@@ -1944,6 +1984,7 @@ export default function VardiyaPlanlamaV2() {
 
   /** Havuz kartı: seçilen şubede o gün için personelin tüm atamalarını iptal eder (başka şubeye sürüklemek için). */
   async function personelSubeGunAtamalariniKaldir(p, subeId) {
+    if (kilitGuard()) return;   // geçmiş hafta kilitli → PIN iste
     const gun = havuzKaynakTarih;
     const ids = (p.gun_durumu?.atamalar || [])
       .filter((a) => String(a.sube_id || '') === String(subeId))
@@ -2472,6 +2513,54 @@ export default function VardiyaPlanlamaV2() {
       </div>
 
       {hata && <div className="alert-box red mb-16">{hata}</div>}
+
+      {/* ── Geçmiş hafta düzenleme kilidi şeridi ── */}
+      {gecmisHafta && (
+        <div style={{
+          marginBottom: 16, padding: '10px 14px', borderRadius: 10, display: 'flex',
+          alignItems: 'center', gap: 12, flexWrap: 'wrap',
+          background: gecmisKilitli ? 'rgba(239,68,68,0.10)' : 'rgba(34,197,94,0.10)',
+          border: `1px solid ${gecmisKilitli ? 'rgba(239,68,68,0.4)' : 'rgba(34,197,94,0.4)'}`,
+        }}>
+          <span style={{ fontSize: 18 }}>{gecmisKilitli ? '🔒' : '🔓'}</span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontWeight: 700, fontSize: 13, color: gecmisKilitli ? '#ef4444' : '#22c55e' }}>
+              {gecmisKilitli ? 'Geçmiş hafta — düzenleme kilitli' : 'Geçmiş hafta — düzenleme açık (PIN onaylı)'}
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>
+              {gecmisKilitli
+                ? 'Yanlışlıkla geçmişi bozmamak için kilitli. Düzenlemen gerekiyorsa PIN ile aç.'
+                : 'Bu hafta için düzenleme yapabilirsin. Başka haftaya geçince tekrar kilitlenir.'}
+            </div>
+          </div>
+          {gecmisKilitli && (
+            <button type="button" className="btn btn-sm btn-secondary" onClick={() => { setPinHata(''); setPinModal(true); }}>🔑 PIN ile aç</button>
+          )}
+        </div>
+      )}
+
+      {/* ── PIN modalı — işletme (Merve Karabacak) PIN'i ── */}
+      {pinModal && (
+        <div onClick={() => setPinModal(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 14, padding: 22, width: 'min(360px, 92vw)' }}>
+            <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 6 }}>🔒 Geçmiş hafta düzenleme</div>
+            <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 14, lineHeight: 1.5 }}>
+              Bu hafta geçmişte. Yanlışlıkla bozmamak için kilitli. Düzenlemek için işletme (Merve Karabacak) 4 haneli PIN'i gerekli.
+            </div>
+            <input type="password" inputMode="numeric" maxLength={4} autoFocus placeholder="••••"
+              value={pinDeger}
+              onChange={e => { setPinDeger(e.target.value.replace(/\D/g, '').slice(0, 4)); setPinHata(''); }}
+              onKeyDown={e => { if (e.key === 'Enter') pinIleAc(); }}
+              style={{ width: '100%', fontSize: 22, textAlign: 'center', letterSpacing: 8, padding: '10px 12px', marginBottom: 10 }} />
+            {pinHata && <div style={{ color: '#ef4444', fontSize: 12, marginBottom: 10 }}>⚠️ {pinHata}</div>}
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button type="button" className="btn btn-sm btn-secondary" onClick={() => { setPinModal(false); setPinDeger(''); setPinHata(''); }}>Vazgeç</button>
+              <button type="button" className="btn btn-sm btn-primary" disabled={pinBusy} onClick={pinIleAc}>{pinBusy ? 'Kontrol...' : '🔓 Aç'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {gunPlani?.gun_kilitli && (
         <div className="alert-box mb-16" style={{ borderColor: '#ef4444', background: 'rgba(239,68,68,0.08)' }}>
           Bu tarih <strong>plana kilitli</strong>. Yeni atamalar yalnızca uyarıları onaylayarak (override) yapılabilir.

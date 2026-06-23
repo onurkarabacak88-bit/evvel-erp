@@ -9338,6 +9338,20 @@ def v2_gun_planini_getir(tarih: str, sube_id: Optional[str] = None):
         return _vv2.gun_planini_getir(cur, t, sube_id)
 
 
+class _V2GecmisKilitIn(BaseModel):
+    pin: str
+
+
+@app.post("/api/vardiya/v2/gecmis-kilit-ac")
+def v2_gecmis_kilit_ac(body: _V2GecmisKilitIn):
+    """Geçmiş haftada vardiya düzenleme KİLİDİ — kasın hatayla geçmişi bozmaması için.
+    İşletme (Merve Karabacak / sahip) 4 haneli PIN'i ile açılır. PIN hatalıysa 403."""
+    from operasyon_merkez_api import _isletme_onay_dogrula
+    with db() as (conn, cur):
+        onayci = _isletme_onay_dogrula(cur, body.pin)  # PIN hatalı → 403
+    return {"ok": True, "onayci": onayci.get("ad_soyad")}
+
+
 @app.put("/api/vardiya/v2/sube-gun-hedef")
 def v2_sube_gun_hedef_kaydet(body: _V2SubeGunHedefIn):
     """Şube için seçilen güne hedef kişi sayısı (vardiya_sube_gun_hedef)."""
