@@ -47,7 +47,7 @@ export default function Maliyet() {
   const [donem, setDonem] = useState('7');              // gun | bugun | 7 | 30 | ay | gecenay | ozel
   const [ozelBas, setOzelBas] = useState('');           // Özel aralık başlangıç (YYYY-MM-DD)
   const [ozelBit, setOzelBit] = useState('');           // Özel aralık bitiş
-  const [seciliGun, setSeciliGun] = useState(() => new Date().toISOString().slice(0, 10)); // 'Gün' modu — tek gün, ◀▶ gezinir
+  const [seciliGun, setSeciliGun] = useState(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }); // 'Gün' modu — YEREL tarih (UTC değil), ◀▶ gezinir
   const [gunGunOnceki, setGunGunOnceki] = useState(null); // önceki eşit pencere (KPI trend için)
   const [maliyetDetayAcik, setMaliyetDetayAcik] = useState(false); // Toplam Maliyet drill-down
   const [loading, setLoading] = useState(false);
@@ -121,7 +121,8 @@ export default function Maliyet() {
   };
 
   // Dönem → tarih aralığı {bas, bit, label}. Backend bas/bit ile gerçek aralık çeker.
-  const _iso = (d) => d.toISOString().slice(0, 10);
+  // YEREL tarih (Y-M-D) — toISOString UTC'ye çevirip gün kaydırıyordu (TR=UTC+3 → ◀▶ 2-3 gün atlardı)
+  const _iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   const donemAralik = () => {
     const t = new Date(); t.setHours(0, 0, 0, 0);
     const g = (n) => { const b = new Date(t); b.setDate(b.getDate() - n); return _iso(b); };
