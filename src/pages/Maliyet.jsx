@@ -57,6 +57,7 @@ export default function Maliyet() {
   const [maliyetForm, setMaliyetForm] = useState({ kalem_kodu: '', kalem_adi: '', birim: 'adet', birim_maliyet_tl: '', tedarikci: '', notlar: '' });
   const [kaydediliyor, setKaydediliyor] = useState(false);
   const [acikKalem, setAcikKalem] = useState(null);
+  const [fiyatAra, setFiyatAra] = useState('');   // Fiyatlar sekmesi güncel liste araması
 
   const [faturaTedarikci, setFaturaTedarikci] = useState('');
   const [faturaYukleniyor, setFaturaYukleniyor] = useState(false);
@@ -1406,15 +1407,22 @@ export default function Maliyet() {
 
       {/* Güncel fiyat listesi + geçmiş/artış görseli (Fiyatlar sekmesi) */}
       {sekme === 'fiyatlar' && (<>
-      <div className="panel-section-hdr" style={{ marginBottom: 12 }}>
-        <span>📑 Güncel Fiyat Listesi</span>
+      <div className="panel-section-hdr" style={{ marginBottom: 10 }}>
+        <span>📑 Güncel Fiyat Listesi <span style={{ fontWeight: 400, color: 'var(--text3)', fontSize: 11 }}>({gruplar.length} kalem fiyatlı{fiyatsizUrunler.length ? ` · ${fiyatsizUrunler.length} fiyatsız` : ''})</span></span>
         <span style={{ fontSize: 10, color: 'var(--text3)' }}>Ok ikonuna tıkla → değişim yüzdesi</span>
       </div>
+      {gruplar.length > 0 && (
+        <input type="text" placeholder="🔍 Fiyat listesinde ara (ürün adı / kod)..." value={fiyatAra}
+          onChange={e => setFiyatAra(e.target.value)} style={{ width: '100%', marginBottom: 10 }} />
+      )}
       {gruplar.length === 0 ? (
         <div className="empty"><p>Henüz fiyat tanımlanmamış. Yukarıdan ilk fiyatı ekleyebilirsin.</p></div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {gruplar.map(g => {
+          {gruplar.filter(g => {
+            const q = fiyatAra.trim().toLocaleLowerCase('tr');
+            return !q || (g.guncel.kalem_adi || g.kalem_kodu || '').toLocaleLowerCase('tr').includes(q) || (g.kalem_kodu || '').toLowerCase().includes(q);
+          }).map(g => {
             const guncel = g.guncel;
             const onceki = g.onceki;
             const fark = onceki ? (guncel.birim_maliyet_tl - onceki.birim_maliyet_tl) : null;
