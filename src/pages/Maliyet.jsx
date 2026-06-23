@@ -50,7 +50,7 @@ export default function Maliyet() {
   const [ozelBit, setOzelBit] = useState('');           // Özel aralık bitiş
   const [seciliGun, setSeciliGun] = useState(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }); // 'Gün' modu — YEREL tarih (UTC değil), ◀▶ gezinir
   const [gunGunOnceki, setGunGunOnceki] = useState(null); // önceki eşit pencere (KPI trend için)
-  const [maliyetDetayAcik, setMaliyetDetayAcik] = useState(false); // Toplam Maliyet drill-down
+  const [maliyetDetayAcik, setMaliyetDetayAcik] = useState(true); // Toplam Maliyet drill-down (görünürlük için açık başlar)
   const [loading, setLoading] = useState(false);
   const [mesaj, setMesaj] = useState(null); // {m, t}
 
@@ -684,25 +684,44 @@ export default function Maliyet() {
               </div>
             )}
 
-            {maliyetDetayAcik && kovalar.length > 0 && (
-              <div className="card" style={{ marginTop: 10 }}>
-                <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 8 }}>📉 Toplam Maliyet kırılımı · {donemLabel}</div>
-                {kovalar.map(k => {
-                  const pct = maliyet > 0 ? (k.tutar / maliyet) * 100 : 0;
-                  return (
-                    <div key={k.ad} style={{ marginBottom: 7 }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
-                        <span>{k.ad}</span>
-                        <span style={{ fontFamily: 'var(--font-mono)' }}>{fmt(k.tutar)} · %{pct.toFixed(0)}</span>
-                      </div>
-                      <div style={{ height: 5, background: 'var(--bg3)', borderRadius: 3, overflow: 'hidden', marginTop: 2 }}>
-                        <div style={{ width: `${Math.min(100, pct)}%`, height: '100%', background: 'var(--accent)' }} />
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
+            {maliyetDetayAcik && kovalar.length > 0 && (() => {
+              const KOVA_RENK = {
+                'Malzeme (ürün-aç)': '#1D9E75', 'Personel': '#378ADD', 'İşveren SGK payı': '#85B7EB',
+                'Kira': '#BA7517', 'Faturalar': '#D85A30', 'Abonelikler': '#7F77DD',
+                'POS komisyonu': '#888780', 'Platform komisyonu': '#B4B2A9', 'Fire': '#E24B4A',
+                'İade': '#D4537E', 'Şube anlık gider': '#97C459',
+              };
+              const renk = ad => KOVA_RENK[ad] || '#888780';
+              return (
+                <div className="card" style={{ marginTop: 10 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 10 }}>
+                    <span style={{ fontSize: 13, fontWeight: 700 }}>📉 Para nereye gidiyor?</span>
+                    <span style={{ fontSize: 11, color: 'var(--text3)' }}>toplam {fmt(maliyet)} · {donemLabel}</span>
+                  </div>
+                  {/* Birleşik segment bar — tek bakışta dağılım */}
+                  <div style={{ height: 14, borderRadius: 4, overflow: 'hidden', display: 'flex', marginBottom: 14, background: 'var(--bg3)' }}>
+                    {kovalar.map(k => {
+                      const pct = maliyet > 0 ? (k.tutar / maliyet) * 100 : 0;
+                      return pct > 0 ? <div key={k.ad} title={`${k.ad}: ${fmt(k.tutar)} (%${pct.toFixed(0)})`} style={{ width: `${pct}%`, height: '100%', background: renk(k.ad) }} /> : null;
+                    })}
+                  </div>
+                  {/* Kalem listesi — renkli nokta + tutar + % */}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: '7px 18px' }}>
+                    {kovalar.map(k => {
+                      const pct = maliyet > 0 ? (k.tutar / maliyet) * 100 : 0;
+                      return (
+                        <div key={k.ad} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
+                          <span style={{ width: 10, height: 10, borderRadius: 2, background: renk(k.ad), flexShrink: 0 }} />
+                          <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{k.ad}</span>
+                          <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--text2)' }}>{fmt(k.tutar)}</span>
+                          <span style={{ color: 'var(--text3)', width: 38, textAlign: 'right' }}>%{pct.toFixed(0)}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         );
       })()}
