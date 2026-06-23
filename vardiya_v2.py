@@ -2345,12 +2345,19 @@ def hafta_personel_tablosu(cur, herhangi_bir_gun: date) -> Dict[str, Any]:
         SELECT p.id, TRIM(COALESCE(p.ad_soyad, '')) AS ad_soyad,
                COALESCE(NULLIF(TRIM(p.gorev), ''), '—') AS gorev,
                COALESCE(NULLIF(TRIM(p.notlar), ''), '') AS notlar,
-               p.sube_id, COALESCE(s.ad, '—') AS sube_ad
+               p.sube_id, COALESCE(s.ad, '—') AS sube_ad,
+               COALESCE(p.aktif, TRUE) AS aktif
         FROM personel p
         LEFT JOIN subeler s ON s.id = p.sube_id
+        -- Aktif personel + o hafta ataması OLAN pasif/ayrılmış personel (geçmiş kayıt korunur)
         WHERE p.aktif = TRUE
+           OR p.id::text IN (
+               SELECT DISTINCT personel_id::text FROM vardiya_atama
+               WHERE tarih BETWEEN %s::date AND %s::date AND durum <> 'iptal'
+           )
         ORDER BY COALESCE(NULLIF(TRIM(p.ad_soyad), ''), p.id)
         """,
+        (d0, d6),
     )
     plist = [dict(r) for r in cur.fetchall()]
 
@@ -2459,15 +2466,19 @@ def personel_haftalik_gorunum(cur, pazartesi: date) -> Dict[str, Any]:
     paz = pazartesi + timedelta(days=6)
     gunler = [pazartesi + timedelta(days=i) for i in range(7)]
 
-    # Tüm aktif personel
+    # Aktif personel + o hafta ataması OLAN pasif/ayrılmış personel (geçmiş kayıt korunur)
     cur.execute("""
         SELECT p.id, p.ad_soyad, p.gorev, p.sube_id,
-               s.ad AS asil_sube_ad
+               s.ad AS asil_sube_ad, COALESCE(p.aktif, TRUE) AS aktif
         FROM personel p
         LEFT JOIN subeler s ON s.id = p.sube_id
         WHERE p.aktif = TRUE
+           OR p.id::text IN (
+               SELECT DISTINCT personel_id::text FROM vardiya_atama
+               WHERE tarih BETWEEN %s::date AND %s::date AND durum <> 'iptal'
+           )
         ORDER BY s.ad NULLS LAST, p.gorev, p.ad_soyad
-    """)
+    """, (pazartesi, paz))
     personeller = [dict(r) for r in cur.fetchall()]
 
     # Tüm haftalık atamalar (bir kerede)
