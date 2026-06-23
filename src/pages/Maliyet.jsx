@@ -553,21 +553,38 @@ export default function Maliyet() {
               const brutMarj = netSatis > 0 ? (brutKar / netSatis) * 100 : null;
               const netMarjNet = netSatis > 0 ? (netKarNet / netSatis) * 100 : null;
               const nrenk = netKarNet > 0 ? 'var(--green)' : netKarNet < 0 ? 'var(--red)' : undefined;
+              const cogs = netSatis - brutKar;
+              const faalGider = brutKar - favok;
+              const vergi = favok - netKarNet;
+              const Satir = ({ etiket, tutar, eksi, kalin, renk, marj, ic }) => (
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '8px 0', borderBottom: '1px solid var(--border)', paddingLeft: ic ? 18 : 0 }}>
+                  <span style={{ fontSize: kalin ? 14 : 13, fontWeight: kalin ? 700 : 400, color: renk || (eksi ? 'var(--text3)' : 'var(--text)') }}>
+                    {etiket}{marj != null && <span style={{ fontSize: 11, color: 'var(--text3)', marginLeft: 8, fontWeight: 400 }}>marj %{marj.toFixed(1)}</span>}
+                  </span>
+                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: kalin ? 15 : 13, fontWeight: kalin ? 800 : 500, color: renk || (eksi ? 'var(--red)' : 'var(--text)') }}>
+                    {eksi ? '−' : ''}{fmt(Math.abs(tutar))}
+                  </span>
+                </div>
+              );
               return (
-                <div style={{ marginTop: 14 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
-                    <span style={{ fontWeight: 700, fontSize: 13 }}>💎 KDV Hariç — Gerçek Marj</span>
-                    <span style={{ fontSize: 11, color: 'var(--text3)' }}>ciro KDV dahil girilir, %10 ayrıştırılır · muhasebe katmanı</span>
+                <div className="card" style={{ marginTop: 14, padding: 16 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6, flexWrap: 'wrap', gap: 6 }}>
+                    <span style={{ fontWeight: 700, fontSize: 14 }}>💰 Kâr-Zarar Tablosu <span style={{ fontWeight: 400, fontSize: 11, color: 'var(--text3)' }}>(KDV hariç)</span></span>
+                    <span style={{ fontSize: 11, color: 'var(--text3)' }}>{donemLabel}{subeId ? '' : ' · tüm şubeler'}</span>
                   </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 10 }}>
-                    {kart('Net Satış', fmt(netSatis), 'KDV hariç ciro')}
-                    {kart('🏛️ Hesaplanan KDV', fmt(hesKdv), '%10 · devlete')}
-                    {kart('Brüt Kâr', fmt(brutKar), brutMarj == null ? '' : `marj %${brutMarj.toFixed(1)} · ürün maliyeti sonrası`)}
-                    {kart('FAVÖK', fmt(favok), 'faaliyet kârı (vergi öncesi)')}
-                    {kart('✅ Net Kâr (KDV hariç)', fmt(netKarNet), netMarjNet == null ? '' : `net marj %${netMarjNet.toFixed(1)}`, nrenk)}
+                  <Satir etiket="Net Satış" tutar={netSatis} kalin />
+                  <Satir etiket="Ürün Maliyeti (COGS)" tutar={cogs} eksi ic />
+                  <Satir etiket="= Brüt Kâr" tutar={brutKar} kalin marj={brutMarj} />
+                  <Satir etiket="Faaliyet Giderleri" tutar={faalGider} eksi ic />
+                  <Satir etiket="= FAVÖK (faaliyet kârı)" tutar={favok} kalin />
+                  <Satir etiket="Tahmini Vergi" tutar={vergi} eksi ic />
+                  <Satir etiket="= NET KÂR" tutar={netKarNet} kalin renk={nrenk} marj={netMarjNet} />
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 10, padding: '8px 12px', background: 'var(--bg3)', borderRadius: 8 }}>
+                    <span style={{ fontSize: 12, color: 'var(--text3)' }}>🏛️ Hesaplanan KDV <span style={{ fontSize: 10 }}>(P&L dışı · devlete)</span></span>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 700 }}>{fmt(hesKdv)}</span>
                   </div>
-                  <div style={{ fontSize: 10.5, color: 'var(--text3)', marginTop: 6, fontStyle: 'italic' }}>
-                    Bu satır KDV'yi cirodan ayrıştırır (gerçek marj). Üstteki "Net Kâr" eski (brüt) hesap — ikisi yan yana, eski bozulmadı.
+                  <div style={{ fontSize: 10.5, color: 'var(--text3)', marginTop: 8, fontStyle: 'italic' }}>
+                    Ciro KDV dahil girilir, %10 ayrıştırılır. KDV kâra DAHİL DEĞİL (devlet emaneti). Vergi şube tipine göre (şahıs/şirket).
                   </div>
                 </div>
               );
