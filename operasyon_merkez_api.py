@@ -13849,8 +13849,11 @@ def ops_maliyet_gun_gun(
             satir["platform_komisyon_tl"] = round(platform_komisyon, 2)
             satir["fire_maliyet_tl"] = round(fire_g, 2)
             satir["iade_maliyet_tl"] = round(iade_g, 2)
+            # NOT (FAZ 2): fire ÇIKARILDI — fire zaten ürün-aç COGS'unun içinde (açılan ürün
+            # israfı kapsıyor); ayrı eklemek MÜKERRER olurdu (kullanıcı kuralı 2026-06-23).
+            # fire_maliyet_tl alanı referans için satırda kalır ama toplama GİRMEZ.
             toplam_maliyet = (toplam + pg["maliyet"] + sgk_isveren + sube_gider + kira_g
-                              + fatura_g + abonelik_g + pos_komisyon + platform_komisyon + fire_g + iade_g)
+                              + fatura_g + abonelik_g + pos_komisyon + platform_komisyon + iade_g)
             satir["genel_toplam"] = round(toplam_maliyet, 2)
             satir["ciro_tl"] = round(ciro_v, 2)
             faaliyet_kari = ciro_v - toplam_maliyet
@@ -13884,6 +13887,44 @@ def ops_maliyet_gun_gun(
                 pass
 
             satirlar.append(satir)
+
+        # ── FAZ 2: DOĞRU şube-bazlı vergiyi net kâra ENTEGRE et (flat %25'i ezer) ──
+        # Şirket → %25; şahıs → yıl-kümülatif gelir vergisi dilim → efektif oran.
+        # Karma şube (tüm şubeler) için ciro-ağırlıklı harman oran. İzole, hata-yutar.
+        try:
+            cur.execute(
+                "SELECT id::text AS id, COALESCE(vergi_tipi,'sirket') AS vt FROM subeler "
+                "WHERE COALESCE(aktif,TRUE)=TRUE AND id <> 'sube-merkez'"
+            )
+            _vt = {r["id"]: r["vt"] for r in cur.fetchall()}
+            _favok_tot = sum(float(s.get("favok_tl") or 0) for s in satirlar)
+            _ns_tot = sum(float(s.get("net_satis_tl") or 0) for s in satirlar)
+            _marj = (_favok_tot / _ns_tot) if _ns_tot > 0 else 0.0
+            _scope = [sube_id] if sube_id else list(_vt.keys())
+            # şube bazlı net satış (ciro_map brüt → /1.10)
+            _sube_ns: Dict[str, float] = {}
+            for (ks, kt), c in ciro_map.items():
+                _sube_ns[ks] = _sube_ns.get(ks, 0.0) + float(c.get("ciro") or 0) / 1.10
+            _tax_tot = 0.0
+            for _sid in _scope:
+                _fv = _sube_ns.get(_sid, 0.0) * _marj           # şube favök tahmini (aynı marj varsayımı)
+                _yil = _fv * (365.0 / gun) if gun > 0 else _fv
+                if _vt.get(_sid) == "sahis":
+                    _yv = _gelir_vergisi_yillik(_yil)
+                else:
+                    _yv = max(0.0, _yil) * _KURUMLAR_VERGI_ORAN
+                _tax_tot += _yv * (gun / 365.0) if gun > 0 else _yv
+            _blended = (_tax_tot / _favok_tot) if _favok_tot > 0 else 0.0
+            for s in satirlar:
+                _fv = float(s.get("favok_tl") or 0)
+                _vn = max(0.0, _fv) * _blended
+                s["tahmini_vergi_net_tl"] = round(_vn, 2)
+                s["net_kar_net_tl"] = round(_fv - _vn, 2)
+                _ns = float(s.get("net_satis_tl") or 0)
+                s["net_marj_net_pct"] = round((s["net_kar_net_tl"] / _ns) * 100, 1) if _ns > 0 else None
+                s["vergi_efektif_oran_pct"] = round(_blended * 100, 1)
+        except Exception:
+            pass
 
     return {
         "gun": gun,

@@ -479,16 +479,19 @@ export default function Maliyet() {
         );
         const topla = (k) => rows.reduce((a, s) => a + (Number(s[k]) || 0), 0);
         const ciro = topla('ciro_tl');
+        const netSatis = topla('net_satis_tl') || (ciro / 1.10);   // FAZ 2: KDV hariç
         const maliyet = topla('genel_toplam');
-        const netKar = topla('net_kar_tl');
-        const marj = ciro > 0 ? (netKar / ciro) * 100 : null;
+        // FAZ 2: ana net kâr = net satış − maliyet − DOĞRU şube vergisi (şahıs/şirket), fire hariç
+        const netKar = topla('net_kar_net_tl');
+        const marj = netSatis > 0 ? (netKar / netSatis) * 100 : null;   // net marj (KDV hariç)
         const gunSayisi = new Set(rows.map(r => r.tarih)).size || rows.length;
         const netRenk = netKar > 0 ? 'var(--green)' : netKar < 0 ? 'var(--red)' : undefined;
         // Önceki eşit pencere (trend kıyası) — renk değil YÖN (GPT pattern)
         const orows = (gunGunOnceki?.satirlar || []).filter(s => (Number(s.ciro_tl) || 0) > 0);
         const oTopla = (k) => orows.reduce((a, s) => a + (Number(s[k]) || 0), 0);
-        const oCiro = oTopla('ciro_tl'), oMaliyet = oTopla('genel_toplam'), oNet = oTopla('net_kar_tl');
-        const oMarj = oCiro > 0 ? (oNet / oCiro) * 100 : null;
+        const oCiro = oTopla('ciro_tl'), oMaliyet = oTopla('genel_toplam'), oNet = oTopla('net_kar_net_tl');
+        const oNetSatis = oTopla('net_satis_tl') || (oCiro / 1.10);
+        const oMarj = oNetSatis > 0 ? (oNet / oNetSatis) * 100 : null;
         const yon = (cur, prev, artisIyi) => {
           if (!orows.length || prev == null) return null;
           const d = cur - prev;
@@ -507,7 +510,7 @@ export default function Maliyet() {
           return <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" style={{ width: '100%', height: 22, marginTop: 4, display: 'block' }}><polyline points={pts} fill="none" stroke={renk} strokeWidth="1.5" vectorEffect="non-scaling-stroke" /></svg>;
         };
         const krono = [...rows].reverse();
-        const netSeri = krono.map(s => Number(s.net_kar_tl) || 0);
+        const netSeri = krono.map(s => Number(s.net_kar_net_tl) || 0);
         const ciroSeri = krono.map(s => Number(s.ciro_tl) || 0);
         // Maliyet kovaları (Toplam Maliyet drill-down)
         const kovalar = [
@@ -537,7 +540,7 @@ export default function Maliyet() {
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12 }}>
               {kart('✅ Net Kâr', fmt(netKar), `${gunSayisi} günde`, netRenk, yon(netKar, oNet, true), sparkline(netSeri, netKar >= 0 ? 'var(--green)' : 'var(--red)'))}
-              {kart('Marj', marj == null ? '—' : `%${marj.toFixed(1)}`, 'net kâr / ciro', netRenk, marj != null && oMarj != null ? yon(marj, oMarj, true) : null)}
+              {kart('Marj', marj == null ? '—' : `%${marj.toFixed(1)}`, 'net kâr / net satış (KDV hariç)', netRenk, marj != null && oMarj != null ? yon(marj, oMarj, true) : null)}
               {kart('💵 Ciro', fmt(ciro), `günlük ort. ${fmt(ciro / Math.max(1, gunSayisi))}`, undefined, yon(ciro, oCiro, true), sparkline(ciroSeri, 'var(--accent)'))}
               {kart('📉 Toplam Maliyet', fmt(maliyet), maliyetDetayAcik ? 'kapat ▴' : 'kırılımı gör ▾', undefined, yon(maliyet, oMaliyet, false), null, () => setMaliyetDetayAcik(v => !v))}
             </div>
