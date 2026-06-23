@@ -489,7 +489,17 @@ export default function Maliyet() {
         // "Bugün yarım gün" / kapanmamış gün düzeltmesi: cirosu 0 olan günler
         // (veri eksik / gün kapanmamış) KPI'ya KATILMAZ — birikmiş maliyet yanlış
         // zarar göstermesin. P&L tablosu (Analiz) yine tüm günleri gösterir.
-        const rows = tumRows.filter(s => (Number(s.ciro_tl) || 0) > 0);
+        // Kapalı sezon düzeltmesi: cirosu 0 ama KİRA/FATURA/ABONELİK gideri devam eden
+        // gün GERÇEK zarardır (kapalı şube hâlâ kira ödüyor) → KPI'ya KATILIR, gösterilir.
+        // Sadece "bugünün yarım günü" (ciro henüz işlenmemiş) hariç tutulur.
+        const _bugunIso = _iso(new Date());
+        const _sabitGider = (s) => (Number(s.kira_maliyet_tl) || 0) + (Number(s.fatura_maliyet_tl) || 0) + (Number(s.abonelik_maliyet_tl) || 0);
+        const rows = tumRows.filter(s => {
+          if ((Number(s.ciro_tl) || 0) > 0) return true;                  // açık/satışlı gün
+          if (_sabitGider(s) > 0 && s.tarih !== _bugunIso) return true;   // kapalı ama kira ödenen gün = zarar
+          return false;
+        });
+        const _kapaliZararVar = rows.length > 0 && rows.every(s => (Number(s.ciro_tl) || 0) === 0);
         if (!tumRows.length) return null;
         if (!rows.length) return (
           <div style={{ marginBottom: 16 }}>
@@ -497,7 +507,7 @@ export default function Maliyet() {
               <span style={{ fontWeight: 700, fontSize: 14 }}>📊 Genel Bakış</span>
               <span style={{ fontSize: 11, color: 'var(--text3)' }}>{donemLabel}{subeId ? '' : ' · tüm şubeler'}</span>
             </div>
-            <div className="card" style={{ fontSize: 12, color: 'var(--text3)' }}>Bu dönemde henüz ciro kaydı yok — kâr hesaplanamaz.</div>
+            <div className="card" style={{ fontSize: 12, color: 'var(--text3)' }}>Bu dönemde ne ciro ne de sabit gider (kira) kaydı var.</div>
           </div>
         );
         const topla = (k) => rows.reduce((a, s) => a + (Number(s[k]) || 0), 0);
@@ -559,8 +569,16 @@ export default function Maliyet() {
           <div style={{ marginBottom: 16 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
               <span style={{ fontWeight: 700, fontSize: 14 }}>📊 Genel Bakış</span>
-              <span style={{ fontSize: 11, color: 'var(--text3)' }}>{donemLabel}{gunSayisi ? ` · ${gunSayisi} cirolu gün` : ''}{orows.length ? ' · ▲▼ geçen döneme göre' : ''}{subeId ? '' : ' · tüm şubeler'}</span>
+              <span style={{ fontSize: 11, color: 'var(--text3)' }}>{donemLabel}{gunSayisi ? ` · ${gunSayisi} ${_kapaliZararVar ? 'kapalı gün' : 'cirolu gün'}` : ''}{orows.length ? ' · ▲▼ geçen döneme göre' : ''}{subeId ? '' : ' · tüm şubeler'}</span>
             </div>
+            {_kapaliZararVar && (
+              <div style={{ marginBottom: 10, padding: '10px 13px', borderRadius: 10, background: 'rgba(239,68,68,0.10)', border: '1px solid rgba(239,68,68,0.40)', display: 'flex', alignItems: 'center', gap: 10 }}>
+                <span style={{ fontSize: 18 }}>🏚️</span>
+                <div style={{ fontSize: 12.5, lineHeight: 1.45 }}>
+                  <strong style={{ color: '#ef4444' }}>Kapalı sezon — satış yok ama sabit gider sürüyor.</strong> Bu dönemde ciro girilmemiş; kira/fatura/abonelik gibi sabit giderler devam ettiği için sonuç <strong>zarar</strong>. Aşağıdaki net kâr eksi görünmesi normaldir.
+                </div>
+              </div>
+            )}
             {/* HERO: Net Kâr — sayfanın ana cevabı, büyük ve vurgulu */}
             {(() => {
               const tr = yon(netKar, oNet, true);
@@ -573,7 +591,7 @@ export default function Maliyet() {
                     </div>
                     <div style={{ fontSize: 34, fontWeight: 800, fontFamily: 'var(--font-mono)', color: netRenk, lineHeight: 1.1 }}>{fmt(netKar)} ₺</div>
                     <div style={{ fontSize: 12, color: 'var(--text3)', marginTop: 5 }}>
-                      {gunSayisi} cirolu gün{marj != null ? ` · marj %${marj.toFixed(1)}` : ''} · günlük ort. {fmt(netKar / Math.max(1, gunSayisi))}
+                      {gunSayisi} {_kapaliZararVar ? 'kapalı gün' : 'cirolu gün'}{marj != null ? ` · marj %${marj.toFixed(1)}` : ''} · günlük ort. {fmt(netKar / Math.max(1, gunSayisi))}
                     </div>
                   </div>
                   <div style={{ width: 170, flexShrink: 0 }}>{sparkline(netSeri, netKar >= 0 ? 'var(--green)' : 'var(--red)')}</div>
