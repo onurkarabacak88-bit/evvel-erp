@@ -557,8 +557,27 @@ export default function Maliyet() {
               <span style={{ fontWeight: 700, fontSize: 14 }}>📊 Genel Bakış</span>
               <span style={{ fontSize: 11, color: 'var(--text3)' }}>{donemLabel}{gunSayisi ? ` · ${gunSayisi} cirolu gün` : ''}{orows.length ? ' · ▲▼ geçen döneme göre' : ''}{subeId ? '' : ' · tüm şubeler'}</span>
             </div>
+            {/* HERO: Net Kâr — sayfanın ana cevabı, büyük ve vurgulu */}
+            {(() => {
+              const tr = yon(netKar, oNet, true);
+              return (
+                <div className="card" style={{ borderTop: `3px solid ${netRenk || 'var(--accent)'}`, marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 16 }}>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 13, color: 'var(--text3)', marginBottom: 4, display: 'flex', alignItems: 'center', gap: 8 }}>
+                      {netKar >= 0 ? '✅' : '🔴'} Net Kâr
+                      {tr && <span style={{ fontSize: 11, fontWeight: 700, color: tr.renk }}>{tr.ok} {tr.t}</span>}
+                    </div>
+                    <div style={{ fontSize: 34, fontWeight: 800, fontFamily: 'var(--font-mono)', color: netRenk, lineHeight: 1.1 }}>{fmt(netKar)} ₺</div>
+                    <div style={{ fontSize: 12, color: 'var(--text3)', marginTop: 5 }}>
+                      {gunSayisi} cirolu gün{marj != null ? ` · marj %${marj.toFixed(1)}` : ''} · günlük ort. {fmt(netKar / Math.max(1, gunSayisi))}
+                    </div>
+                  </div>
+                  <div style={{ width: 170, flexShrink: 0 }}>{sparkline(netSeri, netKar >= 0 ? 'var(--green)' : 'var(--red)')}</div>
+                </div>
+              );
+            })()}
+            {/* Alt KPI üçlüsü */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12 }}>
-              {kart('✅ Net Kâr', fmt(netKar), `${gunSayisi} günde`, netRenk, yon(netKar, oNet, true), sparkline(netSeri, netKar >= 0 ? 'var(--green)' : 'var(--red)'))}
               {kart('Marj', marj == null ? '—' : `%${marj.toFixed(1)}`, 'net kâr / net satış (KDV hariç)', netRenk, marj != null && oMarj != null ? yon(marj, oMarj, true) : null)}
               {kart('💵 Ciro', fmt(ciro), `günlük ort. ${fmt(ciro / Math.max(1, gunSayisi))}`, undefined, yon(ciro, oCiro, true), sparkline(ciroSeri, 'var(--accent)'))}
               {kart('📉 Toplam Maliyet', fmt(maliyet), maliyetDetayAcik ? 'kapat ▴' : 'kırılımı gör ▾', undefined, yon(maliyet, oMaliyet, false), null, () => setMaliyetDetayAcik(v => !v))}
