@@ -3957,7 +3957,12 @@ function CepKule({ onGeri, onDegisti }) {
 
 export default function CepApp() {
   const [girisli, setGirisli] = useState(() => tokenGecerli());
-  const [view, setView] = useState('home');
+  // Deep-link: /cep#kapanis-muhur gibi bağlantılar doğrudan o ekrana düşsün
+  // (panelin "Cep'ten Yönetici Mührü" bağlantısı buraya atlar). Bilinmeyen hash → home.
+  const [view, setView] = useState(() => {
+    const h = (window.location.hash || '').replace(/^#/, '').trim();
+    return h || 'home';
+  });
   const [sayac, setSayac] = useState({ onay: 0, odeme: 0, odemeTutar: 0, ariza: 0, kule: 0, ciro: 0, kasaUyum: 0, disKaynak: 0, belge: 0, basvuru: 0, sayimOnay: 0 });
   const [kasa, setKasa] = useState({ tutar: null, gun: null, hareketler: [] });
   const [kasaModal, setKasaModal] = useState(false);
@@ -4004,10 +4009,20 @@ export default function CepApp() {
     return () => clearInterval(t);
   }, [girisli, sayaclariYukle]);
 
+  // Hash sonradan değişirse (Cep zaten açıkken bağlantıya tıklanırsa) o ekrana git
+  useEffect(() => {
+    const h = () => {
+      const v = (window.location.hash || '').replace(/^#/, '').trim();
+      if (v) setView(v);
+    };
+    window.addEventListener('hashchange', h);
+    return () => window.removeEventListener('hashchange', h);
+  }, []);
+
   if (!girisli) return <CepGiris onGiris={() => setGirisli(true)} />;
 
   const cikis = () => { tokenSil(); setGirisli(false); setView('home'); };
-  const geri = () => setView('home');
+  const geri = () => { if (window.location.hash) { try { history.replaceState(null, '', window.location.pathname); } catch {} } setView('home'); };
 
   if (view === 'odemeler')
     return <CepOdemeler onGeri={geri} />;
