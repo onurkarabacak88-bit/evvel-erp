@@ -301,19 +301,21 @@ export default function Maliyet() {
     .replace(/[^a-zçğıöşü0-9 ]/g, ' ')
     .split(/\s+/)
     .filter(w => w.length >= 2 && !['ve','ile','adet','baskili','baskılı','li','lı'].includes(w));
-  const kalemOnerisi = (ocrAd) => {
+  // Çoklu öneri: en olası katalog kalemleri (kullanıcı doğru olanı tıklar; öneri yanlışsa
+  // diğerini seçer veya kutuya kendi yazar). Kelime kesişim skoruna göre sıralı, top N.
+  const kalemOnerileri = (ocrAd, n = 4) => {
     const oc = new Set(_kelimeBol(ocrAd));
-    if (!oc.size) return null;
-    let best = null, bestSkor = 0;
+    if (!oc.size) return [];
+    const skorlu = [];
     for (const k of stokKalemleri) {
       const kw = _kelimeBol(k.kalem_adi);
       if (!kw.length) continue;
       const kesisim = kw.filter(w => oc.has(w)).length;
       if (!kesisim) continue;
-      const skor = kesisim / kw.length;  // katalog adının ne kadarı faturada geçiyor
-      if (skor > bestSkor) { bestSkor = skor; best = k; }
+      skorlu.push({ kalem_kodu: k.kalem_kodu, kalem_adi: k.kalem_adi, _skor: kesisim / kw.length });
     }
-    return bestSkor >= 0.5 ? best : null;
+    skorlu.sort((a, b) => b._skor - a._skor);
+    return skorlu.filter(x => x._skor >= 0.34).slice(0, n);
   };
 
   // Fiyatlar sekmesindeki forma kalemi doldur + en üste kaydır
@@ -1355,11 +1357,12 @@ export default function Maliyet() {
                     const edit = fotoKalemDuzen[k.id] || {};
                     const kod = edit.kalem_kodu ?? (k.eslesen_stok_kodu || '');
                     const fy = edit.birim_maliyet_tl ?? (k.birim_fiyat != null ? String(k.birim_fiyat) : '');
-                    const oneri = !kod && !kayit ? kalemOnerisi(k.ocr_ad) : null;
+                    const oneriler = !kod && !kayit ? kalemOnerileri(k.ocr_ad) : [];
+                    const secadi = kod ? (stokKalemleri.find(x => x.kalem_kodu === kod)?.kalem_adi || '') : '';
                     return (
                       <div key={k.id}>
                         <div style={{ display: 'grid', gridTemplateColumns: isMobil ? '1fr' : '1.6fr 1.2fr 1fr auto', gap: 6, alignItems: 'center' }}>
-                          <input type="text" list="depo-kalem-listesi-sayfa" placeholder="Stok kodu" value={kod}
+                          <input type="text" list="depo-kalem-listesi-sayfa" placeholder="Ürün ara / kod yaz..." value={kod}
                             onChange={e => setFotoKalemDuzen(p => ({ ...p, [k.id]: { ...p[k.id], kalem_kodu: e.target.value } }))} disabled={kayit} />
                           <span style={{ fontSize: 11, color: 'var(--text3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={k.ocr_ad || ''}>
                             {k.ocr_ad || '—'}{k.adet != null ? ` ×${k.adet}` : ''}
@@ -1370,13 +1373,25 @@ export default function Maliyet() {
                             ? <span style={{ fontSize: 12, color: 'var(--green)', fontWeight: 700, textAlign: 'center' }}>✅</span>
                             : <button className="btn btn-secondary btn-sm" onClick={() => fotoKalemOnayla(f.id, k, kod, fy)}>Onayla</button>}
                         </div>
-                        {oneri && (
-                          <div style={{ marginTop: 3, fontSize: 11 }}>
-                            <button className="btn btn-ghost btn-sm" style={{ color: 'var(--accent)', padding: '1px 6px' }}
-                              title={'Faturadaki "' + (k.ocr_ad || '') + '" bu kaleme benziyor — tıkla, doldur'}
-                              onClick={() => setFotoKalemDuzen(p => ({ ...p, [k.id]: { ...p[k.id], kalem_kodu: oneri.kalem_kodu } }))}>
-                              🔗 Şunu mu demek istedin: <strong>{oneri.kalem_adi}</strong>?
-                            </button>
+                        {/* Seçili kalem adını göster (kutuda UUID görünür → burada okunabilir ad + değiştir) */}
+                        {kod && !kayit && (
+                          <div style={{ marginTop: 4, fontSize: 11, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                            <span style={{ color: 'var(--green)' }}>✓ Seçili: <strong>{secadi || kod}</strong></span>
+                            <button className="btn btn-ghost btn-sm" style={{ padding: '1px 8px', color: 'var(--text3)' }}
+                              onClick={() => setFotoKalemDuzen(p => ({ ...p, [k.id]: { ...p[k.id], kalem_kodu: '' } }))}>değiştir</button>
+                          </div>
+                        )}
+                        {/* Çoklu öneri — doğru olanı tıkla; hiçbiri değilse yukarıdaki kutuya ürün adı yaz */}
+                        {oneriler.length > 0 && (
+                          <div style={{ marginTop: 4, fontSize: 11, display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
+                            <span style={{ color: 'var(--text3)' }}>🔗 Bunlardan biri mi?</span>
+                            {oneriler.map(o => (
+                              <button key={o.kalem_kodu} className="btn btn-ghost btn-sm" style={{ color: 'var(--accent)', padding: '1px 8px' }}
+                                title={`Faturadaki "${k.ocr_ad || ''}" → bu kalem`}
+                                onClick={() => setFotoKalemDuzen(p => ({ ...p, [k.id]: { ...p[k.id], kalem_kodu: o.kalem_kodu } }))}>
+                                {o.kalem_adi}
+                              </button>
+                            ))}
                           </div>
                         )}
                         {k.onceki_fiyat != null && k.birim_fiyat != null && (
