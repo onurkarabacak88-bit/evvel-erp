@@ -12708,7 +12708,9 @@ function updateSolAksiyonChips(data) {
     // kapanis_tamamlandi_bugun: dünkü kapanış bugün erken saatte mühürlenmişse de true
     // dönebilir (bkz. build_panel_operasyon_blob). Açılış zaten yapıldıysa (sube_acik)
     // bu artık "yeni günün başladığı" anlamına gelir — panel kilitlenmemeli.
-    var kapBitti = (op.kapanis_tamamlandi_bugun === true && !data.sube_acik) || evListesi.some(function(ev){
+    // Gün kapalı kilidi: sunucu "kapanış mühürlü VE sonrasında yeniden açılmadı" der.
+    // (Eski `&& !data.sube_acik` aynı-gün aç→kapat akışını yanlışlıkla kilitsiz bırakıyordu.)
+    var kapBitti = (op.gun_kapali_kilit === true) || (op.kapanis_tamamlandi_bugun === true && !data.sube_acik) || evListesi.some(function(ev){
       return ev && String(ev.tip||'').toUpperCase()==='KAPANIS' && String(ev.durum||'').toLowerCase()==='tamamlandi';
     });
     var kapKart = document.getElementById('solKapanisKart');

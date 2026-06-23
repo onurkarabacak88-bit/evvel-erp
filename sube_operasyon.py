@@ -499,6 +499,32 @@ def build_panel_operasyon_blob(cur, sube_id: str, sube: dict, ensure: bool = Tru
         (sube_id, is_gunu_tr(), is_gunu_tr(), is_gunu_tr()),
     )
     kapanis_bugun_bitti = cur.fetchone() is not None
+    # ── GÜN KAPALI KİLİDİ (panel soluklaştırma sinyali) ──
+    # Doğru ayrım: şube "bugün açıldı mı" DEĞİL → "kapanıştan SONRA yeniden açıldı mı".
+    # Aynı gün aç→kapat = kilit (gün bitti). Gece-yarısı mühür sonrası ertesi gün
+    # yeniden açılış = kilit kalkar. (a35b6c8'deki `&& !sube_acik` aynı-gün akışını
+    # yanlışlıkla kilitsiz bırakıyordu çünkü sube_acik gün boyu true kalır.)
+    gun_kapali_kilit = False
+    if kapanis_bugun_bitti:
+        cur.execute(
+            """
+            SELECT tarih FROM sube_operasyon_event
+            WHERE sube_id=%s AND tip='KAPANIS' AND sira_no=0 AND durum='tamamlandi'
+              AND (tarih=%s OR (tarih=(%s::date - INTERVAL '1 day') AND cevap_ts::date=%s::date))
+            ORDER BY tarih DESC LIMIT 1
+            """,
+            (sube_id, is_gunu_tr(), is_gunu_tr(), is_gunu_tr()),
+        )
+        _kr = cur.fetchone()
+        _kapanis_tarih = _kr["tarih"] if _kr else None
+        _reopen = False
+        if _kapanis_tarih is not None:
+            cur.execute(
+                "SELECT 1 FROM sube_acilis WHERE sube_id=%s AND durum='acildi' AND tarih > %s LIMIT 1",
+                (sube_id, _kapanis_tarih),
+            )
+            _reopen = cur.fetchone() is not None
+        gun_kapali_kilit = not _reopen
     out = {
         "sunucu_saati": simdi_display.strftime("%H:%M:%S"),
         "sunucu_iso": simdi_display.isoformat(timespec="seconds"),
@@ -506,6 +532,7 @@ def build_panel_operasyon_blob(cur, sube_id: str, sube: dict, ensure: bool = Tru
         "aktif": aktif,
         "esikler": {"suphe": 5, "kritik": 10},
         "kapanis_tamamlandi_bugun": kapanis_bugun_bitti,
+        "gun_kapali_kilit": gun_kapali_kilit,
     }
     if aktif:
         st = datetime.fromisoformat(aktif["sistem_slot_ts"].replace(" ", "T"))
