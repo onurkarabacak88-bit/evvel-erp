@@ -890,6 +890,8 @@ function CepFaturaOnay({ tick }) {
   const [detay, setDetay] = useState({});        // id -> {fatura, kalemler}
   const [duzen, setDuzen] = useState({});         // kalem_id -> {kod, fy}
   const [kayit, setKayit] = useState({});         // kalem_id -> true
+  const [sonuc, setSonuc] = useState({});         // kalem_id -> onay sonuç mesajı (güncel/geçmiş)
+  const [guncelYap, setGuncelYap] = useState(true); // eski fatura olsa bile BUGÜNden kaydet (güncel olsun)
   const [foto, setFoto] = useState(null);
   const [hata, setHata] = useState('');
   const [picker, setPicker] = useState(null);     // {kalemId} — stok kalem seçici modalı açık
@@ -928,10 +930,12 @@ function CepFaturaOnay({ tick }) {
     try {
       const det = detay[fid];
       const ted = (det && det.fatura && det.fatura.tedarikci_ad) || null;
-      await api('/fatura/kalem/' + encodeURIComponent(kalem.id) + '/onayla', { method: 'POST', body: {
+      const r = await api('/fatura/kalem/' + encodeURIComponent(kalem.id) + '/onayla', { method: 'POST', body: {
         kalem_kodu: kod, kalem_adi: kalem.ocr_ad || kod, birim: kalem.birim || 'adet', birim_maliyet_tl: fy, tedarikci: ted,
+        guncel_yap: guncelYap,
       }});
       setKayit(p => ({ ...p, [kalem.id]: true }));
+      setSonuc(p => ({ ...p, [kalem.id]: (r && r.mesaj) || '✅ onaylandı' }));
     } catch (e) { setHata(e.message || 'Onaylanamadı'); }
   };
 
@@ -978,6 +982,11 @@ function CepFaturaOnay({ tick }) {
 
             {open && d && (
               <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {/* Güncel fiyat yap — eski tarihli faturada bile fiyat GÜNCEL olsun (yoksa geçmişe gömülür) */}
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: C.t2, cursor: 'pointer' }}>
+                  <input type="checkbox" checked={guncelYap} onChange={e => setGuncelYap(e.target.checked)} style={{ width: 18, height: 18 }} />
+                  <span>💡 <b>Güncel fiyat yap</b> — fatura eski tarihli olsa bile fiyatı bugünden kaydet (maliyet hemen güncellenir). Kapatırsan fatura tarihinden kaydeder (geçmişe gömülebilir).</span>
+                </label>
                 {(d.kalemler || []).length === 0 && <div style={{ fontSize: 12, color: C.t3 }}>OCR kalem bulamadı (📷 ile fotoğrafı kontrol et).</div>}
                 {(d.kalemler || []).map(k => {
                   const ked = duzen[k.id] || {};
@@ -1000,6 +1009,9 @@ function CepFaturaOnay({ tick }) {
                           ? <span style={{ color: C.yesil, fontSize: 18, fontWeight: 800 }}>✓</span>
                           : <button onClick={() => onayla(f.id, k)} style={{ background: C.yesil, color: '#fff', border: 'none', borderRadius: 8, padding: '9px 12px', fontSize: 13, fontWeight: 800, cursor: 'pointer' }}>Onayla</button>}
                       </div>
+                      {sonuc[k.id] && (
+                        <div style={{ marginTop: 5, fontSize: 11, fontWeight: 600, color: sonuc[k.id].startsWith('✅') ? C.yesil : C.sari }}>{sonuc[k.id]}</div>
+                      )}
                       {k.onceki_fiyat != null && k.birim_fiyat != null && (
                         <div style={{ marginTop: 4, fontSize: 11, color: k.fiyat_degisim > 0 ? C.kirmizi : k.fiyat_degisim < 0 ? C.yesil : C.t3 }}>
                           {k.fiyat_degisim > 0 ? '🔺' : k.fiyat_degisim < 0 ? '🔻' : '➖'} Önceki {fmt(k.onceki_fiyat)} → {fmt(k.birim_fiyat)}

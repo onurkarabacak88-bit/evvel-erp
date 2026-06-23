@@ -989,6 +989,7 @@ class FaturaKalemOnayBody(BaseModel):
     birim_maliyet_tl: float
     tedarikci: Optional[str] = None
     gecerli_baslangic: Optional[str] = None
+    guncel_yap: bool = False      # TRUE → fatura tarihi yerine BUGÜNden kaydet (güncel fiyat olsun)
 
 
 @router.post("/kalem/{kalem_id}/onayla")
@@ -1030,6 +1031,9 @@ def fatura_kalem_onayla(kalem_id: str, body: FaturaKalemOnayBody):
         # Fiyatın geçerlilik başlangıcı = FATURA TARİHİ (sistem otomatik eşleştirir);
         # frontend açıkça verirse onu kullan, yoksa fatura tarihi, o da yoksa bugün.
         bas = body.gecerli_baslangic or (r.get("fatura_tarih") or None) or str(date.today())
+        # "Güncel fiyat yap": fatura eski tarihli olsa bile BUGÜNden kaydet → güncel fiyat olur
+        if body.guncel_yap:
+            bas = str(date.today())
         ocr_ad = r.get("ocr_ad") or ""
         anahtar = _fatura_anahtar({"urun_kodu": r.get("ocr_urun_kodu"), "aciklama": ocr_ad})
         # 1) Fiyatı kaydet (PDF ile aynı servis) → urun_alis_fiyat + canlı maliyet
@@ -1056,5 +1060,15 @@ def fatura_kalem_onayla(kalem_id: str, body: FaturaKalemOnayBody):
             "UPDATE tedarikci_fatura_kalem SET eslesen_stok_kodu=%s, eslesme_guven=1.0, onaylandi=TRUE WHERE id=%s",
             (kalem, kalem_id),
         )
+        # Bu kayıt GÜNCEL fiyat mı oldu? (bas'tan daha yeni tarihli bir fiyat yoksa = güncel)
+        cur.execute(
+            "SELECT 1 FROM urun_alis_fiyat WHERE kalem_kodu=%s AND gecerli_baslangic > %s LIMIT 1",
+            (kalem, bas),
+        )
+        guncel_oldu = cur.fetchone() is None
         conn.commit()
-    return {"success": True, "fiyat_id": fiyat_id, "kalem_kodu": kalem, "anahtar": anahtar}
+    return {"success": True, "fiyat_id": fiyat_id, "kalem_kodu": kalem, "anahtar": anahtar,
+            "guncel_oldu": guncel_oldu, "gecerli_baslangic": bas,
+            "mesaj": ("✅ Güncel fiyat oldu" if guncel_oldu
+                      else f"⏳ {bas} tarihli geçmiş kayıt — daha yeni fiyat var, güncel maliyet değişmedi. "
+                           "Güncel yapmak için 'güncel fiyat yap' ile onayla.")}
