@@ -13975,6 +13975,8 @@ def ops_maliyet_gun_gun(
                 "depo": urun_depo_map.get(k),
                 "ad_norm": (urun_ad_map.get(k) or "").strip().lower(),
                 "ad_norm_in_map": (urun_ad_map.get(k) or "").strip().lower() in ad_to_fiyat,
+                "reverse_uuids": depo_to_uuids.get(k),
+                "reverse_fiyatlar": [fiyat_son_by_kod.get(u) for u in depo_to_uuids.get(k, ())],
             }
             for k in fiyat_eksik
         ],
