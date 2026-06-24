@@ -3042,6 +3042,12 @@ def _ekstre_eslesme_mutabakat(sonuc):
                          sonuc.get("kullanilabilir_limit"), sonuc.get("kalan_taksit_tutari")),
                     )
                     sonuc["donem_kaydedildi"] = True
+                    # Kart DURUM snapshot'ı (dönem borcu + kullanılabilir limit + kalan taksit +
+                    # faiz) önizlemede DE kalıcı olsun → ekstre yüklenince toplam borç (taksit
+                    # dahil) anında düzelir. "Borç uyumlu, yeni işlem yok" durumunda kullanıcı
+                    # import etmese bile kart durumu güncellenir. İŞLEMLER (kart_hareketleri)
+                    # yine yazılmaz; onlar ayrı ekstre-import adımında eklenir.
+                    conn.commit()
                 except Exception:
                     sonuc["donem_kaydedildi"] = False
 
