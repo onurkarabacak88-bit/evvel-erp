@@ -2781,7 +2781,7 @@ def kart_gelecek_ay_yuk():
     with db() as (conn, cur):
         serbest = float(kasa_bakiyesi(cur) or 0)
         cur.execute(
-            """SELECT kart_id::text AS kid, COALESCE(SUM(tutar),0)::float AS t
+            """SELECT kart_id::text AS kid, COALESCE(SUM(odenecek_tutar),0)::float AS t
                FROM odeme_plani WHERE kart_id IS NOT NULL AND durum='bekliyor'
                  AND tarih BETWEEN %s AND %s GROUP BY kart_id""",
             (ga_bas, ga_bit),
