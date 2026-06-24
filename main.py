@@ -2722,6 +2722,85 @@ def kart_borc_faiz_ozet():
     }
 
 
+@app.get("/api/kartlar/gelecek-ay-yuk")
+def kart_gelecek_ay_yuk():
+    """İZOLE/SALT-OKUR: gelecek ay tahmini ZORUNLU ödeme yükü + elde kalan strateji.
+    Kullanıcı durumu: tüm nakit kredi/kartlara yatıyor → "gelecek ay en az ne ödemeliyim".
+      1) Kart tahmini asgari (OTOMATİK): her kart için gelecek dönem borç tahmini ×
+         asgari oran. Gelecek dönem = (anlık−bu ay asgari)×(1+aylık faiz) + gelecek ay
+         taksit dilimi (odeme_plani). Asgari oran: limit>50k → %40, değilse %20 (TR mevzuat).
+      2) Kredi taksitleri (borc_envanteri, gelecek ay) — kesin.
+      3) ZORUNLU YÜK = kart asgari + kredi taksiti (batmamak için minimum).
+      4) Serbest nakit (kasa_bakiyesi) − zorunlu = ELDE KALAN → çığa (en pahalı borç).
+      5) Ortalama aylık ödeme (son 90 gün kart ödemesi / 3) — tipik yük.
+    Hiçbir veriyi DEĞİŞTİRMEZ; mevcut kartlar_listele + odeme_plani + borc_envanteri okur."""
+    from datetime import date as _date
+    from calendar import monthrange as _mr
+    bugun = bugun_tr()
+    ga_yil = bugun.year + (1 if bugun.month == 12 else 0)
+    ga_ay = 1 if bugun.month == 12 else bugun.month + 1
+    ga_bas = _date(ga_yil, ga_ay, 1)
+    ga_bit = _date(ga_yil, ga_ay, _mr(ga_yil, ga_ay)[1])
+    kl = kartlar_listele()
+    kartlar = kl if isinstance(kl, list) else (kl.get("kartlar") or [])
+    with db() as (conn, cur):
+        serbest = float(kasa_bakiyesi(cur) or 0)
+        cur.execute(
+            """SELECT kart_id::text AS kid, COALESCE(SUM(tutar),0)::float AS t
+               FROM odeme_plani WHERE kart_id IS NOT NULL AND durum='bekliyor'
+                 AND tarih BETWEEN %s AND %s GROUP BY kart_id""",
+            (ga_bas, ga_bit),
+        )
+        kart_taksit = {r["kid"]: float(r["t"]) for r in (cur.fetchall() or [])}
+        cur.execute(
+            "SELECT COALESCE(SUM(aylik_taksit),0)::float AS t FROM borc_envanteri "
+            "WHERE aktif=TRUE AND (kalan_vade IS NULL OR kalan_vade>0)"
+        )
+        kredi_taksit = float((cur.fetchone() or {}).get("t") or 0)
+        try:
+            cur.execute(
+                "SELECT COALESCE(SUM(tutar),0)::float AS t FROM kart_hareketleri "
+                "WHERE islem_turu='ODEME' AND durum='aktif' AND tarih >= CURRENT_DATE - 90"
+            )
+            son90 = float((cur.fetchone() or {}).get("t") or 0)
+        except Exception:
+            son90 = 0.0
+    satir, t_asgari = [], 0.0
+    for k in kartlar:
+        anlik = float(k.get("anlik_borc") if k.get("anlik_borc") is not None else (k.get("guncel_borc") or 0))
+        if anlik <= 0.5:
+            continue
+        bu_asg = float(k.get("asgari_odeme") or 0)
+        faiz_ay = float(k.get("faiz_orani") or 0) / 100.0
+        limit = float(k.get("limit_tutar") or 0)
+        oran = 0.40 if limit > 50000 else 0.20
+        kid = str(k.get("id"))
+        kalan = max(0.0, anlik - bu_asg)
+        faizli = kalan * (1 + faiz_ay)
+        taksit_dilim = kart_taksit.get(kid, 0.0)
+        gelecek_donem = faizli + taksit_dilim
+        tahmini_asgari = gelecek_donem * oran
+        t_asgari += tahmini_asgari
+        satir.append({
+            "kart_adi": k.get("kart_adi"), "anlik_borc": round(anlik, 2),
+            "faiz_ay_pct": round(faiz_ay * 100, 2),
+            "gelecek_donem_tahmini": round(gelecek_donem, 2),
+            "tahmini_asgari": round(tahmini_asgari, 2),
+        })
+    satir.sort(key=lambda x: -x["tahmini_asgari"])
+    zorunlu = t_asgari + kredi_taksit
+    return {
+        "gelecek_ay": f"{ga_yil}-{ga_ay:02d}",
+        "kart_tahmini_asgari": round(t_asgari, 2),
+        "kredi_taksiti": round(kredi_taksit, 2),
+        "zorunlu_yuk": round(zorunlu, 2),
+        "serbest_nakit": round(serbest, 2),
+        "ekstra_kapasite": round(serbest - zorunlu, 2),   # +: çığa yatırılabilir, −: açık
+        "ortalama_aylik_odeme": round(son90 / 3.0, 2),
+        "kartlar": satir,
+    }
+
+
 def _satici_anahtar(aciklama: Optional[str]) -> Optional[str]:
     """Açıklamadan satıcı anahtarı (ilk anlamlı kelime) — hafıza eşleşmesi için.
     'METRO METRO GROSMARKET KOKONYA TR' → 'METRO'."""

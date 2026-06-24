@@ -51,9 +51,11 @@ const ANIM_CSS = `
 function BorcFaizOzet({ onJump }) {
   const [d, setD] = useState(null);
   const [ho, setHo] = useState(null);
+  const [gy, setGy] = useState(null);   // gelecek ay ödeme yükü
   useEffect(() => {
     api('/kartlar/borc-faiz-ozet').then(setD).catch(() => {});
     api('/kartlar/harcama-ozet').then(setHo).catch(() => {});
+    api('/kartlar/gelecek-ay-yuk').then(setGy).catch(() => {});
   }, []);
   if (!d) {
     return <div style={{ padding: 40, textAlign: 'center', color: 'var(--text3)' }}><div className="spinner" /></div>;
@@ -105,6 +107,47 @@ function BorcFaizOzet({ onJump }) {
           )}
         </div>
       </div>
+
+      {/* GELECEK AY ÖDEME YÜKÜ — zorunlu minimum + elde kalan strateji */}
+      {gy && (
+        <div className="card ky-kpi" style={{ padding: '14px 16px', marginBottom: 14, borderTop: '3px solid var(--purple)', animationDelay: '150ms' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 10, flexWrap: 'wrap', gap: 6 }}>
+            <span style={{ fontWeight: 700, fontSize: 14 }}>📅 Gelecek Ay Ödeme Yükü <span style={{ fontWeight: 400, fontSize: 11, color: 'var(--text3)' }}>({gy.gelecek_ay} tahmini)</span></span>
+            <span style={{ fontSize: 11, color: 'var(--text3)' }}>"gelecek ay en az ne ödemeliyim"</span>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(150px,1fr))', gap: 10 }}>
+            <div style={{ background: 'var(--bg3)', borderRadius: 8, padding: '10px 12px' }}>
+              <div style={{ fontSize: 11, color: 'var(--text3)' }}>🔴 Zorunlu yük (minimum)</div>
+              <div style={{ fontSize: 20, fontWeight: 800, fontFamily: 'var(--font-mono)', color: 'var(--red)' }}>{fmt(gy.zorunlu_yuk)}</div>
+              <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 2 }}>kart asgari {fmt(gy.kart_tahmini_asgari)} + 🏦 kredi {fmt(gy.kredi_taksiti)}</div>
+            </div>
+            <div style={{ background: 'var(--bg3)', borderRadius: 8, padding: '10px 12px' }}>
+              <div style={{ fontSize: 11, color: 'var(--text3)' }}>💵 Kasadaki serbest nakit</div>
+              <div style={{ fontSize: 20, fontWeight: 800, fontFamily: 'var(--font-mono)' }}>{fmt(gy.serbest_nakit)}</div>
+            </div>
+            <div style={{ background: 'var(--bg3)', borderRadius: 8, padding: '10px 12px', borderLeft: `3px solid ${gy.ekstra_kapasite >= 0 ? 'var(--green)' : 'var(--red)'}` }}>
+              <div style={{ fontSize: 11, color: 'var(--text3)' }}>{gy.ekstra_kapasite >= 0 ? '🟢 Çığa yatırılabilir' : '🔴 Açık (nakit yetmiyor)'}</div>
+              <div style={{ fontSize: 20, fontWeight: 800, fontFamily: 'var(--font-mono)', color: gy.ekstra_kapasite >= 0 ? 'var(--green)' : 'var(--red)' }}>{fmt(gy.ekstra_kapasite)}</div>
+              <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 2 }}>serbest − zorunlu</div>
+            </div>
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 8 }}>📊 Ortalama aylık ödeme (son 3 ay): <b style={{ color: 'var(--text2)' }}>{fmt(gy.ortalama_aylik_odeme)}</b></div>
+          {gy.kartlar?.length > 0 && (
+            <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
+              <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 6 }}>Kart bazlı gelecek ay tahmini asgari:</div>
+              {gy.kartlar.map((k, i) => (
+                <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, padding: '3px 0' }}>
+                  <span>{k.kart_adi} <span style={{ fontSize: 10, color: 'var(--text3)' }}>(faiz %{k.faiz_ay_pct}/ay)</span></span>
+                  <span style={{ fontFamily: 'var(--font-mono)' }}>{fmt(k.tahmini_asgari)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 8, fontStyle: 'italic' }}>
+            Tahmin: asgari ödenirse kalan borç + aylık faiz + gelecek ay taksitleri → asgari oranı (limit&gt;50k %40, değilse %20). Gerçek harcamalar değiştirir.
+          </div>
+        </div>
+      )}
 
       {/* İŞLETME / ŞAHSİ / BELİRSİZ — görsel bar */}
       {ho && topHarcama > 0 && (
