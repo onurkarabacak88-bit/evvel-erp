@@ -2028,7 +2028,9 @@ def kartlar_listele():
                 "toplam_borc_taksitli": (round(_toplam_taksitli, 2) if _toplam_taksitli is not None else None),
                 "asgari_odeme": asgari_odeme,
                 "bu_donem_odenen": bu_donem_odenen,
-                "asgari_karsilandi": asgari_odeme > 0 and bu_donem_odenen >= asgari_odeme - 0.01,
+                # Asgari estimasyon olduğundan kuruş/yuvarlama farkı için küçük tolerans
+                # (×0.999 — kart_aktif_donem'deki önceki dönem kontrolüyle aynı desen).
+                "asgari_karsilandi": asgari_odeme > 0 and bu_donem_odenen >= asgari_odeme * 0.999,
                 "bu_ekstre": bu_ekstre,
                 "devreden_anapara": devreden_ana,
                 "devreden_faiz": devreden_fz,
