@@ -1879,6 +1879,7 @@ def kartlar_listele():
             # yükü (Worldcard "Kalan Toplam Taksit Tutarı"nı doğrudan basar).
             _kull_limit = None
             _kalan_taksit = None
+            _snap_kesim = None   # gerçek ekstre kesim tarihi (anlık borç penceresi için)
             try:
                 cur.execute(
                     """SELECT kullanilabilir_limit, kalan_taksit_tutari FROM kart_ekstre_donem
@@ -1902,6 +1903,18 @@ def kartlar_listele():
                         _kull_limit = float(_klr['kullanilabilir_limit'])
                     if _klr.get('kalan_taksit_tutari') is not None:
                         _kalan_taksit = float(_klr['kalan_taksit_tutari'])
+                # ANLIK borç penceresi = GERÇEK ekstre kesim tarihi (teorik _kesim_for_ov
+                # değil). Aksi halde kesim-sonrası manuel ödemeler yanlış pencerede kaçar
+                # (ödeme borçtan düşmez / limit açılmaz). En son snapshot'ın kesim_tarihi.
+                cur.execute(
+                    """SELECT kesim_tarihi::text AS kt FROM kart_ekstre_donem
+                       WHERE kart_id=%s AND donem_borcu IS NOT NULL AND kesim_tarihi IS NOT NULL
+                       ORDER BY donem DESC, olusturma DESC LIMIT 1""",
+                    (k['id'],),
+                )
+                _kr = cur.fetchone()
+                if _kr and _kr.get('kt'):
+                    _snap_kesim = _kr['kt']
             except Exception:
                 pass
 
@@ -1959,12 +1972,15 @@ def kartlar_listele():
             # borç çıkar; gelecek ay yeni ekstre yüklenince taban kendiliğinden döner.
             if _ekstre_gercek and _ov_borc is not None:
                 try:
+                    # Gerçek ekstre kesim tarihinden sonraki hareketler (ödeme −, harcama +).
+                    # _snap_kesim yoksa teorik _kesim_for_ov'a düşer (geriye dönük uyumlu).
+                    _pencere = _snap_kesim or str(_kesim_for_ov)
                     cur.execute("""
                         SELECT COALESCE(SUM(CASE WHEN islem_turu='ODEME' THEN -tutar ELSE tutar END), 0) AS d
                         FROM kart_hareketleri
                         WHERE kart_id=%s AND durum='aktif' AND islem_turu <> 'DEVIR'
                           AND tarih > %s::date
-                    """, (k['id'], _kesim_for_ov))
+                    """, (k['id'], _pencere))
                     _post = float((cur.fetchone() or {}).get('d') or 0)
                 except Exception:
                     _post = 0.0
