@@ -1551,6 +1551,9 @@ function CepVadeli({ onGeri }) {
   const [odeId, setOdeId] = useState('');        // ödeme paneli açık satır
   const [odeYontem, setOdeYontem] = useState('nakit');
   const [odeKart, setOdeKart] = useState('');
+  const [odeMod, setOdeMod] = useState('tam');   // tam | kismi
+  const [kismiTutar, setKismiTutar] = useState('');
+  const [kismiVade, setKismiVade] = useState('');
 
   const yukle = useCallback(() => {
     setHata('');
@@ -1637,7 +1640,7 @@ function CepVadeli({ onGeri }) {
     finally { setMesgul(false); }
   };
 
-  const odeAc = (v) => { setOdeId(v.id); setOdeYontem('nakit'); setOdeKart(''); setHata(''); };
+  const odeAc = (v) => { setOdeId(v.id); setOdeYontem('nakit'); setOdeKart(''); setOdeMod('tam'); setKismiTutar(''); setKismiVade(''); setHata(''); };
 
   const ode = async (v) => {
     if (odeYontem === 'kart' && !odeKart) { setHata('Kart seçin'); return; }
@@ -1647,6 +1650,26 @@ function CepVadeli({ onGeri }) {
         method: 'POST', body: { odeme_yontemi: odeYontem, kart_id: odeYontem === 'kart' ? odeKart : null },
       });
       setBilgi(odeYontem === 'kart' ? 'Ödendi — kart harcamasına eklendi' : 'Ödendi — kasadan düşüldü');
+      setOdeId(''); yukle();
+    } catch (e) { setHata(e.message || 'Ödenemedi'); }
+    finally { setMesgul(false); }
+  };
+
+  // Kısmi ödeme: ödenen kısım kasadan/karttan düşer, KALAN borç yeni vade ile bekler.
+  const kismiOde = async (v) => {
+    const tutarN = Number(String(kismiTutar).replace(',', '.'));
+    if (!tutarN || tutarN <= 0) { setHata('Ödenecek tutar girin'); return; }
+    if (tutarN >= Number(v.tutar)) { setHata('Kısmi tutar borçtan az olmalı — tamamı için "Tam Ödeme" kullanın.'); return; }
+    if (!kismiVade) { setHata('Kalan borç için yeni vade tarihi seçin'); return; }
+    if (odeYontem === 'kart' && !odeKart) { setHata('Kart seçin'); return; }
+    setMesgul(true); setHata('');
+    try {
+      await api(`/vadeli-alimlar/${v.id}/kismi-ode`, {
+        method: 'POST',
+        body: { odenen_tutar: tutarN, kalan_vade_tarihi: kismiVade, odeme_yontemi: odeYontem, kart_id: odeYontem === 'kart' ? odeKart : null },
+      });
+      const kalan = Number(v.tutar) - tutarN;
+      setBilgi(`${fmt(tutarN)} ödendi${odeYontem === 'kart' ? ' (kart)' : ' (kasa)'} · kalan ${fmt(kalan)} → ${new Date(kismiVade).toLocaleDateString('tr-TR')}`);
       setOdeId(''); yukle();
     } catch (e) { setHata(e.message || 'Ödenemedi'); }
     finally { setMesgul(false); }
@@ -1744,6 +1767,22 @@ function CepVadeli({ onGeri }) {
 
               {gorunum === 'bekliyor' && odeId === v.id && (
                 <div style={{ marginTop: 10, borderTop: `1px solid ${C.border}`, paddingTop: 10 }}>
+                  {/* Tam / Kısmi ödeme seçimi */}
+                  <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                    {[['tam', 'Tam Ödeme'], ['kismi', 'Kısmi Ödeme']].map(([k, etk]) => (
+                      <button key={k} onClick={() => setOdeMod(k)} style={{ flex: 1, background: odeMod === k ? C.mavi : C.bg, color: odeMod === k ? '#fff' : C.t2, border: `1px solid ${odeMod === k ? C.mavi : C.border}`, borderRadius: 10, padding: '9px 0', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>{etk}</button>
+                    ))}
+                  </div>
+                  {odeMod === 'kismi' && (
+                    <div style={{ marginBottom: 8 }}>
+                      <input type="number" inputMode="decimal" placeholder={`Ödenecek tutar (borç ${fmt(v.tutar)})`} value={kismiTutar} onChange={e => setKismiTutar(e.target.value)} style={{ ...inp, fontSize: 18, fontWeight: 800, textAlign: 'center', marginBottom: 6 }} />
+                      {(() => { const tn = Number(String(kismiTutar).replace(',', '.')) || 0; return tn > 0 && tn < Number(v.tutar) && (
+                        <div style={{ fontSize: 12, color: C.sari, textAlign: 'center', marginBottom: 8 }}>Kalan borç: <b>{fmt(Number(v.tutar) - tn)}</b> (yeni vade ile bekler)</div>
+                      ); })()}
+                      <div style={{ fontSize: 12, color: C.t3, marginBottom: 4 }}>Kalan borç için yeni vade tarihi</div>
+                      <input type="date" value={kismiVade} onChange={e => setKismiVade(e.target.value)} style={{ ...inp }} />
+                    </div>
+                  )}
                   <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
                     {[['nakit', '💵 Nakit'], ['kart', '💳 Kart']].map(([k, etk]) => (
                       <button key={k} onClick={() => setOdeYontem(k)} style={{ flex: 1, background: odeYontem === k ? C.t1 : C.bg, color: odeYontem === k ? C.bg : C.t2, border: `1px solid ${C.border}`, borderRadius: 10, padding: '9px 0', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>{etk}</button>
@@ -1757,7 +1796,11 @@ function CepVadeli({ onGeri }) {
                   )}
                   <div style={{ display: 'flex', gap: 8 }}>
                     <button onClick={() => setOdeId('')} style={{ flex: 1, background: C.bg, color: C.t2, border: `1px solid ${C.border}`, borderRadius: 10, padding: '10px 0', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>Vazgeç</button>
-                    <button onClick={() => ode(v)} disabled={mesgul} style={{ flex: 2, background: C.yesil, color: '#fff', border: 'none', borderRadius: 10, padding: '10px 0', fontSize: 14, fontWeight: 800, cursor: mesgul ? 'default' : 'pointer', opacity: mesgul ? 0.6 : 1 }}>{mesgul ? '…' : `${fmt(v.tutar)} Öde`}</button>
+                    {odeMod === 'tam' ? (
+                      <button onClick={() => ode(v)} disabled={mesgul} style={{ flex: 2, background: C.yesil, color: '#fff', border: 'none', borderRadius: 10, padding: '10px 0', fontSize: 14, fontWeight: 800, cursor: mesgul ? 'default' : 'pointer', opacity: mesgul ? 0.6 : 1 }}>{mesgul ? '…' : `${fmt(v.tutar)} Öde`}</button>
+                    ) : (
+                      <button onClick={() => kismiOde(v)} disabled={mesgul} style={{ flex: 2, background: C.yesil, color: '#fff', border: 'none', borderRadius: 10, padding: '10px 0', fontSize: 14, fontWeight: 800, cursor: mesgul ? 'default' : 'pointer', opacity: mesgul ? 0.6 : 1 }}>{mesgul ? '…' : 'Kısmi Öde'}</button>
+                    )}
                   </div>
                 </div>
               )}
