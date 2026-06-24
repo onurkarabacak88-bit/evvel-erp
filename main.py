@@ -115,6 +115,14 @@ except Exception as _belge_talep_err:
     )
 app.include_router(stok_sayim_router)
 app.include_router(supplier_payment_router)
+# Tam Maliyet — İZOLE (genel merkez gideri + tahakkuk + şube dağıtımı). P&L'ye dokunmaz.
+try:
+    from tam_maliyet_api import router as tam_maliyet_router
+    app.include_router(tam_maliyet_router)
+except Exception as _tam_maliyet_err:
+    logging.getLogger(__name__).warning(
+        f"tam_maliyet modulu yuklenemedi (izole, ana akis etkilenmez): {_tam_maliyet_err}"
+    )
 
 logging.basicConfig(
     level=logging.INFO,
