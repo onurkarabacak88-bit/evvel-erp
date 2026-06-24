@@ -359,6 +359,17 @@ def kart_ekstre_donem_override(cur, kart_id: str, kesim_tarihi: date):
     """, (kart_id, kesim_tarihi))
     r = cur.fetchone()
     if not r:
+        # Fallback: istenen kesim ayı için snapshot yoksa, kartın EN SON gerçek
+        # snapshot'ını kullan. Aktif dönem (kart_aktif_donem) ile yeni yüklenen
+        # ekstrenin kesim ayı uyuşmadığında (donem mismatch) toplam borç/limit
+        # "None" kalmasın — en güncel ekstre kartın gerçek durumudur.
+        cur.execute("""
+            SELECT donem_borcu, asgari_tutar FROM kart_ekstre_donem
+            WHERE kart_id=%s AND donem_borcu IS NOT NULL
+            ORDER BY donem DESC, olusturma DESC LIMIT 1
+        """, (kart_id,))
+        r = cur.fetchone()
+    if not r:
         return None, None
     borc = float(r['donem_borcu'])
     asg = float(r['asgari_tutar']) if r.get('asgari_tutar') is not None else None

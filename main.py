@@ -1887,6 +1887,16 @@ def kartlar_listele():
                     (k['id'], _kesim_for_ov),
                 )
                 _klr = cur.fetchone()
+                if not _klr or (_klr.get('kullanilabilir_limit') is None and _klr.get('kalan_taksit_tutari') is None):
+                    # Fallback (donem mismatch): kartın EN SON snapshot'ındaki limit/taksit.
+                    # _ov_borc fallback'i (kart_ekstre_donem_override) ile tutarlı.
+                    cur.execute(
+                        """SELECT kullanilabilir_limit, kalan_taksit_tutari FROM kart_ekstre_donem
+                           WHERE kart_id=%s AND (kullanilabilir_limit IS NOT NULL OR kalan_taksit_tutari IS NOT NULL)
+                           ORDER BY donem DESC, olusturma DESC LIMIT 1""",
+                        (k['id'],),
+                    )
+                    _klr = cur.fetchone() or _klr
                 if _klr:
                     if _klr.get('kullanilabilir_limit') is not None:
                         _kull_limit = float(_klr['kullanilabilir_limit'])
