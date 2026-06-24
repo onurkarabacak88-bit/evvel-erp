@@ -13691,6 +13691,16 @@ def ops_maliyet_gun_gun(
                 d = dict(r); fiyat_son_by_kod[str(d.get("kalem_kodu"))] = float(d.get("birim_maliyet_tl") or 0)
         except Exception:
             pass
+        # İSİM-BAZLI fiyat haritası: fiyatlı bir ürünün adı → fiyatı. Mükerrer kimlik
+        # (aynı ad, farklı UUID — biri fiyatlı biri fiyatsız) durumunda son emniyet ağı.
+        # "Fiyat ürüne bir kez tanımlanınca, aynı addaki kayıt da hep o fiyatı çeker."
+        ad_to_fiyat: Dict[str, float] = {}
+        for _kod, _f in fiyat_son_by_kod.items():
+            _ad = urun_ad_map.get(_kod)
+            if _ad:
+                _n = _ad.strip().lower()
+                if _n and _n not in ad_to_fiyat:
+                    ad_to_fiyat[_n] = _f
         fire_map: Dict[Tuple[str, str], float] = {}
         iade_map: Dict[Tuple[str, str], float] = {}
         try:
@@ -13808,6 +13818,12 @@ def ops_maliyet_gun_gun(
                         if _f is not None:
                             fiyat = _f
                             break
+                if fiyat is None:
+                    # SON EMNİYET AĞI: mükerrer kimlik (aynı ad, fiyatsız UUID). Ürünün
+                    # adıyla fiyatlı ikizini bul → fiyatı oradan çek.
+                    _ad = urun_ad_map.get(uid)
+                    if _ad:
+                        fiyat = ad_to_fiyat.get(_ad.strip().lower())
                 if fiyat is None:
                     fiyat_eksik.add(uid)  # UID → urun_ad_map ile okunabilir ada çevrilir
                     continue
