@@ -13967,6 +13967,18 @@ def ops_maliyet_gun_gun(
         "fiyat_eksik_kalemler": sorted(
             STOK_LABEL_TR.get(k) or urun_ad_map.get(k) or k for k in fiyat_eksik
         ),
+        "_debug_fiyat_eksik": [
+            {
+                "uid": k,
+                "ad_map": urun_ad_map.get(k),
+                "in_fiyat_son": k in fiyat_son_by_kod,
+                "depo": urun_depo_map.get(k),
+                "ad_norm": (urun_ad_map.get(k) or "").strip().lower(),
+                "ad_norm_in_map": (urun_ad_map.get(k) or "").strip().lower() in ad_to_fiyat,
+            }
+            for k in fiyat_eksik
+        ],
+        "_debug_ad_to_fiyat_ornek": {kk: ad_to_fiyat.get(kk) for kk in ("muzlu rulo", "antep fıstıklı san sebastian (porsiyon)")},
     }
 
 
