@@ -2673,94 +2673,53 @@ def kart_ekstre_arsiv():
 
 @app.get("/api/kartlar/borc-faiz-ozet")
 def kart_borc_faiz_ozet():
-    """Faz KX: kart başına ve toplam — güncel borç + ekstrelerden toplam ödenen banka
-    faizi + bu dönem ekstresi yüklendi mi (aylık mekanizma takibi)."""
+    """Kart başına/toplam — borç (taksit dahil) + ödenen faiz + bu ay ekstre var mı.
+    Borç/taksit/toplam TEK KAYNAK: kartlar_listele() (=/api/kartlar) → cep & masaüstü
+    KartYönetimi AYNI rakamı gösterir (tutarsızlık olmaz). Faiz/son ekstre snapshot'tan."""
     from datetime import date as _date
     bugun = bugun_tr()
+    # Borç + gelecek taksit + toplam: /api/kartlar ile birebir aynı kaynak
+    kl = kartlar_listele()
+    kdata = kl if isinstance(kl, list) else (kl.get("kartlar") or [])
     with db() as (conn, cur):
-        cur.execute("SELECT id::text, kart_adi, banka, COALESCE(sahip,'İşletme') AS sahip, "
-                    "limit_tutar, kesim_gunu, son_odeme_gunu, son_dort_hane FROM kartlar WHERE aktif=TRUE ORDER BY kart_adi")
-        kartlar = [dict(r) for r in (cur.fetchall() or [])]
-        # ekstre snapshot toplamları (faiz) + son dönem
         cur.execute("""
-            SELECT kart_id::text,
-                   COALESCE(SUM(donem_faizi),0)::float AS toplam_faiz,
-                   MAX(donem)::text AS son_donem,
-                   COUNT(*)::int AS donem_adet
+            SELECT kart_id::text AS kart_id, COALESCE(SUM(donem_faizi),0)::float AS toplam_faiz,
+                   MAX(donem)::text AS son_donem, COUNT(*)::int AS donem_adet
             FROM kart_ekstre_donem GROUP BY kart_id
         """)
         snap = {r["kart_id"]: dict(r) for r in (cur.fetchall() or [])}
-        # En son snapshot'ın kullanılabilir limit + kalan taksit → gelecek taksit yükü
-        # (kartlar listesiyle AYNI mantık: kalan_taksit ?? limit−kullanılabilir−borç).
-        cur.execute("""
-            SELECT DISTINCT ON (kart_id) kart_id::text AS kart_id,
-                   kullanilabilir_limit, kalan_taksit_tutari,
-                   donem_borcu, kesim_tarihi::text AS kesim_tarihi
-            FROM kart_ekstre_donem
-            WHERE donem_borcu IS NOT NULL
-            ORDER BY kart_id, donem DESC, olusturma DESC
-        """)
-        sondonem = {r["kart_id"]: dict(r) for r in (cur.fetchall() or [])}
-        bu_ay = str(_date(bugun.year, bugun.month, 1))
-        satirlar, toplam_borc, toplam_faiz, toplam_taksit, eksik = [], 0.0, 0.0, 0.0, []
-        for k in kartlar:
-            sd0 = sondonem.get(k["id"], {})
-            # ANLIK borç (/api/kartlar ile AYNI): ekstre dönem borcu + kesim sonrası
-            # hareketler (ödeme −, harcama +). Ekstre yoksa defter borcuna düşer.
-            # Böylece KartYönetimi ile cep/Kartlar ekranı aynı rakamı gösterir.
-            _ovb = sd0.get("donem_borcu")
-            if _ovb is not None:
-                _kes = sd0.get("kesim_tarihi")
-                _post = 0.0
-                if _kes:
-                    cur.execute(
-                        """SELECT COALESCE(SUM(CASE WHEN islem_turu='ODEME' THEN -tutar ELSE tutar END),0)::float AS d
-                           FROM kart_hareketleri
-                           WHERE kart_id=%s AND durum='aktif' AND islem_turu<>'DEVIR' AND tarih > %s::date""",
-                        (k["id"], _kes),
-                    )
-                    _post = float((cur.fetchone() or {}).get("d") or 0)
-                b = float(_ovb) + _post
-            else:
-                b = float(kart_borc(cur, k["id"]) or 0)
-            s = snap.get(k["id"], {})
-            tf = float(s.get("toplam_faiz") or 0)
-            son_donem = s.get("son_donem")
-            bu_ay_var = bool(son_donem and son_donem[:7] == bu_ay[:7])
-            # Gelecek taksit anaparası (taksit dahil toplam borç için)
-            sd = sondonem.get(k["id"], {})
-            _limit = float(k["limit_tutar"] or 0)
-            _kull = sd.get("kullanilabilir_limit")
-            _kalan_t = sd.get("kalan_taksit_tutari")
-            if _kalan_t is not None:
-                gt = float(_kalan_t)
-            elif _kull is not None:
-                gt = max(0.0, _limit - float(_kull) - b)
-            else:
-                gt = 0.0
-            toplam_kart = b + gt
-            toplam_borc += b; toplam_faiz += tf; toplam_taksit += gt
-            if not bu_ay_var:
-                eksik.append(k["kart_adi"])
-            satirlar.append({
-                "kart_id": k["id"], "kart_adi": k["kart_adi"], "banka": k["banka"],
-                "sahip": k["sahip"], "limit": _limit,
-                "guncel_borc": round(b, 2), "toplam_odenen_faiz": round(tf, 2),
-                "gelecek_taksit_anapara": round(gt, 2),
-                "toplam_borc_taksitli": round(toplam_kart, 2),
-                "son_ekstre_donem": son_donem, "ekstre_adet": int(s.get("donem_adet") or 0),
-                "bu_ay_ekstre_var": bu_ay_var,
-            })
-        satirlar.sort(key=lambda x: -x["toplam_borc_taksitli"])
-        return {
-            "toplam_borc": round(toplam_borc, 2),                          # bu dönem borcu
-            "toplam_taksit": round(toplam_taksit, 2),                       # gelecek taksit anaparası
-            "toplam_borc_taksitli": round(toplam_borc + toplam_taksit, 2),  # GERÇEK toplam (taksit dahil)
-            "toplam_odenen_faiz": round(toplam_faiz, 2),
-            "kart_adet": len(kartlar),
-            "bu_ay_eksik_ekstre": eksik,
-            "kartlar": satirlar,
-        }
+    bu_ay = str(_date(bugun.year, bugun.month, 1))
+    satirlar, toplam_borc, toplam_faiz, toplam_taksit, eksik = [], 0.0, 0.0, 0.0, []
+    for k in kdata:
+        kid = str(k.get("id"))
+        anlik = float(k.get("anlik_borc") if k.get("anlik_borc") is not None else (k.get("guncel_borc") or 0))
+        gt = float(k.get("gelecek_taksit_anapara") or 0)
+        toplam_kart = float(k.get("toplam_borc_taksitli") if k.get("toplam_borc_taksitli") is not None else (anlik + gt))
+        s = snap.get(kid, {})
+        tf = float(s.get("toplam_faiz") or 0)
+        son_donem = s.get("son_donem")
+        bu_ay_var = bool(son_donem and son_donem[:7] == bu_ay[:7])
+        toplam_borc += anlik; toplam_faiz += tf; toplam_taksit += gt
+        if not bu_ay_var:
+            eksik.append(k.get("kart_adi"))
+        satirlar.append({
+            "kart_id": kid, "kart_adi": k.get("kart_adi"), "banka": k.get("banka"),
+            "sahip": k.get("sahip") or "İşletme", "limit": float(k.get("limit_tutar") or 0),
+            "guncel_borc": round(anlik, 2), "toplam_odenen_faiz": round(tf, 2),
+            "gelecek_taksit_anapara": round(gt, 2), "toplam_borc_taksitli": round(toplam_kart, 2),
+            "son_ekstre_donem": son_donem, "ekstre_adet": int(s.get("donem_adet") or 0),
+            "bu_ay_ekstre_var": bu_ay_var,
+        })
+    satirlar.sort(key=lambda x: -x["toplam_borc_taksitli"])
+    return {
+        "toplam_borc": round(toplam_borc, 2),                          # bu dönem borcu (anlık)
+        "toplam_taksit": round(toplam_taksit, 2),                       # gelecek taksit anaparası
+        "toplam_borc_taksitli": round(toplam_borc + toplam_taksit, 2),  # GERÇEK toplam (taksit dahil)
+        "toplam_odenen_faiz": round(toplam_faiz, 2),
+        "kart_adet": len(kdata),
+        "bu_ay_eksik_ekstre": eksik,
+        "kartlar": satirlar,
+    }
 
 
 def _satici_anahtar(aciklama: Optional[str]) -> Optional[str]:
