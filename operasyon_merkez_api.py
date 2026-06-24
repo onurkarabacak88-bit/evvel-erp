@@ -13424,6 +13424,10 @@ def ops_maliyet_gun_gun(
         # + urun_id → ad (fiyat_eksik uyarısında UUID yerine okunabilir ad göstermek için)
         urun_depo_map: Dict[str, str] = {}
         urun_ad_map: Dict[str, str] = {}
+        # TERS HARİTA: depo_stok_kalem_kodu → ona bağlı ürün UUID('ler)i. Ürün-aç bir
+        # ürünü DEPO KODUYLA bildirdiğinde (fiyat ise ürünün UUID'sine tanımlıysa) fiyatı
+        # UUID üzerinden çekebilmek için (kanonik kimlik köprüsü; "bir kez tanımla, hep çek").
+        depo_to_uuids: Dict[str, List[str]] = {}
         try:
             cur.execute("SELECT id::text AS id, ad, depo_stok_kalem_kodu FROM siparis_urun")
             for r in cur.fetchall():
@@ -13431,7 +13435,10 @@ def ops_maliyet_gun_gun(
                 if d.get("ad"):
                     urun_ad_map[d["id"]] = str(d["ad"])
                 if d.get("depo_stok_kalem_kodu"):
-                    urun_depo_map[d["id"]] = str(d["depo_stok_kalem_kodu"])
+                    _dk = str(d["depo_stok_kalem_kodu"]).strip()
+                    urun_depo_map[d["id"]] = _dk
+                    if _dk:
+                        depo_to_uuids.setdefault(_dk, []).append(d["id"])
         except Exception:
             pass
         tuketim_map: Dict[Tuple[str, str], Dict[str, int]] = {}
@@ -13792,6 +13799,15 @@ def ops_maliyet_gun_gun(
                     fiyat = fiyat_son_by_kod.get(depo_kod)
                 if fiyat is None:
                     fiyat = _fiyat_bul(uid, tarih_str) or (_fiyat_bul(depo_kod, tarih_str) if depo_kod else None)
+                if fiyat is None:
+                    # EMNİYET AĞI: uid bir DEPO/legacy kod olabilir (ürün-aç ürünü depo koduyla
+                    # bildirdi) ama fiyat ürünün UUID'sine tanımlı. O depo koduna bağlı ürünün
+                    # UUID fiyatını çek → "merkeze bir kez tanımlanan fiyat her zaman çekilsin".
+                    for _puid in depo_to_uuids.get(uid, ()):
+                        _f = fiyat_son_by_kod.get(_puid) or _fiyat_bul(_puid, tarih_str)
+                        if _f is not None:
+                            fiyat = _f
+                            break
                 if fiyat is None:
                     fiyat_eksik.add(uid)  # UID → urun_ad_map ile okunabilir ada çevrilir
                     continue
