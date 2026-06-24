@@ -2690,27 +2690,53 @@ def kart_borc_faiz_ozet():
             FROM kart_ekstre_donem GROUP BY kart_id
         """)
         snap = {r["kart_id"]: dict(r) for r in (cur.fetchall() or [])}
+        # En son snapshot'ın kullanılabilir limit + kalan taksit → gelecek taksit yükü
+        # (kartlar listesiyle AYNI mantık: kalan_taksit ?? limit−kullanılabilir−borç).
+        cur.execute("""
+            SELECT DISTINCT ON (kart_id) kart_id::text AS kart_id,
+                   kullanilabilir_limit, kalan_taksit_tutari
+            FROM kart_ekstre_donem
+            WHERE donem_borcu IS NOT NULL
+            ORDER BY kart_id, donem DESC, olusturma DESC
+        """)
+        sondonem = {r["kart_id"]: dict(r) for r in (cur.fetchall() or [])}
         bu_ay = str(_date(bugun.year, bugun.month, 1))
-        satirlar, toplam_borc, toplam_faiz, eksik = [], 0.0, 0.0, []
+        satirlar, toplam_borc, toplam_faiz, toplam_taksit, eksik = [], 0.0, 0.0, 0.0, []
         for k in kartlar:
             b = float(kart_borc(cur, k["id"]) or 0)
             s = snap.get(k["id"], {})
             tf = float(s.get("toplam_faiz") or 0)
             son_donem = s.get("son_donem")
             bu_ay_var = bool(son_donem and son_donem[:7] == bu_ay[:7])
-            toplam_borc += b; toplam_faiz += tf
+            # Gelecek taksit anaparası (taksit dahil toplam borç için)
+            sd = sondonem.get(k["id"], {})
+            _limit = float(k["limit_tutar"] or 0)
+            _kull = sd.get("kullanilabilir_limit")
+            _kalan_t = sd.get("kalan_taksit_tutari")
+            if _kalan_t is not None:
+                gt = float(_kalan_t)
+            elif _kull is not None:
+                gt = max(0.0, _limit - float(_kull) - b)
+            else:
+                gt = 0.0
+            toplam_kart = b + gt
+            toplam_borc += b; toplam_faiz += tf; toplam_taksit += gt
             if not bu_ay_var:
                 eksik.append(k["kart_adi"])
             satirlar.append({
                 "kart_id": k["id"], "kart_adi": k["kart_adi"], "banka": k["banka"],
-                "sahip": k["sahip"], "limit": float(k["limit_tutar"] or 0),
+                "sahip": k["sahip"], "limit": _limit,
                 "guncel_borc": round(b, 2), "toplam_odenen_faiz": round(tf, 2),
+                "gelecek_taksit_anapara": round(gt, 2),
+                "toplam_borc_taksitli": round(toplam_kart, 2),
                 "son_ekstre_donem": son_donem, "ekstre_adet": int(s.get("donem_adet") or 0),
                 "bu_ay_ekstre_var": bu_ay_var,
             })
-        satirlar.sort(key=lambda x: -x["guncel_borc"])
+        satirlar.sort(key=lambda x: -x["toplam_borc_taksitli"])
         return {
-            "toplam_borc": round(toplam_borc, 2),
+            "toplam_borc": round(toplam_borc, 2),                          # bu dönem borcu
+            "toplam_taksit": round(toplam_taksit, 2),                       # gelecek taksit anaparası
+            "toplam_borc_taksitli": round(toplam_borc + toplam_taksit, 2),  # GERÇEK toplam (taksit dahil)
             "toplam_odenen_faiz": round(toplam_faiz, 2),
             "kart_adet": len(kartlar),
             "bu_ay_eksik_ekstre": eksik,

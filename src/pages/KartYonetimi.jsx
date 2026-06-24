@@ -66,8 +66,10 @@ function BorcFaizOzet({ onJump }) {
   const pct = (v) => topHarcama > 0 ? Math.round((v / topHarcama) * 100) : 0;
 
   const kpi = [
-    { label: '💳 Toplam Kart Borcu', val: fmt(d.toplam_borc), renk: 'var(--red)', big: true,
-      sub: 'tüm aktif kartlar' },
+    { label: '💳 Toplam Kart Borcu', val: fmt(d.toplam_borc_taksitli ?? d.toplam_borc), renk: 'var(--red)', big: true,
+      sub: d.toplam_taksit > 0
+        ? `dönem ${fmt(d.toplam_borc)} + 📅 taksit ${fmt(d.toplam_taksit)}`
+        : 'tüm aktif kartlar (taksit dahil)' },
     { label: '📈 Bankaya Ödenen Faiz', val: fmt(d.toplam_odenen_faiz), renk: 'var(--orange)',
       sub: 'ekstrelerden birikimli' },
   ];
@@ -132,13 +134,15 @@ function BorcFaizOzet({ onJump }) {
       <div className="card ky-kpi" style={{ padding: 0, marginBottom: 12, animationDelay: '240ms' }}>
         <div className="table-wrap">
           <table>
-            <thead><tr><th>Kart</th><th>Sahip</th><th style={{ textAlign: 'right' }}>Güncel Borç</th><th style={{ textAlign: 'right' }}>Ödenen Faiz</th><th>Son Ekstre</th><th>Bu Ay</th></tr></thead>
+            <thead><tr><th>Kart</th><th>Sahip</th><th style={{ textAlign: 'right' }}>Dönem Borcu</th><th style={{ textAlign: 'right' }}>📅 Taksit Tutarı</th><th style={{ textAlign: 'right' }}>Toplam Borç</th><th style={{ textAlign: 'right' }}>Ödenen Faiz</th><th>Son Ekstre</th><th>Bu Ay</th></tr></thead>
             <tbody>
               {d.kartlar.map(k => (
                 <tr key={k.kart_id}>
                   <td style={{ fontSize: 12, fontWeight: 600 }}>{k.kart_adi}</td>
                   <td style={{ fontSize: 12, color: 'var(--text3)' }}>{k.sahip}</td>
                   <td style={{ textAlign: 'right' }} className="mono">{fmt(k.guncel_borc)}</td>
+                  <td style={{ textAlign: 'right' }} className="mono">{k.gelecek_taksit_anapara > 0 ? <span style={{ color: 'var(--yellow)', fontWeight: 600 }}>{fmt(k.gelecek_taksit_anapara)}</span> : '—'}</td>
+                  <td className="mono" style={{ textAlign: 'right', fontWeight: 700, color: 'var(--red)' }}>{fmt(k.toplam_borc_taksitli ?? k.guncel_borc)}</td>
                   <td style={{ textAlign: 'right' }} className="mono">{k.toplam_odenen_faiz > 0 ? <span style={{ color: 'var(--orange)' }}>{fmt(k.toplam_odenen_faiz)}</span> : '—'}</td>
                   <td style={{ fontSize: 11, color: 'var(--text3)' }}>{k.son_ekstre_donem ? k.son_ekstre_donem.slice(0, 7) : '—'}</td>
                   <td>{k.bu_ay_ekstre_var ? <span className="badge badge-green">✓</span> : <span className="badge badge-yellow">eksik</span>}</td>

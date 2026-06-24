@@ -3179,6 +3179,8 @@ function CepKartlar({ onGeri }) {
   // Ana rakam = ANLIK güncel borç (ekstre dönem borcu + kesim sonrası ödeme/kullanım).
   // Sunucu hesaplar; ekstresiz kartta defter borcuna düşer.
   const kartBorc = (k) => (k.anlik_borc != null ? Number(k.anlik_borc) : Number(k.guncel_borc)) || 0;
+  const kartTaksit = (k) => Number(k.gelecek_taksit_anapara) || 0;   // gelecek taksitlerin anaparası
+  const kartToplam = (k) => (k.toplam_borc_taksitli != null ? Number(k.toplam_borc_taksitli) : kartBorc(k) + kartTaksit(k));
   // Sunucu kalan_limit'i artık kullanılabilir limit + taksit yükünü içerir → direkt kullan.
   const kartKalan = (k) => Number(k.kalan_limit) || 0;
   const kartAsim = (k) => Math.max(0, -kartKalan(k));   // negatifse = limit aşım tutarı
@@ -3194,7 +3196,9 @@ function CepKartlar({ onGeri }) {
     const gb = kartBorc(b) > 0 && b.gun_kaldi != null ? b.gun_kaldi : 9999;
     return ga - gb;
   });
-  const toplamBorc = (liste || []).reduce((s, k) => s + kartBorc(k), 0);
+  const toplamDonem = (liste || []).reduce((s, k) => s + kartBorc(k), 0);     // bu dönem borcu
+  const toplamTaksit = (liste || []).reduce((s, k) => s + kartTaksit(k), 0);  // gelecek taksit anaparası
+  const toplamBorc = (liste || []).reduce((s, k) => s + kartToplam(k), 0);    // GERÇEK toplam (dönem + taksit)
   const toplamKalan = (liste || []).reduce((s, k) => s + Math.max(0, kartKalan(k)), 0);
   const yaklasanSay = (liste || []).filter(k => kartBorc(k) > 0 && k.gun_kaldi != null && k.gun_kaldi <= 7).length;
 
@@ -3307,8 +3311,12 @@ function CepKartlar({ onGeri }) {
 
       {liste && liste.length > 0 && (
         <div style={{ margin: 14, padding: 16, borderRadius: 16, background: 'linear-gradient(135deg, var(--bg2,#1a1d24), var(--bg3,#22262f))', border: `1px solid ${C.border}` }}>
-          <div style={{ fontSize: 12, color: C.t3 }}>Toplam kart borcu</div>
+          <div style={{ fontSize: 12, color: C.t3 }}>Toplam kart borcu <span style={{ fontSize: 10 }}>(taksitler dahil)</span></div>
           <div style={{ fontSize: 28, fontWeight: 800, color: C.kirmizi, marginTop: 2 }}>{fmt(toplamBorc)}</div>
+          <div style={{ display: 'flex', gap: 14, marginTop: 6, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 12, color: C.t3 }}>Dönem borcu: <b style={{ color: C.t2 }}>{fmt(toplamDonem)}</b></span>
+            {toplamTaksit > 0 && <span style={{ fontSize: 12, color: C.t3 }}>📅 Taksit tutarı: <b style={{ color: C.t2 }}>{fmt(toplamTaksit)}</b></span>}
+          </div>
           <div style={{ fontSize: 12, color: C.t3, marginTop: 4 }}>Kalan limit: <b style={{ color: C.yesil }}>{fmt(toplamKalan)}</b></div>
           {yaklasanSay > 0 && (
             <div style={{ fontSize: 13, fontWeight: 700, color: C.sari, marginTop: 10 }}>⚠️ {yaklasanSay} kartın son ödeme tarihi 7 gün içinde</div>
@@ -3347,10 +3355,10 @@ function CepKartlar({ onGeri }) {
               {borc > 0 && Number(k.asgari_odeme) > 0 && (
                 <div style={{ fontSize: 11, color: C.t3, marginTop: 3 }}>Asgari: {fmt(k.asgari_odeme)}{k.asgari_karsilandi ? ' ✓ ödendi' : ''}</div>
               )}
-              {Number(k.gelecek_taksit_anapara) > 0 && (
-                <div style={{ fontSize: 11, color: C.t3, marginTop: 3 }}>
-                  📅 Gelecek taksit yükü: <b style={{ color: C.t2 }}>{fmt(k.gelecek_taksit_anapara)}</b>
-                  {k.toplam_borc_taksitli != null && <> · Taksitlerle toplam: <b style={{ color: C.t2 }}>{fmt(k.toplam_borc_taksitli)}</b></>}
+              {kartTaksit(k) > 0 && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 6, paddingTop: 6, borderTop: `1px solid ${C.border}`, fontSize: 12 }}>
+                  <span style={{ color: C.sari, fontWeight: 700 }}>📅 Taksit Tutarı: {fmt(kartTaksit(k))}</span>
+                  <span style={{ color: C.t2 }}>Toplam: <b style={{ color: C.kirmizi }}>{fmt(kartToplam(k))}</b></span>
                 </div>
               )}
             </button>
