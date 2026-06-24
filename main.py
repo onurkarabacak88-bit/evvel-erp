@@ -1993,7 +1993,9 @@ def kartlar_listele():
             else:
                 _kalan_limit = limit - _anlik
             _doluluk = ((limit - _kalan_limit) / limit) if limit > 0 else 0
-            _toplam_taksitli = (_anlik + _gelecek_taksit) if _gelecek_taksit is not None else None
+            # Toplam borç = anlık + gelecek taksit yükü. Taksit bilinmiyorsa (None) sadece
+            # anlık (boş/None bırakma → frontend "Toplam Borç" hücresi eksik görünmesin).
+            _toplam_taksitli = _anlik + (_gelecek_taksit or 0)
             sonuc.append({**k,
                 "guncel_borc": borc,
                 # ANLIK borç = ekstre dönem borcu + kesim sonrası ödeme/kullanım (gerçek zamanlı).
