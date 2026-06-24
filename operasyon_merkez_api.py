@@ -13780,6 +13780,17 @@ def ops_maliyet_gun_gun(
                         continue
                     fiyat = _fiyat_bul(kaynak, tarih_str)
                     if fiyat is None:
+                        # EMNİYET AĞI: kaynak bir depo/legacy kod; fiyat ürünün UUID'sine
+                        # tanımlı olabilir. Önce kodun kendisi, sonra o depo koduna bağlı
+                        # ürün(ler)in UUID fiyatı. "Bir kez tanımla, hep çek."
+                        fiyat = fiyat_son_by_kod.get(kaynak)
+                    if fiyat is None:
+                        for _puid in depo_to_uuids.get(kaynak, ()):
+                            _f = fiyat_son_by_kod.get(_puid)
+                            if _f is not None:
+                                fiyat = _f
+                                break
+                    if fiyat is None:
                         if adet > 0:
                             fiyat_eksik.add(kaynak)
                         continue
@@ -13967,20 +13978,6 @@ def ops_maliyet_gun_gun(
         "fiyat_eksik_kalemler": sorted(
             STOK_LABEL_TR.get(k) or urun_ad_map.get(k) or k for k in fiyat_eksik
         ),
-        "_debug_fiyat_eksik": [
-            {
-                "uid": k,
-                "ad_map": urun_ad_map.get(k),
-                "in_fiyat_son": k in fiyat_son_by_kod,
-                "depo": urun_depo_map.get(k),
-                "ad_norm": (urun_ad_map.get(k) or "").strip().lower(),
-                "ad_norm_in_map": (urun_ad_map.get(k) or "").strip().lower() in ad_to_fiyat,
-                "reverse_uuids": depo_to_uuids.get(k),
-                "reverse_fiyatlar": [fiyat_son_by_kod.get(u) for u in depo_to_uuids.get(k, ())],
-            }
-            for k in fiyat_eksik
-        ],
-        "_debug_ad_to_fiyat_ornek": {kk: ad_to_fiyat.get(kk) for kk in ("muzlu rulo", "antep fıstıklı san sebastian (porsiyon)")},
     }
 
 
