@@ -1987,6 +1987,21 @@ def kartlar_listele():
                 _anlik = float(_ov_borc) + _post
             else:
                 _anlik = borc
+            # ASGARİ KARŞILANDI doğru ölçümü: GERÇEK snapshot kesim tarihinden SONRA
+            # yapılan ödemeler bu ekstrenin asgarisine sayılır. kart_aktif_donem teorik
+            # kesim kullandığı için kesim-sonrası ödemeleri kaçırıp bu_donem_odenen=0
+            # bırakabiliyordu → asgari ödense bile kutucuk yeşile dönmüyordu.
+            if _ekstre_gercek and _snap_kesim:
+                try:
+                    cur.execute("""
+                        SELECT COALESCE(SUM(tutar), 0) AS odenen
+                        FROM kart_hareketleri
+                        WHERE kart_id=%s AND durum='aktif' AND islem_turu='ODEME'
+                          AND tarih > %s::date
+                    """, (k['id'], _snap_kesim))
+                    bu_donem_odenen = float((cur.fetchone() or {}).get('odenen') or 0)
+                except Exception:
+                    pass
             # Kalan limit (GERÇEK ZAMANLI): limit − anlık borç − gelecek taksit yükü
             if _gelecek_taksit is not None:
                 _kalan_limit = limit - _anlik - _gelecek_taksit
