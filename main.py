@@ -2694,7 +2694,8 @@ def kart_borc_faiz_ozet():
         # (kartlar listesiyle AYNI mantık: kalan_taksit ?? limit−kullanılabilir−borç).
         cur.execute("""
             SELECT DISTINCT ON (kart_id) kart_id::text AS kart_id,
-                   kullanilabilir_limit, kalan_taksit_tutari
+                   kullanilabilir_limit, kalan_taksit_tutari,
+                   donem_borcu, kesim_tarihi::text AS kesim_tarihi
             FROM kart_ekstre_donem
             WHERE donem_borcu IS NOT NULL
             ORDER BY kart_id, donem DESC, olusturma DESC
@@ -2703,7 +2704,25 @@ def kart_borc_faiz_ozet():
         bu_ay = str(_date(bugun.year, bugun.month, 1))
         satirlar, toplam_borc, toplam_faiz, toplam_taksit, eksik = [], 0.0, 0.0, 0.0, []
         for k in kartlar:
-            b = float(kart_borc(cur, k["id"]) or 0)
+            sd0 = sondonem.get(k["id"], {})
+            # ANLIK borç (/api/kartlar ile AYNI): ekstre dönem borcu + kesim sonrası
+            # hareketler (ödeme −, harcama +). Ekstre yoksa defter borcuna düşer.
+            # Böylece KartYönetimi ile cep/Kartlar ekranı aynı rakamı gösterir.
+            _ovb = sd0.get("donem_borcu")
+            if _ovb is not None:
+                _kes = sd0.get("kesim_tarihi")
+                _post = 0.0
+                if _kes:
+                    cur.execute(
+                        """SELECT COALESCE(SUM(CASE WHEN islem_turu='ODEME' THEN -tutar ELSE tutar END),0)::float AS d
+                           FROM kart_hareketleri
+                           WHERE kart_id=%s AND durum='aktif' AND islem_turu<>'DEVIR' AND tarih > %s::date""",
+                        (k["id"], _kes),
+                    )
+                    _post = float((cur.fetchone() or {}).get("d") or 0)
+                b = float(_ovb) + _post
+            else:
+                b = float(kart_borc(cur, k["id"]) or 0)
             s = snap.get(k["id"], {})
             tf = float(s.get("toplam_faiz") or 0)
             son_donem = s.get("son_donem")
