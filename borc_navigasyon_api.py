@@ -260,3 +260,80 @@ def borc_nav_ozet():
         "surdurulemez": surdurulemez,
         "notlar": notlar,
     }
+
+
+@router.get("/sube-katki")
+def sube_katki(gun: int = 30):
+    """ŞUBE KATKI MOTORU — her şubenin ORTAK HAVUZA operasyonel nakit katkısı.
+    Borç KOLEKTİF (hepsi büyümek için çekilmiş, ortak havuzdan ödeniyor) → krediler
+    şubeye paylaştırılmaz. Şube katkısı = operasyonel net (ciro − COGS − personel −
+    KİRA − ... ; finansman HARİÇ). Aktif şube havuzu BESLER (+), kapalı şube kira
+    yüküyle havuzu BOŞALTIR (−). Kapalı dönemler DAHİL (kullanıcı kuralı 2026-06-24).
+    Salt-okur, hata-yutar."""
+    from datetime import date as _date, timedelta as _td
+    bugun = _date.today()
+    son7 = (bugun - _td(days=7)).isoformat()
+    subeler: List[Dict[str, Any]] = []
+    try:
+        with db() as (conn, cur):
+            cur.execute("SELECT id::text AS id, ad FROM subeler WHERE aktif = TRUE ORDER BY ad")
+            subeler = [dict(r) for r in (cur.fetchall() or [])]
+    except Exception as e:
+        logger.warning("sube_katki şube listesi hata: %s", e)
+
+    out: List[Dict[str, Any]] = []
+    try:
+        from operasyon_merkez_api import ops_maliyet_gun_gun
+    except Exception as e:
+        logger.warning("sube_katki gun-gun import hata: %s", e)
+        ops_maliyet_gun_gun = None
+
+    for sb in subeler:
+        sid = sb["id"]
+        ciro = net = cogs = kira = 0.0
+        ciro_son7 = 0.0
+        son_ciro_gun: Optional[str] = None
+        if ops_maliyet_gun_gun is not None:
+            try:
+                g = ops_maliyet_gun_gun(gun=gun, sube_id=sid, bas=None, bit=None)
+                rows = g.get("satirlar") or []
+                for r in rows:
+                    c = _f(r.get("ciro_tl"))
+                    ciro += c
+                    net += _f(r.get("net_kar_tl"))
+                    cogs += _f(r.get("toplam"))
+                    kira += _f(r.get("kira_maliyet_tl"))
+                    t = str(r.get("tarih") or "")[:10]
+                    if c > 0:
+                        if son_ciro_gun is None or t > son_ciro_gun:
+                            son_ciro_gun = t
+                        if t >= son7:
+                            ciro_son7 += c
+            except Exception as e:
+                logger.warning("sube_katki gun-gun(%s) hata: %s", sid, e)
+        kapali = ciro_son7 <= 0.5  # son 7 gün hiç ciro yok → kapalı/atıl
+        # aylık run-rate (dönem → 30 gün)
+        ay_carpan = 30.0 / gun if gun > 0 else 1.0
+        out.append({
+            "sube_id": sid,
+            "sube_adi": sb.get("ad"),
+            "durum": "kapali" if kapali else "aktif",
+            "son_ciro_gun": son_ciro_gun,
+            "ciro_donem": round(ciro, 2),
+            "kira_donem": round(kira, 2),
+            "operasyonel_net_donem": round(net, 2),     # ortak havuza katkı (dönem)
+            "operasyonel_net_aylik": round(net * ay_carpan, 2),
+        })
+    out.sort(key=lambda x: -x["operasyonel_net_aylik"])
+    besleyen = sum(x["operasyonel_net_aylik"] for x in out if x["operasyonel_net_aylik"] > 0)
+    bosaltan = sum(x["operasyonel_net_aylik"] for x in out if x["operasyonel_net_aylik"] < 0)
+    return {
+        "gun": gun,
+        "uretildi": bugun.isoformat(),
+        "subeler": out,
+        "havuz_besleyen_aylik": round(besleyen, 2),
+        "havuz_bosaltan_aylik": round(bosaltan, 2),
+        "net_havuz_aylik": round(besleyen + bosaltan, 2),
+        "not": "Krediler KOLEKTİF (büyümek için, ortak havuzdan ödenir) — şubeye "
+               "paylaştırılmaz. Katkı = operasyonel nakit (kira dahil, finansman hariç).",
+    }
