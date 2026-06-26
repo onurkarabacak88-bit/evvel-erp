@@ -311,22 +311,34 @@ def sube_katki(gun: int = 30):
                             ciro_son7 += c
             except Exception as e:
                 logger.warning("sube_katki gun-gun(%s) hata: %s", sid, e)
-        kapali = ciro_son7 <= 0.5  # son 7 gün hiç ciro yok → kapalı/atıl
-        # aylık run-rate (dönem → 30 gün)
+        # KAPALI tespiti: son cirodan bu yana ≥4 gün (işleyen kafe her gün ciro yapar).
+        gun_since: Optional[int] = None
+        if son_ciro_gun:
+            try:
+                gun_since = (bugun - _date.fromisoformat(son_ciro_gun)).days
+            except Exception:
+                gun_since = None
+        kapali = (gun_since is None) or (gun_since >= 4)
         ay_carpan = 30.0 / gun if gun > 0 else 1.0
+        net_aylik = round(net * ay_carpan, 2)
+        kira_aylik = round(kira * ay_carpan, 2)
+        # İLERİYE DÖNÜK katkı: kapalı şube gelir üretmez ama kira devam → saf drenaj (−kira).
+        # Aktif şube ise gerçek operasyonel run-rate. (Kapalı dönem yükü dahil edilir.)
+        ileri_aylik = (-kira_aylik) if kapali else net_aylik
         out.append({
             "sube_id": sid,
             "sube_adi": sb.get("ad"),
             "durum": "kapali" if kapali else "aktif",
             "son_ciro_gun": son_ciro_gun,
+            "gun_since_ciro": gun_since,
             "ciro_donem": round(ciro, 2),
-            "kira_donem": round(kira, 2),
-            "operasyonel_net_donem": round(net, 2),     # ortak havuza katkı (dönem)
-            "operasyonel_net_aylik": round(net * ay_carpan, 2),
+            "kira_aylik": kira_aylik,
+            "operasyonel_net_aylik": net_aylik,         # son 30 gün gerçek (kapalıda açık günler dahil olabilir)
+            "ileri_aylik_katki": ileri_aylik,           # ileriye dönük ortak havuz etkisi
         })
-    out.sort(key=lambda x: -x["operasyonel_net_aylik"])
-    besleyen = sum(x["operasyonel_net_aylik"] for x in out if x["operasyonel_net_aylik"] > 0)
-    bosaltan = sum(x["operasyonel_net_aylik"] for x in out if x["operasyonel_net_aylik"] < 0)
+    out.sort(key=lambda x: -x["ileri_aylik_katki"])
+    besleyen = sum(x["ileri_aylik_katki"] for x in out if x["ileri_aylik_katki"] > 0)
+    bosaltan = sum(x["ileri_aylik_katki"] for x in out if x["ileri_aylik_katki"] < 0)
     return {
         "gun": gun,
         "uretildi": bugun.isoformat(),
@@ -335,5 +347,6 @@ def sube_katki(gun: int = 30):
         "havuz_bosaltan_aylik": round(bosaltan, 2),
         "net_havuz_aylik": round(besleyen + bosaltan, 2),
         "not": "Krediler KOLEKTİF (büyümek için, ortak havuzdan ödenir) — şubeye "
-               "paylaştırılmaz. Katkı = operasyonel nakit (kira dahil, finansman hariç).",
+               "paylaştırılmaz. Katkı = operasyonel nakit (kira dahil, finansman hariç). "
+               "Kapalı şube ileriye dönük = −kira (gelir yok, kira sürüyor → saf drenaj).",
     }
