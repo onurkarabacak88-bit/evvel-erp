@@ -6620,6 +6620,7 @@ class BorcModel(BaseModel):
 def _ensure_borc_kolonlar(cur) -> None:
     """borc_envanteri'ne takvim alanlarını idempotent ekle (hata-yutar)."""
     try:
+        cur.execute("ALTER TABLE borc_envanteri ADD COLUMN IF NOT EXISTS faiz_orani NUMERIC")
         cur.execute("ALTER TABLE borc_envanteri ADD COLUMN IF NOT EXISTS odemesiz_ay INTEGER DEFAULT 0")
         cur.execute("ALTER TABLE borc_envanteri ADD COLUMN IF NOT EXISTS ilk_taksit_tarihi DATE")
     except Exception:
