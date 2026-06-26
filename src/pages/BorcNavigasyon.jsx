@@ -36,6 +36,7 @@ export default function BorcNavigasyon() {
   const [d, setD] = useState(null);
   const [katki, setKatki] = useState(null);
   const [proj, setProj] = useState(null);
+  const [takvim, setTakvim] = useState(null);
   const [err, setErr] = useState('');
   const [yukleniyor, setYukleniyor] = useState(true);
 
@@ -47,8 +48,16 @@ export default function BorcNavigasyon() {
       .finally(() => setYukleniyor(false));
     api('/borc-nav/sube-katki?gun=30').then(setKatki).catch(() => {});
     api('/borc-nav/projeksiyon?ay=12').then(setProj).catch(() => {});
+    api('/borc-nav/takvim?ay=36').then(setTakvim).catch(() => {});
   };
   useEffect(() => { yukle(); }, []);
+
+  const ayEtiket = (ym) => {
+    if (!ym) return '';
+    const [y, m] = ym.split('-');
+    const aylar = ['Oca', 'Şub', 'Mar', 'Nis', 'May', 'Haz', 'Tem', 'Ağu', 'Eyl', 'Eki', 'Kas', 'Ara'];
+    return `${aylar[parseInt(m, 10) - 1]} ${y.slice(2)}`;
+  };
 
   if (yukleniyor && !d) return <div style={{ padding: 40, color: 'var(--text3)' }}>Borç navigasyonu hesaplanıyor…</div>;
   if (err) return <div style={{ padding: 40, color: 'var(--red)' }}>⚠️ {err}</div>;
@@ -138,6 +147,77 @@ export default function BorcNavigasyon() {
           )}
         </div>
       </div>
+
+      {/* ── BORÇ TAKVİMİ (ay-ay zorunlu yük) ── */}
+      {takvim && takvim.takvim && takvim.takvim.length > 0 && (() => {
+        const t = takvim.takvim;
+        const W = 680, H = 200, padL = 8, padR = 8, padT = 16, padB = 26;
+        const zys = t.map(x => x.zorunlu_yuk);
+        const mx = Math.max(...zys), mn = 0;
+        const n = t.length;
+        const xs = i => padL + (i / (n - 1)) * (W - padL - padR);
+        const ys = v => padT + (1 - (v - mn) / Math.max(1, mx - mn)) * (H - padT - padB);
+        const zLine = t.map((x, i) => `${xs(i)},${ys(x.zorunlu_yuk)}`).join(' ');
+        const zArea = `${xs(0)},${ys(0)} ${zLine} ${xs(n - 1)},${ys(0)}`;
+        const abekY = ys(takvim.abek_aylik);
+        const peakIdx = t.findIndex(x => x.ay === takvim.peak?.ay);
+        return (
+          <div className="bn-card" style={{ ...card, marginBottom: 16, borderTop: '3px solid var(--accent)' }}>
+            <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 4 }}>📅 Borç Takvimi — gelecek 36 ay</div>
+            <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 12 }}>Aylık zorunlu yük (kredi taksitleri + kart asgari). Krediler bitince düşer; ödemesiz kredi devreye girince çıkar. Kredi tarafı kesin, kart yaklaşık.</div>
+
+            {/* İki borç kartı */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(220px,1fr))', gap: 10, marginBottom: 12 }}>
+              <div style={{ background: 'var(--bg3)', borderRadius: 8, padding: '10px 12px', borderLeft: '3px solid var(--red)' }}>
+                <div style={{ fontSize: 11, color: 'var(--text3)' }}>💳 FİNANSAL BORÇ <span style={{ fontSize: 10 }}>(bugün gerçekte)</span></div>
+                <div style={{ fontSize: 22, fontWeight: 800, fontFamily: 'var(--font-mono)', color: 'var(--red)' }}>{fmt(takvim.finansal_borc)}</div>
+                <div style={{ fontSize: 10, color: 'var(--text3)' }}>kalan anapara + kart güncel borç</div>
+              </div>
+              <div style={{ background: 'var(--bg3)', borderRadius: 8, padding: '10px 12px', borderLeft: '3px solid var(--orange)' }}>
+                <div style={{ fontSize: 11, color: 'var(--text3)' }}>📆 TOPLAM GELECEK ÖDEME <span style={{ fontSize: 10 }}>(faiz dahil)</span></div>
+                <div style={{ fontSize: 22, fontWeight: 800, fontFamily: 'var(--font-mono)', color: 'var(--orange)' }}>{fmt(takvim.toplam_gelecek_odeme)}</div>
+                <div style={{ fontSize: 10, color: 'var(--text3)' }}>hiçbir şey değişmezse cepten çıkacak toplam</div>
+              </div>
+            </div>
+
+            {/* Peak banner */}
+            {takvim.peak && (
+              <div style={{ background: 'rgba(245,158,11,0.10)', border: '1px solid var(--orange)', borderRadius: 8, padding: '8px 12px', marginBottom: 12, fontSize: 13 }}>
+                ⛰️ <b style={{ color: 'var(--orange)' }}>En zor ay: {ayEtiket(takvim.peak.ay)}</b> — zorunlu yük <b>{fmt(takvim.peak.zorunlu_yuk)}</b>. (Ödemesiz kredinin devreye girdiği ay.)
+              </div>
+            )}
+
+            {/* Zorunlu yük zaman serisi */}
+            <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%' }}>
+              <polygon points={zArea} fill="var(--accent)" opacity="0.12" />
+              <polyline points={zLine} fill="none" stroke="var(--accent)" strokeWidth="2.5" />
+              {/* ABEK referans */}
+              <line x1={padL} y1={abekY} x2={W - padR} y2={abekY} stroke="var(--green)" strokeDasharray="4 4" />
+              <text x={padL + 2} y={abekY - 4} style={{ fontSize: 10, fill: 'var(--green)' }}>ABEK {fmt(takvim.abek_aylik)}</text>
+              {/* peak işaret */}
+              {peakIdx >= 0 && <circle cx={xs(peakIdx)} cy={ys(takvim.peak.zorunlu_yuk)} r="4" fill="var(--orange)" />}
+              {t.map((x, i) => (i % 6 === 0 || i === n - 1) && (
+                <text key={i} x={xs(i)} y={H - 8} textAnchor="middle" style={{ fontSize: 9, fill: 'var(--text3)' }}>{ayEtiket(x.ay)}</text>
+              ))}
+            </svg>
+            <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>Kesikli yeşil çizgi = aylık ödeme kapasitesi (ABEK). Çizginin üstündeki alan = her ay kapatamadığın açık.</div>
+
+            {/* Kredi bitiş takvimi */}
+            {takvim.kredi_biten_takvim && takvim.kredi_biten_takvim.length > 0 && (
+              <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
+                <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 6 }}>🏁 Krediler ne zaman bitiyor (bitince yük düşer):</div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  {takvim.kredi_biten_takvim.map((b, i) => (
+                    <span key={i} style={{ fontSize: 11, background: 'var(--bg3)', borderRadius: 999, padding: '3px 10px', color: 'var(--text2)' }}>
+                      {ayEtiket(b.ay)} · {b.kredi.replace(/\s*\(.*\)/, '')}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {/* ── ABEK + Borç tablosu ── */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(300px,1fr))', gap: 12, marginBottom: 16 }}>
