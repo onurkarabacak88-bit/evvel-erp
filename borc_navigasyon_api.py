@@ -113,8 +113,13 @@ def borc_nav_ozet():
     kredi_kalan = 0.0
     try:
         with db() as (conn, cur):
+            # FİNANSAL BORÇ = kalan ANAPARA (toplam_borc). Belgesiz/0 kredide
+            # taksit×kalan_vade fallback. (Eski hata: hep taksit×vade → gelecek faizi
+            # de borç sayıp ~3.6M şişiriyordu; gerçek kalan anapara ~6.75M.)
             cur.execute(
-                """SELECT COALESCE(SUM(aylik_taksit * COALESCE(kalan_vade, 0)), 0)::float AS t
+                """SELECT COALESCE(SUM(
+                       COALESCE(NULLIF(toplam_borc,0), aylik_taksit * COALESCE(kalan_vade,0))
+                   ), 0)::float AS t
                    FROM borc_envanteri
                    WHERE aktif = TRUE AND (kalan_vade IS NULL OR kalan_vade > 0)"""
             )
@@ -259,6 +264,114 @@ def borc_nav_ozet():
         ],
         "surdurulemez": surdurulemez,
         "notlar": notlar,
+    }
+
+
+@router.get("/takvim")
+def borc_takvim(ay: int = 36):
+    """BORÇ TAKVİMİ — GPT mimarisi: tek 'toplam borç' yerine ay-ay zaman serisi.
+    Her kredinin amortismanı RAM'de türetilir (PDF saklanmaz): faiz=bakiye×r,
+    anapara=taksit−faiz, bakiye−=anapara. Krediler bitince taksit düşer; ödemesiz
+    kredi (Alsancak-2, Eki'26) o ay devreye girer. Tüm üst göstergeler bundan türer.
+    Çıktı: her ay {kredi taksiti, kart min, zorunlu yük, ABEK, açık, kalan anapara}
+    + Peak Debt Service (en zor ay) + Finansal Borç vs Toplam Gelecek Ödeme.
+    Salt-okur, hata-yutar. NOT: kart tarafı yaklaşık (asgari sabit); kredi tarafı kesin."""
+    ay = max(1, min(60, int(ay or 36)))
+    bugun = date.today()
+
+    def add_months(y, m, k):
+        idx = (y * 12 + (m - 1)) + k
+        return idx // 12, idx % 12 + 1
+
+    # ── Krediler ──
+    loans: List[Dict[str, Any]] = []
+    try:
+        with db() as (conn, cur):
+            cur.execute(
+                """SELECT kurum, COALESCE(toplam_borc,0)::float AS anapara,
+                          COALESCE(aylik_taksit,0)::float AS taksit,
+                          COALESCE(kalan_vade,0)::int AS kvade,
+                          faiz_orani, COALESCE(odemesiz_ay,0)::int AS odemesiz,
+                          ilk_taksit_tarihi::text AS ilk_taksit
+                   FROM borc_envanteri
+                   WHERE aktif = TRUE AND (kalan_vade IS NULL OR kalan_vade > 0)"""
+            )
+            loans = [dict(r) for r in (cur.fetchall() or [])]
+    except Exception as e:
+        logger.warning("takvim kredi okuma hata: %s", e)
+
+    # ── Kart + ABEK ──
+    kart_asgari = kart_borc = abek = 0.0
+    try:
+        from main import kart_gelecek_ay_yuk, kartlar_listele
+        yuk = kart_gelecek_ay_yuk() or {}
+        kart_asgari = _f(yuk.get("kart_tahmini_asgari"))
+        kl = kartlar_listele()
+        for k in (kl if isinstance(kl, list) else kl.get("kartlar", [])):
+            kart_borc += _f(k.get("anlik_borc") if k.get("anlik_borc") is not None else k.get("guncel_borc"))
+    except Exception as e:
+        logger.warning("takvim kart hata: %s", e)
+    try:
+        abek = _f(borc_nav_ozet().get("abek", {}).get("deger"))
+    except Exception:
+        abek = 0.0
+
+    # Kredi başına amortisman durumu
+    st = []
+    for L in loans:
+        st.append({
+            "name": L["kurum"], "r": _f(L["faiz_orani"]) / 100.0, "bal": _f(L["anapara"]),
+            "taksit": _f(L["taksit"]), "kvade": int(L["kvade"] or 0), "paid": 0,
+            "it": (str(L["ilk_taksit"])[:7] if L.get("ilk_taksit") else None),
+        })
+
+    grid: List[Dict[str, Any]] = []
+    biten: List[Dict[str, str]] = []
+    for k in range(1, ay + 1):  # k=1 → gelecek ay
+        cy, cm = add_months(bugun.year, bugun.month, k)
+        ym = f"{cy:04d}-{cm:02d}"
+        kredi_t = 0.0
+        bal_sum = 0.0
+        for s in st:
+            grace = bool(s["it"] and s["it"] > ym)
+            paying = (not grace) and (s["paid"] < s["kvade"]) and (s["bal"] > 0.5)
+            if paying:
+                faiz = s["bal"] * s["r"]
+                anapara = s["taksit"] - faiz
+                if anapara > s["bal"]:
+                    anapara = s["bal"]
+                pay = min(s["taksit"], s["bal"] + faiz)
+                s["bal"] -= anapara
+                s["paid"] += 1
+                kredi_t += pay
+                if s["paid"] == s["kvade"] or s["bal"] <= 0.5:
+                    if not any(b["kredi"] == s["name"] for b in biten):
+                        biten.append({"kredi": s["name"], "ay": ym})
+            bal_sum += max(0.0, s["bal"])
+        zorunlu = kredi_t + kart_asgari
+        grid.append({
+            "ay": ym,
+            "kredi_taksit": round(kredi_t, 2),
+            "kart_min": round(kart_asgari, 2),
+            "zorunlu_yuk": round(zorunlu, 2),
+            "abek": round(abek, 2),
+            "acik": round(zorunlu - abek, 2),
+            "kredi_kalan_anapara": round(bal_sum, 2),
+        })
+
+    peak = max(grid, key=lambda x: x["zorunlu_yuk"]) if grid else None
+    finansal_borc = sum(_f(L["anapara"]) or (_f(L["taksit"]) * int(L["kvade"] or 0)) for L in loans) + kart_borc
+    toplam_gelecek = sum(_f(L["taksit"]) * int(L["kvade"] or 0) for L in loans) + kart_borc
+    return {
+        "uretildi": bugun.isoformat(),
+        "abek_aylik": round(abek, 2),
+        "finansal_borc": round(finansal_borc, 2),       # bugün gerçekte ne borçluyum (kalan anapara + kart)
+        "toplam_gelecek_odeme": round(toplam_gelecek, 2),  # hiçbir şey değişmezse toplam çıkacak (faiz dahil)
+        "peak": peak,                                   # en zor ay (max zorunlu yük)
+        "kredi_biten_takvim": biten,                    # her kredi hangi ay bitiyor
+        "takvim": grid,
+        "not": "Kredi tarafı kesin (amortisman). Kart tarafı yaklaşık (asgari sabit). "
+               "Ödemesiz kredi ilk taksit tarihinde devreye girer; zorunlu yük o ay artar.",
     }
 
 
