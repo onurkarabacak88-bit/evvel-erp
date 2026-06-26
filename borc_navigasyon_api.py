@@ -262,6 +262,85 @@ def borc_nav_ozet():
     }
 
 
+@router.get("/projeksiyon")
+def borc_projeksiyon(ay: int = 12):
+    """GELECEK PROJEKSİYONU — toplam borç ay-ay nasıl gidiyor (sarmal mı?).
+    Makro model (agregat, şeffaf): toplam_borç[n+1] = toplam_borç[n] × (1+efektif
+    aylık faiz) − ABEK. Mantık: işletmenin GERÇEK nakit girişi ABEK kadardır;
+    krediler ödenip kartlardan borçlanıldığı için NET değişim = faiz − ABEK.
+    ABEK < aylık faiz ise borç her ay büyür = finansal sarmal.
+    Karşılaştırma: 'borç sabit' için gereken aylık ödeme (= faiz) de döner.
+    Salt-okur, hata-yutar."""
+    ay = max(1, min(36, int(ay or 12)))
+    try:
+        oz = borc_nav_ozet()
+    except Exception as e:
+        logger.warning("projeksiyon ozet hata: %s", e)
+        return {"hata": "özet okunamadı", "seri": []}
+
+    toplam = _f(oz.get("borc", {}).get("toplam"))
+    kart = _f(oz.get("borc", {}).get("kart_toplam"))
+    kredi = _f(oz.get("borc", {}).get("kredi_kalan"))
+    abek = _f(oz.get("abek", {}).get("deger"))
+
+    # Efektif aylık faiz: kart ~%3.5/ay (≈%51 yıllık), kredi ~%2.8/ay varsayım (amortizan).
+    KART_AY_FAIZ = 0.035
+    KREDI_AY_FAIZ = 0.028
+    ef = ((kart * KART_AY_FAIZ + kredi * KREDI_AY_FAIZ) / toplam) if toplam > 0 else 0.0
+    aylik_faiz_tl = toplam * ef
+
+    seri: List[Dict[str, Any]] = []
+    B = toplam
+    for m in range(1, ay + 1):
+        faiz = B * ef
+        B2 = B + faiz - abek
+        if B2 < 0:
+            B2 = 0.0
+        seri.append({
+            "ay": m,
+            "toplam_borc": round(B2, 2),
+            "faiz": round(faiz, 2),
+            "abek_odeme": round(abek, 2),
+            "net_degisim": round(B2 - B, 2),
+        })
+        B = B2
+
+    son = seri[-1]["toplam_borc"] if seri else toplam
+    artis_pct = round((son / toplam - 1) * 100, 1) if toplam > 0 else 0.0
+    borc_sabit_odeme = round(aylik_faiz_tl, 2)     # borç büyümesin diye GEREKEN aylık ödeme
+    spiral = abek < aylik_faiz_tl                  # ABEK faizi bile karşılamıyorsa sarmal
+    # Borcun ikiye katlanma süresi (sarmaldaysa)
+    ikiye_katlanma_ay = None
+    if spiral and (aylik_faiz_tl - abek) > 0:
+        kk = toplam
+        for m in range(1, 600):
+            kk = kk * (1 + ef) - abek
+            if kk >= 2 * toplam:
+                ikiye_katlanma_ay = m
+                break
+
+    return {
+        "uretildi": date.today().isoformat(),
+        "varsayim": {
+            "efektif_aylik_faiz_pct": round(ef * 100, 2),
+            "kart_aylik_faiz_pct": KART_AY_FAIZ * 100,
+            "kredi_aylik_faiz_pct": KREDI_AY_FAIZ * 100,
+            "abek_aylik": round(abek, 2),
+            "baslangic_borc": round(toplam, 2),
+        },
+        "seri": seri,
+        "ay_sonu_borc": round(son, 2),
+        "artis_pct": artis_pct,
+        "aylik_faiz_tl": round(aylik_faiz_tl, 2),
+        "borc_sabit_icin_gereken_aylik_odeme": borc_sabit_odeme,
+        "abek_aciligi_faize_karsi": round(aylik_faiz_tl - abek, 2),  # +: faizi bile karşılamıyor
+        "spiral": spiral,
+        "ikiye_katlanma_ay": ikiye_katlanma_ay,
+        "not": "Makro model: borç × (1+efektif faiz) − ABEK. Krediler kolektif; "
+               "ABEK = işletmenin gerçek aylık nakit üretimi. ABEK < aylık faiz → sarmal.",
+    }
+
+
 @router.get("/sube-katki")
 def sube_katki(gun: int = 30):
     """ŞUBE KATKI MOTORU — her şubenin ORTAK HAVUZA operasyonel nakit katkısı.
