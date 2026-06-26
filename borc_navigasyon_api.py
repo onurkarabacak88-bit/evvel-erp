@@ -273,6 +273,134 @@ def borc_nav_ozet():
     }
 
 
+def _maliyet_yapisi() -> Dict[str, float]:
+    """Son 30 gün operasyonel maliyet yapısı (ölçek planı için oran/sabit ayrımı).
+    HATA-YUTAR."""
+    try:
+        from operasyon_merkez_api import ops_maliyet_gun_gun
+        g = ops_maliyet_gun_gun(gun=30, sube_id=None, bas=None, bit=None)
+        rows = g.get("satirlar") or []
+    except Exception:
+        rows = []
+    def S(k):
+        return sum(_f(r.get(k)) for r in rows)
+    ciro = S("ciro_tl") or 1.0
+    return {
+        "ciro": ciro,
+        "cogs_oran": S("toplam") / ciro,                                   # tam değişken
+        "kom_oran": (S("pos_komisyon_tl") + S("platform_komisyon_tl")) / ciro,  # tam değişken
+        "kira": S("kira_maliyet_tl"),                                      # basamaklı sabit
+        "fatura": S("fatura_maliyet_tl") + S("abonelik_maliyet_tl"),       # basamaklı sabit
+        "personel": S("personel_maliyet_tl") + S("sgk_isveren_tl"),        # alt-doğrusal
+        "vergi_oran": 0.285,                                               # şube-bazlı blended efektif
+        "sube_sayisi": 2,                                                  # aktif şube (Zafer+Gazze)
+    }
+
+
+@router.get("/olcek-plani")
+def olcek_plani(alpha: float = 0.78, kapasite_carpan: float = 1.4,
+                yeni_sube_kapasite: float = 400000.0, yeni_sube_kira: float = 140000.0,
+                yeni_sube_personel: float = 130000.0, yeni_sube_sabit: float = 40000.0,
+                personel_sayisi: int = 6):
+    """ÖLÇEK PLANLAMA + KAPASİTE GERÇEKLİK MOTORU (iki GPT + filtre sentezi).
+    "Hedef ciro" tek sayı değil: her borç hedefi için GEREKLİ ölçek (ciro+şube+
+    personel+ABEK). Maliyet ölçek-davranışına göre: COGS/komisyon tam değişken,
+    kira/sabit BASAMAKLI (şube sayısına bağlı), personel ALT-DOĞRUSAL (×(C/C0)^α),
+    vergi sonuç-bağımlı, KDV pass-through (ABEK'te dışlı). İteratif çözüm.
+    KAPASİTE GERÇEKLİK: mevcut şubeler MAX kapasitede ABEK < zorunlu yük ise →
+    'operasyonel büyüme tek başına yetmez, yapılandırma şart'. Salt-okur."""
+    import math
+    alpha = max(0.5, min(1.0, float(alpha)))
+    ms = _maliyet_yapisi()
+    C0 = ms["ciro"]
+    kisi_maliyet = (ms["personel"] / personel_sayisi) if personel_sayisi > 0 else 35000.0
+
+    # Borç eşikleri
+    zorunlu = toplam_borc = 0.0
+    try:
+        oz = borc_nav_ozet()
+        zorunlu = _f(oz.get("borc", {}).get("zorunlu_yuk"))
+        toplam_borc = _f(oz.get("borc", {}).get("toplam"))
+    except Exception:
+        pass
+
+    def abek_at(C):
+        existing_cap = C0 * kapasite_carpan
+        extra = 0
+        if C > existing_cap and yeni_sube_kapasite > 0:
+            extra = int(math.ceil((C - existing_cap) / yeni_sube_kapasite))
+        kira = ms["kira"] + extra * yeni_sube_kira
+        fatura = ms["fatura"] + extra * yeni_sube_sabit
+        # personel: alt-doğrusal global + yeni şube taban personeli
+        personel = ms["personel"] * ((C / C0) ** alpha if C0 > 0 else 1) + extra * yeni_sube_personel
+        cogs = ms["cogs_oran"] * C
+        kom = ms["kom_oran"] * C
+        net_satis = C / 1.10                       # KDV hariç
+        favok = net_satis - cogs - kom - kira - fatura - personel
+        vergi = max(0.0, favok) * ms["vergi_oran"]
+        abek = favok - vergi
+        return abek, ms["sube_sayisi"] + extra, personel
+
+    def cozum(required):
+        if required <= 0:
+            return None
+        C = C0
+        for _ in range(4000):                       # 25K adım, ~100M tavana kadar
+            abek, subeler, personel = abek_at(C)
+            if abek >= required:
+                return {
+                    "hedef_ciro": round(C, 2),
+                    "carpan_mevcut": round(C / C0, 2) if C0 > 0 else None,
+                    "sube_sayisi": subeler,
+                    "yeni_sube": subeler - ms["sube_sayisi"],
+                    "personel_maliyet": round(personel, 2),
+                    "personel_sayisi": int(round(personel / kisi_maliyet)) if kisi_maliyet > 0 else None,
+                    "uretilen_abek": round(abek, 2),
+                    "ciro_sube_basi": round(C / subeler, 2) if subeler else None,
+                }
+            C += 25000
+        return None                                  # 100M'de bile ulaşılamaz
+
+    senaryolar = {
+        "borc_sabit": cozum(zorunlu),
+        "yil_25_azal": cozum(zorunlu + toplam_borc * 0.25 / 12.0),
+        "ay24_bitir": cozum(zorunlu + toplam_borc / 24.0),
+    }
+
+    # ── KAPASİTE GERÇEKLİK ──
+    existing_cap = C0 * kapasite_carpan
+    abek_max_mevcut, _, _ = abek_at(existing_cap)     # 2 şube TAM kapasite
+    yapilandirma_sart = abek_max_mevcut < zorunlu
+    return {
+        "uretildi": date.today().isoformat(),
+        "parametreler": {
+            "alpha_personel": alpha, "kapasite_carpan": kapasite_carpan,
+            "mevcut_ciro": round(C0, 2), "mevcut_sube": ms["sube_sayisi"],
+            "kisi_basi_maliyet": round(kisi_maliyet, 2), "personel_sayisi_mevcut": personel_sayisi,
+            "yeni_sube_kapasite": yeni_sube_kapasite, "yeni_sube_kira": yeni_sube_kira,
+            "yeni_sube_personel": yeni_sube_personel, "vergi_oran": ms["vergi_oran"],
+        },
+        "zorunlu_yuk": round(zorunlu, 2),
+        "toplam_borc": round(toplam_borc, 2),
+        "senaryolar": senaryolar,
+        "kapasite_gerceklik": {
+            "mevcut_sube_max_ciro": round(existing_cap, 2),
+            "mevcut_sube_max_abek": round(abek_max_mevcut, 2),
+            "zorunlu_yuk": round(zorunlu, 2),
+            "yapilandirma_sart": yapilandirma_sart,
+            "mesaj": (
+                "2 aktif şube TAM kapasitede bile üretilen ABEK zorunlu borç yükünü "
+                "KARŞILAMIYOR → operasyonel büyüme tek başına yetmez. Borç yapılandırma "
+                "(vade uzatma / faiz indirimi / refinansman / sermaye girişi) ŞART."
+                if yapilandirma_sart else
+                "Mevcut şubeler tam kapasiteye çıkarsa zorunlu yük karşılanabilir."
+            ),
+        },
+        "not": "Yeni şube açma SERMAYE gerektirir; bu işletme 2 şube kapatmış ve nakit "
+               "tamponu düşük → 'yeni şube' senaryoları TEORİK, kısa vadede finanse edilemez.",
+    }
+
+
 @router.get("/takvim")
 def borc_takvim(ay: int = 36):
     """BORÇ TAKVİMİ — GPT mimarisi: tek 'toplam borç' yerine ay-ay zaman serisi.
