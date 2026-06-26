@@ -34,6 +34,7 @@ function Gauge({ skor, renk }) {
 
 export default function BorcNavigasyon() {
   const [d, setD] = useState(null);
+  const [katki, setKatki] = useState(null);
   const [err, setErr] = useState('');
   const [yukleniyor, setYukleniyor] = useState(true);
 
@@ -43,6 +44,7 @@ export default function BorcNavigasyon() {
       .then(setD)
       .catch(e => setErr(e.message || 'Yüklenemedi'))
       .finally(() => setYukleniyor(false));
+    api('/borc-nav/sube-katki?gun=30').then(setKatki).catch(() => {});
   };
   useEffect(() => { yukle(); }, []);
 
@@ -190,6 +192,42 @@ export default function BorcNavigasyon() {
           <div style={{ color: 'var(--red)', fontSize: 13 }}>⚠️ Nakit marj ≤ 0 olduğu için ciro hedefi anlamsız — daha çok satmak daha çok zarar demek. Önce maliyet/fiyat yapısı düzeltilmeli.</div>
         )}
       </div>
+
+      {/* ── Şube Katkı ── */}
+      {katki && katki.subeler && katki.subeler.length > 0 && (() => {
+        const maxAbs = Math.max(1, ...katki.subeler.map(s => Math.abs(s.ileri_aylik_katki)));
+        return (
+          <div className="bn-card" style={{ ...card, marginBottom: 16 }}>
+            <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 4 }}>🏪 Şube Katkı — ortak havuzu kim besliyor, kim boşaltıyor?</div>
+            <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 12 }}>İleriye dönük aylık (operasyonel nakit, finansman hariç). Kapalı şube = saf kira drenajı. Krediler kolektiftir, şubeye paylaştırılmaz.</div>
+            {katki.subeler.map((s, i) => {
+              const poz = s.ileri_aylik_katki >= 0;
+              const w = Math.abs(s.ileri_aylik_katki) / maxAbs * 50; // %50 yarı genişlik
+              return (
+                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 9 }}>
+                  <div style={{ width: 120, fontSize: 13, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 5 }}>
+                    {poz ? '🟢' : '🔴'} {s.sube_adi}
+                  </div>
+                  <div style={{ flex: 1, position: 'relative', height: 22, display: 'flex', alignItems: 'center' }}>
+                    {/* orta çizgi */}
+                    <div style={{ position: 'absolute', left: '50%', top: 0, bottom: 0, width: 1, background: 'var(--border)' }} />
+                    <div style={{ position: 'absolute', left: poz ? '50%' : `${50 - w}%`, width: `${w}%`, height: 14, borderRadius: 4, background: poz ? 'var(--green)' : 'var(--red)' }} />
+                  </div>
+                  <div style={{ width: 110, textAlign: 'right', fontFamily: 'var(--font-mono)', fontSize: 13, fontWeight: 700, color: poz ? 'var(--green)' : 'var(--red)' }}>
+                    {poz ? '+' : '−'}{fmt(Math.abs(s.ileri_aylik_katki))}
+                  </div>
+                  <div style={{ width: 64, fontSize: 10, color: 'var(--text3)' }}>{s.durum === 'kapali' ? '⛔ kapalı' : 'aktif'}</div>
+                </div>
+              );
+            })}
+            <div style={{ borderTop: '1px solid var(--border)', marginTop: 8, paddingTop: 8, display: 'flex', justifyContent: 'space-between', fontSize: 12, flexWrap: 'wrap', gap: 6 }}>
+              <span style={{ color: 'var(--green)' }}>Besleyen: <b>+{fmt(katki.havuz_besleyen_aylik)}</b></span>
+              <span style={{ color: 'var(--red)' }}>Boşaltan: <b>{fmt(katki.havuz_bosaltan_aylik)}</b></span>
+              <span style={{ color: 'var(--text1)', fontWeight: 700 }}>Net havuz: {fmt(katki.net_havuz_aylik)}/ay</span>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ── BBE bileşenleri ── */}
       <div className="bn-card" style={{ ...card, marginBottom: 16 }}>
