@@ -65,7 +65,13 @@ def _op_donem(gun: int) -> Dict[str, float]:
         g = ops_maliyet_gun_gun(gun=gun, sube_id=None, bas=None, bit=None)
         rows = g.get("satirlar") or []
         ciro = sum(_f(r.get("ciro_tl")) for r in rows)
-        net_kar = sum(_f(r.get("net_kar_tl")) for r in rows)
+        # ABEK = net kâr (NAKİT). Tercih: net_kar_net_tl = ŞUBE-BAZLI vergi (şahıs/şirket
+        # karması, ~%28.5) + KDV ayrıştırılmış (KDV işletmenin parası değil, pass-through).
+        # Yoksa düz %25'li net_kar_tl'ye düşer (geriye uyumlu).
+        net_kar = sum(
+            _f(r.get("net_kar_net_tl") if r.get("net_kar_net_tl") is not None else r.get("net_kar_tl"))
+            for r in rows
+        )
         faaliyet = sum(_f(r.get("faaliyet_kari_tl")) for r in rows)
         cogs = sum(_f(r.get("toplam")) for r in rows)
         return {"gun": gun, "ciro": ciro, "net_kar": net_kar,
