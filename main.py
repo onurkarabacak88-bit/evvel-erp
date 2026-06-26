@@ -6610,6 +6610,20 @@ class BorcModel(BaseModel):
     toplam_vade: Optional[int] = None
     baslangic_tarihi: Optional[date] = None
     odeme_gunu: int = 1
+    # Borç Navigasyon (takvim/amortisman) için ek alanlar — hepsi opsiyonel; gönderilmezse
+    # mevcut değer korunur (PUT'ta COALESCE). toplam_borc artık KALAN ANAPARA olarak kullanılır.
+    faiz_orani: Optional[float] = None        # AYLIK faiz % (ör. 3.46)
+    odemesiz_ay: Optional[int] = None         # ödemesiz dönem (ay); ilk taksit gecikir
+    ilk_taksit_tarihi: Optional[date] = None  # ilk taksit tarihi (ödemesiz dönem varsa kritik)
+
+
+def _ensure_borc_kolonlar(cur) -> None:
+    """borc_envanteri'ne takvim alanlarını idempotent ekle (hata-yutar)."""
+    try:
+        cur.execute("ALTER TABLE borc_envanteri ADD COLUMN IF NOT EXISTS odemesiz_ay INTEGER DEFAULT 0")
+        cur.execute("ALTER TABLE borc_envanteri ADD COLUMN IF NOT EXISTS ilk_taksit_tarihi DATE")
+    except Exception:
+        pass
 
 class SubeGuncelleModel(BaseModel):
     pos_oran: float = 0
@@ -6797,10 +6811,13 @@ def _borc_validate(b: BorcModel):
 def borc_ekle(b: BorcModel):
     _borc_validate(b)
     with db() as (conn, cur):
+        _ensure_borc_kolonlar(cur)
         bid = str(uuid.uuid4())
-        cur.execute("""INSERT INTO borc_envanteri (id,kurum,borc_turu,toplam_borc,aylik_taksit,kalan_vade,toplam_vade,baslangic_tarihi,odeme_gunu)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-            (bid, b.kurum, b.borc_turu, b.toplam_borc, b.aylik_taksit, b.kalan_vade, b.toplam_vade, b.baslangic_tarihi, b.odeme_gunu))
+        cur.execute("""INSERT INTO borc_envanteri
+            (id,kurum,borc_turu,toplam_borc,aylik_taksit,kalan_vade,toplam_vade,baslangic_tarihi,odeme_gunu,faiz_orani,odemesiz_ay,ilk_taksit_tarihi)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+            (bid, b.kurum, b.borc_turu, b.toplam_borc, b.aylik_taksit, b.kalan_vade, b.toplam_vade,
+             b.baslangic_tarihi, b.odeme_gunu, b.faiz_orani, (b.odemesiz_ay or 0), b.ilk_taksit_tarihi))
         audit(cur, 'borc_envanteri', bid, 'INSERT')
     return {"id": bid, "success": True}
 
@@ -6808,12 +6825,20 @@ def borc_ekle(b: BorcModel):
 def borc_guncelle(bid: str, b: BorcModel):
     _borc_validate(b)
     with db() as (conn, cur):
+        _ensure_borc_kolonlar(cur)
         cur.execute("SELECT * FROM borc_envanteri WHERE id=%s", (bid,))
         eski = cur.fetchone()
         if not eski: raise HTTPException(404)
+        # Ek alanlar (faiz/ödemesiz/ilk taksit) gönderilmezse MEVCUT korunur (COALESCE) —
+        # eski borçlar UI'ı bu alanları yollamıyor, sıfırlanmasın.
         cur.execute("""UPDATE borc_envanteri SET kurum=%s,borc_turu=%s,toplam_borc=%s,aylik_taksit=%s,
-            kalan_vade=%s,toplam_vade=%s,baslangic_tarihi=%s,odeme_gunu=%s WHERE id=%s""",
-            (b.kurum, b.borc_turu, b.toplam_borc, b.aylik_taksit, b.kalan_vade, b.toplam_vade, b.baslangic_tarihi, b.odeme_gunu, bid))
+            kalan_vade=%s,toplam_vade=%s,baslangic_tarihi=%s,odeme_gunu=%s,
+            faiz_orani=COALESCE(%s,faiz_orani),
+            odemesiz_ay=COALESCE(%s,odemesiz_ay),
+            ilk_taksit_tarihi=COALESCE(%s,ilk_taksit_tarihi)
+            WHERE id=%s""",
+            (b.kurum, b.borc_turu, b.toplam_borc, b.aylik_taksit, b.kalan_vade, b.toplam_vade,
+             b.baslangic_tarihi, b.odeme_gunu, b.faiz_orani, b.odemesiz_ay, b.ilk_taksit_tarihi, bid))
 
         # Bekleyen ödeme planı senkronu — eski tutar/yetim plan kalmasın
         if b.kalan_vade is not None and int(b.kalan_vade) <= 0:
