@@ -123,6 +123,15 @@ except Exception as _tam_maliyet_err:
     logging.getLogger(__name__).warning(
         f"tam_maliyet modulu yuklenemedi (izole, ana akis etkilenmez): {_tam_maliyet_err}"
     )
+# Borç Navigasyon Motoru — İZOLE + SALT-OKUR (ABEK çekirdekli karar destek).
+# Hiçbir şey yazmaz; modül patlasa bile ana uygulama ayakta kalır.
+try:
+    from borc_navigasyon_api import router as borc_nav_router
+    app.include_router(borc_nav_router)
+except Exception as _borc_nav_err:
+    logging.getLogger(__name__).warning(
+        f"borc_navigasyon modulu yuklenemedi (izole, ana akis etkilenmez): {_borc_nav_err}"
+    )
 
 logging.basicConfig(
     level=logging.INFO,
