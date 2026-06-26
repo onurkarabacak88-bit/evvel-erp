@@ -299,7 +299,7 @@ def _maliyet_yapisi() -> Dict[str, float]:
 
 @router.get("/olcek-plani")
 def olcek_plani(alpha: float = 0.78, kapasite_carpan: float = 1.4,
-                yeni_sube_kapasite: float = 400000.0, yeni_sube_kira: float = 140000.0,
+                yeni_sube_kapasite: float = 500000.0, yeni_sube_kira: float = 65000.0,
                 yeni_sube_personel: float = 130000.0, yeni_sube_sabit: float = 40000.0,
                 personel_sayisi: int = 6):
     """ÖLÇEK PLANLAMA + KAPASİTE GERÇEKLİK MOTORU (iki GPT + filtre sentezi).
@@ -326,13 +326,15 @@ def olcek_plani(alpha: float = 0.78, kapasite_carpan: float = 1.4,
 
     def abek_at(C):
         existing_cap = C0 * kapasite_carpan
-        extra = 0
-        if C > existing_cap and yeni_sube_kapasite > 0:
-            extra = int(math.ceil((C - existing_cap) / yeni_sube_kapasite))
+        # INTENSİF (mevcut şubeler, kapasiteye kadar) vs EXTENSİF (yeni şube gereken kısım).
+        # Personel: intensif kısımda ALT-DOĞRUSAL (α, verimlilik); yeni şubeler kendi
+        # personelini LİNEER getirir (çift sayım yok — α sadece intensif ciroya uygulanır).
+        intensive = min(C, existing_cap)
+        extensive = max(0.0, C - existing_cap)
+        extra = int(math.ceil(extensive / yeni_sube_kapasite)) if (extensive > 0 and yeni_sube_kapasite > 0) else 0
         kira = ms["kira"] + extra * yeni_sube_kira
         fatura = ms["fatura"] + extra * yeni_sube_sabit
-        # personel: alt-doğrusal global + yeni şube taban personeli
-        personel = ms["personel"] * ((C / C0) ** alpha if C0 > 0 else 1) + extra * yeni_sube_personel
+        personel = ms["personel"] * ((intensive / C0) ** alpha if C0 > 0 else 1) + extra * yeni_sube_personel
         cogs = ms["cogs_oran"] * C
         kom = ms["kom_oran"] * C
         net_satis = C / 1.10                       # KDV hariç
