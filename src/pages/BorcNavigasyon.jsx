@@ -37,6 +37,7 @@ export default function BorcNavigasyon() {
   const [katki, setKatki] = useState(null);
   const [proj, setProj] = useState(null);
   const [takvim, setTakvim] = useState(null);
+  const [olcek, setOlcek] = useState(null);
   const [err, setErr] = useState('');
   const [yukleniyor, setYukleniyor] = useState(true);
 
@@ -49,6 +50,7 @@ export default function BorcNavigasyon() {
     api('/borc-nav/sube-katki?gun=30').then(setKatki).catch(() => {});
     api('/borc-nav/projeksiyon?ay=12').then(setProj).catch(() => {});
     api('/borc-nav/takvim?ay=36').then(setTakvim).catch(() => {});
+    api('/borc-nav/olcek-plani').then(setOlcek).catch(() => {});
   };
   useEffect(() => { yukle(); }, []);
 
@@ -274,6 +276,62 @@ export default function BorcNavigasyon() {
           <div style={{ color: 'var(--red)', fontSize: 13 }}>⚠️ Nakit marj ≤ 0 olduğu için ciro hedefi anlamsız — daha çok satmak daha çok zarar demek. Önce maliyet/fiyat yapısı düzeltilmeli.</div>
         )}
       </div>
+
+      {/* ── Ölçek Planı + Kapasite Gerçeklik ── */}
+      {olcek && olcek.senaryolar && (() => {
+        const kg = olcek.kapasite_gerceklik;
+        const sen = olcek.senaryolar;
+        const satirlar = [
+          ['Borç büyümesin', sen.borc_sabit, 'var(--text1)'],
+          ['Borç yılda %25 azalsın', sen.yil_25_azal, 'var(--orange)'],
+          ['Borç 24 ayda bitsin', sen.ay24_bitir, 'var(--red)'],
+        ];
+        return (
+          <div className="bn-card" style={{ ...card, marginBottom: 16, borderTop: `3px solid ${kg.yapilandirma_sart ? 'var(--red)' : 'var(--green)'}` }}>
+            <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 4 }}>🏗️ Ölçek Planı — "ne kadar satmalıyım" değil "hangi yapıyla"</div>
+            <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 12 }}>Personel alt-doğrusal (α={olcek.parametreler.alpha_personel}), kira basamaklı (yeni şube=yeni kira), KDV hariç. Her hedef için gerçek operasyon yapısı.</div>
+
+            {/* Kapasite gerçeklik banner */}
+            <div style={{ background: kg.yapilandirma_sart ? 'rgba(239,68,68,0.10)' : 'rgba(34,197,94,0.10)', border: `1px solid ${kg.yapilandirma_sart ? 'var(--red)' : 'var(--green)'}`, borderRadius: 8, padding: '10px 12px', marginBottom: 12, fontSize: 13 }}>
+              {kg.yapilandirma_sart ? '🔴' : '🟢'} <b style={{ color: kg.yapilandirma_sart ? 'var(--red)' : 'var(--green)' }}>Kapasite Gerçeklik:</b> 2 aktif şube TAM kapasitede (≈{fmt(kg.mevcut_sube_max_ciro)} ciro) en fazla <b>{fmt(kg.mevcut_sube_max_abek)}</b> ABEK üretir — zorunlu yük <b>{fmt(kg.zorunlu_yuk)}</b>.
+              {kg.yapilandirma_sart && <div style={{ marginTop: 4, color: 'var(--text2)' }}>→ Operasyonel büyüme tek başına <b>yetmez</b>. Borç yapılandırma (vade uzatma / faiz indirimi / refinansman / sermaye) <b>şart</b>.</div>}
+            </div>
+
+            {/* Senaryo tablosu */}
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                <thead><tr style={{ color: 'var(--text3)', textAlign: 'left' }}>
+                  <th style={{ padding: '6px 8px' }}>Hedef</th>
+                  <th style={{ padding: '6px 8px', textAlign: 'right' }}>Gereken ciro/ay</th>
+                  <th style={{ padding: '6px 8px', textAlign: 'center' }}>Şube</th>
+                  <th style={{ padding: '6px 8px', textAlign: 'center' }}>Personel</th>
+                  <th style={{ padding: '6px 8px', textAlign: 'right' }}>ABEK</th>
+                </tr></thead>
+                <tbody>
+                  {satirlar.map(([ad, sc, c]) => (
+                    <tr key={ad} style={{ borderTop: '1px solid var(--border)' }}>
+                      <td style={{ padding: '8px', fontWeight: 600 }}>{ad}</td>
+                      {sc ? (
+                        <>
+                          <td style={{ padding: '8px', textAlign: 'right', fontFamily: 'var(--font-mono)', fontWeight: 700, color: c }}>{fmt(sc.hedef_ciro)} <span style={{ fontSize: 10, color: 'var(--text3)' }}>({sc.carpan_mevcut}x)</span></td>
+                          <td style={{ padding: '8px', textAlign: 'center' }}>{sc.sube_sayisi} <span style={{ fontSize: 10, color: 'var(--red)' }}>+{sc.yeni_sube}</span></td>
+                          <td style={{ padding: '8px', textAlign: 'center' }}>~{sc.personel_sayisi}</td>
+                          <td style={{ padding: '8px', textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{fmt(sc.uretilen_abek)}</td>
+                        </>
+                      ) : (
+                        <td colSpan={4} style={{ padding: '8px', color: 'var(--red)' }}>Ulaşılamaz</td>
+                      )}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 8, fontStyle: 'italic' }}>
+              ⚠️ {olcek.not}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ── Gelecek Projeksiyonu ── */}
       {proj && proj.seri && proj.seri.length > 0 && (() => {
