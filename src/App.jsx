@@ -37,6 +37,7 @@ import TeslimKayit from './pages/TeslimKayit';
 import KasaTeslim from './pages/KasaTeslim';
 import EkstreYukle from './pages/EkstreYukle';
 import KartYonetimi from './pages/KartYonetimi';
+import BorcNavigasyon from './pages/BorcNavigasyon';
 import IsBasvuruForm from './pages/IsBasvuruForm';
 import IsBasvuruListesi from './pages/IsBasvuruListesi';
 import Maliyet from './pages/Maliyet';
@@ -51,6 +52,7 @@ const NAV = [
     { id: 'ops-merkez',       label: 'Operasyon Merkezi',   icon: '📡' },
     { id: 'akilli-denetim',   label: 'Akıllı Denetim',      icon: '🧠' },
     { id: 'maliyet',          label: 'Maliyet',             icon: '💰' },
+    { id: 'borc-navigasyon',  label: 'Borç Navigasyonu',    icon: '🧭' },
     { id: 'strateji',         label: 'Strateji Motoru',     icon: '🎯' },
   ]},
   { group: 'Onay Bekleyenler', gicon: '✅', items: [
@@ -125,6 +127,7 @@ const PAGES = {
   'kart-analiz':      KartEkstreAnaliz,
   'ekstre-yukle':     EkstreYukle,
   'kart-yonetimi':    KartYonetimi,
+  'borc-navigasyon':  BorcNavigasyon,
   personel:           Personel,
   borclar:            Borclar,
   'sabit-giderler':   SabitGiderler,
