@@ -35,6 +35,7 @@ function Gauge({ skor, renk }) {
 export default function BorcNavigasyon() {
   const [d, setD] = useState(null);
   const [katki, setKatki] = useState(null);
+  const [proj, setProj] = useState(null);
   const [err, setErr] = useState('');
   const [yukleniyor, setYukleniyor] = useState(true);
 
@@ -45,6 +46,7 @@ export default function BorcNavigasyon() {
       .catch(e => setErr(e.message || 'Yüklenemedi'))
       .finally(() => setYukleniyor(false));
     api('/borc-nav/sube-katki?gun=30').then(setKatki).catch(() => {});
+    api('/borc-nav/projeksiyon?ay=12').then(setProj).catch(() => {});
   };
   useEffect(() => { yukle(); }, []);
 
@@ -192,6 +194,56 @@ export default function BorcNavigasyon() {
           <div style={{ color: 'var(--red)', fontSize: 13 }}>⚠️ Nakit marj ≤ 0 olduğu için ciro hedefi anlamsız — daha çok satmak daha çok zarar demek. Önce maliyet/fiyat yapısı düzeltilmeli.</div>
         )}
       </div>
+
+      {/* ── Gelecek Projeksiyonu ── */}
+      {proj && proj.seri && proj.seri.length > 0 && (() => {
+        const seri = proj.seri;
+        const bas = proj.varsayim.baslangic_borc;
+        const vals = [bas, ...seri.map(s => s.toplam_borc)];
+        const mx = Math.max(...vals), mn = Math.min(...vals);
+        const W = 640, H = 180, padL = 8, padR = 8, padT = 14, padB = 22;
+        const n = vals.length;
+        const xs = i => padL + (i / (n - 1)) * (W - padL - padR);
+        const ys = v => padT + (1 - (v - mn) / Math.max(1, mx - mn)) * (H - padT - padB);
+        const linePts = vals.map((v, i) => `${xs(i)},${ys(v)}`).join(' ');
+        const areaPts = `${xs(0)},${ys(mn)} ${linePts} ${xs(n - 1)},${ys(mn)}`;
+        const spiral = proj.spiral;
+        const col = spiral ? 'var(--red)' : 'var(--green)';
+        return (
+          <div className="bn-card" style={{ ...card, marginBottom: 16, borderTop: `3px solid ${col}` }}>
+            <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 4 }}>🔮 Gelecek Projeksiyonu — borç 12 ay sonra</div>
+            <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 10 }}>
+              Bugünkü gidişatla. Her ay faiz <b style={{ color: 'var(--red)' }}>{fmt(proj.aylik_faiz_tl)}</b> geliyor, işletme <b style={{ color: 'var(--green)' }}>{fmt(proj.varsayim.abek_aylik)}</b> (ABEK) ödeyebiliyor → fark borca ekleniyor.
+            </div>
+
+            {spiral && (
+              <div style={{ background: 'rgba(239,68,68,0.10)', border: '1px solid var(--red)', borderRadius: 8, padding: '8px 12px', marginBottom: 10, fontSize: 13, color: 'var(--text2)' }}>
+                🌀 <b style={{ color: 'var(--red)' }}>Sarmal:</b> ABEK aylık faizi bile karşılamıyor (faize karşı açık <b>{fmt(proj.abek_aciligi_faize_karsi)}/ay</b>). Borç {proj.ikiye_katlanma_ay ? <>~<b>{proj.ikiye_katlanma_ay} ayda ikiye katlanır</b>.</> : 'sürekli büyür.'}
+              </div>
+            )}
+
+            <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%' }}>
+              {/* başlangıç referans çizgisi */}
+              <line x1={padL} y1={ys(bas)} x2={W - padR} y2={ys(bas)} stroke="var(--border)" strokeDasharray="4 4" />
+              <text x={W - padR} y={ys(bas) - 4} textAnchor="end" style={{ fontSize: 10, fill: 'var(--text3)' }}>bugün {fmt(bas)}</text>
+              <polygon points={areaPts} fill={col} opacity="0.12" />
+              <polyline points={linePts} fill="none" stroke={col} strokeWidth="2.5" />
+              {vals.map((v, i) => i % 2 === 0 && (
+                <g key={i}>
+                  <circle cx={xs(i)} cy={ys(v)} r="2.5" fill={col} />
+                  <text x={xs(i)} y={H - 6} textAnchor="middle" style={{ fontSize: 9, fill: 'var(--text3)' }}>{i === 0 ? 'şimdi' : `${i}a`}</text>
+                </g>
+              ))}
+            </svg>
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, marginTop: 8, fontSize: 12 }}>
+              <span style={{ color: 'var(--text3)' }}>Efektif faiz: <b style={{ color: 'var(--text2)' }}>%{proj.varsayim.efektif_aylik_faiz_pct}/ay</b></span>
+              <span style={{ color: 'var(--text3)' }}>12 ay sonu: <b style={{ color: col }}>{fmt(proj.ay_sonu_borc)}</b> (<b style={{ color: col }}>{proj.artis_pct > 0 ? '+' : ''}{proj.artis_pct}%</b>)</span>
+              <span style={{ color: 'var(--text3)' }}>Borç durması için gereken ödeme: <b style={{ color: 'var(--text2)' }}>{fmt(proj.borc_sabit_icin_gereken_aylik_odeme)}/ay</b></span>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ── Şube Katkı ── */}
       {katki && katki.subeler && katki.subeler.length > 0 && (() => {
