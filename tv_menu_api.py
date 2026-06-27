@@ -371,7 +371,7 @@ _TV_HTML = r"""<!DOCTYPE html>
 .ring{position:absolute;top:46%;left:50%;width:30vw;height:30vw;border-radius:50%;border:1px solid #3E8E5A1f;border-top-color:#3E8E5A66;border-right-color:#3E8E5A40;animation:spin 17s linear infinite}
 .halo{position:absolute;top:46%;left:50%;width:42vw;height:42vw;border-radius:50%;background:radial-gradient(circle,#1c5235,#11321f 46%,transparent 70%);animation:halo 6s ease-in-out infinite}
 .logoBox{position:relative;z-index:2;overflow:hidden;border-radius:1vw}
-.logo{width:22vw;display:block;mix-blend-mode:screen;animation:flo 6s ease-in-out infinite}
+.logo{width:22vw;display:block;mix-blend-mode:screen;opacity:0;transition:opacity .9s ease;animation:flo 6s ease-in-out infinite}
 .sweep{position:absolute;top:0;left:0;width:42%;height:100%;background:linear-gradient(90deg,transparent,#ffffff2b,transparent);animation:sweep 5s ease-in-out infinite;pointer-events:none}
 .steam{position:absolute;z-index:3}
 .q{position:relative;z-index:2;font-style:italic;font-size:2.2vw;color:#B89B80;margin-top:2.4vh;letter-spacing:.1vw}
@@ -478,7 +478,7 @@ function build(data){
   var hero=el("div","pg");hero.dataset.t=6000;
   hero.appendChild(el("div","ring"));
   hero.appendChild(el("div","halo"));
-  var img=el("img","logo");img.src="/tv-menu/logo";img.alt="TULİPİ";hero.appendChild(img);
+  var img=el("img","logo");img.alt="TULİPİ";img.onload=function(){img.style.opacity=1;};hero.appendChild(img);img.src="/tv-menu/logo";if(img.complete)img.style.opacity=1;
   var steam=el("div","steam");steam.style.zIndex=3;
   steam.innerHTML='<svg width="6vw" viewBox="0 0 60 40"><g fill="none" stroke="#EFE6D6" stroke-width="1.4" stroke-linecap="round"><path d="M22 34 q-3 -7 1 -13" style="animation:steam 3s ease-in-out infinite"/><path d="M31 33 q3 -7 -1 -13" style="animation:steam 3s ease-in-out 1s infinite"/><path d="M40 34 q-3 -7 1 -13" style="animation:steam 3s ease-in-out 2s infinite"/></g></svg>';
   hero.appendChild(el("div","q","Crafted Every Day"));
