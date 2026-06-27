@@ -2829,16 +2829,23 @@ function CepDepolar({ onGeri }) {
   const subeler = data?.subeler || [];
   // "yok" sayımı satış şubeleri üzerinden (merkez = kaynak depo, şube değil)
   const satisSubeler = subeler.filter(s => s.id !== 'sube-merkez');
+  // Bir kalem kaç satış şubesinde YOK (0)? — "Stokta Yok" sekmesi bunu kullanır.
+  const yokSayisi = (k) => satisSubeler.filter(s => (k.adetler?.[s.id] ?? 0) === 0).length;
+  const eksikSayisi = (data?.kalemler || []).filter(k => satisSubeler.length > 0 && yokSayisi(k) > 0).length;
   const kisa = (ad) => (ad || '').slice(0, 3).toUpperCase();
   const q = ara.trim().toLocaleLowerCase('tr');
   let kalemler = (data?.kalemler || []).filter(k => !q || (k.kalem_adi || '').toLocaleLowerCase('tr').includes(q));
+  // "Stokta Yok": en az bir satış şubesinde 0 olan kalemler (tümünde yok → en kritik).
+  if (aktif === 'yok') kalemler = kalemler.filter(k => yokSayisi(k) > 0);
   // Tek şube modunda: sadece o depoda kaydı olan kalemler
-  if (aktif !== 'tumu') kalemler = kalemler.filter(k => k.adetler && k.adetler[aktif] != null);
+  else if (aktif !== 'tumu') kalemler = kalemler.filter(k => k.adetler && k.adetler[aktif] != null);
+  // Stokta Yok sekmesinde en kritik (tümünde yok) üste gelsin
+  if (aktif === 'yok') kalemler = [...kalemler].sort((a, b) => yokSayisi(b) - yokSayisi(a));
   // Sipariş modunda "sadece seçilenler": tiklenenler kalsın, diğerleri kaybolsun
   if (sipMod && sadeceSecili) kalemler = kalemler.filter(k => secim[k.kalem_kodu]);
 
   // Özet
-  const ozetAdet = kalemler.reduce((s, k) => s + (aktif === 'tumu' ? (k.toplam || 0) : (k.adetler[aktif] || 0)), 0);
+  const ozetAdet = kalemler.reduce((s, k) => s + ((aktif === 'tumu' || aktif === 'yok') ? (k.toplam || 0) : (k.adetler[aktif] || 0)), 0);
 
   // Kategoriye grupla
   const gruplar = {};
@@ -2906,13 +2913,19 @@ function CepDepolar({ onGeri }) {
         )}
 
         <div style={{ display: 'flex', gap: 6, overflowX: 'auto', paddingBottom: 8 }}>
-          {[{ id: 'tumu', ad: 'Tümü' }, ...subeler].map(s => (
-            <button key={s.id} onClick={() => setAktif(s.id)} style={{
-              flex: '0 0 auto', padding: '7px 13px', borderRadius: 999, fontSize: 13, fontWeight: 700, cursor: 'pointer',
-              border: `1px solid ${aktif === s.id ? C.mavi : C.border}`,
-              background: aktif === s.id ? C.mavi : C.bg2, color: aktif === s.id ? '#fff' : C.t2, whiteSpace: 'nowrap',
-            }}>{s.ad}</button>
-          ))}
+          {[{ id: 'tumu', ad: 'Tümü' }, { id: 'yok', ad: `⚠️ Stokta Yok${eksikSayisi ? ` (${eksikSayisi})` : ''}` }, ...subeler].map(s => {
+            const aktifMi = aktif === s.id;
+            const yokSekme = s.id === 'yok';
+            const vurgu = yokSekme ? C.kirmizi : C.mavi;
+            return (
+              <button key={s.id} onClick={() => setAktif(s.id)} style={{
+                flex: '0 0 auto', padding: '7px 13px', borderRadius: 999, fontSize: 13, fontWeight: 700, cursor: 'pointer',
+                border: `1px solid ${aktifMi ? vurgu : (yokSekme ? C.kirmizi : C.border)}`,
+                background: aktifMi ? vurgu : C.bg2,
+                color: aktifMi ? '#fff' : (yokSekme ? C.kirmizi : C.t2), whiteSpace: 'nowrap',
+              }}>{s.ad}</button>
+            );
+          })}
         </div>
         <input value={ara} onChange={e => setAra(e.target.value)} placeholder="🔍 Ürün ara…" style={{
           width: '100%', padding: '10px 12px', borderRadius: 10, border: `1px solid ${C.border}`,
@@ -2928,13 +2941,15 @@ function CepDepolar({ onGeri }) {
         {data === null && <div style={{ color: C.t3, textAlign: 'center', padding: 30 }}>Yükleniyor…</div>}
         {hata && <div style={{ color: C.kirmizi, textAlign: 'center', padding: 20 }}>{hata}</div>}
         {data && kalemler.length === 0 && !hata && (
-          <div style={{ color: C.t3, textAlign: 'center', padding: 40 }}>Kalem bulunamadı.</div>
+          <div style={{ color: aktif === 'yok' ? C.yesil : C.t3, textAlign: 'center', padding: 40 }}>
+            {aktif === 'yok' ? '🎉 Hiçbir şube stoksuz değil — hepsi tam.' : 'Kalem bulunamadı.'}
+          </div>
         )}
         {Object.entries(gruplar).map(([kat, items]) => (
           <div key={kat} style={{ marginBottom: 10 }}>
             <div style={{ fontSize: 12, fontWeight: 800, color: C.t3, padding: '8px 2px 4px' }}>{kat} <span style={{ color: C.border }}>({items.length})</span></div>
             {items.map(k => {
-              if (aktif === 'tumu') {
+              if (aktif === 'tumu' || aktif === 'yok') {
                 // Sipariş modunda SEÇİLEN şube vurgulu (sarı); yoksa TEMA vurgulu (kahve)
                 const vurguSube = (sipMod && sipSube) ? sipSube : 'sube-tema';
                 const vurguRenk = (sipMod && sipSube) ? C.sari : '#C8956A';
