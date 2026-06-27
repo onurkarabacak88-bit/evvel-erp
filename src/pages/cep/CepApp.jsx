@@ -2752,6 +2752,14 @@ function CepDepolar({ onGeri }) {
   const [secim, setSecim] = useState({}); // kalem_kodu -> { ad, adet }
   const [sipNot, setSipNot] = useState('');
   const [sadeceSecili, setSadeceSecili] = useState(false);
+  // Stok Sayım Ata modu (seçili kalemlere hedefli sayım görevi)
+  const [sayimMod, setSayimMod] = useState(false);
+  const [sayimSube, setSayimSube] = useState('');
+  const [sayimPersonel, setSayimPersonel] = useState('');
+  const [sayimPersoneller, setSayimPersoneller] = useState([]);
+  const [sayimNot, setSayimNot] = useState('');
+  const [sayimMesgul, setSayimMesgul] = useState(false);
+  const [sayimBilgi, setSayimBilgi] = useState('');
   // Tik: yoksa ekle (adet 1), varsa çıkar
   const secTik = (k) => setSecim(m => {
     const n = { ...m };
@@ -2813,6 +2821,46 @@ function CepDepolar({ onGeri }) {
     setSecim({}); setSipNot(''); setSadeceSecili(false);
   };
 
+  // Sayım için efektif şube: seçili sayım şubesi ya da aktif şube sekmesi
+  const sayimSubeEff = sayimSube || (aktif !== 'tumu' && aktif !== 'yok' ? aktif : '');
+  useEffect(() => {
+    setSayimPersonel('');
+    if (!sayimMod || !sayimSubeEff) { setSayimPersoneller([]); return; }
+    api(`/gorev/sube-personel/${encodeURIComponent(sayimSubeEff)}`)
+      .then(r => setSayimPersoneller(r || [])).catch(() => setSayimPersoneller([]));
+  }, [sayimMod, sayimSubeEff]);
+
+  const sayimAta = async () => {
+    const sb = sayimSubeEff;
+    if (!sb) { setHata('Sayım için şube seçin'); return; }
+    if (!sayimPersonel) { setHata('Personel seçin'); return; }
+    if (!secimList.length) { setHata('En az bir ürün seçin'); return; }
+    setSayimMesgul(true); setHata(''); setSayimBilgi('');
+    try {
+      const kalemler = Object.entries(secim).map(([kk, v]) => ({ kalem_kodu: kk, kalem_adi: v.ad }));
+      const r = await api('/stok-sayim/gorev-ata', {
+        method: 'POST',
+        body: { sube_id: sb, personel_id: sayimPersonel, kapsam_tip: 'set', kalemler, not_aciklama: sayimNot.trim() || null, atayan_ad: 'Patron (Cep)' },
+      });
+      const p = sayimPersoneller.find(x => String(x.id) === String(sayimPersonel));
+      const subeAd = subeler.find(x => x.id === sb)?.ad || '';
+      if (r.wa_gitti) {
+        setSayimBilgi(`✅ Atandı — ${r.personel_ad || ''} · ${r.kalem_sayisi} kalem. WhatsApp otomatik gönderildi 📲`);
+      } else {
+        const num = cepWaNum(p?.telefon);
+        if (num) {
+          const msg = `Merhaba ${p?.ad_soyad || ''} 👋\n*${subeAd}* için sana stok sayım görevi atandı 📋 (${r.kalem_sayisi} kalem)\nMesai başlat, QR okut ve say. Teşekkürler 🙏`;
+          window.open(`https://wa.me/${num}?text=${encodeURIComponent(msg)}`, '_blank');
+          setSayimBilgi(`✅ Atandı — ${r.personel_ad || ''} · ${r.kalem_sayisi} kalem. WhatsApp açıldı, gönder.`);
+        } else {
+          setSayimBilgi(`✅ Atandı — ${r.personel_ad || ''} · ${r.kalem_sayisi} kalem. ${p && !p.telefon ? '(Telefon yok — WhatsApp gidemedi)' : 'Personel mesai başlatınca ekran kilitlenir.'}`);
+        }
+      }
+      setSecim({}); setSayimNot('');
+    } catch (e) { setHata(e.message || 'Atanamadı'); }
+    finally { setSayimMesgul(false); }
+  };
+
   const yukle = useCallback((sessiz) => {
     if (!sessiz) setHata('');
     api('/ops/depo-stok')
@@ -2861,12 +2909,51 @@ function CepDepolar({ onGeri }) {
       } />
       {/* Şube chip'leri + arama — sticky */}
       <div style={{ position: 'sticky', top: 0, zIndex: 5, background: C.bg, padding: '10px 14px 8px', borderBottom: `1px solid ${C.border}` }}>
-        {/* Sipariş Oluştur toggle */}
-        <button onClick={() => { setSipMod(v => !v); setHata(''); }} style={{
-          width: '100%', padding: '10px', borderRadius: 10, marginBottom: 8, cursor: 'pointer',
-          border: 'none', fontWeight: 800, fontSize: 14,
-          background: sipMod ? C.kirmizi : C.yesil, color: '#fff',
-        }}>{sipMod ? '✕ Siparişi Kapat' : '🛒 Sipariş Oluştur'}</button>
+        {/* Sipariş + Stok Sayım Ata toggle (karşılıklı dışlayan) */}
+        <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+          <button onClick={() => { setSipMod(v => !v); setSayimMod(false); setHata(''); }} style={{
+            flex: 1, padding: '10px', borderRadius: 10, cursor: 'pointer', border: 'none', fontWeight: 800, fontSize: 13,
+            background: sipMod ? C.kirmizi : C.yesil, color: '#fff',
+          }}>{sipMod ? '✕ Sipariş' : '🛒 Sipariş'}</button>
+          <button onClick={() => { setSayimMod(v => !v); setSipMod(false); setHata(''); setSayimBilgi(''); }} style={{
+            flex: 1, padding: '10px', borderRadius: 10, cursor: 'pointer', border: 'none', fontWeight: 800, fontSize: 13,
+            background: sayimMod ? C.kirmizi : C.mavi, color: '#fff',
+          }}>{sayimMod ? '✕ Sayım Ata' : '📋 Stok Sayım Ata'}</button>
+        </div>
+
+        {/* Stok Sayım Ata bar — seçili kalemlere hedefli görev */}
+        {sayimMod && (
+          <div style={{ background: C.bg2, border: `1px solid ${C.border}`, borderRadius: 12, padding: 10, marginBottom: 8 }}>
+            {sayimBilgi && <div style={{ marginBottom: 8, padding: 9, background: 'rgba(34,197,94,0.12)', borderRadius: 9, color: C.yesil, fontSize: 12.5, lineHeight: 1.5 }}>{sayimBilgi}</div>}
+            <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+              <select value={sayimSubeEff} onChange={e => setSayimSube(e.target.value)} style={{
+                flex: 1, padding: '9px 10px', borderRadius: 8, border: `1px solid ${C.border}`, background: C.bg, color: C.t1, fontSize: 14, boxSizing: 'border-box',
+              }}>
+                <option value="">— Şube —</option>
+                {satisSubeler.map(s => <option key={s.id} value={s.id}>{s.ad}</option>)}
+              </select>
+              <select value={sayimPersonel} onChange={e => setSayimPersonel(e.target.value)} disabled={!sayimSubeEff} style={{
+                flex: 1, padding: '9px 10px', borderRadius: 8, border: `1px solid ${C.border}`, background: C.bg, color: C.t1, fontSize: 14, boxSizing: 'border-box',
+              }}>
+                <option value="">— Personel —</option>
+                {sayimPersoneller.map(p => <option key={p.id} value={p.id}>{p.ad_soyad || p.ad || p.id}</option>)}
+              </select>
+            </div>
+            <input value={sayimNot} onChange={e => setSayimNot(e.target.value)} placeholder="Not (opsiyonel)" style={{
+              width: '100%', padding: '9px 10px', borderRadius: 8, border: `1px solid ${C.border}`, background: C.bg, color: C.t1, fontSize: 14, boxSizing: 'border-box', marginBottom: 8,
+            }} />
+            {(() => {
+              const haz = secimList.length && sayimSubeEff && sayimPersonel && !sayimMesgul;
+              return (
+                <button onClick={sayimAta} disabled={!haz} style={{
+                  width: '100%', padding: '11px', borderRadius: 9, border: 'none', cursor: haz ? 'pointer' : 'not-allowed',
+                  background: haz ? C.mavi : C.bg3, color: haz ? '#fff' : C.t3, fontWeight: 800, fontSize: 14,
+                }}>{sayimMesgul ? 'Atanıyor…' : `📋 Sayım Görevi Ata (${secimList.length})`}</button>
+              );
+            })()}
+            <div style={{ fontSize: 10, color: C.t3, marginTop: 6, textAlign: 'center' }}>Seçili kalemler için kısmi sayım görevi atanır</div>
+          </div>
+        )}
 
         {/* Sipariş bar — toptancı seç + gönder (wa.me, senin telefonundan) */}
         {sipMod && (
@@ -2962,7 +3049,7 @@ function CepDepolar({ onGeri }) {
                 return (
                   <div key={k.kalem_kodu} style={{ padding: '9px 2px', borderTop: `1px solid ${C.border}` }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      {sipMod && <input type="checkbox" checked={seciliT} onChange={() => secTik(k)} style={{ width: 20, height: 20, accentColor: '#25D366', flex: '0 0 auto' }} />}
+                      {(sipMod || sayimMod) && <input type="checkbox" checked={seciliT} onChange={() => secTik(k)} style={{ width: 20, height: 20, accentColor: '#25D366', flex: '0 0 auto' }} />}
                       <span style={{ fontSize: 14, flex: 1, color: durumRenk || C.t1, fontWeight: durumRenk ? 700 : 400 }}>
                         {k.kalem_adi}
                         {tumYok ? <span style={{ fontSize: 11, fontWeight: 700 }}> · stok yok</span>
@@ -2995,7 +3082,7 @@ function CepDepolar({ onGeri }) {
               const secili = !!secim[k.kalem_kodu];
               return (
                 <div key={k.kalem_kodu} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 2px', borderTop: `1px solid ${C.border}` }}>
-                  {sipMod && <input type="checkbox" checked={secili} onChange={() => secTik(k)} style={{ width: 20, height: 20, accentColor: '#25D366', flex: '0 0 auto' }} />}
+                  {(sipMod || sayimMod) && <input type="checkbox" checked={secili} onChange={() => secTik(k)} style={{ width: 20, height: 20, accentColor: '#25D366', flex: '0 0 auto' }} />}
                   <span style={{ fontSize: 14, flex: 1, color: sifir ? C.kirmizi : C.t1, fontWeight: sifir ? 700 : 400 }}>
                     {k.kalem_adi}
                     {sifir ? <span style={{ fontSize: 11, fontWeight: 700 }}> · stok yok</span>
