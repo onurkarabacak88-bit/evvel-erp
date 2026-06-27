@@ -398,27 +398,28 @@ _TV_HTML = r"""<!DOCTYPE html>
 .pg.story{background:#070504}
 .pg.story.on{animation:none}
 .story .stsc{position:absolute;inset:0;display:flex;align-items:center;justify-content:center}
-.story .stTag{align-items:flex-start;padding-top:4vh;font-size:1vw;letter-spacing:.5vw;color:#3E8E5A;z-index:6;animation:csTag 13s linear infinite}
-.story .stBean{animation:csBean 13s cubic-bezier(.4,0,.5,1) infinite}
-.story .stPour{opacity:0;animation:csPour 13s ease-in infinite}
-.story .stCrema{opacity:0;animation:csCrema 13s ease-out infinite}
-.story .cremaC{width:62vh;height:62vh;border-radius:50%;background:radial-gradient(circle at 50% 45%,#6b3d1d,#3a2110 55%,#1a0e06 80%)}
-.story .stBub{opacity:0;animation:csBub 13s ease-out infinite}
-.story .stArt{opacity:0;animation:csArt 13s ease-in-out infinite}
-.story .csArtPath{animation:csDraw 13s ease-in-out infinite}
-.story .stPriceWrap{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:5;opacity:0;animation:csPrice 13s ease-out infinite}
+.story .stTag{align-items:flex-start;padding-top:5vh;font-size:1vw;letter-spacing:.6vw;color:#3E8E5A;z-index:6;animation:csTag 22s linear infinite}
+.story .stBean{animation:csBean 22s ease-in-out infinite}
+.story .stPour{opacity:0;animation:csPour 22s ease-in-out infinite}
+.story .stCrema{opacity:0;animation:csCrema 22s ease-in-out infinite}
+.story .cremaC{width:58vh;height:58vh;border-radius:50%;background:radial-gradient(circle at 50% 42%,#7a4524,#3a2110 56%,#1a0e06 82%);box-shadow:0 0 8vh #00000088 inset}
+.story .stBub{opacity:0;animation:csBub 22s ease-in-out infinite}
+.story .stArt{opacity:0;animation:csArt 22s ease-in-out infinite}
+.story .csArtPath{animation:csDraw 22s ease-in-out infinite}
+.story .stPriceWrap{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:5;opacity:0;animation:csPrice 22s ease-in-out infinite}
 .story .stpn{font-size:6vw;letter-spacing:.5vw;color:#EFE6D6;text-transform:uppercase}
-.story .stpl{width:5vw;height:1px;background:#3E8E5A;margin:1.8vh 0}
+.story .stpl{width:5vw;height:1px;background:#3E8E5A;margin:2vh 0}
 .story .stpp{font-size:4vw;font-weight:600;color:#3E8E5A}
 .story .stVig{z-index:7;box-shadow:inset 0 0 13vw 4vw #000;pointer-events:none}
-@keyframes csTag{0%,90%{opacity:.5}96%,100%{opacity:0}}
-@keyframes csBean{0%{opacity:0;transform:scale(.04) rotate(-40deg)}5%{opacity:1}18%{opacity:1;transform:scale(1.1) rotate(8deg)}26%{opacity:0;transform:scale(2.8) rotate(14deg);filter:blur(1vw)}100%{opacity:0;transform:scale(2.8)}}
-@keyframes csPour{0%,20%{opacity:0;transform:translateY(-6vh) scale(.6)}27%{opacity:1;transform:translateY(0) scale(1)}40%{opacity:1}45%{opacity:0;transform:scale(1.6);filter:blur(.8vw)}100%{opacity:0}}
-@keyframes csCrema{0%,34%{opacity:0;transform:scale(.05)}43%{opacity:1;transform:scale(1)}54%{opacity:.95;transform:scale(2.2)}61%{opacity:0;transform:scale(2.9)}100%{opacity:0}}
-@keyframes csBub{0%,38%{opacity:0}47%{opacity:.55}58%{opacity:0}100%{opacity:0}}
-@keyframes csArt{0%,54%{opacity:0;transform:scale(1.3)}62%{opacity:1;transform:scale(1)}80%{opacity:1;transform:scale(1)}85%{opacity:0;transform:scale(.7);filter:blur(.6vw)}100%{opacity:0}}
-@keyframes csDraw{0%,56%{stroke-dashoffset:340}75%{stroke-dashoffset:0}82%{stroke-dashoffset:0}87%,100%{stroke-dashoffset:340}}
-@keyframes csPrice{0%,80%{opacity:0;transform:scale(.4);filter:blur(1.4vw)}88%{opacity:1;transform:scale(1);filter:blur(0)}96%{opacity:1;transform:scale(1.04)}100%{opacity:0;transform:scale(1.1)}}
+/* yavaş + net: her sahne FADE IN → BEKLE → FADE OUT. blur YOK, scale nazik. */
+@keyframes csTag{0%,4%{opacity:0}9%,87%{opacity:.5}93%,100%{opacity:0}}
+@keyframes csBean{0%{opacity:0;transform:scale(.32) rotate(-10deg)}7%{opacity:1;transform:scale(.5) rotate(-4deg)}16%{opacity:1;transform:scale(.62) rotate(2deg)}21%{opacity:0;transform:scale(.66) rotate(4deg)}100%{opacity:0}}
+@keyframes csPour{0%,17%{opacity:0;transform:translateY(-3vh)}24%{opacity:1;transform:translateY(0)}35%{opacity:1;transform:translateY(0)}40%{opacity:0}100%{opacity:0}}
+@keyframes csCrema{0%,35%{opacity:0;transform:scale(.82)}43%{opacity:1;transform:scale(1)}56%{opacity:1;transform:scale(1.05)}61%{opacity:0;transform:scale(1.08)}100%{opacity:0}}
+@keyframes csBub{0%,40%{opacity:0}48%{opacity:.5}55%{opacity:0}100%{opacity:0}}
+@keyframes csArt{0%,53%{opacity:0;transform:scale(.92)}61%{opacity:1;transform:scale(1)}79%{opacity:1;transform:scale(1)}84%{opacity:0;transform:scale(1.03)}100%{opacity:0}}
+@keyframes csDraw{0%,55%{stroke-dashoffset:340}74%{stroke-dashoffset:0}82%{stroke-dashoffset:0}85%,100%{stroke-dashoffset:340}}
+@keyframes csPrice{0%,79%{opacity:0;transform:translateY(2.4vh) scale(.97)}87%{opacity:1;transform:translateY(0) scale(1)}97%{opacity:1;transform:translateY(0) scale(1)}100%{opacity:0}}
 </style></head>
 <body><div id="stage">
 <div class="bg" id="bg"><div class="drift"></div></div>
@@ -452,7 +453,7 @@ function findPrice(name){var r=null;if(!window._tvData||!name)return null;
   return r;}
 function buildStory(data){
   var sp=storyProduct(data);window._story=sp;
-  var st=el("div","pg story");st.dataset.t=13000;
+  var st=el("div","pg story");st.dataset.t=22000;
   var bean='<svg viewBox="0 0 100 100" style="width:9vw;height:9vw"><defs><radialGradient id="csbg" cx="38%" cy="32%"><stop offset="0%" stop-color="#7a4a26"/><stop offset="70%" stop-color="#3a1f0e"/><stop offset="100%" stop-color="#1a0d05"/></radialGradient></defs><ellipse cx="50" cy="50" rx="30" ry="40" fill="url(#csbg)" transform="rotate(18 50 50)"/><path d="M50 14 Q42 50 50 86" fill="none" stroke="#1a0d05" stroke-width="3" transform="rotate(18 50 50)"/><path d="M50 22 Q56 36 50 50 Q44 64 50 78" fill="none" stroke="#5a3318" stroke-width="1.4" opacity=".6" transform="rotate(18 50 50)"/></svg>';
   var pour='<svg viewBox="0 0 200 200" style="width:30vh;height:30vh"><g stroke="#6b3d1d" stroke-width="4" stroke-linecap="round" opacity=".85"><line x1="100" y1="30" x2="100" y2="120"/><line x1="90" y1="50" x2="90" y2="118"/><line x1="110" y1="50" x2="110" y2="118"/></g><ellipse cx="100" cy="135" rx="48" ry="13" fill="#3a2110"/></svg>';
   var bub='<svg viewBox="0 0 200 120" style="width:42vh"><g fill="#caa07a" opacity=".5"><circle cx="60" cy="50" r="6"/><circle cx="120" cy="70" r="9"/><circle cx="150" cy="40" r="5"/><circle cx="90" cy="85" r="7"/><circle cx="40" cy="80" r="4"/></g></svg>';
