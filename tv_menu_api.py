@@ -437,6 +437,7 @@ function priceRow(u,three,i){
   return '<div class="row one"'+dly+'><span class="nm">'+u.ad+'</span><span class="pr">'+(v==null?'–':v)+'</span></div>';
 }
 function storyProduct(data){
+  if(window._encok&&window._encok.ad)return window._encok;            // günün ürünü (Evo en-çok) öncelikli
   if(data.imza&&data.imza.ad&&data.imza.fiyat!=null)return {ad:data.imza.ad,fiyat:data.imza.fiyat};
   var found=null,first=null;
   (data.kategoriler||[]).forEach(function(k){(k.urunler||[]).forEach(function(u){
@@ -541,8 +542,10 @@ var SIG="/api/tv-signals", liveArr=["TÜM FİYATLAR TL · TULİPİ COFFEE"], liv
 function loadSig(){fetch(SIG).then(function(r){return r.json();}).then(function(s){
   if(s&&s.seritler&&s.seritler.length){liveArr=s.seritler.concat(["TÜM FİYATLAR TL"]);}
   // Günün ürünü (Evo en-çok) story sahnesindeki "fincanda doğan fiyat"ı besler
-  if(s&&s.en_cok){var pp=findPrice(s.en_cok);var nm=document.getElementById("storyName"),pe=document.getElementById("storyPrice");
-    if(nm&&pp!=null){nm.textContent=s.en_cok;pe.textContent=pp+" TL";}}
+  if(s&&s.en_cok){var pp=findPrice(s.en_cok);
+    if(pp!=null){window._encok={ad:s.en_cok,fiyat:pp};
+      var nm=document.getElementById("storyName"),pe=document.getElementById("storyPrice");
+      if(nm){nm.textContent=s.en_cok;pe.textContent=pp+" TL";}}}
 }).catch(function(){});}
 function rotLive(){var e=document.getElementById("live");if(!e||liveArr.length<2)return;
   e.style.opacity=0;setTimeout(function(){liveI=(liveI+1)%liveArr.length;e.textContent=liveArr[liveI];e.style.opacity=1;},500);}
