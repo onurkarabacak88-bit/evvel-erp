@@ -132,6 +132,15 @@ except Exception as _borc_nav_err:
     logging.getLogger(__name__).warning(
         f"borc_navigasyon modulu yuklenemedi (izole, ana akis etkilenmez): {_borc_nav_err}"
     )
+# TV Menü — İZOLE (TULİPİ dijital menü panosu + canlı fiyat). /tv-menu HTML linki
+# SPA catch-all'dan ÖNCE kayıtlı olsun diye burada (üstte) include edilir.
+try:
+    from tv_menu_api import router as tv_menu_router
+    app.include_router(tv_menu_router)
+except Exception as _tv_menu_err:
+    logging.getLogger(__name__).warning(
+        f"tv_menu modulu yuklenemedi (izole, ana akis etkilenmez): {_tv_menu_err}"
+    )
 
 logging.basicConfig(
     level=logging.INFO,
