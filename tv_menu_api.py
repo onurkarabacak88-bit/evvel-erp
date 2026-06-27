@@ -396,10 +396,7 @@ function build(data){
   var hero=el("div","pg");hero.dataset.t=6000;
   hero.appendChild(el("div","ring"));
   hero.appendChild(el("div","halo"));
-  var box=el("div","logoBox");
-  var img=el("img","logo");img.src="/tv-menu/logo";img.alt="TULİPİ";box.appendChild(img);
-  box.appendChild(el("div","sweep"));
-  hero.appendChild(box);
+  var img=el("img","logo");img.src="/tv-menu/logo";img.alt="TULİPİ";hero.appendChild(img);
   var steam=el("div","steam");steam.style.zIndex=3;
   steam.innerHTML='<svg width="6vw" viewBox="0 0 60 40"><g fill="none" stroke="#EFE6D6" stroke-width="1.4" stroke-linecap="round"><path d="M22 34 q-3 -7 1 -13" style="animation:steam 3s ease-in-out infinite"/><path d="M31 33 q3 -7 -1 -13" style="animation:steam 3s ease-in-out 1s infinite"/><path d="M40 34 q-3 -7 1 -13" style="animation:steam 3s ease-in-out 2s infinite"/></g></svg>';
   hero.appendChild(el("div","q","Crafted Every Day"));
