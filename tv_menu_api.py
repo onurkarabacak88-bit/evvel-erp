@@ -126,6 +126,7 @@ def tv_menu_json():
     try:
         with db() as (conn, cur):
             _ensure_tablo(cur)
+            ayar = _ayar_oku(cur)
             cur.execute(
                 """SELECT kategori, kategori_alt, ad, aciklama, f8, f14, fice
                    FROM tv_menu WHERE aktif=TRUE ORDER BY kategori, sira, ad"""
@@ -142,7 +143,17 @@ def tv_menu_json():
                 "ad": r["ad"], "aciklama": r.get("aciklama") or "",
                 "f8": _fmt(r.get("f8")), "f14": _fmt(r.get("f14")), "fice": _fmt(r.get("fice")),
             })
-        return {"marka": "TULİPİ", "guncelleme": datetime.now().isoformat(), "kategoriler": kats}
+        # İMZA SPOTLIGHT — panelden "imza ürünü" seçilirse fiyatı menüden bulup ekle
+        imza = None
+        iad = (ayar.get("imza_urun") or "").strip()
+        if iad:
+            fy = None
+            for r in rows:
+                if str(r["ad"]).strip().lower() == iad.lower():
+                    fy = _fmt(r.get("f8")) or _fmt(r.get("f14")) or _fmt(r.get("fice"))
+                    break
+            imza = {"ad": iad, "aciklama": (ayar.get("imza_aciklama") or "").strip(), "fiyat": fy}
+        return {"marka": "TULİPİ", "guncelleme": datetime.now().isoformat(), "kategoriler": kats, "imza": imza}
     except Exception as e:
         logger.warning("tv-menu json hata: %s", e)
         return {"marka": "TULİPİ", "kategoriler": [], "hata": str(e)}
@@ -263,6 +274,8 @@ class AyarModel(BaseModel):
     hh_bas: Optional[int] = None
     hh_bit: Optional[int] = None
     hh_mesaj: Optional[str] = None
+    imza_urun: Optional[str] = None
+    imza_aciklama: Optional[str] = None
 
 
 @router.get("/api/tv-ayar")
@@ -274,6 +287,7 @@ def tv_ayar_oku():
         "one_cikan": a.get("one_cikan") or "", "one_cikan_oto": a.get("one_cikan_oto") == "1",
         "hh_aktif": a.get("hh_aktif") == "1", "hh_bas": int(a.get("hh_bas") or 14),
         "hh_bit": int(a.get("hh_bit") or 16), "hh_mesaj": a.get("hh_mesaj") or "Happy Hour",
+        "imza_urun": a.get("imza_urun") or "", "imza_aciklama": a.get("imza_aciklama") or "",
     }
 
 
@@ -292,6 +306,10 @@ def tv_ayar_yaz(a: AyarModel):
         kv["hh_bit"] = str(int(a.hh_bit))
     if a.hh_mesaj is not None:
         kv["hh_mesaj"] = a.hh_mesaj.strip()
+    if a.imza_urun is not None:
+        kv["imza_urun"] = a.imza_urun.strip()
+    if a.imza_aciklama is not None:
+        kv["imza_aciklama"] = a.imza_aciklama.strip()
     with db() as (conn, cur):
         _ensure_tablo(cur)
         for k, v in kv.items():
@@ -367,6 +385,12 @@ _TV_HTML = r"""<!DOCTYPE html>
 .nm{font-size:1.9vw;text-align:left;white-space:nowrap}.nm small{font-size:1vw;color:#B89B80;font-style:italic;margin-left:.6vw}
 .pr{font-size:1.8vw;font-weight:500;text-align:center}.pr.d{color:#ffffff22}
 .ice{position:absolute;width:.5vw;height:.5vw;border-radius:50%;background:#a9dccd;animation:ice 4.5s ease-in-out infinite}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(62,142,90,.45)}70%{box-shadow:0 0 0 1.5vw rgba(62,142,90,0)}100%{box-shadow:0 0 0 0 rgba(62,142,90,0)}}
+.spotTag{position:relative;z-index:2;font-size:1vw;letter-spacing:.32vw;color:#3E8E5A;text-transform:uppercase}
+.spotCup{position:relative;z-index:2;animation:flo 4s ease-in-out infinite;margin:1.5vh 0 .5vh}
+.spotName{position:relative;z-index:2;font-size:4.2vw;font-weight:500;margin:1.2vh 0 .6vh;letter-spacing:.02vw}
+.spotDesc{position:relative;z-index:2;font-size:1.5vw;color:#B89B80;font-style:italic;max-width:38vw;line-height:1.5;margin-bottom:2.6vh}
+.spotPrice{position:relative;z-index:2;display:inline-block;background:#3E8E5A;color:#0e0b09;font-weight:700;font-size:2.4vw;padding:1.3vh 3.4vw;border-radius:50px;animation:pulse 2.2s infinite}
 .foot{position:absolute;bottom:2vh;left:0;right:0;text-align:center;z-index:6}
 .foot #live{font-size:1.25vw;letter-spacing:.15vw;color:#7fae93;transition:opacity .5s}
 .err{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#7d7065;font-size:1.4vw}
@@ -401,6 +425,27 @@ function build(data){
   steam.innerHTML='<svg width="6vw" viewBox="0 0 60 40"><g fill="none" stroke="#EFE6D6" stroke-width="1.4" stroke-linecap="round"><path d="M22 34 q-3 -7 1 -13" style="animation:steam 3s ease-in-out infinite"/><path d="M31 33 q3 -7 -1 -13" style="animation:steam 3s ease-in-out 1s infinite"/><path d="M40 34 q-3 -7 1 -13" style="animation:steam 3s ease-in-out 2s infinite"/></g></svg>';
   hero.appendChild(el("div","q","Crafted Every Day"));
   pages.push(hero);
+  // İMZA SPOTLIGHT — panelden seçilen öne çıkan ürün (float + buhar + nabız fiyat)
+  if(data.imza && data.imza.ad){
+    var sp=el("div","pg");sp.dataset.t=8000;
+    sp.appendChild(el("div","halo"));
+    var cup='<svg width="14vw" viewBox="0 0 200 200" style="width:14vw;height:14vw">'
+      +'<g fill="none" stroke="#B89B80" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">'
+      +'<ellipse cx="100" cy="158" rx="58" ry="9"/><ellipse cx="100" cy="110" rx="40" ry="9"/>'
+      +'<path d="M62 110 Q66 146 100 148 Q134 146 138 110"/><path d="M138 118 Q164 120 159 138 Q157 149 141 146"/></g>'
+      +'<ellipse cx="100" cy="110" rx="36" ry="7.5" fill="#0e0b09"/>'
+      +'<g fill="none" stroke="#3E8E5A" stroke-width="1.5" stroke-linecap="round" opacity=".95"><path d="M100 104 V117 M100 107 q-9 2 -14 6 M100 107 q9 2 14 6 M100 111 q-6 3 -10 6 M100 111 q6 3 10 6"/></g>'
+      +'<g fill="none" stroke="#EFE6D6" stroke-width="1.5" stroke-linecap="round">'
+      +'<path d="M86 100 q-4 -8 1 -15" style="animation:steam 3s ease-in-out infinite"/>'
+      +'<path d="M100 98 q4 -9 -1 -17" style="animation:steam 3s ease-in-out 1s infinite"/>'
+      +'<path d="M114 100 q-4 -8 1 -15" style="animation:steam 3s ease-in-out 2s infinite"/></g></svg>';
+    var inner='<div class="spotTag">Bugünün İmzası</div><div class="spotCup">'+cup+'</div>'
+      +'<div class="spotName">'+data.imza.ad+'</div>'
+      +(data.imza.aciklama?'<div class="spotDesc">'+data.imza.aciklama+'</div>':'')
+      +(data.imza.fiyat!=null?'<div class="spotPrice">'+data.imza.fiyat+' TL</div>':'');
+    sp.innerHTML+=inner;
+    pages.push(sp);
+  }
   // Kategoriler
   (data.kategoriler||[]).forEach(function(k){
     var three=k.urunler.some(function(u){return u.f14!=null||u.fice!=null;});

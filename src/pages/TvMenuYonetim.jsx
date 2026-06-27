@@ -134,6 +134,12 @@ export default function TvMenuYonetim() {
               </div>
               <input style={{ ...inp, marginTop: 6 }} placeholder="Mesaj (ör. 2. kahve bizden)" value={ayar.hh_mesaj || ''} onChange={e => setAyar({ ...ayar, hh_mesaj: e.target.value })} />
             </div>
+            <div>
+              <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 5, fontWeight: 600 }}>⭐ İmza Ürünü (TV'de spotlight sayfası)</div>
+              <input style={inp} list="tvUrunler" placeholder="ör. Caramel Macchiato (boş = kapalı)" value={ayar.imza_urun || ''} onChange={e => setAyar({ ...ayar, imza_urun: e.target.value })} />
+              <datalist id="tvUrunler">{(liste || []).map(it => <option key={it.id} value={it.ad} />)}</datalist>
+              <input style={{ ...inp, marginTop: 6 }} placeholder="Açıklama / slogan (taze süt köpüğü…)" value={ayar.imza_aciklama || ''} onChange={e => setAyar({ ...ayar, imza_aciklama: e.target.value })} />
+            </div>
           </div>
           <button className="btn btn-sm btn-primary" style={{ marginTop: 12 }} disabled={mesgul === 'ayar'} onClick={ayarKaydet}>{mesgul === 'ayar' ? 'Kaydediliyor…' : 'Ayarları Kaydet'}</button>
         </div>
