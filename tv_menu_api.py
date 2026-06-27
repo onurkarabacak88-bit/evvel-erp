@@ -20,8 +20,9 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 import uuid
-from datetime import datetime
+from datetime import datetime, date as _date
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException
@@ -72,6 +73,14 @@ def _ensure_tablo(cur):
             guncelleme TIMESTAMPTZ DEFAULT NOW()
         )"""
     )
+    # FAZ 2: yeni ürün bayrağı + ayar tablosu (happy hour, öne çıkan)
+    try:
+        cur.execute("ALTER TABLE tv_menu ADD COLUMN IF NOT EXISTS yeni BOOLEAN DEFAULT FALSE")
+    except Exception:
+        pass
+    cur.execute(
+        """CREATE TABLE IF NOT EXISTS tv_ayar (anahtar TEXT PRIMARY KEY, deger TEXT)"""
+    )
     cur.execute("SELECT COUNT(*) AS n FROM tv_menu")
     if int((cur.fetchone() or {}).get("n") or 0) == 0:
         for i, (kat, ad, ack, f8, f14, fice) in enumerate(_TOHUM):
@@ -83,6 +92,15 @@ def _ensure_tablo(cur):
     _TABLO_HAZIR = True
 
 
+def _ayar_oku(cur) -> dict:
+    cur.execute("SELECT anahtar, deger FROM tv_ayar")
+    return {r["anahtar"]: r["deger"] for r in (cur.fetchall() or [])}
+
+
+# Evo "en çok satılan" — bellek cache (token kırılgan + Evo yavaş; 30 dk'da bir yenilenir)
+_EVO_CACHE = {"ts": 0.0, "urun": None}
+
+
 class UrunModel(BaseModel):
     kategori: str
     ad: str
@@ -92,6 +110,7 @@ class UrunModel(BaseModel):
     fice: Optional[float] = None
     sira: Optional[int] = 0
     aktif: Optional[bool] = True
+    yeni: Optional[bool] = False
 
 
 def _fmt(v):
@@ -143,9 +162,9 @@ def tv_menu_ekle(u: UrunModel):
         _ensure_tablo(cur)
         uid = str(uuid.uuid4())
         cur.execute(
-            """INSERT INTO tv_menu (id,kategori,ad,aciklama,f8,f14,fice,sira,aktif)
-               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-            (uid, u.kategori, u.ad, u.aciklama, u.f8, u.f14, u.fice, (u.sira or 0), u.aktif),
+            """INSERT INTO tv_menu (id,kategori,ad,aciklama,f8,f14,fice,sira,aktif,yeni)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+            (uid, u.kategori, u.ad, u.aciklama, u.f8, u.f14, u.fice, (u.sira or 0), u.aktif, bool(u.yeni)),
         )
     return {"id": uid, "success": True}
 
@@ -159,8 +178,8 @@ def tv_menu_guncelle(uid: str, u: UrunModel):
             raise HTTPException(404, "Ürün bulunamadı")
         cur.execute(
             """UPDATE tv_menu SET kategori=%s,ad=%s,aciklama=%s,f8=%s,f14=%s,fice=%s,
-               sira=%s,aktif=%s,guncelleme=NOW() WHERE id=%s""",
-            (u.kategori, u.ad, u.aciklama, u.f8, u.f14, u.fice, (u.sira or 0), u.aktif, uid),
+               sira=%s,aktif=%s,yeni=%s,guncelleme=NOW() WHERE id=%s""",
+            (u.kategori, u.ad, u.aciklama, u.f8, u.f14, u.fice, (u.sira or 0), u.aktif, bool(u.yeni), uid),
         )
     return {"success": True}
 
@@ -170,6 +189,115 @@ def tv_menu_sil(uid: str):
     with db() as (conn, cur):
         _ensure_tablo(cur)
         cur.execute("DELETE FROM tv_menu WHERE id=%s", (uid,))
+    return {"success": True}
+
+
+def _saat_modu():
+    h = datetime.now().hour
+    if 6 <= h < 11:
+        return {"mod": "sabah", "etiket": "GÜNAYDIN", "oneri": "Breakfast"}
+    if 11 <= h < 17:
+        return {"mod": "ogle", "etiket": "SERİNLE", "oneri": "Iced Drinks"}
+    if 17 <= h < 23:
+        return {"mod": "aksam", "etiket": "TATLI SAATİ", "oneri": "Dessert + Coffee"}
+    return {"mod": "gece", "etiket": "İYİ GECELER", "oneri": ""}
+
+
+def _en_cok(ayar):
+    """Manuel öne çıkan öncelikli; oto açıksa Evo'dan (30 dk cache, hata-yutar)."""
+    if str(ayar.get("one_cikan_oto") or "") == "1":
+        if time.time() - _EVO_CACHE["ts"] > 1800 or not _EVO_CACHE["urun"]:
+            try:
+                from evo_sync import hs_rapor_urun_satis
+                m = hs_rapor_urun_satis(_date.today(), _date.today())
+                if m:
+                    _EVO_CACHE["urun"] = max(m.items(), key=lambda x: x[1])[0]
+                    _EVO_CACHE["ts"] = time.time()
+            except Exception as e:
+                logger.warning("tv en_cok Evo hata: %s", e)
+        if _EVO_CACHE["urun"]:
+            return _EVO_CACHE["urun"]
+    return (ayar.get("one_cikan") or "").strip() or None
+
+
+@router.get("/api/tv-signals")
+def tv_signals():
+    """FAZ 2 — yaşayan menü sinyalleri (saat-modu / en-çok / yeni / happy hour)."""
+    yeni = []
+    ayar = {}
+    try:
+        with db() as (conn, cur):
+            _ensure_tablo(cur)
+            ayar = _ayar_oku(cur)
+            cur.execute("SELECT ad FROM tv_menu WHERE aktif=TRUE AND yeni=TRUE ORDER BY sira, ad")
+            yeni = [r["ad"] for r in (cur.fetchall() or [])]
+    except Exception as e:
+        logger.warning("tv-signals hata: %s", e)
+    sm = _saat_modu()
+    en_cok = _en_cok(ayar)
+    hh = None
+    try:
+        if str(ayar.get("hh_aktif") or "") == "1":
+            bas = int(ayar.get("hh_bas") or 14)
+            bit = int(ayar.get("hh_bit") or 16)
+            hh = {"aktif": bas <= datetime.now().hour < bit, "bas": bas, "bit": bit,
+                  "mesaj": (ayar.get("hh_mesaj") or "Happy Hour")}
+    except Exception:
+        pass
+    seritler = []
+    if en_cok:
+        seritler.append("🔥 Bugün en çok: " + en_cok)
+    if yeni:
+        seritler.append("✨ Yeni: " + " · ".join(yeni[:2]))
+    if hh and hh.get("aktif"):
+        seritler.append("⏰ " + hh["mesaj"] + " · " + str(hh["bas"]) + ":00–" + str(hh["bit"]) + ":00")
+    if sm["oneri"]:
+        seritler.append(sm["etiket"] + " · " + sm["oneri"])
+    return {"saat_modu": sm, "en_cok": en_cok, "yeni": yeni, "happy_hour": hh, "seritler": seritler}
+
+
+class AyarModel(BaseModel):
+    one_cikan: Optional[str] = None
+    one_cikan_oto: Optional[bool] = None
+    hh_aktif: Optional[bool] = None
+    hh_bas: Optional[int] = None
+    hh_bit: Optional[int] = None
+    hh_mesaj: Optional[str] = None
+
+
+@router.get("/api/tv-ayar")
+def tv_ayar_oku():
+    with db() as (conn, cur):
+        _ensure_tablo(cur)
+        a = _ayar_oku(cur)
+    return {
+        "one_cikan": a.get("one_cikan") or "", "one_cikan_oto": a.get("one_cikan_oto") == "1",
+        "hh_aktif": a.get("hh_aktif") == "1", "hh_bas": int(a.get("hh_bas") or 14),
+        "hh_bit": int(a.get("hh_bit") or 16), "hh_mesaj": a.get("hh_mesaj") or "Happy Hour",
+    }
+
+
+@router.post("/api/tv-ayar")
+def tv_ayar_yaz(a: AyarModel):
+    kv = {}
+    if a.one_cikan is not None:
+        kv["one_cikan"] = a.one_cikan.strip()
+    if a.one_cikan_oto is not None:
+        kv["one_cikan_oto"] = "1" if a.one_cikan_oto else "0"
+    if a.hh_aktif is not None:
+        kv["hh_aktif"] = "1" if a.hh_aktif else "0"
+    if a.hh_bas is not None:
+        kv["hh_bas"] = str(int(a.hh_bas))
+    if a.hh_bit is not None:
+        kv["hh_bit"] = str(int(a.hh_bit))
+    if a.hh_mesaj is not None:
+        kv["hh_mesaj"] = a.hh_mesaj.strip()
+    with db() as (conn, cur):
+        _ensure_tablo(cur)
+        for k, v in kv.items():
+            cur.execute(
+                "INSERT INTO tv_ayar (anahtar,deger) VALUES (%s,%s) "
+                "ON CONFLICT (anahtar) DO UPDATE SET deger=EXCLUDED.deger", (k, v))
     return {"success": True}
 
 
@@ -222,11 +350,12 @@ _TV_HTML = r"""<!DOCTYPE html>
 .nm{font-size:1.9vw;text-align:left;white-space:nowrap}.nm small{font-size:1vw;color:#B89B80;font-style:italic;margin-left:.6vw}
 .pr{font-size:1.8vw;font-weight:500;text-align:center}.pr.d{color:#ffffff22}
 .ice{position:absolute;width:.5vw;height:.5vw;border-radius:50%;background:#a9dccd;animation:ice 4.5s ease-in-out infinite}
-.foot{position:absolute;bottom:2vh;left:0;right:0;text-align:center;font-size:1vw;letter-spacing:.2vw;color:#5f574f;z-index:6}
+.foot{position:absolute;bottom:2vh;left:0;right:0;text-align:center;z-index:6}
+.foot #live{font-size:1.25vw;letter-spacing:.15vw;color:#7fae93;transition:opacity .5s}
 .err{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#7d7065;font-size:1.4vw}
 </style></head>
 <body><div id="stage"><div id="dots"></div>
-<div class="foot">TÜM FİYATLAR TL · TULİPİ COFFEE</div></div>
+<div class="foot"><span id="live">TÜM FİYATLAR TL · TULİPİ COFFEE</span></div></div>
 <script>
 var API="/api/tv-menu", CACHE="tulipi_tv_menu";
 function el(t,c,h){var e=document.createElement(t);if(c)e.className=c;if(h!=null)e.innerHTML=h;return e;}
@@ -279,4 +408,12 @@ function load(){
 }
 load();
 setInterval(load,60000);
+// FAZ 2 — yaşayan menü canlı şeridi (saat-modu / en-çok / yeni / happy hour)
+var SIG="/api/tv-signals", liveArr=["TÜM FİYATLAR TL · TULİPİ COFFEE"], liveI=0;
+function loadSig(){fetch(SIG).then(function(r){return r.json();}).then(function(s){
+  if(s&&s.seritler&&s.seritler.length){liveArr=s.seritler.concat(["TÜM FİYATLAR TL"]);}
+}).catch(function(){});}
+function rotLive(){var e=document.getElementById("live");if(!e||liveArr.length<2)return;
+  e.style.opacity=0;setTimeout(function(){liveI=(liveI+1)%liveArr.length;e.textContent=liveArr[liveI];e.style.opacity=1;},500);}
+loadSig();setInterval(loadSig,60000);setInterval(rotLive,7000);
 </script></body></html>"""

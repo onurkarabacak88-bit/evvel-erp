@@ -9,13 +9,24 @@ export default function TvMenuYonetim() {
   const [bilgi, setBilgi] = useState('');
   const [mesgul, setMesgul] = useState('');
   const [yeni, setYeni] = useState({ kategori: '', ad: '', aciklama: '', f8: '', f14: '', fice: '' });
+  const [ayar, setAyar] = useState(null);
 
   const yukle = useCallback(() => {
     api('/tv-menu/liste')
       .then(r => setListe(Array.isArray(r) ? r : []))
       .catch(e => { setHata(e.message || 'Yüklenemedi'); setListe([]); });
+    api('/tv-ayar').then(setAyar).catch(() => {});
   }, []);
   useEffect(() => { yukle(); }, [yukle]);
+
+  const ayarKaydet = async () => {
+    setMesgul('ayar'); setHata(''); setBilgi('');
+    try {
+      await api('/tv-ayar', { method: 'POST', body: ayar });
+      setBilgi('✓ Yaşayan menü ayarları kaydedildi');
+    } catch (e) { setHata(e.message || 'Kaydedilemedi'); }
+    finally { setMesgul(''); }
+  };
 
   const setSatir = (id, alan, deger) => {
     setListe(l => l.map(x => x.id === id ? { ...x, [alan]: deger } : x));
@@ -35,7 +46,7 @@ export default function TvMenuYonetim() {
         body: {
           kategori: it.kategori, ad: it.ad, aciklama: it.aciklama || null,
           f8: numOrNull(it.f8), f14: numOrNull(it.f14), fice: numOrNull(it.fice),
-          sira: it.sira || 0, aktif: it.aktif !== false,
+          sira: it.sira || 0, aktif: it.aktif !== false, yeni: it.yeni === true,
         },
       });
       setBilgi(`✓ ${it.ad} kaydedildi — TV ~1 dk içinde güncellenir`);
@@ -95,22 +106,56 @@ export default function TvMenuYonetim() {
       {bilgi && <div className="alert-box" style={{ background: 'rgba(34,197,94,0.12)', color: 'var(--green)', marginBottom: 12, padding: 10, borderRadius: 8, fontSize: 13 }}>{bilgi}</div>}
       {hata && <div className="alert-box red" style={{ marginBottom: 12 }}>{hata}</div>}
 
+      {/* Yaşayan Menü Ayarları (Faz 2) */}
+      {ayar && (
+        <div className="card" style={{ padding: 14, marginBottom: 16, borderLeft: '3px solid var(--green)' }}>
+          <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 4 }}>🌿 Yaşayan Menü — alt şerit ayarları</div>
+          <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 12 }}>TV ekranının altında dönen canlı bilgiler. Saat-modu (sabah/öğle/akşam) otomatik gelir.</div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(220px,1fr))', gap: 14 }}>
+            <div>
+              <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 5, fontWeight: 600 }}>🔥 Öne çıkan ürün</div>
+              <input style={inp} placeholder="ör. Latte" value={ayar.one_cikan || ''} onChange={e => setAyar({ ...ayar, one_cikan: e.target.value })} disabled={ayar.one_cikan_oto} />
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--text3)', marginTop: 6, cursor: 'pointer' }}>
+                <input type="checkbox" checked={!!ayar.one_cikan_oto} onChange={e => setAyar({ ...ayar, one_cikan_oto: e.target.checked })} style={{ accentColor: 'var(--green)' }} />
+                Evo satışından otomatik seç
+              </label>
+            </div>
+            <div>
+              <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 5, fontWeight: 600 }}>⏰ Happy Hour</div>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--text3)', marginBottom: 6, cursor: 'pointer' }}>
+                <input type="checkbox" checked={!!ayar.hh_aktif} onChange={e => setAyar({ ...ayar, hh_aktif: e.target.checked })} style={{ accentColor: 'var(--green)' }} />
+                Aktif
+              </label>
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                <input style={{ ...num, width: 56 }} type="number" min={0} max={23} value={ayar.hh_bas ?? 14} onChange={e => setAyar({ ...ayar, hh_bas: parseInt(e.target.value, 10) })} />
+                <span style={{ color: 'var(--text3)' }}>–</span>
+                <input style={{ ...num, width: 56 }} type="number" min={0} max={23} value={ayar.hh_bit ?? 16} onChange={e => setAyar({ ...ayar, hh_bit: parseInt(e.target.value, 10) })} />
+                <span style={{ fontSize: 11, color: 'var(--text3)' }}>saat</span>
+              </div>
+              <input style={{ ...inp, marginTop: 6 }} placeholder="Mesaj (ör. 2. kahve bizden)" value={ayar.hh_mesaj || ''} onChange={e => setAyar({ ...ayar, hh_mesaj: e.target.value })} />
+            </div>
+          </div>
+          <button className="btn btn-sm btn-primary" style={{ marginTop: 12 }} disabled={mesgul === 'ayar'} onClick={ayarKaydet}>{mesgul === 'ayar' ? 'Kaydediliyor…' : 'Ayarları Kaydet'}</button>
+        </div>
+      )}
+
       {liste === null && <div style={{ color: 'var(--text3)', padding: 20 }}>Yükleniyor…</div>}
 
       {Object.entries(gruplar).map(([kat, items]) => (
         <div key={kat} style={{ marginBottom: 18 }}>
           <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--accent)', margin: '6px 2px 8px' }}>{kat}</div>
           <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1.6fr 1.2fr 70px 70px 70px 132px', gap: 8, padding: '8px 12px', fontSize: 11, color: 'var(--text3)', borderBottom: '1px solid var(--border)' }}>
-              <span>Ürün</span><span>Açıklama</span><span style={{ textAlign: 'center' }}>8oz</span><span style={{ textAlign: 'center' }}>14oz</span><span style={{ textAlign: 'center' }}>Ice</span><span></span>
+            <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1.1fr 62px 62px 62px 54px 120px', gap: 8, padding: '8px 12px', fontSize: 11, color: 'var(--text3)', borderBottom: '1px solid var(--border)' }}>
+              <span>Ürün</span><span>Açıklama</span><span style={{ textAlign: 'center' }}>8oz</span><span style={{ textAlign: 'center' }}>14oz</span><span style={{ textAlign: 'center' }}>Ice</span><span style={{ textAlign: 'center' }}>✨Yeni</span><span></span>
             </div>
             {items.map(it => (
-              <div key={it.id} style={{ display: 'grid', gridTemplateColumns: '1.6fr 1.2fr 70px 70px 70px 132px', gap: 8, padding: '8px 12px', alignItems: 'center', borderTop: '1px solid var(--border)' }}>
+              <div key={it.id} style={{ display: 'grid', gridTemplateColumns: '1.5fr 1.1fr 62px 62px 62px 54px 120px', gap: 8, padding: '8px 12px', alignItems: 'center', borderTop: '1px solid var(--border)' }}>
                 <input style={inp} value={it.ad || ''} onChange={e => setSatir(it.id, 'ad', e.target.value)} />
                 <input style={inp} value={it.aciklama || ''} placeholder="—" onChange={e => setSatir(it.id, 'aciklama', e.target.value)} />
                 <input style={num} value={it.f8 ?? ''} placeholder="–" onChange={e => setSatir(it.id, 'f8', e.target.value)} />
                 <input style={num} value={it.f14 ?? ''} placeholder="–" onChange={e => setSatir(it.id, 'f14', e.target.value)} />
                 <input style={num} value={it.fice ?? ''} placeholder="–" onChange={e => setSatir(it.id, 'fice', e.target.value)} />
+                <div style={{ textAlign: 'center' }}><input type="checkbox" checked={it.yeni === true} onChange={e => setSatir(it.id, 'yeni', e.target.checked)} style={{ width: 18, height: 18, accentColor: 'var(--green)', cursor: 'pointer' }} /></div>
                 <div style={{ display: 'flex', gap: 6 }}>
                   <button className="btn btn-sm btn-primary" disabled={mesgul === it.id} onClick={() => kaydet(it)}>{mesgul === it.id ? '…' : 'Kaydet'}</button>
                   <button className="btn btn-sm btn-danger" disabled={mesgul === it.id} onClick={() => sil(it)}>Sil</button>
