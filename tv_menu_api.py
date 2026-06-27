@@ -328,17 +328,34 @@ _TV_HTML = r"""<!DOCTYPE html>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,ital,wght@9..144,0,300;9..144,0,400;9..144,0,500;9..144,1,400&display=swap" rel="stylesheet">
 <style>
 *{margin:0;box-sizing:border-box}html,body{height:100%;overflow:hidden;background:#0e0b09;cursor:none;font-family:'Fraunces',serif;color:#EFE6D6}
-@keyframes fade{from{opacity:0;transform:translateY(14px)}to{opacity:1}}
+@keyframes pgIn{from{opacity:0;transform:translateY(28px) scale(.985);filter:blur(7px)}to{opacity:1;transform:none;filter:none}}
+@keyframes rowIn{from{opacity:0;transform:translateX(-26px)}to{opacity:1;transform:none}}
+@keyframes titleIn{from{opacity:0;transform:translateY(-18px);letter-spacing:.32em}to{opacity:1;transform:none;letter-spacing:.02em}}
 @keyframes flo{0%,100%{transform:translateY(0)}50%{transform:translateY(-.7vw)}}
-@keyframes halo{0%,100%{opacity:.3;transform:translate(-50%,-50%) scale(.92)}50%{opacity:.6;transform:translate(-50%,-50%) scale(1.1)}}
-@keyframes ice{0%,100%{opacity:.12;transform:translateY(0)}50%{opacity:.35;transform:translateY(-.6vw)}}
+@keyframes halo{0%,100%{opacity:.28;transform:translate(-50%,-50%) scale(.9)}50%{opacity:.62;transform:translate(-50%,-50%) scale(1.13)}}
+@keyframes spin{to{transform:translate(-50%,-50%) rotate(360deg)}}
+@keyframes sweep{0%,55%{transform:translateX(-130%) skewX(-18deg)}100%{transform:translateX(250%) skewX(-18deg)}}
+@keyframes steam{0%{opacity:0;transform:translateY(.4vw) scaleY(.5)}35%{opacity:.6}100%{opacity:0;transform:translateY(-1.7vw) scaleY(1.4)}}
+@keyframes bean{0%{transform:translateY(0) rotate(0);opacity:0}12%{opacity:.45}88%{opacity:.45}100%{transform:translateY(-16vh) rotate(50deg);opacity:0}}
+@keyframes glow{0%,100%{transform:translate(-8%,-5%) scale(1);opacity:.45}50%{transform:translate(7%,6%) scale(1.18);opacity:.8}}
+@keyframes live{0%,100%{opacity:.8}50%{opacity:1}}
+@keyframes ice{0%,100%{opacity:.12;transform:translateY(0)}50%{opacity:.38;transform:translateY(-.7vw)}}
 #stage{width:100vw;height:100vh;position:relative;overflow:hidden}
 #dots{position:absolute;top:2.2vh;left:0;right:0;display:flex;justify-content:center;gap:.6vw;z-index:6}
 #dots i{width:.55vw;height:.55vw;border-radius:50%;background:#EFE6D622;transition:.5s}#dots i.on{background:#3E8E5A;width:1.7vw;border-radius:.3vw}
 .pg{position:absolute;inset:0;display:none;flex-direction:column;align-items:center;justify-content:center;padding:6vh 6vw;text-align:center}
-.pg.on{display:flex;animation:fade 1s ease}
+.pg.on{display:flex;animation:pgIn .95s cubic-bezier(.2,.8,.2,1)}
+.pg.on .row{animation:rowIn .55s cubic-bezier(.2,.7,.2,1) both}
+.pg.on .gT{animation:titleIn .8s cubic-bezier(.2,.8,.2,1) both}
+.bg{position:absolute;inset:0;overflow:hidden;z-index:0;pointer-events:none}
+.drift{position:absolute;top:18%;left:28%;width:52vw;height:52vw;border-radius:50%;background:radial-gradient(circle,#2a1c12,transparent 64%);animation:glow 15s ease-in-out infinite}
+.bean{position:absolute;width:.7vw;height:.5vw;border-radius:50%;border:.09vw solid #6a533a;animation:bean linear infinite}
+.ring{position:absolute;top:46%;left:50%;width:30vw;height:30vw;border-radius:50%;border:1px solid #3E8E5A1f;border-top-color:#3E8E5A66;border-right-color:#3E8E5A40;animation:spin 17s linear infinite}
 .halo{position:absolute;top:46%;left:50%;width:42vw;height:42vw;border-radius:50%;background:radial-gradient(circle,#1c5235,#11321f 46%,transparent 70%);animation:halo 6s ease-in-out infinite}
-.logo{width:22vw;mix-blend-mode:screen;animation:flo 6s ease-in-out infinite;position:relative;z-index:2}
+.logoBox{position:relative;z-index:2;overflow:hidden;border-radius:1vw}
+.logo{width:22vw;display:block;mix-blend-mode:screen;animation:flo 6s ease-in-out infinite}
+.sweep{position:absolute;top:0;left:0;width:42%;height:100%;background:linear-gradient(90deg,transparent,#ffffff2b,transparent);animation:sweep 5s ease-in-out infinite;pointer-events:none}
+.steam{position:absolute;z-index:3}
 .q{position:relative;z-index:2;font-style:italic;font-size:2.2vw;color:#B89B80;margin-top:2.4vh;letter-spacing:.1vw}
 .gT{font-size:3.6vw;font-weight:400;font-style:italic;color:#3E8E5A;letter-spacing:.1vw;margin-bottom:.4vh}
 .gH{font-size:1.1vw;letter-spacing:.4vw;color:#7d7065;margin-bottom:3vh}
@@ -354,28 +371,37 @@ _TV_HTML = r"""<!DOCTYPE html>
 .foot #live{font-size:1.25vw;letter-spacing:.15vw;color:#7fae93;transition:opacity .5s}
 .err{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#7d7065;font-size:1.4vw}
 </style></head>
-<body><div id="stage"><div id="dots"></div>
+<body><div id="stage">
+<div class="bg" id="bg"><div class="drift"></div></div>
+<div id="dots"></div>
 <div class="foot"><span id="live">TÜM FİYATLAR TL · TULİPİ COFFEE</span></div></div>
 <script>
 var API="/api/tv-menu", CACHE="tulipi_tv_menu";
 function el(t,c,h){var e=document.createElement(t);if(c)e.className=c;if(h!=null)e.innerHTML=h;return e;}
-function priceRow(u,three){
+function priceRow(u,three,i){
+  var dly=' style="animation-delay:'+(0.18+(i||0)*0.055).toFixed(2)+'s"';
   if(three){
     function cell(v){return '<span class="pr'+(v==null?' d':'')+'">'+(v==null?'–':v)+'</span>';}
-    return '<div class="row"><span class="nm">'+u.ad+(u.aciklama?'<small>'+u.aciklama+'</small>':'')+'</span>'+cell(u.f8)+cell(u.f14)+cell(u.fice)+'</div>';
+    return '<div class="row"'+dly+'><span class="nm">'+u.ad+(u.aciklama?'<small>'+u.aciklama+'</small>':'')+'</span>'+cell(u.f8)+cell(u.f14)+cell(u.fice)+'</div>';
   }
   var v=u.f8!=null?u.f8:(u.f14!=null?u.f14:u.fice);
-  return '<div class="row one"><span class="nm">'+u.ad+'</span><span class="pr">'+(v==null?'–':v)+'</span></div>';
+  return '<div class="row one"'+dly+'><span class="nm">'+u.ad+'</span><span class="pr">'+(v==null?'–':v)+'</span></div>';
 }
 function build(data){
   var stage=document.getElementById("stage");
   Array.prototype.slice.call(stage.querySelectorAll(".pg")).forEach(function(p){p.remove()});
   var dots=document.getElementById("dots");dots.innerHTML="";
   var pages=[];
-  // Hero
+  // Hero — dönen halka + shimmer + buhar
   var hero=el("div","pg");hero.dataset.t=6000;
+  hero.appendChild(el("div","ring"));
   hero.appendChild(el("div","halo"));
-  var img=el("img","logo");img.src="/tv-menu/logo";img.alt="TULİPİ";hero.appendChild(img);
+  var box=el("div","logoBox");
+  var img=el("img","logo");img.src="/tv-menu/logo";img.alt="TULİPİ";box.appendChild(img);
+  box.appendChild(el("div","sweep"));
+  hero.appendChild(box);
+  var steam=el("div","steam");steam.style.zIndex=3;
+  steam.innerHTML='<svg width="6vw" viewBox="0 0 60 40"><g fill="none" stroke="#EFE6D6" stroke-width="1.4" stroke-linecap="round"><path d="M22 34 q-3 -7 1 -13" style="animation:steam 3s ease-in-out infinite"/><path d="M31 33 q3 -7 -1 -13" style="animation:steam 3s ease-in-out 1s infinite"/><path d="M40 34 q-3 -7 1 -13" style="animation:steam 3s ease-in-out 2s infinite"/></g></svg>';
   hero.appendChild(el("div","q","Crafted Every Day"));
   pages.push(hero);
   // Kategoriler
@@ -386,7 +412,7 @@ function build(data){
     if(k.alt)pg.appendChild(el("div","gH",k.alt));
     var m=el("div","menu"+(three?"":" one"));
     if(three)m.innerHTML='<div class="hdr"><span style="text-align:left"></span><span>8oz</span><span>14oz</span><span>ICE</span></div>';
-    m.innerHTML+=k.urunler.map(function(u){return priceRow(u,three);}).join("");
+    m.innerHTML+=k.urunler.map(function(u,i){return priceRow(u,three,i);}).join("");
     pg.appendChild(m);
     if(/(iced|cold|so.uk)/i.test(k.kategori)){for(var i=0;i<10;i++){var s=el("span","ice");s.style.left=(8+Math.random()*84)+"%";s.style.top=(22+Math.random()*54)+"%";s.style.animationDelay=(Math.random()*4.5)+"s";pg.appendChild(s);}}
     pages.push(pg);
@@ -406,6 +432,8 @@ function load(){
     else{document.getElementById("stage").insertBefore(el("div","err","Menü yükleniyor…"),document.querySelector(".foot"));}
   });
 }
+// Ambient — uçuşan kahve çekirdekleri
+(function beans(){var bg=document.getElementById("bg");if(!bg)return;for(var i=0;i<14;i++){var b=document.createElement("span");b.className="bean";b.style.left=(Math.random()*100)+"%";b.style.bottom=(Math.random()*8)+"%";var d=10+Math.random()*10;b.style.animationDuration=d+"s";b.style.animationDelay=(-Math.random()*d)+"s";bg.appendChild(b);}})();
 load();
 setInterval(load,60000);
 // FAZ 2 — yaşayan menü canlı şeridi (saat-modu / en-çok / yeni / happy hour)
