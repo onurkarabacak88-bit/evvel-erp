@@ -394,6 +394,31 @@ _TV_HTML = r"""<!DOCTYPE html>
 .foot{position:absolute;bottom:2vh;left:0;right:0;text-align:center;z-index:6}
 .foot #live{font-size:1.25vw;letter-spacing:.15vw;color:#7fae93;transition:opacity .5s}
 .err{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#7d7065;font-size:1.4vw}
+/* 🎬 COFFEE STORY — sinematik ara sahne (çekirdek→espresso→latte art→fincanda doğan fiyat) */
+.pg.story{background:#070504}
+.pg.story.on{animation:none}
+.story .stsc{position:absolute;inset:0;display:flex;align-items:center;justify-content:center}
+.story .stTag{align-items:flex-start;padding-top:4vh;font-size:1vw;letter-spacing:.5vw;color:#3E8E5A;z-index:6;animation:csTag 13s linear infinite}
+.story .stBean{animation:csBean 13s cubic-bezier(.4,0,.5,1) infinite}
+.story .stPour{opacity:0;animation:csPour 13s ease-in infinite}
+.story .stCrema{opacity:0;animation:csCrema 13s ease-out infinite}
+.story .cremaC{width:62vh;height:62vh;border-radius:50%;background:radial-gradient(circle at 50% 45%,#6b3d1d,#3a2110 55%,#1a0e06 80%)}
+.story .stBub{opacity:0;animation:csBub 13s ease-out infinite}
+.story .stArt{opacity:0;animation:csArt 13s ease-in-out infinite}
+.story .csArtPath{animation:csDraw 13s ease-in-out infinite}
+.story .stPriceWrap{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:5;opacity:0;animation:csPrice 13s ease-out infinite}
+.story .stpn{font-size:6vw;letter-spacing:.5vw;color:#EFE6D6;text-transform:uppercase}
+.story .stpl{width:5vw;height:1px;background:#3E8E5A;margin:1.8vh 0}
+.story .stpp{font-size:4vw;font-weight:600;color:#3E8E5A}
+.story .stVig{z-index:7;box-shadow:inset 0 0 13vw 4vw #000;pointer-events:none}
+@keyframes csTag{0%,90%{opacity:.5}96%,100%{opacity:0}}
+@keyframes csBean{0%{opacity:0;transform:scale(.04) rotate(-40deg)}5%{opacity:1}18%{opacity:1;transform:scale(1.1) rotate(8deg)}26%{opacity:0;transform:scale(2.8) rotate(14deg);filter:blur(1vw)}100%{opacity:0;transform:scale(2.8)}}
+@keyframes csPour{0%,20%{opacity:0;transform:translateY(-6vh) scale(.6)}27%{opacity:1;transform:translateY(0) scale(1)}40%{opacity:1}45%{opacity:0;transform:scale(1.6);filter:blur(.8vw)}100%{opacity:0}}
+@keyframes csCrema{0%,34%{opacity:0;transform:scale(.05)}43%{opacity:1;transform:scale(1)}54%{opacity:.95;transform:scale(2.2)}61%{opacity:0;transform:scale(2.9)}100%{opacity:0}}
+@keyframes csBub{0%,38%{opacity:0}47%{opacity:.55}58%{opacity:0}100%{opacity:0}}
+@keyframes csArt{0%,54%{opacity:0;transform:scale(1.3)}62%{opacity:1;transform:scale(1)}80%{opacity:1;transform:scale(1)}85%{opacity:0;transform:scale(.7);filter:blur(.6vw)}100%{opacity:0}}
+@keyframes csDraw{0%,56%{stroke-dashoffset:340}75%{stroke-dashoffset:0}82%{stroke-dashoffset:0}87%,100%{stroke-dashoffset:340}}
+@keyframes csPrice{0%,80%{opacity:0;transform:scale(.4);filter:blur(1.4vw)}88%{opacity:1;transform:scale(1);filter:blur(0)}96%{opacity:1;transform:scale(1.04)}100%{opacity:0;transform:scale(1.1)}}
 </style></head>
 <body><div id="stage">
 <div class="bg" id="bg"><div class="drift"></div></div>
@@ -411,7 +436,38 @@ function priceRow(u,three,i){
   var v=u.f8!=null?u.f8:(u.f14!=null?u.f14:u.fice);
   return '<div class="row one"'+dly+'><span class="nm">'+u.ad+'</span><span class="pr">'+(v==null?'–':v)+'</span></div>';
 }
+function storyProduct(data){
+  if(data.imza&&data.imza.ad&&data.imza.fiyat!=null)return {ad:data.imza.ad,fiyat:data.imza.fiyat};
+  var found=null,first=null;
+  (data.kategoriler||[]).forEach(function(k){(k.urunler||[]).forEach(function(u){
+    var v=u.f8!=null?u.f8:(u.f14!=null?u.f14:u.fice);
+    if(v!=null){if(!first)first={ad:u.ad,fiyat:v};if(/latte/i.test(u.ad)&&!found)found={ad:u.ad,fiyat:v};}
+  });});
+  return found||first||{ad:"COFFEE",fiyat:null};
+}
+function findPrice(name){var r=null;if(!window._tvData||!name)return null;
+  (window._tvData.kategoriler||[]).forEach(function(k){(k.urunler||[]).forEach(function(u){
+    if(String(u.ad).toLowerCase()===String(name).toLowerCase()){var v=u.f8!=null?u.f8:(u.f14!=null?u.f14:u.fice);if(v!=null)r=v;}});});
+  return r;}
+function buildStory(data){
+  var sp=storyProduct(data);window._story=sp;
+  var st=el("div","pg story");st.dataset.t=13000;
+  var bean='<svg viewBox="0 0 100 100" style="width:9vw;height:9vw"><defs><radialGradient id="csbg" cx="38%" cy="32%"><stop offset="0%" stop-color="#7a4a26"/><stop offset="70%" stop-color="#3a1f0e"/><stop offset="100%" stop-color="#1a0d05"/></radialGradient></defs><ellipse cx="50" cy="50" rx="30" ry="40" fill="url(#csbg)" transform="rotate(18 50 50)"/><path d="M50 14 Q42 50 50 86" fill="none" stroke="#1a0d05" stroke-width="3" transform="rotate(18 50 50)"/><path d="M50 22 Q56 36 50 50 Q44 64 50 78" fill="none" stroke="#5a3318" stroke-width="1.4" opacity=".6" transform="rotate(18 50 50)"/></svg>';
+  var pour='<svg viewBox="0 0 200 200" style="width:30vh;height:30vh"><g stroke="#6b3d1d" stroke-width="4" stroke-linecap="round" opacity=".85"><line x1="100" y1="30" x2="100" y2="120"/><line x1="90" y1="50" x2="90" y2="118"/><line x1="110" y1="50" x2="110" y2="118"/></g><ellipse cx="100" cy="135" rx="48" ry="13" fill="#3a2110"/></svg>';
+  var bub='<svg viewBox="0 0 200 120" style="width:42vh"><g fill="#caa07a" opacity=".5"><circle cx="60" cy="50" r="6"/><circle cx="120" cy="70" r="9"/><circle cx="150" cy="40" r="5"/><circle cx="90" cy="85" r="7"/><circle cx="40" cy="80" r="4"/></g></svg>';
+  var art='<svg viewBox="0 0 200 200" style="width:36vh;height:36vh"><circle cx="100" cy="100" r="92" fill="#5a3318"/><circle cx="100" cy="100" r="92" fill="none" stroke="#3a2110" stroke-width="6"/><g class="csArtPath" fill="none" stroke="#EFE6D6" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="340" stroke-dashoffset="340"><path d="M100 60 Q90 95 100 130 Q110 95 100 60Z"/><path d="M100 130 Q78 118 74 86 Q90 96 100 130Z"/><path d="M100 130 Q122 118 126 86 Q110 96 100 130Z"/><path d="M100 130 V158"/></g></svg>';
+  st.innerHTML='<div class="stsc stTag">TULİPİ · COFFEE STORY</div>'
+    +'<div class="stsc stBean">'+bean+'</div>'
+    +'<div class="stsc stPour">'+pour+'</div>'
+    +'<div class="stsc stCrema"><div class="cremaC"></div></div>'
+    +'<div class="stsc stBub">'+bub+'</div>'
+    +'<div class="stsc stArt">'+art+'</div>'
+    +'<div class="stPriceWrap"><div class="stpn" id="storyName">'+sp.ad+'</div><div class="stpl"></div><div class="stpp" id="storyPrice">'+(sp.fiyat!=null?sp.fiyat+' TL':'')+'</div></div>'
+    +'<div class="stsc stVig"></div>';
+  return st;
+}
 function build(data){
+  window._tvData=data;
   var stage=document.getElementById("stage");
   Array.prototype.slice.call(stage.querySelectorAll(".pg")).forEach(function(p){p.remove()});
   var dots=document.getElementById("dots");dots.innerHTML="";
@@ -425,6 +481,8 @@ function build(data){
   steam.innerHTML='<svg width="6vw" viewBox="0 0 60 40"><g fill="none" stroke="#EFE6D6" stroke-width="1.4" stroke-linecap="round"><path d="M22 34 q-3 -7 1 -13" style="animation:steam 3s ease-in-out infinite"/><path d="M31 33 q3 -7 -1 -13" style="animation:steam 3s ease-in-out 1s infinite"/><path d="M40 34 q-3 -7 1 -13" style="animation:steam 3s ease-in-out 2s infinite"/></g></svg>';
   hero.appendChild(el("div","q","Crafted Every Day"));
   pages.push(hero);
+  // 🎬 COFFEE STORY — sinematik ara sahne (her döngüde günün ürünü fincanda doğar)
+  pages.push(buildStory(data));
   // İMZA SPOTLIGHT — panelden seçilen öne çıkan ürün (float + buhar + nabız fiyat)
   if(data.imza && data.imza.ad){
     var sp=el("div","pg");sp.dataset.t=8000;
@@ -482,6 +540,9 @@ setInterval(load,60000);
 var SIG="/api/tv-signals", liveArr=["TÜM FİYATLAR TL · TULİPİ COFFEE"], liveI=0;
 function loadSig(){fetch(SIG).then(function(r){return r.json();}).then(function(s){
   if(s&&s.seritler&&s.seritler.length){liveArr=s.seritler.concat(["TÜM FİYATLAR TL"]);}
+  // Günün ürünü (Evo en-çok) story sahnesindeki "fincanda doğan fiyat"ı besler
+  if(s&&s.en_cok){var pp=findPrice(s.en_cok);var nm=document.getElementById("storyName"),pe=document.getElementById("storyPrice");
+    if(nm&&pp!=null){nm.textContent=s.en_cok;pe.textContent=pp+" TL";}}
 }).catch(function(){});}
 function rotLive(){var e=document.getElementById("live");if(!e||liveArr.length<2)return;
   e.style.opacity=0;setTimeout(function(){liveI=(liveI+1)%liveArr.length;e.textContent=liveArr[liveI];e.style.opacity=1;},500);}
