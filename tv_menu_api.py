@@ -226,7 +226,7 @@ _TV_HTML = r"""<!DOCTYPE html>
 .err{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#7d7065;font-size:1.4vw}
 </style></head>
 <body><div id="stage"><div id="dots"></div>
-<div class="foot">TÜM FİYATLAR ₺ · TULİPİ COFFEE</div></div>
+<div class="foot">TÜM FİYATLAR TL · TULİPİ COFFEE</div></div>
 <script>
 var API="/api/tv-menu", CACHE="tulipi_tv_menu";
 function el(t,c,h){var e=document.createElement(t);if(c)e.className=c;if(h!=null)e.innerHTML=h;return e;}
