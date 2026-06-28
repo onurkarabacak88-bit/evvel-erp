@@ -429,6 +429,15 @@ _TV_HTML = r"""<!DOCTYPE html>
 .wsteam{position:absolute;width:7vw;height:11vw;border-radius:50%;background:radial-gradient(ellipse at 50% 68%,#ffffff,transparent 66%);filter:blur(2.2vw);opacity:0;mix-blend-mode:screen;will-change:transform,opacity,left,top}
 .wchoc{position:absolute;top:-0.4vw;width:2.2vw;height:3.6vw;border-radius:0 0 45% 45%;background:linear-gradient(#3a1d0e,#160b04);box-shadow:0 .3vw .6vw #00000088;opacity:0;transform:translateX(-50%);will-change:left,opacity}
 .wdrop{position:absolute;width:1vw;height:1.5vw;border-radius:50% 50% 50% 50%/38% 38% 62% 62%;background:radial-gradient(circle at 40% 28%,#6a3c1e,#160b04);box-shadow:0 0 .3vw #0006;opacity:0;will-change:transform,opacity,left,top}
+/* FAZ 6 — MİKRO-SİNEMATİK takeover (her ~2.5dk, 11sn, 3 ekran triptik) */
+#cine{position:absolute;inset:0;z-index:30;opacity:0;pointer-events:none;background:#000;transition:opacity 1.1s ease}
+#cine.on{opacity:1}
+#cine video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+#cine .cgrade{position:absolute;inset:0;background:linear-gradient(180deg,#000 0,transparent 22%,transparent 68%,#000d 100%)}
+#cine .ccap{position:absolute;left:0;right:0;bottom:13%;text-align:center}
+#cine .ct{font-family:'Fraunces',serif;font-size:4.2vw;font-weight:500;letter-spacing:.3vw;color:#EFE6D6;text-shadow:0 .4vw 2vw #000;opacity:0;transform:translateY(2.2vh);transition:.9s ease .35s}
+#cine .cs{font-size:1.4vw;letter-spacing:.55vw;color:#5fbf86;text-transform:uppercase;opacity:0;transform:translateY(2vh);transition:.9s ease .6s}
+#cine.on .ct,#cine.on .cs{opacity:1;transform:none}
 #season{position:absolute;inset:0;z-index:4;pointer-events:none;overflow:hidden}
 #season span{position:absolute;top:-10vh;animation:sfall linear infinite;will-change:transform}
 @keyframes sfall{0%{transform:translateY(-10vh) translateX(0) rotate(0)}100%{transform:translateY(112vh) translateX(5vw) rotate(220deg)}}
@@ -483,7 +492,8 @@ _TV_HTML = r"""<!DOCTYPE html>
 <div id="wall"></div>
 <div id="season"></div>
 <div id="dots"></div>
-<div class="foot"><span id="live">TÜM FİYATLAR TL · TULİPİ COFFEE</span></div></div>
+<div class="foot"><span id="live">TÜM FİYATLAR TL · TULİPİ COFFEE</span></div>
+<div id="cine"><video muted loop playsinline preload="auto"></video><div class="cgrade"></div><div class="ccap"><div class="ct"></div><div class="cs"></div></div></div></div>
 <script>
 var API="/api/tv-menu", CACHE="tulipi_tv_menu";
 function el(t,c,h){var e=document.createElement(t);if(c)e.className=c;if(h!=null)e.innerHTML=h;return e;}
@@ -684,5 +694,27 @@ loadSig();setInterval(loadSig,60000);setInterval(rotLive,7000);
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);
+})();
+// FAZ 6 — MİKRO-SİNEMATİK: her ~2.5dk menüyü duraklat, 11sn sinematik (wall-clock senkron, 3 ekran triptik)
+(function cine(){
+  var c=document.getElementById("cine");if(!c||window._cineInit)return;window._cineInit=1;
+  var ek=(new URLSearchParams(location.search)).get("ekran");
+  var CYCLE=150, DUR=11, names=["bean","latte","cup"];
+  var caps={bean:["TAZE KAVRULDU","Freshly Roasted"],latte:["LATTE ART","El Yapımı"],cup:["SICACIK","Freshly Brewed"]};
+  var vid=c.querySelector("video"),ct=c.querySelector(".ct"),cs=c.querySelector(".cs"),active=false,curName="";
+  function pick(occ){return ek?names[Math.max(0,parseInt(ek,10)-1)%3]:names[occ%3];}
+  if(ek){curName=pick(0);vid.src="/tv-menu/clip/"+curName;}
+  function tick(){
+    var now=Date.now()/1000,inWin=(now%CYCLE)<DUR,name=pick(Math.floor(now/CYCLE));
+    if(inWin&&!active){active=true;
+      if(curName!==name){curName=name;vid.src="/tv-menu/clip/"+name;}
+      ct.textContent=caps[name][0];cs.textContent=caps[name][1];
+      c.classList.add("on");vid.muted=true;try{vid.currentTime=0;}catch(e){}
+      var p=vid.play();if(p&&p.catch)p.catch(function(){});
+    }else if(!inWin&&active){active=false;c.classList.remove("on");
+      setTimeout(function(){try{vid.pause();}catch(e){}},1300);}
+    setTimeout(tick,500);
+  }
+  tick();
 })();
 </script></body></html>"""
