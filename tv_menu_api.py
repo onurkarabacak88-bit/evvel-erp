@@ -232,6 +232,48 @@ def tv_evo_fiyat_oneri(gun: int = 14, max_fatura: int = 80, ham: int = 0):
             "oneri_sayisi": len(oneriler), "oneriler": oneriler, "eslesmeyen": eslesmeyen[:40]}
 
 
+@router.post("/api/tv-menu/evo-fiyat-uygula")
+def tv_evo_fiyat_uygula(gun: int = 14, max_fatura: int = 80):
+    """Evo fiyatlarını menüye UYGULAR (eşleşen kolonları günceller). İnsan tetikler (panel butonu)."""
+    from datetime import timedelta
+    try:
+        from evo_sync import evo_urun_fiyatlari
+        bit = _date.today()
+        bas = bit - timedelta(days=max(1, gun))
+        evo = evo_urun_fiyatlari(bas, bit, max_fatura)
+    except Exception as e:
+        raise HTTPException(503, "Evo fiyat alınamadı: %s" % e)
+    if not evo:
+        raise HTTPException(503, "Evo'dan fiyat gelmedi (token/veri yok)")
+    norm = lambda s: re.sub(r"\s+", " ", str(s).strip().lower())
+    evo_map = {}
+    for ad, fy in evo.items():
+        b, k = _evo_parse(ad)
+        evo_map[(b, k)] = fy
+    degisti = []
+    with db() as (conn, cur):
+        _ensure_tablo(cur)
+        cur.execute("SELECT id,ad,f8,f14,fice FROM tv_menu WHERE aktif=TRUE")
+        rows = [dict(r) for r in (cur.fetchall() or [])]
+        for r in rows:
+            base = norm(r["ad"])
+            upd = {}
+            for kol in ("f8", "f14", "fice"):
+                ev = evo_map.get((base, kol))
+                if ev is None:
+                    continue
+                cur_v = r.get(kol)
+                if cur_v is None or abs(float(cur_v) - float(ev)) >= 0.5:
+                    upd[kol] = ev
+                    degisti.append({"ad": r["ad"], "kolon": kol, "eski": _fmt(cur_v), "yeni": ev})
+            if upd:
+                cols = list(upd.keys())
+                setsql = ",".join(c + "=%s" for c in cols)
+                cur.execute("UPDATE tv_menu SET " + setsql + ",guncelleme=NOW() WHERE id=%s",
+                            [upd[c] for c in cols] + [r["id"]])
+    return {"degisen_sayisi": len(degisti), "degisenler": degisti}
+
+
 @router.post("/api/tv-menu/urun")
 def tv_menu_ekle(u: UrunModel):
     with db() as (conn, cur):

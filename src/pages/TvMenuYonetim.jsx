@@ -10,6 +10,7 @@ export default function TvMenuYonetim() {
   const [mesgul, setMesgul] = useState('');
   const [yeni, setYeni] = useState({ kategori: '', ad: '', aciklama: '', f8: '', f14: '', fice: '' });
   const [ayar, setAyar] = useState(null);
+  const [evo, setEvo] = useState(null);
 
   const yukle = useCallback(() => {
     api('/tv-menu/liste')
@@ -25,6 +26,25 @@ export default function TvMenuYonetim() {
       await api('/tv-ayar', { method: 'POST', body: ayar });
       setBilgi('✓ Yaşayan menü ayarları kaydedildi');
     } catch (e) { setHata(e.message || 'Kaydedilemedi'); }
+    finally { setMesgul(''); }
+  };
+
+  const evoCek = async () => {
+    setMesgul('evo'); setHata(''); setBilgi(''); setEvo(null);
+    try {
+      const r = await api('/tv-menu/evo-fiyat-oneri?gun=21');
+      setEvo(r);
+      if (!r.oneri_sayisi) setBilgi('Evo bağlandı ama eşleşen ürün gelmedi (token/veri yok olabilir).');
+    } catch (e) { setHata(e.message || 'Evo fiyatı alınamadı (token gerekebilir)'); }
+    finally { setMesgul(''); }
+  };
+  const evoUygula = async () => {
+    setMesgul('evo2'); setHata(''); setBilgi('');
+    try {
+      const r = await api('/tv-menu/evo-fiyat-uygula?gun=21', { method: 'POST' });
+      setBilgi(`✓ Evo fiyatları uygulandı — ${r.degisen_sayisi} değişiklik`);
+      setEvo(null); yukle();
+    } catch (e) { setHata(e.message || 'Uygulanamadı'); }
     finally { setMesgul(''); }
   };
 
@@ -130,6 +150,39 @@ export default function TvMenuYonetim() {
             </div>
           );
         })}
+      </div>
+
+      {/* Evo'dan fiyat çek (öneri → uygula) */}
+      <div className="card" style={{ padding: 14, marginBottom: 16, borderLeft: '3px solid #d4a843' }}>
+        <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 2 }}>📥 Evo'dan Fiyat Çek</div>
+        <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 10 }}>
+          Evo satışlarından güncel liste fiyatını hesaplar (KDV dahil) ve menünle karşılaştırır. <b>Önce göster, sonra uygula</b> — otomatik ezmez.
+        </div>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button className="btn btn-sm btn-secondary" onClick={evoCek} disabled={mesgul === 'evo'}>
+            {mesgul === 'evo' ? 'Çekiliyor…' : '🔍 Evo Fiyatlarını Getir'}
+          </button>
+          {evo && evo.oneri_sayisi > 0 && (
+            <button className="btn btn-sm btn-primary" onClick={evoUygula} disabled={mesgul === 'evo2'}>
+              {mesgul === 'evo2' ? 'Uygulanıyor…' : `✅ Uygula (${evo.oneri_sayisi} eşleşme)`}
+            </button>
+          )}
+        </div>
+        {evo && evo.oneriler && evo.oneriler.length > 0 && (
+          <div style={{ marginTop: 10, fontSize: 13 }}>
+            {evo.oneriler.map((o, i) => (
+              <div key={i} style={{ display: 'flex', gap: 10, padding: '4px 0', borderTop: '1px solid var(--border)', alignItems: 'center' }}>
+                <span style={{ flex: 1 }}>{o.menu_ad} <span style={{ color: 'var(--text3)', fontSize: 11 }}>({o.kolon === 'fice' ? 'Ice' : o.kolon === 'f14' ? '14oz' : '8oz'})</span></span>
+                <span style={{ color: 'var(--text2)' }}>{o.mevcut == null ? '—' : o.mevcut}</span>
+                <span style={{ color: 'var(--text3)' }}>→</span>
+                <span style={{ fontWeight: 700, color: o.fark === 0 ? 'var(--green)' : '#d4a843' }}>{o.evo}{o.fark === 0 ? ' ✓' : (o.fark != null ? ` (${o.fark > 0 ? '+' : ''}${o.fark})` : '')}</span>
+              </div>
+            ))}
+            {evo.eslesmeyen && evo.eslesmeyen.length > 0 && (
+              <div style={{ marginTop: 8, fontSize: 11, color: 'var(--text3)' }}>Evo'da olup menüde olmayan: {evo.eslesmeyen.join(', ')}</div>
+            )}
+          </div>
+        )}
       </div>
 
       {bilgi && <div className="alert-box" style={{ background: 'rgba(34,197,94,0.12)', color: 'var(--green)', marginBottom: 12, padding: 10, borderRadius: 8, fontSize: 13 }}>{bilgi}</div>}
