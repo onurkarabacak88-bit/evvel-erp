@@ -421,6 +421,11 @@ _TV_HTML = r"""<!DOCTYPE html>
 .foot{position:absolute;bottom:2vh;left:0;right:0;text-align:center;z-index:6}
 .foot #live{font-size:1.25vw;letter-spacing:.15vw;color:#7fae93;transition:opacity .5s}
 .err{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#7d7065;font-size:1.4vw}
+/* FAZ 5 — TEK TUVAL: 3 ekran ortak sanal duvar (menü ÖNDE, dünya ARKADA) */
+#wall{position:absolute;inset:0;pointer-events:none;overflow:hidden}
+.wbean{position:absolute;width:1.5vw;height:2vw;border-radius:50%;background:radial-gradient(circle at 38% 30%,#7a4a26,#3a1f0e 68%,#160b04);box-shadow:0 .2vw .5vw #00000088;opacity:0;will-change:transform,opacity,left}
+.wbean::after{content:"";position:absolute;left:46%;top:14%;width:8%;height:72%;background:#160b04;border-radius:40%}
+.wlight{position:absolute;top:-25%;width:46vw;height:150%;border-radius:50%;background:radial-gradient(circle,#ffe0b033,transparent 62%);filter:blur(4vw);opacity:0;transform:translateX(-50%);will-change:left,opacity}
 #season{position:absolute;inset:0;z-index:4;pointer-events:none;overflow:hidden}
 #season span{position:absolute;top:-10vh;animation:sfall linear infinite;will-change:transform}
 @keyframes sfall{0%{transform:translateY(-10vh) translateX(0) rotate(0)}100%{transform:translateY(112vh) translateX(5vw) rotate(220deg)}}
@@ -472,6 +477,7 @@ _TV_HTML = r"""<!DOCTYPE html>
 </style></head>
 <body><div id="stage">
 <div class="bg" id="bg"><div class="drift"></div></div>
+<div id="wall"></div>
 <div id="season"></div>
 <div id="dots"></div>
 <div class="foot"><span id="live">TÜM FİYATLAR TL · TULİPİ COFFEE</span></div></div>
@@ -620,4 +626,34 @@ function applySeason(ad){
 function rotLive(){var e=document.getElementById("live");if(!e||liveArr.length<2)return;
   e.style.opacity=0;setTimeout(function(){liveI=(liveI+1)%liveArr.length;e.textContent=liveArr[liveI];e.style.opacity=1;},500);}
 loadSig();setInterval(loadSig,60000);setInterval(rotLive,7000);
+// FAZ 5 — TEK TUVAL motoru: 3 ekran ortak sanal duvar (wall-clock + deterministik → bezel kaybolur)
+(function wall(){
+  var box=document.getElementById("wall");if(!box||window._wallInit)return;window._wallInit=1;
+  var ek=(new URLSearchParams(location.search)).get("ekran");
+  var N=ek?3:1, SI=ek?Math.max(0,parseInt(ek,10)-1):0, SPAN=N+1;
+  function rnd(s){s=Math.sin(s*127.1+311.7)*43758.5453;return s-Math.floor(s);}
+  var beans=[];
+  for(var i=0;i<N*2;i++){
+    var el=document.createElement("div");el.className="wbean";box.appendChild(el);
+    var depth=rnd(i*2+1);
+    beans.push({el:el,y:6+rnd(i*2+3)*80,depth:depth,v:0.02+rnd(i*2+5)*0.03,ph:rnd(i*2+7)*SPAN,
+      sz:(N>1?0.8:1)+(1-depth)*1.4,rs:(rnd(i*2+9)-0.5)*30});
+  }
+  var light=document.createElement("div");light.className="wlight";box.appendChild(light);
+  function frame(){
+    var t=Date.now()/1000;
+    for(var i=0;i<beans.length;i++){var b=beans[i];
+      var lx=((b.ph+t*b.v)%SPAN)-SI;
+      if(lx<-0.25||lx>1.25){b.el.style.opacity=0;continue;}
+      b.el.style.left=(lx*100)+"%";b.el.style.top=b.y+"%";
+      b.el.style.opacity=(0.16+(1-b.depth)*0.34).toFixed(2);
+      b.el.style.filter="blur("+(b.depth*1.1).toFixed(2)+"vw)";
+      b.el.style.transform="translate(-50%,-50%) scale("+b.sz.toFixed(2)+") rotate("+((t*b.rs)%360).toFixed(0)+"deg)";
+    }
+    var llx=((t*0.025)%SPAN)-SI;
+    light.style.left=(llx*100)+"%";light.style.opacity=(llx>-0.4&&llx<1.4)?0.5:0;
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
 </script></body></html>"""
