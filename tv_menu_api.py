@@ -426,6 +426,9 @@ _TV_HTML = r"""<!DOCTYPE html>
 .wbean{position:absolute;width:1.5vw;height:2vw;border-radius:50%;background:radial-gradient(circle at 38% 30%,#7a4a26,#3a1f0e 68%,#160b04);box-shadow:0 .2vw .5vw #00000088;opacity:0;will-change:transform,opacity,left}
 .wbean::after{content:"";position:absolute;left:46%;top:14%;width:8%;height:72%;background:#160b04;border-radius:40%}
 .wlight{position:absolute;top:-25%;width:46vw;height:150%;border-radius:50%;background:radial-gradient(circle,#ffe0b033,transparent 62%);filter:blur(4vw);opacity:0;transform:translateX(-50%);will-change:left,opacity}
+.wsteam{position:absolute;width:7vw;height:11vw;border-radius:50%;background:radial-gradient(ellipse at 50% 68%,#ffffff,transparent 66%);filter:blur(2.2vw);opacity:0;mix-blend-mode:screen;will-change:transform,opacity,left,top}
+.wchoc{position:absolute;top:-0.4vw;width:2.2vw;height:3.6vw;border-radius:0 0 45% 45%;background:linear-gradient(#3a1d0e,#160b04);box-shadow:0 .3vw .6vw #00000088;opacity:0;transform:translateX(-50%);will-change:left,opacity}
+.wdrop{position:absolute;width:1vw;height:1.5vw;border-radius:50% 50% 50% 50%/38% 38% 62% 62%;background:radial-gradient(circle at 40% 28%,#6a3c1e,#160b04);box-shadow:0 0 .3vw #0006;opacity:0;will-change:transform,opacity,left,top}
 #season{position:absolute;inset:0;z-index:4;pointer-events:none;overflow:hidden}
 #season span{position:absolute;top:-10vh;animation:sfall linear infinite;will-change:transform}
 @keyframes sfall{0%{transform:translateY(-10vh) translateX(0) rotate(0)}100%{transform:translateY(112vh) translateX(5vw) rotate(220deg)}}
@@ -640,6 +643,15 @@ loadSig();setInterval(loadSig,60000);setInterval(rotLive,7000);
       sz:(N>1?0.8:1)+(1-depth)*1.4,rs:(rnd(i*2+9)-0.5)*30});
   }
   var light=document.createElement("div");light.className="wlight";box.appendChild(light);
+  // BUHAR — ekranlar arası süzülen + yükselen kolonlar (bezeli geçer)
+  var steam=[];
+  for(var j=0;j<N+1;j++){
+    var se=document.createElement("div");se.className="wsteam";box.appendChild(se);
+    steam.push({el:se,vh:0.008+rnd(j*3+2)*0.012,ph:rnd(j*3+4)*SPAN,vr:0.05+rnd(j*3+6)*0.05,cph:rnd(j*3+8),sw:0.8+rnd(j*3+9)*0.9});
+  }
+  // ÇİKOLATA — duvar boyunca yavaş gezen kaynak + düşen damla (ekran 3→2→1 sürer)
+  var choc=document.createElement("div");choc.className="wchoc";box.appendChild(choc);
+  var drop=document.createElement("div");drop.className="wdrop";box.appendChild(drop);
   function frame(){
     var t=Date.now()/1000;
     for(var i=0;i<beans.length;i++){var b=beans[i];
@@ -652,6 +664,23 @@ loadSig();setInterval(loadSig,60000);setInterval(rotLive,7000);
     }
     var llx=((t*0.025)%SPAN)-SI;
     light.style.left=(llx*100)+"%";light.style.opacity=(llx>-0.4&&llx<1.4)?0.5:0;
+    // buhar
+    for(var k=0;k<steam.length;k++){var s=steam[k];
+      var slx=((s.ph+t*s.vh)%SPAN)-SI;
+      if(slx<-0.3||slx>1.3){s.el.style.opacity=0;continue;}
+      var cyc=((t*s.vr+s.cph)%1);
+      s.el.style.left=(slx*100)+"%";s.el.style.top=(78-cyc*64)+"%";
+      s.el.style.opacity=(Math.sin(cyc*3.14159)*0.20).toFixed(3);
+      s.el.style.transform="translate(-50%,-50%) scale("+(s.sw*(0.6+cyc*0.9)).toFixed(2)+")";
+    }
+    // çikolata gezen kaynak + düşen damla
+    var clx=((t*0.014)%SPAN)-SI;
+    if(clx>-0.2&&clx<1.2){choc.style.left=(clx*100)+"%";choc.style.opacity=0.85;
+      var dcyc=((t*0.35)%1);
+      drop.style.left=(clx*100)+"%";drop.style.top=(3.5+dcyc*96)+"%";
+      drop.style.opacity=(dcyc<0.92?0.85*(dcyc<0.08?dcyc*12.5:1):0).toFixed(2);
+      drop.style.transform="translate(-50%,0) scale("+(1-dcyc*0.3).toFixed(2)+")";
+    }else{choc.style.opacity=0;drop.style.opacity=0;}
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);
