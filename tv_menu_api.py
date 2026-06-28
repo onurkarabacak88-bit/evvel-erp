@@ -214,6 +214,17 @@ def _saat_modu():
     return {"mod": "gece", "etiket": "İYİ GECELER", "oneri": ""}
 
 
+def _mevsim():
+    m = datetime.now().month
+    if m in (12, 1, 2):
+        return {"ad": "kis", "etiket": "❄️ Kış", "oneri": "Sıcak Çikolata · Tarçınlı Latte"}
+    if m in (3, 4, 5):
+        return {"ad": "ilkbahar", "etiket": "🌸 İlkbahar", "oneri": ""}
+    if m in (6, 7, 8):
+        return {"ad": "yaz", "etiket": "☀️ Yaz", "oneri": "Cold Brew · Iced Latte"}
+    return {"ad": "sonbahar", "etiket": "🍂 Sonbahar", "oneri": ""}
+
+
 def _en_cok(ayar):
     """Manuel öne çıkan öncelikli; oto açıksa Evo'dan (30 dk cache, hata-yutar)."""
     if str(ayar.get("one_cikan_oto") or "") == "1":
@@ -264,7 +275,10 @@ def tv_signals():
         seritler.append("⏰ " + hh["mesaj"] + " · " + str(hh["bas"]) + ":00–" + str(hh["bit"]) + ":00")
     if sm["oneri"]:
         seritler.append(sm["etiket"] + " · " + sm["oneri"])
-    return {"saat_modu": sm, "en_cok": en_cok, "yeni": yeni, "happy_hour": hh, "seritler": seritler}
+    mv = _mevsim()
+    if mv["oneri"]:
+        seritler.append(mv["etiket"] + " · " + mv["oneri"])
+    return {"saat_modu": sm, "mevsim": mv, "en_cok": en_cok, "yeni": yeni, "happy_hour": hh, "seritler": seritler}
 
 
 class AyarModel(BaseModel):
@@ -485,7 +499,7 @@ function findPrice(name){var r=null;if(!window._tvData||!name)return null;
   return r;}
 function buildStory(data){
   var sp=storyProduct(data);window._story=sp;
-  var st=el("div","pg story");st.dataset.t=18000;
+  var st=el("div","pg story");st.dataset.t=18000;st.dataset.roles="2";
   function vid(cls,src){return '<video class="vid '+cls+'" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/'+src+'"></video>';}
   st.innerHTML=vid("v1","bean")+vid("v2","latte")+vid("v3","cup")
     +'<div class="grade"></div><div class="grain"></div>'
@@ -502,7 +516,7 @@ function build(data){
   var dots=document.getElementById("dots");dots.innerHTML="";
   var pages=[];
   // Hero — dönen halka + shimmer + buhar
-  var hero=el("div","pg");hero.dataset.t=6000;
+  var hero=el("div","pg");hero.dataset.t=6000;hero.dataset.roles="1,2,3";
   hero.appendChild(el("div","ring"));
   hero.appendChild(el("div","halo"));
   var img=el("img","logo");img.alt="TULİPİ";img.onload=function(){img.style.opacity=1;};hero.appendChild(img);img.src="/tv-menu/logo";if(img.complete)img.style.opacity=1;
@@ -514,7 +528,7 @@ function build(data){
   pages.push(buildStory(data));
   // İMZA SPOTLIGHT — panelden seçilen öne çıkan ürün (float + buhar + nabız fiyat)
   if(data.imza && data.imza.ad){
-    var sp=el("div","pg");sp.dataset.t=8000;
+    var sp=el("div","pg");sp.dataset.t=8000;sp.dataset.roles="2,3";
     sp.appendChild(el("div","halo"));
     var cup='<svg width="14vw" viewBox="0 0 200 200" style="width:14vw;height:14vw">'
       +'<g fill="none" stroke="#B89B80" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">'
@@ -536,7 +550,7 @@ function build(data){
   // Kategoriler
   (data.kategoriler||[]).forEach(function(k){
     var three=k.urunler.some(function(u){return u.f14!=null||u.fice!=null;});
-    var pg=el("div","pg");pg.dataset.t=12000;
+    var pg=el("div","pg");pg.dataset.t=12000;pg.dataset.roles="1,3";
     pg.appendChild(el("div","gT",k.kategori));
     if(k.alt)pg.appendChild(el("div","gH",k.alt));
     var m=el("div","menu"+(three?"":" one"));
@@ -546,6 +560,9 @@ function build(data){
     if(/(iced|cold|so.uk)/i.test(k.kategori)){for(var i=0;i<10;i++){var s=el("span","ice");s.style.left=(8+Math.random()*84)+"%";s.style.top=(22+Math.random()*54)+"%";s.style.animationDelay=(Math.random()*4.5)+"s";pg.appendChild(s);}}
     pages.push(pg);
   });
+  // FAZ 4 — 3 EKRAN MODU: ?ekran=1 MENÜ · ?ekran=2 DENEYİM(video) · ?ekran=3 MARKA+CANLI
+  var ekran=(new URLSearchParams(location.search)).get("ekran");
+  if(ekran){var f=pages.filter(function(p){return (p.dataset.roles||"").split(",").indexOf(ekran)>=0;});if(f.length)pages=f;}
   pages.forEach(function(p){stage.insertBefore(p,document.querySelector(".foot"));dots.appendChild(el("i"));});
   var di=dots.children,idx=0;
   function show(i){pages.forEach(function(p,k){p.classList.toggle("on",k===i);di[k].classList.toggle("on",k===i);});var t=parseInt(pages[i].dataset.t,10)||9000;clearTimeout(window._tvt);window._tvt=setTimeout(function(){idx=(idx+1)%pages.length;show(idx);},t);}

@@ -103,6 +103,35 @@ export default function TvMenuYonetim() {
         </div>
       </div>
 
+      {/* 3 EKRAN MODU (Faz 4) */}
+      <div className="card" style={{ padding: 14, marginBottom: 16, borderLeft: '3px solid var(--accent)' }}>
+        <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 2 }}>🖥️ 3 Ekran Modu (opsiyonel)</div>
+        <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 10 }}>
+          Tek TV varsa üstteki linki kullan (her şey döner). 3 TV yan yana ise her birine farklı rol ver:
+        </div>
+        {[
+          { n: '1', ad: 'MENÜ', desc: 'Fiyat listesi — karar', emoji: '📋' },
+          { n: '2', ad: 'DENEYİM', desc: 'Coffee Story videosu — duygu', emoji: '🎬' },
+          { n: '3', ad: 'MARKA + CANLI', desc: 'Logo + imza + en çok satan', emoji: '✨' },
+        ].map((e) => {
+          const url = `${TV_URL}?ekran=${e.n}`;
+          return (
+            <div key={e.n} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 0', borderTop: '1px solid var(--border)', flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 18 }}>{e.emoji}</span>
+              <div style={{ minWidth: 150 }}>
+                <div style={{ fontSize: 13, fontWeight: 700 }}>Ekran {e.n} · {e.ad}</div>
+                <div style={{ fontSize: 11, color: 'var(--text2)' }}>{e.desc}</div>
+              </div>
+              <code style={{ fontSize: 12, color: 'var(--accent)', wordBreak: 'break-all', flex: 1 }}>{url}</code>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button className="btn btn-sm btn-secondary" onClick={() => { navigator.clipboard?.writeText(url); setBilgi(`Ekran ${e.n} linki kopyalandı`); }}>Kopyala</button>
+                <a className="btn btn-sm btn-primary" href={url} target="_blank" rel="noreferrer">Aç</a>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
       {bilgi && <div className="alert-box" style={{ background: 'rgba(34,197,94,0.12)', color: 'var(--green)', marginBottom: 12, padding: 10, borderRadius: 8, fontSize: 13 }}>{bilgi}</div>}
       {hata && <div className="alert-box red" style={{ marginBottom: 12 }}>{hata}</div>}
 
