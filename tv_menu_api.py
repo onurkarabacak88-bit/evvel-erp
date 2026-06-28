@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import time
 import uuid
 from datetime import datetime, date as _date
@@ -175,6 +176,57 @@ def tv_menu_liste():
         _ensure_tablo(cur)
         cur.execute("SELECT * FROM tv_menu ORDER BY kategori, sira, ad")
         return [dict(r) for r in (cur.fetchall() or [])]
+
+
+def _evo_parse(ad: str):
+    """Evo ürün adı → (taban ad, kolon). 'X Ice'→fice, 'X 14oz'→f14, diğer→f8."""
+    n = re.sub(r"\s+", " ", str(ad).strip().lower())
+    if re.search(r"\bice\b", n):
+        return re.sub(r"\bice\b", "", n).strip(), "fice"
+    if re.search(r"14 ?oz", n):
+        return re.sub(r"14 ?oz", "", n).strip(), "f14"
+    if re.search(r"8 ?oz", n):
+        return re.sub(r"8 ?oz", "", n).strip(), "f8"
+    return n, "f8"
+
+
+@router.get("/api/tv-menu/evo-fiyat-oneri")
+def tv_evo_fiyat_oneri(gun: int = 14, max_fatura: int = 80):
+    """Evo'dan ürün fiyatlarını çekip TV menüsüyle eşleştirir — SALT-OKUR ÖNERİ (ezmez).
+    Eşleştirme: 'X Ice'→fice, 'X 14oz'→f14, diğer→f8. Uygulamak ayrı uçla + onayla."""
+    from datetime import timedelta
+    try:
+        from evo_sync import evo_urun_fiyatlari
+        bit = _date.today()
+        bas = bit - timedelta(days=max(1, gun))
+        evo = evo_urun_fiyatlari(bas, bit, max_fatura)
+    except Exception as e:
+        raise HTTPException(503, "Evo fiyat alınamadı: %s" % e)
+    with db() as (conn, cur):
+        _ensure_tablo(cur)
+        cur.execute("SELECT id,kategori,ad,f8,f14,fice FROM tv_menu WHERE aktif=TRUE ORDER BY kategori,sira,ad")
+        rows = [dict(r) for r in (cur.fetchall() or [])]
+    norm = lambda s: re.sub(r"\s+", " ", str(s).strip().lower())
+    evo_map = {}
+    for ad, fy in evo.items():
+        b, k = _evo_parse(ad)
+        evo_map[(b, k)] = (ad, fy)
+    oneriler = []
+    for r in rows:
+        base = norm(r["ad"])
+        for kol in ("f8", "f14", "fice"):
+            hit = evo_map.get((base, kol))
+            if hit:
+                mevcut = r.get(kol)
+                oneriler.append({
+                    "id": r["id"], "menu_ad": r["ad"], "kolon": kol,
+                    "evo_ad": hit[0], "mevcut": _fmt(mevcut), "evo": hit[1],
+                    "fark": (None if mevcut is None else round(float(hit[1]) - float(mevcut), 2)),
+                })
+    eslesen = {norm(r["ad"]) for r in rows}
+    eslesmeyen = sorted({_evo_parse(a)[0] for a in evo if _evo_parse(a)[0] not in eslesen})
+    return {"tarih_araligi": [str(bas), str(bit)], "evo_urun_sayisi": len(evo),
+            "oneri_sayisi": len(oneriler), "oneriler": oneriler, "eslesmeyen": eslesmeyen[:40]}
 
 
 @router.post("/api/tv-menu/urun")

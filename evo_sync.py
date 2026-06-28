@@ -789,6 +789,42 @@ def evo_urun_bazli_satis(bastar: date, bittar: date) -> Dict[str, float]:
     return urun_toplam
 
 
+def evo_urun_fiyatlari(bastar: date, bittar: date, max_fatura: int = 80) -> Dict[str, float]:
+    """Ürün adı → güncel birim SATIŞ fiyatı (satış satırlarından; en sık görülen fiyat,
+    ikram/iskonto satırları <1₺ elenir). TV menüsü için Evo'dan fiyat çekme kaynağı."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from collections import Counter
+    ham = _hs_rapor_ham_veri(bastar, bittar)
+    faturalar = ham.get("S", []) or []
+    fatura_ids = [str(f.get("a_id") or "") for f in faturalar if f.get("a_id")][:max_fatura]
+
+    def _cek(fid: str):
+        out = []
+        try:
+            for s in _satirlari_coz(evo_fatura_detay(fid)):
+                ad = str(
+                    s.get("a_stok_adi") or s.get("stok_adi") or
+                    s.get("a_adi") or s.get("urun_adi") or ""
+                ).strip()
+                try:
+                    bf = float(s.get("a_brm_fiyat") or s.get("birim_fiyat") or s.get("a_fiyat") or 0)
+                except (ValueError, TypeError):
+                    bf = 0.0
+                if ad and bf >= 1.0:
+                    out.append((ad, round(bf, 2)))
+        except Exception:
+            pass
+        return out
+
+    say: Dict[str, Counter] = {}
+    if fatura_ids:
+        with ThreadPoolExecutor(max_workers=8) as exe:
+            for fut in as_completed([exe.submit(_cek, fid) for fid in fatura_ids]):
+                for ad, bf in fut.result():
+                    say.setdefault(ad, Counter())[bf] += 1
+    return {ad: c.most_common(1)[0][0] for ad, c in say.items() if c}
+
+
 # ─────────────────────────────────────────────
 # 3. FİZİKSEL SAYIM vs POS KARŞILAŞTIRMA
 # ─────────────────────────────────────────────
