@@ -790,7 +790,7 @@ function loadSig(){fetch(SIG).then(function(r){return r.json();}).then(function(
     if(pp!=null){window._encok={ad:s.en_cok,fiyat:pp};
       var nm=document.getElementById("storyName"),pe=document.getElementById("storyPrice");
       if(nm){nm.textContent=s.en_cok;pe.textContent=pp+" TL";}}}
-  if(s&&s.mevsim&&s.mevsim.ad)applySeason(s.mevsim.ad);   // FAZ 3 — mevsim görsel katmanı
+  // FAZ 3 mevsim DÜŞEN YILDIZ efekti kaldırıldı (kullanıcı: gereksiz). Mevsim bilgisi alt şeritte kalır.
   if(s&&s.saat_modu)applyTimeOfDay(s.saat_modu.mod);       // FAZ 8 — zaman atmosferi
   updateFav(s&&s.en_cok);                                  // FAZ 8 — Today's Favorite
 }).catch(function(){});}
