@@ -332,6 +332,17 @@ def tv_menu_logo():
     raise HTTPException(404, "logo yok")
 
 
+@router.get("/tv-menu/clip/{name}")
+def tv_menu_clip(name: str):
+    """Coffee Story gerçek video klipleri (Mixkit Free, ticari kullanım serbest)."""
+    if name not in ("bean", "latte", "cup"):
+        raise HTTPException(404, "klip yok")
+    p = os.path.join("src", "assets", "tv", name + ".mp4")
+    if os.path.exists(p):
+        return FileResponse(p, media_type="video/mp4")
+    raise HTTPException(404, "klip dosyası yok")
+
+
 @router.get("/tv-menu", response_class=HTMLResponse)
 def tv_menu_html():
     """TAM EKRAN TV PANOSU — /api/tv-menu'den canlı çeker, otomatik döner,
@@ -398,6 +409,11 @@ _TV_HTML = r"""<!DOCTYPE html>
 .pg.story{background:#050302}
 .pg.story.on{animation:none}
 .story .stsc{position:absolute;inset:0;display:flex;align-items:center;justify-content:center}
+/* GERÇEK VİDEO sahneleri (crossfade): çekirdek → latte art → buharlı fincan */
+.story .vid{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;opacity:0}
+.story .v1{animation:csVid1 18s ease-in-out infinite}
+.story .v2{animation:csVid2 18s ease-in-out infinite}
+.story .v3{animation:csVid3 18s ease-in-out infinite}
 /* sinematik katmanlar: bokeh derinlik + renklendirme/letterbox + film grain */
 .story .bok{position:absolute;border-radius:50%;filter:blur(3.4vw);pointer-events:none;mix-blend-mode:screen;opacity:.5}
 .story .grade{position:absolute;inset:0;z-index:6;pointer-events:none;background:linear-gradient(180deg,#000 0,transparent 13%,transparent 86%,#000 100%),radial-gradient(125% 88% at 50% 44%,transparent 35%,#000d 100%)}
@@ -420,6 +436,9 @@ _TV_HTML = r"""<!DOCTYPE html>
 .story .stpp{font-size:4.6vw;font-weight:600;color:#5fbf86;text-shadow:0 0 3.5vw #3E8E5A99,0 0 1.2vw #3E8E5Acc}
 /* sahne ritmi: belir → BEKLE (net, Ken Burns yavaş zoom) → kaybol. blur YOK. */
 @keyframes csGrain{0%{background-position:0 0}33%{background-position:-80px 50px}66%{background-position:70px -60px}100%{background-position:-50px -40px}}
+@keyframes csVid1{0%{opacity:0}5%{opacity:1}30%{opacity:1}38%{opacity:0}100%{opacity:0}}
+@keyframes csVid2{0%,34%{opacity:0}42%{opacity:1}62%{opacity:1}70%{opacity:0}100%{opacity:0}}
+@keyframes csVid3{0%,66%{opacity:0}74%{opacity:1}100%{opacity:1}}
 @keyframes csBok1{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(4vw,3vh) scale(1.15)}}
 @keyframes csBok2{0%,100%{transform:translate(0,0) scale(1.1)}50%{transform:translate(-3vw,-2vh) scale(1)}}
 @keyframes csWisp{0%{opacity:0;transform:translateY(2vh) scaleY(.7)}40%{opacity:.5}100%{opacity:0;transform:translateY(-5vh) scaleY(1.3)}}
@@ -464,23 +483,14 @@ function findPrice(name){var r=null;if(!window._tvData||!name)return null;
   return r;}
 function buildStory(data){
   var sp=storyProduct(data);window._story=sp;
-  var st=el("div","pg story");st.dataset.t=22000;
-  var bean='<svg viewBox="0 0 220 220" style="width:26vh;height:26vh"><ellipse cx="110" cy="186" rx="52" ry="10" fill="#000" opacity=".55"/><defs><radialGradient id="csbn" cx="40%" cy="30%" r="78%"><stop offset="0" stop-color="#9a6038"/><stop offset=".5" stop-color="#522e16"/><stop offset="1" stop-color="#23120a"/></radialGradient></defs><g transform="rotate(18 110 105)"><ellipse cx="110" cy="105" rx="46" ry="60" fill="url(#csbn)"/><path d="M110 50 Q96 105 110 160" fill="none" stroke="#160b04" stroke-width="7" stroke-linecap="round"/><path d="M110 64 Q120 85 110 105 Q100 125 110 146" fill="none" stroke="#6a3c1e" stroke-width="2.5" opacity=".55"/><ellipse cx="92" cy="78" rx="12" ry="24" fill="#fff" opacity=".13"/></g></svg>';
-  var pour='<svg viewBox="0 0 220 220" style="width:36vh;height:36vh"><defs><linearGradient id="csesp" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8a5630"/><stop offset="1" stop-color="#3a2110"/></linearGradient></defs><rect x="84" y="22" width="52" height="16" rx="3" fill="#26262b"/><rect x="92" y="38" width="12" height="9" rx="2" fill="#3a3a40"/><rect x="116" y="38" width="12" height="9" rx="2" fill="#3a3a40"/><rect x="96" y="47" width="4.5" height="92" rx="2" fill="url(#csesp)"/><rect x="119" y="47" width="4.5" height="92" rx="2" fill="url(#csesp)"/><ellipse cx="110" cy="162" rx="46" ry="13" fill="#4a2a14"/><ellipse cx="110" cy="158" rx="40" ry="9" fill="#9a5e34" opacity=".75"/><ellipse cx="110" cy="156" rx="26" ry="5" fill="#c08850" opacity=".5"/></svg>';
-  var bub='<svg viewBox="0 0 300 200" style="width:46vh"><g fill="#dcab78" opacity=".5"><circle cx="90" cy="80" r="7"/><circle cx="170" cy="112" r="11"/><circle cx="212" cy="70" r="6"/><circle cx="130" cy="132" r="8"/><circle cx="62" cy="120" r="5"/><circle cx="232" cy="120" r="7"/></g></svg>';
-  var art='<svg viewBox="0 0 200 230" style="width:48vh;height:55vh" class="milk"><g fill="#f5eddc"><path d="M100 54 Q86 62 89 80 L111 80 Q114 62 100 54 Z"/><ellipse cx="100" cy="86" rx="23" ry="13"/><ellipse cx="100" cy="108" rx="31" ry="14"/><ellipse cx="100" cy="132" rx="39" ry="16"/><path d="M100 142 Q96 182 100 216 Q104 182 100 142 Z"/></g><g fill="none" stroke="#6a3c1e" stroke-width="3" opacity=".42" stroke-linecap="round"><path d="M80 92 Q100 100 120 92"/><path d="M72 116 Q100 124 128 116"/><path d="M64 140 Q100 150 136 140"/></g></svg>';
-  var steam='<svg viewBox="0 0 140 170" style="width:22vh;height:36vh"><g fill="none" stroke="#fff" stroke-width="8" stroke-linecap="round"><path d="M52 158 q-14 -32 4 -58 q12 -18 0 -46" opacity="0" style="animation:csWisp 5s ease-in-out infinite"/><path d="M88 158 q14 -32 -4 -58 q-10 -18 2 -46" opacity="0" style="animation:csWisp 5s ease-in-out 1.6s infinite"/><path d="M70 160 q-5 -36 3 -68" opacity="0" style="animation:csWisp 5s ease-in-out 3.1s infinite"/></g></svg>';
-  st.innerHTML='<div class="bok" style="width:34vw;height:34vw;background:#7a4a26;top:2%;left:5%;animation:csBok1 28s ease-in-out infinite"></div>'
-    +'<div class="bok" style="width:26vw;height:26vw;background:#2f6342;bottom:0;right:4%;animation:csBok2 34s ease-in-out infinite"></div>'
-    +'<div class="stsc stBean">'+bean+'</div>'
-    +'<div class="stsc stPour">'+pour+'</div>'
-    +'<div class="stsc stCrema"><div class="cremaC"><div class="cremaTex"></div><div class="cremaHi"></div></div></div>'
-    +'<div class="stsc stBub">'+bub+'</div>'
-    +'<div class="stsc stArt"><div class="artBase">'+art+'</div></div>'
-    +'<div class="stsc steamW">'+steam+'</div>'
-    +'<div class="stPriceWrap"><div class="stpn" id="storyName">'+sp.ad+'</div><div class="stpl"></div><div class="stpp" id="storyPrice">'+(sp.fiyat!=null?sp.fiyat+' TL':'')+'</div></div>'
+  var st=el("div","pg story");st.dataset.t=18000;
+  function vid(cls,src){return '<video class="vid '+cls+'" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/'+src+'"></video>';}
+  st.innerHTML=vid("v1","bean")+vid("v2","latte")+vid("v3","cup")
     +'<div class="grade"></div><div class="grain"></div>'
+    +'<div class="stPriceWrap"><div class="stpn" id="storyName">'+sp.ad+'</div><div class="stpl"></div><div class="stpp" id="storyPrice">'+(sp.fiyat!=null?sp.fiyat+' TL':'')+'</div></div>'
     +'<div class="stsc stTag">TULİPİ · COFFEE STORY</div>';
+  // autoplay güvence (muted -> tarayıcı izin verir)
+  setTimeout(function(){Array.prototype.forEach.call(st.querySelectorAll("video"),function(v){v.muted=true;var p=v.play();if(p&&p.catch)p.catch(function(){});});},60);
   return st;
 }
 function build(data){
