@@ -32,7 +32,7 @@ export default function TvMenuYonetim() {
   const evoCek = async () => {
     setMesgul('evo'); setHata(''); setBilgi(''); setEvo(null);
     try {
-      const r = await api('/tv-menu/evo-fiyat-oneri?gun=21');
+      const r = await api('/tv-menu/evo-fiyat-oneri?gun=30');
       setEvo(r);
       if (!r.oneri_sayisi) setBilgi('Evo bağlandı ama eşleşen ürün gelmedi (token/veri yok olabilir).');
     } catch (e) { setHata(e.message || 'Evo fiyatı alınamadı (token gerekebilir)'); }
@@ -41,7 +41,7 @@ export default function TvMenuYonetim() {
   const evoUygula = async () => {
     setMesgul('evo2'); setHata(''); setBilgi('');
     try {
-      const r = await api('/tv-menu/evo-fiyat-uygula?gun=21', { method: 'POST' });
+      const r = await api('/tv-menu/evo-fiyat-uygula?gun=30', { method: 'POST' });
       setBilgi(`✓ Evo fiyatları uygulandı — ${r.degisen_sayisi} değişiklik`);
       setEvo(null); yukle();
     } catch (e) { setHata(e.message || 'Uygulanamadı'); }

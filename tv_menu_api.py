@@ -191,9 +191,9 @@ def _evo_parse(ad: str):
 
 
 @router.get("/api/tv-menu/evo-fiyat-oneri")
-def tv_evo_fiyat_oneri(gun: int = 14, max_fatura: int = 80, ham: int = 0):
+def tv_evo_fiyat_oneri(gun: int = 30, max_fatura: int = 80, ham: int = 0):
     """Evo'dan ürün fiyatlarını çekip TV menüsüyle eşleştirir — SALT-OKUR ÖNERİ (ezmez).
-    Eşleştirme: 'X Ice'→fice, 'X 14oz'→f14, diğer→f8. Uygulamak ayrı uçla + onayla."""
+    Aylık pencere (gün=30) yavaş satan pastaları da yakalar. 'X Ice'→fice, 'X 14oz'→f14, diğer→f8."""
     from datetime import timedelta
     try:
         from evo_sync import evo_urun_fiyatlari
@@ -201,7 +201,7 @@ def tv_evo_fiyat_oneri(gun: int = 14, max_fatura: int = 80, ham: int = 0):
         bas = bit - timedelta(days=max(1, gun))
         if ham:
             from evo_sync import _hs_cok_satilan
-            return {"ham_ornek": _hs_cok_satilan(bas, bit)[:3]}
+            return {"ham_ornek": _hs_cok_satilan(bas, bit)}
         evo = evo_urun_fiyatlari(bas, bit, max_fatura)
     except Exception as e:
         raise HTTPException(503, "Evo fiyat alınamadı: %s" % e)
@@ -229,11 +229,12 @@ def tv_evo_fiyat_oneri(gun: int = 14, max_fatura: int = 80, ham: int = 0):
     eslesen = {norm(r["ad"]) for r in rows}
     eslesmeyen = sorted({_evo_parse(a)[0] for a in evo if _evo_parse(a)[0] not in eslesen})
     return {"tarih_araligi": [str(bas), str(bit)], "evo_urun_sayisi": len(evo),
-            "oneri_sayisi": len(oneriler), "oneriler": oneriler, "eslesmeyen": eslesmeyen[:40]}
+            "oneri_sayisi": len(oneriler), "oneriler": oneriler, "eslesmeyen": eslesmeyen[:40],
+            "evo_fiyatlar": dict(sorted(evo.items()))}
 
 
 @router.post("/api/tv-menu/evo-fiyat-uygula")
-def tv_evo_fiyat_uygula(gun: int = 14, max_fatura: int = 80):
+def tv_evo_fiyat_uygula(gun: int = 30, max_fatura: int = 80):
     """Evo fiyatlarını menüye UYGULAR (eşleşen kolonları günceller). İnsan tetikler (panel butonu)."""
     from datetime import timedelta
     try:
