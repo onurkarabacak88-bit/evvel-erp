@@ -789,40 +789,61 @@ def evo_urun_bazli_satis(bastar: date, bittar: date) -> Dict[str, float]:
     return urun_toplam
 
 
+def _hs_cok_satilan(bastar: date, bittar: date) -> List[Dict]:
+    """hs_rapor.ashx → Cok_Satilan ham listesi (fiyat alanlarını içerir)."""
+    token = _hs_web_token_al()
+    url = f"{EVO_WEB}/hizli/hs_rapor.ashx?evo_token={token}&evo_server=web.evobulut.com"
+    body = {
+        "komut": "FORM_LOAD",
+        "tarih1": bastar.strftime("%d.%m.%Y 00:00:00"),
+        "tarih2": bittar.strftime("%d.%m.%Y 23:59:59"),
+        "personel": "0", "sube": "0",
+    }
+    headers = {"X-Requested-With": "XMLHttpRequest", "Referer": f"{EVO_WEB}/hizli/hs_rapor.html"}
+    r = requests.post(url, data=body, headers=headers, timeout=20)
+    if r.status_code != 200:
+        return []
+    try:
+        d = r.json()
+    except Exception:
+        return []
+    if str(d.get("Statu") or "").strip().upper() != "OK":
+        _hs_web_token_temizle()
+        return []
+    return d.get("Cok_Satilan", []) or []
+
+
 def evo_urun_fiyatlari(bastar: date, bittar: date, max_fatura: int = 80) -> Dict[str, float]:
-    """Ürün adı → güncel birim SATIŞ fiyatı (satış satırlarından; en sık görülen fiyat,
-    ikram/iskonto satırları <1₺ elenir). TV menüsü için Evo'dan fiyat çekme kaynağı."""
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-    from collections import Counter
-    ham = _hs_rapor_ham_veri(bastar, bittar)
-    faturalar = ham.get("S", []) or []
-    fatura_ids = [str(f.get("a_id") or "") for f in faturalar if f.get("a_id")][:max_fatura]
-
-    def _cek(fid: str):
-        out = []
+    """Ürün adı → güncel birim SATIŞ fiyatı. Fatura detayı bloklu olduğundan
+    hs_rapor Cok_Satilan'dan türetir: birim fiyat alanı ya da tutar/adet."""
+    out: Dict[str, float] = {}
+    for item in _hs_cok_satilan(bastar, bittar):
+        ad = str(item.get("a_adi") or "").strip()
+        if not ad:
+            continue
         try:
-            for s in _satirlari_coz(evo_fatura_detay(fid)):
-                ad = str(
-                    s.get("a_stok_adi") or s.get("stok_adi") or
-                    s.get("a_adi") or s.get("urun_adi") or ""
-                ).strip()
+            mik = float(item.get("satis_mik") or 0)
+        except (ValueError, TypeError):
+            mik = 0.0
+        fiyat = None
+        for kf in ("a_fiyat", "satis_fiyat", "birim_fiyat", "brm_fiyat", "a_brm_fiyat", "fiyat", "a_satis_fiyat", "ort_fiyat"):
+            v = item.get(kf)
+            try:
+                if v not in (None, "", 0, "0") and float(v) >= 1:
+                    fiyat = float(v); break
+            except (ValueError, TypeError):
+                pass
+        if fiyat is None and mik > 0:
+            for kt in ("satis_tutar", "tutar", "a_tutar", "toplam", "ciro", "satis_top", "a_satis_tutar", "net_tutar"):
+                v = item.get(kt)
                 try:
-                    bf = float(s.get("a_brm_fiyat") or s.get("birim_fiyat") or s.get("a_fiyat") or 0)
+                    if v not in (None, "", 0, "0"):
+                        fiyat = float(v) / mik; break
                 except (ValueError, TypeError):
-                    bf = 0.0
-                if ad and bf >= 1.0:
-                    out.append((ad, round(bf, 2)))
-        except Exception:
-            pass
-        return out
-
-    say: Dict[str, Counter] = {}
-    if fatura_ids:
-        with ThreadPoolExecutor(max_workers=8) as exe:
-            for fut in as_completed([exe.submit(_cek, fid) for fid in fatura_ids]):
-                for ad, bf in fut.result():
-                    say.setdefault(ad, Counter())[bf] += 1
-    return {ad: c.most_common(1)[0][0] for ad, c in say.items() if c}
+                    pass
+        if fiyat and fiyat >= 1:
+            out[ad] = round(fiyat, 2)
+    return out
 
 
 # ─────────────────────────────────────────────
