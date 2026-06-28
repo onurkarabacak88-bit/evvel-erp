@@ -658,8 +658,8 @@ loadSig();setInterval(loadSig,60000);setInterval(rotLive,7000);
       var lx=((b.ph+t*b.v)%SPAN)-SI;
       if(lx<-0.25||lx>1.25){b.el.style.opacity=0;continue;}
       b.el.style.left=(lx*100)+"%";b.el.style.top=b.y+"%";
-      b.el.style.opacity=(0.16+(1-b.depth)*0.34).toFixed(2);
-      b.el.style.filter="blur("+(b.depth*1.1).toFixed(2)+"vw)";
+      b.el.style.opacity=(0.24+(1-b.depth)*0.4).toFixed(2);
+      b.el.style.filter="blur("+(b.depth*0.8).toFixed(2)+"vw)";
       b.el.style.transform="translate(-50%,-50%) scale("+b.sz.toFixed(2)+") rotate("+((t*b.rs)%360).toFixed(0)+"deg)";
     }
     var llx=((t*0.025)%SPAN)-SI;
@@ -670,7 +670,7 @@ loadSig();setInterval(loadSig,60000);setInterval(rotLive,7000);
       if(slx<-0.3||slx>1.3){s.el.style.opacity=0;continue;}
       var cyc=((t*s.vr+s.cph)%1);
       s.el.style.left=(slx*100)+"%";s.el.style.top=(78-cyc*64)+"%";
-      s.el.style.opacity=(Math.sin(cyc*3.14159)*0.20).toFixed(3);
+      s.el.style.opacity=(Math.sin(cyc*3.14159)*0.27).toFixed(3);
       s.el.style.transform="translate(-50%,-50%) scale("+(s.sw*(0.6+cyc*0.9)).toFixed(2)+")";
     }
     // çikolata gezen kaynak + düşen damla
