@@ -693,8 +693,16 @@ function buildStory(data){
     +'<div class="grade"></div><div class="grain"></div>'
     +'<div class="stPriceWrap"><div class="stpn" id="storyName">'+sp.ad+'</div><div class="stpl"></div><div class="stpp" id="storyPrice">'+(sp.fiyat!=null?sp.fiyat+' TL':'')+'</div></div>'
     +'<div class="stsc stTag">TULİPİ · COFFEE STORY</div>';
-  // autoplay güvence (muted -> tarayıcı izin verir)
-  setTimeout(function(){Array.prototype.forEach.call(st.querySelectorAll("video"),function(v){v.muted=true;var p=v.play();if(p&&p.catch)p.catch(function(){});});},60);
+  // PERF: SADECE görünen videoyu oynat, gizlileri duraklat (3 decode→1 → donma/takılma biter)
+  Array.prototype.forEach.call(st.querySelectorAll("video"),function(v){v.muted=true;});
+  clearInterval(window._storyVidInt);
+  window._storyVidInt=setInterval(function(){
+    Array.prototype.forEach.call(st.querySelectorAll("video"),function(v){
+      var op=parseFloat(getComputedStyle(v).opacity)||0;
+      if(op>0.06){ if(v.paused){var p=v.play();if(p&&p.catch)p.catch(function(){});} }
+      else if(!v.paused){ try{v.pause();}catch(e){} }
+    });
+  },450);
   return st;
 }
 function build(data){
