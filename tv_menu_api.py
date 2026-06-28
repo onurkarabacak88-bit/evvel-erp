@@ -536,6 +536,7 @@ _TV_HTML = r"""<!DOCTYPE html>
 #dots{position:absolute;top:2.2vh;left:0;right:0;display:flex;justify-content:center;gap:.6vw;z-index:6}
 #dots i{width:.55vw;height:.55vw;border-radius:50%;background:#EFE6D622;transition:.5s}#dots i.on{background:#3E8E5A;width:1.7vw;border-radius:.3vw}
 .pg{position:absolute;inset:0;display:none;flex-direction:column;align-items:center;justify-content:center;padding:6vh 6vw;text-align:center}
+.pg.cat{justify-content:flex-start;padding-top:7vh}  /* menü sayfaları yukarı sabit (kısa listede üst boşluk olmasın) */
 .pg.on{display:flex;animation:pgIn .95s cubic-bezier(.2,.8,.2,1)}
 .pg.on .row{animation:rowIn .55s cubic-bezier(.2,.7,.2,1) both}
 .pg.on .gT{animation:titleIn .8s cubic-bezier(.2,.8,.2,1) both}
@@ -749,7 +750,7 @@ function build(data){
   // Kategoriler
   (data.kategoriler||[]).forEach(function(k){
     var three=k.urunler.some(function(u){return u.f14!=null||u.fice!=null;});
-    var pg=el("div","pg");pg.dataset.t=12000;pg.dataset.roles="1,3";
+    var pg=el("div","pg cat");pg.dataset.t=12000;pg.dataset.roles="1,3";
     pg.appendChild(el("div","gT",k.kategori));
     if(k.alt)pg.appendChild(el("div","gH",k.alt));
     var m=el("div","menu"+(three?"":" one"));
@@ -764,7 +765,8 @@ function build(data){
   if(ekran){var f=pages.filter(function(p){return (p.dataset.roles||"").split(",").indexOf(ekran)>=0;});if(f.length)pages=f;}
   pages.forEach(function(p){stage.insertBefore(p,document.querySelector(".foot"));dots.appendChild(el("i"));});
   var di=dots.children,idx=0;
-  function show(i){pages.forEach(function(p,k){p.classList.toggle("on",k===i);di[k].classList.toggle("on",k===i);});}
+  function show(i){pages.forEach(function(p,k){p.classList.toggle("on",k===i);di[k].classList.toggle("on",k===i);});
+    var fv=document.getElementById("fav");if(fv)fv.classList.toggle("on",!!(window._favName&&pages[i]&&pages[i].classList.contains("cat")));}
   // EKRAN SENKRONU — wall-clock: tüm TV'ler ortak saate göre döner (sürüklenme yok, reload sıçramaz, aynı rol senkron)
   function syncShow(){
     var durs=pages.map(function(p){return parseInt(p.dataset.t,10)||9000;});
@@ -803,7 +805,7 @@ function loadSig(){fetch(SIG).then(function(r){return r.json();}).then(function(
   updateFav(s&&s.en_cok);                                  // FAZ 8 — Today's Favorite
 }).catch(function(){});}
 function applyTimeOfDay(mod){var e=document.getElementById("tod");if(!e)return;e.className="";if(mod)e.classList.add(mod);}
-function updateFav(name){var e=document.getElementById("fav");if(!e)return;if(name){e.innerHTML="⭐ Today's Favorite<b>"+name+"</b>";e.classList.add("on");}else{e.classList.remove("on");}}
+function updateFav(name){window._favName=name||"";var e=document.getElementById("fav");if(!e)return;if(name){e.innerHTML="⭐ Today's Favorite<b>"+name+"</b>";}var on=document.querySelector(".pg.on");e.classList.toggle("on",!!(name&&on&&on.classList.contains("cat")));}
 // MEVSİM GÖRSELİ — kış kar / sonbahar yaprak / ilkbahar çiçek / yaz serin parıltı
 function applySeason(ad){
   var box=document.getElementById("season");if(!box||box.dataset.s===ad)return;box.dataset.s=ad;box.innerHTML="";
