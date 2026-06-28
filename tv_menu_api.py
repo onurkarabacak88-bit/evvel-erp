@@ -337,9 +337,11 @@ def tv_menu_clip(name: str):
     """Coffee Story gerçek video klipleri (Mixkit Free, ticari kullanım serbest)."""
     if name not in ("bean", "latte", "cup"):
         raise HTTPException(404, "klip yok")
-    p = os.path.join("src", "assets", "tv", name + ".mp4")
-    if os.path.exists(p):
-        return FileResponse(p, media_type="video/mp4")
+    # Prod: Vite public/ -> static/tv'ye kopyalar. Dev: public/tv veya src/assets/tv.
+    for base in ("static/tv", "public/tv", "src/assets/tv"):
+        p = os.path.join(base, name + ".mp4")
+        if os.path.exists(p):
+            return FileResponse(p, media_type="video/mp4")
     raise HTTPException(404, "klip dosyası yok")
 
 
