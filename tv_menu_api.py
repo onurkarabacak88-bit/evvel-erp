@@ -421,6 +421,9 @@ _TV_HTML = r"""<!DOCTYPE html>
 .foot{position:absolute;bottom:2vh;left:0;right:0;text-align:center;z-index:6}
 .foot #live{font-size:1.25vw;letter-spacing:.15vw;color:#7fae93;transition:opacity .5s}
 .err{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#7d7065;font-size:1.4vw}
+#season{position:absolute;inset:0;z-index:4;pointer-events:none;overflow:hidden}
+#season span{position:absolute;top:-10vh;animation:sfall linear infinite;will-change:transform}
+@keyframes sfall{0%{transform:translateY(-10vh) translateX(0) rotate(0)}100%{transform:translateY(112vh) translateX(5vw) rotate(220deg)}}
 /* 🎬 COFFEE STORY — sinematik ara sahne (çekirdek→espresso→latte art→fincanda doğan fiyat) */
 .pg.story{background:#050302}
 .pg.story.on{animation:none}
@@ -469,6 +472,7 @@ _TV_HTML = r"""<!DOCTYPE html>
 </style></head>
 <body><div id="stage">
 <div class="bg" id="bg"><div class="drift"></div></div>
+<div id="season"></div>
 <div id="dots"></div>
 <div class="foot"><span id="live">TÜM FİYATLAR TL · TULİPİ COFFEE</span></div></div>
 <script>
@@ -565,8 +569,16 @@ function build(data){
   if(ekran){var f=pages.filter(function(p){return (p.dataset.roles||"").split(",").indexOf(ekran)>=0;});if(f.length)pages=f;}
   pages.forEach(function(p){stage.insertBefore(p,document.querySelector(".foot"));dots.appendChild(el("i"));});
   var di=dots.children,idx=0;
-  function show(i){pages.forEach(function(p,k){p.classList.toggle("on",k===i);di[k].classList.toggle("on",k===i);});var t=parseInt(pages[i].dataset.t,10)||9000;clearTimeout(window._tvt);window._tvt=setTimeout(function(){idx=(idx+1)%pages.length;show(idx);},t);}
-  if(pages.length)show(0);
+  function show(i){pages.forEach(function(p,k){p.classList.toggle("on",k===i);di[k].classList.toggle("on",k===i);});}
+  // EKRAN SENKRONU — wall-clock: tüm TV'ler ortak saate göre döner (sürüklenme yok, reload sıçramaz, aynı rol senkron)
+  function syncShow(){
+    var durs=pages.map(function(p){return parseInt(p.dataset.t,10)||9000;});
+    var total=durs.reduce(function(a,b){return a+b;},0)||1;
+    var t=Date.now()%total,acc=0,i=0;
+    for(var k=0;k<durs.length;k++){if(t<acc+durs[k]){i=k;break;}acc+=durs[k];}
+    show(i);clearTimeout(window._tvt);window._tvt=setTimeout(syncShow,(acc+durs[i]-t)+40);
+  }
+  if(pages.length)syncShow();
 }
 function load(){
   fetch(API).then(function(r){return r.json();}).then(function(d){
@@ -591,7 +603,20 @@ function loadSig(){fetch(SIG).then(function(r){return r.json();}).then(function(
     if(pp!=null){window._encok={ad:s.en_cok,fiyat:pp};
       var nm=document.getElementById("storyName"),pe=document.getElementById("storyPrice");
       if(nm){nm.textContent=s.en_cok;pe.textContent=pp+" TL";}}}
+  if(s&&s.mevsim&&s.mevsim.ad)applySeason(s.mevsim.ad);   // FAZ 3 — mevsim görsel katmanı
 }).catch(function(){});}
+// MEVSİM GÖRSELİ — kış kar / sonbahar yaprak / ilkbahar çiçek / yaz serin parıltı
+function applySeason(ad){
+  var box=document.getElementById("season");if(!box||box.dataset.s===ad)return;box.dataset.s=ad;box.innerHTML="";
+  var g={kis:"❄",sonbahar:"🍂",ilkbahar:"🌸",yaz:"✦"}[ad];if(!g)return;
+  var n=ad==="yaz"?9:18;
+  for(var i=0;i<n;i++){var s=document.createElement("span");s.textContent=g;
+    s.style.left=(Math.random()*100)+"%";var d=7+Math.random()*9;
+    s.style.animationDuration=d+"s";s.style.animationDelay=(-Math.random()*d)+"s";
+    s.style.fontSize=(1+Math.random()*1.7)+"vw";
+    s.style.opacity=ad==="yaz"?0.35:0.6;if(ad==="yaz")s.style.color="#a9dccd";
+    box.appendChild(s);}
+}
 function rotLive(){var e=document.getElementById("live");if(!e||liveArr.length<2)return;
   e.style.opacity=0;setTimeout(function(){liveI=(liveI+1)%liveArr.length;e.textContent=liveArr[liveI];e.style.opacity=1;},500);}
 loadSig();setInterval(loadSig,60000);setInterval(rotLive,7000);
