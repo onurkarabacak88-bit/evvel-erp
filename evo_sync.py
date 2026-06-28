@@ -813,9 +813,14 @@ def _hs_cok_satilan(bastar: date, bittar: date) -> List[Dict]:
     return d.get("Cok_Satilan", []) or []
 
 
-def evo_urun_fiyatlari(bastar: date, bittar: date, max_fatura: int = 80) -> Dict[str, float]:
-    """Ürün adı → güncel birim SATIŞ fiyatı. Fatura detayı bloklu olduğundan
-    hs_rapor Cok_Satilan'dan türetir: birim fiyat alanı ya da tutar/adet."""
+# TR yiyecek-içecek KDV %10. Cok_Satilan satis_tut KDV HARİÇ → liste fiyatı için ×1.10.
+EVO_KDV_CARPAN = 1.10
+
+
+def evo_urun_fiyatlari(bastar: date, bittar: date, max_fatura: int = 80, kdv_carpan: float = EVO_KDV_CARPAN) -> Dict[str, float]:
+    """Ürün adı → güncel LİSTE fiyatı (KDV dahil). Fatura detayı bloklu olduğundan
+    hs_rapor Cok_Satilan'dan türetir: (satis_tut / satis_mik) × KDV, menü için 5'e yuvarlanır.
+    Doğrulandı: Americano Ice 13950.09/99×1.10=155 (menü ile birebir)."""
     out: Dict[str, float] = {}
     for item in _hs_cok_satilan(bastar, bittar):
         ad = str(item.get("a_adi") or "").strip()
@@ -823,26 +828,14 @@ def evo_urun_fiyatlari(bastar: date, bittar: date, max_fatura: int = 80) -> Dict
             continue
         try:
             mik = float(item.get("satis_mik") or 0)
+            tut = float(item.get("satis_tut") or 0)
         except (ValueError, TypeError):
-            mik = 0.0
-        fiyat = None
-        for kf in ("a_fiyat", "satis_fiyat", "birim_fiyat", "brm_fiyat", "a_brm_fiyat", "fiyat", "a_satis_fiyat", "ort_fiyat"):
-            v = item.get(kf)
-            try:
-                if v not in (None, "", 0, "0") and float(v) >= 1:
-                    fiyat = float(v); break
-            except (ValueError, TypeError):
-                pass
-        if fiyat is None and mik > 0:
-            for kt in ("satis_tutar", "tutar", "a_tutar", "toplam", "ciro", "satis_top", "a_satis_tutar", "net_tutar"):
-                v = item.get(kt)
-                try:
-                    if v not in (None, "", 0, "0"):
-                        fiyat = float(v) / mik; break
-                except (ValueError, TypeError):
-                    pass
-        if fiyat and fiyat >= 1:
-            out[ad] = round(fiyat, 2)
+            mik = tut = 0.0
+        if mik > 0 and tut > 0:
+            kdvli = (tut / mik) * kdv_carpan
+            fiyat = int(round(kdvli / 5.0) * 5)   # menü fiyatları 5'in katı
+            if fiyat >= 1:
+                out[ad] = fiyat
     return out
 
 
