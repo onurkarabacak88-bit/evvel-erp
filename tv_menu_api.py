@@ -235,6 +235,22 @@ def _mevsim():
     return {"ad": "sonbahar", "etiket": "🍂 Sonbahar", "oneri": ""}
 
 
+def _ozel_gun(ayar):
+    """Özel gün motoru: manuel override (Ramazan vb. ay takvimi gerektirir) öncelikli; yoksa sabit tarihler."""
+    om = (ayar.get("ozel_mesaj") or "").strip()
+    if om:
+        return {"ad": "manuel", "etiket": (ayar.get("ozel_etiket") or "✨").strip(), "mesaj": om}
+    t = datetime.now()
+    m, d = t.month, t.day
+    if (m == 12 and d >= 28) or (m == 1 and d <= 2):
+        return {"ad": "yilbasi", "etiket": "🎄 Yeni Yıl", "mesaj": "Mutlu Yıllar"}
+    if m == 10 and d == 29:
+        return {"ad": "cumhuriyet", "etiket": "🇹🇷 29 Ekim", "mesaj": "Cumhuriyet Bayramı Kutlu Olsun"}
+    if m == 2 and d == 14:
+        return {"ad": "sevgili", "etiket": "❤️", "mesaj": "Sevgililer Günü"}
+    return None
+
+
 def _en_cok(ayar):
     """Manuel öne çıkan öncelikli; oto açıksa Evo'dan (30 dk cache, hata-yutar)."""
     if str(ayar.get("one_cikan_oto") or "") == "1":
@@ -288,7 +304,10 @@ def tv_signals():
     mv = _mevsim()
     if mv["oneri"]:
         seritler.append(mv["etiket"] + " · " + mv["oneri"])
-    return {"saat_modu": sm, "mevsim": mv, "en_cok": en_cok, "yeni": yeni, "happy_hour": hh, "seritler": seritler}
+    oz = _ozel_gun(ayar)
+    if oz:
+        seritler.insert(0, oz["etiket"] + " · " + oz["mesaj"])   # özel gün şeridi en başta
+    return {"saat_modu": sm, "mevsim": mv, "ozel": oz, "en_cok": en_cok, "yeni": yeni, "happy_hour": hh, "seritler": seritler}
 
 
 class AyarModel(BaseModel):
@@ -302,6 +321,8 @@ class AyarModel(BaseModel):
     imza_aciklama: Optional[str] = None
     pair_urun: Optional[str] = None
     pair_mesaj: Optional[str] = None
+    ozel_etiket: Optional[str] = None
+    ozel_mesaj: Optional[str] = None
 
 
 @router.get("/api/tv-ayar")
@@ -315,6 +336,7 @@ def tv_ayar_oku():
         "hh_bit": int(a.get("hh_bit") or 16), "hh_mesaj": a.get("hh_mesaj") or "Happy Hour",
         "imza_urun": a.get("imza_urun") or "", "imza_aciklama": a.get("imza_aciklama") or "",
         "pair_urun": a.get("pair_urun") or "", "pair_mesaj": a.get("pair_mesaj") or "",
+        "ozel_etiket": a.get("ozel_etiket") or "", "ozel_mesaj": a.get("ozel_mesaj") or "",
     }
 
 
@@ -341,6 +363,10 @@ def tv_ayar_yaz(a: AyarModel):
         kv["pair_urun"] = a.pair_urun.strip()
     if a.pair_mesaj is not None:
         kv["pair_mesaj"] = a.pair_mesaj.strip()
+    if a.ozel_etiket is not None:
+        kv["ozel_etiket"] = a.ozel_etiket.strip()
+    if a.ozel_mesaj is not None:
+        kv["ozel_mesaj"] = a.ozel_mesaj.strip()
     with db() as (conn, cur):
         _ensure_tablo(cur)
         for k, v in kv.items():
@@ -462,6 +488,16 @@ _TV_HTML = r"""<!DOCTYPE html>
 #cine .cs{font-size:1.4vw;letter-spacing:.55vw;color:#5fbf86;text-transform:uppercase;opacity:0;transform:translateY(2vh);transition:.9s ease .6s}
 #cine.on .ct,#cine.on .cs{opacity:1;transform:none}
 #season{position:absolute;inset:0;z-index:4;pointer-events:none;overflow:hidden}
+/* FAZ 8 — zaman atmosferi (saat renk sıcaklığı, kenar-ağırlıklı → menü merkezi temiz) */
+#tod{position:absolute;inset:0;pointer-events:none;z-index:2;opacity:.55;transition:background 4s ease,opacity 4s ease;mix-blend-mode:soft-light}
+#tod.sabah{background:linear-gradient(180deg,#bfe3ff66,transparent 45%)}
+#tod.ogle{background:radial-gradient(120% 70% at 50% 0%,#ffe9c255,transparent 60%)}
+#tod.aksam{background:linear-gradient(0deg,#ff8a3d66,transparent 50%)}
+#tod.gece{background:radial-gradient(120% 100% at 50% 60%,#13204d77,transparent 70%)}
+/* FAZ 8 — Today's Favorite rozeti */
+#fav{position:absolute;top:2.3vh;right:2.6vw;z-index:6;display:none;align-items:center;gap:.5vw;background:#3E8E5A22;border:1px solid #3E8E5A55;color:#cfe8d8;padding:.6vh 1.3vw;border-radius:40px;font-size:1vw;letter-spacing:.08vw}
+#fav.on{display:flex}
+#fav b{color:#EFE6D6;font-family:'Fraunces',serif;font-weight:500;margin-left:.3vw}
 #season span{position:absolute;top:-10vh;animation:sfall linear infinite;will-change:transform}
 @keyframes sfall{0%{transform:translateY(-10vh) translateX(0) rotate(0)}100%{transform:translateY(112vh) translateX(5vw) rotate(220deg)}}
 /* 🎬 COFFEE STORY — sinematik ara sahne (çekirdek→espresso→latte art→fincanda doğan fiyat) */
@@ -512,8 +548,10 @@ _TV_HTML = r"""<!DOCTYPE html>
 </style></head>
 <body><div id="stage">
 <div class="bg" id="bg"><div class="drift"></div></div>
+<div id="tod"></div>
 <div id="wall"></div>
 <div id="season"></div>
+<div id="fav"></div>
 <div id="dots"></div>
 <div class="foot"><span id="live">TÜM FİYATLAR TL · TULİPİ COFFEE</span></div>
 <div id="cine"><video muted loop playsinline preload="auto"></video><div class="cgrade"></div><div class="ccap"><div class="ct"></div><div class="cs"></div></div></div></div>
@@ -649,7 +687,11 @@ function loadSig(){fetch(SIG).then(function(r){return r.json();}).then(function(
       var nm=document.getElementById("storyName"),pe=document.getElementById("storyPrice");
       if(nm){nm.textContent=s.en_cok;pe.textContent=pp+" TL";}}}
   if(s&&s.mevsim&&s.mevsim.ad)applySeason(s.mevsim.ad);   // FAZ 3 — mevsim görsel katmanı
+  if(s&&s.saat_modu)applyTimeOfDay(s.saat_modu.mod);       // FAZ 8 — zaman atmosferi
+  updateFav(s&&s.en_cok);                                  // FAZ 8 — Today's Favorite
 }).catch(function(){});}
+function applyTimeOfDay(mod){var e=document.getElementById("tod");if(!e)return;e.className="";if(mod)e.classList.add(mod);}
+function updateFav(name){var e=document.getElementById("fav");if(!e)return;if(name){e.innerHTML="⭐ Today's Favorite<b>"+name+"</b>";e.classList.add("on");}else{e.classList.remove("on");}}
 // MEVSİM GÖRSELİ — kış kar / sonbahar yaprak / ilkbahar çiçek / yaz serin parıltı
 function applySeason(ad){
   var box=document.getElementById("season");if(!box||box.dataset.s===ad)return;box.dataset.s=ad;box.innerHTML="";
