@@ -206,7 +206,8 @@ def tv_evo_fiyat_oneri(gun: int = 30, max_fatura: int = 80, ham: int = 0):
             from evo_sync import _hs_rapor_full
             d = _hs_rapor_full(bas, bit)
             return {"keys": list(d.keys()),
-                    "bolumler": {k: (len(v) if isinstance(v, list) else str(v)[:60]) for k, v in d.items()}}
+                    "bolumler": {k: (len(v) if isinstance(v, list) else str(v)[:60]) for k, v in d.items()},
+                    "grup_pasta": d.get("Grup_Pasta", [])}
         evo = evo_urun_fiyatlari(bas, bit, max_fatura)
     except Exception as e:
         raise HTTPException(503, "Evo fiyat alınamadı: %s" % e)
