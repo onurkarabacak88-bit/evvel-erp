@@ -585,8 +585,8 @@ _TV_HTML = r"""<!DOCTYPE html>
 /* FAZ 6 — MİKRO-SİNEMATİK takeover (her ~2.5dk, 11sn, 3 ekran triptik) */
 #cine{position:absolute;inset:0;z-index:30;opacity:0;pointer-events:none;background:#000;transition:opacity 1.1s ease}
 #cine.on{opacity:1}
-#cine video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
-#cine .cgrade{position:absolute;inset:0;background:linear-gradient(180deg,#000 0,transparent 22%,transparent 68%,#000d 100%)}
+#cine video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;filter:saturate(1.32) contrast(1.12) brightness(1.14)}
+#cine .cgrade{position:absolute;inset:0;background:linear-gradient(180deg,#0009 0,transparent 24%,transparent 72%,#000b 100%)}
 #cine .ccap{position:absolute;left:0;right:0;bottom:13%;text-align:center}
 #cine .ct{font-family:'Fraunces',serif;font-size:4.2vw;font-weight:500;letter-spacing:.3vw;color:#EFE6D6;text-shadow:0 .4vw 2vw #000;opacity:0;transform:translateY(2.2vh);transition:.9s ease .35s}
 #cine .cs{font-size:1.4vw;letter-spacing:.55vw;color:#5fbf86;text-transform:uppercase;opacity:0;transform:translateY(2vh);transition:.9s ease .6s}
@@ -609,14 +609,14 @@ _TV_HTML = r"""<!DOCTYPE html>
 .pg.story.on{animation:none}
 .story .stsc{position:absolute;inset:0;display:flex;align-items:center;justify-content:center}
 /* GERÇEK VİDEO sahneleri (crossfade): çekirdek → latte art → buharlı fincan */
-.story .vid{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;opacity:0}
+.story .vid{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;opacity:0;filter:saturate(1.32) contrast(1.12) brightness(1.14)}
 .story .v1{animation:csVid1 18s ease-in-out infinite}
 .story .v2{animation:csVid2 18s ease-in-out infinite}
 .story .v3{animation:csVid3 18s ease-in-out infinite}
 /* sinematik katmanlar: bokeh derinlik + renklendirme/letterbox + film grain */
 .story .bok{position:absolute;border-radius:50%;filter:blur(3.4vw);pointer-events:none;mix-blend-mode:screen;opacity:.5}
-.story .grade{position:absolute;inset:0;z-index:6;pointer-events:none;background:linear-gradient(180deg,#000 0,transparent 13%,transparent 86%,#000 100%),radial-gradient(125% 88% at 50% 44%,transparent 35%,#000d 100%)}
-.story .grain{position:absolute;inset:-25%;z-index:8;pointer-events:none;opacity:.12;mix-blend-mode:overlay;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='150' height='150'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='150' height='150' filter='url(%23n)' opacity='0.6'/%3E%3C/svg%3E");background-size:150px 150px;animation:csGrain .5s steps(3) infinite}
+.story .grade{position:absolute;inset:0;z-index:6;pointer-events:none;background:linear-gradient(180deg,#0009 0,transparent 22%,transparent 74%,#000b 100%)}
+.story .grain{position:absolute;inset:-25%;z-index:8;pointer-events:none;opacity:.07;mix-blend-mode:overlay;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='150' height='150'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='150' height='150' filter='url(%23n)' opacity='0.6'/%3E%3C/svg%3E");background-size:150px 150px;animation:csGrain .5s steps(3) infinite}
 .story .stTag{align-items:flex-start;padding-top:5vh;font-size:1vw;letter-spacing:.7vw;color:#3E8E5A;z-index:7;animation:csTag 22s linear infinite}
 .story .stBean{animation:csBean 22s ease-in-out infinite}
 .story .stPour{opacity:0;animation:csPour 22s ease-in-out infinite}
