@@ -153,7 +153,17 @@ def tv_menu_json():
                     fy = _fmt(r.get("f8")) or _fmt(r.get("f14")) or _fmt(r.get("fice"))
                     break
             imza = {"ad": iad, "aciklama": (ayar.get("imza_aciklama") or "").strip(), "fiyat": fy}
-        return {"marka": "TULİPİ", "guncelleme": datetime.now().isoformat(), "kategoriler": kats, "imza": imza}
+        # PERFECT PAIR — eşleştirme önerisi (upsell): panelden seçilen ürünün fiyatını menüden bul
+        pair = None
+        pad = (ayar.get("pair_urun") or "").strip()
+        if pad:
+            pf = None
+            for r in rows:
+                if str(r["ad"]).strip().lower() == pad.lower():
+                    pf = _fmt(r.get("f8")) or _fmt(r.get("f14")) or _fmt(r.get("fice"))
+                    break
+            pair = {"ad": pad, "fiyat": pf, "mesaj": (ayar.get("pair_mesaj") or "Yanına çok yakışır")}
+        return {"marka": "TULİPİ", "guncelleme": datetime.now().isoformat(), "kategoriler": kats, "imza": imza, "pair": pair}
     except Exception as e:
         logger.warning("tv-menu json hata: %s", e)
         return {"marka": "TULİPİ", "kategoriler": [], "hata": str(e)}
@@ -290,6 +300,8 @@ class AyarModel(BaseModel):
     hh_mesaj: Optional[str] = None
     imza_urun: Optional[str] = None
     imza_aciklama: Optional[str] = None
+    pair_urun: Optional[str] = None
+    pair_mesaj: Optional[str] = None
 
 
 @router.get("/api/tv-ayar")
@@ -302,6 +314,7 @@ def tv_ayar_oku():
         "hh_aktif": a.get("hh_aktif") == "1", "hh_bas": int(a.get("hh_bas") or 14),
         "hh_bit": int(a.get("hh_bit") or 16), "hh_mesaj": a.get("hh_mesaj") or "Happy Hour",
         "imza_urun": a.get("imza_urun") or "", "imza_aciklama": a.get("imza_aciklama") or "",
+        "pair_urun": a.get("pair_urun") or "", "pair_mesaj": a.get("pair_mesaj") or "",
     }
 
 
@@ -324,6 +337,10 @@ def tv_ayar_yaz(a: AyarModel):
         kv["imza_urun"] = a.imza_urun.strip()
     if a.imza_aciklama is not None:
         kv["imza_aciklama"] = a.imza_aciklama.strip()
+    if a.pair_urun is not None:
+        kv["pair_urun"] = a.pair_urun.strip()
+    if a.pair_mesaj is not None:
+        kv["pair_mesaj"] = a.pair_mesaj.strip()
     with db() as (conn, cur):
         _ensure_tablo(cur)
         for k, v in kv.items():
@@ -418,6 +435,12 @@ _TV_HTML = r"""<!DOCTYPE html>
 .spotName{position:relative;z-index:2;font-size:4.2vw;font-weight:500;margin:1.2vh 0 .6vh;letter-spacing:.02vw}
 .spotDesc{position:relative;z-index:2;font-size:1.5vw;color:#B89B80;font-style:italic;max-width:38vw;line-height:1.5;margin-bottom:2.6vh}
 .spotPrice{position:relative;z-index:2;display:inline-block;background:#3E8E5A;color:#0e0b09;font-weight:700;font-size:2.4vw;padding:1.3vh 3.4vw;border-radius:50px;animation:pulse 2.2s infinite}
+/* FAZ 7 — Perfect Pair upsell */
+.pair{position:relative;z-index:2;margin-top:2.8vh;display:flex;flex-direction:column;align-items:center;gap:.7vh;animation:pairIn 1s ease 1.1s both}
+.pairTag{font-size:.85vw;letter-spacing:.32vw;color:#0e0b09;background:#B89B80;padding:.5vh 1.5vw;border-radius:40px;text-transform:uppercase}
+.pairTxt{font-family:'Fraunces',serif;font-size:1.9vw;color:#EFE6D6}
+.pairSub{font-size:1.1vw;color:#B89B80;font-style:italic}
+@keyframes pairIn{from{opacity:0;transform:translateY(1.6vh)}to{opacity:1;transform:none}}
 .foot{position:absolute;bottom:2vh;left:0;right:0;text-align:center;z-index:6}
 .foot #live{font-size:1.25vw;letter-spacing:.15vw;color:#7fae93;transition:opacity .5s}
 .err{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#7d7065;font-size:1.4vw}
@@ -551,7 +574,7 @@ function build(data){
   pages.push(buildStory(data));
   // İMZA SPOTLIGHT — panelden seçilen öne çıkan ürün (float + buhar + nabız fiyat)
   if(data.imza && data.imza.ad){
-    var sp=el("div","pg");sp.dataset.t=8000;sp.dataset.roles="2,3";
+    var sp=el("div","pg");sp.dataset.t=10000;sp.dataset.roles="2,3";
     sp.appendChild(el("div","halo"));
     var cup='<svg width="14vw" viewBox="0 0 200 200" style="width:14vw;height:14vw">'
       +'<g fill="none" stroke="#B89B80" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">'
@@ -566,7 +589,10 @@ function build(data){
     var inner='<div class="spotTag">Bugünün İmzası</div><div class="spotCup">'+cup+'</div>'
       +'<div class="spotName">'+data.imza.ad+'</div>'
       +(data.imza.aciklama?'<div class="spotDesc">'+data.imza.aciklama+'</div>':'')
-      +(data.imza.fiyat!=null?'<div class="spotPrice">'+data.imza.fiyat+' TL</div>':'');
+      +(data.imza.fiyat!=null?'<div class="spotPrice">'+data.imza.fiyat+' TL</div>':'')
+      +((data.pair&&data.pair.ad)?'<div class="pair"><span class="pairTag">PERFECT PAIR</span>'
+        +'<span class="pairTxt">+ '+data.pair.ad+(data.pair.fiyat!=null?' · '+data.pair.fiyat+' TL':'')+'</span>'
+        +(data.pair.mesaj?'<span class="pairSub">'+data.pair.mesaj+'</span>':'')+'</div>':'');
     sp.innerHTML+=inner;
     pages.push(sp);
   }
