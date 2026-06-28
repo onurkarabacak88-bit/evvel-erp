@@ -817,6 +817,24 @@ def _hs_cok_satilan(bastar: date, bittar: date) -> List[Dict]:
 EVO_KDV_CARPAN = 1.10
 
 
+def _hs_rapor_full(bastar: date, bittar: date) -> Dict:
+    """hs_rapor.ashx tam JSON yanıtı (tüm bölümler — Cok_Satilan dışı listeleri keşfetmek için)."""
+    token = _hs_web_token_al()
+    url = f"{EVO_WEB}/hizli/hs_rapor.ashx?evo_token={token}&evo_server=web.evobulut.com"
+    body = {
+        "komut": "FORM_LOAD",
+        "tarih1": bastar.strftime("%d.%m.%Y 00:00:00"),
+        "tarih2": bittar.strftime("%d.%m.%Y 23:59:59"),
+        "personel": "0", "sube": "0",
+    }
+    headers = {"X-Requested-With": "XMLHttpRequest", "Referer": f"{EVO_WEB}/hizli/hs_rapor.html"}
+    try:
+        r = requests.post(url, data=body, headers=headers, timeout=20)
+        return r.json()
+    except Exception:
+        return {}
+
+
 def evo_urun_fiyatlari(bastar: date, bittar: date, max_fatura: int = 80, kdv_carpan: float = EVO_KDV_CARPAN) -> Dict[str, float]:
     """Ürün adı → güncel LİSTE fiyatı (KDV dahil). Fatura detayı bloklu olduğundan
     hs_rapor Cok_Satilan'dan türetir: (satis_tut / satis_mik) × KDV, menü için 5'e yuvarlanır.
