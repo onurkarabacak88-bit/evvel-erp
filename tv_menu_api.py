@@ -743,6 +743,10 @@ _TV_HTML = r"""<!DOCTYPE html>
 .ice{position:absolute;width:.5vw;height:.5vw;border-radius:50%;background:#a9dccd;animation:ice 4.5s ease-in-out infinite}
 @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(62,142,90,.45)}70%{box-shadow:0 0 0 1.5vw rgba(62,142,90,0)}100%{box-shadow:0 0 0 0 rgba(62,142,90,0)}}
 .spotTag{position:relative;z-index:2;font-size:1.5vh;letter-spacing:.32vw;color:#3E8E5A;text-transform:uppercase}
+.spotTag.fire{color:#ffb347}
+.spotPrice.fire{background:#ffb347;color:#2a1200;box-shadow:0 0 0 0 rgba(255,179,71,.5);animation:pulseFire 2.2s infinite}
+@keyframes pulseFire{0%{box-shadow:0 0 0 0 rgba(255,179,71,.5)}70%{box-shadow:0 0 0 1.5vw rgba(255,179,71,0)}100%{box-shadow:0 0 0 0 rgba(255,179,71,0)}}
+.halo.fire{background:radial-gradient(circle,#5a3512,#321c08 46%,transparent 70%)}
 .spotCup{position:relative;z-index:2;animation:flo 4s ease-in-out infinite;margin:1.5vh 0 .5vh}
 .spotName{position:relative;z-index:2;font-size:5.6vh;font-weight:500;margin:1.2vh 0 .6vh;letter-spacing:.02vw}
 .spotDesc{position:relative;z-index:2;font-size:2.1vh;color:#B89B80;font-style:italic;max-width:84vw;line-height:1.5;margin-bottom:2.6vh}
@@ -891,6 +895,26 @@ function findPrice(name){var r=null;if(!window._tvData||!name)return null;
   (window._tvData.kategoriler||[]).forEach(function(k){(k.urunler||[]).forEach(function(u){
     if(String(u.ad).toLowerCase()===String(name).toLowerCase()){var v=u.f8!=null?u.f8:(u.f14!=null?u.f14:u.fice);if(v!=null)r=v;}});});
   return r;}
+function findKategori(name){var r="";if(!window._tvData||!name)return r;
+  (window._tvData.kategoriler||[]).forEach(function(k){(k.urunler||[]).forEach(function(u){
+    if(String(u.ad).toLowerCase()===String(name).toLowerCase())r=k.kategori;});});
+  return r;}
+function buildSpotlight(opts){
+  // tek tip "parlatma" kurgusu: halo + bardak silüeti + video arka plan + glow fiyat — Kahraman Ürün & En Çok Satılan ortak kullanır
+  var sp=el("div","pg");sp.dataset.t=opts.dur||10000;sp.dataset.roles="2";
+  sp.dataset.name=opts.ad;if(opts.fiyat!=null)sp.dataset.price=opts.fiyat+" TL";
+  var fire=opts.theme==="fire";
+  var clip=/(mocktail|milkshake)/i.test(opts.kategori||"")?"mocktail":"craft";
+  sp.innerHTML='<video class="bgvid" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/'+clip+'"></video><div class="bggrade"></div>';
+  sp.appendChild(el("div","halo"+(fire?" fire":"")));
+  var cup='<img class="cupShot" src="/tv-menu/cup/'+cupShotFor(opts.ad,opts.kategori)+'" alt="">';
+  var inner='<div class="spotTag'+(fire?" fire":"")+'">'+opts.tag+'</div><div class="spotCup">'+cup+'</div>'
+    +'<div class="spotName">'+opts.ad+'</div>'
+    +(opts.aciklama&&opts.aciklama!==opts.kategori?'<div class="spotDesc">'+opts.aciklama+'</div>':'')
+    +(opts.fiyat!=null?'<div class="spotPrice'+(fire?" fire":"")+'">'+opts.fiyat+' TL</div>':'');
+  sp.innerHTML+=inner;
+  return sp;
+}
 function buildStory(data){
   var sp=storyProduct(data);window._story=sp;
   var st=el("div","pg story");st.dataset.t=18000;st.dataset.roles="2";
@@ -942,24 +966,19 @@ function build(data,sig){
   // 2) 🎬 COFFEE STORY — sinematik (her döngüde günün ürünü fincanda doğar)
   heroPages.push(buildStory(data));
 
-  // 3) KAHRAMAN ÜRÜN — İmza (manuel) veya Öneri motoru (oto), TEK sahne (eskiden 2 ayrı sahneydi → birleştirildi)
-  var hp=heroProduct(data,sig);
-  if(hp){
-    var sp=el("div","pg");sp.dataset.t=10000;sp.dataset.roles="2";
-    sp.dataset.name=hp.ad;if(hp.fiyat!=null)sp.dataset.price=hp.fiyat+" TL";
-    var clip=/(mocktail|milkshake)/i.test(hp.kategori||"")?"mocktail":"craft";
-    sp.innerHTML='<video class="bgvid" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/'+clip+'"></video><div class="bggrade"></div>';
-    sp.appendChild(el("div","halo"));
-    var cup='<img class="cupShot" src="/tv-menu/cup/'+cupShotFor(hp.ad,hp.kategori)+'" alt="">';
-    var inner='<div class="spotTag">'+hp.tag+'</div><div class="spotCup">'+cup+'</div>'
-      +'<div class="spotName">'+hp.ad+'</div>'
-      +(hp.aciklama&&hp.aciklama!==hp.kategori?'<div class="spotDesc">'+hp.aciklama+'</div>':'')
-      +(hp.fiyat!=null?'<div class="spotPrice">'+hp.fiyat+' TL</div>':'');
-    sp.innerHTML+=inner;
-    heroPages.push(sp);
+  // 3) 🔥 EN ÇOK SATILAN SPOTLIGHT — gerçek satış lideri, Kahraman Ürün'le AYNI parlatma kurgusunda (ateş temalı)
+  var ecAd=sig&&sig.en_cok;
+  var hp0=heroProduct(data,sig);  // çakışma kontrolü için önce bak (aynı ürünü 2 kez parlatma)
+  if(ecAd&&(!hp0||hp0.ad!==ecAd)){
+    var ecKat=findKategori(ecAd),ecFy=findPrice(ecAd);
+    heroPages.push(buildSpotlight({tag:"🔥 En Çok Satılan",ad:ecAd,fiyat:ecFy,aciklama:ecKat,kategori:ecKat,dur:9000,theme:"fire"}));
   }
 
-  // 4) 🍰 TATLI KOMBO — Perfect Pair'i sahneler (Peak: merkez ekranın son/en güçlü sahnesi)
+  // 4) KAHRAMAN ÜRÜN — İmza (manuel) veya Öneri motoru (oto), aynı parlatma kurgusu (yeşil tema)
+  var hp=hp0;
+  if(hp)heroPages.push(buildSpotlight({tag:hp.tag,ad:hp.ad,fiyat:hp.fiyat,aciklama:hp.aciklama,kategori:hp.kategori,dur:10000}));
+
+  // 5) 🍰 TATLI KOMBO — Perfect Pair'i sahneler (Peak: merkez ekranın son/en güçlü sahnesi)
   var combo=el("div","pg");combo.dataset.t=9000;combo.dataset.roles="2";
   combo.dataset.name=(data.pair&&data.pair.ad)?data.pair.ad:"Kahve + Tatlı";
   if(data.pair&&data.pair.fiyat!=null)combo.dataset.price=data.pair.fiyat+" TL";
@@ -970,7 +989,7 @@ function build(data,sig){
     +((data.pair&&data.pair.fiyat!=null)?'<div class="spotPrice">'+data.pair.fiyat+' TL</div>':'');
   heroPages.push(combo);
 
-  // 5) KATEGORİLER (DESTEK EKRAN) — decision fatigue: sahne başına max 8 satır, taşan ikinci sayfaya bölünür
+  // 6) KATEGORİLER (DESTEK EKRAN) — decision fatigue: sahne başına max 8 satır, taşan ikinci sayfaya bölünür
   // Her sayfanın altında sabit Perfect Pair mikro-şeridi tekrar eder (cross-sell sürekli hatırlatılır)
   var pairHtml=(data.pair&&data.pair.ad)?('<div class="pairStrip"><span class="tag">Perfect Pair</span> <b>'+data.pair.ad+'</b>'+(data.pair.mesaj?(' · '+data.pair.mesaj):'')+'</div>'):'';
   (data.kategoriler||[]).forEach(function(k){
@@ -991,7 +1010,7 @@ function build(data,sig){
     });
   });
 
-  // 6) 🔥 EN ÇOK TERCİH EDİLEN — Peak-End: destek ekranın en SON/en güçlü sahnesi, gösterişli sosyal kanıt
+  // 7) 🔥 EN ÇOK TERCİH EDİLEN — Peak-End: destek ekranın en SON/en güçlü sahnesi, gösterişli sosyal kanıt
   if(sig && sig.top3 && sig.top3.length){
     var t3=el("div","pg cat top3pg");t3.dataset.t=9000;t3.dataset.roles="1,3";
     t3.innerHTML='<video class="bgvid" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/brew" style="opacity:.32"></video><div class="bggrade"></div>';
