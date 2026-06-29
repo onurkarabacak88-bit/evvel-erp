@@ -642,10 +642,22 @@ def tv_menu_logo():
     raise HTTPException(404, "logo yok")
 
 
+@router.get("/tv-menu/cup/{name}")
+def tv_menu_cup(name: str):
+    """Gerçek TULİPİ bardak fotoğrafları — imza silüet (her sahnede aynı kare, marka hafızası)."""
+    dosya = {"hot": "cup_hot_green.jpeg", "iced": "cup_iced_latte.jpeg", "mocktail": "cup_mocktail_green.jpeg"}.get(name)
+    if not dosya:
+        raise HTTPException(404, "bardak yok")
+    p = os.path.join("src/assets/tv", dosya)
+    if os.path.exists(p):
+        return FileResponse(p, media_type="image/jpeg")
+    raise HTTPException(404, "bardak dosyası yok")
+
+
 @router.get("/tv-menu/clip/{name}")
 def tv_menu_clip(name: str):
     """Coffee Story gerçek video klipleri (Mixkit Free, ticari kullanım serbest)."""
-    if name not in ("bean", "latte", "cup", "dessert", "brew", "froth", "mocktail"):
+    if name not in ("bean", "latte", "cup", "dessert", "brew", "mocktail", "lifestyle", "craft"):
         raise HTTPException(404, "klip yok")
     # Prod: Vite public/ -> static/tv'ye kopyalar. Dev: public/tv veya src/assets/tv.
     for base in ("static/tv", "public/tv", "src/assets/tv"):
@@ -719,6 +731,8 @@ _TV_HTML = r"""<!DOCTYPE html>
 .bgvid{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;opacity:.5;filter:saturate(1.25) contrast(1.1) brightness(.82)}
 .bggrade{position:absolute;inset:0;z-index:1;pointer-events:none;background:linear-gradient(180deg,#0e0b09cc 0,#0e0b0966 28%,#0e0b0966 70%,#0e0b09e6 100%)}
 .comboTitle{position:relative;z-index:2;font-size:3.6vh;font-style:italic;color:#EFE6D6;margin-top:1.2vh;text-shadow:0 .3vw 1.5vw #000}
+/* gerçek TULİPİ bardak fotoğrafı — imza silüet, her sahnede aynı kare (marka hafızası) */
+.cupShot{position:relative;z-index:2;width:20vh;border-radius:1.4vh;box-shadow:0 1.8vh 4.5vh #000c;animation:flo 4s ease-in-out infinite;margin:1.2vh 0 .6vh}
 /* FAZ 7 — Perfect Pair upsell */
 .pair{position:relative;z-index:2;margin-top:2.8vh;display:flex;flex-direction:column;align-items:center;gap:.7vh;animation:pairIn 1s ease 1.1s both}
 .pairTag{font-size:1.3vh;letter-spacing:.32vw;color:#0e0b09;background:#B89B80;padding:.5vh 1.5vw;border-radius:40px;text-transform:uppercase}
@@ -835,6 +849,12 @@ function storyProduct(data){
   });});
   return found||first||{ad:"COFFEE",fiyat:null};
 }
+function cupShotFor(name,kategori){
+  var n=(name||"").toLowerCase(),k=(kategori||"").toLowerCase();
+  if(/mocktail|milkshake/.test(k))return "mocktail";
+  if(/ice|buz|cold|iced/.test(n))return "iced";
+  return "hot";
+}
 function findPrice(name){var r=null;if(!window._tvData||!name)return null;
   (window._tvData.kategoriler||[]).forEach(function(k){(k.urunler||[]).forEach(function(u){
     if(String(u.ad).toLowerCase()===String(name).toLowerCase()){var v=u.f8!=null?u.f8:(u.f14!=null?u.f14:u.fice);if(v!=null)r=v;}});});
@@ -865,13 +885,10 @@ function build(data,sig){
   Array.prototype.slice.call(stage.querySelectorAll(".pg")).forEach(function(p){p.remove()});
   var dots=document.getElementById("dots");dots.innerHTML="";
   var pages=[];
-  // Hero — dönen halka + shimmer + buhar
-  var hero=el("div","pg");hero.dataset.t=6000;hero.dataset.roles="1,2,3";
-  hero.appendChild(el("div","ring"));
-  hero.appendChild(el("div","halo"));
-  var img=el("img","logo");img.alt="TULİPİ";img.onload=function(){img.style.opacity=1;};hero.appendChild(img);img.src="/tv-menu/logo";if(img.complete)img.style.opacity=1;
-  var steam=el("div","steam");steam.style.zIndex=3;
-  steam.innerHTML='<svg width="6vw" viewBox="0 0 60 40"><g fill="none" stroke="#EFE6D6" stroke-width="1.4" stroke-linecap="round"><path d="M22 34 q-3 -7 1 -13" style="animation:steam 3s ease-in-out infinite"/><path d="M31 33 q3 -7 -1 -13" style="animation:steam 3s ease-in-out 1s infinite"/><path d="M40 34 q-3 -7 1 -13" style="animation:steam 3s ease-in-out 2s infinite"/></g></svg>';
+  // Hero — GERÇEK TULİPİ çekimi: bardakla yürüyen müşteri + vitrin (take-away yaşam tarzı, ilk 3sn metin yok)
+  var hero=el("div","pg");hero.dataset.t=8000;hero.dataset.roles="1,2,3";
+  hero.innerHTML='<video class="bgvid" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/lifestyle" style="opacity:.85"></video><div class="bggrade"></div>';
+  var img=el("img","logo");img.alt="TULİPİ";img.style.position="relative";img.style.zIndex=2;img.onload=function(){img.style.opacity=1;};hero.appendChild(img);img.src="/tv-menu/logo";if(img.complete)img.style.opacity=1;
   hero.appendChild(el("div","q","Crafted Every Day"));
   pages.push(hero);
   // 🎬 COFFEE STORY — sinematik ara sahne (her döngüde günün ürünü fincanda doğar)
@@ -879,18 +896,9 @@ function build(data,sig){
   // İMZA SPOTLIGHT — panelden seçilen öne çıkan ürün (float + buhar + nabız fiyat)
   if(data.imza && data.imza.ad){
     var sp=el("div","pg");sp.dataset.t=10000;sp.dataset.roles="2,3";
-    sp.innerHTML='<video class="bgvid" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/froth"></video><div class="bggrade"></div>';
+    sp.innerHTML='<video class="bgvid" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/craft"></video><div class="bggrade"></div>';
     sp.appendChild(el("div","halo"));
-    var cup='<svg width="14vw" viewBox="0 0 200 200" style="width:14vw;height:14vw">'
-      +'<g fill="none" stroke="#B89B80" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">'
-      +'<ellipse cx="100" cy="158" rx="58" ry="9"/><ellipse cx="100" cy="110" rx="40" ry="9"/>'
-      +'<path d="M62 110 Q66 146 100 148 Q134 146 138 110"/><path d="M138 118 Q164 120 159 138 Q157 149 141 146"/></g>'
-      +'<ellipse cx="100" cy="110" rx="36" ry="7.5" fill="#0e0b09"/>'
-      +'<g fill="none" stroke="#3E8E5A" stroke-width="1.5" stroke-linecap="round" opacity=".95"><path d="M100 104 V117 M100 107 q-9 2 -14 6 M100 107 q9 2 14 6 M100 111 q-6 3 -10 6 M100 111 q6 3 10 6"/></g>'
-      +'<g fill="none" stroke="#EFE6D6" stroke-width="1.5" stroke-linecap="round">'
-      +'<path d="M86 100 q-4 -8 1 -15" style="animation:steam 3s ease-in-out infinite"/>'
-      +'<path d="M100 98 q4 -9 -1 -17" style="animation:steam 3s ease-in-out 1s infinite"/>'
-      +'<path d="M114 100 q-4 -8 1 -15" style="animation:steam 3s ease-in-out 2s infinite"/></g></svg>';
+    var cup='<img class="cupShot" src="/tv-menu/cup/'+cupShotFor(data.imza.ad,"")+'" alt="">';
     var inner='<div class="spotTag">Bugünün İmzası</div><div class="spotCup">'+cup+'</div>'
       +'<div class="spotName">'+data.imza.ad+'</div>'
       +(data.imza.aciklama?'<div class="spotDesc">'+data.imza.aciklama+'</div>':'')
@@ -922,6 +930,7 @@ function build(data,sig){
     var clip=/(mocktail|milkshake)/i.test(sig.oneri.kategori||"")?"mocktail":"brew";
     os.innerHTML='<video class="bgvid" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/'+clip+'"></video><div class="bggrade"></div>';
     os.innerHTML+='<div class="spotTag">💡 '+(sig.oneri.neden||"Bugün Dene")+'</div>'
+      +'<img class="cupShot" src="/tv-menu/cup/'+cupShotFor(sig.oneri.ad,sig.oneri.kategori)+'" alt="">'
       +'<div class="spotName">'+sig.oneri.ad+'</div>'
       +(sig.oneri.kategori?'<div class="spotDesc">'+sig.oneri.kategori+'</div>':'')
       +(op!=null?'<div class="spotPrice">'+op+' TL</div>':'');
