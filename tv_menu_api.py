@@ -156,6 +156,83 @@ def _ayar_oku(cur) -> dict:
     return {r["anahtar"]: r["deger"] for r in (cur.fetchall() or [])}
 
 
+# FAZ — ANALYTICS ENGINE (Adım 1: Gösterim Sayacı). İZOLE tablo, kendi ensure
+# fonksiyonu, hata-yutar (TV ekranı log atamazsa bile sahne akışı asla bozulmaz).
+_GOSTERIM_TABLO_HAZIR = False
+
+
+def _ensure_gosterim_tablo(cur):
+    global _GOSTERIM_TABLO_HAZIR
+    if _GOSTERIM_TABLO_HAZIR:
+        return
+    cur.execute(
+        """CREATE TABLE IF NOT EXISTS tv_gosterim (
+            id TEXT PRIMARY KEY,
+            ts TIMESTAMPTZ DEFAULT NOW(),
+            ekran TEXT,
+            sahne TEXT,
+            urun_ad TEXT
+        )"""
+    )
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_tv_gosterim_ts ON tv_gosterim (ts)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_tv_gosterim_urun ON tv_gosterim (urun_ad)")
+    _GOSTERIM_TABLO_HAZIR = True
+
+
+class GosterimModel(BaseModel):
+    ekran: Optional[str] = None
+    sahne: Optional[str] = None
+    urun_ad: Optional[str] = None
+
+
+@router.post("/api/tv-gosterim")
+def tv_gosterim_log(g: GosterimModel):
+    """Bir sahne TV'de gerçekten gösterildiğinde frontend bunu loglar (fire-and-forget).
+    Analytics Engine'in temeli: hangi ürün hangi sahnede, hangi ekranda, ne zaman gösterildi."""
+    if not (g.urun_ad or "").strip():
+        return {"success": False, "neden": "urun_ad yok"}
+    try:
+        with db() as (conn, cur):
+            _ensure_gosterim_tablo(cur)
+            cur.execute(
+                "INSERT INTO tv_gosterim (id,ekran,sahne,urun_ad) VALUES (%s,%s,%s,%s)",
+                (str(uuid.uuid4()), (g.ekran or "").strip() or None, (g.sahne or "").strip() or None, g.urun_ad.strip()),
+            )
+        return {"success": True}
+    except Exception as e:
+        logger.warning("tv-gosterim log hata: %s", e)
+        return {"success": False}
+
+
+@router.get("/api/tv-gosterim/ozet")
+def tv_gosterim_ozet(gun: int = 7):
+    """Son N günde ürün başına gösterim sayısı — Analytics Engine'in ilk raporu.
+    Sonraki adım (attribution): bunu Evo satış verisiyle ilişkilendirmek."""
+    from datetime import timedelta
+    try:
+        with db() as (conn, cur):
+            _ensure_gosterim_tablo(cur)
+            bas = datetime.now() - timedelta(days=max(1, gun))
+            cur.execute(
+                """SELECT urun_ad, sahne, COUNT(*) AS n FROM tv_gosterim
+                   WHERE ts >= %s AND urun_ad IS NOT NULL
+                   GROUP BY urun_ad, sahne ORDER BY n DESC""",
+                (bas,),
+            )
+            rows = [dict(r) for r in (cur.fetchall() or [])]
+        toplam = {}
+        for r in rows:
+            toplam[r["urun_ad"]] = toplam.get(r["urun_ad"], 0) + r["n"]
+        return {
+            "gun": gun,
+            "toplam_gosterim": sorted([{"urun_ad": k, "adet": v} for k, v in toplam.items()], key=lambda x: -x["adet"]),
+            "detay_sahne": rows,
+        }
+    except Exception as e:
+        logger.warning("tv-gosterim ozet hata: %s", e)
+        return {"gun": gun, "toplam_gosterim": [], "detay_sahne": []}
+
+
 class UrunModel(BaseModel):
     kategori: str
     ad: str
@@ -903,7 +980,7 @@ function findKategori(name){var r="";if(!window._tvData||!name)return r;
 function buildSpotlight(opts){
   // tek tip "parlatma" kurgusu: halo + bardak silüeti + video arka plan + glow fiyat — Kahraman Ürün & En Çok Satılan ortak kullanır
   var sp=el("div","pg");sp.dataset.t=opts.dur||10000;sp.dataset.roles="2";
-  sp.dataset.name=opts.ad;if(opts.fiyat!=null)sp.dataset.price=opts.fiyat+" TL";
+  sp.dataset.name=opts.ad;if(opts.fiyat!=null)sp.dataset.price=opts.fiyat+" TL";sp.dataset.sahne=opts.sahne||"spotlight";
   var theme=opts.theme||"";  // "", "fire" (en çok satılan), "discover" (öneri motoru)
   var tcls=theme?(" "+theme):"";
   var clip=/(mocktail|milkshake)/i.test(opts.kategori||"")?"mocktail":"craft";
@@ -922,7 +999,7 @@ function buildStory(data){
   // Tek sürekli gerçek klip, crossfade/3-video performans hack'i gerekmiyor (artık tek video var).
   var sp=storyProduct(data);window._story=sp;
   var st=el("div","pg story");st.dataset.t=12000;st.dataset.roles="2";
-  st.dataset.name=sp.ad;if(sp.fiyat!=null)st.dataset.price=sp.fiyat+" TL";
+  st.dataset.name=sp.ad;if(sp.fiyat!=null)st.dataset.price=sp.fiyat+" TL";st.dataset.sahne="story";
   st.innerHTML='<video class="vid v1" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/espresso" style="opacity:1"></video>'
     +'<div class="grade"></div><div class="grain"></div>'
     +'<div class="stPriceWrap"><div class="stpn" id="storyName">'+sp.ad+'</div><div class="stpl"></div><div class="stpp" id="storyPrice">'+(sp.fiyat!=null?sp.fiyat+' TL':'')+'</div></div>'
@@ -980,12 +1057,12 @@ function build(data,sig){
   var hp0=heroProduct(data,sig);  // çakışma kontrolü için önce bak (aynı ürünü 2 kez parlatma)
   if(ecAd&&(!hp0||hp0.ad!==ecAd)){
     var ecKat=findKategori(ecAd),ecFy=findPrice(ecAd);
-    heroPages.push(buildSpotlight({tag:"En Çok Satılan",ad:ecAd,fiyat:ecFy,aciklama:ecKat,kategori:ecKat,dur:9000,theme:"fire"}));
+    heroPages.push(buildSpotlight({tag:"En Çok Satılan",ad:ecAd,fiyat:ecFy,aciklama:ecKat,kategori:ecKat,dur:9000,theme:"fire",sahne:"en_cok"}));
   }
 
   // 4) KAHRAMAN ÜRÜN — İmza (manuel) veya Öneri motoru (oto), aynı parlatma kurgusu (yeşil tema)
   var hp=hp0;
-  if(hp)heroPages.push(buildSpotlight({tag:hp.tag,ad:hp.ad,fiyat:hp.fiyat,aciklama:hp.aciklama,kategori:hp.kategori,dur:10000,theme:hp.theme}));
+  if(hp)heroPages.push(buildSpotlight({tag:hp.tag,ad:hp.ad,fiyat:hp.fiyat,aciklama:hp.aciklama,kategori:hp.kategori,dur:10000,theme:hp.theme,sahne:"kahraman"}));
 
   // 4.2) CRAFT MOCKTAIL — gerçek barista çekimi: jigger → süzgeç → yeşil akış (barista ustalığı, ayrı/kendi sahnesi)
   // Kahraman Ürün AYNI greenmocktail klibini kullanmışsa burada farklı klip seç (çakışma önleme)
@@ -1000,7 +1077,7 @@ function build(data,sig){
   // uyumsuzluğuydu. Gerçek Desserts çekimi yok, o yüzden gerçek kahve çekimine (craft) geçildi —
   // "Kahve + Tatlı" eşleşmesinde kahve tarafı gerçek, jenerik stok kekten daha tutarlı.
   var combo=el("div","pg");combo.dataset.t=9000;combo.dataset.roles="2";
-  combo.dataset.name=(data.pair&&data.pair.ad)?data.pair.ad:"Kahve + Tatlı";
+  combo.dataset.name=(data.pair&&data.pair.ad)?data.pair.ad:"Kahve + Tatlı";combo.dataset.sahne="kombo";
   if(data.pair&&data.pair.fiyat!=null)combo.dataset.price=data.pair.fiyat+" TL";
   combo.innerHTML='<video class="bgvid" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/craft"></video><div class="bggrade"></div>'
     +'<div class="spotTag">PERFECT PAIR</div>'
@@ -1022,7 +1099,7 @@ function build(data,sig){
     var hpClip=/(mocktail|milkshake)/i.test(hp.kategori||"")?"greenmocktail":"craft";
     var hpTcls=hp.theme?(" "+hp.theme):"";
     var hpC=el("div","pg flatCard");hpC.dataset.t=7000;hpC.dataset.roles="1";
-    hpC.dataset.name=hp.ad;if(hp.fiyat!=null)hpC.dataset.price=hp.fiyat+" TL";  // #priceCorner artık Ekran1'de de tutarlı
+    hpC.dataset.name=hp.ad;if(hp.fiyat!=null)hpC.dataset.price=hp.fiyat+" TL";hpC.dataset.sahne="oneri-flat";  // #priceCorner artık Ekran1'de de tutarlı
     hpC.innerHTML='<video class="bgvid" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/'+hpClip+'" style="opacity:.4"></video><div class="bggrade"></div>'
       +'<div class="gT'+hpTcls+'" style="position:relative;z-index:2">'+hp.tag+'</div><div class="spotName" style="font-size:4vh;position:relative;z-index:2">'+hp.ad+'</div>'
       +(hp.fiyat!=null?'<div class="spotPrice'+hpTcls+'" style="position:relative;z-index:2">'+hp.fiyat+' TL</div>':'');
@@ -1031,7 +1108,7 @@ function build(data,sig){
   // Perfect Pair Kartı — ayrı/büyük (alttaki mikro-şeritten farklı, kendi sahnesi)
   if(data.pair&&data.pair.ad){
     var pairC=el("div","pg flatCard");pairC.dataset.t=7000;pairC.dataset.roles="1";
-    pairC.dataset.name=data.pair.ad;if(data.pair.fiyat!=null)pairC.dataset.price=data.pair.fiyat+" TL";
+    pairC.dataset.name=data.pair.ad;if(data.pair.fiyat!=null)pairC.dataset.price=data.pair.fiyat+" TL";pairC.dataset.sahne="pair-flat";
     pairC.innerHTML='<div class="gT">Perfect Pair</div><div class="spotName" style="font-size:3.6vh;position:relative;z-index:2">'+data.pair.ad+'</div>'
       +(data.pair.mesaj?'<div class="spotDesc" style="position:relative;z-index:2">'+data.pair.mesaj+'</div>':'')
       +(data.pair.fiyat!=null?'<div class="spotPrice" style="position:relative;z-index:2">'+data.pair.fiyat+' TL</div>':'');
@@ -1174,8 +1251,20 @@ function build(data,sig){
       else if(!vids[j].paused){ try{vids[j].pause();}catch(e){} }
     }
   }
+  // ANALYTICS ENGINE — Adım 1 (Gösterim Sayacı): bir ürün adlı sahne gerçekten ekrana gelince
+  // fire-and-forget logla. Sahne akışını ASLA bloklamaz/bozmaz (hata sessizce yutulur).
+  var lastLogIdx=-1;
+  function logGosterim(p){
+    if(!p||!p.dataset.name)return;
+    try{
+      fetch("/api/tv-gosterim",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({ekran:(new URLSearchParams(location.search)).get("ekran")||"tek",sahne:p.dataset.sahne||"",urun_ad:p.dataset.name})
+      }).catch(function(){});
+    }catch(e){}
+  }
   function show(i){pages.forEach(function(p,k){var on=k===i;p.classList.toggle("on",on);di[k].classList.toggle("on",on);syncVideos(p,on);});
     var cur=pages[i];
+    if(i!==lastLogIdx){lastLogIdx=i;logGosterim(cur);}
     var fv=document.getElementById("fav");if(fv)fv.classList.toggle("on",!!(window._favName&&cur&&cur.classList.contains("cat")));
     if(pc){
       if(cur&&cur.dataset.price){pc.querySelector(".pcName").textContent=cur.dataset.name||"";pc.querySelector(".pcPrice").textContent=cur.dataset.price;pc.classList.add("on");}
