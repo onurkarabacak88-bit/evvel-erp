@@ -466,8 +466,13 @@ def _satis_30gun():
     return _SATIS_CACHE["map"]
 
 
-def _top3(satis):
-    """Bugün/son 30 günde en çok tercih edilen 3 ürün (ayrı sahne için)."""
+def _top3(satis, rows=None):
+    """Bugün/son 30 günde en çok tercih edilen 3 ürün — SADECE TV menüsünde gösterilen
+    ürünler arasından (Su/Çay gibi menüde olmayan jenerik kalemler hariç, gösterişli+anlamlı kalsın)."""
+    if rows:
+        norm = lambda s: re.sub(r"\s+", " ", str(s).strip().lower())
+        menu_adlari = {norm(r["ad"]) for r in rows}
+        satis = {a: c for a, c in satis.items() if norm(a) in menu_adlari}
     sirali = sorted(satis.items(), key=lambda x: -x[1])[:3]
     return [{"ad": a, "adet": c} for a, c in sirali if c > 0]
 
@@ -528,7 +533,7 @@ def tv_signals():
     mv = _mevsim()
     en_cok = _en_cok(ayar)
     satis = _satis_30gun()
-    top3 = _top3(satis)
+    top3 = _top3(satis, rows)
     oneri = None
     try:
         oneri = _oneri_motoru(rows, sm["mod"], mv["ad"], haric=en_cok)
@@ -746,6 +751,16 @@ _TV_HTML = r"""<!DOCTYPE html>
 .bgvid{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;opacity:.5;filter:saturate(1.25) contrast(1.1) brightness(.82)}
 .bggrade{position:absolute;inset:0;z-index:1;pointer-events:none;background:linear-gradient(180deg,#0e0b09cc 0,#0e0b0966 28%,#0e0b0966 70%,#0e0b09e6 100%)}
 .comboTitle{position:relative;z-index:2;font-size:3.6vh;font-style:italic;color:#EFE6D6;margin-top:1.2vh;text-shadow:0 .3vw 1.5vw #000}
+/* 🔥 TOP-3 — gösterişli sosyal kanıt: glow rank, animasyonlu yüzde barı, gerçek video arka plan */
+.t3wrap{position:relative;z-index:2;width:90vw;max-width:90vw}
+.t3row{display:flex;align-items:center;gap:1.4vw;margin:1.6vh 0;animation:rowIn .6s cubic-bezier(.2,.7,.2,1) both}
+.t3rank{font-size:5vh;font-weight:700;color:#3E8E5A;width:1.6em;text-align:center;text-shadow:0 0 2vh #3E8E5A99,0 0 .6vh #3E8E5A;flex-shrink:0}
+.t3body{flex:1;min-width:0}
+.t3name{font-size:2.6vh;color:#EFE6D6;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:.6vh}
+.t3barBg{height:1.3vh;border-radius:1vh;background:#ffffff14;overflow:hidden}
+.t3barBg i{display:block;height:100%;background:linear-gradient(90deg,#2c6b43,#5fbf86);border-radius:1vh;box-shadow:0 0 1.2vh #3E8E5A77;animation:t3barIn 1.4s cubic-bezier(.16,.8,.2,1) both}
+@keyframes t3barIn{from{width:0}}
+.t3count{flex-shrink:0;font-size:1.7vh;color:#7fae93;letter-spacing:.05vw;white-space:nowrap}
 /* gerçek TULİPİ bardak fotoğrafı — imza silüet, her sahnede aynı kare (marka hafızası) */
 .cupShot{position:relative;z-index:2;width:20vh;border-radius:1.4vh;box-shadow:0 1.8vh 4.5vh #000c;animation:flo 4s ease-in-out infinite;margin:1.2vh 0 .6vh}
 /* FAZ 7 — Perfect Pair upsell */
@@ -976,15 +991,21 @@ function build(data,sig){
     });
   });
 
-  // 6) 🔥 EN ÇOK TERCİH EDİLEN — Peak-End: destek ekranın en SON/en güçlü sahnesi, gerçek sayı (emoji değil)
+  // 6) 🔥 EN ÇOK TERCİH EDİLEN — Peak-End: destek ekranın en SON/en güçlü sahnesi, gösterişli sosyal kanıt
   if(sig && sig.top3 && sig.top3.length){
-    var t3=el("div","pg cat");t3.dataset.t=9000;t3.dataset.roles="1,3";
-    t3.appendChild(el("div","gT","Bugün En Çok Tercih Edilen"));
-    var m3=el("div","menu");
-    m3.innerHTML=sig.top3.map(function(it,i){
-      return '<div class="row" style="grid-template-columns:1fr 5em;animation-delay:'+(0.18+i*0.1).toFixed(2)+'s"><span class="nm">'+(i+1)+'. '+it.ad+'</span><span class="pr acc">'+it.adet+'×</span></div>';
+    var t3=el("div","pg cat top3pg");t3.dataset.t=9000;t3.dataset.roles="1,3";
+    t3.innerHTML='<video class="bgvid" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/brew" style="opacity:.32"></video><div class="bggrade"></div>';
+    t3.appendChild(el("div","gT","🔥 Bugün En Çok Tercih Edilen"));
+    var maxAdet=Math.max.apply(null,sig.top3.map(function(it){return it.adet;}));
+    var wrap=el("div","t3wrap");
+    wrap.innerHTML=sig.top3.map(function(it,i){
+      var pct=Math.max(8,Math.round((it.adet/maxAdet)*100));
+      return '<div class="t3row" style="animation-delay:'+(0.15+i*0.15).toFixed(2)+'s">'
+        +'<div class="t3rank">'+(i+1)+'</div>'
+        +'<div class="t3body"><div class="t3name">'+it.ad+'</div><div class="t3barBg"><i style="width:'+pct+'%;animation-delay:'+(0.4+i*0.15).toFixed(2)+'s"></i></div></div>'
+        +'<div class="t3count">'+Math.round(it.adet)+' kez</div></div>';
     }).join("");
-    t3.appendChild(m3);
+    t3.appendChild(wrap);
     supportPages.push(t3);
   }
 
