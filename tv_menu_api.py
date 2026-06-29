@@ -649,20 +649,25 @@ def tv_menu_logo():
 
 @router.get("/tv-menu/cup/{name}")
 def tv_menu_cup(name: str):
-    """Gerçek TULİPİ bardak fotoğrafları — imza silüet (her sahnede aynı kare, marka hafızası)."""
-    dosya = {"hot": "cup_hot_green.jpeg", "iced": "cup_iced_latte.jpeg", "mocktail": "cup_mocktail_green.jpeg"}.get(name)
-    if not dosya:
+    """Gerçek TULİPİ bardak fotoğrafları — imza silüet (her sahnede aynı kare, marka hafızası).
+    Prod: Vite public/ -> static/'ye kopyalar. Dev: public/tv veya src/assets/tv."""
+    if name not in ("hot", "iced", "mocktail"):
         raise HTTPException(404, "bardak yok")
-    p = os.path.join("src/assets/tv", dosya)
-    if os.path.exists(p):
-        return FileResponse(p, media_type="image/jpeg")
+    eski = {"hot": "cup_hot_green.jpeg", "iced": "cup_iced_latte.jpeg", "mocktail": "cup_mocktail_green.jpeg"}[name]
+    for p in (
+        os.path.join("static/tv", "cup_" + name + ".jpeg"),
+        os.path.join("public/tv", "cup_" + name + ".jpeg"),
+        os.path.join("src/assets/tv", eski),
+    ):
+        if os.path.exists(p):
+            return FileResponse(p, media_type="image/jpeg")
     raise HTTPException(404, "bardak dosyası yok")
 
 
 @router.get("/tv-menu/clip/{name}")
 def tv_menu_clip(name: str):
     """Coffee Story gerçek video klipleri (Mixkit Free, ticari kullanım serbest)."""
-    if name not in ("bean", "latte", "cup", "dessert", "brew", "mocktail", "lifestyle", "craft", "musteri",
+    if name not in ("dessert", "mocktail", "lifestyle", "craft", "musteri",
                      "espresso", "greenmocktail", "frozen", "kahverengi"):
         raise HTTPException(404, "klip yok")
     # Prod: Vite public/ -> static/tv'ye kopyalar. Dev: public/tv veya src/assets/tv.
@@ -949,8 +954,8 @@ function build(data,sig){
   heroPages.push(bOpen);
 
   // 1.5) SAAT/MEVSİM SİNEMATİK — gerçek sig sinyali, video arka planlı büyük tipografi (yeni malzeme, süre değil çeşitlilik)
-  function clipForMod(mod){return mod==="sabah"?"brew":mod==="ogle"?"mocktail":mod==="aksam"?"dessert":"lifestyle";}
-  function clipForSeason(sea){return sea==="yaz"?"mocktail":sea==="kis"?"brew":sea==="ilkbahar"?"craft":"dessert";}
+  function clipForMod(mod){return mod==="sabah"?"espresso":mod==="ogle"?"mocktail":mod==="aksam"?"dessert":"lifestyle";}
+  function clipForSeason(sea){return sea==="yaz"?"mocktail":sea==="kis"?"espresso":sea==="ilkbahar"?"craft":"dessert";}
   if(sig&&sig.saat_modu){
     var smPg=el("div","pg");smPg.dataset.t=8000;smPg.dataset.roles="2";
     smPg.innerHTML='<video class="bgvid" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/'+clipForMod(sig.saat_modu.mod)+'"></video><div class="bggrade"></div>'
@@ -1057,7 +1062,7 @@ function build(data,sig){
   // 7) 🔥 EN ÇOK TERCİH EDİLEN — Peak-End: destek ekranın en SON/en güçlü sahnesi, gösterişli sosyal kanıt
   if(sig && sig.top3 && sig.top3.length){
     var t3=el("div","pg cat top3pg");t3.dataset.t=9000;t3.dataset.roles="1";
-    t3.innerHTML='<video class="bgvid" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/brew" style="opacity:.32"></video><div class="bggrade"></div>';
+    t3.innerHTML='<video class="bgvid" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/espresso" style="opacity:.32"></video><div class="bggrade"></div>';
     t3.appendChild(el("div","gT","🔥 Bugün En Çok Tercih Edilen"));
     var maxAdet=Math.max.apply(null,sig.top3.map(function(it){return it.adet;}));
     var wrap=el("div","t3wrap");
@@ -1270,8 +1275,9 @@ loadSig();setInterval(loadSig,60000);setInterval(rotLive,7000);
 (function cine(){
   var c=document.getElementById("cine");if(!c||window._cineInit)return;window._cineInit=1;
   var ek=(new URLSearchParams(location.search)).get("ekran");
-  var CYCLE=150, DUR=11, names=["bean","latte","cup","lifestyle"];
-  var caps={bean:["TAZE KAVRULDU","Freshly Roasted"],latte:["LATTE ART","El Yapımı"],cup:["SICACIK","Freshly Brewed"],lifestyle:["TULİPİ","Her An Yanında"]};
+  // GERÇEK TULİPİ çekimleri (stok bean/latte/cup emekli edildi — kopukluk yaratıyordu, marka tutarlılığı için)
+  var CYCLE=150, DUR=11, names=["espresso","craft","musteri","lifestyle"];
+  var caps={espresso:["TAZE DEMLENDİ","Freshly Brewed"],craft:["EL YAPIMI","Handcrafted"],musteri:["MUTLULUK","Her Gülüşte"],lifestyle:["TULİPİ","Her An Yanında"]};
   var vid=c.querySelector("video"),ct=c.querySelector(".ct"),cs=c.querySelector(".cs"),active=false,curName="";
   function pick(occ){return ek?names[Math.max(0,parseInt(ek,10)-1)%names.length]:names[occ%names.length];}
   if(ek){curName=pick(0);vid.src="/tv-menu/clip/"+curName;}
