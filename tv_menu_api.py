@@ -1145,7 +1145,16 @@ function build(data,sig){
   pages.forEach(function(p){stage.insertBefore(p,document.querySelector(".foot"));dots.appendChild(el("i"));});
   var di=dots.children;
   var pc=document.getElementById("priceCorner");
-  function show(i){pages.forEach(function(p,k){p.classList.toggle("on",k===i);di[k].classList.toggle("on",k===i);});
+  // KRİTİK FIX: display:none içindeyken <video autoplay> tarayıcıda sessizce başlamaz —
+  // sahne görünür/gizli olduğunda videoyu EXPLICIT play()/pause() etmek gerekiyor (tüm bgvid sahneleri için)
+  function syncVideos(p,on){
+    var vids=p.querySelectorAll("video");
+    for(var j=0;j<vids.length;j++){
+      if(on){ if(vids[j].paused){var pr=vids[j].play();if(pr&&pr.catch)pr.catch(function(){});} }
+      else if(!vids[j].paused){ try{vids[j].pause();}catch(e){} }
+    }
+  }
+  function show(i){pages.forEach(function(p,k){var on=k===i;p.classList.toggle("on",on);di[k].classList.toggle("on",on);syncVideos(p,on);});
     var cur=pages[i];
     var fv=document.getElementById("fav");if(fv)fv.classList.toggle("on",!!(window._favName&&cur&&cur.classList.contains("cat")));
     if(pc){
