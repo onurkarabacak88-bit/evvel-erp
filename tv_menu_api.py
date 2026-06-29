@@ -662,7 +662,7 @@ def tv_menu_cup(name: str):
 @router.get("/tv-menu/clip/{name}")
 def tv_menu_clip(name: str):
     """Coffee Story gerçek video klipleri (Mixkit Free, ticari kullanım serbest)."""
-    if name not in ("bean", "latte", "cup", "dessert", "brew", "mocktail", "lifestyle", "craft"):
+    if name not in ("bean", "latte", "cup", "dessert", "brew", "mocktail", "lifestyle", "craft", "musteri"):
         raise HTTPException(404, "klip yok")
     # Prod: Vite public/ -> static/tv'ye kopyalar. Dev: public/tv veya src/assets/tv.
     for base in ("static/tv", "public/tv", "src/assets/tv"):
@@ -779,6 +779,13 @@ _TV_HTML = r"""<!DOCTYPE html>
 .hhMsg{font-size:2.2vh;color:#EFE6D6;font-style:italic;margin-top:1vh}
 /* EKRAN 3 — Marka silüet altyazı (bardak rotasyonu) */
 .brandLabel{position:relative;z-index:2;font-size:2.4vh;letter-spacing:.5vw;color:#EFE6D6;text-transform:uppercase;margin-top:1.2vh;text-shadow:0 .3vw 1.5vw #000}
+/* SAAT/MEVSİM SİNEMATİK kartları (Ekran 2) + düz tipografik kartlar (Ekran 1) — gerçek sig verisiyle */
+.bigEmoji{position:relative;z-index:2;font-size:8vh;margin-bottom:.6vh}
+.bigEtiket{position:relative;z-index:2;font-size:4.6vh;font-weight:500;color:#EFE6D6;letter-spacing:.15vw;text-shadow:0 .3vw 1.5vw #000}
+.bigOneri{position:relative;z-index:2;font-size:2.2vh;color:#5fbf86;font-style:italic;margin-top:1vh;letter-spacing:.05vw}
+.flatCard .gT{margin-bottom:1.4vh}
+.flatCard .spotPrice{margin-top:.8vh}
+.musteriTag{position:relative;z-index:2;font-size:3vh;font-style:italic;color:#EFE6D6;text-shadow:0 .3vw 1.5vw #000;margin-top:1.4vh}
 /* gerçek TULİPİ bardak fotoğrafı — imza silüet, her sahnede aynı kare (marka hafızası) */
 .cupShot{position:relative;z-index:2;width:20vh;border-radius:1.4vh;box-shadow:0 1.8vh 4.5vh #000c;animation:flo 4s ease-in-out infinite;margin:1.2vh 0 .6vh}
 /* FAZ 7 — Perfect Pair upsell */
@@ -977,6 +984,22 @@ function build(data,sig){
     +'<div class="bardakInfo"><div class="q" style="margin-top:0">Crafted Every Day</div></div>';
   heroPages.push(bOpen);
 
+  // 1.5) SAAT/MEVSİM SİNEMATİK — gerçek sig sinyali, video arka planlı büyük tipografi (yeni malzeme, süre değil çeşitlilik)
+  function clipForMod(mod){return mod==="sabah"?"brew":mod==="ogle"?"mocktail":mod==="aksam"?"dessert":"lifestyle";}
+  function clipForSeason(sea){return sea==="yaz"?"mocktail":sea==="kis"?"brew":sea==="ilkbahar"?"craft":"dessert";}
+  if(sig&&sig.saat_modu){
+    var smPg=el("div","pg");smPg.dataset.t=8000;smPg.dataset.roles="2";
+    smPg.innerHTML='<video class="bgvid" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/'+clipForMod(sig.saat_modu.mod)+'"></video><div class="bggrade"></div>'
+      +'<div class="bigEtiket">'+sig.saat_modu.etiket+'</div>'+(sig.saat_modu.oneri?'<div class="bigOneri">'+sig.saat_modu.oneri+'</div>':'');
+    heroPages.push(smPg);
+  }
+  if(sig&&sig.mevsim){
+    var mvPg=el("div","pg");mvPg.dataset.t=8000;mvPg.dataset.roles="2";
+    mvPg.innerHTML='<video class="bgvid" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/'+clipForSeason(sig.mevsim.ad)+'"></video><div class="bggrade"></div>'
+      +'<div class="bigEtiket">'+sig.mevsim.etiket+'</div>'+(sig.mevsim.oneri?'<div class="bigOneri">'+sig.mevsim.oneri+'</div>':'');
+    heroPages.push(mvPg);
+  }
+
   // 2) 🎬 COFFEE STORY — sinematik (her döngüde günün ürünü fincanda doğar)
   heroPages.push(buildStory(data));
 
@@ -992,6 +1015,12 @@ function build(data,sig){
   var hp=hp0;
   if(hp)heroPages.push(buildSpotlight({tag:hp.tag,ad:hp.ad,fiyat:hp.fiyat,aciklama:hp.aciklama,kategori:hp.kategori,dur:10000}));
 
+  // 4.5) MÜŞTERİ ANI — gerçek TULİPİ müşteri görüntüsü (otantik, duygusal — yeni malzeme)
+  var musPg=el("div","pg");musPg.dataset.t=8000;musPg.dataset.roles="2";
+  musPg.innerHTML='<video class="bgvid" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/musteri" style="opacity:.9"></video><div class="bggrade"></div>'
+    +'<div class="musteriTag">Her Gülüşte Bir Fincan</div>';
+  heroPages.push(musPg);
+
   // 5) 🍰 TATLI KOMBO — Perfect Pair'i sahneler (Peak: merkez ekranın son/en güçlü sahnesi)
   var combo=el("div","pg");combo.dataset.t=9000;combo.dataset.roles="2";
   combo.dataset.name=(data.pair&&data.pair.ad)?data.pair.ad:"Kahve + Tatlı";
@@ -1002,6 +1031,34 @@ function build(data,sig){
     +'<div class="comboTitle">Birlikte daha güzel</div>'
     +((data.pair&&data.pair.fiyat!=null)?'<div class="spotPrice">'+data.pair.fiyat+' TL</div>':'');
   heroPages.push(combo);
+
+  // 5.5) EKRAN 1 — düz tipografik kartlar (video YOK, "sabit/okunabilir" ethos), kategori listesinden önce
+  // Saat Kartı + Mevsim Kartı — Ekran 2'deki sinematik versiyonun sade/okunabilir karşılığı
+  if(sig&&sig.saat_modu){
+    var smC=el("div","pg flatCard");smC.dataset.t=6000;smC.dataset.roles="1";
+    smC.innerHTML='<div class="gT">'+sig.saat_modu.etiket+'</div>'+(sig.saat_modu.oneri?'<div class="gH" style="margin-bottom:0">'+sig.saat_modu.oneri+'</div>':'');
+    ekran1Pages.push(smC);
+  }
+  if(sig&&sig.mevsim){
+    var mvC=el("div","pg flatCard");mvC.dataset.t=6000;mvC.dataset.roles="1";
+    mvC.innerHTML='<div class="gT">'+sig.mevsim.etiket+'</div>'+(sig.mevsim.oneri?'<div class="gH" style="margin-bottom:0">'+sig.mevsim.oneri+'</div>':'');
+    ekran1Pages.push(mvC);
+  }
+  // Bugünün Önerisi Kartı — Kahraman Ürün'ün sade/fiyat-kartı karşılığı (aynı ürün, video yok)
+  if(hp){
+    var hpC=el("div","pg flatCard");hpC.dataset.t=7000;hpC.dataset.roles="1";
+    hpC.innerHTML='<div class="gT">'+hp.tag+'</div><div class="spotName" style="font-size:4vh;position:relative;z-index:2">'+hp.ad+'</div>'
+      +(hp.fiyat!=null?'<div class="spotPrice" style="position:relative;z-index:2">'+hp.fiyat+' TL</div>':'');
+    ekran1Pages.push(hpC);
+  }
+  // Perfect Pair Kartı — ayrı/büyük (alttaki mikro-şeritten farklı, kendi sahnesi)
+  if(data.pair&&data.pair.ad){
+    var pairC=el("div","pg flatCard");pairC.dataset.t=7000;pairC.dataset.roles="1";
+    pairC.innerHTML='<div class="gT">Perfect Pair</div><div class="spotName" style="font-size:3.6vh;position:relative;z-index:2">'+data.pair.ad+'</div>'
+      +(data.pair.mesaj?'<div class="spotDesc" style="position:relative;z-index:2">'+data.pair.mesaj+'</div>':'')
+      +(data.pair.fiyat!=null?'<div class="spotPrice" style="position:relative;z-index:2">'+data.pair.fiyat+' TL</div>':'');
+    ekran1Pages.push(pairC);
+  }
 
   // 6) KATEGORİLER (DESTEK EKRAN) — decision fatigue: sahne başına max 8 satır, taşan ikinci sayfaya bölünür
   // Her sayfanın altında sabit Perfect Pair mikro-şeridi tekrar eder (cross-sell sürekli hatırlatılır)
