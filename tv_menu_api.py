@@ -645,7 +645,7 @@ def tv_menu_logo():
 @router.get("/tv-menu/clip/{name}")
 def tv_menu_clip(name: str):
     """Coffee Story gerçek video klipleri (Mixkit Free, ticari kullanım serbest)."""
-    if name not in ("bean", "latte", "cup", "dessert", "cold", "brew", "froth"):
+    if name not in ("bean", "latte", "cup", "dessert", "brew", "froth", "mocktail"):
         raise HTTPException(404, "klip yok")
     # Prod: Vite public/ -> static/tv'ye kopyalar. Dev: public/tv veya src/assets/tv.
     for base in ("static/tv", "public/tv", "src/assets/tv"):
@@ -698,36 +698,36 @@ _TV_HTML = r"""<!DOCTYPE html>
 .logo{width:22vw;display:block;mix-blend-mode:screen;opacity:0;transition:opacity .9s ease;animation:flo 6s ease-in-out infinite}
 .sweep{position:absolute;top:0;left:0;width:42%;height:100%;background:linear-gradient(90deg,transparent,#ffffff2b,transparent);animation:sweep 5s ease-in-out infinite;pointer-events:none}
 .steam{position:absolute;z-index:3}
-.q{position:relative;z-index:2;font-style:italic;font-size:2.2vw;color:#B89B80;margin-top:2.4vh;letter-spacing:.1vw}
-.gT{font-size:3.6vw;font-weight:400;font-style:italic;color:#3E8E5A;letter-spacing:.1vw;margin-bottom:.4vh}
-.gH{font-size:1.1vw;letter-spacing:.4vw;color:#7d7065;margin-bottom:3vh}
-.menu{width:100%;max-width:62vw}
-.menu.one{max-width:40vw}
-.hdr{display:grid;grid-template-columns:1fr 6vw 6vw 6vw;gap:1.4vw;font-size:1.1vw;letter-spacing:.1vw;color:#7d7065;margin-bottom:.8vh}.hdr span{text-align:center}
-.row{display:grid;grid-template-columns:1fr 6vw 6vw 6vw;gap:1.4vw;align-items:baseline;padding:1.1vh 0;border-top:1px solid #ffffff0c}
+.q{position:relative;z-index:2;font-style:italic;font-size:2.6vh;color:#B89B80;margin-top:2.4vh;letter-spacing:.1vw}
+.gT{font-size:4.2vh;font-weight:400;font-style:italic;color:#3E8E5A;letter-spacing:.1vw;margin-bottom:.4vh}
+.gH{font-size:1.5vh;letter-spacing:.4vw;color:#7d7065;margin-bottom:3vh}
+.menu{width:100%;max-width:92vw;font-size:2.4vh}
+.menu.one{max-width:84vw}
+.hdr{display:grid;grid-template-columns:1fr 3.2em 3.2em 3.2em;gap:.8em;font-size:.6em;letter-spacing:.1vw;color:#7d7065;margin-bottom:.8vh}.hdr span{text-align:center}
+.row{display:grid;grid-template-columns:1fr 3.2em 3.2em 3.2em;gap:.8em;align-items:baseline;padding:1.1vh 0;border-top:1px solid #ffffff0c}
 .row.one{grid-template-columns:1fr auto}
-.nm{font-size:1.9vw;text-align:left;white-space:nowrap}.nm small{font-size:1vw;color:#B89B80;font-style:italic;margin-left:.6vw}
-.pr{font-size:1.8vw;font-weight:500;text-align:center}.pr.d{color:#ffffff22}
+.nm{font-size:1em;text-align:left;white-space:nowrap}.nm small{font-size:.55em;color:#B89B80;font-style:italic;margin-left:.6vw}
+.pr{font-size:.95em;font-weight:500;text-align:center}.pr.d{color:#ffffff22}
 .ice{position:absolute;width:.5vw;height:.5vw;border-radius:50%;background:#a9dccd;animation:ice 4.5s ease-in-out infinite}
 @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(62,142,90,.45)}70%{box-shadow:0 0 0 1.5vw rgba(62,142,90,0)}100%{box-shadow:0 0 0 0 rgba(62,142,90,0)}}
-.spotTag{position:relative;z-index:2;font-size:1vw;letter-spacing:.32vw;color:#3E8E5A;text-transform:uppercase}
+.spotTag{position:relative;z-index:2;font-size:1.5vh;letter-spacing:.32vw;color:#3E8E5A;text-transform:uppercase}
 .spotCup{position:relative;z-index:2;animation:flo 4s ease-in-out infinite;margin:1.5vh 0 .5vh}
-.spotName{position:relative;z-index:2;font-size:4.2vw;font-weight:500;margin:1.2vh 0 .6vh;letter-spacing:.02vw}
-.spotDesc{position:relative;z-index:2;font-size:1.5vw;color:#B89B80;font-style:italic;max-width:38vw;line-height:1.5;margin-bottom:2.6vh}
-.spotPrice{position:relative;z-index:2;display:inline-block;background:#3E8E5A;color:#0e0b09;font-weight:700;font-size:2.4vw;padding:1.3vh 3.4vw;border-radius:50px;animation:pulse 2.2s infinite}
+.spotName{position:relative;z-index:2;font-size:5.6vh;font-weight:500;margin:1.2vh 0 .6vh;letter-spacing:.02vw}
+.spotDesc{position:relative;z-index:2;font-size:2.1vh;color:#B89B80;font-style:italic;max-width:84vw;line-height:1.5;margin-bottom:2.6vh}
+.spotPrice{position:relative;z-index:2;display:inline-block;background:#3E8E5A;color:#0e0b09;font-weight:700;font-size:3.4vh;padding:1.3vh 6vw;border-radius:50px;animation:pulse 2.2s infinite}
 /* gerçek video arka plan — öneri & tatlı kombo sahnelerinde (sinematik, göz yormaz: opacity düşük + degrade) */
 .bgvid{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;opacity:.5;filter:saturate(1.25) contrast(1.1) brightness(.82)}
 .bggrade{position:absolute;inset:0;z-index:1;pointer-events:none;background:linear-gradient(180deg,#0e0b09cc 0,#0e0b0966 28%,#0e0b0966 70%,#0e0b09e6 100%)}
-.comboTitle{position:relative;z-index:2;font-size:3vw;font-style:italic;color:#EFE6D6;margin-top:1.2vh;text-shadow:0 .3vw 1.5vw #000}
+.comboTitle{position:relative;z-index:2;font-size:3.6vh;font-style:italic;color:#EFE6D6;margin-top:1.2vh;text-shadow:0 .3vw 1.5vw #000}
 /* FAZ 7 — Perfect Pair upsell */
 .pair{position:relative;z-index:2;margin-top:2.8vh;display:flex;flex-direction:column;align-items:center;gap:.7vh;animation:pairIn 1s ease 1.1s both}
-.pairTag{font-size:.85vw;letter-spacing:.32vw;color:#0e0b09;background:#B89B80;padding:.5vh 1.5vw;border-radius:40px;text-transform:uppercase}
-.pairTxt{font-family:'Fraunces',serif;font-size:1.9vw;color:#EFE6D6}
-.pairSub{font-size:1.1vw;color:#B89B80;font-style:italic}
+.pairTag{font-size:1.3vh;letter-spacing:.32vw;color:#0e0b09;background:#B89B80;padding:.5vh 1.5vw;border-radius:40px;text-transform:uppercase}
+.pairTxt{font-family:'Fraunces',serif;font-size:2.4vh;color:#EFE6D6}
+.pairSub{font-size:1.5vh;color:#B89B80;font-style:italic}
 @keyframes pairIn{from{opacity:0;transform:translateY(1.6vh)}to{opacity:1;transform:none}}
 .foot{position:absolute;bottom:2vh;left:0;right:0;text-align:center;z-index:6}
-.foot #live{font-size:1.25vw;letter-spacing:.15vw;color:#7fae93;transition:opacity .5s}
-.err{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#7d7065;font-size:1.4vw}
+.foot #live{font-size:1.7vh;letter-spacing:.15vw;color:#7fae93;transition:opacity .5s}
+.err{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#7d7065;font-size:2vh}
 /* FAZ 5 — TEK TUVAL: 3 ekran ortak sanal duvar (menü ÖNDE, dünya ARKADA) */
 #wall{position:absolute;inset:0;pointer-events:none;overflow:hidden}
 .wbean{position:absolute;width:1.5vw;height:2vw;border-radius:50%;background:radial-gradient(circle at 38% 30%,#7a4a26,#3a1f0e 68%,#160b04);box-shadow:0 .2vw .5vw #00000088;opacity:0;will-change:transform,opacity,left}
@@ -742,8 +742,8 @@ _TV_HTML = r"""<!DOCTYPE html>
 #cine video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;filter:saturate(1.32) contrast(1.12) brightness(1.14)}
 #cine .cgrade{position:absolute;inset:0;background:linear-gradient(180deg,#0009 0,transparent 24%,transparent 72%,#000b 100%)}
 #cine .ccap{position:absolute;left:0;right:0;bottom:13%;text-align:center}
-#cine .ct{font-family:'Fraunces',serif;font-size:4.2vw;font-weight:500;letter-spacing:.3vw;color:#EFE6D6;text-shadow:0 .4vw 2vw #000;opacity:0;transform:translateY(2.2vh);transition:.9s ease .35s}
-#cine .cs{font-size:1.4vw;letter-spacing:.55vw;color:#5fbf86;text-transform:uppercase;opacity:0;transform:translateY(2vh);transition:.9s ease .6s}
+#cine .ct{font-family:'Fraunces',serif;font-size:5.4vh;font-weight:500;letter-spacing:.3vw;color:#EFE6D6;text-shadow:0 .4vw 2vw #000;opacity:0;transform:translateY(2.2vh);transition:.9s ease .35s}
+#cine .cs{font-size:1.9vh;letter-spacing:.55vw;color:#5fbf86;text-transform:uppercase;opacity:0;transform:translateY(2vh);transition:.9s ease .6s}
 #cine.on .ct,#cine.on .cs{opacity:1;transform:none}
 #season{position:absolute;inset:0;z-index:4;pointer-events:none;overflow:hidden}
 /* FAZ 8 — zaman atmosferi (saat renk sıcaklığı, kenar-ağırlıklı → menü merkezi temiz) */
@@ -753,7 +753,7 @@ _TV_HTML = r"""<!DOCTYPE html>
 #tod.aksam{background:linear-gradient(0deg,#ff8a3d66,transparent 50%)}
 #tod.gece{background:radial-gradient(120% 100% at 50% 60%,#13204d77,transparent 70%)}
 /* FAZ 8 — Today's Favorite rozeti */
-#fav{position:absolute;top:2.3vh;right:2.6vw;z-index:6;display:none;align-items:center;gap:.5vw;background:#3E8E5A22;border:1px solid #3E8E5A55;color:#cfe8d8;padding:.6vh 1.3vw;border-radius:40px;font-size:1vw;letter-spacing:.08vw}
+#fav{position:absolute;top:2.3vh;right:2.6vw;z-index:6;display:none;align-items:center;gap:.5vw;background:#3E8E5A22;border:1px solid #3E8E5A55;color:#cfe8d8;padding:.6vh 1.3vw;border-radius:40px;font-size:1.6vh;letter-spacing:.08vw}
 #fav.on{display:flex}
 #fav b{color:#EFE6D6;font-family:'Fraunces',serif;font-weight:500;margin-left:.3vw}
 #season span{position:absolute;top:-10vh;animation:sfall linear infinite;will-change:transform}
@@ -771,7 +771,7 @@ _TV_HTML = r"""<!DOCTYPE html>
 .story .bok{position:absolute;border-radius:50%;filter:blur(3.4vw);pointer-events:none;mix-blend-mode:screen;opacity:.5}
 .story .grade{position:absolute;inset:0;z-index:6;pointer-events:none;background:linear-gradient(180deg,#0009 0,transparent 22%,transparent 74%,#000b 100%)}
 .story .grain{position:absolute;inset:-25%;z-index:8;pointer-events:none;opacity:.07;mix-blend-mode:overlay;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='150' height='150'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='150' height='150' filter='url(%23n)' opacity='0.6'/%3E%3C/svg%3E");background-size:150px 150px;animation:csGrain .5s steps(3) infinite}
-.story .stTag{align-items:flex-start;padding-top:5vh;font-size:1vw;letter-spacing:.7vw;color:#3E8E5A;z-index:7;animation:csTag 22s linear infinite}
+.story .stTag{align-items:flex-start;padding-top:5vh;font-size:1.5vh;letter-spacing:.7vw;color:#3E8E5A;z-index:7;animation:csTag 22s linear infinite}
 .story .stBean{animation:csBean 22s ease-in-out infinite}
 .story .stPour{opacity:0;animation:csPour 22s ease-in-out infinite}
 .story .stCrema{opacity:0;animation:csCrema 22s ease-in-out infinite}
@@ -784,9 +784,9 @@ _TV_HTML = r"""<!DOCTYPE html>
 .story .milk{filter:drop-shadow(0 .3vw .6vw #00000055) blur(.25vw)}
 .story .steamW{z-index:3;align-items:flex-end;padding-bottom:16vh;filter:blur(.5vw);opacity:0;animation:csSteamWin 22s ease-in-out infinite}
 .story .stPriceWrap{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:5;opacity:0;animation:csPrice 22s ease-in-out infinite}
-.story .stpn{font-size:6vw;letter-spacing:.5vw;color:#EFE6D6;text-transform:uppercase;text-shadow:0 .4vw 2.5vw #000,0 0 4vw #00000088}
+.story .stpn{font-size:6.4vh;letter-spacing:.5vw;color:#EFE6D6;text-transform:uppercase;text-shadow:0 .4vw 2.5vw #000,0 0 4vw #00000088}
 .story .stpl{width:5vw;height:1px;background:#3E8E5A;margin:2.2vh 0;box-shadow:0 0 1vw #3E8E5A}
-.story .stpp{font-size:4.6vw;font-weight:600;color:#5fbf86;text-shadow:0 0 3.5vw #3E8E5A99,0 0 1.2vw #3E8E5Acc}
+.story .stpp{font-size:5vh;font-weight:600;color:#5fbf86;text-shadow:0 0 3.5vw #3E8E5A99,0 0 1.2vw #3E8E5Acc}
 /* sahne ritmi: belir → BEKLE (net, Ken Burns yavaş zoom) → kaybol. blur YOK. */
 @keyframes csGrain{0%{background-position:0 0}33%{background-position:-80px 50px}66%{background-position:70px -60px}100%{background-position:-50px -40px}}
 @keyframes csVid1{0%{opacity:0}5%{opacity:1}30%{opacity:1}38%{opacity:0}100%{opacity:0}}
@@ -919,7 +919,7 @@ function build(data,sig){
   if(sig && sig.oneri && sig.oneri.ad){
     var op=findPrice(sig.oneri.ad);if(op==null)op=sig.oneri.fiyat;
     var os=el("div","pg");os.dataset.t=9000;os.dataset.roles="2,3";
-    var clip=/(mocktail|milkshake)/i.test(sig.oneri.kategori||"")?"cold":"brew";
+    var clip=/(mocktail|milkshake)/i.test(sig.oneri.kategori||"")?"mocktail":"brew";
     os.innerHTML='<video class="bgvid" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/'+clip+'"></video><div class="bggrade"></div>';
     os.innerHTML+='<div class="spotTag">💡 '+(sig.oneri.neden||"Bugün Dene")+'</div>'
       +'<div class="spotName">'+sig.oneri.ad+'</div>'
