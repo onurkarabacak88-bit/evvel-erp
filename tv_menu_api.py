@@ -765,6 +765,20 @@ _TV_HTML = r"""<!DOCTYPE html>
 .t3barBg i{display:block;height:100%;background:linear-gradient(90deg,#2c6b43,#5fbf86);border-radius:1vh;box-shadow:0 0 1.2vh #3E8E5A77;animation:t3barIn 1.4s cubic-bezier(.16,.8,.2,1) both}
 @keyframes t3barIn{from{width:0}}
 .t3count{flex-shrink:0;font-size:1.7vh;color:#7fae93;letter-spacing:.05vw;white-space:nowrap}
+/* EKRAN 3 — MARKA + CANLI: Yeni Ürün Lansmanı (siyah + spot ışığı) */
+.launchPg{background:#040302}
+.spotCone{position:absolute;top:-15%;left:50%;width:55vw;height:130vh;transform:translateX(-50%);background:radial-gradient(ellipse at 50% 0%,#ffffff26,transparent 62%);pointer-events:none;z-index:1}
+@keyframes launchPulse{0%,100%{opacity:.9;text-shadow:0 0 4vh #ffffff44}50%{opacity:1;text-shadow:0 0 7vh #ffffff88}}
+.launchBig{position:relative;z-index:2;font-size:9vh;font-weight:700;letter-spacing:.25vw;color:#EFE6D6;animation:launchPulse 2.2s ease-in-out infinite}
+.launchSub{position:relative;z-index:2;font-size:3.4vh;color:#3E8E5A;margin-top:1.6vh;letter-spacing:.05vw}
+.launchTag{position:relative;z-index:2;font-size:2vh;color:#B89B80;font-style:italic;margin-top:1.2vh}
+/* EKRAN 3 — Happy Hour rozeti */
+.hhWrap{position:relative;z-index:2}
+.hhClock{font-size:7vh}
+.hhRange{font-size:4.4vh;font-weight:700;color:#3E8E5A;margin-top:1vh}
+.hhMsg{font-size:2.2vh;color:#EFE6D6;font-style:italic;margin-top:1vh}
+/* EKRAN 3 — Marka silüet altyazı (bardak rotasyonu) */
+.brandLabel{position:relative;z-index:2;font-size:2.4vh;letter-spacing:.5vw;color:#EFE6D6;text-transform:uppercase;margin-top:1.2vh;text-shadow:0 .3vw 1.5vw #000}
 /* gerçek TULİPİ bardak fotoğrafı — imza silüet, her sahnede aynı kare (marka hafızası) */
 .cupShot{position:relative;z-index:2;width:20vh;border-radius:1.4vh;box-shadow:0 1.8vh 4.5vh #000c;animation:flo 4s ease-in-out infinite;margin:1.2vh 0 .6vh}
 /* FAZ 7 — Perfect Pair upsell */
@@ -953,7 +967,7 @@ function build(data,sig){
   var stage=document.getElementById("stage");
   Array.prototype.slice.call(stage.querySelectorAll(".pg")).forEach(function(p){p.remove()});
   var dots=document.getElementById("dots");dots.innerHTML="";
-  var heroPages=[],supportPages=[];
+  var heroPages=[],ekran1Pages=[],ekran3Pages=[];
 
   // 1) BARDAK AÇILIŞ — gerçek bardak fotoğrafı, ilk ~2.5sn TAMAMEN sade (metin yok), sonra marka satırı belirir
   var bOpen=el("div","pg");bOpen.dataset.t=7000;bOpen.dataset.roles="2";
@@ -997,7 +1011,7 @@ function build(data,sig){
     var CHUNK=8,parts=[];
     for(var i=0;i<k.urunler.length;i+=CHUNK)parts.push(k.urunler.slice(i,i+CHUNK));
     parts.forEach(function(chunk,pi){
-      var pg=el("div","pg cat");pg.dataset.t=12000;pg.dataset.roles="1,3";
+      var pg=el("div","pg cat");pg.dataset.t=12000;pg.dataset.roles="1";
       pg.appendChild(el("div","gT",k.kategori+(parts.length>1?" ("+(pi+1)+"/"+parts.length+")":"")));
       if(k.alt&&pi===0)pg.appendChild(el("div","gH",k.alt));
       var m=el("div","menu"+(three?"":" one"));
@@ -1006,13 +1020,13 @@ function build(data,sig){
       pg.appendChild(m);
       if(/(iced|cold|so.uk)/i.test(k.kategori)){for(var i=0;i<10;i++){var s=el("span","ice");s.style.left=(8+Math.random()*84)+"%";s.style.top=(22+Math.random()*54)+"%";s.style.animationDelay=(Math.random()*4.5)+"s";pg.appendChild(s);}}
       if(pairHtml)pg.innerHTML+=pairHtml;
-      supportPages.push(pg);
+      ekran1Pages.push(pg);
     });
   });
 
   // 7) 🔥 EN ÇOK TERCİH EDİLEN — Peak-End: destek ekranın en SON/en güçlü sahnesi, gösterişli sosyal kanıt
   if(sig && sig.top3 && sig.top3.length){
-    var t3=el("div","pg cat top3pg");t3.dataset.t=9000;t3.dataset.roles="1,3";
+    var t3=el("div","pg cat top3pg");t3.dataset.t=9000;t3.dataset.roles="1";
     t3.innerHTML='<video class="bgvid" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/brew" style="opacity:.32"></video><div class="bggrade"></div>';
     t3.appendChild(el("div","gT","🔥 Bugün En Çok Tercih Edilen"));
     var maxAdet=Math.max.apply(null,sig.top3.map(function(it){return it.adet;}));
@@ -1025,15 +1039,52 @@ function build(data,sig){
         +'<div class="t3count">'+Math.round(it.adet)+' kez</div></div>';
     }).join("");
     t3.appendChild(wrap);
-    supportPages.push(t3);
+    ekran1Pages.push(t3);
   }
 
-  // FAZ 4 — 3 EKRAN: merkez (2)=kahraman sahne, yanlar (1,3)=destek/fiyat kartı. Hiçbiri bağımsız hikaye anlatmaz.
+  // 8) EKRAN 3 — MARKA + CANLI: lifestyle, bardak rotasyonu, happy hour, yeni ürün lansmanı, özel gün
+  // Marka/Yaşam Tarzı — gerçek vitrin+müşteri çekimi
+  var brandPg=el("div","pg");brandPg.dataset.t=8000;brandPg.dataset.roles="3";
+  brandPg.innerHTML='<video class="bgvid" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/lifestyle" style="opacity:.85"></video><div class="bggrade"></div>'
+    +'<div class="brandLabel">Her An Yanında</div>';
+  ekran3Pages.push(brandPg);
+  // Bardak rotasyonu — 3 gerçek fotoğraf sırayla (sıcak/buzlu/mocktail), imza silüet tekrarı
+  [["hot","Sıcak Kahveler"],["iced","Buzlu Lezzetler"],["mocktail","Mocktail Dünyası"]].forEach(function(c){
+    var cp=el("div","pg");cp.dataset.t=6000;cp.dataset.roles="3";
+    cp.innerHTML='<img class="bardakBg" src="/tv-menu/cup/'+c[0]+'" alt=""><div class="bggrade"></div><div class="brandLabel">'+c[1]+'</div>';
+    ekran3Pages.push(cp);
+  });
+  // Happy Hour — aktifse büyük rozet
+  if(sig && sig.happy_hour && sig.happy_hour.aktif){
+    var hh=el("div","pg");hh.dataset.t=7000;hh.dataset.roles="3";
+    hh.innerHTML='<video class="bgvid" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/mocktail" style="opacity:.4"></video><div class="bggrade"></div>'
+      +'<div class="hhWrap"><div class="hhClock">⏰</div><div class="hhRange">'+sig.happy_hour.bas+':00–'+sig.happy_hour.bit+':00</div>'
+      +'<div class="hhMsg">'+sig.happy_hour.mesaj+'</div></div>';
+    ekran3Pages.push(hh);
+  }
+  // 🆕 Yeni Ürün Lansmanı — siyah ekran + spot ışığı (yeni=true ürünler varsa)
+  if(sig && sig.yeni && sig.yeni.length){
+    var ln=el("div","pg launchPg");ln.dataset.t=7000;ln.dataset.roles="3";
+    ln.innerHTML='<div class="spotCone"></div>'
+      +'<div class="launchBig">YENİ</div>'
+      +'<div class="launchSub">'+sig.yeni.slice(0,2).join(" · ")+'</div>'
+      +'<div class="launchTag">İlk Sen Dene</div>';
+    ekran3Pages.push(ln);
+  }
+  // Özel Gün — aktifse marka mesajı
+  if(sig && sig.ozel){
+    var oz=el("div","pg");oz.dataset.t=7000;oz.dataset.roles="3";
+    oz.innerHTML='<div class="halo"></div><div class="spotTag">'+sig.ozel.etiket+'</div><div class="comboTitle" style="font-size:4.2vh">'+sig.ozel.mesaj+'</div>';
+    ekran3Pages.push(oz);
+  }
+
+  // FAZ 4 — 3 EKRAN: merkez(2)=sinema/kahraman · sol(1)=fiyat kartı (sabit, video yok) · sağ(3)=marka+canlı sinyal
   var ekran=(new URLSearchParams(location.search)).get("ekran");
   var pages;
   if(ekran==="2")pages=heroPages;
-  else if(ekran==="1"||ekran==="3")pages=supportPages;
-  else pages=heroPages.concat(supportPages);  // ekran param yoksa (tek TV testi) hepsi
+  else if(ekran==="1")pages=ekran1Pages;
+  else if(ekran==="3")pages=ekran3Pages;
+  else pages=heroPages.concat(ekran1Pages).concat(ekran3Pages);  // ekran param yoksa (tek TV testi) hepsi
   pages.forEach(function(p){stage.insertBefore(p,document.querySelector(".foot"));dots.appendChild(el("i"));});
   var di=dots.children;
   var pc=document.getElementById("priceCorner");
