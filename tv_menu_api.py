@@ -233,6 +233,58 @@ def tv_gosterim_ozet(gun: int = 7):
         return {"gun": gun, "toplam_gosterim": [], "detay_sahne": []}
 
 
+@router.get("/api/tv-gosterim/etki")
+def tv_gosterim_etki():
+    """Analytics Engine — Adım 2 (Attribution, KABA/GÜNLÜK versiyon).
+    DÜRÜST NOT: Evo'nun fatura zaman damgasına (a_cdate) şu an token/auth sorunuyla
+    erişilemiyor — bu yüzden 'gösterimden 15 dk sonra satış arttı mı' tarzı dakika-
+    hassasiyetli attribution YAPILAMAZ (bunu yapmak ayrı bir token-debug işi gerektirir,
+    burada uydurmadık). Bunun yerine GÜNLÜK korelasyon: bugün çok gösterilen bir ürünün
+    bugünkü satışı, kendi 30-günlük günlük ortalamasının üstünde mi? Kaba ama gerçek ve
+    hemen ölçülebilir bir sinyal."""
+    try:
+        with db() as (conn, cur):
+            _ensure_gosterim_tablo(cur)
+            cur.execute(
+                """SELECT urun_ad, COUNT(*) AS n FROM tv_gosterim
+                   WHERE ts >= CURRENT_DATE AND urun_ad IS NOT NULL
+                   GROUP BY urun_ad ORDER BY n DESC"""
+            )
+            gosterim_bugun = {r["urun_ad"]: r["n"] for r in (cur.fetchall() or [])}
+    except Exception as e:
+        logger.warning("tv-gosterim etki hata: %s", e)
+        return {"sonuc": [], "uyari": str(e)}
+    if not gosterim_bugun:
+        return {"sonuc": [], "uyari": "Bugün hiç gösterim loglanmadı"}
+    try:
+        from evo_sync import hs_rapor_urun_satis
+        satis_bugun = hs_rapor_urun_satis(_date.today(), _date.today()) or {}
+    except Exception as e:
+        logger.warning("tv-gosterim etki Evo hata: %s", e)
+        satis_bugun = {}
+    ort_30 = _satis_30gun()  # 30 günlük TOPLAM adet — günlük ortalama için /30
+    norm = lambda s: re.sub(r"\s+", " ", str(s).strip().lower())
+    satis_norm = {norm(k): v for k, v in satis_bugun.items()}
+    ort_norm = {norm(k): v for k, v in ort_30.items()}
+    sonuc = []
+    for ad, gosterim in gosterim_bugun.items():
+        n = norm(ad)
+        s_bugun = satis_norm.get(n, 0)
+        ort_gunluk = (ort_norm.get(n, 0) or 0) / 30.0
+        if ort_gunluk > 0.3:
+            oran = round(s_bugun / ort_gunluk, 2)
+            sinyal = "yüksek" if oran >= 1.3 else ("düşük" if oran < 0.7 else "normal")
+        else:
+            oran = None
+            sinyal = "veri az (yeni/nadiren satılan ürün)"
+        sonuc.append({
+            "urun_ad": ad, "gosterim_bugun": gosterim, "satis_bugun": s_bugun,
+            "ortalama_gunluk_30gun": round(ort_gunluk, 2), "oran": oran, "sinyal": sinyal,
+        })
+    sonuc.sort(key=lambda x: -x["gosterim_bugun"])
+    return {"sonuc": sonuc, "not": "Günlük korelasyon — dakika-hassasiyetli attribution Evo token sorunu yüzünden henüz yapılamıyor"}
+
+
 class UrunModel(BaseModel):
     kategori: str
     ad: str
