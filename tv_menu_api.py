@@ -752,6 +752,8 @@ _TV_HTML = r"""<!DOCTYPE html>
 .halo.discover{background:radial-gradient(circle,#163a52,#0c2030 46%,transparent 70%)}
 .gT.fire{color:#ffb347}
 .gT.discover{color:#6cb6e8}
+/* Özel Gün — kendi dokusu: sıcak altın degrade (Happy Hour'un video bg'sinden, Launch'ın siyah spot'undan ayrı) */
+.ozelPg{background:radial-gradient(120% 90% at 50% 30%,#5a3f12,#2a1c08 55%,#0e0b09 100%)}
 .spotCup{position:relative;z-index:2;animation:flo 4s ease-in-out infinite;margin:1.5vh 0 .5vh}
 .spotName{position:relative;z-index:2;font-size:5.6vh;font-weight:500;margin:1.2vh 0 .6vh;letter-spacing:.02vw}
 .spotDesc{position:relative;z-index:2;font-size:2.1vh;color:#B89B80;font-style:italic;max-width:84vw;line-height:1.5;margin-bottom:2.6vh}
@@ -842,14 +844,14 @@ _TV_HTML = r"""<!DOCTYPE html>
 /* sinematik katmanlar: bokeh derinlik + renklendirme/letterbox + film grain */
 .story .grade{position:absolute;inset:0;z-index:6;pointer-events:none;background:linear-gradient(180deg,#0009 0,transparent 22%,transparent 74%,#000b 100%)}
 .story .grain{position:absolute;inset:-25%;z-index:8;pointer-events:none;opacity:.07;mix-blend-mode:overlay;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='150' height='150'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='150' height='150' filter='url(%23n)' opacity='0.6'/%3E%3C/svg%3E");background-size:150px 150px;animation:csGrain .5s steps(3) infinite}
-.story .stTag{align-items:flex-start;padding-top:5vh;font-size:1.5vh;letter-spacing:.7vw;color:#3E8E5A;z-index:7;animation:csTag 19s linear infinite}
-.story .stPriceWrap{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:5;opacity:0;animation:csPrice 19s ease-in-out infinite}
+.story .stTag{align-items:flex-start;padding-top:5vh;font-size:1.5vh;letter-spacing:.7vw;color:#3E8E5A;z-index:7;animation:csTag 12s linear infinite}
+.story .stPriceWrap{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:5;opacity:0;animation:csPrice 12s ease-in-out infinite}
 .story .stpn{font-size:6.4vh;letter-spacing:.5vw;color:#EFE6D6;text-transform:uppercase;text-shadow:0 .4vw 2.5vw #000,0 0 4vw #00000088}
 .story .stpl{width:5vw;height:1px;background:#3E8E5A;margin:2.2vh 0;box-shadow:0 0 1vw #3E8E5A}
 .story .stpp{font-size:5vh;font-weight:600;color:#5fbf86;text-shadow:0 0 3.5vw #3E8E5A99,0 0 1.2vw #3E8E5Acc}
 @keyframes csGrain{0%{background-position:0 0}33%{background-position:-80px 50px}66%{background-position:70px -60px}100%{background-position:-50px -40px}}
 @keyframes csTag{0%,4%{opacity:0}9%,87%{opacity:.55}93%,100%{opacity:0}}
-@keyframes csPrice{0%,79%{opacity:0;transform:translateY(2.6vh) scale(.96)}87%{opacity:1;transform:translateY(0) scale(1)}97%{opacity:1;transform:translateY(0) scale(1)}100%{opacity:0}}
+@keyframes csPrice{0%,55%{opacity:0;transform:translateY(2.6vh) scale(.96)}65%{opacity:1;transform:translateY(0) scale(1)}95%{opacity:1;transform:translateY(0) scale(1)}100%{opacity:0}}
 </style></head>
 <body><div id="stage">
 <div class="bg" id="bg"><div class="drift"></div></div>
@@ -919,7 +921,7 @@ function buildStory(data){
   // GERÇEK TULİPİ ÇEKİMİ — Mixkit stok video emekli edildi (GPT önerisi): espresso akışı → süt → karamel finish → logo.
   // Tek sürekli gerçek klip, crossfade/3-video performans hack'i gerekmiyor (artık tek video var).
   var sp=storyProduct(data);window._story=sp;
-  var st=el("div","pg story");st.dataset.t=19000;st.dataset.roles="2";
+  var st=el("div","pg story");st.dataset.t=12000;st.dataset.roles="2";
   st.dataset.name=sp.ad;if(sp.fiyat!=null)st.dataset.price=sp.fiyat+" TL";
   st.innerHTML='<video class="vid v1" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/espresso" style="opacity:1"></video>'
     +'<div class="grade"></div><div class="grain"></div>'
@@ -949,12 +951,18 @@ function build(data,sig){
   var dots=document.getElementById("dots");dots.innerHTML="";
   var heroPages=[],ekran1Pages=[],ekran3Pages=[];
 
-  // 1) BARDAK AÇILIŞ — gerçek bardak fotoğrafı, ilk ~2.5sn TAMAMEN sade (metin yok), sonra marka satırı belirir
+  // 1) BARDAK AÇILIŞ — gerçek bardak fotoğrafı, ilk ~2.5sn TAMAMEN sade (metin yok), sonra marka satırı + fiyat ipucu belirir
   var bOpen=el("div","pg");bOpen.dataset.t=7000;bOpen.dataset.roles="2";
   var bImg=bardakImgFor(sig&&sig.saat_modu&&sig.saat_modu.mod);
+  var minFy=null;
+  (data.kategoriler||[]).forEach(function(k){(k.urunler||[]).forEach(function(u){
+    var v=u.f8!=null?u.f8:(u.f14!=null?u.f14:u.fice);
+    if(v!=null&&(minFy==null||v<minFy))minFy=v;
+  });});
   bOpen.innerHTML='<img class="bardakBg" src="/tv-menu/cup/'+bImg+'" alt="">'
     +'<div class="bggrade"></div>'
-    +'<div class="bardakInfo"><div class="q" style="margin-top:0">Crafted Every Day</div></div>';
+    +'<div class="bardakInfo"><div class="q" style="margin-top:0">Crafted Every Day</div>'
+    +(minFy!=null?'<div class="bigOneri" style="margin-top:1vh">'+minFy+' TL\'den başlayan fiyatlar</div>':'')+'</div>';
   heroPages.push(bOpen);
 
   // ÖZ-ELEŞTİRİ — KONSOLİDASYON: Saat/Mevsim verisi eskiden 3 ekranda (Ekran1 Saat Kartı,
@@ -980,22 +988,21 @@ function build(data,sig){
   if(hp)heroPages.push(buildSpotlight({tag:hp.tag,ad:hp.ad,fiyat:hp.fiyat,aciklama:hp.aciklama,kategori:hp.kategori,dur:10000,theme:hp.theme}));
 
   // 4.2) CRAFT MOCKTAIL — gerçek barista çekimi: jigger → süzgeç → yeşil akış (barista ustalığı, ayrı/kendi sahnesi)
+  // Kahraman Ürün AYNI greenmocktail klibini kullanmışsa burada farklı klip seç (çakışma önleme)
+  var craftClip=(hp&&/(mocktail|milkshake)/i.test(hp.kategori||""))?"mocktail":"greenmocktail";
   var craftM=el("div","pg");craftM.dataset.t=8000;craftM.dataset.roles="2";
-  craftM.innerHTML='<video class="bgvid" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/greenmocktail" style="opacity:.95"></video><div class="bggrade"></div>'
+  craftM.innerHTML='<video class="bgvid" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/'+craftClip+'" style="opacity:.95"></video><div class="bggrade"></div>'
     +'<div class="spotTag">CRAFT MOCKTAIL</div><div class="comboTitle">El Yapımı, Anında Hazır</div>';
   heroPages.push(craftM);
 
-  // 4.5) MÜŞTERİ ANI — gerçek TULİPİ müşteri görüntüsü (otantik, duygusal — yeni malzeme)
-  var musPg=el("div","pg");musPg.dataset.t=8000;musPg.dataset.roles="2";
-  musPg.innerHTML='<video class="bgvid" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/musteri" style="opacity:.9"></video><div class="bggrade"></div>'
-    +'<div class="musteriTag">Her Gülüşte Bir Fincan</div>';
-  heroPages.push(musPg);
-
   // 5) 🍰 TATLI KOMBO — Perfect Pair'i sahneler (Peak: merkez ekranın son/en güçlü sahnesi)
+  // ÖZ-ELEŞTİRİ: dessert.mp4 (stok Mixkit kek videosu) tüm sistemdeki TEK kalan stok-gerçek
+  // uyumsuzluğuydu. Gerçek Desserts çekimi yok, o yüzden gerçek kahve çekimine (craft) geçildi —
+  // "Kahve + Tatlı" eşleşmesinde kahve tarafı gerçek, jenerik stok kekten daha tutarlı.
   var combo=el("div","pg");combo.dataset.t=9000;combo.dataset.roles="2";
   combo.dataset.name=(data.pair&&data.pair.ad)?data.pair.ad:"Kahve + Tatlı";
   if(data.pair&&data.pair.fiyat!=null)combo.dataset.price=data.pair.fiyat+" TL";
-  combo.innerHTML='<video class="bgvid" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/dessert"></video><div class="bggrade"></div>'
+  combo.innerHTML='<video class="bgvid" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/craft"></video><div class="bggrade"></div>'
     +'<div class="spotTag">PERFECT PAIR</div>'
     +'<div class="spotName">'+((data.pair&&data.pair.ad)?data.pair.ad:"Kahve + Tatlı")+'</div>'
     +'<div class="comboTitle">Birlikte daha güzel</div>'
@@ -1015,6 +1022,7 @@ function build(data,sig){
     var hpClip=/(mocktail|milkshake)/i.test(hp.kategori||"")?"greenmocktail":"craft";
     var hpTcls=hp.theme?(" "+hp.theme):"";
     var hpC=el("div","pg flatCard");hpC.dataset.t=7000;hpC.dataset.roles="1";
+    hpC.dataset.name=hp.ad;if(hp.fiyat!=null)hpC.dataset.price=hp.fiyat+" TL";  // #priceCorner artık Ekran1'de de tutarlı
     hpC.innerHTML='<video class="bgvid" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/'+hpClip+'" style="opacity:.4"></video><div class="bggrade"></div>'
       +'<div class="gT'+hpTcls+'" style="position:relative;z-index:2">'+hp.tag+'</div><div class="spotName" style="font-size:4vh;position:relative;z-index:2">'+hp.ad+'</div>'
       +(hp.fiyat!=null?'<div class="spotPrice'+hpTcls+'" style="position:relative;z-index:2">'+hp.fiyat+' TL</div>':'');
@@ -1023,6 +1031,7 @@ function build(data,sig){
   // Perfect Pair Kartı — ayrı/büyük (alttaki mikro-şeritten farklı, kendi sahnesi)
   if(data.pair&&data.pair.ad){
     var pairC=el("div","pg flatCard");pairC.dataset.t=7000;pairC.dataset.roles="1";
+    pairC.dataset.name=data.pair.ad;if(data.pair.fiyat!=null)pairC.dataset.price=data.pair.fiyat+" TL";
     pairC.innerHTML='<div class="gT">Perfect Pair</div><div class="spotName" style="font-size:3.6vh;position:relative;z-index:2">'+data.pair.ad+'</div>'
       +(data.pair.mesaj?'<div class="spotDesc" style="position:relative;z-index:2">'+data.pair.mesaj+'</div>':'')
       +(data.pair.fiyat!=null?'<div class="spotPrice" style="position:relative;z-index:2">'+data.pair.fiyat+' TL</div>':'');
@@ -1032,23 +1041,33 @@ function build(data,sig){
   // 6) KATEGORİLER (DESTEK EKRAN) — decision fatigue: sahne başına max 8 satır, taşan ikinci sayfaya bölünür
   // Her sayfanın altında sabit Perfect Pair mikro-şeridi tekrar eder (cross-sell sürekli hatırlatılır)
   var pairHtml=(data.pair&&data.pair.ad)?('<div class="pairStrip"><span class="tag">Perfect Pair</span> <b>'+data.pair.ad+'</b>'+(data.pair.mesaj?(' · '+data.pair.mesaj):'')+'</div>'):'';
+  function buildKatPage(k,chunk,pi,totalParts){
+    var three=chunk.some(function(u){return u.f14!=null||u.fice!=null;});
+    var pg=el("div","pg cat");pg.dataset.t=12000;pg.dataset.roles="1";
+    pg.appendChild(el("div","gT",k.kategori+(totalParts>1?" ("+(pi+1)+"/"+totalParts+")":"")));
+    if(k.alt&&pi===0)pg.appendChild(el("div","gH",k.alt));
+    var m=el("div","menu"+(three?"":" one"));
+    if(three)m.innerHTML='<div class="hdr"><span style="text-align:left"></span><span>8oz</span><span>14oz</span><span>ICE</span></div>';
+    m.innerHTML+=chunk.map(function(u,i){return priceRow(u,three,i);}).join("");
+    pg.appendChild(m);
+    if(/(iced|cold|so.uk)/i.test(k.kategori)){for(var i=0;i<10;i++){var s=el("span","ice");s.style.left=(8+Math.random()*84)+"%";s.style.top=(22+Math.random()*54)+"%";s.style.animationDelay=(Math.random()*4.5)+"s";pg.appendChild(s);}}
+    if(pairHtml)pg.innerHTML+=pairHtml;
+    return pg;
+  }
+  var AGIRLIKLI_KAT=["Classic Coffees","Signature Coffees"];  // en çok satılan kategoriler — döngüde 2 kez görünür
+  var agirlikliTekrar=[];
   (data.kategoriler||[]).forEach(function(k){
-    var three=k.urunler.some(function(u){return u.f14!=null||u.fice!=null;});
     var CHUNK=8,parts=[];
     for(var i=0;i<k.urunler.length;i+=CHUNK)parts.push(k.urunler.slice(i,i+CHUNK));
     parts.forEach(function(chunk,pi){
-      var pg=el("div","pg cat");pg.dataset.t=12000;pg.dataset.roles="1";
-      pg.appendChild(el("div","gT",k.kategori+(parts.length>1?" ("+(pi+1)+"/"+parts.length+")":"")));
-      if(k.alt&&pi===0)pg.appendChild(el("div","gH",k.alt));
-      var m=el("div","menu"+(three?"":" one"));
-      if(three)m.innerHTML='<div class="hdr"><span style="text-align:left"></span><span>8oz</span><span>14oz</span><span>ICE</span></div>';
-      m.innerHTML+=chunk.map(function(u,i){return priceRow(u,three,i);}).join("");
-      pg.appendChild(m);
-      if(/(iced|cold|so.uk)/i.test(k.kategori)){for(var i=0;i<10;i++){var s=el("span","ice");s.style.left=(8+Math.random()*84)+"%";s.style.top=(22+Math.random()*54)+"%";s.style.animationDelay=(Math.random()*4.5)+"s";pg.appendChild(s);}}
-      if(pairHtml)pg.innerHTML+=pairHtml;
-      ekran1Pages.push(pg);
+      ekran1Pages.push(buildKatPage(k,chunk,pi,parts.length));
     });
+    if(AGIRLIKLI_KAT.indexOf(k.kategori)>=0&&parts.length)agirlikliTekrar.push(buildKatPage(k,parts[0],0,1));
   });
+  // ÖZ-ELEŞTİRİ: kategori sayfaları eskiden eşit ağırlıklı görünüyordu (Desserts 4 ürün = Signature
+  // 14 ürün, aynı 1 geçiş). En çok satılan kategoriler döngü sonunda (Top3'ten önce) bir kez daha
+  // görünerek daha fazla "ekran zamanı" alır — gerçek satış ağırlığına göre yerleşim.
+  agirlikliTekrar.forEach(function(pg){ekran1Pages.push(pg);});
 
   // 7) 🔥 EN ÇOK TERCİH EDİLEN — Peak-End: destek ekranın en SON/en güçlü sahnesi, gösterişli sosyal kanıt
   if(sig && sig.top3 && sig.top3.length){
@@ -1088,20 +1107,27 @@ function build(data,sig){
   mus3.innerHTML='<video class="bgvid" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/musteri" style="opacity:.9"></video><div class="bggrade"></div>'
     +'<div class="musteriTag">Mutluluk Burada</div>';
   ekran3Pages.push(mus3);
-  // Bardak rotasyonu — 3 gerçek fotoğraf sırayla (sıcak/buzlu/mocktail), imza silüet tekrarı
-  [["hot","Sıcak Kahveler"],["iced","Buzlu Lezzetler"],["mocktail","Mocktail Dünyası"]].forEach(function(c){
-    var cp=el("div","pg");cp.dataset.t=6000;cp.dataset.roles="3";
-    cp.innerHTML='<img class="bardakBg" src="/tv-menu/cup/'+c[0]+'" alt=""><div class="bggrade"></div><div class="brandLabel">'+c[1]+'</div>';
-    ekran3Pages.push(cp);
-  });
-  // Çeşitlilik — gerçek "kahverengi maden suyu" çekimi, bardak rotasyonuna 4. video kare olarak eklendi
+  // Bardak rotasyonu + çeşitlilik + frozen — ÖZ-ELEŞTİRİ: eskiden sıcak→buzlu→mocktail→kahverengi→
+  // frozen sırası 1 sıcak + 4 soğuk art arda veriyordu ("mocktail galerisi" anti-pattern'i — GPT'nin
+  // uyardığı "yine içecek" hissi). Şimdi sıcak/soğuk alternansı: soğuk-soğuk-SICAK-soğuk-soğuk yerine
+  // sıcağı ortaya alıp soğuk kümesini ikiye böldük (2-1-2), tek-nota tekrar hissini kırıyor.
+  var photoPg=function(name,label){var cp=el("div","pg");cp.dataset.t=4000;cp.dataset.roles="3";
+    cp.innerHTML='<img class="bardakBg" src="/tv-menu/cup/'+name+'" alt=""><div class="bggrade"></div><div class="brandLabel">'+label+'</div>';
+    return cp;};
+  ekran3Pages.push(photoPg("iced","Buzlu Lezzetler"));
   var kahveC=el("div","pg");kahveC.dataset.t=6000;kahveC.dataset.roles="3";
   kahveC.innerHTML='<video class="bgvid" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/kahverengi" style="opacity:1"></video><div class="bggrade"></div><div class="brandLabel">Yeni Tatlar</div>';
   ekran3Pages.push(kahveC);
+  ekran3Pages.push(photoPg("hot","Sıcak Kahveler"));
+  ekran3Pages.push(photoPg("mocktail","Mocktail Dünyası"));
   // 🍓 FROZEN VİTRİN — tek başına satabilecek kadar güçlü, tatlı kombo arkasına gizlenmiyor (GPT önerisi: %100 ekran, kendi sahnesi)
+  // ÖZ-ELEŞTİRİ: "YENİ" rozeti eskiden HER ZAMAN gösteriliyordu — eğer Frozen panelde de yeni=true
+  // işaretliyse, müşteri Launch sahnesinde de "YENİ" görüp tekrar karşılaşıyordu (sinyal enflasyonu).
+  // Artık sadece sig.yeni listesinde gerçekten "frozen" geçen bir ürün varsa rozet gösteriliyor.
+  var frozenYeni=!!(sig&&sig.yeni&&sig.yeni.some(function(n){return /frozen/i.test(n);}));
   var frozenPg=el("div","pg");frozenPg.dataset.t=7000;frozenPg.dataset.roles="3";
   frozenPg.innerHTML='<video class="bgvid" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/frozen" style="opacity:1"></video><div class="bggrade"></div>'
-    +'<div class="spotTag fire">YENİ</div><div class="musteriTag">Serinleten Lezzet</div>';
+    +(frozenYeni?'<div class="spotTag fire">YENİ</div>':'')+'<div class="musteriTag">Serinleten Lezzet</div>';
   ekran3Pages.push(frozenPg);
   // Happy Hour — aktifse büyük rozet
   if(sig && sig.happy_hour && sig.happy_hour.aktif){
@@ -1120,10 +1146,12 @@ function build(data,sig){
       +'<div class="launchTag">İlk Sen Dene</div>';
     ekran3Pages.push(ln);
   }
-  // Özel Gün — aktifse marka mesajı
+  // Özel Gün — ÖZ-ELEŞTİRİ: Happy Hour (video bg+rozet) ve Launch (siyah+spot ışığı) farklı şablonlardı
+  // ama Özel Gün ikisiyle de aynı "ortalanmış metin" kalıbını paylaşıyordu. Artık kendi kimliği var:
+  // sıcak altın degrade tam ekran (ne video ne siyah spot — üçüncü bir doku).
   if(sig && sig.ozel){
-    var oz=el("div","pg");oz.dataset.t=7000;oz.dataset.roles="3";
-    oz.innerHTML='<div class="halo"></div><div class="spotTag">'+sig.ozel.etiket+'</div><div class="comboTitle" style="font-size:4.2vh">'+sig.ozel.mesaj+'</div>';
+    var oz=el("div","pg ozelPg");oz.dataset.t=7000;oz.dataset.roles="3";
+    oz.innerHTML='<div class="spotTag" style="position:relative;z-index:2">'+sig.ozel.etiket+'</div><div class="comboTitle" style="position:relative;z-index:2;font-size:4.2vh">'+sig.ozel.mesaj+'</div>';
     ekran3Pages.push(oz);
   }
 
