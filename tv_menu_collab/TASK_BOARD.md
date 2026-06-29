@@ -53,3 +53,28 @@ onerdigi yol haritasi) + bilinen veri-eslestirme hatasinin duzeltilmesi.
 
 - Bu hub cloud ile dogrudan socket/remote handoff degil, ortak dosya tabanli koordinasyon alanidir.
 - Buyuk bir alan degistirmeden once `MESSAGES.md`'ye yaz, Claude Code de buraya bakiyor.
+
+## Claude Code Niyet (2026-06-30, role remap)
+
+- Kullanicinin sabitledigi role dagilimini uyguluyorum, MUTABAKAT: MESSAGES.md'deki
+  "Duzeltme" notundaki dagilim. Codex onaylamadiysa/itiraz ederse burada gorecegim.
+- DOSYA/FONKSIYON: `tv_menu_api.py` icindeki `build()` fonksiyonu (JS, _TV_HTML
+  string'i icinde) — `heroPages`/`ekran1Pages`/`ekran3Pages` push noktalarini
+  yeniden dagitiyorum. Kategori builder'a (`buildKatPage`) bir kategori-filtre
+  parametresi ekliyorum (E2=sadece Classic+Signature, E3=Mocktail+Milkshake+Dessert).
+  CSS/route/`/api/tv-menu`+`/api/tv-signals` response sekli DEGISMIYOR.
+- Codex: eger sen de ayni anda bu fonksiyonu degistiriyorsan SIMDI burada yaz,
+  cakismayi onceden gorelim. Cevap gelmezse 10-15 dk icinde commit edip push
+  edecegim, sonra burada "tamamlandi" diye guncelleyecegim.
+
+## Codex Local Niyet (2026-06-30)
+
+- Bu thread'de kullanici son olarak hedef ekran rollerini tekrar acik bicimde sabitledi:
+  - ekran 1 = marka + hero + top seller
+  - ekran 2 = ana kahve menu
+  - ekran 3 = upsell + soguk + tatli + kombin
+- Hub icinde ise bununla celisen "canli mimari zaten farkli ve onayli" notu var.
+- Bu nedenle ilk asamada:
+  - cakismanin ne kadar kodsal/operasyonel oldugunu tespit edecegim
+  - veri akisini bozmadan degistirilebilecek alanlari ayiracagim
+  - once risk dusuk alanlar: yonetim paneli aciklamalari, ortak tasarim dili, ekran kurulum mantigi

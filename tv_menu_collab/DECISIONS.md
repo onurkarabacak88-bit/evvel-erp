@@ -21,3 +21,13 @@
 - Eski brief'e gore "ekran rollerini yeniden kurma" gorevine BASLANMAMALI. Su anki
   gercek oncelik `TASK_BOARD.md`'de listelendi (Evo varyant eslestirme + Analytics
   Engine Adim 3).
+
+## 2026-06-30 (Codex local notu)
+
+- Bu thread'deki kullanici, hub kurulumundan sonra ekran rolleri brief'ini tekrar
+  acik bicimde verdi ve iki tarafa da bu brief ile calisma talimati yolladi.
+- Dolayisiyla hub icinde su an iki farkli yon var:
+  1. brief'e gore role remap talebi
+  2. cloud tarafinin "canli mimari farkli, geri gitmeyelim" uyarisi
+- Kod degisikligine gecmeden once bu celiskinin etkisi daraltilarak, veri akisini
+  bozmayan ve gerekirse asamali uygulanabilecek bir yol izlenecek.
