@@ -56,6 +56,63 @@ _TOHUM = [
     ("Iced & Cold", "Cold Brew", "18h steeped", 175, None, None),
 ]
 
+# TOHUM V2 — gerçek TULİPİ menüsü (Signature/Mocktails/Milkshakes). Mevcut kayıtlara
+# EKLENİR (silmez/ezmez), tv_ayar.menu_v2_yuklendi bayrağıyla tek seferlik çalışır.
+# Mocktail/Milkshake fiyatları kaynak görselde yoktu → None (panelden doldurulmalı).
+_TOHUM_V2 = [
+    ("Signature Coffees", "Cookie Latte", "", 190, 205, 215),
+    ("Signature Coffees", "Pumpkin Latte", "", 190, 205, 215),
+    ("Signature Coffees", "Dream Latte", "", 190, 205, 215),
+    ("Signature Coffees", "Banana Fish", "", 190, 205, 215),
+    ("Signature Coffees", "Berry Latte", "", 190, 205, 215),
+    ("Signature Coffees", "Vanilla Latte", "", 190, 205, 215),
+    ("Signature Coffees", "Toffee Nut Latte", "", 190, 205, 215),
+    ("Signature Coffees", "Salted Caramel Cappuccino", "", 190, 205, 215),
+    ("Signature Coffees", "Madagaskar Latte", "", 190, 205, 215),
+    ("Signature Coffees", "Velvet Latte", "", 190, 205, 215),
+    ("Signature Coffees", "Taro Latte", "", 190, 205, 215),
+    ("Signature Coffees", "Pop Latte", "", 190, 205, 215),
+    ("Signature Coffees", "Irish Cream Latte", "", 190, 205, 215),
+    ("Signature Coffees", "Zebra Mocha", "", 190, 205, 215),
+    ("Mocktails", "YODA", "", None, None, None),
+    ("Mocktails", "Fetish", "", None, None, None),
+    ("Mocktails", "Serotonin", "", None, None, None),
+    ("Mocktails", "Kuzukulağı", "", None, None, None),
+    ("Mocktails", "Sparkle", "", None, None, None),
+    ("Mocktails", "Pink Floyd", "", None, None, None),
+    ("Mocktails", "Nar Spark", "", None, None, None),
+    ("Milkshakes", "Çikolata Milkshake", "", None, None, None),
+    ("Milkshakes", "Çilek Milkshake", "", None, None, None),
+    ("Milkshakes", "Muz Milkshake", "", None, None, None),
+    ("Milkshakes", "Vanilya Milkshake", "", None, None, None),
+    ("Milkshakes", "Velvet Milkshake", "", None, None, None),
+    ("Milkshakes", "Tulipi Milkshake", "", None, None, None),
+]
+
+
+def _seed_v2(cur):
+    """Gerçek menüyü (Signature/Mocktails/Milkshakes) tek seferlik, EKLEYEREK kurar."""
+    cur.execute("SELECT deger FROM tv_ayar WHERE anahtar='menu_v2_yuklendi'")
+    r = cur.fetchone()
+    if r and r.get("deger") == "1":
+        return
+    cur.execute("SELECT ad FROM tv_menu")
+    mevcut = {str(x["ad"]).strip().lower() for x in (cur.fetchall() or [])}
+    cur.execute("SELECT COALESCE(MAX(sira),0) AS m FROM tv_menu")
+    sira0 = int((cur.fetchone() or {}).get("m") or 0) + 1
+    for i, (kat, ad, ack, f8, f14, fice) in enumerate(_TOHUM_V2):
+        if ad.strip().lower() in mevcut:
+            continue
+        cur.execute(
+            """INSERT INTO tv_menu (id,kategori,ad,aciklama,f8,f14,fice,sira)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
+            (str(uuid.uuid4()), kat, ad, ack, f8, f14, fice, sira0 + i),
+        )
+    cur.execute(
+        "INSERT INTO tv_ayar (anahtar,deger) VALUES ('menu_v2_yuklendi','1') "
+        "ON CONFLICT (anahtar) DO UPDATE SET deger=EXCLUDED.deger"
+    )
+
 
 def _ensure_tablo(cur):
     global _TABLO_HAZIR
@@ -90,6 +147,7 @@ def _ensure_tablo(cur):
                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
                 (str(uuid.uuid4()), kat, ad, ack, f8, f14, fice, i),
             )
+    _seed_v2(cur)
     _TABLO_HAZIR = True
 
 
@@ -372,21 +430,110 @@ def _en_cok(ayar):
     return (ayar.get("one_cikan") or "").strip() or None
 
 
+# Saat-modu / mevsim → bu kategorilerden az-satılan ürün öner (akıllı menü).
+# Klasik temel ürünler (Classic Coffees/Iced & Cold) zaten bilinir, öneri motoru
+# vitrin/imza ürünlere (Signature/Mocktails/Milkshakes) odaklanır.
+_ONERI_KATEGORI = {
+    "sabah": ["Signature Coffees", "Classic Coffees"],
+    "ogle": ["Mocktails", "Iced & Cold"],
+    "aksam": ["Milkshakes", "Signature Coffees"],
+    "gece": ["Milkshakes", "Mocktails"],
+}
+_ONERI_NEDEN = {
+    "sabah": "Güne güçlü başla",
+    "ogle": "Serinlemek için birebir",
+    "aksam": "Tatlı saatinin yıldızı",
+    "gece": "Gece molası",
+}
+
+# Evo 30 günlük satış adedi — bellek cache (30 dk, hata-yutar)
+_SATIS_CACHE = {"ts": 0.0, "map": {}}
+
+
+def _satis_30gun():
+    if time.time() - _SATIS_CACHE["ts"] < 1800 and _SATIS_CACHE["map"]:
+        return _SATIS_CACHE["map"]
+    try:
+        from datetime import timedelta
+        from evo_sync import hs_rapor_urun_satis
+        bit = _date.today()
+        bas = bit - timedelta(days=30)
+        m = hs_rapor_urun_satis(bas, bit) or {}
+        _SATIS_CACHE["map"] = m
+        _SATIS_CACHE["ts"] = time.time()
+    except Exception as e:
+        logger.warning("tv satis_30gun hata: %s", e)
+    return _SATIS_CACHE["map"]
+
+
+def _top3(satis):
+    """Bugün/son 30 günde en çok tercih edilen 3 ürün (ayrı sahne için)."""
+    sirali = sorted(satis.items(), key=lambda x: -x[1])[:3]
+    return [{"ad": a, "adet": c} for a, c in sirali if c > 0]
+
+
+def _oneri_motoru(rows, sm_mod, mevsim_ad, haric=None):
+    """Az satılan ama saat/mevsime uygun bir vitrin ürünü seçer (sürekli tazelenen öneri).
+    Çok satılanı tekrar önermez (haric), sessiz kalan ürünleri öne çıkarır."""
+    satis = _satis_30gun()
+    norm = lambda s: re.sub(r"\s+", " ", str(s).strip().lower())
+    pref = list(_ONERI_KATEGORI.get(sm_mod, ["Signature Coffees"]))
+    if mevsim_ad == "yaz":
+        for c in ("Mocktails", "Milkshakes", "Iced & Cold"):
+            if c not in pref:
+                pref.append(c)
+    elif mevsim_ad == "kis":
+        for c in ("Signature Coffees", "Classic Coffees"):
+            if c not in pref:
+                pref.append(c)
+    hn = norm(haric) if haric else None
+    cands = [r for r in rows if r["kategori"] in pref and (not hn or norm(r["ad"]) != hn)]
+    if not cands:
+        cands = [r for r in rows if not hn or norm(r["ad"]) != hn]
+    if not cands:
+        return None
+
+    def adet(r):
+        rn = norm(r["ad"])
+        for k, v in satis.items():
+            if norm(k) == rn:
+                return v
+        return 0
+
+    cands_sirali = sorted(cands, key=lambda r: (adet(r), r.get("sira") or 0))
+    pick = cands_sirali[0]
+    fy = _fmt(pick.get("f8")) or _fmt(pick.get("f14")) or _fmt(pick.get("fice"))
+    return {"ad": pick["ad"], "fiyat": fy, "kategori": pick["kategori"],
+            "neden": _ONERI_NEDEN.get(sm_mod, "Bugün dene")}
+
+
 @router.get("/api/tv-signals")
 def tv_signals():
-    """FAZ 2 — yaşayan menü sinyalleri (saat-modu / en-çok / yeni / happy hour)."""
+    """FAZ 2 — yaşayan menü sinyalleri (saat-modu / en-çok / yeni / happy hour / akıllı öneri / top3)."""
     yeni = []
     ayar = {}
+    rows = []
     try:
         with db() as (conn, cur):
             _ensure_tablo(cur)
             ayar = _ayar_oku(cur)
-            cur.execute("SELECT ad FROM tv_menu WHERE aktif=TRUE AND yeni=TRUE ORDER BY sira, ad")
-            yeni = [r["ad"] for r in (cur.fetchall() or [])]
+            cur.execute(
+                "SELECT kategori,ad,f8,f14,fice,sira,yeni FROM tv_menu WHERE aktif=TRUE ORDER BY kategori, sira, ad"
+            )
+            rows = [dict(r) for r in (cur.fetchall() or [])]
+            yeni = [r["ad"] for r in rows if r.get("yeni")]
     except Exception as e:
         logger.warning("tv-signals hata: %s", e)
     sm = _saat_modu()
+    mv = _mevsim()
     en_cok = _en_cok(ayar)
+    satis = _satis_30gun()
+    top3 = _top3(satis)
+    oneri = None
+    try:
+        oneri = _oneri_motoru(rows, sm["mod"], mv["ad"], haric=en_cok)
+    except Exception as e:
+        logger.warning("tv oneri_motoru hata: %s", e)
     hh = None
     try:
         if str(ayar.get("hh_aktif") or "") == "1":
@@ -405,13 +552,15 @@ def tv_signals():
         seritler.append("⏰ " + hh["mesaj"] + " · " + str(hh["bas"]) + ":00–" + str(hh["bit"]) + ":00")
     if sm["oneri"]:
         seritler.append(sm["etiket"] + " · " + sm["oneri"])
-    mv = _mevsim()
     if mv["oneri"]:
         seritler.append(mv["etiket"] + " · " + mv["oneri"])
+    if oneri:
+        seritler.append("💡 " + oneri["neden"] + " · " + oneri["ad"])
     oz = _ozel_gun(ayar)
     if oz:
         seritler.insert(0, oz["etiket"] + " · " + oz["mesaj"])   # özel gün şeridi en başta
-    return {"saat_modu": sm, "mevsim": mv, "ozel": oz, "en_cok": en_cok, "yeni": yeni, "happy_hour": hh, "seritler": seritler}
+    return {"saat_modu": sm, "mevsim": mv, "ozel": oz, "en_cok": en_cok, "yeni": yeni,
+            "happy_hour": hh, "top3": top3, "oneri": oneri, "seritler": seritler}
 
 
 class AyarModel(BaseModel):
@@ -496,7 +645,7 @@ def tv_menu_logo():
 @router.get("/tv-menu/clip/{name}")
 def tv_menu_clip(name: str):
     """Coffee Story gerçek video klipleri (Mixkit Free, ticari kullanım serbest)."""
-    if name not in ("bean", "latte", "cup"):
+    if name not in ("bean", "latte", "cup", "dessert", "cold", "brew", "froth"):
         raise HTTPException(404, "klip yok")
     # Prod: Vite public/ -> static/tv'ye kopyalar. Dev: public/tv veya src/assets/tv.
     for base in ("static/tv", "public/tv", "src/assets/tv"):
@@ -566,6 +715,10 @@ _TV_HTML = r"""<!DOCTYPE html>
 .spotName{position:relative;z-index:2;font-size:4.2vw;font-weight:500;margin:1.2vh 0 .6vh;letter-spacing:.02vw}
 .spotDesc{position:relative;z-index:2;font-size:1.5vw;color:#B89B80;font-style:italic;max-width:38vw;line-height:1.5;margin-bottom:2.6vh}
 .spotPrice{position:relative;z-index:2;display:inline-block;background:#3E8E5A;color:#0e0b09;font-weight:700;font-size:2.4vw;padding:1.3vh 3.4vw;border-radius:50px;animation:pulse 2.2s infinite}
+/* gerçek video arka plan — öneri & tatlı kombo sahnelerinde (sinematik, göz yormaz: opacity düşük + degrade) */
+.bgvid{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;opacity:.5;filter:saturate(1.25) contrast(1.1) brightness(.82)}
+.bggrade{position:absolute;inset:0;z-index:1;pointer-events:none;background:linear-gradient(180deg,#0e0b09cc 0,#0e0b0966 28%,#0e0b0966 70%,#0e0b09e6 100%)}
+.comboTitle{position:relative;z-index:2;font-size:3vw;font-style:italic;color:#EFE6D6;margin-top:1.2vh;text-shadow:0 .3vw 1.5vw #000}
 /* FAZ 7 — Perfect Pair upsell */
 .pair{position:relative;z-index:2;margin-top:2.8vh;display:flex;flex-direction:column;align-items:center;gap:.7vh;animation:pairIn 1s ease 1.1s both}
 .pairTag{font-size:.85vw;letter-spacing:.32vw;color:#0e0b09;background:#B89B80;padding:.5vh 1.5vw;border-radius:40px;text-transform:uppercase}
@@ -661,7 +814,7 @@ _TV_HTML = r"""<!DOCTYPE html>
 <div class="foot"><span id="live">TÜM FİYATLAR TL · TULİPİ COFFEE</span></div>
 <div id="cine"><video muted loop playsinline preload="auto"></video><div class="cgrade"></div><div class="ccap"><div class="ct"></div><div class="cs"></div></div></div></div>
 <script>
-var API="/api/tv-menu", CACHE="tulipi_tv_menu";
+var API="/api/tv-menu", SIG="/api/tv-signals", CACHE="tulipi_tv_menu";
 function el(t,c,h){var e=document.createElement(t);if(c)e.className=c;if(h!=null)e.innerHTML=h;return e;}
 function priceRow(u,three,i){
   var dly=' style="animation-delay:'+(0.18+(i||0)*0.055).toFixed(2)+'s"';
@@ -706,7 +859,7 @@ function buildStory(data){
   },450);
   return st;
 }
-function build(data){
+function build(data,sig){
   window._tvData=data;
   var stage=document.getElementById("stage");
   Array.prototype.slice.call(stage.querySelectorAll(".pg")).forEach(function(p){p.remove()});
@@ -726,6 +879,7 @@ function build(data){
   // İMZA SPOTLIGHT — panelden seçilen öne çıkan ürün (float + buhar + nabız fiyat)
   if(data.imza && data.imza.ad){
     var sp=el("div","pg");sp.dataset.t=10000;sp.dataset.roles="2,3";
+    sp.innerHTML='<video class="bgvid" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/froth"></video><div class="bggrade"></div>';
     sp.appendChild(el("div","halo"));
     var cup='<svg width="14vw" viewBox="0 0 200 200" style="width:14vw;height:14vw">'
       +'<g fill="none" stroke="#B89B80" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">'
@@ -760,6 +914,39 @@ function build(data){
     if(/(iced|cold|so.uk)/i.test(k.kategori)){for(var i=0;i<10;i++){var s=el("span","ice");s.style.left=(8+Math.random()*84)+"%";s.style.top=(22+Math.random()*54)+"%";s.style.animationDelay=(Math.random()*4.5)+"s";pg.appendChild(s);}}
     pages.push(pg);
   });
+  // 💡 ÖNERİ SAHNESİ — az satılan ama saate/mevsime uygun vitrin ürünü, ayrı slayt (en-çok'tan ayrı)
+  // Gerçek video arka plan: Mocktail/Milkshake → soğuk içecek görüntüsü, diğerleri → demleme/buhar görüntüsü
+  if(sig && sig.oneri && sig.oneri.ad){
+    var op=findPrice(sig.oneri.ad);if(op==null)op=sig.oneri.fiyat;
+    var os=el("div","pg");os.dataset.t=9000;os.dataset.roles="2,3";
+    var clip=/(mocktail|milkshake)/i.test(sig.oneri.kategori||"")?"cold":"brew";
+    os.innerHTML='<video class="bgvid" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/'+clip+'"></video><div class="bggrade"></div>';
+    os.innerHTML+='<div class="spotTag">💡 '+(sig.oneri.neden||"Bugün Dene")+'</div>'
+      +'<div class="spotName">'+sig.oneri.ad+'</div>'
+      +(sig.oneri.kategori?'<div class="spotDesc">'+sig.oneri.kategori+'</div>':'')
+      +(op!=null?'<div class="spotPrice">'+op+' TL</div>':'');
+    pages.push(os);
+  }
+  // 🍰 TATLI KOMBO — kahve+tatlı eşleşmesi, gerçek video arka plan (Perfect Pair varsa onu vurgular)
+  var combo=el("div","pg");combo.dataset.t=9000;combo.dataset.roles="2,3";
+  combo.innerHTML='<video class="bgvid" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/dessert"></video><div class="bggrade"></div>'
+    +'<div class="spotTag">PERFECT PAIR</div>'
+    +'<div class="spotName">'+((data.pair&&data.pair.ad)?data.pair.ad:"Kahve + Tatlı")+'</div>'
+    +'<div class="comboTitle">Birlikte daha güzel</div>'
+    +((data.pair&&data.pair.fiyat!=null)?'<div class="spotPrice">'+data.pair.fiyat+' TL</div>':'');
+  pages.push(combo);
+  // 🔥 EN ÇOK TERCİH EDİLEN — top 3, ayrı sahne (öneriyle karışmaz, gerçek satış sırası)
+  if(sig && sig.top3 && sig.top3.length){
+    var t3=el("div","pg cat");t3.dataset.t=9000;t3.dataset.roles="1,2,3";
+    t3.appendChild(el("div","gT","Bugün En Çok Tercih Edilen"));
+    var medals=["🥇","🥈","🥉"];
+    var m3=el("div","menu one");
+    m3.innerHTML=sig.top3.map(function(it,i){
+      return '<div class="row one" style="animation-delay:'+(0.18+i*0.1).toFixed(2)+'s"><span class="nm">'+(medals[i]||"")+' '+it.ad+'</span></div>';
+    }).join("");
+    t3.appendChild(m3);
+    pages.push(t3);
+  }
   // FAZ 4 — 3 EKRAN MODU: ?ekran=1 MENÜ · ?ekran=2 DENEYİM(video) · ?ekran=3 MARKA+CANLI
   var ekran=(new URLSearchParams(location.search)).get("ekran");
   if(ekran){var f=pages.filter(function(p){return (p.dataset.roles||"").split(",").indexOf(ekran)>=0;});if(f.length)pages=f;}
@@ -778,12 +965,19 @@ function build(data){
   if(pages.length)syncShow();
 }
 function load(){
-  fetch(API).then(function(r){return r.json();}).then(function(d){
-    if(d&&d.kategoriler&&d.kategoriler.length){localStorage.setItem(CACHE,JSON.stringify(d));build(d);}
-    else throw 0;
+  Promise.all([
+    fetch(API).then(function(r){return r.json();}),
+    fetch(SIG).then(function(r){return r.json();}).catch(function(){return null;})
+  ]).then(function(arr){
+    var d=arr[0],s=arr[1];
+    if(d&&d.kategoriler&&d.kategoriler.length){
+      localStorage.setItem(CACHE,JSON.stringify(d));
+      localStorage.setItem(CACHE+"_sig",JSON.stringify(s||{}));
+      build(d,s);
+    }else throw 0;
   }).catch(function(){
-    var c=localStorage.getItem(CACHE);
-    if(c){build(JSON.parse(c));}
+    var c=localStorage.getItem(CACHE),cs=localStorage.getItem(CACHE+"_sig");
+    if(c){build(JSON.parse(c),cs?JSON.parse(cs):null);}
     else{document.getElementById("stage").insertBefore(el("div","err","Menü yükleniyor…"),document.querySelector(".foot"));}
   });
 }
@@ -792,7 +986,7 @@ function load(){
 load();
 setInterval(load,60000);
 // FAZ 2 — yaşayan menü canlı şeridi (saat-modu / en-çok / yeni / happy hour)
-var SIG="/api/tv-signals", liveArr=["TÜM FİYATLAR TL · TULİPİ COFFEE"], liveI=0;
+var liveArr=["TÜM FİYATLAR TL · TULİPİ COFFEE"], liveI=0;
 function loadSig(){fetch(SIG).then(function(r){return r.json();}).then(function(s){
   if(s&&s.seritler&&s.seritler.length){liveArr=s.seritler.concat(["TÜM FİYATLAR TL"]);}
   // Günün ürünü (Evo en-çok) story sahnesindeki "fincanda doğan fiyat"ı besler
