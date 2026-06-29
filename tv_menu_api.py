@@ -662,7 +662,8 @@ def tv_menu_cup(name: str):
 @router.get("/tv-menu/clip/{name}")
 def tv_menu_clip(name: str):
     """Coffee Story gerçek video klipleri (Mixkit Free, ticari kullanım serbest)."""
-    if name not in ("bean", "latte", "cup", "dessert", "brew", "mocktail", "lifestyle", "craft", "musteri"):
+    if name not in ("bean", "latte", "cup", "dessert", "brew", "mocktail", "lifestyle", "craft", "musteri",
+                     "espresso", "greenmocktail", "frozen", "kahverengi"):
         raise HTTPException(404, "klip yok")
     # Prod: Vite public/ -> static/tv'ye kopyalar. Dev: public/tv veya src/assets/tv.
     for base in ("static/tv", "public/tv", "src/assets/tv"):
@@ -831,46 +832,18 @@ _TV_HTML = r"""<!DOCTYPE html>
 .pg.story{background:#050302}
 .pg.story.on{animation:none}
 .story .stsc{position:absolute;inset:0;display:flex;align-items:center;justify-content:center}
-/* GERÇEK VİDEO sahneleri (crossfade): çekirdek → latte art → buharlı fincan */
-.story .vid{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;opacity:0;filter:saturate(1.32) contrast(1.12) brightness(1.14)}
-.story .v1{animation:csVid1 18s ease-in-out infinite}
-.story .v2{animation:csVid2 18s ease-in-out infinite}
-.story .v3{animation:csVid3 18s ease-in-out infinite}
+/* GERÇEK TULİPİ ÇEKİMİ — tek sürekli video (eski 3-klip crossfade emekli edildi) */
+.story .vid{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;opacity:1;filter:saturate(1.18) contrast(1.08) brightness(1.06)}
 /* sinematik katmanlar: bokeh derinlik + renklendirme/letterbox + film grain */
-.story .bok{position:absolute;border-radius:50%;filter:blur(3.4vw);pointer-events:none;mix-blend-mode:screen;opacity:.5}
 .story .grade{position:absolute;inset:0;z-index:6;pointer-events:none;background:linear-gradient(180deg,#0009 0,transparent 22%,transparent 74%,#000b 100%)}
 .story .grain{position:absolute;inset:-25%;z-index:8;pointer-events:none;opacity:.07;mix-blend-mode:overlay;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='150' height='150'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='150' height='150' filter='url(%23n)' opacity='0.6'/%3E%3C/svg%3E");background-size:150px 150px;animation:csGrain .5s steps(3) infinite}
-.story .stTag{align-items:flex-start;padding-top:5vh;font-size:1.5vh;letter-spacing:.7vw;color:#3E8E5A;z-index:7;animation:csTag 22s linear infinite}
-.story .stBean{animation:csBean 22s ease-in-out infinite}
-.story .stPour{opacity:0;animation:csPour 22s ease-in-out infinite}
-.story .stCrema{opacity:0;animation:csCrema 22s ease-in-out infinite}
-.story .cremaC{width:60vh;height:60vh;border-radius:50%;position:relative;overflow:hidden;background:radial-gradient(circle at 37% 27%,#c5894f 0%,#9a5a30 20%,#683a1d 47%,#3a200f 77%,#1a0d05 100%);box-shadow:inset 0 0 12vh #000000b0,inset 0 1.4vh 3vh #ffffff22,0 3vh 9vh #000a}
-.story .cremaTex{position:absolute;inset:0;opacity:.45;mix-blend-mode:overlay;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='m'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.05' numOctaves='3'/%3E%3C/filter%3E%3Crect width='220' height='220' filter='url(%23m)'/%3E%3C/svg%3E");background-size:cover}
-.story .cremaHi{position:absolute;top:-8%;left:-4%;width:62%;height:60%;border-radius:50%;background:radial-gradient(circle,#ffe6c2cc,transparent 62%);filter:blur(2.6vw)}
-.story .stBub{opacity:0;animation:csBub 22s ease-in-out infinite}
-.story .stArt{opacity:0;animation:csArt 22s ease-in-out infinite}
-.story .artBase{width:60vh;height:60vh;border-radius:50%;position:relative;display:flex;align-items:center;justify-content:center;overflow:hidden;background:radial-gradient(circle at 37% 28%,#b07a48,#6a3c1e 50%,#2f1a0c 100%);box-shadow:inset 0 0 12vh #000000b0,0 3vh 9vh #000a}
-.story .milk{filter:drop-shadow(0 .3vw .6vw #00000055) blur(.25vw)}
-.story .steamW{z-index:3;align-items:flex-end;padding-bottom:16vh;filter:blur(.5vw);opacity:0;animation:csSteamWin 22s ease-in-out infinite}
-.story .stPriceWrap{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:5;opacity:0;animation:csPrice 22s ease-in-out infinite}
+.story .stTag{align-items:flex-start;padding-top:5vh;font-size:1.5vh;letter-spacing:.7vw;color:#3E8E5A;z-index:7;animation:csTag 19s linear infinite}
+.story .stPriceWrap{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:5;opacity:0;animation:csPrice 19s ease-in-out infinite}
 .story .stpn{font-size:6.4vh;letter-spacing:.5vw;color:#EFE6D6;text-transform:uppercase;text-shadow:0 .4vw 2.5vw #000,0 0 4vw #00000088}
 .story .stpl{width:5vw;height:1px;background:#3E8E5A;margin:2.2vh 0;box-shadow:0 0 1vw #3E8E5A}
 .story .stpp{font-size:5vh;font-weight:600;color:#5fbf86;text-shadow:0 0 3.5vw #3E8E5A99,0 0 1.2vw #3E8E5Acc}
-/* sahne ritmi: belir → BEKLE (net, Ken Burns yavaş zoom) → kaybol. blur YOK. */
 @keyframes csGrain{0%{background-position:0 0}33%{background-position:-80px 50px}66%{background-position:70px -60px}100%{background-position:-50px -40px}}
-@keyframes csVid1{0%{opacity:0}5%{opacity:1}30%{opacity:1}38%{opacity:0}100%{opacity:0}}
-@keyframes csVid2{0%,34%{opacity:0}42%{opacity:1}62%{opacity:1}70%{opacity:0}100%{opacity:0}}
-@keyframes csVid3{0%,66%{opacity:0}74%{opacity:1}100%{opacity:1}}
-@keyframes csBok1{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(4vw,3vh) scale(1.15)}}
-@keyframes csBok2{0%,100%{transform:translate(0,0) scale(1.1)}50%{transform:translate(-3vw,-2vh) scale(1)}}
-@keyframes csWisp{0%{opacity:0;transform:translateY(2vh) scaleY(.7)}40%{opacity:.5}100%{opacity:0;transform:translateY(-5vh) scaleY(1.3)}}
-@keyframes csSteamWin{0%,40%{opacity:0}48%{opacity:1}80%{opacity:1}84%{opacity:0}100%{opacity:0}}
 @keyframes csTag{0%,4%{opacity:0}9%,87%{opacity:.55}93%,100%{opacity:0}}
-@keyframes csBean{0%{opacity:0;transform:scale(.34) rotate(-10deg)}7%{opacity:1;transform:scale(.52) rotate(-4deg)}16%{opacity:1;transform:scale(.66) rotate(3deg)}21%{opacity:0;transform:scale(.72) rotate(5deg)}100%{opacity:0}}
-@keyframes csPour{0%,17%{opacity:0;transform:translateY(-3vh) scale(.96)}24%{opacity:1;transform:translateY(0) scale(1)}35%{opacity:1;transform:scale(1.04)}40%{opacity:0}100%{opacity:0}}
-@keyframes csCrema{0%,35%{opacity:0;transform:scale(.84)}43%{opacity:1;transform:scale(1)}56%{opacity:1;transform:scale(1.08)}61%{opacity:0;transform:scale(1.11)}100%{opacity:0}}
-@keyframes csBub{0%,40%{opacity:0}48%{opacity:.5}55%{opacity:0}100%{opacity:0}}
-@keyframes csArt{0%,53%{opacity:0;transform:scale(.9)}61%{opacity:1;transform:scale(1)}79%{opacity:1;transform:scale(1.05)}84%{opacity:0;transform:scale(1.08)}100%{opacity:0}}
 @keyframes csPrice{0%,79%{opacity:0;transform:translateY(2.6vh) scale(.96)}87%{opacity:1;transform:translateY(0) scale(1)}97%{opacity:1;transform:translateY(0) scale(1)}100%{opacity:0}}
 </style></head>
 <body><div id="stage">
@@ -937,24 +910,15 @@ function buildSpotlight(opts){
   return sp;
 }
 function buildStory(data){
+  // GERÇEK TULİPİ ÇEKİMİ — Mixkit stok video emekli edildi (GPT önerisi): espresso akışı → süt → karamel finish → logo.
+  // Tek sürekli gerçek klip, crossfade/3-video performans hack'i gerekmiyor (artık tek video var).
   var sp=storyProduct(data);window._story=sp;
-  var st=el("div","pg story");st.dataset.t=18000;st.dataset.roles="2";
+  var st=el("div","pg story");st.dataset.t=19000;st.dataset.roles="2";
   st.dataset.name=sp.ad;if(sp.fiyat!=null)st.dataset.price=sp.fiyat+" TL";
-  function vid(cls,src){return '<video class="vid '+cls+'" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/'+src+'"></video>';}
-  st.innerHTML=vid("v1","bean")+vid("v2","latte")+vid("v3","cup")
+  st.innerHTML='<video class="vid v1" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/espresso" style="opacity:1"></video>'
     +'<div class="grade"></div><div class="grain"></div>'
     +'<div class="stPriceWrap"><div class="stpn" id="storyName">'+sp.ad+'</div><div class="stpl"></div><div class="stpp" id="storyPrice">'+(sp.fiyat!=null?sp.fiyat+' TL':'')+'</div></div>'
     +'<div class="stsc stTag">TULİPİ · COFFEE STORY</div>';
-  // PERF: SADECE görünen videoyu oynat, gizlileri duraklat (3 decode→1 → donma/takılma biter)
-  Array.prototype.forEach.call(st.querySelectorAll("video"),function(v){v.muted=true;});
-  clearInterval(window._storyVidInt);
-  window._storyVidInt=setInterval(function(){
-    Array.prototype.forEach.call(st.querySelectorAll("video"),function(v){
-      var op=parseFloat(getComputedStyle(v).opacity)||0;
-      if(op>0.06){ if(v.paused){var p=v.play();if(p&&p.catch)p.catch(function(){});} }
-      else if(!v.paused){ try{v.pause();}catch(e){} }
-    });
-  },450);
   return st;
 }
 function bardakImgFor(mod){
@@ -1014,6 +978,12 @@ function build(data,sig){
   // 4) KAHRAMAN ÜRÜN — İmza (manuel) veya Öneri motoru (oto), aynı parlatma kurgusu (yeşil tema)
   var hp=hp0;
   if(hp)heroPages.push(buildSpotlight({tag:hp.tag,ad:hp.ad,fiyat:hp.fiyat,aciklama:hp.aciklama,kategori:hp.kategori,dur:10000}));
+
+  // 4.2) CRAFT MOCKTAIL — gerçek barista çekimi: jigger → süzgeç → yeşil akış (barista ustalığı, ayrı/kendi sahnesi)
+  var craftM=el("div","pg");craftM.dataset.t=8000;craftM.dataset.roles="2";
+  craftM.innerHTML='<video class="bgvid" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/greenmocktail" style="opacity:.95"></video><div class="bggrade"></div>'
+    +'<div class="spotTag">CRAFT MOCKTAIL</div><div class="comboTitle">El Yapımı, Anında Hazır</div>';
+  heroPages.push(craftM);
 
   // 4.5) MÜŞTERİ ANI — gerçek TULİPİ müşteri görüntüsü (otantik, duygusal — yeni malzeme)
   var musPg=el("div","pg");musPg.dataset.t=8000;musPg.dataset.roles="2";
@@ -1124,6 +1094,15 @@ function build(data,sig){
     cp.innerHTML='<img class="bardakBg" src="/tv-menu/cup/'+c[0]+'" alt=""><div class="bggrade"></div><div class="brandLabel">'+c[1]+'</div>';
     ekran3Pages.push(cp);
   });
+  // Çeşitlilik — gerçek "kahverengi maden suyu" çekimi, bardak rotasyonuna 4. video kare olarak eklendi
+  var kahveC=el("div","pg");kahveC.dataset.t=6000;kahveC.dataset.roles="3";
+  kahveC.innerHTML='<video class="bgvid" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/kahverengi" style="opacity:1"></video><div class="bggrade"></div><div class="brandLabel">Yeni Tatlar</div>';
+  ekran3Pages.push(kahveC);
+  // 🍓 FROZEN VİTRİN — tek başına satabilecek kadar güçlü, tatlı kombo arkasına gizlenmiyor (GPT önerisi: %100 ekran, kendi sahnesi)
+  var frozenPg=el("div","pg");frozenPg.dataset.t=7000;frozenPg.dataset.roles="3";
+  frozenPg.innerHTML='<video class="bgvid" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/frozen" style="opacity:1"></video><div class="bggrade"></div>'
+    +'<div class="spotTag fire">YENİ</div><div class="musteriTag">Serinleten Lezzet</div>';
+  ekran3Pages.push(frozenPg);
   // Happy Hour — aktifse büyük rozet
   if(sig && sig.happy_hour && sig.happy_hour.aktif){
     var hh=el("div","pg");hh.dataset.t=7000;hh.dataset.roles="3";
