@@ -1,0 +1,43 @@
+{
+  "module": "tv-menu",
+  "last_updated": "2026-06-30",
+  "active_worktree": ".claude/worktrees/nifty-bassi-3bff39",
+  "branch": "claude/nifty-bassi-3bff39",
+  "direct_cloud_handoff_supported": false,
+  "connected_hosts": [
+    "local",
+    "claude-code"
+  ],
+  "primary_files": [
+    "tv_menu_api.py",
+    "src/pages/TvMenuYonetim.jsx",
+    "main.py"
+  ],
+  "routes": [
+    "/tv-menu",
+    "/api/tv-menu",
+    "/api/tv-signals",
+    "/api/tv-gosterim",
+    "/api/tv-gosterim/ozet",
+    "/api/tv-gosterim/etki"
+  ],
+  "DIKKAT": "screen_roles_target alani asagida Codex'in eski/yanlis brief'ine gore yazilmisti. Claude Code (bu dosyayi guncelleyen taraf) bu modul uzerinde onlarca tur boyunca kullaniciyla (GPT denetim turlari dahil) calisti. Asagidaki roller GERCEK ve CANLI durumdur, brief degil.",
+  "screen_roles_target": {
+    "1": "FIYAT KARTI (sabit/okunabilir) — kategori fiyat sayfalari (max 8 satir/sayfa, agirlikli kategoriler 2x), Top-3 sosyal kanit (fiyatli), Mevsim karti, Bugunun Onerisi (gercek video bg), Perfect Pair karti. VIDEO BILEREK MINIMAL — bu ekranin rolu hizli karar, sinema degil.",
+    "2": "SINEMA / KAHRAMAN — Bardak Acilis (gercek foto+Ken Burns+fiyat ipucu) -> Coffee Story (gercek espresso.mp4, 12s) -> En Cok Satilan (ates tema) -> Kahraman Urun/Imza-Oneri (yesil/mavi-kesfet tema) -> Craft Mocktail -> Tatli Kombo. Tum video gercek TULIPI cekimi (Mixkit stok TAMAMEN kaldirildi).",
+    "3": "MARKA + CANLI — Lifestyle, SIMDI karti (saat+mevsim kompakt), Musteri Ani, bardak rotasyonu (sicak/soguk alternansli 2-1-2), Frozen Vitrin, Happy Hour/Yeni Urun/Ozel Gun (kosullu, ayri gorsel sablonlar)."
+  },
+  "gercek_oncelik_simdi": [
+    "Evo varyant-ad eslestirme sorunu (orn. 'Latte Ice' ile TV menudeki 'Latte' tam eslesmiyor) - oneri motoru + top3 + attribution'i etkiliyor, henuz duzeltilmedi",
+    "Analytics Engine Adim 3: Sahne Performans Puanlama Sistemi (GPT'nin onerdigi yol haritasi)",
+    "Desserts kategorisi icin gercek video/foto YOK (footage cekilmedi, acik kaldi)"
+  ],
+  "constraints": [
+    "no hardcoded prices",
+    "keep query param logic",
+    "preserve Railway compatibility",
+    "avoid unnecessary architectural rewrite",
+    "BUYUK MIMARI DEGISIKLIK YAPMADAN ONCE MESSAGES.md'de soru sor - bu modul defalarca GPT denetiminden gecti, rastgele 'iyilestirme' geriye gidis riski tasiyor"
+  ],
+  "communication_path": "file-based shared hub under tv_menu_collab"
+}
