@@ -1014,10 +1014,13 @@ function build(data,sig){
     mvC.innerHTML='<div class="gT">'+sig.mevsim.etiket+'</div>'+(sig.mevsim.oneri?'<div class="gH" style="margin-bottom:0">'+sig.mevsim.oneri+'</div>':'');
     ekran1Pages.push(mvC);
   }
-  // Bugünün Önerisi Kartı — Kahraman Ürün'ün sade/fiyat-kartı karşılığı (aynı ürün, video yok)
+  // Bugünün Önerisi Kartı — ürün GÖRSELİ+yapılışı (gerçek video, hafif opak) + isim + fiyat aynı kartta
+  // (kategori listeleri okunabilirlik için düz kalır, ama bu vitrin kartı artık "sadece yazı" değil)
   if(hp){
+    var hpClip=/(mocktail|milkshake)/i.test(hp.kategori||"")?"greenmocktail":"craft";
     var hpC=el("div","pg flatCard");hpC.dataset.t=7000;hpC.dataset.roles="1";
-    hpC.innerHTML='<div class="gT">'+hp.tag+'</div><div class="spotName" style="font-size:4vh;position:relative;z-index:2">'+hp.ad+'</div>'
+    hpC.innerHTML='<video class="bgvid" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/'+hpClip+'" style="opacity:.4"></video><div class="bggrade"></div>'
+      +'<div class="gT">'+hp.tag+'</div><div class="spotName" style="font-size:4vh;position:relative;z-index:2">'+hp.ad+'</div>'
       +(hp.fiyat!=null?'<div class="spotPrice" style="position:relative;z-index:2">'+hp.fiyat+' TL</div>':'');
     ekran1Pages.push(hpC);
   }
