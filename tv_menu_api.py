@@ -1105,6 +1105,19 @@ function build(data,sig){
   brandPg.innerHTML='<video class="bgvid" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/lifestyle" style="opacity:.85"></video><div class="bggrade"></div>'
     +'<div class="brandLabel">Her An Yanında</div>';
   ekran3Pages.push(brandPg);
+  // "ŞİMDİ" kartı — saat+mevsim TEK kompakt sinyalde (Ekran 2'nin ayrı/büyük sinematik kartlarından farklı, hızlı bilgi katmanı)
+  if(sig&&sig.saat_modu){
+    var nowPg=el("div","pg");nowPg.dataset.t=7000;nowPg.dataset.roles="3";
+    nowPg.innerHTML='<video class="bgvid" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/'+clipForMod(sig.saat_modu.mod)+'" style="opacity:.55"></video><div class="bggrade"></div>'
+      +'<div class="spotTag">ŞİMDİ</div><div class="bigEtiket" style="font-size:3.6vh">'+sig.saat_modu.etiket+(sig.mevsim?(' · '+sig.mevsim.etiket):'')+'</div>'
+      +(sig.saat_modu.oneri?'<div class="bigOneri">'+sig.saat_modu.oneri+'</div>':'');
+    ekran3Pages.push(nowPg);
+  }
+  // Müşteri Anı — gerçek TULİPİ müşteri görüntüsü (Ekran 2'den farklı mesaj, marka samimiyeti)
+  var mus3=el("div","pg");mus3.dataset.t=7000;mus3.dataset.roles="3";
+  mus3.innerHTML='<video class="bgvid" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/musteri" style="opacity:.9"></video><div class="bggrade"></div>'
+    +'<div class="musteriTag">Mutluluk Burada</div>';
+  ekran3Pages.push(mus3);
   // Bardak rotasyonu — 3 gerçek fotoğraf sırayla (sıcak/buzlu/mocktail), imza silüet tekrarı
   [["hot","Sıcak Kahveler"],["iced","Buzlu Lezzetler"],["mocktail","Mocktail Dünyası"]].forEach(function(c){
     var cp=el("div","pg");cp.dataset.t=6000;cp.dataset.roles="3";
