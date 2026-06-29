@@ -156,10 +156,6 @@ def _ayar_oku(cur) -> dict:
     return {r["anahtar"]: r["deger"] for r in (cur.fetchall() or [])}
 
 
-# Evo "en çok satılan" — bellek cache (token kırılgan + Evo yavaş; 30 dk'da bir yenilenir)
-_EVO_CACHE = {"ts": 0.0, "urun": None}
-
-
 class UrunModel(BaseModel):
     kategori: str
     ad: str
@@ -413,21 +409,17 @@ def _ozel_gun(ayar):
     return None
 
 
-def _en_cok(ayar):
-    """Manuel öne çıkan öncelikli; oto açıksa Evo'dan (30 dk cache, hata-yutar)."""
-    if str(ayar.get("one_cikan_oto") or "") == "1":
-        if time.time() - _EVO_CACHE["ts"] > 1800 or not _EVO_CACHE["urun"]:
-            try:
-                from evo_sync import hs_rapor_urun_satis
-                m = hs_rapor_urun_satis(_date.today(), _date.today())
-                if m:
-                    _EVO_CACHE["urun"] = max(m.items(), key=lambda x: x[1])[0]
-                    _EVO_CACHE["ts"] = time.time()
-            except Exception as e:
-                logger.warning("tv en_cok Evo hata: %s", e)
-        if _EVO_CACHE["urun"]:
-            return _EVO_CACHE["urun"]
-    return (ayar.get("one_cikan") or "").strip() or None
+def _en_cok(ayar, top3=None):
+    """Manuel öne çıkan öncelikli; oto açıksa top3 (_satis_30gun) İLE AYNI veri kaynağı kullanılır.
+    ÖNEMLİ: Eskiden burada ayrı bir 'bugün' Evo çekimi vardı — top3 ile FARKLI pencere kullandığı
+    için iki ekranda çelişen 'en çok satan' bilgisi gösterilebiliyordu (Ekran2 vs Ekran1 Top-3).
+    Artık TEK kaynak: top3[0]. Aynı veri, farklı ekranlarda farklı sunum — asla çelişmez."""
+    manuel = (ayar.get("one_cikan") or "").strip()
+    if manuel:
+        return manuel
+    if str(ayar.get("one_cikan_oto") or "") == "1" and top3:
+        return top3[0]["ad"]
+    return None
 
 
 # Saat-modu / mevsim → bu kategorilerden az-satılan ürün öner (akıllı menü).
@@ -531,9 +523,9 @@ def tv_signals():
         logger.warning("tv-signals hata: %s", e)
     sm = _saat_modu()
     mv = _mevsim()
-    en_cok = _en_cok(ayar)
     satis = _satis_30gun()
     top3 = _top3(satis, rows)
+    en_cok = _en_cok(ayar, top3)
     oneri = None
     try:
         oneri = _oneri_motoru(rows, sm["mod"], mv["ad"], haric=en_cok)
@@ -747,16 +739,23 @@ _TV_HTML = r"""<!DOCTYPE html>
 .pr.sec{color:#7d7065;font-size:.78em}
 .pr.acc{color:#5fbf86;font-weight:700;font-size:1.12em;text-shadow:0 0 1.2vh #3E8E5A55}
 .ice{position:absolute;width:.5vw;height:.5vw;border-radius:50%;background:#a9dccd;animation:ice 4.5s ease-in-out infinite}
-@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(62,142,90,.45)}70%{box-shadow:0 0 0 1.5vw rgba(62,142,90,0)}100%{box-shadow:0 0 0 0 rgba(62,142,90,0)}}
+/* Fiyat rozeti — ÖZ-ELEŞTİRİ: sürekli pulse "dikkat çekmeye çalışıyor" hissi verir (ucuzluk sinyali,
+   Apple/Tesla/Starbucks Reserve hiçbiri fiyatı sürekli animasyonla titretmez). Bir kere belirir, durur. */
+@keyframes priceSettle{from{opacity:0;transform:translateY(.6vh) scale(.97)}to{opacity:1;transform:none}}
 .spotTag{position:relative;z-index:2;font-size:1.5vh;letter-spacing:.32vw;color:#3E8E5A;text-transform:uppercase}
 .spotTag.fire{color:#ffb347}
-.spotPrice.fire{background:#ffb347;color:#2a1200;box-shadow:0 0 0 0 rgba(255,179,71,.5);animation:pulseFire 2.2s infinite}
-@keyframes pulseFire{0%{box-shadow:0 0 0 0 rgba(255,179,71,.5)}70%{box-shadow:0 0 0 1.5vw rgba(255,179,71,0)}100%{box-shadow:0 0 0 0 rgba(255,179,71,0)}}
+.spotPrice.fire{background:#ffb347;color:#2a1200}
 .halo.fire{background:radial-gradient(circle,#5a3512,#321c08 46%,transparent 70%)}
+/* "Keşfet" teması — algoritmik öneri, kürate İmza'nın yeşil/premium statüsünü ÇALMAZ */
+.spotTag.discover{color:#6cb6e8}
+.spotPrice.discover{background:#6cb6e8;color:#0e2230}
+.halo.discover{background:radial-gradient(circle,#163a52,#0c2030 46%,transparent 70%)}
+.gT.fire{color:#ffb347}
+.gT.discover{color:#6cb6e8}
 .spotCup{position:relative;z-index:2;animation:flo 4s ease-in-out infinite;margin:1.5vh 0 .5vh}
 .spotName{position:relative;z-index:2;font-size:5.6vh;font-weight:500;margin:1.2vh 0 .6vh;letter-spacing:.02vw}
 .spotDesc{position:relative;z-index:2;font-size:2.1vh;color:#B89B80;font-style:italic;max-width:84vw;line-height:1.5;margin-bottom:2.6vh}
-.spotPrice{position:relative;z-index:2;display:inline-block;background:#3E8E5A;color:#0e0b09;font-weight:700;font-size:3.4vh;padding:1.3vh 6vw;border-radius:50px;animation:pulse 2.2s infinite}
+.spotPrice{position:relative;z-index:2;display:inline-block;background:#3E8E5A;color:#0e0b09;font-weight:700;font-size:3.4vh;padding:1.3vh 6vw;border-radius:50px;animation:priceSettle .6s ease .3s both}
 /* gerçek video arka plan — öneri & tatlı kombo sahnelerinde (sinematik, göz yormaz: opacity düşük + degrade) */
 .bgvid{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;opacity:.5;filter:saturate(1.25) contrast(1.1) brightness(.82)}
 .bggrade{position:absolute;inset:0;z-index:1;pointer-events:none;background:linear-gradient(180deg,#0e0b09cc 0,#0e0b0966 28%,#0e0b0966 70%,#0e0b09e6 100%)}
@@ -767,6 +766,7 @@ _TV_HTML = r"""<!DOCTYPE html>
 .t3rank{font-size:5vh;font-weight:700;color:#3E8E5A;width:1.6em;text-align:center;text-shadow:0 0 2vh #3E8E5A99,0 0 .6vh #3E8E5A;flex-shrink:0}
 .t3body{flex:1;min-width:0}
 .t3name{font-size:2.6vh;color:#EFE6D6;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:.6vh}
+.t3name small{font-size:.7em;color:#5fbf86;font-style:normal}
 .t3barBg{height:1.3vh;border-radius:1vh;background:#ffffff14;overflow:hidden}
 .t3barBg i{display:block;height:100%;background:linear-gradient(90deg,#2c6b43,#5fbf86);border-radius:1vh;box-shadow:0 0 1.2vh #3E8E5A77;animation:t3barIn 1.4s cubic-bezier(.16,.8,.2,1) both}
 @keyframes t3barIn{from{width:0}}
@@ -902,15 +902,16 @@ function buildSpotlight(opts){
   // tek tip "parlatma" kurgusu: halo + bardak silüeti + video arka plan + glow fiyat — Kahraman Ürün & En Çok Satılan ortak kullanır
   var sp=el("div","pg");sp.dataset.t=opts.dur||10000;sp.dataset.roles="2";
   sp.dataset.name=opts.ad;if(opts.fiyat!=null)sp.dataset.price=opts.fiyat+" TL";
-  var fire=opts.theme==="fire";
+  var theme=opts.theme||"";  // "", "fire" (en çok satılan), "discover" (öneri motoru)
+  var tcls=theme?(" "+theme):"";
   var clip=/(mocktail|milkshake)/i.test(opts.kategori||"")?"mocktail":"craft";
   sp.innerHTML='<video class="bgvid" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/'+clip+'"></video><div class="bggrade"></div>';
-  sp.appendChild(el("div","halo"+(fire?" fire":"")));
+  sp.appendChild(el("div","halo"+tcls));
   var cup='<img class="cupShot" src="/tv-menu/cup/'+cupShotFor(opts.ad,opts.kategori)+'" alt="">';
-  var inner='<div class="spotTag'+(fire?" fire":"")+'">'+opts.tag+'</div><div class="spotCup">'+cup+'</div>'
+  var inner='<div class="spotTag'+tcls+'">'+opts.tag+'</div><div class="spotCup">'+cup+'</div>'
     +'<div class="spotName">'+opts.ad+'</div>'
     +(opts.aciklama&&opts.aciklama!==opts.kategori?'<div class="spotDesc">'+opts.aciklama+'</div>':'')
-    +(opts.fiyat!=null?'<div class="spotPrice'+(fire?" fire":"")+'">'+opts.fiyat+' TL</div>':'');
+    +(opts.fiyat!=null?'<div class="spotPrice'+tcls+'">'+opts.fiyat+' TL</div>':'');
   sp.innerHTML+=inner;
   return sp;
 }
@@ -933,9 +934,12 @@ function bardakImgFor(mod){
 }
 function heroProduct(data,sig){
   // Kahraman Ürün: panelden manuel imza > otomatik öneri motoru > yok
-  if(data.imza&&data.imza.ad)return {ad:data.imza.ad,fiyat:data.imza.fiyat,aciklama:data.imza.aciklama,kategori:"",tag:"Bugünün İmzası"};
+  // ÖZ-ELEŞTİRİ: İmza (kürate/premium) ile Öneri (algoritmik, az-satanı-it) AYNI yeşil temayı
+  // paylaşıyordu — müşteri "bu markanın gurur duyduğu seçim" ile "satmadığı için ittiği ürün"
+  // arasındaki farkı göremiyordu. Öneri artık ayrı "keşfet" (mavi) temada.
+  if(data.imza&&data.imza.ad)return {ad:data.imza.ad,fiyat:data.imza.fiyat,aciklama:data.imza.aciklama,kategori:"",tag:"Bugünün İmzası",theme:""};
   if(sig&&sig.oneri&&sig.oneri.ad){var op=findPrice(sig.oneri.ad);if(op==null)op=sig.oneri.fiyat;
-    return {ad:sig.oneri.ad,fiyat:op,aciklama:sig.oneri.kategori||"",kategori:sig.oneri.kategori||"",tag:"💡 "+(sig.oneri.neden||"Bugün Dene")};}
+    return {ad:sig.oneri.ad,fiyat:op,aciklama:sig.oneri.kategori||"",kategori:sig.oneri.kategori||"",tag:(sig.oneri.neden||"Bugün Dene"),theme:"discover"};}
   return null;
 }
 function build(data,sig){
@@ -953,21 +957,12 @@ function build(data,sig){
     +'<div class="bardakInfo"><div class="q" style="margin-top:0">Crafted Every Day</div></div>';
   heroPages.push(bOpen);
 
-  // 1.5) SAAT/MEVSİM SİNEMATİK — gerçek sig sinyali, video arka planlı büyük tipografi (yeni malzeme, süre değil çeşitlilik)
+  // ÖZ-ELEŞTİRİ — KONSOLİDASYON: Saat/Mevsim verisi eskiden 3 ekranda (Ekran1 Saat Kartı,
+  // Ekran2 Saat Sinematik+Mevsim Sinematik, Ekran3 ŞİMDİ kartı) TEKRAR ediliyordu. Üç ekranı
+  // art arda gören müşteri "GÜNAYDIN" mesajını 2-3 kez görüyordu. Saat sinyali artık SADECE
+  // Ekran 3'te (ŞİMDİ kartı, "canlı" rolüne uygun); Mevsim sinyali SADECE Ekran 1'de (yavaş
+  // değişen veri, "referans" ekranına uygun). Ekran 2'nin kazandığı süre gerçek ürün sahnelerine.
   function clipForMod(mod){return mod==="sabah"?"espresso":mod==="ogle"?"mocktail":mod==="aksam"?"dessert":"lifestyle";}
-  function clipForSeason(sea){return sea==="yaz"?"mocktail":sea==="kis"?"espresso":sea==="ilkbahar"?"craft":"dessert";}
-  if(sig&&sig.saat_modu){
-    var smPg=el("div","pg");smPg.dataset.t=8000;smPg.dataset.roles="2";
-    smPg.innerHTML='<video class="bgvid" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/'+clipForMod(sig.saat_modu.mod)+'"></video><div class="bggrade"></div>'
-      +'<div class="bigEtiket">'+sig.saat_modu.etiket+'</div>'+(sig.saat_modu.oneri?'<div class="bigOneri">'+sig.saat_modu.oneri+'</div>':'');
-    heroPages.push(smPg);
-  }
-  if(sig&&sig.mevsim){
-    var mvPg=el("div","pg");mvPg.dataset.t=8000;mvPg.dataset.roles="2";
-    mvPg.innerHTML='<video class="bgvid" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/'+clipForSeason(sig.mevsim.ad)+'"></video><div class="bggrade"></div>'
-      +'<div class="bigEtiket">'+sig.mevsim.etiket+'</div>'+(sig.mevsim.oneri?'<div class="bigOneri">'+sig.mevsim.oneri+'</div>':'');
-    heroPages.push(mvPg);
-  }
 
   // 2) 🎬 COFFEE STORY — sinematik (her döngüde günün ürünü fincanda doğar)
   heroPages.push(buildStory(data));
@@ -977,12 +972,12 @@ function build(data,sig){
   var hp0=heroProduct(data,sig);  // çakışma kontrolü için önce bak (aynı ürünü 2 kez parlatma)
   if(ecAd&&(!hp0||hp0.ad!==ecAd)){
     var ecKat=findKategori(ecAd),ecFy=findPrice(ecAd);
-    heroPages.push(buildSpotlight({tag:"🔥 En Çok Satılan",ad:ecAd,fiyat:ecFy,aciklama:ecKat,kategori:ecKat,dur:9000,theme:"fire"}));
+    heroPages.push(buildSpotlight({tag:"En Çok Satılan",ad:ecAd,fiyat:ecFy,aciklama:ecKat,kategori:ecKat,dur:9000,theme:"fire"}));
   }
 
   // 4) KAHRAMAN ÜRÜN — İmza (manuel) veya Öneri motoru (oto), aynı parlatma kurgusu (yeşil tema)
   var hp=hp0;
-  if(hp)heroPages.push(buildSpotlight({tag:hp.tag,ad:hp.ad,fiyat:hp.fiyat,aciklama:hp.aciklama,kategori:hp.kategori,dur:10000}));
+  if(hp)heroPages.push(buildSpotlight({tag:hp.tag,ad:hp.ad,fiyat:hp.fiyat,aciklama:hp.aciklama,kategori:hp.kategori,dur:10000,theme:hp.theme}));
 
   // 4.2) CRAFT MOCKTAIL — gerçek barista çekimi: jigger → süzgeç → yeşil akış (barista ustalığı, ayrı/kendi sahnesi)
   var craftM=el("div","pg");craftM.dataset.t=8000;craftM.dataset.roles="2";
@@ -1008,12 +1003,7 @@ function build(data,sig){
   heroPages.push(combo);
 
   // 5.5) EKRAN 1 — düz tipografik kartlar (video YOK, "sabit/okunabilir" ethos), kategori listesinden önce
-  // Saat Kartı + Mevsim Kartı — Ekran 2'deki sinematik versiyonun sade/okunabilir karşılığı
-  if(sig&&sig.saat_modu){
-    var smC=el("div","pg flatCard");smC.dataset.t=6000;smC.dataset.roles="1";
-    smC.innerHTML='<div class="gT">'+sig.saat_modu.etiket+'</div>'+(sig.saat_modu.oneri?'<div class="gH" style="margin-bottom:0">'+sig.saat_modu.oneri+'</div>':'');
-    ekran1Pages.push(smC);
-  }
+  // Mevsim Kartı — saat sinyali artık SADECE Ekran 3'te (konsolidasyon notuna bkz)
   if(sig&&sig.mevsim){
     var mvC=el("div","pg flatCard");mvC.dataset.t=6000;mvC.dataset.roles="1";
     mvC.innerHTML='<div class="gT">'+sig.mevsim.etiket+'</div>'+(sig.mevsim.oneri?'<div class="gH" style="margin-bottom:0">'+sig.mevsim.oneri+'</div>':'');
@@ -1023,10 +1013,11 @@ function build(data,sig){
   // (kategori listeleri okunabilirlik için düz kalır, ama bu vitrin kartı artık "sadece yazı" değil)
   if(hp){
     var hpClip=/(mocktail|milkshake)/i.test(hp.kategori||"")?"greenmocktail":"craft";
+    var hpTcls=hp.theme?(" "+hp.theme):"";
     var hpC=el("div","pg flatCard");hpC.dataset.t=7000;hpC.dataset.roles="1";
     hpC.innerHTML='<video class="bgvid" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/'+hpClip+'" style="opacity:.4"></video><div class="bggrade"></div>'
-      +'<div class="gT">'+hp.tag+'</div><div class="spotName" style="font-size:4vh;position:relative;z-index:2">'+hp.ad+'</div>'
-      +(hp.fiyat!=null?'<div class="spotPrice" style="position:relative;z-index:2">'+hp.fiyat+' TL</div>':'');
+      +'<div class="gT'+hpTcls+'" style="position:relative;z-index:2">'+hp.tag+'</div><div class="spotName" style="font-size:4vh;position:relative;z-index:2">'+hp.ad+'</div>'
+      +(hp.fiyat!=null?'<div class="spotPrice'+hpTcls+'" style="position:relative;z-index:2">'+hp.fiyat+' TL</div>':'');
     ekran1Pages.push(hpC);
   }
   // Perfect Pair Kartı — ayrı/büyük (alttaki mikro-şeritten farklı, kendi sahnesi)
@@ -1063,14 +1054,15 @@ function build(data,sig){
   if(sig && sig.top3 && sig.top3.length){
     var t3=el("div","pg cat top3pg");t3.dataset.t=9000;t3.dataset.roles="1";
     t3.innerHTML='<video class="bgvid" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/espresso" style="opacity:.32"></video><div class="bggrade"></div>';
-    t3.appendChild(el("div","gT","🔥 Bugün En Çok Tercih Edilen"));
+    t3.appendChild(el("div","gT","Bugün En Çok Tercih Edilen"));
     var maxAdet=Math.max.apply(null,sig.top3.map(function(it){return it.adet;}));
     var wrap=el("div","t3wrap");
     wrap.innerHTML=sig.top3.map(function(it,i){
       var pct=Math.max(8,Math.round((it.adet/maxAdet)*100));
+      var fy=findPrice(it.ad);
       return '<div class="t3row" style="animation-delay:'+(0.15+i*0.15).toFixed(2)+'s">'
         +'<div class="t3rank">'+(i+1)+'</div>'
-        +'<div class="t3body"><div class="t3name">'+it.ad+'</div><div class="t3barBg"><i style="width:'+pct+'%;animation-delay:'+(0.4+i*0.15).toFixed(2)+'s"></i></div></div>'
+        +'<div class="t3body"><div class="t3name">'+it.ad+(fy!=null?' <small>· '+fy+' TL</small>':'')+'</div><div class="t3barBg"><i style="width:'+pct+'%;animation-delay:'+(0.4+i*0.15).toFixed(2)+'s"></i></div></div>'
         +'<div class="t3count">'+Math.round(it.adet)+' kez</div></div>';
     }).join("");
     t3.appendChild(wrap);
@@ -1189,8 +1181,8 @@ function load(){
     else{document.getElementById("stage").insertBefore(el("div","err","Menü yükleniyor…"),document.querySelector(".foot"));}
   });
 }
-// Ambient — uçuşan kahve çekirdekleri
-(function beans(){var bg=document.getElementById("bg");if(!bg)return;for(var i=0;i<14;i++){var b=document.createElement("span");b.className="bean";b.style.left=(Math.random()*100)+"%";b.style.bottom=(Math.random()*8)+"%";var d=10+Math.random()*10;b.style.animationDuration=d+"s";b.style.animationDelay=(-Math.random()*d)+"s";bg.appendChild(b);}})();
+// ÖZ-ELEŞTİRİ: uçuşan dekoratif çekirdek parçacıkları kaldırıldı — "tek hareket kaynağı" kuralını
+// ihlal ediyordu (gerçek video zaten hareketliyken, üzerine sahte CSS hareketi eklemek dikkati böler).
 load();
 setInterval(load,60000);
 // FAZ 2 — yaşayan menü canlı şeridi (saat-modu / en-çok / yeni / happy hour)
