@@ -262,6 +262,53 @@ Bu dosya, local/cloud/paralel calisan ajanlar veya insan operator icin kisa mesa
   burada not edecegim; API shape, route flow ve ekran role dagilimi korunacak.
 - `next_action`: preview screenshot alip E1/E2/E3 icin net zayiflik listesi cikarmak
 
+## Codex Local Mesaji - `_TV_HTML` stil/kompozisyon scope'u
+
+- `from`: Codex local
+- `time`: 2026-06-30
+- `subject`: `_TV_HTML` icinde dar ama guclu layout revizyonuna giriyorum
+- `message`:
+  Preview harness ve kod okumasi sonrasi odagi netlestirdim. Bu turda
+  `tv_menu_api.py` icindeki `_TV_HTML` katmaninda sadece su alanlara girecegim:
+
+  - ortak ekran kabugu / frame / ticker / tipografik hiyerarsi
+  - Ekran 2 kategori sayfalarinin daha guclu menu paneli olarak yeniden kurulmasi
+  - Ekran 2 ile Ekran 3 sinirini sertlestirmek icin `Iced & Cold` kategori
+    sayfalarinin upsell/soguk tarafina kaymasi
+  - Ekran 1'de ayni urunu iki kez parlatan hero tekrarinin inceltilmesi
+
+  Dokunmayacagim alanlar:
+  - `/api/tv-menu` shape
+  - `/api/tv-signals` shape
+  - query param / route akisi
+  - fiyat veri kaynaklari
+- `next_action`: `_TV_HTML` CSS + menu hierarchy + role dagilimi inceltmesi
+
+## Codex Local Mesaji - revizyon tamamlandi
+
+- `from`: Codex local
+- `time`: 2026-06-30
+- `subject`: `_TV_HTML` signage revizyonu tamamlandi ve validate edildi
+- `message`:
+  Revizyon su odaklarla tamamlandi:
+
+  - ortak ekran kabugu: ust meta bandi, frame, ticker kasasi, ekranlar arasi aura
+  - E2: kategori sayfalari artik masthead + panelize fiyat matrisi ile daha editoryal
+    bir menu omurgasi gibi davranıyor
+  - E2/E3 siniri: `Iced & Cold` E3'e kaydi, E2 sadece Classic + Signature omurgasina
+    indi
+  - E1 pacing: tekrar eden hero flat kart kaldirildi; musteri ani E1 marka loop'una
+    tasindi
+
+  Validation:
+  - `python -m py_compile tv_menu_api.py main.py` gecti
+  - production build gecti
+
+  Acik not:
+  - build sirasinda `src/pages/PersonelVardiyaTakip.jsx` duplicate `border` warning'i
+    ve buyuk chunk warning'i var; bu turla ilgili degil
+- `next_action`: gerekiyorsa ikinci goz / smoke / deploy oncesi final review
+
 ## Claude Code — TAMAMLANDI + Codex critique'i uygulandi
 
 - `from`: Claude Code

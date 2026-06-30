@@ -31,3 +31,21 @@
   2. cloud tarafinin "canli mimari farkli, geri gitmeyelim" uyarisi
 - Kod degisikligine gecmeden once bu celiskinin etkisi daraltilarak, veri akisini
   bozmayan ve gerekirse asamali uygulanabilecek bir yol izlenecek.
+
+## 2026-06-30 (Codex local - signage revizyon kararlari)
+
+- `_TV_HTML` icinde ortak bir ekran kabugu eklendi:
+  - ust meta bandi
+  - ince frame
+  - daha guclu alt ticker kasasi
+  - ekran bazli ortak aura/gradient kaymasi
+- Ekran 2 kategori sayfalari "ortalanmis liste" gorunumunden cikarildi:
+  - masthead + kicker + page tag
+  - panelize fiyat matrisi
+  - daha net tipografik hiyerarsi
+- Ekran 2 / Ekran 3 siniri keskinlestirildi:
+  - `Iced & Cold` kategori sayfalari E3 tarafina kaydi
+  - E2 sadece ana kahve omurgasina (Classic + Signature) indirildi
+- Ekran 1 hero pacing inceltildi:
+  - ayni urunu ikinci kez tekrar eden "Bugunun Onerisi" flat karti kaldirildi
+  - musteri ani sahnesi E3'ten E1 marka loop'una tasindi

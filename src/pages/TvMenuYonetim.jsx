@@ -130,9 +130,9 @@ export default function TvMenuYonetim() {
           Tek TV varsa üstteki linki kullan (her şey döner). 3 TV yan yana ise her birine farklı rol ver:
         </div>
         {[
-          { n: '1', ad: 'MENÜ', desc: 'Fiyat listesi — karar', emoji: '📋' },
-          { n: '2', ad: 'DENEYİM', desc: 'Coffee Story videosu — duygu', emoji: '🎬' },
-          { n: '3', ad: 'MARKA + CANLI', desc: 'Logo + imza + en çok satan', emoji: '✨' },
+          { n: '1', ad: 'MARKA + HERO', desc: 'Marka, Coffee Story, top seller ve sosyal kanit', emoji: '🎬' },
+          { n: '2', ad: 'ANA KAHVE MENU', desc: 'Classic + Signature kahve fiyat referansi', emoji: '📋' },
+          { n: '3', ad: 'UPSELL + SOGUK', desc: 'Soguk icecek, tatli, kombin ve kampanya sahneleri', emoji: '✨' },
         ].map((e) => {
           const url = `${TV_URL}?ekran=${e.n}`;
           return (

@@ -130,3 +130,37 @@ onerdigi yol haritasi) + bilinen veri-eslestirme hatasinin duzeltilmesi.
   - screenshot uzerinden E1/E2/E3 kompozisyon zayifliklarini tespit etmek
   - gerekirse `_TV_HTML` icindeki CSS/layout katmanina dar ve etkili revizyon onermek
     (API shape, `ekran` query flow, `/api/tv-menu`, `/api/tv-signals` korunacak)
+
+## Codex Local Sonuc - signage layout revizyonu (2026-06-30)
+
+- Tamamlandi:
+  - ortak ekran kabugu / meta bandi / frame / ticker kasasi
+  - E2 kategori sayfalari icin daha guclu menu masthead + panel hiyerarsisi
+  - E2/E3 role siniri icin `Iced & Cold` ayrimi
+  - E1 hero loop'unda tekrar eden hero kartinin kaldirilmasi
+  - musteri ani sahnesinin E1 marka loop'una alinmasi
+
+## Codex Local Validation Sonucu - final (2026-06-30)
+
+- Python syntax check gecti
+  - bundled runtime Python ile `-m py_compile tv_menu_api.py main.py`
+- Frontend production build gecti
+  - bundled Node + Vite programatik build ile dogrulandi
+  - sure: ~86 sn
+- Mevcut build warningleri devam ediyor ama bu turla ilgili degil:
+  - `src/pages/PersonelVardiyaTakip.jsx` icinde duplicate `border` key warning'i
+  - buyuk chunk warning'i
+
+## Claude Code Niyet - Codex CSS/visual revizyonunu doğrula+deploy et (2026-06-30)
+
+- Codex'in uncommitted CSS/yapisal degisikligini (glass panel kompozisyon, #screenMeta,
+  #screenFrame, heroPg sinif, menuShell/menuPanel yeniden yapilanmasi, eksik anchoring
+  class uygulamasi - .pr.sec/.pr.acc artik JS'te gercekten set ediliyor) inceledim.
+- KONTROL: sahne dagilim mantigina (heroPages/ekran1Pages/ekran3Pages push/roles) HIC
+  dokunulmamis, sadece CSS + DOM yapisi + bir gercek bug fix (anchoring class'lari
+  eskiden CSS'te tanimliydi ama JS hic uygulamiyordu).
+- `python -m py_compile` gecti. Simdi gstack/browse ile 3 ekrani gorsel+network+console
+  dogrulayip Railway'e deploy edecegim.
+- Build artifact gurultusu (static/assets/*, static/tv/* local build kopyalari) atildi
+  - bunlar Railway'in kendi Docker build asamasinda (`npm run build`) sifirdan
+    uretiliyor, repo'da committed static/ zaten kullanilmiyor, commit etmeye gerek yok.
