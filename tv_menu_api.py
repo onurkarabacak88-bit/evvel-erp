@@ -263,12 +263,11 @@ def tv_gosterim_etki():
         logger.warning("tv-gosterim etki Evo hata: %s", e)
         satis_bugun = {}
     ort_30 = _satis_30gun()  # 30 günlük TOPLAM adet — günlük ortalama için /30
-    norm = lambda s: re.sub(r"\s+", " ", str(s).strip().lower())
-    satis_norm = {norm(k): v for k, v in satis_bugun.items()}
-    ort_norm = {norm(k): v for k, v in ort_30.items()}
+    satis_norm = _satis_taban_map(satis_bugun)
+    ort_norm = _satis_taban_map(ort_30)
     sonuc = []
     for ad, gosterim in gosterim_bugun.items():
-        n = norm(ad)
+        n = _urun_taban_key(ad)
         s_bugun = satis_norm.get(n, 0)
         ort_gunluk = (ort_norm.get(n, 0) or 0) / 30.0
         if ort_gunluk > 0.3:
@@ -1081,7 +1080,7 @@ function build(data,sig){
   var heroPages=[],ekran1Pages=[],ekran3Pages=[];
 
   // 1) BARDAK AÇILIŞ — gerçek bardak fotoğrafı, ilk ~2.5sn TAMAMEN sade (metin yok), sonra marka satırı + fiyat ipucu belirir
-  var bOpen=el("div","pg");bOpen.dataset.t=7000;bOpen.dataset.roles="2";
+  var bOpen=el("div","pg");bOpen.dataset.t=7000;bOpen.dataset.roles="1";
   var bImg=bardakImgFor(sig&&sig.saat_modu&&sig.saat_modu.mod);
   var minFy=null;
   (data.kategoriler||[]).forEach(function(k){(k.urunler||[]).forEach(function(u){
@@ -1094,12 +1093,9 @@ function build(data,sig){
     +(minFy!=null?'<div class="bigOneri" style="margin-top:1vh">'+minFy+' TL\'den başlayan fiyatlar</div>':'')+'</div>';
   heroPages.push(bOpen);
 
-  // ÖZ-ELEŞTİRİ — KONSOLİDASYON: Saat/Mevsim verisi eskiden 3 ekranda (Ekran1 Saat Kartı,
-  // Ekran2 Saat Sinematik+Mevsim Sinematik, Ekran3 ŞİMDİ kartı) TEKRAR ediliyordu. Üç ekranı
-  // art arda gören müşteri "GÜNAYDIN" mesajını 2-3 kez görüyordu. Saat sinyali artık SADECE
-  // Ekran 3'te (ŞİMDİ kartı, "canlı" rolüne uygun); Mevsim sinyali SADECE Ekran 1'de (yavaş
-  // değişen veri, "referans" ekranına uygun). Ekran 2'nin kazandığı süre gerçek ürün sahnelerine.
-  function clipForMod(mod){return mod==="sabah"?"espresso":mod==="ogle"?"mocktail":mod==="aksam"?"dessert":"lifestyle";}
+  // ÖZ-ELEŞTİRİ — KONSOLİDASYON: Saat sinyali ayrı bir sahne olarak HİÇBİR ekranda yok artık —
+  // alt-şerit ticker'da zaten metin olarak dönüyor (FAZ 2), ayrı "ŞİMDİ" kartı tekrar/doluluk
+  // yaratıyordu (Codex 2. göz review notu). Mevsim sinyali Ekran 2'de (referans ekranı) kalıyor.
 
   // 2) 🎬 COFFEE STORY — sinematik (her döngüde günün ürünü fincanda doğar)
   heroPages.push(buildStory(data));
@@ -1119,16 +1115,16 @@ function build(data,sig){
   // 4.2) CRAFT MOCKTAIL — gerçek barista çekimi: jigger → süzgeç → yeşil akış (barista ustalığı, ayrı/kendi sahnesi)
   // Kahraman Ürün AYNI greenmocktail klibini kullanmışsa burada farklı klip seç (çakışma önleme)
   var craftClip=(hp&&/(mocktail|milkshake)/i.test(hp.kategori||""))?"mocktail":"greenmocktail";
-  var craftM=el("div","pg");craftM.dataset.t=8000;craftM.dataset.roles="2";
+  var craftM=el("div","pg");craftM.dataset.t=8000;craftM.dataset.roles="3";
   craftM.innerHTML='<video class="bgvid" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/'+craftClip+'" style="opacity:.95"></video><div class="bggrade"></div>'
     +'<div class="spotTag">CRAFT MOCKTAIL</div><div class="comboTitle">El Yapımı, Anında Hazır</div>';
-  heroPages.push(craftM);
+  ekran3Pages.push(craftM);
 
   // 5) 🍰 TATLI KOMBO — Perfect Pair'i sahneler (Peak: merkez ekranın son/en güçlü sahnesi)
   // ÖZ-ELEŞTİRİ: dessert.mp4 (stok Mixkit kek videosu) tüm sistemdeki TEK kalan stok-gerçek
   // uyumsuzluğuydu. Gerçek Desserts çekimi yok, o yüzden gerçek kahve çekimine (craft) geçildi —
   // "Kahve + Tatlı" eşleşmesinde kahve tarafı gerçek, jenerik stok kekten daha tutarlı.
-  var combo=el("div","pg");combo.dataset.t=9000;combo.dataset.roles="2";
+  var combo=el("div","pg");combo.dataset.t=9000;combo.dataset.roles="3";
   combo.dataset.name=(data.pair&&data.pair.ad)?data.pair.ad:"Kahve + Tatlı";combo.dataset.sahne="kombo";
   if(data.pair&&data.pair.fiyat!=null)combo.dataset.price=data.pair.fiyat+" TL";
   combo.innerHTML='<video class="bgvid" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/craft"></video><div class="bggrade"></div>'
@@ -1136,43 +1132,39 @@ function build(data,sig){
     +'<div class="spotName">'+((data.pair&&data.pair.ad)?data.pair.ad:"Kahve + Tatlı")+'</div>'
     +'<div class="comboTitle">Birlikte daha güzel</div>'
     +((data.pair&&data.pair.fiyat!=null)?'<div class="spotPrice">'+data.pair.fiyat+' TL</div>':'');
-  heroPages.push(combo);
+  ekran3Pages.push(combo);
 
-  // 5.5) EKRAN 1 — düz tipografik kartlar (video YOK, "sabit/okunabilir" ethos), kategori listesinden önce
+  // 5.5) EKRAN 2 kahve referansi + EKRAN 3 upsell kartlari
   // Mevsim Kartı — saat sinyali artık SADECE Ekran 3'te (konsolidasyon notuna bkz)
   if(sig&&sig.mevsim){
-    var mvC=el("div","pg flatCard");mvC.dataset.t=6000;mvC.dataset.roles="1";
+    var mvC=el("div","pg flatCard");mvC.dataset.t=6000;mvC.dataset.roles="2";
     mvC.innerHTML='<div class="gT">'+sig.mevsim.etiket+'</div>'+(sig.mevsim.oneri?'<div class="gH" style="margin-bottom:0">'+sig.mevsim.oneri+'</div>':'');
     ekran1Pages.push(mvC);
   }
-  // Bugünün Önerisi Kartı — ürün GÖRSELİ+yapılışı (gerçek video, hafif opak) + isim + fiyat aynı kartta
-  // (kategori listeleri okunabilirlik için düz kalır, ama bu vitrin kartı artık "sadece yazı" değil)
-  if(hp){
-    var hpClip=/(mocktail|milkshake)/i.test(hp.kategori||"")?"greenmocktail":"craft";
-    var hpTcls=hp.theme?(" "+hp.theme):"";
-    var hpC=el("div","pg flatCard");hpC.dataset.t=7000;hpC.dataset.roles="1";
-    hpC.dataset.name=hp.ad;if(hp.fiyat!=null)hpC.dataset.price=hp.fiyat+" TL";hpC.dataset.sahne="oneri-flat";  // #priceCorner artık Ekran1'de de tutarlı
-    hpC.innerHTML='<video class="bgvid" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/'+hpClip+'" style="opacity:.4"></video><div class="bggrade"></div>'
-      +'<div class="gT'+hpTcls+'" style="position:relative;z-index:2">'+hp.tag+'</div><div class="spotName" style="font-size:4vh;position:relative;z-index:2">'+hp.ad+'</div>'
-      +(hp.fiyat!=null?'<div class="spotPrice'+hpTcls+'" style="position:relative;z-index:2">'+hp.fiyat+' TL</div>':'');
-    ekran1Pages.push(hpC);
-  }
+  // ÖZ-ELEŞTİRİ (Codex 2. göz review): "Bugünün Önerisi" düz kartı eskiden E1'de Kahraman Ürün
+  // spotlight'ıyla (yukarıda, 4. madde) AYNI ürünü iki farklı formatta art arda gösteriyordu —
+  // "aynı şeyi iki kez söylüyor" hissi, premium değil tekrar. Tamamen kaldırıldı — spotlight zaten
+  // bu işi (gerçek video+isim+fiyat) tam yapıyor, E1 akışı marka→duygu→tek ürün→kanıt olarak kalıyor.
   // Perfect Pair Kartı — ayrı/büyük (alttaki mikro-şeritten farklı, kendi sahnesi)
   if(data.pair&&data.pair.ad){
-    var pairC=el("div","pg flatCard");pairC.dataset.t=7000;pairC.dataset.roles="1";
+    var pairC=el("div","pg flatCard");pairC.dataset.t=7000;pairC.dataset.roles="3";
     pairC.dataset.name=data.pair.ad;if(data.pair.fiyat!=null)pairC.dataset.price=data.pair.fiyat+" TL";pairC.dataset.sahne="pair-flat";
     pairC.innerHTML='<div class="gT">Perfect Pair</div><div class="spotName" style="font-size:3.6vh;position:relative;z-index:2">'+data.pair.ad+'</div>'
       +(data.pair.mesaj?'<div class="spotDesc" style="position:relative;z-index:2">'+data.pair.mesaj+'</div>':'')
       +(data.pair.fiyat!=null?'<div class="spotPrice" style="position:relative;z-index:2">'+data.pair.fiyat+' TL</div>':'');
-    ekran1Pages.push(pairC);
+    ekran3Pages.push(pairC);
   }
 
   // 6) KATEGORİLER (DESTEK EKRAN) — decision fatigue: sahne başına max 8 satır, taşan ikinci sayfaya bölünür
   // Her sayfanın altında sabit Perfect Pair mikro-şeridi tekrar eder (cross-sell sürekli hatırlatılır)
   var pairHtml=(data.pair&&data.pair.ad)?('<div class="pairStrip"><span class="tag">Perfect Pair</span> <b>'+data.pair.ad+'</b>'+(data.pair.mesaj?(' · '+data.pair.mesaj):'')+'</div>'):'';
-  function buildKatPage(k,chunk,pi,totalParts){
+  // ÖZ-ELEŞTİRİ (Codex 2. göz review): "Iced & Cold" E2'de (ana kahve menüsü) yer alıyordu ama
+  // kullanıcının brief'i E3'ü "upsell+SOĞUK İÇECEK+tatlı+kombin" diye tanımlıyor — soğuk kahve
+  // E3'e ait, E2/E3 sınırını netleştirmek için sadece Classic+Signature kaldı (sıcak kahve omurgası).
+  function isCoffeeMenuCategory(kat){return /^(Classic Coffees|Signature Coffees)$/i.test(String(kat||"").trim());}
+  function buildKatPage(k,chunk,pi,totalParts,role,withPair){
     var three=chunk.some(function(u){return u.f14!=null||u.fice!=null;});
-    var pg=el("div","pg cat");pg.dataset.t=12000;pg.dataset.roles="1";
+    var pg=el("div","pg cat");pg.dataset.t=12000;pg.dataset.roles=role||"2";
     pg.appendChild(el("div","gT",k.kategori+(totalParts>1?" ("+(pi+1)+"/"+totalParts+")":"")));
     if(k.alt&&pi===0)pg.appendChild(el("div","gH",k.alt));
     var m=el("div","menu"+(three?"":" one"));
@@ -1180,7 +1172,7 @@ function build(data,sig){
     m.innerHTML+=chunk.map(function(u,i){return priceRow(u,three,i);}).join("");
     pg.appendChild(m);
     if(/(iced|cold|so.uk)/i.test(k.kategori)){for(var i=0;i<10;i++){var s=el("span","ice");s.style.left=(8+Math.random()*84)+"%";s.style.top=(22+Math.random()*54)+"%";s.style.animationDelay=(Math.random()*4.5)+"s";pg.appendChild(s);}}
-    if(pairHtml)pg.innerHTML+=pairHtml;
+    if(withPair&&pairHtml)pg.innerHTML+=pairHtml;
     return pg;
   }
   var AGIRLIKLI_KAT=["Classic Coffees","Signature Coffees"];  // en çok satılan kategoriler — döngüde 2 kez görünür
@@ -1188,10 +1180,12 @@ function build(data,sig){
   (data.kategoriler||[]).forEach(function(k){
     var CHUNK=8,parts=[];
     for(var i=0;i<k.urunler.length;i+=CHUNK)parts.push(k.urunler.slice(i,i+CHUNK));
+    var coffeeRole=isCoffeeMenuCategory(k.kategori);
     parts.forEach(function(chunk,pi){
-      ekran1Pages.push(buildKatPage(k,chunk,pi,parts.length));
+      if(coffeeRole)ekran1Pages.push(buildKatPage(k,chunk,pi,parts.length,"2",false));
+      else ekran3Pages.push(buildKatPage(k,chunk,pi,parts.length,"3",true));
     });
-    if(AGIRLIKLI_KAT.indexOf(k.kategori)>=0&&parts.length)agirlikliTekrar.push(buildKatPage(k,parts[0],0,1));
+    if(coffeeRole&&AGIRLIKLI_KAT.indexOf(k.kategori)>=0&&parts.length)agirlikliTekrar.push(buildKatPage(k,parts[0],0,1,"2",false));
   });
   // ÖZ-ELEŞTİRİ: kategori sayfaları eskiden eşit ağırlıklı görünüyordu (Desserts 4 ürün = Signature
   // 14 ürün, aynı 1 geçiş). En çok satılan kategoriler döngü sonunda (Top3'ten önce) bir kez daha
@@ -1214,28 +1208,21 @@ function build(data,sig){
         +'<div class="t3count">'+Math.round(it.adet)+' kez</div></div>';
     }).join("");
     t3.appendChild(wrap);
-    ekran1Pages.push(t3);
+    heroPages.push(t3);
   }
 
-  // 8) EKRAN 3 — MARKA + CANLI: lifestyle, bardak rotasyonu, happy hour, yeni ürün lansmanı, özel gün
+  // 8) MARKA + CANLI sahneleri ekran 1'e; soguk/tatli/upsell sahneleri ekran 3'e
   // Marka/Yaşam Tarzı — gerçek vitrin+müşteri çekimi
-  var brandPg=el("div","pg");brandPg.dataset.t=8000;brandPg.dataset.roles="3";
+  var brandPg=el("div","pg");brandPg.dataset.t=8000;brandPg.dataset.roles="1";
   brandPg.innerHTML='<video class="bgvid" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/lifestyle" style="opacity:.85"></video><div class="bggrade"></div>'
     +'<div class="brandLabel">Her An Yanında</div>';
-  ekran3Pages.push(brandPg);
-  // "ŞİMDİ" kartı — saat+mevsim TEK kompakt sinyalde (Ekran 2'nin ayrı/büyük sinematik kartlarından farklı, hızlı bilgi katmanı)
-  if(sig&&sig.saat_modu){
-    var nowPg=el("div","pg");nowPg.dataset.t=7000;nowPg.dataset.roles="3";
-    nowPg.innerHTML='<video class="bgvid" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/'+clipForMod(sig.saat_modu.mod)+'" style="opacity:.55"></video><div class="bggrade"></div>'
-      +'<div class="spotTag">ŞİMDİ</div><div class="bigEtiket" style="font-size:3.6vh">'+sig.saat_modu.etiket+(sig.mevsim?(' · '+sig.mevsim.etiket):'')+'</div>'
-      +(sig.saat_modu.oneri?'<div class="bigOneri">'+sig.saat_modu.oneri+'</div>':'');
-    ekran3Pages.push(nowPg);
-  }
-  // Müşteri Anı — gerçek TULİPİ müşteri görüntüsü (Ekran 2'den farklı mesaj, marka samimiyeti)
-  var mus3=el("div","pg");mus3.dataset.t=7000;mus3.dataset.roles="3";
-  mus3.innerHTML='<video class="bgvid" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/musteri" style="opacity:.9"></video><div class="bggrade"></div>'
-    +'<div class="musteriTag">Mutluluk Burada</div>';
-  ekran3Pages.push(mus3);
+  heroPages.push(brandPg);
+  // Müşteri Anı — gerçek TULİPİ müşteri görüntüsü, marka/duygu sahnesi → E1'in "hero" loop'una ait
+  // (Codex 2. göz review: bu sahne E3'ün keskin upsell ritmini seyreltiyordu, E1 marka loop'una taşındı)
+  var musPg2=el("div","pg");musPg2.dataset.t=7000;musPg2.dataset.roles="1";
+  musPg2.innerHTML='<video class="bgvid" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/musteri" style="opacity:.9"></video><div class="bggrade"></div>'
+    +'<div class="musteriTag">Her Gülüşte Bir Fincan</div>';
+  heroPages.push(musPg2);
   // Bardak rotasyonu + çeşitlilik + frozen — ÖZ-ELEŞTİRİ: eskiden sıcak→buzlu→mocktail→kahverengi→
   // frozen sırası 1 sıcak + 4 soğuk art arda veriyordu ("mocktail galerisi" anti-pattern'i — GPT'nin
   // uyardığı "yine içecek" hissi). Şimdi sıcak/soğuk alternansı: soğuk-soğuk-SICAK-soğuk-soğuk yerine
@@ -1247,7 +1234,6 @@ function build(data,sig){
   var kahveC=el("div","pg");kahveC.dataset.t=6000;kahveC.dataset.roles="3";
   kahveC.innerHTML='<video class="bgvid" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/kahverengi" style="opacity:1"></video><div class="bggrade"></div><div class="brandLabel">Yeni Tatlar</div>';
   ekran3Pages.push(kahveC);
-  ekran3Pages.push(photoPg("hot","Sıcak Kahveler"));
   ekran3Pages.push(photoPg("mocktail","Mocktail Dünyası"));
   // 🍓 FROZEN VİTRİN — tek başına satabilecek kadar güçlü, tatlı kombo arkasına gizlenmiyor (GPT önerisi: %100 ekran, kendi sahnesi)
   // ÖZ-ELEŞTİRİ: "YENİ" rozeti eskiden HER ZAMAN gösteriliyordu — eğer Frozen panelde de yeni=true
@@ -1284,11 +1270,11 @@ function build(data,sig){
     ekran3Pages.push(oz);
   }
 
-  // FAZ 4 — 3 EKRAN: merkez(2)=sinema/kahraman · sol(1)=fiyat kartı (sabit, video yok) · sağ(3)=marka+canlı sinyal
+  // FAZ 4 — 3 EKRAN: 1=marka/hero/top seller · 2=ana kahve menu · 3=upsell/soguk/tatli/kombin
   var ekran=(new URLSearchParams(location.search)).get("ekran");
   var pages;
-  if(ekran==="2")pages=heroPages;
-  else if(ekran==="1")pages=ekran1Pages;
+  if(ekran==="1")pages=heroPages;
+  else if(ekran==="2")pages=ekran1Pages;
   else if(ekran==="3")pages=ekran3Pages;
   else pages=heroPages.concat(ekran1Pages).concat(ekran3Pages);  // ekran param yoksa (tek TV testi) hepsi
   pages.forEach(function(p){stage.insertBefore(p,document.querySelector(".foot"));dots.appendChild(el("i"));});
