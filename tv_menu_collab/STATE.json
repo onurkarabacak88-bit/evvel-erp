@@ -21,23 +21,25 @@
     "/api/tv-gosterim/ozet",
     "/api/tv-gosterim/etki"
   ],
-  "DIKKAT": "screen_roles_target alani asagida Codex'in eski/yanlis brief'ine gore yazilmisti. Claude Code (bu dosyayi guncelleyen taraf) bu modul uzerinde onlarca tur boyunca kullaniciyla (GPT denetim turlari dahil) calisti. Asagidaki roller GERCEK ve CANLI durumdur, brief degil.",
+  "DIKKAT": "GUNCEL (2026-06-30). Onceki 'DIKKAT' notu artik gecersiz - kullanici dogrudan brief'i tekrar sabitledi ve role remap Claude Code + Codex isbirligiyle deploy edildi. Asagidaki roller suanki CANLI gercek durumdur.",
   "screen_roles_target": {
-    "1": "FIYAT KARTI (sabit/okunabilir) — kategori fiyat sayfalari (max 8 satir/sayfa, agirlikli kategoriler 2x), Top-3 sosyal kanit (fiyatli), Mevsim karti, Bugunun Onerisi (gercek video bg), Perfect Pair karti. VIDEO BILEREK MINIMAL — bu ekranin rolu hizli karar, sinema degil.",
-    "2": "SINEMA / KAHRAMAN — Bardak Acilis (gercek foto+Ken Burns+fiyat ipucu) -> Coffee Story (gercek espresso.mp4, 12s) -> En Cok Satilan (ates tema) -> Kahraman Urun/Imza-Oneri (yesil/mavi-kesfet tema) -> Craft Mocktail -> Tatli Kombo. Tum video gercek TULIPI cekimi (Mixkit stok TAMAMEN kaldirildi).",
-    "3": "MARKA + CANLI — Lifestyle, SIMDI karti (saat+mevsim kompakt), Musteri Ani, bardak rotasyonu (sicak/soguk alternansli 2-1-2), Frozen Vitrin, Happy Hour/Yeni Urun/Ozel Gun (kosullu, ayri gorsel sablonlar)."
+    "1": "MARKA + HERO + TOP SELLER — Bardak Acilis (gercek foto+Ken Burns+fiyat ipucu) -> Coffee Story (gercek espresso.mp4, 12s) -> En Cok Satilan (ates tema) -> Kahraman Urun/Imza-Oneri (yesil/mavi-kesfet tema, TEK gosterim - flat kart tekrari kaldirildi) -> Top-3 (fiyatli sosyal kanit) -> Lifestyle (marka video) -> Musteri Ani. Tum video gercek TULIPI cekimi.",
+    "2": "ANA KAHVE MENUSU — Mevsim Karti + SADECE Classic Coffees + Signature Coffees kategori sayfalari (agirlikli kategoriler 2x tekrarli). Bilerek sade/okunabilir - video minimal, bu ekranin gorevi hizli fiyat referansi.",
+    "3": "UPSELL + SOGUK ICECEK + TATLI + KOMBIN — Craft Mocktail, oneri varsa mocktail/milkshake kategorisindeki Bugunun Onerisi karti, Tatli Kombo (Perfect Pair sahnesi), Perfect Pair duz kart, Mocktails/Milkshakes/Desserts/Iced&Cold kategori sayfalari (cross-sell mikro-seritli), bardak rotasyonu (buzlu+mocktail), kahverengi cesitlilik videosu, Frozen Vitrin, Happy Hour/Yeni Urun Lansmani/Ozel Gun (kosullu, ayri gorsel sablonlar)."
   },
+  "gecmis_not": "Bu modul once farkli bir mimari ile (Ekran1=Fiyat Karti/sade, Ekran2=Sinema, Ekran3=Marka+Canli) gelistirilip GPT denetim turlerinden gecirilmisti. Kullanici 2026-06-30'da dogrudan talimatla rolleri 'marka+hero+top seller / ana kahve menu / upsell+soguk+tatli+kombin' olarak sabitledi - bu PRD degisikligi kabul edildi, mevcut sahne envanteri (gercek video/foto, Evo veri, Analytics Engine) korunarak yeniden dagitildi.",
   "gercek_oncelik_simdi": [
     "Evo varyant-ad eslestirme sorunu (orn. 'Latte Ice' ile TV menudeki 'Latte' tam eslesmiyor) - oneri motoru + top3 + attribution'i etkiliyor, henuz duzeltilmedi",
     "Analytics Engine Adim 3: Sahne Performans Puanlama Sistemi (GPT'nin onerdigi yol haritasi)",
-    "Desserts kategorisi icin gercek video/foto YOK (footage cekilmedi, acik kaldi)"
+    "Desserts kategorisi icin gercek video/foto YOK (footage cekilmedi, acik kaldi)",
+    "Codex preview-harness ile gorsel/CSS kompozisyon review yapiyor, bulgular MESSAGES.md'ye dusunce uygulanacak"
   ],
   "constraints": [
     "no hardcoded prices",
     "keep query param logic",
     "preserve Railway compatibility",
     "avoid unnecessary architectural rewrite",
-    "BUYUK MIMARI DEGISIKLIK YAPMADAN ONCE MESSAGES.md'de soru sor - bu modul defalarca GPT denetiminden gecti, rastgele 'iyilestirme' geriye gidis riski tasiyor"
+    "BUYUK MIMARI DEGISIKLIK YAPMADAN ONCE MESSAGES.md'de soru sor / niyet yaz - cakisma riski yuksek, bu turda bir kez yasandi ve cozuldu"
   ],
   "communication_path": "file-based shared hub under tv_menu_collab"
 }
