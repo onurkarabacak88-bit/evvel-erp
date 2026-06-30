@@ -767,6 +767,19 @@ def tv_menu_logo():
     raise HTTPException(404, "logo yok")
 
 
+@router.get("/tv-menu/hero/{name}")
+def tv_menu_hero(name: str):
+    if name != "opening":
+        raise HTTPException(404, "hero yok")
+    for p in (
+        os.path.join("static/tv", "e1_opening_hero.png"),
+        os.path.join("public/tv", "e1_opening_hero.png"),
+    ):
+        if os.path.exists(p):
+            return FileResponse(p, media_type="image/png")
+    raise HTTPException(404, "hero dosyasi yok")
+
+
 @router.get("/tv-menu/cup/{name}")
 def tv_menu_cup(name: str):
     """Gerçek TULİPİ bardak fotoğrafları — imza silüet (her sahnede aynı kare, marka hafızası).
@@ -850,6 +863,7 @@ body[data-screen="3"]::after{transform:translateX(10%)}
 .steam{position:absolute;z-index:3}
 /* KÖŞE LOGO — sürekli görünen sabit rozet, artık ayrı bir "Hero" sahnesi yok */
 #logoBadge{position:absolute;top:2.6vh;left:3vw;z-index:9;width:6.2vh;opacity:.94;pointer-events:none;filter:drop-shadow(0 .6vh 1.8vh #0008)}
+body.opening-active #logoBadge,body.opening-active #screenMeta{opacity:0}
 /* GOLDEN TRIANGLE — fiyat/ürün hep aynı sabit köşede (göz "ürün→fiyat" yörüngesini öğrenir) */
 #screenMeta{position:absolute;top:2.3vh;left:50%;transform:translateX(-50%);z-index:9;display:flex;align-items:center;gap:1vw;padding:.9vh 1.6vw;border-radius:999px;background:rgba(10,8,7,.46);border:1px solid var(--line-soft);backdrop-filter:blur(10px);box-shadow:0 1.6vh 3.6vh #0007}
 #screenMeta .metaIdx{font-size:1.2vh;letter-spacing:.28vw;color:var(--green-soft);text-transform:uppercase}
@@ -869,6 +883,17 @@ body[data-screen="3"]::after{transform:translateX(10%)}
 @keyframes bardakReveal{0%,38%{opacity:0;transform:translateY(1.6vh)}55%,100%{opacity:1;transform:none}}
 .bardakBg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;animation:kenBurns 7s ease-out forwards;filter:saturate(1.12) contrast(1.06) brightness(.86)}
 .bardakInfo{position:relative;z-index:2;opacity:0;animation:bardakReveal 7s ease forwards}
+.openingBg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;animation:openingDrift 6s ease-out forwards;transform-origin:42% 54%;backface-visibility:hidden}
+.openingShade{position:absolute;inset:0;z-index:1;background:linear-gradient(90deg,rgba(0,0,0,.02) 0%,rgba(0,0,0,.1) 42%,rgba(0,0,0,.34) 72%,rgba(0,0,0,.56) 100%)}
+.openingCopy{position:absolute;z-index:2;right:7.8vw;top:16.5vh;width:38vw;display:flex;flex-direction:column;align-items:center;text-align:center;color:var(--cream)}
+.openingLogo{width:13.5vw;max-height:23vh;object-fit:contain;opacity:0;mix-blend-mode:screen;filter:drop-shadow(0 1vh 2.8vh #000b);animation:openingLogoIn 6s ease forwards}
+.openingTitle{margin-top:3vh;font-family:'Fraunces',serif;font-size:6.2vh;line-height:.94;font-weight:400;letter-spacing:.02vw;color:#efe6d6;text-shadow:0 .45vh 2.4vh #000;opacity:0;animation:openingTitleIn 6s ease forwards}
+.openingTitle span{display:block}
+.openingSub{margin-top:2.2vh;font-size:2vh;letter-spacing:.05vw;color:#6fb084;opacity:0;animation:openingSubIn 6s ease forwards}
+@keyframes openingDrift{0%{transform:scale(1.02) translateX(-1.2vw)}100%{transform:scale(1.09) translateX(.4vw)}}
+@keyframes openingLogoIn{0%,30%{opacity:0;transform:translateY(1.2vh)}43%,100%{opacity:.96;transform:none}}
+@keyframes openingTitleIn{0%,58%{opacity:0;transform:translateY(1.8vh)}72%,100%{opacity:1;transform:none}}
+@keyframes openingSubIn{0%,70%{opacity:0;transform:translateY(1vh)}84%,100%{opacity:.92;transform:none}}
 /* mikro cross-sell şeridi — her kategori sayfasının altında tekrar eden Perfect Pair hatırlatması */
 .pairStrip{position:absolute;bottom:2.2vh;left:1.7vw;right:1.7vw;z-index:5;display:flex;align-items:center;justify-content:center;gap:.8vw;font-size:1.45vh;color:#B89B80;padding:1vh 1.2vw;border-radius:2vh;background:rgba(13,10,8,.7);border:1px solid var(--line-soft);backdrop-filter:blur(8px)}
 .pairStrip b{color:#EFE6D6;font-style:normal;font-family:'Fraunces',serif}
@@ -923,7 +948,7 @@ body[data-screen="3"]::after{transform:translateX(10%)}
 .spotDesc{position:relative;z-index:2;font-size:2.1vh;color:#B89B80;font-style:italic;max-width:84vw;line-height:1.5;margin-bottom:2.6vh}
 .spotPrice{position:relative;z-index:2;display:inline-block;background:#3E8E5A;color:#0e0b09;font-weight:700;font-size:3.4vh;padding:1.3vh 6vw;border-radius:50px;animation:priceSettle .6s ease .3s both}
 /* gerçek video arka plan — öneri & tatlı kombo sahnelerinde (sinematik, göz yormaz: opacity düşük + degrade) */
-.bgvid{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;opacity:.5;filter:saturate(1.25) contrast(1.1) brightness(.82)}
+.bgvid{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;opacity:.5;transform:translateZ(0);backface-visibility:hidden;will-change:opacity}
 .bggrade{position:absolute;inset:0;z-index:1;pointer-events:none;background:linear-gradient(180deg,#0e0b09cc 0,#0e0b0966 28%,#0e0b0966 70%,#0e0b09e6 100%)}
 .comboTitle{position:relative;z-index:2;font-size:3.6vh;font-style:italic;color:#EFE6D6;margin-top:1.2vh;text-shadow:0 .3vw 1.5vw #000}
 /* 🔥 TOP-3 — gösterişli sosyal kanıt: glow rank, animasyonlu yüzde barı, gerçek video arka plan */
@@ -982,7 +1007,7 @@ body[data-screen="3"]::after{transform:translateX(10%)}
 /* FAZ 6 — MİKRO-SİNEMATİK takeover (her ~2.5dk, 11sn, 3 ekran triptik) */
 #cine{position:absolute;inset:0;z-index:30;opacity:0;pointer-events:none;background:#000;transition:opacity 1.1s ease}
 #cine.on{opacity:1}
-#cine video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;filter:saturate(1.32) contrast(1.12) brightness(1.14)}
+#cine video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transform:translateZ(0);backface-visibility:hidden}
 #cine .cgrade{position:absolute;inset:0;background:linear-gradient(180deg,#0009 0,transparent 24%,transparent 72%,#000b 100%)}
 #cine .ccap{position:absolute;left:0;right:0;bottom:13%;text-align:center}
 #cine .ct{font-family:'Fraunces',serif;font-size:5.4vh;font-weight:500;letter-spacing:.3vw;color:#EFE6D6;text-shadow:0 .4vw 2vw #000;opacity:0;transform:translateY(2.2vh);transition:.9s ease .35s}
@@ -1006,7 +1031,7 @@ body[data-screen="3"]::after{transform:translateX(10%)}
 .pg.story.on{animation:none}
 .story .stsc{position:absolute;inset:0;display:flex;align-items:center;justify-content:center}
 /* GERÇEK TULİPİ ÇEKİMİ — tek sürekli video (eski 3-klip crossfade emekli edildi) */
-.story .vid{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;opacity:1;filter:saturate(1.18) contrast(1.08) brightness(1.06)}
+.story .vid{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;opacity:1;transform:translateZ(0);backface-visibility:hidden;will-change:opacity}
 /* sinematik katmanlar: bokeh derinlik + renklendirme/letterbox + film grain */
 .story .grade{position:absolute;inset:0;z-index:6;pointer-events:none;background:linear-gradient(180deg,#0009 0,transparent 22%,transparent 74%,#000b 100%)}
 .story .grain{position:absolute;inset:-25%;z-index:8;pointer-events:none;opacity:.07;mix-blend-mode:overlay;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='150' height='150'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='150' height='150' filter='url(%23n)' opacity='0.6'/%3E%3C/svg%3E");background-size:150px 150px;animation:csGrain .5s steps(3) infinite}
@@ -1033,7 +1058,7 @@ body[data-screen="3"]::after{transform:translateX(10%)}
 <div class="foot"><span id="live">TÜM FİYATLAR TL · TULİPİ COFFEE</span></div>
 <div id="cine"><video muted loop playsinline preload="auto"></video><div class="cgrade"></div><div class="ccap"><div class="ct"></div><div class="cs"></div></div></div></div>
 <script>
-var API="/api/tv-menu", SIG="/api/tv-signals", CACHE="tulipi_tv_menu";
+var API="/api/tv-menu", SIG="/api/tv-signals", CACHE="tulipi_tv_menu", LAST_BUILD_KEY="";
 function el(t,c,h){var e=document.createElement(t);if(c)e.className=c;if(h!=null)e.innerHTML=h;return e;}
 function priceRow(u,three,i){
   var dly=' style="animation-delay:'+(0.18+(i||0)*0.055).toFixed(2)+'s"';
@@ -1135,18 +1160,13 @@ function build(data,sig){
   var dots=document.getElementById("dots");dots.innerHTML="";
   var heroPages=[],ekran1Pages=[],ekran3Pages=[];
 
-  // 1) BARDAK AÇILIŞ — gerçek bardak fotoğrafı, ilk ~2.5sn TAMAMEN sade (metin yok), sonra marka satırı + fiyat ipucu belirir
-  var bOpen=el("div","pg heroPg");bOpen.dataset.t=7000;bOpen.dataset.roles="1";
-  var bImg=bardakImgFor(sig&&sig.saat_modu&&sig.saat_modu.mod);
-  var minFy=null;
-  (data.kategoriler||[]).forEach(function(k){(k.urunler||[]).forEach(function(u){
-    var v=u.f8!=null?u.f8:(u.f14!=null?u.f14:u.fice);
-    if(v!=null&&(minFy==null||v<minFy))minFy=v;
-  });});
-  bOpen.innerHTML='<img class="bardakBg" src="/tv-menu/cup/'+bImg+'" alt="">'
-    +'<div class="bggrade"></div>'
-    +'<div class="sceneInner bardakInfo"><div class="q" style="margin-top:0">Crafted Every Day</div>'
-    +(minFy!=null?'<div class="bigOneri" style="margin-top:1vh">'+minFy+' TL\'den başlayan fiyatlar</div>':'')+'</div>';
+  // 1) EKRAN 1 AÇILIŞ — premium bardak hero; fiyat yok, eski bardak/fiyat alanı tamamen kaldırıldı
+  var bOpen=el("div","pg heroPg openingPg");bOpen.dataset.t=6000;bOpen.dataset.roles="1";
+  bOpen.innerHTML='<img class="openingBg" src="/tv-menu/hero/opening" alt="">'
+    +'<div class="openingShade"></div>'
+    +'<div class="openingCopy"><img class="openingLogo" src="/tv-menu/logo" alt="">'
+    +'<div class="openingTitle"><span>Her Gün</span><span>Taze.</span></div>'
+    +'<div class="openingSub">Sıcak bir mola, iyi bir kahve.</div></div>';
   heroPages.push(bOpen);
 
   // ÖZ-ELEŞTİRİ — KONSOLİDASYON: Saat sinyali ayrı bir sahne olarak HİÇBİR ekranda yok artık —
@@ -1359,8 +1379,15 @@ function build(data,sig){
   function syncVideos(p,on){
     var vids=p.querySelectorAll("video");
     for(var j=0;j<vids.length;j++){
-      if(on){ if(vids[j].paused){var pr=vids[j].play();if(pr&&pr.catch)pr.catch(function(){});} }
-      else if(!vids[j].paused){ try{vids[j].pause();}catch(e){} }
+      if(on){
+        vids[j].dataset.keepPlaying="1";
+        if(vids[j].paused){var pr=vids[j].play();if(pr&&pr.catch)pr.catch(function(){});}
+      }else{
+        vids[j].dataset.keepPlaying="";
+        (function(v){setTimeout(function(){
+          if(!v.dataset.keepPlaying&&!v.paused){try{v.pause();}catch(e){}}
+        },900);})(vids[j]);
+      }
     }
   }
   // ANALYTICS ENGINE — Adım 1 (Gösterim Sayacı): bir ürün adlı sahne gerçekten ekrana gelince
@@ -1376,6 +1403,7 @@ function build(data,sig){
   }
   function show(i){pages.forEach(function(p,k){var on=k===i;p.classList.toggle("on",on);di[k].classList.toggle("on",on);syncVideos(p,on);});
     var cur=pages[i];
+    document.body.classList.toggle("opening-active",!!(cur&&cur.classList.contains("openingPg")));
     if(i!==lastLogIdx){lastLogIdx=i;logGosterim(cur);}
     var fv=document.getElementById("fav");if(fv)fv.classList.toggle("on",!!(window._favName&&cur&&cur.classList.contains("cat")));
     if(pc){
@@ -1400,13 +1428,21 @@ function load(){
   ]).then(function(arr){
     var d=arr[0],s=arr[1];
     if(d&&d.kategoriler&&d.kategoriler.length){
+      var key=JSON.stringify(d)+"|"+JSON.stringify(s||{});
+      if(key===LAST_BUILD_KEY)return;
+      LAST_BUILD_KEY=key;
       localStorage.setItem(CACHE,JSON.stringify(d));
       localStorage.setItem(CACHE+"_sig",JSON.stringify(s||{}));
       build(d,s);
     }else throw 0;
   }).catch(function(){
     var c=localStorage.getItem(CACHE),cs=localStorage.getItem(CACHE+"_sig");
-    if(c){build(JSON.parse(c),cs?JSON.parse(cs):null);}
+    if(c){
+      var key=c+"|"+(cs||"{}");
+      if(key===LAST_BUILD_KEY)return;
+      LAST_BUILD_KEY=key;
+      build(JSON.parse(c),cs?JSON.parse(cs):null);
+    }
     else{document.getElementById("stage").insertBefore(el("div","err","Menü yükleniyor…"),document.querySelector(".foot"));}
   });
 }

@@ -338,3 +338,60 @@ Bu dosya, local/cloud/paralel calisan ajanlar veya insan operator icin kisa mesa
 - `next_action`: Sıradaki acik isler (oncelik sirasiyla): (1) Evo varyant-ad
   eslestirme (Latte Ice vs Latte), (2) Analytics Engine Adim 3 (Sahne Performans
   Puanlama). Sen preview/CSS review'i bitirince bulgularini buraya yaz, ben uygularim.
+
+## Codex Local Acil Fix - video takilma/duraklama
+
+- `from`: Codex local
+- `time`: 2026-06-30
+- `subject`: Videolar duraklayarak calisiyor - playback performans fix'i aliyorum
+- `message`:
+  Kullanici direkt "VIDEOLAR DURAKLAYARAK CALISIYOR" dedi. Scene dagilimine dokunmadan
+  playback/performance katmanina giriyorum. Supheli iki nokta:
+  1. `setInterval(load,60000)` her dakika ayni veriyle bile tum sahneleri yeniden build ediyor;
+     bu gorunen video DOM'unu sokup takarak takilma yaratabilir.
+  2. Tam ekran videolarda CSS `filter` kullanimi TV browser/GPU tarafinda frame drop yapabilir.
+
+  Plan: Veri degismediyse `build()` calistirmamak ve video CSS filtrelerini kaldirip GPU dostu
+  compositing ipuclari eklemek. API shape, scene dagilimi, route mantigi degismeyecek.
+- `next_action`: `tv_menu_api.py` icinde sadece video playback/performance koduna dar patch.
+
+## Codex Local Acil Fix Tamamlandi - video playback
+
+- `from`: Codex local
+- `time`: 2026-06-30
+- `subject`: Video duraklama fix'i uygulandi
+- `message`:
+  Playback katmaninda dar fix uygulandi:
+  - Veri degismediyse 60 saniyelik `load()` artik `build()` calistirmiyor; video DOM'u
+    gereksiz sokulup takilmiyor.
+  - Cache fallback tarafinda da ayni build-skip kontrolu var.
+  - Tam ekran videolardaki pahali CSS `filter` kaldirildi; yerine `translateZ(0)` /
+    `backface-visibility` gibi daha hafif compositing ipuclari eklendi.
+  - Slide gecisinde gizlenen videolar aninda degil, kisa gecikmeyle pause ediliyor;
+    hizli class/transition aninda dur-kalk azalir.
+
+  Validation: bundled Python ile `python -m py_compile tv_menu_api.py main.py` gecti.
+  Scene dagilimi, API shape ve route mantigi degismedi.
+- `next_action`: TV'de `/tv-menu?ekran=1/2/3` acilip 2-3 dakika izlenmeli; ozellikle 60.
+  saniye civarinda artik takilma/reload hissi olmamali.
+
+## Codex Local - E1 ilk sahne premium hero uygulandi
+
+- `from`: Codex local
+- `time`: 2026-07-01
+- `subject`: Ekran 1 ilk sahne yeni bardak hero oldu
+- `message`:
+  Kullanici ve GPT critique'i dogrultusunda E1 ilk sahne degisti:
+  - Ilk sahnede fiyat etiketi kaldirildi.
+  - 6 saniyelik daha sinematik acilis kuruldu.
+  - Yeni temiz bardak hero asset'i `public/tv/e1_opening_hero.png` olarak eklendi.
+  - Asset `/tv-menu/hero/opening` route'u ile servis ediliyor.
+  - Dış logo gorselin icine gomulmedi; gercek `/tv-menu/logo` HTML/CSS katmani olarak
+    acilis sahnesinde kullaniliyor.
+  - Baslik Turkce: `Her Gun / Taze.` ve alt metin `Sicak bir mola, iyi bir kahve.`
+  - Ilk sahne aktifken global kose logo ve screen meta gizleniyor; sahne daha temiz aciliyor.
+
+  Scene dagilimi ve API shape degismedi; sadece E1 ilk sahnenin gorsel/kompozisyon
+  katmani degisti.
+- `next_action`: TV'de `/tv-menu?ekran=1` ilk 6 saniye izlenip logo, baslik zamanlamasi,
+  bardak boyutu ve fiyatsiz premium his kontrol edilmeli.
