@@ -769,14 +769,18 @@ def tv_menu_logo():
 
 @router.get("/tv-menu/hero/{name}")
 def tv_menu_hero(name: str):
-    if name != "opening":
+    # opening = Sahne 1 PNG; ozen = Sahne 2 "Özen Katmanı" still hero (SAHNE2_PAKET/01, işlenmiş JPG)
+    _heroes = {"opening": ("e1_opening_hero.png", "image/png"),
+               "ozen": ("ozen_hero.jpg", "image/jpeg")}
+    if name not in _heroes:
         raise HTTPException(404, "hero yok")
+    fname, mtype = _heroes[name]
     for p in (
-        os.path.join("static/tv", "e1_opening_hero.png"),
-        os.path.join("public/tv", "e1_opening_hero.png"),
+        os.path.join("static/tv", fname),
+        os.path.join("public/tv", fname),
     ):
         if os.path.exists(p):
-            return FileResponse(p, media_type="image/png")
+            return FileResponse(p, media_type=mtype)
     raise HTTPException(404, "hero dosyasi yok")
 
 
@@ -802,7 +806,7 @@ def tv_menu_clip(name: str):
     """Coffee Story gerçek video klipleri (Mixkit Free, ticari kullanım serbest)."""
     if name not in ("dessert", "mocktail", "lifestyle", "craft", "musteri",
                      "espresso", "greenmocktail", "frozen", "kahverengi",
-                     "zanaat", "hayat"):
+                     "zanaat", "hayat", "ozen"):
         raise HTTPException(404, "klip yok")
     # Prod: Vite public/ -> static/tv'ye kopyalar. Dev: public/tv veya src/assets/tv.
     for base in ("static/tv", "public/tv", "src/assets/tv"):
@@ -1027,7 +1031,28 @@ body.opening-active #logoBadge,body.opening-active #screenMeta{opacity:0}
 #fav b{color:#EFE6D6;font-family:'Fraunces',serif;font-weight:500;margin-left:.3vw}
 #season span{position:absolute;top:-10vh;animation:sfall linear infinite;will-change:transform}
 @keyframes sfall{0%{transform:translateY(-10vh) translateX(0) rotate(0)}100%{transform:translateY(112vh) translateX(5vw) rotate(220deg)}}
-/* ⛔ Coffee Story CSS kaldırıldı (E1 sıfırlama, 2026-07-02) — Sahne 2 baştan kurgulanacak. */
+/* 🎬 SAHNE 2 — "ÖZEN KATMANI" (iç isim; 6.5sn, kullanıcı şartnamesi 2026-07-02).
+   Görev: Sahne 1 premium hissini "özenle hazırlanıyor"a çevirir, Sahne 3 öne-çıkanlara rampa kurar.
+   Omurga = still hero (video süs); mikro video tek oynar son karede donar (loop yok);
+   TÜM animasyonlar opacity-only (Codex gerçek-TV bulgusu: transform/grain = frame drop). */
+.pg.ozen{background:#0b0705}
+.pg.ozen.on{animation:ozenIn .5s ease}
+.ozen .ozHero{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0}
+.ozen .ozVid{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:1;transform:translateZ(0);backface-visibility:hidden}
+/* statik atmosfer katmanları: letterbox gradient + sıcak ambient ışık lekesi (animasyonsuz = bedava) */
+.ozen .ozGrade{position:absolute;inset:0;z-index:2;pointer-events:none;background:linear-gradient(180deg,#000a 0,transparent 24%,transparent 70%,#000c 100%)}
+.ozen .ozAmb{position:absolute;inset:0;z-index:2;pointer-events:none;background:radial-gradient(90% 60% at 30% 22%,#C8956A14,transparent 65%)}
+/* metinler: sol-alt güvenli alan, krem, glow'suz, aynı anda tek satır */
+.ozen .ozTxt{position:absolute;left:7vw;right:7vw;bottom:23%;z-index:3;text-align:left;font-family:'Fraunces',serif;font-weight:400;font-size:4.2vh;letter-spacing:.05vw;color:#EFE6D6;text-shadow:0 .3vh 1.8vh rgba(0,0,0,.65);opacity:0}
+.ozen .ozT1{animation:ozT1 6.5s ease both}
+.ozen .ozT2{animation:ozT2 6.5s ease both}
+/* çıkış: son 1.2sn alt bölge hafif kararır — Sahne 3 kartlarına zemin, doğrudan gösterim YOK */
+.ozen .ozExit{position:absolute;inset:0;z-index:4;pointer-events:none;opacity:0;background:linear-gradient(180deg,transparent 38%,#000d 100%);animation:ozExit 6.5s linear both}
+@keyframes ozenIn{0%{opacity:0}100%{opacity:1}}
+/* zaman çizelgesi (6.5sn): T1 1.5-3.2 / nefes 3.2-3.6 / T2 3.6-5.3 / zemin 5.3-6.5 */
+@keyframes ozT1{0%,23%{opacity:0}31%{opacity:.96}45%{opacity:.96}51%,100%{opacity:0}}
+@keyframes ozT2{0%,55%{opacity:0}63%{opacity:.96}81%{opacity:.96}91%,100%{opacity:0}}
+@keyframes ozExit{0%,82%{opacity:0}100%{opacity:.65}}
 </style></head>
 <body><div id="stage">
 <div class="bg" id="bg"><div class="drift"></div></div>
@@ -1095,8 +1120,27 @@ function buildSpotlight(opts){
   sp.innerHTML+=inner;
   return sp;
 }
-// ⛔ Coffee Story sahne fonksiyonları kaldırıldı (E1 sıfırlama, 2026-07-02) —
-// yeni Sahne 2 kurgusu kullanıcıyla baştan tasarlanacak. Ham klipler /tv-menu/clip'te duruyor.
+function buildOzen(){
+  // 🎬 SAHNE 2 — "ÖZEN KATMANI" (kullanıcı şartnamesi): fiyat/ürün adı/sürekli etiket YOK.
+  // Katmanlar: still hero (omurga, video çökse de sahneyi taşır) → mikro video (2.2sn damla,
+  // tek oynar son karede donar; son kare hero ile aynı dünya) → statik gradient/ambient →
+  // Metin 1 "Özenle hazırlandı." → nefes → Metin 2 "Şimdi öne çıkan fincanlar." → çıkış kararması.
+  var st=el("div","pg ozen");st.dataset.t=6500;st.dataset.roles="1";st.dataset.sahne="ozen";
+  st.innerHTML='<img class="ozHero" src="/tv-menu/hero/ozen" alt="">'
+    +'<video class="ozVid" muted autoplay playsinline preload="auto" src="/tv-menu/clip/ozen" onerror="this.style.display=\'none\'"></video>'
+    +'<div class="ozGrade"></div><div class="ozAmb"></div>'
+    +'<div class="ozTxt ozT1">Özenle hazırlandı.</div>'
+    +'<div class="ozTxt ozT2">Şimdi öne çıkan fincanlar.</div>'
+    +'<div class="ozExit"></div>';
+  // Codex gerçek-TV bulgusu: görünür sahnede currentTime seek'i decoder'ı takıltır →
+  // seek sahne GİZLİYKEN yapılır (pause+başa sar), sahne açılınca sadece play().
+  try{new MutationObserver(function(){
+    var v=st.querySelector("video");if(!v||v.style.display==="none")return;
+    if(st.classList.contains("on")){var p=v.play();if(p&&p.catch)p.catch(function(){});}
+    else{try{v.pause();v.currentTime=0;}catch(e){}}
+  }).observe(st,{attributes:true,attributeFilter:["class"]});}catch(e){}
+  return st;
+}
 function bardakImgFor(mod){
   if(mod==="ogle")return "mocktail";
   if(mod==="aksam")return "iced";
@@ -1148,10 +1192,10 @@ function build(data,sig){
   // alt-şerit ticker'da zaten metin olarak dönüyor (FAZ 2), ayrı "ŞİMDİ" kartı tekrar/doluluk
   // yaratıyordu (Codex 2. göz review notu). Mevsim sinyali Ekran 2'de (referans ekranı) kalıyor.
 
-  // ⛔ EKRAN 1 SIFIRLANDI (kullanıcı kararı 2026-07-02): Sahne 1 (açılış hero) DIŞINDA her şey
-  // kaldırıldı — Coffee Story (zanaat/hayat), En Çok Satılan spotlight ve Kahraman Ürün E1'den çıktı.
-  // Sahne 2+ kullanıcıyla sahne-sahne, detay-detay baştan kurgulanacak. buildSpotlight/heroProduct
-  // fonksiyonları ve public/tv klipleri (zanaat/hayat dahil) yeni kurguda kullanılmak üzere duruyor.
+  // E1 sahne-sahne kuruluyor (kullanıcı onaylı sıra): Sahne 1 açılış hero (onaylı) →
+  // 2) SAHNE 2 "ÖZEN KATMANI" (kullanıcı şartnamesiyle eklendi, 2026-07-02)
+  heroPages.push(buildOzen());
+  // Sahne 3 (öne çıkanlar / sosyal kanıt) HENÜZ kurulmadı — kullanıcı şartnamesi bekleniyor.
   var hp=heroProduct(data,sig);  // Ekran 3 craft klip çakışma kontrolü hâlâ buna bakıyor
 
   // 4.2) CRAFT MOCKTAIL — gerçek barista çekimi: jigger → süzgeç → yeşil akış (barista ustalığı, ayrı/kendi sahnesi)

@@ -451,3 +451,18 @@ Bu dosya, local/cloud/paralel calisan ajanlar veya insan operator icin kisa mesa
   heroProduct fonksiyonlari ve tum /tv-menu/clip klipleri (zanaat+hayat dahil) yeni kurguda
   kullanilmak uzere yerinde duruyor. LUTFEN kullanici onayi olmadan E1'e sahne EKLEMEYIN.
 - `next_action`: Yeni Sahne 2 kurgusu kullanici ile birlikte tasarlanacak (bekleme modunda).
+
+## Claude Cloud - E1 Sahne 2 "OZEN KATMANI" kuruldu (kullanici sartnamesiyle)
+
+- `from`: Claude cloud
+- `time`: 2026-07-02
+- `subject`: Sahne 2 eklendi - still-omurga + mikro video + 2 metin + Sahne 3 rampasi
+- `message`:
+  Kullanicinin detayli sartnamesiyle (6.5sn timeline, kesin metinler) Sahne 2 kuruldu:
+  hero=/tv-menu/hero/ozen (SAHNE2_PAKET/01 islenmis still), mikro video=/tv-menu/clip/ozen
+  (2.2sn damla, tek oynar donar, loop yok), metinler "Ozenle hazirlandi." (1.5-3.2) +
+  "Simdi one cikan fincanlar." (3.6-5.3), cikista alt bolge kararir (Sahne 3 zemini).
+  TUM animasyonlar opacity-only (Codex TV bulgusuna uygun); video seek sahne gizliyken.
+  Sahne 3 HENUZ YOK - kullanici sartnamesi bekleniyor; E1'e onaysiz sahne EKLEMEYIN.
+- `next_action`: TV'de /tv-menu?ekran=1 izlenmeli: dissolve girisi, metin zamanlamalari,
+  video akiciligi, cikis kararmasi.
