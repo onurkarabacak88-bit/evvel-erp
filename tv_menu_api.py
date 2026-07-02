@@ -842,8 +842,9 @@ body[data-screen="1"]::after{transform:translateX(-10%)}
 body[data-screen="2"]::after{transform:translateX(0)}
 body[data-screen="3"]::after{transform:translateX(10%)}
 @keyframes pgIn{from{opacity:0;transform:translateY(28px) scale(.985);filter:blur(7px)}to{opacity:1;transform:none;filter:none}}
-@keyframes rowIn{from{opacity:0;transform:translateX(-26px)}to{opacity:1;transform:none}}
-@keyframes titleIn{from{opacity:0;transform:translateY(-18px);letter-spacing:.32em}to{opacity:1;transform:none;letter-spacing:.02em}}
+/* TV-perf: rowIn/titleIn opacity-only (transform + letter-spacing animasyonu gerçek TV'de yük — tulipi-kurgu kuralı) */
+@keyframes rowIn{from{opacity:0}to{opacity:1}}
+@keyframes titleIn{from{opacity:0}to{opacity:1}}
 @keyframes flo{0%,100%{transform:translateY(0)}50%{transform:translateY(-.7vw)}}
 @keyframes halo{0%,100%{opacity:.28;transform:translate(-50%,-50%) scale(.9)}50%{opacity:.62;transform:translate(-50%,-50%) scale(1.13)}}
 @keyframes spin{to{transform:translate(-50%,-50%) rotate(360deg)}}
@@ -904,7 +905,8 @@ body.opening-active #logoBadge,body.opening-active #screenMeta{opacity:0}
 .pairStrip b{color:#EFE6D6;font-style:normal;font-family:'Fraunces',serif}
 .pairStrip span.tag{background:#3E8E5A;color:#0e0b09;font-weight:700;padding:.25vh 1vw;border-radius:30px;font-size:.85em;text-transform:uppercase;letter-spacing:.05vw}
 .q{position:relative;z-index:2;font-style:italic;font-size:2.6vh;color:#B89B80;margin-top:2.4vh;letter-spacing:.1vw}
-.gT{font-size:4.4vh;font-weight:400;font-style:italic;color:#3E8E5A;letter-spacing:.08vw;margin-bottom:.5vh;line-height:1.02}
+/* E2 editoryal hiyerarşi: kicker yeşil fısıldar, BAŞLIK krem (yeşil başlık = marka bağırması, tulipi-kurgu revizyonu) */
+.gT{font-size:4.8vh;font-weight:400;font-style:italic;color:var(--cream);letter-spacing:.06vw;margin-bottom:.5vh;line-height:1.02}
 .gH{font-size:1.3vh;letter-spacing:.28vw;color:#7d7065;margin-bottom:0;text-transform:uppercase}
 .menuShell{position:relative;z-index:2;display:flex;flex-direction:column;gap:1.8vh}
 .menuHead{display:flex;align-items:flex-end;justify-content:space-between;gap:2vw;padding:0 .6vw}
@@ -912,20 +914,40 @@ body.opening-active #logoBadge,body.opening-active #screenMeta{opacity:0}
 .menuKicker{font-size:1.25vh;letter-spacing:.34vw;color:var(--green-soft);text-transform:uppercase}
 .menuRole{font-size:1.2vh;letter-spacing:.16vw;color:#908171;text-transform:uppercase}
 .menuPageTag{flex-shrink:0;padding:.8vh 1vw;border-radius:999px;border:1px solid var(--line-soft);background:rgba(11,8,7,.46);font-size:1.18vh;letter-spacing:.18vw;color:#b8aa9a;text-transform:uppercase}
-.menuPanel{position:relative;padding:2vh 1.6vw 2.6vh;border-radius:3.2vh;background:linear-gradient(180deg,rgba(17,13,11,.74),rgba(9,7,6,.9));border:1px solid var(--line);box-shadow:inset 0 1px 0 rgba(255,255,255,.04),0 2.4vh 5vh #0008;backdrop-filter:blur(12px);overflow:hidden}
+/* TV-perf: backdrop-filter kaldırıldı (arkada canlı duvar animasyonu varken sürekli GPU yükü) → opak degrade */
+.menuPanel{position:relative;padding:2.2vh 1.8vw 2.8vh;border-radius:3.2vh;background:linear-gradient(180deg,rgba(16,12,10,.93),rgba(9,7,6,.97));border:1px solid var(--line);box-shadow:inset 0 1px 0 rgba(255,255,255,.04),0 2.4vh 5vh #0008;overflow:hidden}
 .menuPanel::before{content:"";position:absolute;inset:0 auto auto 0;width:100%;height:14vh;background:linear-gradient(180deg,rgba(255,255,255,.045),transparent);pointer-events:none}
 .menu{position:relative;width:100%;max-width:none;font-size:2.08vh}
 .menu.one{max-width:none}
-.hdr{display:grid;grid-template-columns:1fr 4.05em 4.05em 4.05em;gap:.9em;font-size:.58em;letter-spacing:.16vw;color:#9a8d80;margin-bottom:1.1vh;padding:0 1vw}.hdr span{text-align:center}
-.hdr span:not(:first-child){padding:.55vh 0;border-radius:999px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.05)}
+/* kolon başlıkları: hap kutuları kalktı → sade harf-aralıklı caps + ince ayraç (editoryal sükunet) */
+.hdr{display:grid;grid-template-columns:1fr 4.05em 4.05em 4.05em;gap:.9em;font-size:.56em;letter-spacing:.22vw;color:#9a8d80;margin-bottom:.4vh;padding:0 1vw .7vh;border-bottom:1px solid var(--line)}.hdr span{text-align:center}
 .row{display:grid;grid-template-columns:1fr 4.05em 4.05em 4.05em;gap:.9em;align-items:center;padding:1.25vh 1vw;border-top:1px solid #ffffff12}
 .row:nth-child(even){background:rgba(255,255,255,.018)}
 .row.one{grid-template-columns:1fr auto}
 .nm{font-size:1em;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:.6vw}.nm small{display:block;font-size:.52em;color:#B89B80;font-style:italic;margin-left:0;margin-top:.35vh;letter-spacing:.03vw}
 .pr{font-size:.95em;font-weight:500;text-align:center}.pr.d{color:#ffffff22}
+/* 🎬 E2 GEÇİŞ KOREOGRAFİSİ (tulipi-kurgu): giriş opacity-only (pgIn'in blur+transform'u TV'de ağır),
+   çıkışta alt-ağırlıklı kararma → sonraki sayfa karanlıktan doğar = yumuşak sözde-crossfade */
+.pg.cat.on{animation:catIn .5s ease}
+.pg.cat .catFade{position:absolute;inset:0;z-index:6;pointer-events:none;opacity:0;background:linear-gradient(180deg,transparent 30%,#000d 100%);animation:catFade 12s linear both}
+@keyframes catIn{from{opacity:0}to{opacity:1}}
+@keyframes catFade{0%,94%{opacity:0}100%{opacity:.6}}
+/* 🎬 E2 MENÜ KAPAĞI — 5sn nefes sahnesi: fiyatsız, loop'a ritim verir */
+.pg.mcov{background:#0b0705}
+.pg.mcov.on{animation:catIn .5s ease}
+.mcov .mcovInner{position:relative;z-index:2;display:flex;flex-direction:column;align-items:center;gap:2.2vh;text-align:center}
+.mcov .mcovKick{font-size:1.5vh;letter-spacing:.55vw;color:var(--green-soft);text-transform:uppercase;opacity:0;animation:mcv1 5s ease both}
+.mcov .mcovTitle{font-family:'Fraunces',serif;font-style:italic;font-weight:400;font-size:7.2vh;color:var(--cream);line-height:1;opacity:0;animation:mcv2 5s ease both}
+.mcov .mcovCats{font-size:1.7vh;letter-spacing:.3vw;color:#9c8d7c;text-transform:uppercase;opacity:0;animation:mcv3 5s ease both}
+.mcov .mcovFade{position:absolute;inset:0;z-index:3;pointer-events:none;opacity:0;background:linear-gradient(180deg,transparent 30%,#000d 100%);animation:mcv4 5s linear both}
+@keyframes mcv1{0%,8%{opacity:0}20%,100%{opacity:.9}}
+@keyframes mcv2{0%,18%{opacity:0}34%,100%{opacity:1}}
+@keyframes mcv3{0%,34%{opacity:0}50%,100%{opacity:.92}}
+@keyframes mcv4{0%,88%{opacity:0}100%{opacity:.65}}
 /* ANCHORING — 8oz sönük (küçük tetikleyici), Ice/14oz aksan-yeşil+büyük (asıl hedef bedef) */
-.pr.sec{color:#7d7065;font-size:.78em}
-.pr.acc{color:#5fbf86;font-weight:700;font-size:1.12em;text-shadow:0 0 1.2vh #3E8E5A55}
+/* fiyat hiyerarşisi: yeşil GLOW kaldırıldı (fısıltı prensibi ihlaliydi) → ana fiyat krem, sekonder taupe */
+.pr.sec{color:#9c8d7c;font-size:.82em;font-weight:400}
+.pr.acc{color:var(--cream);font-weight:600;font-size:1.06em}
 .heroPg{align-items:flex-start;text-align:left;justify-content:flex-end}
 .heroPg .sceneInner{position:relative;z-index:2;max-width:70vw;display:flex;flex-direction:column;align-items:flex-start}
 .heroPg .spotTag,.heroPg .q,.heroPg .brandLabel,.heroPg .musteriTag{margin-left:.4vw}
@@ -1071,7 +1093,8 @@ body.opening-active #logoBadge,body.opening-active #screenMeta{opacity:0}
 var API="/api/tv-menu", SIG="/api/tv-signals", CACHE="tulipi_tv_menu", LAST_BUILD_KEY="";
 function el(t,c,h){var e=document.createElement(t);if(c)e.className=c;if(h!=null)e.innerHTML=h;return e;}
 function priceRow(u,three,i){
-  var dly=' style="animation-delay:'+(0.18+(i||0)*0.055).toFixed(2)+'s"';
+  // koreografi: başlık 0-0.5s → satırlar 0.30s'den itibaren 70ms kademe (motion-design stagger, opacity-only)
+  var dly=' style="animation-delay:'+(0.30+(i||0)*0.07).toFixed(2)+'s"';
   if(three){
     function cell(v){return '<span class="pr'+(v==null?' d':'')+'">'+(v==null?'–':v)+'</span>';}
     return '<div class="row"'+dly+'><span class="nm">'+u.ad+(u.aciklama?'<small>'+u.aciklama+'</small>':'')+'</span>'+cell(u.f8)+cell(u.f14)+cell(u.fice)+'</div>';
@@ -1254,11 +1277,11 @@ function build(data,sig){
     var shell=el("div","menuShell");
     var coffeeMode=(role||"2")==="2";
     var head=el("div","menuHead");
-    head.innerHTML='<div class="menuMeta"><div class="menuKicker">'+(coffeeMode?'MAIN COFFEE MENU':'UPSELL CURATION')+'</div>'
+    head.innerHTML='<div class="menuMeta"><div class="menuKicker">'+(coffeeMode?'KAHVE MENÜSÜ':'SOĞUK & TATLI SEÇKİSİ')+'</div>'
       +'<div class="gT">'+k.kategori+(totalParts>1?' <span style="font-size:.42em;color:#8f816f;font-style:normal">('+(pi+1)+'/'+totalParts+')</span>':'')+'</div>'
       +(k.alt&&pi===0?'<div class="gH">'+k.alt+'</div>':'')
       +'<div class="menuRole">'+(coffeeMode?'Espresso · Latte · Brewed':'Cold drinks · Dessert · Pairing')+'</div></div>'
-      +'<div class="menuPageTag">'+(totalParts>1?('Page '+(pi+1)+' / '+totalParts):'Live Menu')+'</div>';
+      +'<div class="menuPageTag">'+(totalParts>1?('Sayfa '+(pi+1)+' / '+totalParts):'Canlı Menü')+'</div>';
     shell.appendChild(head);
     var panel=el("div","menuPanel");
     var m=el("div","menu"+(three?"":" one"));
@@ -1277,9 +1300,18 @@ function build(data,sig){
     if(withPair&&pairHtml)panel.insertAdjacentHTML("beforeend",pairHtml);
     shell.appendChild(panel);
     pg.appendChild(shell);
+    pg.appendChild(el("div","catFade"));  // çıkış kararması → sonraki sayfaya yumuşak köprü
     if(/(iced|cold|so.uk)/i.test(k.kategori)){for(var i=0;i<10;i++){var s=el("span","ice");s.style.left=(8+Math.random()*84)+"%";s.style.top=(22+Math.random()*54)+"%";s.style.animationDelay=(Math.random()*4.5)+"s";pg.appendChild(s);}}
     return pg;
   }
+  // 0) 🎬 E2 MENÜ KAPAĞI — 5sn nefes sahnesi (fiyatsız): loop'a giriş ritmi, kategorileri fısıldar
+  var kahveKats=(data.kategoriler||[]).map(function(k){return k.kategori;}).filter(isCoffeeMenuCategory);
+  var mcov=el("div","pg mcov");mcov.dataset.t=5000;mcov.dataset.roles="2";mcov.dataset.sahne="menu_kapak";
+  mcov.innerHTML='<div class="mcovInner"><div class="mcovKick">TULİPİ</div>'
+    +'<div class="mcovTitle">Kahve Menüsü.</div>'
+    +'<div class="mcovCats">'+(kahveKats.length?kahveKats.join(" · "):"Classic · Signature")+'</div></div>'
+    +'<div class="mcovFade"></div>';
+  ekran1Pages.push(mcov);
   var AGIRLIKLI_KAT=["Classic Coffees","Signature Coffees"];  // en çok satılan kategoriler — döngüde 2 kez görünür
   var agirlikliTekrar=[];
   (data.kategoriler||[]).forEach(function(k){

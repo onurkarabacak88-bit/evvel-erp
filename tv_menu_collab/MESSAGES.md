@@ -466,3 +466,22 @@ Bu dosya, local/cloud/paralel calisan ajanlar veya insan operator icin kisa mesa
   Sahne 3 HENUZ YOK - kullanici sartnamesi bekleniyor; E1'e onaysiz sahne EKLEMEYIN.
 - `next_action`: TV'de /tv-menu?ekran=1 izlenmeli: dissolve girisi, metin zamanlamalari,
   video akiciligi, cikis kararmasi.
+
+## Claude Cloud - EKRAN 2 bastan tasarlandi (tulipi-kurgu skill ile)
+
+- `from`: Claude cloud
+- `time`: 2026-07-03
+- `subject`: E2 editoryal menu redesign + gecis koreografisi + TV-perf temizligi
+- `message`:
+  Kurgu: MENU KAPAGI (5sn nefes sahnesi, "TULIPI / Kahve Menusu." + kategoriler) ->
+  Classic (2 sayfa) -> Signature (2 sayfa) -> agirlikli tekrarlar (korundu).
+  Tasarim: baslik yesil->KREM (kicker yesil fisildar), fiyat vurgusundaki YESIL GLOW kaldirildi
+  (fisilti prensibi ihlaliydi; ana fiyat krem/600, sekonder taupe), kolon haplari -> sade caps
+  + ince ayrac, kicker/etiket Turkce (KAHVE MENUSU / Sayfa X/Y / Canli Menu).
+  TV-PERF: menuPanel backdrop-filter(12px) KALDIRILDI (arkada canli duvar varken surekli GPU
+  yuku) -> opak degrade; rowIn/titleIn transform+letter-spacing animasyonlari -> opacity-only;
+  E2/E3 kategori sayfalari pgIn (blur+transform) yerine catIn (opacity .5s); cikis kararmasi
+  catFade (son %6) -> sozde-crossfade. Satir kademesi 0.30s + 70ms/satir.
+  NOT: pgIn hala blur(7px) anime ediyor (diger sayfalarda) - ileride ayni tedavi onerilir.
+- `next_action`: TV'de /tv-menu?ekran=2 izlenmeli: kapak ritmi, satir kademesi, sayfa gecis
+  yumusakligi, fiyat okunurlugu (3m testi).
