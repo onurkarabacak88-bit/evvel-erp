@@ -588,15 +588,21 @@ def _satis_30gun():
 
 def _kategori_fav(satis, rows):
     """Kategori başına en çok satılan ürün (✦ en sevilen rozeti) — top3 tek kategoriye
-    yığılabildiği için (yazın hepsi mocktail) her kategorinin KENDİ yıldızı buradan gelir."""
+    yığılabildiği için (yazın hepsi mocktail) her kategorinin KENDİ yıldızı buradan gelir.
+    Evo adları boy/soğuk eki taşır ("Latte Ice", "Mocha 14oz") → ekler soyulup varyant
+    satışları TOPLANIR, yoksa kahveler hiç eşleşmez (bilinen Evo isim tuzağı)."""
     fav = {}
     if not rows or not satis:
         return fav
     norm = lambda s: re.sub(r"\s+", " ", str(s).strip().lower())
-    smap = {norm(a): c for a, c in satis.items()}
+    base = lambda s: re.sub(r"\s+(ice|buzlu|8\s*oz|14\s*oz)$", "", norm(s)).strip()
+    toplam = {}
+    for a, c in satis.items():
+        b = base(a)
+        toplam[b] = toplam.get(b, 0) + (c or 0)
     best = {}
     for r in rows:
-        c = smap.get(norm(r["ad"]))
+        c = toplam.get(base(r["ad"]))
         if c and c > 0 and (r["kategori"] not in best or c > best[r["kategori"]][1]):
             best[r["kategori"]] = (r["ad"], c)
     for kat, (ad, _c) in best.items():
