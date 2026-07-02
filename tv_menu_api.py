@@ -1030,11 +1030,11 @@ body.opening-active #logoBadge,body.opening-active #screenMeta{opacity:0}
    bu sahnede yasak (fiyat ilk kez Sahne 3 "En Çok Satılan"da görünür — arzu burada, kasa orada). */
 .pg.story{background:#050302}
 .pg.story.on{animation:none}
-/* GERÇEK TULİPİ ÇEKİMİ — 12sn boyunca fark edilmeyen push-in (scale 1→1.05) + 0.8sn açılış fade'i */
-.story .vid{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;transform:translateZ(0);backface-visibility:hidden;will-change:transform,opacity;animation:stVid 12s linear both}
-/* sinematik katmanlar: renklendirme/letterbox + film grain */
+/* GERÇEK TULİPİ ÇEKİMİ — performans modu: TV'de frame drop yapmaması için video transform animasyonu yok */
+.story .vid{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;opacity:1;transform:translateZ(0) scale(1.015);backface-visibility:hidden;will-change:opacity}
+/* sinematik katmanlar: renklendirme/letterbox; hareketli grain TV'de frame drop yaptığı için kapalı */
 .story .grade{position:absolute;inset:0;z-index:6;pointer-events:none;background:linear-gradient(180deg,#0009 0,transparent 22%,transparent 74%,#000b 100%)}
-.story .grain{position:absolute;inset:-25%;z-index:8;pointer-events:none;opacity:.07;mix-blend-mode:overlay;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='150' height='150'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='150' height='150' filter='url(%23n)' opacity='0.6'/%3E%3C/svg%3E");background-size:150px 150px;animation:csGrain .5s steps(3) infinite}
+.story .grain{display:none}
 /* fısıltı beat'leri: alt üçte bir, aynı anda tek satır, krem serif — glow yok, sadece okunurluk gölgesi */
 .story .stBeat{position:absolute;left:0;right:0;bottom:17%;z-index:7;text-align:center;font-family:'Fraunces',serif;font-weight:400;font-size:3.4vh;letter-spacing:.06vw;color:#EFE6D6;text-shadow:0 .3vh 1.8vh rgba(0,0,0,.6);opacity:0}
 .story .stBeat1{animation:stBeat1 12s ease both}
@@ -1045,11 +1045,9 @@ body.opening-active #logoBadge,body.opening-active #screenMeta{opacity:0}
 .story .stFinalTxt{margin-top:2.4vh;font-family:'Fraunces',serif;font-size:3.4vh;letter-spacing:.06vw;color:#EFE6D6;text-shadow:0 .3vh 1.8vh rgba(0,0,0,.6)}
 /* sahne sonu 0.6sn siyaha çökme — Sahne 3'e sinematik köprü */
 .story .stFade{position:absolute;inset:0;z-index:9;background:#000;opacity:0;pointer-events:none;animation:stFade 12s linear both}
-@keyframes csGrain{0%{background-position:0 0}33%{background-position:-80px 50px}66%{background-position:70px -60px}100%{background-position:-50px -40px}}
-@keyframes stVid{0%{opacity:0;transform:scale(1) translateZ(0)}6.7%{opacity:1}100%{opacity:1;transform:scale(1.05) translateZ(0)}}
-@keyframes stBeat1{0%,16.7%{opacity:0;transform:translateY(1.2vh)}23.3%{opacity:.94;transform:none}36.7%{opacity:.94;transform:none}41.7%,100%{opacity:0;transform:none}}
-@keyframes stBeat2{0%,50%{opacity:0;transform:translateY(1.2vh)}56.7%{opacity:.94;transform:none}70%{opacity:.94;transform:none}75%,100%{opacity:0;transform:none}}
-@keyframes stFinal{0%,78%{opacity:0;transform:translateY(1.4vh) scale(.985)}87%,100%{opacity:1;transform:none}}
+@keyframes stBeat1{0%,16.7%{opacity:0}23.3%{opacity:.94}36.7%{opacity:.94}41.7%,100%{opacity:0}}
+@keyframes stBeat2{0%,50%{opacity:0}56.7%{opacity:.94}70%{opacity:.94}75%,100%{opacity:0}}
+@keyframes stFinal{0%,78%{opacity:0}87%,100%{opacity:1}}
 @keyframes stFade{0%,95%{opacity:0}100%{opacity:1}}
 </style></head>
 <body><div id="stage">
@@ -1131,11 +1129,6 @@ function buildStory(data){
     +'<div class="stBeat stBeat2">Sonra ustalık.</div>'
     +'<div class="stFinal"><img class="stLogo" src="/tv-menu/logo" alt=""><div class="stFinalTxt">Fincanında.</div></div>'
     +'<div class="stFade"></div>';
-  // sahne her göründüğünde film 0. kareden başlar → espresso akışı beat'lerle hep senkron
-  try{new MutationObserver(function(){
-    if(st.classList.contains("on")){var v=st.querySelector("video");
-      if(v){try{v.currentTime=0;var p=v.play();if(p&&p.catch)p.catch(function(){});}catch(e){}}}
-  }).observe(st,{attributes:true,attributeFilter:["class"]});}catch(e){}
   return st;
 }
 function bardakImgFor(mod){

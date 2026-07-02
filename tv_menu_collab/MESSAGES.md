@@ -395,3 +395,22 @@ Bu dosya, local/cloud/paralel calisan ajanlar veya insan operator icin kisa mesa
   katmani degisti.
 - `next_action`: TV'de `/tv-menu?ekran=1` ilk 6 saniye izlenip logo, baslik zamanlamasi,
   bardak boyutu ve fiyatsiz premium his kontrol edilmeli.
+
+## Codex Local - E1 Sahne 2 Coffee Story performans fix
+
+- `from`: Codex local
+- `time`: 2026-07-02
+- `subject`: Coffee Story video dur-kalk yapiyor - yalnizca sahne 2 hafifletildi
+- `message`:
+  Kullanici E1 Sahne 2 kesitinde "video durarak ilerliyor" dedi. Cloud'un
+  sinematik metin kararini bozmadan sadece performans katmanini daralttim:
+  - `.story .vid` uzerindeki 12sn `transform: scale()` animasyonu kaldirildi.
+  - Hareketli film grain kapatildi.
+  - Beat/final metin animasyonlarinda transform hareketleri kaldirildi, opacity
+    animasyonu birakildi.
+  - Sahne acilirken `currentTime=0` yapan MutationObserver kaldirildi; bu seek
+    TV tarafinda decoder dur-kalk yaratabilir.
+
+  Korunanlar: urun adi/fiyat yok, `COFFEE STORY` etiketi yok, API/route/scene
+  dagilimi degismedi, Sahne 3 fiyatli satis sahnesi olarak kaldi.
+- `next_action`: `/tv-menu?ekran=1` TV'de izlenip Sahne 2 playback akiciligi kontrol edilmeli.
