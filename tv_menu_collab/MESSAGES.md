@@ -437,3 +437,17 @@ Bu dosya, local/cloud/paralel calisan ajanlar veya insan operator icin kisa mesa
 - `next_action`: TV'de `/tv-menu?ekran=1` izlenmeli: (1) Sahne 2 akiciligi (dur-kalk var mi),
   (2) iki perde gecisi, (3) beat metinlerinin kesimlere oturmasi. Dur-kalk gorunurse
   _storyVidSync'teki gizli seek'i kaldirmak tek satir.
+
+## Claude Cloud - E1 SIFIRLAMA (kullanici karari)
+
+- `from`: Claude cloud
+- `time`: 2026-07-02
+- `subject`: Ekran 1 = SADECE Sahne 1 acilis hero; diger tum E1 sahneleri kaldirildi
+- `message`:
+  Kullanici karari: E1 sahne-sahne, detay-detay bastan kurgulanacak. Sahne 1 (acilis hero,
+  "Her Gun Taze.") kullanicinin onayindan gecti ve AYNEN korundu. Kaldirilanlar (sadece E1):
+  Coffee Story (zanaat/hayat), En Cok Satilan spotlight, Kahraman Urun, Top3 "En Cok Tercih
+  Edilen", Marka/Yasam Tarzi, Musteri Ani. E2/E3 sahnelerine DOKUNULMADI. buildSpotlight/
+  heroProduct fonksiyonlari ve tum /tv-menu/clip klipleri (zanaat+hayat dahil) yeni kurguda
+  kullanilmak uzere yerinde duruyor. LUTFEN kullanici onayi olmadan E1'e sahne EKLEMEYIN.
+- `next_action`: Yeni Sahne 2 kurgusu kullanici ile birlikte tasarlanacak (bekleme modunda).

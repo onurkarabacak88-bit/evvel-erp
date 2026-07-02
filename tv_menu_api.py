@@ -1027,36 +1027,7 @@ body.opening-active #logoBadge,body.opening-active #screenMeta{opacity:0}
 #fav b{color:#EFE6D6;font-family:'Fraunces',serif;font-weight:500;margin-left:.3vw}
 #season span{position:absolute;top:-10vh;animation:sfall linear infinite;will-change:transform}
 @keyframes sfall{0%{transform:translateY(-10vh) translateX(0) rotate(0)}100%{transform:translateY(112vh) translateX(5vw) rotate(220deg)}}
-/* 🎬 COFFEE STORY — sinematik kahve hikayesi. SATIŞ YOK: ürün adı / fiyat / etiket / glow bilinçli olarak
-   bu sahnede yasak (fiyat ilk kez Sahne 3 "En Çok Satılan"da görünür — arzu burada, kasa orada). */
-.pg.story{background:#050302}
-.pg.story.on{animation:none}
-/* GERÇEK TULİPİ ÇEKİMİ — performans modu: TV'de frame drop yapmaması için video transform animasyonu yok */
-.story .vid{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;opacity:1;transform:translateZ(0) scale(1.015);backface-visibility:hidden;will-change:opacity}
-/* sinematik katmanlar: renklendirme/letterbox; hareketli grain TV'de frame drop yaptığı için kapalı */
-.story .grade{position:absolute;inset:0;z-index:6;pointer-events:none;background:linear-gradient(180deg,#0009 0,transparent 22%,transparent 74%,#000b 100%)}
-.story .grain{display:none}
-/* fısıltı beat'leri: alt üçte bir, aynı anda tek satır, krem serif — glow yok, sadece okunurluk gölgesi */
-.story .stBeat{position:absolute;left:0;right:0;bottom:17%;z-index:7;text-align:center;font-family:'Fraunces',serif;font-weight:400;font-size:3.4vh;letter-spacing:.06vw;color:#EFE6D6;text-shadow:0 .3vh 1.8vh rgba(0,0,0,.6);opacity:0}
-.story .stBeat1{animation:stBeat1 12s ease both}
-.story .stBeat2{animation:stBeat2 12s ease both}
-/* final: marka mührü — logo + tek kelime, ortada, sahnenin son 3 saniyesi */
-.story .stFinal{position:absolute;inset:0;z-index:7;display:flex;flex-direction:column;align-items:center;justify-content:center;opacity:0;animation:stFinal 12s ease both}
-.story .stLogo{width:9.5vw;max-height:16vh;object-fit:contain;mix-blend-mode:screen;filter:drop-shadow(0 1vh 2.6vh #000b)}
-.story .stFinalTxt{margin-top:2.4vh;font-family:'Fraunces',serif;font-size:3.4vh;letter-spacing:.06vw;color:#EFE6D6;text-shadow:0 .3vh 1.8vh rgba(0,0,0,.6)}
-/* sahne sonu 0.6sn siyaha çökme — Sahne 3'e sinematik köprü */
-.story .stFade{position:absolute;inset:0;z-index:9;background:#000;opacity:0;pointer-events:none;animation:stFade 12s linear both}
-@keyframes stBeat1{0%,16.7%{opacity:0}23.3%{opacity:.94}36.7%{opacity:.94}41.7%,100%{opacity:0}}
-@keyframes stBeat2{0%,50%{opacity:0}56.7%{opacity:.94}70%{opacity:.94}75%,100%{opacity:0}}
-@keyframes stFinal{0%,78%{opacity:0}87%,100%{opacity:1}}
-@keyframes stFade{0%,95%{opacity:0}100%{opacity:1}}
-/* 🎬 HAYAT perdesi (10sn varyant) — zanaatın tamamlayıcısı; aynı görsel dil, aynı performans modu (opacity-only) */
-.story.hayat .stBeat1{animation:st2Beat1 10s ease both}
-.story.hayat .stBeat2{animation:st2Beat2 10s ease both}
-.story.hayat .stFade{animation:st2Fade 10s linear both}
-@keyframes st2Beat1{0%,20%{opacity:0}26%{opacity:.94}44%{opacity:.94}48%,100%{opacity:0}}
-@keyframes st2Beat2{0%,56%{opacity:0}62%{opacity:.94}82%{opacity:.94}86%,100%{opacity:0}}
-@keyframes st2Fade{0%,94%{opacity:0}100%{opacity:1}}
+/* ⛔ Coffee Story CSS kaldırıldı (E1 sıfırlama, 2026-07-02) — Sahne 2 baştan kurgulanacak. */
 </style></head>
 <body><div id="stage">
 <div class="bg" id="bg"><div class="drift"></div></div>
@@ -1124,49 +1095,8 @@ function buildSpotlight(opts){
   sp.innerHTML+=inner;
   return sp;
 }
-function buildStory(data){
-  // 🎬 PERDE 1 — ZANAAT: bu sahne satmaz, arzu kurar: ürün adı/fiyat/etiket bilinçli YOK
-  // (fiyat ilk kez "En Çok Satılan"da görünür). dataset.name/price verilmez → priceCorner
-  // rozeti açılmaz + gösterim log'una ürün yazılmaz (sahne tek ürünü sahnelemiyor).
-  // Klip = /tv-menu/clip/zanaat: gerçek TULİPİ çekiminden amaca-kesilmiş 12sn kurgu
-  // (tamping → espresso süte mermer gibi akar → logolu bardak → el/bardak finali).
-  // Beat'ler kesim noktalarına oturur: 0-2 sessiz → "Önce koku." → "Sonra ustalık."
-  // → logo + "Fincanında." → 0.6sn siyaha çökme.
-  var st=el("div","pg story");st.dataset.t=12000;st.dataset.roles="1";st.dataset.sahne="story";
-  st.innerHTML='<video class="vid v1" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/zanaat"></video>'
-    +'<div class="grade"></div><div class="grain"></div>'
-    +'<div class="stBeat stBeat1">Önce koku.</div>'
-    +'<div class="stBeat stBeat2">Sonra ustalık.</div>'
-    +'<div class="stFinal"><img class="stLogo" src="/tv-menu/logo" alt=""><div class="stFinalTxt">Fincanında.</div></div>'
-    +'<div class="stFade"></div>';
-  _storyVidSync(st);
-  return st;
-}
-function buildStoryHayat(){
-  // 🎬 PERDE 2 — HAYAT (zanaatın tamamlayıcısı): kahve kimin için? Dünya standardı marka akışı:
-  // Vaat (hero) → Kanıt (zanaat) → Duygu (hayat) → Satış (En Çok Satılan, fiyat ilk kez orada).
-  // Klip = /tv-menu/clip/hayat: 10sn gerçek kurgu (bardağa isim yazma → kulaklıklı gülümseme →
-  // pipetli çocuk → barista gülümsemesi). Logo mührü YOK (Perde 1'de var — tekrar bağırmak olur);
-  // sahne saf insan anıyla kapanır, siyaha çöker, satış sahnesi cevabı verir.
-  var st=el("div","pg story hayat");st.dataset.t=10000;st.dataset.roles="1";st.dataset.sahne="story_hayat";
-  st.innerHTML='<video class="vid" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/hayat"></video>'
-    +'<div class="grade"></div><div class="grain"></div>'
-    +'<div class="stBeat stBeat1">Adınla başlar.</div>'
-    +'<div class="stBeat stBeat2">Gülüşünle tamamlanır.</div>'
-    +'<div class="stFade"></div>';
-  _storyVidSync(st);
-  return st;
-}
-function _storyVidSync(st){
-  // Amaca-kesilmiş kurgu kliplerinde beat-video senkronu şart. Codex'in TV bulgusu korunur:
-  // görünür sahnede currentTime seek'i decoder dur-kalk yaratıyor → seek'i sahne GİZLENİRKEN yap
-  // (takılma ekranda değilken biter), sahne açılırken sadece play() (0. kare hazır bekler).
-  try{new MutationObserver(function(){
-    var v=st.querySelector("video");if(!v)return;
-    if(st.classList.contains("on")){var p=v.play();if(p&&p.catch)p.catch(function(){});}
-    else{try{v.pause();v.currentTime=0;}catch(e){}}
-  }).observe(st,{attributes:true,attributeFilter:["class"]});}catch(e){}
-}
+// ⛔ Coffee Story sahne fonksiyonları kaldırıldı (E1 sıfırlama, 2026-07-02) —
+// yeni Sahne 2 kurgusu kullanıcıyla baştan tasarlanacak. Ham klipler /tv-menu/clip'te duruyor.
 function bardakImgFor(mod){
   if(mod==="ogle")return "mocktail";
   if(mod==="aksam")return "iced";
@@ -1218,22 +1148,11 @@ function build(data,sig){
   // alt-şerit ticker'da zaten metin olarak dönüyor (FAZ 2), ayrı "ŞİMDİ" kartı tekrar/doluluk
   // yaratıyordu (Codex 2. göz review notu). Mevsim sinyali Ekran 2'de (referans ekranı) kalıyor.
 
-  // 2) 🎬 COFFEE STORY — iki perdeli sinematik marka filmi (ürünsüz/fiyatsız; fiyat ilk kez satış sahnesinde)
-  // Perde 1 ZANAAT (12sn) + Perde 2 HAYAT (10sn) = Vaat → Kanıt → Duygu → Satış akışı
-  heroPages.push(buildStory(data));
-  heroPages.push(buildStoryHayat());
-
-  // 3) 🔥 EN ÇOK SATILAN SPOTLIGHT — gerçek satış lideri, Kahraman Ürün'le AYNI parlatma kurgusunda (ateş temalı)
-  var ecAd=sig&&sig.en_cok;
-  var hp0=heroProduct(data,sig);  // çakışma kontrolü için önce bak (aynı ürünü 2 kez parlatma)
-  if(ecAd&&(!hp0||hp0.ad!==ecAd)){
-    var ecKat=findKategori(ecAd),ecFy=findPrice(ecAd);
-    heroPages.push(buildSpotlight({tag:"En Çok Satılan",ad:ecAd,fiyat:ecFy,aciklama:ecKat,kategori:ecKat,dur:9000,theme:"fire",sahne:"en_cok"}));
-  }
-
-  // 4) KAHRAMAN ÜRÜN — İmza (manuel) veya Öneri motoru (oto), aynı parlatma kurgusu (yeşil tema)
-  var hp=hp0;
-  if(hp)heroPages.push(buildSpotlight({tag:hp.tag,ad:hp.ad,fiyat:hp.fiyat,aciklama:hp.aciklama,kategori:hp.kategori,dur:10000,theme:hp.theme,sahne:"kahraman"}));
+  // ⛔ EKRAN 1 SIFIRLANDI (kullanıcı kararı 2026-07-02): Sahne 1 (açılış hero) DIŞINDA her şey
+  // kaldırıldı — Coffee Story (zanaat/hayat), En Çok Satılan spotlight ve Kahraman Ürün E1'den çıktı.
+  // Sahne 2+ kullanıcıyla sahne-sahne, detay-detay baştan kurgulanacak. buildSpotlight/heroProduct
+  // fonksiyonları ve public/tv klipleri (zanaat/hayat dahil) yeni kurguda kullanılmak üzere duruyor.
+  var hp=heroProduct(data,sig);  // Ekran 3 craft klip çakışma kontrolü hâlâ buna bakıyor
 
   // 4.2) CRAFT MOCKTAIL — gerçek barista çekimi: jigger → süzgeç → yeşil akış (barista ustalığı, ayrı/kendi sahnesi)
   // Kahraman Ürün AYNI greenmocktail klibini kullanmışsa burada farklı klip seç (çakışma önleme)
@@ -1334,37 +1253,9 @@ function build(data,sig){
   // görünerek daha fazla "ekran zamanı" alır — gerçek satış ağırlığına göre yerleşim.
   agirlikliTekrar.forEach(function(pg){ekran1Pages.push(pg);});
 
-  // 7) 🔥 EN ÇOK TERCİH EDİLEN — Peak-End: destek ekranın en SON/en güçlü sahnesi, gösterişli sosyal kanıt
-  if(sig && sig.top3 && sig.top3.length){
-    var t3=el("div","pg cat top3pg heroPg");t3.dataset.t=9000;t3.dataset.roles="1";
-    t3.innerHTML='<video class="bgvid" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/espresso" style="opacity:.32"></video><div class="bggrade"></div>';
-    t3.appendChild(el("div","gT","Bugün En Çok Tercih Edilen"));
-    var maxAdet=Math.max.apply(null,sig.top3.map(function(it){return it.adet;}));
-    var wrap=el("div","t3wrap");
-    wrap.innerHTML=sig.top3.map(function(it,i){
-      var pct=Math.max(8,Math.round((it.adet/maxAdet)*100));
-      var fy=findPrice(it.ad);
-      return '<div class="t3row" style="animation-delay:'+(0.15+i*0.15).toFixed(2)+'s">'
-        +'<div class="t3rank">'+(i+1)+'</div>'
-        +'<div class="t3body"><div class="t3name">'+it.ad+(fy!=null?' <small>· '+fy+' TL</small>':'')+'</div><div class="t3barBg"><i style="width:'+pct+'%;animation-delay:'+(0.4+i*0.15).toFixed(2)+'s"></i></div></div>'
-        +'<div class="t3count">'+Math.round(it.adet)+' kez</div></div>';
-    }).join("");
-    t3.appendChild(wrap);
-    heroPages.push(t3);
-  }
-
-  // 8) MARKA + CANLI sahneleri ekran 1'e; soguk/tatli/upsell sahneleri ekran 3'e
-  // Marka/Yaşam Tarzı — gerçek vitrin+müşteri çekimi
-  var brandPg=el("div","pg heroPg");brandPg.dataset.t=8000;brandPg.dataset.roles="1";
-  brandPg.innerHTML='<video class="bgvid" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/lifestyle" style="opacity:.85"></video><div class="bggrade"></div>'
-    +'<div class="sceneInner"><div class="brandLabel">Her An Yanında</div></div>';
-  heroPages.push(brandPg);
-  // Müşteri Anı — gerçek TULİPİ müşteri görüntüsü, marka/duygu sahnesi → E1'in "hero" loop'una ait
-  // (Codex 2. göz review: bu sahne E3'ün keskin upsell ritmini seyreltiyordu, E1 marka loop'una taşındı)
-  var musPg2=el("div","pg heroPg");musPg2.dataset.t=7000;musPg2.dataset.roles="1";
-  musPg2.innerHTML='<video class="bgvid" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/musteri" style="opacity:.9"></video><div class="bggrade"></div>'
-    +'<div class="sceneInner"><div class="musteriTag">Her Gülüşte Bir Fincan</div></div>';
-  heroPages.push(musPg2);
+  // ⛔ 7) "En Çok Tercih Edilen" (top3), 8) Marka/Yaşam Tarzı ve Müşteri Anı sahneleri de E1'den
+  // kaldırıldı (E1 sıfırlama, 2026-07-02): Ekran 1 = SADECE Sahne 1 açılış hero. Sahne 2+
+  // kullanıcıyla sahne-sahne baştan kurgulanacak.
   // Bardak rotasyonu + çeşitlilik + frozen — ÖZ-ELEŞTİRİ: eskiden sıcak→buzlu→mocktail→kahverengi→
   // frozen sırası 1 sıcak + 4 soğuk art arda veriyordu ("mocktail galerisi" anti-pattern'i — GPT'nin
   // uyardığı "yine içecek" hissi). Şimdi sıcak/soğuk alternansı: soğuk-soğuk-SICAK-soğuk-soğuk yerine
