@@ -586,6 +586,24 @@ def _satis_30gun():
     return _SATIS_CACHE["map"]
 
 
+def _kategori_fav(satis, rows):
+    """Kategori başına en çok satılan ürün (✦ en sevilen rozeti) — top3 tek kategoriye
+    yığılabildiği için (yazın hepsi mocktail) her kategorinin KENDİ yıldızı buradan gelir."""
+    fav = {}
+    if not rows or not satis:
+        return fav
+    norm = lambda s: re.sub(r"\s+", " ", str(s).strip().lower())
+    smap = {norm(a): c for a, c in satis.items()}
+    best = {}
+    for r in rows:
+        c = smap.get(norm(r["ad"]))
+        if c and c > 0 and (r["kategori"] not in best or c > best[r["kategori"]][1]):
+            best[r["kategori"]] = (r["ad"], c)
+    for kat, (ad, _c) in best.items():
+        fav[kat] = ad
+    return fav
+
+
 def _top3(satis, rows=None):
     """Bugün/son 30 günde en çok tercih edilen 3 ürün — SADECE TV menüsünde gösterilen
     ürünler arasından (Su/Çay gibi menüde olmayan jenerik kalemler hariç, gösterişli+anlamlı kalsın)."""
@@ -686,7 +704,8 @@ def tv_signals():
         seritler.insert(0, oz["etiket"] + " · " + oz["mesaj"])   # özel gün şeridi en başta
     return {"saat_modu": sm, "mevsim": mv, "ozel": oz, "en_cok": en_cok, "yeni": yeni,
             "happy_hour": hh, "top3": top3, "oneri": oneri, "seritler": seritler,
-            "barista_notu": (ayar.get("barista_notu") or "")}
+            "barista_notu": (ayar.get("barista_notu") or ""),
+            "kategori_fav": _kategori_fav(satis, rows)}
 
 
 class AyarModel(BaseModel):
@@ -1323,11 +1342,13 @@ function build(data,sig){
     tops.sort(function(a,b){return _rank[String(a.ad).toLowerCase()]-_rank[String(b.ad).toLowerCase()];});
     return tops.concat(rest);
   }
+  // ✦ en sevilen: sunucunun kategori-bazlı haritası esas (top3 yazın tek kategoriye yığılıyor —
+  // her kategorinin KENDİ yıldızı olsun); ad eşleşmesini menüdeki gerçek yazımla normalize et
   var favMap={};
-  (data.kategoriler||[]).forEach(function(k){(k.urunler||[]).forEach(function(u){
-    var r=_rank[String(u.ad).toLowerCase()];
-    if(r&&(!favMap[k.kategori]||r<_rank[String(favMap[k.kategori]).toLowerCase()]))favMap[k.kategori]=u.ad;
-  });});
+  if(sig&&sig.kategori_fav){(data.kategoriler||[]).forEach(function(k){
+    var favAd=sig.kategori_fav[k.kategori];if(!favAd)return;
+    (k.urunler||[]).forEach(function(u){if(String(u.ad).toLowerCase()===String(favAd).toLowerCase())favMap[k.kategori]=u.ad;});
+  });}
 
   // 0) 🎬 E2 MENÜ KAPAĞI — 5sn nefes sahnesi (fiyatsız): saat moduna göre karşılama fısıltısı
   var kahveKats=(data.kategoriler||[]).map(function(k){return k.kategori;}).filter(isCoffeeMenuCategory);
