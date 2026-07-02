@@ -1185,7 +1185,7 @@ function build(data,sig){
     +'<div class="openingShade"></div>'
     +'<div class="openingCopy"><img class="openingLogo" src="/tv-menu/logo" alt="">'
     +'<div class="openingTitle"><span>Her Gün</span><span>Taze.</span></div>'
-    +'<div class="openingSub">Sıcak bir mola, iyi bir kahve.</div></div>';
+    +'<div class="openingSub">Serin bir mola, iyi bir kahve.</div></div>';  // yaz sezonu (kış: "Sıcak bir mola, iyi bir kahve.")
   heroPages.push(bOpen);
 
   // ÖZ-ELEŞTİRİ — KONSOLİDASYON: Saat sinyali ayrı bir sahne olarak HİÇBİR ekranda yok artık —
