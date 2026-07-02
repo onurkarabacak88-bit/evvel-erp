@@ -888,13 +888,13 @@ body.opening-active #logoBadge,body.opening-active #screenMeta{opacity:0}
 @keyframes bardakReveal{0%,38%{opacity:0;transform:translateY(1.6vh)}55%,100%{opacity:1;transform:none}}
 .bardakBg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;animation:kenBurns 7s ease-out forwards;filter:saturate(1.12) contrast(1.06) brightness(.86)}
 .bardakInfo{position:relative;z-index:2;opacity:0;animation:bardakReveal 7s ease forwards}
-.openingBg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;animation:openingDrift 6s ease-out forwards;transform-origin:42% 54%;backface-visibility:hidden}
+.openingBg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;animation:openingDrift 8s ease-out forwards;transform-origin:42% 54%;backface-visibility:hidden}
 .openingShade{position:absolute;inset:0;z-index:1;background:linear-gradient(90deg,rgba(0,0,0,.02) 0%,rgba(0,0,0,.1) 42%,rgba(0,0,0,.34) 72%,rgba(0,0,0,.56) 100%)}
 .openingCopy{position:absolute;z-index:2;right:7.8vw;top:16.5vh;width:38vw;display:flex;flex-direction:column;align-items:center;text-align:center;color:var(--cream)}
-.openingLogo{width:13.5vw;max-height:23vh;object-fit:contain;opacity:0;mix-blend-mode:screen;filter:drop-shadow(0 1vh 2.8vh #000b);animation:openingLogoIn 6s ease forwards}
-.openingTitle{margin-top:3vh;font-family:'Fraunces',serif;font-size:6.2vh;line-height:.94;font-weight:400;letter-spacing:.02vw;color:#efe6d6;text-shadow:0 .45vh 2.4vh #000;opacity:0;animation:openingTitleIn 6s ease forwards}
+.openingLogo{width:13.5vw;max-height:23vh;object-fit:contain;opacity:0;mix-blend-mode:screen;filter:drop-shadow(0 1vh 2.8vh #000b);animation:openingLogoIn 8s ease forwards}
+.openingTitle{margin-top:3vh;font-family:'Fraunces',serif;font-size:6.2vh;line-height:.94;font-weight:400;letter-spacing:.02vw;color:#efe6d6;text-shadow:0 .45vh 2.4vh #000;opacity:0;animation:openingTitleIn 8s ease forwards}
 .openingTitle span{display:block}
-.openingSub{margin-top:2.2vh;font-size:2vh;letter-spacing:.05vw;color:#6fb084;opacity:0;animation:openingSubIn 6s ease forwards}
+.openingSub{margin-top:2.2vh;font-size:2vh;letter-spacing:.05vw;color:#6fb084;opacity:0;animation:openingSubIn 8s ease forwards}
 @keyframes openingDrift{0%{transform:scale(1.02) translateX(-1.2vw)}100%{transform:scale(1.09) translateX(.4vw)}}
 @keyframes openingLogoIn{0%,30%{opacity:0;transform:translateY(1.2vh)}43%,100%{opacity:.96;transform:none}}
 @keyframes openingTitleIn{0%,58%{opacity:0;transform:translateY(1.8vh)}72%,100%{opacity:1;transform:none}}
@@ -1180,7 +1180,7 @@ function build(data,sig){
   var heroPages=[],ekran1Pages=[],ekran3Pages=[];
 
   // 1) EKRAN 1 AÇILIŞ — premium bardak hero; fiyat yok, eski bardak/fiyat alanı tamamen kaldırıldı
-  var bOpen=el("div","pg heroPg openingPg");bOpen.dataset.t=6000;bOpen.dataset.roles="1";
+  var bOpen=el("div","pg heroPg openingPg");bOpen.dataset.t=8000;bOpen.dataset.roles="1";
   bOpen.innerHTML='<img class="openingBg" src="/tv-menu/hero/opening" alt="">'
     +'<div class="openingShade"></div>'
     +'<div class="openingCopy"><img class="openingLogo" src="/tv-menu/logo" alt="">'
