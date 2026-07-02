@@ -1026,23 +1026,31 @@ body.opening-active #logoBadge,body.opening-active #screenMeta{opacity:0}
 #fav b{color:#EFE6D6;font-family:'Fraunces',serif;font-weight:500;margin-left:.3vw}
 #season span{position:absolute;top:-10vh;animation:sfall linear infinite;will-change:transform}
 @keyframes sfall{0%{transform:translateY(-10vh) translateX(0) rotate(0)}100%{transform:translateY(112vh) translateX(5vw) rotate(220deg)}}
-/* 🎬 COFFEE STORY — sinematik ara sahne (çekirdek→espresso→latte art→fincanda doğan fiyat) */
+/* 🎬 COFFEE STORY — sinematik kahve hikayesi. SATIŞ YOK: ürün adı / fiyat / etiket / glow bilinçli olarak
+   bu sahnede yasak (fiyat ilk kez Sahne 3 "En Çok Satılan"da görünür — arzu burada, kasa orada). */
 .pg.story{background:#050302}
 .pg.story.on{animation:none}
-.story .stsc{position:absolute;inset:0;display:flex;align-items:center;justify-content:center}
-/* GERÇEK TULİPİ ÇEKİMİ — tek sürekli video (eski 3-klip crossfade emekli edildi) */
-.story .vid{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;opacity:1;transform:translateZ(0);backface-visibility:hidden;will-change:opacity}
-/* sinematik katmanlar: bokeh derinlik + renklendirme/letterbox + film grain */
+/* GERÇEK TULİPİ ÇEKİMİ — 12sn boyunca fark edilmeyen push-in (scale 1→1.05) + 0.8sn açılış fade'i */
+.story .vid{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;transform:translateZ(0);backface-visibility:hidden;will-change:transform,opacity;animation:stVid 12s linear both}
+/* sinematik katmanlar: renklendirme/letterbox + film grain */
 .story .grade{position:absolute;inset:0;z-index:6;pointer-events:none;background:linear-gradient(180deg,#0009 0,transparent 22%,transparent 74%,#000b 100%)}
 .story .grain{position:absolute;inset:-25%;z-index:8;pointer-events:none;opacity:.07;mix-blend-mode:overlay;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='150' height='150'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='150' height='150' filter='url(%23n)' opacity='0.6'/%3E%3C/svg%3E");background-size:150px 150px;animation:csGrain .5s steps(3) infinite}
-.story .stTag{align-items:flex-start;padding-top:5vh;font-size:1.5vh;letter-spacing:.7vw;color:#3E8E5A;z-index:7;animation:csTag 12s linear infinite}
-.story .stPriceWrap{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:5;opacity:0;animation:csPrice 12s ease-in-out infinite}
-.story .stpn{font-size:6.4vh;letter-spacing:.5vw;color:#EFE6D6;text-transform:uppercase;text-shadow:0 .4vw 2.5vw #000,0 0 4vw #00000088}
-.story .stpl{width:5vw;height:1px;background:#3E8E5A;margin:2.2vh 0;box-shadow:0 0 1vw #3E8E5A}
-.story .stpp{font-size:5vh;font-weight:600;color:#5fbf86;text-shadow:0 0 3.5vw #3E8E5A99,0 0 1.2vw #3E8E5Acc}
+/* fısıltı beat'leri: alt üçte bir, aynı anda tek satır, krem serif — glow yok, sadece okunurluk gölgesi */
+.story .stBeat{position:absolute;left:0;right:0;bottom:17%;z-index:7;text-align:center;font-family:'Fraunces',serif;font-weight:400;font-size:3.4vh;letter-spacing:.06vw;color:#EFE6D6;text-shadow:0 .3vh 1.8vh rgba(0,0,0,.6);opacity:0}
+.story .stBeat1{animation:stBeat1 12s ease both}
+.story .stBeat2{animation:stBeat2 12s ease both}
+/* final: marka mührü — logo + tek kelime, ortada, sahnenin son 3 saniyesi */
+.story .stFinal{position:absolute;inset:0;z-index:7;display:flex;flex-direction:column;align-items:center;justify-content:center;opacity:0;animation:stFinal 12s ease both}
+.story .stLogo{width:9.5vw;max-height:16vh;object-fit:contain;mix-blend-mode:screen;filter:drop-shadow(0 1vh 2.6vh #000b)}
+.story .stFinalTxt{margin-top:2.4vh;font-family:'Fraunces',serif;font-size:3.4vh;letter-spacing:.06vw;color:#EFE6D6;text-shadow:0 .3vh 1.8vh rgba(0,0,0,.6)}
+/* sahne sonu 0.6sn siyaha çökme — Sahne 3'e sinematik köprü */
+.story .stFade{position:absolute;inset:0;z-index:9;background:#000;opacity:0;pointer-events:none;animation:stFade 12s linear both}
 @keyframes csGrain{0%{background-position:0 0}33%{background-position:-80px 50px}66%{background-position:70px -60px}100%{background-position:-50px -40px}}
-@keyframes csTag{0%,4%{opacity:0}9%,87%{opacity:.55}93%,100%{opacity:0}}
-@keyframes csPrice{0%,55%{opacity:0;transform:translateY(2.6vh) scale(.96)}65%{opacity:1;transform:translateY(0) scale(1)}95%{opacity:1;transform:translateY(0) scale(1)}100%{opacity:0}}
+@keyframes stVid{0%{opacity:0;transform:scale(1) translateZ(0)}6.7%{opacity:1}100%{opacity:1;transform:scale(1.05) translateZ(0)}}
+@keyframes stBeat1{0%,16.7%{opacity:0;transform:translateY(1.2vh)}23.3%{opacity:.94;transform:none}36.7%{opacity:.94;transform:none}41.7%,100%{opacity:0;transform:none}}
+@keyframes stBeat2{0%,50%{opacity:0;transform:translateY(1.2vh)}56.7%{opacity:.94;transform:none}70%{opacity:.94;transform:none}75%,100%{opacity:0;transform:none}}
+@keyframes stFinal{0%,78%{opacity:0;transform:translateY(1.4vh) scale(.985)}87%,100%{opacity:1;transform:none}}
+@keyframes stFade{0%,95%{opacity:0}100%{opacity:1}}
 </style></head>
 <body><div id="stage">
 <div class="bg" id="bg"><div class="drift"></div></div>
@@ -1111,15 +1119,23 @@ function buildSpotlight(opts){
   return sp;
 }
 function buildStory(data){
-  // GERÇEK TULİPİ ÇEKİMİ — Mixkit stok video emekli edildi (GPT önerisi): espresso akışı → süt → karamel finish → logo.
-  // Tek sürekli gerçek klip, crossfade/3-video performans hack'i gerekmiyor (artık tek video var).
-  var sp=storyProduct(data);window._story=sp;
-  var st=el("div","pg story");st.dataset.t=12000;st.dataset.roles="1";
-  st.dataset.name=sp.ad;if(sp.fiyat!=null)st.dataset.price=sp.fiyat+" TL";st.dataset.sahne="story";
-  st.innerHTML='<video class="vid v1" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/espresso" style="opacity:1"></video>'
+  // 🎬 SİNEMATİK KAHVE HİKAYESİ — bu sahne satmaz, arzu kurar: ürün adı/fiyat/etiket bilinçli YOK
+  // (fiyat ilk kez Sahne 3 "En Çok Satılan"da görünür). dataset.name/price verilmez → priceCorner
+  // rozeti açılmaz + gösterim log'una ürün yazılmaz (sahne artık tek ürünü sahnelemiyor).
+  // Kurgu (12sn, gerçek TULİPİ çekimiyle senkron): 0-2 sessiz görüntü → "Önce koku." → "Sonra ustalık."
+  // → logo + "Fincanında." → 0.6sn siyaha çökme.
+  var st=el("div","pg story");st.dataset.t=12000;st.dataset.roles="1";st.dataset.sahne="story";
+  st.innerHTML='<video class="vid v1" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/espresso"></video>'
     +'<div class="grade"></div><div class="grain"></div>'
-    +'<div class="stPriceWrap"><div class="stpn" id="storyName">'+sp.ad+'</div><div class="stpl"></div><div class="stpp" id="storyPrice">'+(sp.fiyat!=null?sp.fiyat+' TL':'')+'</div></div>'
-    +'<div class="stsc stTag">TULİPİ · COFFEE STORY</div>';
+    +'<div class="stBeat stBeat1">Önce koku.</div>'
+    +'<div class="stBeat stBeat2">Sonra ustalık.</div>'
+    +'<div class="stFinal"><img class="stLogo" src="/tv-menu/logo" alt=""><div class="stFinalTxt">Fincanında.</div></div>'
+    +'<div class="stFade"></div>';
+  // sahne her göründüğünde film 0. kareden başlar → espresso akışı beat'lerle hep senkron
+  try{new MutationObserver(function(){
+    if(st.classList.contains("on")){var v=st.querySelector("video");
+      if(v){try{v.currentTime=0;var p=v.play();if(p&&p.catch)p.catch(function(){});}catch(e){}}}
+  }).observe(st,{attributes:true,attributeFilter:["class"]});}catch(e){}
   return st;
 }
 function bardakImgFor(mod){
@@ -1173,7 +1189,7 @@ function build(data,sig){
   // alt-şerit ticker'da zaten metin olarak dönüyor (FAZ 2), ayrı "ŞİMDİ" kartı tekrar/doluluk
   // yaratıyordu (Codex 2. göz review notu). Mevsim sinyali Ekran 2'de (referans ekranı) kalıyor.
 
-  // 2) 🎬 COFFEE STORY — sinematik (her döngüde günün ürünü fincanda doğar)
+  // 2) 🎬 COFFEE STORY — sinematik marka filmi (ürünsüz/fiyatsız; fiyat ilk kez Sahne 3'te)
   heroPages.push(buildStory(data));
 
   // 3) 🔥 EN ÇOK SATILAN SPOTLIGHT — gerçek satış lideri, Kahraman Ürün'le AYNI parlatma kurgusunda (ateş temalı)
@@ -1454,12 +1470,8 @@ setInterval(load,60000);
 var liveArr=["TÜM FİYATLAR TL · TULİPİ COFFEE"], liveI=0;
 function loadSig(){fetch(SIG).then(function(r){return r.json();}).then(function(s){
   if(s&&s.seritler&&s.seritler.length){liveArr=s.seritler.concat(["TÜM FİYATLAR TL"]);}
-  // Günün ürünü (Evo en-çok) story sahnesindeki "fincanda doğan fiyat"ı besler
-  if(s&&s.en_cok){var pp=findPrice(s.en_cok);
-    if(pp!=null){window._encok={ad:s.en_cok,fiyat:pp};
-      var nm=document.getElementById("storyName"),pe=document.getElementById("storyPrice");
-      if(nm){nm.textContent=s.en_cok;pe.textContent=pp+" TL";
-        var stp=nm.closest(".pg");if(stp){stp.dataset.name=s.en_cok;stp.dataset.price=pp+" TL";}}}}
+  // Günün ürünü (Evo en-çok) önbelleği — story sahnesi artık ürünsüz sinematik, fiyat/ad güncellemesi kaldırıldı
+  if(s&&s.en_cok){var pp=findPrice(s.en_cok);if(pp!=null)window._encok={ad:s.en_cok,fiyat:pp};}
   // FAZ 3 mevsim DÜŞEN YILDIZ efekti kaldırıldı (kullanıcı: gereksiz). Mevsim bilgisi alt şeritte kalır.
   if(s&&s.saat_modu)applyTimeOfDay(s.saat_modu.mod);       // FAZ 8 — zaman atmosferi
   updateFav(s&&s.en_cok);                                  // FAZ 8 — Today's Favorite
