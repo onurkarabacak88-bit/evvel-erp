@@ -801,7 +801,8 @@ def tv_menu_cup(name: str):
 def tv_menu_clip(name: str):
     """Coffee Story gerçek video klipleri (Mixkit Free, ticari kullanım serbest)."""
     if name not in ("dessert", "mocktail", "lifestyle", "craft", "musteri",
-                     "espresso", "greenmocktail", "frozen", "kahverengi"):
+                     "espresso", "greenmocktail", "frozen", "kahverengi",
+                     "zanaat", "hayat"):
         raise HTTPException(404, "klip yok")
     # Prod: Vite public/ -> static/tv'ye kopyalar. Dev: public/tv veya src/assets/tv.
     for base in ("static/tv", "public/tv", "src/assets/tv"):
@@ -1049,6 +1050,13 @@ body.opening-active #logoBadge,body.opening-active #screenMeta{opacity:0}
 @keyframes stBeat2{0%,50%{opacity:0}56.7%{opacity:.94}70%{opacity:.94}75%,100%{opacity:0}}
 @keyframes stFinal{0%,78%{opacity:0}87%,100%{opacity:1}}
 @keyframes stFade{0%,95%{opacity:0}100%{opacity:1}}
+/* 🎬 HAYAT perdesi (10sn varyant) — zanaatın tamamlayıcısı; aynı görsel dil, aynı performans modu (opacity-only) */
+.story.hayat .stBeat1{animation:st2Beat1 10s ease both}
+.story.hayat .stBeat2{animation:st2Beat2 10s ease both}
+.story.hayat .stFade{animation:st2Fade 10s linear both}
+@keyframes st2Beat1{0%,20%{opacity:0}26%{opacity:.94}44%{opacity:.94}48%,100%{opacity:0}}
+@keyframes st2Beat2{0%,56%{opacity:0}62%{opacity:.94}82%{opacity:.94}86%,100%{opacity:0}}
+@keyframes st2Fade{0%,94%{opacity:0}100%{opacity:1}}
 </style></head>
 <body><div id="stage">
 <div class="bg" id="bg"><div class="drift"></div></div>
@@ -1117,19 +1125,47 @@ function buildSpotlight(opts){
   return sp;
 }
 function buildStory(data){
-  // 🎬 SİNEMATİK KAHVE HİKAYESİ — bu sahne satmaz, arzu kurar: ürün adı/fiyat/etiket bilinçli YOK
-  // (fiyat ilk kez Sahne 3 "En Çok Satılan"da görünür). dataset.name/price verilmez → priceCorner
-  // rozeti açılmaz + gösterim log'una ürün yazılmaz (sahne artık tek ürünü sahnelemiyor).
-  // Kurgu (12sn, gerçek TULİPİ çekimiyle senkron): 0-2 sessiz görüntü → "Önce koku." → "Sonra ustalık."
+  // 🎬 PERDE 1 — ZANAAT: bu sahne satmaz, arzu kurar: ürün adı/fiyat/etiket bilinçli YOK
+  // (fiyat ilk kez "En Çok Satılan"da görünür). dataset.name/price verilmez → priceCorner
+  // rozeti açılmaz + gösterim log'una ürün yazılmaz (sahne tek ürünü sahnelemiyor).
+  // Klip = /tv-menu/clip/zanaat: gerçek TULİPİ çekiminden amaca-kesilmiş 12sn kurgu
+  // (tamping → espresso süte mermer gibi akar → logolu bardak → el/bardak finali).
+  // Beat'ler kesim noktalarına oturur: 0-2 sessiz → "Önce koku." → "Sonra ustalık."
   // → logo + "Fincanında." → 0.6sn siyaha çökme.
   var st=el("div","pg story");st.dataset.t=12000;st.dataset.roles="1";st.dataset.sahne="story";
-  st.innerHTML='<video class="vid v1" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/espresso"></video>'
+  st.innerHTML='<video class="vid v1" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/zanaat"></video>'
     +'<div class="grade"></div><div class="grain"></div>'
     +'<div class="stBeat stBeat1">Önce koku.</div>'
     +'<div class="stBeat stBeat2">Sonra ustalık.</div>'
     +'<div class="stFinal"><img class="stLogo" src="/tv-menu/logo" alt=""><div class="stFinalTxt">Fincanında.</div></div>'
     +'<div class="stFade"></div>';
+  _storyVidSync(st);
   return st;
+}
+function buildStoryHayat(){
+  // 🎬 PERDE 2 — HAYAT (zanaatın tamamlayıcısı): kahve kimin için? Dünya standardı marka akışı:
+  // Vaat (hero) → Kanıt (zanaat) → Duygu (hayat) → Satış (En Çok Satılan, fiyat ilk kez orada).
+  // Klip = /tv-menu/clip/hayat: 10sn gerçek kurgu (bardağa isim yazma → kulaklıklı gülümseme →
+  // pipetli çocuk → barista gülümsemesi). Logo mührü YOK (Perde 1'de var — tekrar bağırmak olur);
+  // sahne saf insan anıyla kapanır, siyaha çöker, satış sahnesi cevabı verir.
+  var st=el("div","pg story hayat");st.dataset.t=10000;st.dataset.roles="1";st.dataset.sahne="story_hayat";
+  st.innerHTML='<video class="vid" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/hayat"></video>'
+    +'<div class="grade"></div><div class="grain"></div>'
+    +'<div class="stBeat stBeat1">Adınla başlar.</div>'
+    +'<div class="stBeat stBeat2">Gülüşünle tamamlanır.</div>'
+    +'<div class="stFade"></div>';
+  _storyVidSync(st);
+  return st;
+}
+function _storyVidSync(st){
+  // Amaca-kesilmiş kurgu kliplerinde beat-video senkronu şart. Codex'in TV bulgusu korunur:
+  // görünür sahnede currentTime seek'i decoder dur-kalk yaratıyor → seek'i sahne GİZLENİRKEN yap
+  // (takılma ekranda değilken biter), sahne açılırken sadece play() (0. kare hazır bekler).
+  try{new MutationObserver(function(){
+    var v=st.querySelector("video");if(!v)return;
+    if(st.classList.contains("on")){var p=v.play();if(p&&p.catch)p.catch(function(){});}
+    else{try{v.pause();v.currentTime=0;}catch(e){}}
+  }).observe(st,{attributes:true,attributeFilter:["class"]});}catch(e){}
 }
 function bardakImgFor(mod){
   if(mod==="ogle")return "mocktail";
@@ -1182,8 +1218,10 @@ function build(data,sig){
   // alt-şerit ticker'da zaten metin olarak dönüyor (FAZ 2), ayrı "ŞİMDİ" kartı tekrar/doluluk
   // yaratıyordu (Codex 2. göz review notu). Mevsim sinyali Ekran 2'de (referans ekranı) kalıyor.
 
-  // 2) 🎬 COFFEE STORY — sinematik marka filmi (ürünsüz/fiyatsız; fiyat ilk kez Sahne 3'te)
+  // 2) 🎬 COFFEE STORY — iki perdeli sinematik marka filmi (ürünsüz/fiyatsız; fiyat ilk kez satış sahnesinde)
+  // Perde 1 ZANAAT (12sn) + Perde 2 HAYAT (10sn) = Vaat → Kanıt → Duygu → Satış akışı
   heroPages.push(buildStory(data));
+  heroPages.push(buildStoryHayat());
 
   // 3) 🔥 EN ÇOK SATILAN SPOTLIGHT — gerçek satış lideri, Kahraman Ürün'le AYNI parlatma kurgusunda (ateş temalı)
   var ecAd=sig&&sig.en_cok;

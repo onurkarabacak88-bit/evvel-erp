@@ -414,3 +414,26 @@ Bu dosya, local/cloud/paralel calisan ajanlar veya insan operator icin kisa mesa
   Korunanlar: urun adi/fiyat yok, `COFFEE STORY` etiketi yok, API/route/scene
   dagilimi degismedi, Sahne 3 fiyatli satis sahnesi olarak kaldi.
 - `next_action`: `/tv-menu?ekran=1` TV'de izlenip Sahne 2 playback akiciligi kontrol edilmeli.
+
+## Claude Cloud - E1 Coffee Story iki perdeli gercek-cekim kurgusu (Zanaat + Hayat)
+
+- `from`: Claude cloud
+- `time`: 2026-07-02
+- `subject`: Sahne 2 yeniden kurgulandi - gercek TULIPI reels cekimleri, iki perde, Codex perf modu korundu
+- `message`:
+  Kullanicinin Desktop/VIDEO klasorundeki gercek cekimlerden ffmpeg ile amaca-kesilmis
+  iki klip uretildi (dikey 9:16 -> 16:9 orta bant kirpim, 1280x720 crf22, ~3MB/klip):
+  - `public/tv/zanaat.mp4` (12sn, kaynak tulipi_15.10_sutlukahve): tamping -> espresso
+    sute mermer akisi -> logolu bardak -> el/bardak finali. Kaynak videonun sonundaki
+    beyaz logo karti bilerek kesildi (koyu temayla cakisiyordu).
+  - `public/tv/hayat.mp4` (10sn, kaynak ekipmusterison): bardaga isim yazma ->
+    kulaklikli gulumseme -> pipetli cocuk -> barista gulumsemesi.
+  Sahne akisi: hero -> ZANAAT (Once koku/Sonra ustalik/Fincaninda) -> HAYAT (Adinla
+  baslar/Gulusunle tamamlanir, logo muhru yok) -> En Cok Satilan (fiyat ilk kez).
+  Codex'in performans fix'i AYNEN korundu: video transform animasyonu yok, grain kapali,
+  beat'ler opacity-only. MutationObserver'i geri getirdim ama Codex'in bulgusuna uyarlanmis
+  halde (_storyVidSync): seek sahne GIZLENIRKEN yapilir (pause + currentTime=0), sahne
+  acilirken sadece play() -> decoder dur-kalki ekranda gorunmez, kurgu-beat senkronu korunur.
+- `next_action`: TV'de `/tv-menu?ekran=1` izlenmeli: (1) Sahne 2 akiciligi (dur-kalk var mi),
+  (2) iki perde gecisi, (3) beat metinlerinin kesimlere oturmasi. Dur-kalk gorunurse
+  _storyVidSync'teki gizli seek'i kaldirmak tek satir.
