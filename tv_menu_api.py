@@ -685,7 +685,8 @@ def tv_signals():
     if oz:
         seritler.insert(0, oz["etiket"] + " · " + oz["mesaj"])   # özel gün şeridi en başta
     return {"saat_modu": sm, "mevsim": mv, "ozel": oz, "en_cok": en_cok, "yeni": yeni,
-            "happy_hour": hh, "top3": top3, "oneri": oneri, "seritler": seritler}
+            "happy_hour": hh, "top3": top3, "oneri": oneri, "seritler": seritler,
+            "barista_notu": (ayar.get("barista_notu") or "")}
 
 
 class AyarModel(BaseModel):
@@ -701,6 +702,7 @@ class AyarModel(BaseModel):
     pair_mesaj: Optional[str] = None
     ozel_etiket: Optional[str] = None
     ozel_mesaj: Optional[str] = None
+    barista_notu: Optional[str] = None  # E2 kategori sayfası altı tek satır uzman fısıltısı
 
 
 @router.get("/api/tv-ayar")
@@ -715,6 +717,7 @@ def tv_ayar_oku():
         "imza_urun": a.get("imza_urun") or "", "imza_aciklama": a.get("imza_aciklama") or "",
         "pair_urun": a.get("pair_urun") or "", "pair_mesaj": a.get("pair_mesaj") or "",
         "ozel_etiket": a.get("ozel_etiket") or "", "ozel_mesaj": a.get("ozel_mesaj") or "",
+        "barista_notu": a.get("barista_notu") or "",
     }
 
 
@@ -745,6 +748,8 @@ def tv_ayar_yaz(a: AyarModel):
         kv["ozel_etiket"] = a.ozel_etiket.strip()
     if a.ozel_mesaj is not None:
         kv["ozel_mesaj"] = a.ozel_mesaj.strip()
+    if a.barista_notu is not None:
+        kv["barista_notu"] = a.barista_notu.strip()
     with db() as (conn, cur):
         _ensure_tablo(cur)
         for k, v in kv.items():
@@ -901,7 +906,7 @@ body.opening-active #logoBadge,body.opening-active #screenMeta{opacity:0}
 @keyframes openingTitleIn{0%,58%{opacity:0;transform:translateY(1.8vh)}72%,100%{opacity:1;transform:none}}
 @keyframes openingSubIn{0%,70%{opacity:0;transform:translateY(1vh)}84%,100%{opacity:.92;transform:none}}
 /* mikro cross-sell şeridi — her kategori sayfasının altında tekrar eden Perfect Pair hatırlatması */
-.pairStrip{position:absolute;bottom:2.2vh;left:1.7vw;right:1.7vw;z-index:5;display:flex;align-items:center;justify-content:center;gap:.8vw;font-size:1.45vh;color:#B89B80;padding:1vh 1.2vw;border-radius:2vh;background:rgba(13,10,8,.7);border:1px solid var(--line-soft);backdrop-filter:blur(8px)}
+.pairStrip{position:absolute;bottom:2.2vh;left:1.7vw;right:1.7vw;z-index:5;display:flex;align-items:center;justify-content:center;gap:.8vw;font-size:1.45vh;color:#B89B80;padding:1vh 1.2vw;border-radius:2vh;background:rgba(13,10,8,.88);border:1px solid var(--line-soft)}
 .pairStrip b{color:#EFE6D6;font-style:normal;font-family:'Fraunces',serif}
 .pairStrip span.tag{background:#3E8E5A;color:#0e0b09;font-weight:700;padding:.25vh 1vw;border-radius:30px;font-size:.85em;text-transform:uppercase;letter-spacing:.05vw}
 .q{position:relative;z-index:2;font-style:italic;font-size:2.6vh;color:#B89B80;margin-top:2.4vh;letter-spacing:.1vw}
@@ -937,7 +942,7 @@ body.opening-active #logoBadge,body.opening-active #screenMeta{opacity:0}
 .pg.mcov.on{animation:catIn .5s ease}
 .mcov .mcovInner{position:relative;z-index:2;display:flex;flex-direction:column;align-items:center;gap:2.2vh;text-align:center}
 .mcov .mcovKick{font-size:1.5vh;letter-spacing:.55vw;color:var(--green-soft);text-transform:uppercase;opacity:0;animation:mcv1 5s ease both}
-.mcov .mcovTitle{font-family:'Fraunces',serif;font-style:italic;font-weight:400;font-size:7.2vh;color:var(--cream);line-height:1;opacity:0;animation:mcv2 5s ease both}
+.mcov .mcovTitle{font-family:'Fraunces',serif;font-style:italic;font-weight:400;font-size:6vh;color:var(--cream);line-height:1.15;max-width:80vw;opacity:0;animation:mcv2 5s ease both}
 .mcov .mcovCats{font-size:1.7vh;letter-spacing:.3vw;color:#9c8d7c;text-transform:uppercase;opacity:0;animation:mcv3 5s ease both}
 .mcov .mcovFade{position:absolute;inset:0;z-index:3;pointer-events:none;opacity:0;background:linear-gradient(180deg,transparent 30%,#000d 100%);animation:mcv4 5s linear both}
 @keyframes mcv1{0%,8%{opacity:0}20%,100%{opacity:.9}}
@@ -945,9 +950,18 @@ body.opening-active #logoBadge,body.opening-active #screenMeta{opacity:0}
 @keyframes mcv3{0%,34%{opacity:0}50%,100%{opacity:.92}}
 @keyframes mcv4{0%,88%{opacity:0}100%{opacity:.65}}
 /* ANCHORING — 8oz sönük (küçük tetikleyici), Ice/14oz aksan-yeşil+büyük (asıl hedef bedef) */
-/* fiyat hiyerarşisi: yeşil GLOW kaldırıldı (fısıltı prensibi ihlaliydi) → ana fiyat krem, sekonder taupe */
+/* fiyat hiyerarşisi (menü mühendisliği): 14oz = "mantıklı seçim" tam vurgu (krem/altın tonu),
+   ICE orta, 8oz sakin — rozet/patlama yok, sadece tipografik ağırlık */
 .pr.sec{color:#9c8d7c;font-size:.82em;font-weight:400}
-.pr.acc{color:var(--cream);font-weight:600;font-size:1.06em}
+.pr.acc{color:#f2e6cf;font-weight:600;font-size:1.08em}
+.pr.mid{color:#cfc3b2;font-size:.94em;font-weight:500}
+.hdr span:nth-child(3){color:#d8cbb8}
+/* ✦ en sevilen — kategori başına TEK ürün, Evo verisinden otomatik; küçük, italik, animasyonsuz */
+.favTag{margin-left:.7vw;font-size:.5em;letter-spacing:.06vw;color:var(--gold);font-style:italic;white-space:nowrap}
+/* Barista notu — panel altı tek satır uzman fısıltısı */
+.bNote{margin-top:1.4vh;padding:1.1vh 1vw 0;border-top:1px solid var(--line-soft);font-size:1.5vh;color:#B89B80;font-style:italic;letter-spacing:.03vw}
+.bNote b{color:#cfc3b2;font-style:normal;font-weight:500}
+.pr.d{color:#ffffff22;font-weight:400}  /* boş hücre çizgisi soluk kalır (sec/mid/acc'i ezer) */
 .heroPg{align-items:flex-start;text-align:left;justify-content:flex-end}
 .heroPg .sceneInner{position:relative;z-index:2;max-width:70vw;display:flex;flex-direction:column;align-items:flex-start}
 .heroPg .spotTag,.heroPg .q,.heroPg .brandLabel,.heroPg .musteriTag{margin-left:.4vw}
@@ -1092,15 +1106,17 @@ body.opening-active #logoBadge,body.opening-active #screenMeta{opacity:0}
 <script>
 var API="/api/tv-menu", SIG="/api/tv-signals", CACHE="tulipi_tv_menu", LAST_BUILD_KEY="";
 function el(t,c,h){var e=document.createElement(t);if(c)e.className=c;if(h!=null)e.innerHTML=h;return e;}
-function priceRow(u,three,i){
+function priceRow(u,three,i,fav){
   // koreografi: başlık 0-0.5s → satırlar 0.30s'den itibaren 70ms kademe (motion-design stagger, opacity-only)
   var dly=' style="animation-delay:'+(0.30+(i||0)*0.07).toFixed(2)+'s"';
+  var favHtml=fav?'<span class="favTag">✦ en sevilen</span>':'';
   if(three){
-    function cell(v){return '<span class="pr'+(v==null?' d':'')+'">'+(v==null?'–':v)+'</span>';}
-    return '<div class="row"'+dly+'><span class="nm">'+u.ad+(u.aciklama?'<small>'+u.aciklama+'</small>':'')+'</span>'+cell(u.f8)+cell(u.f14)+cell(u.fice)+'</div>';
+    // menü mühendisliği: 14oz tam vurgu (acc), ICE orta (mid), 8oz sakin (sec) — "mantıklı seçim" 14oz
+    function cell(v,cls){return '<span class="pr '+cls+(v==null?' d':'')+'">'+(v==null?'–':v)+'</span>';}
+    return '<div class="row"'+dly+'><span class="nm">'+u.ad+favHtml+(u.aciklama?'<small>'+u.aciklama+'</small>':'')+'</span>'+cell(u.f8,'sec')+cell(u.f14,'acc')+cell(u.fice,'mid')+'</div>';
   }
   var v=u.f8!=null?u.f8:(u.f14!=null?u.f14:u.fice);
-  return '<div class="row one"'+dly+'><span class="nm">'+u.ad+'</span><span class="pr">'+(v==null?'–':v)+'</span></div>';
+  return '<div class="row one"'+dly+'><span class="nm">'+u.ad+favHtml+'</span><span class="pr acc">'+(v==null?'–':v)+'</span></div>';
 }
 function storyProduct(data){
   if(window._encok&&window._encok.ad)return window._encok;            // günün ürünü (Evo en-çok) öncelikli
@@ -1286,17 +1302,11 @@ function build(data,sig){
     var panel=el("div","menuPanel");
     var m=el("div","menu"+(three?"":" one"));
     if(three)m.innerHTML='<div class="hdr"><span style="text-align:left"></span><span>8oz</span><span>14oz</span><span>ICE</span></div>';
-    m.innerHTML+=chunk.map(function(u,i){return priceRow(u,three,i);}).join("");
-    Array.prototype.slice.call(m.querySelectorAll(".row")).forEach(function(r){
-      var cells=r.querySelectorAll(".pr");
-      if(cells.length===1&&cells[0])cells[0].classList.add("acc");
-      if(cells.length>1){
-        if(cells[0])cells[0].classList.add("sec");
-        if(cells[1])cells[1].classList.add("acc");
-        if(cells[2])cells[2].classList.add("acc");
-      }
-    });
+    // ✦ en sevilen: kategori başına TEK ürün (Evo top3'ten, favMap) — sosyal kanıt fısıltısı
+    m.innerHTML+=chunk.map(function(u,i){return priceRow(u,three,i,favMap[k.kategori]===u.ad);}).join("");
     panel.appendChild(m);
+    // Barista notu — kahve sayfalarının altında tek satır uzman fısıltısı (panelden yönetilir)
+    if(coffeeMode&&sig&&sig.barista_notu)panel.insertAdjacentHTML("beforeend",'<div class="bNote"><b>Barista notu:</b> '+sig.barista_notu+'</div>');
     if(withPair&&pairHtml)panel.insertAdjacentHTML("beforeend",pairHtml);
     shell.appendChild(panel);
     pg.appendChild(shell);
@@ -1304,25 +1314,46 @@ function build(data,sig){
     if(/(iced|cold|so.uk)/i.test(k.kategori)){for(var i=0;i<10;i++){var s=el("span","ice");s.style.left=(8+Math.random()*84)+"%";s.style.top=(22+Math.random()*54)+"%";s.style.animationDelay=(Math.random()*4.5)+"s";pg.appendChild(s);}}
     return pg;
   }
-  // 0) 🎬 E2 MENÜ KAPAĞI — 5sn nefes sahnesi (fiyatsız): loop'a giriş ritmi, kategorileri fısıldar
+  // MENÜ MÜHENDİSLİĞİ VERİ KATMANI — top3 sıralaması: kategori içi görünmez yeniden sıralama
+  // (primacy/recency) + kategori başına TEK "✦ en sevilen" (sosyal kanıt). Kampanya hissi YOK.
+  var _rank={};if(sig&&sig.top3)sig.top3.forEach(function(it,ix){_rank[String(it.ad).toLowerCase()]=ix+1;});
+  function _satisaGoreSirala(list){
+    // kararlı bölümleme (eski TV tarayıcılarında Array.sort kararlılığı garantisiz → sort'a güvenme)
+    var tops=[],rest=[];(list||[]).forEach(function(u){if(_rank[String(u.ad).toLowerCase()])tops.push(u);else rest.push(u);});
+    tops.sort(function(a,b){return _rank[String(a.ad).toLowerCase()]-_rank[String(b.ad).toLowerCase()];});
+    return tops.concat(rest);
+  }
+  var favMap={};
+  (data.kategoriler||[]).forEach(function(k){(k.urunler||[]).forEach(function(u){
+    var r=_rank[String(u.ad).toLowerCase()];
+    if(r&&(!favMap[k.kategori]||r<_rank[String(favMap[k.kategori]).toLowerCase()]))favMap[k.kategori]=u.ad;
+  });});
+
+  // 0) 🎬 E2 MENÜ KAPAĞI — 5sn nefes sahnesi (fiyatsız): saat moduna göre karşılama fısıltısı
   var kahveKats=(data.kategoriler||[]).map(function(k){return k.kategori;}).filter(isCoffeeMenuCategory);
+  var covMod=(sig&&sig.saat_modu&&sig.saat_modu.mod)||"";
+  var covTitle=covMod==="sabah"?"Günaydın. İlk kahve burada."
+    :covMod==="ogle"?"Serin bir mola."
+    :covMod==="aksam"?"Yumuşak kapanış."
+    :"Kahve Menüsü.";
   var mcov=el("div","pg mcov");mcov.dataset.t=5000;mcov.dataset.roles="2";mcov.dataset.sahne="menu_kapak";
   mcov.innerHTML='<div class="mcovInner"><div class="mcovKick">TULİPİ</div>'
-    +'<div class="mcovTitle">Kahve Menüsü.</div>'
+    +'<div class="mcovTitle">'+covTitle+'</div>'
     +'<div class="mcovCats">'+(kahveKats.length?kahveKats.join(" · "):"Classic · Signature")+'</div></div>'
     +'<div class="mcovFade"></div>';
   ekran1Pages.push(mcov);
   var AGIRLIKLI_KAT=["Classic Coffees","Signature Coffees"];  // en çok satılan kategoriler — döngüde 2 kez görünür
   var agirlikliTekrar=[];
   (data.kategoriler||[]).forEach(function(k){
+    var urunler=_satisaGoreSirala(k.urunler);  // görünmez satış sıralaması (primacy)
     var CHUNK=8,parts=[];
-    for(var i=0;i<k.urunler.length;i+=CHUNK)parts.push(k.urunler.slice(i,i+CHUNK));
+    for(var i=0;i<urunler.length;i+=CHUNK)parts.push(urunler.slice(i,i+CHUNK));
     var coffeeRole=isCoffeeMenuCategory(k.kategori);
     parts.forEach(function(chunk,pi){
-      if(coffeeRole)ekran1Pages.push(buildKatPage(k,chunk,pi,parts.length,"2",false));
+      if(coffeeRole)ekran1Pages.push(buildKatPage(k,chunk,pi,parts.length,"2",true));  // Perfect Pair mikro şeridi E2'de de
       else ekran3Pages.push(buildKatPage(k,chunk,pi,parts.length,"3",true));
     });
-    if(coffeeRole&&AGIRLIKLI_KAT.indexOf(k.kategori)>=0&&parts.length)agirlikliTekrar.push(buildKatPage(k,parts[0],0,1,"2",false));
+    if(coffeeRole&&AGIRLIKLI_KAT.indexOf(k.kategori)>=0&&parts.length)agirlikliTekrar.push(buildKatPage(k,parts[0],0,1,"2",true));
   });
   // ÖZ-ELEŞTİRİ: kategori sayfaları eskiden eşit ağırlıklı görünüyordu (Desserts 4 ürün = Signature
   // 14 ürün, aynı 1 geçiş). En çok satılan kategoriler döngü sonunda (Top3'ten önce) bir kez daha

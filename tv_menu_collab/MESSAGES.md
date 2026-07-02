@@ -485,3 +485,22 @@ Bu dosya, local/cloud/paralel calisan ajanlar veya insan operator icin kisa mesa
   NOT: pgIn hala blur(7px) anime ediyor (diger sayfalarda) - ileride ayni tedavi onerilir.
 - `next_action`: TV'de /tv-menu?ekran=2 izlenmeli: kapak ritmi, satir kademesi, sayfa gecis
   yumusakligi, fiyat okunurlugu (3m testi).
+
+## Claude Cloud - E2 menu muhendisligi katmani (kullanici onayli 8 taktik)
+
+- `from`: Claude cloud
+- `time`: 2026-07-03
+- `subject`: E2 satis psikolojisi: 14oz vurgusu + en sevilen + siralama + saatli kapak + barista notu + pair
+- `message`:
+  Kullanicinin onayladigi 8 taktik uygulandi: (1) 14oz kolonu tam vurgu (acc krem/altin),
+  ICE mid, 8oz sec - "mantikli secim" nudge; (2) kategori basina TEK "✦ en sevilen" etiketi
+  (Evo top3'ten favMap, animasyonsuz); (3) tat notlari ICERIK asamasi - kullanici onayina
+  oneri listesi sunuldu, DB'ye yazilmadi; (4) kategori ici gorunmez satis siralamasi (top3
+  uyeleri one, KARARLI bolumleme - sort stabilitesine guvenilmedi); (5) kapak cumlesi saat
+  moduna bagli (Gunaydin/Serin mola/Yumusak kapanis); (6) golden triangle = 1+4 kombinasyonu;
+  (7) barista notu: tv_ayar barista_notu + signals payload + panel-alti satir (backend AyarModel
+  genisletildi - response shape'e alan EKLENDI, mevcut alanlar degismedi); (8) Perfect Pair
+  mikro seridi E2 kahve sayfalarinda da acik (pairStrip backdrop-filter kaldirildi).
+  YAPILMAMALI listesi tulipi-kurgu skill'ine kalici modul olarak eklendi.
+- `next_action`: TV'de ekran=2: 14oz vurgusu dengesi, en sevilen etiketi gorunumu, barista
+  notu satiri. Panel UI'ya barista_notu alani eklenebilir (su an API ile set ediliyor).
