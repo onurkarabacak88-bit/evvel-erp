@@ -807,6 +807,7 @@ def tv_menu_logo():
 def tv_menu_hero(name: str):
     # opening = Sahne 1 PNG; ozen = Sahne 2 "Özen Katmanı" still hero (SAHNE2_PAKET/01, işlenmiş JPG)
     _heroes = {"opening": ("e1_opening_hero.png", "image/png"),
+               "latte_cutout": ("e1_latte_cup_cutout.png", "image/png"),
                "ozen": ("ozen_hero.jpg", "image/jpeg"),
                "sezon_yaz": ("sezon_yaz.png", "image/png"),
                "imza_bg": ("imza_bg.jpg", "image/jpeg"),
@@ -950,6 +951,12 @@ body[data-screen="2"] #screenMeta,body[data-screen="3"] #screenMeta{display:none
 .e1HeroScene .bgvid{animation-duration:4s}
 .e1Cold .bgvid{animation-duration:5s}
 .e1Scene .bggrade{background:linear-gradient(180deg,#05030299 0,rgba(5,3,2,.32) 30%,rgba(5,3,2,.36) 66%,#050302e8 100%)}
+.e1HeroScene{background:radial-gradient(70% 46% at 50% 38%,rgba(201,164,106,.18),transparent 62%),radial-gradient(80% 64% at 48% 82%,rgba(62,142,90,.12),transparent 70%),linear-gradient(180deg,#120c08 0,#070403 100%)}
+.e1HeroScene .e1Studio{position:absolute;inset:0;z-index:0;background:linear-gradient(180deg,rgba(255,255,255,.035),transparent 26%),radial-gradient(52% 32% at 50% 72%,rgba(255,225,174,.11),transparent 70%)}
+.e1HeroScene .e1CupAura{position:absolute;z-index:1;left:50%;top:43%;width:54vw;height:54vw;max-width:42vh;max-height:42vh;transform:translate(-50%,-50%);border-radius:50%;background:radial-gradient(circle,rgba(201,164,106,.18),rgba(62,142,90,.08) 45%,transparent 72%);filter:blur(.2vh)}
+.e1HeroCup{position:absolute;z-index:2;left:50%;top:38%;width:46vw;max-width:36vh;max-height:50vh;object-fit:contain;transform:translate(-50%,-50%);filter:drop-shadow(0 2.6vh 4.6vh rgba(0,0,0,.7));opacity:0;animation:e1CupIn 4s ease both}
+.e1HeroScene .e1Block{align-items:center;text-align:center;bottom:13%;left:8vw;right:8vw}
+.e1HeroScene .e1Desc{max-width:82vw}
 .e1Block{position:absolute;z-index:3;left:7vw;right:7vw;bottom:18%;display:flex;flex-direction:column;align-items:flex-start;text-align:left;gap:1.15vh;color:var(--cream)}
 .e1HeroScene .e1Block,.e1Cold .e1Block{opacity:0;animation:e1TextIn .72s ease .45s both}
 .e1Kicker{font-size:1.45vh;letter-spacing:.34vw;color:#c9bba4;text-transform:uppercase}
@@ -960,6 +967,7 @@ body[data-screen="2"] #screenMeta,body[data-screen="3"] #screenMeta{display:none
 .e1Cold .e1Fade{animation-duration:5s}
 @keyframes e1Push{from{transform:scale(1)}to{transform:scale(1.05)}}
 @keyframes e1TextIn{from{opacity:0;transform:translateY(1vh)}to{opacity:1;transform:none}}
+@keyframes e1CupIn{0%,12%{opacity:0;transform:translate(-50%,-48%) scale(.97)}28%,100%{opacity:1;transform:translate(-50%,-50%) scale(1)}}
 @keyframes e1Fade{0%,86%{opacity:0}100%{opacity:.72}}
 /* EKRAN 3 — 12sn upsell/keşif akışı: yeni ürün → craft → sessiz öneri → tatlı eşleşmesi */
 .e3Flow{background:#070403;overflow:hidden}
@@ -1332,7 +1340,7 @@ function buildE1HeroProduct(data,sig){
   var info=e1HeroProduct(data,sig);if(!info)return null;
   var tag=(sig&&sig.en_cok)?"Bu hafta en çok seçilen":(data.imza&&data.imza.ad===info.ad)?"TULİPİ imzası":"Bugünün fincanı";
   var st=el("div","pg e1Scene e1HeroScene");st.dataset.t=4000;st.dataset.roles="1";st.dataset.sahne="e1_tek_hero";st.dataset.name=info.ad;
-  st.innerHTML='<video class="bgvid" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/craft"></video><div class="bggrade"></div>'
+  st.innerHTML='<div class="e1Studio"></div><div class="e1CupAura"></div><img class="e1HeroCup" src="/tv-menu/hero/latte_cutout" alt="">'
     +'<div class="e1Block"><div class="e1Kicker">'+tag+'</div><div class="e1Title">'+info.ad+'</div>'
     +'<div class="e1Desc">'+e1HeroNote(info)+'</div></div><div class="e1Fade"></div>';
   return st;
