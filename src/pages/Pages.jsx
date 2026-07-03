@@ -1300,6 +1300,11 @@ export function VadeliAlimlar() {
   const [kismiTarih, setKismiTarih] = useState('');
 
   const load=()=>api(`/vadeli-alimlar?durum=${gorunum}&gun=30`).then(setListe);
+  // Tedarikçi önerileri: tanımlı tedarikçiler + geçmiş vadeli kayıtlarında yazılmış isimler
+  // (datalist = seçilebilir AMA serbest yazım da mümkün — tanımlı değilse elle yazılır)
+  const [tedarikciler, setTedarikciler] = useState([]);
+  useEffect(()=>{ api('/tedarikciler').then(d=>setTedarikciler((d?.tedarikciler||[]).map(t=>t.ad).filter(Boolean))).catch(()=>{}); },[]);
+  const tedarikciOnerileri = [...new Set([...tedarikciler, ...liste.map(v=>v.tedarikci).filter(Boolean)])].sort((a,b)=>a.localeCompare(b,'tr'));
   useEffect(()=>{load();},[gorunum]);
   useEffect(() => {
     const unsub = subscribeGlobalDataRefresh(() => load());
@@ -1582,11 +1587,18 @@ export function VadeliAlimlar() {
                   {!form.vade_tarihi && <span style={{fontSize:11,color:'var(--yellow)'}}>⚠️ Zorunlu alan</span>}
                 </div>
                 <div className="form-group">
-                  <label>Tedarikçi * <span style={{fontSize:11,color:'var(--text3)'}}>— kart takibinde kullanılır</span></label>
+                  <label>Tedarikçi * <span style={{fontSize:11,color:'var(--text3)'}}>— listeden seç ya da yeni isim yaz</span></label>
                   <input value={form.tedarikci} onChange={e=>setForm({...form,tedarikci:e.target.value})}
-                    placeholder="Tedarikçi adı"
+                    list="tedarikciOnerileri"
+                    placeholder="Tedarikçi seç veya yaz…"
                     style={{borderColor: !form.tedarikci ? 'var(--yellow)' : ''}}/>
+                  <datalist id="tedarikciOnerileri">
+                    {tedarikciOnerileri.map(ad => <option key={ad} value={ad} />)}
+                  </datalist>
                   {!form.tedarikci && <span style={{fontSize:11,color:'var(--yellow)'}}>⚠️ Zorunlu alan</span>}
+                  {form.tedarikci && !tedarikciOnerileri.some(a=>a.toLowerCase()===form.tedarikci.trim().toLowerCase()) && (
+                    <span style={{fontSize:11,color:'var(--text3)'}}>✨ Yeni tedarikçi olarak kaydedilecek</span>
+                  )}
                 </div>
               </div>
             </div>
