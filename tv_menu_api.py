@@ -694,7 +694,10 @@ def tv_signals():
         pass
     seritler = []
     if en_cok:
-        seritler.append("🔥 Bugün en çok: " + en_cok)
+        # sosyal kanıt dili saat-modlu (GPT vizyonu, kullanıcı onaylı): rozetten daha canlı
+        _fav_etiket = {"sabah": "Sabahın favorisi", "ogle": "Öğlenin favorisi",
+                       "aksam": "Akşamın favorisi"}.get(sm.get("mod"), "Bugün en çok seçilen")
+        seritler.append("☕ " + _fav_etiket + ": " + en_cok)
     if yeni:
         seritler.append("✨ Yeni: " + " · ".join(yeni[:2]))
     if hh and hh.get("aktif"):
@@ -705,6 +708,9 @@ def tv_signals():
         seritler.append(mv["etiket"] + " · " + mv["oneri"])
     if oneri:
         seritler.append("💡 " + oneri["neden"] + " · " + oneri["ad"])
+    # boy yükseltme fısıltısı + marka DNA sloganı (kullanıcı onaylı, 2026-07-03)
+    seritler.append("Uzun içim sevenler 14 oz tercih ediyor.")
+    seritler.append("Zincir gibi hızlı. Zanaat gibi özenli.")
     oz = _ozel_gun(ayar)
     if oz:
         seritler.insert(0, oz["etiket"] + " · " + oz["mesaj"])   # özel gün şeridi en başta
@@ -970,6 +976,29 @@ body.opening-active #logoBadge,body.opening-active #screenMeta{opacity:0}
 .mcov .mcovTitle{font-family:'Fraunces',serif;font-style:italic;font-weight:400;font-size:6vh;color:var(--cream);line-height:1.15;max-width:80vw;opacity:0;animation:mcv2 5s ease both}
 .mcov .mcovCats{font-size:1.7vh;letter-spacing:.3vw;color:#9c8d7c;text-transform:uppercase;opacity:0;animation:mcv3 5s ease both}
 .mcov .mcovFade{position:absolute;inset:0;z-index:3;pointer-events:none;opacity:0;background:linear-gradient(180deg,transparent 30%,#000d 100%);animation:mcv4 5s linear both}
+/* 🎬 FAZ1 SATIŞ/KEŞİF KARTLARI — E1 "Günün Seçimi" (gsec) + E3 "Baristanın Sessiz Önerisi" (bsec).
+   Fiyat rampanın ödülü: İLK KEZ burada, ama bağırmaz (krem, sade — eski yeşil hap/glow YOK).
+   Halo STATİK, tüm girişler opacity-only (eski spotlight'ın halo/flo/priceSettle transformları TV yasağı). */
+.pg.pick{background:#0b0705}
+.pg.pick.on{animation:catIn .5s ease}
+.pick .pHalo{position:absolute;top:44%;left:50%;transform:translate(-50%,-50%);width:46vw;height:46vw;border-radius:50%;background:radial-gradient(circle,#1c523522,#11321f18 46%,transparent 70%)}
+.pick.bsec .pHalo{background:radial-gradient(circle,#52401c22,#32270f18 46%,transparent 70%)}
+.pick .pInner{position:relative;z-index:2;display:flex;flex-direction:column;align-items:center;text-align:center;gap:1.1vh}
+.pick .pTag{font-size:1.5vh;letter-spacing:.4vw;color:var(--green-soft);text-transform:uppercase;opacity:0;animation:pk1 9s ease both}
+.pick.bsec .pTag{color:var(--gold)}
+.pick .pCup{width:19vh;border-radius:1.4vh;box-shadow:0 1.8vh 4.5vh #000c;opacity:0;animation:pk2 9s ease both}
+.pick .pName{font-family:'Fraunces',serif;font-style:italic;font-weight:400;font-size:5.6vh;color:var(--cream);opacity:0;animation:pk2 9s ease both}
+.pick .pNote{font-size:2vh;color:#B89B80;font-style:italic;opacity:0;animation:pk3 9s ease both}
+.pick .pPrice{margin-top:1vh;font-size:3vh;font-weight:600;color:#f2e6cf;opacity:0;animation:pk4 9s ease both}
+.pick .pBridge{margin-top:1.6vh;padding-top:1.4vh;border-top:1px solid var(--line-soft);font-size:1.7vh;color:#B89B80;font-style:italic;opacity:0;animation:pk5 9s ease both}
+.pick .pBridge b{color:#cfc3b2;font-weight:500;font-style:normal}
+.pick .pFade{position:absolute;inset:0;z-index:4;pointer-events:none;opacity:0;background:linear-gradient(180deg,transparent 35%,#000d 100%);animation:pkF 9s linear both}
+@keyframes pk1{0%,4%{opacity:0}11%,100%{opacity:.92}}
+@keyframes pk2{0%,9%{opacity:0}18%,100%{opacity:1}}
+@keyframes pk3{0%,16%{opacity:0}23%,100%{opacity:.95}}
+@keyframes pk4{0%,24%{opacity:0}32%,100%{opacity:1}}
+@keyframes pk5{0%,36%{opacity:0}44%,100%{opacity:.95}}
+@keyframes pkF{0%,92%{opacity:0}100%{opacity:.6}}
 @keyframes mcv1{0%,8%{opacity:0}20%,100%{opacity:.9}}
 @keyframes mcv2{0%,18%{opacity:0}34%,100%{opacity:1}}
 @keyframes mcv3{0%,34%{opacity:0}50%,100%{opacity:.92}}
@@ -1167,6 +1196,56 @@ function findKategori(name){var r="";if(!window._tvData||!name)return r;
   (window._tvData.kategoriler||[]).forEach(function(k){(k.urunler||[]).forEach(function(u){
     if(String(u.ad).toLowerCase()===String(name).toLowerCase())r=k.kategori;});});
   return r;}
+// 🍰 YAŞAYAN TATLI-KAHVE MATRİSİ (GPT vizyonu, kullanıcı onaylı 2026-07-03) — saat moduna göre
+// eşleşme döner (7 dk'da bir aynı mod içinde alternatif). Manuel pair ayarı yerine bu birincil.
+var TATLI_MATRIS={
+  sabah:[{k:"Americano",t:"Croissant",c:"Güne sade başlayanlara."},
+         {k:"Latte",t:"Cookie",c:"Yumuşak kahvenin yanına risksiz bir dokunuş."}],
+  ogle: [{k:"Ice Latte",t:"San Sebastian",c:"Soğuk kahve, kremamsı bir eşlikçiyle daha iyi akar."},
+         {k:"Ice Americano",t:"Brownie",c:"Sert kahve, yoğun kakaoyla dengelenir."}],
+  aksam:[{k:"Flat White",t:"San Sebastian",c:"Daha yoğun kahve, daha yumuşak final."},
+         {k:"Mocha",t:"Cookie",c:"Çikolata sevenler için çift katmanlı keyif."}]
+};
+function pairSec(sig){
+  var mod=(sig&&sig.saat_modu&&sig.saat_modu.mod)||"";
+  var liste=TATLI_MATRIS[mod]||TATLI_MATRIS.ogle;
+  return liste[Math.floor(Date.now()/420000)%liste.length];
+}
+function buildGununSecimi(data,sig){
+  // 🎬 E1 SAHNE 3 — "GÜNÜN SEÇİMİ": rampanın finali, fiyat İLK KEZ burada (Vaat→Kanıt→Duygu→SATIŞ).
+  // Sosyal kanıt dili saat-modlu; alt köprü satırı matristen tatlıya bağlar (E3'e pas).
+  var ad=sig&&sig.en_cok;if(!ad)return null;
+  var fy=findPrice(ad),kat=findKategori(ad),nota="";
+  (data.kategoriler||[]).forEach(function(k){(k.urunler||[]).forEach(function(u){if(u.ad===ad&&u.aciklama)nota=u.aciklama;});});
+  var mod=(sig.saat_modu&&sig.saat_modu.mod)||"";
+  var tag=mod==="sabah"?"Sabahın favorisi":mod==="ogle"?"Öğlenin favorisi":mod==="aksam"?"Akşamın favorisi":"Bugünün seçimi";
+  var pr=pairSec(sig);
+  var st=el("div","pg pick gsec");st.dataset.t=9000;st.dataset.roles="1";st.dataset.sahne="gunun_secimi";st.dataset.name=ad;
+  st.innerHTML='<div class="pHalo"></div><div class="pInner">'
+    +'<div class="pTag">'+tag+'</div>'
+    +'<img class="pCup" src="/tv-menu/cup/'+cupShotFor(ad,kat)+'" alt="">'
+    +'<div class="pName">'+ad+'</div>'
+    +(nota?'<div class="pNote">'+nota+'</div>':'')
+    +(fy!=null?'<div class="pPrice">'+fy+' TL</div>':'')
+    +(pr?'<div class="pBridge">Yanına: <b>'+pr.t+'</b> · '+pr.c+'</div>':'')
+    +'</div><div class="pFade"></div>';
+  return st;
+}
+function buildBaristaOnerisi(sig){
+  // 🎬 E3 — "BARİSTANIN SESSİZ ÖNERİSİ": az satan ürün "itilen ürün" değil "bilenin seçimi"
+  // (öneri motoru zaten sessiz+saate uygun ürünü seçiyor; ilk kez sahnesi var).
+  var o=sig&&sig.oneri;if(!o||!o.ad)return null;
+  var fy=findPrice(o.ad),kat=findKategori(o.ad);
+  var st=el("div","pg pick bsec");st.dataset.t=9000;st.dataset.roles="3";st.dataset.sahne="barista_onerisi";st.dataset.name=o.ad;
+  st.innerHTML='<div class="pHalo"></div><div class="pInner">'
+    +'<div class="pTag">Baristanın sessiz önerisi</div>'
+    +'<img class="pCup" src="/tv-menu/cup/'+cupShotFor(o.ad,kat)+'" alt="">'
+    +'<div class="pName">'+o.ad+'</div>'
+    +'<div class="pNote">Çok bilinmez; bilenlerin seçimi.</div>'
+    +(fy!=null?'<div class="pPrice">'+fy+' TL</div>':'')
+    +'</div><div class="pFade"></div>';
+  return st;
+}
 function buildSpotlight(opts){
   // tek tip "parlatma" kurgusu: halo + bardak silüeti + video arka plan + glow fiyat — Kahraman Ürün & En Çok Satılan ortak kullanır
   var sp=el("div","pg heroPg");sp.dataset.t=opts.dur||10000;sp.dataset.roles="1";
@@ -1259,7 +1338,8 @@ function build(data,sig){
   // E1 sahne-sahne kuruluyor (kullanıcı onaylı sıra): Sahne 1 açılış hero (onaylı) →
   // 2) SAHNE 2 "ÖZEN KATMANI" (kullanıcı şartnamesiyle eklendi, 2026-07-02)
   heroPages.push(buildOzen());
-  // Sahne 3 (öne çıkanlar / sosyal kanıt) HENÜZ kurulmadı — kullanıcı şartnamesi bekleniyor.
+  // 3) 🎬 SAHNE 3 "GÜNÜN SEÇİMİ" (FAZ1, kullanıcı onaylı) — rampa tamam: fiyat ilk kez burada
+  var gsec=buildGununSecimi(data,sig);if(gsec)heroPages.push(gsec);
   var hp=heroProduct(data,sig);  // Ekran 3 craft klip çakışma kontrolü hâlâ buna bakıyor
 
   // 4.2) CRAFT MOCKTAIL — gerçek barista çekimi: jigger → süzgeç → yeşil akış (barista ustalığı, ayrı/kendi sahnesi)
@@ -1269,6 +1349,9 @@ function build(data,sig){
   craftM.innerHTML='<video class="bgvid" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/'+craftClip+'" style="opacity:.95"></video><div class="bggrade"></div>'
     +'<div class="sceneInner"><div class="spotTag">CRAFT MOCKTAIL</div><div class="comboTitle">El Yapımı, Anında Hazır</div></div>';
   ekran3Pages.push(craftM);
+
+  // 4.3) 🎬 BARİSTANIN SESSİZ ÖNERİSİ (FAZ1) — öneri motorunun ilk sahnesi (az satan → bilenin seçimi)
+  var bsec=buildBaristaOnerisi(sig);if(bsec)ekran3Pages.push(bsec);
 
   // 5) 🍰 TATLI KOMBO — Perfect Pair'i sahneler (Peak: merkez ekranın son/en güçlü sahnesi)
   // ÖZ-ELEŞTİRİ: dessert.mp4 (stok Mixkit kek videosu) tüm sistemdeki TEK kalan stok-gerçek
@@ -1296,18 +1379,24 @@ function build(data,sig){
   // "aynı şeyi iki kez söylüyor" hissi, premium değil tekrar. Tamamen kaldırıldı — spotlight zaten
   // bu işi (gerçek video+isim+fiyat) tam yapıyor, E1 akışı marka→duygu→tek ürün→kanıt olarak kalıyor.
   // Perfect Pair Kartı — ayrı/büyük (alttaki mikro-şeritten farklı, kendi sahnesi)
-  if(data.pair&&data.pair.ad){
+  // Perfect Pair kartı — yaşayan matristen (saat modlu); eski yeşil hap fiyat yerine sade krem satır
+  var prA=pairSec(sig);
+  if(prA){
+    var prTatliFy=findPrice(prA.t);
     var pairC=el("div","pg flatCard heroPg");pairC.dataset.t=7000;pairC.dataset.roles="3";
-    pairC.dataset.name=data.pair.ad;if(data.pair.fiyat!=null)pairC.dataset.price=data.pair.fiyat+" TL";pairC.dataset.sahne="pair-flat";
-    pairC.innerHTML='<div class="sceneInner"><div class="gT">Perfect Pair</div><div class="spotName" style="font-size:3.6vh;position:relative;z-index:2">'+data.pair.ad+'</div>'
-      +(data.pair.mesaj?'<div class="spotDesc" style="position:relative;z-index:2">'+data.pair.mesaj+'</div>':'')
-      +(data.pair.fiyat!=null?'<div class="spotPrice" style="position:relative;z-index:2">'+data.pair.fiyat+' TL</div>':'')+'</div>';
+    pairC.dataset.name=prA.t;pairC.dataset.sahne="pair-flat";
+    pairC.innerHTML='<div class="sceneInner"><div class="gT">Perfect Pair</div>'
+      +'<div class="spotName" style="font-size:3.6vh;position:relative;z-index:2">'+prA.k+' + '+prA.t+'</div>'
+      +'<div class="spotDesc" style="position:relative;z-index:2">'+prA.c+'</div>'
+      +(prTatliFy!=null?'<div style="position:relative;z-index:2;font-size:2.6vh;font-weight:600;color:#f2e6cf">'+prA.t+' · '+prTatliFy+' TL</div>':'')+'</div>';
     ekran3Pages.push(pairC);
   }
 
   // 6) KATEGORİLER (DESTEK EKRAN) — decision fatigue: sahne başına max 8 satır, taşan ikinci sayfaya bölünür
-  // Her sayfanın altında sabit Perfect Pair mikro-şeridi tekrar eder (cross-sell sürekli hatırlatılır)
-  var pairHtml=(data.pair&&data.pair.ad)?('<div class="pairStrip"><span class="tag">Perfect Pair</span> <b>'+data.pair.ad+'</b>'+(data.pair.mesaj?(' · '+data.pair.mesaj):'')+'</div>'):'';
+  // Perfect Pair şeridi artık YAŞAYAN MATRİSTEN (saat modlu, 7dk rotasyon); manuel data.pair yedek
+  var pairAktif=pairSec(sig);
+  var pairHtml=pairAktif?('<div class="pairStrip"><span class="tag">Perfect Pair</span> <b>'+pairAktif.k+' + '+pairAktif.t+'</b> · '+pairAktif.c+'</div>')
+    :((data.pair&&data.pair.ad)?('<div class="pairStrip"><span class="tag">Perfect Pair</span> <b>'+data.pair.ad+'</b>'+(data.pair.mesaj?(' · '+data.pair.mesaj):'')+'</div>'):'');
   // ÖZ-ELEŞTİRİ (Codex 2. göz review): "Iced & Cold" E2'de (ana kahve menüsü) yer alıyordu ama
   // kullanıcının brief'i E3'ü "upsell+SOĞUK İÇECEK+tatlı+kombin" diye tanımlıyor — soğuk kahve
   // E3'e ait, E2/E3 sınırını netleştirmek için sadece Classic+Signature kaldı (sıcak kahve omurgası).

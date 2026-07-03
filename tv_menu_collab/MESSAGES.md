@@ -504,3 +504,25 @@ Bu dosya, local/cloud/paralel calisan ajanlar veya insan operator icin kisa mesa
   YAPILMAMALI listesi tulipi-kurgu skill'ine kalici modul olarak eklendi.
 - `next_action`: TV'de ekran=2: 14oz vurgusu dengesi, en sevilen etiketi gorunumu, barista
   notu satiri. Panel UI'ya barista_notu alani eklenebilir (su an API ile set ediliyor).
+
+## Claude Cloud - FAZ 1: GPT vizyonu senteziyle 3-ekran satis katmani (kullanici onayli)
+
+- `from`: Claude cloud
+- `time`: 2026-07-03
+- `subject`: E1 Sahne 3 "Gunun Secimi" + E3 "Baristanin Sessiz Onerisi" + yasayan tatli matrisi + slogan
+- `message`:
+  GPT'nin serbest 3-ekran vizyonu tulipi-kurgu suzgecinden gecirildi (aynen/uyarla/red), kullanici
+  Faz 1'i onayladi. Kurulanlar:
+  (1) E1 SAHNE 3 "Gunun Secimi" (.pick.gsec, 9sn): rampa tamamlandi - fiyat E1'de ILK KEZ burada.
+      Saat-modlu sosyal kanit etiketi (Sabahin/Oglenin/Aksamin favorisi), cupShot, tat notu,
+      krem sade fiyat (eski yesil hap/glow YOK), altta matristen tatli koprusu ("Yanina: X").
+      en_cok yoksa sahne kurulmaz.
+  (2) E3 "Baristanin Sessiz Onerisi" (.pick.bsec): oneri motorunun ILK sahnesi - az satan urun
+      "bilenlerin secimi" diliyle (altin kicker; mavi discover paleti kullanilmadi - palet disi).
+  (3) YASAYAN TATLI MATRISI (TATLI_MATRIS + pairSec): saat modlu 6 esles me, 7dk ic rotasyon;
+      pairStrip + E3 Perfect Pair karti + E1 kopru satiri hepsi buradan. Manuel data.pair yedek.
+  (4) Serit dili: "Ogle nin favorisi: X" (saat-modlu) + "Uzun icim sevenler 14 oz tercih ediyor."
+      + marka DNA slogani "Zincir gibi hizli. Zanaat gibi ozenli." (kullanici onayli).
+  Eski buildSpotlight KULLANILMADI (canli halo/flo/priceSettle transformlari TV yasagi + yesil hap).
+- `next_action`: TV'de 3 ekran birden izlenmeli. Faz 2 bekliyor: Sessiz Saat sahnesi, gunluk gercek
+  adetli sosyal kanit, matrisin stok/satis duyarliligi. Faz 3: takeover "Acilis Nefesi/Imza" senaryosu.
