@@ -807,7 +807,8 @@ def tv_menu_logo():
 def tv_menu_hero(name: str):
     # opening = Sahne 1 PNG; ozen = Sahne 2 "Özen Katmanı" still hero (SAHNE2_PAKET/01, işlenmiş JPG)
     _heroes = {"opening": ("e1_opening_hero.png", "image/png"),
-               "ozen": ("ozen_hero.jpg", "image/jpeg")}
+               "ozen": ("ozen_hero.jpg", "image/jpeg"),
+               "sezon_yaz": ("sezon_yaz.png", "image/png")}
     if name not in _heroes:
         raise HTTPException(404, "hero yok")
     fname, mtype = _heroes[name]
@@ -999,6 +1000,31 @@ body.opening-active #logoBadge,body.opening-active #screenMeta{opacity:0}
 @keyframes pk4{0%,24%{opacity:0}32%,100%{opacity:1}}
 @keyframes pk5{0%,36%{opacity:0}44%,100%{opacity:.95}}
 @keyframes pkF{0%,92%{opacity:0}100%{opacity:.6}}
+/* 🎬 SEZON SAHNESİ (yaz: gün batımı mocktail atmosferi; fiyatsız — "kendi menünün içindeki reklam") */
+.pg.szn{background:#0b0705}
+.pg.szn.on{animation:catIn .5s ease}
+.szn .sznBg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;animation:szBg 9s ease both}
+.szn .sznShade{position:absolute;inset:0;z-index:1;background:linear-gradient(90deg,transparent 42%,#000b 100%)}
+.szn .sznTxt{position:absolute;right:7vw;bottom:30%;z-index:2;text-align:right;font-family:'Fraunces',serif;font-style:italic;font-weight:400;font-size:4.6vh;color:var(--cream);text-shadow:0 .3vh 1.8vh rgba(0,0,0,.6);opacity:0;animation:pk3 9s ease both}
+.szn .sznSub{position:absolute;right:7vw;bottom:23%;z-index:2;text-align:right;font-size:1.8vh;letter-spacing:.2vw;color:#B89B80;text-transform:uppercase;opacity:0;animation:pk5 9s ease both}
+@keyframes szBg{0%{opacity:0}8%,100%{opacity:1}}
+/* 🎬 MARKA İMZA SAHNESİ — loop kapanışı: logo + DNA sloganı (fiyatsız, 6sn nefes) */
+.pg.imza{background:#080503}
+.pg.imza.on{animation:catIn .5s ease}
+.imza .imzaInner{position:relative;z-index:2;display:flex;flex-direction:column;align-items:center;text-align:center;gap:2.6vh}
+.imza .imzaLogo{width:10vw;max-height:20vh;object-fit:contain;mix-blend-mode:screen;filter:drop-shadow(0 1vh 2.6vh #000b);opacity:0;animation:im1 6s ease both}
+.imza .imzaTxt{font-family:'Fraunces',serif;font-style:italic;font-weight:400;font-size:4.4vh;line-height:1.3;color:var(--cream);opacity:0;animation:im2 6s ease both}
+.imza .imzaTxt span{display:block}
+@keyframes im1{0%,8%{opacity:0}22%,100%{opacity:.96}}
+@keyframes im2{0%,26%{opacity:0}42%,100%{opacity:1}}
+/* 🎬 HAFTANIN FAVORİLERİ (sosyal kanıt listesi — kategori başına gerçek liderler) */
+.pick .pList{display:flex;flex-direction:column;gap:2.2vh;margin-top:1vh}
+.pick .pLi{opacity:0}
+.pick .pLi .pLiKat{font-size:1.4vh;letter-spacing:.3vw;color:#9c8d7c;text-transform:uppercase}
+.pick .pLi .pLiAd{font-family:'Fraunces',serif;font-style:italic;font-size:4vh;color:var(--cream)}
+.pick .pLi:nth-child(1){animation:pk2 9s ease both}
+.pick .pLi:nth-child(2){animation:pk3 9s ease both}
+.pick .pLi:nth-child(3){animation:pk4 9s ease both}
 @keyframes mcv1{0%,8%{opacity:0}20%,100%{opacity:.9}}
 @keyframes mcv2{0%,18%{opacity:0}34%,100%{opacity:1}}
 @keyframes mcv3{0%,34%{opacity:0}50%,100%{opacity:.92}}
@@ -1246,6 +1272,66 @@ function buildBaristaOnerisi(sig){
     +'</div><div class="pFade"></div>';
   return st;
 }
+function buildYeniUrun(data,sig){
+  // 🎬 E1 — YENİ ÜRÜN (endüstri standardı "new item" sahnesi; sig.yeni panelden işaretlenir, yoksa kurulmaz)
+  var ad=sig&&sig.yeni&&sig.yeni[0];if(!ad)return null;
+  var fy=findPrice(ad),kat=findKategori(ad),nota="";
+  (data.kategoriler||[]).forEach(function(k){(k.urunler||[]).forEach(function(u){if(u.ad===ad&&u.aciklama)nota=u.aciklama;});});
+  var st=el("div","pg pick gsec");st.dataset.t=9000;st.dataset.roles="1";st.dataset.sahne="yeni_urun";st.dataset.name=ad;
+  st.innerHTML='<div class="pHalo"></div><div class="pInner">'
+    +'<div class="pTag">✨ Yeni</div>'
+    +'<img class="pCup" src="/tv-menu/cup/'+cupShotFor(ad,kat)+'" alt="">'
+    +'<div class="pName">'+ad+'</div>'
+    +(nota?'<div class="pNote">'+nota+'</div>':'<div class="pNote">Tanışmak isteyenlere.</div>')
+    +(fy!=null?'<div class="pPrice">'+fy+' TL</div>':'')
+    +'</div><div class="pFade"></div>';
+  return st;
+}
+function buildHaftaninFavorileri(sig){
+  // 🎬 E1 — SOSYAL KANIT LİSTESİ: kategori başına GERÇEK lider (kategori_fav) — "herkes bunları seçiyor"
+  var kf=sig&&sig.kategori_fav;if(!kf)return null;
+  var sira=["Classic Coffees","Signature Coffees","Mocktails"].filter(function(k){return kf[k];});
+  if(sira.length<2)return null;
+  var st=el("div","pg pick gsec");st.dataset.t=9000;st.dataset.roles="1";st.dataset.sahne="haftanin_favorileri";
+  st.innerHTML='<div class="pHalo"></div><div class="pInner">'
+    +'<div class="pTag">Bu haftanın favorileri</div>'
+    +'<div class="pList">'+sira.map(function(k){
+      return '<div class="pLi"><div class="pLiKat">'+k+'</div><div class="pLiAd">'+kf[k]+'</div></div>';
+    }).join("")+'</div>'
+    +'<div class="pBridge">Gerçek seçimler · her gün güncellenir</div>'
+    +'</div><div class="pFade"></div>';
+  return st;
+}
+function buildSezon(sig){
+  // 🎬 E1 — SEZON SAHNESİ (yalnız yazın; kış görseli gelince kış varyantı eklenir)
+  if(!(sig&&sig.mevsim&&sig.mevsim.ad==="yaz"))return null;
+  var st=el("div","pg szn");st.dataset.t=9000;st.dataset.roles="1";st.dataset.sahne="sezon_yaz";
+  st.innerHTML='<img class="sznBg" src="/tv-menu/hero/sezon_yaz" alt="">'
+    +'<div class="sznShade"></div>'
+    +'<div class="sznTxt">Yaz burada soğuk içilir.</div>'
+    +'<div class="sznSub">Mocktail · Ice · Frozen</div>'
+    +'<div class="pFade"></div>';
+  return st;
+}
+function buildMarkaImza(){
+  // 🎬 E1 — LOOP KAPANIŞI: logo + DNA sloganı (kullanıcı onaylı) — döngü hero'ya yumuşak bağlanır
+  var st=el("div","pg imza");st.dataset.t=6000;st.dataset.roles="1";st.dataset.sahne="marka_imza";
+  st.innerHTML='<div class="imzaInner"><img class="imzaLogo" src="/tv-menu/logo" alt="">'
+    +'<div class="imzaTxt"><span>Zincir gibi hızlı.</span><span>Zanaat gibi özenli.</span></div></div>';
+  return st;
+}
+function buildSessizSaat(sig){
+  // 🎬 E3 — SAKİN SAAT (14:00-17:00): ritüel dili, indirim dili değil; matristen öğle çifti
+  var h=new Date().getHours();if(h<14||h>=17)return null;
+  var pr=(TATLI_MATRIS.ogle||[])[0];if(!pr)return null;
+  var st=el("div","pg pick bsec");st.dataset.t=9000;st.dataset.roles="3";st.dataset.sahne="sessiz_saat";
+  st.innerHTML='<div class="pHalo"></div><div class="pInner">'
+    +'<div class="pTag">Sakin saat seçimi</div>'
+    +'<div class="pName">'+pr.k+' + '+pr.t+'</div>'
+    +'<div class="pNote">Kalabalık geçmeden küçük bir kahve molası.</div>'
+    +'</div><div class="pFade"></div>';
+  return st;
+}
 function buildSpotlight(opts){
   // tek tip "parlatma" kurgusu: halo + bardak silüeti + video arka plan + glow fiyat — Kahraman Ürün & En Çok Satılan ortak kullanır
   var sp=el("div","pg heroPg");sp.dataset.t=opts.dur||10000;sp.dataset.roles="1";
@@ -1340,6 +1426,12 @@ function build(data,sig){
   heroPages.push(buildOzen());
   // 3) 🎬 SAHNE 3 "GÜNÜN SEÇİMİ" (FAZ1, kullanıcı onaylı) — rampa tamam: fiyat ilk kez burada
   var gsec=buildGununSecimi(data,sig);if(gsec)heroPages.push(gsec);
+  // 4-7) 🎬 ENDÜSTRİ NORMU SAHNE GENİŞLEMESİ (kahveci panosu: 5-7 sahne / 45-60sn döngü):
+  // Yeni Ürün (koşullu) → Haftanın Favorileri (sosyal kanıt) → Sezon (yaz) → Marka İmza (loop kapanışı)
+  var yeniPg=buildYeniUrun(data,sig);if(yeniPg)heroPages.push(yeniPg);
+  var favPg=buildHaftaninFavorileri(sig);if(favPg)heroPages.push(favPg);
+  var sznPg=buildSezon(sig);if(sznPg)heroPages.push(sznPg);
+  heroPages.push(buildMarkaImza());
   var hp=heroProduct(data,sig);  // Ekran 3 craft klip çakışma kontrolü hâlâ buna bakıyor
 
   // 4.2) CRAFT MOCKTAIL — gerçek barista çekimi: jigger → süzgeç → yeşil akış (barista ustalığı, ayrı/kendi sahnesi)
@@ -1352,6 +1444,13 @@ function build(data,sig){
 
   // 4.3) 🎬 BARİSTANIN SESSİZ ÖNERİSİ (FAZ1) — öneri motorunun ilk sahnesi (az satan → bilenin seçimi)
   var bsec=buildBaristaOnerisi(sig);if(bsec)ekran3Pages.push(bsec);
+  // 4.4) 🎬 MILKSHAKE & FROZEN atmosferi — soğuk tatlı kategorisinin görsel reklamı (gerçek frozen çekimi)
+  var frozenPg=el("div","pg heroPg");frozenPg.dataset.t=8000;frozenPg.dataset.roles="3";frozenPg.dataset.sahne="frozen_atmosfer";
+  frozenPg.innerHTML='<video class="bgvid" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/frozen" style="opacity:.92"></video><div class="bggrade"></div>'
+    +'<div class="sceneInner"><div class="spotTag">MILKSHAKE & FROZEN</div><div class="comboTitle">Yazın En Soğuk Hali</div></div>';
+  ekran3Pages.push(frozenPg);
+  // 4.5) 🎬 SAKİN SAAT (14:00-17:00 koşullu) — sessiz saatleri ritüel diliyle canlandırma
+  var ssaat=buildSessizSaat(sig);if(ssaat)ekran3Pages.push(ssaat);
 
   // 5) 🍰 TATLI KOMBO — Perfect Pair'i sahneler (Peak: merkez ekranın son/en güçlü sahnesi)
   // ÖZ-ELEŞTİRİ: dessert.mp4 (stok Mixkit kek videosu) tüm sistemdeki TEK kalan stok-gerçek

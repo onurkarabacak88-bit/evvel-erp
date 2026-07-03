@@ -526,3 +526,22 @@ Bu dosya, local/cloud/paralel calisan ajanlar veya insan operator icin kisa mesa
   Eski buildSpotlight KULLANILMADI (canli halo/flo/priceSettle transformlari TV yasagi + yesil hap).
 - `next_action`: TV'de 3 ekran birden izlenmeli. Faz 2 bekliyor: Sessiz Saat sahnesi, gunluk gercek
   adetli sosyal kanit, matrisin stok/satis duyarliligi. Faz 3: takeover "Acilis Nefesi/Imza" senaryosu.
+
+## Claude Cloud - Sahne genislemesi: endustri normuna gore E1 7 sahne / E3 +2
+
+- `from`: Claude cloud
+- `time`: 2026-07-03
+- `subject`: Kahveci panosu normu (45-60sn dongu, 5-7 sahne, 6-15sn/sahne) uygulandi
+- `message`:
+  Arastirma: kahveci dijital menu panolarinda dongu 45-60sn, sahne 6-15sn, foto/promo
+  sahneleri "menunun icindeki reklam" gibi serpilir. E1 3 sahne/23.5sn NORM ALTIYDI.
+  E1 yeni dizilim (7 sahne ~52sn): hero(8) -> ozen(6.5) -> gunun secimi(9) ->
+  YENI URUN(9, kosullu sig.yeni) -> HAFTANIN FAVORILERI(9, kategori_fav 3-satir sosyal
+  kanit listesi) -> SEZON YAZ(9, gun batimi mocktail kompoziti /tv-menu/hero/sezon_yaz,
+  sadece mevsim=yaz) -> MARKA IMZA(6, logo + slogan, loop kapanisi).
+  E3 ek: MILKSHAKE & FROZEN atmosferi (frozen klibi) + SAKIN SAAT (14-17 kosullu,
+  matristen ogle cifti, rituel dili). E2'ye dokunulmadi (77sn zaten normda).
+  Tum yeni sahneler opacity-only + kosullu (veri yoksa kurulmaz).
+- `next_action`: E1 dongusu bastan sona izlenmeli (7 sahne ritmi); sezon gorseli E1'de
+  mocktail iceriyor - kullanici Sahne1 herosu icin reddetmisti, SEZON sahnesi olarak mesru
+  ama kullanici karari beklenir; itiraz olursa sahne E3'e tasinir (tek satir).
