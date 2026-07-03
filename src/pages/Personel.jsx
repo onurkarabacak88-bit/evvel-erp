@@ -4,7 +4,7 @@ import { publishGlobalDataRefresh } from '../utils/globalDataRefresh';
 
 const BOSH = {
   ad_soyad:'', gorev:'', calisma_turu:'surekli', maas:'', saatlik_ucret:'',
-  yemek_ucreti:'', yol_ucreti:'', odeme_gunu:28, baslangic_tarihi:'', sube_id:'', notlar:'', telefon:''
+  yemek_ucreti:'', yol_ucreti:'', odeme_gunu:1, baslangic_tarihi:'', sube_id:'', notlar:'', telefon:''
 };
 
 const AY_ADLARI = ['','Ocak','Şubat','Mart','Nisan','Mayıs','Haziran',
@@ -40,8 +40,9 @@ export default function Personel() {
     api('/subeler').then(setSubeler);
   };
 
-  const loadAylik = () => {
+  const loadAylik = async () => {
     setAylikLoading(true);
+    await api(`/personel-aylik/vardiya-sync?yil=${aylikYil}&ay=${aylikAy}`, { method: 'POST' }).catch(() => null);
     api(`/personel-aylik?yil=${aylikYil}&ay=${aylikAy}`)
       .then(data => {
         setAylikData(data);
@@ -71,8 +72,6 @@ export default function Personel() {
   const toast = (m, t='green') => { setMsg({m,t}); setTimeout(()=>setMsg(null),3500); };
 
   async function kaydet() {
-    const gun = Number(form.odeme_gunu);
-
     const body = {
       ad_soyad: form.ad_soyad?.trim(),
       gorev: form.gorev || null,
@@ -81,7 +80,7 @@ export default function Personel() {
       saatlik_ucret: form.saatlik_ucret ? Number(form.saatlik_ucret) : 0,
       yemek_ucreti: form.yemek_ucreti ? Number(form.yemek_ucreti) : 0,
       yol_ucreti: form.yol_ucreti ? Number(form.yol_ucreti) : 0,
-      odeme_gunu: (gun >= 1 && gun <= 31) ? gun : 28,
+      odeme_gunu: 1,
       sube_id: form.sube_id || null,
       baslangic_tarihi: form.baslangic_tarihi ? form.baslangic_tarihi : null,
       notlar: form.notlar || null,
@@ -278,7 +277,7 @@ export default function Personel() {
                     <td style={{textAlign:'right',fontWeight:600}} className={toplam>0?'amount-neg':''}>
                       {p.calisma_turu==='surekli' ? fmt(toplam) : <span style={{color:'var(--text3)',fontSize:11}}>Saat girilince</span>}
                     </td>
-                    <td style={{fontSize:12,color:'var(--text3)'}}>Her ayın {p.odeme_gunu}. günü</td>
+                    <td style={{fontSize:12,color:'var(--text3)'}}>Dönem sonrası ayın 1. günü</td>
                     <td>
                       {!odemeDurum ? (
                         <span className="badge badge-gray">— Plan yok</span>
@@ -637,7 +636,8 @@ export default function Personel() {
                 </div>
                 <div className="form-group">
                   <label>Ödeme Günü</label>
-                  <input type="number" min={1} max={31} value={form.odeme_gunu} onChange={e=>setForm({...form,odeme_gunu:e.target.value})}/>
+                  <input type="number" min={1} max={31} value={1} disabled/>
+                  <span style={{fontSize:10,color:'var(--text3)'}}>Maaş döneminden sonraki ayın 1. günü</span>
                 </div>
                 <div className="form-group">
                   <label>Şube</label>

@@ -4367,7 +4367,7 @@ class PersonelModel(BaseModel):
     saatlik_ucret: float = 0
     yemek_ucreti: float = 0
     yol_ucreti: float = 0
-    odeme_gunu: int = 28
+    odeme_gunu: int = 1
     baslangic_tarihi: Optional[str] = None  # string olarak alıp None/boş kontrolü yapılır
     sube_id: Optional[str] = None
     notlar: Optional[str] = None
@@ -4602,12 +4602,155 @@ def maas_hesapla(p: dict, kayit: dict) -> float:
 
     return round(max(0, net), 2)
 
+
+def _personel_vardiya_kayit_dict(cur, p: dict, yil: int, ay: int, mevcut: Optional[dict] = None) -> dict:
+    mevcut = dict(mevcut or {})
+    vk = _vv2.personel_ay_vardiya_maas_kaynagi(cur, p["id"], yil, ay)
+    calisma = float(mevcut.get("calisma_saati") or 0)
+    fazla = float(mevcut.get("fazla_mesai_saat") or 0)
+
+    if (p.get("calisma_turu") or "surekli") == "surekli":
+        fazla = float(vk.get("ek_mesai_haftalik_toplam") or 0)
+    else:
+        calisma = float(vk.get("toplam_ay_saat") or 0)
+
+    return {
+        "calisma_saati": calisma,
+        "fazla_mesai_saat": fazla,
+        "bayram_mesai_saat": float(mevcut.get("bayram_mesai_saat") or 0),
+        "eksik_gun": float(mevcut.get("eksik_gun") or 0),
+        "raporlu_gun": float(mevcut.get("raporlu_gun") or 0),
+        "rapor_kesinti": bool(mevcut.get("rapor_kesinti") or False),
+        "manuel_duzeltme": float(mevcut.get("manuel_duzeltme") or 0),
+        "not_aciklama": mevcut.get("not_aciklama"),
+        "_vardiya": vk,
+    }
+
+
+def _personel_maas_odeme_tarihi(yil: int, ay: int):
+    from datetime import date
+
+    odeme_yil = yil + 1 if ay == 12 else yil
+    odeme_ay = 1 if ay == 12 else ay + 1
+    return date(odeme_yil, odeme_ay, 1)
+
+
+def _personel_odeme_plani_senkronize(cur, p: dict, yil: int, ay: int, net: float):
+    if net <= 0:
+        return None
+
+    odeme_tarihi = _personel_maas_odeme_tarihi(yil, ay)
+
+    cur.execute(
+        """
+        UPDATE odeme_plani
+        SET tarih=%s, referans_ay=DATE_TRUNC('month', %s::date),
+            odenecek_tutar=%s, asgari_tutar=%s
+        WHERE kaynak_tablo='personel' AND kaynak_id=%s
+          AND durum IN ('bekliyor','onay_bekliyor')
+          AND referans_ay = DATE_TRUNC('month', %s::date)
+        RETURNING id
+        """,
+        (odeme_tarihi, str(odeme_tarihi), net, net, p["id"], str(odeme_tarihi)),
+    )
+    row = cur.fetchone()
+    if row:
+        return row["id"]
+
+    pid = str(uuid.uuid4())
+    cur.execute(
+        """
+        INSERT INTO odeme_plani
+            (id, kart_id, tarih, referans_ay, odenecek_tutar, asgari_tutar,
+             aciklama, durum, kaynak_tablo, kaynak_id)
+        SELECT %s, NULL, %s, DATE_TRUNC('month', %s::date), %s, %s,
+               %s, 'bekliyor', 'personel', %s
+        WHERE NOT EXISTS (
+            SELECT 1 FROM odeme_plani
+            WHERE kaynak_tablo='personel' AND kaynak_id=%s
+              AND durum != 'iptal'
+              AND referans_ay = DATE_TRUNC('month', %s::date)
+        )
+        RETURNING id
+        """,
+        (
+            pid,
+            odeme_tarihi,
+            str(odeme_tarihi),
+            net,
+            net,
+            f"Personel Maaş: {p.get('ad_soyad') or ''}",
+            p["id"],
+            p["id"],
+            str(odeme_tarihi),
+        ),
+    )
+    row = cur.fetchone()
+    return (row or {}).get("id")
+
+
+def _personel_aylik_vardiya_senkronize(cur, p: dict, yil: int, ay: int) -> dict:
+    cur.execute(
+        "SELECT * FROM personel_aylik WHERE personel_id=%s AND yil=%s AND ay=%s",
+        (p["id"], yil, ay),
+    )
+    mevcut = cur.fetchone()
+    if mevcut and mevcut.get("durum") == "onaylandi":
+        net = float(mevcut.get("hesaplanan_net") or 0)
+        _personel_odeme_plani_senkronize(cur, p, yil, ay, net)
+        return {"atlandi": True, "neden": "onaylandi", "hesaplanan_net": net}
+
+    kayit = _personel_vardiya_kayit_dict(cur, p, yil, ay, mevcut)
+    vk = kayit.pop("_vardiya", {})
+    net = maas_hesapla(dict(p), kayit)
+    kid = str(uuid.uuid4())
+    cur.execute(
+        """
+        INSERT INTO personel_aylik
+            (id, personel_id, yil, ay, calisma_saati, fazla_mesai_saat, bayram_mesai_saat,
+             eksik_gun, raporlu_gun, rapor_kesinti, manuel_duzeltme,
+             not_aciklama, hesaplanan_net, durum)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'taslak')
+        ON CONFLICT (personel_id, yil, ay) DO UPDATE SET
+            calisma_saati=%s, fazla_mesai_saat=%s, bayram_mesai_saat=%s,
+            eksik_gun=%s, raporlu_gun=%s, rapor_kesinti=%s, manuel_duzeltme=%s,
+            not_aciklama=%s, hesaplanan_net=%s, durum='taslak'
+        """,
+        (
+            kid,
+            p["id"],
+            yil,
+            ay,
+            kayit["calisma_saati"],
+            kayit["fazla_mesai_saat"],
+            kayit["bayram_mesai_saat"],
+            kayit["eksik_gun"],
+            kayit["raporlu_gun"],
+            kayit["rapor_kesinti"],
+            kayit["manuel_duzeltme"],
+            kayit["not_aciklama"],
+            net,
+            kayit["calisma_saati"],
+            kayit["fazla_mesai_saat"],
+            kayit["bayram_mesai_saat"],
+            kayit["eksik_gun"],
+            kayit["raporlu_gun"],
+            kayit["rapor_kesinti"],
+            kayit["manuel_duzeltme"],
+            kayit["not_aciklama"],
+            net,
+        ),
+    )
+    plan_id = _personel_odeme_plani_senkronize(cur, p, yil, ay, net)
+    return {"atlandi": False, "hesaplanan_net": net, "vardiya": vk, "plan_id": plan_id}
+
 @app.get("/api/personel-aylik")
 def personel_aylik_listele(yil: int = None, ay: int = None):
     """Bu ay için tüm personelin aylik kayıtlarını döner. Kayıt yoksa tahmini tutar ile döner."""
     bugun = bugun_tr()
     yil = yil or bugun.year
     ay  = ay  or bugun.month
+    maas_odeme_tarihi = _personel_maas_odeme_tarihi(yil, ay)
     with db() as (conn, cur):
         cur.execute("SELECT * FROM personel WHERE aktif=TRUE ORDER BY ad_soyad")
         personeller = cur.fetchall()
@@ -4630,13 +4773,13 @@ def personel_aylik_listele(yil: int = None, ay: int = None):
                 WHERE op.kaynak_tablo='personel'
                   AND op.kaynak_id=%s
                   AND op.durum != 'iptal'
-                  AND op.referans_ay = MAKE_DATE(%s, %s, 1)
+                  AND op.referans_ay = DATE_TRUNC('month', %s::date)
                 ORDER BY
                     CASE WHEN op.durum='odendi' THEN 0 WHEN op.durum='onay_bekliyor' THEN 1 ELSE 2 END,
                     op.olusturma DESC
                 LIMIT 1
                 """,
-                (p['id'], yil, ay),
+                (p['id'], str(maas_odeme_tarihi)),
             )
             plan = cur.fetchone() or {}
             if kayit:
@@ -4652,6 +4795,11 @@ def personel_aylik_listele(yil: int = None, ay: int = None):
                 kayit = {}
 
             vk = _vv2.personel_ay_vardiya_maas_kaynagi(cur, p['id'], yil, ay)
+            if not kayit:
+                kayit = _personel_vardiya_kayit_dict(cur, p, yil, ay)
+                kayit.pop("_vardiya", None)
+                net = maas_hesapla(dict(p), kayit)
+                durum = 'vardiya_tahmini'
 
             sonuc.append({
                 'personel_id': p['id'],
@@ -4686,12 +4834,38 @@ def personel_aylik_listele(yil: int = None, ay: int = None):
         return {'yil': yil, 'ay': ay, 'personeller': sonuc,
                 'toplam_tahmini': sum(r['hesaplanan_net'] for r in sonuc)}
 
+
+@app.post("/api/personel-aylik/vardiya-sync")
+def personel_aylik_vardiya_sync(yil: int = None, ay: int = None):
+    """Secilen ayin vardiya verisini aylik maas kayitlarina ve odeme planina senkronlar."""
+    bugun = bugun_tr()
+    yil = yil or bugun.year
+    ay = ay or bugun.month
+    with db() as (conn, cur):
+        cur.execute("SELECT * FROM personel WHERE aktif=TRUE ORDER BY ad_soyad")
+        personeller = cur.fetchall()
+        sonuc = []
+        for p in personeller:
+            r = _personel_aylik_vardiya_senkronize(cur, dict(p), yil, ay)
+            sonuc.append({"personel_id": p["id"], "ad_soyad": p["ad_soyad"], **r})
+        audit(cur, 'personel_aylik', f"{yil}-{ay:02d}", 'VARDIYA_SYNC', yeni={'adet': len(sonuc)})
+    return {
+        "success": True,
+        "yil": yil,
+        "ay": ay,
+        "adet": len(sonuc),
+        "toplam_net": sum(float(r.get("hesaplanan_net") or 0) for r in sonuc),
+        "personeller": sonuc,
+    }
+
+
 @app.post("/api/personel-aylik/{pid}")
 def personel_aylik_kaydet(pid: str, body: PersonelAylikModel, yil: int = None, ay: int = None):
     """Personel aylık kaydını girer/günceller ve maaşı hesaplar."""
     bugun = bugun_tr()
     yil = yil or bugun.year
     ay  = ay  or bugun.month
+    maas_odeme_tarihi = _personel_maas_odeme_tarihi(yil, ay)
     with db() as (conn, cur):
         cur.execute("SELECT * FROM personel WHERE id=%s AND aktif=TRUE", (pid,))
         p = cur.fetchone()
@@ -4721,12 +4895,7 @@ def personel_aylik_kaydet(pid: str, body: PersonelAylikModel, yil: int = None, a
                 body.manuel_duzeltme, body.not_aciklama, net))
 
         # Bağlı ödeme planını gerçek tutarla güncelle
-        cur.execute("""
-            UPDATE odeme_plani SET odenecek_tutar=%s, asgari_tutar=%s
-            WHERE kaynak_tablo='personel' AND kaynak_id=%s
-            AND durum IN ('bekliyor','onay_bekliyor')
-            AND referans_ay = MAKE_DATE(%s, %s, 1)
-        """, (net, net, pid, yil, ay))
+        _personel_odeme_plani_senkronize(cur, dict(p), yil, ay, net)
 
         audit(cur, 'personel_aylik', kid, 'KAYDET', yeni={'net': net, 'yil': yil, 'ay': ay})
     return {"success": True, "hesaplanan_net": net}
@@ -4807,12 +4976,7 @@ def personel_aylik_vardiya_aktar(pid: str, yil: int = None, ay: int = None):
                 eksik, raporlu, rapor_k,
                 manuel, not_a, net))
 
-        cur.execute("""
-            UPDATE odeme_plani SET odenecek_tutar=%s, asgari_tutar=%s
-            WHERE kaynak_tablo='personel' AND kaynak_id=%s
-            AND durum IN ('bekliyor','onay_bekliyor')
-            AND referans_ay = MAKE_DATE(%s, %s, 1)
-        """, (net, net, pid, yil, ay))
+        _personel_odeme_plani_senkronize(cur, dict(p), yil, ay, net)
 
         audit(cur, 'personel_aylik', kid, 'VARDIYA_AKTAR', yeni={'net': net, 'yil': yil, 'ay': ay})
     return {"success": True, "hesaplanan_net": net, "vardiya": vk}
@@ -4824,6 +4988,7 @@ def personel_aylik_onayla(pid: str, yil: int = None, ay: int = None):
     bugun = bugun_tr()
     yil = yil or bugun.year
     ay  = ay  or bugun.month
+    maas_odeme_tarihi = _personel_maas_odeme_tarihi(yil, ay)
     with db() as (conn, cur):
         cur.execute("""
             UPDATE personel_aylik SET durum='onaylandi'
@@ -4838,13 +5003,13 @@ def personel_aylik_onayla(pid: str, yil: int = None, ay: int = None):
             WHERE kaynak_tablo='personel'
               AND kaynak_id=%s
               AND durum != 'iptal'
-              AND referans_ay = MAKE_DATE(%s, %s, 1)
+              AND referans_ay = DATE_TRUNC('month', %s::date)
             ORDER BY
               CASE WHEN durum='odendi' THEN 0 WHEN durum='onay_bekliyor' THEN 1 ELSE 2 END,
               olusturma DESC
             LIMIT 1
             """,
-            (pid, yil, ay),
+            (pid, str(maas_odeme_tarihi)),
         )
         plan = cur.fetchone()
     return {
@@ -4862,16 +5027,17 @@ def personel_aylik_kilit_ac(pid: str, yil: int = None, ay: int = None):
     bugun = bugun_tr()
     yil = yil or bugun.year
     ay  = ay  or bugun.month
+    maas_odeme_tarihi = _personel_maas_odeme_tarihi(yil, ay)
     with db() as (conn, cur):
         # Ödenmiş mi? Ödendiyse kilit açılmaz.
         cur.execute(
             """
             SELECT 1 FROM odeme_plani
             WHERE kaynak_tablo='personel' AND kaynak_id=%s AND durum='odendi'
-              AND referans_ay = MAKE_DATE(%s, %s, 1)
+              AND referans_ay = DATE_TRUNC('month', %s::date)
             LIMIT 1
             """,
-            (pid, yil, ay),
+            (pid, str(maas_odeme_tarihi)),
         )
         if cur.fetchone():
             raise HTTPException(
@@ -4910,12 +5076,7 @@ def personel_aylik_sil(pid: str, yil: int = None, ay: int = None):
         p = cur.fetchone()
         if p and p['calisma_turu'] == 'surekli':
             tahmini = float(p['maas'] or 0) + float(p['yemek_ucreti'] or 0) + float(p['yol_ucreti'] or 0)
-            cur.execute("""
-                UPDATE odeme_plani SET odenecek_tutar=%s, asgari_tutar=%s
-                WHERE kaynak_tablo='personel' AND kaynak_id=%s
-                AND durum IN ('bekliyor','onay_bekliyor')
-                AND referans_ay = MAKE_DATE(%s, %s, 1)
-            """, (tahmini, tahmini, pid, yil, ay))
+            _personel_odeme_plani_senkronize(cur, dict(p), yil, ay, tahmini)
         audit(cur, 'personel_aylik', str(kayit['id']), 'DELETE')
     return {"success": True}
 
@@ -5999,6 +6160,46 @@ def _vadeli_bekleyen_ayni_tedarikci(cur, tedarikci: str):
     return cur.fetchall()
 
 
+def _vadeli_aktif_plan_bul(cur, vadeli_id: str):
+    cur.execute(
+        """
+        SELECT id, odenecek_tutar
+        FROM odeme_plani
+        WHERE kaynak_tablo='vadeli_alimlar' AND kaynak_id=%s
+        AND durum IN ('bekliyor','onay_bekliyor')
+        ORDER BY olusturma DESC, tarih DESC, id DESC
+        LIMIT 1
+        """,
+        (vadeli_id,),
+    )
+    return cur.fetchone()
+
+
+def _vadeli_diger_aktif_planlari_iptal(cur, vadeli_id: str, aktif_plan_id: str):
+    cur.execute(
+        """
+        UPDATE odeme_plani SET durum='iptal'
+        WHERE kaynak_tablo='vadeli_alimlar' AND kaynak_id=%s
+        AND id<>%s
+        AND durum IN ('bekliyor','onay_bekliyor')
+        RETURNING id
+        """,
+        (vadeli_id, aktif_plan_id),
+    )
+    iptal_edilenler = cur.fetchall()
+    iptal_ids = [row["id"] for row in iptal_edilenler]
+    if iptal_ids:
+        cur.execute(
+            """
+            UPDATE onay_kuyrugu SET durum='reddedildi', onay_tarihi=NOW()
+            WHERE durum='bekliyor'
+            AND kaynak_tablo='odeme_plani'
+            AND kaynak_id = ANY(%s)
+            """,
+            (iptal_ids,),
+        )
+
+
 def _vadeli_borcla_birlestir(cur, hedef_id: str, v: VadeliAlim) -> dict:
     cur.execute(
         "SELECT * FROM vadeli_alimlar WHERE id=%s FOR UPDATE",
@@ -6028,16 +6229,7 @@ def _vadeli_borcla_birlestir(cur, hedef_id: str, v: VadeliAlim) -> dict:
         """UPDATE vadeli_alimlar SET tutar=%s, vade_tarihi=%s, aciklama=%s, tedarikci=%s WHERE id=%s""",
         (yeni_toplam, v.vade_tarihi, yeni_aciklama, ted, hedef_id),
     )
-    cur.execute(
-        """
-        SELECT id FROM odeme_plani
-        WHERE kaynak_tablo='vadeli_alimlar' AND kaynak_id=%s
-        AND durum IN ('bekliyor','onay_bekliyor')
-        LIMIT 1
-        """,
-        (hedef_id,),
-    )
-    prow = cur.fetchone()
+    prow = _vadeli_aktif_plan_bul(cur, hedef_id)
     if prow:
         pid = prow["id"]
         cur.execute(
@@ -6077,6 +6269,7 @@ def _vadeli_borcla_birlestir(cur, hedef_id: str, v: VadeliAlim) -> dict:
                 hedef_id,
             ),
         )
+    _vadeli_diger_aktif_planlari_iptal(cur, hedef_id, pid)
     cur.execute(
         """
         UPDATE onay_kuyrugu SET tutar=%s, tarih=%s
@@ -6479,15 +6672,9 @@ def vadeli_ode(vid: str, body: VadeliOdeModel = VadeliOdeModel()):
         if not v: raise HTTPException(404)
 
         # ÇİFT ÖDEME GUARD — bağlı aktif odeme_plani varsa zaten ödenmemiş demektir.
-        # Önce planı bul ki ödenecek GERÇEK tutarı (plan) belirleyelim; kart limiti de
-        # bu tutara göre kontrol edilsin (vadeli_alimlar.tutar ile ayrışırsa yanlış kontrol olmasın).
-        cur.execute("""
-            SELECT id, odenecek_tutar FROM odeme_plani
-            WHERE kaynak_tablo='vadeli_alimlar' AND kaynak_id=%s
-            AND durum IN ('bekliyor','onay_bekliyor')
-            LIMIT 1
-        """, (vid,))
-        aktif_plan = cur.fetchone()
+        # Önce planı bul ki ödenecek gerçek tutarı (plan) belirleyelim; kart limiti de
+        # bu tutara göre kontrol edilsin.
+        aktif_plan = _vadeli_aktif_plan_bul(cur, vid)
         if not aktif_plan:
             odenen = vadeli_kasadan_odenen_toplam(cur, vid)
             if odenen >= float(v['tutar']):
@@ -6513,6 +6700,7 @@ def vadeli_ode(vid: str, body: VadeliOdeModel = VadeliOdeModel()):
             plan = cur.fetchone()
         if not plan:
             raise HTTPException(400, "Bu vadeli alım için ödeme planı bulunamadı")
+        _vadeli_diger_aktif_planlari_iptal(cur, vid, plan["id"])
 
         bugun = str(bugun_tr())
         tutar = float(plan['odenecek_tutar'])  # vadeli_alimlar.tutar değil, planın tutarı
@@ -6596,13 +6784,7 @@ def vadeli_kismi_ode(vid: str, body: KismiOdeModel):
                 raise HTTPException(400, f"Kart limiti yetersiz. Kalan: {kalan_limit:,.0f} ₺")
 
         # Bağlı aktif odeme_plani'nı bul — yoksa zaten ödenmiş demektir
-        cur.execute("""
-            SELECT id, odenecek_tutar FROM odeme_plani
-            WHERE kaynak_tablo='vadeli_alimlar' AND kaynak_id=%s
-            AND durum IN ('bekliyor','onay_bekliyor')
-            LIMIT 1
-        """, (vid,))
-        plan = cur.fetchone()
+        plan = _vadeli_aktif_plan_bul(cur, vid)
         if not plan:
             raise HTTPException(400, "Bu vadeli alım için aktif ödeme planı bulunamadı — zaten ödenmiş olabilir.")
 
@@ -7455,7 +7637,7 @@ async def excel_import(dosya: UploadFile = File(...)):
                                  float(d.get('maas') or 0),
                                  float(d.get('yemek_ucreti') or 0),
                                  float(d.get('yol_ucreti') or 0),
-                                 int(d.get('odeme_gunu') or 28), sube_id))
+                                 int(d.get('odeme_gunu') or 1), sube_id))
                             eklenen += 1
 
                         elif sn == 'sabit_giderler':
@@ -7803,12 +7985,70 @@ def kismi_odeme_yap(oid: str, body: KismiOdeModel):
 
         toplam = float(plan['odenecek_tutar'])
         odenen = body.odenen_tutar
-        kalan  = toplam - odenen
+        kaynak = plan.get('kaynak_tablo') or ''
 
         if odenen <= 0:
             raise HTTPException(400, "Ödenen tutar sıfırdan büyük olmalı")
-        if odenen >= toplam:
+        if odenen > toplam:
+            if kaynak == 'vadeli_alimlar':
+                raise HTTPException(400, "Odenen tutar kalan borctan buyuk olamaz")
             raise HTTPException(400, "Tam ödeme için normal ödeme ekranını kullanın")
+        bugun = str(bugun_tr())
+
+        if odenen >= toplam:
+            if kaynak == 'vadeli_alimlar' and plan.get('kaynak_id'):
+                vid = plan['kaynak_id']
+                _vadeli_diger_aktif_planlari_iptal(cur, vid, oid)
+
+                if getattr(body, 'odeme_yontemi', 'nakit') == 'kart' and getattr(body, 'kart_id', None):
+                    hid = str(uuid.uuid4())
+                    cur.execute("""
+                        INSERT INTO kart_hareketleri
+                            (id, kart_id, tarih, islem_turu, tutar, taksit_sayisi, aciklama, kaynak_id, kaynak_tablo)
+                        VALUES (%s, %s, %s, 'HARCAMA', %s, 1, %s, %s, 'vadeli_alimlar')
+                    """, (
+                        hid,
+                        body.kart_id,
+                        bugun,
+                        toplam,
+                        f"Vadeli alÄ±m kapanÄ±ÅŸ: {plan['aciklama']} ({int(toplam):,} â‚º)",
+                        vid,
+                    ))
+                    audit(cur, 'kart_hareketleri', hid, 'VADELI_KART_KAPANIS')
+                    kart_plan_guncelle_tx(cur)
+                else:
+                    insert_kasa_hareketi(
+                        cur,
+                        bugun,
+                        'VADELI_ODEME',
+                        -abs(toplam),
+                        f"Vadeli alÄ±m kapanÄ±ÅŸ: {plan['aciklama']}",
+                        'vadeli_alimlar',
+                        vid,
+                        oid,
+                        'KISMI_ODE_KAPANIS',
+                    )
+
+                cur.execute(
+                    "UPDATE odeme_plani SET durum='odendi', odeme_tarihi=%s, odenen_tutar=%s WHERE id=%s",
+                    (bugun, toplam, oid),
+                )
+                cur.execute("""
+                    UPDATE onay_kuyrugu SET durum='onaylandi', onay_tarihi=NOW()
+                    WHERE durum NOT IN ('onaylandi','reddedildi')
+                    AND (kaynak_id=%s OR kaynak_id=%s)
+                """, (oid, vid))
+                vadeli_alim_kapat(cur, vid, bugun)
+                audit(cur, 'odeme_plani', oid, 'KISMI_ODE_KAPANIS',
+                      eski={'tutar': toplam}, yeni={'odenen': toplam, 'kalan': 0})
+                uyari_cache_clear()
+                return {"success": True, "odenen": toplam, "kalan": 0, "yeni_plan_id": None, "kapandi": True}
+
+            if kaynak != 'vadeli_alimlar':
+                raise HTTPException(400, "Tam ödeme için normal ödeme ekranını kullanın")
+            raise HTTPException(400, "Odenen tutar kalan borctan buyuk olamaz")
+
+        kalan = toplam - odenen
         if kalan <= 0:
             raise HTTPException(400, "Kalan tutar hesaplanamadı")
 
@@ -7931,6 +8171,8 @@ def kismi_odeme_yap(oid: str, body: KismiOdeModel):
         if not is_kart_plan:
             yeni_referans_ay = str(body.kalan_vade_tarihi)  # DATE_TRUNC('month') DB'de yapılır
             yeni_id = str(uuid.uuid4())
+            if kaynak == 'vadeli_alimlar' and plan.get('kaynak_id'):
+                _vadeli_diger_aktif_planlari_iptal(cur, plan['kaynak_id'], oid)
             cur.execute("""
                 INSERT INTO odeme_plani
                     (id, kart_id, tarih, referans_ay, odenecek_tutar, asgari_tutar, aciklama, durum, kaynak_tablo, kaynak_id)
@@ -7945,6 +8187,8 @@ def kismi_odeme_yap(oid: str, body: KismiOdeModel):
                 plan.get('kaynak_tablo'),
                 plan.get('kaynak_id')
             ))
+            if kaynak == 'vadeli_alimlar' and plan.get('kaynak_id'):
+                _vadeli_diger_aktif_planlari_iptal(cur, plan['kaynak_id'], yeni_id)
 
         # Nakit kısmi ödeme kart_id'li planda ise kart borcunu düşür
         if plan.get('kart_id') and odenen > 0 and not (

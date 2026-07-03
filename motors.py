@@ -595,18 +595,17 @@ def aylik_odeme_plani_uret(yil=None, ay=None):
 
         # 2. PERSONEL MAAŞLARI (Sürekli + Part-time)
         cur.execute("SELECT * FROM personel WHERE aktif=TRUE")
+        maas_donem_yil = yil - 1 if ay == 1 else yil
+        maas_donem_ay = 12 if ay == 1 else ay - 1
         for p in cur.fetchall():
-            odeme_gun = p['odeme_gunu'] or 28
-            import calendar
-            son_gun = calendar.monthrange(yil, ay)[1]
-            odeme_gun = min(odeme_gun, son_gun)
-            odeme_tarihi = date(yil, ay, odeme_gun)
+            odeme_tarihi = date(yil, ay, 1)
 
-            # Bu ay personel_aylik kaydı var mı? Varsa gerçek tutarı kullan
+            # Maaşlar dönem kapandıktan sonraki ayın 1'inde ödenir.
+            # Örn: Haziran maaşı -> 1 Temmuz ödeme planı.
             cur.execute("""
                 SELECT hesaplanan_net FROM personel_aylik
                 WHERE personel_id=%s AND yil=%s AND ay=%s
-            """, (p['id'], yil, ay))
+            """, (p['id'], maas_donem_yil, maas_donem_ay))
             aylik_kayit = cur.fetchone()
 
             if aylik_kayit:

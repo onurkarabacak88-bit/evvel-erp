@@ -450,25 +450,33 @@ export default function Panel({ onNavigate }) {
     finally { setLoadingBtn(false); }
   }
 
-  async function kismiOdemeOnayla() {
+  async function kismiOdemeOnayla(odemeYontemiOverride = null) {
     if (loadingBtn || !kismiTutar || !kismiTarih) return;
+    const secilenYontem = odemeYontemiOverride || kismiYontemi;
     const odenen = parseFloat(kismiTutar);
-    if (isNaN(odenen) || odenen <= 0 || odenen >= kismiModal.toplam) {
+    const toplam = Number(kismiModal.toplam || 0);
+    const vadeliTamKapama = kismiModal.vadeli && odenen >= toplam;
+    if (isNaN(odenen) || odenen <= 0 || odenen > toplam || (!kismiModal.vadeli && odenen >= toplam)) {
       toast('Tutar 0 ile toplam borç arasında olmalı', 'red'); return;
+    }
+    if (secilenYontem === 'kart' && !kismiSeciliKartId) {
+      toast('Kart seçmelisiniz', 'red'); return;
     }
     setLoadingBtn(true);
     try {
-      await api(`/odeme-plani/${kismiModal.odemeId}/kismi-ode`, {
+      const sonuc = await api(`/odeme-plani/${kismiModal.odemeId}/kismi-ode`, {
         method: 'POST',
         body: {
           odenen_tutar: odenen,
           kalan_vade_tarihi: kismiTarih,
-          odeme_yontemi: kismiYontemi,
-          kart_id: kismiYontemi === 'kart' ? kismiSeciliKartId : null
+          odeme_yontemi: secilenYontem,
+          kart_id: secilenYontem === 'kart' ? kismiSeciliKartId : null
         }
       });
-      const kalan = kismiModal.toplam - odenen;
-      const mesaj = kismiYontemi === 'kart'
+      const kalan = Math.max(0, toplam - odenen);
+      const mesaj = sonuc?.kapandi || vadeliTamKapama
+        ? `${odenen.toLocaleString('tr-TR')} ₺ ödendi, vadeli borç kapandı`
+        : secilenYontem === 'kart'
         ? `${odenen.toLocaleString('tr-TR')} ₺ karta eklendi, ${kalan.toLocaleString('tr-TR')} ₺ yeni vadeye aktarıldı`
         : `${odenen.toLocaleString('tr-TR')} ₺ ödendi, ${kalan.toLocaleString('tr-TR')} ₺ ${new Date(kismiTarih).toLocaleDateString('tr-TR')} tarihine aktarıldı`;
       toast(mesaj);
@@ -2516,13 +2524,13 @@ export default function Panel({ onNavigate }) {
               {/* ADIM 2: Yöntem seç — sadece vadeli alım ise */}
               {kismiAdim === 2 && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                  <button className="btn btn-ghost" style={{ textAlign: 'left', padding: '14px 16px', border: '2px solid var(--border)', borderRadius: 8 }}
-                    onClick={() => { setKismiYontemi('nakit'); kismiOdemeOnayla(); }}>
+                  <button className="btn btn-ghost" disabled={loadingBtn} style={{ textAlign: 'left', padding: '14px 16px', border: '2px solid var(--border)', borderRadius: 8 }}
+                    onClick={() => { setKismiYontemi('nakit'); kismiOdemeOnayla('nakit'); }}>
                     <div style={{ fontWeight: 600, marginBottom: 3 }}>Nakit / Havale</div>
                     <div style={{ fontSize: 12, color: 'var(--text3)' }}>Kasadan düşer, ledger'a yansır</div>
                   </button>
-                  <button className="btn btn-ghost" style={{ textAlign: 'left', padding: '14px 16px', border: '2px solid var(--border)', borderRadius: 8 }}
-                    onClick={async () => { setKismiYontemi('kart'); setKismiAdim(3); await kismiKartYukle(kismiModal.odemeId); }}>
+                  <button className="btn btn-ghost" disabled={loadingBtn} style={{ textAlign: 'left', padding: '14px 16px', border: '2px solid var(--border)', borderRadius: 8 }}
+                    onClick={async () => { if (loadingBtn) return; setKismiYontemi('kart'); setKismiAdim(3); await kismiKartYukle(kismiModal.odemeId); }}>
                     <div style={{ fontWeight: 600, marginBottom: 3 }}>Kredi Kartı</div>
                     <div style={{ fontSize: 12, color: 'var(--text3)' }}>Kasaya yansımaz — kart borcuna eklenir</div>
                   </button>
@@ -2542,12 +2550,13 @@ export default function Panel({ onNavigate }) {
             </div>
 
             <div className="modal-footer">
-              <button className="btn btn-secondary" onClick={() => setKismiModal(null)}>İptal</button>
+              <button className="btn btn-secondary" disabled={loadingBtn} onClick={() => setKismiModal(null)}>İptal</button>
               {kismiAdim === 1 && (
                 <button className="btn btn-primary" disabled={loadingBtn || !kismiTutar || !kismiTarih}
                   onClick={() => {
                     const odenen = parseFloat(kismiTutar);
-                    if (odenen <= 0 || odenen >= kismiModal.toplam) { toast('Tutar 0 ile toplam borç arasında olmalı', 'red'); return; }
+                    const toplam = Number(kismiModal.toplam || 0);
+                    if (odenen <= 0 || odenen > toplam || (!kismiModal.vadeli && odenen >= toplam)) { toast('Tutar 0 ile toplam borç arasında olmalı', 'red'); return; }
                     // Vadeli alımsa yöntem seç, değilse direkt nakit
                     if (kismiModal.vadeli) setKismiAdim(2);
                     else kismiOdemeOnayla();
@@ -2557,8 +2566,8 @@ export default function Panel({ onNavigate }) {
               )}
               {kismiAdim === 3 && (
                 <button className="btn btn-primary" disabled={loadingBtn || !kismiSeciliKartId}
-                  onClick={kismiOdemeOnayla}>
-                  ✓ Uygula
+                  onClick={() => kismiOdemeOnayla('kart')}>
+                  {loadingBtn ? 'Uygulanıyor...' : '✓ Uygula'}
                 </button>
               )}
             </div>

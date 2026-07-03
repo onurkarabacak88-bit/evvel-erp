@@ -1676,7 +1676,7 @@ def init_db():
                 saatlik_ucret   NUMERIC(14,2),
                 yemek_ucreti    NUMERIC(14,2) NOT NULL DEFAULT 0,
                 yol_ucreti      NUMERIC(14,2) NOT NULL DEFAULT 0,
-                odeme_gunu      INT NOT NULL DEFAULT 28,
+                odeme_gunu      INT NOT NULL DEFAULT 1,
                 baslangic_tarihi DATE,
                 cikis_tarihi    DATE,
                 sube_id         TEXT REFERENCES subeler(id),
@@ -1691,6 +1691,7 @@ def init_db():
                 olusturma       TIMESTAMP NOT NULL DEFAULT NOW()
             )
         """)
+        cur.execute("ALTER TABLE personel ALTER COLUMN odeme_gunu SET DEFAULT 1")
         cur.execute("""
             DO $$ BEGIN
                 IF NOT EXISTS (SELECT 1 FROM information_schema.columns
