@@ -7968,14 +7968,14 @@ def odeme_ertele(oid: str, yeni_tarih: Optional[date] = None):
         mevcut = o["tarih"]
         yeni = yeni_tarih or (mevcut + timedelta(days=4))
 
-        # Aynı gün / geçmişe erteleme engeli
-        diffGun = (yeni - mevcut).days
-        if diffGun <= 0:
-            raise HTTPException(400, "Aynı güne veya geçmişe erteleme yapılamaz")
-
-        # 1 haftaya kadar erteleme: sistem otomatik olarak +4 gün yapar
-        if diffGun <= 7:
-            yeni = mevcut + timedelta(days=4)
+        # KURAL (kullanıcı, 2026-07-03): vade HER YÖNE değiştirilebilir (öne çekme dahil).
+        # Tek sınır: bugünden geriye atılamaz (defter/simülasyon bozulmasın).
+        # Eski "≤7 güne zorla +4" dayatması KALDIRILDI (FAZ0 bulgu #7 çözüldü) —
+        # kullanıcının seçtiği tarih aynen uygulanır.
+        if yeni < bugun_tr():
+            raise HTTPException(400, "Vade bugünden geriye alınamaz")
+        if yeni == mevcut:
+            raise HTTPException(400, "Tarih değişmedi — mevcut vade zaten bu")
         # Ödeme planı tarihini güncelle
         cur.execute("UPDATE odeme_plani SET tarih=%s WHERE id=%s", (yeni, oid))
         # Onay kuyruğundaki tarihi de güncelle — yeni kayıt açma

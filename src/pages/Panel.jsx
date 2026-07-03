@@ -403,48 +403,24 @@ export default function Panel({ onNavigate }) {
     if (loadingBtn || !erteleTarih) return;
     setLoadingBtn(true);
     try {
-      const mevcut = new Date(erteleModal?.mevcutTarih);
-      const secilen = new Date(erteleTarih);
-      mevcut.setHours(12, 0, 0, 0);
-      secilen.setHours(12, 0, 0, 0);
-      const diffGun = Math.round((secilen.getTime() - mevcut.getTime()) / 86400000);
-
-      if (diffGun <= 0) {
-        toast('Aynı güne erteleme yapılamaz', 'red');
+      // KURAL (2026-07-03): vade HER YÖNE değiştirilebilir (öne çekme dahil);
+      // tek sınır bugünden geriye atılamaz. Eski "+4 gün" dayatması kaldırıldı.
+      const bugunISO = new Date().toISOString().split('T')[0];
+      if (erteleTarih < bugunISO) {
+        toast('Vade bugünden geriye alınamaz', 'red');
         return;
       }
-
-      let hedefTarih = erteleTarih;
-      if (diffGun <= 7) {
-        hedefTarih = new Date(erteleModal.mevcutTarih);
-        hedefTarih.setDate(hedefTarih.getDate() + 4);
-        hedefTarih = hedefTarih.toISOString().split('T')[0];
-
-        setLoadingBtn(false);
-        setOnayModal({
-          baslik: 'Erteleme Onayı',
-          mesaj: `Seçilen tarih çok yakın. Ödeme otomatik olarak 4 gün sonraya (${new Date(hedefTarih).toLocaleDateString('tr-TR')}) ertelenecek.`,
-          onOnayla: async () => {
-            setOnayModal(null);
-            setLoadingBtn(true);
-            try {
-              const res2 = await api(`/odeme-plani/${erteleModal.odemeId}/ertele?yeni_tarih=${hedefTarih}`, { method: 'POST' });
-              const yeni = res2?.yeni_tarih || hedefTarih;
-              toast(`Ödeme ${new Date(yeni).toLocaleDateString('tr-TR')} tarihine ertelendi`);
-              setErteleModal(null); setErteleTarih(''); load();
-            } catch (e2) { toast(e2.message, 'red'); }
-            finally { setLoadingBtn(false); }
-          },
-        });
+      if (erteleTarih === String(erteleModal?.mevcutTarih || '').slice(0, 10)) {
+        toast('Tarih değişmedi — mevcut vade zaten bu', 'yellow');
         return;
       }
 
       const res = await api(
-        `/odeme-plani/${erteleModal.odemeId}/ertele?yeni_tarih=${hedefTarih}`,
+        `/odeme-plani/${erteleModal.odemeId}/ertele?yeni_tarih=${erteleTarih}`,
         { method: 'POST' }
       );
-      const yeni = res?.yeni_tarih || hedefTarih;
-      toast(`Ödeme ${new Date(yeni).toLocaleDateString('tr-TR')} tarihine ertelendi`);
+      const yeni = res?.yeni_tarih || erteleTarih;
+      toast(`Vade ${new Date(yeni).toLocaleDateString('tr-TR')} olarak güncellendi`);
       setErteleModal(null); setErteleTarih(''); load();
     } catch (e) { toast(e.message, 'red'); }
     finally { setLoadingBtn(false); }
@@ -2443,7 +2419,7 @@ export default function Panel({ onNavigate }) {
         <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setErteleModal(null)}>
           <div className="modal" style={{ maxWidth: 400 }}>
             <div className="modal-header">
-              <h3>⏳ Ödeme Ertele</h3>
+              <h3>📅 Vade Değiştir</h3>
               <button className="modal-close" onClick={() => setErteleModal(null)}>✕</button>
             </div>
             <div className="modal-body">
@@ -2458,16 +2434,7 @@ export default function Panel({ onNavigate }) {
                 <input
                   type="date"
                   value={erteleTarih}
-                  min={(() => {
-                    try {
-                      if (!erteleModal?.mevcutTarih) return new Date().toISOString().split('T')[0];
-                      const d = new Date(erteleModal.mevcutTarih);
-                      d.setDate(d.getDate() + 1); // aynı gün seçimlerini UI'da da engelle
-                      return d.toISOString().split('T')[0];
-                    } catch {
-                      return new Date().toISOString().split('T')[0];
-                    }
-                  })()}
+                  min={new Date().toISOString().split('T')[0]} /* vade her yöne serbest — tek sınır: bugünden geriye yasak */
                   onChange={e => setErteleTarih(e.target.value)}
                   autoFocus
                 />
