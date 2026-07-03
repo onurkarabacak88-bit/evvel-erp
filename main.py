@@ -4484,12 +4484,16 @@ def personel_cikis(pid: str, neden: str = ""):
     with db() as (conn, cur):
         cur.execute("UPDATE personel SET aktif=FALSE, cikis_tarihi=%s WHERE id=%s",
             (str(bugun_tr()), pid))
-        # Bekleyen maaş planlarını iptal et — simülasyondan çıksın
+        # KURAL (2026-07-03): "Dönem hakedişi aktiflikten bağımsızdır."
+        # Sadece ÇALIŞILMAMIŞ (gelecek dönem) planlar iptal edilir — simülasyondan çıksın.
+        # Çalışılan dönemin (çıkış ayı dahil, kısmi hakediş) planı KALIR: ay sonunda
+        # kasadan doğru oranda ödenir, ödendikten sonra listeden doğal düşer.
         cur.execute("""
             UPDATE odeme_plani SET durum='iptal'
             WHERE kaynak_tablo='personel' AND kaynak_id=%s
             AND durum IN ('bekliyor','onay_bekliyor')
-        """, (pid,))
+            AND referans_ay > DATE_TRUNC('month', %s::date)
+        """, (pid, str(bugun_tr())))
         cur.execute("""
             UPDATE onay_kuyrugu SET durum='reddedildi'
             WHERE kaynak_tablo='personel' AND kaynak_id=%s
@@ -4752,10 +4756,23 @@ def personel_aylik_listele(yil: int = None, ay: int = None):
     ay  = ay  or bugun.month
     maas_odeme_tarihi = _personel_maas_odeme_tarihi(yil, ay)
     with db() as (conn, cur):
-        cur.execute("SELECT * FROM personel WHERE aktif=TRUE ORDER BY ad_soyad")
+        # KURAL: "Dönem hakedişi aktiflikten bağımsızdır" — ayrılan personel, çıkış tarihi bu
+        # dönemle kesişiyorsa maaş ekranında KALIR (son dönem hakedişi görünür/ödenir).
+        cur.execute("""SELECT * FROM personel
+                       WHERE aktif=TRUE
+                          OR (cikis_tarihi IS NOT NULL AND cikis_tarihi >= MAKE_DATE(%s,%s,1))
+                       ORDER BY ad_soyad""", (yil, ay))
         personeller = cur.fetchall()
+        import calendar as _cal
+        _son_gun = _cal.monthrange(yil, ay)[1]
         sonuc = []
         for p in personeller:
+            # dönem içi çalışma aralığı (başlangıç/çıkış kırpması)
+            _d1, _d2 = date(yil, ay, 1), date(yil, ay, _son_gun)
+            _eff1 = max(_d1, p['baslangic_tarihi']) if p.get('baslangic_tarihi') else _d1
+            _eff2 = min(_d2, p['cikis_tarihi']) if p.get('cikis_tarihi') else _d2
+            if _eff1 > _eff2:
+                continue  # bu dönemde hiç çalışmamış
             cur.execute("""
                 SELECT * FROM personel_aylik
                 WHERE personel_id=%s AND yil=%s AND ay=%s
@@ -4786,9 +4803,12 @@ def personel_aylik_listele(yil: int = None, ay: int = None):
                 net = float(kayit['hesaplanan_net'] or 0)
                 durum = kayit['durum']
             else:
-                # Tahmini hesap
+                # Tahmini hesap — ay içinde başlayan/ayrılan için gün oranlı
                 if p['calisma_turu'] == 'surekli':
                     net = float(p['maas'] or 0) + float(p['yemek_ucreti'] or 0) + float(p['yol_ucreti'] or 0)
+                    _gun = (_eff2 - _eff1).days + 1
+                    if _gun < _son_gun:
+                        net = round(net * _gun / _son_gun, 2)
                 else:
                     net = 0  # Part-time saat girilmeden tahmin yapılamaz
                 durum = 'tahmini'
@@ -4830,6 +4850,8 @@ def personel_aylik_listele(yil: int = None, ay: int = None):
                 'vardiya_ay_toplam_saat': vk.get('toplam_ay_saat', 0),
                 'vardiya_ek_mesai_saat': vk.get('ek_mesai_haftalik_toplam', 0),
                 'vardiya_haftalik_limit': vk.get('haftalik_limit', 0),
+                'aktif': bool(p.get('aktif')),
+                'cikis_tarihi': str(p['cikis_tarihi']) if p.get('cikis_tarihi') else None,
             })
         return {'yil': yil, 'ay': ay, 'personeller': sonuc,
                 'toplam_tahmini': sum(r['hesaplanan_net'] for r in sonuc)}
@@ -4867,7 +4889,8 @@ def personel_aylik_kaydet(pid: str, body: PersonelAylikModel, yil: int = None, a
     ay  = ay  or bugun.month
     maas_odeme_tarihi = _personel_maas_odeme_tarihi(yil, ay)
     with db() as (conn, cur):
-        cur.execute("SELECT * FROM personel WHERE id=%s AND aktif=TRUE", (pid,))
+        # aktif şartı YOK: ayrılan personelin son dönem hakedişi girilebilmeli (dönem hakedişi kuralı)
+        cur.execute("SELECT * FROM personel WHERE id=%s", (pid,))
         p = cur.fetchone()
         if not p: raise HTTPException(404, "Personel bulunamadı")
         _maas_kayit_kilit_guard(cur, pid, yil, ay)
@@ -4914,7 +4937,9 @@ def personel_aylik_vardiya_aktar(pid: str, yil: int = None, ay: int = None):
     yil = yil or bugun.year
     ay = ay or bugun.month
     with db() as (conn, cur):
-        cur.execute("SELECT * FROM personel WHERE id=%s AND aktif=TRUE", (pid,))
+        # aktif şartı YOK: ayrılanın son ayı vardiyadan pro-rata aktarılabilmeli
+        # (personel_calisma_araligi çıkış tarihinden sonrasını zaten kırpar)
+        cur.execute("SELECT * FROM personel WHERE id=%s", (pid,))
         p = cur.fetchone()
         if not p:
             raise HTTPException(404, "Personel bulunamadı")

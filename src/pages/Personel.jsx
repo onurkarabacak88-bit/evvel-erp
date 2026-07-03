@@ -386,6 +386,12 @@ export default function Personel() {
                           style={{marginLeft:8,fontSize:10}}>
                           {p.calisma_turu==='surekli'?'Sürekli':'Part-Time'}
                         </span>
+                        {p.aktif === false && (
+                          <span className="badge" style={{marginLeft:8,fontSize:10,background:'rgba(148,163,184,0.15)',color:'var(--text3)',border:'1px solid var(--border)'}}
+                            title={`Ayrıldı${p.cikis_tarihi ? ' · ' + p.cikis_tarihi : ''} — son dönem hakedişi ödenene kadar listede kalır`}>
+                            🚪 Ayrıldı{p.cikis_tarihi ? ` · ${p.cikis_tarihi}` : ''}
+                          </span>
+                        )}
                       </div>
                       <div style={{display:'flex',gap:8,alignItems:'center'}}>
                         <div className="maas-pipe">

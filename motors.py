@@ -594,11 +594,27 @@ def aylik_odeme_plani_uret(yil=None, ay=None):
                 uretilen.append(f"Sabit gider: {g['gider_adi']} — {odeme_tarihi}")
 
         # 2. PERSONEL MAAŞLARI (Sürekli + Part-time)
-        cur.execute("SELECT * FROM personel WHERE aktif=TRUE")
+        # KURAL (kullanıcı, 2026-07-03): "Dönem hakedişi aktiflikten bağımsızdır."
+        # Ayrılan personel maaş alanından DÜŞMEZ — çıkış tarihi bu dönemle kesişiyorsa
+        # son dönem hakedişi (doğru oranda) plana girer ve ödeme gününde kasadan çıkar.
+        # aktif=FALSE sadece SONRAKİ dönemlerin üretimini durdurur.
+        cur.execute("""SELECT * FROM personel
+                       WHERE aktif=TRUE
+                          OR (cikis_tarihi IS NOT NULL AND cikis_tarihi >= MAKE_DATE(%s,%s,1))""",
+                    (yil, ay))
         maas_donem_yil = yil - 1 if ay == 1 else yil
         maas_donem_ay = 12 if ay == 1 else ay - 1
         for p in cur.fetchall():
             odeme_tarihi = date(yil, ay, 1)
+
+            # Dönem içi fiili çalışma aralığı (başlangıç/çıkış kırpması — TEK MERKEZ kuralıyla uyumlu)
+            import calendar
+            son_gun = calendar.monthrange(yil, ay)[1]
+            d1, d2 = date(yil, ay, 1), date(yil, ay, son_gun)
+            eff1 = max(d1, p['baslangic_tarihi']) if p.get('baslangic_tarihi') else d1
+            eff2 = min(d2, p['cikis_tarihi']) if p.get('cikis_tarihi') else d2
+            if eff1 > eff2:
+                continue  # bu dönemde hiç çalışmamış (dönemden önce ayrıldı / sonra başlayacak)
 
             # Maaşlar dönem kapandıktan sonraki ayın 1'inde ödenir.
             # Örn: Haziran maaşı -> 1 Temmuz ödeme planı.
@@ -611,8 +627,11 @@ def aylik_odeme_plani_uret(yil=None, ay=None):
             if aylik_kayit:
                 toplam_maas = float(aylik_kayit['hesaplanan_net'] or 0)
             elif p['calisma_turu'] == 'surekli':
-                # Tahmini: maaş + yan haklar
+                # Tahmini: maaş + yan haklar — ay içinde başlayan/ayrılan için GÜN ORANLI
                 toplam_maas = float(p['maas'] or 0) + float(p['yemek_ucreti'] or 0) + float(p['yol_ucreti'] or 0)
+                calisilan_gun = (eff2 - eff1).days + 1
+                if calisilan_gun < son_gun:
+                    toplam_maas = round(toplam_maas * calisilan_gun / son_gun, 2)
             else:
                 # Part-time: ay kaydı girilmeden plan üretme
                 atlanan.append(f"Part-time atlandı (kayıt bekleniyor): {p['ad_soyad']}")
