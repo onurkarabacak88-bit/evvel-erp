@@ -447,7 +447,7 @@ export default function Personel() {
                           <>
                             Ay toplam <strong style={{color:'var(--text1)'}}>{Number(p.vardiya_ay_toplam_saat ?? 0).toFixed(1)}</strong> sa
                             {' · '}
-                            Limit üstü <strong style={{color:'var(--text1)'}}>{Number(p.vardiya_ek_mesai_saat ?? 0).toFixed(1)}</strong> sa ek mesai
+                            Fazla mesai (9.5 sa üstü) <strong style={{color:'var(--text1)'}}>{Number(p.vardiya_ek_mesai_saat ?? 0).toFixed(1)}</strong> sa
                             {' · '}
                             Haftalık limit <strong style={{color:'var(--text1)'}}>{Number(p.vardiya_haftalik_limit ?? 0).toFixed(0)}</strong> sa
                           </>
@@ -470,7 +470,7 @@ export default function Personel() {
                       )}
                       <span style={{fontSize:10,opacity:0.85}}>
                         {p.calisma_turu === 'surekli'
-                          ? '(TAM: fazla mesai alanına limit üstü yazar.)'
+                          ? '(Vardiya Takip kurgusu: günlük 9.5 sa üstü fazla mesai + fiilî gün yemek.)'
                           : '(Part: çalışma saati alanına ay toplamı yazar.)'}
                       </span>
                     </div>

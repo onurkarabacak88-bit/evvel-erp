@@ -4730,6 +4730,43 @@ def _personel_odeme_plani_senkronize(cur, p: dict, yil: int, ay: int, net: float
     return (row or {}).get("id")
 
 
+def _vardiya_takip_hesap(pid, yil: int, ay: int):
+    """TEK GERÇEK KAYNAK (kullanıcı kararı 2026-07-04): bordronun otomatik kalemleri
+    Vardiya Takip'in hesabından gelir — iki ekran her zaman aynı rakamı söyler.
+    Kurgu (takip ekseni): taban=(maaş/30)×geçen gün (başlangıç/çıkış kırpılmış),
+    fazla mesai=GÜNLÜK bazlı (9.5 saat üstü planlanan)×saatlik, yemek=hak edilen
+    fiilî gün×(aylık yemek/30), yol=(yol/30)×geçen gün; part-time=planlanan saat×saatlik.
+    (gorev_api.vardiya_takip kendi bağlantısını açar; salt-okur, güvenli.)"""
+    try:
+        from gorev_api import vardiya_takip as _vt
+        res = _vt(yil, ay, personel_id=str(pid))
+        rows = (res or {}).get("personeller") or []
+        return rows[0] if rows else None
+    except Exception as e:
+        logger.warning("vardiya takip hesap hatasi (%s %s-%s): %s", pid, yil, ay, e)
+        return None
+
+
+def _kanonik_net(p: dict, vt: dict, kayit: dict) -> float:
+    """Bordro neti = Vardiya Takip net_hakedişi (otomatik kalemler) + MANUEL katman:
+    bayram mesaisi ×2 (takipte yok) − eksik gün/rapor kesintisi (günlük ücret) + manuel düzeltme."""
+    AYLIK_GUN, AYLIK_SAAT = 30.0, 285.0
+    if (p.get("calisma_turu") or "surekli") == "surekli":
+        maas = float(p.get("maas") or 0)
+        saatlik = maas / AYLIK_SAAT
+        gunluk = maas / AYLIK_GUN
+    else:
+        saatlik = float(p.get("saatlik_ucret") or 0)
+        gunluk = saatlik * 9.5
+    net = float(vt.get("net_hakediş") or 0)
+    net += float(kayit.get("bayram_mesai_saat") or 0) * saatlik * 2
+    kesinti_gun = float(kayit.get("eksik_gun") or 0) + (
+        float(kayit.get("raporlu_gun") or 0) if kayit.get("rapor_kesinti") else 0)
+    net -= gunluk * kesinti_gun
+    net += float(kayit.get("manuel_duzeltme") or 0)
+    return round(max(0.0, net), 2)
+
+
 def _personel_aylik_vardiya_senkronize(cur, p: dict, yil: int, ay: int) -> dict:
     cur.execute(
         "SELECT * FROM personel_aylik WHERE personel_id=%s AND yil=%s AND ay=%s",
@@ -4744,9 +4781,29 @@ def _personel_aylik_vardiya_senkronize(cur, p: dict, yil: int, ay: int) -> dict:
     if _personel_donem_orani(p, yil, ay) is None:
         return {"atlandi": True, "neden": "donem_disi", "hesaplanan_net": 0}
 
-    kayit = _personel_vardiya_kayit_dict(cur, p, yil, ay, mevcut)
-    vk = kayit.pop("_vardiya", {})
-    net = maas_hesapla(dict(p), kayit, yil, ay)
+    # KANONİK HESAP = Vardiya Takip kurgusu (kullanıcı kararı 2026-07-04); manuel alanlar korunur
+    vt = _vardiya_takip_hesap(p["id"], yil, ay)
+    mev = dict(mevcut or {})
+    if vt is not None:
+        kayit = {
+            "calisma_saati": float(vt.get("toplam_planlanan_saat") or 0),
+            "fazla_mesai_saat": float(vt.get("toplam_fazla_mesai_saat") or 0),
+            "bayram_mesai_saat": float(mev.get("bayram_mesai_saat") or 0),
+            "eksik_gun": float(mev.get("eksik_gun") or 0),
+            "raporlu_gun": float(mev.get("raporlu_gun") or 0),
+            "rapor_kesinti": bool(mev.get("rapor_kesinti") or False),
+            "manuel_duzeltme": float(mev.get("manuel_duzeltme") or 0),
+            "not_aciklama": mev.get("not_aciklama"),
+        }
+        net = _kanonik_net(dict(p), vt, kayit)
+        vk = {"kaynak": "vardiya_takip",
+              "toplam_planlanan_saat": kayit["calisma_saati"],
+              "fazla_mesai_saat": kayit["fazla_mesai_saat"]}
+    else:
+        # savunma: takip hesabı alınamazsa eski yerel formüle düş (sistem durmaz)
+        kayit = _personel_vardiya_kayit_dict(cur, p, yil, ay, mevcut)
+        vk = kayit.pop("_vardiya", {})
+        net = maas_hesapla(dict(p), kayit, yil, ay)
     kid = str(uuid.uuid4())
     cur.execute(
         """
@@ -4854,11 +4911,23 @@ def personel_aylik_listele(yil: int = None, ay: int = None):
                 durum = 'tahmini'
                 kayit = {}
 
-            vk = _vv2.personel_ay_vardiya_maas_kaynagi(cur, p['id'], yil, ay)
+            # KANONİK: vardiya alanları ve kayıtsız tahmin = Vardiya Takip kurgusu (tek merkez)
+            vt = _vardiya_takip_hesap(p['id'], yil, ay)
+            if vt is not None:
+                vk = {'toplam_ay_saat': float(vt.get('toplam_planlanan_saat') or 0),
+                      'ek_mesai_haftalik_toplam': float(vt.get('toplam_fazla_mesai_saat') or 0),
+                      'haftalik_limit': 0}
+            else:
+                vk = _vv2.personel_ay_vardiya_maas_kaynagi(cur, p['id'], yil, ay)
             if not kayit:
-                kayit = _personel_vardiya_kayit_dict(cur, p, yil, ay)
-                kayit.pop("_vardiya", None)
-                net = maas_hesapla(dict(p), kayit, yil, ay)
+                if vt is not None:
+                    net = float(vt.get('net_hakediş') or 0)
+                    kayit = {'calisma_saati': vk['toplam_ay_saat'],
+                             'fazla_mesai_saat': vk['ek_mesai_haftalik_toplam']}
+                else:
+                    kayit = _personel_vardiya_kayit_dict(cur, p, yil, ay)
+                    kayit.pop("_vardiya", None)
+                    net = maas_hesapla(dict(p), kayit, yil, ay)
                 durum = 'vardiya_tahmini'
 
             sonuc.append({
@@ -4941,7 +5010,15 @@ def personel_aylik_kaydet(pid: str, body: PersonelAylikModel, yil: int = None, a
         _maas_kayit_kilit_guard(cur, pid, yil, ay)
 
         kayit_dict = body.dict()
-        net = maas_hesapla(dict(p), kayit_dict, yil, ay)
+        # KANONİK: saat/fazla mesai VARDİYA TAKİP'ten gelir (elle girilse de kaynak takiptir —
+        # kullanıcı kararı 2026-07-04); bayram/eksik/rapor/manuel/not katmanı body'den uygulanır.
+        vt = _vardiya_takip_hesap(p["id"], yil, ay)
+        if vt is not None:
+            kayit_dict["calisma_saati"] = float(vt.get("toplam_planlanan_saat") or 0)
+            kayit_dict["fazla_mesai_saat"] = float(vt.get("toplam_fazla_mesai_saat") or 0)
+            net = _kanonik_net(dict(p), vt, kayit_dict)
+        else:
+            net = maas_hesapla(dict(p), kayit_dict, yil, ay)
 
         kid = str(uuid.uuid4())
         cur.execute("""
@@ -4955,10 +5032,10 @@ def personel_aylik_kaydet(pid: str, body: PersonelAylikModel, yil: int = None, a
                 eksik_gun=%s, raporlu_gun=%s, rapor_kesinti=%s, manuel_duzeltme=%s,
                 not_aciklama=%s, hesaplanan_net=%s, durum='taslak'
         """, (kid, pid, yil, ay,
-                body.calisma_saati, body.fazla_mesai_saat, body.bayram_mesai_saat,
+                kayit_dict["calisma_saati"], kayit_dict["fazla_mesai_saat"], body.bayram_mesai_saat,
                 body.eksik_gun, body.raporlu_gun, body.rapor_kesinti,
                 body.manuel_duzeltme, body.not_aciklama, net,
-                body.calisma_saati, body.fazla_mesai_saat, body.bayram_mesai_saat,
+                kayit_dict["calisma_saati"], kayit_dict["fazla_mesai_saat"], body.bayram_mesai_saat,
                 body.eksik_gun, body.raporlu_gun, body.rapor_kesinti,
                 body.manuel_duzeltme, body.not_aciklama, net))
 
@@ -4990,14 +5067,13 @@ def personel_aylik_vardiya_aktar(pid: str, yil: int = None, ay: int = None):
             raise HTTPException(404, "Personel bulunamadı")
         _maas_kayit_kilit_guard(cur, pid, yil, ay)
 
-        vk = _vv2.personel_ay_vardiya_maas_kaynagi(cur, pid, yil, ay)
+        # KANONİK (kullanıcı kararı 2026-07-04): aktarım = tek kişilik vardiya-sync ile AYNI yol.
+        # Saat/fazla mesai Vardiya Takip kurgusundan (günlük 9.5 üstü), manuel alanlar korunur.
         cur.execute(
             "SELECT * FROM personel_aylik WHERE personel_id=%s AND yil=%s AND ay=%s",
             (pid, yil, ay),
         )
         row = cur.fetchone()
-        calisma = float((row or {}).get("calisma_saati") or 0)
-        fazla = float((row or {}).get("fazla_mesai_saat") or 0)
         bayram = float((row or {}).get("bayram_mesai_saat") or 0)
         eksik = float((row or {}).get("eksik_gun") or 0)
         raporlu = float((row or {}).get("raporlu_gun") or 0)
@@ -5005,15 +5081,19 @@ def personel_aylik_vardiya_aktar(pid: str, yil: int = None, ay: int = None):
         manuel = float((row or {}).get("manuel_duzeltme") or 0)
         not_a = (row or {}).get("not_aciklama")
 
-        ct = (p.get("calisma_turu") or "surekli")
-        if ct == "surekli":
-            # Sürekli: maaş sabit; vardiyadan yalnızca LİMİT ÜSTÜ ek mesai alınır.
-            fazla = float(vk["ek_mesai_haftalik_toplam"])
+        vt = _vardiya_takip_hesap(pid, yil, ay)
+        if vt is not None:
+            calisma = float(vt.get("toplam_planlanan_saat") or 0)
+            fazla = float(vt.get("toplam_fazla_mesai_saat") or 0)
         else:
-            # Part-time: ay boyunca çalışılan TOPLAM saat. Fazla/bayram yok (çift sayım olmasın).
-            calisma = float(vk["toplam_ay_saat"])
-            fazla = 0.0
-            bayram = 0.0
+            # savunma: takip hesabı alınamazsa eski kaynak
+            vk = _vv2.personel_ay_vardiya_maas_kaynagi(cur, pid, yil, ay)
+            ct = (p.get("calisma_turu") or "surekli")
+            calisma = float((row or {}).get("calisma_saati") or 0)
+            fazla = float(vk["ek_mesai_haftalik_toplam"]) if ct == "surekli" else 0.0
+            if ct != "surekli":
+                calisma = float(vk["toplam_ay_saat"])
+                bayram = 0.0
 
         kayit_dict = {
             "calisma_saati": calisma,
@@ -5025,7 +5105,7 @@ def personel_aylik_vardiya_aktar(pid: str, yil: int = None, ay: int = None):
             "manuel_duzeltme": manuel,
             "not_aciklama": not_a,
         }
-        net = maas_hesapla(dict(p), kayit_dict, yil, ay)
+        net = _kanonik_net(dict(p), vt, kayit_dict) if vt is not None else maas_hesapla(dict(p), kayit_dict, yil, ay)
 
         kid = str(uuid.uuid4())
         cur.execute("""
