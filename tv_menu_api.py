@@ -808,6 +808,7 @@ def tv_menu_hero(name: str):
     # opening = Sahne 1 PNG; ozen = Sahne 2 "Özen Katmanı" still hero (SAHNE2_PAKET/01, işlenmiş JPG)
     _heroes = {"opening": ("e1_opening_hero.png", "image/png"),
                "latte_cutout": ("e1_latte_cup_cutout.png", "image/png"),
+               "logo_gold": ("tulipi_logo_gold_cutout.png", "image/png"),
                "ozen": ("ozen_hero.jpg", "image/jpeg"),
                "sezon_yaz": ("sezon_yaz.png", "image/png"),
                "imza_bg": ("imza_bg.jpg", "image/jpeg"),
@@ -954,7 +955,16 @@ body[data-screen="2"] #screenMeta,body[data-screen="3"] #screenMeta{display:none
 .e1HeroScene{background:radial-gradient(70% 46% at 50% 38%,rgba(201,164,106,.18),transparent 62%),radial-gradient(80% 64% at 48% 82%,rgba(62,142,90,.12),transparent 70%),linear-gradient(180deg,#120c08 0,#070403 100%)}
 .e1HeroScene .e1Studio{position:absolute;inset:0;z-index:0;background:linear-gradient(180deg,rgba(255,255,255,.035),transparent 26%),radial-gradient(52% 32% at 50% 72%,rgba(255,225,174,.11),transparent 70%)}
 .e1HeroScene .e1CupAura{position:absolute;z-index:1;left:50%;top:43%;width:54vw;height:54vw;max-width:42vh;max-height:42vh;transform:translate(-50%,-50%);border-radius:50%;background:radial-gradient(circle,rgba(201,164,106,.18),rgba(62,142,90,.08) 45%,transparent 72%);filter:blur(.2vh)}
-.e1HeroCup{position:absolute;z-index:2;left:50%;top:38%;width:46vw;max-width:36vh;max-height:50vh;object-fit:contain;transform:translate(-50%,-50%);filter:drop-shadow(0 2.6vh 4.6vh rgba(0,0,0,.7));opacity:0;animation:e1CupIn 4s ease both}
+.e1PaperCup{position:absolute;z-index:2;left:50%;top:37%;width:min(43vw,34vh);height:min(66vw,52vh);transform:translate(-50%,-50%);opacity:0;filter:drop-shadow(0 3.1vh 5.2vh rgba(0,0,0,.72));animation:e1CupIn 4s ease both}
+.e1CupLidTop{position:absolute;left:13%;right:13%;top:0;height:13%;border-radius:50% 50% 46% 46%;background:linear-gradient(180deg,#312d28 0,#171512 54%,#050403 100%);box-shadow:inset 0 .28vh .42vh rgba(255,255,255,.16),inset 0 -.46vh .8vh rgba(0,0,0,.76)}
+.e1CupLidBand{position:absolute;left:4%;right:4%;top:8.4%;height:13.8%;border-radius:2.2vh;background:linear-gradient(180deg,#24211d 0,#0b0907 72%,#030302 100%);box-shadow:inset 0 .26vh .42vh rgba(255,255,255,.14),0 .72vh .72vh rgba(0,0,0,.5)}
+.e1CupBody{position:absolute;left:9%;right:9%;top:19%;bottom:0;clip-path:polygon(0 0,100% 0,83% 100%,17% 100%);border-radius:0 0 3vh 3vh;background:linear-gradient(92deg,#07120e 0,#10281d 18%,#24543d 47%,#132e22 76%,#06100c 100%);box-shadow:inset 1.4vh 0 2.3vh rgba(255,255,255,.065),inset -1.3vh 0 2.8vh rgba(0,0,0,.55)}
+.e1CupBody:before{content:"";position:absolute;inset:0;background:radial-gradient(46% 36% at 47% 38%,rgba(255,232,177,.18),transparent 68%),linear-gradient(90deg,transparent 0,rgba(255,255,255,.035) 48%,transparent 62%),linear-gradient(180deg,rgba(255,255,255,.045),transparent 24%,rgba(0,0,0,.2) 100%);opacity:.86}
+.e1CupBody:after{content:"";position:absolute;left:14%;right:14%;bottom:4%;height:5.2%;border-radius:50%;background:rgba(0,0,0,.3)}
+.e1PaperLogo{position:absolute;z-index:2;left:50%;top:30%;width:64%;height:auto;transform:translateX(-50%);filter:drop-shadow(0 .32vh .46vh rgba(0,0,0,.45))}
+.e1CupFlower{position:absolute;z-index:2;bottom:12%;width:18%;height:29%;border:solid .2vh rgba(222,178,88,.66);border-top:0;border-right:0;border-radius:0 0 0 4vh;opacity:.66}
+.e1CupFlower.l{left:12%;transform:rotate(-8deg)}
+.e1CupFlower.r{right:12%;transform:scaleX(-1) rotate(-8deg)}
 .e1HeroScene .e1Block{align-items:center;text-align:center;bottom:13%;left:8vw;right:8vw}
 .e1HeroScene .e1Desc{max-width:82vw}
 .e1Block{position:absolute;z-index:3;left:7vw;right:7vw;bottom:18%;display:flex;flex-direction:column;align-items:flex-start;text-align:left;gap:1.15vh;color:var(--cream)}
@@ -1340,7 +1350,7 @@ function buildE1HeroProduct(data,sig){
   var info=e1HeroProduct(data,sig);if(!info)return null;
   var tag=(sig&&sig.en_cok)?"Bu hafta en çok seçilen":(data.imza&&data.imza.ad===info.ad)?"TULİPİ imzası":"Bugünün fincanı";
   var st=el("div","pg e1Scene e1HeroScene");st.dataset.t=4000;st.dataset.roles="1";st.dataset.sahne="e1_tek_hero";st.dataset.name=info.ad;
-  st.innerHTML='<div class="e1Studio"></div><div class="e1CupAura"></div><img class="e1HeroCup" src="/tv-menu/hero/latte_cutout" alt="">'
+  st.innerHTML='<div class="e1Studio"></div><div class="e1CupAura"></div><div class="e1PaperCup" aria-hidden="true"><div class="e1CupLidTop"></div><div class="e1CupLidBand"></div><div class="e1CupBody"><img class="e1PaperLogo" src="/tv-menu/hero/logo_gold" alt=""><span class="e1CupFlower l"></span><span class="e1CupFlower r"></span></div></div>'
     +'<div class="e1Block"><div class="e1Kicker">'+tag+'</div><div class="e1Title">'+info.ad+'</div>'
     +'<div class="e1Desc">'+e1HeroNote(info)+'</div></div><div class="e1Fade"></div>';
   return st;
