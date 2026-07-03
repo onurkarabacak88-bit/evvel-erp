@@ -653,6 +653,10 @@ export default function Panel({ onNavigate }) {
 
   // ── Yaklaşan ödeme pilleri (IIFE dışında, sidebar + modal paylaşır) ──
   const yaklaşanPill = (panel.yaklasan_odemeler || []).filter(u => u.gun_farki > 0).sort((a, b) => a.gun_farki - b.gun_farki);
+  // Gecikmiş/bugünkü ÖDENMEMİŞLER de şeritte görünür (kullanıcı isteği 2026-07-04) — kaynak: uyarılar
+  const gecikmişPill = (uyarilar || [])
+    .filter(u => u.tutar != null && u.gun_farki != null && u.gun_farki <= 0)
+    .sort((a, b) => a.gun_farki - b.gun_farki);
   const pillTip = { sabit_giderler: { ikon: '🏠', renk: 'var(--clr-kira)' }, personel: { ikon: '👤', renk: 'var(--clr-personel)' }, vadeli_alimlar: { ikon: '📦', renk: 'var(--clr-vadeli)' }, borc_envanteri: { ikon: '🏦', renk: 'var(--clr-borc)' } };
 
   // ── Alert Tray renderer — modal içinden çağrılır ──
@@ -1103,13 +1107,29 @@ export default function Panel({ onNavigate }) {
       <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
       <div style={{ flex: 1, minWidth: 0 }}>
 
-      {/* ── YAKLAŞAN ÖDEME PİLLERİ ── */}
-      {yaklaşanPill.length > 0 && (
+      {/* ── ÖDEME PİLLERİ: GECİKMİŞLER ÖNDE (kırmızı) + YAKLAŞANLAR ── */}
+      {(yaklaşanPill.length > 0 || gecikmişPill.length > 0) && (
         <div style={{ marginBottom: 12 }}>
           <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: 6 }}>
+            {gecikmişPill.length > 0 && <span style={{ color: 'var(--red)' }}>⚠️ Gecikmiş ({gecikmişPill.length}) · </span>}
             📅 Yaklaşan Ödemeler ({yaklaşanPill.length})
           </div>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            {gecikmişPill.slice(0, 8).map((u, i) => (
+              <div key={'g' + i} onClick={() => yonlendir(u)} style={{
+                display: 'inline-flex', alignItems: 'center', gap: 5,
+                padding: '4px 10px', borderRadius: 20,
+                background: 'rgba(220,50,50,0.10)', border: '1px solid rgba(220,50,50,0.45)',
+                cursor: 'pointer', fontSize: 11,
+              }}>
+                <span>⚠️</span>
+                <span style={{ color: 'var(--text1)', fontWeight: 600, maxWidth: 110, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u.aciklama}</span>
+                <span style={{ color: 'var(--red)', fontWeight: 700, fontFamily: 'var(--font-mono)', fontSize: 10 }}>
+                  {u.gun_farki === 0 ? 'BUGÜN' : `${Math.abs(u.gun_farki)}g gecikti`}
+                </span>
+                <span style={{ color: 'var(--text2)', fontFamily: 'var(--font-mono)', fontSize: 10 }}>{fmt(u.tutar)}</span>
+              </div>
+            ))}
             {yaklaşanPill.slice(0, 14).map((u, i) => {
               const t = pillTip[u.kaynak_tablo] || { ikon: '💳', renk: '#94a3b8' };
               const urgColor = u.gun_farki <= 3 ? 'var(--red)' : u.gun_farki <= 7 ? 'var(--orange)' : 'var(--text3)';
@@ -1540,15 +1560,16 @@ export default function Panel({ onNavigate }) {
         {/* SOL: ÖDEMELER */}
         <div className="card">
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-            <h3 style={{ fontSize: 13, fontWeight: 600 }}>📅 Yaklaşan Ödemeler</h3>
+            {/* Dürüst isimlendirme: bu liste gecikmiş+bugünkü ödemelerdir (yaklaşanlar altta ayrı) */}
+            <h3 style={{ fontSize: 13, fontWeight: 600 }}>⏰ Gecikmiş & Bugün</h3>
             {tumUyarilar.length > 0 && (
-              <span style={{ fontSize: 11, color: 'var(--text3)', background: 'var(--bg3)', borderRadius: 4, padding: '2px 8px' }}>
-                {tumUyarilar.length} ödeme
+              <span style={{ fontSize: 11, color: 'var(--red)', background: 'rgba(220,50,50,0.08)', borderRadius: 4, padding: '2px 8px', fontWeight: 700 }}>
+                {tumUyarilar.length} ödenmemiş
               </span>
             )}
           </div>
           {tumUyarilar.length === 0 ? (
-            <div className="empty"><p>Yaklaşan ödeme yok</p></div>
+            <div className="empty"><p>Gecikmiş ödeme yok 🎉</p></div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 320, overflowY: 'auto' }}>
               {tumUyarilar.map((u, i) => (
@@ -1647,6 +1668,28 @@ export default function Panel({ onNavigate }) {
                   })()}
                 </div>
               ))}
+            </div>
+          )}
+          {/* 📅 YAKLAŞAN — gecikmişlerin altında ayrı bölüm (dürüst ayrım: yangın üstte, plan altta) */}
+          {yaklaşanPill.length > 0 && (
+            <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text2)', marginBottom: 8 }}>
+                📅 Yaklaşan ({yaklaşanPill.length})
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 5, maxHeight: 180, overflowY: 'auto' }}>
+                {yaklaşanPill.slice(0, 10).map((u, i) => (
+                  <div key={i} onClick={() => yonlendir(u)} style={{
+                    display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8,
+                    padding: '6px 10px', borderRadius: 6, background: 'var(--bg3)', cursor: 'pointer', fontSize: 11,
+                  }}>
+                    <span style={{ color: 'var(--text1)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u.aciklama}</span>
+                    <span style={{ flexShrink: 0, color: 'var(--text3)' }}>
+                      {fmtDate(u.tarih)} · <strong style={{ color: u.gun_farki <= 3 ? 'var(--red)' : u.gun_farki <= 7 ? 'var(--orange)' : 'var(--text2)', fontFamily: 'var(--font-mono)' }}>{u.gun_farki}g</strong>
+                      <strong style={{ marginLeft: 8, color: 'var(--text1)', fontFamily: 'var(--font-mono)' }}>{fmt(u.tutar)}</strong>
+                    </span>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </div>
