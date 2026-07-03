@@ -545,3 +545,19 @@ Bu dosya, local/cloud/paralel calisan ajanlar veya insan operator icin kisa mesa
 - `next_action`: E1 dongusu bastan sona izlenmeli (7 sahne ritmi); sezon gorseli E1'de
   mocktail iceriyor - kullanici Sahne1 herosu icin reddetmisti, SEZON sahnesi olarak mesru
   ama kullanici karari beklenir; itiraz olursa sahne E3'e tasinir (tek satir).
+
+## Claude Cloud - Kurgu rotusu: gecisler premium standarda + yeni mavi bardak zenginlestirmesi
+
+- `from`: Claude cloud
+- `time`: 2026-07-03
+- `subject`: pgIn perf borcu kapandi + evrensel cikis kararmasi + havuzdaki yeni fotograflar sahnelere islendi
+- `message`:
+  motion-design skill'inin Premium arketipi uygulandi (350-600ms, cubic-bezier(.4,0,.2,1), tasma yok):
+  (1) pgIn blur(7px)+transform animasyonu KALDIRILDI -> saf opacity .55s (son kalan TV perf borcu);
+  (2) EVRENSEL CIKIS KARARMASI: kendi fade'i olmayan HER sahneye sure-uyumlu .exitFade otomatik
+  eklenir (yuzde keyframe + inline animation-duration) -> tum ekranlarda tutarli sozde-crossfade;
+  (3) Havuzdaki YENI MAVI BARDAK fotograflari (2026-07-02) islendi: cup_hot.jpeg yenilendi
+  (eski yesil kartona yedek: cup_hot_yesil_yedek), Marka Imza sahnesine gercek mekan arka plani
+  (imza_bg.jpg, elde bardak + kafe ici, karartilmis), tum .pick sahnelerine tezgah dokusu ambient
+  katmani (doku_tezgah.jpg, opacity .3 — motion-design 3-katman ilkesi: primary/secondary/ambient).
+- `next_action`: 3 ekran tam tur izlenmeli: gecis tutarliligi + yeni bardak gorseli + imza sahnesi dokusu.

@@ -808,7 +808,9 @@ def tv_menu_hero(name: str):
     # opening = Sahne 1 PNG; ozen = Sahne 2 "Özen Katmanı" still hero (SAHNE2_PAKET/01, işlenmiş JPG)
     _heroes = {"opening": ("e1_opening_hero.png", "image/png"),
                "ozen": ("ozen_hero.jpg", "image/jpeg"),
-               "sezon_yaz": ("sezon_yaz.png", "image/png")}
+               "sezon_yaz": ("sezon_yaz.png", "image/png"),
+               "imza_bg": ("imza_bg.jpg", "image/jpeg"),
+               "doku_tezgah": ("doku_tezgah.jpg", "image/jpeg")}
     if name not in _heroes:
         raise HTTPException(404, "hero yok")
     fname, mtype = _heroes[name]
@@ -878,7 +880,9 @@ body[data-screen="3"]::before{transform:translateX(16%)}
 body[data-screen="1"]::after{transform:translateX(-10%)}
 body[data-screen="2"]::after{transform:translateX(0)}
 body[data-screen="3"]::after{transform:translateX(10%)}
-@keyframes pgIn{from{opacity:0;transform:translateY(28px) scale(.985);filter:blur(7px)}to{opacity:1;transform:none;filter:none}}
+/* TV-perf + motion-design Premium arketipi: giriş = saf opacity, cubic-bezier(.4,0,.2,1), taşma yok
+   (eski pgIn'in blur(7px)+transform animasyonu gerçek TV'de frame-drop riskiydi — son kalan perf borcu kapandı) */
+@keyframes pgIn{from{opacity:0}to{opacity:1}}
 /* TV-perf: rowIn/titleIn opacity-only (transform + letter-spacing animasyonu gerçek TV'de yük — tulipi-kurgu kuralı) */
 @keyframes rowIn{from{opacity:0}to{opacity:1}}
 @keyframes titleIn{from{opacity:0}to{opacity:1}}
@@ -895,7 +899,7 @@ body[data-screen="3"]::after{transform:translateX(10%)}
 #dots i{width:.55vw;height:.55vw;border-radius:50%;background:#EFE6D622;transition:.5s}#dots i.on{background:#3E8E5A;width:1.7vw;border-radius:.3vw}
 .pg{position:absolute;inset:0;display:none;flex-direction:column;align-items:center;justify-content:center;padding:7.5vh 5.6vw 11.5vh;text-align:center}
 .pg.cat{justify-content:flex-start;align-items:stretch;padding:12vh 4.7vw 12vh;text-align:left}  /* menu sayfalari artik yapisal panel icinde hizalanir */
-.pg.on{display:flex;animation:pgIn .95s cubic-bezier(.2,.8,.2,1)}
+.pg.on{display:flex;animation:pgIn .55s cubic-bezier(.4,0,.2,1)}
 .pg.on .row{animation:rowIn .55s cubic-bezier(.2,.7,.2,1) both}
 .pg.on .gT{animation:titleIn .8s cubic-bezier(.2,.8,.2,1) both}
 .bg{position:absolute;inset:0;overflow:hidden;z-index:0;pointer-events:none}
@@ -1015,8 +1019,16 @@ body.opening-active #logoBadge,body.opening-active #screenMeta{opacity:0}
 .imza .imzaLogo{width:10vw;max-height:20vh;object-fit:contain;mix-blend-mode:screen;filter:drop-shadow(0 1vh 2.6vh #000b);opacity:0;animation:im1 6s ease both}
 .imza .imzaTxt{font-family:'Fraunces',serif;font-style:italic;font-weight:400;font-size:4.4vh;line-height:1.3;color:var(--cream);opacity:0;animation:im2 6s ease both}
 .imza .imzaTxt span{display:block}
+.imza .imzaBg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.5;z-index:0}
+.imza .imzaShade{position:absolute;inset:0;z-index:1;background:radial-gradient(90% 90% at 50% 45%,transparent 20%,#080503ee 78%)}
 @keyframes im1{0%,8%{opacity:0}22%,100%{opacity:.96}}
 @keyframes im2{0%,26%{opacity:0}42%,100%{opacity:1}}
+/* .pick sahnelerine gerçek tezgâh dokusu (ambient katman — motion-design 3-katman ilkesi) */
+.pick .pDoku{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.3;z-index:0}
+.pick .pHalo{z-index:1}
+/* EVRENSEL ÇIKIŞ KARARMASI — yüzde-bazlı keyframe + sahne süresi inline verilir → her sürede çalışır */
+.exitFade{position:absolute;inset:0;z-index:9;pointer-events:none;opacity:0;background:linear-gradient(180deg,transparent 35%,#000d 100%);animation:exF linear both}
+@keyframes exF{0%,92%{opacity:0}100%{opacity:.6}}
 /* 🎬 HAFTANIN FAVORİLERİ (sosyal kanıt listesi — kategori başına gerçek liderler) */
 .pick .pList{display:flex;flex-direction:column;gap:2.2vh;margin-top:1vh}
 .pick .pLi{opacity:0}
@@ -1247,7 +1259,7 @@ function buildGununSecimi(data,sig){
   var tag=mod==="sabah"?"Sabahın favorisi":mod==="ogle"?"Öğlenin favorisi":mod==="aksam"?"Akşamın favorisi":"Bugünün seçimi";
   var pr=pairSec(sig);
   var st=el("div","pg pick gsec");st.dataset.t=9000;st.dataset.roles="1";st.dataset.sahne="gunun_secimi";st.dataset.name=ad;
-  st.innerHTML='<div class="pHalo"></div><div class="pInner">'
+  st.innerHTML='<img class="pDoku" src="/tv-menu/hero/doku_tezgah" alt=""><div class="pHalo"></div><div class="pInner">'
     +'<div class="pTag">'+tag+'</div>'
     +'<img class="pCup" src="/tv-menu/cup/'+cupShotFor(ad,kat)+'" alt="">'
     +'<div class="pName">'+ad+'</div>'
@@ -1263,7 +1275,7 @@ function buildBaristaOnerisi(sig){
   var o=sig&&sig.oneri;if(!o||!o.ad)return null;
   var fy=findPrice(o.ad),kat=findKategori(o.ad);
   var st=el("div","pg pick bsec");st.dataset.t=9000;st.dataset.roles="3";st.dataset.sahne="barista_onerisi";st.dataset.name=o.ad;
-  st.innerHTML='<div class="pHalo"></div><div class="pInner">'
+  st.innerHTML='<img class="pDoku" src="/tv-menu/hero/doku_tezgah" alt=""><div class="pHalo"></div><div class="pInner">'
     +'<div class="pTag">Baristanın sessiz önerisi</div>'
     +'<img class="pCup" src="/tv-menu/cup/'+cupShotFor(o.ad,kat)+'" alt="">'
     +'<div class="pName">'+o.ad+'</div>'
@@ -1278,7 +1290,7 @@ function buildYeniUrun(data,sig){
   var fy=findPrice(ad),kat=findKategori(ad),nota="";
   (data.kategoriler||[]).forEach(function(k){(k.urunler||[]).forEach(function(u){if(u.ad===ad&&u.aciklama)nota=u.aciklama;});});
   var st=el("div","pg pick gsec");st.dataset.t=9000;st.dataset.roles="1";st.dataset.sahne="yeni_urun";st.dataset.name=ad;
-  st.innerHTML='<div class="pHalo"></div><div class="pInner">'
+  st.innerHTML='<img class="pDoku" src="/tv-menu/hero/doku_tezgah" alt=""><div class="pHalo"></div><div class="pInner">'
     +'<div class="pTag">✨ Yeni</div>'
     +'<img class="pCup" src="/tv-menu/cup/'+cupShotFor(ad,kat)+'" alt="">'
     +'<div class="pName">'+ad+'</div>'
@@ -1293,7 +1305,7 @@ function buildHaftaninFavorileri(sig){
   var sira=["Classic Coffees","Signature Coffees","Mocktails"].filter(function(k){return kf[k];});
   if(sira.length<2)return null;
   var st=el("div","pg pick gsec");st.dataset.t=9000;st.dataset.roles="1";st.dataset.sahne="haftanin_favorileri";
-  st.innerHTML='<div class="pHalo"></div><div class="pInner">'
+  st.innerHTML='<img class="pDoku" src="/tv-menu/hero/doku_tezgah" alt=""><div class="pHalo"></div><div class="pInner">'
     +'<div class="pTag">Bu haftanın favorileri</div>'
     +'<div class="pList">'+sira.map(function(k){
       return '<div class="pLi"><div class="pLiKat">'+k+'</div><div class="pLiAd">'+kf[k]+'</div></div>';
@@ -1316,7 +1328,8 @@ function buildSezon(sig){
 function buildMarkaImza(){
   // 🎬 E1 — LOOP KAPANIŞI: logo + DNA sloganı (kullanıcı onaylı) — döngü hero'ya yumuşak bağlanır
   var st=el("div","pg imza");st.dataset.t=6000;st.dataset.roles="1";st.dataset.sahne="marka_imza";
-  st.innerHTML='<div class="imzaInner"><img class="imzaLogo" src="/tv-menu/logo" alt="">'
+  st.innerHTML='<img class="imzaBg" src="/tv-menu/hero/imza_bg" alt=""><div class="imzaShade"></div>'
+    +'<div class="imzaInner"><img class="imzaLogo" src="/tv-menu/logo" alt="">'
     +'<div class="imzaTxt"><span>Zincir gibi hızlı.</span><span>Zanaat gibi özenli.</span></div></div>';
   return st;
 }
@@ -1325,7 +1338,7 @@ function buildSessizSaat(sig){
   var h=new Date().getHours();if(h<14||h>=17)return null;
   var pr=(TATLI_MATRIS.ogle||[])[0];if(!pr)return null;
   var st=el("div","pg pick bsec");st.dataset.t=9000;st.dataset.roles="3";st.dataset.sahne="sessiz_saat";
-  st.innerHTML='<div class="pHalo"></div><div class="pInner">'
+  st.innerHTML='<img class="pDoku" src="/tv-menu/hero/doku_tezgah" alt=""><div class="pHalo"></div><div class="pInner">'
     +'<div class="pTag">Sakin saat seçimi</div>'
     +'<div class="pName">'+pr.k+' + '+pr.t+'</div>'
     +'<div class="pNote">Kalabalık geçmeden küçük bir kahve molası.</div>'
@@ -1631,7 +1644,13 @@ function build(data,sig){
   else if(ekran==="2")pages=ekran1Pages;
   else if(ekran==="3")pages=ekran3Pages;
   else pages=heroPages.concat(ekran1Pages).concat(ekran3Pages);  // ekran param yoksa (tek TV testi) hepsi
-  pages.forEach(function(p){stage.insertBefore(p,document.querySelector(".foot"));dots.appendChild(el("i"));});
+  pages.forEach(function(p){
+    // evrensel çıkış kararması: kendi fade katmanı olmayan her sahneye süre-uyumlu exitFade eklenir
+    if(!p.querySelector(".catFade,.pFade,.mcovFade,.ozExit,.exitFade")){
+      var xf=el("div","exitFade");xf.style.animationDuration=((parseInt(p.dataset.t,10)||9000)/1000)+"s";p.appendChild(xf);
+    }
+    stage.insertBefore(p,document.querySelector(".foot"));dots.appendChild(el("i"));
+  });
   var di=dots.children;
   var pc=document.getElementById("priceCorner");
   // KRİTİK FIX: display:none içindeyken <video autoplay> tarayıcıda sessizce başlamaz —
