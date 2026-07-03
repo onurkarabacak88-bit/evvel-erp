@@ -4488,11 +4488,15 @@ def personel_cikis(pid: str, neden: str = ""):
         # Sadece ÇALIŞILMAMIŞ (gelecek dönem) planlar iptal edilir — simülasyondan çıksın.
         # Çalışılan dönemin (çıkış ayı dahil, kısmi hakediş) planı KALIR: ay sonunda
         # kasadan doğru oranda ödenir, ödendikten sonra listeden doğal düşer.
+        # DİKKAT — referans_ay konvansiyonu = ÖDEME AYI (çalışma ayı + 1, a168871 sync ekseni):
+        # bugün çıkan kişinin çalıştığı son dönemin planı referans_ay = gelecek ayın 1'ini taşır,
+        # o yüzden koruma sınırı "+1 ay"dır. (Önceki filtre bunu bilmediği için 10 günlük
+        # hakedişi de siliyordu — kullanıcı şikayetiyle düzeltildi 2026-07-04.)
         cur.execute("""
             UPDATE odeme_plani SET durum='iptal'
             WHERE kaynak_tablo='personel' AND kaynak_id=%s
             AND durum IN ('bekliyor','onay_bekliyor')
-            AND referans_ay > DATE_TRUNC('month', %s::date)
+            AND referans_ay > DATE_TRUNC('month', %s::date + INTERVAL '1 month')
         """, (pid, str(bugun_tr())))
         cur.execute("""
             UPDATE onay_kuyrugu SET durum='reddedildi'
@@ -4554,7 +4558,24 @@ def _maas_kayit_kilit_guard(cur, pid: str, yil: int, ay: int) -> None:
         )
 
 
-def maas_hesapla(p: dict, kayit: dict) -> float:
+def _personel_donem_orani(p: dict, yil: int, ay: int):
+    """Dönem içi çalışma oranı (0..1). Ay ortasında işe giren/ayrılan sürekli personel
+    tam 30 gün değil, çalıştığı takvim günü oranında hakediş alır (kural 2026-07-03:
+    'Dönem hakedişi aktiflikten bağımsızdır' — 10 günlük alacak silinmez, 20 günlük
+    çalışana 30 gün yazılmaz). Dönemle hiç kesişmiyorsa None döner."""
+    import calendar as _c
+    sgun = _c.monthrange(yil, ay)[1]
+    d1, d2 = date(yil, ay, 1), date(yil, ay, sgun)
+    b, c = p.get('baslangic_tarihi'), p.get('cikis_tarihi')
+    eff1 = max(d1, b) if b else d1
+    eff2 = min(d2, c) if c else d2
+    if eff1 > eff2:
+        return None
+    gun = (eff2 - eff1).days + 1
+    return 1.0 if gun >= sgun else gun / sgun
+
+
+def maas_hesapla(p: dict, kayit: dict, yil: int = None, ay: int = None) -> float:
     """
     Personelin aylık net maaşını hesaplar.
 
@@ -4591,11 +4612,20 @@ def maas_hesapla(p: dict, kayit: dict) -> float:
         saatlik = maas / AYLIK_SAAT if AYLIK_SAAT > 0 else 0
         gunluk  = maas / AYLIK_GUN  if AYLIK_GUN  > 0 else 0
 
+        # DÖNEM PRO-RATA: yil/ay verildiyse maaş+yemek+yol tabanı çalışılan gün oranında.
+        # (saatlik/günlük birim ücretler TAM maaştan — mesai ve eksik gün kesintisi birimi değişmez)
+        oran = 1.0
+        if yil and ay:
+            _o = _personel_donem_orani(p, yil, ay)
+            if _o is None:
+                return 0.0  # dönemle kesişmiyor (dönemden önce ayrıldı / sonra başlayacak)
+            oran = _o
+
         kesinti_gun = eksik + (raporlu if rapor_kesinti else 0)
         kesinti     = gunluk * kesinti_gun  # günlük ücret × eksik gün (İş Kanunu)
 
         fazla_ucret = (fazla_normal * saatlik) + (fazla_bayram * saatlik * 2)
-        net = maas - kesinti + fazla_ucret + yemek + yol + manuel
+        net = (maas * oran) - kesinti + fazla_ucret + (yemek * oran) + (yol * oran) + manuel
     else:
         # PART-TIME: ay boyunca çalıştığı TOPLAM saat × saatlik ücret.
         # Fazla mesai kavramı YOK — tüm saatler zaten saat başı ödeniyor (limit/ek mesai
@@ -4703,10 +4733,13 @@ def _personel_aylik_vardiya_senkronize(cur, p: dict, yil: int, ay: int) -> dict:
         net = float(mevcut.get("hesaplanan_net") or 0)
         _personel_odeme_plani_senkronize(cur, p, yil, ay, net)
         return {"atlandi": True, "neden": "onaylandi", "hesaplanan_net": net}
+    # Dönemle hiç kesişmeyen personele (dönemden önce ayrıldı / sonra başlayacak) kayıt açma
+    if _personel_donem_orani(p, yil, ay) is None:
+        return {"atlandi": True, "neden": "donem_disi", "hesaplanan_net": 0}
 
     kayit = _personel_vardiya_kayit_dict(cur, p, yil, ay, mevcut)
     vk = kayit.pop("_vardiya", {})
-    net = maas_hesapla(dict(p), kayit)
+    net = maas_hesapla(dict(p), kayit, yil, ay)
     kid = str(uuid.uuid4())
     cur.execute(
         """
@@ -4818,7 +4851,7 @@ def personel_aylik_listele(yil: int = None, ay: int = None):
             if not kayit:
                 kayit = _personel_vardiya_kayit_dict(cur, p, yil, ay)
                 kayit.pop("_vardiya", None)
-                net = maas_hesapla(dict(p), kayit)
+                net = maas_hesapla(dict(p), kayit, yil, ay)
                 durum = 'vardiya_tahmini'
 
             sonuc.append({
@@ -4864,7 +4897,12 @@ def personel_aylik_vardiya_sync(yil: int = None, ay: int = None):
     yil = yil or bugun.year
     ay = ay or bugun.month
     with db() as (conn, cur):
-        cur.execute("SELECT * FROM personel WHERE aktif=TRUE ORDER BY ad_soyad")
+        # KURAL: dönem hakedişi aktiflikten bağımsız — ayrılanın son dönemi de vardiyadan
+        # güncel veri almaya devam eder (çıkış tarihi dönemle kesişiyorsa)
+        cur.execute("""SELECT * FROM personel
+                       WHERE aktif=TRUE
+                          OR (cikis_tarihi IS NOT NULL AND cikis_tarihi >= MAKE_DATE(%s,%s,1))
+                       ORDER BY ad_soyad""", (yil, ay))
         personeller = cur.fetchall()
         sonuc = []
         for p in personeller:
@@ -4896,7 +4934,7 @@ def personel_aylik_kaydet(pid: str, body: PersonelAylikModel, yil: int = None, a
         _maas_kayit_kilit_guard(cur, pid, yil, ay)
 
         kayit_dict = body.dict()
-        net = maas_hesapla(dict(p), kayit_dict)
+        net = maas_hesapla(dict(p), kayit_dict, yil, ay)
 
         kid = str(uuid.uuid4())
         cur.execute("""
@@ -4980,7 +5018,7 @@ def personel_aylik_vardiya_aktar(pid: str, yil: int = None, ay: int = None):
             "manuel_duzeltme": manuel,
             "not_aciklama": not_a,
         }
-        net = maas_hesapla(dict(p), kayit_dict)
+        net = maas_hesapla(dict(p), kayit_dict, yil, ay)
 
         kid = str(uuid.uuid4())
         cur.execute("""

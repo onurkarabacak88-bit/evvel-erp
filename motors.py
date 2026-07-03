@@ -598,19 +598,23 @@ def aylik_odeme_plani_uret(yil=None, ay=None):
         # Ayrılan personel maaş alanından DÜŞMEZ — çıkış tarihi bu dönemle kesişiyorsa
         # son dönem hakedişi (doğru oranda) plana girer ve ödeme gününde kasadan çıkar.
         # aktif=FALSE sadece SONRAKİ dönemlerin üretimini durdurur.
+        # KONVANSİYON (a168871 sync ekseniyle BİREBİR aynı, çift plan üretmesin):
+        # Üretim (yil, ay) = ÖDEME ayı. Çalışma dönemi = bir önceki ay (arrears).
+        # Plan: tarih = referans_ay = date(yil, ay, 1)  ← ÖDEME AYI.
+        maas_donem_yil = yil - 1 if ay == 1 else yil
+        maas_donem_ay = 12 if ay == 1 else ay - 1
         cur.execute("""SELECT * FROM personel
                        WHERE aktif=TRUE
                           OR (cikis_tarihi IS NOT NULL AND cikis_tarihi >= MAKE_DATE(%s,%s,1))""",
-                    (yil, ay))
-        maas_donem_yil = yil - 1 if ay == 1 else yil
-        maas_donem_ay = 12 if ay == 1 else ay - 1
+                    (maas_donem_yil, maas_donem_ay))
         for p in cur.fetchall():
             odeme_tarihi = date(yil, ay, 1)
 
-            # Dönem içi fiili çalışma aralığı (başlangıç/çıkış kırpması — TEK MERKEZ kuralıyla uyumlu)
+            # ÇALIŞMA DÖNEMİ içi fiili aralık (başlangıç/çıkış kırpması — TEK MERKEZ kuralı)
             import calendar
-            son_gun = calendar.monthrange(yil, ay)[1]
-            d1, d2 = date(yil, ay, 1), date(yil, ay, son_gun)
+            donem_gun = calendar.monthrange(maas_donem_yil, maas_donem_ay)[1]
+            d1 = date(maas_donem_yil, maas_donem_ay, 1)
+            d2 = date(maas_donem_yil, maas_donem_ay, donem_gun)
             eff1 = max(d1, p['baslangic_tarihi']) if p.get('baslangic_tarihi') else d1
             eff2 = min(d2, p['cikis_tarihi']) if p.get('cikis_tarihi') else d2
             if eff1 > eff2:
@@ -627,11 +631,11 @@ def aylik_odeme_plani_uret(yil=None, ay=None):
             if aylik_kayit:
                 toplam_maas = float(aylik_kayit['hesaplanan_net'] or 0)
             elif p['calisma_turu'] == 'surekli':
-                # Tahmini: maaş + yan haklar — ay içinde başlayan/ayrılan için GÜN ORANLI
+                # Tahmini: maaş + yan haklar — dönem içinde başlayan/ayrılan için GÜN ORANLI
                 toplam_maas = float(p['maas'] or 0) + float(p['yemek_ucreti'] or 0) + float(p['yol_ucreti'] or 0)
                 calisilan_gun = (eff2 - eff1).days + 1
-                if calisilan_gun < son_gun:
-                    toplam_maas = round(toplam_maas * calisilan_gun / son_gun, 2)
+                if calisilan_gun < donem_gun:
+                    toplam_maas = round(toplam_maas * calisilan_gun / donem_gun, 2)
             else:
                 # Part-time: ay kaydı girilmeden plan üretme
                 atlanan.append(f"Part-time atlandı (kayıt bekleniyor): {p['ad_soyad']}")
@@ -640,10 +644,7 @@ def aylik_odeme_plani_uret(yil=None, ay=None):
             if toplam_maas <= 0:
                 continue
 
-            # ARREARS (geçmiş ay) bordro: çalışma dönemi = (yil, ay).
-            # Ödeme tarihi = ertesi ayın 1'i. Kayıt↔plan bağı referans_ay (çalışma ayı) üzerinden.
-            calisma_ref = date(yil, ay, 1)
-            odeme_tarihi = date(yil + 1, 1, 1) if ay == 12 else date(yil, ay + 1, 1)
+            donem_ref = date(maas_donem_yil, maas_donem_ay, 1)
             pid = str(_uuid.uuid4())
             cur.execute("""
                 INSERT INTO odeme_plani (id, kart_id, tarih, referans_ay, odenecek_tutar, asgari_tutar, aciklama, durum, kaynak_tablo, kaynak_id)
@@ -654,11 +655,11 @@ def aylik_odeme_plani_uret(yil=None, ay=None):
                     AND referans_ay = %s::date
                     AND durum != 'iptal'
                 )
-            """, (pid, odeme_tarihi, str(calisma_ref), toplam_maas, toplam_maas,
-                  f"Personel Maaş: {p['ad_soyad']} ({calisma_ref:%Y-%m} dönemi)",
-                  p['id'], p['id'], str(calisma_ref)))
+            """, (pid, odeme_tarihi, str(odeme_tarihi), toplam_maas, toplam_maas,
+                  f"Personel Maaş: {p['ad_soyad']} ({donem_ref:%Y-%m} dönemi)",
+                  p['id'], p['id'], str(odeme_tarihi)))
             if cur.rowcount > 0:
-                uretilen.append(f"Maaş: {p['ad_soyad']} — {calisma_ref:%Y-%m} dönemi, ödeme {odeme_tarihi}")
+                uretilen.append(f"Maaş: {p['ad_soyad']} — {donem_ref:%Y-%m} dönemi, ödeme {odeme_tarihi}")
 
         # 3. KREDİ / BORÇ TAKSİTLERİ
         cur.execute("SELECT * FROM borc_envanteri WHERE aktif=TRUE AND aylik_taksit > 0")
