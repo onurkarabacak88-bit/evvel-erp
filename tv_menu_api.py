@@ -911,6 +911,9 @@ body[data-screen="3"]::after{transform:translateX(10%)}
 /* KÖŞE LOGO — sürekli görünen sabit rozet, artık ayrı bir "Hero" sahnesi yok */
 #logoBadge{position:absolute;top:2.6vh;left:3vw;z-index:9;width:6.2vh;opacity:.94;pointer-events:none;filter:drop-shadow(0 .6vh 1.8vh #0008)}
 body.opening-active #logoBadge,body.opening-active #screenMeta{opacity:0}
+body[data-screen="1"] #logoBadge,body[data-screen="1"] #screenMeta,body[data-screen="1"] #priceCorner,body[data-screen="1"] #fav,body[data-screen="1"] .foot{display:none!important}
+body[data-screen="1"] #dots{top:auto;bottom:7vh;opacity:.42}
+body[data-screen="2"] #screenMeta,body[data-screen="3"] #screenMeta{display:none!important}
 /* GOLDEN TRIANGLE — fiyat/ürün hep aynı sabit köşede (göz "ürün→fiyat" yörüngesini öğrenir) */
 #screenMeta{position:absolute;top:2.3vh;left:50%;transform:translateX(-50%);z-index:9;display:flex;align-items:center;gap:1vw;padding:.9vh 1.6vw;border-radius:999px;background:rgba(10,8,7,.46);border:1px solid var(--line-soft);backdrop-filter:blur(10px);box-shadow:0 1.6vh 3.6vh #0007}
 #screenMeta .metaIdx{font-size:1.2vh;letter-spacing:.28vw;color:var(--green-soft);text-transform:uppercase}
@@ -930,17 +933,44 @@ body.opening-active #logoBadge,body.opening-active #screenMeta{opacity:0}
 @keyframes bardakReveal{0%,38%{opacity:0;transform:translateY(1.6vh)}55%,100%{opacity:1;transform:none}}
 .bardakBg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;animation:kenBurns 7s ease-out forwards;filter:saturate(1.12) contrast(1.06) brightness(.86)}
 .bardakInfo{position:relative;z-index:2;opacity:0;animation:bardakReveal 7s ease forwards}
-.openingBg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;animation:openingDrift 8s ease-out forwards;transform-origin:42% 54%;backface-visibility:hidden}
-.openingShade{position:absolute;inset:0;z-index:1;background:linear-gradient(90deg,rgba(0,0,0,.02) 0%,rgba(0,0,0,.1) 42%,rgba(0,0,0,.34) 72%,rgba(0,0,0,.56) 100%)}
-.openingCopy{position:absolute;z-index:2;right:7.8vw;top:16.5vh;width:38vw;display:flex;flex-direction:column;align-items:center;text-align:center;color:var(--cream)}
-.openingLogo{width:13.5vw;max-height:23vh;object-fit:contain;opacity:0;mix-blend-mode:screen;filter:drop-shadow(0 1vh 2.8vh #000b);animation:openingLogoIn 8s ease forwards}
-.openingTitle{margin-top:3vh;font-family:'Fraunces',serif;font-size:6.2vh;line-height:.94;font-weight:400;letter-spacing:.02vw;color:#efe6d6;text-shadow:0 .45vh 2.4vh #000;opacity:0;animation:openingTitleIn 8s ease forwards}
+.openingBg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;animation:openingDrift 3s ease-out forwards;transform-origin:42% 54%;backface-visibility:hidden}
+.openingShade{position:absolute;inset:0;z-index:1;background:linear-gradient(90deg,rgba(0,0,0,.05) 0%,rgba(0,0,0,.16) 44%,rgba(0,0,0,.44) 74%,rgba(0,0,0,.68) 100%)}
+.openingCopy{position:absolute;z-index:2;right:7.8vw;top:14.5vh;width:40vw;display:flex;flex-direction:column;align-items:center;text-align:center;color:var(--cream)}
+.openingLogo{width:11.8vw;max-height:20vh;object-fit:contain;opacity:0;mix-blend-mode:screen;filter:drop-shadow(0 1vh 2.8vh #000b);animation:openingLogoIn 3s ease forwards}
+.openingTitle{margin-top:0;font-family:'Fraunces',serif;font-size:4.8vh;line-height:1.08;font-weight:400;letter-spacing:.01vw;color:#efe6d6;text-shadow:0 .45vh 2.4vh #000;opacity:0;animation:openingTitleIn 3s ease forwards}
 .openingTitle span{display:block}
-.openingSub{margin-top:2.2vh;font-size:2vh;letter-spacing:.05vw;color:#6fb084;opacity:0;animation:openingSubIn 8s ease forwards}
+.openingSub{margin-top:1.8vh;font-size:1.75vh;letter-spacing:.32vw;color:#c9bba4;text-transform:uppercase;opacity:0;animation:openingSubIn 3s ease forwards}
 @keyframes openingDrift{0%{transform:scale(1.02) translateX(-1.2vw)}100%{transform:scale(1.09) translateX(.4vw)}}
-@keyframes openingLogoIn{0%,30%{opacity:0;transform:translateY(1.2vh)}43%,100%{opacity:.96;transform:none}}
-@keyframes openingTitleIn{0%,58%{opacity:0;transform:translateY(1.8vh)}72%,100%{opacity:1;transform:none}}
-@keyframes openingSubIn{0%,70%{opacity:0;transform:translateY(1vh)}84%,100%{opacity:.92;transform:none}}
+@keyframes openingLogoIn{0%,18%{opacity:0;transform:translateY(1.2vh)}36%,100%{opacity:.94;transform:none}}
+@keyframes openingTitleIn{0%,34%{opacity:0;transform:translateY(1.6vh)}54%,100%{opacity:1;transform:none}}
+@keyframes openingSubIn{0%,58%{opacity:0;transform:translateY(1vh)}76%,100%{opacity:.86;transform:none}}
+/* EKRAN 1 — 12sn premium davet akışı: craft açılış → tek hero ürün → yaz/soğuk çağrı */
+.e1Scene{background:#080503;overflow:hidden}
+.e1Scene .bgvid{opacity:.8;animation:e1Push linear forwards;will-change:transform}
+.e1HeroScene .bgvid{animation-duration:4s}
+.e1Cold .bgvid{animation-duration:5s}
+.e1Scene .bggrade{background:linear-gradient(180deg,#05030299 0,rgba(5,3,2,.32) 30%,rgba(5,3,2,.36) 66%,#050302e8 100%)}
+.e1Block{position:absolute;z-index:3;left:7vw;right:7vw;bottom:18%;display:flex;flex-direction:column;align-items:flex-start;text-align:left;gap:1.15vh;color:var(--cream)}
+.e1HeroScene .e1Block,.e1Cold .e1Block{opacity:0;animation:e1TextIn .72s ease .45s both}
+.e1Kicker{font-size:1.45vh;letter-spacing:.34vw;color:#c9bba4;text-transform:uppercase}
+.e1Title{font-family:'Fraunces',serif;font-style:italic;font-weight:400;font-size:5.7vh;line-height:1.04;letter-spacing:0;color:#efe6d6;max-width:76vw}
+.e1Desc{font-size:2vh;line-height:1.45;color:#bba98f;font-style:italic;max-width:70vw}
+.e1Fade{position:absolute;inset:0;z-index:4;pointer-events:none;opacity:0;background:linear-gradient(180deg,transparent 35%,#000 100%);animation:e1Fade linear both}
+.e1HeroScene .e1Fade{animation-duration:4s}
+.e1Cold .e1Fade{animation-duration:5s}
+@keyframes e1Push{from{transform:scale(1)}to{transform:scale(1.05)}}
+@keyframes e1TextIn{from{opacity:0;transform:translateY(1vh)}to{opacity:1;transform:none}}
+@keyframes e1Fade{0%,86%{opacity:0}100%{opacity:.72}}
+/* EKRAN 3 — 12sn upsell/keşif akışı: yeni ürün → craft → sessiz öneri → tatlı eşleşmesi */
+.e3Flow{background:#070403;overflow:hidden}
+.e3Flow .bgvid{opacity:.82;animation:e1Push 3s linear forwards}
+.e3Flow .bggrade{background:linear-gradient(180deg,#050302a3 0,rgba(5,3,2,.38) 35%,rgba(5,3,2,.5) 68%,#050302ef 100%)}
+.e3Flow .e3Block{position:absolute;z-index:3;left:7vw;right:7vw;bottom:17%;display:flex;flex-direction:column;align-items:flex-start;text-align:left;gap:1.05vh;color:var(--cream);opacity:0;animation:e1TextIn .55s ease .25s both}
+.e3Kicker{font-size:1.35vh;letter-spacing:.34vw;color:#c9bba4;text-transform:uppercase}
+.e3Title{font-family:'Fraunces',serif;font-style:italic;font-weight:400;font-size:5.35vh;line-height:1.04;color:#efe6d6;max-width:78vw}
+.e3Desc{font-size:1.95vh;line-height:1.45;color:#bba98f;font-style:italic;max-width:72vw}
+.e3Fade{position:absolute;inset:0;z-index:4;pointer-events:none;opacity:0;background:linear-gradient(180deg,transparent 35%,#000 100%);animation:e3Fade 3s linear both}
+@keyframes e3Fade{0%,82%{opacity:0}100%{opacity:.72}}
 /* mikro cross-sell şeridi — her kategori sayfasının altında tekrar eden Perfect Pair hatırlatması */
 .pairStrip{position:absolute;bottom:2.2vh;left:1.7vw;right:1.7vw;z-index:5;display:flex;align-items:center;justify-content:center;gap:.8vw;font-size:1.45vh;color:#B89B80;padding:1vh 1.2vw;border-radius:2vh;background:rgba(13,10,8,.88);border:1px solid var(--line-soft)}
 .pairStrip b{color:#EFE6D6;font-style:normal;font-family:'Fraunces',serif}
@@ -956,14 +986,14 @@ body.opening-active #logoBadge,body.opening-active #screenMeta{opacity:0}
 .menuRole{font-size:1.2vh;letter-spacing:.16vw;color:#908171;text-transform:uppercase}
 .menuPageTag{flex-shrink:0;padding:.8vh 1vw;border-radius:999px;border:1px solid var(--line-soft);background:rgba(11,8,7,.46);font-size:1.18vh;letter-spacing:.18vw;color:#b8aa9a;text-transform:uppercase}
 /* TV-perf: backdrop-filter kaldırıldı (arkada canlı duvar animasyonu varken sürekli GPU yükü) → opak degrade */
-.menuPanel{position:relative;padding:2.2vh 1.8vw 2.8vh;border-radius:3.2vh;background:linear-gradient(180deg,rgba(16,12,10,.93),rgba(9,7,6,.97));border:1px solid var(--line);box-shadow:inset 0 1px 0 rgba(255,255,255,.04),0 2.4vh 5vh #0008;overflow:hidden}
+.menuPanel{position:relative;padding:2.35vh 1.8vw 2.8vh;border-radius:2.8vh;background:linear-gradient(180deg,rgba(16,12,10,.88),rgba(9,7,6,.94));border:1px solid rgba(239,230,214,.08);box-shadow:inset 0 1px 0 rgba(255,255,255,.03),0 2vh 4.4vh #0007;overflow:hidden}
 .menuPanel::before{content:"";position:absolute;inset:0 auto auto 0;width:100%;height:14vh;background:linear-gradient(180deg,rgba(255,255,255,.045),transparent);pointer-events:none}
 .menu{position:relative;width:100%;max-width:none;font-size:2.08vh}
 .menu.one{max-width:none}
 /* kolon başlıkları: hap kutuları kalktı → sade harf-aralıklı caps + ince ayraç (editoryal sükunet) */
 .hdr{display:grid;grid-template-columns:1fr 4.05em 4.05em 4.05em;gap:.9em;font-size:.56em;letter-spacing:.22vw;color:#9a8d80;margin-bottom:.4vh;padding:0 1vw .7vh;border-bottom:1px solid var(--line)}.hdr span{text-align:center}
-.row{display:grid;grid-template-columns:1fr 4.05em 4.05em 4.05em;gap:.9em;align-items:center;padding:1.25vh 1vw;border-top:1px solid #ffffff12}
-.row:nth-child(even){background:rgba(255,255,255,.018)}
+.row{display:grid;grid-template-columns:1fr 4.05em 4.05em 4.05em;gap:.9em;align-items:center;padding:1.45vh 1vw;border-top:1px solid rgba(255,255,255,.075)}
+.row:nth-child(even){background:rgba(255,255,255,.012)}
 .row.one{grid-template-columns:1fr auto}
 .nm{font-size:1em;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:.6vw}.nm small{display:block;font-size:.52em;color:#B89B80;font-style:italic;margin-left:0;margin-top:.35vh;letter-spacing:.03vw}
 .pr{font-size:.95em;font-weight:500;text-align:center}.pr.d{color:#ffffff22}
@@ -1249,6 +1279,104 @@ function pairSec(sig){
   var liste=TATLI_MATRIS[mod]||TATLI_MATRIS.ogle;
   return liste[Math.floor(Date.now()/420000)%liste.length];
 }
+function productInfo(ad,data){
+  var info={ad:ad||"",kategori:"",aciklama:""};
+  (data.kategoriler||[]).forEach(function(k){(k.urunler||[]).forEach(function(u){
+    if(String(u.ad).toLowerCase()===String(ad).toLowerCase()){
+      info={ad:u.ad,kategori:k.kategori||"",aciklama:u.aciklama||""};
+    }
+  });});
+  return info;
+}
+function e1HeroProduct(data,sig){
+  var ad=(sig&&sig.en_cok)||"";
+  if(!ad&&data.imza&&data.imza.ad)ad=data.imza.ad;
+  if(!ad&&sig&&sig.oneri&&sig.oneri.ad)ad=sig.oneri.ad;
+  if(!ad){
+    (data.kategoriler||[]).some(function(k){return (k.urunler||[]).some(function(u){
+      if(/latte/i.test(u.ad)){ad=u.ad;return true;}return false;
+    });});
+  }
+  if(!ad)return null;
+  var info=productInfo(ad,data);if(!info.ad)info.ad=ad;
+  return info;
+}
+function e1HeroNote(info){
+  var n=(info.ad||"").toLowerCase(),a=(info.aciklama||"").trim();
+  if(a&&a.length<=58)return a;
+  if(/latte|flat white|cappuccino/.test(n))return "İpeksi süt, dengeli espresso.";
+  if(/americano|filtre|brew|cold/.test(n))return "Net kahve karakteri, uzun içim.";
+  if(/mocha|chocolate|çikolata/.test(n))return "Kakao dokusu, yumuşak kahve dengesi.";
+  return "Yumuşak içim, karakterli bitiş.";
+}
+function e1ColdProduct(data,sig){
+  var ad="";
+  if(sig&&sig.yeni){for(var i=0;i<sig.yeni.length;i++){if(/ice|iced|cold|frozen|mocktail|buz/i.test(sig.yeni[i])){ad=sig.yeni[i];break;}}}
+  if(!ad&&sig&&sig.kategori_fav)ad=sig.kategori_fav["Iced & Cold"]||sig.kategori_fav["Cold Drinks"]||"";
+  if(!ad){
+    (data.kategoriler||[]).some(function(k){return /(iced|cold|mocktail|milkshake|frozen|soğuk|soguk)/i.test(k.kategori||"")&&(k.urunler||[]).some(function(u){
+      ad=u.ad;return true;
+    });});
+  }
+  if(!ad)ad="Ice Latte";
+  var info=productInfo(ad,data);if(!info.ad)info.ad=ad;
+  return info;
+}
+function e1ColdClip(info){
+  var n=((info&&info.ad)||"").toLowerCase(),k=((info&&info.kategori)||"").toLowerCase();
+  if(/frozen|milkshake/.test(n+k))return "frozen";
+  if(/mocktail|green/.test(n+k))return "greenmocktail";
+  return "kahverengi";
+}
+function buildE1HeroProduct(data,sig){
+  var info=e1HeroProduct(data,sig);if(!info)return null;
+  var tag=(sig&&sig.en_cok)?"Bu hafta en çok seçilen":(data.imza&&data.imza.ad===info.ad)?"TULİPİ imzası":"Bugünün fincanı";
+  var st=el("div","pg e1Scene e1HeroScene");st.dataset.t=4000;st.dataset.roles="1";st.dataset.sahne="e1_tek_hero";st.dataset.name=info.ad;
+  st.innerHTML='<video class="bgvid" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/craft"></video><div class="bggrade"></div>'
+    +'<div class="e1Block"><div class="e1Kicker">'+tag+'</div><div class="e1Title">'+info.ad+'</div>'
+    +'<div class="e1Desc">'+e1HeroNote(info)+'</div></div><div class="e1Fade"></div>';
+  return st;
+}
+function buildE1ColdCall(data,sig){
+  var info=e1ColdProduct(data,sig);
+  var st=el("div","pg e1Scene e1Cold");st.dataset.t=5000;st.dataset.roles="1";st.dataset.sahne="e1_yaz_soguk";st.dataset.name=info.ad;
+  st.innerHTML='<video class="bgvid" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/'+e1ColdClip(info)+'"></video><div class="bggrade"></div>'
+    +'<div class="e1Block"><div class="e1Kicker">Yaz burada kahveyle serinler.</div><div class="e1Title">'+info.ad+'</div>'
+    +'<div class="e1Desc">Ferah, buzlu, uzun içim.</div></div><div class="e1Fade"></div>';
+  return st;
+}
+function e3NewProduct(data,sig){
+  var info=e1ColdProduct(data,sig);
+  if(sig&&sig.yeni&&sig.yeni.length){
+    var picked=sig.yeni[0];
+    for(var i=0;i<sig.yeni.length;i++){if(/frozen|mocktail|ice|iced|cold|buz/i.test(sig.yeni[i])){picked=sig.yeni[i];break;}}
+    info=productInfo(picked,data);if(!info.ad)info.ad=picked;
+  }
+  return info;
+}
+function e3SilentProduct(data,sig){
+  var o=sig&&sig.oneri&&sig.oneri.ad?productInfo(sig.oneri.ad,data):null;
+  if(o&&o.ad)return o;
+  if(data.imza&&data.imza.ad){o=productInfo(data.imza.ad,data);if(!o.ad)o.ad=data.imza.ad;return o;}
+  return e1HeroProduct(data,sig)||{ad:"Tulipi Latte",kategori:"Signature Coffees",aciklama:""};
+}
+function e3Scene(cls,sahne,clip,kicker,title,desc,name){
+  var st=el("div","pg e3Flow "+(cls||""));st.dataset.t=3000;st.dataset.roles="3";st.dataset.sahne=sahne;if(name)st.dataset.name=name;
+  st.innerHTML='<video class="bgvid" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/'+clip+'"></video><div class="bggrade"></div>'
+    +'<div class="e3Block"><div class="e3Kicker">'+kicker+'</div><div class="e3Title">'+title+'</div><div class="e3Desc">'+desc+'</div></div><div class="e3Fade"></div>';
+  return st;
+}
+function buildE3Flow(data,sig){
+  var pages=[],nw=e3NewProduct(data,sig),silent=e3SilentProduct(data,sig),pr=pairSec(sig);
+  pages.push(e3Scene("e3New","e3_yeni",e1ColdClip(nw),"YENİ",nw.ad,"Yaz için daha ferah, daha canlı.",nw.ad));
+  pages.push(e3Scene("e3Craft","e3_craft",/(mocktail|green|frozen|milkshake)/i.test((nw.ad||"")+(nw.kategori||""))?"greenmocktail":"craft","BARISTA CRAFT","El yapımı, anında hazır","Sadece karıştırmıyoruz; kuruyoruz."));
+  pages.push(e3Scene("e3Silent","e3_sessiz_oneri","kahverengi","Baristanın sessiz önerisi",silent.ad,e1HeroNote(silent),silent.ad));
+  var pairTitle=pr?(pr.k+" + "+pr.t):((data.pair&&data.pair.ad)?("Kahve + "+data.pair.ad):"Kahve + San Sebastian");
+  var pairDesc=pr?pr.c:((data.pair&&data.pair.mesaj)?data.pair.mesaj:"Sütlü kahveyle kremamsı denge.");
+  var pairName=pr?pr.t:((data.pair&&data.pair.ad)||"San Sebastian");
+  pages.push(e3Scene("e3Pair","e3_pair","craft","Yanına iyi gider",pairTitle,pairDesc,pairName));
+  return pages;
+}
 function buildGununSecimi(data,sig){
   // 🎬 E1 SAHNE 3 — "GÜNÜN SEÇİMİ": rampanın finali, fiyat İLK KEZ burada (Vaat→Kanıt→Duygu→SATIŞ).
   // Sosyal kanıt dili saat-modlu; alt köprü satırı matristen tatlıya bağlar (E3'e pas).
@@ -1399,7 +1527,7 @@ function heroProduct(data,sig){
   return null;
 }
 function screenRoleMeta(ekran){
-  if(ekran==="1")return {idx:"SCREEN 01",title:"Marka · Hero · Top Seller",sub:"Premium vitrin akisi"};
+  if(ekran==="1")return {idx:"SCREEN 01",title:"TULİPİ Coffee",sub:"Davet · Hero · Yaz"};
   if(ekran==="2")return {idx:"SCREEN 02",title:"Ana Kahve Menu",sub:"Espresso · Latte · Brewed"};
   if(ekran==="3")return {idx:"SCREEN 03",title:"Upsell · Soguk · Tatli",sub:"Cold drinks · Pairing · Dessert"};
   return {idx:"FULL LOOP",title:"Tulipi TV Menu",sub:"Tum sahneler tek akista"};
@@ -1421,30 +1549,22 @@ function build(data,sig){
   var dots=document.getElementById("dots");dots.innerHTML="";
   var heroPages=[],ekran1Pages=[],ekran3Pages=[];
 
-  // 1) EKRAN 1 AÇILIŞ — premium bardak hero; fiyat yok, eski bardak/fiyat alanı tamamen kaldırıldı
-  var bOpen=el("div","pg heroPg openingPg");bOpen.dataset.t=8000;bOpen.dataset.roles="1";
+  // 1) EKRAN 1 — 12sn premium davet akışı: craft açılış → tek hero ürün → yaz/soğuk çağrı.
+  // Fiyat/TL ve dashboard etiketi yok; Ekran 2/3 veri akışına dokunmadan sadece E1 vitrini sadeleşir.
+  var bOpen=el("div","pg heroPg openingPg");bOpen.dataset.t=3000;bOpen.dataset.roles="1";bOpen.dataset.sahne="e1_craft_acilis";
   bOpen.innerHTML='<img class="openingBg" src="/tv-menu/hero/opening" alt="">'
     +'<div class="openingShade"></div>'
-    +'<div class="openingCopy"><img class="openingLogo" src="/tv-menu/logo" alt="">'
-    +'<div class="openingTitle"><span>Her Gün</span><span>Taze.</span></div>'
-    +'<div class="openingSub">Serin bir mola, iyi bir kahve.</div></div>';  // yaz sezonu (kış: "Sıcak bir mola, iyi bir kahve.")
+    +'<div class="openingCopy">'
+    +'<div class="openingTitle"><span>Kahve burada</span><span>hazır gelmez.</span></div>'
+    +'<div class="openingSub">TULİPİ Coffee</div></div>';
   heroPages.push(bOpen);
 
   // ÖZ-ELEŞTİRİ — KONSOLİDASYON: Saat sinyali ayrı bir sahne olarak HİÇBİR ekranda yok artık —
   // alt-şerit ticker'da zaten metin olarak dönüyor (FAZ 2), ayrı "ŞİMDİ" kartı tekrar/doluluk
   // yaratıyordu (Codex 2. göz review notu). Mevsim sinyali Ekran 2'de (referans ekranı) kalıyor.
 
-  // E1 sahne-sahne kuruluyor (kullanıcı onaylı sıra): Sahne 1 açılış hero (onaylı) →
-  // 2) SAHNE 2 "ÖZEN KATMANI" (kullanıcı şartnamesiyle eklendi, 2026-07-02)
-  heroPages.push(buildOzen());
-  // 3) 🎬 SAHNE 3 "GÜNÜN SEÇİMİ" (FAZ1, kullanıcı onaylı) — rampa tamam: fiyat ilk kez burada
-  var gsec=buildGununSecimi(data,sig);if(gsec)heroPages.push(gsec);
-  // 4-7) 🎬 ENDÜSTRİ NORMU SAHNE GENİŞLEMESİ (kahveci panosu: 5-7 sahne / 45-60sn döngü):
-  // Yeni Ürün (koşullu) → Haftanın Favorileri (sosyal kanıt) → Sezon (yaz) → Marka İmza (loop kapanışı)
-  var yeniPg=buildYeniUrun(data,sig);if(yeniPg)heroPages.push(yeniPg);
-  var favPg=buildHaftaninFavorileri(sig);if(favPg)heroPages.push(favPg);
-  var sznPg=buildSezon(sig);if(sznPg)heroPages.push(sznPg);
-  heroPages.push(buildMarkaImza());
+  var e1Hero=buildE1HeroProduct(data,sig);if(e1Hero)heroPages.push(e1Hero);
+  heroPages.push(buildE1ColdCall(data,sig));
   var hp=heroProduct(data,sig);  // Ekran 3 craft klip çakışma kontrolü hâlâ buna bakıyor
 
   // 4.2) CRAFT MOCKTAIL — gerçek barista çekimi: jigger → süzgeç → yeşil akış (barista ustalığı, ayrı/kendi sahnesi)
@@ -1480,12 +1600,7 @@ function build(data,sig){
   ekran3Pages.push(combo);
 
   // 5.5) EKRAN 2 kahve referansi + EKRAN 3 upsell kartlari
-  // Mevsim Kartı — ayrı saat sahnesi kaldırıldığı için bu sinyal sade bir referans kartı olarak E2'de kalır
-  if(sig&&sig.mevsim){
-    var mvC=el("div","pg flatCard");mvC.dataset.t=6000;mvC.dataset.roles="2";
-    mvC.innerHTML='<div class="gT">'+sig.mevsim.etiket+'</div>'+(sig.mevsim.oneri?'<div class="gH" style="margin-bottom:0">'+sig.mevsim.oneri+'</div>':'');
-    ekran1Pages.push(mvC);
-  }
+  // E2 ana karar ekranı: mevsim/duygu kartı menü ritmini bozmasın diye burada gösterilmez.
   // ÖZ-ELEŞTİRİ (Codex 2. göz review): "Bugünün Önerisi" düz kartı eskiden E1'de Kahraman Ürün
   // spotlight'ıyla (yukarıda, 4. madde) AYNI ürünü iki farklı formatta art arda gösteriyordu —
   // "aynı şeyi iki kez söylüyor" hissi, premium değil tekrar. Tamamen kaldırıldı — spotlight zaten
@@ -1570,13 +1685,18 @@ function build(data,sig){
     +'<div class="mcovCats">'+(kahveKats.length?kahveKats.join(" · "):"Classic · Signature")+'</div></div>'
     +'<div class="mcovFade"></div>';
   ekran1Pages.push(mcov);
-  var AGIRLIKLI_KAT=["Classic Coffees","Signature Coffees"];  // en çok satılan kategoriler — döngüde 2 kez görünür
+  var AGIRLIKLI_KAT=[];  // E2 öngörülebilir menü akışı: kategori tekrarları kapalı
   var agirlikliTekrar=[];
-  (data.kategoriler||[]).forEach(function(k){
+  var orderedKategoriler=(data.kategoriler||[]).slice().sort(function(a,b){
+    var p={"Signature Coffees":0,"Classic Coffees":1};
+    var pa=(p[a.kategori]!=null?p[a.kategori]:9),pb=(p[b.kategori]!=null?p[b.kategori]:9);
+    return pa-pb;
+  });
+  orderedKategoriler.forEach(function(k){
     var urunler=_satisaGoreSirala(k.urunler);  // görünmez satış sıralaması (primacy)
-    var CHUNK=8,parts=[];
-    for(var i=0;i<urunler.length;i+=CHUNK)parts.push(urunler.slice(i,i+CHUNK));
     var coffeeRole=isCoffeeMenuCategory(k.kategori);
+    var CHUNK=coffeeRole?6:8,parts=[];
+    for(var i=0;i<urunler.length;i+=CHUNK)parts.push(urunler.slice(i,i+CHUNK));
     parts.forEach(function(chunk,pi){
       if(coffeeRole)ekran1Pages.push(buildKatPage(k,chunk,pi,parts.length,"2",true));  // Perfect Pair mikro şeridi E2'de de
       else ekran3Pages.push(buildKatPage(k,chunk,pi,parts.length,"3",true));
@@ -1637,6 +1757,9 @@ function build(data,sig){
     oz.innerHTML='<div class="spotTag" style="position:relative;z-index:2">'+sig.ozel.etiket+'</div><div class="comboTitle" style="position:relative;z-index:2;font-size:4.2vh">'+sig.ozel.mesaj+'</div>';
     ekran3Pages.push(oz);
   }
+
+  // EKRAN 3 final rolü: sepet büyütme + keşif. Eski karma sahne havuzunu tek, okunur 12sn akışla değiştir.
+  ekran3Pages=buildE3Flow(data,sig);
 
   // FAZ 4 — 3 EKRAN: 1=marka/hero/top seller · 2=ana kahve menu · 3=upsell/soguk/tatli/kombin
   var pages;
@@ -1816,6 +1939,7 @@ loadSig();setInterval(loadSig,60000);setInterval(rotLive,7000);
 (function cine(){
   var c=document.getElementById("cine");if(!c||window._cineInit)return;window._cineInit=1;
   var ek=(new URLSearchParams(location.search)).get("ekran");
+  if(ek==="1")return;
   // GERÇEK TULİPİ çekimleri (stok bean/latte/cup emekli edildi — kopukluk yaratıyordu, marka tutarlılığı için)
   var CYCLE=150, DUR=11, names=["espresso","craft","musteri","lifestyle"];
   var caps={espresso:["TAZE DEMLENDİ","Freshly Brewed"],craft:["EL YAPIMI","Handcrafted"],musteri:["MUTLULUK","Her Gülüşte"],lifestyle:["TULİPİ","Her An Yanında"]};
