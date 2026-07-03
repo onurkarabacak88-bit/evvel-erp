@@ -6548,18 +6548,32 @@ def vadeli_guncelle(vid: str, v: VadeliAlim):
         if not eski: raise HTTPException(404)
         cur.execute("""UPDATE vadeli_alimlar SET aciklama=%s,tutar=%s,vade_tarihi=%s,tedarikci=%s WHERE id=%s""",
             (v.aciklama, v.tutar, v.vade_tarihi, v.tedarikci, vid))
-        # Bağlı odeme_plani'nı da güncelle
+        # Bağlı odeme_plani'nı da güncelle — İKİ ADIM (UniqueViolation fix, 2026-07-04):
+        # 1) tarih/tutar/açıklama HER ZAMAN güncellenir (fiili vade = tarih alanıdır).
         cur.execute("""
             UPDATE odeme_plani SET
                 tarih=%s,
-                referans_ay=DATE_TRUNC('month', %s::date),
                 odenecek_tutar=%s,
                 asgari_tutar=%s,
                 aciklama=%s
             WHERE kaynak_tablo='vadeli_alimlar' AND kaynak_id=%s
             AND durum IN ('bekliyor','onay_bekliyor')
-        """, (v.vade_tarihi, str(v.vade_tarihi), float(v.tutar), float(v.tutar),
+        """, (v.vade_tarihi, float(v.tutar), float(v.tutar),
               f"Vadeli Alım: {v.aciklama}", vid))
+        # 2) referans_ay (ay-gruplama etiketi) SADECE hedef ayda çakışma yoksa taşınır.
+        #    Aynı vadeli alımın o ayda başka (örn. kısmi ödemeden ÖDENMİŞ) planı varsa
+        #    uq_odeme_plani_kaynak_ay_aktif indeksi patlıyordu — kullanıcı bildirimi.
+        cur.execute("""
+            UPDATE odeme_plani op SET referans_ay=DATE_TRUNC('month', %s::date)
+            WHERE op.kaynak_tablo='vadeli_alimlar' AND op.kaynak_id=%s
+            AND op.durum IN ('bekliyor','onay_bekliyor')
+            AND NOT EXISTS (
+                SELECT 1 FROM odeme_plani q
+                WHERE q.kaynak_tablo='vadeli_alimlar' AND q.kaynak_id=%s
+                AND q.id <> op.id AND q.durum <> 'iptal'
+                AND q.referans_ay = DATE_TRUNC('month', %s::date)
+            )
+        """, (str(v.vade_tarihi), vid, vid, str(v.vade_tarihi)))
         # Bekleyen onay tutarı planla aynı kalsın (düzenleme sonrası eski tutarla çift/eksik kasa olmasın)
         cur.execute("""
             UPDATE onay_kuyrugu SET tutar=%s, tarih=%s
