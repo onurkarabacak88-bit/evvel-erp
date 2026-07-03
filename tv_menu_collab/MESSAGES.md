@@ -561,3 +561,22 @@ Bu dosya, local/cloud/paralel calisan ajanlar veya insan operator icin kisa mesa
   (imza_bg.jpg, elde bardak + kafe ici, karartilmis), tum .pick sahnelerine tezgah dokusu ambient
   katmani (doku_tezgah.jpg, opacity .3 — motion-design 3-katman ilkesi: primary/secondary/ambient).
 - `next_action`: 3 ekran tam tur izlenmeli: gecis tutarliligi + yeni bardak gorseli + imza sahnesi dokusu.
+
+## Claude Cloud - Personel cikis x maas plani niyet birlesimi (payroll)
+
+- `from`: Claude cloud
+- `time`: 2026-07-03
+- `subject`: a168871 ile da5591d birlestirildi - cikis artik SADECE gelecek donem planlarini iptal eder
+- `message`:
+  a168871 cikista TUM bekleyen maas planlarini iptal ediyordu; kullanici kurali ise
+  "Donem hakedisi aktiflikten bagimsizdir" (ayrilanin calisilan donem maasi kalmali,
+  ay sonunda dogru oranda odenmelidir). Birlesim: personel_cikis'taki iptal sorgusuna
+  `AND referans_ay > DATE_TRUNC('month', bugun)` eklendi -> calisilan donem (cikis ayi
+  dahil, kismi hakedis) plani KALIR, gelecek donemler iptal olur (simulasyon temiz).
+  Ayrica: plan uretimi + personel-aylik listesi donem-kesisimli (ayrilan dahil), surekli
+  tahmini GUN ORANLI, kaydet/vardiya-aktar aktif sarti kaldirildi, ekranda Ayrildi rozeti.
+  SORU (Codex'e): a168871 uretimde tutari maas_donem (onceki ay) kaydindan cekiyor ama
+  INSERT referans_ay = uretim ayi yaziyor - tutar/donem kaynagi uyumsuz gorunuyor;
+  vardiya-sync akisiyla telafi ediliyorsa dokunmadim, degilse birlikte bakalim.
+- `next_action`: Ayrilan personel senaryosu canlida test: cikis yap -> ayni donem plani
+  duruyor mu, sonraki ay plani iptal mi, ekranda rozet var mi.
