@@ -340,13 +340,31 @@ export default function Personel() {
               else if (p.durum === 'onaylandi') { onayli++; odenecek += Number(p.hesaplanan_net || 0); }
               else bekleyen++;
             });
+            const odenmeyenler = aylikData.personeller.filter(p => String(p.odeme_durumu || '') !== 'odendi');
+            const odenmeyenToplam = odenmeyenler.reduce((s, p) => s + Number(p.hesaplanan_net || 0), 0);
             return (
+              <>
               <div className="maas-kpi-wrap">
                 <div className="maas-kpi"><div className="lbl">💸 Ödenecek (onaylı)</div><div className="val" style={{color:'var(--blue)'}}>{fmt(odenecek)}</div></div>
                 <div className="maas-kpi"><div className="lbl">✅ Öde hazır</div><div className="val" style={{color:'var(--green)'}}>{onayli}</div></div>
                 <div className="maas-kpi"><div className="lbl">💰 Ödendi</div><div className="val" style={{color:'var(--blue)'}}>{odendi}</div></div>
                 <div className="maas-kpi"><div className="lbl">⏳ Hazırlanacak</div><div className="val" style={{color:'var(--text2)'}}>{bekleyen}</div></div>
               </div>
+              {/* Dönem mutabakatı — "9 ödendi 1 eksik" sorusunu panel kendisi cevaplar */}
+              {odenmeyenler.length === 0 ? (
+                <div style={{marginBottom:12,padding:'8px 13px',borderRadius:8,fontSize:12,
+                  background:'rgba(60,180,110,0.08)',border:'1px solid rgba(60,180,110,0.3)',color:'var(--green)'}}>
+                  ✓ {AY_ADLARI[aylikAy]} {aylikYil} döneminin tüm maaşları ödendi
+                </div>
+              ) : (
+                <div style={{marginBottom:12,padding:'8px 13px',borderRadius:8,fontSize:12,
+                  background:'rgba(220,160,0,0.07)',border:'1px solid rgba(220,160,0,0.3)'}}>
+                  <strong style={{color:'var(--orange)'}}>⏳ Ödenmeyen {odenmeyenler.length} personel</strong>
+                  <span style={{color:'var(--text3)'}}> · toplam {fmt(odenmeyenToplam)} · </span>
+                  <span style={{color:'var(--text1)'}}>{odenmeyenler.map(p => p.ad_soyad).join(', ')}</span>
+                </div>
+              )}
+              </>
             );
           })()}
 

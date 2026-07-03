@@ -4669,23 +4669,30 @@ def _personel_maas_odeme_tarihi(yil: int, ay: int):
     return date(odeme_yil, odeme_ay, 1)
 
 
+_TR_AYLAR = ["", "Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran",
+             "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"]
+
+
 def _personel_odeme_plani_senkronize(cur, p: dict, yil: int, ay: int, net: float):
     if net <= 0:
         return None
 
     odeme_tarihi = _personel_maas_odeme_tarihi(yil, ay)
+    # Dönem etiketi — CFO panel / Yaklaşan Ödemeler'de HANGİ ayın maaşı olduğu okunsun
+    # (kullanıcı sorusu 2026-07-04: "Haziran ayı maaş ödemeleri nasıl görünecek?")
+    aciklama = f"Personel Maaş: {p.get('ad_soyad') or ''} — {_TR_AYLAR[ay]} {yil} dönemi"
 
     cur.execute(
         """
         UPDATE odeme_plani
         SET tarih=%s, referans_ay=DATE_TRUNC('month', %s::date),
-            odenecek_tutar=%s, asgari_tutar=%s
+            odenecek_tutar=%s, asgari_tutar=%s, aciklama=%s
         WHERE kaynak_tablo='personel' AND kaynak_id=%s
           AND durum IN ('bekliyor','onay_bekliyor')
           AND referans_ay = DATE_TRUNC('month', %s::date)
         RETURNING id
         """,
-        (odeme_tarihi, str(odeme_tarihi), net, net, p["id"], str(odeme_tarihi)),
+        (odeme_tarihi, str(odeme_tarihi), net, net, aciklama, p["id"], str(odeme_tarihi)),
     )
     row = cur.fetchone()
     if row:
@@ -4713,7 +4720,7 @@ def _personel_odeme_plani_senkronize(cur, p: dict, yil: int, ay: int, net: float
             str(odeme_tarihi),
             net,
             net,
-            f"Personel Maaş: {p.get('ad_soyad') or ''}",
+            aciklama,
             p["id"],
             p["id"],
             str(odeme_tarihi),

@@ -645,6 +645,8 @@ def aylik_odeme_plani_uret(yil=None, ay=None):
                 continue
 
             donem_ref = date(maas_donem_yil, maas_donem_ay, 1)
+            _tr_aylar = ["", "Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran",
+                         "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"]
             pid = str(_uuid.uuid4())
             cur.execute("""
                 INSERT INTO odeme_plani (id, kart_id, tarih, referans_ay, odenecek_tutar, asgari_tutar, aciklama, durum, kaynak_tablo, kaynak_id)
@@ -656,7 +658,7 @@ def aylik_odeme_plani_uret(yil=None, ay=None):
                     AND durum != 'iptal'
                 )
             """, (pid, odeme_tarihi, str(odeme_tarihi), toplam_maas, toplam_maas,
-                  f"Personel Maaş: {p['ad_soyad']} ({donem_ref:%Y-%m} dönemi)",
+                  f"Personel Maaş: {p['ad_soyad']} — {_tr_aylar[maas_donem_ay]} {maas_donem_yil} dönemi",
                   p['id'], p['id'], str(odeme_tarihi)))
             if cur.rowcount > 0:
                 uretilen.append(f"Maaş: {p['ad_soyad']} — {donem_ref:%Y-%m} dönemi, ödeme {odeme_tarihi}")
