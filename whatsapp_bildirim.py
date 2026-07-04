@@ -463,6 +463,49 @@ def _yarin_odemeler(cur, tarih: date) -> list:
     return sorted(liste, key=lambda x: float(x.get('tutar') or 0), reverse=True)[:10]
 
 
+# ── Tutarı girilmemiş faturalar (unutma yakalayıcısı) ────────────────────────
+
+def _girilmemis_faturalar(cur, tarih: date) -> list:
+    """Değişken giderler: ödeme günü geldi/geçti ama bu ay ne ödeme izi ne plan var —
+    yani bu ayın fatura tutarı HİÇ girilmemiş. Gece özetinde ayrı bölüm
+    (kullanıcı 2026-07-04: 'girmeyi unutmayacak bir sistem kurmalıyız')."""
+    cur.execute("""
+        SELECT id, gider_adi, odeme_gunu, tutar
+        FROM sabit_giderler
+        WHERE aktif = TRUE AND tip = 'degisken' AND COALESCE(odeme_gunu, 1) <= %s
+    """, (tarih.day,))
+    liste = []
+    for g in (cur.fetchall() or []):
+        cur.execute("""
+            SELECT 1 FROM kasa_hareketleri
+            WHERE kaynak_id = %s AND kaynak_tablo = 'sabit_giderler'
+              AND islem_turu = 'FATURA_ODEMESI' AND kasa_etkisi = TRUE AND durum = 'aktif'
+              AND EXTRACT(YEAR FROM tarih) = %s AND EXTRACT(MONTH FROM tarih) = %s
+        """, (str(g['id']), tarih.year, tarih.month))
+        if cur.fetchone():
+            continue  # bu ay nakit ödendi
+        cur.execute("""
+            SELECT 1 FROM kart_hareketleri
+            WHERE kaynak_id = %s AND kaynak_tablo = 'fatura_giderleri'
+              AND islem_turu = 'HARCAMA' AND durum = 'aktif'
+              AND EXTRACT(YEAR FROM tarih) = %s AND EXTRACT(MONTH FROM tarih) = %s
+        """, (str(g['id']), tarih.year, tarih.month))
+        if cur.fetchone():
+            continue  # bu ay kartla ödendi
+        cur.execute("""
+            SELECT 1 FROM odeme_plani
+            WHERE kaynak_tablo='sabit_giderler' AND kaynak_id=%s
+              AND durum != 'iptal'
+              AND referans_ay = DATE_TRUNC('month', %s::date)
+        """, (str(g['id']), str(tarih)))
+        if cur.fetchone():
+            continue  # tutar girilmiş, vade takibinde
+        gecikme = tarih.day - int(g['odeme_gunu'] or 1)
+        liste.append({'ad': g['gider_adi'], 'gecikme': gecikme,
+                      'tahmini': float(g['tutar'] or 0)})
+    return sorted(liste, key=lambda x: -x['gecikme'])
+
+
 # ── Kasa teslimler ───────────────────────────────────────────────────────────
 
 def _kasa_teslimler(cur, tarih: date) -> list:
@@ -784,6 +827,7 @@ def gunluk_ozet_mesaj_olustur(tarih: date | None = None) -> str:
         tedarik_zinciri = _tedarik_zinciri_ozet(cur, tarih)
         denetim_ozetleri = _akilli_denetim_ozetleri(cur, tarih)
         eksik_ciro_oneri = _eksik_ciro_oneri_ozet(cur)
+        girilmemis  = _girilmemis_faturalar(cur, tarih)
 
     tarih_str = f"{tarih.day} {_AY[tarih.month - 1]}"
     s = [f"🌙 *Evvel — {tarih_str} Günlük Özet*", ""]
@@ -854,6 +898,16 @@ def gunluk_ozet_mesaj_olustur(tarih: date | None = None) -> str:
             s.append(f"  Toplam: *{_fmt(toplam_y)}*")
     else:
         s.append("  Ödeme yok ✓")
+
+    # 🧾 Tutarı girilmemiş faturalar — unutma yakalayıcısı (kullanıcı 2026-07-04)
+    if girilmemis:
+        s.append("")
+        s.append(f"*🧾 TUTARI GİRİLMEMİŞ FATURALAR ({len(girilmemis)})*")
+        for f in girilmemis[:10]:
+            gec = f" · {f['gecikme']}g gecikti" if f['gecikme'] > 0 else ""
+            tah = f" (≈{_fmt(f['tahmini'])})" if f['tahmini'] else ""
+            s.append(f"  • {str(f['ad'])[:28]}{tah}{gec}")
+        s.append("  → CFO panelde '🧾 Tutarı Gir' ile işleyin")
 
     # Yarın açılışçılar — ayrı bölüm
     yarin_satirlar = []

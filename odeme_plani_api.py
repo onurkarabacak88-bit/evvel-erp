@@ -64,6 +64,49 @@ def odeme_plani_bugun():
             "gecikmis": gun > 0,
             "gun_gecikme": gun,
         })
+
+    # 🧾 TUTARI GİRİLMEMİŞ değişken faturalar (planı YOK, o yüzden yukarıda çıkmaz) —
+    # cep de görsün ki unutulmasın (kullanıcı 2026-07-04: "girmeyi unutmayacak sistem").
+    with db() as (conn, cur):
+        cur.execute("""
+            SELECT sg.id, sg.gider_adi, sg.odeme_gunu, sg.tutar,
+                   (EXTRACT(DAY FROM CURRENT_DATE)::int - COALESCE(sg.odeme_gunu, 1)) AS gun_gecikme
+            FROM sabit_giderler sg
+            WHERE sg.aktif = TRUE AND sg.tip = 'degisken'
+              AND COALESCE(sg.odeme_gunu, 1) <= EXTRACT(DAY FROM CURRENT_DATE)
+              AND NOT EXISTS (
+                  SELECT 1 FROM kasa_hareketleri kh
+                  WHERE kh.kaynak_id = sg.id AND kh.kaynak_tablo = 'sabit_giderler'
+                    AND kh.islem_turu = 'FATURA_ODEMESI' AND kh.kasa_etkisi = TRUE AND kh.durum = 'aktif'
+                    AND DATE_TRUNC('month', kh.tarih) = DATE_TRUNC('month', CURRENT_DATE))
+              AND NOT EXISTS (
+                  SELECT 1 FROM kart_hareketleri kt
+                  WHERE kt.kaynak_id = sg.id AND kt.kaynak_tablo = 'fatura_giderleri'
+                    AND kt.islem_turu = 'HARCAMA' AND kt.durum = 'aktif'
+                    AND DATE_TRUNC('month', kt.tarih) = DATE_TRUNC('month', CURRENT_DATE))
+              AND NOT EXISTS (
+                  SELECT 1 FROM odeme_plani op2
+                  WHERE op2.kaynak_tablo = 'sabit_giderler' AND op2.kaynak_id = sg.id
+                    AND op2.durum != 'iptal'
+                    AND op2.referans_ay = DATE_TRUNC('month', CURRENT_DATE))
+            ORDER BY gun_gecikme DESC
+        """)
+        for g in (cur.fetchall() or []):
+            gun = int(g.get("gun_gecikme") or 0)
+            tahmini = float(g["tutar"] or 0)
+            tah_ek = f" (≈{tahmini:,.0f} ₺ tahmini)" if tahmini > 0 else ""
+            out.append({
+                "id": f"fatura_{g['id']}",  # sadece görüntü anahtarı (plan değil)
+                "baslik": f"🧾 {g['gider_adi']} — fatura tutarı girilmedi{tah_ek}",
+                "tip": "Fatura (tutar bekleniyor)",
+                # tutar 0: tahmini rakam "bugün ödenecek toplam"a KARIŞMAZ (kasa izi=tek gerçek)
+                "tutar": 0.0,
+                "asgari": None,
+                "tarih": None,
+                "gecikmis": gun > 0,
+                "gun_gecikme": gun,
+                "tutar_girilmedi": True,
+            })
     return out
 
 

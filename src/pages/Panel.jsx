@@ -1,4 +1,4 @@
-﻿import { useState, useEffect } from 'react';
+﻿import { useState, useEffect, useRef } from 'react';
 import { api, fmt, fmtDate } from '../utils/api';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceDot } from 'recharts';
 import { publishGlobalDataRefresh, subscribeGlobalDataRefresh } from '../utils/globalDataRefresh';
@@ -49,6 +49,9 @@ export default function Panel({ onNavigate }) {
   const [faturaSorKartlar, setFaturaSorKartlar] = useState(null);
   const [faturaSorKartYukleniyor, setFaturaSorKartYukleniyor] = useState(false);
   const [faturaSorKartId, setFaturaSorKartId] = useState('');
+  // 🧾 AÇILIŞ YAKALAYICI: vadesi gelmiş/geçmiş ve tutarı girilmemiş faturalar — modal (unutma önleyici)
+  const [faturaBekleyenler, setFaturaBekleyenler] = useState(null);
+  const faturaYakalayiciGosterildi = useRef(false);
   // Nakit/Kart seçim state'leri
   const [kartOneriAdim, setKartOneriAdim] = useState(1); // 1=yöntem, 2=kart seç
   const [kartOneriYontemi, setKartOneriYontemi] = useState('nakit');
@@ -239,7 +242,20 @@ export default function Panel({ onNavigate }) {
       api('/vadeli-alimlar/ozet').catch(() => null),
       api('/gorev/izin-alacagi').catch(() => null),
     ]).then(([p, u, o, a, sg, su, og, vo, ia]) => {
-      if (p) setPanel(p);
+      if (p) {
+        setPanel(p);
+        // 🧾 AÇILIŞ YAKALAYICI (kullanıcı 2026-07-04): vadesi gelmiş/geçmiş ve tutarı
+        // girilmemiş değişken faturalar gözden kaçmasın — Evvel açılınca modal gelir.
+        // Günde 1 kez ("Bugünlük kapat" ile snooze), oturumda 1 kez otomatik açılır.
+        if (!faturaYakalayiciGosterildi.current) {
+          const bekleyen = (p.bugun_odemeler || []).filter(x => x.tip === 'degisken' && x.gun_farki <= 0);
+          const bugunISO = new Date().toISOString().split('T')[0];
+          if (bekleyen.length && localStorage.getItem('fatura_sor_snooze') !== bugunISO) {
+            faturaYakalayiciGosterildi.current = true;
+            setFaturaBekleyenler(bekleyen);
+          }
+        }
+      }
       setUyarilar(u || []); setOnaylar(o || []); setAnomali(a);
       setSabitGiderOzet(sg?.ozet || {});
       setSabitGiderUyarilar(su?.uyarilar || []);
@@ -408,10 +424,13 @@ export default function Panel({ onNavigate }) {
     if (loadingBtn) return;
     setLoadingBtn(true);
     try {
+      const kid = faturaSorModal.kaynak_id;
       const r = await api('/fatura-vadeye-yaz', { method: 'POST', body: {
-        sabit_gider_id: faturaSorModal.kaynak_id, tutar: parseFloat(faturaSorTutar) } });
+        sabit_gider_id: kid, tutar: parseFloat(faturaSorTutar) } });
       toast(`📅 ${fmt(r.tutar)} vade listesine yazıldı (vade ${fmtDate(r.vade)}) — ödeyince düşecek`);
-      setFaturaSorModal(null); load(); publishGlobalDataRefresh();
+      setFaturaSorModal(null);
+      setFaturaBekleyenler(prev => { const k = prev?.filter(x => x.kaynak_id !== kid); return k?.length ? k : null; });
+      load(); publishGlobalDataRefresh();
     } catch (e) { toast(e.message, 'red'); }
     finally { setLoadingBtn(false); }
   }
@@ -421,15 +440,18 @@ export default function Panel({ onNavigate }) {
     if (faturaSorYontem === 'kart' && !faturaSorKartId) { toast('Kart seçin', 'red'); return; }
     setLoadingBtn(true);
     try {
+      const kid = faturaSorModal.kaynak_id;
       await api('/fatura-ode', { method: 'POST', body: {
-        sabit_gider_id: faturaSorModal.kaynak_id,
+        sabit_gider_id: kid,
         tutar: parseFloat(faturaSorTutar),
         tarih: faturaSorTarih,
         odeme_yontemi: faturaSorYontem,
         kart_id: faturaSorYontem === 'kart' ? faturaSorKartId : null,
       }});
       toast(`✓ Fatura ödendi — ${faturaSorYontem === 'kart' ? 'karta yazıldı' : 'kasadan düşüldü'}`);
-      setFaturaSorModal(null); load(); publishGlobalDataRefresh();
+      setFaturaSorModal(null);
+      setFaturaBekleyenler(prev => { const k = prev?.filter(x => x.kaynak_id !== kid); return k?.length ? k : null; });
+      load(); publishGlobalDataRefresh();
     } catch (e) { toast(e.message, 'red'); }
     finally { setLoadingBtn(false); }
   }
@@ -2552,6 +2574,44 @@ export default function Panel({ onNavigate }) {
               <button className="btn btn-primary" disabled={loadingBtn || !erteleTarih} onClick={odemeErteleOnayla}>
                 ✓ Ertele
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── 🧾 AÇILIŞ YAKALAYICI: girilmemiş fatura tutarları (unutma önleyici) ── */}
+      {faturaBekleyenler?.length > 0 && (
+        <div className="modal-overlay">
+          <div className="modal" style={{ maxWidth: 470 }}>
+            <div className="modal-header">
+              <div>
+                <h3>🧾 Fatura Tutarları Bekliyor ({faturaBekleyenler.length})</h3>
+                <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>
+                  Ödeme günü geldi/geçti ama bu ayın tutarı henüz girilmedi
+                </div>
+              </div>
+              <button className="modal-close" onClick={() => setFaturaBekleyenler(null)}>✕</button>
+            </div>
+            <div className="modal-body" style={{ maxHeight: 380, overflowY: 'auto' }}>
+              {faturaBekleyenler.map((u, i) => (
+                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '9px 10px', background: 'var(--bg3)', borderRadius: 8, marginBottom: 6 }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 12.5, fontWeight: 600 }}>{u.aciklama}</div>
+                    <div style={{ fontSize: 11, color: u.gun_farki < 0 ? 'var(--red)' : 'var(--orange)', marginTop: 2 }}>
+                      {u.gun_farki < 0 ? `${Math.abs(u.gun_farki)} gün gecikti` : 'vade bugün'} · {fmtDate(u.tarih)}
+                      {u.tutar > 0 && <span style={{ color: 'var(--text3)' }}> · ≈ {fmt(u.tutar)} tahmini</span>}
+                    </div>
+                  </div>
+                  <button className="btn btn-primary btn-sm" onClick={() => faturaSorAc(u)}>🧾 Tutarı Gir</button>
+                </div>
+              ))}
+            </div>
+            <div className="modal-footer" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
+              <button className="btn btn-ghost btn-sm" onClick={() => {
+                localStorage.setItem('fatura_sor_snooze', new Date().toISOString().split('T')[0]);
+                setFaturaBekleyenler(null);
+              }}>⏰ Bugünlük kapat</button>
+              <span style={{ fontSize: 11, color: 'var(--text3)' }}>Yarın tekrar hatırlatılır</span>
             </div>
           </div>
         </div>
