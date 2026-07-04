@@ -580,3 +580,53 @@ Bu dosya, local/cloud/paralel calisan ajanlar veya insan operator icin kisa mesa
   vardiya-sync akisiyla telafi ediliyorsa dokunmadim, degilse birlikte bakalim.
 - `next_action`: Ayrilan personel senaryosu canlida test: cikis yap -> ayni donem plani
   duruyor mu, sonraki ay plani iptal mi, ekranda rozet var mi.
+
+---
+- `from`: claude (fable)
+- `time`: 2026-07-05
+- `subject`: 92275fe HOTFIX — 61b2c0f (COPY allow-list) prod'u dusurdu, joker desene donuldu
+- `message`:
+  "Harden deploy and production packaging" (61b2c0f) Dockerfile'daki COPY *.py'yi
+  elle yazilmis dosya listesine cevirdi; liste maas_service.py + avans_service.py'yi
+  ATLADI → motors.py import'unda ModuleNotFoundError → uvicorn crash-loop → SITE DOWN
+  (kullanici bildirdi). COPY *.py geri getirildi; deploy.bat degisikliklerine dokunulmadi.
+  RICA: imaj inceltme istenirse ALLOW-LIST yerine .dockerignore (ignore-list) kullanalim —
+  yeni servis dosyalari (bu repo'da SIK dogar: maas_service, avans_service...) otomatik
+  dahil olsun. Allow-list her yeni moduldede ayni kesinti riskini tekrar uretir.
+- `next_action`: paralel oturum kendi worktree'sini origin/main'e rebase etsin (61b2c0f
+  uzerine hotfix geldi); Dockerfile'a dokunan is varsa once bu notu okusun.
+
+---
+- `from`: claude (fable)
+- `time`: 2026-07-04
+- `subject`: c1c926e — latte bardagi yesil KARTON bardaga baglandi (plastik sadece iced/mocktail)
+- `message`:
+  Kullanici kontak foyunden karton bardagi secti ("bunlardan karton bardak olani kullan").
+  /tv-menu/cup/latte esleme e1_latte_cup_cutout.png (plastik buzlu bardak, kaba/haleli
+  cutout) yerine e1_real_paper_cup_cutout.png (temiz transparan karton bardak — alpha
+  dogrulandi: koseler seffaf, 4K yumusak kenar px) servis ediyor. CUP_ASSET_REV
+  20260704-cutout-v3 (TV cache bust). e1_latte_cup_cutout.png dosyasi silinmedi,
+  eslemede kullanilmiyor. Kural: karton = sicak servis (hot+latte), plastik = iced/mocktail.
+- `next_action`: TV'de E1 urun/satis sahnelerinde latte kartonda mi gorunuyor kontrol;
+  istenirse e1_latte_cup_cutout.png arsive tasinabilir.
+
+---
+- `from`: claude (fable)
+- `time`: 2026-07-04
+- `subject`: 0e280b0 — "Tek hikaye, uc perde": 3 ekran 60sn ortak dongu + satis zirvesi hizasi
+- `message`:
+  Kullanici talebi: "ekran 1 2 3 kontrol et, hikayeler birbirini tamamlasin."
+  Bulgular: E1 12sn dongu (nefessiz tekrar), E3 4x3sn (3 metre testinde okunmaz),
+  E2 53sn — capraz anlati yok. Kurgu: uc ekran 60sn'e esitlendi (6/12sn ritim kilidi),
+  wall-clock senkron sayesinde saniye-hizali perdeler: 0-6 uclu acilis nefesi,
+  6-42 rol sahneleri, 42-54 SATIS ZIRVESI (E1 Gunun Secimi fiyat ILK KEZ + E3
+  Perfect Pair ayni anda), 54-60 uclu marka kapanisi. E1'e ozen+gunun-secimi
+  (fallback haftanin-favorileri)+imza geri geldi; E3 buildE3Flow 6 sahne;
+  E2 kapak 6sn + kapanis nefesi (menu_kapanis). ozen animasyonlari 12s orantilandi.
+  NOT: build() icindeki eski E3 sahne inshalari (craftM/frozenPg/combo/pairC/photoPg
+  vb. ~1627-1816) OLU KOD — buildE3Flow hepsini eziyor; cakisma riskini dusurmek icin
+  SILMEDIM, temizligi tek basina bir PR'da yapmak dogru olur.
+  NOT2: E2 dongusu menu buyurse 12'nin kati kalir (60 ile tam faz bozulur ama sahne
+  SINIRLARI hizali duser — duvar ritmi korunur). Su anki menuyle 60/60/60 tam faz.
+- `next_action`: Gercek TV'de uc ekrani yan yana izle: 42-54 penceresinde E1 fiyat +
+  E3 pair ayni anda mi; ozen sahnesi 12sn'de nefesli mi. Olu kod temizligi ayri is.
