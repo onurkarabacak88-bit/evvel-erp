@@ -1068,8 +1068,9 @@ body[data-screen="2"] #screenMeta,body[data-screen="3"] #screenMeta{display:none
 /* 🎬 SEZON SAHNESİ (yaz: gün batımı mocktail atmosferi; fiyatsız — "kendi menünün içindeki reklam") */
 .pg.szn{background:#0b0705}
 .pg.szn.on{animation:catIn .5s ease}
-.szn .sznBg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;animation:szBg 9s ease both}
-.szn .sznShade{position:absolute;inset:0;z-index:1;background:linear-gradient(90deg,transparent 42%,#000b 100%)}
+.szn .bgvid{opacity:.72;animation:e1Push 9s linear forwards}
+.szn .sznCup{position:absolute;left:50%;top:42%;z-index:2;width:min(60vw,43vh);max-height:62vh;object-fit:contain;transform:translate(-50%,-50%);filter:drop-shadow(0 3.2vh 5.4vh rgba(0,0,0,.72));opacity:0;animation:e1CupIn 9s ease both}
+.szn .sznShade{position:absolute;inset:0;z-index:1;background:linear-gradient(180deg,#050302b8 0,rgba(5,3,2,.34) 36%,rgba(5,3,2,.5) 68%,#050302ee 100%)}
 .szn .sznTxt{position:absolute;right:7vw;bottom:30%;z-index:2;text-align:right;font-family:'Fraunces',serif;font-style:italic;font-weight:400;font-size:4.6vh;color:var(--cream);text-shadow:0 .3vh 1.8vh rgba(0,0,0,.6);opacity:0;animation:pk3 9s ease both}
 .szn .sznSub{position:absolute;right:7vw;bottom:23%;z-index:2;text-align:right;font-size:1.8vh;letter-spacing:.2vw;color:#B89B80;text-transform:uppercase;opacity:0;animation:pk5 9s ease both}
 @keyframes szBg{0%{opacity:0}8%,100%{opacity:1}}
@@ -1482,8 +1483,8 @@ function buildSezon(sig){
   // 🎬 E1 — SEZON SAHNESİ (yalnız yazın; kış görseli gelince kış varyantı eklenir)
   if(!(sig&&sig.mevsim&&sig.mevsim.ad==="yaz"))return null;
   var st=el("div","pg szn");st.dataset.t=9000;st.dataset.roles="1";st.dataset.sahne="sezon_yaz";
-  st.innerHTML='<img class="sznBg" src="/tv-menu/hero/sezon_yaz" alt="">'
-    +'<div class="sznShade"></div>'
+  st.innerHTML='<video class="bgvid" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/frozen"></video>'
+    +'<div class="sznShade"></div><img class="sznCup" src="'+cupUrl("iced")+'" alt="">'
     +'<div class="sznTxt">Yaz burada soğuk içilir.</div>'
     +'<div class="sznSub">Mocktail · Ice · Frozen</div>'
     +'<div class="pFade"></div>';
