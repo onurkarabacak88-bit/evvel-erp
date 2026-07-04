@@ -975,6 +975,8 @@ body[data-screen="2"] #screenMeta,body[data-screen="3"] #screenMeta{display:none
 .e1Scene .bggrade{background:linear-gradient(180deg,#05030299 0,rgba(5,3,2,.32) 30%,rgba(5,3,2,.36) 66%,#050302e8 100%)}
 .e1HeroScene{background:radial-gradient(70% 46% at 50% 38%,rgba(201,164,106,.18),transparent 62%),radial-gradient(80% 64% at 48% 82%,rgba(62,142,90,.12),transparent 70%),linear-gradient(180deg,#120c08 0,#070403 100%)}
 .e1HeroScene .e1Studio{position:absolute;inset:0;z-index:0;background:linear-gradient(180deg,rgba(255,255,255,.035),transparent 26%),radial-gradient(52% 32% at 50% 72%,rgba(255,225,174,.11),transparent 70%)}
+.e1Cold{background:radial-gradient(58% 36% at 50% 35%,rgba(201,164,106,.16),transparent 64%),radial-gradient(72% 58% at 48% 75%,rgba(62,142,90,.12),transparent 72%),linear-gradient(180deg,#120c08 0,#070403 100%)}
+.e1ColdStudio{position:absolute;inset:0;z-index:0;background:linear-gradient(180deg,rgba(255,255,255,.04),transparent 24%),radial-gradient(60% 22% at 50% 62%,rgba(255,228,184,.1),transparent 72%),linear-gradient(90deg,rgba(0,0,0,.28),transparent 34%,rgba(0,0,0,.34) 100%)}
 .e1HeroScene .e1CupAura{position:absolute;z-index:1;left:50%;top:43%;width:54vw;height:54vw;max-width:42vh;max-height:42vh;transform:translate(-50%,-50%);border-radius:50%;background:radial-gradient(circle,rgba(201,164,106,.18),rgba(62,142,90,.08) 45%,transparent 72%);filter:blur(.2vh)}
 .e1RealCup{position:absolute;z-index:2;left:50%;top:37%;width:min(58vw,43vh);max-height:60vh;object-fit:contain;transform:translate(-50%,-50%);opacity:0;filter:drop-shadow(0 3.2vh 5.4vh rgba(0,0,0,.72));animation:e1CupIn 4s ease both}
 .e1ColdCup{position:absolute;z-index:2;left:50%;top:39%;width:min(55vw,40vh);max-height:58vh;object-fit:contain;transform:translate(-50%,-50%);opacity:.96;filter:drop-shadow(0 3vh 5vh rgba(0,0,0,.7));animation:e1ColdCupIn 5s ease both}
@@ -1068,7 +1070,7 @@ body[data-screen="2"] #screenMeta,body[data-screen="3"] #screenMeta{display:none
 /* 🎬 SEZON SAHNESİ (yaz: gün batımı mocktail atmosferi; fiyatsız — "kendi menünün içindeki reklam") */
 .pg.szn{background:#0b0705}
 .pg.szn.on{animation:catIn .5s ease}
-.szn .bgvid{opacity:.72;animation:e1Push 9s linear forwards}
+.szn .e1ColdStudio{animation:e1Push 9s linear forwards}
 .szn .sznCup{position:absolute;left:50%;top:42%;z-index:2;width:min(60vw,43vh);max-height:62vh;object-fit:contain;transform:translate(-50%,-50%);filter:drop-shadow(0 3.2vh 5.4vh rgba(0,0,0,.72));opacity:.96;animation:e1ColdCupIn 9s ease both}
 .szn .sznShade{position:absolute;inset:0;z-index:1;background:linear-gradient(180deg,#050302b8 0,rgba(5,3,2,.34) 36%,rgba(5,3,2,.5) 68%,#050302ee 100%)}
 .szn .sznTxt{position:absolute;right:7vw;bottom:30%;z-index:2;text-align:right;font-family:'Fraunces',serif;font-style:italic;font-weight:400;font-size:4.6vh;color:var(--cream);text-shadow:0 .3vh 1.8vh rgba(0,0,0,.6);opacity:0;animation:pk3 9s ease both}
@@ -1377,7 +1379,7 @@ function buildE1HeroProduct(data,sig){
 function buildE1ColdCall(data,sig){
   var info=e1ColdProduct(data,sig);
   var st=el("div","pg e1Scene e1Cold");st.dataset.t=5000;st.dataset.roles="1";st.dataset.sahne="e1_yaz_soguk";st.dataset.name=info.ad;
-  st.innerHTML='<video class="bgvid" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/'+e1ColdClip(info)+'"></video><div class="bggrade"></div>'
+  st.innerHTML='<div class="e1ColdStudio"></div><div class="bggrade"></div>'
     +'<img class="e1ColdCup" src="'+cupUrl("iced")+'" alt="">'
     +'<div class="e1Block"><div class="e1Kicker">Yaz burada kahveyle serinler.</div><div class="e1Title">'+info.ad+'</div>'
     +'<div class="e1Desc">Ferah, buzlu, uzun içim.</div></div><div class="e1Fade"></div>';
@@ -1484,7 +1486,7 @@ function buildSezon(sig){
   // 🎬 E1 — SEZON SAHNESİ (yalnız yazın; kış görseli gelince kış varyantı eklenir)
   if(!(sig&&sig.mevsim&&sig.mevsim.ad==="yaz"))return null;
   var st=el("div","pg szn");st.dataset.t=9000;st.dataset.roles="1";st.dataset.sahne="sezon_yaz";
-  st.innerHTML='<video class="bgvid" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/frozen"></video>'
+  st.innerHTML='<div class="e1ColdStudio"></div>'
     +'<div class="sznShade"></div><img class="sznCup" src="'+cupUrl("iced")+'" alt="">'
     +'<div class="sznTxt">Yaz burada soğuk içilir.</div>'
     +'<div class="sznSub">Mocktail · Ice · Frozen</div>'
