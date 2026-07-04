@@ -1242,10 +1242,10 @@ body[data-screen="2"] #screenMeta,body[data-screen="3"] #screenMeta{display:none
 .ozen .ozAmb{position:absolute;inset:0;z-index:2;pointer-events:none;background:radial-gradient(90% 60% at 30% 22%,#C8956A14,transparent 65%)}
 /* metinler: sol-alt güvenli alan, krem, glow'suz, aynı anda tek satır */
 .ozen .ozTxt{position:absolute;left:7vw;right:7vw;bottom:23%;z-index:3;text-align:left;font-family:'Fraunces',serif;font-weight:400;font-size:4.2vh;letter-spacing:.05vw;color:#EFE6D6;text-shadow:0 .3vh 1.8vh rgba(0,0,0,.65);opacity:0}
-.ozen .ozT1{animation:ozT1 6.5s ease both}
-.ozen .ozT2{animation:ozT2 6.5s ease both}
+.ozen .ozT1{animation:ozT1 12s ease both}
+.ozen .ozT2{animation:ozT2 12s ease both}
 /* çıkış: son 1.2sn alt bölge hafif kararır — Sahne 3 kartlarına zemin, doğrudan gösterim YOK */
-.ozen .ozExit{position:absolute;inset:0;z-index:4;pointer-events:none;opacity:0;background:linear-gradient(180deg,transparent 38%,#000d 100%);animation:ozExit 6.5s linear both}
+.ozen .ozExit{position:absolute;inset:0;z-index:4;pointer-events:none;opacity:0;background:linear-gradient(180deg,transparent 38%,#000d 100%);animation:ozExit 12s linear both}
 @keyframes ozenIn{0%{opacity:0}100%{opacity:1}}
 /* zaman çizelgesi (6.5sn): T1 1.5-3.2 / nefes 3.2-3.6 / T2 3.6-5.3 / zemin 5.3-6.5 */
 @keyframes ozT1{0%,23%{opacity:0}31%{opacity:.96}45%{opacity:.96}51%,100%{opacity:0}}
@@ -1424,14 +1424,26 @@ function e3Scene(cls,sahne,clip,kicker,title,desc,name){
   return st;
 }
 function buildE3Flow(data,sig){
+  // "TEK HİKÂYE, ÜÇ PERDE" — E3 = 60sn keşif→upsell yayı (E1 ile saniye-hizalı, bkz. build() notu):
+  // 0-6 üçlü açılış (craft) · 6-18 YENİ keşif · 18-30 frozen/buzlu vitrin · 30-42 bilenin seçimi ·
+  // 42-54 PERFECT PAIR (E1 'Günün Seçimi' fiyatı verirken E3 yanına tatlıyı koyar = satış zirvesi) ·
+  // 54-60 üçlü marka kapanışı. Eski 3sn sahneler okunmuyordu (3 metre testi) — 12sn nefesli.
   var pages=[],nw=e3NewProduct(data,sig),silent=e3SilentProduct(data,sig),pr=pairSec(sig);
-  pages.push(e3Scene("e3New","e3_yeni",e1ColdClip(nw),"YENİ",nw.ad,"Yaz için daha ferah, daha canlı.",nw.ad));
-  pages.push(e3Scene("e3Craft","e3_craft","craft","BARISTA CRAFT","El yapımı, anında hazır","Sadece karıştırmıyoruz; kuruyoruz."));
-  pages.push(e3Scene("e3Silent","e3_sessiz_oneri","kahverengi","Baristanın sessiz önerisi",silent.ad,e1HeroNote(silent),silent.ad));
+  var ac=e3Scene("e3Craft","e3_acilis","craft","TULİPİ","El yapımı, anında hazır","Sadece karıştırmıyoruz; kuruyoruz.");
+  ac.dataset.t=6000;pages.push(ac);
+  var sYeni=e3Scene("e3New","e3_yeni",e1ColdClip(nw),"YENİ",nw.ad,"Yaz için daha ferah, daha canlı.",nw.ad);
+  sYeni.dataset.t=12000;pages.push(sYeni);
+  var sFrozen=e3Scene("e3Frozen","e3_frozen","frozen","MILKSHAKE & FROZEN","Yazın en soğuk hali","Bardakta kısa bir yaz molası.");
+  sFrozen.dataset.t=12000;pages.push(sFrozen);
+  var sSilent=e3Scene("e3Silent","e3_sessiz_oneri","kahverengi","Baristanın sessiz önerisi",silent.ad,e1HeroNote(silent),silent.ad);
+  sSilent.dataset.t=12000;pages.push(sSilent);
   var pairTitle=pr?(pr.k+" + "+pr.t):((data.pair&&data.pair.ad)?("Kahve + "+data.pair.ad):"Kahve + San Sebastian");
   var pairDesc=pr?pr.c:((data.pair&&data.pair.mesaj)?data.pair.mesaj:"Sütlü kahveyle kremamsı denge.");
   var pairName=pr?pr.t:((data.pair&&data.pair.ad)||"San Sebastian");
-  pages.push(e3Scene("e3Pair","e3_pair","craft","Yanına iyi gider",pairTitle,pairDesc,pairName));
+  var sPair=e3Scene("e3Pair","e3_pair","craft","Yanına iyi gider",pairTitle,pairDesc,pairName);
+  sPair.dataset.t=12000;pages.push(sPair);
+  var kap=buildMarkaImza();kap.dataset.roles="3";kap.dataset.sahne="e3_imza";
+  pages.push(kap);
   return pages;
 }
 function buildGununSecimi(data,sig){
@@ -1606,9 +1618,13 @@ function build(data,sig){
   var dots=document.getElementById("dots");dots.innerHTML="";
   var heroPages=[],ekran1Pages=[],ekran3Pages=[];
 
-  // 1) EKRAN 1 — 12sn premium davet akışı: craft açılış → tek hero ürün → yaz/soğuk çağrı.
-  // Fiyat/TL ve dashboard etiketi yok; Ekran 2/3 veri akışına dokunmadan sadece E1 vitrini sadeleşir.
-  var bOpen=el("div","pg heroPg openingPg");bOpen.dataset.t=3000;bOpen.dataset.roles="1";bOpen.dataset.sahne="e1_craft_acilis";
+  // 1) EKRAN 1 — "TEK HİKÂYE, ÜÇ PERDE" (2026-07-04, kullanıcı: "hikâyeler birbirini tamamlasın"):
+  // ÜÇ EKRAN ORTAK 60sn DÖNGÜ + 6/12sn RİTİM KİLİDİ. Wall-clock senkron (syncShow) sayesinde
+  // aynı saniyede: 0-6 üçlü açılış nefesi · 6-42 rol sahneleri (vaat→duygu→ferahlık) ·
+  // 42-54 SATIŞ ZİRVESİ (E1 fiyatı İLK KEZ verir, E3 aynı anda Perfect Pair'i koyar) ·
+  // 54-60 üçlü marka kapanışı. Tüm sahne süreleri 6/12sn kuantum — menü büyürse E2 12'nin
+  // katı kalır, sahne SINIRLARI yine hizalı düşer (duvar ritmi bozulmaz).
+  var bOpen=el("div","pg heroPg openingPg");bOpen.dataset.t=6000;bOpen.dataset.roles="1";bOpen.dataset.sahne="e1_craft_acilis";
   bOpen.innerHTML='<img class="openingBg" src="/tv-menu/hero/opening" alt="">'
     +'<div class="openingShade"></div>'
     +'<div class="openingCopy">'
@@ -1620,8 +1636,15 @@ function build(data,sig){
   // alt-şerit ticker'da zaten metin olarak dönüyor (FAZ 2), ayrı "ŞİMDİ" kartı tekrar/doluluk
   // yaratıyordu (Codex 2. göz review notu). Mevsim sinyali Ekran 2'de (referans ekranı) kalıyor.
 
-  var e1Hero=buildE1HeroProduct(data,sig);if(e1Hero)heroPages.push(e1Hero);
-  heroPages.push(buildE1ColdCall(data,sig));
+  // E1 perdeleri: hero (kanıt, fiyatsız) → özen (duygu) → soğuk çağrı (ferahlık) →
+  // GÜNÜN SEÇİMİ (satış — fiyat rampanın ödülü) → marka imza (kapanış).
+  var e1Hero=buildE1HeroProduct(data,sig);if(e1Hero){e1Hero.dataset.t=12000;heroPages.push(e1Hero);}
+  var e1Ozen=buildOzen();e1Ozen.dataset.t=12000;heroPages.push(e1Ozen);
+  var e1Cold=buildE1ColdCall(data,sig);e1Cold.dataset.t=12000;heroPages.push(e1Cold);
+  var e1Sec=buildGununSecimi(data,sig);
+  if(e1Sec){e1Sec.dataset.t=12000;heroPages.push(e1Sec);}
+  else{var e1Fav=buildHaftaninFavorileri(sig);if(e1Fav){e1Fav.dataset.t=12000;heroPages.push(e1Fav);}}
+  heroPages.push(buildMarkaImza());
   var hp=heroProduct(data,sig);  // Ekran 3 craft klip çakışma kontrolü hâlâ buna bakıyor
 
   // 4.2) CRAFT MOCKTAIL — gerçek barista çekimi: jigger → süzgeç → yeşil akış (barista ustalığı, ayrı/kendi sahnesi)
@@ -1736,7 +1759,7 @@ function build(data,sig){
     :covMod==="ogle"?"Serin bir mola."
     :covMod==="aksam"?"Yumuşak kapanış."
     :"Kahve Menüsü.";
-  var mcov=el("div","pg mcov");mcov.dataset.t=5000;mcov.dataset.roles="2";mcov.dataset.sahne="menu_kapak";
+  var mcov=el("div","pg mcov");mcov.dataset.t=6000;mcov.dataset.roles="2";mcov.dataset.sahne="menu_kapak";
   mcov.innerHTML='<div class="mcovInner"><div class="mcovKick">TULİPİ</div>'
     +'<div class="mcovTitle">'+covTitle+'</div>'
     +'<div class="mcovCats">'+(kahveKats.length?kahveKats.join(" · "):"Classic · Signature")+'</div></div>'
@@ -1764,6 +1787,16 @@ function build(data,sig){
   // 14 ürün, aynı 1 geçiş). En çok satılan kategoriler döngü sonunda (Top3'ten önce) bir kez daha
   // görünerek daha fazla "ekran zamanı" alır — gerçek satış ağırlığına göre yerleşim.
   agirlikliTekrar.forEach(function(pg){ekran1Pages.push(pg);});
+
+  // E2 PERDE KAPANIŞI (6sn) — üç perde ritim kilidi: E1/E3 marka imzasıyla aynı pencerede
+  // kapanış nefesi (şu an 6+4×12+6=60sn = E1/E3 ile tam faz; menü büyürse 12'nin katı kalır,
+  // sahne sınırları yine hizalı düşer).
+  var mout=el("div","pg mcov");mout.dataset.t=6000;mout.dataset.roles="2";mout.dataset.sahne="menu_kapanis";
+  mout.innerHTML='<div class="mcovInner"><div class="mcovKick">TULİPİ</div>'
+    +'<div class="mcovTitle">'+(covMod==="sabah"?"Güzel bir gün olsun.":covMod==="aksam"?"İyi akşamlar.":"Afiyet olsun.")+'</div>'
+    +'<div class="mcovCats">Her Nesil Kahveci</div></div>'
+    +'<div class="mcovFade"></div>';
+  ekran1Pages.push(mout);
 
   // ⛔ 7) "En Çok Tercih Edilen" (top3), 8) Marka/Yaşam Tarzı ve Müşteri Anı sahneleri de E1'den
   // kaldırıldı (E1 sıfırlama, 2026-07-02): Ekran 1 = SADECE Sahne 1 açılış hero. Sahne 2+
