@@ -565,6 +565,12 @@ export default function Personel() {
                           ? `Baz: ${fmt(p.maas)} · Yan: ${fmt(p.yemek_ucreti+p.yol_ucreti)}`
                           : `Saatlik: ${fmt(p.saatlik_ucret)} · Yan: ${fmt(p.yemek_ucreti+p.yol_ucreti)}`
                         }
+                        {Number(p.avans_mahsup||0) > 0 && (
+                          <span style={{display:'block',color:'var(--orange)',fontWeight:700,marginTop:2}}>
+                            💸 Avans mahsubu: −{fmt(p.avans_mahsup)}
+                            {Number(p.mahsup_devir||0) > 0 && ` (devir: ${fmt(p.mahsup_devir)})`}
+                          </span>
+                        )}
                       </div>
                       <div style={{display:'flex',flexDirection:'column',alignItems:'flex-end',lineHeight:1.2}}>
                         <span className={`maas-net ${stage==='odendi'?'paid':''}`}>{fmt(p.hesaplanan_net)}</span>

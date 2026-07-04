@@ -22,6 +22,7 @@ KASA_ETKISI_MAP = {
     'KART_ODEME': True, 'KART_ODEME_IPTAL': True, 'KART_FAIZ': True,
     'VADELI_ODEME': True, 'VADELI_IPTAL': True,
     'PERSONEL_MAAS': True, 'SABIT_GIDER': True,
+    'PERSONEL_AVANS': True,  # avans_service — maaşın erken ödenen parçası (mahsup avans_service'te)
     'BORC_TAKSIT': True, 'FATURA_ODEMESI': True,
     'ODEME_PLANI': False, 'ODEME_IPTAL': False,
     'KASA_GIRIS': True, 'KASA_DUZELTME': True, 'POS_KESINTI': True,

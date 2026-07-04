@@ -183,6 +183,27 @@ def vardiya_kayit_dict(cur, p: dict, yil: int, ay: int, mevcut: Optional[dict] =
     }
 
 
+# ── AVANS MAHSUBU (avans_service'ten SADECE OKUR — mimari sınır) ──
+
+def avans_mahsup_uygula(cur, p: dict, yil: int, ay: int, brut_net: float) -> tuple:
+    """Dönemin ödenmiş avanslarını + önceki dönem devrini brüt netten düşer.
+    KURAL (kullanıcı+GPT, 2026-07-04): negatif maaş ENGELLENİR; karşılanamayan
+    mahsup 'mahsup_devir' olarak sonraki döneme yazılır. Maaş motoru avansı
+    yalnızca OKUR — kasa hareketi üretme yetkisi avans_service'tedir.
+    Dönüş: (net, avans_mahsup, mahsup_devir)."""
+    try:
+        import avans_service as _av  # lazy: döngüsel import kırıcı (avans → maas tek yön top-level)
+        istek = _av.onceki_devir(cur, p["id"], yil, ay) + _av.donem_odenen_avans(cur, p["id"], yil, ay)
+    except Exception as e:
+        logger.warning("avans mahsubu okunamadi (%s %s-%s): %s", p.get("id"), yil, ay, e)
+        return brut_net, 0.0, 0.0
+    if istek <= 0:
+        return brut_net, 0.0, 0.0
+    mahsup = round(min(istek, max(0.0, brut_net)), 2)
+    devir = round(istek - mahsup, 2)
+    return round(brut_net - mahsup, 2), mahsup, devir
+
+
 # ── TEK PLAN YAZICI ────────────────────────────────────────────
 
 def odeme_plani_esitle(cur, p: dict, yil: int, ay: int, net: float,
@@ -296,18 +317,20 @@ def aylik_vardiya_senkronize(cur, p: dict, yil: int, ay: int) -> dict:
         kayit = vardiya_kayit_dict(cur, p, yil, ay, mevcut)
         vk = kayit.pop("_vardiya", {})
         net = maas_hesapla(dict(p), kayit, yil, ay)
+    # Avans mahsubu — dönemin ödenmiş avansları + önceki devir netten düşer
+    net, avans_mahsup, mahsup_devir = avans_mahsup_uygula(cur, dict(p), yil, ay, net)
     kid = str(uuid.uuid4())
     cur.execute(
         """
         INSERT INTO personel_aylik
             (id, personel_id, yil, ay, calisma_saati, fazla_mesai_saat, bayram_mesai_saat,
              eksik_gun, raporlu_gun, rapor_kesinti, manuel_duzeltme,
-             not_aciklama, hesaplanan_net, durum)
-        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'taslak')
+             not_aciklama, hesaplanan_net, avans_mahsup, mahsup_devir, durum)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'taslak')
         ON CONFLICT (personel_id, yil, ay) DO UPDATE SET
             calisma_saati=%s, fazla_mesai_saat=%s, bayram_mesai_saat=%s,
             eksik_gun=%s, raporlu_gun=%s, rapor_kesinti=%s, manuel_duzeltme=%s,
-            not_aciklama=%s, hesaplanan_net=%s, durum='taslak'
+            not_aciklama=%s, hesaplanan_net=%s, avans_mahsup=%s, mahsup_devir=%s, durum='taslak'
         """,
         (
             kid,
@@ -323,6 +346,8 @@ def aylik_vardiya_senkronize(cur, p: dict, yil: int, ay: int) -> dict:
             kayit["manuel_duzeltme"],
             kayit["not_aciklama"],
             net,
+            avans_mahsup,
+            mahsup_devir,
             kayit["calisma_saati"],
             kayit["fazla_mesai_saat"],
             kayit["bayram_mesai_saat"],
@@ -332,6 +357,8 @@ def aylik_vardiya_senkronize(cur, p: dict, yil: int, ay: int) -> dict:
             kayit["manuel_duzeltme"],
             kayit["not_aciklama"],
             net,
+            avans_mahsup,
+            mahsup_devir,
         ),
     )
     plan = odeme_plani_esitle(cur, p, yil, ay, net)

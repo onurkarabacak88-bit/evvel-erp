@@ -41,6 +41,149 @@ function VardiyaIlerleme({ vardiyaTip }) {
   );
 }
 
+// ── 💸 AVANS — talep + geçmiş + "aldım" onayı (mini bordro-finans köprüsü) ────
+const _avansFmt = (n) => (Number(n) || 0).toLocaleString('tr-TR') + ' ₺';
+const AVANS_DURUM_TR = {
+  talep: '⏳ Onay bekliyor', onaylandi: '✅ Onaylandı — teslim bekliyor',
+  teslim_edildi: '🤝 Teslim edildi — senin onayın bekleniyor', odendi: '💰 Ödendi',
+  reddedildi: '✕ Reddedildi', iptal: '✕ İptal', ters_kayit: '↩ Ters kayıt',
+};
+
+function AvansKarti({ oturum }) {
+  const [data, setData] = useState(null);
+  const [tutar, setTutar] = useState('');
+  const [gonderiyor, setGonderiyor] = useState(false);
+  const [mesaj, setMesaj] = useState(null); // {t:'ok'|'hata', m}
+
+  const yukle = useCallback(() => {
+    api(`/avans/personel-ozet?personel_id=${encodeURIComponent(oturum.personel_id)}`)
+      .then(setData).catch(() => setData({ hata: true }));
+  }, [oturum.personel_id]);
+  useEffect(() => { yukle(); }, [yukle]);
+
+  async function talepEt() {
+    const t = parseFloat(tutar);
+    if (!(t > 0)) { setMesaj({ t: 'hata', m: 'Geçerli bir tutar gir' }); return; }
+    setGonderiyor(true); setMesaj(null);
+    try {
+      await api('/avans/talep', { method: 'POST', body: { personel_id: oturum.personel_id, tutar: t } });
+      setMesaj({ t: 'ok', m: 'Talebin iletildi — onaylanınca burada göreceksin.' });
+      setTutar(''); yukle();
+    } catch (e) { setMesaj({ t: 'hata', m: e.message || 'Talep gönderilemedi' }); }
+    finally { setGonderiyor(false); }
+  }
+
+  if (!data) return null;
+  if (data.hata) return null;
+  const L = data.limit || {};
+  const acik = (data.acik_talep || []).length > 0;
+  return (
+    <div style={{ margin: '14px 16px', padding: 16, background: '#fff', border: '1px solid #E6DED4', borderRadius: 16, boxShadow: '0 4px 16px rgba(120,90,60,0.06)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+        <span style={{ fontSize: 20 }}>💸</span>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 15, fontWeight: 800, color: '#2A241E' }}>Avans</div>
+          <div style={{ fontSize: 11, color: '#9C8E7E' }}>Bu ay çekebileceğin: <b style={{ color: '#C8956A' }}>{_avansFmt(L.kullanilabilir)}</b></div>
+        </div>
+      </div>
+      {acik ? (
+        <div style={{ padding: '10px 12px', borderRadius: 10, background: 'rgba(200,149,106,0.10)', border: '1px solid rgba(200,149,106,0.3)', fontSize: 12.5, color: '#8a5a32' }}>
+          {AVANS_DURUM_TR[data.acik_talep[0].durum]} — {_avansFmt(data.acik_talep[0].tutar)}
+        </div>
+      ) : L.kullanilabilir > 0 ? (
+        <div style={{ display: 'flex', gap: 8 }}>
+          <input type="number" inputMode="numeric" placeholder="Tutar (₺)" value={tutar}
+            onChange={e => setTutar(e.target.value)}
+            style={{ flex: 1, padding: '10px 12px', borderRadius: 10, border: '1px solid #E6DED4', fontSize: 15, background: '#FBF8F4' }} />
+          <button onClick={talepEt} disabled={gonderiyor} style={{
+            padding: '10px 16px', borderRadius: 10, border: 'none', cursor: 'pointer',
+            background: '#C8956A', color: '#fff', fontWeight: 800, fontSize: 13, opacity: gonderiyor ? 0.6 : 1,
+          }}>{gonderiyor ? '…' : 'Talep Et'}</button>
+        </div>
+      ) : (
+        <div style={{ fontSize: 12, color: '#9C8E7E' }}>Şu an avans limitin dolu görünüyor.</div>
+      )}
+      {mesaj && (
+        <div style={{ marginTop: 8, fontSize: 12, fontWeight: 600, color: mesaj.t === 'ok' ? '#4caf84' : '#d9534f' }}>{mesaj.m}</div>
+      )}
+      {(data.gecmis || []).length > 0 && (
+        <div style={{ marginTop: 12, borderTop: '1px dashed #E6DED4', paddingTop: 8 }}>
+          {(data.gecmis || []).slice(0, 5).map(g => (
+            <div key={g.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11.5, color: '#6B5E50', padding: '4px 0' }}>
+              <span>{(g.talep_ts || '').slice(0, 10)} · {AVANS_DURUM_TR[g.durum] || g.durum}</span>
+              <b>{_avansFmt(g.tutar)}</b>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Teslim edilen avans için personelin "aldım" onayı — çift imzanın ikinci yarısı
+function AvansAldimBandi({ oturum }) {
+  const [bekleyen, setBekleyen] = useState([]);
+  const [islem, setIslem] = useState(false);
+  const yukle = useCallback(() => {
+    api(`/avans/personel-ozet?personel_id=${encodeURIComponent(oturum.personel_id)}`)
+      .then(d => setBekleyen(d?.aldim_onayi_bekleyen || [])).catch(() => {});
+  }, [oturum.personel_id]);
+  useEffect(() => { yukle(); }, [yukle]);
+  if (!bekleyen.length) return null;
+  const a = bekleyen[0];
+  return (
+    <div style={{ margin: '12px 16px 0', padding: '12px 14px', borderRadius: 14, background: 'rgba(76,175,132,0.10)', border: '1px solid rgba(76,175,132,0.35)', display: 'flex', alignItems: 'center', gap: 10 }}>
+      <span style={{ fontSize: 20 }}>💸</span>
+      <div style={{ flex: 1 }}>
+        <div style={{ fontSize: 13.5, fontWeight: 800, color: '#2f7d5c' }}>{_avansFmt(a.tutar)} avansını teslim aldın mı?</div>
+        <div style={{ fontSize: 11, color: '#9C8E7E' }}>Onayın kaydı tamamlar (çift imza)</div>
+      </div>
+      <button disabled={islem} onClick={async () => {
+        setIslem(true);
+        try { await api(`/avans/${a.id}/personel-onay`, { method: 'POST', body: { personel_id: oturum.personel_id } }); yukle(); }
+        catch (e) { /* sessiz */ }
+        finally { setIslem(false); }
+      }} style={{ padding: '10px 14px', borderRadius: 10, border: 'none', background: '#4caf84', color: '#fff', fontWeight: 800, fontSize: 13, cursor: 'pointer', opacity: islem ? 0.6 : 1 }}>
+        ✓ Aldım
+      </button>
+    </div>
+  );
+}
+
+// Kapanış sorumlusunun teslim listesi — "parayı kasadan veren" tek tık teslim eder
+function AvansTeslimKarti({ oturum }) {
+  const [liste, setListe] = useState([]);
+  const [islem, setIslem] = useState({});
+  const yukle = useCallback(() => {
+    api(`/avans/teslim-bekleyen?sube_id=${encodeURIComponent(oturum.sube_id)}`)
+      .then(d => setListe(d?.bekleyenler || [])).catch(() => {});
+  }, [oturum.sube_id]);
+  useEffect(() => { yukle(); }, [yukle]);
+  if (!liste.length) return null;
+  return (
+    <div style={{ margin: '12px 16px 0', padding: 14, borderRadius: 14, background: '#fff', border: '1px solid rgba(200,149,106,0.4)' }}>
+      <div style={{ fontSize: 13.5, fontWeight: 800, color: '#8a5a32', marginBottom: 8 }}>💸 Kasadan teslim edilecek avanslar</div>
+      {liste.map(a => (
+        <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 0', borderTop: '1px dashed #E6DED4' }}>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: '#2A241E' }}>{a.ad_soyad}</div>
+            <div style={{ fontSize: 11, color: '#9C8E7E' }}>Onaylı · elden · {_avansFmt(a.tutar)}</div>
+          </div>
+          <button disabled={islem[a.id]} onClick={async () => {
+            setIslem(s => ({ ...s, [a.id]: true }));
+            try { await api(`/avans/${a.id}/teslim-et`, { method: 'POST', body: { teslim_eden_personel_id: oturum.personel_id } }); yukle(); }
+            catch (e) { alert(e.message || 'Teslim kaydedilemedi'); }
+            finally { setIslem(s => ({ ...s, [a.id]: false })); }
+          }} style={{ padding: '8px 12px', borderRadius: 10, border: 'none', background: '#C8956A', color: '#fff', fontWeight: 800, fontSize: 12, cursor: 'pointer' }}>
+            🤝 Teslim Ettim
+          </button>
+        </div>
+      ))}
+      <div style={{ fontSize: 10.5, color: '#9C8E7E', marginTop: 6 }}>Teslimde tutar bugünün kasa hesabına gider olarak işlenir.</div>
+    </div>
+  );
+}
+
 // ── Mobil Sipariş Ekranı ─────────────────────────────────────────────────────
 function SiparisEkrani({ oturum, subeBilgi, onKapat }) {
   const [katalog, setKatalog] = useState(null);
@@ -1464,6 +1607,11 @@ export default function GorevPersonelSayfasi({ oturum, subeBilgi, onCikis }) {
       {/* ════ ŞİMDİ — aktif operasyon (sipariş, ilerleme, mola, görevler) ════ */}
       {sekme === 'gorevler' && (
         <>
+          {/* 💸 Avans çift-imza bandı: teslim edilen avansın "aldım" onayı */}
+          <AvansAldimBandi oturum={oturum} />
+          {/* 💸 Kasadan teslim edilecek onaylı avanslar (şubedeki herkese görünür) */}
+          <AvansTeslimKarti oturum={oturum} />
+
           {/* Hızlı işlem — Sipariş Ver (belirgin kart) */}
           <div style={{ padding: '12px 16px 0' }}>
             <button onClick={() => setSiparisAcik(true)} style={{
@@ -1598,8 +1746,13 @@ export default function GorevPersonelSayfasi({ oturum, subeBilgi, onCikis }) {
       {/* ════ VARDİYAM — bugünkü vardiya özeti ════ */}
       {sekme === 'vardiyam' && <VardiyamEkrani oturum={oturum} subeBilgi={subeBilgi} mod="bugun" />}
 
-      {/* ════ AY — aylık mesai & hakediş ════ */}
-      {sekme === 'ay' && <VardiyamEkrani oturum={oturum} subeBilgi={subeBilgi} mod="ay" />}
+      {/* ════ AY — aylık mesai & hakediş + avans ════ */}
+      {sekme === 'ay' && (
+        <>
+          <AvansKarti oturum={oturum} />
+          <VardiyamEkrani oturum={oturum} subeBilgi={subeBilgi} mod="ay" />
+        </>
+      )}
 
       {/* Alt bant */}
       {sekme === 'gorevler' && data?.eksik === 0 && (

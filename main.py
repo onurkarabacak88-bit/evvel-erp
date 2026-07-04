@@ -115,6 +115,15 @@ except Exception as _belge_talep_err:
     )
 app.include_router(stok_sayim_router)
 app.include_router(supplier_payment_router)
+# Avans Servisi — İZOLE mini bordro-finans köprüsü (talep→onay→teslim→mahsup).
+# Kasa izini (PERSONEL_AVANS) SADECE bu servis yazar; maaş motoru sadece OKUR.
+try:
+    from avans_service import router as avans_router
+    app.include_router(avans_router)
+except Exception as _avans_err:
+    logging.getLogger(__name__).warning(
+        f"avans_service modulu yuklenemedi (izole, ana akis etkilenmez): {_avans_err}"
+    )
 # Tam Maliyet — İZOLE (genel merkez gideri + tahakkuk + şube dağıtımı). P&L'ye dokunmaz.
 try:
     from tam_maliyet_api import router as tam_maliyet_router
@@ -1483,7 +1492,7 @@ def panel_detay():
             cur.execute("""
 SELECT
     COALESCE(SUM(CASE WHEN islem_turu IN ('CIRO','DIS_KAYNAK','KASA_GIRIS','KASA_DUZELTME') AND tutar > 0 THEN tutar ELSE 0 END), 0) as gelir,
-    COALESCE(SUM(CASE WHEN islem_turu IN ('ANLIK_GIDER','KART_ODEME','VADELI_ODEME','PERSONEL_MAAS','SABIT_GIDER','BORC_TAKSIT','FATURA_ODEMESI') THEN ABS(tutar) ELSE 0 END), 0) as gider
+    COALESCE(SUM(CASE WHEN islem_turu IN ('ANLIK_GIDER','KART_ODEME','VADELI_ODEME','PERSONEL_MAAS','PERSONEL_AVANS','SABIT_GIDER','BORC_TAKSIT','FATURA_ODEMESI') THEN ABS(tutar) ELSE 0 END), 0) as gider
 FROM kasa_hareketleri
 WHERE durum='aktif'
 """)
@@ -3932,7 +3941,7 @@ def _onayla_tx(cur, oid: str):
         raise HTTPException(400, f"Bu işlem zaten '{onay['durum']}' durumunda, tekrar onaylanamaz.")
     tutar = float(onay['tutar'])
     tarih = str(onay['tarih'])
-    GIDER_TURLERI = {'KART_ODEME', 'ANLIK_GIDER', 'VADELI_ODEME', 'PERSONEL_MAAS', 'SABIT_GIDER', 'BORC_TAKSIT', 'FATURA_ODEMESI', 'ODEME_PLANI'}
+    GIDER_TURLERI = {'KART_ODEME', 'ANLIK_GIDER', 'VADELI_ODEME', 'PERSONEL_MAAS', 'PERSONEL_AVANS', 'SABIT_GIDER', 'BORC_TAKSIT', 'FATURA_ODEMESI', 'ODEME_PLANI'}
     GELIR_TURLERI = {'CIRO', 'CIRO_DUZELTME', 'DIS_KAYNAK', 'KASA_GIRIS', 'KASA_DUZELTME'}
     islem_turu = onay['islem_turu']
     KASA_FARK_TURLERI = {'KAPANIS_KASA_FARK', 'ACILIS_KASA_FARK'}
@@ -4747,6 +4756,8 @@ def personel_aylik_listele(yil: int = None, ay: int = None):
                 'manuel_duzeltme': float(kayit.get('manuel_duzeltme') or 0),
                 'not_aciklama': kayit.get('not_aciklama'),
                 'hesaplanan_net': net,
+                'avans_mahsup': float(kayit.get('avans_mahsup') or 0),
+                'mahsup_devir': float(kayit.get('mahsup_devir') or 0),
                 'durum': durum,
                 'odeme_id': plan.get('odeme_id'),
                 'odeme_durumu': plan.get('odeme_durumu'),
@@ -4816,25 +4827,26 @@ def personel_aylik_kaydet(pid: str, body: PersonelAylikModel, yil: int = None, a
             net = _kanonik_net(dict(p), vt, kayit_dict)
         else:
             net = maas_hesapla(dict(p), kayit_dict, yil, ay)
+        net, _avm, _avd = _maas_svc.avans_mahsup_uygula(cur, dict(p), yil, ay, net)
 
         kid = str(uuid.uuid4())
         cur.execute("""
             INSERT INTO personel_aylik
                 (id, personel_id, yil, ay, calisma_saati, fazla_mesai_saat, bayram_mesai_saat,
                  eksik_gun, raporlu_gun, rapor_kesinti, manuel_duzeltme,
-                 not_aciklama, hesaplanan_net, durum)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'taslak')
+                 not_aciklama, hesaplanan_net, avans_mahsup, mahsup_devir, durum)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'taslak')
             ON CONFLICT (personel_id, yil, ay) DO UPDATE SET
                 calisma_saati=%s, fazla_mesai_saat=%s, bayram_mesai_saat=%s,
                 eksik_gun=%s, raporlu_gun=%s, rapor_kesinti=%s, manuel_duzeltme=%s,
-                not_aciklama=%s, hesaplanan_net=%s, durum='taslak'
+                not_aciklama=%s, hesaplanan_net=%s, avans_mahsup=%s, mahsup_devir=%s, durum='taslak'
         """, (kid, pid, yil, ay,
                 kayit_dict["calisma_saati"], kayit_dict["fazla_mesai_saat"], body.bayram_mesai_saat,
                 body.eksik_gun, body.raporlu_gun, body.rapor_kesinti,
-                body.manuel_duzeltme, body.not_aciklama, net,
+                body.manuel_duzeltme, body.not_aciklama, net, _avm, _avd,
                 kayit_dict["calisma_saati"], kayit_dict["fazla_mesai_saat"], body.bayram_mesai_saat,
                 body.eksik_gun, body.raporlu_gun, body.rapor_kesinti,
-                body.manuel_duzeltme, body.not_aciklama, net))
+                body.manuel_duzeltme, body.not_aciklama, net, _avm, _avd))
 
         # Bağlı ödeme planını gerçek tutarla güncelle
         _personel_odeme_plani_senkronize(cur, dict(p), yil, ay, net)
@@ -4907,25 +4919,26 @@ def personel_aylik_vardiya_aktar(pid: str, yil: int = None, ay: int = None):
             "not_aciklama": not_a,
         }
         net = _kanonik_net(dict(p), vt, kayit_dict) if vt is not None else maas_hesapla(dict(p), kayit_dict, yil, ay)
+        net, _avm, _avd = _maas_svc.avans_mahsup_uygula(cur, dict(p), yil, ay, net)
 
         kid = str(uuid.uuid4())
         cur.execute("""
             INSERT INTO personel_aylik
                 (id, personel_id, yil, ay, calisma_saati, fazla_mesai_saat, bayram_mesai_saat,
                  eksik_gun, raporlu_gun, rapor_kesinti, manuel_duzeltme,
-                 not_aciklama, hesaplanan_net, durum)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'taslak')
+                 not_aciklama, hesaplanan_net, avans_mahsup, mahsup_devir, durum)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'taslak')
             ON CONFLICT (personel_id, yil, ay) DO UPDATE SET
                 calisma_saati=%s, fazla_mesai_saat=%s, bayram_mesai_saat=%s,
                 eksik_gun=%s, raporlu_gun=%s, rapor_kesinti=%s, manuel_duzeltme=%s,
-                not_aciklama=%s, hesaplanan_net=%s, durum='taslak'
+                not_aciklama=%s, hesaplanan_net=%s, avans_mahsup=%s, mahsup_devir=%s, durum='taslak'
         """, (kid, pid, yil, ay,
                 calisma, fazla, bayram,
                 eksik, raporlu, rapor_k,
-                manuel, not_a, net,
+                manuel, not_a, net, _avm, _avd,
                 calisma, fazla, bayram,
                 eksik, raporlu, rapor_k,
-                manuel, not_a, net))
+                manuel, not_a, net, _avm, _avd))
 
         _personel_odeme_plani_senkronize(cur, dict(p), yil, ay, net)
 

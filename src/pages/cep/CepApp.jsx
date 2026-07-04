@@ -210,6 +210,8 @@ function CepHome({ sayac, kasa, onKasa, onAc, onCikis, yenile }) {
       alt: sayac.odeme > 0 ? `${sayac.odeme} ödeme · ${fmt(sayac.odemeTutar)}` : 'Bugün ödeme yok' },
     { id: 'onaylar', ikon: '✅', baslik: 'Gider Onayı', renk: C.yesil,
       sayi: sayac.onay, alt: `${sayac.onay} bekleyen gider` },
+    { id: 'avans', ikon: '🤝', baslik: 'Avans Talepleri', renk: '#f59e0b',
+      sayi: sayac.avans, alt: sayac.avans > 0 ? `${sayac.avans} bekleyen avans` : 'Bekleyen avans yok' },
     { id: 'ciro', ikon: '📋', baslik: 'Ciro Onayı', renk: C.mavi,
       sayi: sayac.ciro, alt: sayac.ciro > 0 ? `${sayac.ciro} bekleyen ciro` : 'Bekleyen ciro yok' },
     { id: 'maliyet', ikon: '💰', baslik: 'Kâr / Maliyet', renk: C.yesil,
@@ -2677,6 +2679,103 @@ function CepOdemeler({ onGeri }) {
   );
 }
 
+// ── 🤝 Avans Talepleri — onay (havale/elden+şube), teslim/personel-onay takibi ──
+function CepAvans({ onGeri, onDegisti }) {
+  const [liste, setListe] = useState(null);
+  const [subeler, setSubeler] = useState([]);
+  const [secim, setSecim] = useState({}); // avansId → sube_id (elden için)
+  const [islem, setIslem] = useState({});
+  const [hata, setHata] = useState('');
+
+  const yukle = useCallback(() => {
+    api('/avans/bekleyenler').then(d => setListe(d?.bekleyenler || [])).catch(e => { setHata(e.message || 'Yüklenemedi'); setListe([]); });
+    api('/subeler').then(d => setSubeler(Array.isArray(d) ? d : (d?.subeler || []))).catch(() => {});
+  }, []);
+  useEffect(() => { yukle(); }, [yukle]);
+
+  async function aksiyon(id, yol, body) {
+    setIslem(s => ({ ...s, [id]: true }));
+    try {
+      await api(`/avans/${id}/${yol}`, { method: 'POST', body: body || {} });
+      yukle(); onDegisti && onDegisti();
+    } catch (e) { alert(e.message || 'İşlem başarısız'); }
+    finally { setIslem(s => ({ ...s, [id]: false })); }
+  }
+
+  const AV_TR = { talep: 'Onay bekliyor', onaylandi: 'Şubede teslim bekleniyor', teslim_edildi: 'Personelin "aldım" onayı bekleniyor' };
+
+  return (
+    <div style={{ minHeight: '100vh', background: C.bg }}>
+      <Baslik baslik="🤝 Avans Talepleri" onGeri={onGeri} />
+      <div style={{ padding: '0 14px 24px' }}>
+        {liste === null && <div style={{ color: C.t3, textAlign: 'center', padding: 30 }}>Yükleniyor…</div>}
+        {hata && <div style={{ color: C.kirmizi, textAlign: 'center', padding: 20 }}>{hata}</div>}
+        {liste && liste.length === 0 && !hata && (
+          <div style={{ color: C.t3, textAlign: 'center', padding: 40 }}>
+            <div style={{ fontSize: 40, marginBottom: 8 }}>🤝</div>
+            Bekleyen avans yok.
+          </div>
+        )}
+        {(liste || []).map(a => (
+          <div key={a.id} style={{
+            background: C.bg2, border: `1px solid ${C.border}`,
+            borderLeft: `4px solid ${a.durum === 'talep' ? '#f59e0b' : C.mavi}`,
+            borderRadius: 14, padding: 14, marginBottom: 12,
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, marginBottom: 4 }}>
+              <span style={{ fontSize: 15, fontWeight: 800, color: C.t1 }}>{a.ad_soyad}</span>
+              <span style={{ fontSize: 18, fontWeight: 800, color: C.t1 }}>{fmt(a.tutar)}</span>
+            </div>
+            <div style={{ fontSize: 12, color: C.t3, marginBottom: 10 }}>
+              {AV_TR[a.durum] || a.durum} · {a.donem} dönemi maaşından düşülecek
+              {a.sube_ad ? ` · ${a.sube_ad}` : ''}
+              {a.not_aciklama ? ` · "${a.not_aciklama}"` : ''}
+            </div>
+            {a.durum === 'talep' && (
+              <>
+                <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                  <button disabled={islem[a.id]} onClick={() => aksiyon(a.id, 'onayla', { yontem: 'havale' })}
+                    style={{ flex: 1, padding: '10px', borderRadius: 10, border: 'none', background: C.yesil, color: '#fff', fontWeight: 800, fontSize: 13, cursor: 'pointer' }}>
+                    🏦 Havale ile Öde
+                  </button>
+                  <button disabled={islem[a.id]} onClick={() => aksiyon(a.id, 'reddet', {})}
+                    style={{ padding: '10px 14px', borderRadius: 10, border: `1px solid ${C.border}`, background: 'transparent', color: C.kirmizi, fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>
+                    Reddet
+                  </button>
+                </div>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <select value={secim[a.id] || ''} onChange={e => setSecim(s => ({ ...s, [a.id]: e.target.value }))}
+                    style={{ flex: 1, padding: '10px', borderRadius: 10, border: `1px solid ${C.border}`, background: C.bg, color: C.t1, fontSize: 13 }}>
+                    <option value="">Elden — şube kasası seç…</option>
+                    {subeler.map(s => <option key={s.id} value={s.id}>{s.ad}</option>)}
+                  </select>
+                  <button disabled={islem[a.id] || !secim[a.id]}
+                    onClick={() => aksiyon(a.id, 'onayla', { yontem: 'elden', sube_id: secim[a.id] })}
+                    style={{ padding: '10px 14px', borderRadius: 10, border: 'none', background: '#f59e0b', color: '#fff', fontWeight: 800, fontSize: 13, cursor: 'pointer', opacity: (!secim[a.id]) ? 0.5 : 1 }}>
+                    💵 Elden
+                  </button>
+                </div>
+                <div style={{ fontSize: 10.5, color: C.t3, marginTop: 6 }}>
+                  Havale: kasa çıkışı hemen işlenir · Elden: şube kasasından teslimle işlenir
+                </div>
+              </>
+            )}
+            {a.durum === 'onaylandi' && (
+              <button disabled={islem[a.id]} onClick={() => aksiyon(a.id, 'teslim-et', {})}
+                style={{ width: '100%', padding: '10px', borderRadius: 10, border: 'none', background: C.mavi, color: '#fff', fontWeight: 800, fontSize: 13, cursor: 'pointer' }}>
+                🤝 Teslim Edildi (kasadan çıktı)
+              </button>
+            )}
+          </div>
+        ))}
+        <div style={{ fontSize: 11, color: C.t3, textAlign: 'center', marginTop: 6, lineHeight: 1.5 }}>
+          Ödenen avans, personelin o dönem maaşından otomatik düşülür (maaş ekranında ayrı satır).
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Demirbaş & Arıza (alt yapı — şimdilik açık arızalar; sonra zenginleşir) ──
 function CepDemirbas({ onGeri }) {
   const [liste, setListe] = useState(null);
@@ -4116,7 +4215,7 @@ export default function CepApp() {
     const h = (window.location.hash || '').replace(/^#/, '').trim();
     return h || 'home';
   });
-  const [sayac, setSayac] = useState({ onay: 0, odeme: 0, odemeTutar: 0, ariza: 0, kule: 0, ciro: 0, kasaUyum: 0, disKaynak: 0, belge: 0, basvuru: 0, sayimOnay: 0 });
+  const [sayac, setSayac] = useState({ onay: 0, odeme: 0, odemeTutar: 0, ariza: 0, kule: 0, ciro: 0, kasaUyum: 0, disKaynak: 0, belge: 0, basvuru: 0, sayimOnay: 0, avans: 0 });
   const [kasa, setKasa] = useState({ tutar: null, gun: null, hareketler: [] });
   const [kasaModal, setKasaModal] = useState(false);
 
@@ -4133,7 +4232,8 @@ export default function CepApp() {
       api('/belge-talep/bekleyen'),
       api('/is-basvurusu/ozet'),
       api('/stok-sayim/bekleyen-onay'),
-    ]).then(([onay, odeme, kasaR, panelR, arizaR, kuleR, ciroR, kuyumR, belgeR, basvuruR, sayimR]) => {
+      api('/avans/bekleyenler'),
+    ]).then(([onay, odeme, kasaR, panelR, arizaR, kuleR, ciroR, kuyumR, belgeR, basvuruR, sayimR, avansR]) => {
       const onayN = (onay.status === 'fulfilled' && Array.isArray(onay.value)) ? onay.value.filter(giderOnayMi).length : 0;
       const odemeArr = (odeme.status === 'fulfilled' && Array.isArray(odeme.value)) ? odeme.value : [];
       const odemeTutar = odemeArr.reduce((s, o) => s + (Number(o.tutar) || 0), 0);
@@ -4145,7 +4245,8 @@ export default function CepApp() {
       const belgeN = (belgeR.status === 'fulfilled') ? (Number(belgeR.value?.toplam) || 0) : 0;
       const basvuruN = (basvuruR.status === 'fulfilled') ? (Number(basvuruR.value?.yeni) || 0) : 0;
       const sayimN = (sayimR.status === 'fulfilled') ? (Number(sayimR.value?.toplam) || 0) : 0;
-      setSayac({ onay: onayN, odeme: odemeArr.length, odemeTutar, ariza: arizaN, kule: kuleN, ciro: ciroN, kasaUyum: kuyumN, disKaynak: disK, belge: belgeN, basvuru: basvuruN, sayimOnay: sayimN });
+      const avansN = (avansR.status === 'fulfilled') ? (Number(avansR.value?.adet) || 0) : 0;
+      setSayac({ onay: onayN, odeme: odemeArr.length, odemeTutar, ariza: arizaN, kule: kuleN, ciro: ciroN, kasaUyum: kuyumN, disKaynak: disK, belge: belgeN, basvuru: basvuruN, sayimOnay: sayimN, avans: avansN });
 
       const kTutar = (kasaR.status === 'fulfilled') ? (Number(kasaR.value?.guncel_bakiye) || 0) : null;
       const hareketler = (kasaR.status === 'fulfilled' && Array.isArray(kasaR.value?.hareketler)) ? kasaR.value.hareketler : [];
@@ -4179,6 +4280,8 @@ export default function CepApp() {
 
   if (view === 'odemeler')
     return <CepOdemeler onGeri={geri} />;
+  if (view === 'avans')
+    return <CepAvans onGeri={geri} onDegisti={sayaclariYukle} />;
   if (view === 'ciro')
     return <CepCiroOnay onGeri={geri} onDegisti={sayaclariYukle} />;
   if (view === 'maliyet')
