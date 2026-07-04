@@ -1403,7 +1403,7 @@ function e3Scene(cls,sahne,clip,kicker,title,desc,name){
 function buildE3Flow(data,sig){
   var pages=[],nw=e3NewProduct(data,sig),silent=e3SilentProduct(data,sig),pr=pairSec(sig);
   pages.push(e3Scene("e3New","e3_yeni",e1ColdClip(nw),"YENİ",nw.ad,"Yaz için daha ferah, daha canlı.",nw.ad));
-  pages.push(e3Scene("e3Craft","e3_craft",/(mocktail|green|frozen|milkshake)/i.test((nw.ad||"")+(nw.kategori||""))?"greenmocktail":"craft","BARISTA CRAFT","El yapımı, anında hazır","Sadece karıştırmıyoruz; kuruyoruz."));
+  pages.push(e3Scene("e3Craft","e3_craft","craft","BARISTA CRAFT","El yapımı, anında hazır","Sadece karıştırmıyoruz; kuruyoruz."));
   pages.push(e3Scene("e3Silent","e3_sessiz_oneri","kahverengi","Baristanın sessiz önerisi",silent.ad,e1HeroNote(silent),silent.ad));
   var pairTitle=pr?(pr.k+" + "+pr.t):((data.pair&&data.pair.ad)?("Kahve + "+data.pair.ad):"Kahve + San Sebastian");
   var pairDesc=pr?pr.c:((data.pair&&data.pair.mesaj)?data.pair.mesaj:"Sütlü kahveyle kremamsı denge.");
