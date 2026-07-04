@@ -977,6 +977,7 @@ body[data-screen="2"] #screenMeta,body[data-screen="3"] #screenMeta{display:none
 .e1HeroScene .e1Studio{position:absolute;inset:0;z-index:0;background:linear-gradient(180deg,rgba(255,255,255,.035),transparent 26%),radial-gradient(52% 32% at 50% 72%,rgba(255,225,174,.11),transparent 70%)}
 .e1HeroScene .e1CupAura{position:absolute;z-index:1;left:50%;top:43%;width:54vw;height:54vw;max-width:42vh;max-height:42vh;transform:translate(-50%,-50%);border-radius:50%;background:radial-gradient(circle,rgba(201,164,106,.18),rgba(62,142,90,.08) 45%,transparent 72%);filter:blur(.2vh)}
 .e1RealCup{position:absolute;z-index:2;left:50%;top:37%;width:min(58vw,43vh);max-height:60vh;object-fit:contain;transform:translate(-50%,-50%);opacity:0;filter:drop-shadow(0 3.2vh 5.4vh rgba(0,0,0,.72));animation:e1CupIn 4s ease both}
+.e1ColdCup{position:absolute;z-index:2;left:50%;top:39%;width:min(55vw,40vh);max-height:58vh;object-fit:contain;transform:translate(-50%,-50%);opacity:0;filter:drop-shadow(0 3vh 5vh rgba(0,0,0,.7));animation:e1CupIn 5s ease both}
 .e1HeroScene .e1Block{align-items:center;text-align:center;bottom:13%;left:8vw;right:8vw}
 .e1HeroScene .e1Desc{max-width:82vw}
 .e1Block{position:absolute;z-index:3;left:7vw;right:7vw;bottom:18%;display:flex;flex-direction:column;align-items:flex-start;text-align:left;gap:1.15vh;color:var(--cream)}
@@ -1359,8 +1360,8 @@ function e1ColdProduct(data,sig){
 function e1ColdClip(info){
   var n=((info&&info.ad)||"").toLowerCase(),k=((info&&info.kategori)||"").toLowerCase();
   if(/frozen|milkshake/.test(n+k))return "frozen";
-  if(/mocktail|green/.test(n+k))return "greenmocktail";
-  return "kahverengi";
+  if(/mocktail|green/.test(n+k))return "mocktail";
+  return "frozen";
 }
 function buildE1HeroProduct(data,sig){
   var info=e1HeroProduct(data,sig);if(!info)return null;
@@ -1375,6 +1376,7 @@ function buildE1ColdCall(data,sig){
   var info=e1ColdProduct(data,sig);
   var st=el("div","pg e1Scene e1Cold");st.dataset.t=5000;st.dataset.roles="1";st.dataset.sahne="e1_yaz_soguk";st.dataset.name=info.ad;
   st.innerHTML='<video class="bgvid" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/'+e1ColdClip(info)+'"></video><div class="bggrade"></div>'
+    +'<img class="e1ColdCup" src="'+cupUrl("iced")+'" alt="">'
     +'<div class="e1Block"><div class="e1Kicker">Yaz burada kahveyle serinler.</div><div class="e1Title">'+info.ad+'</div>'
     +'<div class="e1Desc">Ferah, buzlu, uzun içim.</div></div><div class="e1Fade"></div>';
   return st;
