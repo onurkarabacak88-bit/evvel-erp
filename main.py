@@ -3665,35 +3665,42 @@ class VadeliOdeModel(BaseModel):
 
 
 def _personel_maas_odeme_guard(cur, plan: dict) -> None:
-    """FAZ 0 #3: Personel maaş planı ödenmeden önce o ayın kaydı 'onaylandi' olmalı.
-    Taslak/tahmini ödeme = fazla mesai dahil edilmeden eksik ödeme riski. Sadece
-    kaynak_tablo='personel' planlarına uygulanır; kira/borç/kart etkilenmez."""
+    """FAZ 0 #3: Personel maaş planı ödenmeden önce DÖNEMİN kaydı 'onaylandi' olmalı.
+    ARREARS kuralı: plan.referans_ay = ÖDEME ayı → kayıt bir ÖNCEKİ ayda (çalışma dönemi)
+    aranır (maas_service.referans_to_donem). FIX 2026-07-04: guard referans ayının
+    kendisine bakıyordu → Haziran kaydı onaylıyken 'kayıt girilmedi' diyordu.
+    Eski konvansiyon (referans=çalışma ayı) planları için referans ayının kendisi de
+    kabul edilir. Sadece kaynak_tablo='personel'; kira/borç/kart etkilenmez."""
     if (plan.get('kaynak_tablo') or '') != 'personel':
         return
     kid = plan.get('kaynak_id')
     ref = plan.get('referans_ay')
     if not kid or not ref:
         return  # eski/bağlanamayan kayıt — engelleme
+    d_yil, d_ay = _maas_svc.referans_to_donem(ref)
     cur.execute(
-        "SELECT durum FROM personel_aylik WHERE personel_id=%s AND yil=%s AND ay=%s",
-        (kid, ref.year, ref.month),
+        """SELECT yil, ay, durum FROM personel_aylik
+           WHERE personel_id=%s AND ((yil=%s AND ay=%s) OR (yil=%s AND ay=%s))
+           ORDER BY (CASE WHEN yil=%s AND ay=%s THEN 0 ELSE 1 END)""",
+        (kid, d_yil, d_ay, ref.year, ref.month, d_yil, d_ay),
     )
-    r = cur.fetchone()
-    durum = (r or {}).get('durum')
-    if durum == 'onaylandi':
+    rows = cur.fetchall()
+    if any((r or {}).get('durum') == 'onaylandi' for r in rows):
         return
     cur.execute("SELECT ad_soyad FROM personel WHERE id=%s", (kid,))
     ad = (cur.fetchone() or {}).get('ad_soyad') or 'Personel'
-    if not r:
+    donem_ad = f"{_maas_svc.TR_AYLAR[d_ay]} {d_yil}"
+    if not rows:
         raise HTTPException(
             400,
-            f"{ad}: bu ayın maaş kaydı henüz girilmedi. Ödeme öncesi 'Vardiyadan Aktar' "
-            f"+ 'Onayla' yapın (fazla mesai dahil edilip tutar kilitlensin).",
+            f"{ad}: {donem_ad} dönemi maaş kaydı henüz girilmedi. Personel > Aylık Maaş'ta "
+            f"{donem_ad} dönemini seçip 'Vardiyadan Aktar' + 'Onayla' yapın "
+            f"(fazla mesai dahil edilip tutar kilitlensin).",
         )
     raise HTTPException(
         400,
-        f"{ad}: maaş kaydı '{durum}' durumda. Ödemeden önce 'Onayla' gerekli "
-        f"(tutarı kilitler, fazla mesai dahil olur).",
+        f"{ad}: {donem_ad} dönemi maaş kaydı '{rows[0].get('durum')}' durumda. Ödemeden "
+        f"önce 'Onayla' gerekli (tutarı kilitler, fazla mesai dahil olur).",
     )
 
 
@@ -4533,19 +4540,22 @@ def _maas_kayit_kilit_guard(cur, pid: str, yil: int, ay: int) -> None:
             400,
             "Maaş kaydı onaylı (kilitli). Değiştirmek için önce '🔓 Kilidi Aç' yapın.",
         )
+    # ARREARS: (yil, ay) = ÇALIŞMA dönemi → ödenmiş plan referans_ay = ödeme ayı (dönem+1).
+    # FIX 2026-07-04: MAKE_DATE(yil,ay,1) çalışma ayına bakıyordu → kilit hiç devreye
+    # girmiyordu. Eski konvansiyon planları için çalışma ayı da kontrol edilir.
     cur.execute(
         """
         SELECT 1 FROM odeme_plani
         WHERE kaynak_tablo='personel' AND kaynak_id=%s AND durum='odendi'
-          AND referans_ay = MAKE_DATE(%s, %s, 1)
+          AND referans_ay IN (%s::date, MAKE_DATE(%s, %s, 1))
         LIMIT 1
         """,
-        (pid, yil, ay),
+        (pid, str(_maas_svc.maas_odeme_tarihi(yil, ay)), yil, ay),
     )
     if cur.fetchone():
         raise HTTPException(
             400,
-            "Bu ayın maaşı ödenmiş — kayıt değiştirilemez. Düzeltme için ek ödeme / "
+            "Bu dönemin maaşı ödenmiş — kayıt değiştirilemez. Düzeltme için ek ödeme / "
             "gelecek aydan mahsup gerekir (geçmiş kayıt değişmez).",
         )
 

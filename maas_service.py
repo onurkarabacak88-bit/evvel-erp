@@ -45,6 +45,14 @@ def maas_odeme_tarihi(yil: int, ay: int) -> date:
     return date(odeme_yil, odeme_ay, 1)
 
 
+def referans_to_donem(ref) -> tuple:
+    """maas_odeme_tarihi'nin TERSİ: plan referans_ay'ı (ÖDEME ayı) → çalışma dönemi (yil, ay).
+    Örn. referans 2026-07-01 → Haziran 2026 dönemi."""
+    yil = ref.year - 1 if ref.month == 1 else ref.year
+    ay = 12 if ref.month == 1 else ref.month - 1
+    return yil, ay
+
+
 def plan_aciklama(p: dict, yil: int, ay: int) -> str:
     """CFO panel / Yaklaşan Ödemeler'de hangi ayın maaşı olduğu okunsun diye dönem etiketi."""
     return f"Personel Maaş: {p.get('ad_soyad') or ''} — {TR_AYLAR[ay]} {yil} dönemi"
