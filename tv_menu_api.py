@@ -839,7 +839,9 @@ def tv_menu_cup(name: str):
     }[name]
     cutout = {
         "hot": "e1_real_paper_cup_cutout.png",
-        "latte": "e1_latte_cup_cutout.png",
+        # KULLANICI KARARI 2026-07-04: latte = YEŞİL KARTON bardak (sıcak servis).
+        # e1_latte_cup_cutout.png plastik buzlu bardaktı — plastik sadece iced/mocktail'de.
+        "latte": "e1_real_paper_cup_cutout.png",
         "iced": "cup_iced_cutout.png",
         "mocktail": "cup_mocktail_cutout.png",
     }[name]
@@ -1264,7 +1266,7 @@ body[data-screen="2"] #screenMeta,body[data-screen="3"] #screenMeta{display:none
 <div class="foot"><span id="live">TÜM FİYATLAR TL · TULİPİ COFFEE</span></div>
 <div id="cine"><video muted loop playsinline preload="auto"></video><div class="cgrade"></div><div class="ccap"><div class="ct"></div><div class="cs"></div></div></div></div>
 <script>
-var API="/api/tv-menu", SIG="/api/tv-signals", CACHE="tulipi_tv_menu", LAST_BUILD_KEY="", CUP_ASSET_REV="20260704-cutout-v2";
+var API="/api/tv-menu", SIG="/api/tv-signals", CACHE="tulipi_tv_menu", LAST_BUILD_KEY="", CUP_ASSET_REV="20260704-cutout-v3";
 function el(t,c,h){var e=document.createElement(t);if(c)e.className=c;if(h!=null)e.innerHTML=h;return e;}
 function priceRow(u,three,i,fav){
   // koreografi: başlık 0-0.5s → satırlar 0.30s'den itibaren 70ms kademe (motion-design stagger, opacity-only)
