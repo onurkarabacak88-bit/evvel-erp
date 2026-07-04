@@ -1339,14 +1339,14 @@ def finans_ozet_motoru():
             AND op.tarih <= CURRENT_DATE
             AND NOT (
                 op.kart_id IS NULL
-                AND op.kaynak_id IS NOT NULL
                 AND EXISTS (
                     SELECT 1 FROM kasa_hareketleri kh
                     WHERE kh.kasa_etkisi = TRUE AND kh.durum = 'aktif'
-                      AND DATE_TRUNC('month', kh.tarih) = DATE_TRUNC('month', op.tarih)
                       AND (
                             (kh.kaynak_tablo = 'odeme_plani' AND kh.kaynak_id = op.id)
-                         OR (kh.kaynak_tablo = op.kaynak_tablo AND kh.kaynak_id = op.kaynak_id)
+                         OR (op.kaynak_id IS NOT NULL
+                             AND kh.kaynak_tablo = op.kaynak_tablo AND kh.kaynak_id = op.kaynak_id
+                             AND DATE_TRUNC('month', kh.tarih) = DATE_TRUNC('month', op.tarih))
                       )
                 )
             )
@@ -1400,14 +1400,14 @@ def finans_ozet_motoru():
                           AND CURRENT_DATE + INTERVAL '30 days'
             AND NOT (
                 op.kart_id IS NULL
-                AND op.kaynak_id IS NOT NULL
                 AND EXISTS (
                     SELECT 1 FROM kasa_hareketleri kh
                     WHERE kh.kasa_etkisi = TRUE AND kh.durum = 'aktif'
-                      AND DATE_TRUNC('month', kh.tarih) = DATE_TRUNC('month', op.tarih)
                       AND (
                             (kh.kaynak_tablo = 'odeme_plani' AND kh.kaynak_id = op.id)
-                         OR (kh.kaynak_tablo = op.kaynak_tablo AND kh.kaynak_id = op.kaynak_id)
+                         OR (op.kaynak_id IS NOT NULL
+                             AND kh.kaynak_tablo = op.kaynak_tablo AND kh.kaynak_id = op.kaynak_id
+                             AND DATE_TRUNC('month', kh.tarih) = DATE_TRUNC('month', op.tarih))
                       )
                 )
             )

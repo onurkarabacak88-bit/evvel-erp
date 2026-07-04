@@ -965,6 +965,62 @@ def borc_plan_mutabakat(referans_tarih: Optional[date] = None) -> dict:
     return sonuc
 
 
+def odeme_plani_kasa_mutabakat() -> dict:
+    """KURAL (kullanıcı, 2026-07-04): 'Kasada ödeme izi varsa ödenmiştir, yoksa ödenmemiştir.'
+    Self-healing (idempotent — her panel açılışında güvenli): kasada ödeme izi olan ama hâlâ
+    'bekliyor'/'onay_bekliyor' kalmış ödeme planlarını 'odendi' yapar. İz YOKSA DOKUNMAZ —
+    plan gerçek borç olarak görünmeye devam eder (ters yön bilerek kapalı: kartla ödenen
+    planların kasa izi olmaz, geri açmak yanlış borç diriltir).
+
+    Eşleşme iki türlü:
+      (a) PLAN-BAĞLI iz: kh.kaynak_tablo='odeme_plani' AND kh.kaynak_id=op.id — AY FİLTRESİZ.
+          Bağ bire bir olduğu için hangi ayda ödendiği fark etmez (POS Temmuz vakasının kökü:
+          ay filtresi yüzünden farklı aydaki doğrudan iz görülmüyordu).
+      (b) KAYNAK-BAĞLI iz: kh.kaynak = op.kaynak (sabit/personel/vadeli/borç) — SADECE plan
+          ayıyla aynı ay (tekrarlayan kalemlerde başka ayın ödemesi bu ayın planını kapatmasın).
+    Kart planları (kart_id'li) hariç — kart ödemeleri kart_hareketleri ekseninde yürür.
+    """
+    sonuc = {"kapatilan": 0, "hata": None}
+    _iz_kosulu = """
+        (kh.kaynak_tablo = 'odeme_plani' AND kh.kaynak_id = op.id)
+        OR (op.kaynak_id IS NOT NULL
+            AND kh.kaynak_tablo = op.kaynak_tablo AND kh.kaynak_id = op.kaynak_id
+            AND DATE_TRUNC('month', kh.tarih) = DATE_TRUNC('month', op.tarih))
+    """
+    try:
+        with db() as (conn, cur):
+            cur.execute(f"""
+                UPDATE odeme_plani op
+                SET durum='odendi',
+                    odenen_tutar = COALESCE(op.odenen_tutar, op.odenecek_tutar),
+                    odeme_tarihi = COALESCE(op.odeme_tarihi, (
+                        SELECT MAX(kh.tarih) FROM kasa_hareketleri kh
+                        WHERE kh.kasa_etkisi=TRUE AND kh.durum='aktif' AND ({_iz_kosulu})))
+                WHERE op.kart_id IS NULL
+                  AND op.durum IN ('bekliyor','onay_bekliyor')
+                  AND EXISTS (
+                      SELECT 1 FROM kasa_hareketleri kh
+                      WHERE kh.kasa_etkisi=TRUE AND kh.durum='aktif' AND ({_iz_kosulu}))
+            """)
+            sonuc["kapatilan"] = cur.rowcount or 0
+            if sonuc["kapatilan"]:
+                # kapananların bekleyen onaylarını da kapat
+                cur.execute("""
+                    UPDATE onay_kuyrugu ok SET durum='onaylandi', onay_tarihi=NOW()
+                    WHERE ok.durum='bekliyor'
+                    AND EXISTS (
+                        SELECT 1 FROM odeme_plani op
+                        WHERE op.durum='odendi'
+                          AND (ok.kaynak_id = op.id::text OR
+                               (ok.kaynak_tablo = op.kaynak_tablo AND ok.kaynak_id = op.kaynak_id::text))
+                    )
+                """)
+    except Exception as e:
+        sonuc["hata"] = str(e)
+        logger.warning(f"odeme_plani_kasa_mutabakat: {e}")
+    return sonuc
+
+
 def odeme_plani_kontrol(referans_tarih: Optional[date] = None) -> dict:
     """
     Ay plan üretimi için lazy + idempotent koruma.
@@ -973,6 +1029,8 @@ def odeme_plani_kontrol(referans_tarih: Optional[date] = None) -> dict:
     bugun = referans_tarih or bugun_tr()
     # Self-healing: ödenmiş ama bekleyen / mükerrer borç planlarını düzelt (idempotent)
     borc_mutabakat = borc_plan_mutabakat(bugun)
+    # Self-healing (genel): kasa izi olan bekleyen planları kapat — "kasa izi = tek gerçek"
+    kasa_mutabakat = odeme_plani_kasa_mutabakat()
     eksik_sabit = eksik_borc = eksik_kart = eksik_personel = 0
     lock_ok = False
 
@@ -1069,6 +1127,7 @@ def odeme_plani_kontrol(referans_tarih: Optional[date] = None) -> dict:
         "uretim_denedi": uretim_denedi,
         "uretilen_adet": uretilen_adet,
         "borc_mutabakat": borc_mutabakat,
+        "kasa_mutabakat": kasa_mutabakat,
     }
 
 
@@ -5572,17 +5631,19 @@ def odeme_plani_odenmis_esitle(uygula: bool = False):
       (b) kaynak_tablo=plan.kaynak_tablo AND kaynak_id=plan.kaynak_id (sabit/vadeli/personel)
     Sadece kart_id'siz (nakit/kaynak bağlı) planlar — kart planlarının kendi guard'ı vardır.
     Önizleme (uygula=False) → liste; uygula=True → düzeltir + ilişkili onay kuyruğunu kapatır."""
+    # İz tanımı = odeme_plani_kasa_mutabakat ile AYNI: (a) plan-bağlı iz ay filtresiz,
+    # (b) kaynak-bağlı iz sadece plan ayında (tekrarlayan kalem güvenliği).
     _esit_kosul = """
         op.kart_id IS NULL
-        AND op.kaynak_id IS NOT NULL
         AND op.durum IN ('bekliyor','onay_bekliyor')
         AND EXISTS (
             SELECT 1 FROM kasa_hareketleri kh
             WHERE kh.kasa_etkisi = TRUE AND kh.durum = 'aktif'
-              AND DATE_TRUNC('month', kh.tarih) = DATE_TRUNC('month', op.tarih)
               AND (
                     (kh.kaynak_tablo = 'odeme_plani' AND kh.kaynak_id = op.id)
-                 OR (kh.kaynak_tablo = op.kaynak_tablo AND kh.kaynak_id = op.kaynak_id)
+                 OR (op.kaynak_id IS NOT NULL
+                     AND kh.kaynak_tablo = op.kaynak_tablo AND kh.kaynak_id = op.kaynak_id
+                     AND DATE_TRUNC('month', kh.tarih) = DATE_TRUNC('month', op.tarih))
               )
         )
     """
