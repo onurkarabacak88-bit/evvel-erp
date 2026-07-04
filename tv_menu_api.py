@@ -832,13 +832,16 @@ def tv_menu_cup(name: str):
     if name not in ("hot", "iced", "mocktail"):
         raise HTTPException(404, "bardak yok")
     eski = {"hot": "cup_hot_green.jpeg", "iced": "cup_iced_latte.jpeg", "mocktail": "cup_mocktail_green.jpeg"}[name]
+    cutout = {"hot": "e1_real_paper_cup_cutout.png", "iced": "cup_iced_cutout.png", "mocktail": "cup_mocktail_cutout.png"}[name]
     for p in (
+        os.path.join("static/tv", cutout),
+        os.path.join("public/tv", cutout),
         os.path.join("static/tv", "cup_" + name + ".jpeg"),
         os.path.join("public/tv", "cup_" + name + ".jpeg"),
         os.path.join("src/assets/tv", eski),
     ):
         if os.path.exists(p):
-            return FileResponse(p, media_type="image/jpeg")
+            return FileResponse(p, media_type="image/png" if p.endswith(".png") else "image/jpeg")
     raise HTTPException(404, "bardak dosyası yok")
 
 
@@ -934,6 +937,10 @@ body[data-screen="2"] #screenMeta,body[data-screen="3"] #screenMeta{display:none
 @keyframes kenBurns{0%{transform:scale(1.04)}100%{transform:scale(1.16)}}
 @keyframes bardakReveal{0%,38%{opacity:0;transform:translateY(1.6vh)}55%,100%{opacity:1;transform:none}}
 .bardakBg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;animation:kenBurns 7s ease-out forwards;filter:saturate(1.12) contrast(1.06) brightness(.86)}
+.cupProductStage{position:absolute;inset:0;z-index:0;background:radial-gradient(62% 44% at 50% 42%,rgba(201,164,106,.14),transparent 62%),radial-gradient(64% 50% at 50% 76%,rgba(62,142,90,.11),transparent 70%),linear-gradient(180deg,#120c08 0,#070403 100%)}
+.cupProduct{position:absolute;left:50%;top:47%;width:min(62vw,46vh);max-height:66vh;object-fit:contain;transform:translate(-50%,-50%) scale(1);filter:drop-shadow(0 3.1vh 5vh rgba(0,0,0,.72));animation:cupProductDrift 7s ease-out forwards;transform-origin:50% 50%}
+.cupProductStage .bggrade{z-index:1}
+@keyframes cupProductDrift{0%{transform:translate(-50%,-50%) scale(1)}100%{transform:translate(-50%,-50%) scale(1.06)}}
 .bardakInfo{position:relative;z-index:2;opacity:0;animation:bardakReveal 7s ease forwards}
 .openingBg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;animation:openingDrift 3s ease-out forwards;transform-origin:42% 54%;backface-visibility:hidden}
 .openingShade{position:absolute;inset:0;z-index:1;background:linear-gradient(90deg,rgba(0,0,0,.05) 0%,rgba(0,0,0,.16) 44%,rgba(0,0,0,.44) 74%,rgba(0,0,0,.68) 100%)}
@@ -1030,7 +1037,7 @@ body[data-screen="2"] #screenMeta,body[data-screen="3"] #screenMeta{display:none
 .pick .pInner{position:relative;z-index:2;display:flex;flex-direction:column;align-items:center;text-align:center;gap:1.1vh}
 .pick .pTag{font-size:1.5vh;letter-spacing:.4vw;color:var(--green-soft);text-transform:uppercase;opacity:0;animation:pk1 9s ease both}
 .pick.bsec .pTag{color:var(--gold)}
-.pick .pCup{width:19vh;border-radius:1.4vh;box-shadow:0 1.8vh 4.5vh #000c;opacity:0;animation:pk2 9s ease both}
+.pick .pCup{width:min(42vw,28vh);max-height:37vh;object-fit:contain;filter:drop-shadow(0 2.2vh 4.2vh rgba(0,0,0,.72));opacity:0;animation:pk2 9s ease both}
 .pick .pName{font-family:'Fraunces',serif;font-style:italic;font-weight:400;font-size:5.6vh;color:var(--cream);opacity:0;animation:pk2 9s ease both}
 .pick .pNote{font-size:2vh;color:#B89B80;font-style:italic;opacity:0;animation:pk3 9s ease both}
 .pick .pPrice{margin-top:1vh;font-size:3vh;font-weight:600;color:#f2e6cf;opacity:0;animation:pk4 9s ease both}
@@ -1158,7 +1165,7 @@ body[data-screen="2"] #screenMeta,body[data-screen="3"] #screenMeta{display:none
 .flatCard .spotPrice{margin-top:.8vh}
 .musteriTag{position:relative;z-index:2;font-size:3vh;font-style:italic;color:#EFE6D6;text-shadow:0 .3vw 1.5vw #000;margin-top:1.4vh}
 /* gerçek TULİPİ bardak fotoğrafı — imza silüet, her sahnede aynı kare (marka hafızası) */
-.cupShot{position:relative;z-index:2;width:20vh;border-radius:1.4vh;box-shadow:0 1.8vh 4.5vh #000c;animation:flo 4s ease-in-out infinite;margin:1.2vh 0 .6vh}
+.cupShot{position:relative;z-index:2;width:min(42vw,28vh);max-height:38vh;object-fit:contain;filter:drop-shadow(0 2.2vh 4.2vh rgba(0,0,0,.72));animation:flo 4s ease-in-out infinite;margin:1.2vh 0 .6vh}
 /* FAZ 7 — Perfect Pair upsell */
 .pair{position:relative;z-index:2;margin-top:2.8vh;display:flex;flex-direction:column;align-items:center;gap:.7vh;animation:pairIn 1s ease 1.1s both}
 .pairTag{font-size:1.3vh;letter-spacing:.32vw;color:#0e0b09;background:#B89B80;padding:.5vh 1.5vw;border-radius:40px;text-transform:uppercase}
@@ -1261,10 +1268,12 @@ function storyProduct(data){
 }
 function cupShotFor(name,kategori){
   var n=(name||"").toLowerCase(),k=(kategori||"").toLowerCase();
-  if(/mocktail|milkshake/.test(k))return "mocktail";
-  if(/ice|buz|cold|iced/.test(n))return "iced";
+  var all=n+" "+k;
+  if(/mocktail|green|mojito|limonata|lemonade|cooler/.test(all))return "mocktail";
+  if(/ice|iced|buz|cold|frozen|milkshake|frappe|smoothie/.test(all))return "iced";
   return "hot";
 }
+function cupSrcFor(info){return "/tv-menu/cup/"+cupShotFor(info&&info.ad,info&&info.kategori);}
 function findPrice(name){var r=null;if(!window._tvData||!name)return null;
   (window._tvData.kategoriler||[]).forEach(function(k){(k.urunler||[]).forEach(function(u){
     if(String(u.ad).toLowerCase()===String(name).toLowerCase()){var v=u.f8!=null?u.f8:(u.f14!=null?u.f14:u.fice);if(v!=null)r=v;}});});
@@ -1341,7 +1350,7 @@ function buildE1HeroProduct(data,sig){
   var info=e1HeroProduct(data,sig);if(!info)return null;
   var tag=(sig&&sig.en_cok)?"Bu hafta en çok seçilen":(data.imza&&data.imza.ad===info.ad)?"TULİPİ imzası":"Bugünün fincanı";
   var st=el("div","pg e1Scene e1HeroScene");st.dataset.t=4000;st.dataset.roles="1";st.dataset.sahne="e1_tek_hero";st.dataset.name=info.ad;
-  st.innerHTML='<div class="e1Studio"></div><div class="e1CupAura"></div><img class="e1RealCup" src="/tv-menu/hero/paper_real" alt="">'
+  st.innerHTML='<div class="e1Studio"></div><div class="e1CupAura"></div><img class="e1RealCup" src="'+cupSrcFor(info)+'" alt="">'
     +'<div class="e1Block"><div class="e1Kicker">'+tag+'</div><div class="e1Title">'+info.ad+'</div>'
     +'<div class="e1Desc">'+e1HeroNote(info)+'</div></div><div class="e1Fade"></div>';
   return st;
@@ -1725,7 +1734,7 @@ function build(data,sig){
   // uyardığı "yine içecek" hissi). Şimdi sıcak/soğuk alternansı: soğuk-soğuk-SICAK-soğuk-soğuk yerine
   // sıcağı ortaya alıp soğuk kümesini ikiye böldük (2-1-2), tek-nota tekrar hissini kırıyor.
   var photoPg=function(name,label){var cp=el("div","pg");cp.dataset.t=4000;cp.dataset.roles="3";
-    cp.innerHTML='<img class="bardakBg" src="/tv-menu/cup/'+name+'" alt=""><div class="bggrade"></div><div class="brandLabel">'+label+'</div>';
+    cp.innerHTML='<div class="cupProductStage"><img class="cupProduct" src="/tv-menu/cup/'+name+'" alt=""><div class="bggrade"></div></div><div class="brandLabel">'+label+'</div>';
     return cp;};
   ekran3Pages.push(photoPg("iced","Buzlu Lezzetler"));
   var kahveC=el("div","pg");kahveC.dataset.t=6000;kahveC.dataset.roles="3";
