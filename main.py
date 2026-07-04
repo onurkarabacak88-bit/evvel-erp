@@ -730,6 +730,15 @@ def guncelle_borc_envanteri_odeme_plani_sonrasi(cur, plan: dict, ana_para_kismi:
     """, (yeni_kalan, yeni_toplam, plan['kaynak_id']))
 
 
+# Ödeme planı kaynağı → kasa işlem türü (TEK KAYNAK — tam ve kısmi ödeme aynı tabloyu kullanır)
+KAYNAK_KASA_ISLEM_TURU = {
+    'sabit_giderler': 'SABIT_GIDER',
+    'personel': 'PERSONEL_MAAS',
+    'vadeli_alimlar': 'VADELI_ODEME',
+    'borc_envanteri': 'BORC_TAKSIT',
+}
+
+
 def kasa_ve_faiz_odeme_plani_tam_odeme(
     cur, plan: dict, plan_id: str, odenen: float, tarih: str,
     anapara_aciklama: Optional[str] = None,
@@ -786,36 +795,19 @@ def kasa_ve_faiz_odeme_plani_tam_odeme(
     if ana_para_kismi > 0:
         aciklama_ana = anapara_aciklama if anapara_aciklama is not None else plan['aciklama']
         kaynak = plan.get('kaynak_tablo') or ''
-        if kaynak == 'sabit_giderler':
-            islem_t = 'SABIT_GIDER'
-            aciklama_t = aciklama_ana
-            insert_kasa_hareketi(cur, tarih, islem_t, -abs(ana_para_kismi),
-                aciklama_t, 'odeme_plani', plan_id, plan_id, 'ODEME_PLANI')
-        elif kaynak == 'personel':
-            islem_t = 'PERSONEL_MAAS'
-            aciklama_t = aciklama_ana
-            insert_kasa_hareketi(cur, tarih, islem_t, -abs(ana_para_kismi),
-                aciklama_t, 'odeme_plani', plan_id, plan_id, 'ODEME_PLANI')
-        elif kaynak == 'vadeli_alimlar':
-            islem_t = 'VADELI_ODEME'
-            aciklama_t = aciklama_ana
+        islem_t = KAYNAK_KASA_ISLEM_TURU.get(kaynak, 'KART_ODEME')
+        if kaynak == 'vadeli_alimlar':
+            # vadeli: kasa kaydı kaynağı vadeli_alimlar'a bağlanır (onay guard ile aynı anahtar)
             vk = plan.get('kaynak_id')
             kasa_kt = 'vadeli_alimlar' if vk else 'odeme_plani'
             kasa_kid = vk or plan_id
             insert_kasa_hareketi(
-                cur, tarih, islem_t, -abs(ana_para_kismi), aciklama_t,
+                cur, tarih, islem_t, -abs(ana_para_kismi), aciklama_ana,
                 kasa_kt, kasa_kid, plan_id, 'ODEME_PLANI',
             )
-        elif kaynak == 'borc_envanteri':
-            islem_t = 'BORC_TAKSIT'
-            aciklama_t = aciklama_ana
-            insert_kasa_hareketi(cur, tarih, islem_t, -abs(ana_para_kismi),
-                aciklama_t, 'odeme_plani', plan_id, plan_id, 'ODEME_PLANI')
         else:
-            islem_t = 'KART_ODEME'
-            aciklama_t = aciklama_ana
             insert_kasa_hareketi(cur, tarih, islem_t, -abs(ana_para_kismi),
-                aciklama_t, 'odeme_plani', plan_id, plan_id, 'ODEME_PLANI')
+                aciklama_ana, 'odeme_plani', plan_id, plan_id, 'ODEME_PLANI')
 
     # kart_borc() ODEME türündeki kart_hareketleri kaydına bakarak borcu düşürür.
     # Nakit ödeme kasaya gider ama kart borcu bu kayıt olmadan hiç azalmaz.
@@ -4558,292 +4550,28 @@ def _maas_kayit_kilit_guard(cur, pid: str, yil: int, ay: int) -> None:
         )
 
 
-def _personel_donem_orani(p: dict, yil: int, ay: int):
-    """Dönem içi çalışma oranı (0..1). Ay ortasında işe giren/ayrılan sürekli personel
-    tam 30 gün değil, çalıştığı takvim günü oranında hakediş alır (kural 2026-07-03:
-    'Dönem hakedişi aktiflikten bağımsızdır' — 10 günlük alacak silinmez, 20 günlük
-    çalışana 30 gün yazılmaz). Dönemle hiç kesişmiyorsa None döner."""
-    import calendar as _c
-    sgun = _c.monthrange(yil, ay)[1]
-    d1, d2 = date(yil, ay, 1), date(yil, ay, sgun)
-    b, c = p.get('baslangic_tarihi'), p.get('cikis_tarihi')
-    eff1 = max(d1, b) if b else d1
-    eff2 = min(d2, c) if c else d2
-    if eff1 > eff2:
-        return None
-    gun = (eff2 - eff1).days + 1
-    return 1.0 if gun >= sgun else gun / sgun
-
-
-def maas_hesapla(p: dict, kayit: dict, yil: int = None, ay: int = None) -> float:
-    """
-    Personelin aylık net maaşını hesaplar.
-
-    SÜREKLİ:
-      - Günlük standart: 9.5 saat, aylık 30 gün (izin günleri dahil, İş Kanunu standardı)
-      - Aylık saat: 30 × 9.5 = 285 saat
-      - Saatlik ücret = maaş / 285  → 28.000 / 285 = 98,25 ₺/saat
-      - Fazla mesai: 9.5 saat üstü çalışma × saatlik ücret
-      - Bayram mesaisi: ×2
-      - Eksik gün kesintisi: (maaş / 30) × eksik_gün  → 28.000/30 = 933 ₺/gün
-
-    PART-TIME:
-      - Saatlik ücret belirlenir
-      - Normal saat × saatlik
-      - Fazla mesai × saatlik × 1  (aynı mantık)
-      - Bayram mesaisi × saatlik × 2
-      - Yemek yok, yol var
-    """
-    GUNLUK_SAAT   = 9.5
-    AYLIK_GUN     = 30        # İş Kanunu standardı: izin günleri dahil 30 gün
-    AYLIK_SAAT    = GUNLUK_SAAT * AYLIK_GUN   # 285
-
-    yol    = float(p.get('yol_ucreti') or 0)
-    manuel = float(kayit.get('manuel_duzeltme') or 0)
-    eksik  = float(kayit.get('eksik_gun') or 0)
-    raporlu = float(kayit.get('raporlu_gun') or 0)
-    fazla_normal = float(kayit.get('fazla_mesai_saat') or 0)
-    fazla_bayram = float(kayit.get('bayram_mesai_saat') or 0)
-    rapor_kesinti = kayit.get('rapor_kesinti', False)
-
-    if p.get('calisma_turu') == 'surekli':
-        maas    = float(p.get('maas') or 0)
-        yemek   = float(p.get('yemek_ucreti') or 0)
-        saatlik = maas / AYLIK_SAAT if AYLIK_SAAT > 0 else 0
-        gunluk  = maas / AYLIK_GUN  if AYLIK_GUN  > 0 else 0
-
-        # DÖNEM PRO-RATA: yil/ay verildiyse maaş+yemek+yol tabanı çalışılan gün oranında.
-        # (saatlik/günlük birim ücretler TAM maaştan — mesai ve eksik gün kesintisi birimi değişmez)
-        oran = 1.0
-        if yil and ay:
-            _o = _personel_donem_orani(p, yil, ay)
-            if _o is None:
-                return 0.0  # dönemle kesişmiyor (dönemden önce ayrıldı / sonra başlayacak)
-            oran = _o
-
-        kesinti_gun = eksik + (raporlu if rapor_kesinti else 0)
-        kesinti     = gunluk * kesinti_gun  # günlük ücret × eksik gün (İş Kanunu)
-
-        fazla_ucret = (fazla_normal * saatlik) + (fazla_bayram * saatlik * 2)
-        net = (maas * oran) - kesinti + fazla_ucret + (yemek * oran) + (yol * oran) + manuel
-    else:
-        # PART-TIME: ay boyunca çalıştığı TOPLAM saat × saatlik ücret.
-        # Fazla mesai kavramı YOK — tüm saatler zaten saat başı ödeniyor (limit/ek mesai
-        # sadece sürekli/maaşlı için anlamlı). Yemek yok, yol + manuel düzeltme eklenir.
-        saatlik = float(p.get('saatlik_ucret') or 0)
-        saat    = float(kayit.get('calisma_saati') or 0)
-        net = (saat * saatlik) + yol + manuel
-
-    return round(max(0, net), 2)
-
-
-def _personel_vardiya_kayit_dict(cur, p: dict, yil: int, ay: int, mevcut: Optional[dict] = None) -> dict:
-    mevcut = dict(mevcut or {})
-    vk = _vv2.personel_ay_vardiya_maas_kaynagi(cur, p["id"], yil, ay)
-    calisma = float(mevcut.get("calisma_saati") or 0)
-    fazla = float(mevcut.get("fazla_mesai_saat") or 0)
-
-    if (p.get("calisma_turu") or "surekli") == "surekli":
-        fazla = float(vk.get("ek_mesai_haftalik_toplam") or 0)
-    else:
-        calisma = float(vk.get("toplam_ay_saat") or 0)
-
-    return {
-        "calisma_saati": calisma,
-        "fazla_mesai_saat": fazla,
-        "bayram_mesai_saat": float(mevcut.get("bayram_mesai_saat") or 0),
-        "eksik_gun": float(mevcut.get("eksik_gun") or 0),
-        "raporlu_gun": float(mevcut.get("raporlu_gun") or 0),
-        "rapor_kesinti": bool(mevcut.get("rapor_kesinti") or False),
-        "manuel_duzeltme": float(mevcut.get("manuel_duzeltme") or 0),
-        "not_aciklama": mevcut.get("not_aciklama"),
-        "_vardiya": vk,
-    }
-
-
-def _personel_maas_odeme_tarihi(yil: int, ay: int):
-    from datetime import date
-
-    odeme_yil = yil + 1 if ay == 12 else yil
-    odeme_ay = 1 if ay == 12 else ay + 1
-    return date(odeme_yil, odeme_ay, 1)
-
-
-_TR_AYLAR = ["", "Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran",
-             "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"]
+# ── MAAŞ ÇEKİRDEĞİ: maas_service.py (TEK MERKEZ) ───────────────
+# Hesap + plan yazımı + dönem (arrears) kuralı + sabitler artık maas_service'te.
+# Eski isimler geriye-uyum için aynen bağlanır (bu dosyadaki çağıranlar değişmez).
+import maas_service as _maas_svc
+from maas_service import (
+    TR_AYLAR as _TR_AYLAR,
+    maas_hesapla,
+    personel_donem_orani as _personel_donem_orani,
+    vardiya_kayit_dict as _personel_vardiya_kayit_dict,
+    maas_odeme_tarihi as _personel_maas_odeme_tarihi,
+    vardiya_takip_hesap as _vardiya_takip_hesap,
+    kanonik_net as _kanonik_net,
+    aylik_vardiya_senkronize as _personel_aylik_vardiya_senkronize,
+)
 
 
 def _personel_odeme_plani_senkronize(cur, p: dict, yil: int, ay: int, net: float):
-    if net <= 0:
-        return None
+    """Geriye-uyum sarmalayıcı: tek plan yazıcı = maas_service.odeme_plani_esitle.
+    (Eski dönüş sözleşmesi korunur: plan id veya None.)"""
+    r = _maas_svc.odeme_plani_esitle(cur, p, yil, ay, net, guncelle=True)
+    return (r or {}).get("id")
 
-    odeme_tarihi = _personel_maas_odeme_tarihi(yil, ay)
-    # Dönem etiketi — CFO panel / Yaklaşan Ödemeler'de HANGİ ayın maaşı olduğu okunsun
-    # (kullanıcı sorusu 2026-07-04: "Haziran ayı maaş ödemeleri nasıl görünecek?")
-    aciklama = f"Personel Maaş: {p.get('ad_soyad') or ''} — {_TR_AYLAR[ay]} {yil} dönemi"
-
-    cur.execute(
-        """
-        UPDATE odeme_plani
-        SET tarih=%s, referans_ay=DATE_TRUNC('month', %s::date),
-            odenecek_tutar=%s, asgari_tutar=%s, aciklama=%s
-        WHERE kaynak_tablo='personel' AND kaynak_id=%s
-          AND durum IN ('bekliyor','onay_bekliyor')
-          AND referans_ay = DATE_TRUNC('month', %s::date)
-        RETURNING id
-        """,
-        (odeme_tarihi, str(odeme_tarihi), net, net, aciklama, p["id"], str(odeme_tarihi)),
-    )
-    row = cur.fetchone()
-    if row:
-        return row["id"]
-
-    pid = str(uuid.uuid4())
-    cur.execute(
-        """
-        INSERT INTO odeme_plani
-            (id, kart_id, tarih, referans_ay, odenecek_tutar, asgari_tutar,
-             aciklama, durum, kaynak_tablo, kaynak_id)
-        SELECT %s, NULL, %s, DATE_TRUNC('month', %s::date), %s, %s,
-               %s, 'bekliyor', 'personel', %s
-        WHERE NOT EXISTS (
-            SELECT 1 FROM odeme_plani
-            WHERE kaynak_tablo='personel' AND kaynak_id=%s
-              AND durum != 'iptal'
-              AND referans_ay = DATE_TRUNC('month', %s::date)
-        )
-        RETURNING id
-        """,
-        (
-            pid,
-            odeme_tarihi,
-            str(odeme_tarihi),
-            net,
-            net,
-            aciklama,
-            p["id"],
-            p["id"],
-            str(odeme_tarihi),
-        ),
-    )
-    row = cur.fetchone()
-    return (row or {}).get("id")
-
-
-def _vardiya_takip_hesap(pid, yil: int, ay: int):
-    """TEK GERÇEK KAYNAK (kullanıcı kararı 2026-07-04): bordronun otomatik kalemleri
-    Vardiya Takip'in hesabından gelir — iki ekran her zaman aynı rakamı söyler.
-    Kurgu (takip ekseni): taban=(maaş/30)×geçen gün (başlangıç/çıkış kırpılmış),
-    fazla mesai=GÜNLÜK bazlı (9.5 saat üstü planlanan)×saatlik, yemek=hak edilen
-    fiilî gün×(aylık yemek/30), yol=(yol/30)×geçen gün; part-time=planlanan saat×saatlik.
-    (gorev_api.vardiya_takip kendi bağlantısını açar; salt-okur, güvenli.)"""
-    try:
-        from gorev_api import vardiya_takip as _vt
-        res = _vt(yil, ay, personel_id=str(pid))
-        rows = (res or {}).get("personeller") or []
-        return rows[0] if rows else None
-    except Exception as e:
-        logger.warning("vardiya takip hesap hatasi (%s %s-%s): %s", pid, yil, ay, e)
-        return None
-
-
-def _kanonik_net(p: dict, vt: dict, kayit: dict) -> float:
-    """Bordro neti = Vardiya Takip net_hakedişi (otomatik kalemler) + MANUEL katman:
-    bayram mesaisi ×2 (takipte yok) − eksik gün/rapor kesintisi (günlük ücret) + manuel düzeltme."""
-    AYLIK_GUN, AYLIK_SAAT = 30.0, 285.0
-    if (p.get("calisma_turu") or "surekli") == "surekli":
-        maas = float(p.get("maas") or 0)
-        saatlik = maas / AYLIK_SAAT
-        gunluk = maas / AYLIK_GUN
-    else:
-        saatlik = float(p.get("saatlik_ucret") or 0)
-        gunluk = saatlik * 9.5
-    net = float(vt.get("net_hakediş") or 0)
-    net += float(kayit.get("bayram_mesai_saat") or 0) * saatlik * 2
-    kesinti_gun = float(kayit.get("eksik_gun") or 0) + (
-        float(kayit.get("raporlu_gun") or 0) if kayit.get("rapor_kesinti") else 0)
-    net -= gunluk * kesinti_gun
-    net += float(kayit.get("manuel_duzeltme") or 0)
-    return round(max(0.0, net), 2)
-
-
-def _personel_aylik_vardiya_senkronize(cur, p: dict, yil: int, ay: int) -> dict:
-    cur.execute(
-        "SELECT * FROM personel_aylik WHERE personel_id=%s AND yil=%s AND ay=%s",
-        (p["id"], yil, ay),
-    )
-    mevcut = cur.fetchone()
-    if mevcut and mevcut.get("durum") == "onaylandi":
-        net = float(mevcut.get("hesaplanan_net") or 0)
-        _personel_odeme_plani_senkronize(cur, p, yil, ay, net)
-        return {"atlandi": True, "neden": "onaylandi", "hesaplanan_net": net}
-    # Dönemle hiç kesişmeyen personele (dönemden önce ayrıldı / sonra başlayacak) kayıt açma
-    if _personel_donem_orani(p, yil, ay) is None:
-        return {"atlandi": True, "neden": "donem_disi", "hesaplanan_net": 0}
-
-    # KANONİK HESAP = Vardiya Takip kurgusu (kullanıcı kararı 2026-07-04); manuel alanlar korunur
-    vt = _vardiya_takip_hesap(p["id"], yil, ay)
-    mev = dict(mevcut or {})
-    if vt is not None:
-        kayit = {
-            "calisma_saati": float(vt.get("toplam_planlanan_saat") or 0),
-            "fazla_mesai_saat": float(vt.get("toplam_fazla_mesai_saat") or 0),
-            "bayram_mesai_saat": float(mev.get("bayram_mesai_saat") or 0),
-            "eksik_gun": float(mev.get("eksik_gun") or 0),
-            "raporlu_gun": float(mev.get("raporlu_gun") or 0),
-            "rapor_kesinti": bool(mev.get("rapor_kesinti") or False),
-            "manuel_duzeltme": float(mev.get("manuel_duzeltme") or 0),
-            "not_aciklama": mev.get("not_aciklama"),
-        }
-        net = _kanonik_net(dict(p), vt, kayit)
-        vk = {"kaynak": "vardiya_takip",
-              "toplam_planlanan_saat": kayit["calisma_saati"],
-              "fazla_mesai_saat": kayit["fazla_mesai_saat"]}
-    else:
-        # savunma: takip hesabı alınamazsa eski yerel formüle düş (sistem durmaz)
-        kayit = _personel_vardiya_kayit_dict(cur, p, yil, ay, mevcut)
-        vk = kayit.pop("_vardiya", {})
-        net = maas_hesapla(dict(p), kayit, yil, ay)
-    kid = str(uuid.uuid4())
-    cur.execute(
-        """
-        INSERT INTO personel_aylik
-            (id, personel_id, yil, ay, calisma_saati, fazla_mesai_saat, bayram_mesai_saat,
-             eksik_gun, raporlu_gun, rapor_kesinti, manuel_duzeltme,
-             not_aciklama, hesaplanan_net, durum)
-        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'taslak')
-        ON CONFLICT (personel_id, yil, ay) DO UPDATE SET
-            calisma_saati=%s, fazla_mesai_saat=%s, bayram_mesai_saat=%s,
-            eksik_gun=%s, raporlu_gun=%s, rapor_kesinti=%s, manuel_duzeltme=%s,
-            not_aciklama=%s, hesaplanan_net=%s, durum='taslak'
-        """,
-        (
-            kid,
-            p["id"],
-            yil,
-            ay,
-            kayit["calisma_saati"],
-            kayit["fazla_mesai_saat"],
-            kayit["bayram_mesai_saat"],
-            kayit["eksik_gun"],
-            kayit["raporlu_gun"],
-            kayit["rapor_kesinti"],
-            kayit["manuel_duzeltme"],
-            kayit["not_aciklama"],
-            net,
-            kayit["calisma_saati"],
-            kayit["fazla_mesai_saat"],
-            kayit["bayram_mesai_saat"],
-            kayit["eksik_gun"],
-            kayit["raporlu_gun"],
-            kayit["rapor_kesinti"],
-            kayit["manuel_duzeltme"],
-            kayit["not_aciklama"],
-            net,
-        ),
-    )
-    plan_id = _personel_odeme_plani_senkronize(cur, p, yil, ay, net)
-    return {"atlandi": False, "hesaplanan_net": net, "vardiya": vk, "plan_id": plan_id}
 
 @app.get("/api/personel-aylik")
 def personel_aylik_listele(yil: int = None, ay: int = None):
@@ -5085,6 +4813,10 @@ def personel_aylik_vardiya_aktar(pid: str, yil: int = None, ay: int = None):
         if vt is not None:
             calisma = float(vt.get("toplam_planlanan_saat") or 0)
             fazla = float(vt.get("toplam_fazla_mesai_saat") or 0)
+            # FIX 2026-07-04: kanonik yolda vk tanımsız kalıyordu → uç 500 veriyordu
+            vk = {"kaynak": "vardiya_takip",
+                  "toplam_planlanan_saat": calisma,
+                  "fazla_mesai_saat": fazla}
         else:
             # savunma: takip hesabı alınamazsa eski kaynak
             vk = _vv2.personel_ay_vardiya_maas_kaynagi(cur, pid, yil, ay)
@@ -8256,16 +7988,7 @@ def kismi_odeme_yap(oid: str, body: KismiOdeModel):
 
         # 2. Kasaya sadece ödenen kadar yaz (nakit) VEYA kart harcamasına ekle (kart)
         kaynak = plan.get('kaynak_tablo') or ''
-        if kaynak == 'sabit_giderler':
-            islem_t = 'SABIT_GIDER'
-        elif kaynak == 'personel':
-            islem_t = 'PERSONEL_MAAS'
-        elif kaynak == 'vadeli_alimlar':
-            islem_t = 'VADELI_ODEME'
-        elif kaynak == 'borc_envanteri':
-            islem_t = 'BORC_TAKSIT'
-        else:
-            islem_t = 'KART_ODEME'
+        islem_t = KAYNAK_KASA_ISLEM_TURU.get(kaynak, 'KART_ODEME')
 
         if kaynak == 'vadeli_alimlar' and getattr(body, 'odeme_yontemi', 'nakit') == 'kart' and getattr(body, 'kart_id', None):
             # KART: kasaya yazma — kart harcamasına ekle

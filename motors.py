@@ -11,6 +11,8 @@ from tr_saat import bugun_tr
 # Kullanıcı kararı: sistem 1 Haziran 2026'dan itibaren çalışmaya başlar.
 SISTEM_BASLANGIC = date(2026, 6, 1)
 
+import maas_service as _maas_svc
+
 from finans_core import (
     kasa_bakiyesi, odeme_yuku, gunluk_ciro_ortalama,
     nakit_akis_sim, kart_borc, tum_kart_borclari,
@@ -608,16 +610,9 @@ def aylik_odeme_plani_uret(yil=None, ay=None):
                           OR (cikis_tarihi IS NOT NULL AND cikis_tarihi >= MAKE_DATE(%s,%s,1))""",
                     (maas_donem_yil, maas_donem_ay))
         for p in cur.fetchall():
-            odeme_tarihi = date(yil, ay, 1)
-
-            # ÇALIŞMA DÖNEMİ içi fiili aralık (başlangıç/çıkış kırpması — TEK MERKEZ kuralı)
-            import calendar
-            donem_gun = calendar.monthrange(maas_donem_yil, maas_donem_ay)[1]
-            d1 = date(maas_donem_yil, maas_donem_ay, 1)
-            d2 = date(maas_donem_yil, maas_donem_ay, donem_gun)
-            eff1 = max(d1, p['baslangic_tarihi']) if p.get('baslangic_tarihi') else d1
-            eff2 = min(d2, p['cikis_tarihi']) if p.get('cikis_tarihi') else d2
-            if eff1 > eff2:
+            # ÇALIŞMA DÖNEMİ içi fiili oran (başlangıç/çıkış kırpması — TEK MERKEZ kuralı)
+            oran = _maas_svc.personel_donem_orani(dict(p), maas_donem_yil, maas_donem_ay)
+            if oran is None:
                 continue  # bu dönemde hiç çalışmamış (dönemden önce ayrıldı / sonra başlayacak)
 
             # Maaşlar dönem kapandıktan sonraki ayın 1'inde ödenir.
@@ -633,34 +628,21 @@ def aylik_odeme_plani_uret(yil=None, ay=None):
             elif p['calisma_turu'] == 'surekli':
                 # Tahmini: maaş + yan haklar — dönem içinde başlayan/ayrılan için GÜN ORANLI
                 toplam_maas = float(p['maas'] or 0) + float(p['yemek_ucreti'] or 0) + float(p['yol_ucreti'] or 0)
-                calisilan_gun = (eff2 - eff1).days + 1
-                if calisilan_gun < donem_gun:
-                    toplam_maas = round(toplam_maas * calisilan_gun / donem_gun, 2)
+                if oran < 1.0:
+                    toplam_maas = round(toplam_maas * oran, 2)
             else:
                 # Part-time: ay kaydı girilmeden plan üretme
                 atlanan.append(f"Part-time atlandı (kayıt bekleniyor): {p['ad_soyad']}")
                 continue
 
-            if toplam_maas <= 0:
-                continue
-
-            donem_ref = date(maas_donem_yil, maas_donem_ay, 1)
-            _tr_aylar = ["", "Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran",
-                         "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"]
-            pid = str(_uuid.uuid4())
-            cur.execute("""
-                INSERT INTO odeme_plani (id, kart_id, tarih, referans_ay, odenecek_tutar, asgari_tutar, aciklama, durum, kaynak_tablo, kaynak_id)
-                SELECT %s, NULL, %s, %s::date, %s, %s, %s, 'bekliyor', 'personel', %s
-                WHERE NOT EXISTS (
-                    SELECT 1 FROM odeme_plani
-                    WHERE kaynak_id = %s
-                    AND referans_ay = %s::date
-                    AND durum != 'iptal'
-                )
-            """, (pid, odeme_tarihi, str(odeme_tarihi), toplam_maas, toplam_maas,
-                  f"Personel Maaş: {p['ad_soyad']} — {_tr_aylar[maas_donem_ay]} {maas_donem_yil} dönemi",
-                  p['id'], p['id'], str(odeme_tarihi)))
-            if cur.rowcount > 0:
+            # TEK PLAN YAZICI (maas_service): referans_ay/tarih/açıklama konvansiyonu
+            # ekran senkronuyla BİREBİR aynı kaynaktan → çift plan yapısal olarak kapalı.
+            # guncelle=False: mevcut planı EZMEZ (kanonik senkron rakamı korunur), yoksa açar.
+            r = _maas_svc.odeme_plani_esitle(cur, dict(p), maas_donem_yil, maas_donem_ay,
+                                             toplam_maas, guncelle=False)
+            if r and r.get('yeni'):
+                odeme_tarihi = _maas_svc.maas_odeme_tarihi(maas_donem_yil, maas_donem_ay)
+                donem_ref = date(maas_donem_yil, maas_donem_ay, 1)
                 uretilen.append(f"Maaş: {p['ad_soyad']} — {donem_ref:%Y-%m} dönemi, ödeme {odeme_tarihi}")
 
         # 3. KREDİ / BORÇ TAKSİTLERİ
