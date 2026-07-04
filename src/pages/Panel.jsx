@@ -40,6 +40,15 @@ export default function Panel({ onNavigate }) {
   const [kismiKartData, setKismiKartData] = useState(null);
   const [kismiKartYukleniyor, setKismiKartYukleniyor] = useState(false);
   const [kismiSeciliKartId, setKismiSeciliKartId] = useState('');
+  // Değişken gider "tutar sor" kurgusu (kullanıcı 2026-07-04): bu ayın faturası kaç? → ödendi mi?
+  const [faturaSorModal, setFaturaSorModal] = useState(null); // {kaynak_id, aciklama, tahmini}
+  const [faturaSorAdim, setFaturaSorAdim] = useState(1); // 1=tutar, 2=ödendi mi?, 3=yöntem/kart
+  const [faturaSorTutar, setFaturaSorTutar] = useState('');
+  const [faturaSorTarih, setFaturaSorTarih] = useState('');
+  const [faturaSorYontem, setFaturaSorYontem] = useState('nakit');
+  const [faturaSorKartlar, setFaturaSorKartlar] = useState(null);
+  const [faturaSorKartYukleniyor, setFaturaSorKartYukleniyor] = useState(false);
+  const [faturaSorKartId, setFaturaSorKartId] = useState('');
   // Nakit/Kart seçim state'leri
   const [kartOneriAdim, setKartOneriAdim] = useState(1); // 1=yöntem, 2=kart seç
   const [kartOneriYontemi, setKartOneriYontemi] = useState('nakit');
@@ -387,6 +396,55 @@ export default function Panel({ onNavigate }) {
     }
   }
 
+  // ── DEĞİŞKEN GİDER KURGUSU: tutar sor → ödendi mi? → ödendi:kasadan düş / ödenmedi:vadeye yaz ──
+  function faturaSorAc(u) {
+    setFaturaSorModal({ kaynak_id: u.kaynak_id, aciklama: u.aciklama, tahmini: u.tutar || 0 });
+    setFaturaSorAdim(1); setFaturaSorTutar(''); setFaturaSorYontem('nakit');
+    setFaturaSorKartlar(null); setFaturaSorKartId('');
+    setFaturaSorTarih(new Date().toISOString().split('T')[0]);
+  }
+
+  async function faturaVadeyeYaz() {
+    if (loadingBtn) return;
+    setLoadingBtn(true);
+    try {
+      const r = await api('/fatura-vadeye-yaz', { method: 'POST', body: {
+        sabit_gider_id: faturaSorModal.kaynak_id, tutar: parseFloat(faturaSorTutar) } });
+      toast(`📅 ${fmt(r.tutar)} vade listesine yazıldı (vade ${fmtDate(r.vade)}) — ödeyince düşecek`);
+      setFaturaSorModal(null); load(); publishGlobalDataRefresh();
+    } catch (e) { toast(e.message, 'red'); }
+    finally { setLoadingBtn(false); }
+  }
+
+  async function faturaOdendiKaydet() {
+    if (loadingBtn) return;
+    if (faturaSorYontem === 'kart' && !faturaSorKartId) { toast('Kart seçin', 'red'); return; }
+    setLoadingBtn(true);
+    try {
+      await api('/fatura-ode', { method: 'POST', body: {
+        sabit_gider_id: faturaSorModal.kaynak_id,
+        tutar: parseFloat(faturaSorTutar),
+        tarih: faturaSorTarih,
+        odeme_yontemi: faturaSorYontem,
+        kart_id: faturaSorYontem === 'kart' ? faturaSorKartId : null,
+      }});
+      toast(`✓ Fatura ödendi — ${faturaSorYontem === 'kart' ? 'karta yazıldı' : 'kasadan düşüldü'}`);
+      setFaturaSorModal(null); load(); publishGlobalDataRefresh();
+    } catch (e) { toast(e.message, 'red'); }
+    finally { setLoadingBtn(false); }
+  }
+
+  async function faturaSorKartYukle() {
+    setFaturaSorKartYukleniyor(true);
+    try {
+      const data = await api(`/anlik-gider-kart-oneri?tutar=${parseFloat(faturaSorTutar) || 0}`);
+      setFaturaSorKartlar(data);
+      const oneri = (data || []).find(k => k.oneri && k.uygun);
+      if (oneri) setFaturaSorKartId(oneri.kart_id);
+    } catch (e) { toast('Kart bilgileri alınamadı: ' + e.message, 'red'); }
+    finally { setFaturaSorKartYukleniyor(false); }
+  }
+
   function odemeErteleAc(odemeId, aciklama, mevcutTarih) {
     if (!odemeId) {
       toast('Erteleme için ödeme planı kimliği yok.', 'red');
@@ -696,12 +754,16 @@ export default function Panel({ onNavigate }) {
             </div>
           </div>
           <div style={{ textAlign: 'right', flexShrink: 0 }}>
-            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 14, fontWeight: 800, color: uColor }}>
-              {tutar2 != null ? fmt(tutar2) : <span style={{ color: 'var(--text3)', fontSize: 11 }}>bekleniyor</span>}
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 14, fontWeight: 800, color: u.tip === 'degisken' ? 'var(--text3)' : uColor }}>
+              {u.tip === 'degisken'
+                ? (tutar2 != null
+                    ? <span>≈ {fmt(tutar2)} <span style={{ fontSize: 10, fontWeight: 500 }}>tahmini</span></span>
+                    : <span style={{ fontSize: 11 }}>tutar sorulacak</span>)
+                : (tutar2 != null ? fmt(tutar2) : <span style={{ color: 'var(--text3)', fontSize: 11 }}>bekleniyor</span>)}
             </div>
             <div style={{ marginTop: 4 }}>
               {u.tip === 'degisken'
-                ? <button className="btn btn-secondary btn-sm" onClick={() => { sessionStorage.setItem('sabit_gider_fatura_id', u.kaynak_id || ''); nav('sabit-giderler'); }}>Öde →</button>
+                ? <button className="btn btn-primary btn-sm" onClick={() => faturaSorAc(u)}>🧾 Tutarı Gir</button>
                 : u.odeme_id
                   ? <div style={{ display: 'flex', gap: 4, marginTop: 2 }}>
                       <button className="btn btn-secondary btn-sm" style={{ fontSize: 10, padding: '2px 6px' }} onClick={() => odemeModalAcVadeliKontrol(u)}>Öde</button>
@@ -720,12 +782,14 @@ export default function Panel({ onNavigate }) {
             {u.aciklama}
             {gecGun > 0 && <span style={{ color: uColor, fontWeight: 700 }}> · {gecGun}g</span>}
           </div>
-          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 700, flexShrink: 0, color: uColor }}>
-            {tutar2 != null ? fmt(tutar2) : '—'}
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 700, flexShrink: 0, color: u.tip === 'degisken' ? 'var(--text3)' : uColor }}>
+            {u.tip === 'degisken'
+              ? (tutar2 != null ? `≈ ${fmt(tutar2)}` : '❓')
+              : (tutar2 != null ? fmt(tutar2) : '—')}
           </span>
           <div style={{ flexShrink: 0 }}>
             {u.tip === 'degisken'
-              ? <button className="btn btn-secondary btn-sm" style={{ fontSize: 10, padding: '2px 7px' }} onClick={() => { sessionStorage.setItem('sabit_gider_fatura_id', u.kaynak_id || ''); nav('sabit-giderler'); }}>Öde</button>
+              ? <button className="btn btn-secondary btn-sm" style={{ fontSize: 10, padding: '2px 7px' }} onClick={() => faturaSorAc(u)}>🧾 Tutar</button>
               : u.odeme_id
                 ? <div style={{ display: 'flex', gap: 3 }}>
                     <button className="btn btn-secondary btn-sm" style={{ fontSize: 10, padding: '2px 6px' }} onClick={() => odemeModalAcVadeliKontrol(u)}>Öde</button>
@@ -2488,6 +2552,89 @@ export default function Panel({ onNavigate }) {
               <button className="btn btn-primary" disabled={loadingBtn || !erteleTarih} onClick={odemeErteleOnayla}>
                 ✓ Ertele
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── DEĞİŞKEN GİDER: TUTAR SOR → ÖDENDİ Mİ? MODALI ── */}
+      {faturaSorModal && (
+        <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setFaturaSorModal(null)}>
+          <div className="modal" style={{ maxWidth: 440 }}>
+            <div className="modal-header">
+              <div>
+                <h3>🧾 {faturaSorAdim === 1 ? 'Bu Ayın Faturası' : faturaSorAdim === 2 ? 'Ödendi mi?' : 'Ödeme Yöntemi'}</h3>
+                <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>{faturaSorModal.aciklama}</div>
+              </div>
+              <button className="modal-close" onClick={() => setFaturaSorModal(null)}>✕</button>
+            </div>
+            <div className="modal-body">
+              {faturaSorAdim === 1 && (
+                <>
+                  <div className="form-group">
+                    <label>Bu ayın fatura tutarı kaç ₺? *</label>
+                    <input type="number" value={faturaSorTutar} autoFocus placeholder="0"
+                      onChange={e => setFaturaSorTutar(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter' && parseFloat(faturaSorTutar) > 0) setFaturaSorAdim(2); }} />
+                    {faturaSorModal.tahmini > 0 && (
+                      <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
+                        📋 Kayıtlı tahmini: {fmt(faturaSorModal.tahmini)} — her ay değişir, gerçek tutarı gir
+                      </div>
+                    )}
+                  </div>
+                  <button className="btn btn-primary" style={{ width: '100%' }}
+                    disabled={!(parseFloat(faturaSorTutar) > 0)}
+                    onClick={() => setFaturaSorAdim(2)}>Devam →</button>
+                </>
+              )}
+              {faturaSorAdim === 2 && (
+                <>
+                  <div style={{ background: 'var(--bg3)', borderRadius: 8, padding: '10px 14px', marginBottom: 14, textAlign: 'center' }}>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 18, fontWeight: 800 }}>{fmt(parseFloat(faturaSorTutar) || 0)}</span>
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    <button className="btn btn-primary" style={{ padding: '12px' }}
+                      onClick={() => setFaturaSorAdim(3)}>
+                      💰 Ödendi — kasadan / karttan düş
+                    </button>
+                    <button className="btn btn-secondary" style={{ padding: '12px' }} disabled={loadingBtn}
+                      onClick={faturaVadeyeYaz}>
+                      📅 Henüz ödenmedi — vade listesine yaz
+                    </button>
+                    <div style={{ fontSize: 11, color: 'var(--text3)', textAlign: 'center' }}>
+                      Ödenmediyse bu tutarla takibe girer; ödediğinde kasadan düşer.
+                    </div>
+                  </div>
+                  <button className="btn btn-ghost btn-sm" style={{ marginTop: 10 }} onClick={() => setFaturaSorAdim(1)}>← Tutarı düzelt</button>
+                </>
+              )}
+              {faturaSorAdim === 3 && (
+                <>
+                  <div className="form-group">
+                    <label>Ödeme Tarihi</label>
+                    <input type="date" value={faturaSorTarih} onChange={e => setFaturaSorTarih(e.target.value)} />
+                  </div>
+                  <div className="form-group">
+                    <label>Yöntem</label>
+                    <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+                      <button type="button" className={`btn btn-sm ${faturaSorYontem === 'nakit' ? 'btn-primary' : 'btn-ghost'}`}
+                        onClick={() => { setFaturaSorYontem('nakit'); setFaturaSorKartId(''); }}>💵 Nakit</button>
+                      <button type="button" className={`btn btn-sm ${faturaSorYontem === 'kart' ? 'btn-primary' : 'btn-ghost'}`}
+                        onClick={() => { setFaturaSorYontem('kart'); if (!faturaSorKartlar) faturaSorKartYukle(); }}>💳 Kart</button>
+                    </div>
+                  </div>
+                  {faturaSorYontem === 'kart' && (
+                    <KartSecimListesi kartlar={faturaSorKartlar} seciliKartId={faturaSorKartId}
+                      onSec={setFaturaSorKartId} yukleniyor={faturaSorKartYukleniyor} />
+                  )}
+                  <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+                    <button className="btn btn-ghost btn-sm" onClick={() => setFaturaSorAdim(2)}>← Geri</button>
+                    <button className="btn btn-primary" style={{ flex: 1 }}
+                      disabled={loadingBtn || (faturaSorYontem === 'kart' && !faturaSorKartId)}
+                      onClick={faturaOdendiKaydet}>✓ Ödemeyi Kaydet</button>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </div>

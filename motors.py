@@ -1472,6 +1472,16 @@ def finans_ozet_motoru():
             """, (str(g['id']), bugun.year, bugun.month))
             if cur.fetchone():
                 continue  # Bu ay kart ile ödendi
+            # Tutar girilip vadeye yazıldıysa (fatura-vadeye-yaz) plan zaten listede
+            # GERÇEK tutarla görünüyor — hatırlatma tekrar sormasın
+            cur.execute("""
+                SELECT 1 FROM odeme_plani
+                WHERE kaynak_tablo='sabit_giderler' AND kaynak_id=%s
+                  AND durum != 'iptal'
+                  AND referans_ay = DATE_TRUNC('month', CURRENT_DATE)
+            """, (str(g['id']),))
+            if cur.fetchone():
+                continue
             bugun_odemeler.append({
                 'odeme_id': None,
                 'aciklama': g['gider_adi'],
@@ -1520,6 +1530,15 @@ def finans_ozet_motoru():
                 AND islem_turu = 'HARCAMA' AND durum = 'aktif'
                 AND EXTRACT(YEAR FROM tarih) = %s AND EXTRACT(MONTH FROM tarih) = %s
             """, (str(g['id']), bugun.year, bugun.month))
+            if cur.fetchone():
+                continue
+            # Tutar girilip vadeye yazıldıysa plan zaten listede — tekrar sorma
+            cur.execute("""
+                SELECT 1 FROM odeme_plani
+                WHERE kaynak_tablo='sabit_giderler' AND kaynak_id=%s
+                  AND durum != 'iptal'
+                  AND referans_ay = DATE_TRUNC('month', CURRENT_DATE)
+            """, (str(g['id']),))
             if cur.fetchone():
                 continue
             yaklasan_odemeler.append({

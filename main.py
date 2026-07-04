@@ -5936,6 +5936,98 @@ def fatura_ode(body: FaturaOdemeModel):
               yeni={'tutar': body.tutar, 'tarih': str(body.tarih)})
     return {"success": True, "id": fid}
 
+
+class FaturaVadeModel(BaseModel):
+    sabit_gider_id: str
+    tutar: float
+    tarih: Optional[date] = None  # vade; verilmezse bu ayın odeme_gunu
+
+
+@app.post("/api/fatura-vadeye-yaz")
+def fatura_vadeye_yaz(body: FaturaVadeModel):
+    """DEĞİŞKEN GİDER KURGUSU (kullanıcı, 2026-07-04): hatırlatma tutarı SORAR; kullanıcı
+    bu ayın fatura tutarını girip 'henüz ödenmedi' derse fatura o ayın ÖDEME PLANINA
+    yazılır (bekliyor) → CFO vade listesinde GERÇEK tutarla izlenir, ödenince kasa izi
+    ile kapanır ("kasa izi = tek gerçek"). Kasa ETKİLENMEZ (para henüz çıkmadı).
+    İdempotent: aynı gider + ay için bekleyen plan varsa tutarı/vadesi güncellenir."""
+    try:
+        _t = float(body.tutar)
+    except (TypeError, ValueError):
+        raise HTTPException(400, "Geçerli bir tutar girin")
+    if _t <= 0:
+        raise HTTPException(400, "Tutar 0'dan büyük olmalı")
+    bugun = bugun_tr()
+    with db() as (conn, cur):
+        cur.execute("SELECT * FROM sabit_giderler WHERE id=%s AND aktif=TRUE", (body.sabit_gider_id,))
+        gider = cur.fetchone()
+        if not gider:
+            raise HTTPException(404, "Gider bulunamadı")
+        _tip = (gider.get('tip') or 'sabit')
+        _kasa_turu = 'FATURA_ODEMESI' if _tip == 'degisken' else 'SABIT_GIDER'
+
+        # Bu ay zaten ödendiyse vadeye yazmak anlamsız (çift gösterim/çift ödeme kapısı)
+        cur.execute("""
+            SELECT 1 FROM kasa_hareketleri
+            WHERE kaynak_id=%s AND kaynak_tablo='sabit_giderler'
+            AND islem_turu=%s AND kasa_etkisi=true AND durum='aktif'
+            AND EXTRACT(YEAR FROM tarih)=%s AND EXTRACT(MONTH FROM tarih)=%s
+        """, (body.sabit_gider_id, _kasa_turu, bugun.year, bugun.month))
+        if cur.fetchone():
+            raise HTTPException(400, "Bu ay için zaten ödeme yapılmış — vadeye yazılamaz")
+        cur.execute("""
+            SELECT 1 FROM odeme_plani
+            WHERE kaynak_tablo='sabit_giderler' AND kaynak_id=%s
+              AND durum='odendi' AND referans_ay = DATE_TRUNC('month', %s::date)
+        """, (body.sabit_gider_id, str(bugun)))
+        if cur.fetchone():
+            raise HTTPException(400, "Bu ayın faturası zaten ödendi — vadeye yazılamaz")
+
+        # Vade: verilen tarih ya da bu ayın odeme_gunu (ay sonuna kırpılır)
+        if body.tarih:
+            vade = body.tarih
+        else:
+            import calendar as _cal
+            g_gun = int(gider.get('odeme_gunu') or bugun.day)
+            vade = date(bugun.year, bugun.month,
+                        min(g_gun, _cal.monthrange(bugun.year, bugun.month)[1]))
+        aciklama = f"Fatura: {gider['gider_adi']} — {_TR_AYLAR[bugun.month]} {bugun.year}"
+
+        # İdempotent yazım: bekleyen plan varsa güncelle, yoksa oluştur
+        cur.execute("""
+            UPDATE odeme_plani
+            SET tarih=%s, odenecek_tutar=%s, asgari_tutar=%s, aciklama=%s
+            WHERE kaynak_tablo='sabit_giderler' AND kaynak_id=%s
+              AND durum IN ('bekliyor','onay_bekliyor')
+              AND referans_ay = DATE_TRUNC('month', %s::date)
+            RETURNING id
+        """, (str(vade), _t, _t, aciklama, body.sabit_gider_id, str(bugun)))
+        row = cur.fetchone()
+        if not row:
+            pid = str(uuid.uuid4())
+            cur.execute("""
+                INSERT INTO odeme_plani
+                    (id, kart_id, tarih, referans_ay, odenecek_tutar, asgari_tutar,
+                     aciklama, durum, kaynak_tablo, kaynak_id)
+                SELECT %s, NULL, %s, DATE_TRUNC('month', %s::date), %s, %s,
+                       %s, 'bekliyor', 'sabit_giderler', %s
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM odeme_plani
+                    WHERE kaynak_tablo='sabit_giderler' AND kaynak_id=%s
+                      AND durum != 'iptal'
+                      AND referans_ay = DATE_TRUNC('month', %s::date)
+                )
+                RETURNING id
+            """, (pid, str(vade), str(bugun), _t, _t, aciklama,
+                  body.sabit_gider_id, body.sabit_gider_id, str(bugun)))
+            row = cur.fetchone()
+        if not row:
+            raise HTTPException(400, "Bu ay için plan yazılamadı (mevcut kayıt engelledi)")
+        audit(cur, 'odeme_plani', str(row['id']), 'FATURA_VADEYE_YAZ',
+              yeni={'tutar': _t, 'vade': str(vade), 'gider': gider['gider_adi']})
+        uyari_cache_clear()
+    return {"success": True, "plan_id": str(row['id']), "vade": str(vade), "tutar": _t}
+
+
 @app.get("/api/fatura-gecmis/{gider_id}")
 def fatura_gecmis(gider_id: str):
     """Bir değişken giderin geçmiş fatura ödemelerini döner."""
