@@ -29,8 +29,61 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY --from=frontend /app/static ./static
-# Kökteki tüm uygulama modülleri (yeni router / servis dosyaları dahil)
-COPY *.py ./
+# Runtime uygulama modülleri. Dev/test/bakım scriptleri bilerek production imajına alınmaz.
+COPY \
+    analitik_olay.py \
+    banka_yatirim_api.py \
+    belge_talep_api.py \
+    borc_navigasyon_api.py \
+    ciro_taslak_api.py \
+    database.py \
+    ekstre_parser.py \
+    ev_tasarim_api.py \
+    evo_sync.py \
+    evvel_merkez_guard.py \
+    fatura_api.py \
+    finans_core.py \
+    finansal_duyu_api.py \
+    fire_bildirim.py \
+    gorev_api.py \
+    is_basvuru_api.py \
+    kart_analiz.py \
+    kasa_acilis_backfill.py \
+    kasa_fark_recalc.py \
+    kasa_service.py \
+    kasa_teslim_api.py \
+    kontrol_motoru.py \
+    main.py \
+    motors.py \
+    odeme_plani_api.py \
+    odeme_plani_motor_api.py \
+    operasyon_defter.py \
+    operasyon_kurallar.py \
+    operasyon_merkez_api.py \
+    operasyon_stok_motor.py \
+    personel_maliyet.py \
+    personel_panel_auth.py \
+    rapor_cache.py \
+    sevkiyat_helpers.py \
+    siparis_depo_temizlik.py \
+    siparis_kontrol_kulesi.py \
+    siparis_sevkiyat_islem.py \
+    stok_bar_uyum.py \
+    stok_sayim_api.py \
+    sube_kapanis_dual.py \
+    sube_operasyon.py \
+    sube_panel.py \
+    sube_personel_api.py \
+    supplier_payment.py \
+    tam_maliyet_api.py \
+    tedarikci_api.py \
+    tr_saat.py \
+    truth_motor.py \
+    tv_menu_api.py \
+    vardiya_plan_motor.py \
+    vardiya_v2.py \
+    whatsapp_bildirim.py \
+    ./
 
 RUN mkdir -p data/x_rapor_uploads
 
