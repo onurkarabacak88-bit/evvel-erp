@@ -829,10 +829,20 @@ def tv_menu_hero(name: str):
 def tv_menu_cup(name: str):
     """Gerçek TULİPİ bardak fotoğrafları — imza silüet (her sahnede aynı kare, marka hafızası).
     Prod: Vite public/ -> static/'ye kopyalar. Dev: public/tv veya src/assets/tv."""
-    if name not in ("hot", "iced", "mocktail"):
+    if name not in ("hot", "latte", "iced", "mocktail"):
         raise HTTPException(404, "bardak yok")
-    eski = {"hot": "cup_hot_green.jpeg", "iced": "cup_iced_latte.jpeg", "mocktail": "cup_mocktail_green.jpeg"}[name]
-    cutout = {"hot": "e1_real_paper_cup_cutout.png", "iced": "cup_iced_cutout.png", "mocktail": "cup_mocktail_cutout.png"}[name]
+    eski = {
+        "hot": "cup_hot_green.jpeg",
+        "latte": "cup_hot_green.jpeg",
+        "iced": "cup_iced_latte.jpeg",
+        "mocktail": "cup_mocktail_green.jpeg",
+    }[name]
+    cutout = {
+        "hot": "e1_real_paper_cup_cutout.png",
+        "latte": "e1_latte_cup_cutout.png",
+        "iced": "cup_iced_cutout.png",
+        "mocktail": "cup_mocktail_cutout.png",
+    }[name]
     for p in (
         os.path.join("static/tv", cutout),
         os.path.join("public/tv", cutout),
@@ -841,7 +851,11 @@ def tv_menu_cup(name: str):
         os.path.join("src/assets/tv", eski),
     ):
         if os.path.exists(p):
-            return FileResponse(p, media_type="image/png" if p.endswith(".png") else "image/jpeg")
+            return FileResponse(
+                p,
+                media_type="image/png" if p.endswith(".png") else "image/jpeg",
+                headers={"Cache-Control": "no-store, max-age=0"},
+            )
     raise HTTPException(404, "bardak dosyası yok")
 
 
@@ -1242,7 +1256,7 @@ body[data-screen="2"] #screenMeta,body[data-screen="3"] #screenMeta{display:none
 <div class="foot"><span id="live">TÜM FİYATLAR TL · TULİPİ COFFEE</span></div>
 <div id="cine"><video muted loop playsinline preload="auto"></video><div class="cgrade"></div><div class="ccap"><div class="ct"></div><div class="cs"></div></div></div></div>
 <script>
-var API="/api/tv-menu", SIG="/api/tv-signals", CACHE="tulipi_tv_menu", LAST_BUILD_KEY="";
+var API="/api/tv-menu", SIG="/api/tv-signals", CACHE="tulipi_tv_menu", LAST_BUILD_KEY="", CUP_ASSET_REV="20260704-cutout-v2";
 function el(t,c,h){var e=document.createElement(t);if(c)e.className=c;if(h!=null)e.innerHTML=h;return e;}
 function priceRow(u,three,i,fav){
   // koreografi: başlık 0-0.5s → satırlar 0.30s'den itibaren 70ms kademe (motion-design stagger, opacity-only)
@@ -1271,9 +1285,11 @@ function cupShotFor(name,kategori){
   var all=n+" "+k;
   if(/mocktail|green|mojito|limonata|lemonade|cooler/.test(all))return "mocktail";
   if(/ice|iced|buz|cold|frozen|milkshake|frappe|smoothie/.test(all))return "iced";
+  if(/latte|flat white|cappuccino|macchiato|mocha|sütlü|sutlu/.test(all))return "latte";
   return "hot";
 }
-function cupSrcFor(info){return "/tv-menu/cup/"+cupShotFor(info&&info.ad,info&&info.kategori);}
+function cupUrl(name){return "/tv-menu/cup/"+name+"?v="+CUP_ASSET_REV;}
+function cupSrcFor(info){return cupUrl(cupShotFor(info&&info.ad,info&&info.kategori));}
 function findPrice(name){var r=null;if(!window._tvData||!name)return null;
   (window._tvData.kategoriler||[]).forEach(function(k){(k.urunler||[]).forEach(function(u){
     if(String(u.ad).toLowerCase()===String(name).toLowerCase()){var v=u.f8!=null?u.f8:(u.f14!=null?u.f14:u.fice);if(v!=null)r=v;}});});
@@ -1407,7 +1423,7 @@ function buildGununSecimi(data,sig){
   var st=el("div","pg pick gsec");st.dataset.t=9000;st.dataset.roles="1";st.dataset.sahne="gunun_secimi";st.dataset.name=ad;
   st.innerHTML='<img class="pDoku" src="/tv-menu/hero/doku_tezgah" alt=""><div class="pHalo"></div><div class="pInner">'
     +'<div class="pTag">'+tag+'</div>'
-    +'<img class="pCup" src="/tv-menu/cup/'+cupShotFor(ad,kat)+'" alt="">'
+    +'<img class="pCup" src="'+cupUrl(cupShotFor(ad,kat))+'" alt="">'
     +'<div class="pName">'+ad+'</div>'
     +(nota?'<div class="pNote">'+nota+'</div>':'')
     +(fy!=null?'<div class="pPrice">'+fy+' TL</div>':'')
@@ -1423,7 +1439,7 @@ function buildBaristaOnerisi(sig){
   var st=el("div","pg pick bsec");st.dataset.t=9000;st.dataset.roles="3";st.dataset.sahne="barista_onerisi";st.dataset.name=o.ad;
   st.innerHTML='<img class="pDoku" src="/tv-menu/hero/doku_tezgah" alt=""><div class="pHalo"></div><div class="pInner">'
     +'<div class="pTag">Baristanın sessiz önerisi</div>'
-    +'<img class="pCup" src="/tv-menu/cup/'+cupShotFor(o.ad,kat)+'" alt="">'
+    +'<img class="pCup" src="'+cupUrl(cupShotFor(o.ad,kat))+'" alt="">'
     +'<div class="pName">'+o.ad+'</div>'
     +'<div class="pNote">Çok bilinmez; bilenlerin seçimi.</div>'
     +(fy!=null?'<div class="pPrice">'+fy+' TL</div>':'')
@@ -1438,7 +1454,7 @@ function buildYeniUrun(data,sig){
   var st=el("div","pg pick gsec");st.dataset.t=9000;st.dataset.roles="1";st.dataset.sahne="yeni_urun";st.dataset.name=ad;
   st.innerHTML='<img class="pDoku" src="/tv-menu/hero/doku_tezgah" alt=""><div class="pHalo"></div><div class="pInner">'
     +'<div class="pTag">✨ Yeni</div>'
-    +'<img class="pCup" src="/tv-menu/cup/'+cupShotFor(ad,kat)+'" alt="">'
+    +'<img class="pCup" src="'+cupUrl(cupShotFor(ad,kat))+'" alt="">'
     +'<div class="pName">'+ad+'</div>'
     +(nota?'<div class="pNote">'+nota+'</div>':'<div class="pNote">Tanışmak isteyenlere.</div>')
     +(fy!=null?'<div class="pPrice">'+fy+' TL</div>':'')
@@ -1500,7 +1516,7 @@ function buildSpotlight(opts){
   var clip=/(mocktail|milkshake)/i.test(opts.kategori||"")?"mocktail":"craft";
   sp.innerHTML='<video class="bgvid" muted loop autoplay playsinline preload="auto" src="/tv-menu/clip/'+clip+'"></video><div class="bggrade"></div>';
   sp.appendChild(el("div","halo"+tcls));
-  var cup='<img class="cupShot" src="/tv-menu/cup/'+cupShotFor(opts.ad,opts.kategori)+'" alt="">';
+  var cup='<img class="cupShot" src="'+cupUrl(cupShotFor(opts.ad,opts.kategori))+'" alt="">';
   var inner='<div class="sceneInner"><div class="spotTag'+tcls+'">'+opts.tag+'</div><div class="spotCup">'+cup+'</div>'
     +'<div class="spotName">'+opts.ad+'</div>'
     +(opts.aciklama&&opts.aciklama!==opts.kategori?'<div class="spotDesc">'+opts.aciklama+'</div>':'')
@@ -1734,7 +1750,7 @@ function build(data,sig){
   // uyardığı "yine içecek" hissi). Şimdi sıcak/soğuk alternansı: soğuk-soğuk-SICAK-soğuk-soğuk yerine
   // sıcağı ortaya alıp soğuk kümesini ikiye böldük (2-1-2), tek-nota tekrar hissini kırıyor.
   var photoPg=function(name,label){var cp=el("div","pg");cp.dataset.t=4000;cp.dataset.roles="3";
-    cp.innerHTML='<div class="cupProductStage"><img class="cupProduct" src="/tv-menu/cup/'+name+'" alt=""><div class="bggrade"></div></div><div class="brandLabel">'+label+'</div>';
+    cp.innerHTML='<div class="cupProductStage"><img class="cupProduct" src="'+cupUrl(name)+'" alt=""><div class="bggrade"></div></div><div class="brandLabel">'+label+'</div>';
     return cp;};
   ekran3Pages.push(photoPg("iced","Buzlu Lezzetler"));
   var kahveC=el("div","pg");kahveC.dataset.t=6000;kahveC.dataset.roles="3";
