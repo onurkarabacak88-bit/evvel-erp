@@ -980,6 +980,9 @@ body[data-screen="2"] #screenMeta,body[data-screen="3"] #screenMeta{display:none
 .e1HeroScene .e1CupAura{position:absolute;z-index:1;left:50%;top:43%;width:54vw;height:54vw;max-width:42vh;max-height:42vh;transform:translate(-50%,-50%);border-radius:50%;background:radial-gradient(circle,rgba(201,164,106,.18),rgba(62,142,90,.08) 45%,transparent 72%);filter:blur(.2vh)}
 .e1RealCup{position:absolute;z-index:2;left:50%;top:37%;width:min(58vw,43vh);max-height:60vh;object-fit:contain;transform:translate(-50%,-50%);opacity:0;filter:drop-shadow(0 3.2vh 5.4vh rgba(0,0,0,.72));animation:e1CupIn 4s ease both}
 .e1ColdCup{position:absolute;z-index:2;left:50%;top:39%;width:min(55vw,40vh);max-height:58vh;object-fit:contain;transform:translate(-50%,-50%);opacity:.96;filter:drop-shadow(0 3vh 5vh rgba(0,0,0,.7));animation:e1ColdCupIn 5s ease both}
+.e1Cold.e1NoCup .e1Block{bottom:24%;left:7vw;right:7vw}
+.e1Cold.e1NoCup .e1Title{max-width:86vw}
+.e1Cold.e1NoCup .e1ColdStudio{background:linear-gradient(180deg,rgba(255,255,255,.045),transparent 24%),radial-gradient(58% 22% at 50% 48%,rgba(255,228,184,.12),transparent 72%),radial-gradient(80% 54% at 48% 72%,rgba(62,142,90,.1),transparent 74%),linear-gradient(90deg,rgba(0,0,0,.3),transparent 34%,rgba(0,0,0,.36) 100%)}
 .e1HeroScene .e1Block{align-items:center;text-align:center;bottom:13%;left:8vw;right:8vw}
 .e1HeroScene .e1Desc{max-width:82vw}
 .e1Block{position:absolute;z-index:3;left:7vw;right:7vw;bottom:18%;display:flex;flex-direction:column;align-items:flex-start;text-align:left;gap:1.15vh;color:var(--cream)}
@@ -1367,6 +1370,17 @@ function e1ColdClip(info){
   if(/mocktail|green/.test(n+k))return "mocktail";
   return "frozen";
 }
+function e1ColdCupName(info){
+  var n=((info&&info.ad)||"").toLowerCase(),k=((info&&info.kategori)||"").toLowerCase(),all=n+" "+k;
+  if(/milkshake|frozen|oreo|smoothie/.test(all))return "";
+  if(/mocktail|mojito|limonata|lemonade|cooler/.test(all))return "mocktail";
+  return "iced";
+}
+function e1ColdKicker(info){
+  var n=((info&&info.ad)||"").toLowerCase(),k=((info&&info.kategori)||"").toLowerCase();
+  if(/milkshake|frozen|oreo|smoothie/.test(n+k))return "Yaz burada soğuk lezzetle serinler.";
+  return "Yaz burada kahveyle serinler.";
+}
 function buildE1HeroProduct(data,sig){
   var info=e1HeroProduct(data,sig);if(!info)return null;
   var tag=(sig&&sig.en_cok)?"Bu hafta en çok seçilen":(data.imza&&data.imza.ad===info.ad)?"TULİPİ imzası":"Bugünün fincanı";
@@ -1378,10 +1392,11 @@ function buildE1HeroProduct(data,sig){
 }
 function buildE1ColdCall(data,sig){
   var info=e1ColdProduct(data,sig);
-  var st=el("div","pg e1Scene e1Cold");st.dataset.t=5000;st.dataset.roles="1";st.dataset.sahne="e1_yaz_soguk";st.dataset.name=info.ad;
+  var cupName=e1ColdCupName(info);
+  var st=el("div","pg e1Scene e1Cold"+(cupName?"":" e1NoCup"));st.dataset.t=5000;st.dataset.roles="1";st.dataset.sahne="e1_yaz_soguk";st.dataset.name=info.ad;
   st.innerHTML='<div class="e1ColdStudio"></div><div class="bggrade"></div>'
-    +'<img class="e1ColdCup" src="'+cupUrl("iced")+'" alt="">'
-    +'<div class="e1Block"><div class="e1Kicker">Yaz burada kahveyle serinler.</div><div class="e1Title">'+info.ad+'</div>'
+    +(cupName?'<img class="e1ColdCup" src="'+cupUrl(cupName)+'" alt="">':'')
+    +'<div class="e1Block"><div class="e1Kicker">'+e1ColdKicker(info)+'</div><div class="e1Title">'+info.ad+'</div>'
     +'<div class="e1Desc">Ferah, buzlu, uzun içim.</div></div><div class="e1Fade"></div>';
   return st;
 }
