@@ -605,11 +605,20 @@ def aylik_odeme_plani_uret(yil=None, ay=None):
         # Plan: tarih = referans_ay = date(yil, ay, 1)  ← ÖDEME AYI.
         maas_donem_yil = yil - 1 if ay == 1 else yil
         maas_donem_ay = 12 if ay == 1 else ay - 1
-        cur.execute("""SELECT * FROM personel
-                       WHERE aktif=TRUE
-                          OR (cikis_tarihi IS NOT NULL AND cikis_tarihi >= MAKE_DATE(%s,%s,1))""",
-                    (maas_donem_yil, maas_donem_ay))
-        for p in cur.fetchall():
+        # SİSTEM BAŞLANGICI: başlangıçtan ÖNCEKİ çalışma dönemi için maaş planı üretme.
+        # (Haziran üretimi → Mayıs dönemi gibi: sistemde o dönemin verisi yok, tam-ay
+        # tahmin planı panelde ödenemez "hayalet gecikmiş" olarak kalıyordu.)
+        if date(maas_donem_yil, maas_donem_ay, 1) >= SISTEM_BASLANGIC:
+            cur.execute("""SELECT * FROM personel
+                           WHERE aktif=TRUE
+                              OR (cikis_tarihi IS NOT NULL AND cikis_tarihi >= MAKE_DATE(%s,%s,1))""",
+                        (maas_donem_yil, maas_donem_ay))
+            maas_personel_listesi = cur.fetchall()
+        else:
+            atlanan.append(f"Personel maaşları atlandı: {maas_donem_yil}-{maas_donem_ay:02d} "
+                           f"dönemi sistem başlangıcından ({SISTEM_BASLANGIC}) önce")
+            maas_personel_listesi = []
+        for p in maas_personel_listesi:
             # ÇALIŞMA DÖNEMİ içi fiili oran (başlangıç/çıkış kırpması — TEK MERKEZ kuralı)
             oran = _maas_svc.personel_donem_orani(dict(p), maas_donem_yil, maas_donem_ay)
             if oran is None:
