@@ -7675,7 +7675,12 @@ async def excel_import(dosya: UploadFile = File(...)):
                     satir_no += 1
                     if all(v is None for v in row): continue
                     d = {headers[i]: row[i] for i in range(len(headers)) if i < len(row)}
-                    
+
+                    # FIX MN4 (2026-07-06): her satır kendi SAVEPOINT'inde işlenir. Önceden tek
+                    # transaction'dı → bir satır constraint ihlali yapınca DB "aborted" olup kalan
+                    # satırlar toptan başarısız, commit'te 1-29 sessizce rollback ama "29 eklendi"
+                    # YANLIŞ raporlanıyordu. Savepoint hatalı satırı izole eder; eklenen=gerçek commit.
+                    cur.execute("SAVEPOINT sp_xls_row")
                     try:
                         # Tarih düzelt
                         def fix_date(v):
@@ -7734,7 +7739,9 @@ async def excel_import(dosya: UploadFile = File(...)):
                             kart_adi = str(d.get('kart_adi','')).upper()
                             cur.execute("SELECT id FROM kartlar WHERE UPPER(kart_adi)=%s", (kart_adi,))
                             k = cur.fetchone()
-                            if not k: continue
+                            if not k:
+                                cur.execute("RELEASE SAVEPOINT sp_xls_row")
+                                continue
                             islem = str(d.get('islem_turu','HARCAMA')).upper()
                             hid = str(uuid.uuid4())
                             cur.execute("""INSERT INTO kart_hareketleri (id,kart_id,tarih,islem_turu,tutar,taksit_sayisi,aciklama)
@@ -7801,7 +7808,10 @@ async def excel_import(dosya: UploadFile = File(...)):
                                  str(d.get('tedarikci') or '')))
                             eklenen += 1
 
+                        cur.execute("RELEASE SAVEPOINT sp_xls_row")
                     except Exception as ex:
+                        cur.execute("ROLLBACK TO SAVEPOINT sp_xls_row")
+                        cur.execute("RELEASE SAVEPOINT sp_xls_row")
                         hata += 1
                         atlanan.append({"satir": satir_no, "sebep": str(ex)[:100], "veri": str(list(d.values())[:3])})
 
