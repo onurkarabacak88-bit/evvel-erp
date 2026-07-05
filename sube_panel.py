@@ -2541,10 +2541,13 @@ def sube_anlik_gider_gir(sube_id: str, body: SubeAnlikGiderModel):
             INSERT INTO anlik_giderler
                 (id, tarih, kategori, tutar, aciklama, sube, odeme_yontemi, durum, personel_id,
                  fis_gonderildi, fis_kontrol_durumu)
-            VALUES (%s, CURRENT_DATE, %s, %s, %s, %s, 'nakit', 'onay_bekliyor', %s,
+            VALUES (%s, %s, %s, %s, %s, %s, 'nakit', 'onay_bekliyor', %s,
                     %s, 'bekliyor')
             """,
-            (gid, body.kategori, body.tutar, acik, sube_id, pid_panel, bool(body.fis_gonderildi)),
+            # FIX KP4 (2026-07-06): CURRENT_DATE (UTC sunucu takvimi) yerine is_gunu_tr() — gece
+            # yarısı sonrası (TR 00:00-03:00) girilen gider yanlış güne düşüp o günün kapanış
+            # farkını iki uçtan bozuyordu (dosyadaki tüm diğer yazımlar zaten is_gunu_tr kullanıyor).
+            (gid, is_gunu_tr(), body.kategori, body.tutar, acik, sube_id, pid_panel, bool(body.fis_gonderildi)),
         )
         onay_ekle(
             cur,

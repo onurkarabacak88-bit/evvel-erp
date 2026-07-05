@@ -4226,7 +4226,15 @@ class ReddetModel(BaseModel):
 @app.post("/api/onay-kuyrugu/{oid}/reddet")
 def reddet(oid: str, body: ReddetModel = ReddetModel()):
     with db() as (conn, cur):
-        cur.execute("UPDATE onay_kuyrugu SET durum='reddedildi', onay_tarihi=NOW() WHERE id=%s", (oid,))
+        # FIX O5 (2026-07-06): zaten 'onaylandi' (kasaya/karta yazılmış) bir onay reddet ile
+        # sessizce iptal edilirse plan iptal olur ama kasa izi kalır → ters kayıt zinciri delinir
+        # (dokunulmaz #5). Reddet yalnız bekleyen onaylar içindir; onaylanmışı geri almak için
+        # ilgili kaydın iptal/ters-kayıt akışı kullanılmalı (o akış kasadan da düşer).
+        cur.execute("SELECT durum FROM onay_kuyrugu WHERE id=%s", (oid,))
+        _mevcut = cur.fetchone()
+        if _mevcut and (_mevcut.get("durum") if isinstance(_mevcut, dict) else _mevcut["durum"]) == "onaylandi":
+            raise HTTPException(400, "Bu onay zaten onaylanmış (kasaya işlenmiş olabilir). Reddetmek yerine ilgili kaydı iptal/ters-kayıt akışından geri alın — o akış kasa izini de düzeltir.")
+        cur.execute("UPDATE onay_kuyrugu SET durum='reddedildi', onay_tarihi=NOW() WHERE id=%s AND durum <> 'onaylandi'", (oid,))
 
         cur.execute("SELECT * FROM onay_kuyrugu WHERE id=%s", (oid,))
         onay = cur.fetchone()
