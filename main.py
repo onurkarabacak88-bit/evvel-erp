@@ -3663,7 +3663,9 @@ def kart_ekstre_import(body: EkstreImportBody):
 
         if yazilan or motor_faizi_iptal:
             try:
-                from motors import kart_plan_guncelle_tx
+                # FIX K2 (2026-07-05): eskiden 'from motors import' idi ama fonksiyon
+                # kasa_service'te → ImportError sessizce yutuluyordu (plan hiç güncellenmiyordu).
+                from kasa_service import kart_plan_guncelle_tx
                 kart_plan_guncelle_tx(cur)
             except Exception:
                 pass

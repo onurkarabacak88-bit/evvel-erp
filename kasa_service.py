@@ -11,7 +11,10 @@ import uuid
 from datetime import date
 from typing import List
 
-from finans_core import kart_borc, kart_asgari_orani
+from finans_core import (
+    kart_borc, kart_asgari_orani, kart_ekstre,
+    kesim_tarihi_hesapla, son_odeme_tarihi_hesapla, kart_ekstre_donem_override,
+)
 from tr_saat import bugun_tr
 
 
@@ -244,10 +247,114 @@ def onay_ekle(cur, islem_turu, kaynak_tablo, kaynak_id, aciklama, tutar, tarih):
     )
 
 
-def kart_plan_guncelle_tx(cur) -> List[str]:
+def kart_kesim_plani_yaz_tx(cur, k: dict, yil: int, ay: int) -> dict:
+    """TEK-OTORİTE kart plan yazıcı — kart planı tutarı SADECE kesim ekstresinden türer.
+
+    FIX A4/K2 (2026-07-05): eskiden kart_plan_guncelle_tx anlık TOPLAM borç (kart_borc)
+    yazıyordu; gece motors.aylik_odeme_plani_uret ise KESİM ekstresi yazıyordu → aynı
+    (kart_id, ay) planı gün içinde iki farklı değere oynuyordu (harcama anında şişik toplam
+    borç, gece doğru kesim). Kredi kartında bu ay KESİLEN ekstre ödenir (toplam borç değil)
+    → kesim ekstresi tek otorite yapıldı. Kesim sonrası harcamalar sonraki kesime devreder.
+
+    onay_kuyrugu senkronu (çift-kasa engeli) KORUNDU — eski kart_plan_guncelle_tx'in yaptığı
+    reddet/tutar-güncelle davranışı burada da var (motors'ta yoktu, kaybolmasın diye taşındı).
+
+    Dönüş: {"durum": "uretildi"|"guncellendi"|"atlandi", "neden":..., "odenecek":..., "asgari":...}
     """
-    Mevcut cursor ile ödeme planlarını günceller — ayrı db() açmaz.
-    Kart harcama/fatura/vadeli ödemesi ile aynı transaction içinde çağrılmalıdır.
+    kesim_gunu       = int(k["kesim_gunu"])
+    son_odeme_gunu   = int(k["son_odeme_gunu"] or 25)
+    bu_ay_kesim      = kesim_tarihi_hesapla(yil, ay, kesim_gunu)
+    son_odeme_tarihi = son_odeme_tarihi_hesapla(bu_ay_kesim, son_odeme_gunu)
+
+    # Kesim ekstresi (önceki kesim → bu kesim). GERÇEK ekstre snapshot'ı (PDF/manuel) varsa o ezmez.
+    ekstre_v  = kart_ekstre(cur, k["id"], kesim_gunu, kesim_tarihi=bu_ay_kesim)
+    bu_ekstre = ekstre_v["ekstre_toplam"]
+    ov_borc, ov_asgari = kart_ekstre_donem_override(cur, k["id"], bu_ay_kesim)
+    if ov_borc is not None:
+        odenecek = round(ov_borc, 2)
+        asgari   = round(ov_asgari, 2) if ov_asgari is not None else round(ov_borc * kart_asgari_orani(k), 2)
+    else:
+        if bu_ekstre <= 0:
+            return {"durum": "atlandi", "neden": "ekstre_yok"}
+        asgari   = round(bu_ekstre * kart_asgari_orani(k), 2)
+        odenecek = round(bu_ekstre, 2)
+
+    # Bu kesim (kesim → son_odeme] arası ödemeler
+    cur.execute("""
+        SELECT COALESCE(SUM(tutar), 0) AS odenen FROM kart_hareketleri
+        WHERE kart_id=%s AND durum='aktif' AND islem_turu='ODEME'
+          AND tarih > %s::date AND tarih <= %s::date
+    """, (k["id"], bu_ay_kesim, son_odeme_tarihi))
+    odenen_kesim = float(cur.fetchone()["odenen"])
+
+    def _onay_reddet():
+        # Plan ödendi/atlandı → bekleyen ODEME_PLANI onayını iptal et (çift kasa riski engeli)
+        cur.execute("""
+            UPDATE onay_kuyrugu SET durum='reddedildi'
+            WHERE islem_turu='ODEME_PLANI' AND durum='bekliyor'
+              AND kaynak_id IN (SELECT id FROM odeme_plani WHERE kart_id=%s
+                  AND DATE_TRUNC('month', tarih)=DATE_TRUNC('month', %s::date))
+        """, (k["id"], str(son_odeme_tarihi)))
+
+    # Tam ödendiyse → plan 'odendi', onay reddet
+    if odenen_kesim >= odenecek - 0.01:
+        cur.execute("""
+            UPDATE odeme_plani SET durum='odendi', odenen_tutar=%s,
+                   odeme_tarihi=COALESCE(odeme_tarihi, CURRENT_DATE)
+            WHERE kart_id=%s AND DATE_TRUNC('month', tarih)=DATE_TRUNC('month', %s::date)
+              AND durum IN ('bekliyor','onay_bekliyor')
+        """, (odenen_kesim, k["id"], str(son_odeme_tarihi)))
+        _onay_reddet()
+        return {"durum": "atlandi", "neden": "tam_odendi", "odenecek": odenecek}
+
+    # Asgari ödendiyse → plan 'odendi' (kalan sonraki aya devreder), onay reddet
+    if odenen_kesim >= asgari * 0.999:
+        cur.execute("""
+            UPDATE odeme_plani SET durum='odendi', odenen_tutar=%s,
+                   odeme_tarihi=COALESCE(odeme_tarihi, CURRENT_DATE),
+                   aciklama=COALESCE(aciklama,'') || ' [ASGARİ ÖDENDİ — kalan ' ||
+                            ROUND((%s - %s)::numeric, 2)::text || ' TL sonraki aya devretti]'
+            WHERE kart_id=%s AND DATE_TRUNC('month', tarih)=DATE_TRUNC('month', %s::date)
+              AND durum IN ('bekliyor','onay_bekliyor')
+        """, (odenen_kesim, odenecek, odenen_kesim, k["id"], str(son_odeme_tarihi)))
+        _onay_reddet()
+        return {"durum": "atlandi", "neden": "asgari_odendi", "odenecek": odenecek}
+
+    # Aktif plan yaz (yoksa) veya güncelle (varsa)
+    pid = str(uuid.uuid4())
+    cur.execute("""
+        INSERT INTO odeme_plani (id, kart_id, tarih, odenecek_tutar, asgari_tutar, aciklama, durum)
+        SELECT %s, %s, %s, %s, %s, %s, 'bekliyor'
+        WHERE NOT EXISTS (SELECT 1 FROM odeme_plani WHERE kart_id=%s
+            AND DATE_TRUNC('month', tarih)=DATE_TRUNC('month', %s::date) AND durum != 'iptal')
+    """, (pid, k["id"], son_odeme_tarihi, odenecek, asgari,
+          f"Kart ekstre: {k['kart_adi']} — {k.get('banka','')} (kesim {bu_ay_kesim})",
+          k["id"], str(son_odeme_tarihi)))
+    yeni = cur.rowcount > 0
+    if not yeni:
+        cur.execute("""
+            UPDATE odeme_plani SET odenecek_tutar=%s, asgari_tutar=%s
+            WHERE kart_id=%s AND DATE_TRUNC('month', tarih)=DATE_TRUNC('month', %s::date)
+              AND durum IN ('bekliyor','onay_bekliyor')
+        """, (odenecek, asgari, k["id"], str(son_odeme_tarihi)))
+
+    # onay_kuyrugu tutar senkronu (bekleyen ODEME_PLANI varsa kesim tutarına çek — çift kasa engeli)
+    cur.execute("""
+        UPDATE onay_kuyrugu SET tutar=%s
+        WHERE islem_turu='ODEME_PLANI' AND durum='bekliyor'
+          AND kaynak_id IN (SELECT id FROM odeme_plani WHERE kart_id=%s
+              AND DATE_TRUNC('month', tarih)=DATE_TRUNC('month', %s::date)
+              AND durum IN ('bekliyor','onay_bekliyor'))
+    """, (odenecek, k["id"], str(son_odeme_tarihi)))
+    return {"durum": ("uretildi" if yeni else "guncellendi"), "odenecek": odenecek, "asgari": asgari}
+
+
+def kart_plan_guncelle_tx(cur) -> List[str]:
+    """Kart ödeme planlarını KESİM EKSTRESİ bazlı günceller (tek-otorite: kart_kesim_plani_yaz_tx).
+
+    FIX A4/K2 (2026-07-05): eskiden anlık TOPLAM borç (kart_borc) yazıyordu → gece motors'un
+    kesim-ekstresi değeriyle çelişiyordu (aynı plan gün içi iki değere oynuyordu). Artık kesim
+    ekstresi tek otorite; onay_kuyrugu senkronu (çift-kasa engeli) korundu.
     FOR UPDATE: iki eş zamanlı işlem aynı kart için çift plan oluşturmasın.
     """
     bugun = bugun_tr()
@@ -255,77 +362,7 @@ def kart_plan_guncelle_tx(cur) -> List[str]:
     guncellenen: List[str] = []
     cur.execute("SELECT * FROM kartlar WHERE aktif=TRUE FOR UPDATE")
     for k in cur.fetchall():
-        son_odeme_gun = k["son_odeme_gunu"] or 25
-        son_gun = calendar.monthrange(yil, ay)[1]
-        son_odeme_gun = min(son_odeme_gun, son_gun)
-        odeme_tarihi = date(yil, ay, son_odeme_gun)
-
-        borc = kart_borc(cur, k["id"])
-        if borc <= 0:
-            # Planı kapat
-            cur.execute("""
-                UPDATE odeme_plani SET durum='odendi', odeme_tarihi=%s
-                WHERE kart_id=%s
-                AND DATE_TRUNC('month', tarih) = DATE_TRUNC('month', %s::date)
-                AND durum IN ('bekliyor','onay_bekliyor')
-            """, (str(bugun), k["id"], str(odeme_tarihi)))
-            # Onay kuyruğundaki ODEME_PLANI girişlerini de iptal et — çift kasa riski engeli
-            cur.execute("""
-                UPDATE onay_kuyrugu SET durum='reddedildi'
-                WHERE islem_turu = 'ODEME_PLANI'
-                AND kaynak_id IN (
-                    SELECT id FROM odeme_plani
-                    WHERE kart_id = %s
-                    AND DATE_TRUNC('month', tarih) = DATE_TRUNC('month', %s::date)
-                    AND durum = 'odendi'
-                )
-                AND durum = 'bekliyor'
-            """, (k["id"], str(odeme_tarihi)))
-            continue
-
-        asgari = round(borc * kart_asgari_orani(k), 2)
-
-        cur.execute(
-            """
-            UPDATE odeme_plani
-            SET odenecek_tutar=%s, asgari_tutar=%s
-            WHERE kart_id=%s
-            AND DATE_TRUNC('month', tarih) = DATE_TRUNC('month', %s::date)
-            AND durum IN ('bekliyor','onay_bekliyor')
-        """,
-            (borc, asgari, k["id"], str(odeme_tarihi)),
-        )
-
-        if cur.rowcount > 0:
-            # Onay kuyruğundaki tutarı da güncelle — kısmi ödeme durumunda çift yazma önlenir
-            cur.execute("""
-                UPDATE onay_kuyrugu SET tutar=%s
-                WHERE islem_turu = 'ODEME_PLANI'
-                AND kaynak_id IN (
-                    SELECT id FROM odeme_plani
-                    WHERE kart_id = %s
-                    AND DATE_TRUNC('month', tarih) = DATE_TRUNC('month', %s::date)
-                    AND durum IN ('bekliyor','onay_bekliyor')
-                )
-                AND durum = 'bekliyor'
-            """, (borc, k["id"], str(odeme_tarihi)))
-            guncellenen.append(f"{k['kart_adi']}: {borc:,.0f}₺")
-        else:
-            pid = str(uuid.uuid4())
-            cur.execute(
-                """
-                INSERT INTO odeme_plani
-                    (id, kart_id, tarih, odenecek_tutar, asgari_tutar, aciklama, durum)
-                VALUES (%s, %s, %s, %s, %s, %s, 'bekliyor')
-            """,
-                (
-                    pid,
-                    k["id"],
-                    odeme_tarihi,
-                    borc,
-                    asgari,
-                    f"Kart: {k['kart_adi']} — {k['banka']}",
-                ),
-            )
-            guncellenen.append(f"{k['kart_adi']}: {borc:,.0f}₺ (yeni plan)")
+        r = kart_kesim_plani_yaz_tx(cur, dict(k), yil, ay)
+        if r.get("durum") in ("uretildi", "guncellendi"):
+            guncellenen.append(f"{k['kart_adi']}: {r['odenecek']:,.0f}₺")
     return guncellenen
