@@ -1003,7 +1003,15 @@ def personel_risk_sinyal_uret(cur, sube_id: str, tarih: str, taniler: List["Tani
         aciklama = (t.detay or {}).get("eylem", {}).get("insan") or t.tani
         sinyal_turu = f"truth_motor_{t.tani.lower()}"
 
-        referans_id = f"tm:{sube_id}:{tarih}:{t.boyut}:{t.tani}"
+        # FIX T2 (2026-07-05): shift-level bardak tanıları (Sprint H/J üç bardak boyutunu —
+        # büyük/küçük/plastik — AYNI tanıya yükseltir) TEK fiziksel olaydır. referans_id'de boyut
+        # kaldığı için aynı olay 3 ayrı sinyal + 3× ağırlık üretiyordu (tek gecelik anomali personeli
+        # otomatik "kritik takip" eşiğine sokuyordu). Bu tanılarda boyutu "bardak"a sabitle →
+        # referans_id idempotency dedup'ı 3'ü 1'e indirir (tek sinyal, tek ağırlık).
+        _SHIFT_LEVEL_BARDAK = ("AKSAM_VARDIYA_BARDAK_ACIK", "AKSAM_BARDAK_SISIRDI")
+        _ref_boyut = "bardak" if t.tani in _SHIFT_LEVEL_BARDAK else t.boyut
+
+        referans_id = f"tm:{sube_id}:{tarih}:{_ref_boyut}:{t.tani}"
         if _risk_sinyal_yaz(cur, pid, sube_id, sinyal_tarih, sinyal_turu, agirlik, aciklama, referans_id):
             n += 1
 
@@ -1018,7 +1026,7 @@ def personel_risk_sinyal_uret(cur, sube_id: str, tarih: str, taniler: List["Tani
                 if not _diger_pid:
                     continue
                 _diger_agirlik = max(1, round(agirlik / 2))
-                _diger_referans = f"tm:{sube_id}:{tarih}:{t.boyut}:{t.tani}:diger:{_diger_pid}"
+                _diger_referans = f"tm:{sube_id}:{tarih}:{_ref_boyut}:{t.tani}:diger:{_diger_pid}"
                 if _risk_sinyal_yaz(cur, _diger_pid, sube_id, sinyal_tarih, sinyal_turu,
                                     _diger_agirlik, aciklama, _diger_referans):
                     n += 1
@@ -3077,12 +3085,12 @@ def adaptive_truth_walk(cur, sube_id: str, tarih: str, boyut: str) -> Dict[str, 
     except Exception as _e:
         k5 = {"katman": 5, "aktif": False, "hata": str(_e)}
 
-    # Bayesian güven güncellemesi — K2 + K3 + K5 deltas Katman 0 sonrasına eklenir
-    guven = min(99.0, max(10.0,
-        guven
-        + k2.get("guven_delta", 0.0)
-        + k3.get("guven_delta", 0.0)
-    ))
+    # FIX T1 (2026-07-05): K2/K3 delta'sı BURADA eklenmez. K7 Bayesian konsensüs (aşağıda, "tüm
+    # kanıt katmanlarını birleştiren TEK toplama noktası") zaten guven_base üstüne K2 prior
+    # (+10/+5) ve K3 sistematik (+15/+8) delta'sını ekliyor — K2/K3'ün ürettiği guven_delta ile
+    # BİREBİR AYNI değerler. Burada bir kez daha toplamak ÇİFTE SAYIMDI (kronik 7 gün → +30 yerine
+    # +15 olmalı) → sınır vakaları hak etmediği "kritik" alarma yükseliyordu. guven K0-sonrası ham kalır;
+    # k6 (NLP açıklama) bunu ön-değerlendirme olarak görür, FİNAL güven K7'den gelir.
 
     try:
         k6 = _katman_6_nlp_aciklama(
