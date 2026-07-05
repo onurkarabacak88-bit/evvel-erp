@@ -360,12 +360,14 @@ def kart_analiz_hesapla():
 
             # Son ödeme tarihi
             son_odeme_gun = k['son_odeme_gunu']
-            son_odeme = date(bugun.year, bugun.month, son_odeme_gun)
+            # _safe_date: son_odeme_gun ay sonunu aşarsa (örn. 31 → Şubat) o ayın son gününe kırpar.
+            # Ham date() burada Şubat'ta ValueError verip kart panelini çökertiyordu (K3).
+            son_odeme = _safe_date(bugun.year, bugun.month, son_odeme_gun)
             if son_odeme < bugun:
                 if bugun.month == 12:
-                    son_odeme = date(bugun.year+1, 1, son_odeme_gun)
+                    son_odeme = _safe_date(bugun.year+1, 1, son_odeme_gun)
                 else:
-                    son_odeme = date(bugun.year, bugun.month+1, son_odeme_gun)
+                    son_odeme = _safe_date(bugun.year, bugun.month+1, son_odeme_gun)
             gun_kaldi = (son_odeme - bugun).days
 
             cur.execute("""

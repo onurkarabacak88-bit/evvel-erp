@@ -72,7 +72,7 @@ from finans_core import (
     taksit_detay, gelecek_taksit_yuku, tum_kartlar_taksit_yuku,
     kart_ekstre_forecast, tum_kartlar_ekstre_forecast, kart_aktif_donem,
     aktif_kesim_gunu, nakit_akis_sim, nakit_akis_tahmin_dogruluk,
-    kesim_tarihi_hesapla,
+    kesim_tarihi_hesapla, _safe_date,
 )
 
 app = FastAPI(title="EVVEL ERP", version="2.0")
@@ -2037,14 +2037,16 @@ def kartlar_listele():
                 try:
                     son_odeme = datetime.strptime(aktif_son_odeme, "%Y-%m-%d").date()
                 except Exception:
-                    son_odeme = date(bugun.year, bugun.month, son_odeme_gun)
+                    son_odeme = _safe_date(bugun.year, bugun.month, son_odeme_gun)
             else:
-                son_odeme = date(bugun.year, bugun.month, son_odeme_gun)
+                # _safe_date: son_odeme_gun ay sonunu aşarsa (31 → Şubat) o ayın son gününe kırpar.
+                # Ham date() Şubat'ta ValueError verip kart panelini çökertiyordu (K3).
+                son_odeme = _safe_date(bugun.year, bugun.month, son_odeme_gun)
                 if son_odeme < bugun:
                     if bugun.month == 12:
-                        son_odeme = date(bugun.year+1, 1, son_odeme_gun)
+                        son_odeme = _safe_date(bugun.year+1, 1, son_odeme_gun)
                     else:
-                        son_odeme = date(bugun.year, bugun.month+1, son_odeme_gun)
+                        son_odeme = _safe_date(bugun.year, bugun.month+1, son_odeme_gun)
             gun_kaldi = (son_odeme - bugun).days
 
             cur.execute("""SELECT * FROM odeme_plani WHERE kart_id=%s AND durum='bekliyor'
