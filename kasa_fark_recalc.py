@@ -120,6 +120,24 @@ def _bilesenleri_topla_kapanis(cur: Any, sube_id: str, tarih: Any) -> Dict[str, 
         (sube_id, str(tarih)),
     )
     z_nakit = float((cur.fetchone() or {}).get("nakit") or 0)
+    # FIX KP2 (2026-07-06): aktif ciro YOKSA bekleyen ciro_taslak nakitine düş. Üretici (kapanış
+    # anı) girilen nakiti kullanırken recalc yalnız onaylı ciro'yu okuyordu → taslak onaylanmadan
+    # bir düzeltme recalc tetiklerse z_nakit=0 olup kapanış farkı binlerce lira yanlış "kritik"
+    # çıkıyordu (masum personele haksız fark). Taslak da girilmiş nakittir; onaylanınca aktif ciro
+    # aynı değeri verir → tutarlı.
+    if z_nakit == 0:
+        try:
+            cur.execute(
+                """
+                SELECT COALESCE(SUM(nakit), 0) AS nakit
+                FROM ciro_taslak
+                WHERE sube_id=%s AND tarih=%s::date AND durum='bekliyor'
+                """,
+                (sube_id, str(tarih)),
+            )
+            z_nakit = float((cur.fetchone() or {}).get("nakit") or 0)
+        except Exception:
+            pass
 
     # 3. nakit_giderler — anlik_giderler nakit + aktif/onay_bekliyor
     cur.execute(

@@ -629,18 +629,30 @@ def vardiya_devri_adim1(sube_id: str, body: VardiyaDevirAdim1):
                 "Birinci imza, bugünkü açılış kaydında yazılı personel ile aynı olmalıdır.",
             )
 
-        # QR ile doğrulandıysa PIN bypass; aksi hâlde PIN zorunlu
+        gun = is_gunu_tr()
+
+        # FIX KP1 (2026-07-06): qr_dogrulandi İSTEMCİ beyanıydı → curl ile sahte 1. imza mümkündü
+        # (adli iz zinciri delik). Artık PIN bypass ancak SUNUCU kanıtı varsa: personelin bugün
+        # bu şubede gorev_yoklama (QR giriş) kaydı bulunmalı. Kanıt yoksa qr_dogrulandi yok sayılır,
+        # PIN zorunlu olur. Meşru akış bozulmaz (QR ile giren personelin yoklaması zaten vardır).
+        _qr_kanitli = False
         if body.qr_dogrulandi:
+            cur.execute(
+                "SELECT 1 FROM gorev_yoklama WHERE sube_id=%s AND personel_id=%s AND tarih=%s LIMIT 1",
+                (sube_id, body.sabahci_devreden_id, gun),
+            )
+            _qr_kanitli = cur.fetchone() is not None
+
+        if _qr_kanitli:
             cur.execute("SELECT id, ad_soyad, aktif FROM personel WHERE id=%s", (body.sabahci_devreden_id,))
             p_row = cur.fetchone()
             if not p_row or not dict(p_row).get("aktif"):
                 raise HTTPException(404, "Personel bulunamadı veya pasif")
             ku = dict(p_row)
         else:
+            # QR kanıtı yok (veya qr_dogrulandi=false) → PIN zorunlu
             ku = _vardiya_imza_personel_dogrula(cur, body.sabahci_devreden_id, body.pin)
         onay_ad = (ku.get("ad_soyad") or "").strip() or "—"
-
-        gun = is_gunu_tr()
         kid = kasa_devir_adim1_kaydet(
             cur, sube_id, body.sabahci_devreden_id, onay_ad, simdi, gun, body.model_dump()
         )
