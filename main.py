@@ -4014,14 +4014,17 @@ def _onayla_tx(cur, oid: str):
             raise HTTPException(404, "Vadeli alım kaydı bulunamadı")
         # ÇİFT ÖDEME GUARD: Kısmi ödeme + tam ödeme farklı kaynak_id ile tutulabildi — tek yerden topla
         onceki_odenen = vadeli_kasadan_odenen_toplam(cur, onay['kaynak_id'])
-        if onceki_odenen >= abs(signed_tutar):
+        # FIX O2/B4 (2026-07-05): "kalan kadar yaz" yorumu vardı ama kod TAM tutarı
+        # ikinci kez yazıyordu → kısmi ödenmiş (0 < önceki < tutar) vadelide ÇİFT DÜŞME.
+        # Artık gerçekten KALAN kadar yazılır.
+        kalan_yazilacak = abs(signed_tutar) - onceki_odenen
+        if kalan_yazilacak <= 0.01:
             logger.warning(f"VADELI_ODEME çift ödeme engellendi — kaynak_id={onay['kaynak_id']}")
             # Kasa zaten yazılmış, sadece onay kuyruğunu kapat ve tabloları güncelle
         else:
-            # Kalan tutar kadar kasaya yaz
-            insert_kasa_hareketi(cur, tarih, islem_turu, signed_tutar,
-                f"Onaylandı: {onay['aciklama']}", onay['kaynak_tablo'], onay['kaynak_id'],
-                ref_id=oid, ref_type='ONAY')
+            insert_kasa_hareketi(cur, tarih, islem_turu, -abs(kalan_yazilacak),
+                f"Onaylandı{' (kalan)' if onceki_odenen > 0.01 else ''}: {onay['aciklama']}",
+                onay['kaynak_tablo'], onay['kaynak_id'], ref_id=oid, ref_type='ONAY')
         # Tüm bağlı kayıtları atomik kapat — çift düşme engeli
         vadeli_alim_kapat(cur, onay['kaynak_id'], tarih)
     elif (
@@ -8467,6 +8470,11 @@ def toplu_odeme(payload: dict):
         raise HTTPException(400, "Ödeme listesi boş")
     
     with db() as (conn, cur):
+        # FIX MN5 (2026-07-05): kasa yeterlilik kontrolü ile ödeme uygulaması arasında
+        # kilit yoktu → iki eşzamanlı toplu-ödeme aynı bakiyeyi görüp kasayı negatife
+        # düşürebiliyordu. Global advisory lock (transaction sonunda otomatik düşer)
+        # kasadan-çıkaran toplu işlemleri serileştirir; plan FOR UPDATE tekli /ode ile yarışı keser.
+        cur.execute("SELECT pg_advisory_xact_lock(hashtext('kasa-toplu-cikis'))")
         # Backend kasa kontrolü — core'dan
         kasa = kasa_bakiyesi(cur)
         toplam = sum(float(i.get('tutar', 0)) for i in odemeler if i.get('tutar'))
@@ -8479,7 +8487,7 @@ def toplu_odeme(payload: dict):
             tutar = item.get('tutar')
             if not oid:
                 continue
-            cur.execute("SELECT * FROM odeme_plani WHERE id=%s", (oid,))
+            cur.execute("SELECT * FROM odeme_plani WHERE id=%s FOR UPDATE", (oid,))
             plan = cur.fetchone()
             if not plan:
                 raise HTTPException(404, f"Ödeme bulunamadı: {oid}")
