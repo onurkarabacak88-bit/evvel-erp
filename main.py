@@ -1846,13 +1846,15 @@ def anlik_gider_ekle(g: AnlikGider):
 
         if g.odeme_yontemi == 'kart':
             # Karta HARCAMA yaz — kasaya yazma
+            # FIX O3 (2026-07-05): kaynak_id/kaynak_tablo ile anlık gidere KANONİK bağ
+            # kur — silme artık açıklama-LIKE yerine bu bağı kullanır (yanlış kayıt iptali önlenir).
             hid = str(uuid.uuid4())
             cur.execute("""
                 INSERT INTO kart_hareketleri
-                    (id, kart_id, tarih, islem_turu, tutar, taksit_sayisi, aciklama)
-                VALUES (%s, %s, %s, 'HARCAMA', %s, 1, %s)
+                    (id, kart_id, tarih, islem_turu, tutar, taksit_sayisi, aciklama, kaynak_id, kaynak_tablo)
+                VALUES (%s, %s, %s, 'HARCAMA', %s, 1, %s, %s, 'anlik_giderler')
             """, (hid, g.kart_id, g.tarih, g.tutar,
-                  f"Anlık gider: {g.aciklama or g.kategori}"))
+                  f"Anlık gider: {g.aciklama or g.kategori}", gid))
         else:
             # NAKİT — kasaya yaz
             insert_kasa_hareketi(cur, g.tarih, 'ANLIK_GIDER', -abs(g.tutar),
@@ -1872,13 +1874,26 @@ def anlik_gider_sil(gid: str):
         if not eski: raise HTTPException(404, "Kayıt bulunamadı veya zaten iptal edilmiş")
         cur.execute("UPDATE anlik_giderler SET durum='iptal' WHERE id=%s", (gid,))
         if eski.get('odeme_yontemi') == 'kart' and eski.get('kart_id'):
-            # Kart harcamasını iptal et
+            # FIX O3 (2026-07-05): kanonik bağ (kaynak_id) ile iptal — açıklama-LIKE
+            # yanlış/çift kayıt iptal edebiliyordu. Eski kayıtlar (bağsız) için
+            # tarih+tutar+LIMIT 1 ile TEK kayıt garantili fallback (LIKE tek başına değil).
             cur.execute("""
                 UPDATE kart_hareketleri SET durum='iptal'
-                WHERE kart_id=%s AND islem_turu='HARCAMA'
-                AND aciklama LIKE %s AND durum='aktif'
-                AND tarih=%s
-            """, (eski['kart_id'], f"%{eski.get('aciklama') or eski['kategori']}%", eski['tarih']))
+                WHERE kaynak_tablo='anlik_giderler' AND kaynak_id=%s
+                  AND islem_turu='HARCAMA' AND durum='aktif'
+            """, (gid,))
+            if cur.rowcount == 0:
+                cur.execute("""
+                    UPDATE kart_hareketleri SET durum='iptal'
+                    WHERE id = (
+                        SELECT id FROM kart_hareketleri
+                        WHERE kart_id=%s AND islem_turu='HARCAMA' AND durum='aktif'
+                          AND tarih=%s AND ABS(tutar - %s) < 0.01
+                          AND aciklama LIKE %s
+                        ORDER BY id LIMIT 1
+                    )
+                """, (eski['kart_id'], eski['tarih'], float(eski.get('tutar') or 0),
+                      f"%{eski.get('aciklama') or eski['kategori']}%"))
         else:
             # NAKİT — ters kasa kaydı
             iptal_kasa_hareketi(cur, gid, 'anlik_giderler', 'ANLIK_GIDER', 'ANLIK_GIDER_IPTAL', 'Anlık gider iptali')
@@ -3878,11 +3893,23 @@ def odeme_plani_sil(oid: str):
         cur.execute("UPDATE onay_kuyrugu SET durum='reddedildi' WHERE kaynak_id=%s", (oid,))
         # Eğer ödeme zaten "odendi" durumundaysa kasa geri alınmalı
         if eski['durum'] == 'odendi':
-            # İptal türü ödeme türüyle eşleşmeli (ledger tutarlılığı)
-            islem = 'KART_ODEME' if eski.get('kart_id') else 'ODEME'
-            iptal_turu = 'KART_ODEME_IPTAL' if eski.get('kart_id') else 'ODEME_IPTAL'
-            iptal_kasa_hareketi(cur, oid, 'odeme_plani', islem, iptal_turu,
-                f"Ödeme iptali: {eski['aciklama']}")
+            # FIX O1 (2026-07-05): Nakit ödeme kasaya KAYNAK türüyle yazılır
+            # (SABIT_GIDER/PERSONEL_MAAS/BORC_TAKSIT/VADELI_ODEME) — 'ODEME' türüyle DEĞİL.
+            # Eski kod 'ODEME' arıyordu → iptal_kasa_hareketi kaydı BULAMIYOR → ters kayıt
+            # hiç oluşmuyor, para kasadan çıkmış görünmeye devam ediyordu (append-only #5
+            # fiilen deliniyordu). Artık kaynak_tablo'dan doğru işlem türü türetilir.
+            kaynak = eski.get('kaynak_tablo') or ''
+            if eski.get('kart_id'):
+                iptal_kasa_hareketi(cur, oid, 'odeme_plani', 'KART_ODEME', 'KART_ODEME_IPTAL',
+                    f"Ödeme iptali: {eski['aciklama']}")
+            elif kaynak == 'vadeli_alimlar' and eski.get('kaynak_id'):
+                # vadeli kasa kaydı kaynak_id=vadeli_id ile bağlı (plan_id değil)
+                iptal_kasa_hareketi(cur, eski['kaynak_id'], 'vadeli_alimlar',
+                    'VADELI_ODEME', 'VADELI_IPTAL', f"Ödeme iptali: {eski['aciklama']}")
+            else:
+                islem = KAYNAK_KASA_ISLEM_TURU.get(kaynak, 'ODEME')
+                iptal_kasa_hareketi(cur, oid, 'odeme_plani', islem, islem + '_IPTAL',
+                    f"Ödeme iptali: {eski['aciklama']}")
         audit(cur, 'odeme_plani', oid, 'IPTAL', eski=eski)
     return {"success": True}
 
@@ -5776,6 +5803,12 @@ def odeme_plani_mukerrer_temizle(uygula: bool = False):
                         WHERE kaynak_id=%s AND durum='aktif' RETURNING id::text, tutar""", (f["id"],))
                     for kr in (cur.fetchall() or []):
                         rapor["iptal_kasa"].append({"id": kr["id"], "tutar": float(kr["tutar"])})
+                        # FIX MN2 (2026-07-05): mükerrer temizlikte UPDATE durum='iptal' DOĞRU
+                        # (fazla kopyayı geri al; ters kayıt eklemek kasayı yanlış sıfırlardı) —
+                        # ancak append-only iz eksikti. Audit kaydıyla denetim izi tamamlanır.
+                        audit(cur, 'kasa_hareketleri', kr["id"], 'MUKERRER_IPTAL',
+                              eski={'durum': 'aktif', 'tutar': float(kr["tutar"])},
+                              yeni={'durum': 'iptal', 'neden': 'mukerrer plan temizligi'})
                     if g["kaynak_tablo"] == "sabit_giderler":
                         cur.execute("""
                             UPDATE kart_hareketleri SET durum='iptal'
@@ -7491,18 +7524,17 @@ def kasa_duzelt(sid: str, body: KasaDuzeltModel):
                 WHERE ref_id = %s AND islem_turu = 'POS_KESINTI' AND durum='aktif'
             """, (k['ciro_id'],))
 
-            # 3) Eski CIRO kaydını direkt güncelle (unique constraint aşmak için)
-            cur.execute("""
-                UPDATE kasa_hareketleri
-                SET tutar = %s,
-                    aciklama = %s,
-                    durum = 'aktif'
-                WHERE id = %s
-            """, (
-                dogru_tutar,
+            # 3) FIX MN1 (2026-07-05): Eski CIRO kaydını UPDATE tutar ile EZMEK append-only
+            # #5 ihlaliydi (ikinci düzeltmede eski değer kalıcı kaybolur). Artık eski kayıt
+            # İPTAL edilir (tutar korunur, iz kalır) + yeni CIRO kaydı kanonik yoldan yazılır.
+            # Net kasa etkisi AYNI (eski iptal → sadece yeni sayılır); davranış bit-bit korunur.
+            cur.execute("UPDATE kasa_hareketleri SET durum='iptal' WHERE id=%s AND durum='aktif'",
+                        (k['kasa_id'],))
+            insert_kasa_hareketi(
+                cur, k['tarih'], 'CIRO', dogru_tutar,
                 f'POS/Online kesinti düzeltmesi (pos:%{pos_oran}, online:%{online_oran})',
-                k['kasa_id']
-            ))
+                'ciro', k['ciro_id'], ref_id=str(uuid.uuid4()), ref_type='CIRO_DUZELTME',
+            )
 
             # 4) Yeni POS_KESINTI kaydı yaz — paneldeki finansman maliyeti buradan hesaplanır
             pos_kesinti = pos_tutari * pos_oran / 100
