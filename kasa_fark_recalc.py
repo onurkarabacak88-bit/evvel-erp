@@ -209,6 +209,25 @@ def _bilesenleri_topla_acilis(cur: Any, sube_id: str, tarih: Any) -> Dict[str, f
 OTOMATIK_COZUM_ESIK_TL = 0.01
 
 
+def sube_gun_kapanis_recalc(cur: Any, sube_id: str, tarih: Any, *, kim_pid=None, kim_ad=None):
+    """TEK TETİKLEME NOKTASI (KÖK-E, FIX KP3): nakit ciro/gider değişen akışlar (avans teslim,
+    ciro iptal, nakit gider red) bunu çağırır → o gün+şube KAPANIS kasa fark uyarısı güncel tutulur,
+    böylece masum personele eski/yanlış zimmet yüklenmez. Uyarı henüz yoksa no-op (tazelenecek fark
+    yok). yeniden_hesapla AŞAĞIDA tanımlı (aynı modül, runtime resolve). Çağıranın transaction'ında çalışır."""
+    cur.execute(
+        """
+        SELECT id FROM sube_operasyon_uyari
+        WHERE sube_id=%s AND tarih=%s::date AND tip='KAPANIS_KASA_FARK'
+        ORDER BY tarih DESC LIMIT 1
+        """,
+        (str(sube_id), str(tarih)),
+    )
+    row = cur.fetchone()
+    if not row:
+        return None  # o gün+şube için kasa fark uyarısı yok — tazelenecek bir şey yok
+    return yeniden_hesapla(cur, dict(row)["id"], kim_pid=kim_pid, kim_ad=kim_ad)
+
+
 def yeniden_hesapla(
     cur: Any,
     uyari_id: str,

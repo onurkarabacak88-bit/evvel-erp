@@ -426,8 +426,11 @@ def avans_teslim_et(aid: str, body: AvansTeslimModel = AvansTeslimModel()):
         audit(cur, "personel_avans", aid, "TESLIM", yeni={"tutar": tutar})
         # 3) Kapanış zaten yapıldıysa fark uyarısını tazele (hata-yutar; ana akışı bozmaz)
         try:
-            from kasa_fark_recalc import yeniden_hesapla
-            yeniden_hesapla(cur, r["sube_id"], bugun, "KAPANIS")
+            # FIX KP3 (2026-07-05): eskiden yeniden_hesapla(cur, sube_id, bugun, "KAPANIS") YANLIŞ
+            # İMZAYDI (fn uyari_id bekler) → TypeError → sessizce yutuluyordu, recalc HİÇ çalışmadı.
+            # Tek tetikleme noktası: sube+gün → o günün kapanış fark uyarısını bulur ve tazeler.
+            from kasa_fark_recalc import sube_gun_kapanis_recalc
+            sube_gun_kapanis_recalc(cur, r["sube_id"], bugun)
         except Exception as e:
             logger.warning("avans teslim sonrasi kasa fark recalc atlandi: %s", e)
     return {"success": True, "durum": "teslim_edildi"}
