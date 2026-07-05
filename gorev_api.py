@@ -1997,7 +1997,23 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
                   AND va.durum IN ('planli','onayli')
                 ORDER BY va.tarih
             """, (pid, p_d1, p_d2))
-            vardiyalar = {str(r["tarih"]): dict(r) for r in cur.fetchall()}
+            # FIX M2 (2026-07-05): Split-shift / aynı gün 2 şube → dict comprehension
+            # SON atamayı tutup öncekini EZİYORDU → 2 şubede çalışan eksik ödeniyor,
+            # gün toplamı 9.5'i aşsa da fazla mesai kaçıyordu. Artık aynı gün atamaları
+            # TOPLANIR; baslangic_saat = en erken atama (gecikme referansı korunur).
+            # Tek-atama günlerde davranış AYNI (golden master değişmez).
+            vardiyalar = {}
+            for r in cur.fetchall():
+                t = str(r["tarih"]); rd = dict(r)
+                if t not in vardiyalar:
+                    vardiyalar[t] = rd
+                else:
+                    vardiyalar[t]["planlanan_saat"] = (
+                        float(vardiyalar[t].get("planlanan_saat") or 0)
+                        + float(rd.get("planlanan_saat") or 0))
+                    _yeni_bas, _mev_bas = rd.get("baslangic_saat"), vardiyalar[t].get("baslangic_saat")
+                    if _yeni_bas and (not _mev_bas or str(_yeni_bas) < str(_mev_bas)):
+                        vardiyalar[t]["baslangic_saat"] = _yeni_bas
 
             # Yoklama kayıtları (giriş saatleri)
             cur.execute("""
@@ -2195,7 +2211,18 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
             if gun_sonu < p_d1:
                 gecen_gun = 0.0
             else:
-                gecen_gun = min(float((gun_sonu - p_d1).days + 1), AYLIK_GUN)
+                # FIX M1 (2026-07-05): İş Kanunu — aylık maaş SABİT, ayın takvim günü
+                # (28/29/30/31) fark etmez. Tam ay çalışıldıysa 30 gün sayılır; Şubat'ta
+                # 28 gün sayıp %6.7 eksik ödeme HATASIYDI. Kısmi dönemde (ay ortası
+                # giriş/çıkış) fiili gün oranı korunur. Golden master (30/31'lik aylar)
+                # değişmez — sadece <30 günlük aylar düzelir.
+                import calendar as _cal_m1
+                _ay_takvim_gun = _cal_m1.monthrange(yil, ay)[1]
+                _fiili_gun = (gun_sonu - p_d1).days + 1
+                if _fiili_gun >= _ay_takvim_gun:
+                    gecen_gun = float(AYLIK_GUN)          # tam ay = 30 (Şubat dahil)
+                else:
+                    gecen_gun = min(float(_fiili_gun), AYLIK_GUN)  # kısmi = prorate
 
             # personel.yemek_ucreti AYLIK bir tutardır (örn. 7000 TL/ay) —
             # hak kazanılan her gün için aylık tutarın 1/30'u ödenir,
