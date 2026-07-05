@@ -3958,6 +3958,9 @@ def sube_urun_ac(sube_id: str, body: SubeUrunAcBody):
                 (sube_id, kk),
             )
             alarm_r = cur.fetchone()
+            # FIX C1 (2026-07-05): _pasta_set/_pkm bitti-modu fonksiyonunda TANIMSIZDI → stok eşiğe
+            # inince NameError → URUN_AC kaydı + depo düşümü rollback (COGS kaybı + 500). Yerel tanım.
+            _pasta_set = _pks(cur)
             if alarm_r and not _pkm(kk, _pasta_set):
                 mevcut = int(alarm_r.get("mevcut_adet") or 0)
                 min_s   = int(alarm_r.get("min_stok")   or 0)
@@ -4071,6 +4074,8 @@ def sube_urun_bitti(sube_id: str, body: SubeUrunBittiBody):
     from operasyon_stok_motor import (
         depo_kalem_kodu_resolve,
         sube_depo_stok_depo_cikis_dus,
+        pasta_kalem_kodu_seti as _pks,
+        pasta_kalemi_mi as _pkm,
     )
     import uuid as _uuid
 
@@ -4140,6 +4145,9 @@ def sube_urun_bitti(sube_id: str, body: SubeUrunBittiBody):
                 (sube_id, kk),
             )
             alarm_r = cur.fetchone()
+            # FIX C1 (2026-07-05): _pasta_set/_pkm bitti-modu fonksiyonunda TANIMSIZDI → stok eşiğe
+            # inince NameError → URUN_AC kaydı + depo düşümü rollback (COGS kaybı + 500). Yerel tanım.
+            _pasta_set = _pks(cur)
             if alarm_r and not _pkm(kk, _pasta_set):
                 mevcut = int(alarm_r.get("mevcut_adet") or 0)
                 min_s = int(alarm_r.get("min_stok") or 0)

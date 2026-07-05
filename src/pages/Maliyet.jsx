@@ -193,7 +193,8 @@ export default function Maliyet() {
         .then(d => {
           const sat = d?.satirlar || [];
           const T = k => sat.reduce((a, x) => a + (Number(x[k]) || 0), 0);
-          const ciro = T('ciro_tl'), gider = T('genel_toplam'), net = T('net_kar_tl');
+          // FIX C6 (2026-07-05): net_kar_net_tl (harman vergi+KDV arındırma) — net_kar_tl eski/düz%25
+          const ciro = T('ciro_tl'), gider = T('genel_toplam'), net = sat.reduce((a, x) => a + (Number(x.net_kar_net_tl ?? x.net_kar_tl) || 0), 0);
           return { sube_id: s.id, ad: s.ad || s.id, ciro, gider, net, marj: ciro > 0 ? (net / ciro) * 100 : null };
         })
         .catch(() => ({ sube_id: s.id, ad: s.ad || s.id, ciro: 0, gider: 0, net: 0, marj: null }))
@@ -998,7 +999,7 @@ export default function Maliyet() {
           </thead>
           <tbody>
             {(gunGunData?.satirlar || []).map((s, i) => {
-              const net = Number(s.net_kar_tl) || 0;
+              const net = Number(s.net_kar_net_tl ?? s.net_kar_tl) || 0;  // FIX C6: doğru harman-vergi net kâr
               const renk = net > 0 ? 'var(--green)' : net < 0 ? 'var(--red)' : 'var(--text3)';
               return (
                 <tr key={i}>
@@ -1078,7 +1079,7 @@ export default function Maliyet() {
               {rows.map((s, i) => {
                 const ciro = Number(s.ciro_tl) || 0;
                 const gider = Number(s.genel_toplam) || 0;
-                const net = Number(s.net_kar_tl) || 0;
+                const net = Number(s.net_kar_net_tl ?? s.net_kar_tl) || 0;  // FIX C6: doğru harman-vergi net kâr
                 const neg = net < 0;
                 return (
                   <div key={i} style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 12, padding: '11px 14px' }}>

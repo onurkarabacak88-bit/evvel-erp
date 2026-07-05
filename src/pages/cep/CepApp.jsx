@@ -3282,9 +3282,12 @@ function CepMaliyet({ onGeri }) {
   }, [donem, subeId, seciliGun]);
 
   const topla = (arr, k) => (arr || []).reduce((a, s) => a + (Number(s[k]) || 0), 0);
-  const ciro = topla(rows, 'ciro_tl'), maliyet = topla(rows, 'genel_toplam'), net = topla(rows, 'net_kar_tl');
+  // FIX C6 (2026-07-05): net_kar_tl (düz %25, KDV arındırmasız — ESKİ) yerine net_kar_net_tl
+  // (harman vergi + KDV arındırma — DOĞRU). Patron olduğundan düşük net kâr görüyordu.
+  const netAlan = (s) => Number(s.net_kar_net_tl ?? s.net_kar_tl) || 0;
+  const ciro = topla(rows, 'ciro_tl'), maliyet = topla(rows, 'genel_toplam'), net = (rows || []).reduce((a, s) => a + netAlan(s), 0);
   const marj = ciro > 0 ? (net / ciro) * 100 : null;
-  const oCiro = topla(orows, 'ciro_tl'), oMaliyet = topla(orows, 'genel_toplam'), oNet = topla(orows, 'net_kar_tl');
+  const oCiro = topla(orows, 'ciro_tl'), oMaliyet = topla(orows, 'genel_toplam'), oNet = (orows || []).reduce((a, s) => a + netAlan(s), 0);
   const oMarj = oCiro > 0 ? (oNet / oCiro) * 100 : null;
   const gun = new Set((rows || []).map(r => r.tarih)).size;
   const yon = (c, p, artiIyi) => {

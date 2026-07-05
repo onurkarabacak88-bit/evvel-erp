@@ -13459,8 +13459,14 @@ def ops_maliyet_gun_gun(
             # Sadece GERÇEK havuz kalemleri (bardak/su gibi depo_kodu _BAR_KEYS'te olup
             # HENÜZ UUID'ye taşınmamışlar) havuz kovasında sayılır → buraya alınmaz.
             for uid, adet in _urun_ac_kalem_idler(r["aciklama"] or ""):
-                depo_kod = urun_depo_map.get(uid)
-                if depo_kod and depo_kod in _BAR_KEYS and depo_kod not in _UUID_TASINAN_HAVUZ:
+                # FIX C5 (2026-07-05): disi-atlama kararı HAVUZ SAYIMIYLA AYNI KRİTERE (ada) bağlandı.
+                # Eskiden havuz kovası ADDAN (_stok_key_from_urun_ad) sayarken disi-atlama DEPO_KODUNDAN
+                # karar veriyordu → iki kriter çelişince aynı ürün iki kovada (çifte COGS) ya da hiçbirinde
+                # (sıfır COGS) sayılabiliyordu. Artık adı gerçek (henüz UUID'ye taşınmamış) havuz kalemine
+                # çözülen ürün havuzda sayılır → disi'de tekrar sayılmaz; taşınanlar (süt/şurup/kapak) disi'de.
+                _ad = urun_ad_map.get(uid) or ""
+                _sk = _stok_key_from_urun_ad(_ad) if _ad else None
+                if _sk and _sk in _BAR_KEYS and _sk not in _UUID_TASINAN_HAVUZ:
                     continue
                 dm = tuketim_disi_map.setdefault(key, {})
                 dm[uid] = dm.get(uid, 0) + adet
@@ -13471,16 +13477,18 @@ def ops_maliyet_gun_gun(
         for r in cur.fetchall():
             sube_adlari[str(r["id"])] = r["ad"]
 
-        # Tüm _BAR_KEYS için fiyat geçmişi (kalem_kodu -> [(gecerli_baslangic, gecerli_bitis, fiyat), ...])
+        # FIX C3 (2026-07-05): fiyat geçmişi TÜM kodlar için (eskiden yalnız _BAR_KEYS havuz
+        # kodları) → UUID kalemler (süt/şurup/kapak/kahve) artık DÖNEM-DOĞRU fiyattan maliyetlenir.
+        # Önceden UUID kalemler _fiyat_bul'da bulunamayıp fiyat_son_by_kod (BUGÜNKÜ fiyat) fallback'ine
+        # düşüyor, alış fiyatı değişince geçmiş ayların COGS/net kârı retroaktif kayıyordu.
+        # urun_alis_fiyat = fiyat kataloğu (kalem başına fiyat-değişimi satırı); tümü çekilir, küçük tablo.
         cur.execute(
             """
             SELECT kalem_kodu, gecerli_baslangic::text AS gecerli_baslangic,
                    gecerli_bitis::text AS gecerli_bitis, birim_maliyet_tl
             FROM urun_alis_fiyat
-            WHERE kalem_kodu = ANY(%s)
             ORDER BY kalem_kodu, gecerli_baslangic
-            """,
-            (list(_BAR_KEYS),),
+            """
         )
         fiyat_gecmisi: Dict[str, List[Tuple[str, Optional[str], float]]] = {}
         for r in cur.fetchall():
@@ -13615,7 +13623,7 @@ def ops_maliyet_gun_gun(
                            COALESCE(nakit,0)::numeric AS nakit, COALESCE(pos,0)::numeric AS pos,
                            COALESCE(online,0)::numeric AS online
                     FROM ciro
-                    WHERE tarih BETWEEN %s::date AND %s::date {_cf}""",
+                    WHERE tarih BETWEEN %s::date AND %s::date AND durum='aktif' {_cf}""",
                 _cp,
             )
             for r in cur.fetchall():
@@ -13732,7 +13740,10 @@ def ops_maliyet_gun_gun(
                     except Exception: adet = 0.0
                     if not kk or adet <= 0:
                         continue
-                    fiyat = fiyat_son_by_kod.get(kk) or _fiyat_bul(kk, d["t"])
+                    # FIX C3: dönem-doğru fiyat ÖNCE (tarih-duyarlı), bugünkü fiyat emniyet ağı
+                    fiyat = _fiyat_bul(kk, d["t"])
+                    if fiyat is None:
+                        fiyat = fiyat_son_by_kod.get(kk)
                     if fiyat:
                         tutar += adet * fiyat
                 if tutar <= 0:
@@ -13948,15 +13959,22 @@ def ops_maliyet_gun_gun(
             _sube_ns: Dict[str, float] = {}
             for (ks, kt), c in ciro_map.items():
                 _sube_ns[ks] = _sube_ns.get(ks, 0.0) + float(c.get("ciro") or 0) / 1.10
+            # FIX C4 (2026-07-05): yıllıklaştırma GERÇEK pencere gün sayısıyla (gun param'ı bas/bit
+            # tarih aralığında yanlış — 30 günlük pencerede gun=7 kalıp vergiyi ~4.3× şişiriyordu).
+            try:
+                _ngun = (_d.fromisoformat(_bit) - _d.fromisoformat(_bas)).days + 1
+            except Exception:
+                _ngun = gun
+            _ngun = max(1, _ngun)
             _tax_tot = 0.0
             for _sid in _scope:
                 _fv = _sube_ns.get(_sid, 0.0) * _marj           # şube favök tahmini (aynı marj varsayımı)
-                _yil = _fv * (365.0 / gun) if gun > 0 else _fv
+                _yil = _fv * (365.0 / _ngun)
                 if _vt.get(_sid) == "sahis":
                     _yv = _gelir_vergisi_yillik(_yil)
                 else:
                     _yv = max(0.0, _yil) * _KURUMLAR_VERGI_ORAN
-                _tax_tot += _yv * (gun / 365.0) if gun > 0 else _yv
+                _tax_tot += _yv * (_ngun / 365.0)
             _blended = (_tax_tot / _favok_tot) if _favok_tot > 0 else 0.0
             for s in satirlar:
                 _fv = float(s.get("favok_tl") or 0)
