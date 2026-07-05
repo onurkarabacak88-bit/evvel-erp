@@ -2839,8 +2839,12 @@ def personel_calisma_araligi(personel: dict, d1: date, d2: date) -> tuple:
     if bas and bas > d1:
         d1 = bas
 
+    # FIX M6 (2026-07-06): kırpma 'aktif=False' şartına bağlıydı — çıkış tarihi girilmiş ama
+    # bayrak henüz kapatılmamış personelde çıkış SONRASI günler maaş tabanına sayılıyordu.
+    # Çıkış tarihi dolu = ayrılık kararı verilmiş; kırpma bayraktan bağımsız uygulanır
+    # (gelecek tarihli çıkış zaten 'cikis < d2' şartıyla bu ayı etkilemez).
     cikis = _d(personel.get("cikis_tarihi"))
-    if cikis and not personel.get("aktif", True) and cikis < d2:
+    if cikis and cikis < d2:
         d2 = cikis
 
     if d1 > d2:

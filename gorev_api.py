@@ -2065,6 +2065,29 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
             # Haftalık izin analizi - her Pazartesi başlayan haftayı tara
             # Kural: 7 günlük haftada HİÇ boş gün yoksa → haftalık izin kullanılmamış
             from datetime import date as _date2, timedelta as _td
+
+            # FIX M7 (2026-07-06): izinli günde İPTAL EDİLMEMİŞ atama ücret/mesai akıtmasın.
+            # personel_izin kaydı o günü kapsıyor ve YOKLAMA YOKSA (fiilen gelmemiş) atama
+            # hesaptan çıkarılır — planlanan saat, fazla mesai eşiği, yemek hakkı ve haftalık
+            # izin analizi doğru işler. Yoklama VARSA personel gelmiş → çalışma normal sayılır.
+            cur.execute("""
+                SELECT baslangic_tarih, COALESCE(bitis_tarih, baslangic_tarih) AS bitis_tarih
+                FROM personel_izin
+                WHERE personel_id=%s
+                  AND baslangic_tarih <= %s
+                  AND COALESCE(bitis_tarih, baslangic_tarih) >= %s
+            """, (pid, p_d2, p_d1))
+            _izinli_gunler = set()
+            for _iz in cur.fetchall():
+                _ig = _iz["baslangic_tarih"]
+                _ib = _iz["bitis_tarih"]
+                while _ig <= _ib:
+                    _izinli_gunler.add(str(_ig))
+                    _ig += _td(days=1)
+            for _t in list(vardiyalar.keys()):
+                if _t in _izinli_gunler and _t not in yoklamalar:
+                    del vardiyalar[_t]
+
             haftalik_izin_kullanilmadi = 0  # kaç haftada izin kullanılmamış
             haftalik_izin_detay = []        # [{hafta_baslangic, calisilan_gun, izin_var}]
 
@@ -2341,19 +2364,34 @@ def gecikme_eksik_gun_isle(body: GecikmeEksikGunBody):
 
         # Maaş yeniden hesapla
         import uuid as _uuid
-        GUNLUK_SAAT = 9.5
-        AYLIK_GUN   = 30.0
-        AYLIK_SAAT  = GUNLUK_SAAT * AYLIK_GUN
-        maas   = float(p.get("maas") or 0)
-        yemek  = float(p.get("yemek_ucreti") or 0)
-        yol    = float(p.get("yol_ucreti") or 0)
-        gunluk = maas / AYLIK_GUN
-
         mevcut_dict = dict(mevcut) if mevcut else {}
-        fazla  = float(mevcut_dict.get("fazla_mesai_saat") or 0)
-        bayram = float(mevcut_dict.get("bayram_mesai_saat") or 0)
-        saatlik = maas / AYLIK_SAAT
-        net = maas - (gunluk * yeni_eksik) + (fazla * saatlik) + (bayram * saatlik * 2) + yemek + yol
+
+        # FIX M5 (2026-07-06): net artık KANONİK motordan — maas_service.kanonik_net
+        # (= Vardiya Takip net_hakediş + bayram×2 − eksik gün + manuel düzeltme).
+        # Eskiden burada el yapımı TAM-AYLIK formül vardı (yemek/yol prorate'siz, dönem
+        # kırpmasız) → aynı personel Vardiya Takip ekranı ile burada FARKLI net görüyordu.
+        _kayit_m5 = {**mevcut_dict, "eksik_gun": yeni_eksik}
+        net = None
+        try:
+            import maas_service as _ms
+            _vt = _ms.vardiya_takip_hesap(body.personel_id, body.yil, body.ay)
+            if _vt:
+                net = _ms.kanonik_net(dict(p), _vt, _kayit_m5)
+        except Exception:
+            net = None
+        if net is None:
+            # YEDEK YOL — kanonik hesap alınamazsa (bağlantı vb.) sistem durmasın: eski formül
+            GUNLUK_SAAT = 9.5
+            AYLIK_GUN   = 30.0
+            AYLIK_SAAT  = GUNLUK_SAAT * AYLIK_GUN
+            maas   = float(p.get("maas") or 0)
+            yemek  = float(p.get("yemek_ucreti") or 0)
+            yol    = float(p.get("yol_ucreti") or 0)
+            gunluk = maas / AYLIK_GUN
+            fazla  = float(mevcut_dict.get("fazla_mesai_saat") or 0)
+            bayram = float(mevcut_dict.get("bayram_mesai_saat") or 0)
+            saatlik = maas / AYLIK_SAAT
+            net = maas - (gunluk * yeni_eksik) + (fazla * saatlik) + (bayram * saatlik * 2) + yemek + yol
 
         not_ekle = body.not_aciklama or f"Gecikme → {body.eksik_gun} eksik gün olarak işlendi"
         kid = str(_uuid.uuid4())
