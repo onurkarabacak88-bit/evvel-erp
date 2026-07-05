@@ -5629,10 +5629,24 @@ def odeme_plani_gecmis_temizle(baslangic: str = "2026-06-01", uygula: bool = Fal
             (str(kesim), kesim),
         )
         iptal_adet = cur.rowcount
+        # FIX MN10 (2026-07-06): iptal edilen planlara bağlı BEKLEYEN onay kuyruğu kayıtları
+        # güncellenmiyordu → yetim onaylar panelde sonsuza dek "bekliyor" görünüyordu.
+        onay_kapatilan = 0
+        if adaylar:
+            _plan_ids = [r["id"] for r in adaylar]
+            cur.execute(
+                """
+                UPDATE onay_kuyrugu SET durum='reddedildi', onay_tarihi=NOW()
+                WHERE durum NOT IN ('onaylandi','reddedildi') AND kaynak_id = ANY(%s)
+                """,
+                (_plan_ids,),
+            )
+            onay_kapatilan = cur.rowcount
         return {
             "onizleme": False,
             "baslangic": str(kesim),
             "iptal_edilen_adet": iptal_adet,
+            "kapatilan_onay_adet": onay_kapatilan,
             "iptal_edilen_tutar": round(toplam, 2),
             "kayitlar": liste,
         }
@@ -7091,7 +7105,11 @@ def borc_ode(bid: str, body: BorcOdemeBody):
         yeni_kalan = (kalan_vade - 1) if borc['kalan_vade'] is not None else None
         yeni_toplam = max(0.0, float(borc['toplam_borc'] or 0) - tutar)
         # Vade ile kapan; vade tanımsızsa (NULL) toplam borç sıfırlanınca kapan.
-        kapansin = (yeni_kalan is not None and yeni_kalan <= 0) or (yeni_kalan is None and yeni_toplam <= 0)
+        # FIX MN9 (2026-07-06): toplam_borc da NULL ise (0 sayılıp) İLK ödemede borç yanlışlıkla
+        # kapanıyordu — iki alan da tanımsızken kapanma kararı VERİLEMEZ, borç açık kalır.
+        kapansin = (yeni_kalan is not None and yeni_kalan <= 0) or (
+            yeni_kalan is None and borc['toplam_borc'] is not None and yeni_toplam <= 0
+        )
         cur.execute(
             """
             UPDATE borc_envanteri
@@ -7143,6 +7161,12 @@ def _borc_validate(b: BorcModel):
     if (b.kalan_vade is not None and b.toplam_vade is not None
             and int(b.kalan_vade) > int(b.toplam_vade)):
         raise HTTPException(400, "Kalan vade, toplam vadeden büyük olamaz")
+    # FIX MN8 (2026-07-06): faiz/ödemesiz ay validasyonu yoktu — negatif/aşırı faiz girilip
+    # Borç Koçu motoruna kirli veri akabiliyordu (kartlardaki 0-500 deseniyle aynı).
+    if b.faiz_orani is not None and not (0 <= float(b.faiz_orani) <= 500):
+        raise HTTPException(400, "Faiz oranı 0–500 arası olmalı (yıllık %)")
+    if b.odemesiz_ay is not None and int(b.odemesiz_ay) < 0:
+        raise HTTPException(400, "Ödemesiz ay negatif olamaz")
 
 
 @app.post("/api/borclar")
