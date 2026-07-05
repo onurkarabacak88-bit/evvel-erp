@@ -14279,37 +14279,49 @@ def ops_maliyet_kdv_oran_kaydet(body: KdvOranBody):
     return {"success": True, "kalem_kodu": kod, "kdv_oran": oran, "kdv_yuzde": yuzde}
 
 
+_TR_HARF_MAP = str.maketrans({
+    "ı": "i", "İ": "i", "I": "i", "ş": "s", "Ş": "s", "ğ": "g", "Ğ": "g",
+    "ü": "u", "Ü": "u", "ö": "o", "Ö": "o", "ç": "c", "Ç": "c",
+})
+
+
+def _tr_fold(s: str) -> str:
+    """Türkçe-güvenli normalize: TR harfleri ASCII karşılığına eşle + küçült. İKİ tuzak birden:
+    (1) casefold() İ'yi 'i̇' yapıp eşleşmeyi bozuyordu (MENDİL); (2) ascii-ignore dotless 'ı'yı
+    SİLİYORDU (Karıştırıcı→'karstrc'). Harf-eşleme (ı→i, İ→i, ş→s...) ikisini de çözer."""
+    return (s or "").translate(_TR_HARF_MAP).lower()
+
+
 def _kdv_oran_tahmin(ad: str) -> float:
     """Kalem adından KDV oranı tahmini (TR 2024+, kafe bağlamı). Öneri — kullanıcı düzeltebilir.
     %20 gıda dışı (ambalaj/sarf/temizlik/kırtasiye) · %1 temel gıda (süt/şeker/su) · %10 kalan içecek/gıda."""
-    a = (ad or "").casefold()
+    a = _tr_fold(ad)  # TR-güvenli (ASCII fold): mendil/pipet/peçete artık kesin eşleşir
     # Özel durum: "bardak su" = su ürünü (bardak kelimesi %20'ye takılmasın) → %1
     if "bardak su" in a:
         return 0.01
-    # %20 — gıda DIŞI ambalaj/sarf/temizlik/kırtasiye
-    yirmi = ["bardak", "kapak", "pipet", "peçete", "pecete", "mendil", "çanta", "canta",
-             "karıştırıcı", "karistirici", "filtre kağıdı", "filtre kagidi", "kağıt", "kagit",
-             "eldiven", "cam bezi", "klips", "poşet", "poset", "streç", "strec", "çamaşır",
-             "camasir", "deterjan", "yüzey", "yuzey", "temizley", "temizlik", "sabun", "karton",
-             "kalem"]
+    # %20 — gıda DIŞI ambalaj/sarf/temizlik/kırtasiye (anahtarlar ASCII)
+    yirmi = ["bardak", "kapak", "pipet", "pecete", "mendil", "canta", "karistirici",
+             "filtre kagidi", "kagit", "eldiven", "cam bezi", "klips", "poset", "strec",
+             "camasir", "deterjan", "yuzey", "temizley", "temizlik", "sabun", "karton", "kalem"]
     for k in yirmi:
         if k in a:
             return 0.20
     # %1 — temel gıda
-    if "süt" in a or "sut" in a:  # not: badem sütü de %1 sayılır (kullanıcı düzeltebilir)
+    if "sut" in a:  # süt (badem sütü de %1 sayılır — kullanıcı düzeltebilir)
         return 0.01
-    if "şeker" in a or "seker" in a:
+    if "seker" in a:
         return 0.01
-    if "maden suyu" in a or "maden su" in a:  # gazlı içecek → %10
+    if "maden su" in a:  # gazlı içecek → %10 (aşağıda kalan kurala düşer)
         return 0.10
     # kalan içecek/gıda (kahve/çay/şurup/püre/sos/meyve/tatlı...)
     return 0.10
 
 
 @router.post("/maliyet/kdv-oran-otomatik")
-def ops_maliyet_kdv_oran_otomatik():
+def ops_maliyet_kdv_oran_otomatik(force: bool = Query(False)):
     """Tüm alış-fiyatlı kalemlere KDV oranını ada göre OTOMATİK atar (kural bazlı öneri).
-    Zaten elle tanımlı olanları EZMEZ (kullanıcı ayarı korunur). Yeni/tanımsızları doldurur."""
+    force=false: sadece tanımsızları doldurur (elle ayarları korur).
+    force=true: TÜM kalemleri kural sonucuyla yeniden yazar (yanlış kural-atamasını düzeltmek için)."""
     with db() as (conn, cur):
         _ensure_maliyet_tablolari(cur)
         cur.execute("SELECT kalem_kodu FROM kalem_kdv_oran")
@@ -14321,17 +14333,18 @@ def ops_maliyet_kdv_oran_otomatik():
         kalemler = [(str(r["kalem_kodu"]), r.get("kalem_adi") or str(r["kalem_kodu"])) for r in cur.fetchall()]
         atanan = {"%1": 0, "%10": 0, "%20": 0}
         for kod, ad in kalemler:
-            if kod in tanimli:
-                continue  # elle ayarlanmış — dokunma
+            if kod in tanimli and not force:
+                continue  # elle/önceki ayar — dokunma (force=true ise yeniden yaz)
             oran = _kdv_oran_tahmin(ad)
             cur.execute("""
                 INSERT INTO kalem_kdv_oran (kalem_kodu, kalem_adi, kdv_oran, guncelleme)
                 VALUES (%s, %s, %s, NOW())
-                ON CONFLICT (kalem_kodu) DO NOTHING
+                ON CONFLICT (kalem_kodu) DO UPDATE SET
+                    kalem_adi=EXCLUDED.kalem_adi, kdv_oran=EXCLUDED.kdv_oran, guncelleme=NOW()
             """, (kod, ad, oran))
             atanan["%" + str(int(oran * 100))] = atanan.get("%" + str(int(oran * 100)), 0) + 1
     return {"success": True, "atanan": atanan, "toplam": sum(atanan.values()),
-            "not": "Ada göre kural bazlı otomatik atama. Elle ayarlananlar korundu. "
+            "not": "Ada göre kural bazlı otomatik atama. force=true tümünü yeniden yazar. "
                    "Vergi Ayarları'ndan tek tıkla düzeltilebilir."}
 
 
