@@ -1,6 +1,108 @@
 import { useState, useEffect } from 'react';
 import { api, fmt, fmtDate } from '../utils/api';
 
+// 🧾 VERGİ AYARLARI — kalem bazlı KDV oranı düzenleme + kira stopaj özeti (2026-07-05)
+function VergiAyarlari({ fmt }) {
+  const [kdv, setKdv] = useState(null);
+  const [stopaj, setStopaj] = useState(null);
+  const [kayit, setKayit] = useState({});   // kalem_kodu → kaydediliyor
+  const [ara, setAra] = useState('');
+  const KDV_SECENEK = [1, 10, 20];
+
+  const yukle = () => {
+    api('/ops/maliyet/kdv-oranlari').then(setKdv).catch(() => setKdv({ satirlar: [] }));
+    api('/ops/maliyet/stopaj-ozet').then(setStopaj).catch(() => setStopaj(null));
+  };
+  useEffect(() => { yukle(); }, []);
+
+  const oranKaydet = async (s, yuzde) => {
+    setKayit(k => ({ ...k, [s.kalem_kodu]: true }));
+    try {
+      await api('/ops/maliyet/kdv-oran-kaydet', { method: 'POST', body: { kalem_kodu: s.kalem_kodu, kalem_adi: s.kalem_adi, kdv_yuzde: yuzde } });
+      setKdv(d => ({ ...d, satirlar: d.satirlar.map(x => x.kalem_kodu === s.kalem_kodu ? { ...x, kdv_yuzde: yuzde, kdv_oran: yuzde / 100, tanimli: true } : x) }));
+    } catch (e) { alert(e.message || 'Kaydedilemedi'); }
+    finally { setKayit(k => ({ ...k, [s.kalem_kodu]: false })); }
+  };
+
+  const satirlar = (kdv?.satirlar || []).filter(s =>
+    !ara || (s.kalem_adi || '').toLowerCase().includes(ara.toLowerCase()) || (s.kalem_kodu || '').toLowerCase().includes(ara.toLowerCase()));
+
+  return (
+    <>
+      {/* Kira stopajı */}
+      {stopaj && stopaj.adet > 0 && (
+        <div className="card" style={{ marginTop: 14 }}>
+          <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 8 }}>🏠 Kira Stopajı <span style={{ fontWeight: 400, color: 'var(--text3)' }}>(brüt kira P&L gideri; stopaj devlete)</span></div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10, marginBottom: 8 }}>
+            <div style={{ background: 'var(--bg3)', borderRadius: 8, padding: '8px 10px' }}>
+              <div style={{ fontSize: 11, color: 'var(--text3)' }}>Brüt kira (aylık)</div>
+              <div style={{ fontFamily: 'var(--font-mono)', fontWeight: 700 }}>{fmt(stopaj.toplam_brut_tl)}</div>
+            </div>
+            <div style={{ background: 'var(--bg3)', borderRadius: 8, padding: '8px 10px', borderLeft: '3px solid var(--orange)' }}>
+              <div style={{ fontSize: 11, color: 'var(--text3)' }}>Stopaj → vergi dairesi</div>
+              <div style={{ fontFamily: 'var(--font-mono)', fontWeight: 800, color: 'var(--orange)' }}>{fmt(stopaj.toplam_stopaj_tl)}</div>
+            </div>
+            <div style={{ background: 'var(--bg3)', borderRadius: 8, padding: '8px 10px' }}>
+              <div style={{ fontSize: 11, color: 'var(--text3)' }}>Net → mülk sahibi</div>
+              <div style={{ fontFamily: 'var(--font-mono)', fontWeight: 700 }}>{fmt(stopaj.toplam_net_tl)}</div>
+            </div>
+          </div>
+          <div className="table-wrap">
+            <table><thead><tr><th>Kira</th><th style={{ textAlign: 'right' }}>Brüt</th><th style={{ textAlign: 'right' }}>%</th><th style={{ textAlign: 'right' }}>Stopaj</th><th style={{ textAlign: 'right' }}>Net</th></tr></thead>
+              <tbody>{stopaj.satirlar.map(s => (
+                <tr key={s.id}><td>{s.gider_adi}</td><td className="mono" style={{ textAlign: 'right' }}>{fmt(s.brut_tl)}</td>
+                  <td className="mono" style={{ textAlign: 'right' }}>%{s.stopaj_yuzde}</td>
+                  <td className="mono" style={{ textAlign: 'right', color: 'var(--orange)' }}>{fmt(s.stopaj_tl)}</td>
+                  <td className="mono" style={{ textAlign: 'right' }}>{fmt(s.net_odenecek_tl)}</td></tr>))}
+              </tbody></table>
+          </div>
+          <div style={{ fontSize: 10.5, color: 'var(--text3)', marginTop: 6, fontStyle: 'italic' }}>{stopaj.not}</div>
+        </div>
+      )}
+      {stopaj && stopaj.adet === 0 && (
+        <div className="card" style={{ marginTop: 14, fontSize: 12, color: 'var(--text3)' }}>
+          🏠 Kira stopajı tanımlı değil. Bir kira giderine stopaj oranı (%20) eklerseniz burada özetlenir. (Şahıstan işyeri kirasında geçerli.)
+        </div>
+      )}
+
+      {/* Kalem KDV oranları */}
+      <div className="card" style={{ marginTop: 14 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8, flexWrap: 'wrap', gap: 6 }}>
+          <span style={{ fontWeight: 700, fontSize: 13 }}>📋 Kalem KDV Oranları <span style={{ fontWeight: 400, color: 'var(--text3)' }}>(alış — indirilecek KDV bundan hesaplanır)</span></span>
+          <input value={ara} onChange={e => setAra(e.target.value)} placeholder="Kalem ara…"
+            style={{ padding: '5px 10px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg2)', fontSize: 12, width: 160 }} />
+        </div>
+        <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 8 }}>
+          Kahve/süt gibi temel gıda %1, çoğu içecek %10, ambalaj/bardak %20. Varsayılan %{kdv?.varsayilan_yuzde || 10}. Değiştirdiğinde anında kaydolur.
+        </div>
+        {!kdv ? <div style={{ color: 'var(--text3)', padding: 20 }}>Yükleniyor…</div>
+          : satirlar.length === 0 ? <div style={{ color: 'var(--text3)', padding: 20, fontSize: 12 }}>Alış fiyatı tanımlı kalem yok — önce Fiyatlar sekmesinden fiyat girin, sonra KDV oranını ayarlayın.</div>
+            : (
+              <div className="table-wrap">
+                <table><thead><tr><th>Kalem</th><th style={{ textAlign: 'center' }}>KDV Oranı</th></tr></thead>
+                  <tbody>{satirlar.slice(0, 200).map(s => (
+                    <tr key={s.kalem_kodu}>
+                      <td>{s.kalem_adi}{!s.tanimli && <span style={{ fontSize: 10, color: 'var(--text3)' }}> · varsayılan</span>}</td>
+                      <td style={{ textAlign: 'center' }}>
+                        <div style={{ display: 'inline-flex', gap: 4 }}>
+                          {KDV_SECENEK.map(y => (
+                            <button key={y} disabled={kayit[s.kalem_kodu]} onClick={() => oranKaydet(s, y)}
+                              style={{ padding: '4px 10px', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer',
+                                border: `1px solid ${Math.round(s.kdv_yuzde) === y ? 'var(--accent)' : 'var(--border)'}`,
+                                background: Math.round(s.kdv_yuzde) === y ? 'var(--accent-dim, rgba(80,160,120,0.15))' : 'var(--bg2)',
+                                color: Math.round(s.kdv_yuzde) === y ? 'var(--accent)' : 'var(--text2)' }}>%{y}</button>
+                          ))}
+                        </div>
+                      </td>
+                    </tr>))}
+                  </tbody></table>
+              </div>
+            )}
+      </div>
+    </>
+  );
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // Maliyet — Faz 1+2+3:
 //  - Alış fiyatı girişi/güncelleme + geçmiş (artış/azalış oku)
@@ -724,6 +826,9 @@ export default function Maliyet() {
                 <div style={{ fontSize: 10.5, color: 'var(--text3)', marginTop: 6, fontStyle: 'italic' }}>{kdvPoz.not}</div>
               </div>
             )}
+
+            {/* 🧾 VERGİ AYARLARI — kalem KDV oranları + kira stopajı (2026-07-05) */}
+            {altSekme === 'vergi' && <VergiAyarlari fmt={fmt} />}
 
             {maliyetDetayAcik && kovalar.length > 0 && (() => {
               const KOVA_RENK = {

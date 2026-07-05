@@ -5123,6 +5123,7 @@ class SabitGider(BaseModel):
     sozlesme_bitis_tarihi: Optional[date] = None
     odeme_yontemi: str = 'nakit'   # 'nakit' veya 'kart'
     kart_id: Optional[str] = None  # Kart talimatı için
+    stopaj_oran: float = 0         # kira stopajı: şahıstan işyeri kirasında 0.20; 0=stopajsız
 
 KIRA_ARTIS_PERIYOT_MAP = {"6ay": 6, "1yil": 12, "2yil": 24, "5yil": 60}
 
@@ -5172,12 +5173,12 @@ def sabit_gider_ekle(g: SabitGider):
         cur.execute("""INSERT INTO sabit_giderler
             (id,gider_adi,kategori,tutar,tip,periyot,odeme_gunu,baslangic_tarihi,sube_id,
              sozlesme_sure_ay,kira_artis_periyot,kira_artis_tarihi,sozlesme_bitis_tarihi,
-             odeme_yontemi,kart_id)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+             odeme_yontemi,kart_id,stopaj_oran)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
             (gid, g.gider_adi, g.kategori, g.tutar, g.tip, g.periyot, g.odeme_gunu,
              g.baslangic_tarihi, g.sube_id or None,
              g.sozlesme_sure_ay, g.kira_artis_periyot, kira_artis_tarihi, sozlesme_bitis,
-             g.odeme_yontemi, g.kart_id or None))
+             g.odeme_yontemi, g.kart_id or None, max(0.0, min(1.0, float(g.stopaj_oran or 0)))))
         # Degisken gider: onay kuyruğuna girme — motor da plan üretmez, sadece hatırlatır
         # Kart talimatı: motor otomatik işler, onay kuyruğuna girme
         if g.tip == 'sabit' and g.odeme_yontemi != 'kart':
@@ -5237,12 +5238,12 @@ def sabit_gider_guncelle(gid: str, g: SabitGider):
             cur.execute("""INSERT INTO sabit_giderler
                 (id,gider_adi,kategori,tutar,tip,periyot,odeme_gunu,baslangic_tarihi,sube_id,
                  sozlesme_sure_ay,kira_artis_periyot,kira_artis_tarihi,sozlesme_bitis_tarihi,
-                 odeme_yontemi,kart_id)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                 odeme_yontemi,kart_id,stopaj_oran)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                 (yeni_id, gider_adi, kategori, g.tutar, tip, periyot,
                  odeme_gunu, g.gecerlilik_tarihi, sube_id,
                  g.sozlesme_sure_ay, g.kira_artis_periyot, kira_artis_tarihi_g, sozlesme_bitis,
-                 odeme_yontemi, kart_id or None))
+                 odeme_yontemi, kart_id or None, max(0.0, min(1.0, float(g.stopaj_oran or 0)))))
             # KRİTİK 3: degisken gider onay kuyruğuna girmesin
             if tip == 'sabit' and odeme_yontemi != 'kart':
                 onay_ekle(cur, 'SABIT_GIDER', 'sabit_giderler', yeni_id,
@@ -5254,9 +5255,10 @@ def sabit_gider_guncelle(gid: str, g: SabitGider):
             tip_guncelle = g.tip or eski.get('tip') or 'sabit'
             cur.execute("""UPDATE sabit_giderler SET gider_adi=%s,kategori=%s,tutar=%s,
                 tip=%s,periyot=%s,odeme_gunu=%s,baslangic_tarihi=%s,sube_id=%s,
-                odeme_yontemi=%s,kart_id=%s WHERE id=%s""",
+                odeme_yontemi=%s,kart_id=%s,stopaj_oran=%s WHERE id=%s""",
                 (gider_adi, kategori, g.tutar, tip_guncelle, periyot, odeme_gunu,
-                 g.baslangic_tarihi, sube_id, odeme_yontemi, kart_id or None, gid))
+                 g.baslangic_tarihi, sube_id, odeme_yontemi, kart_id or None,
+                 max(0.0, min(1.0, float(g.stopaj_oran or 0))), gid))
             audit(cur, 'sabit_giderler', gid, 'UPDATE', eski=eski)
         return {"success": True}
 

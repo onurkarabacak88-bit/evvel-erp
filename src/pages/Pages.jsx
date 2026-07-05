@@ -642,7 +642,7 @@ export function SabitGiderler() {
   const [subeler, setSubeler] = useState([]);
   const [kartlar, setKartlar] = useState([]);
   const [showModal, setShowModal] = useState(false);
-  const [form, setForm] = useState({gider_adi:'',kategori:'Kira',tip:'sabit',tutar:'',periyot:'aylik',odeme_gunu:1,baslangic_tarihi:'',sube_id:'',gecerlilik_tarihi:'',sozlesme_sure_ay:'',kira_artis_periyot:'',odeme_yontemi:'nakit',kart_id:''});
+  const [form, setForm] = useState({gider_adi:'',kategori:'Kira',tip:'sabit',tutar:'',periyot:'aylik',odeme_gunu:1,baslangic_tarihi:'',sube_id:'',gecerlilik_tarihi:'',sozlesme_sure_ay:'',kira_artis_periyot:'',odeme_yontemi:'nakit',kart_id:'',stopaj_yuzde:''});
   const [duzenleId, setDuzenleId] = useState(null);
   const [msg, setMsg] = useState(null);
   const [sekme, setSekme] = useState('tanimli');
@@ -677,7 +677,8 @@ export function SabitGiderler() {
             odeme_gunu:g.odeme_gunu,baslangic_tarihi:g.baslangic_tarihi?.slice(0,10)||'',
             sube_id:g.sube_id||'',gecerlilik_tarihi:'',sozlesme_sure_ay:g.sozlesme_sure_ay||'',
             kira_artis_periyot:g.kira_artis_periyot||'',
-            odeme_yontemi:g.odeme_yontemi||'nakit',kart_id:g.kart_id||''});
+            odeme_yontemi:g.odeme_yontemi||'nakit',kart_id:g.kart_id||'',
+            stopaj_yuzde: g.stopaj_oran ? String(Math.round(Number(g.stopaj_oran)*100)) : ''});
           setDuzenleId(g.id);
           setHatalar({});
           setShowModal(true);
@@ -733,6 +734,7 @@ export function SabitGiderler() {
         kira_artis_periyot:  form.kira_artis_periyot  || null,
         kira_artis_tarihi:   form.kira_artis_tarihi   || null,
         sozlesme_bitis_tarihi: form.sozlesme_bitis_tarihi || null,
+        stopaj_oran:         form.kategori === 'Kira' ? ((parseFloat(form.stopaj_yuzde) || 0) / 100) : 0,
       };
       if(duzenleId) await api(`/sabit-giderler/${duzenleId}`,{method:'PUT',body});
       else await api('/sabit-giderler',{method:'POST',body});
@@ -1211,6 +1213,19 @@ export function SabitGiderler() {
                         return <span style={{fontSize:11,color:'var(--yellow)'}}>⏰ Sonraki artış: {d.toLocaleDateString('tr-TR')} — 15 gün öncesinde uyarı gelir</span>;
                       })()}
                     </div>
+                    {form.kategori === 'Kira' && (
+                      <div className="form-group">
+                        <label>🏠 Stopaj Oranı (%)</label>
+                        <input type="number" inputMode="numeric" value={form.stopaj_yuzde} placeholder="0 (şahıs kirasında 20)"
+                          onChange={e=>setForm({...form,stopaj_yuzde:e.target.value})} />
+                        <span style={{fontSize:11,color:'var(--text3)'}}>
+                          Şahıstan işyeri kirasında %20 stopaj vergi dairesine ödenir, kalanı mülk sahibine.
+                          Şirket/faturalı kirada 0 bırakın. {form.stopaj_yuzde>0 && form.tutar>0 && (
+                            <b style={{color:'var(--orange)'}}> Aylık stopaj: {Math.round(form.tutar*form.stopaj_yuzde/100).toLocaleString('tr-TR')} ₺</b>
+                          )}
+                        </span>
+                      </div>
+                    )}
                   </>
                 )}
 

@@ -13250,6 +13250,21 @@ def _ensure_maliyet_tablolari(cur: Any) -> None:
         )
     """)
 
+    # KALEM BAZLI KDV ORANI (2026-07-05, kullanıcı kararı) — her tüketilen kalemin alış
+    # KDV oranı (%1 gıda / %10 F&B / %20 ambalaj). İndirilecek KDV artık ürün-aç tüketiminden
+    # kalem-bazlı hesaplanır (eskiden fatura toplamı × düz %10). oran = 0.01/0.10/0.20.
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS kalem_kdv_oran (
+            kalem_kodu   TEXT PRIMARY KEY,
+            kalem_adi    TEXT,
+            kdv_oran     NUMERIC(5,4) NOT NULL DEFAULT 0.10,
+            guncelleme   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    """)
+    # Kira/sabit gider STOPAJ oranı (2026-07-05) — şahıstan işyeri kirasında brüt kiranın
+    # %20'si stopaj olarak kesilip vergi dairesine ödenir. 0 = stopajsız (şirket/faturalı kira).
+    cur.execute("ALTER TABLE sabit_giderler ADD COLUMN IF NOT EXISTS stopaj_oran NUMERIC(5,4) DEFAULT 0")
+
 
 @router.get("/maliyet/ozet")
 def ops_maliyet_ozet(
@@ -13683,6 +13698,29 @@ def ops_maliyet_gun_gun(
         except Exception:
             pass
 
+        # KALEM BAZLI KDV ORANI (2026-07-05) — indirilecek KDV'yi ürün-aç tüketiminden kalem
+        # oranıyla hesaplamak için (KDV pozisyonu bunu okur). Varsayılan %10; tabloda tanımlı
+        # olanlar ezer. hem kalem_kodu hem UUID hem depo_kodu anahtarı denenecek.
+        kalem_kdv_map: Dict[str, float] = {}
+        try:
+            cur.execute("SELECT kalem_kodu, kdv_oran FROM kalem_kdv_oran")
+            for r in cur.fetchall():
+                kalem_kdv_map[str(r["kalem_kodu"])] = float(r["kdv_oran"] or 0.10)
+        except Exception:
+            pass
+        _KDV_VARSAYILAN = 0.10
+
+        def _kalem_kdv(kod: str, uid: str = "") -> float:
+            # önce depo/kalem kodu, sonra UUID — tabloda hangisi tanımlıysa
+            if kod and kod in kalem_kdv_map:
+                return kalem_kdv_map[kod]
+            if uid and uid in kalem_kdv_map:
+                return kalem_kdv_map[uid]
+            return _KDV_VARSAYILAN
+
+        # şube-gün bazında biriken indirilecek KDV (net maliyet × kalem oranı)
+        indirilecek_kdv_gun: Dict[Tuple[str, str], float] = {}
+
         # ── FAZ 3: Fire + İade maliyeti (sube_fire_bildirim kalemleri × birim maliyet) ──
         # sebep_kodu='iade' → iade kovası; diğer sebepler → fire kovası.
         # Fire kalemleri UUID de olabilir → _BAR_KEYS sınırlı fiyat_gecmisi yetmez;
@@ -13805,7 +13843,12 @@ def ops_maliyet_gun_gun(
                         if adet > 0:
                             fiyat_eksik.add(kaynak)
                         continue
-                    kolon_toplam += adet * fiyat
+                    _kt = adet * fiyat
+                    kolon_toplam += _kt
+                    # KDV: net maliyet × kalem oranı → indirilecek KDV (maliyet sayısına dokunmaz)
+                    indirilecek_kdv_gun[(sid or "", tarih_str)] = (
+                        indirilecek_kdv_gun.get((sid or "", tarih_str), 0.0) + _kt * _kalem_kdv(kaynak)
+                    )
                 satir[kolon_kod] = round(kolon_toplam, 2)
                 toplam += kolon_toplam
 
@@ -13849,10 +13892,16 @@ def ops_maliyet_gun_gun(
                 if fiyat is None:
                     fiyat_eksik.add(uid)  # UID → urun_ad_map ile okunabilir ada çevrilir
                     continue
-                diger_cogs += adet * fiyat
+                _dt = adet * fiyat
+                diger_cogs += _dt
+                indirilecek_kdv_gun[(sid or "", tarih_str)] = (
+                    indirilecek_kdv_gun.get((sid or "", tarih_str), 0.0) + _dt * _kalem_kdv(depo_kod or "", uid)
+                )
             satir["diger_urun_ac_tl"] = round(diger_cogs, 2)
             toplam += diger_cogs
             satir["toplam"] = round(toplam, 2)
+            # İndirilecek KDV (bu şube-gün, ürün-aç tüketiminden kalem-bazlı) — KDV pozisyonu okur
+            satir["indirilecek_kdv_tl"] = round(indirilecek_kdv_gun.get((sid or "", tarih_str), 0.0), 2)
 
             pg = personel_gun_map.get(tarih_str, {"sayisi": 0, "saat": 0.0, "maliyet": 0.0})
             satir["personel_sayisi"] = pg["sayisi"]
@@ -14122,31 +14171,150 @@ def ops_maliyet_kdv_pozisyon(
         cur.execute("SELECT id::text AS id, ad FROM subeler WHERE COALESCE(aktif,TRUE)=TRUE")
         ad_map = {r["id"]: r["ad"] for r in cur.fetchall()}
 
-    sids = set(ciro_map) | set(fatura_map)
+    # İNDİRİLECEK KDV — ÜRÜN-AÇ BAZLI (kullanıcı kararı 2026-07-05): her tüketilen kalemin
+    # net maliyeti × kendi KDV oranı (%1/%10/%20). Eskiden fatura toplamı × düz %10 (kaba +
+    # stok birikimini de sayıyordu). gun-gun COGS motoru şube-gün satırlarında indirilecek_kdv_tl
+    # üretiyor; şube bazında topla. Fatura yöntemi "karşılaştırma" olarak da döndürülür.
+    ind_urunac_map: Dict[str, float] = {}
+    ind_urunac_toplam = 0.0
+    try:
+        _gg = ops_maliyet_gun_gun(gun=gun, sube_id=sube_id, bas=None, bit=None)
+        for _r in _gg.get("satirlar", []):
+            _s = str(_r.get("sube_id") or "")
+            _k = float(_r.get("indirilecek_kdv_tl") or 0)
+            ind_urunac_map[_s] = ind_urunac_map.get(_s, 0.0) + _k
+            ind_urunac_toplam += _k
+    except Exception:
+        pass
+
+    sids = set(ciro_map) | set(fatura_map) | set(ind_urunac_map)
     if sube_id:
         sids = {sube_id}
     satirlar = []
-    t_hes = t_ind = 0.0
+    t_hes = t_ind = t_ind_fatura = 0.0
     for sid in sids:
         brut = ciro_map.get(sid, 0.0)
         alis = fatura_map.get(sid, 0.0)
         hes = brut * _fac
-        ind = alis * _fac
+        ind_fatura = alis * _fac
+        ind = ind_urunac_map.get(sid, 0.0)   # ürün-aç bazlı (birincil)
         satirlar.append({
-            "sube_id": sid, "sube_adi": ad_map.get(sid) or (sid if sid else "(şubesiz fatura)"),
+            "sube_id": sid, "sube_adi": ad_map.get(sid) or (sid if sid else "(şubesiz)"),
             "hesaplanan_kdv_tl": round(hes, 2),
             "indirilecek_kdv_tl": round(ind, 2),
+            "indirilecek_kdv_fatura_tl": round(ind_fatura, 2),  # karşılaştırma (eski yöntem)
             "odenecek_kdv_tl": round(hes - ind, 2),
         })
+        t_ind_fatura += ind_fatura
         t_hes += hes; t_ind += ind
     return {
         "gun": gun, "sube_id": sube_id, "kdv_oran": _KDV,
         "satirlar": sorted(satirlar, key=lambda x: -x["odenecek_kdv_tl"]),
         "toplam_hesaplanan_tl": round(t_hes, 2),
         "toplam_indirilecek_tl": round(t_ind, 2),
+        "toplam_indirilecek_fatura_tl": round(t_ind_fatura, 2),
         "toplam_odenecek_tl": round(t_hes - t_ind, 2),
-        "not": "⚠️ Hesaplanan KDV ciro'dan kesin. İndirilecek KDV fatura TOPLAMLARINDAN tahmini "
-               "(fatura ayrı KDV alanı yok, %10 varsayıldı). Kesinlik için faturalarda KDV oranı tutulmalı.",
+        "not": "Hesaplanan KDV ciro'dan kesin. İndirilecek KDV artık ÜRÜN-AÇ tüketiminden "
+               "kalem-bazlı orandan (%1/%10/%20) hesaplanıyor — her kalemin kendi KDV oranı "
+               "'Vergi Ayarları'ndan düzenlenebilir. 'fatura_tl' alanı eski (fatura toplamı × %10) "
+               "karşılaştırma içindir.",
+    }
+
+
+@router.get("/maliyet/kdv-oranlari")
+def ops_maliyet_kdv_oranlari():
+    """Kalem bazlı KDV oranları — alış fiyatı tanımlı kalemler + kayıtlı oranlar birleşik.
+    Her kalem: kdv_oran (yoksa varsayılan %10). Kullanıcı 'Vergi Ayarları'ndan düzenler."""
+    with db() as (conn, cur):
+        _ensure_maliyet_tablolari(cur)
+        # Kayıtlı oranlar
+        cur.execute("SELECT kalem_kodu, kalem_adi, kdv_oran FROM kalem_kdv_oran")
+        oran_map = {str(r["kalem_kodu"]): (r["kalem_adi"], float(r["kdv_oran"] or 0.10)) for r in cur.fetchall()}
+        # Fiyatı tanımlı kalemler (isim için)
+        cur.execute("""
+            SELECT DISTINCT ON (kalem_kodu) kalem_kodu, kalem_adi
+            FROM urun_alis_fiyat ORDER BY kalem_kodu, gecerli_baslangic DESC
+        """)
+        kalemler: Dict[str, str] = {}
+        for r in cur.fetchall():
+            kalemler[str(r["kalem_kodu"])] = r.get("kalem_adi") or str(r["kalem_kodu"])
+    satirlar = []
+    for kod in sorted(set(kalemler) | set(oran_map), key=lambda k: (kalemler.get(k) or oran_map.get(k, ("",0))[0] or k)):
+        ad = kalemler.get(kod) or (oran_map.get(kod, (None,))[0]) or kod
+        oran = oran_map.get(kod, (None, 0.10))[1]
+        satirlar.append({"kalem_kodu": kod, "kalem_adi": ad,
+                         "kdv_oran": oran, "kdv_yuzde": round(oran * 100, 2),
+                         "tanimli": kod in oran_map})
+    return {"satirlar": satirlar, "toplam": len(satirlar), "varsayilan_yuzde": 10}
+
+
+class KdvOranBody(BaseModel):
+    kalem_kodu: str
+    kalem_adi: Optional[str] = None
+    kdv_yuzde: float   # 1 / 10 / 20 gibi
+
+
+@router.post("/maliyet/kdv-oran-kaydet")
+def ops_maliyet_kdv_oran_kaydet(body: KdvOranBody):
+    """Bir kalemin KDV oranını kaydeder/günceller (yüzde girilir, orana çevrilir)."""
+    kod = (body.kalem_kodu or "").strip()
+    if not kod:
+        raise HTTPException(400, "kalem_kodu zorunlu")
+    try:
+        yuzde = float(body.kdv_yuzde)
+    except (TypeError, ValueError):
+        raise HTTPException(400, "Geçerli bir KDV yüzdesi girin")
+    if yuzde < 0 or yuzde > 40:
+        raise HTTPException(400, "KDV yüzdesi 0–40 arası olmalı (TR: 1/10/20)")
+    oran = round(yuzde / 100.0, 4)
+    with db() as (conn, cur):
+        _ensure_maliyet_tablolari(cur)
+        cur.execute("""
+            INSERT INTO kalem_kdv_oran (kalem_kodu, kalem_adi, kdv_oran, guncelleme)
+            VALUES (%s, %s, %s, NOW())
+            ON CONFLICT (kalem_kodu) DO UPDATE SET
+                kalem_adi=COALESCE(EXCLUDED.kalem_adi, kalem_kdv_oran.kalem_adi),
+                kdv_oran=EXCLUDED.kdv_oran, guncelleme=NOW()
+        """, (kod, body.kalem_adi, oran))
+    return {"success": True, "kalem_kodu": kod, "kdv_oran": oran, "kdv_yuzde": yuzde}
+
+
+@router.get("/maliyet/stopaj-ozet")
+def ops_maliyet_stopaj_ozet():
+    """Kira stopaj özeti (2026-07-05): stopaj_oran>0 olan aktif sabit giderlerin aylık
+    ödenecek stopajı. Brüt kira P&L gideri (değişmez); stopaj = brüt × oran vergi dairesine,
+    net = brüt − stopaj mülk sahibine. Bu uç sadece 'ne kadar stopaj öderim' bilgisini toplar."""
+    with db() as (conn, cur):
+        try:
+            cur.execute("""
+                SELECT id::text AS id, gider_adi, tutar, COALESCE(stopaj_oran,0) AS oran, sube_id::text AS sube_id
+                FROM sabit_giderler
+                WHERE aktif=TRUE AND COALESCE(stopaj_oran,0) > 0 AND COALESCE(tutar,0) > 0
+                ORDER BY tutar DESC
+            """)
+            rows = cur.fetchall()
+        except Exception:
+            rows = []
+    satirlar = []
+    t_brut = t_stopaj = 0.0
+    for r in rows:
+        brut = float(r["tutar"] or 0)
+        oran = float(r["oran"] or 0)
+        stopaj = round(brut * oran, 2)
+        net = round(brut - stopaj, 2)
+        satirlar.append({
+            "id": r["id"], "gider_adi": r["gider_adi"], "sube_id": r.get("sube_id"),
+            "brut_tl": round(brut, 2), "stopaj_oran": oran, "stopaj_yuzde": round(oran * 100, 1),
+            "stopaj_tl": stopaj, "net_odenecek_tl": net,
+        })
+        t_brut += brut; t_stopaj += stopaj
+    return {
+        "satirlar": satirlar, "adet": len(satirlar),
+        "toplam_brut_tl": round(t_brut, 2),
+        "toplam_stopaj_tl": round(t_stopaj, 2),
+        "toplam_net_tl": round(t_brut - t_stopaj, 2),
+        "not": "Brüt kira P&L gideridir (değişmez). Stopaj = brüt × oran → vergi dairesine (muhtasar). "
+               "Net = brüt − stopaj → mülk sahibine. Şahıstan işyeri kirasında oran %20.",
     }
 
 
