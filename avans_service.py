@@ -254,6 +254,10 @@ def avans_talep(body: AvansTalepModel):
         raise HTTPException(400, "Tutar 0'dan büyük olmalı")
     with db() as (conn, cur):
         _tablolar_garantile(cur)
+        # FIX AV2 (2026-07-06): personel bazlı yarış kilidi — eşzamanlı iki talep ikisi de
+        # "bekleyen yok" görüp tavanın toplamda aşılmasına yol açabiliyordu. Transaction-scoped
+        # advisory lock istekleri sıraya sokar; ikincisi aşağıdaki bekleyen-talep kontrolüne takılır.
+        cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"avans_talep:{body.personel_id}",))
         cur.execute("SELECT * FROM personel WHERE id=%s AND aktif=TRUE", (body.personel_id,))
         p = cur.fetchone()
         if not p:
@@ -323,8 +327,22 @@ def avans_onayla(aid: str, body: AvansOnayModel):
         r = _avans_getir(cur, aid)
         if r["durum"] != "talep":
             raise HTTPException(400, f"Bu kayıt '{r['durum']}' durumda — sadece bekleyen talep onaylanır")
-        cur.execute("SELECT ad_soyad FROM personel WHERE id=%s", (r["personel_id"],))
-        ad = (cur.fetchone() or {}).get("ad_soyad") or "Personel"
+        cur.execute("SELECT * FROM personel WHERE id=%s AND aktif=TRUE", (r["personel_id"],))
+        p_onay = cur.fetchone()
+        if not p_onay:
+            raise HTTPException(400, "Personel pasif — avans onaylanamaz (talebi reddedin)")
+        ad = (dict(p_onay).get("ad_soyad") or "Personel").strip() or "Personel"
+        # FIX AV2 (2026-07-06): onayda tavan RE-CHECK — talep anı ile onay anı arasında hakediş/
+        # dönem değişmiş olabilir. 'talep' durumu _AKTIF_DURUMLAR'da olduğundan kullanilan bu
+        # talebin tutarını AYNI dönemde zaten içerir → aynı dönemde kural "kullanilan > tavan";
+        # dönem değiştiyse (ay atladı) bu talep yeni dönem toplamında yoktur → tutar eklenerek bakılır.
+        _lim = _tavan_hesapla(cur, dict(p_onay))
+        _ayni_donem = (int(_lim["donem_yil"]), int(_lim["donem_ay"])) == (int(r["donem_yil"]), int(r["donem_ay"]))
+        _toplam = _lim["kullanilan"] if _ayni_donem else _lim["kullanilan"] + float(r["tutar"])
+        if _toplam > _lim["tavan"] + 0.005:
+            raise HTTPException(400,
+                f"Onay anında tavan aşılıyor: dönem toplamı {_toplam:,.0f} ₺ > tavan {_lim['tavan']:,.0f} ₺. "
+                f"Hakediş/dönem talep sonrası değişti — talebi reddedip güncel tavanla yeniden açtırın.")
         if yontem == "havale":
             # Onay = ödeme anı: kasa izi ŞİMDİ yazılır ("kasa izi = tek gerçek")
             insert_kasa_hareketi(cur, str(bugun), "PERSONEL_AVANS", -abs(float(r["tutar"])),

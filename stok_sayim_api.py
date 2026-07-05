@@ -224,6 +224,9 @@ def gorev_ata(body: GorevAtaBody):
 
     with db() as (_, cur):
         _ensure_tablolar(cur)
+        # FIX S1 (2026-07-06): şube bazlı yarış kilidi — eşzamanlı iki atama isteği ikisi de
+        # "aktif görev yok" görüp çift görev açabiliyordu; transaction-scoped advisory lock sıraya sokar.
+        cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"stok_sayim_ata:{sube_id}",))
         # Aynı personelde zaten aktif sayım görevi varsa engelle (çift atama)
         cur.execute(
             "SELECT id FROM stok_sayim_gorev WHERE sube_id=%s AND personel_id=%s AND durum IN ('atandi','basladi') LIMIT 1",
@@ -231,6 +234,16 @@ def gorev_ata(body: GorevAtaBody):
         )
         if cur.fetchone():
             raise HTTPException(409, "Bu personelde zaten aktif bir sayım görevi var")
+        # FIX S1 (2026-07-06): aynı şubede aktif TAM sayım varken ikinci TAM sayım açılamaz —
+        # iki tam sayım aynı stok gerçeğini iki elden yazar, geç gelen erkenki sonucu ezer
+        # (kalibrasyon güvenilmez olur). Set (kısmi) sayımlar etkilenmez.
+        if kapsam == "tam":
+            cur.execute(
+                "SELECT id FROM stok_sayim_gorev WHERE sube_id=%s AND kapsam_tip='tam' AND durum IN ('atandi','basladi') LIMIT 1",
+                (sube_id,),
+            )
+            if cur.fetchone():
+                raise HTTPException(409, "Bu şubede zaten aktif bir TAM sayım görevi var — bitmeden ikincisi açılamaz")
 
         # Personel adı + telefon (telefon → atama sonrası otomatik WhatsApp)
         personel_ad = None
