@@ -115,6 +115,14 @@ except Exception as _belge_talep_err:
     )
 app.include_router(stok_sayim_router)
 app.include_router(supplier_payment_router)
+# K1 kart-ödeme tanısı — İZOLE mutabakat toplayıcı (salt-okur tarama + önizleme-varsayılan onarım)
+try:
+    from k1_kart_odeme_tani import router as k1_tani_router
+    app.include_router(k1_tani_router)
+except Exception as _k1_err:
+    logging.getLogger(__name__).warning(
+        f"k1_kart_odeme_tani modulu yuklenemedi (izole, ana akis etkilenmez): {_k1_err}"
+    )
 # Avans Servisi — İZOLE mini bordro-finans köprüsü (talep→onay→teslim→mahsup).
 # Kasa izini (PERSONEL_AVANS) SADECE bu servis yazar; maaş motoru sadece OKUR.
 try:
@@ -8228,6 +8236,16 @@ def kismi_odeme_yap(oid: str, body: KismiOdeModel):
             cur.execute("UPDATE odeme_plani SET durum='odendi', odeme_tarihi=%s, odenen_tutar=%s WHERE id=%s",
                 (bugun, odenen, oid))
 
+        # FIX K1 (2026-07-06): ödeme-olayı sıra kimliği — plan + kümülatif kuruş, deterministik.
+        # Kart kesim planı birden çok kısmi ödemeye açık kalır; eskiden kart ODEME satırı sabit
+        # id=f"kodm_{oid}" + ON CONFLICT ile yazıldığından 2. ödeme kart borcunu DÜŞÜRMÜYORDU
+        # (nakit kasadan yine çıkıyordu → borç kalıcı şişik). Kasa idempotency anahtarı da
+        # ref_id=oid+tarih+tutar'dan türediği için aynı gün aynı tutarlı 2. ödeme kasada sessizce
+        # yutulup plan sayacı yine artıyordu. Artık İKİ defter de bu sıra kimliğinden türer:
+        # meşru yeni ödeme → kümülatif değişir → ikisi de yazar; commit-öncesi kopan birebir
+        # retry → kümülatif aynı → ikisi de idempotent atlar. Defterler hep senkron.
+        _odeme_seq = int(round((yeni_total_odenen if is_kart_plan else odenen) * 100))
+
         # Eski plana ait TUM acik onaylari kapat
         # Hem plan_id hem de kaynağın id'si (sabit_gider, personel vb.) ile ara
         _kaynak_id = plan.get('kaynak_id') or oid
@@ -8274,6 +8292,10 @@ def kismi_odeme_yap(oid: str, body: KismiOdeModel):
                 kasa_kid,
                 oid,
                 "KISMI_ODE",
+                # FIX K1: dedup anahtarı ödeme-olayı bazlı — aynı plana aynı gün aynı tutarlı
+                # 2. MEŞRU ödeme artık sessizce yutulmaz (kümülatif seq farklı), birebir retry
+                # ise yine idempotent (aynı seq → aynı anahtar).
+                idempotency_key=f"kismi|{oid}|{_odeme_seq}",
             )
 
         # Kaynak vadeli_alimlar ise tutarı ve vadeyi güncelle (kapatma — kalan borç devam ediyor)
@@ -8339,7 +8361,11 @@ def kismi_odeme_yap(oid: str, body: KismiOdeModel):
                 VALUES (%s, %s, %s, 'ODEME', %s, %s, %s, 'odeme_plani')
                 ON CONFLICT DO NOTHING
             """, (
-                f"kodm_{oid}",
+                # FIX K1: id ödeme-olayı bazlı (eskiden plan-bazlı sabit kodm_{oid} idi →
+                # 2. kısmi ödeme ON CONFLICT'e takılıp kart borcunu düşürmüyordu).
+                # Kasa dedup anahtarıyla AYNI seq → iki defter senkron. Birebir retry'da
+                # aynı seq → ON CONFLICT yine korur.
+                f"kodm_{oid}_{_odeme_seq}",
                 plan['kart_id'],
                 bugun,
                 abs(odenen),
