@@ -9,10 +9,12 @@ from database import db
 router = APIRouter()
 
 # Sistem başlangıç tarihi - bu tarihten önceki veriler hesaba katılmaz
-# Başlangıç günü (10 Haziran): o gün çalışan herkes tam+doğru çalışmış sayılır
 # (gecikme=0, fazla mesai=0, yemek=tam, haftalık izin=var)
+# FIX M3 (2026-07-05): yıl 2025 YANLIŞTI → Haziran 2026 öncesi dönemler clamp'lenmeyip
+# maaş hesabına giriyordu. motors.py:12, finans_core, main.py hepsi 2026-06-01 kullanıyor;
+# bu tek sapan tanım tutarlı hale getirildi (sistem gerçekten 1 Haziran 2026'da başladı).
 from datetime import date as _SYSTEM_DATE
-SISTEM_BASLANGIC = _SYSTEM_DATE(2025, 6, 1)
+SISTEM_BASLANGIC = _SYSTEM_DATE(2026, 6, 1)
 
 SABLON_SEED = [
     # (vardiya_tip, sira, alan, gorev, siklik)

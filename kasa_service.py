@@ -132,11 +132,18 @@ def iptal_kasa_hareketi(cur, kaynak_id, kaynak_tablo, islem_turu, iptal_turu, ac
 
     net_tutar = sum(float(m["tutar"]) for m in mevcutlar)
     _kasa_etkisi = KASA_IPTAL_MAP.get(iptal_turu, True)
+    # FIX A1 (2026-07-05): ters kayda idempotency_key. KURAL 2 (yukarıda) normal çift-iptali
+    # yakalar; bu anahtar EŞZAMANLI iki iptalin (race condition) çift ters-kayıt yazmasını da
+    # kesin keser — insert_kasa_hareketi ile aynı ON CONFLICT deseni.
+    _iptal_idem = hashlib.sha256(
+        f"v2|iptal|{iptal_turu}|{kaynak_tablo}|{kaynak_id}".encode("utf-8")
+    ).hexdigest()
     cur.execute(
         """
         INSERT INTO kasa_hareketleri
-            (id, tarih, islem_turu, tutar, aciklama, kaynak_tablo, kaynak_id, ref_id, ref_type, kasa_etkisi)
-        VALUES (%s, CURRENT_DATE, %s, %s, %s, %s, %s, %s, %s, %s)
+            (id, tarih, islem_turu, tutar, aciklama, kaynak_tablo, kaynak_id, ref_id, ref_type, kasa_etkisi, idempotency_key)
+        VALUES (%s, CURRENT_DATE, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (idempotency_key) DO NOTHING
     """,
         (
             str(uuid.uuid4()),
@@ -148,11 +155,13 @@ def iptal_kasa_hareketi(cur, kaynak_id, kaynak_tablo, islem_turu, iptal_turu, ac
             str(uuid.uuid4()),
             kaynak_tablo.upper(),
             _kasa_etkisi,
+            _iptal_idem,
         ),
     )
 
-    if cur.rowcount == 0:
-        raise Exception(f"İptal kaydı yazılamadı — {iptal_turu} / {kaynak_id}")
+    # ON CONFLICT ile rowcount=0 artık HATA DEĞİL — aynı iptal zaten yazılmış (idempotent
+    # başarı). KURAL 2 normal çift-iptali zaten yukarıda yakaladığı için buraya yalnızca
+    # eşzamanlı çift-çağrı düşer; sessizce başarı kabul edilir.
 
 
 def vadeli_kasadan_odenen_toplam(cur, vadeli_id: str) -> float:
