@@ -445,13 +445,16 @@ def _yarin_odemeler(cur, tarih: date) -> list:
     # 2. sabit_giderler degisken tipi — motors.py ile aynı mantık
     # odeme_gunu <= yarin.day + 3 (panel ile aynı pencere)
     import calendar as _cal
-    yarin_gun = yarin.day
+    # FIX WA2 (2026-07-06): ay sonu sarması — BETWEEN yarin_gun AND yarin_gun+3, gün numarası ayı
+    # aşınca (29/30/31 → 32...) ayın 1-3'ünde ödenen değişken giderleri pencereden düşürüyordu.
+    # Gerçek sonraki 4 takvim gününün gün-numaralarını üret (sarma-doğru).
+    gun_pencere = sorted({(yarin + timedelta(days=i)).day for i in range(4)})
     cur.execute("""
         SELECT id, gider_adi, odeme_gunu, tutar
         FROM sabit_giderler
         WHERE aktif = TRUE AND tip = 'degisken'
-          AND odeme_gunu BETWEEN %s AND %s
-    """, (yarin_gun, yarin_gun + 3))
+          AND odeme_gunu = ANY(%s)
+    """, (gun_pencere,))
     for g in (cur.fetchall() or []):
         # Bu ay zaten ödendi mi?
         cur.execute("""
