@@ -9100,9 +9100,12 @@ def _sinyal_vektor_cikar(
     kasa_k    = next((k for k in kontroller if k.get("kod") == "sabah_kasasi"), {})
     devir_k   = next((k for k in kontroller if k.get("kod") == "aksam_devir"),  {})
     gece_k    = next((k for k in kontroller if k.get("kod") == "gece_bardak"),  {})
-    sut_k     = next((k for k in kontroller if k.get("kod") == "sut_sapma"),    {})
-    vardiya_k = next((k for k in kontroller if k.get("kod") == "vardiya_bardak"), {})
-    birikim_k = next((k for k in kontroller if k.get("kod") == "birikim"),      {})
+    # FIX T8 (2026-07-05): kod isimleri kontroller listesindekiyle EŞLEŞMİYORDU → 3 sinyal
+    # (süt/vardiya-bardak/birikim) Bayesian modele HİÇ ULAŞMIYORDU (durum hep "ok"). Gerçek
+    # üretilen kodlar: sut_kullanimi / aksam_vardiya_bardak / kasa_birikim_trendi.
+    sut_k     = next((k for k in kontroller if k.get("kod") == "sut_kullanimi"),        {})
+    vardiya_k = next((k for k in kontroller if k.get("kod") == "aksam_vardiya_bardak"), {})
+    birikim_k = next((k for k in kontroller if k.get("kod") == "kasa_birikim_trendi"),  {})
 
     kasa_durum    = kasa_k.get("durum", "ok")
     devir_durum   = devir_k.get("durum", "ok")
@@ -9688,9 +9691,19 @@ def gunluk_tam_analiz(
         pass
 
     # Evo tani — teyit kontrollerinden çek
+    # FIX T8 (2026-07-05): kod "evo" değil "evo_teyit"; ayrıca state_key ("evo_teyit.sweethearting")
+    # ile _sinyal_vektor_cikar'ın beklediği tani kodları ("SWEETHEARTING_SINYAL") uyuşmuyordu →
+    # evo sinyali hiç girmiyordu. state_key son ekini kanonik tani koduna eşle.
     kontroller = teyit.get("kontroller") or []
-    evo_k    = next((k for k in kontroller if k.get("kod") == "evo"), {})
-    evo_tani = (evo_k.get("state_key") or "").replace("evo.", "") or None
+    evo_k    = next((k for k in kontroller if k.get("kod") == "evo_teyit"), {})
+    _EVO_SK_TANI = {
+        "uyumlu": "UYUMLU", "motor_yok": "YETERSIZ_VERI", "cozulmedi": "YETERSIZ_VERI",
+        "sweethearting": "SWEETHEARTING_SINYAL", "stok_kacagi": "STOK_KACAGI_BEYANSIZ",
+        "ikram_evo_teyit": "IKRAM_EVO_TEYIT", "ikram_unutuldu": "IKRAM_SURDURULEN",
+        "zimmet_nakit": "ZIMMET_IPTAL_MANIPULASYON", "sabah_hatali": "SABAH_HATALI",
+    }
+    _evo_sk_son = (evo_k.get("state_key") or "").split(".")[-1]
+    evo_tani = _EVO_SK_TANI.get(_evo_sk_son, (_evo_sk_son.upper() if _evo_sk_son else None))
 
     # 3. Sinyal vektörü
     sinyal = _sinyal_vektor_cikar(teyit, sprint_g, sprint_h, sprint_i, sprint_j, evo_tani)
