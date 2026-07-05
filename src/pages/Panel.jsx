@@ -12,6 +12,7 @@ export default function Panel({ onNavigate }) {
   const [uyarilar, setUyarilar] = useState([]);
   const [onaylar, setOnaylar] = useState([]);
   const [anomali, setAnomali] = useState(null);
+  const [avansOzet, setAvansOzet] = useState(null); // {bekleyen_adet, bu_ay_odenen, teslim_bekleyen_adet...}
   const [loading, setLoading] = useState(true);
   const [odemeModal, setOdemeModal] = useState(null);
   const [hizliModal, setHizliModal] = useState(null);
@@ -241,7 +242,8 @@ export default function Panel({ onNavigate }) {
       api('/sabit-giderler/odenenler').catch(() => null),
       api('/vadeli-alimlar/ozet').catch(() => null),
       api('/gorev/izin-alacagi').catch(() => null),
-    ]).then(([p, u, o, a, sg, su, og, vo, ia]) => {
+      api('/avans/ozet').catch(() => null),
+    ]).then(([p, u, o, a, sg, su, og, vo, ia, av]) => {
       if (p) {
         setPanel(p);
         // 🧾 AÇILIŞ YAKALAYICI (kullanıcı 2026-07-04): vadesi gelmiş/geçmiş ve tutarı
@@ -262,6 +264,7 @@ export default function Panel({ onNavigate }) {
       setOdenenGiderler(og || []);
       setVadeliOzet(vo || {});
       setIzinAlacagi((ia?.personeller || []).filter(p => p.net_alacak_gun > 0));
+      setAvansOzet(av || null);
       setLoading(false);
     }).catch((e) => {
       console.error("PANEL LOAD ERROR:", e);
@@ -1192,6 +1195,32 @@ export default function Panel({ onNavigate }) {
       {/* ── 2-KOLON LAYOUT: Sol = Ana İçerik, Sağ = Bildirim Paneli ── */}
       <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
       <div style={{ flex: 1, minWidth: 0 }}>
+
+      {/* ── 🤝 AVANS FARKINDALIK ŞERİDİ (CFO görünürlüğü — onay Cep'ten yapılır) ── */}
+      {avansOzet && (avansOzet.bekleyen_adet > 0 || avansOzet.teslim_bekleyen_adet > 0 || avansOzet.bu_ay_odenen > 0) && (
+        <div style={{
+          display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 12, marginBottom: 12,
+          padding: '8px 14px', borderRadius: 10,
+          background: avansOzet.bekleyen_adet > 0 ? 'rgba(245,158,11,0.07)' : 'var(--bg3)',
+          border: `1px solid ${avansOzet.bekleyen_adet > 0 ? 'rgba(245,158,11,0.3)' : 'var(--border)'}`,
+        }}>
+          <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text2)' }}>🤝 Avans</span>
+          {avansOzet.bekleyen_adet > 0 && (
+            <span style={{ fontSize: 12, color: 'var(--orange)', fontWeight: 600 }}>
+              {avansOzet.bekleyen_adet} onay bekliyor · {fmt(avansOzet.bekleyen_tutar)}
+            </span>
+          )}
+          {avansOzet.teslim_bekleyen_adet > 0 && (
+            <span style={{ fontSize: 12, color: 'var(--text3)' }}>
+              {avansOzet.teslim_bekleyen_adet} teslim/onay bekliyor · {fmt(avansOzet.teslim_bekleyen_tutar)}
+            </span>
+          )}
+          <span style={{ fontSize: 12, color: 'var(--text3)', marginLeft: 'auto' }}>
+            Bu ay ödenen avans: <strong style={{ color: 'var(--text1)', fontFamily: 'var(--font-mono)' }}>{fmt(avansOzet.bu_ay_odenen)}</strong>
+            <span style={{ fontSize: 10.5, marginLeft: 6, opacity: 0.7 }}>· onay telefondan</span>
+          </span>
+        </div>
+      )}
 
       {/* ── ÖDEME PİLLERİ: GECİKMİŞLER ÖNDE (kırmızı) + YAKLAŞANLAR ── */}
       {(yaklaşanPill.length > 0 || gecikmişPill.length > 0) && (

@@ -2702,6 +2702,19 @@ function CepAvans({ onGeri, onDegisti }) {
     finally { setIslem(s => ({ ...s, [id]: false })); }
   }
 
+  function iptalEt(id) {
+    const neden = prompt('Bu avans talebini iptal et — sebep (opsiyonel):');
+    if (neden === null) return; // vazgeçildi
+    aksiyon(id, 'iptal', { neden: neden || null });
+  }
+
+  function tersKayit(id) {
+    const neden = prompt('TERS KAYIT — para çıktı, geri alınıyor. Sebep (zorunlu):');
+    if (!neden || !neden.trim()) { if (neden !== null) alert('Ters kayıt için sebep zorunlu'); return; }
+    if (!confirm('Kasaya geri iz yazılacak ve mahsuptan düşecek. Onaylıyor musun?')) return;
+    aksiyon(id, 'ters-kayit', { neden: neden.trim() });
+  }
+
   const AV_TR = { talep: 'Onay bekliyor', onaylandi: 'Şubede teslim bekleniyor', teslim_edildi: 'Personelin "aldım" onayı bekleniyor' };
 
   return (
@@ -2761,10 +2774,25 @@ function CepAvans({ onGeri, onDegisti }) {
               </>
             )}
             {a.durum === 'onaylandi' && (
-              <button disabled={islem[a.id]} onClick={() => aksiyon(a.id, 'teslim-et', {})}
-                style={{ width: '100%', padding: '10px', borderRadius: 10, border: 'none', background: C.mavi, color: '#fff', fontWeight: 800, fontSize: 13, cursor: 'pointer' }}>
-                🤝 Teslim Edildi (kasadan çıktı)
-              </button>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button disabled={islem[a.id]} onClick={() => aksiyon(a.id, 'teslim-et', {})}
+                  style={{ flex: 1, padding: '10px', borderRadius: 10, border: 'none', background: C.mavi, color: '#fff', fontWeight: 800, fontSize: 13, cursor: 'pointer' }}>
+                  🤝 Teslim Edildi (kasadan çıktı)
+                </button>
+                <button disabled={islem[a.id]} onClick={() => iptalEt(a.id)}
+                  style={{ padding: '10px 12px', borderRadius: 10, border: `1px solid ${C.border}`, background: 'transparent', color: C.t3, fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>
+                  İptal
+                </button>
+              </div>
+            )}
+            {a.durum === 'teslim_edildi' && (
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <span style={{ flex: 1, fontSize: 11.5, color: C.t3 }}>Personelin "aldım" onayı bekleniyor — para çıktı.</span>
+                <button disabled={islem[a.id]} onClick={() => tersKayit(a.id)}
+                  style={{ padding: '9px 12px', borderRadius: 10, border: `1px solid ${C.kirmizi}55`, background: 'transparent', color: C.kirmizi, fontWeight: 700, fontSize: 12, cursor: 'pointer' }}>
+                  ↩ Ters Kayıt
+                </button>
+              </div>
             )}
           </div>
         ))}

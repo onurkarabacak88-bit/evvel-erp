@@ -453,6 +453,60 @@ def avans_personel_onay(aid: str, body: AvansPersonelOnayModel):
     return {"success": True, "durum": "odendi"}
 
 
+@router.get("/api/avans/ozet")
+def avans_ozet():
+    """CFO masaüstü paneli için avans farkındalık özeti: bekleyen talep + teslim bekleyen
+    + bu takvim ayı fiilen ödenen avans (kasa çıkışı). Salt-okur, hata-yutar tasarım."""
+    bugun = bugun_tr()
+    with db() as (conn, cur):
+        _tablolar_garantile(cur)
+        cur.execute(
+            """SELECT
+                   COUNT(*) FILTER (WHERE durum='talep')                     AS bekleyen_adet,
+                   COALESCE(SUM(tutar) FILTER (WHERE durum='talep'),0)        AS bekleyen_tutar,
+                   COUNT(*) FILTER (WHERE durum IN ('onaylandi','teslim_edildi')) AS teslim_bekleyen_adet,
+                   COALESCE(SUM(tutar) FILTER (WHERE durum IN ('onaylandi','teslim_edildi')),0) AS teslim_bekleyen_tutar,
+                   COUNT(*) FILTER (WHERE durum IN ('teslim_edildi','odendi')
+                       AND COALESCE(odeme_ts, teslim_ts) >= %s)              AS bu_ay_adet,
+                   COALESCE(SUM(tutar) FILTER (WHERE durum IN ('teslim_edildi','odendi')
+                       AND COALESCE(odeme_ts, teslim_ts) >= %s),0)          AS bu_ay_odenen
+               FROM personel_avans""",
+            (date(bugun.year, bugun.month, 1), date(bugun.year, bugun.month, 1)),
+        )
+        r = dict(cur.fetchone() or {})
+    return {
+        "bekleyen_adet": int(r.get("bekleyen_adet") or 0),
+        "bekleyen_tutar": float(r.get("bekleyen_tutar") or 0),
+        "teslim_bekleyen_adet": int(r.get("teslim_bekleyen_adet") or 0),
+        "teslim_bekleyen_tutar": float(r.get("teslim_bekleyen_tutar") or 0),
+        "bu_ay_adet": int(r.get("bu_ay_adet") or 0),
+        "bu_ay_odenen": float(r.get("bu_ay_odenen") or 0),
+    }
+
+
+class AvansIptalModel(BaseModel):
+    neden: Optional[str] = None
+
+
+@router.post("/api/avans/{aid}/iptal")
+def avans_iptal(aid: str, body: AvansIptalModel = AvansIptalModel()):
+    """Para ÇIKMADAN geri çekme (talep veya elden-onaylı ama henüz teslim edilmemiş).
+    Para çıkmış (teslim_edildi/odendi) kayıt için ters-kayıt gerekir. Reddet'ten farkı:
+    iptal personel/sahip tarafından 'vazgeçildi' anlamı taşır, reddet sahip retidir."""
+    with db() as (conn, cur):
+        _tablolar_garantile(cur)
+        r = _avans_getir(cur, aid)
+        if r["durum"] not in ("talep", "onaylandi"):
+            raise HTTPException(400, "Para çıkmış avans iptal edilemez — ters kayıt kullanın")
+        cur.execute(
+            "UPDATE personel_avans SET durum='iptal', not_aciklama=COALESCE(%s, not_aciklama) WHERE id=%s",
+            (body.neden, aid),
+        )
+        _event(cur, aid, "IPTAL", {"neden": body.neden})
+        audit(cur, "personel_avans", aid, "IPTAL")
+    return {"success": True, "durum": "iptal"}
+
+
 class AvansTersModel(BaseModel):
     neden: str
     onaylayan: Optional[str] = None
