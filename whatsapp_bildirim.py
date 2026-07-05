@@ -104,6 +104,10 @@ def _sube_ciro_gun(cur, tarih: date) -> dict:
         FROM sube_operasyon_event e
         WHERE e.tip = 'KAPANIS' AND e.durum = 'tamamlandi'
           AND e.tarih = %s
+          -- FIX WA1 (2026-07-06): ertesi-gün event YALNIZ gece penceresinde (TR saat<2) kabul —
+          -- 00:00-02:00 kapanış önceki iş gününe aittir; ertesi gün öğlen/akşam yapılan NORMAL
+          -- kapanış düne sızmasın (geç mühür sızıntısı kuralı whatsapp özetinde uygulanmıyordu).
+          AND EXTRACT(HOUR FROM (e.cevap_ts AT TIME ZONE 'Europe/Istanbul')) < 2
         ORDER BY e.sube_id, e.cevap_ts DESC NULLS LAST, e.id DESC
     """, (tarih + timedelta(days=1),))
     for r in (cur.fetchall() or []):
@@ -174,7 +178,9 @@ def _sube_nakit_gun(cur, tarih: date) -> dict:
                e.sube_id::text, e.snap_nakit, e.snap_pos, e.snap_online, e.meta
         FROM sube_operasyon_event e
         WHERE e.tip = 'KAPANIS' AND e.durum = 'tamamlandi'
-          AND e.tarih IN (%s, %s)
+          -- FIX WA1 (2026-07-06): bugün her saat; ertesi gün YALNIZ gece penceresi (TR saat<2)
+          AND (e.tarih = %s
+               OR (e.tarih = %s AND EXTRACT(HOUR FROM (e.cevap_ts AT TIME ZONE 'Europe/Istanbul')) < 2))
         ORDER BY e.sube_id, e.cevap_ts DESC NULLS LAST, e.id DESC
     """, (tarih, tarih + timedelta(days=1)))
     for r in (cur.fetchall() or []):
@@ -327,7 +333,9 @@ def _vardiya_personel(cur, tarih: date) -> dict:
                (e.cevap_ts AT TIME ZONE 'Europe/Istanbul') AS ts
         FROM sube_operasyon_event e
         WHERE e.tip = 'KAPANIS' AND e.durum = 'tamamlandi'
-          AND e.tarih IN (%s, %s)
+          -- FIX WA1 (2026-07-06): bugün her saat; ertesi gün YALNIZ gece penceresi (TR saat<2)
+          AND (e.tarih = %s
+               OR (e.tarih = %s AND EXTRACT(HOUR FROM (e.cevap_ts AT TIME ZONE 'Europe/Istanbul')) < 2))
         ORDER BY e.sube_id, e.cevap_ts DESC NULLS LAST, e.id DESC
     """, (tarih, tarih + timedelta(days=1)))
     kapanis_map = {}

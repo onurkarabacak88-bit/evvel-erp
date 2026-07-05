@@ -2198,7 +2198,8 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
             # aralık. İlk/son ay için "gecen_gun" bu aralığa göre PRORATE
             # edilir (örn. ayın 15'inde başlayan personel ~15/30 gün alır),
             # aksi halde işe başlamadan önceki günler de maaşa dahil olur.
-            _bugun_t = _date.today()
+            from tr_saat import dt_now_tr as _dnt_m4  # FIX M4 (2026-07-06)
+            _bugun_t = _dnt_m4().date()  # TR takvim günü — _date.today() UTC sunucuda TR 00:00-03:00 arası 1 gün geride → hakediş 1 gün eksik/fazla sayılabiliyordu
             if (yil, ay) == (_bugun_t.year, _bugun_t.month):
                 gun_sonu  = min(_bugun_t, p_d2)
                 ay_tamam  = False
@@ -2388,8 +2389,9 @@ def izin_alacagi(personel_id: Optional[str] = None):
     """
     from datetime import date as _date, timedelta as _td
     from calendar import monthrange
+    from tr_saat import dt_now_tr as _dnt_m4  # FIX M4 (2026-07-06)
 
-    bugun = _date.today()
+    bugun = _dnt_m4().date()  # TR takvim günü (UTC _date.today() TR gece yarısı sonrası 1 gün geride)
     d1 = SISTEM_BASLANGIC
 
     with db() as (conn, cur):
