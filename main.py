@@ -1898,6 +1898,14 @@ def anlik_gider_sil(gid: str):
             # NAKİT — ters kasa kaydı
             iptal_kasa_hareketi(cur, gid, 'anlik_giderler', 'ANLIK_GIDER', 'ANLIK_GIDER_IPTAL', 'Anlık gider iptali')
         audit(cur, 'anlik_giderler', gid, 'IPTAL', eski=eski)
+        # FIX KP3 (2026-07-05): nakit gider iptali nakit_giderler'i değiştirir → o günün kapanış
+        # farkını tazele (yanlış zimmet önlenir). anlik_giderler.sube = kapanış farkı sorgusunun
+        # (kasa_fark_recalc) kullandığı değerle aynı. Kart gideri ise / uyarı yoksa no-op. Hata-yutar.
+        try:
+            from kasa_fark_recalc import sube_gun_kapanis_recalc
+            sube_gun_kapanis_recalc(cur, eski.get('sube'), eski['tarih'])
+        except Exception:
+            pass
     return {"success": True}
 
 # ── KARTLAR ────────────────────────────────────────────────────
@@ -4457,6 +4465,14 @@ def ciro_sil(cid: str):
         iptal_kasa_hareketi(cur, cid, 'ciro', 'CIRO', 'CIRO_IPTAL', 'Ciro iptali')
 
         audit(cur, 'ciro', cid, 'IPTAL', eski=eski)
+        # FIX KP3 (2026-07-05): ciro iptali z_nakit'i (ciro.nakit) değiştirir → o günün kapanış
+        # farkını tazele (masum personele eski/yanlış zimmet kalmasın). Tek tetikleme noktası;
+        # uyarı yoksa no-op. Hata-yutar: recalc sorunu ciro iptalini bozmasın.
+        try:
+            from kasa_fark_recalc import sube_gun_kapanis_recalc
+            sube_gun_kapanis_recalc(cur, eski['sube_id'], eski['tarih'])
+        except Exception:
+            pass
     return {"success": True}
 
 # ── PERSONEL ───────────────────────────────────────────────────
