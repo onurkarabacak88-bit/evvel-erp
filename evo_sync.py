@@ -2286,6 +2286,23 @@ def _evvel_sube_evo_payload_eslestir(
     return None
 
 
+def evvel_sube_evo_id_eslestir(sube_adi_evvel: str) -> Optional[int]:
+    """Evvel şube adı → EVO_SUBE_ID_MAP id'si — Türkçe-güvenli anahtar + TEMA alias.
+
+    FIX T5 (2026-07-06): truth_motor'daki 5 kopya .lower() substring eşleşmesi hem Türkçe
+    büyük-İ tuzağına düşüyor (KÖYCEĞİZ eşleşmez) hem TEMA=Gazze alias'ını bilmiyordu →
+    yanlış/boş şube eşleşmesi. ID eşleşmesi de artık bu tek merkezden."""
+    evvel_key = _sube_ad_eslesme_anahtar(sube_adi_evvel)
+    if not evvel_key:
+        return None
+    adaylar = [evvel_key, *_SUBE_AD_ALIAS.get(evvel_key, [])]
+    for eid, ead in EVO_SUBE_ID_MAP.items():
+        ekey = _sube_ad_eslesme_anahtar(str(ead or ""))
+        if ekey and any(a in ekey or ekey in a for a in adaylar):
+            return eid
+    return None
+
+
 def evo_bar_adet_by_sube_id(cur: Any, hedef: date) -> Dict[str, Any]:
     """
     Tek gün için şube_id → bar_key → {adet, etiket, grup}.

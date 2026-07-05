@@ -1202,16 +1202,13 @@ def veri_topla(cur, sube_id: str, tarih: str) -> List[BoyutVeri]:
         tarih_d = _d(y, mo, d)
         evo_sonuc = hs_rapor_sube_bazli_cached(tarih_d, tarih_d)
 
-        # Şube eşleşmesi: sube_adi_evvel (örn. "ZAFER" veya "Zafer") ↔ "Zafer Şubesi"
-        evo_sube_payload = None
-        if sube_adi_evvel:
-            # case-insensitive substring eşleşme
-            evvel_lower = sube_adi_evvel.strip().lower().replace("şubesi", "").strip()
-            for ad, payload in (evo_sonuc.get("subeler") or {}).items():
-                evo_lower = ad.strip().lower().replace("şubesi", "").strip()
-                if evvel_lower and (evvel_lower in evo_lower or evo_lower in evvel_lower):
-                    evo_sube_payload = payload
-                    break
+        # FIX T5 (2026-07-06): kırık .lower() substring kopyası (Türkçe İ tuzağı: KÖYCEĞİZ
+        # eşleşmiyordu; TEMA=Gazze alias'ı bilinmiyordu) → evo_sync merkezî eşleştirici.
+        from evo_sync import _evvel_sube_evo_payload_eslestir as _sube_esle_t5
+        evo_sube_payload = (
+            _sube_esle_t5(sube_adi_evvel, evo_sonuc.get("subeler") or {})
+            if sube_adi_evvel else None
+        )
 
         if evo_sube_payload:
             for g, v in (evo_sube_payload.get("gruplar") or {}).items():
@@ -2052,18 +2049,18 @@ def _evo_sube_grup_satis(cur, sube_id: str, tarih: str) -> Dict[str, float]:
         y, mo, dn = (int(x) for x in str(tarih)[:10].split("-"))
         tarih_d = _d(y, mo, dn)
         evo = hs_rapor_sube_bazli_cached(tarih_d, tarih_d)
-        evvel_lower = sube_adi_evvel.strip().lower().replace("şubesi", "").strip()
-        for ad, payload in (evo.get("subeler") or {}).items():
-            elow = ad.strip().lower().replace("şubesi", "").strip()
-            if evvel_lower and (evvel_lower in elow or elow in evvel_lower):
-                gruplar = {}
-                for g, v in (payload.get("gruplar") or {}).items():
-                    gruplar[g] = float(v.get("adet") or 0)
-                gruplar["_nakit"] = float(payload.get("nakit") or 0)
-                gruplar["_kart"] = float(payload.get("kart") or 0)
-                gruplar["_ciro"] = float(payload.get("ciro_toplam") or 0)
-                gruplar["_evo_canli"] = 1.0 if evo.get("canli") else 0.0
-                return gruplar
+        # FIX T5 (2026-07-06): kırık .lower() substring → evo_sync merkezî eşleştirici
+        from evo_sync import _evvel_sube_evo_payload_eslestir as _sube_esle_t5
+        payload = _sube_esle_t5(sube_adi_evvel, evo.get("subeler") or {})
+        if payload:
+            gruplar = {}
+            for g, v in (payload.get("gruplar") or {}).items():
+                gruplar[g] = float(v.get("adet") or 0)
+            gruplar["_nakit"] = float(payload.get("nakit") or 0)
+            gruplar["_kart"] = float(payload.get("kart") or 0)
+            gruplar["_ciro"] = float(payload.get("ciro_toplam") or 0)
+            gruplar["_evo_canli"] = 1.0 if evo.get("canli") else 0.0
+            return gruplar
     except Exception as e:
         try:
             cur.execute("ROLLBACK TO SAVEPOINT sp_evogrup")
@@ -3209,13 +3206,9 @@ def vardiya_bazli_uzlasma(cur, sube_id: str, tarih: str,
 
     evo_sube_id = None
     try:
-        from evo_sync import EVO_SUBE_ID_MAP
-        evvel_lower = sube_adi_evvel.strip().lower().replace("şubesi", "").strip()
-        for eid, ead in EVO_SUBE_ID_MAP.items():
-            elow = ead.strip().lower().replace("şubesi", "").strip()
-            if evvel_lower and (evvel_lower in elow or elow in evvel_lower):
-                evo_sube_id = eid
-                break
+        # FIX T5 (2026-07-06): kırık .lower() substring → evo_sync merkezî id eşleştirici
+        from evo_sync import evvel_sube_evo_id_eslestir
+        evo_sube_id = evvel_sube_evo_id_eslestir(sube_adi_evvel)
     except Exception as _e:
         log.warning("evo_sync import veya şube eşleştirme başarısız sube=%s: %s", sube_id, _e)
 
@@ -3423,13 +3416,12 @@ def bom_recete_varyans(cur, sube_id: str, tarih: str) -> Dict[str, Any]:
         y, mo, dn = (int(x) for x in str(tarih)[:10].split("-"))
         tarih_d = _d(y, mo, dn)
         evo = hs_rapor_sube_bazli_cached(tarih_d, tarih_d)
-        evvel_lower = sube_adi_evvel.strip().lower().replace("şubesi", "").strip()
-        for ad, payload in (evo.get("subeler") or {}).items():
-            elow = ad.strip().lower().replace("şubesi", "").strip()
-            if evvel_lower and (evvel_lower in elow or elow in evvel_lower):
-                for g, v in (payload.get("gruplar") or {}).items():
-                    evo_gruplar[g] = float(v.get("adet") or 0)
-                break
+        # FIX T5 (2026-07-06): kırık .lower() substring → evo_sync merkezî eşleştirici
+        from evo_sync import _evvel_sube_evo_payload_eslestir as _sube_esle_t5
+        payload = _sube_esle_t5(sube_adi_evvel, evo.get("subeler") or {})
+        if payload:
+            for g, v in (payload.get("gruplar") or {}).items():
+                evo_gruplar[g] = float(v.get("adet") or 0)
     except Exception as e:
         log.warning("bom: evo cekilemedi: %s", e)
 
@@ -7177,13 +7169,9 @@ def aksam_vardiya_bardak_pnl(cur, sube_id: str, tarih: str) -> Dict[str, Any]:
         srow = cur.fetchone()
         sube_adi_evvel = str(dict(srow).get("ad") or "") if srow else ""
         cur.execute("RELEASE SAVEPOINT sp_h_evoid")
-        from evo_sync import EVO_SUBE_ID_MAP
-        evvel_lower = sube_adi_evvel.strip().lower().replace("şubesi", "").strip()
-        for eid, ead in EVO_SUBE_ID_MAP.items():
-            elow = ead.strip().lower().replace("şubesi", "").strip()
-            if evvel_lower and (evvel_lower in elow or elow in evvel_lower):
-                evo_sube_id = eid
-                break
+        # FIX T5 (2026-07-06): kırık .lower() substring → evo_sync merkezî id eşleştirici
+        from evo_sync import evvel_sube_evo_id_eslestir
+        evo_sube_id = evvel_sube_evo_id_eslestir(sube_adi_evvel)
     except Exception as e:
         try:
             cur.execute("ROLLBACK TO SAVEPOINT sp_h_evoid")
