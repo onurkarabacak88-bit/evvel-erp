@@ -14279,6 +14279,75 @@ def ops_maliyet_kdv_oran_kaydet(body: KdvOranBody):
     return {"success": True, "kalem_kodu": kod, "kdv_oran": oran, "kdv_yuzde": yuzde}
 
 
+def _kdv_oran_tahmin(ad: str) -> float:
+    """Kalem adından KDV oranı tahmini (TR 2024+, kafe bağlamı). Öneri — kullanıcı düzeltebilir.
+    %20 gıda dışı (ambalaj/sarf/temizlik/kırtasiye) · %1 temel gıda (süt/şeker/su) · %10 kalan içecek/gıda."""
+    a = (ad or "").casefold()
+    # Özel durum: "bardak su" = su ürünü (bardak kelimesi %20'ye takılmasın) → %1
+    if "bardak su" in a:
+        return 0.01
+    # %20 — gıda DIŞI ambalaj/sarf/temizlik/kırtasiye
+    yirmi = ["bardak", "kapak", "pipet", "peçete", "pecete", "mendil", "çanta", "canta",
+             "karıştırıcı", "karistirici", "filtre kağıdı", "filtre kagidi", "kağıt", "kagit",
+             "eldiven", "cam bezi", "klips", "poşet", "poset", "streç", "strec", "çamaşır",
+             "camasir", "deterjan", "yüzey", "yuzey", "temizley", "temizlik", "sabun", "karton",
+             "kalem"]
+    for k in yirmi:
+        if k in a:
+            return 0.20
+    # %1 — temel gıda
+    if "süt" in a or "sut" in a:  # not: badem sütü de %1 sayılır (kullanıcı düzeltebilir)
+        return 0.01
+    if "şeker" in a or "seker" in a:
+        return 0.01
+    if "maden suyu" in a or "maden su" in a:  # gazlı içecek → %10
+        return 0.10
+    # kalan içecek/gıda (kahve/çay/şurup/püre/sos/meyve/tatlı...)
+    return 0.10
+
+
+@router.post("/maliyet/kdv-oran-otomatik")
+def ops_maliyet_kdv_oran_otomatik():
+    """Tüm alış-fiyatlı kalemlere KDV oranını ada göre OTOMATİK atar (kural bazlı öneri).
+    Zaten elle tanımlı olanları EZMEZ (kullanıcı ayarı korunur). Yeni/tanımsızları doldurur."""
+    with db() as (conn, cur):
+        _ensure_maliyet_tablolari(cur)
+        cur.execute("SELECT kalem_kodu FROM kalem_kdv_oran")
+        tanimli = {str(r["kalem_kodu"]) for r in cur.fetchall()}
+        cur.execute("""
+            SELECT DISTINCT ON (kalem_kodu) kalem_kodu, kalem_adi
+            FROM urun_alis_fiyat ORDER BY kalem_kodu, gecerli_baslangic DESC
+        """)
+        kalemler = [(str(r["kalem_kodu"]), r.get("kalem_adi") or str(r["kalem_kodu"])) for r in cur.fetchall()]
+        atanan = {"%1": 0, "%10": 0, "%20": 0}
+        for kod, ad in kalemler:
+            if kod in tanimli:
+                continue  # elle ayarlanmış — dokunma
+            oran = _kdv_oran_tahmin(ad)
+            cur.execute("""
+                INSERT INTO kalem_kdv_oran (kalem_kodu, kalem_adi, kdv_oran, guncelleme)
+                VALUES (%s, %s, %s, NOW())
+                ON CONFLICT (kalem_kodu) DO NOTHING
+            """, (kod, ad, oran))
+            atanan["%" + str(int(oran * 100))] = atanan.get("%" + str(int(oran * 100)), 0) + 1
+    return {"success": True, "atanan": atanan, "toplam": sum(atanan.values()),
+            "not": "Ada göre kural bazlı otomatik atama. Elle ayarlananlar korundu. "
+                   "Vergi Ayarları'ndan tek tıkla düzeltilebilir."}
+
+
+@router.post("/maliyet/stopaj-otomatik")
+def ops_maliyet_stopaj_otomatik(oran_yuzde: float = Query(20, ge=0, le=40)):
+    """Tüm aktif KİRA sabit giderlerine stopaj oranını OTOMATİK atar (varsayılan %20)."""
+    oran = round(float(oran_yuzde) / 100.0, 4)
+    with db() as (conn, cur):
+        cur.execute("""
+            UPDATE sabit_giderler SET stopaj_oran=%s
+            WHERE aktif=TRUE AND LOWER(COALESCE(kategori,''))='kira'
+        """, (oran,))
+        adet = cur.rowcount or 0
+    return {"success": True, "guncellenen": adet, "stopaj_yuzde": oran_yuzde}
+
+
 @router.get("/maliyet/stopaj-ozet")
 def ops_maliyet_stopaj_ozet():
     """Kira stopaj özeti (2026-07-05): stopaj_oran>0 olan aktif sabit giderlerin aylık

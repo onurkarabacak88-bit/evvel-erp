@@ -69,8 +69,15 @@ function VergiAyarlari({ fmt }) {
       <div className="card" style={{ marginTop: 14 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8, flexWrap: 'wrap', gap: 6 }}>
           <span style={{ fontWeight: 700, fontSize: 13 }}>📋 Kalem KDV Oranları <span style={{ fontWeight: 400, color: 'var(--text3)' }}>(alış — indirilecek KDV bundan hesaplanır)</span></span>
-          <input value={ara} onChange={e => setAra(e.target.value)} placeholder="Kalem ara…"
-            style={{ padding: '5px 10px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg2)', fontSize: 12, width: 160 }} />
+          <div style={{ display: 'flex', gap: 6 }}>
+            <button onClick={async () => {
+              if (!confirm('Tüm kalemlere KDV oranı ada göre otomatik atansın mı? (Elle ayarladıklarınız korunur)')) return;
+              try { const r = await api('/ops/maliyet/kdv-oran-otomatik', { method: 'POST' }); alert(`✓ ${r.toplam} kaleme atandı: ${JSON.stringify(r.atanan)}`); yukle(); }
+              catch (e) { alert(e.message || 'Başarısız'); }
+            }} className="btn btn-primary btn-sm" style={{ fontSize: 11 }}>⚡ Otomatik Ata</button>
+            <input value={ara} onChange={e => setAra(e.target.value)} placeholder="Kalem ara…"
+              style={{ padding: '5px 10px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg2)', fontSize: 12, width: 140 }} />
+          </div>
         </div>
         <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 8 }}>
           Kahve/süt gibi temel gıda %1, çoğu içecek %10, ambalaj/bardak %20. Varsayılan %{kdv?.varsayilan_yuzde || 10}. Değiştirdiğinde anında kaydolur.
