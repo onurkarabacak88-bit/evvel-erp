@@ -102,12 +102,30 @@ class KasaTeslimBody(BaseModel):
 
 @router.post("/api/kasa-teslim")
 def kasa_teslim_ekle(body: KasaTeslimBody):
+    """
+    FIX KP5 (2026-07-06): bu uç kimliksizdi — PIN opsiyonel, şube doğrulanmıyordu; kasa teslimi
+    kapanış farkını doğrudan etkilediği için curl ile isimsiz/istenen ada yazılabiliyordu.
+    Şube panelinin ara-teslim ucu (sube_panel.sube_ara_kasa_teslim) zaten sıkıydı ve tüm meşru
+    akış oradan geçiyor (bu ucu çağıran frontend YOK) → aynı disipline çekildi:
+    şube doğrulanır + teslim eden personel + 4 haneli panel PIN ZORUNLU.
+    """
     if body.tutar <= 0:
         raise HTTPException(400, "Tutar sıfırdan büyük olmalı")
     if body.teslim_turu not in ("ara", "gun_sonu"):
         raise HTTPException(400, "teslim_turu: ara | gun_sonu")
+    pid_in = (body.teslim_eden_personel_id or "").strip()
+    pin = (body.pin or "").replace(" ", "")
+    if not pid_in:
+        raise HTTPException(400, "teslim_eden_personel_id gerekli")
+    if len(pin) != 4 or not pin.isdigit():
+        raise HTTPException(400, "4 haneli panel PIN gerekli")
 
     with db() as (conn, cur):
+        # Şube doğrulama — kapanış farkı şube bazlı hesaplanır, hayalet şubeye teslim yazılamaz
+        cur.execute("SELECT 1 FROM subeler WHERE id=%s", ((body.sube_id or "").strip(),))
+        if not cur.fetchone():
+            raise HTTPException(404, "Şube bulunamadı")
+
         # Teslim alan kontrolü
         cur.execute(
             "SELECT id, ad, unvan FROM kasa_teslim_alici WHERE id=%s AND aktif=TRUE",
@@ -118,15 +136,12 @@ def kasa_teslim_ekle(body: KasaTeslimBody):
             raise HTTPException(404, "Teslim alıcı bulunamadı")
         alici = dict(alici)
 
-        # PIN doğrulama (opsiyonel)
-        onay_ad = (body.teslim_eden_ad or "").strip() or "—"
-        pid = (body.teslim_eden_personel_id or "").strip() or None
-        if pid and (body.pin or "").strip():
-            from personel_panel_auth import dogrula_personel_panel_pin
+        # PIN doğrulama (ZORUNLU — kasa teslimi kimliksiz olamaz)
+        from personel_panel_auth import dogrula_personel_panel_pin
 
-            ku = dogrula_personel_panel_pin(cur, pid, body.pin.strip())
-            onay_ad = (ku.get("ad_soyad") or onay_ad).strip()
-            pid = str(ku.get("id") or pid)
+        ku = dogrula_personel_panel_pin(cur, pid_in, pin)
+        onay_ad = (ku.get("ad_soyad") or "").strip() or "—"
+        pid = str(ku.get("id") or pid_in)
 
         from tr_saat import dt_now_tr, is_gunu_tr
 

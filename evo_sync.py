@@ -276,10 +276,16 @@ def _web_ashx(ashx_yol: str, data: dict, qs: dict | None = None) -> Any:
     return result
 
 
-def _evo_post(modul: str, body: dict) -> dict:
+def _evo_post(modul: str, body: dict, _retry: bool = True) -> dict:
     """
     evobulut REST API generic POST.
     Token'ı body'ye ekler, POST atar, status kontrolü yapar.
+
+    FIX EVO1 (2026-07-06): status!=OK dönünce token önbelleği TEMİZLENMİYORDU → Evo token'ı
+    erken öldürdüyse (örn. aynı hesapla başka giriş — Chrome extension) 8 saat boyunca her
+    çağrı ölü token'la gidip 502 alıyordu; sistem kendini toparlayamıyordu. Artık hata durumunda
+    önbellek temizlenir + taze token'la BİR kez yeniden denenir (tüm çağrılar okuma — jq_list vb.
+    — olduğu için retry güvenli). İkinci deneme de başarısızsa gerçek hata: aynen raise.
     """
     body["UID"] = _token_al()
     r = requests.post(
@@ -288,9 +294,15 @@ def _evo_post(modul: str, body: dict) -> dict:
         timeout=20,
     )
     if r.status_code != 200:
+        _token_cache.clear()
+        if _retry:
+            return _evo_post(modul, body, _retry=False)
         raise HTTPException(502, f"evobulut /{modul} HTTP {r.status_code}")
     data = r.json()
     if isinstance(data, dict) and data.get("status") not in ("OK", None, ""):
+        _token_cache.clear()
+        if _retry:
+            return _evo_post(modul, body, _retry=False)
         mesaj = ""
         try:
             mesaj = data["veri"]["Ana"][0].get("mesaj", "")

@@ -119,27 +119,25 @@ def iptal_kasa_hareketi(cur, kaynak_id, kaynak_tablo, islem_turu, iptal_turu, ac
     if not mevcutlar:
         raise Exception(f"İptal edilecek kayıt bulunamadı — {islem_turu} / {kaynak_id}")
 
-    cur.execute(
-        """
-        SELECT 1 FROM kasa_hareketleri
-        WHERE kaynak_id=%s AND islem_turu=%s
-        LIMIT 1
-    """,
-        (kaynak_id, iptal_turu),
-    )
-    if cur.fetchone():
-        raise Exception(f"Bu kayıt zaten iptal edilmiş — {iptal_turu} / {kaynak_id}")
+    # FIX O6 (2026-07-06): eski KURAL 2 ("kaynak_id'de iptal_turu kaydı varsa reddet") kaldırıldı.
+    # Analiz: sıralı çift-iptali zaten KURAL 1 durdurur (aktif kayıt kalmaz), eşzamanlı çift-iptali
+    # aşağıdaki idempotency anahtarı durdurur. Eski KURAL 2'nin fiilen tetiklendiği TEK senaryo
+    # "iptal → yeniden yazım → tekrar iptal" (örn. aynı ciroya 2. düzeltme) = MEŞRU döngüydü →
+    # 500 veriyordu. Artık aktif kayıt varsa iptal meşrudur.
 
     for m in mevcutlar:
         cur.execute("UPDATE kasa_hareketleri SET durum='iptal' WHERE id=%s", (m["id"],))
 
     net_tutar = sum(float(m["tutar"]) for m in mevcutlar)
     _kasa_etkisi = KASA_IPTAL_MAP.get(iptal_turu, True)
-    # FIX A1 (2026-07-05): ters kayda idempotency_key. KURAL 2 (yukarıda) normal çift-iptali
-    # yakalar; bu anahtar EŞZAMANLI iki iptalin (race condition) çift ters-kayıt yazmasını da
-    # kesin keser — insert_kasa_hareketi ile aynı ON CONFLICT deseni.
+    # FIX A1 (2026-07-05) + O6 (2026-07-06): ters kayda OLAY-bazlı idempotency_key — anahtar
+    # iptal edilen hareket ID setinden türer. Eşzamanlı çift istek aynı aktif seti görür → aynı
+    # anahtar → tek ters kayıt (A1 korunur). Meşru yeni iptal döngüsünde (yeniden yazım sonrası)
+    # set farklı → ters kayıt YAZILIR (eski kaynak_id-bazlı anahtar bunu sessizce yutuyordu —
+    # K1'deki "olay yerine kap kimliği" dersinin birebir kopyası).
+    _iptal_set = ",".join(sorted(str(m["id"]) for m in mevcutlar))
     _iptal_idem = hashlib.sha256(
-        f"v2|iptal|{iptal_turu}|{kaynak_tablo}|{kaynak_id}".encode("utf-8")
+        f"v2|iptal|{iptal_turu}|{kaynak_tablo}|{kaynak_id}|{_iptal_set}".encode("utf-8")
     ).hexdigest()
     cur.execute(
         """
