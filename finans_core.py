@@ -1226,16 +1226,19 @@ def kart_aktif_donem(cur, kart_id: str) -> dict:
 
             # ÇİFT SAYMA KORUMASI:
             # faiz_hesapla_ve_yaz motoru bu kesim için zaten FAIZ kaydı
-            # yazmış mı? (Aynı duplicate guard penceresi: (kesim, kesim+32g])
+            # yazmış mı? Duplicate guard ile BİREBİR AYNI pencere: [kesim, kesim+32g].
             # Yazmışsa: kayıttaki tutarı doğrudan kullan (motor artık
             #   KKDF+BSMV dahil yazıyor).
             # Yazmamışsa: kalan × oran × VERGI ile hesapla.
+            # FIX K6 (2026-07-06): pencere başı '>' (açık) idi, duplicate guard ise '>=' (kapalı)
+            # — motor FAIZ'i TAM kesim tarihiyle yazdığından bu sorgu o kaydı GÖRMÜYORDU →
+            # yazilmis=0 sanıp faizi yeniden hesaplıyor, faiz ekstre devrine ÇİFT giriyordu.
             cur.execute("""
                 SELECT COALESCE(SUM(tutar), 0) AS yazilmis
                 FROM kart_hareketleri
                 WHERE kart_id = %s AND durum = 'aktif'
                   AND islem_turu = 'FAIZ'
-                  AND tarih >  %s::date
+                  AND tarih >= %s::date
                   AND tarih <= %s::date + INTERVAL '32 days'
             """, (kart_id, onceki_kesim, onceki_kesim))
             yazilmis_faiz = float(cur.fetchone()['yazilmis'])
