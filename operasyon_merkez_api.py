@@ -13977,13 +13977,33 @@ def ops_maliyet_gun_gun(
                 _KDV = 0.10
                 net_satis = ciro_v / (1.0 + _KDV)
                 hesaplanan_kdv = ciro_v - net_satis
-                brut_kar = net_satis - toplam                      # net satış − ürün maliyeti (COGS)
-                favok = net_satis - toplam_maliyet                 # FAVÖK/EBITDA (faaliyet kârı, vergi öncesi)
-                vergi_net = max(0.0, favok) * TAHMINI_VERGI_ORANI  # şube-bazlı oran Faz 1b'de gelecek
-                net_kar_net = favok - vergi_net
+                # ── KDV TAM MODEL (2026-07-06, Codex+Claude): tüm KDV'li giderler KDV-hariç (net)
+                # → satış net (ciro/1.10) ile gider net simetrik olur (Codex'in asimetri uyarısı çözülür).
+                # KDV dahil tutarın içindeki KDV = tutar × oran/(1+oran). Gider oranları TR-varsayılan,
+                # YAPILANDIRILABİLİR: fatura/komisyon/abonelik %20; kira/şube-anlık/personel/SGK %0
+                # (çoğu küçük işletme kira şahıs=KDV'siz, şube-anlık karışık → güvenli 0; indirilemeyen
+                # KDV binek-araç/temsil de burada 0 kalır). COGS zaten kalem-bazlı yukarıda hesaplandı.
+                def _ickdv(tutar, oran):
+                    return tutar * oran / (1.0 + oran) if (tutar and oran > 0) else 0.0
+                _cogs_ind_kdv = indirilecek_kdv_gun.get((sid or "", tarih_str), 0.0)
+                _gider_ind_kdv = (
+                    _ickdv(fatura_g, 0.20) + _ickdv(abonelik_g, 0.20)
+                    + _ickdv(pos_komisyon + platform_komisyon, 0.20)
+                )  # kira_g/sube_gider/iade_g → %0 (yapılandırılabilir); personel/SGK KDV yok
+                _toplam_ind_kdv = _cogs_ind_kdv + _gider_ind_kdv
+                net_cogs = toplam - _cogs_ind_kdv                  # ürün maliyeti KDV-hariç
+                net_toplam_maliyet = toplam_maliyet - _toplam_ind_kdv
+                brut_kar = net_satis - net_cogs                    # net satış − NET COGS (simetrik)
+                favok = net_satis - net_toplam_maliyet             # FAVÖK/EBITDA (KDV-hariç, vergi öncesi)
+                odenecek_kdv = hesaplanan_kdv - _toplam_ind_kdv     # devlete ödenecek KDV (nötr, kâr dışı pozisyon)
+                vergi_net = max(0.0, favok) * TAHMINI_VERGI_ORANI  # şube-bazlı oran aşağıda blended ezer
+                net_kar_net = favok - vergi_net                    # net kâr KDV'den BAĞIMSIZ
                 satir["kdv_oran"] = _KDV
                 satir["net_satis_tl"] = round(net_satis, 2)
                 satir["hesaplanan_kdv_tl"] = round(hesaplanan_kdv, 2)
+                satir["indirilecek_kdv_tl"] = round(_toplam_ind_kdv, 2)   # COGS + gider (TÜM)
+                satir["odenecek_kdv_tl"] = round(odenecek_kdv, 2)         # yeni: hesaplanan − indirilecek
+                satir["net_cogs_tl"] = round(net_cogs, 2)
                 satir["brut_kar_tl"] = round(brut_kar, 2)
                 satir["brut_marj_pct"] = round((brut_kar / net_satis) * 100, 1) if net_satis > 0 else None
                 satir["favok_tl"] = round(favok, 2)
