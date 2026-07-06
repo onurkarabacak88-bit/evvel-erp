@@ -283,6 +283,15 @@ def avans_talep(body: AvansTalepModel):
         )
         _event(cur, aid, "TALEP", {"tutar": t, "tavan": limit})
         audit(cur, "personel_avans", aid, "TALEP", yeni={"tutar": t, "personel": p["ad_soyad"]})
+    # DUYU OMURGASI (2026-07-06): KİMLİKSİZ olay — şube scope + tutar (kural #15; retention
+    # bağlamı F3'te ŞUBE seviyesinde okunacak). Hata-yutar.
+    try:
+        from duyu_omurga import duyu_olay_yaz
+        duyu_olay_yaz("avans", "finans.sube.avans_talebi", aid,
+                      entity_scope="sube", entity_id=str(p.get("sube_id") or "") or None,
+                      signal_name="Avans talebi", payload={"tutar": t})
+    except Exception:  # noqa: BLE001
+        pass
     return {"success": True, "id": aid, "donem": f"{limit['donem_yil']}-{limit['donem_ay']:02d}"}
 
 
@@ -362,6 +371,17 @@ def avans_onayla(aid: str, body: AvansOnayModel):
             )
             _event(cur, aid, "ONAY_ELDEN", {"sube_id": body.sube_id, "onaylayan": body.onaylayan})
         audit(cur, "personel_avans", aid, "ONAY", yeni={"yontem": yontem})
+    # DUYU OMURGASI (2026-07-06): kimliksiz para-çıkışı/onay olayı — hata-yutar
+    try:
+        from duyu_omurga import duyu_olay_yaz
+        duyu_olay_yaz("avans",
+                      "finans.sube.avans_cikisi" if yontem == "havale" else "finans.sube.avans_onayi",
+                      f"{aid}:onay",
+                      entity_scope="sube", entity_id=str(body.sube_id or "") or None,
+                      signal_name="Avans " + ("ödendi (havale)" if yontem == "havale" else "onaylandı (elden)"),
+                      payload={"tutar": float(r["tutar"]), "yontem": yontem})
+    except Exception:  # noqa: BLE001
+        pass
     return {"success": True, "durum": "odendi" if yontem == "havale" else "onaylandi"}
 
 
@@ -451,6 +471,15 @@ def avans_teslim_et(aid: str, body: AvansTeslimModel = AvansTeslimModel()):
             sube_gun_kapanis_recalc(cur, r["sube_id"], bugun)
         except Exception as e:
             logger.warning("avans teslim sonrasi kasa fark recalc atlandi: %s", e)
+    # DUYU OMURGASI (2026-07-06): elden teslim = fiili para çıkışı olayı (kimliksiz)
+    try:
+        from duyu_omurga import duyu_olay_yaz
+        duyu_olay_yaz("avans", "finans.sube.avans_cikisi", f"{aid}:teslim",
+                      entity_scope="sube", entity_id=str(r.get("sube_id") or "") or None,
+                      signal_name="Avans teslim edildi (elden)",
+                      payload={"tutar": tutar, "yontem": "elden"})
+    except Exception:  # noqa: BLE001
+        pass
     return {"success": True, "durum": "teslim_edildi"}
 
 
@@ -573,4 +602,13 @@ def avans_ters_kayit(aid: str, body: AvansTersModel):
                 _ms.aylik_vardiya_senkronize(cur, dict(_pk), int(r["donem_yil"]), int(r["donem_ay"]))
         except Exception as _e:
             logger.warning("avans ters-kayit sonrasi maas plan senkronu atlandi: %s", _e)
+    # DUYU OMURGASI (2026-07-06): kimliksiz ters-kayıt olayı — hata-yutar
+    try:
+        from duyu_omurga import duyu_olay_yaz
+        duyu_olay_yaz("avans", "finans.sube.avans_ters_kayit", f"{aid}:ters",
+                      entity_scope="sube", entity_id=str(r.get("sube_id") or "") or None,
+                      signal_name="Avans ters kayıt",
+                      payload={"tutar": abs(float(r["tutar"]))})
+    except Exception:  # noqa: BLE001
+        pass
     return {"success": True, "durum": "ters_kayit"}

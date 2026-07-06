@@ -12449,6 +12449,27 @@ def ops_v2_kabul(siparis_id: str, body: KabulBody):
             [k.model_dump() for k in body.kabul],
             body.yapan_id, body.yapan_ad,
         )
+        # DUYU OMURGASI kancası (2026-07-06): sevk≠kabul satırları Katman-2 olay — hata-yutar
+        try:
+            cur.execute(
+                """SELECT kalem_kodu, kalem_adi, sevk_adet, kabul_adet FROM stok_yolda
+                   WHERE siparis_talep_id=%s AND kabul_adet IS NOT NULL AND kabul_adet <> sevk_adet""",
+                (siparis_id,),
+            )
+            _varyanslar = [dict(r) for r in (cur.fetchall() or [])]
+            if _varyanslar:
+                from duyu_omurga import duyu_olay_yaz
+                for _v in _varyanslar:
+                    duyu_olay_yaz(
+                        "kabul_varyans", "tedarik.sevkiyat.kabul_varyansi",
+                        f"{siparis_id}:{_v['kalem_kodu']}",
+                        entity_scope="kalem", entity_id=_v["kalem_kodu"],
+                        signal_name="Sevk-kabul farkı",
+                        payload={"sevk": _v["sevk_adet"], "kabul": _v["kabul_adet"],
+                                 "sube_id": str(sube_id), "kalem_adi": _v["kalem_adi"]},
+                    )
+        except Exception:  # noqa: BLE001
+            pass
         # commit() kaldırıldı — db() context manager başarılı çıkışta otomatik commit yapar
     return sonuc
 

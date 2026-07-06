@@ -3138,6 +3138,19 @@ def sevk_cikti_kaydet(cur: Any, siparis_talep_id: str,
                             ),
                         )
                         cur.execute("RELEASE SAVEPOINT sp_hayalet_stok")
+                        # DUYU OMURGASI kancası (2026-07-06): hayalet stok = Katman-2 olay
+                        try:
+                            from duyu_omurga import duyu_olay_yaz
+                            duyu_olay_yaz(
+                                "stok_motor", "stok.sube.hayalet_stok",
+                                f"{siparis_talep_id}:{dusulecek_kod}",
+                                entity_scope="kalem", entity_id=dusulecek_kod,
+                                signal_name="Hayalet stok (kaynak yetersizken sevk)",
+                                payload={"mevcut": _mevcut_before, "sevk": sevk_adet,
+                                         "hayalet": _hayalet, "depo": str(kaynak_depo)},
+                            )
+                        except Exception:  # noqa: BLE001
+                            pass
                     except Exception:
                         try:
                             cur.execute("ROLLBACK TO SAVEPOINT sp_hayalet_stok")

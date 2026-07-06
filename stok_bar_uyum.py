@@ -337,6 +337,19 @@ def _uyari_upsert(
         """,
         (uid, sube_id, tarih, tip, seviye, beklenen, gercek, fark, mesaj, kalem_kodu, dj),
     )
+    # DUYU OMURGASI kancası (2026-07-06): bar-stok uyumsuzluğu Katman-2 olay (hata-yutar;
+    # source_ref=uid idempotent — aynı uyarının güncellenmesi çift olay üretmez).
+    try:
+        from duyu_omurga import duyu_olay_yaz
+        duyu_olay_yaz(
+            "bar_stok_uyum", "stok.sube.bar_uyumsuzluk", uid,
+            entity_scope="kalem", entity_id=kalem_kodu or None,
+            occurred_at=str(tarih), signal_name=tip,
+            payload={"seviye": seviye, "beklenen": beklenen, "gercek": gercek,
+                     "fark": fark, "sube_id": str(sube_id)},
+        )
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def _seviye_adet(abs_fark: int) -> str:

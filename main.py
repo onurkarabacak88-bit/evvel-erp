@@ -330,6 +330,26 @@ def _gece_yarisi_scheduler():
             except Exception as e:
                 logger.warning(f"⏰ Scheduler K1 mutabakat hatası: {e}")
 
+            # FAZ 1c+ (2026-07-06) — ayın 1'i: geçen ayın KDV pozisyonu dönem olayı (idempotent,
+            # TAHMİNİ rozetli — beyanname değil). source_ref=YYYY-MM → ayda tek olay.
+            if bugun.day == 1:
+                try:
+                    from calendar import monthrange as _mr2
+                    from operasyon_merkez_api import ops_maliyet_kdv_pozisyon
+                    _gy, _gm = (bugun.year, bugun.month - 1) if bugun.month > 1 else (bugun.year - 1, 12)
+                    _poz = ops_maliyet_kdv_pozisyon(gun=_mr2(_gy, _gm)[1], sube_id=None)
+                    from duyu_omurga import duyu_olay_yaz
+                    duyu_olay_yaz(
+                        "kdv_pozisyon", "finans.vergi.donem_pozisyonu", f"{_gy}-{_gm:02d}",
+                        entity_scope="genel", signal_name="KDV dönem pozisyonu (tahmini)",
+                        payload={"hesaplanan": _poz.get("toplam_hesaplanan_tl"),
+                                 "indirilecek": _poz.get("toplam_indirilecek_tl"),
+                                 "odenecek": _poz.get("toplam_odenecek_tl")},
+                    )
+                    logger.info("⏰ Scheduler: KDV dönem pozisyonu olayı yazıldı")
+                except Exception as e:
+                    logger.warning(f"⏰ Scheduler KDV dönem olayı hatası: {e}")
+
             # Pazartesi — geçen haftanın kalem bazlı fire raporu
             if bugun.weekday() == 0:  # 0 = Pazartesi
                 try:
@@ -1013,6 +1033,20 @@ def borc_plan_mutabakat(referans_tarih: Optional[date] = None) -> dict:
             sonuc["backfill"] = cur.rowcount or 0
     except Exception as e:
         sonuc["hata"] = f"backfill: {e}"; logger.warning(f"borc_plan_mutabakat backfill: {e}")
+    # DUYU OMURGASI kancası (2026-07-06): self-heal bir şey düzelttiyse günlük idempotent olay
+    try:
+        _duzeltme = sum(v for v in sonuc.values() if isinstance(v, int) and v > 0)
+        if _duzeltme:
+            from duyu_omurga import duyu_olay_yaz
+            duyu_olay_yaz(
+                "borc_plan_selfheal", "finans.plan.kasa_izi_esitleme",
+                f"borc-mutabakat:{date.today().isoformat()}",
+                entity_scope="genel", signal_name="Borç planı self-heal düzeltmesi",
+                evidence_class="mutabakat",
+                payload={k: v for k, v in sonuc.items() if isinstance(v, (int, float, str))},
+            )
+    except Exception:  # noqa: BLE001
+        pass
     return sonuc
 
 

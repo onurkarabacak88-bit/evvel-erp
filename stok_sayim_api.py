@@ -653,6 +653,19 @@ def gorev_onayla(gorev_id: str, body: GorevOnaylaBody):
             "UPDATE stok_sayim_gorev SET durum='onaylandi', onay_ts=NOW() WHERE id=%s",
             (gid,),
         )
+    # DUYU OMURGASI kancası (2026-07-06): onaylanan sayım = Katman-2 olay (görev özeti).
+    # Kalibrasyon (ilk kurulum ayarı) ile sayım farkı AYRI fenomenler. Hata-yutar.
+    try:
+        from duyu_omurga import duyu_olay_yaz
+        _tip = "stok.sube.kalibrasyon" if mod == "kalibrasyon" else "stok.sube.sayim_onayi"
+        duyu_olay_yaz(
+            "stok_sayim", _tip, gid,
+            entity_scope="sube", entity_id=sube_id,
+            signal_name="Sayım onaylandı" if mod != "kalibrasyon" else "Kalibrasyon",
+            payload={"duzeltme_sayisi": duzeltme_sayisi, "mod": mod},
+        )
+    except Exception:  # noqa: BLE001
+        pass
     return {"ok": True, "durum": "onaylandi", "duzeltme_sayisi": duzeltme_sayisi, "mod": mod}
 
 

@@ -284,6 +284,20 @@ def _fatura_json_db_yaz(cur, fatura_id: str, j: Dict[str, Any]) -> int:
             fatura_id,
         ),
     )
+    # DUYU OMURGASI kancası (2026-07-06): fatura işlendi = Katman-2 olay (hata-yutar,
+    # source_ref=fatura_id idempotent — yeniden-OCR çift olay üretmez).
+    try:
+        from duyu_omurga import duyu_olay_yaz
+        duyu_olay_yaz(
+            "fatura_ocr", "tedarik.belge.fatura_islendi", str(fatura_id),
+            entity_scope="tedarikci",
+            entity_id=(str(j.get("tedarikci") or "").strip() or None),
+            occurred_at=(str(j.get("fatura_tarih")) if j.get("fatura_tarih") else None),
+            signal_name="Fatura OCR tamamlandı",
+            payload={"toplam_tutar": _sayi(j.get("toplam_tutar")), "kalem_sayisi": len(kalemler)},
+        )
+    except Exception:  # noqa: BLE001
+        pass
     # Eski kalemleri temizle (yeniden işleme/tekrar deneme idempotent olsun)
     cur.execute("DELETE FROM tedarikci_fatura_kalem WHERE fatura_id=%s", (fatura_id,))
     for i, k in enumerate(kalemler):

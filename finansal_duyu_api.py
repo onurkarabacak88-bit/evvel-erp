@@ -135,6 +135,20 @@ def _gozlem_yaz(cur, *, hipotez_turu: str, tarih: str, kosul_var: bool,
         """, (hipotez_turu, hedef, sube_id, tarih, bool(kosul_var), ham_tutar, ham_oran,
               yas_gun, json.dumps(detay or {}, ensure_ascii=False, default=str), referans_id))
         cur.execute("RELEASE SAVEPOINT sp_fin_gozlem")
+        # DUYU OMURGASI kancası (FAZ 1+, 2026-07-06): her yeni finansal gözlem Katman-2
+        # olaya da düşer (fenomen dili; hata-yutar — kendi bağlantısını açar).
+        try:
+            from duyu_omurga import duyu_olay_yaz
+            _tip_map = {"FIN_KASA_MUTABAKAT": "finans.kasa.mutabakat_gozlemi",
+                        "FIN_GECIKMIS_ODEME": "finans.odeme.gecikme"}
+            duyu_olay_yaz(
+                "finansal_duyu", _tip_map.get(hipotez_turu, f"finans.genel.{hipotez_turu.lower()}"),
+                referans_id, entity_scope="sube" if sube_id else "genel", entity_id=sube_id,
+                occurred_at=tarih, signal_name=hipotez_turu, evidence_class="mutabakat",
+                payload={"kosul_var": bool(kosul_var), "ham_tutar": ham_tutar, "yas_gun": yas_gun},
+            )
+        except Exception:  # noqa: BLE001
+            pass
         return True
     except Exception as e:
         try:
