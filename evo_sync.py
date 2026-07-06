@@ -22,6 +22,8 @@ import unicodedata
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional
 
+import re as _re
+
 import requests
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
@@ -1997,14 +1999,19 @@ def evo_grup_belirle(urun_adi: str) -> str:
     Sıra önemli — özel öncelik (14 Oz, 8 Oz) Ice'tan önce kontrol edilir."""
     if not urun_adi:
         return ""
-    a = str(urun_adi).strip().lower()
+    # FIX EVO2 (2026-07-06): Türkçe büyük-İ tuzağı — 'İCE'.lower() = 'i̇ce' (i + görünmez
+    # birleşik nokta) olduğundan 'ice' substring'i EŞLEŞMİYORDU → Türkçe büyük yazılmış
+    # soğuk içecekler grupsuz kalıyordu. Harf-eşleme önce yapılır.
+    a = str(urun_adi).strip().replace("İ", "i").replace("I", "i").lower()
     # 14 Oz / 8 Oz öncelikli (boyut ürün adında geçtiğinde)
     if "14 oz" in a or "14oz" in a:
         return "14 Oz"
     if "8 oz" in a or "8oz" in a:
         return "8 Oz"
-    # Ice / Iced / Frozen — soğuk içecek → plastik bardak grubu
-    if "ice" in a or "iced" in a or "frozen" in a:
+    # Ice / Iced / Frozen — soğuk içecek → plastik bardak grubu.
+    # FIX EVO2: 'ice' düz substring 'JUICE' içindeki ice'ı da yakalıyordu (meyve suyu →
+    # plastik bardak grubu). Kelime-sınırlı arama: juice'ta \bice\b eşleşmez.
+    if _re.search(r"\bice\b|\biced\b|frozen|buzlu", a):
         return "Ice"
     # Su (önce Maden Suyu, sonra düz Su)
     if "maden" in a:
@@ -2832,8 +2839,11 @@ def evo_sube_tam_detay(
 
     # Kategori pattern eşleştirme
     def _kategorize(ad: str) -> str:
-        a = ad.lower()
-        if any(k in a for k in ("ice", "iced", "14 oz", "14oz", "8 oz", "8oz", "16 oz", "16oz", "20 oz", "20oz")):
+        # FIX EVO2 (2026-07-06): Türkçe İ harf-eşleme + 'ice' kelime-sınırlı (juice hariç)
+        a = (ad or "").replace("İ", "i").replace("I", "i").lower()
+        if _re.search(r"\bice\b|\biced\b", a) or any(
+            k in a for k in ("14 oz", "14oz", "8 oz", "8oz", "16 oz", "16oz", "20 oz", "20oz")
+        ):
             return "bardak_oz_ice"
         if "bardak" in a or "kup" in a or "kutu" in a:
             return "bardak_diger"
