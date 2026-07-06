@@ -1213,260 +1213,167 @@ def panel():
         ozet['bu_ay_devir'] = devir_bilgi['devir_tutar']
         ozet['gecen_ay_adi'] = devir_bilgi['gecen_ay']
 
-        # Bu ay gelir breakdown — nakit/pos/online/dış kaynak ayrı
+        # ── PERF PANEL REFAKTÖRÜ (2026-07-06) ──────────────────────────────────
+        # Eskiden bu gövdede 3 AYRI DB bağlantısı + ~20 tekil SUM sorgusu vardı; her sorgu
+        # EXTRACT(YEAR/MONTH)=CURRENT_DATE fonksiyonel filtresi kullanıyordu (index'siz seq scan).
+        # Aynı tablo + aynı ay-penceresi sorguları FILTER ile TEK geçişte toplandı (~20 → 7 sorgu,
+        # 3 → 1 bağlantı); ay filtresi index-dostu yarı-açık tarih aralığına çevrildi:
+        # [ay başı, sonraki ay başı) — EXTRACT ikilisiyle SEMANTİK BİREBİR. Değerler golden'lı.
         with db() as (conn, cur):
+            # 1) KASA HAREKETLERİ — bu ayın TÜM metrikleri tek geçişte (eski 9 ayrı sorgu)
             cur.execute("""
                 SELECT
-                    COALESCE(SUM(CASE WHEN islem_turu='DIS_KAYNAK' THEN tutar ELSE 0 END), 0) as dis_kaynak,
-                    COALESCE(SUM(CASE WHEN islem_turu='CIRO' THEN tutar ELSE 0 END), 0) as sadece_ciro
+                    COALESCE(SUM(tutar)      FILTER (WHERE islem_turu='DIS_KAYNAK'), 0) AS dis_kaynak,
+                    COALESCE(SUM(tutar)      FILTER (WHERE islem_turu='CIRO'), 0) AS sadece_ciro,
+                    COALESCE(SUM(ABS(tutar)) FILTER (WHERE islem_turu='ANLIK_GIDER'), 0) AS anlik_gider,
+                    COALESCE(SUM(ABS(tutar)) FILTER (WHERE islem_turu='SABIT_GIDER'    AND kasa_etkisi), 0) AS sabit_nakit,
+                    COALESCE(SUM(ABS(tutar)) FILTER (WHERE islem_turu='FATURA_ODEMESI' AND kasa_etkisi), 0) AS fatura_nakit,
+                    COALESCE(SUM(ABS(tutar)) FILTER (WHERE islem_turu='VADELI_ODEME'   AND kasa_etkisi), 0) AS vadeli_nakit,
+                    COALESCE(SUM(ABS(tutar)) FILTER (WHERE islem_turu='BORC_TAKSIT'    AND kasa_etkisi), 0) AS borc_odenen,
+                    COALESCE(SUM(ABS(tutar)) FILTER (WHERE kasa_etkisi AND tutar < 0
+                        AND islem_turu NOT IN ('CIRO_DUZELTME','CIRO_IPTAL','ACILIS_DEVRI')), 0) AS toplam_cikis,
+                    COALESCE(SUM(tutar)      FILTER (WHERE kasa_etkisi AND tutar > 0
+                        AND islem_turu NOT IN ('CIRO_DUZELTME','CIRO_IPTAL','ACILIS_DEVRI')), 0) AS toplam_giris
                 FROM kasa_hareketleri
                 WHERE durum='aktif'
-                AND EXTRACT(YEAR FROM tarih) = EXTRACT(YEAR FROM CURRENT_DATE)
-                AND EXTRACT(MONTH FROM tarih) = EXTRACT(MONTH FROM CURRENT_DATE)
+                  AND tarih >= date_trunc('month', CURRENT_DATE)
+                  AND tarih <  date_trunc('month', CURRENT_DATE) + INTERVAL '1 month'
             """)
-            row = cur.fetchone()
-            ozet['bu_ay_dis_kaynak'] = float(row['dis_kaynak'])
-            ozet['bu_ay_sadece_ciro'] = float(row['sadece_ciro'])
+            _kh = dict(cur.fetchone())
+            ozet['bu_ay_dis_kaynak'] = float(_kh['dis_kaynak'])
+            ozet['bu_ay_sadece_ciro'] = float(_kh['sadece_ciro'])
+            ozet['bu_ay_anlik_gider'] = float(_kh['anlik_gider'])
 
-            # Bu ay toplam anlık gider
-            cur.execute("""
-                SELECT COALESCE(SUM(ABS(tutar)), 0) as anlik_gider
-                FROM kasa_hareketleri
-                WHERE durum='aktif'
-                AND islem_turu = 'ANLIK_GIDER'
-                AND EXTRACT(YEAR FROM tarih) = EXTRACT(YEAR FROM CURRENT_DATE)
-                AND EXTRACT(MONTH FROM tarih) = EXTRACT(MONTH FROM CURRENT_DATE)
-            """)
-            ozet['bu_ay_anlik_gider'] = float(cur.fetchone()['anlik_gider'])
-
-            # Bu ay bankaya yatırılan (takip tablosu)
+            # 2) Bu ay bankaya yatırılan (takip tablosu)
             cur.execute(
                 """
                 SELECT COALESCE(SUM(tutar), 0) AS toplam,
                        COUNT(*)::int AS adet
                 FROM banka_yatirimlari
-                WHERE EXTRACT(YEAR FROM tarih) = EXTRACT(YEAR FROM CURRENT_DATE)
-                  AND EXTRACT(MONTH FROM tarih) = EXTRACT(MONTH FROM CURRENT_DATE)
+                WHERE tarih >= date_trunc('month', CURRENT_DATE)
+                  AND tarih <  date_trunc('month', CURRENT_DATE) + INTERVAL '1 month'
                 """
             )
             _by = cur.fetchone()
             ozet["bu_ay_banka_yatirim"] = float(_by["toplam"] or 0)
             ozet["bu_ay_banka_yatirim_adet"] = int(_by["adet"] or 0)
 
-            # Nakit / POS / Online breakdown (bu ay ciro)
+            # 3) CİRO — nakit/pos/online + finansman kesintileri tek geçişte (eski 2 sorgu).
+            #    LEFT JOIN + COALESCE(oran,0): şube eşleşmeyen ciro satır kaybetmez (eski JOIN'de
+            #    kesintiye katkısı zaten 0'dı — sonuç birebir aynı).
             cur.execute("""
                 SELECT
-                    COALESCE(SUM(nakit), 0) as nakit,
-                    COALESCE(SUM(pos), 0) as pos,
-                    COALESCE(SUM(online), 0) as online
-                FROM ciro
-                WHERE durum='aktif'
-                AND EXTRACT(YEAR FROM tarih) = EXTRACT(YEAR FROM CURRENT_DATE)
-                AND EXTRACT(MONTH FROM tarih) = EXTRACT(MONTH FROM CURRENT_DATE)
+                    COALESCE(SUM(c.nakit), 0)  AS nakit,
+                    COALESCE(SUM(c.pos), 0)    AS pos,
+                    COALESCE(SUM(c.online), 0) AS online,
+                    COALESCE(SUM(c.pos    * COALESCE(s.pos_oran, 0)    / 100.0), 0) AS pos_kesinti,
+                    COALESCE(SUM(c.online * COALESCE(s.online_oran, 0) / 100.0), 0) AS online_kesinti
+                FROM ciro c
+                LEFT JOIN subeler s ON s.id = c.sube_id
+                WHERE c.durum='aktif'
+                  AND c.tarih >= date_trunc('month', CURRENT_DATE)
+                  AND c.tarih <  date_trunc('month', CURRENT_DATE) + INTERVAL '1 month'
             """)
             breakdown = cur.fetchone()
             ozet['bu_ay_nakit'] = float(breakdown['nakit'])
             ozet['bu_ay_pos'] = float(breakdown['pos'])
             ozet['bu_ay_online'] = float(breakdown['online'])
+            ozet['bu_ay_pos_kesinti']    = float(breakdown['pos_kesinti'])
+            ozet['bu_ay_online_kesinti'] = float(breakdown['online_kesinti'])
 
-            # Finansman maliyeti — ciro tablosundan hesapla (bilgi amaçlı, kasayı etkilemez)
+            # 4) KART HAREKETLERİ — faiz + kart-kırılımları tek geçişte (eski 4 sorgu).
+            #    NOT: kart_faizi orijinalinde durum şartı YOKTU — FILTER'larda birebir korunur.
             cur.execute("""
                 SELECT
-                    COALESCE(SUM(c.pos * s.pos_oran / 100.0), 0) as pos_kesinti,
-                    COALESCE(SUM(c.online * s.online_oran / 100.0), 0) as online_kesinti
-                FROM ciro c
-                JOIN subeler s ON s.id = c.sube_id
-                WHERE c.durum='aktif'
-                AND EXTRACT(YEAR FROM c.tarih) = EXTRACT(YEAR FROM CURRENT_DATE)
-                AND EXTRACT(MONTH FROM c.tarih) = EXTRACT(MONTH FROM CURRENT_DATE)
-            """)
-            kesinti_row = cur.fetchone()
-            ozet['bu_ay_pos_kesinti']    = float(kesinti_row['pos_kesinti'])
-            ozet['bu_ay_online_kesinti'] = float(kesinti_row['online_kesinti'])
-
-            # Kart faizi — FAİZ tipi hareketlerden gerçek veri
-            cur.execute("""
-                SELECT COALESCE(SUM(tutar), 0) as kart_faizi
+                    COALESCE(SUM(tutar) FILTER (WHERE islem_turu='FAIZ'), 0) AS kart_faizi,
+                    COALESCE(SUM(tutar) FILTER (WHERE islem_turu='HARCAMA' AND durum='aktif'
+                        AND kaynak_tablo='sabit_giderler'), 0) AS sabit_kart,
+                    COALESCE(SUM(tutar) FILTER (WHERE islem_turu='HARCAMA' AND durum='aktif'
+                        AND kaynak_tablo='fatura_giderleri'), 0) AS fatura_kart,
+                    COALESCE(SUM(tutar) FILTER (WHERE islem_turu='HARCAMA' AND durum='aktif'
+                        AND kaynak_tablo='vadeli_alimlar'), 0) AS vadeli_kart
                 FROM kart_hareketleri
-                WHERE islem_turu = 'FAIZ'
-                AND EXTRACT(YEAR FROM tarih) = EXTRACT(YEAR FROM CURRENT_DATE)
-                AND EXTRACT(MONTH FROM tarih) = EXTRACT(MONTH FROM CURRENT_DATE)
+                WHERE tarih >= date_trunc('month', CURRENT_DATE)
+                  AND tarih <  date_trunc('month', CURRENT_DATE) + INTERVAL '1 month'
             """)
-            ozet['bu_ay_kart_faizi'] = float(cur.fetchone()['kart_faizi'])
+            _kt = dict(cur.fetchone())
+            ozet['bu_ay_kart_faizi'] = float(_kt['kart_faizi'])
             ozet['bu_ay_finansman_maliyeti'] = ozet['bu_ay_pos_kesinti'] + ozet['bu_ay_online_kesinti'] + ozet['bu_ay_kart_faizi']
 
-        # Plan son üretim tarihi
-        with db() as (conn, cur):
+            # 5) ÖDEME PLANI — son üretim + bekleyen borç taksitleri tek geçişte (eski 2 sorgu + 1 bağlantı)
             cur.execute("""
-                SELECT MAX(olusturma) as son_uretim
+                SELECT
+                    MAX(olusturma) FILTER (WHERE tarih >= date_trunc('month', CURRENT_DATE)
+                        AND tarih < date_trunc('month', CURRENT_DATE) + INTERVAL '1 month') AS son_uretim,
+                    COALESCE(SUM(odenecek_tutar) FILTER (WHERE kaynak_tablo='borc_envanteri'
+                        AND durum IN ('bekliyor','onay_bekliyor')), 0) AS borc_bekleyen,
+                    COUNT(*) FILTER (WHERE kaynak_tablo='borc_envanteri'
+                        AND durum IN ('bekliyor','onay_bekliyor')) AS borc_bekleyen_adet
                 FROM odeme_plani
-                WHERE EXTRACT(YEAR FROM tarih) = EXTRACT(YEAR FROM CURRENT_DATE)
-                AND EXTRACT(MONTH FROM tarih) = EXTRACT(MONTH FROM CURRENT_DATE)
             """)
-            row = cur.fetchone()
-            ozet['plan_son_uretim'] = str(row['son_uretim'])[:16] if row['son_uretim'] else None
+            _op = dict(cur.fetchone())
+            ozet['plan_son_uretim'] = str(_op['son_uretim'])[:16] if _op['son_uretim'] else None
 
-        # ── NAKİT / KART KIRILIMLARI ───────────────────────────
-        # Her gider türünde bu ay nakit mi kart mı ödendiği
-        with db() as (conn, cur):
-            # ANLIK GİDER — kasa_hareketleri=nakit, kart_hareketleri=kart
+            # ── NAKİT / KART KIRILIMLARI (aynı bağlantı — eski 3. with db() bloğu kaldırıldı) ──
+            # 6) ANLIK GİDER — kasa=nakit, kart=kart kırılımı (tek tablo, tek sorgu — aynı kaldı)
             cur.execute("""
                 SELECT
                     COALESCE(SUM(CASE WHEN ag.odeme_yontemi='nakit' THEN ag.tutar ELSE 0 END), 0) as nakit,
                     COALESCE(SUM(CASE WHEN ag.odeme_yontemi='kart'  THEN ag.tutar ELSE 0 END), 0) as kart
                 FROM anlik_giderler ag
                 WHERE ag.durum='aktif'
-                AND EXTRACT(YEAR FROM ag.tarih) = EXTRACT(YEAR FROM CURRENT_DATE)
-                AND EXTRACT(MONTH FROM ag.tarih) = EXTRACT(MONTH FROM CURRENT_DATE)
+                  AND ag.tarih >= date_trunc('month', CURRENT_DATE)
+                  AND ag.tarih <  date_trunc('month', CURRENT_DATE) + INTERVAL '1 month'
             """)
             ag = cur.fetchone()
             ozet['anlik_nakit'] = float(ag['nakit'])
             ozet['anlik_kart']  = float(ag['kart'])
 
-            # SABİT GİDER nakit — kasa_hareketleri SABIT_GIDER
-            cur.execute("""
-                SELECT COALESCE(SUM(ABS(tutar)), 0) as nakit
-                FROM kasa_hareketleri
-                WHERE islem_turu = 'SABIT_GIDER' AND kasa_etkisi = true AND durum = 'aktif'
-                AND EXTRACT(YEAR FROM tarih) = EXTRACT(YEAR FROM CURRENT_DATE)
-                AND EXTRACT(MONTH FROM tarih) = EXTRACT(MONTH FROM CURRENT_DATE)
-            """)
-            ozet['sabit_nakit'] = float(cur.fetchone()['nakit'])
+            # Kasa/kart kırılımları — 1) ve 4) numaralı birleşik sorgulardan (eski 7 ayrı sorgu)
+            ozet['sabit_nakit']  = float(_kh['sabit_nakit'])
+            ozet['sabit_kart']   = float(_kt['sabit_kart'])
+            ozet['fatura_nakit'] = float(_kh['fatura_nakit'])
+            ozet['fatura_kart']  = float(_kt['fatura_kart'])
+            ozet['vadeli_nakit'] = float(_kh['vadeli_nakit'])
+            ozet['vadeli_kart']  = float(_kt['vadeli_kart'])
 
-            # SABİT GİDER kart — kart_hareketleri kaynak_tablo=sabit_giderler
-            cur.execute("""
-                SELECT COALESCE(SUM(tutar), 0) as kart
-                FROM kart_hareketleri
-                WHERE islem_turu = 'HARCAMA' AND durum = 'aktif'
-                AND kaynak_tablo = 'sabit_giderler'
-                AND EXTRACT(YEAR FROM tarih) = EXTRACT(YEAR FROM CURRENT_DATE)
-                AND EXTRACT(MONTH FROM tarih) = EXTRACT(MONTH FROM CURRENT_DATE)
-            """)
-            ozet['sabit_kart'] = float(cur.fetchone()['kart'])
-
-            # FATURA GİDERİ nakit — kasa_hareketleri FATURA_ODEMESI
-            cur.execute("""
-                SELECT COALESCE(SUM(ABS(tutar)), 0) as nakit
-                FROM kasa_hareketleri
-                WHERE islem_turu = 'FATURA_ODEMESI' AND kasa_etkisi = true AND durum = 'aktif'
-                AND EXTRACT(YEAR FROM tarih) = EXTRACT(YEAR FROM CURRENT_DATE)
-                AND EXTRACT(MONTH FROM tarih) = EXTRACT(MONTH FROM CURRENT_DATE)
-            """)
-            ozet['fatura_nakit'] = float(cur.fetchone()['nakit'])
-
-            # FATURA GİDERİ kart — kart_hareketleri kaynak_tablo=fatura_giderleri
-            cur.execute("""
-                SELECT COALESCE(SUM(tutar), 0) as kart
-                FROM kart_hareketleri
-                WHERE islem_turu = 'HARCAMA' AND durum = 'aktif'
-                AND kaynak_tablo = 'fatura_giderleri'
-                AND EXTRACT(YEAR FROM tarih) = EXTRACT(YEAR FROM CURRENT_DATE)
-                AND EXTRACT(MONTH FROM tarih) = EXTRACT(MONTH FROM CURRENT_DATE)
-            """)
-            ozet['fatura_kart'] = float(cur.fetchone()['kart'])
-
-            # VADELİ ALIM — kasa_hareketleri VADELI_ODEME=nakit, kart_hareketleri HARCAMA+aciklama=kart
-            cur.execute("""
-                SELECT COALESCE(SUM(ABS(tutar)), 0) as nakit
-                FROM kasa_hareketleri
-                WHERE islem_turu = 'VADELI_ODEME' AND kasa_etkisi=true AND durum='aktif'
-                AND EXTRACT(YEAR FROM tarih) = EXTRACT(YEAR FROM CURRENT_DATE)
-                AND EXTRACT(MONTH FROM tarih) = EXTRACT(MONTH FROM CURRENT_DATE)
-            """)
-            ozet['vadeli_nakit'] = float(cur.fetchone()['nakit'])
-
-            cur.execute("""
-                SELECT COALESCE(SUM(kh.tutar), 0) as kart
-                FROM kart_hareketleri kh
-                WHERE kh.islem_turu = 'HARCAMA'
-                AND kh.kaynak_tablo = 'vadeli_alimlar'
-                AND kh.durum = 'aktif'
-                AND EXTRACT(YEAR FROM kh.tarih) = EXTRACT(YEAR FROM CURRENT_DATE)
-                AND EXTRACT(MONTH FROM kh.tarih) = EXTRACT(MONTH FROM CURRENT_DATE)
-            """)
-            ozet['vadeli_kart'] = float(cur.fetchone()['kart'])
-
-            # PERSONEL MAAŞ — tahmini vs gerçekleşen
+            # 7) PERSONEL — tahmini + gerçekleşen + kayıt bekleyen tek round-trip (eski 3 sorgu)
             cur.execute("""
                 SELECT
-                    COALESCE(SUM(p.maas + p.yemek_ucreti + p.yol_ucreti), 0) as tahmini
-                FROM personel p WHERE p.aktif=TRUE AND p.calisma_turu='surekli'
+                    (SELECT COALESCE(SUM(p.maas + p.yemek_ucreti + p.yol_ucreti), 0)
+                     FROM personel p WHERE p.aktif=TRUE AND p.calisma_turu='surekli') AS tahmini,
+                    (SELECT COALESCE(SUM(pa.hesaplanan_net), 0)
+                     FROM personel_aylik pa
+                     WHERE pa.yil = EXTRACT(YEAR FROM CURRENT_DATE)
+                       AND pa.ay  = EXTRACT(MONTH FROM CURRENT_DATE)) AS gercek,
+                    (SELECT COUNT(*)
+                     FROM personel p
+                     WHERE p.aktif=TRUE
+                       AND NOT EXISTS (
+                           SELECT 1 FROM personel_aylik pa
+                           WHERE pa.personel_id = p.id
+                             AND pa.yil = EXTRACT(YEAR FROM CURRENT_DATE)
+                             AND pa.ay  = EXTRACT(MONTH FROM CURRENT_DATE)
+                       )) AS bekleyen
             """)
-            ozet['personel_tahmini'] = float(cur.fetchone()['tahmini'])
+            _pp = dict(cur.fetchone())
+            ozet['personel_tahmini'] = float(_pp['tahmini'])
+            ozet['personel_gercek'] = float(_pp['gercek'])
+            ozet['personel_kayit_bekleyen'] = int(_pp['bekleyen'])
 
-            cur.execute("""
-                SELECT COALESCE(SUM(pa.hesaplanan_net), 0) as gercek
-                FROM personel_aylik pa
-                WHERE pa.yil = EXTRACT(YEAR FROM CURRENT_DATE)
-                AND pa.ay  = EXTRACT(MONTH FROM CURRENT_DATE)
-            """)
-            ozet['personel_gercek'] = float(cur.fetchone()['gercek'])
-
-            cur.execute("""
-                SELECT COUNT(*) as bekleyen
-                FROM personel p
-                WHERE p.aktif=TRUE
-                AND NOT EXISTS (
-                    SELECT 1 FROM personel_aylik pa
-                    WHERE pa.personel_id = p.id
-                    AND pa.yil = EXTRACT(YEAR FROM CURRENT_DATE)
-                    AND pa.ay  = EXTRACT(MONTH FROM CURRENT_DATE)
-                )
-            """)
-            ozet['personel_kayit_bekleyen'] = int(cur.fetchone()['bekleyen'])
-
-            # BORÇ TAKSİTLERİ — bu ay ödenen
-            cur.execute("""
-                SELECT COALESCE(SUM(ABS(tutar)), 0) as borc_odenen
-                FROM kasa_hareketleri
-                WHERE islem_turu = 'BORC_TAKSIT' AND kasa_etkisi = true AND durum = 'aktif'
-                AND EXTRACT(YEAR FROM tarih) = EXTRACT(YEAR FROM CURRENT_DATE)
-                AND EXTRACT(MONTH FROM tarih) = EXTRACT(MONTH FROM CURRENT_DATE)
-            """)
-            ozet['borc_taksit_odenen'] = float(cur.fetchone()['borc_odenen'])
-
-            # Bekleyen borç taksitleri
-            cur.execute("""
-                SELECT COALESCE(SUM(odenecek_tutar), 0) as bekleyen,
-                       COUNT(*) as adet
-                FROM odeme_plani
-                WHERE kaynak_tablo = 'borc_envanteri'
-                AND durum IN ('bekliyor','onay_bekliyor')
-            """)
-            row = cur.fetchone()
-            ozet['borc_taksit_bekleyen'] = float(row['bekleyen'])
-            ozet['borc_taksit_bekleyen_adet'] = int(row['adet'])
+            # BORÇ TAKSİTLERİ — 1) ve 5) numaralı birleşik sorgulardan
+            ozet['borc_taksit_odenen'] = float(_kh['borc_odenen'])
+            ozet['borc_taksit_bekleyen'] = float(_op['borc_bekleyen'])
+            ozet['borc_taksit_bekleyen_adet'] = int(_op['borc_bekleyen_adet'])
 
             # GENEL TOPLAM
             ozet['genel_nakit_toplam'] = ozet['anlik_nakit'] + ozet['sabit_nakit'] + ozet['vadeli_nakit']
             ozet['genel_kart_toplam']  = ozet['anlik_kart']  + ozet['sabit_kart']  + ozet['vadeli_kart']
 
-            # BU AY TOPLAM KASA ÇIKIŞI — ciro düzeltme/iptal ledger kayıtları hariç gerçek giderler
-            # CIRO_DUZELTME: ciro güncellenince oluşan ters kayıt (teknik, gerçek gider değil)
-            # CIRO_IPTAL: ciro iptal edilince oluşan ters kayıt (teknik, gerçek gider değil)
-            cur.execute("""
-                SELECT COALESCE(SUM(ABS(tutar)), 0) as toplam_cikis
-                FROM kasa_hareketleri
-                WHERE kasa_etkisi = true AND durum = 'aktif' AND tutar < 0
-                AND islem_turu NOT IN ('CIRO_DUZELTME', 'CIRO_IPTAL', 'ACILIS_DEVRI')
-                AND EXTRACT(YEAR  FROM tarih) = EXTRACT(YEAR  FROM CURRENT_DATE)
-                AND EXTRACT(MONTH FROM tarih) = EXTRACT(MONTH FROM CURRENT_DATE)
-            """)
-            ozet['bu_ay_nakit_cikis'] = float(cur.fetchone()['toplam_cikis'])
-
-            # BU AY TOPLAM KASA GİRİŞİ — tüm pozitif hareketlerin toplamı
-            # (Güncellenmiş ciro için yeni CIRO kaydı islem_turu='CIRO' olarak gelir, doğru sayılır)
-            cur.execute("""
-                SELECT COALESCE(SUM(tutar), 0) as toplam_giris
-                FROM kasa_hareketleri
-                WHERE kasa_etkisi = true AND durum = 'aktif' AND tutar > 0
-                AND islem_turu NOT IN ('CIRO_DUZELTME', 'CIRO_IPTAL', 'ACILIS_DEVRI')
-                AND EXTRACT(YEAR  FROM tarih) = EXTRACT(YEAR  FROM CURRENT_DATE)
-                AND EXTRACT(MONTH FROM tarih) = EXTRACT(MONTH FROM CURRENT_DATE)
-            """)
-            ozet['bu_ay_nakit_giris'] = float(cur.fetchone()['toplam_giris'])
-
-            # NET (nakit giriş - nakit çıkış)
+            # BU AY TOPLAM KASA GİRİŞ/ÇIKIŞ — 1) numaralı birleşik sorgudan
+            # (CIRO_DUZELTME/CIRO_IPTAL/ACILIS_DEVRI teknik ters kayıtları hariç — filtre aynı)
+            ozet['bu_ay_nakit_cikis'] = float(_kh['toplam_cikis'])
+            ozet['bu_ay_nakit_giris'] = float(_kh['toplam_giris'])
             ozet['bu_ay_net'] = ozet['bu_ay_nakit_giris'] - ozet['bu_ay_nakit_cikis']
 
         return ozet
