@@ -263,22 +263,20 @@ def _post_check(cevap: str, baglam_metni: str) -> Optional[str]:
 
 
 def _veri_kalite_ozeti(bloklar) -> dict:
-    """Cevaba iliştirilen veri-kalite şeridi [GPT+DeepSeek]: sağlık bloğundan rozet sayımı.
-    'Bu cevaba ne kadar güvenilir veriyle bakıyoruz?' sorusunun dürüst özeti."""
+    """Cevaba iliştirilen veri-kalite şeridi [GPT+DeepSeek]: sağlık rozetlerinin sayımı.
+    'Bu cevaba ne kadar güvenilir veriyle bakıyoruz?' sorusunun dürüst özeti.
+    Bloklar 4000 karaktere kırpılır (kırpık JSON parse edilemez) — kaynağı doğrudan oku."""
     ozet = {"canli": 0, "izlenemez": 0, "sorunlu": 0}
     try:
-        for bid, _baslik, metin in bloklar:
-            if bid != "B2":
-                continue
-            d = json.loads(metin)
-            for u in d.get("ureticiler") or []:
-                r = u.get("rozet")
-                if r == "canli":
-                    ozet["canli"] += 1
-                elif r in ("izlenemez", "ritim_bilinmiyor", "hic_olay_yok"):
-                    ozet["izlenemez"] += 1
-                else:
-                    ozet["sorunlu"] += 1
+        from duyu_omurga import duyu_saglik
+        for u in duyu_saglik().get("ureticiler") or []:
+            r = u.get("rozet")
+            if r == "canli":
+                ozet["canli"] += 1
+            elif r in ("izlenemez", "ritim_bilinmiyor", "hic_olay_yok"):
+                ozet["izlenemez"] += 1
+            else:
+                ozet["sorunlu"] += 1
     except Exception:  # noqa: BLE001
         pass
     return ozet
