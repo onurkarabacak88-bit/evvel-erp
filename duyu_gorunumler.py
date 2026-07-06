@@ -123,11 +123,15 @@ def mudahale_izi(gun: int = Query(30, ge=7, le=90)):
 def gece_mudahale_olay_yaz() -> None:
     """GECE: dünün geriye-dönük müdahale sayısı > 0 ise omurgaya günlük özet olayı yaz.
     İdempotent (source_ref=gün); hata-yutar."""
+    from duyu_omurga import duyu_nabiz_yaz
     try:
         dun = date.today() - timedelta(days=1)
         with db() as (_, cur):
             zk = _audit_zaman_kolonu(cur)
             if not zk:
+                # Denetim P2-6: sessiz çıkış duyuyu görünmez susturuyordu — dürüst nabız
+                duyu_nabiz_yaz("mudahale_izi", durum="hata", yutulan_hata=1,
+                               not_metin="audit_log zaman kolonu yok — şema uyumu bekliyor")
                 return
             cur.execute(
                 f"""
@@ -147,10 +151,10 @@ def gece_mudahale_olay_yaz() -> None:
                 signal_name="Geriye dönük müdahale günü",
                 payload={"adet": n},
             )
-        from duyu_omurga import duyu_nabiz_yaz
         duyu_nabiz_yaz("mudahale_izi", taranan=1, uretilen=1 if n > 0 else 0)
     except Exception as e:  # noqa: BLE001
         logger.warning("gece mudahale izi yutuldu: %s", str(e)[:120])
+        duyu_nabiz_yaz("mudahale_izi", durum="hata", yutulan_hata=1, not_metin=str(e)[:200])
 
 
 @router.get("/vergi-takvim")

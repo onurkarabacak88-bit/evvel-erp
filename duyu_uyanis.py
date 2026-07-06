@@ -159,18 +159,26 @@ def _aile_haritasi() -> dict:
     return {ad: (m.get("kaynak_aile") or "bilinmiyor") for ad, m in _DUYU_REGISTRY.items()}
 
 
+def _kanit_duyulari() -> set:
+    """Kanıt sayılan duyular (registry kanit=True). Denetim P2-5: rutin günlük kesitler
+    bağımsızlık sayacını doyuruyordu — sadece işaretli duyular + patern-sınıfı olaylar sayılır."""
+    from duyu_omurga import _DUYU_REGISTRY
+    return {ad for ad, m in _DUYU_REGISTRY.items() if m.get("kanit")}
+
+
 def kanit_paketi(entity_scope: str, entity_id: str, gun_bas: date, gun_bit: date) -> dict:
     """Bir odak (şube/kalem/tedarikçi × pencere) için BAĞIMSIZ kanıt paketi.
     Codex kuralları: (1) pencere D+2'den tazeyse 'olgunlaşmamış' damgası;
     (2) bağımsızlık = yaprak ham-kaynak ailesi; sinaps/meta SAYILMAZ, kompozitler
     payload'daki kaynak üreticilere AÇILIR; (3) hüküm yok — paket sayar, yorumlamaz."""
     aileler_map = _aile_haritasi()
+    kanit_seti = _kanit_duyulari()
     olgun = gun_bit <= date.today() - timedelta(days=OLGUNLUK_GUN)
     with db() as (_, cur):
         cur.execute(
             """
             SELECT event_id, duyu, olay_tipi, signal_name, occurred_at::text,
-                   confidence, payload_json
+                   confidence, evidence_class, payload_json
             FROM duyu_olay
             WHERE entity_scope = %s AND entity_id = %s
               AND occurred_at::date BETWEEN %s AND %s
@@ -179,15 +187,18 @@ def kanit_paketi(entity_scope: str, entity_id: str, gun_bas: date, gun_bit: date
             (entity_scope, str(entity_id), str(gun_bas), str(gun_bit)),
         )
         olaylar = [dict(r) for r in (cur.fetchall() or [])]
-    # Yaprak soyağacına aç: kompozit → payload'daki kaynak duyular; meta aileler dışarı
+    # Yaprak soyağacına aç + KANIT SÜZGECİ (denetim P2-5): rutin kesit olayları sayılmaz;
+    # bir olay ancak (duyusu kanit=True) VEYA (evidence_class='patern') ise kanıttır.
+    # Kompozit → payload'daki kaynak duyulara açılır; meta aileler her durumda dışarı.
     yaprak_duyular = set()
     for o in olaylar:
         d = str(o.get("duyu") or "")
         if d == "sinaps_kompozit":
             pj = o.get("payload_json") or {}
             for kd in pj.get("duyular") or []:
-                yaprak_duyular.add(str(kd))
-        else:
+                if str(kd) in kanit_seti:
+                    yaprak_duyular.add(str(kd))
+        elif d in kanit_seti or str(o.get("evidence_class") or "") == "patern":
             yaprak_duyular.add(d)
     aileler = sorted({aileler_map.get(d, "bilinmiyor") for d in yaprak_duyular}
                      - {"meta", "bilinmiyor"})
@@ -272,7 +283,9 @@ def uyanis_hazirlik():
         kriterler.append({"kriter": "dilim_kapsamasi", "hedef": ">=30 olgun şube-dilim kesiti",
                           "durum": f"{dilim_n} kesit", "gecti": dilim_n >= 30})
 
-        # K6: kararlı paket örnekleri — OLGUN pencerelerde ≥2 bağımsız aileli şube-gün ≥10
+        # K6: kararlı paket örnekleri — OLGUN pencerelerde ≥2 bağımsız aileli şube-gün ≥10.
+        # Denetim P2-5: yalnız KANIT olayları sayılır (kanit=True duyular + patern sınıfı);
+        # rutin kesitler sayılsaydı her şube-gün otomatik ≥2 aile olurdu.
         cur.execute(
             """
             SELECT entity_id, occurred_at::date::text AS gun,
@@ -280,9 +293,10 @@ def uyanis_hazirlik():
             FROM duyu_olay
             WHERE entity_scope = 'sube' AND occurred_at::date <= %s
               AND duyu <> 'sinaps_kompozit'
+              AND (duyu = ANY(%s) OR evidence_class = 'patern')
             GROUP BY entity_id, occurred_at::date
             """,
-            (str(olgun_sinir),),
+            (str(olgun_sinir), sorted(_kanit_duyulari())),
         )
         aileler_map = _aile_haritasi()
         paket_n = 0

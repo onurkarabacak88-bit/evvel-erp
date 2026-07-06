@@ -385,7 +385,8 @@ def _gece_yarisi_scheduler():
                     from duyu_omurga import duyu_olay_yaz
                     duyu_olay_yaz(
                         "kdv_pozisyon", "finans.vergi.donem_pozisyonu", f"{_gy}-{_gm:02d}",
-                        entity_scope="genel", signal_name="KDV dönem pozisyonu (tahmini)",
+                        entity_scope="genel", occurred_at=f"{_gy}-{_gm:02d}-01",
+                        signal_name="KDV dönem pozisyonu (tahmini)",
                         payload={"hesaplanan": _poz.get("toplam_hesaplanan_tl"),
                                  "indirilecek": _poz.get("toplam_indirilecek_tl"),
                                  "odenecek": _poz.get("toplam_odenecek_tl")},
@@ -398,6 +399,12 @@ def _gece_yarisi_scheduler():
                         pass
                 except Exception as e:
                     logger.warning(f"⏰ Scheduler KDV dönem olayı hatası: {e}")
+                    try:
+                        from duyu_omurga import duyu_nabiz_yaz
+                        duyu_nabiz_yaz("kdv_pozisyon", durum="hata", yutulan_hata=1,
+                                       not_metin=str(e)[:200])
+                    except Exception:
+                        pass
 
             # FAZ 1f (2026-07-06) — GECE SAĞLIK DEĞERLENDİRMESİ (proprioception): ritmini
             # belirgin aşan duyular için DURUM-GEÇİŞİ meta olayı (spam yok); hata-yutar.
@@ -408,7 +415,7 @@ def _gece_yarisi_scheduler():
             except Exception as e:
                 logger.warning(f"⏰ Scheduler duyu sağlık hatası: {e}")
 
-            # EVVEL BEYNİ gece öz-anlatısı (L3) — arşive yazar, WhatsApp'a GİRMEZ; hata-yutar.
+            # EVVEL BEYNİ gece öz-anlatısı (L3) — arşive yazar + sabah WhatsApp mesajı (çerçeveli); hata-yutar.
             try:
                 from beyin_api import gece_sentez
                 gece_sentez()

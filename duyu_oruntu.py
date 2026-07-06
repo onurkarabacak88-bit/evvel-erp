@@ -215,6 +215,7 @@ def _sessiz_sifirlanma_hesapla(gun: date, taban_gun: int = 7, taban_esik: float 
         return []  # hedef günün Evo verisi yok — ölçülemez (sıfır değil)
     # şube→ürün→gün adet haritası
     seri: dict = defaultdict(dict)
+    kod_haritasi: dict = {}  # (sube, ad) → stok_kodu (denetim P3-14: kalıcı kimlik)
     for g, vj in gunler.items():
         for sube_ad, sd in (vj.get("subeler") or {}).items():
             for u in sd.get("cok_satilan") or []:
@@ -224,6 +225,9 @@ def _sessiz_sifirlanma_hesapla(gun: date, taban_gun: int = 7, taban_esik: float 
                         seri[(sube_ad, ad)][g] = float(u.get("adet") or 0)
                     except (TypeError, ValueError):
                         pass
+                    kod = str(u.get("stok_kodu") or "").strip()
+                    if kod:
+                        kod_haritasi[(sube_ad, ad)] = kod
     adaylar = []
     for (sube_ad, urun), gunluk in seri.items():
         gecmis = [v for g, v in gunluk.items() if g != str(gun)]
@@ -234,6 +238,7 @@ def _sessiz_sifirlanma_hesapla(gun: date, taban_gun: int = 7, taban_esik: float 
         if taban >= taban_esik and (bugun_adet is None or bugun_adet == 0):
             adaylar.append({
                 "sube_ad": sube_ad, "urun": urun,
+                "stok_kodu": kod_haritasi.get((sube_ad, urun)),  # kalem kimliği (varsa)
                 "taban_ort": round(taban, 1), "taban_gun_n": len(gecmis),
                 "hedef_gun_adet": bugun_adet,
                 "liste_kesigi_olabilir": bugun_adet is None,
@@ -249,8 +254,11 @@ def gece_sessiz_sifirlanma() -> None:
         for a in adaylar:
             duyu_olay_yaz(
                 "urun_sessiz", "satis.urun.sessiz_sifirlanma",
-                f"{a['sube_ad']}_{a['urun']}_{dun}",
-                entity_scope="kalem", entity_id=a["urun"], occurred_at=str(dun),
+                f"{a['sube_ad']}_{a.get('stok_kodu') or a['urun']}_{dun}",
+                # kalem kimliği: stok_kodu varsa o (ad değişimi kimlik doğurmasın —
+                # dörtgen/kase ile aynı dil), yoksa ad
+                entity_scope="kalem", entity_id=str(a.get("stok_kodu") or a["urun"]),
+                occurred_at=str(dun),
                 signal_name="Düzenli satan ürün sustu (aday)",
                 confidence=0.5, evidence_class="patern",
                 payload=a,

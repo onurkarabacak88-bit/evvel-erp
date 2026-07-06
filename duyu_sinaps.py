@@ -158,6 +158,9 @@ _KOMPOZIT_OKUYUCU = "sinaps_kompozit"
 _KOMPOZIT_DISI_DUYULAR = frozenset({
     "sinaps_kompozit", "sinaps_kase", "sinaps_zincir",
     "odeme_karmasi", "aciklama_yogunlugu", "adet_tutar", "duyu_saglik", "evvel_beyni",
+    # Denetim P2-4 (2026-07-06): rutin şube-gün kesit üreticileri — her gün ses çıkarır,
+    # sayılırsa kompozit "her-olay dedektörüne" yozlaşır
+    "operasyon_ritmi", "iade_fire", "sayim_cevresi", "kapanis_sonrasi", "etiket_koprusu",
 })
 
 
@@ -187,7 +190,8 @@ def gece_kompozit() -> None:
             if len(duyular) < 2:
                 continue
             duyu_olay_yaz(
-                "sinaps_kompozit", "kasa.sube.coklu_duyu_birlikteligi",
+                # taksonomi düzeltmesi (denetim P3): kompozit alan-üstü — alan=operasyon
+                "sinaps_kompozit", "operasyon.sube.coklu_duyu_birlikteligi",
                 f"{sube_id}_{gun}",
                 entity_scope="sube", entity_id=sube_id, occurred_at=gun,
                 signal_name="Aynı şube-günde çoklu duyu sesi (aday)",
@@ -234,10 +238,11 @@ def sinapsler(gun: int = Query(14, ge=3, le=60)):
             (str(bas),),
         )
         olaylar = [dict(r) for r in (cur.fetchall() or [])]
-    try:
-        kase_canli = _kutsal_kase_hesapla(7)
-    except Exception:  # noqa: BLE001
-        kase_canli = []
+    # Denetim P1-1 (2026-07-06): Kâse CANLI hesabı bu uçtan KALDIRILDI — 4 şube × 7 gün
+    # dörtgen = 100+ canlı Evo çağrısı panel açılışını kilitliyordu. Kâse adayları artık
+    # gece yazılan omurga olaylarından okunur; zincir hesabı yerel SQL (ucuz), kalır.
+    kase_omurgadan = [o for o in olaylar if o.get("duyu") == "sinaps_kase"]
+    kase_canli = [dict(o.get("payload_json") or {}) for o in kase_omurgadan[:10]]
     try:
         zincir_canli = _zincir_hesapla()
     except Exception:  # noqa: BLE001
@@ -248,5 +253,6 @@ def sinapsler(gun: int = Query(14, ge=3, le=60)):
         "kase_canli": kase_canli,
         "zincir_canli": zincir_canli,
         "not": "Sinapslar duyuları BİRBİRİNE bağlar: birliktelik kaydeder, hüküm vermez, "
-               "alarm kapatmaz. confidence=0.5 = ADAY; değerlendirme insanındır.",
+               "alarm kapatmaz. confidence=0.5 = ADAY; değerlendirme insanındır. "
+               "Kâse adayları gece taramasından gelir (canlı Evo çağrısı yapılmaz).",
     }

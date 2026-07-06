@@ -96,19 +96,27 @@ def _kapanis_sonrasi_hesapla(cur, gun: date) -> list:
     cevap_ts yoksa (kapanış cevaplanmamış) o şube-gün ölçülemez — 'veri_yok' dürüstlüğü."""
     cur.execute(
         """
+        -- Denetim P3-11: aynı şube-günde birden çok KAPANIS olabilir (sira_no) —
+        -- şube başına SON kapanış esas alınır, yoksa satırlar aynı source_ref'te çakışıp
+        -- ilki hariç sessizce yutulurdu
+        WITH son_kapanis AS (
+            SELECT sube_id, MAX(cevap_ts) AS cevap_ts
+            FROM sube_operasyon_event
+            WHERE tarih = %s AND tip = 'KAPANIS' AND cevap_ts IS NOT NULL
+            GROUP BY sube_id
+        )
         SELECT s.ad AS sube_ad, e.sube_id,
                e.cevap_ts::text AS kapanis_ts,
                COUNT(c.id) FILTER (WHERE c.olusturma > e.cevap_ts)::int AS sonrasi_n,
                COALESCE(SUM(c.toplam) FILTER (WHERE c.olusturma > e.cevap_ts), 0) AS sonrasi_tutar,
                ROUND((EXTRACT(EPOCH FROM MAX(c.olusturma - e.cevap_ts)
                      FILTER (WHERE c.olusturma > e.cevap_ts)) / 60.0)::numeric, 1) AS max_gecikme_dk
-        FROM sube_operasyon_event e
+        FROM son_kapanis e
         JOIN subeler s ON s.id = e.sube_id
-        LEFT JOIN ciro c ON c.sube_id = e.sube_id AND c.tarih = e.tarih AND c.durum = 'aktif'
-        WHERE e.tarih = %s AND e.tip = 'KAPANIS' AND e.cevap_ts IS NOT NULL
+        LEFT JOIN ciro c ON c.sube_id = e.sube_id AND c.tarih = %s AND c.durum = 'aktif'
         GROUP BY s.ad, e.sube_id, e.cevap_ts
         """,
-        (str(gun),),
+        (str(gun), str(gun)),
     )
     return [dict(r) for r in (cur.fetchall() or [])]
 

@@ -50,10 +50,14 @@ ASSERTION_LEVELS = ("ham", "baglamli", "korele")
 ENTITY_SCOPES = ("sube", "tedarikci", "kalem", "kart", "genel")  # PERSONEL bilinçli olarak YOK
 
 # Kimlik güvenlik duvarı: payload'dan sessizce soyulan anahtarlar
+# (Denetim 2026-07-06: gerçek şema kimlik kolonları eklendi — karar_veren_ad,
+#  personel_satislar, iade müşteri alanları, inceleyen vb.)
 _KIMLIK_ANAHTARLARI = frozenset({
     "personel_id", "personel_ad", "ad_soyad", "personel", "sabahci_id", "aksamci_id",
     "sabahci_ad", "aksamci_ad", "acan_personel_id", "acan_personel_ad",
     "biten_personel_id", "biten_personel_ad", "teslim_eden_personel_id", "teslim_eden_ad",
+    "karar_veren_ad", "personel_satislar", "iade_musteri_ad", "iade_musteri_telefon",
+    "olusturan_ad", "inceleyen", "yukleyen_personel_id", "personel_saat",
 })
 
 
@@ -115,18 +119,19 @@ def _ensure(cur) -> None:
     )
 
 
-def _payload_temizle(payload: Optional[dict]) -> Optional[dict]:
-    """Kimlik güvenlik duvarı: payload'dan kimlik anahtarlarını soy (iç içe dahil, tek seviye derin)."""
-    if not isinstance(payload, dict):
+def _payload_temizle(payload, _derinlik: int = 0):
+    """Kimlik güvenlik duvarı: payload'dan kimlik anahtarlarını soy — TAM ÖZYİNELİ
+    (dict VE list içleri; denetim 2026-07-06: tek-seviye temizlik listeleri kaçırıyordu,
+    örn. {"ornekler":[{"ad_soyad":...}]}). Derinlik sigortası 8."""
+    if _derinlik > 8:
         return payload
-    temiz = {}
-    for k, v in payload.items():
-        if str(k).lower() in _KIMLIK_ANAHTARLARI:
-            continue
-        if isinstance(v, dict):
-            v = {ik: iv for ik, iv in v.items() if str(ik).lower() not in _KIMLIK_ANAHTARLARI}
-        temiz[k] = v
-    return temiz
+    if isinstance(payload, dict):
+        return {k: _payload_temizle(v, _derinlik + 1)
+                for k, v in payload.items()
+                if str(k).lower() not in _KIMLIK_ANAHTARLARI}
+    if isinstance(payload, list):
+        return [_payload_temizle(v, _derinlik + 1) for v in payload]
+    return payload
 
 
 def duyu_olay_yaz(
@@ -275,21 +280,26 @@ def cursor_ilerlet(cur, okuyucu: str, son_olay: dict) -> None:
 # tek aile). Aileler: kasa_defteri (kasa_hareketleri), ciro, operasyon_event
 # (sube_operasyon_event), stok (depo/sayım/sevk), evo (POS dışa kaynak), belge (fatura/
 # teslimat), cari, audit (audit_log), gider (anlik_giderler), avans, meta (öz-gözlem).
+# kanit=True: bu duyunun olayları motor uyanış kapısında BAĞIMSIZ KANIT sayılır.
+# Denetim düzeltmesi (2026-07-06, P2): rutin günlük kesitler (her gün ses çıkaranlar —
+# ödeme karması, ritim, açıklama oranı...) kanıt SAYILMAZ; yoksa bağımsızlık sayacı
+# rutinle doyar ve isme-yaklaşma bekçisi hiçbir şey ölçmez. Varsayılan=False (fail-closed);
+# rutin duyunun PATERN-sınıfı istisna olayı yine sayılır (kanit_paketi kuralı).
 _DUYU_REGISTRY = {
-    "k1_mutabakat":       {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0, "kaynak_aile": "kasa_defteri"},
+    "k1_mutabakat":       {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0, "kaynak_aile": "kasa_defteri", "kanit": True},
     "kdv_pozisyon":       {"sinif": "zamanli", "period_gun": 32.0, "grace": 1.5, "kaynak_aile": "ciro"},
-    "borc_plan_selfheal": {"sinif": "olay_gudumlu_anomali", "kaynak_aile": "kasa_defteri"},
-    "acik_teslimat":      {"sinif": "olay_gudumlu_normal", "kaynak_aile": "belge"},
-    "finansal_duyu":      {"sinif": "olay_gudumlu_normal", "kaynak_aile": "kasa_defteri"},
-    "stok_sayim":         {"sinif": "olay_gudumlu_normal", "kaynak_aile": "stok"},
+    "borc_plan_selfheal": {"sinif": "olay_gudumlu_anomali", "kaynak_aile": "kasa_defteri", "kanit": True},
+    "acik_teslimat":      {"sinif": "olay_gudumlu_normal", "kaynak_aile": "belge", "kanit": True},
+    "finansal_duyu":      {"sinif": "olay_gudumlu_normal", "kaynak_aile": "kasa_defteri", "kanit": True},
+    "stok_sayim":         {"sinif": "olay_gudumlu_normal", "kaynak_aile": "stok", "kanit": True},
     "avans":              {"sinif": "olay_gudumlu_normal", "kaynak_aile": "avans"},
     "fatura_ocr":         {"sinif": "olay_gudumlu_normal", "kaynak_aile": "belge"},
-    "hayalet_stok":       {"sinif": "olay_gudumlu_anomali", "kaynak_aile": "stok"},
-    "kabul_varyans":      {"sinif": "olay_gudumlu_anomali", "kaynak_aile": "stok"},
-    "bar_stok_uyum":      {"sinif": "olay_gudumlu_anomali", "kaynak_aile": "evo"},
+    "hayalet_stok":       {"sinif": "olay_gudumlu_anomali", "kaynak_aile": "stok", "kanit": True},
+    "kabul_varyans":      {"sinif": "olay_gudumlu_anomali", "kaynak_aile": "stok", "kanit": True},
+    "bar_stok_uyum":      {"sinif": "olay_gudumlu_anomali", "kaynak_aile": "evo", "kanit": True},
     "duyu_saglik":        {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0, "kaynak_aile": "meta"},
     "evvel_beyni":        {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0, "kaynak_aile": "meta"},
-    "mudahale_izi":       {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0, "kaynak_aile": "audit"},
+    "mudahale_izi":       {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0, "kaynak_aile": "audit", "kanit": True},
     "aciklama_yogunlugu": {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0, "kaynak_aile": "kasa_defteri"},
     "kapanis_sonrasi":    {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0, "kaynak_aile": "ciro"},
     "odeme_karmasi":      {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0, "kaynak_aile": "ciro"},
@@ -302,8 +312,8 @@ _DUYU_REGISTRY = {
     "operasyon_ritmi":    {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0, "kaynak_aile": "operasyon_event"},
     "sayim_cevresi":      {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0, "kaynak_aile": "stok"},
     "fatura_oruntu":      {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0, "kaynak_aile": "belge"},
-    "ters_zincir":        {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0, "kaynak_aile": "belge"},
-    "urun_sessiz":        {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0, "kaynak_aile": "evo"},
+    "ters_zincir":        {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0, "kaynak_aile": "belge", "kanit": True},
+    "urun_sessiz":        {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0, "kaynak_aile": "evo", "kanit": True},
 }
 
 
@@ -489,26 +499,53 @@ def saglik_hesapla(cur) -> dict:
 
 
 def gece_saglik_degerlendir() -> None:
-    """GECE: sağlık hesapla; kopuk_supheli/ritmini_asti DURUM GEÇİŞLERİNİ meta olaya yaz.
-    Spam yok: source_ref=duyu+rozet+gün → aynı durum aynı gün tek olay; DÜZELME de olay
-    (sessizlik_bitti). Hata-yutar."""
+    """GECE: sağlık hesapla; sessizlik DURUM GEÇİŞLERİNİ meta olaya yaz.
+    Denetim düzeltmesi (2026-07-06, P1): eski source_ref=duyu:rozet EPOKSUZDU —
+    ilk bölümden sonra gelecekteki her yeni sessizlik dönemi ON CONFLICT'e yutulur,
+    'sessizlik_bitti' de hiç yazılmazdı. Şimdi: son meta olaya bakılır; durum
+    DEĞİŞTİYSE yeni olay (ref=duyu:durum:bugün → bölüm damgalı), düzelme de
+    sessizlik_bitti olarak yazılır. Spam yok: değişmeyen durum olay üretmez."""
     try:
         with db() as (_, cur):
             s = saglik_hesapla(cur)
-            # önceki rozetler (dünkü meta olaylardan değil — basit: son meta olay tipine bak)
-            for u in s["ureticiler"]:
-                if u["rozet"] in ("ritmini_asti", "kopuk_supheli"):
-                    duyu_olay_yaz(
-                        "duyu_saglik", "meta.duyu.sessizlik_basladi",
-                        f"{u['duyu']}:{u['rozet']}",  # durum değişmedikçe idempotent (gün eklenmez!)
-                        entity_scope="genel", signal_name=f"Duyu ritmini aştı: {u['duyu']}",
-                        evidence_class="gozlem",
-                        payload={"rozet": u["rozet"], "yas_gun": u["yas_gun"],
-                                 "beklenen_gun": u["beklenen_gun"], "sinif": u["sinif"]},
-                    )
+            # her duyunun SON meta durum olayını al (basladi/bitti)
+            cur.execute(
+                """
+                SELECT DISTINCT ON (payload_json->>'duyu_adi') payload_json->>'duyu_adi' AS d,
+                       olay_tipi
+                FROM duyu_olay
+                WHERE duyu = 'duyu_saglik'
+                  AND olay_tipi IN ('meta.duyu.sessizlik_basladi','meta.duyu.sessizlik_bitti')
+                ORDER BY payload_json->>'duyu_adi', observed_at DESC
+                """
+            )
+            son_durum = {dict(r)["d"]: dict(r)["olay_tipi"] for r in (cur.fetchall() or [])}
+        bugun = str(date.today())
+        for u in s["ureticiler"]:
+            sessiz = u["rozet"] in ("ritmini_asti", "kopuk_supheli")
+            onceki = son_durum.get(u["duyu"])
+            if sessiz and onceki != "meta.duyu.sessizlik_basladi":
+                duyu_olay_yaz(
+                    "duyu_saglik", "meta.duyu.sessizlik_basladi",
+                    f"{u['duyu']}:basladi:{bugun}",
+                    entity_scope="genel", signal_name=f"Duyu ritmini aştı: {u['duyu']}",
+                    evidence_class="gozlem",
+                    payload={"duyu_adi": u["duyu"], "rozet": u["rozet"],
+                             "yas_gun": u["yas_gun"], "beklenen_gun": u["beklenen_gun"],
+                             "sinif": u["sinif"]},
+                )
+            elif not sessiz and onceki == "meta.duyu.sessizlik_basladi":
+                duyu_olay_yaz(
+                    "duyu_saglik", "meta.duyu.sessizlik_bitti",
+                    f"{u['duyu']}:bitti:{bugun}",
+                    entity_scope="genel", signal_name=f"Duyu ritmine döndü: {u['duyu']}",
+                    evidence_class="gozlem",
+                    payload={"duyu_adi": u["duyu"], "rozet": u["rozet"]},
+                )
         duyu_nabiz_yaz("duyu_saglik", taranan=len(_DUYU_REGISTRY), not_metin="gece degerlendirme")
     except Exception as e:  # noqa: BLE001
         logger.warning("gece_saglik_degerlendir yutuldu: %s", str(e)[:150])
+        duyu_nabiz_yaz("duyu_saglik", durum="hata", yutulan_hata=1, not_metin=str(e)[:200])
 
 
 @router.get("/saglik")

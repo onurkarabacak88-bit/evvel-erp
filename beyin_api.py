@@ -17,7 +17,7 @@ Mimari (Codex kritikli):
 - KİMLİKSİZ: bağlam kimliksiz görünümlerden derlenir + prompt isim üretmeyi yasaklar.
 - beyin_gunluk = Katman-4 arşivi (soru, bağlam izleri, cevap, model, red_nedeni).
   Beğeni/öğretmen verisi v2 konusu — v0.1 yalnız kalite telemetrisi.
-- Gece sentez WhatsApp'a GİRMEZ (çift hakikat anlatısı olmasın) — yalnız arşiv + panel.
+- Gece sentez arşiv + panel + WhatsApp sabah mesajı (2026-07-06 kullanıcı kararı; çift-hakikat freni ÇERÇEVEyle korunur: mesaj kendini motor bulgusundan ayrı ilan eder).
 - ANTHROPIC_API_KEY yoksa sessizce devre dışı (503 nazik mesaj).
 
 Kaldırmak: main.py'den router + scheduler kancasını çıkar. Tablo zararsız kalır.
@@ -90,7 +90,8 @@ def _pii_kontrol(soru: str) -> Optional[str]:
             cur.execute("SELECT ad_soyad FROM personel WHERE ad_soyad IS NOT NULL")
             for r in cur.fetchall() or []:
                 for token in _tr_katla(str(dict(r)["ad_soyad"] or "")).split():
-                    if len(token) >= 4 and f" {token} " in s:
+                    # ≥3: Ali/Ece/Can gibi 3 harfli adlar da yakalanır (denetim P3-12)
+                    if len(token) >= 3 and f" {token} " in s:
                         return token
     except Exception as e:  # noqa: BLE001
         logger.warning("beyin pii kontrol atlandi: %s", str(e)[:100])
@@ -423,10 +424,17 @@ def gece_sentez() -> None:
     mesaj zaten doğmaz. Hata-yutar; WA kotası dolarsa arşiv yine durur."""
     try:
         if not llm_mevcut():
+            # Denetim P2-6: sessiz çıkış 'evvel_beyni' üreticisini görünmez susturuyordu
+            from duyu_omurga import duyu_nabiz_yaz
+            duyu_nabiz_yaz("evvel_beyni", durum="hata", yutulan_hata=1,
+                           not_metin="LLM anahtarı yok — sentez atlandı")
             return
+        # 'kapanış farkları' anahtarı bilinçli: seçici B5'i (ucuz SQL) tetikler; anahtar
+        # eşleşmezse fallback TÜM blokları (canlı Evo dahil) kurup geceyi ağırlaştırıyordu
         sonuc = _sor_calistir(
             "Bugünün duyu verilerinden 5-6 satırlık bir günlük gözlem anlatısı yaz: "
-            "en dikkat çeken 2-3 gözlem + duyu sağlığı durumu. Hüküm yok, gözlem dili.",
+            "en dikkat çeken 2-3 gözlem, kapanış farkları ve duyu sağlığı durumu. "
+            "Hüküm yok, gözlem dili.",
             tip="gece_sentez",
         )
         try:
@@ -453,3 +461,8 @@ def gece_sentez() -> None:
             logger.warning("beyin gece WA konusmasi yutuldu: %s", str(e)[:120])
     except Exception as e:  # noqa: BLE001
         logger.warning("beyin gece sentez yutuldu: %s", str(e)[:150])
+        try:
+            from duyu_omurga import duyu_nabiz_yaz
+            duyu_nabiz_yaz("evvel_beyni", durum="hata", yutulan_hata=1, not_metin=str(e)[:200])
+        except Exception:  # noqa: BLE001
+            pass
