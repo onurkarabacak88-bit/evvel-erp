@@ -70,16 +70,26 @@ _YASAKLI_DIL = re.compile(
 )
 
 
+# Türkçe harf katlama: kullanıcı "Aysenaz" yazar, DB'de "AYŞENAZ" durur — ş/s, ı/i,
+# İ/i eşleşmezse filtre delinir (bilinen büyük-İ tuzağı, bkz. Evo şube eşleştirme).
+_TR_FOLD = str.maketrans("çğıöşüÇĞİÖŞÜI", "cgiosucgiosui")
+
+
+def _tr_katla(t: str) -> str:
+    return (t or "").translate(_TR_FOLD).lower()
+
+
 def _pii_kontrol(soru: str) -> Optional[str]:
     """PII GİRİŞ FİLTRESİ [4 model teyidi]: soruda personel adı geçiyorsa modele HİÇ gitmeden
-    nazik red. Şube/tedarikçi adları serbest (kimlik değil kurum). Hata-yutar (filtre çökerse
-    soru geçer — ama isim-üretme yasağı + kimliksiz bağlam ikinci hat olarak durur)."""
+    nazik red. Şube/tedarikçi adları serbest (kimlik değil kurum). Karşılaştırma Türkçe-katlanmış
+    (ş→s, ı→i…) iki yönde. Hata-yutar (filtre çökerse soru geçer — ama isim-üretme yasağı +
+    kimliksiz bağlam ikinci hat olarak durur)."""
     try:
-        s = " " + re.sub(r"[^\wçğıöşüÇĞİÖŞÜ ]", " ", (soru or "").lower()) + " "
+        s = " " + re.sub(r"[^\w ]", " ", _tr_katla(soru)) + " "
         with db() as (_, cur):
             cur.execute("SELECT ad_soyad FROM personel WHERE ad_soyad IS NOT NULL")
             for r in cur.fetchall() or []:
-                for token in str(dict(r)["ad_soyad"] or "").lower().split():
+                for token in _tr_katla(str(dict(r)["ad_soyad"] or "")).split():
                     if len(token) >= 4 and f" {token} " in s:
                         return token
     except Exception as e:  # noqa: BLE001
