@@ -13264,6 +13264,10 @@ def _ensure_maliyet_tablolari(cur: Any) -> None:
     # Kira/sabit gider STOPAJ oranı (2026-07-05) — şahıstan işyeri kirasında brüt kiranın
     # %20'si stopaj olarak kesilip vergi dairesine ödenir. 0 = stopajsız (şirket/faturalı kira).
     cur.execute("ALTER TABLE sabit_giderler ADD COLUMN IF NOT EXISTS stopaj_oran NUMERIC(5,4) DEFAULT 0")
+    # Sabit gider KDV oranı (2026-07-06, kullanıcı teyidi) — kira şube-bazlı KDV'li olabilir:
+    # Köyceğiz kirası KDV'siz (%0), Alsancak + Gazze kiraları KDV'li (%20, şirketten faturalı).
+    # 0 = KDV'siz. gun-gun P&L indirilecek KDV'yi bu koloandan kayıt-bazlı hesaplar.
+    cur.execute("ALTER TABLE sabit_giderler ADD COLUMN IF NOT EXISTS kdv_oran NUMERIC(5,4) DEFAULT 0")
 
 
 @router.get("/maliyet/ozet")
@@ -13680,6 +13684,10 @@ def ops_maliyet_gun_gun(
         #  - faiz/finansman/kredi → OPERASYONEL P&L'YE GİRMEZ (işletme üzerine düşen
         #    finansman yükü; "bugün operasyonel kâr ettik mi?" sorusunu kirletir → kullanıcı kuralı)
         kira_gunluk: Dict[str, float] = {}
+        # FIX KDV-KİRA (2026-07-06, kullanıcı teyidi): kira KDV'si şube-bazlı — Köyceğiz KDV'siz,
+        # Alsancak+Gazze %20 KDV'li. sabit_giderler.kdv_oran kayıt-bazlı okunur; günlük kira
+        # payının İÇİNDEKİ KDV (tutar × oran/(1+oran)) burada birikir, satırda indirilecek'e eklenir.
+        kira_kdv_gunluk: Dict[str, float] = {}
         fatura_sabit_gunluk: Dict[str, float] = {}
         abonelik_gunluk: Dict[str, float] = {}
         # Periyot → GÜN bölücü: tutar / bölücü = günlük pay. Yanlış bölücü = maliyet
@@ -13692,7 +13700,8 @@ def ops_maliyet_gun_gun(
             cur.execute(
                 """SELECT sube_id::text AS sid, LOWER(COALESCE(kategori,'')) AS kat,
                           LOWER(COALESCE(gider_adi,'')) AS ad, COALESCE(tutar,0)::numeric AS tutar,
-                          LOWER(COALESCE(periyot,'aylik')) AS periyot
+                          LOWER(COALESCE(periyot,'aylik')) AS periyot,
+                          COALESCE(kdv_oran, 0)::float AS kdv_oran
                    FROM sabit_giderler
                    WHERE aktif = TRUE AND sube_id IS NOT NULL"""
             )
@@ -13705,6 +13714,9 @@ def ops_maliyet_gun_gun(
                     continue  # finansman yükü → operasyonel P&L dışı
                 if "kira" in txt:
                     kira_gunluk[sidk] = kira_gunluk.get(sidk, 0.0) + g
+                    _ko = float(d.get("kdv_oran") or 0)
+                    if _ko > 0:
+                        kira_kdv_gunluk[sidk] = kira_kdv_gunluk.get(sidk, 0.0) + g * _ko / (1.0 + _ko)
                 elif "abonelik" in txt or "abonman" in txt or "abone" in txt:
                     abonelik_gunluk[sidk] = abonelik_gunluk.get(sidk, 0.0) + g
                 else:
@@ -13942,6 +13954,7 @@ def ops_maliyet_gun_gun(
             # ── Ciro + Faz1 (kira) + Faz2 (faturalar + POS/platform komisyon) + P&L ──
             if sid is None:
                 kira_g = sum(kira_gunluk.values())
+                kira_kdv_g = sum(kira_kdv_gunluk.values())
                 fatura_g = sum(fatura_sabit_gunluk.values())
                 abonelik_g = sum(abonelik_gunluk.values())
                 _cm = [v for (ks, kt), v in ciro_map.items() if kt == tarih_str]
@@ -13954,6 +13967,7 @@ def ops_maliyet_gun_gun(
                 iade_g = sum(v for (ks, kt), v in iade_map.items() if kt == tarih_str)
             else:
                 kira_g = kira_gunluk.get(sid, 0.0)
+                kira_kdv_g = kira_kdv_gunluk.get(sid, 0.0)
                 fatura_g = fatura_sabit_gunluk.get(sid, 0.0)
                 abonelik_g = abonelik_gunluk.get(sid, 0.0)
                 _c = ciro_map.get((sid, tarih_str), {"ciro": 0, "pos": 0, "online": 0})
@@ -14003,7 +14017,10 @@ def ops_maliyet_gun_gun(
                 _gider_ind_kdv = (
                     _ickdv(fatura_g, 0.20) + _ickdv(abonelik_g, 0.20)
                     + _ickdv(pos_komisyon + platform_komisyon, 0.20)
-                )  # kira_g/sube_gider/iade_g → %0 (yapılandırılabilir); personel/SGK KDV yok
+                    # FIX KDV-KİRA (2026-07-06, kullanıcı teyidi): kira KDV'si artık kayıt-bazlı
+                    # (sabit_giderler.kdv_oran) — Alsancak+Gazze %20, Köyceğiz 0. Düz %0 varsayımı bitti.
+                    + kira_kdv_g
+                )  # sube_gider/iade_g → %0 (yapılandırılabilir); personel/SGK KDV yok
                 _toplam_ind_kdv = _cogs_ind_kdv + _gider_ind_kdv
                 net_cogs = toplam - _cogs_ind_kdv                  # ürün maliyeti KDV-hariç
                 net_toplam_maliyet = toplam_maliyet - _toplam_ind_kdv
@@ -14398,6 +14415,42 @@ def ops_maliyet_stopaj_otomatik(oran_yuzde: float = Query(20, ge=0, le=40)):
         """, (oran,))
         adet = cur.rowcount or 0
     return {"success": True, "guncellenen": adet, "stopaj_yuzde": oran_yuzde}
+
+
+@router.post("/maliyet/kira-kdv-kaydet")
+def ops_maliyet_kira_kdv_kaydet(body: dict):
+    """Kira KDV oranını şube-bazlı ayarlar (2026-07-06, kullanıcı teyidi:
+    Köyceğiz kirası KDV'siz; Alsancak + Gazze kiraları %20 KDV'li).
+
+    body: {"kdvli_subeler": ["alsancak", "gazze"], "oran_yuzde": 20}
+    Listedeki şubelerin aktif KİRA giderlerine oran yazılır; DİĞER tüm kira
+    giderlerinin kdv_oran'ı 0'a çekilir (idempotent — tekrar çağrılabilir).
+    Şube adı eşleşmesi Türkçe-güvenli (_tr_fold, substring)."""
+    kdvli = [(_tr_fold(str(s)) or "").strip() for s in (body.get("kdvli_subeler") or []) if str(s).strip()]
+    oran_yuzde = float(body.get("oran_yuzde") or 20)
+    if not (0 <= oran_yuzde <= 40):
+        raise HTTPException(400, "oran_yuzde 0-40 arası olmalı")
+    oran = round(oran_yuzde / 100.0, 4)
+    with db() as (conn, cur):
+        _ensure_maliyet_tablolari(cur)
+        cur.execute("""
+            SELECT sg.id::text AS id, sg.gider_adi, sg.sube_id::text AS sube_id,
+                   COALESCE(s.ad, '') AS sube_ad
+            FROM sabit_giderler sg
+            LEFT JOIN subeler s ON s.id::text = sg.sube_id::text
+            WHERE sg.aktif=TRUE AND LOWER(COALESCE(sg.kategori,''))='kira'
+        """)
+        kiralar = [dict(r) for r in (cur.fetchall() or [])]
+        sonuc = []
+        for k in kiralar:
+            _ad_key = _tr_fold(str(k.get("sube_ad") or ""))
+            _kdvli = bool(_ad_key) and any(a and (a in _ad_key or _ad_key in a) for a in kdvli)
+            _yeni = oran if _kdvli else 0
+            cur.execute("UPDATE sabit_giderler SET kdv_oran=%s WHERE id=%s", (_yeni, k["id"]))
+            sonuc.append({"gider": k.get("gider_adi"), "sube": k.get("sube_ad"),
+                          "kdv_yuzde": round(_yeni * 100, 1)})
+    return {"success": True, "kiralar": sonuc,
+            "not": "Kira KDV'si şube-bazlı; gun-gun P&L indirilecek KDV'ye kayıt-bazlı yansır."}
 
 
 @router.get("/maliyet/stopaj-ozet")
