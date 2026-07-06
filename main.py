@@ -7609,28 +7609,26 @@ def kasa_duzelt(sid: str, body: KasaDuzeltModel):
             )
 
             # 4) Yeni POS_KESINTI kaydı yaz — paneldeki finansman maliyeti buradan hesaplanır
+            # FIX MN3 (2026-07-06): ham INSERT idempotency'sizdi → düzeltme iki kez tetiklenirse
+            # (çift tık/retry) aynı ciroya ÇİFT kesinti yazılıp kasa fazladan düşüyordu. Merkezi
+            # yazıcıya (insert_kasa_hareketi) çevrildi: deterministik ref_id'den türeyen
+            # idempotency anahtarı birebir tekrarı sessizce yutar (ON CONFLICT).
             pos_kesinti = pos_tutari * pos_oran / 100
             online_kesinti = online_tutari * online_oran / 100
             if pos_kesinti > 0.01:
-                cur.execute("""
-                    INSERT INTO kasa_hareketleri
-                        (id, tarih, islem_turu, tutar, aciklama, kaynak_tablo, kaynak_id, ref_id, ref_type)
-                    VALUES (%s, %s, 'POS_KESINTI', %s, %s, 'ciro', %s, %s, 'POS_KESINTI')
-                """, (
-                    str(uuid.uuid4()), k['tarih'], -pos_kesinti,
+                insert_kasa_hareketi(
+                    cur, k['tarih'], 'POS_KESINTI', -pos_kesinti,
                     f'POS komisyon kesintisi (%{pos_oran})',
-                    k['ciro_id'] + '_pos', k['ciro_id'] + '_pos'
-                ))
+                    'ciro', k['ciro_id'] + '_pos',
+                    ref_id=k['ciro_id'] + '_pos', ref_type='POS_KESINTI',
+                )
             if online_kesinti > 0.01:
-                cur.execute("""
-                    INSERT INTO kasa_hareketleri
-                        (id, tarih, islem_turu, tutar, aciklama, kaynak_tablo, kaynak_id, ref_id, ref_type)
-                    VALUES (%s, %s, 'ONLINE_KESINTI', %s, %s, 'ciro', %s, %s, 'ONLINE_KESINTI')
-                """, (
-                    str(uuid.uuid4()), k['tarih'], -online_kesinti,
+                insert_kasa_hareketi(
+                    cur, k['tarih'], 'ONLINE_KESINTI', -online_kesinti,
                     f'Online komisyon kesintisi (%{online_oran})',
-                    k['ciro_id'] + '_online', k['ciro_id'] + '_online'
-                ))
+                    'ciro', k['ciro_id'] + '_online',
+                    ref_id=k['ciro_id'] + '_online', ref_type='ONLINE_KESINTI',
+                )
 
             audit(cur, 'kasa_hareketleri', k['kasa_id'], 'DUZELTME',
                   eski={'tutar': mevcut_tutar}, yeni={'tutar': dogru_tutar})
