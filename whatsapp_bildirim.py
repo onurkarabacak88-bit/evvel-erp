@@ -1154,6 +1154,14 @@ def gunluk_ozet_gonder(tarih: date | None = None) -> dict:
     try:
         mesaj    = gunluk_ozet_mesaj_olustur(tarih)
         basarili = whatsapp_gonder(mesaj)
+        # KONUŞMA İZİ kancası (hata-yutar): söylenen söz de bir olaydır — raporun
+        # sayısal özü omurgaya (kişi adları girmez)
+        if basarili:
+            try:
+                from duyu_konusma import rapor_izi_kaydet
+                rapor_izi_kaydet(tarih or date.today())
+            except Exception:
+                pass
         return {"basarili": basarili, "mesaj_onizleme": mesaj[:400] + "..."}
     except Exception as e:
         logger.error(f"WhatsApp günlük özet hatası: {e}")

@@ -201,7 +201,7 @@ def kanit_paketi(entity_scope: str, entity_id: str, gun_bas: date, gun_bit: date
         elif d in kanit_seti or str(o.get("evidence_class") or "") == "patern":
             yaprak_duyular.add(d)
     aileler = sorted({aileler_map.get(d, "bilinmiyor") for d in yaprak_duyular}
-                     - {"meta", "bilinmiyor"})
+                     - {"meta", "bilinmiyor", "iletisim"})
     return {
         "odak": {"scope": entity_scope, "entity_id": entity_id,
                  "pencere": [str(gun_bas), str(gun_bit)]},
@@ -302,7 +302,7 @@ def uyanis_hazirlik():
         paket_n = 0
         for r in cur.fetchall() or []:
             ailes = {aileler_map.get(str(d), "bilinmiyor") for d in (dict(r).get("duyular") or [])}
-            if len(ailes - {"meta", "bilinmiyor"}) >= 2:
+            if len(ailes - {"meta", "bilinmiyor", "iletisim"}) >= 2:
                 paket_n += 1
         kriterler.append({"kriter": "kararli_paket_ornekleri",
                           "hedef": ">=10 olgun ≥2-aileli şube-gün paketi",

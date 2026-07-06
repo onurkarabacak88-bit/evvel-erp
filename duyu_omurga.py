@@ -318,6 +318,11 @@ _DUYU_REGISTRY = {
     "menu_fiyat_izi":     {"sinif": "olay_gudumlu_normal", "kaynak_aile": "belge"},
     "bildirim_iletim":    {"sinif": "olay_gudumlu_anomali", "kaynak_aile": "meta"},
     "sinaps_sarmal":      {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0, "kaynak_aile": "meta"},
+    # KONUŞMA İZLERİ (2026-07-07, Codex çaprazlı): sistemin dışa dönük sözü — aile
+    # 'iletisim' kanıt kapısında meta gibi DIŞLANIR (motor kendi sesini kanıt duyamaz)
+    "rapor_izi":          {"sinif": "olay_gudumlu_normal", "kaynak_aile": "iletisim"},
+    "motor_bulgu_izi":    {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0, "kaynak_aile": "iletisim"},
+    "soz_aksiyon":        {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0, "kaynak_aile": "iletisim"},
 }
 
 

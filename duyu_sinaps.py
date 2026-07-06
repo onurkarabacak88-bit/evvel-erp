@@ -158,6 +158,7 @@ _KOMPOZIT_OKUYUCU = "sinaps_kompozit"
 _KOMPOZIT_DISI_DUYULAR = frozenset({
     "sinaps_kompozit", "sinaps_kase", "sinaps_zincir", "sinaps_sarmal",
     "vardiya_plan_gercek", "menu_fiyat_izi", "bildirim_iletim",
+    "rapor_izi", "motor_bulgu_izi", "soz_aksiyon",
     "odeme_karmasi", "aciklama_yogunlugu", "adet_tutar", "duyu_saglik", "evvel_beyni",
     # Denetim P2-4 (2026-07-06): rutin şube-gün kesit üreticileri — her gün ses çıkarır,
     # sayılırsa kompozit "her-olay dedektörüne" yozlaşır

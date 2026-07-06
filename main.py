@@ -423,13 +423,8 @@ def _gece_yarisi_scheduler():
             except Exception as e:
                 logger.warning(f"⏰ Scheduler duyu sağlık hatası: {e}")
 
-            # EVVEL BEYNİ gece öz-anlatısı (L3) — arşive yazar + sabah WhatsApp mesajı (çerçeveli); hata-yutar.
-            try:
-                from beyin_api import gece_sentez
-                gece_sentez()
-                logger.info("⏰ Scheduler: Evvel Beyni gece sentezi tamamlandı")
-            except Exception as e:
-                logger.warning(f"⏰ Scheduler beyin sentez hatası: {e}")
+            # (Beyin sentezi zincirin SONUNA taşındı — 2026-07-07 Codex zarf kararı:
+            #  V3 anlatıcı, gecenin tüm olayları doğduktan sonra ve EN SON konuşur.)
 
             # FAZ V (2026-07-06) — SAHİP-DAHİL müdahale izi: dünün geriye-dönük işlemleri
             # omurgaya günlük özet olayı (Grok kör noktası); hata-yutar.
@@ -484,6 +479,25 @@ def _gece_yarisi_scheduler():
                 logger.info("⏰ Scheduler: özgün duyular taraması tamamlandı")
             except Exception as e:
                 logger.warning(f"⏰ Scheduler özgün duyular hatası: {e}")
+
+            # Konuşma izleri (2026-07-07, Codex çaprazlı): motor bulgu kesiti (kaba+D+2
+            # gecikmeli) + söz→aksiyon adayı. Rapor izi gönderim kancasından beslenir.
+            try:
+                from duyu_konusma import gece_konusma_calistir
+                gece_konusma_calistir()
+                logger.info("⏰ Scheduler: konuşma izleri taraması tamamlandı")
+            except Exception as e:
+                logger.warning(f"⏰ Scheduler konuşma izleri hatası: {e}")
+
+            # EVVEL BEYNİ gece öz-anlatısı (L3) — ZİNCİRİN SONU (Codex zarf kararı:
+            # anlatıcı, gecenin tüm olayları doğduktan sonra ve EN SON konuşur).
+            # Arşive yazar + sabah WhatsApp mesajı (çerçeveli); hata-yutar.
+            try:
+                from beyin_api import gece_sentez
+                gece_sentez()
+                logger.info("⏰ Scheduler: Evvel Beyni gece sentezi tamamlandı (zincir sonu)")
+            except Exception as e:
+                logger.warning(f"⏰ Scheduler beyin sentez hatası: {e}")
 
             # Pazartesi — geçen haftanın kalem bazlı fire raporu
             if bugun.weekday() == 0:  # 0 = Pazartesi
