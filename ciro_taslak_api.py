@@ -251,6 +251,9 @@ def gecmis_gun_ciro_gonder(body: GecmisCiroBody):
         if not s:
             raise HTTPException(404, "Şube bulunamadı")
         sube_id = s["id"]; sube_ad2 = s["ad"]
+        # FIX SEC2 (2026-07-06): şube+tarih yarış kilidi — idempotent kontrol ile insert arasında
+        # kilit yoktu; eşzamanlı iki istek ikisi de 'yok' görüp aynı güne ÇİFT ciro+kasa yazardı.
+        cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"gecmis-ciro:{sube_id}:{body.tarih}",))
         # İdempotent: o tarihte aktif ciro zaten var mı?
         cur.execute("SELECT id FROM ciro WHERE sube_id=%s AND tarih=%s::date AND durum='aktif' LIMIT 1",
                     (sube_id, body.tarih))

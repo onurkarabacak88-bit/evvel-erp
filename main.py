@@ -5943,8 +5943,12 @@ def fatura_ode(body: FaturaOdemeModel):
     if _tutar_chk <= 0:
         raise HTTPException(400, "Tutar 0'dan büyük olmalı")
     with db() as (conn, cur):
+        # FIX SEC2 (2026-07-06): gider-bazlı yarış kilidi — "bu ay ödendi mi" kontrolü ile kasa
+        # yazımı arasında kilit yoktu; eşzamanlı iki istek ikisi de 'ödenmemiş' görüp aynı faturayı
+        # iki kez kasadan düşürebiliyordu. Kilit istekleri sıraya sokar; ikincisi dedup'a takılır.
+        cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"fatura-ode:{body.sabit_gider_id}",))
         # Sabit gideri kontrol et
-        cur.execute("SELECT * FROM sabit_giderler WHERE id=%s AND aktif=TRUE", (body.sabit_gider_id,))
+        cur.execute("SELECT * FROM sabit_giderler WHERE id=%s AND aktif=TRUE FOR UPDATE", (body.sabit_gider_id,))
         gider = cur.fetchone()
         if not gider:
             raise HTTPException(404, "Gider bulunamadı")
@@ -6827,7 +6831,10 @@ def vadeli_kart_oneri(vid: str):
 @app.post("/api/vadeli-alimlar/{vid}/ode")
 def vadeli_ode(vid: str, body: VadeliOdeModel = VadeliOdeModel()):
     with db() as (conn, cur):
-        cur.execute("SELECT * FROM vadeli_alimlar WHERE id=%s AND durum='bekliyor'", (vid,))
+        # FIX SEC2 (2026-07-06): FOR UPDATE — eşzamanlı iki tam-ödeme isteği aynı vadeliyi iki
+        # kez kasadan düşürebiliyordu. İkinci istek ilki commit edene kadar bekler; vadeli
+        # kapanınca durum='bekliyor' bulamaz (404) veya ödendi-guard'ına takılır.
+        cur.execute("SELECT * FROM vadeli_alimlar WHERE id=%s AND durum='bekliyor' FOR UPDATE", (vid,))
         v = cur.fetchone()
         if not v: raise HTTPException(404)
 
