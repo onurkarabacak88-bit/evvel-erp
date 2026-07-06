@@ -381,6 +381,15 @@ def _gece_yarisi_scheduler():
             except Exception as e:
                 logger.warning(f"⏰ Scheduler beyin sentez hatası: {e}")
 
+            # FAZ V (2026-07-06) — SAHİP-DAHİL müdahale izi: dünün geriye-dönük işlemleri
+            # omurgaya günlük özet olayı (Grok kör noktası); hata-yutar.
+            try:
+                from duyu_gorunumler import gece_mudahale_olay_yaz
+                gece_mudahale_olay_yaz()
+                logger.info("⏰ Scheduler: müdahale izi taraması tamamlandı")
+            except Exception as e:
+                logger.warning(f"⏰ Scheduler müdahale izi hatası: {e}")
+
             # Pazartesi — geçen haftanın kalem bazlı fire raporu
             if bugun.weekday() == 0:  # 0 = Pazartesi
                 try:

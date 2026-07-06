@@ -283,6 +283,7 @@ _DUYU_REGISTRY = {
     "bar_stok_uyum":      {"sinif": "olay_gudumlu_anomali"},
     "duyu_saglik":        {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0},
     "evvel_beyni":        {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0},
+    "mudahale_izi":       {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0},
 }
 
 
@@ -347,12 +348,21 @@ def saglik_hesapla(cur) -> dict:
     _ensure(cur)
     _ensure_nabiz(cur)
     # Üretici başına: son olay + olay sayısı + öğrenilen ritim (N>=6: max(p50*2, p90))
+    # + ZAMANSAL BÜTÜNLÜK (FAZ V, DeepSeek vuruşu): observed−occurred GECİKMESİ — "kayıt ne
+    # kadar geç düştü?" Kaynakta geriye-dönük girilen/geç gelen veri mutabakatları sessizce
+    # bozar; gecikme kendisi bir sağlık boyutudur.
     cur.execute(
         """
         SELECT duyu,
                MAX(observed_at) AS son_olay,
                COUNT(*)::int AS olay_n,
-               GREATEST(0, EXTRACT(EPOCH FROM (NOW() - MAX(observed_at))) / 86400.0) AS yas_gun
+               GREATEST(0, EXTRACT(EPOCH FROM (NOW() - MAX(observed_at))) / 86400.0) AS yas_gun,
+               ROUND(AVG(GREATEST(0, EXTRACT(EPOCH FROM (observed_at - occurred_at)) / 86400.0))
+                     FILTER (WHERE occurred_at IS NOT NULL)::numeric, 2) AS ort_gecikme_gun,
+               ROUND(MAX(GREATEST(0, EXTRACT(EPOCH FROM (observed_at - occurred_at)) / 86400.0))
+                     FILTER (WHERE occurred_at IS NOT NULL)::numeric, 2) AS max_gecikme_gun,
+               COUNT(*) FILTER (WHERE occurred_at IS NOT NULL
+                   AND observed_at - occurred_at > INTERVAL '2 days')::int AS gec_kayit_n
         FROM duyu_olay
         WHERE olay_tipi NOT LIKE 'meta.%%'
         GROUP BY duyu
@@ -408,15 +418,24 @@ def saglik_hesapla(cur) -> dict:
         else:
             beklenen = None
         rozet = _rozet_degerlendir(sinif, yas, beklenen, nb is not None, int(ol.get("olay_n") or 0))
+        # ZAMAN GÜVENİ (FAZ V): geç kayıt oranı yüksekse mutabakatlar şüpheli — İSİMLİ rozet
+        _gec_n = int(ol.get("gec_kayit_n") or 0)
+        _n = int(ol.get("olay_n") or 0)
+        zaman_guveni = ("veri_yok" if _n == 0 else
+                        "gec_kayit_yogun" if (_gec_n / max(1, _n)) > 0.2 else
+                        "gec_kayit_var" if _gec_n > 0 else "zamaninda")
         ureticiler.append({
             "duyu": duyu, "sinif": sinif, "rozet": rozet,
             "son_olay": str(ol.get("son_olay") or "") or None,
-            "olay_n": int(ol.get("olay_n") or 0),
+            "olay_n": _n,
             "yas_gun": round(yas, 2) if yas is not None else None,
             "beklenen_gun": round(beklenen, 2) if beklenen else None,
             "son_nabiz": str(nb["run_ts"]) if nb else None,
             "nabiz_durum": (nb or {}).get("durum"),
             "yutulan_hata_7g": yutulanlar.get(duyu, 0),
+            "zaman_guveni": zaman_guveni,
+            "ort_gecikme_gun": float(ol["ort_gecikme_gun"]) if ol.get("ort_gecikme_gun") is not None else None,
+            "gec_kayit_n": _gec_n,
         })
 
     # SİNAPS sağlığı: cursor kaç olay geride (backlog) + imleç yaşı

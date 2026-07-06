@@ -27,6 +27,96 @@ _KDV_ODEME_GUNU = 28       # takip eden ayın 28'i
 _MUHTASAR_ODEME_GUNU = 28  # muhtasar da takip eden ayın sonuna doğru
 
 
+# SAHİP-DAHİL MÜDAHALE İZİ (FAZ V, Grok'un özgün vuruşu — 2026-07-06):
+# "Sahibin kendisi sistemi bypass ederse bunu görecek duyu yok; sahip kendi sistemini
+# kandırabilir." Çözüm kural #15 ile çelişmez (o PERSONELİ korur) — bu ŞEFFAFLIKTIR:
+# geçmişe dokunan / kayıt-değiştiren işlemler KİM YAPARSA YAPSIN (patron dahil) iz bırakır
+# ve görünür olur. Öz-hesap-verebilirlik: "bir yıl sonra bu farkı neden elden kapattım?"
+# sorusunun cevabı kayıtta olsun.
+_GERIYE_DONUK_ISLEMLER = (
+    "KAPANIS_GERI_AL", "KAPANIS_GERI_AL_TESLIM_SIL", "DUZELTME", "KASA_DUZELTME",
+    "MUKERRER", "GECMIS_TEMIZLE", "IPTAL", "TERS_KAYIT", "K1_TELAFI_ODEME",
+    "KISMI_ODE_KAPANIS", "GUNCELLEME",
+)
+
+
+@router.get("/mudahale-izi")
+def mudahale_izi(gun: int = Query(30, ge=7, le=90)):
+    """Geçmişe dokunan / kayıt-değiştiren işlemlerin izi (audit_log'dan, salt-okur).
+    HÜKÜM YOK: her müdahale meşru olabilir — amaç görünürlük. Kişi kolonu bilerek yok
+    (audit_log zaten kim-yaptı tutmuyor; iş TÜRÜ ve YOĞUNLUĞU izlenir)."""
+    bas = date.today() - timedelta(days=gun - 1)
+    with db() as (_, cur):
+        cur.execute(
+            """
+            SELECT islem, tablo,
+                   COUNT(*)::int AS adet,
+                   MIN(olusturma)::date::text AS ilk,
+                   MAX(olusturma)::date::text AS son
+            FROM audit_log
+            WHERE olusturma >= %s
+              AND (islem = ANY(%s) OR islem LIKE '%%IPTAL%%' OR islem LIKE '%%GERI_AL%%'
+                   OR islem LIKE '%%DUZELT%%' OR islem LIKE '%%TERS%%')
+            GROUP BY islem, tablo
+            ORDER BY adet DESC
+            """,
+            (str(bas), list(_GERIYE_DONUK_ISLEMLER)),
+        )
+        turler = [dict(r) for r in (cur.fetchall() or [])]
+        cur.execute(
+            """
+            SELECT olusturma::date::text AS gun, COUNT(*)::int AS adet
+            FROM audit_log
+            WHERE olusturma >= %s
+              AND (islem = ANY(%s) OR islem LIKE '%%IPTAL%%' OR islem LIKE '%%GERI_AL%%'
+                   OR islem LIKE '%%DUZELT%%' OR islem LIKE '%%TERS%%')
+            GROUP BY olusturma::date ORDER BY gun DESC LIMIT 30
+            """,
+            (str(bas), list(_GERIYE_DONUK_ISLEMLER)),
+        )
+        gunluk = [dict(r) for r in (cur.fetchall() or [])]
+    return {
+        "kesit": {"bas": str(bas), "gun": gun},
+        "islem_turleri": turler,
+        "gunluk_yogunluk": gunluk,
+        "toplam": sum(t["adet"] for t in turler),
+        "not": "SAHİP DAHİL tüm düzeltme/iptal/geri-alma işlemlerinin izi — hüküm yok, "
+               "görünürlük var. Her müdahale meşru olabilir; yoğunlaşma ve zamanlama "
+               "örüntüsünü İNSAN okur. (Grok: 'sistemin en kırılgan noktası, üst düzey "
+               "insider'ın kendi sistemini bypass etmesidir' — bu ekran o kör noktayı kapatır.)",
+    }
+
+
+def gece_mudahale_olay_yaz() -> None:
+    """GECE: dünün geriye-dönük müdahale sayısı > 0 ise omurgaya günlük özet olayı yaz.
+    İdempotent (source_ref=gün); hata-yutar."""
+    try:
+        dun = date.today() - timedelta(days=1)
+        with db() as (_, cur):
+            cur.execute(
+                """
+                SELECT COUNT(*)::int AS n FROM audit_log
+                WHERE olusturma::date = %s
+                  AND (islem = ANY(%s) OR islem LIKE '%%IPTAL%%' OR islem LIKE '%%GERI_AL%%'
+                       OR islem LIKE '%%DUZELT%%' OR islem LIKE '%%TERS%%')
+                """,
+                (str(dun), list(_GERIYE_DONUK_ISLEMLER)),
+            )
+            n = int(dict(cur.fetchone() or {}).get("n") or 0)
+        if n > 0:
+            from duyu_omurga import duyu_olay_yaz
+            duyu_olay_yaz(
+                "mudahale_izi", "operasyon.kayit.geriye_donuk_mudahale", str(dun),
+                entity_scope="genel", occurred_at=str(dun),
+                signal_name="Geriye dönük müdahale günü",
+                payload={"adet": n},
+            )
+        from duyu_omurga import duyu_nabiz_yaz
+        duyu_nabiz_yaz("mudahale_izi", taranan=1, uretilen=1 if n > 0 else 0)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("gece mudahale izi yutuldu: %s", str(e)[:120])
+
+
 @router.get("/vergi-takvim")
 def vergi_nakit_takvimi():
     """FAZ 1c: vergi kaynaklı nakit çıkış takvimi (tahmini — rozetli, hüküm yok)."""
