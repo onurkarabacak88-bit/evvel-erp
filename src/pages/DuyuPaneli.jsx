@@ -91,6 +91,7 @@ export default function DuyuPaneli() {
   const [omurga, setOmurga] = useState(null);
   const [acikTeslimat, setAcikTeslimat] = useState(null);
   const [mudahale, setMudahale] = useState(null);
+  const [disiplin, setDisiplin] = useState(null);
   const [hata, setHata] = useState('');
 
   useEffect(() => {
@@ -105,6 +106,7 @@ export default function DuyuPaneli() {
     api('/duyu/ozet').then(setOmurga).catch(() => {});
     api('/belge-talep/acik-teslimat').then(setAcikTeslimat).catch(() => {});
     api('/duyu/mudahale-izi?gun=30').then(setMudahale).catch(() => {});
+    api('/duyu/kayit-disiplini?gun=14').then(setDisiplin).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -299,6 +301,41 @@ export default function DuyuPaneli() {
                   ⚡ Yoğun günler: {(mudahale.gunluk_yogunluk || []).filter((g) => g.adet >= 10).map((g) => `${g.gun} (×${g.adet})`).join(' · ')}
                 </div>
               )}
+            </>
+          )}
+        </div>
+
+        {/* ── 🧾 KAYIT DİSİPLİNİ (FAZ 2) ── */}
+        <div style={K.kart}>
+          <div style={K.baslik}>🧾 Kayıt Disiplini <span style={{ fontSize: 10.5, color: 'var(--text3)' }}>(14 gün, Sv0 ham)</span></div>
+          <div style={K.alt}>Manuel açıklama oranı + geriye tarihli yazım + şube nakit oranı. Hepsi meşru olabilir — örüntüye sen bakarsın.</div>
+          {disiplin && (
+            <>
+              {(() => {
+                const sonGunler = {};
+                (disiplin.aciklama_yogunlugu || []).forEach((a) => { sonGunler[a.tablo] = a; });
+                return Object.values(sonGunler).map((a, i) => (
+                  <div key={i} style={{ fontSize: 12, color: 'var(--text2)', padding: '3px 0', display: 'flex', justifyContent: 'space-between' }}>
+                    <span>📝 <b>{a.tablo}</b> <span style={{ color: 'var(--text3)', fontSize: 10.5 }}>{a.gun}</span></span>
+                    <span style={{ fontFamily: 'ui-monospace, monospace' }}>{a.aciklamali}/{a.toplam} açıklamalı ({Math.round((a.oran || 0) * 100)}%)</span>
+                  </div>
+                ));
+              })()}
+              {(disiplin.geriye_tarihli_bugun || []).map((b, i) => (
+                <div key={`b${i}`} style={{ fontSize: 12, color: 'var(--yellow, #f59e0b)', padding: '3px 0' }}>
+                  ⏪ bugün geçmiş tarihe yazım: <b>{b.tablo}</b> ×{b.n} (en eski {b.max_gecikme_gun}g geride)
+                </div>
+              ))}
+              {(() => {
+                const sonKarma = {};
+                (disiplin.odeme_karmasi || []).forEach((k2) => { sonKarma[k2.sube_ad] = k2; });
+                return Object.values(sonKarma).map((k2, i) => (
+                  <div key={`k${i}`} style={{ fontSize: 12, color: 'var(--text2)', padding: '3px 0', display: 'flex', justifyContent: 'space-between' }}>
+                    <span>💳 <b>{k2.sube_ad}</b> <span style={{ color: 'var(--text3)', fontSize: 10.5 }}>{k2.gun}</span></span>
+                    <span style={{ fontFamily: 'ui-monospace, monospace' }}>nakit {k2.nakit_oran != null ? `${Math.round(k2.nakit_oran * 100)}%` : '—'} · {fmt(k2.toplam)}₺</span>
+                  </div>
+                ));
+              })()}
             </>
           )}
         </div>

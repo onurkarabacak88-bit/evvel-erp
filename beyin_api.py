@@ -175,6 +175,14 @@ def _blok_derle(soru: str) -> List[Tuple[str, str, str]]:
          ("ödeme", "odeme", "bakiye", "mutabakat", "cari"),
          lambda: _j({k: (v if not isinstance(v, list) else v[:6])
                      for k, v in __import__("duyu_gorunumler").odeme_mutabakat(gun=60).items()})),
+        ("B10", "Kayıt disiplini (açıklama yoğunluğu + kapanış-sonrası + ödeme karması, 14 gün)",
+         ("açıklama", "aciklama", "geriye", "backdate", "geç kayıt", "gec kayit",
+          "nakit oran", "karma", "kayıt disiplin", "kayit disiplin"),
+         lambda: _j({k: (v if not isinstance(v, list) else v[-14:])
+                     for k, v in __import__("duyu_faz2").kayit_disiplini(gun=14).items()})),
+        ("B11", "Müdahale izi (sahip dahil, 30 gün)",
+         ("müdahale", "mudahale", "iptal", "geri al", "düzeltme", "duzeltme", "override"),
+         lambda: _j(__import__("duyu_gorunumler").mudahale_izi(gun=30))),
     ]
     # Dörtgen: şube adı geçiyorsa o şube (yoksa stok anahtarında tüm şubeler kısa özet)
     def _dortgen_blok(sube_id: str, sube_ad: str):
