@@ -124,6 +124,64 @@ def _j(v) -> str:
     return json.dumps(v, ensure_ascii=False, default=str)
 
 
+def _derinlik_bloklari() -> List[Tuple[str, str, str]]:
+    """DERİNLİK v0.3 (2026-07-07, kullanıcı eleştirisi: 'toplamı söylüyor ama nereden
+    geldiğini bilmiyor — bebek gibi'): en dikkat çeken 2 şube için GÜN-GÜN kırılım +
+    o günlerin omurga olayları + açıklama bağları. Beyin ancak gördüğünü anlatabilir —
+    bu bloklar ona 'nereden geldi' malzemesini verir."""
+    bloklar: List[Tuple[str, str, str]] = []
+    try:
+        with db() as (_, cur):
+            # dikkat sırası: son 14 günde |net kapanış farkı| en büyük 2 şube
+            cur.execute(
+                """
+                SELECT u.sube_id::text AS sube_id, COALESCE(s.ad, u.sube_id::text) AS sube_ad,
+                       ROUND(SUM(COALESCE(u.fark_tl,0))::numeric, 2) AS net_fark
+                FROM sube_operasyon_uyari u
+                LEFT JOIN subeler s ON s.id::text = u.sube_id::text
+                WHERE u.tip = 'KAPANIS_KASA_FARK' AND u.tarih >= CURRENT_DATE - 14
+                GROUP BY u.sube_id, s.ad
+                ORDER BY ABS(SUM(COALESCE(u.fark_tl,0))) DESC LIMIT 2
+                """
+            )
+            hedefler = [dict(r) for r in (cur.fetchall() or [])]
+            for i, h in enumerate(hedefler):
+                cur.execute(
+                    """
+                    SELECT tarih::text AS gun, tip,
+                           ROUND(COALESCE(fark_tl,0)::numeric, 2) AS fark_tl
+                    FROM sube_operasyon_uyari
+                    WHERE sube_id::text = %s
+                      AND tip IN ('ACILIS_KASA_FARK','KAPANIS_KASA_FARK')
+                      AND tarih >= CURRENT_DATE - 14
+                    ORDER BY tarih
+                    """,
+                    (h["sube_id"],),
+                )
+                gunluk = [dict(r) for r in (cur.fetchall() or [])]
+                cur.execute(
+                    """
+                    SELECT occurred_at::date::text AS gun, duyu, olay_tipi, signal_name
+                    FROM duyu_olay
+                    WHERE entity_scope = 'sube' AND entity_id = %s
+                      AND occurred_at >= CURRENT_DATE - 7
+                      AND duyu NOT IN ('rapor_izi','motor_bulgu_izi','soz_aksiyon')
+                    ORDER BY occurred_at DESC LIMIT 25
+                    """,
+                    (h["sube_id"],),
+                )
+                eslik = [dict(r) for r in (cur.fetchall() or [])]
+                bloklar.append((
+                    f"B15.{i+1}",
+                    f"DERİNLİK — {h['sube_ad']}: gün-gün fark + eşlik eden olaylar",
+                    _j({"sube": h["sube_ad"], "net_fark_14g": float(h["net_fark"] or 0),
+                        "gun_gun_farklar": gunluk, "eslik_eden_olaylar": eslik}),
+                ))
+    except Exception as e:  # noqa: BLE001
+        logger.warning("beyin derinlik bloklari atlandi: %s", str(e)[:100])
+    return bloklar
+
+
 def _konusma_izleri_blok() -> str:
     """B14: sistemin dışa dönük sözünün izleri (V1 rapor + V2 motor kesiti) — omurgadan."""
     with db() as (_, cur):
@@ -285,7 +343,9 @@ def _llm_cagir(system: str, kullanici: str, max_tokens: int = 900) -> Tuple[str,
         try:
             from openai import OpenAI
             client = OpenAI(api_key=okey)
-            model = os.getenv("OPENAI_BEYIN_MODEL", "gpt-4o-mini")
+            # Derinlik v0.3: sentez modeli yükseltildi — günde 1-2 çağrı, açıklama
+            # kalitesi maliyetten önemli (kullanıcı: "bebek gibi konuşuyor")
+            model = os.getenv("OPENAI_BEYIN_MODEL", "gpt-4o")
             resp = client.chat.completions.create(
                 model=model, max_tokens=max_tokens,
                 messages=[{"role": "system", "content": system},
@@ -334,8 +394,10 @@ def _veri_kalite_ozeti(bloklar) -> dict:
     return ozet
 
 
-def _sor_calistir(soru: str, tip: str = "soru") -> dict:
+def _sor_calistir(soru: str, tip: str = "soru", ek_bloklar=None) -> dict:
     bloklar = _blok_derle(soru)
+    if ek_bloklar:
+        bloklar = bloklar + list(ek_bloklar)  # gece derinlik blokları buradan girer
     if not bloklar:
         raise HTTPException(503, "Bağlam derlenemedi")
     # GÜVENLİK v0.2: untrusted-veri çerçevesi — bloklar VERİ olarak işaretlenir (injection freni)
@@ -439,6 +501,25 @@ def beyin_gunluk_listesi(limit: int = 20):
     return {"toplam": len(rows), "kayitlar": rows}
 
 
+@router.post("/sentez-onizle")
+def sentez_onizle():
+    """Gece anlatısının ÖNİZLEMESİ — aynı derinlik blokları + format, WhatsApp'a GİTMEZ,
+    arşive 'soru' tipiyle düşer. Anlatı kalitesini geceyi beklemeden test etmek için."""
+    if not llm_mevcut():
+        raise HTTPException(503, "LLM anahtarı yok")
+    return _sor_calistir(
+        "Dünün gözlem anlatısını yaz. FORMAT ZORUNLU — en dikkat çeken 1-2 gözlem "
+        "için AYRI paragraf, her paragrafta üç katman: "
+        "(a) NE GÖRÜLDÜ: rakamı GÜNÜYLE ver (derinlik bloğundaki gün-gün kırılımı "
+        "kullan; çıplak toplam YASAK); (b) YANINDA NE VARDI: aynı şube-günde başka "
+        "duyu olayı varsa an; (c) NEYİ BİLMİYORUZ: nedeni kayıtlarda görünmüyorsa "
+        "açıkça yaz ve bakılacak kaydı öner. Sonda tek cümle duyu sağlığı. "
+        "Hüküm yok, gözlem dili. Kapanış farkları dahil et.",
+        tip="soru",
+        ek_bloklar=_derinlik_bloklari(),
+    )
+
+
 def gece_sentez() -> None:
     """GECE ÖZ-ANLATI: çekirdek bağlam → 5-6 satır gözlem anlatısı → arşiv + WhatsApp.
     v0.1'de yalnız arşivdi; kullanıcı kararıyla (2026-07-06: 'dil benimle konuşmalı')
@@ -453,13 +534,24 @@ def gece_sentez() -> None:
             duyu_nabiz_yaz("evvel_beyni", durum="hata", yutulan_hata=1,
                            not_metin="LLM anahtarı yok — sentez atlandı")
             return
-        # 'kapanış farkları' anahtarı bilinçli: seçici B5'i (ucuz SQL) tetikler; anahtar
-        # eşleşmezse fallback TÜM blokları (canlı Evo dahil) kurup geceyi ağırlaştırıyordu
+        # DERİNLİK v0.3 (2026-07-07, kullanıcı eleştirisi: "toplamı söylüyor ama nereden
+        # geldiğini bilmiyor"): gece anlatısı artık gün-gün kırılım + eşlik eden olay
+        # bloklarıyla beslenir ve yapılandırılmış AÇIKLAMA formatı ister.
+        # 'kapanış farkları' anahtarı bilinçli: seçici B5'i (ucuz SQL) tetikler.
         sonuc = _sor_calistir(
-            "Bugünün duyu verilerinden 5-6 satırlık bir günlük gözlem anlatısı yaz: "
-            "en dikkat çeken 2-3 gözlem, kapanış farkları ve duyu sağlığı durumu. "
-            "Hüküm yok, gözlem dili.",
+            "Dünün gözlem anlatısını yaz. FORMAT ZORUNLU — en dikkat çeken 1-2 gözlem "
+            "için AYRI paragraf, her paragrafta üç katman: "
+            "(a) NE GÖRÜLDÜ: rakamı GÜNÜYLE ver (derinlik bloğundaki gün-gün kırılımı "
+            "kullan; 14 günlük bir toplamı ancak hangi günlerde biriktiğini söyleyerek "
+            "anabilirsin — 'toplam -8639' gibi çıplak toplam YASAK); "
+            "(b) YANINDA NE VARDI: aynı şube-günde başka duyu olayı veya açıklama bağı "
+            "görünüyorsa an (kapanış farkları, geç kapanış, müdahale, fire...); "
+            "(c) NEYİ BİLMİYORUZ: farkın nedeni kayıtlarda görünmüyorsa bunu AÇIKÇA yaz "
+            "('nedeni kayıtlarda görünmüyor') ve hangi kayda bakılacağını öner. "
+            "Bilmediğini söylemek başarısızlık değil dürüstlüktür. Sonda tek cümle duyu "
+            "sağlığı. Hüküm yok, gözlem dili.",
             tip="gece_sentez",
+            ek_bloklar=_derinlik_bloklari(),
         )
         try:
             from duyu_omurga import duyu_nabiz_yaz
