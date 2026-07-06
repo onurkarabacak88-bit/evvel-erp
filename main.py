@@ -165,6 +165,15 @@ except Exception as _ds3_err:
     logging.getLogger(__name__).warning(
         f"duyu_sinaps modulu yuklenemedi (izole, ana akis etkilenmez): {_ds3_err}"
     )
+# FAZ 4 ÖN-KURULUM — motor uyanış kapısı (UYUR): kanıt paketi önizleme + hazırlık ölçer +
+# etiket köprüsü + operasyon ritmi. Motor bu modülü ÇAĞIRMAZ; insan önizler.
+try:
+    from duyu_uyanis import router as duyu_uyanis_router
+    app.include_router(duyu_uyanis_router)
+except Exception as _du4_err:
+    logging.getLogger(__name__).warning(
+        f"duyu_uyanis modulu yuklenemedi (izole, ana akis etkilenmez): {_du4_err}"
+    )
 # EVVEL BEYNİ v0.1 (L3 dil/sentez) — salt-okur gözlem katmanı: karar vermez, alarm kapatmaz,
 # kişi/niyet atfetmez, operasyon başlatmaz (Codex sınır cümlesi).
 try:
@@ -424,6 +433,15 @@ def _gece_yarisi_scheduler():
                 logger.info("⏰ Scheduler: FAZ 3 sinaps taraması tamamlandı")
             except Exception as e:
                 logger.warning(f"⏰ Scheduler FAZ 3 sinaps hatası: {e}")
+
+            # FAZ 4 ön-kurulum (2026-07-06): etiket köprüsü (insan kararları → öğretmen
+            # defteri) + operasyon ritmi (şube-dilim kesiti). Motor hâlâ UYUYOR.
+            try:
+                from duyu_uyanis import gece_uyanis_calistir
+                gece_uyanis_calistir()
+                logger.info("⏰ Scheduler: FAZ 4 uyanış hazırlığı tamamlandı")
+            except Exception as e:
+                logger.warning(f"⏰ Scheduler FAZ 4 uyanış hatası: {e}")
 
             # Pazartesi — geçen haftanın kalem bazlı fire raporu
             if bugun.weekday() == 0:  # 0 = Pazartesi

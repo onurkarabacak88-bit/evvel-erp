@@ -269,29 +269,37 @@ def cursor_ilerlet(cur, okuyucu: str, son_olay: dict) -> None:
 #   olay_gudumlu_normal   → iş aktivitesiyle düzenli doğar; tarihsel ritim öğrenilebilir (N>=6)
 #   olay_gudumlu_anomali  → yalnız SORUN olunca doğar; çıktı-sessizliği SAĞLIK GÖSTERGESİ DEĞİL
 #                           (nabız yoksa dürüst rozet: 'izlenemez')
+# kaynak_aile (FAZ 4 ön-hazırlık, 2026-07-06): duyunun HAM VERİ SOYAĞACI — motor uyanışında
+# "≥2-3 BAĞIMSIZ duyu" kuralının resmi tanımı buradan gelir: aynı ham tablodan türeyen iki
+# duyu bağımsız kanıt SAYILMAZ (kapanis_sonrasi ve odeme_karmasi ikisi de 'ciro'dan türer —
+# tek aile). Aileler: kasa_defteri (kasa_hareketleri), ciro, operasyon_event
+# (sube_operasyon_event), stok (depo/sayım/sevk), evo (POS dışa kaynak), belge (fatura/
+# teslimat), cari, audit (audit_log), gider (anlik_giderler), avans, meta (öz-gözlem).
 _DUYU_REGISTRY = {
-    "k1_mutabakat":       {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0},
-    "kdv_pozisyon":       {"sinif": "zamanli", "period_gun": 32.0, "grace": 1.5},
-    "borc_plan_selfheal": {"sinif": "olay_gudumlu_anomali"},
-    "acik_teslimat":      {"sinif": "olay_gudumlu_normal"},
-    "finansal_duyu":      {"sinif": "olay_gudumlu_normal"},
-    "stok_sayim":         {"sinif": "olay_gudumlu_normal"},
-    "avans":              {"sinif": "olay_gudumlu_normal"},
-    "fatura_ocr":         {"sinif": "olay_gudumlu_normal"},
-    "hayalet_stok":       {"sinif": "olay_gudumlu_anomali"},
-    "kabul_varyans":      {"sinif": "olay_gudumlu_anomali"},
-    "bar_stok_uyum":      {"sinif": "olay_gudumlu_anomali"},
-    "duyu_saglik":        {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0},
-    "evvel_beyni":        {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0},
-    "mudahale_izi":       {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0},
-    "aciklama_yogunlugu": {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0},
-    "kapanis_sonrasi":    {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0},
-    "odeme_karmasi":      {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0},
-    "adet_tutar":         {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0},
-    "iade_fire":          {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0},
-    "sinaps_kase":        {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0},
-    "sinaps_zincir":      {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0},
-    "sinaps_kompozit":    {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0},
+    "k1_mutabakat":       {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0, "kaynak_aile": "kasa_defteri"},
+    "kdv_pozisyon":       {"sinif": "zamanli", "period_gun": 32.0, "grace": 1.5, "kaynak_aile": "ciro"},
+    "borc_plan_selfheal": {"sinif": "olay_gudumlu_anomali", "kaynak_aile": "kasa_defteri"},
+    "acik_teslimat":      {"sinif": "olay_gudumlu_normal", "kaynak_aile": "belge"},
+    "finansal_duyu":      {"sinif": "olay_gudumlu_normal", "kaynak_aile": "kasa_defteri"},
+    "stok_sayim":         {"sinif": "olay_gudumlu_normal", "kaynak_aile": "stok"},
+    "avans":              {"sinif": "olay_gudumlu_normal", "kaynak_aile": "avans"},
+    "fatura_ocr":         {"sinif": "olay_gudumlu_normal", "kaynak_aile": "belge"},
+    "hayalet_stok":       {"sinif": "olay_gudumlu_anomali", "kaynak_aile": "stok"},
+    "kabul_varyans":      {"sinif": "olay_gudumlu_anomali", "kaynak_aile": "stok"},
+    "bar_stok_uyum":      {"sinif": "olay_gudumlu_anomali", "kaynak_aile": "evo"},
+    "duyu_saglik":        {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0, "kaynak_aile": "meta"},
+    "evvel_beyni":        {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0, "kaynak_aile": "meta"},
+    "mudahale_izi":       {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0, "kaynak_aile": "audit"},
+    "aciklama_yogunlugu": {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0, "kaynak_aile": "kasa_defteri"},
+    "kapanis_sonrasi":    {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0, "kaynak_aile": "ciro"},
+    "odeme_karmasi":      {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0, "kaynak_aile": "ciro"},
+    "adet_tutar":         {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0, "kaynak_aile": "evo"},
+    "iade_fire":          {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0, "kaynak_aile": "stok"},
+    "sinaps_kase":        {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0, "kaynak_aile": "meta"},
+    "sinaps_zincir":      {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0, "kaynak_aile": "meta"},
+    "sinaps_kompozit":    {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0, "kaynak_aile": "meta"},
+    "etiket_koprusu":     {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0, "kaynak_aile": "meta"},
+    "operasyon_ritmi":    {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0, "kaynak_aile": "operasyon_event"},
 }
 
 
