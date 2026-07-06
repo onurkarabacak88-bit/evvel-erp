@@ -244,6 +244,24 @@ def _sor_calistir(soru: str, tip: str = "soru") -> dict:
         red = "LLM yanıtı alınamadı (anahtar yok / hata)"
     else:
         red = _post_check(cevap, baglam_metni)
+    # ÖZ-DÜZELTME DÖNGÜSÜ (tek deneme): post-check reddettiyse red nedenini modele geri ver.
+    # Küçük modeller 'aritmetik yapma' kuralını ilk seferde sık deler; somut hata gösterilince
+    # genelde düzeltir. İkinci deneme de failse dürüst red (fren gevşetilmez).
+    if cevap and red:
+        duzeltme = (
+            kullanici
+            + f"\n\n⚠️ ÖNCEKİ DENEMEN OTOMATİK DOĞRULAMADAN GEÇEMEDİ: {red}. "
+              "Cevabını yeniden yaz: YALNIZ bağlam bloklarında AYNEN geçen sayıları kullan; "
+              "toplama/çıkarma/yuvarlama YAPMA (toplam gerekiyorsa sayıları ayrı ayrı ver); "
+              "her iddiaya [B#] referansı koy."
+        )
+        cevap2, model2 = _llm_cagir(_SYSTEM, duzeltme)
+        if cevap2:
+            red2 = _post_check(cevap2, baglam_metni)
+            if red2 is None:
+                cevap, model, red = cevap2, model2, None
+            else:
+                red = f"{red2} (öz-düzeltme sonrası da)"
     izler = [{"id": bid, "baslik": baslik} for bid, baslik, _ in bloklar]
     try:
         with db() as (_, cur):
