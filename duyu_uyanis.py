@@ -41,21 +41,19 @@ OLGUNLUK_GUN = 2  # Codex bekçisi: pencere bitişi bugünden en az bu kadar ger
 
 # ── (a) ETİKET KÖPRÜSÜ: insan kararları → öğretmen defteri ──────────────────
 def gece_etiket_koprusu() -> None:
-    """GECE: son 3 günde KARARA BAĞLANAN onay kuyruğu kayıtları → duyu_etiket.
-    İdempotent (UNIQUE(kaynak, iliskili_ref)); kimlik taşınmaz (açıklama serbest
-    metni BİLEREK kopyalanmaz — isim içerebilir). Öğretmen verisi artık kaybolmaz."""
+    """GECE: KARARA BAĞLANMIŞ TÜM onay kuyruğu kayıtları → duyu_etiket.
+    Bilinçli tüm-tarih taraması: tablo küçük, yazıcı idempotent (UNIQUE(kaynak,
+    iliskili_ref)) — köprü her gece kendi kendini onarır, tarihsel karar kaçmaz.
+    Kimlik taşınmaz (açıklama serbest metni BİLEREK kopyalanmaz — isim içerebilir)."""
     from duyu_omurga import duyu_etiket_yaz, duyu_nabiz_yaz
     try:
-        bas = date.today() - timedelta(days=3)
         with db() as (_, cur):
             cur.execute(
                 """
                 SELECT id, islem_turu, kaynak_tablo, tutar, tarih::text AS tarih, durum
                 FROM onay_kuyrugu
                 WHERE durum IN ('onaylandi', 'reddedildi')
-                  AND COALESCE(onay_tarihi, olusturma) >= %s
-                """,
-                (str(bas),),
+                """
             )
             kararlar = [dict(r) for r in (cur.fetchall() or [])]
         for k in kararlar:
@@ -117,6 +115,17 @@ def gece_uyanis_calistir() -> None:
     """Tek giriş — köprü + ritim; her biri kendi hatasını yutar."""
     gece_etiket_koprusu()
     gece_operasyon_ritmi()
+
+
+@router.post("/uyanis-kopru-calistir")
+def uyanis_kopru_calistir():
+    """Elle tetik: etiket köprüsünü ŞİMDİ çalıştır (idempotent — çift kayıt üretmez).
+    İlk kurulumda tarihsel kararların geceyi beklemeden köprülenmesi için."""
+    gece_etiket_koprusu()
+    with db() as (_, cur):
+        cur.execute("SELECT COUNT(*)::int AS n FROM duyu_etiket")
+        n = int(dict(cur.fetchone() or {}).get("n") or 0)
+    return {"ok": True, "etiket_toplam": n}
 
 
 # ── (e) ARINDIRMA HARİTASI: motorun hüküm dili → fenomen dili ────────────────
