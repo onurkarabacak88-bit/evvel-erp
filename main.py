@@ -9313,7 +9313,8 @@ def aylik_rapor_excel(yil: int = None, ay: int = None):
         ("Ay Başı Kasa",    "baslangic_kasa", GRI_BG),
         ("Toplam Gelir",    "toplam_gelir",   YESIL_BG),
         ("Toplam Gider",    "toplam_gider",   KIRMIZI_BG),
-        ("Net Kar / Zarar", "net_kar_zarar",  YESIL_BG if float(o.get("net_kar_zarar",0)) >= 0 else KIRMIZI_BG),
+        # FIX MN7 (2026-07-06): kasa-bazlı sayı = nakit akışı, kâr değil (kredi girişi kârı şişirir)
+        ("Net Nakit Akışı (kasa)", "net_kar_zarar",  YESIL_BG if float(o.get("net_kar_zarar",0)) >= 0 else KIRMIZI_BG),
         ("Ay Sonu Kasa",    "bitis_kasa",     SARI_BG),
     ]:
         val = float(o.get(key, 0) or 0)

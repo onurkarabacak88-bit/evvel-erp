@@ -351,7 +351,10 @@ export default function Rapor() {
           {[
             { label: '↑ Toplam Gelir',    val: o.toplam_gelir,   renk: 'var(--green)',  eski: onc.gelir },
             { label: '↓ Toplam Gider',    val: o.toplam_gider,   renk: 'var(--red)',    eski: onc.gider },
-            { label: '= Net Kar / Zarar', val: o.net_kar_zarar,  renk: o.net_kar_zarar >= 0 ? 'var(--green)' : 'var(--red)', eski: null },
+            // FIX MN7 (2026-07-06): bu sayı KASA hareketlerinden (gelir−gider) türer = NAKİT
+            // AKIŞI; kredi/borç girişi "kâr" gibi görünüyordu. Gerçek net kâr: Maliyet > Gün Gün
+            // P&L (net_kar_net_tl, KDV-hariç). Etiket dürüstleştirildi, alan adı korunuyor.
+            { label: '= Net Nakit Akışı (kasa)', val: o.net_kar_zarar,  renk: o.net_kar_zarar >= 0 ? 'var(--green)' : 'var(--red)', eski: null, sub: 'Kâr değil — gerçek kâr: Maliyet › Gün Gün' },
             { label: '🏦 Ay Sonu Kasa',   val: o.bitis_kasa,     renk: 'var(--text1)',  eski: null, sub: `Başlangıç: ${fmt(o.baslangic_kasa)}` },
           ].map(({ label, val, renk, eski, sub }) => {
             const d = eski ? degisim(val, eski) : null;

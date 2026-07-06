@@ -717,6 +717,25 @@ def _ai_denetim_yorumu(ozetler: list) -> tuple[str, str]:
         f"Şube: {o['sube']}\nAlarm seviyesi: {o['alarm']}\nÖzet: {o['ozet']}\nDetay:\n{o['yorum']}"
         for o in ozetler
     )
+
+    # FIX WA3 (2026-07-06): LLM rakam post-check — halüsinasyonlu rakam CFO'ya gitmesin.
+    # Kaynak metindeki tüm sayılar normalize edilip (ayraçlar atılır) küme yapılır; LLM
+    # çıktısındaki 2+ haneli her sayı bu kümede yoksa yorum GÜVENSİZ sayılıp atlanır
+    # (fail-safe: ham anomali özeti zaten mesajda var, finansal karar etkilenmez).
+    import re as _re_wa3
+
+    def _rakamlar(metin: str) -> set:
+        return {_re_wa3.sub(r"[^\d]", "", m) for m in _re_wa3.findall(r"\d[\d.,]*", metin or "")}
+
+    _kaynak_rakamlar = _rakamlar(detay)
+
+    def _rakam_kontrol(metin: str) -> bool:
+        """True = güvenli (tüm 2+ haneli sayılar kaynakta var)."""
+        for m in _rakamlar(metin):
+            if len(m) >= 2 and m not in _kaynak_rakamlar:
+                logger.warning("WA3: AI yorumunda kaynakta olmayan rakam (%s) — yorum atlandı", m)
+                return False
+        return True
     prompt = (
         "Sen bir kahve zinciri için günlük denetim asistanısın. Aşağıda şubelerin "
         "otomatik denetim motorundan çıkan anomali özetleri var. Bunları CFO'nun "
@@ -740,7 +759,7 @@ def _ai_denetim_yorumu(ozetler: list) -> tuple[str, str]:
             metin = "".join(
                 b.text for b in resp.content if getattr(b, "type", None) == "text"
             ).strip()
-            if metin:
+            if metin and _rakam_kontrol(metin):  # FIX WA3
                 return metin, "claude"
         except Exception as e:
             logger.warning(f"Akıllı Denetim AI yorum hatası (Claude): {e}")
@@ -756,7 +775,7 @@ def _ai_denetim_yorumu(ozetler: list) -> tuple[str, str]:
                 max_tokens=500,
             )
             metin = (resp.choices[0].message.content or "").strip()
-            if metin:
+            if metin and _rakam_kontrol(metin):  # FIX WA3
                 return metin, "openai"
         except Exception as e:
             logger.warning(f"Akıllı Denetim AI yorum hatası (OpenAI): {e}")
