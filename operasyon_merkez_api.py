@@ -13426,14 +13426,22 @@ def ops_maliyet_gun_gun(
 
         cur.execute(
             f"""
-            SELECT sube_id::text AS sube_id, tarih::text AS tarih, aciklama
+            SELECT sube_id::text AS sube_id, tarih::text AS tarih,
+                   REPLACE(aciklama, 'URUN_KULLANIMA_AL_JSON:', 'URUN_AC_JSON:') AS aciklama
             FROM operasyon_defter
-            WHERE etiket='URUN_AC'
+            WHERE etiket IN ('URUN_AC', 'URUN_KULLANIMA_AL')
               AND tarih BETWEEN %s::date AND %s::date
               {sube_filter}
             """,
             params,
         )
+        # FIX C1 (2026-07-06): bitince-modu ürünler URUN_KULLANIMA_AL etiketiyle yazılıyordu ama
+        # HİÇBİR yer okumuyordu → COGS'a HİÇ girmiyordu (bedava sayılıyorlardı). Açılışta maliyete
+        # dahil edildi. KARAR (kullanıcı+Claude): elle "bitti" bildirimi YOK = iz-bazlı + kayıpsız;
+        # zamanlama kaba (açılış günü) ama ürün-aç zaten proxy, aylık toplam doğru. REPLACE payload
+        # prefix'ini normalize eder → parse fonksiyonları (delta/kalem/payload) değişmeden çalışır.
+        # SADECE bu COGS/P&L okuması değişti — STOK düşümü bitince-modunda KORUNDU (URUN_KULLANIMA_AL
+        # stok düşürmez; o davranışa dokunulmadı).
         _urun_ac_rows = cur.fetchall()
         # urun_id → depo_stok_kalem_kodu (havuz-dışı kalemleri maliyetlemek için)
         # + urun_id → ad (fiyat_eksik uyarısında UUID yerine okunabilir ad göstermek için)
