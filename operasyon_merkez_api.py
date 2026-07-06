@@ -14238,10 +14238,11 @@ def ops_maliyet_kdv_pozisyon(
         "toplam_indirilecek_tl": round(t_ind, 2),
         "toplam_indirilecek_fatura_tl": round(t_ind_fatura, 2),
         "toplam_odenecek_tl": round(t_hes - t_ind, 2),
-        "not": "Hesaplanan KDV ciro'dan kesin. İndirilecek KDV artık ÜRÜN-AÇ tüketiminden "
-               "kalem-bazlı orandan (%1/%10/%20) hesaplanıyor — her kalemin kendi KDV oranı "
-               "'Vergi Ayarları'ndan düzenlenebilir. 'fatura_tl' alanı eski (fatura toplamı × %10) "
-               "karşılaştırma içindir.",
+        "not": "Hesaplanan KDV ciro'dan kesin. İndirilecek KDV artık TÜM KDV'li girdilerden: "
+               "ürün-aç tüketimi (kalem-bazlı %1/%10/%20) + fatura/komisyon/abonelik (%20). "
+               "KDV dahil tutarın içindeki KDV = tutar × oran/(1+oran). Kira/şube-anlık/personel %0 "
+               "(yapılandırılabilir). Her kalemin oranı 'Vergi Ayarları'ndan düzenlenir. 'fatura_tl' "
+               "alanı eski (fatura toplamı × %10) karşılaştırma içindir.",
     }
 
 
