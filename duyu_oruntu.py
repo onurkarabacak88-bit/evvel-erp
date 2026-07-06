@@ -86,7 +86,7 @@ def _fatura_oruntu_hesapla(cur, gun: date) -> list:
         """
         SELECT f.id, f.tedarikci_ad, f.toplam_tutar, f.fatura_tarih::text AS fatura_tarih,
                f.fatura_no,
-               (f.toplam_tutar >= 100 AND f.toplam_tutar %% 100 = 0) AS yuvarlak,
+               (f.toplam_tutar >= 100 AND MOD(f.toplam_tutar::numeric, 100) = 0) AS yuvarlak,
                EXISTS (
                    SELECT 1 FROM tedarikci_fatura f2
                    WHERE f2.id <> f.id AND f2.tedarikci_ad = f.tedarikci_ad
