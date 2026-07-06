@@ -94,6 +94,7 @@ export default function DuyuPaneli() {
   const [disiplin, setDisiplin] = useState(null);
   const [butunluk, setButunluk] = useState(null);
   const [sinaps, setSinaps] = useState(null);
+  const [hazirlik, setHazirlik] = useState(null);
   const [hata, setHata] = useState('');
 
   useEffect(() => {
@@ -111,6 +112,7 @@ export default function DuyuPaneli() {
     api('/duyu/kayit-disiplini?gun=14').then(setDisiplin).catch(() => {});
     api('/duyu/satis-butunluk?gun=14').then(setButunluk).catch(() => {});
     api('/duyu/sinapsler?gun=14').then(setSinaps).catch(() => {});
+    api('/duyu/uyanis-hazirlik').then(setHazirlik).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -399,6 +401,30 @@ export default function DuyuPaneli() {
               {(sinaps.kase_canli || []).length === 0 && (sinaps.zincir_canli || []).filter((z) => z.zincir_kor).length === 0 && (sinaps.sinaps_olaylari || []).length === 0 && (
                 <div style={{ fontSize: 12, color: 'var(--text3)' }}>Şu an birliktelik yok — sinapslar her gece tarar.</div>
               )}
+            </>
+          )}
+        </div>
+
+        {/* ── 🌡️ MOTOR UYANIŞ KARNESİ (FAZ 4, uyur) ── */}
+        <div style={{ ...K.kart, borderLeft: '3px solid var(--text3)' }}>
+          <div style={K.baslik}>🌡️ Motor Uyanış Karnesi <span style={{ fontSize: 10.5, color: 'var(--text3)' }}>(motor uyuyor)</span></div>
+          <div style={K.alt}>Takvim değil termometre: kriterler veri biriktikçe kendiliğinden yeşerir. 7/7 + senin onayın olmadan motor uyanmaz.</div>
+          {hazirlik && (
+            <>
+              <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--text1)', marginBottom: 8 }}>
+                {hazirlik.durum} <span style={{ fontSize: 10.5, fontWeight: 400, color: 'var(--text3)' }}>· olgunluk bekçisi D+{hazirlik.olgunluk_bekcisi_gun}</span>
+              </div>
+              {(hazirlik.kriterler || []).map((k2, i) => (
+                <div key={i} style={{ fontSize: 12, padding: '3px 0', display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                  <span style={{ color: k2.gecti ? 'var(--green, #22c55e)' : 'var(--text3)' }}>
+                    {k2.gecti ? '✅' : '⬜'} {k2.kriter.replace(/_/g, ' ')}
+                  </span>
+                  <span style={{ color: 'var(--text3)', fontFamily: 'ui-monospace, monospace', fontSize: 11, textAlign: 'right' }}>{k2.durum}</span>
+                </div>
+              ))}
+              <div style={{ fontSize: 10.5, color: 'var(--text3)', marginTop: 8, fontStyle: 'italic' }}>
+                Uyanış günü motor omurgayı SADECE OKUR; isme yaklaşmak ≥2-3 bağımsız kaynak ailesi ister; hiçbir duyu verisi alarm kapatamaz.
+              </div>
             </>
           )}
         </div>
