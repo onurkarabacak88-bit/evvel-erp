@@ -300,6 +300,10 @@ _DUYU_REGISTRY = {
     "sinaps_kompozit":    {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0, "kaynak_aile": "meta"},
     "etiket_koprusu":     {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0, "kaynak_aile": "meta"},
     "operasyon_ritmi":    {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0, "kaynak_aile": "operasyon_event"},
+    "sayim_cevresi":      {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0, "kaynak_aile": "stok"},
+    "fatura_oruntu":      {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0, "kaynak_aile": "belge"},
+    "ters_zincir":        {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0, "kaynak_aile": "belge"},
+    "urun_sessiz":        {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0, "kaynak_aile": "evo"},
 }
 
 

@@ -165,6 +165,15 @@ except Exception as _ds3_err:
     logging.getLogger(__name__).warning(
         f"duyu_sinaps modulu yuklenemedi (izole, ana akis etkilenmez): {_ds3_err}"
     )
+# 5-YZ TAMAMLAMA — örüntü duyuları (sayım-çevresi + fatura örüntüsü + ters zincir +
+# ürün sessiz sıfırlanması); Sv0/aday, izole.
+try:
+    from duyu_oruntu import router as duyu_oruntu_router
+    app.include_router(duyu_oruntu_router)
+except Exception as _dor_err:
+    logging.getLogger(__name__).warning(
+        f"duyu_oruntu modulu yuklenemedi (izole, ana akis etkilenmez): {_dor_err}"
+    )
 # FAZ 4 ÖN-KURULUM — motor uyanış kapısı (UYUR): kanıt paketi önizleme + hazırlık ölçer +
 # etiket köprüsü + operasyon ritmi. Motor bu modülü ÇAĞIRMAZ; insan önizler.
 try:
@@ -442,6 +451,15 @@ def _gece_yarisi_scheduler():
                 logger.info("⏰ Scheduler: FAZ 4 uyanış hazırlığı tamamlandı")
             except Exception as e:
                 logger.warning(f"⏰ Scheduler FAZ 4 uyanış hatası: {e}")
+
+            # 5-YZ tamamlama (2026-07-06): örüntü duyuları — sayım-çevresi + fatura
+            # örüntüsü + ters zincir + ürün sessiz sıfırlanması.
+            try:
+                from duyu_oruntu import gece_oruntu_calistir
+                gece_oruntu_calistir()
+                logger.info("⏰ Scheduler: örüntü duyuları taraması tamamlandı")
+            except Exception as e:
+                logger.warning(f"⏰ Scheduler örüntü duyuları hatası: {e}")
 
             # Pazartesi — geçen haftanın kalem bazlı fire raporu
             if bugun.weekday() == 0:  # 0 = Pazartesi
