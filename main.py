@@ -174,6 +174,14 @@ except Exception as _dor_err:
     logging.getLogger(__name__).warning(
         f"duyu_oruntu modulu yuklenemedi (izole, ana akis etkilenmez): {_dor_err}"
     )
+# YAVRU ÖRME MOTORU (Y1) — bildirimsel kural kütüphanesi + T1/T2 bağ motoru; izole.
+try:
+    from duyu_yavru import router as duyu_yavru_router
+    app.include_router(duyu_yavru_router)
+except Exception as _dyv_err:
+    logging.getLogger(__name__).warning(
+        f"duyu_yavru modulu yuklenemedi (izole, ana akis etkilenmez): {_dyv_err}"
+    )
 # ÖZGÜN KURGU DUYULARI — vardiya plan-gerçek + menü fiyat izi + bildirim iletim; izole.
 try:
     from duyu_ozgun import router as duyu_ozgun_router

@@ -323,6 +323,7 @@ _DUYU_REGISTRY = {
     "rapor_izi":          {"sinif": "olay_gudumlu_normal", "kaynak_aile": "iletisim"},
     "motor_bulgu_izi":    {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0, "kaynak_aile": "iletisim"},
     "soz_aksiyon":        {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0, "kaynak_aile": "iletisim"},
+    "yavru_beklenti":     {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0, "kaynak_aile": "meta"},
 }
 
 

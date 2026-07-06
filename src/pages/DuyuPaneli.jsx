@@ -96,6 +96,7 @@ export default function DuyuPaneli() {
   const [sinaps, setSinaps] = useState(null);
   const [hazirlik, setHazirlik] = useState(null);
   const [gunluk, setGunluk] = useState(null);
+  const [yavru, setYavru] = useState(null);
   const [hata, setHata] = useState('');
 
   useEffect(() => {
@@ -115,6 +116,7 @@ export default function DuyuPaneli() {
     api('/duyu/sinapsler?gun=14').then(setSinaps).catch(() => {});
     api('/duyu/uyanis-hazirlik').then(setHazirlik).catch(() => {});
     api('/beyin/gunluk?limit=12').then(setGunluk).catch(() => {});
+    api('/duyu/yavru-kurallari?gun=7').then(setYavru).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -426,6 +428,34 @@ export default function DuyuPaneli() {
               ))}
               <div style={{ fontSize: 10.5, color: 'var(--text3)', marginTop: 8, fontStyle: 'italic' }}>
                 Uyanış günü motor omurgayı SADECE OKUR; isme yaklaşmak ≥2-3 bağımsız kaynak ailesi ister; hiçbir duyu verisi alarm kapatamaz.
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* ── 🧶 YAVRU ÖRME (kural kütüphanesi + bağlar) ── */}
+        <div style={K.kart}>
+          <div style={K.baslik}>🧶 Yavru Örme <span style={{ fontSize: 10.5, color: 'var(--text3)' }}>("şu söylerse bu da bundandır")</span></div>
+          <div style={K.alt}>T1 = açıklayıcı bağ (kapatmaz, iliştirir) · T2 = beklenti (çocuk doğmalıydı; doğmadıysa yokluk sinyaldir). Kural ekleme yalnız senin onayınla.</div>
+          {yavru && (
+            <>
+              <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 6 }}>
+                Kütüphane: <b>{yavru.kural_n}</b> kural — {(yavru.kurallar || []).filter((k2) => k2.tur === 'T1').length} açıklayıcı, {(yavru.kurallar || []).filter((k2) => k2.tur === 'T2').length} beklenti
+              </div>
+              {(yavru.kurallar || []).map((k2, i) => (
+                <div key={i} style={{ fontSize: 11, color: 'var(--text3)', padding: '2px 0' }}>
+                  {k2.tur === 'T2' ? '⏳' : '🔗'} <b style={{ color: 'var(--text2)' }}>{k2.kural_id}</b> — {k2.aciklama}
+                </div>
+              ))}
+              <div style={{ marginTop: 8 }}>
+                {(yavru.son_baglar || []).slice(0, 6).map((b, i) => (
+                  <div key={`b${i}`} style={{ fontSize: 11.5, padding: '3px 0', color: String(b.olay_tipi).includes('cocuk_gelmedi') ? 'var(--yellow, #f59e0b)' : 'var(--text2)' }}>
+                    {String(b.olay_tipi).includes('cocuk_gelmedi') ? '⚠️' : '·'} {String(b.occurred_at || '').slice(0, 10)} <b>{b.payload_json?.kural_id}</b>: {b.signal_name}
+                  </div>
+                ))}
+                {(yavru.son_baglar || []).length === 0 && (
+                  <div style={{ fontSize: 11.5, color: 'var(--text3)' }}>Henüz bağ yok — motor her gece örer.</div>
+                )}
               </div>
             </>
           )}
