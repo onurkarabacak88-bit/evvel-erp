@@ -148,6 +148,15 @@ except Exception as _dgo_err:
     logging.getLogger(__name__).warning(
         f"duyu_gorunumler modulu yuklenemedi (izole, ana akis etkilenmez): {_dgo_err}"
     )
+# FAZ 2 DUYULARI — kayıt disiplini üçlüsü (açıklama yoğunluğu + kapanış-sonrası/backdate +
+# ödeme karması); hepsi Sv0 kaydet-gösterme, izole.
+try:
+    from duyu_faz2 import router as duyu_faz2_router
+    app.include_router(duyu_faz2_router)
+except Exception as _df2_err:
+    logging.getLogger(__name__).warning(
+        f"duyu_faz2 modulu yuklenemedi (izole, ana akis etkilenmez): {_df2_err}"
+    )
 # EVVEL BEYNİ v0.1 (L3 dil/sentez) — salt-okur gözlem katmanı: karar vermez, alarm kapatmaz,
 # kişi/niyet atfetmez, operasyon başlatmaz (Codex sınır cümlesi).
 try:
@@ -389,6 +398,15 @@ def _gece_yarisi_scheduler():
                 logger.info("⏰ Scheduler: müdahale izi taraması tamamlandı")
             except Exception as e:
                 logger.warning(f"⏰ Scheduler müdahale izi hatası: {e}")
+
+            # FAZ 2 duyuları (2026-07-06): açıklama yoğunluğu + kapanış-sonrası/backdate +
+            # ödeme karması — dünün ham kesitleri omurgaya; her biri kendi hatasını yutar.
+            try:
+                from duyu_faz2 import gece_faz2_calistir
+                gece_faz2_calistir()
+                logger.info("⏰ Scheduler: FAZ 2 duyu taraması tamamlandı")
+            except Exception as e:
+                logger.warning(f"⏰ Scheduler FAZ 2 duyu hatası: {e}")
 
             # Pazartesi — geçen haftanın kalem bazlı fire raporu
             if bugun.weekday() == 0:  # 0 = Pazartesi

@@ -284,6 +284,9 @@ _DUYU_REGISTRY = {
     "duyu_saglik":        {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0},
     "evvel_beyni":        {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0},
     "mudahale_izi":       {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0},
+    "aciklama_yogunlugu": {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0},
+    "kapanis_sonrasi":    {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0},
+    "odeme_karmasi":      {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0},
 }
 
 
