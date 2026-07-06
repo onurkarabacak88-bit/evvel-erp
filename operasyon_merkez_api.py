@@ -13845,9 +13845,11 @@ def ops_maliyet_gun_gun(
                         continue
                     _kt = adet * fiyat
                     kolon_toplam += _kt
-                    # KDV: net maliyet × kalem oranı → indirilecek KDV (maliyet sayısına dokunmaz)
+                    # FIX (2026-07-06, Codex+Claude çapraz-doğrulama): _kt KDV DAHİL tutar →
+                    # içindeki KDV = _kt × oran/(1+oran), _kt × oran DEĞİL. Örn. 110₺ %10 → 10₺ (11₺ değil).
+                    _o_kdv = _kalem_kdv(kaynak)
                     indirilecek_kdv_gun[(sid or "", tarih_str)] = (
-                        indirilecek_kdv_gun.get((sid or "", tarih_str), 0.0) + _kt * _kalem_kdv(kaynak)
+                        indirilecek_kdv_gun.get((sid or "", tarih_str), 0.0) + _kt * _o_kdv / (1.0 + _o_kdv)
                     )
                 satir[kolon_kod] = round(kolon_toplam, 2)
                 toplam += kolon_toplam
@@ -13894,8 +13896,10 @@ def ops_maliyet_gun_gun(
                     continue
                 _dt = adet * fiyat
                 diger_cogs += _dt
+                # FIX (2026-07-06): KDV dahil tutarın içindeki KDV = tutar × oran/(1+oran).
+                _o_kdv2 = _kalem_kdv(depo_kod or "", uid)
                 indirilecek_kdv_gun[(sid or "", tarih_str)] = (
-                    indirilecek_kdv_gun.get((sid or "", tarih_str), 0.0) + _dt * _kalem_kdv(depo_kod or "", uid)
+                    indirilecek_kdv_gun.get((sid or "", tarih_str), 0.0) + _dt * _o_kdv2 / (1.0 + _o_kdv2)
                 )
             satir["diger_urun_ac_tl"] = round(diger_cogs, 2)
             toplam += diger_cogs
