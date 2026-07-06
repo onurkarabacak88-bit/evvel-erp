@@ -12,6 +12,7 @@ DUYU SAF GÖRÜNÜMLERİ — FAZ 1c + 1e (2026-07-06, Duyu Ağı Master Planı)
 from __future__ import annotations
 
 import logging
+import re
 from datetime import date, timedelta
 from typing import Dict
 
@@ -39,6 +40,31 @@ _GERIYE_DONUK_ISLEMLER = (
     "KISMI_ODE_KAPANIS", "GUNCELLEME",
 )
 
+# Prod audit_log tablosu koddan ESKİ bir şemayla kurulmuş olabilir (CREATE TABLE IF NOT
+# EXISTS yeni kolonu eklemez) — zaman kolonu adını prod'un kendisinden keşfet, cache'le.
+_AUDIT_ZAMAN_KOL: str | None = None
+
+
+def _audit_zaman_kolonu(cur) -> str | None:
+    """audit_log'daki ilk timestamp/date kolonunun adını döndürür (yoksa None)."""
+    global _AUDIT_ZAMAN_KOL
+    if _AUDIT_ZAMAN_KOL:
+        return _AUDIT_ZAMAN_KOL
+    cur.execute(
+        """
+        SELECT column_name FROM information_schema.columns
+        WHERE table_name = 'audit_log'
+          AND (data_type LIKE 'timestamp%%' OR data_type = 'date')
+        ORDER BY ordinal_position LIMIT 1
+        """
+    )
+    row = cur.fetchone()
+    kol = dict(row).get("column_name") if row else None
+    if kol and re.fullmatch(r"[a-z_][a-z0-9_]*", kol):
+        _AUDIT_ZAMAN_KOL = kol
+        return kol
+    return None
+
 
 @router.get("/mudahale-izi")
 def mudahale_izi(gun: int = Query(30, ge=7, le=90)):
@@ -47,14 +73,21 @@ def mudahale_izi(gun: int = Query(30, ge=7, le=90)):
     (audit_log zaten kim-yaptı tutmuyor; iş TÜRÜ ve YOĞUNLUĞU izlenir)."""
     bas = date.today() - timedelta(days=gun - 1)
     with db() as (_, cur):
+        zk = _audit_zaman_kolonu(cur)
+        if not zk:
+            return {"kesit": {"bas": str(bas), "gun": gun}, "islem_turleri": [],
+                    "gunluk_yogunluk": [], "toplam": 0,
+                    "not": "audit_log tablosunda zaman kolonu bulunamadı — iz görünümü "
+                           "şema uyumu bekliyor (veri silinmedi, sadece okunamıyor)."}
+        # zk information_schema'dan gelir + regex'le doğrulanır — interpolasyon güvenli
         cur.execute(
-            """
+            f"""
             SELECT islem, tablo,
                    COUNT(*)::int AS adet,
-                   MIN(olusturma)::date::text AS ilk,
-                   MAX(olusturma)::date::text AS son
+                   MIN({zk})::date::text AS ilk,
+                   MAX({zk})::date::text AS son
             FROM audit_log
-            WHERE olusturma >= %s
+            WHERE {zk} >= %s
               AND (islem = ANY(%s) OR islem LIKE '%%IPTAL%%' OR islem LIKE '%%GERI_AL%%'
                    OR islem LIKE '%%DUZELT%%' OR islem LIKE '%%TERS%%')
             GROUP BY islem, tablo
@@ -64,13 +97,13 @@ def mudahale_izi(gun: int = Query(30, ge=7, le=90)):
         )
         turler = [dict(r) for r in (cur.fetchall() or [])]
         cur.execute(
-            """
-            SELECT olusturma::date::text AS gun, COUNT(*)::int AS adet
+            f"""
+            SELECT {zk}::date::text AS gun, COUNT(*)::int AS adet
             FROM audit_log
-            WHERE olusturma >= %s
+            WHERE {zk} >= %s
               AND (islem = ANY(%s) OR islem LIKE '%%IPTAL%%' OR islem LIKE '%%GERI_AL%%'
                    OR islem LIKE '%%DUZELT%%' OR islem LIKE '%%TERS%%')
-            GROUP BY olusturma::date ORDER BY gun DESC LIMIT 30
+            GROUP BY {zk}::date ORDER BY gun DESC LIMIT 30
             """,
             (str(bas), list(_GERIYE_DONUK_ISLEMLER)),
         )
@@ -93,10 +126,13 @@ def gece_mudahale_olay_yaz() -> None:
     try:
         dun = date.today() - timedelta(days=1)
         with db() as (_, cur):
+            zk = _audit_zaman_kolonu(cur)
+            if not zk:
+                return
             cur.execute(
-                """
+                f"""
                 SELECT COUNT(*)::int AS n FROM audit_log
-                WHERE olusturma::date = %s
+                WHERE {zk}::date = %s
                   AND (islem = ANY(%s) OR islem LIKE '%%IPTAL%%' OR islem LIKE '%%GERI_AL%%'
                        OR islem LIKE '%%DUZELT%%' OR islem LIKE '%%TERS%%')
                 """,
