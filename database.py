@@ -2851,6 +2851,13 @@ $$;
             "CREATE INDEX IF NOT EXISTS idx_kasa_har_islem_turu "
             "ON kasa_hareketleri (islem_turu, tarih DESC)"
         )
+        # PERF (2026-07-06): çift-ödeme kapıları + iptal KURAL-1 hep (kaynak_id, islem_turu)
+        # ile arar; index yoktu → tablo büyüdükçe seq scan. Dedup sorguları artık index'li.
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_kasa_har_kaynak "
+            "ON kasa_hareketleri (kaynak_id, islem_turu) "
+            "WHERE durum='aktif'"
+        )
         # ciro: sube_id + tarih + durum kombinasyonu çok sık kullanılıyor
         cur.execute(
             "CREATE INDEX IF NOT EXISTS idx_ciro_sube_tarih "

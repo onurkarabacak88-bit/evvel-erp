@@ -65,7 +65,7 @@ from motors import (
     uyari_cache_clear,
 )
 from finans_core import (
-    kart_borc, kasa_bakiyesi, kasa_bakiyesi_tarihte,
+    kart_borc, tum_kart_borclari, kasa_bakiyesi, kasa_bakiyesi_tarihte,
     kart_ekstre, kart_ekstre_donem_override, kart_bu_ay_odenen, kart_faiz_tahmini,
     kart_asgari_orani,
     faiz_hesapla_ve_yaz, tum_kartlar_faiz_hesapla,
@@ -1937,9 +1937,12 @@ def kartlar_listele():
         kartlar = [dict(r) for r in cur.fetchall()]
         sonuc = []
         bugun = bugun_tr()
+        # PERF N+1 FIX (2026-07-06): kart başına ayrı borç sorgusu yerine tüm kart borçları
+        # TEK sorguda (finans_core.tum_kart_borclari — aynı kanonik formül, GROUP BY'lı hâli).
+        _borc_map = tum_kart_borclari(cur)
         for k in kartlar:
             # ── CORE HESAPLAR ──────────────────────────────────
-            borc     = kart_borc(cur, k['id'])
+            borc     = _borc_map.get(str(k['id']), 0.0)
             ekstre_v = kart_ekstre(cur, k['id'], k['kesim_gunu'])
             aylik_taksit = ekstre_v["aylik_taksit"]
 
@@ -4734,6 +4737,38 @@ def personel_aylik_listele(yil: int = None, ay: int = None):
         personeller = cur.fetchall()
         import calendar as _cal
         _son_gun = _cal.monthrange(yil, ay)[1]
+
+        # PERF N+1 FIX (2026-07-06): eskiden KİŞİ BAŞI 2 SQL + tam vardiya-takip hesabı
+        # (her biri KENDİ DB bağlantısını açıp tüm sorgu setini çalıştırıyordu) → ~20 personelde
+        # ~13sn. Üç veri de TOPLU çekilir; döngü içinde yalnız map lookup kalır. Davranış birebir:
+        # 1) Vardiya Takip TÜM personel TEK çağrıda (aynı kanonik fonksiyon, personel filtresi yok).
+        _vt_map = {}
+        try:
+            from gorev_api import vardiya_takip as _vt_all_fn
+            _vt_res = _vt_all_fn(yil, ay)
+            _vt_map = {str(r.get("personel_id")): r for r in ((_vt_res or {}).get("personeller") or [])}
+        except Exception as _e_vt:
+            logging.getLogger(__name__).warning("personel-aylik toplu vardiya takip hatasi: %s", _e_vt)
+        # 2) personel_aylik kayıtları tek sorgu → map
+        cur.execute("SELECT * FROM personel_aylik WHERE yil=%s AND ay=%s", (yil, ay))
+        _kayit_map = {str(r["personel_id"]): dict(r) for r in (cur.fetchall() or [])}
+        # 3) ödeme planları tek sorgu — kişi başı LIMIT 1 ile AYNI öncelik sırası (DISTINCT ON)
+        cur.execute(
+            """
+            SELECT DISTINCT ON (op.kaynak_id)
+                op.kaynak_id, op.id::text AS odeme_id, op.durum AS odeme_durumu,
+                op.tarih AS odeme_tarihi, op.odenecek_tutar, op.odenen_tutar
+            FROM odeme_plani op
+            WHERE op.kaynak_tablo='personel' AND op.durum != 'iptal'
+              AND op.referans_ay = DATE_TRUNC('month', %s::date)
+            ORDER BY op.kaynak_id,
+                CASE WHEN op.durum='odendi' THEN 0 WHEN op.durum='onay_bekliyor' THEN 1 ELSE 2 END,
+                op.olusturma DESC
+            """,
+            (str(maas_odeme_tarihi),),
+        )
+        _plan_map = {str(r["kaynak_id"]): dict(r) for r in (cur.fetchall() or [])}
+
         sonuc = []
         for p in personeller:
             # dönem içi çalışma aralığı (başlangıç/çıkış kırpması)
@@ -4742,32 +4777,9 @@ def personel_aylik_listele(yil: int = None, ay: int = None):
             _eff2 = min(_d2, p['cikis_tarihi']) if p.get('cikis_tarihi') else _d2
             if _eff1 > _eff2:
                 continue  # bu dönemde hiç çalışmamış
-            cur.execute("""
-                SELECT * FROM personel_aylik
-                WHERE personel_id=%s AND yil=%s AND ay=%s
-            """, (p['id'], yil, ay))
-            kayit = cur.fetchone()
-            cur.execute(
-                """
-                SELECT
-                    op.id::text AS odeme_id,
-                    op.durum AS odeme_durumu,
-                    op.tarih AS odeme_tarihi,
-                    op.odenecek_tutar,
-                    op.odenen_tutar
-                FROM odeme_plani op
-                WHERE op.kaynak_tablo='personel'
-                  AND op.kaynak_id=%s
-                  AND op.durum != 'iptal'
-                  AND op.referans_ay = DATE_TRUNC('month', %s::date)
-                ORDER BY
-                    CASE WHEN op.durum='odendi' THEN 0 WHEN op.durum='onay_bekliyor' THEN 1 ELSE 2 END,
-                    op.olusturma DESC
-                LIMIT 1
-                """,
-                (p['id'], str(maas_odeme_tarihi)),
-            )
-            plan = cur.fetchone() or {}
+            # PERF N+1 FIX: toplu map lookup (eski kişi-başı sorgularla birebir aynı sonuç)
+            kayit = _kayit_map.get(str(p['id']))
+            plan = _plan_map.get(str(p['id'])) or {}
             if kayit:
                 net = float(kayit['hesaplanan_net'] or 0)
                 durum = kayit['durum']
@@ -4784,7 +4796,8 @@ def personel_aylik_listele(yil: int = None, ay: int = None):
                 kayit = {}
 
             # KANONİK: vardiya alanları ve kayıtsız tahmin = Vardiya Takip kurgusu (tek merkez)
-            vt = _vardiya_takip_hesap(p['id'], yil, ay)
+            # PERF N+1 FIX: kişi-başı ayrı hesap yerine toplu map (aynı kanonik fonksiyon)
+            vt = _vt_map.get(str(p['id']))
             if vt is not None:
                 vk = {'toplam_ay_saat': float(vt.get('toplam_planlanan_saat') or 0),
                       'ek_mesai_haftalik_toplam': float(vt.get('toplam_fazla_mesai_saat') or 0),
