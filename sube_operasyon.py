@@ -693,6 +693,21 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
             raise HTTPException(400, "Bu olay tamamlanamaz")
 
         tip = ev["tip"]
+
+        # FIX KP7 (2026-07-06): BAYAT EVENT KİLİDİ — dünden 'bekliyor'/'gecikti' kalmış
+        # ACILIS/KAPANIS eventi bugün tamamlanabiliyordu (kapanış saat kilidi 22:30 her güne
+        # uyar) → dünün kapanışı BUGÜNÜN nakit/ciro verisiyle mühürlenirdi (geç-mühür sızıntısı
+        # ailesinin yazma tarafı). Event tarihi bugünkü İŞ GÜNÜ olmalı; is_gunu_tr() gece
+        # 00:00-02:00'de dünü döndürdüğü için meşru gece kapanışı ENGELLENMEZ.
+        if tip in ("ACILIS", "KAPANIS"):
+            _ev_tarih = str(ev.get("tarih") or "")[:10]
+            if _ev_tarih and _ev_tarih != str(is_gunu_tr()):
+                raise HTTPException(
+                    410,
+                    f"Bu {tip.lower()} olayı geçmiş güne ait ({_ev_tarih}) — bayat olay "
+                    "tamamlanamaz; bugünün verisi düne mühürlenemez. Geçmiş gün düzeltmesi "
+                    "için merkez akışını kullanın.",
+                )
         if tip == "ACILIS":
             if not tr_acilis_tamam_saat_uygun_mu(simdi):
                 raise HTTPException(

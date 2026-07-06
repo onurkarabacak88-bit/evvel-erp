@@ -679,9 +679,24 @@ def sube_kapanis_geri_al(sube_id: str, body: KapanisGeriAlBody):
         )
         devir_geri_yuklendi = cur.rowcount
 
-        # 2c) O günün kasa teslim kayıtları (gün sonu + gün içi 'ara' teslim) → sil.
-        #     kasa_teslim kasaya doğrudan dokunmaz; yeniden kapanışta tekrar yazılır.
-        cur.execute("DELETE FROM kasa_teslim WHERE sube_id=%s AND tarih=%s", (sube_id, tarih))
+        # 2c) FIX KP6 (2026-07-06): eskiden GÜNÜN TÜM teslim kayıtları siliniyordu — iki hata:
+        #     (1) ARA teslimler gün-içi fiziksel gerçektir (para fiilen teslim edildi), mühür
+        #     açılınca geçersizleşmez ve kapanış akışında YENİDEN YAZILMAZ → kalıcı veri kaybı +
+        #     kapanış farkı yanlış. Artık YALNIZ gün-sonu teslimi silinir (o, yeniden kapanışta
+        #     tekrar üretilir). (2) Ham silme iz bırakmıyordu → silinen satırların TAM kopyası
+        #     önce audit'e yazılır (append-only telafisi: adli iz + gerekirse elle geri yükleme).
+        cur.execute(
+            "SELECT * FROM kasa_teslim WHERE sube_id=%s AND tarih=%s AND teslim_turu='gun_sonu'",
+            (sube_id, tarih),
+        )
+        _silinecekler = [dict(r) for r in (cur.fetchall() or [])]
+        for _ts in _silinecekler:
+            audit(cur, "kasa_teslim", str(_ts.get("id")), "KAPANIS_GERI_AL_TESLIM_SIL",
+                  eski={k: str(v) for k, v in _ts.items()})
+        cur.execute(
+            "DELETE FROM kasa_teslim WHERE sube_id=%s AND tarih=%s AND teslim_turu='gun_sonu'",
+            (sube_id, tarih),
+        )
         teslim_silindi = cur.rowcount
 
         # 3) KAPANIS operasyon olayını yeniden aç (panel kapanışı tekrar görsün)
