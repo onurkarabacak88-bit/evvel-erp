@@ -99,7 +99,9 @@ def _kapanis_sonrasi_hesapla(cur, gun: date) -> list:
         SELECT s.ad AS sube_ad, e.sube_id,
                e.cevap_ts::text AS kapanis_ts,
                COUNT(c.id) FILTER (WHERE c.olusturma > e.cevap_ts)::int AS sonrasi_n,
-               COALESCE(SUM(c.toplam) FILTER (WHERE c.olusturma > e.cevap_ts), 0) AS sonrasi_tutar
+               COALESCE(SUM(c.toplam) FILTER (WHERE c.olusturma > e.cevap_ts), 0) AS sonrasi_tutar,
+               ROUND((EXTRACT(EPOCH FROM MAX(c.olusturma - e.cevap_ts)
+                     FILTER (WHERE c.olusturma > e.cevap_ts)) / 60.0)::numeric, 1) AS max_gecikme_dk
         FROM sube_operasyon_event e
         JOIN subeler s ON s.id = e.sube_id
         LEFT JOIN ciro c ON c.sube_id = e.sube_id AND c.tarih = e.tarih AND c.durum = 'aktif'
@@ -151,7 +153,10 @@ def gece_kapanis_sonrasi_kayit() -> None:
                 signal_name="Kapanış sonrası ciro kaydı",
                 payload={"sube_ad": k.get("sube_ad"), "adet": int(k["sonrasi_n"]),
                          "tutar": float(k.get("sonrasi_tutar") or 0),
-                         "kapanis_ts": k.get("kapanis_ts")},
+                         "kapanis_ts": k.get("kapanis_ts"),
+                         # Gecikme dağılımı L4 hammaddesi: kapanıştan dakikalar sonra
+                         # girilen rutin ciro ile saatler sonra gelen kayıt ayrışabilsin
+                         "max_gecikme_dk": float(k["max_gecikme_dk"]) if k.get("max_gecikme_dk") is not None else None},
             )
             uretilen += 1
         for b in backdate:
