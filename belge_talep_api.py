@@ -102,6 +102,19 @@ def belge_talep_olustur_izole(ts_id: str) -> None:
             )
     except Exception as e:  # noqa: BLE001 — bilerek yutuluyor (teslim-al bozulmasın)
         logger.warning("belge_talep olusturulamadi (yutuldu, teslim-al etkilenmedi): %s", str(e)[:200])
+        return
+    # FAZ 0 (2026-07-06): omurga olayı — REFERANS ÜRETİCİ. Hata-yutar, kendi bağlantısı,
+    # idempotent; teslim-al akışını hiçbir koşulda etkilemez.
+    try:
+        from duyu_omurga import duyu_olay_yaz
+        duyu_olay_yaz(
+            "acik_teslimat", "tedarik.teslimat.acik_dogdu", tsid,
+            entity_scope="tedarikci", entity_id=(t.get("tedarikci_id") or t.get("tedarikci_ad")),
+            occurred_at=None, signal_name="Açık teslimat doğdu",
+            payload={"sube_adi": t.get("sube_adi"), "tedarikci_ad": t.get("tedarikci_ad")},
+        )
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def _tedarikci_ritim_map(cur) -> dict:
@@ -289,9 +302,28 @@ def belge_talep_kapat(talep_id: str, body: KapatBody = None):
             """UPDATE belge_talep
                SET durum=%s, kapanma_ts=NOW(), kapanis_tipi=%s,
                    kapanis_aciklama=COALESCE(NULLIF(%s,''), kapanis_aciklama)
-               WHERE id=%s AND durum='bekliyor'""",
+               WHERE id=%s AND durum='bekliyor'
+               RETURNING ts_id, tedarikci_id, tedarikci_ad, teslim_tarihi""",
             (durum, tip, acik, tid),
         )
+        _kap = cur.fetchone()
+    # FAZ 0: omurga olayı + (manuel kapanışta) ground-truth etiketi — hata-yutar
+    if _kap:
+        try:
+            from duyu_omurga import duyu_etiket_yaz, duyu_olay_yaz
+            _kd = dict(_kap)
+            duyu_olay_yaz(
+                "acik_teslimat", "tedarik.teslimat.kapandi", str(_kd.get("ts_id") or tid),
+                entity_scope="tedarikci", entity_id=(_kd.get("tedarikci_id") or _kd.get("tedarikci_ad")),
+                occurred_at=_kd.get("teslim_tarihi"), signal_name="Teslimat kapandı",
+                payload={"kapanis_tipi": tip, "tedarikci_ad": _kd.get("tedarikci_ad")},
+            )
+            if tip == "manuel" and acik:
+                # İnsan kararı = öğretmen verisi: teslimat NEDEN belgesiz kapandı
+                duyu_etiket_yaz("manuel_kapanis", tid, insan_karari=acik,
+                                detay={"tedarikci_ad": _kd.get("tedarikci_ad")})
+        except Exception:  # noqa: BLE001
+            pass
     return {"ok": True, "durum": durum, "kapanis_tipi": tip}
 
 
@@ -396,6 +428,17 @@ async def belge_talep_fatura_yukle(talep_id: str, dosya: UploadFile = File(...))
             (fatura_idler[0] if fatura_idler else None, tid),
         )
         conn.commit()
+
+    # FAZ 0: omurga olayı (fatura ile kapanış) — hata-yutar, ana akışı etkilemez
+    try:
+        from duyu_omurga import duyu_olay_yaz
+        duyu_olay_yaz(
+            "acik_teslimat", "tedarik.teslimat.kapandi", str(bt.get("talep_id") or tid),
+            entity_scope="tedarikci", entity_id=None, signal_name="Teslimat kapandı",
+            payload={"kapanis_tipi": "fatura", "fatura_adet": len(fatura_idler)},
+        )
+    except Exception:  # noqa: BLE001
+        pass
 
     # Asenkron OCR — yüklemeyi bekletmeden
     for fid in ocr_calisacak:

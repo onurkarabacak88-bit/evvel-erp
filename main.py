@@ -123,6 +123,15 @@ except Exception as _k1_err:
     logging.getLogger(__name__).warning(
         f"k1_kart_odeme_tani modulu yuklenemedi (izole, ana akis etkilenmez): {_k1_err}"
     )
+# DUYU OMURGASI (FAZ 0) — Katman-2 olay omurgası + ground-truth etiket defteri + cursor.
+# Sinir sisteminin çekirdeği: duyular yazar, sinapslar cursor'la okur. Salt-okur uçlar.
+try:
+    from duyu_omurga import router as duyu_omurga_router
+    app.include_router(duyu_omurga_router)
+except Exception as _duyu_err:
+    logging.getLogger(__name__).warning(
+        f"duyu_omurga modulu yuklenemedi (izole, ana akis etkilenmez): {_duyu_err}"
+    )
 # Avans Servisi — İZOLE mini bordro-finans köprüsü (talep→onay→teslim→mahsup).
 # Kasa izini (PERSONEL_AVANS) SADECE bu servis yazar; maaş motoru sadece OKUR.
 try:
