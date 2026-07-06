@@ -14417,6 +14417,39 @@ def ops_maliyet_stopaj_otomatik(oran_yuzde: float = Query(20, ge=0, le=40)):
     return {"success": True, "guncellenen": adet, "stopaj_yuzde": oran_yuzde}
 
 
+@router.post("/maliyet/kira-stopaj-kaydet")
+def ops_maliyet_kira_stopaj_kaydet(body: dict):
+    """Kira STOPAJINI şube-bazlı ayarlar (2026-07-06, kullanıcı kararı: "0 çek").
+    Vergi kuralı: şahıstan kira → %20 stopaj + KDV'siz (Köyceğiz); şirketten faturalı
+    kira → %20 KDV + STOPAJSIZ (Alsancak, Gazze/TEMA).
+
+    body: {"stopajli_subeler": ["koycegiz"], "oran_yuzde": 20}
+    Listedeki şubelerin aktif KİRA giderlerine stopaj yazılır; DİĞER tüm kira
+    giderlerinin stopajı 0'a çekilir (idempotent). Türkçe-güvenli eşleşme (_tr_fold)."""
+    stopajli = [(_tr_fold(str(s)) or "").strip() for s in (body.get("stopajli_subeler") or []) if str(s).strip()]
+    oran_yuzde = float(body.get("oran_yuzde") or 20)
+    if not (0 <= oran_yuzde <= 40):
+        raise HTTPException(400, "oran_yuzde 0-40 arası olmalı")
+    oran = round(oran_yuzde / 100.0, 4)
+    with db() as (conn, cur):
+        _ensure_maliyet_tablolari(cur)
+        cur.execute("""
+            SELECT sg.id::text AS id, sg.gider_adi, COALESCE(s.ad, '') AS sube_ad
+            FROM sabit_giderler sg
+            LEFT JOIN subeler s ON s.id::text = sg.sube_id::text
+            WHERE sg.aktif=TRUE AND LOWER(COALESCE(sg.kategori,''))='kira'
+        """)
+        sonuc = []
+        for k in [dict(r) for r in (cur.fetchall() or [])]:
+            _ad_key = _tr_fold(str(k.get("sube_ad") or ""))
+            _var = bool(_ad_key) and any(a and (a in _ad_key or _ad_key in a) for a in stopajli)
+            _yeni = oran if _var else 0
+            cur.execute("UPDATE sabit_giderler SET stopaj_oran=%s WHERE id=%s", (_yeni, k["id"]))
+            sonuc.append({"gider": k.get("gider_adi"), "sube": k.get("sube_ad"),
+                          "stopaj_yuzde": round(_yeni * 100, 1)})
+    return {"success": True, "kiralar": sonuc}
+
+
 @router.post("/maliyet/kira-kdv-kaydet")
 def ops_maliyet_kira_kdv_kaydet(body: dict):
     """Kira KDV oranını şube-bazlı ayarlar (2026-07-06, kullanıcı teyidi:
