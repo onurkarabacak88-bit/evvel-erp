@@ -148,6 +148,15 @@ except Exception as _dgo_err:
     logging.getLogger(__name__).warning(
         f"duyu_gorunumler modulu yuklenemedi (izole, ana akis etkilenmez): {_dgo_err}"
     )
+# EVVEL BEYNİ v0.1 (L3 dil/sentez) — salt-okur gözlem katmanı: karar vermez, alarm kapatmaz,
+# kişi/niyet atfetmez, operasyon başlatmaz (Codex sınır cümlesi).
+try:
+    from beyin_api import router as beyin_router
+    app.include_router(beyin_router)
+except Exception as _by_err:
+    logging.getLogger(__name__).warning(
+        f"beyin_api modulu yuklenemedi (izole, ana akis etkilenmez): {_by_err}"
+    )
 # Avans Servisi — İZOLE mini bordro-finans köprüsü (talep→onay→teslim→mahsup).
 # Kasa izini (PERSONEL_AVANS) SADECE bu servis yazar; maaş motoru sadece OKUR.
 try:
@@ -363,6 +372,14 @@ def _gece_yarisi_scheduler():
                 logger.info("⏰ Scheduler: duyu sağlık değerlendirmesi tamamlandı")
             except Exception as e:
                 logger.warning(f"⏰ Scheduler duyu sağlık hatası: {e}")
+
+            # EVVEL BEYNİ gece öz-anlatısı (L3) — arşive yazar, WhatsApp'a GİRMEZ; hata-yutar.
+            try:
+                from beyin_api import gece_sentez
+                gece_sentez()
+                logger.info("⏰ Scheduler: Evvel Beyni gece sentezi tamamlandı")
+            except Exception as e:
+                logger.warning(f"⏰ Scheduler beyin sentez hatası: {e}")
 
             # Pazartesi — geçen haftanın kalem bazlı fire raporu
             if bugun.weekday() == 0:  # 0 = Pazartesi

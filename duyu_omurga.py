@@ -281,6 +281,8 @@ _DUYU_REGISTRY = {
     "hayalet_stok":       {"sinif": "olay_gudumlu_anomali"},
     "kabul_varyans":      {"sinif": "olay_gudumlu_anomali"},
     "bar_stok_uyum":      {"sinif": "olay_gudumlu_anomali"},
+    "duyu_saglik":        {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0},
+    "evvel_beyni":        {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0},
 }
 
 
