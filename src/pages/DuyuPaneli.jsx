@@ -92,6 +92,7 @@ export default function DuyuPaneli() {
   const [acikTeslimat, setAcikTeslimat] = useState(null);
   const [mudahale, setMudahale] = useState(null);
   const [disiplin, setDisiplin] = useState(null);
+  const [butunluk, setButunluk] = useState(null);
   const [hata, setHata] = useState('');
 
   useEffect(() => {
@@ -107,6 +108,7 @@ export default function DuyuPaneli() {
     api('/belge-talep/acik-teslimat').then(setAcikTeslimat).catch(() => {});
     api('/duyu/mudahale-izi?gun=30').then(setMudahale).catch(() => {});
     api('/duyu/kayit-disiplini?gun=14').then(setDisiplin).catch(() => {});
+    api('/duyu/satis-butunluk?gun=14').then(setButunluk).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -336,6 +338,37 @@ export default function DuyuPaneli() {
                   </div>
                 ));
               })()}
+            </>
+          )}
+        </div>
+
+        {/* ── 🎯 SATIŞ BÜTÜNLÜĞÜ (FAZ 2) ── */}
+        <div style={K.kart}>
+          <div style={K.baslik}>🎯 Satış Bütünlüğü <span style={{ fontSize: 10.5, color: 'var(--text3)' }}>(zımni fiyat + iade/fire, aday)</span></div>
+          <div style={K.alt}>Ciro÷adet = zımni fiyat; menüden sapanlar ADAY (kampanya/ikram da aynı izi bırakır). İade-fire yerli bildirimlerden.</div>
+          {butunluk && (
+            <>
+              {(butunluk.zimni_fiyat || []).map((z, i) => (
+                <div key={`z${i}`} style={{ fontSize: 12, color: 'var(--text2)', padding: '3px 0' }}>
+                  🏷️ <b>{z.sube_ad}</b> <span style={{ color: 'var(--text3)', fontSize: 10.5 }}>{z.gun}{z.canli === false ? ' · cache' : ''}</span>: {z.urun_n} ürün, {z.menu_eslesen_n} menü eşleşti
+                  {(z.sapma_adaylari || []).length > 0 && (
+                    <div style={{ marginLeft: 16, color: 'var(--yellow, #f59e0b)', fontSize: 11.5 }}>
+                      {(z.sapma_adaylari || []).slice(0, 4).map((sa, j) => (
+                        <div key={j}>≈ {sa.ad}: zımni {fmt(sa.liste_tahmin)}₺ / menü {fmt(sa.menu_fiyat)}₺ ({sa.sapma_oran > 0 ? '+' : ''}{Math.round(sa.sapma_oran * 100)}%)</div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+              {(butunluk.iade_fire || []).slice(-6).map((f, i) => (
+                <div key={`f${i}`} style={{ fontSize: 12, color: 'var(--text2)', padding: '3px 0', display: 'flex', justifyContent: 'space-between' }}>
+                  <span>♻️ <b>{f.sube_ad}</b> <span style={{ color: 'var(--text3)', fontSize: 10.5 }}>{f.gun}</span></span>
+                  <span style={{ fontFamily: 'ui-monospace, monospace' }}>{f.bildirim_n} bildirim · {f.toplam_adet} adet{f.iade_n > 0 ? ` · ${f.iade_n} iade` : ''}</span>
+                </div>
+              ))}
+              {(butunluk.zimni_fiyat || []).length === 0 && (butunluk.iade_fire || []).length === 0 && (
+                <div style={{ fontSize: 12, color: 'var(--text3)' }}>Henüz veri yok — zımni fiyat Evo çekimiyle, iade/fire şube bildirimiyle dolar.</div>
+              )}
             </>
           )}
         </div>

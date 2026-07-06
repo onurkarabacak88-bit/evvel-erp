@@ -287,6 +287,8 @@ _DUYU_REGISTRY = {
     "aciklama_yogunlugu": {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0},
     "kapanis_sonrasi":    {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0},
     "odeme_karmasi":      {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0},
+    "adet_tutar":         {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0},
+    "iade_fire":          {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0},
 }
 
 

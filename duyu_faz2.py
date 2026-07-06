@@ -226,11 +226,167 @@ def gece_odeme_karmasi() -> None:
                        not_metin=str(e)[:200])
 
 
+# ── 4) ADET-TUTAR / ZIMNİ FİYAT (under-ringing doğrudan gölgesi) ─────────────
+# Evo şube×ürün×gün adet+ciro'dan ZIMNİ birim fiyat türetilir (ciro/adet). Aynı ürünün
+# zımni fiyatı menü fiyatının altına kayıyorsa "ucuz tuşlama" (under-ringing) GÖLGESİ
+# düşer — hüküm değil: kampanya/ikram/iskonto da aynı gölgeyi yapar, ayrımı insan/L4 yapar.
+# Menü karşılaştırması tv_menu'den (f8/f14/fice — Evo grubu kolonu seçer) ADAY düzeyinde.
+_GRUP_FIYAT_KOLONU = {"8 oz": "f8", "14 oz": "f14", "ice": "fice"}
+_TR_FOLD = str.maketrans("çğıöşüÇĞİÖŞÜI", "cgiosucgiosui")
+
+
+def _katla(t: str) -> str:
+    return (t or "").translate(_TR_FOLD).lower().strip()
+
+
+def _menu_fiyat_haritasi(cur) -> dict:
+    """{katlanmış tv_menu adı: {f8, f14, fice}} — salt-okur, hata durumunda boş."""
+    try:
+        cur.execute("SELECT ad, f8, f14, fice FROM tv_menu WHERE aktif = TRUE")
+        return {_katla(str(dict(r)["ad"])): dict(r) for r in (cur.fetchall() or [])}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _menu_eslestir(menu: dict, urun_ad: str, grup: str):
+    """Evo ürün adı → tv_menu fiyatı (ADAY: isim katlamalı içerme, tek eşleşme şartı).
+    Evo adı boy/soğukluk taşır ('Americano Ice'), menü adı çıplaktır ('Americano')."""
+    kol = _GRUP_FIYAT_KOLONU.get(_katla(grup))
+    if not kol:
+        return None  # Su/Pasta gibi gruplar: menüde tek fiyat kolonu yok — karşılaştırma yapılmaz
+    u = _katla(urun_ad)
+    adaylar = [(ad, kayit) for ad, kayit in menu.items() if ad and (ad in u or u in ad)]
+    if len(adaylar) != 1:
+        return None  # 0 veya çok eşleşme = güvenilmez, aday bile değil
+    fiyat = adaylar[0][1].get(kol)
+    return float(fiyat) if fiyat is not None else None
+
+
+def _zimni_fiyat_hesapla(gun: date) -> list:
+    """[{sube_id, sube_ad, urunler:[...], sapma_adaylari:[...]}] — Evo cok_satilan'dan.
+    Evo erişilemezse boş liste (cache fallback evo_sync içinde)."""
+    from evo_sync import EVO_KDV_CARPAN, evvel_sube_evo_id_eslestir, hs_rapor_sube_bazli_cached
+    evo = hs_rapor_sube_bazli_cached(gun, gun)
+    evo_subeler = evo.get("subeler") or {}
+    if not evo_subeler:
+        return []
+    with db() as (_, cur):
+        cur.execute("SELECT id, ad FROM subeler WHERE aktif = TRUE")
+        yerel = [dict(r) for r in (cur.fetchall() or [])]
+        menu = _menu_fiyat_haritasi(cur)
+    # Evo şube id → yerel şube (T5 tek merkez eşleştirici)
+    evo_id_yerel = {}
+    for sb in yerel:
+        eid = evvel_sube_evo_id_eslestir(str(sb["ad"]))
+        if eid is not None:
+            evo_id_yerel[str(eid)] = sb
+    out = []
+    for _evo_ad, sd in evo_subeler.items():
+        yer = evo_id_yerel.get(str(sd.get("evo_sube_id") or ""))
+        if not yer:
+            continue
+        urunler, sapmalar = [], []
+        for u in (sd.get("cok_satilan") or [])[:40]:
+            try:
+                adet = float(u.get("adet") or 0)
+                ciro = float(u.get("ciro") or 0)
+            except (TypeError, ValueError):
+                continue
+            if adet <= 0:
+                continue
+            zimni = round(ciro / adet, 2)                      # KDV hariç ham
+            liste_tahmin = round(zimni * EVO_KDV_CARPAN, 2)    # menüyle aynı dil (KDV dahil)
+            kayit = {"ad": u.get("ad"), "grup": u.get("grup"), "adet": adet,
+                     "ciro": ciro, "zimni": zimni, "liste_tahmin": liste_tahmin}
+            menu_f = _menu_eslestir(menu, str(u.get("ad") or ""), str(u.get("grup") or ""))
+            if menu_f:
+                kayit["menu_fiyat"] = menu_f
+                oran = round((liste_tahmin - menu_f) / menu_f, 3)
+                kayit["sapma_oran"] = oran
+                if abs(oran) > 0.10:  # aday eşiği: %10 üstü sapmaları AYRICA listele (gizleme yok)
+                    sapmalar.append({"ad": u.get("ad"), "grup": u.get("grup"),
+                                     "liste_tahmin": liste_tahmin, "menu_fiyat": menu_f,
+                                     "sapma_oran": oran, "adet": adet})
+            urunler.append(kayit)
+        out.append({"sube_id": yer["id"], "sube_ad": yer["ad"], "gun": str(gun),
+                    "urun_n": len(urunler), "urunler": urunler,
+                    "menu_eslesen_n": sum(1 for x in urunler if "menu_fiyat" in x),
+                    "sapma_adaylari": sapmalar,
+                    "canli": bool(evo.get("canli"))})
+    return out
+
+
+def gece_adet_tutar() -> None:
+    """GECE: dünün şube×ürün zımni fiyat kesiti → omurga. İdempotent, hata-yutar."""
+    from duyu_omurga import duyu_nabiz_yaz, duyu_olay_yaz
+    try:
+        dun = date.today() - timedelta(days=1)
+        kesitler = _zimni_fiyat_hesapla(dun)
+        for k in kesitler:
+            duyu_olay_yaz(
+                "adet_tutar", "finans.satis.zimni_fiyat_kesiti",
+                f"{k['sube_id']}_{k['gun']}",
+                entity_scope="sube", entity_id=str(k["sube_id"]), occurred_at=k["gun"],
+                signal_name="Günlük zımni birim fiyat kesiti",
+                # Menü sapması ADAY dilindedir: kampanya/ikram/yeni fiyat da aynı izi bırakır
+                confidence=1.0,
+                payload={kk: k[kk] for kk in ("sube_ad", "urun_n", "urunler",
+                                              "menu_eslesen_n", "sapma_adaylari", "canli")},
+            )
+        duyu_nabiz_yaz("adet_tutar", taranan=len(kesitler), uretilen=len(kesitler))
+    except Exception as e:  # noqa: BLE001
+        logger.warning("gece adet-tutar yutuldu: %s", str(e)[:120])
+        duyu_nabiz_yaz("adet_tutar", durum="hata", yutulan_hata=1, not_metin=str(e)[:200])
+
+
+# ── 5) İADE / FİRE KESİTİ (iade↔stok duyusunun YERLİ yarısı) ─────────────────
+# Evo void/refund satırı API'de YOK (bilinçli-bekleme: Evo iade ucu açılırsa tamamlanır).
+# Yerli kayıt VAR: sube_fire_bildirim (fire + müşteri iadesi). Kimlik OKUNMAZ.
+def _iade_fire_hesapla(cur, gun_bas: date, gun_bit: date) -> list:
+    cur.execute(
+        """
+        SELECT s.ad AS sube_ad, f.sube_id, f.tarih::text AS gun,
+               COUNT(*)::int AS bildirim_n,
+               COALESCE(SUM(f.toplam_adet), 0)::int AS toplam_adet,
+               COUNT(*) FILTER (WHERE f.iade_zaman IS NOT NULL)::int AS iade_n
+        FROM sube_fire_bildirim f JOIN subeler s ON s.id = f.sube_id
+        WHERE f.tarih BETWEEN %s AND %s
+        GROUP BY s.ad, f.sube_id, f.tarih
+        ORDER BY f.tarih, s.ad
+        """,
+        (str(gun_bas), str(gun_bit)),
+    )
+    return [dict(r) for r in (cur.fetchall() or [])]
+
+
+def gece_iade_fire() -> None:
+    """GECE: dünün şube fire/iade bildirimleri kesiti → omurga."""
+    from duyu_omurga import duyu_nabiz_yaz, duyu_olay_yaz
+    try:
+        dun = date.today() - timedelta(days=1)
+        with db() as (_, cur):
+            satirlar = _iade_fire_hesapla(cur, dun, dun)
+        for s in satirlar:
+            duyu_olay_yaz(
+                "iade_fire", "stok.fire.bildirim_kesiti",
+                f"{s['sube_id']}_{s['gun']}",
+                entity_scope="sube", entity_id=str(s["sube_id"]), occurred_at=s["gun"],
+                signal_name="Günlük fire/iade bildirim kesiti",
+                payload={k: s[k] for k in ("sube_ad", "bildirim_n", "toplam_adet", "iade_n")},
+            )
+        duyu_nabiz_yaz("iade_fire", taranan=len(satirlar), uretilen=len(satirlar))
+    except Exception as e:  # noqa: BLE001
+        logger.warning("gece iade-fire yutuldu: %s", str(e)[:120])
+        duyu_nabiz_yaz("iade_fire", durum="hata", yutulan_hata=1, not_metin=str(e)[:200])
+
+
 def gece_faz2_calistir() -> None:
-    """Tek giriş noktası — üç duyu sırayla, her biri kendi hatasını yutar."""
+    """Tek giriş noktası — beş duyu sırayla, her biri kendi hatasını yutar."""
     gece_aciklama_yogunlugu()
     gece_kapanis_sonrasi_kayit()
     gece_odeme_karmasi()
+    gece_adet_tutar()
+    gece_iade_fire()
 
 
 # ── SALT-OKUR UÇ ─────────────────────────────────────────────────────────────
@@ -255,4 +411,29 @@ def kayit_disiplini(gun: int = Query(14, ge=3, le=60)):
         "not": "Sv0 ham veri — alarm değil. Açıklama yoğunlaşması 'süreç kalıba sığmıyor' "
                "işareti, kapanış-sonrası kayıt ve karma kayması sadece bakılacak yer önerir; "
                "değerlendirme insanındır.",
+    }
+
+
+@router.get("/satis-butunluk")
+def satis_butunluk(gun: int = Query(14, ge=3, le=30)):
+    """Adet-tutar (zımni fiyat vs menü, DÜN — Evo kaynaklı) + iade/fire kesiti (N gün).
+    ADAY dili: sapma = kampanya/ikram/yeni fiyat da olabilir; Evo void/refund satırı
+    API'de yok — iade'nin Evo yarısı bilinçli-bekleme'de."""
+    dun = date.today() - timedelta(days=1)
+    bas = date.today() - timedelta(days=gun - 1)
+    try:
+        zimni = _zimni_fiyat_hesapla(dun)
+    except Exception as e:  # noqa: BLE001
+        zimni = []
+        logger.warning("satis-butunluk zimni hesap atlandi: %s", str(e)[:120])
+    with db() as (_, cur):
+        iade = _iade_fire_hesapla(cur, bas, date.today())
+    return {
+        "kesit": {"zimni_gun": str(dun), "iade_bas": str(bas)},
+        "zimni_fiyat": [{k: v for k, v in s.items() if k != "urunler"} | {
+            "urun_ornek": (s.get("urunler") or [])[:8]} for s in zimni],
+        "iade_fire": iade,
+        "not": "Zımni fiyat = ciro/adet (KDV'li tahminle menüye kıyas, ADAY). Sapma "
+               "hüküm değildir: kampanya, ikram, fiyat güncellemesi de aynı izi bırakır. "
+               "İade/fire yerli bildirimlerden; Evo void/refund ucu yok (bilinçli bekleme).",
     }

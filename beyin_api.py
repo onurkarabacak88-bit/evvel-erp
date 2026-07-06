@@ -183,6 +183,10 @@ def _blok_derle(soru: str) -> List[Tuple[str, str, str]]:
         ("B11", "Müdahale izi (sahip dahil, 30 gün)",
          ("müdahale", "mudahale", "iptal", "geri al", "düzeltme", "duzeltme", "override"),
          lambda: _j(__import__("duyu_gorunumler").mudahale_izi(gun=30))),
+        ("B12", "Satış bütünlüğü (zımni fiyat + iade/fire)",
+         ("zımni", "zimni", "birim fiyat", "sapma", "iade", "fire", "menü fiyat",
+          "menu fiyat", "under"),
+         lambda: _j(__import__("duyu_faz2").satis_butunluk(gun=14))),
     ]
     # Dörtgen: şube adı geçiyorsa o şube (yoksa stok anahtarında tüm şubeler kısa özet)
     def _dortgen_blok(sube_id: str, sube_ad: str):
