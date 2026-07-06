@@ -249,6 +249,240 @@ def cursor_ilerlet(cur, okuyucu: str, son_olay: dict) -> None:
     )
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# DUYU SAĞLIK DUYUSU (proprioception) — FAZ 1f (2026-07-06, Claude+Codex sentezi)
+#
+# Codex'in ana vuruşu: "OLAY YOKLUĞU ≠ DUYU KÖRLÜĞÜ." Anomali-üreten duyuda sessizlik
+# çoğu zaman SAĞLIKTIR (fark yok = olay yok). Körlüğü ölçmek için ÇIKTI telemetrisi değil
+# ÇALIŞMA telemetrisi gerekir: nabız (koştu mu), fırsat sayısı (kaç kayıt taradı),
+# yutulan hata (hata-yutma güçlüyse körlük saklanır). Sistem kendi sessizliğini değil
+# kendi KÖRLÜĞÜNÜ ölçmeli.
+#
+# MİMARİ SINIR (god-object freni): meta-duyu yalnız freshness/liveness/lag/shape bakar;
+# İŞ ANLAMI ÇIKARMAZ. Domain eşikleri REGISTRY'de, değerlendirici GENERIC kalır.
+# Meta olaylar omurgaya yalnız DURUM GEÇİŞİ olarak yazılır (her gece "hâlâ sessiz" spam'i
+# YASAK); meta.% olayları sağlık hesabına dahil edilmez (özyineleme kesilir).
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Üretici kayıt defteri: sınıf + beklenen ritim. Codex rozet merdiveni değerlendiricide.
+#   zamanli               → scheduler'a bağlı; period biliniyor (SLA)
+#   olay_gudumlu_normal   → iş aktivitesiyle düzenli doğar; tarihsel ritim öğrenilebilir (N>=6)
+#   olay_gudumlu_anomali  → yalnız SORUN olunca doğar; çıktı-sessizliği SAĞLIK GÖSTERGESİ DEĞİL
+#                           (nabız yoksa dürüst rozet: 'izlenemez')
+_DUYU_REGISTRY = {
+    "k1_mutabakat":       {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0},
+    "kdv_pozisyon":       {"sinif": "zamanli", "period_gun": 32.0, "grace": 1.5},
+    "borc_plan_selfheal": {"sinif": "olay_gudumlu_anomali"},
+    "acik_teslimat":      {"sinif": "olay_gudumlu_normal"},
+    "finansal_duyu":      {"sinif": "olay_gudumlu_normal"},
+    "stok_sayim":         {"sinif": "olay_gudumlu_normal"},
+    "avans":              {"sinif": "olay_gudumlu_normal"},
+    "fatura_ocr":         {"sinif": "olay_gudumlu_normal"},
+    "hayalet_stok":       {"sinif": "olay_gudumlu_anomali"},
+    "kabul_varyans":      {"sinif": "olay_gudumlu_anomali"},
+    "bar_stok_uyum":      {"sinif": "olay_gudumlu_anomali"},
+}
+
+
+def _ensure_nabiz(cur) -> None:
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS duyu_nabiz (
+            id            TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+            duyu          TEXT NOT NULL,
+            run_ts        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            durum         TEXT NOT NULL DEFAULT 'basari',   -- basari | hata
+            taranan_adet  INT,                               -- fırsat sayısı (kaç kayıt bakıldı)
+            uretilen_olay INT,                               -- bu koşuda üretilen olay
+            yutulan_hata  INT NOT NULL DEFAULT 0,            -- hata-yutma sayacı (körlük saklanmasın)
+            not_metin     TEXT
+        )
+        """
+    )
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_duyu_nabiz ON duyu_nabiz (duyu, run_ts DESC)")
+
+
+def duyu_nabiz_yaz(duyu: str, *, durum: str = "basari", taranan: Optional[int] = None,
+                   uretilen: Optional[int] = None, yutulan_hata: int = 0,
+                   not_metin: Optional[str] = None) -> None:
+    """ÇALIŞMA TELEMETRİSİ — üretici her koştuğunda yazar (çıktı üretmese bile!).
+    'Koştum, N kayıt taradım, M olay ürettim, K hata yuttum.' Hata-yutar, izole."""
+    try:
+        with db() as (_, cur):
+            _ensure_nabiz(cur)
+            cur.execute(
+                """INSERT INTO duyu_nabiz (duyu, durum, taranan_adet, uretilen_olay, yutulan_hata, not_metin)
+                   VALUES (%s,%s,%s,%s,%s,%s)""",
+                ((duyu or "").strip(), durum if durum in ("basari", "hata") else "basari",
+                 taranan, uretilen, int(yutulan_hata or 0), not_metin),
+            )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("duyu_nabiz_yaz yutuldu (%s): %s", duyu, str(e)[:120])
+
+
+def _rozet_degerlendir(sinif: str, yas_gun: Optional[float], beklenen_gun: Optional[float],
+                       nabiz_var: bool, olay_n: int) -> str:
+    """GENERIC rozet merdiveni (Codex): canli / gecikmeli / ritmini_asti / kopuk_supheli /
+    ritim_bilinmiyor / firsat_yok_veya_sessiz / izlenemez. İş anlamı YOK — yalnız freshness."""
+    if sinif == "olay_gudumlu_anomali" and not nabiz_var:
+        return "izlenemez"  # anomali duyusu + nabız telemetrisi yok → sessizlik ölçülemez (dürüst)
+    if yas_gun is None:
+        return "izlenemez" if not nabiz_var else "hic_olay_yok"
+    if beklenen_gun is None or beklenen_gun <= 0:
+        return "ritim_bilinmiyor" if olay_n < 6 else "canli"
+    oran = yas_gun / beklenen_gun
+    if oran <= 1.25:
+        return "canli"
+    if oran <= 2.0:
+        return "gecikmeli"
+    if oran <= 4.0:
+        return "ritmini_asti"
+    return "kopuk_supheli"
+
+
+def saglik_hesapla(cur) -> dict:
+    """Üretici + sinaps + besleme sağlığı — SALT HESAP (yazmaz). meta.% olayları hariç."""
+    _ensure(cur)
+    _ensure_nabiz(cur)
+    # Üretici başına: son olay + olay sayısı + öğrenilen ritim (N>=6: max(p50*2, p90))
+    cur.execute(
+        """
+        SELECT duyu,
+               MAX(observed_at) AS son_olay,
+               COUNT(*)::int AS olay_n,
+               GREATEST(0, EXTRACT(EPOCH FROM (NOW() - MAX(observed_at))) / 86400.0) AS yas_gun
+        FROM duyu_olay
+        WHERE olay_tipi NOT LIKE 'meta.%%'
+        GROUP BY duyu
+        """
+    )
+    olaylar = {str(r["duyu"]): dict(r) for r in (cur.fetchall() or [])}
+    # Öğrenilen ritim: ardışık olay aralıkları (yalnız olay_gudumlu_normal için anlamlı)
+    cur.execute(
+        """
+        WITH sirali AS (
+            SELECT duyu, observed_at,
+                   EXTRACT(EPOCH FROM (observed_at - LAG(observed_at) OVER
+                       (PARTITION BY duyu ORDER BY observed_at))) / 86400.0 AS aralik_gun
+            FROM duyu_olay WHERE olay_tipi NOT LIKE 'meta.%%'
+        )
+        SELECT duyu,
+               PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY aralik_gun) AS p50,
+               PERCENTILE_CONT(0.9) WITHIN GROUP (ORDER BY aralik_gun) AS p90,
+               COUNT(aralik_gun)::int AS n
+        FROM sirali WHERE aralik_gun IS NOT NULL GROUP BY duyu
+        """
+    )
+    ritimler = {str(r["duyu"]): dict(r) for r in (cur.fetchall() or [])}
+    # Son nabızlar + son 7 gün yutulan hata toplamı
+    cur.execute(
+        """
+        SELECT DISTINCT ON (duyu) duyu, run_ts, durum, taranan_adet, uretilen_olay
+        FROM duyu_nabiz ORDER BY duyu, run_ts DESC
+        """
+    )
+    nabizlar = {str(r["duyu"]): dict(r) for r in (cur.fetchall() or [])}
+    cur.execute(
+        """SELECT duyu, SUM(yutulan_hata)::int AS yutulan
+           FROM duyu_nabiz WHERE run_ts >= NOW() - INTERVAL '7 days' GROUP BY duyu"""
+    )
+    yutulanlar = {str(r["duyu"]): int(r["yutulan"] or 0) for r in (cur.fetchall() or [])}
+
+    ureticiler = []
+    for duyu, reg in _DUYU_REGISTRY.items():
+        ol = olaylar.get(duyu) or {}
+        rt = ritimler.get(duyu) or {}
+        nb = nabizlar.get(duyu)
+        sinif = reg["sinif"]
+        yas = float(ol["yas_gun"]) if ol.get("yas_gun") is not None else None
+        if sinif == "zamanli":
+            beklenen = float(reg["period_gun"]) * float(reg.get("grace", 1.5))
+            # zamanlıda asıl ölçü NABIZ yaşı (çıktı değil çalışma!)
+            if nb and nb.get("run_ts") is not None:
+                cur.execute("SELECT GREATEST(0, EXTRACT(EPOCH FROM (NOW() - %s)) / 86400.0) AS y", (nb["run_ts"],))
+                yas = float(dict(cur.fetchone())["y"])
+        elif sinif == "olay_gudumlu_normal" and int(rt.get("n") or 0) >= 6:
+            beklenen = max(float(rt["p50"] or 0) * 2, float(rt["p90"] or 0), 1.0)
+        else:
+            beklenen = None
+        rozet = _rozet_degerlendir(sinif, yas, beklenen, nb is not None, int(ol.get("olay_n") or 0))
+        ureticiler.append({
+            "duyu": duyu, "sinif": sinif, "rozet": rozet,
+            "son_olay": str(ol.get("son_olay") or "") or None,
+            "olay_n": int(ol.get("olay_n") or 0),
+            "yas_gun": round(yas, 2) if yas is not None else None,
+            "beklenen_gun": round(beklenen, 2) if beklenen else None,
+            "son_nabiz": str(nb["run_ts"]) if nb else None,
+            "nabiz_durum": (nb or {}).get("durum"),
+            "yutulan_hata_7g": yutulanlar.get(duyu, 0),
+        })
+
+    # SİNAPS sağlığı: cursor kaç olay geride (backlog) + imleç yaşı
+    cur.execute("SELECT okuyucu, son_observed, son_event_id, guncelleme FROM duyu_okuma_cursor")
+    okuyucular = []
+    for r in (cur.fetchall() or []):
+        d = dict(r)
+        cur.execute(
+            """SELECT COUNT(*)::int AS geride FROM duyu_olay
+               WHERE olay_tipi NOT LIKE 'meta.%%'
+                 AND (observed_at, event_id) > (%s, %s)""",
+            (d.get("son_observed"), d.get("son_event_id") or ""),
+        )
+        d["backlog"] = int(dict(cur.fetchone())["geride"])
+        d["son_observed"] = str(d.get("son_observed") or "")
+        d["guncelleme"] = str(d.get("guncelleme") or "")
+        okuyucular.append(d)
+
+    # BESLEME sağlığı: Evo son başarılı çekim (cache tablosundan — hata-yutar)
+    beslemeler = []
+    try:
+        cur.execute("SELECT MAX(cekim_ts) AS son FROM evo_rapor_cache")
+        _e = dict(cur.fetchone() or {})
+        beslemeler.append({"besleme": "evo_hs_rapor",
+                           "son_basarili_cekim": str(_e.get("son") or "") or None})
+    except Exception:  # noqa: BLE001
+        beslemeler.append({"besleme": "evo_hs_rapor", "hata": "cache okunamadı"})
+
+    return {"ureticiler": sorted(ureticiler, key=lambda u: u["duyu"]),
+            "sinapslar": okuyucular, "beslemeler": beslemeler}
+
+
+def gece_saglik_degerlendir() -> None:
+    """GECE: sağlık hesapla; kopuk_supheli/ritmini_asti DURUM GEÇİŞLERİNİ meta olaya yaz.
+    Spam yok: source_ref=duyu+rozet+gün → aynı durum aynı gün tek olay; DÜZELME de olay
+    (sessizlik_bitti). Hata-yutar."""
+    try:
+        with db() as (_, cur):
+            s = saglik_hesapla(cur)
+            # önceki rozetler (dünkü meta olaylardan değil — basit: son meta olay tipine bak)
+            for u in s["ureticiler"]:
+                if u["rozet"] in ("ritmini_asti", "kopuk_supheli"):
+                    duyu_olay_yaz(
+                        "duyu_saglik", "meta.duyu.sessizlik_basladi",
+                        f"{u['duyu']}:{u['rozet']}",  # durum değişmedikçe idempotent (gün eklenmez!)
+                        entity_scope="genel", signal_name=f"Duyu ritmini aştı: {u['duyu']}",
+                        evidence_class="gozlem",
+                        payload={"rozet": u["rozet"], "yas_gun": u["yas_gun"],
+                                 "beklenen_gun": u["beklenen_gun"], "sinif": u["sinif"]},
+                    )
+        duyu_nabiz_yaz("duyu_saglik", taranan=len(_DUYU_REGISTRY), not_metin="gece degerlendirme")
+    except Exception as e:  # noqa: BLE001
+        logger.warning("gece_saglik_degerlendir yutuldu: %s", str(e)[:150])
+
+
+@router.get("/saglik")
+def duyu_saglik():
+    """PROPRIOCEPTION — sistemin kendini hissetmesi. Salt-okur; hüküm yok, rozet var.
+    'izlenemez' = dürüst itiraf (nabız telemetrisi henüz yok); 'kopuk_supheli' = bakılmalı."""
+    with db() as (_, cur):
+        s = saglik_hesapla(cur)
+    s["not"] = ("Rozetler: canli(≤1.25x) · gecikmeli(≤2x) · ritmini_asti(≤4x) · kopuk_supheli(>4x) "
+                "· ritim_bilinmiyor(N<6) · izlenemez(nabız yok — anomali duyusunda sessizlik "
+                "SAĞLIK GÖSTERGESİ DEĞİLDİR, Codex kuralı). Zamanlı duyularda ölçü ÇALIŞMA "
+                "nabzıdır, çıktı değil. yutulan_hata_7g>0 = hata-yutma körlük saklıyor olabilir.")
+    return s
+
+
 # ── SALT-OKUR UÇLAR ───────────────────────────────────────────────────────────
 
 @router.get("/ozet")

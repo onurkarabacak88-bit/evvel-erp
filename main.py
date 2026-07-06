@@ -347,8 +347,22 @@ def _gece_yarisi_scheduler():
                                  "odenecek": _poz.get("toplam_odenecek_tl")},
                     )
                     logger.info("⏰ Scheduler: KDV dönem pozisyonu olayı yazıldı")
+                    try:
+                        from duyu_omurga import duyu_nabiz_yaz
+                        duyu_nabiz_yaz("kdv_pozisyon", taranan=1, uretilen=1)
+                    except Exception:
+                        pass
                 except Exception as e:
                     logger.warning(f"⏰ Scheduler KDV dönem olayı hatası: {e}")
+
+            # FAZ 1f (2026-07-06) — GECE SAĞLIK DEĞERLENDİRMESİ (proprioception): ritmini
+            # belirgin aşan duyular için DURUM-GEÇİŞİ meta olayı (spam yok); hata-yutar.
+            try:
+                from duyu_omurga import gece_saglik_degerlendir
+                gece_saglik_degerlendir()
+                logger.info("⏰ Scheduler: duyu sağlık değerlendirmesi tamamlandı")
+            except Exception as e:
+                logger.warning(f"⏰ Scheduler duyu sağlık hatası: {e}")
 
             # Pazartesi — geçen haftanın kalem bazlı fire raporu
             if bugun.weekday() == 0:  # 0 = Pazartesi
@@ -1033,6 +1047,20 @@ def borc_plan_mutabakat(referans_tarih: Optional[date] = None) -> dict:
             sonuc["backfill"] = cur.rowcount or 0
     except Exception as e:
         sonuc["hata"] = f"backfill: {e}"; logger.warning(f"borc_plan_mutabakat backfill: {e}")
+    # ÇALIŞMA NABZI (2026-07-06): panel her açılışta koşar — nabız çok sık olmasın diye
+    # saatte en fazla 1 yazılır (son nabız <1 saatse atla). Hata-yutar.
+    try:
+        from duyu_omurga import duyu_nabiz_yaz
+        with db() as (_, _c):
+            _c.execute(
+                "SELECT 1 FROM duyu_nabiz WHERE duyu='borc_plan_selfheal' AND run_ts >= NOW() - INTERVAL '1 hour' LIMIT 1"
+            )
+            _son_var = _c.fetchone() is not None
+        if not _son_var:
+            duyu_nabiz_yaz("borc_plan_selfheal", taranan=1,
+                           uretilen=sum(v for v in sonuc.values() if isinstance(v, int) and v > 0))
+    except Exception:  # noqa: BLE001
+        pass
     # DUYU OMURGASI kancası (2026-07-06): self-heal bir şey düzelttiyse günlük idempotent olay
     try:
         _duzeltme = sum(v for v in sonuc.values() if isinstance(v, int) and v > 0)

@@ -131,8 +131,20 @@ def gece_mutabakat_olay_yaz() -> None:
                 payload={"eksik_kart_odeme": v.get("eksik_kart_odeme"), "tip": v.get("tip"),
                          "kasa": v.get("kasa_kismi_toplam"), "kart": v.get("kart_kodm_toplam")},
             )
+        # ÇALIŞMA NABZI (Codex: çıktı değil çalışma telemetrisi — 0 vaka da 'koştum' demektir)
+        try:
+            from duyu_omurga import duyu_nabiz_yaz
+            duyu_nabiz_yaz("k1_mutabakat", taranan=rapor.get("taranan_kartli_plan"),
+                           uretilen=len(rapor.get("vakalar") or []))
+        except Exception:  # noqa: BLE001
+            pass
     except Exception as e:  # noqa: BLE001 — gece koşusu bozulmaz
         logger.warning("k1 gece mutabakat olay yazimi atlandi: %s", str(e)[:150])
+        try:
+            from duyu_omurga import duyu_nabiz_yaz
+            duyu_nabiz_yaz("k1_mutabakat", durum="hata", yutulan_hata=1, not_metin=str(e)[:120])
+        except Exception:  # noqa: BLE001
+            pass
 
 
 @router.post("/api/k1/onar")
