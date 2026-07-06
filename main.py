@@ -140,6 +140,14 @@ except Exception as _dg_err:
     logging.getLogger(__name__).warning(
         f"dortgen_duyu modulu yuklenemedi (izole, ana akis etkilenmez): {_dg_err}"
     )
+# DUYU SAF GÖRÜNÜMLERİ (FAZ 1c+1e) — vergi→nakit takvimi + kapanış-fark şube profili
+try:
+    from duyu_gorunumler import router as duyu_gorunum_router
+    app.include_router(duyu_gorunum_router)
+except Exception as _dgo_err:
+    logging.getLogger(__name__).warning(
+        f"duyu_gorunumler modulu yuklenemedi (izole, ana akis etkilenmez): {_dgo_err}"
+    )
 # Avans Servisi — İZOLE mini bordro-finans köprüsü (talep→onay→teslim→mahsup).
 # Kasa izini (PERSONEL_AVANS) SADECE bu servis yazar; maaş motoru sadece OKUR.
 try:
@@ -312,6 +320,15 @@ def _gece_yarisi_scheduler():
                 logger.info(f"⏰ Scheduler: supplier_payment_event beslendi ({_sp.get('eklenen')} yeni olay)")
             except Exception as e:
                 logger.warning(f"⏰ Scheduler supplier_payment hatası: {e}")
+
+            # FAZ 1b (2026-07-06) — her gece kart-kasa mutabakat taraması → duyu omurgası.
+            # Fark vakası varsa Katman-2 olay yazar (alarmsız, Sv0); hata-yutar.
+            try:
+                from k1_kart_odeme_tani import gece_mutabakat_olay_yaz
+                gece_mutabakat_olay_yaz()
+                logger.info("⏰ Scheduler: K1 kart-kasa mutabakatı omurgaya tarandı")
+            except Exception as e:
+                logger.warning(f"⏰ Scheduler K1 mutabakat hatası: {e}")
 
             # Pazartesi — geçen haftanın kalem bazlı fire raporu
             if bugun.weekday() == 0:  # 0 = Pazartesi

@@ -111,6 +111,30 @@ def k1_hasar_tarama():
         return _mutabakat(cur)
 
 
+def gece_mutabakat_olay_yaz() -> None:
+    """FAZ 1b (2026-07-06): GECE TARAMASI → duyu omurgası. Kart-kasa mutabakatını tarar;
+    FARK vakası varsa Katman-2 olay yazar (kasa.kart.defter_farki — fenomen dili, alarm YOK,
+    Sv0 kaydet-göster-me). source_ref = plan+gün → süren fark her gece 1 olay = yaşlanma izi.
+    Hata-yutar: gece koşusunu asla bozmaz."""
+    try:
+        with db() as (_, cur):
+            rapor = _mutabakat(cur)
+        from duyu_omurga import duyu_olay_yaz
+        gun = str(dt_now_tr().date())
+        for v in rapor.get("vakalar") or []:
+            duyu_olay_yaz(
+                "k1_mutabakat", "kasa.kart.defter_farki",
+                f"{v['plan_id']}:{gun}",
+                entity_scope="kart", entity_id=v.get("kart_id"),
+                occurred_at=gun, signal_name="Kart-kasa defter farkı",
+                evidence_class="mutabakat", assertion_level="ham",
+                payload={"eksik_kart_odeme": v.get("eksik_kart_odeme"), "tip": v.get("tip"),
+                         "kasa": v.get("kasa_kismi_toplam"), "kart": v.get("kart_kodm_toplam")},
+            )
+    except Exception as e:  # noqa: BLE001 — gece koşusu bozulmaz
+        logger.warning("k1 gece mutabakat olay yazimi atlandi: %s", str(e)[:150])
+
+
 @router.post("/api/k1/onar")
 def k1_onar(uygula: bool = False):
     """
