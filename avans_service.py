@@ -560,4 +560,17 @@ def avans_ters_kayit(aid: str, body: AvansTersModel):
         )
         _event(cur, aid, "TERS_KAYIT", {"neden": body.neden, "onaylayan": body.onaylayan, "ters_ref": ters_id})
         audit(cur, "personel_avans", aid, "TERS_KAYIT", yeni={"neden": body.neden})
+        # FIX AV1 (2026-07-06): ters kayıt avansı mahsup havuzundan düşürür ama dönemin BEKLEYEN
+        # maaş planı o mahsupla (düşük tutarlı) üretilmişse eski kalıyordu → personele eksik
+        # ödeme planı. Kanonik senkron plan+kaydı yeniden eşitler (onaylı kayıt kendi guard'ıyla
+        # EZİLMEZ; plan yazımı yine TEK yazıcıdan — maas_service). Hata-yutar: senkron başarısız
+        # olsa da ters kayıt geçerli kalır (panel açılış mutabakatı da ayrıca yakalar).
+        try:
+            import maas_service as _ms
+            cur.execute("SELECT * FROM personel WHERE id=%s", (r["personel_id"],))
+            _pk = cur.fetchone()
+            if _pk:
+                _ms.aylik_vardiya_senkronize(cur, dict(_pk), int(r["donem_yil"]), int(r["donem_ay"]))
+        except Exception as _e:
+            logger.warning("avans ters-kayit sonrasi maas plan senkronu atlandi: %s", _e)
     return {"success": True, "durum": "ters_kayit"}

@@ -220,6 +220,33 @@ def odeme_plani_esitle(cur, p: dict, yil: int, ay: int, net: float,
     Dönüş: {"id": plan_id, "yeni": bool} veya None (net<=0 ya da plan zaten var/insert edilmedi).
     """
     if net <= 0:
+        # FIX AV5 (2026-07-06): net 0'a düştüyse (örn. maaşın tamamı avans mahsubuyla karşılandı)
+        # bekleyen ESKİ plan güncellenmeden kalıyordu → panelde hayalet "ödenecek maaş".
+        # Ekran senkronu modunda bekleyen plan iptal edilir (append-only: silinmez, durum='iptal')
+        # + bağlı bekleyen onaylar da kapatılır (MN10 yetim-onay dersi).
+        if guncelle:
+            _ot = maas_odeme_tarihi(yil, ay)
+            cur.execute(
+                """
+                UPDATE odeme_plani
+                SET durum='iptal',
+                    aciklama = COALESCE(aciklama,'') || ' · iptal: net 0 (avans mahsubu)'
+                WHERE kaynak_tablo='personel' AND kaynak_id=%s
+                  AND durum IN ('bekliyor','onay_bekliyor')
+                  AND referans_ay = DATE_TRUNC('month', %s::date)
+                RETURNING id
+                """,
+                (p["id"], str(_ot)),
+            )
+            _iptal_ids = [str(r["id"]) for r in (cur.fetchall() or [])]
+            if _iptal_ids:
+                cur.execute(
+                    """
+                    UPDATE onay_kuyrugu SET durum='reddedildi', onay_tarihi=NOW()
+                    WHERE durum NOT IN ('onaylandi','reddedildi') AND kaynak_id = ANY(%s)
+                    """,
+                    (_iptal_ids,),
+                )
         return None
 
     odeme_tarihi = maas_odeme_tarihi(yil, ay)

@@ -641,6 +641,16 @@ def aylik_odeme_plani_uret(yil=None, ay=None):
                 toplam_maas = float(p['maas'] or 0) + float(p['yemek_ucreti'] or 0) + float(p['yol_ucreti'] or 0)
                 if oran < 1.0:
                     toplam_maas = round(toplam_maas * oran, 2)
+                # FIX AV4 (2026-07-06): tahmini yolda avans mahsubu uygulanmıyordu — aylık kaydı
+                # henüz senkronlanmamış personelde plan MAHSUPSUZ (yüksek) üretiliyor, maaş tam
+                # ödenince ödenmiş avans da cepte kalıyordu (çifte ödeme penceresi). Kanonik
+                # kayıt yolu (hesaplanan_net) mahsubu zaten içerir; tahmini yol da artık içerir.
+                try:
+                    toplam_maas, _avm4, _avd4 = _maas_svc.avans_mahsup_uygula(
+                        cur, dict(p), maas_donem_yil, maas_donem_ay, toplam_maas)
+                except Exception as _e4:
+                    logging.getLogger(__name__).warning(
+                        "motors maas tahmini avans mahsup atlandi (%s): %s", p.get('ad_soyad'), _e4)
             else:
                 # Part-time: ay kaydı girilmeden plan üretme
                 atlanan.append(f"Part-time atlandı (kayıt bekleniyor): {p['ad_soyad']}")
