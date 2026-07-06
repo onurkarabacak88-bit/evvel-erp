@@ -415,12 +415,16 @@ def beyin_gunluk_listesi(limit: int = 20):
 
 
 def gece_sentez() -> None:
-    """GECE ÖZ-ANLATI: çekirdek bağlam → 5-6 satır gözlem anlatısı → arşiv.
-    WhatsApp'a GİRMEZ (çift hakikat anlatısı olmasın — Codex). Hata-yutar."""
+    """GECE ÖZ-ANLATI: çekirdek bağlam → 5-6 satır gözlem anlatısı → arşiv + WhatsApp.
+    v0.1'de yalnız arşivdi; kullanıcı kararıyla (2026-07-06: 'dil benimle konuşmalı')
+    sabah mesajı olarak da gönderilir. Codex'in 'çift hakikat' endişesi ÇERÇEVEyle
+    korunur: mesaj kendini motor bulgusundan AYRI bir gözlem anlatısı ilan eder;
+    çelişki hata değil üründür. Tüm post-check'ler (rakam+blok+yasaklı dil) geçmeden
+    mesaj zaten doğmaz. Hata-yutar; WA kotası dolarsa arşiv yine durur."""
     try:
         if not llm_mevcut():
             return
-        _sor_calistir(
+        sonuc = _sor_calistir(
             "Bugünün duyu verilerinden 5-6 satırlık bir günlük gözlem anlatısı yaz: "
             "en dikkat çeken 2-3 gözlem + duyu sağlığı durumu. Hüküm yok, gözlem dili.",
             tip="gece_sentez",
@@ -430,5 +434,22 @@ def gece_sentez() -> None:
             duyu_nabiz_yaz("evvel_beyni", taranan=1, uretilen=1, not_metin="gece sentez")
         except Exception:  # noqa: BLE001
             pass
+        # KONUŞMA KATMANI: sentez frenlerden geçtiyse sahibe seslen
+        try:
+            if sonuc and sonuc.get("ok") and (sonuc.get("cevap") or "").strip():
+                vk = sonuc.get("veri_kalite") or {}
+                mesaj = (
+                    "🧠 *EVVEL BEYNİ — GECE GÖZLEM GÜNLÜĞÜ*\n"
+                    "_(karar değil, alarm değil — duyuların dünkü anlatısı)_\n\n"
+                    f"{sonuc['cevap'].strip()}\n\n"
+                    f"Veri kalitesi: canlı {vk.get('canli', 0)} · "
+                    f"izlenemez {vk.get('izlenemez', 0)} · sorunlu {vk.get('sorunlu', 0)}\n"
+                    "— Motor bulgularından BAĞIMSIZ bir gözlem anlatısıdır; "
+                    "çelişirlerse ikisine de bak. Değerlendirme insanındır."
+                )
+                from whatsapp_bildirim import whatsapp_gonder
+                whatsapp_gonder(mesaj)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("beyin gece WA konusmasi yutuldu: %s", str(e)[:120])
     except Exception as e:  # noqa: BLE001
         logger.warning("beyin gece sentez yutuldu: %s", str(e)[:150])

@@ -95,6 +95,7 @@ export default function DuyuPaneli() {
   const [butunluk, setButunluk] = useState(null);
   const [sinaps, setSinaps] = useState(null);
   const [hazirlik, setHazirlik] = useState(null);
+  const [gunluk, setGunluk] = useState(null);
   const [hata, setHata] = useState('');
 
   useEffect(() => {
@@ -113,6 +114,7 @@ export default function DuyuPaneli() {
     api('/duyu/satis-butunluk?gun=14').then(setButunluk).catch(() => {});
     api('/duyu/sinapsler?gun=14').then(setSinaps).catch(() => {});
     api('/duyu/uyanis-hazirlik').then(setHazirlik).catch(() => {});
+    api('/beyin/gunluk?limit=12').then(setGunluk).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -427,6 +429,22 @@ export default function DuyuPaneli() {
               </div>
             </>
           )}
+        </div>
+
+        {/* ── 📓 BEYİN GÜNLÜĞÜ (iç sesin okunabilir hali) ── */}
+        <div style={{ ...K.kart, borderLeft: '3px solid var(--purple, #8b5cf6)' }}>
+          <div style={K.baslik}>📓 Beyin Günlüğü <span style={{ fontSize: 10.5, color: 'var(--text3)' }}>(gece öz-anlatıları)</span></div>
+          <div style={K.alt}>Beyin her gece duyuların gördüğünü kendi kelimeleriyle günlüğüne yazar ve sabah WhatsApp'ına gönderir. Gözlem dili — karar değil.</div>
+          {gunluk && (() => {
+            const sentezler = (gunluk.kayitlar || []).filter((k2) => k2.tip === 'gece_sentez' && k2.cevap && !k2.red_nedeni);
+            if (!sentezler.length) return <div style={{ fontSize: 12, color: 'var(--text3)' }}>Henüz gece anlatısı yok — beyin her gece 00:30 civarı yazar.</div>;
+            return sentezler.slice(0, 3).map((s, i) => (
+              <div key={i} style={{ background: 'var(--bg)', borderRadius: 10, padding: '10px 12px', marginBottom: 8 }}>
+                <div style={{ fontSize: 10.5, color: 'var(--text3)', marginBottom: 4 }}>{String(s.olusturma || '').slice(0, 16)} · {s.model}</div>
+                <div style={{ fontSize: 12.5, color: 'var(--text1)', whiteSpace: 'pre-wrap', lineHeight: 1.55 }}>{s.cevap}</div>
+              </div>
+            ));
+          })()}
         </div>
       </div>
     </div>
