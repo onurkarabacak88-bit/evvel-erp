@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 from datetime import date, timedelta
+from typing import Dict
 
 from fastapi import APIRouter, Query
 
@@ -82,6 +83,124 @@ def vergi_nakit_takvimi():
         "takvim": satirlar,
         "not": "Salt-okur farkındalık görünümü — beyanname DEĞİLDİR; yönetim tahmini. "
                "Ödeme günleri pratik varsayım (28'i), muhasebeci takvimi esastır.",
+    }
+
+
+@router.get("/odeme-mutabakat")
+def odeme_mutabakat(gun: int = Query(60, ge=14, le=180)):
+    """FAZ 1d: ÖDEME MUTABAKAT GÖRÜNÜMÜ — cari (tedarikçi) bazında iki tarafı YAN YANA koyar:
+      SOL: e-fatura bakiye zincirindeki DÜŞÜŞLER (dahil[N] > önceki[N+1] → arada bakiye eridi)
+      SAĞ: bizim ödeme olaylarımız (supplier_payment_event — kart/nakit, confidence'lı)
+    ADAY eşleştirme (yüksek/orta/düşük güven) — birebir DEĞİL. DİL DİSİPLİNİ (GPT düzeltmesi):
+    bakiye düşüşü MUHASEBE SİNYALİDİR, ödeme kanıtı DEĞİL (iade/iskonto/mahsup da düşürür).
+    Bu ekran 'ödeme eksik' HÜKMÜ vermez — 'düşüş gözlendi, kayıtlarımızda karşılık yok' GÖZLEMİ
+    yapar. Cari seviyesi (ad-normalize) çalışır — şube kırılımı bilinçli yok (VKN tuzağı)."""
+    from supplier_payment import _norm  # Türkçe-güvenli normalize (tek merkez)
+
+    bas = date.today() - timedelta(days=gun - 1)
+    with db() as (_, cur):
+        # SOL: bakiye alanlı faturalar → cari bazında kronolojik zincir → düşüşler
+        cur.execute(
+            """
+            SELECT tedarikci_ad, fatura_tarih, onceki_bakiye::float AS onceki, bakiye_dahil::float AS dahil
+            FROM tedarikci_fatura
+            WHERE onceki_bakiye IS NOT NULL AND bakiye_dahil IS NOT NULL
+              AND tedarikci_ad IS NOT NULL AND fatura_tarih IS NOT NULL
+              AND fatura_tarih >= %s
+            ORDER BY fatura_tarih, olusturma
+            """,
+            (str(bas),),
+        )
+        zincir: Dict[str, list] = {}
+        for r in (cur.fetchall() or []):
+            d = dict(r)
+            k = _norm(d["tedarikci_ad"])
+            if len(k) >= 3:
+                zincir.setdefault(k, []).append(d)
+
+        dusular = []
+        for k, fats in zincir.items():
+            for a, b in zip(fats, fats[1:]):
+                fark = round(float(a["dahil"]) - float(b["onceki"]), 2)
+                if fark > 0.005:
+                    dusular.append({
+                        "tedarikci_ad": b["tedarikci_ad"], "_norm": k,
+                        "pencere_bas": str(a["fatura_tarih"]), "pencere_bit": str(b["fatura_tarih"]),
+                        "dusus_tutar": fark,
+                    })
+
+        # SAĞ: ödeme olayları (pencere payıyla geriden başla)
+        cur.execute(
+            """
+            SELECT id, tedarikci_ad, tutar::float AS tutar, tarih, kaynak, confidence
+            FROM supplier_payment_event
+            WHERE tarih >= %s
+            ORDER BY tarih
+            """,
+            (str(bas - timedelta(days=7)),),
+        )
+        odemeler = []
+        for r in (cur.fetchall() or []):
+            d = dict(r)
+            d["_norm"] = _norm(d.get("tedarikci_ad"))
+            d["tarih"] = str(d["tarih"])
+            d["_kullanildi"] = False
+            odemeler.append(d)
+
+    # ADAY EŞLEŞTİRME — hüküm değil aday; kör noktalar bilinir (kısmi ödeme, çok-fatura-tek-ödeme)
+    def _pencere_icinde(o, du, pay=0):
+        return (du["pencere_bas"] <= o["tarih"] <= du["pencere_bit"]) or (
+            pay and abs((date.fromisoformat(o["tarih"]) - date.fromisoformat(du["pencere_bit"])).days) <= pay
+        ) or (
+            pay and abs((date.fromisoformat(o["tarih"]) - date.fromisoformat(du["pencere_bas"])).days) <= pay
+        )
+
+    eslesen, dusus_karsiliksiz = [], []
+    for du in dusular:
+        adaylar = [o for o in odemeler if o["_norm"] == du["_norm"] and not o["_kullanildi"]]
+        secilen, guven = None, None
+        # 1) tek ödeme, tutar çok yakın + pencere içi → yüksek
+        for o in adaylar:
+            if abs(o["tutar"] - du["dusus_tutar"]) <= max(5.0, du["dusus_tutar"] * 0.02) and _pencere_icinde(o, du):
+                secilen, guven = [o], "yuksek"
+                break
+        # 2) tek ödeme, tutar ~%10 veya pencere±7 → orta
+        if not secilen:
+            for o in adaylar:
+                if abs(o["tutar"] - du["dusus_tutar"]) <= du["dusus_tutar"] * 0.10 and _pencere_icinde(o, du, pay=7):
+                    secilen, guven = [o], "orta"
+                    break
+        # 3) pencere±7 içi ödemelerin TOPLAMI tutara ≤%2 → orta (kısmi ödemeler)
+        if not secilen:
+            pi = [o for o in adaylar if _pencere_icinde(o, du, pay=7)]
+            if pi and abs(sum(o["tutar"] for o in pi) - du["dusus_tutar"]) <= max(5.0, du["dusus_tutar"] * 0.02):
+                secilen, guven = pi, "orta"
+        if secilen:
+            for o in secilen:
+                o["_kullanildi"] = True
+            eslesen.append({**{k: v for k, v in du.items() if k != "_norm"},
+                            "guven": guven,
+                            "odemeler": [{"tutar": o["tutar"], "tarih": o["tarih"],
+                                          "kaynak": o["kaynak"], "kayit_guveni": o["confidence"]}
+                                         for o in secilen]})
+        else:
+            dusus_karsiliksiz.append({k: v for k, v in du.items() if k != "_norm"})
+
+    odeme_karsiliksiz = [
+        {"tedarikci_ad": o.get("tedarikci_ad"), "tutar": o["tutar"], "tarih": o["tarih"],
+         "kaynak": o["kaynak"], "kayit_guveni": o["confidence"]}
+        for o in odemeler if not o["_kullanildi"]
+    ]
+
+    return {
+        "kesit": {"bas": str(bas), "gun": gun},
+        "eslesen": eslesen,                      # 🟢 düşüş ↔ ödeme adayı (güvenle)
+        "dusus_var_odeme_kaydi_yok": dusus_karsiliksiz,   # 🟡 gözlem — hüküm değil
+        "odeme_var_dusus_gorulmedi": odeme_karsiliksiz,   # 🟡 bilgi — fatura zinciri eksik olabilir
+        "not": "ADAY eşleştirme — kesin mutabakat DEĞİL. Bakiye düşüşü muhasebe sinyalidir "
+               "(iade/iskonto/mahsup da düşürür); 'ödeme eksik' hükmü YOK. kayit_guveni<1 = "
+               "ödeme kaydı fuzzy eşleşmiş (aday). Kör noktalar: kısmi ödeme, tek ödeme→çok "
+               "fatura, tarih kayması, açılış bakiyesi. Cari (ad) seviyesi — şube kırılımı yok.",
     }
 
 
