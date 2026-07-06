@@ -132,6 +132,14 @@ except Exception as _duyu_err:
     logging.getLogger(__name__).warning(
         f"duyu_omurga modulu yuklenemedi (izole, ana akis etkilenmez): {_duyu_err}"
     )
+# TÜKETİM DÖRTGENİ (FAZ 1a) — giren↔satış↔kullanım↔sayım yan yana, salt-okur, kesit rozetli
+try:
+    from dortgen_duyu import router as dortgen_router
+    app.include_router(dortgen_router)
+except Exception as _dg_err:
+    logging.getLogger(__name__).warning(
+        f"dortgen_duyu modulu yuklenemedi (izole, ana akis etkilenmez): {_dg_err}"
+    )
 # Avans Servisi — İZOLE mini bordro-finans köprüsü (talep→onay→teslim→mahsup).
 # Kasa izini (PERSONEL_AVANS) SADECE bu servis yazar; maaş motoru sadece OKUR.
 try:
