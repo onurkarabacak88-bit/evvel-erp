@@ -174,24 +174,44 @@ def _rakamlar(metin: str) -> set:
     return {re.sub(r"[^\d]", "", m) for m in re.findall(r"\d[\d.,]*", metin or "")}
 
 
+def llm_mevcut() -> bool:
+    return bool(os.getenv("ANTHROPIC_API_KEY") or os.getenv("OPENAI_API_KEY"))
+
+
 def _llm_cagir(system: str, kullanici: str, max_tokens: int = 900) -> Tuple[str, str]:
-    """(cevap, model) — ANTHROPIC yoksa ('', ''). whatsapp_bildirim ile aynı desen."""
-    key = os.getenv("ANTHROPIC_API_KEY")
-    if not key:
-        return "", ""
-    try:
-        import anthropic
-        client = anthropic.Anthropic(api_key=key)
-        model = os.getenv("ANTHROPIC_BEYIN_MODEL", "claude-3-5-haiku-20241022")
-        resp = client.messages.create(
-            model=model, max_tokens=max_tokens, system=system,
-            messages=[{"role": "user", "content": kullanici}],
-        )
-        metin = "".join(b.text for b in resp.content if getattr(b, "type", None) == "text").strip()
-        return metin, model
-    except Exception as e:  # noqa: BLE001
-        logger.warning("beyin LLM hatasi: %s", str(e)[:150])
-        return "", ""
+    """(cevap, model) — whatsapp_bildirim ile aynı ikili desen: önce Anthropic, yoksa OpenAI."""
+    akey = os.getenv("ANTHROPIC_API_KEY")
+    if akey:
+        try:
+            import anthropic
+            client = anthropic.Anthropic(api_key=akey)
+            model = os.getenv("ANTHROPIC_BEYIN_MODEL", "claude-3-5-haiku-20241022")
+            resp = client.messages.create(
+                model=model, max_tokens=max_tokens, system=system,
+                messages=[{"role": "user", "content": kullanici}],
+            )
+            metin = "".join(b.text for b in resp.content if getattr(b, "type", None) == "text").strip()
+            if metin:
+                return metin, model
+        except Exception as e:  # noqa: BLE001
+            logger.warning("beyin LLM hatasi (Anthropic): %s", str(e)[:150])
+    okey = os.getenv("OPENAI_API_KEY")
+    if okey:
+        try:
+            from openai import OpenAI
+            client = OpenAI(api_key=okey)
+            model = os.getenv("OPENAI_BEYIN_MODEL", "gpt-4o-mini")
+            resp = client.chat.completions.create(
+                model=model, max_tokens=max_tokens,
+                messages=[{"role": "system", "content": system},
+                          {"role": "user", "content": kullanici}],
+            )
+            metin = (resp.choices[0].message.content or "").strip()
+            if metin:
+                return metin, model
+        except Exception as e:  # noqa: BLE001
+            logger.warning("beyin LLM hatasi (OpenAI): %s", str(e)[:150])
+    return "", ""
 
 
 def _post_check(cevap: str, baglam_metni: str) -> Optional[str]:
@@ -251,8 +271,8 @@ def beyin_sor(body: SorBody):
     soru = (body.soru or "").strip()
     if not soru or len(soru) < 3:
         raise HTTPException(400, "Soru boş olamaz")
-    if not os.getenv("ANTHROPIC_API_KEY"):
-        raise HTTPException(503, "Beyin şu an devre dışı (ANTHROPIC_API_KEY tanımsız)")
+    if not llm_mevcut():
+        raise HTTPException(503, "Beyin şu an devre dışı (LLM anahtarı tanımsız)")
     return _sor_calistir(soru[:500], tip="soru")
 
 
@@ -274,7 +294,7 @@ def gece_sentez() -> None:
     """GECE ÖZ-ANLATI: çekirdek bağlam → 5-6 satır gözlem anlatısı → arşiv.
     WhatsApp'a GİRMEZ (çift hakikat anlatısı olmasın — Codex). Hata-yutar."""
     try:
-        if not os.getenv("ANTHROPIC_API_KEY"):
+        if not llm_mevcut():
             return
         _sor_calistir(
             "Bugünün duyu verilerinden 5-6 satırlık bir günlük gözlem anlatısı yaz: "
