@@ -1120,8 +1120,21 @@ def whatsapp_gonder(mesaj: str) -> bool:
     group_id = os.getenv("WA_GROUP_ID", "").strip()
     if not group_id:
         logger.warning("WhatsApp: WA_GROUP_ID eksik — atlanıyor")
+        _bildirim_izi(False, "WA_GROUP_ID eksik")
         return False
-    return _wa_send(group_id, mesaj).get("basarili", False)
+    sonuc = _wa_send(group_id, mesaj)
+    _bildirim_izi(bool(sonuc.get("basarili")), sonuc.get("hata"))
+    return sonuc.get("basarili", False)
+
+
+def _bildirim_izi(basarili: bool, hata=None) -> None:
+    """BİLDİRİM İLETİM DUYUSU kancası (2026-07-06): sistemin sesi kısılırsa (466 kota,
+    ağ, config) artık görünür. Hata-yutar — iz, gönderimi asla bozamaz."""
+    try:
+        from duyu_ozgun import bildirim_sonuc_kaydet
+        bildirim_sonuc_kaydet("whatsapp_grup", basarili, str(hata) if hata else None)
+    except Exception:
+        pass
 
 
 def whatsapp_gonder_numara(telefon: str, mesaj: str) -> dict:

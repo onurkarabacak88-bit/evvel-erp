@@ -460,6 +460,14 @@ def tv_evo_fiyat_uygula(gun: int = 30, max_fatura: int = 80):
                 setsql = ",".join(c + "=%s" for c in cols)
                 cur.execute("UPDATE tv_menu SET " + setsql + ",guncelleme=NOW() WHERE id=%s",
                             [upd[c] for c in cols] + [r["id"]])
+    # DUYU KANCASI (hata-yutar): fiyat değişimi omurgaya iz bırakır — zımni-fiyat
+    # sapmalarının doğal açıklayıcısı (menu_fiyat_izi duyusu)
+    try:
+        from duyu_ozgun import fiyat_degisim_kaydet
+        for d in degisti:
+            fiyat_degisim_kaydet(d["ad"], d["kolon"], d.get("eski"), d.get("yeni"), "evo_sync")
+    except Exception:
+        pass
     return {"degisen_sayisi": len(degisti), "degisenler": degisti}
 
 
@@ -480,14 +488,23 @@ def tv_menu_ekle(u: UrunModel):
 def tv_menu_guncelle(uid: str, u: UrunModel):
     with db() as (conn, cur):
         _ensure_tablo(cur)
-        cur.execute("SELECT id FROM tv_menu WHERE id=%s", (uid,))
-        if not cur.fetchone():
+        cur.execute("SELECT id, ad, f8, f14, fice FROM tv_menu WHERE id=%s", (uid,))
+        eski = cur.fetchone()
+        if not eski:
             raise HTTPException(404, "Ürün bulunamadı")
+        eski = dict(eski)
         cur.execute(
             """UPDATE tv_menu SET kategori=%s,ad=%s,aciklama=%s,f8=%s,f14=%s,fice=%s,
                sira=%s,aktif=%s,yeni=%s,guncelleme=NOW() WHERE id=%s""",
             (u.kategori, u.ad, u.aciklama, u.f8, u.f14, u.fice, (u.sira or 0), u.aktif, bool(u.yeni), uid),
         )
+    # DUYU KANCASI (hata-yutar): elle fiyat değişimi de iz bırakır (menu_fiyat_izi)
+    try:
+        from duyu_ozgun import fiyat_degisim_kaydet
+        for kol, yeni_v in (("f8", u.f8), ("f14", u.f14), ("fice", u.fice)):
+            fiyat_degisim_kaydet(eski.get("ad") or u.ad, kol, eski.get(kol), yeni_v, "manuel")
+    except Exception:
+        pass
     return {"success": True}
 
 

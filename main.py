@@ -174,6 +174,14 @@ except Exception as _dor_err:
     logging.getLogger(__name__).warning(
         f"duyu_oruntu modulu yuklenemedi (izole, ana akis etkilenmez): {_dor_err}"
     )
+# ÖZGÜN KURGU DUYULARI — vardiya plan-gerçek + menü fiyat izi + bildirim iletim; izole.
+try:
+    from duyu_ozgun import router as duyu_ozgun_router
+    app.include_router(duyu_ozgun_router)
+except Exception as _doz_err:
+    logging.getLogger(__name__).warning(
+        f"duyu_ozgun modulu yuklenemedi (izole, ana akis etkilenmez): {_doz_err}"
+    )
 # FAZ 4 ÖN-KURULUM — motor uyanış kapısı (UYUR): kanıt paketi önizleme + hazırlık ölçer +
 # etiket köprüsü + operasyon ritmi. Motor bu modülü ÇAĞIRMAZ; insan önizler.
 try:
@@ -467,6 +475,15 @@ def _gece_yarisi_scheduler():
                 logger.info("⏰ Scheduler: örüntü duyuları taraması tamamlandı")
             except Exception as e:
                 logger.warning(f"⏰ Scheduler örüntü duyuları hatası: {e}")
+
+            # Özgün kurgu duyuları (2026-07-06): vardiya plan-gerçek kesiti (fiyat izi ve
+            # bildirim iletim olay-güdümlü, kancalardan beslenir).
+            try:
+                from duyu_ozgun import gece_ozgun_calistir
+                gece_ozgun_calistir()
+                logger.info("⏰ Scheduler: özgün duyular taraması tamamlandı")
+            except Exception as e:
+                logger.warning(f"⏰ Scheduler özgün duyular hatası: {e}")
 
             # Pazartesi — geçen haftanın kalem bazlı fire raporu
             if bugun.weekday() == 0:  # 0 = Pazartesi

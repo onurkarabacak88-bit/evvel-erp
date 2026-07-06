@@ -314,6 +314,10 @@ _DUYU_REGISTRY = {
     "fatura_oruntu":      {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0, "kaynak_aile": "belge"},
     "ters_zincir":        {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0, "kaynak_aile": "belge", "kanit": True},
     "urun_sessiz":        {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0, "kaynak_aile": "evo", "kanit": True},
+    "vardiya_plan_gercek": {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0, "kaynak_aile": "operasyon_event"},
+    "menu_fiyat_izi":     {"sinif": "olay_gudumlu_normal", "kaynak_aile": "belge"},
+    "bildirim_iletim":    {"sinif": "olay_gudumlu_anomali", "kaynak_aile": "meta"},
+    "sinaps_sarmal":      {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0, "kaynak_aile": "meta"},
 }
 
 

@@ -156,7 +156,8 @@ _KOMPOZIT_OKUYUCU = "sinaps_kompozit"
 # Kompozitin kendi ürettikleri ve rutin kesit üreticileri sayılmaz (her gün ses çıkarırlar —
 # çakışma bilgisi taşımazlar; İSTİSNAİ duyuların birlikteliği aranır)
 _KOMPOZIT_DISI_DUYULAR = frozenset({
-    "sinaps_kompozit", "sinaps_kase", "sinaps_zincir",
+    "sinaps_kompozit", "sinaps_kase", "sinaps_zincir", "sinaps_sarmal",
+    "vardiya_plan_gercek", "menu_fiyat_izi", "bildirim_iletim",
     "odeme_karmasi", "aciklama_yogunlugu", "adet_tutar", "duyu_saglik", "evvel_beyni",
     # Denetim P2-4 (2026-07-06): rutin şube-gün kesit üreticileri — her gün ses çıkarır,
     # sayılırsa kompozit "her-olay dedektörüne" yozlaşır
@@ -213,11 +214,101 @@ def gece_kompozit() -> None:
         duyu_nabiz_yaz("sinaps_kompozit", durum="hata", yutulan_hata=1, not_metin=str(e)[:200])
 
 
+# ── S4) AÇIKLAMA SARMALI: "şu söylerse bu da bundandır" ─────────────────────
+# Kullanıcı kurgusu (2026-07-06): bir duyunun sinyali başka bir duyunun olayıyla
+# AÇIKLANABİLİR — yavru ilişkisi. BERAAT YASAĞI KORUNUR: sarmal bağ sinyali KAPATMAZ,
+# yanına "muhtemel açıklama" iliştirir; ikisi de kayıtta kalır, insan değerlendirir.
+_SARMAL_KURALLARI = (
+    # (kural adı, açıklanan duyu+tip, açıklayan duyu+tip, eşleşme anahtarı)
+    # R1: menü fiyatı değişti → zımni fiyat sapması ondandır (kalem adı eşleşmesi)
+    ("fiyat_degisimi_sapmayi_aciklar",
+     ("adet_tutar", "finans.satis.zimni_fiyat_kesiti"),
+     ("menu_fiyat_izi", "fiyat.menu.degisim"), "urun_ad"),
+    # R2: kapanış geç yapıldı → kapanış-sonrası kayıt ondandır (şube-gün eşleşmesi)
+    ("gec_kapanis_sonrasini_aciklar",
+     ("kapanis_sonrasi", "operasyon.kayit.kapanis_sonrasi_ciro"),
+     ("operasyon_ritmi", "operasyon.ritim.dilim_kesiti"), "sube_gun"),
+    # R3: sayım/kalibrasyon vardı → sayım-çevresi düzeltmeler ondandır (şube-gün)
+    ("sayim_duzeltmeyi_aciklar",
+     ("sayim_cevresi", "stok.duzeltme.sayim_cevresi_kesiti"),
+     ("stok_sayim", None), "sube_gun"),
+)
+
+
+def gece_sarmal() -> None:
+    """GECE: dünün ADAY sinyalleri × açıklayıcı olaylar → meta.aciklama.baglanti_adayi.
+    Bağ öneri dilindedir (evidence=oneri, confidence=0.5); hiçbir şeyi kapatmaz."""
+    from duyu_omurga import duyu_nabiz_yaz, duyu_olay_yaz
+    try:
+        dun = date.today() - timedelta(days=1)
+        with db() as (_, cur):
+            cur.execute(
+                """
+                SELECT event_id, duyu, olay_tipi, entity_scope, entity_id,
+                       occurred_at::text, payload_json
+                FROM duyu_olay
+                WHERE occurred_at::date BETWEEN %s AND %s
+                """,
+                (str(dun - timedelta(days=2)), str(dun)),  # açıklayan 2 gün geriden gelebilir
+            )
+            olaylar = [dict(r) for r in (cur.fetchall() or [])]
+        uretilen, taranan = 0, 0
+        for kural, (ac_duyu, ac_tip), (ay_duyu, ay_tip), anahtar in _SARMAL_KURALLARI:
+            aciklananlar = [o for o in olaylar if o["duyu"] == ac_duyu
+                            and (ac_tip is None or o["olay_tipi"] == ac_tip)
+                            and str(o.get("occurred_at") or "")[:10] == str(dun)]
+            aciklayanlar = [o for o in olaylar if o["duyu"] == ay_duyu
+                            and (ay_tip is None or o["olay_tipi"] == ay_tip)]
+            taranan += len(aciklananlar)
+            for ac in aciklananlar:
+                es = None
+                if anahtar == "sube_gun":
+                    # R2 inceliği: geç kapanış ancak GERÇEKTEN gecikmişse açıklayıcıdır
+                    es = next((ay for ay in aciklayanlar
+                               if ay.get("entity_id") == ac.get("entity_id")
+                               and str(ay.get("occurred_at") or "")[:10] == str(dun)
+                               and (kural != "gec_kapanis_sonrasini_aciklar"
+                                    or ((ay.get("payload_json") or {}).get("tip") == "KAPANIS"
+                                        and float((ay.get("payload_json") or {}).get("gecikme_dk") or 0) > 30))),
+                              None)
+                elif anahtar == "urun_ad":
+                    sapmalar = (ac.get("payload_json") or {}).get("sapma_adaylari") or []
+                    sapan_adlar = {str(s.get("ad") or "").lower() for s in sapmalar}
+                    es = next((ay for ay in aciklayanlar
+                               if str(ay.get("entity_id") or "").lower() in sapan_adlar), None)
+                    if not sapmalar:
+                        continue  # sapma yoksa açıklanacak şey de yok
+                if es is None:
+                    continue
+                duyu_olay_yaz(
+                    "sinaps_sarmal", "meta.aciklama.baglanti_adayi",
+                    f"{kural}_{ac['event_id']}",
+                    entity_scope=ac.get("entity_scope") or "genel",
+                    entity_id=ac.get("entity_id"), occurred_at=str(dun),
+                    signal_name="Muhtemel açıklama bağı (yavru ilişki)",
+                    evidence_class="oneri", assertion_level="korele", confidence=0.5,
+                    payload={
+                        "kural": kural,
+                        "aciklanan": {"event_id": ac["event_id"], "duyu": ac["duyu"],
+                                      "olay_tipi": ac["olay_tipi"]},
+                        "aciklayan": {"event_id": es["event_id"], "duyu": es["duyu"],
+                                      "olay_tipi": es["olay_tipi"]},
+                        "not": "Bağ öneridir — sinyali KAPATMAZ; ikisi de kayıtta.",
+                    },
+                )
+                uretilen += 1
+        duyu_nabiz_yaz("sinaps_sarmal", taranan=taranan, uretilen=uretilen)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("gece sarmal yutuldu: %s", str(e)[:120])
+        duyu_nabiz_yaz("sinaps_sarmal", durum="hata", yutulan_hata=1, not_metin=str(e)[:200])
+
+
 def gece_sinaps_calistir() -> None:
-    """Tek giriş — üç sinaps sırayla; kompozit SONDA (o gece doğan olayları da görsün)."""
+    """Tek giriş — sinapslar sırayla; kompozit ve sarmal SONDA (o gece doğan olayları görsün)."""
     gece_kutsal_kase()
     gece_zincir()
     gece_kompozit()
+    gece_sarmal()
 
 
 # ── SALT-OKUR UÇ ─────────────────────────────────────────────────────────────
@@ -231,7 +322,7 @@ def sinapsler(gun: int = Query(14, ge=3, le=60)):
             SELECT duyu, olay_tipi, signal_name, entity_scope, entity_id,
                    occurred_at::text, confidence, payload_json
             FROM duyu_olay
-            WHERE duyu IN ('sinaps_kase','sinaps_zincir','sinaps_kompozit')
+            WHERE duyu IN ('sinaps_kase','sinaps_zincir','sinaps_kompozit','sinaps_sarmal')
               AND observed_at >= %s
             ORDER BY observed_at DESC LIMIT 100
             """,
