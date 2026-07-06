@@ -90,6 +90,7 @@ export default function DuyuPaneli() {
   const [mutabakat, setMutabakat] = useState(null);
   const [omurga, setOmurga] = useState(null);
   const [acikTeslimat, setAcikTeslimat] = useState(null);
+  const [mudahale, setMudahale] = useState(null);
   const [hata, setHata] = useState('');
 
   useEffect(() => {
@@ -103,6 +104,7 @@ export default function DuyuPaneli() {
     api('/duyu/odeme-mutabakat?gun=60').then(setMutabakat).catch(() => {});
     api('/duyu/ozet').then(setOmurga).catch(() => {});
     api('/belge-talep/acik-teslimat').then(setAcikTeslimat).catch(() => {});
+    api('/duyu/mudahale-izi?gun=30').then(setMudahale).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -273,6 +275,30 @@ export default function DuyuPaneli() {
                   🚚 yolda: {y.kalem_adi} ×{y.sevk_adet} → {y.sube_ad} ({y.yas_gun}g)
                 </div>
               ))}
+            </>
+          )}
+        </div>
+
+        {/* ── 🪞 MÜDAHALE İZİ (sahip dahil) ── */}
+        <div style={K.kart}>
+          <div style={K.baslik}>🪞 Müdahale İzi <span style={{ fontSize: 10.5, color: 'var(--text3)' }}>(30 gün, sahip dahil)</span></div>
+          <div style={K.alt}>Geçmişe dokunan her işlem — iptal, geri alma, düzeltme — kim yaparsa yapsın iz bırakır. Hüküm yok: her müdahale meşru olabilir; yoğunlaşmayı sen okursun.</div>
+          {mudahale && (
+            <>
+              <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 8 }}>
+                Toplam: <b>{mudahale.toplam}</b> müdahale
+              </div>
+              {(mudahale.islem_turleri || []).slice(0, 7).map((t, i) => (
+                <div key={i} style={{ fontSize: 12, color: 'var(--text2)', padding: '4px 0', display: 'flex', justifyContent: 'space-between' }}>
+                  <span><b>{t.islem}</b> <span style={{ color: 'var(--text3)' }}>({t.tablo})</span></span>
+                  <span style={{ fontFamily: 'ui-monospace, monospace' }}>×{t.adet} <span style={{ color: 'var(--text3)', fontSize: 10.5 }}>{t.ilk === t.son ? t.son : `${t.ilk}→${t.son}`}</span></span>
+                </div>
+              ))}
+              {(mudahale.gunluk_yogunluk || []).some((g) => g.adet >= 10) && (
+                <div style={{ fontSize: 11, color: 'var(--yellow, #f59e0b)', marginTop: 6 }}>
+                  ⚡ Yoğun günler: {(mudahale.gunluk_yogunluk || []).filter((g) => g.adet >= 10).map((g) => `${g.gun} (×${g.adet})`).join(' · ')}
+                </div>
+              )}
             </>
           )}
         </div>
