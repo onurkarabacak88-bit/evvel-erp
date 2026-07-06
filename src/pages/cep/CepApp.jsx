@@ -776,10 +776,23 @@ function CepBelgeTalep({ onGeri, onDegisti }) {
     finally { setMesgul(''); }
   };
 
-  // Dijital fatura yoksa (sadece kâğıt) elle kapat — yedek
+  // AÇIK TESLİMAT kapanışı: dijital fatura yoksa elle kapat — ama KANITSIZ KAPANMAZ.
+  // Manuel kapanışta kısa açıklama zorunlu (örn. "irsaliye elden alındı", "ay sonu faturasında").
   const elleKapat = async (x) => {
+    const neden = window.prompt(
+      `${x.tedarikci_ad || 'Teslimat'} — neden elle kapatıyorsun?\n` +
+      `(örn: irsaliye elden alındı / ay sonu faturasına dahil / kâğıt fatura dosyada)`
+    );
+    if (neden === null) return; // vazgeçti
+    if (!String(neden).trim()) { setHata('Açıklama boş olamaz — teslimat kanıtsız kapanamaz.'); return; }
     setMesgul(x.id);
-    try { await api(`/belge-talep/${x.id}/kapat`, { method: 'POST', body: { durum: 'kapandi' } }); yukle(); onDegisti && onDegisti(); }
+    try {
+      await api(`/belge-talep/${x.id}/kapat`, {
+        method: 'POST',
+        body: { durum: 'kapandi', kapanis_tipi: 'manuel', aciklama: String(neden).trim() },
+      });
+      yukle(); onDegisti && onDegisti();
+    }
     catch (e) { setHata(e.message || 'Kapatılamadı'); }
     finally { setMesgul(''); }
   };
@@ -848,7 +861,18 @@ function CepBelgeTalep({ onGeri, onDegisti }) {
                   <div style={{ fontSize: 11, color: C.t3, marginTop: 3 }}>
                     {yasMetin(yas)}{x.mesaj_sayisi > 0 ? ` · ${x.mesaj_sayisi}× istendi` : ' · henüz istenmedi'}
                   </div>
+                  {/* AÇIK TESLİMAT bağlamı: tedarikçi ritmi — önceliği ayarlar, susturmaz */}
+                  {x.ritim_medyan_gun != null && (
+                    <div style={{ fontSize: 11, color: C.t3, marginTop: 2 }}>
+                      ⏱ genelde ~{x.ritim_medyan_gun} günde kapatır
+                      {x.oncelik === 'yuksek' && <span style={{ color: C.kirmizi, fontWeight: 700 }}> · ritmini aştı</span>}
+                    </div>
+                  )}
                 </div>
+                {x.oncelik === 'yuksek' && (
+                  <span style={{ fontSize: 10, fontWeight: 800, color: C.kirmizi, background: 'rgba(220,53,69,0.12)',
+                                 borderRadius: 8, padding: '3px 8px', whiteSpace: 'nowrap' }}>NEDEN AÇIK?</span>
+                )}
               </div>
               <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
                 <button onClick={() => faturaIste(x)} disabled={!telVar} style={{
