@@ -157,6 +157,14 @@ except Exception as _df2_err:
     logging.getLogger(__name__).warning(
         f"duyu_faz2 modulu yuklenemedi (izole, ana akis etkilenmez): {_df2_err}"
     )
+# FAZ 3 SİNAPSLARI — duyular birbirine bağlanır (kase + zincir + kompozit); aday dili, izole.
+try:
+    from duyu_sinaps import router as duyu_sinaps_router
+    app.include_router(duyu_sinaps_router)
+except Exception as _ds3_err:
+    logging.getLogger(__name__).warning(
+        f"duyu_sinaps modulu yuklenemedi (izole, ana akis etkilenmez): {_ds3_err}"
+    )
 # EVVEL BEYNİ v0.1 (L3 dil/sentez) — salt-okur gözlem katmanı: karar vermez, alarm kapatmaz,
 # kişi/niyet atfetmez, operasyon başlatmaz (Codex sınır cümlesi).
 try:
@@ -407,6 +415,15 @@ def _gece_yarisi_scheduler():
                 logger.info("⏰ Scheduler: FAZ 2 duyu taraması tamamlandı")
             except Exception as e:
                 logger.warning(f"⏰ Scheduler FAZ 2 duyu hatası: {e}")
+
+            # FAZ 3 sinapsları (2026-07-06): kase + zincir + kompozit — duyuların ürettiği
+            # olaylardan SONRA koşar ki kompozit o gecenin olaylarını da görsün.
+            try:
+                from duyu_sinaps import gece_sinaps_calistir
+                gece_sinaps_calistir()
+                logger.info("⏰ Scheduler: FAZ 3 sinaps taraması tamamlandı")
+            except Exception as e:
+                logger.warning(f"⏰ Scheduler FAZ 3 sinaps hatası: {e}")
 
             # Pazartesi — geçen haftanın kalem bazlı fire raporu
             if bugun.weekday() == 0:  # 0 = Pazartesi

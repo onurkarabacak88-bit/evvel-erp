@@ -289,6 +289,9 @@ _DUYU_REGISTRY = {
     "odeme_karmasi":      {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0},
     "adet_tutar":         {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0},
     "iade_fire":          {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0},
+    "sinaps_kase":        {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0},
+    "sinaps_zincir":      {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0},
+    "sinaps_kompozit":    {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0},
 }
 
 

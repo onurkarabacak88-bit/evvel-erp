@@ -187,6 +187,11 @@ def _blok_derle(soru: str) -> List[Tuple[str, str, str]]:
          ("zımni", "zimni", "birim fiyat", "sapma", "iade", "fire", "menü fiyat",
           "menu fiyat", "under"),
          lambda: _j(__import__("duyu_faz2").satis_butunluk(gun=14))),
+        ("B13", "Sinaps birlikteliği (kase + zincir + kompozit, 14 gün)",
+         ("sinaps", "birliktelik", "çakışma", "cakisma", "korelasyon", "kutsal",
+          "zincir", "kompozit"),
+         lambda: _j({k: (v if not isinstance(v, list) else v[:10])
+                     for k, v in __import__("duyu_sinaps").sinapsler(gun=14).items()})),
     ]
     # Dörtgen: şube adı geçiyorsa o şube (yoksa stok anahtarında tüm şubeler kısa özet)
     def _dortgen_blok(sube_id: str, sube_ad: str):

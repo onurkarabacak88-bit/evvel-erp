@@ -93,6 +93,7 @@ export default function DuyuPaneli() {
   const [mudahale, setMudahale] = useState(null);
   const [disiplin, setDisiplin] = useState(null);
   const [butunluk, setButunluk] = useState(null);
+  const [sinaps, setSinaps] = useState(null);
   const [hata, setHata] = useState('');
 
   useEffect(() => {
@@ -109,6 +110,7 @@ export default function DuyuPaneli() {
     api('/duyu/mudahale-izi?gun=30').then(setMudahale).catch(() => {});
     api('/duyu/kayit-disiplini?gun=14').then(setDisiplin).catch(() => {});
     api('/duyu/satis-butunluk?gun=14').then(setButunluk).catch(() => {});
+    api('/duyu/sinapsler?gun=14').then(setSinaps).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -368,6 +370,34 @@ export default function DuyuPaneli() {
               ))}
               {(butunluk.zimni_fiyat || []).length === 0 && (butunluk.iade_fire || []).length === 0 && (
                 <div style={{ fontSize: 12, color: 'var(--text3)' }}>Henüz veri yok — zımni fiyat Evo çekimiyle, iade/fire şube bildirimiyle dolar.</div>
+              )}
+            </>
+          )}
+        </div>
+
+        {/* ── 🕸️ SİNAPSLAR (FAZ 3) ── */}
+        <div style={K.kart}>
+          <div style={K.baslik}>🕸️ Sinapslar <span style={{ fontSize: 10.5, color: 'var(--text3)' }}>(duyular arası birliktelik, aday)</span></div>
+          <div style={K.alt}>Duyular birbirine bağlandı: aynı yere düşen işaretler yan yana. Birliktelik kaydı — hüküm değil.</div>
+          {sinaps && (
+            <>
+              {(sinaps.kase_canli || []).slice(0, 4).map((a, i) => (
+                <div key={`ka${i}`} style={{ fontSize: 12, color: 'var(--yellow, #f59e0b)', padding: '3px 0' }}>
+                  ⭐ <b>{a.kalem_adi}</b> ({a.sube_ad}): sayım {fmt(a.sayim_delta)} · satış {fmt(a.satis)} &gt; kullanım {fmt(a.kullanim)}{a.fire_bildirimi_var ? ' · fire bildirimi VAR' : ' · fire bildirimi YOK'}
+                </div>
+              ))}
+              {(sinaps.zincir_canli || []).filter((z) => z.zincir_kor).slice(0, 4).map((z, i) => (
+                <div key={`zi${i}`} style={{ fontSize: 12, color: 'var(--text2)', padding: '3px 0' }}>
+                  🔗 <b>{z.tedarikci_ad}</b>: {z.acik_teslimat_n} açık teslimat ({z.max_yas_gun}g) · ödeme izi yok
+                </div>
+              ))}
+              {(sinaps.sinaps_olaylari || []).slice(0, 5).map((o, i) => (
+                <div key={`so${i}`} style={{ fontSize: 11.5, color: 'var(--text3)', padding: '3px 0' }}>
+                  · {String(o.occurred_at || '').slice(0, 10)} {o.signal_name} {o.duyu === 'sinaps_kompozit' && o.payload_json?.duyular ? `— ${o.payload_json.duyular.join(' + ')}` : ''}
+                </div>
+              ))}
+              {(sinaps.kase_canli || []).length === 0 && (sinaps.zincir_canli || []).filter((z) => z.zincir_kor).length === 0 && (sinaps.sinaps_olaylari || []).length === 0 && (
+                <div style={{ fontSize: 12, color: 'var(--text3)' }}>Şu an birliktelik yok — sinapslar her gece tarar.</div>
               )}
             </>
           )}
