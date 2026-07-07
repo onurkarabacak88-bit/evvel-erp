@@ -137,6 +137,7 @@ def _ensure(cur) -> None:
     cur.execute("CREATE INDEX IF NOT EXISTS idx_beyin_gunluk ON beyin_gunluk (tip, olusturma DESC)")
     cur.execute("ALTER TABLE beyin_gunluk ADD COLUMN IF NOT EXISTS oturum_id TEXT")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_beyin_gunluk_oturum ON beyin_gunluk (oturum_id, olusturma)")
+    cur.execute("ALTER TABLE beyin_gunluk ADD COLUMN IF NOT EXISTS cevap_karari TEXT")
 
 
 # ── BAĞLAM DERLEYİCİ ─────────────────────────────────────────────────────────
@@ -656,7 +657,8 @@ def _sor_calistir(soru: str, tip: str = "soru", ek_bloklar=None,
         f"SORU: {soru}\n\n"
         "Cevabını yalnız bu bloklara dayandır; her iddiaya [B#] referansı ekle."
     )
-    cevap, model = _llm_cagir(_SYSTEM, kullanici)
+    system_metni = _SYSTEM + _uslup_rehberi()
+    cevap, model = _llm_cagir(system_metni, kullanici)
     red = None
     if not cevap:
         red = "LLM yanıtı alınamadı (anahtar yok / hata)"
@@ -673,7 +675,7 @@ def _sor_calistir(soru: str, tip: str = "soru", ek_bloklar=None,
               "toplama/çıkarma/yuvarlama YAPMA (toplam gerekiyorsa sayıları ayrı ayrı ver); "
               "her iddiaya [B#] referansı koy."
         )
-        cevap2, model2 = _llm_cagir(_SYSTEM, duzeltme)
+        cevap2, model2 = _llm_cagir(system_metni, duzeltme)
         if cevap2:
             red2 = _post_check(cevap2, baglam_metni)
             if red2 is None:
@@ -681,15 +683,17 @@ def _sor_calistir(soru: str, tip: str = "soru", ek_bloklar=None,
             else:
                 red = f"{red2} (öz-düzeltme sonrası da)"
     izler = [{"id": bid, "baslik": baslik} for bid, baslik, _ in bloklar]
+    gunluk_id = None
     try:
         with db() as (_, cur):
             _ensure(cur)
             cur.execute(
                 """INSERT INTO beyin_gunluk (tip, soru, baglam_bloklari, cevap, model,
                                              red_nedeni, oturum_id)
-                   VALUES (%s,%s,%s::jsonb,%s,%s,%s,%s)""",
+                   VALUES (%s,%s,%s::jsonb,%s,%s,%s,%s) RETURNING id""",
                 (tip, soru, _j(izler), cevap or None, model or None, red, oturum_id),
             )
+            gunluk_id = dict(cur.fetchone() or {}).get("id")
     except Exception as e:  # noqa: BLE001
         logger.warning("beyin_gunluk arsiv hatasi: %s", str(e)[:120])
     vk = _veri_kalite_ozeti(bloklar)
@@ -698,12 +702,14 @@ def _sor_calistir(soru: str, tip: str = "soru", ek_bloklar=None,
                 "cevap": "Bu soruya güvenli cevap üretilemedi (doğrulama başarısız: "
                          f"{red}). Ham görünümlere Duyu Paneli'nden bakabilirsin.",
                 "bloklar": izler, "baglam_ozeti": baglam_hash,
-                "veri_kalite": vk, "dipnot": _DIPNOT, "oturum_id": oturum_id}
+                "veri_kalite": vk, "dipnot": _DIPNOT, "oturum_id": oturum_id,
+                "gunluk_id": gunluk_id}
     _veri_dilegi_yakala(soru, cevap)  # kural 12: bilgi boşluğu → omurgaya dilek
     cevap = _jargon_cevir(cevap)  # sızıntı filtresi: onaydan SONRA, deterministik
     return {"ok": True, "etiket": _ETIKET, "cevap": cevap, "bloklar": izler,
             "model": model, "baglam_ozeti": baglam_hash,
-            "veri_kalite": vk, "dipnot": _DIPNOT, "oturum_id": oturum_id}
+            "veri_kalite": vk, "dipnot": _DIPNOT, "oturum_id": oturum_id,
+            "gunluk_id": gunluk_id}
 
 
 class SorBody(BaseModel):
@@ -783,6 +789,50 @@ _OZSORGU_BANKASI = (
     "Dün sabah raporu ne söyledi, sonrasında ne değişti?",
     "Menü fiyatlarında son değişiklik var mı, satışa etkisi görünüyor mu?",
 )
+
+
+
+
+def _uslup_rehberi() -> str:
+    """CEVAP ÖĞRENMESİ (2026-07-08): sahibin 👍 verdiği son 2 cevap, sonraki her cevapta
+    ÜSLUP REHBERİ olarak modelin önüne konur (in-context; model değişmez, davranış
+    beğeniyle şekillenir). İçerik kopyalanmaz — üslup örnek alınır."""
+    try:
+        with db() as (_, cur):
+            cur.execute(
+                """SELECT cevap FROM beyin_gunluk
+                   WHERE cevap_karari = 'iyi' AND cevap IS NOT NULL
+                   ORDER BY olusturma DESC LIMIT 2""")
+            iyiler = [str(dict(r)["cevap"])[:500] for r in (cur.fetchall() or [])]
+        if not iyiler:
+            return ""
+        nl = chr(10)
+        return (nl + nl + "ÖRNEK İYİ CEVAPLAR (sahibin beğendikleri — İÇERİĞİNİ KOPYALAMA, "
+                "üslubunu/yapısını örnek al):" + nl +
+                (nl + "---" + nl).join(iyiler))
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+class CevapEtiketBody(BaseModel):
+    gunluk_id: str
+    karar: str  # iyi | kotu
+
+
+@router.post("/cevap-etiket")
+def cevap_etiket(body: CevapEtiketBody):
+    """Sahip cevabı puanlar: 👍 iyi → üslup rehberine girer; 👎 kötü → kalite telemetrisi.
+    Karar değiştirilebilir."""
+    karar = (body.karar or "").strip()
+    if karar not in ("iyi", "kotu"):
+        return {"ok": False, "hata": "karar iyi|kotu olmalı"}
+    with db() as (_, cur):
+        _ensure(cur)
+        cur.execute("UPDATE beyin_gunluk SET cevap_karari=%s WHERE id=%s RETURNING id",
+                    (karar, body.gunluk_id))
+        if not cur.fetchone():
+            return {"ok": False, "hata": "cevap bulunamadı"}
+    return {"ok": True, "gunluk_id": body.gunluk_id, "karar": karar}
 
 
 def _olay_gudumlu_sorular(cur) -> list:

@@ -48,7 +48,7 @@ function BeyinSor() {
     try {
       const r = await api('/beyin/sor', { method: 'POST', body: { soru: s, oturum_id: oturumId } });
       if (r.oturum_id) setOturumId(r.oturum_id);
-      setMesajlar((m) => [...m, { rol: 'beyin', metin: r.cevap, bloklar: r.bloklar, etiket: r.etiket, dipnot: r.dipnot }]);
+      setMesajlar((m) => [...m, { rol: 'beyin', metin: r.cevap, bloklar: r.bloklar, etiket: r.etiket, dipnot: r.dipnot, gunlukId: r.gunluk_id, puan: null }]);
     } catch (e) {
       setHata(e.message || 'Beyin yanıt veremedi');
     } finally { setMesgul(false); }
@@ -74,9 +74,21 @@ function BeyinSor() {
             }}>
               {m.rol === 'beyin' && <div style={{ fontSize: 10, fontWeight: 800, color: 'var(--yellow, #f59e0b)', marginBottom: 4 }}>{m.etiket}</div>}
               <div style={{ fontSize: 13, color: 'var(--text1)', whiteSpace: 'pre-wrap', lineHeight: 1.55 }}>{m.metin}</div>
-              {m.rol === 'beyin' && m.bloklar && m.bloklar.length > 0 && (
-                <div style={{ fontSize: 9.5, color: 'var(--text3)', marginTop: 6 }}>
-                  Kaynak: {m.bloklar.map((b) => b.id).join(' ')}
+              {m.rol === 'beyin' && (
+                <div style={{ fontSize: 9.5, color: 'var(--text3)', marginTop: 6, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span>{m.bloklar && m.bloklar.length > 0 ? `Kaynak: ${m.bloklar.map((b) => b.id).join(' ')}` : ''}</span>
+                  {m.gunlukId && (
+                    m.puan ? (
+                      <span style={{ fontSize: 11 }}>{m.puan === 'iyi' ? '👍 beğenildi — üslup rehberine girdi' : '👎'}</span>
+                    ) : (
+                      <span>
+                        <button title="iyi cevap — üslup rehberine girer" onClick={() => { api('/beyin/cevap-etiket', { method: 'POST', body: { gunluk_id: m.gunlukId, karar: 'iyi' } }).then(() => setMesajlar((ms) => ms.map((x) => x.gunlukId === m.gunlukId ? { ...x, puan: 'iyi' } : x))).catch(() => {}); }}
+                          style={{ background: 'transparent', border: '1px solid var(--border)', borderRadius: 6, cursor: 'pointer', fontSize: 12, padding: '1px 7px', marginRight: 4 }}>👍</button>
+                        <button title="kötü cevap" onClick={() => { api('/beyin/cevap-etiket', { method: 'POST', body: { gunluk_id: m.gunlukId, karar: 'kotu' } }).then(() => setMesajlar((ms) => ms.map((x) => x.gunlukId === m.gunlukId ? { ...x, puan: 'kotu' } : x))).catch(() => {}); }}
+                          style={{ background: 'transparent', border: '1px solid var(--border)', borderRadius: 6, cursor: 'pointer', fontSize: 12, padding: '1px 7px' }}>👎</button>
+                      </span>
+                    )
+                  )}
                 </div>
               )}
             </div>
