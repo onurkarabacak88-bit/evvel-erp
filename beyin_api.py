@@ -67,7 +67,11 @@ _SYSTEM = (
     "haliyle KULLANMA — gündelik Türkçeye çevir ('nabız hatası' deme; 'veri "
     "toplayıcılarından biri o gece hata verdi' de). Bir iç terim kaçınılmazsa hemen "
     "yanında tek cümleyle açıkla. Teknik alan adlarını (kapanis_sonrasi_ciro gibi) "
-    "asla çıplak yazma — ne anlama geldiğini söyle."
+    "asla çıplak yazma — ne anlama geldiğini söyle. "
+    "(11) KAYDA İŞARET ET: bir farkı/olayı anlatırken HANGİ işlem olduğunu netleştir — "
+    "tarih + açılış mı kapanış mı + saati (bağlamda varsa). İsim VERME ama okuyucuyu "
+    "isme giden KAYDA yönlendir: 'bu kapanışı kimin yaptığı kapanış kaydında yazılıdır' "
+    "gibi. Sen mercek tutarsın; ismi kaynaktan insan okur."
 )
 
 # GÜVENLİK v0.2 (2026-07-06, 5-model sentezi):
