@@ -813,6 +813,33 @@ _OZSORGU_BANKASI = (
 
 
 
+@router.get("/ses-durumu")
+def ses_durumu():
+    """TEŞHİS: hangi ses kanalları görünür + yerel kanalın CANLI tek-token denemesi.
+    Anahtar DEĞERLERİ asla dönmez — yalnız var/yok ve hata metni."""
+    durum = {
+        "yerel_url_tanimli": bool((os.getenv("YEREL_LLM_URL") or "").strip()),
+        "yerel_model": os.getenv("YEREL_LLM_MODEL", "(varsayilan qwen2.5:14b)"),
+        "yerel_key_tanimli": bool((os.getenv("YEREL_LLM_KEY") or "").strip()),
+        "anthropic_tanimli": bool(os.getenv("ANTHROPIC_API_KEY")),
+        "openai_tanimli": bool(os.getenv("OPENAI_API_KEY")),
+    }
+    if durum["yerel_url_tanimli"]:
+        try:
+            from openai import OpenAI
+            client = OpenAI(base_url=os.getenv("YEREL_LLM_URL").strip(),
+                            api_key=os.getenv("YEREL_LLM_KEY", "yerel"))
+            resp = client.chat.completions.create(
+                model=os.getenv("YEREL_LLM_MODEL", "qwen2.5:14b"), max_tokens=5,
+                messages=[{"role": "user", "content": "merhaba de"}])
+            durum["yerel_canli_test"] = "OK: " + (resp.choices[0].message.content or "")[:30]
+        except Exception as e:  # noqa: BLE001
+            durum["yerel_canli_test"] = "HATA: " + str(e)[:200]
+    else:
+        durum["yerel_canli_test"] = "atlandi (URL tanimsiz)"
+    return durum
+
+
 def _uslup_rehberi() -> str:
     """CEVAP ÖĞRENMESİ (2026-07-08): sahibin 👍 verdiği son 2 cevap, sonraki her cevapta
     ÜSLUP REHBERİ olarak modelin önüne konur (in-context; model değişmez, davranış
