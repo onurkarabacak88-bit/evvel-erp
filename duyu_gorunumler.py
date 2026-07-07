@@ -250,6 +250,100 @@ def nakit_ufku(gun: int = Query(7, ge=3, le=30)):
     }
 
 
+@router.get("/zam-koridoru")
+def zam_koridoru():
+    """ZAM KORİDORU (L5-lite, 2026-07-07): 'ürünlere ne kadar zam koymalıyım?'
+    sorusunun HESAPLANMIŞ çerçevesi. Marj-koruma formülü: gerekli zam %% ≈
+    (maliyet artışı %%) × (o maliyet kaleminin cirodaki payı). HESABI KOD YAPAR,
+    dil modeli anlatır; ÜRÜN-BAZLI kesin zam veremez (reçete verisi yok — dürüst sınır),
+    işletme-düzeyi koridor + öncelikli hammadde listesi verir. ÖNERİDİR, karar insanın."""
+    bugun = date.today()
+    with db() as (_, cur):
+        # 1) HAMMADDE ENDEKSİ: son 90 günü iki 45-günlük pencereye böl; kalem bazında
+        #    ort birim fiyat değişimi; ağırlık = son dönem harcama tutarı
+        cur.execute(
+            """
+            WITH kalemler AS (
+                SELECT COALESCE(NULLIF(k.eslesen_stok_kodu,''), LOWER(TRIM(k.ocr_ad))) AS kalem,
+                       MIN(k.ocr_ad) AS ad,
+                       f.fatura_tarih >= %s AS son_donem,
+                       AVG(NULLIF(k.birim_fiyat,0)) AS ort_fiyat,
+                       SUM(COALESCE(k.satir_toplam,0)) AS harcama,
+                       COUNT(*) AS n
+                FROM tedarikci_fatura_kalem k
+                JOIN tedarikci_fatura f ON f.id = k.fatura_id
+                WHERE f.fatura_tarih >= %s AND k.birim_fiyat > 0
+                GROUP BY 1, 3
+            )
+            SELECT eski.kalem, eski.ad,
+                   ROUND(eski.ort_fiyat::numeric, 2) AS eski_fiyat,
+                   ROUND(yeni.ort_fiyat::numeric, 2) AS yeni_fiyat,
+                   ROUND(((yeni.ort_fiyat - eski.ort_fiyat) / eski.ort_fiyat * 100)::numeric, 1) AS degisim_pct,
+                   ROUND(yeni.harcama::numeric, 2) AS son_donem_harcama
+            FROM kalemler eski
+            JOIN kalemler yeni ON yeni.kalem = eski.kalem
+                AND eski.son_donem = FALSE AND yeni.son_donem = TRUE
+            WHERE eski.n >= 2 AND yeni.n >= 2 AND eski.ort_fiyat > 0
+            """,
+            (str(bugun - timedelta(days=45)), str(bugun - timedelta(days=90))),
+        )
+        kalemler = [dict(r) for r in (cur.fetchall() or [])]
+        toplam_harcama = sum(float(k["son_donem_harcama"] or 0) for k in kalemler) or 1.0
+        hammadde_endeksi = round(sum(
+            float(k["degisim_pct"] or 0) * float(k["son_donem_harcama"] or 0)
+            for k in kalemler) / toplam_harcama, 1)
+        en_cok_artan = sorted(kalemler, key=lambda k: -float(k["degisim_pct"] or 0))[:8]
+        # 2) PERSONEL DEĞİŞİMİ: maaş planları (kaynak_tablo='personel') aylık toplam,
+        #    son iki TAM ay karşılaştırması
+        cur.execute(
+            """
+            SELECT DATE_TRUNC('month', referans_ay)::date::text AS ay,
+                   ROUND(SUM(odenecek_tutar)::numeric, 2) AS toplam
+            FROM odeme_plani
+            WHERE kaynak_tablo = 'personel' AND durum <> 'iptal'
+            GROUP BY 1 ORDER BY 1 DESC LIMIT 3
+            """
+        )
+        maas_aylar = [dict(r) for r in (cur.fetchall() or [])]
+        personel_degisim = None
+        if len(maas_aylar) >= 2 and float(maas_aylar[1]["toplam"] or 0) > 0:
+            personel_degisim = round(
+                (float(maas_aylar[0]["toplam"]) - float(maas_aylar[1]["toplam"]))
+                / float(maas_aylar[1]["toplam"]) * 100, 1)
+        # 3) PAYLAR (son 30 gün gerçek verisi): hammadde/ciro ve personel/ciro
+        cur.execute("SELECT COALESCE(SUM(toplam),0) AS c FROM ciro "
+                    "WHERE durum='aktif' AND tarih >= %s", (str(bugun - timedelta(days=30)),))
+        ciro_30 = float(dict(cur.fetchone() or {}).get("c") or 0) or 1.0
+        cur.execute("SELECT COALESCE(SUM(toplam_tutar),0) AS t FROM tedarikci_fatura "
+                    "WHERE fatura_tarih >= %s", (str(bugun - timedelta(days=30)),))
+        hammadde_30 = float(dict(cur.fetchone() or {}).get("t") or 0)
+        hammadde_pay = round(hammadde_30 / ciro_30, 3)
+        personel_ay = float(maas_aylar[0]["toplam"]) if maas_aylar else 0.0
+        personel_pay = round(personel_ay / max(ciro_30, 1.0), 3)
+    # 4) KORİDOR — marj-koruma formülü (bileşen artışı × cirodaki payı)
+    alt = round(max(0.0, hammadde_endeksi) * hammadde_pay, 1)
+    ust = round(alt + max(0.0, (personel_degisim or 0)) * personel_pay, 1)
+    return {
+        "hammadde_endeksi_pct_45g": hammadde_endeksi,
+        "hammadde_pay": hammadde_pay,
+        "personel_degisim_pct_aylik": personel_degisim,
+        "personel_pay": personel_pay,
+        "maas_aylik": maas_aylar,
+        "en_cok_artan_hammaddeler": [
+            {"ad": k["ad"], "eski": float(k["eski_fiyat"]), "yeni": float(k["yeni_fiyat"]),
+             "degisim_pct": float(k["degisim_pct"])} for k in en_cok_artan],
+        "izlenen_kalem_n": len(kalemler),
+        "zam_koridoru_pct": {"alt": alt, "ust": ust},
+        "formul": "gerekli zam %% ≈ maliyet artışı %% × o kalemin cirodaki payı "
+                  "(marj-koruma mekanizması); alt=yalnız hammadde, üst=+personel",
+        "not": "ÖNERİ ÇERÇEVESİDİR, karar insanın. ÜRÜN-BAZLI kesin zam verilemez — "
+               "reçete verisi yok (hangi üründe ne kadar hammadde bilinmiyor; reçete "
+               "girilirse ürün bazına iner). Rekabet, müşteri hassasiyeti ve psikolojik "
+               "fiyat eşikleri hesapta YOK. En çok artan hammaddeleri yoğun kullanan "
+               "ürün grupları doğal önceliktir — eşleştirme insan yorumudur.",
+    }
+
+
 @router.get("/vergi-takvim")
 def vergi_nakit_takvimi():
     """FAZ 1c: vergi kaynaklı nakit çıkış takvimi (tahmini — rozetli, hüküm yok)."""
