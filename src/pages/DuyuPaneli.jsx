@@ -97,6 +97,7 @@ export default function DuyuPaneli() {
   const [hazirlik, setHazirlik] = useState(null);
   const [gunluk, setGunluk] = useState(null);
   const [yavru, setYavru] = useState(null);
+  const [karne, setKarne] = useState(null);
   const [hata, setHata] = useState('');
 
   useEffect(() => {
@@ -117,6 +118,7 @@ export default function DuyuPaneli() {
     api('/duyu/uyanis-hazirlik').then(setHazirlik).catch(() => {});
     api('/beyin/gunluk?limit=12').then(setGunluk).catch(() => {});
     api('/duyu/yavru-kurallari?gun=7').then(setYavru).catch(() => {});
+    api('/duyu/kural-karnesi').then(setKarne).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -469,6 +471,22 @@ export default function DuyuPaneli() {
                   <div style={{ fontSize: 11.5, color: 'var(--text3)' }}>Henüz bağ yok — motor her gece örer.</div>
                 )}
               </div>
+              {karne && (
+                <div style={{ marginTop: 8, borderTop: '1px solid var(--border)', paddingTop: 6 }}>
+                  <div style={{ fontSize: 10.5, color: 'var(--text3)', marginBottom: 4 }}>
+                    📋 Kural karnesi <b>(öğrenme {karne.ogrenme_aktif ? 'AÇIK' : 'kapalı — sadece gösterir'})</b>
+                  </div>
+                  {(karne.karne || []).filter((k2) => k2.bag_n > 0 || k2.etiketli_n > 0).map((k2, i) => (
+                    <div key={i} style={{ fontSize: 10.5, color: 'var(--text3)', display: 'flex', justifyContent: 'space-between' }}>
+                      <span>{k2.kural_id}</span>
+                      <span style={{ fontFamily: 'ui-monospace, monospace' }}>{k2.bag_n} bağ · ✓{k2.dogru_n} ✗{k2.yanlis_n} · {k2.n_esigi_rozet.replace(/_/g, ' ')}</span>
+                    </div>
+                  ))}
+                  {(karne.karne || []).every((k2) => k2.bag_n === 0 && k2.etiketli_n === 0) && (
+                    <div style={{ fontSize: 10.5, color: 'var(--text3)' }}>Karne boş — bağlar ve işaretlerin biriktikçe dolar.</div>
+                  )}
+                </div>
+              )}
             </>
           )}
         </div>

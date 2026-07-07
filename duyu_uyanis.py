@@ -202,6 +202,31 @@ def kanit_paketi(entity_scope: str, entity_id: str, gun_bas: date, gun_bit: date
             yaprak_duyular.add(d)
     aileler = sorted({aileler_map.get(d, "bilinmiyor") for d in yaprak_duyular}
                      - {"meta", "bilinmiyor", "iletisim"})
+    # Y5 ALTYAPISI (2026-07-07, Codex mutlak kuralı): sarmal-bilinçli SUNUM —
+    # açıklama bağı OLAN olaylar 'aciklanmis' etiketi alır ve dikkat sırasında GERİYE
+    # düşer; açıklanmamışlar öne. bagimsiz_aile_n'e ve pakete ASLA dokunulmaz —
+    # hiçbir olay çıkarılmaz, hiçbir sayı düşürülmez (matematiğe indirgenmiş beraat yasak).
+    aciklanan_ids = set()
+    olay_ids = [o["event_id"] for o in olaylar]
+    if olay_ids:
+        with db() as (_, cur):
+            cur.execute(
+                """
+                SELECT payload_json->'aciklanan'->>'event_id' AS ref
+                FROM duyu_olay
+                WHERE duyu = 'sinaps_sarmal'
+                  AND payload_json->'aciklanan'->>'event_id' = ANY(%s)
+                """,
+                (olay_ids,),
+            )
+            aciklanan_ids = {str(dict(r)["ref"]) for r in (cur.fetchall() or [])}
+    olay_liste = [{**{k: o.get(k) for k in ("event_id", "duyu", "olay_tipi",
+                                            "signal_name", "occurred_at", "confidence")},
+                   "aciklama_durumu": ("aciklanmis" if o["event_id"] in aciklanan_ids
+                                       else "aciklanmamis")}
+                  for o in olaylar]
+    olay_liste.sort(key=lambda o: (o["aciklama_durumu"] == "aciklanmis",
+                                   str(o.get("occurred_at") or "")))
     return {
         "odak": {"scope": entity_scope, "entity_id": entity_id,
                  "pencere": [str(gun_bas), str(gun_bit)]},
@@ -209,9 +234,10 @@ def kanit_paketi(entity_scope: str, entity_id: str, gun_bas: date, gun_bit: date
         "bagimsiz_aile_n": len(aileler),
         "aileler": aileler,
         "olay_n": len(olaylar),
-        "olaylar": [{k: o.get(k) for k in ("event_id", "duyu", "olay_tipi",
-                                           "signal_name", "occurred_at", "confidence")}
-                    for o in olaylar[:20]],
+        "aciklanmamis_n": sum(1 for o in olay_liste if o["aciklama_durumu"] == "aciklanmamis"),
+        "olaylar": olay_liste[:20],
+        "dikkat_sirasi_notu": "Açıklanmamış olaylar ÖNDE; açıklama bağı olanlar geride "
+                              "ama SAYIMDA — hiçbir olay paketten düşmez.",
         "not": ("PAKET OLGUNLAŞMAMIŞ — geç kayıtlar sayıyı değiştirebilir; çapa atma."
                 if not olgun else
                 "Paket olgun (D+%d bekçisi geçti). Sayı hüküm değildir; motor UYUYOR — "

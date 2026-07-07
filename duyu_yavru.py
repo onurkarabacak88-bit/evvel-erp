@@ -402,6 +402,130 @@ def yavru_etiket(body: BagEtiketBody):
     return {"ok": True, "event_id": body.event_id, "karar": karar, "kural_id": kural_id}
 
 
+# ── Y4 ALTYAPISI (UYUR): kural karnesi + kural madenciliği ──────────────────
+# Öğrenme bayrağı KAPALI: karne yalnız GÖSTERİR, hiçbir kuralın davranışını değiştirmez.
+# 2-3 ay veri + yeterli etiket birikince aktivasyon TEK SATIR: bayrak True + ağırlığın
+# dikkat_sirasi'na bağlanması (Codex: kapı matematiğine ASLA değil).
+Y4_OGRENME_AKTIF = False
+
+
+def _wilson_alt(dogru: int, n: int, z: float = 1.96) -> float:
+    """Wilson skor alt sınırı — küçük-N dürüst gösterim ('10 bağda 8 doğruydu; aralık
+    geniş' — asla '%80 isabet' deme)."""
+    if n == 0:
+        return 0.0
+    p = dogru / n
+    payda = 1 + z * z / n
+    merkez = p + z * z / (2 * n)
+    yayilim = z * ((p * (1 - p) + z * z / (4 * n)) / n) ** 0.5
+    return round(max(0.0, (merkez - yayilim) / payda), 3)
+
+
+@router.get("/kural-karnesi")
+def kural_karnesi():
+    """Y4 karnesi (UYUR): kural başına bağ sayısı + insan etiketleri + Beta-Binomial
+    posterior + Wilson alt sınırı + N-eşiği rozeti. GÖSTERİR, ETKİLEMEZ."""
+    with db() as (_, cur):
+        cur.execute(
+            """
+            SELECT o.payload_json->>'kural_id' AS kural_id,
+                   COUNT(*)::int AS bag_n,
+                   COUNT(e.etiket_id)::int AS etiketli_n,
+                   COUNT(*) FILTER (WHERE e.insan_karari = 'dogru_bag')::int AS dogru_n,
+                   COUNT(*) FILTER (WHERE e.insan_karari = 'yanlis_bag')::int AS yanlis_n
+            FROM duyu_olay o
+            LEFT JOIN duyu_etiket e
+                   ON e.kaynak = 'bag_karari' AND e.iliskili_ref = o.event_id
+            WHERE o.duyu IN ('sinaps_sarmal','yavru_beklenti')
+              AND o.payload_json->>'kural_id' IS NOT NULL
+            GROUP BY o.payload_json->>'kural_id'
+            """
+        )
+        satirlar = {dict(r)["kural_id"]: dict(r) for r in (cur.fetchall() or [])}
+    karne = []
+    for kural in KURAL_KUTUPHANESI:
+        s = satirlar.get(kural["kural_id"], {})
+        dogru, yanlis = int(s.get("dogru_n") or 0), int(s.get("yanlis_n") or 0)
+        n = dogru + yanlis
+        # Beta-Binomial (zayıf prior α=1, β=1 — 4/4 model anlaşması)
+        posterior = round((1 + dogru) / (2 + n), 3) if True else None
+        rozet = ("veri_yetersiz" if n < 10 else "zayif" if n < 30 else "aktif_olabilir")
+        karne.append({
+            "kural_id": kural["kural_id"], "tur": kural["tur"],
+            "bag_n": int(s.get("bag_n") or 0), "etiketli_n": int(s.get("etiketli_n") or 0),
+            "dogru_n": dogru, "yanlis_n": yanlis,
+            "posterior_ort": posterior, "wilson_alt": _wilson_alt(dogru, n),
+            "n_esigi_rozet": rozet,
+        })
+    return {
+        "ogrenme_aktif": Y4_OGRENME_AKTIF,
+        "karne": karne,
+        "not": "ÖĞRENME KAPALI — karne yalnız gösterir; hiçbir kuralın davranışını "
+               "değiştirmez. N<10 hiç, 10-29 'zayıf' rozetli, >=30 aktivasyona aday "
+               "(5-YZ birleşik kararı). Aktivasyon günü: bayrak + dikkat_sirasi bağı; "
+               "kapı matematiğine ASLA dokunulmaz.",
+    }
+
+
+@router.get("/kural-adaylari")
+def kural_adaylari():
+    """Y4 KURAL MADENCİSİ (UYUR): kompozit birlikteliklerden İNSANA kural adayı çıkarır.
+    ASLA otomatik kural doğurmaz — aday sunar, onay=KURAL_KUTUPHANESI'ne commit.
+    Codex frenleri: yalnız OLGUN pencere · ÇAPRAZ-ŞUBE tekrarı · FARKLI kaynak aileleri ·
+    mevcut kuralla örtüşen bastırılır · destek tabanı + yaklaşık kaldıraç."""
+    from duyu_omurga import _DUYU_REGISTRY
+    olgun_sinir = date.today() - timedelta(days=2)
+    with db() as (_, cur):
+        cur.execute(
+            """
+            SELECT entity_id, occurred_at::date::text AS gun, payload_json
+            FROM duyu_olay
+            WHERE duyu = 'sinaps_kompozit' AND occurred_at::date <= %s
+            """,
+            (str(olgun_sinir),),
+        )
+        kompozitler = [dict(r) for r in (cur.fetchall() or [])]
+    # mevcut kuralların kapsadığı duyu çiftleri (bastırma)
+    kapsanan = set()
+    for k in KURAL_KUTUPHANESI:
+        eb = str(k["ebeveyn"]).split("/")[0]
+        co = str(k["cocuk"]).split("/")[0]
+        kapsanan.add(frozenset((eb, co)))
+    aile = {ad: (m.get("kaynak_aile") or "?") for ad, m in _DUYU_REGISTRY.items()}
+    cift_sayac: dict = {}
+    for ko in kompozitler:
+        duyular = sorted(set((ko.get("payload_json") or {}).get("duyular") or []))
+        for i in range(len(duyular)):
+            for j in range(i + 1, len(duyular)):
+                a, b = duyular[i], duyular[j]
+                if frozenset((a, b)) in kapsanan:
+                    continue
+                if aile.get(a) == aile.get(b):
+                    continue  # aynı aile = ortak kaynak gürültüsü, aday değil
+                c = cift_sayac.setdefault((a, b), {"n": 0, "subeler": set(), "gunler": set()})
+                c["n"] += 1
+                c["subeler"].add(str(ko.get("entity_id")))
+                c["gunler"].add(ko.get("gun"))
+    toplam_pencere = max(1, len({(str(k.get("entity_id")), k.get("gun")) for k in kompozitler}))
+    adaylar = []
+    for (a, b), c in cift_sayac.items():
+        if c["n"] < 3 or len(c["subeler"]) < 2:
+            continue  # destek tabanı + çapraz-şube freni
+        adaylar.append({
+            "cift": [a, b], "aileler": [aile.get(a), aile.get(b)],
+            "birliktelik_n": c["n"], "sube_n": len(c["subeler"]),
+            "yaklasik_destek": round(c["n"] / toplam_pencere, 3),
+        })
+    adaylar.sort(key=lambda x: -x["birliktelik_n"])
+    return {
+        "aday_n": len(adaylar), "adaylar": adaylar[:10],
+        "incelenen_kompozit_n": len(kompozitler),
+        "not": "ADAY = öneri; kural DOĞMAZ. Onaylarsan kural kütüphanesine insan "
+               "commit'iyle eklenir. Frenler: olgun pencere, çapraz-şube (>=2), farklı "
+               "kaynak ailesi, mevcut kural bastırması, destek >=3.",
+    }
+
+
 # ── SALT-OKUR UÇ ─────────────────────────────────────────────────────────────
 @router.get("/yavru-kurallari")
 def yavru_kurallari(gun: int = Query(7, ge=1, le=30)):
