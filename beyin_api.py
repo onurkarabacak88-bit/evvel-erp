@@ -481,8 +481,10 @@ def _llm_cagir(system: str, kullanici: str, max_tokens: int = 900) -> Tuple[str,
     if yerel_url:
         try:
             from openai import OpenAI
-            client = OpenAI(base_url=yerel_url, api_key=os.getenv("YEREL_LLM_KEY", "yerel"))
-            model = os.getenv("YEREL_LLM_MODEL", "qwen2.5:14b")
+            client = OpenAI(base_url=yerel_url,
+                            api_key=(os.getenv("YEREL_LLM_KEY") or "yerel").strip())
+            # .strip(): panele kopyalanan degerlere gorunmez tab/bosluk yapisabiliyor
+            model = (os.getenv("YEREL_LLM_MODEL") or "qwen2.5:14b").strip()
             resp = client.chat.completions.create(
                 model=model, max_tokens=max_tokens,
                 messages=[{"role": "system", "content": system},
@@ -828,9 +830,9 @@ def ses_durumu():
         try:
             from openai import OpenAI
             client = OpenAI(base_url=os.getenv("YEREL_LLM_URL").strip(),
-                            api_key=os.getenv("YEREL_LLM_KEY", "yerel"))
+                            api_key=(os.getenv("YEREL_LLM_KEY") or "yerel").strip())
             resp = client.chat.completions.create(
-                model=os.getenv("YEREL_LLM_MODEL", "qwen2.5:14b"), max_tokens=5,
+                model=(os.getenv("YEREL_LLM_MODEL") or "qwen2.5:14b").strip(), max_tokens=5,
                 messages=[{"role": "user", "content": "merhaba de"}])
             durum["yerel_canli_test"] = "OK: " + (resp.choices[0].message.content or "")[:30]
         except Exception as e:  # noqa: BLE001
