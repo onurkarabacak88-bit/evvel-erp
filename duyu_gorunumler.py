@@ -215,7 +215,8 @@ def nakit_ufku(gun: int = Query(7, ge=3, le=30)):
         odeme_gunluk[o["tarih"]] = odeme_gunluk.get(o["tarih"], 0.0) + float(o["kalan"])
     projeksiyon = []
     kumul_odeme = 0.0
-    for d in range(1, gun + 1):
+    # d=0: BUGÜN — ciro katkısı sayılmaz (gün bitmedi), bugünün ödemeleri düşülür
+    for d in range(0, gun + 1):
         t = str(bugun + timedelta(days=d))
         kumul_odeme += odeme_gunluk.get(t, 0.0)
         satir = {"tarih": t, "gun_sonra": d,

@@ -399,6 +399,64 @@ def _post_check(cevap: str, baglam_metni: str) -> Optional[str]:
     return None
 
 
+# JARGON SIZINTI FİLTRESİ (2026-07-07, kullanıcı: "bunu da ayarla"): kural 10'a rağmen
+# modelin kaçırdığı ÇIPLAK kod adları cevap onaylandıktan sonra deterministik çevrilir.
+# Post-check'lerden SONRA uygulanır (rakam içermez, doğrulamayı bozamaz).
+_JARGON_SOZLUK = {
+    "stok.sube.bar_uyumsuzluk": "bar-stok uyumsuzluğu",
+    "stok.kalem.dortgen_sayim_birlikteligi": "dörtgen-sayım birlikteliği",
+    "stok.kalem.beyansiz_dusus": "beyansız stok düşüşü",
+    "stok.fire.bildirim_kesiti": "fire/iade bildirimi",
+    "stok.duzeltme.sayim_cevresi_kesiti": "sayım çevresinde elle düzeltme",
+    "operasyon.kayit.kapanis_sonrasi_ciro": "kapanış sonrası ciro kaydı",
+    "operasyon.kayit.geriye_tarihli_yazim": "geriye tarihli kayıt",
+    "operasyon.kayit.geriye_donuk_mudahale": "geriye dönük müdahale",
+    "operasyon.kayit.manuel_aciklama_kesiti": "elle açıklama oranı kaydı",
+    "operasyon.ritim.dilim_kesiti": "açılış/kapanış zamanlama kaydı",
+    "operasyon.vardiya.plan_gercek_kesiti": "vardiya plan-gerçek karşılaştırması",
+    "operasyon.sube.coklu_duyu_birlikteligi": "aynı günde çoklu sinyal birlikteliği",
+    "finans.ciro.odeme_karmasi_kesiti": "günlük ödeme-tipi dağılımı",
+    "finans.satis.zimni_fiyat_kesiti": "satış birim-fiyat kesiti",
+    "finans.vergi.donem_pozisyonu": "KDV dönem pozisyonu",
+    "finans.sube.avans_talebi": "avans talebi",
+    "finans.sube.avans_cikisi": "avans çıkışı",
+    "finans.sube.avans_ters_kayit": "avans düzeltmesi",
+    "kasa.kart.defter_farki": "kart-kasa defter farkı",
+    "belge.fatura.oruntu_kesiti": "fatura örüntü kaydı",
+    "belge.fatura.teslimat_izi_yok": "faturaya karşılık teslimat izi yok",
+    "tedarik.zincir.belge_odeme_yoklugu": "teslimat açık ve ödeme izi yok",
+    "satis.urun.sessiz_sifirlanma": "düzenli satan ürünün susması",
+    "fiyat.menu.degisim": "menü fiyat değişimi",
+    "iletisim.mesaj.gonderim_hatasi": "bildirim gönderim hatası",
+    "iletisim.rapor.gunluk_ozet": "günlük rapor özeti",
+    "iletisim.motor.bulgu_kesiti": "denetim bulgu özeti",
+    "meta.aciklama.baglanti_adayi": "açıklama bağı (aday)",
+    "meta.duyu.sessizlik_basladi": "duyunun susması",
+    "meta.duyu.sessizlik_bitti": "duyunun ritmine dönmesi",
+    "meta.iletisim.soz_aksiyon_adayi": "söz sonrası aksiyon (aday)",
+    "yavru.beklenti.cocuk_geldi": "beklenen kayıt geldi",
+    "yavru.beklenti.cocuk_gelmedi": "beklenen kayıt DOĞMADI",
+    "bar_stok_uyum": "bar-stok uyumu",
+    "urun_sessiz": "ürün sessizliği",
+    "kapanis_sonrasi": "kapanış sonrası kayıt",
+    "odeme_karmasi": "ödeme-tipi dağılımı",
+}
+_JARGON_GENEL = re.compile(r"\b[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*\b")
+
+
+def _jargon_cevir(metin: str) -> str:
+    """Bilinen kod adları sözlükten; bilinmeyen x.y.z kalıbı son parçasından okunur hale
+    getirilir ('..._kesiti' → '... kaydı'). Rakamlara dokunmaz."""
+    if not metin:
+        return metin
+    for kod, tr in _JARGON_SOZLUK.items():
+        metin = metin.replace(f'"{kod}"', tr).replace(f"'{kod}'", tr).replace(kod, tr)
+    def _genel(m):
+        son = m.group(0).split(".")[-1].replace("_", " ")
+        return f"{son} kaydı"
+    return _JARGON_GENEL.sub(_genel, metin)
+
+
 def _veri_kalite_ozeti(bloklar) -> dict:
     """Cevaba iliştirilen veri-kalite şeridi [GPT+DeepSeek]: sağlık rozetlerinin sayımı.
     'Bu cevaba ne kadar güvenilir veriyle bakıyoruz?' sorusunun dürüst özeti.
@@ -482,6 +540,7 @@ def _sor_calistir(soru: str, tip: str = "soru", ek_bloklar=None) -> dict:
                          f"{red}). Ham görünümlere Duyu Paneli'nden bakabilirsin.",
                 "bloklar": izler, "baglam_ozeti": baglam_hash,
                 "veri_kalite": vk, "dipnot": _DIPNOT}
+    cevap = _jargon_cevir(cevap)  # sızıntı filtresi: onaydan SONRA, deterministik
     return {"ok": True, "etiket": _ETIKET, "cevap": cevap, "bloklar": izler,
             "model": model, "baglam_ozeti": baglam_hash,
             "veri_kalite": vk, "dipnot": _DIPNOT}
