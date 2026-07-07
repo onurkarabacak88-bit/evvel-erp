@@ -360,7 +360,9 @@ def zam_koridoru():
 
 
 @router.get("/odeme-secenek-kiyasi")
-def odeme_secenek_kiyasi(tutar: float | None = Query(None), vade_gun: int = Query(0)):
+def odeme_secenek_kiyasi(tutar: float | None = None, vade_gun: int = 0):
+    # DÜZ varsayılan (Query() DEĞİL): beyin B20 bu fonksiyonu doğrudan çağırır;
+    # Query sentineli 'is None' kontrolünü atlatıp float()'ta patlar → blok sessiz düşer.
     """ÖDEME SEÇENEĞİ KIYASI (2026-07-08): 'nakit mi, kart mı, vade mi?' sorusunun
     HESAPLANMIŞ karşılaştırması. HÜKÜM YOK — üç senaryonun sayıları yan yana konur,
     hangi senaryoda kasa eksiye inmiyor gösterilir; KARAR İNSANIN. Faiz maliyeti,
