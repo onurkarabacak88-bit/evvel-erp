@@ -3310,9 +3310,12 @@ function CepMaliyet({ onGeri }) {
   // (harman vergi + KDV arındırma — DOĞRU). Patron olduğundan düşük net kâr görüyordu.
   const netAlan = (s) => Number(s.net_kar_net_tl ?? s.net_kar_tl) || 0;
   const ciro = topla(rows, 'ciro_tl'), maliyet = topla(rows, 'genel_toplam'), net = (rows || []).reduce((a, s) => a + netAlan(s), 0);
-  const marj = ciro > 0 ? (net / ciro) * 100 : null;
+  // G7 (2026-07-07): marj tanım birliği — masaüstüyle aynı: net kâr / NET SATIŞ (KDV hariç)
+  const netSatisT = topla(rows, 'net_satis_tl') || ciro;
+  const marj = netSatisT > 0 ? (net / netSatisT) * 100 : null;
   const oCiro = topla(orows, 'ciro_tl'), oMaliyet = topla(orows, 'genel_toplam'), oNet = (orows || []).reduce((a, s) => a + netAlan(s), 0);
-  const oMarj = oCiro > 0 ? (oNet / oCiro) * 100 : null;
+  const oNetSatisT = topla(orows, 'net_satis_tl') || oCiro;
+  const oMarj = oNetSatisT > 0 ? (oNet / oNetSatisT) * 100 : null;
   const gun = new Set((rows || []).map(r => r.tarih)).size;
   const yon = (c, p, artiIyi) => {
     if (!orows.length || p == null) return null;
@@ -3387,7 +3390,7 @@ function CepMaliyet({ onGeri }) {
             {gun} cirolu gün · {subeId ? (subeler.find(s => s.id === subeId)?.ad || 'şube') : 'tüm şubeler'}{orows.length ? ' · ▲▼ geçen döneme göre' : ''}
           </div>
           <div style={{ fontSize: 11, color: C.t3, padding: '0 16px', lineHeight: 1.5 }}>
-            Operasyonel kâr (KDV düşülmez, kart faizi hariç). Detay + şube kırılımı: masaüstü Maliyet ekranı.
+            Net kâr: KDV hariç, şube-bazlı tahmini vergi düşülmüş (kart faizi hariç). Detay + şube kırılımı: masaüstü Maliyet ekranı.
           </div>
         </>
       )}

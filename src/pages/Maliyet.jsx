@@ -304,7 +304,10 @@ export default function Maliyet() {
           const T = k => sat.reduce((a, x) => a + (Number(x[k]) || 0), 0);
           // FIX C6 (2026-07-05): net_kar_net_tl (harman vergi+KDV arındırma) — net_kar_tl eski/düz%25
           const ciro = T('ciro_tl'), gider = T('genel_toplam'), net = sat.reduce((a, x) => a + (Number(x.net_kar_net_tl ?? x.net_kar_tl) || 0), 0);
-          return { sube_id: s.id, ad: s.ad || s.id, ciro, gider, net, marj: ciro > 0 ? (net / ciro) * 100 : null };
+          // G7 (2026-07-07): marj tanım birliği — net kâr / NET SATIŞ (KDV hariç);
+          // brüt ciro tabanı marjı sistematik ~%9 düşük gösteriyordu
+          const netSatis = T('net_satis_tl') || ciro;
+          return { sube_id: s.id, ad: s.ad || s.id, ciro, gider, net, marj: netSatis > 0 ? (net / netSatis) * 100 : null };
         })
         .catch(() => ({ sube_id: s.id, ad: s.ad || s.id, ciro: 0, gider: 0, net: 0, marj: null }))
     )).then(r => setSubeOzetler(r.sort((a, b) => b.ciro - a.ciro))).catch(() => {});
@@ -711,8 +714,8 @@ export default function Maliyet() {
             {/* Alt KPI üçlüsü */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12 }}>
               {kart('Marj', marj == null ? '—' : `%${marj.toFixed(1)}`, 'net kâr / net satış (KDV hariç)', netRenk, marj != null && oMarj != null ? yon(marj, oMarj, true) : null)}
-              {kart('💵 Ciro', fmt(ciro), `günlük ort. ${fmt(ciro / Math.max(1, gunSayisi))}`, undefined, yon(ciro, oCiro, true), sparkline(ciroSeri, 'var(--accent)'))}
-              {kart('📉 Toplam Maliyet', fmt(maliyet), maliyetDetayAcik ? 'kapat ▴' : 'kırılımı gör ▾', undefined, yon(maliyet, oMaliyet, false), null, () => setMaliyetDetayAcik(v => !v))}
+              {kart('💵 Ciro (KDV dahil)', fmt(ciro), `günlük ort. ${fmt(ciro / Math.max(1, gunSayisi))}`, undefined, yon(ciro, oCiro, true), sparkline(ciroSeri, 'var(--accent)'))}
+              {kart('📉 Toplam Maliyet (KDV dahil)', fmt(maliyet), maliyetDetayAcik ? 'kapat ▴' : 'kırılımı gör ▾ · KDV-hariç net maliyet P&L tablosunda', undefined, yon(maliyet, oMaliyet, false), null, () => setMaliyetDetayAcik(v => !v))}
             </div>
 
             {/* ── İZOLE: KDV Hariç (Gerçek Marj) katmanı — Faz 1, ayrı alan ── */}
@@ -736,7 +739,7 @@ export default function Maliyet() {
                     {kart('✅ Net Kâr (KDV hariç)', fmt(netKarNet), netMarjNet == null ? '' : `net marj %${netMarjNet.toFixed(1)}`, nrenk)}
                   </div>
                   <div style={{ fontSize: 10.5, color: 'var(--text3)', marginTop: 6, fontStyle: 'italic' }}>
-                    Bu satır KDV'yi cirodan ayrıştırır (gerçek marj). Üstteki "Net Kâr" eski (brüt) hesap — ikisi yan yana, eski bozulmadı.
+                    Bu satır KDV'yi cirodan ayrıştırır (gerçek marj). Üstteki hero "Net Kâr" da AYNI hesaptır (KDV-hariç, şube-bazlı vergili) — iki blok tutarlıdır.
                   </div>
                 </div>
               );
@@ -1089,11 +1092,11 @@ export default function Maliyet() {
         );
       })()}
 
-      {/* ── KÂR-ZARAR (P&L) — Ciro − Maliyet − Tahmini Vergi = Net Kâr ── */}
+      {/* ── KÂR-ZARAR (P&L) — TEK KATMAN: KDV-hariç + şube-bazlı vergi (G1-G5, 2026-07-07) ── */}
       {sekme === 'genel' && altSekme === 'pnl' && (<>
       <div className="panel-section-hdr" style={{ marginBottom: 12 }}>
         <span>💰 Kâr-Zarar (Operasyonel){subeId ? '' : ' — Tüm Şubeler'}</span>
-        <span style={{ fontSize: 10, color: 'var(--text3)' }}>Ciro − Maliyet − Tahmini Vergi (%25) = Net Kâr · KDV düşülmez · resmî muhasebe değil</span>
+        <span style={{ fontSize: 10, color: 'var(--text3)' }}>Net Satış (KDV hariç) − Net Maliyet (KDV hariç) = FAVÖK − Şube-bazlı Tahmini Vergi = NET KÂR · resmî muhasebe değil</span>
       </div>
       <div style={{ overflowX: 'auto', marginBottom: 16 }}>
         <table className="tablo">
@@ -1101,12 +1104,13 @@ export default function Maliyet() {
             <tr>
               <th>Tarih</th>
               {!subeId && <th>Şube</th>}
-              <th style={{ textAlign: 'right' }}>💵 Ciro</th>
-              <th style={{ textAlign: 'right' }}>📉 Toplam Maliyet</th>
-              <th style={{ textAlign: 'right' }}>Faaliyet Kârı</th>
-              <th style={{ textAlign: 'right' }} title="max(0, faaliyet kârı) × %25">🏛️ Tahmini Vergi</th>
+              <th style={{ textAlign: 'right' }} title="Kasadaki brüt ciro — KDV dahil">💵 Ciro (KDV dahil)</th>
+              <th style={{ textAlign: 'right' }} title="Ciro − hesaplanan KDV">Net Satış</th>
+              <th style={{ textAlign: 'right' }}>📉 Net Maliyet (KDV hariç)</th>
+              <th style={{ textAlign: 'right' }} title="Net Satış − Net Maliyet (KDV-hariç, vergi öncesi)">FAVÖK</th>
+              <th style={{ textAlign: 'right' }} title="Şube-bazlı: şahıs şubelerde artan dilim, şirket şubelerde %25">🏛️ Tahmini Vergi</th>
               <th style={{ textAlign: 'right' }}>✅ NET KÂR</th>
-              <th style={{ textAlign: 'right' }}>Marj</th>
+              <th style={{ textAlign: 'right' }} title="Net Kâr / Net Satış">Marj</th>
             </tr>
           </thead>
           <tbody>
@@ -1118,8 +1122,10 @@ export default function Maliyet() {
                   <td>{fmtDate(s.tarih)}</td>
                   {!subeId && <td>{s.sube_adi}</td>}
                   <td style={{ textAlign: 'right', fontWeight: 700 }}>{fmt(s.ciro_tl || 0)}</td>
+                  <td style={{ textAlign: 'right' }}>{fmt(s.net_satis_tl ?? 0)}</td>
                   <td style={{ textAlign: 'right', color: 'var(--text2)', cursor: 'help' }}
                     title={[
+                      'KDV-HARİÇ toplam maliyet. Kalemler (KDV dahil ham):',
                       `Kira: ${fmt(s.kira_maliyet_tl || 0)}`,
                       `Faturalar (elektrik/su/gaz): ${fmt(s.fatura_maliyet_tl || 0)}`,
                       `Abonelikler: ${fmt(s.abonelik_maliyet_tl || 0)}`,
@@ -1129,17 +1135,18 @@ export default function Maliyet() {
                       `İade: ${fmt(s.iade_maliyet_tl || 0)}`,
                       `Şube anlık gider: ${fmt(s.sube_anlik_gider_tl || 0)}`,
                       '(+ ürün-aç COGS + personel)',
+                      `KDV dahil toplam: ${fmt(s.genel_toplam || 0)}`,
                       'Hariç: kart faizi / finansman',
-                    ].join('\n')}>{fmt(s.genel_toplam || 0)}</td>
-                  <td style={{ textAlign: 'right' }}>{fmt(s.faaliyet_kari_tl || 0)}</td>
-                  <td style={{ textAlign: 'right', color: 'var(--text3)' }}>{fmt(s.tahmini_vergi_tl || 0)}</td>
+                    ].join('\n')}>{fmt(s.net_toplam_maliyet_tl ?? s.genel_toplam ?? 0)}</td>
+                  <td style={{ textAlign: 'right' }}>{fmt(s.favok_tl ?? 0)}</td>
+                  <td style={{ textAlign: 'right', color: 'var(--text3)' }}>{fmt(s.tahmini_vergi_net_tl ?? s.tahmini_vergi_tl ?? 0)}</td>
                   <td style={{ textAlign: 'right', fontWeight: 800, color: renk }}>{fmt(net)}</td>
-                  <td style={{ textAlign: 'right', color: renk }}>{s.net_marj_pct == null ? '—' : `%${s.net_marj_pct}`}</td>
+                  <td style={{ textAlign: 'right', color: renk }}>{(s.net_marj_net_pct ?? s.net_marj_pct) == null ? '—' : `%${s.net_marj_net_pct ?? s.net_marj_pct}`}</td>
                 </tr>
               );
             })}
             {(!gunGunData?.satirlar || gunGunData.satirlar.length === 0) && (
-              <tr><td colSpan={subeId ? 7 : 8} style={{ textAlign: 'center', color: 'var(--text3)', padding: 16 }}>Veri yok</td></tr>
+              <tr><td colSpan={subeId ? 8 : 9} style={{ textAlign: 'center', color: 'var(--text3)', padding: 16 }}>Veri yok</td></tr>
             )}
           </tbody>
         </table>

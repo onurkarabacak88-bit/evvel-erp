@@ -14059,6 +14059,9 @@ def ops_maliyet_gun_gun(
                 satir["brut_kar_tl"] = round(brut_kar, 2)
                 satir["brut_marj_pct"] = round((brut_kar / net_satis) * 100, 1) if net_satis > 0 else None
                 satir["favok_tl"] = round(favok, 2)
+                # G3 (gösterim denetimi 2026-07-07): KDV-hariç toplam maliyet hesaplanıyordu
+                # ama satıra YAZILMIYORDU — frontend 'Toplam Maliyet'i KDV-hariç gösterebilsin
+                satir["net_toplam_maliyet_tl"] = round(net_toplam_maliyet, 2)
                 satir["tahmini_vergi_net_tl"] = round(vergi_net, 2)
                 satir["net_kar_net_tl"] = round(net_kar_net, 2)
                 satir["net_marj_net_pct"] = round((net_kar_net / net_satis) * 100, 1) if net_satis > 0 else None

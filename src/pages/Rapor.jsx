@@ -151,7 +151,7 @@ export default function Rapor() {
         {rapor.kpi && (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 12, marginBottom: 20 }}>
             {[
-              { l: 'Net Kâr Marjı', v: rapor.kpi.net_kar_marji, suf: '%', good: (rapor.kpi.net_kar_marji ?? 0) >= 0 },
+              { l: 'Nakit Akış Oranı', v: rapor.kpi.net_kar_marji, suf: '%', sub: 'kasa net akış / gelir — kâr değil', good: (rapor.kpi.net_kar_marji ?? 0) >= 0 },
               { l: 'Gider / Ciro', v: rapor.kpi.gider_ciro_orani, suf: '%', good: (rapor.kpi.gider_ciro_orani ?? 100) <= 80 },
               { l: 'POS Yanan Para', v: rapor.kpi.pos_yanan_orani, suf: '%', sub: fmt(rapor.kpi.pos_kesinti_toplam), good: (rapor.kpi.pos_yanan_orani ?? 0) <= 1.5 },
               { l: 'Kasa Dayanıklılık', v: rapor.kpi.runway_gun, suf: ' gün', sub: `Kasa: ${fmt(rapor.kpi.bitis_kasa)}`, good: (rapor.kpi.runway_gun ?? 0) >= 30 },
