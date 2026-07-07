@@ -785,29 +785,106 @@ _OZSORGU_BANKASI = (
 )
 
 
+def _olay_gudumlu_sorular(cur) -> list:
+    """DİNAMİK SORU ÜRETİMİ v2 — kaynak 1: dünün OLAYLARI soruyu kendisi doğurur.
+    Şablonlar kimliksizdir; her olay tipi kendi patron-sorusunu üretir."""
+    sorular = []
+    dun = date.today()
+    # T2 boş beklentiler
+    cur.execute(
+        """SELECT payload_json->>'kural_id' AS k, entity_id FROM duyu_olay
+           WHERE duyu='yavru_beklenti' AND olay_tipi='yavru.beklenti.cocuk_gelmedi'
+             AND observed_at >= NOW() - INTERVAL '1 day' LIMIT 2""")
+    for r in cur.fetchall() or []:
+        d = dict(r)
+        sorular.append(f"Dün '{d.get('k')}' kuralının beklediği kayıt neden doğmadı, hangi işlemde eksik var?")
+    # Kompozit birliktelikler
+    cur.execute(
+        """SELECT entity_id, payload_json->'duyular' AS dl FROM duyu_olay
+           WHERE duyu='sinaps_kompozit' AND observed_at >= NOW() - INTERVAL '1 day' LIMIT 2""")
+    for r in cur.fetchall() or []:
+        sorular.append("Dün aynı şube-günde birden çok sinyal çakıştı — bu birlikteliğin olası ortak nedeni ne?")
+    # Dünün en büyük kasa farkı
+    cur.execute(
+        """SELECT s.ad, ROUND(ABS(COALESCE(u.fark_tl,0))::numeric,0) AS f
+           FROM sube_operasyon_uyari u LEFT JOIN subeler s ON s.id::text=u.sube_id::text
+           WHERE u.tarih >= CURRENT_DATE-1 AND u.tip IN ('ACILIS_KASA_FARK','KAPANIS_KASA_FARK')
+           ORDER BY ABS(COALESCE(u.fark_tl,0)) DESC LIMIT 1""")
+    r = cur.fetchone()
+    if r and float(dict(r).get("f") or 0) > 50:
+        d = dict(r)
+        sorular.append(f"{d['ad']} şubesindeki son kasa farkının yanında hangi olaylar vardı, açıklaması var mı?")
+    # Susan duyular
+    cur.execute(
+        """SELECT payload_json->>'duyu_adi' AS d FROM duyu_olay
+           WHERE duyu='duyu_saglik' AND olay_tipi='meta.duyu.sessizlik_basladi'
+             AND observed_at >= NOW() - INTERVAL '1 day' LIMIT 1""")
+    r = cur.fetchone()
+    if r and dict(r).get("d"):
+        sorular.append(f"'{dict(r)['d']}' veri toplayıcısı neden sustu, hangi akış durdu?")
+    return sorular[:3]
+
+
+def _uretilmis_sorular() -> list:
+    """Kaynak 2: BEYİN KENDİ SORULARINI ÜRETİR — 'sahip olsan yarın ne sorardın?'
+    Üretilen sorular normal /sor hattından geçer (PII + rakam freni aynen uygulanır)."""
+    try:
+        from duyu_omurga import duyu_ozet
+        ozet = _j(duyu_ozet(gun=2))[:2500]
+        metin, _m = _llm_cagir(
+            "Sen bir kahve zinciri sahibinin iç denetim asistanısın. Görevin SORU ÜRETMEK, "
+            "cevaplamak değil. Kurallar: kişi adı KULLANMA; şube/gün/kalem dilinde kal; "
+            "kısa ve net Türkçe; sadece soruları yaz, her satıra bir soru, başka hiçbir şey yazma.",
+            "Dünün olay özeti (ham veri):" + chr(10) + ozet + chr(10) + chr(10) +
+            "Bu veriye bakıp sahibin sormadığı ama sorması GEREKEN 3 soruyu üret.",
+            max_tokens=200,
+        )
+        adaylar = [s.strip(" -•0123456789.") for s in (metin or "").splitlines()]
+        return [s for s in adaylar if len(s) > 15 and "?" in s][:3]
+    except Exception as e:  # noqa: BLE001
+        logger.warning("soru uretimi yutuldu: %s", str(e)[:100])
+        return []
+
+
 def gece_ozsorgu() -> None:
-    """GECE: bankadan 3 rotasyonlu soru → kendi /sor hattı → sonuç omurgaya.
-    Cevaplanamayan/dilekli sorular sistemin KENDİ bulduğu boşluklardır."""
+    """GECE v2 (dinamik): olay-güdümlü + beyin-üretimli + çekirdek bankadan 1 rotasyon.
+    Sistem 10 soruya sığmaz — sorular artık sistemin kendi durumundan doğar; banka
+    yalnız süreklilik karnesidir. Son 7 günde sorulmuş soru tekrarlanmaz."""
     try:
         from duyu_omurga import duyu_nabiz_yaz, duyu_olay_yaz
         if not llm_mevcut():
             duyu_nabiz_yaz("ozsorgu", durum="hata", yutulan_hata=1,
                            not_metin="LLM anahtarı yok")
             return
+        with db() as (_, cur):
+            olay_sorulari = _olay_gudumlu_sorular(cur)
+            # tekrar önleme: son 7 günün öz-sorgu soruları
+            cur.execute(
+                """SELECT DISTINCT soru FROM beyin_gunluk
+                   WHERE tip='ozsorgu' AND olusturma >= NOW() - INTERVAL '7 days'""")
+            sorulmus = {str(dict(r)["soru"]).strip().lower() for r in (cur.fetchall() or [])}
+        uretilen_sorular = _uretilmis_sorular()
         gun_no = date.today().toordinal()
-        n = len(_OZSORGU_BANKASI)
-        secilen = [_OZSORGU_BANKASI[(gun_no * 3 + k) % n] for k in range(3)]
+        cekirdek = [_OZSORGU_BANKASI[gun_no % len(_OZSORGU_BANKASI)]]
+        hepsi, gorulen = [], set()
+        for s in olay_sorulari + uretilen_sorular + cekirdek:
+            k = s.strip().lower()
+            if k in sorulmus or k in gorulen:
+                continue
+            gorulen.add(k)
+            hepsi.append(s)
+        hepsi = hepsi[:6]  # gece maliyet tavanı
         cevaplanan, dilekli = 0, 0
-        for soru in secilen:
+        for soru in hepsi:
+            kaynak = ("olay" if soru in olay_sorulari else
+                      "uretim" if soru in uretilen_sorular else "banka")
             try:
                 sonuc = _sor_calistir(soru, tip="ozsorgu")
                 cevap = (sonuc.get("cevap") or "")
                 dilek_var = "VERİ DİLEĞİ" in cevap or "VERI DILEGI" in cevap.upper()
                 basarili = bool(sonuc.get("ok"))
-                if basarili:
-                    cevaplanan += 1
-                if dilek_var:
-                    dilekli += 1
+                cevaplanan += 1 if basarili else 0
+                dilekli += 1 if dilek_var else 0
                 duyu_olay_yaz(
                     "ozsorgu",
                     "meta.ozsorgu.cevaplandi" if basarili else "meta.ozsorgu.cevaplanamadi",
@@ -815,16 +892,24 @@ def gece_ozsorgu() -> None:
                     entity_scope="genel", occurred_at=str(date.today()),
                     signal_name="Öz-sorgu: sistem kendine sordu",
                     evidence_class="gozlem",
-                    payload={"soru": soru, "ok": basarili, "dilek_dogdu": dilek_var,
+                    payload={"soru": soru, "kaynak": kaynak, "ok": basarili,
+                             "dilek_dogdu": dilek_var,
                              "red_nedeni": sonuc.get("red_nedeni"),
                              "cevap_ozet": cevap[:200]},
                 )
             except Exception as e:  # noqa: BLE001
                 logger.warning("ozsorgu soru yutuldu: %s", str(e)[:100])
-        duyu_nabiz_yaz("ozsorgu", taranan=len(secilen), uretilen=cevaplanan,
-                       not_metin=f"dilek dogan: {dilekli}")
+        duyu_nabiz_yaz("ozsorgu", taranan=len(hepsi), uretilen=cevaplanan,
+                       not_metin=f"olay:{len(olay_sorulari)} uretim:{len(uretilen_sorular)} dilek:{dilekli}")
     except Exception as e:  # noqa: BLE001
         logger.warning("gece ozsorgu yutuldu: %s", str(e)[:120])
+
+
+@router.post("/ozsorgu-calistir")
+def ozsorgu_calistir():
+    """Elle tetik (test/önizleme): dinamik öz-sorguyu ŞİMDİ koştur."""
+    gece_ozsorgu()
+    return ozsorgu_sonuclari(gun=1)
 
 
 @router.get("/ozsorgu-sonuclari")
