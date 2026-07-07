@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { api } from './utils/api';
 import { subscribeGlobalDataRefresh } from './utils/globalDataRefresh';
+import BeyinChat from './components/BeyinChat';
 import Panel from './pages/Panel';
 import Kartlar from './pages/Kartlar';
 import KartHareketleri from './pages/KartHareketleri';
@@ -468,6 +469,8 @@ export default function App() {
         )}
         <Page onNavigate={navigate} />
       </main>
+      {/* 🧠 Beyin sohbeti — her sayfada sağ altta; sayfa gezinirken sohbet kaybolmaz */}
+      <BeyinChat />
     </div>
   );
 }
