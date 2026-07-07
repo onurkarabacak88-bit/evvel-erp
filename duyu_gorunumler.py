@@ -157,6 +157,98 @@ def gece_mudahale_olay_yaz() -> None:
         duyu_nabiz_yaz("mudahale_izi", durum="hata", yutulan_hata=1, not_metin=str(e)[:200])
 
 
+@router.get("/nakit-ufku")
+def nakit_ufku(gun: int = Query(7, ge=3, le=30)):
+    """NAKİT UFKU (L5-lite, 2026-07-07): 'bu ödemeleri yapabilecek miyim?' sorusunun
+    HESAPLANMIŞ cevabı. 5-YZ reçetesi: deterministik ödeme takvimi + hareketli ortalama
+    + 3 senaryo (%80/100/120); HESABI KOD YAPAR, dil modeli yalnız anlatır.
+    TAHMİNDİR, taahhüt değil — sınırları 'not' alanında dürüstçe yazar."""
+    bugun = date.today()
+    bit = bugun + timedelta(days=gun)
+    with db() as (_, cur):
+        # 1) Önümüzdeki planlı ödemeler (bekleyenler)
+        cur.execute(
+            """
+            SELECT tarih::text AS tarih, COALESCE(aciklama,'') AS aciklama,
+                   ROUND((odenecek_tutar - COALESCE(odenen_tutar,0))::numeric,2) AS kalan
+            FROM odeme_plani
+            WHERE durum IN ('bekliyor','onay_bekliyor')
+              AND tarih BETWEEN %s AND %s
+              AND (odenecek_tutar - COALESCE(odenen_tutar,0)) > 0
+            ORDER BY tarih
+            """,
+            (str(bugun), str(bit)),
+        )
+        odemeler = [dict(r) for r in (cur.fetchall() or [])]
+        # 2) Son 14 gün günlük ciro ortalaması (aktif)
+        cur.execute(
+            """
+            SELECT COALESCE(SUM(toplam),0) AS t, COUNT(DISTINCT tarih) AS g
+            FROM ciro WHERE durum='aktif' AND tarih >= %s AND tarih < %s
+            """,
+            (str(bugun - timedelta(days=14)), str(bugun)),
+        )
+        r = dict(cur.fetchone() or {})
+        gun_n = max(1, int(r.get("g") or 0))
+        ciro_ort = round(float(r.get("t") or 0) / gun_n, 2)
+        # 3) Son 14 gün günlük anlık gider ortalaması (rutin çıkışlar)
+        cur.execute(
+            """
+            SELECT COALESCE(SUM(tutar),0) AS t
+            FROM anlik_giderler WHERE durum='aktif' AND tarih >= %s AND tarih < %s
+            """,
+            (str(bugun - timedelta(days=14)), str(bugun)),
+        )
+        gider_ort = round(float(dict(cur.fetchone() or {}).get("t") or 0) / 14.0, 2)
+    # 4) Kasa (kanonik kaynak: panel)
+    try:
+        from main import panel
+        p = panel()
+        kasa = float(p.get("kasa") or 0)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("nakit ufku kasa okunamadi: %s", str(e)[:80])
+        kasa = 0.0
+    # 5) Gün gün projeksiyon — 3 ciro senaryosu; ödemeler vadesinde düşülür
+    senaryolar = {"kotu": 0.8, "orta": 1.0, "iyi": 1.2}
+    odeme_gunluk: dict = {}
+    for o in odemeler:
+        odeme_gunluk[o["tarih"]] = odeme_gunluk.get(o["tarih"], 0.0) + float(o["kalan"])
+    projeksiyon = []
+    kumul_odeme = 0.0
+    for d in range(1, gun + 1):
+        t = str(bugun + timedelta(days=d))
+        kumul_odeme += odeme_gunluk.get(t, 0.0)
+        satir = {"tarih": t, "gun_sonra": d,
+                 "o_gune_kadar_odeme": round(kumul_odeme, 2)}
+        for ad, katsayi in senaryolar.items():
+            beklenen = kasa + (ciro_ort * katsayi - gider_ort) * d - kumul_odeme
+            satir[f"beklenen_kasa_{ad}"] = round(beklenen, 2)
+        projeksiyon.append(satir)
+    # 6) Ödeme günü özetleri — "3 gün sonra 150.000 ödemen var, açık/fazla şu"
+    odeme_ozet = []
+    for o in odemeler:
+        gs = (date.fromisoformat(o["tarih"]) - bugun).days
+        pr = next((x for x in projeksiyon if x["tarih"] == o["tarih"]), None)
+        odeme_ozet.append({
+            "tarih": o["tarih"], "gun_sonra": gs, "aciklama": o["aciklama"][:60],
+            "tutar": float(o["kalan"]),
+            "odeme_sonrasi_beklenen_kasa_orta": (pr or {}).get("beklenen_kasa_orta"),
+            "odeme_sonrasi_beklenen_kasa_kotu": (pr or {}).get("beklenen_kasa_kotu"),
+            "acik_gorunuyor_orta": bool(((pr or {}).get("beklenen_kasa_orta") or 0) < 0),
+        })
+    return {
+        "bugun": str(bugun), "kasa_simdiki": round(kasa, 2),
+        "gunluk_ciro_ort_14g": ciro_ort, "gunluk_gider_ort_14g": gider_ort,
+        "odeme_n": len(odemeler), "odeme_toplam": round(sum(odeme_gunluk.values()), 2),
+        "odemeler": odeme_ozet, "gun_gun_projeksiyon": projeksiyon,
+        "not": "TAHMİNDİR, taahhüt değil: ciro son 14 gün ortalamasıyla (kötü/orta/iyi "
+               "= %80/100/120), rutin giderler 14 gün ortalamasıyla varsayıldı. Kart "
+               "tahsilat gecikmesi, plansız giderler ve kira gelir/gider zamanlaması "
+               "hesapta YOK. Negatif beklenen kasa = 'açık görünüyor' uyarısıdır, "
+               "kesinlik değil.",
+    }
+
+
 @router.get("/vergi-takvim")
 def vergi_nakit_takvimi():
     """FAZ 1c: vergi kaynaklı nakit çıkış takvimi (tahmini — rozetli, hüküm yok)."""

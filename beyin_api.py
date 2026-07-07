@@ -279,6 +279,11 @@ def _blok_derle(soru: str) -> List[Tuple[str, str, str]]:
           "zincir", "kompozit"),
          lambda: _j({k: (v if not isinstance(v, list) else v[:10])
                      for k, v in __import__("duyu_sinaps").sinapsler(gun=14).items()})),
+        ("B16", "Nakit ufku (HESAPLANMIŞ projeksiyon: kasa + ciro ort - giderler - ödemeler, 3 senaryo)",
+         ("ödeyebil", "odeyebil", "yapabilecek", "yetecek", "yeter mi", "nakit",
+          "ödeme plan", "odeme plan", "ödemeleri", "odemeleri", "ufuk", "hafta",
+          "karşılayabil", "karsilayabil"),
+         lambda: _j(__import__("duyu_gorunumler").nakit_ufku(gun=10))),
         ("B14", "Konuşma izleri (dün ne söylendi: rapor + motor kesiti, 7 gün)",
          ("rapor", "söylen", "soylen", "dün ne", "dun ne", "motor", "denetim özeti",
           "denetim ozeti"),
