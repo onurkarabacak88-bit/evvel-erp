@@ -359,6 +359,101 @@ def zam_koridoru():
     }
 
 
+@router.get("/odeme-secenek-kiyasi")
+def odeme_secenek_kiyasi(tutar: float | None = Query(None), vade_gun: int = Query(0)):
+    """ÖDEME SEÇENEĞİ KIYASI (2026-07-08): 'nakit mi, kart mı, vade mi?' sorusunun
+    HESAPLANMIŞ karşılaştırması. HÜKÜM YOK — üç senaryonun sayıları yan yana konur,
+    hangi senaryoda kasa eksiye inmiyor gösterilir; KARAR İNSANIN. Faiz maliyeti,
+    tedarikçi ilişkisi ve kartın gerçek güncel ekstresi hesapta YAKLAŞIKTIR (not'ta)."""
+    bugun = date.today()
+    ufuk = nakit_ufku(gun=14)
+    kasa = float(ufuk.get("kasa_simdiki") or 0)
+    ciro_ort = float(ufuk.get("gunluk_ciro_ort_14g") or 0)
+    gider_ort = float(ufuk.get("gunluk_gider_ort_14g") or 0)
+    with db() as (_, cur):
+        # Hedef ödeme: parametre yoksa önümüzdeki 7 günün EN BÜYÜK bekleyen ödemesi
+        hedef = None
+        if tutar is None:
+            cur.execute(
+                """SELECT COALESCE(aciklama,'') AS aciklama, tarih::text AS tarih,
+                          ROUND((odenecek_tutar - COALESCE(odenen_tutar,0))::numeric,2) AS kalan
+                   FROM odeme_plani
+                   WHERE durum IN ('bekliyor','onay_bekliyor')
+                     AND tarih BETWEEN %s AND %s
+                     AND (odenecek_tutar - COALESCE(odenen_tutar,0)) > 0
+                   ORDER BY (odenecek_tutar - COALESCE(odenen_tutar,0)) DESC LIMIT 1""",
+                (str(bugun), str(bugun + timedelta(days=7))),
+            )
+            r = cur.fetchone()
+            if r:
+                hedef = dict(r)
+                tutar = float(hedef["kalan"])
+        if tutar is None:
+            return {"hata": "Önümüzdeki 7 günde bekleyen ödeme yok; ?tutar= ile sorabilirsin."}
+        # Kartlar: müsait limit ≈ limit - bekleyen kart borç planları (YAKLAŞIK)
+        cur.execute(
+            """SELECT k.kart_adi, k.banka, k.limit_tutar, k.kesim_gunu, k.son_odeme_gunu,
+                      k.faiz_orani,
+                      COALESCE((SELECT SUM(op.odenecek_tutar - COALESCE(op.odenen_tutar,0))
+                                FROM odeme_plani op
+                                WHERE op.kart_id = k.id AND op.durum IN ('bekliyor','onay_bekliyor')), 0
+                      ) AS bekleyen_borc
+               FROM kartlar k WHERE k.aktif = TRUE""",
+        )
+        kartlar = []
+        for r in cur.fetchall() or []:
+            d = dict(r)
+            musait = round(float(d["limit_tutar"] or 0) - float(d["bekleyen_borc"] or 0), 2)
+            # nakit çıkışının öteleneceği tahmini tarih: sonraki kesim + son ödeme günü
+            kesim = int(d["kesim_gunu"] or 15)
+            ay, yil = (bugun.month, bugun.year)
+            if bugun.day >= kesim:  # bu ayın kesimi geçti → sonraki ekstre
+                ay, yil = (ay % 12 + 1, yil + (1 if ay == 12 else 0))
+            son_ay, son_yil = (ay % 12 + 1, yil + (1 if ay == 12 else 0))
+            oteleme = date(son_yil, son_ay, min(28, int(d["son_odeme_gunu"] or 25)))
+            kartlar.append({"kart": d["kart_adi"], "banka": d["banka"],
+                            "musait_yaklasik": musait, "yeterli": musait >= tutar,
+                            "nakit_cikisi_otelenir": str(oteleme),
+                            "oteleme_gun": (oteleme - bugun).days,
+                            "faiz_orani_pct": float(d["faiz_orani"] or 0)})
+    # Projeksiyon yardımcısı: verilen gün ödemesiyle en düşük beklenen kasa (orta senaryo)
+    def _projeksiyon(odeme_gunu_ofset: int, odeme_tutari: float):
+        min_kasa, eksi_gun, ilk_eksi = None, 0, None
+        for d in range(0, 15):
+            beklenen = kasa + (ciro_ort - gider_ort) * d - (odeme_tutari if d >= odeme_gunu_ofset else 0)
+            if min_kasa is None or beklenen < min_kasa:
+                min_kasa = beklenen
+            if beklenen < 0:
+                eksi_gun += 1
+                if ilk_eksi is None:
+                    ilk_eksi = str(bugun + timedelta(days=d))
+        return {"en_dusuk_beklenen_kasa": round(min_kasa, 2),
+                "eksi_gun_sayisi": eksi_gun, "ilk_eksi_gun": ilk_eksi,
+                "kasa_eksiye_iniyor": eksi_gun > 0}
+    secenekler = {
+        "A_nakit_vadesinde": {**_projeksiyon(0, tutar),
+                              "aciklama": "Ödeme bugün/vadesinde nakit yapılır"},
+        "B_kartla": {**_projeksiyon(0, 0.0),
+                     "aciklama": "Nakit çıkışı ekstreye ötelenir; kasa korunur",
+                     "uygun_kartlar": [k for k in kartlar if k["yeterli"]],
+                     "yetersiz_kartlar": [k for k in kartlar if not k["yeterli"]]},
+        "C_vade_3gun": {**_projeksiyon(3, tutar),
+                        "aciklama": "Tedarikçiden +3 gün vade istenirse"},
+        "C_vade_7gun": {**_projeksiyon(7, tutar),
+                        "aciklama": "Tedarikçiden +7 gün vade istenirse"},
+    }
+    return {
+        "hedef_odeme": {"tutar": tutar, **({"aciklama": hedef["aciklama"][:60],
+                        "vade": hedef["tarih"]} if hedef else {})},
+        "kasa_simdiki": kasa, "gunluk_net_akis_ort": round(ciro_ort - gider_ort, 2),
+        "secenekler": secenekler,
+        "not": "HESAPLANMIŞ KIYAS — öneri/emir değildir, karar insanın. Kart müsait "
+               "limiti bekleyen planlardan YAKLAŞIKTIR (gerçek ekstre farklı olabilir); "
+               "kart faiz/taksit maliyeti ve tedarikçi ilişki maliyeti hesapta YOK; "
+               "ciro/gider 14 gün ortalaması varsayımdır.",
+    }
+
+
 @router.get("/vergi-takvim")
 def vergi_nakit_takvimi():
     """FAZ 1c: vergi kaynaklı nakit çıkış takvimi (tahmini — rozetli, hüküm yok)."""
