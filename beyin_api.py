@@ -294,17 +294,56 @@ def _veri_dilegi_yakala(soru: str, cevap: str) -> None:
 
 
 @router.get("/veri-dilekleri")
-def veri_dilekleri(limit: int = 20):
+def veri_dilekleri(limit: int = 20, sadece_acik: bool = False):
     """Beynin biriken veri dilekleri — 'şunu toplarsak şu soruları cevaplayabilirim'
-    listesi. Onaylanan dilek = yeni duyu kurulum talebi (kurgucuya iletilir)."""
+    listesi. Onaylanan dilek = yeni duyu kurulum talebi (kurgucuya iletilir).
+    Her dileğe karar defterinden son karar iliştirilir (kuruldu/mevcut/beklemede/
+    kapatildi); sadece_acik=true kararsızları döner (haftalık dilek oturumu bunu okur)."""
     with db() as (_, cur):
         cur.execute(
-            """SELECT occurred_at::text, payload_json FROM duyu_olay
-               WHERE duyu = 'evvel_beyni' AND olay_tipi = 'meta.bilgi.veri_dilegi'
-               ORDER BY observed_at DESC LIMIT %s""",
+            """SELECT d.occurred_at::text, d.source_ref AS ref, d.payload_json,
+                      k.payload_json->>'karar' AS karar,
+                      k.payload_json->>'karar_notu' AS karar_notu
+               FROM duyu_olay d
+               LEFT JOIN LATERAL (
+                   SELECT payload_json FROM duyu_olay
+                   WHERE duyu = 'evvel_beyni'
+                     AND olay_tipi = 'meta.bilgi.veri_dilegi_karari'
+                     AND payload_json->>'ref' = d.source_ref
+                   ORDER BY observed_at DESC LIMIT 1
+               ) k ON TRUE
+               WHERE d.duyu = 'evvel_beyni' AND d.olay_tipi = 'meta.bilgi.veri_dilegi'
+               ORDER BY d.observed_at DESC LIMIT %s""",
             (max(1, min(100, limit)),),
         )
-        return {"dilekler": [dict(r) for r in (cur.fetchall() or [])]}
+        satirlar = [dict(r) for r in (cur.fetchall() or [])]
+    if sadece_acik:
+        satirlar = [r for r in satirlar if not r.get("karar")]
+    return {"dilekler": satirlar}
+
+
+@router.post("/veri-dilek-karar")
+def veri_dilek_karar(payload: dict):
+    """Dilek KARAR defteri (insan onay kapısının kaydı): kuruldu (pencere/duyu açıldı) /
+    mevcut (sistem zaten yapıyor, yönlendirme yeter) / beklemede (yeni veri kaynağı
+    ister, karar ertelendi) / kapatildi (muğlak-tekrar). Dileğin kendisi SİLİNMEZ
+    (append-only omurga) — karar üstüne yazılır, tarihçe kalır."""
+    ref = str(payload.get("ref") or "").strip()
+    karar = str(payload.get("karar") or "").strip()
+    notu = str(payload.get("karar_notu") or "").strip()[:300]
+    if not ref or len(ref) < 8:
+        raise HTTPException(400, "ref (dileğin source_ref değeri) zorunlu")
+    if karar not in ("kuruldu", "mevcut", "beklemede", "kapatildi"):
+        raise HTTPException(400, "karar: kuruldu | mevcut | beklemede | kapatildi")
+    from duyu_omurga import duyu_olay_yaz
+    duyu_olay_yaz(
+        "evvel_beyni", "meta.bilgi.veri_dilegi_karari",
+        f"{ref}:{karar}",  # aynı ref+karar tek kayıt; karar değişirse yeni kayıt
+        entity_scope="genel", signal_name="Veri dileği kararı (insan onayı)",
+        evidence_class="oneri", confidence=1.0,
+        payload={"ref": ref, "karar": karar, "karar_notu": notu},
+    )
+    return {"ok": True, "ref": ref, "karar": karar}
 
 
 def _konusma_izleri_blok() -> str:
@@ -408,6 +447,24 @@ def _blok_derle(soru: str, yonlendirme_ek: str = "") -> List[Tuple[str, str, str
          ("kartla", "kart ile", "nakit mi", "nakitle mi", "vade iste", "vade talep",
           "nasıl öde", "nasil ode", "hangi kart", "ötele", "otele", "erteleyeyim"),
          lambda: _j(__import__("duyu_gorunumler").odeme_secenek_kiyasi())),
+        # DİLEK-KURULUM TURU (2026-07-08): onaylanan veri dileklerinden doğan 3 pencere
+        ("B21", "Geçmiş ödeme dökümü (kasa izinden: ay × işlem türü + en büyük 10)",
+         ("ocaktan beri", "ocak'tan beri", "geçmiş ödeme", "gecmis odeme",
+          "şimdiye kadar öde", "simdiye kadar ode", "bu yıl öde", "bu yil ode",
+          "neler ödedik", "neler odedik", "ne kadar ödedik", "ne kadar odedik",
+          "ödeme dökümü", "odeme dokumu", "aylık ödeme", "aylik odeme",
+          "yapılan ödemeler", "yapilan odemeler"),
+         lambda: _j(__import__("duyu_gorunumler").gecmis_odeme_dokumu(ay_sayisi=12))),
+        ("B22", "Ciro onay kuyruğu izi (günlük giren/onaylanan/reddedilen + bekleyenler)",
+         ("onay kuyru", "onay bekleyen", "bekleyen onay", "onaylanmayan",
+          "ciro onay", "onay süre", "onay sure", "onaylamadı", "onaylamadi",
+          "kaç onay", "kac onay"),
+         lambda: _j(__import__("duyu_gorunumler").ciro_onay_izi(gun=30))),
+        ("B23", "Şube gelir-gider kaba kıyası (bu ay + geçen ay; kâr rakamı DEĞİL)",
+         ("gelir gider", "gelir-gider", "hangi şube", "hangi sube",
+          "şube kıyas", "sube kiyas", "en kârlı", "en karli", "en çok kazandıran",
+          "en cok kazandiran", "zarar eden", "şube performans", "sube performans"),
+         lambda: _j(__import__("duyu_gorunumler").sube_gelir_gider())),
         ("B16", "Nakit ufku (HESAPLANMIŞ projeksiyon: kasa + ciro ort - giderler - ödemeler, 3 senaryo)",
          ("ödeyebil", "odeyebil", "yapabilecek", "yetecek", "yeter mi", "nakit",
           "ödeme plan", "odeme plan", "ödemeleri", "odemeleri", "ufuk", "hafta",

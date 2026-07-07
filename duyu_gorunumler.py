@@ -672,3 +672,153 @@ def kapanis_fark_profili(gun: int = Query(30, ge=7, le=90)):
                "İNSAN okur; sistem hüküm vermez. Kaynak kesiti: onaylı fark uyarıları "
                "(recalc her ciro/gider değişiminde tazeler).",
     }
+
+
+# ── DİLEK-KURULUM TURU (2026-07-08): beynin veri dileklerinden doğan 3 pencere ──
+# Ders: beyin bu fonksiyonları DOĞRUDAN çağırır → Query() varsayılanı YASAK (B20 dersi).
+
+@router.get("/gecmis-odeme-dokumu")
+def gecmis_odeme_dokumu(ay_sayisi: int = 12):
+    """GEÇMİŞ ÖDEME DÖKÜMÜ (dilek: Ocak'tan beri yapılan ödemeler neler?).
+    Kaynak = KASA İZİ (tek gerçek): fiilen kasadan çıkan paralar, ay × işlem türü.
+    Plan/temenni değil, gerçekleşen. Kişi adı taşıyan açıklamalar personel
+    kalemlerinde boşaltılır (kimlik firewall)."""
+    n = max(1, min(24, int(ay_sayisi or 12)))
+    with db() as (_, cur):
+        cur.execute(
+            """SELECT to_char(date_trunc('month', tarih), 'YYYY-MM') AS ay,
+                      islem_turu, COUNT(*)::int AS adet,
+                      ROUND(SUM(ABS(tutar))::numeric, 2) AS toplam
+               FROM kasa_hareketleri
+               WHERE kasa_etkisi = TRUE AND durum = 'aktif' AND tutar < 0
+                 AND islem_turu NOT IN ('CIRO_DUZELTME','CIRO_IPTAL','ACILIS_DEVRI')
+                 AND tarih >= date_trunc('month', CURRENT_DATE) - (%s * INTERVAL '1 month')
+               GROUP BY 1, 2 ORDER BY 1 DESC, toplam DESC""",
+            (n - 1,),
+        )
+        aylar: Dict[str, dict] = {}
+        for r in cur.fetchall() or []:
+            a = aylar.setdefault(r["ay"], {"ay": r["ay"], "toplam_cikis": 0.0, "kalemler": []})
+            a["toplam_cikis"] = round(a["toplam_cikis"] + float(r["toplam"]), 2)
+            a["kalemler"].append({"tur": r["islem_turu"], "toplam": float(r["toplam"]),
+                                  "adet": r["adet"]})
+        cur.execute(
+            """SELECT tarih::text AS tarih, islem_turu,
+                      ROUND(ABS(tutar)::numeric, 2) AS tutar,
+                      CASE WHEN islem_turu LIKE 'PERSONEL%%' THEN ''
+                           ELSE LEFT(COALESCE(aciklama,''), 80) END AS aciklama
+               FROM kasa_hareketleri
+               WHERE kasa_etkisi = TRUE AND durum = 'aktif' AND tutar < 0
+                 AND islem_turu NOT IN ('CIRO_DUZELTME','CIRO_IPTAL','ACILIS_DEVRI')
+                 AND tarih >= date_trunc('month', CURRENT_DATE) - (%s * INTERVAL '1 month')
+               ORDER BY ABS(tutar) DESC LIMIT 10""",
+            (n - 1,),
+        )
+        buyukler = [dict(r) for r in cur.fetchall() or []]
+    return {
+        "kesit_ay": n,
+        "aylar": sorted(aylar.values(), key=lambda x: x["ay"], reverse=True),
+        "en_buyuk_10_odeme": buyukler,
+        "not": "Kaynak=kasa izi: FİİLEN kasadan çıkanlar (plan değil). Kartla ödenen ekstre "
+               "borçları KART_ODEME satırında görünür; kart harcamasının kendisi kasadan "
+               "çıkmaz. Personel kalemlerinde açıklama kimlik nedeniyle boş.",
+    }
+
+
+@router.get("/ciro-onay-izi")
+def ciro_onay_izi(gun: int = 30):
+    """CİRO ONAY KUYRUĞU İZİ (dilek: onay kuyruğu günlük izleme): kuyruğa günde ne
+    girdi, ne onaylandı, ne reddedildi + şu an bekleyenlerin yaşı ve tür kırılımı.
+    Salt sayı, hüküm yok. Kuyruğa hiç GİRMEYEN ciro ayrı duyunun işi (not'ta)."""
+    g = max(7, min(90, int(gun or 30)))
+    with db() as (_, cur):
+        cur.execute(
+            """SELECT tarih::text AS gun, durum, COUNT(*)::int AS adet,
+                      ROUND(SUM(COALESCE(tutar,0))::numeric, 2) AS toplam
+               FROM onay_kuyrugu
+               WHERE tarih >= CURRENT_DATE - %s
+               GROUP BY 1, 2 ORDER BY 1 DESC""",
+            (g,),
+        )
+        gunler: Dict[str, dict] = {}
+        for r in cur.fetchall() or []:
+            gn = gunler.setdefault(r["gun"], {"gun": r["gun"]})
+            gn[r["durum"]] = {"adet": r["adet"], "toplam": float(r["toplam"])}
+        cur.execute(
+            """SELECT COUNT(*)::int AS adet,
+                      ROUND(SUM(COALESCE(tutar,0))::numeric, 2) AS toplam,
+                      MIN(tarih)::text AS en_eski_tarih
+               FROM onay_kuyrugu WHERE durum = 'bekliyor'"""
+        )
+        bekleyen = dict(cur.fetchone() or {})
+        if bekleyen.get("toplam") is not None:
+            bekleyen["toplam"] = float(bekleyen["toplam"])
+        cur.execute(
+            """SELECT islem_turu, COUNT(*)::int AS adet,
+                      ROUND(SUM(COALESCE(tutar,0))::numeric, 2) AS toplam
+               FROM onay_kuyrugu WHERE durum = 'bekliyor'
+               GROUP BY 1 ORDER BY toplam DESC NULLS LAST"""
+        )
+        tur_kirilimi = [{"tur": r["islem_turu"], "adet": r["adet"],
+                         "toplam": float(r["toplam"] or 0)} for r in cur.fetchall() or []]
+    return {
+        "kesit_gun": g,
+        "gunluk": sorted(gunler.values(), key=lambda x: x["gun"], reverse=True),
+        "su_an_bekleyen": bekleyen,
+        "bekleyen_tur_kirilimi": tur_kirilimi,
+        "not": "Kuyruğa GİREN kayıtların izi. Kuyruğa hiç girmeyen ciro bu tablodan "
+               "görünmez — onun bekçisi Eksik Ciro Güvence duyusudur (kapanış mührü "
+               "var + Evo satışı yok karşılaştırması).",
+    }
+
+
+@router.get("/sube-gelir-gider")
+def sube_gelir_gider():
+    """ŞUBE GELİR-GİDER KABA KIYAS (dilek: Alsancak gelir-gider seti).
+    Bu ay + geçen ay: şube başına ciro tahsilatı vs şubeye yazılan anlık giderler.
+    KABA görünümdür: kira/maaş/merkezi giderler ve KDV ayrıştırması YOK — tam P&L
+    Maliyet sayfasındadır. Beynin hızlı şube kıyası için pencere."""
+    with db() as (_, cur):
+        cur.execute("SELECT id, ad FROM subeler WHERE aktif = TRUE")
+        subeler = {str(r["id"]): str(r["ad"]) for r in cur.fetchall() or []}
+        sonuc = []
+        for ofset, etiket in ((0, "bu_ay"), (1, "gecen_ay")):
+            cur.execute(
+                """SELECT sube_id::text AS sube_id,
+                          ROUND(SUM(COALESCE(toplam,0))::numeric, 2) AS ciro
+                   FROM ciro
+                   WHERE durum = 'aktif'
+                     AND tarih >= date_trunc('month', CURRENT_DATE) - (%s * INTERVAL '1 month')
+                     AND tarih <  date_trunc('month', CURRENT_DATE) - ((%s - 1) * INTERVAL '1 month')
+                   GROUP BY 1""",
+                (ofset, ofset),
+            )
+            cirolar = {r["sube_id"]: float(r["ciro"]) for r in cur.fetchall() or []}
+            # anlik_giderler.sube METİN şube adıdır (sube_id DEĞİL — bilinen tuzak)
+            cur.execute(
+                """SELECT COALESCE(NULLIF(TRIM(UPPER(sube)),''),'MERKEZ') AS sube_ad,
+                          ROUND(SUM(COALESCE(tutar,0))::numeric, 2) AS gider
+                   FROM anlik_giderler
+                   WHERE durum = 'aktif'
+                     AND tarih >= date_trunc('month', CURRENT_DATE) - (%s * INTERVAL '1 month')
+                     AND tarih <  date_trunc('month', CURRENT_DATE) - ((%s - 1) * INTERVAL '1 month')
+                   GROUP BY 1""",
+                (ofset, ofset),
+            )
+            giderler = {r["sube_ad"]: float(r["gider"]) for r in cur.fetchall() or []}
+            satirlar = []
+            for sid, ad in subeler.items():
+                ciro = cirolar.get(sid, 0.0)
+                gider = giderler.get(ad.strip().upper(), 0.0)
+                satirlar.append({"sube": ad, "ciro_tahsilat": ciro,
+                                 "anlik_gider": gider,
+                                 "kaba_fark": round(ciro - gider, 2)})
+            merkez = giderler.get("MERKEZ", 0.0)
+            sonuc.append({"donem": etiket, "subeler": satirlar,
+                          "merkez_gideri": merkez})
+    return {
+        "donemler": sonuc,
+        "not": "KABA kıyas: ciro=tahsilat (KDV dahil), gider=yalnız şubeye yazılan anlık "
+               "giderler. Kira, maaş, hammadde faturaları ve merkezi giderler DAHİL DEĞİL — "
+               "kaba_fark bir kâr rakamı DEĞİLDİR. Tam tablo Maliyet sayfasında.",
+    }
