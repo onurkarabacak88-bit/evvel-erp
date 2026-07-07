@@ -13,6 +13,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { api, fmt } from '../../utils/api';
+import BeyinChat from '../../components/BeyinChat';
 
 // ── Cihaz oturumu (frontend "beni hatırla") ─────────────────────────────────
 // Not: Bu demo/iç kullanım için yeterli. Gerçek (uzaktan iptal edilebilir) token
@@ -4336,54 +4337,43 @@ export default function CepApp() {
   const cikis = () => { tokenSil(); setGirisli(false); setView('home'); };
   const geri = () => { if (window.location.hash) { try { history.replaceState(null, '', window.location.pathname); } catch {} } setView('home'); };
 
-  if (view === 'odemeler')
-    return <CepOdemeler onGeri={geri} />;
-  if (view === 'avans')
-    return <CepAvans onGeri={geri} onDegisti={sayaclariYukle} />;
-  if (view === 'ciro')
-    return <CepCiroOnay onGeri={geri} onDegisti={sayaclariYukle} />;
-  if (view === 'maliyet')
-    return <CepMaliyet onGeri={geri} />;
-  if (view === 'kasa-uyumsuzluk')
-    return <CepKasaUyumsuzluk onGeri={geri} />;
-  if (view === 'dis-kaynak')
-    return <CepDisKaynak onGeri={geri} />;
-  if (view === 'anlik-gider')
-    return <CepAnlikGider onGeri={geri} />;
-  if (view === 'vadeli')
-    return <CepVadeli onGeri={geri} />;
-  if (view === 'kartlar')
-    return <CepKartlar onGeri={geri} />;
-  if (view === 'onaylar')
-    return <CepOnaylar onGeri={geri} onDegisti={sayaclariYukle} />;
-  if (view === 'denetim')
-    return <CepDenetim onGeri={geri} />;
-  if (view === 'stok-sayim')
-    return <CepStokSayim onGeri={geri} />;
-  if (view === 'vardiya-takip')
-    return <CepVardiyaTakip onGeri={geri} />;
-  if (view === 'demirbas')
-    return <CepDemirbas onGeri={geri} />;
-  if (view === 'kule')
-    return <CepKule onGeri={geri} onDegisti={sayaclariYukle} />;
-  if (view === 'depolar')
-    return <CepDepolar onGeri={geri} />;
-  if (view === 'belge-talep')
-    return <CepBelgeTalep onGeri={geri} onDegisti={sayaclariYukle} />;
-  if (view === 'basvurular')
-    return <CepBasvurular onGeri={geri} />;
-  if (view === 'merkez-sil')
-    return <CepMerkezSil onGeri={geri} />;
-  if (view === 'kapanis-muhur')
-    return <CepKapanisOverride onGeri={geri} />;
-  if (view === 'subeler')
-    return <CepSubeler onGeri={geri} />;
+  // Görünüm haritası: erken-dönüş zinciri tek dönüşe çevrildi ki 🧠 Beyin balonu
+  // HER görünümde monte kalsın (sohbet ekran değiştirirken kaybolmaz).
+  const GORUNUMLER = {
+    'odemeler': <CepOdemeler onGeri={geri} />,
+    'avans': <CepAvans onGeri={geri} onDegisti={sayaclariYukle} />,
+    'ciro': <CepCiroOnay onGeri={geri} onDegisti={sayaclariYukle} />,
+    'maliyet': <CepMaliyet onGeri={geri} />,
+    'kasa-uyumsuzluk': <CepKasaUyumsuzluk onGeri={geri} />,
+    'dis-kaynak': <CepDisKaynak onGeri={geri} />,
+    'anlik-gider': <CepAnlikGider onGeri={geri} />,
+    'vadeli': <CepVadeli onGeri={geri} />,
+    'kartlar': <CepKartlar onGeri={geri} />,
+    'onaylar': <CepOnaylar onGeri={geri} onDegisti={sayaclariYukle} />,
+    'denetim': <CepDenetim onGeri={geri} />,
+    'stok-sayim': <CepStokSayim onGeri={geri} />,
+    'vardiya-takip': <CepVardiyaTakip onGeri={geri} />,
+    'demirbas': <CepDemirbas onGeri={geri} />,
+    'kule': <CepKule onGeri={geri} onDegisti={sayaclariYukle} />,
+    'depolar': <CepDepolar onGeri={geri} />,
+    'belge-talep': <CepBelgeTalep onGeri={geri} onDegisti={sayaclariYukle} />,
+    'basvurular': <CepBasvurular onGeri={geri} />,
+    'merkez-sil': <CepMerkezSil onGeri={geri} />,
+    'kapanis-muhur': <CepKapanisOverride onGeri={geri} />,
+    'subeler': <CepSubeler onGeri={geri} />,
+  };
 
   return (
-    <div style={{ minHeight: '100vh', background: C.bg, fontFamily: 'Instrument Sans, system-ui, sans-serif' }}>
-      <CepHome sayac={sayac} kasa={kasa} onKasa={() => setKasaModal(true)}
-        onAc={setView} onCikis={cikis} yenile={sayaclariYukle} />
-      {kasaModal && <CepKasaModal kasa={kasa} onKapat={() => setKasaModal(false)} />}
-    </div>
+    <>
+      {GORUNUMLER[view] || (
+        <div style={{ minHeight: '100vh', background: C.bg, fontFamily: 'Instrument Sans, system-ui, sans-serif' }}>
+          <CepHome sayac={sayac} kasa={kasa} onKasa={() => setKasaModal(true)}
+            onAc={setView} onCikis={cikis} yenile={sayaclariYukle} />
+          {kasaModal && <CepKasaModal kasa={kasa} onKapat={() => setKasaModal(false)} />}
+        </div>
+      )}
+      {/* 🧠 Beyin sohbeti — cepte de her ekranda (sahip telefondan sorabilsin) */}
+      <BeyinChat />
+    </>
   );
 }

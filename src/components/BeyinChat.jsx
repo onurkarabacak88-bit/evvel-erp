@@ -77,7 +77,7 @@ export default function BeyinChat() {
             background: 'var(--bg2)',
           }}>
             <div>
-              <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--text1)' }}>🧠 Evvel Beyni</div>
+              <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--text1, #e8e9ec)' }}>🧠 Evvel Beyni</div>
               <div style={{ fontSize: 10, color: 'var(--text3)' }}>sohbet hafızalı · isim vermez · karar senin</div>
             </div>
             <div style={{ display: 'flex', gap: 6 }}>
@@ -118,7 +118,7 @@ export default function BeyinChat() {
                 borderRadius: 10, padding: '9px 11px', marginBottom: 8,
                 marginLeft: m.rol === 'sen' ? 30 : 0, marginRight: m.rol === 'sen' ? 0 : 30,
               }}>
-                <div style={{ fontSize: 12.5, color: 'var(--text1)', whiteSpace: 'pre-wrap', lineHeight: 1.55 }}>{m.metin}</div>
+                <div style={{ fontSize: 12.5, color: 'var(--text1, #e8e9ec)', whiteSpace: 'pre-wrap', lineHeight: 1.55 }}>{m.metin}</div>
                 {m.rol === 'beyin' && (
                   <div style={{ fontSize: 9, color: 'var(--text3)', marginTop: 6, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <span>{m.bloklar && m.bloklar.length > 0 ? m.bloklar.map((b) => b.id).join(' ') : ''}</span>
@@ -147,7 +147,7 @@ export default function BeyinChat() {
             <input ref={inputRef} value={soru} onChange={(e) => setSoru(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') sor(); }}
               placeholder={mesajlar.length ? 'Takip sorunu yaz…' : 'Sorunu yaz…'} disabled={mesgul}
-              style={{ flex: 1, background: 'var(--bg)', color: 'var(--text1)', border: '1px solid var(--border)', borderRadius: 10, padding: '10px 12px', fontSize: 13 }} />
+              style={{ flex: 1, background: 'var(--bg)', color: 'var(--text1, #e8e9ec)', border: '1px solid var(--border)', borderRadius: 10, padding: '10px 12px', fontSize: 13 }} />
             <button onClick={sor} disabled={mesgul || soru.trim().length < 3} style={{
               background: 'var(--purple, #8b5cf6)', color: '#fff', border: 'none', borderRadius: 10,
               padding: '10px 16px', fontSize: 13, fontWeight: 800,
