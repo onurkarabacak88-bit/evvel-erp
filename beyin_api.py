@@ -242,9 +242,24 @@ def _neden_malzemesi_blok() -> str:
             (str(bugun - _td(days=7)), str(bugun - _td(days=7)), str(bugun - _td(days=14))),
         )
         karma = [dict(r) for r in (cur.fetchall() or [])]
+    # İŞLETME GÜNLÜĞÜ (beynin ilk veri dileği, sahip onaylı 2026-07-07):
+    # kampanya/etkinlik notları — ciro-neden sorularının açıklayıcı adayı
+    try:
+        with db() as (_, cur):
+            cur.execute(
+                """SELECT g.tarih::text AS gun, COALESCE(s.ad,'TÜM İŞLETME') AS sube,
+                          g.tip, g.baslik
+                   FROM isletme_gunlugu g LEFT JOIN subeler s ON s.id = g.sube_id
+                   WHERE g.tarih >= %s ORDER BY g.tarih DESC LIMIT 20""",
+                (str(bugun - _td(days=14)),),
+            )
+            gunluk_notlari = [dict(r) for r in (cur.fetchall() or [])]
+    except Exception:  # noqa: BLE001
+        gunluk_notlari = []
     return _j({"sube_gun_ciro_14g": ciro_kirilim,
                "menu_fiyat_degisimleri_14g": fiyat_degisimleri,
-               "nakit_oran_ilk7_vs_son7": karma})
+               "nakit_oran_ilk7_vs_son7": karma,
+               "isletme_gunlugu_notlari_14g": gunluk_notlari})
 
 
 _VERI_DILEGI = re.compile(r"VERİ DİLEĞİ:\s*(.+?)(?:\n|$)", re.IGNORECASE)

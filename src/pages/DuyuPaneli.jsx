@@ -99,6 +99,56 @@ function BeyinSor() {
   );
 }
 
+function IsletmeGunlugu({ subeler }) {
+  const [notlar, setNotlar] = useState([]);
+  const [baslik, setBaslik] = useState('');
+  const [tip, setTip] = useState('kampanya');
+  const [subeId, setSubeId] = useState('');
+  const [mesgul, setMesgul] = useState(false);
+  const yukle = () => api('/duyu/gunluk-notlar?gun=30').then((r) => setNotlar(r.notlar || [])).catch(() => {});
+  useEffect(() => { yukle(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const ekle = async () => {
+    if (baslik.trim().length < 3 || mesgul) return;
+    setMesgul(true);
+    try {
+      await api('/duyu/gunluk-not', { method: 'POST', body: { baslik: baslik.trim(), tip, sube_id: subeId || null } });
+      setBaslik(''); yukle();
+    } catch (e) { /* sessiz */ }
+    finally { setMesgul(false); }
+  };
+  const tipEmoji = { kampanya: '🎉', etkinlik: '🎪', ozel_gun: '📅', hava: '🌦️', tadilat: '🔧', diger: '📌' };
+  return (
+    <div style={K.kart}>
+      <div style={K.baslik}>📔 İşletme Günlüğü <span style={{ fontSize: 10.5, color: 'var(--text3)' }}>(beynin ilk veri dileği — senin onayınla kuruldu)</span></div>
+      <div style={K.alt}>"Bugün kampanya vardı" gibi tek satır not düş — beyin "ciro neden arttı?" sorularında bu notları görür ve bağlar.</div>
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
+        <select value={tip} onChange={(e) => setTip(e.target.value)}
+          style={{ background: 'var(--bg)', color: 'var(--text1)', border: '1px solid var(--border)', borderRadius: 8, padding: '8px 10px', fontSize: 12.5 }}>
+          {Object.keys(tipEmoji).map((t) => <option key={t} value={t}>{tipEmoji[t]} {t.replace('_', ' ')}</option>)}
+        </select>
+        <select value={subeId} onChange={(e) => setSubeId(e.target.value)}
+          style={{ background: 'var(--bg)', color: 'var(--text1)', border: '1px solid var(--border)', borderRadius: 8, padding: '8px 10px', fontSize: 12.5 }}>
+          <option value="">Tüm işletme</option>
+          {(subeler || []).map((s) => <option key={s.id} value={s.id}>{s.ad}</option>)}
+        </select>
+        <input value={baslik} onChange={(e) => setBaslik(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') ekle(); }}
+          placeholder="Not: örn. 2. kahve %50 kampanyası" disabled={mesgul}
+          style={{ flex: 1, minWidth: 180, background: 'var(--bg)', color: 'var(--text1)', border: '1px solid var(--border)', borderRadius: 8, padding: '8px 10px', fontSize: 12.5 }} />
+        <button onClick={ekle} disabled={mesgul || baslik.trim().length < 3}
+          style={{ background: 'var(--accent, #3b82f6)', color: '#fff', border: 'none', borderRadius: 8, padding: '8px 14px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer', opacity: mesgul ? 0.6 : 1 }}>Ekle</button>
+      </div>
+      {notlar.slice(0, 6).map((n, i) => (
+        <div key={i} style={{ fontSize: 12, color: 'var(--text2)', padding: '3px 0', display: 'flex', justifyContent: 'space-between' }}>
+          <span>{tipEmoji[n.tip] || '📌'} <b>{n.baslik}</b> <span style={{ color: 'var(--text3)', fontSize: 10.5 }}>{n.sube_ad || 'tüm işletme'}</span></span>
+          <span style={{ color: 'var(--text3)', fontSize: 10.5 }}>{n.tarih}</span>
+        </div>
+      ))}
+      {notlar.length === 0 && <div style={{ fontSize: 11.5, color: 'var(--text3)' }}>Henüz not yok — ilk kampanya/etkinlik notunu düş.</div>}
+    </div>
+  );
+}
+
 export default function DuyuPaneli() {
   const [subeler, setSubeler] = useState([]);
   const [subeId, setSubeId] = useState('');
@@ -509,6 +559,9 @@ export default function DuyuPaneli() {
             </>
           )}
         </div>
+
+        {/* ── 📔 İŞLETME GÜNLÜĞÜ (beynin ilk veri dileği — sahip onaylı) ── */}
+        <IsletmeGunlugu subeler={subeler} />
 
         {/* ── 📓 BEYİN GÜNLÜĞÜ (iç sesin okunabilir hali) ── */}
         <div style={{ ...K.kart, borderLeft: '3px solid var(--purple, #8b5cf6)' }}>

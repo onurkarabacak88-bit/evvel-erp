@@ -150,6 +150,87 @@ def gece_ozgun_calistir() -> None:
     gece_vardiya_plan_gercek()
 
 
+# ── İŞLETME GÜNLÜĞÜ (beynin İLK VERİ DİLEĞİ — kullanıcı onayı 2026-07-07) ────
+# Beyin "ciro neden arttı?" sorusunda "kampanya/müşteri trafiği verisi toplanmalı"
+# dileği yazdı; sahip onayladı. Elle girilen bağlam notları: kampanya, etkinlik,
+# özel gün, hava... Ciro-neden sorularının AÇIKLAYICI hammaddesi (kanıt değil bağlam).
+from pydantic import BaseModel  # noqa: E402
+
+_GUNLUK_TIPLERI = ("kampanya", "etkinlik", "ozel_gun", "hava", "tadilat", "diger")
+
+
+def _gunluk_ensure(cur) -> None:
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS isletme_gunlugu (
+            id         TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+            tarih      DATE NOT NULL,
+            sube_id    TEXT,                -- NULL = tüm işletme
+            tip        TEXT NOT NULL,
+            baslik     TEXT NOT NULL,
+            aciklama   TEXT,
+            olusturma  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """
+    )
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_isletme_gunlugu ON isletme_gunlugu (tarih DESC)")
+
+
+class GunlukNotBody(BaseModel):
+    tarih: str | None = None   # YYYY-MM-DD; boş = bugün
+    sube_id: str | None = None
+    tip: str = "kampanya"
+    baslik: str
+    aciklama: str | None = None
+
+
+@router.post("/gunluk-not")
+def gunluk_not_ekle(body: GunlukNotBody):
+    """Elle bağlam notu: 'bugün kampanya vardı' gibi. Beyin neden-sorularında görür."""
+    baslik = (body.baslik or "").strip()
+    if len(baslik) < 3:
+        return {"ok": False, "hata": "başlık en az 3 karakter"}
+    tip = body.tip if body.tip in _GUNLUK_TIPLERI else "diger"
+    tarih = (body.tarih or "").strip() or str(date.today())
+    with db() as (_, cur):
+        _gunluk_ensure(cur)
+        cur.execute(
+            """INSERT INTO isletme_gunlugu (tarih, sube_id, tip, baslik, aciklama)
+               VALUES (%s,%s,%s,%s,%s) RETURNING id""",
+            (tarih, (body.sube_id or None), tip, baslik[:120],
+             (body.aciklama or "")[:400] or None),
+        )
+        nid = dict(cur.fetchone() or {}).get("id")
+    # Omurgaya bağlam olayı (hata-yutar) — sarmal/kompozit hammaddesi
+    try:
+        from duyu_omurga import duyu_nabiz_yaz, duyu_olay_yaz
+        duyu_olay_yaz(
+            "isletme_gunlugu", "baglam.not.girildi", str(nid),
+            entity_scope="sube" if body.sube_id else "genel",
+            entity_id=body.sube_id, occurred_at=tarih,
+            signal_name="İşletme günlüğü notu",
+            payload={"tip": tip, "baslik": baslik[:120]},
+        )
+        duyu_nabiz_yaz("isletme_gunlugu", taranan=1, uretilen=1)
+    except Exception:  # noqa: BLE001
+        pass
+    return {"ok": True, "id": nid, "tarih": tarih, "tip": tip}
+
+
+@router.get("/gunluk-notlar")
+def gunluk_notlar(gun: int = Query(30, ge=1, le=120)):
+    with db() as (_, cur):
+        _gunluk_ensure(cur)
+        cur.execute(
+            """SELECT g.id, g.tarih::text, s.ad AS sube_ad, g.tip, g.baslik, g.aciklama
+               FROM isletme_gunlugu g LEFT JOIN subeler s ON s.id = g.sube_id
+               WHERE g.tarih >= %s ORDER BY g.tarih DESC, g.olusturma DESC LIMIT 100""",
+            (str(date.today() - timedelta(days=gun - 1)),),
+        )
+        return {"notlar": [dict(r) for r in (cur.fetchall() or [])],
+                "tipler": list(_GUNLUK_TIPLERI)}
+
+
 # ── SALT-OKUR UÇ ─────────────────────────────────────────────────────────────
 @router.get("/ozgun-duyular")
 def ozgun_duyular(gun: int = Query(7, ge=1, le=30)):
