@@ -820,9 +820,19 @@ def _sor_calistir(soru: str, tip: str = "soru", ek_bloklar=None,
     # sorulur. Dilek yerine organ kullanımı — 'mevcut' dileklerinin panzehiri.
     m_pi = re.search(r"PENCERE\s+[İIi]STE[ĞGğg][İIi]\s*:\s*\[?(B\d+)", cevap or "",
                      re.IGNORECASE)
-    if m_pi:
-        istenen = m_pi.group(1).upper()
-        mevcut_idler = {b[0].split(".")[0] for b in bloklar}
+    mevcut_idler = {b[0].split(".")[0] for b in bloklar}
+    istenen = m_pi.group(1).upper() if m_pi else None
+    if not istenen:
+        # ÖRTÜK İSTEK (2026-07-08 canlı gözlem): Llama protokol satırını yazmak yerine
+        # pencereyi cevabın içinde ANIYOR ('B21 penceresi yardımıyla incelenebilir').
+        # Anayasa: karar modele bırakılmaz — bağlamda olmayan blok anıldıysa KOD açar.
+        gecerli = {bid for bid, *_k in _SECICI} | {"B15"}
+        for aday in re.findall(r"\bB(\d+)\b", cevap or ""):
+            aday_id = f"B{aday}"
+            if aday_id not in mevcut_idler and aday_id in gecerli:
+                istenen = aday_id
+                break
+    if istenen:
         acilan = False
         if istenen not in mevcut_idler:
             if istenen == "B15":
