@@ -472,7 +472,27 @@ def llm_mevcut() -> bool:
 
 
 def _llm_cagir(system: str, kullanici: str, max_tokens: int = 900) -> Tuple[str, str]:
-    """(cevap, model) — whatsapp_bildirim ile aynı ikili desen: önce Anthropic, yoksa OpenAI."""
+    """(cevap, model) — üçlü desen: YEREL model (varsa) → Anthropic → OpenAI.
+    YEREL PRİZ (2026-07-08, 'konuşmayı sahiplenme' 2. aşama): YEREL_LLM_URL tanımlıysa
+    (Ollama/OpenAI-uyumlu uç, örn. http://sunucu:11434/v1) önce KENDİ modelin denenir —
+    internet/ödeme bağımsız ses telleri. Başarısızsa bulut devralır; frenler her durumda
+    aynı (model-bağımsız mimari katman — terbiye ses teline bağlı değil)."""
+    yerel_url = (os.getenv("YEREL_LLM_URL") or "").strip()
+    if yerel_url:
+        try:
+            from openai import OpenAI
+            client = OpenAI(base_url=yerel_url, api_key=os.getenv("YEREL_LLM_KEY", "yerel"))
+            model = os.getenv("YEREL_LLM_MODEL", "qwen2.5:14b")
+            resp = client.chat.completions.create(
+                model=model, max_tokens=max_tokens,
+                messages=[{"role": "system", "content": system},
+                          {"role": "user", "content": kullanici}],
+            )
+            metin = (resp.choices[0].message.content or "").strip()
+            if metin:
+                return metin, f"yerel:{model}"
+        except Exception as e:  # noqa: BLE001
+            logger.warning("beyin YEREL model hatasi (buluta dusuluyor): %s", str(e)[:120])
     akey = os.getenv("ANTHROPIC_API_KEY")
     if akey:
         try:
