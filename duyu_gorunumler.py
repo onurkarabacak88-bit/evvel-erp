@@ -301,6 +301,8 @@ def zam_koridoru():
                    ROUND(SUM(odenecek_tutar)::numeric, 2) AS toplam
             FROM odeme_plani
             WHERE kaynak_tablo = 'personel' AND durum <> 'iptal'
+              AND referans_ay < DATE_TRUNC('month', CURRENT_DATE)  -- içinde bulunulan ay
+                  -- KISMİ olur (planlar ay boyunca yazılır) — karşılaştırmaya sokulmaz
             GROUP BY 1 ORDER BY 1 DESC LIMIT 3
             """
         )
@@ -321,9 +323,22 @@ def zam_koridoru():
         personel_ay = float(maas_aylar[0]["toplam"]) if maas_aylar else 0.0
         personel_pay = round(personel_ay / max(ciro_30, 1.0), 3)
     # 4) KORİDOR — marj-koruma formülü (bileşen artışı × cirodaki payı)
-    alt = round(max(0.0, hammadde_endeksi) * hammadde_pay, 1)
-    ust = round(alt + max(0.0, (personel_degisim or 0)) * personel_pay, 1)
+    # VERİ-YETERSİZLİĞİ DÜRÜSTLÜĞÜ: kalem karşılaştırması yoksa koridor HESAPLANAMAZ —
+    # '%0 → zam gerekmez' YANLIŞ mesajı yerine 'henüz ölçülemiyor' denir.
+    veri_yetersiz = len(kalemler) == 0
+    if veri_yetersiz:
+        koridor = None
+    else:
+        alt = round(max(0.0, hammadde_endeksi) * hammadde_pay, 1)
+        ust = round(alt + max(0.0, (personel_degisim or 0)) * personel_pay, 1)
+        koridor = {"alt": alt, "ust": ust}
     return {
+        "veri_yetersiz": veri_yetersiz,
+        "veri_yetersiz_nedeni": ("Hammadde endeksi için aynı kalemin İKİ ayrı 45 günlük "
+                                 "dönemde en az 2'şer faturası gerekli — fatura geçmişi "
+                                 "biriktikçe koridor kendiliğinden hesaplanır. ŞU AN ZAM "
+                                 "ORANI SÖYLENEMEZ; 'sıfır baskı' anlamına GELMEZ."
+                                 if veri_yetersiz else None),
         "hammadde_endeksi_pct_45g": hammadde_endeksi,
         "hammadde_pay": hammadde_pay,
         "personel_degisim_pct_aylik": personel_degisim,
@@ -333,7 +348,7 @@ def zam_koridoru():
             {"ad": k["ad"], "eski": float(k["eski_fiyat"]), "yeni": float(k["yeni_fiyat"]),
              "degisim_pct": float(k["degisim_pct"])} for k in en_cok_artan],
         "izlenen_kalem_n": len(kalemler),
-        "zam_koridoru_pct": {"alt": alt, "ust": ust},
+        "zam_koridoru_pct": koridor,
         "formul": "gerekli zam %% ≈ maliyet artışı %% × o kalemin cirodaki payı "
                   "(marj-koruma mekanizması); alt=yalnız hammadde, üst=+personel",
         "not": "ÖNERİ ÇERÇEVESİDİR, karar insanın. ÜRÜN-BAZLI kesin zam verilemez — "
