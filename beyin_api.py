@@ -127,6 +127,8 @@ def _ensure(cur) -> None:
         """
     )
     cur.execute("CREATE INDEX IF NOT EXISTS idx_beyin_gunluk ON beyin_gunluk (tip, olusturma DESC)")
+    cur.execute("ALTER TABLE beyin_gunluk ADD COLUMN IF NOT EXISTS oturum_id TEXT")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_beyin_gunluk_oturum ON beyin_gunluk (oturum_id, olusturma)")
 
 
 # ── BAĞLAM DERLEYİCİ ─────────────────────────────────────────────────────────
@@ -207,10 +209,11 @@ def _konusma_izleri_blok() -> str:
         return _j([dict(r) for r in (cur.fetchall() or [])])
 
 
-def _blok_derle(soru: str) -> List[Tuple[str, str, str]]:
+def _blok_derle(soru: str, yonlendirme_ek: str = "") -> List[Tuple[str, str, str]]:
     """[(blok_id, başlık, metin)] — çekirdek + soruya göre seçici (fallback: geniş).
     Tüm kaynaklar SALT-OKUR mevcut fonksiyonlar; hata-yutar (bir blok çökse diğerleri yaşar)."""
-    s = (soru or "").lower()
+    # yonlendirme_ek: sohbet hafızası — önceki sorular da seçiciyi yönlendirir
+    s = ((soru or "") + " " + (yonlendirme_ek or "")).lower()
     bloklar: List[Tuple[str, str, str]] = []
 
     def ekle(bid: str, baslik: str, uretici) -> None:
@@ -482,8 +485,42 @@ def _veri_kalite_ozeti(bloklar) -> dict:
     return ozet
 
 
-def _sor_calistir(soru: str, tip: str = "soru", ek_bloklar=None) -> dict:
-    bloklar = _blok_derle(soru)
+def _oturum_gecmisi(oturum_id: str, limit: int = 3):
+    """SOHBET HAFIZASI (2026-07-07): aynı oturumun son N başarılı soru-cevabı.
+    Dönüş: (B0 blok metni | None, yönlendirme metni — önceki sorular selector'a girer
+    ki 'peki Köyceğiz'de?' takibi önceki konunun bloklarını da taşısın)."""
+    try:
+        with db() as (_, cur):
+            _ensure(cur)
+            cur.execute(
+                """SELECT soru, cevap FROM beyin_gunluk
+                   WHERE oturum_id = %s AND tip = 'soru' AND red_nedeni IS NULL
+                     AND cevap IS NOT NULL
+                   ORDER BY olusturma DESC LIMIT %s""",
+                (oturum_id, limit),
+            )
+            gecmis = [dict(r) for r in (cur.fetchall() or [])][::-1]  # kronolojik
+        if not gecmis:
+            return None, ""
+        metin = _j([{"onceki_soru": g["soru"], "onceki_cevap": (g["cevap"] or "")[:600]}
+                    for g in gecmis])
+        yonlendirme = " ".join(g["soru"] for g in gecmis)
+        return metin, yonlendirme
+    except Exception as e:  # noqa: BLE001
+        logger.warning("beyin oturum gecmisi okunamadi: %s", str(e)[:100])
+        return None, ""
+
+
+def _sor_calistir(soru: str, tip: str = "soru", ek_bloklar=None,
+                  oturum_id: str | None = None) -> dict:
+    gecmis_blok, yonlendirme = (None, "")
+    if oturum_id:
+        gecmis_blok, yonlendirme = _oturum_gecmisi(oturum_id)
+    bloklar = _blok_derle(soru, yonlendirme_ek=yonlendirme)
+    if gecmis_blok:
+        # B0 en başta: önceki konuşma da HAM VERİ çerçevesindedir (talimat değil);
+        # takip cevabı önceki rakamlara atıf yapabilir (post-check kaynağına girer)
+        bloklar = [("B0", "Bu sohbetin önceki soru-cevapları", gecmis_blok[:4000])] + bloklar
     if ek_bloklar:
         bloklar = bloklar + list(ek_bloklar)  # gece derinlik blokları buradan girer
     if not bloklar:
@@ -532,9 +569,10 @@ def _sor_calistir(soru: str, tip: str = "soru", ek_bloklar=None) -> dict:
         with db() as (_, cur):
             _ensure(cur)
             cur.execute(
-                """INSERT INTO beyin_gunluk (tip, soru, baglam_bloklari, cevap, model, red_nedeni)
-                   VALUES (%s,%s,%s::jsonb,%s,%s,%s)""",
-                (tip, soru, _j(izler), cevap or None, model or None, red),
+                """INSERT INTO beyin_gunluk (tip, soru, baglam_bloklari, cevap, model,
+                                             red_nedeni, oturum_id)
+                   VALUES (%s,%s,%s::jsonb,%s,%s,%s,%s)""",
+                (tip, soru, _j(izler), cevap or None, model or None, red, oturum_id),
             )
     except Exception as e:  # noqa: BLE001
         logger.warning("beyin_gunluk arsiv hatasi: %s", str(e)[:120])
@@ -544,15 +582,16 @@ def _sor_calistir(soru: str, tip: str = "soru", ek_bloklar=None) -> dict:
                 "cevap": "Bu soruya güvenli cevap üretilemedi (doğrulama başarısız: "
                          f"{red}). Ham görünümlere Duyu Paneli'nden bakabilirsin.",
                 "bloklar": izler, "baglam_ozeti": baglam_hash,
-                "veri_kalite": vk, "dipnot": _DIPNOT}
+                "veri_kalite": vk, "dipnot": _DIPNOT, "oturum_id": oturum_id}
     cevap = _jargon_cevir(cevap)  # sızıntı filtresi: onaydan SONRA, deterministik
     return {"ok": True, "etiket": _ETIKET, "cevap": cevap, "bloklar": izler,
             "model": model, "baglam_ozeti": baglam_hash,
-            "veri_kalite": vk, "dipnot": _DIPNOT}
+            "veri_kalite": vk, "dipnot": _DIPNOT, "oturum_id": oturum_id}
 
 
 class SorBody(BaseModel):
     soru: str
+    oturum_id: Optional[str] = None  # sohbet hafızası: aynı oturumda takip sorusu
 
 
 @router.post("/sor")
@@ -573,7 +612,9 @@ def beyin_sor(body: SorBody):
                          "kimliksiz sinyalleri gösteririm.",
                 "red_nedeni": "soru kişi adı içeriyor (PII filtresi)",
                 "bloklar": [], "dipnot": _DIPNOT}
-    return _sor_calistir(soru[:500], tip="soru")
+    import uuid as _uuid
+    oturum = (body.oturum_id or "").strip() or str(_uuid.uuid4())
+    return _sor_calistir(soru[:500], tip="soru", oturum_id=oturum)
 
 
 @router.get("/gunluk")

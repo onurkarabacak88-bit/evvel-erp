@@ -36,27 +36,58 @@ function Rozetler({ obj }) {
 
 function BeyinSor() {
   const [soru, setSoru] = useState('');
-  const [cevap, setCevap] = useState(null);
+  const [mesajlar, setMesajlar] = useState([]); // {rol:'sen'|'beyin', metin, bloklar?, etiket?}
+  const [oturumId, setOturumId] = useState(null);
   const [mesgul, setMesgul] = useState(false);
   const [hata, setHata] = useState('');
   const sor = async () => {
     const s = soru.trim();
     if (s.length < 3 || mesgul) return;
-    setMesgul(true); setHata(''); setCevap(null);
+    setMesgul(true); setHata(''); setSoru('');
+    setMesajlar((m) => [...m, { rol: 'sen', metin: s }]);
     try {
-      const r = await api('/beyin/sor', { method: 'POST', body: { soru: s } });
-      setCevap(r);
-    } catch (e) { setHata(e.message || 'Beyin yanıt veremedi'); }
-    finally { setMesgul(false); }
+      const r = await api('/beyin/sor', { method: 'POST', body: { soru: s, oturum_id: oturumId } });
+      if (r.oturum_id) setOturumId(r.oturum_id);
+      setMesajlar((m) => [...m, { rol: 'beyin', metin: r.cevap, bloklar: r.bloklar, etiket: r.etiket, dipnot: r.dipnot }]);
+    } catch (e) {
+      setHata(e.message || 'Beyin yanıt veremedi');
+    } finally { setMesgul(false); }
   };
+  const yeniSohbet = () => { setMesajlar([]); setOturumId(null); setHata(''); };
   return (
     <div style={{ ...K.kart, borderLeft: '3px solid var(--purple, #8b5cf6)' }}>
-      <div style={K.baslik}>🧠 Evvel Beyni'ne Sor <span style={{ fontSize: 10.5, color: 'var(--text3)' }}>v0.1 — gözlem katmanı</span></div>
-      <div style={K.alt}>Duyuların gördüğünü sorabilirsin ("Köyceğiz'de bu hafta ne oldu?", "vergi çıkışı ne kadar?"). Karar vermez, alarm kapatmaz, isim vermez — sadece kayıtları anlatır.</div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+        <div style={K.baslik}>🧠 Evvel Beyni'yle Konuş <span style={{ fontSize: 10.5, color: 'var(--text3)' }}>sohbet hafızalı — takip sorusu sorabilirsin</span></div>
+        {mesajlar.length > 0 && (
+          <button onClick={yeniSohbet} style={{ background: 'transparent', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text3)', cursor: 'pointer', fontSize: 11, padding: '3px 10px' }}>🆕 Yeni sohbet</button>
+        )}
+      </div>
+      <div style={K.alt}>"Bugün sorunlar nedir?" diye başla, "peki Köyceğiz'de?" diye devam et — önceki soruları hatırlar. Karar vermez, isim vermez; kayıtları anlatır, kayda işaret eder.</div>
+      {mesajlar.length > 0 && (
+        <div style={{ maxHeight: 420, overflowY: 'auto', marginBottom: 10 }}>
+          {mesajlar.map((m, i) => (
+            <div key={i} style={{
+              background: m.rol === 'sen' ? 'var(--bg2)' : 'var(--bg)',
+              border: m.rol === 'sen' ? '1px solid var(--border)' : '1px solid var(--purple, #8b5cf6)',
+              borderRadius: 10, padding: '10px 12px', marginBottom: 8,
+              marginLeft: m.rol === 'sen' ? 40 : 0, marginRight: m.rol === 'sen' ? 0 : 40,
+            }}>
+              {m.rol === 'beyin' && <div style={{ fontSize: 10, fontWeight: 800, color: 'var(--yellow, #f59e0b)', marginBottom: 4 }}>{m.etiket}</div>}
+              <div style={{ fontSize: 13, color: 'var(--text1)', whiteSpace: 'pre-wrap', lineHeight: 1.55 }}>{m.metin}</div>
+              {m.rol === 'beyin' && m.bloklar && m.bloklar.length > 0 && (
+                <div style={{ fontSize: 9.5, color: 'var(--text3)', marginTop: 6 }}>
+                  Kaynak: {m.bloklar.map((b) => b.id).join(' ')}
+                </div>
+              )}
+            </div>
+          ))}
+          {mesgul && <div style={{ fontSize: 12.5, color: 'var(--text3)', padding: '6px 0' }}>💭 düşünüyor…</div>}
+        </div>
+      )}
       <div style={{ display: 'flex', gap: 8 }}>
         <input value={soru} onChange={(e) => setSoru(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') sor(); }}
-          placeholder="Sorunu yaz…" disabled={mesgul}
+          placeholder={mesajlar.length ? 'Takip sorunu yaz…' : 'Sorunu yaz…'} disabled={mesgul}
           style={{ flex: 1, background: 'var(--bg)', color: 'var(--text1)', border: '1px solid var(--border)', borderRadius: 10, padding: '10px 12px', fontSize: 13.5 }} />
         <button onClick={sor} disabled={mesgul || soru.trim().length < 3} style={{
           background: 'var(--purple, #8b5cf6)', color: '#fff', border: 'none', borderRadius: 10,
@@ -64,18 +95,6 @@ function BeyinSor() {
         }}>{mesgul ? '💭…' : 'Sor'}</button>
       </div>
       {hata && <div style={{ color: 'var(--red)', fontSize: 12.5, marginTop: 8 }}>⚠️ {hata}</div>}
-      {cevap && (
-        <div style={{ background: 'var(--bg)', borderRadius: 10, padding: '12px 14px', marginTop: 10 }}>
-          <div style={{ fontSize: 10.5, fontWeight: 800, color: 'var(--yellow, #f59e0b)', marginBottom: 6 }}>{cevap.etiket}</div>
-          <div style={{ fontSize: 13.5, color: 'var(--text1)', whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>{cevap.cevap}</div>
-          {cevap.bloklar && (
-            <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 8 }}>
-              Kaynak blokları: {cevap.bloklar.map((b) => `[${b.id}] ${b.baslik}`).join(' · ')}
-            </div>
-          )}
-          <div style={{ fontSize: 10.5, color: 'var(--text3)', marginTop: 6, fontStyle: 'italic' }}>{cevap.dipnot}</div>
-        </div>
-      )}
     </div>
   );
 }
