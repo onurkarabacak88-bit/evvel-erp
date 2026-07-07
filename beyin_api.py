@@ -79,11 +79,23 @@ _SYSTEM = (
     "veriyle desteklenmeyen adayı 'kayıtlarda izi yok' diye işaretle. Eldeki veri "
     "soruyu cevaplamaya YETMİYORSA bunu söyle ve cevabının SON SATIRINA şu kalıpla "
     "tek cümle ekle: 'VERİ DİLEĞİ: <bu soruyu cevaplayabilmek için toplanması gereken "
-    "veri>'. Bu satır sistemce kaydedilir ve veri toplama kurulumu insan onayına gider."
+    "veri>'. Bu satır sistemce kaydedilir ve veri toplama kurulumu insan onayına gider. "
+    "(13) YALNIZCA TÜRKÇE YAZ: cevabında tek bir yabancı kelime, yabancı alfabe "
+    "karakteri (Kiril, Çince, Vietnamca işaretli harf vb.) veya İngilizce dolgu "
+    "sözcüğü OLMAYACAK. Karışık dilli cevap otomatik reddedilir ve yeniden yazdırılır."
 )
 
 # GÜVENLİK v0.2 (2026-07-06, 5-model sentezi):
 # Yasaklı-dil filtresi [GPT]: hüküm/kesinlik dili otomatik red — gözlem katmanı yargı üretemez.
+# YABANCI ALFABE FRENİ (2026-07-08): açık model (Llama) cevaba Kiril ("блок"),
+# Çince ("具体") ve Vietnamca ("cụ thể") karıştırdı. Türkçe = ASCII + Latin-1 +
+# Latin Genişletilmiş-A; şu bloklar deterministik red: Yunan, Kiril, Arap, Tay,
+# Vietnamca ek işaretli Latin, CJK, Kana, Hangul, tam-genişlik formlar.
+_YABANCI_ALFABE = re.compile(
+    "[Ͱ-ϿЀ-ӿ؀-ۿ฀-๿"
+    "Ḁ-ỿ⺀-鿿぀-ヿ가-힯＀-￯]"
+)
+
 _YASAKLI_DIL = re.compile(
     r"\b(kesin olarak|kesinlikle kanıtl|kanıtladı|çaldı|çalmış|hırsız|suçlu|suç işledi"
     r"|yakalandı|masum|temizdir|aklandı|normaldir|önemsiz|göz ardı edilebilir)\b",
@@ -594,9 +606,14 @@ def _llm_cagir(system: str, kullanici: str, max_tokens: int = 900) -> Tuple[str,
 
 def _post_check(cevap: str, baglam_metni: str) -> Optional[str]:
     """None=geçti; str=red nedeni. (1) rakam bağlamda olmalı, (2) en az bir [B#] referansı,
-    (3) yasaklı hüküm/kesinlik dili yok [güvenlik v0.2]."""
+    (3) yasaklı hüküm/kesinlik dili yok [güvenlik v0.2], (4) yabancı alfabe yok
+    [2026-07-08: Llama cevaba Kiril/Çince/Vietnamca karıştırdı — kural 13 + bu fren]."""
     if not re.search(r"\[B\d", cevap):
         return "blok referansı yok (iddia kaynaksız)"
+    m_alfabe = _YABANCI_ALFABE.search(cevap)
+    if m_alfabe:
+        return (f"yabancı alfabe karakteri: '{m_alfabe.group(0)}' — cevap YALNIZCA "
+                "Türkçe yazılmalı (kural 13)")
     m_dil = _YASAKLI_DIL.search(cevap)
     if m_dil:
         return f"hüküm dili: '{m_dil.group(0)}' (gözlem katmanı yargı üretemez)"
