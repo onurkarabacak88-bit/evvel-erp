@@ -71,7 +71,14 @@ _SYSTEM = (
     "(11) KAYDA İŞARET ET: bir farkı/olayı anlatırken HANGİ işlem olduğunu netleştir — "
     "tarih + açılış mı kapanış mı + saati (bağlamda varsa). İsim VERME ama okuyucuyu "
     "isme giden KAYDA yönlendir: 'bu kapanışı kimin yaptığı kapanış kaydında yazılıdır' "
-    "gibi. Sen mercek tutarsın; ismi kaynaktan insan okur."
+    "gibi. Sen mercek tutarsın; ismi kaynaktan insan okur. "
+    "(12) NEDEN PROTOKOLÜ: 'neden/sebep' sorularında ASLA tek kesin neden ilan etme. "
+    "Bağlamdaki olası açıklayıcıları ADAY olarak sırala (fiyat değişimi, gün deseni, "
+    "ödeme karması, ürün kırılımı...) ve her adayın yanına dayandığı veriyi koy; "
+    "veriyle desteklenmeyen adayı 'kayıtlarda izi yok' diye işaretle. Eldeki veri "
+    "soruyu cevaplamaya YETMİYORSA bunu söyle ve cevabının SON SATIRINA şu kalıpla "
+    "tek cümle ekle: 'VERİ DİLEĞİ: <bu soruyu cevaplayabilmek için toplanması gereken "
+    "veri>'. Bu satır sistemce kaydedilir ve veri toplama kurulumu insan onayına gider."
 )
 
 # GÜVENLİK v0.2 (2026-07-06, 5-model sentezi):
@@ -194,6 +201,95 @@ def _derinlik_bloklari() -> List[Tuple[str, str, str]]:
     return bloklar
 
 
+def _neden_malzemesi_blok() -> str:
+    """B18 (kural 12'nin malzemesi): 'neden arttı/azaldı' soruları için hipotez adayları —
+    şube-gün ciro kırılımı (14g, hafta günü etiketli) + menü fiyat değişimleri +
+    ödeme karması ilk-7/son-7 karşılaştırması. Kesin neden değil, ADAY malzemesi."""
+    from datetime import date as _d, timedelta as _td
+    bugun = _d.today()
+    with db() as (_, cur):
+        cur.execute(
+            """
+            SELECT s.ad AS sube, c.tarih::text AS gun,
+                   TRIM(TO_CHAR(c.tarih, 'Day')) AS hafta_gunu,
+                   ROUND(SUM(c.toplam)::numeric, 2) AS ciro
+            FROM ciro c JOIN subeler s ON s.id = c.sube_id
+            WHERE c.durum = 'aktif' AND c.tarih >= %s
+            GROUP BY s.ad, c.tarih ORDER BY c.tarih
+            """,
+            (str(bugun - _td(days=14)),),
+        )
+        ciro_kirilim = [dict(r) for r in (cur.fetchall() or [])]
+        cur.execute(
+            """
+            SELECT entity_id AS urun, occurred_at::date::text AS gun, payload_json
+            FROM duyu_olay
+            WHERE duyu = 'menu_fiyat_izi' AND occurred_at >= %s
+            ORDER BY occurred_at DESC LIMIT 15
+            """,
+            (str(bugun - _td(days=14)),),
+        )
+        fiyat_degisimleri = [dict(r) for r in (cur.fetchall() or [])]
+        cur.execute(
+            """
+            SELECT s.ad AS sube,
+                   ROUND(AVG(c.nakit / NULLIF(c.toplam,0)) FILTER (WHERE c.tarih < %s)::numeric, 3) AS nakit_oran_ilk7,
+                   ROUND(AVG(c.nakit / NULLIF(c.toplam,0)) FILTER (WHERE c.tarih >= %s)::numeric, 3) AS nakit_oran_son7
+            FROM ciro c JOIN subeler s ON s.id = c.sube_id
+            WHERE c.durum = 'aktif' AND c.tarih >= %s
+            GROUP BY s.ad
+            """,
+            (str(bugun - _td(days=7)), str(bugun - _td(days=7)), str(bugun - _td(days=14))),
+        )
+        karma = [dict(r) for r in (cur.fetchall() or [])]
+    return _j({"sube_gun_ciro_14g": ciro_kirilim,
+               "menu_fiyat_degisimleri_14g": fiyat_degisimleri,
+               "nakit_oran_ilk7_vs_son7": karma})
+
+
+_VERI_DILEGI = re.compile(r"VERİ DİLEĞİ:\s*(.+?)(?:\n|$)", re.IGNORECASE)
+
+
+def _veri_dilegi_yakala(soru: str, cevap: str) -> None:
+    """Kural 12 çıktısı: beyin 'bu veriyle cevaplayamam, şu toplansın' dediğinde dilek
+    omurgaya yazılır (meta.bilgi.veri_dilegi) — sistemin kendi bilgi boşluğunu fark edip
+    ÖNLEM İSTEMESİ. Kurulum otomatik DEĞİL: dilek insan onayına gider (duyu anayasası)."""
+    try:
+        m = _VERI_DILEGI.search(cevap or "")
+        if not m:
+            return
+        dilek = m.group(1).strip()[:300]
+        if len(dilek) < 10:
+            return
+        import hashlib as _h
+        from duyu_omurga import duyu_olay_yaz
+        duyu_olay_yaz(
+            "evvel_beyni", "meta.bilgi.veri_dilegi",
+            _h.sha256(dilek.encode("utf-8")).hexdigest()[:16],  # aynı dilek tek kayıt
+            entity_scope="genel", signal_name="Beynin veri dileği",
+            evidence_class="oneri", confidence=1.0,
+            payload={"tetikleyen_soru": (soru or "")[:200], "dilek": dilek,
+                     "not": "Kurulum insan onayı bekler — sistem kendi kendine veri "
+                            "toplamaya başlamaz."},
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("veri dilegi yakalanamadi: %s", str(e)[:100])
+
+
+@router.get("/veri-dilekleri")
+def veri_dilekleri(limit: int = 20):
+    """Beynin biriken veri dilekleri — 'şunu toplarsak şu soruları cevaplayabilirim'
+    listesi. Onaylanan dilek = yeni duyu kurulum talebi (kurgucuya iletilir)."""
+    with db() as (_, cur):
+        cur.execute(
+            """SELECT occurred_at::text, payload_json FROM duyu_olay
+               WHERE duyu = 'evvel_beyni' AND olay_tipi = 'meta.bilgi.veri_dilegi'
+               ORDER BY observed_at DESC LIMIT %s""",
+            (max(1, min(100, limit)),),
+        )
+        return {"dilekler": [dict(r) for r in (cur.fetchall() or [])]}
+
+
 def _konusma_izleri_blok() -> str:
     """B14: sistemin dışa dönük sözünün izleri (V1 rapor + V2 motor kesiti) — omurgadan."""
     with db() as (_, cur):
@@ -282,6 +378,10 @@ def _blok_derle(soru: str, yonlendirme_ek: str = "") -> List[Tuple[str, str, str
           "zincir", "kompozit"),
          lambda: _j({k: (v if not isinstance(v, list) else v[:10])
                      for k, v in __import__("duyu_sinaps").sinapsler(gun=14).items()})),
+        ("B18", "Neden malzemesi (şube-gün ciro 14g + fiyat değişimleri + karma ilk7/son7)",
+         ("neden", "sebep", "niye", "artış", "artis", "arttı", "artti", "azal",
+          "düştü", "dustu", "yükseldi", "yukseldi", "ciro"),
+         _neden_malzemesi_blok),
         ("B17", "Zam koridoru (HESAPLANMIŞ: hammadde endeksi + personel değişimi + paylar → marj-koruma aralığı)",
          ("zam", "fiyat art", "fiyat aralığ", "fiyat araligi", "marj", "kaç lira yap",
           "kac lira yap", "fiyat güncell", "fiyat guncell", "fiyatları yükselt",
@@ -583,6 +683,7 @@ def _sor_calistir(soru: str, tip: str = "soru", ek_bloklar=None,
                          f"{red}). Ham görünümlere Duyu Paneli'nden bakabilirsin.",
                 "bloklar": izler, "baglam_ozeti": baglam_hash,
                 "veri_kalite": vk, "dipnot": _DIPNOT, "oturum_id": oturum_id}
+    _veri_dilegi_yakala(soru, cevap)  # kural 12: bilgi boşluğu → omurgaya dilek
     cevap = _jargon_cevir(cevap)  # sızıntı filtresi: onaydan SONRA, deterministik
     return {"ok": True, "etiket": _ETIKET, "cevap": cevap, "bloklar": izler,
             "model": model, "baglam_ozeti": baglam_hash,
