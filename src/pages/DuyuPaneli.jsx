@@ -448,9 +448,21 @@ export default function DuyuPaneli() {
                 </div>
               ))}
               <div style={{ marginTop: 8 }}>
-                {(yavru.son_baglar || []).slice(0, 6).map((b, i) => (
-                  <div key={`b${i}`} style={{ fontSize: 11.5, padding: '3px 0', color: String(b.olay_tipi).includes('cocuk_gelmedi') ? 'var(--yellow, #f59e0b)' : 'var(--text2)' }}>
-                    {String(b.olay_tipi).includes('cocuk_gelmedi') ? '⚠️' : '·'} {String(b.occurred_at || '').slice(0, 10)} <b>{b.payload_json?.kural_id}</b>: {b.signal_name}
+                {(yavru.son_baglar || []).slice(0, 8).map((b, i) => (
+                  <div key={`b${i}`} style={{ fontSize: 11.5, padding: '3px 0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 6, color: String(b.olay_tipi).includes('cocuk_gelmedi') ? 'var(--yellow, #f59e0b)' : 'var(--text2)' }}>
+                    <span>{String(b.olay_tipi).includes('cocuk_gelmedi') ? '⚠️' : '·'} {String(b.occurred_at || '').slice(0, 10)} <b>{b.payload_json?.kural_id}</b>: {b.signal_name}</span>
+                    <span style={{ whiteSpace: 'nowrap' }}>
+                      {b.insan_karari ? (
+                        <span style={{ fontSize: 10.5, color: b.insan_karari === 'dogru_bag' ? 'var(--green, #22c55e)' : 'var(--red)' }}>{b.insan_karari === 'dogru_bag' ? '✓ doğru' : '✗ yanlış'}</span>
+                      ) : (
+                        <>
+                          <button title="doğru bağ" onClick={() => { api('/duyu/yavru-etiket', { method: 'POST', body: { event_id: b.event_id, karar: 'dogru_bag' } }).then(() => api('/duyu/yavru-kurallari?gun=7').then(setYavru)).catch(() => {}); }}
+                            style={{ background: 'transparent', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--green, #22c55e)', cursor: 'pointer', fontSize: 11, padding: '1px 6px', marginRight: 4 }}>✓</button>
+                          <button title="yanlış bağ" onClick={() => { api('/duyu/yavru-etiket', { method: 'POST', body: { event_id: b.event_id, karar: 'yanlis_bag' } }).then(() => api('/duyu/yavru-kurallari?gun=7').then(setYavru)).catch(() => {}); }}
+                            style={{ background: 'transparent', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--red)', cursor: 'pointer', fontSize: 11, padding: '1px 6px' }}>✗</button>
+                        </>
+                      )}
+                    </span>
                   </div>
                 ))}
                 {(yavru.son_baglar || []).length === 0 && (

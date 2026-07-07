@@ -77,6 +77,13 @@ KURAL_KUTUPHANESI = [
      "cocuk": "duyu_nabiz/bildirim_iletim basari", "eslesme": "kanal",
      "aciklama": "Ses kısıldı → 2 gün içinde başarılı gönderim DOĞMALI; "
                  "yoksa sistemin sesi hâlâ kısık", "aktif": True},
+    {"kural_id": "R10_kabul_stok", "surum": 1, "gecerli_bas": "2026-07-07", "tur": "T2",
+     "yasam_dongusu": "beklenti_acik_kapali", "pencere_gun": 1, "pencere_capasi": "payload:kabul_ts",
+     "ebeveyn": "stok_yolda/kabul (kabul_ts+kabul_adet>0)",
+     "cocuk": "sube_depo_stok_hareket/miktar>0 (TESLIM_GIRIS ailesi)", "eslesme": "sube_kalem",
+     "aciklama": "Mal kabulü onaylandı → stok hareket defterinde GİRİŞ doğmalı; "
+                 "doğmadıysa 'kabul onaylı ama stok artmıyor' vakası (eski backlog "
+                 "artık canlı yakalanır)", "aktif": True},
 ]
 
 
@@ -277,12 +284,51 @@ def _r9_iletim(cur, kural, dun):
     return n
 
 
+def _r10_kabul(cur, kural, dun):
+    """T2: dünün stok_yolda kabulleri → hareket defterinde GİRİŞ satırı DOĞMALI.
+    Çocuk kontrolü sube_depo_stok_hareket'ten (miktar>0, kabul saatinin ±penceresi).
+    Dürüst not: hareket yazımı kaynakta try/except'li — nadir yanlış-yokluk olabilir;
+    aday dili bunu taşır."""
+    cur.execute(
+        """
+        SELECT id, sube_id, kalem_kodu, kabul_adet, kabul_ts
+        FROM stok_yolda
+        WHERE kabul_ts::date = %s AND COALESCE(kabul_adet, 0) > 0
+        """,
+        (str(dun),),
+    )
+    kabuller = [dict(r) for r in (cur.fetchall() or [])]
+    n = 0
+    for k in kabuller:
+        cur.execute(
+            """
+            SELECT hareket_turu FROM sube_depo_stok_hareket
+            WHERE sube_id = %s AND kalem_kodu = %s AND miktar > 0
+              AND zaman BETWEEN %s::timestamptz - INTERVAL '10 minutes'
+                            AND %s::timestamptz + INTERVAL '1 day'
+            LIMIT 1
+            """,
+            (str(k["sube_id"]), str(k["kalem_kodu"]), k["kabul_ts"], k["kabul_ts"]),
+        )
+        row = cur.fetchone()
+        geldi = row is not None
+        ebeveyn = {"event_id": f"stokyolda_{k['id']}", "duyu": "stok_yolda",
+                   "entity_scope": "sube", "entity_id": str(k["sube_id"]),
+                   "occurred_at": str(dun)}
+        _t2_durum_yaz(kural, ebeveyn, geldi,
+                      {"kalem_kodu": k.get("kalem_kodu"),
+                       "kabul_adet": int(k.get("kabul_adet") or 0),
+                       "hareket_turu": (dict(row).get("hareket_turu") if row else None)})
+        n += 1
+    return n
+
+
 _ESLESTIRICILER = {
     "R1_fiyat_zimni": _r1_r7_fiyat, "R2_gec_kapanis": _r2_r6_ritim,
     "R3_sayim_duzeltme": _r3_sayim, "R4_fire_kase": _r4_fire,
     "R5_mudahale_kart": _r5_mudahale, "R6_gec_acilis_fark": _r2_r6_ritim,
     "R7_fiyat_sessiz": _r1_r7_fiyat, "R8_avans_kasa_izi": _r8_avans,
-    "R9_iletim_toparlanma": _r9_iletim,
+    "R9_iletim_toparlanma": _r9_iletim, "R10_kabul_stok": _r10_kabul,
 }
 
 
@@ -308,9 +354,52 @@ def gece_yavru_calistir() -> None:
         except Exception as e:  # noqa: BLE001
             hata_n += 1
             logger.warning("yavru kural %s yutuldu: %s", kural["kural_id"], str(e)[:100])
-    duyu_nabiz_yaz("sinaps_sarmal", taranan=sum(1 for k in KURAL_KUTUPHANESI if k.get("aktif")),
-                   uretilen=t1_n, yutulan_hata=hata_n)
-    duyu_nabiz_yaz("yavru_beklenti", taranan=2, uretilen=t2_n)
+    t1_kural = sum(1 for k in KURAL_KUTUPHANESI if k.get("aktif") and k["tur"] == "T1")
+    t2_kural = sum(1 for k in KURAL_KUTUPHANESI if k.get("aktif") and k["tur"] == "T2")
+    duyu_nabiz_yaz("sinaps_sarmal", taranan=t1_kural, uretilen=t1_n, yutulan_hata=hata_n)
+    duyu_nabiz_yaz("yavru_beklenti", taranan=t2_kural, uretilen=t2_n)
+
+
+# ── Y3 ALTYAPISI: BAĞ ETİKETİ (öğretmen verisi sarmala uzanır) ───────────────
+from pydantic import BaseModel  # noqa: E402
+
+
+class BagEtiketBody(BaseModel):
+    event_id: str
+    karar: str  # dogru_bag | yanlis_bag
+
+
+@router.post("/yavru-etiket")
+def yavru_etiket(body: BagEtiketBody):
+    """İNSAN KARARI: bir yavru bağına 'doğru bağ / yanlış bağ' işareti. Y4'ün öğretmeni
+    (Beta-Binomial kural ağırlıkları bu etiketlerle öğrenilecek). Karar DEĞİŞTİRİLEBİLİR
+    (upsert) — insan fikir değiştirme hakkı öğretmen defterinde de geçerlidir.
+    NOT: etiket bağı KAPATMAZ; sadece kuralın isabet karnesine yazılır."""
+    karar = (body.karar or "").strip()
+    if karar not in ("dogru_bag", "yanlis_bag"):
+        return {"ok": False, "hata": "karar dogru_bag|yanlis_bag olmalı"}
+    with db() as (_, cur):
+        cur.execute(
+            """SELECT duyu, payload_json FROM duyu_olay
+               WHERE event_id = %s AND duyu IN ('sinaps_sarmal','yavru_beklenti')""",
+            (body.event_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            return {"ok": False, "hata": "bağ olayı bulunamadı"}
+        kural_id = str((dict(row).get("payload_json") or {}).get("kural_id") or "")
+        cur.execute(
+            """
+            INSERT INTO duyu_etiket (kaynak, iliskili_ref, insan_karari, detay_json)
+            VALUES ('bag_karari', %s, %s, %s::jsonb)
+            ON CONFLICT (kaynak, iliskili_ref) DO UPDATE
+                SET insan_karari = EXCLUDED.insan_karari,
+                    detay_json = EXCLUDED.detay_json,
+                    olusturma = NOW()
+            """,
+            (body.event_id, karar, '{"kural_id": "%s"}' % kural_id),
+        )
+    return {"ok": True, "event_id": body.event_id, "karar": karar, "kural_id": kural_id}
 
 
 # ── SALT-OKUR UÇ ─────────────────────────────────────────────────────────────
@@ -320,17 +409,26 @@ def yavru_kurallari(gun: int = Query(7, ge=1, le=30)):
     bas = date.today() - timedelta(days=gun - 1)
     with db() as (_, cur):
         cur.execute(
-            """SELECT duyu, olay_tipi, signal_name, entity_id, occurred_at::text,
-                      confidence, payload_json
+            """SELECT event_id, duyu, olay_tipi, signal_name, entity_id,
+                      occurred_at::text, confidence, payload_json
                FROM duyu_olay
                WHERE duyu IN ('sinaps_sarmal','yavru_beklenti') AND observed_at >= %s
                ORDER BY observed_at DESC LIMIT 60""",
             (str(bas),))
         baglar = [dict(r) for r in (cur.fetchall() or [])]
+        # mevcut insan kararları (Y3) — panel butonlarının durumu
+        cur.execute(
+            "SELECT iliskili_ref, insan_karari FROM duyu_etiket WHERE kaynak = 'bag_karari'"
+        )
+        kararlar = {str(dict(r)["iliskili_ref"]): dict(r)["insan_karari"]
+                    for r in (cur.fetchall() or [])}
+    for b in baglar:
+        b["insan_karari"] = kararlar.get(str(b.get("event_id")))
     return {
         "kural_n": len(KURAL_KUTUPHANESI),
         "kurallar": [{k: v for k, v in kural.items()} for kural in KURAL_KUTUPHANESI],
         "son_baglar": baglar,
         "not": "T1 bağı sinyali KAPATMAZ; T2 'cocuk_geldi' zincir bilgisidir, aklama "
-               "değildir. Kural ekleme yalnız insan onayıyla (kod commit'i).",
+               "değildir. Kural ekleme yalnız insan onayıyla (kod commit'i). Bağlara "
+               "verilen doğru/yanlış işaretleri Y4 kural-ağırlığı öğretmenidir.",
     }
