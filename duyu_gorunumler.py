@@ -1058,3 +1058,181 @@ def gunluk_not_ozet(gun: int = 30):
         "not": "İnsan girdisi günlük notları — sayısal veri değil BAĞLAM. Ciro "
                "değişimi yorumlanırken bu notlar aday açıklamadır, kanıt değildir.",
     }
+
+
+# ── TAM KAPSAMA TURU 2/2 (2026-07-08): kalan 5 pencere ──
+# Kimlik firewall: personel_satislar, ad_soyad, sayim_personel_ad vb. ASLA seçilmez.
+
+@router.get("/evo-satis-kirilimi")
+def evo_satis_kirilimi():
+    """EVO ÜRÜN SATIŞ KIRILIMI (cache'ten, canlı Evo çağrısı YOK): son kayıtlı günün
+    şube×grup×ürün dökümü + son 7 günün grup toplamları. personel_satislar alanı
+    kimlik içerdiği için OKUNMAZ (firewall)."""
+    with db() as (_, cur):
+        cur.execute(
+            """SELECT bastar::text AS gun, veri_json FROM evo_rapor_cache
+               WHERE anahtar = 'sube-grup-detay' AND bastar = bittar
+               ORDER BY bastar DESC LIMIT 7"""
+        )
+        gunler = [dict(r) for r in cur.fetchall() or []]
+    if not gunler:
+        return {"not": "Evo satış cache'i boş — gece çekimi henüz koşmamış olabilir.",
+                "son_gun": None, "grup_7g": []}
+    son = gunler[0]
+    son_ozet = []
+    for sube_ad, sd in (son["veri_json"].get("subeler") or {}).items():
+        son_ozet.append({
+            "sube": sube_ad,
+            "ciro_toplam": sd.get("ciro_toplam"),
+            "fatura_sayisi": sd.get("fatura_sayisi"),
+            "nakit": sd.get("nakit"), "kart": sd.get("kart"),
+            "gruplar": dict(sorted((sd.get("gruplar") or {}).items(),
+                                   key=lambda kv: -(kv[1].get("ciro") or 0))[:6]),
+            "cok_satilan_ilk8": [
+                {"ad": u.get("ad"), "adet": u.get("adet"), "ciro": u.get("ciro")}
+                for u in (sd.get("cok_satilan") or [])[:8]
+            ],
+        })
+    grup_7g: dict = {}
+    for g in gunler:
+        for _sube, sd in (g["veri_json"].get("subeler") or {}).items():
+            for grup, gv in (sd.get("gruplar") or {}).items():
+                t = grup_7g.setdefault(grup, {"adet": 0.0, "ciro": 0.0})
+                t["adet"] += float(gv.get("adet") or 0)
+                t["ciro"] = round(t["ciro"] + float(gv.get("ciro") or 0), 2)
+    grup_listesi = [{"grup": k, **v} for k, v in
+                    sorted(grup_7g.items(), key=lambda kv: -kv[1]["ciro"])][:12]
+    return {
+        "son_gun": son["gun"],
+        "son_gun_subeler": son_ozet,
+        "grup_7g_toplam": grup_listesi,
+        "not": "Kaynak=Evo gece çekim cache'i (canlı değil; son çekim gününe kadar). "
+               "Kişi bazlı satış bu pencerede YOK (kimlik firewall). ÇAY grubu Evo "
+               "eşleştirmesinde görünmeyebilir (bilinen sınır).",
+    }
+
+
+@router.get("/demirbas-ozet")
+def demirbas_ozet():
+    """DEMİRBAŞ ÖZETİ: şube başına durum kırılımı + 'var' olmayan kalemlerin listesi
+    (eksik/arızalı takibi). Güncelleyen kişi adı OKUNMAZ."""
+    with db() as (_, cur):
+        cur.execute(
+            """SELECT s.ad AS sube, d.durum, COUNT(*)::int AS adet
+               FROM demirbas_durum d JOIN subeler s ON s.id = d.sube_id
+               GROUP BY 1, 2 ORDER BY 1, 2"""
+        )
+        kirilim = [dict(r) for r in cur.fetchall() or []]
+        cur.execute(
+            """SELECT s.ad AS sube, k.kategori, k.ad AS kalem, d.durum,
+                      LEFT(COALESCE(d.not_aciklama,''), 60) AS not_kisa,
+                      d.guncelleme::date::text AS guncelleme
+               FROM demirbas_durum d
+               JOIN demirbas_kalem k ON k.id = d.kalem_id
+               JOIN subeler s ON s.id = d.sube_id
+               WHERE d.durum <> 'var'
+               ORDER BY d.guncelleme DESC LIMIT 20"""
+        )
+        sorunlular = [dict(r) for r in cur.fetchall() or []]
+    return {
+        "durum_kirilimi": kirilim,
+        "var_olmayanlar": sorunlular,
+        "not": "Demirbaş modülü kuruluş aşamasında — veri azsa liste kısa olur. "
+               "Kim güncelledi bilgisi kayıtta var ama bu pencerede gösterilmez.",
+    }
+
+
+@router.get("/is-basvuru-ozet")
+def is_basvuru_ozet():
+    """İŞ BAŞVURULARI KİMLİKSİZ ÖZET: durum×pozisyon adetleri + son 30 gün akışı.
+    Ad-soyad/telefon bu pencereye ASLA girmez (kimlik firewall)."""
+    with db() as (_, cur):
+        cur.execute(
+            """SELECT durum, COALESCE(NULLIF(TRIM(pozisyon),''),'BELİRSİZ') AS pozisyon,
+                      COUNT(*)::int AS adet
+               FROM is_basvuru GROUP BY 1, 2 ORDER BY adet DESC"""
+        )
+        kirilim = [dict(r) for r in cur.fetchall() or []]
+        cur.execute(
+            """SELECT COUNT(*)::int AS adet FROM is_basvuru
+               WHERE olusturma_ts >= NOW() - INTERVAL '30 days'"""
+        )
+        son30 = dict(cur.fetchone() or {}).get("adet", 0)
+    return {
+        "durum_pozisyon_kirilimi": kirilim,
+        "son_30_gun_yeni_basvuru": son30,
+        "not": "KİMLİKSİZ havuz özeti. Aday isim/iletişim bilgisi İş Başvuruları "
+               "ekranındadır — beyin kişi değerlendirmesi yapmaz.",
+    }
+
+
+@router.get("/personel-risk-ozet")
+def personel_risk_ozet(gun: int = 30):
+    """PERSONEL RİSK SİNYALLERİ — ŞUBE×TÜR düzeyinde KİMLİKSİZ toplam. Kişi kırılımı
+    bu pencerede YOK; 'hangi kayıtta' sorusunun cevabı Personel ekranındadır."""
+    g = max(7, min(90, int(gun or 30)))
+    with db() as (_, cur):
+        cur.execute(
+            """SELECT COALESCE(s.ad, 'GENEL') AS sube, r.sinyal_turu,
+                      COUNT(*)::int AS adet, SUM(COALESCE(r.agirlik,0))::int AS agirlik_toplam
+               FROM personel_risk_sinyal r
+               LEFT JOIN subeler s ON s.id = r.sube_id
+               WHERE r.tarih >= CURRENT_DATE - %s
+               GROUP BY 1, 2 ORDER BY agirlik_toplam DESC""",
+            (g,),
+        )
+        kirilim = [dict(r) for r in cur.fetchall() or []]
+    return {
+        "kesit_gun": g,
+        "sube_tur_kirilimi": kirilim,
+        "not": "KİMLİKSİZ toplam: hangi şubede hangi TÜR sinyal birikiyor. Kişi bazlı "
+               "değerlendirme motorun işidir (≥2 bağımsız kanıt + insan onayı) — bu "
+               "pencere yalnız iklimi gösterir.",
+    }
+
+
+@router.get("/kasa-anomali-ozet")
+def kasa_anomali_ozet(gun: int = 30):
+    """KASA ANOMALİ ÖZETİ: ciro↔kasa izi eşleşme bozuklukları (v_kasa_anomali) +
+    kasa baskını sayım sonuçları (adsız: tarih+beklenen+sayılan+fark)."""
+    g = max(7, min(90, int(gun or 30)))
+    with db() as (_, cur):
+        cur.execute(
+            """SELECT durum, COUNT(*)::int AS adet FROM v_kasa_anomali
+               WHERE tarih >= CURRENT_DATE - %s AND durum <> 'OK'
+               GROUP BY durum""",
+            (g,),
+        )
+        anomaliler = [dict(r) for r in cur.fetchall() or []]
+        cur.execute(
+            """SELECT tarih::text AS tarih, durum,
+                      ROUND(COALESCE(ciro_toplam,0)::numeric,2) AS ciro_toplam
+               FROM v_kasa_anomali
+               WHERE tarih >= CURRENT_DATE - %s AND durum <> 'OK'
+               ORDER BY tarih DESC LIMIT 10""",
+            (g,),
+        )
+        ornekler = [dict(r) for r in cur.fetchall() or []]
+        for o in ornekler:
+            o["ciro_toplam"] = float(o["ciro_toplam"] or 0)
+        cur.execute(
+            """SELECT b.baslatma_ts::date::text AS tarih, s.ad AS sube,
+                      ROUND(COALESCE(b.beklenen_tutar,0)::numeric,2) AS beklenen,
+                      ROUND(COALESCE(b.sayilan_tutar,0)::numeric,2) AS sayilan,
+                      ROUND(COALESCE(b.fark,0)::numeric,2) AS fark
+               FROM kasa_baskini b LEFT JOIN subeler s ON s.id = b.sube_id
+               ORDER BY b.baslatma_ts DESC LIMIT 8"""
+        )
+        baskinlar = [dict(r) for r in cur.fetchall() or []]
+        for b in baskinlar:
+            for k in ("beklenen", "sayilan", "fark"):
+                b[k] = float(b[k] or 0)
+    return {
+        "kesit_gun": g,
+        "anomali_kirilimi": anomaliler,
+        "anomali_ornekleri": ornekler,
+        "kasa_baskini_sonuclari": baskinlar,
+        "not": "Anomali = ciro kaydının kasa izinde karşılığı yok/iptal. AÇIKLAMA "
+               "değil GÖZLEMDİR — beraat yasağı: hiçbir açıklama alarmı kapatmaz; "
+               "kim sorusunun kaydı ilgili ekranda.",
+    }
