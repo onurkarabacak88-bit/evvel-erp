@@ -822,3 +822,239 @@ def sube_gelir_gider():
                "giderler. Kira, maaş, hammadde faturaları ve merkezi giderler DAHİL DEĞİL — "
                "kaba_fark bir kâr rakamı DEĞİLDİR. Tam tablo Maliyet sayfasında.",
     }
+
+
+# ── TAM KAPSAMA TURU (2026-07-08): envanter turundan doğan 7 pencere ──
+# Kural: DÜZ varsayılan (Query() yasak — beyin doğrudan çağırır). KİMLİK FIREWALL:
+# personel_id/personel_ad kolonları HİÇBİR pencereye girmez; yalnız sayı/toplam.
+
+@router.get("/vardiya-plan-ozet")
+def vardiya_plan_ozet(gun: int = 7):
+    """VARDİYA PLAN ÖZETİ (kimliksiz): şube×gün atama sayısı + durum kırılımı,
+    geriye N gün + ileriye N gün. Kim çalıştı DEĞİL, kaç atama/iptal var."""
+    g = max(3, min(30, int(gun or 7)))
+    with db() as (_, cur):
+        cur.execute(
+            """SELECT va.tarih::text AS gun, s.ad AS sube, va.durum,
+                      COUNT(*)::int AS atama
+               FROM vardiya_atama va
+               JOIN vardiya_slot vs ON vs.id = va.slot_id
+               JOIN subeler s ON s.id = vs.sube_id
+               WHERE va.tarih BETWEEN CURRENT_DATE - %s AND CURRENT_DATE + %s
+               GROUP BY 1, 2, 3 ORDER BY 1 DESC, 2""",
+            (g, g),
+        )
+        satirlar = [dict(r) for r in cur.fetchall() or []]
+    return {
+        "kesit_gun": g,
+        "atamalar": satirlar[:120],
+        "not": "KİMLİKSİZ plan özeti: şube-gün-durum atama sayıları (geçmiş+gelecek). "
+               "Kişi bazlı bilgi bu pencerede YOK — kim atandı vardiya ekranında.",
+    }
+
+
+@router.get("/maas-avans-ozet")
+def maas_avans_ozet():
+    """MAAŞ + AVANS KİMLİKSİZ ÖZET: dönem başına kişi SAYISI ve TOPLAMLAR.
+    Kişi adı/kimliği bu pencereye ASLA girmez (kimlik firewall)."""
+    with db() as (_, cur):
+        cur.execute(
+            """SELECT yil, ay, COUNT(DISTINCT personel_id)::int AS kisi_sayisi,
+                      ROUND(SUM(COALESCE(hesaplanan_net,0))::numeric, 2) AS toplam_net,
+                      ROUND(SUM(COALESCE(fazla_mesai_saat,0))::numeric, 1) AS toplam_fazla_mesai_saat,
+                      ROUND(SUM(COALESCE(eksik_gun,0))::numeric, 1) AS toplam_eksik_gun
+               FROM personel_aylik
+               GROUP BY yil, ay ORDER BY yil DESC, ay DESC LIMIT 4"""
+        )
+        donemler = [dict(r) for r in cur.fetchall() or []]
+        for d in donemler:
+            for k in ("toplam_net", "toplam_fazla_mesai_saat", "toplam_eksik_gun"):
+                if d.get(k) is not None:
+                    d[k] = float(d[k])
+        cur.execute(
+            """SELECT durum, COUNT(*)::int AS adet,
+                      ROUND(SUM(COALESCE(tutar,0))::numeric, 2) AS toplam
+               FROM personel_avans GROUP BY durum ORDER BY toplam DESC"""
+        )
+        avanslar = [{"durum": r["durum"], "adet": r["adet"],
+                     "toplam": float(r["toplam"] or 0)} for r in cur.fetchall() or []]
+    return {
+        "maas_donemleri": donemler,
+        "avans_durumlari": avanslar,
+        "not": "KİMLİKSİZ toplam düzey: kişi sayısı + toplam tutarlar. Kişi bazlı maaş "
+               "bu pencerede YOK (kimlik firewall) — detay Personel ekranında.",
+    }
+
+
+@router.get("/stok-hareket-ozet")
+def stok_hareket_ozet(gun: int = 7):
+    """STOK HAREKET ÖZETİ: şube × hareket türü adet+miktar (son N gün) + açık sayım
+    görevleri + son elle düzeltmeler. Kalem-kalem detay değil, akışın nabzı."""
+    g = max(3, min(30, int(gun or 7)))
+    with db() as (_, cur):
+        cur.execute(
+            """SELECT s.ad AS sube, h.hareket_turu, COUNT(*)::int AS adet,
+                      ROUND(SUM(ABS(COALESCE(h.miktar,0)))::numeric, 1) AS toplam_miktar
+               FROM sube_depo_stok_hareket h
+               JOIN subeler s ON s.id = h.sube_id
+               WHERE h.zaman >= NOW() - (%s * INTERVAL '1 day')
+               GROUP BY 1, 2 ORDER BY 1, adet DESC""",
+            (g,),
+        )
+        hareketler = [dict(r) for r in cur.fetchall() or []]
+        for h in hareketler:
+            if h.get("toplam_miktar") is not None:
+                h["toplam_miktar"] = float(h["toplam_miktar"])
+        cur.execute(
+            """SELECT COUNT(*)::int AS acik_gorev FROM stok_sayim_gorev
+               WHERE tamamlama_ts IS NULL"""
+        )
+        acik = dict(cur.fetchone() or {})
+        cur.execute(
+            """SELECT COUNT(*)::int AS adet FROM envanter_duzeltme
+               WHERE olusturma >= NOW() - INTERVAL '30 days'"""
+        )
+        duzeltme = dict(cur.fetchone() or {})
+    return {
+        "kesit_gun": g,
+        "hareket_kirilimi": hareketler[:60],
+        "acik_sayim_gorevi": acik.get("acik_gorev", 0),
+        "son_30g_envanter_duzeltme": duzeltme.get("adet", 0),
+        "not": "Şube×tür stok akış nabzı. Kalem-kalem soru için Tüketim Dörtgeni (B9) "
+               "penceresi; sayım detayı Stok Sayım ekranında.",
+    }
+
+
+@router.get("/kart-pozisyon")
+def kart_pozisyon():
+    """KART EKSTRE & LİMİT POZİSYONU: her kart için limit, son dönem borcu,
+    kullanılabilir limit, son ödeme tarihi + bekleyen kart planları toplamı."""
+    with db() as (_, cur):
+        cur.execute(
+            """SELECT k.id, k.kart_adi, k.banka,
+                      ROUND(COALESCE(k.limit_tutar,0)::numeric,2) AS limit_tutar,
+                      k.kesim_gunu, k.son_odeme_gunu,
+                      ROUND(COALESCE(k.faiz_orani,0)::numeric,2) AS faiz_orani
+               FROM kartlar k WHERE k.aktif = TRUE ORDER BY k.kart_adi"""
+        )
+        kartlar = [dict(r) for r in cur.fetchall() or []]
+        for kt in kartlar:
+            kt["limit_tutar"] = float(kt["limit_tutar"] or 0)
+            kt["faiz_orani"] = float(kt["faiz_orani"] or 0)
+            cur.execute(
+                """SELECT donem, ROUND(COALESCE(donem_borcu,0)::numeric,2) AS donem_borcu,
+                          ROUND(COALESCE(kullanilabilir_limit,0)::numeric,2) AS kullanilabilir,
+                          son_odeme_tarihi::text AS son_odeme
+                   FROM kart_ekstre_donem WHERE kart_id = %s
+                   ORDER BY donem DESC LIMIT 1""",
+                (kt["id"],),
+            )
+            e = cur.fetchone()
+            kt["son_ekstre"] = ({"donem": e["donem"], "donem_borcu": float(e["donem_borcu"]),
+                                 "kullanilabilir_limit": float(e["kullanilabilir"]),
+                                 "son_odeme_tarihi": e["son_odeme"]} if e else None)
+            cur.execute(
+                """SELECT ROUND(SUM(odenecek_tutar - COALESCE(odenen_tutar,0))::numeric,2) AS bekleyen
+                   FROM odeme_plani
+                   WHERE kart_id = %s AND durum IN ('bekliyor','onay_bekliyor')""",
+                (kt["id"],),
+            )
+            b = cur.fetchone()
+            kt["bekleyen_plan_toplami"] = float((b or {}).get("bekleyen") or 0)
+            del kt["id"]
+    return {
+        "kartlar": kartlar,
+        "not": "Kart başına limit + son ekstre pozisyonu + bekleyen ödeme planları. "
+               "Ekstre YAKLAŞIKTIR (banka canlı verisi değil, sistem kayıtları).",
+    }
+
+
+@router.get("/siparis-sevkiyat-ozet")
+def siparis_sevkiyat_ozet(gun: int = 30):
+    """SİPARİŞ-SEVKİYAT ZİNCİRİ ÖZETİ: toptancı sipariş durum kırılımı + bekleyen
+    şube talepleri + yolda bekleyen kalemler (kabul edilmemiş) yaşıyla."""
+    g = max(7, min(90, int(gun or 30)))
+    with db() as (_, cur):
+        cur.execute(
+            """SELECT durum, COUNT(*)::int AS adet FROM toptanci_siparis
+               WHERE olusturma >= NOW() - (%s * INTERVAL '1 day')
+               GROUP BY durum ORDER BY adet DESC""",
+            (g,),
+        )
+        siparisler = [dict(r) for r in cur.fetchall() or []]
+        cur.execute(
+            """SELECT COUNT(*)::int AS adet FROM siparis_talep WHERE durum = 'bekliyor'"""
+        )
+        bekleyen_talep = dict(cur.fetchone() or {}).get("adet", 0)
+        cur.execute(
+            """SELECT s.ad AS sube, y.kalem_adi, y.sevk_adet,
+                      y.sevk_ts::date::text AS sevk_gunu,
+                      (CURRENT_DATE - y.sevk_ts::date)::int AS yas_gun
+               FROM stok_yolda y JOIN subeler s ON s.id = y.sube_id
+               WHERE y.kabul_ts IS NULL AND y.durum NOT IN ('iptal')
+               ORDER BY y.sevk_ts ASC LIMIT 15"""
+        )
+        yolda = [dict(r) for r in cur.fetchall() or []]
+    return {
+        "kesit_gun": g,
+        "siparis_durum_kirilimi": siparisler,
+        "bekleyen_sube_talebi": bekleyen_talep,
+        "yolda_kabul_bekleyen": yolda,
+        "not": "Sevk edilmiş ama kabul edilmemiş kalemler yaşıyla listelenir — uzun "
+               "yaş, sevkiyat/kabul zincirinde kopukluk göstergesi olabilir (yorum insanın).",
+    }
+
+
+@router.get("/vadeli-alim-ozet")
+def vadeli_alim_ozet():
+    """VADELİ ALIM PORTFÖYÜ: durum kırılımı + vadesi 7 gün içinde gelenler +
+    vadesi geçmiş bekleyenler."""
+    with db() as (_, cur):
+        cur.execute(
+            """SELECT durum, COUNT(*)::int AS adet,
+                      ROUND(SUM(COALESCE(tutar,0))::numeric,2) AS toplam
+               FROM vadeli_alimlar GROUP BY durum ORDER BY toplam DESC"""
+        )
+        durumlar = [{"durum": r["durum"], "adet": r["adet"],
+                     "toplam": float(r["toplam"] or 0)} for r in cur.fetchall() or []]
+        cur.execute(
+            """SELECT aciklama, tedarikci, vade_tarihi::text AS vade,
+                      ROUND(COALESCE(tutar,0)::numeric,2) AS tutar,
+                      (vade_tarihi - CURRENT_DATE)::int AS kalan_gun
+               FROM vadeli_alimlar
+               WHERE durum = 'bekliyor' AND vade_tarihi <= CURRENT_DATE + 7
+               ORDER BY vade_tarihi ASC LIMIT 12"""
+        )
+        yaklasan = [dict(r) for r in cur.fetchall() or []]
+        for y in yaklasan:
+            y["tutar"] = float(y["tutar"] or 0)
+    return {
+        "durum_kirilimi": durumlar,
+        "vadesi_7gun_icinde_veya_gecmis": yaklasan,
+        "not": "kalan_gun eksi ise vade GEÇMİŞ demektir. Ödeme kararı insanındır; "
+               "seçenek kıyası için Ödeme Seçeneği penceresi (B20) kullanılabilir.",
+    }
+
+
+@router.get("/gunluk-not-ozet")
+def gunluk_not_ozet(gun: int = 30):
+    """İŞLETME GÜNLÜĞÜ PENCERESİ: sahibin girdiği notlar (kampanya, etkinlik, dış
+    etken) son N gün — ciro yorumlarında insan bağlamı."""
+    g = max(7, min(90, int(gun or 30)))
+    with db() as (_, cur):
+        cur.execute(
+            """SELECT g.tarih::text AS tarih, COALESCE(s.ad, 'GENEL') AS sube,
+                      g.baslik, LEFT(COALESCE(g.aciklama,''), 160) AS aciklama
+               FROM isletme_gunlugu g
+               LEFT JOIN subeler s ON s.id = g.sube_id
+               WHERE g.tarih >= CURRENT_DATE - %s
+               ORDER BY g.tarih DESC LIMIT 30""",
+            (g,),
+        )
+        notlar = [dict(r) for r in cur.fetchall() or []]
+    return {
+        "kesit_gun": g,
+        "notlar": notlar,
+        "not": "İnsan girdisi günlük notları — sayısal veri değil BAĞLAM. Ciro "
+               "değişimi yorumlanırken bu notlar aday açıklamadır, kanıt değildir.",
+    }
