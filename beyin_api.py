@@ -310,7 +310,17 @@ def _blok_derle(soru: str) -> List[Tuple[str, str, str]]:
             ekle(f"B9.{i+1}", f"Tüketim dörtgeni — {sb['ad']} (7 gün)",
                  _dortgen_blok(str(sb["id"]), str(sb["ad"])))
 
-    eslesen_var = bool(hedef_subeler or stok_anahtar)
+    # PATRON SORULARI (2026-07-07): "bugün sorunlar nedir / durum ne / ne oldu" gibi
+    # gündelik sorular derinlik bloklarını çeker — gün-gün kırılım olmadan beyin
+    # genel geçer konuşur (bebek dili eleştirisinin soru tarafı)
+    genel_durum = any(a in s for a in ("sorun", "durum", "ne oldu", "neler oldu",
+                                       "bugün", "bugun", "dün", "dun", "özet", "ozet",
+                                       "nasıl gidiyor", "nasil gidiyor"))
+    if genel_durum:
+        for bid, baslik, metin in _derinlik_bloklari():
+            bloklar.append((bid, baslik, metin[:4000]))
+
+    eslesen_var = bool(hedef_subeler or stok_anahtar or genel_durum)
     for bid, baslik, anahtarlar, uretici in secici:
         if any(a in s for a in anahtarlar):
             eslesen_var = True
