@@ -206,26 +206,46 @@ def kanit_paketi(entity_scope: str, entity_id: str, gun_bas: date, gun_bit: date
     # açıklama bağı OLAN olaylar 'aciklanmis' etiketi alır ve dikkat sırasında GERİYE
     # düşer; açıklanmamışlar öne. bagimsiz_aile_n'e ve pakete ASLA dokunulmaz —
     # hiçbir olay çıkarılmaz, hiçbir sayı düşürülmez (matematiğe indirgenmiş beraat yasak).
-    aciklanan_ids = set()
+    aciklayan_kural: dict = {}  # event_id → kural_id
     olay_ids = [o["event_id"] for o in olaylar]
     if olay_ids:
         with db() as (_, cur):
             cur.execute(
                 """
-                SELECT payload_json->'aciklanan'->>'event_id' AS ref
+                SELECT payload_json->'aciklanan'->>'event_id' AS ref,
+                       payload_json->>'kural_id' AS kural_id
                 FROM duyu_olay
                 WHERE duyu = 'sinaps_sarmal'
                   AND payload_json->'aciklanan'->>'event_id' = ANY(%s)
                 """,
                 (olay_ids,),
             )
-            aciklanan_ids = {str(dict(r)["ref"]) for r in (cur.fetchall() or [])}
-    olay_liste = [{**{k: o.get(k) for k in ("event_id", "duyu", "olay_tipi",
-                                            "signal_name", "occurred_at", "confidence")},
-                   "aciklama_durumu": ("aciklanmis" if o["event_id"] in aciklanan_ids
-                                       else "aciklanmamis")}
-                  for o in olaylar]
+            for r in cur.fetchall() or []:
+                d = dict(r)
+                aciklayan_kural[str(d["ref"])] = str(d.get("kural_id") or "")
+    # Y4 ağırlıkları (öğrenme AÇIK; n>=eşik kurallar uygulanabilir) — fail-safe boş dict
+    try:
+        from duyu_yavru import kural_agirliklari
+        agirliklar = kural_agirliklari()
+    except Exception:  # noqa: BLE001
+        agirliklar = {}
+    olay_liste = []
+    for o in olaylar:
+        eid = o["event_id"]
+        kural_id = aciklayan_kural.get(eid)
+        ag = agirliklar.get(kural_id or "") or {}
+        # açıklama gücü: kural henüz öğrenilmemişse (n<eşik) None — nötr açıklama
+        guc = ag.get("posterior") if ag.get("uygulanabilir") else None
+        olay_liste.append({**{k: o.get(k) for k in ("event_id", "duyu", "olay_tipi",
+                                                    "signal_name", "occurred_at", "confidence")},
+                           "aciklama_durumu": "aciklanmis" if kural_id else "aciklanmamis",
+                           "aciklayan_kural": kural_id,
+                           "aciklama_gucu": guc})
+    # Dikkat sırası: açıklanmamışlar ÖNDE; açıklanmışlar arasında ZAYIF kuralın
+    # açıklaması öne yakın (zayıf açıklama ≈ neredeyse açıklanmamış), güçlü geriye.
+    # SADECE sunum — sayıma/kapıya etkisi yok.
     olay_liste.sort(key=lambda o: (o["aciklama_durumu"] == "aciklanmis",
+                                   o.get("aciklama_gucu") if o.get("aciklama_gucu") is not None else 0.5,
                                    str(o.get("occurred_at") or "")))
     return {
         "odak": {"scope": entity_scope, "entity_id": entity_id,

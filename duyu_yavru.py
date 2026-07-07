@@ -402,11 +402,47 @@ def yavru_etiket(body: BagEtiketBody):
     return {"ok": True, "event_id": body.event_id, "karar": karar, "kural_id": kural_id}
 
 
-# ── Y4 ALTYAPISI (UYUR): kural karnesi + kural madenciliği ──────────────────
-# Öğrenme bayrağı KAPALI: karne yalnız GÖSTERİR, hiçbir kuralın davranışını değiştirmez.
-# 2-3 ay veri + yeterli etiket birikince aktivasyon TEK SATIR: bayrak True + ağırlığın
-# dikkat_sirasi'na bağlanması (Codex: kapı matematiğine ASLA değil).
-Y4_OGRENME_AKTIF = False
+# ── Y4: kural karnesi + kural madenciliği ────────────────────────────────────
+# Öğrenme bayrağı AÇIK (kullanıcı kararı 2026-07-07: "öğrenme kartını açık tut").
+# VERİ-ÖNCE BOZULMAZ: asıl bekçi N-EŞİĞİDİR — bir kuralın ağırlığı ancak n>=30 insan
+# etiketi birikince UYGULANIR (bugün hiçbiri; etiketler biriktikçe kural kural
+# kendiliğinden devreye girer — takvim değil veri karar verir). Ağırlık YALNIZ
+# dikkat sırasına dokunur; kapı matematiğine (bagimsiz_aile_n) ASLA (Codex mutlak kuralı).
+Y4_OGRENME_AKTIF = True
+Y4_N_ESIGI = 30  # 5-YZ birleşik kararı: <10 hiç, 10-29 zayıf-göster, >=30 uygula
+
+
+def kural_agirliklari() -> dict:
+    """{kural_id: {posterior, n, uygulanabilir}} — Y5 dikkat sırasının besleyicisi.
+    uygulanabilir = öğrenme açık VE n>=esik. Hata durumunda boş dict (fail-safe:
+    ağırlıksız davranış = bugünkü davranış)."""
+    try:
+        with db() as (_, cur):
+            cur.execute(
+                """
+                SELECT o.payload_json->>'kural_id' AS kural_id,
+                       COUNT(*) FILTER (WHERE e.insan_karari = 'dogru_bag')::int AS dogru_n,
+                       COUNT(*) FILTER (WHERE e.insan_karari = 'yanlis_bag')::int AS yanlis_n
+                FROM duyu_olay o
+                JOIN duyu_etiket e
+                  ON e.kaynak = 'bag_karari' AND e.iliskili_ref = o.event_id
+                WHERE o.duyu IN ('sinaps_sarmal','yavru_beklenti')
+                GROUP BY o.payload_json->>'kural_id'
+                """
+            )
+            out = {}
+            for r in cur.fetchall() or []:
+                d = dict(r)
+                dogru, yanlis = int(d.get("dogru_n") or 0), int(d.get("yanlis_n") or 0)
+                n = dogru + yanlis
+                out[str(d.get("kural_id"))] = {
+                    "posterior": round((1 + dogru) / (2 + n), 3), "n": n,
+                    "uygulanabilir": bool(Y4_OGRENME_AKTIF and n >= Y4_N_ESIGI),
+                }
+            return out
+    except Exception as e:  # noqa: BLE001
+        logger.warning("kural agirliklari okunamadi: %s", str(e)[:100])
+        return {}
 
 
 def _wilson_alt(dogru: int, n: int, z: float = 1.96) -> float:
@@ -456,14 +492,17 @@ def kural_karnesi():
             "dogru_n": dogru, "yanlis_n": yanlis,
             "posterior_ort": posterior, "wilson_alt": _wilson_alt(dogru, n),
             "n_esigi_rozet": rozet,
+            "agirlik_uygulaniyor": bool(Y4_OGRENME_AKTIF and n >= Y4_N_ESIGI),
         })
     return {
         "ogrenme_aktif": Y4_OGRENME_AKTIF,
+        "n_esigi": Y4_N_ESIGI,
         "karne": karne,
-        "not": "ÖĞRENME KAPALI — karne yalnız gösterir; hiçbir kuralın davranışını "
-               "değiştirmez. N<10 hiç, 10-29 'zayıf' rozetli, >=30 aktivasyona aday "
-               "(5-YZ birleşik kararı). Aktivasyon günü: bayrak + dikkat_sirasi bağı; "
-               "kapı matematiğine ASLA dokunulmaz.",
+        "not": "ÖĞRENME AÇIK — ama bekçi N-EŞİĞİ: bir kuralın ağırlığı ancak >=%d insan "
+               "etiketiyle UYGULANIR (kural kural kendiliğinden devreye girer). Ağırlık "
+               "yalnız dikkat sırasını etkiler; kapı matematiğine (bağımsız aile sayısı) "
+               "ASLA dokunulmaz. Wilson alt sınırı dürüst dil içindir: '10 bağda 8 "
+               "doğruydu, aralık geniş' — asla 'yüzde seksen isabet' değil." % Y4_N_ESIGI,
     }
 
 
