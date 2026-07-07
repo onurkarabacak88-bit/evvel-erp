@@ -497,6 +497,15 @@ def _gece_yarisi_scheduler():
             except Exception as e:
                 logger.warning(f"⏰ Scheduler konuşma izleri hatası: {e}")
 
+            # ÖZ-SORGU (2026-07-07, 'koltuğuma geç' talimatı): sistem kendine 3 patron
+            # sorusu sorar; cevaplayamadıkları kendiliğinden veri dileği olur.
+            try:
+                from beyin_api import gece_ozsorgu
+                gece_ozsorgu()
+                logger.info("⏰ Scheduler: öz-sorgu tamamlandı")
+            except Exception as e:
+                logger.warning(f"⏰ Scheduler öz-sorgu hatası: {e}")
+
             # EVVEL BEYNİ gece öz-anlatısı (L3) — ZİNCİRİN SONU (Codex zarf kararı:
             # anlatıcı, gecenin tüm olayları doğduktan sonra ve EN SON konuşur).
             # Arşive yazar + sabah WhatsApp mesajı (çerçeveli); hata-yutar.

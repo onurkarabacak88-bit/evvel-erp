@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import date
 import os
 import re
 from typing import List, Optional, Tuple
@@ -764,6 +765,81 @@ def sentez_onizle():
         tip="soru",
         ek_bloklar=_derinlik_bloklari(),
     )
+
+
+# ── ÖZ-SORGU MOTORU (2026-07-07, kullanıcı: "koltuğuma geç, soruları kendin sor") ────
+# Sistem her gece KENDİNE patron soruları sorar; cevaplayamadıkları kural 12 gereği
+# kendiliğinden VERİ DİLEĞİ olur. Soru bankası sahibin gerçek soru kalıplarından doğdu;
+# gecede 3 soru döner (maliyet sınırı), banka ~3 günde bir tam tur atar.
+_OZSORGU_BANKASI = (
+    "Bugün işletmede sorunlar nedir?",
+    "Dün hangi şubede kasa farkı vardı, hangi kapanışta?",
+    "Bu hafta ödemeleri karşılayabilecek miyim, nakit yetecek mi?",
+    "Tedarik zincirinde bekleyen veya kopuk ne var?",
+    "Stokta dikkat çeken uyumsuzluk var mı, hangi kalemlerde?",
+    "Ciro trendi nasıl, hangi şube zayıf görünüyor?",
+    "Ürünlere zam gerekiyor mu, maliyetler artıyor mu?",
+    "Duyuların sağlığı nasıl, sistemin kör noktası var mı?",
+    "Dün sabah raporu ne söyledi, sonrasında ne değişti?",
+    "Menü fiyatlarında son değişiklik var mı, satışa etkisi görünüyor mu?",
+)
+
+
+def gece_ozsorgu() -> None:
+    """GECE: bankadan 3 rotasyonlu soru → kendi /sor hattı → sonuç omurgaya.
+    Cevaplanamayan/dilekli sorular sistemin KENDİ bulduğu boşluklardır."""
+    try:
+        from duyu_omurga import duyu_nabiz_yaz, duyu_olay_yaz
+        if not llm_mevcut():
+            duyu_nabiz_yaz("ozsorgu", durum="hata", yutulan_hata=1,
+                           not_metin="LLM anahtarı yok")
+            return
+        gun_no = date.today().toordinal()
+        n = len(_OZSORGU_BANKASI)
+        secilen = [_OZSORGU_BANKASI[(gun_no * 3 + k) % n] for k in range(3)]
+        cevaplanan, dilekli = 0, 0
+        for soru in secilen:
+            try:
+                sonuc = _sor_calistir(soru, tip="ozsorgu")
+                cevap = (sonuc.get("cevap") or "")
+                dilek_var = "VERİ DİLEĞİ" in cevap or "VERI DILEGI" in cevap.upper()
+                basarili = bool(sonuc.get("ok"))
+                if basarili:
+                    cevaplanan += 1
+                if dilek_var:
+                    dilekli += 1
+                duyu_olay_yaz(
+                    "ozsorgu",
+                    "meta.ozsorgu.cevaplandi" if basarili else "meta.ozsorgu.cevaplanamadi",
+                    f"{soru[:40]}_{date.today()}",
+                    entity_scope="genel", occurred_at=str(date.today()),
+                    signal_name="Öz-sorgu: sistem kendine sordu",
+                    evidence_class="gozlem",
+                    payload={"soru": soru, "ok": basarili, "dilek_dogdu": dilek_var,
+                             "red_nedeni": sonuc.get("red_nedeni"),
+                             "cevap_ozet": cevap[:200]},
+                )
+            except Exception as e:  # noqa: BLE001
+                logger.warning("ozsorgu soru yutuldu: %s", str(e)[:100])
+        duyu_nabiz_yaz("ozsorgu", taranan=len(secilen), uretilen=cevaplanan,
+                       not_metin=f"dilek dogan: {dilekli}")
+    except Exception as e:  # noqa: BLE001
+        logger.warning("gece ozsorgu yutuldu: %s", str(e)[:120])
+
+
+@router.get("/ozsorgu-sonuclari")
+def ozsorgu_sonuclari(gun: int = 7):
+    """Sistemin kendine sorduğu soruların karnesi — cevaplananlar, dilek doğuranlar."""
+    with db() as (_, cur):
+        cur.execute(
+            """SELECT olay_tipi, occurred_at::date::text AS gun, payload_json
+               FROM duyu_olay
+               WHERE duyu = 'ozsorgu' AND observed_at >= NOW() - (%s || ' days')::interval
+               ORDER BY observed_at DESC LIMIT 40""",
+            (str(max(1, min(30, gun))),),
+        )
+        return {"sonuclar": [dict(r) for r in (cur.fetchall() or [])],
+                "banka_boyutu": len(_OZSORGU_BANKASI)}
 
 
 def gece_sentez() -> None:

@@ -325,6 +325,7 @@ _DUYU_REGISTRY = {
     "soz_aksiyon":        {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0, "kaynak_aile": "iletisim"},
     "yavru_beklenti":     {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0, "kaynak_aile": "meta"},
     "isletme_gunlugu":    {"sinif": "olay_gudumlu_normal", "kaynak_aile": "baglam"},
+    "ozsorgu":            {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0, "kaynak_aile": "meta"},
 }
 
 
