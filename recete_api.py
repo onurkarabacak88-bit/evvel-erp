@@ -1007,9 +1007,17 @@ def gece_degirmen_izleme() -> None:
 
 @router.get("/unutulan-urun-ac")
 def unutulan_urun_ac(gun: int = 7):
+    """UNUTULAN ÜRÜN-AÇ DEDEKTÖRÜ v2 (TEMEL ONARIM #2: tek kanonik satış kaynağı).
+    Beklenen artık ürün-bazlı Evo çok-satılan × reçete bardak kalemi (şube kırılımlı)
+    — reçete kıyasıyla AYNI sözlük; Grup_Pasta kategori haritası kullanılmaz.
+    İki bağımsız parmak izi: (a) beklenen bardak > hesaplanan kullanım (satış fiziken
+    bardak ister), (b) aynı gün depo zincir kopuğu → sinyal=guclu. İSİM YOK."""
     g = max(3, min(14, int(gun or 7)))
     bugun = date.today()
-    # bar tarafı: şube-gün-kalem açılış/ürün-aç/kapanış/kullanım
+    hedef_keys = ("bardak_plastik", "bardak_buyuk", "bardak_kucuk")
+    bar_key_malzeme = {v[0]: k for k, v in _RECETE_BAR_ES.items()
+                       if v[0] in hedef_keys}
+    # bar tarafı: şube-gün kullanım + ürün-aç
     try:
         from operasyon_merkez_api import ops_bar_ozet
         aylar = {str(bugun - timedelta(days=i))[:7] for i in range(g + 1)}
@@ -1021,47 +1029,78 @@ def unutulan_urun_ac(gun: int = 7):
     except Exception as e:  # noqa: BLE001
         logger.warning("unutulan urun-ac bar okumasi: %s", str(e)[:80])
         bar_rows = []
-    hedef_keys = ("bardak_plastik", "bardak_buyuk", "bardak_kucuk", "sut_litre",
-                  "su_adet", "soda_adet", "redbull_adet")
     bulgular = []
     with db() as (_, cur):
+        # onaylı eşleşmeler + reçete bardak kalemleri (recete_kontrol ile aynı mantık)
+        cur.execute("""SELECT kaynak_ad, hedef_ad FROM recete_eslestirme
+                       WHERE durum='onayli' AND tip='urun'""")
+        urun_es = {r["kaynak_ad"]: r["hedef_ad"] for r in
+                   (dict(x) for x in cur.fetchall() or [])}
+        cur.execute("""
+            SELECT r.urun_ad_norm, k.malzeme_ad
+            FROM recete r JOIN recete_kalem k ON k.recete_id = r.id
+            WHERE r.aktif=TRUE AND k.malzeme_sinif='bardak'""")
+        urun_bardak = {}  # urun_norm → bar_key
+        for row in (dict(x) for x in cur.fetchall() or []):
+            m = _norm(row["malzeme_ad"])
+            bk = (_RECETE_BAR_ES.get(m) or (None,))[0]
+            if bk in hedef_keys:
+                urun_bardak[row["urun_ad_norm"]] = bk
+        evo_ad_to_norm = { _norm(ea): rn for rn, ea in urun_es.items() }
+        # Evo günlük ürün satışları (cache) → şube-gün-bar_key beklenen bardak adedi
+        cur.execute("""SELECT bastar::text AS gun, veri_json FROM evo_rapor_cache
+                       WHERE anahtar='sube-grup-detay' AND bastar=bittar
+                         AND bastar >= %s""", (str(bugun - timedelta(days=g)),))
+        beklenen: Dict[tuple, float] = {}  # (evo_sube_ad_norm, gun, bar_key) → adet
+        for row in (dict(x) for x in cur.fetchall() or []):
+            gun_s = row["gun"]
+            for evo_sube_ad, sd in (row["veri_json"].get("subeler") or {}).items():
+                sn = _norm(evo_sube_ad)
+                for u in sd.get("cok_satilan") or []:
+                    rn = evo_ad_to_norm.get(_norm(str(u.get("ad") or "")))
+                    if not rn:
+                        continue
+                    bk = urun_bardak.get(rn)
+                    if not bk:
+                        continue
+                    beklenen[(sn, gun_s, bk)] = beklenen.get((sn, gun_s, bk), 0.0) \
+                        + float(u.get("adet") or 0)
+        # şube adı köprüsü: Evvel şube adı → Evo şube adı (tek merkez eşleştirici)
         try:
-            from evo_sync import evo_bar_adet_by_sube_id
+            from evo_sync import evvel_sube_evo_id_eslestir, EVO_SUBE_ID_MAP
         except Exception:  # noqa: BLE001
-            evo_bar_adet_by_sube_id = None
-        evo_cache: Dict[str, dict] = {}
+            evvel_sube_evo_id_eslestir = None
+            EVO_SUBE_ID_MAP = {}
         for r in bar_rows:
             t = str(r.get("tarih") or "")
             if not t or t < str(bugun - timedelta(days=g)) or t >= str(bugun):
                 continue
-            sid = str(r.get("sube_id") or "")
-            # Evo satış (gün bazlı, kendi cache'iyle)
-            if t not in evo_cache and evo_bar_adet_by_sube_id is not None:
+            evo_sn = None
+            if evvel_sube_evo_id_eslestir is not None:
                 try:
-                    from datetime import date as _d
-                    y, m, dd = (int(x) for x in t.split("-"))
-                    evo_cache[t] = evo_bar_adet_by_sube_id(cur, _d(y, m, dd)) or {}
+                    eid = evvel_sube_evo_id_eslestir(str(r.get("sube_adi") or ""))
+                    if eid is not None:
+                        evo_sn = _norm(EVO_SUBE_ID_MAP.get(str(eid)) or "")
                 except Exception:  # noqa: BLE001
-                    evo_cache[t] = {}
-            evo_by = (evo_cache.get(t) or {}).get("by_sube") or {}
-            evo_sube = evo_by.get(sid) or {}
+                    evo_sn = None
+            if not evo_sn:
+                continue
+            sid = str(r.get("sube_id") or "")
             for bk in hedef_keys:
                 kullanilan = (r.get("satilan") or {}).get(bk)
                 if kullanilan is None:
                     continue
-                satis = (evo_sube.get(bk) or {}).get("adet")
-                if satis is None:
+                bek = beklenen.get((evo_sn, t, bk))
+                if bek is None:
                     continue
-                acik = float(satis) - float(kullanilan)
-                if acik < 3:  # küçük dalga gürültü
+                acik = float(bek) - float(kullanilan)
+                if acik < 5:  # gürültü eşiği
                     continue
-                # depo zincir kopuğu aynı gün var mı? (bar-key = depo kodu)
                 cur.execute(
                     """SELECT onceki_miktar, sonraki_miktar
                        FROM sube_depo_stok_hareket
                        WHERE sube_id=%s AND kalem_kodu=%s AND zaman::date=%s
-                       ORDER BY zaman ASC, created_at ASC""",
-                    (sid, bk, t))
+                       ORDER BY zaman ASC, created_at ASC""", (sid, bk, t))
                 hs = [dict(x) for x in cur.fetchall() or []]
                 kopuk = 0
                 son = None
@@ -1073,7 +1112,8 @@ def unutulan_urun_ac(gun: int = 7):
                         son = float(sm)
                 bulgular.append({
                     "sube": r.get("sube_adi"), "tarih": t, "kalem": bk,
-                    "evo_satis": satis, "hesaplanan_kullanim": kullanilan,
+                    "beklenen_bardak": round(float(bek), 1),
+                    "hesaplanan_kullanim": kullanilan,
                     "acikta_kalan": round(acik, 1),
                     "urun_ac_kaydi": (r.get("urun_ac") or {}).get(bk),
                     "depo_zincir_kopugu": kopuk,
@@ -1083,10 +1123,9 @@ def unutulan_urun_ac(gun: int = 7):
     return {
         "kesit_gun": g,
         "bulgular": bulgular[:40],
-        "not": "OLASI unutulmuş ürün-aç: satış fiziken malzeme ister — hesaplanan "
-               "kullanım satışın altındaysa bara KAYITSIZ mal girmiş olabilir. "
-               "sinyal=guclu: aynı gün depo hareket zincirinde kopukluk DA var (iki "
-               "bağımsız tanık). sinyal=zayif: tek tanık — Evo etiket kapsam payı "
-               "olabilir. İSİM YOK; o günün kapanış/vardiya kaydı kimin olduğunu "
-               "söyler. HÜKÜM YOK — eğitim/hatırlatma fırsatı olarak da okunabilir.",
+        "not": "v2 — TEK KANONİK SATIŞ: beklenen = ürün-bazlı Evo çok-satılan × "
+               "reçete bardak kalemi (reçete kıyasıyla aynı sözlük; eşleşmemiş "
+               "ürünler kapsam dışı → beklenen alt sınırdır, gerçek açık daha "
+               "büyük olabilir). sinyal=guclu: aynı gün depo zincir kopuğu da var. "
+               "İSİM YOK; kapanış/vardiya kaydı kimi söyler. HÜKÜM YOK.",
     }
