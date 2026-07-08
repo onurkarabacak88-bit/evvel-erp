@@ -761,6 +761,8 @@ def _degirmen_ensure(cur) -> None:
     """)
     # Helios 65 (TEMA+Köyceğiz) üç doz sayar; F64E (Zafer) iki. Kolon sonradan eklendi.
     cur.execute("ALTER TABLE degirmen_sayac ADD COLUMN IF NOT EXISTS uc_sayac BIGINT")
+    # F64E ana ekrani BUGUNKU cekimi de gosterir (sag ust bardak ikonu) - dogrudan giris
+    cur.execute("ALTER TABLE degirmen_sayac ADD COLUMN IF NOT EXISTS gunluk_cekim BIGINT")
     # SAHİP KURALI (2026-07-08, TÜM ŞUBELER): tek buton kullanılır, HER ÇEKİM
     # 17,5g çift ayarlıdır. 8oz'da çift çekilip iki bardağa bölünür; tek 8oz'da
     # ikinci shot çöpe gidebilir — makine sayacı israfı DA sayar (bilinçli: görünür
@@ -790,23 +792,27 @@ def degirmen_sayac_kaydet(payload: dict):
     tek = payload.get("tek_sayac")
     cift = payload.get("cift_sayac")
     uc = payload.get("uc_sayac")
-    if tek is None and cift is None and uc is None:
+    gunluk = payload.get("gunluk_cekim")
+    if tek is None and cift is None and uc is None and gunluk is None:
         raise HTTPException(400, "en az bir sayaç değeri gerekli")
     with db() as (conn, cur):
         _ensure(cur)
         _degirmen_ensure(cur)
         cur.execute(
-            """INSERT INTO degirmen_sayac (id, sube_id, tarih, tek_sayac, cift_sayac, uc_sayac)
-               VALUES (%s,%s,CURRENT_DATE,%s,%s,%s)
+            """INSERT INTO degirmen_sayac (id, sube_id, tarih, tek_sayac, cift_sayac,
+                                           uc_sayac, gunluk_cekim)
+               VALUES (%s,%s,CURRENT_DATE,%s,%s,%s,%s)
                ON CONFLICT (sube_id, tarih)
                DO UPDATE SET tek_sayac=COALESCE(EXCLUDED.tek_sayac, degirmen_sayac.tek_sayac),
                              cift_sayac=COALESCE(EXCLUDED.cift_sayac, degirmen_sayac.cift_sayac),
                              uc_sayac=COALESCE(EXCLUDED.uc_sayac, degirmen_sayac.uc_sayac),
+                             gunluk_cekim=COALESCE(EXCLUDED.gunluk_cekim, degirmen_sayac.gunluk_cekim),
                              olusturma=NOW()""",
             (str(uuid.uuid4()), sube_id,
              int(tek) if tek is not None else None,
              int(cift) if cift is not None else None,
-             int(uc) if uc is not None else None))
+             int(uc) if uc is not None else None,
+             int(gunluk) if gunluk is not None else None))
         conn.commit()
     return {"ok": True, "sube_id": sube_id}
 
@@ -828,7 +834,7 @@ def degirmen_kiyas(gun: int = 7):
         uc_g = prm.get("degirmen_uc_doz_g", 17.5)
         cur.execute(
             """SELECT d.sube_id, s.ad AS sube, d.tarih::text AS tarih,
-                      d.tek_sayac, d.cift_sayac, d.uc_sayac
+                      d.tek_sayac, d.cift_sayac, d.uc_sayac, d.gunluk_cekim
                FROM degirmen_sayac d LEFT JOIN subeler s ON s.id = d.sube_id
                WHERE d.tarih >= %s ORDER BY d.sube_id, d.tarih""",
             (str(bugun - timedelta(days=g + 3)),))
@@ -838,6 +844,14 @@ def degirmen_kiyas(gun: int = 7):
     onceki: Dict[str, dict] = {}
     for r in rows:
         sid = r["sube_id"]
+        # GUNLUK CEKIM dogrudan girildiyse (F64E sag ust) fark hesabina gerek yok
+        if r.get("gunluk_cekim") is not None:
+            gunluk.append({"sube": r["sube"] or sid, "tarih": r["tarih"],
+                           "gunluk_cekim": int(r["gunluk_cekim"]),
+                           "makine_gram": round(int(r["gunluk_cekim"]) * cift_g, 1),
+                           "kaynak": "gunluk_dogrudan"})
+            onceki[sid] = r
+            continue
         o = onceki.get(sid)
         if o is not None:
             satir = {"sube": r["sube"] or sid, "tarih": r["tarih"],

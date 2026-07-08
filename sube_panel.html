@@ -5859,12 +5859,13 @@
         <div style="margin-bottom:16px">
           <div style="font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.6px;color:#f59e0b;margin-bottom:6px;display:flex;align-items:center;gap:5px">
             ◈ Değirmen Sayacı
-            <span class="tip-q" data-tip="Değirmen ekranındaki İSTATİSTİK sayılarını olduğu gibi yazın; SIFIRLAMAYIN — sistem dünle farkını kendi alır. Kullandığınız butonun sayacını kendi alanına yazın (F64E: istatistik menüsü · Helios: ana ekran I/II/III). Boş bırakılabilir.">?</span>
+            <span class="tip-q" data-tip="EN KOLAY: F64E ana ekran sağ üstteki BUGÜNKÜ çekim sayısını ilk alana yazın. Alternatif: birikimli sayaçları kendi alanlarına yazın (Helios: ana ekran I/II/III) — SIFIRLAMAYIN, sistem dünle farkını alır. Kapanış gece yarısını GEÇTİYSE bugünkü sayı sıfırlanmış olabilir; o durumda birikimli sayaçları girin. Boş bırakılabilir.">?</span>
           </div>
-          <div class="kap-stok3">
-            <div><div class="kap-lbl">Doz I (tek)</div><input id="kapDegTek" class="kap-inp-stok" inputmode="numeric" placeholder="sayaç" /></div>
-            <div><div class="kap-lbl">Doz II (çift)</div><input id="kapDegCift" class="kap-inp-stok" inputmode="numeric" placeholder="sayaç" /></div>
-            <div><div class="kap-lbl">Doz III (varsa)</div><input id="kapDegUc" class="kap-inp-stok" inputmode="numeric" placeholder="Helios" /></div>
+          <div class="kap-stok3" style="grid-template-columns:1fr 1fr 1fr 1fr">
+            <div><div class="kap-lbl">Bugünkü Çekim</div><input id="kapDegGunluk" class="kap-inp-stok" inputmode="numeric" placeholder="sağ üst" /></div>
+            <div><div class="kap-lbl">Doz I (toplam)</div><input id="kapDegTek" class="kap-inp-stok" inputmode="numeric" placeholder="sayaç" /></div>
+            <div><div class="kap-lbl">Doz II (toplam)</div><input id="kapDegCift" class="kap-inp-stok" inputmode="numeric" placeholder="sayaç" /></div>
+            <div><div class="kap-lbl">Doz III</div><input id="kapDegUc" class="kap-inp-stok" inputmode="numeric" placeholder="Helios" /></div>
           </div>
         </div>
         <div style="display:flex;gap:10px">
@@ -6700,13 +6701,15 @@ async function kapanisGonderSubmit(otomatik) {
       var _dt = parseInt(inpVal('kapDegTek') || '', 10);
       var _dc = parseInt(inpVal('kapDegCift') || '', 10);
       var _du = parseInt(inpVal('kapDegUc') || '', 10);
-      if (!isNaN(_dt) || !isNaN(_dc) || !isNaN(_du)) {
+      var _dg = parseInt(inpVal('kapDegGunluk') || '', 10);
+      if (!isNaN(_dt) || !isNaN(_dc) || !isNaN(_du) || !isNaN(_dg)) {
         fetch(apiUrl('/recete/degirmen-sayac'), {
           method: 'POST', headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({ sube_id: SUBE_ID,
             tek_sayac: isNaN(_dt) ? null : _dt,
             cift_sayac: isNaN(_dc) ? null : _dc,
-            uc_sayac: isNaN(_du) ? null : _du })
+            uc_sayac: isNaN(_du) ? null : _du,
+            gunluk_cekim: isNaN(_dg) ? null : _dg })
         }).catch(function(){});
       }
     } catch (e) { /* değirmen kaydı kapanışı etkilemez */ }
