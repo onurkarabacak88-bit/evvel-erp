@@ -1316,7 +1316,33 @@ def tutarsizlik_ozeti(gun: int = 7):
     except Exception as e:  # noqa: BLE001
         logger.warning("tutarsizlik recete: %s", str(e)[:80])
 
-    # 4) MAKİNE ↔ SATIŞ (değirmen sayacı)
+    # 4) TOPTANCI KABUL ↔ STOK GİRİŞİ (R10 beklenti ihlalleri — omurgadan)
+    # "Kabul onaylandı ama depo stoğu artmadı" = giriş tarafının tutarsızlığı.
+    try:
+        with db() as (_, cur):
+            cur.execute(
+                """SELECT occurred_at::text AS tarih, entity_id, payload_json
+                   FROM duyu_olay
+                   WHERE duyu = 'yavru_beklenti'
+                     AND olay_tipi = 'yavru.beklenti.cocuk_gelmedi'
+                     AND payload_json->>'kural_id' = 'R10_kabul_stok'
+                     AND observed_at >= NOW() - (%s * INTERVAL '1 day')
+                   ORDER BY observed_at DESC LIMIT 10""", (g,))
+            for r in [dict(x) for x in cur.fetchall() or []]:
+                p = r.get("payload_json") or {}
+                satirlar.append({
+                    "konu": "toptancı kabul ↔ stok girişi",
+                    "tarih": (r.get("tarih") or "")[:10],
+                    "kaynak_a": "sevkiyat kabulü (onaylandı)",
+                    "deger_a": p.get("kabul_adet") or "kabul kaydı var",
+                    "kaynak_b": "depo stok girişi",
+                    "deger_b": "GİRİŞ YOK",
+                    "beklenti": "kabul edilen mal depo stoğuna GİRMELİ (R10 zinciri)",
+                })
+    except Exception as e:  # noqa: BLE001
+        logger.warning("tutarsizlik kabul-stok: %s", str(e)[:80])
+
+    # 5) MAKİNE ↔ SATIŞ (değirmen sayacı)
     try:
         from recete_api import degirmen_kiyas
         dk = degirmen_kiyas(gun=g)
@@ -1338,8 +1364,9 @@ def tutarsizlik_ozeti(gun: int = 7):
         "kesit_gun": g,
         "toplam": len(satirlar),
         "tutarsizliklar": satirlar[:60],
-        "not": "İKİ KAYNAK AYNI ŞEYİ FARKLI SÖYLÜYOR listesi — hüküm yok, beraat da "
-               "yok: hiçbir açıklama satırı listeden düşürmez, yorum insanındır. "
+        "not": "İKİ KAYNAK AYNI ŞEYİ FARKLI SÖYLÜYOR listesi (5 kontrol: ciro-kasa izi, 
+               "devir, satış-tüketim, kabul-stok girişi, makine-satış) — hüküm yok, "
+               "beraat da yok: hiçbir açıklama satırı listeden düşürmez, yorum insanındır. "
                "Boş liste 'her şey tutarlı' demektir. Eşik: satış/makine kıyasında "
                "±%15 altı gürültü sayılıp gösterilmez (ham hali ilgili pencerelerde).",
     }
