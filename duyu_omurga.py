@@ -286,6 +286,7 @@ def cursor_ilerlet(cur, okuyucu: str, son_olay: dict) -> None:
 # rutinle doyar ve isme-yaklaşma bekçisi hiçbir şey ölçmez. Varsayılan=False (fail-closed);
 # rutin duyunun PATERN-sınıfı istisna olayı yine sayılır (kanit_paketi kuralı).
 _DUYU_REGISTRY = {
+    "recete_kontrol":     {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0, "kaynak_aile": "stok", "kanit": False},
     "k1_mutabakat":       {"sinif": "zamanli", "period_gun": 1.2, "grace": 2.0, "kaynak_aile": "kasa_defteri", "kanit": True},
     "kdv_pozisyon":       {"sinif": "zamanli", "period_gun": 32.0, "grace": 1.5, "kaynak_aile": "ciro"},
     "borc_plan_selfheal": {"sinif": "olay_gudumlu_anomali", "kaynak_aile": "kasa_defteri", "kanit": True},

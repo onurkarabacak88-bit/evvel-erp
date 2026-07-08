@@ -509,6 +509,8 @@ def _gece_yarisi_scheduler():
             # ÖZ-SORGU (2026-07-07, 'koltuğuma geç' talimatı): sistem kendine 3 patron
             # sorusu sorar; cevaplayamadıkları kendiliğinden veri dileği olur.
             try:
+                from recete_api import gece_recete_kontrol_ozeti
+                gece_recete_kontrol_ozeti()  # recete hafta kiyasi -> omurga (oneri-only)
                 from beyin_api import gece_ozsorgu
                 gece_ozsorgu()
                 logger.info("⏰ Scheduler: öz-sorgu tamamlandı")

@@ -568,6 +568,12 @@ def _blok_derle(soru: str, yonlendirme_ek: str = "") -> List[Tuple[str, str, str
          ("anomali", "kasa kaydı yok", "kasa kaydi yok", "baskın", "baskin",
           "şüpheli", "supheli", "eşleşmeyen", "eslesmeyen"),
          lambda: _j(__import__("duyu_gorunumler").kasa_anomali_ozet(gun=30))),
+        ("B36", "Reçete kontrolü (beklenen=satış×reçete ↔ gerçek tüketim, 7 gün)",
+         ("reçete", "recete", "fazla giden", "fazla gitti", "beklenen tüketim",
+          "beklenen tuketim", "israf", "malzeme fark", "süt fark", "sut fark",
+          "kahve fark", "bardak fark"),
+         lambda: _j({k: (v if not isinstance(v, list) else v[:40])
+                     for k, v in __import__("recete_api").recete_kontrol(gun=7).items()})),
         ("B16", "Nakit ufku (HESAPLANMIŞ projeksiyon: kasa + ciro ort - giderler - ödemeler, 3 senaryo)",
          ("ödeyebil", "odeyebil", "yapabilecek", "yetecek", "yeter mi", "nakit",
           "ödeme plan", "odeme plan", "ödemeleri", "odemeleri", "ufuk", "hafta",

@@ -702,3 +702,40 @@ def ambalaj_kaydet(payload: dict):
         conn.commit()
     return {"ok": True, "kalem_kodu": kod, "icerik": float(icerik),
             "birim": birim, "varsayim": varsayim}
+
+
+def gece_recete_kontrol_ozeti() -> None:
+    """GECE ZİNCİRİ: 7 günlük reçete kıyas özetini omurgaya yazar (öneri-only;
+    haftalık pencere — toplu ambalaj açma günlük kıyası bozar, hafta düzeltir)."""
+    try:
+        r = recete_kontrol(gun=7)
+        kiyas = r.get("kiyas") or []
+        from datetime import date as _d
+        from duyu_omurga import duyu_olay_yaz
+        ozet: dict = {}
+        for k in kiyas:
+            if k.get("fark") is None:
+                continue
+            m = k["malzeme"]
+            o = ozet.setdefault(m, {"beklenen": 0.0, "gercek": 0.0, "birim": k["birim"]})
+            o["beklenen"] += k["beklenen_miktar"]
+            o["gercek"] += k["gercek_miktar"]
+        yil, hafta, _ = _d.today().isocalendar()
+        for m, o in ozet.items():
+            if not o["beklenen"]:
+                continue
+            fark_y = round((o["gercek"] - o["beklenen"]) / o["beklenen"] * 100, 1)
+            duyu_olay_yaz(
+                "recete_kontrol", "stok.recete.hafta_kiyasi",
+                f"{m}:{yil}-{hafta}",  # malzeme+hafta idempotent
+                entity_scope="genel", signal_name="Reçete-tüketim hafta kıyası",
+                evidence_class="oneri", confidence=0.7,
+                payload={"malzeme": m, "beklenen": round(o["beklenen"], 1),
+                         "gercek": round(o["gercek"], 1), "birim": o["birim"],
+                         "fark_yuzde": fark_y,
+                         "not": "GÖZLEM (hüküm yok): beklenen=satış×reçete, "
+                                "gerçek=devirli bar sayımı / ürün-aç. Kalıcı ve tek "
+                                "yönlü fark insanın bakacağı yerdir."},
+            )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("gece recete kontrol ozeti hatasi: %s", str(e)[:120])
