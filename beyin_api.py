@@ -995,6 +995,8 @@ def _sor_calistir(soru: str, tip: str = "soru", ek_bloklar=None,
             + f"\n\n⚠️ ÖNCEKİ DENEMEN OTOMATİK DOĞRULAMADAN GEÇEMEDİ: {red}. "
               "Cevabını yeniden yaz: YALNIZ bağlam bloklarında AYNEN geçen sayıları kullan; "
               "toplama/çıkarma/yuvarlama YAPMA (toplam gerekiyorsa sayıları ayrı ayrı ver); "
+              "FARK/İLİŞKİ soruluyorsa bloklardaki HAZIR 'fark', 'fark_yuzde', "
+              "'olmasi_gereken', 'hipotez' alanlarını AYNEN aktar — kendin hesaplama; "
               "her iddiaya [B#] referansı koy."
         )
         cevap2, model2 = _llm_cagir(system_metni, duzeltme)
