@@ -406,6 +406,8 @@ def eslestirme_karar(payload: dict):
 # eşleşmesi GEREKMEZ — gerçek taraf bar satilan'dan (açılış + ürün-aç − kapanış).
 _RECETE_BAR_ES = {
     "sut": ("sut_litre", 1000.0, "ml"),
+    # espresso gram ↔ kahve paketi (1 kg, sahip teyitli): beklenen g / gerçek paket×1000
+    "espresso": ("kahve_paket", 1000.0, "g"),
     "plastik bardak": ("bardak_plastik", 1.0, "adet"),
     # depo kodları = bar anahtarları: '14oz Bardak'→bardak_buyuk, '8oz Bardak'→bardak_kucuk
     # (karton_bardak anahtarı DEĞİL — depo dökümü dersi, 2026-07-08)
