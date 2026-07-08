@@ -1530,3 +1530,168 @@ def stok_denge(gun: int = 7, sube: str = "", kalem: str = ""):
                "recete/kontrol ve bar özeti. Toplam eldeki = depo mevcut + bar "
                "kapanış sayımı. GÖZLEMDİR — yorum insanın.",
     }
+
+
+# ── ÇAPRAZ HİPOTEZ MOTORU (2026-07-09, sahip onayı: 'bunu da yap') ──
+# İki ucun defterini OTOMATİK eşleştirir ve tek cümlelik hipotez üretir:
+#  1. DEPO kayıtsız çıkışı (zincir kopuğundan YÖNLÜ ölçülür: kopukta
+#     |önceki − bir önceki kaydın sonrakisi| = kayıtsız değişim miktarı)
+#  2. BAR açığı (dedektör v3: satış var / kullanım az farkı)
+#  → aynı şube-gün-kalemde örtüşüyorlarsa: 'muhtemel kayıtsız ürün-aç'
+#  3. SEVK net≠0 → stok_yolda'da kabul bekleyen VARSA: 'yolda' (kesin);
+#     yoksa: 'sevk çıkışı karşılıksız' adayı.
+# HÜKÜM YOK — hipotez + güven + tanıklar; karar insanın.
+
+@router.get("/stok-capraz-hipotez")
+def stok_capraz_hipotez(gun: int = 7):
+    g = max(3, min(14, int(gun or 7)))
+    bugun = date.today()
+    hipotezler: List[dict] = []
+
+    # 1) depo kayıtsız değişimleri (şube-gün-kalem, yönlü)
+    depo_kayitsiz: Dict[tuple, float] = {}
+    with db() as (_, cur):
+        cur.execute(
+            """SELECT h.sube_id, s.ad AS sube, h.kalem_kodu,
+                      h.zaman::date::text AS gun,
+                      h.onceki_miktar, h.sonraki_miktar
+               FROM sube_depo_stok_hareket h JOIN subeler s ON s.id = h.sube_id
+               WHERE h.zaman >= NOW() - (%s * INTERVAL '1 day')
+               ORDER BY h.sube_id, h.kalem_kodu, h.zaman ASC, h.created_at ASC""",
+            (g,))
+        son: Dict[tuple, float] = {}
+        sube_ad: Dict[str, str] = {}
+        for r in (dict(x) for x in cur.fetchall() or []):
+            key = (r["sube_id"], r["kalem_kodu"])
+            sube_ad[r["sube_id"]] = r["sube"]
+            om, sm = r.get("onceki_miktar"), r.get("sonraki_miktar")
+            if key in son and om is not None:
+                sapma = float(om) - son[key]  # negatif = kayıtsız ÇIKIŞ
+                if abs(sapma) > 0.01:
+                    k2 = (r["sube_id"], r["gun"], r["kalem_kodu"])
+                    depo_kayitsiz[k2] = depo_kayitsiz.get(k2, 0.0) + sapma
+            if sm is not None:
+                son[key] = float(sm)
+
+    # 2) bar açıkları (dedektör v3)
+    try:
+        from recete_api import unutulan_urun_ac
+        bar_bulgular = unutulan_urun_ac(gun=g).get("bulgular") or []
+    except Exception as e:  # noqa: BLE001
+        logger.warning("capraz hipotez dedektor okumasi: %s", str(e)[:80])
+        bar_bulgular = []
+
+    # sube adı → id köprüsü
+    ad_to_id = {v.strip().upper(): k for k, v in sube_ad.items()}
+    eslesen_depo: set = set()
+    for b in bar_bulgular:
+        if b.get("yon") != "satis_var_kullanim_az":
+            # ters yön: bar fazla kullanmış — depo tanığı aranmaz, kendi hipotezi
+            hipotezler.append({
+                "tip": "kasasiz_satis_adayi", "guven": "orta",
+                "sube": b.get("sube"), "tarih": b.get("tarih"),
+                "kalem": b.get("kalem"),
+                "hipotez": (f"{b.get('kalem')} barda {b.get('fark')} adet satış "
+                            "kaydından FAZLA kullanılmış — kasasız satış / "
+                            "bildirilmemiş fire-ikram adayı (kapsam şerhi geçerli)"),
+                "taniklar": {"beklenen_satis": b.get("beklenen_bardak"),
+                             "kullanim": b.get("hesaplanan_kullanim"),
+                             "kapanis_sayim": b.get("kapanis_sayim")},
+            })
+            continue
+        sid = ad_to_id.get(str(b.get("sube") or "").strip().upper())
+        key = (sid, b.get("tarih"), b.get("kalem"))
+        depo_cikis = -(depo_kayitsiz.get(key) or 0.0)  # pozitifleştir
+        bar_acik = float(b.get("fark") or 0)
+        if sid and depo_cikis > 0 and bar_acik > 0:
+            oran = min(depo_cikis, bar_acik) / max(depo_cikis, bar_acik)
+            if depo_cikis >= 1 and (abs(depo_cikis - bar_acik) <= 5 or oran >= 0.7):
+                eslesen_depo.add(key)
+                hipotezler.append({
+                    "tip": "kayitsiz_urun_ac", "guven": "yuksek",
+                    "sube": b.get("sube"), "tarih": b.get("tarih"),
+                    "kalem": b.get("kalem"),
+                    "hipotez": (f"depo kayıtsız −{depo_cikis:.0f} ↔ bar açığı "
+                                f"+{bar_acik:.0f} ÖRTÜŞÜYOR → muhtemel kayıtsız "
+                                "ürün-aç (mal bara gitmiş ve satılmış; kayıt eksik)"),
+                    "taniklar": {"depo_kayitsiz_cikis": round(depo_cikis, 1),
+                                 "bar_acik": bar_acik,
+                                 "urun_ac_kaydi": b.get("urun_ac_kaydi")},
+                })
+                continue
+        hipotezler.append({
+            "tip": "bar_acigi_depo_izsiz", "guven": "dusuk",
+            "sube": b.get("sube"), "tarih": b.get("tarih"),
+            "kalem": b.get("kalem"),
+            "hipotez": (f"bar açığı +{bar_acik:.0f} var ama aynı gün depo kayıtsız "
+                        "izi yok → sayım hatası / satış gün-kayması / eşleşme "
+                        "kapsam boşluğu adayları"),
+            "taniklar": {"bar_acik": bar_acik,
+                         "kapanis_sayim": b.get("kapanis_sayim")},
+        })
+
+    # eşleşmeyen depo kayıtsız çıkışları (bar karşılığı yok)
+    for (sid, gun_s, kod), sapma in depo_kayitsiz.items():
+        if sapma >= -0.01 or (sid, gun_s, kod) in eslesen_depo:
+            continue
+        hipotezler.append({
+            "tip": "depo_kayitsiz_cikis_karsiliksiz", "guven": "orta",
+            "sube": sube_ad.get(sid, sid), "tarih": gun_s, "kalem": kod,
+            "hipotez": (f"depodan kayıtsız −{-sapma:.0f} çıkmış, bar tarafında "
+                        "karşılığı görünmüyor → bildirilmemiş fire / kayıp / "
+                        "kayıtsız sevk adayları"),
+            "taniklar": {"depo_kayitsiz_cikis": round(-sapma, 1)},
+        })
+
+    # 3) sevk net≠0 → yolda mı, kayıp mı?
+    with db() as (_, cur):
+        cur.execute(
+            """SELECT kaynak_id, kalem_adi, MAX(zaman)::date::text AS tarih,
+                      ROUND(SUM(COALESCE(miktar,0))::numeric,1) AS net
+               FROM sube_depo_stok_hareket
+               WHERE kaynak_tip = 'sevkiyat'
+                 AND hareket_turu IN ('SEVK_CIKIS','SEVK_GIRIS','SEVK_UZLASMA')
+                 AND zaman >= NOW() - (%s * INTERVAL '1 day')
+               GROUP BY kaynak_id, kalem_adi
+               HAVING SUM(COALESCE(miktar,0)) < -0.01
+               ORDER BY MAX(zaman) DESC LIMIT 15""", (g,))
+        for r in (dict(x) for x in cur.fetchall() or []):
+            cur.execute(
+                """SELECT COALESCE(SUM(sevk_adet),0) AS bekleyen
+                   FROM stok_yolda
+                   WHERE kabul_ts IS NULL AND durum NOT IN ('iptal')
+                     AND UPPER(kalem_adi) = UPPER(%s)""", (r["kalem_adi"],))
+            bekleyen = float(dict(cur.fetchone() or {}).get("bekleyen") or 0)
+            eksik = -float(r["net"])
+            if bekleyen >= eksik - 0.01:
+                hipotezler.append({
+                    "tip": "sevk_yolda", "guven": "yuksek",
+                    "tarih": r["tarih"], "kalem": r["kalem_adi"],
+                    "hipotez": (f"sevkte çıkan−giren farkı {eksik:.0f} — kabul "
+                                f"bekleyen {bekleyen:.0f} adet yolda listesinde VAR "
+                                "→ mal YOLDA, kabul bekliyor (kayıp değil)"),
+                    "taniklar": {"sevk_net": float(r["net"]),
+                                 "yolda_bekleyen": bekleyen},
+                })
+            else:
+                hipotezler.append({
+                    "tip": "sevk_karsiliksiz", "guven": "orta",
+                    "tarih": r["tarih"], "kalem": r["kalem_adi"],
+                    "hipotez": (f"sevkte {eksik:.0f} adet çıkmış; yolda listesinde "
+                                f"yalnız {bekleyen:.0f} bekliyor → aradaki fark "
+                                "kayıt/kayıp adayı"),
+                    "taniklar": {"sevk_net": float(r["net"]),
+                                 "yolda_bekleyen": bekleyen},
+                })
+
+    sira = {"yuksek": 0, "orta": 1, "dusuk": 2}
+    hipotezler.sort(key=lambda x: (sira.get(x["guven"], 3), x.get("tarih") or ""))
+    return {
+        "kesit_gun": g,
+        "hipotezler": hipotezler[:40],
+        "not": "OTOMATİK HİPOTEZ — hüküm değil: iki ucun defteri örtüşünce güven "
+               "yükselir (kayitsiz_urun_ac=iki tanık; sevk_yolda=yolda listesi "
+               "teyitli). Hiçbir hipotez kaydı kapatmaz/aklamaz; karar insanın. "
+               "Ürün-aç kancası (2026-07-09) sonrası kayitsiz_urun_ac hipotezleri "
+               "doğal olarak azalmalı — azalmıyorsa kanca dışı bir akış var demektir.",
+    }
