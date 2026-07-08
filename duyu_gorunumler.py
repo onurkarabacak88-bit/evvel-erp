@@ -905,6 +905,24 @@ def stok_hareket_ozet(gun: int = 7):
         for h in hareketler:
             if h.get("toplam_miktar") is not None:
                 h["toplam_miktar"] = float(h["toplam_miktar"])
+        # KALEM DETAYI (2026-07-08 gece): 'TEMA'ya bu hafta plastik bardak girişi
+        # yapıldı mı?' sorusu tür toplamıyla cevaplanamıyordu — giriş/çıkış türlerinde
+        # şube×kalem kırılımı (ilk 40 satır, miktara göre).
+        cur.execute(
+            """SELECT s.ad AS sube, h.hareket_turu, h.kalem_adi,
+                      ROUND(SUM(ABS(COALESCE(h.miktar,0)))::numeric, 1) AS toplam_miktar,
+                      COUNT(*)::int AS islem
+               FROM sube_depo_stok_hareket h
+               JOIN subeler s ON s.id = h.sube_id
+               WHERE h.zaman >= NOW() - (%s * INTERVAL '1 day')
+                 AND COALESCE(h.kalem_adi,'') <> ''
+               GROUP BY 1, 2, 3 ORDER BY toplam_miktar DESC LIMIT 40""",
+            (g,),
+        )
+        kalem_detay = [dict(r) for r in cur.fetchall() or []]
+        for kd in kalem_detay:
+            if kd.get("toplam_miktar") is not None:
+                kd["toplam_miktar"] = float(kd["toplam_miktar"])
         cur.execute(
             """SELECT COUNT(*)::int AS acik_gorev FROM stok_sayim_gorev
                WHERE tamamlama_ts IS NULL"""
@@ -918,10 +936,12 @@ def stok_hareket_ozet(gun: int = 7):
     return {
         "kesit_gun": g,
         "hareket_kirilimi": hareketler[:60],
+        "kalem_detay": kalem_detay,
         "acik_sayim_gorevi": acik.get("acik_gorev", 0),
         "son_30g_envanter_duzeltme": duzeltme.get("adet", 0),
-        "not": "Şube×tür stok akış nabzı. Kalem-kalem soru için Tüketim Dörtgeni (B9) "
-               "penceresi; sayım detayı Stok Sayım ekranında.",
+        "not": "Şube×tür stok akış nabzı + kalem_detay (şube×tür×kalem, miktara göre "
+               "ilk 40). 'Şu şubeye şu kalem girişi oldu mu?' sorusu kalem_detay'dan "
+               "cevaplanır; yoksa o dönemde o kalemde hareket YOK demektir.",
     }
 
 

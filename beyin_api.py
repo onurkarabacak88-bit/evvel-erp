@@ -303,6 +303,28 @@ def _veri_dilegi_yakala(soru: str, cevap: str) -> None:
     try:
         m = _VERI_DILEGI.search(cevap or "")
         if not m:
+            # DETERMİNİSTİK YEDEK (2026-07-08 gece, kullanıcı analizi): model kural
+            # 12'nin kalıp satırını unutabiliyor ('bardak girişi görünmüyor' dedi ama
+            # dilek yazmadı). Cevap AÇIKÇA veri ihtiyacı beyan ediyorsa dilek KOD
+            # tarafından üretilir — dilek yakalama modelin insafına bırakılmaz.
+            if re.search(r"(doğrulamak mümkün değil|dogrulamak mumkun degil"
+                         r"|daha fazla detay gerek|veri gerekebilir|detay gerekebilir"
+                         r"|bilgi sağlanmamış|bilgi saglanmamis|cevaplanamamaktadır"
+                         r"|cevaplayabilmek için.*gerek)", cevap or "", re.IGNORECASE):
+                dilek = ("Şu soru mevcut pencerelerle tam cevaplanamadı: "
+                         + (soru or "")[:200])
+                import hashlib as _h
+                from duyu_omurga import duyu_olay_yaz
+                duyu_olay_yaz(
+                    "evvel_beyni", "meta.bilgi.veri_dilegi",
+                    _h.sha256(dilek.encode("utf-8")).hexdigest()[:16],
+                    entity_scope="genel", signal_name="Beynin veri dileği (oto-yakalama)",
+                    evidence_class="oneri", confidence=0.8,
+                    payload={"tetikleyen_soru": (soru or "")[:200], "dilek": dilek,
+                             "kaynak": "deterministik_yedek",
+                             "not": "Model dilek satırı yazmadı; cevaptaki veri-ihtiyacı "
+                                    "beyanından KOD üretti. Kurulum insan onayı bekler."},
+                )
             return
         dilek = m.group(1).strip()[:300]
         if len(dilek) < 10:
