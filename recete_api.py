@@ -428,20 +428,47 @@ def recete_kontrol(gun: int = 7):
                  AND tarih >= %s""",
             ("%[BİTTİ]%", str(bugun - timedelta(days=g))),
         )
+        try:
+            from operasyon_stok_motor import depo_kalem_kodu_resolve as _resolve
+        except Exception:  # noqa: BLE001
+            _resolve = None
         acilan: Dict[str, Dict[str, float]] = {}  # kalem_kodu → {gun: ambalaj adedi}
+
+        def _acilan_ekle(kod: str, gun_s: str, adet: float) -> None:
+            acilan.setdefault(kod, {}).setdefault(gun_s, 0.0)
+            acilan[kod][gun_s] += adet
+
         for row in cur.fetchall() or []:
             r = dict(row)
             p = _payload(str(r["aciklama"] or ""))
             if not p:
                 continue
+            # delta anahtarları = havuz kodları (doğrudan kalem_kodu — dörtgen deseni)
             for kod, v in (p.get("delta") or {}).items():
                 try:
                     adet = float(v or 0)
                 except (TypeError, ValueError):
                     continue
                 if adet > 0:
-                    acilan.setdefault(str(kod), {}).setdefault(r["gun"], 0.0)
-                    acilan[str(kod)][r["gun"]] += adet
+                    _acilan_ekle(str(kod), r["gun"], adet)
+            # kalemler = ürün id/ad → depo kalem koduna çözümlenir (dörtgen deseni)
+            for kal in (p.get("kalemler") or []):
+                try:
+                    adet = float(kal.get("adet") or 0)
+                except (TypeError, ValueError):
+                    continue
+                if adet <= 0:
+                    continue
+                uid = str(kal.get("urun_id") or "").strip()
+                uad = str(kal.get("urun_ad") or "").strip()
+                kod = ""
+                if _resolve and uid:
+                    try:
+                        kod = _resolve(cur, uid, uad) or ""
+                    except Exception:  # noqa: BLE001
+                        kod = ""
+                if kod:
+                    _acilan_ekle(kod, r["gun"], adet)
         cur.execute("SELECT kalem_kodu, icerik, birim, varsayim FROM recete_ambalaj")
         ambalaj = {dict(r)["kalem_kodu"]: dict(r) for r in cur.fetchall() or []}
         sonuc = []
