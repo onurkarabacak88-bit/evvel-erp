@@ -3402,6 +3402,36 @@ def gunluk_acilis_stok_sayim_map(cur: Any, sube_id: str) -> Dict[str, int]:
     return {k: max(0, int(ac_blk.get(k) or 0)) for k in STOK_KEYS}
 
 
+def _urun_ac_hareket_yaz(cur: Any, sube_id: str, kk: str, lab: str,
+                          ad: int, onceki_v) -> None:
+    """TEMEL ONARIM #1 (2026-07-09): ürün-aç depo düşümü hareket defterine YAZILIR.
+    Kayıtsız düşüm denge denklemini kirletiyordu (ZAFER -698 vakası: bara giden
+    meşru akış 'kayıtsız eksik' görünüyordu). HATA-YUTAR + SAVEPOINT — ürün-aç
+    akışını hiçbir koşulda bozamaz."""
+    try:
+        cur.execute("SAVEPOINT sp_urun_ac_hareket")
+        cur.execute(
+            "SELECT mevcut_adet FROM sube_depo_stok WHERE sube_id=%s AND kalem_kodu=%s",
+            (sube_id, kk))
+        r = cur.fetchone()
+        sonraki = None
+        if r is not None:
+            sonraki = float((dict(r) if not isinstance(r, dict) else r).get("mevcut_adet") or 0)
+        cur.execute(
+            """INSERT INTO sube_depo_stok_hareket
+                   (sube_id, kalem_kodu, kalem_adi, hareket_turu, miktar,
+                    onceki_miktar, sonraki_miktar, kaynak_tip, aciklama, onay_durumu)
+               VALUES (%s,%s,%s,'URUN_AC',%s,%s,%s,'urun_ac',%s,'otomatik')""",
+            (sube_id, kk, lab, -float(ad), onceki_v, sonraki,
+             f"Ürün aç — {lab} x{ad} depodan bara"))
+        cur.execute("RELEASE SAVEPOINT sp_urun_ac_hareket")
+    except Exception:  # noqa: BLE001
+        try:
+            cur.execute("ROLLBACK TO SAVEPOINT sp_urun_ac_hareket")
+        except Exception:  # noqa: BLE001
+            pass
+
+
 def sube_depo_stok_depo_cikis_dus(
     cur: Any,
     sube_id: str,
@@ -3426,6 +3456,18 @@ def sube_depo_stok_depo_cikis_dus(
         return False
     lab = (STOK_LABEL_TR.get(kk) or (kalem_adi or "") or kk).strip() or kk
 
+    # hareket defteri için düşüm ÖNCESİ mevcut (temel onarım #1)
+    onceki_v = None
+    try:
+        cur.execute(
+            "SELECT mevcut_adet FROM sube_depo_stok WHERE sube_id=%s AND kalem_kodu=%s",
+            (sube_id, kk))
+        _r0 = cur.fetchone()
+        if _r0 is not None:
+            onceki_v = float((dict(_r0) if not isinstance(_r0, dict) else _r0).get("mevcut_adet") or 0)
+    except Exception:  # noqa: BLE001
+        onceki_v = None
+
     # CHECK constraint: mevcut_adet >= 0 — yetersiz stokta 0'a kırpılır (eksik miktar
     # URUN_AC_UYUMSUZLUK uyarısı olarak sube_panel.py tarafında loglanır).
     cur.execute(
@@ -3442,6 +3484,7 @@ def sube_depo_stok_depo_cikis_dus(
         (ad, ad, sube_id, kk),
     )
     if cur.rowcount:
+        _urun_ac_hareket_yaz(cur, sube_id, kk, lab, ad, onceki_v)
         return True
 
     baslangic = 0
@@ -3472,7 +3515,11 @@ def sube_depo_stok_depo_cikis_dus(
         """,
         (ad, ad, sube_id, kk),
     )
-    return cur.rowcount > 0
+    _basarili = cur.rowcount > 0
+    if _basarili:
+        _urun_ac_hareket_yaz(cur, sube_id, kk, lab, ad,
+                             onceki_v if onceki_v is not None else float(baslangic))
+    return _basarili
 
 
 def sube_depo_stok_depo_giris_ekle(

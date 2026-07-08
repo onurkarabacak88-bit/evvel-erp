@@ -1453,6 +1453,8 @@ def stok_denge(gun: int = 7, sube: str = "", kalem: str = ""):
                                   THEN ABS(COALESCE(h.miktar,0)) ELSE 0 END)::numeric,1) AS sevk_cikan,
                    ROUND(SUM(CASE WHEN h.hareket_turu = 'FIRE'
                                   THEN ABS(COALESCE(h.miktar,0)) ELSE 0 END)::numeric,1) AS fire,
+                   ROUND(SUM(CASE WHEN h.hareket_turu = 'URUN_AC'
+                                  THEN ABS(COALESCE(h.miktar,0)) ELSE 0 END)::numeric,1) AS bara_verilen,
                    ROUND(SUM(CASE WHEN h.hareket_turu NOT IN
                                   ('TESLIM_GIRIS','SEVK_GIRIS','SEVK_CIKIS','FIRE')
                                   AND COALESCE(h.miktar,0) < 0
@@ -1501,6 +1503,7 @@ def stok_denge(gun: int = 7, sube: str = "", kalem: str = ""):
                 "giren": float(grp["giren"] or 0),
                 "sevk_cikan": float(grp["sevk_cikan"] or 0),
                 "fire": float(grp["fire"] or 0),
+                "bara_verilen": float(grp.get("bara_verilen") or 0),
                 "diger_cikan": float(grp["diger_cikan"] or 0),
                 "kayitli_net": float(grp["kayitli_net"] or 0),
                 "depo_mevcut": mevcut,
