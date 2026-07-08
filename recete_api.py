@@ -1094,8 +1094,15 @@ def unutulan_urun_ac(gun: int = 7):
                 if bek is None:
                     continue
                 acik = float(bek) - float(kullanilan)
-                if acik < 5:  # gürültü eşiği
+                # YÖN AYRIMI (sahip sorusu, 2026-07-09): iki zıt hikâye —
+                #  satis_var_kullanim_az: satış kayıtlı ama bardak düşümü az →
+                #    bardak kayıtsız gelmiş (ürün-aç unutuldu) YA DA kapanış şişkin
+                #  kullanim_var_satis_yok: bardak gitmiş ama satış kaydı yok →
+                #    KASASIZ SATIŞ / bildirilmemiş fire-ikram şüphesi (kritik yön)
+                if abs(acik) < 5:  # gürültü eşiği (iki yönde de)
                     continue
+                yon = ("satis_var_kullanim_az" if acik > 0
+                       else "kullanim_var_satis_yok")
                 cur.execute(
                     """SELECT onceki_miktar, sonraki_miktar
                        FROM sube_depo_stok_hareket
@@ -1112,18 +1119,28 @@ def unutulan_urun_ac(gun: int = 7):
                         son = float(sm)
                 bulgular.append({
                     "sube": r.get("sube_adi"), "tarih": t, "kalem": bk,
+                    "yon": yon,
                     "beklenen_bardak": round(float(bek), 1),
                     "hesaplanan_kullanim": kullanilan,
-                    "acikta_kalan": round(acik, 1),
+                    "fark": round(abs(acik), 1),
+                    "acilis_sayim": (r.get("acilis") or {}).get(bk),
                     "urun_ac_kaydi": (r.get("urun_ac") or {}).get(bk),
+                    "kapanis_sayim": (r.get("kapanis") or {}).get(bk),
                     "depo_zincir_kopugu": kopuk,
-                    "sinyal": "guclu" if kopuk > 0 else "zayif",
+                    "sinyal": ("guclu" if (kopuk > 0 or yon == "kullanim_var_satis_yok")
+                               else "zayif"),
                 })
-    bulgular.sort(key=lambda x: (-(x["sinyal"] == "guclu"), -x["acikta_kalan"]))
+    bulgular.sort(key=lambda x: (-(x["sinyal"] == "guclu"), -x["fark"]))
     return {
         "kesit_gun": g,
         "bulgular": bulgular[:40],
-        "not": "v2 — TEK KANONİK SATIŞ: beklenen = ürün-bazlı Evo çok-satılan × "
+        "not": "v3 — YÖN AYRIMLI: satis_var_kullanim_az = satış kayıtlı, bardak "
+               "düşümü az (kayıtsız giriş/ürün-aç unutulmuş — depo izi varsa kesinleşir; "
+               "kapanış sayımı yüksekse sayım/gün-kayması şüphesi). "
+               "kullanim_var_satis_yok = bardak gitmiş, satış kaydı YOK — kasasız "
+               "satış / bildirilmemiş fire-ikram şüphesi (bu yön hep GÜÇLÜ sayılır). "
+               "Açılış/ürün-aç/kapanış sayımları satırda tanık olarak durur. "
+               "TEK KANONİK SATIŞ: beklenen = ürün-bazlı Evo çok-satılan × "
                "reçete bardak kalemi (reçete kıyasıyla aynı sözlük; eşleşmemiş "
                "ürünler kapsam dışı → beklenen alt sınırdır, gerçek açık daha "
                "büyük olabilir). sinyal=guclu: aynı gün depo zincir kopuğu da var. "
