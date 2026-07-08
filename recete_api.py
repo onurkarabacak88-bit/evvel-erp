@@ -278,8 +278,15 @@ def eslestirme_oner():
         cur.execute("""SELECT DISTINCT malzeme_ad FROM recete_kalem
                        WHERE malzeme_ad <> ''""")
         malzemeler = [dict(r)["malzeme_ad"] for r in cur.fetchall() or []]
-        cur.execute("""SELECT DISTINCT kalem_kodu, kalem_adi FROM sube_depo_stok_hareket
-                       WHERE zaman >= NOW() - INTERVAL '60 days'""")
+        # iki kaynak: son 60 gün HAREKET görenler + depo stok tablosunun KENDİSİ
+        # (hareketsiz kalemler de eşleşebilsin — '14 OZ BARDAK' dersi, 2026-07-08)
+        cur.execute("""
+            SELECT DISTINCT kalem_kodu, kalem_adi FROM (
+                SELECT kalem_kodu, kalem_adi FROM sube_depo_stok_hareket
+                WHERE zaman >= NOW() - INTERVAL '60 days'
+                UNION
+                SELECT kalem_kodu, kalem_adi FROM sube_depo_stok
+            ) t WHERE COALESCE(kalem_adi,'') <> ''""")
         kalemler = [dict(r) for r in cur.fetchall() or []]
         for m in malzemeler:
             for k in kalemler:
