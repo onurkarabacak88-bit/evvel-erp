@@ -47,6 +47,7 @@ import EvTasarim from './pages/EvTasarim';
 import FireFotoYukle from './pages/FireFotoYukle';
 import CepApp from './pages/cep/CepApp';
 import DuyuPaneli from './pages/DuyuPaneli';
+import ReceteEslestirme from './pages/ReceteEslestirme';
 import './index.css';
 
 const NAV = [
@@ -55,6 +56,7 @@ const NAV = [
     { id: 'ops-merkez',       label: 'Operasyon Merkezi',   icon: '📡' },
     { id: 'akilli-denetim',   label: 'Akıllı Denetim',      icon: '🧠' },
     { id: 'duyu-paneli',      label: 'Duyu Paneli',         icon: '👁️' },
+    { id: 'recete-eslestirme', label: 'Reçete Eşleştirme',  icon: '🔗' },
     { id: 'maliyet',          label: 'Maliyet',             icon: '💰' },
     { id: 'borc-navigasyon',  label: 'Borç Navigasyonu',    icon: '🧭' },
     { id: 'strateji',         label: 'Strateji Motoru',     icon: '🎯' },
@@ -116,6 +118,7 @@ const PAGES = {
   'evo-satis':        EvoSatis,
   'kasa-teslim':      KasaTeslim,
   'duyu-paneli':      DuyuPaneli,
+  'recete-eslestirme': ReceteEslestirme,
   strateji:           Strateji,
   onay:               OnayKuyrugu,
   'ciro-taslak-onay': CiroTaslakOnay,

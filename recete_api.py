@@ -326,12 +326,71 @@ def eslestirmeler(durum: str = ""):
         return {"eslestirmeler": rows}
 
 
+@router.get("/eslestirme-adaylar")
+def eslestirme_adaylar():
+    """Elle eşleştirme ekranı için seçim listeleri: reçete ürünleri/malzemeleri,
+    Evo satış adları (7 gün cache) ve depo kalemleri (stok + 60g hareket)."""
+    with db() as (_, cur):
+        _ensure(cur)
+        cur.execute("SELECT DISTINCT urun_ad FROM recete WHERE aktif=TRUE ORDER BY urun_ad")
+        recete_urunler = [dict(r)["urun_ad"] for r in cur.fetchall() or []]
+        cur.execute("""SELECT DISTINCT malzeme_ad FROM recete_kalem
+                       WHERE malzeme_ad <> '' ORDER BY malzeme_ad""")
+        recete_malzemeler = [dict(r)["malzeme_ad"] for r in cur.fetchall() or []]
+        cur.execute("""SELECT veri_json FROM evo_rapor_cache
+                       WHERE anahtar='sube-grup-detay' AND bastar=bittar
+                       ORDER BY bastar DESC LIMIT 7""")
+        evo_adlar = set()
+        for row in cur.fetchall() or []:
+            for _s, sd in (dict(row)["veri_json"].get("subeler") or {}).items():
+                for u in sd.get("cok_satilan") or []:
+                    ad = str(u.get("ad") or "").strip()
+                    if ad:
+                        evo_adlar.add(ad)
+        cur.execute("""
+            SELECT DISTINCT kalem_kodu, kalem_adi FROM (
+                SELECT kalem_kodu, kalem_adi FROM sube_depo_stok_hareket
+                WHERE zaman >= NOW() - INTERVAL '60 days'
+                UNION
+                SELECT kalem_kodu, kalem_adi FROM sube_depo_stok
+            ) t WHERE COALESCE(kalem_adi,'') <> '' ORDER BY kalem_adi""")
+        depo = [dict(r) for r in cur.fetchall() or []]
+    return {"recete_urunler": recete_urunler, "recete_malzemeler": recete_malzemeler,
+            "evo_adlar": sorted(evo_adlar), "depo_kalemler": depo}
+
+
+@router.post("/eslestirme-ekle")
+def eslestirme_ekle(payload: dict):
+    """ELLE eşleştirme (insan kararı = doğrudan ONAYLI). tip='urun': kaynak=reçete
+    ürün adı, hedef=Evo satış adı. tip='malzeme': kaynak=reçete malzeme adı,
+    hedef=depo kalem (ad+kod)."""
+    tip = str(payload.get("tip") or "").strip()
+    kaynak = str(payload.get("kaynak_ad") or "").strip()
+    hedef = str(payload.get("hedef_ad") or "").strip()
+    kod = str(payload.get("hedef_kod") or "").strip() or None
+    if tip not in ("urun", "malzeme") or not kaynak or not hedef:
+        raise HTTPException(400, "tip(urun|malzeme) + kaynak_ad + hedef_ad zorunlu")
+    if tip == "malzeme" and not kod:
+        raise HTTPException(400, "malzeme eşleştirmesinde hedef_kod zorunlu")
+    with db() as (conn, cur):
+        _ensure(cur)
+        cur.execute(
+            """INSERT INTO recete_eslestirme (id, tip, kaynak_ad, hedef_ad, hedef_kod,
+                                              benzerlik, durum)
+               VALUES (%s,%s,%s,%s,%s,NULL,'onayli')
+               ON CONFLICT (tip, kaynak_ad, hedef_ad)
+               DO UPDATE SET durum='onayli', hedef_kod=EXCLUDED.hedef_kod""",
+            (str(uuid.uuid4()), tip, _norm(kaynak), hedef, kod))
+        conn.commit()
+    return {"ok": True, "tip": tip, "kaynak_ad": _norm(kaynak), "hedef_ad": hedef}
+
+
 @router.post("/eslestirme-karar")
 def eslestirme_karar(payload: dict):
     eid = str(payload.get("id") or "").strip()
     karar = str(payload.get("karar") or "").strip()
-    if karar not in ("onayli", "reddedildi"):
-        raise HTTPException(400, "karar: onayli | reddedildi")
+    if karar not in ("onayli", "reddedildi", "oneri"):  # 'oneri' = kararı geri al
+        raise HTTPException(400, "karar: onayli | reddedildi | oneri")
     with db() as (conn, cur):
         _ensure(cur)
         cur.execute("UPDATE recete_eslestirme SET durum=%s WHERE id=%s", (karar, eid))
