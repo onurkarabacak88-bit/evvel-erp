@@ -333,6 +333,15 @@ def eslestirme_karar(payload: dict):
 
 
 # ── KONTROL DUYUSU: beklenen ↔ gerçek (öneri-only) ───────────────────────────
+# Bar sayımında DEVİR-BİLİNÇLİ izlenen malzemeler (Kullanılan Ürünler hesabı):
+# malzeme(norm) → (bar_key, 1 birimin içeriği, içerik birimi). Bunlar için depo
+# eşleşmesi GEREKMEZ — gerçek taraf bar satilan'dan (açılış + ürün-aç − kapanış).
+_RECETE_BAR_ES = {
+    "sut": ("sut_litre", 1000.0, "ml"),
+    "plastik bardak": ("bardak_plastik", 1.0, "adet"),
+    "14 oz karton bardak": ("karton_bardak", 1.0, "adet"),
+    "8 oz bardak": ("bardak_kucuk", 1.0, "adet"),
+}
 @router.get("/kontrol")
 def recete_kontrol(gun: int = 7):
     """REÇETE KONTROLÜ: onaylı eşleşmeler üzerinden gün bazında
@@ -405,7 +414,8 @@ def recete_kontrol(gun: int = 7):
                         continue
                     adet = float(u.get("adet") or 0)
                     for kal in recete_map[ad_n]:
-                        if kal["malzeme"] not in malzeme_es:
+                        if (kal["malzeme"] not in malzeme_es
+                                and kal["malzeme"] not in _RECETE_BAR_ES):
                             continue
                         anahtar = (kal["malzeme"], kal["birim"])
                         beklenen.setdefault(anahtar, {}).setdefault(gun_s, 0.0)
@@ -477,8 +487,61 @@ def recete_kontrol(gun: int = 7):
                     _acilan_ekle(kod, r["gun"], adet)
         cur.execute("SELECT kalem_kodu, icerik, birim, varsayim FROM recete_ambalaj")
         ambalaj = {dict(r)["kalem_kodu"]: dict(r) for r in cur.fetchall() or []}
+    # ── DEVİR-BİLİNÇLİ GERÇEK (kullanıcı düzeltmesi 2026-07-08): bardak/süt bir önceki
+    # günden DEVİRLE gelir — ham 'açılan' günlük tüketim DEĞİLDİR. Kullanılan Ürünler
+    # hesabı (ops_bar_ozet.satilan = açılış + ürün-aç − kapanış) devri zaten çözer;
+    # bar sayımında izlenen malzemeler için gerçek taraf ORADAN okunur.
+    _BAR_ES = _RECETE_BAR_ES
+    bar_gercek: Dict[tuple, float] = {}   # (bar_key, gun) → satilan toplam (şubeler)
+    bar_gecici: set = set()               # kapanışı henüz kesinleşmemiş günler
+    try:
+        from operasyon_merkez_api import ops_bar_ozet
+        aylar = {str(bugun - timedelta(days=i))[:7] for i in range(g + 1)}
+        for ay in sorted(aylar):
+            try:
+                rows = ops_bar_ozet(sube_id=None, year_month=ay, gun=None,
+                                    limit=365, kapanis_fallback=True,
+                                    evo_yenile=False).get("satirlar") or []
+            except Exception as e:  # noqa: BLE001
+                logger.warning("recete kontrol bar-ozet %s okunamadi: %s", ay, str(e)[:100])
+                continue
+            for r in rows:
+                gun_s = str(r.get("tarih") or "")
+                if not gun_s or gun_s < str(bugun - timedelta(days=g)):
+                    continue
+                if not r.get("kapanis_gercek"):
+                    bar_gecici.add(gun_s)
+                for bk, sat in (r.get("satilan") or {}).items():
+                    try:
+                        bar_gercek[(bk, gun_s)] = bar_gercek.get((bk, gun_s), 0.0) + float(sat or 0)
+                    except (TypeError, ValueError):
+                        continue
+    except Exception as e:  # noqa: BLE001
+        logger.warning("recete kontrol bar-ozet modulu yok: %s", str(e)[:100])
+
+    with db() as (_, cur):
         sonuc = []
         for (malzeme, birim), gunler in beklenen.items():
+            bar_bilgi = _BAR_ES.get(malzeme)
+            if bar_bilgi:
+                bk, icerik, _ib = bar_bilgi
+                for gun_s, bek in sorted(gunler.items()):
+                    sat = bar_gercek.get((bk, gun_s))
+                    satir = {"malzeme": malzeme, "birim": birim, "gun": gun_s,
+                             "beklenen_miktar": round(bek, 1),
+                             "kaynak": "bar_sayim_devirli"}
+                    if sat is not None:
+                        ger = sat * icerik
+                        satir["gercek_miktar"] = round(ger, 1)
+                        satir["fark"] = round(ger - bek, 1)
+                        satir["fark_yuzde"] = round((ger - bek) / bek * 100, 1) if bek else None
+                        if gun_s in bar_gecici:
+                            satir["kapanis_gecici"] = True
+                    else:
+                        satir["fark"] = None
+                        satir["eksik"] = "bar_sayim_yok"
+                    sonuc.append(satir)
+                continue
             kodlar = malzeme_es.get(malzeme) or []
             for gun_s, bek in sorted(gunler.items()):
                 toplam_adet = 0.0
