@@ -1236,3 +1236,110 @@ def kasa_anomali_ozet(gun: int = 30):
                "değil GÖZLEMDİR — beraat yasağı: hiçbir açıklama alarmı kapatmaz; "
                "kim sorusunun kaydı ilgili ekranda.",
     }
+
+
+# ── TUTARSIZLIK ÖZETİ (2026-07-08 gece): "şurada şu, burada bu — aynı olmalıydı" ──
+# Kullanıcı isteği: beyin veri tutarsızlıklarını TEK dilde söyleyebilsin
+# ("12 bardak satılması lazımdı ama 14 görünüyor"). Yeni veri ÜRETMEZ — mevcut
+# çapraz kontrolleri (kasa anomali, bar deviri, satış↔sayım, makine↔satış)
+# tek pencerede 'kaynak A / kaynak B / fark' kalıbına çevirir. Hüküm yok.
+
+@router.get("/tutarsizlik-ozeti")
+def tutarsizlik_ozeti(gun: int = 7):
+    g = max(3, min(14, int(gun or 7)))
+    bugun = date.today()
+    satirlar: List[dict] = []
+
+    # 1) CİRO ↔ KASA İZİ (aynı işlem iki deftere de yazılmalı)
+    try:
+        with db() as (_, cur):
+            cur.execute(
+                """SELECT tarih::text AS tarih, durum,
+                          ROUND(COALESCE(ciro_toplam,0)::numeric,2) AS tutar
+                   FROM v_kasa_anomali
+                   WHERE tarih >= CURRENT_DATE - %s AND durum <> 'OK'
+                   ORDER BY tarih DESC LIMIT 10""", (g,))
+            for r in [dict(x) for x in cur.fetchall() or []]:
+                satirlar.append({
+                    "konu": "ciro kaydı ↔ kasa izi", "tarih": r["tarih"],
+                    "kaynak_a": "ciro defteri", "deger_a": float(r["tutar"]),
+                    "kaynak_b": "kasa izi", "deger_b": r["durum"],
+                    "beklenti": "her ciro kaydının kasa izinde karşılığı OLMALI",
+                })
+    except Exception as e:  # noqa: BLE001
+        logger.warning("tutarsizlik kasa-anomali: %s", str(e)[:80])
+
+    # 2) DÜN KAPANIŞ ↔ BUGÜN AÇILIŞ (bar deviri — köprü ürün-aç düşülmüş)
+    try:
+        from operasyon_merkez_api import ops_bar_ozet
+        aylar = {str(bugun - timedelta(days=i))[:7] for i in range(g + 1)}
+        for ay in sorted(aylar):
+            rows = ops_bar_ozet(sube_id=None, year_month=ay, gun=None,
+                                limit=365, kapanis_fallback=True,
+                                evo_yenile=False).get("satirlar") or []
+            for r in rows:
+                t = str(r.get("tarih") or "")
+                if not t or t < str(bugun - timedelta(days=g)):
+                    continue
+                for kalem, f in (r.get("devir_farklari") or {}).items():
+                    satirlar.append({
+                        "konu": f"devir ({kalem})", "tarih": t,
+                        "sube": r.get("sube_adi"),
+                        "kaynak_a": "dün kapanış + gece ürün-aç",
+                        "deger_a": f.get("beklenen"),
+                        "kaynak_b": "bugün açılış sayımı",
+                        "deger_b": f.get("bugun_acilis"),
+                        "fark": f.get("fark"),
+                        "beklenti": "açılış = dün kapanış + köprü ürün-aç OLMALI",
+                    })
+    except Exception as e:  # noqa: BLE001
+        logger.warning("tutarsizlik devir: %s", str(e)[:80])
+
+    # 3) SATIŞ ↔ SAYIM (reçete kıyası: '12 satılması lazım, 14 görünüyor' tam bu)
+    try:
+        from recete_api import recete_kontrol
+        rk = recete_kontrol(gun=g)
+        for k in (rk.get("kiyas") or []):
+            if k.get("fark") is None or k.get("fark_yuzde") is None:
+                continue
+            if abs(k["fark_yuzde"]) < 15:  # küçük dalgalanma gürültüsü ele
+                continue
+            satirlar.append({
+                "konu": f"satış ↔ tüketim ({k['malzeme']})", "tarih": k["gun"],
+                "kaynak_a": "satış × reçete (beklenen)",
+                "deger_a": k["beklenen_miktar"],
+                "kaynak_b": "sayım/ürün-aç (gerçek)",
+                "deger_b": k.get("gercek_miktar"),
+                "fark": k["fark"], "fark_yuzde": k["fark_yuzde"],
+                "beklenti": "satılan kadar tüketim OLMALI (± fire payı)",
+            })
+    except Exception as e:  # noqa: BLE001
+        logger.warning("tutarsizlik recete: %s", str(e)[:80])
+
+    # 4) MAKİNE ↔ SATIŞ (değirmen sayacı)
+    try:
+        from recete_api import degirmen_kiyas
+        dk = degirmen_kiyas(gun=g)
+        for k in (dk.get("gun_kiyasi") or []):
+            if k.get("fark_yuzde") is None or abs(k["fark_yuzde"]) < 15:
+                continue
+            satirlar.append({
+                "konu": "değirmen ↔ satış (espresso)", "tarih": k["tarih"],
+                "kaynak_a": "makine sayacı", "deger_a": k["makine_gram"],
+                "kaynak_b": "satış × reçete", "deger_b": k.get("beklenen_gram"),
+                "fark": k.get("fark_gram"), "fark_yuzde": k["fark_yuzde"],
+                "beklenti": "makine çektiği kadar satış OLMALI (± çöp-shot payı)",
+            })
+    except Exception as e:  # noqa: BLE001
+        logger.warning("tutarsizlik degirmen: %s", str(e)[:80])
+
+    satirlar.sort(key=lambda x: x.get("tarih") or "", reverse=True)
+    return {
+        "kesit_gun": g,
+        "toplam": len(satirlar),
+        "tutarsizliklar": satirlar[:60],
+        "not": "İKİ KAYNAK AYNI ŞEYİ FARKLI SÖYLÜYOR listesi — hüküm yok, beraat da "
+               "yok: hiçbir açıklama satırı listeden düşürmez, yorum insanındır. "
+               "Boş liste 'her şey tutarlı' demektir. Eşik: satış/makine kıyasında "
+               "±%15 altı gürültü sayılıp gösterilmez (ham hali ilgili pencerelerde).",
+    }
