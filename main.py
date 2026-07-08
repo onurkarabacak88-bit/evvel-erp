@@ -243,6 +243,15 @@ except Exception as _tv_menu_err:
     logging.getLogger(__name__).warning(
         f"tv_menu modulu yuklenemedi (izole, ana akis etkilenmez): {_tv_menu_err}"
     )
+# Reçete Kontrol — İZOLE (2026-07-08): ürün-aç düşürmeye devam eder; reçete
+# yalnız KONTROL eder (Evo satış × reçete = beklenen ↔ stok hareketi = gerçek).
+try:
+    from recete_api import router as recete_router
+    app.include_router(recete_router)
+except Exception as _recete_err:
+    logging.getLogger(__name__).warning(
+        f"recete modulu yuklenemedi (izole, ana akis etkilenmez): {_recete_err}"
+    )
 
 logging.basicConfig(
     level=logging.INFO,
