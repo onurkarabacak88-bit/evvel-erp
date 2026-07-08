@@ -1419,3 +1419,111 @@ def tutarsizlik_ozeti(gun: int = 7):
                "Boş liste 'her şey tutarlı' demektir. Eşik: satış/makine kıyasında "
                "±%15 altı gürültü sayılıp gösterilmez (ham hali ilgili pencerelerde).",
     }
+
+
+# ── STOK DENGE DENKLEMİ (2026-07-08 gece, sahip tarifi): kalem başına tam hesap ──
+# "300 vardı, 500 geldi, 700 satıldı, kapanışta 31 kalmış — olması gereken neydi?"
+# İKİ KATMAN: DEPO (başlangıç + giren − çıkan = olması gereken ↔ mevcut) ve
+# BAR (açılış + bara verilen − kapanış = kullanılan ↔ satılan; ops_bar_ozet'te).
+# ARTI: hareket ZİNCİRİ sürekliliği — her hareket önceki→sonraki yazar; kopukluk
+# (bir hareketin 'önceki'si ≠ önceki hareketin 'sonraki'si) = kayıtsız el değmiş.
+
+@router.get("/stok-denge")
+def stok_denge(gun: int = 7, sube: str = "", kalem: str = ""):
+    """Kalem×şube denge tablosu (öneri-only, hüküm yok). fark = mevcut − olması
+    gereken: pozitif = kayıtsız giriş/sayım fazlası, negatif = kayıtsız çıkış.
+    zincir_kopugu > 0 = hareket defterinde süreklilik kırılması (elle müdahale izi)."""
+    g = max(3, min(30, int(gun or 7)))
+    with db() as (_, cur):
+        params: list = [g]
+        sube_f = kalem_f = ""
+        if sube.strip():
+            sube_f = " AND UPPER(s.ad) LIKE UPPER(%s) "
+            params.append(f"%{sube.strip()}%")
+        if kalem.strip():
+            kalem_f = " AND UPPER(h.kalem_adi) LIKE UPPER(%s) "
+            params.append(f"%{kalem.strip()}%")
+        cur.execute(f"""
+            SELECT h.sube_id, s.ad AS sube, h.kalem_kodu, MAX(h.kalem_adi) AS kalem_adi,
+                   COUNT(*)::int AS hareket_sayisi,
+                   ROUND(SUM(COALESCE(h.miktar,0))::numeric,1) AS kayitli_net,
+                   ROUND(SUM(CASE WHEN h.hareket_turu IN ('TESLIM_GIRIS','SEVK_GIRIS')
+                                  THEN COALESCE(h.miktar,0) ELSE 0 END)::numeric,1) AS giren,
+                   ROUND(SUM(CASE WHEN h.hareket_turu = 'SEVK_CIKIS'
+                                  THEN ABS(COALESCE(h.miktar,0)) ELSE 0 END)::numeric,1) AS sevk_cikan,
+                   ROUND(SUM(CASE WHEN h.hareket_turu = 'FIRE'
+                                  THEN ABS(COALESCE(h.miktar,0)) ELSE 0 END)::numeric,1) AS fire,
+                   ROUND(SUM(CASE WHEN h.hareket_turu NOT IN
+                                  ('TESLIM_GIRIS','SEVK_GIRIS','SEVK_CIKIS','FIRE')
+                                  AND COALESCE(h.miktar,0) < 0
+                                  THEN ABS(h.miktar) ELSE 0 END)::numeric,1) AS diger_cikan
+            FROM sube_depo_stok_hareket h
+            JOIN subeler s ON s.id = h.sube_id
+            WHERE h.zaman >= NOW() - (%s * INTERVAL '1 day')
+              AND COALESCE(h.kalem_adi,'') <> ''
+              {sube_f} {kalem_f}
+            GROUP BY h.sube_id, s.ad, h.kalem_kodu
+            ORDER BY ABS(SUM(COALESCE(h.miktar,0))) DESC LIMIT 60""", params)
+        gruplar = [dict(r) for r in cur.fetchall() or []]
+
+        sonuc = []
+        for grp in gruplar:
+            sid, kod = grp["sube_id"], grp["kalem_kodu"]
+            # pencere içi hareketler kronolojik: başlangıç = ilk hareketin 'önceki'si;
+            # zincir kopukluğu = ardışık kayıtta önceki ≠ bir önceki kaydın sonraki'si
+            cur.execute(
+                """SELECT miktar, onceki_miktar, sonraki_miktar
+                   FROM sube_depo_stok_hareket
+                   WHERE sube_id=%s AND kalem_kodu=%s
+                     AND zaman >= NOW() - (%s * INTERVAL '1 day')
+                   ORDER BY zaman ASC, created_at ASC""",
+                (sid, kod, g))
+            hs = [dict(r) for r in cur.fetchall() or []]
+            baslangic = None
+            zincir_kopugu = 0
+            son_sonraki = None
+            for hrow in hs:
+                om, sm = hrow.get("onceki_miktar"), hrow.get("sonraki_miktar")
+                if baslangic is None and om is not None:
+                    baslangic = float(om)
+                if son_sonraki is not None and om is not None:
+                    if abs(float(om) - son_sonraki) > 0.01:
+                        zincir_kopugu += 1
+                if sm is not None:
+                    son_sonraki = float(sm)
+            cur.execute(
+                """SELECT COALESCE(SUM(mevcut_adet),0) AS mevcut FROM sube_depo_stok
+                   WHERE sube_id=%s AND kalem_kodu=%s""", (sid, kod))
+            mevcut = float(dict(cur.fetchone() or {}).get("mevcut") or 0)
+            satir = {
+                "sube": grp["sube"], "kalem": grp["kalem_adi"], "kalem_kodu": kod,
+                "baslangic": baslangic,
+                "giren": float(grp["giren"] or 0),
+                "sevk_cikan": float(grp["sevk_cikan"] or 0),
+                "fire": float(grp["fire"] or 0),
+                "diger_cikan": float(grp["diger_cikan"] or 0),
+                "kayitli_net": float(grp["kayitli_net"] or 0),
+                "depo_mevcut": mevcut,
+                "zincir_kopugu": zincir_kopugu,
+                "hareket_sayisi": grp["hareket_sayisi"],
+            }
+            if baslangic is not None:
+                beklenen = round(baslangic + satir["kayitli_net"], 1)
+                satir["olmasi_gereken"] = beklenen
+                satir["fark"] = round(mevcut - beklenen, 1)
+            else:
+                satir["olmasi_gereken"] = None
+                satir["fark"] = None
+                satir["eksik"] = "baslangic_bilinmiyor"
+            sonuc.append(satir)
+    return {
+        "kesit_gun": g,
+        "denge": sonuc,
+        "not": "DEPO DENKLEMİ: başlangıç + kayıtlı hareketler = olması gereken ↔ "
+               "sistem mevcudu. fark≠0 = KAYITSIZ değişim (pozitif: kayıtsız "
+               "giriş/sayım düzeltmesi; negatif: kayıtsız çıkış). zincir_kopugu = "
+               "hareket defterinde süreklilik kırılması (arada kayıtsız el değmiş). "
+               "Bar tarafı (açılış+verilen−kapanış=kullanılan↔satılan) ayrı denklem: "
+               "recete/kontrol ve bar özeti. Toplam eldeki = depo mevcut + bar "
+               "kapanış sayımı. GÖZLEMDİR — yorum insanın.",
+    }
