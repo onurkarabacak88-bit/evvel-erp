@@ -597,6 +597,23 @@ def recete_kontrol(gun: int = 7):
         logger.warning("recete kontrol bar-ozet modulu yok: %s", str(e)[:100])
 
     with db() as (_, cur):
+        # FİRE/İADE bildirimleri (sahip: 'motor bunlari gormuyor' — artik AÇIK kolon)
+        fire_map: Dict[tuple, float] = {}
+        try:
+            bar_kodlar = list({v[0] for v in _RECETE_BAR_ES.values()})
+            cur.execute(
+                """SELECT kalem_kodu, zaman::date::text AS gun,
+                          ROUND(SUM(ABS(COALESCE(miktar,0)))::numeric,1) AS mik
+                   FROM sube_depo_stok_hareket
+                   WHERE hareket_turu IN ('FIRE','IADE') AND kalem_kodu = ANY(%s)
+                     AND zaman >= %s
+                   GROUP BY 1, 2""",
+                (bar_kodlar, str(bugun - timedelta(days=g))))
+            for r in cur.fetchall() or []:
+                rr = dict(r)
+                fire_map[(rr["kalem_kodu"], rr["gun"])] = float(rr["mik"])
+        except Exception as e:  # noqa: BLE001
+            logger.warning("recete kontrol fire haritasi: %s", str(e)[:80])
         sonuc = []
         for (malzeme, birim), gunler in beklenen.items():
             bar_bilgi = _BAR_ES.get(malzeme)
@@ -612,6 +629,13 @@ def recete_kontrol(gun: int = 7):
                         satir["gercek_miktar"] = round(ger, 1)
                         satir["fark"] = round(ger - bek, 1)
                         satir["fark_yuzde"] = round((ger - bek) / bek * 100, 1) if bek else None
+                        fire_b = fire_map.get((bk, gun_s), 0.0) * icerik
+                        if fire_b:
+                            satir["bildirilen_fire"] = round(fire_b, 1)
+                            satir["fark_fire_sonrasi"] = round(ger - bek - fire_b, 1)
+                            if bek:
+                                satir["fark_yuzde_fire_sonrasi"] = round(
+                                    (ger - bek - fire_b) / bek * 100, 1)
                         if gun_s in bar_gecici:
                             satir["kapanis_gecici"] = True
                     else:
