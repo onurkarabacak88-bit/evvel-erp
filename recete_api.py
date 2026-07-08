@@ -463,6 +463,8 @@ def recete_kontrol(gun: int = 7):
                 mik, b = mik * prm.get("silme_kasik_g", 10), "g"
             elif b == "yuzde_bardak":
                 mik, b = mik / 100.0 * prm.get("bardak_14oz_ml", 414), "ml"
+            elif b == "yuzde_bardak8":
+                mik, b = mik / 100.0 * prm.get("bardak_8oz_ml", 237), "ml"
             elif b == "fincan":
                 mik, b = mik * prm.get("fincan_ml", 70), "ml"
             recete_map.setdefault(row["urun_ad_norm"], []).append(
