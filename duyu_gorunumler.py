@@ -1362,7 +1362,36 @@ def tutarsizlik_ozeti(gun: int = 7):
     except Exception as e:  # noqa: BLE001
         logger.warning("tutarsizlik kabul-stok: %s", str(e)[:80])
 
-    # 5) MAKİNE ↔ SATIŞ (değirmen sayacı)
+    # 5) DEPOLAR ARASI SEVK: ÇIKAN ↔ GİREN (aynı sevkiyat no + kalem üzerinden)
+    # Bir depodan çıkan miktar hedef şubeye AYNEN girmeli; net≠0 = yolda ya da kayıp.
+    try:
+        with db() as (_, cur):
+            cur.execute(
+                """SELECT kaynak_id, kalem_adi, MAX(zaman)::date::text AS tarih,
+                          ROUND(SUM(CASE WHEN miktar < 0 THEN -miktar ELSE 0 END)::numeric,1) AS cikan,
+                          ROUND(SUM(CASE WHEN miktar > 0 THEN miktar ELSE 0 END)::numeric,1) AS giren,
+                          ROUND(SUM(COALESCE(miktar,0))::numeric,1) AS net
+                   FROM sube_depo_stok_hareket
+                   WHERE kaynak_tip = 'sevkiyat'
+                     AND hareket_turu IN ('SEVK_CIKIS','SEVK_GIRIS','SEVK_UZLASMA')
+                     AND zaman >= NOW() - (%s * INTERVAL '1 day')
+                   GROUP BY kaynak_id, kalem_adi
+                   HAVING ABS(SUM(COALESCE(miktar,0))) > 0.01
+                   ORDER BY MAX(zaman) DESC LIMIT 12""", (g,))
+            for r in [dict(x) for x in cur.fetchall() or []]:
+                satirlar.append({
+                    "konu": f"depolar arası sevk ({r['kalem_adi']})",
+                    "tarih": r["tarih"],
+                    "kaynak_a": "depodan çıkan", "deger_a": float(r["cikan"]),
+                    "kaynak_b": "şubeye giren", "deger_b": float(r["giren"]),
+                    "fark": float(r["net"]),
+                    "beklenti": "çıkan = giren OLMALI (fark: mal yolda olabilir — "
+                                "kabul bekliyorsa B28 yolda listesinde görünür)",
+                })
+    except Exception as e:  # noqa: BLE001
+        logger.warning("tutarsizlik sevk: %s", str(e)[:80])
+
+    # 6) MAKİNE ↔ SATIŞ (değirmen sayacı)
     try:
         from recete_api import degirmen_kiyas
         dk = degirmen_kiyas(gun=g)
@@ -1384,8 +1413,8 @@ def tutarsizlik_ozeti(gun: int = 7):
         "kesit_gun": g,
         "toplam": len(satirlar),
         "tutarsizliklar": satirlar[:60],
-        "not": "İKİ KAYNAK AYNI ŞEYİ FARKLI SÖYLÜYOR listesi (5 kontrol: ciro-kasa izi, "
-               "devir, satış-tüketim, kabul-stok girişi, makine-satış) — hüküm yok, "
+        "not": "İKİ KAYNAK AYNI ŞEYİ FARKLI SÖYLÜYOR listesi (6 kontrol: ciro-kasa izi, "
+               "devir, satış-tüketim, kabul-stok girişi, depolar-arası sevk, makine-satış) — hüküm yok, "
                "beraat da yok: hiçbir açıklama satırı listeden düşürmez, yorum insanındır. "
                "Boş liste 'her şey tutarlı' demektir. Eşik: satış/makine kıyasında "
                "±%15 altı gürültü sayılıp gösterilmez (ham hali ilgili pencerelerde).",
