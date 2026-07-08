@@ -779,6 +779,11 @@ def _post_check(cevap: str, baglam_metni: str) -> Optional[str]:
     if m_dil:
         return f"hüküm dili: '{m_dil.group(0)}' (gözlem katmanı yargı üretemez)"
     kaynak = _rakamlar(baglam_metni)
+    # FREN HATASI DÜZELTMESİ (2026-07-09): bağlamda '1243.0' yazan sayı '12430'
+    # olarak normalize oluyordu; model '1243' deyince HAKSIZ red yiyordu. Aynı
+    # sayının .0'sız yazımı da kaynak sayılır (fren GEVŞEMEZ — yeni sayı girmez).
+    for m in re.findall(r"\d[\d.,]*\.0", baglam_metni or ""):
+        kaynak.add(re.sub(r"[^\d]", "", m[:-2]))
     for m in _rakamlar(cevap):
         if len(m) >= 2 and m not in kaynak:
             return f"bağlamda olmayan rakam: {m}"
