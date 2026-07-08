@@ -908,3 +908,54 @@ def degirmen_kiyas(gun: int = 7):
                "Sayaç sıfırlanırsa o gün hesaplanmaz. Beklenen=satış×reçete. GÖZLEMDİR "
                "— fark ± kalibrasyon/ikram payı taşır; yorum insanın.",
     }
+
+
+def gece_degirmen_izleme() -> None:
+    """GECE ZİNCİRİ: dünün değirmen okumaları omurgaya işlenir (öneri-only).
+    İki olay: (a) şube başına makine↔beklenen günlük kıyas, (b) kapanış/ciro
+    kaydı OLAN ama sayaç GİRMEYEN şube (veri disiplini sinyali — beyin görsün)."""
+    try:
+        from datetime import date as _d, timedelta as _td
+        from duyu_omurga import duyu_olay_yaz
+        dun = _d.today() - _td(days=1)
+        r = degirmen_kiyas(gun=3)
+        gun_beklenen = {k["tarih"]: k for k in (r.get("gun_kiyasi") or [])}
+        for s in (r.get("sube_gunluk") or []):
+            if s.get("tarih") != str(dun) or s.get("makine_gram") is None:
+                continue
+            gk = gun_beklenen.get(str(dun)) or {}
+            duyu_olay_yaz(
+                "recete_kontrol", "stok.espresso.makine_gunluk",
+                f"{s['sube']}:{dun}",
+                entity_scope="sube", signal_name="Değirmen günlük okuma",
+                evidence_class="oneri", confidence=0.8,
+                payload={"sube": s["sube"], "tarih": s["tarih"],
+                         "makine_gram": s["makine_gram"],
+                         "gun_beklenen_gram": gk.get("beklenen_gram"),
+                         "gun_makine_toplam": gk.get("makine_gram"),
+                         "not": "Makine sayacı okuma (kör giriş; beklenen personele "
+                                "GÖSTERİLMEZ). Fark israf/çöp-shot payı taşır."},
+            )
+        # sayaç girilmeyen şubeler: dün cirosu olan ama degirmen_sayac kaydı olmayan
+        with db() as (_, cur):
+            _ensure(cur)
+            _degirmen_ensure(cur)
+            cur.execute(
+                """SELECT DISTINCT s.ad FROM ciro c JOIN subeler s ON s.id = c.sube_id
+                   WHERE c.tarih = %s AND c.durum = 'aktif'
+                     AND NOT EXISTS (SELECT 1 FROM degirmen_sayac d
+                                     WHERE d.sube_id = c.sube_id AND d.tarih = %s)""",
+                (str(dun), str(dun)))
+            eksikler = [dict(x)["ad"] for x in cur.fetchall() or []]
+        for ad in eksikler:
+            duyu_olay_yaz(
+                "recete_kontrol", "stok.espresso.sayac_girilmedi",
+                f"{ad}:{dun}",
+                entity_scope="sube", signal_name="Değirmen sayacı girilmedi",
+                evidence_class="oneri", confidence=0.9,
+                payload={"sube": ad, "tarih": str(dun),
+                         "not": "Ciro kaydı var ama kapanışta değirmen sayacı "
+                                "girilmemiş — veri disiplini sinyali (hüküm yok)."},
+            )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("gece degirmen izleme hatasi: %s", str(e)[:120])

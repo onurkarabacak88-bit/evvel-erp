@@ -574,6 +574,10 @@ def _blok_derle(soru: str, yonlendirme_ek: str = "") -> List[Tuple[str, str, str
           "kahve fark", "bardak fark"),
          lambda: _j({k: (v if not isinstance(v, list) else v[:40])
                      for k, v in __import__("recete_api").recete_kontrol(gun=7).items()})),
+        ("B37", "Değirmen kıyası (makine sayacı ↔ satış beklentisi, 7 gün + girilmeyen günler)",
+         ("değirmen", "degirmen", "shot", "çekim", "cekim", "makine sayac",
+          "kaç doz", "kac doz", "espresso makine"),
+         lambda: _j(__import__("recete_api").degirmen_kiyas(gun=7))),
         ("B16", "Nakit ufku (HESAPLANMIŞ projeksiyon: kasa + ciro ort - giderler - ödemeler, 3 senaryo)",
          ("ödeyebil", "odeyebil", "yapabilecek", "yetecek", "yeter mi", "nakit",
           "ödeme plan", "odeme plan", "ödemeleri", "odemeleri", "ufuk", "hafta",

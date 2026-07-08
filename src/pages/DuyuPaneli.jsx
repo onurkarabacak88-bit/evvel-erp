@@ -111,6 +111,53 @@ function BeyinSor() {
   );
 }
 
+
+function DegirmenKiyas() {
+  const [veri, setVeri] = useState(null);
+  useEffect(() => { api('/recete/degirmen-kiyas?gun=7').then(setVeri).catch(() => {}); }, []);
+  if (!veri) return null;
+  const gunler = veri.gun_kiyasi || [];
+  const subeler = (veri.sube_gunluk || []).slice(-16).reverse();
+  return (
+    <div style={{ ...K.kart, borderLeft: '3px solid var(--yellow, #e8c547)' }}>
+      <div style={K.baslik}>⚙️ Değirmen Kıyası <span style={{ fontSize: 10.5, color: 'var(--text3)' }}>makine sayacı ↔ satış beklentisi</span></div>
+      <div style={K.alt}>Personel kapanışta SADECE makinedeki sayıyı girer (kör giriş — beklenen gösterilmez).
+        Kıyas burada ve beyinde yapılır. Fark ± çöp-shot/israf payı taşır; yorum senindir.</div>
+      {gunler.length === 0 && <div style={{ fontSize: 12.5, color: 'var(--text3)' }}>Henüz sayaç verisi yok — bu geceki kapanışlardan itibaren dolacak.</div>}
+      {gunler.length > 0 && (
+        <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: 10 }}>
+          <thead><tr>
+            <th style={K.thL}>Gün</th><th style={K.th}>Makine (g)</th>
+            <th style={K.th}>Beklenen (g)</th><th style={K.th}>Fark %</th><th style={K.th}>Şube</th>
+          </tr></thead>
+          <tbody>
+            {gunler.map((g) => (
+              <tr key={g.tarih}>
+                <td style={K.tdL}>{g.tarih}</td>
+                <td style={K.td}>{num(g.makine_gram)}</td>
+                <td style={K.td}>{num(g.beklenen_gram)}</td>
+                <td style={{ ...K.td, color: g.fark_yuzde > 15 || g.fark_yuzde < -15 ? 'var(--yellow, #e8c547)' : 'var(--text2)' }}>
+                  {g.fark_yuzde != null ? `%${g.fark_yuzde}` : '—'}</td>
+                <td style={K.td}>{g.sube_sayisi}/4</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      {subeler.length > 0 && (
+        <div style={{ fontSize: 11, color: 'var(--text3)', lineHeight: 1.7 }}>
+          {subeler.map((s, i) => (
+            <span key={i} style={K.rozet}>
+              {s.sube} {s.tarih.slice(5)}: {s.makine_gram != null ? `${num(s.makine_gram)} g` : (s.durum === 'sayac_sifirlanmis' ? '🔄 sıfırlanmış' : '—')}
+              {s.kaynak === 'gunluk_dogrudan' ? ' (günlük)' : ''}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function IsletmeGunlugu({ subeler }) {
   const [notlar, setNotlar] = useState([]);
   const [baslik, setBaslik] = useState('');
@@ -228,6 +275,7 @@ export default function DuyuPaneli() {
 
       {/* ── 🧠 EVVEL BEYNİ ── */}
       <BeyinSor />
+      <DegirmenKiyas />
 
       {/* ── ⭐ TÜKETİM MUHASEBESİ DÖRTGENİ ── */}
       <div style={K.kart}>

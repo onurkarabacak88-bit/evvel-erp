@@ -511,6 +511,8 @@ def _gece_yarisi_scheduler():
             try:
                 from recete_api import gece_recete_kontrol_ozeti
                 gece_recete_kontrol_ozeti()  # recete hafta kiyasi -> omurga (oneri-only)
+                from recete_api import gece_degirmen_izleme
+                gece_degirmen_izleme()  # degirmen gunluk okuma + sayac-girilmedi
                 from beyin_api import gece_ozsorgu
                 gece_ozsorgu()
                 logger.info("⏰ Scheduler: öz-sorgu tamamlandı")
