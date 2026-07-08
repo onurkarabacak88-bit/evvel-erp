@@ -350,7 +350,12 @@ def recete_kontrol(gun: int = 7):
                        FROM recete_eslestirme WHERE durum='onayli'""")
         onayli = [dict(r) for r in cur.fetchall() or []]
         urun_es = {r["kaynak_ad"]: r["hedef_ad"] for r in onayli if r["tip"] == "urun"}
-        malzeme_es = {r["kaynak_ad"]: r["hedef_kod"] for r in onayli if r["tip"] == "malzeme"}
+        # malzeme → KOD LİSTESİ: depoda kopya kalemler var (örn. 'Plastik bardak' ×2)
+        # — aynı malzemenin tüm onaylı kodlarının açılışları TOPLANIR (çift kod kıyası bozmasın)
+        malzeme_es: Dict[str, list] = {}
+        for r in onayli:
+            if r["tip"] == "malzeme" and r.get("hedef_kod"):
+                malzeme_es.setdefault(r["kaynak_ad"], []).append(r["hedef_kod"])
         if not urun_es or not malzeme_es:
             cur.execute("""SELECT COUNT(*)::int AS n FROM recete_eslestirme
                            WHERE durum='oneri'""")
@@ -385,7 +390,8 @@ def recete_kontrol(gun: int = 7):
                        WHERE anahtar='sube-grup-detay' AND bastar=bittar
                          AND bastar >= %s ORDER BY bastar""",
                     (str(bugun - timedelta(days=g)),))
-        beklenen: Dict[str, Dict[str, float]] = {}  # kalem_kodu → {gun: miktar}
+        # beklenen: MALZEME bazında (kod değil) — (malzeme, birim) → {gun: miktar}
+        beklenen: Dict[tuple, Dict[str, float]] = {}
         for row in cur.fetchall() or []:
             gun_s = dict(row)["gun"]
             for _s, sd in (dict(row)["veri_json"].get("subeler") or {}).items():
@@ -399,11 +405,11 @@ def recete_kontrol(gun: int = 7):
                         continue
                     adet = float(u.get("adet") or 0)
                     for kal in recete_map[ad_n]:
-                        kod = malzeme_es.get(kal["malzeme"])
-                        if not kod:
+                        if kal["malzeme"] not in malzeme_es:
                             continue
-                        beklenen.setdefault(kod, {}).setdefault(gun_s, 0.0)
-                        beklenen[kod][gun_s] += adet * kal["miktar"]
+                        anahtar = (kal["malzeme"], kal["birim"])
+                        beklenen.setdefault(anahtar, {}).setdefault(gun_s, 0.0)
+                        beklenen[anahtar][gun_s] += adet * kal["miktar"]
         # GERÇEK tüketim = ÜRÜN-AÇ DEFTERİ (operasyon_defter URUN_AC JSON yükü):
         # ambalaj ADEDİ sayılır. Reçete ml/g konuştuğu için köprü = recete_ambalaj
         # (1 ambalaj kaç ml/g). Ambalaj içeriği tanımsızsa fark HESAPLANMAZ —
@@ -472,23 +478,39 @@ def recete_kontrol(gun: int = 7):
         cur.execute("SELECT kalem_kodu, icerik, birim, varsayim FROM recete_ambalaj")
         ambalaj = {dict(r)["kalem_kodu"]: dict(r) for r in cur.fetchall() or []}
         sonuc = []
-        for kod, gunler in beklenen.items():
-            amb = ambalaj.get(kod)
+        for (malzeme, birim), gunler in beklenen.items():
+            kodlar = malzeme_es.get(malzeme) or []
             for gun_s, bek in sorted(gunler.items()):
-                adet = (acilan.get(kod) or {}).get(gun_s)
-                satir = {"kalem_kodu": kod, "gun": gun_s,
+                toplam_adet = 0.0
+                adet_var = False
+                ger = 0.0
+                ger_tam = True  # tüm açılan kodların ambalaj içeriği biliniyor mu
+                varsayimli = False
+                for kod in kodlar:
+                    adet = (acilan.get(kod) or {}).get(gun_s)
+                    if adet is None:
+                        continue
+                    adet_var = True
+                    toplam_adet += adet
+                    amb = ambalaj.get(kod)
+                    if amb:
+                        ger += adet * float(amb["icerik"])
+                        if amb.get("varsayim"):
+                            varsayimli = True
+                    else:
+                        ger_tam = False
+                satir = {"malzeme": malzeme, "birim": birim, "gun": gun_s,
                          "beklenen_miktar": round(bek, 1),
-                         "acilan_ambalaj": adet}
-                if adet is not None and amb:
-                    ger = adet * float(amb["icerik"])
+                         "acilan_ambalaj": (toplam_adet if adet_var else None)}
+                if adet_var and ger_tam:
                     satir["gercek_miktar"] = round(ger, 1)
                     satir["fark"] = round(ger - bek, 1)
                     satir["fark_yuzde"] = round((ger - bek) / bek * 100, 1) if bek else None
-                    if amb.get("varsayim"):
+                    if varsayimli:
                         satir["ambalaj_varsayim"] = True
                 else:
                     satir["fark"] = None
-                    satir["eksik"] = ("urun_ac_kaydi_yok" if adet is None
+                    satir["eksik"] = ("urun_ac_kaydi_yok" if not adet_var
                                       else "ambalaj_icerigi_tanimsiz")
                 sonuc.append(satir)
     return {
