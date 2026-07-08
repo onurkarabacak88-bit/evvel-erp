@@ -546,8 +546,8 @@ def ambalaj_kaydet(payload: dict):
     kod = str(payload.get("kalem_kodu") or "").strip()
     icerik = payload.get("icerik")
     birim = str(payload.get("birim") or "").strip()
-    if not kod or icerik is None or birim not in ("ml", "g"):
-        raise HTTPException(400, "kalem_kodu + icerik + birim(ml|g) zorunlu")
+    if not kod or icerik is None or birim not in ("ml", "g", "adet"):
+        raise HTTPException(400, "kalem_kodu + icerik + birim(ml|g|adet) zorunlu")
     varsayim = bool(payload.get("varsayim", False))
     with db() as (conn, cur):
         _ensure(cur)
