@@ -725,6 +725,7 @@ def gece_recete_kontrol_ozeti() -> None:
             if not o["beklenen"]:
                 continue
             fark_y = round((o["gercek"] - o["beklenen"]) / o["beklenen"] * 100, 1)
+            fark_mutlak = round(o["gercek"] - o["beklenen"], 1)
             duyu_olay_yaz(
                 "recete_kontrol", "stok.recete.hafta_kiyasi",
                 f"{m}:{yil}-{hafta}",  # malzeme+hafta idempotent
@@ -732,7 +733,7 @@ def gece_recete_kontrol_ozeti() -> None:
                 evidence_class="oneri", confidence=0.7,
                 payload={"malzeme": m, "beklenen": round(o["beklenen"], 1),
                          "gercek": round(o["gercek"], 1), "birim": o["birim"],
-                         "fark_yuzde": fark_y,
+                         "fark_yuzde": fark_y, "fark_mutlak": fark_mutlak,
                          "not": "GÖZLEM (hüküm yok): beklenen=satış×reçete, "
                                 "gerçek=devirli bar sayımı / ürün-aç. Kalıcı ve tek "
                                 "yönlü fark insanın bakacağı yerdir."},
@@ -895,7 +896,10 @@ def degirmen_kiyas(gun: int = 7):
         bek = beklenen_gun.get(tarih)
         k["beklenen_gram"] = bek
         if bek:
-            k["fark_yuzde"] = round((k["makine_gram"] - bek) / bek * 100, 1)
+            fark_g = round(k["makine_gram"] - bek, 1)
+            k["fark_gram"] = fark_g
+            k["fark_cekim"] = round(fark_g / cift_g, 1)  # kac cekimlik fark
+            k["fark_yuzde"] = round(fark_g / bek * 100, 1)
     return {
         "kesit_gun": g,
         "doz_gramaj": {"tek": tek_g, "cift": cift_g, "uc": uc_g},
@@ -933,6 +937,9 @@ def gece_degirmen_izleme() -> None:
                          "makine_gram": s["makine_gram"],
                          "gun_beklenen_gram": gk.get("beklenen_gram"),
                          "gun_makine_toplam": gk.get("makine_gram"),
+                         "gun_fark_gram": gk.get("fark_gram"),
+                         "gun_fark_cekim": gk.get("fark_cekim"),
+                         "gun_fark_yuzde": gk.get("fark_yuzde"),
                          "not": "Makine sayacı okuma (kör giriş; beklenen personele "
                                 "GÖSTERİLMEZ). Fark israf/çöp-shot payı taşır."},
             )

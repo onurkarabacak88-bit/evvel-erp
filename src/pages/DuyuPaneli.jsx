@@ -128,7 +128,8 @@ function DegirmenKiyas() {
         <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: 10 }}>
           <thead><tr>
             <th style={K.thL}>Gün</th><th style={K.th}>Makine (g)</th>
-            <th style={K.th}>Beklenen (g)</th><th style={K.th}>Fark %</th><th style={K.th}>Şube</th>
+            <th style={K.th}>Beklenen (g)</th><th style={K.th}>Fark (g)</th>
+            <th style={K.th}>Fark (çekim)</th><th style={K.th}>Fark %</th><th style={K.th}>Şube</th>
           </tr></thead>
           <tbody>
             {gunler.map((g) => (
@@ -136,6 +137,8 @@ function DegirmenKiyas() {
                 <td style={K.tdL}>{g.tarih}</td>
                 <td style={K.td}>{num(g.makine_gram)}</td>
                 <td style={K.td}>{num(g.beklenen_gram)}</td>
+                <td style={K.td}>{g.fark_gram != null ? (g.fark_gram > 0 ? '+' : '') + num(g.fark_gram) : '—'}</td>
+                <td style={K.td}>{g.fark_cekim != null ? (g.fark_cekim > 0 ? '+' : '') + num(g.fark_cekim) : '—'}</td>
                 <td style={{ ...K.td, color: g.fark_yuzde > 15 || g.fark_yuzde < -15 ? 'var(--yellow, #e8c547)' : 'var(--text2)' }}>
                   {g.fark_yuzde != null ? `%${g.fark_yuzde}` : '—'}</td>
                 <td style={K.td}>{g.sube_sayisi}/4</td>
