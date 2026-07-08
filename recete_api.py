@@ -761,16 +761,22 @@ def _degirmen_ensure(cur) -> None:
     """)
     # Helios 65 (TEMA+Köyceğiz) üç doz sayar; F64E (Zafer) iki. Kolon sonradan eklendi.
     cur.execute("ALTER TABLE degirmen_sayac ADD COLUMN IF NOT EXISTS uc_sayac BIGINT")
+    # SAHİP KURALI (2026-07-08, TÜM ŞUBELER): tek buton kullanılır, HER ÇEKİM
+    # 17,5g çift ayarlıdır. 8oz'da çift çekilip iki bardağa bölünür; tek 8oz'da
+    # ikinci shot çöpe gidebilir — makine sayacı israfı DA sayar (bilinçli: görünür
+    # olsun). Reçetedeki '8oz≈11g' işte bu israf-DAHİL içecek başı ortalamadır;
+    # makine tarafında her sayaç 17,5g ile çarpılır.
     for ad, deger, birim, acik in (
-        ("degirmen_tek_doz_g", 11, "g", "Tek doz gramajı (8oz ~11g — teyit edilecek)"),
+        ("degirmen_tek_doz_g", 17.5, "g", "Her çekim 17,5g çift ayarlı (sahip - tüm şubeler)"),
         ("degirmen_cift_doz_g", 17.5, "g", "Çift doz gramajı (sahip teyitli)"),
-        ("degirmen_uc_doz_g", 17.5, "g", "Doz III gramajı (Helios 65 — teyit edilecek)"),
+        ("degirmen_uc_doz_g", 17.5, "g", "Doz III de aynı ayar (sahip - tüm şubeler)"),
     ):
         cur.execute(
             """INSERT INTO recete_parametre (ad, deger, birim, aciklama)
                VALUES (%s,%s,%s,%s) ON CONFLICT (ad) DO NOTHING""",
             (ad, deger, birim, acik))
-    cur.execute("UPDATE recete_parametre SET varsayim=FALSE WHERE ad='degirmen_cift_doz_g'")
+    cur.execute("UPDATE recete_parametre SET deger=17.5, varsayim=FALSE "
+                "WHERE ad LIKE 'degirmen%%doz_g'")
 
 
 @router.post("/degirmen-sayac")
@@ -881,8 +887,10 @@ def degirmen_kiyas(gun: int = 7):
         "doz_gramaj": {"tek": tek_g, "cift": cift_g, "uc": uc_g},
         "sube_gunluk": gunluk[-40:],
         "gun_kiyasi": sorted(kiyas.values(), key=lambda x: x["tarih"], reverse=True),
-        "not": "MAKİNE GERÇEĞİ: F64E birikimli sayaç farkı × doz gramajı. 4 şubenin "
-               "TAMAMI sayaç girmeden gün kıyası eksik kalır (sube_sayisi'na bak). "
+        "not": "MAKİNE GERÇEĞİ: birikimli sayaç farkı × 17,5g (TÜM şubelerde tek buton, "
+               "her çekim çift ayarlı; tek 8oz'da ikinci shot çöpe gidebilir — sayaç israfı "
+               "DA sayar, satış-makine farkının doğal parçasıdır ve görünür olması "
+               "İSTENİR). 4 şube de girmeden gün kıyası eksik (sube_sayisi'na bak). "
                "Sayaç sıfırlanırsa o gün hesaplanmaz. Beklenen=satış×reçete. GÖZLEMDİR "
                "— fark ± kalibrasyon/ikram payı taşır; yorum insanın.",
     }
