@@ -990,3 +990,101 @@ def gece_degirmen_izleme() -> None:
             )
     except Exception as e:  # noqa: BLE001
         logger.warning("gece degirmen izleme hatasi: %s", str(e)[:120])
+
+
+# ── UNUTULAN ÜRÜN-AÇ DEDEKTÖRÜ (2026-07-08 gece, sahip sorusu) ──
+# 'Personel ürün-aç mekanizmasını kullanmayı unutmuş olabilir mi?'
+# İKİ BAĞIMSIZ PARMAK İZİ birleşince güçlü sinyal (anayasa: ≥2 kaynak):
+#  (a) SATIŞ > KULLANIM: Evo satışı fiziken bardak/malzeme ister; hesaplanan
+#      kullanım (açılış+ürün-aç−kapanış) satışın altındaysa bara KAYITSIZ mal
+#      girmiş olmalı (ürün-aç atlanmış).
+#  (b) DEPO ZİNCİR KOPUĞU: aynı gün o kalemin depo hareketlerinde önceki→sonraki
+#      sürekliliği kırılmışsa depodan kayıtsız el değmiş demektir.
+# İkisi birden = 'guclu'; yalnız (a) = 'zayif' (Evo etiket şişkinliği payı olabilir).
+# İSİM YOK — şube-gün düzeyi; kim olduğu vardiya/kapanış kayıtlarından okunur.
+
+@router.get("/unutulan-urun-ac")
+def unutulan_urun_ac(gun: int = 7):
+    g = max(3, min(14, int(gun or 7)))
+    bugun = date.today()
+    # bar tarafı: şube-gün-kalem açılış/ürün-aç/kapanış/kullanım
+    try:
+        from operasyon_merkez_api import ops_bar_ozet
+        aylar = {str(bugun - timedelta(days=i))[:7] for i in range(g + 1)}
+        bar_rows = []
+        for ay in sorted(aylar):
+            bar_rows += (ops_bar_ozet(sube_id=None, year_month=ay, gun=None,
+                                      limit=365, kapanis_fallback=True,
+                                      evo_yenile=False).get("satirlar") or [])
+    except Exception as e:  # noqa: BLE001
+        logger.warning("unutulan urun-ac bar okumasi: %s", str(e)[:80])
+        bar_rows = []
+    hedef_keys = ("bardak_plastik", "bardak_buyuk", "bardak_kucuk", "sut_litre",
+                  "su_adet", "soda_adet", "redbull_adet")
+    bulgular = []
+    with db() as (_, cur):
+        try:
+            from evo_sync import evo_bar_adet_by_sube_id
+        except Exception:  # noqa: BLE001
+            evo_bar_adet_by_sube_id = None
+        evo_cache: Dict[str, dict] = {}
+        for r in bar_rows:
+            t = str(r.get("tarih") or "")
+            if not t or t < str(bugun - timedelta(days=g)) or t >= str(bugun):
+                continue
+            sid = str(r.get("sube_id") or "")
+            # Evo satış (gün bazlı, kendi cache'iyle)
+            if t not in evo_cache and evo_bar_adet_by_sube_id is not None:
+                try:
+                    from datetime import date as _d
+                    y, m, dd = (int(x) for x in t.split("-"))
+                    evo_cache[t] = evo_bar_adet_by_sube_id(cur, _d(y, m, dd)) or {}
+                except Exception:  # noqa: BLE001
+                    evo_cache[t] = {}
+            evo_by = (evo_cache.get(t) or {}).get("by_sube") or {}
+            evo_sube = evo_by.get(sid) or {}
+            for bk in hedef_keys:
+                kullanilan = (r.get("satilan") or {}).get(bk)
+                if kullanilan is None:
+                    continue
+                satis = (evo_sube.get(bk) or {}).get("adet")
+                if satis is None:
+                    continue
+                acik = float(satis) - float(kullanilan)
+                if acik < 3:  # küçük dalga gürültü
+                    continue
+                # depo zincir kopuğu aynı gün var mı? (bar-key = depo kodu)
+                cur.execute(
+                    """SELECT onceki_miktar, sonraki_miktar
+                       FROM sube_depo_stok_hareket
+                       WHERE sube_id=%s AND kalem_kodu=%s AND zaman::date=%s
+                       ORDER BY zaman ASC, created_at ASC""",
+                    (sid, bk, t))
+                hs = [dict(x) for x in cur.fetchall() or []]
+                kopuk = 0
+                son = None
+                for hrow in hs:
+                    om, sm = hrow.get("onceki_miktar"), hrow.get("sonraki_miktar")
+                    if son is not None and om is not None and abs(float(om) - son) > 0.01:
+                        kopuk += 1
+                    if sm is not None:
+                        son = float(sm)
+                bulgular.append({
+                    "sube": r.get("sube_adi"), "tarih": t, "kalem": bk,
+                    "evo_satis": satis, "hesaplanan_kullanim": kullanilan,
+                    "acikta_kalan": round(acik, 1),
+                    "urun_ac_kaydi": (r.get("urun_ac") or {}).get(bk),
+                    "depo_zincir_kopugu": kopuk,
+                    "sinyal": "guclu" if kopuk > 0 else "zayif",
+                })
+    bulgular.sort(key=lambda x: (-(x["sinyal"] == "guclu"), -x["acikta_kalan"]))
+    return {
+        "kesit_gun": g,
+        "bulgular": bulgular[:40],
+        "not": "OLASI unutulmuş ürün-aç: satış fiziken malzeme ister — hesaplanan "
+               "kullanım satışın altındaysa bara KAYITSIZ mal girmiş olabilir. "
+               "sinyal=guclu: aynı gün depo hareket zincirinde kopukluk DA var (iki "
+               "bağımsız tanık). sinyal=zayif: tek tanık — Evo etiket kapsam payı "
+               "olabilir. İSİM YOK; o günün kapanış/vardiya kaydı kimin olduğunu "
+               "söyler. HÜKÜM YOK — eğitim/hatırlatma fırsatı olarak da okunabilir.",
+    }
