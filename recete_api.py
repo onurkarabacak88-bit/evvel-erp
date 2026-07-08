@@ -759,9 +759,12 @@ def _degirmen_ensure(cur) -> None:
             UNIQUE (sube_id, tarih)
         );
     """)
+    # Helios 65 (TEMA+Köyceğiz) üç doz sayar; F64E (Zafer) iki. Kolon sonradan eklendi.
+    cur.execute("ALTER TABLE degirmen_sayac ADD COLUMN IF NOT EXISTS uc_sayac BIGINT")
     for ad, deger, birim, acik in (
-        ("degirmen_tek_doz_g", 11, "g", "F64E tek doz gramajı (8oz ~11g — teyit edilecek)"),
-        ("degirmen_cift_doz_g", 17.5, "g", "F64E çift doz gramajı (sahip teyitli)"),
+        ("degirmen_tek_doz_g", 11, "g", "Tek doz gramajı (8oz ~11g — teyit edilecek)"),
+        ("degirmen_cift_doz_g", 17.5, "g", "Çift doz gramajı (sahip teyitli)"),
+        ("degirmen_uc_doz_g", 17.5, "g", "Doz III gramajı (Helios 65 — teyit edilecek)"),
     ):
         cur.execute(
             """INSERT INTO recete_parametre (ad, deger, birim, aciklama)
@@ -780,21 +783,24 @@ def degirmen_sayac_kaydet(payload: dict):
         raise HTTPException(400, "sube_id zorunlu")
     tek = payload.get("tek_sayac")
     cift = payload.get("cift_sayac")
-    if tek is None and cift is None:
+    uc = payload.get("uc_sayac")
+    if tek is None and cift is None and uc is None:
         raise HTTPException(400, "en az bir sayaç değeri gerekli")
     with db() as (conn, cur):
         _ensure(cur)
         _degirmen_ensure(cur)
         cur.execute(
-            """INSERT INTO degirmen_sayac (id, sube_id, tarih, tek_sayac, cift_sayac)
-               VALUES (%s,%s,CURRENT_DATE,%s,%s)
+            """INSERT INTO degirmen_sayac (id, sube_id, tarih, tek_sayac, cift_sayac, uc_sayac)
+               VALUES (%s,%s,CURRENT_DATE,%s,%s,%s)
                ON CONFLICT (sube_id, tarih)
                DO UPDATE SET tek_sayac=COALESCE(EXCLUDED.tek_sayac, degirmen_sayac.tek_sayac),
                              cift_sayac=COALESCE(EXCLUDED.cift_sayac, degirmen_sayac.cift_sayac),
+                             uc_sayac=COALESCE(EXCLUDED.uc_sayac, degirmen_sayac.uc_sayac),
                              olusturma=NOW()""",
             (str(uuid.uuid4()), sube_id,
              int(tek) if tek is not None else None,
-             int(cift) if cift is not None else None))
+             int(cift) if cift is not None else None,
+             int(uc) if uc is not None else None))
         conn.commit()
     return {"ok": True, "sube_id": sube_id}
 
@@ -813,9 +819,10 @@ def degirmen_kiyas(gun: int = 7):
         prm = {dict(r)["ad"]: float(dict(r)["deger"]) for r in cur.fetchall() or []}
         tek_g = prm.get("degirmen_tek_doz_g", 11.0)
         cift_g = prm.get("degirmen_cift_doz_g", 17.5)
+        uc_g = prm.get("degirmen_uc_doz_g", 17.5)
         cur.execute(
             """SELECT d.sube_id, s.ad AS sube, d.tarih::text AS tarih,
-                      d.tek_sayac, d.cift_sayac
+                      d.tek_sayac, d.cift_sayac, d.uc_sayac
                FROM degirmen_sayac d LEFT JOIN subeler s ON s.id = d.sube_id
                WHERE d.tarih >= %s ORDER BY d.sube_id, d.tarih""",
             (str(bugun - timedelta(days=g + 3)),))
@@ -831,7 +838,8 @@ def degirmen_kiyas(gun: int = 7):
                      "onceki_tarih": o["tarih"]}
             sifirlanmis = False
             toplam_g = 0.0
-            for alan, gram in (("tek_sayac", tek_g), ("cift_sayac", cift_g)):
+            for alan, gram in (("tek_sayac", tek_g), ("cift_sayac", cift_g),
+                               ("uc_sayac", uc_g)):
                 simdi_v, once_v = r.get(alan), o.get(alan)
                 if simdi_v is None or once_v is None:
                     satir[alan.replace("_sayac", "_doz")] = None
@@ -870,7 +878,7 @@ def degirmen_kiyas(gun: int = 7):
             k["fark_yuzde"] = round((k["makine_gram"] - bek) / bek * 100, 1)
     return {
         "kesit_gun": g,
-        "doz_gramaj": {"tek": tek_g, "cift": cift_g},
+        "doz_gramaj": {"tek": tek_g, "cift": cift_g, "uc": uc_g},
         "sube_gunluk": gunluk[-40:],
         "gun_kiyasi": sorted(kiyas.values(), key=lambda x: x["tarih"], reverse=True),
         "not": "MAKİNE GERÇEĞİ: F64E birikimli sayaç farkı × doz gramajı. 4 şubenin "

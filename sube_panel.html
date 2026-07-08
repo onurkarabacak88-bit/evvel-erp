@@ -5861,9 +5861,10 @@
             ◈ Değirmen Sayacı
             <span class="tip-q" data-tip="Değirmenin (F64E) ekranındaki İSTATİSTİK sayılarını olduğu gibi yazın — toplam tek doz ve çift doz sayısı. SIFIRLAMAYIN; sistem dünle farkını kendi alır. Boş bırakılabilir.">?</span>
           </div>
-          <div class="kap-stok3" style="grid-template-columns:1fr 1fr">
-            <div><div class="kap-lbl">Tek Doz Sayacı</div><input id="kapDegTek" class="kap-inp-stok" inputmode="numeric" placeholder="ekrandaki sayı" /></div>
-            <div><div class="kap-lbl">Çift Doz Sayacı</div><input id="kapDegCift" class="kap-inp-stok" inputmode="numeric" placeholder="ekrandaki sayı" /></div>
+          <div class="kap-stok3">
+            <div><div class="kap-lbl">Doz I (tek)</div><input id="kapDegTek" class="kap-inp-stok" inputmode="numeric" placeholder="sayaç" /></div>
+            <div><div class="kap-lbl">Doz II (çift)</div><input id="kapDegCift" class="kap-inp-stok" inputmode="numeric" placeholder="sayaç" /></div>
+            <div><div class="kap-lbl">Doz III (varsa)</div><input id="kapDegUc" class="kap-inp-stok" inputmode="numeric" placeholder="Helios" /></div>
           </div>
         </div>
         <div style="display:flex;gap:10px">
@@ -6698,12 +6699,14 @@ async function kapanisGonderSubmit(otomatik) {
     try {
       var _dt = parseInt(inpVal('kapDegTek') || '', 10);
       var _dc = parseInt(inpVal('kapDegCift') || '', 10);
-      if (!isNaN(_dt) || !isNaN(_dc)) {
+      var _du = parseInt(inpVal('kapDegUc') || '', 10);
+      if (!isNaN(_dt) || !isNaN(_dc) || !isNaN(_du)) {
         fetch(apiUrl('/recete/degirmen-sayac'), {
           method: 'POST', headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({ sube_id: SUBE_ID,
             tek_sayac: isNaN(_dt) ? null : _dt,
-            cift_sayac: isNaN(_dc) ? null : _dc })
+            cift_sayac: isNaN(_dc) ? null : _dc,
+            uc_sayac: isNaN(_du) ? null : _du })
         }).catch(function(){});
       }
     } catch (e) { /* değirmen kaydı kapanışı etkilemez */ }
