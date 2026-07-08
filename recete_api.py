@@ -71,6 +71,13 @@ def _ensure(cur) -> None:
             varsayim BOOLEAN NOT NULL DEFAULT TRUE,   -- kullanıcı teyidiyle FALSE olur
             aciklama TEXT NOT NULL DEFAULT ''
         );
+        CREATE TABLE IF NOT EXISTS recete_ambalaj (
+            kalem_kodu TEXT PRIMARY KEY,
+            kalem_adi TEXT NOT NULL DEFAULT '',
+            icerik NUMERIC(10,1) NOT NULL,     -- 1 ambalajın içeriği (ml veya g)
+            birim TEXT NOT NULL,               -- ml | g
+            varsayim BOOLEAN NOT NULL DEFAULT TRUE
+        );
         CREATE TABLE IF NOT EXISTS recete_eslestirme (
             id TEXT PRIMARY KEY,
             tip TEXT NOT NULL,                 -- 'urun' (recete↔Evo adı) | 'malzeme' (↔depo kalemi)
@@ -397,29 +404,112 @@ def recete_kontrol(gun: int = 7):
                             continue
                         beklenen.setdefault(kod, {}).setdefault(gun_s, 0.0)
                         beklenen[kod][gun_s] += adet * kal["miktar"]
-        # gerçek düşüşler (çıkış yönlü hareketler)
+        # GERÇEK tüketim = ÜRÜN-AÇ DEFTERİ (operasyon_defter URUN_AC JSON yükü):
+        # ambalaj ADEDİ sayılır. Reçete ml/g konuştuğu için köprü = recete_ambalaj
+        # (1 ambalaj kaç ml/g). Ambalaj içeriği tanımsızsa fark HESAPLANMAZ —
+        # iki sayı yan yana dürüstçe verilir (uydurma yok).
+        import json as _json
+        _dec = _json.JSONDecoder()
+
+        def _payload(a: str):
+            try:
+                i = a.index("URUN_AC_JSON:") + len("URUN_AC_JSON:")
+                obj, _ = _dec.raw_decode(a[i:])
+                return obj if isinstance(obj, dict) else None
+            except Exception:  # noqa: BLE001
+                return None
+
+        cur.execute(
+            """SELECT tarih::date::text AS gun,
+                      REPLACE(aciklama,'URUN_KULLANIMA_AL_JSON:','URUN_AC_JSON:') AS aciklama
+               FROM operasyon_defter
+               WHERE etiket IN ('URUN_AC','URUN_KULLANIMA_AL')
+                 AND NOT (etiket='URUN_AC' AND aciklama LIKE %s)
+                 AND tarih >= %s""",
+            ("%[BİTTİ]%", str(bugun - timedelta(days=g))),
+        )
+        acilan: Dict[str, Dict[str, float]] = {}  # kalem_kodu → {gun: ambalaj adedi}
+        for row in cur.fetchall() or []:
+            r = dict(row)
+            p = _payload(str(r["aciklama"] or ""))
+            if not p:
+                continue
+            for kod, v in (p.get("delta") or {}).items():
+                try:
+                    adet = float(v or 0)
+                except (TypeError, ValueError):
+                    continue
+                if adet > 0:
+                    acilan.setdefault(str(kod), {}).setdefault(r["gun"], 0.0)
+                    acilan[str(kod)][r["gun"]] += adet
+        cur.execute("SELECT kalem_kodu, icerik, birim, varsayim FROM recete_ambalaj")
+        ambalaj = {dict(r)["kalem_kodu"]: dict(r) for r in cur.fetchall() or []}
         sonuc = []
         for kod, gunler in beklenen.items():
-            cur.execute("""
-                SELECT zaman::date::text AS gun,
-                       ROUND(SUM(ABS(miktar))::numeric,1) AS dusen
-                FROM sube_depo_stok_hareket
-                WHERE kalem_kodu=%s AND miktar < 0
-                  AND zaman >= %s
-                GROUP BY 1""", (kod, str(bugun - timedelta(days=g))))
-            gercek = {dict(r)["gun"]: float(dict(r)["dusen"]) for r in cur.fetchall() or []}
+            amb = ambalaj.get(kod)
             for gun_s, bek in sorted(gunler.items()):
-                ger = gercek.get(gun_s)
-                sonuc.append({"kalem_kodu": kod, "gun": gun_s,
-                              "beklenen": round(bek, 1),
-                              "gercek_dusen": ger,
-                              "fark": (round(ger - bek, 1) if ger is not None else None)})
+                adet = (acilan.get(kod) or {}).get(gun_s)
+                satir = {"kalem_kodu": kod, "gun": gun_s,
+                         "beklenen_miktar": round(bek, 1),
+                         "acilan_ambalaj": adet}
+                if adet is not None and amb:
+                    ger = adet * float(amb["icerik"])
+                    satir["gercek_miktar"] = round(ger, 1)
+                    satir["fark"] = round(ger - bek, 1)
+                    satir["fark_yuzde"] = round((ger - bek) / bek * 100, 1) if bek else None
+                    if amb.get("varsayim"):
+                        satir["ambalaj_varsayim"] = True
+                else:
+                    satir["fark"] = None
+                    satir["eksik"] = ("urun_ac_kaydi_yok" if adet is None
+                                      else "ambalaj_icerigi_tanimsiz")
+                sonuc.append(satir)
     return {
         "kesit_gun": g,
         "onayli_urun_es": len(urun_es), "onayli_malzeme_es": len(malzeme_es),
-        "kiyas": sonuc[:80],
-        "not": "GÖZLEMDİR, hüküm değil: beklenen=Evo satış × reçete (çevrim "
-               "parametreleri varsayım olabilir — /parametreler), gerçek=stok "
-               "hareketi çıkışları. Fark ± işçilik payı/fire normaldir; kalıcı ve "
-               "tek yönlü fark İNSANIN bakacağı yerdir. Ürün-aç akışı değişmedi.",
+        "kiyas": sonuc[:100],
+        "not": "GÖZLEMDİR, hüküm değil: beklenen=Evo satış × reçete (çevrimler "
+               "/parametreler'de, varsayım olabilir); gerçek=ürün-aç defteri × ambalaj "
+               "içeriği (/ambalajlar). Fark ± fire/işçilik payı normaldir; KALICI ve "
+               "TEK YÖNLÜ fark insanın bakacağı yerdir. Ürün-aç stok/maliyet akışı "
+               "DEĞİŞMEDİ — reçete yalnız kontrol eder.",
     }
+
+
+@router.get("/ambalajlar")
+def ambalajlar():
+    """Kalem başına 1 ambalajın içeriği (ml/g). Kontrol köprüsü: ürün-aç ADET sayar,
+    reçete ml/g konuşur. varsayim=true satırlar kullanıcı teyidi bekler."""
+    with db() as (_, cur):
+        _ensure(cur)
+        cur.execute("""SELECT kalem_kodu, kalem_adi, icerik, birim, varsayim
+                       FROM recete_ambalaj ORDER BY kalem_adi""")
+        rows = [dict(r) for r in cur.fetchall() or []]
+        for r in rows:
+            r["icerik"] = float(r["icerik"])
+        return {"ambalajlar": rows}
+
+
+@router.post("/ambalaj")
+def ambalaj_kaydet(payload: dict):
+    """Ambalaj içeriği tanımla/güncelle: {kalem_kodu, icerik, birim, kalem_adi?}.
+    Kullanıcı eliyle girilen değer varsayim=FALSE olur (teyitli)."""
+    kod = str(payload.get("kalem_kodu") or "").strip()
+    icerik = payload.get("icerik")
+    birim = str(payload.get("birim") or "").strip()
+    if not kod or icerik is None or birim not in ("ml", "g"):
+        raise HTTPException(400, "kalem_kodu + icerik + birim(ml|g) zorunlu")
+    varsayim = bool(payload.get("varsayim", False))
+    with db() as (conn, cur):
+        _ensure(cur)
+        cur.execute(
+            """INSERT INTO recete_ambalaj (kalem_kodu, kalem_adi, icerik, birim, varsayim)
+               VALUES (%s,%s,%s,%s,%s)
+               ON CONFLICT (kalem_kodu) DO UPDATE
+               SET icerik=EXCLUDED.icerik, birim=EXCLUDED.birim,
+                   varsayim=EXCLUDED.varsayim,
+                   kalem_adi=COALESCE(NULLIF(EXCLUDED.kalem_adi,''), recete_ambalaj.kalem_adi)""",
+            (kod, str(payload.get("kalem_adi") or "")[:80], float(icerik), birim, varsayim))
+        conn.commit()
+    return {"ok": True, "kalem_kodu": kod, "icerik": float(icerik),
+            "birim": birim, "varsayim": varsayim}
