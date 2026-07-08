@@ -407,9 +407,13 @@ def recete_kontrol(gun: int = 7):
                          AND bastar >= %s ORDER BY bastar""",
                     (str(bugun - timedelta(days=g)),))
         # beklenen: MALZEME bazında (kod değil) — (malzeme, birim) → {gun: miktar}
+        # BUGÜN kıyasa GİRMEZ: gün bitmeden (kapanış sayımı yokken) fark anlamsız —
+        # dünün tamamlanmış günleri kıyaslanır (2026-07-08 dersi: %2400 sahte fark).
         beklenen: Dict[tuple, Dict[str, float]] = {}
         for row in cur.fetchall() or []:
             gun_s = dict(row)["gun"]
+            if gun_s >= str(bugun):
+                continue
             for _s, sd in (dict(row)["veri_json"].get("subeler") or {}).items():
                 for u in sd.get("cok_satilan") or []:
                     ad_n = None
