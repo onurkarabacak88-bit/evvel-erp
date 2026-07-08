@@ -37,7 +37,9 @@ _TR_FOLD = str.maketrans("çğıöşüÇĞİÖŞÜI", "cgiosucgiosui")
 
 
 def _norm(s: str) -> str:
-    return re.sub(r"\s+", " ", (s or "").translate(_TR_FOLD).lower()).strip()
+    s = (s or "").translate(_TR_FOLD).lower()
+    s = re.sub(r"(\d)([a-z])", r"\1 \2", s)  # '14oz'→'14 oz' (depo bitişik yazım dersi)
+    return re.sub(r"\s+", " ", s).strip()
 
 
 def _ensure(cur) -> None:
@@ -346,7 +348,9 @@ def eslestirme_karar(payload: dict):
 _RECETE_BAR_ES = {
     "sut": ("sut_litre", 1000.0, "ml"),
     "plastik bardak": ("bardak_plastik", 1.0, "adet"),
-    "14 oz karton bardak": ("karton_bardak", 1.0, "adet"),
+    # depo kodları = bar anahtarları: '14oz Bardak'→bardak_buyuk, '8oz Bardak'→bardak_kucuk
+    # (karton_bardak anahtarı DEĞİL — depo dökümü dersi, 2026-07-08)
+    "14 oz karton bardak": ("bardak_buyuk", 1.0, "adet"),
     "8 oz bardak": ("bardak_kucuk", 1.0, "adet"),
 }
 @router.get("/kontrol")
