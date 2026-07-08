@@ -1384,7 +1384,7 @@ def tutarsizlik_ozeti(gun: int = 7):
         "kesit_gun": g,
         "toplam": len(satirlar),
         "tutarsizliklar": satirlar[:60],
-        "not": "İKİ KAYNAK AYNI ŞEYİ FARKLI SÖYLÜYOR listesi (5 kontrol: ciro-kasa izi, 
+        "not": "İKİ KAYNAK AYNI ŞEYİ FARKLI SÖYLÜYOR listesi (5 kontrol: ciro-kasa izi, "
                "devir, satış-tüketim, kabul-stok girişi, makine-satış) — hüküm yok, "
                "beraat da yok: hiçbir açıklama satırı listeden düşürmez, yorum insanındır. "
                "Boş liste 'her şey tutarlı' demektir. Eşik: satış/makine kıyasında "
