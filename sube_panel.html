@@ -5855,6 +5855,17 @@
           <div><div class="kap-lbl">Soda</div><input id="kapSo" class="kap-inp-stok" inputmode="numeric" placeholder="0" /></div>
           <div><div class="kap-lbl">Cookie</div><input id="kapCk" class="kap-inp-stok" inputmode="numeric" placeholder="0" /></div>
         </div>
+        <!-- Değirmen sayacı (F64E) — kapanıştan BAĞIMSIZ ayrı uca gider, kapanışı bloklamaz -->
+        <div style="margin-bottom:16px">
+          <div style="font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.6px;color:#f59e0b;margin-bottom:6px;display:flex;align-items:center;gap:5px">
+            ◈ Değirmen Sayacı
+            <span class="tip-q" data-tip="Değirmenin (F64E) ekranındaki İSTATİSTİK sayılarını olduğu gibi yazın — toplam tek doz ve çift doz sayısı. SIFIRLAMAYIN; sistem dünle farkını kendi alır. Boş bırakılabilir.">?</span>
+          </div>
+          <div class="kap-stok3" style="grid-template-columns:1fr 1fr">
+            <div><div class="kap-lbl">Tek Doz Sayacı</div><input id="kapDegTek" class="kap-inp-stok" inputmode="numeric" placeholder="ekrandaki sayı" /></div>
+            <div><div class="kap-lbl">Çift Doz Sayacı</div><input id="kapDegCift" class="kap-inp-stok" inputmode="numeric" placeholder="ekrandaki sayı" /></div>
+          </div>
+        </div>
         <div style="display:flex;gap:10px">
           <button class="btn btn-ghost" id="kapBack3" type="button" style="height:46px;flex:0 0 100px;font-size:14px">← Geri</button>
           <button class="btn btn-primary" id="kapNext3" type="button" style="height:46px;flex:1;font-size:14px;font-weight:800">Pasta Sayımına Geç →</button>
@@ -6683,6 +6694,19 @@ async function kapanisGonderSubmit(otomatik) {
       method: 'POST', body: body,
       islemBasariliMesaji: 'Kapanış gönderildi — ciro merkez onayına düştü.',
     });
+    // Değirmen sayacı — İZOLE uç, hata yutar (kapanışı asla bloklamaz)
+    try {
+      var _dt = parseInt(inpVal('kapDegTek') || '', 10);
+      var _dc = parseInt(inpVal('kapDegCift') || '', 10);
+      if (!isNaN(_dt) || !isNaN(_dc)) {
+        fetch(apiUrl('/recete/degirmen-sayac'), {
+          method: 'POST', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ sube_id: SUBE_ID,
+            tek_sayac: isNaN(_dt) ? null : _dt,
+            cift_sayac: isNaN(_dc) ? null : _dc })
+        }).catch(function(){});
+      }
+    } catch (e) { /* değirmen kaydı kapanışı etkilemez */ }
     setMsg('kapMsg','✅ Kapanış tamamlandı — ciro merkez onayına düştü.','msg-ok');
     setTimeout(function(){ kapanisModalKapat(); refresh(); }, 1500);
     return true;

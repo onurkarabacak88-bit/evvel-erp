@@ -739,3 +739,142 @@ def gece_recete_kontrol_ozeti() -> None:
             )
     except Exception as e:  # noqa: BLE001
         logger.warning("gece recete kontrol ozeti hatasi: %s", str(e)[:120])
+
+
+# ── DEĞİRMEN SAYACI (2026-07-08 gece): Fiorenzato F64E doz istatistiği ──
+# Starbucks modeli 3. katman: makine sayacı ↔ POS satışı. F64E her çekimi
+# birikimli sayar (tek/çift doz, istatistik ekranı). Kapanışta personel okur,
+# İZOLE uca gönderilir (KAPANIS event'ine DOKUNULMAZ — kapanışı asla bloklamaz).
+# Günlük tüketim = bugünkü sayaç − önceki okuma (birikimli fark).
+
+def _degirmen_ensure(cur) -> None:
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS degirmen_sayac (
+            id TEXT PRIMARY KEY,
+            sube_id TEXT NOT NULL,
+            tarih DATE NOT NULL DEFAULT CURRENT_DATE,
+            tek_sayac BIGINT,
+            cift_sayac BIGINT,
+            olusturma TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            UNIQUE (sube_id, tarih)
+        );
+    """)
+    for ad, deger, birim, acik in (
+        ("degirmen_tek_doz_g", 11, "g", "F64E tek doz gramajı (8oz ~11g — teyit edilecek)"),
+        ("degirmen_cift_doz_g", 17.5, "g", "F64E çift doz gramajı (sahip teyitli)"),
+    ):
+        cur.execute(
+            """INSERT INTO recete_parametre (ad, deger, birim, aciklama)
+               VALUES (%s,%s,%s,%s) ON CONFLICT (ad) DO NOTHING""",
+            (ad, deger, birim, acik))
+    cur.execute("UPDATE recete_parametre SET varsayim=FALSE WHERE ad='degirmen_cift_doz_g'")
+
+
+@router.post("/degirmen-sayac")
+def degirmen_sayac_kaydet(payload: dict):
+    """Kapanışta değirmen istatistik sayacı okuma (BİRİKİMLİ değerler — sıfırlamayın).
+    Aynı gün ikinci gönderim üstüne yazar (son okuma geçerli). Hata-yutar tasarım:
+    şube paneli bu ucu kapanıştan BAĞIMSIZ çağırır."""
+    sube_id = str(payload.get("sube_id") or "").strip()
+    if not sube_id:
+        raise HTTPException(400, "sube_id zorunlu")
+    tek = payload.get("tek_sayac")
+    cift = payload.get("cift_sayac")
+    if tek is None and cift is None:
+        raise HTTPException(400, "en az bir sayaç değeri gerekli")
+    with db() as (conn, cur):
+        _ensure(cur)
+        _degirmen_ensure(cur)
+        cur.execute(
+            """INSERT INTO degirmen_sayac (id, sube_id, tarih, tek_sayac, cift_sayac)
+               VALUES (%s,%s,CURRENT_DATE,%s,%s)
+               ON CONFLICT (sube_id, tarih)
+               DO UPDATE SET tek_sayac=COALESCE(EXCLUDED.tek_sayac, degirmen_sayac.tek_sayac),
+                             cift_sayac=COALESCE(EXCLUDED.cift_sayac, degirmen_sayac.cift_sayac),
+                             olusturma=NOW()""",
+            (str(uuid.uuid4()), sube_id,
+             int(tek) if tek is not None else None,
+             int(cift) if cift is not None else None))
+        conn.commit()
+    return {"ok": True, "sube_id": sube_id}
+
+
+@router.get("/degirmen-kiyas")
+def degirmen_kiyas(gun: int = 7):
+    """DEĞİRMEN ↔ SATIŞ KIYASI (Starbucks 3. katman): makine sayacı farkından
+    çekilen doz × gramaj = MAKİNE GERÇEĞİ ↔ satış×reçete = BEKLENEN.
+    Sayaç düştüyse (reset/elektrik) o gün 'sayac_sifirlanmis' — hesap yapılmaz."""
+    g = max(3, min(30, int(gun or 7)))
+    bugun = date.today()
+    with db() as (_, cur):
+        _ensure(cur)
+        _degirmen_ensure(cur)
+        cur.execute("SELECT ad, deger FROM recete_parametre WHERE ad LIKE 'degirmen%%'")
+        prm = {dict(r)["ad"]: float(dict(r)["deger"]) for r in cur.fetchall() or []}
+        tek_g = prm.get("degirmen_tek_doz_g", 11.0)
+        cift_g = prm.get("degirmen_cift_doz_g", 17.5)
+        cur.execute(
+            """SELECT d.sube_id, s.ad AS sube, d.tarih::text AS tarih,
+                      d.tek_sayac, d.cift_sayac
+               FROM degirmen_sayac d LEFT JOIN subeler s ON s.id = d.sube_id
+               WHERE d.tarih >= %s ORDER BY d.sube_id, d.tarih""",
+            (str(bugun - timedelta(days=g + 3)),))
+        rows = [dict(r) for r in cur.fetchall() or []]
+    # şube bazında ardışık okuma farkı
+    gunluk = []
+    onceki: Dict[str, dict] = {}
+    for r in rows:
+        sid = r["sube_id"]
+        o = onceki.get(sid)
+        if o is not None:
+            satir = {"sube": r["sube"] or sid, "tarih": r["tarih"],
+                     "onceki_tarih": o["tarih"]}
+            sifirlanmis = False
+            toplam_g = 0.0
+            for alan, gram in (("tek_sayac", tek_g), ("cift_sayac", cift_g)):
+                simdi_v, once_v = r.get(alan), o.get(alan)
+                if simdi_v is None or once_v is None:
+                    satir[alan.replace("_sayac", "_doz")] = None
+                    continue
+                fark = int(simdi_v) - int(once_v)
+                if fark < 0:
+                    sifirlanmis = True
+                satir[alan.replace("_sayac", "_doz")] = fark
+                toplam_g += max(0, fark) * gram
+            if sifirlanmis:
+                satir["durum"] = "sayac_sifirlanmis"
+            else:
+                satir["makine_gram"] = round(toplam_g, 1)
+            gunluk.append(satir)
+        onceki[sid] = r
+    # beklenen espresso (satış×reçete) gün bazında — recete_kontrol'den
+    try:
+        rk = recete_kontrol(gun=g)
+        beklenen_gun = {k["gun"]: k["beklenen_miktar"] for k in (rk.get("kiyas") or [])
+                        if k["malzeme"] == "espresso"}
+    except Exception:  # noqa: BLE001
+        beklenen_gun = {}
+    # gün bazında şubeler toplamı ↔ beklenen
+    kiyas: Dict[str, dict] = {}
+    for s in gunluk:
+        if s.get("makine_gram") is None:
+            continue
+        k = kiyas.setdefault(s["tarih"], {"tarih": s["tarih"], "makine_gram": 0.0,
+                                          "sube_sayisi": 0})
+        k["makine_gram"] = round(k["makine_gram"] + s["makine_gram"], 1)
+        k["sube_sayisi"] += 1
+    for tarih, k in kiyas.items():
+        bek = beklenen_gun.get(tarih)
+        k["beklenen_gram"] = bek
+        if bek:
+            k["fark_yuzde"] = round((k["makine_gram"] - bek) / bek * 100, 1)
+    return {
+        "kesit_gun": g,
+        "doz_gramaj": {"tek": tek_g, "cift": cift_g},
+        "sube_gunluk": gunluk[-40:],
+        "gun_kiyasi": sorted(kiyas.values(), key=lambda x: x["tarih"], reverse=True),
+        "not": "MAKİNE GERÇEĞİ: F64E birikimli sayaç farkı × doz gramajı. 4 şubenin "
+               "TAMAMI sayaç girmeden gün kıyası eksik kalır (sube_sayisi'na bak). "
+               "Sayaç sıfırlanırsa o gün hesaplanmaz. Beklenen=satış×reçete. GÖZLEMDİR "
+               "— fark ± kalibrasyon/ikram payı taşır; yorum insanın.",
+    }
