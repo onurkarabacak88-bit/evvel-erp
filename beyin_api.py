@@ -310,6 +310,8 @@ def _veri_dilegi_yakala(soru: str, cevap: str) -> None:
             if re.search(r"(doğrulamak mümkün değil|dogrulamak mumkun degil"
                          r"|daha fazla detay gerek|veri gerekebilir|detay gerekebilir"
                          r"|bilgi sağlanmamış|bilgi saglanmamis|cevaplanamamaktadır"
+                         r"|bu bağlamda görünmüyor|bu baglamda gorunmuyor"
+                         r"|verisi mevcut değil|verisi mevcut degil|ulaşılamıyor|ulasilamiyor"
                          r"|cevaplayabilmek için.*gerek)", cevap or "", re.IGNORECASE):
                 dilek = ("Şu soru mevcut pencerelerle tam cevaplanamadı: "
                          + (soru or "")[:200])
@@ -552,7 +554,9 @@ def _blok_derle(soru: str, yonlendirme_ek: str = "") -> List[Tuple[str, str, str
          lambda: _j(__import__("duyu_gorunumler").maas_avans_ozet())),
         ("B26", "Stok hareket özeti (şube×tür akış + açık sayım görevi + düzeltmeler)",
          ("stok hareket", "giriş çıkış", "giris cikis", "sayım görev", "sayim gorev",
-          "stok akış", "stok akis", "depo hareket", "envanter düzelt", "envanter duzelt"),
+          "stok akış", "stok akis", "depo hareket", "envanter düzelt", "envanter duzelt",
+          "girişi", "girisi", "giriş yapıl", "giris yapil", "stok gir", "teslim al",
+          "kaç adet gel", "kac adet gel", "ürün gel", "urun gel"),
          lambda: _j(__import__("duyu_gorunumler").stok_hareket_ozet(gun=7))),
         ("B27", "Kart ekstre & limit pozisyonu (kart başına limit/borç/müsait)",
          ("kart limit", "ekstre", "limit", "kart borcu", "kart borç", "kart borc",
