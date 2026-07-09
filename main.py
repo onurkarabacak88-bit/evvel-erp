@@ -1838,6 +1838,9 @@ FROM kasa_hareketleri
 WHERE durum='aktif'
 """)
             row = cur.fetchone() or {"gelir": 0, "gider": 0}
+            # D13 notu (2026-07-10): buradaki 'gider' = KASADAN ÇIKAN NAKİT (nakit
+            # akışı; KART_ODEME=banka transferi dahil). P&L gideri DEĞİLDİR —
+            # operasyonel P&L kart ödemesini/finansmanı bilinçli dışlar.
             toplam_gelir = float(row.get('gelir', 0) or 0)
             toplam_gider = float(row.get('gider', 0) or 0)
 
@@ -3734,6 +3737,76 @@ def kart_manuel_ekstre(kid: str, body: ManuelEkstreBody):
                         (body.faiz_orani, body.gecikme_faiz_orani, kid))
         yeni_borc = kart_borc(cur, kid)
     return {"success": True, "yeni_borc": round(yeni_borc, 2)}
+
+
+@app.get("/api/kartlar/fatura-eslesme")
+def kart_fatura_eslesme(ay_sayisi: int = 2, esik: float = 1000.0):
+    """K2-D — KART HARCAMASI ↔ TEDARİKÇİ FATURASI köprüsü (öneri-only):
+    1) EŞLEŞEN: işletme/belirsiz kart harcaması ile tutar ±%2 / tarih ±5 gün
+       uyuşan fatura → 'faturası sistemde VAR, KDV indirimi ayrıştırılabilir'.
+    2) FATURASIZ BÜYÜK: eşiği aşan işletme harcaması, eş faturası yok →
+       belge/fatura isteme adayı (KDV indirimi kaçıyor olabilir).
+    Hiçbir kaydı DEĞİŞTİRMEZ — farkındalık raporu."""
+    n = max(1, min(6, int(ay_sayisi or 2)))
+    with db() as (_, cur):
+        cur.execute(
+            """SELECT h.id, h.tarih::text AS tarih, k.kart_adi,
+                      ROUND(h.tutar::numeric,2) AS tutar,
+                      LEFT(COALESCE(h.aciklama,''),50) AS aciklama,
+                      COALESCE(h.harcama_tipi,'belirsiz') AS tip
+               FROM kart_hareketleri h JOIN kartlar k ON k.id = h.kart_id
+               WHERE h.islem_turu='HARCAMA' AND h.durum='aktif'
+                 AND COALESCE(h.harcama_tipi,'belirsiz') <> 'sahsi'
+                 AND h.tarih >= DATE_TRUNC('month', CURRENT_DATE) - (%s || ' months')::interval
+               ORDER BY h.tutar DESC""", (n - 1,))
+        harcamalar = [dict(r) for r in cur.fetchall() or []]
+        cur.execute(
+            """SELECT id, tedarikci_ad, fatura_tarih::text AS tarih,
+                      COALESCE(toplam_tutar,0)::float AS tutar
+               FROM tedarikci_fatura
+               WHERE fatura_tarih >= DATE_TRUNC('month', CURRENT_DATE) - (%s || ' months')::interval
+                 AND COALESCE(toplam_tutar,0) > 0""", (n - 1,))
+        faturalar = [dict(r) for r in cur.fetchall() or []]
+    from datetime import date as _d
+    kullanildi: set = set()
+    eslesen, faturasiz_buyuk = [], []
+    kdv_ayrisabilir = 0.0
+    for h in harcamalar:
+        tut = float(h["tutar"])
+        aday = None
+        for f in faturalar:
+            if f["id"] in kullanildi:
+                continue
+            if abs(f["tutar"] - tut) > max(5.0, tut * 0.02):
+                continue
+            try:
+                gunfark = abs((_d.fromisoformat(h["tarih"][:10])
+                               - _d.fromisoformat(str(f["tarih"])[:10])).days)
+            except Exception:  # noqa: BLE001
+                continue
+            if gunfark <= 5:
+                aday = f
+                break
+        if aday:
+            kullanildi.add(aday["id"])
+            kdv_ayrisabilir += tut
+            eslesen.append({"harcama_tarih": h["tarih"], "kart": h["kart_adi"],
+                            "tutar": tut, "aciklama": h["aciklama"],
+                            "fatura_tedarikci": aday["tedarikci_ad"],
+                            "fatura_tarih": aday["tarih"]})
+        elif tut >= float(esik) and h["tip"] == "isletme":
+            faturasiz_buyuk.append({"tarih": h["tarih"], "kart": h["kart_adi"],
+                                    "tutar": tut, "aciklama": h["aciklama"]})
+    return {
+        "eslesen": eslesen[:30],
+        "eslesen_toplam": round(kdv_ayrisabilir, 2),
+        "faturasiz_buyuk_isletme": faturasiz_buyuk[:30],
+        "faturasiz_toplam": round(sum(x["tutar"] for x in faturasiz_buyuk), 2),
+        "not": "ADAY eşleştirme — hüküm değil. 'Eşleşen' = faturası sistemde olan kart "
+               "harcaması (KDV'si fatura kaleminden ayrıştırılabilir). 'Faturasız büyük' "
+               "= belge isteme adayı; fatura alınmazsa indirilecek KDV kaçar. Kart "
+               "giderleri şu an KDV-ayrıştırmasız gider yazılır (bilinçli model).",
+    }
 
 
 @app.get("/api/kartlar/taksit-takvimi")
