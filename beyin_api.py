@@ -570,7 +570,7 @@ def _blok_derle(soru: str, yonlendirme_ek: str = "") -> List[Tuple[str, str, str
         from duyu_gorunumler import bag_defteri_oku
         v = bag_defteri_oku()
         return _j({"defter_gunu": v.get("defter_gunu"),
-                   "baglar": [x.get("cumle") for x in (v.get("baglar") or [])][:35],
+                   "baglar": [x.get("cumle") for x in (v.get("baglar") or [])][:80],  # kaynak 11'e cikinca 35 tavani yeni alanlari kesiyordu (canli ders)
                    "not": v.get("not")})
     ekle("B42", "Bağ defteri (alanlar arası HAZIR ilişki cümleleri — kod kurdu)", _b42)
 
