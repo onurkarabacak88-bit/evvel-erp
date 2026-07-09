@@ -1463,7 +1463,7 @@ def _uretilmis_sorular() -> list:
         return []
 
 
-def gece_ozsorgu() -> None:
+def gece_ozsorgu(sadece_liste: bool = False):
     """GECE v2 (dinamik): olay-güdümlü + beyin-üretimli + çekirdek bankadan 1 rotasyon.
     Sistem 10 soruya sığmaz — sorular artık sistemin kendi durumundan doğar; banka
     yalnız süreklilik karnesidir. Son 7 günde sorulmuş soru tekrarlanmaz."""
@@ -1531,6 +1531,13 @@ def gece_ozsorgu() -> None:
             gorulen.add(k)
             hepsi.append(s)
         hepsi = hepsi[:8]  # gece maliyet tavanı (v2: 5 kaynak → 8)
+        if sadece_liste:  # teşhis: LLM koşmadan derlenen soru evrenini göster
+            return {"sorular": [
+                {"kaynak": ("olay" if s in olay_sorulari else
+                            "sahip_tekrar" if s in sahip_sorulari else
+                            "bag_takip" if s in bag_sorulari else
+                            "uretim" if s in uretilen_sorular else "banka"),
+                 "soru": s} for s in hepsi]}
         cevaplanan, dilekli = 0, 0
         for soru in hepsi:
             kaynak = ("olay" if soru in olay_sorulari else
@@ -1573,11 +1580,32 @@ def ozsorgu_calistir(beklemeden: int = 1):
     hemen dön; sonuçlar /ozsorgu-sonuclari'ndan izlenir. beklemeden=0 eski davranış."""
     if beklemeden:
         import threading
-        threading.Thread(target=gece_ozsorgu, daemon=True).start()
+
+        def _korunmus():
+            try:
+                gece_ozsorgu()
+            except Exception as e:  # noqa: BLE001
+                logger.error("ozsorgu thread coktu: %s", str(e)[:300])
+                try:
+                    from duyu_omurga import duyu_olay_yaz
+                    duyu_olay_yaz("ozsorgu", "meta.ozsorgu.thread_hatasi",
+                                  f"hata_{date.today()}", entity_scope="genel",
+                                  signal_name="Öz-sorgu turu çöktü",
+                                  payload={"hata": str(e)[:300]})
+                except Exception:  # noqa: BLE001
+                    pass
+
+        threading.Thread(target=_korunmus, daemon=True).start()
         return {"ok": True, "baslatildi": True,
                 "not": "Tur arka planda koşuyor — GET /api/beyin/ozsorgu-sonuclari?gun=1"}
     gece_ozsorgu()
     return ozsorgu_sonuclari(gun=1)
+
+
+@router.get("/ozsorgu-onizle")
+def ozsorgu_onizle():
+    """Teşhis: bu gece SORULACAK soru listesi (kaynaklarıyla) — LLM koşmaz."""
+    return gece_ozsorgu(sadece_liste=True) or {"sorular": []}
 
 
 @router.get("/ozsorgu-sonuclari")
