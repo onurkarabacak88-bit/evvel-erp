@@ -1918,6 +1918,87 @@ def _bag_kart() -> List[dict]:
     return out
 
 
+def _bag_ciro_kasa() -> List[dict]:
+    """Ciro↔kasa farkı bağı (dilek e59f57ec/10044dff: 'bu cirolarda kasa açığı
+    var mı?') — şube-gün cirosu ile AYNI GÜNÜN kasa fark uyarısı yan yana."""
+    with db() as (_, cur):
+        cur.execute(
+            """SELECT s.ad AS sube, c.tarih::text AS gun,
+                      ROUND(SUM(c.toplam)::numeric, 2) AS ciro
+               FROM ciro c JOIN subeler s ON s.id = c.sube_id
+               WHERE c.durum = 'aktif' AND c.tarih >= CURRENT_DATE - 7
+               GROUP BY s.ad, c.tarih""")
+        cirolar = {(r["sube"], r["gun"]): float(r["ciro"]) for r in cur.fetchall() or []}
+        cur.execute(
+            """SELECT COALESCE(s.ad, u.sube_id::text) AS sube, u.tarih::text AS gun,
+                      u.tip, ROUND(COALESCE(u.fark_tl,0)::numeric, 2) AS fark
+               FROM sube_operasyon_uyari u
+               LEFT JOIN subeler s ON s.id::text = u.sube_id::text
+               WHERE u.tip IN ('ACILIS_KASA_FARK','KAPANIS_KASA_FARK')
+                 AND u.tarih >= CURRENT_DATE - 7""")
+        farklar = [dict(r) for r in cur.fetchall() or []]
+    out = []
+    for f in farklar[:10]:
+        ciro = cirolar.get((f["sube"], f["gun"]))
+        tip_ad = "açılış" if f["tip"] == "ACILIS_KASA_FARK" else "kapanış"
+        yon = "eksik" if float(f["fark"]) < 0 else "fazla"
+        out.append({"alanlar": ["ciro", "kasa"], "tarih": f["gun"], "guven": "gozlem",
+                    "cumle": (f"{f['sube']} {f['gun']}: kayıtlı ciro "
+                              f"{ciro if ciro is not None else 'kaydı görünmüyor'}; aynı günün "
+                              f"{tip_ad} kasa farkı {f['fark']} ({yon}) — ciro↔kasa bağı "
+                              "(hazır kayıt, hüküm değil)")})
+    if not farklar:
+        out.append({"alanlar": ["ciro", "kasa"], "tarih": None, "guven": "gozlem",
+                    "cumle": "son 7 günde kayıtlı kasa farkı uyarısı yok — "
+                             "cirolarda kasa açığı kaydına rastlanmadı (hazır kayıt)"})
+    return out
+
+
+def _bag_evo_ciro() -> List[dict]:
+    """Evo↔kayıtlı ciro bağı (dilek 131e65a0: 'Zafer cirosu ile Evo verisi
+    arasında fark var mı?') — Evo gece-çekim cache'i ile ciro tablosu şube-gün
+    kıyası; farkı KOD hesaplar. TEMA↔GAZZE ad köprüsü bilinçli (aynı şube)."""
+    def _kat(s):
+        return (s or "").strip().upper().replace("İ", "I").replace("Ş", "S")             .replace("Ğ", "G").replace("Ü", "U").replace("Ö", "O").replace("Ç", "C")
+    with db() as (_, cur):
+        cur.execute(
+            """SELECT bastar::text AS gun, veri_json FROM evo_rapor_cache
+               WHERE anahtar = 'sube-grup-detay' AND bastar = bittar
+               ORDER BY bastar DESC LIMIT 5""")
+        evo_gunler = [dict(r) for r in cur.fetchall() or []]
+        cur.execute(
+            """SELECT s.ad AS sube, c.tarih::text AS gun,
+                      ROUND(SUM(c.toplam)::numeric, 2) AS ciro
+               FROM ciro c JOIN subeler s ON s.id = c.sube_id
+               WHERE c.durum = 'aktif' AND c.tarih >= CURRENT_DATE - 8
+               GROUP BY s.ad, c.tarih""")
+        kayitli = {(_kat(r["sube"]), r["gun"]): float(r["ciro"])
+                   for r in cur.fetchall() or []}
+    takma = {"GAZZE": "TEMA", "TEMA": "GAZZE"}
+    out = []
+    for eg in evo_gunler:
+        for sube_ad, sd in (eg["veri_json"].get("subeler") or {}).items():
+            evo_c = sd.get("ciro_toplam")
+            if evo_c is None:
+                continue
+            k = _kat(sube_ad)
+            kc = kayitli.get((k, eg["gun"]))
+            if kc is None and k in takma:
+                kc = kayitli.get((takma[k], eg["gun"]))
+            if kc is None:
+                out.append({"alanlar": ["evo", "ciro"], "tarih": eg["gun"], "guven": "gozlem",
+                            "cumle": (f"{sube_ad} {eg['gun']}: Evo satış toplamı {evo_c} ama "
+                                      "sistemde o günün kayıtlı cirosu görünmüyor — Evo↔ciro "
+                                      "bağı (kayıt gecikmesi de olabilir)")})
+                continue
+            fark = round(float(evo_c) - kc, 2)
+            out.append({"alanlar": ["evo", "ciro"], "tarih": eg["gun"], "guven": "hesap",
+                        "cumle": (f"{sube_ad} {eg['gun']}: Evo satış toplamı {evo_c}, "
+                                  f"kayıtlı ciro {kc} — fark {fark} (hazır hesap; "
+                                  "küçük fark yuvarlama/iade kaynaklı olabilir)")})
+    return out[:12]
+
+
 _BAG_KAYNAKLARI = [
     ("stok_hipotez", _bag_stok_hipotez),
     ("tutarsizlik", _bag_tutarsizlik),
@@ -1928,6 +2009,8 @@ _BAG_KAYNAKLARI = [
     ("odeme", _bag_odeme),
     ("maas_avans", _bag_maas_avans),
     ("kart", _bag_kart),
+    ("ciro_kasa", _bag_ciro_kasa),
+    ("evo_ciro", _bag_evo_ciro),
 ]
 
 

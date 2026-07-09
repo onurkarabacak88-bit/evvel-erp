@@ -548,6 +548,21 @@ def _blok_derle(soru: str, yonlendirme_ek: str = "") -> List[Tuple[str, str, str
         return _j({k: p.get(k) for k in alanlar if k in p})
     ekle("B4", "Finans panel özeti (bu ay)", _b4)
 
+    # B44 — TAKVİM (dilek d581bc70, 2026-07-09: 'Biz hangi aydayız' cevapsızdı;
+    # bugünün tarihi hiçbir bağlam bloğunda yoktu → rakam freni tarih söyletmezdi).
+    # NOT: B0 kimliği sohbet-geçmişi bloğunda kullanılıyor — o yüzden B44.
+    def _b44():
+        from datetime import date as _d
+        bugun = _d.today()
+        aylar = ["", "Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz",
+                 "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"]
+        gunler = ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma",
+                  "Cumartesi", "Pazar"]
+        return _j({"bugun": str(bugun), "yil": bugun.year,
+                   "ay": f"{aylar[bugun.month]} {bugun.year}",
+                   "hafta_gunu": gunler[bugun.weekday()]})
+    ekle("B44", "Bugünün takvimi (tarih, ay, hafta günü)", _b44)
+
     # B42 — BAĞ DEFTERİ (2026-07-09, sahip: 'her konuda bağ kurarak konuşsun'):
     # kod GECE kurduğu hazır ilişki cümlelerini HER soruda beynin önüne koyar;
     # model bağı hesaplamaz, AKTARIR (kural 15). Cache okuma = hafif, pool dostu.
