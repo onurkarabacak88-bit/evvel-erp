@@ -1264,6 +1264,14 @@ def borc_plan_mutabakat(referans_tarih: Optional[date] = None) -> dict:
     """
     sonuc = {"backfill": 0, "kapatilan": 0, "mukerrer_iptal": 0, "baslangic_oncesi_iptal": 0, "hata": None}
 
+    # F1 KART BÖLÜMÜ (2026-07-09, kuru çalıştırma doğrulandı → zincire bağlandı):
+    # kart planları da self-heal kapsamında — mükerrer/bayat-taşıma/geçmiş-ay kapama.
+    try:
+        kt = kart_plan_mutabakat(uygula=True)
+        sonuc["kart"] = kt.get("ozet")
+    except Exception as e:
+        sonuc["hata"] = f"kart: {e}"; logger.warning(f"borc_plan_mutabakat kart: {e}")
+
     # 0) Başlangıç tarihinden ÖNCEKİ bekleyen borç planını iptal et (örn. araba ilk taksit
     #    1 Temmuz ise yanlışlıkla üretilmiş 1 Haziran satırı temizlenir).
     try:
