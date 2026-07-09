@@ -3189,6 +3189,35 @@ def sevk_cikti_kaydet(cur: Any, siparis_talep_id: str,
             kaynak_depo=kaynak_depo,
         )
         yolda_ids.append(yid)
+        # GÖREV #55 (2026-07-09, sahip teyidi): sevk çıkışının HAREKET İZİ.
+        # Stok miktarı yukarıda zaten düşüyordu ama defterde çıkış ayağı hiç
+        # görünmüyordu → denetim 'giriş var, çıkış kaydı YOK' diyordu (tek-ayaklı
+        # sevk dersi). kaynak_id = stok_yolda id → kabul girişiyle AYNI kimlik,
+        # çıkan↔giren eşleşmesi kurulur. Hata-yutar (ana sevki engellemez).
+        try:
+            cur.execute("SAVEPOINT sp_sevk_cikis_iz")
+            _iz_kod = dusulecek_kod if kaynak_depo else kalem_kodu
+            _once = (float(_mevcut_before)
+                     if (kaynak_depo and _mevcut_before is not None) else None)
+            cur.execute(
+                """
+                INSERT INTO sube_depo_stok_hareket
+                    (id, sube_id, kalem_kodu, kalem_adi, hareket_turu,
+                     miktar, onceki_miktar, sonraki_miktar,
+                     kaynak_tip, kaynak_id, aciklama)
+                VALUES (%s, %s, %s, %s, 'SEVK_CIKIS', %s, %s, %s, 'sevkiyat', %s, %s)
+                """,
+                (str(uuid.uuid4()), (kaynak_depo or "MERKEZ"), _iz_kod, kalem_adi,
+                 -float(sevk_adet), _once,
+                 (max(0.0, _once - sevk_adet) if _once is not None else None),
+                 yid, f"Sevk çıkışı — {kalem_adi} x{sevk_adet} yola çıktı"),
+            )
+            cur.execute("RELEASE SAVEPOINT sp_sevk_cikis_iz")
+        except Exception:
+            try:
+                cur.execute("ROLLBACK TO SAVEPOINT sp_sevk_cikis_iz")
+            except Exception:
+                pass
 
     # durum/sevkiyat alanlari cagiran katmanda guncellenir.
     _disiplin_olay_yaz(cur, siparis_talep_id, sube_id, OLAY_SEVK_CIKTI,
@@ -3278,7 +3307,11 @@ def sube_kabul_kaydet(cur: Any, siparis_talep_id: str, sube_id: str,
             # Tek kanonik depo girişi: INSERT + hareket log + alarm temizle + DEFERRED
             # RECONCILIATION (bekleyen URUN_AC borcunu mahsup eder). Tedarikçi sevkiyle
             # AYNI motor → inter-şube kabul de artık tutarlı (eskiden depoyu fazla sayıyordu).
-            sube_depo_stok_depo_giris_ekle(cur, sube_id, kalem_kodu, kalem_adi, kabul_adet)
+            sube_depo_stok_depo_giris_ekle(
+                cur, sube_id, kalem_kodu, kalem_adi, kabul_adet,
+                hareket_turu="SEVK_GIRIS", kaynak_tip="sevkiyat",
+                kaynak_id=yolda_id,  # çıkış ayağıyla AYNI kimlik → çift-ayak eşleşir
+            )
             if yolda_durum == "kabul_uyusmazlik":
                 eksik = sevk_adet - kabul_adet
                 logger.info(
@@ -3528,6 +3561,9 @@ def sube_depo_stok_depo_giris_ekle(
     kalem_kodu: str,
     kalem_adi: Optional[str],
     adet: int,
+    hareket_turu: str = "TESLIM_GIRIS",
+    kaynak_tip: str = "teslim_al",
+    kaynak_id: Optional[str] = None,
 ) -> None:
     """
     Şube paneli «ürün stok ekle» (URUN_STOK_EKLE): fiziksel depo stoğu artar.
@@ -3566,10 +3602,11 @@ def sube_depo_stok_depo_giris_ekle(
             """
             INSERT INTO sube_depo_stok_hareket
                 (id, sube_id, kalem_kodu, kalem_adi, hareket_turu,
-                 miktar, onceki_miktar, sonraki_miktar, kaynak_tip, aciklama)
-            VALUES (%s, %s, %s, %s, 'TESLIM_GIRIS', %s, %s, %s, 'teslim_al', %s)
+                 miktar, onceki_miktar, sonraki_miktar, kaynak_tip, kaynak_id, aciklama)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
-            (str(uuid.uuid4()), sube_id, kk, lab, float(ad), _onceki, _onceki + ad,
+            (str(uuid.uuid4()), sube_id, kk, lab, hareket_turu, float(ad),
+             _onceki, _onceki + ad, kaynak_tip, kaynak_id,
              f"Teslim al — {lab} +{ad}"),
         )
     except Exception:
