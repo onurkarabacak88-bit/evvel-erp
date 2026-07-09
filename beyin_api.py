@@ -88,7 +88,13 @@ _SYSTEM = (
     "bağlamında yoksa dilek YAZMA; cevabının son satırına tek başına şu kalıbı ekle: "
     "'PENCERE İSTEĞİ: B21' (ihtiyacın olan pencerenin numarası). Sistem o pencereyi "
     "açıp soruyu sana yeniden sorar. VERİ DİLEĞİ yalnız katalogda HİÇBİR pencerenin "
-    "karşılamadığı ihtiyaçlar içindir."
+    "karşılamadığı ihtiyaçlar içindir. "
+    "(15) BAĞ KURARAK KONUŞ ama BAĞI SEN HESAPLAMA: iki alanı/kaydı "
+    "ilişkilendirirken ÖNCE [B42] bağ defterindeki hazır cümlelere ve blokların "
+    "hazır 'fark/fark_yuzde/olmasi_gereken/hipotez' alanlarına bak — bunları AYNEN "
+    "aktar ve kaynağını söyle. Defterde ve bloklarda hazır bağ yoksa iki kaydın ham "
+    "değerlerini yan yana ver ve 'bu ikisinin hazır bağı henüz kurulmamış' de; "
+    "ASLA kendi toplama/çıkarmanla yeni bir bağ rakamı üretme."
 )
 
 # GÜVENLİK v0.2 (2026-07-06, 5-model sentezi):
@@ -479,6 +485,17 @@ def _blok_derle(soru: str, yonlendirme_ek: str = "") -> List[Tuple[str, str, str
                    "borc_taksit_bekleyen", "bu_ay_finansman_maliyeti", "personel_gercek")
         return _j({k: p.get(k) for k in alanlar if k in p})
     ekle("B4", "Finans panel özeti (bu ay)", _b4)
+
+    # B42 — BAĞ DEFTERİ (2026-07-09, sahip: 'her konuda bağ kurarak konuşsun'):
+    # kod GECE kurduğu hazır ilişki cümlelerini HER soruda beynin önüne koyar;
+    # model bağı hesaplamaz, AKTARIR (kural 15). Cache okuma = hafif, pool dostu.
+    def _b42():
+        from duyu_gorunumler import bag_defteri_oku
+        v = bag_defteri_oku()
+        return _j({"defter_gunu": v.get("defter_gunu"),
+                   "baglar": [x.get("cumle") for x in (v.get("baglar") or [])][:35],
+                   "not": v.get("not")})
+    ekle("B42", "Bağ defteri (alanlar arası HAZIR ilişki cümleleri — kod kurdu)", _b42)
 
     # SEÇİCİ (anahtar kelime → blok); hiçbiri eşleşmezse HEPSİ eklenir (fallback=geniş)
     secici = _SECICI or [

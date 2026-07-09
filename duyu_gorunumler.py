@@ -1695,3 +1695,171 @@ def stok_capraz_hipotez(gun: int = 7):
                "Ürün-aç kancası (2026-07-09) sonrası kayitsiz_urun_ac hipotezleri "
                "doğal olarak azalmalı — azalmıyorsa kanca dışı bir akış var demektir.",
     }
+
+
+# ── BAĞ DEFTERİ (2026-07-09, sahip talimatı: 'her konuda bağ kurarak konuşmayı
+# öğret — konuya özel değil'). GENEL İLKE: bağları LLM değil KOD kurar; her alanın
+# hazır ilişki cümleleri gece derlenir, beyin HER soruda bu defteri görür ve
+# AKTARIR (hesaplamaz). Yeni alan eklemek = _BAG_KAYNAKLARI'na bir üretici eklemek.
+
+def _bag_ensure(cur) -> None:
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS bag_defteri (
+            gun DATE PRIMARY KEY,
+            veri JSONB NOT NULL,
+            olusturma TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+    """)
+
+
+def _bag_stok_hipotez() -> List[dict]:
+    """Stok↔satış↔sevk bağları (hipotez motoru — cümleler zaten hazır)."""
+    r = stok_capraz_hipotez(gun=7)
+    return [{"alanlar": ["stok", "satis", "sevk"], "tarih": h.get("tarih"),
+             "guven": h.get("guven"),
+             "cumle": f"{h.get('sube') or ''} {h.get('kalem') or ''}: {h['hipotez']}".strip()}
+            for h in (r.get("hipotezler") or [])[:12]]
+
+
+def _bag_tutarsizlik() -> List[dict]:
+    """İki-kaynak uyuşmazlık bağları (6 çapraz kontrol)."""
+    r = tutarsizlik_ozeti(gun=7)
+    out = []
+    for t in (r.get("tutarsizliklar") or [])[:12]:
+        out.append({"alanlar": ["tutarsizlik"], "tarih": t.get("tarih"),
+                    "guven": "gozlem",
+                    "cumle": (f"{t.get('sube') or ''} {t['konu']}: "
+                              f"{t['kaynak_a']}={t.get('deger_a')} ↔ "
+                              f"{t['kaynak_b']}={t.get('deger_b')}"
+                              + (f" (fark {t.get('fark')})" if t.get('fark') is not None else "")
+                              + f" — {t['beklenti']}").strip()})
+    return out
+
+
+def _bag_recete() -> List[dict]:
+    """Satış↔tüketim bağları (reçete kıyası haftalık malzeme toplamları)."""
+    from recete_api import recete_kontrol
+    r = recete_kontrol(gun=7)
+    toplam: Dict[str, dict] = {}
+    for k in (r.get("kiyas") or []):
+        if k.get("fark") is None:
+            continue
+        o = toplam.setdefault(k["malzeme"], {"b": 0.0, "g": 0.0, "birim": k["birim"]})
+        o["b"] += k["beklenen_miktar"]
+        o["g"] += k.get("gercek_miktar") or 0
+    out = []
+    for m, o in toplam.items():
+        if not o["b"]:
+            continue
+        fy = round((o["g"] - o["b"]) / o["b"] * 100, 1)
+        out.append({"alanlar": ["satis", "tuketim"], "tarih": None, "guven": "hesap",
+                    "cumle": (f"{m} (7 gün): satıştan beklenen {round(o['b'],1)} {o['birim']}, "
+                              f"gerçek tüketim {round(o['g'],1)} {o['birim']} — fark %{fy} "
+                              "(± fire/israf payı; hazır hesap)")})
+    return out
+
+
+def _bag_degirmen() -> List[dict]:
+    """Makine↔satış bağı (değirmen sayacı)."""
+    from recete_api import degirmen_kiyas
+    r = degirmen_kiyas(gun=7)
+    out = []
+    for k in (r.get("gun_kiyasi") or [])[:7]:
+        if k.get("fark_yuzde") is None:
+            continue
+        out.append({"alanlar": ["makine", "satis"], "tarih": k["tarih"], "guven": "hesap",
+                    "cumle": (f"değirmen {k['tarih']}: makine {k['makine_gram']} g çekti, "
+                              f"satış beklentisi {k.get('beklenen_gram')} g — fark "
+                              f"{k.get('fark_gram')} g (%{k['fark_yuzde']}; çöp-shot payı içerir)")})
+    return out
+
+
+def _bag_finans() -> List[dict]:
+    """Kasa↔ödeme bağı (nakit ufku — tek cümle)."""
+    r = nakit_ufku(gun=7)
+    proj = r.get("gun_gun_projeksiyon") or []
+    eksi = [p for p in proj if (p.get("beklenen_kasa_orta") or 0) < 0]
+    kasa = r.get("kasa_simdiki")
+    if eksi:
+        ilk = eksi[0]
+        return [{"alanlar": ["kasa", "odeme"], "tarih": ilk.get("tarih"), "guven": "hesap",
+                 "cumle": (f"kasa {kasa} iken ödeme takvimiyle {ilk.get('tarih')} günü "
+                           f"beklenen kasa {ilk.get('beklenen_kasa_orta')} (EKSİ) — kasa↔ödeme "
+                           "bağı gergin (hazır projeksiyon)")}]
+    return [{"alanlar": ["kasa", "odeme"], "tarih": None, "guven": "hesap",
+             "cumle": f"kasa {kasa}; 7 günlük ödeme takviminde eksiye düşüş görünmüyor (hazır projeksiyon)"}]
+
+
+def _bag_sinaps() -> List[dict]:
+    """Duyu-birlikteliği bağları (aynı şube-günde çoklu sinyal)."""
+    from duyu_sinaps import sinapsler
+    r = sinapsler(gun=7)
+    out = []
+    for tip in ("kompozit", "zincir", "kase"):
+        for o in (r.get(tip) or [])[:4]:
+            ad = o.get("signal_name") or o.get("olay_tipi") or tip
+            out.append({"alanlar": ["duyu", "birliktelik"], "tarih": str(o.get("occurred_at") or "")[:10],
+                        "guven": "gozlem",
+                        "cumle": f"sinaps ({tip}): {ad} — {str(o.get('entity_id') or '')[:40]}"})
+    return out
+
+
+_BAG_KAYNAKLARI = [
+    ("stok_hipotez", _bag_stok_hipotez),
+    ("tutarsizlik", _bag_tutarsizlik),
+    ("recete", _bag_recete),
+    ("degirmen", _bag_degirmen),
+    ("finans", _bag_finans),
+    ("sinaps", _bag_sinaps),
+]
+
+
+def bag_defteri_hesapla() -> dict:
+    """Tüm alanların hazır bağ cümlelerini derler ve GÜNLÜK cache'e yazar.
+    GECE koşar (pool dostu — gündüz beyin cache'ten okur). Kaynaklardan biri
+    çökse diğerleri yaşar."""
+    baglar: List[dict] = []
+    hatalar: List[str] = []
+    for ad, fn in _BAG_KAYNAKLARI:
+        try:
+            baglar.extend(fn() or [])
+        except Exception as e:  # noqa: BLE001
+            hatalar.append(f"{ad}: {str(e)[:60]}")
+            logger.warning("bag defteri kaynak %s: %s", ad, str(e)[:100])
+    veri = {"baglar": baglar[:80], "kaynak_hatalari": hatalar,
+            "not": "HAZIR BAĞ CÜMLELERİ — kod kurdu, beyin AKTARIR (kendi hesabını "
+                   "yapmaz). Hüküm yok; her cümle gözlem/hazır hesaptır."}
+    import json as _json
+    with db() as (conn, cur):
+        _bag_ensure(cur)
+        cur.execute(
+            """INSERT INTO bag_defteri (gun, veri) VALUES (CURRENT_DATE, %s::jsonb)
+               ON CONFLICT (gun) DO UPDATE SET veri=EXCLUDED.veri, olusturma=NOW()""",
+            (_json.dumps(veri, ensure_ascii=False, default=str),))
+        conn.commit()
+    return {"ok": True, "bag_sayisi": len(baglar), "hatalar": hatalar}
+
+
+@router.post("/bag-defteri-hesapla")
+def bag_defteri_hesapla_uc():
+    """Elle tetikleme (ilk doldurma / test). Normalde gece zinciri koşar."""
+    return bag_defteri_hesapla()
+
+
+@router.get("/bag-defteri")
+def bag_defteri_oku():
+    """Beynin her soruda gördüğü bağ defteri — CACHE'ten (hızlı, pool dostu).
+    Cache boşsa dürüstçe söyler; canlı hesaba KAÇMAZ (pool koruması)."""
+    with db() as (_, cur):
+        _bag_ensure(cur)
+        cur.execute("""SELECT gun::text AS gun, veri, olusturma::text AS olusturma
+                       FROM bag_defteri ORDER BY gun DESC LIMIT 1""")
+        r = cur.fetchone()
+    if not r:
+        return {"baglar": [], "not": "Bağ defteri henüz hesaplanmadı (gece zinciri "
+                                     "veya elle tetik bekleniyor)."}
+    rr = dict(r)
+    veri = rr["veri"] if isinstance(rr["veri"], dict) else {}
+    veri["defter_gunu"] = rr["gun"]
+    veri["hesap_zamani"] = rr["olusturma"]
+    return veri
