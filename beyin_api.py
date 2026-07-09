@@ -735,6 +735,12 @@ def _blok_derle(soru: str, yonlendirme_ek: str = "") -> List[Tuple[str, str, str
           "kartlardan gelecek", "kart taksit",
           "asgari", "kesim tarihi", "hangi kartta"),
          lambda: _j(__import__("duyu_gorunumler").kart_pozisyon())),
+        ("B45", "Gelecek ekstre tahmini (HESAPLANMIŞ: kart başına sıradaki kesimde "
+                "oluşan borç + asgari + kasa kıyası — tahmin, ekstre değil)",
+         ("gelecek ekstre", "gelecek ay borc", "onumuzdeki ay kart", "kesimde ne kadar",
+          "ne kadar borc olus", "borcum olusacak", "siradaki kesim", "tahmini ekstre",
+          "kart tahmin", "olusan borc", "birikiyor", "ekstre tahmini"),
+         lambda: _j(__import__("duyu_gorunumler").kart_gelecek_ekstre())),
         ("B28", "Sipariş-sevkiyat zinciri (durum kırılımı + yolda kabul bekleyenler)",
          ("sipariş", "siparis", "sevkiyat", "toptancı", "toptanci", "yolda",
           "kabul bekle", "sevk"),

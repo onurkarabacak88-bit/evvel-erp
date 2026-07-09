@@ -2029,6 +2029,65 @@ def kart_dongu():
                    "ekstre snapshot + plan durumundan. Hüküm yok; hatırlatma amaçlı."}
 
 
+@router.get("/kart-gelecek-ekstre")
+def kart_gelecek_ekstre(taze: int = 0):
+    """K2-B (2026-07-10) — GELECEK EKSTRE TAHMİNİ: banka kesmeden önce kart başına
+    'sıradaki kesimde ~X borç oluşuyor, asgari ~Y' (bilinen harcama + taksit payı +
+    devreden anapara/faiz senaryosu; senaryo=asgari ödenir). Motor: finans_core.
+    kart_ekstre_forecast (bugüne dek hiçbir pencereye bağlı değildi). Kasa kıyası
+    KOD hesabıdır (kural 15). Gece ön-hesap cache'i; taze=1 canlı zorlar."""
+    if not taze:
+        _c = _agir_oku("kart_gelecek_ekstre")
+        if _c is not None:
+            return _c
+    from finans_core import kart_ekstre_forecast
+    satirlar = []
+    with db() as (_, cur):
+        cur.execute("SELECT id, kart_adi FROM kartlar WHERE aktif=TRUE ORDER BY kart_adi")
+        kartlar = [dict(r) for r in cur.fetchall() or []]
+        for k in kartlar:
+            try:
+                fc = kart_ekstre_forecast(cur, k["id"], ay_sayisi=2,
+                                          asgari_senaryosu="odenir") or []
+                acik = next((x for x in fc if x.get("durum") in ("acik", "gelecek")), None)
+                if not acik:
+                    continue
+                satirlar.append({
+                    "kart": k["kart_adi"],
+                    "donem": acik.get("ay"),
+                    "kesim_tarihi": str(acik.get("kesim_tarihi") or ""),
+                    "son_odeme_tarihi": str(acik.get("son_odeme_tarihi") or ""),
+                    "su_ana_kadar_harcama": float(acik.get("tek_cekim_bilinen") or 0),
+                    "taksit_payi": float(acik.get("taksit_payi") or 0),
+                    "devreden_anapara": float(acik.get("devreden_anapara") or 0),
+                    "devreden_faiz": float(acik.get("devreden_faiz") or 0),
+                    "tahmini_ekstre": float(acik.get("ekstre_toplam") or 0),
+                    "tahmini_asgari": float(acik.get("asgari_tahmini") or 0),
+                })
+            except Exception as e:  # noqa: BLE001
+                logger.warning("gelecek ekstre %s: %s", k.get("kart_adi"), str(e)[:60])
+    t_ekstre = round(sum(s["tahmini_ekstre"] for s in satirlar), 2)
+    t_asgari = round(sum(s["tahmini_asgari"] for s in satirlar), 2)
+    kasa_kiyas = None
+    try:
+        kasa = (nakit_ufku(gun=7) or {}).get("kasa_simdiki")
+        if kasa is not None:
+            kasa_kiyas = {"kasa": kasa,
+                          "tum_ekstreler_fark": round(float(kasa) - t_ekstre, 2),
+                          "asgariler_fark": round(float(kasa) - t_asgari, 2)}
+    except Exception:  # noqa: BLE001
+        pass
+    sonuc = {
+        "kartlar": satirlar,
+        "toplam": {"tahmini_ekstre": t_ekstre, "tahmini_asgari": t_asgari},
+        "kasa_kiyas": kasa_kiyas,
+        "not": "TAHMİN — banka ekstresi değil: bilinen harcamalar + taksit sözleşmeleri "
+               "+ 'asgari ödenir' faiz senaryosu (KKDF+BSMV dahil). Yeni harcama "
+               "yapıldıkça tahmin büyür; gerçek ekstre yüklenince yerini ona bırakır.",
+    }
+    return sonuc
+
+
 def gece_kart_dongu_izleme() -> dict:
     """Gece: ekstre bekleyen / geciken kartlar + LİMİT doluluk uyarıları (K2-A)
     omurgaya olay olarak düşer (hatırlatma + beyin + WhatsApp görür). Hata-yutar."""
@@ -2156,6 +2215,7 @@ def gece_agir_onhesap() -> dict:
         ("tutarsizlik_ozeti", lambda: tutarsizlik_ozeti(gun=7, taze=1)),
         ("stok_denge", lambda: stok_denge(gun=7, taze=1)),
         ("stok_capraz_hipotez", lambda: stok_capraz_hipotez(gun=7, taze=1)),
+        ("kart_gelecek_ekstre", lambda: kart_gelecek_ekstre(taze=1)),
     ]
     try:
         from recete_api import recete_kontrol as _rk, degirmen_kiyas as _dk
@@ -2348,6 +2408,20 @@ def _bag_kart() -> List[dict]:
                                   f"harcama var, 30 günlük toplamı {bl['toplam_30g']} — "
                                   "işletme/şahsi ayrımı yapılana dek P&L'e gider "
                                   "olarak giriyor (sınıflandırma ödevi)")})
+        try:
+            ge = kart_gelecek_ekstre()
+            gt = (ge.get("toplam") or {})
+            kk = ge.get("kasa_kiyas") or {}
+            if gt.get("tahmini_ekstre"):
+                cum2 = (f"sıradaki kesimlerde TAHMİNİ toplam ekstre {gt['tahmini_ekstre']} "
+                        f"(asgariler toplamı {gt['tahmini_asgari']})")
+                if kk.get("kasa") is not None:
+                    cum2 += (f"; kasa {kk['kasa']} → asgarilere göre fark "
+                             f"{kk['asgariler_fark']} (hazır hesap — tahmin, ekstre değil)")
+                out.append({"alanlar": ["kart", "gelecek", "kasa"], "tarih": None,
+                            "guven": "hesap", "cumle": cum2})
+        except Exception as e:  # noqa: BLE001
+            logger.warning("bag gelecek ekstre: %s", str(e)[:60])
         gec = [s for s in (dongu.get("kartlar") or []) if s.get("durum") == "gecikti"]
         if gec:
             en_uzun = max(int(s.get("gun") or 0) for s in gec)
