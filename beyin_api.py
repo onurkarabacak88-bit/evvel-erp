@@ -1290,6 +1290,14 @@ _OZSORGU_BANKASI = (
     "Duyuların sağlığı nasıl, sistemin kör noktası var mı?",
     "Dün sabah raporu ne söyledi, sonrasında ne değişti?",
     "Menü fiyatlarında son değişiklik var mı, satışa etkisi görünüyor mu?",
+    # 2026-07-09 organ turu: yeni pencereler öz-sorguya da girsin (sahip:
+    # 'kendini eğitiyor mu?') — her yeni organ, gece kendi patron-sorusunu üretir
+    "Dün depolar arası sevklerde çıkan=giren tuttu mu, hangi şubeler arasında fark var?",
+    "Bugün şubeler planlanan saatte mi açıldı, fiili açılış ile plan arasında fark var mı?",
+    "Kredi kartlarında ilk ödemesi yapılmamış borç toplamı ne, kasa bu borcu karşılar mı?",
+    "Bekleyen iş başvurularının uygunluk puan dağılımı nasıl, güçlü aday birikiyor mu?",
+    "Değirmen sayacı ile satış beklentisi arasında bu hafta fark açıldı mı?",
+    "Bağ defterinde bugün en dikkat çeken alanlar-arası ilişki hangisi?",
 )
 
 
