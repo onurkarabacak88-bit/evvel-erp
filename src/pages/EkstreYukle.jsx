@@ -187,6 +187,11 @@ export default function EkstreYukle() {
         </button>
         {manOpen && (
           <div style={{ padding: '0 16px 16px' }}>
+            {/* H5 — düzeltme güvencesi (2026-07-10): yanlış giriş korkusu kalksın */}
+            <div style={{ fontSize: 12, color: 'var(--text3)', margin: '0 0 12px', lineHeight: 1.5 }}>
+              💡 Yanlış tutar girdiysen sorun değil: aynı formu doğru değerlerle <b>tekrar gönder</b> —
+              düzeltme üst üste binmez, borç her seferinde girdiğin değere çekilir.
+            </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(160px,1fr))', gap: 12 }}>
               <div className="form-group">
                 <label>Kart *</label>
@@ -216,6 +221,36 @@ export default function EkstreYukle() {
 
       {sonuc && !yukleniyor && (
         <>
+          {/* H4 — ESKİ DÖNEM UYARISI + H3 — TEYİT KARTI (2026-07-10 kullanıcı-akışı) */}
+          {(() => {
+            const sot = String(sonuc.son_odeme_tarihi || sonuc.kesim_tarihi || '');
+            const ay = sot.slice(0, 7);
+            const buAy = new Date().toISOString().slice(0, 7);
+            return (
+              <>
+                {ay && ay < buAy && (
+                  <div className="card mb-16" style={{ padding: 14, borderLeft: '3px solid var(--red)', background: 'rgba(239,68,68,.08)' }}>
+                    <div style={{ fontWeight: 800, color: 'var(--red)', fontSize: 14 }}>⚠️ DİKKAT: Bu GÜNCEL dönem değil!</div>
+                    <div style={{ fontSize: 13, marginTop: 4 }}>
+                      Yüklenen ekstre <b>{ay}</b> dönemine ait (son ödeme {sot}). Kayıt doğru aya işlenir —
+                      ama güncel borcun için bu ayın ekstresini de yüklemeyi unutma (üstteki şerit hangi kartın beklediğini gösterir).
+                    </div>
+                  </div>
+                )}
+                {sonuc.donem_kaydedildi && (
+                  <div className="card mb-16" style={{ padding: 14, borderLeft: '3px solid var(--green)', background: 'rgba(34,197,94,.07)' }}>
+                    <div style={{ fontWeight: 800, color: 'var(--green)', fontSize: 14 }}>✓ Ekstre işlendi — plan güncellendi</div>
+                    <div style={{ fontSize: 13, marginTop: 6, display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+                      <span>📄 Dönem borcu: <b>{fmt(sonuc.donem_borcu || 0)}</b></span>
+                      <span>🔻 Asgari: <b>{fmt(sonuc.asgari_tutar || 0)}</b></span>
+                      <span>📅 Son ödeme: <b>{sonuc.son_odeme_tarihi || '—'}</b></span>
+                      {sonuc.cfo_odeme_plani && <span>🗓️ Ödeme planına işlendi ✓</span>}
+                    </div>
+                  </div>
+                )}
+              </>
+            );
+          })()}
           {/* Mutabakat */}
           {kart ? (
             <div className="card mb-16" style={{ padding: 16, borderLeft: `3px solid ${m?.tutar_uyumlu ? 'var(--green)' : 'var(--red)'}` }}>
