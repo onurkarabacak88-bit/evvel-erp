@@ -3912,6 +3912,7 @@ class EkstreImportIslem(BaseModel):
 class EkstreImportBody(BaseModel):
     kart_id: str
     islemler: List[EkstreImportIslem]
+    zorla: Optional[bool] = False  # çift-yazma frenini bilinçli geç
 
 
 @app.post("/api/kartlar/ekstre-import")
@@ -3934,6 +3935,15 @@ def kart_ekstre_import(body: EkstreImportBody):
             raise HTTPException(404, "Kart bulunamadı")
         yazilan, atlanan = 0, 0
         anlik_gider_yazilan = 0
+        # ÇİFT-YAZMA FRENİ (2026-07-10, sahip: 'ekstreyi de yükleyince çift yazıyor'):
+        # UI eşleştirmesi kuruş/tarih kaymasını kaçırabilir; sunucu ikinci hat olarak
+        # elle girilmiş (ekstre_import OLMAYAN) eş kaydı arar — tutar ±1 TL, tarih ±5
+        # gün, aynı tip. Eşi bulunan satır YAZILMAZ (atlanan_mevcut'a düşer);
+        # bilinçli geçmek için body.zorla=true. Her manuel kayıt EN FAZLA BİR ekstre
+        # satırını yutar (aynı güne iki eşit meşru harcama korunur).
+        _kullanilan_manuel: set = set()
+        atlanan_mevcut = []
+        _zorla = bool(getattr(body, "zorla", False))
         faiz_donemleri: set = set()  # ekstreden faiz gelen YYYY-MM dönemleri (motor tahmini iptali için)
         for isl in body.islemler:
             tip = (isl.tip or "HARCAMA").upper()
@@ -3969,6 +3979,26 @@ def kart_ekstre_import(body: EkstreImportBody):
                     htip = htip or "belirsiz"
                 else:
                     htip = "isletme"
+            if not _zorla and not is_taksit:
+                cur.execute(
+                    """SELECT id, tarih::text AS t, tutar::float AS tu
+                       FROM kart_hareketleri
+                       WHERE kart_id=%s AND durum='aktif' AND islem_turu=%s
+                         AND COALESCE(kaynak_tablo,'') <> 'ekstre_import'
+                         AND ABS(tutar - %s) <= 1.0
+                         AND tarih BETWEEN %s::date - 5 AND %s::date + 5
+                       ORDER BY ABS(tarih - %s::date), id""",
+                    (body.kart_id, tip, tutar, tarih, tarih, tarih))
+                _es = next((dict(r) for r in (cur.fetchall() or [])
+                            if dict(r)["id"] not in _kullanilan_manuel), None)
+                if _es:
+                    _kullanilan_manuel.add(_es["id"])
+                    atlanan += 1
+                    atlanan_mevcut.append(
+                        {"tarih": tarih, "tutar": tutar, "tip": tip,
+                         "mevcut_kayit_tarihi": _es["t"], "mevcut_tutar": _es["tu"],
+                         "aciklama": (isl.aciklama or "")[:60]})
+                    continue
             anahtar = f"{body.kart_id}|{tarih}|{tutar:.2f}|{tip}|{tsay}|{(isl.aciklama or '')[:40]}"
             hid = "eks_" + hashlib.md5(anahtar.encode("utf-8")).hexdigest()[:24]
             cur.execute(
@@ -4034,10 +4064,81 @@ def kart_ekstre_import(body: EkstreImportBody):
     return {
         "yazilan": yazilan,
         "atlanan_veya_mevcut": atlanan,
+        "atlanan_mevcut_adet": len(atlanan_mevcut),
+        "atlanan_mevcut": atlanan_mevcut[:20],
         "motor_tahmini_faiz_iptal": motor_faizi_iptal,
         "anlik_gider_yazilan": anlik_gider_yazilan,
         "yeni_sistem_borc": round(yeni_borc, 2),
     }
+
+
+@app.get("/api/kartlar/cift-kayit-tarama")
+def kart_cift_kayit_tarama(kart_id: Optional[str] = None):
+    """ÇİFT YAZMA TARAMASI (salt-okur): elle girilmiş kayıt ile ekstre_import
+    kopyası eşleşen çiftleri listeler (aynı kart+tip, tutar ±1, tarih ±5 gün).
+    Temizlik ayrı uçtadır — bu uç hiçbir şeyi değiştirmez."""
+    with db() as (_, cur):
+        cur.execute(
+            """SELECT e.id AS ekstre_id, e.tarih::text AS ekstre_tarih,
+                      e.tutar::float AS tutar, e.islem_turu AS tip,
+                      LEFT(COALESCE(e.aciklama,''),60) AS ekstre_aciklama,
+                      man.id AS manuel_id, man.tarih::text AS manuel_tarih,
+                      man.tutar::float AS manuel_tutar,
+                      LEFT(COALESCE(man.aciklama,''),60) AS manuel_aciklama,
+                      k.kart_adi
+               FROM kart_hareketleri e
+               JOIN kartlar k ON k.id = e.kart_id
+               JOIN LATERAL (
+                   SELECT id, tarih, tutar, aciklama FROM kart_hareketleri m2
+                   WHERE m2.kart_id = e.kart_id AND m2.durum='aktif'
+                     AND m2.islem_turu = e.islem_turu
+                     AND COALESCE(m2.kaynak_tablo,'') <> 'ekstre_import'
+                     AND m2.islem_turu <> 'DEVIR'
+                     AND ABS(m2.tutar - e.tutar) <= 1.0
+                     AND m2.tarih BETWEEN e.tarih - 5 AND e.tarih + 5
+                   ORDER BY ABS(m2.tarih - e.tarih) LIMIT 1
+               ) man ON TRUE
+               WHERE e.kaynak_tablo = 'ekstre_import' AND e.durum='aktif'
+                 AND e.islem_turu IN ('HARCAMA','ODEME','FAIZ')
+                 AND (%s::text IS NULL OR e.kart_id = %s)
+               ORDER BY k.kart_adi, e.tarih DESC""",
+            (kart_id, kart_id))
+        adaylar = [dict(r) for r in cur.fetchall() or []]
+    return {"aday_sayisi": len(adaylar), "adaylar": adaylar,
+            "not": "ADAY çiftler — kesin hüküm değil (aynı tutarlı iki meşru işlem "
+                   "olabilir). Temizlikte varsayılan: ekstre_import KOPYASI iptal "
+                   "edilir (elle kayıt gider/kasa zincirine bağlı olabilir). "
+                   "POST /api/kartlar/cift-kayit-temizle {ekstre_ids:[...], uygula:true}"}
+
+
+@app.post("/api/kartlar/cift-kayit-temizle")
+def kart_cift_kayit_temizle(body: dict):
+    """Seçilen ekstre_import KOPYALARINI iptal eder (kart borcu düşer, bağlı
+    anlik_giderler kaydı silinir). Yalnız ekstre_import kaynaklı id kabul edilir —
+    elle kayıtlara DOKUNAMAZ. uygula=false → önizleme."""
+    ids = [str(x) for x in (body or {}).get("ekstre_ids") or [] if str(x).startswith("eks_")]
+    uygula = bool((body or {}).get("uygula"))
+    if not ids:
+        raise HTTPException(400, "ekstre_ids (eks_ ile başlayan) zorunlu")
+    with db() as (conn, cur):
+        cur.execute(
+            """SELECT id, kart_id, tarih::text AS tarih, islem_turu, tutar::float AS tutar
+               FROM kart_hareketleri
+               WHERE id = ANY(%s) AND kaynak_tablo='ekstre_import' AND durum='aktif'""",
+            (ids,))
+        kayitlar = [dict(r) for r in cur.fetchall() or []]
+        if uygula and kayitlar:
+            kids = [r["id"] for r in kayitlar]
+            cur.execute(
+                """UPDATE kart_hareketleri
+                   SET durum='iptal',
+                       aciklama = COALESCE(aciklama,'') || ' [çift-kayıt temizliği]'
+                   WHERE id = ANY(%s)""", (kids,))
+            cur.execute(
+                """DELETE FROM anlik_giderler
+                   WHERE kaynak_tablo='ekstre_import' AND kaynak_id = ANY(%s)""", (kids,))
+            conn.commit()
+    return {"uygula": uygula, "islenen": len(kayitlar), "kayitlar": kayitlar}
 
 
 @app.post("/api/kartlar/ekstre-import-anlik-gider-backfill")
