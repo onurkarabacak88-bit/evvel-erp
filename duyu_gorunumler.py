@@ -1071,8 +1071,8 @@ def kart_pozisyon():
             for k in _borclu if not k.get("plan_odemesi_baslamis")), 2),
     }
     return {
+        "OZET_toplamlar": toplamlar,  # EN BAŞTA: 'kasa yeter mi' sorusunun hazır cevabı
         "kartlar": kartlar,
-        "toplamlar": toplamlar,
         "not": "Kart başına limit + son ekstre pozisyonu + bekleyen ödeme planları. "
                "Ekstre YAKLAŞIKTIR (banka canlı verisi değil, sistem kayıtları).",
     }
@@ -2141,14 +2141,24 @@ def _bag_kart() -> List[dict]:
     """Kart ekstre↔ödeme planı bağı (yaklaşık — banka canlı verisi değil)."""
     r = kart_pozisyon()
     out = []
-    t = r.get("toplamlar") or {}
+    t = r.get("OZET_toplamlar") or r.get("toplamlar") or {}
     if t:
+        cum = (f"tüm kartların dönem borcu toplamı {t.get('donem_borcu_toplam')}; "
+               f"bunun {t.get('ilk_odemesi_yapilmamis_borc_toplami')} kadarı "
+               f"İLK ÖDEMESİ YAPILMAMIŞ {t.get('ilk_odemesi_yapilmamis_kart_sayisi')} karta ait")
+        try:
+            kasa = (nakit_ufku(gun=7) or {}).get("kasa_simdiki")
+            borc = t.get("ilk_odemesi_yapilmamis_borc_toplami")
+            if kasa is not None and borc is not None:
+                fark = round(float(kasa) - float(borc), 2)
+                durum = ("kasa bu borcun TAMAMINI karşılamaz"
+                         if fark < 0 else "kasa bu borcu karşılar")
+                cum += (f"; kasa {kasa} → fark {fark} ({durum} — hazır hesap; "
+                        "kartlar tek seferde ödenmez, plan/öteleme seçenekleri ayrı pencerede)")
+        except Exception as e:  # noqa: BLE001
+            logger.warning("bag kart kasa kiyasi: %s", str(e)[:60])
         out.append({"alanlar": ["kart", "kasa"], "tarih": None, "guven": "hesap",
-                    "cumle": (f"tüm kartların dönem borcu toplamı {t.get('donem_borcu_toplam')}; "
-                              f"bunun {t.get('ilk_odemesi_yapilmamis_borc_toplami')} kadarı "
-                              f"İLK ÖDEMESİ YAPILMAMIŞ {t.get('ilk_odemesi_yapilmamis_kart_sayisi')} "
-                              "karta ait — kasa yeterliliği kıyası için hazır toplam "
-                              "(kasa rakamı finans penceresinde)")})
+                    "cumle": cum})
     for kt in (r.get("kartlar") or [])[:6]:
         e = kt.get("son_ekstre") or {}
         if not e:
