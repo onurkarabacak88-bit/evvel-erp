@@ -416,11 +416,19 @@ _RECETE_BAR_ES = {
     "8 oz bardak": ("bardak_kucuk", 1.0, "adet"),
 }
 @router.get("/kontrol")
-def recete_kontrol(gun: int = 7):
+def recete_kontrol(gun: int = 7, taze: int = 0):
     """REÇETE KONTROLÜ: onaylı eşleşmeler üzerinden gün bazında
     beklenen tüketim (Evo satış × reçete) ↔ gerçek düşüş (stok hareketi).
     Ürün-aç akışına DOKUNMAZ; yalnız FARKI gösterir. Eşleşme onaysızsa hesap
     o kalem için 'bekliyor' — dürüst boşluk, sıfır uydurma."""
+    if not taze and int(gun or 7) == 7:
+        try:
+            from duyu_gorunumler import _agir_oku
+            _c = _agir_oku("recete_kontrol")
+        except Exception:  # noqa: BLE001
+            _c = None
+        if _c is not None:
+            return _c  # GÖREV #56: gündüz cache (gece ön-hesap)
     g = max(3, min(30, int(gun or 7)))
     bugun = date.today()
     with db() as (_, cur):
@@ -845,11 +853,19 @@ def degirmen_sayac_kaydet(payload: dict):
 
 
 @router.get("/degirmen-kiyas")
-def degirmen_kiyas(gun: int = 7):
+def degirmen_kiyas(gun: int = 7, taze: int = 0):
     """DEĞİRMEN ↔ SATIŞ KIYASI (Starbucks 3. katman): makine sayacı farkından
     çekilen doz × gramaj = MAKİNE GERÇEĞİ ↔ satış×reçete = BEKLENEN.
     Sayaç düştüyse (reset/elektrik) o gün 'sayac_sifirlanmis' — hesap yapılmaz."""
     g = max(3, min(30, int(gun or 7)))
+    if not taze and g == 7:
+        try:
+            from duyu_gorunumler import _agir_oku
+            _c = _agir_oku("degirmen_kiyas")
+        except Exception:  # noqa: BLE001
+            _c = None
+        if _c is not None:
+            return _c  # GÖREV #56: gündüz cache (gece ön-hesap)
     bugun = date.today()
     with db() as (_, cur):
         _ensure(cur)

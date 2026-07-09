@@ -1336,8 +1336,12 @@ def kasa_anomali_ozet(gun: int = 30):
 # tek pencerede 'kaynak A / kaynak B / fark' kalıbına çevirir. Hüküm yok.
 
 @router.get("/tutarsizlik-ozeti")
-def tutarsizlik_ozeti(gun: int = 7):
+def tutarsizlik_ozeti(gun: int = 7, taze: int = 0):
     g = max(3, min(14, int(gun or 7)))
+    if not taze and g == 7:
+        _c = _agir_oku("tutarsizlik_ozeti")
+        if _c is not None:
+            return _c  # GÖREV #56: gündüz cache (gece ön-hesap)
     bugun = date.today()
     satirlar: List[dict] = []
 
@@ -1509,11 +1513,15 @@ def tutarsizlik_ozeti(gun: int = 7):
 # (bir hareketin 'önceki'si ≠ önceki hareketin 'sonraki'si) = kayıtsız el değmiş.
 
 @router.get("/stok-denge")
-def stok_denge(gun: int = 7, sube: str = "", kalem: str = ""):
+def stok_denge(gun: int = 7, sube: str = "", kalem: str = "", taze: int = 0):
     """Kalem×şube denge tablosu (öneri-only, hüküm yok). fark = mevcut − olması
     gereken: pozitif = kayıtsız giriş/sayım fazlası, negatif = kayıtsız çıkış.
     zincir_kopugu > 0 = hareket defterinde süreklilik kırılması (elle müdahale izi)."""
     g = max(3, min(30, int(gun or 7)))
+    if not taze and g == 7 and not (sube or "").strip() and not (kalem or "").strip():
+        _c = _agir_oku("stok_denge")
+        if _c is not None:
+            return _c  # GÖREV #56: yalnız filtresiz varsayılan kesit cache'lenir
     with db() as (_, cur):
         params: list = [g]
         sube_f = kalem_f = ""
@@ -1623,8 +1631,12 @@ def stok_denge(gun: int = 7, sube: str = "", kalem: str = ""):
 # HÜKÜM YOK — hipotez + güven + tanıklar; karar insanın.
 
 @router.get("/stok-capraz-hipotez")
-def stok_capraz_hipotez(gun: int = 7):
+def stok_capraz_hipotez(gun: int = 7, taze: int = 0):
     g = max(3, min(14, int(gun or 7)))
+    if not taze and g == 7:
+        _c = _agir_oku("stok_capraz_hipotez")
+        if _c is not None:
+            return _c  # GÖREV #56: gündüz cache (gece ön-hesap)
     bugun = date.today()
     hipotezler: List[dict] = []
 
@@ -1836,6 +1848,96 @@ def stok_capraz_hipotez(gun: int = 7):
                "Ürün-aç kancası (2026-07-09) sonrası kayitsiz_urun_ac hipotezleri "
                "doğal olarak azalmalı — azalmıyorsa kanca dışı bir akış var demektir.",
     }
+
+
+# ── AĞIR UÇ ÖN-HESAP (GÖREV #56, 2026-07-09 — pool zehirlenmesi P1) ──
+# Paralel ağır denetim çağrıları (tutarsızlık+denge+hipotez+reçete+değirmen)
+# bağlantı havuzunu tüketip /api/panel'i 500'e düşürmüştü. ÇÖZÜM: gece SIRALI
+# ön-hesap → gündüz cache'ten servis. taze=1 parametresi canlı hesabı zorlar.
+# Cache YAZIMI yalnız ön-hesapta yapılır (gündüz cache-miss canlı hesaplar ama
+# yazmaz — yarış ve çift-yazım yok).
+
+def _agir_ensure(cur) -> None:
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS duyu_agir_onhesap (
+            uc TEXT NOT NULL,
+            gun DATE NOT NULL DEFAULT CURRENT_DATE,
+            veri JSONB NOT NULL,
+            olusturma TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            PRIMARY KEY (uc, gun)
+        );
+    """)
+
+
+def _agir_oku(uc: str, max_saat: int = 26):
+    """Son ön-hesap sonucu (26 saatten eskiyse None → canlı hesaba düşülür)."""
+    try:
+        with db() as (_, cur):
+            _agir_ensure(cur)
+            cur.execute(
+                """SELECT veri, olusturma::text AS z FROM duyu_agir_onhesap
+                   WHERE uc = %s AND olusturma > NOW() - (%s * INTERVAL '1 hour')
+                   ORDER BY olusturma DESC LIMIT 1""", (uc, max_saat))
+            r = cur.fetchone()
+        if not r:
+            return None
+        rr = dict(r)
+        v = rr["veri"]
+        if isinstance(v, dict):
+            v["_onhesap"] = {"hesap_zamani": rr["z"],
+                             "not": "gece ön-hesap sonucu (pool koruması) — "
+                                    "canlı hesap için taze=1"}
+        return v
+    except Exception as e:  # noqa: BLE001
+        logger.warning("agir onhesap okuma %s: %s", uc, str(e)[:80])
+        return None
+
+
+def _agir_yaz(uc: str, veri) -> None:
+    try:
+        import json as _json
+        with db() as (conn, cur):
+            _agir_ensure(cur)
+            cur.execute(
+                """INSERT INTO duyu_agir_onhesap (uc, gun, veri)
+                   VALUES (%s, CURRENT_DATE, %s::jsonb)
+                   ON CONFLICT (uc, gun) DO UPDATE
+                   SET veri = EXCLUDED.veri, olusturma = NOW()""",
+                (uc, _json.dumps(veri, ensure_ascii=False, default=str)))
+            conn.commit()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("agir onhesap yazma %s: %s", uc, str(e)[:80])
+
+
+def gece_agir_onhesap() -> dict:
+    """Ağır uçları SIRALI hesaplar ve cache'e yazar (gece zinciri + elle tetik).
+    Bir uç çökse diğerleri yaşar; sıralılık pool dostudur."""
+    isler = [
+        ("tutarsizlik_ozeti", lambda: tutarsizlik_ozeti(gun=7, taze=1)),
+        ("stok_denge", lambda: stok_denge(gun=7, taze=1)),
+        ("stok_capraz_hipotez", lambda: stok_capraz_hipotez(gun=7, taze=1)),
+    ]
+    try:
+        from recete_api import recete_kontrol as _rk, degirmen_kiyas as _dk
+        isler.append(("recete_kontrol", lambda: _rk(gun=7, taze=1)))
+        isler.append(("degirmen_kiyas", lambda: _dk(gun=7, taze=1)))
+    except Exception as e:  # noqa: BLE001
+        logger.warning("agir onhesap recete iceri alinamadi: %s", str(e)[:80])
+    tamam, hatalar = [], []
+    for ad, fn in isler:
+        try:
+            _agir_yaz(ad, fn())
+            tamam.append(ad)
+        except Exception as e:  # noqa: BLE001
+            hatalar.append(f"{ad}: {str(e)[:60]}")
+            logger.warning("agir onhesap %s: %s", ad, str(e)[:100])
+    return {"ok": not hatalar, "hesaplanan": tamam, "hatalar": hatalar}
+
+
+@router.post("/agir-onhesap")
+def agir_onhesap_uc():
+    """Elle tetikleme (ilk doldurma / test). Normalde gece zinciri koşar."""
+    return gece_agir_onhesap()
 
 
 # ── BAĞ DEFTERİ (2026-07-09, sahip talimatı: 'her konuda bağ kurarak konuşmayı
