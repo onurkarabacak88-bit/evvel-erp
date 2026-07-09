@@ -741,6 +741,12 @@ def _blok_derle(soru: str, yonlendirme_ek: str = "") -> List[Tuple[str, str, str
           "ne kadar borc olus", "borcum olusacak", "siradaki kesim", "tahmini ekstre",
           "kart tahmin", "olusan borc", "birikiyor", "ekstre tahmini"),
          lambda: _j(__import__("duyu_gorunumler").kart_gelecek_ekstre())),
+        ("B46", "Kart abonelik yükü + harcama anomalisi (tekrarlayan satıcılar; "
+                "dikkat listesi — aday, hüküm yok)",
+         ("abonelik", "abone", "uyelik", "tekrarlayan harcama", "dikkat ceken harcama",
+          "dikkat cekici harcama", "anormal harcama", "suphel", "yeni satici"),
+         lambda: _j({"abonelik": __import__("duyu_gorunumler").kart_abonelik_yuku(),
+                     "anomali": __import__("duyu_gorunumler").kart_harcama_anomali(gun=7)})),
         ("B28", "Sipariş-sevkiyat zinciri (durum kırılımı + yolda kabul bekleyenler)",
          ("sipariş", "siparis", "sevkiyat", "toptancı", "toptanci", "yolda",
           "kabul bekle", "sevk"),
