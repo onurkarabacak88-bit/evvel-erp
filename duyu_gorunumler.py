@@ -853,6 +853,64 @@ def vardiya_plan_ozet(gun: int = 7):
     }
 
 
+@router.get("/vardiya-takvimi")
+def vardiya_takvimi(gun: int = 3):
+    """VARDİYA TAKVİMİ — İSİMLİ (bilinçli istisna, 2026-07-09 sahip talebi:
+    'sabah Zafer'de açılış kim?' cevapsız kalıyordu). Kimlik firewall'un amacı
+    kişi üzerinden YARGI üretmemek; bu pencere yargı değil, KİM-NEREDE-NE-ZAMAN
+    operasyonel planını verir (dün + bugün + ileriye N gün, iptaller hariç).
+    Beyin tarafında kural 4-istisnası: isim yalnız TAKVİM aktarımında kullanılır,
+    kişi hakkında değerlendirme/kıyas yine yasaktır."""
+    g = max(1, min(7, int(gun or 3)))
+    with db() as (_, cur):
+        cur.execute(
+            """SELECT va.tarih::text AS gun, COALESCE(s.ad, 'şube-bilinmiyor') AS sube,
+                      COALESCE(vs.tip, 'normal') AS slot_tip, vs.ad AS slot_ad,
+                      p.ad_soyad AS personel,
+                      va.baslangic_saat::text AS baslangic,
+                      va.bitis_saat::text AS bitis, va.durum
+               FROM vardiya_atama va
+               LEFT JOIN vardiya_slot vs ON vs.id = va.slot_id
+               LEFT JOIN subeler s ON s.id = vs.sube_id
+               JOIN personel p ON p.id = va.personel_id
+               WHERE va.tarih BETWEEN CURRENT_DATE - 1 AND CURRENT_DATE + %s
+                 AND va.durum <> 'iptal'
+               ORDER BY va.tarih, sube, va.baslangic_saat""",
+            (g,),
+        )
+        satirlar = [dict(r) for r in cur.fetchall() or []]
+    # HAZIR açılış/kapanış özeti (kural 15 disiplini: bağı kod kurar, model aktarır):
+    # açılış = tip 'acilis' olanlar; yoksa o şube-günün EN ERKEN başlayanı.
+    # kapanış = tip 'kapanis' olanlar; yoksa EN GEÇ biteni.
+    gruplar: Dict[tuple, list] = {}
+    for r in satirlar:
+        gruplar.setdefault((r["gun"], r["sube"]), []).append(r)
+    ozet = []
+    for (gun_s, sube), rows in sorted(gruplar.items()):
+        acilis = [r for r in rows if r["slot_tip"] == "acilis"]
+        if not acilis:
+            en_erken = min(r["baslangic"] for r in rows)
+            acilis = [r for r in rows if r["baslangic"] == en_erken]
+        kapanis = [r for r in rows if r["slot_tip"] == "kapanis"]
+        if not kapanis:
+            en_gec = max(r["bitis"] for r in rows)
+            kapanis = [r for r in rows if r["bitis"] == en_gec]
+        ozet.append({
+            "gun": gun_s, "sube": sube,
+            "acilis_personeli": [f"{r['personel']} ({r['baslangic'][:5]})" for r in acilis],
+            "kapanis_personeli": [f"{r['personel']} ({r['bitis'][:5]})" for r in kapanis],
+            "toplam_atama": len(rows),
+        })
+    return {
+        "acilis_kapanis_ozeti": ozet,
+        "atamalar": satirlar[:80],
+        "not": "İSİMLİ operasyonel TAKVİM penceresi — kim-nerede-ne-zaman planı. "
+               "Açılış/kapanış alanları HAZIRDIR (tip işaretli slot; yoksa en erken "
+               "başlayan / en geç biten). Bu pencere kişi DEĞERLENDİRMESİ için "
+               "kullanılamaz; plan aktarımı yargı değildir.",
+    }
+
+
 @router.get("/maas-avans-ozet")
 def maas_avans_ozet():
     """MAAŞ + AVANS KİMLİKSİZ ÖZET: dönem başına kişi SAYISI ve TOPLAMLAR.
