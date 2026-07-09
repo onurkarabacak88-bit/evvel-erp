@@ -1029,6 +1029,40 @@ def gunluk_ozet_mesaj_olustur(tarih: date | None = None) -> str:
             ham_satirlar.append(satir)
         _akilli_denetim_kaydet(tarih, denetim_ozetleri, "\n".join(ham_satirlar), "")
 
+    # ── 💳 KART DURUMU (K2-A, 2026-07-10 — gece özeti kart-kördü) ──
+    # Yalnız AKSİYON gerektirenler yazılır (gecikmiş / ekstre bekleyen / limit);
+    # her şey yolundaysa bölüm hiç görünmez (alert-yorgunluğu önlenir). Hata-yutar.
+    try:
+        from duyu_gorunumler import kart_dongu
+        _kd = kart_dongu()
+        _kgec = [x for x in (_kd.get("kartlar") or []) if x.get("durum") == "gecikti"]
+        _kbek = [x for x in (_kd.get("kartlar") or []) if x.get("durum") == "ekstre_bekleniyor"]
+        _klim = []
+        try:
+            from main import kartlar_listele
+            _kl = kartlar_listele()
+            _kl = _kl if isinstance(_kl, list) else (_kl or {}).get("kartlar") or []
+            for k in _kl:
+                _lt = float(k.get("limit_tutar") or 0)
+                _bo = (float(k.get("anlik_borc") or 0)
+                       + float(k.get("gelecek_taksit_anapara") or 0))
+                if _lt > 0 and _bo / _lt >= 0.90:
+                    _klim.append((k.get("kart_adi"), _bo / _lt * 100))
+        except Exception:
+            pass
+        if _kgec or _kbek or _klim:
+            s.append("")
+            s.append("💳 *KART DURUMU*")
+            for x in _kgec:
+                s.append(f"  🔴 {x['kart']}: son ödeme {x.get('gun')} gün GEÇTİ "
+                         f"(gecikme faizi işliyor olabilir)")
+            for x in _kbek:
+                s.append(f"  🟡 {x['kart']}: ekstre {x.get('gun')} gündür yüklenmedi")
+            for ad, yz in _klim:
+                s.append(f"  🚨 {ad}: limit %{yz:.0f} dolu")
+    except Exception as _e:  # noqa: BLE001
+        logger.warning(f"WA kart bolumu: {_e}")
+
     return "\n".join(s)
 
 

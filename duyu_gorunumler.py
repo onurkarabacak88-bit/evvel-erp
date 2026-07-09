@@ -1101,8 +1101,38 @@ def kart_pozisyon():
                                     if k.get("dongu_durum") == "ekstre_bekleniyor"),
         "gecikmis_kart": sum(1 for k in kartlar if k.get("dongu_durum") == "gecikti"),
     }
+    # K2-A: aylık ÖDENEN FAİZ trendi (son 4 ay) + sınıflandırma bekleyen
+    # 'belirsiz' harcama özeti (30 gün) — P&L'e gider olarak giren gri bölge.
+    faiz_trend, belirsiz = [], {}
+    try:
+        with db() as (_, cur):
+            cur.execute(
+                """SELECT TO_CHAR(tarih,'YYYY-MM') AS ay,
+                          ROUND(SUM(tutar)::numeric,2) AS toplam
+                   FROM kart_hareketleri
+                   WHERE islem_turu='FAIZ' AND durum='aktif'
+                     AND tarih >= (CURRENT_DATE - INTERVAL '4 months')
+                   GROUP BY 1 ORDER BY 1 DESC""")
+            faiz_trend = [{"ay": r["ay"], "odenen_faiz": float(r["toplam"])}
+                          for r in cur.fetchall() or []]
+            cur.execute(
+                """SELECT COUNT(*)::int AS adet,
+                          ROUND(COALESCE(SUM(tutar),0)::numeric,2) AS toplam
+                   FROM kart_hareketleri
+                   WHERE islem_turu='HARCAMA' AND durum='aktif'
+                     AND COALESCE(harcama_tipi,'belirsiz')='belirsiz'
+                     AND tarih >= CURRENT_DATE - 30""")
+            rb = dict(cur.fetchone() or {})
+            belirsiz = {"adet": int(rb.get("adet") or 0),
+                        "toplam_30g": float(rb.get("toplam") or 0),
+                        "not": "sınıflandırılmamış (işletme mi şahsi mi belli değil) — "
+                               "şu an P&L'e GİDER olarak giriyor"}
+    except Exception as e:  # noqa: BLE001
+        logger.warning("kart faiz/belirsiz ozet: %s", str(e)[:80])
     return {
         "OZET_toplamlar": toplamlar,  # EN BAŞTA: 'kasa yeter mi' sorusunun hazır cevabı
+        "aylik_odenen_faiz_trendi": faiz_trend,
+        "belirsiz_harcama_30g": belirsiz,
         "kartlar": kartlar,
         "not": "KANONİK borç = anlik_borc (ödeme/kullanımla oynar) ve "
                "toplam_borc_taksitli (taksitler dahil gerçek yük); donem_borcu = son "
@@ -1999,9 +2029,10 @@ def kart_dongu():
                    "ekstre snapshot + plan durumundan. Hüküm yok; hatırlatma amaçlı."}
 
 
-def gece_kart_dongu_izleme() -> None:
-    """Gece: ekstre bekleyen / geciken kartlar omurgaya olay olarak düşer
-    (hatırlatma + beyin görür). Hata-yutar."""
+def gece_kart_dongu_izleme() -> dict:
+    """Gece: ekstre bekleyen / geciken kartlar + LİMİT doluluk uyarıları (K2-A)
+    omurgaya olay olarak düşer (hatırlatma + beyin + WhatsApp görür). Hata-yutar."""
+    ozet = {"dongu_olay": 0, "limit_olay": 0, "olaylar": []}
     try:
         d = kart_dongu()
         from duyu_omurga import duyu_olay_yaz
@@ -2015,8 +2046,48 @@ def gece_kart_dongu_izleme() -> None:
                                  else "Kart ödemesi gecikti"),
                     payload=s,
                 )
+                ozet["dongu_olay"] += 1
+                ozet["olaylar"].append(f"{s['durum']}: {s['kart']}")
+        # K2-A — LİMİT DOLULUK OLAYI (%75 uyarı / %90 kritik), KANONİK kaynaktan
+        # (anlik_borc + gelecek taksit) / limit. Ay-anahtarlı source_ref → aynı ay
+        # tek kayıt (omurga idempotent), her gece spam üretmez.
+        try:
+            from main import kartlar_listele
+            _kl = kartlar_listele()
+            _kl = _kl if isinstance(_kl, list) else (_kl or {}).get("kartlar") or []
+            for k in _kl:
+                lt = float(k.get("limit_tutar") or 0)
+                borc = (float(k.get("anlik_borc") or 0)
+                        + float(k.get("gelecek_taksit_anapara") or 0))
+                if lt <= 0:
+                    continue
+                dol = borc / lt
+                if dol >= 0.75:
+                    seviye = "kritik" if dol >= 0.90 else "uyari"
+                    duyu_olay_yaz(
+                        "kart_dongu", "finans.kart.limit_uyarisi",
+                        f"{k.get('kart_adi')}:{date.today().strftime('%Y-%m')}:{seviye}",
+                        entity_scope="kart", entity_id=str(k.get("kart_adi")),
+                        signal_name=("Limit KRİTİK (%90+)" if seviye == "kritik"
+                                     else "Limit uyarısı (%75+)"),
+                        payload={"kart": k.get("kart_adi"), "limit": lt,
+                                 "borc_taksitli": round(borc, 2),
+                                 "doluluk_yuzde": round(dol * 100, 1)},
+                    )
+                    ozet["limit_olay"] += 1
+                    ozet["olaylar"].append(
+                        f"limit %{dol*100:.0f}: {k.get('kart_adi')}")
+        except Exception as e:  # noqa: BLE001
+            logger.warning("limit olaylari: %s", str(e)[:80])
     except Exception as e:  # noqa: BLE001
         logger.warning("gece kart dongu: %s", str(e)[:100])
+    return ozet
+
+
+@router.post("/kart-dongu-izle")
+def kart_dongu_izle_uc():
+    """Elle tetik (test): gece kart izleme turunu koşar, yazılan olayları döner."""
+    return gece_kart_dongu_izleme()
 
 
 # ── AĞIR UÇ ÖN-HESAP (GÖREV #56, 2026-07-09 — pool zehirlenmesi P1) ──
@@ -2262,6 +2333,21 @@ def _bag_kart() -> List[dict]:
     out = []
     try:
         dongu = kart_dongu()
+        ft = r.get("aylik_odenen_faiz_trendi") or []
+        if len(ft) >= 2 and (ft[0].get("odenen_faiz") or 0) > 0:
+            yon = ("ARTIYOR" if ft[0]["odenen_faiz"] > ft[1]["odenen_faiz"]
+                   else "azalıyor")
+            out.append({"alanlar": ["kart", "faiz"], "tarih": None, "guven": "hesap",
+                        "cumle": (f"kartlara ödenen faiz: {ft[0]['ay']} ayında "
+                                  f"{ft[0]['odenen_faiz']}, önceki ay {ft[1]['odenen_faiz']} "
+                                  f"— faiz maliyeti {yon} (hazır trend)")})
+        bl = r.get("belirsiz_harcama_30g") or {}
+        if (bl.get("adet") or 0) > 0:
+            out.append({"alanlar": ["kart", "gider"], "tarih": None, "guven": "gozlem",
+                        "cumle": (f"kartlarda sınıflandırılmamış (belirsiz) {bl['adet']} "
+                                  f"harcama var, 30 günlük toplamı {bl['toplam_30g']} — "
+                                  "işletme/şahsi ayrımı yapılana dek P&L'e gider "
+                                  "olarak giriyor (sınıflandırma ödevi)")})
         gec = [s for s in (dongu.get("kartlar") or []) if s.get("durum") == "gecikti"]
         if gec:
             en_uzun = max(int(s.get("gun") or 0) for s in gec)
