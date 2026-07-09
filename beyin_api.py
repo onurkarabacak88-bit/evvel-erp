@@ -713,6 +713,7 @@ def _blok_derle(soru: str, yonlendirme_ek: str = "") -> List[Tuple[str, str, str
          lambda: _j(__import__("duyu_gorunumler").stok_hareket_ozet(gun=7))),
         ("B27", "Kart ekstre & limit pozisyonu (kart başına limit/borç/müsait)",
          ("kart limit", "ekstre", "limit", "kart borcu", "kart borc",
+          "gecikmis kart", "kart gecik", "kesim", "kart durum", "ekstre durum",
           "kredi kart", "ilk odeme", "odeme yapilmamis", "kart ode",
           "kartlardan gelecek", "kart taksit",
           "asgari", "kesim tarihi", "hangi kartta"),

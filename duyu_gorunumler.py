@@ -1058,6 +1058,30 @@ def kart_pozisyon():
             kt["plan_odemesi_baslamis"] = bool(_borc > 0.01
                                                and kt["bekleyen_plan_toplami"] < _borc - 0.01)
             del kt["id"]
+    # F4 — KANONİK KAYNAK + DÖNGÜ (2026-07-09): 'tek toplam kaynağı' dersi (4d290ec)
+    # beyin penceresine de uygulanır — /api/kartlar'ın anlık/taksitli rakamları ve
+    # kart-döngü durumu her karta işlenir; dönem borcu artık yalnız REFERANS.
+    try:
+        from main import kartlar_listele
+        _kl = kartlar_listele()
+        _kl = _kl if isinstance(_kl, list) else (_kl or {}).get("kartlar") or []
+        kanonik = {str(x.get("kart_adi")): x for x in _kl}
+    except Exception as e:  # noqa: BLE001
+        kanonik = {}
+        logger.warning("kart pozisyon kanonik okunamadi: %s", str(e)[:80])
+    try:
+        dongu_map = {s.get("kart"): s for s in (kart_dongu().get("kartlar") or [])}
+    except Exception:  # noqa: BLE001
+        dongu_map = {}
+    for kt in kartlar:
+        kx = kanonik.get(kt.get("kart_adi")) or {}
+        kt["anlik_borc"] = kx.get("anlik_borc")
+        kt["toplam_borc_taksitli"] = kx.get("toplam_borc_taksitli")
+        kt["gelecek_taksit_anapara"] = kx.get("gelecek_taksit_anapara")
+        kt["kalan_limit"] = kx.get("kalan_limit")
+        dg = dongu_map.get(kt.get("kart_adi")) or {}
+        kt["dongu_durum"] = dg.get("durum")
+        kt["dongu_mesaj"] = dg.get("mesaj")
     _borclu = [k for k in kartlar if float((k.get("son_ekstre") or {}).get("donem_borcu") or 0) > 0.01]
     toplamlar = {
         "donem_borcu_toplam": round(sum(float((k.get("son_ekstre") or {}).get("donem_borcu") or 0)
@@ -1069,12 +1093,22 @@ def kart_pozisyon():
         "ilk_odemesi_yapilmamis_borc_toplami": round(sum(
             float((k.get("son_ekstre") or {}).get("donem_borcu") or 0)
             for k in _borclu if not k.get("plan_odemesi_baslamis")), 2),
+        "anlik_borc_toplam_KANONIK": round(sum(float(k.get("anlik_borc") or 0)
+                                               for k in kartlar), 2),
+        "taksitli_toplam_borc_KANONIK": round(sum(float(k.get("toplam_borc_taksitli") or 0)
+                                                  for k in kartlar), 2),
+        "ekstre_bekleyen_kart": sum(1 for k in kartlar
+                                    if k.get("dongu_durum") == "ekstre_bekleniyor"),
+        "gecikmis_kart": sum(1 for k in kartlar if k.get("dongu_durum") == "gecikti"),
     }
     return {
         "OZET_toplamlar": toplamlar,  # EN BAŞTA: 'kasa yeter mi' sorusunun hazır cevabı
         "kartlar": kartlar,
-        "not": "Kart başına limit + son ekstre pozisyonu + bekleyen ödeme planları. "
-               "Ekstre YAKLAŞIKTIR (banka canlı verisi değil, sistem kayıtları).",
+        "not": "KANONİK borç = anlik_borc (ödeme/kullanımla oynar) ve "
+               "toplam_borc_taksitli (taksitler dahil gerçek yük); donem_borcu = son "
+               "ekstre REFERANSI (bayat olabilir — dongu_durum söyler: "
+               "ekstre_bekleniyor = rakam eski dönemden). Ekstre YAKLAŞIKTIR "
+               "(banka canlı verisi değil).",
     }
 
 
@@ -2228,6 +2262,13 @@ def _bag_kart() -> List[dict]:
     out = []
     try:
         dongu = kart_dongu()
+        gec = [s for s in (dongu.get("kartlar") or []) if s.get("durum") == "gecikti"]
+        if gec:
+            en_uzun = max(int(s.get("gun") or 0) for s in gec)
+            out.append({"alanlar": ["kart", "gecikme"], "tarih": None, "guven": "gozlem",
+                        "cumle": (f"{len(gec)} kartın son ödeme tarihi GEÇTİ (en uzunu "
+                                  f"{en_uzun} gün) — gecikme faizi işliyor olabilir; "
+                                  "kartlar döngü şeridinde işaretli")})
         bekleyen = [s for s in (dongu.get("kartlar") or [])
                     if s.get("durum") == "ekstre_bekleniyor"]
         if bekleyen:
