@@ -513,6 +513,8 @@ def _gece_yarisi_scheduler():
                 gece_recete_kontrol_ozeti()  # recete hafta kiyasi -> omurga (oneri-only)
                 from recete_api import gece_degirmen_izleme
                 gece_degirmen_izleme()  # degirmen gunluk okuma + sayac-girilmedi
+                from duyu_gorunumler import gece_kart_dongu_izleme
+                gece_kart_dongu_izleme()  # F5: ekstre bekleyen / geciken kart olaylari
                 from duyu_gorunumler import gece_agir_onhesap
                 gece_agir_onhesap()  # GOREV #56: agir uclar SIRALI on-hesap -> gunduz cache
                 from duyu_gorunumler import bag_defteri_hesapla

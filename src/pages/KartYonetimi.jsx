@@ -6,6 +6,36 @@ import KartHareketleri from './KartHareketleri';
 import KartEkstreAnaliz from './KartEkstreAnaliz';
 import EkstreYukle from './EkstreYukle';
 
+// F5 — KART AYI DÖNGÜSÜ ŞERİDİ (2026-07-09): her kart ayın neresinde —
+// kesim → EKSTRE BEKLENİYOR → yüklendi → ödeme bekliyor → ödendi / GECİKTİ.
+const DONGU_STIL = {
+  ekstre_bekleniyor: { ikon: '🟡', renk: '#f59e0b', ad: 'EKSTRE BEKLENİYOR' },
+  gecikti:           { ikon: '🔴', renk: '#ef4444', ad: 'GECİKTİ' },
+  odeme_bekliyor:    { ikon: '💰', renk: '#60a5fa', ad: 'Ödeme bekliyor' },
+  odendi:            { ikon: '✅', renk: '#34d399', ad: 'Ödendi' },
+  yuklendi:          { ikon: '🟢', renk: '#34d399', ad: 'Yüklendi' },
+};
+function KartDonguSerit() {
+  const [d, setD] = useState(null);
+  useEffect(() => { api('/duyu/kart-dongu').then(setD).catch(() => {}); }, []);
+  if (!d?.kartlar?.length) return null;
+  return (
+    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', padding: '6px 0 8px' }}>
+      {d.kartlar.map(s => {
+        const st = DONGU_STIL[s.durum] || { ikon: '🔵', renk: 'var(--text3)', ad: s.durum };
+        const ad = (s.kart || '').length > 18 ? (s.kart || '').slice(0, 18) + '…' : s.kart;
+        return (
+          <span key={s.kart} title={`${s.mesaj || ''} — kesim ${s.kesim}, son ödeme ${s.son_odeme}`}
+            style={{ fontSize: 11, fontWeight: 700, padding: '3px 9px', borderRadius: 999,
+                     border: `1px solid ${st.renk}`, color: st.renk, whiteSpace: 'nowrap' }}>
+            {st.ikon} {ad} · {st.ad}{s.gun != null ? ` (${s.gun}g)` : ''}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
 const TABS = [
   { id: 'genel',        label: 'Genel',          icon: '📊', C: KartMerkez },
   { id: 'koc',          label: 'Borç Koçu',      icon: '🧭', C: BorcKocu },
@@ -364,6 +394,7 @@ export default function KartYonetimi({ onNavigate }) {
         position: 'sticky', top: 0, zIndex: 30, background: 'var(--bg)',
         borderBottom: '1px solid var(--border)', padding: '8px 16px 0',
       }}>
+        <KartDonguSerit />
         {/* Üst satır: sekmeler + hızlı erişim */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', gap: 12, flexWrap: 'wrap' }}>
           <div style={{ position: 'relative', display: 'flex', gap: 2, flexWrap: 'wrap' }}>

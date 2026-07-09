@@ -3416,6 +3416,9 @@ function CepKartlar({ onGeri }) {
   const kartlariYenile = () => api('/kartlar')
     .then(r => setListe(Array.isArray(r) ? r : (r?.kartlar || [])))
     .catch(() => {});
+  // F5: kart ayı döngüsü şeridi (kesim → ekstre → ödeme durumu)
+  const [dongu, setDongu] = useState(null);
+  useEffect(() => { api('/duyu/kart-dongu').then(setDongu).catch(() => {}); }, []);
 
   useEffect(() => {
     api('/kartlar')
@@ -3521,6 +3524,27 @@ function CepKartlar({ onGeri }) {
   return (
     <div style={{ minHeight: '100vh', background: C.bg, paddingBottom: 30 }}>
       <Baslik baslik="💳 Kartlar" onGeri={onGeri} />
+
+      {/* F5 — Kart Ayı Döngüsü şeridi */}
+      {dongu?.kartlar?.length > 0 && (
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', margin: '12px 14px 0' }}>
+          {dongu.kartlar.map(s => {
+            const st = ({ ekstre_bekleniyor: ['🟡', '#f59e0b', 'EKSTRE BEKLENİYOR'],
+                          gecikti: ['🔴', '#ef4444', 'GECİKTİ'],
+                          odeme_bekliyor: ['💰', '#60a5fa', 'Ödeme bekliyor'],
+                          odendi: ['✅', '#34d399', 'Ödendi'],
+                          yuklendi: ['🟢', '#34d399', 'Yüklendi'] })[s.durum] || ['🔵', C.t3, s.durum];
+            const ad = (s.kart || '').length > 16 ? (s.kart || '').slice(0, 16) + '…' : s.kart;
+            return (
+              <span key={s.kart} title={s.mesaj} style={{ fontSize: 11, fontWeight: 700,
+                padding: '4px 9px', borderRadius: 999, border: `1px solid ${st[1]}`,
+                color: st[1], background: C.bg2 }}>
+                {st[0]} {ad} · {st[2]}{s.gun != null ? ` ${s.gun}g` : ''}
+              </span>
+            );
+          })}
+        </div>
+      )}
 
       {/* ── Ekstre PDF Yükle (WhatsApp'tan gelen ekstreyi telefondan seç) ── */}
       <div style={{ margin: '14px 14px 0' }}>

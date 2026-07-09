@@ -268,6 +268,17 @@ def kart_kesim_plani_yaz_tx(cur, k: dict, yil: int, ay: int) -> dict:
     ekstre_v  = kart_ekstre(cur, k["id"], kesim_gunu, kesim_tarihi=bu_ay_kesim)
     bu_ekstre = ekstre_v["ekstre_toplam"]
     ov_borc, ov_asgari = kart_ekstre_donem_override(cur, k["id"], bu_ay_kesim)
+    # F3 BAYAT-SNAPSHOT FRENİ (2026-07-09 kart derin incelemesi): override'ın
+    # "son snapshot" fallback'i BAYAT dönemin borcunu YENİ ayın planına taşıyordu
+    # (3018/Ziraat 2x vakalarının kökü). Kural: override yalnız BU KESİM AYINA ait
+    # snapshot'tan gelir; yoksa defter tahminine düşülür (taşıma YOK) ve döngü
+    # duyusu 'ekstre bekleniyor' der.
+    cur.execute(
+        """SELECT 1 FROM kart_ekstre_donem
+           WHERE kart_id=%s AND donem=DATE_TRUNC('month',%s::date) LIMIT 1""",
+        (k["id"], str(bu_ay_kesim)))
+    if ov_borc is not None and cur.fetchone() is None:
+        ov_borc, ov_asgari = None, None
     if ov_borc is not None:
         odenecek = round(ov_borc, 2)
         asgari   = round(ov_asgari, 2) if ov_asgari is not None else round(ov_borc * kart_asgari_orani(k), 2)

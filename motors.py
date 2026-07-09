@@ -763,6 +763,16 @@ def aylik_odeme_plani_uret(yil=None, ay=None):
             # kullan — kart_hareketleri-bazlı tahmin, büyük "devir" bakiyesini
             # göremediği için gerçek dönem borcundan çok düşük çıkabilir.
             ov_borc, ov_asgari = kart_ekstre_donem_override(cur, k['id'], bu_ay_kesim)
+            # F3 BAYAT-SNAPSHOT FRENİ (kasa_service ile aynı kural): bu kesim ayına
+            # ait snapshot yoksa eski dönem borcu YENİ ay planına TAŞINMAZ.
+            cur.execute(
+                """SELECT 1 FROM kart_ekstre_donem
+                   WHERE kart_id=%s AND donem=DATE_TRUNC('month',%s::date) LIMIT 1""",
+                (k['id'], str(bu_ay_kesim)))
+            if ov_borc is not None and cur.fetchone() is None:
+                ov_borc, ov_asgari = None, None
+                atlanan.append(f"Kart: {k['kart_adi']} — bu kesime ait ekstre YÜKLENMEDİ "
+                               "(bayat borç taşınmadı; ekstre bekleniyor)")
             if ov_borc is not None:
                 odenecek = round(ov_borc, 2)
                 asgari = round(ov_asgari, 2) if ov_asgari is not None else round(ov_borc * kart_asgari_orani(k), 2)

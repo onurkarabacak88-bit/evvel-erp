@@ -1900,6 +1900,91 @@ def stok_capraz_hipotez(gun: int = 7, taze: int = 0):
     }
 
 
+# ── KART AYI DÖNGÜSÜ (F5, 2026-07-09 — sahip: 'çalışma noktası prof kurgu') ──
+# Her kart ayın neresinde: kesim bekleniyor → EKSTRE BEKLENİYOR → yüklendi →
+# ödeme bekliyor → ödendi / GECİKTİ. Salt-okur türetilmiş durum; tablo yok.
+
+@router.get("/kart-dongu")
+def kart_dongu():
+    from finans_core import kesim_tarihi_hesapla, son_odeme_tarihi_hesapla
+    bugun = date.today()
+    satirlar = []
+    with db() as (_, cur):
+        cur.execute("""SELECT id, kart_adi, kesim_gunu, COALESCE(son_odeme_gunu,25) AS sog
+                       FROM kartlar WHERE aktif=TRUE ORDER BY kart_adi""")
+        kartlar = [dict(r) for r in cur.fetchall() or []]
+        for k in kartlar:
+            try:
+                bu_ay = kesim_tarihi_hesapla(bugun.year, bugun.month, int(k["kesim_gunu"]))
+                if bugun >= bu_ay:
+                    son_kesim = bu_ay
+                else:
+                    oy, om = (bugun.year - 1, 12) if bugun.month == 1 else (bugun.year, bugun.month - 1)
+                    son_kesim = kesim_tarihi_hesapla(oy, om, int(k["kesim_gunu"]))
+                son_odeme = son_odeme_tarihi_hesapla(son_kesim, int(k["sog"]))
+                cur.execute("""SELECT 1 FROM kart_ekstre_donem
+                               WHERE kart_id=%s AND donem=DATE_TRUNC('month',%s::date) LIMIT 1""",
+                            (k["id"], str(son_kesim)))
+                snap_var = cur.fetchone() is not None
+                s = {"kart": k["kart_adi"], "kesim": str(son_kesim), "son_odeme": str(son_odeme)}
+                if not snap_var:
+                    s["durum"] = "ekstre_bekleniyor"
+                    s["gun"] = (bugun - son_kesim).days
+                    s["mesaj"] = (f"kesim {son_kesim} — ekstre {s['gun']} gündür yüklenmedi")
+                else:
+                    cur.execute("""SELECT durum, COALESCE(odenecek_tutar,0)::float AS t
+                                   FROM odeme_plani
+                                   WHERE kart_id=%s AND durum!='iptal'
+                                     AND DATE_TRUNC('month',tarih)=DATE_TRUNC('month',%s::date)
+                                   ORDER BY (durum='odendi') DESC LIMIT 1""",
+                                (k["id"], str(son_odeme)))
+                    pl = dict(cur.fetchone() or {})
+                    if pl.get("durum") == "odendi":
+                        s["durum"], s["mesaj"] = "odendi", f"bu dönem ödendi ({pl.get('t')})"
+                    elif pl and bugun <= son_odeme:
+                        s["durum"] = "odeme_bekliyor"
+                        s["gun"] = (son_odeme - bugun).days
+                        s["mesaj"] = f"son ödemeye {s['gun']} gün ({pl.get('t')})"
+                    elif pl:
+                        s["durum"] = "gecikti"
+                        s["gun"] = (bugun - son_odeme).days
+                        s["mesaj"] = f"son ödeme {s['gun']} gün GEÇTİ ({pl.get('t')})"
+                    else:
+                        s["durum"], s["mesaj"] = "yuklendi", "ekstre yüklü, plan bekleniyor"
+                # sıradaki kesim bilgisi (bilgilendirici)
+                if bugun < bu_ay:
+                    s["siradaki_kesime_gun"] = (bu_ay - bugun).days
+                satirlar.append(s)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("kart dongu %s: %s", k.get("kart_adi"), str(e)[:60])
+    sayilar = {}
+    for s in satirlar:
+        sayilar[s["durum"]] = sayilar.get(s["durum"], 0) + 1
+    return {"bugun": str(bugun), "kartlar": satirlar, "ozet": sayilar,
+            "not": "Türetilmiş döngü durumu — kesim/son ödeme kart tanımından, "
+                   "ekstre snapshot + plan durumundan. Hüküm yok; hatırlatma amaçlı."}
+
+
+def gece_kart_dongu_izleme() -> None:
+    """Gece: ekstre bekleyen / geciken kartlar omurgaya olay olarak düşer
+    (hatırlatma + beyin görür). Hata-yutar."""
+    try:
+        d = kart_dongu()
+        from duyu_omurga import duyu_olay_yaz
+        for s in d.get("kartlar") or []:
+            if s.get("durum") in ("ekstre_bekleniyor", "gecikti"):
+                duyu_olay_yaz(
+                    "kart_dongu", f"finans.kart.{s['durum']}",
+                    f"{s['kart']}:{s.get('kesim')}",
+                    entity_scope="kart", entity_id=s["kart"],
+                    signal_name=("Ekstre bekleniyor" if s["durum"] == "ekstre_bekleniyor"
+                                 else "Kart ödemesi gecikti"),
+                    payload=s,
+                )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("gece kart dongu: %s", str(e)[:100])
+
+
 # ── AĞIR UÇ ÖN-HESAP (GÖREV #56, 2026-07-09 — pool zehirlenmesi P1) ──
 # Paralel ağır denetim çağrıları (tutarsızlık+denge+hipotez+reçete+değirmen)
 # bağlantı havuzunu tüketip /api/panel'i 500'e düşürmüştü. ÇÖZÜM: gece SIRALI
@@ -2141,6 +2226,18 @@ def _bag_kart() -> List[dict]:
     """Kart ekstre↔ödeme planı bağı (yaklaşık — banka canlı verisi değil)."""
     r = kart_pozisyon()
     out = []
+    try:
+        dongu = kart_dongu()
+        bekleyen = [s for s in (dongu.get("kartlar") or [])
+                    if s.get("durum") == "ekstre_bekleniyor"]
+        if bekleyen:
+            en_eski = max(int(s.get("gun") or 0) for s in bekleyen)
+            out.append({"alanlar": ["kart", "ekstre"], "tarih": None, "guven": "gozlem",
+                        "cumle": (f"{len(bekleyen)} kartın kesimi geçti ama ekstresi "
+                                  f"YÜKLENMEDİ (en eskisi {en_eski} gün) — bu kartların "
+                                  "borç/plan rakamları bayat dönemden kalmadır")})
+    except Exception as e:  # noqa: BLE001
+        logger.warning("bag kart dongu: %s", str(e)[:60])
     t = r.get("OZET_toplamlar") or r.get("toplamlar") or {}
     if t:
         cum = (f"tüm kartların dönem borcu toplamı {t.get('donem_borcu_toplam')}; "
