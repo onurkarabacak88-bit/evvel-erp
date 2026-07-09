@@ -1981,7 +1981,8 @@ def _bag_evo_ciro() -> List[dict]:
             evo_c = sd.get("ciro_toplam")
             if evo_c is None:
                 continue
-            k = _kat(sube_ad)
+            # Evo adlari 'Zafer Subesi' bicimli — sonek atilir (canli test dersi)
+            k = _kat(sube_ad).replace("SUBESI", "").strip()
             kc = kayitli.get((k, eg["gun"]))
             if kc is None and k in takma:
                 kc = kayitli.get((takma[k], eg["gun"]))
