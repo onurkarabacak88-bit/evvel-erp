@@ -1155,8 +1155,28 @@ def kart_plan_mutabakat(uygula: bool = False) -> dict:
             )
             planlar = [dict(r) for r in cur.fetchall() or []]
 
-            # R1 — aynı kart+ay mükerrer
+            # R1b — aynı kart+ay'da ÖDENMİŞ plan varken hâlâ 'bekliyor' satır
+            # (2026-07-09 döngü canlı dersi: ekstre-yukle UPDATE yalnız bekleyeni
+            # arıyor, satır 'odendi' olunca YENİ bekleyen INSERT ediyordu — HEPSI/
+            # WORLD/7015 hem ödendi hem bekliyor görünüyordu)
             iptal_ids = set()
+            cur.execute(
+                """SELECT op.id, k.kart_adi, TO_CHAR(op.tarih,'YYYY-MM') AS ay,
+                          COALESCE(op.odenecek_tutar,0)::float AS tutar
+                   FROM odeme_plani op JOIN kartlar k ON k.id = op.kart_id
+                   WHERE op.kart_id IS NOT NULL
+                     AND op.durum IN ('bekliyor','onay_bekliyor')
+                     AND EXISTS (SELECT 1 FROM odeme_plani o2
+                                 WHERE o2.kart_id = op.kart_id AND o2.durum = 'odendi'
+                                   AND DATE_TRUNC('month', o2.tarih) = DATE_TRUNC('month', op.tarih))"""
+            )
+            for r in [dict(x) for x in cur.fetchall() or []]:
+                iptal_ids.add(r["id"])
+                rapor.setdefault("r1b_odendi_yaninda_bekleyen", []).append(
+                    {"kart": r["kart_adi"], "ay": r["ay"], "tutar": r["tutar"],
+                     "plan_id": r["id"][:8]})
+
+            # R1 — aynı kart+ay mükerrer
             gruplar = {}
             for p in planlar:
                 gruplar.setdefault((p["kart_id"], p["ay"]), []).append(p)
@@ -1240,7 +1260,8 @@ def kart_plan_mutabakat(uygula: bool = False) -> dict:
     except Exception as e:  # noqa: BLE001
         rapor["hata"] = str(e)[:200]
         logger.warning("kart_plan_mutabakat: %s", str(e)[:200])
-    rapor["ozet"] = {"r1": len(rapor["r1_mukerrer"]), "r2": len(rapor["r2_bayat_tasima"]),
+    rapor["ozet"] = {"r1b": len(rapor.get("r1b_odendi_yaninda_bekleyen") or []),
+                     "r1": len(rapor["r1_mukerrer"]), "r2": len(rapor["r2_bayat_tasima"]),
                      "r3": len(rapor["r3_kapama"]),
                      "kalan_bekleyen": len(rapor["dokunulmayan_bekleyen"])}
     return rapor
@@ -3621,11 +3642,16 @@ def _ekstre_eslesme_mutabakat(sonuc):
                     (sot, (brc or asg), asg, acik, sot, kart["id"], sot),
                 )
                 if cur.rowcount == 0:
+                    # R1b korumasi: ayni ay zaten ODENDIyse yeni bekleyen ekleme
                     cur.execute(
                         """INSERT INTO odeme_plani
                             (id, kart_id, tarih, referans_ay, odenecek_tutar, asgari_tutar, aciklama, durum)
-                           VALUES (%s, %s, %s::date, DATE_TRUNC('month', %s::date), %s, %s, %s, 'bekliyor')""",
-                        (str(uuid.uuid4()), kart["id"], sot, sot, (brc or asg), asg, acik),
+                           SELECT %s, %s, %s::date, DATE_TRUNC('month', %s::date), %s, %s, %s, 'bekliyor'
+                           WHERE NOT EXISTS (SELECT 1 FROM odeme_plani
+                               WHERE kart_id=%s AND durum='odendi'
+                                 AND DATE_TRUNC('month',tarih)=DATE_TRUNC('month',%s::date))""",
+                        (str(uuid.uuid4()), kart["id"], sot, sot, (brc or asg), asg, acik,
+                         kart["id"], sot),
                     )
                 sonuc["cfo_odeme_plani"] = {"son_odeme": sot, "asgari": asg, "borc": brc}
         elif son4:
@@ -3693,10 +3719,14 @@ def kart_manuel_ekstre(kid: str, body: ManuelEkstreBody):
                 (sot, (borc or asg), asg, acik, sot, kid, sot),
             )
             if cur.rowcount == 0:
+                # R1b korumasi: ayni ay zaten ODENDIyse yeni bekleyen ekleme
                 cur.execute(
                     """INSERT INTO odeme_plani (id,kart_id,tarih,referans_ay,odenecek_tutar,asgari_tutar,aciklama,durum)
-                       VALUES (%s,%s,%s::date,DATE_TRUNC('month',%s::date),%s,%s,%s,'bekliyor')""",
-                    (str(uuid.uuid4()), kid, sot, sot, (borc or asg), asg, acik),
+                       SELECT %s,%s,%s::date,DATE_TRUNC('month',%s::date),%s,%s,%s,'bekliyor'
+                       WHERE NOT EXISTS (SELECT 1 FROM odeme_plani
+                           WHERE kart_id=%s AND durum='odendi'
+                             AND DATE_TRUNC('month',tarih)=DATE_TRUNC('month',%s::date))""",
+                    (str(uuid.uuid4()), kid, sot, sot, (borc or asg), asg, acik, kid, sot),
                 )
         # 4) faiz oranı
         if body.faiz_orani is not None and body.faiz_orani > 0:
