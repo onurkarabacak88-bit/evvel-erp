@@ -2088,6 +2088,106 @@ def kart_gelecek_ekstre(taze: int = 0):
     return sonuc
 
 
+@router.get("/kart-anomali")
+def kart_harcama_anomali(gun: int = 7):
+    """K2-E — KART HARCAMA ANOMALİSİ (öneri-only): son N günde
+    (a) YENİ SATICI: son 90 günde hiç görülmemiş satıcıdan ≥2.000 TL harcama,
+    (b) BÜYÜK TUTAR: kartın 90 günlük harcama p95'inin 1.5 katını aşan (≥5.000).
+    Şahsi hariç. Hüküm yok — dikkat listesi."""
+    gn = max(3, min(30, int(gun or 7)))
+    adaylar = []
+    try:
+        from main import _satici_anahtar
+    except Exception:  # noqa: BLE001
+        def _satici_anahtar(x):  # type: ignore
+            return (str(x or "").strip().split() or [""])[0].lower()
+    with db() as (_, cur):
+        cur.execute(
+            """SELECT h.tarih::text AS tarih, k.kart_adi,
+                      ROUND(h.tutar::numeric,2) AS tutar,
+                      LEFT(COALESCE(h.aciklama,''),60) AS aciklama, h.kart_id
+               FROM kart_hareketleri h JOIN kartlar k ON k.id = h.kart_id
+               WHERE h.islem_turu='HARCAMA' AND h.durum='aktif'
+                 AND COALESCE(h.harcama_tipi,'belirsiz') <> 'sahsi'
+                 AND h.tarih >= CURRENT_DATE - %s
+               ORDER BY h.tutar DESC LIMIT 200""", (gn,))
+        yeniler = [dict(r) for r in cur.fetchall() or []]
+        cur.execute(
+            """SELECT COALESCE(aciklama,'') AS a FROM kart_hareketleri
+               WHERE islem_turu='HARCAMA' AND durum='aktif'
+                 AND tarih >= CURRENT_DATE - 90 AND tarih < CURRENT_DATE - %s""", (gn,))
+        eski_saticilar = {_satici_anahtar(dict(r)["a"]) for r in cur.fetchall() or []}
+        eski_saticilar.discard("")
+        cur.execute(
+            """SELECT kart_id,
+                      PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY tutar) AS p95
+               FROM kart_hareketleri
+               WHERE islem_turu='HARCAMA' AND durum='aktif'
+                 AND tarih >= CURRENT_DATE - 90
+               GROUP BY kart_id""")
+        p95 = {dict(r)["kart_id"]: float(dict(r)["p95"] or 0) for r in cur.fetchall() or []}
+    for h in yeniler:
+        tut = float(h["tutar"])
+        sat = _satici_anahtar(h["aciklama"])
+        nedenler = []
+        if sat and sat not in eski_saticilar and tut >= 2000:
+            nedenler.append("yeni satıcı")
+        esik = max(5000.0, (p95.get(h["kart_id"]) or 0) * 1.5)
+        if tut >= esik and esik > 0:
+            nedenler.append(f"büyük tutar (90g p95×1.5={esik:,.0f} üstü)")
+        if nedenler:
+            adaylar.append({"tarih": h["tarih"], "kart": h["kart_adi"],
+                            "tutar": tut, "aciklama": h["aciklama"],
+                            "neden": " + ".join(nedenler)})
+    return {"kesit_gun": gn, "aday_sayisi": len(adaylar), "adaylar": adaylar[:20],
+            "not": "ADAY dikkat listesi — hüküm yok. Yeni satıcı meşru olabilir; "
+                   "büyük tutar planlı alım olabilir. Karar sahibinin."}
+
+
+@router.get("/kart-abonelik")
+def kart_abonelik_yuku():
+    """K2-E — ABONELİK YÜKÜ: son 4 ayda ≥3 farklı ayda görülen, tutar sapması
+    ≤%15 olan satıcılar = tekrarlayan yük adayı; aylık toplam abonelik maliyeti."""
+    try:
+        from main import _satici_anahtar
+    except Exception:  # noqa: BLE001
+        def _satici_anahtar(x):  # type: ignore
+            return (str(x or "").strip().split() or [""])[0].lower()
+    with db() as (_, cur):
+        cur.execute(
+            """SELECT COALESCE(aciklama,'') AS a, TO_CHAR(tarih,'YYYY-MM') AS ay,
+                      tutar::float AS tutar
+               FROM kart_hareketleri
+               WHERE islem_turu='HARCAMA' AND durum='aktif'
+                 AND tarih >= DATE_TRUNC('month', CURRENT_DATE) - INTERVAL '3 months'"""
+        )
+        gruplar: dict = {}
+        for r in [dict(x) for x in cur.fetchall() or []]:
+            sat = _satici_anahtar(r["a"])
+            if not sat:
+                continue
+            gruplar.setdefault(sat, []).append(r)
+    abonelikler = []
+    for sat, rows in gruplar.items():
+        aylar = {r["ay"] for r in rows}
+        if len(aylar) < 3:
+            continue
+        tutarlar = [r["tutar"] for r in rows]
+        ort = sum(tutarlar) / len(tutarlar)
+        if ort <= 0:
+            continue
+        sapma = max(abs(t - ort) for t in tutarlar) / ort
+        if sapma <= 0.15:
+            abonelikler.append({"satici": sat, "ay_sayisi": len(aylar),
+                                "ortalama_aylik": round(ort, 2),
+                                "ornek_aciklama": rows[0]["a"][:50]})
+    abonelikler.sort(key=lambda x: -x["ortalama_aylik"])
+    return {"abonelik_adaylari": abonelikler[:20],
+            "aylik_toplam_yuk": round(sum(a["ortalama_aylik"] for a in abonelikler), 2),
+            "not": "Son 4 ayda ≥3 ayda tekrarlayan, tutarı ~sabit (≤%15 sapma) satıcılar. "
+                   "İptal edilebilir abonelik mi, sabit yükümlülük mü — karar sahibinin."}
+
+
 def _kart_asgari_tuzagi() -> list:
     """K2-C — ASGARİ TUZAĞI adayları: son 3 ekstre döneminde borç erimiyor
     (her dönem >= öncekinin %95'i) VE bankanın yazdığı dönem ödemesi asgari
@@ -2188,6 +2288,19 @@ def gece_kart_dongu_izleme() -> dict:
                 ozet["limit_olay"] += 0  # sayaçlar ayrı kalsın
         except Exception as e:  # noqa: BLE001
             logger.warning("asgari tuzagi olay: %s", str(e)[:80])
+        # K2-E — harcama anomalisi adayları (gün+tutar anahtarlı, idempotent)
+        try:
+            an = kart_harcama_anomali(gun=3)
+            for a in (an.get("adaylar") or [])[:6]:
+                duyu_olay_yaz(
+                    "kart_dongu", "finans.kart.anomali_harcama",
+                    f"{a['kart']}:{a['tarih']}:{a['tutar']}",
+                    entity_scope="kart", entity_id=a["kart"],
+                    signal_name="Kart harcama anomalisi (aday)",
+                    payload=a)
+                ozet["olaylar"].append(f"anomali: {a['kart']} {a['tutar']}")
+        except Exception as e:  # noqa: BLE001
+            logger.warning("anomali olay: %s", str(e)[:80])
     except Exception as e:  # noqa: BLE001
         logger.warning("gece kart dongu: %s", str(e)[:100])
     return ozet
@@ -2482,6 +2595,25 @@ def _bag_kart() -> List[dict]:
                                       "faiz yükü büyüyor (aday gözlem)")})
         except Exception:  # noqa: BLE001
             pass
+        try:
+            an = kart_harcama_anomali(gun=7)
+            if an.get("aday_sayisi"):
+                ilk = (an.get("adaylar") or [{}])[0]
+                out.append({"alanlar": ["kart", "anomali"], "tarih": ilk.get("tarih"),
+                            "guven": "dusuk",
+                            "cumle": (f"son 7 günde {an['aday_sayisi']} dikkat çeken kart "
+                                      f"harcaması var (örn. {ilk.get('kart','')[:18]} "
+                                      f"{ilk.get('tutar')} — {ilk.get('neden','')}) — aday "
+                                      "liste, hüküm değil")})
+            ab = kart_abonelik_yuku()
+            if ab.get("aylik_toplam_yuk"):
+                out.append({"alanlar": ["kart", "abonelik"], "tarih": None, "guven": "hesap",
+                            "cumle": (f"kartlarda tekrarlayan (abonelik benzeri) aylık yük "
+                                      f"~{ab['aylik_toplam_yuk']} "
+                                      f"({len(ab.get('abonelik_adaylari') or [])} kalem) — "
+                                      "iptal edilebilirler gözden geçirilebilir")})
+        except Exception as e:  # noqa: BLE001
+            logger.warning("bag anomali/abonelik: %s", str(e)[:60])
         gec = [s for s in (dongu.get("kartlar") or []) if s.get("durum") == "gecikti"]
         if gec:
             en_uzun = max(int(s.get("gun") or 0) for s in gec)
