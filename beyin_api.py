@@ -714,6 +714,8 @@ def _blok_derle(soru: str, yonlendirme_ek: str = "") -> List[Tuple[str, str, str
         ("B27", "Kart ekstre & limit pozisyonu (kart başına limit/borç/müsait)",
          ("kart limit", "ekstre", "limit", "kart borcu", "kart borc",
           "gecikmis kart", "kart gecik", "kesim", "kart durum", "ekstre durum",
+          "kartlarin borcu", "kartlarin guncel", "toplam borc", "guncel borc",
+          "gercek yuk", "taksitlerle", "kartlarda borc",
           "kredi kart", "ilk odeme", "odeme yapilmamis", "kart ode",
           "kartlardan gelecek", "kart taksit",
           "asgari", "kesim tarihi", "hangi kartta"),
