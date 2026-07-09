@@ -1567,8 +1567,15 @@ def gece_ozsorgu() -> None:
 
 
 @router.post("/ozsorgu-calistir")
-def ozsorgu_calistir():
-    """Elle tetik (test/önizleme): dinamik öz-sorguyu ŞİMDİ koştur."""
+def ozsorgu_calistir(beklemeden: int = 1):
+    """Elle tetik: 8 soruluk tur HTTP ömründen uzun sürebilir (istemci kopunca
+    koşu da kesiliyordu — 2026-07-10 dersi). Varsayılan: ARKA PLANDA başlat,
+    hemen dön; sonuçlar /ozsorgu-sonuclari'ndan izlenir. beklemeden=0 eski davranış."""
+    if beklemeden:
+        import threading
+        threading.Thread(target=gece_ozsorgu, daemon=True).start()
+        return {"ok": True, "baslatildi": True,
+                "not": "Tur arka planda koşuyor — GET /api/beyin/ozsorgu-sonuclari?gun=1"}
     gece_ozsorgu()
     return ozsorgu_sonuclari(gun=1)
 
