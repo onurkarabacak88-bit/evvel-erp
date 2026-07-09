@@ -1483,17 +1483,59 @@ def gece_ozsorgu() -> None:
         uretilen_sorular = _uretilmis_sorular()
         gun_no = date.today().toordinal()
         cekirdek = [_OZSORGU_BANKASI[gun_no % len(_OZSORGU_BANKASI)]]
+        # ── SORU EVRENİ v2 (2026-07-10, sahip: 'her gece SONSUZ soru bağlamı
+        # öğreten evren') — iki ÜRETKEN kaynak daha: sorular sabit bankadan değil,
+        # yaşayan sistemden türer; sen sordukça ve bağlar kuruldukça evren büyür.
+        # 1) SAHİP-TEKRAR: son 7 günde senin sorduğun gerçek sorular gece yeniden
+        #    sınanır (👎 verdiklerin ÖNCELİKLİ) — dün cevaplanamayan bugün
+        #    cevaplanabiliyor mu, gerileme var mı?
+        sahip_sorulari = []
+        try:
+            with db() as (_, cur):
+                cur.execute(
+                    """SELECT DISTINCT ON (LOWER(TRIM(soru))) soru,
+                              (cevap_karari = 'kotu')::int AS oncelik, MAX(olusturma) AS son
+                       FROM beyin_gunluk
+                       WHERE tip = 'soru' AND soru IS NOT NULL
+                         AND LENGTH(TRIM(soru)) > 15
+                         AND olusturma >= NOW() - INTERVAL '7 days'
+                       GROUP BY soru, cevap_karari
+                       ORDER BY LOWER(TRIM(soru)), oncelik DESC, son DESC""")
+                adaylar = [dict(r) for r in (cur.fetchall() or [])]
+            adaylar.sort(key=lambda r: (-int(r.get("oncelik") or 0), str(r.get("son"))),
+                         reverse=False)
+            adaylar.sort(key=lambda r: -int(r.get("oncelik") or 0))
+            sahip_sorulari = [str(a["soru"])[:300] for a in adaylar[:2]]
+        except Exception as e:  # noqa: BLE001
+            logger.warning("ozsorgu sahip kaynagi: %s", str(e)[:80])
+        # 2) BAĞ-TAKİP: bağ defterindeki hazır gözlemlerden 'nedeni ne?' takip
+        #    sorusu türet — her yeni bağ, otomatik yeni bir patron sorusudur.
+        bag_sorulari = []
+        try:
+            from duyu_gorunumler import bag_defteri_oku
+            _baglar = [x.get("cumle") for x in (bag_defteri_oku().get("baglar") or [])
+                       if x.get("cumle")]
+            if _baglar:
+                for i in range(2):
+                    c = _baglar[(gun_no + i * 7) % len(_baglar)]
+                    bag_sorulari.append(
+                        "Şu hazır gözlemin olası açıklayıcılarını bağlamdaki verilerle "
+                        f"ADAY olarak sırala (kesin neden ilan etme): '{str(c)[:140]}'")
+        except Exception as e:  # noqa: BLE001
+            logger.warning("ozsorgu bag kaynagi: %s", str(e)[:80])
         hepsi, gorulen = [], set()
-        for s in olay_sorulari + uretilen_sorular + cekirdek:
+        for s in olay_sorulari + sahip_sorulari + bag_sorulari + uretilen_sorular + cekirdek:
             k = s.strip().lower()
             if k in sorulmus or k in gorulen:
                 continue
             gorulen.add(k)
             hepsi.append(s)
-        hepsi = hepsi[:6]  # gece maliyet tavanı
+        hepsi = hepsi[:8]  # gece maliyet tavanı (v2: 5 kaynak → 8)
         cevaplanan, dilekli = 0, 0
         for soru in hepsi:
             kaynak = ("olay" if soru in olay_sorulari else
+                      "sahip_tekrar" if soru in sahip_sorulari else
+                      "bag_takip" if soru in bag_sorulari else
                       "uretim" if soru in uretilen_sorular else "banka")
             try:
                 sonuc = _sor_calistir(soru, tip="ozsorgu")
@@ -1517,7 +1559,9 @@ def gece_ozsorgu() -> None:
             except Exception as e:  # noqa: BLE001
                 logger.warning("ozsorgu soru yutuldu: %s", str(e)[:100])
         duyu_nabiz_yaz("ozsorgu", taranan=len(hepsi), uretilen=cevaplanan,
-                       not_metin=f"olay:{len(olay_sorulari)} uretim:{len(uretilen_sorular)} dilek:{dilekli}")
+                       not_metin=(f"olay:{len(olay_sorulari)} sahip:{len(sahip_sorulari)} "
+                                  f"bag:{len(bag_sorulari)} uretim:{len(uretilen_sorular)} "
+                                  f"dilek:{dilekli}"))
     except Exception as e:  # noqa: BLE001
         logger.warning("gece ozsorgu yutuldu: %s", str(e)[:120])
 
