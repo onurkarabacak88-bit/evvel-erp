@@ -712,7 +712,9 @@ def _blok_derle(soru: str, yonlendirme_ek: str = "") -> List[Tuple[str, str, str
           "kaç adet gel", "kac adet gel", "ürün gel", "urun gel"),
          lambda: _j(__import__("duyu_gorunumler").stok_hareket_ozet(gun=7))),
         ("B27", "Kart ekstre & limit pozisyonu (kart başına limit/borç/müsait)",
-         ("kart limit", "ekstre", "limit", "kart borcu", "kart borç", "kart borc",
+         ("kart limit", "ekstre", "limit", "kart borcu", "kart borc",
+          "kredi kart", "ilk odeme", "odeme yapilmamis", "kart ode",
+          "kartlardan gelecek", "kart taksit",
           "asgari", "kesim tarihi", "hangi kartta"),
          lambda: _j(__import__("duyu_gorunumler").kart_pozisyon())),
         ("B28", "Sipariş-sevkiyat zinciri (durum kırılımı + yolda kabul bekleyenler)",
@@ -914,7 +916,7 @@ def _llm_cagir(system: str, kullanici: str, max_tokens: int = 900) -> Tuple[str,
     return "", ""
 
 
-def _post_check(cevap: str, baglam_metni: str) -> Optional[str]:
+def _post_check(cevap: str, baglam_metni: str, soru: str = "") -> Optional[str]:
     """None=geçti; str=red nedeni. (1) rakam bağlamda olmalı, (2) en az bir [B#] referansı,
     (3) yasaklı hüküm/kesinlik dili yok [güvenlik v0.2], (4) yabancı alfabe yok
     [2026-07-08: Llama cevaba Kiril/Çince/Vietnamca karıştırdı — kural 13 + bu fren]."""
@@ -932,6 +934,10 @@ def _post_check(cevap: str, baglam_metni: str) -> Optional[str]:
     if m_dil:
         return f"hüküm dili: '{m_dil.group(0)}' (gözlem katmanı yargı üretemez)"
     kaynak = _rakamlar(baglam_metni)
+    # FREN DÜZELTMESİ (2026-07-09, '90 üzeri puan' haksız reddi): SORUDA geçen
+    # rakam da meşru kaynaktır — model kullanıcının sorduğu eşiği yansıtabilmeli
+    # (fren gevşemez: bağlamda VE soruda olmayan rakam yine reddedilir).
+    kaynak |= _rakamlar(soru)
     # FREN HATASI DÜZELTMESİ (2026-07-09): bağlamda '1243.0' yazan sayı '12430'
     # olarak normalize oluyordu; model '1243' deyince HAKSIZ red yiyordu. Aynı
     # sayının .0'sız yazımı da kaynak sayılır (fren GEVŞEMEZ — yeni sayı girmez).
@@ -1138,7 +1144,7 @@ def _sor_calistir(soru: str, tip: str = "soru", ek_bloklar=None,
     if not cevap:
         red = "LLM yanıtı alınamadı (anahtar yok / hata)"
     else:
-        red = _post_check(cevap, baglam_metni)
+        red = _post_check(cevap, baglam_metni, soru)
     # ÖZ-DÜZELTME DÖNGÜSÜ (tek deneme): post-check reddettiyse red nedenini modele geri ver.
     # Küçük modeller 'aritmetik yapma' kuralını ilk seferde sık deler; somut hata gösterilince
     # genelde düzeltir. İkinci deneme de failse dürüst red (fren gevşetilmez).
@@ -1154,7 +1160,7 @@ def _sor_calistir(soru: str, tip: str = "soru", ek_bloklar=None,
         )
         cevap2, model2 = _llm_cagir(system_metni, duzeltme)
         if cevap2:
-            red2 = _post_check(cevap2, baglam_metni)
+            red2 = _post_check(cevap2, baglam_metni, soru)
             if red2 is None:
                 cevap, model, red = cevap2, model2, None
             else:

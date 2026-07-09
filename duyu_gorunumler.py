@@ -1052,9 +1052,27 @@ def kart_pozisyon():
             )
             b = cur.fetchone()
             kt["bekleyen_plan_toplami"] = float((b or {}).get("bekleyen") or 0)
+            _borc = float((kt.get("son_ekstre") or {}).get("donem_borcu") or 0)
+            # 'İLK ÖDEME yapılmamış' HAZIR alanı (sahip sorusu 2026-07-09):
+            # bekleyen plan ≈ dönem borcu → henüz hiç ödeme düşmemiş
+            kt["plan_odemesi_baslamis"] = bool(_borc > 0.01
+                                               and kt["bekleyen_plan_toplami"] < _borc - 0.01)
             del kt["id"]
+    _borclu = [k for k in kartlar if float((k.get("son_ekstre") or {}).get("donem_borcu") or 0) > 0.01]
+    toplamlar = {
+        "donem_borcu_toplam": round(sum(float((k.get("son_ekstre") or {}).get("donem_borcu") or 0)
+                                        for k in kartlar), 2),
+        "bekleyen_plan_toplam": round(sum(float(k.get("bekleyen_plan_toplami") or 0)
+                                          for k in kartlar), 2),
+        "ilk_odemesi_yapilmamis_kart_sayisi": sum(1 for k in _borclu
+                                                  if not k.get("plan_odemesi_baslamis")),
+        "ilk_odemesi_yapilmamis_borc_toplami": round(sum(
+            float((k.get("son_ekstre") or {}).get("donem_borcu") or 0)
+            for k in _borclu if not k.get("plan_odemesi_baslamis")), 2),
+    }
     return {
         "kartlar": kartlar,
+        "toplamlar": toplamlar,
         "not": "Kart başına limit + son ekstre pozisyonu + bekleyen ödeme planları. "
                "Ekstre YAKLAŞIKTIR (banka canlı verisi değil, sistem kayıtları).",
     }
@@ -1249,11 +1267,43 @@ def is_basvuru_ozet():
                WHERE olusturma_ts >= NOW() - INTERVAL '30 days'"""
         )
         son30 = dict(cur.fetchone() or {}).get("adet", 0)
+        # 'bugün başvuru geldi mi' dileği (2026-07-09): gün-gün son 7 gün
+        cur.execute(
+            """SELECT olusturma_ts::date::text AS gun, COUNT(*)::int AS adet
+               FROM is_basvuru WHERE olusturma_ts >= CURRENT_DATE - 7
+               GROUP BY 1 ORDER BY 1 DESC"""
+        )
+        gun_gun = [dict(r) for r in cur.fetchall() or []]
+        bugun_adet = next((r["adet"] for r in gun_gun
+                           if r["gun"] == str(date.today())), 0)
+        # PUAN bantları ('90 üzeri kaç kişi' sorusu): skor motoru saf-Python,
+        # tüm başvurulara koşturmak ucuz. KİMLİKSİZ — yalnız adetler.
+        bantlar = None
+        try:
+            from is_basvuru_api import _hesapla_skor
+            cur.execute("SELECT * FROM is_basvuru")
+            puanlar = []
+            for r in cur.fetchall() or []:
+                try:
+                    puanlar.append(int(_hesapla_skor(dict(r)).get("toplam") or 0))
+                except Exception:  # noqa: BLE001
+                    continue
+            bantlar = {"90_ve_uzeri": sum(1 for p in puanlar if p >= 90),
+                       "80_89": sum(1 for p in puanlar if 80 <= p < 90),
+                       "70_79": sum(1 for p in puanlar if 70 <= p < 80),
+                       "70_alti": sum(1 for p in puanlar if p < 70),
+                       "puanlanan_basvuru": len(puanlar)}
+        except Exception as e:  # noqa: BLE001
+            logger.warning("basvuru puan bandi: %s", str(e)[:80])
     return {
         "durum_pozisyon_kirilimi": kirilim,
         "son_30_gun_yeni_basvuru": son30,
+        "bugun_yeni_basvuru": bugun_adet,
+        "gun_gun_son7": gun_gun,
+        "uygunluk_puan_bantlari": bantlar,
         "not": "KİMLİKSİZ havuz özeti. Aday isim/iletişim bilgisi İş Başvuruları "
-               "ekranındadır — beyin kişi değerlendirmesi yapmaz.",
+               "ekranındadır — beyin kişi değerlendirmesi yapmaz. uygunluk_puan_bantlari "
+               "= sistemin 5 boyut × 20 üzerinden otomatik ön-değerlendirmesi (adet).",
     }
 
 
@@ -2091,6 +2141,14 @@ def _bag_kart() -> List[dict]:
     """Kart ekstre↔ödeme planı bağı (yaklaşık — banka canlı verisi değil)."""
     r = kart_pozisyon()
     out = []
+    t = r.get("toplamlar") or {}
+    if t:
+        out.append({"alanlar": ["kart", "kasa"], "tarih": None, "guven": "hesap",
+                    "cumle": (f"tüm kartların dönem borcu toplamı {t.get('donem_borcu_toplam')}; "
+                              f"bunun {t.get('ilk_odemesi_yapilmamis_borc_toplami')} kadarı "
+                              f"İLK ÖDEMESİ YAPILMAMIŞ {t.get('ilk_odemesi_yapilmamis_kart_sayisi')} "
+                              "karta ait — kasa yeterliliği kıyası için hazır toplam "
+                              "(kasa rakamı finans penceresinde)")})
     for kt in (r.get("kartlar") or [])[:6]:
         e = kt.get("son_ekstre") or {}
         if not e:
