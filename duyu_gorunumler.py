@@ -1438,21 +1438,30 @@ def tutarsizlik_ozeti(gun: int = 7):
     try:
         with db() as (_, cur):
             cur.execute(
-                """SELECT kaynak_id, kalem_adi, MAX(zaman)::date::text AS tarih,
-                          ROUND(SUM(CASE WHEN miktar < 0 THEN -miktar ELSE 0 END)::numeric,1) AS cikan,
-                          ROUND(SUM(CASE WHEN miktar > 0 THEN miktar ELSE 0 END)::numeric,1) AS giren,
-                          ROUND(SUM(COALESCE(miktar,0))::numeric,1) AS net
-                   FROM sube_depo_stok_hareket
-                   WHERE kaynak_tip = 'sevkiyat'
-                     AND hareket_turu IN ('SEVK_CIKIS','SEVK_GIRIS','SEVK_UZLASMA')
-                     AND zaman >= NOW() - (%s * INTERVAL '1 day')
-                   GROUP BY kaynak_id, kalem_adi
-                   HAVING ABS(SUM(COALESCE(miktar,0))) > 0.01
-                   ORDER BY MAX(zaman) DESC LIMIT 12""", (g,))
+                """SELECT h.kaynak_id, h.kalem_adi, MAX(h.zaman)::date::text AS tarih,
+                          ROUND(SUM(CASE WHEN h.miktar < 0 THEN -h.miktar ELSE 0 END)::numeric,1) AS cikan,
+                          ROUND(SUM(CASE WHEN h.miktar > 0 THEN h.miktar ELSE 0 END)::numeric,1) AS giren,
+                          ROUND(SUM(COALESCE(h.miktar,0))::numeric,1) AS net,
+                          STRING_AGG(DISTINCT CASE WHEN h.miktar < 0
+                                     THEN COALESCE(s.ad, h.sube_id) END, '+') AS veren,
+                          STRING_AGG(DISTINCT CASE WHEN h.miktar > 0
+                                     THEN COALESCE(s.ad, h.sube_id) END, '+') AS alan
+                   FROM sube_depo_stok_hareket h
+                   LEFT JOIN subeler s ON s.id = h.sube_id
+                   WHERE h.kaynak_tip = 'sevkiyat'
+                     AND h.hareket_turu IN ('SEVK_CIKIS','SEVK_GIRIS','SEVK_UZLASMA')
+                     AND h.zaman >= NOW() - (%s * INTERVAL '1 day')
+                   GROUP BY h.kaynak_id, h.kalem_adi
+                   HAVING ABS(SUM(COALESCE(h.miktar,0))) > 0.01
+                   ORDER BY MAX(h.zaman) DESC LIMIT 12""", (g,))
             for r in [dict(x) for x in cur.fetchall() or []]:
+                # 2026-07-09 sahip dersi: tarih/sube olmadan cevap muallak kaliyordu —
+                # veren/alan sube ve sevkiyat gunu HAZIR alan olarak pencereye girer
                 satirlar.append({
                     "konu": f"depolar arası sevk ({r['kalem_adi']})",
-                    "tarih": r["tarih"],
+                    "tarih": r["tarih"], "sevk_gunu": r["tarih"],
+                    "veren_depo": r.get("veren") or "çıkış kaydı YOK (veren ayak kayıtsız)",
+                    "alan_sube": r.get("alan") or "giriş kaydı YOK (henüz kabul edilmedi / yolda)",
                     "kaynak_a": "depodan çıkan", "deger_a": float(r["cikan"]),
                     "kaynak_b": "şubeye giren", "deger_b": float(r["giren"]),
                     "fark": float(r["net"]),
