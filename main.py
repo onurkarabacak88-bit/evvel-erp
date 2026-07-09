@@ -4019,6 +4019,29 @@ def kart_ekstre_import(body: EkstreImportBody):
                 # anlik_giderler kaydı eklenir (kart_hareketleri TEKRAR yazılmaz —
                 # /api/anlik-gider'deki gibi çift kart hareketi oluşmasın).
                 if tip == "HARCAMA" and htip != "sahsi":
+                    # GİDER FRENİ (2026-07-10): elle girilmiş kartlı Anlık Gider eşi
+                    # varsa gider TEKRAR yazılmaz (kart borcu yukarıda zaten doğru;
+                    # P&L/kategori çift şişmesin). Tutar ±1, tarih ±7 gün.
+                    if not _zorla:
+                        try:
+                            cur.execute(
+                                """SELECT 1 FROM anlik_giderler
+                                   WHERE COALESCE(kaynak_tablo,'') <> 'ekstre_import'
+                                     AND odeme_yontemi = 'kart'
+                                     AND (kart_id = %s OR kart_id IS NULL)
+                                     AND ABS(tutar - %s) <= 1.0
+                                     AND tarih::date BETWEEN %s::date - 7 AND %s::date + 7
+                                   LIMIT 1""",
+                                (body.kart_id, tutar, tarih, tarih))
+                            if cur.fetchone():
+                                atlanan_mevcut.append(
+                                    {"tarih": tarih, "tutar": tutar, "tip": "GIDER",
+                                     "aciklama": (isl.aciklama or "")[:60],
+                                     "not": "kart borcu yazıldı; elle gider zaten var — "
+                                            "gider TEKRAR yazılmadı"})
+                                continue
+                        except Exception:
+                            pass  # tarih formatı vb. — fren çökerse eski davranış
                     agid = "agk_" + hid
                     cur.execute(
                         """INSERT INTO anlik_giderler
@@ -4104,7 +4127,38 @@ def kart_cift_kayit_tarama(kart_id: Optional[str] = None):
                ORDER BY k.kart_adi, e.tarih DESC""",
             (kart_id, kart_id))
         adaylar = [dict(r) for r in cur.fetchall() or []]
+    gider_adaylar, gider_hata = [], None
+    try:
+        with db() as (_, cur):
+            cur.execute(
+                """SELECT g.id AS gider_id, g.tarih::text AS gider_tarih,
+                          g.tutar::float AS tutar,
+                          LEFT(COALESCE(g.aciklama,''),60) AS gider_aciklama,
+                          man.id AS elle_id, man.tarih::text AS elle_tarih,
+                          man.tutar::float AS elle_tutar,
+                          LEFT(COALESCE(man.aciklama,''),60) AS elle_aciklama,
+                          COALESCE(k.kart_adi,'?') AS kart_adi
+                   FROM anlik_giderler g
+                   LEFT JOIN kartlar k ON k.id = g.kart_id
+                   JOIN LATERAL (
+                       SELECT id, tarih, tutar, aciklama FROM anlik_giderler m2
+                       WHERE COALESCE(m2.kaynak_tablo,'') <> 'ekstre_import'
+                         AND m2.odeme_yontemi = 'kart'
+                         AND (m2.kart_id = g.kart_id OR m2.kart_id IS NULL)
+                         AND ABS(m2.tutar - g.tutar) <= 1.0
+                         AND m2.tarih::date BETWEEN g.tarih::date - 7 AND g.tarih::date + 7
+                       ORDER BY ABS(m2.tarih::date - g.tarih::date) LIMIT 1
+                   ) man ON TRUE
+                   WHERE g.kaynak_tablo = 'ekstre_import'
+                     AND (%s::text IS NULL OR g.kart_id = %s)
+                   ORDER BY g.tarih DESC""",
+                (kart_id, kart_id))
+            gider_adaylar = [dict(r) for r in cur.fetchall() or []]
+    except Exception as e:
+        gider_hata = str(e)[:120]
     return {"aday_sayisi": len(adaylar), "adaylar": adaylar,
+            "gider_aday_sayisi": len(gider_adaylar), "gider_adaylar": gider_adaylar,
+            "gider_tarama_hatasi": gider_hata,
             "not": "ADAY çiftler — kesin hüküm değil (aynı tutarlı iki meşru işlem "
                    "olabilir). Temizlikte varsayılan: ekstre_import KOPYASI iptal "
                    "edilir (elle kayıt gider/kasa zincirine bağlı olabilir). "
@@ -4117,9 +4171,19 @@ def kart_cift_kayit_temizle(body: dict):
     anlik_giderler kaydı silinir). Yalnız ekstre_import kaynaklı id kabul edilir —
     elle kayıtlara DOKUNAMAZ. uygula=false → önizleme."""
     ids = [str(x) for x in (body or {}).get("ekstre_ids") or [] if str(x).startswith("eks_")]
+    gider_ids = [str(x) for x in (body or {}).get("gider_ids") or [] if str(x).startswith("agk_")]
     uygula = bool((body or {}).get("uygula"))
+    if not ids and not gider_ids:
+        raise HTTPException(400, "ekstre_ids (eks_) veya gider_ids (agk_) zorunlu")
+    if gider_ids and uygula:
+        with db() as (conn, cur):
+            cur.execute(
+                """DELETE FROM anlik_giderler
+                   WHERE id = ANY(%s) AND kaynak_tablo='ekstre_import'""", (gider_ids,))
+            conn.commit()
     if not ids:
-        raise HTTPException(400, "ekstre_ids (eks_ ile başlayan) zorunlu")
+        return {"uygula": uygula, "islenen": 0, "gider_silinen": len(gider_ids) if uygula else 0,
+                "gider_onizleme": gider_ids}
     with db() as (conn, cur):
         cur.execute(
             """SELECT id, kart_id, tarih::text AS tarih, islem_turu, tutar::float AS tutar
