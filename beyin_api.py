@@ -295,6 +295,20 @@ def _neden_malzemesi_blok() -> str:
             (str(bugun - _td(days=14)),),
         )
         ciro_kirilim = [dict(r) for r in (cur.fetchall() or [])]
+        # HAZIR ORTALAMA (dilek 59dde038: 'bu ay ortalama günlük cirom' — fren
+        # modele ortalama hesaplatmaz, hazır alan şart; kod hesaplar model aktarır)
+        cur.execute(
+            """SELECT COALESCE(s.ad,'TÜM ŞUBELER') AS sube,
+                      ROUND(AVG(g.gunluk)::numeric, 2) AS ortalama_gunluk_ciro,
+                      COUNT(*)::int AS gun_sayisi
+               FROM (SELECT sube_id, tarih, SUM(toplam) AS gunluk FROM ciro
+                     WHERE durum='aktif'
+                       AND DATE_TRUNC('month',tarih)=DATE_TRUNC('month',CURRENT_DATE)
+                     GROUP BY sube_id, tarih) g
+               LEFT JOIN subeler s ON s.id = g.sube_id
+               GROUP BY ROLLUP(s.ad) ORDER BY s.ad NULLS LAST"""
+        )
+        bu_ay_ortalama = [dict(r) for r in (cur.fetchall() or [])]
         cur.execute(
             """
             SELECT entity_id AS urun, occurred_at::date::text AS gun, payload_json
@@ -331,7 +345,8 @@ def _neden_malzemesi_blok() -> str:
             gunluk_notlari = [dict(r) for r in (cur.fetchall() or [])]
     except Exception:  # noqa: BLE001
         gunluk_notlari = []
-    return _j({"sube_gun_ciro_14g": ciro_kirilim,
+    return _j({"bu_ay_ortalama_gunluk_ciro_HAZIR": bu_ay_ortalama,
+               "sube_gun_ciro_14g": ciro_kirilim,
                "menu_fiyat_degisimleri_14g": fiyat_degisimleri,
                "nakit_oran_ilk7_vs_son7": karma,
                "isletme_gunlugu_notlari_14g": gunluk_notlari})
@@ -653,7 +668,7 @@ def _blok_derle(soru: str, yonlendirme_ek: str = "") -> List[Tuple[str, str, str
                      for k, v in __import__("duyu_sinaps").sinapsler(gun=14).items()})),
         ("B18", "Neden malzemesi (şube-gün ciro 14g + fiyat değişimleri + karma ilk7/son7)",
          ("neden", "sebep", "niye", "artış", "artis", "arttı", "artti", "azal",
-          "düştü", "dustu", "yükseldi", "yukseldi", "ciro"),
+          "düştü", "dustu", "yükseldi", "yukseldi", "ciro", "ortalama"),
          _neden_malzemesi_blok),
         ("B17", "Zam koridoru (HESAPLANMIŞ: hammadde endeksi + personel değişimi + paylar → marj-koruma aralığı)",
          ("zam", "fiyat art", "fiyat aralığ", "fiyat araligi", "marj", "kaç lira yap",
