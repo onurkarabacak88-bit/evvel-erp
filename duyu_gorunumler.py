@@ -1804,6 +1804,62 @@ def _bag_sinaps() -> List[dict]:
     return out
 
 
+def _bag_odeme() -> List[dict]:
+    """Tedarikçi borç↔ödeme bağı (mutabakat aday eşleştirmeleri — cümleler hazır)."""
+    r = odeme_mutabakat(gun=45)
+    out = []
+    for e in (r.get("eslesen") or [])[:5]:
+        out.append({"alanlar": ["borc", "odeme"], "tarih": e.get("pencere_bit"),
+                    "guven": e.get("guven"),
+                    "cumle": (f"{e.get('tedarikci_ad')}: bakiye {e.get('dusus_tutar')} düşmüş, "
+                              f"kayıtlarımızda {len(e.get('odemeler') or [])} ödeme karşılığı VAR "
+                              f"(aday eşleşme, güven {e.get('guven')})")})
+    for d in (r.get("dusus_var_odeme_kaydi_yok") or [])[:5]:
+        out.append({"alanlar": ["borc", "odeme"], "tarih": d.get("pencere_bit"), "guven": "gozlem",
+                    "cumle": (f"{d.get('tedarikci_ad')}: bakiye {d.get('dusus_tutar')} düşmüş ama "
+                              "kayıtlarımızda ödeme karşılığı GÖRÜNMÜYOR (iade/iskonto/mahsup da "
+                              "düşürür — hüküm değil, gözlem)")})
+    for o in (r.get("odeme_var_dusus_gorulmedi") or [])[:3]:
+        out.append({"alanlar": ["borc", "odeme"], "tarih": o.get("tarih"), "guven": "gozlem",
+                    "cumle": (f"{o.get('tedarikci_ad')}: {o.get('tutar')} ödeme kaydımız var ama "
+                              "fatura zincirinde bakiye düşüşü görülmedi (zincir eksik olabilir)")})
+    return out
+
+
+def _bag_maas_avans() -> List[dict]:
+    """Maaş↔avans bağı (KİMLİKSİZ toplamlar — kişi adı asla girmez)."""
+    r = maas_avans_ozet()
+    out = []
+    donemler = r.get("maas_donemleri") or []
+    if donemler:
+        d = donemler[0]
+        out.append({"alanlar": ["maas", "avans"], "tarih": None, "guven": "hesap",
+                    "cumle": (f"maaş dönemi {d.get('yil')}-{d.get('ay')}: {d.get('kisi_sayisi')} kişi, "
+                              f"toplam net {d.get('toplam_net')} — avans mahsupları bu dönemin "
+                              "planından otomatik düşer (hazır bağ)")})
+    for a in (r.get("avans_durumlari") or [])[:4]:
+        out.append({"alanlar": ["maas", "avans"], "tarih": None, "guven": "hesap",
+                    "cumle": (f"avans durumu '{a.get('durum')}': {a.get('adet')} kayıt, "
+                              f"toplam {a.get('toplam')} — maaş↔avans mahsup zinciri")})
+    return out
+
+
+def _bag_kart() -> List[dict]:
+    """Kart ekstre↔ödeme planı bağı (yaklaşık — banka canlı verisi değil)."""
+    r = kart_pozisyon()
+    out = []
+    for kt in (r.get("kartlar") or [])[:6]:
+        e = kt.get("son_ekstre") or {}
+        if not e:
+            continue
+        out.append({"alanlar": ["kart", "odeme_plani"], "tarih": e.get("son_odeme_tarihi"),
+                    "guven": "hesap",
+                    "cumle": (f"kart {kt.get('kart_adi')}: dönem borcu {e.get('donem_borcu')}, "
+                              f"bekleyen plan toplamı {kt.get('bekleyen_plan_toplami')}, "
+                              f"son ödeme {e.get('son_odeme_tarihi')} — ekstre↔plan bağı (yaklaşık)")})
+    return out
+
+
 _BAG_KAYNAKLARI = [
     ("stok_hipotez", _bag_stok_hipotez),
     ("tutarsizlik", _bag_tutarsizlik),
@@ -1811,6 +1867,9 @@ _BAG_KAYNAKLARI = [
     ("degirmen", _bag_degirmen),
     ("finans", _bag_finans),
     ("sinaps", _bag_sinaps),
+    ("odeme", _bag_odeme),
+    ("maas_avans", _bag_maas_avans),
+    ("kart", _bag_kart),
 ]
 
 

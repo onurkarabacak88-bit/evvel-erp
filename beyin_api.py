@@ -352,6 +352,68 @@ def _veri_dilegi_yakala(soru: str, cevap: str) -> None:
         logger.warning("veri dilegi yakalanamadi: %s", str(e)[:100])
 
 
+def _bag_dilegi_yakala(soru: str, cevap: str, red) -> None:
+    """BAĞ DİLEK DEFTERİ (2026-07-09, sahip: 'bağlam gerektiren sorularda kendini
+    eğitecek mekanizma'): soru iki alanı İLİŞKİLENDİRMEK istedi ama bağ defterinde
+    hazır bağ yoktu — ya model dürüstçe 'hazır bağı henüz kurulmamış' dedi (kural 15)
+    ya da kafadan hesaba kaçıp rakam frenine takıldı. Her iki iz de DİLEK olur;
+    onaylanan dilek = _BAG_KAYNAKLARI'na yeni üretici (kurulum insan onayı bekler,
+    sistem kendi kendine bağ kurmaya başlamaz — duyu anayasası)."""
+    try:
+        neden = None
+        if red and "bağlamda olmayan rakam" in str(red):
+            neden = "fren_reddi_kafadan_hesap"
+        elif (re.search(r"haz[ıi]r\s+ba[ğg]", (cevap or ""), re.IGNORECASE)
+              and re.search(r"kurulmam[ıi]ş|hen[uü]z\s+yok|hen[uü]z\s+kurulmad",
+                            (cevap or ""), re.IGNORECASE)):
+            neden = "bag_yok_beyani"
+        if not neden:
+            return
+        dilek = ("Şu soru alanlar-arası HAZIR BAĞ istedi ama bağ defterinde yoktu: "
+                 + (soru or "")[:200])
+        import hashlib as _h
+        from duyu_omurga import duyu_olay_yaz
+        duyu_olay_yaz(
+            "evvel_beyni", "meta.bilgi.bag_dilegi",
+            _h.sha256(dilek.encode("utf-8")).hexdigest()[:16],  # aynı dilek tek kayıt
+            entity_scope="genel", signal_name="Beynin bağ dileği (kendini eğitme izi)",
+            evidence_class="oneri", confidence=0.9,
+            payload={"tetikleyen_soru": (soru or "")[:200], "dilek": dilek, "neden": neden,
+                     "not": "Onaylanan bağ dileği = bağ defterine YENİ ÜRETİCİ "
+                            "(_BAG_KAYNAKLARI). Kurulum insan onayı bekler."},
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("bag dilegi yakalanamadi: %s", str(e)[:100])
+
+
+@router.get("/bag-dilekleri")
+def bag_dilekleri(limit: int = 20, sadece_acik: bool = False):
+    """Beynin biriken BAĞ dilekleri — 'şu iki alan arasında hazır bağ kurulursa şu
+    soruları cevaplayabilirim' listesi. Haftalık dilek oturumu veri dilekleriyle
+    BİRLİKTE okur; karar defteri ortaktır (/veri-dilek-karar, ref ile)."""
+    with db() as (_, cur):
+        cur.execute(
+            """SELECT d.occurred_at::text, d.source_ref AS ref, d.payload_json,
+                      k.payload_json->>'karar' AS karar,
+                      k.payload_json->>'karar_notu' AS karar_notu
+               FROM duyu_olay d
+               LEFT JOIN LATERAL (
+                   SELECT payload_json FROM duyu_olay
+                   WHERE duyu = 'evvel_beyni'
+                     AND olay_tipi = 'meta.bilgi.veri_dilegi_karari'
+                     AND payload_json->>'ref' = d.source_ref
+                   ORDER BY observed_at DESC LIMIT 1
+               ) k ON TRUE
+               WHERE d.duyu = 'evvel_beyni' AND d.olay_tipi = 'meta.bilgi.bag_dilegi'
+               ORDER BY d.observed_at DESC LIMIT %s""",
+            (max(1, min(100, limit)),),
+        )
+        satirlar = [dict(r) for r in (cur.fetchall() or [])]
+    if sadece_acik:
+        satirlar = [r for r in satirlar if not r.get("karar")]
+    return {"dilekler": satirlar}
+
+
 @router.get("/veri-dilekleri")
 def veri_dilekleri(limit: int = 20, sadece_acik: bool = False):
     """Beynin biriken veri dilekleri — 'şunu toplarsak şu soruları cevaplayabilirim'
@@ -1039,6 +1101,7 @@ def _sor_calistir(soru: str, tip: str = "soru", ek_bloklar=None,
         logger.warning("beyin_gunluk arsiv hatasi: %s", str(e)[:120])
     vk = _veri_kalite_ozeti(bloklar)
     if red:
+        _bag_dilegi_yakala(soru, cevap, red)  # kafadan-hesap reddi = bağ dileği izi
         return {"ok": False, "etiket": _ETIKET, "red_nedeni": red,
                 "cevap": "Bu soruya güvenli cevap üretilemedi (doğrulama başarısız: "
                          f"{red}). Ham görünümlere Duyu Paneli'nden bakabilirsin.",
@@ -1046,6 +1109,7 @@ def _sor_calistir(soru: str, tip: str = "soru", ek_bloklar=None,
                 "veri_kalite": vk, "dipnot": _DIPNOT, "oturum_id": oturum_id,
                 "gunluk_id": gunluk_id}
     _veri_dilegi_yakala(soru, cevap)  # kural 12: bilgi boşluğu → omurgaya dilek
+    _bag_dilegi_yakala(soru, cevap, None)  # kural 15: hazır bağ yok beyanı → bağ dileği
     cevap = _jargon_cevir(cevap)  # sızıntı filtresi: onaydan SONRA, deterministik
     return {"ok": True, "etiket": _ETIKET, "cevap": cevap, "bloklar": izler,
             "model": model, "baglam_ozeti": baglam_hash,
