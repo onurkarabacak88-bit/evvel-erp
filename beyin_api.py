@@ -1170,9 +1170,13 @@ def beyin_sor(body: SorBody):
     if _pii:
         return {"ok": False, "etiket": _ETIKET,
                 "cevap": "Bu sistem KİŞİ üzerinden değerlendirme yapmaz — soru bir personel "
-                         "adı içeriyor. Aynı soruyu şube / gün / olay penceresi üzerinden "
-                         "sorabilirsin (örn. 'Köyceğiz'de dün kapanışta ne oldu?'); sana "
-                         "kimliksiz sinyalleri gösteririm.",
+                         "adı içeriyor. Aynı bilgiye ŞUBE üzerinden ulaşabilirsin; sorunun "
+                         "şube-seviyesi karşılıkları CEVAPLANIR: '<şube> bugün fiilen kaçta "
+                         "açıldı, planlanan saatle farkı ne?' / '<şube>'de açılış/kapanış kim, "
+                         "saat kaçta?' / '<şube>'de dün kapanışta ne oldu?'. İsim yalnız "
+                         "vardiya TAKVİMİ aktarımında kullanılır; kişi hakkında geç kaldı / "
+                         "güvenilir mi gibi değerlendirmeyi sistem yapmaz, veriyi gösterir, "
+                         "yorum sahibindir.",
                 "red_nedeni": "soru kişi adı içeriyor (PII filtresi)",
                 "bloklar": [], "dipnot": _DIPNOT}
     import uuid as _uuid
