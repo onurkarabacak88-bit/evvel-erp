@@ -154,6 +154,44 @@ def _pii_kontrol(soru: str) -> Optional[str]:
     return None
 
 
+def _pii_adi_ayikla(soru: str) -> str:
+    """Sorudaki personel ad token'larını '(vardiyadaki kişi)' ile değiştirir —
+    OLAY-GERÇEĞİ istisnası için: ad modele kullanıcı sorusundan ULAŞMAZ; takvim
+    adı yalnız B43 penceresinden (izinli kanal) girer. Hata durumunda tam güvenli
+    düşüş: soru tamamen genelleştirilir."""
+    try:
+        tokenler = set()
+        with db() as (_, cur):
+            cur.execute("SELECT ad_soyad FROM personel WHERE ad_soyad IS NOT NULL")
+            for r in cur.fetchall() or []:
+                for t in _tr_katla(str(dict(r)["ad_soyad"] or "")).split():
+                    if len(t) >= 3:
+                        tokenler.add(t)
+        parcalar, onceki_ad = [], False
+        for kelime in re.split(r"(\W+)", soru or ""):
+            if kelime and _tr_katla(kelime) in tokenler:
+                if not onceki_ad:
+                    parcalar.append("(vardiyadaki kişi)")
+                onceki_ad = True
+            else:
+                if kelime.strip():
+                    onceki_ad = False
+                parcalar.append(kelime)
+        return "".join(parcalar)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("pii ad ayiklama dususu: %s", str(e)[:80])
+        return "şubenin bugünkü açılış/kapanış olayı (plan ve fiili saat)"
+
+
+# Olay-GERÇEĞİ anahtarları: bunlar sorulursa kişi adı ayıklanıp CEVAPLANIR
+_PII_FAKT = ("gec kal", "gec mi", "saat", "kacta", "acilis", "kapanis",
+             "vardiya", "ne zaman", "geldi", "gitti", "acti", "kapatti",
+             "izinli", "calisti", "calisiyor", "isbasi", "mesai")
+# YARGI anahtarları: ad + bunlar birlikteyse HER ZAMAN red (firewall özü)
+_PII_YARGI = ("guvenilir", "hirsiz", "zimmet", "suc", "caldi", "performans",
+              "hata yap", "kasa fark", "acik var", "kayip", "iyi mi", "kotu")
+
+
 def _ensure(cur) -> None:
     cur.execute(
         """
@@ -659,7 +697,8 @@ def _blok_derle(soru: str, yonlendirme_ek: str = "") -> List[Tuple[str, str, str
           "kim kapat", "kim çalış", "kim calis", "yarın kim", "yarin kim",
           "bugün kim", "bugun kim", "sabah kim", "akşam kim", "aksam kim",
           "kim var", "kim geliyor", "kim gelecek", "kimler çalış", "kimler calis",
-          "kimler var", "takvim", "acilis saat", "kapanis saat", "kacta ac",
+          "kimler var", "takvim", "gec kal", "gec mi", "geciken",
+          "vardiyadaki kisi", "acilis saat", "kapanis saat", "kacta ac",
           "kacta kap", "kacta gel", "ne zaman ac", "ne zaman kap", "saat kacta"),
          lambda: _j(__import__("duyu_gorunumler").vardiya_takvimi(gun=3))),
         ("B25", "Maaş + avans KİMLİKSİZ özet (dönem toplamları + avans durumları)",
@@ -1168,17 +1207,30 @@ def beyin_sor(body: SorBody):
     # GÜVENLİK v0.2 — PII giriş filtresi: kişi adı modele HİÇ ulaşmaz [4 model teyidi]
     _pii = _pii_kontrol(soru)
     if _pii:
-        return {"ok": False, "etiket": _ETIKET,
+        # OLAY-GERÇEĞİ İSTİSNASI (2026-07-09, sahip: 'yargıyı değil GERÇEKLEŞEN
+        # olayı söyleyebilmeli — takip sistemi'): soru saat/takvim/olay GERÇEĞİ
+        # soruyorsa red edilmez; ad ayıklanır (modele kullanıcı sorusundan isim
+        # gitmez), soru şube-olay gerçeğine çevrilir. YARGI soruları blokta kalır.
+        _sk = _tr_katla(soru)
+        if (any(k in _sk for k in _PII_FAKT)
+                and not any(k in _sk for k in _PII_YARGI)):
+            soru = (_pii_adi_ayikla(soru)
+                    + " — [SİSTEM NOTU: kişi hakkında yargı/değerlendirme VERME; "
+                      "vardiya takvimi planındaki saat ile fiilen gerçekleşen "
+                      "açılış/kapanış saatini yan yana AYNEN aktar; "
+                      "değerlendirme okuyucunundur.]")
+        else:
+            return {"ok": False, "etiket": _ETIKET,
                 "cevap": "Bu sistem KİŞİ üzerinden değerlendirme yapmaz — soru bir personel "
-                         "adı içeriyor. Aynı bilgiye ŞUBE üzerinden ulaşabilirsin; sorunun "
-                         "şube-seviyesi karşılıkları CEVAPLANIR: '<şube> bugün fiilen kaçta "
-                         "açıldı, planlanan saatle farkı ne?' / '<şube>'de açılış/kapanış kim, "
-                         "saat kaçta?' / '<şube>'de dün kapanışta ne oldu?'. İsim yalnız "
-                         "vardiya TAKVİMİ aktarımında kullanılır; kişi hakkında geç kaldı / "
-                         "güvenilir mi gibi değerlendirmeyi sistem yapmaz, veriyi gösterir, "
-                         "yorum sahibindir.",
-                "red_nedeni": "soru kişi adı içeriyor (PII filtresi)",
-                "bloklar": [], "dipnot": _DIPNOT}
+                             "adı içeriyor. Aynı bilgiye ŞUBE üzerinden ulaşabilirsin; sorunun "
+                             "şube-seviyesi karşılıkları CEVAPLANIR: '<şube> bugün fiilen kaçta "
+                             "açıldı, planlanan saatle farkı ne?' / '<şube>'de açılış/kapanış kim, "
+                             "saat kaçta?' / '<şube>'de dün kapanışta ne oldu?'. İsim yalnız "
+                             "vardiya TAKVİMİ aktarımında kullanılır; kişi hakkında güvenilirlik/"
+                             "zimmet gibi değerlendirmeyi sistem yapmaz, veriyi gösterir, "
+                             "yorum sahibindir.",
+                    "red_nedeni": "soru kişi adı + değerlendirme içeriyor (PII filtresi)",
+                    "bloklar": [], "dipnot": _DIPNOT}
     import uuid as _uuid
     oturum = (body.oturum_id or "").strip() or str(_uuid.uuid4())
     return _sor_calistir(soru[:500], tip="soru", oturum_id=oturum)
