@@ -1122,6 +1122,136 @@ def devir_goster(yil: int = None, ay: int = None):
         raise HTTPException(500, str(e))
 
 
+def kart_plan_mutabakat(uygula: bool = False) -> dict:
+    """F1 — KART planları self-heal (2026-07-09 derin inceleme; sahip onayı):
+    borc_plan_mutabakat yalnız borc_envanteri kapsıyordu, KART planları başıboştu.
+      R1 MÜKERRER-AYNI-AY: aynı kart+ay >1 aktif plan → en yeni tarihli kalır,
+         diğerleri 'iptal' (çift "ödenecek" kaybolur).
+      R2 BAYAT-TAŞIMA: aynı kartta ÖNCEKİ ayda eş-tutarlı (±1) plan varken, kendi
+         ayına ait ekstre snapshot'ı OLMAYAN sonraki-ay planı → 'iptal'
+         (motorun son-snapshot fallback'i bayat borcu yeni aya kopyalıyordu —
+         3018 ve Ziraat 2× vakalarının kökü).
+      R3 GEÇMİŞ-AY KAPAMA: plan ayı geçmişte + o ay kart defterinde (kart_hareketleri
+         ODEME) toplam ≥ asgari → 'odendi' (tam/asgari notu). İZ YOKSA PLAN KALIR —
+         kasa izi = tek gerçek; elle aklama yok.
+    uygula=False → yalnız liste döner (kuru çalıştırma, hiçbir şey değişmez).
+    İdempotent: ikinci koşuş aynı sonuçları bulmaz (durumlar değişmiş olur)."""
+    rapor = {"uygula": uygula, "r1_mukerrer": [], "r2_bayat_tasima": [],
+             "r3_kapama": [], "dokunulmayan_bekleyen": [], "hata": None}
+    try:
+        with db() as (conn, cur):
+            cur.execute(
+                """SELECT op.id, op.kart_id, k.kart_adi, op.tarih::text AS tarih,
+                          TO_CHAR(op.tarih, 'YYYY-MM') AS ay,
+                          COALESCE(op.odenecek_tutar,0)::float AS odenecek,
+                          COALESCE(op.asgari_tutar,0)::float AS asgari, op.durum
+                   FROM odeme_plani op JOIN kartlar k ON k.id = op.kart_id
+                   WHERE op.kart_id IS NOT NULL
+                     AND op.durum IN ('bekliyor','onay_bekliyor')
+                   ORDER BY op.kart_id, TO_CHAR(op.tarih,'YYYY-MM'),
+                            op.tarih DESC, op.id"""
+            )
+            planlar = [dict(r) for r in cur.fetchall() or []]
+
+            # R1 — aynı kart+ay mükerrer
+            iptal_ids = set()
+            gruplar = {}
+            for p in planlar:
+                gruplar.setdefault((p["kart_id"], p["ay"]), []).append(p)
+            for (_kid, _ay), grp in gruplar.items():
+                for fazla in grp[1:]:
+                    iptal_ids.add(fazla["id"])
+                    rapor["r1_mukerrer"].append(
+                        {"kart": fazla["kart_adi"], "ay": fazla["ay"],
+                         "tutar": fazla["odenecek"], "plan_id": fazla["id"][:8]})
+
+            kalanlar = [p for p in planlar if p["id"] not in iptal_ids]
+
+            # R2 — bayat-snapshot taşıması (önceki ayda eş-tutar + kendi ayında ekstre yok)
+            for p in kalanlar:
+                onceki_es = [q for q in planlar
+                             if q["kart_id"] == p["kart_id"] and q["ay"] < p["ay"]
+                             and abs(q["odenecek"] - p["odenecek"]) <= 1.0
+                             and q["id"] not in iptal_ids]
+                if not onceki_es:
+                    continue
+                cur.execute(
+                    """SELECT 1 FROM kart_ekstre_donem
+                       WHERE kart_id = %s AND TO_CHAR(donem,'YYYY-MM') = %s LIMIT 1""",
+                    (p["kart_id"], p["ay"]))
+                if cur.fetchone():
+                    continue  # kendi ayının gerçek ekstresi var — taşıma değil
+                iptal_ids.add(p["id"])
+                rapor["r2_bayat_tasima"].append(
+                    {"kart": p["kart_adi"], "ay": p["ay"], "tutar": p["odenecek"],
+                     "es_tutarli_onceki_ay": onceki_es[0]["ay"], "plan_id": p["id"][:8]})
+
+            if uygula and iptal_ids:
+                cur.execute(
+                    """UPDATE odeme_plani
+                       SET durum='iptal',
+                           aciklama = COALESCE(aciklama,'') || ' [kart-mutabakat iptali]'
+                       WHERE id = ANY(%s)""", (list(iptal_ids),))
+
+            # R3 — geçmiş-ay kapama (kart defteri ODEME izi ile)
+            for p in kalanlar:
+                if p["id"] in iptal_ids:
+                    continue
+                if p["ay"] >= date.today().strftime("%Y-%m"):
+                    continue  # bu ay/gelecek — motorun işi, dokunma
+                cur.execute(
+                    """SELECT COALESCE(SUM(tutar),0)::float AS odenen,
+                              MAX(tarih)::text AS son_odeme_gunu
+                       FROM kart_hareketleri
+                       WHERE kart_id = %s AND durum='aktif' AND islem_turu='ODEME'
+                         AND TO_CHAR(tarih,'YYYY-MM') = %s""",
+                    (p["kart_id"], p["ay"]))
+                oz = dict(cur.fetchone() or {})
+                odenen = float(oz.get("odenen") or 0)
+                asgari = p["asgari"] or p["odenecek"]
+                if odenen >= p["odenecek"] - 0.01:
+                    tur = "tam"
+                elif asgari > 0 and odenen >= asgari * 0.999:
+                    tur = "asgari"
+                else:
+                    rapor["dokunulmayan_bekleyen"].append(
+                        {"kart": p["kart_adi"], "ay": p["ay"], "tutar": p["odenecek"],
+                         "o_ay_odenen": odenen,
+                         "not": "iz yetersiz — plan KALIR (borç gerçeği)"})
+                    continue
+                rapor["r3_kapama"].append(
+                    {"kart": p["kart_adi"], "ay": p["ay"], "tutar": p["odenecek"],
+                     "odenen": odenen, "tur": tur, "plan_id": p["id"][:8]})
+                if uygula:
+                    ek = (" [kart-mutabakat: %s ödeme iziyle kapatıldı]" % tur
+                          if tur == "tam" else
+                          " [kart-mutabakat: ASGARİ ödendi (%s) — kalan sonraki döneme]" % odenen)
+                    cur.execute(
+                        """UPDATE odeme_plani
+                           SET durum='odendi', odenen_tutar=%s,
+                               odeme_tarihi=COALESCE(odeme_tarihi, %s::date),
+                               aciklama = COALESCE(aciklama,'') || %s
+                           WHERE id=%s AND durum IN ('bekliyor','onay_bekliyor')""",
+                        (odenen, oz.get("son_odeme_gunu") or p["tarih"], ek, p["id"]))
+            if uygula:
+                conn.commit()
+    except Exception as e:  # noqa: BLE001
+        rapor["hata"] = str(e)[:200]
+        logger.warning("kart_plan_mutabakat: %s", str(e)[:200])
+    rapor["ozet"] = {"r1": len(rapor["r1_mukerrer"]), "r2": len(rapor["r2_bayat_tasima"]),
+                     "r3": len(rapor["r3_kapama"]),
+                     "kalan_bekleyen": len(rapor["dokunulmayan_bekleyen"])}
+    return rapor
+
+
+@app.post("/api/kartlar/plan-mutabakat")
+def kart_plan_mutabakat_uc(body: dict = None):
+    """F1 elle tetik: body.uygula=false → kuru çalıştırma listesi; true → uygular.
+    Doğrula-önce-düzelt: önce kuru sonuç incelenir, sonra uygulanır."""
+    uygula = bool((body or {}).get("uygula"))
+    return kart_plan_mutabakat(uygula=uygula)
+
+
 def borc_plan_mutabakat(referans_tarih: Optional[date] = None) -> dict:
     """Borç ödeme planı self-healing mutabakatı (idempotent — her panel açılışında güvenli).
 
