@@ -3736,6 +3736,71 @@ def kart_manuel_ekstre(kid: str, body: ManuelEkstreBody):
     return {"success": True, "yeni_borc": round(yeni_borc, 2)}
 
 
+@app.get("/api/kartlar/taksit-takvimi")
+def kart_taksit_takvimi(ay: int = 12):
+    """K2-C — TAKSİT TAKVİMİ: gelecek N ay, kart × ay taksit yükü dağılımı
+    (banka 'gelecek dönem taksitleriniz' ekranının karşılığı). Salt-okur."""
+    n = max(3, min(24, int(ay or 12)))
+    from finans_core import gelecek_taksit_yuku
+    takvim, ay_toplam = [], {}
+    with db() as (_, cur):
+        cur.execute("SELECT id, kart_adi FROM kartlar WHERE aktif=TRUE ORDER BY kart_adi")
+        for k in [dict(r) for r in cur.fetchall() or []]:
+            try:
+                aylar = gelecek_taksit_yuku(cur, k["id"], ay_sayisi=n) or []
+            except Exception:
+                aylar = []
+            dolu = [a for a in aylar if (a.get("taksit_yuku") or 0) > 0]
+            if not dolu:
+                continue
+            takvim.append({"kart": k["kart_adi"], "aylar": aylar,
+                           "toplam_kalan": round(sum(a["taksit_yuku"] for a in aylar), 2)})
+            for a in aylar:
+                ay_toplam[a["ay"]] = round(ay_toplam.get(a["ay"], 0) + a["taksit_yuku"], 2)
+    return {"kartlar": takvim,
+            "ay_toplamlari": [{"ay": k2, "toplam_taksit": v}
+                              for k2, v in sorted(ay_toplam.items())],
+            "not": "Bilinen taksit sözleşmelerinin aylara dağılımı — yeni taksitli "
+                   "alım yapıldıkça takvim büyür."}
+
+
+@app.get("/api/kartlar/sahsi-cekim-raporu")
+def kart_sahsi_cekim_raporu(ay_sayisi: int = 6):
+    """K2-C — ŞAHSİ ÇEKİM RAPORU (sahip carisi): işletme kartlarından yapılan
+    ŞAHSİ harcamaların ay × kart dökümü. P&L'e girmeyen ama kart borcunu
+    büyüten kalemler — 'işletme, sahibin şahsi harcamasını finanse ediyor mu?'"""
+    n = max(1, min(24, int(ay_sayisi or 6)))
+    with db() as (_, cur):
+        cur.execute(
+            """SELECT TO_CHAR(h.tarih,'YYYY-MM') AS ay, k.kart_adi,
+                      ROUND(SUM(h.tutar)::numeric,2) AS toplam, COUNT(*)::int AS adet
+               FROM kart_hareketleri h JOIN kartlar k ON k.id = h.kart_id
+               WHERE h.islem_turu='HARCAMA' AND h.durum='aktif'
+                 AND h.harcama_tipi='sahsi'
+                 AND h.tarih >= DATE_TRUNC('month', CURRENT_DATE) - (%s || ' months')::interval
+               GROUP BY 1, 2 ORDER BY 1 DESC, toplam DESC""", (n - 1,))
+        kirilim = [dict(r) for r in cur.fetchall() or []]
+        for r in kirilim:
+            r["toplam"] = float(r["toplam"])
+        cur.execute(
+            """SELECT h.tarih::text AS tarih, k.kart_adi,
+                      ROUND(h.tutar::numeric,2) AS tutar,
+                      LEFT(COALESCE(h.aciklama,''),60) AS aciklama
+               FROM kart_hareketleri h JOIN kartlar k ON k.id = h.kart_id
+               WHERE h.islem_turu='HARCAMA' AND h.durum='aktif'
+                 AND h.harcama_tipi='sahsi'
+               ORDER BY h.tarih DESC LIMIT 10""")
+        son10 = [dict(r) for r in cur.fetchall() or []]
+        for r in son10:
+            r["tutar"] = float(r["tutar"])
+    genel = round(sum(r["toplam"] for r in kirilim), 2)
+    return {"ay_kart_kirilimi": kirilim, "son_10_sahsi_islem": son10,
+            "genel_toplam": genel,
+            "not": "Şahsi harcamalar P&L'e GİRMEZ ama kart borcunu ve faiz yükünü "
+                   "büyütür — sahip carisi olarak izlenir; hüküm yok, görünürlük.",
+    }
+
+
 @app.delete("/api/kartlar/{kid}/ekstre-donem/{donem}")
 def kart_ekstre_donem_sil(kid: str, donem: str):
     """Bir kart için tek bir ayın (dönem) ekstre verisini siler: o aya ait

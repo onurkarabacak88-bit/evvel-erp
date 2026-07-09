@@ -2088,6 +2088,43 @@ def kart_gelecek_ekstre(taze: int = 0):
     return sonuc
 
 
+def _kart_asgari_tuzagi() -> list:
+    """K2-C — ASGARİ TUZAĞI adayları: son 3 ekstre döneminde borç erimiyor
+    (her dönem >= öncekinin %95'i) VE bankanın yazdığı dönem ödemesi asgari
+    civarında (<= asgari × 1.5) → 'hep asgari, borç dönüyor' gözlemi.
+    Kaynak: kart_ekstre_donem (banka gerçeği). Hüküm yok — aday."""
+    adaylar = []
+    try:
+        with db() as (_, cur):
+            cur.execute(
+                """SELECT k.kart_adi, d.donem::text AS donem,
+                          COALESCE(d.donem_borcu,0)::float AS borc,
+                          COALESCE(d.asgari_tutar,0)::float AS asgari,
+                          COALESCE(d.donem_odeme,0)::float AS odeme
+                   FROM kart_ekstre_donem d JOIN kartlar k ON k.id = d.kart_id
+                   WHERE k.aktif = TRUE
+                   ORDER BY k.kart_adi, d.donem DESC""")
+            gruplar = {}
+            for r in [dict(x) for x in cur.fetchall() or []]:
+                gruplar.setdefault(r["kart_adi"], []).append(r)
+        for ad, ds in gruplar.items():
+            son3 = ds[:3]
+            if len(son3) < 3:
+                continue
+            borc_erimiyor = all(son3[i]["borc"] >= son3[i + 1]["borc"] * 0.95
+                                for i in range(2))
+            asgari_civari = all(0 < d["odeme"] <= max(d["asgari"], 1) * 1.5
+                                for d in son3 if d["asgari"] > 0)
+            odeme_var = all(d["odeme"] > 0 for d in son3)
+            if borc_erimiyor and asgari_civari and odeme_var:
+                adaylar.append({"kart": ad, "son_borc": son3[0]["borc"],
+                                "donemler": [d["donem"][:7] for d in son3],
+                                "gozlem": "3 dönemdir asgari civarı ödeme, borç erimiyor"})
+    except Exception as e:  # noqa: BLE001
+        logger.warning("asgari tuzagi: %s", str(e)[:80])
+    return adaylar
+
+
 def gece_kart_dongu_izleme() -> dict:
     """Gece: ekstre bekleyen / geciken kartlar + LİMİT doluluk uyarıları (K2-A)
     omurgaya olay olarak düşer (hatırlatma + beyin + WhatsApp görür). Hata-yutar."""
@@ -2138,6 +2175,19 @@ def gece_kart_dongu_izleme() -> dict:
                         f"limit %{dol*100:.0f}: {k.get('kart_adi')}")
         except Exception as e:  # noqa: BLE001
             logger.warning("limit olaylari: %s", str(e)[:80])
+        # K2-C — asgari tuzağı adayları (ay-anahtarlı, idempotent)
+        try:
+            for a in _kart_asgari_tuzagi():
+                duyu_olay_yaz(
+                    "kart_dongu", "finans.kart.asgari_tuzagi",
+                    f"{a['kart']}:{date.today().strftime('%Y-%m')}",
+                    entity_scope="kart", entity_id=a["kart"],
+                    signal_name="Asgari döngüsü adayı (borç erimiyor)",
+                    payload=a)
+                ozet["olaylar"].append(f"asgari_tuzagi: {a['kart']}")
+                ozet["limit_olay"] += 0  # sayaçlar ayrı kalsın
+        except Exception as e:  # noqa: BLE001
+            logger.warning("asgari tuzagi olay: %s", str(e)[:80])
     except Exception as e:  # noqa: BLE001
         logger.warning("gece kart dongu: %s", str(e)[:100])
     return ozet
@@ -2422,6 +2472,16 @@ def _bag_kart() -> List[dict]:
                             "guven": "hesap", "cumle": cum2})
         except Exception as e:  # noqa: BLE001
             logger.warning("bag gelecek ekstre: %s", str(e)[:60])
+        try:
+            tz = _kart_asgari_tuzagi()
+            if tz:
+                out.append({"alanlar": ["kart", "faiz"], "tarih": None, "guven": "gozlem",
+                            "cumle": (f"{len(tz)} kart asgari döngüsünde görünüyor "
+                                      f"({', '.join(a['kart'][:18] for a in tz[:3])}) — "
+                                      "3 dönemdir asgari civarı ödeme, borç erimiyor; "
+                                      "faiz yükü büyüyor (aday gözlem)")})
+        except Exception:  # noqa: BLE001
+            pass
         gec = [s for s in (dongu.get("kartlar") or []) if s.get("durum") == "gecikti"]
         if gec:
             en_uzun = max(int(s.get("gun") or 0) for s in gec)
