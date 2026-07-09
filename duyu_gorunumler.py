@@ -901,10 +901,23 @@ def vardiya_takvimi(gun: int = 3):
             "kapanis_personeli": [f"{r['personel']} ({r['bitis'][:5]})" for r in kapanis],
             "toplam_atama": len(rows),
         })
+    with db() as (_, cur):
+        cur.execute(
+            """SELECT e.tarih::text AS gun, COALESCE(s.ad, e.sube_id) AS sube, e.tip,
+                      TO_CHAR(e.cevap_ts, 'HH24:MI') AS saat, e.durum
+               FROM sube_operasyon_event e
+               LEFT JOIN subeler s ON s.id = e.sube_id
+               WHERE e.tip IN ('ACILIS','KAPANIS')
+                 AND e.tarih BETWEEN CURRENT_DATE - 1 AND CURRENT_DATE
+               ORDER BY e.tarih, sube, e.tip""")
+        gerceklesen = [dict(r) for r in cur.fetchall() or []]
     return {
+        "gerceklesen_acilis_kapanis": gerceklesen,
         "acilis_kapanis_ozeti": ozet,
         "atamalar": satirlar[:80],
         "not": "İSİMLİ operasyonel TAKVİM penceresi — kim-nerede-ne-zaman planı. "
+               "gerceklesen_acilis_kapanis = şube panelinden FİİLEN yapılan açılış/"
+               "kapanış olay saatleri (dün+bugün; saat boşsa henüz cevaplanmadı). "
                "Açılış/kapanış alanları HAZIRDIR (tip işaretli slot; yoksa en erken "
                "başlayan / en geç biten). Bu pencere kişi DEĞERLENDİRMESİ için "
                "kullanılamaz; plan aktarımı yargı değildir.",

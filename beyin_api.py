@@ -318,7 +318,12 @@ def _veri_dilegi_yakala(soru: str, cevap: str) -> None:
                          r"|bilgi sağlanmamış|bilgi saglanmamis|cevaplanamamaktadır"
                          r"|bu bağlamda görünmüyor|bu baglamda gorunmuyor"
                          r"|verisi mevcut değil|verisi mevcut degil|ulaşılamıyor|ulasilamiyor"
-                         r"|cevaplayabilmek için.*gerek)", cevap or "", re.IGNORECASE):
+                         r"|cevaplayabilmek için.*gerek"
+                         # 2026-07-09 dersi: 'açılış saatine dair bilgi görünmüyor'
+                         # dilek düşürmüyordu — bilgi/veri/kayıt + yokluk kalıbı eklendi
+                         r"|(?:bilgi|veri|kayıt|kayit|detay)[^.\n]{0,40}"
+                         r"(?:görünmüyor|gorunmuyor|bulunmamakta|yer almamakta"
+                         r"|belirtilmemiş|belirtilmemis))", cevap or "", re.IGNORECASE):
                 dilek = ("Şu soru mevcut pencerelerle tam cevaplanamadı: "
                          + (soru or "")[:200])
                 import hashlib as _h
@@ -511,7 +516,9 @@ def _blok_derle(soru: str, yonlendirme_ek: str = "") -> List[Tuple[str, str, str
     """[(blok_id, başlık, metin)] — çekirdek + soruya göre seçici (fallback: geniş).
     Tüm kaynaklar SALT-OKUR mevcut fonksiyonlar; hata-yutar (bir blok çökse diğerleri yaşar)."""
     # yonlendirme_ek: sohbet hafızası — önceki sorular da seçiciyi yönlendirir
-    s = ((soru or "") + " " + (yonlendirme_ek or "")).lower()
+    # HARF KATLAMASI (2026-07-09 dersi: sahip "acılış saati" yazdı — ne "açılış"
+    # ne "acilis" anahtarı tuttu): soru VE anahtarlar Türkçe-katlanır (ş→s, ı→i…)
+    s = _tr_katla((soru or "") + " " + (yonlendirme_ek or ""))
     bloklar: List[Tuple[str, str, str]] = []
 
     def ekle(bid: str, baslik: str, uretici) -> None:
@@ -652,7 +659,8 @@ def _blok_derle(soru: str, yonlendirme_ek: str = "") -> List[Tuple[str, str, str
           "kim kapat", "kim çalış", "kim calis", "yarın kim", "yarin kim",
           "bugün kim", "bugun kim", "sabah kim", "akşam kim", "aksam kim",
           "kim var", "kim geliyor", "kim gelecek", "kimler çalış", "kimler calis",
-          "kimler var", "takvim"),
+          "kimler var", "takvim", "acilis saat", "kapanis saat", "kacta ac",
+          "kacta kap", "kacta gel", "ne zaman ac", "ne zaman kap", "saat kacta"),
          lambda: _j(__import__("duyu_gorunumler").vardiya_takvimi(gun=3))),
         ("B25", "Maaş + avans KİMLİKSİZ özet (dönem toplamları + avans durumları)",
          ("maaş", "maas", "avans", "bordro", "personel gider", "personel maliyet",
@@ -759,10 +767,10 @@ def _blok_derle(soru: str, yonlendirme_ek: str = "") -> List[Tuple[str, str, str
             subeler = [dict(r) for r in (cur.fetchall() or [])]
     except Exception:  # noqa: BLE001
         subeler = []
-    stok_anahtar = any(k in s for k in ("stok", "dörtgen", "dortgen", "bardak", "tüketim",
-                                        "tuketim", "sayım", "sayim", "kullanım", "kullanim"))
+    stok_anahtar = any(_tr_katla(k) in s for k in ("stok", "dortgen", "bardak",
+                                                   "tuketim", "sayim", "kullanim"))
     hedef_subeler = [sb for sb in subeler
-                     if str(sb.get("ad") or "").lower() and str(sb["ad"]).lower() in s]
+                     if _tr_katla(str(sb.get("ad") or "")) and _tr_katla(str(sb["ad"])) in s]
     if hedef_subeler or stok_anahtar:
         for i, sb in enumerate(hedef_subeler or subeler[:4]):
             ekle(f"B9.{i+1}", f"Tüketim dörtgeni — {sb['ad']} (7 gün)",
@@ -771,16 +779,16 @@ def _blok_derle(soru: str, yonlendirme_ek: str = "") -> List[Tuple[str, str, str
     # PATRON SORULARI (2026-07-07): "bugün sorunlar nedir / durum ne / ne oldu" gibi
     # gündelik sorular derinlik bloklarını çeker — gün-gün kırılım olmadan beyin
     # genel geçer konuşur (bebek dili eleştirisinin soru tarafı)
-    genel_durum = any(a in s for a in ("sorun", "durum", "ne oldu", "neler oldu",
-                                       "bugün", "bugun", "dün", "dun", "özet", "ozet",
-                                       "nasıl gidiyor", "nasil gidiyor"))
+    genel_durum = any(_tr_katla(a) in s for a in ("sorun", "durum", "ne oldu",
+                                                  "neler oldu", "bugun", "dun",
+                                                  "ozet", "nasil gidiyor"))
     if genel_durum:
         for bid, baslik, metin in _derinlik_bloklari():
             bloklar.append((bid, baslik, metin[:4000]))
 
     eslesen_var = bool(hedef_subeler or stok_anahtar or genel_durum)
     for bid, baslik, anahtarlar, uretici in secici:
-        if any(a in s for a in anahtarlar):
+        if any(_tr_katla(a) in s for a in anahtarlar):
             eslesen_var = True
             ekle(bid, baslik, uretici)
     if not eslesen_var:  # fallback: geniş bağlam (Codex: boş dönme)
