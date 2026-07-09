@@ -1710,17 +1710,77 @@ def stok_capraz_hipotez(gun: int = 7):
                          "kapanis_sayim": b.get("kapanis_sayim")},
         })
 
-    # eşleşmeyen depo kayıtsız çıkışları (bar karşılığı yok)
+    # ŞUBE-ÇAPRAZ TESLİM EŞLEŞTİRME (GÖREV #54, 2026-07-09): bar karşılığı olmayan
+    # kayıtsız çıkış, ±1 gün içinde BAŞKA şubede aynı kalemin girişiyle örtüşüyorsa
+    # → 'muhtemelen aynı teslimat, veren ayağı kayıtsız' (TEMA −500 ↔ ZAFER +500
+    # deseni). 77238d6 sonrası yeni sevkler çift-ayaklı doğar; bu kural esasen
+    # GEÇMİŞTEKİ tek-ayaklı kayıtları okunur kılar.
+    girisler: Dict[tuple, float] = {}
+    with db() as (_, cur):
+        cur.execute(
+            """SELECT h.sube_id, h.kalem_kodu, h.zaman::date::text AS gun,
+                      ROUND(SUM(h.miktar)::numeric,1) AS giren
+               FROM sube_depo_stok_hareket h
+               WHERE h.miktar > 0
+                 AND h.hareket_turu IN ('TESLIM_GIRIS','SEVK_GIRIS')
+                 AND h.zaman >= NOW() - (%s * INTERVAL '1 day')
+               GROUP BY h.sube_id, h.kalem_kodu, h.zaman::date""", (g,))
+        for r in (dict(x) for x in cur.fetchall() or []):
+            girisler[(r["sube_id"], r["gun"], r["kalem_kodu"])] = float(r["giren"])
+
+    def _gun_komsu(g1: str, g2: str) -> bool:
+        try:
+            return abs((date.fromisoformat(g1) - date.fromisoformat(g2)).days) <= 1
+        except Exception:  # noqa: BLE001
+            return g1 == g2
+
+    def _miktar_ortusur(a: float, b: float) -> bool:
+        return (min(a, b) / max(a, b) >= 0.7) or (abs(a - b) <= 5)
+
     for (sid, gun_s, kod), sapma in depo_kayitsiz.items():
         if sapma >= -0.01 or (sid, gun_s, kod) in eslesen_depo:
+            continue
+        cikis = -sapma
+        aday = None
+        # önce KAYITLI girişler (teslim/sevk girişi başka şubede)
+        for (sid2, gun2, kod2), giren in girisler.items():
+            if sid2 == sid or kod2 != kod or giren <= 0.01:
+                continue
+            if _gun_komsu(gun_s, gun2) and _miktar_ortusur(cikis, giren):
+                aday = {"sube": sube_ad.get(sid2, sid2), "gun": gun2,
+                        "miktar": giren, "kayit": "kayıtlı giriş"}
+                break
+        # sonra KAYITSIZ girişler (karşı şubede zincir kopuğu POZİTİF)
+        if aday is None:
+            for (sid2, gun2, kod2), sap2 in depo_kayitsiz.items():
+                if sid2 == sid or kod2 != kod or sap2 <= 0.01:
+                    continue
+                if _gun_komsu(gun_s, gun2) and _miktar_ortusur(cikis, sap2):
+                    aday = {"sube": sube_ad.get(sid2, sid2), "gun": gun2,
+                            "miktar": sap2, "kayit": "kayıtsız giriş"}
+                    break
+        if aday:
+            hipotezler.append({
+                "tip": "sube_capraz_teslim_adayi", "guven": "orta",
+                "sube": sube_ad.get(sid, sid), "tarih": gun_s, "kalem": kod,
+                "hipotez": (f"depodan kayıtsız −{cikis:.0f} çıkmış; {aday['gun']} günü "
+                            f"{aday['sube']} şubesine aynı kalemden {aday['miktar']:.0f} "
+                            f"girmiş ({aday['kayit']}) → muhtemelen AYNI teslimat, "
+                            "veren ayağı kayıtsız (şubeler-arası sevk adayı — "
+                            "toptancı teslim çakışması da olabilir, hüküm değil)"),
+                "taniklar": {"kayitsiz_cikis": round(cikis, 1),
+                             "karsi_sube": aday["sube"], "karsi_giris": aday["miktar"],
+                             "karsi_gun": aday["gun"],
+                             "karsi_kayit_turu": aday["kayit"]},
+            })
             continue
         hipotezler.append({
             "tip": "depo_kayitsiz_cikis_karsiliksiz", "guven": "orta",
             "sube": sube_ad.get(sid, sid), "tarih": gun_s, "kalem": kod,
-            "hipotez": (f"depodan kayıtsız −{-sapma:.0f} çıkmış, bar tarafında "
-                        "karşılığı görünmüyor → bildirilmemiş fire / kayıp / "
-                        "kayıtsız sevk adayları"),
-            "taniklar": {"depo_kayitsiz_cikis": round(-sapma, 1)},
+            "hipotez": (f"depodan kayıtsız −{cikis:.0f} çıkmış, bar tarafında ve "
+                        "diğer şubelerin girişlerinde karşılığı görünmüyor → "
+                        "bildirilmemiş fire / kayıp / kayıtsız sevk adayları"),
+            "taniklar": {"depo_kayitsiz_cikis": round(cikis, 1)},
         })
 
     # 3) sevk net≠0 → yolda mı, kayıp mı?
@@ -1771,7 +1831,8 @@ def stok_capraz_hipotez(gun: int = 7):
         "hipotezler": hipotezler[:40],
         "not": "OTOMATİK HİPOTEZ — hüküm değil: iki ucun defteri örtüşünce güven "
                "yükselir (kayitsiz_urun_ac=iki tanık; sevk_yolda=yolda listesi "
-               "teyitli). Hiçbir hipotez kaydı kapatmaz/aklamaz; karar insanın. "
+               "teyitli; sube_capraz_teslim_adayi=karşı şubede ±1 gün miktar "
+               "örtüşmesi). Hiçbir hipotez kaydı kapatmaz/aklamaz; karar insanın. "
                "Ürün-aç kancası (2026-07-09) sonrası kayitsiz_urun_ac hipotezleri "
                "doğal olarak azalmalı — azalmıyorsa kanca dışı bir akış var demektir.",
     }
