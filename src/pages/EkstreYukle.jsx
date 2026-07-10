@@ -162,7 +162,23 @@ export default function EkstreYukle() {
       const fark = Math.round((ekstreBorc - (yeniBorc ?? 0)) * 100) / 100;
       const esik = Math.max(5000, Math.abs(ekstreBorc) * 0.05);
       let devirYapildi = false, devirDuzeltme = 0;
-      if (Math.abs(fark) > 1 && Math.abs(fark) <= esik) {
+      // Eşik üstü fark: akışı YARIDA BIRAKMA — tek onay sorusuyla devam et
+      // (2026-07-10 dersi: ilk mutabakat ayında eski devir tabanı yüzünden fark
+      // hep büyük çıkar; kullanıcı ayrı buton aramak zorunda kalmasın).
+      let devamOnayi = Math.abs(fark) <= esik;
+      if (Math.abs(fark) > 1 && !devamOnayi) {
+        devamOnayi = window.confirm(
+          `Fark güvenlik eşiğinin üstünde: ${fark.toLocaleString('tr-TR')} ₺.
+
+` +
+          `Bu genelde İLK mutabakatta eski devir tabanından kaynaklanır ve güvenlidir ` +
+          `(düzeltme kaydı birikmez, her zaman yeniden hesaplanır).
+
+` +
+          `Sistem borcu ekstre borcuna (${ekstreBorc.toLocaleString('tr-TR')} ₺) eşitlensin mi?`
+        );
+      }
+      if (Math.abs(fark) > 1 && devamOnayi) {
         const r2 = await fetch(`/api/kartlar/${kart.id}/manuel-ekstre`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -291,7 +307,7 @@ export default function EkstreYukle() {
               </div>
               {impSonuc.buyuk_fark_onay_gerek && (
                 <div style={{ fontSize: 12, marginTop: 6, color: 'var(--text3)' }}>
-                  Kalan fark güvenlik eşiğinin üstünde — doğruysa aşağıdaki "Devir kabul et" ile onayla.
+                  Onaylamadın — doğruysa ⚡ butona tekrar basıp onaylayabilir ya da aşağıdaki "Devir kabul et"i kullanabilirsin.
                 </div>
               )}
             </div>
