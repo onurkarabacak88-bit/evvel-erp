@@ -43,6 +43,17 @@ ESIK = float(os.getenv("FATURA_ISTEK_ESIK", "5000"))
 PENCERE_GUN = 60
 # KDV riski = kaba tahmin (%20 varsayım, tutar KDV dahil kabul edilir) — "≈" ile sunulur
 _KDV_ORAN = 0.20
+# FATURA ÜRETMEYEN gider türleri (canlı test dersi: 'geçiken araç kredisi' aday
+# olmuştu) — kredi taksiti/maaş/vergi/SGK için tedarikçiden fatura İSTENMEZ;
+# bunlar aday motoru gürültüsüdür (alert-yorgunluğu ilkesi). Liste bilinçli DAR:
+# muhasebe/kira gibi belge üretebilen türler filtrelenmez.
+_FATURASIZ_TUR = ("kredi", "maas", "maaş", "vergi", "sgk", "stopaj",
+                  "faiz", "personel avans", "borç taksit", "borc taksit")
+
+
+def _faturasiz_tur_mu(metin: str) -> bool:
+    m = (metin or "").lower()
+    return any(t in m for t in _FATURASIZ_TUR)
 
 
 def _ensure(cur) -> None:
@@ -190,6 +201,8 @@ def _tara() -> dict:
         # 4) YENİ ADAYLAR — eşleşmeyen ödemeler (fatura tek kullanım, greedy)
         kullanildi: set = set()
         for o in sorted(odemeler, key=lambda x: -float(x["tutar"])):
+            if _faturasiz_tur_mu(f"{o.get('aciklama') or ''} {o.get('detay') or ''}"):
+                continue  # kredi/maaş/vergi türü — fatura istenecek ödeme değil
             fid = _k2d_eslesti(float(o["tutar"]), o["tarih"], faturalar, kullanildi)
             if fid:
                 continue
@@ -209,6 +222,14 @@ def _tara() -> dict:
             if cur.fetchone():
                 yeni.append({"kaynak": o["kaynak_tip"], "tarih": o["tarih"],
                              "tutar": float(o["tutar"])})
+
+        # 4b) GÜRÜLTÜ TEMİZLİĞİ — daha önce aday olmuş fatura-üretmeyen türler
+        #     silinir (yalnız MAKİNE ürettiği 'aday' durumu; insan dokunmuşsa kalır)
+        cur.execute("SELECT id, aciklama, kanal_detay FROM fatura_istek WHERE durum='aday'")
+        for r in [dict(x) for x in cur.fetchall() or []]:
+            if _faturasiz_tur_mu(f"{r.get('aciklama') or ''} {r.get('kanal_detay') or ''}"):
+                cur.execute("DELETE FROM fatura_istek WHERE id=%s AND durum='aday'",
+                            (r["id"],))
 
         # 5) OTOMATİK KAPANIŞ — açık istek, sonradan gelen faturayla eşleşirse
         #    kendiliğinden kapanır (iz varsa kapanır; pencere geniş: ±10 gün)
