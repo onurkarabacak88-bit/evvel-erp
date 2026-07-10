@@ -131,6 +131,60 @@ export default function EkstreYukle() {
     setSecili(prev => prev.size === yeniGuvenliIdx.length ? new Set() : new Set(yeniGuvenliIdx));
   }
 
+  // ⚡ TEK TIK MUTABAKAT (2026-07-10, sahip: 'her seferinde içe aktar + devir mi
+  // diyeceğim?' — QuickBooks/YNAB deseni): eksikleri frenli aktar → kalan farkı
+  // devir düzeltmesiyle OTOMATİK kapat → tek özet. Büyük farkta (>%5 / 5.000)
+  // otomatik kapatmaz, onay ister. İç mekanik (import/devir) kullanıcıya sızmaz.
+  const [ttBusy, setTtBusy] = useState(false);
+  async function tekTikMutabakat() {
+    if (!kart?.id || !sonuc) return;
+    setTtBusy(true); setHata(null); setImpSonuc(null);
+    try {
+      // 1) TÜM eksikleri aktar (sunucu frenleri: çift yazmaz, elle eşi atlar)
+      const islemler = (sonuc.islemler || []).filter(x => x && x.durum === 'yeni')
+        .map(x => ({ tarih: x.tarih, tutar: x.tutar, tip: x.tip, aciklama: x.aciklama,
+                     kategori: x.kategori, harcama_tipi: x.oneri_tipi || undefined,
+                     taksit_sayisi: x.taksit_sayisi || undefined,
+                     taksit_anapara: x.taksit_anapara || undefined }));
+      let yeniBorc = sonuc?.mutabakat?.sistem_borc;
+      let impOzet = { yazilan: 0, atlanan_veya_mevcut: 0, atlanan_mevcut_adet: 0 };
+      if (islemler.length) {
+        const r1 = await fetch('/api/kartlar/ekstre-import', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ kart_id: kart.id, islemler }),
+        });
+        const d1 = await r1.json();
+        if (!r1.ok) throw new Error(d1.detail || 'İçe aktarılamadı');
+        impOzet = d1; yeniBorc = d1.yeni_sistem_borc;
+      }
+      // 2) kalan fark → otomatik devir düzeltmesi (eşik: max(5000, ekstre %5))
+      const ekstreBorc = sonuc?.mutabakat?.ekstre_borc ?? sonuc?.donem_borcu ?? 0;
+      const fark = Math.round((ekstreBorc - (yeniBorc ?? 0)) * 100) / 100;
+      const esik = Math.max(5000, Math.abs(ekstreBorc) * 0.05);
+      let devirYapildi = false, devirDuzeltme = 0;
+      if (Math.abs(fark) > 1 && Math.abs(fark) <= esik) {
+        const r2 = await fetch(`/api/kartlar/${kart.id}/manuel-ekstre`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            donem: sonuc.kesim_tarihi, son_odeme: sonuc.son_odeme_tarihi || null,
+            donem_borcu: sonuc.donem_borcu, asgari_tutar: sonuc.asgari_tutar || null,
+            faiz_orani: sonuc.akdi_faiz_yillik || null,
+          }),
+        });
+        const d2 = await r2.json();
+        if (!r2.ok) throw new Error(d2.detail || 'Mutabakat düzeltmesi yapılamadı');
+        yeniBorc = d2.yeni_borc; devirYapildi = true; devirDuzeltme = fark;
+      }
+      const sonFark = Math.round((ekstreBorc - (yeniBorc ?? 0)) * 100) / 100;
+      setSonuc(sn => ({ ...sn, mutabakat: { ...sn.mutabakat, sistem_borc: yeniBorc,
+        fark: sonFark, tutar_uyumlu: Math.abs(sonFark) < 1 } }));
+      setImpSonuc({ ...impOzet, tek_tik: true, devir: devirYapildi,
+        devir_duzeltme: devirDuzeltme, yeni_sistem_borc: yeniBorc,
+        buyuk_fark_onay_gerek: Math.abs(sonFark) > 1 });
+    } catch (e) { setHata(e.message); }
+    finally { setTtBusy(false); }
+  }
+
   async function iceAktar() {
     if (!kart?.id) return;
     const islemler = [...secili].map(i => sonuc.islemler[i]).filter(x => x && x.durum === 'yeni')
@@ -221,6 +275,27 @@ export default function EkstreYukle() {
 
       {sonuc && !yukleniyor && (
         <>
+          {impSonuc?.tek_tik && (
+            <div className="card mb-16" style={{ padding: 14, borderLeft: `3px solid ${impSonuc.buyuk_fark_onay_gerek ? 'var(--yellow, #f59e0b)' : 'var(--green)'}` }}>
+              <div style={{ fontWeight: 800, fontSize: 14,
+                color: impSonuc.buyuk_fark_onay_gerek ? '#f59e0b' : 'var(--green)' }}>
+                {impSonuc.buyuk_fark_onay_gerek
+                  ? '⚠️ Mutabakat kısmen tamam — büyük fark onayını bekliyor'
+                  : '⚡ Mutabakat TAMAM'}
+              </div>
+              <div style={{ fontSize: 13, marginTop: 6, display: 'flex', gap: 14, flexWrap: 'wrap' }}>
+                <span>📥 Aktarılan: <b>{impSonuc.yazilan ?? 0}</b></span>
+                <span>⏭️ Zaten kayıtlı: <b>{(impSonuc.atlanan_veya_mevcut ?? 0)}</b></span>
+                {impSonuc.devir && <span>🧮 Mutabakat düzeltmesi: <b>{fmt(impSonuc.devir_duzeltme || 0)}</b></span>}
+                <span>💳 Yeni sistem borcu: <b>{fmt(impSonuc.yeni_sistem_borc || 0)}</b></span>
+              </div>
+              {impSonuc.buyuk_fark_onay_gerek && (
+                <div style={{ fontSize: 12, marginTop: 6, color: 'var(--text3)' }}>
+                  Kalan fark güvenlik eşiğinin üstünde — doğruysa aşağıdaki "Devir kabul et" ile onayla.
+                </div>
+              )}
+            </div>
+          )}
           {/* H4 — ESKİ DÖNEM UYARISI + H3 — TEYİT KARTI (2026-07-10 kullanıcı-akışı) */}
           {(() => {
             const sot = String(sonuc.son_odeme_tarihi || sonuc.kesim_tarihi || '');
@@ -358,7 +433,13 @@ export default function EkstreYukle() {
                 {yeniUyariliIdx.length > 0 && <span style={{ marginLeft: 8, fontSize: 12, color: 'var(--red)', fontWeight: 600 }}>· {yeniUyariliIdx.length} olası mükerrer ⚠️</span>}
               </div>
               {kart && yeniIdx.length > 0 && (
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <button className="btn btn-primary" disabled={ttBusy || impBusy}
+                    onClick={tekTikMutabakat}
+                    title="Eksikleri aktarır, kalan farkı mutabakat düzeltmesiyle kapatır — tek adım">
+                    {ttBusy ? '⏳ Mutabakat yapılıyor…' : '⚡ Tek Tık Mutabakat (önerilen)'}
+                  </button>
+                  <span style={{ fontSize: 11, color: 'var(--text3)' }}>veya gelişmiş:</span>
                   <button className="btn btn-secondary btn-sm" onClick={tumYeni}>{secili.size === yeniGuvenliIdx.length ? 'Seçimi kaldır' : `Tüm eksikleri seç (${yeniGuvenliIdx.length})`}</button>
                   <button className="btn btn-primary btn-sm" disabled={impBusy || secili.size === 0} onClick={iceAktar}>
                     {impBusy ? '…' : `İçe Aktar (${secili.size})`}
