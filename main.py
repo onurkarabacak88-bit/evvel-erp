@@ -1260,7 +1260,45 @@ def kart_plan_mutabakat(uygula: bool = False) -> dict:
     except Exception as e:  # noqa: BLE001
         rapor["hata"] = str(e)[:200]
         logger.warning("kart_plan_mutabakat: %s", str(e)[:200])
-    rapor["ozet"] = {"r1b": len(rapor.get("r1b_odendi_yaninda_bekleyen") or []),
+    # R4 (2026-07-10 sahip vakası): bu döneme ait EKSTRE SNAPSHOT'ı olan ama aktif
+    # planı olmayan kart (eski-odendi blokajı kurbanı) → tek yazıcıyla planı AÇ.
+    try:
+        from finans_core import kesim_tarihi_hesapla
+        from kasa_service import kart_kesim_plani_yaz_tx
+        with db() as (conn, cur):
+            cur.execute("SELECT * FROM kartlar WHERE aktif=TRUE")
+            for k in [dict(r) for r in cur.fetchall() or []]:
+                try:
+                    bugun = date.today()
+                    bu_kesim = kesim_tarihi_hesapla(bugun.year, bugun.month,
+                                                    int(k["kesim_gunu"]))
+                    if bugun < bu_kesim:
+                        continue  # kesim henüz gelmedi
+                    cur.execute(
+                        """SELECT 1 FROM kart_ekstre_donem
+                           WHERE kart_id=%s AND donem=DATE_TRUNC('month',%s::date) LIMIT 1""",
+                        (k["id"], str(bu_kesim)))
+                    if not cur.fetchone():
+                        continue  # bu dönemin ekstresi yok — F3 freni alanı
+                    cur.execute(
+                        """SELECT 1 FROM odeme_plani
+                           WHERE kart_id=%s AND durum IN ('bekliyor','onay_bekliyor')
+                             AND tarih >= %s::date LIMIT 1""",
+                        (k["id"], str(bu_kesim)))
+                    if cur.fetchone():
+                        continue  # aktif plan zaten var
+                    rapor.setdefault("r4_plan_acilan", []).append(
+                        {"kart": k.get("kart_adi"), "kesim": str(bu_kesim)})
+                    if uygula:
+                        kart_kesim_plani_yaz_tx(cur, k, bugun.year, bugun.month)
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("R4 %s: %s", k.get("kart_adi"), str(e)[:60])
+            if uygula:
+                conn.commit()
+    except Exception as e:  # noqa: BLE001
+        rapor["hata"] = (rapor.get("hata") or "") + f" r4: {str(e)[:100]}"
+    rapor["ozet"] = {"r4": len(rapor.get("r4_plan_acilan") or []),
+                     "r1b": len(rapor.get("r1b_odendi_yaninda_bekleyen") or []),
                      "r1": len(rapor["r1_mukerrer"]), "r2": len(rapor["r2_bayat_tasima"]),
                      "r3": len(rapor["r3_kapama"]),
                      "kalan_bekleyen": len(rapor["dokunulmayan_bekleyen"])}
@@ -3652,9 +3690,10 @@ def _ekstre_eslesme_mutabakat(sonuc):
                            SELECT %s, %s, %s::date, DATE_TRUNC('month', %s::date), %s, %s, %s, 'bekliyor'
                            WHERE NOT EXISTS (SELECT 1 FROM odeme_plani
                                WHERE kart_id=%s AND durum='odendi'
-                                 AND DATE_TRUNC('month',tarih)=DATE_TRUNC('month',%s::date))""",
+                                 AND DATE_TRUNC('month',tarih)=DATE_TRUNC('month',%s::date)
+                                 AND COALESCE(odeme_tarihi, tarih) >= %s::date)""",
                         (str(uuid.uuid4()), kart["id"], sot, sot, (brc or asg), asg, acik,
-                         kart["id"], sot),
+                         kart["id"], sot, str(sonuc.get("kesim_tarihi") or sot)[:10]),
                     )
                 sonuc["cfo_odeme_plani"] = {"son_odeme": sot, "asgari": asg, "borc": brc}
         elif son4:
@@ -3728,8 +3767,9 @@ def kart_manuel_ekstre(kid: str, body: ManuelEkstreBody):
                        SELECT %s,%s,%s::date,DATE_TRUNC('month',%s::date),%s,%s,%s,'bekliyor'
                        WHERE NOT EXISTS (SELECT 1 FROM odeme_plani
                            WHERE kart_id=%s AND durum='odendi'
-                             AND DATE_TRUNC('month',tarih)=DATE_TRUNC('month',%s::date))""",
-                    (str(uuid.uuid4()), kid, sot, sot, (borc or asg), asg, acik, kid, sot),
+                             AND DATE_TRUNC('month',tarih)=DATE_TRUNC('month',%s::date)
+                             AND COALESCE(odeme_tarihi, tarih) >= %s::date)""",
+                    (str(uuid.uuid4()), kid, sot, sot, (borc or asg), asg, acik, kid, sot, kesim),
                 )
         # 4) faiz oranı
         if body.faiz_orani is not None and body.faiz_orani > 0:

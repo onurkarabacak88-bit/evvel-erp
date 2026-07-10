@@ -335,10 +335,15 @@ def kart_kesim_plani_yaz_tx(cur, k: dict, yil: int, ay: int) -> dict:
         INSERT INTO odeme_plani (id, kart_id, tarih, odenecek_tutar, asgari_tutar, aciklama, durum)
         SELECT %s, %s, %s, %s, %s, %s, 'bekliyor'
         WHERE NOT EXISTS (SELECT 1 FROM odeme_plani WHERE kart_id=%s
-            AND DATE_TRUNC('month', tarih)=DATE_TRUNC('month', %s::date) AND durum != 'iptal')
+            AND DATE_TRUNC('month', tarih)=DATE_TRUNC('month', %s::date)
+            AND (durum IN ('bekliyor','onay_bekliyor')
+                 -- DÖNEM AYIRACI (2026-07-10): 'odendi' satır yalnız YENİ KESİMDEN
+                 -- SONRAKİ ödemeyle kapandıysa bu dönemi temsil eder; kesim-öncesi
+                 -- ödemeli 'odendi' ESKİ dönemin kapanışıdır, yeni planı BLOKE ETMEZ.
+                 OR (durum='odendi' AND COALESCE(odeme_tarihi, tarih) >= %s::date)))
     """, (pid, k["id"], son_odeme_tarihi, odenecek, asgari,
           f"Kart ekstre: {k['kart_adi']} — {k.get('banka','')} (kesim {bu_ay_kesim})",
-          k["id"], str(son_odeme_tarihi)))
+          k["id"], str(son_odeme_tarihi), str(bu_ay_kesim)))
     yeni = cur.rowcount > 0
     if not yeni:
         cur.execute("""

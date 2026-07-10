@@ -1996,12 +1996,16 @@ def kart_dongu():
                     s["gun"] = (bugun - son_kesim).days
                     s["mesaj"] = (f"kesim {son_kesim} — ekstre {s['gun']} gündür yüklenmedi")
                 else:
+                    # DÖNEM AYIRACI: kesim-öncesi ödemeyle kapanmış 'odendi' satırı
+                    # ESKİ dönemindir — bu döngüde ödendi SAYILMAZ (sahip vakası).
                     cur.execute("""SELECT durum, COALESCE(odenecek_tutar,0)::float AS t
                                    FROM odeme_plani
                                    WHERE kart_id=%s AND durum!='iptal'
                                      AND DATE_TRUNC('month',tarih)=DATE_TRUNC('month',%s::date)
+                                     AND NOT (durum='odendi'
+                                              AND COALESCE(odeme_tarihi, tarih) < %s::date)
                                    ORDER BY (durum='odendi') DESC LIMIT 1""",
-                                (k["id"], str(son_odeme)))
+                                (k["id"], str(son_odeme), str(son_kesim)))
                     pl = dict(cur.fetchone() or {})
                     if pl.get("durum") == "odendi":
                         s["durum"], s["mesaj"] = "odendi", f"bu dönem ödendi ({pl.get('t')})"
