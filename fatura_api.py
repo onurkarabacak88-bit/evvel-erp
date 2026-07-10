@@ -928,6 +928,167 @@ def belge_merkezi_uc(ay: str = ""):
     return belge_merkezi_ozet(ay)
 
 
+# ── BM-5: TEDARİKÇİ CARİ EKSTRE (2026-07-10) ────────────────────────────────
+# Kanonik kimlik = VKN (öncelik), yoksa normalize ad (fizibilite şartı #2).
+# CARİ GERÇEK = fatura üstü bakiye zinciri (onceki_bakiye/bakiye_dahil =
+# TEDARİKÇİNİN BEYANI — bizim hesap değil, '≈ beyan' diye sunulur).
+# Ödeme tarafı ayrı kasa izi YOK — 3 kanal aday-eşleştirme (fatura_istek ile
+# aynı evren): salt-okur, öneri-only.
+
+def _cari_kanonik(vkn, ad) -> str:
+    v = (vkn or "").strip()
+    return v if v else (ad or "").strip().lower()
+
+
+def _cari_zincir(faturalar: list) -> list:
+    """Kronolojik faturalarda zincir farkı: onceki_bakiye(N) − bakiye_dahil(N-1).
+    Negatif → arada ÖDEME görülmüş; pozitif → belge-dışı borç artışı (yönlü ölçüm,
+    Çapraz Hipotez deseni). None bakiyeli satırlar zinciri koparmaz, atlanır."""
+    onceki_dahil = None
+    for f in faturalar:
+        f["zincir_fark"] = None
+        if f.get("onceki_bakiye") is not None and onceki_dahil is not None:
+            f["zincir_fark"] = round(float(f["onceki_bakiye"]) - onceki_dahil, 2)
+        if f.get("bakiye_dahil") is not None:
+            onceki_dahil = float(f["bakiye_dahil"])
+    return faturalar
+
+
+def cari_ozet() -> dict:
+    """Tüm tedarikçilerin cari özeti — beyin (B48) + bağ + UI. Salt-okur."""
+    from datetime import date, timedelta
+    kesit_6ay = (date.today() - timedelta(days=180)).isoformat()
+    with db() as (_, cur):
+        _ensure_tablolar(cur)
+        cur.execute(
+            """SELECT tedarikci_vkn, tedarikci_ad,
+                      COALESCE(fatura_tarih, olusturma::date)::text AS tarih,
+                      COALESCE(toplam_tutar,0)::float AS tutar,
+                      onceki_bakiye, bakiye_dahil
+               FROM tedarikci_fatura
+               WHERE COALESCE(TRIM(tedarikci_ad),'') <> ''
+                  OR COALESCE(TRIM(tedarikci_vkn),'') <> ''
+               ORDER BY COALESCE(fatura_tarih, olusturma::date), olusturma""")
+        satirlar = [dict(r) for r in cur.fetchall() or []]
+        cur.execute(
+            """SELECT COALESCE(TRIM(tedarikci),'') AS tedarikci,
+                      tutar::float AS tutar, vade_tarihi::text AS vade
+               FROM vadeli_alimlar WHERE durum='bekliyor'
+               ORDER BY vade_tarihi""")
+        vadeler = [dict(r) for r in cur.fetchall() or []]
+
+    gruplar: dict = {}
+    for s in satirlar:
+        k = _cari_kanonik(s.get("tedarikci_vkn"), s.get("tedarikci_ad"))
+        if not k:
+            continue
+        g = gruplar.setdefault(k, {"tedarikci": (s.get("tedarikci_ad") or "").strip(),
+                                   "vkn": (s.get("tedarikci_vkn") or "").strip() or None,
+                                   "faturalar": []})
+        if (s.get("tedarikci_vkn") or "").strip():
+            g["vkn"] = s["tedarikci_vkn"].strip()
+        g["faturalar"].append(s)
+
+    ozet = []
+    for g in gruplar.values():
+        fl = _cari_zincir(g["faturalar"])
+        son6 = [f for f in fl if f["tarih"] >= kesit_6ay]
+        beyan, beyan_tarih = None, None
+        for f in reversed(fl):
+            if f.get("bakiye_dahil") is not None:
+                beyan, beyan_tarih = round(float(f["bakiye_dahil"]), 2), f["tarih"]
+                break
+        ad_l = g["tedarikci"].lower()
+        v_top, v_yakin = 0.0, None
+        for v in vadeler:
+            vt = v["tedarikci"].lower()
+            if len(vt) >= 4 and len(ad_l) >= 4 and (vt in ad_l or ad_l[:20] in vt):
+                v_top = round(v_top + v["tutar"], 2)
+                v_yakin = v_yakin or v["vade"]
+        kopuk = [f["zincir_fark"] for f in fl if f.get("zincir_fark") not in (None, 0.0)]
+        ozet.append({
+            "tedarikci": g["tedarikci"], "vkn": g["vkn"],
+            "fatura_adet_6ay": len(son6),
+            "fatura_toplam_6ay": round(sum(f["tutar"] for f in son6), 2),
+            "son_fatura": fl[-1]["tarih"] if fl else None,
+            "beyan_bakiye": beyan, "beyan_tarihi": beyan_tarih,
+            "bekleyen_vade_toplam": v_top, "en_yakin_vade": v_yakin,
+            "zincir_hareket_adet": len(kopuk),
+            "son_zincir_fark": kopuk[-1] if kopuk else None,
+        })
+    ozet.sort(key=lambda x: -(abs(x["beyan_bakiye"] or 0) + x["bekleyen_vade_toplam"]))
+    return {
+        "tedarikciler": ozet[:20],
+        "toplam_beyan_bakiye": round(sum(x["beyan_bakiye"] or 0 for x in ozet), 2),
+        "toplam_bekleyen_vade": round(sum(x["bekleyen_vade_toplam"] for x in ozet), 2),
+        "not": ("beyan_bakiye = TEDARİKÇİNİN fatura üstündeki bakiye beyanı (≈, bizim "
+                "hesap değil). zincir_fark<0 = iki fatura arasında ödeme görülmüş; "
+                ">0 = belge-dışı borç artışı olabilir (öneri, hüküm değil)."),
+    }
+
+
+@router.get("/cari-ozet")
+def cari_ozet_uc():
+    return cari_ozet()
+
+
+@router.get("/cari-ekstre")
+def cari_ekstre(tedarikci: str = ""):
+    """Tek tedarikçinin ekstresi: fatura zinciri + zincir farkları + bekleyen
+    vadeler + ödeme ADAYLARI (3 kanal metin eşleşmesi — öneri-only)."""
+    ara = (tedarikci or "").strip()
+    if len(ara) < 3:
+        raise HTTPException(400, "tedarikci parametresi (ad veya VKN) en az 3 karakter")
+    with db() as (_, cur):
+        _ensure_tablolar(cur)
+        cur.execute(
+            """SELECT id, fatura_no, COALESCE(fatura_tarih, olusturma::date)::text AS tarih,
+                      COALESCE(toplam_tutar,0)::float AS tutar,
+                      onceki_bakiye, bakiye_dahil, tedarikci_ad, tedarikci_vkn
+               FROM tedarikci_fatura
+               WHERE TRIM(tedarikci_vkn) = %s OR tedarikci_ad ILIKE %s
+               ORDER BY COALESCE(fatura_tarih, olusturma::date), olusturma""",
+            (ara, f"%{ara}%"))
+        faturalar = _cari_zincir([dict(r) for r in cur.fetchall() or []])
+        cur.execute(
+            """SELECT tutar::float AS tutar, vade_tarihi::text AS vade, aciklama
+               FROM vadeli_alimlar
+               WHERE durum='bekliyor' AND (tedarikci ILIKE %s OR aciklama ILIKE %s)
+               ORDER BY vade_tarihi""", (f"%{ara}%", f"%{ara}%"))
+        bekleyen_vadeler = [dict(r) for r in cur.fetchall() or []]
+        odeme_adaylari = []
+        cur.execute(
+            """SELECT 'vadeli_alim' AS kanal, vade_tarihi::text AS tarih, tutar::float AS tutar,
+                      LEFT(COALESCE(aciklama,''),60) AS aciklama
+               FROM vadeli_alimlar
+               WHERE durum='odendi' AND (tedarikci ILIKE %s OR aciklama ILIKE %s)
+               UNION ALL
+               SELECT 'anlik_gider', tarih::text, tutar::float, LEFT(COALESCE(aciklama,''),60)
+               FROM anlik_giderler WHERE durum='aktif' AND aciklama ILIKE %s
+               UNION ALL
+               SELECT 'kart', h.tarih::text, h.tutar::float, LEFT(COALESCE(h.aciklama,''),60)
+               FROM kart_hareketleri h
+               WHERE h.islem_turu='HARCAMA' AND h.durum='aktif' AND h.aciklama ILIKE %s
+               ORDER BY 2 DESC LIMIT 60""",
+            (f"%{ara}%", f"%{ara}%", f"%{ara}%", f"%{ara}%"))
+        odeme_adaylari = [dict(r) for r in cur.fetchall() or []]
+    for f in faturalar:
+        f["goruntule"] = f"/api/fatura/{f['id']}/foto"
+    beyan = next((f["bakiye_dahil"] for f in reversed(faturalar)
+                  if f.get("bakiye_dahil") is not None), None)
+    return {
+        "arama": ara,
+        "fatura_adet": len(faturalar),
+        "faturalar": faturalar[-60:],
+        "beyan_bakiye": (round(float(beyan), 2) if beyan is not None else None),
+        "bekleyen_vadeler": bekleyen_vadeler,
+        "bekleyen_vade_toplam": round(sum(v["tutar"] for v in bekleyen_vadeler), 2),
+        "odeme_adaylari": odeme_adaylari,
+        "not": ("Beyan bakiye = tedarikçinin fatura üstü beyanı (≈). Ödeme adayları "
+                "metin eşleşmesidir — kesin mutabakat değil (öneri-only)."),
+    }
+
+
 @router.get("/bekleyen")
 def fatura_bekleyen(sube_id: Optional[str] = None, limit: int = 50):
     """İncelenmeyi bekleyen faturalar (OCR tamam ama insan onayı yok)."""

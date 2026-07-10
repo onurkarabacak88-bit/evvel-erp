@@ -2728,6 +2728,35 @@ def _bag_fatura_istek() -> List[dict]:
     return out
 
 
+def _bag_cari() -> List[dict]:
+    """BM-5 bağı: tedarikçi beyan bakiyeleri + yaklaşan vadeler (KOD hazırlar).
+    Beyan = tedarikçinin fatura üstü bakiyesi — bizim hesap değil ('≈')."""
+    out = []
+    try:
+        from fatura_api import cari_ozet
+        o = cari_ozet()
+        buyukler = [t for t in (o.get("tedarikciler") or [])
+                    if (t.get("beyan_bakiye") or 0) > 0][:3]
+        if buyukler:
+            parcalar = ", ".join(
+                f"{t['tedarikci']} ≈ {t['beyan_bakiye']} (beyan {t['beyan_tarihi']})"
+                for t in buyukler)
+            out.append({"alanlar": ["cari", "fatura", "odeme"], "tarih": None,
+                        "guven": "gozlem",
+                        "cumle": (f"tedarikçi fatura üstü BEYAN bakiyeleri: {parcalar} — "
+                                  "tedarikçinin kendi beyanıdır, mutabakat hükmü değil "
+                                  "(hazır kayıt)")})
+        if (o.get("toplam_bekleyen_vade") or 0) > 0:
+            out.append({"alanlar": ["cari", "vade", "odeme"], "tarih": None,
+                        "guven": "hesap",
+                        "cumle": (f"bekleyen vadeli alım toplamı "
+                                  f"{o['toplam_bekleyen_vade']} — tedarikçi cari "
+                                  "özetinde vade kırılımı hazır (hazır hesap)")})
+    except Exception as e:  # noqa: BLE001
+        logger.warning("bag cari: %s", str(e)[:60])
+    return out
+
+
 def _bag_ciro_kasa() -> List[dict]:
     """Ciro↔kasa farkı bağı (dilek e59f57ec/10044dff: 'bu cirolarda kasa açığı
     var mı?') — şube-gün cirosu ile AYNI GÜNÜN kasa fark uyarısı yan yana."""
@@ -2822,6 +2851,7 @@ _BAG_KAYNAKLARI = [
     ("kart", _bag_kart),
     ("belge", _bag_belge),
     ("fatura_istek", _bag_fatura_istek),
+    ("cari", _bag_cari),
     ("ciro_kasa", _bag_ciro_kasa),
     ("evo_ciro", _bag_evo_ciro),
 ]

@@ -743,8 +743,18 @@ def _blok_derle(soru: str, yonlendirme_ek: str = "") -> List[Tuple[str, str, str
           "kac fatura", "faturasi sistemde", "faturasi olmayan", "faturasi var mi",
           "hangilerinin faturasi", "harcamalarin faturasi", "belgesi yok",
           "fatura iste", "fatura bekleyen", "fatura gelmeyen", "kdv riski",
-          "odedim ama fatura", "fatura kesilmedi"),
+          "odedim ama fatura", "fatura kesilmedi", "faturasi gelmeyen",
+          "faturasi gelmedi", "fatura gelmedi", "fatura gelmemis"),
          lambda: _j(__import__("fatura_api").belge_merkezi_ozet())),
+        ("B48", "Tedarikçi cari özeti (BM-5: tedarikçi başına fatura üstü BEYAN "
+                "bakiye [tedarikçinin kendi beyanı, ≈] + bekleyen vadeli alım "
+                "toplamı + en yakın vade + zincir hareketi)",
+         ("cari", "tedarikciye borc", "toptanciya borc", "tedarikci borc",
+          "kime borcum", "kime ne kadar borc", "sutas", "vadesi gelen",
+          "vadesi yaklasan", "vadeli alim borc", "tedarikci bakiye",
+          "toptanci bakiye", "cari ekstre", "tedarikci ekstre",
+          "hangi toptanciya", "ne kadar borcum"),
+         lambda: _j(__import__("fatura_api").cari_ozet())),
         ("B45", "Gelecek ekstre tahmini (HESAPLANMIŞ: kart başına sıradaki kesimde "
                 "oluşan borç + asgari + kasa kıyası — tahmin, ekstre değil)",
          ("gelecek ekstre", "gelecek ay borc", "onumuzdeki ay kart", "kesimde ne kadar",

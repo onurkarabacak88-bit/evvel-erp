@@ -12,6 +12,15 @@ export default function BelgeMerkezi() {
   const [d, setD] = useState(null);
   const [hata, setHata] = useState('');
   const [acikToptanci, setAcikToptanci] = useState(null);
+  // BM-5: toptancı açılınca cari ekstre (beyan bakiye + vade + zincir)
+  const [cari, setCari] = useState({});
+  async function cariGetir(ad) {
+    if (!ad || ad === '(tedarikçi belirsiz)' || cari[ad]) return;
+    try {
+      const r = await api(`/fatura/cari-ekstre?tedarikci=${encodeURIComponent(ad)}`);
+      setCari(c => ({ ...c, [ad]: r }));
+    } catch { setCari(c => ({ ...c, [ad]: { hata: true } })); }
+  }
   // BM-8: tam metin arama
   const [q, setQ] = useState('');
   const [araSonuc, setAraSonuc] = useState(null);
@@ -192,12 +201,30 @@ export default function BelgeMerkezi() {
               {(d.toptancilar || []).map(t => (
                 <div key={t.toptanci} style={{ borderBottom: '1px solid var(--border)', padding: '8px 0' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, cursor: 'pointer' }}
-                       onClick={() => setAcikToptanci(a => a === t.toptanci ? null : t.toptanci)}>
+                       onClick={() => { setAcikToptanci(a => a === t.toptanci ? null : t.toptanci); cariGetir(t.toptanci); }}>
                     <span style={{ fontWeight: 700 }}>{t.toptanci} <span style={{ color: 'var(--text3)', fontWeight: 400 }}>({t.adet} fatura)</span></span>
                     <span style={{ fontFamily: 'var(--font-mono)' }}>{fmt(t.toplam)}</span>
                   </div>
                   {acikToptanci === t.toptanci && (
                     <div style={{ marginTop: 6 }}>
+                      {/* BM-5 — cari şerit: beyan bakiye + bekleyen vade + zincir */}
+                      {cari[t.toptanci] && !cari[t.toptanci].hata && (
+                        <div style={{ fontSize: 12, padding: '6px 8px', marginBottom: 4,
+                                      background: 'var(--bg2)', borderRadius: 8 }}>
+                          💼 Cari: beyan bakiye{' '}
+                          <b>{cari[t.toptanci].beyan_bakiye != null ? `≈ ${fmt(cari[t.toptanci].beyan_bakiye)}` : 'fatura üstünde yok'}</b>
+                          {cari[t.toptanci].bekleyen_vade_toplam > 0 && (
+                            <> · bekleyen vade <b style={{ color: 'var(--red)' }}>{fmt(cari[t.toptanci].bekleyen_vade_toplam)}</b>
+                              {cari[t.toptanci].bekleyen_vadeler?.[0] && ` (en yakın ${cari[t.toptanci].bekleyen_vadeler[0].vade})`}</>
+                          )}
+                          {(cari[t.toptanci].faturalar || []).some(f => f.zincir_fark != null && f.zincir_fark !== 0) && (
+                            <span style={{ color: 'var(--text3)' }}> · zincirde ödeme/hareket izi var</span>
+                          )}
+                          <div style={{ color: 'var(--text3)', marginTop: 2 }}>
+                            beyan = tedarikçinin fatura üstü bakiyesi (≈, mutabakat hükmü değil)
+                          </div>
+                        </div>
+                      )}
                       {(d.fatura_arsivi || []).filter(f => (f.tedarikci_ad || '(tedarikçi belirsiz)').trim() === t.toptanci || ((f.tedarikci_ad || '').trim() === '' && t.toptanci === '(tedarikçi belirsiz)')).map(f => (
                         <div key={f.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, padding: '3px 0' }}>
                           <span>{f.tarih || '—'} · <span style={{ color: DURUM_RENK[f.durum] || 'var(--text3)' }}>{f.durum}</span></span>
