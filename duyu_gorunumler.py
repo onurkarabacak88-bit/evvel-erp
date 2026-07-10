@@ -1986,39 +1986,48 @@ def kart_dongu():
                     oy, om = (bugun.year - 1, 12) if bugun.month == 1 else (bugun.year, bugun.month - 1)
                     son_kesim = kesim_tarihi_hesapla(oy, om, int(k["kesim_gunu"]))
                 son_odeme = son_odeme_tarihi_hesapla(son_kesim, int(k["sog"]))
-                cur.execute("""SELECT 1 FROM kart_ekstre_donem
+                cur.execute("""SELECT COALESCE(donem_borcu,0)::float AS borc,
+                                      COALESCE(asgari_tutar,0)::float AS asgari
+                               FROM kart_ekstre_donem
                                WHERE kart_id=%s AND donem=DATE_TRUNC('month',%s::date) LIMIT 1""",
                             (k["id"], str(son_kesim)))
-                snap_var = cur.fetchone() is not None
+                snap = dict(cur.fetchone() or {})
                 s = {"kart": k["kart_adi"], "kesim": str(son_kesim), "son_odeme": str(son_odeme)}
-                if not snap_var:
+                if not snap:
                     s["durum"] = "ekstre_bekleniyor"
                     s["gun"] = (bugun - son_kesim).days
                     s["mesaj"] = (f"kesim {son_kesim} — ekstre {s['gun']} gündür yüklenmedi")
                 else:
-                    # DÖNEM AYIRACI: kesim-öncesi ödemeyle kapanmış 'odendi' satırı
-                    # ESKİ dönemindir — bu döngüde ödendi SAYILMAZ (sahip vakası).
-                    cur.execute("""SELECT durum, COALESCE(odenecek_tutar,0)::float AS t
-                                   FROM odeme_plani
-                                   WHERE kart_id=%s AND durum!='iptal'
-                                     AND DATE_TRUNC('month',tarih)=DATE_TRUNC('month',%s::date)
-                                     AND NOT (durum='odendi'
-                                              AND COALESCE(odeme_tarihi, tarih) < %s::date)
-                                   ORDER BY (durum='odendi') DESC LIMIT 1""",
-                                (k["id"], str(son_odeme), str(son_kesim)))
-                    pl = dict(cur.fetchone() or {})
-                    if pl.get("durum") == "odendi":
-                        s["durum"], s["mesaj"] = "odendi", f"bu dönem ödendi ({pl.get('t')})"
-                    elif pl and bugun <= son_odeme:
+                    # DEFTER = TEK GERÇEK (2026-07-10 v2, Axess vakası): plan damgasına
+                    # DEĞİL kart defterine bakılır — bu dönemin penceresinde
+                    # (kesim → son ödeme] fiilen yapılan ÖDEME toplamı belirleyicidir.
+                    # (Plan 'odendi' damgası işaretleme GÜNÜNÜ taşıyabiliyor; eski
+                    # dönemin ödemesi yeni döneme sızıyordu.)
+                    borc = float(snap.get("borc") or 0)
+                    asgari = float(snap.get("asgari") or 0) or borc
+                    cur.execute("""SELECT COALESCE(SUM(tutar),0)::float AS o
+                                   FROM kart_hareketleri
+                                   WHERE kart_id=%s AND durum='aktif' AND islem_turu='ODEME'
+                                     AND tarih > %s::date AND tarih <= %s::date""",
+                                (k["id"], str(son_kesim), str(son_odeme)))
+                    odenen = float(dict(cur.fetchone() or {}).get("o") or 0)
+                    if borc > 0 and odenen >= borc - 0.01:
+                        s["durum"] = "odendi"
+                        s["mesaj"] = f"bu dönem TAM ödendi ({odenen})"
+                    elif asgari > 0 and odenen >= asgari * 0.999:
+                        s["durum"] = "odendi"
+                        s["mesaj"] = (f"asgari ödendi ({odenen}) — kalan "
+                                      f"{round(borc - odenen, 2)} sonraki döneme devreder")
+                    elif bugun <= son_odeme:
                         s["durum"] = "odeme_bekliyor"
                         s["gun"] = (son_odeme - bugun).days
-                        s["mesaj"] = f"son ödemeye {s['gun']} gün ({pl.get('t')})"
-                    elif pl:
+                        s["mesaj"] = (f"son ödemeye {s['gun']} gün (borç {borc}, asgari {asgari}"
+                                      + (f"; şu ana dek {odenen} ödendi" if odenen > 0 else "") + ")")
+                    else:
                         s["durum"] = "gecikti"
                         s["gun"] = (bugun - son_odeme).days
-                        s["mesaj"] = f"son ödeme {s['gun']} gün GEÇTİ ({pl.get('t')})"
-                    else:
-                        s["durum"], s["mesaj"] = "yuklendi", "ekstre yüklü, plan bekleniyor"
+                        s["mesaj"] = (f"son ödeme {s['gun']} gün GEÇTİ (borç {borc}"
+                                      + (f"; yalnız {odenen} ödendi" if odenen > 0 else ", ödeme izi yok") + ")")
                 # sıradaki kesim bilgisi (bilgilendirici)
                 if bugun < bu_ay:
                     s["siradaki_kesime_gun"] = (bu_ay - bugun).days
