@@ -20,6 +20,48 @@ export default function BelgeMerkezi() {
     try { setAraSonuc(await api(`/fatura/ara?q=${encodeURIComponent(q.trim())}`)); }
     catch (e) { setAraSonuc({ hata: e?.message || 'arama hatası' }); }
   }
+  // BM-4: Fatura İstek Motoru (ödenmiş ama faturasız ≥eşik ödemeler)
+  const [fi, setFi] = useState(null);
+  const [fiMesaj, setFiMesaj] = useState('');
+  async function fiYenile() {
+    try { setFi(await api('/fatura-istek/liste')); }
+    catch { setFi(null); }
+  }
+  useEffect(() => { fiYenile(); }, []);
+  async function fiTara() {
+    setFiMesaj('taranıyor…');
+    try {
+      const r = await api('/fatura-istek/tara', { method: 'POST' });
+      setFiMesaj(`✓ ${r.yeni_aday ?? 0} yeni aday, ${r.oto_kapanan ?? 0} kendiliğinden kapandı`);
+      fiYenile();
+    } catch (e) { setFiMesaj(e?.message || 'tarama hatası'); }
+  }
+  async function fiIste(g) {
+    if (!g.wa_link) return;
+    window.open(g.wa_link, '_blank');
+    try {
+      for (const x of g.istekler) await api(`/fatura-istek/${x.id}/gonderildi`, { method: 'POST' });
+    } catch { /* iz düşemedi — mesaj yine gitti */ }
+    fiYenile();
+  }
+  async function fiNumara(g) {
+    const tel = window.prompt(`${g.tedarikci} için telefon numarası (örn. 0532 123 45 67):`);
+    if (!tel) return;
+    try {
+      await api(`/fatura-istek/${g.istekler[0].id}/telefon`, {
+        method: 'POST', body: { telefon: tel },
+      });
+      fiYenile();
+    } catch (e) { alert(e?.message || 'numara kaydedilemedi'); }
+  }
+  async function fiKapat(id) {
+    const acik = window.prompt('Kapanış açıklaması (zorunlu — örn. "faturası kağıt geldi", "fatura kesilmeyecek"):');
+    if (!acik) return;
+    try {
+      await api(`/fatura-istek/${id}/kapat`, { method: 'POST', body: { aciklama: acik } });
+      fiYenile();
+    } catch (e) { alert(e?.message || 'kapatılamadı'); }
+  }
 
   useEffect(() => {
     setD(null); setHata('');
@@ -86,6 +128,61 @@ export default function BelgeMerkezi() {
               Kapsama: {oran != null ? `%${oran}` : '—'} · faturasız kısım = belge isteme adayı (KDV indirimi + gider kanıtı)
             </div>
           </div>
+
+          {/* BM-4 — FATURA İSTE (ödenmiş ama faturasız ≥eşik ödemeler) */}
+          {fi && (
+            <div className="card" style={{ padding: 16, marginBottom: 14 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+                <div style={{ fontWeight: 800 }}>
+                  📨 Fatura İste — {fi.acik_adet} açık / {fmt(fi.acik_toplam)}
+                  {fi.acik_adet > 0 && (
+                    <span style={{ fontWeight: 400, fontSize: 12, color: 'var(--text3)' }}>
+                      {' '}· KDV riski ≈ {fmt(fi.kdv_riski)}
+                    </span>
+                  )}
+                </div>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  {fiMesaj && <span style={{ fontSize: 12, color: 'var(--text3)' }}>{fiMesaj}</span>}
+                  <button className="btn btn-secondary" onClick={fiTara}>🔄 Adayları Tara</button>
+                </div>
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--text3)', margin: '4px 0 8px' }}>
+                ≥{fmt(fi.esik)} ödenmiş ama faturası arşivde eşleşmeyen ödemeler. Fatura gelince istek
+                kendiliğinden kapanır. Teslimat faturaları ayrı takipte
+                {fi.belge_talep_bekleyen > 0 ? ` (Açık Teslimat: ${fi.belge_talep_bekleyen} bekliyor)` : ''}.
+              </div>
+              {fi.acik_adet === 0 && <div style={{ color: 'var(--green)', fontSize: 13 }}>Açık istek yok 🎉</div>}
+              {(fi.gruplar || []).map(g => (
+                <div key={g.tedarikci} style={{ borderBottom: '1px solid var(--border)', padding: '8px 0' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                    <span style={{ fontWeight: 700 }}>
+                      {g.tedarikci} <span style={{ color: 'var(--text3)', fontWeight: 400 }}>({g.adet} ödeme · {fmt(g.toplam)})</span>
+                    </span>
+                    <span style={{ display: 'flex', gap: 6 }}>
+                      {g.wa_link
+                        ? <button className="btn btn-secondary" onClick={() => fiIste(g)}>📲 WhatsApp'tan İste</button>
+                        : <button className="btn btn-secondary" onClick={() => fiNumara(g)}>📵 Numara Ekle</button>}
+                    </span>
+                  </div>
+                  {(g.istekler || []).map(x => (
+                    <div key={x.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 12, padding: '3px 0' }}>
+                      <span>
+                        {x.tarih} · {x.kaynak_tip === 'kart' ? `💳 ${x.kanal_detay || 'kart'}`
+                          : x.kaynak_tip === 'anlik_gider' ? '🧾 anlık gider' : '📦 vadeli alım'}
+                        {' · '}{(x.aciklama || '').slice(0, 40)}
+                        {x.durum === 'istek_gonderildi' && <span style={{ color: 'var(--green)' }}> · ✉ istendi ({x.mesaj_sayisi})</span>}
+                      </span>
+                      <span style={{ whiteSpace: 'nowrap' }}>
+                        {fmt(x.tutar)}{' '}
+                        <button className="btn btn-secondary" style={{ padding: '0 6px', fontSize: 11 }}
+                          onClick={() => fiKapat(x.id)} title="Manuel kapat (açıklama zorunlu)">✔</button>
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
+          )}
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(340px,1fr))', gap: 14 }}>
             {/* TOPTANCILAR */}

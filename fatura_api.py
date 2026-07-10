@@ -893,6 +893,14 @@ def belge_merkezi_ozet(ay: str = ""):
                                    "faturasiz_harcama": 0.0})
         d0["faturasiz_harcama"] = round(d0["faturasiz_harcama"] + h["tutar"], 2)
     toplam_harcama = round(sum(float(h["tutar"]) for h in harcamalar), 2)
+    # BM-4: Fatura İstek özeti — hata-yutar (motor yoksa Belge Merkezi yaşar);
+    # hem UI hem beyin B47 bu tek uçtan besleniyor.
+    fatura_istekleri = None
+    try:
+        from fatura_istek_api import fatura_istek_ozet
+        fatura_istekleri = fatura_istek_ozet()
+    except Exception:  # noqa: BLE001
+        pass
     return {
         "ay": hedef,
         "kapsama": {
@@ -906,6 +914,7 @@ def belge_merkezi_ozet(ay: str = ""):
         "gun_gun": sorted(gunler.values(), key=lambda x: x["gun"], reverse=True),
         "faturasiz_harcamalar": faturasiz[:40],
         "fatura_arsivi": faturalar[:60],
+        "fatura_istekleri": fatura_istekleri,
         "not": "ADAY eşleştirme (±%2 tutar, ±5 gün) — hüküm değil. Faturasız satır = "
                "belge isteme adayı (KDV indirimi + gider kanıtı). PDF/foto: goruntule "
                "linki. Nakit işletme giderleri (anlık gider) bu sürümde kapsam dışı — "

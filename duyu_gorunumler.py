@@ -2707,6 +2707,27 @@ def _bag_belge() -> List[dict]:
     return out
 
 
+def _bag_fatura_istek() -> List[dict]:
+    """BM-4 bağı: ödenmiş-ama-faturasız büyük ödemeler (Fatura İstek Motoru).
+    Sayıları KOD hazırlar; KDV riski kaba tahmindir ('≈' ile sunulur)."""
+    out = []
+    try:
+        from fatura_istek_api import fatura_istek_ozet
+        o = fatura_istek_ozet()
+        if (o.get("acik_adet") or 0) > 0:
+            out.append({"alanlar": ["fatura", "odeme", "kdv"], "tarih": None,
+                        "guven": "hesap",
+                        "cumle": (f"{o['esik']:,.0f} TL üzeri ödemelerden "
+                                  f"{o['acik_adet']} tanesinin faturası henüz yok "
+                                  f"(toplam {o['acik_toplam']}; KDV indirimi riski "
+                                  f"≈ {o['kdv_riski']}; en büyüğü {o['en_buyuk']}) — "
+                                  "Belge Merkezi'nden tek tık Fatura İste "
+                                  "(hazır hesap, hüküm değil)")})
+    except Exception as e:  # noqa: BLE001
+        logger.warning("bag fatura_istek: %s", str(e)[:60])
+    return out
+
+
 def _bag_ciro_kasa() -> List[dict]:
     """Ciro↔kasa farkı bağı (dilek e59f57ec/10044dff: 'bu cirolarda kasa açığı
     var mı?') — şube-gün cirosu ile AYNI GÜNÜN kasa fark uyarısı yan yana."""
@@ -2800,6 +2821,7 @@ _BAG_KAYNAKLARI = [
     ("maas_avans", _bag_maas_avans),
     ("kart", _bag_kart),
     ("belge", _bag_belge),
+    ("fatura_istek", _bag_fatura_istek),
     ("ciro_kasa", _bag_ciro_kasa),
     ("evo_ciro", _bag_evo_ciro),
 ]

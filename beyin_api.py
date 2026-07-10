@@ -736,11 +736,14 @@ def _blok_derle(soru: str, yonlendirme_ek: str = "") -> List[Tuple[str, str, str
           "asgari", "kesim tarihi", "hangi kartta"),
          lambda: _j(__import__("duyu_gorunumler").kart_pozisyon())),
         ("B47", "Belge Merkezi (bu ay: fatura kapsama oranı + faturasız işletme "
-                "harcamaları + toptancı fatura özeti)",
+                "harcamaları + toptancı fatura özeti + fatura_istekleri bloğu: "
+                "≥eşik ödenmiş-ama-faturasız ödeme sayısı/toplamı/KDV riski)",
          ("faturasi yok", "faturasiz", "fatura kapsam", "belge kapsam", "arsiv",
           "faturalari gor", "toptanci fatura", "hangi faturalar", "belge merkezi",
           "kac fatura", "faturasi sistemde", "faturasi olmayan", "faturasi var mi",
-          "hangilerinin faturasi", "harcamalarin faturasi", "belgesi yok"),
+          "hangilerinin faturasi", "harcamalarin faturasi", "belgesi yok",
+          "fatura iste", "fatura bekleyen", "fatura gelmeyen", "kdv riski",
+          "odedim ama fatura", "fatura kesilmedi"),
          lambda: _j(__import__("fatura_api").belge_merkezi_ozet())),
         ("B45", "Gelecek ekstre tahmini (HESAPLANMIŞ: kart başına sıradaki kesimde "
                 "oluşan borç + asgari + kasa kıyası — tahmin, ekstre değil)",

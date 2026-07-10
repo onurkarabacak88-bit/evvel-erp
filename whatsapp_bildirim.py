@@ -1063,6 +1063,19 @@ def gunluk_ozet_mesaj_olustur(tarih: date | None = None) -> str:
     except Exception as _e:  # noqa: BLE001
         logger.warning(f"WA kart bolumu: {_e}")
 
+    # ── 🧾 FATURA İSTEK (BM-4) — ödenmiş ama faturasız ≥eşik ödemeler ──
+    # Açık istek yoksa bölüm hiç görünmez (alert-yorgunluğu önlenir). Hata-yutar.
+    try:
+        from fatura_istek_api import fatura_istek_ozet
+        _fi = fatura_istek_ozet()
+        if (_fi.get("acik_adet") or 0) > 0:
+            s.append("")
+            s.append(f"🧾 *FATURA BEKLEYEN ÖDEMELER*: {_fi['acik_adet']} adet / "
+                     f"{_fi['acik_toplam']:,.0f} TL (KDV riski ≈ {_fi['kdv_riski']:,.0f} TL)"
+                     f" — Belge Merkezi'nden tek tık iste")
+    except Exception as _e:  # noqa: BLE001
+        logger.warning(f"WA fatura istek bolumu: {_e}")
+
     return "\n".join(s)
 
 

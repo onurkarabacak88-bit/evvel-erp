@@ -113,6 +113,14 @@ except Exception as _belge_talep_err:
     logging.getLogger(__name__).warning(
         f"belge_talep modulu yuklenemedi (izole, ana akis etkilenmez): {_belge_talep_err}"
     )
+# Fatura İstek Motoru (BM-4+4A) — İZOLE (ödenmiş ama faturasız ≥eşik ödemeler).
+try:
+    from fatura_istek_api import router as fatura_istek_router
+    app.include_router(fatura_istek_router)
+except Exception as _fatura_istek_err:
+    logging.getLogger(__name__).warning(
+        f"fatura_istek modulu yuklenemedi (izole, ana akis etkilenmez): {_fatura_istek_err}"
+    )
 app.include_router(stok_sayim_router)
 app.include_router(supplier_payment_router)
 # K1 kart-ödeme tanısı — İZOLE mutabakat toplayıcı (salt-okur tarama + önizleme-varsayılan onarım)
@@ -517,6 +525,8 @@ def _gece_yarisi_scheduler():
                 gece_kart_dongu_izleme()  # F5: ekstre bekleyen / geciken kart olaylari
                 from fatura_api import gece_belge_kimlik
                 gece_belge_kimlik()  # BM-1: parmak izi + mukerrer/iade taramasi
+                from fatura_istek_api import gece_fatura_istek_tara
+                gece_fatura_istek_tara()  # BM-4: faturasiz buyuk odeme adaylari + oto-kapanis
                 from duyu_gorunumler import gece_agir_onhesap
                 gece_agir_onhesap()  # GOREV #56: agir uclar SIRALI on-hesap -> gunduz cache
                 from duyu_gorunumler import bag_defteri_hesapla
