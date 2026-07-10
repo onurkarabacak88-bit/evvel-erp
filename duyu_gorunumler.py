@@ -2016,8 +2016,9 @@ def kart_dongu():
                         s["mesaj"] = f"bu dönem TAM ödendi ({odenen})"
                     elif asgari > 0 and odenen >= asgari * 0.999:
                         s["durum"] = "odendi"
+                        s["devreden_kalan"] = round(borc - odenen, 2)
                         s["mesaj"] = (f"asgari ödendi ({odenen}) — kalan "
-                                      f"{round(borc - odenen, 2)} sonraki döneme devreder")
+                                      f"{s['devreden_kalan']} sonraki döneme devreder")
                     elif bugun <= son_odeme:
                         s["durum"] = "odeme_bekliyor"
                         s["gun"] = (son_odeme - bugun).days
@@ -2627,6 +2628,13 @@ def _bag_kart() -> List[dict]:
                                       "iptal edilebilirler gözden geçirilebilir")})
         except Exception as e:  # noqa: BLE001
             logger.warning("bag anomali/abonelik: %s", str(e)[:60])
+        devirli = [s for s in (dongu.get("kartlar") or []) if s.get("devreden_kalan")]
+        if devirli:
+            t_devir = round(sum(float(s["devreden_kalan"]) for s in devirli), 2)
+            out.append({"alanlar": ["kart", "devir", "faiz"], "tarih": None, "guven": "hesap",
+                        "cumle": (f"{len(devirli)} kart bu dönem yalnız ASGARİ ödedi; "
+                                  f"sonraki döneme devreden toplam {t_devir} — bu tutara "
+                                  "faiz işleyecek (hazır hesap, kart döngüsünden)")})
         gec = [s for s in (dongu.get("kartlar") or []) if s.get("durum") == "gecikti"]
         if gec:
             en_uzun = max(int(s.get("gun") or 0) for s in gec)
