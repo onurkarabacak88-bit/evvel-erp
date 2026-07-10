@@ -1987,11 +1987,16 @@ def kart_dongu():
                     son_kesim = kesim_tarihi_hesapla(oy, om, int(k["kesim_gunu"]))
                 son_odeme = son_odeme_tarihi_hesapla(son_kesim, int(k["sog"]))
                 cur.execute("""SELECT COALESCE(donem_borcu,0)::float AS borc,
-                                      COALESCE(asgari_tutar,0)::float AS asgari
+                                      COALESCE(asgari_tutar,0)::float AS asgari,
+                                      son_odeme_tarihi
                                FROM kart_ekstre_donem
                                WHERE kart_id=%s AND donem=DATE_TRUNC('month',%s::date) LIMIT 1""",
                             (k["id"], str(son_kesim)))
                 snap = dict(cur.fetchone() or {})
+                # SNAPSHOT'taki GERÇEK son ödeme tarihi hesaplananı ezer
+                # (Axess vakası: hesap 20 dedi, ekstre 16 diyor — banka haklı)
+                if snap.get("son_odeme_tarihi"):
+                    son_odeme = snap["son_odeme_tarihi"]
                 s = {"kart": k["kart_adi"], "kesim": str(son_kesim), "son_odeme": str(son_odeme)}
                 if not snap:
                     s["durum"] = "ekstre_bekleniyor"

@@ -12,6 +12,14 @@ export default function BelgeMerkezi() {
   const [d, setD] = useState(null);
   const [hata, setHata] = useState('');
   const [acikToptanci, setAcikToptanci] = useState(null);
+  // BM-8: tam metin arama
+  const [q, setQ] = useState('');
+  const [araSonuc, setAraSonuc] = useState(null);
+  async function ara() {
+    if (q.trim().length < 2) return;
+    try { setAraSonuc(await api(`/fatura/ara?q=${encodeURIComponent(q.trim())}`)); }
+    catch (e) { setAraSonuc({ hata: e?.message || 'arama hatası' }); }
+  }
 
   useEffect(() => {
     setD(null); setHata('');
@@ -32,6 +40,31 @@ export default function BelgeMerkezi() {
           Fatura arşivi · faturasız harcamalar · gün gün kapsama
         </span>
       </div>
+      {/* BM-8 — arama */}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+        <input value={q} onChange={e => setQ(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && ara()}
+          placeholder="🔍 Fatura ara: tedarikçi, fatura no, belge içeriği, ürün adı…"
+          style={{ flex: 1, background: 'var(--bg2)', color: 'var(--text)',
+                   border: '1px solid var(--border)', borderRadius: 8, padding: '8px 12px' }} />
+        <button className="btn btn-secondary" onClick={ara}>Ara</button>
+        {araSonuc && <button className="btn btn-secondary" onClick={() => { setAraSonuc(null); setQ(''); }}>✕</button>}
+      </div>
+      {araSonuc && (
+        <div className="card" style={{ padding: 14, marginBottom: 14 }}>
+          <div style={{ fontWeight: 800, marginBottom: 6 }}>🔍 Arama: "{araSonuc.q}" — {araSonuc.adet ?? 0} sonuç</div>
+          {araSonuc.hata && <div style={{ color: 'var(--red)' }}>{araSonuc.hata}</div>}
+          {(araSonuc.sonuclar || []).map(s => (
+            <div key={s.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 12, padding: '4px 0', borderBottom: '1px solid var(--border)' }}>
+              <span>{s.tarih || '—'} · <b>{s.tedarikci_ad || '?'}</b> · {s.fatura_no || 'no yok'}
+                {s.gib_dogrulama === 'dogrulandi' && ' · ✅GİB'}
+                {s.gib_dogrulama === 'supheli' && ' · ⚠️GİB'}</span>
+              <span style={{ whiteSpace: 'nowrap' }}>{fmt(s.tutar)} <a href={s.goruntule} target="_blank" rel="noreferrer" style={{ color: 'var(--blue, #60a5fa)' }}>📎</a>{' '}
+                <a href="https://ebelge.gib.gov.tr/earsivsorgula.html" target="_blank" rel="noreferrer" title="GİB e-Arşiv sorgula (sonucu sistemde damgala)" style={{ color: 'var(--text3)' }}>🏛️</a></span>
+            </div>
+          ))}
+        </div>
+      )}
       {hata && <div className="card" style={{ padding: 14, color: 'var(--red)' }}>{hata}</div>}
       {!d && !hata && <div style={{ color: 'var(--text3)' }}>Yükleniyor…</div>}
       {d && (

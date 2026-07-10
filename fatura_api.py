@@ -118,11 +118,24 @@ def _ensure_tablolar(cur) -> None:
         )
     """)
     cur.execute("CREATE INDEX IF NOT EXISTS idx_tufg_ted_stok ON tedarikci_urun_fiyat_gecmis (tedarikci_ad, stok_kodu, gecerlilik_ts DESC)")
+    # BM-1 (2026-07-10): belge kimliği + GİB damgası kolonları
+    cur.execute("ALTER TABLE tedarikci_fatura ADD COLUMN IF NOT EXISTS parmak_izi TEXT")
+    cur.execute("ALTER TABLE tedarikci_fatura ADD COLUMN IF NOT EXISTS ettn TEXT")
+    cur.execute("ALTER TABLE tedarikci_fatura ADD COLUMN IF NOT EXISTS gib_dogrulama TEXT")
+    cur.execute("ALTER TABLE tedarikci_fatura ADD COLUMN IF NOT EXISTS gib_dogrulama_ts TIMESTAMPTZ")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_tf_parmak ON tedarikci_fatura (parmak_izi)")
+    # BM-8: tam metin arama (simple config — Türkçe ekleri ILIKE yedeğiyle telafi)
+    cur.execute("""CREATE INDEX IF NOT EXISTS idx_tf_fts ON tedarikci_fatura
+                   USING GIN (to_tsvector('simple',
+                       COALESCE(tedarikci_ad,'') || ' ' || COALESCE(fatura_no,'') || ' ' ||
+                       COALESCE(kaynak_metin,'')))""")
     _TABLOLAR_HAZIR = True
 
 
-# ── Saklama politikası: fotoğraf = "ürün geldi" kanıtı, 6 ay tutulur ──────────
-FATURA_FOTO_SAKLAMA_AY = 6
+# ── Saklama politikası (BM-0a, 2026-07-10): VUK 5 yıl / TTK 10 yıl belge saklama
+# yükümlülüğü — 6 aylık silme YASAL RİSKti. 120 aya çekildi; kalıcı çözüm BM-0b
+# (obje depoya taşıma, DB'de yalnız künye+hash). Hacim ~0.5GB/yıl — taşınabilir.
+FATURA_FOTO_SAKLAMA_AY = 120
 
 
 def fatura_foto_temizle(cur) -> int:
@@ -674,6 +687,130 @@ def fatura_sil(fatura_id: str):
     if not n:
         raise HTTPException(404, "Fatura bulunamadı")
     return {"ok": True, "silinen": fid}
+
+
+def _belge_parmak_izi(vkn, fno, tarih, tutar, ted_ad) -> str:
+    """BM-1 belge kimliği: VKN+fatura_no+tarih+tutar (+normalize tedarikçi adı yedeği).
+    Codex notu: fatura_no tek başına yetmez — bileşik kimlik."""
+    import hashlib as _h
+    tn = (str(ted_ad or "").strip().upper()
+          .replace("İ", "I").replace("Ş", "S").replace("Ğ", "G")
+          .replace("Ü", "U").replace("Ö", "O").replace("Ç", "C"))[:40]
+    ham = f"{(vkn or '').strip()}|{(fno or '').strip().upper()}|{str(tarih or '')[:10]}|"           f"{round(float(tutar or 0), 2)}|{tn}"
+    return _h.sha256(ham.encode("utf-8")).hexdigest()[:32]
+
+
+def gece_belge_kimlik() -> dict:
+    """BM-1: (1) parmak izi backfill, (2) MÜKERRER adayları (aynı kimlik >1 kayıt),
+    (3) İADE adayları (negatif tutar ↔ eş pozitif) → duyu olayları. Öneri-only."""
+    ozet = {"backfill": 0, "mukerrer": [], "iade": []}
+    try:
+        from duyu_omurga import duyu_olay_yaz
+        with db() as (conn, cur):
+            _ensure_tablolar(cur)
+            cur.execute(
+                """SELECT id, tedarikci_vkn, fatura_no, fatura_tarih, toplam_tutar, tedarikci_ad
+                   FROM tedarikci_fatura WHERE parmak_izi IS NULL LIMIT 500""")
+            for r in [dict(x) for x in cur.fetchall() or []]:
+                pi = _belge_parmak_izi(r.get("tedarikci_vkn"), r.get("fatura_no"),
+                                       r.get("fatura_tarih"), r.get("toplam_tutar"),
+                                       r.get("tedarikci_ad"))
+                cur.execute("UPDATE tedarikci_fatura SET parmak_izi=%s WHERE id=%s",
+                            (pi, r["id"]))
+                ozet["backfill"] += 1
+            # mükerrer: aynı kimlik, tutar>0, birden çok kayıt
+            cur.execute(
+                """SELECT parmak_izi, COUNT(*)::int AS n,
+                          MIN(tedarikci_ad) AS ted, MIN(fatura_tarih)::text AS t,
+                          MIN(COALESCE(toplam_tutar,0))::float AS tutar
+                   FROM tedarikci_fatura
+                   WHERE parmak_izi IS NOT NULL AND COALESCE(toplam_tutar,0) > 0
+                   GROUP BY parmak_izi HAVING COUNT(*) > 1""")
+            for r in [dict(x) for x in cur.fetchall() or []]:
+                ozet["mukerrer"].append({"tedarikci": r["ted"], "tarih": r["t"],
+                                         "tutar": r["tutar"], "adet": r["n"]})
+                duyu_olay_yaz("belge_kimlik", "belge.fatura.mukerrer_aday",
+                              f"{r['parmak_izi']}",
+                              entity_scope="belge", entity_id=str(r["ted"] or "")[:40],
+                              signal_name="Mükerrer fatura adayı (aynı kimlik)",
+                              payload=r)
+            # iade: negatif tutarlı belge ↔ aynı tedarikçi eş pozitif (±30g)
+            cur.execute(
+                """SELECT n.id, n.tedarikci_ad, n.fatura_tarih::text AS t,
+                          n.toplam_tutar::float AS tutar
+                   FROM tedarikci_fatura n
+                   WHERE COALESCE(n.toplam_tutar,0) < 0
+                     AND EXISTS (SELECT 1 FROM tedarikci_fatura p
+                                 WHERE p.tedarikci_ad = n.tedarikci_ad
+                                   AND ABS(COALESCE(p.toplam_tutar,0) + n.toplam_tutar) <= 1
+                                   AND ABS(p.fatura_tarih - n.fatura_tarih) <= 30)""")
+            for r in [dict(x) for x in cur.fetchall() or []]:
+                ozet["iade"].append(r)
+                duyu_olay_yaz("belge_kimlik", "belge.fatura.iade_aday",
+                              f"iade_{r['id']}",
+                              entity_scope="belge", entity_id=str(r["tedarikci_ad"] or "")[:40],
+                              signal_name="İade/ters belge adayı",
+                              payload=r)
+            conn.commit()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("gece belge kimlik: %s", str(e)[:120])
+    return ozet
+
+
+@router.post("/kimlik-tara")
+def belge_kimlik_tara_uc():
+    """BM-1 elle tetik: parmak izi backfill + mükerrer/iade tarama."""
+    return gece_belge_kimlik()
+
+
+@router.post("/{fatura_id}/gib-damga")
+def fatura_gib_damga(fatura_id: str, body: dict):
+    """BM-1 GİB doğrulaması İNSAN-DAMGALI (otomatik sorgu YOK — portal interaktif):
+    kullanıcı e-Arşiv sorgulama sayfasında kontrol eder, sonucu buraya damgalar."""
+    sonuc = str((body or {}).get("sonuc") or "").strip()
+    if sonuc not in ("dogrulandi", "supheli", "bulunamadi"):
+        raise HTTPException(400, "sonuc: dogrulandi | supheli | bulunamadi")
+    with db() as (conn, cur):
+        _ensure_tablolar(cur)
+        cur.execute(
+            """UPDATE tedarikci_fatura
+               SET gib_dogrulama=%s, gib_dogrulama_ts=NOW() WHERE id=%s RETURNING id""",
+            (sonuc, fatura_id))
+        if not cur.fetchone():
+            raise HTTPException(404, "Fatura bulunamadı")
+        conn.commit()
+    return {"ok": True, "id": fatura_id, "gib_dogrulama": sonuc,
+            "sorgu_sayfasi": "https://ebelge.gib.gov.tr/earsivsorgula.html"}
+
+
+@router.get("/ara")
+def fatura_ara(q: str, limit: int = 30):
+    """BM-8 TAM METİN ARAMA: tedarikçi adı + fatura no + belge içeriği (kaynak_metin)
+    + kalem adları. GIN indeksli tsquery + ILIKE yedeği (Türkçe ekleri için)."""
+    q = (q or "").strip()
+    if len(q) < 2:
+        raise HTTPException(400, "q en az 2 karakter")
+    lim = max(1, min(100, int(limit or 30)))
+    with db() as (_, cur):
+        _ensure_tablolar(cur)
+        cur.execute(
+            """SELECT DISTINCT f.id, f.tedarikci_ad, f.fatura_no,
+                      f.fatura_tarih::text AS tarih,
+                      COALESCE(f.toplam_tutar,0)::float AS tutar, f.durum,
+                      f.gib_dogrulama
+               FROM tedarikci_fatura f
+               LEFT JOIN tedarikci_fatura_kalem k ON k.fatura_id = f.id
+               WHERE to_tsvector('simple',
+                       COALESCE(f.tedarikci_ad,'') || ' ' || COALESCE(f.fatura_no,'') || ' ' ||
+                       COALESCE(f.kaynak_metin,'')) @@ websearch_to_tsquery('simple', %s)
+                  OR f.tedarikci_ad ILIKE %s OR f.fatura_no ILIKE %s
+                  OR k.ocr_ad ILIKE %s
+               ORDER BY tarih DESC NULLS LAST LIMIT %s""",
+            (q, f"%{q}%", f"%{q}%", f"%{q}%", lim))
+        sonuclar = [dict(r) for r in cur.fetchall() or []]
+    for s in sonuclar:
+        s["goruntule"] = f"/api/fatura/{s['id']}/foto"
+    return {"q": q, "adet": len(sonuclar), "sonuclar": sonuclar}
 
 
 def belge_merkezi_ozet(ay: str = ""):
