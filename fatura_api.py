@@ -1064,11 +1064,13 @@ def cari_ekstre(tedarikci: str = ""):
                WHERE durum='odendi' AND (tedarikci ILIKE %s OR aciklama ILIKE %s)
                UNION ALL
                SELECT 'anlik_gider', tarih::text, tutar::float, LEFT(COALESCE(aciklama,''),60)
-               FROM anlik_giderler WHERE durum='aktif' AND aciklama ILIKE %s
+               FROM anlik_giderler
+               WHERE durum='aktif' AND kaynak_id IS NULL AND aciklama ILIKE %s
                UNION ALL
                SELECT 'kart', h.tarih::text, h.tutar::float, LEFT(COALESCE(h.aciklama,''),60)
                FROM kart_hareketleri h
-               WHERE h.islem_turu='HARCAMA' AND h.durum='aktif' AND h.aciklama ILIKE %s
+               WHERE h.islem_turu='HARCAMA' AND h.durum='aktif'
+                 AND h.kaynak_id IS NULL AND h.aciklama ILIKE %s
                ORDER BY 2 DESC LIMIT 60""",
             (f"%{ara}%", f"%{ara}%", f"%{ara}%", f"%{ara}%"))
         odeme_adaylari = [dict(r) for r in cur.fetchall() or []]
@@ -1085,8 +1087,108 @@ def cari_ekstre(tedarikci: str = ""):
         "bekleyen_vade_toplam": round(sum(v["tutar"] for v in bekleyen_vadeler), 2),
         "odeme_adaylari": odeme_adaylari,
         "not": ("Beyan bakiye = tedarikçinin fatura üstü beyanı (≈). Ödeme adayları "
-                "metin eşleşmesidir — kesin mutabakat değil (öneri-only)."),
+                "metin eşleşmesidir — kesin mutabakat değil (öneri-only). VKN'siz "
+                "tedarikçilerde ad yazım farkı ayrı satır açabilir — kanonik çözüm "
+                "VKN (fatura OCR'ı doldurdukça birleşir)."),
     }
+
+
+# ── BM-6: SATIR FİYAT BANDI (2026-07-10) ────────────────────────────────────
+# Onaylı fatura kalemlerinden ürün başına fiyat bandı (medyan + aralık) çıkar;
+# SON fiyat bandın ±%10 dışındaysa ve/veya maliyet kartındaki (urun_alis_fiyat)
+# fiyattan saparsa ADAY olarak gösterir. Fizibilite şartı: birim dönüşümü YOK —
+# yalnız AYNI BİRİM kıyaslanır (gramaj/koli master-data işi, heuristik yasak).
+# Öneri-only: hiçbir fiyat kaydını DEĞİŞTİRMEZ.
+
+def fiyat_bandi_ozet() -> dict:
+    from statistics import median
+    with db() as (_, cur):
+        _ensure_tablolar(cur)
+        cur.execute(
+            """SELECT k.eslesen_stok_kodu AS kod,
+                      COALESCE(NULLIF(TRIM(k.ocr_ad),''),'?') AS ad,
+                      LOWER(COALESCE(NULLIF(TRIM(k.birim),''),'adet')) AS birim,
+                      COALESCE(f.fatura_tarih, f.olusturma::date)::text AS tarih,
+                      k.birim_fiyat::float AS fiyat, f.tedarikci_ad AS tedarikci
+               FROM tedarikci_fatura_kalem k
+               JOIN tedarikci_fatura f ON f.id = k.fatura_id
+               WHERE k.eslesen_stok_kodu IS NOT NULL AND k.birim_fiyat > 0
+                 AND COALESCE(f.fatura_tarih, f.olusturma::date) >= CURRENT_DATE - 180
+               ORDER BY COALESCE(f.fatura_tarih, f.olusturma::date)""")
+        satirlar = [dict(r) for r in cur.fetchall() or []]
+        cur.execute(
+            """SELECT DISTINCT ON (kalem_kodu) kalem_kodu, birim,
+                      birim_maliyet_tl::float AS kart_fiyat
+               FROM urun_alis_fiyat
+               WHERE gecerli_bitis IS NULL OR gecerli_bitis >= CURRENT_DATE
+               ORDER BY kalem_kodu, gecerli_baslangic DESC""")
+        kartlar = {(r["kalem_kodu"], (r["birim"] or "adet").lower()): float(r["kart_fiyat"])
+                   for r in cur.fetchall() or []}
+
+    gruplar: dict = {}
+    for s in satirlar:
+        gruplar.setdefault((s["kod"], s["birim"]), []).append(s)
+    bantlar, band_disi = [], []
+    for (kod, birim), gl in gruplar.items():
+        if len(gl) < 3:
+            continue  # 3 gözlem altı band kurulamaz (yanlış güven üretme)
+        fiyatlar = [g["fiyat"] for g in gl]
+        med = round(median(fiyatlar), 4)
+        son = gl[-1]
+        sapma = round((son["fiyat"] - med) / med * 100, 1) if med > 0 else None
+        kart = kartlar.get((kod, birim))
+        kart_sapma = (round((son["fiyat"] - kart) / kart * 100, 1)
+                      if kart and kart > 0 else None)
+        b = {"kod": kod, "ad": son["ad"], "birim": birim, "gozlem": len(gl),
+             "medyan": med, "aralik": [round(min(fiyatlar), 4), round(max(fiyatlar), 4)],
+             "son_fiyat": son["fiyat"], "son_tarih": son["tarih"],
+             "son_tedarikci": son.get("tedarikci"),
+             "sapma_yuzde": sapma, "kart_fiyat": kart, "kart_sapma_yuzde": kart_sapma}
+        bantlar.append(b)
+        if (sapma is not None and abs(sapma) >= 10) or \
+           (kart_sapma is not None and abs(kart_sapma) >= 10):
+            band_disi.append(b)
+    band_disi.sort(key=lambda x: -abs(x.get("sapma_yuzde") or 0))
+    return {
+        "urun_adet": len(bantlar),
+        "band_disi_adet": len(band_disi),
+        "band_disi": band_disi[:20],
+        "bantlar": sorted(bantlar, key=lambda x: -abs(x.get("sapma_yuzde") or 0))[:40],
+        "not": ("Band = onaylı fatura kalemlerinin 180 günlük medyanı (≥3 gözlem, AYNI "
+                "birim). Sapma ≥%10 ADAY — fiyat kaydı DEĞİŞTİRİLMEZ, maliyet kartı "
+                "güncellemesi insan onayıyla (Price Approval). Birim dönüşümü yapılmaz."),
+    }
+
+
+@router.get("/fiyat-bandi")
+def fiyat_bandi_uc():
+    return fiyat_bandi_ozet()
+
+
+def gece_fiyat_bandi_izleme() -> dict:
+    """GECE: band dışı ürünler omurgaya olay olarak yazılır (gün-idempotent).
+    Hata-yutar — gece zinciri yaşar."""
+    try:
+        o = fiyat_bandi_ozet()
+        try:
+            from duyu_omurga import duyu_olay_yaz
+            for b in (o.get("band_disi") or [])[:10]:
+                duyu_olay_yaz(
+                    "belge", "belge.fiyat.band_disi",
+                    f"{b['kod']}|{b['son_tarih']}",
+                    entity_scope="urun", entity_id=b["kod"],
+                    signal_name="Fiyat bandı dışı alım",
+                    payload={"ad": b["ad"], "birim": b["birim"],
+                             "medyan": b["medyan"], "son_fiyat": b["son_fiyat"],
+                             "sapma_yuzde": b["sapma_yuzde"],
+                             "kart_sapma_yuzde": b["kart_sapma_yuzde"],
+                             "tedarikci": b.get("son_tedarikci")})
+        except Exception:  # noqa: BLE001
+            pass
+        return {"ok": True, "band_disi": o.get("band_disi_adet", 0)}
+    except Exception as e:  # noqa: BLE001
+        logger.warning("fiyat bandi izleme hatasi (yutuldu): %s", str(e)[:200])
+        return {"ok": False, "hata": str(e)[:200]}
 
 
 @router.get("/bekleyen")

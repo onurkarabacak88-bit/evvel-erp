@@ -2757,6 +2757,31 @@ def _bag_cari() -> List[dict]:
     return out
 
 
+def _bag_fiyat_bandi() -> List[dict]:
+    """BM-6 bağı: fatura kalemlerinden fiyat bandı sapmaları (KOD hesaplar).
+    Yalnız aynı-birim kıyası; fiyat kaydını DEĞİŞTİRMEZ (öneri-only)."""
+    out = []
+    try:
+        from fatura_api import fiyat_bandi_ozet
+        o = fiyat_bandi_ozet()
+        for b in (o.get("band_disi") or [])[:4]:
+            yon = "üstünde" if (b.get("sapma_yuzde") or 0) > 0 else "altında"
+            kart_ek = ""
+            if b.get("kart_sapma_yuzde") is not None:
+                kart_ek = (f"; maliyet kartından sapma %{b['kart_sapma_yuzde']} "
+                           f"(kart {b['kart_fiyat']})")
+            out.append({"alanlar": ["fiyat", "fatura", "maliyet"],
+                        "tarih": b.get("son_tarih"), "guven": "hesap",
+                        "cumle": (f"{b['ad']} ({b['birim']}): son alım {b['son_fiyat']} — "
+                                  f"180 günlük bandın (medyan {b['medyan']}) "
+                                  f"%{abs(b['sapma_yuzde'])} {yon}{kart_ek} — "
+                                  "fiyat bandı adayı (hazır hesap, fiyat kaydı "
+                                  "değiştirilmedi)")})
+    except Exception as e:  # noqa: BLE001
+        logger.warning("bag fiyat_bandi: %s", str(e)[:60])
+    return out
+
+
 def _bag_ciro_kasa() -> List[dict]:
     """Ciro↔kasa farkı bağı (dilek e59f57ec/10044dff: 'bu cirolarda kasa açığı
     var mı?') — şube-gün cirosu ile AYNI GÜNÜN kasa fark uyarısı yan yana."""
@@ -2852,6 +2877,7 @@ _BAG_KAYNAKLARI = [
     ("belge", _bag_belge),
     ("fatura_istek", _bag_fatura_istek),
     ("cari", _bag_cari),
+    ("fiyat_bandi", _bag_fiyat_bandi),
     ("ciro_kasa", _bag_ciro_kasa),
     ("evo_ciro", _bag_evo_ciro),
 ]

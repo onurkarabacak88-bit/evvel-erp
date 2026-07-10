@@ -755,6 +755,13 @@ def _blok_derle(soru: str, yonlendirme_ek: str = "") -> List[Tuple[str, str, str
           "toptanci bakiye", "cari ekstre", "tedarikci ekstre",
           "hangi toptanciya", "ne kadar borcum"),
          lambda: _j(__import__("fatura_api").cari_ozet())),
+        ("B49", "Fiyat bandı (BM-6: fatura kalemlerinden ürün başına 180 günlük "
+                "fiyat bandı [medyan+aralık, aynı birim] + band dışı son alımlar + "
+                "maliyet kartı sapması — fiyat kaydı değiştirilmez)",
+         ("fiyat band", "fiyati artti", "fiyat artisi", "zam gelmis", "zam mi",
+          "pahali almisiz", "alis fiyati", "fiyati degisti", "fiyat anomali",
+          "hangi urun zamlandi", "fiyat sapma", "ucuza almisiz", "fiyat dustu"),
+         lambda: _j(__import__("fatura_api").fiyat_bandi_ozet())),
         ("B45", "Gelecek ekstre tahmini (HESAPLANMIŞ: kart başına sıradaki kesimde "
                 "oluşan borç + asgari + kasa kıyası — tahmin, ekstre değil)",
          ("gelecek ekstre", "gelecek ay borc", "onumuzdeki ay kart", "kesimde ne kadar",

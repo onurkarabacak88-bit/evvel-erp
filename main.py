@@ -527,6 +527,8 @@ def _gece_yarisi_scheduler():
                 gece_belge_kimlik()  # BM-1: parmak izi + mukerrer/iade taramasi
                 from fatura_istek_api import gece_fatura_istek_tara
                 gece_fatura_istek_tara()  # BM-4: faturasiz buyuk odeme adaylari + oto-kapanis
+                from fatura_api import gece_fiyat_bandi_izleme
+                gece_fiyat_bandi_izleme()  # BM-6: band disi alim -> omurga olayi
                 from duyu_gorunumler import gece_agir_onhesap
                 gece_agir_onhesap()  # GOREV #56: agir uclar SIRALI on-hesap -> gunduz cache
                 from duyu_gorunumler import bag_defteri_hesapla

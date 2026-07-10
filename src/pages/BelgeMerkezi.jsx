@@ -37,6 +37,11 @@ export default function BelgeMerkezi() {
     catch { setFi(null); }
   }
   useEffect(() => { fiYenile(); }, []);
+  // BM-6: fiyat bandı (band dışı son alımlar)
+  const [fb, setFb] = useState(null);
+  useEffect(() => {
+    api('/fatura/fiyat-bandi').then(setFb).catch(() => setFb(null));
+  }, []);
   async function fiTara() {
     setFiMesaj('taranıyor…');
     try {
@@ -190,6 +195,29 @@ export default function BelgeMerkezi() {
                   ))}
                 </div>
               ))}
+            </div>
+          )}
+
+          {/* BM-6 — FİYAT BANDI (band dışı son alımlar; öneri-only) */}
+          {fb && fb.band_disi_adet > 0 && (
+            <div className="card" style={{ padding: 16, marginBottom: 14 }}>
+              <div style={{ fontWeight: 800, marginBottom: 4 }}>
+                📈 Fiyat Bandı — {fb.band_disi_adet} ürün band dışı
+                <span style={{ fontWeight: 400, fontSize: 12, color: 'var(--text3)' }}>
+                  {' '}({fb.urun_adet} ürünün 180 günlük bandı izleniyor)
+                </span>
+              </div>
+              {(fb.band_disi || []).slice(0, 8).map(b => (
+                <div key={`${b.kod}-${b.birim}`} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 12, padding: '3px 0', borderBottom: '1px solid var(--border)' }}>
+                  <span>{(b.ad || b.kod).slice(0, 38)} <span style={{ color: 'var(--text3)' }}>({b.birim})</span> · medyan {b.medyan}</span>
+                  <span style={{ whiteSpace: 'nowrap', color: (b.sapma_yuzde || 0) > 0 ? 'var(--red)' : 'var(--green)' }}>
+                    son {b.son_fiyat} ({b.sapma_yuzde > 0 ? '+' : ''}{b.sapma_yuzde}%)
+                  </span>
+                </div>
+              ))}
+              <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
+                Aynı birim kıyası; fiyat kaydı değiştirilmez — maliyet kartı güncellemesi insan onayıyla.
+              </div>
             </div>
           )}
 
