@@ -42,6 +42,11 @@ export default function BelgeMerkezi() {
   useEffect(() => {
     api('/fatura/fiyat-bandi').then(setFb).catch(() => setFb(null));
   }, []);
+  // BM-2: mutabakat zinciri (sipariş→teslim→belge→fatura→ödeme izi)
+  const [mz, setMz] = useState(null);
+  useEffect(() => {
+    api('/fatura/mutabakat-zinciri').then(setMz).catch(() => setMz(null));
+  }, []);
   async function fiTara() {
     setFiMesaj('taranıyor…');
     try {
@@ -141,7 +146,48 @@ export default function BelgeMerkezi() {
             <div style={{ fontSize: 12, color: 'var(--text3)', marginTop: 4 }}>
               Kapsama: {oran != null ? `%${oran}` : '—'} · faturasız kısım = belge isteme adayı (KDV indirimi + gider kanıtı)
             </div>
+            {/* BM-3 — KDV kanıt sınıflaması + BM-0b arşiv boyutu */}
+            {(d.kdv_kanit || d.arsiv_depo) && (
+              <div style={{ fontSize: 12, marginTop: 8, display: 'flex', gap: 16, flexWrap: 'wrap', color: 'var(--text3)' }}>
+                {d.kdv_kanit && (
+                  <span>
+                    🧮 KDV kanıt: <b style={{ color: 'var(--green)' }}>{d.kdv_kanit.indirime_aday.adet} sağlam</b> ({fmt(d.kdv_kanit.indirime_aday.toplam)})
+                    {d.kdv_kanit.inceleme.adet > 0 && <> · <b style={{ color: '#f59e0b' }}>{d.kdv_kanit.inceleme.adet} inceleme</b> ({fmt(d.kdv_kanit.inceleme.toplam)} — no/VKN eksik)</>}
+                    {d.kdv_kanit.supheli.adet > 0 && <> · <b style={{ color: 'var(--red)' }}>{d.kdv_kanit.supheli.adet} şüpheli</b></>}
+                    {' '}· hüküm muhasebecinin
+                  </span>
+                )}
+                {d.arsiv_depo && (
+                  <span>💾 Arşiv: {d.arsiv_depo.dosyali_adet} dosya / {d.arsiv_depo.toplam_mb} MB</span>
+                )}
+              </div>
+            )}
           </div>
+
+          {/* BM-2 — MUTABAKAT ZİNCİRİ (eksik halkalar varsa) */}
+          {mz && mz.siparis_adet > 0 && (mz.sayac?.tam ?? 0) < mz.siparis_adet && (
+            <div className="card" style={{ padding: 16, marginBottom: 14 }}>
+              <div style={{ fontWeight: 800, marginBottom: 4 }}>
+                🔗 Mutabakat Zinciri — son 60 gün: {mz.sayac.tam}/{mz.siparis_adet} sipariş TAM
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 6 }}>
+                sipariş → teslim → belge → fatura → ödeme izi
+                {mz.sayac.teslim_yok > 0 && <> · teslim yok: <b>{mz.sayac.teslim_yok}</b></>}
+                {mz.sayac.belge_acik > 0 && <> · belge açık: <b>{mz.sayac.belge_acik}</b></>}
+                {mz.sayac.fatura_yok > 0 && <> · fatura yok: <b>{mz.sayac.fatura_yok}</b></>}
+                {mz.sayac.odeme_izi_yok > 0 && <> · ödeme izi yok: <b>{mz.sayac.odeme_izi_yok}</b></>}
+              </div>
+              {(mz.eksik_zincirler || []).slice(0, 6).map(z => (
+                <div key={z.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 12, padding: '3px 0', borderBottom: '1px solid var(--border)' }}>
+                  <span>{z.siparis_tarihi} · {(z.tedarikci_ad || '?').slice(0, 30)}</span>
+                  <span style={{ color: 'var(--red)', whiteSpace: 'nowrap' }}>
+                    {z.eksik === 'teslim_yok' ? 'teslim alınmadı' : z.eksik === 'belge_acik' ? 'belge bekleniyor'
+                      : z.eksik === 'fatura_yok' ? 'fatura yok' : 'ödeme izi yok'}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
 
           {/* BM-4 — FATURA İSTE (ödenmiş ama faturasız ≥eşik ödemeler) */}
           {fi && (

@@ -762,6 +762,14 @@ def _blok_derle(soru: str, yonlendirme_ek: str = "") -> List[Tuple[str, str, str
           "pahali almisiz", "alis fiyati", "fiyati degisti", "fiyat anomali",
           "hangi urun zamlandi", "fiyat sapma", "ucuza almisiz", "fiyat dustu"),
          lambda: _j(__import__("fatura_api").fiyat_bandi_ozet())),
+        ("B50", "Mutabakat zinciri (BM-2: son 60 gün toptancı siparişlerinde "
+                "sipariş→teslim→belge→fatura→ödeme izi halkaları; tam/eksik "
+                "sayaçları + eksik zincir listesi — belge seviyesi)",
+         ("mutabakat", "zincir eksik", "siparis fatura", "teslim fatura",
+          "siparisin faturasi", "hangi siparisler", "odeme izi",
+          "fatura odeme eslesme", "zincir tam mi", "bes li mutabakat",
+          "teslimat belgesi"),
+         lambda: _j(__import__("fatura_api").mutabakat_zinciri())),
         ("B45", "Gelecek ekstre tahmini (HESAPLANMIŞ: kart başına sıradaki kesimde "
                 "oluşan borç + asgari + kasa kıyası — tahmin, ekstre değil)",
          ("gelecek ekstre", "gelecek ay borc", "onumuzdeki ay kart", "kesimde ne kadar",

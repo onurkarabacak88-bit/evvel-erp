@@ -2782,6 +2782,30 @@ def _bag_fiyat_bandi() -> List[dict]:
     return out
 
 
+def _bag_mutabakat_zinciri() -> List[dict]:
+    """BM-2 bağı: sipariş→teslim→belge→fatura→ödeme zincirinin eksik halkaları
+    (belge-seviyesi; sayıları KOD hazırlar, hüküm insanın)."""
+    out = []
+    try:
+        from fatura_api import mutabakat_zinciri
+        o = mutabakat_zinciri()
+        s = o.get("sayac") or {}
+        eksik_toplam = sum(v for k, v in s.items() if k != "tam")
+        if eksik_toplam > 0:
+            out.append({"alanlar": ["siparis", "fatura", "odeme"], "tarih": None,
+                        "guven": "hesap",
+                        "cumle": (f"son 60 günün {o.get('siparis_adet')} toptancı "
+                                  f"siparişinde zincir: {s.get('tam', 0)} TAM; eksikler — "
+                                  f"teslim yok {s.get('teslim_yok', 0)}, belge açık "
+                                  f"{s.get('belge_acik', 0)}, fatura yok "
+                                  f"{s.get('fatura_yok', 0)}, ödeme izi yok "
+                                  f"{s.get('odeme_izi_yok', 0)} (belge-seviyesi hazır "
+                                  "hesap; ödeme izi aday eşleşmesidir)")})
+    except Exception as e:  # noqa: BLE001
+        logger.warning("bag mutabakat: %s", str(e)[:60])
+    return out
+
+
 def _bag_ciro_kasa() -> List[dict]:
     """Ciro↔kasa farkı bağı (dilek e59f57ec/10044dff: 'bu cirolarda kasa açığı
     var mı?') — şube-gün cirosu ile AYNI GÜNÜN kasa fark uyarısı yan yana."""
@@ -2878,6 +2902,7 @@ _BAG_KAYNAKLARI = [
     ("fatura_istek", _bag_fatura_istek),
     ("cari", _bag_cari),
     ("fiyat_bandi", _bag_fiyat_bandi),
+    ("mutabakat_zinciri", _bag_mutabakat_zinciri),
     ("ciro_kasa", _bag_ciro_kasa),
     ("evo_ciro", _bag_evo_ciro),
 ]

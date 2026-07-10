@@ -901,6 +901,26 @@ def belge_merkezi_ozet(ay: str = ""):
         fatura_istekleri = fatura_istek_ozet()
     except Exception:  # noqa: BLE001
         pass
+    # BM-3: KDV kanıt sınıflaması (belge-kanıt seviyesi) — hata-yutar
+    kdv_kanit = None
+    try:
+        kdv_kanit = kdv_kanit_ozet(hedef)
+    except Exception:  # noqa: BLE001
+        pass
+    # BM-0b görünürlüğü: arşiv depo boyutu (BYTEA) — obje depoya geçiş eşiği izlenir
+    arsiv_depo = None
+    try:
+        with db() as (_, cur):
+            cur.execute(
+                """SELECT COUNT(*)::int AS adet,
+                          ROUND(COALESCE(SUM(OCTET_LENGTH(foto)),0) / 1048576.0, 1) AS mb
+                   FROM tedarikci_fatura WHERE foto IS NOT NULL""")
+            r0 = dict(cur.fetchone() or {})
+        arsiv_depo = {"dosyali_adet": int(r0.get("adet") or 0),
+                      "toplam_mb": float(r0.get("mb") or 0),
+                      "not": "≈500 MB üstünde obje depoya taşıma (BM-0b) gündeme alınmalı"}
+    except Exception:  # noqa: BLE001
+        pass
     return {
         "ay": hedef,
         "kapsama": {
@@ -915,6 +935,8 @@ def belge_merkezi_ozet(ay: str = ""):
         "faturasiz_harcamalar": faturasiz[:40],
         "fatura_arsivi": faturalar[:60],
         "fatura_istekleri": fatura_istekleri,
+        "kdv_kanit": kdv_kanit,
+        "arsiv_depo": arsiv_depo,
         "not": "ADAY eşleştirme (±%2 tutar, ±5 gün) — hüküm değil. Faturasız satır = "
                "belge isteme adayı (KDV indirimi + gider kanıtı). PDF/foto: goruntule "
                "linki. Nakit işletme giderleri (anlık gider) bu sürümde kapsam dışı — "
@@ -1091,6 +1113,153 @@ def cari_ekstre(tedarikci: str = ""):
                 "tedarikçilerde ad yazım farkı ayrı satır açabilir — kanonik çözüm "
                 "VKN (fatura OCR'ı doldurdukça birleşir)."),
     }
+
+
+# ── BM-2: 5'Lİ MUTABAKAT ZİNCİRİ (2026-07-10, belge-seviyesi v1) ────────────
+# SİPARİŞ → TESLİM → BELGE TALEBİ → FATURA → ÖDEME İZİ halkaları. Satır-bazlı
+# varyans BİLİNÇLİ ertelendi (fizibilite: kanonik ürün kimliği + birim dönüşümü
+# önkoşul; N2 bulgusu: sipariş fiyatı siparişe yazılmıyor). Salt-okur, öneri-only.
+
+def mutabakat_zinciri() -> dict:
+    from datetime import date as _d
+    with db() as (_, cur):
+        _ensure_tablolar(cur)
+        cur.execute(
+            """SELECT ts.id, ts.talep_id, ts.tedarikci_ad,
+                      ts.olusturma::date::text AS siparis_tarihi,
+                      ts.durum, (ts.teslim_ts IS NOT NULL) AS teslim_var,
+                      bt.durum AS belge_durum, bt.kapanis_tipi, bt.fatura_id
+               FROM toptanci_siparis ts
+               LEFT JOIN belge_talep bt ON bt.ts_id = ts.id
+               WHERE ts.olusturma >= CURRENT_DATE - 60
+                 AND COALESCE(ts.durum,'') NOT IN ('iptal','iptal_edildi')
+               ORDER BY ts.olusturma DESC""")
+        siparisler = [dict(r) for r in cur.fetchall() or []]
+        cur.execute(
+            """SELECT siparis_talep_id, id, COALESCE(toplam_tutar,0)::float AS tutar,
+                      COALESCE(fatura_tarih, olusturma::date)::text AS tarih
+               FROM tedarikci_fatura
+               WHERE siparis_talep_id IS NOT NULL
+                 AND olusturma >= CURRENT_DATE - 75""")
+        fatura_map: dict = {}
+        for r in cur.fetchall() or []:
+            fatura_map.setdefault(r["siparis_talep_id"], []).append(dict(r))
+        # Ödeme izi penceresi (3 kanal, türetilmişler hariç) — tek sorgu
+        cur.execute(
+            """SELECT tarih::text AS tarih, tutar::float AS tutar FROM (
+                 SELECT vade_tarihi AS tarih, tutar FROM vadeli_alimlar
+                 WHERE durum='odendi' AND vade_tarihi >= CURRENT_DATE - 75
+                 UNION ALL
+                 SELECT tarih, tutar FROM anlik_giderler
+                 WHERE durum='aktif' AND kaynak_id IS NULL
+                   AND tarih >= CURRENT_DATE - 75
+                 UNION ALL
+                 SELECT tarih, tutar FROM kart_hareketleri
+                 WHERE islem_turu='HARCAMA' AND durum='aktif' AND kaynak_id IS NULL
+                   AND tarih >= CURRENT_DATE - 75) x""")
+        odemeler = [dict(r) for r in cur.fetchall() or []]
+
+    def _odeme_izi(tutar: float, tarih: str) -> bool:
+        for o in odemeler:
+            if abs(o["tutar"] - tutar) > max(5.0, tutar * 0.02):
+                continue
+            try:
+                gf = abs((_d.fromisoformat(str(tarih)[:10])
+                          - _d.fromisoformat(str(o["tarih"])[:10])).days)
+            except Exception:  # noqa: BLE001
+                continue
+            if gf <= 10:
+                return True
+        return False
+
+    zincirler, sayac = [], {"tam": 0, "teslim_yok": 0, "belge_acik": 0,
+                            "fatura_yok": 0, "odeme_izi_yok": 0}
+    for s in siparisler:
+        halka = {"siparis": True, "teslim": bool(s["teslim_var"] or s["belge_durum"]),
+                 "belge": s.get("belge_durum") in ("pdf_geldi", "kapandi"),
+                 "fatura": False, "odeme_izi": None}
+        fl = fatura_map.get(s.get("talep_id")) or []
+        if s.get("fatura_id") or fl:
+            halka["fatura"] = True
+            f0 = fl[0] if fl else None
+            if f0 and f0["tutar"] > 0:
+                halka["odeme_izi"] = _odeme_izi(f0["tutar"], f0["tarih"])
+        if not halka["teslim"]:
+            eksik = "teslim_yok"
+        elif not halka["fatura"] and s.get("belge_durum") == "bekliyor":
+            eksik = "belge_acik"
+        elif not halka["fatura"]:
+            eksik = "fatura_yok"
+        elif halka["odeme_izi"] is False:
+            eksik = "odeme_izi_yok"
+        else:
+            eksik = None
+            sayac["tam"] += 1
+        if eksik:
+            sayac[eksik] += 1
+        zincirler.append({**{k: s.get(k) for k in
+                             ("id", "tedarikci_ad", "siparis_tarihi")},
+                          "halkalar": halka, "eksik": eksik})
+    return {
+        "pencere_gun": 60, "siparis_adet": len(siparisler), "sayac": sayac,
+        "eksik_zincirler": [z for z in zincirler if z["eksik"]][:25],
+        "not": ("Belge-SEVİYESİ zincir (v1): sipariş→teslim→belge→fatura→ödeme izi. "
+                "Ödeme izi = tutar/tarih aday eşleşmesi (kesin mutabakat değil; "
+                "kısmi ödeme/çok-fatura-tek-ödeme izi düşürebilir). Satır-bazlı "
+                "varyans, kanonik ürün kimliği kurulunca (öneri-only)."),
+    }
+
+
+@router.get("/mutabakat-zinciri")
+def mutabakat_zinciri_uc():
+    return mutabakat_zinciri()
+
+
+# ── BM-3: KDV KANIT SINIFLAMASI (2026-07-10, belge-kanıt seviyesi v1) ───────
+# BİLİNÇLİ DAR KAPSAM (fizibilite: KDV/istisna/tevkifat kural seti olmadan
+# 'yanlış güven' üretme): KDV TUTARI HESAPLANMAZ; yalnız belge-kanıt gücü
+# sınıflanır. Hüküm muhasebecinin.
+
+def kdv_kanit_ozet(ay: str = "") -> dict:
+    from datetime import date as _d
+    hedef = (ay or "").strip()[:7] or _d.today().strftime("%Y-%m")
+    with db() as (_, cur):
+        _ensure_tablolar(cur)
+        cur.execute(
+            """SELECT COALESCE(toplam_tutar,0)::float AS tutar,
+                      NULLIF(TRIM(COALESCE(fatura_no,'')),'') AS fno,
+                      NULLIF(TRIM(COALESCE(tedarikci_vkn,'')),'') AS vkn,
+                      gib_dogrulama
+               FROM tedarikci_fatura
+               WHERE TO_CHAR(COALESCE(fatura_tarih, olusturma::date),'YYYY-MM') = %s""",
+            (hedef,))
+        rows = [dict(r) for r in cur.fetchall() or []]
+    saglam, inceleme, supheli = [], [], []
+    for r in rows:
+        if r.get("gib_dogrulama") == "supheli":
+            supheli.append(r)
+        elif r["fno"] and (r["vkn"] or r.get("gib_dogrulama") == "dogrulandi"):
+            saglam.append(r)
+        else:
+            inceleme.append(r)
+    def _t(liste):
+        return round(sum(x["tutar"] for x in liste), 2)
+    return {
+        "ay": hedef,
+        "indirime_aday": {"adet": len(saglam), "toplam": _t(saglam)},
+        "inceleme": {"adet": len(inceleme), "toplam": _t(inceleme)},
+        "supheli": {"adet": len(supheli), "toplam": _t(supheli)},
+        "not": ("BELGE-KANIT sınıflaması (v1): 'indirime aday' = fatura no + "
+                "(VKN veya GİB damgası ✓); 'inceleme' = no/VKN eksik; 'şüpheli' = "
+                "GİB damgası şüpheli. KDV TUTARI HESAPLANMAZ — hüküm muhasebecinin. "
+                "Eksikleri kapatmanın yolu: fatura onay ekranında no/VKN tamamla + "
+                "GİB damgala."),
+    }
+
+
+@router.get("/kdv-kanit")
+def kdv_kanit_uc(ay: str = ""):
+    return kdv_kanit_ozet(ay)
 
 
 # ── BM-6: SATIR FİYAT BANDI (2026-07-10) ────────────────────────────────────
