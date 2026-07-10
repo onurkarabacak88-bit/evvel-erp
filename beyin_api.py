@@ -739,7 +739,8 @@ def _blok_derle(soru: str, yonlendirme_ek: str = "") -> List[Tuple[str, str, str
                 "harcamaları + toptancı fatura özeti)",
          ("faturasi yok", "faturasiz", "fatura kapsam", "belge kapsam", "arsiv",
           "faturalari gor", "toptanci fatura", "hangi faturalar", "belge merkezi",
-          "kac fatura"),
+          "kac fatura", "faturasi sistemde", "faturasi olmayan", "faturasi var mi",
+          "hangilerinin faturasi", "harcamalarin faturasi", "belgesi yok"),
          lambda: _j(__import__("fatura_api").belge_merkezi_ozet())),
         ("B45", "Gelecek ekstre tahmini (HESAPLANMIŞ: kart başına sıradaki kesimde "
                 "oluşan borç + asgari + kasa kıyası — tahmin, ekstre değil)",
