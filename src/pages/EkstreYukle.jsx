@@ -439,11 +439,15 @@ export default function EkstreYukle() {
                     title="Eksikleri aktarır, kalan farkı mutabakat düzeltmesiyle kapatır — tek adım">
                     {ttBusy ? '⏳ Mutabakat yapılıyor…' : '⚡ Tek Tık Mutabakat (önerilen)'}
                   </button>
-                  <span style={{ fontSize: 11, color: 'var(--text3)' }}>veya gelişmiş:</span>
-                  <button className="btn btn-secondary btn-sm" onClick={tumYeni}>{secili.size === yeniGuvenliIdx.length ? 'Seçimi kaldır' : `Tüm eksikleri seç (${yeniGuvenliIdx.length})`}</button>
-                  <button className="btn btn-primary btn-sm" disabled={impBusy || secili.size === 0} onClick={iceAktar}>
-                    {impBusy ? '…' : `İçe Aktar (${secili.size})`}
-                  </button>
+                  <details style={{ display: 'inline-block' }}>
+                    <summary style={{ fontSize: 11, color: 'var(--text3)', cursor: 'pointer' }}>gelişmiş ▾</summary>
+                    <span style={{ display: 'inline-flex', gap: 8, marginLeft: 6 }}>
+                      <button className="btn btn-secondary btn-sm" onClick={tumYeni}>{secili.size === yeniGuvenliIdx.length ? 'Seçimi kaldır' : `Tüm eksikleri seç (${yeniGuvenliIdx.length})`}</button>
+                      <button className="btn btn-secondary btn-sm" disabled={impBusy || secili.size === 0} onClick={iceAktar}>
+                        {impBusy ? '…' : `İçe Aktar (${secili.size})`}
+                      </button>
+                    </span>
+                  </details>
                 </div>
               )}
             </div>

@@ -676,6 +676,112 @@ def fatura_sil(fatura_id: str):
     return {"ok": True, "silinen": fid}
 
 
+def belge_merkezi_ozet(ay: str = ""):
+    """🧾 BELGE MERKEZİ (2026-07-10, sahip: 'faturaları toptancı toptancı, ay ay,
+    gün gün görebildiğim; işletme harcamalarından faturası OLMAYANLARI direkt
+    gördüğüm mekanizma'): tek özet — (1) toptancı bazlı fatura arşivi, (2) gün gün
+    kırılım, (3) faturasız işletme kart harcamaları, (4) belge kapsama oranı.
+    Salt-okur; PDF/foto erişimi /api/fatura/{id}/foto."""
+    from datetime import date as _d
+    hedef = (ay or "").strip()[:7] or _d.today().strftime("%Y-%m")
+    with db() as (_, cur):
+        cur.execute(
+            """SELECT COALESCE(NULLIF(TRIM(tedarikci_ad),''),'(tedarikçi belirsiz)') AS toptanci,
+                      COUNT(*)::int AS adet,
+                      ROUND(COALESCE(SUM(toplam_tutar),0)::numeric,2) AS toplam,
+                      MAX(fatura_tarih)::text AS son_fatura
+               FROM tedarikci_fatura
+               WHERE TO_CHAR(COALESCE(fatura_tarih, olusturma::date),'YYYY-MM') = %s
+               GROUP BY 1 ORDER BY toplam DESC""", (hedef,))
+        toptancilar = [dict(r) for r in cur.fetchall() or []]
+        for t in toptancilar:
+            t["toplam"] = float(t["toplam"])
+        cur.execute(
+            """SELECT id, tedarikci_ad, fatura_tarih::text AS tarih,
+                      COALESCE(toplam_tutar,0)::float AS tutar, durum
+               FROM tedarikci_fatura
+               WHERE TO_CHAR(COALESCE(fatura_tarih, olusturma::date),'YYYY-MM') = %s
+               ORDER BY fatura_tarih DESC NULLS LAST LIMIT 200""", (hedef,))
+        faturalar = [dict(r) for r in cur.fetchall() or []]
+        for x in faturalar:
+            x["goruntule"] = f"/api/fatura/{x['id']}/foto"
+        cur.execute(
+            """SELECT h.id, h.tarih::text AS tarih, k.kart_adi,
+                      ROUND(h.tutar::numeric,2) AS tutar,
+                      LEFT(COALESCE(h.aciklama,''),50) AS aciklama,
+                      COALESCE(h.harcama_tipi,'belirsiz') AS tip
+               FROM kart_hareketleri h JOIN kartlar k ON k.id = h.kart_id
+               WHERE h.islem_turu='HARCAMA' AND h.durum='aktif'
+                 AND COALESCE(h.harcama_tipi,'belirsiz') <> 'sahsi'
+                 AND TO_CHAR(h.tarih,'YYYY-MM') = %s
+               ORDER BY h.tutar DESC LIMIT 300""", (hedef,))
+        harcamalar = [dict(r) for r in cur.fetchall() or []]
+    # eşleştirme (K2-D kuralı: tutar ±%2 / ±5 TL, tarih ±5 gün, fatura tek kullanım)
+    kullanildi: set = set()
+    faturasiz, eslesen_tutar = [], 0.0
+    for h in harcamalar:
+        tut = float(h["tutar"])
+        aday = None
+        for x in faturalar:
+            if x["id"] in kullanildi or float(x.get("tutar") or 0) <= 0:
+                continue
+            if abs(float(x["tutar"]) - tut) > max(5.0, tut * 0.02):
+                continue
+            try:
+                gf = abs((_d.fromisoformat(h["tarih"][:10])
+                          - _d.fromisoformat(str(x["tarih"])[:10])).days)
+            except Exception:  # noqa: BLE001
+                continue
+            if gf <= 5:
+                aday = x
+                break
+        if aday:
+            kullanildi.add(aday["id"])
+            eslesen_tutar += tut
+        else:
+            faturasiz.append({"tarih": h["tarih"], "kart": h["kart_adi"],
+                              "tutar": tut, "aciklama": h["aciklama"], "tip": h["tip"]})
+    # gün gün: fatura + faturasız harcama kırılımı
+    gunler: dict = {}
+    for x in faturalar:
+        g = str(x.get("tarih") or "")[:10]
+        if g:
+            d0 = gunler.setdefault(g, {"gun": g, "fatura_adet": 0, "fatura_toplam": 0.0,
+                                       "faturasiz_harcama": 0.0})
+            d0["fatura_adet"] += 1
+            d0["fatura_toplam"] = round(d0["fatura_toplam"] + float(x.get("tutar") or 0), 2)
+    for h in faturasiz:
+        g = h["tarih"][:10]
+        d0 = gunler.setdefault(g, {"gun": g, "fatura_adet": 0, "fatura_toplam": 0.0,
+                                   "faturasiz_harcama": 0.0})
+        d0["faturasiz_harcama"] = round(d0["faturasiz_harcama"] + h["tutar"], 2)
+    toplam_harcama = round(sum(float(h["tutar"]) for h in harcamalar), 2)
+    return {
+        "ay": hedef,
+        "kapsama": {
+            "isletme_kart_harcamasi": toplam_harcama,
+            "faturali_eslesen": round(eslesen_tutar, 2),
+            "faturasiz": round(toplam_harcama - eslesen_tutar, 2),
+            "oran_yuzde": (round(eslesen_tutar / toplam_harcama * 100, 1)
+                           if toplam_harcama > 0 else None),
+        },
+        "toptancilar": toptancilar,
+        "gun_gun": sorted(gunler.values(), key=lambda x: x["gun"], reverse=True),
+        "faturasiz_harcamalar": faturasiz[:40],
+        "fatura_arsivi": faturalar[:60],
+        "not": "ADAY eşleştirme (±%2 tutar, ±5 gün) — hüküm değil. Faturasız satır = "
+               "belge isteme adayı (KDV indirimi + gider kanıtı). PDF/foto: goruntule "
+               "linki. Nakit işletme giderleri (anlık gider) bu sürümde kapsam dışı — "
+               "kart harcamaları izlenir.",
+    }
+
+
+@router.get("/belge-merkezi")
+def belge_merkezi_uc(ay: str = ""):
+    """UI + beyin için birleşik Belge Merkezi özeti."""
+    return belge_merkezi_ozet(ay)
+
+
 @router.get("/bekleyen")
 def fatura_bekleyen(sube_id: Optional[str] = None, limit: int = 50):
     """İncelenmeyi bekleyen faturalar (OCR tamam ama insan onayı yok)."""

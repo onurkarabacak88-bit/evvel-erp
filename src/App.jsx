@@ -48,6 +48,7 @@ import FireFotoYukle from './pages/FireFotoYukle';
 import CepApp from './pages/cep/CepApp';
 import DuyuPaneli from './pages/DuyuPaneli';
 import ReceteEslestirme from './pages/ReceteEslestirme';
+import BelgeMerkezi from './pages/BelgeMerkezi';
 import './index.css';
 
 const NAV = [
@@ -58,6 +59,7 @@ const NAV = [
     { id: 'duyu-paneli',      label: 'Duyu Paneli',         icon: '👁️' },
     { id: 'recete-eslestirme', label: 'Reçete Eşleştirme',  icon: '🔗' },
     { id: 'maliyet',          label: 'Maliyet',             icon: '💰' },
+    { id: 'belge-merkezi',    label: 'Belge Merkezi',       icon: '🧾' },
     { id: 'borc-navigasyon',  label: 'Borç Navigasyonu',    icon: '🧭' },
     { id: 'strateji',         label: 'Strateji Motoru',     icon: '🎯' },
   ]},
@@ -119,6 +121,7 @@ const PAGES = {
   'kasa-teslim':      KasaTeslim,
   'duyu-paneli':      DuyuPaneli,
   'recete-eslestirme': ReceteEslestirme,
+  'belge-merkezi':    BelgeMerkezi,
   strateji:           Strateji,
   onay:               OnayKuyrugu,
   'ciro-taslak-onay': CiroTaslakOnay,

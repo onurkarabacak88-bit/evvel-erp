@@ -735,6 +735,12 @@ def _blok_derle(soru: str, yonlendirme_ek: str = "") -> List[Tuple[str, str, str
           "kartlardan gelecek", "kart taksit",
           "asgari", "kesim tarihi", "hangi kartta"),
          lambda: _j(__import__("duyu_gorunumler").kart_pozisyon())),
+        ("B47", "Belge Merkezi (bu ay: fatura kapsama oranı + faturasız işletme "
+                "harcamaları + toptancı fatura özeti)",
+         ("faturasi yok", "faturasiz", "fatura kapsam", "belge kapsam", "arsiv",
+          "faturalari gor", "toptanci fatura", "hangi faturalar", "belge merkezi",
+          "kac fatura"),
+         lambda: _j(__import__("fatura_api").belge_merkezi_ozet())),
         ("B45", "Gelecek ekstre tahmini (HESAPLANMIŞ: kart başına sıradaki kesimde "
                 "oluşan borç + asgari + kasa kıyası — tahmin, ekstre değil)",
          ("gelecek ekstre", "gelecek ay borc", "onumuzdeki ay kart", "kesimde ne kadar",
@@ -1489,25 +1495,24 @@ def gece_ozsorgu(sadece_liste: bool = False):
         # 1) SAHİP-TEKRAR: son 7 günde senin sorduğun gerçek sorular gece yeniden
         #    sınanır (👎 verdiklerin ÖNCELİKLİ) — dün cevaplanamayan bugün
         #    cevaplanabiliyor mu, gerileme var mı?
-        sahip_sorulari = []
+        sahip_sorulari, kaynak_hatalari = [], []
         try:
             with db() as (_, cur):
                 cur.execute(
-                    """SELECT DISTINCT ON (LOWER(TRIM(soru))) soru,
-                              (cevap_karari = 'kotu')::int AS oncelik, MAX(olusturma) AS son
+                    """SELECT MIN(soru) AS soru,
+                              MAX((cevap_karari = 'kotu')::int) AS oncelik,
+                              MAX(olusturma) AS son
                        FROM beyin_gunluk
                        WHERE tip = 'soru' AND soru IS NOT NULL
                          AND LENGTH(TRIM(soru)) > 15
                          AND olusturma >= NOW() - INTERVAL '7 days'
-                       GROUP BY soru, cevap_karari
-                       ORDER BY LOWER(TRIM(soru)), oncelik DESC, son DESC""")
+                       GROUP BY LOWER(TRIM(soru))
+                       ORDER BY oncelik DESC, son DESC LIMIT 12""")
                 adaylar = [dict(r) for r in (cur.fetchall() or [])]
-            adaylar.sort(key=lambda r: (-int(r.get("oncelik") or 0), str(r.get("son"))),
-                         reverse=False)
-            adaylar.sort(key=lambda r: -int(r.get("oncelik") or 0))
             sahip_sorulari = [str(a["soru"])[:300] for a in adaylar[:2]]
         except Exception as e:  # noqa: BLE001
-            logger.warning("ozsorgu sahip kaynagi: %s", str(e)[:80])
+            kaynak_hatalari.append(f"sahip: {str(e)[:120]}")
+            logger.warning("ozsorgu sahip kaynagi: %s", str(e)[:120])
         # 2) BAĞ-TAKİP: bağ defterindeki hazır gözlemlerden 'nedeni ne?' takip
         #    sorusu türet — her yeni bağ, otomatik yeni bir patron sorusudur.
         bag_sorulari = []
@@ -1522,17 +1527,26 @@ def gece_ozsorgu(sadece_liste: bool = False):
                         "Şu hazır gözlemin olası açıklayıcılarını bağlamdaki verilerle "
                         f"ADAY olarak sırala (kesin neden ilan etme): '{str(c)[:140]}'")
         except Exception as e:  # noqa: BLE001
-            logger.warning("ozsorgu bag kaynagi: %s", str(e)[:80])
+            kaynak_hatalari.append(f"bag: {str(e)[:120]}")
+            logger.warning("ozsorgu bag kaynagi: %s", str(e)[:120])
         hepsi, gorulen = [], set()
         for s in olay_sorulari + sahip_sorulari + bag_sorulari + uretilen_sorular + cekirdek:
             k = s.strip().lower()
             if k in sorulmus or k in gorulen:
                 continue
+            if _YABANCI_ALFABE.search(s):  # bozuk üretim sorusu (Kore/Çince sızıntı)
+                continue
             gorulen.add(k)
             hepsi.append(s)
         hepsi = hepsi[:8]  # gece maliyet tavanı (v2: 5 kaynak → 8)
         if sadece_liste:  # teşhis: LLM koşmadan derlenen soru evrenini göster
-            return {"sorular": [
+            return {"kaynak_hatalari": kaynak_hatalari,
+                    "kaynak_sayilari": {"olay": len(olay_sorulari),
+                                        "sahip": len(sahip_sorulari),
+                                        "bag": len(bag_sorulari),
+                                        "uretim": len(uretilen_sorular),
+                                        "banka": len(cekirdek)},
+                    "sorular": [
                 {"kaynak": ("olay" if s in olay_sorulari else
                             "sahip_tekrar" if s in sahip_sorulari else
                             "bag_takip" if s in bag_sorulari else

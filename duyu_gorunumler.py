@@ -2661,6 +2661,26 @@ def _bag_kart() -> List[dict]:
     return out
 
 
+def _bag_belge() -> List[dict]:
+    """Belge kapsama bağı: işletme kart harcaması ↔ fatura arşivi (KDV/kanıt riski)."""
+    out = []
+    try:
+        from fatura_api import belge_merkezi_ozet
+        r = belge_merkezi_ozet()
+        k = r.get("kapsama") or {}
+        if (k.get("isletme_kart_harcamasi") or 0) > 0:
+            out.append({"alanlar": ["fatura", "kart", "kdv"], "tarih": None,
+                        "guven": "hesap",
+                        "cumle": (f"bu ay işletme kart harcaması {k['isletme_kart_harcamasi']}; "
+                                  f"bunun {k['faturali_eslesen']} kadarının faturası arşivde "
+                                  f"eşleşti (kapsama %{k.get('oran_yuzde')}); faturasız "
+                                  f"{k['faturasiz']} — belge istenmezse KDV indirimi ve "
+                                  "gider kanıtı riski (hazır hesap)")})
+    except Exception as e:  # noqa: BLE001
+        logger.warning("bag belge: %s", str(e)[:60])
+    return out
+
+
 def _bag_ciro_kasa() -> List[dict]:
     """Ciro↔kasa farkı bağı (dilek e59f57ec/10044dff: 'bu cirolarda kasa açığı
     var mı?') — şube-gün cirosu ile AYNI GÜNÜN kasa fark uyarısı yan yana."""
@@ -2753,6 +2773,7 @@ _BAG_KAYNAKLARI = [
     ("odeme", _bag_odeme),
     ("maas_avans", _bag_maas_avans),
     ("kart", _bag_kart),
+    ("belge", _bag_belge),
     ("ciro_kasa", _bag_ciro_kasa),
     ("evo_ciro", _bag_evo_ciro),
 ]
