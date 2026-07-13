@@ -2752,6 +2752,22 @@ def _bag_cari() -> List[dict]:
                         "cumle": (f"bekleyen vadeli alım toplamı "
                                   f"{o['toplam_bekleyen_vade']} — tedarikçi cari "
                                   "özetinde vade kırılımı hazır (hazır hesap)")})
+        # ÖDEME İZİ YOK → CARİ BÜYÜYOR (sahip talebi 2026-07-13): fatura gelmiş
+        # ama 180 günde hiç ödeme izi eşleşmemiş tedarikçiler — açık birikiyor
+        buyuyen = [t for t in (o.get("tedarikciler") or [])
+                   if (t.get("hesaplanan_acik") or 0) > 0
+                   and not t.get("odeme_izi_var")
+                   and (t.get("fatura_adet_6ay") or 0) > 0][:3]
+        for t in buyuyen:
+            out.append({"alanlar": ["cari", "odeme", "fatura"], "tarih": None,
+                        "guven": "hesap",
+                        "cumle": (f"{t['tedarikci']}: 180 günde "
+                                  f"{t['fatura_adet_6ay']} fatura "
+                                  f"(toplam {t['fatura_toplam_6ay']}) var ama "
+                                  "hiç ödeme izi eşleşmedi — hesaplanan cari açık "
+                                  f"{t['hesaplanan_acik']} ve BÜYÜYOR (iz yoksa "
+                                  "borç kalır; kısmi/farklı-adla ödeme izi "
+                                  "eşleşmemiş de olabilir — hüküm insanın)")})
     except Exception as e:  # noqa: BLE001
         logger.warning("bag cari: %s", str(e)[:60])
     return out

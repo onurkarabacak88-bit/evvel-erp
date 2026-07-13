@@ -746,9 +746,10 @@ def _blok_derle(soru: str, yonlendirme_ek: str = "") -> List[Tuple[str, str, str
           "odedim ama fatura", "fatura kesilmedi", "faturasi gelmeyen",
           "faturasi gelmedi", "fatura gelmedi", "fatura gelmemis"),
          lambda: _j(__import__("fatura_api").belge_merkezi_ozet())),
-        ("B48", "Tedarikçi cari özeti (BM-5: tedarikçi başına fatura üstü BEYAN "
-                "bakiye [tedarikçinin kendi beyanı, ≈] + bekleyen vadeli alım "
-                "toplamı + en yakın vade + zincir hareketi)",
+        ("B48", "Tedarikçi cari özeti (BM-5: İKİ GÖZ — tedarikçinin fatura üstü "
+                "BEYAN bakiyesi [≈] VE bizim taraf hesaplanan_acik = 180 gün "
+                "fatura − ödeme izi [iz yoksa açık BÜYÜR] + beyan_hesap_farki + "
+                "bekleyen vadeler + zincir hareketi)",
          ("cari", "tedarikciye borc", "toptanciya borc", "tedarikci borc",
           "kime borcum", "kime ne kadar borc", "sutas", "vadesi gelen",
           "vadesi yaklasan", "vadeli alim borc", "tedarikci bakiye",

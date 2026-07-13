@@ -285,7 +285,14 @@ export default function BelgeMerkezi() {
                       {cari[t.toptanci] && !cari[t.toptanci].hata && (
                         <div style={{ fontSize: 12, padding: '6px 8px', marginBottom: 4,
                                       background: 'var(--bg2)', borderRadius: 8 }}>
-                          💼 Cari: beyan bakiye{' '}
+                          💼 Cari — bizim hesap:{' '}
+                          <b style={{ color: (cari[t.toptanci].hesaplanan_acik || 0) > 0 ? 'var(--red)' : 'var(--green)' }}>
+                            ≈ {fmt(cari[t.toptanci].hesaplanan_acik)}
+                          </b>
+                          <span style={{ color: 'var(--text3)' }}>
+                            {' '}(fatura {fmt(cari[t.toptanci].fatura_toplam_6ay)} − ödeme izi {fmt(cari[t.toptanci].odeme_izi_toplam_6ay)})
+                          </span>
+                          {' '}· beyan{' '}
                           <b>{cari[t.toptanci].beyan_bakiye != null ? `≈ ${fmt(cari[t.toptanci].beyan_bakiye)}` : 'fatura üstünde yok'}</b>
                           {cari[t.toptanci].bekleyen_vade_toplam > 0 && (
                             <> · bekleyen vade <b style={{ color: 'var(--red)' }}>{fmt(cari[t.toptanci].bekleyen_vade_toplam)}</b>
@@ -295,7 +302,7 @@ export default function BelgeMerkezi() {
                             <span style={{ color: 'var(--text3)' }}> · zincirde ödeme/hareket izi var</span>
                           )}
                           <div style={{ color: 'var(--text3)', marginTop: 2 }}>
-                            beyan = tedarikçinin fatura üstü bakiyesi (≈, mutabakat hükmü değil)
+                            bizim hesap = 180 gün fatura − ödeme izi (ödeme izi yoksa açık büyür) · beyan = tedarikçinin fatura üstü bakiyesi · ikisi de ≈, hüküm değil
                           </div>
                         </div>
                       )}

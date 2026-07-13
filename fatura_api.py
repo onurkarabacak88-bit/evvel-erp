@@ -998,6 +998,25 @@ def cari_ozet() -> dict:
                FROM vadeli_alimlar WHERE durum='bekliyor'
                ORDER BY vade_tarihi""")
         vadeler = [dict(r) for r in cur.fetchall() or []]
+        # BİZİM TARAF ödeme izleri (3 kanal, türetilmişler hariç) — kasa izi
+        # felsefesi: iz varsa borçtan düşer, iz yoksa borç BİRİKİR (cari artar)
+        cur.execute(
+            """SELECT tarih::text AS tarih, tutar::float AS tutar, metin FROM (
+                 SELECT vade_tarihi AS tarih, tutar,
+                        COALESCE(tedarikci,'') || ' ' || COALESCE(aciklama,'') AS metin
+                 FROM vadeli_alimlar
+                 WHERE durum='odendi' AND vade_tarihi >= CURRENT_DATE - 180
+                 UNION ALL
+                 SELECT tarih, tutar, COALESCE(aciklama,'')
+                 FROM anlik_giderler
+                 WHERE durum='aktif' AND kaynak_id IS NULL
+                   AND tarih >= CURRENT_DATE - 180
+                 UNION ALL
+                 SELECT tarih, tutar, COALESCE(aciklama,'')
+                 FROM kart_hareketleri
+                 WHERE islem_turu='HARCAMA' AND durum='aktif' AND kaynak_id IS NULL
+                   AND tarih >= CURRENT_DATE - 180) x""")
+        odeme_izleri = [dict(r) for r in cur.fetchall() or []]
 
     gruplar: dict = {}
     for s in satirlar:
@@ -1028,24 +1047,46 @@ def cari_ozet() -> dict:
                 v_top = round(v_top + v["tutar"], 2)
                 v_yakin = v_yakin or v["vade"]
         kopuk = [f["zincir_fark"] for f in fl if f.get("zincir_fark") not in (None, 0.0)]
+        # BİZİM TARAF HESABI: fatura(+) − ödeme izi(−). Ödeme izi = tedarikçi adı
+        # ödeme metninde geçen kayıtlar (aday eşleşme). İz YOKSA açık BÜYÜR.
+        odeme_top = 0.0
+        if len(ad_l) >= 4:
+            anahtar = ad_l[:20]
+            for o in odeme_izleri:
+                if anahtar in (o.get("metin") or "").lower():
+                    odeme_top = round(odeme_top + float(o["tutar"] or 0), 2)
+        fat_top = round(sum(f["tutar"] for f in son6), 2)
+        hesaplanan_acik = round(fat_top - odeme_top, 2)
         ozet.append({
             "tedarikci": g["tedarikci"], "vkn": g["vkn"],
             "fatura_adet_6ay": len(son6),
-            "fatura_toplam_6ay": round(sum(f["tutar"] for f in son6), 2),
+            "fatura_toplam_6ay": fat_top,
+            "odeme_izi_toplam_6ay": odeme_top,
+            "hesaplanan_acik": hesaplanan_acik,
+            "odeme_izi_var": odeme_top > 0,
             "son_fatura": fl[-1]["tarih"] if fl else None,
             "beyan_bakiye": beyan, "beyan_tarihi": beyan_tarih,
+            "beyan_hesap_farki": (round(beyan - hesaplanan_acik, 2)
+                                  if beyan is not None else None),
             "bekleyen_vade_toplam": v_top, "en_yakin_vade": v_yakin,
             "zincir_hareket_adet": len(kopuk),
             "son_zincir_fark": kopuk[-1] if kopuk else None,
         })
-    ozet.sort(key=lambda x: -(abs(x["beyan_bakiye"] or 0) + x["bekleyen_vade_toplam"]))
+    ozet.sort(key=lambda x: -(max(abs(x["beyan_bakiye"] or 0),
+                                  abs(x["hesaplanan_acik"])) + x["bekleyen_vade_toplam"]))
     return {
         "tedarikciler": ozet[:20],
         "toplam_beyan_bakiye": round(sum(x["beyan_bakiye"] or 0 for x in ozet), 2),
+        "toplam_hesaplanan_acik": round(sum(max(0.0, x["hesaplanan_acik"])
+                                            for x in ozet), 2),
         "toplam_bekleyen_vade": round(sum(x["bekleyen_vade_toplam"] for x in ozet), 2),
-        "not": ("beyan_bakiye = TEDARİKÇİNİN fatura üstündeki bakiye beyanı (≈, bizim "
-                "hesap değil). zincir_fark<0 = iki fatura arasında ödeme görülmüş; "
-                ">0 = belge-dışı borç artışı olabilir (öneri, hüküm değil)."),
+        "not": ("İKİ GÖZ: beyan_bakiye = TEDARİKÇİNİN fatura üstü beyanı (≈); "
+                "hesaplanan_acik = BİZİM taraf ≈ 180 gün fatura toplamı − ödeme izi "
+                "(3 kanal aday eşleşme). Ödeme izi YOKSA açık BÜYÜR (kasa izi ilkesi: "
+                "iz varsa düşer, iz yoksa borç kalır). Negatif açık = fazla/peşin "
+                "ödeme ya da eşleşme fazlası olabilir. beyan_hesap_farki büyükse "
+                "kayıt-dışı hareket / eksik fatura / eksik ödeme kaydı incelenir — "
+                "hüküm insanın."),
     }
 
 
@@ -1100,11 +1141,21 @@ def cari_ekstre(tedarikci: str = ""):
         f["goruntule"] = f"/api/fatura/{f['id']}/foto"
     beyan = next((f["bakiye_dahil"] for f in reversed(faturalar)
                   if f.get("bakiye_dahil") is not None), None)
+    # BİZİM TARAF HESABI (180 gün): fatura(+) − ödeme izi(−); iz yoksa açık büyür
+    from datetime import date as _d, timedelta as _td
+    _kesit = (_d.today() - _td(days=180)).isoformat()
+    fatura_toplam = round(sum(f["tutar"] for f in faturalar
+                              if str(f["tarih"]) >= _kesit), 2)
+    odeme_toplam = round(sum(o["tutar"] for o in odeme_adaylari
+                             if str(o["tarih"]) >= _kesit), 2)
     return {
         "arama": ara,
         "fatura_adet": len(faturalar),
         "faturalar": faturalar[-60:],
         "beyan_bakiye": (round(float(beyan), 2) if beyan is not None else None),
+        "fatura_toplam_6ay": fatura_toplam,
+        "odeme_izi_toplam_6ay": odeme_toplam,
+        "hesaplanan_acik": round(fatura_toplam - odeme_toplam, 2),
         "bekleyen_vadeler": bekleyen_vadeler,
         "bekleyen_vade_toplam": round(sum(v["tutar"] for v in bekleyen_vadeler), 2),
         "odeme_adaylari": odeme_adaylari,
