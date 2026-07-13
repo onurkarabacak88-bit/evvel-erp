@@ -14,6 +14,7 @@ export default function BelgeMerkezi() {
   const [acikToptanci, setAcikToptanci] = useState(null);
   // BM-5: toptancı açılınca cari ekstre (beyan bakiye + vade + zincir)
   const [cari, setCari] = useState({});
+  const [acikAy, setAcikAy] = useState(null); // "toptanci|ay" — ay detayı açık mı
   async function cariGetir(ad) {
     if (!ad || ad === '(tedarikçi belirsiz)' || cari[ad]) return;
     try {
@@ -312,6 +313,53 @@ export default function BelgeMerkezi() {
                           <div style={{ color: 'var(--text3)', marginTop: 2 }}>
                             bizim hesap = 180 gün fatura − ödeme izi (ödeme izi yoksa açık büyür) · beyan = tedarikçinin fatura üstü bakiyesi · ikisi de ≈, hüküm değil
                           </div>
+                          {/* AY AY MUTABAKAT — fatura ↔ ödeme; aya tıkla = detay + PDF */}
+                          {(cari[t.toptanci].aylik || []).length > 0 && (
+                            <div style={{ marginTop: 6 }}>
+                              <table style={{ width: '100%', fontSize: 11 }}>
+                                <thead><tr style={{ color: 'var(--text3)' }}>
+                                  <th style={{ textAlign: 'left' }}>Ay</th>
+                                  <th style={{ textAlign: 'right' }}>Fatura</th>
+                                  <th style={{ textAlign: 'right' }}>Ödeme</th>
+                                  <th style={{ textAlign: 'right' }}>Fark</th>
+                                </tr></thead>
+                                <tbody>
+                                  {cari[t.toptanci].aylik.map(a => {
+                                    const anahtar = `${t.toptanci}|${a.ay}`;
+                                    return (
+                                      <>
+                                        <tr key={anahtar} onClick={() => setAcikAy(x => x === anahtar ? null : anahtar)}
+                                            style={{ cursor: 'pointer', opacity: a.sistem_oncesi ? 0.5 : 1 }}
+                                            title={a.sistem_oncesi ? 'Sistem öncesi — arşiv, hesaba girmez' : 'Detay için tıkla'}>
+                                          <td>{acikAy === anahtar ? '▾' : '▸'} {a.ay}{a.sistem_oncesi ? ' 🗄' : ''}</td>
+                                          <td style={{ textAlign: 'right' }}>{a.fatura_adet > 0 ? `${fmt(a.fatura_toplam)} (${a.fatura_adet})` : '—'}</td>
+                                          <td style={{ textAlign: 'right' }}>{a.odeme_adet > 0 ? `${fmt(a.odeme_toplam)} (${a.odeme_adet})` : '—'}</td>
+                                          <td style={{ textAlign: 'right', color: a.fark > 0 ? 'var(--red)' : a.fark < 0 ? 'var(--green)' : 'var(--text3)' }}>{fmt(a.fark)}</td>
+                                        </tr>
+                                        {acikAy === anahtar && (
+                                          <tr key={anahtar + '-d'}><td colSpan={4} style={{ padding: '4px 0 8px 14px' }}>
+                                            {(cari[t.toptanci].faturalar || []).filter(f => String(f.tarih).slice(0, 7) === a.ay).map(f => (
+                                              <div key={f.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, padding: '2px 0' }}>
+                                                <span>🧾 {f.tarih} · {f.fatura_no || 'no yok'}</span>
+                                                <span style={{ whiteSpace: 'nowrap' }}>{fmt(f.tutar)}{' '}
+                                                  <a href={f.goruntule} target="_blank" rel="noreferrer" style={{ color: 'var(--blue, #60a5fa)' }}>📎 PDF</a></span>
+                                              </div>
+                                            ))}
+                                            {(cari[t.toptanci].odeme_adaylari || []).filter(o => String(o.tarih).slice(0, 7) === a.ay).map((o, i) => (
+                                              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, padding: '2px 0', color: 'var(--text3)' }}>
+                                                <span>💸 {o.tarih} · {o.kanal === 'kart' ? 'kart' : o.kanal === 'anlik_gider' ? 'nakit/anlık' : 'vadeli ödeme'} · {(o.aciklama || '').slice(0, 30)}</span>
+                                                <span style={{ whiteSpace: 'nowrap' }}>−{fmt(o.tutar)}</span>
+                                              </div>
+                                            ))}
+                                          </td></tr>
+                                        )}
+                                      </>
+                                    );
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
                         </div>
                       )}
                       {(d.fatura_arsivi || []).filter(f => (f.tedarikci_ad || '(tedarikçi belirsiz)').trim() === t.toptanci || ((f.tedarikci_ad || '').trim() === '' && t.toptanci === '(tedarikçi belirsiz)')).map(f => (

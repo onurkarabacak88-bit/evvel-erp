@@ -1247,6 +1247,27 @@ def cari_ekstre(tedarikci: str = ""):
         f["goruntule"] = f"/api/fatura/{f['id']}/foto"
     beyan = next((f["bakiye_dahil"] for f in reversed(faturalar)
                   if f.get("bakiye_dahil") is not None), None)
+    # AY AY MUTABAKAT (sahip 2026-07-14: "her toptancıyı ay ay ödeme ve gelen
+    # faturalarını görsek, detaya bak deyince fatura PDF görebilsek"):
+    # aynı veriden ay kırılımı — KOD hesaplar, UI yalnız gösterir.
+    aylik: dict = {}
+    for f in faturalar:
+        ay_k = str(f["tarih"])[:7]
+        a = aylik.setdefault(ay_k, {"ay": ay_k, "fatura_adet": 0, "fatura_toplam": 0.0,
+                                    "odeme_adet": 0, "odeme_toplam": 0.0})
+        a["fatura_adet"] += 1
+        a["fatura_toplam"] = round(a["fatura_toplam"] + float(f["tutar"] or 0), 2)
+    for o in odeme_adaylari:
+        ay_k = str(o["tarih"])[:7]
+        a = aylik.setdefault(ay_k, {"ay": ay_k, "fatura_adet": 0, "fatura_toplam": 0.0,
+                                    "odeme_adet": 0, "odeme_toplam": 0.0})
+        a["odeme_adet"] += 1
+        a["odeme_toplam"] = round(a["odeme_toplam"] + float(o["tutar"] or 0), 2)
+    for a in aylik.values():
+        a["fark"] = round(a["fatura_toplam"] - a["odeme_toplam"], 2)
+        a["sistem_oncesi"] = a["ay"] < EVVEL_SISTEM_BASLANGIC[:7]  # arşiv, hesaba girmez
+    aylik_liste = sorted(aylik.values(), key=lambda x: x["ay"], reverse=True)
+
     # BİZİM TARAF HESABI: fatura(+) − ödeme izi(−); iz yoksa açık büyür.
     # Pencere sistem başlangıcından önceye TAŞMAZ (Haziran 2026 öncesi veri yok).
     _kesit = _cari_pencere_kesiti(180)
@@ -1262,6 +1283,7 @@ def cari_ekstre(tedarikci: str = ""):
         "fatura_toplam_6ay": fatura_toplam,
         "odeme_izi_toplam_6ay": odeme_toplam,
         "hesaplanan_acik": round(fatura_toplam - odeme_toplam, 2),
+        "aylik": aylik_liste,
         "bekleyen_vadeler": bekleyen_vadeler,
         "bekleyen_vade_toplam": round(sum(v["tutar"] for v in bekleyen_vadeler), 2),
         "odeme_adaylari": odeme_adaylari,
