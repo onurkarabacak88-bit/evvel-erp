@@ -2062,82 +2062,85 @@ class AnlikGider(BaseModel):
     kaynak_tablo: Optional[str] = None    # 'sabit_giderler'
     force: bool = False
 
+def _kanonik_kalan_limit(kart_id, yedek: float) -> float:
+    """Ödeme guard'ları için KANONİK kalan limit (kartlar_listele — ekstre gerçeği
+    + gelecek taksit + ortak limit havuzu). Kanonik okunamıyorsa eski defter
+    hesabı (yedek) kullanılır — emniyet ağı, ödeme akışı asla kilitlenmez."""
+    try:
+        kl = kartlar_listele()
+        kdata = kl if isinstance(kl, list) else (kl.get("kartlar") or [])
+        for k in kdata:
+            if str(k.get("id")) == str(kart_id):
+                v = k.get("kalan_limit")
+                return float(v) if v is not None else yedek
+    except Exception:  # noqa: BLE001
+        pass
+    return yedek
+
+
+def _kart_oneri_hesapla(tutar: float = 0) -> list:
+    """Kart seçici TEK KAYNAK (2026-07-13, sahip şikayeti: 'ödeme yap alanında
+    kart seçince gerçek limitler yok görünüyor'): eski seçici borcu defterden
+    sıfırdan topluyordu (kart_borc) — ekstre içe aktarımı sonrası defter toplamı
+    şişince kalan limit negatife düşüp HER kart 'Limit yetersiz' oluyordu.
+    Artık kalan_limit/doluluk KANONİK kartlar_listele'den gelir (ekstre gerçeği +
+    kesim-sonrası hareketler + gelecek taksit yükü + ortak limit havuzu dahil) —
+    kart_borc_faiz_ozet ile aynı 'tek kaynak' ilkesi."""
+    import calendar as _cal
+    bugun = bugun_tr()
+    kl = kartlar_listele()
+    kdata = kl if isinstance(kl, list) else (kl.get("kartlar") or [])
+    sonuc = []
+    for k in kdata:
+        limit = float(k.get('limit_tutar') or 0)
+        kalan_limit = round(float(k.get('kalan_limit') or 0), 2)
+        doluluk = float(k.get('limit_doluluk') or 0)
+        faiz = float(k.get('faiz_orani') or 0)
+        temel = {
+            'kart_id': str(k['id']), 'kart_adi': k.get('kart_adi'), 'banka': k.get('banka'),
+            'kalan_limit': kalan_limit, 'limit_tutar': limit, 'limit_doluluk': doluluk,
+            'faiz_orani': faiz, 'kesim_gunu': k.get('kesim_gunu'),
+            'son_odeme_gunu': k.get('son_odeme_gunu'), 'skor': 0, 'oneri': False,
+        }
+        if limit <= 0:
+            sonuc.append({**temel, 'uygun': False,
+                          'uygun_degil_neden': 'Kart limiti tanımlı değil — Kartlar ekranından limit gir'})
+            continue
+        if tutar > 0 and kalan_limit < tutar:
+            sonuc.append({**temel, 'uygun': False, 'uygun_degil_neden': 'Limit yetersiz'})
+            continue
+        bugun_gun = bugun.day
+        ay_sonu = _cal.monthrange(bugun.year, bugun.month)[1]
+        kesim_gun = int(k.get('kesim_gunu') or 1)
+        kesim_uzakligi = (kesim_gun - bugun_gun if kesim_gun >= bugun_gun
+                          else (ay_sonu - bugun_gun) + kesim_gun)
+        so_gun = int(k.get('son_odeme_gunu') or 10)
+        son_odeme_uzakligi = (so_gun - bugun_gun if so_gun >= bugun_gun
+                              else (ay_sonu - bugun_gun) + so_gun)
+        temel.update({'kesim_uzakligi': kesim_uzakligi,
+                      'son_odeme_uzakligi': son_odeme_uzakligi})
+        if son_odeme_uzakligi <= 3:
+            sonuc.append({**temel, 'uygun': False,
+                          'uygun_degil_neden': f'Son ödeme {son_odeme_uzakligi} gün sonra — bu kart zaten ödenecek'})
+            continue
+        skor = ((kesim_uzakligi / 30.0) * 0.5 + (kalan_limit / limit) * 0.3
+                - min(faiz / 5.0, 1.0) * 0.2)
+        sonuc.append({**temel, 'uygun': True, 'uygun_degil_neden': None,
+                      'skor': round(skor, 4)})
+    uygunlar = [x for x in sonuc if x['uygun']]
+    if uygunlar:
+        en_iyi = max(uygunlar, key=lambda x: x['skor'])
+        for x in sonuc:
+            if x['kart_id'] == en_iyi['kart_id']:
+                x['oneri'] = True
+    sonuc.sort(key=lambda x: (-int(x['oneri']), -x['skor']))
+    return sonuc
+
+
 @app.get("/api/anlik-gider-kart-oneri")
 def anlik_gider_kart_oneri(tutar: float = 0):
-    """
-    Anlık gider için kart önerisi — vadeli alımla aynı skorlama.
-    Kesim günü uzaklığı, limit boşluğu, faiz oranına göre sıralar.
-    """
-    bugun = bugun_tr()
-    with db() as (conn, cur):
-        cur.execute("SELECT * FROM kartlar WHERE aktif=TRUE ORDER BY banka")
-        kartlar = cur.fetchall()
-        sonuc = []
-        for k in kartlar:
-            borc = kart_borc(cur, k['id'])
-            limit = float(k['limit_tutar'])
-            kalan_limit = limit - borc
-
-            if tutar > 0 and kalan_limit < tutar:
-                sonuc.append({
-                    'kart_id': str(k['id']), 'kart_adi': k['kart_adi'], 'banka': k['banka'],
-                    'kalan_limit': kalan_limit, 'limit_doluluk': borc/limit if limit>0 else 0,
-                    'faiz_orani': float(k['faiz_orani']),
-                    'kesim_gunu': k['kesim_gunu'], 'son_odeme_gunu': k['son_odeme_gunu'],
-                    'uygun': False, 'uygun_degil_neden': 'Limit yetersiz', 'skor': 0, 'oneri': False,
-                })
-                continue
-
-            import calendar as _cal
-            kesim_gun = k['kesim_gunu']
-            bugun_gun = bugun.day
-            if kesim_gun >= bugun_gun:
-                kesim_uzakligi = kesim_gun - bugun_gun
-            else:
-                ay_sonu = _cal.monthrange(bugun.year, bugun.month)[1]
-                kesim_uzakligi = (ay_sonu - bugun_gun) + kesim_gun
-
-            son_odeme_gun = k['son_odeme_gunu']
-            if son_odeme_gun >= bugun_gun:
-                son_odeme_uzakligi = son_odeme_gun - bugun_gun
-            else:
-                ay_sonu = _cal.monthrange(bugun.year, bugun.month)[1]
-                son_odeme_uzakligi = (ay_sonu - bugun_gun) + son_odeme_gun
-
-            if son_odeme_uzakligi <= 3:
-                sonuc.append({
-                    'kart_id': str(k['id']), 'kart_adi': k['kart_adi'], 'banka': k['banka'],
-                    'kalan_limit': kalan_limit, 'limit_doluluk': borc/limit if limit>0 else 0,
-                    'faiz_orani': float(k['faiz_orani']),
-                    'kesim_gunu': kesim_gun, 'kesim_uzakligi': kesim_uzakligi,
-                    'son_odeme_gunu': son_odeme_gun, 'son_odeme_uzakligi': son_odeme_uzakligi,
-                    'uygun': False, 'uygun_degil_neden': f'Son ödeme {son_odeme_uzakligi} gün sonra — bu kart zaten ödenecek',
-                    'skor': 0, 'oneri': False,
-                })
-                continue
-
-            limit_boslugu_pct = kalan_limit / limit if limit > 0 else 0
-            faiz = float(k['faiz_orani'])
-            skor = (kesim_uzakligi/30.0)*0.5 + limit_boslugu_pct*0.3 - min(faiz/5.0,1.0)*0.2
-
-            sonuc.append({
-                'kart_id': str(k['id']), 'kart_adi': k['kart_adi'], 'banka': k['banka'],
-                'kalan_limit': kalan_limit, 'limit_doluluk': borc/limit if limit>0 else 0,
-                'faiz_orani': faiz,
-                'kesim_gunu': kesim_gun, 'kesim_uzakligi': kesim_uzakligi,
-                'son_odeme_gunu': son_odeme_gun, 'son_odeme_uzakligi': son_odeme_uzakligi,
-                'uygun': True, 'uygun_degil_neden': None, 'skor': round(skor,4), 'oneri': False,
-            })
-
-        uygunlar = [k for k in sonuc if k['uygun']]
-        if uygunlar:
-            en_iyi = max(uygunlar, key=lambda x: x['skor'])
-            for k in sonuc:
-                if k['kart_id'] == en_iyi['kart_id']:
-                    k['oneri'] = True
-
-        sonuc.sort(key=lambda x: (-int(x['oneri']), -x['skor']))
-        return sonuc
+    """Anlık gider için kart önerisi — kanonik tek kaynaktan (_kart_oneri_hesapla)."""
+    return _kart_oneri_hesapla(float(tutar or 0))
 
 @app.get("/api/anlik-gider")
 def anlik_gider_listele(durum: str = "aktif", include_pending: bool = False, include_summary: bool = False, ay: str = None):
@@ -2229,7 +2232,7 @@ def anlik_gider_ekle(g: AnlikGider):
             kart = cur.fetchone()
             if not kart: raise HTTPException(404, "Kart bulunamadı")
             borc = kart_borc(cur, g.kart_id)
-            kalan_limit = float(kart['limit_tutar']) - borc
+            kalan_limit = _kanonik_kalan_limit(g.kart_id, float(kart['limit_tutar']) - borc)
             if kalan_limit < g.tutar:
                 raise HTTPException(400, f"Kart limiti yetersiz. Kalan: {kalan_limit:,.0f} ₺")
 
@@ -4552,7 +4555,7 @@ def odeme_yap(oid: str, tutar: Optional[float] = None, body: VadeliOdeModel = Va
             kart = cur.fetchone()
             if not kart: raise HTTPException(404, "Kart bulunamadı")
             borc = kart_borc(cur, body.kart_id)
-            kalan_limit = float(kart['limit_tutar']) - borc
+            kalan_limit = _kanonik_kalan_limit(body.kart_id, float(kart['limit_tutar']) - borc)
             if kalan_limit < odeme_tutari:
                 raise HTTPException(400, f"Kart limiti yetersiz. Kalan: {kalan_limit:,.0f} ₺")
             # Kart harcaması ekle — kasaya yazma
@@ -6704,7 +6707,7 @@ def fatura_ode(body: FaturaOdemeModel):
                 raise HTTPException(404, "Kart bulunamadı")
             # Mevcut kart borcunu hesapla — limit kontrolü, FOR UPDATE: eş zamanlı limit aşımını önler
             borc = kart_borc(cur, body.kart_id)
-            kalan_limit = float(kart['limit_tutar']) - borc
+            kalan_limit = _kanonik_kalan_limit(body.kart_id, float(kart['limit_tutar']) - borc)
             if kalan_limit < body.tutar:
                 raise HTTPException(400, f"Kart limiti yetersiz. Kalan: {kalan_limit:,.0f} ₺")
             # Karta HARCAMA yaz — kaynak_tablo fatura_giderleri
@@ -7417,127 +7420,19 @@ def vadeli_sil(vid: str):
 
 @app.get("/api/vadeli-alimlar/{vid}/kart-oneri")
 def vadeli_kart_oneri(vid: str):
-    """
-    Vadeli alım ödemesi için kart önerisi.
-    Her aktif kartı skorlar: kesim günü uzaklığı, limit boşluğu, faiz oranı.
-    En yüksek skor = en iyi kart.
-    """
-    bugun = bugun_tr()
+    """Vadeli alım ödemesi için kart önerisi — kanonik tek kaynaktan
+    (_kart_oneri_hesapla; kalan limit ekstre gerçeği + taksit + ortak havuz dahil)."""
     with db() as (conn, cur):
         cur.execute("SELECT * FROM vadeli_alimlar WHERE id=%s", (vid,))
         v = cur.fetchone()
         if not v: raise HTTPException(404)
         odeme_tutari = float(v['tutar'])
-
-        cur.execute("SELECT * FROM kartlar WHERE aktif=TRUE ORDER BY banka")
-        kartlar = cur.fetchall()
-
-        sonuc = []
-        for k in kartlar:
-            # Güncel borç
-            borc = kart_borc(cur, k['id'])
-            limit = float(k['limit_tutar'])
-            kalan_limit = limit - borc
-
-            # Limit yetmiyorsa listeye alma
-            if kalan_limit < odeme_tutari:
-                sonuc.append({
-                    'kart_id': str(k['id']),
-                    'kart_adi': k['kart_adi'],
-                    'banka': k['banka'],
-                    'kalan_limit': kalan_limit,
-                    'limit_doluluk': borc / limit if limit > 0 else 0,
-                    'faiz_orani': float(k['faiz_orani']),
-                    'kesim_gunu': k['kesim_gunu'],
-                    'son_odeme_gunu': k['son_odeme_gunu'],
-                    'uygun': False,
-                    'uygun_degil_neden': 'Limit yetersiz',
-                    'skor': 0,
-                    'oneri': False,
-                })
-                continue
-
-            # Kesim günü kaç gün kaldı
-            kesim_gun = k['kesim_gunu']
-            bugun_gun = bugun.day
-            if kesim_gun >= bugun_gun:
-                kesim_uzakligi = kesim_gun - bugun_gun
-            else:
-                import calendar
-                ay_sonu = calendar.monthrange(bugun.year, bugun.month)[1]
-                kesim_uzakligi = (ay_sonu - bugun_gun) + kesim_gun
-
-            # Son ödeme günü 3 günden azsa önerme
-            son_odeme_gun = k['son_odeme_gunu']
-            if son_odeme_gun >= bugun_gun:
-                son_odeme_uzakligi = son_odeme_gun - bugun_gun
-            else:
-                import calendar
-                ay_sonu = calendar.monthrange(bugun.year, bugun.month)[1]
-                son_odeme_uzakligi = (ay_sonu - bugun_gun) + son_odeme_gun
-
-            if son_odeme_uzakligi <= 3:
-                sonuc.append({
-                    'kart_id': str(k['id']),
-                    'kart_adi': k['kart_adi'],
-                    'banka': k['banka'],
-                    'kalan_limit': kalan_limit,
-                    'limit_doluluk': borc / limit if limit > 0 else 0,
-                    'faiz_orani': float(k['faiz_orani']),
-                    'kesim_gunu': kesim_gun,
-                    'kesim_uzakligi': kesim_uzakligi,
-                    'son_odeme_gunu': son_odeme_gun,
-                    'son_odeme_uzakligi': son_odeme_uzakligi,
-                    'uygun': False,
-                    'uygun_degil_neden': f'Son ödeme {son_odeme_uzakligi} gün sonra — bu kart zaten ödenecek',
-                    'skor': 0,
-                    'oneri': False,
-                })
-                continue
-
-            # SKOR: kesim uzaklığı (0.5) + limit boşluğu (0.3) - faiz (0.2)
-            limit_boslugu_pct = kalan_limit / limit if limit > 0 else 0
-            faiz = float(k['faiz_orani'])
-            faiz_normalize = min(faiz / 5.0, 1.0)  # 5 baz puan max normalize
-            skor = (
-                (kesim_uzakligi / 30.0) * 0.5 +
-                limit_boslugu_pct * 0.3 -
-                faiz_normalize * 0.2
-            )
-
-            sonuc.append({
-                'kart_id': str(k['id']),
-                'kart_adi': k['kart_adi'],
-                'banka': k['banka'],
-                'kalan_limit': kalan_limit,
-                'limit_doluluk': borc / limit if limit > 0 else 0,
-                'faiz_orani': faiz,
-                'kesim_gunu': kesim_gun,
-                'kesim_uzakligi': kesim_uzakligi,
-                'son_odeme_gunu': son_odeme_gun,
-                'son_odeme_uzakligi': son_odeme_uzakligi,
-                'uygun': True,
-                'uygun_degil_neden': None,
-                'skor': round(skor, 4),
-                'oneri': False,
-            })
-
-        # En yüksek skorlu uygun kartı öner
-        uygunlar = [k for k in sonuc if k['uygun']]
-        if uygunlar:
-            en_iyi = max(uygunlar, key=lambda x: x['skor'])
-            for k in sonuc:
-                if k['kart_id'] == en_iyi['kart_id']:
-                    k['oneri'] = True
-
-        # Sıralama: önerilen önce, sonra skora göre
-        sonuc.sort(key=lambda x: (-int(x['oneri']), -x['skor']))
-
-        return {
-            'vadeli_alim': {'id': str(v['id']), 'aciklama': v['aciklama'], 'tutar': odeme_tutari},
-            'kartlar': sonuc,
-            'oneri_var': any(k['oneri'] for k in sonuc)
-        }
+    sonuc = _kart_oneri_hesapla(odeme_tutari)
+    return {
+        'vadeli_alim': {'id': str(v['id']), 'aciklama': v['aciklama'], 'tutar': odeme_tutari},
+        'kartlar': sonuc,
+        'oneri_var': any(k['oneri'] for k in sonuc)
+    }
 
 
 @app.post("/api/vadeli-alimlar/{vid}/ode")
@@ -7592,7 +7487,7 @@ def vadeli_ode(vid: str, body: VadeliOdeModel = VadeliOdeModel()):
             kart = cur.fetchone()
             if not kart: raise HTTPException(404, "Kart bulunamadı")
             borc = kart_borc(cur, body.kart_id)
-            kalan_limit = float(kart['limit_tutar']) - borc
+            kalan_limit = _kanonik_kalan_limit(body.kart_id, float(kart['limit_tutar']) - borc)
             if kalan_limit < tutar:
                 raise HTTPException(400, f"Kart limiti yetersiz. Kalan: {kalan_limit:,.0f} ₺")
 
@@ -7658,7 +7553,7 @@ def vadeli_kismi_ode(vid: str, body: KismiOdeModel):
             kart = cur.fetchone()
             if not kart: raise HTTPException(404, "Kart bulunamadı")
             borc = kart_borc(cur, body.kart_id)
-            kalan_limit = float(kart['limit_tutar']) - borc
+            kalan_limit = _kanonik_kalan_limit(body.kart_id, float(kart['limit_tutar']) - borc)
             if kalan_limit < body.odenen_tutar:
                 raise HTTPException(400, f"Kart limiti yetersiz. Kalan: {kalan_limit:,.0f} ₺")
 
