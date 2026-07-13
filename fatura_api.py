@@ -973,6 +973,18 @@ def _cari_kanonik(vkn, ad) -> str:
 # 'SÜTAŞ SÜT ÜRÜNLERİ A.Ş.' ödeme metnindeki KISA adla 'sütaş süt alımı'
 # eşleşmiyordu — tüm tedarikçiler yanlışça 'iz yok' görünüyordu).
 # İlk anlamlı kelime = marka; jenerik kelimeler marka sayılmaz.
+# Sahip düzeltmesi (2026-07-13): "sistem Haziran'dan beri kullanılıyor — Haziran
+# öncesi fatura/ödemeyi dahil EDEMEZSİN". Cari penceresi sistem başlangıcından
+# önceye TAŞMAZ; öncesi borçlar yalnız tedarikçi BEYANINDA görünür.
+EVVEL_SISTEM_BASLANGIC = "2026-06-01"  # gorev_api.SISTEM_BASLANGIC ile aynı kural
+
+
+def _cari_pencere_kesiti(gun: int = 180) -> str:
+    from datetime import date as _d, timedelta as _td
+    kesit = (_d.today() - _td(days=gun)).isoformat()
+    return max(kesit, EVVEL_SISTEM_BASLANGIC)
+
+
 def _cari_katla(s: str) -> str:
     """TR harf katlaması (beyin _tr_katla dersi: 'HİZMETLERİ'.lower() noktalı
     i̇ üretir, ASCII karşılaştırma ıskalar) — tüm cari eşleştirmeleri bundan geçer."""
@@ -1035,9 +1047,9 @@ def _cari_zincir(faturalar: list) -> list:
 
 
 def cari_ozet() -> dict:
-    """Tüm tedarikçilerin cari özeti — beyin (B48) + bağ + UI. Salt-okur."""
-    from datetime import date, timedelta
-    kesit_6ay = (date.today() - timedelta(days=180)).isoformat()
+    """Tüm tedarikçilerin cari özeti — beyin (B48) + bağ + UI. Salt-okur.
+    Pencere sistem başlangıcından önceye taşmaz (Haziran 2026 öncesi veri yok)."""
+    kesit_6ay = _cari_pencere_kesiti(180)
     with db() as (_, cur):
         _ensure_tablolar(cur)
         cur.execute(
@@ -1057,23 +1069,24 @@ def cari_ozet() -> dict:
                ORDER BY vade_tarihi""")
         vadeler = [dict(r) for r in cur.fetchall() or []]
         # BİZİM TARAF ödeme izleri (3 kanal, türetilmişler hariç) — kasa izi
-        # felsefesi: iz varsa borçtan düşer, iz yoksa borç BİRİKİR (cari artar)
+        # felsefesi: iz varsa borçtan düşer, iz yoksa borç BİRİKİR (cari artar).
+        # Pencere = fatura penceresiyle AYNI kesit (sistem başlangıcı korumalı).
         cur.execute(
             """SELECT tarih::text AS tarih, tutar::float AS tutar, metin FROM (
                  SELECT vade_tarihi AS tarih, tutar,
                         COALESCE(tedarikci,'') || ' ' || COALESCE(aciklama,'') AS metin
                  FROM vadeli_alimlar
-                 WHERE durum='odendi' AND vade_tarihi >= CURRENT_DATE - 180
+                 WHERE durum='odendi' AND vade_tarihi >= %s::date
                  UNION ALL
                  SELECT tarih, tutar, COALESCE(aciklama,'')
                  FROM anlik_giderler
-                 WHERE durum='aktif' AND kaynak_id IS NULL
-                   AND tarih >= CURRENT_DATE - 180
+                 WHERE durum='aktif' AND kaynak_id IS NULL AND tarih >= %s::date
                  UNION ALL
                  SELECT tarih, tutar, COALESCE(aciklama,'')
                  FROM kart_hareketleri
                  WHERE islem_turu='HARCAMA' AND durum='aktif' AND kaynak_id IS NULL
-                   AND tarih >= CURRENT_DATE - 180) x""")
+                   AND tarih >= %s::date) x""",
+            (kesit_6ay, kesit_6ay, kesit_6ay))
         odeme_izleri = [dict(r) for r in cur.fetchall() or []]
 
     gruplar: dict = {}
@@ -1136,13 +1149,16 @@ def cari_ozet() -> dict:
         "toplam_hesaplanan_acik": round(sum(max(0.0, x["hesaplanan_acik"])
                                             for x in ozet), 2),
         "toplam_bekleyen_vade": round(sum(x["bekleyen_vade_toplam"] for x in ozet), 2),
+        "pencere_baslangic": kesit_6ay,
         "not": ("İKİ GÖZ: beyan_bakiye = TEDARİKÇİNİN fatura üstü beyanı (≈); "
-                "hesaplanan_acik = BİZİM taraf ≈ 180 gün fatura toplamı − ödeme izi "
-                "(3 kanal aday eşleşme). Ödeme izi YOKSA açık BÜYÜR (kasa izi ilkesi: "
-                "iz varsa düşer, iz yoksa borç kalır). Negatif açık = fazla/peşin "
-                "ödeme ya da eşleşme fazlası olabilir. beyan_hesap_farki büyükse "
-                "kayıt-dışı hareket / eksik fatura / eksik ödeme kaydı incelenir — "
-                "hüküm insanın."),
+                "hesaplanan_acik = BİZİM taraf ≈ pencere içi fatura toplamı − ödeme "
+                "izi (3 kanal aday eşleşme). PENCERE Haziran 2026 (sistem başlangıcı) "
+                "öncesine TAŞMAZ — öncesinin fatura/ödemesi sistemde yok; eski "
+                "borçlar yalnız tedarikçi beyanında görünür. Ödeme izi YOKSA açık "
+                "BÜYÜR (iz varsa düşer, iz yoksa borç kalır). Negatif açık = fazla/"
+                "peşin ödeme ya da penceredeki faturası henüz yüklenmemiş ödeme. "
+                "beyan_hesap_farki büyükse eksik fatura / eksik ödeme kaydı / "
+                "sistem-öncesi bakiye incelenir — hüküm insanın."),
     }
 
 
@@ -1199,9 +1215,9 @@ def cari_ekstre(tedarikci: str = ""):
         f["goruntule"] = f"/api/fatura/{f['id']}/foto"
     beyan = next((f["bakiye_dahil"] for f in reversed(faturalar)
                   if f.get("bakiye_dahil") is not None), None)
-    # BİZİM TARAF HESABI (180 gün): fatura(+) − ödeme izi(−); iz yoksa açık büyür
-    from datetime import date as _d, timedelta as _td
-    _kesit = (_d.today() - _td(days=180)).isoformat()
+    # BİZİM TARAF HESABI: fatura(+) − ödeme izi(−); iz yoksa açık büyür.
+    # Pencere sistem başlangıcından önceye TAŞMAZ (Haziran 2026 öncesi veri yok).
+    _kesit = _cari_pencere_kesiti(180)
     fatura_toplam = round(sum(f["tutar"] for f in faturalar
                               if str(f["tarih"]) >= _kesit), 2)
     odeme_toplam = round(sum(o["tutar"] for o in odeme_adaylari
