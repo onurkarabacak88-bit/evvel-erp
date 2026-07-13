@@ -856,6 +856,7 @@ def belge_merkezi_ozet(ay: str = ""):
     # eşleştirme (K2-D kuralı: tutar ±%2 / ±5 TL, tarih ±5 gün, fatura tek kullanım)
     kullanildi: set = set()
     faturasiz, eslesen_tutar = [], 0.0
+    kurumsal, kurumsal_tutar = [], 0.0  # MEPAŞ vb: belgesi KURUMDA hazır, arşive inmemiş
     for h in harcamalar:
         tut = float(h["tutar"])
         aday = None
@@ -875,9 +876,15 @@ def belge_merkezi_ozet(ay: str = ""):
         if aday:
             kullanildi.add(aday["id"])
             eslesen_tutar += tut
+            continue
+        satir = {"tarih": h["tarih"], "kart": h["kart_adi"],
+                 "tutar": tut, "aciklama": h["aciklama"], "tip": h["tip"]}
+        if kurumsal_fatura_mu(h.get("aciklama") or ""):
+            satir["tip"] = "kurumsal"
+            kurumsal.append(satir)
+            kurumsal_tutar += tut
         else:
-            faturasiz.append({"tarih": h["tarih"], "kart": h["kart_adi"],
-                              "tutar": tut, "aciklama": h["aciklama"], "tip": h["tip"]})
+            faturasiz.append(satir)
     # gün gün: fatura + faturasız harcama kırılımı
     gunler: dict = {}
     for x in faturalar:
@@ -926,13 +933,17 @@ def belge_merkezi_ozet(ay: str = ""):
         "kapsama": {
             "isletme_kart_harcamasi": toplam_harcama,
             "faturali_eslesen": round(eslesen_tutar, 2),
-            "faturasiz": round(toplam_harcama - eslesen_tutar, 2),
+            # Kurumsal otomatik (MEPAŞ vb): belgesi kurumda hazır — riskli
+            # faturasızdan AYRI sayılır (sahip konumlandırması 2026-07-14)
+            "kurumsal_otomatik": round(kurumsal_tutar, 2),
+            "faturasiz": round(toplam_harcama - eslesen_tutar - kurumsal_tutar, 2),
             "oran_yuzde": (round(eslesen_tutar / toplam_harcama * 100, 1)
                            if toplam_harcama > 0 else None),
         },
         "toptancilar": toptancilar,
         "gun_gun": sorted(gunler.values(), key=lambda x: x["gun"], reverse=True),
         "faturasiz_harcamalar": faturasiz[:40],
+        "kurumsal_harcamalar": kurumsal[:40],
         "fatura_arsivi": faturalar[:60],
         "fatura_istekleri": fatura_istekleri,
         "kdv_kanit": kdv_kanit,
@@ -973,6 +984,27 @@ def _cari_kanonik(vkn, ad) -> str:
 # 'SÜTAŞ SÜT ÜRÜNLERİ A.Ş.' ödeme metnindeki KISA adla 'sütaş süt alımı'
 # eşleşmiyordu — tüm tedarikçiler yanlışça 'iz yok' görünüyordu).
 # İlk anlamlı kelime = marka; jenerik kelimeler marka sayılmaz.
+# KURUMSAL OTOMATİK FATURA sınıfı (sahip, 2026-07-14: "MEPAŞ faturaları kartta
+# otomatik ödemede; ekstre yükleyince sistem 'faturası yok' algılıyor — bunları
+# nasıl konumlandırmalıyız?"). Bunlar FATURASIZ değil: kurum e-arşiv faturası
+# KESİYOR, sadece PDF arşive inmemiş. Kovalama yolu WhatsApp DEĞİL — kurum
+# sitesi / GİB e-arşivden indirip Belge Merkezi'ne yüklemek. Kalıp listesi dar
+# tutulur (elektrik/su/doğalgaz/telekom kurumları); eşleşme ADAY etiketi, hüküm değil.
+_KURUMSAL_KALIPLAR = (
+    "mepas", "mepaş", "medas", "medaş", "tedas", "tedaş", "bedas", "bedaş",
+    "ayedas", "ayedaş", "enerjisa", "aydem", "gediz elektrik", "toroslar",
+    "elektrik", "koski", "koskİ", "iski", "aski", "su idaresi", "su fatura",
+    "dogalgaz", "doğalgaz", "igdas", "igdaş", "enerya", "aksa dogalgaz",
+    "turk telekom", "türk telekom", "turkcell", "vodafone", "superonline",
+    "turknet", "türknet", "ttnet", "internet fatura", "gsm fatura",
+)
+
+
+def kurumsal_fatura_mu(metin: str) -> bool:
+    m = _cari_katla(metin)
+    return any(_cari_katla(k) in m for k in _KURUMSAL_KALIPLAR)
+
+
 # Sahip düzeltmesi (2026-07-13): "sistem Haziran'dan beri kullanılıyor — Haziran
 # öncesi fatura/ödemeyi dahil EDEMEZSİN". Cari penceresi sistem başlangıcından
 # önceye TAŞMAZ; öncesi borçlar yalnız tedarikçi BEYANINDA görünür.

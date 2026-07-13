@@ -137,6 +137,11 @@ export default function BelgeMerkezi() {
               <div style={{ fontSize: 13, display: 'flex', gap: 16, flexWrap: 'wrap' }}>
                 <span>💳 İşletme kart harcaması: <b>{fmt(k.isletme_kart_harcamasi || 0)}</b></span>
                 <span style={{ color: 'var(--green)' }}>🧾 Faturalı: <b>{fmt(k.faturali_eslesen || 0)}</b></span>
+                {(k.kurumsal_otomatik || 0) > 0 && (
+                  <span style={{ color: '#f59e0b' }} title="MEPAŞ/su/telekom vb otomatik ödemeler — faturası kurumda hazır, e-arşivden indirip yükleyin">
+                    🏢 Kurumsal: <b>{fmt(k.kurumsal_otomatik)}</b>
+                  </span>
+                )}
                 <span style={{ color: 'var(--red)' }}>⚠ Faturasız: <b>{fmt(k.faturasiz || 0)}</b></span>
               </div>
             </div>
@@ -219,9 +224,12 @@ export default function BelgeMerkezi() {
                       {g.tedarikci} <span style={{ color: 'var(--text3)', fontWeight: 400 }}>({g.adet} ödeme · {fmt(g.toplam)})</span>
                     </span>
                     <span style={{ display: 'flex', gap: 6 }}>
-                      {g.wa_link
-                        ? <button className="btn btn-secondary" onClick={() => fiIste(g)}>📲 WhatsApp'tan İste</button>
-                        : <button className="btn btn-secondary" onClick={() => fiNumara(g)}>📵 Numara Ekle</button>}
+                      {g.kurumsal
+                        ? <a className="btn btn-secondary" href="https://ebelge.gib.gov.tr/earsivsorgula.html" target="_blank" rel="noreferrer"
+                             title="Kurumsal otomatik ödeme (MEPAŞ vb) — faturası kurumda; e-arşivden indirip yükle">🏛️ e-Arşiv'den İndir</a>
+                        : g.wa_link
+                          ? <button className="btn btn-secondary" onClick={() => fiIste(g)}>📲 WhatsApp'tan İste</button>
+                          : <button className="btn btn-secondary" onClick={() => fiNumara(g)}>📵 Numara Ekle</button>}
                     </span>
                   </div>
                   {(g.istekler || []).map(x => (
@@ -335,6 +343,26 @@ export default function BelgeMerkezi() {
                   </div>
                 ))}
               </div>
+              {/* 🏢 KURUMSAL OTOMATİK (MEPAŞ vb) — faturasız DEĞİL: belgesi kurumda hazır */}
+              {(d.kurumsal_harcamalar || []).length > 0 && (
+                <div style={{ marginTop: 10 }}>
+                  <div style={{ fontWeight: 700, fontSize: 12, color: '#f59e0b', marginBottom: 4 }}>
+                    🏢 Kurumsal Otomatik Ödemeler ({d.kurumsal_harcamalar.length}) — faturası kurumda hazır
+                    {' '}<a href="https://ebelge.gib.gov.tr/earsivsorgula.html" target="_blank" rel="noreferrer" style={{ color: 'var(--blue, #60a5fa)', fontWeight: 400 }}>🏛️ e-Arşiv'den indir</a>
+                  </div>
+                  <div style={{ maxHeight: 160, overflowY: 'auto' }}>
+                    {d.kurumsal_harcamalar.map((h, i) => (
+                      <div key={i} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 12, padding: '3px 0', borderBottom: '1px solid var(--border)', color: 'var(--text3)' }}>
+                        <span>{h.tarih} · {(h.kart || '').slice(0, 16)} · {h.aciklama}</span>
+                        <span style={{ fontFamily: 'var(--font-mono)', whiteSpace: 'nowrap' }}>{fmt(h.tutar)}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>
+                    İndirdiğin PDF'i Belge Merkezi'ne yükleyince satır faturalıya geçer (KDV indirimi + gider kanıtı).
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 

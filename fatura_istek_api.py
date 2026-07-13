@@ -83,6 +83,10 @@ def _ensure(cur) -> None:
     )
     cur.execute("CREATE INDEX IF NOT EXISTS idx_fatura_istek_durum "
                 "ON fatura_istek (durum, tarih DESC)")
+    # KURUMSAL sınıfı (2026-07-14, MEPAŞ vakası): tedarikci=wa.me kovala,
+    # kurumsal=kurum sitesi/GİB e-arşivden İNDİR (WhatsApp saçma olur)
+    cur.execute("ALTER TABLE fatura_istek ADD COLUMN IF NOT EXISTS "
+                "tur TEXT NOT NULL DEFAULT 'tedarikci'")
 
 
 def _tel_norm(tel: str) -> str:
@@ -210,15 +214,21 @@ def _tara() -> dict:
             ted_ad, ted_tel = _tel_bul(metin)
             if o["kaynak_tip"] == "vadeli_alim" and (o.get("detay") or "").strip():
                 ted_ad = ted_ad or str(o["detay"]).strip()
+            # MEPAŞ vb kurumsal otomatik ödeme → tur='kurumsal' (e-arşivden indirilir)
+            try:
+                from fatura_api import kurumsal_fatura_mu
+                tur = "kurumsal" if kurumsal_fatura_mu(metin) else "tedarikci"
+            except Exception:  # noqa: BLE001
+                tur = "tedarikci"
             cur.execute(
                 """INSERT INTO fatura_istek
                        (kaynak_tip, kaynak_id, tarih, tutar, aciklama, kanal_detay,
-                        tedarikci_ad, tedarikci_tel)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+                        tedarikci_ad, tedarikci_tel, tur)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
                    ON CONFLICT (kaynak_tip, kaynak_id) DO NOTHING
                    RETURNING id""",
                 (o["kaynak_tip"], str(o["id"]), o["tarih"], o["tutar"],
-                 o.get("aciklama"), o.get("detay"), ted_ad, ted_tel))
+                 o.get("aciklama"), o.get("detay"), ted_ad, ted_tel, tur))
             if cur.fetchone():
                 yeni.append({"kaynak": o["kaynak_tip"], "tarih": o["tarih"],
                              "tutar": float(o["tutar"])})
@@ -230,6 +240,19 @@ def _tara() -> dict:
             if _faturasiz_tur_mu(f"{r.get('aciklama') or ''} {r.get('kanal_detay') or ''}"):
                 cur.execute("DELETE FROM fatura_istek WHERE id=%s AND durum='aday'",
                             (r["id"],))
+        # 4c) GERİYE DÖNÜK kurumsal etiketi — önceden 'tedarikci' doğmuş MEPAŞ vb
+        #     adaylar kurumsal sınıfa taşınır (idempotent)
+        try:
+            from fatura_api import kurumsal_fatura_mu as _kfm
+            cur.execute("""SELECT id, aciklama, kanal_detay FROM fatura_istek
+                           WHERE durum IN ('aday','istek_gonderildi')
+                             AND COALESCE(tur,'tedarikci')='tedarikci'""")
+            for r in [dict(x) for x in cur.fetchall() or []]:
+                if _kfm(f"{r.get('aciklama') or ''} {r.get('kanal_detay') or ''}"):
+                    cur.execute("UPDATE fatura_istek SET tur='kurumsal' WHERE id=%s",
+                                (r["id"],))
+        except Exception:  # noqa: BLE001
+            pass
 
         # 5) OTOMATİK KAPANIŞ — açık istek, sonradan gelen faturayla eşleşirse
         #    kendiliğinden kapanır (iz varsa kapanır; pencere geniş: ±10 gün)
@@ -291,7 +314,7 @@ def fatura_istek_liste():
         cur.execute(
             """SELECT id, kaynak_tip, tarih::text AS tarih, tutar::float AS tutar,
                       aciklama, kanal_detay, tedarikci_ad, tedarikci_tel, durum,
-                      mesaj_sayisi
+                      mesaj_sayisi, COALESCE(tur,'tedarikci') AS tur
                FROM fatura_istek
                WHERE durum IN ('aday','istek_gonderildi')
                ORDER BY tutar DESC""")
@@ -305,20 +328,31 @@ def fatura_istek_liste():
 
     gruplar: dict = {}
     for x in acik:
-        anahtar = (x.get("tedarikci_ad") or "").strip() or "(tedarikçi belirsiz)"
+        kurumsal = x.get("tur") == "kurumsal"
+        anahtar = (x.get("tedarikci_ad") or "").strip() \
+            or ((x.get("aciklama") or "").strip()[:30] if kurumsal else "") \
+            or "(tedarikçi belirsiz)"
         g = gruplar.setdefault(anahtar, {"tedarikci": anahtar, "tel": None,
-                                         "adet": 0, "toplam": 0.0, "istekler": []})
+                                         "adet": 0, "toplam": 0.0,
+                                         "kurumsal": kurumsal, "istekler": []})
         g["adet"] += 1
         g["toplam"] = round(g["toplam"] + float(x["tutar"] or 0), 2)
+        g["kurumsal"] = g["kurumsal"] or kurumsal
         if not g["tel"]:
             g["tel"] = _tel_norm(x.get("tedarikci_tel") or "") or None
         g["istekler"].append(x)
     for g in gruplar.values():
-        if g["tel"]:
+        if g["kurumsal"]:
+            # MEPAŞ vb: WhatsApp DEĞİL — kurum sitesi / GİB e-arşivden indirilir
+            g["wa_link"] = None
+            g["eylem"] = "earsiv_indir"
+        elif g["tel"]:
             g["wa_link"] = (f"https://wa.me/{g['tel']}?text="
                             + quote(_wa_mesaj(g["tedarikci"], g["istekler"])))
+            g["eylem"] = "whatsapp"
         else:
             g["wa_link"] = None
+            g["eylem"] = "numara_ekle"
 
     o = fatura_istek_ozet()
     return {
