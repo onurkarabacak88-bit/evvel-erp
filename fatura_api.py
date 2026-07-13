@@ -958,21 +958,37 @@ def belge_merkezi_uc(ay: str = ""):
 # aynı evren): salt-okur, öneri-only.
 
 def _cari_kanonik(vkn, ad) -> str:
+    """VKN öncelik; yoksa JENERİK-filtreli anlamlı token dizisi (canlı test dersi:
+    'SAN. VE TİC.' ↔ 'SANAYİ VE TİCARET' yazım farkı aynı tedarikçiyi iki satıra
+    bölüyor, ödeme izi ÇİFT düşülüyordu)."""
     v = (vkn or "").strip()
-    return v if v else (ad or "").strip().lower()
+    if v:
+        return v
+    tokenlar = [w.strip(".,()") for w in _cari_katla(ad).split()
+                if len(w.strip(".,()")) >= 3 and w.strip(".,()") not in _JENERIK]
+    return " ".join(tokenlar) or _cari_katla(ad).strip()
 
 
 # Marka-token eşleştirme (canlı test dersi 2026-07-13: fatura üstü UZUN ünvan
 # 'SÜTAŞ SÜT ÜRÜNLERİ A.Ş.' ödeme metnindeki KISA adla 'sütaş süt alımı'
 # eşleşmiyordu — tüm tedarikçiler yanlışça 'iz yok' görünüyordu).
 # İlk anlamlı kelime = marka; jenerik kelimeler marka sayılmaz.
-_JENERIK = {"gida", "gıda", "kahve", "market", "grup", "ltd", "şti", "sti",
-            "san", "tic", "sanayi", "ticaret", "ürünleri", "urunleri", "süt",
-            "sut", "ith", "ihr", "ithalat", "ihracat", "a.ş", "a.s", "ve"}
+def _cari_katla(s: str) -> str:
+    """TR harf katlaması (beyin _tr_katla dersi: 'HİZMETLERİ'.lower() noktalı
+    i̇ üretir, ASCII karşılaştırma ıskalar) — tüm cari eşleştirmeleri bundan geçer."""
+    ceviri = str.maketrans("İIıŞşĞğÜüÖöÇç", "iiissgguuoocc")
+    return (s or "").translate(ceviri).lower()
+
+
+# Katlanmış (ASCII) biçimde tutulur — _cari_katla sonrası karşılaştırılır
+_JENERIK = {"gida", "kahve", "market", "grup", "ltd", "sti", "san", "tic",
+            "sanayi", "ticaret", "urunleri", "sut", "ith", "ihr", "ithalat",
+            "ihracat", "a.s", "ve", "limited", "sirketi", "anonim",
+            "hizmetleri", "hizmet"}
 
 
 def _marka_token(ad: str) -> str:
-    for w in (ad or "").lower().split():
+    for w in _cari_katla(ad).split():
         w = w.strip(".,()")
         if len(w) >= 3 and w not in _JENERIK:
             return w
@@ -981,18 +997,18 @@ def _marka_token(ad: str) -> str:
 
 # Yaygın Türkçe kişi adları — kişi-adlı tedarikçide (MEHMET ATALAY) tek kelime
 # eşleşmesi başka Mehmet'lere de yapışır (birim test dersi) → soyadı da aranır.
-_KISI_ADLARI = {"mehmet", "ahmet", "ali", "mustafa", "hasan", "hüseyin", "huseyin",
-                "ibrahim", "ismail", "osman", "yusuf", "murat", "ömer", "omer",
-                "halil", "süleyman", "suleyman", "ramazan", "recep", "salih",
-                "fatma", "ayşe", "ayse", "emine", "hatice", "zeynep", "ersin",
+_KISI_ADLARI = {"mehmet", "ahmet", "ali", "mustafa", "hasan", "huseyin",
+                "ibrahim", "ismail", "osman", "yusuf", "murat", "omer",
+                "halil", "suleyman", "ramazan", "recep", "salih",
+                "fatma", "ayse", "emine", "hatice", "zeynep", "ersin",
                 "emre", "onur", "fethi", "kemal", "kadir", "adem", "yaren"}
 
 
 def _odeme_eslesir(ad: str, metin: str) -> bool:
     """Ödeme metni bu tedarikçiye mi? Marka tokeni aranır; token kişi adıysa
     ikinci kelime (soyadı) da ZORUNLU. Aday eşleşmedir — kesin mutabakat değil."""
-    m = (metin or "").lower()
-    kelimeler = [w.strip(".,()") for w in (ad or "").lower().split()
+    m = _cari_katla(metin)
+    kelimeler = [w.strip(".,()") for w in _cari_katla(ad).split()
                  if len(w.strip(".,()")) >= 3 and w.strip(".,()") not in _JENERIK]
     if not kelimeler:
         return False
