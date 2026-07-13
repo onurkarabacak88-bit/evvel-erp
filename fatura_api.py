@@ -1268,6 +1268,31 @@ def cari_ekstre(tedarikci: str = ""):
         a["sistem_oncesi"] = a["ay"] < EVVEL_SISTEM_BASLANGIC[:7]  # arşiv, hesaba girmez
     aylik_liste = sorted(aylik.values(), key=lambda x: x["ay"], reverse=True)
 
+    # YÜRÜYEN BAKİYE EKSTRESİ (sahip 2026-07-14: "159.000 olmuş, 59.000 ödemişim
+    # 100.000 kalmış, yeni faturalar gelmiş — sırayla görebilmeliyim; elle giriş
+    # yapılsa bile fatura gelince AYNI borç işlenmeli; ödeme illa fatura tutarı
+    # kadar olmayacak"): balance-forward deseni — borç YALNIZ faturadan doğar
+    # (elle vadeli alım kaydı borcu İKİNCİ kez yaratmaz; o vade takibi + ödeme
+    # izidir), ödeme bakiyeden düşer (kısmi/toplu ödeme doğal desteklenir).
+    hareketler = []
+    for f in faturalar:
+        if str(f["tarih"]) >= EVVEL_SISTEM_BASLANGIC:
+            hareketler.append({"tip": "fatura", "tarih": str(f["tarih"]),
+                               "tutar": round(float(f["tutar"] or 0), 2),
+                               "aciklama": f.get("fatura_no") or "fatura",
+                               "goruntule": f.get("goruntule")})
+    for o in odeme_adaylari:
+        if str(o["tarih"]) >= EVVEL_SISTEM_BASLANGIC:
+            hareketler.append({"tip": "odeme", "tarih": str(o["tarih"]),
+                               "tutar": round(float(o["tutar"] or 0), 2),
+                               "aciklama": f"{o.get('kanal')}: {(o.get('aciklama') or '')[:40]}"})
+    # Aynı günde fatura önce işlenir (bakiye sezgisel yürüsün)
+    hareketler.sort(key=lambda h: (h["tarih"], 0 if h["tip"] == "fatura" else 1))
+    bakiye = 0.0
+    for h in hareketler:
+        bakiye = round(bakiye + (h["tutar"] if h["tip"] == "fatura" else -h["tutar"]), 2)
+        h["bakiye"] = bakiye
+
     # BİZİM TARAF HESABI: fatura(+) − ödeme izi(−); iz yoksa açık büyür.
     # Pencere sistem başlangıcından önceye TAŞMAZ (Haziran 2026 öncesi veri yok).
     _kesit = _cari_pencere_kesiti(180)
@@ -1284,6 +1309,8 @@ def cari_ekstre(tedarikci: str = ""):
         "odeme_izi_toplam_6ay": odeme_toplam,
         "hesaplanan_acik": round(fatura_toplam - odeme_toplam, 2),
         "aylik": aylik_liste,
+        "hareketler": hareketler[-80:],
+        "yuruyen_bakiye": (hareketler[-1]["bakiye"] if hareketler else 0.0),
         "bekleyen_vadeler": bekleyen_vadeler,
         "bekleyen_vade_toplam": round(sum(v["tutar"] for v in bekleyen_vadeler), 2),
         "odeme_adaylari": odeme_adaylari,

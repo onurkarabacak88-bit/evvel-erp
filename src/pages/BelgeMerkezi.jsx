@@ -313,6 +313,34 @@ export default function BelgeMerkezi() {
                           <div style={{ color: 'var(--text3)', marginTop: 2 }}>
                             bizim hesap = 180 gün fatura − ödeme izi (ödeme izi yoksa açık büyür) · beyan = tedarikçinin fatura üstü bakiyesi · ikisi de ≈, hüküm değil
                           </div>
+                          {/* 📜 YÜRÜYEN EKSTRE — fatura(+) ödeme(−) sırayla, bakiye yürür */}
+                          {(cari[t.toptanci].hareketler || []).length > 0 && (
+                            <details style={{ marginTop: 6 }}>
+                              <summary style={{ cursor: 'pointer', fontSize: 12, fontWeight: 700 }}>
+                                📜 Yürüyen Ekstre — güncel bakiye ≈ {fmt(cari[t.toptanci].yuruyen_bakiye)}
+                              </summary>
+                              <div style={{ maxHeight: 220, overflowY: 'auto', marginTop: 4 }}>
+                                {cari[t.toptanci].hareketler.map((h, i) => (
+                                  <div key={i} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 11, padding: '2px 0', borderBottom: '1px solid var(--border)' }}>
+                                    <span>
+                                      {h.tarih} {h.tip === 'fatura' ? '🧾' : '💸'} {(h.aciklama || '').slice(0, 34)}
+                                      {h.goruntule && <>{' '}<a href={h.goruntule} target="_blank" rel="noreferrer" style={{ color: 'var(--blue, #60a5fa)' }}>📎</a></>}
+                                    </span>
+                                    <span style={{ whiteSpace: 'nowrap', fontFamily: 'var(--font-mono)' }}>
+                                      <span style={{ color: h.tip === 'fatura' ? 'var(--red)' : 'var(--green)' }}>
+                                        {h.tip === 'fatura' ? '+' : '−'}{fmt(h.tutar)}
+                                      </span>
+                                      {' '}<b>→ {fmt(h.bakiye)}</b>
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                              <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 2 }}>
+                                Borç yalnız FATURADAN doğar (elle vadeli alım girişi çift saymaz — o vade takibi + ödeme izidir).
+                                Ödeme bakiyeden düşer; fatura tutarına eşit olmak zorunda değil (kısmi/toplu ödeme desteklenir). ≈ aday eşleşme.
+                              </div>
+                            </details>
+                          )}
                           {/* AY AY MUTABAKAT — fatura ↔ ödeme; aya tıkla = detay + PDF */}
                           {(cari[t.toptanci].aylik || []).length > 0 && (
                             <div style={{ marginTop: 6 }}>
