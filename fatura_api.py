@@ -962,6 +962,48 @@ def _cari_kanonik(vkn, ad) -> str:
     return v if v else (ad or "").strip().lower()
 
 
+# Marka-token eşleştirme (canlı test dersi 2026-07-13: fatura üstü UZUN ünvan
+# 'SÜTAŞ SÜT ÜRÜNLERİ A.Ş.' ödeme metnindeki KISA adla 'sütaş süt alımı'
+# eşleşmiyordu — tüm tedarikçiler yanlışça 'iz yok' görünüyordu).
+# İlk anlamlı kelime = marka; jenerik kelimeler marka sayılmaz.
+_JENERIK = {"gida", "gıda", "kahve", "market", "grup", "ltd", "şti", "sti",
+            "san", "tic", "sanayi", "ticaret", "ürünleri", "urunleri", "süt",
+            "sut", "ith", "ihr", "ithalat", "ihracat", "a.ş", "a.s", "ve"}
+
+
+def _marka_token(ad: str) -> str:
+    for w in (ad or "").lower().split():
+        w = w.strip(".,()")
+        if len(w) >= 3 and w not in _JENERIK:
+            return w
+    return ""
+
+
+# Yaygın Türkçe kişi adları — kişi-adlı tedarikçide (MEHMET ATALAY) tek kelime
+# eşleşmesi başka Mehmet'lere de yapışır (birim test dersi) → soyadı da aranır.
+_KISI_ADLARI = {"mehmet", "ahmet", "ali", "mustafa", "hasan", "hüseyin", "huseyin",
+                "ibrahim", "ismail", "osman", "yusuf", "murat", "ömer", "omer",
+                "halil", "süleyman", "suleyman", "ramazan", "recep", "salih",
+                "fatma", "ayşe", "ayse", "emine", "hatice", "zeynep", "ersin",
+                "emre", "onur", "fethi", "kemal", "kadir", "adem", "yaren"}
+
+
+def _odeme_eslesir(ad: str, metin: str) -> bool:
+    """Ödeme metni bu tedarikçiye mi? Marka tokeni aranır; token kişi adıysa
+    ikinci kelime (soyadı) da ZORUNLU. Aday eşleşmedir — kesin mutabakat değil."""
+    m = (metin or "").lower()
+    kelimeler = [w.strip(".,()") for w in (ad or "").lower().split()
+                 if len(w.strip(".,()")) >= 3 and w.strip(".,()") not in _JENERIK]
+    if not kelimeler:
+        return False
+    t1 = kelimeler[0]
+    if t1 not in m:
+        return False
+    if t1 in _KISI_ADLARI:
+        return len(kelimeler) >= 2 and kelimeler[1] in m
+    return True
+
+
 def _cari_zincir(faturalar: list) -> list:
     """Kronolojik faturalarda zincir farkı: onceki_bakiye(N) − bakiye_dahil(N-1).
     Negatif → arada ÖDEME görülmüş; pozitif → belge-dışı borç artışı (yönlü ölçüm,
@@ -1050,11 +1092,9 @@ def cari_ozet() -> dict:
         # BİZİM TARAF HESABI: fatura(+) − ödeme izi(−). Ödeme izi = tedarikçi adı
         # ödeme metninde geçen kayıtlar (aday eşleşme). İz YOKSA açık BÜYÜR.
         odeme_top = 0.0
-        if len(ad_l) >= 4:
-            anahtar = ad_l[:20]
-            for o in odeme_izleri:
-                if anahtar in (o.get("metin") or "").lower():
-                    odeme_top = round(odeme_top + float(o["tutar"] or 0), 2)
+        for o in odeme_izleri:
+            if _odeme_eslesir(g["tedarikci"], o.get("metin")):
+                odeme_top = round(odeme_top + float(o["tutar"] or 0), 2)
         fat_top = round(sum(f["tutar"] for f in son6), 2)
         hesaplanan_acik = round(fat_top - odeme_top, 2)
         ozet.append({
@@ -1102,6 +1142,8 @@ def cari_ekstre(tedarikci: str = ""):
     ara = (tedarikci or "").strip()
     if len(ara) < 3:
         raise HTTPException(400, "tedarikci parametresi (ad veya VKN) en az 3 karakter")
+    # Ödeme/vade metinleri KISA ad kullanır — tam ünvan gelirse marka tokeniyle ara
+    ara_kisa = _marka_token(ara) or ara
     with db() as (_, cur):
         _ensure_tablolar(cur)
         cur.execute(
@@ -1117,7 +1159,7 @@ def cari_ekstre(tedarikci: str = ""):
             """SELECT tutar::float AS tutar, vade_tarihi::text AS vade, aciklama
                FROM vadeli_alimlar
                WHERE durum='bekliyor' AND (tedarikci ILIKE %s OR aciklama ILIKE %s)
-               ORDER BY vade_tarihi""", (f"%{ara}%", f"%{ara}%"))
+               ORDER BY vade_tarihi""", (f"%{ara_kisa}%", f"%{ara_kisa}%"))
         bekleyen_vadeler = [dict(r) for r in cur.fetchall() or []]
         odeme_adaylari = []
         cur.execute(
@@ -1135,7 +1177,7 @@ def cari_ekstre(tedarikci: str = ""):
                WHERE h.islem_turu='HARCAMA' AND h.durum='aktif'
                  AND h.kaynak_id IS NULL AND h.aciklama ILIKE %s
                ORDER BY 2 DESC LIMIT 60""",
-            (f"%{ara}%", f"%{ara}%", f"%{ara}%", f"%{ara}%"))
+            (f"%{ara_kisa}%", f"%{ara_kisa}%", f"%{ara_kisa}%", f"%{ara_kisa}%"))
         odeme_adaylari = [dict(r) for r in cur.fetchall() or []]
     for f in faturalar:
         f["goruntule"] = f"/api/fatura/{f['id']}/foto"
