@@ -2016,14 +2016,36 @@ def kart_dongu():
                                      AND tarih > %s::date AND tarih <= %s::date""",
                                 (k["id"], str(son_kesim), str(son_odeme)))
                     odenen = float(dict(cur.fetchone() or {}).get("o") or 0)
+                    # Sahip düzeltmesi (2026-07-14, Fethi Garanti vakası): asgari/tam
+                    # ödendi VE son ödeme tarihi GEÇTİYSE dönem KAPANMIŞTIR — kart
+                    # 'ödendi'de oturmaz, yeni döngüye geçer: devreden kalan yeni
+                    # borcun çekirdeği olur, durum 'ekstre_bekleniyor' olur.
+                    donem_kapandi = bugun > son_odeme
+                    if bugun < bu_ay:
+                        siradaki_kesim = bu_ay
+                    else:
+                        sy, sm = (bugun.year + 1, 1) if bugun.month == 12 else (bugun.year, bugun.month + 1)
+                        siradaki_kesim = kesim_tarihi_hesapla(sy, sm, int(k["kesim_gunu"]))
                     if borc > 0 and odenen >= borc - 0.01:
-                        s["durum"] = "odendi"
-                        s["mesaj"] = f"bu dönem TAM ödendi ({odenen})"
+                        if donem_kapandi:
+                            s["durum"] = "ekstre_bekleniyor"
+                            s["mesaj"] = (f"dönem kapandı — TAM ödendi ({odenen}); "
+                                          f"yeni ekstre {siradaki_kesim} kesiminde bekleniyor")
+                        else:
+                            s["durum"] = "odendi"
+                            s["mesaj"] = f"bu dönem TAM ödendi ({odenen})"
                     elif asgari > 0 and odenen >= asgari * 0.999:
-                        s["durum"] = "odendi"
                         s["devreden_kalan"] = round(borc - odenen, 2)
-                        s["mesaj"] = (f"asgari ödendi ({odenen}) — kalan "
-                                      f"{s['devreden_kalan']} sonraki döneme devreder")
+                        if donem_kapandi:
+                            s["durum"] = "ekstre_bekleniyor"
+                            s["mesaj"] = (f"dönem kapandı — asgari ödendi ({odenen}); "
+                                          f"kalan {s['devreden_kalan']} YENİ borca "
+                                          f"devretti, yeni ekstre {siradaki_kesim} "
+                                          "kesiminde bekleniyor")
+                        else:
+                            s["durum"] = "odendi"
+                            s["mesaj"] = (f"asgari ödendi ({odenen}) — kalan "
+                                          f"{s['devreden_kalan']} sonraki döneme devreder")
                     elif bugun <= son_odeme:
                         s["durum"] = "odeme_bekliyor"
                         s["gun"] = (son_odeme - bugun).days
