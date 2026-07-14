@@ -741,6 +741,36 @@ def gece_belge_kimlik() -> dict:
                               entity_scope="belge", entity_id=str(r["ted"] or "")[:40],
                               signal_name="Mükerrer fatura adayı (aynı kimlik)",
                               payload=r)
+            # İKİZ mükerrer (ATALAY vakası 2026-07-14): eski OCR tarihi/numarayı
+            # yanlış okuyunca parmak izi farklılaşıyor — AYNI tutar + fatura_no
+            # KUYRUĞU aynı (son 6+ hane) + FARKLI tarih = güçlü mükerrer adayı
+            # ('NPE025...413' vs 'NPE2026...413', 2.272,50). Öneri-only.
+            cur.execute(
+                """SELECT a.id AS id1, b.id AS id2, a.tedarikci_ad AS ted,
+                          a.fatura_no AS no1, b.fatura_no AS no2,
+                          a.fatura_tarih::text AS t1, b.fatura_tarih::text AS t2,
+                          a.toplam_tutar::float AS tutar
+                   FROM tedarikci_fatura a
+                   JOIN tedarikci_fatura b
+                     ON a.id < b.id
+                    AND COALESCE(a.toplam_tutar,0) > 0
+                    AND ABS(COALESCE(a.toplam_tutar,0) - COALESCE(b.toplam_tutar,0)) <= 0.01
+                    AND LENGTH(COALESCE(a.fatura_no,'')) >= 6
+                    AND LENGTH(COALESCE(b.fatura_no,'')) >= 6
+                    AND RIGHT(a.fatura_no, 6) = RIGHT(b.fatura_no, 6)
+                    AND a.fatura_no <> b.fatura_no
+                   LIMIT 25""")
+            for r in [dict(x) for x in cur.fetchall() or []]:
+                r["tip"] = "ikiz_no_kuyrugu"
+                ozet["mukerrer"].append({"tedarikci": r["ted"], "tarih": r["t1"],
+                                         "tutar": r["tutar"], "adet": 2,
+                                         "tip": "ikiz", "no1": r["no1"], "no2": r["no2"],
+                                         "t2": r["t2"], "id1": r["id1"], "id2": r["id2"]})
+                duyu_olay_yaz("belge_kimlik", "belge.fatura.mukerrer_aday",
+                              f"ikiz_{r['id1']}_{r['id2']}",
+                              entity_scope="belge", entity_id=str(r["ted"] or "")[:40],
+                              signal_name="İkiz fatura adayı (aynı tutar + no kuyruğu, farklı tarih)",
+                              payload=r)
             # iade: negatif tutarlı belge ↔ aynı tedarikçi eş pozitif (±30g)
             cur.execute(
                 """SELECT n.id, n.tedarikci_ad, n.fatura_tarih::text AS t,
@@ -1291,11 +1321,17 @@ def cari_ozet() -> dict:
             if f.get("bakiye_dahil") is not None:
                 beyan, beyan_tarih = round(float(f["bakiye_dahil"]), 2), f["tarih"]
                 break
-        ad_l = g["tedarikci"].lower()
+        # VADE SÖZÜ eşleşmesi (ATALAY vakası 2026-07-14: 'ATALAY KAHVE' sözü
+        # 'MEHMET ATALAY' cari satırına bağlanmıyordu) — marka-token eşleşmesi;
+        # her vade TEK gruba atanır (çift sayım yok, ilk eşleşen alır).
         v_top, v_yakin = 0.0, None
         for v in vadeler:
-            vt = v["tedarikci"].lower()
-            if len(vt) >= 4 and len(ad_l) >= 4 and (vt in ad_l or ad_l[:20] in vt):
+            if v.get("_atandi"):
+                continue
+            vt_metin = f"{v['tedarikci']} {v.get('aciklama') or ''}"
+            if _odeme_eslesir(g["tedarikci"], vt_metin) or \
+               _odeme_eslesir(v["tedarikci"], g["tedarikci"]):
+                v["_atandi"] = True
                 v_top = round(v_top + v["tutar"], 2)
                 v_yakin = v_yakin or v["vade"]
         kopuk = [f["zincir_fark"] for f in fl if f.get("zincir_fark") not in (None, 0.0)]

@@ -434,6 +434,16 @@ export default function BelgeMerkezi() {
                             <> · bekleyen vade <b style={{ color: 'var(--red)' }}>{fmt(cari[t.toptanci].bekleyen_vade_toplam)}</b>
                               {cari[t.toptanci].bekleyen_vadeler?.[0] && ` (en yakın ${cari[t.toptanci].bekleyen_vadeler[0].vade})`}</>
                           )}
+                          {/* SÖZ vs FATURA farkı (ATALAY vakası): toplu vade sözü fatura açığından saparsa uyar */}
+                          {cari[t.toptanci].bekleyen_vade_toplam > 0 &&
+                            Math.abs(cari[t.toptanci].bekleyen_vade_toplam - Math.max(0, cari[t.toptanci].hesaplanan_acik || 0)) >
+                              Math.max(500, (cari[t.toptanci].bekleyen_vade_toplam || 0) * 0.05) && (
+                            <div style={{ color: '#f59e0b', marginTop: 2 }}>
+                              ⚠ Ödeme sözü {fmt(cari[t.toptanci].bekleyen_vade_toplam)} ama faturalardan görünen açık {fmt(Math.max(0, cari[t.toptanci].hesaplanan_acik || 0))} —
+                              fark {fmt(Math.abs(cari[t.toptanci].bekleyen_vade_toplam - Math.max(0, cari[t.toptanci].hesaplanan_acik || 0)))}:
+                              ya faturaları henüz yüklenmedi/okunmadı, ya söz toplu/tahmini girildi.
+                            </div>
+                          )}
                           {(cari[t.toptanci].faturalar || []).some(f => f.zincir_fark != null && f.zincir_fark !== 0) && (
                             <span style={{ color: 'var(--text3)' }}> · zincirde ödeme/hareket izi var</span>
                           )}
