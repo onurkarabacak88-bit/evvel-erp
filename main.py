@@ -539,6 +539,14 @@ def _gece_yarisi_scheduler():
                 gece_fiyat_bandi_izleme()  # BM-6: band disi alim -> omurga olayi
                 from personel_puan_api import gece_personel_puan_tara
                 gece_personel_puan_tara()  # PUAN: dunun olaylari (gec kalma/fark/foto/temiz hafta)
+                # OCR KURTARMA (SUTAS vakasi): gunduz kota 429'una takilan fotolar
+                # gece yeniden denenir — sessiz birikme olmaz. Hata-yutar.
+                try:
+                    from fatura_api import ocr_yeniden_dene
+                    _ocr_r = ocr_yeniden_dene(limit=50)
+                    logger.info(f"⏰ OCR gece kurtarma: {_ocr_r.get('kuyruga_alinan')} foto kuyruga alindi")
+                except Exception as _ocr_e:
+                    logger.warning(f"⏰ OCR gece kurtarma atlandi: {_ocr_e}")
                 from duyu_gorunumler import gece_agir_onhesap
                 gece_agir_onhesap()  # GOREV #56: agir uclar SIRALI on-hesap -> gunduz cache
                 from duyu_gorunumler import bag_defteri_hesapla
