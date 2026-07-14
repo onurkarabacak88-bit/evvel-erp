@@ -163,17 +163,30 @@ def _tara(hedef_gun: Optional[str] = None) -> dict:
         _ensure(cur)
         kurallar = _kural_map(cur)
 
-        # ── AÇILIŞ SLOTU KİŞİLERİ (plan) + GERÇEKLEŞEN AÇILIŞ (olay) ──
+        # ── AÇILIŞ KİŞİLERİ (plan) + GERÇEKLEŞEN AÇILIŞ (olay) ──
+        # Takvim kuralıyla AYNI (vardiya_takvimi): tip='acilis' işaretli slot;
+        # şube-günde İŞARETLİ YOKSA en erken başlayan(lar) açılışçıdır.
         cur.execute(
             """SELECT va.personel_id, p.ad_soyad, va.baslangic_saat::text AS plan_bas,
-                      COALESCE(s.ad,'?') AS sube_ad, vs.sube_id
+                      COALESCE(s.ad,'?') AS sube_ad, vs.sube_id,
+                      COALESCE(vs.tip,'normal') AS slot_tip
                FROM vardiya_atama va
                JOIN vardiya_slot vs ON vs.id = va.slot_id
                LEFT JOIN subeler s ON s.id = vs.sube_id
                JOIN personel p ON p.id = va.personel_id
-               WHERE va.tarih = %s::date AND va.durum <> 'iptal'
-                 AND COALESCE(vs.tip,'') = 'acilis'""", (gun,))
-        acilis_plan = [dict(r) for r in cur.fetchall() or []]
+               WHERE va.tarih = %s::date AND va.durum <> 'iptal'""", (gun,))
+        tum_atamalar = [dict(r) for r in cur.fetchall() or []]
+        _sube_grup: dict = {}
+        for r in tum_atamalar:
+            _sube_grup.setdefault(str(r.get("sube_id")), []).append(r)
+        acilis_plan = []
+        for rows in _sube_grup.values():
+            isaretli = [r for r in rows if r["slot_tip"] == "acilis"]
+            if isaretli:
+                acilis_plan.extend(isaretli)
+            elif rows:
+                en_erken = min(r["plan_bas"] for r in rows)
+                acilis_plan.extend([r for r in rows if r["plan_bas"] == en_erken])
         cur.execute(
             """SELECT sube_id, MIN(cevap_ts) AS ts FROM sube_operasyon_event
                WHERE tip='ACILIS' AND tarih = %s::date AND cevap_ts IS NOT NULL
@@ -221,16 +234,29 @@ def _tara(hedef_gun: Optional[str] = None) -> dict:
         # KAPANIS_KASA_FARK(gun) → o günün kapanışçısı; ACILIS_KASA_FARK(gun)
         # → ÖNCEKİ günün kapanışçısı (sabah sayımı dünkü kapanışı ölçer).
         def _kapanis_kisileri(g: str) -> list:
+            # Takvim kuralıyla AYNI: tip='kapanis'; işaretli yoksa EN GEÇ biten(ler)
             cur.execute(
                 """SELECT va.personel_id, p.ad_soyad, COALESCE(s.ad,'?') AS sube_ad,
-                          vs.sube_id
+                          vs.sube_id, COALESCE(vs.tip,'normal') AS slot_tip,
+                          va.bitis_saat::text AS bitis
                    FROM vardiya_atama va
                    JOIN vardiya_slot vs ON vs.id = va.slot_id
                    LEFT JOIN subeler s ON s.id = vs.sube_id
                    JOIN personel p ON p.id = va.personel_id
-                   WHERE va.tarih = %s::date AND va.durum <> 'iptal'
-                     AND COALESCE(vs.tip,'') = 'kapanis'""", (g,))
-            return [dict(r) for r in cur.fetchall() or []]
+                   WHERE va.tarih = %s::date AND va.durum <> 'iptal'""", (g,))
+            rows_g = [dict(r) for r in cur.fetchall() or []]
+            grup: dict = {}
+            for r in rows_g:
+                grup.setdefault(str(r.get("sube_id")), []).append(r)
+            secilen = []
+            for rows in grup.values():
+                isaretli = [r for r in rows if r["slot_tip"] == "kapanis"]
+                if isaretli:
+                    secilen.extend(isaretli)
+                elif rows:
+                    en_gec = max(r["bitis"] for r in rows)
+                    secilen.extend([r for r in rows if r["bitis"] == en_gec])
+            return secilen
 
         cur.execute(
             """SELECT tip, sube_id::text AS sube_id, COALESCE(fark_tl,0)::float AS fark
