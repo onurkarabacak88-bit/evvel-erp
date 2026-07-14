@@ -152,6 +152,27 @@ export default function BelgeMerkezi() {
             <div style={{ fontSize: 12, color: 'var(--text3)', marginTop: 4 }}>
               Kapsama: {oran != null ? `%${oran}` : '—'} · faturasız kısım = belge isteme adayı (KDV indirimi + gider kanıtı)
             </div>
+            {/* 📷 İŞLENEMEYEN FOTOLAR (SÜTAŞ vakası): OCR'a takılanlar görünür olsun */}
+            {d.islenemeyen_foto && d.islenemeyen_foto.adet > 0 && (
+              <div style={{ fontSize: 12, marginTop: 8, padding: '6px 10px', borderRadius: 8,
+                            background: 'rgba(239,68,68,.12)', display: 'flex',
+                            justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                <span>
+                  📷 <b>{d.islenemeyen_foto.adet} foto işlenemedi</b> (OCR hatası/bekliyor) —
+                  içlerinde aranan faturalar olabilir
+                  {d.islenemeyen_foto.son_hata && (
+                    <span style={{ color: 'var(--text3)' }}> · son hata: {d.islenemeyen_foto.son_hata.slice(0, 60)}</span>
+                  )}
+                </span>
+                <button className="btn btn-secondary" onClick={async () => {
+                  try {
+                    const r = await api('/fatura/ocr-yeniden-dene?limit=50', { method: 'POST' });
+                    alert(`${r.kuyruga_alinan} foto OCR kuyruğuna alındı — 1-2 dk sonra sayfayı yenileyin.` +
+                      (r.son_hatalar?.length ? `\nSon hata: ${r.son_hatalar[0]}` : ''));
+                  } catch (e) { alert(e?.message || 'tetiklenemedi'); }
+                }}>🔄 Yeniden Dene</button>
+              </div>
+            )}
             {/* BM-3 — KDV kanıt sınıflaması + BM-0b arşiv boyutu */}
             {(d.kdv_kanit || d.arsiv_depo) && (
               <div style={{ fontSize: 12, marginTop: 8, display: 'flex', gap: 16, flexWrap: 'wrap', color: 'var(--text3)' }}>

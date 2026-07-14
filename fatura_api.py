@@ -914,6 +914,21 @@ def belge_merkezi_ozet(ay: str = ""):
         kdv_kanit = kdv_kanit_ozet(hedef)
     except Exception:  # noqa: BLE001
         pass
+    # İŞLENEMEYEN FOTO sayacı (SÜTAŞ vakası): ocr_hata/bekleyen fotolar GÖRÜNÜR
+    # olsun — sessiz birikme bir daha yaşanmasın
+    islenemeyen = None
+    try:
+        with db() as (_, cur):
+            cur.execute(
+                """SELECT COUNT(*)::int AS adet,
+                          MAX(LEFT(COALESCE(ocr_hata,''),120)) AS son_hata
+                   FROM tedarikci_fatura
+                   WHERE durum IN ('ocr_hata','ocr_bekliyor') AND foto IS NOT NULL""")
+            r1 = dict(cur.fetchone() or {})
+        islenemeyen = {"adet": int(r1.get("adet") or 0),
+                       "son_hata": (r1.get("son_hata") or "").strip() or None}
+    except Exception:  # noqa: BLE001
+        pass
     # BM-0b görünürlüğü: arşiv depo boyutu (BYTEA) — obje depoya geçiş eşiği izlenir
     arsiv_depo = None
     try:
@@ -948,6 +963,7 @@ def belge_merkezi_ozet(ay: str = ""):
         "fatura_istekleri": fatura_istekleri,
         "kdv_kanit": kdv_kanit,
         "arsiv_depo": arsiv_depo,
+        "islenemeyen_foto": islenemeyen,
         "not": "ADAY eşleştirme (±%2 tutar, ±5 gün) — hüküm değil. Faturasız satır = "
                "belge isteme adayı (KDV indirimi + gider kanıtı). PDF/foto: goruntule "
                "linki. Nakit işletme giderleri (anlık gider) bu sürümde kapsam dışı — "
@@ -959,6 +975,29 @@ def belge_merkezi_ozet(ay: str = ""):
 def belge_merkezi_uc(ay: str = ""):
     """UI + beyin için birleşik Belge Merkezi özeti."""
     return belge_merkezi_ozet(ay)
+
+
+@router.post("/ocr-yeniden-dene")
+def ocr_yeniden_dene(limit: int = 25):
+    """SÜTAŞ vakası (2026-07-14): personelin yüklediği 50 foto OCR'da sessizce
+    'ocr_hata'ya düşmüş (LLM anahtarı/kota kesintisi) ve hiçbir ekranda
+    görünmüyordu. Bu uç hatalı/bekleyen fotoğrafları OCR kuyruğuna GERİ alır
+    (asenkron); son hata metinlerini de döner ki kök neden görünsün."""
+    import threading
+    lim = max(1, min(100, int(limit or 25)))
+    with db() as (_, cur):
+        _ensure_tablolar(cur)
+        cur.execute(
+            """SELECT id, ocr_hata FROM tedarikci_fatura
+               WHERE durum IN ('ocr_hata','ocr_bekliyor') AND foto IS NOT NULL
+               ORDER BY olusturma DESC LIMIT %s""", (lim,))
+        rows = [dict(r) for r in cur.fetchall() or []]
+    hatalar = sorted({(r.get("ocr_hata") or "")[:160] for r in rows if r.get("ocr_hata")})
+    for r in rows:
+        threading.Thread(target=_ocr_calistir, args=(r["id"],), daemon=True).start()
+    return {"ok": True, "kuyruga_alinan": len(rows), "son_hatalar": hatalar[:3],
+            "not": "OCR asenkron çalışır — 1-2 dk sonra Belge Merkezi'ni yenileyin. "
+                   "Hata sürerse son_hatalar kök nedeni söyler (örn. LLM kota)."}
 
 
 # ── BM-5: TEDARİKÇİ CARİ EKSTRE (2026-07-10) ────────────────────────────────
