@@ -45,11 +45,10 @@ router = APIRouter(prefix="/api/puan", tags=["personel-puan"])
 GRACE_DK = 5          # bu dakikaya kadar gecikme CEZASIZ (Codex: threshold cliff)
 HAFIF_DK = 15         # 6-15 dk = hafif
 AYLIK_EKSI_TABAN = -15  # aylık eksi toplamı kişi başına bundan aşağı KIRPILIR
-# İlk canlı kalibrasyon dersi (2026-07-14): fark uyarıları neredeyse her gün
-# doğuyor, kuruşluk/bozukluk farkları bile −2 yazıp 4/6 kişiyi ekside bıraktı
-# (Codex: 'ortalama çalışan negatif bitiyorsa tasarım yanlış'). Küçük fark =
-# yuvarlama/bozukluk gürültüsü — kişiye ceza OLMAZ.
-FARK_ESIK_TL = 100.0
+# İlk canlı kalibrasyon dersi (2026-07-14): kuruşluk/bozukluk farkları −2
+# yazıp 4/6 kişiyi ekside bırakmıştı. Eşik altı fark kişiye ceza OLMAZ.
+# SAHİP KARARI (2026-07-14): eşik 20 TL ("yok 20 tl eşik").
+FARK_ESIK_TL = 20.0
 
 # Bildirimsel kural seti — VERİ (aktif=FALSE olanlar TOHUM: veri bağı doğrulanınca açılır)
 _KURAL_TOHUM = [
