@@ -225,6 +225,8 @@ function CepHome({ sayac, kasa, onKasa, onAc, onCikis, yenile }) {
       sayi: null, alt: 'Gider ekle / aylık liste' },
     { id: 'vadeli', ikon: '🧾', baslik: 'Vadeli Alımlar', renk: '#f59e0b',
       sayi: null, alt: 'Vadeli borç ekle / öde' },
+    { id: 'tedarikci-merkez', ikon: '🏦', baslik: 'Tedarikçi Merkezi', renk: C.mavi,
+      sayi: null, alt: 'Cari · gecikmiş vade · belge açığı' },
     { id: 'kartlar', ikon: '💳', baslik: 'Kartlar', renk: C.kirmizi,
       sayi: null, alt: 'Borç · limit · yaklaşan' },
     { id: 'kule', ikon: '🚚', baslik: 'Sipariş Kulesi', renk: C.mavi,
@@ -4290,6 +4292,134 @@ function CepKule({ onGeri, onDegisti }) {
   );
 }
 
+// ── 🏦 Tedarikçi Merkezi (CEP) — masaüstü merkezin mobil özeti (2026-07-14) ──
+// Salt-okur komuta yüzeyi: KPI + gecikmiş vadeler + tedarikçi-360 (hafif) +
+// belge açığı (wa.me tek dokunuş — telefonda birebir işlev). Ödeme akışı
+// Vadeli Alımlar ekranında kalır (Codex: deep-link, taşıma yok).
+function CepTedarikciMerkezi({ onGeri }) {
+  const [mk, setMk] = useState(null);
+  const [fi, setFi] = useState(null);
+  const [hata, setHata] = useState('');
+  const [acik, setAcik] = useState(null);      // açık tedarikçi adı
+  const [cari, setCari] = useState({});
+  const yukle = useCallback(() => {
+    api('/fatura/tedarikci-merkez').then(setMk).catch(e => setHata(e?.message || 'Yüklenemedi'));
+    api('/fatura-istek/liste').then(setFi).catch(() => setFi(null));
+  }, []);
+  useEffect(() => { yukle(); }, [yukle]);
+  const cariGetir = async (ad) => {
+    if (!ad || cari[ad]) return;
+    try { setCari(c => ({ ...c, [ad]: null })); const r = await api(`/fatura/cari-ekstre?tedarikci=${encodeURIComponent(ad)}`); setCari(c => ({ ...c, [ad]: r })); }
+    catch { setCari(c => ({ ...c, [ad]: { hata: true } })); }
+  };
+  const kpi = mk?.kpi || {};
+  const KPIK = [
+    ['⏰ Gecikmiş', kpi.gecikmis_vade_toplam, C.kirmizi],
+    ['💼 Açık', kpi.toplam_hesaplanan_acik, C.t1],
+    ['📅 Gelecek Vade', kpi.vadesi_gelmemis, C.t2],
+    ['🧾 Faturasız', kpi.faturasiz_risk, C.sari],
+  ];
+  return (
+    <div style={{ minHeight: '100vh', background: C.bg, fontFamily: 'Instrument Sans, system-ui, sans-serif', paddingBottom: 40 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 14px 8px' }}>
+        <button onClick={onGeri} style={{ background: C.bg2, border: `1px solid ${C.border}`, borderRadius: 10, color: C.t2, padding: '8px 12px', fontSize: 14 }}>‹</button>
+        <div style={{ fontSize: 18, fontWeight: 800, color: C.t1 }}>🏦 Tedarikçi Merkezi</div>
+      </div>
+      {hata && <div style={{ color: C.kirmizi, padding: 14 }}>{hata}</div>}
+      {!mk && !hata && <div style={{ color: C.t3, padding: 14 }}>Yükleniyor…</div>}
+      {mk && (
+        <div style={{ padding: '0 12px' }}>
+          {/* KPI 2x2 */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 10 }}>
+            {KPIK.map(([ad, v, renk]) => (
+              <div key={ad} style={{ background: C.bg2, border: `1px solid ${C.border}`, borderRadius: 12, padding: '10px 12px' }}>
+                <div style={{ fontSize: 11, color: C.t3 }}>{ad}</div>
+                <div style={{ fontSize: 17, fontWeight: 800, color: renk }}>{fmt(v || 0)}</div>
+              </div>
+            ))}
+          </div>
+          {/* GECİKMİŞ VADELER */}
+          {(mk.gecikmis_vadeler || []).length > 0 && (
+            <div style={{ background: C.bg2, border: `1px solid ${C.kirmizi}44`, borderRadius: 12, padding: 12, marginBottom: 10 }}>
+              <div style={{ fontWeight: 800, color: C.kirmizi, fontSize: 13, marginBottom: 6 }}>⏰ Gecikmiş Vadeler</div>
+              {mk.gecikmis_vadeler.map(v => (
+                <div key={v.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '4px 0', borderBottom: `1px solid ${C.border}` }}>
+                  <span style={{ color: C.t2 }}>{(v.tedarikci || v.aciklama || '?').slice(0, 20)}</span>
+                  <span style={{ color: C.kirmizi, fontWeight: 700 }}>{fmt(v.tutar)} · {v.gecikme_gun}g</span>
+                </div>
+              ))}
+              <div style={{ fontSize: 11, color: C.t3, marginTop: 4 }}>Ödeme: ana ekran → 🧾 Vadeli Alımlar</div>
+            </div>
+          )}
+          {/* TEDARİKÇİ-360 (hafif) */}
+          <div style={{ background: C.bg2, border: `1px solid ${C.border}`, borderRadius: 12, padding: 12, marginBottom: 10 }}>
+            <div style={{ fontWeight: 800, color: C.t1, fontSize: 13, marginBottom: 6 }}>🏪 Tedarikçiler (açığa göre)</div>
+            {(mk.tedarikciler || []).slice(0, 12).map(t => (
+              <div key={t.tedarikci} style={{ borderBottom: `1px solid ${C.border}`, padding: '6px 0' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}
+                     onClick={() => { setAcik(a => a === t.tedarikci ? null : t.tedarikci); cariGetir(t.tedarikci); }}>
+                  <span style={{ color: C.t2 }}>{acik === t.tedarikci ? '▾' : '▸'} {(t.tedarikci || '?').slice(0, 22)}</span>
+                  <span style={{ fontWeight: 700, color: (t.hesaplanan_acik || 0) > 0 ? C.kirmizi : C.yesil }}>
+                    {fmt(t.hesaplanan_acik)}
+                  </span>
+                </div>
+                {acik === t.tedarikci && (
+                  <div style={{ fontSize: 12, color: C.t3, padding: '4px 0 2px 14px' }}>
+                    {cari[t.tedarikci] === null && 'yükleniyor…'}
+                    {cari[t.tedarikci]?.hata && 'detay alınamadı'}
+                    {cari[t.tedarikci] && !cari[t.tedarikci].hata && cari[t.tedarikci].fatura_adet != null && (
+                      <>
+                        <div>fatura {fmt(cari[t.tedarikci].fatura_toplam_6ay)} − ödeme {fmt(cari[t.tedarikci].odeme_izi_toplam_6ay)}
+                          {cari[t.tedarikci].beyan_bakiye != null && <> · beyan ≈ {fmt(cari[t.tedarikci].beyan_bakiye)}</>}</div>
+                        {(cari[t.tedarikci].hareketler || []).slice(-4).map((h, i) => (
+                          <div key={i} style={{ display: 'flex', justifyContent: 'space-between' }}>
+                            <span>{h.tarih} {h.tip === 'fatura' ? '🧾' : '💸'}</span>
+                            <span>{h.tip === 'fatura' ? '+' : '−'}{fmt(h.tutar)} → <b style={{ color: C.t2 }}>{fmt(h.bakiye)}</b></span>
+                          </div>
+                        ))}
+                        {t.bekleyen_vade_toplam > 0 && <div style={{ color: C.sari }}>bekleyen vade {fmt(t.bekleyen_vade_toplam)}{t.en_yakin_vade ? ` (${t.en_yakin_vade})` : ''}</div>}
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+          {/* BELGE AÇIĞI — wa.me tek dokunuş (telefonda birebir) */}
+          {fi && (fi.gruplar || []).length > 0 && (
+            <div style={{ background: C.bg2, border: `1px solid ${C.border}`, borderRadius: 12, padding: 12, marginBottom: 10 }}>
+              <div style={{ fontWeight: 800, color: C.sari, fontSize: 13, marginBottom: 6 }}>
+                📨 Belge Açığı — {fi.acik_adet} ödeme / {fmt(fi.acik_toplam)}
+              </div>
+              {fi.gruplar.slice(0, 8).map(g => (
+                <div key={g.tedarikci} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, padding: '5px 0', borderBottom: `1px solid ${C.border}` }}>
+                  <span style={{ fontSize: 13, color: C.t2 }}>{(g.tedarikci || '?').slice(0, 18)} <span style={{ color: C.t3 }}>({g.adet})</span></span>
+                  {g.kurumsal
+                    ? <a href="https://ebelge.gib.gov.tr/earsivsorgula.html" target="_blank" rel="noreferrer"
+                         style={{ fontSize: 12, color: C.mavi, textDecoration: 'none' }}>🏛️ e-Arşiv</a>
+                    : g.wa_link
+                      ? <a href={g.wa_link} target="_blank" rel="noreferrer"
+                           onClick={() => { (g.istekler || []).forEach(x => api(`/fatura-istek/${x.id}/gonderildi`, { method: 'POST' }).catch(() => {})); }}
+                           style={{ fontSize: 12, color: C.yesil, textDecoration: 'none', fontWeight: 700 }}>📲 İste</a>
+                      : <span style={{ fontSize: 11, color: C.t3 }}>tel yok (PC'den ekle)</span>}
+                </div>
+              ))}
+              {(mk.belge_acigi?.teslimat_temelli?.bekleyen || 0) > 0 && (
+                <div style={{ fontSize: 11, color: C.t3, marginTop: 4 }}>
+                  📦 Teslimat faturaları: {mk.belge_acigi.teslimat_temelli.bekleyen} bekleyen → ana ekran "Fatura Bekleyen"
+                </div>
+              )}
+            </div>
+          )}
+          <div style={{ fontSize: 10, color: C.t3, padding: '0 2px' }}>
+            Salt-okur özet — detay/PDF ve tüm aksiyonlar masaüstü 🏦 Tedarikçi Merkezi'nde.
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function CepApp() {
   const [girisli, setGirisli] = useState(() => tokenGecerli());
   // Deep-link: /cep#kapanis-muhur gibi bağlantılar doğrudan o ekrana düşsün
@@ -4372,6 +4502,7 @@ export default function CepApp() {
     'dis-kaynak': <CepDisKaynak onGeri={geri} />,
     'anlik-gider': <CepAnlikGider onGeri={geri} />,
     'vadeli': <CepVadeli onGeri={geri} />,
+    'tedarikci-merkez': <CepTedarikciMerkezi onGeri={geri} />,
     'kartlar': <CepKartlar onGeri={geri} />,
     'onaylar': <CepOnaylar onGeri={geri} onDegisti={sayaclariYukle} />,
     'denetim': <CepDenetim onGeri={geri} />,
