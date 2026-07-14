@@ -381,15 +381,16 @@ async def belge_talep_fatura_yukle(talep_id: str, dosya: UploadFile = File(...))
                         if cur.fetchone():
                             continue
                     fid = str(uuid.uuid4())
+                    # Orijinal PDF de saklanır ('gör' hep açılsın — 2026-07-14 dersi)
                     cur.execute(
                         """
                         INSERT INTO tedarikci_fatura
                             (id, sube_id, siparis_talep_id, fatura_no, fatura_tarih, onceki_bakiye,
-                             bakiye_dahil, kaynak_metin, kaynak_tip, durum)
-                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'pdf','ocr_bekliyor')
+                             bakiye_dahil, kaynak_metin, kaynak_tip, durum, foto, foto_mime)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'pdf','ocr_bekliyor',%s,'application/pdf')
                         """,
                         (fid, sube_id, siparis_talep_id, fno, f.get("fatura_tarih"),
-                         f.get("onceki_bakiye"), f.get("bakiye_dahil"), metin),
+                         f.get("onceki_bakiye"), f.get("bakiye_dahil"), metin, raw),
                     )
                     fatura_idler.append(fid)
                     ocr_calisacak.append(fid)

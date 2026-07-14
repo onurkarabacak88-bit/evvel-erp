@@ -644,15 +644,22 @@ async def fatura_yukle_pdf(
                     continue
             ftarih = (f.get("fatura_tarih") or None)  # regex'ten — kesin
             fid = str(uuid.uuid4())
+            # ORİJİNAL PDF de saklanır (sahip şikayeti 2026-07-14: 'gör' deyince
+            # 'saklanmıyor' diyordu — PDF yolunda dosya hiç kaydedilmiyormuş;
+            # VUK/TTK saklama BELGEYİ ister, yalnız metni değil). Bölünmüş çoklu
+            # faturada aynı kaynak PDF her faturaya damgalanır — 'gör' hep açılır.
             cur.execute(
                 """
                 INSERT INTO tedarikci_fatura
                     (id, sube_id, fatura_no, fatura_tarih, onceki_bakiye, bakiye_dahil,
-                     kaynak_metin, kaynak_tip, durum, yukleyen_personel_id)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, 'pdf', 'ocr_bekliyor', %s)
+                     kaynak_metin, kaynak_tip, durum, yukleyen_personel_id,
+                     foto, foto_mime)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, 'pdf', 'ocr_bekliyor', %s,
+                        %s, 'application/pdf')
                 """,
                 (fid, (sube_id or None), fno, ftarih,
-                 f.get("onceki_bakiye"), f.get("bakiye_dahil"), metin, (personel_id or None)),
+                 f.get("onceki_bakiye"), f.get("bakiye_dahil"), metin, (personel_id or None),
+                 raw),
             )
             yeni_idler.append(fid)
         conn.commit()
@@ -1928,22 +1935,40 @@ def fatura_cek_sayfasi():
 
 @router.get("/{fatura_id}/foto")
 def fatura_foto(fatura_id: str):
-    """Saklanan fatura fotoğrafı = 'ürün geldi' kanıtı. 6 ay sonra temizlenmişse 410."""
+    """Saklanan fatura belgesi (foto/PDF). Dosya yoksa ama PDF METNİ varsa metin
+    kopyası HTML olarak gösterilir (sahip şikayeti 2026-07-14: eski PDF yüklemeleri
+    dosyayı saklamıyordu — 'gör' boş dönmesin, elde ne varsa göstersin)."""
     if not fatura_modul_aktif():
         raise HTTPException(503, "Fatura modülü kapalı.")
     with db() as (conn, cur):
         _ensure_tablolar(cur)
-        cur.execute("SELECT foto, foto_mime FROM tedarikci_fatura WHERE id=%s", (fatura_id,))
+        cur.execute("""SELECT foto, foto_mime, kaynak_metin, tedarikci_ad, fatura_no,
+                              fatura_tarih::text AS tarih
+                       FROM tedarikci_fatura WHERE id=%s""", (fatura_id,))
         r = cur.fetchone()
         if not r:
             raise HTTPException(404, "Fatura bulunamadı")
         d = dict(r)
         foto = d.get("foto")
-        if not foto:
-            raise HTTPException(410, "Fatura fotoğrafı artık saklanmıyor (6 aylık saklama süresi doldu).")
-        mime = d.get("foto_mime") or "image/jpeg"
-        data = bytes(foto)
-    return StreamingResponse(io.BytesIO(data), media_type=mime)
+        if foto:
+            mime = d.get("foto_mime") or "image/jpeg"
+            return StreamingResponse(io.BytesIO(bytes(foto)), media_type=mime)
+    metin = (d.get("kaynak_metin") or "").strip()
+    if metin:
+        from fastapi.responses import HTMLResponse
+        import html as _html
+        return HTMLResponse(
+            "<html><head><meta charset='utf-8'><title>Fatura metin kopyası</title></head>"
+            "<body style='font-family:monospace;background:#111;color:#eee;padding:20px'>"
+            f"<h3>🧾 {_html.escape(d.get('tedarikci_ad') or '')} · "
+            f"{_html.escape(d.get('fatura_no') or 'no yok')} · "
+            f"{_html.escape(d.get('tarih') or '')}</h3>"
+            "<p style='color:#f59e0b'>⚠ Orijinal PDF bu kayıtta saklanmamış (eski "
+            "yükleme) — aşağıdaki METİN KOPYASI gösteriliyor. Yeni yüklemelerde "
+            "orijinal PDF de saklanır.</p><pre style='white-space:pre-wrap'>"
+            + _html.escape(metin) + "</pre></body></html>")
+    raise HTTPException(410, "Bu kayıtta belge dosyası yok (eski yükleme dosya "
+                             "saklamıyordu ya da saklama süresi doldu).")
 
 
 @router.get("/{fatura_id}")
