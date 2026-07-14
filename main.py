@@ -121,6 +121,14 @@ except Exception as _fatura_istek_err:
     logging.getLogger(__name__).warning(
         f"fatura_istek modulu yuklenemedi (izole, ana akis etkilenmez): {_fatura_istek_err}"
     )
+# Personel Puan Defteri — İZOLE (öneri-only; puan maaşa otomatik bağlanmaz).
+try:
+    from personel_puan_api import router as personel_puan_router
+    app.include_router(personel_puan_router)
+except Exception as _puan_err:
+    logging.getLogger(__name__).warning(
+        f"personel_puan modulu yuklenemedi (izole, ana akis etkilenmez): {_puan_err}"
+    )
 app.include_router(stok_sayim_router)
 app.include_router(supplier_payment_router)
 # K1 kart-ödeme tanısı — İZOLE mutabakat toplayıcı (salt-okur tarama + önizleme-varsayılan onarım)
@@ -529,6 +537,8 @@ def _gece_yarisi_scheduler():
                 gece_fatura_istek_tara()  # BM-4: faturasiz buyuk odeme adaylari + oto-kapanis
                 from fatura_api import gece_fiyat_bandi_izleme
                 gece_fiyat_bandi_izleme()  # BM-6: band disi alim -> omurga olayi
+                from personel_puan_api import gece_personel_puan_tara
+                gece_personel_puan_tara()  # PUAN: dunun olaylari (gec kalma/fark/foto/temiz hafta)
                 from duyu_gorunumler import gece_agir_onhesap
                 gece_agir_onhesap()  # GOREV #56: agir uclar SIRALI on-hesap -> gunduz cache
                 from duyu_gorunumler import bag_defteri_hesapla

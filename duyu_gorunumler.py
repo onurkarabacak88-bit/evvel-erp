@@ -2820,6 +2820,28 @@ def _bag_fiyat_bandi() -> List[dict]:
     return out
 
 
+def _bag_personel_puan() -> List[dict]:
+    """Personel puan bağı — OLAY diliyle (kişilik yargısı üretmez; olay-gerçeği
+    istisnası). Sayıları KOD hazırlar."""
+    out = []
+    try:
+        from personel_puan_api import puan_ozet
+        o = puan_ozet()
+        ilk = (o.get("ilk8") or [])
+        if ilk:
+            lider = ilk[0]
+            out.append({"alanlar": ["personel", "puan"], "tarih": None,
+                        "guven": "hesap",
+                        "cumle": (f"{o['ay']} puan defteri: {o['toplam_kisi']} kişide "
+                                  f"kayıt var; vardiya-oranlı lig başında {lider['ad']} "
+                                  f"(net {lider['net']}, {lider['vardiya']} vardiya"
+                                  + (f", {lider['temiz_hafta']} temiz hafta" if lider.get('temiz_hafta') else "")
+                                  + ") — olay sayımıdır, hüküm insanın (hazır hesap)")})
+    except Exception as e:  # noqa: BLE001
+        logger.warning("bag personel_puan: %s", str(e)[:60])
+    return out
+
+
 def _bag_mutabakat_zinciri() -> List[dict]:
     """BM-2 bağı: sipariş→teslim→belge→fatura→ödeme zincirinin eksik halkaları
     (belge-seviyesi; sayıları KOD hazırlar, hüküm insanın)."""
@@ -2941,6 +2963,7 @@ _BAG_KAYNAKLARI = [
     ("cari", _bag_cari),
     ("fiyat_bandi", _bag_fiyat_bandi),
     ("mutabakat_zinciri", _bag_mutabakat_zinciri),
+    ("personel_puan", _bag_personel_puan),
     ("ciro_kasa", _bag_ciro_kasa),
     ("evo_ciro", _bag_evo_ciro),
 ]

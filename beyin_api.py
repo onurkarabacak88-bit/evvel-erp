@@ -763,6 +763,14 @@ def _blok_derle(soru: str, yonlendirme_ek: str = "") -> List[Tuple[str, str, str
           "pahali almisiz", "alis fiyati", "fiyati degisti", "fiyat anomali",
           "hangi urun zamlandi", "fiyat sapma", "ucuza almisiz", "fiyat dustu"),
          lambda: _j(__import__("fatura_api").fiyat_bandi_ozet())),
+        ("B51", "Personel puan defteri (aylık lig: kişi başına artı/eksi/net + "
+                "puan-per-vardiya oranı + temiz hafta rozetleri — OLAY SAYIMLARI, "
+                "kişilik yargısı değil; kasa fark günü zimmet hükmü DEĞİLDİR; "
+                "puan maaşa otomatik bağlanmaz, hüküm insanın)",
+         ("puan", "kim onde", "lig tablosu", "en iyi personel", "gec kalan",
+          "kac puan", "takdir", "uyari aldi", "temiz hafta", "puan defteri",
+          "personel performans", "kim gec kaldi", "gecikme deseni"),
+         lambda: _j(__import__("personel_puan_api").puan_ozet())),
         ("B50", "Mutabakat zinciri (BM-2: son 60 gün toptancı siparişlerinde "
                 "sipariş→teslim→belge→fatura→ödeme izi halkaları; tam/eksik "
                 "sayaçları + eksik zincir listesi — belge seviyesi)",
