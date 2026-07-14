@@ -45,6 +45,11 @@ router = APIRouter(prefix="/api/puan", tags=["personel-puan"])
 GRACE_DK = 5          # bu dakikaya kadar gecikme CEZASIZ (Codex: threshold cliff)
 HAFIF_DK = 15         # 6-15 dk = hafif
 AYLIK_EKSI_TABAN = -15  # aylık eksi toplamı kişi başına bundan aşağı KIRPILIR
+# İlk canlı kalibrasyon dersi (2026-07-14): fark uyarıları neredeyse her gün
+# doğuyor, kuruşluk/bozukluk farkları bile −2 yazıp 4/6 kişiyi ekside bıraktı
+# (Codex: 'ortalama çalışan negatif bitiyorsa tasarım yanlış'). Küçük fark =
+# yuvarlama/bozukluk gürültüsü — kişiye ceza OLMAZ.
+FARK_ESIK_TL = 100.0
 
 # Bildirimsel kural seti — VERİ (aktif=FALSE olanlar TOHUM: veri bağı doğrulanınca açılır)
 _KURAL_TOHUM = [
@@ -268,6 +273,8 @@ def _tara(hedef_gun: Optional[str] = None) -> dict:
         kapanis_bugun = _kapanis_kisileri(gun)
         kapanis_dun = _kapanis_kisileri(onceki_gun)
         for f in farklar:
+            if abs(float(f.get("fark") or 0)) < FARK_ESIK_TL:
+                continue  # kuruşluk/bozukluk farkı — kişiye ceza olmaz
             hedef_tarih = gun if f["tip"] == "KAPANIS_KASA_FARK" else onceki_gun
             adaylar = kapanis_bugun if f["tip"] == "KAPANIS_KASA_FARK" else kapanis_dun
             for kp in adaylar:
@@ -316,8 +323,16 @@ def _tara(hedef_gun: Optional[str] = None) -> dict:
                              {"vardiya": r["vardiya"],
                               "hafta": f"{hafta_bas}..{hafta_son}"}):
                     yeni["olumlu"] += 1
+        # GÜRÜLTÜ TEMİZLİĞİ (fatura_istek deseni): makinenin ürettiği eşik-altı
+        # fark cezaları geriye dönük SİLİNİR (yalnız kaynak='gece'; elle kayıt korunur)
+        cur.execute(
+            """DELETE FROM personel_puan_olay
+               WHERE kaynak='gece' AND kural_kodu='KASA_FARK_GUNU'
+                 AND ABS(COALESCE((detay->>'fark_tl')::float, 0)) < %s""",
+            (FARK_ESIK_TL,))
+        temizlenen = cur.rowcount
         conn.commit()
-    return {"ok": True, "gun": gun, "yeni": yeni}
+    return {"ok": True, "gun": gun, "yeni": yeni, "esik_alti_temizlenen": temizlenen}
 
 
 @router.post("/tara")
