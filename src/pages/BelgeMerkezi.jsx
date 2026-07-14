@@ -6,11 +6,29 @@ import { api, fmt } from '../utils/api';
 // gördüğüm mekanizma". Kaynak: /api/fatura/belge-merkezi (salt-okur).
 const DURUM_RENK = { ocr_bekliyor: '#f59e0b', incelendi: '#22c55e', onaylandi: '#22c55e' };
 
+// 🏦 TEDARİKÇİ MERKEZİ dönüşümü (2026-07-14, sahip: "hepsini tek merkez halinde
+// kurgulayalım"). Codex mimarisi: ana obje=Tedarikçi-360, iniş=Genel Bakış;
+// GECİKMİŞ her zaman en gürültülü KPI; yaşlandırma VADE tarihine göre; faturasız
+// harcama aging'e karışmaz; iki kovalama evreni ayrı alt-durum; ödeme akışı
+// TAŞINMADI (deep-link). Salt-okur komuta merkezi.
+const SEKMELER = [
+  ['genel', '📊 Genel Bakış'],
+  ['tedarikci', '🏪 Tedarikçiler'],
+  ['belge', '📄 Belge Akışı'],
+  ['acik', '📨 Belge Açığı'],
+];
+
 export default function BelgeMerkezi() {
   const bugunAy = new Date().toISOString().slice(0, 7);
   const [ay, setAy] = useState(bugunAy);
   const [d, setD] = useState(null);
   const [hata, setHata] = useState('');
+  const [sekme, setSekme] = useState('genel');
+  // Tedarikçi Merkezi agregatı (KPI + vade yaşlandırma + gecikmişler)
+  const [mk, setMk] = useState(null);
+  useEffect(() => {
+    api('/fatura/tedarikci-merkez').then(setMk).catch(() => setMk(null));
+  }, []);
   const [acikToptanci, setAcikToptanci] = useState(null);
   // BM-5: toptancı açılınca cari ekstre (beyan bakiye + vade + zincir)
   const [cari, setCari] = useState({});
@@ -94,13 +112,47 @@ export default function BelgeMerkezi() {
 
   return (
     <div style={{ padding: '16px 18px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 14 }}>
-        <h2 style={{ margin: 0 }}>🧾 Belge Merkezi</h2>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 10 }}>
+        <h2 style={{ margin: 0 }}>🏦 Tedarikçi Merkezi</h2>
         <input type="month" value={ay} onChange={e => setAy(e.target.value)}
           style={{ background: 'var(--bg2)', color: 'var(--text)', border: '1px solid var(--border)', borderRadius: 8, padding: '6px 10px' }} />
         <span style={{ fontSize: 12, color: 'var(--text3)' }}>
-          Fatura arşivi · faturasız harcamalar · gün gün kapsama
+          cari · vadeler · fatura arşivi · belge açığı — tek merkez
         </span>
+      </div>
+      {/* KPI ŞERİDİ — gecikmiş her zaman en gürültülü (Codex kuralı) */}
+      {mk && (
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 10 }}>
+          {[
+            ['⏰ GECİKMİŞ VADE', mk.kpi?.gecikmis_vade_toplam, 'var(--red)', true],
+            ['💼 Hesaplanan Açık', mk.kpi?.toplam_hesaplanan_acik, 'var(--text)', false],
+            ['📅 Vadesi Gelmemiş', mk.kpi?.vadesi_gelmemis, 'var(--text2, var(--text))', false],
+            ['🗓 Bu Hafta Vade', mk.kpi?.bu_hafta_vade_toplam, '#f59e0b', false],
+            ['🧾 Faturasız Risk', mk.kpi?.faturasiz_risk, '#f59e0b', false],
+          ].map(([ad, val, renk, buyuk]) => (
+            <div key={ad} className="card" style={{ padding: '8px 14px', minWidth: 150 }}>
+              <div style={{ fontSize: 11, color: 'var(--text3)' }}>{ad}</div>
+              <div style={{ fontWeight: 800, fontSize: buyuk ? 20 : 15, color: renk }}>{fmt(val || 0)}</div>
+            </div>
+          ))}
+          {(mk.kpi?.islenemeyen_foto || 0) > 0 && (
+            <div className="card" style={{ padding: '8px 14px', minWidth: 120 }}>
+              <div style={{ fontSize: 11, color: 'var(--text3)' }}>📷 Takılı Foto</div>
+              <div style={{ fontWeight: 800, fontSize: 15, color: 'var(--red)' }}>{mk.kpi.islenemeyen_foto}</div>
+            </div>
+          )}
+        </div>
+      )}
+      {/* SEKMELER */}
+      <div style={{ display: 'flex', gap: 6, marginBottom: 12, flexWrap: 'wrap' }}>
+        {SEKMELER.map(([k2, ad]) => (
+          <button key={k2} className="btn btn-secondary"
+            onClick={() => setSekme(k2)}
+            style={{ fontWeight: sekme === k2 ? 800 : 400,
+                     border: sekme === k2 ? '2px solid var(--accent)' : undefined }}>
+            {ad}
+          </button>
+        ))}
       </div>
       {/* BM-8 — arama */}
       <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
@@ -131,7 +183,51 @@ export default function BelgeMerkezi() {
       {!d && !hata && <div style={{ color: 'var(--text3)' }}>Yükleniyor…</div>}
       {d && (
         <>
+          {/* ═══ 📊 GENEL BAKIŞ — triage inişi (Codex): gecikmişler + bu hafta ═══ */}
+          {sekme === 'genel' && mk && (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(340px,1fr))', gap: 14, marginBottom: 14 }}>
+              <div className="card" style={{ padding: 16 }}>
+                <div style={{ fontWeight: 800, marginBottom: 6, color: 'var(--red)' }}>
+                  ⏰ Gecikmiş Vadeler ({(mk.gecikmis_vadeler || []).length})
+                </div>
+                {(mk.gecikmis_vadeler || []).length === 0 && <div style={{ color: 'var(--green)', fontSize: 13 }}>Gecikmiş vade yok 🎉</div>}
+                {(mk.gecikmis_vadeler || []).map(v => (
+                  <div key={v.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 12, padding: '4px 0', borderBottom: '1px solid var(--border)' }}>
+                    <span>{(v.tedarikci || v.aciklama || '?').slice(0, 28)} · vade {v.vade}</span>
+                    <span style={{ whiteSpace: 'nowrap', color: 'var(--red)', fontWeight: 700 }}>
+                      {fmt(v.tutar)} · {v.gecikme_gun}g gecikti
+                    </span>
+                  </div>
+                ))}
+                <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 6 }}>
+                  Yaşlandırma: 1-7g {fmt(mk.vade_yaslandirma?.g1_7 || 0)} · 8-30g {fmt(mk.vade_yaslandirma?.g8_30 || 0)} ·
+                  31-60g {fmt(mk.vade_yaslandirma?.g31_60 || 0)} · 61+g {fmt(mk.vade_yaslandirma?.g61_plus || 0)} —
+                  ödeme için Vadeli Alımlar ekranı kullanılır (buradan taşınmadı).
+                </div>
+              </div>
+              <div className="card" style={{ padding: 16 }}>
+                <div style={{ fontWeight: 800, marginBottom: 6, color: '#f59e0b' }}>
+                  🗓 Bu Hafta Vadesi Gelenler ({(mk.bu_hafta_vadeler || []).length})
+                </div>
+                {(mk.bu_hafta_vadeler || []).length === 0 && <div style={{ color: 'var(--text3)', fontSize: 13 }}>Bu hafta vadesi gelen yok.</div>}
+                {(mk.bu_hafta_vadeler || []).map(v => (
+                  <div key={v.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 12, padding: '4px 0', borderBottom: '1px solid var(--border)' }}>
+                    <span>{(v.tedarikci || v.aciklama || '?').slice(0, 28)}</span>
+                    <span style={{ whiteSpace: 'nowrap' }}>{fmt(v.tutar)} · {v.vade}</span>
+                  </div>
+                ))}
+                <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 6 }}>
+                  Belge açığı: ödeme-temelli {(mk.belge_acigi?.odeme_temelli?.acik_adet ?? 0)} istek ·
+                  teslimat-temelli {(mk.belge_acigi?.teslimat_temelli?.bekleyen ?? 0)} açık teslimat
+                  {(mk.belge_acigi?.teslimat_temelli?.en_yasli_gun || 0) > 0 && ` (en yaşlısı ${mk.belge_acigi.teslimat_temelli.en_yasli_gun}g)`}
+                  {' '}→ 📨 Belge Açığı sekmesi
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* KAPSAMA BARI */}
+          {sekme === 'belge' && (
           <div className="card" style={{ padding: 16, marginBottom: 14 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10 }}>
               <div style={{ fontWeight: 800 }}>Belge Kapsama — {d.ay}</div>
@@ -190,9 +286,10 @@ export default function BelgeMerkezi() {
               </div>
             )}
           </div>
+          )}
 
           {/* BM-2 — MUTABAKAT ZİNCİRİ (eksik halkalar varsa) */}
-          {mz && mz.siparis_adet > 0 && (mz.sayac?.tam ?? 0) < mz.siparis_adet && (
+          {sekme === 'genel' && mz && mz.siparis_adet > 0 && (mz.sayac?.tam ?? 0) < mz.siparis_adet && (
             <div className="card" style={{ padding: 16, marginBottom: 14 }}>
               <div style={{ fontWeight: 800, marginBottom: 4 }}>
                 🔗 Mutabakat Zinciri — son 60 gün: {mz.sayac.tam}/{mz.siparis_adet} sipariş TAM
@@ -216,8 +313,16 @@ export default function BelgeMerkezi() {
             </div>
           )}
 
-          {/* BM-4 — FATURA İSTE (ödenmiş ama faturasız ≥eşik ödemeler) */}
-          {fi && (
+          {/* ═══ 📨 BELGE AÇIĞI: iki alt-durum (Codex — ayrı kuyruklar, tek sekme) ═══ */}
+          {sekme === 'acik' && mk?.belge_acigi?.teslimat_temelli && (
+            <div className="card" style={{ padding: 12, marginBottom: 14, fontSize: 13 }}>
+              📦 <b>Teslimat-temelli belge açığı:</b> {mk.belge_acigi.teslimat_temelli.bekleyen} açık teslimat
+              {(mk.belge_acigi.teslimat_temelli.en_yasli_gun || 0) > 0 && ` (en yaşlısı ${mk.belge_acigi.teslimat_temelli.en_yasli_gun} gün)`}
+              {' '}— takibi EVVEL Cep → Açık Teslimat ekranında (teslim başına kovalanır; buradaki 📨 liste ise ödeme-temelli).
+            </div>
+          )}
+          {/* BM-4 — FATURA İSTE (ödeme-temelli belge açığı) */}
+          {sekme === 'acik' && fi && (
             <div className="card" style={{ padding: 16, marginBottom: 14 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
                 <div style={{ fontWeight: 800 }}>
@@ -275,7 +380,7 @@ export default function BelgeMerkezi() {
           )}
 
           {/* BM-6 — FİYAT BANDI (band dışı son alımlar; öneri-only) */}
-          {fb && fb.band_disi_adet > 0 && (
+          {sekme === 'genel' && fb && fb.band_disi_adet > 0 && (
             <div className="card" style={{ padding: 16, marginBottom: 14 }}>
               <div style={{ fontWeight: 800, marginBottom: 4 }}>
                 📈 Fiyat Bandı — {fb.band_disi_adet} ürün band dışı
@@ -298,9 +403,10 @@ export default function BelgeMerkezi() {
           )}
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(340px,1fr))', gap: 14 }}>
-            {/* TOPTANCILAR */}
-            <div className="card" style={{ padding: 16 }}>
-              <div style={{ fontWeight: 800, marginBottom: 8 }}>🏪 Toptancı Toptancı ({(d.toptancilar || []).length})</div>
+            {/* ═══ 🏪 TEDARİKÇİLER (Tedarikçi-360: cari + ekstre + ay-ay + PDF) ═══ */}
+            {sekme === 'tedarikci' && (
+            <div className="card" style={{ padding: 16, gridColumn: '1 / -1' }}>
+              <div style={{ fontWeight: 800, marginBottom: 8 }}>🏪 Tedarikçi-360 ({(d.toptancilar || []).length}) — tıkla: cari · yürüyen ekstre · ay-ay mutabakat · 📎 PDF</div>
               {(d.toptancilar || []).length === 0 && <div style={{ color: 'var(--text3)', fontSize: 13 }}>Bu ay arşivde fatura yok.</div>}
               {(d.toptancilar || []).map(t => (
                 <div key={t.toptanci} style={{ borderBottom: '1px solid var(--border)', padding: '8px 0' }}>
@@ -425,9 +531,11 @@ export default function BelgeMerkezi() {
                 </div>
               ))}
             </div>
+            )}
 
-            {/* FATURASIZ HARCAMALAR */}
-            <div className="card" style={{ padding: 16 }}>
+            {/* FATURASIZ HARCAMALAR (ödeme-temelli açığın ham listesi) */}
+            {sekme === 'acik' && (
+            <div className="card" style={{ padding: 16, gridColumn: '1 / -1' }}>
               <div style={{ fontWeight: 800, marginBottom: 8, color: 'var(--red)' }}>
                 ⚠ Faturası Olmayan İşletme Harcamaları ({(d.faturasiz_harcamalar || []).length})
               </div>
@@ -461,9 +569,11 @@ export default function BelgeMerkezi() {
                 </div>
               )}
             </div>
+            )}
           </div>
 
           {/* GÜN GÜN */}
+          {sekme === 'belge' && (
           <div className="card" style={{ padding: 16, marginTop: 14 }}>
             <div style={{ fontWeight: 800, marginBottom: 8 }}>📅 Gün Gün</div>
             <div className="table-wrap">
@@ -482,7 +592,10 @@ export default function BelgeMerkezi() {
               </table>
             </div>
           </div>
-          <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 8 }}>{d.not}</div>
+          )}
+          <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 8 }}>
+            {sekme === 'belge' ? d.not : (mk?.not || '')}
+          </div>
         </>
       )}
     </div>

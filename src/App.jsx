@@ -59,7 +59,7 @@ const NAV = [
     { id: 'duyu-paneli',      label: 'Duyu Paneli',         icon: '👁️' },
     { id: 'recete-eslestirme', label: 'Reçete Eşleştirme',  icon: '🔗' },
     { id: 'maliyet',          label: 'Maliyet',             icon: '💰' },
-    { id: 'belge-merkezi',    label: 'Belge Merkezi',       icon: '🧾' },
+    { id: 'belge-merkezi',    label: 'Tedarikçi Merkezi',   icon: '🏦' },
     { id: 'borc-navigasyon',  label: 'Borç Navigasyonu',    icon: '🧭' },
     { id: 'strateji',         label: 'Strateji Motoru',     icon: '🎯' },
   ]},

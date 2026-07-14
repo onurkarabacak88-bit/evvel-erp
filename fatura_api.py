@@ -977,6 +977,109 @@ def belge_merkezi_uc(ay: str = ""):
     return belge_merkezi_ozet(ay)
 
 
+# ── TEDARİKÇİ MERKEZİ (2026-07-14, sahip: 'hepsini tek merkez halinde kurgulayalım')
+# Codex mimari kararları (session 019f5f5f devamı): ana obje=Tedarikçi-360, iniş=
+# Genel Bakış; GECİKMİŞ tutar her zaman toplam açıktan GÜRÜLTÜLÜ; yaşlandırma VADE
+# tarihine göre (Cari/1-7/8-30/31-60/61+ gecikme); faturasız harcama aging'e
+# KARIŞMAZ (ayrı risk KPI); fatura_istek(ödeme-temelli) ile belge_talep(teslimat-
+# temelli) AYNI KUYRUĞA SOKULMAZ — tek sekmede iki alt-durum; ödeme akışı
+# TAŞINMAZ (deep-link); SALT-OKUR agregat + aksiyonlar mevcut akışlara link.
+
+@router.get("/tedarikci-merkez")
+def tedarikci_merkez():
+    from datetime import date as _d
+    bugun = _d.today()
+    # 1) Vadeli borçlar — VADE tarihli yaşlandırma (Codex: due-date aging)
+    with db() as (_, cur):
+        _ensure_tablolar(cur)
+        cur.execute(
+            """SELECT id, COALESCE(TRIM(tedarikci),'') AS tedarikci,
+                      tutar::float AS tutar, vade_tarihi::text AS vade,
+                      LEFT(COALESCE(aciklama,''),50) AS aciklama
+               FROM vadeli_alimlar WHERE durum='bekliyor' ORDER BY vade_tarihi""")
+        vadeler = [dict(r) for r in cur.fetchall() or []]
+    kovalar = {"cari": 0.0, "g1_7": 0.0, "g8_30": 0.0, "g31_60": 0.0, "g61_plus": 0.0}
+    gecikmisler, bu_hafta = [], []
+    for v in vadeler:
+        try:
+            gec = (bugun - _d.fromisoformat(v["vade"])).days
+        except Exception:  # noqa: BLE001
+            gec = 0
+        v["gecikme_gun"] = gec
+        if gec <= 0:
+            kovalar["cari"] += v["tutar"]
+            if -7 <= gec <= 0:
+                bu_hafta.append(v)
+        elif gec <= 7:
+            kovalar["g1_7"] += v["tutar"]; gecikmisler.append(v)
+        elif gec <= 30:
+            kovalar["g8_30"] += v["tutar"]; gecikmisler.append(v)
+        elif gec <= 60:
+            kovalar["g31_60"] += v["tutar"]; gecikmisler.append(v)
+        else:
+            kovalar["g61_plus"] += v["tutar"]; gecikmisler.append(v)
+    kovalar = {k: round(x, 2) for k, x in kovalar.items()}
+    gecikmis_toplam = round(sum(v["tutar"] for v in gecikmisler), 2)
+    gecikmisler.sort(key=lambda v: -v["gecikme_gun"])
+
+    # 2) Cari (Tedarikçi-360 listesi) + 3) belge açığı iki alt-durumu — hata-yutar
+    cari = {}
+    try:
+        cari = cari_ozet()
+    except Exception:  # noqa: BLE001
+        pass
+    odeme_temelli = None
+    try:
+        from fatura_istek_api import fatura_istek_ozet
+        odeme_temelli = fatura_istek_ozet()
+    except Exception:  # noqa: BLE001
+        pass
+    teslimat_temelli = None
+    try:
+        with db() as (_, cur):
+            cur.execute("""SELECT COUNT(*)::int AS adet,
+                                  COALESCE(MAX(GREATEST(0, CURRENT_DATE -
+                                      COALESCE(teslim_tarihi, olusturma::date))),0)::int AS en_yasli_gun
+                           FROM belge_talep WHERE durum='bekliyor'""")
+            r0 = dict(cur.fetchone() or {})
+        teslimat_temelli = {"bekleyen": int(r0.get("adet") or 0),
+                           "en_yasli_gun": int(r0.get("en_yasli_gun") or 0)}
+    except Exception:  # noqa: BLE001
+        pass
+    islenemeyen = None
+    try:
+        with db() as (_, cur):
+            cur.execute("""SELECT COUNT(*)::int AS a FROM tedarikci_fatura
+                           WHERE durum IN ('ocr_hata','ocr_bekliyor') AND foto IS NOT NULL""")
+            islenemeyen = int(dict(cur.fetchone() or {"a": 0})["a"])
+    except Exception:  # noqa: BLE001
+        pass
+
+    return {
+        "kpi": {
+            "toplam_hesaplanan_acik": cari.get("toplam_hesaplanan_acik"),
+            "gecikmis_vade_toplam": gecikmis_toplam,          # her zaman en gürültülü
+            "vadesi_gelmemis": kovalar["cari"],
+            "bu_hafta_vade_toplam": round(sum(v["tutar"] for v in bu_hafta), 2),
+            "faturasiz_risk": (odeme_temelli or {}).get("acik_toplam"),  # aging'e KARIŞMAZ
+            "islenemeyen_foto": islenemeyen,
+        },
+        "vade_yaslandirma": kovalar,
+        "gecikmis_vadeler": gecikmisler[:20],
+        "bu_hafta_vadeler": bu_hafta[:20],
+        "tedarikciler": cari.get("tedarikciler") or [],
+        "belge_acigi": {
+            "odeme_temelli": odeme_temelli,       # fatura_istek (≥eşik, wa.me/e-arşiv)
+            "teslimat_temelli": teslimat_temelli, # belge_talep (Açık Teslimat, cep)
+        },
+        "not": ("SALT-OKUR komuta merkezi — aksiyonlar mevcut akışlara link (ödeme "
+                "akışı taşınmadı). Yaşlandırma VADE tarihine göre; faturasız kart "
+                "harcaması yaşlandırmaya karışmaz (ayrı risk). İki kovalama evreni "
+                "ayrı alt-durumdur: ödeme-temelli (fatura istek) / teslimat-temelli "
+                "(açık teslimat)."),
+    }
+
+
 @router.post("/ocr-yeniden-dene")
 def ocr_yeniden_dene(limit: int = 25):
     """SÜTAŞ vakası (2026-07-14): personelin yüklediği 50 foto OCR'da sessizce
