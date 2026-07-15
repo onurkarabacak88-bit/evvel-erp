@@ -306,7 +306,8 @@ export function OnayKuyrugu() {
 }
 
 // Borclar.jsx
-export function Borclar() {
+export function Borclar({ onNavigate }) {
+  const navOM = onNavigate || (() => {});
   const [liste, setListe] = useState([]);
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState({kurum:'',borc_turu:'Kredi',toplam_borc:'',aylik_taksit:'',kalan_vade:'',toplam_vade:'',baslangic_tarihi:'',odeme_gunu:1});
@@ -394,7 +395,8 @@ export function Borclar() {
     <div className="page">
       {msg && <div className={`alert-box ${msg.t} mb-16`}>{msg.m}</div>}
       <div className="page-header flex items-center justify-between">
-        <div><h2>Borç Envanteri</h2><p>Aylık taksit: {parseInt(toplamTaksit).toLocaleString('tr-TR')} ₺</p></div>
+        <div><h2>Borç Envanteri</h2><p>Aylık taksit: {parseInt(toplamTaksit).toLocaleString('tr-TR')} ₺
+          {' · '}<a style={{cursor:'pointer',color:'var(--blue,#60a5fa)'}} onClick={()=>navOM('odeme-merkezi')}>💸 taksitleri Ödeme Merkezi'nde öde →</a></p></div>
         <button className="btn btn-primary" onClick={()=>{setForm({kurum:'',borc_turu:'Kredi',toplam_borc:'',aylik_taksit:'',kalan_vade:'',toplam_vade:'',baslangic_tarihi:'',odeme_gunu:1});setDuzenleId(null);setShowModal(true);}}>+ Borç Ekle</button>
       </div>
       <div className="table-wrap">
@@ -1288,7 +1290,8 @@ export function SabitGiderler() {
 }
 
 // VadeliAlimlar.jsx
-export function VadeliAlimlar() {
+export function VadeliAlimlar({ onNavigate }) {
+  const navOM = onNavigate || (() => {});
   const [liste, setListe] = useState([]);
   const [gorunum, setGorunum] = useState('bekliyor'); // bekliyor | odendi
   const [gecmisModal, setGecmisModal] = useState(false);
@@ -1529,7 +1532,8 @@ export function VadeliAlimlar() {
       <div className="page-header flex items-center justify-between">
         <div>
           <h2>Vadeli Alımlar</h2>
-          <p>{gorunum === 'bekliyor' ? '7 gün içinde yaklaşanlar panelde gösterilir' : 'Son 30 günde ödenen vadeli alımlar'}</p>
+          <p>{gorunum === 'bekliyor' ? '7 gün içinde yaklaşanlar panelde gösterilir' : 'Son 30 günde ödenen vadeli alımlar'}
+            {' · '}<a style={{cursor:'pointer',color:'var(--blue,#60a5fa)'}} onClick={()=>navOM('odeme-merkezi')}>💸 tüm ödemeler artık Ödeme Merkezi'nde →</a></p>
         </div>
         <div style={{display:'flex',gap:8}}>
           <button
@@ -2119,8 +2123,9 @@ export function KartHareketleri() {
     <div className="page">
       {msg && <div className={`alert-box ${msg.t} mb-16`}>{msg.m}</div>}
       <div className="page-header flex items-center justify-between">
-        <div><h2>Kart Hareketleri</h2><p>❗ Harcama kasayı etkilemez · Ödeme anında kasadan düşer</p></div>
-        <button className="btn btn-primary" onClick={()=>setShowModal(true)}>+ Hareket Ekle</button>
+        <div><h2>Kart Hareketleri</h2><p>❗ Harcama kasayı etkilemez · kart borcu ödemenin normal yolu 💸 Ödeme Merkezi</p></div>
+        <button className="btn btn-secondary" title="Elle hareket girişi düzeltme içindir — kart borcu ödemek için Ödeme Merkezi'ni kullanın"
+          onClick={()=>setShowModal(true)}>⚙ Gelişmiş: Elle Hareket (düzeltme)</button>
       </div>
 
       {/* Sınıflandırma aksiyon banner'ı — bu sayfanın birincil işi: belirsizleri işaretle */}

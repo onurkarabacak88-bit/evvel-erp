@@ -7,6 +7,8 @@ const KATEGORILER = ['Nakit Alım','Market','Fatura','Kargo','Yemek','Yakıt','B
 
 export default function AnlikGider({ onNavigate }) {
   const nav = onNavigate || (() => {});
+  // v3 duyuru (Codex: 'announce inside old screens') — bu ekran liste/rapor için
+  // kalır; ödeme girişinin yeni adresi 💸 Ödeme Merkezi.
   const [liste, setListe] = useState([]);
   const [subeBekleyenOzet, setSubeBekleyenOzet] = useState({ adet: 0, toplam: 0 });
   const [durumFiltre, setDurumFiltre] = useState('hepsi'); // hepsi | aktif | onay_bekliyor
@@ -115,7 +117,8 @@ export default function AnlikGider({ onNavigate }) {
       <div className="page-header flex items-center justify-between">
         <div>
           <h2>Anlık Gider</h2>
-          <p>Beklenmeyen giderler · Bugün: {fmt(toplamBugün)} · Bu ay: {fmt(toplamAy)}</p>
+          <p>Beklenmeyen giderler · Bugün: {fmt(toplamBugün)} · Bu ay: {fmt(toplamAy)}
+            {' · '}<a style={{cursor:'pointer',color:'var(--blue,#60a5fa)'}} onClick={()=>nav('odeme-merkezi')}>💸 tüm ödemeler artık Ödeme Merkezi'nde →</a></p>
         </div>
         <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap',justifyContent:'flex-end'}}>
           <div style={{ position:'relative' }}>

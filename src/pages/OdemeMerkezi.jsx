@@ -39,13 +39,15 @@ export default function OdemeMerkezi() {
   const [liste, setListe] = useState(null);
   const [hata, setHata] = useState('');
   const [msg, setMsg] = useState(null);
+  // v3: pencere seçici — 29.07 gibi ileri vadeliler de merkezden ödensin
+  const [pencere, setPencere] = useState(7);
   const toast = (m, t = 'green') => { setMsg({ m, t }); setTimeout(() => setMsg(null), 5000); };
 
   const yukle = useCallback(() => {
-    api('/odeme-plani/bugun?gun=7&personel=0')
+    api(`/odeme-plani/bugun?gun=${pencere}&personel=0`)
       .then(r => setListe(Array.isArray(r) ? r : []))
       .catch(e => { setHata(e?.message || 'Yüklenemedi'); setListe([]); });
-  }, []);
+  }, [pencere]);
   useEffect(() => { yukle(); }, [yukle]);
 
   // ── TEK ÖDEME MODALI ──
@@ -191,13 +193,22 @@ export default function OdemeMerkezi() {
       {liste !== null && (
         <>
           <div className="card" style={{ padding: 16, marginBottom: 14 }}>
-            <div style={{ fontWeight: 800, marginBottom: 6 }}>📋 Bekleyenler ({liste.length})</div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+              <div style={{ fontWeight: 800 }}>📋 Bekleyenler ({liste.length})</div>
+              <div style={{ display: 'flex', gap: 4 }}>
+                {[7, 30, 60].map(g => (
+                  <button key={g} className="btn btn-secondary btn-sm"
+                    style={{ fontWeight: pencere === g ? 800 : 400, border: pencere === g ? '2px solid var(--accent)' : undefined }}
+                    onClick={() => setPencere(g)}>{g} gün</button>
+                ))}
+              </div>
+            </div>
             {liste.length === 0 && <div style={{ color: 'var(--green)' }}>Bekleyen ödeme yok 🎉</div>}
             {gecikmis.length > 0 && <div style={{ fontSize: 12, color: 'var(--red)', fontWeight: 700, margin: '6px 0 2px' }}>GECİKMİŞ</div>}
             {gecikmis.map(r => <Satir key={r.id} r={r} />)}
             {bugunkuler.length > 0 && <div style={{ fontSize: 12, color: '#f59e0b', fontWeight: 700, margin: '10px 0 2px' }}>BUGÜN / TUTAR BEKLEYEN</div>}
             {bugunkuler.map(r => <Satir key={r.id} r={r} />)}
-            {yaklasan.length > 0 && <div style={{ fontSize: 12, color: 'var(--text3)', fontWeight: 700, margin: '10px 0 2px' }}>YAKLAŞAN (7 gün)</div>}
+            {yaklasan.length > 0 && <div style={{ fontSize: 12, color: 'var(--text3)', fontWeight: 700, margin: '10px 0 2px' }}>YAKLAŞAN ({pencere} gün)</div>}
             {yaklasan.map(r => <Satir key={r.id} r={r} />)}
           </div>
 
