@@ -1358,6 +1358,18 @@ def finans_ozet_motoru():
             """, (str(g['id']),))
             if cur.fetchone():
                 continue
+            # 4. İZ (sahip vakası 2026-07-15: 'dün girişi yaptık, hâlâ gecikmede'):
+            # Panel 'Tutarı Gir' → ANLIK GİDER akışı kaynak damgasıyla anlik_giderler'e
+            # yazar — hatırlatma bu defteri OKUMUYORDU, ödeme yapılmışken gecikmede
+            # gösteriyordu. Bu ay kaynak-damgalı anlık gider varsa ödendi sayılır.
+            cur.execute("""
+                SELECT 1 FROM anlik_giderler
+                WHERE kaynak_tablo='sabit_giderler' AND kaynak_id=%s
+                  AND durum='aktif'
+                  AND EXTRACT(YEAR FROM tarih)=%s AND EXTRACT(MONTH FROM tarih)=%s
+            """, (str(g['id']), bugun.year, bugun.month))
+            if cur.fetchone():
+                continue
             bugun_odemeler.append({
                 'odeme_id': None,
                 'aciklama': g['gider_adi'],
@@ -1415,6 +1427,15 @@ def finans_ozet_motoru():
                   AND durum != 'iptal'
                   AND referans_ay = DATE_TRUNC('month', CURRENT_DATE)
             """, (str(g['id']),))
+            if cur.fetchone():
+                continue
+            # 4. İZ: bu ay kaynak-damgalı ANLIK GİDER girildiyse ödendi sayılır
+            cur.execute("""
+                SELECT 1 FROM anlik_giderler
+                WHERE kaynak_tablo='sabit_giderler' AND kaynak_id=%s
+                  AND durum='aktif'
+                  AND EXTRACT(YEAR FROM tarih)=%s AND EXTRACT(MONTH FROM tarih)=%s
+            """, (str(g['id']), bugun.year, bugun.month))
             if cur.fetchone():
                 continue
             yaklasan_odemeler.append({
