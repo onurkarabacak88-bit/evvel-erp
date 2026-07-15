@@ -1381,7 +1381,13 @@ def borc_plan_mutabakat(referans_tarih: Optional[date] = None) -> dict:
     except Exception as e:
         sonuc["hata"] = f"baslangic: {e}"; logger.warning(f"borc_plan_mutabakat baslangic: {e}")
 
-    # 1) Ödenmiş ama bekleyen borç planını kapat (o ayın kasa BORC_TAKSIT ödemesi varsa)
+    # 1) Ödenmiş ama bekleyen borç planını kapat. İKİ eşleşme dalı:
+    #    (a) AYNI AY kasa BORC_TAKSIT izi (mevcut kural);
+    #    (b) KOÇ FİNANS vakası (2026-07-15, sahip: 'son ödemesi yapıldı ama
+    #        bekleyende görünüyor'): ay sonuna yakın vadeli taksit birkaç gün
+    #        GEÇ ödenince ay değişiyor, ay-kuralı ıskalıyordu (plan 28.06,
+    #        ödeme 04.07). GEÇ ÖDEME PENCERESİ: vade..vade+35g içinde,
+    #        kuruşuna aynı tutarlı iz de planı kapatır (kasa izi=tek gerçek).
     try:
         with db() as (conn, cur):
             cur.execute("""
@@ -1392,14 +1398,18 @@ def borc_plan_mutabakat(referans_tarih: Optional[date] = None) -> dict:
                         SELECT MAX(kh.tarih) FROM kasa_hareketleri kh
                         WHERE kh.kaynak_tablo='borc_envanteri' AND kh.kaynak_id=op.kaynak_id
                           AND kh.islem_turu='BORC_TAKSIT' AND kh.kasa_etkisi=TRUE AND kh.durum='aktif'
-                          AND DATE_TRUNC('month', kh.tarih)=DATE_TRUNC('month', op.tarih)))
+                          AND (DATE_TRUNC('month', kh.tarih)=DATE_TRUNC('month', op.tarih)
+                               OR (kh.tarih BETWEEN op.tarih AND op.tarih + INTERVAL '35 days'
+                                   AND ABS(ABS(kh.tutar) - op.odenecek_tutar) <= 1))))
                 WHERE op.kaynak_tablo='borc_envanteri'
                   AND op.durum IN ('bekliyor','onay_bekliyor')
                   AND EXISTS (
                       SELECT 1 FROM kasa_hareketleri kh
                       WHERE kh.kaynak_tablo='borc_envanteri' AND kh.kaynak_id=op.kaynak_id
                         AND kh.islem_turu='BORC_TAKSIT' AND kh.kasa_etkisi=TRUE AND kh.durum='aktif'
-                        AND DATE_TRUNC('month', kh.tarih)=DATE_TRUNC('month', op.tarih))
+                        AND (DATE_TRUNC('month', kh.tarih)=DATE_TRUNC('month', op.tarih)
+                             OR (kh.tarih BETWEEN op.tarih AND op.tarih + INTERVAL '35 days'
+                                 AND ABS(ABS(kh.tutar) - op.odenecek_tutar) <= 1)))
             """)
             sonuc["kapatilan"] = cur.rowcount or 0
     except Exception as e:
