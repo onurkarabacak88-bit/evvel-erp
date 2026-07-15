@@ -49,6 +49,7 @@ import CepApp from './pages/cep/CepApp';
 import DuyuPaneli from './pages/DuyuPaneli';
 import ReceteEslestirme from './pages/ReceteEslestirme';
 import BelgeMerkezi from './pages/BelgeMerkezi';
+import OdemeMerkezi from './pages/OdemeMerkezi';
 import './index.css';
 
 const NAV = [
@@ -59,6 +60,7 @@ const NAV = [
     { id: 'duyu-paneli',      label: 'Duyu Paneli',         icon: '👁️' },
     { id: 'recete-eslestirme', label: 'Reçete Eşleştirme',  icon: '🔗' },
     { id: 'maliyet',          label: 'Maliyet',             icon: '💰' },
+    { id: 'odeme-merkezi',    label: 'Ödeme Merkezi',       icon: '💸' },
     { id: 'belge-merkezi',    label: 'Tedarikçi Merkezi',   icon: '🏦' },
     { id: 'borc-navigasyon',  label: 'Borç Navigasyonu',    icon: '🧭' },
     { id: 'strateji',         label: 'Strateji Motoru',     icon: '🎯' },
@@ -122,6 +124,7 @@ const PAGES = {
   'duyu-paneli':      DuyuPaneli,
   'recete-eslestirme': ReceteEslestirme,
   'belge-merkezi':    BelgeMerkezi,
+  'odeme-merkezi':    OdemeMerkezi,
   strateji:           Strateji,
   onay:               OnayKuyrugu,
   'ciro-taslak-onay': CiroTaslakOnay,
