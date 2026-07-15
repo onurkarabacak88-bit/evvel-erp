@@ -52,8 +52,16 @@ _FATURASIZ_TUR = ("kredi", "maas", "maaş", "vergi", "sgk", "stopaj",
 
 
 def _faturasiz_tur_mu(metin: str) -> bool:
-    m = (metin or "").lower()
-    return any(t in m for t in _FATURASIZ_TUR)
+    # TR-katlama ŞART (2026-07-15 vakası: 'HESAP FAİZİ'.lower() noktalı-i üretiyor,
+    # 'faiz' kalıbı ıskalanıyordu — banka faizi 'fatura bekliyor' görünüyordu)
+    try:
+        from fatura_api import _cari_katla
+        m = _cari_katla(metin)
+        kaliplar = [_cari_katla(t) for t in _FATURASIZ_TUR]
+    except Exception:  # noqa: BLE001
+        m = (metin or "").lower()
+        kaliplar = list(_FATURASIZ_TUR)
+    return any(t in m for t in kaliplar)
 
 
 def _ensure(cur) -> None:

@@ -1270,8 +1270,12 @@ def kurumsal_fatura_mu(metin: str) -> bool:
 # '🚫 belge beklenmez' deyince kalıp kaydedilir, bir daha aday olmaz.
 _BELGESIZ_KALIPLAR = (
     "personel", "avans", "maas", "maaş", "prim", "ikramiye", "bahsis", "bahşiş",
-    "harclik", "harçlık", "elden odeme", "elden ödeme", "elden para",
-    "yol parasi", "yol ücreti", "yemek parasi", "kasa devir", "kasa transfer",
+    "harclik", "harçlık", "elden", "yol parasi", "yol ücreti", "yemek parasi",
+    "kasa devir", "kasa transfer",
+    # 2026-07-15 (sahip: 'kartlar için vade gibi algılıyor, fatura bekliyor'):
+    # banka/faiz/kart ödemeleri fatura ÜRETMEZ — belgesi dekont/ekstredir
+    "banka", "hesap faizi", "eksi hesap", "faiz", "kredi karti", "kart odeme",
+    "kart borcu", "ekstre", "asgari odeme", "altin alimi", "altın alımı",
 )
 
 
