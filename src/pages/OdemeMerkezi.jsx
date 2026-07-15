@@ -169,20 +169,56 @@ export default function OdemeMerkezi() {
   const gecikmis = (liste || []).filter(r => r.gecikmis);
   const bugunkuler = (liste || []).filter(r => !r.gecikmis && (r.gun_gecikme === 0 || r.tutar_girilmedi));
   const yaklasan = (liste || []).filter(r => !r.gecikmis && r.gun_gecikme < 0 && !r.tutar_girilmedi);
-  const toplamBekleyen = (liste || []).reduce((s, r) => s + (Number(r.tutar) || 0), 0);
+  const topla = (arr) => arr.reduce((s, r) => s + (Number(r.tutar) || 0), 0);
+  const gecikmisT = topla(gecikmis), bugunT = topla(bugunkuler), yaklasanT = topla(yaklasan);
+  const toplamBekleyen = gecikmisT + bugunT + yaklasanT;
 
-  const Satir = ({ r }) => (
-    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, padding: '9px 0', borderBottom: '1px solid var(--border)' }}>
-      <span style={{ fontSize: 13 }}>
-        {r.gecikmis && <b style={{ color: 'var(--red)' }}>⚠{r.gun_gecikme}g </b>}
-        {TIP_IKON[r.tip] || '💸'} <b>{r.baslik}</b>
-        <span style={{ color: 'var(--text3)', fontSize: 12 }}> · {r.tip}{r.tarih ? ` · ${r.tarih}` : ''}</span>
-      </span>
-      <span style={{ whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 8 }}>
-        <b style={{ fontFamily: 'var(--font-mono)' }}>{r.tutar_girilmedi ? (r.tahmini_tutar ? `≈ ${fmt(r.tahmini_tutar)}` : '—') : fmt(r.tutar)}</b>
-        {r.asgari != null && <span style={{ fontSize: 11, color: 'var(--text3)' }}>asg {fmt(r.asgari)}</span>}
-        <button className="btn btn-primary btn-sm" onClick={() => ac(r)}>{r.tutar_girilmedi ? 'Tutarı Gir' : 'Öde'}</button>
-      </span>
+  // Ramp/Melio deseni: göreli tarih ("3 gün gecikti" > "2026-07-12")
+  const zamanEtiket = (r) => r.gecikmis ? `${r.gun_gecikme} gün gecikti`
+    : (r.gun_gecikme < 0 ? (r.gun_gecikme === -1 ? 'yarın' : `${-r.gun_gecikme} gün sonra`)
+      : (r.tutar_girilmedi ? 'tutar bekleniyor' : 'bugün'));
+
+  const Satir = ({ r }) => {
+    const renk = r.gecikmis ? 'var(--red)' : (r.gun_gecikme < 0 ? 'var(--text3)' : '#f59e0b');
+    return (
+      <div onClick={() => ac(r)}
+        style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12,
+                 padding: '12px 12px', margin: '6px 0', borderRadius: 10, cursor: 'pointer',
+                 background: 'var(--bg2)', borderLeft: `4px solid ${renk}`,
+                 transition: 'transform .08s, background .12s' }}
+        onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg3, var(--bg2))'; }}
+        onMouseLeave={e => { e.currentTarget.style.background = 'var(--bg2)'; }}>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+          <span style={{ fontSize: 20 }}>{TIP_IKON[r.tip] || '💸'}</span>
+          <span style={{ minWidth: 0 }}>
+            <div style={{ fontWeight: 700, fontSize: 13, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 380 }}>{r.baslik}</div>
+            <div style={{ fontSize: 11, color: 'var(--text3)' }}>
+              <span style={{ color: renk, fontWeight: 700 }}>{zamanEtiket(r)}</span>
+              {' · '}{r.tip}{r.tarih ? ` · ${r.tarih}` : ''}
+            </div>
+          </span>
+        </span>
+        <span style={{ whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 12 }}>
+          <span style={{ textAlign: 'right' }}>
+            <div style={{ fontFamily: 'var(--font-mono)', fontWeight: 800, fontSize: 15 }}>
+              {r.tutar_girilmedi ? (r.tahmini_tutar ? `≈ ${fmt(r.tahmini_tutar)}` : '—') : fmt(r.tutar)}
+            </div>
+            {r.asgari != null && <div style={{ fontSize: 10, color: 'var(--text3)' }}>asgari {fmt(r.asgari)}</div>}
+          </span>
+          <button className="btn btn-primary btn-sm" onClick={e => { e.stopPropagation(); ac(r); }}
+            style={{ minWidth: 86 }}>{r.tutar_girilmedi ? 'Tutarı Gir' : 'Öde ›'}</button>
+        </span>
+      </div>
+    );
+  };
+
+  const Bolum = ({ ad, renk, satirlar, toplam }) => satirlar.length > 0 && (
+    <div style={{ marginBottom: 10 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '4px 4px' }}>
+        <span style={{ fontSize: 12, fontWeight: 800, color: renk, letterSpacing: 0.5 }}>{ad} ({satirlar.length})</span>
+        <span style={{ fontSize: 12, fontFamily: 'var(--font-mono)', color: renk, fontWeight: 700 }}>{fmt(toplam)}</span>
+      </div>
+      {satirlar.map(r => <Satir key={r.id} r={r} />)}
     </div>
   );
 
@@ -191,8 +227,24 @@ export default function OdemeMerkezi() {
       {msg && <div className={`alert-box ${msg.t} mb-16`}>{msg.m}</div>}
       <div className="page-header">
         <h2>💸 Ödeme Merkezi</h2>
-        <p>Tüm para çıkışı tek kapıdan — sistem doğru deftere kendisi dağıtır. Bekleyen toplam: <b>{fmt(toplamBekleyen)}</b></p>
+        <p>Tüm para çıkışı tek kapıdan — sistem doğru deftere kendisi dağıtır.</p>
       </div>
+      {/* KPI şeridi (Ramp deseni: gecikmiş her zaman en gürültülü) */}
+      {liste !== null && (
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 14 }}>
+          {[
+            ['⚠ GECİKMİŞ', gecikmisT, gecikmis.length, 'var(--red)', true],
+            ['🗓 Bugün', bugunT, bugunkuler.length, '#f59e0b', false],
+            ['📅 Yaklaşan', yaklasanT, yaklasan.length, 'var(--text2, var(--text))', false],
+            ['Σ Toplam', toplamBekleyen, (liste || []).length, 'var(--text)', false],
+          ].map(([ad, val, adet, renk, buyuk]) => (
+            <div key={ad} className="card" style={{ padding: '10px 16px', minWidth: 150, borderTop: `3px solid ${renk}` }}>
+              <div style={{ fontSize: 11, color: 'var(--text3)' }}>{ad} {adet > 0 ? `· ${adet}` : ''}</div>
+              <div style={{ fontWeight: 800, fontFamily: 'var(--font-mono)', fontSize: buyuk ? 22 : 16, color: renk }}>{fmt(val)}</div>
+            </div>
+          ))}
+        </div>
+      )}
       {hata && !sec && <div className="alert-box red mb-16">{hata}</div>}
       {liste === null && <div style={{ color: 'var(--text3)' }}>Yükleniyor…</div>}
       {liste !== null && (
@@ -208,13 +260,15 @@ export default function OdemeMerkezi() {
                 ))}
               </div>
             </div>
-            {liste.length === 0 && <div style={{ color: 'var(--green)' }}>Bekleyen ödeme yok 🎉</div>}
-            {gecikmis.length > 0 && <div style={{ fontSize: 12, color: 'var(--red)', fontWeight: 700, margin: '6px 0 2px' }}>GECİKMİŞ</div>}
-            {gecikmis.map(r => <Satir key={r.id} r={r} />)}
-            {bugunkuler.length > 0 && <div style={{ fontSize: 12, color: '#f59e0b', fontWeight: 700, margin: '10px 0 2px' }}>BUGÜN / TUTAR BEKLEYEN</div>}
-            {bugunkuler.map(r => <Satir key={r.id} r={r} />)}
-            {yaklasan.length > 0 && <div style={{ fontSize: 12, color: 'var(--text3)', fontWeight: 700, margin: '10px 0 2px' }}>YAKLAŞAN ({pencere} gün)</div>}
-            {yaklasan.map(r => <Satir key={r.id} r={r} />)}
+            {liste.length === 0 && (
+              <div style={{ textAlign: 'center', padding: 30, color: 'var(--text3)' }}>
+                <div style={{ fontSize: 40, marginBottom: 6 }}>🎉</div>
+                Bekleyen ödeme yok — kasan rahat.
+              </div>
+            )}
+            <Bolum ad="GECİKMİŞ" renk="var(--red)" satirlar={gecikmis} toplam={gecikmisT} />
+            <Bolum ad="BUGÜN / TUTAR BEKLEYEN" renk="#f59e0b" satirlar={bugunkuler} toplam={bugunT} />
+            <Bolum ad={`YAKLAŞAN (${pencere} GÜN)`} renk="var(--text3)" satirlar={yaklasan} toplam={yaklasanT} />
           </div>
 
           <div className="card" style={{ padding: 16 }}>
@@ -299,9 +353,17 @@ export default function OdemeMerkezi() {
               )}
               {mod !== 'vadeye' && (
                 <>
-                  <div style={{ display: 'flex', gap: 8 }}>
-                    {[['nakit', '💵 Kasa'], ['kart', '💳 Kart']].map(([k, et]) => (
-                      <button key={k} className={yontem === k ? 'btn btn-primary btn-sm' : 'btn btn-secondary btn-sm'} onClick={() => setYontem(k)}>{et}</button>
+                  {/* Kaynak seçimi — büyük iki kart (banka uygulaması deseni) */}
+                  <div style={{ display: 'flex', gap: 10 }}>
+                    {[['nakit', '💵', 'Kasa', 'kasadan düşer'], ['kart', '💳', 'Kart', 'kart borcuna yazılır']].map(([k, ikon, ad, alt]) => (
+                      <button key={k} onClick={() => setYontem(k)}
+                        style={{ flex: 1, padding: '12px 8px', borderRadius: 10, cursor: 'pointer',
+                                 border: `2px solid ${yontem === k ? 'var(--accent)' : 'var(--border)'}`,
+                                 background: yontem === k ? 'var(--accent-dim, var(--bg2))' : 'var(--bg2)', textAlign: 'center' }}>
+                        <div style={{ fontSize: 22 }}>{ikon}</div>
+                        <div style={{ fontWeight: 800, fontSize: 14 }}>{ad}</div>
+                        <div style={{ fontSize: 10, color: 'var(--text3)' }}>{alt}</div>
+                      </button>
                     ))}
                   </div>
                   {yontem === 'kart' && (

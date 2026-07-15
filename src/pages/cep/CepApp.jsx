@@ -2799,8 +2799,18 @@ function CepOdemeler({ onGeri }) {
   };
 
   const toplam = (liste || []).reduce((s, o) => s + (Number(o.tutar) || 0), 0);
+  const grpGecikmis = (liste || []).filter(o => o.gecikmis);
+  const grpBugun = (liste || []).filter(o => !o.gecikmis && (o.gun_gecikme === 0 || o.tutar_girilmedi));
+  const grpYaklasan = (liste || []).filter(o => !o.gecikmis && o.gun_gecikme < 0 && !o.tutar_girilmedi);
+  const grpToplam = (arr) => arr.reduce((s, o) => s + (Number(o.tutar) || 0), 0);
   const inp = { width: '100%', background: C.bg, border: `1px solid ${C.border}`, borderRadius: 10, padding: '10px 12px', fontSize: 14, color: C.t1, boxSizing: 'border-box' };
-  const seciliBtn = (aktif) => ({ flex: 1, background: aktif ? C.t1 : C.bg, color: aktif ? C.bg : C.t2, border: `1px solid ${C.border}`, borderRadius: 10, padding: '9px 0', fontSize: 13, fontWeight: 700, cursor: 'pointer' });
+  const seciliBtn = (aktif) => ({ flex: 1, background: aktif ? C.t1 : C.bg, color: aktif ? C.bg : C.t2, border: `1px solid ${C.border}`, borderRadius: 10, padding: '11px 0', fontSize: 13, fontWeight: 700, cursor: 'pointer' });
+  const BolumBaslik = ({ ad, renk, arr }) => arr.length > 0 && (
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '2px 2px 6px' }}>
+      <span style={{ fontSize: 12, fontWeight: 800, color: renk, letterSpacing: 0.5 }}>{ad} ({arr.length})</span>
+      <span style={{ fontSize: 12, fontWeight: 700, color: renk }}>{fmt(grpToplam(arr))}</span>
+    </div>
+  );
 
   return (
     <div style={{ minHeight: '100vh', background: C.bg, paddingBottom: 30 }}>
@@ -2823,10 +2833,13 @@ function CepOdemeler({ onGeri }) {
             Bekleyen ödeme yok.
           </div>
         )}
-        {(liste || []).map(o => (
+        {[['GECİKMİŞ', C.kirmizi, grpGecikmis], ['BUGÜN / TUTAR BEKLEYEN', C.sari, grpBugun], ['YAKLAŞAN (7 GÜN)', C.t3, grpYaklasan]].map(([bAd, bRenk, bArr]) => (
+          <div key={bAd}>
+            <BolumBaslik ad={bAd} renk={bRenk} arr={bArr} />
+            {bArr.map(o => (
           <div key={o.id} style={{
             background: C.bg2, border: `1px solid ${acik === o.id ? C.mavi : C.border}`,
-            borderLeft: `4px solid ${o.gecikmis ? C.kirmizi : C.sari}`,
+            borderLeft: `4px solid ${o.gecikmis ? C.kirmizi : (o.gun_gecikme < 0 ? C.t3 : C.sari)}`,
             borderRadius: 14, padding: 14, marginBottom: 12,
           }}>
             <div onClick={() => ac(o)} style={{ cursor: 'pointer' }}>
@@ -2909,6 +2922,8 @@ function CepOdemeler({ onGeri }) {
                 </div>
               </div>
             )}
+          </div>
+            ))}
           </div>
         ))}
         <div style={{ fontSize: 11, color: C.t3, textAlign: 'center', marginTop: 6 }}>
