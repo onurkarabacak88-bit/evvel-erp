@@ -326,8 +326,29 @@ def eksik_gun_ciro_tara(body: EksikGunTaraBody):
                 toplam = round(nakit + pos, 2)
                 if toplam <= 0:
                     continue
-                cur.execute("SELECT 1 FROM ciro WHERE sube_id=%s AND tarih=%s::date AND durum='aktif' LIMIT 1", (sid, ts))
-                if cur.fetchone():
+                # SAHİP KURALI (2026-07-15, hatırlatma: "ciroda HATA olursa YA DA
+                # giriş olmazsa denetlesin"): ciro GİRİLMİŞSE Evo ile KIYASLA —
+                # fark eşiği aşarsa duyu olayı (öneri-only; aktif ciroya taslak
+                # üretilmez — çift kayıt riski; hüküm insanın).
+                cur.execute("""SELECT ROUND(SUM(toplam)::numeric,2)::float AS t
+                               FROM ciro WHERE sube_id=%s AND tarih=%s::date
+                                 AND durum='aktif'""", (sid, ts))
+                _cr = dict(cur.fetchone() or {})
+                if _cr.get("t") is not None:
+                    girilen = float(_cr["t"] or 0)
+                    fark = round(girilen - toplam, 2)
+                    if abs(fark) > max(50.0, toplam * 0.02):
+                        oneriler.append({"sube": sad, "tarih": ts, "durum": "fark",
+                                         "girilen": girilen, "evo": toplam, "fark": fark})
+                        try:
+                            from duyu_omurga import duyu_olay_yaz
+                            duyu_olay_yaz(
+                                "ciro_guvence", "ciro.evo_fark", f"{sid}_{ts}",
+                                entity_scope="sube", entity_id=sad,
+                                occurred_at=ts, signal_name="Girilen ciro ≠ Evo satışı",
+                                payload={"girilen": girilen, "evo": toplam, "fark": fark})
+                        except Exception:  # noqa: BLE001
+                            pass
                     continue
                 cur.execute("SELECT 1 FROM ciro_taslak WHERE sube_id=%s AND tarih=%s::date AND durum='bekliyor' LIMIT 1", (sid, ts))
                 if cur.fetchone():
@@ -346,7 +367,9 @@ def eksik_gun_ciro_tara(body: EksikGunTaraBody):
                     kayit["durum"] = "onizleme"
                 oneriler.append(kayit)
     yeni = [o for o in oneriler if o.get("durum") in ("onizleme", "oneri_olusturuldu")]
+    farklar = [o for o in oneriler if o.get("durum") == "fark"]
     return {"oneri_sayisi": len(yeni), "toplam_eslesme": len(oneriler),
+            "fark_sayisi": len(farklar), "farklar": farklar,
             "evo_hata": evo_hata, "oneriler": oneriler,
             "mesaj": ("Öneriler onay kuyruğuna düştü." if body.uygula else "ÖNİZLEME — yazılmadı.")}
 
