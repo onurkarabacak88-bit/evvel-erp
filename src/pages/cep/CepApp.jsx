@@ -63,6 +63,27 @@ const cepWaNum = (tel) => {
   return n.length >= 11 ? n : '';
 };
 
+// 📎 FORMDAN FATURA YÜKLEME (sahip 2026-07-15: "vadeli alım vs girerken fatura
+// yüklemesi istesin; eklemezse faturasız alım olarak girsin; anlık giderde de
+// aynı mantık"). Maliyet/Tedarikçi alanıyla AYNI boru hattı: PDF → /fatura/yukle-pdf
+// (LLM kalem), foto → /fatura/yukle (vision OCR) → Belge Merkezi arşivi + cari +
+// K2-D eşleşmesi kendiliğinden. Kayıt akışını ASLA bozmaz (yükleme hatası yutulur).
+async function cepFaturaDosyaYukle(file) {
+  const fd = new FormData();
+  const isPdf = /pdf/i.test(file.type || '') || /\.pdf$/i.test(file.name || '');
+  fd.append(isPdf ? 'pdf' : 'foto', file);
+  const headers = {};
+  try {
+    const mut = (localStorage.getItem('evvelMerkezMutasyonKey') || '').trim();
+    if (mut) headers['X-Evvel-Merkez-Key'] = mut;
+  } catch { /* ignore */ }
+  const res = await fetch(isPdf ? '/api/fatura/yukle-pdf' : '/api/fatura/yukle',
+    { method: 'POST', headers, body: fd });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error((data && data.detail) || 'fatura yüklenemedi');
+  return data;
+}
+
 // Cep yalnızca GİDER onaylarını gösterir — kasa hataları (islem_turu'nde KASA geçen)
 // buraya düşmez. Masaüstü Onay Kuyruğu'ndaki "Şube Giderleri" sekmesiyle aynı ayrım.
 const giderOnayMi = (o) => !String(o?.islem_turu || '').toUpperCase().includes('KASA');
@@ -1396,6 +1417,7 @@ function CepAnlikGider({ onGeri }) {
   const [formAcik, setFormAcik] = useState(false);
   const [ayOff, setAyOff] = useState(0); // 0=bu ay, 1=geçen ay…
   const [f, setF] = useState({ tarih: bugun(), kategori: 'Diğer', tutar: '', aciklama: '', sube: 'MERKEZ', odeme_yontemi: 'nakit', kart_id: '' });
+  const [fDosya, setFDosya] = useState(null); // 📎 fatura PDF/foto (opsiyonel)
 
   const ayStr = (() => { const t = new Date(); t.setDate(1); t.setMonth(t.getMonth() - ayOff); return t.toISOString().slice(0, 7); })();
   const ayMetin = (() => { const t = new Date(); t.setDate(1); t.setMonth(t.getMonth() - ayOff); return t.toLocaleDateString('tr-TR', { month: 'long', year: 'numeric' }); })();
@@ -1421,11 +1443,21 @@ function CepAnlikGider({ onGeri }) {
     setMesgul(true); setHata(''); setBilgi('');
     try {
       const body = { ...f, tutar: tutarN };
+      // 📎 dosya yoksa görünür etiket: FATURASIZ ALIM (sahip kuralı)
+      if (!fDosya) body.aciklama = `${(f.aciklama || '').trim()} [faturasız alım]`.trim();
       if (f.odeme_yontemi === 'nakit') delete body.kart_id;
       const res = await api('/anlik-gider', { method: 'POST', body });
       if (res && res.warning) { setHata(res.mesaj || 'Mükerrer olabilir — tekrar deneyin'); setMesgul(false); return; }
-      setBilgi(f.odeme_yontemi === 'kart' ? 'Eklendi — kart borcuna işlendi' : 'Eklendi — kasadan düşüldü');
+      let dosyaNot = ' · faturasız alım olarak girildi';
+      if (fDosya) {
+        try {
+          await cepFaturaDosyaYukle(fDosya);
+          dosyaNot = ' · 📎 fatura arşive alındı (Belge Merkezi)';
+        } catch (e2) { dosyaNot = ` · ⚠ fatura yüklenemedi: ${e2.message}`; }
+      }
+      setBilgi((f.odeme_yontemi === 'kart' ? 'Eklendi — kart borcuna işlendi' : 'Eklendi — kasadan düşüldü') + dosyaNot);
       setF({ tarih: bugun(), kategori: 'Diğer', tutar: '', aciklama: '', sube: f.sube, odeme_yontemi: 'nakit', kart_id: '' });
+      setFDosya(null);
       setFormAcik(false);
       yukle();
     } catch (e) { setHata(e.message || 'Kaydedilemedi'); }
@@ -1524,6 +1556,15 @@ function CepAnlikGider({ onGeri }) {
 
             <input type="date" value={f.tarih} onChange={e => set('tarih', e.target.value)} style={{ ...inp, marginBottom: 12 }} />
 
+            {/* 📎 FATURA (opsiyonel) — eklenirse Maliyet/Tedarikçi boru hattına düşer */}
+            <div style={{ fontSize: 12, color: C.t3, marginBottom: 5 }}>Fatura (PDF/foto — opsiyonel)</div>
+            <input type="file" accept="application/pdf,image/*"
+              onChange={e => setFDosya(e.target.files?.[0] || null)}
+              style={{ ...inp, marginBottom: 4, padding: '8px 10px' }} />
+            <div style={{ fontSize: 11, color: fDosya ? C.yesil : C.sari, marginBottom: 12 }}>
+              {fDosya ? `📎 ${fDosya.name} — arşive alınacak` : '⚠ Dosya eklenmezse FATURASIZ ALIM olarak işaretlenir'}
+            </div>
+
             <div style={{ display: 'flex', gap: 8 }}>
               <button onClick={() => { setFormAcik(false); setHata(''); }} style={{
                 flex: 1, background: C.bg, color: C.t2, border: `1px solid ${C.border}`, borderRadius: 10,
@@ -1577,6 +1618,7 @@ function CepVadeli({ onGeri }) {
   const [tedarikciler, setTedarikciler] = useState([]);
   const [formAcik, setFormAcik] = useState(false);
   const [f, setF] = useState({ tedarikci: '', telefon: '', aciklama: '', tutar: '', vade_tarihi: '' });
+  const [fDosya, setFDosya] = useState(null);   // 📎 fatura PDF/foto (opsiyonel)
   const [odeId, setOdeId] = useState('');        // ödeme paneli açık satır
   const [odeYontem, setOdeYontem] = useState('nakit');
   const [odeKart, setOdeKart] = useState('');
@@ -1636,9 +1678,20 @@ function CepVadeli({ onGeri }) {
     const tel = f.telefon.trim();
     setMesgul(true); setHata(''); setBilgi('');
     try {
-      const res = await _post({ tedarikci: tedAd, aciklama: f.aciklama.trim(), tutar: tutarN, vade_tarihi: f.vade_tarihi });
+      // 📎 dosya yoksa görünür etiket: FATURASIZ ALIM (sahip kuralı 2026-07-15)
+      const acikMetin = fDosya ? f.aciklama.trim()
+        : `${f.aciklama.trim()} [faturasız alım]`.trim();
+      const res = await _post({ tedarikci: tedAd, aciklama: acikMetin, tutar: tutarN, vade_tarihi: f.vade_tarihi });
       if (res) {
         let ekNot = '';
+        if (fDosya) {
+          try {
+            await cepFaturaDosyaYukle(fDosya);
+            ekNot += ' · 📎 fatura arşive alındı';
+          } catch (e3) { ekNot += ` · ⚠ fatura yüklenemedi: ${e3.message}`; }
+        } else {
+          ekNot += ' · faturasız alım olarak girildi';
+        }
         // Tedarikçi kayıtlı değilse → listeye ekleme öner + otomatik ekle
         const kayitli = tedBul(tedAd);
         if (!kayitli && tedAd.length >= 2) {
@@ -1662,6 +1715,7 @@ function CepVadeli({ onGeri }) {
         }
         setBilgi((res.birlestirildi ? `Birleştirildi — toplam ${fmt(res.yeni_toplam)}` : 'Vadeli alım eklendi.') + ekNot);
         setF({ tedarikci: '', telefon: '', aciklama: '', tutar: '', vade_tarihi: '' });
+        setFDosya(null);
         setFormAcik(false);
         yukle();
       }
@@ -1762,6 +1816,14 @@ function CepVadeli({ onGeri }) {
             <input type="number" inputMode="decimal" placeholder="Tutar ₺" value={f.tutar} onChange={e => set('tutar', e.target.value)} style={{ ...inp, fontSize: 20, fontWeight: 800, textAlign: 'center', marginBottom: 10 }} />
             <div style={{ fontSize: 12, color: C.t3, marginBottom: 4 }}>Vade tarihi</div>
             <input type="date" value={f.vade_tarihi} onChange={e => set('vade_tarihi', e.target.value)} style={{ ...inp, marginBottom: 12 }} />
+            {/* 📎 FATURA (opsiyonel) — eklenirse Maliyet/Tedarikçi boru hattına düşer */}
+            <div style={{ fontSize: 12, color: C.t3, marginBottom: 4 }}>Fatura (PDF/foto — opsiyonel)</div>
+            <input type="file" accept="application/pdf,image/*"
+              onChange={e => setFDosya(e.target.files?.[0] || null)}
+              style={{ ...inp, marginBottom: 4, padding: '8px 10px' }} />
+            <div style={{ fontSize: 11, color: fDosya ? C.yesil : C.sari, marginBottom: 12 }}>
+              {fDosya ? `📎 ${fDosya.name} — arşive alınacak` : '⚠ Dosya eklenmezse FATURASIZ ALIM olarak işaretlenir'}
+            </div>
             <div style={{ display: 'flex', gap: 8 }}>
               <button onClick={() => { setFormAcik(false); setHata(''); }} style={{ flex: 1, background: C.bg, color: C.t2, border: `1px solid ${C.border}`, borderRadius: 10, padding: '12px 0', fontSize: 15, fontWeight: 700, cursor: 'pointer' }}>Vazgeç</button>
               <button onClick={kaydet} disabled={mesgul} style={{ flex: 2, background: C.yesil, color: '#fff', border: 'none', borderRadius: 10, padding: '12px 0', fontSize: 15, fontWeight: 800, cursor: mesgul ? 'default' : 'pointer', opacity: mesgul ? 0.6 : 1 }}>{mesgul ? 'Kaydediliyor…' : 'Kaydet'}</button>

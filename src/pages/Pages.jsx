@@ -1296,6 +1296,24 @@ export function VadeliAlimlar() {
   const [gecmisYukleniyor, setGecmisYukleniyor] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState({aciklama:'',tutar:'',vade_tarihi:'',tedarikci:''});
+  // 📎 Fatura eki (sahip 2026-07-15): eklenirse Maliyet/Tedarikçi boru hattına
+  // düşer (yukle-pdf/yukle); eklenmezse kayıt '[faturasız alım]' etiketi alır.
+  const [fDosya, setFDosya] = useState(null);
+  async function faturaDosyaYukle() {
+    if (!fDosya) return ' · faturasız alım olarak girildi';
+    try {
+      const fd = new FormData();
+      const isPdf = /pdf/i.test(fDosya.type || '') || /\.pdf$/i.test(fDosya.name || '');
+      fd.append(isPdf ? 'pdf' : 'foto', fDosya);
+      const headers = {};
+      try { const mut = (localStorage.getItem('evvelMerkezMutasyonKey') || '').trim(); if (mut) headers['X-Evvel-Merkez-Key'] = mut; } catch { /* ignore */ }
+      const res = await fetch(isPdf ? '/api/fatura/yukle-pdf' : '/api/fatura/yukle', { method: 'POST', headers, body: fd });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error((data && data.detail) || 'yüklenemedi');
+      return ' · 📎 fatura arşive alındı';
+    } catch (e) { return ` · ⚠ fatura yüklenemedi: ${e.message}`; }
+    finally { setFDosya(null); }
+  }
   const [duzenleId, setDuzenleId] = useState(null);
   const [msg, setMsg] = useState(null);
   const [dupUyari, setDupUyari] = useState(null);
@@ -1433,6 +1451,7 @@ export function VadeliAlimlar() {
         toast('Kaydedildi');
       } else {
         const body = {...form, force};
+        if (!fDosya) body.aciklama = `${(form.aciklama || '').trim()} [faturasız alım]`.trim();
         const res = await api('/vadeli-alimlar',{method:'POST',body});
         if (res.warning && res.kod === 'TEDARIKCI_ACIK_BAKIYE') {
           const rows = res.mevcut_borc || [];
@@ -1441,9 +1460,10 @@ export function VadeliAlimlar() {
           return;
         }
         if (res.warning) { setDupUyari(res.mesaj); return; }
+        const dosyaNot = await faturaDosyaYukle();
         if(res.birlestirildi){
-          toast(`Birleştirildi — yeni toplam ${Number(res.yeni_toplam).toLocaleString('tr-TR')} ₺`);
-        } else toast('Kaydedildi');
+          toast(`Birleştirildi — yeni toplam ${Number(res.yeni_toplam).toLocaleString('tr-TR')} ₺${dosyaNot}`);
+        } else toast('Kaydedildi' + dosyaNot);
       }
       setShowModal(false); setDuzenleId(null); load();
     }catch(e){toast(e.message,'red');}
@@ -1615,6 +1635,16 @@ export function VadeliAlimlar() {
                     <span style={{fontSize:11,color:'var(--text3)'}}>✨ Yeni tedarikçi olarak kaydedilecek</span>
                   )}
                 </div>
+                {!duzenleId && (
+                <div className="form-group">
+                  <label>📎 Fatura (PDF/foto — opsiyonel)</label>
+                  <input type="file" accept="application/pdf,image/*"
+                    onChange={e=>setFDosya(e.target.files?.[0] || null)} />
+                  <span style={{fontSize:11,color: fDosya ? 'var(--green)' : 'var(--yellow)'}}>
+                    {fDosya ? `📎 ${fDosya.name} — Belge Merkezi arşivine alınacak` : '⚠ Eklenmezse FATURASIZ ALIM olarak işaretlenir'}
+                  </span>
+                </div>
+                )}
               </div>
             </div>
             {dupUyari && (
