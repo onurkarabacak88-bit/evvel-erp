@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Fragment } from 'react';
 import { api, fmt } from '../utils/api';
 
 // 🧾 BELGE MERKEZİ (2026-07-10) — sahip: "faturaları toptancı toptancı, ay ay,
@@ -492,7 +492,7 @@ export default function BelgeMerkezi() {
                                   {cari[t.toptanci].aylik.map(a => {
                                     const anahtar = `${t.toptanci}|${a.ay}`;
                                     return (
-                                      <>
+                                      <Fragment key={anahtar}>
                                         <tr key={anahtar} onClick={() => setAcikAy(x => x === anahtar ? null : anahtar)}
                                             style={{ cursor: 'pointer', opacity: a.sistem_oncesi ? 0.5 : 1 }}
                                             title={a.sistem_oncesi ? 'Sistem öncesi — arşiv, hesaba girmez' : 'Detay için tıkla'}>
@@ -518,7 +518,7 @@ export default function BelgeMerkezi() {
                                             ))}
                                           </td></tr>
                                         )}
-                                      </>
+                                      </Fragment>
                                     );
                                   })}
                                 </tbody>

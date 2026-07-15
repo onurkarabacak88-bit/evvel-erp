@@ -439,8 +439,21 @@ def _fatura_bakiye_regex(metin: str) -> Dict[str, Optional[float]]:
     }
 
 
+# OCR eşzamanlılık freni (mimari denetim 2026-07-15): 50 foto aynı anda
+# kuyruklanınca 50 thread × db() 15'lik pool'u zehirliyor + 50 paralel LLM
+# çağrısı 429 kotayı kendisi tetikliyordu. Aynı anda en çok 3 OCR koşar.
+import threading as _thr
+_OCR_FRENI = _thr.BoundedSemaphore(3)
+
+
 def _ocr_calistir(fatura_id: str) -> None:
-    """Arka plan iş parçacığı — kendi DB bağlantısı. Hiçbir hata fırlatmaz."""
+    """Arka plan iş parçacığı — kendi DB bağlantısı. Hiçbir hata fırlatmaz.
+    _OCR_FRENI: aynı anda en çok 3 OCR (pool + LLM kota koruması)."""
+    with _OCR_FRENI:
+        _ocr_calistir_icerik(fatura_id)
+
+
+def _ocr_calistir_icerik(fatura_id: str) -> None:
     try:
         with db() as (conn, cur):
             _ensure_tablolar(cur)
@@ -636,9 +649,15 @@ async def fatura_yukle_pdf(
             metin = (f.get("metin") or "").strip()
             if not metin:
                 continue
-            # Idempotent: aynı fatura_no zaten varsa atla (tekrar yükleme korunağı)
+            # Idempotent: aynı fatura_no + AYNI TARİH varsa atla (denetim P2-8:
+            # yalnız-no kontrolü, basit seri no kullanan FARKLI tedarikçilerin
+            # aynı numaralı faturasını sessizce yutuyordu)
             if fno:
-                cur.execute("SELECT 1 FROM tedarikci_fatura WHERE fatura_no=%s LIMIT 1", (fno,))
+                cur.execute(
+                    """SELECT 1 FROM tedarikci_fatura
+                       WHERE fatura_no=%s
+                         AND fatura_tarih IS NOT DISTINCT FROM %s::date LIMIT 1""",
+                    (fno, (f.get("fatura_tarih") or None)))
                 if cur.fetchone():
                     atlanan += 1
                     continue
@@ -746,7 +765,8 @@ def gece_belge_kimlik() -> dict:
             # KUYRUĞU aynı (son 6+ hane) + FARKLI tarih = güçlü mükerrer adayı
             # ('NPE025...413' vs 'NPE2026...413', 2.272,50). Öneri-only.
             cur.execute(
-                """SELECT a.id AS id1, b.id AS id2, a.tedarikci_ad AS ted,
+                """SELECT a.id AS id1, b.id AS id2,
+                          a.tedarikci_ad AS ted, b.tedarikci_ad AS tedb,
                           a.fatura_no AS no1, b.fatura_no AS no2,
                           a.fatura_tarih::text AS t1, b.fatura_tarih::text AS t2,
                           a.toplam_tutar::float AS tutar
@@ -761,6 +781,12 @@ def gece_belge_kimlik() -> dict:
                     AND a.fatura_no <> b.fatura_no
                    LIMIT 25""")
             for r in [dict(x) for x in cur.fetchall() or []]:
+                # Denetim P2-4: farklı tedarikçilerin '...000123' biten faturaları
+                # yanlış-pozitif olmasın — kanonik ad eşit/alt-küme şartı.
+                _ka = set(_cari_kanonik(None, r.get("ted")).split())
+                _kb = set(_cari_kanonik(None, r.get("tedb")).split())
+                if not _ka or not _kb or not (_ka <= _kb or _kb <= _ka):
+                    continue
                 r["tip"] = "ikiz_no_kuyrugu"
                 ozet["mukerrer"].append({"tedarikci": r["ted"], "tarih": r["t1"],
                                          "tutar": r["tutar"], "adet": 2,
@@ -771,25 +797,34 @@ def gece_belge_kimlik() -> dict:
                               entity_scope="belge", entity_id=str(r["ted"] or "")[:40],
                               signal_name="İkiz fatura adayı (aynı tutar + no kuyruğu, farklı tarih)",
                               payload=r)
-            # İKİZ-2 (tarih uçurumu): AYNI tedarikçi + kuruşuna AYNI tutar +
-            # tarih farkı > 300 gün — OCR yılı yanlış okuyunca no kuyruğu da
-            # bozulabiliyor (NP-2023...266 vs NPA2026...026, 9.019,30). Zam
-            # ortamında yıllar arayla kuruşu kuruşuna aynı fatura ≈ mükerrer ADAYI.
+            # İKİZ-2 (tarih uçurumu): AYNI tedarikçi (KANONİK — ham ad yazımları
+            # farklı olabilir: 'MEHMET ATALAY' vs 'Napolés ... Mehmet Atalay') +
+            # kuruşuna AYNI tutar + tarih farkı > 300 gün — OCR yılı yanlış
+            # okuyunca no kuyruğu da bozuluyor (NP-2023...266 vs NPA2026...026).
+            _gorulen_cift = {(m.get("id1"), m.get("id2")) for m in ozet["mukerrer"]
+                             if m.get("id1")}
             cur.execute(
-                """SELECT a.id AS id1, b.id AS id2, a.tedarikci_ad AS ted,
+                """SELECT a.id AS id1, b.id AS id2,
+                          a.tedarikci_ad AS ted, b.tedarikci_ad AS ted2,
                           a.fatura_no AS no1, b.fatura_no AS no2,
                           a.fatura_tarih::text AS t1, b.fatura_tarih::text AS t2,
                           a.toplam_tutar::float AS tutar
                    FROM tedarikci_fatura a
                    JOIN tedarikci_fatura b
                      ON a.id < b.id
-                    AND a.tedarikci_ad = b.tedarikci_ad
                     AND COALESCE(a.toplam_tutar,0) > 0
                     AND ABS(COALESCE(a.toplam_tutar,0) - COALESCE(b.toplam_tutar,0)) <= 0.01
                     AND a.fatura_tarih IS NOT NULL AND b.fatura_tarih IS NOT NULL
                     AND ABS(a.fatura_tarih - b.fatura_tarih) > 300
-                   LIMIT 25""")
+                   LIMIT 60""")
             for r in [dict(x) for x in cur.fetchall() or []]:
+                if (r["id1"], r["id2"]) in _gorulen_cift:
+                    continue  # İKİZ-1 zaten raporladı — çift rapor yok
+                # Kanonik ad eşleşmesi: eşit ya da biri diğerinin alt kümesi
+                k1 = set(_cari_kanonik(None, r.get("ted")).split())
+                k2 = set(_cari_kanonik(None, r.get("ted2")).split())
+                if not k1 or not k2 or not (k1 <= k2 or k2 <= k1):
+                    continue
                 ozet["mukerrer"].append({"tedarikci": r["ted"], "tarih": r["t1"],
                                          "tutar": r["tutar"], "adet": 2,
                                          "tip": "ikiz_tarih", "no1": r["no1"],
@@ -1304,7 +1339,8 @@ def cari_ozet() -> dict:
         satirlar = [dict(r) for r in cur.fetchall() or []]
         cur.execute(
             """SELECT COALESCE(TRIM(tedarikci),'') AS tedarikci,
-                      tutar::float AS tutar, vade_tarihi::text AS vade
+                      tutar::float AS tutar, vade_tarihi::text AS vade,
+                      COALESCE(aciklama,'') AS aciklama
                FROM vadeli_alimlar WHERE durum='bekliyor'
                ORDER BY vade_tarihi""")
         vadeler = [dict(r) for r in cur.fetchall() or []]
@@ -1325,6 +1361,7 @@ def cari_ozet() -> dict:
                  SELECT tarih, tutar, COALESCE(aciklama,'')
                  FROM kart_hareketleri
                  WHERE islem_turu='HARCAMA' AND durum='aktif' AND kaynak_id IS NULL
+                   AND COALESCE(harcama_tipi,'belirsiz') <> 'sahsi'
                    AND tarih >= %s::date) x""",
             (kesit_6ay, kesit_6ay, kesit_6ay))
         odeme_izleri = [dict(r) for r in cur.fetchall() or []]
@@ -1346,23 +1383,30 @@ def cari_ozet() -> dict:
     # şahıs adı vs dükkân ünvanı). Kısa anahtarın token seti uzunun ALT KÜMESİYSE
     # tek satırda birleşir (çok faturalı grubun adı görünür). VKN'li gruplar
     # birleşmez (kanonik kimlik zaten kesin). Aday birleştirmedir, '≈' evreninde.
+    # Denetim P2-6 guard'ları: (a) tek tokenlik KİŞİ ADI anahtar ('hasan')
+    # birleşmeye girmez — iki farklı Hasan'ı yapıştırabilir; (b) kısa anahtarın
+    # BİRDEN ÇOK üst kümesi varsa belirsizlik = BİRLEŞMEME (yanlış kişiye
+    # yapışmaktansa iki satır kalsın).
     anahtarlar = sorted([k for k in gruplar if not gruplar[k].get("vkn")],
                         key=lambda k: len(k.split()))
     for i, kisa in enumerate(anahtarlar):
         ks = set(kisa.split())
         if not ks or kisa not in gruplar:
             continue
-        for uzun in anahtarlar[i + 1:]:
-            if uzun not in gruplar or len(uzun.split()) <= len(ks):
-                continue
-            if ks.issubset(set(uzun.split())):
-                hedef, kaynak = (kisa, uzun) \
-                    if len(gruplar[kisa]["faturalar"]) >= len(gruplar[uzun]["faturalar"]) \
-                    else (uzun, kisa)
-                gruplar[hedef]["faturalar"].extend(gruplar[kaynak]["faturalar"])
-                gruplar[hedef]["faturalar"].sort(key=lambda f: (str(f["tarih"])))
-                del gruplar[kaynak]
-                break
+        if len(ks) == 1 and next(iter(ks)) in _KISI_ADLARI:
+            continue
+        adaylar_ust = [u for u in anahtarlar[i + 1:]
+                       if u in gruplar and len(u.split()) > len(ks)
+                       and ks.issubset(set(u.split()))]
+        if len(adaylar_ust) != 1:
+            continue  # 0 = eş yok; 2+ = belirsiz, birleştirme yapılmaz
+        uzun = adaylar_ust[0]
+        hedef, kaynak = (kisa, uzun) \
+            if len(gruplar[kisa]["faturalar"]) >= len(gruplar[uzun]["faturalar"]) \
+            else (uzun, kisa)
+        gruplar[hedef]["faturalar"].extend(gruplar[kaynak]["faturalar"])
+        gruplar[hedef]["faturalar"].sort(key=lambda f: (str(f["tarih"])))
+        del gruplar[kaynak]
 
     ozet = []
     for g in gruplar.values():
@@ -1389,9 +1433,14 @@ def cari_ozet() -> dict:
         kopuk = [f["zincir_fark"] for f in fl if f.get("zincir_fark") not in (None, 0.0)]
         # BİZİM TARAF HESABI: fatura(+) − ödeme izi(−). Ödeme izi = tedarikçi adı
         # ödeme metninde geçen kayıtlar (aday eşleşme). İz YOKSA açık BÜYÜR.
+        # Denetim P2-5: her ödeme izi TEK gruba düşer (vadelerdeki _atandi
+        # deseni) — 'MEHMET ATALAY KAHVE' metni iki gruba birden düşmesin.
         odeme_top = 0.0
         for o in odeme_izleri:
+            if o.get("_atandi"):
+                continue
             if _odeme_eslesir(g["tedarikci"], o.get("metin")):
+                o["_atandi"] = True
                 odeme_top = round(odeme_top + float(o["tutar"] or 0), 2)
         fat_top = round(sum(f["tutar"] for f in son6), 2)
         hesaplanan_acik = round(fat_top - odeme_top, 2)
@@ -1443,43 +1492,65 @@ def cari_ekstre(tedarikci: str = ""):
     ara = (tedarikci or "").strip()
     if len(ara) < 3:
         raise HTTPException(400, "tedarikci parametresi (ad veya VKN) en az 3 karakter")
-    # Ödeme/vade metinleri KISA ad kullanır — tam ünvan gelirse marka tokeniyle ara
-    ara_kisa = _marka_token(ara) or ara
     with db() as (_, cur):
         _ensure_tablolar(cur)
+        # DENETİM P1-1: fatura seti artık KANONİK eşleşmeyle — cari-ozet birleşik
+        # satırının adıyla gelen istek diğer yazımın ('SÜTAŞ A.Ş.' vs uzun ünvan)
+        # faturalarını da görsün. SQL geniş çeker, Python kanonik süzer.
         cur.execute(
             """SELECT id, fatura_no, COALESCE(fatura_tarih, olusturma::date)::text AS tarih,
                       COALESCE(toplam_tutar,0)::float AS tutar,
                       onceki_bakiye, bakiye_dahil, tedarikci_ad, tedarikci_vkn
                FROM tedarikci_fatura
-               WHERE TRIM(tedarikci_vkn) = %s OR tedarikci_ad ILIKE %s
-               ORDER BY COALESCE(fatura_tarih, olusturma::date), olusturma""",
-            (ara, f"%{ara}%"))
-        faturalar = _cari_zincir([dict(r) for r in cur.fetchall() or []])
+               ORDER BY COALESCE(fatura_tarih, olusturma::date), olusturma""")
+        _ara_tok = set(_cari_kanonik(None, ara).split())
+        _tum = [dict(r) for r in cur.fetchall() or []]
+        _sec = []
+        for r in _tum:
+            if (r.get("tedarikci_vkn") or "").strip() == ara:
+                _sec.append(r); continue
+            ad = (r.get("tedarikci_ad") or "")
+            if ara.lower() in ad.lower():
+                _sec.append(r); continue
+            ft = set(_cari_kanonik(None, ad).split())
+            if _ara_tok and ft and (_ara_tok <= ft or ft <= _ara_tok):
+                _sec.append(r)
+        faturalar = _cari_zincir(_sec)
+        # DENETİM P1-3: kişi-adlı tedarikçide ('MEHMET ATALAY') tek token
+        # ('mehmet') başka kişilerin kayıtlarını topluyordu — SQL geniş, Python
+        # _odeme_eslesir (soyadı-zorunlu) süzer. P1-2: LIMIT 60 + alt-sınırsız
+        # geçmiş kesiliyordu — pencere sistem başlangıcı, toplam TAM sayılır.
         cur.execute(
-            """SELECT tutar::float AS tutar, vade_tarihi::text AS vade, aciklama
-               FROM vadeli_alimlar
-               WHERE durum='bekliyor' AND (tedarikci ILIKE %s OR aciklama ILIKE %s)
-               ORDER BY vade_tarihi""", (f"%{ara_kisa}%", f"%{ara_kisa}%"))
-        bekleyen_vadeler = [dict(r) for r in cur.fetchall() or []]
-        odeme_adaylari = []
+            """SELECT tutar::float AS tutar, vade_tarihi::text AS vade,
+                      COALESCE(tedarikci,'') AS ted, aciklama
+               FROM vadeli_alimlar WHERE durum='bekliyor' ORDER BY vade_tarihi""")
+        bekleyen_vadeler = [
+            {"tutar": r["tutar"], "vade": r["vade"], "aciklama": r["aciklama"]}
+            for r in (dict(x) for x in cur.fetchall() or [])
+            if _odeme_eslesir(ara, f"{r['ted']} {r['aciklama'] or ''}")
+            or _odeme_eslesir(r["ted"], ara)]  # ters yön: 'ATALAY KAHVE' sözü ↔ 'MEHMET ATALAY'
         cur.execute(
-            """SELECT 'vadeli_alim' AS kanal, vade_tarihi::text AS tarih, tutar::float AS tutar,
-                      LEFT(COALESCE(aciklama,''),60) AS aciklama
-               FROM vadeli_alimlar
-               WHERE durum='odendi' AND (tedarikci ILIKE %s OR aciklama ILIKE %s)
-               UNION ALL
-               SELECT 'anlik_gider', tarih::text, tutar::float, LEFT(COALESCE(aciklama,''),60)
-               FROM anlik_giderler
-               WHERE durum='aktif' AND kaynak_id IS NULL AND aciklama ILIKE %s
-               UNION ALL
-               SELECT 'kart', h.tarih::text, h.tutar::float, LEFT(COALESCE(h.aciklama,''),60)
-               FROM kart_hareketleri h
-               WHERE h.islem_turu='HARCAMA' AND h.durum='aktif'
-                 AND h.kaynak_id IS NULL AND h.aciklama ILIKE %s
-               ORDER BY 2 DESC LIMIT 60""",
-            (f"%{ara_kisa}%", f"%{ara_kisa}%", f"%{ara_kisa}%", f"%{ara_kisa}%"))
-        odeme_adaylari = [dict(r) for r in cur.fetchall() or []]
+            """SELECT kanal, tarih, tutar, aciklama FROM (
+                 SELECT 'vadeli_alim' AS kanal, vade_tarihi::text AS tarih,
+                        tutar::float AS tutar,
+                        LEFT(COALESCE(tedarikci,'') || ' ' || COALESCE(aciklama,''),80) AS aciklama
+                 FROM vadeli_alimlar
+                 WHERE durum='odendi' AND vade_tarihi >= %s::date
+                 UNION ALL
+                 SELECT 'anlik_gider', tarih::text, tutar::float, LEFT(COALESCE(aciklama,''),80)
+                 FROM anlik_giderler
+                 WHERE durum='aktif' AND kaynak_id IS NULL AND tarih >= %s::date
+                 UNION ALL
+                 SELECT 'kart', h.tarih::text, h.tutar::float, LEFT(COALESCE(h.aciklama,''),80)
+                 FROM kart_hareketleri h
+                 WHERE h.islem_turu='HARCAMA' AND h.durum='aktif'
+                   AND h.kaynak_id IS NULL
+                   AND COALESCE(h.harcama_tipi,'belirsiz') <> 'sahsi'
+                   AND h.tarih >= %s::date) x
+               ORDER BY tarih""",
+            (EVVEL_SISTEM_BASLANGIC, EVVEL_SISTEM_BASLANGIC, EVVEL_SISTEM_BASLANGIC))
+        odeme_adaylari = [r for r in (dict(x) for x in cur.fetchall() or [])
+                          if _odeme_eslesir(ara, r.get("aciklama"))]
     for f in faturalar:
         f["goruntule"] = f"/api/fatura/{f['id']}/foto"
     beyan = next((f["bakiye_dahil"] for f in reversed(faturalar)

@@ -524,38 +524,36 @@ def _gece_yarisi_scheduler():
 
             # ÖZ-SORGU (2026-07-07, 'koltuğuma geç' talimatı): sistem kendine 3 patron
             # sorusu sorar; cevaplayamadıkları kendiliğinden veri dileği olur.
-            try:
-                from recete_api import gece_recete_kontrol_ozeti
-                gece_recete_kontrol_ozeti()  # recete hafta kiyasi -> omurga (oneri-only)
-                from recete_api import gece_degirmen_izleme
-                gece_degirmen_izleme()  # degirmen gunluk okuma + sayac-girilmedi
-                from duyu_gorunumler import gece_kart_dongu_izleme
-                gece_kart_dongu_izleme()  # F5: ekstre bekleyen / geciken kart olaylari
-                from fatura_api import gece_belge_kimlik
-                gece_belge_kimlik()  # BM-1: parmak izi + mukerrer/iade taramasi
-                from fatura_istek_api import gece_fatura_istek_tara
-                gece_fatura_istek_tara()  # BM-4: faturasiz buyuk odeme adaylari + oto-kapanis
-                from fatura_api import gece_fiyat_bandi_izleme
-                gece_fiyat_bandi_izleme()  # BM-6: band disi alim -> omurga olayi
-                from personel_puan_api import gece_personel_puan_tara
-                gece_personel_puan_tara()  # PUAN: dunun olaylari (gec kalma/fark/foto/temiz hafta)
-                # OCR KURTARMA (SUTAS vakasi): gunduz kota 429'una takilan fotolar
-                # gece yeniden denenir — sessiz birikme olmaz. Hata-yutar.
+            # MİMARİ DENETİM (2026-07-15): tek try ~10 halkayı sarıyordu — ilk
+            # halka çökünce ağır ön-hesap/bağ/öz-sorgu hiç koşmuyor, ertesi gün
+            # her uç canlı hesaba düşüyordu. Her halka KENDİ try'ında (ev kuralı:
+            # bir halka çökerse diğerleri yaşar — artık yapısal).
+            def _halka(ad, fn):
                 try:
-                    from fatura_api import ocr_yeniden_dene
-                    _ocr_r = ocr_yeniden_dene(limit=50)
-                    logger.info(f"⏰ OCR gece kurtarma: {_ocr_r.get('kuyruga_alinan')} foto kuyruga alindi")
-                except Exception as _ocr_e:
-                    logger.warning(f"⏰ OCR gece kurtarma atlandi: {_ocr_e}")
-                from duyu_gorunumler import gece_agir_onhesap
-                gece_agir_onhesap()  # GOREV #56: agir uclar SIRALI on-hesap -> gunduz cache
-                from duyu_gorunumler import bag_defteri_hesapla
-                bag_defteri_hesapla()  # BAG DEFTERI: alanlar-arasi hazir cumleler (B42)
-                from beyin_api import gece_ozsorgu
-                gece_ozsorgu()
-                logger.info("⏰ Scheduler: öz-sorgu tamamlandı")
-            except Exception as e:
-                logger.warning(f"⏰ Scheduler öz-sorgu hatası: {e}")
+                    fn()
+                    logger.info(f"⏰ Scheduler halka tamam: {ad}")
+                except Exception as _he:  # noqa: BLE001
+                    logger.warning(f"⏰ Scheduler halka hatası ({ad}): {_he}")
+
+            # OCR KURTARMA zincirin BAŞINDA (mimari denetim: kimlik/istek taraması
+            # kurtarılan faturaları aynı gece görsün) + fatura_api içinde artık
+            # eşzamanlılık freni var (pool zehirlenmez).
+            def _ocr_kurtarma():
+                from fatura_api import ocr_yeniden_dene
+                _r = ocr_yeniden_dene(limit=50)
+                logger.info(f"⏰ OCR gece kurtarma: {_r.get('kuyruga_alinan')} foto kuyruga alindi")
+            _halka("ocr_kurtarma", _ocr_kurtarma)
+            _halka("recete_kontrol", lambda: __import__("recete_api").gece_recete_kontrol_ozeti())
+            _halka("degirmen", lambda: __import__("recete_api").gece_degirmen_izleme())
+            _halka("kart_dongu", lambda: __import__("duyu_gorunumler").gece_kart_dongu_izleme())
+            _halka("belge_kimlik", lambda: __import__("fatura_api").gece_belge_kimlik())
+            _halka("fatura_istek", lambda: __import__("fatura_istek_api").gece_fatura_istek_tara())
+            _halka("fiyat_bandi", lambda: __import__("fatura_api").gece_fiyat_bandi_izleme())
+            _halka("personel_puan", lambda: __import__("personel_puan_api").gece_personel_puan_tara())
+            _halka("agir_onhesap", lambda: __import__("duyu_gorunumler").gece_agir_onhesap())
+            _halka("bag_defteri", lambda: __import__("duyu_gorunumler").bag_defteri_hesapla())
+            _halka("ozsorgu", lambda: __import__("beyin_api").gece_ozsorgu())
+            logger.info("⏰ Scheduler: öz-sorgu zinciri tamamlandı")
 
             # EVVEL BEYNİ gece öz-anlatısı (L3) — ZİNCİRİN SONU (Codex zarf kararı:
             # anlatıcı, gecenin tüm olayları doğduktan sonra ve EN SON konuşur).

@@ -207,7 +207,12 @@ def _tara() -> dict:
         for o in sorted(odemeler, key=lambda x: -float(x["tutar"])):
             if _faturasiz_tur_mu(f"{o.get('aciklama') or ''} {o.get('detay') or ''}"):
                 continue  # kredi/maaş/vergi türü — fatura istenecek ödeme değil
-            fid = _k2d_eslesti(float(o["tutar"]), o["tarih"], faturalar, kullanildi)
+            # Denetim P2-7: vadeli alımda elimizdeki tarih VADE tarihi — fatura
+            # tipik 30-60 gün ÖNCE kesilir; ±5 gün penceresi hiç tutmuyordu ve
+            # faturası arşivde olan ödenmiş vadeli KALICI aday oluyordu.
+            _tol = 90 if o["kaynak_tip"] == "vadeli_alim" else 5
+            fid = _k2d_eslesti(float(o["tutar"]), o["tarih"], faturalar,
+                               kullanildi, gun_tol=_tol)
             if fid:
                 continue
             metin = f"{o.get('aciklama') or ''} {o.get('detay') or ''}"
@@ -257,11 +262,12 @@ def _tara() -> dict:
         # 5) OTOMATİK KAPANIŞ — açık istek, sonradan gelen faturayla eşleşirse
         #    kendiliğinden kapanır (iz varsa kapanır; pencere geniş: ±10 gün)
         cur.execute(
-            """SELECT id, tarih::text AS tarih, tutar::float AS tutar
+            """SELECT id, tarih::text AS tarih, tutar::float AS tutar, kaynak_tip
                FROM fatura_istek WHERE durum IN ('aday','istek_gonderildi')""")
         for r in [dict(x) for x in cur.fetchall() or []]:
+            _tol = 90 if r.get("kaynak_tip") == "vadeli_alim" else 10
             fid = _k2d_eslesti(float(r["tutar"]), r["tarih"], faturalar,
-                               kullanildi, gun_tol=10)
+                               kullanildi, gun_tol=_tol)
             if fid:
                 cur.execute(
                     """UPDATE fatura_istek
