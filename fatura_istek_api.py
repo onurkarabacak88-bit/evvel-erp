@@ -205,8 +205,17 @@ def _tara() -> dict:
         # 4) YENİ ADAYLAR — eşleşmeyen ödemeler (fatura tek kullanım, greedy)
         kullanildi: set = set()
         for o in sorted(odemeler, key=lambda x: -float(x["tutar"])):
-            if _faturasiz_tur_mu(f"{o.get('aciklama') or ''} {o.get('detay') or ''}"):
+            _metin_o = f"{o.get('aciklama') or ''} {o.get('detay') or ''}"
+            if _faturasiz_tur_mu(_metin_o):
                 continue  # kredi/maaş/vergi türü — fatura istenecek ödeme değil
+            # 🚫 BELGE BEKLENMEZ (sabit kalıp + sahibin öğrettiği istisnalar):
+            # personele elden para / prim / öğrenilen kalıp — aday OLMAZ
+            try:
+                from fatura_api import belge_beklenmez_mi, _belge_istisna_kaliplari
+                if belge_beklenmez_mi(_metin_o, _belge_istisna_kaliplari(cur)):
+                    continue
+            except Exception:  # noqa: BLE001
+                pass
             # Denetim P2-7: vadeli alımda elimizdeki tarih VADE tarihi — fatura
             # tipik 30-60 gün ÖNCE kesilir; ±5 gün penceresi hiç tutmuyordu ve
             # faturası arşivde olan ödenmiş vadeli KALICI aday oluyordu.
@@ -240,9 +249,16 @@ def _tara() -> dict:
 
         # 4b) GÜRÜLTÜ TEMİZLİĞİ — daha önce aday olmuş fatura-üretmeyen türler
         #     silinir (yalnız MAKİNE ürettiği 'aday' durumu; insan dokunmuşsa kalır)
+        try:
+            from fatura_api import belge_beklenmez_mi as _bbm, \
+                _belge_istisna_kaliplari as _bik
+            _ist = _bik(cur)
+        except Exception:  # noqa: BLE001
+            _bbm, _ist = (lambda m, i=None: False), []
         cur.execute("SELECT id, aciklama, kanal_detay FROM fatura_istek WHERE durum='aday'")
         for r in [dict(x) for x in cur.fetchall() or []]:
-            if _faturasiz_tur_mu(f"{r.get('aciklama') or ''} {r.get('kanal_detay') or ''}"):
+            _m = f"{r.get('aciklama') or ''} {r.get('kanal_detay') or ''}"
+            if _faturasiz_tur_mu(_m) or _bbm(_m, _ist):
                 cur.execute("DELETE FROM fatura_istek WHERE id=%s AND durum='aday'",
                             (r["id"],))
         # 4c) GERİYE DÖNÜK kurumsal etiketi — önceden 'tedarikci' doğmuş MEPAŞ vb
@@ -428,12 +444,15 @@ def fatura_istek_telefon(istek_id: str, body: TelefonBody):
 
 class KapatBody(BaseModel):
     aciklama: str
+    kalici_istisna: bool = False  # 🚫 belge beklenmez — kalıbı ÖĞREN
 
 
 @router.post("/{istek_id}/kapat")
 def fatura_istek_kapat(istek_id: str, body: KapatBody):
     """Manuel kapanış — açıklama ZORUNLU (kayıt sessizce kapanamaz; kapanış
-    kanıtı iz bırakır — belge_talep ile aynı ilke)."""
+    kanıtı iz bırakır — belge_talep ile aynı ilke). kalici_istisna=true:
+    sahip 'belge beklenmez' dedi → kalıp öğrenilir (tedarikçi adı ya da
+    açıklamanın ilk kelimeleri), aynı ödeme türü bir daha aday olmaz."""
     acik = (body.aciklama or "").strip()
     if not acik:
         raise HTTPException(400, "Açıklama zorunlu — örn. 'faturası kağıt geldi', "
@@ -443,6 +462,22 @@ def fatura_istek_kapat(istek_id: str, body: KapatBody):
         cur.execute(
             """UPDATE fatura_istek
                SET durum='kapandi', kapanis_aciklama=%s, kapanma_ts=NOW()
-               WHERE id=%s AND durum IN ('aday','istek_gonderildi')""",
+               WHERE id=%s AND durum IN ('aday','istek_gonderildi')
+               RETURNING tedarikci_ad, aciklama""",
             (acik, istek_id))
-    return {"ok": True}
+        r = cur.fetchone()
+        if body.kalici_istisna and r:
+            d = dict(r)
+            kalip = (d.get("tedarikci_ad") or "").strip() \
+                or " ".join((d.get("aciklama") or "").split()[:3]).strip()
+            if len(kalip) >= 3:
+                try:
+                    from fatura_api import _belge_istisna_kaliplari
+                    _belge_istisna_kaliplari(cur)  # tabloyu garanti et
+                    cur.execute(
+                        """INSERT INTO belge_istisna_kalip (kalip, not_metin)
+                           VALUES (%s, %s) ON CONFLICT (kalip) DO NOTHING""",
+                        (kalip, f"sahip kapanışı: {acik[:120]}"))
+                except Exception:  # noqa: BLE001
+                    pass
+    return {"ok": True, "ogrenilen_kalip": (kalip if body.kalici_istisna and r else None)}

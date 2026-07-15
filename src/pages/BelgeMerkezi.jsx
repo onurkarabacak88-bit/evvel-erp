@@ -100,6 +100,18 @@ export default function BelgeMerkezi() {
       fiYenile();
     } catch (e) { alert(e?.message || 'kapatılamadı'); }
   }
+  // 🚫 belge beklenmez — kapat + kalıbı ÖĞREN (personele elden ödeme vb bir daha aday olmaz)
+  async function fiBelgesiz(x) {
+    if (!window.confirm(`"${(x.aciklama || '').slice(0, 40)}" için belge beklenmesin mi?\nBu kalıp öğrenilir — benzer ödemeler bir daha aday olmaz.`)) return;
+    try {
+      const r = await api(`/fatura-istek/${x.id}/kapat`, {
+        method: 'POST',
+        body: { aciklama: 'belge beklenmez (personel/elden ödeme — sahip işareti)', kalici_istisna: true },
+      });
+      if (r.ogrenilen_kalip) alert(`Öğrenildi: "${r.ogrenilen_kalip}" — benzer ödemeler artık aday olmaz.`);
+      fiYenile();
+    } catch (e) { alert(e?.message || 'işaretlenemedi'); }
+  }
 
   useEffect(() => {
     setD(null); setHata('');
@@ -239,6 +251,11 @@ export default function BelgeMerkezi() {
                     🏢 Kurumsal: <b>{fmt(k.kurumsal_otomatik)}</b>
                   </span>
                 )}
+                {(k.belge_beklenmez || 0) > 0 && (
+                  <span style={{ color: 'var(--text3)' }} title="Personele elden ödeme / prim / öğrenilen istisnalar — belge beklenmez, risk sayılmaz">
+                    🚫 Belge beklenmez: <b>{fmt(k.belge_beklenmez)}</b>
+                  </span>
+                )}
                 <span style={{ color: 'var(--red)' }}>⚠ Faturasız: <b>{fmt(k.faturasiz || 0)}</b></span>
               </div>
             </div>
@@ -370,7 +387,9 @@ export default function BelgeMerkezi() {
                       <span style={{ whiteSpace: 'nowrap' }}>
                         {fmt(x.tutar)}{' '}
                         <button className="btn btn-secondary" style={{ padding: '0 6px', fontSize: 11 }}
-                          onClick={() => fiKapat(x.id)} title="Manuel kapat (açıklama zorunlu)">✔</button>
+                          onClick={() => fiKapat(x.id)} title="Manuel kapat (açıklama zorunlu)">✔</button>{' '}
+                        <button className="btn btn-secondary" style={{ padding: '0 6px', fontSize: 11 }}
+                          onClick={() => fiBelgesiz(x)} title="Belge beklenmez (personele elden ödeme vb) — kalıbı öğren, bir daha aday olmasın">🚫</button>
                       </span>
                     </div>
                   ))}

@@ -958,6 +958,12 @@ def belge_merkezi_ozet(ay: str = ""):
     kullanildi: set = set()
     faturasiz, eslesen_tutar = [], 0.0
     kurumsal, kurumsal_tutar = [], 0.0  # MEPAŞ vb: belgesi KURUMDA hazır, arşive inmemiş
+    belgesiz, belgesiz_tutar = [], 0.0  # 🚫 belge beklenmez (personel/elden/öğrenilen)
+    try:
+        with db() as (_, cur):
+            _istisnalar = _belge_istisna_kaliplari(cur)
+    except Exception:  # noqa: BLE001
+        _istisnalar = []
     for h in harcamalar:
         tut = float(h["tutar"])
         aday = None
@@ -984,6 +990,10 @@ def belge_merkezi_ozet(ay: str = ""):
             satir["tip"] = "kurumsal"
             kurumsal.append(satir)
             kurumsal_tutar += tut
+        elif belge_beklenmez_mi(h.get("aciklama") or "", _istisnalar):
+            satir["tip"] = "belgesiz"
+            belgesiz.append(satir)
+            belgesiz_tutar += tut
         else:
             faturasiz.append(satir)
     # gün gün: fatura + faturasız harcama kırılımı
@@ -1052,7 +1062,10 @@ def belge_merkezi_ozet(ay: str = ""):
             # Kurumsal otomatik (MEPAŞ vb): belgesi kurumda hazır — riskli
             # faturasızdan AYRI sayılır (sahip konumlandırması 2026-07-14)
             "kurumsal_otomatik": round(kurumsal_tutar, 2),
-            "faturasiz": round(toplam_harcama - eslesen_tutar - kurumsal_tutar, 2),
+            # 🚫 belge beklenmez (personel/elden/öğrenilen istisna) — riskli değil
+            "belge_beklenmez": round(belgesiz_tutar, 2),
+            "faturasiz": round(toplam_harcama - eslesen_tutar - kurumsal_tutar
+                               - belgesiz_tutar, 2),
             "oran_yuzde": (round(eslesen_tutar / toplam_harcama * 100, 1)
                            if toplam_harcama > 0 else None),
         },
@@ -1060,6 +1073,7 @@ def belge_merkezi_ozet(ay: str = ""):
         "gun_gun": sorted(gunler.values(), key=lambda x: x["gun"], reverse=True),
         "faturasiz_harcamalar": faturasiz[:40],
         "kurumsal_harcamalar": kurumsal[:40],
+        "belgesiz_harcamalar": belgesiz[:40],
         "fatura_arsivi": faturalar[:60],
         "fatura_istekleri": fatura_istekleri,
         "kdv_kanit": kdv_kanit,
@@ -1246,6 +1260,44 @@ _KURUMSAL_KALIPLAR = (
 def kurumsal_fatura_mu(metin: str) -> bool:
     m = _cari_katla(metin)
     return any(_cari_katla(k) in m for k in _KURUMSAL_KALIPLAR)
+
+
+# 🚫 BELGE BEKLENMEZ sınıfı (sahip 2026-07-15: "bazı ödemeler faturasız ya da
+# personele elden verilmiş para — nasıl ayırt edeceğiz?"): personele ödeme /
+# elden para / prim-bahşiş türü çıkışlar TEDARİKÇİ alımı değildir — fatura
+# kovalanmaz, kapsama oranını kirletmez. İki kaynak: (1) sabit kalıplar,
+# (2) ÖĞRENEN istisna defteri (belge_istisna_kalip) — sahip Fatura İstek'te
+# '🚫 belge beklenmez' deyince kalıp kaydedilir, bir daha aday olmaz.
+_BELGESIZ_KALIPLAR = (
+    "personel", "avans", "maas", "maaş", "prim", "ikramiye", "bahsis", "bahşiş",
+    "harclik", "harçlık", "elden odeme", "elden ödeme", "elden para",
+    "yol parasi", "yol ücreti", "yemek parasi", "kasa devir", "kasa transfer",
+)
+
+
+def _belge_istisna_kaliplari(cur) -> list:
+    """Öğrenen istisna defteri — sahip onayıyla birikir (kural=VERİ deseni)."""
+    try:
+        cur.execute("""CREATE TABLE IF NOT EXISTS belge_istisna_kalip (
+                           id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+                           kalip TEXT NOT NULL UNIQUE,
+                           not_metin TEXT,
+                           olusturma TIMESTAMPTZ NOT NULL DEFAULT NOW())""")
+        cur.execute("SELECT kalip FROM belge_istisna_kalip")
+        return [r["kalip"] for r in cur.fetchall() or []]
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def belge_beklenmez_mi(metin: str, ogrenilen: list = None) -> bool:
+    m = _cari_katla(metin)
+    if any(_cari_katla(k) in m for k in _BELGESIZ_KALIPLAR):
+        return True
+    for k in (ogrenilen or []):
+        kk = _cari_katla(k)
+        if len(kk) >= 3 and kk in m:
+            return True
+    return False
 
 
 # Sahip düzeltmesi (2026-07-13): "sistem Haziran'dan beri kullanılıyor — Haziran
