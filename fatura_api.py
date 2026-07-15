@@ -1406,7 +1406,8 @@ def cari_ozet() -> dict:
                  FROM vadeli_alimlar
                  WHERE durum='odendi' AND vade_tarihi >= %s::date
                  UNION ALL
-                 SELECT tarih, tutar, COALESCE(aciklama,'')
+                 SELECT tarih, tutar,
+                        COALESCE(tedarikci,'') || ' ' || COALESCE(aciklama,'')
                  FROM anlik_giderler
                  WHERE durum='aktif' AND kaynak_id IS NULL AND tarih >= %s::date
                  UNION ALL
@@ -1589,7 +1590,8 @@ def cari_ekstre(tedarikci: str = ""):
                  FROM vadeli_alimlar
                  WHERE durum='odendi' AND vade_tarihi >= %s::date
                  UNION ALL
-                 SELECT 'anlik_gider', tarih::text, tutar::float, LEFT(COALESCE(aciklama,''),80)
+                 SELECT 'anlik_gider', tarih::text, tutar::float,
+                        LEFT(COALESCE(tedarikci,'') || ' ' || COALESCE(aciklama,''),80)
                  FROM anlik_giderler
                  WHERE durum='aktif' AND kaynak_id IS NULL AND tarih >= %s::date
                  UNION ALL

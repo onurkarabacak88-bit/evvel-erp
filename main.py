@@ -2076,6 +2076,7 @@ class AnlikGider(BaseModel):
     kart_id: Optional[str] = None
     kaynak_id: Optional[str] = None       # Değişken gider kaynağı (sabit_giderler.id)
     kaynak_tablo: Optional[str] = None    # 'sabit_giderler'
+    tedarikci: Optional[str] = None       # V4: opsiyonel — dolarsa supplier_payment_event conf 1.0
     force: bool = False
 
 def _kanonik_kalan_limit(kart_id, yedek: float) -> float:
@@ -2253,11 +2254,14 @@ def anlik_gider_ekle(g: AnlikGider):
                 raise HTTPException(400, f"Kart limiti yetersiz. Kalan: {kalan_limit:,.0f} ₺")
 
         gid = str(uuid.uuid4())
+        # V4 (Ödeme Merkezi): opsiyonel tedarikçi kolonu — lazy migration
+        cur.execute("ALTER TABLE anlik_giderler ADD COLUMN IF NOT EXISTS tedarikci TEXT")
+        _ted = (g.tedarikci or "").strip() or None
         cur.execute("""INSERT INTO anlik_giderler
-            (id,tarih,kategori,tutar,aciklama,sube,odeme_yontemi,kart_id,kaynak_id,kaynak_tablo)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+            (id,tarih,kategori,tutar,aciklama,sube,odeme_yontemi,kart_id,kaynak_id,kaynak_tablo,tedarikci)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
             (gid, g.tarih, g.kategori, g.tutar, g.aciklama, g.sube,
-             g.odeme_yontemi, g.kart_id, g.kaynak_id, g.kaynak_tablo))
+             g.odeme_yontemi, g.kart_id, g.kaynak_id, g.kaynak_tablo, _ted))
 
         if g.odeme_yontemi == 'kart':
             # Karta HARCAMA yaz — kasaya yazma
@@ -2278,6 +2282,29 @@ def anlik_gider_ekle(g: AnlikGider):
         audit(cur, 'anlik_giderler', gid, 'INSERT')
         if g.odeme_yontemi == 'kart':
             kart_plan_guncelle_tx(cur)
+
+    # V4 — supplier_payment.py başlığındaki vaat: ödeme ekranından tedarikçi
+    # SEÇİLDİYSE olay KESİN güvenle (confidence=1.0) doğar. Hata-yutar, izole.
+    if _ted:
+        try:
+            from supplier_payment import _ensure_tablo as _spe_ensure
+            with db() as (_c2, cur2):
+                _spe_ensure(cur2)
+                cur2.execute("SELECT id FROM tedarikciler WHERE aktif=TRUE AND LOWER(TRIM(ad))=LOWER(%s) LIMIT 1", (_ted,))
+                _tr = cur2.fetchone()
+                cur2.execute("""
+                    INSERT INTO supplier_payment_event
+                        (tedarikci_id, tedarikci_ad, tutar, tarih, kaynak,
+                         kaynak_tablo, kaynak_id, confidence, eslesme_yontemi, aciklama)
+                    VALUES (%s,%s,%s,%s,%s,'anlik_giderler',%s,1.0,'manuel',%s)
+                    ON CONFLICT (kaynak_tablo, kaynak_id) DO UPDATE
+                    SET tedarikci_ad=EXCLUDED.tedarikci_ad, confidence=1.0,
+                        eslesme_yontemi='manuel'
+                """, ((dict(_tr)["id"] if _tr else None), _ted, abs(g.tutar), g.tarih,
+                      ('kart' if g.odeme_yontemi == 'kart' else 'nakit'),
+                      gid, (g.aciklama or g.kategori)))
+        except Exception as _spe_e:  # noqa: BLE001
+            logging.getLogger(__name__).warning(f"supplier_payment_event (v4) yazilamadi: {_spe_e}")
 
     return {"id": gid, "success": True}
 

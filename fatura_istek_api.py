@@ -159,7 +159,8 @@ def _tara() -> dict:
             odemeler.append(d)
         cur.execute(
             """SELECT id, tarih::text AS tarih, tutar::float AS tutar,
-                      LEFT(COALESCE(aciklama,''),80) AS aciklama, kategori AS detay
+                      LEFT(COALESCE(tedarikci,'') || ' ' || COALESCE(aciklama,''),80) AS aciklama,
+                      kategori AS detay
                FROM anlik_giderler
                WHERE durum='aktif' AND kaynak_id IS NULL
                  AND tutar >= %s AND tarih >= CURRENT_DATE - %s""",

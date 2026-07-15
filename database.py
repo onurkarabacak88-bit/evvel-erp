@@ -1968,6 +1968,9 @@ def init_db():
                     WHERE table_name='anlik_giderler' AND column_name='kart_id')
                 THEN ALTER TABLE anlik_giderler ADD COLUMN kart_id TEXT; END IF;
                 IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='anlik_giderler' AND column_name='tedarikci')
+                THEN ALTER TABLE anlik_giderler ADD COLUMN tedarikci TEXT; END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
                     WHERE table_name='anlik_giderler' AND column_name='personel_id')
                 THEN ALTER TABLE anlik_giderler ADD COLUMN personel_id TEXT; END IF;
                 IF NOT EXISTS (SELECT 1 FROM information_schema.columns

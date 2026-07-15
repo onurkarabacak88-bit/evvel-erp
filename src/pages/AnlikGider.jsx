@@ -16,7 +16,10 @@ export default function AnlikGider({ onNavigate }) {
   const [arama, setArama] = useState(''); // açıklama/kategori/şube arama
   const [kartlar, setKartlar] = useState([]);
   const [showModal, setShowModal] = useState(false);
-  const [form, setForm] = useState({tarih: new Date().toISOString().split('T')[0], kategori:'Diğer', tutar:'', aciklama:'', sube:'MERKEZ', odeme_yontemi:'nakit', kart_id:'', kaynak_id:null, kaynak_tablo:null});
+  const [form, setForm] = useState({tarih: new Date().toISOString().split('T')[0], kategori:'Diğer', tutar:'', aciklama:'', sube:'MERKEZ', odeme_yontemi:'nakit', kart_id:'', kaynak_id:null, kaynak_tablo:null, tedarikci:''});
+  // V4: tedarikçi datalist — dolarsa supplier_payment_event conf 1.0 + cari kesin eşleşme
+  const [tedarikciListe, setTedarikciListe] = useState([]);
+  useEffect(() => { api('/tedarikciler').then(r => setTedarikciListe(Array.isArray(r) ? r : (r?.tedarikciler || []))).catch(() => {}); }, []);
   const [msg, setMsg] = useState(null);
   const [dupUyari, setDupUyari] = useState(null);
   const [kartOneri, setKartOneri] = useState(null);       // backend'den gelen sıralı kart listesi
@@ -78,7 +81,7 @@ export default function AnlikGider({ onNavigate }) {
       toast(mesaj);
       setShowModal(false);
       setKartOneri(null);
-      setForm({tarih: new Date().toISOString().split('T')[0], kategori:'Diğer', tutar:'', aciklama:'', sube:'MERKEZ', odeme_yontemi:'nakit', kart_id:''});
+      setForm({tarih: new Date().toISOString().split('T')[0], kategori:'Diğer', tutar:'', aciklama:'', sube:'MERKEZ', odeme_yontemi:'nakit', kart_id:'', tedarikci:''});
       publishGlobalDataRefresh('anlik-gider');
       load();
     } catch(e) { toast(e.message, 'red'); }
@@ -325,6 +328,11 @@ export default function AnlikGider({ onNavigate }) {
                 )}
 
                 <div className="form-group" style={{gridColumn:'1/-1'}}><label>Açıklama</label><input value={form.aciklama} onChange={e=>setForm({...form,aciklama:e.target.value})} placeholder="Ne için ödendi?"/></div>
+                <div className="form-group" style={{gridColumn:'1/-1'}}>
+                  <label>🏪 Tedarikçi <span style={{fontSize:11,color:'var(--text3)'}}>— tedarikçiye ödemeyse seç (cari kesin eşleşir)</span></label>
+                  <input list="agTedarikciler" value={form.tedarikci} onChange={e=>setForm({...form,tedarikci:e.target.value})} placeholder="opsiyonel"/>
+                  <datalist id="agTedarikciler">{tedarikciListe.map(t=><option key={t.id||t.ad} value={t.ad}/>)}</datalist>
+                </div>
               </div>
             </div>
             <div className="modal-footer">

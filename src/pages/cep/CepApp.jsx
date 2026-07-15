@@ -1416,8 +1416,10 @@ function CepAnlikGider({ onGeri }) {
   const [subeler, setSubeler] = useState([]);
   const [formAcik, setFormAcik] = useState(false);
   const [ayOff, setAyOff] = useState(0); // 0=bu ay, 1=geçen ay…
-  const [f, setF] = useState({ tarih: bugun(), kategori: 'Diğer', tutar: '', aciklama: '', sube: 'MERKEZ', odeme_yontemi: 'nakit', kart_id: '' });
+  const [f, setF] = useState({ tarih: bugun(), kategori: 'Diğer', tutar: '', aciklama: '', sube: 'MERKEZ', odeme_yontemi: 'nakit', kart_id: '', tedarikci: '' });
   const [fDosya, setFDosya] = useState(null); // 📎 fatura PDF/foto (opsiyonel)
+  const [tedarikciler, setTedarikciler] = useState([]);
+  useEffect(() => { api('/tedarikciler').then(r => setTedarikciler(Array.isArray(r) ? r : (r?.tedarikciler || []))).catch(() => {}); }, []);
 
   const ayStr = (() => { const t = new Date(); t.setDate(1); t.setMonth(t.getMonth() - ayOff); return t.toISOString().slice(0, 7); })();
   const ayMetin = (() => { const t = new Date(); t.setDate(1); t.setMonth(t.getMonth() - ayOff); return t.toLocaleDateString('tr-TR', { month: 'long', year: 'numeric' }); })();
@@ -1455,8 +1457,9 @@ function CepAnlikGider({ onGeri }) {
           dosyaNot = ' · 📎 fatura arşive alındı (Belge Merkezi)';
         } catch (e2) { dosyaNot = ` · ⚠ fatura yüklenemedi: ${e2.message}`; }
       }
-      setBilgi((f.odeme_yontemi === 'kart' ? 'Eklendi — kart borcuna işlendi' : 'Eklendi — kasadan düşüldü') + dosyaNot);
-      setF({ tarih: bugun(), kategori: 'Diğer', tutar: '', aciklama: '', sube: f.sube, odeme_yontemi: 'nakit', kart_id: '' });
+      setBilgi((f.odeme_yontemi === 'kart' ? 'Eklendi — kart borcuna işlendi' : 'Eklendi — kasadan düşüldü')
+        + (f.tedarikci ? ' · 🏪 tedarikçiye ödeme olarak izlendi' : '') + dosyaNot);
+      setF({ tarih: bugun(), kategori: 'Diğer', tutar: '', aciklama: '', sube: f.sube, odeme_yontemi: 'nakit', kart_id: '', tedarikci: '' });
       setFDosya(null);
       setFormAcik(false);
       yukle();
@@ -1525,6 +1528,13 @@ function CepAnlikGider({ onGeri }) {
 
             <input placeholder="Açıklama (opsiyonel)" value={f.aciklama}
               onChange={e => set('aciklama', e.target.value)} style={{ ...inp, marginBottom: 12 }} />
+
+            {/* V4: tedarikçiye ödemeyse SEÇ — cari/mutabakat kesin eşleşir */}
+            <input list="cepAgTedarikciler" placeholder="🏪 Tedarikçi (opsiyonel)" value={f.tedarikci}
+              onChange={e => set('tedarikci', e.target.value)} style={{ ...inp, marginBottom: 12 }} />
+            <datalist id="cepAgTedarikciler">
+              {tedarikciler.map(t => <option key={t.id || t.ad} value={t.ad} />)}
+            </datalist>
 
             <div style={{ fontSize: 12, color: C.t3, marginBottom: 5 }}>Şube / yer</div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>

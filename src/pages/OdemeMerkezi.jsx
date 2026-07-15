@@ -131,10 +131,14 @@ export default function OdemeMerkezi() {
 
   // ── SERBEST ÖDEME (listede olmayan şey) ──
   const [sAcik, setSAcik] = useState(false);
-  const [sf, setSf] = useState({ kategori: 'Diğer', tutar: '', aciklama: '', sube: 'MERKEZ', odeme_yontemi: 'nakit', kart_id: '' });
+  const [sf, setSf] = useState({ kategori: 'Diğer', tutar: '', aciklama: '', sube: 'MERKEZ', odeme_yontemi: 'nakit', kart_id: '', tedarikci: '' });
   const [sDosya, setSDosya] = useState(null);
   const [subeler, setSubeler] = useState([]);
-  useEffect(() => { api('/subeler').then(r => setSubeler(Array.isArray(r) ? r : [])).catch(() => {}); }, []);
+  const [tedarikciler, setTedarikciler] = useState([]);
+  useEffect(() => {
+    api('/subeler').then(r => setSubeler(Array.isArray(r) ? r : [])).catch(() => {});
+    api('/tedarikciler').then(r => setTedarikciler(Array.isArray(r) ? r : (r?.tedarikciler || []))).catch(() => {});
+  }, []);
   const serbestKaydet = async () => {
     const t = Number(String(sf.tutar).replace(',', '.'));
     if (!t || t <= 0) { toast('Geçerli tutar girin', 'red'); return; }
@@ -148,8 +152,9 @@ export default function OdemeMerkezi() {
       if (res && res.warning) { toast(res.mesaj || 'Mükerrer olabilir', 'red'); setMesgul(false); return; }
       let not = ' · faturasız alım olarak girildi';
       if (sDosya) { try { await faturaEkiYukle(sDosya); not = ' · 📎 fatura arşive alındı'; } catch (e) { not = ` · ⚠ ${e.message}`; } }
-      toast((sf.odeme_yontemi === 'kart' ? 'Eklendi — karta yazıldı' : 'Eklendi — kasadan düşüldü') + not);
-      setSf({ kategori: 'Diğer', tutar: '', aciklama: '', sube: sf.sube, odeme_yontemi: 'nakit', kart_id: '' });
+      toast((sf.odeme_yontemi === 'kart' ? 'Eklendi — karta yazıldı' : 'Eklendi — kasadan düşüldü')
+        + (sf.tedarikci ? ' · 🏪 tedarikçiye ödeme olarak izlendi' : '') + not);
+      setSf({ kategori: 'Diğer', tutar: '', aciklama: '', sube: sf.sube, odeme_yontemi: 'nakit', kart_id: '', tedarikci: '' });
       setSDosya(null); setSAcik(false); yukle(); publishGlobalDataRefresh('odeme-merkezi');
     } catch (e) { toast(e?.message || 'Kaydedilemedi', 'red'); }
     finally { setMesgul(false); }
@@ -227,6 +232,12 @@ export default function OdemeMerkezi() {
                 </div>
                 <input type="number" placeholder="Tutar ₺" value={sf.tutar} onChange={e => setSf({ ...sf, tutar: e.target.value })} />
                 <input placeholder="Açıklama (ne için ödendi?)" value={sf.aciklama} onChange={e => setSf({ ...sf, aciklama: e.target.value })} />
+                {/* V4: tedarikçiye ödemeyse SEÇ — cari/mutabakat KESİN eşleşir (conf 1.0) */}
+                <input list="omTedarikciler" placeholder="🏪 Tedarikçi (opsiyonel — tedarikçiye ödemeyse seç)"
+                  value={sf.tedarikci} onChange={e => setSf({ ...sf, tedarikci: e.target.value })} />
+                <datalist id="omTedarikciler">
+                  {tedarikciler.map(t => <option key={t.id || t.ad} value={t.ad} />)}
+                </datalist>
                 <div style={{ display: 'flex', gap: 8 }}>
                   {[['nakit', '💵 Nakit (kasadan)'], ['kart', '💳 Kart (borca)']].map(([k, et]) => (
                     <button key={k} className={sf.odeme_yontemi === k ? 'btn btn-primary btn-sm' : 'btn btn-secondary btn-sm'}
