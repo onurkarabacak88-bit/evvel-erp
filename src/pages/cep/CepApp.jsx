@@ -2799,6 +2799,7 @@ function CepOdemeler({ onGeri }) {
   };
 
   const toplam = (liste || []).reduce((s, o) => s + (Number(o.tutar) || 0), 0);
+  const [grupla, setGrupla] = useState('zaman'); // 'zaman' | 'tur' (sahip isteği: tür başlıkları)
   const grpGecikmis = (liste || []).filter(o => o.gecikmis);
   const grpBugun = (liste || []).filter(o => !o.gecikmis && (o.gun_gecikme === 0 || o.tutar_girilmedi));
   const grpYaklasan = (liste || []).filter(o => !o.gecikmis && o.gun_gecikme < 0 && !o.tutar_girilmedi);
@@ -2811,6 +2812,17 @@ function CepOdemeler({ onGeri }) {
       <span style={{ fontSize: 12, fontWeight: 700, color: renk }}>{fmt(grpToplam(arr))}</span>
     </div>
   );
+  const turSirala = (arr) => [...arr].sort((a, b) => (b.gecikmis ? 1 : 0) - (a.gecikmis ? 1 : 0) || (b.gun_gecikme || 0) - (a.gun_gecikme || 0));
+  const gruplar = grupla === 'zaman'
+    ? [['GECİKMİŞ', C.kirmizi, grpGecikmis], ['BUGÜN / TUTAR BEKLEYEN', C.sari, grpBugun], ['YAKLAŞAN (7 GÜN)', C.t3, grpYaklasan]]
+    : [
+      ['💳 KREDİ KARTLARI', C.kirmizi, turSirala((liste || []).filter(o => o.tip === 'Kredi Kartı'))],
+      ['🏦 KREDİLER / TAKSİTLER', C.mavi, turSirala((liste || []).filter(o => o.tip === 'Borç Taksiti'))],
+      ['📦 VADELİ BORÇLAR', C.sari, turSirala((liste || []).filter(o => o.tip === 'Vadeli Alım'))],
+      ['⚡ DEĞİŞKEN FATURALAR', C.sari, turSirala((liste || []).filter(o => o.tip === 'Fatura (tutar bekleniyor)'))],
+      ['🏠 SABİT GİDERLER', C.t2, turSirala((liste || []).filter(o => o.tip === 'Sabit Gider'))],
+      ['DİĞER', C.t3, turSirala((liste || []).filter(o => !['Kredi Kartı', 'Borç Taksiti', 'Vadeli Alım', 'Fatura (tutar bekleniyor)', 'Sabit Gider'].includes(o.tip)))],
+    ];
 
   return (
     <div style={{ minHeight: '100vh', background: C.bg, paddingBottom: 30 }}>
@@ -2821,6 +2833,15 @@ function CepOdemeler({ onGeri }) {
         <div style={{ margin: 14, padding: 14, borderRadius: 14, background: C.bg2, border: `1px solid ${C.border}`, textAlign: 'center' }}>
           <div style={{ fontSize: 12, color: C.t3 }}>Bekleyen toplam (gecikmiş + 7 gün)</div>
           <div style={{ fontSize: 24, fontWeight: 800, color: C.t1, marginTop: 2 }}>{fmt(toplam)}</div>
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'center', marginTop: 10 }}>
+            {[['zaman', '⏱ Zamana göre'], ['tur', '🗂 Türe göre']].map(([m, et]) => (
+              <button key={m} onClick={() => setGrupla(m)} style={{
+                background: grupla === m ? C.t1 : C.bg, color: grupla === m ? C.bg : C.t2,
+                border: `1px solid ${C.border}`, borderRadius: 10, padding: '8px 14px',
+                fontSize: 12, fontWeight: 700, cursor: 'pointer',
+              }}>{et}</button>
+            ))}
+          </div>
         </div>
       )}
       {bilgi && <div style={{ margin: '0 14px 10px', padding: 10, background: 'rgba(34,197,94,0.12)', borderRadius: 10, color: C.yesil, fontSize: 13 }}>{bilgi}</div>}
@@ -2833,7 +2854,7 @@ function CepOdemeler({ onGeri }) {
             Bekleyen ödeme yok.
           </div>
         )}
-        {[['GECİKMİŞ', C.kirmizi, grpGecikmis], ['BUGÜN / TUTAR BEKLEYEN', C.sari, grpBugun], ['YAKLAŞAN (7 GÜN)', C.t3, grpYaklasan]].map(([bAd, bRenk, bArr]) => (
+        {gruplar.map(([bAd, bRenk, bArr]) => (
           <div key={bAd}>
             <BolumBaslik ad={bAd} renk={bRenk} arr={bArr} />
             {bArr.map(o => (

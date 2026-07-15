@@ -41,6 +41,8 @@ export default function OdemeMerkezi() {
   const [msg, setMsg] = useState(null);
   // v3: pencere seçici — 29.07 gibi ileri vadeliler de merkezden ödensin
   const [pencere, setPencere] = useState(7);
+  // Sahip isteği (2026-07-15): tür başlıkları — zamana/türe göre grup değiştirici
+  const [grupla, setGrupla] = useState('zaman'); // 'zaman' | 'tur'
   const toast = (m, t = 'green') => { setMsg({ m, t }); setTimeout(() => setMsg(null), 5000); };
 
   const yukle = useCallback(() => {
@@ -222,6 +224,21 @@ export default function OdemeMerkezi() {
     </div>
   );
 
+  // 🗂 Türe göre gruplar — her bölümde gecikmişler üstte
+  const TUR_GRUPLARI = [
+    ['💳 KREDİ KARTLARI', ['Kredi Kartı']],
+    ['🏦 KREDİLER / TAKSİTLER', ['Borç Taksiti']],
+    ['📦 VADELİ BORÇLAR (TEDARİKÇİ)', ['Vadeli Alım']],
+    ['⚡ DEĞİŞKEN FATURALAR', ['Fatura (tutar bekleniyor)']],
+    ['🏠 SABİT GİDERLER', ['Sabit Gider']],
+  ];
+  const turSirala = (arr) => [...arr].sort((a, b) => (b.gecikmis ? 1 : 0) - (a.gecikmis ? 1 : 0) || (b.gun_gecikme || 0) - (a.gun_gecikme || 0));
+  const turGruplari = TUR_GRUPLARI.map(([ad, tipler]) => {
+    const satirlar = turSirala((liste || []).filter(r => tipler.includes(r.tip)));
+    return { ad, satirlar, toplam: topla(satirlar), gecikmisVar: satirlar.some(r => r.gecikmis) };
+  });
+  const turDisi = turSirala((liste || []).filter(r => !TUR_GRUPLARI.some(([, t]) => t.includes(r.tip))));
+
   return (
     <div className="page">
       {msg && <div className={`alert-box ${msg.t} mb-16`}>{msg.m}</div>}
@@ -250,9 +267,15 @@ export default function OdemeMerkezi() {
       {liste !== null && (
         <>
           <div className="card" style={{ padding: 16, marginBottom: 14 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6, flexWrap: 'wrap', gap: 6 }}>
               <div style={{ fontWeight: 800 }}>📋 Bekleyenler ({liste.length})</div>
-              <div style={{ display: 'flex', gap: 4 }}>
+              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                {[['zaman', '⏱ Zamana göre'], ['tur', '🗂 Türe göre']].map(([m, et]) => (
+                  <button key={m} className="btn btn-secondary btn-sm"
+                    style={{ fontWeight: grupla === m ? 800 : 400, border: grupla === m ? '2px solid var(--accent)' : undefined }}
+                    onClick={() => setGrupla(m)}>{et}</button>
+                ))}
+                <span style={{ width: 8 }} />
                 {[7, 30, 60].map(g => (
                   <button key={g} className="btn btn-secondary btn-sm"
                     style={{ fontWeight: pencere === g ? 800 : 400, border: pencere === g ? '2px solid var(--accent)' : undefined }}
@@ -266,9 +289,21 @@ export default function OdemeMerkezi() {
                 Bekleyen ödeme yok — kasan rahat.
               </div>
             )}
-            <Bolum ad="GECİKMİŞ" renk="var(--red)" satirlar={gecikmis} toplam={gecikmisT} />
-            <Bolum ad="BUGÜN / TUTAR BEKLEYEN" renk="#f59e0b" satirlar={bugunkuler} toplam={bugunT} />
-            <Bolum ad={`YAKLAŞAN (${pencere} GÜN)`} renk="var(--text3)" satirlar={yaklasan} toplam={yaklasanT} />
+            {grupla === 'zaman' ? (
+              <>
+                <Bolum ad="GECİKMİŞ" renk="var(--red)" satirlar={gecikmis} toplam={gecikmisT} />
+                <Bolum ad="BUGÜN / TUTAR BEKLEYEN" renk="#f59e0b" satirlar={bugunkuler} toplam={bugunT} />
+                <Bolum ad={`YAKLAŞAN (${pencere} GÜN)`} renk="var(--text3)" satirlar={yaklasan} toplam={yaklasanT} />
+              </>
+            ) : (
+              <>
+                {turGruplari.map(g => (
+                  <Bolum key={g.ad} ad={g.ad} renk={g.gecikmisVar ? 'var(--red)' : 'var(--text2, var(--text))'}
+                    satirlar={g.satirlar} toplam={g.toplam} />
+                ))}
+                <Bolum ad="DİĞER" renk="var(--text3)" satirlar={turDisi} toplam={topla(turDisi)} />
+              </>
+            )}
           </div>
 
           <div className="card" style={{ padding: 16 }}>
