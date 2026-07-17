@@ -299,6 +299,29 @@ export default function BelgeMerkezi() {
                       (r.son_hatalar?.length ? `\nSon hata: ${r.son_hatalar[0]}` : ''));
                   } catch (e) { alert(e?.message || 'tetiklenemedi'); }
                 }}>🔄 Yeniden Dene</button>
+                {/* Foto foto döküm — hata TİPİ ile (sahip 2026-07-18: 'bazılarının
+                    çekim hatası var'): kota=sistem sorunu, okunamadı=yeniden çekilmeli */}
+                {(d.islenemeyen_foto.fotolar || []).length > 0 && (
+                  <details style={{ width: '100%' }}>
+                    <summary style={{ cursor: 'pointer', fontSize: 11 }}>▸ foto foto göster (hangisi çekim hatası?)</summary>
+                    {(d.islenemeyen_foto.fotolar || []).map(f => (
+                      <div key={f.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 11, padding: '2px 0', borderBottom: '1px solid var(--border)' }}>
+                        <span>
+                          {f.tarih}{' '}
+                          {f.hata_tipi === 'kota'
+                            ? <span style={{ color: '#f59e0b' }}>⏳ sistem kotası — foto SAĞLAM, sıra gelince okunacak</span>
+                            : f.hata_tipi === 'okunamadi'
+                              ? <span style={{ color: 'var(--red)' }}>📵 okunamadı — muhtemel çekim hatası, YENİDEN ÇEKİLMELİ</span>
+                              : <span style={{ color: 'var(--text3)' }}>⌛ sırada bekliyor</span>}
+                        </span>
+                        <a href={f.goruntule} target="_blank" rel="noreferrer" style={{ color: 'var(--blue, #60a5fa)', whiteSpace: 'nowrap' }}>👁 gör</a>
+                      </div>
+                    ))}
+                    <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 2 }}>
+                      ⏳ kota = bizim LLM hakkı doldu, foto suçsuz (gece otomatik yeniden denenir) · 📵 okunamadı = bulanık/kesik/eksik çekim — personelden yeniden çekmesini iste, eskisini 👁 ile kontrol et
+                    </div>
+                  </details>
+                )}
               </div>
             )}
             {/* BM-3 — KDV kanıt sınıflaması + BM-0b arşiv boyutu */}

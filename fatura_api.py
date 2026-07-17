@@ -1031,13 +1031,28 @@ def belge_merkezi_ozet(ay: str = ""):
     try:
         with db() as (_, cur):
             cur.execute(
-                """SELECT COUNT(*)::int AS adet,
-                          MAX(LEFT(COALESCE(ocr_hata,''),120)) AS son_hata
+                """SELECT id, olusturma::date::text AS tarih, durum,
+                          LEFT(COALESCE(ocr_hata,''),160) AS hata,
+                          COALESCE(sube_id::text,'') AS sube
                    FROM tedarikci_fatura
-                   WHERE durum IN ('ocr_hata','ocr_bekliyor') AND foto IS NOT NULL""")
-            r1 = dict(cur.fetchone() or {})
-        islenemeyen = {"adet": int(r1.get("adet") or 0),
-                       "son_hata": (r1.get("son_hata") or "").strip() or None}
+                   WHERE durum IN ('ocr_hata','ocr_bekliyor') AND foto IS NOT NULL
+                   ORDER BY olusturma DESC LIMIT 40""")
+            takili = [dict(r) for r in cur.fetchall() or []]
+        # Hata SINIFLAMASI (sahip 2026-07-18: 'bazılarında çekim hatası var'):
+        # kota/anahtar = SİSTEM sorunu (yeniden dene çözer, foto suçsuz);
+        # okunamadı = ÇEKİM sorunu (bulanık/kesik — yeniden çekilmeli).
+        for r in takili:
+            h = (r.get("hata") or "").lower()
+            if not h:
+                r["hata_tipi"] = "bekliyor"
+            elif "429" in h or "quota" in h or "rate" in h or "api" in h and "key" in h:
+                r["hata_tipi"] = "kota"
+            else:
+                r["hata_tipi"] = "okunamadi"
+            r["goruntule"] = f"/api/fatura/{r['id']}/foto"
+        islenemeyen = {"adet": len(takili),
+                       "son_hata": (takili[0].get("hata") or None) if takili else None,
+                       "fotolar": takili}
     except Exception:  # noqa: BLE001
         pass
     # BM-0b görünürlüğü: arşiv depo boyutu (BYTEA) — obje depoya geçiş eşiği izlenir
