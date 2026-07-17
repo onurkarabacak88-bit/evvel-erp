@@ -1317,6 +1317,29 @@ def _cari_pencere_kesiti(gun: int = 180) -> str:
     return max(kesit, EVVEL_SISTEM_BASLANGIC)
 
 
+# 📜 AÇILIŞ DEVRİ (sahip 2026-07-18, DYK vakası: "fatura öncesinde de ödeme
+# yapılmıştı ama sistem o dönemde yoktu — önceki ödemeyi görmedi"): pencere
+# sistem başlangıcı öncesine taşmadığından, öncesinin GERÇEĞİ tek satırlık
+# sahip beyanıyla temsil edilir (dünya pratiği: açılış fişi / opening balance).
+# tutar > 0 = başlangıç itibarıyla tedarikçiye BORÇ; tutar < 0 = AVANS/alacak.
+# Kural=VERİ deseni: tablo, kod değil. Kasa-izi istisnası BİLİNÇLİ: sistem
+# öncesi ödemenin izi olamaz — bu yüzden beyan açıkça 'sahip beyanı' etiketlidir.
+def _cari_devirler(cur) -> list:
+    try:
+        cur.execute("""CREATE TABLE IF NOT EXISTS cari_devir (
+                           id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+                           tedarikci TEXT NOT NULL UNIQUE,
+                           tutar NUMERIC(14,2) NOT NULL,
+                           aciklama TEXT,
+                           olusturma TIMESTAMPTZ NOT NULL DEFAULT NOW())""")
+        cur.execute("""SELECT id, tedarikci, tutar::float AS tutar,
+                              COALESCE(aciklama,'') AS aciklama
+                       FROM cari_devir""")
+        return [dict(r) for r in cur.fetchall() or []]
+    except Exception:  # noqa: BLE001
+        return []
+
+
 def _cari_katla(s: str) -> str:
     """TR harf katlaması (beyin _tr_katla dersi: 'HİZMETLERİ'.lower() noktalı
     i̇ üretir, ASCII karşılaştırma ıskalar) — tüm cari eşleştirmeleri bundan geçer."""
@@ -1423,6 +1446,7 @@ def cari_ozet() -> dict:
                    AND tarih >= %s::date) x""",
             (kesit_6ay, kesit_6ay, kesit_6ay))
         odeme_izleri = [dict(r) for r in cur.fetchall() or []]
+        devirler = _cari_devirler(cur)  # 📜 sistem-öncesi açılış beyanları
 
     gruplar: dict = {}
     for s in satirlar:
@@ -1501,9 +1525,20 @@ def cari_ozet() -> dict:
                 o["_atandi"] = True
                 odeme_top = round(odeme_top + float(o["tutar"] or 0), 2)
         fat_top = round(sum(f["tutar"] for f in son6), 2)
-        hesaplanan_acik = round(fat_top - odeme_top, 2)
+        # 📜 AÇILIŞ DEVRİ (tek-atama): sahip beyanı pencere-öncesi gerçeği taşır;
+        # açık = devir + pencere içi fatura − ödeme izi. Devir yalnız TEK gruba.
+        devir_top = 0.0
+        for dv in devirler:
+            if dv.get("_atandi"):
+                continue
+            if _odeme_eslesir(g["tedarikci"], dv["tedarikci"]) or \
+               _odeme_eslesir(dv["tedarikci"], g["tedarikci"]):
+                dv["_atandi"] = True
+                devir_top = round(devir_top + float(dv["tutar"] or 0), 2)
+        hesaplanan_acik = round(devir_top + fat_top - odeme_top, 2)
         ozet.append({
             "tedarikci": g["tedarikci"], "vkn": g["vkn"],
+            "devir": devir_top,
             "fatura_adet_6ay": len(son6),
             "fatura_toplam_6ay": fat_top,
             "odeme_izi_toplam_6ay": odeme_top,
@@ -1517,6 +1552,22 @@ def cari_ozet() -> dict:
             "zincir_hareket_adet": len(kopuk),
             "son_zincir_fark": kopuk[-1] if kopuk else None,
         })
+    # Faturasız tedarikçide kalan devir beyanı da satır olur (borç kaybolmasın)
+    for dv in devirler:
+        if dv.get("_atandi") or not float(dv.get("tutar") or 0):
+            continue
+        ozet.append({
+            "tedarikci": dv["tedarikci"], "vkn": None,
+            "devir": round(float(dv["tutar"]), 2),
+            "fatura_adet_6ay": 0, "fatura_toplam_6ay": 0.0,
+            "odeme_izi_toplam_6ay": 0.0,
+            "hesaplanan_acik": round(float(dv["tutar"]), 2),
+            "odeme_izi_var": False, "son_fatura": None,
+            "beyan_bakiye": None, "beyan_tarihi": None,
+            "beyan_hesap_farki": None,
+            "bekleyen_vade_toplam": 0.0, "en_yakin_vade": None,
+            "zincir_hareket_adet": 0, "son_zincir_fark": None,
+        })
     ozet.sort(key=lambda x: -(max(abs(x["beyan_bakiye"] or 0),
                                   abs(x["hesaplanan_acik"])) + x["bekleyen_vade_toplam"]))
     return {
@@ -1527,10 +1578,10 @@ def cari_ozet() -> dict:
         "toplam_bekleyen_vade": round(sum(x["bekleyen_vade_toplam"] for x in ozet), 2),
         "pencere_baslangic": kesit_6ay,
         "not": ("İKİ GÖZ: beyan_bakiye = TEDARİKÇİNİN fatura üstü beyanı (≈); "
-                "hesaplanan_acik = BİZİM taraf ≈ pencere içi fatura toplamı − ödeme "
-                "izi (3 kanal aday eşleşme). PENCERE Haziran 2026 (sistem başlangıcı) "
-                "öncesine TAŞMAZ — öncesinin fatura/ödemesi sistemde yok; eski "
-                "borçlar yalnız tedarikçi beyanında görünür. Ödeme izi YOKSA açık "
+                "hesaplanan_acik = BİZİM taraf ≈ açılış devri + pencere içi fatura "
+                "toplamı − ödeme izi (3 kanal aday eşleşme). PENCERE Haziran 2026 "
+                "(sistem başlangıcı) öncesine TAŞMAZ — öncesinin gerçeği tek "
+                "satırlık AÇILIŞ DEVRİ beyanıyla (sahip girer) taşınır. Ödeme izi YOKSA açık "
                 "BÜYÜR (iz varsa düşer, iz yoksa borç kalır). Negatif açık = fazla/"
                 "peşin ödeme ya da penceredeki faturası henüz yüklenmemiş ödeme. "
                 "beyan_hesap_farki büyükse eksik fatura / eksik ödeme kaydı / "
@@ -1541,6 +1592,49 @@ def cari_ozet() -> dict:
 @router.get("/cari-ozet")
 def cari_ozet_uc():
     return cari_ozet()
+
+
+# ── 📜 AÇILIŞ DEVRİ UÇLARI (sahip beyanı — tek yazıcı burası) ────────────────
+class CariDevirBody(BaseModel):
+    tedarikci: str
+    tutar: float          # >0 = başlangıçta tedarikçiye borç, <0 = avans/alacak
+    aciklama: Optional[str] = None
+
+
+@router.get("/cari-devir")
+def cari_devir_liste():
+    with db() as (_, cur):
+        return {"devirler": _cari_devirler(cur)}
+
+
+@router.post("/cari-devir")
+def cari_devir_kaydet(body: CariDevirBody):
+    ad = (body.tedarikci or "").strip()
+    if len(ad) < 3:
+        raise HTTPException(400, "tedarikci en az 3 karakter")
+    if abs(body.tutar) > 10_000_000:
+        raise HTTPException(400, "tutar makul aralık dışında")
+    with db() as (conn, cur):
+        _cari_devirler(cur)  # tablo garanti
+        cur.execute(
+            """INSERT INTO cari_devir (tedarikci, tutar, aciklama)
+               VALUES (%s,%s,%s)
+               ON CONFLICT (tedarikci)
+               DO UPDATE SET tutar=EXCLUDED.tutar, aciklama=EXCLUDED.aciklama""",
+            (ad, round(body.tutar, 2), (body.aciklama or "").strip() or None))
+        conn.commit()
+    return {"ok": True, "tedarikci": ad, "tutar": round(body.tutar, 2)}
+
+
+@router.delete("/cari-devir/{devir_id}")
+def cari_devir_sil(devir_id: str):
+    with db() as (conn, cur):
+        _cari_devirler(cur)
+        cur.execute("DELETE FROM cari_devir WHERE id=%s OR tedarikci=%s",
+                    (devir_id, devir_id))
+        silinen = cur.rowcount
+        conn.commit()
+    return {"ok": True, "silinen": silinen}
 
 
 @router.get("/cari-ekstre")
@@ -1610,6 +1704,13 @@ def cari_ekstre(tedarikci: str = ""):
             (EVVEL_SISTEM_BASLANGIC, EVVEL_SISTEM_BASLANGIC, EVVEL_SISTEM_BASLANGIC))
         odeme_adaylari = [r for r in (dict(x) for x in cur.fetchall() or [])
                           if _odeme_eslesir(ara, r.get("aciklama"))]
+        _devirler = _cari_devirler(cur)
+    # 📜 açılış devri — bu tedarikçiye eşleşen sahip beyanı (çift yön eşleşme)
+    devir, devir_not = 0.0, None
+    for dv in _devirler:
+        if _odeme_eslesir(ara, dv["tedarikci"]) or _odeme_eslesir(dv["tedarikci"], ara):
+            devir = round(devir + float(dv["tutar"] or 0), 2)
+            devir_not = dv.get("aciklama") or devir_not
     for f in faturalar:
         f["goruntule"] = f"/api/fatura/{f['id']}/foto"
     beyan = next((f["bakiye_dahil"] for f in reversed(faturalar)
@@ -1655,9 +1756,17 @@ def cari_ekstre(tedarikci: str = ""):
                                "aciklama": f"{o.get('kanal')}: {(o.get('aciklama') or '')[:40]}"})
     # Aynı günde fatura önce işlenir (bakiye sezgisel yürüsün)
     hareketler.sort(key=lambda h: (h["tarih"], 0 if h["tip"] == "fatura" else 1))
+    # 📜 Ekstre DEVİRLE başlar (Codex teyitli dünya pratiği: açılış fişi) —
+    # negatif devir = avans/alacağımız, pozitif = kalan borcumuz.
+    if devir:
+        hareketler.insert(0, {
+            "tip": "devir", "tarih": EVVEL_SISTEM_BASLANGIC,
+            "tutar": devir,
+            "aciklama": f"📜 sistem öncesi devir (sahip beyanı"
+                        f"{': ' + devir_not[:40] if devir_not else ''})"})
     bakiye = 0.0
     for h in hareketler:
-        bakiye = round(bakiye + (h["tutar"] if h["tip"] == "fatura" else -h["tutar"]), 2)
+        bakiye = round(bakiye + (-h["tutar"] if h["tip"] == "odeme" else h["tutar"]), 2)
         h["bakiye"] = bakiye
 
     # BİZİM TARAF HESABI: fatura(+) − ödeme izi(−); iz yoksa açık büyür.
@@ -1672,9 +1781,10 @@ def cari_ekstre(tedarikci: str = ""):
         "fatura_adet": len(faturalar),
         "faturalar": faturalar[-60:],
         "beyan_bakiye": (round(float(beyan), 2) if beyan is not None else None),
+        "devir": devir, "devir_not": devir_not,
         "fatura_toplam_6ay": fatura_toplam,
         "odeme_izi_toplam_6ay": odeme_toplam,
-        "hesaplanan_acik": round(fatura_toplam - odeme_toplam, 2),
+        "hesaplanan_acik": round(devir + fatura_toplam - odeme_toplam, 2),
         "aylik": aylik_liste,
         "hareketler": hareketler[-80:],
         "yuruyen_bakiye": (hareketler[-1]["bakiye"] if hareketler else 0.0),

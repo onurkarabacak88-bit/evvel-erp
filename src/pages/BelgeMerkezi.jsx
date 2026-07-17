@@ -40,6 +40,21 @@ export default function BelgeMerkezi() {
       setCari(c => ({ ...c, [ad]: r }));
     } catch { setCari(c => ({ ...c, [ad]: { hata: true } })); }
   }
+  // 📜 Sistem-öncesi AÇILIŞ DEVRİ (DYK vakası 2026-07-18): 1 Haziran öncesi
+  // kalan bakiye sahip beyanıyla girilir — cari açık + yürüyen ekstre buna oturur
+  const [devirDuzen, setDevirDuzen] = useState(null);
+  const [devirTutar, setDevirTutar] = useState('');
+  const [devirNot, setDevirNot] = useState('');
+  async function devirKaydet(ad) {
+    const t = parseFloat(String(devirTutar).replace(/\./g, '').replace(',', '.'));
+    if (isNaN(t)) { alert('Tutar sayı olmalı (borç için +, bizim avansımız için −)'); return; }
+    try {
+      await api('/fatura/cari-devir', { method: 'POST', body: { tedarikci: ad, tutar: t, aciklama: devirNot.trim() || null } });
+      setDevirDuzen(null); setDevirTutar(''); setDevirNot('');
+      const r = await api(`/fatura/cari-ekstre?tedarikci=${encodeURIComponent(ad)}`);
+      setCari(c => ({ ...c, [ad]: r }));
+    } catch (e) { alert(e.message || 'devir kaydedilemedi'); }
+  }
   // BM-8: tam metin arama
   const [q, setQ] = useState('');
   const [araSonuc, setAraSonuc] = useState(null);
@@ -445,7 +460,7 @@ export default function BelgeMerkezi() {
                             ≈ {fmt(cari[t.toptanci].hesaplanan_acik)}
                           </b>
                           <span style={{ color: 'var(--text3)' }}>
-                            {' '}(fatura {fmt(cari[t.toptanci].fatura_toplam_6ay)} − ödeme izi {fmt(cari[t.toptanci].odeme_izi_toplam_6ay)})
+                            {' '}({cari[t.toptanci].devir ? `📜 devir ${fmt(cari[t.toptanci].devir)} + ` : ''}fatura {fmt(cari[t.toptanci].fatura_toplam_6ay)} − ödeme izi {fmt(cari[t.toptanci].odeme_izi_toplam_6ay)})
                           </span>
                           {' '}· beyan{' '}
                           <b>{cari[t.toptanci].beyan_bakiye != null ? `≈ ${fmt(cari[t.toptanci].beyan_bakiye)}` : 'fatura üstünde yok'}</b>
@@ -467,7 +482,35 @@ export default function BelgeMerkezi() {
                             <span style={{ color: 'var(--text3)' }}> · zincirde ödeme/hareket izi var</span>
                           )}
                           <div style={{ color: 'var(--text3)', marginTop: 2 }}>
-                            bizim hesap = 180 gün fatura − ödeme izi (ödeme izi yoksa açık büyür) · beyan = tedarikçinin fatura üstü bakiyesi · ikisi de ≈, hüküm değil
+                            bizim hesap = açılış devri + 180 gün fatura − ödeme izi (ödeme izi yoksa açık büyür) · beyan = tedarikçinin fatura üstü bakiyesi · ikisi de ≈, hüküm değil
+                          </div>
+                          {/* 📜 AÇILIŞ DEVRİ — sistem (1 Haziran) öncesinden kalan bakiye beyanı */}
+                          <div style={{ marginTop: 4, fontSize: 11 }}>
+                            📜 Sistem öncesi devir:{' '}
+                            <b>{cari[t.toptanci].devir ? fmt(cari[t.toptanci].devir) : 'yok'}</b>
+                            {cari[t.toptanci].devir_not && <span style={{ color: 'var(--text3)' }}> · {cari[t.toptanci].devir_not}</span>}
+                            {devirDuzen === t.toptanci ? (
+                              <span style={{ marginLeft: 6, display: 'inline-flex', gap: 4, flexWrap: 'wrap' }}>
+                                <input value={devirTutar} onChange={e => setDevirTutar(e.target.value)}
+                                       placeholder="tutar (borç +, avansımız −)"
+                                       style={{ width: 150, fontSize: 11, padding: '2px 6px' }} />
+                                <input value={devirNot} onChange={e => setDevirNot(e.target.value)}
+                                       placeholder="not (ör: Mayıs öncesi ödendi)"
+                                       style={{ width: 160, fontSize: 11, padding: '2px 6px' }} />
+                                <button className="btn btn-sm" onClick={() => devirKaydet(t.toptanci)}>Kaydet</button>
+                                <button className="btn btn-sm" onClick={() => setDevirDuzen(null)}>Vazgeç</button>
+                              </span>
+                            ) : (
+                              <button className="btn btn-sm" style={{ marginLeft: 6, fontSize: 11 }}
+                                      onClick={() => {
+                                        setDevirDuzen(t.toptanci);
+                                        setDevirTutar(cari[t.toptanci].devir ? String(cari[t.toptanci].devir) : '');
+                                        setDevirNot(cari[t.toptanci].devir_not || '');
+                                      }}>✏ gir/düzenle</button>
+                            )}
+                            <div style={{ color: 'var(--text3)' }}>
+                              1 Haziran ÖNCESİNDEN kalan bakiyeyi bir kez gir (tedarikçiye borcun kaldıysa +, fazla/peşin ödediysen −, borç kapandıysa 0/boş) — sonrasını sistem kendisi işler.
+                            </div>
                           </div>
                           {/* 📜 YÜRÜYEN EKSTRE — fatura(+) ödeme(−) sırayla, bakiye yürür */}
                           {(cari[t.toptanci].hareketler || []).length > 0 && (
@@ -479,21 +522,25 @@ export default function BelgeMerkezi() {
                                 {cari[t.toptanci].hareketler.map((h, i) => (
                                   <div key={i} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 11, padding: '2px 0', borderBottom: '1px solid var(--border)' }}>
                                     <span>
-                                      {h.tarih} {h.tip === 'fatura' ? '🧾' : '💸'} {(h.aciklama || '').slice(0, 34)}
+                                      {h.tarih} {h.tip === 'fatura' ? '🧾' : h.tip === 'devir' ? '📜' : '💸'} {(h.aciklama || '').slice(0, 40)}
                                       {h.goruntule && <>{' '}<a href={h.goruntule} target="_blank" rel="noreferrer" style={{ color: 'var(--blue, #60a5fa)' }}>📎</a></>}
                                     </span>
                                     <span style={{ whiteSpace: 'nowrap', fontFamily: 'var(--font-mono)' }}>
-                                      <span style={{ color: h.tip === 'fatura' ? 'var(--red)' : 'var(--green)' }}>
-                                        {h.tip === 'fatura' ? '+' : '−'}{fmt(h.tutar)}
+                                      <span style={{ color: h.tip === 'odeme' ? 'var(--green)' : 'var(--red)' }}>
+                                        {h.tip === 'odeme' ? '−' : h.tutar >= 0 ? '+' : ''}{fmt(h.tutar)}
                                       </span>
-                                      {' '}<b>→ {fmt(h.bakiye)}</b>
+                                      {' '}<b style={{ color: h.bakiye < 0 ? 'var(--green)' : undefined }}
+                                             title={h.bakiye < 0 ? 'Avans/alacak: ödemeler faturaları aşıyor' : undefined}>
+                                        → {fmt(h.bakiye)}{h.bakiye < 0 ? ' 🟢avans' : ''}
+                                      </b>
                                     </span>
                                   </div>
                                 ))}
                               </div>
                               <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 2 }}>
-                                Borç yalnız FATURADAN doğar (elle vadeli alım girişi çift saymaz — o vade takibi + ödeme izidir).
-                                Ödeme bakiyeden düşer; fatura tutarına eşit olmak zorunda değil (kısmi/toplu ödeme desteklenir). ≈ aday eşleşme.
+                                Ekstre 📜 açılış devriyle başlar (sistem öncesi bakiye — sahip beyanı). Borç yalnız FATURADAN doğar
+                                (elle vadeli alım girişi çift saymaz — o vade takibi + ödeme izidir). Ödeme bakiyeden düşer; fatura tutarına
+                                eşit olmak zorunda değil (avans/kısmi/toplu ödeme doğal desteklenir, eksi bakiye = avans). ≈ aday eşleşme.
                               </div>
                             </details>
                           )}

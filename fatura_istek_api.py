@@ -285,19 +285,82 @@ def _tara() -> dict:
             pass
 
         # 5) OTOMATİK KAPANIŞ — açık istek, sonradan gelen faturayla eşleşirse
-        #    kendiliğinden kapanır (iz varsa kapanır; pencere geniş: ±10 gün)
+        #    kendiliğinden kapanır. İKİ KURAL:
+        #    K1 BİREBİR: tutar ±%2, tarih ±10g (vadeli 90g) — eski davranış.
+        #    K2 KISMİ/AVANS (sahip 2026-07-18, DYK vakası: "5 Mayıs 15.000 avans,
+        #    20 Mayıs 75.000 fatura, 25 Mayıs 60.000 ödeme — borç kapanır; kısmi
+        #    ödemede birebir tutar hiç tutmuyordu, aday KALICI kalıyordu"):
+        #    tedarikçi adı eşleşmesi + tarih ±45g + faturanın KALAN KAPASİTESİ
+        #    (Codex çapraz görüşü: guard oran değil kalan-bakiye bazlı olsun;
+        #    tavan fatura*1.05, bağlanan düşülür). 46-90 gün arası aday KALIR —
+        #    otomatik bağlanmaz, insan bakar (öneri-only freni).
         cur.execute(
-            """SELECT id, tarih::text AS tarih, tutar::float AS tutar, kaynak_tip
+            """SELECT id, tarih::text AS tarih, tutar::float AS tutar, kaynak_tip,
+                      COALESCE(aciklama,'') AS aciklama,
+                      COALESCE(kanal_detay,'') AS kanal_detay,
+                      COALESCE(tedarikci_ad,'') AS tedarikci_ad
                FROM fatura_istek WHERE durum IN ('aday','istek_gonderildi')""")
-        for r in [dict(x) for x in cur.fetchall() or []]:
+        acik_istekler = [dict(x) for x in cur.fetchall() or []]
+        # Kapanış havuzu açık adayların yaşına göre GENİŞLER — sabit 75 günlük
+        # havuz, eski adayın (DYK: ödeme 65 gün, faturası 89 gün önce) faturasını
+        # hiç göremiyordu.
+        havuz = faturalar
+        _tarihli = [r["tarih"] for r in acik_istekler if r.get("tarih")]
+        if _tarihli:
+            try:
+                cur.execute(
+                    """SELECT id, COALESCE(fatura_tarih, olusturma::date)::text AS tarih,
+                              COALESCE(toplam_tutar,0)::float AS tutar, tedarikci_ad
+                       FROM tedarikci_fatura
+                       WHERE COALESCE(fatura_tarih, olusturma::date) >= %s::date - 90""",
+                    (min(_tarihli),))
+                havuz = [dict(r) for r in cur.fetchall() or []]
+            except Exception:  # noqa: BLE001
+                havuz = faturalar
+        try:
+            from fatura_api import _odeme_eslesir as _oe
+        except Exception:  # noqa: BLE001
+            _oe = None
+        kapasite: dict = {}  # fatura id → kalan bağlanabilir tutar (tutar*1.05 − bağlanan)
+        for r in acik_istekler:
             _tol = 90 if r.get("kaynak_tip") == "vadeli_alim" else 10
-            fid = _k2d_eslesti(float(r["tutar"]), r["tarih"], faturalar,
+            fid = _k2d_eslesti(float(r["tutar"]), r["tarih"], havuz,
                                kullanildi, gun_tol=_tol)
+            k2_not = None
+            if not fid and _oe:
+                metin_a = (f"{r.get('aciklama')} {r.get('kanal_detay')} "
+                           f"{r.get('tedarikci_ad')}")
+                for f in havuz:
+                    if f["id"] in kullanildi:
+                        continue
+                    fad = (f.get("tedarikci_ad") or "").strip()
+                    tut_f = float(f.get("tutar") or 0)
+                    if not fad or tut_f <= 0:
+                        continue
+                    ist_ad = (r.get("tedarikci_ad") or "").strip()
+                    if not (_oe(fad, metin_a) or (ist_ad and _oe(ist_ad, fad))):
+                        continue
+                    try:
+                        gf = abs((date.fromisoformat(str(r["tarih"])[:10])
+                                  - date.fromisoformat(str(f["tarih"])[:10])).days)
+                    except Exception:  # noqa: BLE001
+                        continue
+                    if gf > 45:
+                        continue
+                    kalan = kapasite.get(f["id"], round(tut_f * 1.05, 2))
+                    if float(r["tutar"]) > kalan + 1:
+                        continue  # bu faturanın kapasitesi dolu — başka fatura ara
+                    kapasite[f["id"]] = round(kalan - float(r["tutar"]), 2)
+                    fid = f["id"]
+                    k2_not = "kısmi/avans eşleşme: tedarikçi adı + ±45 gün + kalan kapasite"
+                    break
             if fid:
                 cur.execute(
                     """UPDATE fatura_istek
-                       SET durum='fatura_geldi', eslesen_fatura_id=%s, kapanma_ts=NOW()
-                       WHERE id=%s""", (fid, r["id"]))
+                       SET durum='fatura_geldi', eslesen_fatura_id=%s,
+                           kapanis_aciklama=COALESCE(%s, kapanis_aciklama),
+                           kapanma_ts=NOW()
+                       WHERE id=%s""", (fid, k2_not, r["id"]))
                 oto_kapanan += 1
         conn.commit()
 

@@ -4618,12 +4618,12 @@ function CepTedarikciMerkezi({ onGeri }) {
                     {cari[t.tedarikci]?.hata && 'detay alınamadı'}
                     {cari[t.tedarikci] && !cari[t.tedarikci].hata && cari[t.tedarikci].fatura_adet != null && (
                       <>
-                        <div>fatura {fmt(cari[t.tedarikci].fatura_toplam_6ay)} − ödeme {fmt(cari[t.tedarikci].odeme_izi_toplam_6ay)}
+                        <div>{cari[t.tedarikci].devir ? `📜 devir ${fmt(cari[t.tedarikci].devir)} + ` : ''}fatura {fmt(cari[t.tedarikci].fatura_toplam_6ay)} − ödeme {fmt(cari[t.tedarikci].odeme_izi_toplam_6ay)}
                           {cari[t.tedarikci].beyan_bakiye != null && <> · beyan ≈ {fmt(cari[t.tedarikci].beyan_bakiye)}</>}</div>
                         {(cari[t.tedarikci].hareketler || []).slice(-4).map((h, i) => (
                           <div key={i} style={{ display: 'flex', justifyContent: 'space-between' }}>
-                            <span>{h.tarih} {h.tip === 'fatura' ? '🧾' : '💸'}</span>
-                            <span>{h.tip === 'fatura' ? '+' : '−'}{fmt(h.tutar)} → <b style={{ color: C.t2 }}>{fmt(h.bakiye)}</b></span>
+                            <span>{h.tarih} {h.tip === 'fatura' ? '🧾' : h.tip === 'devir' ? '📜' : '💸'}</span>
+                            <span>{h.tip === 'odeme' ? '−' : h.tutar >= 0 ? '+' : ''}{fmt(h.tutar)} → <b style={{ color: C.t2 }}>{fmt(h.bakiye)}{h.bakiye < 0 ? ' 🟢' : ''}</b></span>
                           </div>
                         ))}
                         {t.bekleyen_vade_toplam > 0 && <div style={{ color: C.sari }}>bekleyen vade {fmt(t.bekleyen_vade_toplam)}{t.en_yakin_vade ? ` (${t.en_yakin_vade})` : ''}</div>}
