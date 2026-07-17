@@ -297,6 +297,33 @@ def _fatura_json_db_yaz(cur, fatura_id: str, j: Dict[str, Any]) -> int:
             fatura_id,
         ),
     )
+    # 📑 KOPYA KAPANIŞI (sahip 2026-07-18: "personel foto çekiyor, okunamayınca
+    # toptancıdan PDF istiyoruz, PDF gelince aynı fatura İKİ kayıt oluyor").
+    # Foto sonradan okununca aynı fatura_no başka satırda zaten varsa BU satır
+    # 'kopya' olur: cari/kapsama/mükerrer hesaplarına GİRMEZ, foto yasal arşiv
+    # yedeği olarak kalır (silinmez). Karşılaştırma normalize no üstünden.
+    _kopya_no = (str(j.get("fatura_no") or "").strip())
+    if len(_kopya_no) >= 8:
+        try:
+            cur.execute(
+                """SELECT id FROM tedarikci_fatura
+                   WHERE id <> %s AND COALESCE(durum,'') <> 'kopya'
+                     AND UPPER(REGEXP_REPLACE(COALESCE(fatura_no,''),
+                                              '[^A-Za-z0-9]','','g'))
+                         = UPPER(REGEXP_REPLACE(%s,'[^A-Za-z0-9]','','g'))
+                   ORDER BY olusturma LIMIT 1""", (fatura_id, _kopya_no))
+            _asil = cur.fetchone()
+            if _asil:
+                cur.execute(
+                    """UPDATE tedarikci_fatura SET durum='kopya',
+                           ocr_hata='aynı faturanın ikinci nüshası (foto+PDF) — asıl: '
+                                    || %s
+                       WHERE id=%s""", (str(dict(_asil)["id"]), fatura_id))
+                cur.execute("DELETE FROM tedarikci_fatura_kalem WHERE fatura_id=%s",
+                            (fatura_id,))
+                return 0
+        except Exception:  # noqa: BLE001
+            pass
     # DUYU OMURGASI kancası (2026-07-06): fatura işlendi = Katman-2 olay (hata-yutar,
     # source_ref=fatura_id idempotent — yeniden-OCR çift olay üretmez).
     try:
@@ -751,6 +778,7 @@ def gece_belge_kimlik() -> dict:
                           MIN(COALESCE(toplam_tutar,0))::float AS tutar
                    FROM tedarikci_fatura
                    WHERE parmak_izi IS NOT NULL AND COALESCE(toplam_tutar,0) > 0
+                     AND COALESCE(durum,'') <> 'kopya'
                    GROUP BY parmak_izi HAVING COUNT(*) > 1""")
             for r in [dict(x) for x in cur.fetchall() or []]:
                 ozet["mukerrer"].append({"tedarikci": r["ted"], "tarih": r["t"],
@@ -773,6 +801,8 @@ def gece_belge_kimlik() -> dict:
                    FROM tedarikci_fatura a
                    JOIN tedarikci_fatura b
                      ON a.id < b.id
+                    AND COALESCE(a.durum,'') <> 'kopya'
+                    AND COALESCE(b.durum,'') <> 'kopya'
                     AND COALESCE(a.toplam_tutar,0) > 0
                     AND ABS(COALESCE(a.toplam_tutar,0) - COALESCE(b.toplam_tutar,0)) <= 0.01
                     AND LENGTH(COALESCE(a.fatura_no,'')) >= 6
@@ -812,6 +842,8 @@ def gece_belge_kimlik() -> dict:
                    FROM tedarikci_fatura a
                    JOIN tedarikci_fatura b
                      ON a.id < b.id
+                    AND COALESCE(a.durum,'') <> 'kopya'
+                    AND COALESCE(b.durum,'') <> 'kopya'
                     AND COALESCE(a.toplam_tutar,0) > 0
                     AND ABS(COALESCE(a.toplam_tutar,0) - COALESCE(b.toplam_tutar,0)) <= 0.01
                     AND a.fatura_tarih IS NOT NULL AND b.fatura_tarih IS NOT NULL
@@ -930,6 +962,7 @@ def belge_merkezi_ozet(ay: str = ""):
                       MAX(fatura_tarih)::text AS son_fatura
                FROM tedarikci_fatura
                WHERE TO_CHAR(COALESCE(fatura_tarih, olusturma::date),'YYYY-MM') = %s
+                 AND COALESCE(durum,'') <> 'kopya'
                GROUP BY 1 ORDER BY toplam DESC""", (hedef,))
         toptancilar = [dict(r) for r in cur.fetchall() or []]
         for t in toptancilar:
@@ -939,6 +972,7 @@ def belge_merkezi_ozet(ay: str = ""):
                       COALESCE(toplam_tutar,0)::float AS tutar, durum
                FROM tedarikci_fatura
                WHERE TO_CHAR(COALESCE(fatura_tarih, olusturma::date),'YYYY-MM') = %s
+                 AND COALESCE(durum,'') <> 'kopya'
                ORDER BY fatura_tarih DESC NULLS LAST LIMIT 200""", (hedef,))
         faturalar = [dict(r) for r in cur.fetchall() or []]
         for x in faturalar:
@@ -1428,8 +1462,9 @@ def cari_ozet() -> dict:
                       COALESCE(toplam_tutar,0)::float AS tutar,
                       onceki_bakiye, bakiye_dahil
                FROM tedarikci_fatura
-               WHERE COALESCE(TRIM(tedarikci_ad),'') <> ''
-                  OR COALESCE(TRIM(tedarikci_vkn),'') <> ''
+               WHERE (COALESCE(TRIM(tedarikci_ad),'') <> ''
+                  OR COALESCE(TRIM(tedarikci_vkn),'') <> '')
+                 AND COALESCE(durum,'') <> 'kopya'
                ORDER BY COALESCE(fatura_tarih, olusturma::date), olusturma""")
         satirlar = [dict(r) for r in cur.fetchall() or []]
         cur.execute(
@@ -1669,6 +1704,7 @@ def cari_ekstre(tedarikci: str = ""):
                       COALESCE(toplam_tutar,0)::float AS tutar,
                       onceki_bakiye, bakiye_dahil, tedarikci_ad, tedarikci_vkn
                FROM tedarikci_fatura
+               WHERE COALESCE(durum,'') <> 'kopya'
                ORDER BY COALESCE(fatura_tarih, olusturma::date), olusturma""")
         _ara_tok = set(_cari_kanonik(None, ara).split())
         _tum = [dict(r) for r in cur.fetchall() or []]
@@ -1838,6 +1874,7 @@ def mutabakat_zinciri() -> dict:
                       COALESCE(fatura_tarih, olusturma::date)::text AS tarih
                FROM tedarikci_fatura
                WHERE siparis_talep_id IS NOT NULL
+                 AND COALESCE(durum,'') <> 'kopya'
                  AND olusturma >= CURRENT_DATE - 75""")
         fatura_map: dict = {}
         for r in cur.fetchall() or []:
@@ -1929,7 +1966,8 @@ def kdv_kanit_ozet(ay: str = "") -> dict:
                       NULLIF(TRIM(COALESCE(tedarikci_vkn,'')),'') AS vkn,
                       gib_dogrulama
                FROM tedarikci_fatura
-               WHERE TO_CHAR(COALESCE(fatura_tarih, olusturma::date),'YYYY-MM') = %s""",
+               WHERE TO_CHAR(COALESCE(fatura_tarih, olusturma::date),'YYYY-MM') = %s
+                 AND COALESCE(durum,'') <> 'kopya'""",
             (hedef,))
         rows = [dict(r) for r in cur.fetchall() or []]
     saglam, inceleme, supheli = [], [], []

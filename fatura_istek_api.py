@@ -194,7 +194,8 @@ def _tara() -> dict:
             """SELECT id, COALESCE(fatura_tarih, olusturma::date)::text AS tarih,
                       COALESCE(toplam_tutar,0)::float AS tutar, tedarikci_ad
                FROM tedarikci_fatura
-               WHERE COALESCE(fatura_tarih, olusturma::date)
+               WHERE COALESCE(durum,'') <> 'kopya'
+                 AND COALESCE(fatura_tarih, olusturma::date)
                      >= CURRENT_DATE - %s""", (PENCERE_GUN + 15,))
         faturalar = [dict(r) for r in cur.fetchall() or []]
 
@@ -312,7 +313,8 @@ def _tara() -> dict:
                     """SELECT id, COALESCE(fatura_tarih, olusturma::date)::text AS tarih,
                               COALESCE(toplam_tutar,0)::float AS tutar, tedarikci_ad
                        FROM tedarikci_fatura
-                       WHERE COALESCE(fatura_tarih, olusturma::date) >= %s::date - 90""",
+                       WHERE COALESCE(durum,'') <> 'kopya'
+                         AND COALESCE(fatura_tarih, olusturma::date) >= %s::date - 90""",
                     (min(_tarihli),))
                 havuz = [dict(r) for r in cur.fetchall() or []]
             except Exception:  # noqa: BLE001

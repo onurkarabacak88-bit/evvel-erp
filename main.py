@@ -3875,6 +3875,7 @@ def kart_fatura_eslesme(ay_sayisi: int = 2, esik: float = 1000.0):
                       COALESCE(toplam_tutar,0)::float AS tutar
                FROM tedarikci_fatura
                WHERE fatura_tarih >= DATE_TRUNC('month', CURRENT_DATE) - (%s || ' months')::interval
+                 AND COALESCE(durum,'') <> 'kopya'
                  AND COALESCE(toplam_tutar,0) > 0""", (n - 1,))
         faturalar = [dict(r) for r in cur.fetchall() or []]
     from datetime import date as _d
