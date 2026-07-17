@@ -1276,6 +1276,7 @@ _BELGESIZ_KALIPLAR = (
     # banka/faiz/kart ödemeleri fatura ÜRETMEZ — belgesi dekont/ekstredir
     "banka", "hesap faizi", "eksi hesap", "faiz", "kredi karti", "kart odeme",
     "kart borcu", "ekstre", "asgari odeme", "altin alimi", "altın alımı",
+    "hisse senedi", "doviz alimi", "döviz alımı",  # yatırım — fatura üretmez
 )
 
 
