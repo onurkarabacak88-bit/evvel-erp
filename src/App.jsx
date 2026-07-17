@@ -454,7 +454,9 @@ export default function App() {
         {page !== 'panel' && (
           <div style={{
             position: 'sticky', top: 0, zIndex: 40,
-            background: 'var(--bg1)',
+            background: 'rgba(22,16,9,.82)',
+            backdropFilter: 'blur(14px) saturate(1.15)',
+            WebkitBackdropFilter: 'blur(14px) saturate(1.15)',
             borderBottom: '1px solid var(--border)',
             padding: '6px 20px',
             display: 'flex', alignItems: 'center', gap: 8,
@@ -478,7 +480,11 @@ export default function App() {
             </span>
           </div>
         )}
-        <Page onNavigate={navigate} />
+        {/* Sayfa geçiş koreografisi — key=page: her sekme değişiminde içerik
+            yumuşak yükselerek girer (CSS .sayfa-gecis, reduced-motion saygılı) */}
+        <div key={page} className="sayfa-gecis">
+          <Page onNavigate={navigate} />
+        </div>
       </main>
       {/* 🧠 Beyin sohbeti — her sayfada sağ altta; sayfa gezinirken sohbet kaybolmaz */}
       <BeyinChat />

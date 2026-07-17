@@ -31,13 +31,23 @@
   --clr-banka:#0ea5e9;--clr-banka-bg:rgba(14,165,233,0.10);
   --font-display:'Fraunces',Georgia,serif;
   --font-mono:'JetBrains Mono',monospace;
+  /* HAREKET DİLİ (Codex çaprazlı, Apple hissi): tek easing ailesi + süre
+     bandı 120/180/280/420ms — her geçiş bu tokenlardan türer; yalnız
+     transform/opacity/filter anime edilir (60fps kuralı) */
+  --ease-out:cubic-bezier(.22,1,.36,1);
+  --ease-smooth:cubic-bezier(.2,.8,.2,1);
+  --ease-spring:cubic-bezier(.32,1.25,.42,1);
+  --dur-fast:.12s;--dur-base:.18s;--dur-page:.28s;--dur-slow:.42s;
   /* Spacing ölçeği — 8px taban (4px yarım adım) */
   --sp-1:4px;--sp-2:8px;--sp-3:12px;--sp-4:16px;--sp-5:20px;--sp-6:24px;--sp-8:32px;--sp-10:40px;--sp-12:48px;
 }
 body{font-family:'Instrument Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);font-size:14px;line-height:1.5}
 .app{display:flex;height:100vh;overflow:hidden}
-.sidebar{width:220px;background:var(--bg2);border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0}
-.sidebar-logo{padding:var(--sp-6) var(--sp-4) var(--sp-4);border-bottom:1px solid var(--border)}
+.sidebar{width:220px;background:linear-gradient(180deg,#241A12 0%,#1D150E 55%,#191009 100%);border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0}
+.sidebar-logo{position:relative;padding:var(--sp-6) var(--sp-4) var(--sp-4);border-bottom:1px solid var(--border)}
+/* İmza detay: açılışta logonun altından kayarak çizilen bakır çizgi */
+@keyframes cizgiAc{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+.sidebar-logo::after{content:'';position:absolute;left:var(--sp-4);bottom:-1px;width:56px;height:2px;background:var(--accent);border-radius:1px;transform-origin:left;animation:cizgiAc .8s var(--ease-out) .2s both}
 .sidebar-logo h1{font-family:var(--font-display);font-size:19px;font-weight:600;color:var(--text);letter-spacing:.2px}
 .sidebar-logo h1::after{content:'.';color:var(--accent)}
 .sidebar-logo span{font-size:11px;color:var(--text3);margin-top:2px;display:block;letter-spacing:.4px}
@@ -48,11 +58,27 @@ body{font-family:'Instrument Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',s
 .nav-label .gico{display:inline-flex;align-items:center;opacity:.9}
 .nav-item{display:flex;align-items:center;gap:9px;padding:8px 11px;border-radius:8px;cursor:pointer;color:var(--text2);font-size:13px;border-left:2px solid transparent;transition:background .15s ease,color .15s ease,border-color .15s ease,transform .12s ease}
 .nav-item:hover{background:var(--bg3);color:var(--text);transform:translateX(2px)}
-.nav-item.active{background:var(--accent-dim);color:var(--accent);font-weight:600;border-left-color:var(--accent)}
+.nav-item:active{transform:translateX(2px) scale(.98)}
+.nav-item.active{background:var(--accent-dim);color:var(--accent);font-weight:600;border-left-color:var(--accent);box-shadow:inset 0 1px 0 rgba(241,233,221,.05),inset 4px 0 10px -6px rgba(210,154,91,.5)}
 .nav-item.active .icon{transform:scale(1.08)}
 .nav-item .icon{width:18px;display:inline-flex;align-items:center;justify-content:center;transition:transform .15s ease}
 .sidebar-footer{padding:12px 16px;font-size:11px;color:var(--text3);border-top:1px solid var(--border)}
-.main{flex:1;overflow-y:auto;background:var(--bg)}
+.main{flex:1;overflow-y:auto;background:var(--bg);scroll-behavior:smooth}
+/* ═══ SAYFA GEÇİŞ KOREOGRAFİSİ (Codex: chrome sabit, yalnız sahne değişir;
+   giriş y14→0 + blur çözülmesi 280ms) ═══ */
+@keyframes sayfaGiris{from{opacity:0;transform:translateY(14px);filter:blur(6px)}to{opacity:1;transform:none;filter:blur(0)}}
+.sayfa-gecis{animation:sayfaGiris var(--dur-page) var(--ease-out) both}
+/* Semantik dalga: önce KPI rakamları (stagger ~20ms, en çok 6 öğe), sonra kartlar */
+.metrics .metric-card{animation:metricIn var(--dur-slow) var(--ease-out) both}
+.metrics .metric-card:nth-child(1){animation-delay:.02s}
+.metrics .metric-card:nth-child(2){animation-delay:.04s}
+.metrics .metric-card:nth-child(3){animation-delay:.06s}
+.metrics .metric-card:nth-child(4){animation-delay:.08s}
+.metrics .metric-card:nth-child(5){animation-delay:.10s}
+.metrics .metric-card:nth-child(6){animation-delay:.12s}
+.page .card{animation:cfoCardIn .32s var(--ease-out) .1s both}
+/* İmza detay (Codex): her sayfa girişinde başlığın altında bakır çizgi çözülür */
+.sayfa-gecis .page-header h2::after{content:'';display:block;width:48px;height:2px;background:var(--accent);border-radius:0;margin-top:10px;transform-origin:left;animation:cizgiAc .5s var(--ease-out) .16s both}
 .page{padding:var(--sp-8) var(--sp-6);max-width:1200px;margin:0 auto}
 .page-header{margin-bottom:var(--sp-8)}
 .page-header h2{font-family:var(--font-display);font-size:26px;font-weight:600;letter-spacing:.1px;line-height:1.15}
@@ -82,8 +108,8 @@ tr:hover td{background:rgba(210,154,91,.04)}
 .badge-yellow{background:rgba(232,197,71,.15);color:var(--yellow)}
 .badge-blue{background:rgba(91,155,214,.15);color:var(--blue)}
 .badge-gray{background:rgba(255,255,255,.08);color:var(--text3)}
-.btn{padding:7px 14px;border-radius:8px;border:none;font-size:13px;cursor:pointer;font-weight:600;transition:transform .13s ease,box-shadow .13s ease,background .15s ease,border-color .15s ease}
-.btn:active{transform:translateY(1px)}
+.btn{padding:7px 14px;border-radius:8px;border:none;font-size:13px;cursor:pointer;font-weight:600;transition:transform var(--dur-base) var(--ease-smooth),box-shadow var(--dur-base) var(--ease-smooth),background var(--dur-base) ease,border-color var(--dur-base) ease}
+.btn:active{transform:scale(.985);transition-duration:var(--dur-fast)}
 /* Bakır zemin üstüne KOYU metin (WCAG AA — beyaz metin bakırda 2.1:1 kalıyordu) */
 .btn-primary{background:var(--accent);color:#241A12}
 .btn-primary:hover{background:#DCA96E;box-shadow:var(--shadow-accent);transform:translateY(-1px)}
@@ -98,13 +124,13 @@ tr:hover td{background:rgba(210,154,91,.04)}
 .form-group{margin-bottom:14px}
 .form-group label{display:block;font-size:12px;color:var(--text3);margin-bottom:6px;font-weight:500}
 .form-group input,.form-group select,.form-group textarea{width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:7px;padding:8px 12px;color:var(--text);font-size:13px;outline:none;transition:border .15s}
-.form-group input:focus,.form-group select:focus{border-color:var(--accent)}
+.form-group input:focus,.form-group select:focus,.form-group textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-dim)}
 .form-row{display:grid;gap:12px}.form-row.cols-2{grid-template-columns:1fr 1fr}.form-row.cols-3{grid-template-columns:1fr 1fr 1fr}
 @keyframes modalOverlayIn{from{opacity:0}to{opacity:1}}
 @keyframes modalIn{from{opacity:0;transform:scale(0.96) translateY(10px)}to{opacity:1;transform:scale(1) translateY(0)}}
 @keyframes islemProgress{from{width:100%}to{width:0%}}
-.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.7);display:flex;align-items:center;justify-content:center;z-index:1000;padding:20px;animation:modalOverlayIn 0.18s ease}
-.modal{background:var(--bg2);border:1px solid var(--border);border-radius:12px;width:100%;max-width:520px;max-height:90vh;overflow-y:auto;animation:modalIn 0.22s cubic-bezier(0.2,0.8,0.3,1)}
+.modal-overlay{position:fixed;inset:0;background:rgba(12,7,2,.66);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;z-index:1000;padding:20px;animation:modalOverlayIn .12s ease}
+.modal{background:var(--bg2);border:1px solid var(--border);border-radius:14px;width:100%;max-width:520px;max-height:90vh;overflow-y:auto;box-shadow:var(--shadow-2);animation:modalIn .24s var(--ease-out)}
 .modal-header{padding:18px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
 .modal-header h3{font-family:var(--font-display);font-size:17px;font-weight:600}
 .modal-close{background:none;border:none;color:var(--text3);font-size:18px;cursor:pointer;padding:2px 6px;border-radius:4px}
@@ -132,6 +158,12 @@ tr:hover td{background:rgba(210,154,91,.04)}
 .alert-box.yellow{background:rgba(232,197,71,.1);border:1px solid rgba(232,197,71,.3);color:var(--yellow)}
 .alert-box.green{background:rgba(76,175,132,.1);border:1px solid rgba(76,175,132,.3);color:var(--green)}
 .alert-box.orange{background:rgba(230,130,60,.1);border:1px solid rgba(230,130,60,.3);color:#e6823c}
+/* Hareket azaltma tercihi: koreografi kapanır, içerik anında görünür */
+@media (prefers-reduced-motion:reduce){
+  .sayfa-gecis,.metrics .metric-card,.page .card,
+  .sayfa-gecis .page-header h2::after,.sidebar-logo::after{animation:none!important}
+  .btn,.metric-card,.nav-item{transition:none!important}
+}
 /* Odak halkası + kaydırma çubuğu — marka vurgusundan (erişilebilirlik + mikro-detay) */
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
 ::-webkit-scrollbar{width:10px;height:10px}
