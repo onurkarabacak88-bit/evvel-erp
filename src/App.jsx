@@ -454,7 +454,7 @@ export default function App() {
         {page !== 'panel' && (
           <div style={{
             position: 'sticky', top: 0, zIndex: 40,
-            background: 'rgba(22,16,9,.82)',
+            background: 'rgba(246,240,228,.82)',
             backdropFilter: 'blur(14px) saturate(1.15)',
             WebkitBackdropFilter: 'blur(14px) saturate(1.15)',
             borderBottom: '1px solid var(--border)',

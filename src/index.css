@@ -9,20 +9,24 @@
    Font çifti: Fraunces (karakterli serif — SADECE başlıklar) + Instrument Sans (gövde);
    rakamlar JetBrains Mono (tabular). Boşluk: 8px taban (--sp-2/4/6/8/10). */
 :root{
-  --bg:#161009;--bg2:#211710;--bg3:#2B2016;
-  --border:#3A2C1E;--text:#F1E9DD;--text2:#C4B5A2;--text3:#8B7B67;
-  --green:#5FBE8E;--red:#E2604F;--yellow:#E5B84E;--blue:#6FA8D8;--purple:#B08BC9;
-  --orange:#D4893A;
+  /* AÇIK KREM LATTE içerik (sahip 2026-07-18: 'profesyoneli sen seç' —
+     dünya standardı back-office: aydınlık çalışma alanı + koyu nav).
+     Kart sayfadan AÇIK durur (kâğıt hissi); tüm renkler krem üstünde AA. */
+  --bg:#F4EEE2;--bg2:#FCFAF4;--bg3:#EDE4D2;
+  --border:#E0D4BE;--text:#2A1F13;--text2:#5D4E3C;--text3:#8A7963;
+  --green:#25794F;--red:#C03A2B;--yellow:#9A7410;--blue:#2E6CA4;--purple:#7A57A6;
+  --orange:#B36A1F;
   /* Şiddet (severity) token sözlüğü — Operasyon Merkezi şiddet renkleri için tek kaynak.
      kritik=kırmızı, uyari=turuncu/amber, bilgi=mavi. Mevcut palet tonlarıyla uyumlu. */
   --sev-kritik:#ef4444;--sev-kritik-bg:rgba(239,68,68,0.10);
   --sev-uyari:#f97316;--sev-uyari-bg:rgba(249,115,22,0.10);
   --sev-bilgi:var(--blue);--sev-bilgi-bg:rgba(111,168,216,0.10);
-  --accent:#D29A5B;--accent-dim:rgba(210,154,91,.13);--accent-border:rgba(210,154,91,.35);
-  /* Marka gölgeleri — gri değil, espressodan türetilmiş sıcak karanlık */
-  --shadow-1:0 4px 14px rgba(12,7,2,.35);
-  --shadow-2:0 8px 28px rgba(12,7,2,.45);
-  --shadow-accent:0 4px 16px rgba(210,154,91,.28);
+  /* Bakır vurgu — krem üstünde AA için koyultuldu (#9A5F2E ≈ 4.9:1) */
+  --accent:#9A5F2E;--accent-dim:rgba(154,95,46,.10);--accent-border:rgba(154,95,46,.35);
+  /* Marka gölgeleri — gri değil, kavrulmuş kahveden türetilmiş sıcak ton */
+  --shadow-1:0 3px 12px rgba(70,50,25,.10);
+  --shadow-2:0 8px 26px rgba(70,50,25,.16);
+  --shadow-accent:0 4px 14px rgba(154,95,46,.25);
   /* Kategori renkleri — Panel genelinde tutarlı kaynak */
   --clr-personel:#4a9eff;--clr-personel-bg:rgba(74,158,255,0.10);
   --clr-vadeli:#f97316;--clr-vadeli-bg:rgba(249,115,22,0.10);
@@ -43,7 +47,15 @@
 }
 body{font-family:'Instrument Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);font-size:14px;line-height:1.5}
 .app{display:flex;height:100vh;overflow:hidden}
-.sidebar{width:220px;background:linear-gradient(180deg,#241A12 0%,#1D150E 55%,#191009 100%);border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0}
+/* SOL MENÜ KOYU ESPRESSO KALIR (premium SaaS deseni: koyu nav + aydınlık
+   çalışma alanı) — değişkenler bu kapsamda YENİDEN tanımlanır, içindeki her
+   öğe (nav-item, rozetler, footer) otomatik koyu temada kalır. */
+.sidebar{
+  --bg:#191009;--bg2:#211710;--bg3:#2B2016;
+  --border:#3A2C1E;--text:#F1E9DD;--text2:#C4B5A2;--text3:#8B7B67;
+  --accent:#D29A5B;--accent-dim:rgba(210,154,91,.13);--accent-border:rgba(210,154,91,.35);
+  width:220px;background:linear-gradient(180deg,#241A12 0%,#1D150E 55%,#191009 100%);
+  border-right:1px solid #3A2C1E;display:flex;flex-direction:column;flex-shrink:0}
 .sidebar-logo{position:relative;padding:var(--sp-6) var(--sp-4) var(--sp-4);border-bottom:1px solid var(--border)}
 /* İmza detay: açılışta logonun altından kayarak çizilen bakır çizgi */
 @keyframes cizgiAc{from{transform:scaleX(0)}to{transform:scaleX(1)}}
@@ -101,18 +113,18 @@ table{width:100%;border-collapse:collapse;font-size:13px}
 th{text-align:left;padding:10px 14px;font-size:11px;font-weight:500;color:var(--text3);text-transform:uppercase;letter-spacing:.4px;border-bottom:1px solid var(--border);white-space:nowrap}
 td{padding:10px 14px;border-bottom:1px solid var(--border)}
 tr:last-child td{border-bottom:none}
-tr:hover td{background:rgba(210,154,91,.04)}
+tr:hover td{background:rgba(154,95,46,.05)}
 .badge{display:inline-flex;align-items:center;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:500}
 .badge-green{background:rgba(76,175,132,.15);color:var(--green)}
 .badge-red{background:rgba(224,92,92,.15);color:var(--red)}
 .badge-yellow{background:rgba(232,197,71,.15);color:var(--yellow)}
 .badge-blue{background:rgba(91,155,214,.15);color:var(--blue)}
-.badge-gray{background:rgba(255,255,255,.08);color:var(--text3)}
+.badge-gray{background:rgba(42,31,19,.08);color:var(--text3)}
 .btn{padding:7px 14px;border-radius:8px;border:none;font-size:13px;cursor:pointer;font-weight:600;transition:transform var(--dur-base) var(--ease-smooth),box-shadow var(--dur-base) var(--ease-smooth),background var(--dur-base) ease,border-color var(--dur-base) ease}
 .btn:active{transform:scale(.985);transition-duration:var(--dur-fast)}
-/* Bakır zemin üstüne KOYU metin (WCAG AA — beyaz metin bakırda 2.1:1 kalıyordu) */
-.btn-primary{background:var(--accent);color:#241A12}
-.btn-primary:hover{background:#DCA96E;box-shadow:var(--shadow-accent);transform:translateY(-1px)}
+/* Koyu bakır zemin + krem metin (WCAG AA ≈ 5.2:1) */
+.btn-primary{background:var(--accent);color:#FFF8EC}
+.btn-primary:hover{background:#A97038;box-shadow:var(--shadow-accent);transform:translateY(-1px)}
 .btn-secondary{background:var(--bg3);color:var(--text);border:1px solid var(--border)}
 .btn-secondary:hover{border-color:var(--accent-border);box-shadow:var(--shadow-1);transform:translateY(-1px)}
 .btn-danger{background:rgba(224,92,92,.15);color:var(--red);border:1px solid rgba(224,92,92,.3)}
@@ -168,7 +180,7 @@ tr:hover td{background:rgba(210,154,91,.04)}
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
 ::-webkit-scrollbar{width:10px;height:10px}
 ::-webkit-scrollbar-track{background:var(--bg)}
-::-webkit-scrollbar-thumb{background:var(--bg3);border-radius:5px;border:2px solid var(--bg)}
+::-webkit-scrollbar-thumb{background:#D9CCB2;border-radius:5px;border:2px solid var(--bg)}
 ::-webkit-scrollbar-thumb:hover{background:var(--accent-border)}
 @keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
 .blink{animation:blink 1s ease-in-out infinite}
@@ -295,7 +307,7 @@ tr:hover td{background:rgba(210,154,91,.04)}
 
 .cfo-section{margin-bottom:4px}
 .cfo-section-hdr{display:flex;align-items:center;gap:10px;padding:7px 12px;border-radius:7px;cursor:pointer;user-select:none;transition:background .12s;margin-bottom:3px}
-.cfo-section-hdr:hover{background:rgba(255,255,255,.03)}
+.cfo-section-hdr:hover{background:rgba(42,31,19,.04)}
 
 .cfo-card{
   display:flex;align-items:center;gap:10px;
@@ -349,8 +361,8 @@ tr:hover td{background:rgba(210,154,91,.04)}
 .maas-pipe{display:flex;align-items:center;flex-wrap:wrap;gap:0}
 .maas-pipe .seg{font-size:10.5px;font-weight:600;color:var(--text3);padding:3px 10px;border-radius:999px;background:var(--bg3);white-space:nowrap;transition:all .28s ease}
 .maas-pipe .seg.done{color:var(--green);background:rgba(76,175,132,.12)}
-.maas-pipe .seg.active{color:#241A12;background:var(--accent);box-shadow:var(--shadow-accent)}
-.maas-pipe .seg.paid{color:#241A12;background:var(--blue);box-shadow:0 2px 10px rgba(111,168,216,.45)}
+.maas-pipe .seg.active{color:#FFF8EC;background:var(--accent);box-shadow:var(--shadow-accent)}
+.maas-pipe .seg.paid{color:#FFF8EC;background:var(--blue);box-shadow:0 2px 10px rgba(46,108,164,.35)}
 .maas-pipe .arw{color:var(--text3);font-size:11px;margin:0 4px;opacity:.55}
 .maas-net{font-family:var(--font-mono);font-size:19px;font-weight:700;letter-spacing:-.4px;color:var(--blue)}
 .maas-net.paid{color:var(--green)}
