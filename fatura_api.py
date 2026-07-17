@@ -988,7 +988,11 @@ def belge_merkezi_ozet(ay: str = ""):
                  AND TO_CHAR(h.tarih,'YYYY-MM') = %s
                ORDER BY h.tutar DESC LIMIT 300""", (hedef,))
         harcamalar = [dict(r) for r in cur.fetchall() or []]
-    # eşleştirme (K2-D kuralı: tutar ±%2 / ±5 TL, tarih ±5 gün, fatura tek kullanım)
+    # eşleştirme: tutar ±%2 / ±5 TL, tarih ±45 gün, fatura tek kullanım.
+    # (Tarih penceresi 5→45 gün, sahip 2026-07-18: DYK bardak faturası 01.07
+    # kesildi, kart ödemesi 14.07 — 13 gün farkla 'faturasız' görünüyordu;
+    # vadeli/kartlı alımda fatura ödemeden HAFTALAR önce kesilir. Tutar %2 +
+    # tek-kullanım guard'ı yanlış eşleşmeyi frenler.)
     kullanildi: set = set()
     faturasiz, eslesen_tutar = [], 0.0
     kurumsal, kurumsal_tutar = [], 0.0  # MEPAŞ vb: belgesi KURUMDA hazır, arşive inmemiş
@@ -1011,7 +1015,7 @@ def belge_merkezi_ozet(ay: str = ""):
                           - _d.fromisoformat(str(x["tarih"])[:10])).days)
             except Exception:  # noqa: BLE001
                 continue
-            if gf <= 5:
+            if gf <= 45:
                 aday = x
                 break
         if aday:
@@ -1311,7 +1315,13 @@ _KURUMSAL_KALIPLAR = (
 
 def kurumsal_fatura_mu(metin: str) -> bool:
     m = _cari_katla(metin)
-    return any(_cari_katla(k) in m for k in _KURUMSAL_KALIPLAR)
+    if any(_cari_katla(k) in m for k in _KURUMSAL_KALIPLAR):
+        return True
+    # TEK-KELİME kurum sınıfları (sahip 2026-07-18: 'GAZZE SU', 'ALSANCAK
+    # İNTERNET' kurumsal algılanmıyordu — elektrik algılanıyordu çünkü kalıp
+    # alt-dize; 'su' alt-dize olarak riskli ('suat' vb) → TOKEN bazlı arama).
+    tokenlar = {w.strip(".,():;0123456789") for w in m.split()}
+    return bool(tokenlar & {"su", "internet", "wifi", "fiber"})
 
 
 # 🚫 BELGE BEKLENMEZ sınıfı (sahip 2026-07-15: "bazı ödemeler faturasız ya da
