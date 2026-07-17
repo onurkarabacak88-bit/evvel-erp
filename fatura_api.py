@@ -1065,12 +1065,15 @@ def belge_merkezi_ozet(ay: str = ""):
     try:
         with db() as (_, cur):
             cur.execute(
-                """SELECT id, olusturma::date::text AS tarih, durum,
-                          LEFT(COALESCE(ocr_hata,''),160) AS hata,
-                          COALESCE(sube_id::text,'') AS sube
-                   FROM tedarikci_fatura
-                   WHERE durum IN ('ocr_hata','ocr_bekliyor') AND foto IS NOT NULL
-                   ORDER BY olusturma DESC LIMIT 40""")
+                """SELECT f.id, f.olusturma::date::text AS tarih, f.durum,
+                          LEFT(COALESCE(f.ocr_hata,''),160) AS hata,
+                          COALESCE(s.ad, '') AS sube,
+                          COALESCE(p.ad_soyad, '') AS yukleyen
+                   FROM tedarikci_fatura f
+                   LEFT JOIN personel p ON p.id = f.yukleyen_personel_id
+                   LEFT JOIN subeler s ON s.id::text = f.sube_id::text
+                   WHERE f.durum IN ('ocr_hata','ocr_bekliyor') AND f.foto IS NOT NULL
+                   ORDER BY f.olusturma DESC LIMIT 40""")
             takili = [dict(r) for r in cur.fetchall() or []]
         # Hata SINIFLAMASI (sahip 2026-07-18: 'bazılarında çekim hatası var'):
         # kota/anahtar = SİSTEM sorunu (yeniden dene çözer, foto suçsuz);

@@ -307,7 +307,10 @@ export default function BelgeMerkezi() {
                     {(d.islenemeyen_foto.fotolar || []).map(f => (
                       <div key={f.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 11, padding: '2px 0', borderBottom: '1px solid var(--border)' }}>
                         <span>
-                          {f.tarih}{' '}
+                          {f.tarih}
+                          {(f.yukleyen || f.sube) && (
+                            <b> · 👤 {f.yukleyen || '?'}{f.sube ? ` (${f.sube})` : ''}</b>
+                          )}{' '}
                           {f.hata_tipi === 'kota'
                             ? <span style={{ color: '#f59e0b' }}>⏳ sistem kotası — foto SAĞLAM, sıra gelince okunacak</span>
                             : f.hata_tipi === 'okunamadi'
