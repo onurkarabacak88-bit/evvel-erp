@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { api } from './utils/api';
 import { subscribeGlobalDataRefresh } from './utils/globalDataRefresh';
 import BeyinChat from './components/BeyinChat';
+import Ikon from './components/Ikon';
 import Panel from './pages/Panel';
 import Kartlar from './pages/Kartlar';
 import KartHareketleri from './pages/KartHareketleri';
@@ -52,65 +53,67 @@ import BelgeMerkezi from './pages/BelgeMerkezi';
 import OdemeMerkezi from './pages/OdemeMerkezi';
 import './index.css';
 
+// Marka kimliği 2. tur (2026-07-18): kabuk ikonları emoji değil SVG (Ikon.jsx,
+// tek outline ailesi) — icon/gicon alanları artık Ikon adı taşır.
 const NAV = [
-  { group: 'Yönetim & Karar', gicon: '📊', items: [
-    { id: 'panel',            label: 'CFO Panel',           icon: '⬛' },
-    { id: 'ops-merkez',       label: 'Operasyon Merkezi',   icon: '📡' },
-    { id: 'akilli-denetim',   label: 'Akıllı Denetim',      icon: '🧠' },
-    { id: 'duyu-paneli',      label: 'Duyu Paneli',         icon: '👁️' },
-    { id: 'recete-eslestirme', label: 'Reçete Eşleştirme',  icon: '🔗' },
-    { id: 'maliyet',          label: 'Maliyet',             icon: '💰' },
-    { id: 'odeme-merkezi',    label: 'Ödeme Merkezi',       icon: '💸' },
-    { id: 'belge-merkezi',    label: 'Tedarikçi Merkezi',   icon: '🏦' },
-    { id: 'borc-navigasyon',  label: 'Borç Navigasyonu',    icon: '🧭' },
-    { id: 'strateji',         label: 'Strateji Motoru',     icon: '🎯' },
+  { group: 'Yönetim & Karar', gicon: 'gosterge', items: [
+    { id: 'panel',            label: 'CFO Panel',           icon: 'gosterge' },
+    { id: 'ops-merkez',       label: 'Operasyon Merkezi',   icon: 'radar' },
+    { id: 'akilli-denetim',   label: 'Akıllı Denetim',      icon: 'islemci' },
+    { id: 'duyu-paneli',      label: 'Duyu Paneli',         icon: 'goz' },
+    { id: 'recete-eslestirme', label: 'Reçete Eşleştirme',  icon: 'bag' },
+    { id: 'maliyet',          label: 'Maliyet',             icon: 'para' },
+    { id: 'odeme-merkezi',    label: 'Ödeme Merkezi',       icon: 'banknot' },
+    { id: 'belge-merkezi',    label: 'Tedarikçi Merkezi',   icon: 'dukkan' },
+    { id: 'borc-navigasyon',  label: 'Borç Navigasyonu',    icon: 'pusula' },
+    { id: 'strateji',         label: 'Strateji Motoru',     icon: 'hedef' },
   ]},
-  { group: 'Onay Bekleyenler', gicon: '✅', items: [
-    { id: 'onay',             label: 'Onay Kuyruğu',        icon: '✅' },
-    { id: 'ciro-taslak-onay', label: 'Ciro Onayı',          icon: '📋' },
+  { group: 'Onay Bekleyenler', gicon: 'onay', items: [
+    { id: 'onay',             label: 'Onay Kuyruğu',        icon: 'onay' },
+    { id: 'ciro-taslak-onay', label: 'Ciro Onayı',          icon: 'pano-onay' },
   ]},
-  { group: 'Para Hareketleri', gicon: '💰', items: [
-    { id: 'ciro',             label: 'Ciro Girişi',         icon: '📈' },
-    { id: 'evo-satis',        label: 'Ürün Satışları',      icon: '☕' },
-    { id: 'kasa-teslim',      label: 'Kasa Teslim',         icon: '💵' },
-    { id: 'anlik-gider',      label: 'Anlık Gider',         icon: '💸' },
-    { id: 'dis-kaynak',       label: 'Dış Kaynak Geliri',   icon: '🪙' },
-    { id: 'vadeli',           label: 'Vadeli Alım',         icon: '📦' },
+  { group: 'Para Hareketleri', gicon: 'para', items: [
+    { id: 'ciro',             label: 'Ciro Girişi',         icon: 'trend' },
+    { id: 'evo-satis',        label: 'Ürün Satışları',      icon: 'kahve' },
+    { id: 'kasa-teslim',      label: 'Kasa Teslim',         icon: 'cuzdan' },
+    { id: 'anlik-gider',      label: 'Anlık Gider',         icon: 'fis' },
+    { id: 'dis-kaynak',       label: 'Dış Kaynak Geliri',   icon: 'arti-para' },
+    { id: 'vadeli',           label: 'Vadeli Alım',         icon: 'koli' },
   ]},
-  { group: 'Kartlar', gicon: '💳', items: [
-    { id: 'kart-yonetimi',    label: 'Kart Yönetimi',       icon: '💳' },
+  { group: 'Kartlar', gicon: 'kart', items: [
+    { id: 'kart-yonetimi',    label: 'Kart Yönetimi',       icon: 'kart' },
   ]},
-  { group: 'İnsan Kaynakları', gicon: '💼', items: [
-    { id: 'is-basvurusu',     label: 'İş Başvuruları',      icon: '💼' },
+  { group: 'İnsan Kaynakları', gicon: 'canta', items: [
+    { id: 'is-basvurusu',     label: 'İş Başvuruları',      icon: 'canta' },
   ]},
-  { group: 'Personel & Vardiya', gicon: '👥', items: [
-    { id: 'personel',         label: 'Personel & Maaş',     icon: '👥' },
-    { id: 'vardiya-planlamasi',label: 'Vardiya Planlaması', icon: '🗓️' },
-    { id: 'sube-panel-pin',   label: 'Personel Panel PIN',  icon: '🔐' },
-    { id: 'gorev-qr',         label: 'Görev QR Kodları',    icon: '📱' },
-    { id: 'gorev-ozet',          label: 'Görev Takibi',        icon: '✅' },
-    { id: 'stok-sayim',          label: 'Stok Sayım',          icon: '📋' },
-    { id: 'personel-vardiya-takip', label: 'Vardiya Takip',    icon: '⏱️' },
+  { group: 'Personel & Vardiya', gicon: 'ekip', items: [
+    { id: 'personel',         label: 'Personel & Maaş',     icon: 'ekip' },
+    { id: 'vardiya-planlamasi',label: 'Vardiya Planlaması', icon: 'takvim' },
+    { id: 'sube-panel-pin',   label: 'Personel Panel PIN',  icon: 'kilit' },
+    { id: 'gorev-qr',         label: 'Görev QR Kodları',    icon: 'qr' },
+    { id: 'gorev-ozet',          label: 'Görev Takibi',        icon: 'onay-kare' },
+    { id: 'stok-sayim',          label: 'Stok Sayım',          icon: 'pano-liste' },
+    { id: 'personel-vardiya-takip', label: 'Vardiya Takip',    icon: 'saat' },
   ]},
-  { group: 'Tanımlar', gicon: '🗂️', items: [
-    { id: 'sabit-giderler',   label: 'Sabit Giderler',      icon: '🏠' },
-    { id: 'borclar',          label: 'Borç Envanteri',      icon: '🏦' },
-    { id: 'tedarikciler',     label: 'Tedarikçiler',        icon: '🚚' },
-    { id: 'tedarik-dosyasi',  label: 'Tedarik Dosyası',     icon: '🧾' },
-    { id: 'tv-menu',          label: 'TV Menü',             icon: '📺' },
+  { group: 'Tanımlar', gicon: 'klasor', items: [
+    { id: 'sabit-giderler',   label: 'Sabit Giderler',      icon: 'ev' },
+    { id: 'borclar',          label: 'Borç Envanteri',      icon: 'banka' },
+    { id: 'tedarikciler',     label: 'Tedarikçiler',        icon: 'kamyon' },
+    { id: 'tedarik-dosyasi',  label: 'Tedarik Dosyası',     icon: 'dosya' },
+    { id: 'tv-menu',          label: 'TV Menü',             icon: 'tv' },
   ]},
-  { group: 'Rapor & Defter', gicon: '📒', items: [
-    { id: 'rapor',            label: 'Aylık Rapor',         icon: '📈' },
-    { id: 'ledger',           label: 'İşlem Defteri',       icon: '📒' },
+  { group: 'Rapor & Defter', gicon: 'defter', items: [
+    { id: 'rapor',            label: 'Aylık Rapor',         icon: 'grafik' },
+    { id: 'ledger',           label: 'İşlem Defteri',       icon: 'defter' },
   ]},
-  { group: 'Veri & Sistem', gicon: '🔧', items: [
-    { id: 'excel',            label: 'Excel Import',        icon: '📊' },
-    { id: 'teslim-kayit',     label: 'Bilgi Teslim',        icon: '📨' },
-    { id: 'veri-temizle',     label: 'Veri Temizle',        icon: '🧹' },
-    { id: 'merkez-temizlik',  label: 'Merkez Sipariş Temizliği', icon: '🧹' },
+  { group: 'Veri & Sistem', gicon: 'anahtar', items: [
+    { id: 'excel',            label: 'Excel Import',        icon: 'tablo' },
+    { id: 'teslim-kayit',     label: 'Bilgi Teslim',        icon: 'gelen-kutusu' },
+    { id: 'veri-temizle',     label: 'Veri Temizle',        icon: 'silgi' },
+    { id: 'merkez-temizlik',  label: 'Merkez Sipariş Temizliği', icon: 'cop' },
   ]},
-  { group: 'Kişisel', gicon: '🏠', items: [
-    { id: 'ev-tasarim',       label: 'İşletme/Dükkan Tasarımı', icon: '🏠' },
+  { group: 'Kişisel', gicon: 'ev', items: [
+    { id: 'ev-tasarim',       label: 'İşletme/Dükkan Tasarımı', icon: 'cetvel' },
   ]},
 ];
 
@@ -218,17 +221,17 @@ function AdminGirisKapisi({ onBasarili }) {
   return (
     <div style={{
       minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
-      background: 'var(--bg1, #0f1117)', fontFamily: 'Instrument Sans, sans-serif',
+      background: 'var(--bg)', fontFamily: "'Instrument Sans', sans-serif",
     }}>
       <form onSubmit={girisYap} style={{
-        width: 320, padding: 28, borderRadius: 14,
-        background: 'var(--bg2, #1a1d24)', border: '1px solid var(--border, #2a2d35)',
-        textAlign: 'center',
+        width: 320, padding: 32, borderRadius: 14,
+        background: 'var(--bg2)', border: '1px solid var(--border)',
+        boxShadow: 'var(--shadow-2)', textAlign: 'center',
       }}>
-        <div style={{ fontSize: 20, fontWeight: 800, color: 'var(--text1, #e8e9ec)', marginBottom: 4 }}>
-          EVVEL ERP
+        <div style={{ fontFamily: 'var(--font-display)', fontSize: 24, fontWeight: 600, color: 'var(--text)', marginBottom: 4 }}>
+          EVVEL<span style={{ color: 'var(--accent)' }}>.</span>
         </div>
-        <div style={{ fontSize: 12, color: 'var(--text3, #6b6f7a)', marginBottom: 20 }}>
+        <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 24 }}>
           Devam etmek için şifre girin
         </div>
         <input
@@ -239,16 +242,15 @@ function AdminGirisKapisi({ onBasarili }) {
           placeholder="Şifre"
           style={{
             width: '100%', padding: '12px 14px', borderRadius: 8, marginBottom: 12,
-            border: '1px solid var(--border, #2a2d35)', background: 'var(--bg1, #0f1117)',
-            color: 'var(--text1, #e8e9ec)', fontSize: 14, boxSizing: 'border-box',
+            border: '1px solid var(--border)', background: 'var(--bg)',
+            color: 'var(--text)', fontSize: 14, boxSizing: 'border-box',
           }}
         />
         {hata && (
-          <div style={{ fontSize: 12, color: '#e05c5c', marginBottom: 12 }}>{hata}</div>
+          <div style={{ fontSize: 12, color: 'var(--red)', marginBottom: 12 }}>{hata}</div>
         )}
-        <button type="submit" disabled={yukleniyor || !sifre} style={{
-          width: '100%', padding: '12px', borderRadius: 8, border: 'none', cursor: 'pointer',
-          background: '#C8956A', color: '#fff', fontWeight: 700, fontSize: 14,
+        <button type="submit" disabled={yukleniyor || !sifre} className="btn btn-primary" style={{
+          width: '100%', padding: '12px', fontSize: 14,
           opacity: yukleniyor || !sifre ? 0.6 : 1,
         }}>
           {yukleniyor ? '…' : 'Giriş Yap'}
@@ -364,7 +366,7 @@ export default function App() {
         <nav className="sidebar-nav">
           {NAV.map(g => (
             <div key={g.group} className="nav-group">
-              <div className="nav-label">{g.gicon && <span className="gico">{g.gicon}</span>}{g.group}</div>
+              <div className="nav-label">{g.gicon && <span className="gico"><Ikon ad={g.gicon} boyut={12} kalinlik={2} /></span>}{g.group}</div>
               {g.items.map(item => (
                 <div
                   key={item.id}
@@ -372,7 +374,7 @@ export default function App() {
                   onClick={() => navigate(item.id)}
                   style={{ position: 'relative' }}
                 >
-                  <span className="icon">{item.icon}</span>
+                  <span className="icon"><Ikon ad={item.icon} boyut={16} /></span>
                   {item.label}
                   {item.id === 'onay' && onayBekleyen > 0 && (
                     <span style={{
