@@ -479,6 +479,52 @@ import threading as _thr
 _OCR_FRENI = _thr.BoundedSemaphore(3)
 
 
+def _pdf_regex_yedek(metin: str) -> Optional[Dict[str, Any]]:
+    """LLM'SİZ DETERMİNİSTİK e-fatura okuma (2026-07-18, sahip: 'yapay zekâ
+    desteği olmadan PDF okuyamıyor mu?'). Standart GİB e-fatura düz metninden
+    KODLA çıkarır: Ödenecek Tutar (+ yedek kalıplar), satıcı ünvanı (SAYIN
+    bloğundan ÖNCEKİ ilk anlamlı satır), VKN. Kalemler LLM işidir — kota
+    dönünce gece zenginleştirilir (ocr-yeniden-dene regex_yedek kayıtlarını
+    da kapsar). Tutar bulunamazsa None → normal hata akışı sürer."""
+    t = metin or ""
+
+    def _tr_sayi(s: str) -> Optional[float]:
+        try:
+            return round(float(s.strip().replace(".", "").replace(",", ".")), 2)
+        except Exception:  # noqa: BLE001
+            return None
+
+    tutar = None
+    # 'Ödenecek Tutar' — bozuk kodlamada 'Ö' kaybolabilir, kuyruktan yakalanır
+    for kalip in (r"denecek\s*Tutar[^0-9]{0,10}([\d.,]+)\s*.?TL",
+                  r"Vergiler\s*Dahil\s*Toplam\s*Tutar[^0-9]{0,10}([\d.,]+)\s*.?TL",
+                  r"Toplam\s*Tutar[^0-9]{0,10}([\d.,]+)\s*.?TL"):
+        m = re.search(kalip, t, re.IGNORECASE)
+        if m:
+            tutar = _tr_sayi(m.group(1))
+            if tutar:
+                break
+    if not tutar or tutar <= 0:
+        return None
+    ted = None
+    bas = t.split("SAYIN")[0] if "SAYIN" in t else t[:400]
+    for satir in bas.splitlines():
+        s = satir.strip()
+        # Ünvan satırı: etiket değil (':' içermez), en az iki kelime, anahtar
+        # kelime kirliliği yok (ESH dersi: 'Düzenleme Saati:' yakalanıyordu)
+        if len(s) >= 8 and ":" not in s and len(s.split()) >= 2 and \
+           re.search(r"[A-Za-zÇĞİÖŞÜçğıöşü]{4}", s) and \
+           not re.search(r"fatura|tarih|senaryo|zelle|tipi|ettn|sayfa|d.zenleme"
+                         r"|mersis|sicil|posta|web|sitesi",
+                         s, re.IGNORECASE):
+            ted = s[:80]
+            break
+    m_vkn = re.search(r"VKN\s*:?\s*(\d{10})", t)
+    return {"toplam_tutar": tutar, "tedarikci": ted,
+            "tedarikci_vkn": (m_vkn.group(1) if m_vkn else None),
+            "kalemler": [], "yontem": "regex_yedek"}
+
+
 def _ocr_calistir(fatura_id: str) -> None:
     """Arka plan iş parçacığı — kendi DB bağlantısı. Hiçbir hata fırlatmaz.
     _OCR_FRENI: aynı anda en çok 3 OCR (pool + LLM kota koruması)."""
@@ -487,6 +533,7 @@ def _ocr_calistir(fatura_id: str) -> None:
 
 
 def _ocr_calistir_icerik(fatura_id: str) -> None:
+    kaynak_metin = ""
     try:
         with db() as (conn, cur):
             _ensure_tablolar(cur)
@@ -517,6 +564,25 @@ def _ocr_calistir_icerik(fatura_id: str) -> None:
         logger.info("fatura OCR tamam: %s (%d kalem)", fatura_id, kalem_say)
     except Exception as e:
         logger.warning("fatura OCR hata %s: %s", fatura_id, e)
+        # 🔧 LLM'SİZ YEDEK: PDF metni varsa tutar/tedarikçi KODLA çıkarılır —
+        # kota/anahtar yokken bile fatura işlenir (kalemler gece tamamlanır)
+        try:
+            if kaynak_metin:
+                y = _pdf_regex_yedek(kaynak_metin)
+                if y:
+                    with db() as (conn, cur):
+                        _ensure_tablolar(cur)
+                        _fatura_json_db_yaz(cur, fatura_id, y)
+                        cur.execute(
+                            "UPDATE tedarikci_fatura SET ocr_hata=%s WHERE id=%s",
+                            (f"LLM'siz yedek okudu; kalemler gece tamamlanacak "
+                             f"({str(e)[:100]})", fatura_id))
+                        conn.commit()
+                    logger.info("fatura regex-yedek okundu: %s (%.2f TL)",
+                                fatura_id, y["toplam_tutar"])
+                    return
+        except Exception as e2:  # noqa: BLE001
+            logger.warning("regex yedek de olmadi %s: %s", fatura_id, e2)
         try:
             with db() as (conn, cur):
                 cur.execute(
@@ -1269,7 +1335,8 @@ def ocr_yeniden_dene(limit: int = 25):
         _ensure_tablolar(cur)
         cur.execute(
             """SELECT id, ocr_hata FROM tedarikci_fatura
-               WHERE durum IN ('ocr_hata','ocr_bekliyor') AND foto IS NOT NULL
+               WHERE (durum IN ('ocr_hata','ocr_bekliyor') AND foto IS NOT NULL)
+                  OR (durum='ocr_tamam' AND ocr_json->>'yontem'='regex_yedek')
                ORDER BY olusturma DESC LIMIT %s""", (lim,))
         rows = [dict(r) for r in cur.fetchall() or []]
     hatalar = sorted({(r.get("ocr_hata") or "")[:160] for r in rows if r.get("ocr_hata")})
