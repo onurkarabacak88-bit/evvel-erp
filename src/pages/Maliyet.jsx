@@ -292,6 +292,18 @@ export default function Maliyet() {
 
   useEffect(() => { yukle(); }, [subeId, donem, ozelBas, ozelBit, seciliGun]);
 
+  // ⚖️ Ciro Fark Defteri (Evo ↔ Kasa) — P&L ciro kaynağı kararları
+  const [fdefter, setFdefter] = useState(null);
+  const fdYukle = () => api('/ciro-taslak/fark-defteri?gun=45').then(setFdefter).catch(() => setFdefter(null));
+  useEffect(() => { fdYukle(); }, []);
+  async function farkKarar(id, karar) {
+    try {
+      await api(`/ciro-taslak/fark-defteri/${id}/karar`, { method: 'POST', body: { karar } });
+      fdYukle();
+      yukle(); // P&L cirosu karara göre değişir — tazele
+    } catch (e) { alert(e?.message || 'karar kaydedilemedi'); }
+  }
+
   // Analiz sekmesi — TÜM (satış) şubelerin dönem özeti (karşılaştırma kartları için)
   useEffect(() => {
     if (sekme !== 'analiz' || !subeler.length) return;
@@ -749,6 +761,43 @@ export default function Maliyet() {
                 </div>
               );
             })()}
+
+            {/* ── ⚖️ CİRO FARK DEFTERİ (Evo ↔ Kasa) — sahip 2026-07-18: P&L cirosu
+                 EVO kabul; fark meşruysa (iade/sayım) tıkla → kasa girişi kullanılır ── */}
+            {fdefter && (fdefter.kayitlar || []).length > 0 && (
+              <div className="card" style={{ marginTop: 14 }}>
+                <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 4 }}>
+                  ⚖️ Ciro Fark Defteri — Evo ↔ Kasa
+                  {fdefter.acik_adet > 0 && <span style={{ color: 'var(--orange)' }}> · {fdefter.acik_adet} açık karar / {fmt(fdefter.acik_toplam_fark)}</span>}
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 8 }}>
+                  Kâr-zarar cirosu bu günlerde EVO'dan kabul edilir (varsayılan — POS gerçeği). Fark meşruysa
+                  (iade yapıldı / kasa sayımı farklı) <b>"Kasa doğru"</b>ya tıkla → o gün kasadaki giriş kullanılır.
+                  Kasa kayıtlarına dokunulmaz; karar her an geri alınabilir.
+                </div>
+                {(fdefter.kayitlar || []).map(k => (
+                  <div key={k.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, fontSize: 12, padding: '5px 0', borderBottom: '1px solid var(--border)', flexWrap: 'wrap' }}>
+                    <span>
+                      {k.tarih} · <b>{k.sube_ad || k.sube_id}</b> · kasa {fmt(k.girilen)} / evo {fmt(k.evo)} ·{' '}
+                      <b style={{ color: (k.fark || 0) < 0 ? 'var(--red)' : 'var(--green)' }}>
+                        {(k.fark || 0) < 0 ? 'açık' : 'fazla'} {fmt(Math.abs(k.fark || 0))}
+                      </b>
+                      {k.durum !== 'acik' && (
+                        <span style={{ color: 'var(--green)' }}> · ✓ {k.durum === 'girilen_dogru' ? 'kasa doğru (P&L kasa girişini kullanır)' : 'evo doğru'}</span>
+                      )}
+                    </span>
+                    {k.durum === 'acik' ? (
+                      <span style={{ display: 'inline-flex', gap: 6 }}>
+                        <button className="btn btn-sm btn-secondary" onClick={() => farkKarar(k.id, 'girilen_dogru')}>✓ Kasa doğru (iade/sayım)</button>
+                        <button className="btn btn-sm btn-secondary" onClick={() => farkKarar(k.id, 'evo_dogru')}>✓ Evo doğru</button>
+                      </span>
+                    ) : (
+                      <button className="btn btn-sm btn-ghost" onClick={() => farkKarar(k.id, 'acik')}>geri al</button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
 
             {/* ── Detay alt-sekmeleri: tablolar üst üste yığılmasın, tek pencerede gezilsin ── */}
             <div style={{ display: 'flex', gap: 6, marginTop: 18, marginBottom: 2, flexWrap: 'wrap', borderBottom: '1px solid var(--border)', paddingBottom: 10 }}>

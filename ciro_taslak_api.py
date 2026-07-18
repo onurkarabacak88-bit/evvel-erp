@@ -285,6 +285,71 @@ class EksikGunTaraBody(BaseModel):
     uygula: bool = False         # False → sadece tespit/önizleme (yazmaz)
 
 
+# ── ⚖️ CİRO FARK DEFTERİ (2026-07-18, sahip kararı: "düzenleme sadece MALİYET
+# özelinde olsun: Evo'dan alınan kabul görünsün ama açıklar/fazlalar ayrı alanda
+# gözüksün, tıkladığımızda sisteme dahil olsun — 800 açık kasa sayımı yanlış ya
+# da iade olabilir"). İZOLE okuma-katmanı defteri: kasa/ciro KAYITLARINA
+# DOKUNMAZ. Gece sweep fark bulunca buraya yazar; Maliyet P&L cirosu deftere
+# bakarak Evo'yu varsayılan kabul eder; sahip "girilen doğru" derse o gün
+# kasadaki giriş kullanılır. Hüküm insanın — defter yalnız kaydeder.
+
+def _fark_defteri_ensure(cur) -> None:
+    cur.execute("""CREATE TABLE IF NOT EXISTS ciro_fark_defteri (
+                       id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+                       sube_id TEXT NOT NULL,
+                       sube_ad TEXT,
+                       tarih DATE NOT NULL,
+                       girilen NUMERIC(14,2),
+                       evo NUMERIC(14,2),
+                       fark NUMERIC(14,2),
+                       durum TEXT NOT NULL DEFAULT 'acik',
+                       -- acik (Evo kabul) | girilen_dogru (iade/sayım meşru) | evo_dogru
+                       karar_aciklama TEXT,
+                       karar_ts TIMESTAMPTZ,
+                       olusturma TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                       UNIQUE (sube_id, tarih))""")
+
+
+@router.get("/fark-defteri")
+def ciro_fark_defteri_liste(gun: int = 45):
+    with db() as (_, cur):
+        _fark_defteri_ensure(cur)
+        cur.execute("""SELECT id, sube_id, sube_ad, tarih::text AS tarih,
+                              girilen::float AS girilen, evo::float AS evo,
+                              fark::float AS fark, durum, karar_aciklama
+                       FROM ciro_fark_defteri
+                       WHERE tarih >= CURRENT_DATE - %s
+                       ORDER BY tarih DESC""",
+                    (max(1, min(int(gun or 45), 120)),))
+        rows = [dict(r) for r in cur.fetchall() or []]
+    acik = [r for r in rows if r["durum"] == "acik"]
+    return {"kayitlar": rows, "acik_adet": len(acik),
+            "acik_toplam_fark": round(sum(abs(r["fark"] or 0) for r in acik), 2),
+            "not": ("Maliyet P&L cirosu bu deftere bakar: 'açık' ve 'evo_dogru' "
+                    "günlerde EVO kabul edilir; 'girilen_dogru' günlerde kasadaki "
+                    "giriş kullanılır. Kasa/ciro kayıtlarına dokunulmaz.")}
+
+
+class FarkKararBody(BaseModel):
+    karar: str                       # girilen_dogru | evo_dogru | acik (geri al)
+    aciklama: Optional[str] = None
+
+
+@router.post("/fark-defteri/{fid}/karar")
+def ciro_fark_karar(fid: str, body: FarkKararBody):
+    if body.karar not in ("girilen_dogru", "evo_dogru", "acik"):
+        raise HTTPException(400, "karar: girilen_dogru | evo_dogru | acik")
+    with db() as (conn, cur):
+        _fark_defteri_ensure(cur)
+        cur.execute("""UPDATE ciro_fark_defteri
+                       SET durum=%s, karar_aciklama=%s, karar_ts=NOW()
+                       WHERE id=%s RETURNING id""",
+                    (body.karar, (body.aciklama or "").strip() or None, fid))
+        if not cur.fetchone():
+            raise HTTPException(404, "fark kaydı bulunamadı")
+    return {"ok": True, "karar": body.karar}
+
+
 @router.post("/eksik-gun-tara")
 def eksik_gun_ciro_tara(body: EksikGunTaraBody):
     """DUYU — EVO-GÜDÜMLÜ gece sweep'i: Evo'da SATIŞ olan ama Evvel'de ciro OLMAYAN
@@ -347,6 +412,20 @@ def eksik_gun_ciro_tara(body: EksikGunTaraBody):
                                 entity_scope="sube", entity_id=sad,
                                 occurred_at=ts, signal_name="Girilen ciro ≠ Evo satışı",
                                 payload={"girilen": girilen, "evo": toplam, "fark": fark})
+                        except Exception:  # noqa: BLE001
+                            pass
+                        # ⚖️ FARK DEFTERİNE yaz (Maliyet P&L bu deftere bakar) —
+                        # değerler tazelenir, sahibin verdiği KARAR korunur.
+                        try:
+                            _fark_defteri_ensure(cur)
+                            cur.execute(
+                                """INSERT INTO ciro_fark_defteri
+                                       (sube_id, sube_ad, tarih, girilen, evo, fark)
+                                   VALUES (%s,%s,%s::date,%s,%s,%s)
+                                   ON CONFLICT (sube_id, tarih) DO UPDATE
+                                     SET girilen=EXCLUDED.girilen, evo=EXCLUDED.evo,
+                                         fark=EXCLUDED.fark, sube_ad=EXCLUDED.sube_ad""",
+                                (sid, sad, ts, girilen, toplam, fark))
                         except Exception:  # noqa: BLE001
                             pass
                     continue

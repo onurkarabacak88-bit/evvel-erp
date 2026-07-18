@@ -13688,6 +13688,30 @@ def ops_maliyet_gun_gun(
                 }
         except Exception:
             pass
+        # ⚖️ MALİYET-ÖZEL EVO KABULÜ (sahip 2026-07-18: "Evo'dan alınan kabul
+        # görünsün; açık/fazlalar ayrı alanda, tıklayınca dahil olsun"). Kasa/ciro
+        # KAYITLARINA DOKUNMAZ — yalnız bu P&L okuma katmanı: ciro_fark_defteri'ndeki
+        # günlerde sahip "girilen doğru" (iade/sayım meşru) demediyse ciro = EVO.
+        # pos/online payı korunur → komisyon hesabı şişmez (fark nakit varsayılır).
+        try:
+            cur.execute(
+                """SELECT sube_id::text AS sid, tarih::text AS t,
+                          evo::float AS evo, durum
+                   FROM ciro_fark_defteri
+                   WHERE tarih BETWEEN %s::date AND %s::date""", (_bas, _bit))
+            for r in cur.fetchall():
+                d = dict(r)
+                if d.get("durum") == "girilen_dogru" or not d.get("evo"):
+                    continue
+                if sube_id and d["sid"] != sube_id:
+                    continue
+                key = (d["sid"], d["t"])
+                if key in ciro_map:
+                    ciro_map[key]["ciro"] = float(d["evo"])
+                else:
+                    ciro_map[key] = {"ciro": float(d["evo"]), "pos": 0.0, "online": 0.0}
+        except Exception:  # noqa: BLE001 — tablo henüz yoksa eski davranış sürer
+            pass
         # Şube POS / online (platform) komisyon oranları (subeler.pos_oran / online_oran, %)
         sube_oran: Dict[str, Dict[str, float]] = {}
         try:
