@@ -75,6 +75,28 @@ def ciro_taslak_liste(durum: str = "bekliyor") -> List[dict]:
     return [_taslak_dict(r) for r in rows]
 
 
+# ⚠️ ROTA SIRASI: /fark-defteri, /{taslak_id} jokerinden ÖNCE tanımlanmalı —
+# yoksa FastAPI 'fark-defteri'yi taslak_id sanır (canlı 404 dersi, 2026-07-18)
+@router.get("/fark-defteri")
+def ciro_fark_defteri_liste(gun: int = 45):
+    with db() as (_, cur):
+        _fark_defteri_ensure(cur)
+        cur.execute("""SELECT id, sube_id, sube_ad, tarih::text AS tarih,
+                              girilen::float AS girilen, evo::float AS evo,
+                              fark::float AS fark, durum, karar_aciklama
+                       FROM ciro_fark_defteri
+                       WHERE tarih >= CURRENT_DATE - %s
+                       ORDER BY tarih DESC""",
+                    (max(1, min(int(gun or 45), 120)),))
+        rows = [dict(r) for r in cur.fetchall() or []]
+    acik = [r for r in rows if r["durum"] == "acik"]
+    return {"kayitlar": rows, "acik_adet": len(acik),
+            "acik_toplam_fark": round(sum(abs(r["fark"] or 0) for r in acik), 2),
+            "not": ("Maliyet P&L cirosu bu deftere bakar: 'açık' ve 'evo_dogru' "
+                    "günlerde EVO kabul edilir; 'girilen_dogru' günlerde kasadaki "
+                    "giriş kullanılır. Kasa/ciro kayıtlarına dokunulmaz.")}
+
+
 @router.get("/{taslak_id}")
 def ciro_taslak_detay(taslak_id: str):
     with db() as (conn, cur):
@@ -308,26 +330,6 @@ def _fark_defteri_ensure(cur) -> None:
                        karar_ts TIMESTAMPTZ,
                        olusturma TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                        UNIQUE (sube_id, tarih))""")
-
-
-@router.get("/fark-defteri")
-def ciro_fark_defteri_liste(gun: int = 45):
-    with db() as (_, cur):
-        _fark_defteri_ensure(cur)
-        cur.execute("""SELECT id, sube_id, sube_ad, tarih::text AS tarih,
-                              girilen::float AS girilen, evo::float AS evo,
-                              fark::float AS fark, durum, karar_aciklama
-                       FROM ciro_fark_defteri
-                       WHERE tarih >= CURRENT_DATE - %s
-                       ORDER BY tarih DESC""",
-                    (max(1, min(int(gun or 45), 120)),))
-        rows = [dict(r) for r in cur.fetchall() or []]
-    acik = [r for r in rows if r["durum"] == "acik"]
-    return {"kayitlar": rows, "acik_adet": len(acik),
-            "acik_toplam_fark": round(sum(abs(r["fark"] or 0) for r in acik), 2),
-            "not": ("Maliyet P&L cirosu bu deftere bakar: 'açık' ve 'evo_dogru' "
-                    "günlerde EVO kabul edilir; 'girilen_dogru' günlerde kasadaki "
-                    "giriş kullanılır. Kasa/ciro kayıtlarına dokunulmaz.")}
 
 
 class FarkKararBody(BaseModel):
