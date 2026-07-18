@@ -842,6 +842,8 @@ async def fatura_yukle_pdf(
         )
 
     yeni_idler: List[str] = []
+    kod_tam_idler: List[str] = []
+    aninda_okunan = 0
     atlanan = 0
     with db() as (conn, cur):
         _ensure_tablolar(cur)
@@ -882,17 +884,40 @@ async def fatura_yukle_pdf(
                  raw),
             )
             yeni_idler.append(fid)
+            # ⚡ ANINDA KOD OKUMA (sahip 2026-07-18: 'yeni PDF yükledim ama
+            # sıraya aldı — ilk kod çalışmalıydı'): kimlik+tutar+kalemler KODLA
+            # yükleme ANINDA çıkarılır (milisaniyeler) — LLM kuyruğunu beklemez.
+            # kod_tam ise LLM'e HİÇ gitmez; yalnız-tutar okunduysa (kalemler
+            # çıkmadıysa) kayıt yine anında işlenir, kalemler arka planda/gece
+            # LLM ile zenginleşir.
+            try:
+                y = _pdf_regex_yedek(metin)
+                if y:
+                    kl = _pdf_kod_kalemler(raw, fno)
+                    if kl:
+                        y = {**y, "kalemler": kl, "yontem": "kod_tam"}
+                        kod_tam_idler.append(fid)
+                    _fatura_json_db_yaz(cur, fid, y)
+                    aninda_okunan += 1
+            except Exception as _e:  # noqa: BLE001
+                logger.warning("aninda kod okuma olmadi (kuyruga birakildi) %s: %s",
+                               fid, str(_e)[:100])
         conn.commit()
 
-    # Asenkron ayrıştırma — her fatura ayrı (biri patlasa diğerleri devam)
+    # Asenkron ayrıştırma — yalnız kodun TAM okuyamadıkları (kalem zenginleştirme
+    # / bozuk düzen LLM'e gider); kod_tam kayıtlar kuyruğa hiç girmez
     for fid in yeni_idler:
-        threading.Thread(target=_ocr_calistir, args=(fid,), daemon=True).start()
+        if fid not in kod_tam_idler:
+            threading.Thread(target=_ocr_calistir, args=(fid,), daemon=True).start()
 
     return {
         "toplam_fatura": len(faturalar),
         "yuklenen": len(yeni_idler),
+        "aninda_okunan": aninda_okunan,
+        "kod_tam": len(kod_tam_idler),
         "atlanan_mevcut": atlanan,
-        "durum": "ocr_bekliyor",
+        "durum": ("okundu" if aninda_okunan == len(yeni_idler) and yeni_idler
+                  else "ocr_bekliyor"),
     }
 
 

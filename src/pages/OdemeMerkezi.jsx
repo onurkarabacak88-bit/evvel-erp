@@ -133,6 +133,10 @@ export default function OdemeMerkezi() {
 
   // ── SERBEST ÖDEME (listede olmayan şey) ──
   const [sAcik, setSAcik] = useState(false);
+  // 📄 Faturadan Vadeye — okunan faturayı ödeme takvimine bağlama
+  const [fvAcik, setFvAcik] = useState(false);
+  const [fvTed, setFvTed] = useState('');
+  const [fvFaturalar, setFvFaturalar] = useState([]);
   const [sf, setSf] = useState({ kategori: 'Diğer', tutar: '', aciklama: '', sube: 'MERKEZ', odeme_yontemi: 'nakit', kart_id: '', tedarikci: '' });
   const [sDosya, setSDosya] = useState(null);
   const [subeler, setSubeler] = useState([]);
@@ -349,6 +353,53 @@ export default function OdemeMerkezi() {
                   </div>
                 </div>
                 <button className="btn btn-primary" disabled={mesgul} onClick={serbestKaydet}>{mesgul ? 'Kaydediliyor…' : 'Kaydet'}</button>
+              </div>
+            )}
+          </div>
+
+          {/* ── 📄 FATURADAN VADEYE (sahip 2026-07-18: 'bütün para çıkışlarını
+               tek alandan yöneteyim') — okunan faturayı ödeme takvimine bağla ── */}
+          <div className="card" style={{ padding: 16 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ fontWeight: 800 }}>📄 Faturadan Vadeye — okunan faturayı ödeme takvimine koy</div>
+              <button className="btn btn-secondary btn-sm" onClick={() => setFvAcik(a => !a)}>{fvAcik ? 'Kapat' : 'Aç'}</button>
+            </div>
+            {fvAcik && (
+              <div style={{ marginTop: 10, display: 'grid', gap: 8, maxWidth: 560 }}>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <input list="omTedarikciler" placeholder="🏪 Tedarikçi seç…" style={{ flex: 1 }}
+                    value={fvTed} onChange={e => setFvTed(e.target.value)} />
+                  <button className="btn btn-secondary btn-sm" disabled={fvTed.trim().length < 3}
+                    onClick={async () => {
+                      try {
+                        const r = await api(`/fatura/cari-ekstre?tedarikci=${encodeURIComponent(fvTed.trim())}`);
+                        setFvFaturalar((r?.faturalar || []).filter(f => (f.tutar || 0) > 0).slice(-10).reverse());
+                      } catch (e) { alert(e?.message || 'faturalar alınamadı'); setFvFaturalar([]); }
+                    }}>Faturaları Getir</button>
+                </div>
+                {fvFaturalar.map(f => (
+                  <div key={f.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, fontSize: 12, padding: '5px 0', borderBottom: '1px solid var(--border)' }}>
+                    <span>🧾 {f.tarih} · {f.fatura_no || 'no yok'} · <b style={{ fontFamily: 'var(--font-mono)' }}>{fmt(f.tutar)}</b>
+                      {f.goruntule && <>{' '}<a href={f.goruntule} target="_blank" rel="noreferrer" style={{ color: 'var(--blue, #60a5fa)' }}>📎</a></>}
+                    </span>
+                    <button className="btn btn-sm btn-primary" onClick={async () => {
+                      const vt = window.prompt(`${fvTed} · ${fmt(f.tutar)}\nVade tarihi (YYYY-AA-GG):`,
+                        new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10));
+                      if (!vt) return;
+                      try {
+                        await api('/vadeli-alimlar', { method: 'POST', body: {
+                          tedarikci: fvTed.trim(), tutar: f.tutar, vade_tarihi: vt,
+                          aciklama: `Fatura ${f.fatura_no || String(f.id).slice(0, 8)} — vadeye yazıldı (Ödeme Merkezi)`,
+                        } });
+                        alert(`${fmt(f.tutar)} vadeye yazıldı (${vt}) — bekleyenler listesine düşecek.`);
+                        yukle();
+                      } catch (e) { alert(e?.message || 'vadeye yazılamadı'); }
+                    }}>📅 Vadeye yaz</button>
+                  </div>
+                ))}
+                {fvFaturalar.length === 0 && fvTed && (
+                  <div style={{ fontSize: 11, color: 'var(--text3)' }}>Tedarikçiyi yazıp "Faturaları Getir"e bas — son 10 okunmuş fatura listelenir.</div>
+                )}
               </div>
             )}
           </div>
