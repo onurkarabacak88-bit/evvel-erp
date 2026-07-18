@@ -648,6 +648,22 @@ export default function BelgeMerkezi() {
                           <span>{f.tarih || '—'} · <span style={{ color: DURUM_RENK[f.durum] || 'var(--text3)' }}>{f.durum}</span></span>
                           <span>
                             {fmt(f.tutar)}{' '}
+                            {f.tutar > 0 && t.toptanci !== '(tedarikçi belirsiz)' && (
+                              <button className="btn btn-sm btn-secondary" style={{ fontSize: 10, padding: '2px 8px' }}
+                                title="Bu faturanın borcunu vade takibine (Ödeme Merkezi kuyruğuna) yaz"
+                                onClick={async () => {
+                                  const vt = window.prompt(`${t.toptanci} · ${fmt(f.tutar)}\nVade tarihi (YYYY-AA-GG):`,
+                                    new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10));
+                                  if (!vt) return;
+                                  try {
+                                    await api('/vadeli-alimlar', { method: 'POST', body: {
+                                      tedarikci: t.toptanci, tutar: f.tutar, vade_tarihi: vt,
+                                      aciklama: `Fatura ${f.fatura_no || String(f.id).slice(0, 8)} — vadeye yazıldı (Tedarikçi Merkezi)`,
+                                    } });
+                                    alert(`${fmt(f.tutar)} vadeye yazıldı (${vt}) — Ödeme Merkezi'nde görünecek.`);
+                                  } catch (e) { alert(e?.message || 'vadeye yazılamadı'); }
+                                }}>📅 Vadeye yaz</button>
+                            )}{' '}
                             <a href={f.goruntule} target="_blank" rel="noreferrer" style={{ color: 'var(--blue, #60a5fa)' }}>📎 gör</a>
                           </span>
                         </div>
