@@ -517,7 +517,10 @@ def _fatura_kuyruk_uret(fatura_id: str) -> str:
             # FRENLER (Codex): kopya/negatif(alacak dekontu)/kimliksiz/arşiv girmez
             if f.get("kuyruk_vadeli_id"):
                 return "zaten_bagli"
-            if f.get("durum") != "ocr_tamam":
+            # 'okundu' = anında kod okuma yolu (19e4f62) — o da kuyruğa girebilir
+            # (2026-07-19 mutabakat dersi: sadece ocr_tamam kabul edilince kod-yolu
+            # faturaları retro taramadan sonsuza dek kaçıyordu).
+            if f.get("durum") not in ("ocr_tamam", "okundu"):
                 return "atlandi_okunmamis"
             if (f.get("tutar") or 0) <= 0:
                 return "atlandi_negatif_veya_sifir"
@@ -591,9 +594,23 @@ def fatura_kuyruk_tara(gun: int = 30):
     with db() as (_, cur):
         cur.execute("ALTER TABLE tedarikci_fatura ADD COLUMN IF NOT EXISTS "
                     "kuyruk_vadeli_id TEXT")
+        # DAMGA HİJYENİ (2026-07-19 mutabakat dersi): damga silinmiş/iptal bir
+        # vadeli kaydına işaret ediyorsa fatura sonsuza dek "zaten bağlı" kalıyordu.
+        # Ölü damgayı sıfırla ki fatura yeniden kuyruğa girebilsin. Sentineller
+        # ('(arsiv)','(odenmis)','(insan)') ve YAŞAYAN kayıtlar (bekliyor/odendi)
+        # DOKUNULMAZ — ödenmiş söze bağlı fatura tekrar kuyruğa GİRMEZ.
+        cur.execute(
+            """UPDATE tedarikci_fatura tf SET kuyruk_vadeli_id=NULL
+               WHERE tf.kuyruk_vadeli_id IS NOT NULL
+                 AND tf.kuyruk_vadeli_id NOT LIKE '(%%'
+                 AND NOT EXISTS (
+                       SELECT 1 FROM vadeli_alimlar va
+                       WHERE va.id = tf.kuyruk_vadeli_id
+                         AND COALESCE(va.durum,'') <> 'iptal')""")
+        temizlenen = cur.rowcount or 0
         cur.execute(
             """SELECT id FROM tedarikci_fatura
-               WHERE durum='ocr_tamam' AND kuyruk_vadeli_id IS NULL
+               WHERE durum IN ('ocr_tamam','okundu') AND kuyruk_vadeli_id IS NULL
                  AND COALESCE(fatura_tarih, olusturma::date)
                      >= CURRENT_DATE - %s
                ORDER BY olusturma DESC LIMIT 100""", (g,))
@@ -602,7 +619,7 @@ def fatura_kuyruk_tara(gun: int = 30):
     for fid in idler:
         s = _fatura_kuyruk_uret(fid)
         ozet[s] = ozet.get(s, 0) + 1
-    return {"taranan": len(idler), "ozet": ozet}
+    return {"taranan": len(idler), "ozet": ozet, "damga_temizlenen": temizlenen}
 
 
 def gece_fatura_kuyruk_tara() -> dict:
@@ -611,6 +628,107 @@ def gece_fatura_kuyruk_tara() -> dict:
         return fatura_kuyruk_tara(gun=30)
     except Exception as e:  # noqa: BLE001
         logger.warning("gece fatura kuyruk tarama hatasi (yutuldu): %s", str(e)[:150])
+        return {"ok": False}
+
+
+# ── 💊 AP SELF-HEAL — hayalet söz kapama (2026-07-19, APS/Redbull dersi;
+# emsal: main.borc_plan_mutabakat 5c59c77). KASA İZİ = TEK GERÇEK: tedarikçinin
+# carisi kapanmış (fatura−ödeme≈0) ama kuyrukta 'bekliyor' söz duruyorsa VE söz
+# tutarına ±%2 uyan gerçek bir ödeme izi varsa, söz YENİ KASA HAREKETİ YAZILMADAN
+# 'odendi' işaretlenir (iz referansı notta). Tipik vaka: ödeme önce (17.06 vadeli
+# alım), fatura 23 gün sonra okundu → fren penceresi (−10g) izi göremedi, hayalet
+# söz doğdu, vadesi geçti, kokpit 'gecikmiş çıkış' diye şişirdi.
+@router.post("/ap-selfheal")
+def ap_selfheal() -> dict:
+    kapatilan, incelenen = [], 0
+    try:
+        oz = cari_ozet()
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "hata": f"cari_ozet: {str(e)[:120]}"}
+    cari_map = {}
+    for t in oz.get("tedarikciler", []):
+        ad = (t.get("tedarikci") or "").strip().upper()
+        if ad:
+            cari_map[ad] = float(t.get("hesaplanan_acik") or 0)
+    with db() as (conn, cur):
+        cur.execute("""SELECT id, tedarikci, aciklama, tutar::float AS tutar,
+                              vade_tarihi FROM vadeli_alimlar
+                       WHERE durum='bekliyor'""")
+        sozler = [dict(r) for r in cur.fetchall() or []]
+        for s in sozler:
+            # AD EŞLEŞMESİ MUHAFAZAKÂR: birebir (büyük/küçük duyarsız) eşleşme
+            # yoksa DOKUNMA — 'fez'/'ATALAY KAHVE' gibi elle kısaltılmış adlar
+            # insan konusu kalır, motor zorlamaz.
+            ad = (s.get("tedarikci") or "").strip().upper()
+            if not ad or ad not in cari_map:
+                continue
+            incelenen += 1
+            tut = float(s["tutar"] or 0)
+            esik = max(5.0, tut * 0.02)
+            if tut <= 0 or cari_map[ad] > esik:
+                continue  # cari hâlâ açık — söz gerçek borcu takip ediyor
+            # ÖDEME İZİ: 3 kanal (fren sorgusuyla aynı), söz tutarına ±%2,
+            # vade −180g..+35g. Sözün kendisi 'bekliyor' olduğundan vadeli
+            # kanalının durum='odendi' filtresi kendini dışlar.
+            cur.execute(
+                """SELECT x.t, x.tutar FROM (
+                     SELECT vade_tarihi AS t, tutar FROM vadeli_alimlar
+                     WHERE durum='odendi'
+                     UNION ALL
+                     SELECT tarih, tutar FROM anlik_giderler
+                     WHERE durum='aktif' AND kaynak_id IS NULL
+                     UNION ALL
+                     SELECT tarih, tutar FROM kart_hareketleri
+                     WHERE islem_turu='HARCAMA' AND durum='aktif'
+                       AND kaynak_id IS NULL
+                       AND COALESCE(harcama_tipi,'belirsiz') <> 'sahsi') x
+                   WHERE ABS(x.tutar - %s) <= GREATEST(5, %s * 0.02)
+                     AND x.t BETWEEN %s::date - 180 AND %s::date + 35
+                   ORDER BY x.t DESC LIMIT 1""",
+                (tut, tut, str(s["vade_tarihi"]), str(s["vade_tarihi"])))
+            iz = cur.fetchone()
+            if not iz:
+                continue
+            iz_not = f" [self-heal {date.today().isoformat()}: kasa izi {iz['t']} {float(iz['tutar']):.2f}, cari kapalı]"
+            cur.execute(
+                """UPDATE vadeli_alimlar
+                   SET durum='odendi',
+                       aciklama = COALESCE(aciklama,'') || %s
+                   WHERE id=%s AND durum='bekliyor'""", (iz_not, s["id"]))
+            cur.execute(
+                """UPDATE odeme_plani
+                   SET durum='odendi',
+                       odenen_tutar = COALESCE(odenen_tutar, odenecek_tutar),
+                       aciklama = COALESCE(aciklama,'') || %s
+                   WHERE kaynak_tablo='vadeli_alimlar' AND kaynak_id=%s
+                     AND durum IN ('bekliyor','onay_bekliyor')""", (iz_not, str(s["id"])))
+            kapatilan.append({"id": s["id"], "tedarikci": s.get("tedarikci"),
+                              "tutar": tut, "iz_tarih": str(iz["t"]),
+                              "iz_tutar": float(iz["tutar"])})
+            logger.info("ap self-heal: soz kapatildi %s (%s %.2f, iz %s)",
+                        s["id"], s.get("tedarikci"), tut, iz["t"])
+    # Şeffaflık: her kapama duyu olayı (hata-yutar; source_ref=soz id idempotent)
+    for k in kapatilan:
+        try:
+            from duyu_omurga import duyu_olay_yaz
+            duyu_olay_yaz(
+                "ap_selfheal", "finans.ap.selfheal_soz_kapandi", str(k["id"]),
+                entity_scope="tedarikci", entity_id=str(k["tedarikci"] or "")[:60],
+                signal_name="Hayalet söz kasa iziyle kapandı",
+                payload=k)
+        except Exception:  # noqa: BLE001
+            pass
+    return {"ok": True, "incelenen": incelenen,
+            "kapatilan_adet": len(kapatilan), "kapatilan": kapatilan}
+
+
+def gece_ap_selfheal() -> dict:
+    """Gece zinciri halkası — hata-yutar. ap_mutabakat'tan ÖNCE koşmalı ki
+    mutabakat raporu temiz tabloyu görsün."""
+    try:
+        return ap_selfheal()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("gece ap selfheal hatasi (yutuldu): %s", str(e)[:150])
         return {"ok": False}
 
 
@@ -2045,6 +2163,42 @@ def ap_mutabakat() -> dict:
                          "fark": s["fark"], "yon": s["yon"]})
         except Exception:  # noqa: BLE001
             pass
+    # NEDEN DÖKÜMÜ (2026-07-19, sahip 'farklı konuşuyor'): uyumsuz tedarikçide
+    # her faturanın kuyruk damgası + açık sözler — sağlık şeridi açılırında
+    # "neden farklı" görünsün, tahmin değil veri konuşsun. SALT-OKUR.
+    try:
+        with db() as (_, cur):
+            for s in satirlar[:30]:
+                if s["uyumlu"]:
+                    continue
+                ad = (s.get("tedarikci") or "").strip()
+                if not ad:
+                    continue
+                cur.execute(
+                    """SELECT fatura_no, COALESCE(toplam_tutar,0)::float AS tutar,
+                              fatura_tarih::text AS tarih, durum, kuyruk_vadeli_id
+                       FROM tedarikci_fatura
+                       WHERE UPPER(TRIM(tedarikci_ad)) = UPPER(%s)
+                         AND COALESCE(toplam_tutar,0) > 0
+                       ORDER BY fatura_tarih DESC NULLS LAST LIMIT 8""", (ad,))
+                fx = []
+                for r in cur.fetchall() or []:
+                    f = dict(r)
+                    d = f.pop("kuyruk_vadeli_id", None)
+                    f["kuyruk_damga"] = (
+                        "bagli" if d and not str(d).startswith("(")
+                        else (str(d).strip("()") if d else "damgasiz"))
+                    fx.append(f)
+                cur.execute(
+                    """SELECT id, COALESCE(aciklama,'') AS aciklama,
+                              tutar::float AS tutar, vade_tarihi::text AS vade
+                       FROM vadeli_alimlar
+                       WHERE UPPER(TRIM(tedarikci)) = UPPER(%s)
+                         AND durum='bekliyor' LIMIT 5""", (ad,))
+                s["detay"] = {"faturalar": fx,
+                              "acik_sozler": [dict(r) for r in cur.fetchall() or []]}
+    except Exception as e:  # noqa: BLE001 — döküm süsü, rapor çekirdeğini bozamaz
+        logger.warning("ap mutabakat detay hatasi (yutuldu): %s", str(e)[:120])
     return {
         "tedarikciler": satirlar[:30],
         "uyumsuz_adet": uyumsuz,

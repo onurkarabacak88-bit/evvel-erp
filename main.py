@@ -559,6 +559,9 @@ def _gece_yarisi_scheduler():
             _halka("fatura_istek", lambda: __import__("fatura_istek_api").gece_fatura_istek_tara())
             # FAZ A (2026-07-18): okunmuş ama kuyruğa bağlanmamış faturalar
             _halka("fatura_kuyruk", lambda: __import__("fatura_api").gece_fatura_kuyruk_tara())
+            # SELF-HEAL (2026-07-19, APS dersi): hayalet sözler kasa iziyle kapanır —
+            # mutabakattan ÖNCE koşar ki rapor temiz tabloyu görsün
+            _halka("ap_selfheal", lambda: __import__("fatura_api").gece_ap_selfheal())
             # FAZ D (2026-07-18): AP mutabakat sağlığı (cari ↔ kuyruk çift-koşu)
             _halka("ap_mutabakat", lambda: __import__("fatura_api").gece_ap_mutabakat())
             _halka("fiyat_bandi", lambda: __import__("fatura_api").gece_fiyat_bandi_izleme())

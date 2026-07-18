@@ -418,9 +418,29 @@ export default function OdemeMerkezi() {
             {apmAcik && (apm.tedarikciler || []).filter(t => !t.uyumlu).length > 0 && (
               <div style={{ marginTop: 8, fontSize: 12 }}>
                 {apm.tedarikciler.filter(t => !t.uyumlu).slice(0, 10).map((t, i) => (
-                  <div key={i} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, padding: '3px 0', borderTop: '1px solid var(--border)' }}>
-                    <span><b>{t.tedarikci}</b> · {t.yon === 'kuyruk_eksik' ? 'borç var ama ödeme kuyruğunda yok' : 'kuyrukta söz var ama defterde borç yok'}</span>
-                    <span style={{ fontFamily: 'var(--font-mono)' }}>defter {fmt(t.cari_acik)} / kuyruk {fmt(t.kuyruk_toplam)}</span>
+                  <div key={i} style={{ padding: '3px 0', borderTop: '1px solid var(--border)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                      <span><b>{t.tedarikci}</b> · {t.yon === 'kuyruk_eksik' ? 'borç var ama ödeme kuyruğunda yok' : 'kuyrukta söz var ama defterde borç yok'}</span>
+                      <span style={{ fontFamily: 'var(--font-mono)' }}>defter {fmt(t.cari_acik)} / kuyruk {fmt(t.kuyruk_toplam)}</span>
+                    </div>
+                    {/* NEDEN dökümü — fatura damgaları + açık sözler (veri konuşsun) */}
+                    {t.detay && (
+                      <div style={{ marginTop: 2, marginLeft: 10, fontSize: 11, color: 'var(--text3)' }}>
+                        {(t.detay.faturalar || []).slice(0, 4).map((f, j) => (
+                          <div key={'f' + j}>
+                            📄 {f.tarih || '?'} · {fmt(f.tutar)} · {
+                              f.kuyruk_damga === 'bagli' ? 'kuyruğa bağlı'
+                              : f.kuyruk_damga === 'odenmis' ? 'ödenmiş sayıldı (iz var)'
+                              : f.kuyruk_damga === 'insan' ? '⚠ insan kararı bekliyor'
+                              : f.kuyruk_damga === 'arsiv' ? 'sistem-öncesi arşiv'
+                              : '⚠ kuyruğa hiç girmemiş'}
+                          </div>
+                        ))}
+                        {(t.detay.acik_sozler || []).map((v, j) => (
+                          <div key={'v' + j}>🤝 açık söz: {fmt(v.tutar)} · vade {v.vade}{v.aciklama ? ` · ${v.aciklama.slice(0, 40)}` : ''}</div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 ))}
                 <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 4 }}>
