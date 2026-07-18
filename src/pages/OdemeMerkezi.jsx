@@ -75,12 +75,24 @@ export default function OdemeMerkezi() {
       .catch(e => { setHata(e?.message || 'Yüklenemedi'); setListe([]); });
     api('/odeme-plani/kokpit?personel=1').then(setKokpit).catch(() => setKokpit(null));
     api('/ops/maliyet/kdv-pozisyon?gun=30').then(setKdvPoz).catch(() => setKdvPoz(null));
+    setCariler(null); // ödeme sonrası cari borç listesi tazelensin (iz düşmüş olabilir)
   }, [pencere]);
   useEffect(() => { yukle(); }, [yukle]);
   // FAZ D — AP mutabakat sağlığı (cari borç ↔ ödeme kuyruğu tutuyor mu)
   const [apm, setApm] = useState(null);
   const [apmAcik, setApmAcik] = useState(false);
   useEffect(() => { api('/fatura/ap-mutabakat').then(setApm).catch(() => setApm(null)); }, []);
+
+  // 📒 CARİ BORÇLAR (2026-07-19, sahip: 'vadeli alımların dışında olan bir ödeme
+  // altyapısı') — Tedarikçi sekmesi: faturalardan yığılan cari açık, söz şartı
+  // olmadan buradan ödenir. Hub YAZMAZ: ödeme = sihirbazın serbest formu
+  // tedarikçi damgalı (POST /anlik-gider → supplier_payment_event conf=1.0),
+  // iz düşünce self-heal/mutabakat gerisini eşler.
+  const [cariler, setCariler] = useState(null);
+  useEffect(() => {
+    if (sekme !== 'tedarikci' || cariler !== null) return;
+    api('/fatura/cari-ozet').then(r => setCariler(r?.tedarikciler || [])).catch(() => setCariler([]));
+  }, [sekme, cariler]);
 
   // ── TEK ÖDEME MODALI ──
   const [sec, setSec] = useState(null);          // seçili satır
@@ -253,6 +265,19 @@ export default function OdemeMerkezi() {
       setFvSecili(null); sihirbazKapat(); yukle();
     } catch (e) { toast(e?.message || 'vadeye yazılamadı', 'red'); }
     finally { setMesgul(false); }
+  };
+
+  // 📒 cari borçtan ödeme/söz — sihirbazı dolu açar (aynı delege uçları)
+  const cariOde = (t) => {
+    setSf(s => ({ ...s, kategori: 'Fatura', tedarikci: t.tedarikci || '',
+                  tutar: Math.max(0, t.hesaplanan_acik || 0).toFixed(2),
+                  aciklama: `Cari borç ödemesi — ${t.tedarikci || ''}`.slice(0, 80) }));
+    setSDosya(null); setSiha('serbest'); setHata('');
+  };
+  const cariVade = (t) => {
+    setTf({ tedarikci: t.tedarikci || '', tutar: Math.max(0, t.hesaplanan_acik || 0).toFixed(2),
+            vade: artiGunISO(7), aciklama: 'cari borç için ödeme sözü' });
+    setTUyari(null); setSiha('taahhut'); setHata('');
   };
 
   // ── ☑ ÇOKLU SEÇİM + ÖDEME KOŞUSU ──
@@ -578,6 +603,46 @@ export default function OdemeMerkezi() {
               {sekme === 'personel' && ' Maaş/avans ödemeleri kendi akışından yapılır — burada izlenir.'}
             </div>
           )}
+        </div>
+      )}
+
+      {/* 📒 CARİ BORÇLAR — Tedarikçi sekmesi: faturalardan yığılan açık, söz
+          şartı olmadan buradan ödenir (sahip: 'vadeli alımların dışında ödeme
+          altyapısı'). Ödeme izi düşünce self-heal/mutabakat eşler. */}
+      {sekme === 'tedarikci' && (
+        <div className="card" style={{ padding: 16, marginBottom: 14 }}>
+          <div style={{ fontWeight: 800, marginBottom: 4 }}>
+            📒 Cari Borçlar <span style={{ fontWeight: 400, fontSize: 12, color: 'var(--text3)' }}>— faturalardan yığılan açık (söz beklemez, buradan ödenir)</span>
+          </div>
+          {cariler === null && <div style={{ color: 'var(--text3)', fontSize: 13 }}>Yükleniyor…</div>}
+          {cariler !== null && cariler.filter(t => (t.hesaplanan_acik || 0) > 1).length === 0 && (
+            <div style={{ color: 'var(--text3)', fontSize: 13, padding: '10px 0' }}>🎉 Açık cari borç yok — tüm faturalar ödenmiş görünüyor.</div>
+          )}
+          {(cariler || []).filter(t => (t.hesaplanan_acik || 0) > 1)
+            .sort((a, b) => (b.hesaplanan_acik || 0) - (a.hesaplanan_acik || 0)).map((t, i) => {
+            const soz = t.bekleyen_vade_toplam || 0;
+            const acik = t.hesaplanan_acik || 0;
+            return (
+              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10,
+                                    padding: '10px 12px', margin: '6px 0', borderRadius: 10, background: 'var(--bg2)',
+                                    borderLeft: `4px solid ${soz >= acik - Math.max(500, acik * 0.05) ? 'var(--green, #22c55e)' : '#f59e0b'}`, flexWrap: 'wrap' }}>
+                <span style={{ minWidth: 0 }}>
+                  <div style={{ fontWeight: 700, fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 340 }}>{t.tedarikci}</div>
+                  <div style={{ fontSize: 11, color: 'var(--text3)' }}>
+                    {soz > 0 ? `kuyrukta söz: ${fmt(soz)}` : '⚠ kuyrukta sözü yok — takvimsiz borç'}
+                  </div>
+                </span>
+                <span style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                  <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 800, fontSize: 15 }}>{fmt(acik)}</span>
+                  <button className="btn btn-primary btn-sm" onClick={() => cariOde(t)}>💸 Öde</button>
+                  <button className="btn btn-secondary btn-sm" onClick={() => cariVade(t)}>🤝 Vadeye</button>
+                </span>
+              </div>
+            );
+          })}
+          <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 6 }}>
+            Açık = fatura − ödeme izi + devir (cari ekstre). Ödeme, tedarikçi damgalı kaydedilir — iz düşünce borç kendiliğinden azalır, mutabakat şeridi eşleşmeyi izler.
+          </div>
         </div>
       )}
 
