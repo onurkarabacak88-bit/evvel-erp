@@ -137,6 +137,34 @@ export default function OdemeMerkezi() {
   const [fvAcik, setFvAcik] = useState(false);
   const [fvTed, setFvTed] = useState('');
   const [fvFaturalar, setFvFaturalar] = useState([]);
+  // 🤝 FAZ B — Yeni Taahhüt (elle vade girişinin yeni evi; borç yaratmaz,
+  // nakit planıdır; faturası gelince oto-kuyruk motoru üstüne birleşir)
+  const [tAcik, setTAcik] = useState(false);
+  const [tf, setTf] = useState({ tedarikci: '', tutar: '', vade: '', aciklama: '' });
+  const taahhutKaydet = async (ekstra = {}) => {
+    const tut = parseFloat(String(tf.tutar).replace(',', '.'));
+    if (!tf.tedarikci.trim() || !tut || !tf.vade) { alert('Tedarikçi, tutar ve vade tarihi zorunlu.'); return; }
+    try {
+      const r = await api('/vadeli-alimlar', { method: 'POST', body: {
+        tedarikci: tf.tedarikci.trim(), tutar: tut, vade_tarihi: tf.vade,
+        aciklama: `🤝 Taahhüt: ${tf.aciklama.trim() || 'ödeme sözü'}`, ...ekstra,
+      } });
+      if (r?.warning) {
+        if (r.kod === 'TEDARIKCI_ACIK_BAKIYE') {
+          if (window.confirm(`${tf.tedarikci} için zaten açık borç var.\nTAMAM = ayrı satır olarak kaydet · İptal = vazgeç`)) {
+            return taahhutKaydet({ tedarikci_karari: 'ayri' });
+          }
+          return;
+        }
+        if (window.confirm(`${r.mesaj}\nYine de kaydedilsin mi?`)) return taahhutKaydet({ ...ekstra, force: true });
+        return;
+      }
+      alert(`Taahhüt kaydedildi — ${tf.vade} günü bekleyenlerde görünecek.`);
+      setTf({ tedarikci: '', tutar: '', vade: '', aciklama: '' });
+      setTAcik(false);
+      yukle();
+    } catch (e) { alert(e?.message || 'kaydedilemedi'); }
+  };
   const [sf, setSf] = useState({ kategori: 'Diğer', tutar: '', aciklama: '', sube: 'MERKEZ', odeme_yontemi: 'nakit', kart_id: '', tedarikci: '' });
   const [sDosya, setSDosya] = useState(null);
   const [subeler, setSubeler] = useState([]);
@@ -353,6 +381,33 @@ export default function OdemeMerkezi() {
                   </div>
                 </div>
                 <button className="btn btn-primary" disabled={mesgul} onClick={serbestKaydet}>{mesgul ? 'Kaydediliyor…' : 'Kaydet'}</button>
+              </div>
+            )}
+          </div>
+
+          {/* ── 🤝 FAZ B: YENİ TAAHHÜT — elle vade girişinin yeni evi ── */}
+          <div className="card" style={{ padding: 16 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ fontWeight: 800 }}>🤝 Yeni Taahhüt — tedarikçiye ödeme sözü ver</div>
+              <button className="btn btn-secondary btn-sm" onClick={() => setTAcik(a => !a)}>{tAcik ? 'Kapat' : 'Aç'}</button>
+            </div>
+            {tAcik && (
+              <div style={{ marginTop: 10, display: 'grid', gap: 8, maxWidth: 520 }}>
+                <div style={{ fontSize: 11, color: 'var(--text3)' }}>
+                  Bu bir ödeme SÖZÜdür — borç yaratmaz (borç faturadan doğar). Faturası
+                  sonradan okunursa sistem otomatik bu söze bağlar, çift kayıt olmaz.
+                </div>
+                <input list="omTedarikciler" placeholder="🏪 Tedarikçi" value={tf.tedarikci}
+                  onChange={e => setTf({ ...tf, tedarikci: e.target.value })} />
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <input type="number" placeholder="Tutar ₺" style={{ flex: 1 }} value={tf.tutar}
+                    onChange={e => setTf({ ...tf, tutar: e.target.value })} />
+                  <input type="date" style={{ flex: 1 }} value={tf.vade}
+                    onChange={e => setTf({ ...tf, vade: e.target.value })} />
+                </div>
+                <input placeholder="Açıklama (ör: temmuz süt borcu)" value={tf.aciklama}
+                  onChange={e => setTf({ ...tf, aciklama: e.target.value })} />
+                <button className="btn btn-primary" onClick={() => taahhutKaydet()}>Kaydet</button>
               </div>
             )}
           </div>

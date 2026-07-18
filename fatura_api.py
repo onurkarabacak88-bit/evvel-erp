@@ -479,6 +479,141 @@ import threading as _thr
 _OCR_FRENI = _thr.BoundedSemaphore(3)
 
 
+def _fatura_vade_regex(metin: str) -> Optional[str]:
+    """PDF metnindeki 'Vade Tarihi: DD-MM-YYYY' → ISO (deterministik)."""
+    m = re.search(r"Vade\s*Tarihi\s*:?\s*(\d{1,2})\s*[-./]\s*(\d{1,2})\s*[-./]\s*(\d{4})",
+                  metin or "", re.IGNORECASE)
+    if not m:
+        return None
+    g, a, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    try:
+        from datetime import date as _d
+        return _d(y, a, g).isoformat()
+    except Exception:  # noqa: BLE001
+        return None
+
+
+# ── FAZ A: FATURA → ÖDEME KUYRUĞU MOTORU (2026-07-18, sahip 'A VE B KUR';
+# Codex çaprazlı AP-2 sentezi). ALTIN İLKE: borç faturadan BİR KEZ doğar
+# (cari), kuyruk yalnız NE ZAMAN/NASIL ödeneceğini yönetir. Bu motor okunan
+# faturayı main.vadeli_ekle (TEK YAZICI — birleştirme frenleri + odeme_plani
+# üretimi orada) üzerinden kuyruğa bağlar. İdempotency: tedarikci_fatura.
+# kuyruk_vadeli_id (lazy kolon) — bir fatura kuyruğa EN FAZLA bir kez girer.
+def _fatura_kuyruk_uret(fatura_id: str) -> str:
+    from datetime import date as _d, timedelta as _td
+    try:
+        with db() as (conn, cur):
+            cur.execute("ALTER TABLE tedarikci_fatura ADD COLUMN IF NOT EXISTS "
+                        "kuyruk_vadeli_id TEXT")
+            cur.execute(
+                """SELECT tedarikci_ad, COALESCE(toplam_tutar,0)::float AS tutar,
+                          fatura_tarih::text AS ftarih, fatura_no, durum,
+                          kaynak_metin, kuyruk_vadeli_id
+                   FROM tedarikci_fatura WHERE id=%s""", (fatura_id,))
+            r = cur.fetchone()
+            if not r:
+                return "yok"
+            f = dict(r)
+            # FRENLER (Codex): kopya/negatif(alacak dekontu)/kimliksiz/arşiv girmez
+            if f.get("kuyruk_vadeli_id"):
+                return "zaten_bagli"
+            if f.get("durum") != "ocr_tamam":
+                return "atlandi_okunmamis"
+            if (f.get("tutar") or 0) <= 0:
+                return "atlandi_negatif_veya_sifir"
+            ted = (f.get("tedarikci_ad") or "").strip()
+            if len(ted) < 3:
+                return "atlandi_kimliksiz"
+            ftarih = (f.get("ftarih") or "")[:10]
+            if ftarih and ftarih < EVVEL_SISTEM_BASLANGIC:
+                cur.execute("UPDATE tedarikci_fatura SET kuyruk_vadeli_id='(arsiv)' "
+                            "WHERE id=%s", (fatura_id,))
+                return "atlandi_arsiv"
+            # ÖDEME İZİ FRENİ: zaten ödenmişse kuyruğa GİRMEZ (3 kanal,
+            # tutar ±max(5,%2), tarih fatura −10g..+90g)
+            tut = float(f["tutar"])
+            cur.execute(
+                """SELECT 1 FROM (
+                     SELECT vade_tarihi AS t, tutar FROM vadeli_alimlar
+                     WHERE durum='odendi'
+                     UNION ALL
+                     SELECT tarih, tutar FROM anlik_giderler
+                     WHERE durum='aktif' AND kaynak_id IS NULL
+                     UNION ALL
+                     SELECT tarih, tutar FROM kart_hareketleri
+                     WHERE islem_turu='HARCAMA' AND durum='aktif'
+                       AND kaynak_id IS NULL
+                       AND COALESCE(harcama_tipi,'belirsiz') <> 'sahsi') x
+                   WHERE ABS(x.tutar - %s) <= GREATEST(5, %s * 0.02)
+                     AND x.t BETWEEN %s::date - 10 AND %s::date + 90
+                   LIMIT 1""",
+                (tut, tut, ftarih or str(_d.today()), ftarih or str(_d.today())))
+            if cur.fetchone():
+                cur.execute("UPDATE tedarikci_fatura SET kuyruk_vadeli_id='(odenmis)' "
+                            "WHERE id=%s", (fatura_id,))
+                return "zaten_odenmis"
+            # VADE ÖNCELİĞİ: PDF'teki Vade Tarihi > fatura tarihi+7g > bugün+7g
+            vade = _fatura_vade_regex(f.get("kaynak_metin") or "")
+            if not vade:
+                try:
+                    vade = (_d.fromisoformat(ftarih) + _td(days=7)).isoformat()
+                except Exception:  # noqa: BLE001
+                    vade = (_d.today() + _td(days=7)).isoformat()
+        # TEK YAZICI: main.vadeli_ekle (birleştirme frenleri + odeme_plani orada).
+        # Aynı tedarikçide TEK açık söz varsa otomatik ÜSTÜNE BİRLEŞİR (Codex:
+        # commitment faturaya linklenince birleşir); birden çoksa/benzer kayıt
+        # uyarısı dönerse İNSAN konusu — motor zorlamaz, kalıcı işaretler.
+        from main import vadeli_ekle, VadeliAlim
+        g = VadeliAlim(
+            aciklama=f"Fatura {f.get('fatura_no') or fatura_id[:8]} ({ted})",
+            tutar=round(tut, 2), vade_tarihi=_d.fromisoformat(vade), tedarikci=ted)
+        sonuc = vadeli_ekle(g)
+        with db() as (conn, cur):
+            if isinstance(sonuc, dict) and sonuc.get("id"):
+                cur.execute("UPDATE tedarikci_fatura SET kuyruk_vadeli_id=%s "
+                            "WHERE id=%s", (str(sonuc["id"]), fatura_id))
+                logger.info("fatura kuyruğa bağlandı: %s → vadeli %s (%.2f, vade %s)",
+                            fatura_id, sonuc["id"], tut, vade)
+                return "uretildi"
+            cur.execute("UPDATE tedarikci_fatura SET kuyruk_vadeli_id='(insan)' "
+                        "WHERE id=%s", (fatura_id,))
+            return "atlandi_insan_karari"
+    except Exception as e:  # noqa: BLE001 — kuyruk üretimi çökse fatura akışı yaşar
+        logger.warning("fatura kuyruk uretimi hatasi %s: %s", fatura_id, str(e)[:150])
+        return "hata"
+
+
+@router.post("/kuyruk-tara")
+def fatura_kuyruk_tara(gun: int = 30):
+    """Retro + gece taraması: okunmuş ama kuyruğa bağlanmamış faturaları
+    ödeme kuyruğuna bağlar (idempotent — kuyruk_vadeli_id boş olanlar)."""
+    g = max(1, min(int(gun or 30), 90))
+    with db() as (_, cur):
+        cur.execute("ALTER TABLE tedarikci_fatura ADD COLUMN IF NOT EXISTS "
+                    "kuyruk_vadeli_id TEXT")
+        cur.execute(
+            """SELECT id FROM tedarikci_fatura
+               WHERE durum='ocr_tamam' AND kuyruk_vadeli_id IS NULL
+                 AND COALESCE(fatura_tarih, olusturma::date)
+                     >= CURRENT_DATE - %s
+               ORDER BY olusturma DESC LIMIT 100""", (g,))
+        idler = [r["id"] for r in cur.fetchall() or []]
+    ozet: Dict[str, int] = {}
+    for fid in idler:
+        s = _fatura_kuyruk_uret(fid)
+        ozet[s] = ozet.get(s, 0) + 1
+    return {"taranan": len(idler), "ozet": ozet}
+
+
+def gece_fatura_kuyruk_tara() -> dict:
+    """Gece zinciri halkası — hata-yutar."""
+    try:
+        return fatura_kuyruk_tara(gun=30)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("gece fatura kuyruk tarama hatasi (yutuldu): %s", str(e)[:150])
+        return {"ok": False}
+
+
 def _pdf_regex_yedek(metin: str) -> Optional[Dict[str, Any]]:
     """LLM'SİZ DETERMİNİSTİK e-fatura okuma (2026-07-18, sahip: 'yapay zekâ
     desteği olmadan PDF okuyamıyor mu?'). Standart GİB e-fatura düz metninden
@@ -664,6 +799,8 @@ def _ocr_calistir_icerik(fatura_id: str) -> None:
             kalem_say = _fatura_json_db_yaz(cur, fatura_id, j)
             conn.commit()
         logger.info("fatura OCR tamam: %s (%d kalem)", fatura_id, kalem_say)
+        # FAZ A: okunan fatura ödeme kuyruğuna bağlanır (hata-yutar, idempotent)
+        _fatura_kuyruk_uret(fatura_id)
     except Exception as e:
         logger.warning("fatura OCR hata %s: %s", fatura_id, e)
         # 🔧 LLM'SİZ YEDEK: PDF metni varsa tutar/tedarikçi KODLA çıkarılır —
@@ -904,6 +1041,16 @@ async def fatura_yukle_pdf(
                                fid, str(_e)[:100])
         conn.commit()
 
+    # FAZ A: anında okunanlar ödeme kuyruğuna bağlanır (idempotent, hata-yutar)
+    for fid in yeni_idler:
+        try:
+            with db() as (_c2, _k2):
+                _k2.execute("SELECT durum FROM tedarikci_fatura WHERE id=%s", (fid,))
+                _rr = _k2.fetchone()
+            if _rr and dict(_rr).get("durum") == "ocr_tamam":
+                _fatura_kuyruk_uret(fid)
+        except Exception:  # noqa: BLE001
+            pass
     # Asenkron ayrıştırma — yalnız kodun TAM okuyamadıkları (kalem zenginleştirme
     # / bozuk düzen LLM'e gider); kod_tam kayıtlar kuyruğa hiç girmez
     for fid in yeni_idler:
