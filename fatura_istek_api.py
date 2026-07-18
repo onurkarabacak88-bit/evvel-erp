@@ -233,6 +233,19 @@ def _tara() -> dict:
             fid = _k2d_eslesti(float(o["tutar"]), o["tarih"], faturalar,
                                kullanildi, gun_tol=_tol)
             if fid:
+                # Canlı ders (2026-07-18, APS/Redbull): fatura sonradan havuza
+                # girince bu adım eşleşip faturayı 'kullanildi' yapıyor ama daha
+                # önce doğmuş AÇIK aday öylece kalıyordu (kapanış bölümü faturayı
+                # bir daha göremiyordu). Eşleşme bulunduysa açık adayı da KAPAT.
+                cur.execute(
+                    """UPDATE fatura_istek
+                       SET durum='fatura_geldi', eslesen_fatura_id=%s,
+                           kapanma_ts=NOW()
+                       WHERE kaynak_tip=%s AND kaynak_id=%s
+                         AND durum IN ('aday','istek_gonderildi')""",
+                    (fid, o["kaynak_tip"], str(o["id"])))
+                if cur.rowcount:
+                    oto_kapanan += 1
                 continue
             metin = f"{o.get('aciklama') or ''} {o.get('detay') or ''}"
             ted_ad, ted_tel = _tel_bul(metin)
