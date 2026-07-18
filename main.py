@@ -559,6 +559,8 @@ def _gece_yarisi_scheduler():
             _halka("fatura_istek", lambda: __import__("fatura_istek_api").gece_fatura_istek_tara())
             # FAZ A (2026-07-18): okunmuş ama kuyruğa bağlanmamış faturalar
             _halka("fatura_kuyruk", lambda: __import__("fatura_api").gece_fatura_kuyruk_tara())
+            # FAZ D (2026-07-18): AP mutabakat sağlığı (cari ↔ kuyruk çift-koşu)
+            _halka("ap_mutabakat", lambda: __import__("fatura_api").gece_ap_mutabakat())
             _halka("fiyat_bandi", lambda: __import__("fatura_api").gece_fiyat_bandi_izleme())
             _halka("personel_puan", lambda: __import__("personel_puan_api").gece_personel_puan_tara())
             _halka("agir_onhesap", lambda: __import__("duyu_gorunumler").gece_agir_onhesap())

@@ -2004,6 +2004,74 @@ def cari_ozet_uc():
     return cari_ozet()
 
 
+# ── FAZ D: AP MUTABAKAT DUYUSU (2026-07-18, sahip 'FAZ D'; Codex çift-koşu) ──
+# Vadeli Alımlar'ı tamamen kaldırmadan ÖNCEKİ güvenlik ağı: her gece
+# "tedarikçi CARİ açığı (fatura − ödeme izi + devir) ↔ ÖDEME KUYRUĞU (bekleyen
+# vade sözü)" tutuyor mu? İki taraf da AYNI borcu ölçer; sapma = kuyruğa
+# girmemiş fatura / kapanmamış söz / çift kayıt sinyali. SALT-OKUR, öneri-only,
+# hata-yutar. Uyumsuz tedarikçi başına duyu olayı (Sv0 — alarm değil, gözlem).
+def ap_mutabakat() -> dict:
+    oz = cari_ozet()
+    satirlar, uyumsuz = [], 0
+    for t in oz.get("tedarikciler", []):
+        acik = round(max(0.0, float(t.get("hesaplanan_acik") or 0)), 2)
+        kuyruk = round(float(t.get("bekleyen_vade_toplam") or 0), 2)
+        # cari açık VAR ama kuyruk YOK → fatura kuyruğa bağlanmamış (asıl risk);
+        # kuyruk VAR ama açık YOK → söz fazlası/ödenmiş fatura kalmış
+        fark = round(kuyruk - acik, 2)
+        esik = max(500.0, acik * 0.05)
+        uyumlu = abs(fark) <= esik
+        if not uyumlu:
+            uyumsuz += 1
+        satirlar.append({
+            "tedarikci": t.get("tedarikci"), "cari_acik": acik,
+            "kuyruk_toplam": kuyruk, "fark": fark, "uyumlu": uyumlu,
+            "yon": ("kuyruk_eksik" if fark < -esik else
+                    "kuyruk_fazla" if fark > esik else "uyumlu"),
+        })
+    satirlar.sort(key=lambda x: -abs(x["fark"]))
+    # UYUMSUZ olanlar için duyu olayı (hata-yutar; source_ref=tedarikçi → idempotent)
+    for s in satirlar:
+        if s["uyumlu"]:
+            continue
+        try:
+            from duyu_omurga import duyu_olay_yaz
+            duyu_olay_yaz(
+                "ap_mutabakat", "finans.ap.kuyruk_cari_farki",
+                str(s["tedarikci"] or "")[:60],
+                entity_scope="tedarikci", entity_id=str(s["tedarikci"] or "")[:60],
+                signal_name="Ödeme kuyruğu ≠ cari borç",
+                payload={"cari_acik": s["cari_acik"], "kuyruk": s["kuyruk_toplam"],
+                         "fark": s["fark"], "yon": s["yon"]})
+        except Exception:  # noqa: BLE001
+            pass
+    return {
+        "tedarikciler": satirlar[:30],
+        "uyumsuz_adet": uyumsuz,
+        "toplam_cari_acik": round(sum(s["cari_acik"] for s in satirlar), 2),
+        "toplam_kuyruk": round(sum(s["kuyruk_toplam"] for s in satirlar), 2),
+        "saglikli": uyumsuz == 0,
+        "not": ("Cari açık (fatura−ödeme izi+devir) ile ödeme kuyruğu (bekleyen "
+                "vade sözü) aynı borcu ölçer; sapma = kuyruğa bağlanmamış fatura / "
+                "kapanmamış söz / çift kayıt. Vadeli Alımlar tam kaldırılmadan önce "
+                "bu satır GÜN GÜN 'sağlıklı' çıkmalı (Faz D çift-koşu). Öneri-only."),
+    }
+
+
+@router.get("/ap-mutabakat")
+def ap_mutabakat_uc():
+    return ap_mutabakat()
+
+
+def gece_ap_mutabakat() -> dict:
+    """Gece zinciri halkası — hata-yutar."""
+    try:
+        return ap_mutabakat()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("gece ap mutabakat hatasi (yutuldu): %s", str(e)[:150])
+        return {"ok": False}
+
+
 # ── 📜 AÇILIŞ DEVRİ UÇLARI (sahip beyanı — tek yazıcı burası) ────────────────
 class CariDevirBody(BaseModel):
     tedarikci: str

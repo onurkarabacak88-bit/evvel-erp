@@ -51,6 +51,10 @@ export default function OdemeMerkezi() {
       .catch(e => { setHata(e?.message || 'Yüklenemedi'); setListe([]); });
   }, [pencere]);
   useEffect(() => { yukle(); }, [yukle]);
+  // FAZ D — AP mutabakat sağlığı (cari borç ↔ ödeme kuyruğu tutuyor mu)
+  const [apm, setApm] = useState(null);
+  const [apmAcik, setApmAcik] = useState(false);
+  useEffect(() => { api('/fatura/ap-mutabakat').then(setApm).catch(() => setApm(null)); }, []);
 
   // ── TEK ÖDEME MODALI ──
   const [sec, setSec] = useState(null);          // seçili satır
@@ -292,6 +296,38 @@ export default function OdemeMerkezi() {
               <div style={{ fontWeight: 800, fontFamily: 'var(--font-mono)', fontSize: buyuk ? 22 : 16, color: renk }}>{fmt(val)}</div>
             </div>
           ))}
+        </div>
+      )}
+      {/* FAZ D — AP mutabakat sağlık şeridi (cari borç ↔ ödeme kuyruğu) */}
+      {apm && (
+        <div className={`alert-box ${apm.saglikli ? 'green' : 'yellow'} mb-16`} style={{ cursor: 'pointer' }}
+          onClick={() => setApmAcik(a => !a)}>
+          <div style={{ width: '100%' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
+              <span>
+                {apm.saglikli
+                  ? '✅ Mutabakat sağlıklı — cari borç ile ödeme kuyruğu tutuyor'
+                  : `⚠ ${apm.uyumsuz_adet} tedarikçide cari borç ≠ ödeme kuyruğu (incelenmeli)`}
+                <span style={{ color: 'var(--text3)', fontWeight: 400 }}>
+                  {' '}· cari açık {fmt(apm.toplam_cari_acik)} / kuyruk {fmt(apm.toplam_kuyruk)}
+                </span>
+              </span>
+              <span style={{ fontSize: 11, color: 'var(--text3)' }}>{apmAcik ? 'gizle ▴' : 'detay ▾'}</span>
+            </div>
+            {apmAcik && (apm.tedarikciler || []).filter(t => !t.uyumlu).length > 0 && (
+              <div style={{ marginTop: 8, fontSize: 12 }}>
+                {apm.tedarikciler.filter(t => !t.uyumlu).slice(0, 10).map((t, i) => (
+                  <div key={i} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, padding: '3px 0', borderTop: '1px solid var(--border)' }}>
+                    <span><b>{t.tedarikci}</b> · {t.yon === 'kuyruk_eksik' ? 'kuyruğa girmemiş borç' : 'kuyrukta fazla söz'}</span>
+                    <span style={{ fontFamily: 'var(--font-mono)' }}>cari {fmt(t.cari_acik)} / kuyruk {fmt(t.kuyruk_toplam)} · fark {fmt(t.fark)}</span>
+                  </div>
+                ))}
+                <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 4 }}>
+                  Vadeli Alımlar tamamen kaldırılmadan önce bu satır gün gün "sağlıklı" çıkmalı (çift-koşu güvencesi). Öneri-only — hüküm insanın.
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       )}
       {hata && !sec && <div className="alert-box red mb-16">{hata}</div>}
