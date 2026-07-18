@@ -294,6 +294,7 @@ export default function Maliyet() {
 
   // ⚖️ Ciro Fark Defteri (Evo ↔ Kasa) — P&L ciro kaynağı kararları
   const [fdefter, setFdefter] = useState(null);
+  const [fdSube, setFdSube] = useState(null); // null = tüm şubeler
   const fdYukle = () => api('/ciro-taslak/fark-defteri?gun=45').then(setFdefter).catch(() => setFdefter(null));
   useEffect(() => { fdYukle(); }, []);
   async function farkKarar(id, karar) {
@@ -780,30 +781,56 @@ export default function Maliyet() {
 
             {/* ── ⚖️ CİRO FARK DEFTERİ (Evo ↔ Kasa) — sahip 2026-07-18: P&L cirosu
                  EVO kabul; fark meşruysa (iade/sayım) tıkla → kasa girişi kullanılır ── */}
-            {fdefter && (fdefter.kayitlar || []).length > 0 && (
+            {fdefter && (fdefter.kayitlar || []).length > 0 && (() => {
+              // ŞUBE ŞUBE ayrım (sahip isteği): filtre hapları + seçime göre toplamlar
+              const tumKayit = fdefter.kayitlar || [];
+              const subeListe = [...new Set(tumKayit.map(k => k.sube_ad || k.sube_id))];
+              const fRows = fdSube ? tumKayit.filter(k => (k.sube_ad || k.sube_id) === fdSube) : tumKayit;
+              const fEksik = fRows.filter(k => (k.fark || 0) < 0);
+              const fFazla = fRows.filter(k => (k.fark || 0) > 0);
+              const fEksikT = fEksik.reduce((s, k) => s + (k.fark || 0), 0);
+              const fFazlaT = fFazla.reduce((s, k) => s + (k.fark || 0), 0);
+              const fNet = fEksikT + fFazlaT;
+              const fAcik = fRows.filter(k => k.durum === 'acik').length;
+              const fCozulen = fRows.filter(k => ['gidere_yazildi', 'gelire_yazildi'].includes(k.durum)).length;
+              const subeNet = s => tumKayit.filter(k => (k.sube_ad || k.sube_id) === s)
+                .reduce((t, k) => t + (k.fark || 0), 0);
+              return (
               <div className="card" style={{ marginTop: 14 }}>
-                <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 4 }}>
+                <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 6 }}>
                   ⚖️ Ciro Fark Defteri — Evo ↔ Kasa
-                  {fdefter.acik_adet > 0 && <span style={{ color: 'var(--orange)' }}> · {fdefter.acik_adet} açık karar</span>}
+                  {fAcik > 0 && <span style={{ color: 'var(--orange)' }}> · {fAcik} açık karar</span>}
                 </div>
-                {/* Eksik / Fazla / Net — AYRI göstergeler (sahip isteği); TÜM pencere
-                    toplamları — kararlar verilse de şerit kaybolmaz */}
+                {/* Şube filtresi — her hapta o şubenin NET farkı */}
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
+                  <button className="btn btn-sm" onClick={() => setFdSube(null)}
+                          style={{ background: !fdSube ? 'var(--accent)' : 'var(--bg3)', color: !fdSube ? '#FFF8EC' : 'var(--text2)', border: '1px solid var(--border)' }}>
+                    Tümü · {fmt(tumKayit.reduce((t, k) => t + (k.fark || 0), 0))}
+                  </button>
+                  {subeListe.map(s => (
+                    <button key={s} className="btn btn-sm" onClick={() => setFdSube(fdSube === s ? null : s)}
+                            style={{ background: fdSube === s ? 'var(--accent)' : 'var(--bg3)', color: fdSube === s ? '#FFF8EC' : 'var(--text2)', border: '1px solid var(--border)' }}>
+                      {s} · <span style={{ fontFamily: 'var(--font-mono)', color: fdSube === s ? '#FFF8EC' : (subeNet(s) < 0 ? 'var(--red)' : 'var(--green)') }}>{fmt(subeNet(s))}</span>
+                    </button>
+                  ))}
+                </div>
+                {/* Eksik / Fazla / Net — AYRI göstergeler; seçili şubeye göre yeniden hesaplanır */}
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 8, marginBottom: 10 }}>
                   <div style={{ background: 'rgba(192,58,43,.08)', border: '1px solid rgba(192,58,43,.25)', borderRadius: 8, padding: '8px 10px' }}>
-                    <div style={{ fontSize: 10, color: 'var(--text3)' }}>🔻 EKSİK (kasa &lt; Evo) · {fdefter.tum_eksik_gun ?? fdefter.eksik_gun ?? 0} gün</div>
-                    <div style={{ fontSize: 15, fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--red)' }}>{fmt(fdefter.eksik_toplam ?? 0)}</div>
+                    <div style={{ fontSize: 10, color: 'var(--text3)' }}>🔻 EKSİK (kasa &lt; Evo) · {fEksik.length} gün</div>
+                    <div style={{ fontSize: 15, fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--red)' }}>{fmt(fEksikT)}</div>
                   </div>
                   <div style={{ background: 'rgba(37,121,79,.08)', border: '1px solid rgba(37,121,79,.25)', borderRadius: 8, padding: '8px 10px' }}>
-                    <div style={{ fontSize: 10, color: 'var(--text3)' }}>🔺 FAZLA (kasa &gt; Evo) · {fdefter.tum_fazla_gun ?? fdefter.fazla_gun ?? 0} gün</div>
-                    <div style={{ fontSize: 15, fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--green)' }}>+{fmt(fdefter.fazla_toplam ?? 0)}</div>
+                    <div style={{ fontSize: 10, color: 'var(--text3)' }}>🔺 FAZLA (kasa &gt; Evo) · {fFazla.length} gün</div>
+                    <div style={{ fontSize: 15, fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--green)' }}>+{fmt(fFazlaT)}</div>
                   </div>
                   <div style={{ background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 8, padding: '8px 10px' }}>
-                    <div style={{ fontSize: 10, color: 'var(--text3)' }}>⚖️ NET (eksik+fazla)</div>
-                    <div style={{ fontSize: 15, fontWeight: 700, fontFamily: 'var(--font-mono)', color: (fdefter.tum_net_fark || 0) < 0 ? 'var(--red)' : 'var(--green)' }}>{fmt(fdefter.tum_net_fark ?? fdefter.acik_net_fark ?? 0)}</div>
+                    <div style={{ fontSize: 10, color: 'var(--text3)' }}>⚖️ NET TOPLAM FARK{fdSube ? ` · ${fdSube}` : ''}</div>
+                    <div style={{ fontSize: 15, fontWeight: 700, fontFamily: 'var(--font-mono)', color: fNet < 0 ? 'var(--red)' : 'var(--green)' }}>{fmt(fNet)}</div>
                   </div>
                   <div style={{ background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 8, padding: '8px 10px' }}>
                     <div style={{ fontSize: 10, color: 'var(--text3)' }}>✓ Karar verilen · gidere/gelire yazılan</div>
-                    <div style={{ fontSize: 15, fontWeight: 700, fontFamily: 'var(--font-mono)' }}>{(fdefter.kayitlar || []).length - (fdefter.acik_adet || 0)} · {fdefter.cozulen_adet ?? 0}</div>
+                    <div style={{ fontSize: 15, fontWeight: 700, fontFamily: 'var(--font-mono)' }}>{fRows.length - fAcik} · {fCozulen}</div>
                   </div>
                 </div>
                 <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 8 }}>
@@ -811,7 +838,7 @@ export default function Maliyet() {
                   (iade yapıldı / kasa sayımı farklı) <b>"Kasa doğru"</b>ya tıkla → o gün kasadaki giriş kullanılır.
                   Kasa kayıtlarına dokunulmaz; karar her an geri alınabilir.
                 </div>
-                {(fdefter.kayitlar || []).map(k => (
+                {fRows.map(k => (
                   <div key={k.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, fontSize: 12, padding: '5px 0', borderBottom: '1px solid var(--border)', flexWrap: 'wrap' }}>
                     <span>
                       {k.tarih} · <b>{k.sube_ad || k.sube_id}</b> ·{' '}
@@ -851,7 +878,8 @@ export default function Maliyet() {
                   </div>
                 ))}
               </div>
-            )}
+              );
+            })()}
 
             {/* ── Detay alt-sekmeleri: tablolar üst üste yığılmasın, tek pencerede gezilsin ── */}
             <div style={{ display: 'flex', gap: 6, marginTop: 18, marginBottom: 2, flexWrap: 'wrap', borderBottom: '1px solid var(--border)', paddingBottom: 10 }}>
