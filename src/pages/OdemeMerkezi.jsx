@@ -37,7 +37,21 @@ async function faturaEkiYukle(dosya) {
 const TIP_IKON = {
   'Kredi Kartı': '💳', 'Borç Taksiti': '🏦', 'Sabit Gider': '🏠',
   'Vadeli Alım': '📦', 'Fatura (tutar bekleniyor)': '⚡',
+  'Personel Ödemesi': '👥',
 };
+
+// ── 🗂 ALT SEKMELER (2026-07-19, sahip kurgusu: "her ay ödeme yaptığım
+// alanlar tek alanda, izlenebilir") — sekme=FİLTRE (tek kuyruk, tek veri;
+// Codex: ayrı sayfa yaparsan sayılar tutmaz). Personel sahip kararıyla
+// DAHİL (salt-görünüm; ödeme maaş akışında — guard zaten korur).
+const SEKMELER = [
+  ['tumu', '📋 Tümü', () => true],
+  ['tedarikci', '🏪 Tedarikçi', r => r.kaynak_tablo === 'vadeli_alimlar'],
+  ['kart', '💳 Kart', r => r.tip === 'Kredi Kartı'],
+  ['kredi', '🏦 Kredi', r => r.kaynak_tablo === 'borc_envanteri'],
+  ['personel', '👥 Personel', r => r.kaynak_tablo === 'personel'],
+  ['giderler', '⚡ Giderler', r => r.kaynak_tablo === 'sabit_giderler' || r.tip === 'Sabit Gider' || r.tip === 'Fatura (tutar bekleniyor)'],
+];
 
 const bugunISO = () => new Date().toISOString().slice(0, 10);
 const artiGunISO = (g) => new Date(Date.now() + g * 86400000).toISOString().slice(0, 10);
@@ -50,13 +64,17 @@ export default function OdemeMerkezi() {
   const [pencere, setPencere] = useState(7);
   const [grupla, setGrupla] = useState('zaman'); // 'zaman' | 'tur'
   const [filtre, setFiltre] = useState('tumu');  // 'tumu' | 'bugun' | 'gecikmis' | 'tutar'
+  const [sekme, setSekme] = useState('tumu');    // 🗂 alt sekme (SEKMELER)
+  const [kdvPoz, setKdvPoz] = useState(null);    // 🏛 Resmi Ödemeler (KDV) bloğu
   const toast = (m, t = 'green') => { setMsg({ m, t }); setTimeout(() => setMsg(null), 5000); };
 
   const yukle = useCallback(() => {
-    api(`/odeme-plani/bugun?gun=${pencere}&personel=0`)
+    // personel=1: sahip kurgusu — TÜM çıkışlar tek çatıda görünür (maaş dahil)
+    api(`/odeme-plani/bugun?gun=${pencere}&personel=1`)
       .then(r => setListe(Array.isArray(r) ? r : []))
       .catch(e => { setHata(e?.message || 'Yüklenemedi'); setListe([]); });
-    api('/odeme-plani/kokpit?personel=0').then(setKokpit).catch(() => setKokpit(null));
+    api('/odeme-plani/kokpit?personel=1').then(setKokpit).catch(() => setKokpit(null));
+    api('/ops/maliyet/kdv-pozisyon?gun=30').then(setKdvPoz).catch(() => setKdvPoz(null));
   }, [pencere]);
   useEffect(() => { yukle(); }, [yukle]);
   // FAZ D — AP mutabakat sağlığı (cari borç ↔ ödeme kuyruğu tutuyor mu)
@@ -76,6 +94,10 @@ export default function OdemeMerkezi() {
   const [mesgul, setMesgul] = useState(false);
 
   const ac = (r) => {
+    if (r.kaynak_tablo === 'personel') {
+      toast('👥 Maaş/avans ödemesi kendi akışından yapılır (Personel & Maaş ekranı) — burada sadece izlenir.', 'yellow');
+      return;
+    }
     setSec(r); setMod('tam');
     setTutar(r.tutar_girilmedi ? (r.tahmini_tutar || '') : r.tutar);
     setKalanVade(''); setYontem('nakit'); setKartId(''); setDosya(null); setHata('');
@@ -236,7 +258,8 @@ export default function OdemeMerkezi() {
   // ── ☑ ÇOKLU SEÇİM + ÖDEME KOŞUSU ──
   const [secim, setSecim] = useState(() => new Set());
   const [kosu, setKosu] = useState(null);   // {yontem, kartId, sonuc: null|[{id,baslik,tutar,ok,mesaj}], calisiyor}
-  const secilebilir = (r) => !r.tutar_girilmedi && !String(r.id).startsWith('fatura_');
+  // personel satırı seçilemez/ödenemez (v1 salt-görünüm — maaş akışı tek yazıcı)
+  const secilebilir = (r) => !r.tutar_girilmedi && !String(r.id).startsWith('fatura_') && r.kaynak_tablo !== 'personel';
   const secToggle = (id) => setSecim(s => {
     const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n;
   });
@@ -270,9 +293,12 @@ export default function OdemeMerkezi() {
   };
 
   // ── LİSTE HESAPLARI ──
-  const gecikmis = (liste || []).filter(r => r.gecikmis);
-  const bugunkuler = (liste || []).filter(r => !r.gecikmis && (r.gun_gecikme === 0 || r.tutar_girilmedi));
-  const yaklasan = (liste || []).filter(r => !r.gecikmis && r.gun_gecikme < 0 && !r.tutar_girilmedi);
+  // 🗂 önce alt sekme süzer (tek kuyruk üstünde filtre), sonra zaman/tür bölümleri
+  const sekmePred = (SEKMELER.find(([k]) => k === sekme) || SEKMELER[0])[2];
+  const sekmeListe = (liste || []).filter(sekmePred);
+  const gecikmis = sekmeListe.filter(r => r.gecikmis);
+  const bugunkuler = sekmeListe.filter(r => !r.gecikmis && (r.gun_gecikme === 0 || r.tutar_girilmedi));
+  const yaklasan = sekmeListe.filter(r => !r.gecikmis && r.gun_gecikme < 0 && !r.tutar_girilmedi);
   const topla = (arr) => arr.reduce((s, r) => s + (Number(r.tutar) || 0), 0);
   const gecikmisT = topla(gecikmis), bugunT = topla(bugunkuler), yaklasanT = topla(yaklasan);
 
@@ -319,8 +345,12 @@ export default function OdemeMerkezi() {
             </div>
             {r.asgari != null && <div style={{ fontSize: 10, color: 'var(--text3)' }}>asgari {fmt(r.asgari)}</div>}
           </span>
-          <button className="btn btn-primary btn-sm" onClick={e => { e.stopPropagation(); ac(r); }}
-            style={{ minWidth: 86 }}>{r.tutar_girilmedi ? 'Tutarı Gir' : 'Öde ›'}</button>
+          {r.kaynak_tablo === 'personel' ? (
+            <span style={{ fontSize: 11, color: 'var(--text3)', minWidth: 86, textAlign: 'right' }}>maaş akışında</span>
+          ) : (
+            <button className="btn btn-primary btn-sm" onClick={e => { e.stopPropagation(); ac(r); }}
+              style={{ minWidth: 86 }}>{r.tutar_girilmedi ? 'Tutarı Gir' : 'Öde ›'}</button>
+          )}
         </span>
       </div>
     );
@@ -340,15 +370,16 @@ export default function OdemeMerkezi() {
     ['💳 KREDİ KARTLARI', ['Kredi Kartı']],
     ['🏦 KREDİLER / TAKSİTLER', ['Borç Taksiti']],
     ['📦 VADELİ BORÇLAR (TEDARİKÇİ)', ['Vadeli Alım']],
+    ['👥 PERSONEL (MAAŞ / AVANS)', ['Personel Ödemesi']],
     ['⚡ DEĞİŞKEN FATURALAR', ['Fatura (tutar bekleniyor)']],
     ['🏠 SABİT GİDERLER', ['Sabit Gider']],
   ];
   const turSirala = (arr) => [...arr].sort((a, b) => (b.gecikmis ? 1 : 0) - (a.gecikmis ? 1 : 0) || (b.gun_gecikme || 0) - (a.gun_gecikme || 0));
   const turGruplari = TUR_GRUPLARI.map(([ad, tipler]) => {
-    const satirlar = turSirala(filtreUygula((liste || []).filter(r => tipler.includes(r.tip))));
+    const satirlar = turSirala(filtreUygula(sekmeListe.filter(r => tipler.includes(r.tip))));
     return { ad, satirlar, toplam: topla(satirlar), gecikmisVar: satirlar.some(r => r.gecikmis) };
   });
-  const turDisi = turSirala(filtreUygula((liste || []).filter(r => !TUR_GRUPLARI.some(([, t]) => t.includes(r.tip)))));
+  const turDisi = turSirala(filtreUygula(sekmeListe.filter(r => !TUR_GRUPLARI.some(([, t]) => t.includes(r.tip)))));
 
   // Sihirbaz seçenek kartı
   const SecenekKart = ({ ikon, ad, alt, onClick }) => (
@@ -453,10 +484,51 @@ export default function OdemeMerkezi() {
       )}
       {hata && !sec && !siha && <div className="alert-box red mb-16">{hata}</div>}
       {liste === null && <div style={{ color: 'var(--text3)' }}>Yükleniyor…</div>}
+
+      {/* 🗂 ALT SEKMELER — sahip kurgusu: her ay ödeme yapılan alanlar tek çatıda */}
+      {liste !== null && (
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
+          {SEKMELER.map(([k, et, pred]) => {
+            const arr = (liste || []).filter(pred);
+            const t = topla(arr);
+            const aktif = sekme === k;
+            const gecVar = arr.some(r => r.gecikmis);
+            return (
+              <button key={k} onClick={() => { setSekme(k); setSecim(new Set()); }}
+                style={{ padding: '10px 14px', borderRadius: 10, cursor: 'pointer',
+                         border: aktif ? '2px solid var(--accent)' : '1px solid var(--border)',
+                         background: aktif ? 'var(--accent-dim, var(--bg3, var(--bg2)))' : 'var(--bg2)',
+                         fontWeight: aktif ? 800 : 600, fontSize: 13,
+                         display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span>{et}</span>
+                <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)',
+                               color: gecVar ? 'var(--red)' : 'var(--text3)' }}>
+                  {arr.length}{t > 0 ? ` · ${fmt(t)}` : ''}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {/* 🏛 RESMİ ÖDEMELER bloğu (v1: sekme değil blok — ikinci resmi tip gelince terfi) */}
+      {sekme === 'tumu' && kdvPoz && (kdvPoz.toplam_odenecek_tl || 0) > 0 && (
+        <div className="card" style={{ padding: '10px 16px', marginBottom: 10, display: 'flex',
+                                       justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <span style={{ fontWeight: 700, fontSize: 13 }}>
+            🏛 Resmi Ödemeler — Ödenecek KDV (son {kdvPoz.gun} gün)
+            <span style={{ fontWeight: 400, fontSize: 11, color: 'var(--text3)' }}> · bilgi amaçlı, kuyruğa dahil değil</span>
+          </span>
+          <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 800 }}>≈ {fmt(kdvPoz.toplam_odenecek_tl)}</span>
+        </div>
+      )}
+
       {liste !== null && (
         <div className="card" style={{ padding: 16, marginBottom: 14 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6, flexWrap: 'wrap', gap: 6 }}>
-            <div style={{ fontWeight: 800 }}>📋 Bekleyenler ({liste.length})</div>
+            <div style={{ fontWeight: 800 }}>
+              {(SEKMELER.find(([k]) => k === sekme) || SEKMELER[0])[1]} — Bekleyenler ({sekmeListe.length})
+            </div>
             <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
               {[['tumu', 'Tümü'], ['gecikmis', '⚠ Gecikmiş'], ['bugun', '🗓 Bugün'], ['tutar', '⚡ Tutar bekleyen']].map(([f, et]) => (
                 <button key={f} className="btn btn-secondary btn-sm"
@@ -477,10 +549,10 @@ export default function OdemeMerkezi() {
               ))}
             </div>
           </div>
-          {liste.length === 0 && (
+          {sekmeListe.length === 0 && (
             <div style={{ textAlign: 'center', padding: 30, color: 'var(--text3)' }}>
               <div style={{ fontSize: 40, marginBottom: 6 }}>🎉</div>
-              Bekleyen ödeme yok — kasan rahat.
+              {sekme === 'tumu' ? 'Bekleyen ödeme yok — kasan rahat.' : 'Bu alanda bekleyen ödeme yok.'}
             </div>
           )}
           {grupla === 'zaman' ? (
@@ -498,9 +570,10 @@ export default function OdemeMerkezi() {
               <Bolum ad="DİĞER" renk="var(--text3)" satirlar={turDisi} toplam={topla(turDisi)} />
             </>
           )}
-          {liste.length > 0 && (
+          {sekmeListe.length > 0 && (
             <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 6 }}>
               ☑ Kutucuklarla birden çok ödeme seçip alttan tek seferde ödeyebilirsin.
+              {sekme === 'personel' && ' Maaş/avans ödemeleri kendi akışından yapılır — burada izlenir.'}
             </div>
           )}
         </div>
