@@ -973,7 +973,9 @@ def _llm_cagir(system: str, kullanici: str, max_tokens: int = 900) -> Tuple[str,
     if okey:
         try:
             from openai import OpenAI
-            client = OpenAI(api_key=okey)
+            # LLM_BASE_URL doluysa OpenAI-uyumlu sağlayıcı (örn. Gemini ücretsiz katman)
+            client = OpenAI(api_key=okey,
+                            base_url=(os.getenv("LLM_BASE_URL") or "").strip() or None)
             # Derinlik v0.3: sentez modeli yükseltildi — günde 1-2 çağrı, açıklama
             # kalitesi maliyetten önemli (kullanıcı: "bebek gibi konuşuyor")
             model = os.getenv("OPENAI_BEYIN_MODEL", "gpt-4o")

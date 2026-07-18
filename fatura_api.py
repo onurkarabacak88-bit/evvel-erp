@@ -186,7 +186,10 @@ def _vision_ocr(foto: bytes, mime: str) -> Dict[str, Any]:
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY yok")
     from openai import OpenAI
-    client = OpenAI(api_key=api_key)
+    # LLM_BASE_URL doluysa OpenAI-uyumlu başka sağlayıcı (örn. Gemini ücretsiz
+    # katman: generativelanguage.googleapis.com/v1beta/openai/) kullanılır
+    client = OpenAI(api_key=api_key,
+                    base_url=(os.getenv("LLM_BASE_URL") or "").strip() or None)
     b64 = base64.b64encode(foto).decode("ascii")
     resp = client.chat.completions.create(
         model=os.getenv("OPENAI_FATURA_MODEL", "gpt-4o"),  # fatura kritik → tam model
@@ -255,7 +258,10 @@ def _text_ocr(metin: str) -> Dict[str, Any]:
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY yok")
     from openai import OpenAI
-    client = OpenAI(api_key=api_key)
+    # LLM_BASE_URL doluysa OpenAI-uyumlu başka sağlayıcı (örn. Gemini ücretsiz
+    # katman: generativelanguage.googleapis.com/v1beta/openai/) kullanılır
+    client = OpenAI(api_key=api_key,
+                    base_url=(os.getenv("LLM_BASE_URL") or "").strip() or None)
     govde = (metin or "").strip()[:12000]  # uzun faturada bağlamı sınırla
     son_hata: Optional[Exception] = None
     for _deneme in range(2):

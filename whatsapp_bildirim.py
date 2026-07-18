@@ -768,7 +768,9 @@ def _ai_denetim_yorumu(ozetler: list) -> tuple[str, str]:
     if openai_key:
         try:
             from openai import OpenAI
-            client = OpenAI(api_key=openai_key)
+            # LLM_BASE_URL doluysa OpenAI-uyumlu sağlayıcı (örn. Gemini ücretsiz katman)
+            client = OpenAI(api_key=openai_key,
+                            base_url=(os.getenv("LLM_BASE_URL") or "").strip() or None)
             resp = client.chat.completions.create(
                 model=os.getenv("OPENAI_AKILLI_DENETIM_MODEL", "gpt-4o-mini"),
                 messages=[{"role": "user", "content": prompt}],
