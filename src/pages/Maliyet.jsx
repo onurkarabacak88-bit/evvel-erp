@@ -303,6 +303,14 @@ export default function Maliyet() {
       yukle(); // P&L cirosu karara göre değişir — tazele
     } catch (e) { alert(e?.message || 'karar kaydedilemedi'); }
   }
+  async function farkGidereYaz(id) {
+    try {
+      const r = await api(`/ciro-taslak/fark-defteri/${id}/gidere-yaz`, { method: 'POST', body: {} });
+      alert(`${fmt(r?.tutar)} kasa açığı anlık gider olarak yazıldı.`);
+      fdYukle();
+      yukle();
+    } catch (e) { alert(e?.message || 'gidere yazılamadı'); }
+  }
 
   // Analiz sekmesi — TÜM (satış) şubelerin dönem özeti (karşılaştırma kartları için)
   useEffect(() => {
@@ -785,22 +793,34 @@ export default function Maliyet() {
                 {(fdefter.kayitlar || []).map(k => (
                   <div key={k.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, fontSize: 12, padding: '5px 0', borderBottom: '1px solid var(--border)', flexWrap: 'wrap' }}>
                     <span>
-                      {k.tarih} · <b>{k.sube_ad || k.sube_id}</b> · kasa {fmt(k.girilen)} / evo {fmt(k.evo)} ·{' '}
-                      <b style={{ color: (k.fark || 0) < 0 ? 'var(--red)' : 'var(--green)' }}>
-                        {(k.fark || 0) < 0 ? 'açık' : 'fazla'} {fmt(Math.abs(k.fark || 0))}
-                      </b>
-                      {k.durum !== 'acik' && (
-                        <span style={{ color: 'var(--green)' }}> · ✓ {k.durum === 'girilen_dogru' ? 'kasa doğru (P&L kasa girişini kullanır)' : 'evo doğru'}</span>
+                      {k.tarih} · <b>{k.sube_ad || k.sube_id}</b> ·{' '}
+                      {k.girilen == null ? (
+                        <span style={{ color: 'var(--blue)' }}>girilmemiş gün → Evo {fmt(k.evo)} maliyete işlendi 🤖</span>
+                      ) : (
+                        <>
+                          kasa {fmt(k.girilen)} / evo {fmt(k.evo)} ·{' '}
+                          <b style={{ color: (k.fark || 0) < 0 ? 'var(--red)' : 'var(--green)' }}>
+                            {(k.fark || 0) < 0 ? 'açık' : 'fazla'} {fmt(Math.abs(k.fark || 0))}
+                          </b>
+                        </>
                       )}
+                      {k.durum === 'girilen_dogru' && <span style={{ color: 'var(--green)' }}> · ✓ kasa doğru (P&L kasa girişini kullanır)</span>}
+                      {k.durum === 'evo_dogru' && <span style={{ color: 'var(--green)' }}> · ✓ evo doğru</span>}
+                      {k.durum === 'gidere_yazildi' && <span style={{ color: 'var(--green)' }}> · ✓ açık anlık gidere yazıldı (kasadan düştü)</span>}
                     </span>
-                    {k.durum === 'acik' ? (
-                      <span style={{ display: 'inline-flex', gap: 6 }}>
+                    {k.durum === 'acik' && k.girilen != null ? (
+                      <span style={{ display: 'inline-flex', gap: 6, flexWrap: 'wrap' }}>
                         <button className="btn btn-sm btn-secondary" onClick={() => farkKarar(k.id, 'girilen_dogru')}>✓ Kasa doğru (iade/sayım)</button>
                         <button className="btn btn-sm btn-secondary" onClick={() => farkKarar(k.id, 'evo_dogru')}>✓ Evo doğru</button>
+                        {(k.fark || 0) < 0 && (
+                          <button className="btn btn-sm btn-danger" onClick={() => {
+                            if (window.confirm(`${k.tarih} ${k.sube_ad || ''}: ${fmt(Math.abs(k.fark))} kasa açığı ANLIK GİDER olarak yazılsın mı? (kasadan düşer)`)) farkGidereYaz(k.id);
+                          }}>💸 Açığı gidere yaz</button>
+                        )}
                       </span>
-                    ) : (
+                    ) : (k.durum === 'girilen_dogru' || k.durum === 'evo_dogru') ? (
                       <button className="btn btn-sm btn-ghost" onClick={() => farkKarar(k.id, 'acik')}>geri al</button>
-                    )}
+                    ) : null}
                   </div>
                 ))}
               </div>

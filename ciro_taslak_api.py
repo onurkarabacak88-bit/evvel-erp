@@ -357,6 +357,49 @@ def ciro_fark_karar(fid: str, body: FarkKararBody):
     return {"ok": True, "karar": body.karar}
 
 
+@router.post("/fark-defteri/{fid}/gidere-yaz")
+def ciro_fark_gidere_yaz(fid: str):
+    """SAHİP KARARI (2026-07-18): 'en son hesaplanan tutarı anlık gider olarak
+    gir; tıklarsam kasadan düşebilsin' — EKSİK (kasa < Evo) günün açığı tek
+    tıkla ANLIK GİDER olur (kasa açığı). Yazım main'in kanonik anlık gider
+    yazarı üzerinden gider (kasa düşümü + izler orada — tek-yazıcı ilkesi).
+    P&L o günün cirosunu Evo'dan almaya devam eder (satış gerçeği), eksik
+    para da gider olarak düşer — defter tutarlı kapanır."""
+    with db() as (_, cur):
+        _fark_defteri_ensure(cur)
+        cur.execute("""SELECT id, sube_id, sube_ad, tarih::text AS tarih,
+                              girilen::float AS girilen, evo::float AS evo,
+                              fark::float AS fark, durum
+                       FROM ciro_fark_defteri WHERE id=%s""", (fid,))
+        r = cur.fetchone()
+    if not r:
+        raise HTTPException(404, "fark kaydı bulunamadı")
+    r = dict(r)
+    if r["durum"] == "gidere_yazildi":
+        raise HTTPException(400, "bu fark zaten gidere yazılmış")
+    fark = float(r.get("fark") or 0)
+    if fark >= 0:
+        raise HTTPException(400, "yalnız EKSİK (kasa açığı) günler gidere yazılır")
+    from main import anlik_gider_ekle, AnlikGider  # istek anında — döngüsel import yok
+    from datetime import date as _d2
+    g = AnlikGider(
+        tarih=_d2.fromisoformat(r["tarih"][:10]),
+        kategori="Kasa Açığı (Evo farkı)",
+        tutar=round(abs(fark), 2),
+        aciklama=(f"⚖️ Ciro fark defteri {r['tarih']} {r.get('sube_ad') or ''}: "
+                  f"Evo {r['evo']:.0f} − kasa {r['girilen']:.0f} (tek tık sahip onayı)"),
+        sube=(r.get("sube_ad") or "MERKEZ"),
+        odeme_yontemi="nakit")
+    sonuc = anlik_gider_ekle(g)
+    with db() as (_, cur):
+        cur.execute("""UPDATE ciro_fark_defteri
+                       SET durum='gidere_yazildi',
+                           karar_aciklama='kasa açığı anlık gidere yazıldı',
+                           karar_ts=NOW()
+                       WHERE id=%s""", (fid,))
+    return {"ok": True, "gider": sonuc, "tutar": round(abs(fark), 2)}
+
+
 @router.post("/eksik-gun-tara")
 def eksik_gun_ciro_tara(body: EksikGunTaraBody):
     """DUYU — EVO-GÜDÜMLÜ gece sweep'i: Evo'da SATIŞ olan ama Evvel'de ciro OLMAYAN
@@ -378,6 +421,18 @@ def eksik_gun_ciro_tara(body: EksikGunTaraBody):
         return {"oneriler": [], "evo_hata": str(e), "mesaj": "Evo modülü yüklenemedi."}
     oneriler = []; evo_hata = None
     with db() as (conn, cur):
+        # SAHİP KARARI (2026-07-18): kuyruktaki 🤖 Evo günlük taslakları TAMAMEN
+        # kaldırılır — girilmemiş gün artık onay kuyruğuna düşmez, Maliyet P&L
+        # Evo'dan doğrudan okur (fark defteri üzerinden). Personelin gönderdiği
+        # ciro taslaklarına (gonderen_ad farklı) DOKUNULMAZ. İdempotent.
+        try:
+            cur.execute("""UPDATE ciro_taslak
+                           SET durum='reddedildi',
+                               aciklama = COALESCE(aciklama,'') ||
+                                   ' · sahip kararı 18.07: Evo maliyete doğrudan işlenir (kuyruktan kaldırıldı)'
+                           WHERE durum='bekliyor' AND gonderen_ad='Evo Oto-Denetim'""")
+        except Exception:  # noqa: BLE001
+            pass
         cur.execute("SELECT id, ad FROM subeler WHERE aktif=TRUE")
         subeler = [dict(r) for r in cur.fetchall()]
         for k in range(1, gun_sayisi + 1):
@@ -436,21 +491,23 @@ def eksik_gun_ciro_tara(body: EksikGunTaraBody):
                         except Exception:  # noqa: BLE001
                             pass
                     continue
-                cur.execute("SELECT 1 FROM ciro_taslak WHERE sube_id=%s AND tarih=%s::date AND durum='bekliyor' LIMIT 1", (sid, ts))
-                if cur.fetchone():
-                    oneriler.append({"sube": sad, "tarih": ts, "nakit": nakit, "pos": pos, "toplam": toplam, "durum": "zaten_oneri_var"})
-                    continue
-                kayit = {"sube": sad, "tarih": ts, "nakit": nakit, "pos": pos, "toplam": toplam}
-                if body.uygula:
-                    cur.execute("""
-                        INSERT INTO ciro_taslak (id, sube_id, tarih, nakit, pos, online, durum, aciklama, gonderen_ad)
-                        VALUES (%s, %s, %s::date, %s, %s, 0, 'bekliyor',
-                                '🤖 Evo oto-denetim — kapanışı girilmemiş gün (onay bekliyor)', 'Evo Oto-Denetim')
-                        ON CONFLICT DO NOTHING
-                    """, (str(_uuid.uuid4()), sid, ts, nakit, pos))
-                    kayit["durum"] = "oneri_olusturuldu" if cur.rowcount else "zaten_var"
-                else:
-                    kayit["durum"] = "onizleme"
+                # SAHİP KARARI (2026-07-18): girilmemiş gün ONAY KUYRUĞUNA DÜŞMEZ —
+                # fark defterine 'evo_kullaniliyor' olarak yazılır; Maliyet P&L o
+                # günün cirosunu doğrudan Evo'dan alır. Kasa/ciro kaydı ÜRETİLMEZ
+                # (kasa dünyası ayrı — sahip isterse defterden görür).
+                kayit = {"sube": sad, "tarih": ts, "nakit": nakit, "pos": pos,
+                         "toplam": toplam, "durum": "evo_maliyete_islendi"}
+                try:
+                    _fark_defteri_ensure(cur)
+                    cur.execute(
+                        """INSERT INTO ciro_fark_defteri
+                               (sube_id, sube_ad, tarih, girilen, evo, fark, durum)
+                           VALUES (%s,%s,%s::date,NULL,%s,NULL,'evo_kullaniliyor')
+                           ON CONFLICT (sube_id, tarih) DO UPDATE
+                             SET evo=EXCLUDED.evo, sube_ad=EXCLUDED.sube_ad""",
+                        (sid, sad, ts, toplam))
+                except Exception:  # noqa: BLE001
+                    kayit["durum"] = "defter_hatasi"
                 oneriler.append(kayit)
     yeni = [o for o in oneriler if o.get("durum") in ("onizleme", "oneri_olusturuldu")]
     farklar = [o for o in oneriler if o.get("durum") == "fark"]
