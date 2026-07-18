@@ -525,6 +525,96 @@ def _pdf_regex_yedek(metin: str) -> Optional[Dict[str, Any]]:
             "kalemler": [], "yontem": "regex_yedek"}
 
 
+def _tr_tutar(s: str) -> Optional[float]:
+    """'1.360,8000 TL' → 1360.8 (TR sayı biçimi, TL/boşluk toleranslı)."""
+    m = re.search(r"([\d.]+,\d+|[\d.]+)", str(s or ""))
+    if not m:
+        return None
+    try:
+        return round(float(m.group(1).replace(".", "").replace(",", ".")), 4)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _pdf_kod_kalemler(pdf_bytes: bytes, fatura_no: Optional[str] = None) -> List[Dict[str, Any]]:
+    """KOD-BİRİNCİL kalem çıkarımı (2026-07-18, sahip: 'PDF okumasını kendi
+    yapsın, yapamadığını yapay zekâdan destek alsın'). pdfplumber TABLO yapısını
+    ayıklar: başlığında Sıra+Miktar geçen tablo = kalem tablosu; her satırda
+    sıra(no int) / kod / ad / '3 Adet' miktar / birim fiyat / satır toplam.
+    GÜVEN KAPISI: satırların ≥%80'inde adet×birim_fiyat ≈ satır_toplam (±%2)
+    tutmalı — tutmuyorsa [] döner ve LLM devralır (yanlış kalem yazılmaz).
+    Çok faturalı PDF'te fatura_no verilirse yalnız o numaranın sayfaları okunur."""
+    try:
+        import pdfplumber  # type: ignore
+    except Exception:  # noqa: BLE001
+        return []
+    kalemler: List[Dict[str, Any]] = []
+    try:
+        with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+            for sayfa in pdf.pages:
+                if fatura_no:
+                    _pt = (sayfa.extract_text() or "")
+                    if fatura_no not in _pt.replace(" ", ""):
+                        continue
+                for tablo in sayfa.extract_tables() or []:
+                    if not tablo or len(tablo) < 2:
+                        continue
+                    baslik = [str(h or "").lower().replace("\n", " ") for h in tablo[0]]
+                    b_metin = " ".join(baslik)
+                    if "miktar" not in b_metin or not any(
+                            ("s" in h and "ra" in h and "no" in h) or h.startswith("sıra")
+                            for h in baslik):
+                        continue
+
+                    def _kolon(anahtar, yasak=None):
+                        for i, h in enumerate(baslik):
+                            if anahtar in h and not (yasak and yasak in h):
+                                return i
+                        return None
+                    i_kod = _kolon("kod")
+                    i_ad = next((i for i, h in enumerate(baslik)
+                                 if ("mal" in h or "hizmet" in h) and "kod" not in h
+                                 and "tut" not in h), None)
+                    i_mik = _kolon("miktar")
+                    i_bf = _kolon("birim")
+                    for row in tablo[1:]:
+                        hucre = [str(c or "").strip() for c in row]
+                        if not hucre or not re.fullmatch(r"\d{1,3}", hucre[0] or ""):
+                            continue  # toplam/altbilgi satırı
+                        mik_s = hucre[i_mik] if (i_mik is not None and i_mik < len(hucre)) else ""
+                        m_mik = re.search(r"([\d.,]+)\s*([A-Za-zÇĞİÖŞÜçğıöşü]*)", mik_s)
+                        adet = _tr_tutar(m_mik.group(1)) if m_mik else None
+                        birim = (m_mik.group(2) or "Adet") if m_mik else "Adet"
+                        bf = _tr_tutar(hucre[i_bf]) if (i_bf is not None and i_bf < len(hucre)) else None
+                        # satır toplamı = sağdan ilk TL'li dolu hücre (kolon kayması toleransı)
+                        st = None
+                        for c in reversed(hucre):
+                            if "TL" in c and _tr_tutar(c):
+                                st = _tr_tutar(c)
+                                break
+                        ad = hucre[i_ad].replace("\n", " ")[:120] if (i_ad is not None and i_ad < len(hucre)) else ""
+                        kod = hucre[i_kod][:30] if (i_kod is not None and i_kod < len(hucre) and hucre[i_kod]) else None
+                        if adet and st:
+                            kalemler.append({"ad": ad or None, "urun_kodu": kod,
+                                             "adet": adet, "birim": birim,
+                                             "birim_fiyat": bf, "satir_toplam": st})
+    except Exception as e:  # noqa: BLE001
+        logger.warning("pdf kod kalem parse hatasi: %s", str(e)[:120])
+        return []
+    if not kalemler:
+        return []
+    # GÜVEN KAPISI — satır içi tutarlılık
+    uygun = sum(1 for k in kalemler
+                if k.get("birim_fiyat") and
+                abs(k["adet"] * k["birim_fiyat"] - k["satir_toplam"])
+                <= max(0.5, k["satir_toplam"] * 0.02))
+    if uygun < max(1, int(len(kalemler) * 0.8)):
+        logger.info("pdf kod kalemler guven kapisini gecemedi (%d/%d) — LLM devralacak",
+                    uygun, len(kalemler))
+        return []
+    return kalemler
+
+
 def _ocr_calistir(fatura_id: str) -> None:
     """Arka plan iş parçacığı — kendi DB bağlantısı. Hiçbir hata fırlatmaz.
     _OCR_FRENI: aynı anda en çok 3 OCR (pool + LLM kota koruması)."""
@@ -538,7 +628,7 @@ def _ocr_calistir_icerik(fatura_id: str) -> None:
         with db() as (conn, cur):
             _ensure_tablolar(cur)
             cur.execute(
-                "SELECT foto, foto_mime, kaynak_metin FROM tedarikci_fatura WHERE id=%s",
+                "SELECT foto, foto_mime, kaynak_metin, fatura_no FROM tedarikci_fatura WHERE id=%s",
                 (fatura_id,),
             )
             r = cur.fetchone()
@@ -548,10 +638,22 @@ def _ocr_calistir_icerik(fatura_id: str) -> None:
             foto = bytes(d.get("foto") or b"")
             mime = d.get("foto_mime") or "image/jpeg"
             kaynak_metin = (d.get("kaynak_metin") or "").strip()
+            _fno = (d.get("fatura_no") or "").strip() or None
 
-        # Kaynak: PDF metni varsa text yolu (vision YOK), yoksa foto vision OCR.
+        # PDF yolu — KOD BİRİNCİL (sahip 2026-07-18: 'PDF okumasını kendi
+        # yapsın, yapamadığını yapay zekâdan destek alsın'): kimlik+tutar regex,
+        # kalemler tablo parser'ı. İkisi de doluysa LLM HİÇ ÇAĞRILMAZ
+        # (determinizm + kota tasarrufu). Kod yetmezse LLM devralır; LLM de
+        # patlarsa kod ne bulduysa onunla işlenir (aşağıdaki yedek dal).
         if kaynak_metin:
-            j = _text_ocr(kaynak_metin)
+            j_kod = _pdf_regex_yedek(kaynak_metin)
+            kalemler_kod = _pdf_kod_kalemler(foto, _fno) if foto else []
+            if j_kod and kalemler_kod:
+                j = {**j_kod, "kalemler": kalemler_kod, "yontem": "kod_tam"}
+                logger.info("fatura KOD ile tam okundu (LLM'siz): %s (%d kalem)",
+                            fatura_id, len(kalemler_kod))
+            else:
+                j = _text_ocr(kaynak_metin)
         elif foto:
             j = _vision_ocr(foto, mime)
         else:
