@@ -292,6 +292,17 @@ export default function App() {
   const mainRef = useRef(null);
   const Page = PAGES[page] || Panel;
   const [onayBekleyen, setOnayBekleyen] = useState(0);
+  // 📦 Teslim bildirimleri (sahip 2026-07-18): personel teslim alınca görünür
+  // bilgi notu; 'Tamam' kalıcıdır (sunucuda görüldü defteri) — bir daha çıkmaz
+  const [teslimler, setTeslimler] = useState([]);
+  const teslimYukle = () => api('/teslim-bildirim/liste?gun=7')
+    .then(d => setTeslimler(d?.olaylar || [])).catch(() => setTeslimler([]));
+  async function teslimGordum(anahtar) {
+    try {
+      await api('/teslim-bildirim/gordum', { method: 'POST', body: { anahtar } });
+      setTeslimler(t => t.filter(o => o.anahtar !== anahtar));
+    } catch (_) { /* bildirim çökse akış yaşar */ }
+  }
   const [ciroBekleyen, setCiroBekleyen] = useState(0);
   const [bugunAnomali, setBugunAnomali] = useState(0);
   const [yeniBasvuru, setYeniBasvuru] = useState(0);
@@ -326,6 +337,7 @@ export default function App() {
       api('/stok-sayim/bekleyen-onay')
         .then(d => setStokSayimBekleyen(Number(d?.toplam) || 0))
         .catch(() => {});
+      teslimYukle();
     };
     yukle();
     const timer = setInterval(yukle, 60000);
@@ -478,6 +490,28 @@ export default function App() {
             <span style={{ fontSize: 11, color: 'var(--text3)' }}>
               {NAV.flatMap(g => g.items).find(i => i.id === page)?.label || page}
             </span>
+          </div>
+        )}
+        {/* 📦 Görülmemiş teslim bildirimleri — 'Tamam' kalıcı, bir daha çıkmaz */}
+        {teslimler.length > 0 && (
+          <div style={{ margin: '12px 24px 0', display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {teslimler.slice(0, 4).map(o => (
+              <div key={o.anahtar} style={{
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12,
+                padding: '9px 14px', borderRadius: 10, fontSize: 13,
+                background: 'var(--accent-dim)', border: '1px solid var(--accent-border)',
+              }}>
+                <span>
+                  📦 <b>{o.sube_ad}</b> · {String(o.zaman).replace('T', ' ')} — {o.tur}:{' '}
+                  <b>{o.kalem_adet} kalem / {Math.round(o.toplam_miktar)} adet</b> depoya işlendi
+                  {' '}<span style={{ color: 'var(--text3)' }}>· detay: Operasyon Merkezi → Stok Hareketi</span>
+                </span>
+                <button className="btn btn-sm btn-primary" onClick={() => teslimGordum(o.anahtar)}>Tamam</button>
+              </div>
+            ))}
+            {teslimler.length > 4 && (
+              <div style={{ fontSize: 11, color: 'var(--text3)', paddingLeft: 4 }}>+ {teslimler.length - 4} teslim daha…</div>
+            )}
           </div>
         )}
         {/* Sayfa geçiş koreografisi — key=page: her sekme değişiminde içerik

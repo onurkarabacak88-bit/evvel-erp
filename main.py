@@ -121,6 +121,15 @@ except Exception as _fatura_istek_err:
     logging.getLogger(__name__).warning(
         f"fatura_istek modulu yuklenemedi (izole, ana akis etkilenmez): {_fatura_istek_err}"
     )
+# Teslim Bildirim Akışı — İZOLE (sahip 2026-07-18: 'personel teslim alınca
+# haberim olsun; Tamam deyince bir daha çıkmasın'). Salt-okur türetme.
+try:
+    from teslim_bildirim_api import router as teslim_bildirim_router
+    app.include_router(teslim_bildirim_router)
+except Exception as _teslim_bild_err:
+    logging.getLogger(__name__).warning(
+        f"teslim_bildirim modulu yuklenemedi (izole, ana akis etkilenmez): {_teslim_bild_err}"
+    )
 # Personel Puan Defteri — İZOLE (öneri-only; puan maaşa otomatik bağlanmaz).
 try:
     from personel_puan_api import router as personel_puan_router

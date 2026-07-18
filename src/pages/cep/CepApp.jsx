@@ -163,6 +163,52 @@ function Baslik({ baslik, onGeri, sag }) {
   );
 }
 
+// ── 📦 Teslim bildirimleri (sahip 2026-07-18: 'personel teslim alınca haberim
+// olsun; Tamam deyince bir daha çıkmasın') — kendi kendine yeten kart ─────────
+function CepTeslimBildirim() {
+  const [olaylar, setOlaylar] = useState([]);
+  const yukle = () => api('/teslim-bildirim/liste?gun=7')
+    .then(d => setOlaylar(d?.olaylar || [])).catch(() => setOlaylar([]));
+  useEffect(() => {
+    yukle();
+    const t = setInterval(yukle, 90000);
+    return () => clearInterval(t);
+  }, []);
+  async function gordum(anahtar) {
+    try {
+      await api('/teslim-bildirim/gordum', { method: 'POST', body: { anahtar } });
+      setOlaylar(o => o.filter(x => x.anahtar !== anahtar));
+    } catch (_) { /* bildirim çökse akış yaşar */ }
+  }
+  if (!olaylar.length) return null;
+  return (
+    <div style={{ margin: '4px 14px 12px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+      {olaylar.slice(0, 3).map(o => (
+        <div key={o.anahtar} style={{
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10,
+          background: 'rgba(210,154,91,.12)', border: '1px solid rgba(210,154,91,.35)',
+          borderRadius: 14, padding: '12px 14px',
+        }}>
+          <div style={{ fontSize: 13, color: C.t1, lineHeight: 1.45 }}>
+            📦 <b>{o.sube_ad}</b> · {String(o.zaman).replace('T', ' ')}
+            <div style={{ fontSize: 12, color: C.t3 }}>
+              {o.tur}: <b style={{ color: C.t2 }}>{o.kalem_adet} kalem / {Math.round(o.toplam_miktar)} adet</b> depoya işlendi
+            </div>
+          </div>
+          <button onClick={() => gordum(o.anahtar)} style={{
+            background: '#D29A5B', color: '#241A12', border: 'none', borderRadius: 10,
+            padding: '10px 16px', fontSize: 14, fontWeight: 800, cursor: 'pointer',
+            flexShrink: 0, minHeight: 44,
+          }}>Tamam</button>
+        </div>
+      ))}
+      {olaylar.length > 3 && (
+        <div style={{ fontSize: 11, color: C.t3, paddingLeft: 4 }}>+ {olaylar.length - 3} teslim daha…</div>
+      )}
+    </div>
+  );
+}
+
 // ── Güncel Kasa hareketleri modalı (alt-sayfa) ──────────────────────────────
 function CepKasaModal({ kasa, onKapat }) {
   const hareketler = kasa.hareketler || [];
@@ -288,6 +334,9 @@ function CepHome({ sayac, kasa, onKasa, onAc, onCikis, yenile }) {
           color: C.t2, padding: '8px 12px', fontSize: 13, cursor: 'pointer',
         }}>Çıkış</button>
       </div>
+
+      {/* 📦 Teslim bildirimleri — personel teslim alınca sahip görsün; Tamam kalıcı */}
+      <CepTeslimBildirim />
 
       {/* Güncel Kasa — CFO'daki gibi, tıkla → hareketler modalı */}
       <button onClick={onKasa} style={{
