@@ -385,7 +385,8 @@ export default function OdemeMerkezi() {
   const SecenekKart = ({ ikon, ad, alt, onClick }) => (
     <button onClick={onClick}
       style={{ flex: 1, minWidth: 160, padding: '18px 12px', borderRadius: 12, cursor: 'pointer',
-               border: '2px solid var(--border)', background: 'var(--bg2)', textAlign: 'center' }}>
+               border: '2px solid var(--border)', background: 'var(--bg2)', textAlign: 'center',
+               color: 'var(--text, inherit)' /* ham <button> koyu temada siyah yazar — okunmazdı */ }}>
       <div style={{ fontSize: 30 }}>{ikon}</div>
       <div style={{ fontWeight: 800, fontSize: 15, marginTop: 4 }}>{ad}</div>
       <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>{alt}</div>
@@ -499,6 +500,7 @@ export default function OdemeMerkezi() {
                          border: aktif ? '2px solid var(--accent)' : '1px solid var(--border)',
                          background: aktif ? 'var(--accent-dim, var(--bg3, var(--bg2)))' : 'var(--bg2)',
                          fontWeight: aktif ? 800 : 600, fontSize: 13,
+                         color: 'var(--text, inherit)',
                          display: 'flex', alignItems: 'center', gap: 8 }}>
                 <span>{et}</span>
                 <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)',
@@ -602,7 +604,7 @@ export default function OdemeMerkezi() {
         <div className="modal-overlay" onClick={e => e.target === e.currentTarget && !kosu.calisiyor && setKosu(null)}>
           <div className="modal" style={{ maxWidth: 520 }}>
             <div className="modal-header"><h3>💸 Ödeme Koşusu — {seciliSatirlar.length || (kosu.sonuc || []).length} ödeme</h3></div>
-            <div style={{ padding: '4px 16px 12px', display: 'grid', gap: 10 }}>
+            <div className="form-group" style={{ padding: '4px 16px 12px', display: 'grid', gap: 10 }}>
               {!kosu.sonuc && (
                 <>
                   <div style={{ maxHeight: 220, overflowY: 'auto', fontSize: 12 }}>
@@ -622,7 +624,8 @@ export default function OdemeMerkezi() {
                       <button key={k} onClick={() => setKosu(x => ({ ...x, yontem: k }))}
                         style={{ flex: 1, padding: '12px 8px', borderRadius: 10, cursor: 'pointer',
                                  border: `2px solid ${kosu.yontem === k ? 'var(--accent)' : 'var(--border)'}`,
-                                 background: kosu.yontem === k ? 'var(--accent-dim, var(--bg2))' : 'var(--bg2)', textAlign: 'center' }}>
+                                 background: kosu.yontem === k ? 'var(--accent-dim, var(--bg2))' : 'var(--bg2)',
+                                 color: 'var(--text, inherit)', textAlign: 'center' }}>
                         <div style={{ fontSize: 22 }}>{ikon}</div>
                         <div style={{ fontWeight: 800, fontSize: 14 }}>{ad}</div>
                         <div style={{ fontSize: 10, color: 'var(--text3)' }}>{alt}</div>
@@ -696,7 +699,7 @@ export default function OdemeMerkezi() {
                 {siha === 'fatura' && '📄 Okunmuş Faturayı Takvime Koy'}
               </h3>
             </div>
-            <div style={{ padding: '4px 16px 12px', display: 'grid', gap: 10 }}>
+            <div className="form-group" style={{ padding: '4px 16px 12px', display: 'grid', gap: 10 }}>
               {siha === 'soru' && (
                 <>
                   <div style={{ fontSize: 13, color: 'var(--text2, var(--text))' }}>Para kasadan/karttan <b>çıktı mı?</b></div>
@@ -841,7 +844,7 @@ export default function OdemeMerkezi() {
         <div className="modal-overlay" onClick={e => e.target === e.currentTarget && kapat()}>
           <div className="modal" style={{ maxWidth: 460 }}>
             <div className="modal-header"><h3>{TIP_IKON[sec.tip] || '💸'} {sec.baslik}</h3></div>
-            <div style={{ padding: '4px 16px 12px', display: 'grid', gap: 10 }}>
+            <div className="form-group" style={{ padding: '4px 16px 12px', display: 'grid', gap: 10 }}>
               {hata && <div className="alert-box red">{hata}</div>}
               {sec.tutar_girilmedi ? (
                 <>
@@ -874,7 +877,8 @@ export default function OdemeMerkezi() {
                       <button key={k} onClick={() => setYontem(k)}
                         style={{ flex: 1, padding: '12px 8px', borderRadius: 10, cursor: 'pointer',
                                  border: `2px solid ${yontem === k ? 'var(--accent)' : 'var(--border)'}`,
-                                 background: yontem === k ? 'var(--accent-dim, var(--bg2))' : 'var(--bg2)', textAlign: 'center' }}>
+                                 background: yontem === k ? 'var(--accent-dim, var(--bg2))' : 'var(--bg2)',
+                                 color: 'var(--text, inherit)', textAlign: 'center' }}>
                         <div style={{ fontSize: 22 }}>{ikon}</div>
                         <div style={{ fontWeight: 800, fontSize: 14 }}>{ad}</div>
                         <div style={{ fontSize: 10, color: 'var(--text3)' }}>{alt}</div>
