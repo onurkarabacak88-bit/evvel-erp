@@ -146,6 +146,30 @@ export default function BelgeMerkezi() {
         <span style={{ fontSize: 12, color: 'var(--text3)' }}>
           cari · vadeler · fatura arşivi · belge açığı — tek merkez
         </span>
+        {/* Masaüstünden belge yükleme (sahip 2026-07-18: 'masaüstünden de
+            belge yüklemeyi konumlandır') — Maliyet'teki PDF yoluna delege */}
+        <label className="btn btn-sm btn-primary" style={{ marginLeft: 'auto', cursor: 'pointer' }}>
+          📎 Fatura PDF Yükle
+          <input type="file" accept="application/pdf" multiple style={{ display: 'none' }}
+            onChange={async e => {
+              const dosyalar = [...(e.target.files || [])];
+              e.target.value = '';
+              if (!dosyalar.length) return;
+              let ok = 0, atlanan = 0;
+              for (const f of dosyalar) {
+                try {
+                  const fd = new FormData();
+                  fd.append('pdf', f);
+                  const r = await fetch('/api/fatura/yukle-pdf', { method: 'POST', body: fd });
+                  const j = await r.json();
+                  if (!r.ok) throw new Error(j?.detail || 'yüklenemedi');
+                  ok += j?.yuklenen || 0; atlanan += j?.atlanan_mevcut || 0;
+                } catch (err) { alert(`${f.name}: ${err?.message || 'yüklenemedi'}`); }
+              }
+              alert(`${ok} fatura yüklendi${atlanan ? ` · ${atlanan} zaten vardı (atlandı)` : ''} — okuma arka planda; kota doluysa gece tamamlanır.`);
+              api(`/fatura/belge-merkezi?ay=${ay}`).then(setD).catch(() => {});
+            }} />
+        </label>
       </div>
       {/* KPI ŞERİDİ — gecikmiş her zaman en gürültülü (Codex kuralı) */}
       {mk && (
