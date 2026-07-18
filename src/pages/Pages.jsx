@@ -95,7 +95,6 @@ export function OnayKuyrugu() {
   const [msg, setMsg] = useState(null);
   const [reddetModal, setReddetModal] = useState(null);
   const [gorunum, setGorunum] = useState('bekliyor'); // bekliyor | gecmis
-  const [kategori, setKategori] = useState('gider');   // gider | kasa
   const [secili, setSecili] = useState(new Set());
   const [topluYukleniyor, setTopluYukleniyor] = useState(false);
   const load = () => {
@@ -116,11 +115,11 @@ export function OnayKuyrugu() {
   }
 
   // İşlem türünde "KASA" geçen kalemler = kasa hataları (KAPANIS_KASA_FARK,
-  // ACILIS_KASA_FARK …); diğerleri = şube giderleri (ANLIK_GIDER, SABIT_GIDER …).
+  // ACILIS_KASA_FARK …). Sahip kararı (2026-07-18): kasa hataları BU KUYRUKTAN
+  // KALDIRILDI — onayları Maliyet ekranındaki isteğe bağlı '⚖️ Kasa Hataları'
+  // bölümünden yapılır. Burada yalnız şube giderleri görünür.
   const kasaHatasiMi = (o) => String(o.islem_turu || '').toUpperCase().includes('KASA');
-  const giderSayi = liste.filter(o => !kasaHatasiMi(o)).length;
-  const kasaSayi = liste.filter(o => kasaHatasiMi(o)).length;
-  const gorunenListe = liste.filter(o => kategori === 'kasa' ? kasaHatasiMi(o) : !kasaHatasiMi(o));
+  const gorunenListe = liste.filter(o => !kasaHatasiMi(o));
 
   function toggleSecim(id) {
     setSecili(prev => {
@@ -128,11 +127,6 @@ export function OnayKuyrugu() {
       s.has(id) ? s.delete(id) : s.add(id);
       return s;
     });
-  }
-
-  function kategoriDegis(k) {
-    setKategori(k);
-    setSecili(new Set()); // sekme değişince seçim sıfırlansın (gizli kalem seçili kalmasın)
   }
 
   function tumunuSec() {
@@ -175,7 +169,7 @@ export function OnayKuyrugu() {
       <div className="page-header flex items-center justify-between">
         <div>
           <h2>✅ Onay Kuyruğu</h2>
-          <p>{gorunenListe.length} {gorunum === 'bekliyor' ? 'bekleyen' : 'geçmiş'} {kategori === 'kasa' ? 'kasa hatası' : 'şube gideri'}</p>
+          <p>{gorunenListe.length} {gorunum === 'bekliyor' ? 'bekleyen' : 'geçmiş'} şube gideri · kasa hataları Maliyet ekranında</p>
         </div>
         <div style={{display:'flex',gap:8,alignItems:'center'}}>
           <button
@@ -207,23 +201,8 @@ export function OnayKuyrugu() {
           </div>
         )}
       </div>
-      {/* Kategori sekmeleri — karışıklığı önler: giderler ayrı, kasa hataları ayrı */}
-      <div style={{display:'flex',gap:8,marginBottom:16,borderBottom:'1px solid var(--border)',paddingBottom:12}}>
-        <button
-          className={`btn btn-sm ${kategori==='gider'?'btn-primary':'btn-ghost'}`}
-          onClick={()=>kategoriDegis('gider')}
-        >
-          🏪 Şube Giderleri ({giderSayi})
-        </button>
-        <button
-          className={`btn btn-sm ${kategori==='kasa'?'btn-primary':'btn-ghost'}`}
-          onClick={()=>kategoriDegis('kasa')}
-        >
-          ⚖️ Kasa Hataları ({kasaSayi})
-        </button>
-      </div>
       {!gorunenListe.length ? (
-        <div className="empty"><div className="icon">✅</div><p>{gorunum === 'bekliyor' ? `Bekleyen ${kategori === 'kasa' ? 'kasa hatası' : 'şube gideri'} yok` : 'Geçmiş kayıt yok'}</p></div>
+        <div className="empty"><div className="icon">✅</div><p>{gorunum === 'bekliyor' ? 'Bekleyen şube gideri yok' : 'Geçmiş kayıt yok'}</p></div>
       ) : (
         <div className="table-wrap">
           <table>

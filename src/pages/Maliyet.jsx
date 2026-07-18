@@ -312,6 +312,23 @@ export default function Maliyet() {
       yukle();
     } catch (e) { alert(e?.message || 'gidere yazılamadı'); }
   }
+  // ⚖️ Kasa Hataları onayı (sahip 2026-07-18: Onay Kuyruğu'ndan KALDIRILDI,
+  // Maliyet'te İSTEĞE BAĞLI bölüm oldu) — aynı onay-kuyruğu uçları kullanılır
+  const [khListe, setKhListe] = useState([]);
+  const [khAcik, setKhAcik] = useState(false);
+  const khYukle = () => api('/onay-kuyrugu?durum=bekliyor&limit=400')
+    .then(d => setKhListe((d || []).filter(o => String(o.islem_turu || '').toUpperCase().includes('KASA'))))
+    .catch(() => setKhListe([]));
+  useEffect(() => { khYukle(); }, []);
+  async function khOnayla(id) {
+    try { await api(`/onay-kuyrugu/${id}/onayla`, { method: 'POST' }); khYukle(); yukle(); }
+    catch (e) { alert(e?.message || 'onaylanamadı'); }
+  }
+  async function khReddet(id) {
+    if (!window.confirm('Bu kasa hatası kaydı reddedilsin mi? (plan iptal olur, kaynak aktif kalır)')) return;
+    try { await api(`/onay-kuyrugu/${id}/reddet`, { method: 'POST', body: { neden: 'maliyet_ekrani_red' } }); khYukle(); }
+    catch (e) { alert(e?.message || 'reddedilemedi'); }
+  }
   async function farkGelireYaz(id) {
     try {
       const r = await api(`/ciro-taslak/fark-defteri/${id}/gelire-yaz`, { method: 'POST', body: {} });
@@ -880,6 +897,33 @@ export default function Maliyet() {
               </div>
               );
             })()}
+
+            {/* ── ⚖️ KASA HATALARI (Onay Kuyruğu'ndan taşındı — isteğe bağlı bölüm) ── */}
+            {khListe.length > 0 && (
+              <div className="card" style={{ marginTop: 14 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontWeight: 700, fontSize: 13 }}>
+                    ⚖️ Kasa Hataları — onay bekleyen <span style={{ color: 'var(--orange)' }}>{khListe.length}</span>
+                    <span style={{ color: 'var(--text3)', fontWeight: 400, fontSize: 11 }}> · Onay Kuyruğu'ndan buraya taşındı</span>
+                  </span>
+                  <button className="btn btn-sm btn-secondary" onClick={() => setKhAcik(v => !v)}>{khAcik ? 'gizle ▴' : 'göster ▾'}</button>
+                </div>
+                {khAcik && khListe.map(o => (
+                  <div key={o.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, fontSize: 12, padding: '5px 0', borderBottom: '1px solid var(--border)', flexWrap: 'wrap' }}>
+                    <span>
+                      {o.tarih} · <span className="badge badge-yellow">{o.islem_turu}</span> · {(o.aciklama || '').slice(0, 60)}
+                      {' '}<b style={{ fontFamily: 'var(--font-mono)', color: parseFloat(o.tutar) >= 0 ? 'var(--green)' : 'var(--red)' }}>
+                        {o.tutar != null ? `${parseFloat(o.tutar).toLocaleString('tr-TR', { maximumFractionDigits: 0 })} ₺` : '—'}
+                      </b>
+                    </span>
+                    <span style={{ display: 'inline-flex', gap: 6 }}>
+                      <button className="btn btn-sm btn-primary" onClick={() => khOnayla(o.id)}>✓ Onayla</button>
+                      <button className="btn btn-sm btn-danger" onClick={() => khReddet(o.id)}>✕ Reddet</button>
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
 
             {/* ── Detay alt-sekmeleri: tablolar üst üste yığılmasın, tek pencerede gezilsin ── */}
             <div style={{ display: 'flex', gap: 6, marginTop: 18, marginBottom: 2, flexWrap: 'wrap', borderBottom: '1px solid var(--border)', paddingBottom: 10 }}>
