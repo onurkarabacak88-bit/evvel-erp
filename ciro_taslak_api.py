@@ -400,6 +400,45 @@ def ciro_fark_gidere_yaz(fid: str):
     return {"ok": True, "gider": sonuc, "tutar": round(abs(fark), 2)}
 
 
+@router.post("/fark-defteri/{fid}/gelire-yaz")
+def ciro_fark_gelire_yaz(fid: str):
+    """Simetrik buton (sahip 2026-07-18: 'onu da yaz'): FAZLA (kasa > Evo) günün
+    fazlası tek tıkla DIŞ KAYNAK GELİRİ olur — kasa defterine gelir olarak
+    işlenir (main.dis_kaynak_ekle kanonik yazarı; kasa girişi + izler orada).
+    P&L cirosu Evo'da kalır (satış gerçeği); fazla para satış-dışı gelir."""
+    with db() as (_, cur):
+        _fark_defteri_ensure(cur)
+        cur.execute("""SELECT id, sube_id, sube_ad, tarih::text AS tarih,
+                              girilen::float AS girilen, evo::float AS evo,
+                              fark::float AS fark, durum
+                       FROM ciro_fark_defteri WHERE id=%s""", (fid,))
+        r = cur.fetchone()
+    if not r:
+        raise HTTPException(404, "fark kaydı bulunamadı")
+    r = dict(r)
+    if r["durum"] in ("gelire_yazildi", "gidere_yazildi"):
+        raise HTTPException(400, "bu fark zaten kayda geçmiş")
+    fark = float(r.get("fark") or 0)
+    if fark <= 0:
+        raise HTTPException(400, "yalnız FAZLA (kasa > Evo) günler gelire yazılır")
+    from main import dis_kaynak_ekle, DisKaynakGelir  # istek anında — döngüsel import yok
+    from datetime import date as _d2
+    g = DisKaynakGelir(
+        tarih=_d2.fromisoformat(r["tarih"][:10]),
+        kategori="Kasa Fazlası (Evo farkı)",
+        tutar=round(fark, 2),
+        aciklama=(f"⚖️ Ciro fark defteri {r['tarih']} {r.get('sube_ad') or ''}: "
+                  f"kasa {r['girilen']:.0f} − Evo {r['evo']:.0f} (tek tık sahip onayı)"))
+    sonuc = dis_kaynak_ekle(g)
+    with db() as (_, cur):
+        cur.execute("""UPDATE ciro_fark_defteri
+                       SET durum='gelire_yazildi',
+                           karar_aciklama='kasa fazlası dış kaynak gelirine yazıldı',
+                           karar_ts=NOW()
+                       WHERE id=%s""", (fid,))
+    return {"ok": True, "gelir": sonuc, "tutar": round(fark, 2)}
+
+
 @router.post("/eksik-gun-tara")
 def eksik_gun_ciro_tara(body: EksikGunTaraBody):
     """DUYU — EVO-GÜDÜMLÜ gece sweep'i: Evo'da SATIŞ olan ama Evvel'de ciro OLMAYAN

@@ -311,6 +311,14 @@ export default function Maliyet() {
       yukle();
     } catch (e) { alert(e?.message || 'gidere yazılamadı'); }
   }
+  async function farkGelireYaz(id) {
+    try {
+      const r = await api(`/ciro-taslak/fark-defteri/${id}/gelire-yaz`, { method: 'POST', body: {} });
+      alert(`${fmt(r?.tutar)} kasa fazlası dış kaynak geliri olarak yazıldı.`);
+      fdYukle();
+      yukle();
+    } catch (e) { alert(e?.message || 'gelire yazılamadı'); }
+  }
 
   // Analiz sekmesi — TÜM (satış) şubelerin dönem özeti (karşılaştırma kartları için)
   useEffect(() => {
@@ -807,6 +815,7 @@ export default function Maliyet() {
                       {k.durum === 'girilen_dogru' && <span style={{ color: 'var(--green)' }}> · ✓ kasa doğru (P&L kasa girişini kullanır)</span>}
                       {k.durum === 'evo_dogru' && <span style={{ color: 'var(--green)' }}> · ✓ evo doğru</span>}
                       {k.durum === 'gidere_yazildi' && <span style={{ color: 'var(--green)' }}> · ✓ açık anlık gidere yazıldı (kasadan düştü)</span>}
+                      {k.durum === 'gelire_yazildi' && <span style={{ color: 'var(--green)' }}> · ✓ fazla dış kaynak gelirine yazıldı (kasaya girdi)</span>}
                     </span>
                     {k.durum === 'acik' && k.girilen != null ? (
                       <span style={{ display: 'inline-flex', gap: 6, flexWrap: 'wrap' }}>
@@ -816,6 +825,11 @@ export default function Maliyet() {
                           <button className="btn btn-sm btn-danger" onClick={() => {
                             if (window.confirm(`${k.tarih} ${k.sube_ad || ''}: ${fmt(Math.abs(k.fark))} kasa açığı ANLIK GİDER olarak yazılsın mı? (kasadan düşer)`)) farkGidereYaz(k.id);
                           }}>💸 Açığı gidere yaz</button>
+                        )}
+                        {(k.fark || 0) > 0 && (
+                          <button className="btn btn-sm btn-secondary" onClick={() => {
+                            if (window.confirm(`${k.tarih} ${k.sube_ad || ''}: ${fmt(k.fark)} kasa fazlası DIŞ KAYNAK GELİRİ olarak yazılsın mı? (kasaya gelir girer)`)) farkGelireYaz(k.id);
+                          }}>💰 Fazlayı gelir yaz</button>
                         )}
                       </span>
                     ) : (k.durum === 'girilen_dogru' || k.durum === 'evo_dogru') ? (
