@@ -1866,6 +1866,11 @@ def cari_ekstre(tedarikci: str = ""):
 # SİPARİŞ → TESLİM → BELGE TALEBİ → FATURA → ÖDEME İZİ halkaları. Satır-bazlı
 # varyans BİLİNÇLİ ertelendi (fizibilite: kanonik ürün kimliği + birim dönüşümü
 # önkoşul; N2 bulgusu: sipariş fiyatı siparişe yazılmıyor). Salt-okur, öneri-only.
+# Sahip kararı (2026-07-18): zincir YALNIZ 15 Temmuz 2026 SONRASI siparişlerde
+# çalışır — öncesinde teslim-al/belge disiplini oturmamıştı, 'teslim alınmadı /
+# fatura yok' uyarıları eski dönem için normaldi ve gürültü üretiyordu.
+MUTABAKAT_BASLANGIC = "2026-07-15"
+
 
 def mutabakat_zinciri() -> dict:
     from datetime import date as _d
@@ -1878,9 +1883,9 @@ def mutabakat_zinciri() -> dict:
                       bt.durum AS belge_durum, bt.kapanis_tipi, bt.fatura_id
                FROM toptanci_siparis ts
                LEFT JOIN belge_talep bt ON bt.ts_id = ts.id
-               WHERE ts.olusturma >= CURRENT_DATE - 60
+               WHERE ts.olusturma >= GREATEST(CURRENT_DATE - 60, %s::date)
                  AND COALESCE(ts.durum,'') NOT IN ('iptal','iptal_edildi')
-               ORDER BY ts.olusturma DESC""")
+               ORDER BY ts.olusturma DESC""", (MUTABAKAT_BASLANGIC,))
         siparisler = [dict(r) for r in cur.fetchall() or []]
         cur.execute(
             """SELECT siparis_talep_id, id, COALESCE(toplam_tutar,0)::float AS tutar,
@@ -1949,9 +1954,12 @@ def mutabakat_zinciri() -> dict:
                              ("id", "tedarikci_ad", "siparis_tarihi")},
                           "halkalar": halka, "eksik": eksik})
     return {
-        "pencere_gun": 60, "siparis_adet": len(siparisler), "sayac": sayac,
+        "pencere_gun": 60, "baslangic": MUTABAKAT_BASLANGIC,
+        "siparis_adet": len(siparisler), "sayac": sayac,
         "eksik_zincirler": [z for z in zincirler if z["eksik"]][:25],
         "not": ("Belge-SEVİYESİ zincir (v1): sipariş→teslim→belge→fatura→ödeme izi. "
+                "YALNIZ 15.07.2026 sonrası siparişler denetlenir (sahip kararı — "
+                "öncesinde teslim-al/belge disiplini yoktu, uyarılar normaldi). "
                 "Ödeme izi = tutar/tarih aday eşleşmesi (kesin mutabakat değil; "
                 "kısmi ödeme/çok-fatura-tek-ödeme izi düşürebilir). Satır-bazlı "
                 "varyans, kanonik ürün kimliği kurulunca (öneri-only)."),

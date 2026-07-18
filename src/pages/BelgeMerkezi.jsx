@@ -350,7 +350,7 @@ export default function BelgeMerkezi() {
           {sekme === 'genel' && mz && mz.siparis_adet > 0 && (mz.sayac?.tam ?? 0) < mz.siparis_adet && (
             <div className="card" style={{ padding: 16, marginBottom: 14 }}>
               <div style={{ fontWeight: 800, marginBottom: 4 }}>
-                🔗 Mutabakat Zinciri — son 60 gün: {mz.sayac.tam}/{mz.siparis_adet} sipariş TAM
+                🔗 Mutabakat Zinciri — 15 Temmuz'dan beri: {mz.sayac.tam}/{mz.siparis_adet} sipariş TAM
               </div>
               <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 6 }}>
                 sipariş → teslim → belge → fatura → ödeme izi
