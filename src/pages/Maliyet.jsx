@@ -784,15 +784,29 @@ export default function Maliyet() {
               <div className="card" style={{ marginTop: 14 }}>
                 <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 4 }}>
                   ⚖️ Ciro Fark Defteri — Evo ↔ Kasa
-                  {fdefter.acik_adet > 0 && (
-                    <span style={{ color: 'var(--orange)' }}>
-                      {' '}· {fdefter.acik_adet} açık karar · NET {fmt(fdefter.acik_net_fark ?? 0)}
-                      <span style={{ color: 'var(--text3)', fontWeight: 400 }}>
-                        {' '}(eksik {fdefter.eksik_gun ?? '—'} gün / fazla {fdefter.fazla_gun ?? '—'} gün · mutlak {fmt(fdefter.acik_toplam_fark)})
-                      </span>
-                    </span>
-                  )}
+                  {fdefter.acik_adet > 0 && <span style={{ color: 'var(--orange)' }}> · {fdefter.acik_adet} açık karar</span>}
                 </div>
+                {/* Eksik / Fazla / Net — AYRI göstergeler (sahip isteği) */}
+                {fdefter.acik_adet > 0 && (
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 8, marginBottom: 10 }}>
+                    <div style={{ background: 'rgba(192,58,43,.08)', border: '1px solid rgba(192,58,43,.25)', borderRadius: 8, padding: '8px 10px' }}>
+                      <div style={{ fontSize: 10, color: 'var(--text3)' }}>🔻 EKSİK (kasa &lt; Evo) · {fdefter.eksik_gun} gün</div>
+                      <div style={{ fontSize: 15, fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--red)' }}>{fmt(fdefter.eksik_toplam ?? 0)}</div>
+                    </div>
+                    <div style={{ background: 'rgba(37,121,79,.08)', border: '1px solid rgba(37,121,79,.25)', borderRadius: 8, padding: '8px 10px' }}>
+                      <div style={{ fontSize: 10, color: 'var(--text3)' }}>🔺 FAZLA (kasa &gt; Evo) · {fdefter.fazla_gun} gün</div>
+                      <div style={{ fontSize: 15, fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--green)' }}>+{fmt(fdefter.fazla_toplam ?? 0)}</div>
+                    </div>
+                    <div style={{ background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 8, padding: '8px 10px' }}>
+                      <div style={{ fontSize: 10, color: 'var(--text3)' }}>⚖️ NET (eksik+fazla)</div>
+                      <div style={{ fontSize: 15, fontWeight: 700, fontFamily: 'var(--font-mono)', color: (fdefter.acik_net_fark || 0) < 0 ? 'var(--red)' : 'var(--green)' }}>{fmt(fdefter.acik_net_fark ?? 0)}</div>
+                    </div>
+                    <div style={{ background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 8, padding: '8px 10px' }}>
+                      <div style={{ fontSize: 10, color: 'var(--text3)' }}>Σ MUTLAK (işaretsiz)</div>
+                      <div style={{ fontSize: 15, fontWeight: 700, fontFamily: 'var(--font-mono)' }}>{fmt(fdefter.acik_toplam_fark ?? 0)}</div>
+                    </div>
+                  </div>
+                )}
                 <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 8 }}>
                   Kâr-zarar cirosu bu günlerde EVO'dan kabul edilir (varsayılan — POS gerçeği). Fark meşruysa
                   (iade yapıldı / kasa sayımı farklı) <b>"Kasa doğru"</b>ya tıkla → o gün kasadaki giriş kullanılır.

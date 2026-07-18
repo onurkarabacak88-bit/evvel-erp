@@ -97,6 +97,11 @@ def ciro_fark_defteri_liste(gun: int = 45):
             "acik_net_fark": round(sum((r["fark"] or 0) for r in acik), 2),
             "eksik_gun": len([r for r in acik if (r["fark"] or 0) < 0]),
             "fazla_gun": len([r for r in acik if (r["fark"] or 0) > 0]),
+            # Sahip isteği (2026-07-18): eksik/fazla TUTARLARI ayrı ayrı görünsün
+            "eksik_toplam": round(sum((r["fark"] or 0) for r in acik
+                                      if (r["fark"] or 0) < 0), 2),
+            "fazla_toplam": round(sum((r["fark"] or 0) for r in acik
+                                      if (r["fark"] or 0) > 0), 2),
             "not": ("Maliyet P&L cirosu bu deftere bakar: 'açık' ve 'evo_dogru' "
                     "günlerde EVO kabul edilir; 'girilen_dogru' günlerde kasadaki "
                     "giriş kullanılır. Kasa/ciro kayıtlarına dokunulmaz.")}
