@@ -119,6 +119,64 @@ def odeme_plani_bugun(gun: int = 0, personel: int = 1):
     return out
 
 
+@router.get("/api/odeme-plani/kokpit")
+def odeme_plani_kokpit(personel: int = 0):
+    """💸 NAKİT KOKPİTİ (2026-07-19, sahip 'adam akıllı ele alalım'; Codex çaprazlı).
+    SALT-OKUR karar bağlamı: kasa bakiyesi + gecikmiş + 7/30 gün zorunlu çıkış +
+    gün gün 'en düşük beklenen bakiye' (≈ projected floor — ciro tahminli, kesinlik
+    iddiası YOK; UI ≈ ile gösterir). ABEK motoru kurulunca zenginleşir, onu beklemez.
+    ?personel=0: maaş planları hariç (hub v1 ile aynı kapsam — maaş sonra)."""
+    from finans_core import kasa_bakiyesi, gunluk_ciro_ortalama
+    from tr_saat import bugun_tr
+    from datetime import timedelta
+    bugun = bugun_tr()
+    with db() as (conn, cur):
+        kasa = float(kasa_bakiyesi(cur) or 0)
+        cur.execute(
+            """SELECT tarih, COALESCE(odenecek_tutar,0)::float AS tutar, kaynak_tablo
+               FROM odeme_plani
+               WHERE durum = 'bekliyor' AND tarih <= %s""",
+            (bugun + timedelta(days=30),))
+        rows = [dict(r) for r in cur.fetchall() or []]
+        ciro = gunluk_ciro_ortalama(cur)
+    if not personel:
+        rows = [r for r in rows if (r.get("kaynak_tablo") or "") != "personel"]
+    gecikmis = [r for r in rows if r["tarih"] < bugun]
+    gecikmis_t = round(sum(r["tutar"] for r in gecikmis), 2)
+    gun_cikis: dict = {}
+    for r in rows:
+        d = max(0, (r["tarih"] - bugun).days)  # gecikmiş = bugün ödenmeli varsayımı
+        gun_cikis[d] = gun_cikis.get(d, 0.0) + r["tutar"]
+    cikis_7 = round(sum(t for d, t in gun_cikis.items() if d <= 7), 2)
+    cikis_30 = round(sum(t for d, t in gun_cikis.items() if d <= 30), 2)
+    # ── Projected floor: bakiye(d) = kasa + ciro_tahmini(1..d) − çıkışlar(0..d).
+    # Gün 0 ciro eklemez (bugünün cirosu belirsiz) — bilinçli temkin.
+    tahmin = float(ciro.get("tahmin") or 0)
+    katsayi = ciro.get("gunluk_katsayi") or {}
+    bakiye, en_dusuk, en_dusuk_gun, seri = kasa, kasa, bugun, []
+    for d in range(0, 31):
+        t = bugun + timedelta(days=d)
+        if d > 0:
+            bakiye += tahmin * float(katsayi.get(str(t.isoweekday()), 1.0) or 1.0)
+        bakiye -= gun_cikis.get(d, 0.0)
+        seri.append({"tarih": str(t), "bakiye": round(bakiye, 2)})
+        if bakiye < en_dusuk:
+            en_dusuk, en_dusuk_gun = bakiye, t
+    return {
+        "kasa": round(kasa, 2),
+        "gecikmis_toplam": gecikmis_t,
+        "gecikmis_adet": len(gecikmis),
+        "cikis_7": cikis_7,
+        "cikis_30": cikis_30,
+        "ciro_gunluk_tahmin": round(tahmin, 2),
+        "en_dusuk_bakiye": round(en_dusuk, 2),
+        "en_dusuk_tarih": str(en_dusuk_gun),
+        "projeksiyon": seri,
+        "not": ("≈ tahmindir: ciro son 7/30 gün ağırlıklı ortalama + gün-tipi katsayısı; "
+                "çıkışlar yalnız bekleyen ödeme planı (maaş hariç). Kesinlik iddiası yok."),
+    }
+
+
 @router.get("/api/odeme-plani")
 def odeme_plani_listele():
     with db() as (conn, cur):
