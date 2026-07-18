@@ -39,9 +39,12 @@ def odeme_plani_bugun(gun: int = 0, personel: int = 1):
         cur.execute(
             """SELECT op.id, op.tarih, op.odenecek_tutar, op.asgari_tutar,
                       op.aciklama, op.kaynak_tablo, op.kaynak_id, k.banka, k.kart_adi,
+                      va.tedarikci AS vadeli_tedarikci,
                       (CURRENT_DATE - op.tarih) AS gun_gecikme
                FROM odeme_plani op
                LEFT JOIN kartlar k ON k.id = op.kart_id
+               LEFT JOIN vadeli_alimlar va
+                      ON op.kaynak_tablo = 'vadeli_alimlar' AND va.id = op.kaynak_id
                WHERE op.durum = 'bekliyor'
                  AND op.tarih <= CURRENT_DATE + %s
                ORDER BY op.tarih ASC""", (gun,)
@@ -58,7 +61,7 @@ def odeme_plani_bugun(gun: int = 0, personel: int = 1):
             baslik = r.get("aciklama") or KAYNAK_AD.get(r.get("kaynak_tablo") or "", "Ödeme")
             tip = KAYNAK_AD.get(r.get("kaynak_tablo") or "", "Ödeme")
         gun_g = int(r.get("gun_gecikme") or 0)
-        out.append({
+        satir = {
             "id": r["id"],
             "baslik": baslik,
             "tip": tip,
@@ -68,7 +71,17 @@ def odeme_plani_bugun(gun: int = 0, personel: int = 1):
             "tarih": str(r["tarih"]),
             "gecikmis": gun_g > 0,
             "gun_gecikme": gun_g,
-        })
+        }
+        # 🏷 vadeli satıra tedarikçi + mal/hizmet sınıfı (ÖM: elektrik gibi
+        # hizmet faturaları Tedarikçi sekmesine DEĞİL Giderler'e düşer)
+        if r.get("vadeli_tedarikci"):
+            satir["tedarikci"] = r["vadeli_tedarikci"]
+            try:
+                from fatura_api import tedarikci_sinif
+                satir["tedarikci_sinif"] = tedarikci_sinif(r["vadeli_tedarikci"])
+            except Exception:  # noqa: BLE001
+                satir["tedarikci_sinif"] = "mal"
+        out.append(satir)
 
     # 🧾 TUTARI GİRİLMEMİŞ değişken faturalar (planı YOK, o yüzden yukarıda çıkmaz) —
     # cep de görsün ki unutulmasın (kullanıcı 2026-07-04: "girmeyi unutmayacak sistem").

@@ -1928,6 +1928,24 @@ def _cari_zincir(faturalar: list) -> list:
     return faturalar
 
 
+# ── 🏷 TEDARİKÇİ SINIFI (2026-07-19, sahip: 'elektrik faturasını tedarikçi
+# alanında bulunduramayız'): mal tedarikçisi (kahve/gıda/ambalaj) ≠ hizmet
+# sağlayıcı (elektrik/uydu/telekom). Deterministik anahtar kelime — Ödeme
+# Merkezi'nde hizmetçiler ⚡ Giderler sekmesine düşer. Yanlış sınıf görürsek
+# liste büyür (kod=veri, tek merkez burası).
+_HIZMET_KELIMELERI = (
+    "ENERJ", "ELEKTR", "DOĞALGAZ", "DOGALGAZ", "TELEKOM", "UYDU",
+    "İLETİŞİM", "ILETISIM", "INTERNET", "İNTERNET", "GSM", "TURKCELL",
+    "VODAFONE", "SİGORTA", "SIGORTA", "MUHASEBE", "MALİ MÜŞAVİR",
+)
+
+
+def tedarikci_sinif(ad: str) -> str:
+    """'hizmet' (fatura sağlayıcı — Giderler alanı) | 'mal' (ürün tedarikçisi)."""
+    u = (ad or "").upper()
+    return "hizmet" if any(k in u for k in _HIZMET_KELIMELERI) else "mal"
+
+
 def cari_ozet() -> dict:
     """Tüm tedarikçilerin cari özeti — beyin (B48) + bağ + UI. Salt-okur.
     Pencere sistem başlangıcından önceye taşmaz (Haziran 2026 öncesi veri yok)."""
@@ -2096,6 +2114,8 @@ def cari_ozet() -> dict:
             "bekleyen_vade_toplam": 0.0, "en_yakin_vade": None,
             "zincir_hareket_adet": 0, "son_zincir_fark": None,
         })
+    for x in ozet:  # 🏷 mal/hizmet sınıfı (ÖM sekme yönlendirmesi)
+        x["sinif"] = tedarikci_sinif(x.get("tedarikci") or "")
     ozet.sort(key=lambda x: -(max(abs(x["beyan_bakiye"] or 0),
                                   abs(x["hesaplanan_acik"])) + x["bekleyen_vade_toplam"]))
     return {

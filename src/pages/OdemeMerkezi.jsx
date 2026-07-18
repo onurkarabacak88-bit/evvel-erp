@@ -46,12 +46,31 @@ const TIP_IKON = {
 // DAHİL (salt-görünüm; ödeme maaş akışında — guard zaten korur).
 const SEKMELER = [
   ['tumu', '📋 Tümü', () => true],
-  ['tedarikci', '🏪 Tedarikçi', r => r.kaynak_tablo === 'vadeli_alimlar'],
+  // hizmet sınıfı (elektrik/uydu/telekom) vadeli satırları Tedarikçi'ye DEĞİL
+  // Giderler'e düşer (sahip: 'elektrik faturasını tedarikçi alanında bulunduramayız')
+  ['tedarikci', '🏪 Tedarikçi', r => r.kaynak_tablo === 'vadeli_alimlar' && r.tedarikci_sinif !== 'hizmet'],
   ['kart', '💳 Kart', r => r.tip === 'Kredi Kartı'],
   ['kredi', '🏦 Kredi', r => r.kaynak_tablo === 'borc_envanteri'],
   ['personel', '👥 Personel', r => r.kaynak_tablo === 'personel'],
-  ['giderler', '⚡ Giderler', r => r.kaynak_tablo === 'sabit_giderler' || r.tip === 'Sabit Gider' || r.tip === 'Fatura (tutar bekleniyor)'],
+  ['giderler', '⚡ Giderler', r => r.kaynak_tablo === 'sabit_giderler' || r.tip === 'Sabit Gider' || r.tip === 'Fatura (tutar bekleniyor)'
+    || (r.kaynak_tablo === 'vadeli_alimlar' && r.tedarikci_sinif === 'hizmet')],
 ];
+
+// ── söz ↔ cari eşleşmesi (görsel gruplama; yazmaz) — 'fez' ↔ 'FEZ KAHVE GIDA…',
+// 'ATALAY KAHVE' ↔ 'MEHMET ATALAY'. Genel kelimeler eşleşme sayılmaz.
+const _ESLESME_STOP = new Set(['GIDA', 'GİDA', 'SANAYI', 'SANAYİ', 'TICARET', 'TİCARET',
+  'LIMITED', 'LİMİTED', 'SIRKETI', 'ŞİRKETİ', 'ITHALAT', 'İTHALAT', 'IHRACAT', 'İHRACAT',
+  'ANONIM', 'ANONİM', 'KAHVE', 'COFFEE', 'ROASTERY', 'SAN', 'TIC', 'TİC', 'LTD', 'STI', 'ŞTİ',
+  'VE', 'A.S', 'A.Ş', 'AS', 'AŞ', 'GRUP', 'HIZMETLERI', 'HİZMETLERİ', 'URUNLERI', 'ÜRÜNLERİ']);
+const _token = (s) => String(s || '').toLocaleUpperCase('tr')
+  .split(/[^A-ZÇĞİÖŞÜ0-9]+/).filter(t => t.length >= 3 && !_ESLESME_STOP.has(t));
+const tedarikciEslesir = (a, b) => {
+  const A = String(a || '').trim().toLocaleUpperCase('tr'), B = String(b || '').trim().toLocaleUpperCase('tr');
+  if (!A || !B) return false;
+  if (A === B) return true;
+  const ta = _token(A), tb = new Set(_token(B));
+  return ta.some(t => tb.has(t));
+};
 
 const bugunISO = () => new Date().toISOString().slice(0, 10);
 const artiGunISO = (g) => new Date(Date.now() + g * 86400000).toISOString().slice(0, 10);
@@ -89,6 +108,7 @@ export default function OdemeMerkezi() {
   // tedarikçi damgalı (POST /anlik-gider → supplier_payment_event conf=1.0),
   // iz düşünce self-heal/mutabakat gerisini eşler.
   const [cariler, setCariler] = useState(null);
+  const [cariSecili, setCariSecili] = useState(null); // ▾ açık tedarikçi satırı
   useEffect(() => {
     if (sekme !== 'tedarikci' || cariler !== null) return;
     api('/fatura/cari-ozet').then(r => setCariler(r?.tedarikciler || [])).catch(() => setCariler([]));
@@ -550,7 +570,7 @@ export default function OdemeMerkezi() {
         </div>
       )}
 
-      {liste !== null && (
+      {liste !== null && sekme !== 'tedarikci' && (
         <div className="card" style={{ padding: 16, marginBottom: 14 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6, flexWrap: 'wrap', gap: 6 }}>
             <div style={{ fontWeight: 800 }}>
@@ -606,45 +626,86 @@ export default function OdemeMerkezi() {
         </div>
       )}
 
-      {/* 📒 CARİ BORÇLAR — Tedarikçi sekmesi: faturalardan yığılan açık, söz
-          şartı olmadan buradan ödenir (sahip: 'vadeli alımların dışında ödeme
-          altyapısı'). Ödeme izi düşünce self-heal/mutabakat eşler. */}
-      {sekme === 'tedarikci' && (
-        <div className="card" style={{ padding: 16, marginBottom: 14 }}>
-          <div style={{ fontWeight: 800, marginBottom: 4 }}>
-            📒 Cari Borçlar <span style={{ fontWeight: 400, fontSize: 12, color: 'var(--text3)' }}>— faturalardan yığılan açık (söz beklemez, buradan ödenir)</span>
-          </div>
-          {cariler === null && <div style={{ color: 'var(--text3)', fontSize: 13 }}>Yükleniyor…</div>}
-          {cariler !== null && cariler.filter(t => (t.hesaplanan_acik || 0) > 1).length === 0 && (
-            <div style={{ color: 'var(--text3)', fontSize: 13, padding: '10px 0' }}>🎉 Açık cari borç yok — tüm faturalar ödenmiş görünüyor.</div>
-          )}
-          {(cariler || []).filter(t => (t.hesaplanan_acik || 0) > 1)
-            .sort((a, b) => (b.hesaplanan_acik || 0) - (a.hesaplanan_acik || 0)).map((t, i) => {
-            const soz = t.bekleyen_vade_toplam || 0;
-            const acik = t.hesaplanan_acik || 0;
-            return (
-              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10,
-                                    padding: '10px 12px', margin: '6px 0', borderRadius: 10, background: 'var(--bg2)',
-                                    borderLeft: `4px solid ${soz >= acik - Math.max(500, acik * 0.05) ? 'var(--green, #22c55e)' : '#f59e0b'}`, flexWrap: 'wrap' }}>
-                <span style={{ minWidth: 0 }}>
-                  <div style={{ fontWeight: 700, fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 340 }}>{t.tedarikci}</div>
-                  <div style={{ fontSize: 11, color: 'var(--text3)' }}>
-                    {soz > 0 ? `kuyrukta söz: ${fmt(soz)}` : '⚠ kuyrukta sözü yok — takvimsiz borç'}
-                  </div>
-                </span>
-                <span style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-                  <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 800, fontSize: 15 }}>{fmt(acik)}</span>
-                  <button className="btn btn-primary btn-sm" onClick={() => cariOde(t)}>💸 Öde</button>
-                  <button className="btn btn-secondary btn-sm" onClick={() => cariVade(t)}>🤝 Vadeye</button>
-                </span>
+      {/* 🏪 TEDARİKÇİ — BİRLEŞİK GÖRÜNÜM (sahip: 'aynı borç iki yerde
+          görünmesin'): tedarikçi başına TEK satır — cari açık + ne kadarı
+          takvimli (kuyruk sözü) / takvimsiz; satıra tıklayınca o tedarikçinin
+          sözleri açılır (oradan ödenir). Sözler cariye görsel eşlenir
+          (tedarikciEslesir) — yazma yok, çift sayım görüntüsü yok. */}
+      {sekme === 'tedarikci' && (() => {
+        const sozler = (liste || []).filter(r => r.kaynak_tablo === 'vadeli_alimlar' && r.tedarikci_sinif !== 'hizmet');
+        const malCariler = (cariler || []).filter(t => (t.sinif || 'mal') !== 'hizmet' && (t.hesaplanan_acik || 0) > 1)
+          .sort((a, b) => (b.hesaplanan_acik || 0) - (a.hesaplanan_acik || 0));
+        const kullanilan = new Set();
+        const gruplar = malCariler.map(t => {
+          const ait = sozler.filter(r => !kullanilan.has(r.id) && tedarikciEslesir(r.tedarikci || r.baslik, t.tedarikci));
+          ait.forEach(r => kullanilan.add(r.id));
+          const takvimli = ait.reduce((s, r) => s + (Number(r.tutar) || 0), 0);
+          return { t, ait, takvimli, takvimsiz: Math.max(0, (t.hesaplanan_acik || 0) - takvimli) };
+        });
+        const serbestSozler = sozler.filter(r => !kullanilan.has(r.id));
+        return (
+          <div className="card" style={{ padding: 16, marginBottom: 14 }}>
+            <div style={{ fontWeight: 800, marginBottom: 4 }}>
+              🏪 Tedarikçi Borçları <span style={{ fontWeight: 400, fontSize: 12, color: 'var(--text3)' }}>— tedarikçi başına tek satır; tıkla, sözlerini gör</span>
+            </div>
+            {cariler === null && <div style={{ color: 'var(--text3)', fontSize: 13 }}>Yükleniyor…</div>}
+            {cariler !== null && gruplar.length === 0 && serbestSozler.length === 0 && (
+              <div style={{ textAlign: 'center', padding: 30, color: 'var(--text3)' }}>
+                <div style={{ fontSize: 40, marginBottom: 6 }}>🎉</div>Açık tedarikçi borcu yok.
               </div>
-            );
-          })}
-          <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 6 }}>
-            Açık = fatura − ödeme izi + devir (cari ekstre). Ödeme, tedarikçi damgalı kaydedilir — iz düşünce borç kendiliğinden azalır, mutabakat şeridi eşleşmeyi izler.
+            )}
+            {gruplar.map(({ t, ait, takvimli, takvimsiz }, i) => {
+              const acik = t.hesaplanan_acik || 0;
+              const acikMi = cariSecili === t.tedarikci;
+              return (
+                <div key={i} style={{ margin: '6px 0', borderRadius: 10, background: 'var(--bg2)',
+                                      borderLeft: `4px solid ${takvimsiz <= Math.max(500, acik * 0.05) ? 'var(--green, #22c55e)' : '#f59e0b'}` }}>
+                  <div onClick={() => setCariSecili(acikMi ? null : t.tedarikci)}
+                    style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10,
+                             padding: '10px 12px', cursor: 'pointer', flexWrap: 'wrap' }}>
+                    <span style={{ minWidth: 0 }}>
+                      <div style={{ fontWeight: 700, fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 340 }}>
+                        {acikMi ? '▾' : '▸'} {t.tedarikci}
+                      </div>
+                      <div style={{ fontSize: 11, color: 'var(--text3)' }}>
+                        {takvimli > 0 ? `takvimli ${fmt(takvimli)} (${ait.length} söz)` : ''}
+                        {takvimli > 0 && takvimsiz > 0 ? ' · ' : ''}
+                        {takvimsiz > 0 ? `⚠ takvimsiz ${fmt(takvimsiz)}` : (takvimli > 0 ? '' : '⚠ takvimsiz borç')}
+                      </div>
+                    </span>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                      <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 800, fontSize: 15 }}>{fmt(acik)}</span>
+                      <button className="btn btn-primary btn-sm" onClick={e => { e.stopPropagation(); cariOde(t); }}>💸 Öde</button>
+                      <button className="btn btn-secondary btn-sm" onClick={e => { e.stopPropagation(); cariVade(t); }}>🤝 Vadeye</button>
+                    </span>
+                  </div>
+                  {acikMi && ait.length > 0 && (
+                    <div style={{ padding: '0 10px 8px 22px' }}>
+                      {ait.map(r => <Satir key={r.id} r={r} />)}
+                    </div>
+                  )}
+                  {acikMi && ait.length === 0 && (
+                    <div style={{ padding: '0 12px 10px 22px', fontSize: 12, color: 'var(--text3)' }}>
+                      Kuyrukta sözü yok — 🤝 Vadeye ile takvime bağla ya da 💸 Öde.
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+            {serbestSozler.length > 0 && (
+              <div style={{ marginTop: 10 }}>
+                <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--text3)', padding: '4px 4px' }}>
+                  🧾 CARİYE EŞLEŞMEYEN SÖZLER ({serbestSozler.length})
+                </div>
+                {serbestSozler.map(r => <Satir key={r.id} r={r} />)}
+              </div>
+            )}
+            <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 6 }}>
+              Açık = fatura − ödeme izi + devir. Takvimli = kuyruktaki sözler (aynı borcun vade planı — ayrı borç DEĞİL). Ödeme izi düşünce açık kendiliğinden azalır.
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* ── ☑ YAPIŞKAN ALT BAR — ödeme koşusu (dokunmatik için büyük) ── */}
       {secim.size > 0 && (
