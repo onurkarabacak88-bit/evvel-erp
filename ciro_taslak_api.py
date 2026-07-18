@@ -91,7 +91,12 @@ def ciro_fark_defteri_liste(gun: int = 45):
         rows = [dict(r) for r in cur.fetchall() or []]
     acik = [r for r in rows if r["durum"] == "acik"]
     return {"kayitlar": rows, "acik_adet": len(acik),
+            # MUTLAK = işaretsiz sapma büyüklüğü; NET = artı-eksi götürüşmesi
+            # (sahip sorusu 2026-07-18: '21 fark artı-eksi hesabıyla mı?' — ikisi de döner)
             "acik_toplam_fark": round(sum(abs(r["fark"] or 0) for r in acik), 2),
+            "acik_net_fark": round(sum((r["fark"] or 0) for r in acik), 2),
+            "eksik_gun": len([r for r in acik if (r["fark"] or 0) < 0]),
+            "fazla_gun": len([r for r in acik if (r["fark"] or 0) > 0]),
             "not": ("Maliyet P&L cirosu bu deftere bakar: 'açık' ve 'evo_dogru' "
                     "günlerde EVO kabul edilir; 'girilen_dogru' günlerde kasadaki "
                     "giriş kullanılır. Kasa/ciro kayıtlarına dokunulmaz.")}

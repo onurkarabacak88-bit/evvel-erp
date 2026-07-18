@@ -768,7 +768,14 @@ export default function Maliyet() {
               <div className="card" style={{ marginTop: 14 }}>
                 <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 4 }}>
                   ⚖️ Ciro Fark Defteri — Evo ↔ Kasa
-                  {fdefter.acik_adet > 0 && <span style={{ color: 'var(--orange)' }}> · {fdefter.acik_adet} açık karar / {fmt(fdefter.acik_toplam_fark)}</span>}
+                  {fdefter.acik_adet > 0 && (
+                    <span style={{ color: 'var(--orange)' }}>
+                      {' '}· {fdefter.acik_adet} açık karar · NET {fmt(fdefter.acik_net_fark ?? 0)}
+                      <span style={{ color: 'var(--text3)', fontWeight: 400 }}>
+                        {' '}(eksik {fdefter.eksik_gun ?? '—'} gün / fazla {fdefter.fazla_gun ?? '—'} gün · mutlak {fmt(fdefter.acik_toplam_fark)})
+                      </span>
+                    </span>
+                  )}
                 </div>
                 <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 8 }}>
                   Kâr-zarar cirosu bu günlerde EVO'dan kabul edilir (varsayılan — POS gerçeği). Fark meşruysa
