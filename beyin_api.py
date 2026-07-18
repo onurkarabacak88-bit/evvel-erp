@@ -126,7 +126,11 @@ _YABANCI_ALFABE = re.compile(
 _YABANCI_KELIME = re.compile(
     r"\b(the|and|with|this|that|needed|necessary|however|therefore|because|available"
     r"|important|payment|balance|total|amount|answer|Antwort|aber|auch|nicht"
-    r"|please|should|would|could|which|about|information)\b",
+    r"|please|should|would|could|which|about|information"
+    # 2026-07-18 Gemini sızıntıları: İngilizce analiz kalıpları cevaba karışıyordu
+    r"|check|mention|mentioned|processed|invoice|invoices|following|based|block"
+    r"|blocks|data|status|summary|note|notes|from|there|these|those|shows|shown"
+    r"|value|values|missing|found|etc)\b",
     re.IGNORECASE,
 )
 
@@ -1009,6 +1013,11 @@ def _post_check(cevap: str, baglam_metni: str, soru: str = "") -> Optional[str]:
     [2026-07-08: Llama cevaba Kiril/Çince/Vietnamca karıştırdı — kural 13 + bu fren]."""
     if not re.search(r"\[B\d", cevap):
         return "blok referansı yok (iddia kaynaksız)"
+    # BİÇİM FRENİ (2026-07-18, Gemini): madde işaretli/JSON kopyalı çöp çıktı —
+    # kural 16'ya rağmen model bazen bağlam satırlarını olduğu gibi yapıştırıyor.
+    if re.search(r"^\s*[\*\-•#]|```|\"\w+\"\s*:", cevap, re.MULTILINE):
+        return ("madde işareti / ham veri kopyası — akıcı DÜZ YAZI cümleleriyle "
+                "yeniden yaz (kural 16)")
     m_alfabe = _YABANCI_ALFABE.search(cevap)
     if m_alfabe:
         return (f"yabancı alfabe karakteri: '{m_alfabe.group(0)}' — cevap YALNIZCA "
@@ -1237,7 +1246,11 @@ def _sor_calistir(soru: str, tip: str = "soru", ek_bloklar=None,
     # ÖZ-DÜZELTME DÖNGÜSÜ (tek deneme): post-check reddettiyse red nedenini modele geri ver.
     # Küçük modeller 'aritmetik yapma' kuralını ilk seferde sık deler; somut hata gösterilince
     # genelde düzeltir. İkinci deneme de failse dürüst red (fren gevşetilmez).
-    if cevap and red:
+    # 2026-07-18 (Gemini uyumu): tek deneme yetmiyordu — EN ÇOK 2 öz-düzeltme
+    # turu (fren gevşemez; deterministik tavan, sonsuz döngü yok).
+    _oz_deneme = 0
+    while cevap and red and _oz_deneme < 2:
+        _oz_deneme += 1
         duzeltme = (
             kullanici
             + f"\n\n⚠️ ÖNCEKİ DENEMEN OTOMATİK DOĞRULAMADAN GEÇEMEDİ: {red}. "
@@ -1245,16 +1258,19 @@ def _sor_calistir(soru: str, tip: str = "soru", ek_bloklar=None,
               "toplama/çıkarma/yuvarlama YAPMA (toplam gerekiyorsa sayıları ayrı ayrı ver); "
               "FARK/İLİŞKİ soruluyorsa bloklardaki HAZIR 'fark', 'fark_yuzde', "
               "'olmasi_gereken', 'hipotez' alanlarını AYNEN aktar — kendin hesaplama; "
-              "AKICI DÜZ YAZI yaz (madde işareti/JSON/ham satır kopyası YASAK) ve "
-              "HER CÜMLENİN sonuna [B#] referansı koy."
+              "AKICI DÜZ YAZI yaz (madde işareti/JSON/ham satır kopyası/İngilizce "
+              "kelime YASAK) ve HER CÜMLENİN sonuna [B#] referansı koy."
         )
         cevap2, model2 = _llm_cagir(system_metni, duzeltme)
-        if cevap2:
-            red2 = _post_check(cevap2, baglam_metni, soru)
-            if red2 is None:
-                cevap, model, red = cevap2, model2, None
-            else:
-                red = f"{red2} (öz-düzeltme sonrası da)"
+        if not cevap2:
+            break
+        red2 = _post_check(cevap2, baglam_metni, soru)
+        if red2 is None:
+            cevap, model, red = cevap2, model2, None
+        else:
+            red = red2
+    if red and _oz_deneme:
+        red = f"{red} (öz-düzeltme sonrası da)"
     izler = [{"id": bid, "baslik": baslik} for bid, baslik, _ in bloklar]
     gunluk_id = None
     try:
