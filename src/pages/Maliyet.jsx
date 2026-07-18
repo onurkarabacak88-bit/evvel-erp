@@ -722,6 +722,7 @@ export default function Maliyet() {
             {topla('net_satis_tl') > 0 && (() => {
               const netSatis = topla('net_satis_tl'), hesKdv = topla('hesaplanan_kdv_tl');
               const brutKar = topla('brut_kar_tl'), favok = topla('favok_tl'), netKarNet = topla('net_kar_net_tl');
+              const indKdv = topla('indirilecek_kdv_tl'), netMaliyet = topla('net_toplam_maliyet_tl');
               const brutMarj = netSatis > 0 ? (brutKar / netSatis) * 100 : null;
               const netMarjNet = netSatis > 0 ? (netKarNet / netSatis) * 100 : null;
               const nrenk = netKarNet > 0 ? 'var(--green)' : netKarNet < 0 ? 'var(--red)' : undefined;
@@ -734,12 +735,16 @@ export default function Maliyet() {
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 10 }}>
                     {kart('Net Satış', fmt(netSatis), 'KDV hariç ciro')}
                     {kart('🏛️ Hesaplanan KDV', fmt(hesKdv), '%10 · devlete')}
+                    {kart('📉 Net Maliyet (KDV hariç)', fmt(netMaliyet),
+                          `maliyet ${fmt(netMaliyet + indKdv)} − mahsup KDV ${fmt(indKdv)}`)}
                     {kart('Brüt Kâr', fmt(brutKar), brutMarj == null ? '' : `marj %${brutMarj.toFixed(1)} · ürün maliyeti sonrası`)}
-                    {kart('FAVÖK', fmt(favok), 'faaliyet kârı (vergi öncesi)')}
+                    {kart('FAVÖK', fmt(favok), 'net satış − net maliyet (vergi öncesi)')}
                     {kart('✅ Net Kâr (KDV hariç)', fmt(netKarNet), netMarjNet == null ? '' : `net marj %${netMarjNet.toFixed(1)}`, nrenk)}
                   </div>
                   <div style={{ fontSize: 10.5, color: 'var(--text3)', marginTop: 6, fontStyle: 'italic' }}>
                     Bu satır KDV'yi cirodan ayrıştırır (gerçek marj). Üstteki hero "Net Kâr" da AYNI hesaptır (KDV-hariç, şube-bazlı vergili) — iki blok tutarlıdır.
+                    {' '}⚖️ Alışta ödediğin KDV ({fmt(indKdv)}) GİDER DEĞİLDİR — devletten mahsup edilir; bu yüzden maliyetten ÇIKARILIR
+                    ve kâra otomatik geri kazanılır. Devlete yalnız fark (Ödenecek KDV = {fmt(hesKdv - indKdv)}) kalır; o da kâr hesabına girmez, ayrı cep.
                   </div>
                 </div>
               );
