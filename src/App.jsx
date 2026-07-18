@@ -78,7 +78,8 @@ const NAV = [
     { id: 'kasa-teslim',      label: 'Kasa Teslim',         icon: 'cuzdan' },
     { id: 'anlik-gider',      label: 'Anlık Gider',         icon: 'fis' },
     { id: 'dis-kaynak',       label: 'Dış Kaynak Geliri',   icon: 'arti-para' },
-    { id: 'vadeli',           label: 'Vadeli Alım',         icon: 'koli' },
+    // 'vadeli' (Vadeli Alım) FAZ C'de menüden çekildi — salt-okunur arşive döndü;
+    // route PAGES'te durur (eski #vadeli linkleri kırılmaz), giriş/ödeme Ödeme Merkezi'nde
   ]},
   { group: 'Kartlar', gicon: 'kart', items: [
     { id: 'kart-yonetimi',    label: 'Kart Yönetimi',       icon: 'kart' },

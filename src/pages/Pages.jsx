@@ -1508,11 +1508,16 @@ export function VadeliAlimlar({ onNavigate }) {
   return (
     <div className="page">
       {msg && <div className={`alert-box ${msg.t} mb-16`}>{msg.m}</div>}
+      {/* FAZ C (2026-07-18): salt-okunur arşiv — tüm giriş/ödeme Ödeme Merkezi'nde */}
+      <div className="alert-box orange mb-16" style={{cursor:'pointer'}} onClick={()=>navOM('odeme-merkezi')}>
+        <span>🗄 <b>Bu sayfa artık salt-okunur ARŞİVDİR.</b> Yeni vadeli alım, ödeme sözü ve
+        ödeme işlemleri tek merkezden — <b>💸 Ödeme Merkezi</b>'nden yapılır. Fatura okununca
+        borç kuyruğa kendiliğinden düşer. <u>Ödeme Merkezi'ne git →</u></span>
+      </div>
       <div className="page-header flex items-center justify-between">
         <div>
-          <h2>Vadeli Alımlar</h2>
-          <p>{gorunum === 'bekliyor' ? '7 gün içinde yaklaşanlar panelde gösterilir' : 'Son 30 günde ödenen vadeli alımlar'}
-            {' · '}<a style={{cursor:'pointer',color:'var(--blue,#60a5fa)'}} onClick={()=>navOM('odeme-merkezi')}>💸 tüm ödemeler artık Ödeme Merkezi'nde →</a></p>
+          <h2>Vadeli Alımlar <span style={{fontSize:12,color:'var(--text3)',fontWeight:400}}>(arşiv)</span></h2>
+          <p>{gorunum === 'bekliyor' ? 'Bekleyen kayıtlar — ödeme Ödeme Merkezi\'nden yapılır' : 'Son 30 günde ödenen vadeli alımlar'}</p>
         </div>
         <div style={{display:'flex',gap:8}}>
           <button
@@ -1527,12 +1532,7 @@ export function VadeliAlimlar({ onNavigate }) {
           >
             Ödenenler (30 gün)
           </button>
-        </div>
-        <div style={{display:'flex',gap:8}}>
-          <button className="btn btn-ghost" onClick={vadeliGecmisAc}>📋 Ödeme Geçmişi</button>
-          {gorunum === 'bekliyor' && (
-            <button className="btn btn-primary" onClick={()=>{setForm({aciklama:'',tutar:'',vade_tarihi:'',tedarikci:''});setDuzenleId(null);setShowModal(true);}}>+ Vadeli Alım Ekle</button>
-          )}
+          <button className="btn btn-ghost btn-sm" onClick={vadeliGecmisAc}>📋 Geçmiş</button>
         </div>
       </div>
       <div className="table-wrap">
@@ -1560,12 +1560,7 @@ export function VadeliAlimlar({ onNavigate }) {
                   </td>
                   <td>
                     {gorunum === 'bekliyor' ? (
-                      <div className="flex gap-8">
-                        <button className="btn btn-primary btn-sm" onClick={()=>odemeModalAc(v,'tam')}>Ödendi</button>
-                        <button className="btn btn-ghost btn-sm" onClick={()=>odemeModalAc(v,'kismi')}>✂ Kısmi</button>
-                        <button className="btn btn-ghost btn-sm" onClick={()=>{setForm({aciklama:v.aciklama,tutar:v.tutar,vade_tarihi:v.vade_tarihi,tedarikci:v.tedarikci||''});setDuzenleId(v.id);setShowModal(true);}}>✏️</button>
-                        <button className="btn btn-danger btn-sm" onClick={()=>sil(v.id)}>✕</button>
-                      </div>
+                      <button className="btn btn-secondary btn-sm" onClick={()=>navOM('odeme-merkezi')}>💸 Ödeme Merkezi'nde öde →</button>
                     ) : (
                       <span style={{fontSize:11,color:'var(--text3)'}}>Kapanmış kayıt</span>
                     )}
