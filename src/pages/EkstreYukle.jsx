@@ -294,7 +294,7 @@ export default function EkstreYukle() {
           {impSonuc?.tek_tik && (
             <div className="card mb-16" style={{ padding: 14, borderLeft: `3px solid ${impSonuc.buyuk_fark_onay_gerek ? 'var(--yellow, #f59e0b)' : 'var(--green)'}` }}>
               <div style={{ fontWeight: 800, fontSize: 14,
-                color: impSonuc.buyuk_fark_onay_gerek ? '#f59e0b' : 'var(--green)' }}>
+                color: impSonuc.buyuk_fark_onay_gerek ? 'var(--orange)' : 'var(--green)' }}>
                 {impSonuc.buyuk_fark_onay_gerek
                   ? '⚠️ Mutabakat kısmen tamam — büyük fark onayını bekliyor'
                   : '⚡ Mutabakat TAMAM'}

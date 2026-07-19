@@ -44,9 +44,9 @@ const C = {
   t2: 'var(--text2, #a8acb8)',
   t3: 'var(--text3, #6b6f7a)',
   marka: '#C8956A',
-  yesil: '#22c55e',
-  kirmizi: '#ef4444',
-  sari: '#f59e0b',
+  yesil: 'var(--green)',
+  kirmizi: 'var(--red)',
+  sari: 'var(--orange)',
   mavi: '#3b82f6',
 };
 
@@ -278,7 +278,7 @@ function CepHome({ sayac, kasa, onKasa, onAc, onCikis, yenile }) {
       alt: sayac.odeme > 0 ? `${sayac.odeme} ödeme · ${fmt(sayac.odemeTutar)} — dokun, öde` : 'Bekleyen ödeme yok' },
     { id: 'onaylar', ikon: '✅', baslik: 'Gider Onayı', renk: C.yesil,
       sayi: sayac.onay, alt: `${sayac.onay} bekleyen gider` },
-    { id: 'avans', ikon: '🤝', baslik: 'Avans Talepleri', renk: '#f59e0b',
+    { id: 'avans', ikon: '🤝', baslik: 'Avans Talepleri', renk: 'var(--orange)',
       sayi: sayac.avans, alt: sayac.avans > 0 ? `${sayac.avans} bekleyen avans` : 'Bekleyen avans yok' },
     { id: 'ciro', ikon: '📋', baslik: 'Ciro Onayı', renk: C.mavi,
       sayi: sayac.ciro, alt: sayac.ciro > 0 ? `${sayac.ciro} bekleyen ciro` : 'Bekleyen ciro yok' },
@@ -290,7 +290,7 @@ function CepHome({ sayac, kasa, onKasa, onAc, onCikis, yenile }) {
       sayi: null, alt: sayac.disKaynak > 0 ? `Bu ay ${fmt(sayac.disKaynak)}` : 'Bu ay gelir yok' },
     { id: 'anlik-gider', ikon: '💸', baslik: 'Anlık Gider', renk: C.kirmizi,
       sayi: null, alt: 'Gider ekle / aylık liste' },
-    { id: 'vadeli', ikon: '🧾', baslik: 'Vadeli Alımlar', renk: '#f59e0b',
+    { id: 'vadeli', ikon: '🧾', baslik: 'Vadeli Alımlar', renk: 'var(--orange)',
       sayi: null, alt: 'Vadeli borç ekle / öde' },
     { id: 'tedarikci-merkez', ikon: '🏦', baslik: 'Tedarikçi Kontrol', renk: C.mavi,
       sayi: null, alt: 'Cari · gecikmiş vade · belge açığı' },
@@ -300,11 +300,11 @@ function CepHome({ sayac, kasa, onKasa, onAc, onCikis, yenile }) {
       sayi: sayac.kule, alt: sayac.kule > 0 ? `${sayac.kule} yönlendir bekliyor` : 'Gelen sipariş & yönlendir' },
     { id: 'depolar', ikon: '📦', baslik: 'Depolar', renk: C.mavi,
       sayi: null, alt: 'Tüm şube stokları' },
-    { id: 'belge-talep', ikon: '🧾', baslik: 'Fatura Bekleyen', renk: '#f59e0b',
+    { id: 'belge-talep', ikon: '🧾', baslik: 'Fatura Bekleyen', renk: 'var(--orange)',
       sayi: sayac.belge, alt: sayac.belge > 0 ? `${sayac.belge} teslimat faturası bekliyor` : 'Fatura bekleyen yok' },
     { id: 'merkez-sil', ikon: '🧹', baslik: 'Merkez Sipariş Temizliği', renk: C.kirmizi,
       sayi: null, alt: 'Deneme siparişlerini sil' },
-    { id: 'kapanis-muhur', ikon: '🔒', baslik: 'Kapanış Mührü (Yönetici)', renk: '#f59e0b',
+    { id: 'kapanis-muhur', ikon: '🔒', baslik: 'Kapanış Mührü (Yönetici)', renk: 'var(--orange)',
       sayi: null, alt: 'Kapanışçı atamadıysa sen ata' },
     // Denetim kartı şimdilik kapalı (kullanıcı kararı) — component/route dormant duruyor.
     { id: 'basvurular', ikon: '🧑‍💼', baslik: 'İş Başvuruları', renk: C.mavi,
@@ -871,7 +871,7 @@ function CepBelgeTalep({ onGeri, onDegisti }) {
   };
 
   // Yaşa göre renk: <24sa sarı, <72sa turuncu, ≥72sa kırmızı
-  const renk = (s) => s >= 72 ? C.kirmizi : (s >= 24 ? '#f59e0b' : C.sari);
+  const renk = (s) => s >= 72 ? C.kirmizi : (s >= 24 ? 'var(--orange)' : C.sari);
   const yasMetin = (s) => s < 1 ? 'az önce' : (s < 24 ? `${Math.round(s)} saat önce` : `${Math.floor(s / 24)} gün önce`);
 
   return (
@@ -2203,7 +2203,7 @@ function CepSayimAktif() {
     finally { setMesgul(false); }
   };
 
-  const DURUM = { atandi: ['atandı', C.sari], basladi: ['sayımda', C.mavi], tamamlandi: ['onay bekliyor', '#f59e0b'], onaylandi: ['onaylandı', C.yesil] };
+  const DURUM = { atandi: ['atandı', C.sari], basladi: ['sayımda', C.mavi], tamamlandi: ['onay bekliyor', 'var(--orange)'], onaylandi: ['onaylandı', C.yesil] };
   const aktifler = (liste || []).filter(g => ['atandi', 'basladi', 'tamamlandi'].includes(g.durum));
 
   return (
@@ -2287,7 +2287,7 @@ function CepVardiyaTakip({ onGeri }) {
       {/* Özet */}
       {personeller.length > 0 && (
         <div style={{ display: 'flex', gap: 8, padding: '12px 14px 0' }}>
-          {[[`${personeller.length}`, 'Personel', C.t1], [hs(ozetFazla), 'Fazla mesai', '#f59e0b'], [`${ozetPartTam}`, 'Part-tam', '#f59e0b']].map(([v, l, renk]) => (
+          {[[`${personeller.length}`, 'Personel', C.t1], [hs(ozetFazla), 'Fazla mesai', 'var(--orange)'], [`${ozetPartTam}`, 'Part-tam', 'var(--orange)']].map(([v, l, renk]) => (
             <div key={l} style={{ flex: 1, background: C.bg2, border: `1px solid ${C.border}`, borderRadius: 10, padding: '10px 8px', textAlign: 'center' }}>
               <div style={{ fontSize: 16, fontWeight: 800, color: renk }}>{v}</div>
               <div style={{ fontSize: 10, color: C.t3, marginTop: 2 }}>{l}</div>
@@ -2299,10 +2299,10 @@ function CepVardiyaTakip({ onGeri }) {
       {/* Bugün vardiya dışı girişler */}
       {vardiyaDisi.length > 0 && (
         <div style={{ margin: '12px 14px 0', border: '1px solid rgba(245,158,11,0.3)', background: 'rgba(245,158,11,0.06)', borderRadius: 12, padding: '10px 12px' }}>
-          <div style={{ fontSize: 12, fontWeight: 700, color: '#f59e0b', marginBottom: 6 }}>🔀 Bugün vardiya dışı giriş ({vardiyaDisi.length})</div>
+          <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--orange)', marginBottom: 6 }}>🔀 Bugün vardiya dışı giriş ({vardiyaDisi.length})</div>
           {vardiyaDisi.map((g, i) => (
             <div key={i} style={{ fontSize: 12, color: C.t2, padding: '3px 0' }}>
-              <b style={{ color: C.t1 }}>{g.ad_soyad}</b> · {g.asil_sube_adi || '—'} → <span style={{ color: '#f59e0b' }}>{g.sube_adi}</span>
+              <b style={{ color: C.t1 }}>{g.ad_soyad}</b> · {g.asil_sube_adi || '—'} → <span style={{ color: 'var(--orange)' }}>{g.sube_adi}</span>
             </div>
           ))}
         </div>
@@ -2335,13 +2335,13 @@ function CepVardiyaTakip({ onGeri }) {
               </div>
               <div style={{ display: 'flex', gap: 14, marginTop: 8, fontSize: 12 }}>
                 <span style={{ color: C.t3 }}>Plan <b style={{ color: C.t1 }}>{hs(p.toplam_planlanan_saat)}</b></span>
-                <span style={{ color: C.t3 }}>Fazla <b style={{ color: p.toplam_fazla_mesai_saat > 0 ? '#f59e0b' : C.t1 }}>{hs(p.toplam_fazla_mesai_saat)}</b></span>
+                <span style={{ color: C.t3 }}>Fazla <b style={{ color: p.toplam_fazla_mesai_saat > 0 ? 'var(--orange)' : C.t1 }}>{hs(p.toplam_fazla_mesai_saat)}</b></span>
                 <span style={{ color: C.t3 }}>Gecikme <b style={{ color: p.toplam_gecikme_dk > 0 ? C.kirmizi : C.t1 }}>{p.toplam_gecikme_dk || 0} dk</b></span>
                 <span style={{ color: C.t3 }}>Yemek <b style={{ color: C.yesil }}>{p.yemek_ucret_gun || 0}g</b></span>
               </div>
               {(p.part_tam_gun > 0 || p.haftalik_izin_kullanilmadi > 0) && (
                 <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
-                  {p.part_tam_gun > 0 && <span style={{ fontSize: 11, fontWeight: 700, color: '#f59e0b', background: 'rgba(245,158,11,0.12)', borderRadius: 6, padding: '2px 8px' }}>{p.part_tam_gun}g part-tam</span>}
+                  {p.part_tam_gun > 0 && <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--orange)', background: 'rgba(245,158,11,0.12)', borderRadius: 6, padding: '2px 8px' }}>{p.part_tam_gun}g part-tam</span>}
                   {p.haftalik_izin_kullanilmadi > 0 && <span style={{ fontSize: 11, fontWeight: 700, color: C.kirmizi, background: 'rgba(239,68,68,0.12)', borderRadius: 6, padding: '2px 8px' }}>{p.haftalik_izin_kullanilmadi} hafta izinsiz</span>}
                 </div>
               )}
@@ -2388,7 +2388,7 @@ function CepVardiyaModal({ p, izinler = [], onKapat }) {
           {/* Özet metrikler */}
           <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
             <Sat l="Plan" v={hs(p.toplam_planlanan_saat)} />
-            <Sat l="Fazla" v={hs(p.toplam_fazla_mesai_saat)} renk={p.toplam_fazla_mesai_saat > 0 ? '#f59e0b' : C.t1} />
+            <Sat l="Fazla" v={hs(p.toplam_fazla_mesai_saat)} renk={p.toplam_fazla_mesai_saat > 0 ? 'var(--orange)' : C.t1} />
             <Sat l="Gecikme" v={`${p.toplam_gecikme_dk || 0}dk`} renk={p.toplam_gecikme_dk > 0 ? C.kirmizi : C.t1} />
             <Sat l="Yemek" v={`${p.yemek_ucret_gun || 0}g`} renk={C.yesil} />
             <Sat l="Net" v={p['net_hakediş'] > 0 ? fmt(Math.round(p['net_hakediş'])) : '—'} renk={C.yesil} />
@@ -2433,7 +2433,7 @@ function CepVardiyaModal({ p, izinler = [], onKapat }) {
               <span style={{ fontSize: 11, color: C.t3, display: 'flex', gap: 10 }}>
                 <span>{hs(g.planlanan_saat)}</span>
                 {g.gecikme_dk > 0 && <span style={{ color: C.kirmizi }}>⏰ {g.gecikme_dk}dk</span>}
-                {g.fazla_mesai_saat > 0 && <span style={{ color: '#f59e0b' }}>+{hs(g.fazla_mesai_saat)}</span>}
+                {g.fazla_mesai_saat > 0 && <span style={{ color: 'var(--orange)' }}>+{hs(g.fazla_mesai_saat)}</span>}
                 {g.yemek_sure_dk != null && <span style={{ color: g.yemek_ucret_hakki ? C.yesil : C.kirmizi }}>🍽️{g.yemek_ucret_hakki ? '✓' : '✗'}</span>}
                 {!g.giris_var && !g.baslangic_gunu && <span style={{ color: C.kirmizi }}>giriş yok</span>}
               </span>
@@ -3057,7 +3057,7 @@ function CepAvans({ onGeri, onDegisti }) {
         {(liste || []).map(a => (
           <div key={a.id} style={{
             background: C.bg2, border: `1px solid ${C.border}`,
-            borderLeft: `4px solid ${a.durum === 'talep' ? '#f59e0b' : C.mavi}`,
+            borderLeft: `4px solid ${a.durum === 'talep' ? 'var(--orange)' : C.mavi}`,
             borderRadius: 14, padding: 14, marginBottom: 12,
           }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, marginBottom: 4 }}>
@@ -3089,7 +3089,7 @@ function CepAvans({ onGeri, onDegisti }) {
                   </select>
                   <button disabled={islem[a.id] || !secim[a.id]}
                     onClick={() => aksiyon(a.id, 'onayla', { yontem: 'elden', sube_id: secim[a.id] })}
-                    style={{ padding: '10px 14px', borderRadius: 10, border: 'none', background: '#f59e0b', color: '#fff', fontWeight: 800, fontSize: 13, cursor: 'pointer', opacity: (!secim[a.id]) ? 0.5 : 1 }}>
+                    style={{ padding: '10px 14px', borderRadius: 10, border: 'none', background: 'var(--orange)', color: '#fff', fontWeight: 800, fontSize: 13, cursor: 'pointer', opacity: (!secim[a.id]) ? 0.5 : 1 }}>
                     💵 Elden
                   </button>
                 </div>
@@ -3829,8 +3829,8 @@ function CepKartlar({ onGeri }) {
       {dongu?.kartlar?.length > 0 && (
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', margin: '12px 14px 0' }}>
           {dongu.kartlar.map(s => {
-            const st = ({ ekstre_bekleniyor: ['🟡', '#f59e0b', 'EKSTRE BEKLENİYOR'],
-                          gecikti: ['🔴', '#ef4444', 'GECİKTİ'],
+            const st = ({ ekstre_bekleniyor: ['🟡', 'var(--orange)', 'EKSTRE BEKLENİYOR'],
+                          gecikti: ['🔴', 'var(--red)', 'GECİKTİ'],
                           odeme_bekliyor: ['💰', '#60a5fa', 'Ödeme bekliyor'],
                           odendi: ['✅', '#34d399', 'Ödendi'],
                           yuklendi: ['🟢', '#34d399', 'Yüklendi'] })[s.durum] || ['🔵', C.t3, s.durum];

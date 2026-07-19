@@ -287,9 +287,9 @@ export default function SevkiyatHazirlama() {
                 >
                   <td style={{ padding: '6px 8px', fontWeight: 600 }}>{o.depo_sube_adi || sid}</td>
                   <td style={{ padding: '6px 8px', color: 'var(--text3)' }}>{o.sube_tipi || '—'}</td>
-                  <td style={{ padding: '6px 8px', textAlign: 'right', color: (o.hazirlikta || 0) > 0 ? '#f59e0b' : 'var(--text3)' }}>{o.hazirlikta ?? 0}</td>
+                  <td style={{ padding: '6px 8px', textAlign: 'right', color: (o.hazirlikta || 0) > 0 ? 'var(--orange)' : 'var(--text3)' }}>{o.hazirlikta ?? 0}</td>
                   <td style={{ padding: '6px 8px', textAlign: 'right' }}>{o.gonderildi ?? 0}</td>
-                  <td style={{ padding: '6px 8px', textAlign: 'right', color: '#22c55e' }}>{o.teslim_edildi ?? 0}</td>
+                  <td style={{ padding: '6px 8px', textAlign: 'right', color: 'var(--green)' }}>{o.teslim_edildi ?? 0}</td>
                   <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 700 }}>{o.toplam ?? 0}</td>
                   <td style={{ padding: '6px 8px', color: 'var(--text3)', whiteSpace: 'nowrap' }}>{o.son_talep_tarih || '—'}</td>
                 </tr>
@@ -371,7 +371,7 @@ export default function SevkiyatHazirlama() {
                     {rp.depo_personel_ad ? ` · ${rp.depo_personel_ad}` : ''}
                   </span>
                   {rp.depo_sevkiyat_rapor_uyari ? (
-                    <span style={{ marginLeft: 8, fontSize: 11, color: '#f59e0b' }}>⚠ Uyarı</span>
+                    <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--orange)' }}>⚠ Uyarı</span>
                   ) : null}
                 </summary>
                 <div style={{ marginTop: 10, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>

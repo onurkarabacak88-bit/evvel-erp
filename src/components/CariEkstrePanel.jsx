@@ -119,7 +119,7 @@ export default function CariEkstrePanel({ ek, ad, mode = 'review' }) {
           sonOdeme ? trT(String(sonOdeme.tarih)) : 'henüz ödeme izi yok')}
         {kpiKart('Sıradaki Vade', siradaki ? trT(siradaki.vade) : '—',
           siradaki ? `beklenen ${para(siradaki.tutar)}` : 'takvimde vade yok',
-          gecikmisTop > 0 ? '#f59e0b' : undefined)}
+          gecikmisTop > 0 ? 'var(--orange)' : undefined)}
       </div>
 
       {/* 2 ▸ HAREKET EKSTRESİ — ana bölüm: borç/alacak/bakiye defteri */}

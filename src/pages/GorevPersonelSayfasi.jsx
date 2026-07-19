@@ -4,7 +4,7 @@ import tulipiLogo from '../assets/tulipi-logo.jpg';
 
 const VT_ETIKET = {
   sabahci:     { label: 'Sabahçı',    renk: '#4a9eff', bas: 7,  bit: 15 },
-  ara_vardiya: { label: 'Ara Vardiya', renk: '#f59e0b', bas: 11, bit: 19 },
+  ara_vardiya: { label: 'Ara Vardiya', renk: 'var(--orange)', bas: 11, bit: 19 },
   kapanis:     { label: 'Kapanış',    renk: '#C8956A', bas: 15, bit: 23 },
 };
 
@@ -297,7 +297,7 @@ function SiparisEkrani({ oturum, subeBilgi, onKapat }) {
         <div style={{ fontSize: 13, color: '#9C8E7E', marginBottom: 24, lineHeight: 1.6 }}>{hataMsg}</div>
         <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}>
           <button onClick={() => setSonuc(null)} style={{ ...S.btn('#E6DED4'), color: '#2A241E' }}>Geri Dön</button>
-          <button onClick={() => { setSonuc(null); gonder(true); }} style={S.btn('#f59e0b')}>Yine de Gönder</button>
+          <button onClick={() => { setSonuc(null); gonder(true); }} style={S.btn('var(--orange)')}>Yine de Gönder</button>
         </div>
       </div>
     </div>
@@ -787,7 +787,7 @@ function VardiyamEkrani({ oturum, subeBilgi, mod = 'bugun' }) {
                renk={bugun.gecikme_dk > 0 ? '#e05c5c' : '#4caf84'} />
             <K label="Fazla Mesai"
                val={bugun.fazla_mesai_saat > 0 ? `+${bugun.fazla_mesai_saat.toFixed(1)}s` : '—'}
-               renk={bugun.fazla_mesai_saat > 0 ? '#f59e0b' : '#9C8E7E'} />
+               renk={bugun.fazla_mesai_saat > 0 ? 'var(--orange)' : '#9C8E7E'} />
           </div>
         ) : (
           <div style={{ fontSize: 13, color: '#9C8E7E' }}>Bugün için vardiya kaydı bulunamadı.</div>
@@ -796,7 +796,7 @@ function VardiyamEkrani({ oturum, subeBilgi, mod = 'bugun' }) {
           <div style={{
             marginTop: 10, padding: '8px 12px', borderRadius: 8, fontSize: 12,
             background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.3)',
-            color: '#f59e0b',
+            color: 'var(--orange)',
           }}>
             ⚠️ Part-time kaydınız var ama bugün tam mesai (9.5 saat) yazılmış.
           </div>
@@ -812,7 +812,7 @@ function VardiyamEkrani({ oturum, subeBilgi, mod = 'bugun' }) {
           </div>
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 10 }}>
             <K label="Toplam Mesai" val={`${aylik.toplam_planlanan_saat?.toFixed(1)}s`} renk="#4a9eff" />
-            <K label="Fazla Mesai" val={aylik.toplam_fazla_mesai_saat > 0 ? `+${aylik.toplam_fazla_mesai_saat.toFixed(1)}s` : '—'} renk={aylik.toplam_fazla_mesai_saat > 0 ? '#f59e0b' : '#9C8E7E'} />
+            <K label="Fazla Mesai" val={aylik.toplam_fazla_mesai_saat > 0 ? `+${aylik.toplam_fazla_mesai_saat.toFixed(1)}s` : '—'} renk={aylik.toplam_fazla_mesai_saat > 0 ? 'var(--orange)' : '#9C8E7E'} />
           </div>
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
             <K label="Toplam Gecikme" val={fmtDk(aylik.toplam_gecikme_dk)} renk={aylik.toplam_gecikme_dk > 30 ? '#e05c5c' : '#9C8E7E'} />
@@ -890,7 +890,7 @@ function VardiyamEkrani({ oturum, subeBilgi, mod = 'bugun' }) {
                   {d.fazla_mesai_saat > 0 && (
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
                       <span style={{ color: '#6B5E50' }}>Fazla Mesai ({d.fazla_mesai_saat}s)</span>
-                      <span style={{ color: '#f59e0b', fontWeight: 600 }}>+{fmt2(d.fazla_mesai_ucret)}</span>
+                      <span style={{ color: 'var(--orange)', fontWeight: 600 }}>+{fmt2(d.fazla_mesai_ucret)}</span>
                     </div>
                   )}
                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
@@ -921,7 +921,7 @@ function VardiyamEkrani({ oturum, subeBilgi, mod = 'bugun' }) {
                   <div style={{
                     margin: '0 18px 16px', padding: '10px 12px', borderRadius: 10,
                     background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.25)',
-                    fontSize: 12, color: '#f59e0b', lineHeight: 1.5,
+                    fontSize: 12, color: 'var(--orange)', lineHeight: 1.5,
                   }}>
                     ⚠️ Bu ay <strong>{yemekKaybiGun} gün</strong> yemek molası hakkın kazanılmadı
                     (mola süresi limit dışı kaldı) — bu günler için yemek ücreti eklenmedi.
@@ -954,7 +954,7 @@ function VardiyamEkrani({ oturum, subeBilgi, mod = 'bugun' }) {
               background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.3)',
               fontSize: 13,
             }}>
-              <div style={{ fontWeight: 700, color: '#f59e0b', marginBottom: 6 }}>
+              <div style={{ fontWeight: 700, color: 'var(--orange)', marginBottom: 6 }}>
                 ℹ️ Geriye Dönük İzin / Devamsızlık Kaydı
               </div>
               {aylik.izin_bildirimleri.map((b, i) => (
@@ -963,7 +963,7 @@ function VardiyamEkrani({ oturum, subeBilgi, mod = 'bugun' }) {
                     {new Date(b.tarih).toLocaleDateString('tr-TR', { day: 'numeric', month: 'long' })}
                   </strong> tarihinde vardiyan olduğu halde yoklama kaydın bulunmadığı için
                   bu gün{' '}
-                  <strong style={{ color: b.tip === 'ucretsiz' ? '#e05c5c' : '#f59e0b' }}>
+                  <strong style={{ color: b.tip === 'ucretsiz' ? '#e05c5c' : 'var(--orange)' }}>
                     {b.tip === 'ucretsiz' ? 'devamsız' : 'izinli'}
                   </strong> olarak işlendi. Bir yanlışlık olduğunu düşünüyorsan yöneticinle konuş.
                 </div>

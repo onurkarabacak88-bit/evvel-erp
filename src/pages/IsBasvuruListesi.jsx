@@ -4,7 +4,7 @@ import { publishGlobalDataRefresh } from '../utils/globalDataRefresh';
 
 // Durum = SADECE iş akışı (öncelik & arşiv & işe-alındı AYRI boyutlar)
 const DURUM_CFG = {
-  bekliyor: { label: 'Bekliyor', renk: '#f59e0b', bg: 'rgba(245,158,11,0.12)', ikon: '⏳' },
+  bekliyor: { label: 'Bekliyor', renk: 'var(--orange)', bg: 'rgba(245,158,11,0.12)', ikon: '⏳' },
   gorusme:  { label: 'Görüşme',  renk: '#4a9eff', bg: 'rgba(74,158,255,0.12)', ikon: '📞' },
   olumlu:   { label: 'Olumlu',   renk: '#4caf84', bg: 'rgba(76,175,132,0.12)', ikon: '✅' },
   olumsuz:  { label: 'Olumsuz',  renk: '#e05c5c', bg: 'rgba(224,92,92,0.12)',  ikon: '❌' },
@@ -18,7 +18,7 @@ const ONCELIK_CFG = {
 const SKOR_CFG = {
   guclu:  { renk: '#34d399', bg: 'rgba(52,211,153,0.12)',  border: 'rgba(52,211,153,0.3)'  },
   iyi:    { renk: '#4a9eff', bg: 'rgba(74,158,255,0.12)',  border: 'rgba(74,158,255,0.3)'  },
-  orta:   { renk: '#f59e0b', bg: 'rgba(245,158,11,0.12)',  border: 'rgba(245,158,11,0.3)'  },
+  orta:   { renk: 'var(--orange)', bg: 'rgba(245,158,11,0.12)',  border: 'rgba(245,158,11,0.3)'  },
   zayif:  { renk: '#e05c5c', bg: 'rgba(224,92,92,0.12)',   border: 'rgba(224,92,92,0.3)'   },
 };
 
@@ -86,7 +86,7 @@ function SkorPanel({ skor }) {
               <span style={{ fontSize: 12, color: '#e8e9ec', fontWeight: 700 }}>{b.puan}/20</span>
             </div>
             <div style={{ height: 6, background: '#242736', borderRadius: 99 }}>
-              <div style={{ height: 6, borderRadius: 99, background: b.puan >= 16 ? '#34d399' : b.puan >= 12 ? '#4a9eff' : b.puan >= 8 ? '#f59e0b' : '#e05c5c', width: `${(b.puan / 20) * 100}%`, transition: 'width 0.6s ease' }} />
+              <div style={{ height: 6, borderRadius: 99, background: b.puan >= 16 ? '#34d399' : b.puan >= 12 ? '#4a9eff' : b.puan >= 8 ? 'var(--orange)' : '#e05c5c', width: `${(b.puan / 20) * 100}%`, transition: 'width 0.6s ease' }} />
             </div>
           </div>
         ))}
@@ -94,7 +94,7 @@ function SkorPanel({ skor }) {
       {skor.sinyaller.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           {skor.sinyaller.filter(s => s.tip === 'olumlu').map((s, i) => (<div key={i} style={{ fontSize: 12, color: '#34d399', display: 'flex', gap: 6 }}><span>✅</span><span>{s.mesaj}</span></div>))}
-          {skor.sinyaller.filter(s => s.tip === 'dikkat').map((s, i) => (<div key={i} style={{ fontSize: 12, color: '#f59e0b', display: 'flex', gap: 6 }}><span>⚠️</span><span>{s.mesaj}</span></div>))}
+          {skor.sinyaller.filter(s => s.tip === 'dikkat').map((s, i) => (<div key={i} style={{ fontSize: 12, color: 'var(--orange)', display: 'flex', gap: 6 }}><span>⚠️</span><span>{s.mesaj}</span></div>))}
           {skor.sinyaller.filter(s => s.tip === 'tutarsizlik').map((s, i) => (<div key={i} style={{ fontSize: 12, color: '#a78bfa', display: 'flex', gap: 6 }}><span>🔍</span><span>{s.mesaj}</span></div>))}
         </div>
       )}
@@ -320,13 +320,13 @@ function BasvuruKart({ b, onClick, secili, onSec }) {
         <div style={{ marginBottom: 8 }}>
           <span style={{ fontSize: 11, padding: '3px 10px', borderRadius: 20, fontWeight: 700, background: sc.bg, color: sc.renk, border: `1px solid ${sc.border}` }}>
             {b.skor.genel_label} · {b.skor.toplam}/100
-            {b.skor.dikkat_sayisi > 0 && <span style={{ marginLeft: 6, color: '#f59e0b' }}>⚠️×{b.skor.dikkat_sayisi}</span>}
+            {b.skor.dikkat_sayisi > 0 && <span style={{ marginLeft: 6, color: 'var(--orange)' }}>⚠️×{b.skor.dikkat_sayisi}</span>}
             {b.skor.tutarsizlik_sayisi > 0 && <span style={{ marginLeft: 6, color: '#a78bfa' }}>🔍×{b.skor.tutarsizlik_sayisi}</span>}
           </span>
         </div>
       )}
       {b.ise_alindi && <div style={{ marginBottom: 8 }}><span style={{ fontSize: 11, padding: '3px 10px', borderRadius: 20, fontWeight: 700, background: 'rgba(52,211,153,0.14)', color: '#34d399', border: '1px solid #34d39955' }}>👤 İşe Alındı</span></div>}
-      {!b.goruldu_ts && (<div style={{ position: 'absolute', top: 10, right: 10, width: 10, height: 10, borderRadius: '50%', background: '#22c55e', boxShadow: '0 0 0 3px rgba(34,197,94,0.18)' }} title="Yeni" />)}
+      {!b.goruldu_ts && (<div style={{ position: 'absolute', top: 10, right: 10, width: 10, height: 10, borderRadius: '50%', background: 'var(--green)', boxShadow: '0 0 0 3px rgba(34,197,94,0.18)' }} title="Yeni" />)}
 
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
         {b.calisma_tercihi && <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 8, background: '#12151b', color: '#9ca3af' }}>{b.calisma_tercihi === 'tam' ? 'Tam Z.' : b.calisma_tercihi === 'yari' ? 'Yarı Z.' : 'Esnek'}</span>}
@@ -440,7 +440,7 @@ export default function IsBasvuruListesi() {
           {[
             { label: '🥇 1.Öncelik', val: ozet.oncelik1||0, renk: '#fbbf24' },
             { label: '🥈 2.Öncelik', val: ozet.oncelik2||0, renk: '#a78bfa' },
-            { label: '⏳ Bekleyen', val: ozet.bekliyor||0, renk: '#f59e0b' },
+            { label: '⏳ Bekleyen', val: ozet.bekliyor||0, renk: 'var(--orange)' },
             { label: '📞 Görüşme',  val: ozet.gorusme||0,  renk: '#4a9eff' },
             { label: '✅ Olumlu',   val: ozet.olumlu||0,   renk: '#4caf84' },
             { label: '👤 İşe Alınan', val: ozet.ise_alindi||0, renk: '#34d399' },

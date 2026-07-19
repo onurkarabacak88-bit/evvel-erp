@@ -394,7 +394,7 @@ export default function App() {
                       position: 'absolute', top: '50%', right: 10,
                       transform: 'translateY(-50%)',
                       minWidth: 18, height: 18, padding: '0 5px',
-                      borderRadius: 999, background: '#22c55e', color: '#fff',
+                      borderRadius: 999, background: 'var(--green)', color: '#fff',
                       fontSize: 11, fontWeight: 800, lineHeight: '18px', textAlign: 'center',
                     }}>
                       {onayBekleyen}
@@ -405,7 +405,7 @@ export default function App() {
                       position: 'absolute', top: '50%', right: 10,
                       transform: 'translateY(-50%)',
                       minWidth: 18, height: 18, padding: '0 5px',
-                      borderRadius: 999, background: '#22c55e', color: '#fff',
+                      borderRadius: 999, background: 'var(--green)', color: '#fff',
                       fontSize: 11, fontWeight: 800, lineHeight: '18px', textAlign: 'center',
                     }} title="Bekleyen ciro onayı">
                       {ciroBekleyen}
@@ -416,7 +416,7 @@ export default function App() {
                       position: 'absolute', top: '50%', right: 10,
                       transform: 'translateY(-50%)',
                       minWidth: 18, height: 18, padding: '0 5px',
-                      borderRadius: 999, background: '#22c55e', color: '#fff',
+                      borderRadius: 999, background: 'var(--green)', color: '#fff',
                       fontSize: 11, fontWeight: 800, lineHeight: '18px', textAlign: 'center',
                     }} title="Yeni başvuru">
                       {yeniBasvuru}
@@ -427,7 +427,7 @@ export default function App() {
                       position: 'absolute', top: '50%', right: 10,
                       transform: 'translateY(-50%)',
                       minWidth: 18, height: 18, padding: '0 5px',
-                      borderRadius: 999, background: '#ef4444', color: '#fff',
+                      borderRadius: 999, background: 'var(--red)', color: '#fff',
                       fontSize: 11, fontWeight: 800, lineHeight: '18px', textAlign: 'center',
                     }} title="Bugün anomali sayısı">
                       {bugunAnomali}
@@ -438,7 +438,7 @@ export default function App() {
                       position: 'absolute', top: '50%', right: 10,
                       transform: 'translateY(-50%)',
                       minWidth: 18, height: 18, padding: '0 5px',
-                      borderRadius: 999, background: '#22c55e', color: '#fff',
+                      borderRadius: 999, background: 'var(--green)', color: '#fff',
                       fontSize: 11, fontWeight: 800, lineHeight: '18px', textAlign: 'center',
                     }} title="Onay bekleyen sayım">
                       {stokSayimBekleyen}

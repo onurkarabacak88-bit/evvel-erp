@@ -5,7 +5,7 @@ import CariEkstrePanel from '../components/CariEkstrePanel';
 // 🧾 BELGE MERKEZİ (2026-07-10) — sahip: "faturaları toptancı toptancı, ay ay,
 // gün gün görebildiğim; işletme harcamalarından faturası OLMAYANLARI direkt
 // gördüğüm mekanizma". Kaynak: /api/fatura/belge-merkezi (salt-okur).
-const DURUM_RENK = { ocr_bekliyor: '#f59e0b', incelendi: '#22c55e', onaylandi: '#22c55e' };
+const DURUM_RENK = { ocr_bekliyor: 'var(--orange)', incelendi: 'var(--green)', onaylandi: 'var(--green)' };
 
 // 🏦 TEDARİKÇİ MERKEZİ dönüşümü (2026-07-14, sahip: "hepsini tek merkez halinde
 // kurgulayalım"). Codex mimarisi: ana obje=Tedarikçi-360, iniş=Genel Bakış;
@@ -198,8 +198,8 @@ export default function BelgeMerkezi() {
             ['⏰ GECİKMİŞ VADE', mk.kpi?.gecikmis_vade_toplam, 'var(--red)', true],
             ['💼 Hesaplanan Açık', mk.kpi?.toplam_hesaplanan_acik, 'var(--text)', false],
             ['📅 Vadesi Gelmemiş', mk.kpi?.vadesi_gelmemis, 'var(--text2, var(--text))', false],
-            ['🗓 Bu Hafta Vade', mk.kpi?.bu_hafta_vade_toplam, '#f59e0b', false],
-            ['🧾 Faturasız Risk', mk.kpi?.faturasiz_risk, '#f59e0b', false],
+            ['🗓 Bu Hafta Vade', mk.kpi?.bu_hafta_vade_toplam, 'var(--orange)', false],
+            ['🧾 Faturasız Risk', mk.kpi?.faturasiz_risk, 'var(--orange)', false],
           ].map(([ad, val, renk, buyuk]) => (
             <div key={ad} className="card" style={{ padding: '8px 14px', minWidth: 150 }}>
               <div style={{ fontSize: 11, color: 'var(--text3)' }}>{ad}</div>
@@ -277,7 +277,7 @@ export default function BelgeMerkezi() {
                 </div>
               </div>
               <div className="card" style={{ padding: 16 }}>
-                <div style={{ fontWeight: 800, marginBottom: 6, color: '#f59e0b' }}>
+                <div style={{ fontWeight: 800, marginBottom: 6, color: 'var(--orange)' }}>
                   🗓 Bu Hafta Vadesi Gelenler ({(mk.bu_hafta_vadeler || []).length})
                 </div>
                 {(mk.bu_hafta_vadeler || []).length === 0 && <div style={{ color: 'var(--text3)', fontSize: 13 }}>Bu hafta vadesi gelen yok.</div>}
@@ -306,7 +306,7 @@ export default function BelgeMerkezi() {
                 <span>💳 İşletme kart harcaması: <b>{fmt(k.isletme_kart_harcamasi || 0)}</b></span>
                 <span style={{ color: 'var(--green)' }}>🧾 Faturalı: <b>{fmt(k.faturali_eslesen || 0)}</b></span>
                 {(k.kurumsal_otomatik || 0) > 0 && (
-                  <span style={{ color: '#f59e0b' }} title="MEPAŞ/su/telekom vb otomatik ödemeler — faturası kurumda hazır, e-arşivden indirip yükleyin">
+                  <span style={{ color: 'var(--orange)' }} title="MEPAŞ/su/telekom vb otomatik ödemeler — faturası kurumda hazır, e-arşivden indirip yükleyin">
                     🏢 Kurumsal: <b>{fmt(k.kurumsal_otomatik)}</b>
                   </span>
                 )}
@@ -356,7 +356,7 @@ export default function BelgeMerkezi() {
                             <b> · 👤 {f.yukleyen || '?'}{f.sube ? ` (${f.sube})` : ''}</b>
                           )}{' '}
                           {f.hata_tipi === 'kota'
-                            ? <span style={{ color: '#f59e0b' }}>⏳ sistem kotası — foto SAĞLAM, sıra gelince okunacak</span>
+                            ? <span style={{ color: 'var(--orange)' }}>⏳ sistem kotası — foto SAĞLAM, sıra gelince okunacak</span>
                             : f.hata_tipi === 'okunamadi'
                               ? <span style={{ color: 'var(--red)' }}>📵 okunamadı — muhtemel çekim hatası, YENİDEN ÇEKİLMELİ</span>
                               : <span style={{ color: 'var(--text3)' }}>⌛ sırada bekliyor</span>}
@@ -377,7 +377,7 @@ export default function BelgeMerkezi() {
                 {d.kdv_kanit && (
                   <span>
                     🧮 KDV kanıt: <b style={{ color: 'var(--green)' }}>{d.kdv_kanit.indirime_aday.adet} sağlam</b> ({fmt(d.kdv_kanit.indirime_aday.toplam)})
-                    {d.kdv_kanit.inceleme.adet > 0 && <> · <b style={{ color: '#f59e0b' }}>{d.kdv_kanit.inceleme.adet} inceleme</b> ({fmt(d.kdv_kanit.inceleme.toplam)} — no/VKN eksik)</>}
+                    {d.kdv_kanit.inceleme.adet > 0 && <> · <b style={{ color: 'var(--orange)' }}>{d.kdv_kanit.inceleme.adet} inceleme</b> ({fmt(d.kdv_kanit.inceleme.toplam)} — no/VKN eksik)</>}
                     {d.kdv_kanit.supheli.adet > 0 && <> · <b style={{ color: 'var(--red)' }}>{d.kdv_kanit.supheli.adet} şüpheli</b></>}
                     {' '}· hüküm muhasebecinin
                   </span>
@@ -543,7 +543,7 @@ export default function BelgeMerkezi() {
                           {cari[t.toptanci].bekleyen_vade_toplam > 0 &&
                             Math.abs(cari[t.toptanci].bekleyen_vade_toplam - Math.max(0, cari[t.toptanci].hesaplanan_acik || 0)) >
                               Math.max(500, (cari[t.toptanci].bekleyen_vade_toplam || 0) * 0.05) && (
-                            <div style={{ color: '#f59e0b', marginTop: 2 }}>
+                            <div style={{ color: 'var(--orange)', marginTop: 2 }}>
                               ⚠ Ödeme sözü {fmt(cari[t.toptanci].bekleyen_vade_toplam)} ama faturalardan görünen açık {fmt(Math.max(0, cari[t.toptanci].hesaplanan_acik || 0))} —
                               fark {fmt(Math.abs(cari[t.toptanci].bekleyen_vade_toplam - Math.max(0, cari[t.toptanci].hesaplanan_acik || 0)))}:
                               ya faturaları henüz yüklenmedi/okunmadı, ya söz toplu/tahmini girildi.
@@ -634,7 +634,7 @@ export default function BelgeMerkezi() {
               {/* 🏢 KURUMSAL OTOMATİK (MEPAŞ vb) — faturasız DEĞİL: belgesi kurumda hazır */}
               {(d.kurumsal_harcamalar || []).length > 0 && (
                 <div style={{ marginTop: 10 }}>
-                  <div style={{ fontWeight: 700, fontSize: 12, color: '#f59e0b', marginBottom: 4 }}>
+                  <div style={{ fontWeight: 700, fontSize: 12, color: 'var(--orange)', marginBottom: 4 }}>
                     🏢 Kurumsal Otomatik Ödemeler ({d.kurumsal_harcamalar.length}) — faturası kurumda hazır
                     {' '}<a href="https://ebelge.gib.gov.tr/earsivsorgula.html" target="_blank" rel="noreferrer" style={{ color: 'var(--blue, #60a5fa)', fontWeight: 400 }}>🏛️ e-Arşiv'den indir</a>
                   </div>

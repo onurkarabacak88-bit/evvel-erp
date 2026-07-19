@@ -9,8 +9,8 @@ import EkstreYukle from './EkstreYukle';
 // F5 — KART AYI DÖNGÜSÜ ŞERİDİ (2026-07-09): her kart ayın neresinde —
 // kesim → EKSTRE BEKLENİYOR → yüklendi → ödeme bekliyor → ödendi / GECİKTİ.
 const DONGU_STIL = {
-  ekstre_bekleniyor: { ikon: '🟡', renk: '#f59e0b', ad: 'EKSTRE BEKLENİYOR' },
-  gecikti:           { ikon: '🔴', renk: '#ef4444', ad: 'GECİKTİ' },
+  ekstre_bekleniyor: { ikon: '🟡', renk: 'var(--orange)', ad: 'EKSTRE BEKLENİYOR' },
+  gecikti:           { ikon: '🔴', renk: 'var(--red)', ad: 'GECİKTİ' },
   odeme_bekliyor:    { ikon: '💰', renk: '#60a5fa', ad: 'Ödeme bekliyor' },
   odendi:            { ikon: '✅', renk: '#34d399', ad: 'Ödendi' },
   yuklendi:          { ikon: '🟢', renk: '#34d399', ad: 'Yüklendi' },

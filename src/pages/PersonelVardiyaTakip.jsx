@@ -16,7 +16,7 @@ function fmt(n, dk = false) {
 
 function Badge({ renk, label }) {
   const renkler = {
-    sari: { bg: 'rgba(245,158,11,0.12)', border: 'rgba(245,158,11,0.35)', text: '#f59e0b' },
+    sari: { bg: 'rgba(245,158,11,0.12)', border: 'rgba(245,158,11,0.35)', text: 'var(--orange)' },
     kirmizi: { bg: 'rgba(224,92,92,0.1)', border: 'rgba(224,92,92,0.3)', text: '#e05c5c' },
     yesil: { bg: 'rgba(76,175,132,0.1)', border: 'rgba(76,175,132,0.3)', text: '#4caf84' },
     mavi: { bg: 'rgba(74,158,255,0.1)', border: 'rgba(74,158,255,0.3)', text: '#4a9eff' },
@@ -161,7 +161,7 @@ function PersonelKart({ p, onDetay, yil, ay, onYenile }) {
             <div style={{ color: 'var(--text3)', fontSize: 10 }}>Plan</div>
           </div>
           <div style={{ textAlign: 'center' }}>
-            <div style={{ fontWeight: 700, color: p.toplam_fazla_mesai_saat > 0 ? '#f59e0b' : 'var(--text3)' }}>
+            <div style={{ fontWeight: 700, color: p.toplam_fazla_mesai_saat > 0 ? 'var(--orange)' : 'var(--text3)' }}>
               {fmt(p.toplam_fazla_mesai_saat)}s
             </div>
             <div style={{ color: 'var(--text3)', fontSize: 10 }}>Fazla</div>
@@ -261,7 +261,7 @@ function PersonelDetayModal({ p, yil, ay, onKapat }) {
               <div style={{ color: 'var(--text3)', fontSize: 10 }}>Plan</div>
             </div>
             <div style={{ textAlign: 'center' }}>
-              <div style={{ fontWeight: 700, color: p.toplam_fazla_mesai_saat > 0 ? '#f59e0b' : 'var(--text3)' }}>
+              <div style={{ fontWeight: 700, color: p.toplam_fazla_mesai_saat > 0 ? 'var(--orange)' : 'var(--text3)' }}>
                 {fmt(p.toplam_fazla_mesai_saat)}s
               </div>
               <div style={{ color: 'var(--text3)', fontSize: 10 }}>Fazla</div>
@@ -311,7 +311,7 @@ function PersonelDetayModal({ p, yil, ay, onKapat }) {
                 ))}
                 {yemekKaybiGunler.map(g => (
                   <div key={'yemek-'+g.tarih} style={{
-                    padding: '8px 12px', borderRadius: 8, fontSize: 12, color: '#f59e0b',
+                    padding: '8px 12px', borderRadius: 8, fontSize: 12, color: 'var(--orange)',
                     background: 'rgba(245,158,11,0.06)', border: '1px solid rgba(245,158,11,0.2)',
                   }}>
                     🍽️ {new Date(g.tarih).toLocaleDateString('tr-TR', { day: 'numeric', month: 'short', weekday: 'long' })}
@@ -352,7 +352,7 @@ function PersonelDetayModal({ p, yil, ay, onKapat }) {
                     </td>
                     <td style={{ padding: '8px 12px' }}>
                       {g.fazla_mesai_saat > 0
-                        ? <span style={{ color: '#f59e0b', fontWeight: 700 }}>+{fmt(g.fazla_mesai_saat)}s</span>
+                        ? <span style={{ color: 'var(--orange)', fontWeight: 700 }}>+{fmt(g.fazla_mesai_saat)}s</span>
                         : <span style={{ color: 'var(--text3)' }}>—</span>}
                     </td>
                     <td style={{ padding: '8px 12px' }}>
@@ -423,7 +423,7 @@ function PersonelDetayModal({ p, yil, ay, onKapat }) {
               )}
               {d.saatlik_ucret > 0 && satir('Saatlik Ücret (maaş÷285)', fmt2(d.saatlik_ucret), 'var(--text3)')}
               {d.calisma_saati != null && satir(`Çalışma (${d.calisma_saati}s × ${fmt2(d.saatlik_ucret)}/s)`, fmt2(d.normal_ucret), null)}
-              {d.fazla_mesai_saat > 0 && satir(`Fazla Mesai (${d.fazla_mesai_saat}s)`, '+' + fmt2(d.fazla_mesai_ucret), '#f59e0b')}
+              {d.fazla_mesai_saat > 0 && satir(`Fazla Mesai (${d.fazla_mesai_saat}s)`, '+' + fmt2(d.fazla_mesai_ucret), 'var(--orange)')}
               {(d.yemek_ucret_gun > 0 || d.yemek_ucret > 0) && satir(
                 `🍽️ Yemek (${d.yemek_ucret_gun ?? p.yemek_ucret_gun} gün × ${fmt2(d.yemek_ucret_birim ?? 0)})`,
                 '+' + fmt2(d.yemek_ucret), '#4caf84'
@@ -549,7 +549,7 @@ export default function PersonelVardiyaTakip() {
           }}>
             <span style={{ fontSize: 15 }}>🔀</span>
             <div>
-              <div style={{ fontWeight: 700, fontSize: 13, color: '#f59e0b' }}>
+              <div style={{ fontWeight: 700, fontSize: 13, color: 'var(--orange)' }}>
                 Bugün Vardiya Dışı Girişler — {vardiyaDisiGirisler.length} kayıt
               </div>
               <div style={{ fontSize: 11, color: 'var(--text3)' }}>
@@ -568,7 +568,7 @@ export default function PersonelVardiyaTakip() {
                 </span>
                 <span style={{ fontSize: 12, color: 'var(--text3)' }}>asıl: {g.asil_sube_adi || '—'}</span>
                 <span style={{ color: 'var(--text3)' }}>→</span>
-                <span style={{ fontSize: 12, fontWeight: 600, color: '#f59e0b' }}>{g.sube_adi}</span>
+                <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--orange)' }}>{g.sube_adi}</span>
                 <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text3)' }}>
                   {g.vardiya_tip === 'sabahci' ? '🌅 Sabah' : g.vardiya_tip === 'ara_vardiya' ? '☀️ Ara' : '🌙 Kapanış'}
                   {' · '}{new Date(g.giris_ts).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}
@@ -594,7 +594,7 @@ export default function PersonelVardiyaTakip() {
             { label: '✅ Aktif Kadro Hakediş', val: _tl(aktifNet), renk: '#4caf84' },
             { label: ayrilanNet > 0 ? `↩ Ayrılan Son Hesap (${_ayr.length})` : 'Ayrılan', val: _tl(ayrilanNet), renk: ayrilanNet > 0 ? '#e08a5c' : 'var(--text3)' },
             { label: 'Toplam (aktif+ayrılan)', val: _tl(aktifNet + ayrilanNet), renk: 'var(--text2)' },
-            { label: 'Toplam Fazla Mesai', val: fmt(personeller.reduce((s,p)=>s+p.toplam_fazla_mesai_saat,0))+'s', renk: '#f59e0b' },
+            { label: 'Toplam Fazla Mesai', val: fmt(personeller.reduce((s,p)=>s+p.toplam_fazla_mesai_saat,0))+'s', renk: 'var(--orange)' },
             { label: 'Yemek Ücreti Toplam', val: new Intl.NumberFormat('tr-TR').format(personeller.reduce((s,p)=>s+p.yemek_ucret_tutari,0))+'₺', renk: '#4caf84' },
           ].map(k => (
             <div key={k.label} style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 10, padding: '12px 14px' }}>

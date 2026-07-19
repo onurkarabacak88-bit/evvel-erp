@@ -551,14 +551,14 @@ const OPS_HUB_RENK = {
   canli: '#4a9eff',
   'urun-ac': '#2db573',
   'acilis-takip': '#f97316',
-  'kullanilan-urunler': '#f59e0b',
-  'kapanis-takip': '#22c55e',
+  'kullanilan-urunler': 'var(--orange)',
+  'kapanis-takip': 'var(--green)',
   'acilis-kasa-takip': '#f97316',
   'ciro-onay': '#d946b8',
   'kasa-uyumsuzluk': '#e85d5d',
   'personel-vardiya-uyumsuzluk': '#be185d',
   'urun-uyumsuzluk': '#8b5cf6',
-  'fire-bildirim': '#ef4444',
+  'fire-bildirim': 'var(--red)',
   'siparis-kontrol': '#0ea5a4',
   'magaza-kartlari': '#7c6fdc',
   kontrol: '#e85d5d',
@@ -572,7 +572,7 @@ const OPS_HUB_RENK = {
   sayim: 'var(--green)',
   siparis: '#4a9eff',
   'toptanci-siparisleri': '#0ea5a4',
-  'toptanci-teslimler': '#f59e0b',
+  'toptanci-teslimler': 'var(--orange)',
   analitik: '#6366f1',
   'stok-tahmin': '#10b981',
   mesaj: '#8899aa',
@@ -1161,7 +1161,7 @@ function HubGunlukAcilisKapanisCard({ bucket }) {
   const goruntulenenSorun = bucket.acilisGecikti.length + bucket.acilisGecAcildi.length
     + (kapanisZamani ? bucket.kapanisGecikti.length + bucket.kapanisBekliyor.length : 0);
   const tickerMetni = (parcalar.join('   ·   ') + '      ').repeat(3);
-  const renk = goruntulenenSorun === 0 ? '#22c55e' : '#ea580c';
+  const renk = goruntulenenSorun === 0 ? 'var(--green)' : '#ea580c';
   const hiz = Math.max(12, tickerMetni.length * 0.18);
 
   return (
@@ -1535,7 +1535,7 @@ function DetayModal({ kart, onKapat, filtre, onYenileDetay }) {
               if (gecDk > 2)  { renk = 'var(--red)';   ikon = '⚠️'; satir = `Açıldı ${ger} · Beklenen ${bek} · +${gecDk}dk gecikme`; }
               else if (gecDk < -2) { renk = 'var(--green)'; ikon = '✅'; satir = `Açıldı ${ger} · Beklenen ${bek} · ${Math.abs(gecDk)}dk erken`; }
               else            { renk = 'var(--green)'; ikon = '✅'; satir = `Açıldı ${ger} · Zamanında (Beklenen ${bek})`; }
-            } else if (bek) { renk = '#f59e0b'; ikon = '⏰'; satir = `Beklenen açılış: ${bek}${kart.beklenen_acilis_personel ? ' · ' + kart.beklenen_acilis_personel : ''}`; }
+            } else if (bek) { renk = 'var(--orange)'; ikon = '⏰'; satir = `Beklenen açılış: ${bek}${kart.beklenen_acilis_personel ? ' · ' + kart.beklenen_acilis_personel : ''}`; }
             else             { renk = 'var(--green)'; ikon = '✅'; satir = `Açıldı: ${ger}`; }
             return (
               <div style={{ padding: '8px 12px', background: 'var(--bg3)', borderRadius: 7, fontSize: 12, color: renk, display: 'flex', gap: 6, alignItems: 'center' }}>
@@ -1771,10 +1771,10 @@ function StokKayipPanel({ veri }) {
       {/* ── ÖZET STAT BARI ── */}
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
         {[
-          { label: 'Sapma Tespit Edilen Şube', val: subeOzet.length, renk: subeOzet.length > 0 ? '#ef4444' : '#22c55e', icon: '🏪' },
-          { label: 'Toplam Açıklanamayan Birim', val: toplamKayip, renk: toplamKayip > 0 ? '#f97316' : '#22c55e', icon: '📦' },
+          { label: 'Sapma Tespit Edilen Şube', val: subeOzet.length, renk: subeOzet.length > 0 ? 'var(--red)' : 'var(--green)', icon: '🏪' },
+          { label: 'Toplam Açıklanamayan Birim', val: toplamKayip, renk: toplamKayip > 0 ? '#f97316' : 'var(--green)', icon: '📦' },
           { label: 'Risk Altında Personel', val: riskPersonel.length, renk: riskPersonel.length > 0 ? '#f97316' : '#94a3b8', icon: '👤' },
-          { label: 'Veri Eksik Gün', val: veriEksik, renk: veriEksik > 0 ? '#eab308' : '#94a3b8', icon: '⚠️' },
+          { label: 'Veri Eksik Gün', val: veriEksik, renk: veriEksik > 0 ? 'var(--yellow)' : '#94a3b8', icon: '⚠️' },
         ].map((st) => (
           <div key={st.label} style={{
             flex: '1 1 140px',
@@ -1798,7 +1798,7 @@ function StokKayipPanel({ veri }) {
         }}>
           <span style={{ fontSize: 16 }}>⚠️</span>
           <div>
-            <div style={{ fontSize: 13, fontWeight: 700, color: '#eab308' }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--yellow)' }}>
               {veriEksik} günde açılış kaydı eksik
             </div>
             <div style={{ fontSize: 12, color: 'var(--text3)', marginTop: 2 }}>
@@ -1858,7 +1858,7 @@ function StokKayipPanel({ veri }) {
             })}
           </div>
           {toplamRiskUyari && (
-            <div style={{ padding: '8px 14px', background: yuksekRisk.length > 0 ? 'rgba(239,68,68,0.06)' : 'rgba(249,115,22,0.06)', borderTop: '1px solid var(--border)', fontSize: 12, color: yuksekRisk.length > 0 ? '#ef4444' : '#f97316' }}>
+            <div style={{ padding: '8px 14px', background: yuksekRisk.length > 0 ? 'rgba(239,68,68,0.06)' : 'rgba(249,115,22,0.06)', borderTop: '1px solid var(--border)', fontSize: 12, color: yuksekRisk.length > 0 ? 'var(--red)' : '#f97316' }}>
               {toplamRiskUyari}
             </div>
           )}
@@ -1895,7 +1895,7 @@ function StokKayipPanel({ veri }) {
                     <tr key={`${s.sube_id}-${i}`} style={yuksek ? { background: 'rgba(239,68,68,0.06)' } : {}}>
                       <td style={{ fontWeight: 600 }}>
                         {s.sube_adi || s.sube_id}
-                        {yuksek && <span style={{ marginLeft: 6, fontSize: 10, color: '#ef4444' }}>●</span>}
+                        {yuksek && <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--red)' }}>●</span>}
                       </td>
                       <td className="mono" style={{ textAlign: 'right', fontWeight: 700, color: s.toplam_acik > 0 ? '#f97316' : 'inherit' }}>
                         {s.toplam_acik}
@@ -1924,7 +1924,7 @@ function StokKayipPanel({ veri }) {
 
 const DURUM_LABEL = {
   bekliyor:       { label: 'Bekliyor',       renk: '#4a9eff', icon: '🕐' },
-  teslim_edildi:  { label: 'Teslim Edildi',  renk: '#22c55e', icon: '✅' },
+  teslim_edildi:  { label: 'Teslim Edildi',  renk: 'var(--green)', icon: '✅' },
   iptal:          { label: 'İptal',          renk: '#94a3b8', icon: '✕' },
   gonderilmedi:   { label: 'Gönderilmedi',   renk: '#f97316', icon: '⚠️' },
 };
@@ -6496,7 +6496,7 @@ export default function OperasyonMerkezi() {
                   emoji: '🔥',
                   ad: 'Fire',
                   deger: fireSayi,
-                  renk: '#f59e0b',
+                  renk: 'var(--orange)',
                   pulse: false,
                   onClick: () => acOpsModul('fire-bildirim', 'envanter'),
                   title: fireSayi === 0
@@ -9407,7 +9407,7 @@ export default function OperasyonMerkezi() {
                         ) : null}
                       </span>
                       <span style={{ fontSize: 12, color: 'var(--text3)' }}>
-                        {gun.toplam_islem || 0} şube · {gun.toplam_adet || 0} adet · <span style={{ color: '#f59e0b' }}>Detay ↓</span>
+                        {gun.toplam_islem || 0} şube · {gun.toplam_adet || 0} adet · <span style={{ color: 'var(--orange)' }}>Detay ↓</span>
                       </span>
                     </button>
                     {dolu ? (
@@ -9745,7 +9745,7 @@ export default function OperasyonMerkezi() {
           const x = Number(v);
           if (Math.abs(x) <= 0.5) return { color: 'var(--text2)', fontWeight: 600 };
           if (x > 0.5) return { color: '#e85d5d', fontWeight: 800 };
-          return { color: '#22c55e', fontWeight: 800 };
+          return { color: 'var(--green)', fontWeight: 800 };
         };
         /** Nakit Δ: yalnızca açılış+kapanış tamam ise tutar; değilse açık uyarı metni (şube paneli değil, merkez tablosu). */
         const nakitDeltaHucre = (r) => {
@@ -9779,7 +9779,7 @@ export default function OperasyonMerkezi() {
               // Kısmi (gün sürüyor) → GERÇEK fark değil, "şu an kasada olması gereken".
               // Kırmızı/yeşil alarm verme; nötr göster. Alarm sadece TAM denklemede.
               const kismiNotr = kismi && !tam;
-              const etiketRenk = kismiNotr ? 'var(--text3)' : (!buyuk ? 'var(--text3)' : fv > 0 ? '#e85d5d' : '#22c55e');
+              const etiketRenk = kismiNotr ? 'var(--text3)' : (!buyuk ? 'var(--text3)' : fv > 0 ? '#e85d5d' : 'var(--green)');
               const sayiStil = kismiNotr
                 ? { fontSize: 12, fontWeight: 700, color: 'var(--text2)' }
                 : farkStil(fark);
@@ -9898,10 +9898,10 @@ export default function OperasyonMerkezi() {
             {kt && (
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 10 }}>
                 {[
-                  { label: 'Kapanış yapan', val: `${kt.kapanis_yapan_adet} / ${kt.sube_sayisi}`, color: eksikKapanisSayisi > 0 ? '#e85d5d' : '#22c55e', bg: eksikKapanisSayisi > 0 ? 'rgba(232,93,93,0.12)' : 'rgba(34,197,94,0.12)', border: eksikKapanisSayisi > 0 ? 'rgba(232,93,93,0.4)' : 'rgba(34,197,94,0.4)' },
-                  { label: 'Ciro onaylı',   val: `${tamamSayisi} şube`, color: tamamSayisi === kt.sube_sayisi ? '#22c55e' : '#f59e0b', bg: 'rgba(99,102,241,0.10)', border: 'rgba(99,102,241,0.3)' },
+                  { label: 'Kapanış yapan', val: `${kt.kapanis_yapan_adet} / ${kt.sube_sayisi}`, color: eksikKapanisSayisi > 0 ? '#e85d5d' : 'var(--green)', bg: eksikKapanisSayisi > 0 ? 'rgba(232,93,93,0.12)' : 'rgba(34,197,94,0.12)', border: eksikKapanisSayisi > 0 ? 'rgba(232,93,93,0.4)' : 'rgba(34,197,94,0.4)' },
+                  { label: 'Ciro onaylı',   val: `${tamamSayisi} şube`, color: tamamSayisi === kt.sube_sayisi ? 'var(--green)' : 'var(--orange)', bg: 'rgba(99,102,241,0.10)', border: 'rgba(99,102,241,0.3)' },
                   { label: 'Onay bekleyen', val: bekleyenSayisi > 0 ? `${bekleyenSayisi} şube` : '—', color: bekleyenSayisi > 0 ? '#fbbf24' : 'var(--text3)', bg: bekleyenSayisi > 0 ? 'rgba(245,158,11,0.10)' : 'var(--bg2)', border: bekleyenSayisi > 0 ? 'rgba(245,158,11,0.35)' : 'var(--border)' },
-                  { label: 'Ciro eksik',    val: eksikCiroSayisi > 0 ? `${eksikCiroSayisi} şube` : 'Yok', color: eksikCiroSayisi > 0 ? '#e85d5d' : '#22c55e', bg: eksikCiroSayisi > 0 ? 'rgba(232,93,93,0.10)' : 'rgba(34,197,94,0.07)', border: eksikCiroSayisi > 0 ? 'rgba(232,93,93,0.35)' : 'rgba(34,197,94,0.25)' },
+                  { label: 'Ciro eksik',    val: eksikCiroSayisi > 0 ? `${eksikCiroSayisi} şube` : 'Yok', color: eksikCiroSayisi > 0 ? '#e85d5d' : 'var(--green)', bg: eksikCiroSayisi > 0 ? 'rgba(232,93,93,0.10)' : 'rgba(34,197,94,0.07)', border: eksikCiroSayisi > 0 ? 'rgba(232,93,93,0.35)' : 'rgba(34,197,94,0.25)' },
                 ].map((m, i) => (
                   <div key={i} style={{ background: m.bg, border: `1px solid ${m.border}`, borderRadius: 8, padding: '10px 14px' }}>
                     <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 4 }}>{m.label}</div>
@@ -9928,7 +9928,7 @@ export default function OperasyonMerkezi() {
                 </button>
                 {satirlar.map((r) => {
                   const sec = subeSecili === String(r.sube_id);
-                  const acc = !r.kapanis_tamam ? '#e85d5d' : !r.ciro_onaylandi && !r.taslak_var ? '#f97316' : r.taslak_var && r.taslak_durum === 'bekliyor' ? '#fbbf24' : '#22c55e';
+                  const acc = !r.kapanis_tamam ? '#e85d5d' : !r.ciro_onaylandi && !r.taslak_var ? '#f97316' : r.taslak_var && r.taslak_durum === 'bekliyor' ? '#fbbf24' : 'var(--green)';
                   return (
                     <button
                       key={r.sube_id}
@@ -9966,18 +9966,18 @@ export default function OperasyonMerkezi() {
 
             {/* ── Şube kartları (varsayılan görünüm) ── */}
             {satirlar.length > 0 && (() => {
-              const oncAksan = (r) => { const o = _oncelik(r); return o === 0 ? '#e85d5d' : o === 1 ? '#f97316' : o === 2 ? '#fbbf24' : '#22c55e'; };
+              const oncAksan = (r) => { const o = _oncelik(r); return o === 0 ? '#e85d5d' : o === 1 ? '#f97316' : o === 2 ? '#fbbf24' : 'var(--green)'; };
               const rozet = (c) => ({ background: 'var(--bg2)', color: c, border: `1px solid ${c}`, borderRadius: 999, padding: '2px 10px', fontSize: 11, fontWeight: 700, whiteSpace: 'nowrap' });
               const durumRozetleri = (r) => {
                 const out = [];
                 out.push(
                   r.kapanis_tamam
-                    ? <span key="k" style={rozet('#22c55e')}>✅ Kapandı</span>
+                    ? <span key="k" style={rozet('var(--green)')}>✅ Kapandı</span>
                     : r.acildi
                     ? <span key="k" style={rozet('#e85d5d')}>🔴 Kapanmadı</span>
                     : <span key="k" style={rozet('var(--text3)')}>Açılmadı</span>
                 );
-                if (r.ciro_onaylandi) out.push(<span key="c" style={rozet('#22c55e')}>✓ Ciro onaylı</span>);
+                if (r.ciro_onaylandi) out.push(<span key="c" style={rozet('var(--green)')}>✓ Ciro onaylı</span>);
                 else if (r.taslak_var && r.taslak_durum === 'bekliyor') out.push(<span key="c" style={rozet('#fbbf24')}>⏳ Onayda</span>);
                 else if (r.kapanis_tamam) out.push(<span key="c" style={rozet('#e85d5d')}>❌ Ciro yok</span>);
                 return out;
@@ -9992,12 +9992,12 @@ export default function OperasyonMerkezi() {
                 }
                 const adimlar = [
                   { e: 'Sabah kasa', v: Number(r.sabah_kasa_tl) || 0, s: '', c: 'var(--text2)' },
-                  { e: 'Nakit (X)', v: Number(r.nakit) || 0, s: '+', c: '#22c55e' },
+                  { e: 'Nakit (X)', v: Number(r.nakit) || 0, s: '+', c: 'var(--green)' },
                   { e: 'Teslim', v: Number(r.teslim_kasa_tl) || 0, s: '−', c: '#e85d5d' },
                   { e: 'Devir', v: Number(r.devir) || 0, s: '−', c: '#60a5fa' },
                 ];
                 if ((Number(r.ara_teslim_tl) || 0) > 0) adimlar.push({ e: 'Ara teslim', v: Number(r.ara_teslim_tl), s: '−', c: '#e85d5d' });
-                if ((Number(r.anlik_gider_nakit_tl) || 0) > 0) adimlar.push({ e: 'Gider (N)', v: Number(r.anlik_gider_nakit_tl), s: '−', c: '#f59e0b' });
+                if ((Number(r.anlik_gider_nakit_tl) || 0) > 0) adimlar.push({ e: 'Gider (N)', v: Number(r.anlik_gider_nakit_tl), s: '−', c: 'var(--orange)' });
                 return (
                   <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'stretch', gap: 6 }}>
                     {adimlar.map((a, i) => (
@@ -10026,7 +10026,7 @@ export default function OperasyonMerkezi() {
                     <div style={{ display: 'flex', alignItems: 'baseline', gap: 18, flexWrap: 'wrap' }}>
                       <div>
                         <div style={{ fontSize: 10, color: 'var(--text3)' }}>Toplam ciro</div>
-                        <div style={{ fontSize: 24, fontWeight: 800, color: r.ciro_onaylandi ? '#22c55e' : 'var(--text)', fontVariantNumeric: 'tabular-nums' }}>{toplam > 0 ? `${fmt(toplam)} ₺` : '—'}</div>
+                        <div style={{ fontSize: 24, fontWeight: 800, color: r.ciro_onaylandi ? 'var(--green)' : 'var(--text)', fontVariantNumeric: 'tabular-nums' }}>{toplam > 0 ? `${fmt(toplam)} ₺` : '—'}</div>
                       </div>
                       <div style={{ display: 'flex', gap: 16 }}>
                         {[['Nakit', Number(r.nakit) || 0], ['POS', Number(r.pos) || 0], ['Online', onlineNet]].map(([e, v]) => (
@@ -10070,7 +10070,7 @@ export default function OperasyonMerkezi() {
                   )}
                   {tamamlar.length > 0 && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                      {grupBaslik('Tamamlanan', '#22c55e', tamamlar.length)}
+                      {grupBaslik('Tamamlanan', 'var(--green)', tamamlar.length)}
                       {grid(tamamlar)}
                     </div>
                   )}
@@ -10081,7 +10081,7 @@ export default function OperasyonMerkezi() {
                   </div>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(115px, 1fr))', gap: 10 }}>
                     {[
-                      ['Toplam ciro', topCiro, '#22c55e'],
+                      ['Toplam ciro', topCiro, 'var(--green)'],
                       ['Sabah kasa', topSabah, 'var(--text)'],
                       ['Teslim', topTeslim, 'var(--text)'],
                       ['Devir', topDevir, 'var(--text)'],
@@ -10139,7 +10139,7 @@ export default function OperasyonMerkezi() {
                           {/* Kapanış */}
                           <td style={{ padding: '8px 10px', textAlign: 'center', borderBottom: '1px solid var(--border)', whiteSpace: 'nowrap' }}>
                             {r.kapanis_tamam
-                              ? <span style={{ color: '#22c55e', fontWeight: 700 }}>✅ Kapandı</span>
+                              ? <span style={{ color: 'var(--green)', fontWeight: 700 }}>✅ Kapandı</span>
                               : r.acildi
                               ? <span style={{ color: '#e85d5d', fontWeight: 700 }}>🔴 Kapanmadı</span>
                               : <span style={{ color: 'var(--text3)', fontStyle: 'italic', fontSize: 12 }}>Açılmadı</span>}
@@ -10155,7 +10155,7 @@ export default function OperasyonMerkezi() {
                           {/* Ciro durumu */}
                           <td style={{ padding: '8px 10px', textAlign: 'center', borderBottom: '1px solid var(--border)', whiteSpace: 'nowrap' }}>
                             {r.ciro_onaylandi
-                              ? <span style={{ background: 'rgba(34,197,94,0.15)', color: '#22c55e', borderRadius: 6, padding: '2px 8px', fontWeight: 700, fontSize: 12 }}>✓ Onaylı</span>
+                              ? <span style={{ background: 'rgba(34,197,94,0.15)', color: 'var(--green)', borderRadius: 6, padding: '2px 8px', fontWeight: 700, fontSize: 12 }}>✓ Onaylı</span>
                               : r.taslak_var && r.taslak_durum === 'bekliyor'
                               ? <span style={{ background: 'rgba(245,158,11,0.15)', color: '#fbbf24', borderRadius: 6, padding: '2px 8px', fontWeight: 700, fontSize: 12 }}>⏳ Onayda</span>
                               : r.kapanis_tamam
@@ -10185,7 +10185,7 @@ export default function OperasyonMerkezi() {
                             ) : onlineCiftKayit ? (
                               <span style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
                                 <span style={{ color: 'var(--text3)' }}>—</span>
-                                <span style={{ fontSize: 9, fontWeight: 700, color: '#f59e0b', maxWidth: 110, textAlign: 'right', lineHeight: 1.2 }}>
+                                <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--orange)', maxWidth: 110, textAlign: 'right', lineHeight: 1.2 }}>
                                   Online yok (çift kayıt düzeltildi)
                                 </span>
                               </span>
@@ -10197,7 +10197,7 @@ export default function OperasyonMerkezi() {
                             title={`Toplam ciro (Nakit ${fmt(nakitN)} + POS ${fmt(posN)}${onlineNet > 0 ? ` + Online ${fmt(onlineNet)}` : ''})`}
                           >
                             {toplam > 0
-                              ? <span style={{ fontWeight: 800, fontSize: 14, color: r.ciro_onaylandi ? '#22c55e' : 'var(--text)' }}>{fmt(toplam)} ₺</span>
+                              ? <span style={{ fontWeight: 800, fontSize: 14, color: r.ciro_onaylandi ? 'var(--green)' : 'var(--text)' }}>{fmt(toplam)} ₺</span>
                               : <span style={{ color: 'var(--text3)' }}>—</span>}
                           </td>
                           {/* Sabah kasa */}
@@ -10244,7 +10244,7 @@ export default function OperasyonMerkezi() {
                         <td style={{ padding: '9px 10px', textAlign: 'right', borderTop: '2px solid var(--border)', fontVariantNumeric: 'tabular-nums', fontWeight: 700, fontSize: 13 }}>
                           {fmt(topOnline)} ₺
                         </td>
-                        <td style={{ padding: '9px 10px', textAlign: 'right', borderTop: '2px solid var(--border)', fontVariantNumeric: 'tabular-nums', fontWeight: 800, fontSize: 15, color: '#22c55e' }}>
+                        <td style={{ padding: '9px 10px', textAlign: 'right', borderTop: '2px solid var(--border)', fontVariantNumeric: 'tabular-nums', fontWeight: 800, fontSize: 15, color: 'var(--green)' }}>
                           {fmt(topCiro)} ₺
                         </td>
                         <td style={{ padding: '9px 10px', textAlign: 'right', borderTop: '2px solid var(--border)', fontVariantNumeric: 'tabular-nums', fontWeight: 700, fontSize: 12, color: 'var(--text2)' }}>
@@ -10325,13 +10325,13 @@ export default function OperasyonMerkezi() {
         const farkStil = (sev, fark) => {
           if (fark == null || Math.abs(Number(fark)) <= 0.01) return { color: 'var(--text2)', fontWeight: 600 };
           if (sev === 'kritik' || Math.abs(Number(fark)) >= 200) return { color: '#e85d5d', fontWeight: 800 };
-          if (sev === 'uyari' || Math.abs(Number(fark)) >= 50) return { color: '#f59e0b', fontWeight: 800 };
+          if (sev === 'uyari' || Math.abs(Number(fark)) >= 50) return { color: 'var(--orange)', fontWeight: 800 };
           return { color: 'var(--text2)', fontWeight: 600 };
         };
         const durumHucre = (r) => {
           if (r.acilis_tamam) {
             return (
-              <span style={{ background: 'rgba(34,197,94,0.15)', color: '#22c55e', borderRadius: 6, padding: '2px 8px', fontWeight: 700, fontSize: 12 }}>
+              <span style={{ background: 'rgba(34,197,94,0.15)', color: 'var(--green)', borderRadius: 6, padding: '2px 8px', fontWeight: 700, fontSize: 12 }}>
                 ✓ Açıldı
               </span>
             );
@@ -10409,9 +10409,9 @@ export default function OperasyonMerkezi() {
             {akt && (
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 10 }}>
                 {[
-                  { label: 'Açılış yapan', val: `${acilisSayisi} / ${akt.sube_sayisi}`, color: bekleyenSayisi > 0 ? '#f59e0b' : '#22c55e', bg: bekleyenSayisi > 0 ? 'rgba(245,158,11,0.10)' : 'rgba(34,197,94,0.12)', border: bekleyenSayisi > 0 ? 'rgba(245,158,11,0.35)' : 'rgba(34,197,94,0.4)' },
-                  { label: 'Açılmayan', val: bekleyenSayisi > 0 ? `${bekleyenSayisi} şube` : 'Yok', color: bekleyenSayisi > 0 ? '#e85d5d' : '#22c55e', bg: bekleyenSayisi > 0 ? 'rgba(232,93,93,0.10)' : 'rgba(34,197,94,0.07)', border: bekleyenSayisi > 0 ? 'rgba(232,93,93,0.35)' : 'rgba(34,197,94,0.25)' },
-                  { label: 'Kasa farkı (≥50₺)', val: farkSayisi > 0 ? `${farkSayisi} şube` : 'Yok', color: farkSayisi > 0 ? '#f59e0b' : 'var(--text3)', bg: farkSayisi > 0 ? 'rgba(245,158,11,0.10)' : 'var(--bg2)', border: farkSayisi > 0 ? 'rgba(245,158,11,0.35)' : 'var(--border)' },
+                  { label: 'Açılış yapan', val: `${acilisSayisi} / ${akt.sube_sayisi}`, color: bekleyenSayisi > 0 ? 'var(--orange)' : 'var(--green)', bg: bekleyenSayisi > 0 ? 'rgba(245,158,11,0.10)' : 'rgba(34,197,94,0.12)', border: bekleyenSayisi > 0 ? 'rgba(245,158,11,0.35)' : 'rgba(34,197,94,0.4)' },
+                  { label: 'Açılmayan', val: bekleyenSayisi > 0 ? `${bekleyenSayisi} şube` : 'Yok', color: bekleyenSayisi > 0 ? '#e85d5d' : 'var(--green)', bg: bekleyenSayisi > 0 ? 'rgba(232,93,93,0.10)' : 'rgba(34,197,94,0.07)', border: bekleyenSayisi > 0 ? 'rgba(232,93,93,0.35)' : 'rgba(34,197,94,0.25)' },
+                  { label: 'Kasa farkı (≥50₺)', val: farkSayisi > 0 ? `${farkSayisi} şube` : 'Yok', color: farkSayisi > 0 ? 'var(--orange)' : 'var(--text3)', bg: farkSayisi > 0 ? 'rgba(245,158,11,0.10)' : 'var(--bg2)', border: farkSayisi > 0 ? 'rgba(245,158,11,0.35)' : 'var(--border)' },
                   { label: 'Uyumsuzluk bekleyen', val: uyumBekleyen > 0 ? `${uyumBekleyen} kayıt` : '—', color: uyumBekleyen > 0 ? '#e85d5d' : 'var(--text3)', bg: uyumBekleyen > 0 ? 'rgba(232,93,93,0.10)' : 'var(--bg2)', border: uyumBekleyen > 0 ? 'rgba(232,93,93,0.35)' : 'var(--border)' },
                 ].map((m, i) => (
                   <div key={i} style={{ background: m.bg, border: `1px solid ${m.border}`, borderRadius: 8, padding: '10px 14px' }}>
@@ -10495,7 +10495,7 @@ export default function OperasyonMerkezi() {
                                 Çözüm bekliyor →
                               </button>
                             ) : r.uyumsuzluk_cozuldu ? (
-                              <span style={{ fontSize: 11, color: '#22c55e', fontWeight: 700 }}>✓ Çözüldü</span>
+                              <span style={{ fontSize: 11, color: 'var(--green)', fontWeight: 700 }}>✓ Çözüldü</span>
                             ) : (
                               <span style={{ color: 'var(--text3)', fontSize: 12 }}>—</span>
                             )}
@@ -10728,7 +10728,7 @@ export default function OperasyonMerkezi() {
                 let durum, acc;
                 if (gecMap.has(sid)) { durum = 'acilmadi'; acc = '#e85d5d'; }
                 else if (gecAcMap.has(sid)) { durum = 'gec'; acc = '#f97316'; }
-                else if (oz.acilis_tamam) { durum = 'acildi'; acc = '#22c55e'; }
+                else if (oz.acilis_tamam) { durum = 'acildi'; acc = 'var(--green)'; }
                 else { durum = 'bekliyor'; acc = '#94a3b8'; }
                 const g = gecMap.get(sid) || gecAcMap.get(sid);
                 return { k, sid, durum, acc, gecikme: g?.gecikme_dk, bek: bekSet.has(sid) };
@@ -10737,7 +10737,7 @@ export default function OperasyonMerkezi() {
               list.sort((a, b) => (ord[a.durum] - ord[b.durum]) || String(a.k.sube_adi || '').localeCompare(String(b.k.sube_adi || ''), 'tr'));
               if (!list.length) return <div className="loading"><div className="spinner" />Kartlar yükleniyor…</div>;
               const rozet = (c) => ({ background: 'var(--bg2)', color: c, border: `1px solid ${c}`, borderRadius: 999, padding: '2px 10px', fontSize: 11, fontWeight: 700, whiteSpace: 'nowrap' });
-              const durumRozet = (d) => d === 'acildi' ? <span style={rozet('#22c55e')}>✅ Açıldı</span>
+              const durumRozet = (d) => d === 'acildi' ? <span style={rozet('var(--green)')}>✅ Açıldı</span>
                 : d === 'gec' ? <span style={rozet('#f97316')}>🟡 Geç açıldı</span>
                 : d === 'acilmadi' ? <span style={rozet('#e85d5d')}>🔴 Açılmadı</span>
                 : <span style={rozet('#94a3b8')}>⏳ Bekliyor</span>;
@@ -11916,14 +11916,14 @@ export default function OperasyonMerkezi() {
           : null;
 
         const fcRenk = avgFoodCost == null ? 'var(--text3)'
-          : avgFoodCost > benchmark.food_cost_max_pct ? '#ef4444'
-          : avgFoodCost < benchmark.food_cost_min_pct ? '#f59e0b'
-          : '#22c55e';
+          : avgFoodCost > benchmark.food_cost_max_pct ? 'var(--red)'
+          : avgFoodCost < benchmark.food_cost_min_pct ? 'var(--orange)'
+          : 'var(--green)';
 
         const shrinkRenk = avgShrinkage == null ? 'var(--text3)'
-          : avgShrinkage > benchmark.shrinkage_sorusturma_pct ? '#ef4444'
+          : avgShrinkage > benchmark.shrinkage_sorusturma_pct ? 'var(--red)'
           : avgShrinkage > benchmark.shrinkage_izleme_pct ? '#f97316'
-          : '#22c55e';
+          : 'var(--green)';
 
         return (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -11985,11 +11985,11 @@ export default function OperasyonMerkezi() {
             {/* Benchmark referans şeridi */}
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               {[
-                { label: 'Food Cost %28–35', aciklama: 'Sağlıklı aralık', renk: '#22c55e' },
+                { label: 'Food Cost %28–35', aciklama: 'Sağlıklı aralık', renk: 'var(--green)' },
                 { label: 'FC >%35', aciklama: 'Maliyet soruştur', renk: '#f97316' },
-                { label: 'Shrinkage <%2', aciklama: 'Normal kayıp', renk: '#22c55e' },
+                { label: 'Shrinkage <%2', aciklama: 'Normal kayıp', renk: 'var(--green)' },
                 { label: 'Shrinkage %2–5', aciklama: 'İzle', renk: '#f97316' },
-                { label: 'Shrinkage >%5', aciklama: 'Soruştur', renk: '#ef4444' },
+                { label: 'Shrinkage >%5', aciklama: 'Soruştur', renk: 'var(--red)' },
               ].map((b, i) => (
                 <div key={i} style={{ padding: '4px 10px', borderRadius: 20, border: `1px solid ${b.renk}40`, background: `${b.renk}10`, fontSize: 11 }}>
                   <span style={{ fontWeight: 700, color: b.renk }}>{b.label}</span>
@@ -12087,7 +12087,7 @@ export default function OperasyonMerkezi() {
                           {gosterilecekler.map((r, i) => {
                             // DB kayıtları food_cost_pct decimal (0.32), hesaplama sonucu % (32.0)
                             const fcRaw = kaynakHesaplama ? Number(r.food_cost_pct || 0) : Number(r.food_cost_pct || 0) * 100;
-                            const fcR = fcRaw > 35 ? '#ef4444' : fcRaw > 0 && fcRaw < 28 ? '#f59e0b' : fcRaw > 0 ? '#22c55e' : 'var(--text3)';
+                            const fcR = fcRaw > 35 ? 'var(--red)' : fcRaw > 0 && fcRaw < 28 ? 'var(--orange)' : fcRaw > 0 ? 'var(--green)' : 'var(--text3)';
                             return (
                               <tr key={i} style={{ borderBottom: '1px solid var(--border)', background: i%2===0?'transparent':'var(--bg2)' }}>
                                 <td style={{ padding: '6px 10px', whiteSpace: 'nowrap', fontSize: 11, color: 'var(--text3)' }}>{r.tarih}</td>
@@ -12388,7 +12388,7 @@ export default function OperasyonMerkezi() {
                           </div>
                           <div style={{ paddingTop: idx === 0 ? 16 : 0 }}>
                             {receteForm.hammaddeler.length > 1 && (
-                              <button onClick={() => silHammadde(idx)} style={{ padding: '5px 7px', borderRadius: 5, border: '1px solid rgba(239,68,68,.4)', background: 'rgba(239,68,68,.07)', color: '#ef4444', fontSize: 11, cursor: 'pointer', width: '100%' }}>✕</button>
+                              <button onClick={() => silHammadde(idx)} style={{ padding: '5px 7px', borderRadius: 5, border: '1px solid rgba(239,68,68,.4)', background: 'rgba(239,68,68,.07)', color: 'var(--red)', fontSize: 11, cursor: 'pointer', width: '100%' }}>✕</button>
                             )}
                           </div>
                         </div>
@@ -12423,7 +12423,7 @@ export default function OperasyonMerkezi() {
                             </div>
                             <div style={{ display: 'flex', gap: 6 }}>
                               <button onClick={() => aciklaReceteFormu(r)} style={{ padding: '3px 10px', borderRadius: 5, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text2)', fontSize: 11, cursor: 'pointer' }}>✏️ Düzenle</button>
-                              <button onClick={() => silRecete(r.urun_id)} style={{ padding: '3px 10px', borderRadius: 5, border: '1px solid rgba(239,68,68,.4)', background: 'rgba(239,68,68,.07)', color: '#ef4444', fontSize: 11, cursor: 'pointer' }}>🗑 Sil</button>
+                              <button onClick={() => silRecete(r.urun_id)} style={{ padding: '3px 10px', borderRadius: 5, border: '1px solid rgba(239,68,68,.4)', background: 'rgba(239,68,68,.07)', color: 'var(--red)', fontSize: 11, cursor: 'pointer' }}>🗑 Sil</button>
                             </div>
                           </div>
                           <div style={{ padding: '8px 12px', display: 'flex', flexWrap: 'wrap', gap: 8 }}>
@@ -12461,12 +12461,12 @@ export default function OperasyonMerkezi() {
 
       {aktifSekme === 'stok-hareketi' && (() => {
         const TUR_ETIKET = {
-          SEVK_GIRIS:      { label: 'Sevk Girişi',      renk: '#22c55e', ikon: '📦' },
+          SEVK_GIRIS:      { label: 'Sevk Girişi',      renk: 'var(--green)', ikon: '📦' },
           SEVK_CIKIS:      { label: 'Sevk Çıkışı',      renk: '#f97316', ikon: '🚚' },
-          SEVK_UZLASMA:    { label: 'Sevk Uzlaşma',     renk: '#f59e0b', ikon: '🔄' },
+          SEVK_UZLASMA:    { label: 'Sevk Uzlaşma',     renk: 'var(--orange)', ikon: '🔄' },
           KULLANIM:        { label: 'Kullanım',          renk: '#a78bfa', ikon: '☕' },
           SAYIM_DUZELTME:  { label: 'Sayım Düzeltme',   renk: '#60a5fa', ikon: '📊' },
-          FIRE:            { label: 'Fire / Zayi',       renk: '#ef4444', ikon: '🗑' },
+          FIRE:            { label: 'Fire / Zayi',       renk: 'var(--red)', ikon: '🗑' },
           IADE:            { label: 'İade',              renk: '#94a3b8', ikon: '↩️' },
           TRANSFER_GIRIS:  { label: 'Transfer Girişi',   renk: '#34d399', ikon: '➡️' },
           TRANSFER_CIKIS:  { label: 'Transfer Çıkışı',  renk: '#fb923c', ikon: '⬅️' },
@@ -12535,7 +12535,7 @@ export default function OperasyonMerkezi() {
                       <div key={t.hareket_turu} style={{ padding: '8px 12px', borderRadius: 8, border: `1px solid ${meta.renk}40`, background: `${meta.renk}10`, minWidth: 140 }}>
                         <div style={{ fontSize: 12, fontWeight: 700, color: meta.renk }}>{meta.ikon} {meta.label}</div>
                         <div style={{ fontSize: 11, color: 'var(--text2)', marginTop: 2 }}>
-                          {t.adet} hareket · <span style={{ color: '#22c55e' }}>+{Number(t.toplam_giris || 0).toFixed(1)}</span> / <span style={{ color: '#ef4444' }}>−{Number(t.toplam_cikis || 0).toFixed(1)}</span>
+                          {t.adet} hareket · <span style={{ color: 'var(--green)' }}>+{Number(t.toplam_giris || 0).toFixed(1)}</span> / <span style={{ color: 'var(--red)' }}>−{Number(t.toplam_cikis || 0).toFixed(1)}</span>
                         </div>
                       </div>
                     );
@@ -12553,7 +12553,7 @@ export default function OperasyonMerkezi() {
                     <div key={s.sube_id} style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg2)', minWidth: 160 }}>
                       <div style={{ fontSize: 12, fontWeight: 700 }}>🏪 {s.sube_ad || s.sube_id}</div>
                       <div style={{ fontSize: 11, color: 'var(--text2)', marginTop: 2 }}>
-                        {s.hareket_adet} hareket · <span style={{ color: '#22c55e' }}>+{Number(s.toplam_giris || 0).toFixed(1)}</span> / <span style={{ color: '#ef4444' }}>−{Number(s.toplam_cikis || 0).toFixed(1)}</span>
+                        {s.hareket_adet} hareket · <span style={{ color: 'var(--green)' }}>+{Number(s.toplam_giris || 0).toFixed(1)}</span> / <span style={{ color: 'var(--red)' }}>−{Number(s.toplam_cikis || 0).toFixed(1)}</span>
                       </div>
                     </div>
                   ))}
@@ -12591,7 +12591,7 @@ export default function OperasyonMerkezi() {
                               {meta.ikon} {meta.label}
                             </span>
                           </td>
-                          <td style={{ padding: '6px 10px', whiteSpace: 'nowrap', fontWeight: 700, color: pozitif ? '#22c55e' : '#ef4444', fontVariantNumeric: 'tabular-nums' }}>
+                          <td style={{ padding: '6px 10px', whiteSpace: 'nowrap', fontWeight: 700, color: pozitif ? 'var(--green)' : 'var(--red)', fontVariantNumeric: 'tabular-nums' }}>
                             {pozitif ? '+' : ''}{Number(s.miktar || 0).toFixed(1)}
                           </td>
                           <td style={{ padding: '6px 10px', whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums', color: 'var(--text3)', fontSize: 11 }}>
@@ -12939,7 +12939,7 @@ export default function OperasyonMerkezi() {
                             </span>
                           )}
                           {row.kabul_yok && !row.siparis_iptal && (
-                            <span className="badge" style={{ background: '#f59e0b', color: '#fff' }}>
+                            <span className="badge" style={{ background: 'var(--orange)', color: '#fff' }}>
                               ⏳ Kabul Bekliyor
                             </span>
                           )}
@@ -13796,14 +13796,14 @@ export default function OperasyonMerkezi() {
                                 background: 'var(--bg2)',
                                 borderRadius: 8,
                                 padding: '10px 12px',
-                                borderLeft: `3px solid ${t.teslim_durumu === 'eksik_var' ? '#f59e0b' : '#22c55e'}`,
+                                borderLeft: `3px solid ${t.teslim_durumu === 'eksik_var' ? 'var(--orange)' : 'var(--green)'}`,
                               }}
                             >
                               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginBottom: 6 }}>
                                 <div>
                                   <span style={{ fontWeight: 700, fontSize: 13 }}>{t.tedarikci}</span>
                                   {t.teslim_durumu === 'eksik_var' && (
-                                    <span style={{ marginLeft: 8, fontSize: 11, background: 'rgba(245,158,11,.2)', color: '#f59e0b', borderRadius: 4, padding: '1px 6px' }}>
+                                    <span style={{ marginLeft: 8, fontSize: 11, background: 'rgba(245,158,11,.2)', color: 'var(--orange)', borderRadius: 4, padding: '1px 6px' }}>
                                       eksik var
                                     </span>
                                   )}
@@ -13977,7 +13977,7 @@ export default function OperasyonMerkezi() {
                               <button
                                 type="button"
                                 className="btn btn-sm"
-                                style={{ background: '#f59e0b', color: '#fff', border: 'none' }}
+                                style={{ background: 'var(--orange)', color: '#fff', border: 'none' }}
                                 disabled={!!onayBusyId || kkDuzeltBusy}
                                 title="Sebebi bul, kaynağı düzelt"
                                 onClick={() => kkDuzeltModalAc(u)}
@@ -14117,10 +14117,10 @@ export default function OperasyonMerkezi() {
             <>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(160px,1fr))', gap: 12 }}>
                 {[
-                  { label: 'Başarı Oranı', val: analitikVeri.basari_orani + '%', color: analitikVeri.basari_orani >= 80 ? '#22c55e' : analitikVeri.basari_orani >= 60 ? '#f59e0b' : '#ef4444' },
+                  { label: 'Başarı Oranı', val: analitikVeri.basari_orani + '%', color: analitikVeri.basari_orani >= 80 ? 'var(--green)' : analitikVeri.basari_orani >= 60 ? 'var(--orange)' : 'var(--red)' },
                   { label: 'Toplam Sipariş', val: analitikVeri.toplam_siparis, color: '#6366f1' },
-                  { label: 'Tamamlandı', val: analitikVeri.tamamlandi, color: '#22c55e' },
-                  { label: 'Uyuşmazlık', val: analitikVeri.uyusmazlik, color: '#ef4444' },
+                  { label: 'Tamamlandı', val: analitikVeri.tamamlandi, color: 'var(--green)' },
+                  { label: 'Uyuşmazlık', val: analitikVeri.uyusmazlik, color: 'var(--red)' },
                   { label: 'İptal', val: analitikVeri.iptal, color: '#94a3b8' },
                   { label: 'Ort. Süre (saat)', val: analitikVeri.ort_sure_saat, color: '#0ea5e9' },
                 ].map(({ label, val, color }) => (
@@ -14147,7 +14147,7 @@ export default function OperasyonMerkezi() {
                   <div style={{ display: 'grid', gap: 6 }}>
                     {aylikFoodCostCache.kayitlar.map((k) => {
                       const pct = k.food_cost_pct;
-                      const renk = pct == null ? '#94a3b8' : pct <= 30 ? '#22c55e' : pct <= 45 ? '#f59e0b' : '#ef4444';
+                      const renk = pct == null ? '#94a3b8' : pct <= 30 ? 'var(--green)' : pct <= 45 ? 'var(--orange)' : 'var(--red)';
                       return (
                         <div key={k.sube_id + k.year_month} style={{ display: 'grid', gridTemplateColumns: '1fr 90px 90px 60px 60px', gap: 8, alignItems: 'center', fontSize: 12 }}>
                           <span style={{ fontWeight: 600 }}>{k.sube_id} <span style={{ color: 'var(--text3)', fontWeight: 400, fontSize: 10 }}>· {k.year_month}</span></span>
@@ -14175,9 +14175,9 @@ export default function OperasyonMerkezi() {
                         <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 60px 60px 60px 50px', gap: 8, alignItems: 'center', fontSize: 12 }}>
                           <span style={{ fontWeight: 600 }}>{s.sube_adi || s.sube_id}</span>
                           <span style={{ color: 'var(--text3)' }}>Top: {s.toplam}</span>
-                          <span style={{ color: '#22c55e' }}>✓ {s.basarili}</span>
-                          <span style={{ color: '#ef4444' }}>⚠ {s.uyusmazlik}</span>
-                          <span style={{ fontWeight: 700, color: oran >= 80 ? '#22c55e' : oran >= 60 ? '#f59e0b' : '#ef4444' }}>{oran}%</span>
+                          <span style={{ color: 'var(--green)' }}>✓ {s.basarili}</span>
+                          <span style={{ color: 'var(--red)' }}>⚠ {s.uyusmazlik}</span>
+                          <span style={{ fontWeight: 700, color: oran >= 80 ? 'var(--green)' : oran >= 60 ? 'var(--orange)' : 'var(--red)' }}>{oran}%</span>
                         </div>
                       );
                     })}
@@ -14232,9 +14232,9 @@ export default function OperasyonMerkezi() {
                     <span style={{ color: 'var(--text3)' }}>Ort: {t.ort_gunluk_tuketim}/gün</span>
                     <span style={{ color: '#6366f1' }}>7g: {t.tahmin_7gun}</span>
                     {t.mevcut_stok != null ? (
-                      <span style={{ color: t.uyari ? '#ef4444' : '#22c55e' }}>Stok: {t.mevcut_stok}</span>
+                      <span style={{ color: t.uyari ? 'var(--red)' : 'var(--green)' }}>Stok: {t.mevcut_stok}</span>
                     ) : <span />}
-                    <span style={{ fontSize: 11, color: t.trend === 'artiyor' ? '#f59e0b' : t.trend === 'dusuyor' ? '#22c55e' : 'var(--text3)' }}>
+                    <span style={{ fontSize: 11, color: t.trend === 'artiyor' ? 'var(--orange)' : t.trend === 'dusuyor' ? 'var(--green)' : 'var(--text3)' }}>
                       {t.trend === 'artiyor' ? '↑ artıyor' : t.trend === 'dusuyor' ? '↓ düşüyor' : '→ sabit'}
                     </span>
                     {t.uyari ? (
@@ -15413,11 +15413,11 @@ export default function OperasyonMerkezi() {
             const getAdimlar = (s) => [
               { key: 'talep',  label: 'Talep',  done: true,
                 ts: fmtSaat(s.olusturma), tarih: fmtTs(s.olusturma),
-                bilgi: '', renk: '#22c55e', uyari: '' },
+                bilgi: '', renk: 'var(--green)', uyari: '' },
               { key: 'tahsis', label: 'Tahsis', done: !!s.tahsis_durum,
                 ts: fmtSaat(s.tahsis_ts), tarih: fmtTs(s.tahsis_ts),
                 bilgi: s.tahsis_yapan_ad || '',
-                renk: s.tahsis_durum === 'tam' ? '#22c55e' : s.tahsis_durum === 'kismi' ? '#f59e0b' : s.tahsis_durum === 'yok' ? '#ef4444' : '#6b7280',
+                renk: s.tahsis_durum === 'tam' ? 'var(--green)' : s.tahsis_durum === 'kismi' ? 'var(--orange)' : s.tahsis_durum === 'yok' ? 'var(--red)' : '#6b7280',
                 uyari: s.tahsis_durum === 'yok' ? 'Stok yok' : s.tahsis_durum === 'kismi' ? 'Kısmi' : '' },
               { key: 'sevk',   label: 'Sevk',   done: s.sevkiyat_durumu === 'gonderildi',
                 ts: fmtSaat(s.sevkiyat_ts), tarih: fmtTs(s.sevkiyat_ts),
@@ -15426,7 +15426,7 @@ export default function OperasyonMerkezi() {
               { key: 'kabul',  label: 'Kabul',  done: ['kabul_tam','kabul_kismi'].includes(s.kabul_durum),
                 ts: fmtSaat(s.kabul_ts), tarih: fmtTs(s.kabul_ts),
                 bilgi: '',
-                renk: s.kabul_durum === 'kabul_tam' ? '#22c55e' : s.kabul_durum === 'kabul_uyusmazlik' ? '#ef4444' : s.kabul_durum === 'kabul_kismi' ? '#f59e0b' : '#6b7280',
+                renk: s.kabul_durum === 'kabul_tam' ? 'var(--green)' : s.kabul_durum === 'kabul_uyusmazlik' ? 'var(--red)' : s.kabul_durum === 'kabul_kismi' ? 'var(--orange)' : '#6b7280',
                 uyari: s.kabul_durum === 'kabul_uyusmazlik' ? 'Uyumsuzluk' : s.kabul_durum === 'kabul_kismi' ? 'Kısmi' : '' },
             ];
             const uyumsuzlukSayisi = tumAkis.filter((s) => s.kabul_durum === 'kabul_uyusmazlik').length;
@@ -15452,7 +15452,7 @@ export default function OperasyonMerkezi() {
                       </div>
                     </div>
                     <span style={{
-                      marginLeft: 'auto', background: '#ef4444', color: '#fff',
+                      marginLeft: 'auto', background: 'var(--red)', color: '#fff',
                       borderRadius: 999, padding: '2px 9px', fontSize: 12, fontWeight: 800, flexShrink: 0,
                     }}>{uyumsuzlukSayisi}</span>
                   </div>
@@ -15468,14 +15468,14 @@ export default function OperasyonMerkezi() {
                         style={{
                           fontSize: 11, padding: '3px 10px', position: 'relative',
                           ...(f.key === 'uyumsuzluk' && fSayisi > 0 && akisFiltre !== 'uyumsuzluk'
-                            ? { borderColor: '#ef4444', color: '#fca5a5' } : {}),
+                            ? { borderColor: 'var(--red)', color: '#fca5a5' } : {}),
                         }}
                         onClick={() => setAkisFiltre(f.key)}>
                         {f.label}
                         {fSayisi > 0 && (
                           <span style={{
                             position: 'absolute', top: -6, right: -6,
-                            background: '#ef4444', color: '#fff', borderRadius: 999,
+                            background: 'var(--red)', color: '#fff', borderRadius: 999,
                             minWidth: 16, height: 16, fontSize: 10, fontWeight: 800,
                             lineHeight: '16px', textAlign: 'center', padding: '0 4px',
                           }}>{fSayisi}</span>
@@ -15495,10 +15495,10 @@ export default function OperasyonMerkezi() {
                       const adimlar = getAdimlar(s);
                       const acik = akisAcikId === s.id;
                       const kd = s.kabul_durum;
-                      const bordRenk = kd === 'kabul_tam' ? '#22c55e'
-                        : kd === 'kabul_uyusmazlik' ? '#ef4444'
+                      const bordRenk = kd === 'kabul_tam' ? 'var(--green)'
+                        : kd === 'kabul_uyusmazlik' ? 'var(--red)'
                         : s.sevkiyat_durumu === 'gonderildi' ? '#3b82f6'
-                        : s.tahsis_durum ? '#f59e0b'
+                        : s.tahsis_durum ? 'var(--orange)'
                         : 'var(--border)';
                       const tamamlandi = kd === 'kabul_tam' || s.durum === 'teslim_edildi';
                       return (
@@ -15562,14 +15562,14 @@ export default function OperasyonMerkezi() {
                                   <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
                                     {(s.yolda || []).map((y, idx) => {
                                       const yd = String(y.durum || '').toLowerCase();
-                                      const kabulRenk = yd === 'kabul_edildi' || yd === 'uzlasildi' ? '#22c55e' : yd === 'kabul_uyusmazlik' ? '#ef4444' : 'var(--text3)';
+                                      const kabulRenk = yd === 'kabul_edildi' || yd === 'uzlasildi' ? 'var(--green)' : yd === 'kabul_uyusmazlik' ? 'var(--red)' : 'var(--text3)';
                                       const fark = y.kabul_adet != null && y.sevk_adet != null ? Number(y.kabul_adet) - Number(y.sevk_adet) : null;
                                       return (
                                         <div key={idx} style={{ display: 'flex', gap: 10, alignItems: 'center', fontSize: 12, padding: '4px 0', borderBottom: '1px solid var(--border)' }}>
                                           <span style={{ flex: 1, color: 'var(--text)' }}>{y.kalem_adi || y.kalem_kodu}</span>
                                           <span className="mono" style={{ color: 'var(--text3)', minWidth: 60 }}>Sevk: <strong>{y.sevk_adet ?? '—'}</strong></span>
                                           <span className="mono" style={{ color: kabulRenk, minWidth: 60 }}>Kabul: <strong>{y.kabul_adet ?? '—'}</strong></span>
-                                          {fark !== null && fark !== 0 && <span style={{ fontSize: 10, color: '#ef4444', fontWeight: 700 }}>Δ{fark > 0 ? '+' : ''}{fark}</span>}
+                                          {fark !== null && fark !== 0 && <span style={{ fontSize: 10, color: 'var(--red)', fontWeight: 700 }}>Δ{fark > 0 ? '+' : ''}{fark}</span>}
                                           {(yd === 'uzlasildi') && <span className="badge badge-green" style={{ fontSize: 9 }}>Uzlaşı</span>}
                                         </div>
                                       );
@@ -15604,7 +15604,7 @@ export default function OperasyonMerkezi() {
                                             })}
                                             style={{
                                               fontSize: 10, padding: '2px 8px', borderRadius: 4,
-                                              background: '#f59e0b', borderColor: '#f59e0b',
+                                              background: 'var(--orange)', borderColor: 'var(--orange)',
                                               color: '#000', border: '1px solid #f59e0b', cursor: 'pointer',
                                             }}
                                             title="Sipariş-Tahsis uyumsuzluğunu uzlaştır"
@@ -15806,7 +15806,7 @@ export default function OperasyonMerkezi() {
                     setTahsisCozBusy(false);
                   }
                 }}
-                style={{ background: '#f59e0b', borderColor: '#f59e0b' }}>
+                style={{ background: 'var(--orange)', borderColor: 'var(--orange)' }}>
                 {tahsisCozBusy ? 'Kaydediliyor…' : 'Uzlaş ve Kaydet'}
               </button>
             </div>
@@ -16202,7 +16202,7 @@ export default function OperasyonMerkezi() {
                 type="button" className="btn btn-primary"
                 disabled={kkDuzeltBusy}
                 onClick={kkDuzeltGonder}
-                style={{ background: '#f59e0b', borderColor: '#f59e0b' }}
+                style={{ background: 'var(--orange)', borderColor: 'var(--orange)' }}
               >
                 {kkDuzeltBusy ? 'Düzeltiliyor…' : '🔧 Düzelt ve Yeniden Hesapla'}
               </button>

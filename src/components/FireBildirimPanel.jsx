@@ -45,9 +45,9 @@ function injectStyles() {
 const SEBEP_META = {
   kirma_dokulme:     { ico: '💔', renk: '#fb923c', label: 'Kırma / Dökülme' },
   kirilma_dokulme:   { ico: '💔', renk: '#fb923c', label: 'Kırma / Dökülme' },
-  skt_bozulma:       { ico: '🟡', renk: '#ef4444', label: 'SKT / Bozulma' },
+  skt_bozulma:       { ico: '🟡', renk: 'var(--red)', label: 'SKT / Bozulma' },
   iade:              { ico: '↩️', renk: '#f97316', label: 'Müşteri İadesi' },
-  yanlis_urun:       { ico: '🔄', renk: '#f59e0b', label: 'Yanlış Ürün' },
+  yanlis_urun:       { ico: '🔄', renk: 'var(--orange)', label: 'Yanlış Ürün' },
   hazirlik_deneme:   { ico: '📦', renk: '#94a3b8', label: 'Hazırlık / Deneme' },
   personel_kullanim: { ico: '👤', renk: '#60a5fa', label: 'Personel Kullanımı' },
   ikram:             { ico: '🎁', renk: '#34d399', label: 'İkram' },
@@ -65,7 +65,7 @@ const IADE_SEBEP_LABEL = {
   yabanci: '🐛 Yabancı Madde', bekleme: '⏱️ Uzun Bekleme', hasar: '📦 Hasar',
 };
 
-const getSebep = (k) => SEBEP_META[k] || { ico: '🔥', renk: '#ef4444', label: k || 'Fire' };
+const getSebep = (k) => SEBEP_META[k] || { ico: '🔥', renk: 'var(--red)', label: k || 'Fire' };
 const fmt  = (v) => Number(v || 0).toLocaleString('tr-TR', { maximumFractionDigits: 0 });
 const zaman = (iso) => iso ? String(iso).replace('T', ' ').slice(0, 16) : '—';
 const zamanKisa = (iso) => {
@@ -694,7 +694,7 @@ export default function FireBildirimPanel({
         <MetrikKart
           deger={aramaYukleniyor ? '…' : gunToplam}
           etiket="Bildirim"
-          renk="#ef4444"
+          renk="var(--red)"
           sub={secilenTarih.slice(5).replace('-', '/')}
         />
         <MetrikKart
@@ -705,7 +705,7 @@ export default function FireBildirimPanel({
         <MetrikKart
           deger={aramaYukleniyor ? '…' : gorulmayanSay}
           etiket="Görülmemiş"
-          renk={gorulmayanSay > 0 ? '#f59e0b' : '#22c55e'}
+          renk={gorulmayanSay > 0 ? 'var(--orange)' : 'var(--green)'}
           pulse={gorulmayanSay > 0}
           sub={gorulmayanSay > 0 ? 'Onay bekliyor' : 'Tümü onaylandı'}
         />
@@ -745,7 +745,7 @@ export default function FireBildirimPanel({
           </div>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
             <SebepChip
-              aktif={!sebepFiltre} label="Tümü" ico="🔥" renk="#ef4444"
+              aktif={!sebepFiltre} label="Tümü" ico="🔥" renk="var(--red)"
               sayi={gunToplam || undefined}
               onClick={async () => { setSebepFiltre(''); await gunGit(secilenTarih, ''); }}
             />

@@ -37,8 +37,8 @@ export default function MerkezTemizlik() {
 
   const durumEtiket = (s) => {
     if (s.iptalli) return { t: 'iptal', renk: '#94a3b8' };
-    if (s.teslim_alindi) return { t: 'teslim alındı · stok eklendi', renk: '#22c55e' };
-    return { t: 'yolda/bekliyor', renk: '#f59e0b' };
+    if (s.teslim_alindi) return { t: 'teslim alındı · stok eklendi', renk: 'var(--green)' };
+    return { t: 'yolda/bekliyor', renk: 'var(--orange)' };
   };
 
   return (
@@ -75,7 +75,7 @@ export default function MerkezTemizlik() {
               </div>
             </div>
             <button onClick={() => sil(s)} disabled={mesgul === s.talep_id} style={{
-              background: '#ef4444', color: '#fff', border: 'none', borderRadius: 8,
+              background: 'var(--red)', color: '#fff', border: 'none', borderRadius: 8,
               padding: '9px 16px', fontWeight: 700, whiteSpace: 'nowrap',
               cursor: mesgul === s.talep_id ? 'default' : 'pointer', opacity: mesgul === s.talep_id ? 0.6 : 1,
             }}>{mesgul === s.talep_id ? 'Siliniyor…' : '🗑️ Sil'}</button>

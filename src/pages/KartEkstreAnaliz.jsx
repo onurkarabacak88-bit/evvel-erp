@@ -6,7 +6,7 @@ import {
 import { api, fmt } from '../utils/api';
 
 const RENKLER = [
-  '#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6',
+  '#6366f1', '#10b981', 'var(--orange)', 'var(--red)', '#8b5cf6',
   '#06b6d4', '#f97316', '#84cc16', '#ec4899', '#14b8a6',
   '#a78bfa', '#34d399', '#fbbf24', '#f87171', '#c084fc',
 ];
@@ -105,8 +105,8 @@ export default function KartEkstreAnaliz() {
                   <YAxis tick={{ fontSize: 11, fill: 'var(--text3)' }} />
                   <Tooltip formatter={(v) => fmt(v)} contentStyle={{ background: 'var(--bg2)', border: '1px solid var(--border)' }} />
                   <Legend />
-                  <Bar dataKey="Borç" fill="#ef4444" radius={[4, 4, 0, 0]} />
-                  <Bar dataKey="Faiz" fill="#f59e0b" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="Borç" fill="var(--red)" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="Faiz" fill="var(--orange)" radius={[4, 4, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </div>

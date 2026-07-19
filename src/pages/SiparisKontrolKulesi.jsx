@@ -5,11 +5,11 @@ import { publishGlobalDataRefresh } from '../utils/globalDataRefresh';
 
 const ASAMA_STIL = {
   bekliyor: { renk: '#4a9eff', ikon: '🕐', label: 'Merkez kuyruğu' },
-  depoda: { renk: '#f59e0b', ikon: '🏭', label: 'Depoda' },
+  depoda: { renk: 'var(--orange)', ikon: '🏭', label: 'Depoda' },
   yolda: { renk: '#3b82f6', ikon: '🚚', label: 'Yolda' },
   toptanci_bekliyor: { renk: '#a855f7', ikon: '🏪', label: 'Toptancıdan bekleniyor' },
-  uyumsuzluk: { renk: '#ef4444', ikon: '⚠', label: 'Uyumsuzluk' },
-  tamamlandi: { renk: '#22c55e', ikon: '✅', label: 'Tamamlandı' },
+  uyumsuzluk: { renk: 'var(--red)', ikon: '⚠', label: 'Uyumsuzluk' },
+  tamamlandi: { renk: 'var(--green)', ikon: '✅', label: 'Tamamlandı' },
   iptal: { renk: '#94a3b8', ikon: '✕', label: 'İptal' },
   gonderilmedi: { renk: '#f97316', ikon: '⊘', label: 'Gönderilmedi' },
 };
@@ -1376,7 +1376,7 @@ export default function SiparisKontrolKulesi({ vurgulaTalepId: vurgulaProp = nul
                             {kisaTs(sip.olusturma)} · {kalemOzet(Array.isArray(sip.kalan_kalemler) ? sip.kalan_kalemler : sip.kalemler)}{(Array.isArray(sip.kalan_kalemler) && sip.kalan_kalemler.length < (sip.kalemler || []).length) ? ' (kalan)' : ''}
                           </div>
                           {sip.kismi_toptanci && (
-                            <div style={{ fontSize: 11, color: '#f59e0b', fontWeight: 700, marginBottom: 4, lineHeight: 1.4 }}>
+                            <div style={{ fontSize: 11, color: 'var(--orange)', fontWeight: 700, marginBottom: 4, lineHeight: 1.4 }}>
                               🔶 {(sip.dagitilan_kalem_adlari || []).join(', ')} zaten yollandı — kalan {(sip.kalan_kalemler || []).map(k => k?.urun_ad).filter(Boolean).join(', ')}
                             </div>
                           )}
@@ -1461,7 +1461,7 @@ export default function SiparisKontrolKulesi({ vurgulaTalepId: vurgulaProp = nul
                             <SiparisGonderenSatiri kayit={s} style={{ marginTop: 2 }} />
                             <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>{s.asama_metni}</div>
                             {s.kismi_toptanci && (
-                              <div style={{ fontSize: 11, color: '#f59e0b', fontWeight: 700, marginTop: 3, lineHeight: 1.4 }}>
+                              <div style={{ fontSize: 11, color: 'var(--orange)', fontWeight: 700, marginTop: 3, lineHeight: 1.4 }}>
                                 🔶 Kısmi: {(s.dagitilan_kalem_adlari || []).join(', ') || '—'} yollandı · {(s.kalan_kalemler || []).map(k => k?.urun_ad).filter(Boolean).join(', ') || '—'} bekliyor
                               </div>
                             )}
@@ -1494,7 +1494,7 @@ export default function SiparisKontrolKulesi({ vurgulaTalepId: vurgulaProp = nul
 
               {uyumsuzluklar.length > 0 && (
                 <div className="card" style={{ padding: 12, borderColor: '#ef444455' }}>
-                  <div style={{ fontWeight: 700, color: '#ef4444', marginBottom: 8 }}>
+                  <div style={{ fontWeight: 700, color: 'var(--red)', marginBottom: 8 }}>
                     ⚠ Kabul uyumsuzlukları ({uyumsuzluklar.length})
                   </div>
                   <div style={{ maxHeight: 200, overflowY: 'auto', fontSize: 12 }}>

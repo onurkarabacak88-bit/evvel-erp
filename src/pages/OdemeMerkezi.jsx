@@ -393,7 +393,7 @@ export default function OdemeMerkezi() {
       : (r.tutar_girilmedi ? 'tutar bekleniyor' : 'bugün'));
 
   const Satir = ({ r }) => {
-    const renk = r.gecikmis ? 'var(--red)' : (r.gun_gecikme < 0 ? 'var(--text3)' : '#f59e0b');
+    const renk = r.gecikmis ? 'var(--red)' : (r.gun_gecikme < 0 ? 'var(--text3)' : 'var(--orange)');
     const secili = secim.has(r.id);
     return (
       <div onClick={() => ac(r)}
@@ -476,7 +476,7 @@ export default function OdemeMerkezi() {
   const kokpitKartlar = kokpit ? [
     ['💰 Kasa', kokpit.kasa, null, 'var(--green, #22c55e)', true],
     ['⚠ Gecikmiş', kokpit.gecikmis_toplam, `${kokpit.gecikmis_adet} ödeme`, 'var(--red)', kokpit.gecikmis_toplam > 0],
-    ['📅 7 gün çıkış', kokpit.cikis_7, null, '#f59e0b', false],
+    ['📅 7 gün çıkış', kokpit.cikis_7, null, 'var(--orange)', false],
     ['🗓 30 gün çıkış', kokpit.cikis_30, null, 'var(--text2, var(--text))', false],
     ['📉 ≈ En düşük bakiye', kokpit.en_dusuk_bakiye, kokpit.en_dusuk_tarih,
       kokpit.en_dusuk_bakiye < 0 ? 'var(--red)' : 'var(--text2, var(--text))', kokpit.en_dusuk_bakiye < 0],
@@ -640,7 +640,7 @@ export default function OdemeMerkezi() {
           {grupla === 'zaman' ? (
             <>
               <Bolum ad="GECİKMİŞ" renk="var(--red)" satirlar={filtreUygula(gecikmis)} toplam={topla(filtreUygula(gecikmis))} />
-              <Bolum ad="BUGÜN / TUTAR BEKLEYEN" renk="#f59e0b" satirlar={filtreUygula(bugunkuler)} toplam={topla(filtreUygula(bugunkuler))} />
+              <Bolum ad="BUGÜN / TUTAR BEKLEYEN" renk="var(--orange)" satirlar={filtreUygula(bugunkuler)} toplam={topla(filtreUygula(bugunkuler))} />
               <Bolum ad={`YAKLAŞAN (${pencere} GÜN)`} renk="var(--text3)" satirlar={filtreUygula(yaklasan)} toplam={topla(filtreUygula(yaklasan))} />
             </>
           ) : (
@@ -713,7 +713,7 @@ export default function OdemeMerkezi() {
                   const kapali = acik <= 1;
                   const gecikmisVade = !kapali && t.en_yakin_vade && t.en_yakin_vade < bugunISO() && (t.bekleyen_vade_toplam || 0) > 0;
                   const durumRenk = kapali ? 'var(--green, #22c55e)' : gecikmisVade ? 'var(--red, #ef4444)'
-                    : takvimsiz > Math.max(500, acik * 0.05) ? '#f59e0b' : 'var(--green, #22c55e)';
+                    : takvimsiz > Math.max(500, acik * 0.05) ? 'var(--orange)' : 'var(--green, #22c55e)';
                   return (
                     <button key={i} onClick={() => { if (!seciliMi) cariAc(t.tedarikci); }}
                       style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '9px 13px', borderRadius: 10,
@@ -739,7 +739,7 @@ export default function OdemeMerkezi() {
               const kapali = acik <= 1;
               const gecikmisVade = !kapali && t.en_yakin_vade && t.en_yakin_vade < bugunISO() && (t.bekleyen_vade_toplam || 0) > 0;
               const durumRenk = kapali ? 'var(--green, #22c55e)' : gecikmisVade ? 'var(--red, #ef4444)'
-                : takvimsiz > Math.max(500, acik * 0.05) ? '#f59e0b' : 'var(--green, #22c55e)';
+                : takvimsiz > Math.max(500, acik * 0.05) ? 'var(--orange)' : 'var(--green, #22c55e)';
               return (
                 <div style={{ borderRadius: 14, background: 'var(--bg2)', border: '1px solid var(--border)',
                               overflow: 'hidden', borderLeft: `4px solid ${durumRenk}` }}>

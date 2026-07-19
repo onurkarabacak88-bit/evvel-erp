@@ -42,9 +42,9 @@ function slotAktifGunlerEtiket(gunler) {
 const V2_PRESET_GUN_ANAHTARLARI = ['pzt', 'sal', 'car', 'per', 'cum', 'cmt', 'paz'];
 
 const SLOT_TIPI = {
-  acilis:   { ikon: '🌅', renk: '#f59e0b', etiket: 'Sabah bandı' },
+  acilis:   { ikon: '🌅', renk: 'var(--orange)', etiket: 'Sabah bandı' },
   normal:   { ikon: '⏱',  renk: '#4f8ef7', etiket: 'Standart mesai' },
-  yogun:    { ikon: '🔥', renk: '#ef4444', etiket: 'Yoğun vurgu' },
+  yogun:    { ikon: '🔥', renk: 'var(--red)', etiket: 'Yoğun vurgu' },
   kapanis:  { ikon: '🌙', renk: '#7c3aed', etiket: 'Akşam bandı' },
 };
 
@@ -624,9 +624,9 @@ function personelKartGosterge(d, gunKilitli) {
   // İzinli #ef4444 (KIRMIZI) · Override #a855f7
   if (izinli) {
     const tip = d.izin?.tip || 'izin';
-    rozetler.push({ k: 'izin', t: tip, renk: '#ef4444' });
+    rozetler.push({ k: 'izin', t: tip, renk: 'var(--red)' });
     return {
-      accent: '#ef4444',
+      accent: 'var(--red)',
       border: '1px solid rgba(239,68,68,0.5)',
       bg: 'rgba(239,68,68,0.06)',
       rozetler,
@@ -645,7 +645,7 @@ function personelKartGosterge(d, gunKilitli) {
   const overrideVar = !!d.override_var;
   if (overrideVar) rozetler.push({ k: 'override', t: 'Override geçmişi', renk: '#a855f7' });
   if (gunKilitli) rozetler.push({ k: 'kilit', t: 'Gün kilidi', renk: '#9ca3af' });
-  if (fazla > 0) rozetler.push({ k: 'fazla', t: `+${fazla.toFixed(1)}h limit üstü`, renk: '#ef4444' });
+  if (fazla > 0) rozetler.push({ k: 'fazla', t: `+${fazla.toFixed(1)}h limit üstü`, renk: 'var(--red)' });
   if (doluGunluk) rozetler.push({ k: 'limit', t: 'Günlük süre dolu', renk: '#9ca3af' });
   else if (yuzde >= 90) rozetler.push({ k: 'yuksek', t: 'Süre neredeyse doldu', renk: '#facc15' });
   else if (yuzde >= 70) rozetler.push({ k: 'orta', t: 'Yüksek yük', renk: '#facc15' });
@@ -654,7 +654,7 @@ function personelKartGosterge(d, gunKilitli) {
   if (d.durum === 'BOS') rozetler.push({ k: 'bos', t: 'Bilinçli boş', renk: '#64748b' });
 
   let seviye = 'ok';
-  let accent = '#22c55e';     // Aktif yeşil
+  let accent = 'var(--green)';     // Aktif yeşil
   let bg = 'transparent';
   if (doluGunluk) {
     seviye = 'kilit';
@@ -662,7 +662,7 @@ function personelKartGosterge(d, gunKilitli) {
     bg = 'rgba(156,163,175,0.08)';
   } else if (fazla > 0) {
     seviye = 'kritik';
-    accent = '#ef4444';
+    accent = 'var(--red)';
     bg = 'rgba(239,68,68,0.06)';
   } else if (overrideVar) {
     seviye = 'override';
@@ -2034,7 +2034,7 @@ export default function VardiyaPlanlamaV2() {
       borderCol = '#facc15';                    // Yetersiz ideal = sarı
       bgHucre   = 'rgba(250,204,21,0.10)';
     } else if (doluTam) {
-      borderCol = '#22c55e';                    // Dolu = yeşil
+      borderCol = 'var(--green)';                    // Dolu = yeşil
       bgHucre   = 'rgba(34,197,94,0.08)';
     } else if (sv.atanan_personel === 0) {
       borderCol = '#cbd5e1';                    // Boş gri
@@ -2405,7 +2405,7 @@ export default function VardiyaPlanlamaV2() {
                 fontSize: 11,
                 cursor: gunPlani ? 'pointer' : 'default',
                 marginLeft: 'auto',
-                color: gunPlani?.gun_kilitli ? '#ef4444' : 'var(--text2)',
+                color: gunPlani?.gun_kilitli ? 'var(--red)' : 'var(--text2)',
                 flexWrap: 'wrap',
               }}
             >
@@ -2524,7 +2524,7 @@ export default function VardiyaPlanlamaV2() {
         }}>
           <span style={{ fontSize: 18 }}>{gecmisKilitli ? '🔒' : '🔓'}</span>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontWeight: 700, fontSize: 13, color: gecmisKilitli ? '#ef4444' : '#22c55e' }}>
+            <div style={{ fontWeight: 700, fontSize: 13, color: gecmisKilitli ? 'var(--red)' : 'var(--green)' }}>
               {gecmisKilitli ? 'Geçmiş hafta — düzenleme kilitli' : 'Geçmiş hafta — düzenleme açık (PIN onaylı)'}
             </div>
             <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>
@@ -2552,7 +2552,7 @@ export default function VardiyaPlanlamaV2() {
               onChange={e => { setPinDeger(e.target.value.replace(/\D/g, '').slice(0, 4)); setPinHata(''); }}
               onKeyDown={e => { if (e.key === 'Enter') pinIleAc(); }}
               style={{ width: '100%', fontSize: 22, textAlign: 'center', letterSpacing: 8, padding: '10px 12px', marginBottom: 10 }} />
-            {pinHata && <div style={{ color: '#ef4444', fontSize: 12, marginBottom: 10 }}>⚠️ {pinHata}</div>}
+            {pinHata && <div style={{ color: 'var(--red)', fontSize: 12, marginBottom: 10 }}>⚠️ {pinHata}</div>}
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
               <button type="button" className="btn btn-sm btn-secondary" onClick={() => { setPinModal(false); setPinDeger(''); setPinHata(''); }}>Vazgeç</button>
               <button type="button" className="btn btn-sm btn-primary" disabled={pinBusy} onClick={pinIleAc}>{pinBusy ? 'Kontrol...' : '🔓 Aç'}</button>
@@ -2562,7 +2562,7 @@ export default function VardiyaPlanlamaV2() {
       )}
 
       {gunPlani?.gun_kilitli && (
-        <div className="alert-box mb-16" style={{ borderColor: '#ef4444', background: 'rgba(239,68,68,0.08)' }}>
+        <div className="alert-box mb-16" style={{ borderColor: 'var(--red)', background: 'rgba(239,68,68,0.08)' }}>
           Bu tarih <strong>plana kilitli</strong>. Yeni atamalar yalnızca uyarıları onaylayarak (override) yapılabilir.
         </div>
       )}
@@ -2582,9 +2582,9 @@ export default function VardiyaPlanlamaV2() {
           </div>
           <div style={{ marginTop: 6, fontSize: 11 }}>
             Sürükleme: önce <strong>yerel</strong> çakışma (anı), ardından <strong>atama/check</strong> ({PREVIEW_DEBOUNCE_MS}ms gecikmeli) kesin renk.
-            {' '}<strong style={{ color: '#22c55e' }}>Yeşil</strong> = uygun ·{' '}
+            {' '}<strong style={{ color: 'var(--green)' }}>Yeşil</strong> = uygun ·{' '}
             <strong style={{ color: '#facc15' }}>Sarı</strong> = uyarı / onay ·{' '}
-            <strong style={{ color: '#ef4444' }}>Kırmızı</strong> = atanamaz.
+            <strong style={{ color: 'var(--red)' }}>Kırmızı</strong> = atanamaz.
           </div>
         </div>
       )}
@@ -2756,11 +2756,11 @@ export default function VardiyaPlanlamaV2() {
           </div>
           <div style={{ fontSize: 10, color: 'var(--text3)', marginBottom: 10, lineHeight: 1.45 }}>
             Kart şeridi:{' '}
-            <span style={{ color: '#22c55e', fontWeight: 700 }}>●</span> uygun{' '}
+            <span style={{ color: 'var(--green)', fontWeight: 700 }}>●</span> uygun{' '}
             <span style={{ color: '#facc15', fontWeight: 700 }}>●</span> uyarı{' '}
             <span style={{ color: '#a855f7', fontWeight: 700 }}>●</span> override{' '}
             <span style={{ color: '#9ca3af', fontWeight: 700 }}>●</span> günlük limit (hesap) dolu — yine de sürükleme açık, saat modalında kısmi seçim mümkün{' '}
-            <span style={{ color: '#ef4444', fontWeight: 700 }}>●</span> izin / limit aşımı · İzinli: sürükleme kapalı (izin: tıkla / 🌴)
+            <span style={{ color: 'var(--red)', fontWeight: 700 }}>●</span> izin / limit aşımı · İzinli: sürükleme kapalı (izin: tıkla / 🌴)
           </div>
           {havuzKaynakTarih !== tarih && havuzYukleniyor && !havuzGunPlani ? (
             <div style={{ color: 'var(--text3)' }}>Havuz günü yükleniyor…</div>
@@ -2781,7 +2781,7 @@ export default function VardiyaPlanlamaV2() {
               const haftaPlan = (d.haftalik_saat_snapshot != null)
                 ? Number(d.haftalik_saat_snapshot)
                 : Number(p.haftalik_saat) || 0;
-              const barBg = g.doluGunluk || g.fazla > 0 ? '#ef4444' : (g.yuzde >= 70 ? '#facc15' : '#22c55e');
+              const barBg = g.doluGunluk || g.fazla > 0 ? 'var(--red)' : (g.yuzde >= 70 ? '#facc15' : 'var(--green)');
               const subeAtamalar = calisiyor ? gunAtamaSubeleriGrup(d.atamalar, subeler) : [];
               const atanmisSayisi = Number(d.atama_sayisi) || 0;
               const atanmisBugun = !izinli && (calisiyor || atanmisSayisi > 0);
@@ -2830,7 +2830,7 @@ export default function VardiyaPlanlamaV2() {
                   onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; e.currentTarget.style.zIndex = ''; }}
                   title={tt}
                 >
-                  <div style={{ width: solSeritGen, flexShrink: 0, background: atanmisBugun && !izinli ? '#22c55e' : g.accent }} aria-hidden />
+                  <div style={{ width: solSeritGen, flexShrink: 0, background: atanmisBugun && !izinli ? 'var(--green)' : g.accent }} aria-hidden />
                   <div style={{ flex: 1, padding: '8px 10px 8px 8px', minWidth: 0 }}>
                     {atanmisBugun && (
                       <div
@@ -3004,7 +3004,7 @@ export default function VardiyaPlanlamaV2() {
                         style={{
                           marginTop: 6, fontSize: 10, padding: '3px 8px',
                           background: 'transparent', border: '1px solid #ef4444',
-                          color: '#ef4444', borderRadius: 4, cursor: 'pointer',
+                          color: 'var(--red)', borderRadius: 4, cursor: 'pointer',
                         }}
                         title={`Bu güne (${tarih}) bir günlük izin ekle`}
                       >🌴 İzinli yap (bugün)</button>
@@ -3540,9 +3540,9 @@ export default function VardiyaPlanlamaV2() {
                 ▲ Gün özeti · uyarılar <span style={{ fontWeight: 500, color: 'var(--text3)' }}>(genişlet)</span>
               </span>
               <span style={{ fontSize: 12, color: 'var(--text3)' }}>
-                Eksik slot: <strong style={{ color: eksikSlotSayisi ? '#fb923c' : '#22c55e' }}>{eksikSlotSayisi}</strong>
+                Eksik slot: <strong style={{ color: eksikSlotSayisi ? '#fb923c' : 'var(--green)' }}>{eksikSlotSayisi}</strong>
                 {' · '}
-                Fazla mesai: <strong style={{ color: fazlaMesaiSayisi ? '#ef4444' : '#22c55e' }}>{fazlaMesaiSayisi}</strong>
+                Fazla mesai: <strong style={{ color: fazlaMesaiSayisi ? 'var(--red)' : 'var(--green)' }}>{fazlaMesaiSayisi}</strong>
                 {' · '}
                 Uyarı satırı: <strong>{canliUyariListesi.length}</strong>
               </span>
@@ -3565,10 +3565,10 @@ export default function VardiyaPlanlamaV2() {
               </div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'baseline', marginBottom: 10 }}>
                 <span style={{ fontSize: 13 }}>
-                  Eksik personelli slot: <strong style={{ color: eksikSlotSayisi ? '#fb923c' : '#22c55e' }}>{eksikSlotSayisi}</strong>
+                  Eksik personelli slot: <strong style={{ color: eksikSlotSayisi ? '#fb923c' : 'var(--green)' }}>{eksikSlotSayisi}</strong>
                 </span>
                 <span style={{ fontSize: 13 }}>
-                  Fazla mesai: <strong style={{ color: fazlaMesaiSayisi ? '#ef4444' : '#22c55e' }}>{fazlaMesaiSayisi} kişi</strong>
+                  Fazla mesai: <strong style={{ color: fazlaMesaiSayisi ? 'var(--red)' : 'var(--green)' }}>{fazlaMesaiSayisi} kişi</strong>
                 </span>
                 <span style={{ fontSize: 12, color: 'var(--text3)' }}>
                   Raporlar üstteki <strong>📊 Raporlar</strong> kartında.
@@ -3584,7 +3584,7 @@ export default function VardiyaPlanlamaV2() {
               </div>
               <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text3)', marginBottom: 6, letterSpacing: 0.04 }}>CANLI UYARI LİSTESİ</div>
               {canliUyariListesi.length === 0 ? (
-                <div style={{ fontSize: 13, color: '#22c55e', padding: '10px 12px', background: 'rgba(34,197,94,0.08)', borderRadius: 8, border: '1px solid rgba(34,197,94,0.25)' }}>
+                <div style={{ fontSize: 13, color: 'var(--green)', padding: '10px 12px', background: 'rgba(34,197,94,0.08)', borderRadius: 8, border: '1px solid rgba(34,197,94,0.25)' }}>
                   Bu gün için listede kritik uyarı yok (kilit / eksik slot / limit üstü / plan yok taraması temiz).
                 </div>
               ) : (
@@ -3599,7 +3599,7 @@ export default function VardiyaPlanlamaV2() {
                   }}
                 >
                   {canliUyariListesi.map((u, i) => {
-                    const col = u.seviye === 'kritik' ? '#ef4444' : u.seviye === 'uyari' ? '#fb923c' : 'var(--text3)';
+                    const col = u.seviye === 'kritik' ? 'var(--red)' : u.seviye === 'uyari' ? '#fb923c' : 'var(--text3)';
                     const bg = u.seviye === 'kritik' ? 'rgba(239,68,68,0.07)' : u.seviye === 'uyari' ? 'rgba(251,146,60,0.08)' : 'rgba(148,163,184,0.08)';
                     return (
                       <li
@@ -4386,7 +4386,7 @@ function GanttGorunumu({ gunPlani, filtrelenmisSubeler, tarih, havuzById }) {
                           const x2 = saatToPix(fmtSaat(a.bitis_saat), a.gece_vardiyasi);
                           const w = Math.max(8, x2 - x);
                           const tip = a.slot?.tip || 'normal';
-                          const tipRenkleri = { acilis: '#f59e0b', kapanis: '#a855f7', yogun: '#ef4444', normal: '#3b82f6' };
+                          const tipRenkleri = { acilis: 'var(--orange)', kapanis: '#a855f7', yogun: 'var(--red)', normal: '#3b82f6' };
                           const renk = tipRenkleri[tip] || '#3b82f6';
                           const cercevede = atamaSlotCercevesindeMi(a, a.slot);
                           return (
@@ -4420,9 +4420,9 @@ function GanttGorunumu({ gunPlani, filtrelenmisSubeler, tarih, havuzById }) {
 
         {/* Açıklama */}
         <div style={{ marginTop: 16, paddingTop: 12, borderTop: '1px solid var(--border)', display: 'flex', gap: 14, flexWrap: 'wrap', fontSize: 11, color: 'var(--text3)' }}>
-          <div><span style={{ display: 'inline-block', width: 12, height: 12, background: '#f59e0b', borderRadius: 2, marginRight: 4, verticalAlign: 'middle' }}></span>{SLOT_TIPI.acilis.etiket}</div>
+          <div><span style={{ display: 'inline-block', width: 12, height: 12, background: 'var(--orange)', borderRadius: 2, marginRight: 4, verticalAlign: 'middle' }}></span>{SLOT_TIPI.acilis.etiket}</div>
           <div><span style={{ display: 'inline-block', width: 12, height: 12, background: '#3b82f6', borderRadius: 2, marginRight: 4, verticalAlign: 'middle' }}></span>{SLOT_TIPI.normal.etiket}</div>
-          <div><span style={{ display: 'inline-block', width: 12, height: 12, background: '#ef4444', borderRadius: 2, marginRight: 4, verticalAlign: 'middle' }}></span>{SLOT_TIPI.yogun.etiket}</div>
+          <div><span style={{ display: 'inline-block', width: 12, height: 12, background: 'var(--red)', borderRadius: 2, marginRight: 4, verticalAlign: 'middle' }}></span>{SLOT_TIPI.yogun.etiket}</div>
           <div><span style={{ display: 'inline-block', width: 12, height: 12, background: '#a855f7', borderRadius: 2, marginRight: 4, verticalAlign: 'middle' }}></span>{SLOT_TIPI.kapanis.etiket}</div>
           <div style={{ marginLeft: 'auto' }}>
             Açık renk: slot zemini (referans bandı) · Koyu çubuk: kayıtlı gerçek mesai · Sarı kontur: çerçeve dışı dilim (bilinçli ek mesai vb.)
@@ -4672,7 +4672,7 @@ function KisitModal({ personel_id, subeler, onClose, onKaydet }) {
                     {item.neden && <span style={{ color: 'var(--text3)' }}> · {item.neden}</span>}
                   </span>
                   <button type="button" onClick={() => dersSil(gun, i)}
-                    style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer' }}>✕</button>
+                    style={{ background: 'none', border: 'none', color: 'var(--red)', cursor: 'pointer' }}>✕</button>
                 </div>
               ))
             )}
@@ -4867,11 +4867,11 @@ function OverrideModal({ uyarilar, ozetMetni, onIptal, onOnayla }) {
         {uyarilar.map((u, i) => (
           <div key={i} style={{
             padding: '8px 12px',
-            borderLeft: `4px solid ${u.seviye === 'kritik' ? '#ef4444' : '#f59e0b'}`,
+            borderLeft: `4px solid ${u.seviye === 'kritik' ? 'var(--red)' : 'var(--orange)'}`,
             background: u.seviye === 'kritik' ? 'rgba(239,68,68,0.08)' : 'rgba(245,158,11,0.08)',
             borderRadius: 4,
           }}>
-            <div style={{ fontWeight: 700, fontSize: 11, color: u.seviye === 'kritik' ? '#ef4444' : '#f59e0b' }}>
+            <div style={{ fontWeight: 700, fontSize: 11, color: u.seviye === 'kritik' ? 'var(--red)' : 'var(--orange)' }}>
               {u.seviye === 'kritik' ? 'Kritik' : 'Uyarı'} · {String(u.tip || '').replace(/_/g, ' ')}
             </div>
             <div style={{ fontSize: 13, marginTop: 4, color: 'var(--text2)' }}>{u.mesaj}</div>
@@ -4945,7 +4945,7 @@ function LogModal({ onClose }) {
                 <tr key={k.id}>
                   <td>{new Date(k.ts).toLocaleString('tr-TR')}</td>
                   <td>{k.personel_ad} {k.personel_soyad}</td>
-                  <td><span style={{ color: '#f59e0b', fontWeight: 600 }}>{k.ihlal_tipi}</span></td>
+                  <td><span style={{ color: 'var(--orange)', fontWeight: 600 }}>{k.ihlal_tipi}</span></td>
                   <td>{k.tarih}</td>
                   <td style={{ maxWidth: 220, wordBreak: 'break-word' }}>{userHucre}</td>
                   <td style={{ maxWidth: 320, wordBreak: 'break-word' }}>{sistemHucre}</td>
@@ -4991,7 +4991,7 @@ function IscilikPaneli({ tarih, yenileSayac }) {
   useEffect(() => { yukle(); }, [yukle, yenileSayac]);
   if (!d) return null;
   const t = d.toplam || {};
-  const renkY = (y) => (y == null ? 'var(--text3)' : y <= 25 ? '#22c55e' : y <= 35 ? '#eab308' : '#ef4444');
+  const renkY = (y) => (y == null ? 'var(--text3)' : y <= 25 ? 'var(--green)' : y <= 35 ? 'var(--yellow)' : 'var(--red)');
   const tl = (n) => (Number(n) || 0).toLocaleString('tr-TR', { maximumFractionDigits: 0 }) + ' ₺';
   const yzd = (y) => (y == null ? '—' : '%' + y);
   return (

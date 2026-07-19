@@ -391,7 +391,7 @@ export default function GorevGiris({ subeId: subeIdProp }) {
           >
             <div style={{ fontSize: 22, flexShrink: 0 }}>🕒</div>
             <div style={{ flex: 1 }}>
-              <div style={{ fontWeight: 700, fontSize: 15, color: '#f59e0b', marginBottom: 2 }}>
+              <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--orange)', marginBottom: 2 }}>
                 Çıkış yapmayı unutmuşsun
               </div>
               <div style={{ fontSize: 13, color: '#6B5E50', lineHeight: 1.4 }}>{cikisUyari}</div>
@@ -567,7 +567,7 @@ export default function GorevGiris({ subeId: subeIdProp }) {
               textAlign: 'center',
             }}>
               <div style={{ fontSize: 20, marginBottom: 6 }}>🔄</div>
-              <div style={{ fontSize: 14, fontWeight: 700, color: '#f59e0b', marginBottom: 4 }}>
+              <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--orange)', marginBottom: 4 }}>
                 Devir Seni Bekliyor
               </div>
               <div style={{ fontSize: 12, color: '#6B5E50', lineHeight: 1.6 }}>
@@ -626,7 +626,7 @@ export default function GorevGiris({ subeId: subeIdProp }) {
                       style={{
                         width: '100%', padding: '16px', borderRadius: 10, cursor: 'pointer',
                         background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.3)',
-                        color: '#f59e0b', fontSize: 15, fontWeight: 700,
+                        color: 'var(--orange)', fontSize: 15, fontWeight: 700,
                         opacity: yukleniyor ? 0.6 : 1,
                       }}>
                       {yukleniyor ? '…' : `✅ Ben ${bekleyenDevir.devralan_ad} — Kabul Ediyorum`}
@@ -651,7 +651,7 @@ export default function GorevGiris({ subeId: subeIdProp }) {
                       style={{
                         padding: '15px 16px', borderRadius: 10, cursor: 'pointer',
                         background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.3)',
-                        color: '#f59e0b', fontSize: 15, fontWeight: 700, textAlign: 'left',
+                        color: 'var(--orange)', fontSize: 15, fontWeight: 700, textAlign: 'left',
                         opacity: yukleniyor ? 0.6 : 1,
                       }}>
                       ✅ {p.ad_soyad}
@@ -681,7 +681,7 @@ export default function GorevGiris({ subeId: subeIdProp }) {
                 style={{
                   marginBottom: 12, background: 'rgba(245,158,11,0.08)',
                   border: '1px solid rgba(245,158,11,0.3)', borderRadius: 8,
-                  color: '#f59e0b', fontSize: 12, cursor: 'pointer', padding: '7px 12px',
+                  color: 'var(--orange)', fontSize: 12, cursor: 'pointer', padding: '7px 12px',
                   width: '100%',
                 }}>
                 ← Devir Kabul ekranına dön
@@ -762,7 +762,7 @@ export default function GorevGiris({ subeId: subeIdProp }) {
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               {[
                 { id: 'sabahci',     label: '🌅 Sabahçı',    alt: 'Açılış ve sabah görevleri',     renk: '#4a9eff' },
-                { id: 'ara_vardiya', label: '☀️ Ara Vardiya', alt: 'Depo, stok ve tuvalet',          renk: '#f59e0b' },
+                { id: 'ara_vardiya', label: '☀️ Ara Vardiya', alt: 'Depo, stok ve tuvalet',          renk: 'var(--orange)' },
                 { id: 'kapanis',     label: '🌙 Kapanış',    alt: 'Temizlik ve kapanış görevleri',  renk: '#C8956A' },
               ].map(vt => (
                 <button key={vt.id} onClick={() => vardiyaSec(vt.id)}

@@ -14,15 +14,15 @@ function fmtTL(n) {
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const GRUP_RENK = {
-  'Ice': '#3b82f6', '14 Oz': '#f59e0b', '8 Oz': '#10b981',
+  'Ice': '#3b82f6', '14 Oz': 'var(--orange)', '8 Oz': '#10b981',
   'Su': '#6366f1', 'Maden Suyu': '#14b8a6',
-  'Redbull': '#8b5cf6', 'Pasta': '#ec4899', 'ÇAY': '#ef4444',
+  'Redbull': '#8b5cf6', 'Pasta': '#ec4899', 'ÇAY': 'var(--red)',
 };
 
 const MALZEME_RENK = {
-  'Plastik Bardak': '#3b82f6', '14oz Karton Bardak': '#f59e0b',
+  'Plastik Bardak': '#3b82f6', '14oz Karton Bardak': 'var(--orange)',
   '8oz Karton Bardak': '#10b981', 'Su Şişesi': '#6366f1',
-  'Çay Bardağı': '#ef4444', 'Pasta Tabağı': '#ec4899',
+  'Çay Bardağı': 'var(--red)', 'Pasta Tabağı': '#ec4899',
   'Kutu (Redbull)': '#8b5cf6', 'Maden Suyu Şişesi': '#14b8a6',
 };
 

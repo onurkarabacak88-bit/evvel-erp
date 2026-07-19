@@ -1479,7 +1479,7 @@ function VardiyaBardakPNL({ tarih, subeler }) {
   const uyumlu    = tani === 'UYUMLU';
   const renk      = anomali ? '#fca5a5' : uyumlu ? '#86efac' : 'var(--text3)';
   const bg        = anomali ? 'rgba(220,38,38,0.10)' : uyumlu ? 'rgba(34,197,94,0.08)' : 'rgba(120,120,120,0.06)';
-  const border    = anomali ? '#ef4444' : uyumlu ? '#22c55e' : '#555';
+  const border    = anomali ? 'var(--red)' : uyumlu ? 'var(--green)' : '#555';
 
   const BardakHucre = ({ label, fiziksel, evo, acik, anomaliFlag }) => {
     const acikRenk = acik > 0 ? (anomaliFlag ? '#fca5a5' : '#fbbf24') : '#86efac';
@@ -2137,7 +2137,7 @@ function AksamBardakSisirme({ tarih, subeler }) {
   const uyumlu  = tani === 'UYUMLU';
   const renk    = sisirdi ? '#fca5a5' : uyumlu ? '#86efac' : 'var(--text3)';
   const bg      = sisirdi ? 'rgba(220,38,38,0.10)' : uyumlu ? 'rgba(34,197,94,0.08)' : 'rgba(120,120,120,0.06)';
-  const border  = sisirdi ? '#ef4444' : uyumlu ? '#22c55e' : '#555';
+  const border  = sisirdi ? 'var(--red)' : uyumlu ? 'var(--green)' : '#555';
 
   // Sayım kutusu helper
   const SayimKutu = ({ label, dun, bugun, kaybi }) => {
@@ -2251,7 +2251,7 @@ function AksamBardakSisirme({ tarih, subeler }) {
                     ? (s.harf === 'B' ? 'rgba(220,38,38,0.12)' : 'rgba(245,158,11,0.10)')
                     : 'rgba(0,0,0,0.12)';
                   const sBorder = isMuhtemel
-                    ? (s.harf === 'B' ? '#ef4444' : '#f59e0b')
+                    ? (s.harf === 'B' ? 'var(--red)' : 'var(--orange)')
                     : '#444';
                   return (
                     <div key={s.harf} style={{
@@ -2292,7 +2292,7 @@ function AksamBardakSisirme({ tarih, subeler }) {
                     : veri.olasi_senaryo === 'A'
                     ? 'rgba(245,158,11,0.10)'
                     : 'rgba(100,100,100,0.12)',
-                  border: `1px solid ${veri.olasi_senaryo === 'B' ? '#ef4444' : veri.olasi_senaryo === 'A' ? '#f59e0b' : '#555'}`,
+                  border: `1px solid ${veri.olasi_senaryo === 'B' ? 'var(--red)' : veri.olasi_senaryo === 'A' ? 'var(--orange)' : '#555'}`,
                   fontSize: 12, lineHeight: 1.6,
                   color: veri.olasi_senaryo === 'B' ? '#fca5a5' : veri.olasi_senaryo === 'A' ? '#fbbf24' : 'var(--text2)',
                 }}>
@@ -2869,7 +2869,7 @@ function GorevDuzenleModal({ gorev, onKapat, onKaydet }) {
         <div style={{ display: 'flex', justifyContent: 'space-between' }}>
           <button className="btn btn-secondary" onClick={onKapat} disabled={busy}>İptal</button>
           <button className="btn btn-primary" onClick={kaydet} disabled={busy}
-            style={{ background: '#f59e0b', borderColor: '#f59e0b' }}>
+            style={{ background: 'var(--orange)', borderColor: 'var(--orange)' }}>
             {busy ? 'Kaydediliyor…' : 'Kaydet'}
           </button>
         </div>
@@ -3136,7 +3136,7 @@ function DetayModal({ sube_id, sube_ad, tarih, onKapat, onGorevAcildi }) {
                           }}
                           style={{
                             fontSize: 10, padding: '3px 8px',
-                            background: '#f59e0b', color: '#000', borderRadius: 4,
+                            background: 'var(--orange)', color: '#000', borderRadius: 4,
                             textDecoration: 'none', fontWeight: 600,
                           }}
                           title="Operasyon Merkezi'nde kaynak düzelt akışını aç"

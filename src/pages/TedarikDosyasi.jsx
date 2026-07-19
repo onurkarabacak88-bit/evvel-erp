@@ -8,8 +8,8 @@ import { api, fmt, fmtDate } from '../utils/api';
 // ─────────────────────────────────────────────────────────────────────────
 
 const DURUM_RENK = {
-  bekliyor: '#f59e0b', gonderildi: '#3b82f6', hazirlaniyor: '#3b82f6',
-  teslim_edildi: '#22c55e', kabul_uyusmazlik: '#ef4444', iptal: '#94a3b8',
+  bekliyor: 'var(--orange)', gonderildi: '#3b82f6', hazirlaniyor: '#3b82f6',
+  teslim_edildi: 'var(--green)', kabul_uyusmazlik: 'var(--red)', iptal: '#94a3b8',
 };
 
 export default function TedarikDosyasi() {
@@ -104,8 +104,8 @@ export default function TedarikDosyasi() {
                   {t.sube_adi} <span style={{ color: 'var(--text3)', fontWeight: 500 }}>· 🚚 {t.tedarikci}</span>
                   {t.siparisli
                     ? <span style={{ fontSize: 10, fontWeight: 700, padding: '1px 7px', borderRadius: 20, background: '#3b82f6', color: '#fff' }}>siparişli</span>
-                    : <span style={{ fontSize: 10, fontWeight: 700, padding: '1px 7px', borderRadius: 20, background: '#f59e0b', color: '#fff' }}>siparişsiz</span>}
-                  {t.teslim_durumu === 'eksik_var' && <span style={{ fontSize: 10, fontWeight: 700, padding: '1px 7px', borderRadius: 20, background: '#ef4444', color: '#fff' }}>eksik</span>}
+                    : <span style={{ fontSize: 10, fontWeight: 700, padding: '1px 7px', borderRadius: 20, background: 'var(--orange)', color: '#fff' }}>siparişsiz</span>}
+                  {t.teslim_durumu === 'eksik_var' && <span style={{ fontSize: 10, fontWeight: 700, padding: '1px 7px', borderRadius: 20, background: 'var(--red)', color: '#fff' }}>eksik</span>}
                 </div>
                 {t.kalemler?.length > 0 && (
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 4 }}>
@@ -136,8 +136,8 @@ export default function TedarikDosyasi() {
                   <div style={{ fontSize: 14, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                     🚚 {t.tedarikci}
                     {cokSube
-                      ? <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 20, background: '#ef4444', color: '#fff' }}>tedarikçi paterni ({t.sube_sayisi} şube)</span>
-                      : <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 20, background: '#f59e0b', color: '#fff' }}>tek şube — belirsiz</span>}
+                      ? <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 20, background: 'var(--red)', color: '#fff' }}>tedarikçi paterni ({t.sube_sayisi} şube)</span>
+                      : <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 20, background: 'var(--orange)', color: '#fff' }}>tek şube — belirsiz</span>}
                   </div>
                   <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 3 }}>
                     {t.olay_sayisi} kabul farkı · {t.sube_sayisi} şube ({(t.subeler || []).join(', ')})
@@ -177,7 +177,7 @@ export default function TedarikDosyasi() {
                 <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
                   <span style={{ fontSize: 10, fontWeight: 700, padding: '1px 7px', borderRadius: 20, background: renk, color: '#fff' }}>{f.durum}</span>
                   {f.fatura_say > 0 && <span style={{ fontSize: 10, fontWeight: 700, padding: '1px 7px', borderRadius: 20, background: '#a855f7', color: '#fff' }}>📄 {f.fatura_say}</span>}
-                  {f.kabul_durum === 'kabul_uyusmazlik' && <span style={{ fontSize: 10, fontWeight: 700, padding: '1px 7px', borderRadius: 20, background: '#ef4444', color: '#fff' }}>⚠ fark</span>}
+                  {f.kabul_durum === 'kabul_uyusmazlik' && <span style={{ fontSize: 10, fontWeight: 700, padding: '1px 7px', borderRadius: 20, background: 'var(--red)', color: '#fff' }}>⚠ fark</span>}
                 </div>
               </button>
             );
@@ -209,7 +209,7 @@ export default function TedarikDosyasi() {
                     <div style={{ fontSize: 13, fontWeight: 700, display: 'flex', gap: 8, alignItems: 'center' }}>
                       🚚 {s.tedarikci_ad}
                       {s.wa_gonderildi && <span title="WhatsApp gönderildi" style={{ fontSize: 11 }}>📲</span>}
-                      <span style={{ fontSize: 10, marginLeft: 'auto', padding: '1px 7px', borderRadius: 20, background: s.teslim_alindi ? '#22c55e' : '#f59e0b', color: '#fff', fontWeight: 700 }}>
+                      <span style={{ fontSize: 10, marginLeft: 'auto', padding: '1px 7px', borderRadius: 20, background: s.teslim_alindi ? 'var(--green)' : 'var(--orange)', color: '#fff', fontWeight: 700 }}>
                         {s.teslim_alindi ? 'teslim alındı' : 'bekleniyor'}
                       </span>
                     </div>
@@ -222,7 +222,7 @@ export default function TedarikDosyasi() {
               {d.kabul_farklar?.length > 0 && (
                 <Bolum baslik="⚠ Kabul farkı (gelen ≠ beklenen)">
                   {d.kabul_farklar.map((k, i) => (
-                    <div key={i} style={{ fontSize: 12, color: '#ef4444', padding: '2px 0' }}>
+                    <div key={i} style={{ fontSize: 12, color: 'var(--red)', padding: '2px 0' }}>
                       {k.urun_ad}: beklenen {k.istenen}, sayılan {k.kabul} ({k.fark > 0 ? '+' : ''}{k.fark})
                       {k.aciklama ? ` — “${k.aciklama}”` : ''}
                     </div>
