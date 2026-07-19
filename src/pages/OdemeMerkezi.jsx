@@ -125,9 +125,25 @@ export default function OdemeMerkezi() {
     }
   };
   // 🗂 sekme şeridi (sahip: 'yan yana başlıklar'): ilk girişte en çok çalışılan
-  // tedarikçi otomatik seçilir — boş detay alanı kalmasın
+  // tedarikçi otomatik seçilir — boş detay alanı kalmasın. Tedarikçi Kontrol'den
+  // '💸 Ödeme ekranında aç' ile gelinmişse O tedarikçi seçilir (gevşek ad eşleşmesi:
+  // TM fatura ünvanı taşır, burada kısa ad olabilir).
   useEffect(() => {
-    if (sekme !== 'tedarikci' || !cariler || cariSecili) return;
+    if (!cariler) return;
+    let hedefAd = null;
+    try {
+      hedefAd = sessionStorage.getItem('om_ac_tedarikci');
+      if (hedefAd) { sessionStorage.removeItem('om_ac_tedarikci'); setSekme('tedarikci'); }
+    } catch { /* yoksay */ }
+    if (hedefAd) {
+      const u = hedefAd.trim().toUpperCase();
+      const aday = malCariListesi(cariler).find(t =>
+        t.tedarikci.toUpperCase() === u
+        || t.tedarikci.toUpperCase().includes(u) || u.includes(t.tedarikci.toUpperCase())
+        || (t.resmi_adlar || []).some(r => r.toUpperCase() === u || r.toUpperCase().includes(u) || u.includes(r.toUpperCase())));
+      if (aday) { cariAc(aday.tedarikci); return; }
+    }
+    if (sekme !== 'tedarikci' || cariSecili) return;
     const ilk = malCariListesi(cariler)[0];
     if (ilk) cariAc(ilk.tedarikci);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -759,6 +775,11 @@ export default function OdemeMerkezi() {
                           <button className="btn btn-secondary btn-sm" onClick={() => cariVade(t)}>🤝 Vadeye</button>
                         </>
                       )}
+                      <button className="btn btn-secondary btn-sm" title="Belge arşivi, beyan, devir, fatura kovalama — Tedarikçi Kontrol'de incele"
+                        onClick={() => {
+                          try { sessionStorage.setItem('tm_ac_tedarikci', t.tedarikci); } catch { /* yoksay */ }
+                          window.location.hash = 'belge-merkezi';
+                        }}>🏦 Tedarikçi 360</button>
                     </span>
                   </div>
                   {ait.length > 0 && (
@@ -777,7 +798,7 @@ export default function OdemeMerkezi() {
                     const ek = ekstreler[t.tedarikci];
                     if (!ek) return <div style={{ padding: '0 12px 10px 22px', fontSize: 12, color: 'var(--text3)' }}>📜 Ekstre yükleniyor…</div>;
                     if (ek.hata) return <div style={{ padding: '0 12px 10px 22px', fontSize: 12, color: 'var(--red)' }}>Ekstre alınamadı.</div>;
-                    return <CariEkstrePanel ek={ek} ad={t.tedarikci} />;
+                    return <CariEkstrePanel ek={ek} ad={t.tedarikci} mode="action" />;
                   })()}
                 </div>
               );
@@ -811,7 +832,7 @@ export default function OdemeMerkezi() {
                         const ek = ekstreler[t.tedarikci];
                         if (!ek) return <div style={{ padding: '0 6px 8px', fontSize: 12, color: 'var(--text3)' }}>📜 Ekstre yükleniyor…</div>;
                         if (ek.hata) return <div style={{ padding: '0 6px 8px', fontSize: 12, color: 'var(--red)' }}>Ekstre alınamadı.</div>;
-                        return <CariEkstrePanel ek={ek} ad={t.tedarikci} />;
+                        return <CariEkstrePanel ek={ek} ad={t.tedarikci} mode="action" />;
                       })()}
                     </div>
                   );

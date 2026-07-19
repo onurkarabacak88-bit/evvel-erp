@@ -31,6 +31,26 @@ export default function BelgeMerkezi() {
     api('/fatura/tedarikci-merkez').then(setMk).catch(() => setMk(null));
   }, []);
   const [acikToptanci, setAcikToptanci] = useState(null);
+  // 💸→🏦 derin link (Codex: 'supplier context taşınmalı'): Ödeme Merkezi'ndeki
+  // '🏦 Tedarikçi 360' düğmesi tedarikçi adını bırakır — burada o satır açılır.
+  // Gevşek eşleşme: ÖM kısa ad taşır ('ATALAY KAHVE'), buradaki satır fatura
+  // ünvanı olabilir ('MEHMET ATALAY') — birebir yoksa içerme iki yönlü denenir.
+  useEffect(() => {
+    if (!d) return;
+    let hedef = null;
+    try {
+      hedef = sessionStorage.getItem('tm_ac_tedarikci');
+      if (hedef) sessionStorage.removeItem('tm_ac_tedarikci');
+    } catch { /* yoksay */ }
+    if (!hedef) return;
+    setSekme('tedarikci');
+    const u = hedef.trim().toUpperCase();
+    const liste = (d.toptancilar || []).map(t => t.toptanci);
+    const tam = liste.find(a => a.toUpperCase() === u)
+      || liste.find(a => a.toUpperCase().includes(u) || u.includes(a.toUpperCase()));
+    if (tam) { setAcikToptanci(tam); cariGetir(tam); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [d]);
   // BM-5: toptancı açılınca cari ekstre (beyan bakiye + vade + zincir)
   const [cari, setCari] = useState({});
   async function cariGetir(ad) {
@@ -140,7 +160,7 @@ export default function BelgeMerkezi() {
   return (
     <div style={{ padding: '16px 18px' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 10 }}>
-        <h2 style={{ margin: 0 }}>🏦 Tedarikçi Merkezi</h2>
+        <h2 style={{ margin: 0 }}>🏦 Tedarikçi Kontrol</h2>
         <input type="month" value={ay} onChange={e => setAy(e.target.value)}
           style={{ background: 'var(--bg2)', color: 'var(--text)', border: '1px solid var(--border)', borderRadius: 8, padding: '6px 10px' }} />
         <span style={{ fontSize: 12, color: 'var(--text3)' }}>
@@ -510,6 +530,13 @@ export default function BelgeMerkezi() {
                       {cari[t.toptanci] && !cari[t.toptanci].hata && (
                         <div style={{ fontSize: 12, padding: '6px 8px', marginBottom: 4,
                                       background: 'var(--bg2)', borderRadius: 8 }}>
+                          {/* Codex çapraz gezinme: incele→ödemeye it (ödeme akışı BURADA yok) */}
+                          <button className="btn btn-sm btn-primary" style={{ float: 'right', marginLeft: 8 }}
+                            title="Bu tedarikçinin ödeme akışı Ödeme Merkezi'nde"
+                            onClick={() => {
+                              try { sessionStorage.setItem('om_ac_tedarikci', t.toptanci); } catch { /* yoksay */ }
+                              window.location.hash = 'odeme-merkezi';
+                            }}>💸 Ödeme ekranında aç</button>
                           🧾 Beyan (tedarikçinin fatura üstü bakiyesi):{' '}
                           <b>{cari[t.toptanci].beyan_bakiye != null ? `≈ ${fmt(cari[t.toptanci].beyan_bakiye)}` : 'fatura üstünde yok'}</b>
                           {/* SÖZ vs FATURA farkı (ATALAY vakası): toplu vade sözü fatura açığından saparsa uyar */}
@@ -555,7 +582,7 @@ export default function BelgeMerkezi() {
                       {/* 📒 ORTAK EKSTRE PANELİ — KPI + borç/alacak/bakiye defteri +
                           dönem/yazdır + katlanır mutabakat + belgeler + PDF çekmecesi */}
                       {cari[t.toptanci] && !cari[t.toptanci].hata && (
-                        <CariEkstrePanel ek={cari[t.toptanci]} ad={t.toptanci} />
+                        <CariEkstrePanel ek={cari[t.toptanci]} ad={t.toptanci} mode="review" />
                       )}
                       {(d.fatura_arsivi || []).filter(f => (f.tedarikci_ad || '(tedarikçi belirsiz)').trim() === t.toptanci || ((f.tedarikci_ad || '').trim() === '' && t.toptanci === '(tedarikçi belirsiz)')).map(f => (
                         <div key={f.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, padding: '3px 0' }}>

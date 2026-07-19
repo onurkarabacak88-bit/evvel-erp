@@ -292,7 +292,7 @@ function CepHome({ sayac, kasa, onKasa, onAc, onCikis, yenile }) {
       sayi: null, alt: 'Gider ekle / aylık liste' },
     { id: 'vadeli', ikon: '🧾', baslik: 'Vadeli Alımlar', renk: '#f59e0b',
       sayi: null, alt: 'Vadeli borç ekle / öde' },
-    { id: 'tedarikci-merkez', ikon: '🏦', baslik: 'Tedarikçi Merkezi', renk: C.mavi,
+    { id: 'tedarikci-merkez', ikon: '🏦', baslik: 'Tedarikçi Kontrol', renk: C.mavi,
       sayi: null, alt: 'Cari · gecikmiş vade · belge açığı' },
     { id: 'kartlar', ikon: '💳', baslik: 'Kartlar', renk: C.kirmizi,
       sayi: null, alt: 'Borç · limit · yaklaşan' },
@@ -4621,7 +4621,7 @@ function CepTedarikciMerkezi({ onGeri }) {
     <div style={{ minHeight: '100vh', background: C.bg, fontFamily: 'Instrument Sans, system-ui, sans-serif', paddingBottom: 40 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 14px 8px' }}>
         <button onClick={onGeri} style={{ background: C.bg2, border: `1px solid ${C.border}`, borderRadius: 10, color: C.t2, padding: '8px 12px', fontSize: 14 }}>‹</button>
-        <div style={{ fontSize: 18, fontWeight: 800, color: C.t1 }}>🏦 Tedarikçi Merkezi</div>
+        <div style={{ fontSize: 18, fontWeight: 800, color: C.t1 }}>🏦 Tedarikçi Kontrol</div>
       </div>
       {hata && <div style={{ color: C.kirmizi, padding: 14 }}>{hata}</div>}
       {!mk && !hata && <div style={{ color: C.t3, padding: 14 }}>Yükleniyor…</div>}
@@ -4710,7 +4710,7 @@ function CepTedarikciMerkezi({ onGeri }) {
             </div>
           )}
           <div style={{ fontSize: 10, color: C.t3, padding: '0 2px' }}>
-            Salt-okur özet — detay/PDF ve tüm aksiyonlar masaüstü 🏦 Tedarikçi Merkezi'nde.
+            Salt-okur özet — detay/PDF ve tüm aksiyonlar masaüstü 🏦 Tedarikçi Kontrol'de.
           </div>
         </div>
       )}

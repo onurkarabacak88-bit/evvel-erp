@@ -29,15 +29,19 @@ export const malCariListesi = (cariler) => (cariler || [])
     || (b.fatura_toplam_6ay || 0) - (a.fatura_toplam_6ay || 0)
     || (b.hesaplanan_acik || 0) - (a.hesaplanan_acik || 0));
 
-export default function CariEkstrePanel({ ek, ad }) {
-  const [donem, setDonem] = useState('tumu');     // buay | son3 | tumu
+// mode (Codex: 'aynı component, iki mod — aynı çevre UI ile görünmesin'):
+//   'action' → Ödeme Merkezi: amaç KARAR — varsayılan dönem Son 3 Ay, kısa belge listesi
+//   'review' → Tedarikçi Kontrol: amaç İNCELEME — varsayılan Tümü, tam liste
+export default function CariEkstrePanel({ ek, ad, mode = 'review' }) {
+  const [donem, setDonem] = useState(mode === 'action' ? 'son3' : 'tumu'); // buay | son3 | tumu
   const [mutAcik, setMutAcik] = useState(false);  // aylık mutabakat katlanır
   const [onizle, setOnizle] = useState(null);     // {url,no,tarih,tutar} → sağ çekmece
   const bugun = bugunISO();
   const esik = donem === 'buay' ? `${bugun.slice(0, 7)}-01` : donem === 'son3' ? artiGunISO(-90) : '';
 
   const har = (ek.hareketler || []).filter(h => !esik || h.tarih >= esik);
-  const fats = (ek.faturalar || []).filter(f => !esik || String(f.tarih) >= esik).slice(-30).reverse();
+  const fats = (ek.faturalar || []).filter(f => !esik || String(f.tarih) >= esik)
+    .slice(mode === 'action' ? -8 : -30).reverse();
   const aylar = (ek.aylik || []).filter(a => !a.sistem_oncesi);
   const vadeler = ek.bekleyen_vadeler || [];
   const gecikmis = vadeler.filter(v => v.vade && v.vade < bugun);
