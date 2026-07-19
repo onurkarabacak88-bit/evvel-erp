@@ -32,6 +32,15 @@ export default function IzlemePanosu() {
   const [dd, setDd] = useState(null);
   const yenile = () => api('/ops/maliyet/depo-izleme').then(setDd).catch(() => setDd({ hata: true }));
   useEffect(() => { yenile(); }, []);
+  // Codex kazanç #3: kritik sayacı BAĞLAM-duyarlı — şube seçiliyken o şubenin sayısı
+  const kritikSayi = (() => {
+    if (!dd || dd.hata) return 0;
+    if (!sube) return dd.kritik_sayi || 0;
+    return (dd.kalemler || []).filter(k => {
+      const e = (k.sube_kirilim || []).find(x => x.sube_id === sube);
+      return e && e.min_stok > 0 && e.adet <= e.min_stok;
+    }).length;
+  })();
   async function stokKaydet(k, f) {
     const kir = (k.sube_kirilim || []).find(x => x.sube_id === f.sube_id);
     setMesgul(true);
@@ -70,12 +79,12 @@ export default function IzlemePanosu() {
           {dd && !dd.hata && chip(!sube, () => setSube(null), '🏢 Tümü', true)}
           {dd && !dd.hata && (dd.subeler || []).filter(x => x.id !== 'sube-merkez').map(x =>
             chip(sube === x.id, () => setSube(sube === x.id ? null : x.id), x.ad, true))}
-          {dd && !dd.hata && (dd.kritik_sayi || 0) > 0 && (
+          {dd && !dd.hata && kritikSayi > 0 && (
             <button onClick={() => setSadeceKritik(a => !a)}
               style={{ height: 26, padding: '0 11px', borderRadius: 13, fontSize: 11.5, fontWeight: 800, cursor: 'pointer',
                        border: '1px solid var(--red, #ef4444)',
                        background: sadeceKritik ? 'var(--red, #ef4444)' : 'transparent',
-                       color: sadeceKritik ? '#fff' : 'var(--red, #ef4444)' }}>⚠ Kritik ({dd.kritik_sayi})</button>
+                       color: sadeceKritik ? '#fff' : 'var(--red, #ef4444)' }}>⚠ Kritik ({kritikSayi}{sube ? '' : ' · tüm'})</button>
           )}
         </div>
         <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -236,11 +245,28 @@ export default function IzlemePanosu() {
                   <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 2 }}>
                     {dSecili.kategori_emoji} {dSecili.kalem_adi}
                   </div>
-                  <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 8 }}>
-                    📦 Depoda kalan <b style={{ fontFamily: M, color: 'var(--text)', fontSize: 14 }}>{Math.round(dSecili.kalan_toplam)}</b>
-                    {' '}· son 7 gün <b style={{ color: '#f59e0b' }}>−{Math.round(dSecili.dusum_7g || 0)}</b>
-                    {' '}· son 30 gün <b style={{ color: '#f59e0b' }}>−{Math.round(dSecili.dusum_30g || 0)}</b>
-                  </div>
+                  {(() => {
+                    // Codex hizalama: şube seçiliyken özet de o şubenin (kalan kırılımdan,
+                    // düşüm o şubenin hareket izinden hesaplanır)
+                    const hepsi = dSecili.hareketler || [];
+                    const hf = sube ? hepsi.filter(h => h.sube_id === sube) : hepsi;
+                    const gun = (n) => new Date(Date.now() - n * 86400000).toISOString().slice(0, 10);
+                    const dus = (kes) => Math.round(hf.filter(h => h.t >= kes &&
+                      ((h.miktar || 0) < 0 || ((h.onceki ?? 0) > (h.sonraki ?? 0))))
+                      .reduce((a, h) => a + Math.abs(h.miktar || ((h.onceki || 0) - (h.sonraki || 0))), 0));
+                    const kalanG = sube
+                      ? Math.round(((dSecili.sube_kirilim || []).find(x => x.sube_id === sube) || {}).adet || 0)
+                      : Math.round(dSecili.kalan_toplam);
+                    const subeAd = sube ? ((dd.subeler || []).find(x => x.id === sube)?.ad || '') : '';
+                    return (
+                      <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 8 }}>
+                        📦 {sube ? `${subeAd}'de kalan` : 'Depoda kalan (tüm şubeler)'}{' '}
+                        <b style={{ fontFamily: M, color: 'var(--text)', fontSize: 14 }}>{kalanG}</b>
+                        {' '}· son 7 gün <b style={{ color: '#f59e0b' }}>−{sube ? dus(gun(7)) : Math.round(dSecili.dusum_7g || 0)}</b>
+                        {' '}· son 30 gün <b style={{ color: '#f59e0b' }}>−{sube ? dus(gun(30)) : Math.round(dSecili.dusum_30g || 0)}</b>
+                      </div>
+                    );
+                  })()}
                   {(dSecili.sube_kirilim || []).length > 0 && (
                     <div style={{ fontSize: 11.5, color: 'var(--text3)', marginBottom: 6, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                       {dSecili.sube_kirilim.map((sk2, j) => (
@@ -288,13 +314,19 @@ export default function IzlemePanosu() {
                             style={{ width: 60, height: 30, borderRadius: 8, background: 'var(--bg2)', color: 'var(--text)', border: '1px solid var(--border)', padding: '0 8px', fontSize: 12.5 }} />
                         </label>
                       </div>
-                      <div style={{ fontSize: 10.5, color: 'var(--text3)', margin: '6px 0 8px' }}>
-                        Hareket defterine "sayım düzeltme" izi düşer (önceki → sonraki) — alış fiyatına dokunulmaz.
+                      <div style={{ fontSize: 10.5, color: 'var(--text3)', margin: '6px 0 8px', lineHeight: 1.45 }}>
+                        ⚡ Bu alan <b>hızlı düzeltmedir</b> (tek ürün, tek şube) — resmi sayım değildir;
+                        kalibrasyon/kontrol için <b>Stok Sayım</b> modülünü kullan. Hareket defterine
+                        "sayım düzeltme" izi düşer (önceki → sonraki) — alış fiyatına dokunulmaz.
                       </div>
                       <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
                         <button className="btn btn-secondary btn-sm" onClick={() => setDuz(null)}>Vazgeç</button>
                         <button className="btn btn-primary btn-sm" disabled={mesgul}
-                          onClick={() => stokKaydet(dSecili, duz)}>{mesgul ? 'Kaydediliyor…' : '💾 Kaydet'}</button>
+                          onClick={() => {
+                            const sAd = (dd.subeler || []).find(x => x.id === duz.sube_id)?.ad || duz.sube_id;
+                            if (!window.confirm(`Bu RESMİ SAYIM DEĞİL, anlık düzeltmedir.\n${sAd} · ${dSecili.kalem_adi} → ${duz.adet} adet (min ${duz.min}) yazılacak.\nOnaylıyor musun?`)) return;
+                            stokKaydet(dSecili, duz);
+                          }}>{mesgul ? 'Kaydediliyor…' : '💾 Kaydet'}</button>
                       </div>
                     </div>
                   )}
