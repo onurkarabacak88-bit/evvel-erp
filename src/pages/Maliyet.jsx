@@ -783,6 +783,7 @@ export default function Maliyet() {
             {(() => {
               const farkGunler = tumRows.filter(s => s.kasa_fark_tl != null);
               const evoYedekGun = tumRows.filter(s => s.ciro_kaynak === 'evo').length;
+              const evoKararGun = tumRows.filter(s => s.ciro_kaynak === 'evo_dogru').length;
               if (!farkGunler.length && !evoYedekGun) return null;
               const kasaT = tumRows.reduce((a, s) => a + (Number(s.kasa_ciro_tl) || 0), 0);
               const evoT = tumRows.reduce((a, s) => a + (s.evo_ciro_tl != null
@@ -808,7 +809,7 @@ export default function Maliyet() {
                   <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 6 }}>
                     Fark fiziki kasaya göre: kasa fazlaysa <b style={{ color: 'var(--green)' }}>yeşil fazla</b>, eksikse <b style={{ color: 'var(--red)' }}>kırmızı açık</b>.
                     Dönem seçiminde günlük +/− farklar toplanır{farkGunler.length ? ` (${farkGunler.length} farklı gün)` : ''}.
-                    Ciro kaynağı: personelin girdiği kasa esas{evoYedekGun > 0 ? `; ${evoYedekGun} günde kasa girilmediği için Evo kullanıldı` : ''}.
+                    Ciro kaynağı: personelin girdiği kasa esas{evoYedekGun > 0 ? `; ${evoYedekGun} günde kasa girilmediği için Evo kullanıldı` : ''}{evoKararGun > 0 ? `; ${evoKararGun} günde senin kararınla Evo esas alındı (personel hatası)` : ''}.
                   </div>
                 </div>
               );

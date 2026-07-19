@@ -13697,6 +13697,7 @@ def ops_maliyet_gun_gun(
         # kasa > evo → fazla, kasa < evo → açık).
         evo_gun: Dict[Tuple[str, str], float] = {}
         kasa_gun: Dict[Tuple[str, str], float] = {k: v["ciro"] for k, v in ciro_map.items()}
+        evo_dogru_keys: set = set()  # sahibin 'Evo doğru' dediği günler (etiket için)
         try:
             cur.execute(
                 """SELECT sube_id::text AS sid, tarih::text AS t,
@@ -13717,6 +13718,7 @@ def ops_maliyet_gun_gun(
                 elif d.get("durum") == "evo_dogru":
                     # sahip bu gün için açıkça 'Evo doğru' demiş — istisna
                     ciro_map[key]["ciro"] = float(d["evo"])
+                    evo_dogru_keys.add(key)
         except Exception:  # noqa: BLE001 — tablo henüz yoksa eski davranış sürer
             pass
         # Şube POS / online (platform) komisyon oranları (subeler.pos_oran / online_oran, %)
@@ -14065,8 +14067,11 @@ def ops_maliyet_gun_gun(
             satir["kasa_ciro_tl"] = round(_kasa_g, 2) if _kasa_g is not None else None
             satir["evo_ciro_tl"] = round(_evo_g, 2) if _evo_g is not None else None
             satir["kasa_fark_tl"] = _fark_g
-            satir["ciro_kaynak"] = ("kasa" if _kasa_g is not None
-                                    else ("evo" if _evo_g is not None else "yok"))
+            if sid is not None and (sid, tarih_str) in evo_dogru_keys:
+                satir["ciro_kaynak"] = "evo_dogru"   # sahip kararı: o gün Evo esas
+            else:
+                satir["ciro_kaynak"] = ("kasa" if _kasa_g is not None
+                                        else ("evo" if _evo_g is not None else "yok"))
             faaliyet_kari = ciro_v - toplam_maliyet
             tahmini_vergi = max(0.0, faaliyet_kari) * TAHMINI_VERGI_ORANI
             satir["faaliyet_kari_tl"] = round(faaliyet_kari, 2)
