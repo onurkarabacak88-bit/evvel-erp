@@ -3239,6 +3239,7 @@ function HizliAksiyonModal({ tip, onKapat, onKaydet }) {
     nakit: '', pos: '', online: '', sube_id: ''
   });
   const [subeler, setSubeler] = useState([]);
+  const [hata, setHata] = useState(''); // native alert yerine modal-içi inline hata (Evvel Tasarım Dili #10)
 
   useEffect(() => {
     if (tip !== 'ciro') return;
@@ -3256,18 +3257,19 @@ function HizliAksiyonModal({ tip, onKapat, onKaydet }) {
   const cfg = tipConfig[tip] || { title: 'Kayıt', label: 'Tutar' };
 
   function handleKaydet() {
+    setHata('');
     if (tip === 'ciro') {
       const nakit = parseFloat(form.nakit) || 0;
       const pos = parseFloat(form.pos) || 0;
       const online = parseFloat(form.online) || 0;
-      if (nakit + pos + online <= 0) { alert('En az bir tutar girilmeli'); return; }
-      if (!form.sube_id) { alert('Şube seçin — ciro şubeye bağlı kaydedilir'); return; }
+      if (nakit + pos + online <= 0) { setHata('En az bir tutar girilmeli (nakit / POS / online).'); return; }
+      if (!form.sube_id) { setHata('Şube seçin — ciro şubeye bağlı kaydedilir.'); return; }
       const toplam = nakit + pos + online;
       onKaydet('ciro', { tarih: form.tarih, nakit, pos, online, aciklama: form.aciklama || `Ciro ${toplam.toLocaleString('tr-TR')} ₺`, sube_id: form.sube_id });
     } else if (tip === 'gider') {
       const tutar = parseFloat(form.tutar);
-      if (!tutar || tutar <= 0) { alert('Geçerli bir tutar girin'); return; }
-      if (!form.aciklama?.trim() && form.kategori === 'Genel') { alert('Açıklama veya kategori girin'); return; }
+      if (!tutar || tutar <= 0) { setHata('Geçerli bir tutar girin.'); return; }
+      if (!form.aciklama?.trim() && form.kategori === 'Genel') { setHata('Açıklama veya kategori girin.'); return; }
       onKaydet('gider', { tarih: form.tarih, tutar, aciklama: form.aciklama || form.kategori, kategori: form.kategori });
     }
   }
@@ -3319,6 +3321,11 @@ function HizliAksiyonModal({ tip, onKapat, onKaydet }) {
             <input value={form.aciklama} onChange={e => set('aciklama', e.target.value)} placeholder="İsteğe bağlı" />
           </div>
         </div>
+        {hata && (
+          <div style={{ margin: '0 20px 4px', padding: '8px 12px', borderRadius: 8, background: 'rgba(220,50,50,0.10)', border: '1px solid rgba(220,50,50,0.35)', color: 'var(--red)', fontSize: 12.5, fontWeight: 600 }}>
+            ⚠️ {hata}
+          </div>
+        )}
         <div className="modal-footer">
           <button className="btn btn-secondary" onClick={onKapat}>Vazgeç</button>
           <button className="btn btn-primary" onClick={handleKaydet}>✓ Kaydet</button>
