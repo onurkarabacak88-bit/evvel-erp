@@ -95,7 +95,9 @@ export default function IzlemePanosu() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 12 }}>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           <span style={{ fontWeight: 800, fontSize: 14 }}>📦 Depo İzleme</span>
-          {GORUNUMLER.map(g => chip(gorunum === g.id, () => setGorunum(g.id), g.ad))}
+          {/* Tek görünüm varken çip sahte bir seçim sunuyordu (Mercury: remove dead
+              navigation) — ikinci görünüm eklenince kendiliğinden geri gelir. */}
+          {GORUNUMLER.length > 1 && GORUNUMLER.map(g => chip(gorunum === g.id, () => setGorunum(g.id), g.ad))}
           {dd && !dd.hata && chip(!sube, () => setSube(null), '🏢 Tümü', true)}
           {dd && !dd.hata && (dd.subeler || []).filter(x => x.id !== 'sube-merkez').map(x =>
             chip(sube === x.id, () => setSube(sube === x.id ? null : x.id), x.ad, true))}
