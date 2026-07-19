@@ -921,6 +921,12 @@ export default function OdemeMerkezi() {
           return { t, ait, takvimli, takvimsiz: Math.max(0, (t.hesaplanan_acik || 0) - takvimli) };
         });
         const serbestSozler = sozler.filter(r => !kullanilan.has(r.id));
+        // 📦 DİĞER (sahip: 'diğer alanı kurun — tek ödemeler / tedarikçide
+        // birleşmeyen alanlar alt alta'): geçici sınıf = tek seferlik internet/kart
+        // alımı (ASSA, D-MARKET — ödemesi kart ekstresinde, sürekli cari değil).
+        // Kart değil sade satır — sürekli tedarikçiyle karışmasın.
+        const digerCariler = (cariler || []).filter(t => (t.sinif || '') === 'gecici')
+          .sort((a, b) => (b.hesaplanan_acik || 0) - (a.hesaplanan_acik || 0));
         return (
           <div className="card" style={{ padding: 16, marginBottom: 14 }}>
             <div style={{ fontWeight: 800, marginBottom: 4 }}>
@@ -1000,12 +1006,48 @@ export default function OdemeMerkezi() {
                 </div>
               );
             })}
-            {serbestSozler.length > 0 && (
-              <div style={{ marginTop: 10 }}>
-                <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--text3)', padding: '4px 4px' }}>
-                  🧾 CARİYE EŞLEŞMEYEN SÖZLER ({serbestSozler.length})
+            {(digerCariler.length > 0 || serbestSozler.length > 0) && (
+              <div style={{ marginTop: 16, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
+                <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--text3)', marginBottom: 2 }}>
+                  📦 DİĞER <span style={{ fontWeight: 400 }}>— tek seferlik alımlar + tedarikçi kartına birleşmeyenler</span>
                 </div>
-                {serbestSozler.map(r => <Satir key={r.id} r={r} />)}
+                {digerCariler.map((t, i) => {
+                  const acikMi = cariSecili === t.tedarikci;
+                  return (
+                    <div key={`d${i}`} style={{ borderBottom: '1px solid var(--border)' }}>
+                      <div onClick={() => cariAc(t.tedarikci)}
+                        style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10,
+                                 padding: '8px 6px', cursor: 'pointer', flexWrap: 'wrap' }}>
+                        <span style={{ minWidth: 0 }}>
+                          <div style={{ fontWeight: 700, fontSize: 12.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 360 }}>
+                            {acikMi ? '▾' : '▸'} {t.tedarikci}
+                          </div>
+                          <div style={{ fontSize: 11, color: 'var(--text3)' }}>
+                            tek seferlik alım — ödemesi kart ekstresinde izlenir
+                            {t.son_fatura ? ` · son ${trT(String(t.son_fatura))}` : ''}
+                          </div>
+                        </span>
+                        <span style={{ fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums', fontWeight: 700, fontSize: 13 }}>
+                          {fmt(t.hesaplanan_acik || 0)}
+                        </span>
+                      </div>
+                      {acikMi && (() => {
+                        const ek = ekstreler[t.tedarikci];
+                        if (!ek) return <div style={{ padding: '0 6px 8px', fontSize: 12, color: 'var(--text3)' }}>📜 Ekstre yükleniyor…</div>;
+                        if (ek.hata) return <div style={{ padding: '0 6px 8px', fontSize: 12, color: 'var(--red)' }}>Ekstre alınamadı.</div>;
+                        return <CariEkstrePanel ek={ek} ad={t.tedarikci} />;
+                      })()}
+                    </div>
+                  );
+                })}
+                {serbestSozler.length > 0 && (
+                  <div style={{ marginTop: 8 }}>
+                    <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--text3)', padding: '2px 4px' }}>
+                      🧾 Cariye eşleşmeyen sözler ({serbestSozler.length})
+                    </div>
+                    {serbestSozler.map(r => <Satir key={r.id} r={r} />)}
+                  </div>
+                )}
               </div>
             )}
             <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 6 }}>
