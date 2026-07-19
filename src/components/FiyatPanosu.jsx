@@ -73,6 +73,11 @@ export default function FiyatPanosu() {
     katMap.get(a).urunler.push(k);
   }
   const katListe = [...katMap.values()].sort((a, b) => (a.sira - b.sira) || a.ad.localeCompare(b.ad, 'tr'));
+  // İstisnalar-önce (Stripe deseni): eşik üstü zam alanlar kategori gezmeden görünür.
+  // Tek kaynak = kalemler listesi (sol raydaki son_yukselenler backend'den ayrı gelir
+  // ve boş kalabilir; kategori rozetleriyle çelişmesin diye buradan türetilir).
+  const zamlilar = donemli.filter(k => (k.degisim_pct || 0) >= esik && !k.sicrama)
+    .sort((a, b) => (b.degisim_pct || 0) - (a.degisim_pct || 0));
   const urunSirala = (arr) => arr.slice().sort((a, b) => {
     const aa = (a.degisim_pct || 0) >= esik ? 1 : 0, bb = (b.degisim_pct || 0) >= esik ? 1 : 0;
     if (aa !== bb) return bb - aa;
@@ -266,6 +271,18 @@ export default function FiyatPanosu() {
                 <div style={{ fontSize: 11.5, color: 'var(--text3)', marginBottom: 8 }}>
                   Filtre aktif — {sadeceAlarm ? 'yalnız eşik üstü zam alanlar' : 'yalnız bu dönemde değişenler'} gösteriliyor.
                 </div>
+              )}
+              {zamlilar.length > 0 && !sadeceAlarm && (
+                <>
+                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 8 }}>
+                    <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--red, #ef4444)' }}>🔺 Zam Verenler</span>
+                    <span style={{ fontSize: 11, color: 'var(--text3)' }}>eşik ≥%{esik} · en yüksek artış önce — tıkla, incele</span>
+                  </div>
+                  <div className="mk-stagger mk-hovlift" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 10, marginBottom: 16 }}>
+                    {zamlilar.slice(0, 8).map(urunKutusu)}
+                  </div>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--text3)', marginBottom: 8 }}>📂 Kategoriler</div>
+                </>
               )}
               <div className="mk-stagger mk-hovlift" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))', gap: 10 }}>
                 {katListe.map(kt => {
