@@ -14892,7 +14892,8 @@ def ops_fiyat_izleme():
     # Kategori bilgisi sipariş-ver deseninin (emoji'li kategori kartları) temelidir.
     try:
         with db() as (_, cur2):
-            cur2.execute("""SELECT u.id::text AS id, u.ad, k.ad AS kat_ad,
+            cur2.execute("""SELECT u.id::text AS id, u.ad, u.depo_stok_kalem_kodu AS depo_kod,
+                                   k.ad AS kat_ad,
                                    COALESCE(k.emoji,'📦') AS kat_emoji,
                                    COALESCE(k.sira, 999) AS kat_sira
                             FROM siparis_urun u
@@ -14900,12 +14901,22 @@ def ops_fiyat_izleme():
                             WHERE COALESCE(u.ad,'') <> '' AND u.aktif = TRUE""")
             urunler = [dict(r) for r in cur2.fetchall() or []]
         kat_map = {u["id"]: u for u in urunler}
+        # 🌉 HAVUZ KÖPRÜSÜ (sahip: 'solda yazıyor, yeni desende yazmıyor!'):
+        # bardak_buyuk gibi havuz kodlarıyla fiyatlanan kalemler ürün kartına
+        # depo_stok_kalem_kodu üzerinden bağlanır — bardaklar 'Diğer'e düşmez,
+        # sipariş ekranındaki GERÇEK kategorisinde (Sarf Malzemeler) görünür.
+        depo_kat = {}
+        for u in urunler:
+            dk = (u.get("depo_kod") or "").strip()
+            if dk:
+                depo_kat.setdefault(dk, u)
         ad_kat = {}
         for u in urunler:
             ad_kat.setdefault((u["ad"] or "").strip().lower(), u)
-        # Fiyatlı kalemlere kategori bağla (UUID doğrudan; havuz/legacy kod ADDAN)
+        # Fiyatlı kalemlere kategori bağla: UUID → depo köprüsü → ad eşleşmesi
         for k in kalemler:
-            u = kat_map.get(k["kalem_kodu"]) or ad_kat.get((k.get("kalem_adi") or "").strip().lower())
+            u = (kat_map.get(k["kalem_kodu"]) or depo_kat.get(k["kalem_kodu"])
+                 or ad_kat.get((k.get("kalem_adi") or "").strip().lower()))
             k["kategori"] = (u or {}).get("kat_ad") or "Diğer"
             k["kategori_emoji"] = (u or {}).get("kat_emoji") or "📦"
             k["kategori_sira"] = int((u or {}).get("kat_sira") or 999)
