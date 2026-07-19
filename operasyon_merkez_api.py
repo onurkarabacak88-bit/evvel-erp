@@ -14860,10 +14860,14 @@ def ops_fiyat_izleme():
                 continue
             zincir.append({"bas": h["bas"], "bit": h.get("bit"), "fiyat": round(h["fiyat"], 4),
                            "tedarikci": h.get("tedarikci"), "notlar": (h.get("notlar") or "")[:120]})
-        # dönemler arası delta
+        # dönemler arası delta. DÜZELTME FRENİ: 'açılış birimi düzeltmesi' damgalı
+        # kayıt ZAM değildir (pipet 0,50→42,50 = birim hatası onarımı) — %8400 diye
+        # 'Son Yükselenler'e düşmesin; zincirde 🔧 düzeltme olarak gösterilir.
         for i, z in enumerate(zincir):
+            duzeltme = "açılış birimi düzeltmesi" in (z.get("notlar") or "")
+            z["duzeltme"] = duzeltme
             z["degisim_pct"] = (round((z["fiyat"] - zincir[i-1]["fiyat"]) / zincir[i-1]["fiyat"] * 100, 1)
-                                if i > 0 and zincir[i-1]["fiyat"] > 0 else None)
+                                if i > 0 and zincir[i-1]["fiyat"] > 0 and not duzeltme else None)
         son = zincir[-1]
         onceki = zincir[-2] if len(zincir) > 1 else None
         kalemler.append({

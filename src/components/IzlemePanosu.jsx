@@ -175,14 +175,18 @@ export default function IzlemePanosu() {
                   </div>
                   {z.map((b, i) => (
                     <div key={i}>
-                      {i > 0 && (
+                      {i > 0 && (b.duzeltme ? (
+                        <div style={{ fontSize: 11.5, fontWeight: 700, padding: '3px 0 3px 14px', color: 'var(--text3)' }}>
+                          🔧 birim düzeltmesi (zam değil)
+                        </div>
+                      ) : (
                         <div style={{ fontSize: 11.5, fontWeight: 800, padding: '3px 0 3px 14px',
                                       color: (b.degisim_pct || 0) > 0 ? 'var(--red, #ef4444)' : (b.degisim_pct || 0) < 0 ? 'var(--green, #22c55e)' : 'var(--text3)' }}>
                           {(b.degisim_pct || 0) > 0 ? '↑' : (b.degisim_pct || 0) < 0 ? '↓' : '='}{' '}
                           %{Math.abs(b.degisim_pct || 0).toFixed(1)}
                           {' '}({(b.fiyat - z[i - 1].fiyat) > 0 ? '+' : ''}{fmt(b.fiyat - z[i - 1].fiyat)})
                         </div>
-                      )}
+                      ))}
                       <div style={{ padding: '9px 12px', borderRadius: 10,
                                     border: `1px solid ${i === z.length - 1 ? 'var(--accent, #c9853f)' : 'var(--border)'}`,
                                     background: i === z.length - 1 ? 'rgba(255,255,255,.04)' : 'transparent' }}>
