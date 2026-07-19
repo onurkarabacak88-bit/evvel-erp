@@ -191,6 +191,24 @@ export default function IzlemePanosu() {
                 </>
               ) : !dSeciliKat ? (
                 <>
+                  {/* Risk-önce (Mercury deseni): kritik stoklar kategori gezmeden ilk bakışta */}
+                  {!sadeceKritik && (() => {
+                    const kritikler = dtumu.filter(k => gz(k).kritik)
+                      .sort((a, b) => gz(a).kalan - gz(b).kalan);
+                    if (!kritikler.length) return null;
+                    return (
+                      <>
+                        <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 8 }}>
+                          <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--red, #ef4444)' }}>⚠ Kritik Stoklar</span>
+                          <span style={{ fontSize: 11, color: 'var(--text3)' }}>min altına düşenler · en az kalan önce — tıkla, düzelt</span>
+                        </div>
+                        <div className="mk-stagger mk-hovlift" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 10, marginBottom: 16 }}>
+                          {kritikler.slice(0, 8).map(depoKutu)}
+                        </div>
+                        <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--text3)', marginBottom: 8 }}>📂 Kategoriler</div>
+                      </>
+                    );
+                  })()}
                   <div style={{ fontSize: 11.5, color: 'var(--text3)', marginBottom: 8 }}>
                     Kategoriye tıkla → depodaki ürünler; ürüne tıkla → sağda gün gün düşüm izi.
                   </div>
