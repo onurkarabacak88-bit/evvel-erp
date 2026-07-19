@@ -1,5 +1,6 @@
-import { useState, useEffect, Fragment } from 'react';
+import { useState, useEffect } from 'react';
 import { api, fmt } from '../utils/api';
+import CariEkstrePanel from '../components/CariEkstrePanel';
 
 // 🧾 BELGE MERKEZİ (2026-07-10) — sahip: "faturaları toptancı toptancı, ay ay,
 // gün gün görebildiğim; işletme harcamalarından faturası OLMAYANLARI direkt
@@ -32,7 +33,6 @@ export default function BelgeMerkezi() {
   const [acikToptanci, setAcikToptanci] = useState(null);
   // BM-5: toptancı açılınca cari ekstre (beyan bakiye + vade + zincir)
   const [cari, setCari] = useState({});
-  const [acikAy, setAcikAy] = useState(null); // "toptanci|ay" — ay detayı açık mı
   async function cariGetir(ad) {
     if (!ad || ad === '(tedarikçi belirsiz)' || cari[ad]) return;
     try {
@@ -501,23 +501,17 @@ export default function BelgeMerkezi() {
                   </div>
                   {acikToptanci === t.toptanci && (
                     <div style={{ marginTop: 6 }}>
-                      {/* BM-5 — cari şerit: beyan bakiye + bekleyen vade + zincir */}
+                      {/* BM-5 slim şerit — yalnız BURAYA özgü işler: beyan bakiyesi,
+                          söz↔fatura fark uyarısı, 📜 açılış devri girişi. Ekstrenin kendisi
+                          ORTAK CariEkstrePanel'den gelir (Ödeme Merkezi ile TEK kaynak —
+                          sahip 2026-07-19: 'Tedarikçi Merkezi içeriğini tamamla'). */}
+                      {!cari[t.toptanci] && <div style={{ fontSize: 12, color: 'var(--text3)' }}>📜 Ekstre yükleniyor…</div>}
+                      {cari[t.toptanci]?.hata && <div style={{ fontSize: 12, color: 'var(--red)' }}>Ekstre alınamadı.</div>}
                       {cari[t.toptanci] && !cari[t.toptanci].hata && (
                         <div style={{ fontSize: 12, padding: '6px 8px', marginBottom: 4,
                                       background: 'var(--bg2)', borderRadius: 8 }}>
-                          💼 Cari — bizim hesap:{' '}
-                          <b style={{ color: (cari[t.toptanci].hesaplanan_acik || 0) > 0 ? 'var(--red)' : 'var(--green)' }}>
-                            ≈ {fmt(cari[t.toptanci].hesaplanan_acik)}
-                          </b>
-                          <span style={{ color: 'var(--text3)' }}>
-                            {' '}({cari[t.toptanci].devir ? `📜 devir ${fmt(cari[t.toptanci].devir)} + ` : ''}fatura {fmt(cari[t.toptanci].fatura_toplam_6ay)} − ödeme izi {fmt(cari[t.toptanci].odeme_izi_toplam_6ay)})
-                          </span>
-                          {' '}· beyan{' '}
+                          🧾 Beyan (tedarikçinin fatura üstü bakiyesi):{' '}
                           <b>{cari[t.toptanci].beyan_bakiye != null ? `≈ ${fmt(cari[t.toptanci].beyan_bakiye)}` : 'fatura üstünde yok'}</b>
-                          {cari[t.toptanci].bekleyen_vade_toplam > 0 && (
-                            <> · bekleyen vade <b style={{ color: 'var(--red)' }}>{fmt(cari[t.toptanci].bekleyen_vade_toplam)}</b>
-                              {cari[t.toptanci].bekleyen_vadeler?.[0] && ` (en yakın ${cari[t.toptanci].bekleyen_vadeler[0].vade})`}</>
-                          )}
                           {/* SÖZ vs FATURA farkı (ATALAY vakası): toplu vade sözü fatura açığından saparsa uyar */}
                           {cari[t.toptanci].bekleyen_vade_toplam > 0 &&
                             Math.abs(cari[t.toptanci].bekleyen_vade_toplam - Math.max(0, cari[t.toptanci].hesaplanan_acik || 0)) >
@@ -528,12 +522,6 @@ export default function BelgeMerkezi() {
                               ya faturaları henüz yüklenmedi/okunmadı, ya söz toplu/tahmini girildi.
                             </div>
                           )}
-                          {(cari[t.toptanci].faturalar || []).some(f => f.zincir_fark != null && f.zincir_fark !== 0) && (
-                            <span style={{ color: 'var(--text3)' }}> · zincirde ödeme/hareket izi var</span>
-                          )}
-                          <div style={{ color: 'var(--text3)', marginTop: 2 }}>
-                            bizim hesap = açılış devri + 180 gün fatura − ödeme izi (ödeme izi yoksa açık büyür) · beyan = tedarikçinin fatura üstü bakiyesi · ikisi de ≈, hüküm değil
-                          </div>
                           {/* 📜 AÇILIŞ DEVRİ — sistem (1 Haziran) öncesinden kalan bakiye beyanı */}
                           <div style={{ marginTop: 4, fontSize: 11 }}>
                             📜 Sistem öncesi devir:{' '}
@@ -562,86 +550,12 @@ export default function BelgeMerkezi() {
                               1 Haziran ÖNCESİNDEN kalan bakiyeyi bir kez gir (tedarikçiye borcun kaldıysa +, fazla/peşin ödediysen −, borç kapandıysa 0/boş) — sonrasını sistem kendisi işler.
                             </div>
                           </div>
-                          {/* 📜 YÜRÜYEN EKSTRE — fatura(+) ödeme(−) sırayla, bakiye yürür */}
-                          {(cari[t.toptanci].hareketler || []).length > 0 && (
-                            <details style={{ marginTop: 6 }}>
-                              <summary style={{ cursor: 'pointer', fontSize: 12, fontWeight: 700 }}>
-                                📜 Yürüyen Ekstre — güncel bakiye ≈ {fmt(cari[t.toptanci].yuruyen_bakiye)}
-                              </summary>
-                              <div style={{ maxHeight: 220, overflowY: 'auto', marginTop: 4 }}>
-                                {cari[t.toptanci].hareketler.map((h, i) => (
-                                  <div key={i} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 11, padding: '2px 0', borderBottom: '1px solid var(--border)' }}>
-                                    <span>
-                                      {h.tarih} {h.tip === 'fatura' ? '🧾' : h.tip === 'devir' ? '📜' : '💸'} {(h.aciklama || '').slice(0, 40)}
-                                      {h.goruntule && <>{' '}<a href={h.goruntule} target="_blank" rel="noreferrer" style={{ color: 'var(--blue, #60a5fa)' }}>📎</a></>}
-                                    </span>
-                                    <span style={{ whiteSpace: 'nowrap', fontFamily: 'var(--font-mono)' }}>
-                                      <span style={{ color: h.tip === 'odeme' ? 'var(--green)' : 'var(--red)' }}>
-                                        {h.tip === 'odeme' ? '−' : h.tutar >= 0 ? '+' : ''}{fmt(h.tutar)}
-                                      </span>
-                                      {' '}<b style={{ color: h.bakiye < 0 ? 'var(--green)' : undefined }}
-                                             title={h.bakiye < 0 ? 'Avans/alacak: ödemeler faturaları aşıyor' : undefined}>
-                                        → {fmt(h.bakiye)}{h.bakiye < 0 ? ' 🟢avans' : ''}
-                                      </b>
-                                    </span>
-                                  </div>
-                                ))}
-                              </div>
-                              <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 2 }}>
-                                Ekstre 📜 açılış devriyle başlar (sistem öncesi bakiye — sahip beyanı). Borç yalnız FATURADAN doğar
-                                (elle vadeli alım girişi çift saymaz — o vade takibi + ödeme izidir). Ödeme bakiyeden düşer; fatura tutarına
-                                eşit olmak zorunda değil (avans/kısmi/toplu ödeme doğal desteklenir, eksi bakiye = avans). ≈ aday eşleşme.
-                              </div>
-                            </details>
-                          )}
-                          {/* AY AY MUTABAKAT — fatura ↔ ödeme; aya tıkla = detay + PDF */}
-                          {(cari[t.toptanci].aylik || []).length > 0 && (
-                            <div style={{ marginTop: 6 }}>
-                              <table style={{ width: '100%', fontSize: 11 }}>
-                                <thead><tr style={{ color: 'var(--text3)' }}>
-                                  <th style={{ textAlign: 'left' }}>Ay</th>
-                                  <th style={{ textAlign: 'right' }}>Fatura</th>
-                                  <th style={{ textAlign: 'right' }}>Ödeme</th>
-                                  <th style={{ textAlign: 'right' }}>Fark</th>
-                                </tr></thead>
-                                <tbody>
-                                  {cari[t.toptanci].aylik.map(a => {
-                                    const anahtar = `${t.toptanci}|${a.ay}`;
-                                    return (
-                                      <Fragment key={anahtar}>
-                                        <tr key={anahtar} onClick={() => setAcikAy(x => x === anahtar ? null : anahtar)}
-                                            style={{ cursor: 'pointer', opacity: a.sistem_oncesi ? 0.5 : 1 }}
-                                            title={a.sistem_oncesi ? 'Sistem öncesi — arşiv, hesaba girmez' : 'Detay için tıkla'}>
-                                          <td>{acikAy === anahtar ? '▾' : '▸'} {a.ay}{a.sistem_oncesi ? ' 🗄' : ''}</td>
-                                          <td style={{ textAlign: 'right' }}>{a.fatura_adet > 0 ? `${fmt(a.fatura_toplam)} (${a.fatura_adet})` : '—'}</td>
-                                          <td style={{ textAlign: 'right' }}>{a.odeme_adet > 0 ? `${fmt(a.odeme_toplam)} (${a.odeme_adet})` : '—'}</td>
-                                          <td style={{ textAlign: 'right', color: a.fark > 0 ? 'var(--red)' : a.fark < 0 ? 'var(--green)' : 'var(--text3)' }}>{fmt(a.fark)}</td>
-                                        </tr>
-                                        {acikAy === anahtar && (
-                                          <tr key={anahtar + '-d'}><td colSpan={4} style={{ padding: '4px 0 8px 14px' }}>
-                                            {(cari[t.toptanci].faturalar || []).filter(f => String(f.tarih).slice(0, 7) === a.ay).map(f => (
-                                              <div key={f.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, padding: '2px 0' }}>
-                                                <span>🧾 {f.tarih} · {f.fatura_no || 'no yok'}</span>
-                                                <span style={{ whiteSpace: 'nowrap' }}>{fmt(f.tutar)}{' '}
-                                                  <a href={f.goruntule} target="_blank" rel="noreferrer" style={{ color: 'var(--blue, #60a5fa)' }}>📎 PDF</a></span>
-                                              </div>
-                                            ))}
-                                            {(cari[t.toptanci].odeme_adaylari || []).filter(o => String(o.tarih).slice(0, 7) === a.ay).map((o, i) => (
-                                              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, padding: '2px 0', color: 'var(--text3)' }}>
-                                                <span>💸 {o.tarih} · {o.kanal === 'kart' ? 'kart' : o.kanal === 'anlik_gider' ? 'nakit/anlık' : 'vadeli ödeme'} · {(o.aciklama || '').slice(0, 30)}</span>
-                                                <span style={{ whiteSpace: 'nowrap' }}>−{fmt(o.tutar)}</span>
-                                              </div>
-                                            ))}
-                                          </td></tr>
-                                        )}
-                                      </Fragment>
-                                    );
-                                  })}
-                                </tbody>
-                              </table>
-                            </div>
-                          )}
                         </div>
+                      )}
+                      {/* 📒 ORTAK EKSTRE PANELİ — KPI + borç/alacak/bakiye defteri +
+                          dönem/yazdır + katlanır mutabakat + belgeler + PDF çekmecesi */}
+                      {cari[t.toptanci] && !cari[t.toptanci].hata && (
+                        <CariEkstrePanel ek={cari[t.toptanci]} ad={t.toptanci} />
                       )}
                       {(d.fatura_arsivi || []).filter(f => (f.tedarikci_ad || '(tedarikçi belirsiz)').trim() === t.toptanci || ((f.tedarikci_ad || '').trim() === '' && t.toptanci === '(tedarikçi belirsiz)')).map(f => (
                         <div key={f.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, padding: '3px 0' }}>
