@@ -14017,11 +14017,15 @@ def ops_maliyet_gun_gun(
                                         for (ks, kt), x in ciro_map.items() if kt == tarih_str)
                 fire_g = sum(v for (ks, kt), v in fire_map.items() if kt == tarih_str)
                 iade_g = sum(v for (ks, kt), v in iade_map.items() if kt == tarih_str)
-                # ⚖️ Evo↔Kasa şeridi (tüm şubeler toplamı, o gün)
+                # ⚖️ Evo↔Kasa şeridi (tüm şubeler toplamı, o gün). Evo toplamı ŞUBE
+                # bazında tamamlanır: fark kaydı olmayan şubede evo ≈ kasa sayılır —
+                # yoksa 4 şubeden 1'inin evo'su tüm günün Evo'suymuş gibi görünür.
                 _kasa_keys = [k for k in kasa_gun if k[1] == tarih_str]
                 _evo_keys = [k for k in evo_gun if k[1] == tarih_str]
                 _kasa_g = sum(kasa_gun[k] for k in _kasa_keys) if _kasa_keys else None
-                _evo_g = sum(evo_gun[k] for k in _evo_keys) if _evo_keys else None
+                _tum_keys = set(_kasa_keys) | set(_evo_keys)
+                _evo_g = (sum(evo_gun.get(k, kasa_gun.get(k, 0.0)) for k in _tum_keys)
+                          if _evo_keys else None)
                 _cift = [k for k in _evo_keys if k in kasa_gun]
                 _fark_g = round(sum(kasa_gun[k] - evo_gun[k] for k in _cift), 2) if _cift else None
             else:
