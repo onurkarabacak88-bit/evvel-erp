@@ -1968,6 +1968,7 @@ _ESLESTIRME_SEED = [
     ("DYK GRUP AMBALAJ HİZMETLERİ SAN. VE TİC. LİMİTED ŞİRKETİ", "DYK GRUP", None),
     ("METRO GROSMARKET B.KÖY ALIS.HIZ.TIC.LTD.STI.", "METRO", None),
     ("HASAN ERKAN", "PASTA", None),                                # sahip: 'hasan erkan pasta'
+    ("APS GIDA ENERJİ KİMYA TARIM SAN. VE TİC. A.Ş.", "redbull", None),  # sahip: 'redbull doğru'
     ("ESHİM TEKNİK SERVİS HÜSEYİN KARA", None, "hizmet"),          # makine tamircisi
     ("ASSA SANAL MAĞAZACILIK LİMİTED ŞİRKETİ", None, "gecici"),    # internetten kartla
     ("D-MARKET ELEKTRONİK HİZMETLER VE TİCARET A.Ş.", None, "gecici"),
