@@ -14926,11 +14926,32 @@ def ops_fiyat_izleme():
         ad_kat = {}
         for u in urunler:
             ad_kat.setdefault((u["ad"] or "").strip().lower(), u)
-        # Fiyatlı kalemlere kategori bağla: UUID → depo köprüsü → havuz çözücü → ad
+        # 🔧 SAHİP EŞLEMELERİ (2026-07-19: 'kurabiye şurubu = Şuruplar'daki Cookie
+        # şurubu; su şişesi = Su; Selpak havlu Diğer'de kalsın'): adı kartla
+        # uyuşmayan yetimler elle sabitlenir — Selpak bilinçli olarak listede YOK.
+        def _urun_bul(ad_l, kat_tercih=None):
+            adaylar = [u for u in urunler if (u.get("ad") or "").strip().lower() == ad_l]
+            if kat_tercih:
+                for u in adaylar:
+                    if (u.get("kat_ad") or "") == kat_tercih:
+                        return u
+            return adaylar[0] if adaylar else None
+
+        def _el_esleme(k):
+            if k["kalem_kodu"] == "su_sise":
+                return _urun_bul("su")
+            _adl = (k.get("kalem_adi") or "").lower()
+            if "kurabi̇ye" in _adl or "kurabiye" in _adl:
+                if "şurup" in _adl or "surup" in _adl:
+                    return _urun_bul("cookie", "Şuruplar")
+            return None
+
+        # Fiyatlı kalemlere kategori bağla: UUID → depo köprüsü → havuz çözücü → ad → el
         for k in kalemler:
             u = (kat_map.get(k["kalem_kodu"]) or depo_kat.get(k["kalem_kodu"])
                  or stok_key_kat.get(k["kalem_kodu"])
-                 or ad_kat.get((k.get("kalem_adi") or "").strip().lower()))
+                 or ad_kat.get((k.get("kalem_adi") or "").strip().lower())
+                 or _el_esleme(k))
             k["kategori"] = (u or {}).get("kat_ad") or "Diğer"
             k["kategori_emoji"] = (u or {}).get("kat_emoji") or "📦"
             k["kategori_sira"] = int((u or {}).get("kat_sira") or 999)
