@@ -632,8 +632,10 @@ export default function OdemeMerkezi() {
           sözleri açılır (oradan ödenir). Sözler cariye görsel eşlenir
           (tedarikciEslesir) — yazma yok, çift sayım görüntüsü yok. */}
       {sekme === 'tedarikci' && (() => {
-        const sozler = (liste || []).filter(r => r.kaynak_tablo === 'vadeli_alimlar' && r.tedarikci_sinif !== 'hizmet');
-        const malCariler = (cariler || []).filter(t => (t.sinif || 'mal') !== 'hizmet' && (t.hesaplanan_acik || 0) > 1)
+        // gecici = internetten kartla tek seferlik alım (ödemesi kart ekstresinde) — cari takip edilmez
+        const sozler = (liste || []).filter(r => r.kaynak_tablo === 'vadeli_alimlar'
+          && r.tedarikci_sinif !== 'hizmet' && r.tedarikci_sinif !== 'gecici');
+        const malCariler = (cariler || []).filter(t => !['hizmet', 'gecici'].includes(t.sinif || 'mal') && (t.hesaplanan_acik || 0) > 1)
           .sort((a, b) => (b.hesaplanan_acik || 0) - (a.hesaplanan_acik || 0));
         const kullanilan = new Set();
         const gruplar = malCariler.map(t => {
@@ -671,6 +673,9 @@ export default function OdemeMerkezi() {
                         {takvimli > 0 ? `takvimli ${fmt(takvimli)} (${ait.length} söz)` : ''}
                         {takvimli > 0 && takvimsiz > 0 ? ' · ' : ''}
                         {takvimsiz > 0 ? `⚠ takvimsiz ${fmt(takvimsiz)}` : (takvimli > 0 ? '' : '⚠ takvimsiz borç')}
+                        {(t.resmi_adlar || []).length > 0 && (
+                          <span> · 🔗 {t.resmi_adlar.map(a => a.split(' ').slice(0, 2).join(' ')).join(' + ')}</span>
+                        )}
                       </div>
                     </span>
                     <span style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>

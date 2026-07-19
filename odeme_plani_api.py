@@ -50,6 +50,12 @@ def odeme_plani_bugun(gun: int = 0, personel: int = 1):
                ORDER BY op.tarih ASC""", (gun,)
         )
         rows = [dict(r) for r in cur.fetchall()]
+    # 🔗 kanonik eşleştirme haritası (bir kez çekilir; hata-yutar)
+    try:
+        from fatura_api import tedarikci_eslestirme_haritasi, tedarikci_sinif as _sinif
+        _harita = tedarikci_eslestirme_haritasi()
+    except Exception:  # noqa: BLE001
+        _harita, _sinif = {}, (lambda a: "mal")
     out = []
     for r in rows:
         if not personel and (r.get("kaynak_tablo") or "") == "personel":
@@ -72,15 +78,13 @@ def odeme_plani_bugun(gun: int = 0, personel: int = 1):
             "gecikmis": gun_g > 0,
             "gun_gecikme": gun_g,
         }
-        # 🏷 vadeli satıra tedarikçi + mal/hizmet sınıfı (ÖM: elektrik gibi
-        # hizmet faturaları Tedarikçi sekmesine DEĞİL Giderler'e düşer)
+        # 🏷 vadeli satıra tedarikçi + sınıf: kanonik eşleştirme (kisa ad) önce,
+        # kelime heuristiği yedek (ÖM: hizmet/gecici satırlar Tedarikçi'ye düşmez)
         if r.get("vadeli_tedarikci"):
-            satir["tedarikci"] = r["vadeli_tedarikci"]
-            try:
-                from fatura_api import tedarikci_sinif
-                satir["tedarikci_sinif"] = tedarikci_sinif(r["vadeli_tedarikci"])
-            except Exception:  # noqa: BLE001
-                satir["tedarikci_sinif"] = "mal"
+            ad = r["vadeli_tedarikci"]
+            e = _harita.get((ad or "").strip().upper()) or {}
+            satir["tedarikci"] = e.get("kisa") or ad
+            satir["tedarikci_sinif"] = e.get("sinif") or _sinif(ad)
         out.append(satir)
 
     # 🧾 TUTARI GİRİLMEMİŞ değişken faturalar (planı YOK, o yüzden yukarıda çıkmaz) —

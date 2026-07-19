@@ -1934,16 +1934,81 @@ def _cari_zincir(faturalar: list) -> list:
 # Merkezi'nde hizmetçiler ⚡ Giderler sekmesine düşer. Yanlış sınıf görürsek
 # liste büyür (kod=veri, tek merkez burası).
 _HIZMET_KELIMELERI = (
-    "ENERJ", "ELEKTR", "DOĞALGAZ", "DOGALGAZ", "TELEKOM", "UYDU",
-    "İLETİŞİM", "ILETISIM", "INTERNET", "İNTERNET", "GSM", "TURKCELL",
-    "VODAFONE", "SİGORTA", "SIGORTA", "MUHASEBE", "MALİ MÜŞAVİR",
+    "ENERJ", "ELEKTRİK", "ELEKTRIK", "DOĞALGAZ", "DOGALGAZ", "TELEKOM",
+    "UYDU", "İLETİŞİM", "ILETISIM", "INTERNET", "İNTERNET", "GSM",
+    "TURKCELL", "VODAFONE", "SİGORTA", "SIGORTA", "MUHASEBE", "MALİ MÜŞAVİR",
 )
+# MAL kanıtı hizmet kelimesini EZER: 'APS GIDA ENERJİ KİMYA TARIM' bir Red Bull
+# distribütörü — adında ENERJİ geçiyor diye elektrik şirketi sayılmaz (2026-07-19
+# canlı yanlış-poz dersi; D-MARKET 'ELEKTRONİK' de ELEKTR'e takılıyordu → tam
+# kelimeye çevrildi, ELEKTRONİK artık eşleşmez).
+_MAL_KANITI = ("GIDA", "GİDA", "MARKET", "GROSMARKET", "AMBALAJ", "KAHVE",
+               "COFFEE", "SÜT", "SUT ", "TARIM", "MAĞAZACILIK", "MAGAZACILIK")
 
 
 def tedarikci_sinif(ad: str) -> str:
     """'hizmet' (fatura sağlayıcı — Giderler alanı) | 'mal' (ürün tedarikçisi)."""
     u = (ad or "").upper()
+    if any(k in u for k in _MAL_KANITI):
+        return "mal"
     return "hizmet" if any(k in u for k in _HIZMET_KELIMELERI) else "mal"
+
+
+# ── 🔗 TEDARİKÇİ EŞLEŞTİRME — KANONİK KAYIT (2026-07-19, sahip onaylı tur:
+# 'tedarikçi listesindeki isimlerle fatura isimlerinin eşleştirmesini bir kere
+# yapmalıyız'). Fatura ünvanı → kayıtlı kısa ad + sınıf. İlke: kanonik kimlik
+# KAYNAKTA damgalanır, zincirde tahminle düşürülmez. sinif='gecici' = internetten
+# kartla tek seferlik alım (ödemesi kart ekstresinde — cari takip edilmez).
+_ESLESTIRME_SEED = [
+    # (fatura resmi ünvanı, kayıtlı kısa ad, sınıf override)
+    ("MEHMET ATALAY", "ATALAY KAHVE", None),
+    ("Napolés Coffee & Roastery", "ATALAY KAHVE", None),          # sahip: 'Napolés de atalay'
+    ("FEZ KAHVE GIDA İTHALAT İHRACAT SANAYİ VE TİCARET LİMİTED ŞİRKETİ", "FEZ", None),
+    ("SÜTAŞ SÜT ÜRÜNLERİ A.Ş.", "SÜTAŞ", None),
+    ("DYK GRUP AMBALAJ HİZMETLERİ SAN. VE TİC. LİMİTED ŞİRKETİ", "DYK GRUP", None),
+    ("METRO GROSMARKET B.KÖY ALIS.HIZ.TIC.LTD.STI.", "METRO", None),
+    ("HASAN ERKAN", "PASTA", None),                                # sahip: 'hasan erkan pasta'
+    ("ESHİM TEKNİK SERVİS HÜSEYİN KARA", None, "hizmet"),          # makine tamircisi
+    ("ASSA SANAL MAĞAZACILIK LİMİTED ŞİRKETİ", None, "gecici"),    # internetten kartla
+    ("D-MARKET ELEKTRONİK HİZMETLER VE TİCARET A.Ş.", None, "gecici"),
+]
+
+
+def _eslestirme_ensure(cur) -> None:
+    cur.execute(
+        """CREATE TABLE IF NOT EXISTS tedarikci_eslestirme (
+               resmi_ad TEXT PRIMARY KEY,
+               kisa_ad TEXT,
+               sinif TEXT,
+               kaynak TEXT,
+               olusturma TIMESTAMPTZ DEFAULT NOW())""")
+    for resmi, kisa, sinif in _ESLESTIRME_SEED:
+        cur.execute(
+            """INSERT INTO tedarikci_eslestirme (resmi_ad, kisa_ad, sinif, kaynak)
+               VALUES (%s, %s, %s, 'sahip_onay_2026-07-19')
+               ON CONFLICT (resmi_ad) DO NOTHING""", (resmi, kisa, sinif))
+
+
+def tedarikci_eslestirme_haritasi() -> dict:
+    """UPPER(ad) → {'kisa': kayıtlı ad|None, 'sinif': override|None}.
+    Hem resmi ünvan hem kısa ad anahtarlanır ('fez' sözü de 'FEZ KAHVE…' faturası
+    da aynı kimliğe çözülür). Hata-yutar: harita gelmezse davranış eskisi gibi."""
+    try:
+        with db() as (_, cur):
+            _eslestirme_ensure(cur)
+            cur.execute("SELECT resmi_ad, kisa_ad, sinif FROM tedarikci_eslestirme")
+            rows = [dict(r) for r in cur.fetchall() or []]
+    except Exception as e:  # noqa: BLE001
+        logger.warning("eslestirme haritasi hatasi (yutuldu): %s", str(e)[:100])
+        return {}
+    h: dict = {}
+    for r in rows:
+        deger = {"kisa": (r.get("kisa_ad") or "").strip() or None,
+                 "sinif": (r.get("sinif") or "").strip() or None}
+        h[(r["resmi_ad"] or "").strip().upper()] = deger
+        if deger["kisa"]:
+            h.setdefault(deger["kisa"].upper(), deger)
+    return h
 
 
 def cari_ozet() -> dict:
@@ -2114,8 +2179,41 @@ def cari_ozet() -> dict:
             "bekleyen_vade_toplam": 0.0, "en_yakin_vade": None,
             "zincir_hareket_adet": 0, "son_zincir_fark": None,
         })
-    for x in ozet:  # 🏷 mal/hizmet sınıfı (ÖM sekme yönlendirmesi)
-        x["sinif"] = tedarikci_sinif(x.get("tedarikci") or "")
+    # 🔗 KANONİK BİRLEŞTİRME: aynı kayıtlı ada bağlı fatura ünvanları TEK cari
+    # satırında toplanır (ATALAY KAHVE = MEHMET ATALAY + Napolés). Sınıf:
+    # eşleştirme override > kelime heuristiği.
+    harita = tedarikci_eslestirme_haritasi()
+    birlesik: dict = {}
+    yeni_ozet = []
+    for x in ozet:
+        e = harita.get((x.get("tedarikci") or "").strip().upper()) or {}
+        x["sinif"] = e.get("sinif") or tedarikci_sinif(x.get("tedarikci") or "")
+        kisa = e.get("kisa")
+        if not kisa:
+            yeni_ozet.append(x)
+            continue
+        hedef = birlesik.get(kisa)
+        if hedef is None:
+            x["kayitli_ad"] = kisa
+            x["resmi_adlar"] = [x["tedarikci"]]
+            x["tedarikci"] = kisa
+            birlesik[kisa] = x
+            yeni_ozet.append(x)
+            continue
+        for alan in ("devir", "fatura_adet_6ay", "fatura_toplam_6ay",
+                     "odeme_izi_toplam_6ay", "hesaplanan_acik",
+                     "bekleyen_vade_toplam", "zincir_hareket_adet"):
+            hedef[alan] = round((hedef.get(alan) or 0) + (x.get(alan) or 0), 2)
+        hedef["resmi_adlar"].append(x["tedarikci"])
+        hedef["odeme_izi_var"] = bool(hedef.get("odeme_izi_var") or x.get("odeme_izi_var"))
+        if x.get("son_fatura") and (not hedef.get("son_fatura") or str(x["son_fatura"]) > str(hedef["son_fatura"])):
+            hedef["son_fatura"] = x["son_fatura"]
+        if x.get("en_yakin_vade") and (not hedef.get("en_yakin_vade") or str(x["en_yakin_vade"]) < str(hedef["en_yakin_vade"])):
+            hedef["en_yakin_vade"] = x["en_yakin_vade"]
+        if x.get("beyan_bakiye") is not None and hedef.get("beyan_bakiye") is None:
+            hedef["beyan_bakiye"] = x["beyan_bakiye"]
+            hedef["beyan_tarihi"] = x.get("beyan_tarihi")
+    ozet = yeni_ozet
     ozet.sort(key=lambda x: -(max(abs(x["beyan_bakiye"] or 0),
                                   abs(x["hesaplanan_acik"])) + x["bekleyen_vade_toplam"]))
     return {
