@@ -2,16 +2,15 @@ import { useState, useEffect } from 'react';
 import { api, fmt } from '../utils/api';
 import { trT } from './CariEkstrePanel';
 
-// ── 📈 İZLEME PANOSU (2026-07-19, sahip: "kalemlerin artışlarını blok blok
-// görmeliyim — ürün-aç'taki kutucuk desenini kullan; tıklayınca tarih sıralı
-// artış zinciri; sol tarafta en son artış yapanlar; ileride başka izlemeleri
-// de aynı alanda başlık değiştirerek görmek istiyorum").
-// Codex kurgusu: trading-app watchlist kalıbı — TEK kabuk: üstte görünüm
-// değiştirici, sol rail (öne çıkanlar) + orta kutucuk ızgarası + sağ detay.
-// Yeni izleme = GORUNUMLER'e kayıt; yeni sayfa AÇILMAZ (sadeleştirme ilkesi).
+// ── 📈 İZLEME PANOSU (2026-07-19, sahip: "sipariş-ver örüntüsüne bak, bu
+// tasarımı kullan — tıklayınca içeriğini göreyim: Haziran 1'de 15 TL idi,
+// Temmuz 10'da 17 TL oldu; SOL HATTAKİ SON YÜKSELENLER KALSIN").
+// Desen = şube paneli sipariş-ver akışı: önce EMOJİ'Lİ KATEGORİ KARTLARI,
+// kategoriye tıkla → ürün kutucukları, ürüne tıkla → sağda fiyat zinciri.
+// Sol rail (Son Yükselenler) sabit. Yeni izleme görünümü = GORUNUMLER'e kayıt.
 const GORUNUMLER = [
   { id: 'fiyat', ad: '🏷️ Fiyat İzleme' },
-  // gelecek: { id: 'stok', ad: '📦 Stok Riski' }, { id: 'band', ad: '📈 Fiyat Bandı' }
+  // gelecek: { id: 'stok', ad: '📦 Stok Riski' }
 ];
 
 const DONEMLER = [['7', 'Son 7 gün'], ['30', 'Son 30 gün'], ['90', 'Son 90 gün'], ['tumu', 'Tümü']];
@@ -20,8 +19,10 @@ export default function IzlemePanosu() {
   const [gorunum, setGorunum] = useState('fiyat');
   const [d, setD] = useState(null);
   const [hata, setHata] = useState('');
-  const [donem, setDonem] = useState('90');
-  const [secili, setSecili] = useState(null); // kalem_kodu
+  const [donem, setDonem] = useState('tumu');   // varsayılan TÜMÜ — bütün ürünler görünür
+  const [kat, setKat] = useState(null);         // seçili kategori (null = kategori kartları)
+  const [ara, setAra] = useState('');
+  const [secili, setSecili] = useState(null);   // kalem_kodu
   useEffect(() => {
     api('/ops/maliyet/fiyat-izleme').then(setD).catch(e => setHata(e?.message || 'yüklenemedi'));
   }, []);
@@ -33,25 +34,45 @@ export default function IzlemePanosu() {
   const M = 'var(--font-mono)';
   const kesit = donem === 'tumu' ? '' : new Date(Date.now() - Number(donem) * 86400000).toISOString().slice(0, 10);
   const tumu = d.kalemler || [];
-  // Dönem filtresi: pencerede DEĞİŞİM yaşamış kalemler; 'Tümü' = hepsi (stabiller sonda)
-  const kalemler = (donem === 'tumu' ? tumu
-    : tumu.filter(k => k.son_degisim && k.son_degisim >= kesit))
-    .slice().sort((a, b) => {
-      const aa = (a.degisim_pct || 0) >= esik ? 1 : 0, bb = (b.degisim_pct || 0) >= esik ? 1 : 0;
-      if (aa !== bb) return bb - aa;                                   // 1) eşik üstü artış önce
-      const at = a.son_degisim || '', bt = b.son_degisim || '';
-      if (at !== bt) return bt.localeCompare(at);                      // 2) son değişim tarihi desc
-      return (b.degisim_pct || 0) - (a.degisim_pct || 0);              // 3) yüzde desc
-    });
+  const donemli = donem === 'tumu' ? tumu
+    : tumu.filter(k => k.son_degisim && k.son_degisim >= kesit);
+  const aranan = ara.trim().toLowerCase();
   const seciliK = tumu.find(k => k.kalem_kodu === secili) || null;
 
-  const rozet = (pct, sicrama) => {
+  // Kategori grupları (sipariş-ver kalıbı) — sıra: kategori sira → ad
+  const katMap = new Map();
+  for (const k of donemli) {
+    const anahtar = k.kategori || 'Diğer';
+    if (!katMap.has(anahtar)) katMap.set(anahtar, { ad: anahtar, emoji: k.kategori_emoji || '📦', sira: k.kategori_sira ?? 999, urunler: [] });
+    katMap.get(anahtar).urunler.push(k);
+  }
+  const katListe = [...katMap.values()].sort((a, b) => (a.sira - b.sira) || a.ad.localeCompare(b.ad, 'tr'));
+
+  const urunSirala = (arr) => arr.slice().sort((a, b) => {
+    const aa = (a.degisim_pct || 0) >= esik ? 1 : 0, bb = (b.degisim_pct || 0) >= esik ? 1 : 0;
+    if (aa !== bb) return bb - aa;                                    // eşik üstü zam önce
+    const at = a.son_degisim || '', bt = b.son_degisim || '';
+    if (at !== bt) return bt.localeCompare(at);                       // son değişim desc
+    if (!!a.fiyat_yok !== !!b.fiyat_yok) return a.fiyat_yok ? 1 : -1; // fiyatsızlar sonda
+    return (a.kalem_adi || '').localeCompare(b.kalem_adi || '', 'tr');
+  });
+
+  // Arama aktifse kategori atlanır — tüm ürünlerde arar
+  const aramaSonuc = aranan
+    ? urunSirala(donemli.filter(k => (k.kalem_adi || '').toLowerCase().includes(aranan)))
+    : null;
+  const seciliKat = kat ? katMap.get(kat) : null;
+
+  const rozet = (k) => {
+    if (k.fiyat_yok) return <span title="Hiç fiyat kaydı yok — maliyette 0 sayılıyor!"
+      style={{ fontSize: 10.5, fontWeight: 800, color: '#f59e0b', whiteSpace: 'nowrap' }}>fiyat yok ⚠</span>;
+    const pct = k.degisim_pct;
     if (pct == null) return <span style={{ fontSize: 11, color: 'var(--text3)' }}>=</span>;
-    if (sicrama) return <span title="Birim/veri değişimi olabilir — gerçek zam sayılmaz"
+    if (k.sicrama) return <span title="Birim/veri değişimi olabilir — gerçek zam sayılmaz"
       style={{ fontSize: 11.5, fontWeight: 800, color: '#f59e0b', whiteSpace: 'nowrap' }}>⚠ sıçrama</span>;
     const artis = pct > 0;
-    const renk = artis ? 'var(--red, #ef4444)' : 'var(--green, #22c55e)';
-    return <span style={{ fontSize: 11.5, fontWeight: 800, color: renk, whiteSpace: 'nowrap' }}>
+    return <span style={{ fontSize: 11.5, fontWeight: 800, whiteSpace: 'nowrap',
+                          color: artis ? 'var(--red, #ef4444)' : 'var(--green, #22c55e)' }}>
       {artis ? '↑' : '↓'} %{Math.abs(pct).toFixed(1)}
     </span>;
   };
@@ -65,23 +86,55 @@ export default function IzlemePanosu() {
                color: aktif ? '#1a120b' : 'var(--text3)' }}>{icerik}</button>
   );
 
+  const urunKutusu = (k) => {
+    const seciliMi = secili === k.kalem_kodu;
+    const alarm = (k.degisim_pct || 0) >= esik && !k.sicrama;
+    return (
+      <div key={k.kalem_kodu} onClick={() => setSecili(k.kalem_kodu)}
+        style={{ minHeight: 104, padding: '11px 12px', borderRadius: 14, cursor: 'pointer',
+                 background: 'var(--bg2)', display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
+                 border: `1px solid ${seciliMi ? 'var(--accent, #c9853f)' : alarm ? 'var(--red, #ef4444)' : k.fiyat_yok ? 'rgba(245,158,11,.55)' : 'var(--border)'}`,
+                 borderStyle: k.fiyat_yok ? 'dashed' : 'solid',
+                 boxShadow: seciliMi ? '0 0 0 1px var(--accent, #c9853f)' : undefined }}>
+        <div style={{ fontSize: 12.5, fontWeight: 700, lineHeight: 1.25, overflow: 'hidden',
+                      display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
+          {k.kalem_adi}
+        </div>
+        <div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 6 }}>
+            <span style={{ fontFamily: M, fontVariantNumeric: 'tabular-nums', fontWeight: 800, fontSize: 15 }}>
+              {k.fiyat_yok ? '—' : fmt(k.guncel_fiyat)}
+            </span>
+            {rozet(k)}
+          </div>
+          <div style={{ fontSize: 10.5, color: 'var(--text3)', marginTop: 2 }}>
+            {k.fiyat_yok ? 'fiyat girilmemiş' : k.son_degisim ? `son değişim ${trT(k.son_degisim)}` : 'değişim yok'}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div>
-      {/* KABUK BAŞLIĞI — görünüm değiştirici (watchlist kalıbı; yeni izleme = yeni pill) */}
+      {/* KABUK BAŞLIĞI — görünüm pilleri + dönem + arama */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 12 }}>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           <span style={{ fontWeight: 800, fontSize: 14 }}>📈 İzleme Panosu</span>
           {GORUNUMLER.map(g => chip(gorunum === g.id, () => setGorunum(g.id), g.ad))}
         </div>
-        <div style={{ display: 'flex', gap: 6 }}>
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+          <input value={ara} onChange={e => setAra(e.target.value)} placeholder="🔍 ürün ara…"
+            style={{ width: 160, height: 28, padding: '0 10px', borderRadius: 14, fontSize: 12,
+                     background: 'var(--bg2)', color: 'var(--text)', border: '1px solid var(--border)' }} />
           {DONEMLER.map(([k, lbl]) => chip(donem === k, () => setDonem(k), lbl, true))}
         </div>
       </div>
 
       {gorunum === 'fiyat' && (
         <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start', flexWrap: 'wrap' }}>
-          {/* SOL RAIL — Son Yükselenler */}
-          <div className="card" style={{ flex: '0 1 290px', minWidth: 250, padding: 12 }}>
+          {/* SOL RAIL — Son Yükselenler (sahip: 'sol hattaki kalsın!') */}
+          <div className="card" style={{ flex: '0 1 280px', minWidth: 245, padding: 12 }}>
             <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--text3)', marginBottom: 6 }}>
               🔺 SON YÜKSELENLER
             </div>
@@ -97,7 +150,7 @@ export default function IzlemePanosu() {
                   <span style={{ fontSize: 12.5, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {k.kalem_adi}
                   </span>
-                  {rozet(k.degisim_pct, k.sicrama)}
+                  {rozet(k)}
                 </div>
                 <div style={{ fontSize: 11, color: 'var(--text3)', display: 'flex', justifyContent: 'space-between', gap: 8 }}>
                   <span style={{ fontFamily: M }}>{fmt(k.guncel_fiyat)}</span>
@@ -107,73 +160,101 @@ export default function IzlemePanosu() {
             ))}
           </div>
 
-          {/* ORTA — KUTUCUK IZGARASI (şube paneli ürün-aç dili) */}
+          {/* ORTA — SİPARİŞ-VER ÖRÜNTÜSÜ: kategori kartları → ürün kutucukları */}
           <div style={{ flex: '1 1 380px', minWidth: 320 }}>
-            {kalemler.length === 0 && (
-              <div className="card" style={{ padding: 16, fontSize: 12.5, color: 'var(--text3)' }}>
-                Bu dönemde fiyat değişimi yaşayan kalem yok — "Tümü"nü seç, bütün kalemleri gör.
-              </div>
-            )}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 10 }}>
-              {kalemler.map(k => {
-                const seciliMi = secili === k.kalem_kodu;
-                const alarm = (k.degisim_pct || 0) >= esik;
-                return (
-                  <div key={k.kalem_kodu} onClick={() => setSecili(k.kalem_kodu)}
-                    style={{ minHeight: 108, padding: '12px 12px', borderRadius: 14, cursor: 'pointer',
-                             background: 'var(--bg2)', display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
-                             border: `1px solid ${seciliMi ? 'var(--accent, #c9853f)' : alarm ? 'var(--red, #ef4444)' : 'var(--border)'}`,
-                             boxShadow: seciliMi ? '0 0 0 1px var(--accent, #c9853f)' : undefined }}>
-                    <div style={{ fontSize: 12.5, fontWeight: 700, lineHeight: 1.25, overflow: 'hidden',
-                                  display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
-                      {k.kalem_adi}
-                    </div>
-                    <div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 6 }}>
-                        <span style={{ fontFamily: M, fontVariantNumeric: 'tabular-nums', fontWeight: 800, fontSize: 15.5 }}>
-                          {fmt(k.guncel_fiyat)}
-                        </span>
-                        {rozet(k.degisim_pct, k.sicrama)}
-                      </div>
-                      <div style={{ fontSize: 10.5, color: 'var(--text3)', marginTop: 2 }}>
-                        {k.son_degisim ? `son değişim ${trT(k.son_degisim)}` : 'değişim yok'}
-                      </div>
-                    </div>
+            {aramaSonuc ? (
+              <>
+                <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 8 }}>
+                  🔍 "{ara}" — {aramaSonuc.length} ürün
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 10 }}>
+                  {aramaSonuc.map(urunKutusu)}
+                </div>
+              </>
+            ) : !seciliKat ? (
+              <>
+                {donem !== 'tumu' && (
+                  <div style={{ fontSize: 11.5, color: 'var(--text3)', marginBottom: 8 }}>
+                    Yalnız bu dönemde fiyatı değişen ürünler gösteriliyor — hepsini görmek için "Tümü".
                   </div>
-                );
-              })}
-            </div>
+                )}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))', gap: 10 }}>
+                  {katListe.map(kt => {
+                    const zamli = kt.urunler.filter(u => (u.degisim_pct || 0) > 0 && !u.sicrama).length;
+                    const fiyatsiz = kt.urunler.filter(u => u.fiyat_yok).length;
+                    return (
+                      <div key={kt.ad} onClick={() => setKat(kt.ad)}
+                        style={{ minHeight: 96, padding: '12px 12px', borderRadius: 14, cursor: 'pointer',
+                                 background: 'var(--bg2)', border: `1px solid ${zamli > 0 ? 'rgba(239,68,68,.5)' : 'var(--border)'}`,
+                                 display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                        <div style={{ fontSize: 22 }}>{kt.emoji}</div>
+                        <div>
+                          <div style={{ fontSize: 13, fontWeight: 800 }}>{kt.ad}</div>
+                          <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>
+                            {kt.urunler.length} ürün
+                            {zamli > 0 && <b style={{ color: 'var(--red, #ef4444)' }}> · {zamli} zam</b>}
+                            {fiyatsiz > 0 && <b style={{ color: '#f59e0b' }}> · {fiyatsiz} fiyatsız</b>}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            ) : (
+              <>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+                  <button onClick={() => setKat(null)} className="btn btn-secondary btn-sm">← Kategoriler</button>
+                  <span style={{ fontWeight: 800, fontSize: 13.5 }}>{seciliKat.emoji} {seciliKat.ad}
+                    <span style={{ fontWeight: 400, fontSize: 11.5, color: 'var(--text3)' }}> · {seciliKat.urunler.length} ürün</span>
+                  </span>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 10 }}>
+                  {urunSirala(seciliKat.urunler).map(urunKutusu)}
+                </div>
+              </>
+            )}
           </div>
 
-          {/* SAĞ — SEÇİLİ KALEMİN FİYAT ZİNCİRİ (tarih sıralı bloklar) */}
-          <div className="card" style={{ flex: '0 1 400px', minWidth: 300, padding: 14 }}>
+          {/* SAĞ — SEÇİLİ ÜRÜNÜN FİYAT DEĞİŞİMİ (tarih sıralı bloklar) */}
+          <div className="card" style={{ flex: '0 1 380px', minWidth: 295, padding: 14 }}>
             {!seciliK && (
               <div style={{ fontSize: 12.5, color: 'var(--text3)' }}>
-                👈 Bir kutucuğa (ya da soldaki listeye) tıkla — o kalemin fiyat artış zinciri
-                tarih sırasıyla burada açılır.
+                👈 Bir ürüne tıkla — fiyat değişimi burada tarih sırasıyla açılır
+                (örn. "1 Haziran 15 ₺ → 10 Temmuz 17 ₺").
               </div>
             )}
-            {seciliK && (() => {
+            {seciliK && seciliK.fiyat_yok && (
+              <div>
+                <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 6 }}>{seciliK.kalem_adi}</div>
+                <div style={{ fontSize: 12.5, color: '#f59e0b', lineHeight: 1.5 }}>
+                  ⚠ Bu ürünün hiç fiyat kaydı yok — her ürün-aç tıklaması maliyete <b>0 ₺</b> yazıyor,
+                  net kâr olduğundan iyi görünüyor. Faturası onaylandığında fiyat kendiliğinden oluşur;
+                  ya da 🏷️ Fiyatlar sekmesinden elle girilebilir.
+                </div>
+              </div>
+            )}
+            {seciliK && !seciliK.fiyat_yok && (() => {
               const z = seciliK.zincir || [];
               const ilk = z[0], son = z[z.length - 1];
               const toplamPct = (ilk && son && ilk.fiyat > 0)
                 ? ((son.fiyat - ilk.fiyat) / ilk.fiyat) * 100 : null;
               const k90 = new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10);
               const artis90 = z.filter(x => (x.degisim_pct || 0) > 0 && x.bas >= k90).length;
-              const enYuksek = Math.max(0, ...z.map(x => x.degisim_pct || 0));
               return (
                 <div>
-                  <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 2 }}>{seciliK.kalem_adi}</div>
+                  <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 2 }}>
+                    {seciliK.kategori_emoji} {seciliK.kalem_adi}
+                  </div>
                   <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 10 }}>
                     Güncel <b style={{ fontFamily: M, color: 'var(--text)' }}>{fmt(seciliK.guncel_fiyat)}</b>
-                    {toplamPct != null && Math.abs(toplamPct) > 0.05 && (
+                    {toplamPct != null && Math.abs(toplamPct) > 0.05 && !z.some(x => x.duzeltme || x.sicrama) && (
                       <> · ilk kayıt → bugün{' '}
                         <b style={{ color: toplamPct > 0 ? 'var(--red, #ef4444)' : 'var(--green, #22c55e)' }}>
                           {toplamPct > 0 ? '+' : ''}%{toplamPct.toFixed(1)}
                         </b></>
                     )}
                     {artis90 > 0 && <> · son 90 günde {artis90} artış</>}
-                    {enYuksek > 0 && <> · en yüksek +%{enYuksek.toFixed(1)}</>}
                   </div>
                   {z.map((b, i) => (
                     <div key={i}>

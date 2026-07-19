@@ -14886,6 +14886,49 @@ def ops_fiyat_izleme():
             "degisim_sayisi": max(0, len(zincir) - 1),
             "zincir": zincir,
         })
+    # 🕳 FİYATSIZ ÜRÜNLER + 🗂 KATEGORİ (sahip: 'burada bütün ürünler yok?' +
+    # 'sipariş-ver örüntüsünü kullan'): TÜM aktif sipariş ürünleri panoya girer —
+    # fiyatsızlar COGS'ta 0 sayılan EN riskli grup, görünmezlerse açık kapanmaz.
+    # Kategori bilgisi sipariş-ver deseninin (emoji'li kategori kartları) temelidir.
+    try:
+        with db() as (_, cur2):
+            cur2.execute("""SELECT u.id::text AS id, u.ad, k.ad AS kat_ad,
+                                   COALESCE(k.emoji,'📦') AS kat_emoji,
+                                   COALESCE(k.sira, 999) AS kat_sira
+                            FROM siparis_urun u
+                            LEFT JOIN siparis_kategori k ON k.id = u.kategori_id
+                            WHERE COALESCE(u.ad,'') <> '' AND u.aktif = TRUE""")
+            urunler = [dict(r) for r in cur2.fetchall() or []]
+        kat_map = {u["id"]: u for u in urunler}
+        ad_kat = {}
+        for u in urunler:
+            ad_kat.setdefault((u["ad"] or "").strip().lower(), u)
+        # Fiyatlı kalemlere kategori bağla (UUID doğrudan; havuz/legacy kod ADDAN)
+        for k in kalemler:
+            u = kat_map.get(k["kalem_kodu"]) or ad_kat.get((k.get("kalem_adi") or "").strip().lower())
+            k["kategori"] = (u or {}).get("kat_ad") or "Diğer"
+            k["kategori_emoji"] = (u or {}).get("kat_emoji") or "📦"
+            k["kategori_sira"] = int((u or {}).get("kat_sira") or 999)
+        fiyatli_kod = set(grup.keys())
+        fiyatli_ad = {(k.get("kalem_adi") or "").strip().lower() for k in kalemler}
+        gorulen_ad = set()
+        for u in urunler:
+            ad_k = (u["ad"] or "").strip().lower()
+            if u["id"] in fiyatli_kod or ad_k in fiyatli_ad or ad_k in gorulen_ad:
+                continue
+            gorulen_ad.add(ad_k)
+            kalemler.append({
+                "kalem_kodu": u["id"], "kalem_adi": u["ad"], "birim": "adet",
+                "guncel_fiyat": None, "onceki_fiyat": None, "degisim_pct": None,
+                "sicrama": False, "son_degisim": None, "tedarikci": None,
+                "degisim_sayisi": 0, "zincir": [], "fiyat_yok": True,
+                "kategori": u.get("kat_ad") or "Diğer",
+                "kategori_emoji": u.get("kat_emoji") or "📦",
+                "kategori_sira": int(u.get("kat_sira") or 999),
+            })
+    except Exception:  # noqa: BLE001
+        for k in kalemler:
+            k.setdefault("kategori", "Diğer"); k.setdefault("kategori_emoji", "📦"); k.setdefault("kategori_sira", 999)
     # Sol rail: en son GERÇEK ARTIŞ yapanlar (tarih desc; sıçrama/düzeltme hariç)
     yukselenler = sorted(
         [k for k in kalemler if (k.get("degisim_pct") or 0) > 0 and k.get("son_degisim")
