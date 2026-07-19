@@ -712,6 +712,14 @@ export default function OdemeMerkezi() {
                     if (ek.hata) return <div style={{ padding: '0 12px 10px 22px', fontSize: 12, color: 'var(--red)' }}>Ekstre alınamadı.</div>;
                     const aylar = (ek.aylik || []).filter(a => !a.sistem_oncesi).slice(0, 6);
                     const har = (ek.hareketler || []).slice(-12).reverse();
+                    const fats = (ek.faturalar || []).slice(-12).reverse();
+                    // 📎 görünür "gör" düğmesi (sahip: 'her fatura girişinin yanına görsel — faturayı takip edebileyim')
+                    const gorLink = (url) => url && (
+                      <a href={url} target="_blank" rel="noreferrer"
+                         style={{ marginLeft: 6, padding: '1px 7px', borderRadius: 6, whiteSpace: 'nowrap',
+                                  border: '1px solid var(--blue, #60a5fa)', color: 'var(--blue, #60a5fa)',
+                                  fontSize: 11, fontWeight: 700, textDecoration: 'none' }}>📎 gör</a>
+                    );
                     return (
                       <div style={{ padding: '0 12px 12px 22px', fontSize: 12 }}>
                         {aylar.length > 0 && (
@@ -737,7 +745,7 @@ export default function OdemeMerkezi() {
                               <div key={j} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, padding: '2px 0' }}>
                                 <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                   {h.tip === 'fatura' ? '📄' : h.tip === 'devir' ? '📜' : '💸'} {h.tarih} · {(h.aciklama || h.tip).slice(0, 34)}
-                                  {h.goruntule && <a href={h.goruntule} target="_blank" rel="noreferrer" style={{ marginLeft: 4 }}>📎</a>}
+                                  {gorLink(h.goruntule)}
                                 </span>
                                 <span style={{ fontFamily: 'var(--font-mono)', whiteSpace: 'nowrap' }}>
                                   {h.tip === 'odeme' ? '−' : '+'}{fmt(h.tutar)} <span style={{ color: 'var(--text3)' }}>→ {fmt(h.bakiye)}</span>
@@ -746,7 +754,22 @@ export default function OdemeMerkezi() {
                             ))}
                           </div>
                         )}
-                        {aylar.length === 0 && har.length === 0 && (
+                        {fats.length > 0 && (
+                          <div style={{ marginTop: 8 }}>
+                            <div style={{ fontWeight: 800, fontSize: 11, color: 'var(--text3)', marginBottom: 3 }}>📄 FATURALAR (belgeler)</div>
+                            {fats.map((f, j) => (
+                              <div key={j} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, padding: '2px 0', borderTop: '1px solid var(--border)' }}>
+                                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                  🧾 {f.tarih} · {(f.fatura_no || 'no yok').slice(0, 22)}
+                                </span>
+                                <span style={{ fontFamily: 'var(--font-mono)', whiteSpace: 'nowrap' }}>
+                                  {fmt(f.tutar)}{gorLink(f.goruntule)}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {aylar.length === 0 && har.length === 0 && fats.length === 0 && (
                           <div style={{ color: 'var(--text3)' }}>Sistem penceresinde hareket yok.</div>
                         )}
                       </div>
