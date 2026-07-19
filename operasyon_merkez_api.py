@@ -14910,12 +14910,26 @@ def ops_fiyat_izleme():
             dk = (u.get("depo_kod") or "").strip()
             if dk:
                 depo_kat.setdefault(dk, u)
+        # 🌉 AD→HAVUZ ÇÖZÜCÜ KÖPRÜSÜ: COGS'un kullandığı _stok_key_from_urun_ad ile
+        # ürün kartı adı ('14oz Bardak') havuz koduna (bardak_buyuk) çözülür —
+        # kategori eşlemesi ve hayalet-kopya freni AYNI çözücüyü kullanır (tek beyin).
+        stok_key_kat = {}
+        urun_stok_key = {}
+        for u in urunler:
+            try:
+                sk = _stok_key_from_urun_ad(u.get("ad") or "")
+            except Exception:  # noqa: BLE001
+                sk = None
+            if sk:
+                urun_stok_key[u["id"]] = sk
+                stok_key_kat.setdefault(sk, u)
         ad_kat = {}
         for u in urunler:
             ad_kat.setdefault((u["ad"] or "").strip().lower(), u)
-        # Fiyatlı kalemlere kategori bağla: UUID → depo köprüsü → ad eşleşmesi
+        # Fiyatlı kalemlere kategori bağla: UUID → depo köprüsü → havuz çözücü → ad
         for k in kalemler:
             u = (kat_map.get(k["kalem_kodu"]) or depo_kat.get(k["kalem_kodu"])
+                 or stok_key_kat.get(k["kalem_kodu"])
                  or ad_kat.get((k.get("kalem_adi") or "").strip().lower()))
             k["kategori"] = (u or {}).get("kat_ad") or "Diğer"
             k["kategori_emoji"] = (u or {}).get("kat_emoji") or "📦"
@@ -14926,6 +14940,12 @@ def ops_fiyat_izleme():
         for u in urunler:
             ad_k = (u["ad"] or "").strip().lower()
             if u["id"] in fiyatli_kod or ad_k in fiyatli_ad or ad_k in gorulen_ad:
+                continue
+            # 🚫 HAYALET FRENİ: ürün kartı havuz koduna çözülüyorsa ('14oz Bardak'
+            # → bardak_buyuk) ve o havuz kalemi zaten fiyatlıysa, kartı ayrıca
+            # 'fiyat yok' kutusu olarak GÖSTERME — aynı fiziksel ürün iki kez çıkmasın.
+            _sk = urun_stok_key.get(u["id"])
+            if _sk and _sk in fiyatli_kod:
                 continue
             gorulen_ad.add(ad_k)
             kalemler.append({
