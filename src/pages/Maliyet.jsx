@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { api, fmt, fmtDate } from '../utils/api';
+import IzlemePanosu from '../components/IzlemePanosu';
 
 // 🧾 VERGİ AYARLARI — kalem bazlı KDV oranı düzenleme + kira stopaj özeti (2026-07-05)
 function VergiAyarlari({ fmt }) {
@@ -614,7 +615,7 @@ export default function Maliyet() {
 
       {/* ── Görev sekmeleri (GPT+kullanıcı tasarımı): farklı zihinsel modlar ── */}
       <div style={{ display: 'flex', gap: 4, borderBottom: '1px solid var(--border)', marginBottom: 16, flexWrap: 'wrap' }}>
-        {[['genel', '📊 Genel Bakış'], ['analiz', '🔍 Analiz'], ['fiyatlar', '🏷️ Fiyatlar'], ['faturalar', '🧾 Faturalar']].map(([id, lbl]) => (
+        {[['genel', '📊 Genel Bakış'], ['analiz', '🔍 Analiz'], ['fiyatlar', '🏷️ Fiyatlar'], ['izleme', '📈 İzleme'], ['faturalar', '🧾 Faturalar']].map(([id, lbl]) => (
           <button key={id} onClick={() => setSekme(id)} style={{
             padding: '8px 14px', border: 'none', background: 'transparent', cursor: 'pointer',
             fontSize: 13, fontWeight: sekme === id ? 700 : 500,
@@ -1572,6 +1573,9 @@ export default function Maliyet() {
       )}
 
       {/* ── FATURALAR sekmesi: PDF yükle + telefon faturaları + foto modal ── */}
+      {/* 📈 İZLEME PANOSU — watchlist kabuğu (Codex kurgusu; sol rail + tile grid + timeline) */}
+      {sekme === 'izleme' && <IzlemePanosu />}
+
       {sekme === 'faturalar' && (<>
       {/* Fatura PDF yükleme — çok faturalı PDF (e-fatura) */}
       <div className="panel-section-hdr" style={{ marginBottom: 12 }}>

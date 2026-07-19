@@ -14832,6 +14832,61 @@ def ops_acilis_birimi_kaydet(body: AcilisBirimiBody):
             "fiyat_duzeltildi": fiyat_id is not None, "fiyat_id": fiyat_id}
 
 
+@router.get("/maliyet/fiyat-izleme")
+def ops_fiyat_izleme():
+    """📈 İZLEME PANOSU verisi (sahip 2026-07-19: 'kalemlerin artışlarını blok blok
+    görmeliyim; tıklayınca tarih sıralı artış zinciri; solda en son artış yapanlar').
+    Codex yerleşimi: sol rail + tile grid + sağ timeline — tek uç hepsini besler.
+    Kalem başına: güncel fiyat, önceki, değişim %, son değişim tarihi + TAM geçmiş."""
+    with db() as (_, cur):
+        _ensure_maliyet_tablolari(cur)
+        cur.execute(
+            """SELECT kalem_kodu, kalem_adi, birim, birim_maliyet_tl::float AS fiyat,
+                      gecerli_baslangic::text AS bas, gecerli_bitis::text AS bit,
+                      tedarikci, notlar
+               FROM urun_alis_fiyat ORDER BY kalem_kodu, gecerli_baslangic, id""")
+        rows = [dict(r) for r in cur.fetchall() or []]
+    from collections import defaultdict
+    grup: dict = defaultdict(list)
+    for r in rows:
+        grup[r["kalem_kodu"]].append(r)
+    kalemler = []
+    for kod, hist in grup.items():
+        # Ardışık AYNI fiyat kayıtlarını tek dönemde birleştir (mükerrer onay gürültüsü)
+        zincir = []
+        for h in hist:
+            if zincir and abs(zincir[-1]["fiyat"] - h["fiyat"]) < 0.005:
+                zincir[-1]["bit"] = h.get("bit")
+                continue
+            zincir.append({"bas": h["bas"], "bit": h.get("bit"), "fiyat": round(h["fiyat"], 4),
+                           "tedarikci": h.get("tedarikci"), "notlar": (h.get("notlar") or "")[:120]})
+        # dönemler arası delta
+        for i, z in enumerate(zincir):
+            z["degisim_pct"] = (round((z["fiyat"] - zincir[i-1]["fiyat"]) / zincir[i-1]["fiyat"] * 100, 1)
+                                if i > 0 and zincir[i-1]["fiyat"] > 0 else None)
+        son = zincir[-1]
+        onceki = zincir[-2] if len(zincir) > 1 else None
+        kalemler.append({
+            "kalem_kodu": kod,
+            "kalem_adi": hist[-1].get("kalem_adi") or kod,
+            "birim": hist[-1].get("birim") or "adet",
+            "guncel_fiyat": son["fiyat"],
+            "onceki_fiyat": onceki["fiyat"] if onceki else None,
+            "degisim_pct": son.get("degisim_pct"),
+            "son_degisim": son["bas"] if onceki else None,  # tek kayıtlıysa 'değişim' yok
+            "tedarikci": son.get("tedarikci"),
+            "degisim_sayisi": max(0, len(zincir) - 1),
+            "zincir": zincir,
+        })
+    # Sol rail: en son ARTIŞ yapanlar (tarih desc)
+    yukselenler = sorted(
+        [k for k in kalemler if (k.get("degisim_pct") or 0) > 0 and k.get("son_degisim")],
+        key=lambda k: k["son_degisim"], reverse=True)[:25]
+    return {"kalemler": kalemler, "son_yukselenler": yukselenler,
+            "zam_esik_yuzde": FIYAT_ZAM_ESIK_YUZDE,
+            "not": "zincir = birleşik fiyat dönemleri (ardışık aynı fiyat tek blok); degisim_pct önceki döneme göre."}
+
+
 @router.get("/fiyat-zam-alarmlari")
 def ops_fiyat_zam_alarmlari(gun: int = 90, sadece_yeni: bool = False, limit: int = 100):
     """Eşik üstü fiyat artışları (onaylı fiyattan tetiklenir) — denetim sinyali listesi."""
