@@ -62,7 +62,7 @@ const NAV = [
     { id: 'akilli-denetim',   label: 'Akıllı Denetim',      icon: 'islemci' },
     { id: 'duyu-paneli',      label: 'Duyu Paneli',         icon: 'goz' },
     { id: 'recete-eslestirme', label: 'Reçete Eşleştirme',  icon: 'bag' },
-    { id: 'maliyet',          label: 'Maliyet',             icon: 'para' },
+    { id: 'maliyet',          label: 'Kâr & Maliyet',       icon: 'para' },
     { id: 'odeme-merkezi',    label: 'Ödeme Merkezi',       icon: 'banknot' },
     { id: 'belge-merkezi',    label: 'Tedarikçi Kontrol',   icon: 'dukkan' },
     { id: 'borc-navigasyon',  label: 'Borç Navigasyonu',    icon: 'pusula' },

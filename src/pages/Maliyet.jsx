@@ -613,15 +613,25 @@ export default function Maliyet() {
         ))}
       </div>
 
-      {/* ── Görev sekmeleri (GPT+kullanıcı tasarımı): farklı zihinsel modlar ── */}
+      {/* ── Görev sekmeleri (sahip 2026-07-19: 'alt sekmeler nelerin daha fazla
+          gösterdiğini göstermeli') — her sekme etiket + kısa açıklama satırı ── */}
       <div style={{ display: 'flex', gap: 4, borderBottom: '1px solid var(--border)', marginBottom: 16, flexWrap: 'wrap' }}>
-        {[['genel', '📊 Genel Bakış'], ['analiz', '🔍 Analiz'], ['fiyatlar', '🏷️ Fiyatlar'], ['izleme', '📈 İzleme'], ['faturalar', '🧾 Faturalar']].map(([id, lbl]) => (
+        {[
+          ['genel', '📊 Kâr Özeti', 'para kazandık mı?'],
+          ['analiz', '🔍 Analiz', 'şube & gün kırılımı'],
+          ['fiyatlar', '🏷️ Fiyat Girişi', 'fiyat gir + güncel liste'],
+          ['izleme', '📈 İzleme', 'zamlar + depo düşümü'],
+          ['faturalar', '🧾 Faturalar', 'PDF fatura arşivi'],
+        ].map(([id, lbl, alt]) => (
           <button key={id} onClick={() => setSekme(id)} style={{
-            padding: '8px 14px', border: 'none', background: 'transparent', cursor: 'pointer',
-            fontSize: 13, fontWeight: sekme === id ? 700 : 500,
-            color: sekme === id ? 'var(--accent)' : 'var(--text3)',
+            padding: '7px 14px 6px', border: 'none', background: 'transparent', cursor: 'pointer',
+            textAlign: 'left', lineHeight: 1.2,
             borderBottom: sekme === id ? '2px solid var(--accent)' : '2px solid transparent',
-          }}>{lbl}</button>
+          }}>
+            <div style={{ fontSize: 13, fontWeight: sekme === id ? 700 : 500,
+                          color: sekme === id ? 'var(--accent)' : 'var(--text2, var(--text))' }}>{lbl}</div>
+            <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 1 }}>{alt}</div>
+          </button>
         ))}
       </div>
 
