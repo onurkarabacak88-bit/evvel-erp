@@ -164,6 +164,7 @@ export default function Maliyet() {
   const [gunGunOnceki, setGunGunOnceki] = useState(null); // önceki eşit pencere (KPI trend için)
   const [maliyetDetayAcik, setMaliyetDetayAcik] = useState(true); // Toplam Maliyet drill-down (görünürlük için açık başlar)
   const [loading, setLoading] = useState(false);
+  const [anaHata, setAnaHata] = useState(false); // ana veri yüklemesi patladı mı (sessiz .catch yerine görünür durum)
   const [mesaj, setMesaj] = useState(null); // {m, t}
 
   const [maliyetForm, setMaliyetForm] = useState({ kalem_kodu: '', kalem_adi: '', birim: 'adet', birim_maliyet_tl: '', tedarikci: '', notlar: '' });
@@ -262,6 +263,7 @@ export default function Maliyet() {
 
   const yukle = () => {
     setLoading(true);
+    setAnaHata(false);
     const ar = donemAralik();
     const onc = oncekiAralik(ar);
     const q = subeId ? `?sube_id=${encodeURIComponent(subeId)}` : '';
@@ -277,7 +279,7 @@ export default function Maliyet() {
       setMaliyetFiyatlar(fiyatlar?.satirlar || []);
       setStokKalemleri(kalemler?.kalemler || []);
       setGunGunData(gunGun);
-    }).catch(() => {}).finally(() => setLoading(false));
+    }).catch(() => setAnaHata(true)).finally(() => setLoading(false));
     // Önceki dönem (sadece KPI trend toplamları için)
     api(`/ops/maliyet/gun-gun?bas=${onc.bas}&bit=${onc.bit}${subeQ}`)
       .then(setGunGunOnceki).catch(() => setGunGunOnceki(null));
@@ -636,6 +638,18 @@ export default function Maliyet() {
         ))}
       </div>
 
+      {/* Sessiz .catch yerine görünür bozulma durumu (Linear deseni): "veri yok" ile
+          "sistem bozuk" ayırt edilir; tek dokunuşla yeniden denenir. */}
+      {anaHata && (
+        <div style={{ marginBottom: 12, padding: '10px 13px', borderRadius: 10,
+          background: 'rgba(239,68,68,0.10)', border: '1px solid rgba(239,68,68,0.40)',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 12.5 }}>
+            ⚠️ <strong>Veriler yüklenemedi.</strong> İnternet ya da sunucu sorunu olabilir — aşağıda gördüğün sayılar eski olabilir.
+          </span>
+          <button className="btn btn-secondary btn-sm" onClick={yukle}>🔄 Tekrar dene</button>
+        </div>
+      )}
       {mesaj && (
         <div style={{ marginBottom: 12, padding: '8px 12px', borderRadius: 8,
           background: mesaj.t === 'error' ? 'rgba(220,60,60,0.1)' : 'rgba(60,180,90,0.1)',

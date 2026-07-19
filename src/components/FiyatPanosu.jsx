@@ -64,7 +64,12 @@ export default function FiyatPanosu() {
     finally { setMesgul(false); }
   }
 
-  if (hata) return <div className="card" style={{ padding: 14, color: 'var(--red)' }}>{hata}</div>;
+  if (hata) return (
+    <div className="card" style={{ padding: 14, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
+      <span style={{ color: 'var(--red)', fontSize: 12.5 }}>⚠️ Fiyat panosu yüklenemedi — {hata}</span>
+      <button className="btn btn-secondary btn-sm" onClick={() => { setHata(''); yenile(); }}>🔄 Tekrar dene</button>
+    </div>
+  );
   if (!d) return <div style={{ color: 'var(--text3)', fontSize: 13 }}>🏷️ Fiyat panosu yükleniyor…</div>;
 
   const esik = d.zam_esik_yuzde || 10;

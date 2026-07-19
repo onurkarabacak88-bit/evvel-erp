@@ -120,7 +120,10 @@ export default function IzlemePanosu() {
       {gorunum === 'depo' && (!dd ? (
         <div style={{ color: 'var(--text3)', fontSize: 13 }}>📦 Depo verisi yükleniyor…</div>
       ) : dd.hata ? (
-        <div className="card" style={{ padding: 14, color: 'var(--red)' }}>Depo verisi alınamadı.</div>
+        <div className="card" style={{ padding: 14, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
+          <span style={{ color: 'var(--red)', fontSize: 12.5 }}>⚠️ Depo verisi alınamadı — internet ya da sunucu sorunu olabilir.</span>
+          <button className="btn btn-secondary btn-sm" onClick={() => { setDd(null); yenile(); }}>🔄 Tekrar dene</button>
+        </div>
       ) : (() => {
         // şube seçiliyse değerler o şubenin kırılımından okunur (OM davranışı)
         const gz = (k) => {
