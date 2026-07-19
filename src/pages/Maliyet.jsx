@@ -764,6 +764,45 @@ export default function Maliyet() {
               {kart('📉 Toplam Maliyet (KDV dahil)', fmt(maliyet), maliyetDetayAcik ? 'kapat ▴' : 'kırılımı gör ▾ · KDV-hariç net maliyet P&L tablosunda', undefined, yon(maliyet, oMaliyet, false), null, () => setMaliyetDetayAcik(v => !v))}
             </div>
 
+            {/* ⚖️ EVO ↔ FİZİKİ KASA (sahip 2026-07-19: "personelin girdiği kasa
+                doğru; Evo ile kasanın görüntüsünü yaz — fark fiziki kasaya göre:
+                fazla YEŞİL, açık KIRMIZI; haftalıkta +/− farklar toplanır").
+                Fark yalnız iki değerin de bilindiği günlerden; kasa girilmeyen
+                günde ciro Evo'dan alınır ve fark sayılmaz. */}
+            {(() => {
+              const farkGunler = tumRows.filter(s => s.kasa_fark_tl != null);
+              const evoYedekGun = tumRows.filter(s => s.ciro_kaynak === 'evo').length;
+              if (!farkGunler.length && !evoYedekGun) return null;
+              const kasaT = tumRows.reduce((a, s) => a + (Number(s.kasa_ciro_tl) || 0), 0);
+              const evoT = tumRows.reduce((a, s) => a + (s.evo_ciro_tl != null
+                ? Number(s.evo_ciro_tl) : (Number(s.kasa_ciro_tl) || 0)), 0);
+              const fark = farkGunler.reduce((a, s) => a + (Number(s.kasa_fark_tl) || 0), 0);
+              const renk = fark > 0 ? 'var(--green)' : fark < 0 ? 'var(--red)' : 'var(--text3)';
+              const etiket = fark > 0 ? `+${fmt(fark)} FAZLA` : fark < 0 ? `−${fmt(Math.abs(fark))} AÇIK` : 'FARK YOK';
+              return (
+                <div className="card" style={{ marginTop: 12, borderTop: `3px solid ${renk}` }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+                    <div style={{ fontSize: 13, fontWeight: 700 }}>⚖️ Evo ↔ Fiziki Kasa</div>
+                    <div style={{ display: 'flex', gap: 18, alignItems: 'center', flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: 12, color: 'var(--text3)' }}>
+                        🖥 Evo <b style={{ fontFamily: 'var(--font-mono)', fontSize: 14, color: 'var(--text)' }}>{fmt(evoT)}</b>
+                      </span>
+                      <span style={{ fontSize: 12, color: 'var(--text3)' }}>
+                        💵 Kasa <b style={{ fontFamily: 'var(--font-mono)', fontSize: 14, color: 'var(--text)' }}>{fmt(kasaT)}</b>
+                      </span>
+                      <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 800, fontSize: 16, color: renk,
+                                     padding: '3px 12px', borderRadius: 9, border: `1px solid ${renk}` }}>{etiket}</span>
+                    </div>
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 6 }}>
+                    Fark fiziki kasaya göre: kasa fazlaysa <b style={{ color: 'var(--green)' }}>yeşil fazla</b>, eksikse <b style={{ color: 'var(--red)' }}>kırmızı açık</b>.
+                    Dönem seçiminde günlük +/− farklar toplanır{farkGunler.length ? ` (${farkGunler.length} farklı gün)` : ''}.
+                    Ciro kaynağı: personelin girdiği kasa esas{evoYedekGun > 0 ? `; ${evoYedekGun} günde kasa girilmediği için Evo kullanıldı` : ''}.
+                  </div>
+                </div>
+              );
+            })()}
+
             {/* ── İZOLE: KDV Hariç (Gerçek Marj) katmanı — Faz 1, ayrı alan ── */}
             {topla('net_satis_tl') > 0 && (() => {
               const netSatis = topla('net_satis_tl'), hesKdv = topla('hesaplanan_kdv_tl');

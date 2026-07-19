@@ -13688,11 +13688,15 @@ def ops_maliyet_gun_gun(
                 }
         except Exception:
             pass
-        # ⚖️ MALİYET-ÖZEL EVO KABULÜ (sahip 2026-07-18: "Evo'dan alınan kabul
-        # görünsün; açık/fazlalar ayrı alanda, tıklayınca dahil olsun"). Kasa/ciro
-        # KAYITLARINA DOKUNMAZ — yalnız bu P&L okuma katmanı: ciro_fark_defteri'ndeki
-        # günlerde sahip "girilen doğru" (iade/sayım meşru) demediyse ciro = EVO.
-        # pos/online payı korunur → komisyon hesabı şişmez (fark nakit varsayılır).
+        # ⚖️ CİRO KAYNAK KURALI (sahip 2026-07-19: "personelin girdiği kasayı DOĞRU
+        # kabul et; personel kasa girişi yapmamışsa Evo'dan al"): FİZİKİ KASA ESAS,
+        # Evo yalnız YEDEK kaynak. Önceki davranış (fark günlerinde Evo'nun kazanması,
+        # 2026-07-18) TERSİNE çevrildi. Tek istisna: sahibin fark defterinde AÇIKÇA
+        # 'evo_dogru' dediği gün — el hükmü korunur. Defterdeki evo değerleri ayrıca
+        # Evo↔Kasa karşılaştırma şeridi için satırlara taşınır (fark = kasaya göre:
+        # kasa > evo → fazla, kasa < evo → açık).
+        evo_gun: Dict[Tuple[str, str], float] = {}
+        kasa_gun: Dict[Tuple[str, str], float] = {k: v["ciro"] for k, v in ciro_map.items()}
         try:
             cur.execute(
                 """SELECT sube_id::text AS sid, tarih::text AS t,
@@ -13701,15 +13705,18 @@ def ops_maliyet_gun_gun(
                    WHERE tarih BETWEEN %s::date AND %s::date""", (_bas, _bit))
             for r in cur.fetchall():
                 d = dict(r)
-                if d.get("durum") == "girilen_dogru" or not d.get("evo"):
-                    continue
                 if sube_id and d["sid"] != sube_id:
                     continue
+                if d.get("evo") is None:
+                    continue
                 key = (d["sid"], d["t"])
-                if key in ciro_map:
-                    ciro_map[key]["ciro"] = float(d["evo"])
-                else:
+                evo_gun[key] = float(d["evo"])
+                if key not in kasa_gun:
+                    # kasa girişi YOK → Evo yedek (pos/online bilinmez → komisyon 0)
                     ciro_map[key] = {"ciro": float(d["evo"]), "pos": 0.0, "online": 0.0}
+                elif d.get("durum") == "evo_dogru":
+                    # sahip bu gün için açıkça 'Evo doğru' demiş — istisna
+                    ciro_map[key]["ciro"] = float(d["evo"])
         except Exception:  # noqa: BLE001 — tablo henüz yoksa eski davranış sürer
             pass
         # Şube POS / online (platform) komisyon oranları (subeler.pos_oran / online_oran, %)
@@ -14010,6 +14017,13 @@ def ops_maliyet_gun_gun(
                                         for (ks, kt), x in ciro_map.items() if kt == tarih_str)
                 fire_g = sum(v for (ks, kt), v in fire_map.items() if kt == tarih_str)
                 iade_g = sum(v for (ks, kt), v in iade_map.items() if kt == tarih_str)
+                # ⚖️ Evo↔Kasa şeridi (tüm şubeler toplamı, o gün)
+                _kasa_keys = [k for k in kasa_gun if k[1] == tarih_str]
+                _evo_keys = [k for k in evo_gun if k[1] == tarih_str]
+                _kasa_g = sum(kasa_gun[k] for k in _kasa_keys) if _kasa_keys else None
+                _evo_g = sum(evo_gun[k] for k in _evo_keys) if _evo_keys else None
+                _cift = [k for k in _evo_keys if k in kasa_gun]
+                _fark_g = round(sum(kasa_gun[k] - evo_gun[k] for k in _cift), 2) if _cift else None
             else:
                 kira_g = kira_gunluk.get(sid, 0.0)
                 kira_kdv_g = kira_kdv_gunluk.get(sid, 0.0)
@@ -14022,6 +14036,10 @@ def ops_maliyet_gun_gun(
                 platform_komisyon = _c["online"] * (_or["online"] / 100.0)
                 fire_g = fire_map.get((sid, tarih_str), 0.0)
                 iade_g = iade_map.get((sid, tarih_str), 0.0)
+                # ⚖️ Evo↔Kasa şeridi (tek şube, o gün)
+                _kasa_g = kasa_gun.get((sid, tarih_str))
+                _evo_g = evo_gun.get((sid, tarih_str))
+                _fark_g = round(_kasa_g - _evo_g, 2) if (_kasa_g is not None and _evo_g is not None) else None
             satir["kira_maliyet_tl"] = round(kira_g, 2)
             satir["fatura_maliyet_tl"] = round(fatura_g, 2)
             satir["abonelik_maliyet_tl"] = round(abonelik_g, 2)  # FAZ 4: ayrı görünür kova
@@ -14036,6 +14054,15 @@ def ops_maliyet_gun_gun(
                               + fatura_g + abonelik_g + pos_komisyon + platform_komisyon + iade_g)
             satir["genel_toplam"] = round(toplam_maliyet, 2)
             satir["ciro_tl"] = round(ciro_v, 2)
+            # ⚖️ Evo↔Kasa görünümü (sahip 2026-07-19: "Evo 12000 kasa 12500 fark
+            # fiziki kasaya göre: +500 FAZLA yeşil / eksik AÇIK kırmızı"): fark
+            # yalnız İKİSİ DE bilinen günlerde; evo bilinmeyen gün ≈ kasa (eşik
+            # altı fark — defter yalnız farklı günleri kaydeder).
+            satir["kasa_ciro_tl"] = round(_kasa_g, 2) if _kasa_g is not None else None
+            satir["evo_ciro_tl"] = round(_evo_g, 2) if _evo_g is not None else None
+            satir["kasa_fark_tl"] = _fark_g
+            satir["ciro_kaynak"] = ("kasa" if _kasa_g is not None
+                                    else ("evo" if _evo_g is not None else "yok"))
             faaliyet_kari = ciro_v - toplam_maliyet
             tahmini_vergi = max(0.0, faaliyet_kari) * TAHMINI_VERGI_ORANI
             satir["faaliyet_kari_tl"] = round(faaliyet_kari, 2)

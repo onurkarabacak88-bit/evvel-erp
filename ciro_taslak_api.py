@@ -109,9 +109,10 @@ def ciro_fark_defteri_liste(gun: int = 45):
             "tum_fazla_gun": len([r for r in rows if (r["fark"] or 0) > 0]),
             "cozulen_adet": len([r for r in rows
                                  if r["durum"] in ("gidere_yazildi", "gelire_yazildi")]),
-            "not": ("Maliyet P&L cirosu bu deftere bakar: 'açık' ve 'evo_dogru' "
-                    "günlerde EVO kabul edilir; 'girilen_dogru' günlerde kasadaki "
-                    "giriş kullanılır. Kasa/ciro kayıtlarına dokunulmaz.")}
+            "not": ("Maliyet P&L cirosu: personelin girdiği FİZİKİ KASA esastır "
+                    "(sahip kuralı 2026-07-19); kasa girişi olmayan günlerde EVO "
+                    "yedek kaynaktır. Tek istisna: 'evo_dogru' işaretlenen günde "
+                    "Evo kabul edilir. Kasa/ciro kayıtlarına dokunulmaz.")}
 
 
 @router.get("/{taslak_id}")
