@@ -981,15 +981,36 @@ export default function Maliyet() {
               );
             })()}
 
-            {/* 🔎 İnceleme Gerekenler — aksiyon kuyruklarını (Ciro Fark + Kasa Hataları)
-                tek başlık altında topla, tier-3'e indir (Ramp exception-feed deseni).
-                En az biri doluysa görünür; ikisi de boşsa başlık da çıkmaz. */}
-            {((fdefter?.kayitlar || []).length > 0 || khListe.length > 0) && (
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginTop: 20, marginBottom: 2 }}>
-                <span style={{ fontWeight: 700, fontSize: 13 }}>🔎 İnceleme Gerekenler</span>
-                <span style={{ fontSize: 11, color: 'var(--text3)' }}>karar bekleyen kasa / ciro farkları</span>
-              </div>
+            {/* ── Detay alt-sekmeleri (İnceleme dahil): tek pencerede gezilir → üst özet kısalır.
+                İnceleme = Ciro Fark + Kasa Hataları aksiyon kuyrukları; açık iş varsa rozet+turuncu. ── */}
+            {(() => {
+              const incAcik = (fdefter?.kayitlar || []).filter(k => k.durum === 'acik').length + (khListe?.length || 0);
+              const TABLAR = [
+                ['ozet', '🎯 Güven & Sapma'], ['vergi', '🏛️ Vergi & KDV'], ['pnl', '💰 Günlük Kâr-Zarar'],
+                ['inceleme', `🔎 İnceleme Gerekenler${incAcik > 0 ? ` (${incAcik})` : ''}`],
+              ];
+              return (
+                <div style={{ display: 'flex', gap: 6, marginTop: 18, marginBottom: 2, flexWrap: 'wrap', borderBottom: '1px solid var(--border)', paddingBottom: 10 }}>
+                  {TABLAR.map(([id, lbl]) => {
+                    const acilRozet = id === 'inceleme' && incAcik > 0 && altSekme !== id;
+                    return (
+                      <button key={id} onClick={() => setAltSekme(id)} style={{
+                        padding: '7px 15px', borderRadius: 999, fontSize: 12.5, fontWeight: altSekme === id ? 700 : 500,
+                        cursor: 'pointer', border: '1px solid ' + (altSekme === id ? 'var(--accent)' : (acilRozet ? 'var(--orange)' : 'var(--border)')),
+                        background: altSekme === id ? 'var(--accent)' : 'transparent',
+                        color: altSekme === id ? '#fff' : (acilRozet ? 'var(--orange)' : 'var(--text3)'), transition: 'all .15s', whiteSpace: 'nowrap',
+                      }}>{lbl}</button>
+                    );
+                  })}
+                </div>
+              );
+            })()}
+
+            {/* 🔎 İnceleme Gerekenler sekmesi içeriği — boşsa temiz mesajı */}
+            {altSekme === 'inceleme' && (fdefter?.kayitlar || []).length === 0 && (khListe?.length || 0) === 0 && (
+              <div className="card" style={{ marginTop: 14, fontSize: 12, color: 'var(--text3)' }}>✓ İnceleme bekleyen kasa / ciro farkı yok — temiz.</div>
             )}
+            {altSekme === 'inceleme' && (<>
 
             {/* ── ⚖️ CİRO FARK DEFTERİ (Evo ↔ Kasa) — sahip 2026-07-18: P&L cirosu
                  EVO kabul; fark meşruysa (iade/sayım) tıkla → kasa girişi kullanılır ── */}
@@ -1119,18 +1140,7 @@ export default function Maliyet() {
                 ))}
               </div>
             )}
-
-            {/* ── Detay alt-sekmeleri: tablolar üst üste yığılmasın, tek pencerede gezilsin ── */}
-            <div style={{ display: 'flex', gap: 6, marginTop: 18, marginBottom: 2, flexWrap: 'wrap', borderBottom: '1px solid var(--border)', paddingBottom: 10 }}>
-              {[['ozet', '🎯 Güven & Sapma'], ['vergi', '🏛️ Vergi & KDV'], ['pnl', '💰 Günlük Kâr-Zarar']].map(([id, lbl]) => (
-                <button key={id} onClick={() => setAltSekme(id)} style={{
-                  padding: '7px 15px', borderRadius: 999, fontSize: 12.5, fontWeight: altSekme === id ? 700 : 500,
-                  cursor: 'pointer', border: '1px solid ' + (altSekme === id ? 'var(--accent)' : 'var(--border)'),
-                  background: altSekme === id ? 'var(--accent)' : 'transparent',
-                  color: altSekme === id ? '#fff' : 'var(--text3)', transition: 'all .15s', whiteSpace: 'nowrap',
-                }}>{lbl}</button>
-              ))}
-            </div>
+            </>)}
 
             {/* ── İZOLE: Şube Bazlı Tahmini Vergi (Türkiye mekanizması) — Faz 1b ── */}
             {altSekme === 'vergi' && vergiOzet && (vergiOzet.satirlar || []).length > 0 && (
