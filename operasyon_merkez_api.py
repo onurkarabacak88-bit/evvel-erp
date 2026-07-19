@@ -15096,6 +15096,11 @@ def ops_depo_izleme():
         cikis = (h.get("miktar") or 0) < 0 or ((h.get("onceki") is not None and h.get("sonraki") is not None
                                                 and h["sonraki"] < h["onceki"]))
         d_adet = abs(h.get("miktar") or ((h.get("onceki") or 0) - (h.get("sonraki") or 0)))
+        # Şubeler arası taşıma tüketim DEĞİL: SEVK_CIKIS kaynak şubeden düşer ama aynı
+        # mal varış şubesinde ürün-aç ile bir daha düşer → toplama ikisini de katmak
+        # aynı bardağı iki kez sayar (sahip yakaladı, 2026-07-19: 2221'in 800'ü sevkti).
+        if h.get("hareket_turu") in ("SEVK_CIKIS", "SEVK_UZLASMA"):
+            cikis = False
         if cikis:
             if h["t"] >= k7:
                 g["dusum_7g"] += d_adet
@@ -15124,9 +15129,10 @@ def ops_depo_izleme():
             "kritik_sayi": kritik_sayi,
             "subeler": [{"id": sid, "ad": ad} for sid, ad in sorted(sube_ad.items(), key=lambda x: x[1])
                         if sid != "sube-merkez" or any(s["sube_id"] == "sube-merkez" for s in stoklar)],
-            "not": ("kalan = tüm şubelerin depo toplamı; düşüm = hareket defterindeki "
-                    "çıkışlar (ürün-aç/fire/reçete); hareketler = son 45 gün, kalem "
-                    "başına son 40 satır (önceki → sonraki iz).")}
+            "not": ("kalan = tüm şubelerin depo toplamı; düşüm = gerçek tüketim "
+                    "çıkışları (ürün-aç/fire) — şubeler arası sevk taşımadır, düşüme "
+                    "SAYILMAZ (varışta ürün-aç zaten sayar); hareketler = son 45 gün, "
+                    "kalem başına son 40 satır (önceki → sonraki iz).")}
 
 
 @router.get("/fiyat-zam-alarmlari")
