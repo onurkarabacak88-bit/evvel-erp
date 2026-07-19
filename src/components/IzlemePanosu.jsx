@@ -25,60 +25,9 @@ export default function IzlemePanosu() {
   // özellikler — sahip 2026-07-19: 'OM depo stoklarını kaldırıp buraya harmanla')
   const [sube, setSube] = useState(null);       // null = tüm şubeler
   const [sadeceKritik, setSadeceKritik] = useState(false);
-  // ✏️ stok düzeltme formu + 🗂 TASLAK/ONAY KATMANI (sahip 2026-07-19: 'kaybı
-  // engelle ve geri getir, tam entegrasyon' — OM'deki bekleyen-değişiklik akışı):
-  // düzeltme ÖNCE taslağa birikir, sahip tek tek ya da toplu İŞLE der; işlenmemiş
-  // taslak varken sayfadan ayrılırken tarayıcı uyarır.
+  // ✏️ stok düzeltme formu (OM onay akışının sadeleşmiş hali — sayım düzeltme)
   const [duz, setDuz] = useState(null);         // {sube_id, adet, min}
   const [mesgul, setMesgul] = useState(false);
-  const [bekleyen, setBekleyen] = useState([]); // [{key, sube_id, sube_ad, kalem_kodu, kalem_adi, eskiAdet, eskiMin, adet, min, alis_fiyati}]
-  useEffect(() => {
-    if (!bekleyen.length) return undefined;
-    const uyar = (e) => { e.preventDefault(); e.returnValue = ''; };
-    window.addEventListener('beforeunload', uyar);
-    return () => window.removeEventListener('beforeunload', uyar);
-  }, [bekleyen.length]);
-  function taslagaEkle(k, f) {
-    const kir = (k.sube_kirilim || []).find(x => x.sube_id === f.sube_id);
-    const subeAd = (dd?.subeler || []).find(x => x.id === f.sube_id)?.ad || f.sube_id;
-    const kayit = {
-      key: `${f.sube_id}::${k.kalem_kodu}`,
-      sube_id: f.sube_id, sube_ad: subeAd,
-      kalem_kodu: k.kalem_kodu, kalem_adi: k.kalem_adi,
-      eskiAdet: kir ? Math.round(kir.adet) : null,
-      eskiMin: kir ? Math.round(kir.min_stok || 0) : null,
-      adet: Math.max(0, Math.round(Number(String(f.adet).replace(',', '.')) || 0)),
-      min: Math.max(0, Math.round(Number(String(f.min).replace(',', '.')) || 0)),
-      alis_fiyati: kir?.alis_fiyati || 0,
-    };
-    setBekleyen(prev => [...prev.filter(b => b.key !== kayit.key), kayit]);
-    setDuz(null);
-  }
-  async function taslakIsle(b) {
-    await api('/ops/v2/sube-depo/guncelle', { method: 'POST', body: {
-      sube_id: b.sube_id, kalem_kodu: b.kalem_kodu, kalem_adi: b.kalem_adi,
-      mevcut_adet: b.adet, min_stok: b.min,
-      alis_fiyati_tl: b.alis_fiyati,           // mevcut fiyat korunur (0'a ezilmesin)
-      giris_nedeni: 'sayim_duzeltme',
-    }});
-  }
-  async function tekIsle(b) {
-    setMesgul(true);
-    try { await taslakIsle(b); setBekleyen(prev => prev.filter(x => x.key !== b.key)); yenile(); }
-    catch (e) { alert(e?.message || 'işlenemedi'); }
-    finally { setMesgul(false); }
-  }
-  async function topluIsle() {
-    if (!window.confirm(`${bekleyen.length} düzeltme depoya işlenecek (resmi sayım değil, anlık düzeltme). Onaylıyor musun?`)) return;
-    setMesgul(true);
-    const kalanlar = [];
-    for (const b of bekleyen) {
-      try { await taslakIsle(b); }
-      catch { kalanlar.push(b); }
-    }
-    setBekleyen(kalanlar); setMesgul(false); yenile();
-    if (kalanlar.length) alert(`${kalanlar.length} kayıt işlenemedi — listede kaldı.`);
-  }
   // 📦 depo verisi
   const [dd, setDd] = useState(null);
   const yenile = () => api('/ops/maliyet/depo-izleme').then(setDd).catch(() => setDd({ hata: true }));
@@ -92,6 +41,21 @@ export default function IzlemePanosu() {
       return e && e.min_stok > 0 && e.adet <= e.min_stok;
     }).length;
   })();
+  async function stokKaydet(k, f) {
+    const kir = (k.sube_kirilim || []).find(x => x.sube_id === f.sube_id);
+    setMesgul(true);
+    try {
+      await api('/ops/v2/sube-depo/guncelle', { method: 'POST', body: {
+        sube_id: f.sube_id, kalem_kodu: k.kalem_kodu, kalem_adi: k.kalem_adi,
+        mevcut_adet: Math.max(0, Math.round(Number(String(f.adet).replace(',', '.')) || 0)),
+        min_stok: Math.max(0, Math.round(Number(String(f.min).replace(',', '.')) || 0)),
+        alis_fiyati_tl: kir?.alis_fiyati || 0,   // mevcut depo fiyatı korunur (0'a ezilmesin)
+        giris_nedeni: 'sayim_duzeltme',
+      }});
+      setDuz(null); yenile();
+    } catch (e) { alert(e?.message || 'kaydedilemedi'); }
+    finally { setMesgul(false); }
+  }
 
   const M = 'var(--font-mono)';
 
@@ -158,9 +122,7 @@ export default function IzlemePanosu() {
         const dAramaSonuc = dara ? dSirala(dtumu.filter(k => (k.kalem_adi || '').toLowerCase().includes(dara))) : null;
         const dSeciliKat = kat ? dKat.get(kat) : null;
         const dSecili = dtumu.find(k => k.kalem_kodu === secili) || null;
-        const depoKutu = (k) => { const g2 = gz(k);
-          const taslakVar = bekleyen.some(b => b.kalem_kodu === k.kalem_kodu);
-          return (
+        const depoKutu = (k) => { const g2 = gz(k); return (
           <div key={k.kalem_kodu} onClick={() => { setSecili(k.kalem_kodu); setDuz(null); }}
             style={{ minHeight: 104, padding: '11px 12px', borderRadius: 14, cursor: 'pointer',
                      background: 'var(--bg2)', display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
@@ -176,9 +138,7 @@ export default function IzlemePanosu() {
                   {Math.round(g2.kalan)}
                   <span style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--text3)' }}> kalan{sube ? '' : ' (tüm)'}</span>
                 </span>
-                {taslakVar ? (
-                  <span style={{ fontSize: 10.5, fontWeight: 800, color: 'var(--accent, #c9853f)', whiteSpace: 'nowrap' }}>🗂 taslak</span>
-                ) : (k.dusum_7g || 0) > 0 && (
+                {(k.dusum_7g || 0) > 0 && (
                   <span style={{ fontSize: 11, fontWeight: 800, color: '#f59e0b', whiteSpace: 'nowrap' }}>7g −{Math.round(k.dusum_7g)}</span>
                 )}
               </div>
@@ -189,39 +149,6 @@ export default function IzlemePanosu() {
           </div>
         ); };
         return (
-          <>
-          {bekleyen.length > 0 && (
-            <div className="card" style={{ marginBottom: 12, padding: 12, border: '1px solid var(--accent, #c9853f)' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 6 }}>
-                <span style={{ fontSize: 12.5, fontWeight: 800 }}>🗂 ONAY BEKLEYEN DÜZELTMELER ({bekleyen.length})
-                  <span style={{ fontWeight: 400, fontSize: 11, color: 'var(--text3)' }}> — işlemeden sayfadan çıkarsan kaybolur (tarayıcı uyarır)</span>
-                </span>
-                <span style={{ display: 'flex', gap: 8 }}>
-                  <button className="btn btn-secondary btn-sm" disabled={mesgul}
-                    onClick={() => { if (window.confirm('Bekleyen tüm düzeltmeler iptal edilsin mi?')) setBekleyen([]); }}>✕ Hepsini İptal</button>
-                  <button className="btn btn-primary btn-sm" disabled={mesgul}
-                    onClick={topluIsle}>{mesgul ? 'İşleniyor…' : '✓ Tümünü İşle'}</button>
-                </span>
-              </div>
-              {bekleyen.map(b => (
-                <div key={b.key} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10,
-                                          padding: '6px 4px', borderTop: '1px solid var(--border)', fontSize: 12.5, flexWrap: 'wrap' }}>
-                  <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    <b>{b.sube_ad}</b> · {b.kalem_adi}
-                  </span>
-                  <span style={{ display: 'flex', gap: 10, alignItems: 'center', whiteSpace: 'nowrap' }}>
-                    <span style={{ fontFamily: M, fontVariantNumeric: 'tabular-nums' }}>
-                      {b.eskiAdet != null ? `${b.eskiAdet} → ` : ''}<b>{b.adet}</b> adet
-                      <span style={{ color: 'var(--text3)' }}> · min {b.eskiMin != null && b.eskiMin !== b.min ? `${b.eskiMin} → ` : ''}{b.min}</span>
-                    </span>
-                    <button className="btn btn-primary btn-sm" disabled={mesgul} onClick={() => tekIsle(b)}>✓ İşle</button>
-                    <button className="btn btn-secondary btn-sm" disabled={mesgul}
-                      onClick={() => setBekleyen(prev => prev.filter(x => x.key !== b.key))}>✕</button>
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
           <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start', flexWrap: 'wrap' }}>
             {/* SOL RAIL — en çok tüketilenler */}
             <div className="card" style={{ flex: '0 1 280px', minWidth: 245, padding: 12 }}>
@@ -388,14 +315,18 @@ export default function IzlemePanosu() {
                         </label>
                       </div>
                       <div style={{ fontSize: 10.5, color: 'var(--text3)', margin: '6px 0 8px', lineHeight: 1.45 }}>
-                        ⚡ Hızlı düzeltme (resmi sayım değil — kalibrasyon için <b>Stok Sayım</b>).
-                        "Onaya Ekle" ile taslağa yazılır; üstteki 🗂 tepsiden <b>İşle</b> deyince depoya
-                        geçer ve hareket defterine iz düşer — alış fiyatına dokunulmaz.
+                        ⚡ Bu alan <b>hızlı düzeltmedir</b> (tek ürün, tek şube) — resmi sayım değildir;
+                        kalibrasyon/kontrol için <b>Stok Sayım</b> modülünü kullan. Hareket defterine
+                        "sayım düzeltme" izi düşer (önceki → sonraki) — alış fiyatına dokunulmaz.
                       </div>
                       <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
                         <button className="btn btn-secondary btn-sm" onClick={() => setDuz(null)}>Vazgeç</button>
                         <button className="btn btn-primary btn-sm" disabled={mesgul}
-                          onClick={() => taslagaEkle(dSecili, duz)}>🗂 Onaya Ekle</button>
+                          onClick={() => {
+                            const sAd = (dd.subeler || []).find(x => x.id === duz.sube_id)?.ad || duz.sube_id;
+                            if (!window.confirm(`Bu RESMİ SAYIM DEĞİL, anlık düzeltmedir.\n${sAd} · ${dSecili.kalem_adi} → ${duz.adet} adet (min ${duz.min}) yazılacak.\nOnaylıyor musun?`)) return;
+                            stokKaydet(dSecili, duz);
+                          }}>{mesgul ? 'Kaydediliyor…' : '💾 Kaydet'}</button>
                       </div>
                     </div>
                   )}
@@ -426,7 +357,6 @@ export default function IzlemePanosu() {
               )}
             </div>
           </div>
-          </>
         );
       })())}
     </div>
