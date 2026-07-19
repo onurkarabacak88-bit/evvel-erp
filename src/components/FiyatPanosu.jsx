@@ -204,8 +204,11 @@ export default function FiyatPanosu() {
             </span>
             {rozet(k)}
           </div>
-          <div style={{ fontSize: 10.5, color: 'var(--text3)', marginTop: 2 }}>
-            {k.fiyat_yok ? 'fiyat girilmemiş' : k.son_degisim ? `son değişim ${trT(k.son_degisim)}` : 'değişim yok'}
+          <div style={{ fontSize: 10.5, color: k.fiyat_yok || k.sicrama ? '#f59e0b' : 'var(--text3)', marginTop: 2 }}>
+            {/* Rozetin ANLAMI hover beklemeden görünür (dokunmatikte hover yok) */}
+            {k.fiyat_yok ? 'fiyat girilmemiş — maliyete 0 yazılıyor'
+              : k.sicrama ? 'birim/veri değişimi olabilir — gerçek zam sayılmaz'
+              : k.son_degisim ? `son değişim ${trT(k.son_degisim)}` : 'değişim yok'}
           </div>
         </div>
       </div>
