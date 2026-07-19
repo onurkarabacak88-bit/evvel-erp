@@ -371,3 +371,65 @@ tr:hover td{background:rgba(154,95,46,.05)}
 .maas-kpi:hover{transform:translateY(-2px);box-shadow:0 6px 18px rgba(0,0,0,.25)}
 .maas-kpi .lbl{font-size:11px;color:var(--text3);font-weight:600;margin-bottom:5px;display:flex;align-items:center;gap:5px}
 .maas-kpi .val{font-family:var(--font-mono);font-size:21px;font-weight:700;letter-spacing:-.5px}
+
+/* ══ 🎬 MALİYET HAREKET DİLİ (2026-07-19, motion-design ajanı — PREMIUM arketip)
+   İmza easing: cubic-bezier(0.4,0,0.2,1) · süreler: 160ms (dokunma) / 280ms
+   (kart) / 420ms (panel-çekmece) · giriş: "yüksel & otur" 12px + fade, 30ms
+   kademe · zıplama %0 · yalnız transform/opacity (60fps) ══ */
+:root {
+  --mk-ease: cubic-bezier(0.4, 0, 0.2, 1);
+  --mk-hizli: 160ms; --mk-orta: 280ms; --mk-yavas: 420ms;
+}
+@keyframes mkYuksel { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes mkBelir  { from { opacity: 0; } to { opacity: 1; } }
+@keyframes mkKay    { from { transform: translateX(48px); opacity: .4; } to { transform: translateX(0); opacity: 1; } }
+@keyframes mkBuyu   { from { opacity: 0; transform: scale(.96) translateY(8px); } to { opacity: 1; transform: scale(1) translateY(0); } }
+
+/* Tek eleman girişi (hero kart, sağ panel, şerit) */
+.mk-rise { animation: mkYuksel var(--mk-orta) var(--mk-ease) both; }
+
+/* Kademeli giriş — kapsayıcıya verilir; çocuklar 30ms arayla yükselir (bütçe <400ms) */
+.mk-stagger > * { animation: mkYuksel var(--mk-orta) var(--mk-ease) both; }
+.mk-stagger > *:nth-child(1)  { animation-delay: 0ms; }
+.mk-stagger > *:nth-child(2)  { animation-delay: 30ms; }
+.mk-stagger > *:nth-child(3)  { animation-delay: 60ms; }
+.mk-stagger > *:nth-child(4)  { animation-delay: 90ms; }
+.mk-stagger > *:nth-child(5)  { animation-delay: 120ms; }
+.mk-stagger > *:nth-child(6)  { animation-delay: 150ms; }
+.mk-stagger > *:nth-child(7)  { animation-delay: 180ms; }
+.mk-stagger > *:nth-child(8)  { animation-delay: 210ms; }
+.mk-stagger > *:nth-child(9)  { animation-delay: 240ms; }
+.mk-stagger > *:nth-child(10) { animation-delay: 270ms; }
+.mk-stagger > *:nth-child(11) { animation-delay: 300ms; }
+.mk-stagger > *:nth-child(12) { animation-delay: 330ms; }
+.mk-stagger > *:nth-child(n+13) { animation-delay: 360ms; }
+
+/* Dokunma katmanı — kapsayıcıya verilir; çocuklar kalkar-oturur (ikincil: gölge) */
+.mk-hovlift > * { transition: transform var(--mk-hizli) var(--mk-ease),
+                              box-shadow var(--mk-hizli) var(--mk-ease),
+                              border-color var(--mk-hizli) var(--mk-ease); }
+.mk-hovlift > *:hover  { transform: translateY(-2px); box-shadow: 0 8px 22px rgba(0,0,0,.28); }
+.mk-hovlift > *:active { transform: translateY(0) scale(.985); box-shadow: 0 3px 10px rgba(0,0,0,.2); }
+
+/* Sağ çekmece (PDF önizleme) — sağdan süzülür; perde yumuşak belirir */
+.mk-perde   { animation: mkBelir var(--mk-orta) var(--mk-ease) both; }
+.mk-cekmece { animation: mkKay var(--mk-yavas) var(--mk-ease) both; }
+
+/* Modal (➕ Yeni Fiyat) — hafif büyüyerek gelir */
+.mk-modal { animation: mkBuyu var(--mk-orta) var(--mk-ease) both; }
+
+/* Zincir blokları (fiyat geçmişi / hareket izi) — hızlı mikro kademe (20ms) */
+.mk-stagger-s > * { animation: mkYuksel 220ms var(--mk-ease) both; }
+.mk-stagger-s > *:nth-child(1) { animation-delay: 0ms; }
+.mk-stagger-s > *:nth-child(2) { animation-delay: 20ms; }
+.mk-stagger-s > *:nth-child(3) { animation-delay: 40ms; }
+.mk-stagger-s > *:nth-child(4) { animation-delay: 60ms; }
+.mk-stagger-s > *:nth-child(5) { animation-delay: 80ms; }
+.mk-stagger-s > *:nth-child(6) { animation-delay: 100ms; }
+.mk-stagger-s > *:nth-child(n+7) { animation-delay: 120ms; }
+
+/* Erişilebilirlik: hareket azaltma tercihine saygı */
+@media (prefers-reduced-motion: reduce) {
+  .mk-rise, .mk-stagger > *, .mk-stagger-s > *, .mk-perde, .mk-cekmece, .mk-modal { animation: none !important; }
+  .mk-hovlift > * { transition: none !important; }
+}

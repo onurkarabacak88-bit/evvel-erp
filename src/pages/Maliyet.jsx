@@ -764,7 +764,7 @@ export default function Maliyet() {
             {(() => {
               const tr = yon(netKar, oNet, true);
               return (
-                <div className="card" style={{ borderTop: `3px solid ${netRenk || 'var(--accent)'}`, marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 16 }}>
+                <div className="card mk-rise" style={{ borderTop: `3px solid ${netRenk || 'var(--accent)'}`, marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 16 }}>
                   <div style={{ minWidth: 0 }}>
                     <div style={{ fontSize: 13, color: 'var(--text3)', marginBottom: 4, display: 'flex', alignItems: 'center', gap: 8 }}>
                       {netKar >= 0 ? '✅' : '🔴'} Net Kâr
@@ -780,7 +780,7 @@ export default function Maliyet() {
               );
             })()}
             {/* Alt KPI üçlüsü */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12 }}>
+            <div className="mk-stagger mk-hovlift" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12 }}>
               {kart('Marj', marj == null ? '—' : `%${marj.toFixed(1)}`, 'net kâr / net satış (KDV hariç)', netRenk, marj != null && oMarj != null ? yon(marj, oMarj, true) : null)}
               {kart('💵 Ciro (KDV dahil)', fmt(ciro), `günlük ort. ${fmt(ciro / Math.max(1, gunSayisi))}`, 'var(--accent)', yon(ciro, oCiro, true), sparkline(ciroSeri, 'var(--accent)'))}
               {kart('📉 Toplam Maliyet (KDV dahil)', fmt(maliyet), maliyetDetayAcik ? 'kapat ▴' : 'kırılımı gör ▾ · KDV-hariç net maliyet P&L tablosunda', '#f59e0b', yon(maliyet, oMaliyet, false), null, () => setMaliyetDetayAcik(v => !v))}
@@ -803,7 +803,7 @@ export default function Maliyet() {
               const renk = fark > 0 ? 'var(--green)' : fark < 0 ? 'var(--red)' : 'var(--text3)';
               const etiket = fark > 0 ? `+${fmt(fark)} FAZLA` : fark < 0 ? `−${fmt(Math.abs(fark))} AÇIK` : 'FARK YOK';
               return (
-                <div className="card" style={{ marginTop: 12, borderTop: `3px solid ${renk}` }}>
+                <div className="card mk-rise" style={{ marginTop: 12, borderTop: `3px solid ${renk}` }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
                     <div style={{ fontSize: 13, fontWeight: 700 }}>⚖️ Evo ↔ Fiziki Kasa</div>
                     <div style={{ display: 'flex', gap: 18, alignItems: 'center', flexWrap: 'wrap' }}>

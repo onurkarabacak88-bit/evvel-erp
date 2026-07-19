@@ -209,7 +209,7 @@ export default function FiyatPanosu() {
 
       <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start', flexWrap: 'wrap' }}>
         {/* SOL RAIL — Son Yükselenler + Fiyatsızlar */}
-        <div className="card" style={{ flex: '0 1 280px', minWidth: 245, padding: 12 }}>
+        <div className="card mk-rise" style={{ flex: '0 1 280px', minWidth: 245, padding: 12 }}>
           <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--text3)', marginBottom: 6 }}>
             🔺 SON YÜKSELENLER
           </div>
@@ -255,7 +255,7 @@ export default function FiyatPanosu() {
           {aramaSonuc ? (
             <>
               <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 8 }}>🔍 "{ara}" — {aramaSonuc.length} ürün</div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 10 }}>
+              <div className="mk-stagger mk-hovlift" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 10 }}>
                 {aramaSonuc.map(urunKutusu)}
               </div>
             </>
@@ -266,7 +266,7 @@ export default function FiyatPanosu() {
                   Filtre aktif — {sadeceAlarm ? 'yalnız eşik üstü zam alanlar' : 'yalnız bu dönemde değişenler'} gösteriliyor.
                 </div>
               )}
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))', gap: 10 }}>
+              <div className="mk-stagger mk-hovlift" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))', gap: 10 }}>
                 {katListe.map(kt => {
                   const zamli = kt.urunler.filter(u => (u.degisim_pct || 0) > 0 && !u.sicrama).length;
                   const fyok = kt.urunler.filter(u => u.fiyat_yok).length;
@@ -297,7 +297,7 @@ export default function FiyatPanosu() {
                   <span style={{ fontWeight: 400, fontSize: 11.5, color: 'var(--text3)' }}> · {seciliKat.urunler.length} ürün</span>
                 </span>
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 10 }}>
+              <div className="mk-stagger mk-hovlift" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 10 }}>
                 {urunSirala(seciliKat.urunler).map(urunKutusu)}
               </div>
             </>
@@ -305,7 +305,7 @@ export default function FiyatPanosu() {
         </div>
 
         {/* SAĞ — fiyat geçmişi + bağlamsal YENİ FİYAT girişi */}
-        <div className="card" style={{ flex: '0 1 380px', minWidth: 300, padding: 14 }}>
+        <div className="card mk-rise" style={{ flex: '0 1 380px', minWidth: 300, padding: 14 }}>
           {!seciliK && (
             <div style={{ fontSize: 12.5, color: 'var(--text3)' }}>
               👈 Bir ürüne tıkla — fiyat geçmişi burada açılır; aynı panelden yeni fiyat girebilirsin.
@@ -346,7 +346,7 @@ export default function FiyatPanosu() {
                   </div>
                 )}
                 {z.map((b, i) => (
-                  <div key={i}>
+                  <div key={i} className="mk-stagger-s">
                     {i > 0 && (b.duzeltme ? (
                       <div style={{ fontSize: 11.5, fontWeight: 700, padding: '3px 0 3px 14px', color: 'var(--text3)' }}>
                         🔧 birim düzeltmesi (zam değil)
@@ -394,9 +394,9 @@ export default function FiyatPanosu() {
       {/* GLOBAL YENİ FİYAT MODALI — ürün seçilebilir */}
       {modal && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 70 }}>
-          <div onClick={() => setModal(false)} style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,.45)' }} />
-          <div style={{ position: 'absolute', top: '12%', left: '50%', transform: 'translateX(-50%)',
-                        width: 'min(430px, 92vw)', background: 'var(--bg1, #17110c)', borderRadius: 14,
+          <div className="mk-perde" onClick={() => setModal(false)} style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,.45)' }} />
+          <div className="mk-modal" style={{ position: 'absolute', top: '12%', left: '50%',
+                        width: 'min(430px, 92vw)', marginLeft: 'calc(min(430px, 92vw) / -2)', background: 'var(--bg1, #17110c)', borderRadius: 14,
                         border: '1px solid var(--border)', padding: 18, boxShadow: '0 12px 40px rgba(0,0,0,.5)' }}>
             <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 10 }}>➕ Yeni Fiyat</div>
             {form && girisFormu(form, setForm, () => { setModal(false); setForm(null); }, false)}

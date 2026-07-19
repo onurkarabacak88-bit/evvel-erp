@@ -253,8 +253,8 @@ export default function CariEkstrePanel({ ek, ad, mode = 'review' }) {
       {/* 📄 BELGE ÇEKMECESİ — sağdan açılır, ekstre görünür kalır */}
       {onizle && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 70 }}>
-          <div onClick={() => setOnizle(null)} style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,.45)' }} />
-          <div style={{ position: 'absolute', top: 0, right: 0, bottom: 0, width: 'min(760px, 94vw)',
+          <div className="mk-perde" onClick={() => setOnizle(null)} style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,.45)' }} />
+          <div className="mk-cekmece" style={{ position: 'absolute', top: 0, right: 0, bottom: 0, width: 'min(760px, 94vw)',
                         background: 'var(--bg1, #17110c)', borderLeft: '1px solid var(--border)',
                         display: 'flex', flexDirection: 'column', boxShadow: '-8px 0 28px rgba(0,0,0,.4)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10,

@@ -151,7 +151,7 @@ export default function IzlemePanosu() {
         return (
           <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start', flexWrap: 'wrap' }}>
             {/* SOL RAIL — en çok tüketilenler */}
-            <div className="card" style={{ flex: '0 1 280px', minWidth: 245, padding: 12 }}>
+            <div className="card mk-rise" style={{ flex: '0 1 280px', minWidth: 245, padding: 12 }}>
               <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--text3)', marginBottom: 2 }}>
                 🔻 SON 7 GÜNDE EN ÇOK DÜŞENLER
               </div>
@@ -185,7 +185,7 @@ export default function IzlemePanosu() {
               {dAramaSonuc ? (
                 <>
                   <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 8 }}>🔍 "{ara}" — {dAramaSonuc.length} ürün</div>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 10 }}>
+                  <div className="mk-stagger mk-hovlift" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 10 }}>
                     {dAramaSonuc.map(depoKutu)}
                   </div>
                 </>
@@ -194,7 +194,7 @@ export default function IzlemePanosu() {
                   <div style={{ fontSize: 11.5, color: 'var(--text3)', marginBottom: 8 }}>
                     Kategoriye tıkla → depodaki ürünler; ürüne tıkla → sağda gün gün düşüm izi.
                   </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))', gap: 10 }}>
+                  <div className="mk-stagger mk-hovlift" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))', gap: 10 }}>
                     {dKatListe.map(kt => {
                       const kritik = kt.urunler.filter(u => gz(u).kritik).length;
                       const dusum = Math.round(kt.urunler.reduce((a, u) => a + (u.dusum_7g || 0), 0));
@@ -225,7 +225,7 @@ export default function IzlemePanosu() {
                       <span style={{ fontWeight: 400, fontSize: 11.5, color: 'var(--text3)' }}> · {dSeciliKat.urunler.length} ürün</span>
                     </span>
                   </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 10 }}>
+                  <div className="mk-stagger mk-hovlift" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 10 }}>
                     {dSirala(dSeciliKat.urunler).map(depoKutu)}
                   </div>
                 </>
@@ -233,7 +233,7 @@ export default function IzlemePanosu() {
             </div>
 
             {/* SAĞ — GÜN GÜN DÜŞÜM İZİ (önceki → sonraki) */}
-            <div className="card" style={{ flex: '0 1 400px', minWidth: 300, padding: 14 }}>
+            <div className="card mk-rise" style={{ flex: '0 1 400px', minWidth: 300, padding: 14 }}>
               {!dSecili && (
                 <div style={{ fontSize: 12.5, color: 'var(--text3)' }}>
                   👈 Bir ürüne tıkla — depodaki kalan + gün gün düşüm izi burada açılır
