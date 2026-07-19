@@ -902,8 +902,17 @@ export default function OdemeMerkezi() {
         // gecici = internetten kartla tek seferlik alım (ödemesi kart ekstresinde) — cari takip edilmez
         const sozler = (liste || []).filter(r => r.kaynak_tablo === 'vadeli_alimlar'
           && r.tedarikci_sinif !== 'hizmet' && r.tedarikci_sinif !== 'gecici');
-        const malCariler = (cariler || []).filter(t => !['hizmet', 'gecici'].includes(t.sinif || 'mal') && (t.hesaplanan_acik || 0) > 1)
-          .sort((a, b) => (b.hesaplanan_acik || 0) - (a.hesaplanan_acik || 0));
+        // 🏪 HER SÜREKLİ TEDARİKÇİ = KART (sahip: 'her tedarikçi tek tek başlık/kart
+        // olsun; kullanımı fazla olanlar başta; eklendikçe kart da eklenir'):
+        // borcu 0 olsa da faturası/hareketi olan tedarikçi listede KALIR (SÜTAŞ dersi —
+        // beyanla sıfırlandı diye kaybolmasın); sıralama = KULLANIM (6 ay fatura adet,
+        // eş adette ciro), borç değil. Yeni tedarikçi faturası yüklenince cari-ozet'ten
+        // kendiliğinden kart olur — elle ekleme yok.
+        const malCariler = (cariler || []).filter(t => !['hizmet', 'gecici'].includes(t.sinif || 'mal')
+          && ((t.hesaplanan_acik || 0) > 1 || (t.fatura_adet_6ay || 0) > 0 || (t.odeme_izi_toplam_6ay || 0) > 0))
+          .sort((a, b) => (b.fatura_adet_6ay || 0) - (a.fatura_adet_6ay || 0)
+            || (b.fatura_toplam_6ay || 0) - (a.fatura_toplam_6ay || 0)
+            || (b.hesaplanan_acik || 0) - (a.hesaplanan_acik || 0));
         const kullanilan = new Set();
         const gruplar = malCariler.map(t => {
           const ait = sozler.filter(r => !kullanilan.has(r.id) && tedarikciEslesir(r.tedarikci || r.baslik, t.tedarikci));
@@ -915,40 +924,59 @@ export default function OdemeMerkezi() {
         return (
           <div className="card" style={{ padding: 16, marginBottom: 14 }}>
             <div style={{ fontWeight: 800, marginBottom: 4 }}>
-              🏪 Tedarikçi Borçları <span style={{ fontWeight: 400, fontSize: 12, color: 'var(--text3)' }}>— tedarikçi başına tek satır; tıkla, sözlerini gör</span>
+              🏪 Tedarikçiler <span style={{ fontWeight: 400, fontSize: 12, color: 'var(--text3)' }}>— her sürekli tedarikçi kendi kartında; en çok çalışılan üstte; karta tıkla, ekstresi açılır</span>
             </div>
             {cariler === null && <div style={{ color: 'var(--text3)', fontSize: 13 }}>Yükleniyor…</div>}
             {cariler !== null && gruplar.length === 0 && serbestSozler.length === 0 && (
               <div style={{ textAlign: 'center', padding: 30, color: 'var(--text3)' }}>
-                <div style={{ fontSize: 40, marginBottom: 6 }}>🎉</div>Açık tedarikçi borcu yok.
+                <div style={{ fontSize: 40, marginBottom: 6 }}>🎉</div>Kayıtlı tedarikçi hareketi yok — ilk fatura yüklenince kartı burada belirir.
               </div>
             )}
             {gruplar.map(({ t, ait, takvimli, takvimsiz }, i) => {
               const acik = t.hesaplanan_acik || 0;
               const acikMi = cariSecili === t.tedarikci;
+              const kapali = acik <= 1;
+              const gecikmisVade = !kapali && t.en_yakin_vade && t.en_yakin_vade < bugunISO() && (t.bekleyen_vade_toplam || 0) > 0;
+              const durumRenk = kapali ? 'var(--green, #22c55e)'
+                : gecikmisVade ? 'var(--red, #ef4444)'
+                : takvimsiz > Math.max(500, acik * 0.05) ? '#f59e0b' : 'var(--green, #22c55e)';
               return (
-                <div key={i} style={{ margin: '6px 0', borderRadius: 10, background: 'var(--bg2)',
-                                      borderLeft: `4px solid ${takvimsiz <= Math.max(500, acik * 0.05) ? 'var(--green, #22c55e)' : '#f59e0b'}` }}>
+                <div key={i} style={{ margin: '10px 0', borderRadius: 14, background: 'var(--bg2)',
+                                      border: '1px solid var(--border)', overflow: 'hidden',
+                                      borderLeft: `4px solid ${durumRenk}` }}>
                   <div onClick={() => cariAc(t.tedarikci)}
                     style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10,
-                             padding: '10px 12px', cursor: 'pointer', flexWrap: 'wrap' }}>
+                             padding: '13px 14px', cursor: 'pointer', flexWrap: 'wrap' }}>
                     <span style={{ minWidth: 0 }}>
-                      <div style={{ fontWeight: 700, fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 340 }}>
+                      <div style={{ fontWeight: 800, fontSize: 14.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 380 }}>
                         {acikMi ? '▾' : '▸'} {t.tedarikci}
+                        {kapali && <span style={{ marginLeft: 8, fontSize: 10.5, fontWeight: 700, padding: '2px 8px', borderRadius: 8,
+                                                  border: '1px solid var(--green, #22c55e)', color: 'var(--green, #22c55e)' }}>cari kapalı ✓</span>}
+                        {gecikmisVade && <span style={{ marginLeft: 8, fontSize: 10.5, fontWeight: 700, padding: '2px 8px', borderRadius: 8,
+                                                        border: '1px solid var(--red, #ef4444)', color: 'var(--red, #ef4444)' }}>vadesi geçti</span>}
                       </div>
-                      <div style={{ fontSize: 11, color: 'var(--text3)' }}>
-                        {takvimli > 0 ? `takvimli ${fmt(takvimli)} (${ait.length} söz)` : ''}
-                        {takvimli > 0 && takvimsiz > 0 ? ' · ' : ''}
-                        {takvimsiz > 0 ? `⚠ takvimsiz ${fmt(takvimsiz)}` : (takvimli > 0 ? '' : '⚠ takvimsiz borç')}
+                      <div style={{ fontSize: 11.5, color: 'var(--text3)', marginTop: 3 }}>
+                        📄 {t.fatura_adet_6ay || 0} fatura (6 ay) · {fmt(t.fatura_toplam_6ay || 0)} alım
+                        {t.son_fatura ? ` · son ${trT(String(t.son_fatura))}` : ''}
+                        {!kapali && takvimli > 0 ? ` · takvimli ${fmt(takvimli)}` : ''}
+                        {!kapali && takvimsiz > 0 ? ` · ⚠ takvimsiz ${fmt(takvimsiz)}` : ''}
                         {(t.resmi_adlar || []).length > 0 && (
                           <span> · 🔗 {t.resmi_adlar.map(a => a.split(' ').slice(0, 2).join(' ')).join(' + ')}</span>
                         )}
                       </div>
                     </span>
                     <span style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-                      <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 800, fontSize: 15 }}>{fmt(acik)}</span>
-                      <button className="btn btn-primary btn-sm" onClick={e => { e.stopPropagation(); cariOde(t); }}>💸 Öde</button>
-                      <button className="btn btn-secondary btn-sm" onClick={e => { e.stopPropagation(); cariVade(t); }}>🤝 Vadeye</button>
+                      <span style={{ textAlign: 'right' }}>
+                        <div style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--text3)' }}>açık bakiye</div>
+                        <div style={{ fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums', fontWeight: 800, fontSize: 16,
+                                      color: kapali ? 'var(--green, #22c55e)' : 'var(--text)' }}>{fmt(acik)}</div>
+                      </span>
+                      {!kapali && (
+                        <>
+                          <button className="btn btn-primary btn-sm" onClick={e => { e.stopPropagation(); cariOde(t); }}>💸 Öde</button>
+                          <button className="btn btn-secondary btn-sm" onClick={e => { e.stopPropagation(); cariVade(t); }}>🤝 Vadeye</button>
+                        </>
+                      )}
                     </span>
                   </div>
                   {acikMi && ait.length > 0 && (
@@ -956,7 +984,7 @@ export default function OdemeMerkezi() {
                       {ait.map(r => <Satir key={r.id} r={r} />)}
                     </div>
                   )}
-                  {acikMi && ait.length === 0 && (
+                  {acikMi && ait.length === 0 && !kapali && (
                     <div style={{ padding: '0 12px 10px 22px', fontSize: 12, color: 'var(--text3)' }}>
                       Kuyrukta sözü yok — 🤝 Vadeye ile takvime bağla ya da 💸 Öde.
                     </div>
