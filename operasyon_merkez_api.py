@@ -14676,6 +14676,33 @@ def _fiyat_zam_alarmi_yaz(cur: Any, kalem: str, kalem_adi: Optional[str],
         pass
 
 
+# ── 📦 AÇILIŞ BİRİMİ (2026-07-19, sahip: "pipet paket olarak açılır 42,50 doğru;
+# Sprite birim olarak açılır; Oreo kutu bazlı — ürün-aç mantığında formül
+# geliştirmeliyiz, gelen faturalardan birim fiyat önemli"). ERP UOM deseni:
+# SATIN ALMA birimi ≠ AÇILIŞ (tüketim) birimi. Kural=VERİ: her kaleme
+# fatura_icerik katsayısı (1 fatura birimi = kaç AÇILIŞ birimi). Fatura onayından
+# fiyat yazılırken katsayıya BÖLÜNÜR → ürün-aç tıklaması hep doğru fiyatı yakar.
+def _acilis_birimi_ensure(cur: Any) -> None:
+    cur.execute(
+        """CREATE TABLE IF NOT EXISTS urun_acilis_birimi (
+               kalem_kodu TEXT PRIMARY KEY,
+               acilis_birim TEXT,               -- adet | paket | kutu | koli (bilgi)
+               fatura_icerik NUMERIC NOT NULL DEFAULT 1,  -- 1 fatura birimi = kaç açılış birimi
+               notlar TEXT,
+               guncelleme TIMESTAMPTZ NOT NULL DEFAULT NOW())""")
+
+
+def _fatura_icerik(cur: Any, kalem: str) -> float:
+    try:
+        _acilis_birimi_ensure(cur)
+        cur.execute("SELECT fatura_icerik::float AS i FROM urun_acilis_birimi WHERE kalem_kodu=%s", (kalem,))
+        r = cur.fetchone()
+        v = float((r or {}).get("i") or 1)
+        return v if v > 0 else 1.0
+    except Exception:  # noqa: BLE001
+        return 1.0
+
+
 def _kaydet_alis_fiyati(cur: Any, kalem: str, kalem_adi: Optional[str], birim: str,
                         birim_maliyet_tl: float, bas: str, tedarikci: Optional[str],
                         notlar: Optional[str]) -> str:
@@ -14691,6 +14718,13 @@ def _kaydet_alis_fiyati(cur: Any, kalem: str, kalem_adi: Optional[str], birim: s
     işaretlenir ve "en güncel fiyat" (sube_depo_stok.alis_fiyati_tl) GÜNCELLENMEZ —
     çünkü daha yeni tarihli bir fiyat zaten mevcuttur."""
     _ensure_maliyet_tablolari(cur)
+    # 📦 AÇILIŞ BİRİMİ NORMALİZASYONU: kalemin fatura_icerik katsayısı > 1 ise
+    # (fatura koli/çoklu satıyor, personel tekil açıyor) fiyat katsayıya bölünür.
+    _icerik = _fatura_icerik(cur, kalem)
+    if _icerik > 1:
+        _orij = birim_maliyet_tl
+        birim_maliyet_tl = round(birim_maliyet_tl / _icerik, 4)
+        notlar = f"{notlar or ''} · 📦 fatura {_orij:.2f} ÷ içerik {_icerik:g} = açılış birimi fiyatı".strip(' ·')
     # Zam tespiti için: bu fiyatın YERİNE geçtiği önceki fiyat (bas'tan önceki en güncel)
     cur.execute(
         "SELECT birim_maliyet_tl FROM urun_alis_fiyat WHERE kalem_kodu = %s AND gecerli_baslangic < %s ORDER BY gecerli_baslangic DESC LIMIT 1",
@@ -14730,6 +14764,72 @@ def _kaydet_alis_fiyati(cur: Any, kalem: str, kalem_adi: Optional[str], birim: s
     # Zam alarmı: yeni fiyat öncekini eşik üstü aşıyorsa denetim sinyali yaz
     _fiyat_zam_alarmi_yaz(cur, kalem, kalem_adi, _onceki_fiyat, birim_maliyet_tl, tedarikci)
     return new_id
+
+
+@router.get("/maliyet/acilis-birimleri")
+def ops_acilis_birimleri():
+    """📦 Kalem → açılış birimi + fatura içerik katsayısı listesi (kural=VERİ)."""
+    with db() as (_, cur):
+        _acilis_birimi_ensure(cur)
+        cur.execute("""SELECT kalem_kodu, acilis_birim, fatura_icerik::float AS fatura_icerik,
+                              notlar, guncelleme::text AS guncelleme
+                       FROM urun_acilis_birimi ORDER BY guncelleme DESC""")
+        return {"kayitlar": [dict(r) for r in cur.fetchall() or []],
+                "not": ("fatura_icerik = 1 fatura biriminin içindeki AÇILIŞ birimi sayısı. "
+                        "Fatura onayından fiyat yazılırken bu katsayıya bölünür — ürün-aç "
+                        "tıklaması her zaman açılış biriminin fiyatını yakar.")}
+
+
+class AcilisBirimiBody(BaseModel):
+    kalem_kodu: str
+    acilis_birim: str = "adet"          # adet | paket | kutu (bilgi amaçlı)
+    fatura_icerik: float = 1            # 1 fatura birimi = kaç açılış birimi
+    notlar: Optional[str] = None
+    dogru_fiyat: Optional[float] = None  # verilirse BUGÜNDEN düzeltilmiş fiyat satırı yazılır
+
+
+@router.post("/maliyet/acilis-birimi")
+def ops_acilis_birimi_kaydet(body: AcilisBirimiBody):
+    """📦 Açılış birimi tanımla (sahip onayı) + isteğe bağlı fiyat düzeltmesi.
+    dogru_fiyat verilirse bugünden yeni fiyat dönemi açılır (geçmiş korunur)."""
+    kalem = (body.kalem_kodu or "").strip()
+    if not kalem:
+        raise HTTPException(400, "kalem_kodu zorunlu")
+    if body.fatura_icerik <= 0:
+        raise HTTPException(400, "fatura_icerik > 0 olmalı")
+    with db() as (conn, cur):
+        _acilis_birimi_ensure(cur)
+        cur.execute(
+            """INSERT INTO urun_acilis_birimi (kalem_kodu, acilis_birim, fatura_icerik, notlar, guncelleme)
+               VALUES (%s,%s,%s,%s,NOW())
+               ON CONFLICT (kalem_kodu) DO UPDATE
+                 SET acilis_birim=EXCLUDED.acilis_birim, fatura_icerik=EXCLUDED.fatura_icerik,
+                     notlar=EXCLUDED.notlar, guncelleme=NOW()""",
+            (kalem, (body.acilis_birim or "adet").strip(), round(body.fatura_icerik, 4),
+             (body.notlar or "").strip() or None))
+        fiyat_id = None
+        if body.dogru_fiyat is not None and body.dogru_fiyat > 0:
+            # Düzeltme fiyatı DOĞRUDAN yazılır (katsayı uygulanmaz — zaten açılış birimi)
+            cur.execute("SELECT kalem_adi, birim FROM urun_alis_fiyat WHERE kalem_kodu=%s ORDER BY gecerli_baslangic DESC LIMIT 1", (kalem,))
+            _m = dict(cur.fetchone() or {})
+            cur.execute(
+                "UPDATE urun_alis_fiyat SET gecerli_bitis=%s WHERE kalem_kodu=%s AND gecerli_bitis IS NULL AND gecerli_baslangic < %s",
+                (str(date.today()), kalem, str(date.today())))
+            cur.execute(
+                """INSERT INTO urun_alis_fiyat (kalem_kodu, kalem_adi, birim, birim_maliyet_tl, gecerli_baslangic, tedarikci, notlar)
+                   VALUES (%s,%s,%s,%s,%s,NULL,%s) RETURNING id""",
+                (kalem, _m.get("kalem_adi") or kalem, _m.get("birim") or body.acilis_birim,
+                 round(body.dogru_fiyat, 4), str(date.today()),
+                 f"📦 açılış birimi düzeltmesi (sahip onayı): {body.notlar or ''}".strip()))
+            fiyat_id = str((cur.fetchone() or {}).get("id") or "")
+            try:
+                cur.execute("UPDATE sube_depo_stok SET alis_fiyati_tl=%s, guncelleme=NOW() WHERE kalem_kodu=%s",
+                            (round(body.dogru_fiyat, 4), kalem))
+            except Exception:  # noqa: BLE001
+                pass
+        conn.commit()
+    return {"ok": True, "kalem_kodu": kalem, "fatura_icerik": body.fatura_icerik,
+            "fiyat_duzeltildi": fiyat_id is not None, "fiyat_id": fiyat_id}
 
 
 @router.get("/fiyat-zam-alarmlari")
