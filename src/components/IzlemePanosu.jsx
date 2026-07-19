@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { api, fmt } from '../utils/api';
 import { trT } from './CariEkstrePanel';
 
@@ -28,6 +28,15 @@ export default function IzlemePanosu() {
   // ✏️ stok düzeltme formu (OM onay akışının sadeleşmiş hali — sayım düzeltme)
   const [duz, setDuz] = useState(null);         // {sube_id, adet, min}
   const [mesgul, setMesgul] = useState(false);
+  // 📣 Kayıt geri bildirimi — alert() yerine görünür, kendiliğinden sönen toast
+  const [toast, setToast] = useState(null);     // {t:'ok'|'err', m}
+  const toastZaman = useRef(null);
+  const bildir = (t, m) => {
+    setToast({ t, m });
+    clearTimeout(toastZaman.current);
+    toastZaman.current = setTimeout(() => setToast(null), 4500);
+  };
+  useEffect(() => () => clearTimeout(toastZaman.current), []);
   // 📦 depo verisi
   const [dd, setDd] = useState(null);
   const yenile = () => api('/ops/maliyet/depo-izleme').then(setDd).catch(() => setDd({ hata: true }));
@@ -45,15 +54,17 @@ export default function IzlemePanosu() {
     const kir = (k.sube_kirilim || []).find(x => x.sube_id === f.sube_id);
     setMesgul(true);
     try {
+      const yeniAdet = Math.max(0, Math.round(Number(String(f.adet).replace(',', '.')) || 0));
       await api('/ops/v2/sube-depo/guncelle', { method: 'POST', body: {
         sube_id: f.sube_id, kalem_kodu: k.kalem_kodu, kalem_adi: k.kalem_adi,
-        mevcut_adet: Math.max(0, Math.round(Number(String(f.adet).replace(',', '.')) || 0)),
+        mevcut_adet: yeniAdet,
         min_stok: Math.max(0, Math.round(Number(String(f.min).replace(',', '.')) || 0)),
         alis_fiyati_tl: kir?.alis_fiyati || 0,   // mevcut depo fiyatı korunur (0'a ezilmesin)
         giris_nedeni: 'sayim_duzeltme',
       }});
       setDuz(null); yenile();
-    } catch (e) { alert(e?.message || 'kaydedilemedi'); }
+      bildir('ok', `✅ ${kir?.sube_ad || f.sube_id} · ${k.kalem_adi}: ${kir != null ? `${Math.round(kir.adet)} → ` : ''}${yeniAdet} kaydedildi`);
+    } catch (e) { bildir('err', `❌ Kaydedilemedi — ${e?.message || 'bilinmeyen hata'}`); }
     finally { setMesgul(false); }
   }
 
@@ -71,6 +82,15 @@ export default function IzlemePanosu() {
 
   return (
     <div>
+      {toast && (
+        <div style={{ position: 'fixed', bottom: 26, left: '50%', width: 340, marginLeft: -170, zIndex: 130,
+                      padding: '11px 15px', borderRadius: 12, fontSize: 12.5, fontWeight: 700, textAlign: 'center',
+                      background: toast.t === 'ok' ? 'linear-gradient(135deg,#4ade80,#22c55e)' : 'linear-gradient(135deg,#fb7185,#ef4444)',
+                      color: toast.t === 'ok' ? '#052e14' : '#fff',
+                      boxShadow: '0 10px 28px rgba(0,0,0,.4)' }}>
+          {toast.m}
+        </div>
+      )}
       {/* KABUK BAŞLIĞI — görünüm pilleri + dönem + arama */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 12 }}>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { api, fmt } from '../utils/api';
 import { trT } from './CariEkstrePanel';
 
@@ -34,12 +34,22 @@ export default function FiyatPanosu() {
   const [form, setForm] = useState(null);     // {kalem_kodu(locked), yeni, tarih, tedarikci, not}
   const [modal, setModal] = useState(false);  // global giriş (ürün seçilebilir)
   const [mesgul, setMesgul] = useState(false);
+  // 📣 Kayıt geri bildirimi — alert() yerine görünür, kendiliğinden sönen toast
+  // (Stripe deseni: kullanıcı NE değiştiğini kayıttan sonra da görür)
+  const [toast, setToast] = useState(null);   // {t:'ok'|'err', m}
+  const toastZaman = useRef(null);
+  const bildir = (t, m) => {
+    setToast({ t, m });
+    clearTimeout(toastZaman.current);
+    toastZaman.current = setTimeout(() => setToast(null), 4500);
+  };
+  useEffect(() => () => clearTimeout(toastZaman.current), []);
   const bugun = new Date().toISOString().slice(0, 10);
   const formAc = (k) => setForm({ kalem_kodu: k.kalem_kodu, kalem_adi: k.kalem_adi, birim: k.birim || 'adet',
                                   guncel: k.guncel_fiyat, yeni: '', tarih: bugun, tedarikci: k.tedarikci || '', not: '' });
   async function fiyatKaydet(f, kapat) {
     const yeni = Number(String(f.yeni).replace(',', '.'));
-    if (!f.kalem_kodu || !yeni || yeni <= 0) { alert('Ürün ve geçerli bir fiyat gerekli'); return; }
+    if (!f.kalem_kodu || !yeni || yeni <= 0) { bildir('err', '⚠ Ürün ve geçerli bir fiyat gerekli'); return; }
     setMesgul(true);
     try {
       await api('/ops/maliyet/alis-fiyat-kaydet', { method: 'POST', body: {
@@ -49,7 +59,8 @@ export default function FiyatPanosu() {
         notlar: `✍️ Elle giriş${f.not ? ' — ' + f.not.trim() : ''}`,
       }});
       kapat(); yenile();
-    } catch (e) { alert(e?.message || 'kaydedilemedi'); }
+      bildir('ok', `✅ ${f.kalem_adi || f.kalem_kodu}: ${f.guncel != null ? `${fmt(f.guncel)} → ` : ''}${fmt(yeni)} kaydedildi`);
+    } catch (e) { bildir('err', `❌ Kaydedilemedi — ${e?.message || 'bilinmeyen hata'}`); }
     finally { setMesgul(false); }
   }
 
@@ -198,6 +209,15 @@ export default function FiyatPanosu() {
 
   return (
     <div>
+      {toast && (
+        <div style={{ position: 'fixed', bottom: 26, left: '50%', width: 340, marginLeft: -170, zIndex: 130,
+                      padding: '11px 15px', borderRadius: 12, fontSize: 12.5, fontWeight: 700, textAlign: 'center',
+                      background: toast.t === 'ok' ? 'linear-gradient(135deg,#4ade80,#22c55e)' : 'linear-gradient(135deg,#fb7185,#ef4444)',
+                      color: toast.t === 'ok' ? '#052e14' : '#fff',
+                      boxShadow: '0 10px 28px rgba(0,0,0,.4)' }}>
+          {toast.m}
+        </div>
+      )}
       {/* ÜST BAR — arama + filtreler + global Yeni Fiyat */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 12 }}>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
