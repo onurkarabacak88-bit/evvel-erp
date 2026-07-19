@@ -14991,6 +14991,114 @@ def ops_fiyat_izleme():
             "not": "zincir = birleşik fiyat dönemleri (ardışık aynı fiyat tek blok); degisim_pct önceki döneme göre."}
 
 
+@router.get("/maliyet/depo-izleme")
+def ops_depo_izleme():
+    """📦 İZLEME PANOSU — DEPO görünümü (sahip 2026-07-19: 'depo alanını da
+    maliyet alanına alalım; ürün-aç'tan düşümünü izleyeyim — 13 espresso 12'ye
+    düştüyse hangi gün, tek tek'). Kaynak: sube_depo_stok (kalan) +
+    sube_depo_stok_hareket (önceki→sonraki iz defteri). Salt-okur."""
+    from collections import defaultdict
+    with db() as (_, cur):
+        cur.execute("SELECT id::text AS id, ad FROM subeler")
+        sube_ad = {str(r["id"]): (r["ad"] or str(r["id"])) for r in cur.fetchall() or []}
+        cur.execute("""SELECT sube_id::text AS sube_id, kalem_kodu, kalem_adi,
+                              COALESCE(mevcut_adet,0)::float AS adet,
+                              COALESCE(min_stok,0)::float AS min_stok
+                       FROM sube_depo_stok""")
+        stoklar = [dict(r) for r in cur.fetchall() or []]
+        try:
+            cur.execute("""SELECT zaman::date::text AS t, to_char(zaman,'HH24:MI') AS saat,
+                                  sube_id::text AS sube_id, kalem_kodu, kalem_adi,
+                                  hareket_turu, miktar::float AS miktar,
+                                  onceki_miktar::float AS onceki, sonraki_miktar::float AS sonraki
+                           FROM sube_depo_stok_hareket
+                           WHERE zaman >= NOW() - INTERVAL '45 days'
+                           ORDER BY zaman DESC LIMIT 5000""")
+            hareketler = [dict(r) for r in cur.fetchall() or []]
+        except Exception:  # noqa: BLE001 — tablo yoksa kalanlar yine döner
+            hareketler = []
+        # Kategori köprüsü (fiyat-izleme ile aynı zincir: UUID → depo kodu → havuz çözücü → ad)
+        try:
+            cur.execute("""SELECT u.id::text AS id, u.ad, u.depo_stok_kalem_kodu AS depo_kod,
+                                  k.ad AS kat_ad, COALESCE(k.emoji,'📦') AS kat_emoji,
+                                  COALESCE(k.sira,999) AS kat_sira
+                           FROM siparis_urun u
+                           LEFT JOIN siparis_kategori k ON k.id = u.kategori_id
+                           WHERE COALESCE(u.ad,'') <> '' AND u.aktif = TRUE""")
+            urunler = [dict(r) for r in cur.fetchall() or []]
+        except Exception:  # noqa: BLE001
+            urunler = []
+    kat_map = {u["id"]: u for u in urunler}
+    depo_kat = {}
+    stok_key_kat = {}
+    ad_kat = {}
+    for u in urunler:
+        dk = (u.get("depo_kod") or "").strip()
+        if dk:
+            depo_kat.setdefault(dk, u)
+        try:
+            sk = _stok_key_from_urun_ad(u.get("ad") or "")
+        except Exception:  # noqa: BLE001
+            sk = None
+        if sk:
+            stok_key_kat.setdefault(sk, u)
+        ad_kat.setdefault((u["ad"] or "").strip().lower(), u)
+
+    def _kat(kod, ad):
+        u = (kat_map.get(kod) or depo_kat.get(kod) or stok_key_kat.get(kod)
+             or ad_kat.get((ad or "").strip().lower()))
+        return ((u or {}).get("kat_ad") or "Diğer",
+                (u or {}).get("kat_emoji") or "📦",
+                int((u or {}).get("kat_sira") or 999))
+
+    bugun = date.today()
+    k7 = (bugun - timedelta(days=7)).isoformat()
+    k30 = (bugun - timedelta(days=30)).isoformat()
+    grup: dict = {}
+    for s in stoklar:
+        g = grup.setdefault(s["kalem_kodu"], {
+            "kalem_kodu": s["kalem_kodu"], "kalem_adi": s["kalem_adi"],
+            "kalan_toplam": 0.0, "min_toplam": 0.0, "sube_kirilim": [],
+            "dusum_7g": 0.0, "dusum_30g": 0.0, "hareketler": []})
+        g["kalan_toplam"] += s["adet"]
+        g["min_toplam"] += s["min_stok"]
+        g["sube_kirilim"].append({"sube": sube_ad.get(s["sube_id"], s["sube_id"]), "adet": s["adet"]})
+    for h in hareketler:
+        g = grup.setdefault(h["kalem_kodu"], {
+            "kalem_kodu": h["kalem_kodu"], "kalem_adi": h.get("kalem_adi") or h["kalem_kodu"],
+            "kalan_toplam": 0.0, "min_toplam": 0.0, "sube_kirilim": [],
+            "dusum_7g": 0.0, "dusum_30g": 0.0, "hareketler": []})
+        cikis = (h.get("miktar") or 0) < 0 or ((h.get("onceki") is not None and h.get("sonraki") is not None
+                                                and h["sonraki"] < h["onceki"]))
+        d_adet = abs(h.get("miktar") or ((h.get("onceki") or 0) - (h.get("sonraki") or 0)))
+        if cikis:
+            if h["t"] >= k7:
+                g["dusum_7g"] += d_adet
+            if h["t"] >= k30:
+                g["dusum_30g"] += d_adet
+        if len(g["hareketler"]) < 40:
+            g["hareketler"].append({
+                "t": h["t"], "saat": h.get("saat"),
+                "sube": sube_ad.get(h["sube_id"], h["sube_id"]),
+                "tur": h.get("hareket_turu"), "miktar": h.get("miktar"),
+                "onceki": h.get("onceki"), "sonraki": h.get("sonraki")})
+    kalemler = []
+    for g in grup.values():
+        ka, ke, ks = _kat(g["kalem_kodu"], g["kalem_adi"])
+        g["kategori"], g["kategori_emoji"], g["kategori_sira"] = ka, ke, ks
+        g["kalan_toplam"] = round(g["kalan_toplam"], 2)
+        g["dusum_7g"] = round(g["dusum_7g"], 2)
+        g["dusum_30g"] = round(g["dusum_30g"], 2)
+        g["kritik"] = g["min_toplam"] > 0 and g["kalan_toplam"] <= g["min_toplam"]
+        kalemler.append(g)
+    en_cok_dusen = sorted([k for k in kalemler if k["dusum_7g"] > 0],
+                          key=lambda k: -k["dusum_7g"])[:25]
+    return {"kalemler": kalemler, "en_cok_dusen": en_cok_dusen,
+            "not": ("kalan = tüm şubelerin depo toplamı; düşüm = hareket defterindeki "
+                    "çıkışlar (ürün-aç/fire/reçete); hareketler = son 45 gün, kalem "
+                    "başına son 40 satır (önceki → sonraki iz).")}
+
+
 @router.get("/fiyat-zam-alarmlari")
 def ops_fiyat_zam_alarmlari(gun: int = 90, sadece_yeni: bool = False, limit: int = 100):
     """Eşik üstü fiyat artışları (onaylı fiyattan tetiklenir) — denetim sinyali listesi."""
