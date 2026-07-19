@@ -801,7 +801,7 @@ function MaasTutarAlani({ k, label, val, setVal, not, duzenle, setDuzenle }) {
       ) : (
         <div onDoubleClick={() => setDuzenle(k)} title="çift tıkla değiştir"
           style={{ padding: '9px 11px', borderRadius: 8, background: 'var(--bg3)', border: '1px solid var(--border)', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <span style={{ fontWeight: 700, fontFamily: 'var(--font-mono)' }}>{fmt(Number(val) || 0)} ₺</span>
+          <span style={{ fontWeight: 700, fontFamily: 'var(--font-mono)' }}>{fmt(Number(val) || 0)}</span>
           <span style={{ fontSize: 10, color: 'var(--text3)' }}>{not || '✎ çift tıkla'}</span>
         </div>
       )}
@@ -842,7 +842,7 @@ function MaasHesapla() {
   const SonucSatir = ({ etiket, tutar, kalin, renk }) => (
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '7px 0', borderBottom: '1px solid var(--border)' }}>
       <span style={{ fontSize: kalin ? 14 : 13, fontWeight: kalin ? 700 : 400, color: renk }}>{etiket}</span>
-      <span style={{ fontFamily: 'var(--font-mono)', fontSize: kalin ? 16 : 13, fontWeight: kalin ? 800 : 500, color: renk }}>{fmt(tutar)} ₺</span>
+      <span style={{ fontFamily: 'var(--font-mono)', fontSize: kalin ? 16 : 13, fontWeight: kalin ? 800 : 500, color: renk }}>{fmt(tutar)}</span>
     </div>
   );
 
@@ -891,7 +891,7 @@ function MaasHesapla() {
       {/* Sonuç */}
       <div className="card" style={{ borderTop: '3px solid var(--accent)' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
-          <span style={{ fontWeight: 700, fontSize: 14 }}>{n} gün × günlük {fmt(gunluk)} ₺</span>
+          <span style={{ fontWeight: 700, fontSize: 14 }}>{n} gün × günlük {fmt(gunluk)}</span>
           <span style={{ fontSize: 11, color: 'var(--text3)' }}>{surekli ? 'maaşlı' : 'saatlik'} · {s} saat/gün</span>
         </div>
         <SonucSatir etiket={surekli ? 'Ücret (maaş payı)' : 'Ücret (saat × ücret)'} tutar={taban * n} />
@@ -900,7 +900,7 @@ function MaasHesapla() {
         {yemekG > 0 && <SonucSatir etiket="Yemek payı" tutar={yemekG * n} />}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '12px 0 2px' }}>
           <span style={{ fontSize: 16, fontWeight: 800 }}>= TOPLAM</span>
-          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 24, fontWeight: 800, color: 'var(--accent)' }}>{fmt(toplam)} ₺</span>
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 24, fontWeight: 800, color: 'var(--accent)' }}>{fmt(toplam)}</span>
         </div>
         <div style={{ fontSize: 10.5, color: 'var(--text3)', marginTop: 8, fontStyle: 'italic' }}>
           Formül: günlük = maaş/30 + yemek/30 + yol/30 {surekli ? '+ (9,5 saat üstü fazla mesai: maaş/285 × fazla saat)' : '(saatlik: saat × ücret)'}. Vardiya/Maliyet ekranıyla aynı hesap.

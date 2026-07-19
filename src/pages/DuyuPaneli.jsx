@@ -387,12 +387,12 @@ export default function DuyuPaneli() {
               </div>
               {(mutabakat.dusus_var_odeme_kaydi_yok || []).slice(0, 5).map((x, i) => (
                 <div key={`d${i}`} style={{ fontSize: 12, color: 'var(--text2)', padding: '4px 0' }}>
-                  🟡 <b>{x.tedarikci_ad}</b> bakiyesi {fmt(x.dusus_tutar)}₺ düştü ({x.pencere_bas}→{x.pencere_bit}) — kayıtlarımızda karşılık yok
+                  🟡 <b>{x.tedarikci_ad}</b> bakiyesi {fmt(x.dusus_tutar)} düştü ({x.pencere_bas}→{x.pencere_bit}) — kayıtlarımızda karşılık yok
                 </div>
               ))}
               {(mutabakat.odeme_var_dusus_gorulmedi || []).slice(0, 6).map((x, i) => (
                 <div key={`o${i}`} style={{ fontSize: 12, color: 'var(--text3)', padding: '4px 0' }}>
-                  · {x.tedarikci_ad}: {fmt(x.tutar)}₺ ({x.tarih}, {x.kaynak}{x.kayit_guveni < 1 ? ', aday' : ''})
+                  · {x.tedarikci_ad}: {fmt(x.tutar)} ({x.tarih}, {x.kaynak}{x.kayit_guveni < 1 ? ', aday' : ''})
                 </div>
               ))}
             </>
@@ -476,7 +476,7 @@ export default function DuyuPaneli() {
                 return Object.values(sonKarma).map((k2, i) => (
                   <div key={`k${i}`} style={{ fontSize: 12, color: 'var(--text2)', padding: '3px 0', display: 'flex', justifyContent: 'space-between' }}>
                     <span>💳 <b>{k2.sube_ad}</b> <span style={{ color: 'var(--text3)', fontSize: 10.5 }}>{k2.gun}</span></span>
-                    <span style={{ fontFamily: 'ui-monospace, monospace' }}>nakit {k2.nakit_oran != null ? `${Math.round(k2.nakit_oran * 100)}%` : '—'} · {fmt(k2.toplam)}₺</span>
+                    <span style={{ fontFamily: 'ui-monospace, monospace' }}>nakit {k2.nakit_oran != null ? `${Math.round(k2.nakit_oran * 100)}%` : '—'} · {fmt(k2.toplam)}</span>
                   </div>
                 ));
               })()}
@@ -496,7 +496,7 @@ export default function DuyuPaneli() {
                   {(z.sapma_adaylari || []).length > 0 && (
                     <div style={{ marginLeft: 16, color: 'var(--yellow, #f59e0b)', fontSize: 11.5 }}>
                       {(z.sapma_adaylari || []).slice(0, 4).map((sa, j) => (
-                        <div key={j}>≈ {sa.ad}: zımni {fmt(sa.liste_tahmin)}₺ / menü {fmt(sa.menu_fiyat)}₺ ({sa.sapma_oran > 0 ? '+' : ''}{Math.round(sa.sapma_oran * 100)}%)</div>
+                        <div key={j}>≈ {sa.ad}: zımni {fmt(sa.liste_tahmin)} / menü {fmt(sa.menu_fiyat)} ({sa.sapma_oran > 0 ? '+' : ''}{Math.round(sa.sapma_oran * 100)}%)</div>
                       ))}
                     </div>
                   )}

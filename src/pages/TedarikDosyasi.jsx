@@ -242,7 +242,7 @@ export default function TedarikDosyasi() {
                       )}
                       <span style={{ fontWeight: 700, fontSize: 13 }}>{f.tedarikci_ad}</span>
                       <span style={{ fontSize: 11, color: 'var(--text3)' }}>
-                        {f.fatura_tarih ? fmtDate(f.fatura_tarih) : ''}{f.toplam_tutar != null ? ` · ${fmt(f.toplam_tutar)}₺` : ''}
+                        {f.fatura_tarih ? fmtDate(f.fatura_tarih) : ''}{f.toplam_tutar != null ? ` · ${fmt(f.toplam_tutar)}` : ''}
                       </span>
                       <span style={{ fontSize: 10, marginLeft: 'auto', color: 'var(--text3)' }}>{f.durum}</span>
                     </div>
@@ -253,7 +253,7 @@ export default function TedarikDosyasi() {
                             <tr key={i} style={{ borderTop: '1px solid var(--border)' }}>
                               <td style={{ padding: '3px 0' }}>{k.ocr_ad || '—'}</td>
                               <td style={{ textAlign: 'right', color: 'var(--text3)' }}>{k.adet ?? '-'}</td>
-                              <td style={{ textAlign: 'right', fontWeight: 700 }}>{k.birim_fiyat != null ? `${fmt(k.birim_fiyat)}₺` : '-'}</td>
+                              <td style={{ textAlign: 'right', fontWeight: 700 }}>{k.birim_fiyat != null ? `${fmt(k.birim_fiyat)}` : '-'}</td>
                             </tr>
                           ))}
                         </tbody>

@@ -232,7 +232,7 @@ export default function KasaTeslim() {
                   </span>
                 )}
               </div>
-              <div style={{ fontSize: 26, fontWeight: 800, color: c.renk, fontVariantNumeric: 'tabular-nums', lineHeight: 1.1 }}>{fmt(c.tutar)} ₺</div>
+              <div style={{ fontSize: 26, fontWeight: 800, color: c.renk, fontVariantNumeric: 'tabular-nums', lineHeight: 1.1 }}>{fmt(c.tutar)}</div>
               <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', marginTop: 3 }}>{c.adet} teslim</div>
             </div>
           );
@@ -249,7 +249,7 @@ export default function KasaTeslim() {
             {subeOzet.map((s) => (
               <div key={s.ad} style={{ display: 'flex', flexDirection: 'column', minWidth: 130, padding: '9px 13px', borderRadius: 10, background: 'var(--color-background-secondary)', border: '1px solid var(--color-border-tertiary)' }}>
                 <span style={{ fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap' }}>🏪 {s.ad}</span>
-                <span style={{ fontSize: 17, fontWeight: 800, fontVariantNumeric: 'tabular-nums', marginTop: 2 }}>{fmt(s.toplam)} ₺</span>
+                <span style={{ fontSize: 17, fontWeight: 800, fontVariantNumeric: 'tabular-nums', marginTop: 2 }}>{fmt(s.toplam)}</span>
                 <span style={{ fontSize: 10, color: 'var(--color-text-secondary)' }}>{s.adet} teslim</span>
               </div>
             ))}
@@ -394,7 +394,7 @@ export default function KasaTeslim() {
                               whiteSpace: 'nowrap',
                             }}
                           >
-                            Σ {fmt(gunToplam[s.tarih])} ₺
+                            Σ {fmt(gunToplam[s.tarih])}
                           </span>
                         </td>
                         <td style={{ borderTop: '2px solid var(--color-border-tertiary)' }} />
@@ -455,7 +455,7 @@ export default function KasaTeslim() {
                             whiteSpace: 'nowrap',
                           }}
                         >
-                          {fmt(s.tutar)} ₺
+                          {fmt(s.tutar)}
                         </span>
                       </td>
                       <td style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>{s.aciklama || '—'}</td>
@@ -470,7 +470,7 @@ export default function KasaTeslim() {
                 <td colSpan={6} style={{ textAlign: 'right', paddingRight: 12, fontSize: 13 }}>
                   Toplam
                 </td>
-                <td style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', fontWeight: 800, color: 'rgb(22,163,74)' }}>{fmt(ozet.genel_toplam)} ₺</td>
+                <td style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', fontWeight: 800, color: 'rgb(22,163,74)' }}>{fmt(ozet.genel_toplam)}</td>
                 <td />
               </tr>
             </tfoot>

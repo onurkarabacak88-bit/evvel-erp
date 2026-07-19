@@ -6871,11 +6871,11 @@ export default function OperasyonMerkezi() {
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 10, marginBottom: 14 }}>
                           <div className="card" style={{ padding: 10, fontSize: 12 }}>
                             <div style={{ color: 'var(--text3)', fontSize: 10 }}>Toplam stok değeri</div>
-                            <div style={{ fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>{fmt(oz.toplam_stok_deger || 0)} ₺</div>
+                            <div style={{ fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>{fmt(oz.toplam_stok_deger || 0)}</div>
                           </div>
                           <div className="card" style={{ padding: 10, fontSize: 12 }}>
                             <div style={{ color: 'var(--text3)', fontSize: 10 }}>Harcama (pencere)</div>
-                            <div style={{ fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>{fmt(oz.toplam_harcama_deger || 0)} ₺</div>
+                            <div style={{ fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>{fmt(oz.toplam_harcama_deger || 0)}</div>
                           </div>
                           <div className="card" style={{ padding: 10, fontSize: 12 }}>
                             <div style={{ color: 'var(--text3)', fontSize: 10 }}>Kritik kalem</div>
