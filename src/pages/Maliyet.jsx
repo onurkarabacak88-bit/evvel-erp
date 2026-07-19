@@ -771,7 +771,7 @@ export default function Maliyet() {
                       {netKar >= 0 ? '✅' : '🔴'} Net Kâr
                       {tr && <span style={{ fontSize: 11, fontWeight: 700, color: tr.renk }}>{tr.ok} {tr.t}</span>}
                     </div>
-                    <div style={{ fontSize: 34, fontWeight: 800, fontFamily: 'var(--font-mono)', color: netRenk, lineHeight: 1.1 }}>{fmt(netKar)} ₺</div>
+                    <div style={{ fontSize: 34, fontWeight: 800, fontFamily: 'var(--font-mono)', color: netRenk, lineHeight: 1.1 }}>{fmt(netKar)}</div>
                     <div style={{ fontSize: 12, color: 'var(--text3)', marginTop: 5 }}>
                       {gunSayisi} {_kapaliZararVar ? 'kapalı gün' : 'cirolu gün'}{marj != null ? ` · marj %${marj.toFixed(1)}` : ''} · günlük ort. {fmt(netKar / Math.max(1, gunSayisi))}
                     </div>
@@ -1450,7 +1450,7 @@ export default function Maliyet() {
                         {fmtDate(s.tarih)}{!subeId && s.sube_adi ? <span style={{ color: 'var(--text3)', fontWeight: 400 }}> · {s.sube_adi}</span> : ''}
                       </span>
                       <span style={{ fontSize: 13, fontWeight: 700, fontFamily: 'var(--font-mono)', padding: '2px 9px', borderRadius: 6, background: neg ? 'rgba(239,68,68,0.12)' : 'rgba(34,197,94,0.12)', color: neg ? '#ef4444' : '#22c55e' }}>
-                        {neg ? '' : '+'}{fmt(net)} ₺
+                        {neg ? '' : '+'}{fmt(net)}
                       </span>
                     </div>
                     {/* Ciro çubuğu */}
