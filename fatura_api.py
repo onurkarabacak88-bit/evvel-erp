@@ -2396,6 +2396,23 @@ def cari_ekstre(tedarikci: str = ""):
     ara = (tedarikci or "").strip()
     if len(ara) < 3:
         raise HTTPException(400, "tedarikci parametresi (ad veya VKN) en az 3 karakter")
+    # 🔗 KANONİK EŞDEĞERLER (2026-07-19, sahip: 'sürekli çalıştığımız tedarikçiler
+    # tek tek başlıklar altında'): 'ATALAY KAHVE' sorgusu MEHMET ATALAY + Napolés
+    # faturalarını da getirir — eşleştirme tablosu konuşur, tahmin değil.
+    _harita = tedarikci_eslestirme_haritasi()
+    _kisa = (_harita.get(ara.upper()) or {}).get("kisa")
+    _es_adlar = [ara]
+    if _kisa:
+        if _kisa.upper() != ara.upper():
+            _es_adlar.append(_kisa)
+        for _hk, _hv in _harita.items():
+            if _hv.get("kisa") == _kisa and _hk not in {a.upper() for a in _es_adlar}:
+                _es_adlar.append(_hk)
+    _es_upper = {a.upper() for a in _es_adlar}
+
+    def _es_es(metin) -> bool:
+        return any(_odeme_eslesir(a, metin) for a in _es_adlar)
+
     with db() as (_, cur):
         _ensure_tablolar(cur)
         # DENETİM P1-1: fatura seti artık KANONİK eşleşmeyle — cari-ozet birleşik
@@ -2415,6 +2432,8 @@ def cari_ekstre(tedarikci: str = ""):
             if (r.get("tedarikci_vkn") or "").strip() == ara:
                 _sec.append(r); continue
             ad = (r.get("tedarikci_ad") or "")
+            if ad.strip().upper() in _es_upper:  # 🔗 eşleştirme tablosu eşdeğeri
+                _sec.append(r); continue
             if ara.lower() in ad.lower():
                 _sec.append(r); continue
             ft = set(_cari_kanonik(None, ad).split())
@@ -2432,8 +2451,8 @@ def cari_ekstre(tedarikci: str = ""):
         bekleyen_vadeler = [
             {"tutar": r["tutar"], "vade": r["vade"], "aciklama": r["aciklama"]}
             for r in (dict(x) for x in cur.fetchall() or [])
-            if _odeme_eslesir(ara, f"{r['ted']} {r['aciklama'] or ''}")
-            or _odeme_eslesir(r["ted"], ara)]  # ters yön: 'ATALAY KAHVE' sözü ↔ 'MEHMET ATALAY'
+            if _es_es(f"{r['ted']} {r['aciklama'] or ''}")
+            or any(_odeme_eslesir(r["ted"], a) for a in _es_adlar)]  # ters yön: 'ATALAY KAHVE' sözü ↔ 'MEHMET ATALAY'
         cur.execute(
             """SELECT kanal, tarih, tutar, aciklama FROM (
                  SELECT 'vadeli_alim' AS kanal, vade_tarihi::text AS tarih,
@@ -2456,12 +2475,12 @@ def cari_ekstre(tedarikci: str = ""):
                ORDER BY tarih""",
             (EVVEL_SISTEM_BASLANGIC, EVVEL_SISTEM_BASLANGIC, EVVEL_SISTEM_BASLANGIC))
         odeme_adaylari = [r for r in (dict(x) for x in cur.fetchall() or [])
-                          if _odeme_eslesir(ara, r.get("aciklama"))]
+                          if _es_es(r.get("aciklama"))]
         _devirler = _cari_devirler(cur)
     # 📜 açılış devri — bu tedarikçiye eşleşen sahip beyanı (çift yön eşleşme)
     devir, devir_not = 0.0, None
     for dv in _devirler:
-        if _odeme_eslesir(ara, dv["tedarikci"]) or _odeme_eslesir(dv["tedarikci"], ara):
+        if _es_es(dv["tedarikci"]) or any(_odeme_eslesir(dv["tedarikci"], a) for a in _es_adlar):
             devir = round(devir + float(dv["tutar"] or 0), 2)
             devir_not = dv.get("aciklama") or devir_not
     for f in faturalar:

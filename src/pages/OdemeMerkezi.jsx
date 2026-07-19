@@ -95,6 +95,7 @@ export default function OdemeMerkezi() {
     api('/odeme-plani/kokpit?personel=1').then(setKokpit).catch(() => setKokpit(null));
     api('/ops/maliyet/kdv-pozisyon?gun=30').then(setKdvPoz).catch(() => setKdvPoz(null));
     setCariler(null); // ödeme sonrası cari borç listesi tazelensin (iz düşmüş olabilir)
+    setEkstreler({}); // ekstreler de taze çekilsin
   }, [pencere]);
   useEffect(() => { yukle(); }, [yukle]);
   // FAZ D — AP mutabakat sağlığı (cari borç ↔ ödeme kuyruğu tutuyor mu)
@@ -109,10 +110,19 @@ export default function OdemeMerkezi() {
   // iz düşünce self-heal/mutabakat gerisini eşler.
   const [cariler, setCariler] = useState(null);
   const [cariSecili, setCariSecili] = useState(null); // ▾ açık tedarikçi satırı
+  const [ekstreler, setEkstreler] = useState({});     // 📜 tedarikçi → ay-ay ekstre
   useEffect(() => {
     if (sekme !== 'tedarikci' || cariler !== null) return;
     api('/fatura/cari-ozet').then(r => setCariler(r?.tedarikciler || [])).catch(() => setCariler([]));
   }, [sekme, cariler]);
+  const cariAc = (ad) => {
+    setCariSecili(s => (s === ad ? null : ad));
+    if (!ekstreler[ad]) {
+      api(`/fatura/cari-ekstre?tedarikci=${encodeURIComponent(ad)}`)
+        .then(r => setEkstreler(e => ({ ...e, [ad]: r })))
+        .catch(() => setEkstreler(e => ({ ...e, [ad]: { hata: true } })));
+    }
+  };
 
   // ── TEK ÖDEME MODALI ──
   const [sec, setSec] = useState(null);          // seçili satır
@@ -662,7 +672,7 @@ export default function OdemeMerkezi() {
               return (
                 <div key={i} style={{ margin: '6px 0', borderRadius: 10, background: 'var(--bg2)',
                                       borderLeft: `4px solid ${takvimsiz <= Math.max(500, acik * 0.05) ? 'var(--green, #22c55e)' : '#f59e0b'}` }}>
-                  <div onClick={() => setCariSecili(acikMi ? null : t.tedarikci)}
+                  <div onClick={() => cariAc(t.tedarikci)}
                     style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10,
                              padding: '10px 12px', cursor: 'pointer', flexWrap: 'wrap' }}>
                     <span style={{ minWidth: 0 }}>
@@ -694,6 +704,54 @@ export default function OdemeMerkezi() {
                       Kuyrukta sözü yok — 🤝 Vadeye ile takvime bağla ya da 💸 Öde.
                     </div>
                   )}
+                  {/* 📜 AY AY EKSTRE — sahip: 'her faturası yüklü tedarikçi kendi başlığı altında;
+                      ürün gelişi/fatura + ödemenin ne zaman yapıldığı görünsün' */}
+                  {acikMi && (() => {
+                    const ek = ekstreler[t.tedarikci];
+                    if (!ek) return <div style={{ padding: '0 12px 10px 22px', fontSize: 12, color: 'var(--text3)' }}>📜 Ekstre yükleniyor…</div>;
+                    if (ek.hata) return <div style={{ padding: '0 12px 10px 22px', fontSize: 12, color: 'var(--red)' }}>Ekstre alınamadı.</div>;
+                    const aylar = (ek.aylik || []).filter(a => !a.sistem_oncesi).slice(0, 6);
+                    const har = (ek.hareketler || []).slice(-12).reverse();
+                    return (
+                      <div style={{ padding: '0 12px 12px 22px', fontSize: 12 }}>
+                        {aylar.length > 0 && (
+                          <div style={{ marginBottom: 8 }}>
+                            <div style={{ fontWeight: 800, fontSize: 11, color: 'var(--text3)', marginBottom: 3 }}>AY AY MUTABAKAT</div>
+                            {aylar.map((a, j) => (
+                              <div key={j} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, padding: '3px 0', borderTop: '1px solid var(--border)' }}>
+                                <span style={{ fontWeight: 700 }}>{a.ay}</span>
+                                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11 }}>
+                                  📄 {a.fatura_adet} fatura {fmt(a.fatura_toplam)} · 💸 {a.odeme_adet} ödeme {fmt(a.odeme_toplam)} ·{' '}
+                                  <b style={{ color: a.fark > 0 ? '#f59e0b' : 'var(--green, #22c55e)' }}>
+                                    {a.fark > 0 ? `kalan ${fmt(a.fark)}` : a.fark < 0 ? `fazla ödeme ${fmt(-a.fark)}` : 'kapandı ✓'}
+                                  </b>
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {har.length > 0 && (
+                          <div>
+                            <div style={{ fontWeight: 800, fontSize: 11, color: 'var(--text3)', marginBottom: 3 }}>SON HAREKETLER (yürüyen bakiye)</div>
+                            {har.map((h, j) => (
+                              <div key={j} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, padding: '2px 0' }}>
+                                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                  {h.tip === 'fatura' ? '📄' : h.tip === 'devir' ? '📜' : '💸'} {h.tarih} · {(h.aciklama || h.tip).slice(0, 34)}
+                                  {h.goruntule && <a href={h.goruntule} target="_blank" rel="noreferrer" style={{ marginLeft: 4 }}>📎</a>}
+                                </span>
+                                <span style={{ fontFamily: 'var(--font-mono)', whiteSpace: 'nowrap' }}>
+                                  {h.tip === 'odeme' ? '−' : '+'}{fmt(h.tutar)} <span style={{ color: 'var(--text3)' }}>→ {fmt(h.bakiye)}</span>
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {aylar.length === 0 && har.length === 0 && (
+                          <div style={{ color: 'var(--text3)' }}>Sistem penceresinde hareket yok.</div>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </div>
               );
             })}
