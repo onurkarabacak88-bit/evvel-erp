@@ -2011,6 +2011,11 @@ _ESLESTIRME_SEED = [
     ("HASAN ERKAN", "PASTA", None),                                # sahip: 'hasan erkan pasta'
     ("APS GIDA ENERJİ KİMYA TARIM SAN. VE TİC. A.Ş.", "redbull", None),  # sahip: 'redbull doğru'
     ("ESHİM TEKNİK SERVİS HÜSEYİN KARA", None, "hizmet"),          # makine tamircisi
+    # 2026-07-19 keşif: 40.800 söz 'hüseyin makina' adına girilmiş — sınıfı 'mal'
+    # damgalanıp Tedarikçi'de eşleşmeyen sözlere düşüyordu. SADECE sınıf düzeltildi
+    # (hizmet → ⚡ Giderler); ESHİM'le KİMLİK birleştirme sahip onayı BEKLİYOR
+    # (aynı tutar + Hüseyin + makine güçlü işaret ama kural: doğrulanmadan birleştirme yok).
+    ("hüseyin makina", None, "hizmet"),
     ("ASSA SANAL MAĞAZACILIK LİMİTED ŞİRKETİ", None, "gecici"),    # internetten kartla
     ("D-MARKET ELEKTRONİK HİZMETLER VE TİCARET A.Ş.", None, "gecici"),
 ]

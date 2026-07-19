@@ -190,8 +190,8 @@ function CariEkstrePanel({ ek, ad }) {
       {har.length === 0 ? (
         <div style={{ fontSize: 12, color: 'var(--text3)', padding: '10px 0 4px' }}>Bu dönemde hareket yok.</div>
       ) : (
-        <div style={{ maxHeight: 340, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 10 }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <div style={{ maxHeight: 340, overflowY: 'auto', overflowX: 'auto', border: '1px solid var(--border)', borderRadius: 10 }}>
+          <table style={{ width: '100%', minWidth: 520, borderCollapse: 'collapse' }}>
             <thead>
               <tr style={{ borderBottom: '1px solid var(--border)' }}>
                 <th style={{ ...basHucre, width: 84 }}>Tarih</th>
@@ -242,7 +242,8 @@ function CariEkstrePanel({ ek, ad }) {
             {mutAcik ? '▾' : '▸'} Aylık Mutabakat <span style={{ fontWeight: 400, color: 'var(--text3)' }}>({aylar.length} ay)</span>
           </button>
           {mutAcik && (
-            <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: 6 }}>
+            <div style={{ overflowX: 'auto', marginTop: 6 }}>
+            <table style={{ width: '100%', minWidth: 460, borderCollapse: 'collapse' }}>
               <thead>
                 <tr style={{ borderBottom: '1px solid var(--border)' }}>
                   <th style={{ ...basHucre, width: 90 }}>Ay</th>
@@ -268,6 +269,7 @@ function CariEkstrePanel({ ek, ad }) {
                 ))}
               </tbody>
             </table>
+            </div>
           )}
         </div>
       )}
@@ -276,7 +278,8 @@ function CariEkstrePanel({ ek, ad }) {
       {fats.length > 0 && (
         <div style={{ marginTop: 12 }}>
           <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text2, var(--text))', marginBottom: 4 }}>Belgeler</div>
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', minWidth: 440, borderCollapse: 'collapse' }}>
             <tbody>
               {fats.map((f, j) => (
                 <tr key={j} style={{ borderBottom: '1px solid var(--border)' }}>
@@ -298,6 +301,7 @@ function CariEkstrePanel({ ek, ad }) {
               ))}
             </tbody>
           </table>
+          </div>
         </div>
       )}
 
