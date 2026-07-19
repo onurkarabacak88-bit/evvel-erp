@@ -471,7 +471,9 @@ const UST_SEKMELER = [
   { id: 'urun-uyumsuzluk', label: '🧪 Ürün Uyumsuzlukları' },
   { id: 'fire-bildirim', label: '🔥 Fire Bildirimleri' },
   { id: 'siparis-kontrol', label: '📡 Sipariş Kontrol Kulesi' },
-  { id: 'magaza-kartlari', label: '🏪 Depo stokları' },
+  // 'magaza-kartlari' (🏪 Depo stokları) LISTEDEN KALDIRILDI (sahip 2026-07-19):
+  // özellikleri Kâr & Maliyet → 📦 Depo İzleme panosuna harmanlandı (şube filtresi +
+  // sayım düzeltme + kritik alarm). Kod ve route'lar duruyor — geri almak = bu satırı aç.
   { id: 'stok-hareketi', label: '📋 Stok Hareketi' },
   { id: 'food-cost-ozet', label: '💰 Food Cost Özeti' },
   { id: 'alis-fiyatlari', label: '🏷 Alış Fiyatları' },
@@ -598,7 +600,7 @@ const MODULLER = [
     label: '📦 Envanter',
     renk: '#f08040',
     desc: 'Stok sayımı, ürün açma, fire & kayıp analizi',
-    tabs: ['magaza-kartlari', 'stok-hareketi', 'sayim', 'urun-ac', 'stok-kayip', 'fire-bildirim'],
+    tabs: ['stok-hareketi', 'sayim', 'urun-ac', 'stok-kayip', 'fire-bildirim'],
   },
   {
     id: 'siparis-tedarik',

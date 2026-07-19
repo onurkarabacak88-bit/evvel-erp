@@ -15010,11 +15010,16 @@ def ops_depo_izleme():
     sube_depo_stok_hareket (önceki→sonraki iz defteri). Salt-okur."""
     from collections import defaultdict
     with db() as (_, cur):
+        try:
+            _ensure_sube_depo_alis_fiyati_col(cur)
+        except Exception:  # noqa: BLE001
+            pass
         cur.execute("SELECT id::text AS id, ad FROM subeler")
         sube_ad = {str(r["id"]): (r["ad"] or str(r["id"])) for r in cur.fetchall() or []}
         cur.execute("""SELECT sube_id::text AS sube_id, kalem_kodu, kalem_adi,
                               COALESCE(mevcut_adet,0)::float AS adet,
-                              COALESCE(min_stok,0)::float AS min_stok
+                              COALESCE(min_stok,0)::float AS min_stok,
+                              COALESCE(alis_fiyati_tl,0)::float AS alis_fiyati
                        FROM sube_depo_stok""")
         stoklar = [dict(r) for r in cur.fetchall() or []]
         try:
@@ -15079,7 +15084,10 @@ def ops_depo_izleme():
             "dusum_7g": 0.0, "dusum_30g": 0.0, "hareketler": []})
         g["kalan_toplam"] += s["adet"]
         g["min_toplam"] += s["min_stok"]
-        g["sube_kirilim"].append({"sube": sube_ad.get(s["sube_id"], s["sube_id"]), "adet": s["adet"]})
+        g["sube_kirilim"].append({"sube_id": s["sube_id"],
+                                  "sube": sube_ad.get(s["sube_id"], s["sube_id"]),
+                                  "adet": s["adet"], "min_stok": s["min_stok"],
+                                  "alis_fiyati": s.get("alis_fiyati") or 0})
     for h in hareketler:
         g = grup.setdefault(h["kalem_kodu"], {
             "kalem_kodu": h["kalem_kodu"], "kalem_adi": h.get("kalem_adi") or h["kalem_kodu"],
@@ -15096,6 +15104,7 @@ def ops_depo_izleme():
         if len(g["hareketler"]) < 40:
             g["hareketler"].append({
                 "t": h["t"], "saat": h.get("saat"),
+                "sube_id": h["sube_id"],
                 "sube": sube_ad.get(h["sube_id"], h["sube_id"]),
                 "tur": h.get("hareket_turu"), "miktar": h.get("miktar"),
                 "onceki": h.get("onceki"), "sonraki": h.get("sonraki")})
@@ -15110,7 +15119,11 @@ def ops_depo_izleme():
         kalemler.append(g)
     en_cok_dusen = sorted([k for k in kalemler if k["dusum_7g"] > 0],
                           key=lambda k: -k["dusum_7g"])[:25]
+    kritik_sayi = sum(1 for k in kalemler if k.get("kritik"))
     return {"kalemler": kalemler, "en_cok_dusen": en_cok_dusen,
+            "kritik_sayi": kritik_sayi,
+            "subeler": [{"id": sid, "ad": ad} for sid, ad in sorted(sube_ad.items(), key=lambda x: x[1])
+                        if sid != "sube-merkez" or any(s["sube_id"] == "sube-merkez" for s in stoklar)],
             "not": ("kalan = tüm şubelerin depo toplamı; düşüm = hareket defterindeki "
                     "çıkışlar (ürün-aç/fire/reçete); hareketler = son 45 gün, kalem "
                     "başına son 40 satır (önceki → sonraki iz).")}

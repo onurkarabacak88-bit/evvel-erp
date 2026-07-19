@@ -21,11 +21,32 @@ export default function IzlemePanosu() {
   const [kat, setKat] = useState(null);         // seçili kategori (null = kategori kartları)
   const [ara, setAra] = useState('');
   const [secili, setSecili] = useState(null);   // kalem_kodu
-  // 📦 depo verisi — pano açılınca 1 kez
+  // 🏢 şube filtresi + ⚠ kritik filtresi (OM 'Depo stokları' sekmesinden devralınan
+  // özellikler — sahip 2026-07-19: 'OM depo stoklarını kaldırıp buraya harmanla')
+  const [sube, setSube] = useState(null);       // null = tüm şubeler
+  const [sadeceKritik, setSadeceKritik] = useState(false);
+  // ✏️ stok düzeltme formu (OM onay akışının sadeleşmiş hali — sayım düzeltme)
+  const [duz, setDuz] = useState(null);         // {sube_id, adet, min}
+  const [mesgul, setMesgul] = useState(false);
+  // 📦 depo verisi
   const [dd, setDd] = useState(null);
-  useEffect(() => {
-    api('/ops/maliyet/depo-izleme').then(setDd).catch(() => setDd({ hata: true }));
-  }, []);
+  const yenile = () => api('/ops/maliyet/depo-izleme').then(setDd).catch(() => setDd({ hata: true }));
+  useEffect(() => { yenile(); }, []);
+  async function stokKaydet(k, f) {
+    const kir = (k.sube_kirilim || []).find(x => x.sube_id === f.sube_id);
+    setMesgul(true);
+    try {
+      await api('/ops/v2/sube-depo/guncelle', { method: 'POST', body: {
+        sube_id: f.sube_id, kalem_kodu: k.kalem_kodu, kalem_adi: k.kalem_adi,
+        mevcut_adet: Math.max(0, Math.round(Number(String(f.adet).replace(',', '.')) || 0)),
+        min_stok: Math.max(0, Math.round(Number(String(f.min).replace(',', '.')) || 0)),
+        alis_fiyati_tl: kir?.alis_fiyati || 0,   // mevcut depo fiyatı korunur (0'a ezilmesin)
+        giris_nedeni: 'sayim_duzeltme',
+      }});
+      setDuz(null); yenile();
+    } catch (e) { alert(e?.message || 'kaydedilemedi'); }
+    finally { setMesgul(false); }
+  }
 
   const M = 'var(--font-mono)';
 
@@ -46,6 +67,16 @@ export default function IzlemePanosu() {
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           <span style={{ fontWeight: 800, fontSize: 14 }}>📦 Depo İzleme</span>
           {GORUNUMLER.map(g => chip(gorunum === g.id, () => setGorunum(g.id), g.ad))}
+          {dd && !dd.hata && chip(!sube, () => setSube(null), '🏢 Tümü', true)}
+          {dd && !dd.hata && (dd.subeler || []).filter(x => x.id !== 'sube-merkez').map(x =>
+            chip(sube === x.id, () => setSube(sube === x.id ? null : x.id), x.ad, true))}
+          {dd && !dd.hata && (dd.kritik_sayi || 0) > 0 && (
+            <button onClick={() => setSadeceKritik(a => !a)}
+              style={{ height: 26, padding: '0 11px', borderRadius: 13, fontSize: 11.5, fontWeight: 800, cursor: 'pointer',
+                       border: '1px solid var(--red, #ef4444)',
+                       background: sadeceKritik ? 'var(--red, #ef4444)' : 'transparent',
+                       color: sadeceKritik ? '#fff' : 'var(--red, #ef4444)' }}>⚠ Kritik ({dd.kritik_sayi})</button>
+          )}
         </div>
         <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
           <input value={ara} onChange={e => setAra(e.target.value)} placeholder="🔍 ürün ara…"
@@ -60,7 +91,15 @@ export default function IzlemePanosu() {
       ) : dd.hata ? (
         <div className="card" style={{ padding: 14, color: 'var(--red)' }}>Depo verisi alınamadı.</div>
       ) : (() => {
-        const dtumu = dd.kalemler || [];
+        // şube seçiliyse değerler o şubenin kırılımından okunur (OM davranışı)
+        const gz = (k) => {
+          if (!sube) return { kalan: k.kalan_toplam, kritik: k.kritik, varMi: true };
+          const e = (k.sube_kirilim || []).find(x => x.sube_id === sube);
+          return e ? { kalan: e.adet, kritik: e.min_stok > 0 && e.adet <= e.min_stok, varMi: true }
+                   : { kalan: 0, kritik: false, varMi: false };
+        };
+        let dtumu = (dd.kalemler || []).filter(k => gz(k).varMi);
+        if (sadeceKritik) dtumu = dtumu.filter(k => gz(k).kritik);
         const dara = ara.trim().toLowerCase();
         const dKat = new Map();
         for (const k of dtumu) {
@@ -74,11 +113,11 @@ export default function IzlemePanosu() {
         const dAramaSonuc = dara ? dSirala(dtumu.filter(k => (k.kalem_adi || '').toLowerCase().includes(dara))) : null;
         const dSeciliKat = kat ? dKat.get(kat) : null;
         const dSecili = dtumu.find(k => k.kalem_kodu === secili) || null;
-        const depoKutu = (k) => (
-          <div key={k.kalem_kodu} onClick={() => setSecili(k.kalem_kodu)}
+        const depoKutu = (k) => { const g2 = gz(k); return (
+          <div key={k.kalem_kodu} onClick={() => { setSecili(k.kalem_kodu); setDuz(null); }}
             style={{ minHeight: 104, padding: '11px 12px', borderRadius: 14, cursor: 'pointer',
                      background: 'var(--bg2)', display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
-                     border: `1px solid ${secili === k.kalem_kodu ? 'var(--accent, #c9853f)' : k.kritik ? 'var(--red, #ef4444)' : 'var(--border)'}`,
+                     border: `1px solid ${secili === k.kalem_kodu ? 'var(--accent, #c9853f)' : g2.kritik ? 'var(--red, #ef4444)' : 'var(--border)'}`,
                      boxShadow: secili === k.kalem_kodu ? '0 0 0 1px var(--accent, #c9853f)' : undefined }}>
             <div style={{ fontSize: 12.5, fontWeight: 700, lineHeight: 1.25, overflow: 'hidden',
                           display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
@@ -87,19 +126,19 @@ export default function IzlemePanosu() {
             <div>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 6 }}>
                 <span style={{ fontFamily: M, fontVariantNumeric: 'tabular-nums', fontWeight: 800, fontSize: 16 }}>
-                  {Math.round(k.kalan_toplam)}
-                  <span style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--text3)' }}> kalan</span>
+                  {Math.round(g2.kalan)}
+                  <span style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--text3)' }}> kalan{sube ? '' : ' (tüm)'}</span>
                 </span>
                 {(k.dusum_7g || 0) > 0 && (
                   <span style={{ fontSize: 11, fontWeight: 800, color: '#f59e0b', whiteSpace: 'nowrap' }}>7g −{Math.round(k.dusum_7g)}</span>
                 )}
               </div>
-              <div style={{ fontSize: 10.5, color: k.kritik ? 'var(--red, #ef4444)' : 'var(--text3)', marginTop: 2 }}>
-                {k.kritik ? '⚠ kritik stok (min altı)' : `30 günde −${Math.round(k.dusum_30g || 0)}`}
+              <div style={{ fontSize: 10.5, color: g2.kritik ? 'var(--red, #ef4444)' : 'var(--text3)', marginTop: 2 }}>
+                {g2.kritik ? '⚠ kritik stok (min altı)' : `30 günde −${Math.round(k.dusum_30g || 0)}`}
               </div>
             </div>
           </div>
-        );
+        ); };
         return (
           <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start', flexWrap: 'wrap' }}>
             {/* SOL RAIL — en çok tüketilenler */}
@@ -148,7 +187,7 @@ export default function IzlemePanosu() {
                   </div>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))', gap: 10 }}>
                     {dKatListe.map(kt => {
-                      const kritik = kt.urunler.filter(u => u.kritik).length;
+                      const kritik = kt.urunler.filter(u => gz(u).kritik).length;
                       const dusum = Math.round(kt.urunler.reduce((a, u) => a + (u.dusum_7g || 0), 0));
                       return (
                         <div key={kt.ad} onClick={() => setKat(kt.ad)}
@@ -203,21 +242,69 @@ export default function IzlemePanosu() {
                     {' '}· son 30 gün <b style={{ color: '#f59e0b' }}>−{Math.round(dSecili.dusum_30g || 0)}</b>
                   </div>
                   {(dSecili.sube_kirilim || []).length > 0 && (
-                    <div style={{ fontSize: 11.5, color: 'var(--text3)', marginBottom: 10, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                    <div style={{ fontSize: 11.5, color: 'var(--text3)', marginBottom: 6, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                       {dSecili.sube_kirilim.map((sk2, j) => (
-                        <span key={j} style={{ padding: '2px 9px', borderRadius: 8, border: '1px solid var(--border)' }}>
+                        <span key={j} onClick={() => setDuz({ sube_id: sk2.sube_id, adet: String(Math.round(sk2.adet)), min: String(Math.round(sk2.min_stok || 0)) })}
+                          title="Tıkla → bu şubenin stoğunu düzelt"
+                          style={{ padding: '2px 9px', borderRadius: 8, cursor: 'pointer',
+                                   border: `1px solid ${(sk2.min_stok > 0 && sk2.adet <= sk2.min_stok) ? 'var(--red, #ef4444)' : 'var(--border)'}` }}>
                           {sk2.sube}: <b style={{ fontFamily: M }}>{Math.round(sk2.adet)}</b>
+                          {sk2.min_stok > 0 && <span style={{ opacity: .7 }}> /min {Math.round(sk2.min_stok)}</span>} ✏️
                         </span>
                       ))}
+                    </div>
+                  )}
+                  {!duz && (
+                    <button className="btn btn-secondary btn-sm" style={{ marginBottom: 8 }}
+                      onClick={() => {
+                        const ilk = (dSecili.sube_kirilim || [])[0];
+                        setDuz({ sube_id: sube || ilk?.sube_id || (dd.subeler || [])[0]?.id || '',
+                                 adet: ilk ? String(Math.round(ilk.adet)) : '0',
+                                 min: ilk ? String(Math.round(ilk.min_stok || 0)) : '0' });
+                      }}>✏️ Stok Düzelt (sayım)</button>
+                  )}
+                  {duz && (
+                    <div style={{ margin: '4px 0 10px', padding: 12, borderRadius: 10,
+                                  border: '1px solid var(--accent, #c9853f)', background: 'rgba(255,255,255,.03)' }}>
+                      <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 8 }}>✏️ Sayım Düzeltme — {dSecili.kalem_adi}</div>
+                      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                        <select value={duz.sube_id}
+                          onChange={e => {
+                            const sid = e.target.value;
+                            const kk = (dSecili.sube_kirilim || []).find(x => x.sube_id === sid);
+                            setDuz({ sube_id: sid, adet: kk ? String(Math.round(kk.adet)) : '0', min: kk ? String(Math.round(kk.min_stok || 0)) : '0' });
+                          }}
+                          style={{ height: 30, borderRadius: 8, background: 'var(--bg2)', color: 'var(--text)', border: '1px solid var(--border)', padding: '0 8px', fontSize: 12.5 }}>
+                          {(dd.subeler || []).filter(x => x.id !== 'sube-merkez').map(x => (
+                            <option key={x.id} value={x.id}>{x.ad}</option>
+                          ))}
+                        </select>
+                        <label style={{ fontSize: 11.5, color: 'var(--text3)', display: 'flex', alignItems: 'center', gap: 5 }}>
+                          adet <input value={duz.adet} onChange={e => setDuz({ ...duz, adet: e.target.value })}
+                            style={{ width: 70, height: 30, borderRadius: 8, background: 'var(--bg2)', color: 'var(--text)', border: '1px solid var(--border)', padding: '0 8px', fontSize: 12.5 }} />
+                        </label>
+                        <label style={{ fontSize: 11.5, color: 'var(--text3)', display: 'flex', alignItems: 'center', gap: 5 }}>
+                          min <input value={duz.min} onChange={e => setDuz({ ...duz, min: e.target.value })}
+                            style={{ width: 60, height: 30, borderRadius: 8, background: 'var(--bg2)', color: 'var(--text)', border: '1px solid var(--border)', padding: '0 8px', fontSize: 12.5 }} />
+                        </label>
+                      </div>
+                      <div style={{ fontSize: 10.5, color: 'var(--text3)', margin: '6px 0 8px' }}>
+                        Hareket defterine "sayım düzeltme" izi düşer (önceki → sonraki) — alış fiyatına dokunulmaz.
+                      </div>
+                      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                        <button className="btn btn-secondary btn-sm" onClick={() => setDuz(null)}>Vazgeç</button>
+                        <button className="btn btn-primary btn-sm" disabled={mesgul}
+                          onClick={() => stokKaydet(dSecili, duz)}>{mesgul ? 'Kaydediliyor…' : '💾 Kaydet'}</button>
+                      </div>
                     </div>
                   )}
                   <div style={{ fontSize: 11.5, fontWeight: 800, color: 'var(--text3)', marginBottom: 4 }}>
                     📉 GÜN GÜN HAREKET <span style={{ fontWeight: 400 }}>(önceki → sonraki)</span>
                   </div>
-                  {(dSecili.hareketler || []).length === 0 && (
-                    <div style={{ fontSize: 12, color: 'var(--text3)' }}>Son 45 günde hareket kaydı yok.</div>
+                  {(dSecili.hareketler || []).filter(h => !sube || h.sube_id === sube).length === 0 && (
+                    <div style={{ fontSize: 12, color: 'var(--text3)' }}>Bu {sube ? 'şubede ' : ''}son 45 günde hareket kaydı yok.</div>
                   )}
-                  {(dSecili.hareketler || []).map((h, j) => {
+                  {(dSecili.hareketler || []).filter(h => !sube || h.sube_id === sube).map((h, j) => {
                     const dusum2 = (h.miktar || 0) < 0 || ((h.onceki ?? 0) > (h.sonraki ?? 0));
                     return (
                       <div key={j} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, padding: '5px 0', borderBottom: '1px solid var(--border)', fontSize: 12 }}>
