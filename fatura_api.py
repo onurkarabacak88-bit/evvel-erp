@@ -2010,12 +2010,10 @@ _ESLESTIRME_SEED = [
     ("METRO GROSMARKET B.KÖY ALIS.HIZ.TIC.LTD.STI.", "METRO", None),
     ("HASAN ERKAN", "PASTA", None),                                # sahip: 'hasan erkan pasta'
     ("APS GIDA ENERJİ KİMYA TARIM SAN. VE TİC. A.Ş.", "redbull", None),  # sahip: 'redbull doğru'
-    ("ESHİM TEKNİK SERVİS HÜSEYİN KARA", None, "hizmet"),          # makine tamircisi
-    # 2026-07-19 keşif: 40.800 söz 'hüseyin makina' adına girilmiş — sınıfı 'mal'
-    # damgalanıp Tedarikçi'de eşleşmeyen sözlere düşüyordu. SADECE sınıf düzeltildi
-    # (hizmet → ⚡ Giderler); ESHİM'le KİMLİK birleştirme sahip onayı BEKLİYOR
-    # (aynı tutar + Hüseyin + makine güçlü işaret ama kural: doğrulanmadan birleştirme yok).
-    ("hüseyin makina", None, "hizmet"),
+    # sahip onayı 2026-07-19 'EVET': 'hüseyin makina' = ESHİM (makine tamircisi
+    # Hüseyin Kara — 40.800 söz bu adla girilmişti). İki yazım tek ESHİM başlığında.
+    ("ESHİM TEKNİK SERVİS HÜSEYİN KARA", "ESHİM", "hizmet"),
+    ("hüseyin makina", "ESHİM", "hizmet"),
     ("ASSA SANAL MAĞAZACILIK LİMİTED ŞİRKETİ", None, "gecici"),    # internetten kartla
     ("D-MARKET ELEKTRONİK HİZMETLER VE TİCARET A.Ş.", None, "gecici"),
 ]
@@ -2034,6 +2032,13 @@ def _eslestirme_ensure(cur) -> None:
             """INSERT INTO tedarikci_eslestirme (resmi_ad, kisa_ad, sinif, kaynak)
                VALUES (%s, %s, %s, 'sahip_onay_2026-07-19')
                ON CONFLICT (resmi_ad) DO NOTHING""", (resmi, kisa, sinif))
+    # 🔧 tek-seferlik göç (sahip 'EVET' 2026-07-19): eski kayıtlarda ESHİM/hüseyin
+    # makina kisa_ad'sız durur (seed DO NOTHING güncellemez) — kimlik birleştirme
+    # burada tamamlanır; idempotent (kisa_ad dolunca koşul boşa düşer).
+    cur.execute(
+        """UPDATE tedarikci_eslestirme SET kisa_ad='ESHİM'
+           WHERE resmi_ad IN ('ESHİM TEKNİK SERVİS HÜSEYİN KARA', 'hüseyin makina')
+             AND (kisa_ad IS NULL OR kisa_ad='')""")
 
 
 def tedarikci_eslestirme_haritasi() -> dict:
