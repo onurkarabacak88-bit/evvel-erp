@@ -723,7 +723,7 @@ export default function Maliyet() {
         }
         if (!uyarilar.length) return null;
         const acilVar = uyarilar.some(u => u.acil);
-        const renk = acilVar ? '#ef4444' : '#eab308';
+        const renk = acilVar ? 'var(--red)' : 'var(--yellow)';
         const bg = acilVar ? 'rgba(239,68,68,0.10)' : 'rgba(234,179,8,0.10)';
         const bd = acilVar ? 'rgba(239,68,68,0.45)' : 'rgba(234,179,8,0.45)';
         return (
@@ -855,7 +855,7 @@ export default function Maliyet() {
               <div style={{ marginBottom: 10, padding: '10px 13px', borderRadius: 10, background: 'rgba(239,68,68,0.10)', border: '1px solid rgba(239,68,68,0.40)', display: 'flex', alignItems: 'center', gap: 10 }}>
                 <span style={{ fontSize: 18 }}>🏚️</span>
                 <div style={{ fontSize: 12.5, lineHeight: 1.45 }}>
-                  <strong style={{ color: '#ef4444' }}>Kapalı sezon — satış yok ama sabit gider sürüyor.</strong> Bu dönemde ciro girilmemiş; kira/fatura/abonelik gibi sabit giderler devam ettiği için sonuç <strong>zarar</strong>. Aşağıdaki net kâr eksi görünmesi normaldir.
+                  <strong style={{ color: 'var(--red)' }}>Kapalı sezon — satış yok ama sabit gider sürüyor.</strong> Bu dönemde ciro girilmemiş; kira/fatura/abonelik gibi sabit giderler devam ettiği için sonuç <strong>zarar</strong>. Aşağıdaki net kâr eksi görünmesi normaldir.
                 </div>
               </div>
             )}
@@ -882,7 +882,7 @@ export default function Maliyet() {
             <div className="mk-stagger mk-hovlift" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12 }}>
               {kart('Marj', marj == null ? '—' : `%${marj.toFixed(1)}`, 'net kâr / net satış (KDV hariç)', netRenk, marj != null && oMarj != null ? yon(marj, oMarj, true) : null)}
               {kart('💵 Ciro (KDV dahil)', fmt(ciro), `günlük ort. ${fmt(ciro / Math.max(1, gunSayisi))}`, 'var(--accent)', yon(ciro, oCiro, true))}
-              {kart('📉 Toplam Maliyet (KDV dahil)', fmt(maliyet), maliyetDetayAcik ? 'kapat ▴' : 'kırılımı gör ▾ · KDV-hariç net maliyet P&L tablosunda', '#f59e0b', yon(maliyet, oMaliyet, false), null, () => setMaliyetDetayAcik(v => !v))}
+              {kart('📉 Toplam Maliyet (KDV dahil)', fmt(maliyet), maliyetDetayAcik ? 'kapat ▴' : 'kırılımı gör ▾ · KDV-hariç net maliyet P&L tablosunda', 'var(--orange)', yon(maliyet, oMaliyet, false), null, () => setMaliyetDetayAcik(v => !v))}
             </div>
 
             {/* ⚖️ EVO ↔ FİZİKİ KASA (sahip 2026-07-19: "personelin girdiği kasa
@@ -1281,7 +1281,7 @@ export default function Maliyet() {
             const sec = subeId === s.sube_id;
             const veri = s.ciro > 0;
             const poz = s.net >= 0;
-            const renk = !veri ? 'var(--text3)' : (poz ? '#22c55e' : '#ef4444');
+            const renk = !veri ? 'var(--text3)' : (poz ? 'var(--green)' : 'var(--red)');
             return (
               <div key={s.sube_id} onClick={() => setSubeId(sec ? '' : s.sube_id)} style={{
                 cursor: 'pointer', background: 'var(--bg)', borderRadius: 12, padding: '12px 14px',
@@ -1298,7 +1298,7 @@ export default function Maliyet() {
                   {!veri ? 'veri yok' : `marj %${s.marj.toFixed(1)} · ciro ${fmt(s.ciro)}`}
                 </div>
                 <div style={{ height: 5, background: 'var(--bg3)', borderRadius: 3, marginTop: 8, overflow: 'hidden' }}>
-                  <div style={{ width: `${Math.min(100, Math.abs(s.marj || 0))}%`, height: '100%', background: veri ? (poz ? '#22c55e' : '#ef4444') : 'transparent' }} />
+                  <div style={{ width: `${Math.min(100, Math.abs(s.marj || 0))}%`, height: '100%', background: veri ? (poz ? 'var(--green)' : 'var(--red)') : 'transparent' }} />
                 </div>
               </div>
             );
@@ -1331,8 +1331,8 @@ export default function Maliyet() {
       {/* ── FAZ 5: GÜVEN SKORU + SAPMA MOTORU (öneri-only, hiçbir şeyi değiştirmez) ── */}
       {sekme === 'genel' && altSekme === 'ozet' && guvenSkoru && (() => {
         const skor = guvenSkoru.genel_skor ?? 0;
-        const renk = skor >= 85 ? '#22c55e' : (skor >= 60 ? '#eab308' : '#ef4444');
-        const durumRenk = (d) => d === 'iyi' ? '#22c55e' : (d === 'orta' ? '#eab308' : '#ef4444');
+        const renk = skor >= 85 ? 'var(--green)' : (skor >= 60 ? 'var(--yellow)' : 'var(--red)');
+        const durumRenk = (d) => d === 'iyi' ? 'var(--green)' : (d === 'orta' ? 'var(--yellow)' : 'var(--red)');
         const sapmalar = guvenSkoru.sapmalar || [];
         return (
           <div style={{ marginBottom: 16, border: `1px solid var(--border)`, borderRadius: 10, padding: 14, background: 'var(--bg2)' }}>
@@ -1349,8 +1349,8 @@ export default function Maliyet() {
                 <div style={{ fontWeight: 600, fontSize: 14 }}>🎯 Maliyet Güven Skoru {guvenSkoru.sube_id ? '' : '— Tüm Şubeler'}</div>
                 <div style={{ fontSize: 12, color: 'var(--text3)', marginTop: 2 }}>
                   {sapmalar.length > 0
-                    ? <span style={{ color: '#ef4444', fontWeight: 600 }}>⚠️ {sapmalar.length} şüpheli değer yakalandı (sapma motoru)</span>
-                    : <span style={{ color: '#22c55e' }}>✓ Şüpheli değer yok</span>}
+                    ? <span style={{ color: 'var(--red)', fontWeight: 600 }}>⚠️ {sapmalar.length} şüpheli değer yakalandı (sapma motoru)</span>
+                    : <span style={{ color: 'var(--green)' }}>✓ Şüpheli değer yok</span>}
                   {' · '}maliyetin ne kadar güvenilir olduğu
                 </div>
               </div>
@@ -1375,14 +1375,14 @@ export default function Maliyet() {
                 {/* Sapmalar */}
                 {sapmalar.length > 0 && (
                   <div>
-                    <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 6, color: '#ef4444' }}>🔍 Sapma Motoru — şüpheli değerler (insan kontrolü gerek)</div>
+                    <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 6, color: 'var(--red)' }}>🔍 Sapma Motoru — şüpheli değerler (insan kontrolü gerek)</div>
                     {sapmalar.map((s, i) => (
                       <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '7px 10px', borderRadius: 7, marginBottom: 5,
                         background: s.siddet === 'kritik' ? 'rgba(239,68,68,0.10)' : 'rgba(234,179,8,0.08)',
                         border: `1px solid ${s.siddet === 'kritik' ? 'rgba(239,68,68,0.35)' : 'rgba(234,179,8,0.30)'}` }}>
                         <span style={{ fontSize: 13 }}>{s.tip === 'FIYAT_OUTLIER' ? '💸' : '📦'}</span>
                         <div style={{ flex: 1, fontSize: 11.5, lineHeight: 1.4 }}>
-                          <span style={{ fontWeight: 600, color: s.siddet === 'kritik' ? '#ef4444' : '#b45309' }}>{s.kat}× </span>
+                          <span style={{ fontWeight: 600, color: s.siddet === 'kritik' ? 'var(--red)' : 'var(--orange)' }}>{s.kat}× </span>
                           {s.mesaj}
                         </div>
                       </div>
@@ -1512,7 +1512,7 @@ export default function Maliyet() {
                       <span style={{ fontWeight: 600, fontSize: 13 }}>
                         {fmtDate(s.tarih)}{!subeId && s.sube_adi ? <span style={{ color: 'var(--text3)', fontWeight: 400 }}> · {s.sube_adi}</span> : ''}
                       </span>
-                      <span style={{ fontSize: 13, fontWeight: 700, fontFamily: 'var(--font-mono)', padding: '2px 9px', borderRadius: 6, background: neg ? 'rgba(239,68,68,0.12)' : 'rgba(34,197,94,0.12)', color: neg ? '#ef4444' : '#22c55e' }}>
+                      <span style={{ fontSize: 13, fontWeight: 700, fontFamily: 'var(--font-mono)', padding: '2px 9px', borderRadius: 6, background: neg ? 'rgba(239,68,68,0.12)' : 'rgba(34,197,94,0.12)', color: neg ? 'var(--red)' : 'var(--green)' }}>
                         {neg ? '' : '+'}{fmt(net)}
                       </span>
                     </div>

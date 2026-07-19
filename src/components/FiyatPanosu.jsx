@@ -107,11 +107,11 @@ export default function FiyatPanosu() {
 
   const rozet = (k) => {
     if (k.fiyat_yok) return <span title="Hiç fiyat kaydı yok — maliyette 0 sayılıyor!"
-      style={{ fontSize: 10.5, fontWeight: 800, color: '#f59e0b', whiteSpace: 'nowrap' }}>fiyat yok ⚠</span>;
+      style={{ fontSize: 10.5, fontWeight: 800, color: 'var(--orange)', whiteSpace: 'nowrap' }}>fiyat yok ⚠</span>;
     const pct = k.degisim_pct;
     if (pct == null) return <span style={{ fontSize: 11, color: 'var(--text3)' }}>=</span>;
     if (k.sicrama) return <span title="Birim/veri değişimi olabilir — gerçek zam sayılmaz"
-      style={{ fontSize: 11.5, fontWeight: 800, color: '#f59e0b', whiteSpace: 'nowrap' }}>⚠ sıçrama</span>;
+      style={{ fontSize: 11.5, fontWeight: 800, color: 'var(--orange)', whiteSpace: 'nowrap' }}>⚠ sıçrama</span>;
     return <span className={`kv-pill ${pct > 0 ? 'r' : 'g'}`}
                  style={{ fontSize: 11.5, fontWeight: 800, whiteSpace: 'nowrap', padding: '2px 9px', borderRadius: 9,
                           color: pct > 0 ? 'var(--red, #ef4444)' : 'var(--green, #22c55e)' }}>
@@ -211,7 +211,7 @@ export default function FiyatPanosu() {
             </span>
             {rozet(k)}
           </div>
-          <div style={{ fontSize: 10.5, color: k.fiyat_yok || k.sicrama ? '#f59e0b' : 'var(--text3)', marginTop: 2 }}>
+          <div style={{ fontSize: 10.5, color: k.fiyat_yok || k.sicrama ? 'var(--orange)' : 'var(--text3)', marginTop: 2 }}>
             {/* Rozetin ANLAMI hover beklemeden görünür (dokunmatikte hover yok) */}
             {k.fiyat_yok ? 'fiyat girilmemiş — maliyete 0 yazılıyor'
               : k.sicrama ? 'birim/veri değişimi olabilir — gerçek zam sayılmaz'
@@ -261,7 +261,7 @@ export default function FiyatPanosu() {
             <div key={k.kalem_kodu} onClick={() => { setSecili(k.kalem_kodu); setForm(null); }}
               style={{ padding: '8px 8px', borderRadius: 9, cursor: 'pointer', marginBottom: 2,
                        background: secili === k.kalem_kodu ? 'rgba(255,255,255,.05)' : 'transparent',
-                       borderLeft: `3px solid ${(k.degisim_pct || 0) >= esik ? 'var(--red, #ef4444)' : '#f59e0b'}` }}>
+                       borderLeft: `3px solid ${(k.degisim_pct || 0) >= esik ? 'var(--red, #ef4444)' : 'var(--orange)'}` }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
                 <span style={{ fontSize: 12.5, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {k.kalem_adi}
@@ -276,7 +276,7 @@ export default function FiyatPanosu() {
           ))}
           {fiyatsizlar.length > 0 && (
             <>
-              <div style={{ fontSize: 12, fontWeight: 800, color: '#f59e0b', margin: '12px 0 4px' }}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--orange)', margin: '12px 0 4px' }}>
                 ⚠ FİYATSIZLAR ({fiyatsizlar.length}) <span style={{ fontWeight: 400, color: 'var(--text3)' }}>maliyete 0 yazıyor</span>
               </div>
               {fiyatsizlar.slice(0, 8).map(k => (
@@ -334,7 +334,7 @@ export default function FiyatPanosu() {
                         <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>
                           {kt.urunler.length} ürün
                           {zamli > 0 && <b style={{ color: 'var(--red, #ef4444)' }}> · {zamli} zam</b>}
-                          {fyok > 0 && <b style={{ color: '#f59e0b' }}> · {fyok} fiyatsız</b>}
+                          {fyok > 0 && <b style={{ color: 'var(--orange)' }}> · {fyok} fiyatsız</b>}
                         </div>
                       </div>
                     </div>
@@ -378,7 +378,7 @@ export default function FiyatPanosu() {
                   )}
                 </div>
                 {seciliK.fiyat_yok ? (
-                  <div style={{ fontSize: 12.5, color: '#f59e0b', margin: '8px 0', lineHeight: 1.5 }}>
+                  <div style={{ fontSize: 12.5, color: 'var(--orange)', margin: '8px 0', lineHeight: 1.5 }}>
                     ⚠ Bu ürünün hiç fiyat kaydı yok — her ürün-aç maliyete <b>0 ₺</b> yazıyor.
                     Sağdaki 🏷️ düğmesiyle ilk fiyatını gir; faturası onaylanınca da kendiliğinden oluşur.
                   </div>
@@ -405,7 +405,7 @@ export default function FiyatPanosu() {
                         🔧 birim düzeltmesi (zam değil)
                       </div>
                     ) : b.sicrama ? (
-                      <div style={{ fontSize: 11.5, fontWeight: 700, padding: '3px 0 3px 14px', color: '#f59e0b' }}>
+                      <div style={{ fontSize: 11.5, fontWeight: 700, padding: '3px 0 3px 14px', color: 'var(--orange)' }}>
                         ⚠ %{Math.abs(b.degisim_pct || 0).toFixed(0)} sıçrama — birim/veri değişimi olabilir
                       </div>
                     ) : (

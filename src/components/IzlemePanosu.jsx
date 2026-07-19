@@ -164,7 +164,7 @@ export default function IzlemePanosu() {
                   <span style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--text3)' }}> kalan{sube ? '' : ' (tüm)'}</span>
                 </span>
                 {(k.dusum_7g || 0) > 0 && (
-                  <span style={{ fontSize: 11, fontWeight: 800, color: '#f59e0b', whiteSpace: 'nowrap' }}>7g −{Math.round(k.dusum_7g)}</span>
+                  <span style={{ fontSize: 11, fontWeight: 800, color: 'var(--orange)', whiteSpace: 'nowrap' }}>7g −{Math.round(k.dusum_7g)}</span>
                 )}
               </div>
               <div style={{ fontSize: 10.5, color: g2.kritik ? 'var(--red, #ef4444)' : 'var(--text3)', marginTop: 2 }}>
@@ -190,12 +190,12 @@ export default function IzlemePanosu() {
                 <div key={k.kalem_kodu} onClick={() => setSecili(k.kalem_kodu)}
                   style={{ padding: '8px 8px', borderRadius: 9, cursor: 'pointer', marginBottom: 2,
                            background: secili === k.kalem_kodu ? 'rgba(255,255,255,.05)' : 'transparent',
-                           borderLeft: `3px solid ${k.kritik ? 'var(--red, #ef4444)' : '#f59e0b'}` }}>
+                           borderLeft: `3px solid ${k.kritik ? 'var(--red, #ef4444)' : 'var(--orange)'}` }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
                     <span style={{ fontSize: 12.5, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {k.kalem_adi}
                     </span>
-                    <span style={{ fontSize: 11.5, fontWeight: 800, color: '#f59e0b', whiteSpace: 'nowrap' }}>−{Math.round(k.dusum_7g)}</span>
+                    <span style={{ fontSize: 11.5, fontWeight: 800, color: 'var(--orange)', whiteSpace: 'nowrap' }}>−{Math.round(k.dusum_7g)}</span>
                   </div>
                   <div style={{ fontSize: 11, color: 'var(--text3)', display: 'flex', justifyContent: 'space-between', gap: 8 }}>
                     <span>depoda {Math.round(k.kalan_toplam)}</span>
@@ -251,7 +251,7 @@ export default function IzlemePanosu() {
                             <div style={{ fontSize: 13, fontWeight: 800 }}>{kt.ad}</div>
                             <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>
                               {kt.urunler.length} ürün
-                              {dusum > 0 && <b style={{ color: '#f59e0b' }}> · 7g −{dusum}</b>}
+                              {dusum > 0 && <b style={{ color: 'var(--orange)' }}> · 7g −{dusum}</b>}
                               {kritik > 0 && <b style={{ color: 'var(--red, #ef4444)' }}> · {kritik} kritik</b>}
                             </div>
                           </div>
@@ -305,8 +305,8 @@ export default function IzlemePanosu() {
                       <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 8 }}>
                         📦 {sube ? `${subeAd}'de kalan` : 'Depoda kalan (tüm şubeler)'}{' '}
                         <b style={{ fontFamily: M, color: 'var(--text)', fontSize: 14 }}>{kalanG}</b>
-                        {' '}· son 7 gün <b style={{ color: '#f59e0b' }}>−{sube ? dus(gun(7)) : Math.round(dSecili.dusum_7g || 0)}</b>
-                        {' '}· son 30 gün <b style={{ color: '#f59e0b' }}>−{sube ? dus(gun(30)) : Math.round(dSecili.dusum_30g || 0)}</b>
+                        {' '}· son 7 gün <b style={{ color: 'var(--orange)' }}>−{sube ? dus(gun(7)) : Math.round(dSecili.dusum_7g || 0)}</b>
+                        {' '}· son 30 gün <b style={{ color: 'var(--orange)' }}>−{sube ? dus(gun(30)) : Math.round(dSecili.dusum_30g || 0)}</b>
                       </div>
                     );
                   })()}
@@ -390,7 +390,7 @@ export default function IzlemePanosu() {
                           <span style={{ color: 'var(--text3)' }}> · {(h.tur || '').toLowerCase().replace(/_/g, ' ')}</span>
                         </span>
                         <span style={{ fontFamily: M, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap', fontWeight: 700,
-                                       color: dusum2 ? '#f59e0b' : 'var(--green, #22c55e)' }}>
+                                       color: dusum2 ? 'var(--orange)' : 'var(--green, #22c55e)' }}>
                           {h.onceki != null && h.sonraki != null
                             ? `${Math.round(h.onceki)} → ${Math.round(h.sonraki)}`
                             : `${(h.miktar || 0) > 0 ? '+' : ''}${Math.round(h.miktar || 0)}`}
