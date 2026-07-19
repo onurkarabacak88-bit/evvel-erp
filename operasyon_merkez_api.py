@@ -14941,6 +14941,10 @@ def ops_fiyat_izleme():
             if k["kalem_kodu"] == "su_sise":
                 return _urun_bul("su")
             _adl = (k.get("kalem_adi") or "").lower()
+            # sahip 2026-07-19: 'Z Peçete ile Diğer'deki Selpak AYNI :)' — fiyat
+            # kaydı zaten 'Z PEÇETE' kodundaydı; Selpak havlu = Z Peçete ürünü
+            if k["kalem_kodu"].strip().upper() == "Z PEÇETE" or "selpak" in _adl:
+                return _urun_bul("z peçete") or _urun_bul("z pecete")
             if "kurabi̇ye" in _adl or "kurabiye" in _adl:
                 if "şurup" in _adl or "surup" in _adl:
                     return _urun_bul("cookie", "Şuruplar")
@@ -15047,6 +15051,12 @@ def ops_depo_izleme():
     def _kat(kod, ad):
         u = (kat_map.get(kod) or depo_kat.get(kod) or stok_key_kat.get(kod)
              or ad_kat.get((ad or "").strip().lower()))
+        if not u:  # el eşlemeleri (fiyat-izleme ile aynı sahip kararları)
+            _adl = (ad or "").lower()
+            if (kod or "").strip().upper() == "Z PEÇETE" or "selpak" in _adl:
+                u = ad_kat.get("z peçete") or ad_kat.get("z pecete")
+            elif kod == "su_sise":
+                u = ad_kat.get("su")
         return ((u or {}).get("kat_ad") or "Diğer",
                 (u or {}).get("kat_emoji") or "📦",
                 int((u or {}).get("kat_sira") or 999))
