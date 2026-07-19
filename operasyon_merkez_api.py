@@ -14710,7 +14710,7 @@ def _fatura_icerik(cur: Any, kalem: str) -> float:
 
 def _kaydet_alis_fiyati(cur: Any, kalem: str, kalem_adi: Optional[str], birim: str,
                         birim_maliyet_tl: float, bas: str, tedarikci: Optional[str],
-                        notlar: Optional[str]) -> str:
+                        notlar: Optional[str], icerik_uygula: bool = True) -> str:
     """urun_alis_fiyat'a yeni fiyat satırı ekler, önceki geçerli kaydı kapatır. id döner.
     Aynı kalem_kodu ile depo stoklarında (sube_depo_stok) kayıt varsa, oradaki
     alis_fiyati_tl alanını da günceller — böylece depo ekranı ve stok değeri
@@ -14725,7 +14725,9 @@ def _kaydet_alis_fiyati(cur: Any, kalem: str, kalem_adi: Optional[str], birim: s
     _ensure_maliyet_tablolari(cur)
     # 📦 AÇILIŞ BİRİMİ NORMALİZASYONU: kalemin fatura_icerik katsayısı > 1 ise
     # (fatura koli/çoklu satıyor, personel tekil açıyor) fiyat katsayıya bölünür.
-    _icerik = _fatura_icerik(cur, kalem)
+    # icerik_uygula=False → MANUEL giriş (kullanıcı zaten AÇILIŞ birimi fiyatı
+    # yazar; bölünürse Sprite 55 → 4,58 olurdu). Fatura onay yolları True.
+    _icerik = _fatura_icerik(cur, kalem) if icerik_uygula else 1.0
     if _icerik > 1:
         _orij = birim_maliyet_tl
         birim_maliyet_tl = round(birim_maliyet_tl / _icerik, 4)
@@ -15369,8 +15371,10 @@ def ops_maliyet_alis_fiyat_kaydet(body: AlisFiyatBody):
         raise HTTPException(400, "birim_maliyet_tl negatif olamaz")
     bas = body.gecerli_baslangic or str(date.today())
     with db() as (conn, cur):
+        # Manuel giriş = kullanıcı AÇILIŞ birimi fiyatı yazar → katsayı UYGULANMAZ
         new_id = _kaydet_alis_fiyati(cur, kalem, body.kalem_adi, body.birim,
-                                      body.birim_maliyet_tl, bas, body.tedarikci, body.notlar)
+                                      body.birim_maliyet_tl, bas, body.tedarikci,
+                                      body.notlar, icerik_uygula=False)
     return {"success": True, "id": new_id, "kalem_kodu": kalem}
 
 

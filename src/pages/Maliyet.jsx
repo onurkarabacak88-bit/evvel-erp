@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { api, fmt, fmtDate } from '../utils/api';
 import IzlemePanosu from '../components/IzlemePanosu';
+import FiyatPanosu from '../components/FiyatPanosu';
 
 // 🧾 VERGİ AYARLARI — kalem bazlı KDV oranı düzenleme + kira stopaj özeti (2026-07-05)
 function VergiAyarlari({ fmt }) {
@@ -619,8 +620,8 @@ export default function Maliyet() {
         {[
           ['genel', '📊 Kâr Özeti', 'para kazandık mı?'],
           ['analiz', '🔍 Analiz', 'şube & gün kırılımı'],
-          ['fiyatlar', '🏷️ Fiyat Girişi', 'fiyat gir + güncel liste'],
-          ['izleme', '📈 İzleme', 'zamlar + depo düşümü'],
+          ['fiyatlar', '🏷️ Fiyatlar', 'artışlar + giriş + tam liste'],
+          ['izleme', '📦 Depo İzleme', 'kalanlar + gün gün düşüm'],
           ['faturalar', '🧾 Faturalar', 'PDF fatura arşivi'],
         ].map(([id, lbl, alt]) => (
           <button key={id} onClick={() => setSekme(id)} style={{
@@ -1470,10 +1471,17 @@ export default function Maliyet() {
 
       {/* Fiyat girişi / güncelleme formu (Fiyatlar sekmesi) */}
       {sekme === 'fiyatlar' && (<>
-      <div className="panel-section-hdr" style={{ marginBottom: 12 }}>
-        <span>➕ Fiyat Girişi / Güncelleme</span>
-      </div>
-      <div className="card" style={{ marginBottom: 16 }}>
+      {/* 🏷️ FİYAT PANOSU — birincil yüzey (Codex: watch primary, entry contextual):
+          izleme tahtası + sağ panelden bağlamsal fiyat girişi + ➕ Yeni Fiyat modalı.
+          Zam alarmları 'Alarm Verenler' filtresine, fiyatsız uzun liste sol rail'e katlandı. */}
+      <FiyatPanosu />
+
+      {/* 🗂 KLASİK GİRİŞ FORMU — ikincil (muhasebe/eski alışkanlık; varsayılan kapalı) */}
+      <details style={{ margin: '16px 0' }}>
+        <summary style={{ cursor: 'pointer', fontSize: 12.5, fontWeight: 700, color: 'var(--text3)' }}>
+          🗂 Klasik giriş formu (kalem kodu ile) — aç/kapa
+        </summary>
+      <div className="card" style={{ margin: '10px 0 4px' }}>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px,1fr))', gap: 10, marginBottom: 12 }}>
           <div className="form-group" style={{ margin: 0 }}>
             <label>Kalem kodu (depo kataloğu)</label>
@@ -1520,7 +1528,11 @@ export default function Maliyet() {
           <option key={k.kalem_kodu} value={k.kalem_kodu}>{k.kalem_adi}</option>
         ))}
       </datalist>
+      </details>
 
+      {/* Fiyatsız uzun liste KALDIRILDI (Codex: panoya katlandı — sol rail
+          FİYATSIZLAR + kesikli kutucuklar; fiyat girişi artık panodan) */}
+      {false && (<>
       {/* ── Fiyatı girilmemiş ürünler (eşleştirilmemiş / fiyatsız) ── */}
       {fiyatsizUrunler.length > 0 && (
         <>
@@ -1560,28 +1572,10 @@ export default function Maliyet() {
         </>
       )}
       </>)}
+      </>)}
 
-      {/* 🔺 Zam Alarmları — eşik üstü fiyat artışı (Akıllı Denetim sinyali) */}
-      {sekme === 'fiyatlar' && zamAlarmlar.length > 0 && (
-        <>
-          <div className="panel-section-hdr" style={{ marginBottom: 12 }}>
-            <span>🔺 Zam Alarmları</span>
-            <span style={{ fontSize: 10, color: 'var(--text3)' }}>Eşik üstü fiyat artışı — onaylanan fatura fiyatından</span>
-          </div>
-          <div className="card" style={{ marginBottom: 16, border: '1px solid var(--red)' }}>
-            {zamAlarmlar.map(a => (
-              <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 4px', borderBottom: '1px solid var(--border)' }}>
-                <span style={{ fontSize: 14, fontWeight: 800, color: 'var(--red)', minWidth: 60 }}>🔺 +{a.artis_yuzde}%</span>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13, fontWeight: 700 }}>{a.kalem_adi || a.kalem_kodu}</div>
-                  <div style={{ fontSize: 11, color: 'var(--text3)' }}>🚚 {a.tedarikci} · {fmt(a.eski_fiyat)}₺ → {fmt(a.yeni_fiyat)}₺ · {a.olusturma}</div>
-                </div>
-                <button className="btn btn-secondary btn-sm" onClick={() => zamGorduldu(a.id)}>Gördüm</button>
-              </div>
-            ))}
-          </div>
-        </>
-      )}
+      {/* 🔺 Zam Alarmları ayrı blok olarak KALDIRILDI (Codex: panoya katlandı —
+          '🚨 Alarm Verenler' filtresi + kutucuk/rozet + Son Yükselenler) */}
 
       {/* ── FATURALAR sekmesi: PDF yükle + telefon faturaları + foto modal ── */}
       {/* 📈 İZLEME PANOSU — watchlist kabuğu (Codex kurgusu; sol rail + tile grid + timeline) */}
@@ -1794,6 +1788,10 @@ export default function Maliyet() {
 
       {/* Güncel fiyat listesi + geçmiş/artış görseli (Fiyatlar sekmesi) */}
       {sekme === 'fiyatlar' && (<>
+      <details style={{ marginTop: 4 }}>
+        <summary style={{ cursor: 'pointer', fontSize: 12.5, fontWeight: 700, color: 'var(--text3)', marginBottom: 8 }}>
+          📑 Tüm Fiyatlar — tam liste (muhasebe görünümü: ara · geçmiş · sil) — aç/kapa
+        </summary>
       <div className="panel-section-hdr" style={{ marginBottom: 10 }}>
         <span>📑 Güncel Fiyat Listesi <span style={{ fontWeight: 400, color: 'var(--text3)', fontSize: 11 }}>({gruplar.length} kalem fiyatlı{fiyatsizUrunler.length ? ` · ${fiyatsizUrunler.length} fiyatsız` : ''})</span></span>
         <span style={{ fontSize: 10, color: 'var(--text3)' }}>Ok ikonuna tıkla → değişim yüzdesi</span>
@@ -1879,6 +1877,7 @@ export default function Maliyet() {
           })}
         </div>
       )}
+      </details>
       </>)}
     </div>
   );
