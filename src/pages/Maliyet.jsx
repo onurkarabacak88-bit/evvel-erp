@@ -1620,10 +1620,18 @@ export default function Maliyet() {
         </div>
         <div className="form-group" style={{ margin: 0 }}>
           <label>Fatura PDF (tek veya çok faturalı)</label>
-          <input type="file" accept="application/pdf"
-            onChange={e => faturaPdfYukle(e.target.files?.[0])} disabled={faturaYukleniyor} />
+          {/* Çıplak tarayıcı dosya kutusu ('Choose File · No file chosen' — İngilizce)
+              yerine temayla uyumlu Türkçe seçim kutusu; input görünmez ama erişilebilir. */}
+          <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
+                          padding: '18px 14px', borderRadius: 12, cursor: faturaYukleniyor ? 'wait' : 'pointer',
+                          border: '2px dashed var(--border)', background: 'var(--bg3)',
+                          fontSize: 13, fontWeight: 600, color: 'var(--text2)', textAlign: 'center' }}>
+            <span style={{ fontSize: 20 }}>📎</span>
+            {faturaYukleniyor ? 'PDF ayrıştırılıyor…' : 'PDF seçmek için tıkla'}
+            <input type="file" accept="application/pdf" style={{ display: 'none' }}
+              onChange={e => faturaPdfYukle(e.target.files?.[0])} disabled={faturaYukleniyor} />
+          </label>
         </div>
-        {faturaYukleniyor && <div style={{ fontSize: 12, color: 'var(--text3)', marginTop: 8 }}>PDF ayrıştırılıyor...</div>}
         {faturaUyari && <div style={{ fontSize: 12, color: 'var(--yellow)', marginBottom: 8 }}>⚠️ {faturaUyari}</div>}
         {faturaSatirlar?.length > 0 && (
           <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 4 }}>
