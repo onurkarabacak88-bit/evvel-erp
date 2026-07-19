@@ -689,6 +689,20 @@ def ap_selfheal() -> dict:
             iz = cur.fetchone()
             if not iz:
                 continue
+            # 🛑 DÖNEM FRENİ (2026-07-19 APS/Redbull dersi — sahip: 'bundan önce
+            # de bir fatura vardı, en son gelen fatura borç'): iz tarihi, söze
+            # bağlı FATURANIN tarihinden ESKİYSE kapatma — o ödeme muhtemelen
+            # sisteme yüklenmemiş ÖNCEKİ faturanın parasıdır (sürekli tedarikçi
+            # döngüsü). Belirsizlik = insan konusu, motor zorlamaz.
+            cur.execute(
+                """SELECT MIN(COALESCE(fatura_tarih, olusturma::date)) AS ftarih
+                   FROM tedarikci_fatura WHERE kuyruk_vadeli_id = %s""",
+                (str(s["id"]),))
+            fk = cur.fetchone()
+            if fk and fk.get("ftarih") and str(iz["t"]) < str(fk["ftarih"]):
+                logger.info("ap self-heal atlandi (donem freni): soz %s iz %s < fatura %s",
+                            s["id"], iz["t"], fk["ftarih"])
+                continue
             iz_not = f" [self-heal {date.today().isoformat()}: kasa izi {iz['t']} {float(iz['tutar']):.2f}, cari kapalı]"
             cur.execute(
                 """UPDATE vadeli_alimlar
@@ -720,6 +734,32 @@ def ap_selfheal() -> dict:
             pass
     return {"ok": True, "incelenen": incelenen,
             "kapatilan_adet": len(kapatilan), "kapatilan": kapatilan}
+
+
+@router.post("/soz-yeniden-ac/{vadeli_id}")
+def soz_yeniden_ac(vadeli_id: str, neden: str = ""):
+    """🔓 BAKIM: yanlış kapanmış ödeme sözünü geri açar (sahip kararıyla).
+    İlk vaka 2026-07-19 APS/Redbull: self-heal, sisteme yüklenmemiş Haziran
+    faturasının ödemesini yeni R37 faturasının sözüne sayıp kapatmıştı —
+    sahip: 'en son gelen fatura borç'. Kasa hareketi YAZMAZ/SİLMEZ."""
+    n = f" [yeniden açıldı {date.today().isoformat()}: {(neden or 'sahip kararı')[:80]}]"
+    with db() as (conn, cur):
+        cur.execute(
+            """UPDATE vadeli_alimlar
+               SET durum='bekliyor', aciklama = COALESCE(aciklama,'') || %s
+               WHERE id=%s AND durum='odendi'""", (n, vadeli_id))
+        acilan = cur.rowcount or 0
+        cur.execute(
+            """UPDATE odeme_plani
+               SET durum='bekliyor', odenen_tutar=NULL,
+                   aciklama = COALESCE(aciklama,'') || %s
+               WHERE kaynak_tablo='vadeli_alimlar' AND kaynak_id=%s
+                 AND durum='odendi'""", (n, str(vadeli_id)))
+        plan_acilan = cur.rowcount or 0
+    if not acilan:
+        raise HTTPException(404, "Söz bulunamadı ya da zaten bekliyor")
+    logger.info("soz yeniden acildi: %s (%s)", vadeli_id, neden[:60])
+    return {"ok": True, "acilan": acilan, "plan_acilan": plan_acilan}
 
 
 def gece_ap_selfheal() -> dict:
