@@ -45,8 +45,10 @@ export default function IzlemePanosu() {
     });
   const seciliK = tumu.find(k => k.kalem_kodu === secili) || null;
 
-  const rozet = (pct) => {
+  const rozet = (pct, sicrama) => {
     if (pct == null) return <span style={{ fontSize: 11, color: 'var(--text3)' }}>=</span>;
+    if (sicrama) return <span title="Birim/veri değişimi olabilir — gerçek zam sayılmaz"
+      style={{ fontSize: 11.5, fontWeight: 800, color: '#f59e0b', whiteSpace: 'nowrap' }}>⚠ sıçrama</span>;
     const artis = pct > 0;
     const renk = artis ? 'var(--red, #ef4444)' : 'var(--green, #22c55e)';
     return <span style={{ fontSize: 11.5, fontWeight: 800, color: renk, whiteSpace: 'nowrap' }}>
@@ -95,7 +97,7 @@ export default function IzlemePanosu() {
                   <span style={{ fontSize: 12.5, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {k.kalem_adi}
                   </span>
-                  {rozet(k.degisim_pct)}
+                  {rozet(k.degisim_pct, k.sicrama)}
                 </div>
                 <div style={{ fontSize: 11, color: 'var(--text3)', display: 'flex', justifyContent: 'space-between', gap: 8 }}>
                   <span style={{ fontFamily: M }}>{fmt(k.guncel_fiyat)}</span>
@@ -131,7 +133,7 @@ export default function IzlemePanosu() {
                         <span style={{ fontFamily: M, fontVariantNumeric: 'tabular-nums', fontWeight: 800, fontSize: 15.5 }}>
                           {fmt(k.guncel_fiyat)}
                         </span>
-                        {rozet(k.degisim_pct)}
+                        {rozet(k.degisim_pct, k.sicrama)}
                       </div>
                       <div style={{ fontSize: 10.5, color: 'var(--text3)', marginTop: 2 }}>
                         {k.son_degisim ? `son değişim ${trT(k.son_degisim)}` : 'değişim yok'}
@@ -178,6 +180,10 @@ export default function IzlemePanosu() {
                       {i > 0 && (b.duzeltme ? (
                         <div style={{ fontSize: 11.5, fontWeight: 700, padding: '3px 0 3px 14px', color: 'var(--text3)' }}>
                           🔧 birim düzeltmesi (zam değil)
+                        </div>
+                      ) : b.sicrama ? (
+                        <div style={{ fontSize: 11.5, fontWeight: 700, padding: '3px 0 3px 14px', color: '#f59e0b' }}>
+                          ⚠ %{Math.abs(b.degisim_pct || 0).toFixed(0)} sıçrama — birim/veri değişimi olabilir, zam sayılmadı
                         </div>
                       ) : (
                         <div style={{ fontSize: 11.5, fontWeight: 800, padding: '3px 0 3px 14px',

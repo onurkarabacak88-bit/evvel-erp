@@ -14868,6 +14868,9 @@ def ops_fiyat_izleme():
             z["duzeltme"] = duzeltme
             z["degisim_pct"] = (round((z["fiyat"] - zincir[i-1]["fiyat"]) / zincir[i-1]["fiyat"] * 100, 1)
                                 if i > 0 and zincir[i-1]["fiyat"] > 0 and not duzeltme else None)
+            # SIÇRAMA FRENİ: %500+ değişim gerçek zam değildir (birim/veri hatası
+            # kalıbı — Oreo 4,75→149,78 vakası); zam listelerine girmez, uyarıyla gösterilir
+            z["sicrama"] = z["degisim_pct"] is not None and abs(z["degisim_pct"]) >= 500
         son = zincir[-1]
         onceki = zincir[-2] if len(zincir) > 1 else None
         kalemler.append({
@@ -14877,14 +14880,16 @@ def ops_fiyat_izleme():
             "guncel_fiyat": son["fiyat"],
             "onceki_fiyat": onceki["fiyat"] if onceki else None,
             "degisim_pct": son.get("degisim_pct"),
+            "sicrama": bool(son.get("sicrama")),
             "son_degisim": son["bas"] if onceki else None,  # tek kayıtlıysa 'değişim' yok
             "tedarikci": son.get("tedarikci"),
             "degisim_sayisi": max(0, len(zincir) - 1),
             "zincir": zincir,
         })
-    # Sol rail: en son ARTIŞ yapanlar (tarih desc)
+    # Sol rail: en son GERÇEK ARTIŞ yapanlar (tarih desc; sıçrama/düzeltme hariç)
     yukselenler = sorted(
-        [k for k in kalemler if (k.get("degisim_pct") or 0) > 0 and k.get("son_degisim")],
+        [k for k in kalemler if (k.get("degisim_pct") or 0) > 0 and k.get("son_degisim")
+         and not k.get("sicrama")],
         key=lambda k: k["son_degisim"], reverse=True)[:25]
     return {"kalemler": kalemler, "son_yukselenler": yukselenler,
             "zam_esik_yuzde": FIYAT_ZAM_ESIK_YUZDE,
