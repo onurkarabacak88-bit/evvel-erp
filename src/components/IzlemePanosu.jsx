@@ -348,12 +348,14 @@ export default function IzlemePanosu() {
                             <option key={x.id} value={x.id}>{x.ad}</option>
                           ))}
                         </select>
+                        {/* Düz dil (Mercury deseni): 'adet/min' kısaltmaları sahibi düşündürüyordu */}
                         <label style={{ fontSize: 11.5, color: 'var(--text3)', display: 'flex', alignItems: 'center', gap: 5 }}>
-                          adet <input value={duz.adet} onChange={e => setDuz({ ...duz, adet: e.target.value })}
+                          yeni stok adedi <input value={duz.adet} onChange={e => setDuz({ ...duz, adet: e.target.value })}
                             style={{ width: 70, height: 30, borderRadius: 8, background: 'var(--bg2)', color: 'var(--text)', border: '1px solid var(--border)', padding: '0 8px', fontSize: 12.5 }} />
                         </label>
-                        <label style={{ fontSize: 11.5, color: 'var(--text3)', display: 'flex', alignItems: 'center', gap: 5 }}>
-                          min <input value={duz.min} onChange={e => setDuz({ ...duz, min: e.target.value })}
+                        <label style={{ fontSize: 11.5, color: 'var(--text3)', display: 'flex', alignItems: 'center', gap: 5 }}
+                          title="Stok bu sayının altına inince kritik alarmı verilir">
+                          alarm eşiği (min) <input value={duz.min} onChange={e => setDuz({ ...duz, min: e.target.value })}
                             style={{ width: 60, height: 30, borderRadius: 8, background: 'var(--bg2)', color: 'var(--text)', border: '1px solid var(--border)', padding: '0 8px', fontSize: 12.5 }} />
                         </label>
                       </div>

@@ -168,11 +168,18 @@ export default function FiyatPanosu() {
             değişim: {pct > 0 ? '+' : ''}%{pct.toFixed(1)} ({pct > 0 ? '+' : ''}{fmt(yeniN - f.guncel)})
           </div>
         )}
+        {/* Etiket placeholder'a gömülmez (alan doluyken ne olduğu kaybolmasın) */}
         <div style={{ display: 'flex', gap: 8 }}>
-          <input style={{ ...girisAlan, flex: 1 }} placeholder="Tedarikçi (opsiyonel)"
-            value={f.tedarikci} onChange={e => setF({ ...f, tedarikci: e.target.value })} />
-          <input style={{ ...girisAlan, flex: 1 }} placeholder="Not (opsiyonel)"
-            value={f.not} onChange={e => setF({ ...f, not: e.target.value })} />
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 3 }}>Tedarikçi <span style={{ opacity: .6 }}>(opsiyonel)</span></div>
+            <input style={girisAlan} placeholder="örn. SÜTAŞ"
+              value={f.tedarikci} onChange={e => setF({ ...f, tedarikci: e.target.value })} />
+          </div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 3 }}>Not <span style={{ opacity: .6 }}>(opsiyonel)</span></div>
+            <input style={girisAlan} placeholder="örn. pazarlıkla alındı"
+              value={f.not} onChange={e => setF({ ...f, not: e.target.value })} />
+          </div>
         </div>
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
           <button className="btn btn-secondary btn-sm" onClick={kapat}>Vazgeç</button>
