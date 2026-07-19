@@ -473,18 +473,11 @@ def eksik_gun_ciro_tara(body: EksikGunTaraBody):
         return {"oneriler": [], "evo_hata": str(e), "mesaj": "Evo modülü yüklenemedi."}
     oneriler = []; evo_hata = None
     with db() as (conn, cur):
-        # SAHİP KARARI (2026-07-18): kuyruktaki 🤖 Evo günlük taslakları TAMAMEN
-        # kaldırılır — girilmemiş gün artık onay kuyruğuna düşmez, Maliyet P&L
-        # Evo'dan doğrudan okur (fark defteri üzerinden). Personelin gönderdiği
-        # ciro taslaklarına (gonderen_ad farklı) DOKUNULMAZ. İdempotent.
-        try:
-            cur.execute("""UPDATE ciro_taslak
-                           SET durum='reddedildi',
-                               aciklama = COALESCE(aciklama,'') ||
-                                   ' · sahip kararı 18.07: Evo maliyete doğrudan işlenir (kuyruktan kaldırıldı)'
-                           WHERE durum='bekliyor' AND gonderen_ad='Evo Oto-Denetim'""")
-        except Exception:  # noqa: BLE001
-            pass
+        # SAHİP KARARI (2026-07-19, 18.07 kararının GERİ ALINIŞI): "girişi yoksa
+        # CİRO ONAYINA düşürsün — kasada iz bırakmıyor, amacına uygun değil."
+        # Girilmemiş gün yeniden 🤖 Evo taslağı olarak onay kuyruğuna düşer;
+        # sahip onaylayınca GERÇEK ciro + kasa hareketi oluşur. Onay gelene dek
+        # P&L, fark defteri köprüsüyle Evo'dan okumaya devam eder (kâr boş kalmaz).
         cur.execute("SELECT id, ad FROM subeler WHERE aktif=TRUE")
         subeler = [dict(r) for r in cur.fetchall()]
         for k in range(1, gun_sayisi + 1):
@@ -543,12 +536,29 @@ def eksik_gun_ciro_tara(body: EksikGunTaraBody):
                         except Exception:  # noqa: BLE001
                             pass
                     continue
-                # SAHİP KARARI (2026-07-18): girilmemiş gün ONAY KUYRUĞUNA DÜŞMEZ —
-                # fark defterine 'evo_kullaniliyor' olarak yazılır; Maliyet P&L o
-                # günün cirosunu doğrudan Evo'dan alır. Kasa/ciro kaydı ÜRETİLMEZ
-                # (kasa dünyası ayrı — sahip isterse defterden görür).
+                # SAHİP KARARI (2026-07-19): girilmemiş gün YENİDEN ONAY KUYRUĞUNA
+                # düşer (🤖 Evo taslağı) — onaylanınca gerçek ciro + KASA İZİ oluşur.
+                # Fark defteri köprüsü de yazılır: onay gelene dek P&L Evo'dan okur;
+                # onay sonrası kasa kaydı varken köprü etkisiz kalır (kasa esas).
                 kayit = {"sube": sad, "tarih": ts, "nakit": nakit, "pos": pos,
-                         "toplam": toplam, "durum": "evo_maliyete_islendi"}
+                         "toplam": toplam, "durum": "onizleme"}
+                try:
+                    cur.execute("""SELECT 1 FROM ciro_taslak
+                                   WHERE sube_id=%s AND tarih=%s::date AND durum='bekliyor'
+                                   LIMIT 1""", (sid, ts))
+                    if cur.fetchone():
+                        kayit["durum"] = "taslak_zaten_bekliyor"
+                    elif body.uygula:
+                        cur.execute(
+                            """INSERT INTO ciro_taslak
+                                   (id, sube_id, tarih, nakit, pos, online, aciklama,
+                                    durum, gonderen_ad)
+                               VALUES (%s,%s,%s::date,%s,%s,0,%s,'bekliyor','Evo Oto-Denetim')""",
+                            (str(_uuid.uuid4()), sid, ts, nakit, pos,
+                             "🤖 Evo oto-denetim — kapanışı girilmemiş gün (onay bekliyor)"))
+                        kayit["durum"] = "oneri_olusturuldu"
+                except Exception:  # noqa: BLE001
+                    kayit["durum"] = "taslak_hatasi"
                 try:
                     _fark_defteri_ensure(cur)
                     cur.execute(
