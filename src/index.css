@@ -433,3 +433,26 @@ tr:hover td{background:rgba(154,95,46,.05)}
   .mk-rise, .mk-stagger > *, .mk-stagger-s > *, .mk-perde, .mk-cekmece, .mk-modal { animation: none !important; }
   .mk-hovlift > * { transition: none !important; }
 }
+
+
+/* ══ 🎨 KADİFE VİTRİN KAPLAMASI (2026-07-19, design-shotgun B varyantı — sahip
+   seçimi; Stripe ruhu: katmanlı sıcak kartlar + degrade rozetler + bakır ışıltı).
+   .kv kapsamı = yalnız Kâr & Maliyet sayfası; beğenilirse kabuk geneline yayılır. ══ */
+.kv .card{background:linear-gradient(165deg,#2e2317,#261c11);border:1px solid rgba(243,233,220,.10);
+  border-radius:18px;box-shadow:0 14px 34px rgba(0,0,0,.35)}
+.kv .kv-hero{border-radius:20px;
+  box-shadow:0 14px 34px rgba(0,0,0,.35),inset 0 0 0 1px rgba(217,154,78,.16),0 0 60px rgba(217,154,78,.08)!important}
+.kv .kv-pill{border:none!important;border-radius:99px!important;font-weight:800!important}
+.kv .kv-pill.g{color:#052e14!important;background:linear-gradient(135deg,#4ade80,#22c55e);
+  box-shadow:0 6px 16px rgba(34,197,94,.28)}
+.kv .kv-pill.r{color:#3d0910!important;background:linear-gradient(135deg,#fb7185,#ef4444);
+  box-shadow:0 6px 16px rgba(239,68,68,.25)}
+.kv .kv-pill.m{color:var(--text3)!important;box-shadow:inset 0 0 0 1px var(--border)}
+.kv .kv-tab{border-radius:14px;transition:background .3s var(--mk-ease),box-shadow .3s var(--mk-ease);
+  border-bottom-width:0!important;margin-bottom:6px}
+.kv .kv-tab.on{background:linear-gradient(165deg,#2e2317,#261c11);
+  box-shadow:0 6px 18px rgba(0,0,0,.3),inset 0 0 0 1px rgba(243,233,220,.12)}
+.kv .kv-chip-on{background:linear-gradient(135deg,#d99a4e,#b06e2c)!important;color:#1c130c!important;
+  border-color:transparent!important;box-shadow:0 6px 16px rgba(217,154,78,.25)}
+.kv .mk-hovlift>*{border-radius:16px}
+.kv .mk-hovlift>*:hover{box-shadow:0 16px 30px rgba(0,0,0,.4);border-color:rgba(217,154,78,.4)!important}

@@ -566,7 +566,7 @@ export default function Maliyet() {
   }
 
   return (
-    <div className="page">
+    <div className="page kv">
       <div className="page-header">
         <h1>💰 Maliyet</h1>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
@@ -624,7 +624,7 @@ export default function Maliyet() {
           ['izleme', '📦 Depo İzleme', 'kalanlar + gün gün düşüm'],
           ['faturalar', '🧾 Faturalar', 'PDF fatura arşivi'],
         ].map(([id, lbl, alt]) => (
-          <button key={id} onClick={() => setSekme(id)} style={{
+          <button key={id} onClick={() => setSekme(id)} className={sekme === id ? 'kv-tab on' : 'kv-tab'} style={{
             padding: '7px 14px 6px', border: 'none', background: 'transparent', cursor: 'pointer',
             textAlign: 'left', lineHeight: 1.2,
             borderBottom: sekme === id ? '2px solid var(--accent)' : '2px solid transparent',
@@ -734,7 +734,8 @@ export default function Maliyet() {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 6 }}>
               <div style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--text2, var(--text))', marginBottom: 4 }}>{baslik}</div>
               {tr && (
-                <span style={{ fontSize: 11.5, fontWeight: 800, color: tr.renk, whiteSpace: 'nowrap',
+                <span className={`kv-pill ${tr.renk.includes('green') ? 'g' : tr.renk.includes('red') ? 'r' : 'm'}`}
+                      style={{ fontSize: 11.5, fontWeight: 800, color: tr.renk, whiteSpace: 'nowrap',
                                padding: '2px 10px', borderRadius: 9, border: `1px solid ${tr.renk}` }}>
                   {tr.ok} {tr.t}
                 </span>
@@ -764,7 +765,7 @@ export default function Maliyet() {
             {(() => {
               const tr = yon(netKar, oNet, true);
               return (
-                <div className="card mk-rise" style={{ borderTop: `3px solid ${netRenk || 'var(--accent)'}`, marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 16 }}>
+                <div className="card mk-rise kv-hero" style={{ borderTop: `3px solid ${netRenk || 'var(--accent)'}`, marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 16 }}>
                   <div style={{ minWidth: 0 }}>
                     <div style={{ fontSize: 13, color: 'var(--text3)', marginBottom: 4, display: 'flex', alignItems: 'center', gap: 8 }}>
                       {netKar >= 0 ? '✅' : '🔴'} Net Kâr

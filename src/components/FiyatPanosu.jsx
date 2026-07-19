@@ -91,14 +91,15 @@ export default function FiyatPanosu() {
     if (pct == null) return <span style={{ fontSize: 11, color: 'var(--text3)' }}>=</span>;
     if (k.sicrama) return <span title="Birim/veri değişimi olabilir — gerçek zam sayılmaz"
       style={{ fontSize: 11.5, fontWeight: 800, color: '#f59e0b', whiteSpace: 'nowrap' }}>⚠ sıçrama</span>;
-    return <span style={{ fontSize: 11.5, fontWeight: 800, whiteSpace: 'nowrap',
+    return <span className={`kv-pill ${pct > 0 ? 'r' : 'g'}`}
+                 style={{ fontSize: 11.5, fontWeight: 800, whiteSpace: 'nowrap', padding: '2px 9px', borderRadius: 9,
                           color: pct > 0 ? 'var(--red, #ef4444)' : 'var(--green, #22c55e)' }}>
       {pct > 0 ? '↑' : '↓'} %{Math.abs(pct).toFixed(1)}
     </span>;
   };
 
   const chip = (aktif, onClick, icerik) => (
-    <button onClick={onClick}
+    <button onClick={onClick} className={aktif ? 'kv-chip-on' : ''}
       style={{ height: 26, padding: '0 11px', borderRadius: 13, fontSize: 11.5, fontWeight: 700, cursor: 'pointer',
                border: `1px solid ${aktif ? 'var(--accent, #c9853f)' : 'var(--border)'}`,
                background: aktif ? 'var(--accent, #c9853f)' : 'transparent',

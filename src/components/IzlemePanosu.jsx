@@ -60,7 +60,7 @@ export default function IzlemePanosu() {
   const M = 'var(--font-mono)';
 
   const chip = (aktif, onClick, icerik, kucuk) => (
-    <button onClick={onClick}
+    <button onClick={onClick} className={aktif ? 'kv-chip-on' : ''}
       style={{ height: kucuk ? 26 : 30, padding: kucuk ? '0 11px' : '0 14px', borderRadius: 15,
                fontSize: kucuk ? 11.5 : 12.5, fontWeight: 700, cursor: 'pointer',
                border: `1px solid ${aktif ? 'var(--accent, #c9853f)' : 'var(--border)'}`,
