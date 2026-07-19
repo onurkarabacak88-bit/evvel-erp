@@ -882,6 +882,9 @@ def kapanis_hatirlatma_tara():
         logger.warning(f"⏰ kapanis hatirlatma tara hatasi (yutuldu): {e}")
 
 
+_EKSIK_CIRO_EMNIYET = {"gun": None}  # gündüz emniyet koşusu — günde 1 kez
+
+
 def _kapanis_hatirlatma_scheduler():
     """Gün-içi periyodik (15 dk): kapanışa ~1 saat kala sorumluya hatırlatma."""
     import time as _t
@@ -890,6 +893,21 @@ def _kapanis_hatirlatma_scheduler():
             kapanis_hatirlatma_tara()
         except Exception as e:
             logger.warning(f"⏰ kapanis hatirlatma scheduler hatasi: {e}")
+        # 🛟 EKSİK CİRO EMNİYET KOŞUSU (sahip 2026-07-19: Zafer 18.07 girilmemişti,
+        # gece 00:30 sweep'i yakalamadı — 'çalışmıyor yine'). Gece koşusu Evo
+        # erişim aksaması/yeniden başlatma yüzünden kaçırabilir; TR 11-13 bandında
+        # GÜNDE BİR kez kısa sweep (son 3 gün) yeniden dener. Hata-yutar.
+        try:
+            from tr_saat import dt_now_tr
+            _su = dt_now_tr()
+            if 11 <= _su.hour < 13 and _EKSIK_CIRO_EMNIYET.get("gun") != _su.date().isoformat():
+                from ciro_taslak_api import eksik_gun_ciro_tara, EksikGunTaraBody
+                _er = eksik_gun_ciro_tara(EksikGunTaraBody(gun_sayisi=3, uygula=True))
+                _EKSIK_CIRO_EMNIYET["gun"] = _su.date().isoformat()
+                logger.info(f"🛟 Eksik ciro emniyet koşusu: oneri={_er.get('oneri_sayisi')} "
+                            f"islenen={_er.get('toplam_eslesme')} evo_hata={_er.get('evo_hata')}")
+        except Exception as e:
+            logger.warning(f"🛟 eksik ciro emniyet hatasi (yutuldu): {e}")
         _t.sleep(900)  # 15 dakika
 
 
