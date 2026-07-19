@@ -725,13 +725,23 @@ export default function Maliyet() {
           ['Platform komisyonu', 'platform_komisyon_tl'], ['Fire', 'fire_maliyet_tl'],
           ['İade', 'iade_maliyet_tl'], ['Şube anlık gider', 'sube_anlik_gider_tl'],
         ].map(([ad, k]) => ({ ad, tutar: topla(k) })).filter(x => x.tutar > 0.005).sort((a, b) => b.tutar - a.tutar);
+        {/* Kart dili = ⚖️ Evo↔Fiziki Kasa kartıyla AYNI (sahip 2026-07-19:
+            'Marj/Ciro kartları Evo-Fiziki gibi kart olsun'): renkli üst şerit +
+            çerçeveli trend ROZETİ (▲%X) + mono büyük değer + alt not. */}
         const kart = (baslik, deger, alt, vurgu, tr, spark, tikla) => (
-          <div className="card" onClick={tikla} style={{ borderTop: vurgu ? `3px solid ${vurgu}` : undefined, cursor: tikla ? 'pointer' : undefined }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 6 }}>
-              <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 4 }}>{baslik}</div>
-              {tr && <span style={{ fontSize: 11, fontWeight: 700, color: tr.renk, whiteSpace: 'nowrap' }}>{tr.ok} {tr.t}</span>}
+          <div className="card" onClick={tikla}
+            style={{ borderTop: `3px solid ${vurgu || 'var(--border)'}`, cursor: tikla ? 'pointer' : undefined }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 6 }}>
+              <div style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--text2, var(--text))', marginBottom: 4 }}>{baslik}</div>
+              {tr && (
+                <span style={{ fontSize: 11.5, fontWeight: 800, color: tr.renk, whiteSpace: 'nowrap',
+                               padding: '2px 10px', borderRadius: 9, border: `1px solid ${tr.renk}` }}>
+                  {tr.ok} {tr.t}
+                </span>
+              )}
             </div>
-            <div style={{ fontSize: 22, fontWeight: 800, fontFamily: 'var(--font-mono)', color: vurgu || 'var(--text)' }}>{deger}</div>
+            <div style={{ fontSize: 22, fontWeight: 800, fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums',
+                          color: vurgu || 'var(--text)' }}>{deger}</div>
             {spark}
             {alt && <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>{alt}</div>}
           </div>
@@ -772,8 +782,8 @@ export default function Maliyet() {
             {/* Alt KPI üçlüsü */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12 }}>
               {kart('Marj', marj == null ? '—' : `%${marj.toFixed(1)}`, 'net kâr / net satış (KDV hariç)', netRenk, marj != null && oMarj != null ? yon(marj, oMarj, true) : null)}
-              {kart('💵 Ciro (KDV dahil)', fmt(ciro), `günlük ort. ${fmt(ciro / Math.max(1, gunSayisi))}`, undefined, yon(ciro, oCiro, true), sparkline(ciroSeri, 'var(--accent)'))}
-              {kart('📉 Toplam Maliyet (KDV dahil)', fmt(maliyet), maliyetDetayAcik ? 'kapat ▴' : 'kırılımı gör ▾ · KDV-hariç net maliyet P&L tablosunda', undefined, yon(maliyet, oMaliyet, false), null, () => setMaliyetDetayAcik(v => !v))}
+              {kart('💵 Ciro (KDV dahil)', fmt(ciro), `günlük ort. ${fmt(ciro / Math.max(1, gunSayisi))}`, 'var(--accent)', yon(ciro, oCiro, true), sparkline(ciroSeri, 'var(--accent)'))}
+              {kart('📉 Toplam Maliyet (KDV dahil)', fmt(maliyet), maliyetDetayAcik ? 'kapat ▴' : 'kırılımı gör ▾ · KDV-hariç net maliyet P&L tablosunda', '#f59e0b', yon(maliyet, oMaliyet, false), null, () => setMaliyetDetayAcik(v => !v))}
             </div>
 
             {/* ⚖️ EVO ↔ FİZİKİ KASA (sahip 2026-07-19: "personelin girdiği kasa
