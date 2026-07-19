@@ -1966,6 +1966,7 @@ _ESLESTIRME_SEED = [
     ("FEZ KAHVE GIDA İTHALAT İHRACAT SANAYİ VE TİCARET LİMİTED ŞİRKETİ", "FEZ", None),
     ("SÜTAŞ SÜT ÜRÜNLERİ A.Ş.", "SÜTAŞ", None),
     ("DYK GRUP AMBALAJ HİZMETLERİ SAN. VE TİC. LİMİTED ŞİRKETİ", "DYK GRUP", None),
+    ("DYN GRUP AMBALAJ HİZMETLERİ SANAYİ VE TİCARET LİMİTED ŞİRKETİ", "DYK GRUP", None),  # sahip: 'aynı firma' (OCR yazım farkı)
     ("METRO GROSMARKET B.KÖY ALIS.HIZ.TIC.LTD.STI.", "METRO", None),
     ("HASAN ERKAN", "PASTA", None),                                # sahip: 'hasan erkan pasta'
     ("APS GIDA ENERJİ KİMYA TARIM SAN. VE TİC. A.Ş.", "redbull", None),  # sahip: 'redbull doğru'
