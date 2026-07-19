@@ -162,7 +162,8 @@ export default function Maliyet() {
   const [ozelBit, setOzelBit] = useState('');           // Özel aralık bitiş
   const [seciliGun, setSeciliGun] = useState(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }); // 'Gün' modu — YEREL tarih (UTC değil), ◀▶ gezinir
   const [gunGunOnceki, setGunGunOnceki] = useState(null); // önceki eşit pencere (KPI trend için)
-  const [maliyetDetayAcik, setMaliyetDetayAcik] = useState(true); // Toplam Maliyet drill-down (görünürlük için açık başlar)
+  const [maliyetDetayAcik, setMaliyetDetayAcik] = useState(false); // Toplam Maliyet drill-down (default kapalı — hero baskın kalsın, tıkla → "Para nereye gidiyor?")
+  const [kdvAkisAcik, setKdvAkisAcik] = useState(false); // "Net Kâr nasıl oluştu?" KDV-hariç şelalesi (default kapalı — hero baskın kalsın)
   const [loading, setLoading] = useState(false);
   const [anaHata, setAnaHata] = useState(false); // ana veri yüklemesi patladı mı (sessiz .catch yerine görünür durum)
   const [mesaj, setMesaj] = useState(null); // {m, t}
@@ -668,6 +669,89 @@ export default function Maliyet() {
         </div>
       )}
 
+      {/* ── RİSK ŞERİDİ (Ramp exception-feed): "maliyet eksik → kâr şişebilir" uyarıları
+           hero'nun ÜSTÜNDE; sahibi yüksek görünen kârın neden şüpheli olduğunu ÖNCE görür.
+           Eskiden sayfanın en altındaydı — kimse görmüyordu. ── */}
+      {sekme === 'genel' && (() => {
+        const uyarilar = [];
+        if (tuketilenFiyatsiz.length > 0) {
+          uyarilar.push({
+            ikon: '🔴', acil: true,
+            baslik: `${tuketilenFiyatsiz.length} kalem fiyatsız tüketildi`,
+            alt: `Maliyeti 0₺ sayıldı: ${tuketilenFiyatsiz.slice(0, 5).join(', ')}${tuketilenFiyatsiz.length > 5 ? ` +${tuketilenFiyatsiz.length - 5} kalem` : ''}${fiyatsizUrunler.length > 0 ? ` · toplam ${fiyatsizUrunler.length} ürün fiyatsız` : ''}`,
+            hedef: 'fiyatlar', hedefMetin: '🏷️ Fiyatlar →',
+          });
+        } else if (fiyatsizUrunler.length > 0) {
+          uyarilar.push({
+            ikon: '🟡', acil: false,
+            baslik: `${fiyatsizUrunler.length} ürünün alış fiyatı hiç girilmemiş`,
+            alt: 'Tüketilirse maliyet 0₺ sayılır ve kâr şişer.',
+            hedef: 'fiyatlar', hedefMetin: '🏷️ Fiyatlar →',
+          });
+        }
+        if (subeId && ciroluGunVar && donemKiraTL === 0) {
+          uyarilar.push({
+            ikon: '🏠', acil: true,
+            baslik: 'Bu şube için kira girilmemiş',
+            alt: 'Kira maliyeti 0₺ sayıldı → kâr olduğundan yüksek görünüyor. Giderler ekranından (sabit gider → kira) gir.',
+            hedef: null,
+          });
+        }
+        if (subeId && ciroluGunVar && donemPersonelTL === 0) {
+          uyarilar.push({
+            ikon: '👥', acil: true,
+            baslik: 'Bu dönemde personel maliyeti yok',
+            alt: 'Vardiya/atama görünmüyor → personel gideri 0₺ sayıldı, kâr yüksek görünüyor. Vardiya Planlama’dan ata.',
+            hedef: null,
+          });
+        }
+        if (subeId && ciroluGunVar && donemFaturaTL === 0) {
+          uyarilar.push({
+            ikon: '🧾', acil: true,
+            baslik: 'Fatura gideri girilmemiş (elektrik / su / gaz / internet)',
+            alt: 'Fatura maliyeti 0₺ sayıldı → kâr yüksek görünüyor. Giderler ekranından (sabit gider → fatura) son faturayı gir.',
+            hedef: null,
+          });
+        }
+        if (subeId && ciroluGunVar && donemAbonelikTL === 0) {
+          uyarilar.push({
+            ikon: '🔁', acil: false,
+            baslik: 'Abonelik gideri görünmüyor',
+            alt: 'Aylık abonelik (yazılım, müzik, üyelik vb.) düşmemiş — varsa Giderler ekranından gir; bu şubede abonelik yoksa normal.',
+            hedef: null,
+          });
+        }
+        if (!uyarilar.length) return null;
+        const acilVar = uyarilar.some(u => u.acil);
+        const renk = acilVar ? '#ef4444' : '#eab308';
+        const bg = acilVar ? 'rgba(239,68,68,0.10)' : 'rgba(234,179,8,0.10)';
+        const bd = acilVar ? 'rgba(239,68,68,0.45)' : 'rgba(234,179,8,0.45)';
+        return (
+          <div style={{ marginBottom: 16, padding: '12px 14px', borderRadius: 10, background: bg, border: `1px solid ${bd}` }}>
+            <div style={{ fontWeight: 700, fontSize: 13, color: renk, marginBottom: uyarilar.length ? 8 : 0 }}>
+              ⚠️ Maliyet eksik görünüyor → kâr olduğundan YÜKSEK olabilir
+            </div>
+            {uyarilar.map((u, i) => (
+              <div key={i}
+                onClick={u.hedef ? () => setSekme(u.hedef) : undefined}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 10,
+                  padding: '7px 0', cursor: u.hedef ? 'pointer' : 'default',
+                  borderTop: i === 0 ? 'none' : '1px solid var(--border)',
+                }}
+              >
+                <span style={{ fontSize: 16, flexShrink: 0 }}>{u.ikon}</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600 }}>{u.baslik}</div>
+                  <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>{u.alt}</div>
+                </div>
+                {u.hedef && <span style={{ fontSize: 11, color: 'var(--text3)', whiteSpace: 'nowrap', flexShrink: 0 }}>{u.hedefMetin}</span>}
+              </div>
+            ))}
+          </div>
+        );
+      })()}
+
       {/* ── KPI ŞERİDİ — "Bugün para kazandık mı?" (gün-gün veriden hesaplanır) ── */}
       {sekme === 'genel' && (() => {
         const tumRows = gunGunData?.satirlar || [];
@@ -797,7 +881,7 @@ export default function Maliyet() {
             {/* Alt KPI üçlüsü */}
             <div className="mk-stagger mk-hovlift" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12 }}>
               {kart('Marj', marj == null ? '—' : `%${marj.toFixed(1)}`, 'net kâr / net satış (KDV hariç)', netRenk, marj != null && oMarj != null ? yon(marj, oMarj, true) : null)}
-              {kart('💵 Ciro (KDV dahil)', fmt(ciro), `günlük ort. ${fmt(ciro / Math.max(1, gunSayisi))}`, 'var(--accent)', yon(ciro, oCiro, true), sparkline(ciroSeri, 'var(--accent)'))}
+              {kart('💵 Ciro (KDV dahil)', fmt(ciro), `günlük ort. ${fmt(ciro / Math.max(1, gunSayisi))}`, 'var(--accent)', yon(ciro, oCiro, true))}
               {kart('📉 Toplam Maliyet (KDV dahil)', fmt(maliyet), maliyetDetayAcik ? 'kapat ▴' : 'kırılımı gör ▾ · KDV-hariç net maliyet P&L tablosunda', '#f59e0b', yon(maliyet, oMaliyet, false), null, () => setMaliyetDetayAcik(v => !v))}
             </div>
 
@@ -841,37 +925,71 @@ export default function Maliyet() {
               );
             })()}
 
-            {/* ── İZOLE: KDV Hariç (Gerçek Marj) katmanı — Faz 1, ayrı alan ── */}
+            {/* ── KDV-hariç "Net Kâr nasıl oluştu?" — hero'yu TEKRAR ETMEZ, ona AKAR
+                 (Mercury deseni: tek resim → drill-down). Katlanır, default kapalı;
+                 6 eşit kart yerine tek P&L şelalesi (tüm sayılar korunur). ── */}
             {topla('net_satis_tl') > 0 && (() => {
               const netSatis = topla('net_satis_tl'), hesKdv = topla('hesaplanan_kdv_tl');
               const brutKar = topla('brut_kar_tl'), favok = topla('favok_tl'), netKarNet = topla('net_kar_net_tl');
-              const indKdv = topla('indirilecek_kdv_tl'), netMaliyet = topla('net_toplam_maliyet_tl');
+              const indKdv = topla('indirilecek_kdv_tl');
               const brutMarj = netSatis > 0 ? (brutKar / netSatis) * 100 : null;
               const netMarjNet = netSatis > 0 ? (netKarNet / netSatis) * 100 : null;
+              const vergi = favok - netKarNet;
               const nrenk = netKarNet > 0 ? 'var(--green)' : netKarNet < 0 ? 'var(--red)' : undefined;
+              // Şelale satırı: etiket (sol) · değer (sağ, mono, işaretli)
+              const satir = (etiket, deger, opt = {}) => (
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12,
+                              padding: opt.sonuc ? '7px 0 6px' : '5px 0',
+                              borderTop: opt.ust ? '1px solid var(--border)' : 'none' }}>
+                  <span style={{ fontSize: opt.sonuc ? 13 : 12, fontWeight: opt.sonuc ? 700 : 500,
+                                 color: opt.sonuc ? 'var(--text)' : 'var(--text2)' }}>{etiket}</span>
+                  <span style={{ fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap',
+                                 fontSize: opt.sonuc ? 15 : 13, fontWeight: opt.sonuc ? 800 : 600,
+                                 color: opt.renk || (opt.eksi ? 'var(--text3)' : 'var(--text)') }}>
+                    {opt.eksi ? '− ' : ''}{deger}
+                  </span>
+                </div>
+              );
               return (
-                <div style={{ marginTop: 14 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
-                    <span style={{ fontWeight: 700, fontSize: 13 }}>💎 KDV Hariç — Gerçek Marj</span>
-                    <span style={{ fontSize: 11, color: 'var(--text3)' }}>ciro KDV dahil girilir, %10 ayrıştırılır · muhasebe katmanı</span>
+                <div style={{ marginTop: 12, border: '1px solid var(--border)', borderRadius: 10, background: 'var(--bg2)', overflow: 'hidden' }}>
+                  <div onClick={() => setKdvAkisAcik(v => !v)}
+                       style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, padding: '11px 14px', cursor: 'pointer' }}>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 700 }}>💎 Net Kâr nasıl oluştu?</div>
+                      <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>
+                        KDV ayrıştırılmış gerçek marj · Net Satış {fmt(netSatis)} → FAVÖK {fmt(favok)} → Net Kâr {fmt(netKarNet)}
+                      </div>
+                    </div>
+                    <span style={{ fontSize: 12, color: 'var(--text3)', whiteSpace: 'nowrap' }}>{kdvAkisAcik ? '▲ gizle' : '▼ şelale'}</span>
                   </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 10 }}>
-                    {kart('Net Satış', fmt(netSatis), 'KDV hariç ciro')}
-                    {kart('🏛️ Hesaplanan KDV', fmt(hesKdv), '%10 · devlete')}
-                    {kart('📉 Net Maliyet (KDV hariç)', fmt(netMaliyet),
-                          `maliyet ${fmt(netMaliyet + indKdv)} − mahsup KDV ${fmt(indKdv)}`)}
-                    {kart('Brüt Kâr', fmt(brutKar), brutMarj == null ? '' : `marj %${brutMarj.toFixed(1)} · ürün maliyeti sonrası`)}
-                    {kart('FAVÖK', fmt(favok), 'net satış − net maliyet (vergi öncesi)')}
-                    {kart('✅ Net Kâr (KDV hariç)', fmt(netKarNet), netMarjNet == null ? '' : `net marj %${netMarjNet.toFixed(1)}`, nrenk)}
-                  </div>
-                  <div style={{ fontSize: 10.5, color: 'var(--text3)', marginTop: 6, fontStyle: 'italic' }}>
-                    Bu satır KDV'yi cirodan ayrıştırır (gerçek marj). Üstteki hero "Net Kâr" da AYNI hesaptır (KDV-hariç, şube-bazlı vergili) — iki blok tutarlıdır.
-                    {' '}⚖️ Alışta ödediğin KDV ({fmt(indKdv)}) GİDER DEĞİLDİR — devletten mahsup edilir; bu yüzden maliyetten ÇIKARILIR
-                    ve kâra otomatik geri kazanılır. Devlete yalnız fark (Ödenecek KDV = {fmt(hesKdv - indKdv)}) kalır; o da kâr hesabına girmez, ayrı cep.
-                  </div>
+                  {kdvAkisAcik && (
+                    <div style={{ padding: '2px 14px 12px' }}>
+                      {satir('Net Satış (KDV hariç)', fmt(netSatis))}
+                      {satir('− Ürün (malzeme) maliyeti', fmt(netSatis - brutKar), { eksi: true })}
+                      {satir(`= Brüt Kâr${brutMarj != null ? `  ·  marj %${brutMarj.toFixed(1)}` : ''}`, fmt(brutKar), { ust: true, sonuc: true })}
+                      {satir('− Diğer giderler (personel, kira, fatura…)', fmt(brutKar - favok), { eksi: true })}
+                      {satir('= FAVÖK (vergi öncesi)', fmt(favok), { ust: true, sonuc: true })}
+                      {satir('− Tahmini vergi (şube-bazlı)', fmt(vergi), { eksi: true })}
+                      {satir(`= Net Kâr${netMarjNet != null ? `  ·  net marj %${netMarjNet.toFixed(1)}` : ''}  ↑ yukarıdaki hero ile aynı`, fmt(netKarNet), { ust: true, sonuc: true, renk: nrenk })}
+                      <div style={{ fontSize: 10.5, color: 'var(--text3)', marginTop: 10, fontStyle: 'italic', lineHeight: 1.5 }}>
+                        ⚖️ Alışta ödediğin KDV ({fmt(indKdv)}) GİDER DEĞİLDİR — devletten mahsup edilir, maliyetten çıkarılır ve kâra geri döner.
+                        Devlete yalnız fark kalır: Ödenecek KDV = Hesaplanan {fmt(hesKdv)} − İndirilecek {fmt(indKdv)} = {fmt(hesKdv - indKdv)} (kâr hesabına girmez, ayrı cep).
+                      </div>
+                    </div>
+                  )}
                 </div>
               );
             })()}
+
+            {/* 🔎 İnceleme Gerekenler — aksiyon kuyruklarını (Ciro Fark + Kasa Hataları)
+                tek başlık altında topla, tier-3'e indir (Ramp exception-feed deseni).
+                En az biri doluysa görünür; ikisi de boşsa başlık da çıkmaz. */}
+            {((fdefter?.kayitlar || []).length > 0 || khListe.length > 0) && (
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginTop: 20, marginBottom: 2 }}>
+                <span style={{ fontWeight: 700, fontSize: 13 }}>🔎 İnceleme Gerekenler</span>
+                <span style={{ fontSize: 11, color: 'var(--text3)' }}>karar bekleyen kasa / ciro farkları</span>
+              </div>
+            )}
 
             {/* ── ⚖️ CİRO FARK DEFTERİ (Evo ↔ Kasa) — sahip 2026-07-18: P&L cirosu
                  EVO kabul; fark meşruysa (iade/sayım) tıkla → kasa girişi kullanılır ── */}
@@ -1139,86 +1257,7 @@ export default function Maliyet() {
         );
       })()}
 
-      {/* ── Genel Bakış: eksik maliyet uyarıları (kâr şişme riski) ── */}
-      {sekme === 'genel' && (() => {
-        const uyarilar = [];
-        if (tuketilenFiyatsiz.length > 0) {
-          uyarilar.push({
-            ikon: '🔴', acil: true,
-            baslik: `${tuketilenFiyatsiz.length} kalem fiyatsız tüketildi`,
-            alt: `Maliyeti 0₺ sayıldı: ${tuketilenFiyatsiz.slice(0, 5).join(', ')}${tuketilenFiyatsiz.length > 5 ? ` +${tuketilenFiyatsiz.length - 5} kalem` : ''}${fiyatsizUrunler.length > 0 ? ` · toplam ${fiyatsizUrunler.length} ürün fiyatsız` : ''}`,
-            hedef: 'fiyatlar', hedefMetin: '🏷️ Fiyatlar →',
-          });
-        } else if (fiyatsizUrunler.length > 0) {
-          uyarilar.push({
-            ikon: '🟡', acil: false,
-            baslik: `${fiyatsizUrunler.length} ürünün alış fiyatı hiç girilmemiş`,
-            alt: 'Tüketilirse maliyet 0₺ sayılır ve kâr şişer.',
-            hedef: 'fiyatlar', hedefMetin: '🏷️ Fiyatlar →',
-          });
-        }
-        if (subeId && ciroluGunVar && donemKiraTL === 0) {
-          uyarilar.push({
-            ikon: '🏠', acil: true,
-            baslik: 'Bu şube için kira girilmemiş',
-            alt: 'Kira maliyeti 0₺ sayıldı → kâr olduğundan yüksek görünüyor. Giderler ekranından (sabit gider → kira) gir.',
-            hedef: null,
-          });
-        }
-        if (subeId && ciroluGunVar && donemPersonelTL === 0) {
-          uyarilar.push({
-            ikon: '👥', acil: true,
-            baslik: 'Bu dönemde personel maliyeti yok',
-            alt: 'Vardiya/atama görünmüyor → personel gideri 0₺ sayıldı, kâr yüksek görünüyor. Vardiya Planlama’dan ata.',
-            hedef: null,
-          });
-        }
-        if (subeId && ciroluGunVar && donemFaturaTL === 0) {
-          uyarilar.push({
-            ikon: '🧾', acil: true,
-            baslik: 'Fatura gideri girilmemiş (elektrik / su / gaz / internet)',
-            alt: 'Fatura maliyeti 0₺ sayıldı → kâr yüksek görünüyor. Giderler ekranından (sabit gider → fatura) son faturayı gir.',
-            hedef: null,
-          });
-        }
-        if (subeId && ciroluGunVar && donemAbonelikTL === 0) {
-          uyarilar.push({
-            ikon: '🔁', acil: false,
-            baslik: 'Abonelik gideri görünmüyor',
-            alt: 'Aylık abonelik (yazılım, müzik, üyelik vb.) düşmemiş — varsa Giderler ekranından gir; bu şubede abonelik yoksa normal.',
-            hedef: null,
-          });
-        }
-        if (!uyarilar.length) return null;
-        const acilVar = uyarilar.some(u => u.acil);
-        const renk = acilVar ? '#ef4444' : '#eab308';
-        const bg = acilVar ? 'rgba(239,68,68,0.10)' : 'rgba(234,179,8,0.10)';
-        const bd = acilVar ? 'rgba(239,68,68,0.45)' : 'rgba(234,179,8,0.45)';
-        return (
-          <div style={{ marginBottom: 16, padding: '12px 14px', borderRadius: 10, background: bg, border: `1px solid ${bd}` }}>
-            <div style={{ fontWeight: 700, fontSize: 13, color: renk, marginBottom: uyarilar.length ? 8 : 0 }}>
-              ⚠️ Maliyet eksik görünüyor → kâr olduğundan YÜKSEK olabilir
-            </div>
-            {uyarilar.map((u, i) => (
-              <div key={i}
-                onClick={u.hedef ? () => setSekme(u.hedef) : undefined}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 10,
-                  padding: '7px 0', cursor: u.hedef ? 'pointer' : 'default',
-                  borderTop: i === 0 ? 'none' : '1px solid var(--border)',
-                }}
-              >
-                <span style={{ fontSize: 16, flexShrink: 0 }}>{u.ikon}</span>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13, fontWeight: 600 }}>{u.baslik}</div>
-                  <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>{u.alt}</div>
-                </div>
-                {u.hedef && <span style={{ fontSize: 11, color: 'var(--text3)', whiteSpace: 'nowrap', flexShrink: 0 }}>{u.hedefMetin}</span>}
-              </div>
-            ))}
-          </div>
-        );
-      })()}
+      {/* eksik maliyet uyarıları (kâr şişme riski) → risk şeridi olarak hero'nun ÜSTÜNE taşındı (bkz. yukarısı) */}
 
       {/* Özet kartları (Analiz sekmesi) */}
       {/* ── Analiz: Şube karşılaştırma kartları (tıkla → o şubeyi seç) ── */}
