@@ -16,6 +16,7 @@
   --border:#E0D4BE;--text:#2A1F13;--text2:#5D4E3C;--text3:#8A7963;
   --green:#25794F;--red:#C03A2B;--yellow:#9A7410;--blue:#2E6CA4;--purple:#7A57A6;
   --orange:#B36A1F;
+  --glass:rgba(246,240,228,.82); /* yapışkan üst bar camı — .kv (koyu) kapsamında koyusu tanımlı */
   /* Şiddet (severity) token sözlüğü — Operasyon Merkezi şiddet renkleri için tek kaynak.
      kritik=kırmızı, uyari=turuncu/amber, bilgi=mavi. Mevcut palet tonlarıyla uyumlu. */
   --sev-kritik:#ef4444;--sev-kritik-bg:rgba(239,68,68,0.10);
@@ -437,7 +438,21 @@ tr:hover td{background:rgba(154,95,46,.05)}
 
 /* ══ 🎨 KADİFE VİTRİN KAPLAMASI (2026-07-19, design-shotgun B varyantı — sahip
    seçimi; Stripe ruhu: katmanlı sıcak kartlar + degrade rozetler + bakır ışıltı).
-   .kv kapsamı = yalnız Kâr & Maliyet sayfası; beğenilirse kabuk geneline yayılır. ══ */
+   .kv kapsamı = yalnız Kâr & Maliyet sayfası; beğenilirse kabuk geneline yayılır.
+   Onaylanan B mockup'ı TAM KOYU sayfaydı; çalışma alanı ise açık tema — koyu kart
+   + açık metin çakışması yaşandı (sahip: "yazılar tam gözükmüyor"). Çözüm sidebar
+   deseninin aynısı: .kv görünürken .main kapsamında değişkenler koyu kadifeye
+   yeniden tanımlanır, böylece sayfa mockup'taki gibi uçtan uca koyu olur. ══ */
+.main:has(.kv){
+  --bg:#1D140C;--bg2:#261C11;--bg3:#2E2317;
+  --border:#3A2C1E;--text:#F1E9DD;--text2:#C4B5A2;--text3:#9B8A75;
+  --accent:#D29A5B;--accent-dim:rgba(210,154,91,.13);--accent-border:rgba(210,154,91,.35);
+  --glass:rgba(29,20,12,.82);
+  --green:#4ADE80;--red:#F87171;--yellow:#FBBF24;--blue:#60A5FA;--purple:#A78BFA;--orange:#FB923C;
+  /* color şart: renk vermeyen öğeler (h1 gibi) body'nin AÇIK-tema hesaplanmış
+     koyu rengini miras alır — kapsamda yeniden köklenmeli */
+  color:var(--text);
+  background:radial-gradient(1200px 600px at 75% -10%,rgba(51,36,20,.5),transparent),#1D140C}
 .kv .card{background:linear-gradient(165deg,#2e2317,#261c11);border:1px solid rgba(243,233,220,.10);
   border-radius:18px;box-shadow:0 14px 34px rgba(0,0,0,.35)}
 .kv .kv-hero{border-radius:20px;
