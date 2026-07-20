@@ -1252,6 +1252,7 @@ function menuCizAd(ad){
   if(has14) cols.push({key:'f14',cls:'c14',etiket:'14 oz'});
   if(hasIce) cols.push({key:'fice',cls:'cice',etiket:'Buzlu'});
   if(!cols.length) cols.push({key:'f8',cls:'c14',etiket:''});
+  if(cols.length===1) cols[0].cls='c14';   // tek sütun = fiyat ana bilgi, krem vurgulu
   menuEl.classList.remove('cols-1'); menuEl.classList.remove('cols-2'); menuEl.classList.remove('cols-3');
   menuEl.classList.add('cols-'+cols.length);
   menuEl.classList.toggle('yogun', us.length>9);
