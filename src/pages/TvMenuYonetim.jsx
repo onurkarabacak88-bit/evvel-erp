@@ -195,7 +195,12 @@ export default function TvMenuYonetim() {
                           <option value="hero">🥤 Kahraman ürün</option><option value="gunun">⭐ Günün seçimi</option><option value="vitrin">🏪 Üçlü vitrin</option><option value="eslesme">🍽️ Saat eşleştirmesi</option>
                         </select>
                         {tip === 'menu'
-                          ? <select value={ic.menu || ''} onChange={e => icSet(i, ek, 'menu', e.target.value)} style={{ width: '100%', fontSize: 11 }}>{katList.map(c => <option key={c} value={c}>{c}</option>)}</select>
+                          ? <>
+                              <select value={ic.menu || ''} onChange={e => icSet(i, ek, 'menu', e.target.value)} style={{ width: '100%', fontSize: 11 }}>{katList.map(c => <option key={c} value={c}>{c}</option>)}</select>
+                              <select value={ic.syf || ''} onChange={e => icSet(i, ek, 'syf', e.target.value ? parseInt(e.target.value, 10) : null)} style={{ width: '100%', fontSize: 11, marginTop: 3 }}>
+                                <option value="">📄 Tüm liste</option><option value="1">Bölüm 1 / 2</option><option value="2">Bölüm 2 / 2</option>
+                              </select>
+                            </>
                           : OTO[tip]
                           ? <div style={{ fontSize: 10.5, color: 'var(--text3)', lineHeight: 1.4 }}>{OTO[tip]}</div>
                           : <>

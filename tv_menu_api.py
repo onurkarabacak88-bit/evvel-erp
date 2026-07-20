@@ -822,17 +822,17 @@ def tv_ayar_yaz(a: AyarModel):
 # Bozuk config = built-in VARSAYILAN'a düşer (TV asla kararmaz). Klip whitelist zorunlu.
 # ─────────────────────────────────────────────────────────────────────────
 PORTRE_KLIP_WL = ["tulipi_mekan", "tulipi_grind", "tulipi_espresso", "tulipi_latte", "tulipi_iced",
-                  "tulipi_gulus", "tulipi_serin", "tulipi_servis", "tulipi_barista"]
+                  "tulipi_gulus", "tulipi_serin", "tulipi_servis", "tulipi_barista", "tulipi_bar"]
 # ══ NİHAİ PROGRAM (kreatif direktör ajanı kurgusu, 2026-07-21 — sahip talebi) ══
 # 5 perde: Marka Nefesi → Zanaat Zinciri → Duygu → Satış Rampası → Serin İniş/Kapanış.
 # E2 kesintisiz hikâye (çekirdek→ateş→el→servis), E3 duyusal yan-okuma. Fiyat rampası:
 # panolar sessiz zemin → vitrin/spot fısıltı → slot 10 ZİRVE (gunun+eslesme tek slotta).
 # 12 slot · 81sn · E1'de video yok · triptik 5 · yeni/sezon 1'er kez · klip tekrarı yok.
 VARSAYILAN_KURGU = [
-  # ── PERDE I · MARKA NEFESİ (açılış triptiği — mekân istisnası) ──
-  {"sure":7000,"e1":{"menu":"Classic Coffees"},"e2":{"v":"tulipi_mekan","k":"TULİPİ","b":"Her gün taze.","m":False},"e3":{"v":"tulipi_mekan","k":"","b":"","m":True}},
+  # ── PERDE I · MARKA NEFESİ (Codex: açılış vaadi = içerideki emek + marka izi → V5 bar) ──
+  {"sure":7000,"e1":{"menu":"Classic Coffees","syf":1},"e2":{"v":"tulipi_bar","k":"TULİPİ","b":"Her gün taze.","m":False},"e3":{"v":"tulipi_mekan","k":"","b":"","m":True}},
   # ── PERDE II · ZANAAT ZİNCİRİ (E2: çekirdek→ateş→el→servis · E3: duyusal yan-okuma) ──
-  {"sure":7000,"e1":{"menu":"Signature Coffees"},"e2":{"v":"tulipi_grind","k":"ZANAAT","b":"Önce çekirdek.","m":False},"e3":{"v":"tulipi_barista","k":"USTA","b":"Her fincan elde.","m":False}},
+  {"sure":7000,"e1":{"menu":"Signature Coffees","syf":1},"e2":{"v":"tulipi_grind","k":"ZANAAT","b":"Önce çekirdek.","m":False},"e3":{"v":"tulipi_barista","k":"USTA","b":"Her fincan elde.","m":False}},
   {"sure":6000,"e1":{"menu":"Milkshakes"},"e2":{"v":"tulipi_espresso","k":"ZANAAT","b":"Sonra ateş.","m":False},"e3":{"v":"tulipi_iced","k":"SERİN","b":"Soğuk da zanaat.","m":False}},
   {"sure":6000,"e1":{"menu":"Mocktails"},"e2":{"v":"tulipi_latte","k":"İMZA","b":"Elin son sözü.","m":False},"e3":{"v":"tulipi_serin","k":"TAZE","b":"Serin ve canlı.","m":False}},
   {"sure":6000,"e1":{"cok":True},"e2":{"v":"tulipi_servis","k":"","b":"Ve masana gelir.","m":False},"e3":{"yeni":True}},
@@ -840,8 +840,8 @@ VARSAYILAN_KURGU = [
   {"sure":7500,"e1":{"menu":"Desserts"},"e2":{"v":"tulipi_gulus","k":"","b":"Burada iyi hissedersin.","m":False},"e3":{"sezon":True}},
   # ── PERDE IV · SATIŞ RAMPASI (vitrin → spot → menü duvarı → ZİRVE) ──
   {"sure":6000,"e1":{"vitrin":True},"e2":{"hero":True},"e3":{"vitrin":True}},
-  {"sure":7500,"e1":{"menu":"Signature Coffees"},"e2":{"spot":True},"e3":{"spot":True}},
-  {"sure":9000,"e1":{"menu":"Classic Coffees"},"e2":{"menu":"Milkshakes"},"e3":{"menu":"Desserts"}},
+  {"sure":7500,"e1":{"menu":"Signature Coffees","syf":2},"e2":{"spot":True},"e3":{"spot":True}},
+  {"sure":9000,"e1":{"menu":"Classic Coffees","syf":2},"e2":{"menu":"Milkshakes"},"e3":{"menu":"Desserts"}},
   {"sure":6500,"e1":{"vitrin":True},"e2":{"gunun":True},"e3":{"eslesme":True}},
   # ── PERDE V · SERİN İNİŞ + KAPANIŞ NEFESİ ──
   {"sure":6000,"e1":{"menu":"Mocktails"},"e2":{"v":"tulipi_iced","k":"SERİN","b":"Buzlu bir mola.","m":False},"e3":{"v":"tulipi_serin","k":"TAZE","b":"Bahçeden bardağa.","m":False}},
@@ -1009,7 +1009,9 @@ def tv_menu_clip(name: str):
                      "tulipi_latte", "tulipi_espresso", "tulipi_grind",
                      "tulipi_mekan", "tulipi_iced",
                      # D turu ek kahramanlar (2026-07-20)
-                     "tulipi_gulus", "tulipi_serin", "tulipi_servis", "tulipi_barista"):
+                     "tulipi_gulus", "tulipi_serin", "tulipi_servis", "tulipi_barista",
+                     # Codex-onaylı açılış (2026-07-21): V5 bar arkası 1-8sn
+                     "tulipi_bar"):
         raise HTTPException(404, "klip yok")
     # Prod: Vite public/ -> static/tv'ye kopyalar. Dev: public/tv veya src/assets/tv.
     for base in ("static/tv", "public/tv", "src/assets/tv"):
@@ -1099,7 +1101,7 @@ video.on{opacity:1}
 #menu.yogun .grow{padding:.45vh 0}
 #menu.yogun .gad{font-size:2.6vh;line-height:1.12}
 #menu.yogun .gfav{font-size:1.6vh}
-#menu.yogun .gtat{font-size:1.5vh;line-height:1.1;margin-top:.2vh}
+#menu.yogun .gtat{display:none}  /* Codex 7-kuralı: yoğun listede tat notu gürültü — sayfalı bölümlerde görünür */
 #menu.yogun .gpr{font-size:2.4vh}
 #menu.yogun #mfoot{padding:1.2vh 0 1.6vh}
 #menu.yogun #mfnote{font-size:1.8vh}
@@ -1442,12 +1444,19 @@ function menuEkstraTemizle(){
   var al=document.getElementById('malt'); if(al) al.style.display='';
   menuEl.classList.remove('cols-1'); menuEl.classList.remove('cols-2'); menuEl.classList.remove('cols-3');
 }
-function menuCizAd(ad){
+function menuCizAd(ad, syf){
   if(!MENU.length) return false;
   var k=null,j;
   for(j=0;j<MENU.length;j++){ if(MENU[j].kategori===ad){ k=MENU[j]; break; } }
   if(!k) k=MENU[0];
   var us=k.urunler||[];
+  // 7-KURALI (Codex kararı 2026-07-21): uzun kategori iki bölüme — syf=1|2; kısa kategoride yok sayılır
+  var bolum='';
+  if((syf===1||syf===2) && us.length>7){
+    var yarim=Math.ceil(us.length/2);
+    us = (syf===1) ? us.slice(0,yarim) : us.slice(yarim);
+    bolum = 'bölüm '+syf+' / 2';
+  }
 
   // 1) GÖRÜNMEZ SATIŞ SIRALAMASI — top3 üyeleri öne; kararlı bölümleme (Array.sort YOK)
   var t3=(SIG&&SIG.top3)||[], topAd={}, tops=[], rest=[];
@@ -1479,7 +1488,8 @@ function menuCizAd(ad){
   var kickEl=document.getElementById('mkick');
   kickEl.textContent=(sm&&sm.etiket)?sm.etiket:'';
   mkat.textContent=k.kategori||'';
-  if(k.alt){ malt.textContent=k.alt; malt.style.display=''; }
+  if(bolum){ malt.textContent=bolum; malt.style.display=''; }
+  else if(k.alt){ malt.textContent=k.alt; malt.style.display=''; }
   else { malt.textContent=''; malt.style.display='none'; }
 
   // 4) SÜTUN BAŞLIKLARI — tek sütunlu kategoride gizli (belirsizlik yok)
@@ -1606,7 +1616,7 @@ function goster(c){
   }
   if(c.menu){
     // menü sayfası: videoları söndür, adına göre çiz+göster, alt beat kapalı
-    if(!menuCizAd(c.menu)) return;   // menü verisi yoksa video kalsın
+    if(!menuCizAd(c.menu, c.syf)) return;   // menü verisi yoksa video kalsın
     if(aktif){ aktif.classList.remove('on'); aktif=null; }
     menuEl.classList.add('on');
     metinYaz('','');
