@@ -807,6 +807,98 @@ def tv_ayar_yaz(a: AyarModel):
     return {"success": True}
 
 
+# ─────────────────────────────────────────────────────────────────────────
+# KURGU EDİTÖRÜ (İŞ 2) — /tv-portre sahne dizisi panelden ayarlanır.
+# Bozuk config = built-in VARSAYILAN'a düşer (TV asla kararmaz). Klip whitelist zorunlu.
+# ─────────────────────────────────────────────────────────────────────────
+PORTRE_KLIP_WL = ["tulipi_mekan", "tulipi_grind", "tulipi_espresso", "tulipi_latte", "tulipi_iced"]
+VARSAYILAN_KURGU = [
+  {"sure":4200,"e1":{"menu":"Classic Coffees"},  "e2":{"v":"tulipi_mekan","k":"TULİPİ","b":"Her gün taze.","m":False},       "e3":{"v":"tulipi_mekan","k":"","b":"","m":True}},
+  {"sure":3600,"e1":{"menu":"Signature Coffees"},"e2":{"v":"tulipi_grind","k":"Zanaat","b":"Önce çekirdek.","m":True},        "e3":{"menu":"Signature Coffees"}},
+  {"sure":4000,"e1":{"menu":"Milkshakes"},       "e2":{"v":"tulipi_espresso","k":"Zanaat","b":"Sonra ateş.","m":True},        "e3":{"v":"tulipi_latte","k":"İmza","b":"İmza dokunuş.","m":True}},
+  {"sure":3600,"e1":{"menu":"Mocktails"},        "e2":{"v":"tulipi_latte","k":"Usta","b":"Elin son sözü.","m":True},          "e3":{"menu":"Mocktails"}},
+  {"sure":4000,"e1":{"menu":"Desserts"},         "e2":{"v":"tulipi_iced","k":"Serinlik","b":"Ya da buzlu bir mola.","m":True},"e3":{"v":"tulipi_iced","k":"Serinlik","b":"Buzlu imza.","m":True}},
+  {"sure":9000,"e1":{"menu":"Classic Coffees"},  "e2":{"menu":"Signature Coffees"},                                          "e3":{"menu":"Desserts"}},
+  {"sure":4600,"e1":{"menu":"Signature Coffees"},"e2":{"v":"tulipi_mekan","k":"","b":"Zincir gibi hızlı.\nZanaat gibi özenli.","m":False},"e3":{"menu":"Mocktails"}},
+]
+
+
+def _kurgu_dogrula(slots):
+    """Bozuk/tehlikeli config'i reddet → TV kararmasın. Hata mesajı döndürür (None=geçerli)."""
+    if not isinstance(slots, list) or not slots:
+        return "slots boş veya liste değil"
+    for idx, s in enumerate(slots):
+        if not isinstance(s, dict):
+            return f"slot {idx} nesne değil"
+        try:
+            sr = int(s.get("sure"))
+        except Exception:
+            return f"slot {idx}: sure sayı değil"
+        if sr < 1500 or sr > 60000:
+            return f"slot {idx}: sure 1500-60000ms aralığında olmalı"
+        for e in ("e1", "e2", "e3"):
+            c = s.get(e)
+            if not isinstance(c, dict):
+                return f"slot {idx}.{e} nesne değil"
+            if "menu" not in c and "v" not in c:
+                return f"slot {idx}.{e}: menu veya v (klip) olmalı"
+            if c.get("v") and c["v"] not in PORTRE_KLIP_WL:
+                return f"slot {idx}.{e}: klip whitelist dışı ({c.get('v')})"
+    return None
+
+
+@router.get("/api/tv-portre/kurgu")
+def tv_portre_kurgu_oku():
+    import json as _j
+    kayitli = None
+    with db() as (conn, cur):
+        _ensure_tablo(cur)
+        cur.execute("SELECT deger FROM tv_ayar WHERE anahtar='portre_kurgu'")
+        row = cur.fetchone()
+    if row and (row.get("deger") if isinstance(row, dict) else row[0]):
+        raw = row.get("deger") if isinstance(row, dict) else row[0]
+        try:
+            k = _j.loads(raw)
+            if _kurgu_dogrula(k) is None:
+                kayitli = k
+        except Exception:
+            kayitli = None
+    return {
+        "slots": kayitli or VARSAYILAN_KURGU,   # AKTİF kurgu (kayıtlı geçerliyse o, yoksa varsayılan)
+        "kaydedildi": kayitli is not None,
+        "varsayilan": VARSAYILAN_KURGU,
+        "klipler": PORTRE_KLIP_WL,
+    }
+
+
+class KurguModel(BaseModel):
+    slots: list
+
+
+@router.post("/api/tv-portre/kurgu")
+def tv_portre_kurgu_yaz(k: KurguModel):
+    import json as _j
+    hata = _kurgu_dogrula(k.slots)
+    if hata:
+        raise HTTPException(400, hata)
+    with db() as (conn, cur):
+        _ensure_tablo(cur)
+        cur.execute(
+            "INSERT INTO tv_ayar (anahtar,deger) VALUES ('portre_kurgu',%s) "
+            "ON CONFLICT (anahtar) DO UPDATE SET deger=EXCLUDED.deger",
+            (_j.dumps(k.slots, ensure_ascii=False),))
+    return {"success": True, "slot_sayisi": len(k.slots)}
+
+
+@router.post("/api/tv-portre/kurgu-sifirla")
+def tv_portre_kurgu_sifirla():
+    """Kayıtlı kurguyu sil → varsayılana dön."""
+    with db() as (conn, cur):
+        _ensure_tablo(cur)
+        cur.execute("DELETE FROM tv_ayar WHERE anahtar='portre_kurgu'")
+    return {"success": True}
+
+
 @router.get("/tv-menu/logo")
 def tv_menu_logo():
     for p in ("src/assets/tulipi-logo.jpg",):
@@ -1090,8 +1182,17 @@ function tick(){
 // TV hep açık; sekme geri gelince aktif video duraksadıysa devam
 document.addEventListener('visibilitychange',function(){ if(!document.hidden && aktif && aktif.paused){ var p=aktif.play(); if(p&&p.catch)p.catch(function(){}); } });
 
-// klipler belleğe + menü çekilince perdeyi kaldır ve başla
-Promise.all([hazirla(), menuGetir()]).then(function(){
+// KURGU EDİTÖRÜ: kayıtlı kurgu varsa onu kullan (yoksa yukarıdaki built-in SLOT fallback)
+function kurguGetir(){
+  return fetch('/api/tv-portre/kurgu').then(function(r){return r.json();}).then(function(d){
+    if(d && d.slots && d.slots.length){
+      SLOT=d.slots; TOPLAM=0; SLOT.forEach(function(s){ s._bas=TOPLAM; TOPLAM+=s.sure; });
+      KLIPLER=[]; SLOT.forEach(function(s){ ['e1','e2','e3'].forEach(function(e){ var c=s[e]; if(c&&c.v&&KLIPLER.indexOf(c.v)<0) KLIPLER.push(c.v); }); });
+    }
+  }).catch(function(){});
+}
+// önce kurgu (doğru klipler preload olsun) → klipler+menü belleğe → perde kalk → başla
+kurguGetir().then(function(){ return Promise.all([hazirla(), menuGetir()]); }).then(function(){
   setTimeout(function(){ veil.classList.add('gone'); tick(); }, 400);
 });
 </script>
