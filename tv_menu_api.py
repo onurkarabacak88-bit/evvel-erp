@@ -932,10 +932,10 @@ video.on{opacity:1}
 #malt{font-size:2.1vh;color:var(--muted);letter-spacing:.16em;text-transform:uppercase;margin-top:2vh}
 #mlist{display:flex;flex-direction:column;gap:2.7vh}
 .mrow{display:flex;align-items:baseline;gap:1.6vw}
-.mad{font-size:3.5vh;font-weight:500;color:var(--cream);white-space:nowrap}
-.mnote{flex:1;font-size:2vh;font-style:italic;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transform:translateY(-.3vh)}
+.mad{font-size:3.5vh;font-weight:500;color:var(--cream);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex-shrink:1}
+.mnote{flex:1 1 0;font-size:2vh;font-style:italic;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;transform:translateY(-.3vh)}
 .mdot{flex:1;border-bottom:1px dotted rgba(184,155,128,.30);transform:translateY(-.5vh);min-width:2vw}
-.mfiyat{font-size:3.2vh;font-weight:500;color:var(--cream);white-space:nowrap;font-variant-numeric:tabular-nums}
+.mfiyat{font-size:3.2vh;font-weight:500;color:var(--cream);white-space:nowrap;font-variant-numeric:tabular-nums;flex-shrink:0}
 /* yoğun kategori (10+ ürün) — sıkışık ölçek, taşma yok */
 #menu.yogun{padding-top:9vh}
 #menu.yogun #mhead{margin-bottom:3.6vh}
