@@ -1268,7 +1268,7 @@ function heroCiz(){
   var ad=(SIG&&SIG.en_cok)||(IMZA&&IMZA.ad); if(!ad) return false;
   var f=urunBul(ad);
   spkick.textContent=(SIG&&SIG.en_cok)?'BU HAFTA EN ÇOK SEÇİLEN':'TULİPİ İMZASI';
-  spcup.src='/tv-menu/cup/'+bardakSec(ad, f&&f.kat); spcup.style.display='';
+  spcup.src='/tv-menu/cup/'+bardakSec(ad, f&&f.kat); spcup.style.display='block';
   spad.textContent=ad;
   spnot.textContent=(f&&f.u.aciklama)||'';
   spfiyat.textContent='';
@@ -1280,7 +1280,7 @@ function gununCiz(){
   var ad=SIG&&SIG.en_cok; if(!ad) return false;
   var f=urunBul(ad), sm=SIG&&SIG.saat_modu;
   spkick.textContent=(sm&&sm.etiket?sm.etiket+' · ':'')+'GÜNÜN SEÇİMİ';
-  spcup.src='/tv-menu/cup/'+bardakSec(ad, f&&f.kat); spcup.style.display='';
+  spcup.src='/tv-menu/cup/'+bardakSec(ad, f&&f.kat); spcup.style.display='block';
   spad.textContent=ad;
   spnot.textContent=(f&&f.u.aciklama)||'';
   var fy=f&&(f.u.f8!=null?f.u.f8:(f.u.f14!=null?f.u.f14:f.u.fice));
