@@ -818,12 +818,14 @@ VARSAYILAN_KURGU = [
   {"sure":3600,"e1":{"menu":"Signature Coffees"},"e2":{"v":"tulipi_grind","k":"Zanaat","b":"Önce çekirdek.","m":True},        "e3":{"menu":"Signature Coffees"}},
   {"sure":4000,"e1":{"menu":"Milkshakes"},       "e2":{"v":"tulipi_espresso","k":"Zanaat","b":"Sonra ateş.","m":True},        "e3":{"v":"tulipi_latte","k":"İmza","b":"İmza dokunuş.","m":True}},
   {"sure":3200,"e1":{"menu":"Signature Coffees"},"e2":{"v":"tulipi_barista","k":"Usta","b":"Her fincan elde.","m":True},      "e3":{"v":"tulipi_servis","k":"","b":"Ve servis.","m":True}},
+  {"sure":5200,"e1":{"menu":"Desserts"},         "e2":{"hero":True},                                                          "e3":{"hero":True}},
   {"sure":3600,"e1":{"menu":"Mocktails"},        "e2":{"v":"tulipi_latte","k":"Usta","b":"Elin son sözü.","m":True},          "e3":{"menu":"Mocktails"}},
   {"sure":6000,"e1":{"menu":"Signature Coffees"},"e2":{"spot":True},                                                          "e3":{"spot":True}},
   {"sure":5400,"e1":{"cok":True},                "e2":{"sezon":True},                                                        "e3":{"yeni":True}},
   {"sure":4000,"e1":{"menu":"Desserts"},         "e2":{"v":"tulipi_iced","k":"Serinlik","b":"Ya da buzlu bir mola.","m":True},"e3":{"sezon":True}},
   {"sure":9000,"e1":{"menu":"Classic Coffees"},  "e2":{"menu":"Signature Coffees"},                                          "e3":{"menu":"Desserts"}},
   {"sure":3600,"e1":{"menu":"Milkshakes"},       "e2":{"v":"tulipi_gulus","k":"","b":"Burada iyi hissedersin.","m":True},    "e3":{"v":"tulipi_serin","k":"Taze","b":"Serin ve canlı.","m":True}},
+  {"sure":5600,"e1":{"menu":"Classic Coffees"},  "e2":{"gunun":True},                                                        "e3":{"gunun":True}},
   {"sure":4600,"e1":{"menu":"Signature Coffees"},"e2":{"v":"tulipi_mekan","k":"","b":"Zincir gibi hızlı.\nZanaat gibi özenli.","m":False},"e3":{"menu":"Mocktails"}},
 ]
 
@@ -846,8 +848,9 @@ def _kurgu_dogrula(slots):
             if not isinstance(c, dict):
                 return f"slot {idx}.{e} nesne değil"
             if ("menu" not in c and "v" not in c and not c.get("spot")
-                    and not c.get("cok") and not c.get("yeni") and not c.get("sezon")):
-                return f"slot {idx}.{e}: menu, klip (v), spot, cok, yeni veya sezon olmalı"
+                    and not c.get("cok") and not c.get("yeni") and not c.get("sezon")
+                    and not c.get("hero") and not c.get("gunun")):
+                return f"slot {idx}.{e}: menu, klip (v), spot, cok, yeni, sezon, hero veya gunun olmalı"
             if c.get("v") and c["v"] not in PORTRE_KLIP_WL:
                 return f"slot {idx}.{e}: klip whitelist dışı ({c.get('v')})"
     return None
@@ -996,10 +999,13 @@ def tv_menu_clip(name: str):
     raise HTTPException(404, "klip dosyası yok")
 
 
+@router.get("/tv", response_class=HTMLResponse)
 @router.get("/tv-portre", response_class=HTMLResponse)
 def tv_portre_html():
-    """DİKEY (9:16) FLAGSHIP — gerçek TULİPİ kliplerinden sinematik marka hikâyesi.
-    Sahip kararı 2026-07-20: ekranlar portre. Mevcut yatay /tv-menu'ye DOKUNMAZ."""
+    """⭐ TEK TV MOTORU (sahip kararı 2026-07-20: 'iki sistemi birleştir') — /tv kısa adres.
+    Dikey (9:16) VE yatay (16:9) otomatik; blob preload + duvar-saati senkron + kurgu editörü +
+    canlı veri sahneleri + yatay sistemin iyi sahneleri (hero ürün, günün seçimi).
+    Eski yatay /tv-menu legacy olarak duruyor; yeni kurulumda her TV /tv?ekran=N kullanır."""
     return HTMLResponse(_TV_PORTRE_HTML)
 
 
@@ -1077,6 +1083,34 @@ video.on{opacity:1}
 #menu.yogun .gpr{font-size:2.4vh}
 #menu.yogun #mfoot{padding:1.2vh 0 1.6vh}
 #menu.yogun #mfnote{font-size:1.8vh}
+/* ── YATAY TV (16:9) — AYNI MOTOR: pano orta kolon, sahneler geniş kadraj ── */
+body.yatay #menu{padding:5vh 21vw 0}
+body.yatay #mkat{font-size:6.6vh}
+body.yatay #mbrand{font-size:2.5vh}
+body.yatay #mkick{font-size:2.3vh}
+body.yatay #malt{font-size:2.3vh}
+body.yatay .gad{font-size:4.1vh}
+body.yatay .gtat{font-size:2.4vh}
+body.yatay .gfav{font-size:2.3vh}
+body.yatay .gpr{font-size:3.8vh}
+body.yatay #mcols div{font-size:2vh}
+body.yatay #mfnote{font-size:2.5vh}
+body.yatay #menu.cols-1 .grow,body.yatay #menu.cols-1 #mcols{grid-template-columns:1fr 8vw}
+body.yatay #menu.cols-2 .grow,body.yatay #menu.cols-2 #mcols{grid-template-columns:1fr 6.5vw 6.5vw}
+body.yatay #menu.cols-3 .grow,body.yatay #menu.cols-3 #mcols{grid-template-columns:1fr 6vw 6vw 6.5vw}
+body.yatay #menu.yogun{padding-top:3vh}
+body.yatay #menu.yogun .gad{font-size:3.2vh}
+body.yatay #menu.yogun .gpr{font-size:3vh}
+body.yatay #menu.yogun .gtat{display:none}
+body.yatay #txt{bottom:12vh;padding:0 16vw}
+body.yatay #beat{font-size:8.2vh}
+body.yatay #kick{font-size:3vh}
+body.yatay #brand{font-size:4vh}
+body.yatay #spad{font-size:8.4vh}
+body.yatay #spnot{font-size:3.4vh;max-width:64vw}
+body.yatay #spfiyat{font-size:7vh}
+body.yatay #sppair{font-size:3.1vh;padding:1.6vh 2.4vw}
+body.yatay #spcup{width:36vh;max-height:38vh}
 /* LEGACY satırlar — cokCiz (En Çok) / yeniCiz (Yeni) sahneleri bunları kullanır */
 .mrow{display:flex;align-items:baseline;gap:1.6vw;padding:1.35vh 0;opacity:0;animation:satirBelir .6s ease forwards}
 .mad{font-size:3.5vh;font-weight:500;color:var(--cream);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex-shrink:1}
@@ -1090,6 +1124,7 @@ video.on{opacity:1}
 #spot{position:absolute;inset:0;z-index:2;opacity:0;transition:opacity 1.05s cubic-bezier(.37,0,.24,1);display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:0 8vw;background:linear-gradient(180deg,rgba(11,7,5,.58),rgba(11,7,5,.32) 42%,rgba(11,7,5,.80))}
 #spot.on{opacity:1}
 #spkick{font-size:2.6vh;font-weight:500;letter-spacing:.4em;color:var(--green);margin-bottom:2.2vh}
+#spcup{display:none;width:30vh;max-width:44vw;max-height:34vh;object-fit:contain;margin-bottom:2.4vh;filter:drop-shadow(0 2.4vh 4.6vh rgba(0,0,0,.72))}
 #spad{font-size:6.4vh;font-weight:500;color:var(--cream);line-height:1.06;text-shadow:0 2px 24px rgba(0,0,0,.6)}
 #spnot{font-size:2.7vh;font-style:italic;color:var(--muted);margin-top:2.2vh;max-width:82vw}
 #spfiyat{font-size:5.6vh;font-weight:600;color:var(--cream);margin-top:2.8vh;font-variant-numeric:tabular-nums}
@@ -1119,6 +1154,7 @@ video.on{opacity:1}
   </div>
   <div id="spot">
     <div id="spkick">★ İMZA</div>
+    <img id="spcup" alt="">
     <div id="spad"></div>
     <div id="spnot"></div>
     <div id="spfiyat"></div>
@@ -1134,6 +1170,9 @@ video.on{opacity:1}
 // EKRAN: 1=MENÜ(karar) · 2=DENEYİM(hikâye) · 3=İMZA(upsell). Parametresiz = 2.
 var EKRAN=(function(){ var m=location.search.match(/[?&]ekran=([123])/); return m?('e'+m[1]):'e2'; })();
 document.body.setAttribute('data-ekran', EKRAN.slice(1));
+// TEK MOTOR, İKİ YÖN: dikey (9:16) varsayılan; yatay TV otomatik algılanır (?yon= ile zorlanabilir)
+var YATAY=(function(){ var m=location.search.match(/[?&]yon=(dikey|yatay)/); if(m) return m[1]==='yatay'; return window.innerWidth>window.innerHeight; })();
+if(YATAY) document.body.className+=' yatay';
 // her slot: {sure, e1, e2, e3}; içerik = {v:'klip',k:'kicker',b:'beat',m:marka} VEYA {menu:'Kategori Adı'}
 var SLOT = [
   {sure:4200, e1:{menu:'Classic Coffees'},   e2:{v:'tulipi_mekan',k:'TULİPİ',b:'Her gün taze.',m:false},        e3:{v:'tulipi_mekan',k:'',b:'',m:true}},
@@ -1145,13 +1184,27 @@ var SLOT = [
   {sure:4600, e1:{menu:'Signature Coffees'}, e2:{v:'tulipi_mekan',k:'',b:'Zincir gibi hızlı.\nZanaat gibi özenli.',m:false}, e3:{menu:'Mocktails'}}
 ];
 var TOPLAM=0; SLOT.forEach(function(s){ s._bas=TOPLAM; TOPLAM+=s.sure; });
-var KLIPLER=[]; SLOT.forEach(function(s){ ['e1','e2','e3'].forEach(function(e){ var c=s[e]; if(c&&c.v&&KLIPLER.indexOf(c.v)<0) KLIPLER.push(c.v); }); });
+// içerik tipi hangi klipleri gerektirir? (hero/gunun/sezon/cok/yeni zeminleri de preload — sahne asla karanlık kalmasın)
+function icKlipleri(c,push){
+  if(!c) return;
+  if(c.v) push(c.v);
+  if(c.spot||c.hero) push('tulipi_latte');
+  if(c.gunun) push('tulipi_servis');
+  if(c.sezon){ push('tulipi_iced'); push('tulipi_serin'); push('tulipi_espresso'); push('tulipi_latte'); }
+  if(c.cok||c.yeni) push('tulipi_mekan');
+}
+function klipListesi(slots){
+  var L=[]; var push=function(n){ if(n&&L.indexOf(n)<0) L.push(n); };
+  slots.forEach(function(s){ ['e1','e2','e3'].forEach(function(e){ icKlipleri(s[e],push); }); });
+  return L;
+}
+var KLIPLER=klipListesi(SLOT);
 
 var stage=document.getElementById('stage'), veil=document.getElementById('veil'),
     vfill=document.getElementById('vfill'), vpct=document.getElementById('vpct'),
     kick=document.getElementById('kick'), beat=document.getElementById('beat'), brand=document.getElementById('brand'),
     menuEl=document.getElementById('menu'), mkat=document.getElementById('mkat'), malt=document.getElementById('malt'), mlist=document.getElementById('mlist'),
-    spotEl=document.getElementById('spot'), spad=document.getElementById('spad'), spnot=document.getElementById('spnot'), spfiyat=document.getElementById('spfiyat'), sppair=document.getElementById('sppair'),
+    spotEl=document.getElementById('spot'), spkick=document.getElementById('spkick'), spcup=document.getElementById('spcup'), spad=document.getElementById('spad'), spnot=document.getElementById('spnot'), spfiyat=document.getElementById('spfiyat'), sppair=document.getElementById('sppair'),
     hhribbon=document.getElementById('hhribbon');
 var VID={};   // klip adi -> <video> (hepsi belleğe yüklü, hazır)
 var aktif=null, i=-1;
@@ -1183,9 +1236,55 @@ function sinyalGetir(){
 // İMZA SPOTLIGHT — hero ürün + fiyat + perfect-pair upsell
 function spotCiz(){
   if(!IMZA){ return false; }
+  spkick.textContent='★ İMZA';
+  spcup.style.display='none';
   spad.textContent=IMZA.ad||'';
   spnot.textContent=IMZA.aciklama||'';
   spfiyat.textContent=(IMZA.fiyat!=null?IMZA.fiyat:'');
+  if(PAIR && PAIR.ad){ sppair.innerHTML='<b>+ '+PAIR.ad+'</b> · '+(PAIR.fiyat!=null?PAIR.fiyat+' · ':'')+(PAIR.mesaj||'Yanına yakışır'); sppair.style.display=''; }
+  else { sppair.style.display='none'; }
+  return true;
+}
+// ürünü canlı menüde bul (ad eşleşmesi) → {u, kat}
+function urunBul(ad){
+  if(!ad) return null;
+  var n=String(ad).toLowerCase(), a, b, us;
+  for(a=0;a<MENU.length;a++){
+    us=MENU[a].urunler||[];
+    for(b=0;b<us.length;b++){ if(String(us[b].ad||'').toLowerCase()===n) return {u:us[b], kat:MENU[a].kategori}; }
+  }
+  return null;
+}
+// ürün → bardak görseli (/tv-menu/cup/{hot|latte|iced|mocktail})
+function bardakSec(ad,kat){
+  var s=(ad||'')+' '+(kat||'');
+  if(/mocktail/i.test(s)) return 'mocktail';
+  if(/milkshake|frozen|ice|iced|buz/i.test(s)) return 'iced';
+  if(/latte|cappuccino|mocha|macchiato|flat|white/i.test(s)) return 'latte';
+  return 'hot';
+}
+// 🥤 KAHRAMAN ÜRÜN — vaat/kanıt sahnesi, FİYATSIZ (rampa: fiyat ilk kez günün seçiminde)
+function heroCiz(){
+  var ad=(SIG&&SIG.en_cok)||(IMZA&&IMZA.ad); if(!ad) return false;
+  var f=urunBul(ad);
+  spkick.textContent=(SIG&&SIG.en_cok)?'BU HAFTA EN ÇOK SEÇİLEN':'TULİPİ İMZASI';
+  spcup.src='/tv-menu/cup/'+bardakSec(ad, f&&f.kat); spcup.style.display='';
+  spad.textContent=ad;
+  spnot.textContent=(f&&f.u.aciklama)||'';
+  spfiyat.textContent='';
+  sppair.style.display='none';
+  return true;
+}
+// ⭐ GÜNÜN SEÇİMİ — satış zirvesi: fiyat İLK KEZ + perfect-pair köprüsü
+function gununCiz(){
+  var ad=SIG&&SIG.en_cok; if(!ad) return false;
+  var f=urunBul(ad), sm=SIG&&SIG.saat_modu;
+  spkick.textContent=(sm&&sm.etiket?sm.etiket+' · ':'')+'GÜNÜN SEÇİMİ';
+  spcup.src='/tv-menu/cup/'+bardakSec(ad, f&&f.kat); spcup.style.display='';
+  spad.textContent=ad;
+  spnot.textContent=(f&&f.u.aciklama)||'';
+  var fy=f&&(f.u.f8!=null?f.u.f8:(f.u.f14!=null?f.u.f14:f.u.fice));
+  spfiyat.textContent=(fy!=null?fy:'');
   if(PAIR && PAIR.ad){ sppair.innerHTML='<b>+ '+PAIR.ad+'</b> · '+(PAIR.fiyat!=null?PAIR.fiyat+' · ':'')+(PAIR.mesaj||'Yanına yakışır'); sppair.style.display=''; }
   else { sppair.style.display='none'; }
   return true;
@@ -1353,6 +1452,16 @@ function goster(c){
     else { spotEl.classList.remove('on'); metinYaz('İmza','TULİPİ'); brand.classList.add('on'); }
     return;
   }
+  // 🥤 KAHRAMAN ÜRÜN / ⭐ GÜNÜN SEÇİMİ — spot overlay + gerçek çekim zemin (yatay sistemin iyi sahneleri, tek motorda)
+  if(c.hero || c.gunun){
+    menuEl.classList.remove('on');
+    var zem=VID[c.hero?'tulipi_latte':'tulipi_servis'];
+    if(zem){ try{zem.currentTime=0;}catch(e){} var pz=zem.play(); if(pz&&pz.catch)pz.catch(function(){}); zem.classList.add('on'); if(aktif&&aktif!==zem)aktif.classList.remove('on'); aktif=zem; }
+    var okS = c.hero ? heroCiz() : gununCiz();
+    if(okS){ spotEl.classList.add('on'); metinYaz('',''); brand.classList.remove('on'); }
+    else { spotEl.classList.remove('on'); metinYaz('',''); brand.classList.add('on'); }
+    return;
+  }
   spotEl.classList.remove('on');
   // 🏆 EN ÇOK / ✨ YENİ — #menu overlay'i sosyal kanıt/yeni ürünle doldur
   if(c.cok || c.yeni){
@@ -1415,11 +1524,13 @@ function kurguGetir(){
   return fetch('/api/tv-portre/kurgu').then(function(r){return r.json();}).then(function(d){
     if(d && d.slots && d.slots.length){
       SLOT=d.slots; TOPLAM=0; SLOT.forEach(function(s){ s._bas=TOPLAM; TOPLAM+=s.sure; });
-      KLIPLER=[]; SLOT.forEach(function(s){ ['e1','e2','e3'].forEach(function(e){ var c=s[e]; if(c&&c.v&&KLIPLER.indexOf(c.v)<0) KLIPLER.push(c.v); }); });
+      KLIPLER=klipListesi(SLOT);
     }
   }).catch(function(){});
 }
 // önce kurgu (doğru klipler preload olsun) → klipler+menü belleğe → perde kalk → başla
+// bardak cutout'ları da belleğe (hero/gunun sahneleri flaşsız açılsın)
+['hot','latte','iced','mocktail'].forEach(function(n){ var im=new Image(); im.src='/tv-menu/cup/'+n; });
 kurguGetir().then(function(){ return Promise.all([hazirla(), menuGetir(), sinyalGetir()]); }).then(function(){
   setTimeout(function(){ veil.classList.add('gone'); tick(); }, 400);
   // canlı tazeleme: fiyat/imza (60sn), happy-hour/sinyal (60sn) — TV kapanmadan güncel kalır
