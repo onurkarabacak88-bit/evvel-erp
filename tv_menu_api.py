@@ -817,6 +817,7 @@ VARSAYILAN_KURGU = [
   {"sure":4200,"e1":{"menu":"Classic Coffees"},  "e2":{"v":"tulipi_mekan","k":"TULİPİ","b":"Her gün taze.","m":False},       "e3":{"v":"tulipi_mekan","k":"","b":"","m":True}},
   {"sure":3600,"e1":{"menu":"Signature Coffees"},"e2":{"v":"tulipi_grind","k":"Zanaat","b":"Önce çekirdek.","m":True},        "e3":{"menu":"Signature Coffees"}},
   {"sure":4000,"e1":{"menu":"Milkshakes"},       "e2":{"v":"tulipi_espresso","k":"Zanaat","b":"Sonra ateş.","m":True},        "e3":{"v":"tulipi_latte","k":"İmza","b":"İmza dokunuş.","m":True}},
+  {"sure":3200,"e1":{"menu":"Signature Coffees"},"e2":{"v":"tulipi_barista","k":"Usta","b":"Her fincan elde.","m":True},      "e3":{"v":"tulipi_servis","k":"","b":"Ve servis.","m":True}},
   {"sure":3600,"e1":{"menu":"Mocktails"},        "e2":{"v":"tulipi_latte","k":"Usta","b":"Elin son sözü.","m":True},          "e3":{"menu":"Mocktails"}},
   {"sure":6000,"e1":{"menu":"Signature Coffees"},"e2":{"spot":True},                                                          "e3":{"spot":True}},
   {"sure":4000,"e1":{"menu":"Desserts"},         "e2":{"v":"tulipi_iced","k":"Serinlik","b":"Ya da buzlu bir mola.","m":True},"e3":{"v":"tulipi_iced","k":"Serinlik","b":"Buzlu imza.","m":True}},
@@ -1010,7 +1011,7 @@ _TV_PORTRE_HTML = r"""<!DOCTYPE html>
 *{margin:0;box-sizing:border-box}
 html,body{height:100%;overflow:hidden;background:var(--bg);cursor:none;font-family:'Fraunces',serif;color:var(--cream)}
 #stage{position:fixed;inset:0;background:var(--bg)}
-video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity .6s ease;will-change:opacity}
+video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity 1.05s cubic-bezier(.37,0,.24,1);will-change:opacity}
 video.on{opacity:1}
 #scrim{position:absolute;inset:0;pointer-events:none;background:linear-gradient(180deg,rgba(11,7,5,.28) 0%,transparent 26%,transparent 52%,rgba(11,7,5,.72) 100%)}
 #txt{position:absolute;left:0;right:0;bottom:9vh;padding:0 8vw;text-align:center;z-index:3}
@@ -1021,14 +1022,15 @@ video.on{opacity:1}
 #brand b{color:var(--green)}
 .show{opacity:1 !important}
 /* ── MENÜ SAYFASI — okunurluk kral: koyu zemin, Fraunces krem, tat notu ── */
-#menu{position:absolute;inset:0;z-index:2;opacity:0;transition:opacity .6s ease;display:flex;flex-direction:column;padding:13vh 8vw 8vh;background:radial-gradient(72vw 60vw at 50% 18%,rgba(98,66,34,.22),transparent 64%),linear-gradient(180deg,#1b130f 0%,#0b0705 100%)}
+#menu{position:absolute;inset:0;z-index:2;opacity:0;transition:opacity 1.15s cubic-bezier(.37,0,.24,1);display:flex;flex-direction:column;padding:13vh 8vw 8vh;background:radial-gradient(72vw 60vw at 50% 18%,rgba(98,66,34,.22),transparent 64%),linear-gradient(180deg,#1b130f 0%,#0b0705 100%)}
 #menu.on{opacity:1}
 #mhead{text-align:center;margin-bottom:5.4vh}
 #mkat{font-size:5.4vh;font-weight:500;color:var(--cream);line-height:1.05}
 #mkat::after{content:"";display:block;width:8vw;height:2px;background:var(--green);margin:2vh auto 0;border-radius:2px}
 #malt{font-size:2.1vh;color:var(--muted);letter-spacing:.16em;text-transform:uppercase;margin-top:2vh}
 #mlist{display:flex;flex-direction:column;gap:2.7vh}
-.mrow{display:flex;align-items:baseline;gap:1.6vw}
+@keyframes satirBelir{from{opacity:0}to{opacity:1}}
+.mrow{display:flex;align-items:baseline;gap:1.6vw;opacity:0;animation:satirBelir .6s ease forwards}
 .mad{font-size:3.5vh;font-weight:500;color:var(--cream);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex-shrink:1}
 .mnote{flex:1 1 0;font-size:2vh;font-style:italic;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;transform:translateY(-.3vh)}
 .mdot{flex:1;border-bottom:1px dotted rgba(184,155,128,.30);transform:translateY(-.5vh);min-width:2vw}
@@ -1042,7 +1044,7 @@ video.on{opacity:1}
 #menu.yogun .mfiyat{font-size:2.8vh}
 #menu.yogun .mnote{font-size:1.8vh}
 /* ── İMZA SPOTLIGHT (hero ürün + upsell) — video zemin üstünde ── */
-#spot{position:absolute;inset:0;z-index:2;opacity:0;transition:opacity .6s ease;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:0 8vw;background:linear-gradient(180deg,rgba(11,7,5,.58),rgba(11,7,5,.32) 42%,rgba(11,7,5,.80))}
+#spot{position:absolute;inset:0;z-index:2;opacity:0;transition:opacity 1.05s cubic-bezier(.37,0,.24,1);display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:0 8vw;background:linear-gradient(180deg,rgba(11,7,5,.58),rgba(11,7,5,.32) 42%,rgba(11,7,5,.80))}
 #spot.on{opacity:1}
 #spkick{font-size:2.6vh;font-weight:500;letter-spacing:.4em;color:var(--green);margin-bottom:2.2vh}
 #spad{font-size:6.4vh;font-weight:500;color:var(--cream);line-height:1.06;text-shadow:0 2px 24px rgba(0,0,0,.6)}
@@ -1150,9 +1152,9 @@ function menuCizAd(ad){
   // TÜM ürünler; uzun kategoride (Signature 13) sıkışık mod → taşma yok
   menuEl.classList.toggle('yogun', us.length>9);
   var html='';
-  us.forEach(function(u){
+  us.forEach(function(u,ix){
     var f=fiyatMetni(u);
-    html+='<div class="mrow"><span class="mad">'+(u.ad||'')+'</span>'
+    html+='<div class="mrow" style="animation-delay:'+(0.28+ix*0.05).toFixed(2)+'s"><span class="mad">'+(u.ad||'')+'</span>'
         + (u.aciklama?'<span class="mnote">'+u.aciklama+'</span>':'<span class="mdot"></span>')
         + '<span class="mfiyat">'+f+'</span></div>';
   });
