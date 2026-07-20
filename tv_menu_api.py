@@ -896,6 +896,92 @@ def tv_menu_clip(name: str):
     raise HTTPException(404, "klip dosyası yok")
 
 
+@router.get("/tv-portre", response_class=HTMLResponse)
+def tv_portre_html():
+    """DİKEY (9:16) FLAGSHIP — gerçek TULİPİ kliplerinden sinematik marka hikâyesi.
+    Sahip kararı 2026-07-20: ekranlar portre. Mevcut yatay /tv-menu'ye DOKUNMAZ."""
+    return HTMLResponse(_TV_PORTRE_HTML)
+
+
+_TV_PORTRE_HTML = r"""<!DOCTYPE html>
+<html lang="tr"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>TULİPİ</title>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,ital,wght@9..144,0,300;9..144,0,400;9..144,0,500;9..144,0,600&display=swap" rel="stylesheet">
+<style>
+:root{--cream:#EFE6D6;--muted:#B89B80;--green:#3E8E5A;--bg:#0b0705}
+*{margin:0;box-sizing:border-box}
+html,body{height:100%;overflow:hidden;background:var(--bg);cursor:none;font-family:'Fraunces',serif;color:var(--cream)}
+#stage{position:fixed;inset:0;background:var(--bg)}
+video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity .6s ease}
+video.on{opacity:1}
+/* alt karartma — metin okunsun (kadraj mantığı: alt banda yaz) */
+#scrim{position:absolute;inset:0;pointer-events:none;background:linear-gradient(180deg,rgba(11,7,5,.28) 0%,transparent 26%,transparent 52%,rgba(11,7,5,.72) 100%)}
+#txt{position:absolute;left:0;right:0;bottom:9vh;padding:0 8vw;text-align:center}
+#kick{font-size:2.4vh;font-weight:500;letter-spacing:.42em;text-transform:uppercase;color:var(--green);opacity:0;transition:opacity .5s ease;margin-bottom:1.6vh}
+#beat{font-size:6.2vh;line-height:1.08;font-weight:400;color:var(--cream);opacity:0;transition:opacity .55s ease;text-shadow:0 2px 24px rgba(0,0,0,.55)}
+#brand{position:absolute;top:6vh;left:0;right:0;text-align:center;font-size:3.1vh;font-weight:600;letter-spacing:.34em;color:var(--cream);opacity:0;transition:opacity .6s ease}
+#brand.on{opacity:.96}
+#brand b{color:var(--green)}
+.show{opacity:1 !important}
+</style></head>
+<body>
+<div id="stage">
+  <video id="vA" muted playsinline preload="auto"></video>
+  <video id="vB" muted playsinline preload="auto"></video>
+  <div id="scrim"></div>
+  <div id="brand">TULİ<b>P</b>İ</div>
+  <div id="txt"><div id="kick"></div><div id="beat"></div></div>
+</div>
+<script>
+var CLIP = function(n){return '/tv-menu/clip/'+n;};
+// Storyboard v1 — Vaat -> Zanaat rampasi -> Urun -> Marka kapanis (klip suresine gore)
+var SAHNE = [
+  {klip:'tulipi_mekan',    kick:'TULİPİ',   beat:'Her gün taze.',                         sure:4200, marka:true},
+  {klip:'tulipi_grind',    kick:'Zanaat',   beat:'Önce çekirdek.',                        sure:3000},
+  {klip:'tulipi_espresso', kick:'Zanaat',   beat:'Sonra ateş.',                           sure:4000},
+  {klip:'tulipi_latte',    kick:'Usta',     beat:'Elin son sözü.',                        sure:3000},
+  {klip:'tulipi_iced',     kick:'Serinlik', beat:'Ya da buzlu bir mola.',                 sure:4000},
+  {klip:'tulipi_mekan',    kick:'',         beat:'Zincir gibi hızlı.\nZanaat gibi özenli.', sure:4600, marka:true}
+];
+var vA=document.getElementById('vA'), vB=document.getElementById('vB');
+var kick=document.getElementById('kick'), beat=document.getElementById('beat'), brand=document.getElementById('brand');
+var aktif=vB, i=-1, t=null;
+function goster(s){
+  var yeni = (aktif===vA)? vB : vA;
+  yeni.src = CLIP(s.klip);
+  yeni.load();
+  var basla=function(){
+    yeni.play().catch(function(){});
+    yeni.classList.add('on');
+    aktif.classList.remove('on');
+    aktif=yeni;
+    yeni.removeEventListener('canplay',basla);
+  };
+  yeni.addEventListener('canplay',basla);
+  // metin: once soldur, sonra yaz + belir
+  kick.classList.remove('show'); beat.classList.remove('show');
+  setTimeout(function(){
+    kick.textContent=s.kick; beat.innerHTML=(s.beat||'').replace(/\n/g,'<br>');
+    if(s.kick) kick.classList.add('show');
+    beat.classList.add('show');
+  },420);
+  if(s.marka) brand.classList.add('on'); else brand.classList.remove('on');
+}
+function dongu(){
+  i=(i+1)%SAHNE.length;
+  var s=SAHNE[i];
+  goster(s);
+  t=setTimeout(dongu, s.sure);
+}
+// ilk sahne
+dongu();
+// sekme gorunur olunca kaldigi yerden (TV hep acik ama guvence)
+document.addEventListener('visibilitychange',function(){ if(!document.hidden && aktif && aktif.paused) aktif.play().catch(function(){}); });
+</script>
+</body></html>"""
+
+
 @router.get("/tv-menu", response_class=HTMLResponse)
 def tv_menu_html():
     """TAM EKRAN TV PANOSU — /api/tv-menu'den canlı çeker, otomatik döner,
