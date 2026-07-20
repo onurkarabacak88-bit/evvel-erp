@@ -913,29 +913,33 @@ _TV_PORTRE_HTML = r"""<!DOCTYPE html>
 *{margin:0;box-sizing:border-box}
 html,body{height:100%;overflow:hidden;background:var(--bg);cursor:none;font-family:'Fraunces',serif;color:var(--cream)}
 #stage{position:fixed;inset:0;background:var(--bg)}
-video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity .6s ease}
+video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity .6s ease;will-change:opacity}
 video.on{opacity:1}
-/* alt karartma — metin okunsun (kadraj mantığı: alt banda yaz) */
 #scrim{position:absolute;inset:0;pointer-events:none;background:linear-gradient(180deg,rgba(11,7,5,.28) 0%,transparent 26%,transparent 52%,rgba(11,7,5,.72) 100%)}
-#txt{position:absolute;left:0;right:0;bottom:9vh;padding:0 8vw;text-align:center}
+#txt{position:absolute;left:0;right:0;bottom:9vh;padding:0 8vw;text-align:center;z-index:3}
 #kick{font-size:2.4vh;font-weight:500;letter-spacing:.42em;text-transform:uppercase;color:var(--green);opacity:0;transition:opacity .5s ease;margin-bottom:1.6vh}
 #beat{font-size:6.2vh;line-height:1.08;font-weight:400;color:var(--cream);opacity:0;transition:opacity .55s ease;text-shadow:0 2px 24px rgba(0,0,0,.55)}
-#brand{position:absolute;top:6vh;left:0;right:0;text-align:center;font-size:3.1vh;font-weight:600;letter-spacing:.34em;color:var(--cream);opacity:0;transition:opacity .6s ease}
+#brand{position:absolute;top:6vh;left:0;right:0;text-align:center;font-size:3.1vh;font-weight:600;letter-spacing:.34em;color:var(--cream);opacity:0;transition:opacity .6s ease;z-index:3}
 #brand.on{opacity:.96}
 #brand b{color:var(--green)}
 .show{opacity:1 !important}
+/* ön-yükleme perdesi — hazır olana kadar */
+#veil{position:absolute;inset:0;z-index:9;display:flex;flex-direction:column;align-items:center;justify-content:center;background:radial-gradient(60vw 60vw at 50% 38%,rgba(98,66,34,.30),transparent 66%),var(--bg);transition:opacity .8s ease}
+#veil.gone{opacity:0;pointer-events:none}
+#vbrand{font-size:5vh;font-weight:600;letter-spacing:.34em;color:var(--cream)}#vbrand b{color:var(--green)}
+#vbar{margin-top:3.4vh;width:44vw;height:3px;background:rgba(239,230,214,.14);border-radius:2px;overflow:hidden}
+#vfill{height:100%;width:0;background:var(--green);transition:width .35s ease}
+#vpct{margin-top:1.8vh;font-size:1.9vh;letter-spacing:.3em;color:var(--muted)}
 </style></head>
 <body>
 <div id="stage">
-  <video id="vA" muted playsinline preload="auto"></video>
-  <video id="vB" muted playsinline preload="auto"></video>
   <div id="scrim"></div>
   <div id="brand">TULİ<b>P</b>İ</div>
   <div id="txt"><div id="kick"></div><div id="beat"></div></div>
+  <div id="veil"><div id="vbrand">TULİ<b>P</b>İ</div><div id="vbar"><div id="vfill"></div></div><div id="vpct">HAZIRLANIYOR</div></div>
 </div>
 <script>
-var CLIP = function(n){return '/tv-menu/clip/'+n;};
-// Storyboard v1 — Vaat -> Zanaat rampasi -> Urun -> Marka kapanis (klip suresine gore)
+// ── STORYBOARD v1 ────────────────────────────────────────────────────────
 var SAHNE = [
   {klip:'tulipi_mekan',    kick:'TULİPİ',   beat:'Her gün taze.',                         sure:4200, marka:true},
   {klip:'tulipi_grind',    kick:'Zanaat',   beat:'Önce çekirdek.',                        sure:3000},
@@ -944,40 +948,66 @@ var SAHNE = [
   {klip:'tulipi_iced',     kick:'Serinlik', beat:'Ya da buzlu bir mola.',                 sure:4000},
   {klip:'tulipi_mekan',    kick:'',         beat:'Zincir gibi hızlı.\nZanaat gibi özenli.', sure:4600, marka:true}
 ];
-var vA=document.getElementById('vA'), vB=document.getElementById('vB');
-var kick=document.getElementById('kick'), beat=document.getElementById('beat'), brand=document.getElementById('brand');
-var aktif=vB, i=-1, t=null;
+var KLIPLER=[]; SAHNE.forEach(function(s){ if(KLIPLER.indexOf(s.klip)<0) KLIPLER.push(s.klip); });
+
+var stage=document.getElementById('stage'), veil=document.getElementById('veil'),
+    vfill=document.getElementById('vfill'), vpct=document.getElementById('vpct'),
+    kick=document.getElementById('kick'), beat=document.getElementById('beat'), brand=document.getElementById('brand');
+var VID={};   // klip adi -> <video> (hepsi belleğe yüklü, hazır)
+var aktif=null, i=-1;
+
+// ── ÖN-BELLEK: her klibi blob olarak indir → objectURL → hazır <video> ──
+// Sahne değişiminde AĞ/DECODE beklemesi olmaz → DONMA YOK (sahip kuralı).
+function hazirla(){
+  var toplam=KLIPLER.length, bitti=0;
+  var ilerle=function(){ bitti++; var p=Math.round(bitti/toplam*100); vfill.style.width=p+'%'; vpct.textContent=p<100?('HAZIRLANIYOR · %'+p):'HAZIR'; };
+  var isler=KLIPLER.map(function(n){
+    return fetch('/tv-menu/clip/'+n).then(function(r){return r.blob();}).then(function(b){
+      return new Promise(function(res){
+        var v=document.createElement('video');
+        v.muted=true; v.playsInline=true; v.preload='auto'; v.setAttribute('playsinline','');
+        v.src=URL.createObjectURL(b);
+        var ok=function(){ v.removeEventListener('canplaythrough',ok); try{v.currentTime=0;}catch(e){} ilerle(); res(); };
+        v.addEventListener('canplaythrough',ok);
+        v.addEventListener('error',function(){ ilerle(); res(); });
+        stage.insertBefore(v, document.getElementById('scrim'));
+        v.load(); VID[n]=v;
+      });
+    }).catch(function(){
+      // ağ/blob patlarsa: doğrudan stream fallback (yine de çalışsın)
+      var v=document.createElement('video'); v.muted=true; v.playsInline=true; v.preload='auto';
+      v.setAttribute('playsinline',''); v.src='/tv-menu/clip/'+n;
+      stage.insertBefore(v, document.getElementById('scrim')); VID[n]=v; ilerle();
+    });
+  });
+  return Promise.all(isler);
+}
+
 function goster(s){
-  var yeni = (aktif===vA)? vB : vA;
-  yeni.src = CLIP(s.klip);
-  yeni.load();
-  var basla=function(){
-    yeni.play().catch(function(){});
-    yeni.classList.add('on');
-    aktif.classList.remove('on');
-    aktif=yeni;
-    yeni.removeEventListener('canplay',basla);
-  };
-  yeni.addEventListener('canplay',basla);
-  // metin: once soldur, sonra yaz + belir
+  var v=VID[s.klip]; if(!v){ return; }
+  try{ v.currentTime=0; }catch(e){}
+  var pr=v.play(); if(pr&&pr.catch) pr.catch(function(){});
+  v.classList.add('on');
+  if(aktif && aktif!==v) aktif.classList.remove('on');
+  aktif=v;
+  // metin: önce soldur → yaz → belir
   kick.classList.remove('show'); beat.classList.remove('show');
   setTimeout(function(){
-    kick.textContent=s.kick; beat.innerHTML=(s.beat||'').replace(/\n/g,'<br>');
+    kick.textContent=s.kick||''; beat.innerHTML=(s.beat||'').replace(/\n/g,'<br>');
     if(s.kick) kick.classList.add('show');
     beat.classList.add('show');
   },420);
   if(s.marka) brand.classList.add('on'); else brand.classList.remove('on');
 }
-function dongu(){
-  i=(i+1)%SAHNE.length;
-  var s=SAHNE[i];
-  goster(s);
-  t=setTimeout(dongu, s.sure);
-}
-// ilk sahne
-dongu();
-// sekme gorunur olunca kaldigi yerden (TV hep acik ama guvence)
-document.addEventListener('visibilitychange',function(){ if(!document.hidden && aktif && aktif.paused) aktif.play().catch(function(){}); });
+function dongu(){ i=(i+1)%SAHNE.length; var s=SAHNE[i]; goster(s); setTimeout(dongu, s.sure); }
+
+// TV hep açık; sekme geri gelince aktif video duraksadıysa devam
+document.addEventListener('visibilitychange',function(){ if(!document.hidden && aktif && aktif.paused){ var p=aktif.play(); if(p&&p.catch)p.catch(function(){}); } });
+
+// hepsi belleğe yüklenince perdeyi kaldır ve başla
+hazirla().then(function(){
+  setTimeout(function(){ veil.classList.add('gone'); dongu(); }, 400);
+});
 </script>
 </body></html>"""
 
