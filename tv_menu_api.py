@@ -936,6 +936,14 @@ video.on{opacity:1}
 .mnote{flex:1;font-size:2vh;font-style:italic;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transform:translateY(-.3vh)}
 .mdot{flex:1;border-bottom:1px dotted rgba(184,155,128,.30);transform:translateY(-.5vh);min-width:2vw}
 .mfiyat{font-size:3.2vh;font-weight:500;color:var(--cream);white-space:nowrap;font-variant-numeric:tabular-nums}
+/* yoğun kategori (10+ ürün) — sıkışık ölçek, taşma yok */
+#menu.yogun{padding-top:9vh}
+#menu.yogun #mhead{margin-bottom:3.6vh}
+#menu.yogun #mkat{font-size:4.6vh}
+#menu.yogun #mlist{gap:1.75vh}
+#menu.yogun .mad{font-size:3vh}
+#menu.yogun .mfiyat{font-size:2.8vh}
+#menu.yogun .mnote{font-size:1.8vh}
 /* ön-yükleme perdesi — hazır olana kadar */
 #veil{position:absolute;inset:0;z-index:9;display:flex;flex-direction:column;align-items:center;justify-content:center;background:radial-gradient(60vw 60vw at 50% 38%,rgba(98,66,34,.30),transparent 66%),var(--bg);transition:opacity .8s ease}
 #veil.gone{opacity:0;pointer-events:none}
@@ -966,8 +974,12 @@ var SAHNE = [
   {tip:'menu',  sure:9000},
   {tip:'video', klip:'tulipi_iced',     kick:'Serinlik', beat:'Ya da buzlu bir mola.',                 sure:4000, marka:true},
   {tip:'menu',  sure:9000},
+  {tip:'menu',  sure:9000},
+  {tip:'menu',  sure:9000},
   {tip:'video', klip:'tulipi_mekan',    kick:'',         beat:'Zincir gibi hızlı.\nZanaat gibi özenli.', sure:4600, marka:false}
 ];
+// NOT: menü sahnesi sayısı >= kategori sayısı olsun ki HER TUR TÜM kategoriler görünsün.
+// menuCiz() eksikse dinamik ekler (aşağıda).
 var KLIPLER=[]; SAHNE.forEach(function(s){ if(s.klip && KLIPLER.indexOf(s.klip)<0) KLIPLER.push(s.klip); });
 
 var stage=document.getElementById('stage'), veil=document.getElementById('veil'),
@@ -993,10 +1005,13 @@ function menuGetir(){
 function menuCiz(){
   if(!MENU.length){ return; }
   var k=MENU[menuKat % MENU.length]; menuKat++;
+  var us=k.urunler||[];
   mkat.textContent=k.kategori||'';
-  malt.textContent=k.alt||((k.urunler||[]).length+' seçenek');
+  malt.textContent=k.alt||(us.length+' seçenek');
+  // TÜM ürünler gösterilir; uzun kategoride (Signature 13) sıkışık mod → taşma yok
+  menuEl.classList.toggle('yogun', us.length>9);
   var html='';
-  (k.urunler||[]).slice(0,10).forEach(function(u){
+  us.forEach(function(u){
     var f=fiyatMetni(u);
     html+='<div class="mrow"><span class="mad">'+(u.ad||'')+'</span>'
         + (u.aciklama?'<span class="mnote">'+u.aciklama+'</span>':'<span class="mdot"></span>')
