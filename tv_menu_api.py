@@ -811,7 +811,8 @@ def tv_ayar_yaz(a: AyarModel):
 # KURGU EDİTÖRÜ (İŞ 2) — /tv-portre sahne dizisi panelden ayarlanır.
 # Bozuk config = built-in VARSAYILAN'a düşer (TV asla kararmaz). Klip whitelist zorunlu.
 # ─────────────────────────────────────────────────────────────────────────
-PORTRE_KLIP_WL = ["tulipi_mekan", "tulipi_grind", "tulipi_espresso", "tulipi_latte", "tulipi_iced"]
+PORTRE_KLIP_WL = ["tulipi_mekan", "tulipi_grind", "tulipi_espresso", "tulipi_latte", "tulipi_iced",
+                  "tulipi_gulus", "tulipi_serin", "tulipi_servis", "tulipi_barista"]
 VARSAYILAN_KURGU = [
   {"sure":4200,"e1":{"menu":"Classic Coffees"},  "e2":{"v":"tulipi_mekan","k":"TULİPİ","b":"Her gün taze.","m":False},       "e3":{"v":"tulipi_mekan","k":"","b":"","m":True}},
   {"sure":3600,"e1":{"menu":"Signature Coffees"},"e2":{"v":"tulipi_grind","k":"Zanaat","b":"Önce çekirdek.","m":True},        "e3":{"menu":"Signature Coffees"}},
@@ -819,6 +820,7 @@ VARSAYILAN_KURGU = [
   {"sure":3600,"e1":{"menu":"Mocktails"},        "e2":{"v":"tulipi_latte","k":"Usta","b":"Elin son sözü.","m":True},          "e3":{"menu":"Mocktails"}},
   {"sure":4000,"e1":{"menu":"Desserts"},         "e2":{"v":"tulipi_iced","k":"Serinlik","b":"Ya da buzlu bir mola.","m":True},"e3":{"v":"tulipi_iced","k":"Serinlik","b":"Buzlu imza.","m":True}},
   {"sure":9000,"e1":{"menu":"Classic Coffees"},  "e2":{"menu":"Signature Coffees"},                                          "e3":{"menu":"Desserts"}},
+  {"sure":3600,"e1":{"menu":"Milkshakes"},       "e2":{"v":"tulipi_gulus","k":"","b":"Burada iyi hissedersin.","m":True},    "e3":{"v":"tulipi_serin","k":"Taze","b":"Serin ve canlı.","m":True}},
   {"sure":4600,"e1":{"menu":"Signature Coffees"},"e2":{"v":"tulipi_mekan","k":"","b":"Zincir gibi hızlı.\nZanaat gibi özenli.","m":False},"e3":{"menu":"Mocktails"}},
 ]
 
@@ -978,7 +980,9 @@ def tv_menu_clip(name: str):
                      "zanaat", "hayat", "ozen",
                      # GERÇEK TULİPİ çekimleri (dikey 9:16, F1 2026-07-20) — Otancy galerisinden
                      "tulipi_latte", "tulipi_espresso", "tulipi_grind",
-                     "tulipi_mekan", "tulipi_iced"):
+                     "tulipi_mekan", "tulipi_iced",
+                     # D turu ek kahramanlar (2026-07-20)
+                     "tulipi_gulus", "tulipi_serin", "tulipi_servis", "tulipi_barista"):
         raise HTTPException(404, "klip yok")
     # Prod: Vite public/ -> static/tv'ye kopyalar. Dev: public/tv veya src/assets/tv.
     for base in ("static/tv", "public/tv", "src/assets/tv"):
