@@ -1364,7 +1364,7 @@ function vitrinCiz(){
   if(xs.length){
     var foot=document.getElementById('mfoot'), fnote=document.getElementById('mfnote');
     var xh='<span class="xbaslik">Yanına ekle</span> ';
-    xs.forEach(function(x,xi){ xh+=(xi?'<span class="xayr">·</span>':'')+'<span class="xtr">'+escq(x)+'</span>'; });
+    xs.forEach(function(x,xi){ xh+=(xi?' <span class="xayr">·</span> ':'')+'<span class="xtr">'+escq(x)+'</span>'; });  // span'ler arası GERÇEK boşluk = satır kırılma noktası (taşma fix)
     xh+='<div class="kdvnot">fiyatlara KDV dahildir</div>';
     fnote.innerHTML=xh; foot.style.display='';
   }
