@@ -1542,7 +1542,7 @@ body[data-screen="2"] #screenMeta,body[data-screen="3"] #screenMeta{display:none
 .e1HeroScene .e1Desc{max-width:82vw}
 .e1Block{position:absolute;z-index:3;left:7vw;right:7vw;bottom:18%;display:flex;flex-direction:column;align-items:flex-start;text-align:left;gap:1.15vh;color:var(--cream)}
 .e1HeroScene .e1Block,.e1Cold .e1Block{opacity:0;animation:e1TextIn .72s ease .45s both}
-.e1Kicker{font-size:1.45vh;letter-spacing:.34vw;color:#c9bba4;text-transform:uppercase}
+.e1Kicker{font-size:1.45vh;letter-spacing:.34vw;color:var(--green-soft);text-transform:uppercase}
 .e1Title{font-family:'Fraunces',serif;font-style:italic;font-weight:400;font-size:5.7vh;line-height:1.04;letter-spacing:0;color:#efe6d6;max-width:76vw}
 .e1Desc{font-size:2vh;line-height:1.45;color:#bba98f;font-style:italic;max-width:70vw}
 .e1Fade{position:absolute;inset:0;z-index:4;pointer-events:none;opacity:0;background:linear-gradient(180deg,transparent 35%,#000 100%);animation:e1Fade linear both}
@@ -1557,7 +1557,7 @@ body[data-screen="2"] #screenMeta,body[data-screen="3"] #screenMeta{display:none
 .e3Flow .bgvid{opacity:.82;animation:e1Push 3s linear forwards}
 .e3Flow .bggrade{background:linear-gradient(180deg,#050302a3 0,rgba(5,3,2,.38) 35%,rgba(5,3,2,.5) 68%,#050302ef 100%)}
 .e3Flow .e3Block{position:absolute;z-index:3;left:7vw;right:7vw;bottom:17%;display:flex;flex-direction:column;align-items:flex-start;text-align:left;gap:1.05vh;color:var(--cream);opacity:0;animation:e1TextIn .55s ease .25s both}
-.e3Kicker{font-size:1.35vh;letter-spacing:.34vw;color:#c9bba4;text-transform:uppercase}
+.e3Kicker{font-size:1.35vh;letter-spacing:.34vw;color:var(--green-soft);text-transform:uppercase}
 .e3Title{font-family:'Fraunces',serif;font-style:italic;font-weight:400;font-size:5.35vh;line-height:1.04;color:#efe6d6;max-width:78vw}
 .e3Desc{font-size:1.95vh;line-height:1.45;color:#bba98f;font-style:italic;max-width:72vw}
 .e3Fade{position:absolute;inset:0;z-index:4;pointer-events:none;opacity:0;background:linear-gradient(180deg,transparent 35%,#000 100%);animation:e3Fade 3s linear both}
@@ -1940,7 +1940,8 @@ function buildE1HeroProduct(data,sig){
   var info=e1HeroProduct(data,sig);if(!info)return null;
   var tag=(sig&&sig.en_cok)?"Bu hafta en çok seçilen":(data.imza&&data.imza.ad===info.ad)?"TULİPİ imzası":"Bugünün fincanı";
   var st=el("div","pg e1Scene e1HeroScene");st.dataset.t=4000;st.dataset.roles="1";st.dataset.sahne="e1_tek_hero";st.dataset.name=info.ad;
-  st.innerHTML='<div class="e1Studio"></div><div class="e1CupAura"></div><img class="e1RealCup" src="'+cupSrcFor(info)+'" alt="">'
+  st.innerHTML='<video class="bgvid" muted autoplay playsinline preload="auto" src="/tv-menu/clip/tulipi_latte"></video><div class="bggrade"></div>'
+    +'<div class="e1Studio"></div><div class="e1CupAura"></div><img class="e1RealCup" src="'+cupSrcFor(info)+'" alt="">'
     +'<div class="e1Block"><div class="e1Kicker">'+tag+'</div><div class="e1Title">'+info.ad+'</div>'
     +'<div class="e1Desc">'+e1HeroNote(info)+'</div></div><div class="e1Fade"></div>';
   return st;
@@ -1949,7 +1950,8 @@ function buildE1ColdCall(data,sig){
   var info=e1ColdProduct(data,sig);
   var cupName=e1ColdCupName(info);
   var st=el("div","pg e1Scene e1Cold"+(cupName?"":" e1NoCup"));st.dataset.t=5000;st.dataset.roles="1";st.dataset.sahne="e1_yaz_soguk";st.dataset.name=info.ad;
-  st.innerHTML='<div class="e1ColdStudio"></div><div class="bggrade"></div>'
+  st.innerHTML='<video class="bgvid" muted autoplay playsinline preload="auto" src="/tv-menu/clip/tulipi_iced"></video>'
+    +'<div class="e1ColdStudio"></div><div class="bggrade"></div>'
     +(cupName?'<img class="e1ColdCup" src="'+cupUrl(cupName)+'" alt="">':'')
     +'<div class="e1Block"><div class="e1Kicker">'+e1ColdKicker(info)+'</div><div class="e1Title">'+info.ad+'</div>'
     +'<div class="e1Desc">Ferah, buzlu, uzun içim.</div></div><div class="e1Fade"></div>';
@@ -2009,7 +2011,8 @@ function buildGununSecimi(data,sig){
   var tag=mod==="sabah"?"Sabahın favorisi":mod==="ogle"?"Öğlenin favorisi":mod==="aksam"?"Akşamın favorisi":"Bugünün seçimi";
   var pr=pairSec(sig);
   var st=el("div","pg pick gsec");st.dataset.t=9000;st.dataset.roles="1";st.dataset.sahne="gunun_secimi";st.dataset.name=ad;
-  st.innerHTML='<img class="pDoku" src="/tv-menu/hero/doku_tezgah" alt=""><div class="pHalo"></div><div class="pInner">'
+  st.innerHTML='<video class="bgvid" muted autoplay playsinline preload="auto" src="/tv-menu/clip/tulipi_servis" style="opacity:.34"></video>'
+    +'<img class="pDoku" src="/tv-menu/hero/doku_tezgah" alt=""><div class="pHalo"></div><div class="pInner">'
     +'<div class="pTag">'+tag+'</div>'
     +'<img class="pCup" src="'+cupUrl(cupShotFor(ad,kat))+'" alt="">'
     +'<div class="pName">'+ad+'</div>'
