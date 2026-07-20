@@ -818,6 +818,7 @@ VARSAYILAN_KURGU = [
   {"sure":3600,"e1":{"menu":"Signature Coffees"},"e2":{"v":"tulipi_grind","k":"Zanaat","b":"Önce çekirdek.","m":True},        "e3":{"menu":"Signature Coffees"}},
   {"sure":4000,"e1":{"menu":"Milkshakes"},       "e2":{"v":"tulipi_espresso","k":"Zanaat","b":"Sonra ateş.","m":True},        "e3":{"v":"tulipi_latte","k":"İmza","b":"İmza dokunuş.","m":True}},
   {"sure":3600,"e1":{"menu":"Mocktails"},        "e2":{"v":"tulipi_latte","k":"Usta","b":"Elin son sözü.","m":True},          "e3":{"menu":"Mocktails"}},
+  {"sure":6000,"e1":{"menu":"Signature Coffees"},"e2":{"spot":True},                                                          "e3":{"spot":True}},
   {"sure":4000,"e1":{"menu":"Desserts"},         "e2":{"v":"tulipi_iced","k":"Serinlik","b":"Ya da buzlu bir mola.","m":True},"e3":{"v":"tulipi_iced","k":"Serinlik","b":"Buzlu imza.","m":True}},
   {"sure":9000,"e1":{"menu":"Classic Coffees"},  "e2":{"menu":"Signature Coffees"},                                          "e3":{"menu":"Desserts"}},
   {"sure":3600,"e1":{"menu":"Milkshakes"},       "e2":{"v":"tulipi_gulus","k":"","b":"Burada iyi hissedersin.","m":True},    "e3":{"v":"tulipi_serin","k":"Taze","b":"Serin ve canlı.","m":True}},
@@ -842,8 +843,8 @@ def _kurgu_dogrula(slots):
             c = s.get(e)
             if not isinstance(c, dict):
                 return f"slot {idx}.{e} nesne değil"
-            if "menu" not in c and "v" not in c:
-                return f"slot {idx}.{e}: menu veya v (klip) olmalı"
+            if "menu" not in c and "v" not in c and not c.get("spot"):
+                return f"slot {idx}.{e}: menu, klip (v) veya spot (imza) olmalı"
             if c.get("v") and c["v"] not in PORTRE_KLIP_WL:
                 return f"slot {idx}.{e}: klip whitelist dışı ({c.get('v')})"
     return None
@@ -1005,7 +1006,7 @@ _TV_PORTRE_HTML = r"""<!DOCTYPE html>
 <title>TULİPİ</title>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,ital,wght@9..144,0,300;9..144,0,400;9..144,0,500;9..144,0,600&display=swap" rel="stylesheet">
 <style>
-:root{--cream:#EFE6D6;--muted:#B89B80;--green:#3E8E5A;--bg:#0b0705}
+:root{--cream:#EFE6D6;--muted:#B89B80;--green:#3E8E5A;--green-soft:#6fb786;--bg:#0b0705}
 *{margin:0;box-sizing:border-box}
 html,body{height:100%;overflow:hidden;background:var(--bg);cursor:none;font-family:'Fraunces',serif;color:var(--cream)}
 #stage{position:fixed;inset:0;background:var(--bg)}
@@ -1040,6 +1041,18 @@ video.on{opacity:1}
 #menu.yogun .mad{font-size:3vh}
 #menu.yogun .mfiyat{font-size:2.8vh}
 #menu.yogun .mnote{font-size:1.8vh}
+/* ── İMZA SPOTLIGHT (hero ürün + upsell) — video zemin üstünde ── */
+#spot{position:absolute;inset:0;z-index:2;opacity:0;transition:opacity .6s ease;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:0 8vw;background:linear-gradient(180deg,rgba(11,7,5,.58),rgba(11,7,5,.32) 42%,rgba(11,7,5,.80))}
+#spot.on{opacity:1}
+#spkick{font-size:2.6vh;font-weight:500;letter-spacing:.4em;color:var(--green);margin-bottom:2.2vh}
+#spad{font-size:6.4vh;font-weight:500;color:var(--cream);line-height:1.06;text-shadow:0 2px 24px rgba(0,0,0,.6)}
+#spnot{font-size:2.7vh;font-style:italic;color:var(--muted);margin-top:2.2vh;max-width:82vw}
+#spfiyat{font-size:5.6vh;font-weight:600;color:var(--cream);margin-top:2.8vh;font-variant-numeric:tabular-nums}
+#sppair{font-size:2.5vh;color:var(--cream);margin-top:4vh;padding:1.3vh 3.4vw;border:1px solid var(--green);border-radius:99px;background:rgba(62,142,90,.15)}
+#sppair b{color:var(--green-soft)}
+/* ── HAPPY HOUR şeridi (sinyal aktifse tepede) ── */
+#hhribbon{position:absolute;top:0;left:0;right:0;z-index:6;text-align:center;padding:1.5vh 4vw;background:linear-gradient(90deg,var(--green),#2f6f46);color:#fff;font-size:2.4vh;font-weight:600;letter-spacing:.12em;opacity:0;transform:translateY(-100%);transition:opacity .5s ease,transform .5s ease}
+#hhribbon.on{opacity:1;transform:translateY(0)}
 /* ön-yükleme perdesi — hazır olana kadar */
 #veil{position:absolute;inset:0;z-index:9;display:flex;flex-direction:column;align-items:center;justify-content:center;background:radial-gradient(60vw 60vw at 50% 38%,rgba(98,66,34,.30),transparent 66%),var(--bg);transition:opacity .8s ease}
 #veil.gone{opacity:0;pointer-events:none}
@@ -1055,6 +1068,14 @@ video.on{opacity:1}
     <div id="mhead"><div id="mkat"></div><div id="malt"></div></div>
     <div id="mlist"></div>
   </div>
+  <div id="spot">
+    <div id="spkick">★ İMZA</div>
+    <div id="spad"></div>
+    <div id="spnot"></div>
+    <div id="spfiyat"></div>
+    <div id="sppair"></div>
+  </div>
+  <div id="hhribbon"></div>
   <div id="brand">TULİ<b>P</b>İ</div>
   <div id="txt"><div id="kick"></div><div id="beat"></div></div>
   <div id="veil"><div id="vbrand">TULİ<b>P</b>İ</div><div id="vbar"><div id="vfill"></div></div><div id="vpct">HAZIRLANIYOR</div></div>
@@ -1080,10 +1101,12 @@ var KLIPLER=[]; SLOT.forEach(function(s){ ['e1','e2','e3'].forEach(function(e){ 
 var stage=document.getElementById('stage'), veil=document.getElementById('veil'),
     vfill=document.getElementById('vfill'), vpct=document.getElementById('vpct'),
     kick=document.getElementById('kick'), beat=document.getElementById('beat'), brand=document.getElementById('brand'),
-    menuEl=document.getElementById('menu'), mkat=document.getElementById('mkat'), malt=document.getElementById('malt'), mlist=document.getElementById('mlist');
+    menuEl=document.getElementById('menu'), mkat=document.getElementById('mkat'), malt=document.getElementById('malt'), mlist=document.getElementById('mlist'),
+    spotEl=document.getElementById('spot'), spad=document.getElementById('spad'), spnot=document.getElementById('spnot'), spfiyat=document.getElementById('spfiyat'), sppair=document.getElementById('sppair'),
+    hhribbon=document.getElementById('hhribbon');
 var VID={};   // klip adi -> <video> (hepsi belleğe yüklü, hazır)
 var aktif=null, i=-1;
-var MENU=[], menuKat=0;   // canlı menü kategorileri (/api/tv-menu)
+var MENU=[], menuKat=0, IMZA=null, PAIR=null;   // canlı menü + imza ürün + pair (upsell)
 
 function fiyatMetni(u){
   if(u.f8!=null && u.f14!=null) return u.f8+' / '+u.f14;
@@ -1094,8 +1117,28 @@ function fiyatMetni(u){
 }
 function menuGetir(){
   return fetch('/api/tv-menu').then(function(r){return r.json();}).then(function(d){
-    MENU=(d && d.kategoriler)||[];
+    MENU=(d && d.kategoriler)||[]; IMZA=(d&&d.imza)||null; PAIR=(d&&d.pair)||null;
   }).catch(function(){ MENU=[]; });
+}
+// HAPPY HOUR + canlı sinyaller (Evvel gücü). Aktifse tepede şerit.
+function sinyalGetir(){
+  return fetch('/api/tv-signals').then(function(r){return r.json();}).then(function(d){
+    var hh=d && d.happy_hour;
+    if(hh && (hh.mesaj || hh.aktif)){
+      hhribbon.textContent='⏰ HAPPY HOUR · '+(hh.mesaj||'Fırsat saati');
+      hhribbon.classList.add('on');
+    } else { hhribbon.classList.remove('on'); }
+  }).catch(function(){});
+}
+// İMZA SPOTLIGHT — hero ürün + fiyat + perfect-pair upsell
+function spotCiz(){
+  if(!IMZA){ return false; }
+  spad.textContent=IMZA.ad||'';
+  spnot.textContent=IMZA.aciklama||'';
+  spfiyat.textContent=(IMZA.fiyat!=null?IMZA.fiyat:'');
+  if(PAIR && PAIR.ad){ sppair.innerHTML='<b>+ '+PAIR.ad+'</b> · '+(PAIR.fiyat!=null?PAIR.fiyat+' · ':'')+(PAIR.mesaj||'Yanına yakışır'); sppair.style.display=''; }
+  else { sppair.style.display='none'; }
+  return true;
 }
 function menuCizAd(ad){
   if(!MENU.length) return false;
@@ -1153,6 +1196,16 @@ function metinYaz(kickTxt, beatTxt){
 }
 function goster(c){
   if(!c) return;
+  // ★ İMZA SPOTLIGHT — hero ürün + fiyat + perfect-pair upsell (zemin: latte videosu)
+  if(c.spot){
+    menuEl.classList.remove('on');
+    var vb=VID['tulipi_latte'];
+    if(vb){ try{vb.currentTime=0;}catch(e){} var pb=vb.play(); if(pb&&pb.catch)pb.catch(function(){}); vb.classList.add('on'); if(aktif&&aktif!==vb)aktif.classList.remove('on'); aktif=vb; }
+    if(spotCiz()){ spotEl.classList.add('on'); metinYaz('',''); brand.classList.remove('on'); }
+    else { spotEl.classList.remove('on'); metinYaz('İmza','TULİPİ'); brand.classList.add('on'); }
+    return;
+  }
+  spotEl.classList.remove('on');
   if(c.menu){
     // menü sayfası: videoları söndür, adına göre çiz+göster, alt beat kapalı
     if(!menuCizAd(c.menu)) return;   // menü verisi yoksa video kalsın
@@ -1196,8 +1249,10 @@ function kurguGetir(){
   }).catch(function(){});
 }
 // önce kurgu (doğru klipler preload olsun) → klipler+menü belleğe → perde kalk → başla
-kurguGetir().then(function(){ return Promise.all([hazirla(), menuGetir()]); }).then(function(){
+kurguGetir().then(function(){ return Promise.all([hazirla(), menuGetir(), sinyalGetir()]); }).then(function(){
   setTimeout(function(){ veil.classList.add('gone'); tick(); }, 400);
+  // canlı tazeleme: fiyat/imza (60sn), happy-hour/sinyal (60sn) — TV kapanmadan güncel kalır
+  setInterval(function(){ menuGetir(); sinyalGetir(); }, 60000);
 });
 </script>
 </body></html>"""
