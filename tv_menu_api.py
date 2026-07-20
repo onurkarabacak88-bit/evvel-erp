@@ -731,10 +731,16 @@ def tv_signals():
     oz = _ozel_gun(ayar)
     if oz:
         seritler.insert(0, oz["etiket"] + " · " + oz["mesaj"])   # özel gün şeridi en başta
+    # Extralar şeridi (araştırma: 'make it yours' kutusu, modifier upsell %15-30) — panelden düzenlenir
+    extralar = [p.strip() for p in (ayar.get("extralar") or EXTRALAR_VARSAYILAN).split(",") if p.strip()]
     return {"saat_modu": sm, "mevsim": mv, "ozel": oz, "en_cok": en_cok, "yeni": yeni,
             "happy_hour": hh, "top3": top3, "oneri": oneri, "seritler": seritler,
             "barista_notu": (ayar.get("barista_notu") or ""),
-            "kategori_fav": _kategori_fav(satis, rows)}
+            "kategori_fav": _kategori_fav(satis, rows),
+            "extralar": extralar}
+
+
+EXTRALAR_VARSAYILAN = "Süt +30, Extra Shot +40, Aromalar +35, Çikolata +50, Krema +40"
 
 
 class AyarModel(BaseModel):
@@ -751,6 +757,7 @@ class AyarModel(BaseModel):
     ozel_etiket: Optional[str] = None
     ozel_mesaj: Optional[str] = None
     barista_notu: Optional[str] = None  # E2 kategori sayfası altı tek satır uzman fısıltısı
+    extralar: Optional[str] = None      # vitrin dip bandı: "Süt +30, Extra Shot +40, ..." (virgüllü)
 
 
 @router.get("/api/tv-ayar")
@@ -766,6 +773,7 @@ def tv_ayar_oku():
         "pair_urun": a.get("pair_urun") or "", "pair_mesaj": a.get("pair_mesaj") or "",
         "ozel_etiket": a.get("ozel_etiket") or "", "ozel_mesaj": a.get("ozel_mesaj") or "",
         "barista_notu": a.get("barista_notu") or "",
+        "extralar": a.get("extralar") or EXTRALAR_VARSAYILAN,
     }
 
 
@@ -798,6 +806,8 @@ def tv_ayar_yaz(a: AyarModel):
         kv["ozel_mesaj"] = a.ozel_mesaj.strip()
     if a.barista_notu is not None:
         kv["barista_notu"] = a.barista_notu.strip()
+    if a.extralar is not None:
+        kv["extralar"] = a.extralar.strip()
     with db() as (conn, cur):
         _ensure_tablo(cur)
         for k, v in kv.items():
@@ -823,7 +833,7 @@ VARSAYILAN_KURGU = [
   {"sure":6000,"e1":{"menu":"Signature Coffees"},"e2":{"spot":True},                                                          "e3":{"spot":True}},
   {"sure":5400,"e1":{"cok":True},                "e2":{"sezon":True},                                                        "e3":{"yeni":True}},
   {"sure":6400,"e1":{"vitrin":True},             "e2":{"v":"tulipi_servis","k":"","b":"Hazırlayan eller.","m":True},          "e3":{"vitrin":True}},
-  {"sure":4000,"e1":{"menu":"Desserts"},         "e2":{"v":"tulipi_iced","k":"Serinlik","b":"Ya da buzlu bir mola.","m":True},"e3":{"sezon":True}},
+  {"sure":4000,"e1":{"menu":"Desserts"},         "e2":{"eslesme":True},                                                      "e3":{"sezon":True}},
   {"sure":9000,"e1":{"menu":"Classic Coffees"},  "e2":{"menu":"Signature Coffees"},                                          "e3":{"menu":"Desserts"}},
   {"sure":3600,"e1":{"menu":"Milkshakes"},       "e2":{"v":"tulipi_gulus","k":"","b":"Burada iyi hissedersin.","m":True},    "e3":{"v":"tulipi_serin","k":"Taze","b":"Serin ve canlı.","m":True}},
   {"sure":5600,"e1":{"menu":"Classic Coffees"},  "e2":{"gunun":True},                                                        "e3":{"gunun":True}},
@@ -850,8 +860,9 @@ def _kurgu_dogrula(slots):
                 return f"slot {idx}.{e} nesne değil"
             if ("menu" not in c and "v" not in c and not c.get("spot")
                     and not c.get("cok") and not c.get("yeni") and not c.get("sezon")
-                    and not c.get("hero") and not c.get("gunun") and not c.get("vitrin")):
-                return f"slot {idx}.{e}: menu, klip (v), spot, cok, yeni, sezon, hero, gunun veya vitrin olmalı"
+                    and not c.get("hero") and not c.get("gunun") and not c.get("vitrin")
+                    and not c.get("eslesme")):
+                return f"slot {idx}.{e}: menu, klip (v), spot, cok, yeni, sezon, hero, gunun, vitrin veya eslesme olmalı"
             if c.get("v") and c["v"] not in PORTRE_KLIP_WL:
                 return f"slot {idx}.{e}: klip whitelist dışı ({c.get('v')})"
     return None
@@ -1099,6 +1110,14 @@ body.yatay .vad{font-size:3.4vh}
 body.yatay .vtat{font-size:2.2vh}
 body.yatay .vpr span{font-size:2.1vh}
 body.yatay .vpr b{font-size:3vh}
+/* extralar şeridi (vitrin dip bandı) + KDV dipnotu — fısıltı dozunda */
+.xbaslik{font-size:1.7vh;letter-spacing:.2em;text-transform:uppercase;color:var(--green-soft);font-style:normal;margin-right:1.4vw}
+.xtr{font-size:1.9vh;color:var(--cream);font-style:normal;white-space:nowrap}
+.xayr{color:var(--muted);margin:0 1vw}
+.kdvnot{font-size:1.4vh;color:var(--muted);opacity:.62;margin-top:.9vh;font-style:normal;letter-spacing:.08em}
+body.yatay .xbaslik{font-size:2vh}
+body.yatay .xtr{font-size:2.3vh}
+body.yatay .kdvnot{font-size:1.7vh}
 /* ── YATAY TV (16:9) — AYNI MOTOR: pano orta kolon, sahneler geniş kadraj ── */
 body.yatay #menu{padding:5vh 21vw 0}
 body.yatay #mkat{font-size:6.6vh}
@@ -1208,6 +1227,7 @@ function icKlipleri(c,push){
   if(c.hero){ push('tulipi_latte'); push('tulipi_iced'); push('tulipi_serin'); }  // ürüne göre seçilir
   if(c.gunun||c.cok||c.yeni||c.vitrin) push('tulipi_mekan');
   if(c.sezon){ push('tulipi_iced'); push('tulipi_serin'); push('tulipi_espresso'); push('tulipi_latte'); }
+  if(c.eslesme){ push('tulipi_espresso'); push('tulipi_iced'); push('tulipi_servis'); }
 }
 function klipListesi(slots){
   var L=[]; var push=function(n){ if(n&&L.indexOf(n)<0) L.push(n); };
@@ -1339,7 +1359,36 @@ function vitrinCiz(){
   });
   html+='</div>';
   mlist.innerHTML=html;
+  // dip bandı: EXTRALAR şeridi (make-it-yours) + KDV/güven dipnotu
+  var xs=(SIG&&SIG.extralar)||[];
+  if(xs.length){
+    var foot=document.getElementById('mfoot'), fnote=document.getElementById('mfnote');
+    var xh='<span class="xbaslik">Yanına ekle</span> ';
+    xs.forEach(function(x,xi){ xh+=(xi?'<span class="xayr">·</span>':'')+'<span class="xtr">'+escq(x)+'</span>'; });
+    xh+='<div class="kdvnot">fiyatlara KDV dahildir</div>';
+    fnote.innerHTML=xh; foot.style.display='';
+  }
   return true;
+}
+// 🍽️ EŞLEŞTİRME (dayparting) — saat dilimine göre ikili öneri (sabah kruvasan +%15 yiyecek kanıtı)
+function eslesmeCiz(){
+  var sm=(SIG&&SIG.saat_modu)||{}, mod=sm.mod||'aksam';
+  var kahve=null, yanina=null, mesaj='', zemin='tulipi_servis';
+  var kf=(SIG&&SIG.kategori_fav)||{};
+  if(mod==='sabah'){ kahve=kf['Classic Coffees']||'Latte'; yanina='Croissant'; mesaj='Güne birlikte başlarlar.'; zemin='tulipi_espresso'; }
+  else if(mod==='ogle'){ kahve=(SIG&&SIG.oneri&&SIG.oneri.ad)||kf['Mocktails']||'Iced Latte'; yanina='Cookie'; mesaj='Öğlenin serin molası.'; zemin='tulipi_iced'; }
+  else { kahve=(IMZA&&IMZA.ad)||kf['Signature Coffees']||'Latte'; yanina=(PAIR&&PAIR.ad)||'San Sebastian Cheesecake'; mesaj=(PAIR&&PAIR.mesaj)||'Akşamın tatlı dengesi.'; zemin='tulipi_servis'; }
+  var fk=urunBul(kahve), fy2=urunBul(yanina);
+  if(!fk && !fy2) return null;
+  spkick.textContent=(sm.etiket||'BUGÜN')+' · BİRLİKTE İYİ';
+  spcup.style.display='none';
+  spad.textContent=kahve+' + '+yanina;
+  spnot.textContent=mesaj;
+  var f1=fk&&(fk.u.f8!=null?fk.u.f8:(fk.u.f14!=null?fk.u.f14:fk.u.fice));
+  var f2=fy2&&(fy2.u.f8!=null?fy2.u.f8:(fy2.u.f14!=null?fy2.u.f14:fy2.u.fice));
+  spfiyat.textContent=(f1!=null&&f2!=null)?(f1+' + '+f2):(f1!=null?f1:(f2!=null?f2:''));
+  sppair.style.display='none';
+  return zemin;
 }
 // 🏆 EN ÇOK SATILAN (sosyal kanıt) — #menu içine
 function cokCiz(){
@@ -1505,9 +1554,9 @@ function goster(c){
     return;
   }
   // 🥤 KAHRAMAN ÜRÜN / ⭐ GÜNÜN SEÇİMİ — spot overlay + gerçek çekim zemin (yatay sistemin iyi sahneleri, tek motorda)
-  if(c.hero || c.gunun){
+  if(c.hero || c.gunun || c.eslesme){
     menuEl.classList.remove('on');
-    var zemAd = c.hero ? heroCiz() : gununCiz();   // içerik çizilir + uygun zemin klip adı döner
+    var zemAd = c.hero ? heroCiz() : c.gunun ? gununCiz() : eslesmeCiz();   // içerik çizilir + uygun zemin klip adı döner
     var zem=zemAd&&VID[zemAd];
     if(zem){ try{zem.currentTime=0;}catch(e){} var pz=zem.play(); if(pz&&pz.catch)pz.catch(function(){}); zem.classList.add('on'); if(aktif&&aktif!==zem)aktif.classList.remove('on'); aktif=zem; }
     if(zemAd){ spotEl.classList.add('on'); metinYaz('',''); brand.classList.remove('on'); }

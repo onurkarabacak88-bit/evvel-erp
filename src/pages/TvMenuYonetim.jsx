@@ -38,6 +38,7 @@ export default function TvMenuYonetim() {
     : tip === 'hero' ? { hero: true }
     : tip === 'gunun' ? { gunun: true }
     : tip === 'vitrin' ? { vitrin: true }
+    : tip === 'eslesme' ? { eslesme: true }
     : { v: klipler[0] || '', k: '', b: '' } }));
   const sureSet = (i, sn) => setKurgu(k => k.map((s, j) => j === i ? { ...s, sure: Math.max(2, Math.min(60, parseInt(sn) || 5)) * 1000 } : s));
   const slotTasi = (i, yon) => setKurgu(k => { const a = [...k]; const j = i + yon; if (j < 0 || j >= a.length) return a; [a[i], a[j]] = [a[j], a[i]]; return a; });
@@ -183,15 +184,15 @@ export default function TvMenuYonetim() {
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 8 }}>
                   {[['e1', '1 · Menü/karar'], ['e2', '2 · Deneyim'], ['e3', '3 · İmza']].map(([ek, lbl]) => {
-                    const ic = s[ek] || {}; const tip = ic.spot ? 'spot' : ic.cok ? 'cok' : ic.yeni ? 'yeni' : ic.sezon ? 'sezon' : ic.hero ? 'hero' : ic.gunun ? 'gunun' : ic.vitrin ? 'vitrin' : (ic.menu != null ? 'menu' : 'video');
-                    const OTO = { spot: 'İmza ürün + fiyat + “yanına yakışır” otomatik. İmza/pair’i Yaşayan Menü Ayarları’ndan seç.', cok: '🏆 Bu hafta en çok satılan 3 ürün — canlı satış verisinden otomatik.', yeni: '✨ Menüye yeni eklenen ürünler — canlı veriden otomatik.', sezon: '☀️ Mevsim/saate göre öneri (yazın buzlu, kışın sıcak) — canlı, fiyatsız fısıltı.', hero: '🥤 Haftanın en çok seçileni — ürünün KENDİ videosu tam ekran, FİYATSIZ (vaat sahnesi).', gunun: '⭐ Günün seçimi — nötr mekân zemini + bardak + fiyat İLK KEZ + “yanına yakışır” (satış zirvesi).', vitrin: '🏪 Üçlü vitrin — en çok satan 3 ürün yan yana, bardak + 8oz/14oz/Buzlu fiyat blokları.' };
+                    const ic = s[ek] || {}; const tip = ic.spot ? 'spot' : ic.cok ? 'cok' : ic.yeni ? 'yeni' : ic.sezon ? 'sezon' : ic.hero ? 'hero' : ic.gunun ? 'gunun' : ic.vitrin ? 'vitrin' : ic.eslesme ? 'eslesme' : (ic.menu != null ? 'menu' : 'video');
+                    const OTO = { spot: 'İmza ürün + fiyat + “yanına yakışır” otomatik. İmza/pair’i Yaşayan Menü Ayarları’ndan seç.', cok: '🏆 Bu hafta en çok satılan 3 ürün — canlı satış verisinden otomatik.', yeni: '✨ Menüye yeni eklenen ürünler — canlı veriden otomatik.', sezon: '☀️ Mevsim/saate göre öneri (yazın buzlu, kışın sıcak) — canlı, fiyatsız fısıltı.', hero: '🥤 Haftanın en çok seçileni — ürünün KENDİ videosu tam ekran, FİYATSIZ (vaat sahnesi).', gunun: '⭐ Günün seçimi — nötr mekân zemini + bardak + fiyat İLK KEZ + “yanına yakışır” (satış zirvesi).', vitrin: '🏪 Üçlü vitrin — en çok satan 3 ürün yan yana, bardak + 8oz/14oz/Buzlu fiyat blokları + extralar şeridi.', eslesme: '🍽️ Saat eşleştirmesi — sabah kahve+kruvasan, öğle serin+cookie, akşam imza+tatlı (otomatik).' };
                     return (
                       <div key={ek} style={{ border: '1px solid var(--border)', borderRadius: 6, padding: 8 }}>
                         <div style={{ fontSize: 10, color: 'var(--text3)', marginBottom: 4 }}>Ekran {lbl}</div>
                         <select value={tip} onChange={e => tipSet(i, ek, e.target.value)} style={{ width: '100%', fontSize: 11, marginBottom: 4 }}>
                           <option value="menu">📋 Menü sayfası</option><option value="video">🎬 Video sahne</option><option value="spot">★ İmza spotlight</option>
                           <option value="cok">🏆 En çok satılan</option><option value="yeni">✨ Yeni ürünler</option><option value="sezon">☀️ Mevsim/saat</option>
-                          <option value="hero">🥤 Kahraman ürün</option><option value="gunun">⭐ Günün seçimi</option><option value="vitrin">🏪 Üçlü vitrin</option>
+                          <option value="hero">🥤 Kahraman ürün</option><option value="gunun">⭐ Günün seçimi</option><option value="vitrin">🏪 Üçlü vitrin</option><option value="eslesme">🍽️ Saat eşleştirmesi</option>
                         </select>
                         {tip === 'menu'
                           ? <select value={ic.menu || ''} onChange={e => icSet(i, ek, 'menu', e.target.value)} style={{ width: '100%', fontSize: 11 }}>{katList.map(c => <option key={c} value={c}>{c}</option>)}</select>
@@ -316,6 +317,11 @@ export default function TvMenuYonetim() {
               <input style={inp} list="tvUrunler" placeholder="ör. Caramel Macchiato (boş = kapalı)" value={ayar.imza_urun || ''} onChange={e => setAyar({ ...ayar, imza_urun: e.target.value })} />
               <datalist id="tvUrunler">{(liste || []).map(it => <option key={it.id} value={it.ad} />)}</datalist>
               <input style={{ ...inp, marginTop: 6 }} placeholder="Açıklama / slogan (taze süt köpüğü…)" value={ayar.imza_aciklama || ''} onChange={e => setAyar({ ...ayar, imza_aciklama: e.target.value })} />
+            </div>
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4 }}>🧩 Extralar şeridi (vitrin dip bandı)</div>
+              <input style={inp} placeholder="Süt +30, Extra Shot +40, Aromalar +35" value={ayar.extralar || ''} onChange={e => setAyar({ ...ayar, extralar: e.target.value })} />
+              <div style={{ fontSize: 10.5, color: 'var(--text3)', marginTop: 3 }}>Virgülle ayır — "Ad +fiyat" biçiminde; boş bırakma, şerit vitrin sahnesinde görünür.</div>
             </div>
           </div>
           <button className="btn btn-sm btn-primary" style={{ marginTop: 12 }} disabled={mesgul === 'ayar'} onClick={ayarKaydet}>{mesgul === 'ayar' ? 'Kaydediliyor…' : 'Ayarları Kaydet'}</button>
