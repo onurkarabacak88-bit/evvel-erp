@@ -1023,25 +1023,64 @@ video.on{opacity:1}
 #brand.on{opacity:.96}
 #brand b{color:var(--green)}
 .show{opacity:1 !important}
-/* ── MENÜ SAYFASI — okunurluk kral: koyu zemin, Fraunces krem, tat notu ── */
-#menu{position:absolute;inset:0;z-index:2;opacity:0;transition:opacity 1.15s cubic-bezier(.37,0,.24,1);display:flex;flex-direction:column;padding:13vh 8vw 8vh;background:radial-gradient(72vw 60vw at 50% 18%,rgba(98,66,34,.22),transparent 64%),linear-gradient(180deg,#1b130f 0%,#0b0705 100%)}
+/* ── MENÜ SAYFASI v2 — pano düzeni: başlık / gövde / alt bant + gerçek fiyat sütunları ── */
+#menu{position:absolute;inset:0;z-index:2;opacity:0;transition:opacity 1.15s cubic-bezier(.37,0,.24,1);display:flex;flex-direction:column;padding:8.5vh 7vw 0;background:radial-gradient(72vw 60vw at 50% 18%,rgba(98,66,34,.22),transparent 64%),linear-gradient(180deg,#1b130f 0%,#0b0705 100%)}
 #menu.on{opacity:1}
-#mhead{text-align:center;margin-bottom:5.4vh}
-#mkat{font-size:5.4vh;font-weight:500;color:var(--cream);line-height:1.05}
-#mkat::after{content:"";display:block;width:8vw;height:2px;background:var(--green);margin:2vh auto 0;border-radius:2px}
-#malt{font-size:2.1vh;color:var(--muted);letter-spacing:.16em;text-transform:uppercase;margin-top:2vh}
-#mlist{display:flex;flex-direction:column;gap:2.7vh}
+#mhead{text-align:center;margin-bottom:3.6vh;flex-shrink:0}
+#mkick{font-size:1.9vh;font-weight:500;letter-spacing:.4em;text-transform:uppercase;color:var(--green);margin-bottom:1.5vh;min-height:1.9vh}
+#mkat{font-size:5.2vh;font-weight:500;color:var(--cream);line-height:1.05}
+#mkat::after{content:"";display:block;width:8vw;height:2px;background:var(--green);margin:1.8vh auto 0;border-radius:2px}
+#malt{font-size:2vh;color:var(--muted);letter-spacing:.16em;text-transform:uppercase;margin-top:1.8vh}
+/* gövde: kısa listede dikey ortala → alt boşluk sorunu yapısal çözülür */
+#mbody{flex:1 1 auto;display:flex;flex-direction:column;justify-content:center;min-height:0;overflow:hidden}
+/* fiyat sütun başlıkları — listeyle aynı grid, piksel hizalı */
+#mcols{display:grid;column-gap:2vw;align-items:baseline;padding-bottom:1vh;border-bottom:1px solid rgba(184,155,128,.28);flex-shrink:0}
+#mcols div{font-size:1.8vh;font-weight:500;letter-spacing:.22em;text-transform:uppercase;color:var(--muted);text-align:right}
+#mcols .c14{color:var(--cream);opacity:.88}
+#mlist{display:flex;flex-direction:column}
 @keyframes satirBelir{from{opacity:0}to{opacity:1}}
-.mrow{display:flex;align-items:baseline;gap:1.6vw;opacity:0;animation:satirBelir .6s ease forwards}
+/* ürün satırı = grid: ad hücresi + fiyat hücreleri */
+.grow{display:grid;column-gap:2vw;align-items:baseline;padding:1.5vh 0;border-bottom:1px solid rgba(184,155,128,.13);opacity:0;animation:satirBelir .6s ease forwards}
+.grow:last-child{border-bottom:0}
+#menu.cols-1 .grow,#menu.cols-1 #mcols{grid-template-columns:1fr 12vw}
+#menu.cols-2 .grow,#menu.cols-2 #mcols{grid-template-columns:1fr 10.5vw 10.5vw}
+#menu.cols-3 .grow,#menu.cols-3 #mcols{grid-template-columns:1fr 9.5vw 9.5vw 9.5vw}
+.gname{min-width:0}
+.gad{font-size:3.4vh;font-weight:500;color:var(--cream);line-height:1.12}
+.gfav{font-size:1.9vh;font-style:italic;color:var(--green-soft);margin-left:1.2vw;white-space:nowrap}
+.gtat{font-size:2vh;font-style:italic;color:var(--muted);line-height:1.15;margin-top:.4vh}
+.gpr{font-size:3.1vh;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+.gpr.c8{color:var(--muted);font-weight:400}
+.gpr.c14{color:var(--cream);font-weight:600}
+.gpr.cice{color:var(--cream);opacity:.78;font-weight:400}
+.gpr.cbos{color:rgba(184,155,128,.30);font-weight:300}
+/* alt bilgi bandı — barista notu / saat önerisi; ekranı alttan kilitler */
+#mfoot{flex-shrink:0;border-top:1px solid rgba(184,155,128,.22);padding:2vh 0 2.6vh;text-align:center}
+#mfnote{font-size:2vh;font-style:italic;color:var(--muted)}
+#mfnote b{color:var(--cream);font-style:normal;font-weight:500}
+/* yoğun kategori (10+ ürün: Classic 11, Signature 13) — sıkışık ölçek, taşma yok */
+#menu.yogun{padding-top:4.5vh}
+#menu.yogun #mhead{margin-bottom:1.8vh}
+#menu.yogun #mkick{font-size:1.7vh;margin-bottom:1vh;min-height:1.7vh}
+#menu.yogun #mkat{font-size:4.2vh}
+#menu.yogun #mkat::after{margin-top:1.2vh}
+#menu.yogun #malt{display:none}
+#menu.yogun #mbody{justify-content:flex-start}
+#menu.yogun #mcols div{font-size:1.6vh}
+#menu.yogun #mcols{padding-bottom:.7vh}
+#menu.yogun .grow{padding:.45vh 0}
+#menu.yogun .gad{font-size:2.6vh;line-height:1.12}
+#menu.yogun .gfav{font-size:1.6vh}
+#menu.yogun .gtat{font-size:1.5vh;line-height:1.1;margin-top:.2vh}
+#menu.yogun .gpr{font-size:2.4vh}
+#menu.yogun #mfoot{padding:1.2vh 0 1.6vh}
+#menu.yogun #mfnote{font-size:1.8vh}
+/* LEGACY satırlar — cokCiz (En Çok) / yeniCiz (Yeni) sahneleri bunları kullanır */
+.mrow{display:flex;align-items:baseline;gap:1.6vw;padding:1.35vh 0;opacity:0;animation:satirBelir .6s ease forwards}
 .mad{font-size:3.5vh;font-weight:500;color:var(--cream);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex-shrink:1}
 .mnote{flex:1 1 0;font-size:2vh;font-style:italic;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;transform:translateY(-.3vh)}
 .mdot{flex:1;border-bottom:1px dotted rgba(184,155,128,.30);transform:translateY(-.5vh);min-width:2vw}
 .mfiyat{font-size:3.2vh;font-weight:500;color:var(--cream);white-space:nowrap;font-variant-numeric:tabular-nums;flex-shrink:0}
-/* yoğun kategori (10+ ürün) — sıkışık ölçek, taşma yok */
-#menu.yogun{padding-top:9vh}
-#menu.yogun #mhead{margin-bottom:3.6vh}
-#menu.yogun #mkat{font-size:4.6vh}
-#menu.yogun #mlist{gap:1.75vh}
 #menu.yogun .mad{font-size:3vh}
 #menu.yogun .mfiyat{font-size:2.8vh}
 #menu.yogun .mnote{font-size:1.8vh}
@@ -1069,8 +1108,12 @@ video.on{opacity:1}
 <div id="stage">
   <div id="scrim"></div>
   <div id="menu">
-    <div id="mhead"><div id="mkat"></div><div id="malt"></div></div>
-    <div id="mlist"></div>
+    <div id="mhead"><div id="mkick"></div><div id="mkat"></div><div id="malt"></div></div>
+    <div id="mbody">
+      <div id="mcols"></div>
+      <div id="mlist"></div>
+    </div>
+    <div id="mfoot"><div id="mfnote"></div></div>
   </div>
   <div id="spot">
     <div id="spkick">★ İMZA</div>
@@ -1148,6 +1191,7 @@ function spotCiz(){
 // 🏆 EN ÇOK SATILAN (sosyal kanıt) — #menu içine
 function cokCiz(){
   var t3=SIG&&SIG.top3; if(!t3||!t3.length) return false;
+  menuEkstraTemizle();
   mkat.textContent='Bu Hafta En Çok'; malt.textContent='sizin favoriniz';
   menuEl.classList.remove('yogun');
   var html='';
@@ -1159,6 +1203,7 @@ function cokCiz(){
 // ✨ YENİ ÜRÜNLER — #menu içine
 function yeniCiz(){
   var ys=SIG&&SIG.yeni; if(!ys||!ys.length) return false;
+  menuEkstraTemizle();
   mkat.textContent='✨ Yeni'; malt.textContent='menümüzde';
   menuEl.classList.remove('yogun');
   var html='';
@@ -1167,23 +1212,96 @@ function yeniCiz(){
   });
   mlist.innerHTML=html; return true;
 }
+function escq(s){
+  return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+// #menu overlay'i menü-dışı içerikle (En Çok / Yeni) kullanılırken v2 parçalarını sustur
+function menuEkstraTemizle(){
+  var el=document.getElementById('mkick'); if(el) el.textContent='';
+  el=document.getElementById('mcols'); if(el){ el.innerHTML=''; el.style.display='none'; }
+  el=document.getElementById('mfoot'); if(el) el.style.display='none';
+  var al=document.getElementById('malt'); if(al) al.style.display='';
+  menuEl.classList.remove('cols-1'); menuEl.classList.remove('cols-2'); menuEl.classList.remove('cols-3');
+}
 function menuCizAd(ad){
   if(!MENU.length) return false;
-  var k=null,j; for(j=0;j<MENU.length;j++){ if(MENU[j].kategori===ad){ k=MENU[j]; break; } }
+  var k=null,j;
+  for(j=0;j<MENU.length;j++){ if(MENU[j].kategori===ad){ k=MENU[j]; break; } }
   if(!k) k=MENU[0];
   var us=k.urunler||[];
-  mkat.textContent=k.kategori||'';
-  malt.textContent=k.alt||(us.length+' seçenek');
-  // TÜM ürünler; uzun kategoride (Signature 13) sıkışık mod → taşma yok
+
+  // 1) GÖRÜNMEZ SATIŞ SIRALAMASI — top3 üyeleri öne; kararlı bölümleme (Array.sort YOK)
+  var t3=(SIG&&SIG.top3)||[], topAd={}, tops=[], rest=[];
+  for(j=0;j<t3.length;j++){ if(t3[j]&&t3[j].ad) topAd[String(t3[j].ad).toLowerCase()]=true; }
+  for(j=0;j<us.length;j++){
+    if(topAd[String(us[j].ad||'').toLowerCase()]) tops.push(us[j]); else rest.push(us[j]);
+  }
+  us=tops.concat(rest);
+
+  // 2) FİYAT SÜTUNLARI — kategori verisinden keşfet (8oz / 14oz / Buzlu)
+  var has8=false,has14=false,hasIce=false;
+  for(j=0;j<us.length;j++){
+    if(us[j].f8!=null&&us[j].f8!=='') has8=true;
+    if(us[j].f14!=null&&us[j].f14!=='') has14=true;
+    if(us[j].fice!=null&&us[j].fice!=='') hasIce=true;
+  }
+  var cols=[];
+  if(has8) cols.push({key:'f8',cls:'c8',etiket:'8 oz'});
+  if(has14) cols.push({key:'f14',cls:'c14',etiket:'14 oz'});
+  if(hasIce) cols.push({key:'fice',cls:'cice',etiket:'Buzlu'});
+  if(!cols.length) cols.push({key:'f8',cls:'c14',etiket:''});
+  menuEl.classList.remove('cols-1'); menuEl.classList.remove('cols-2'); menuEl.classList.remove('cols-3');
+  menuEl.classList.add('cols-'+cols.length);
   menuEl.classList.toggle('yogun', us.length>9);
-  var html='';
-  us.forEach(function(u,ix){
-    var f=fiyatMetni(u);
-    html+='<div class="mrow" style="animation-delay:'+(0.28+ix*0.05).toFixed(2)+'s"><span class="mad">'+(u.ad||'')+'</span>'
-        + (u.aciklama?'<span class="mnote">'+u.aciklama+'</span>':'<span class="mdot"></span>')
-        + '<span class="mfiyat">'+f+'</span></div>';
-  });
-  mlist.innerHTML=html; return true;
+
+  // 3) BAŞLIK — saatli kapak kicker + kategori ("N SEÇENEK" öldü)
+  var sm=(SIG&&SIG.saat_modu)||null;
+  var kickEl=document.getElementById('mkick');
+  kickEl.textContent=(sm&&sm.etiket)?sm.etiket:'';
+  mkat.textContent=k.kategori||'';
+  if(k.alt){ malt.textContent=k.alt; malt.style.display=''; }
+  else { malt.textContent=''; malt.style.display='none'; }
+
+  // 4) SÜTUN BAŞLIKLARI — tek sütunlu kategoride gizli (belirsizlik yok)
+  var mcols=document.getElementById('mcols'), ch='', c;
+  if(cols.length>1){
+    ch='<div class="gname"></div>';
+    for(j=0;j<cols.length;j++){ c=cols[j]; ch+='<div class="'+c.cls+'">'+c.etiket+'</div>'; }
+    mcols.innerHTML=ch; mcols.style.display='';
+  } else { mcols.innerHTML=''; mcols.style.display='none'; }
+
+  // 5) SATIRLAR — ✦ en sevilen (kategori başına TEK) + tat notu ad ALTINDA tam görünür
+  var favAd='', kf=SIG&&SIG.kategori_fav;
+  if(kf&&kf[k.kategori]) favAd=String(kf[k.kategori]).toLowerCase();
+  var favVerildi=false, html='', u, fv, ix;
+  for(ix=0;ix<us.length;ix++){
+    u=us[ix];
+    var favMi=(!favVerildi && favAd && String(u.ad||'').toLowerCase()===favAd);
+    if(favMi) favVerildi=true;
+    html+='<div class="grow" style="animation-delay:'+(0.26+ix*0.05).toFixed(2)+'s">'
+        + '<div class="gname"><span class="gad">'+escq(u.ad)+'</span>'
+        + (favMi?'<span class="gfav">&#10022; en sevilen</span>':'')
+        + (u.aciklama?'<div class="gtat">'+escq(u.aciklama)+'</div>':'')
+        + '</div>';
+    for(j=0;j<cols.length;j++){
+      c=cols[j]; fv=u[c.key];
+      if(fv!=null&&fv!=='') html+='<div class="gpr '+c.cls+'">'+escq(fv)+'</div>';
+      else html+='<div class="gpr cbos">&#8212;</div>';
+    }
+    html+='</div>';
+  }
+  mlist.innerHTML=html;
+
+  // 6) ALT BANT — kahve sayfası: barista notu; diğerleri: saat önerisi; yoksa sessiz süs
+  var foot=document.getElementById('mfoot'), fnote=document.getElementById('mfnote');
+  var kahveMi=(k.kategori==='Classic Coffees'||k.kategori==='Signature Coffees');
+  var ftxt='';
+  if(kahveMi && SIG && SIG.barista_notu) ftxt='<b>Barista notu</b> &middot; '+escq(SIG.barista_notu);
+  else if(sm && sm.oneri) ftxt='Bu saatin iyi fikri &middot; <b>'+escq(sm.oneri)+'</b>';
+  if(!ftxt) ftxt='&#10022;';
+  fnote.innerHTML=ftxt;
+  foot.style.display='';
+  return true;
 }
 
 // ── ÖN-BELLEK: her klibi blob olarak indir → objectURL → hazır <video> ──
