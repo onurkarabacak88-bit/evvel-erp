@@ -11,14 +11,42 @@ export default function TvMenuYonetim() {
   const [yeni, setYeni] = useState({ kategori: '', ad: '', aciklama: '', f8: '', f14: '', fice: '' });
   const [ayar, setAyar] = useState(null);
   const [evo, setEvo] = useState(null);
+  const [kurgu, setKurgu] = useState(null);   // 🎬 portre /tv-portre sahne dizisi
+  const [klipler, setKlipler] = useState([]); // kullanılabilir video klipleri
+  const [katList, setKatList] = useState([]); // menü kategori adları
 
   const yukle = useCallback(() => {
     api('/tv-menu/liste')
       .then(r => setListe(Array.isArray(r) ? r : []))
       .catch(e => { setHata(e.message || 'Yüklenemedi'); setListe([]); });
     api('/tv-ayar').then(setAyar).catch(() => {});
+    api('/tv-portre/kurgu').then(d => { setKurgu(d.slots || []); setKlipler(d.klipler || []); }).catch(() => setKurgu([]));
+    api('/tv-menu').then(d => setKatList((d.kategoriler || []).map(k => k.kategori))).catch(() => {});
   }, []);
   useEffect(() => { yukle(); }, [yukle]);
+
+  // ── 🎬 KURGU EDİTÖRÜ yardımcıları (E2) ──
+  const PORTRE_URL = 'https://evvel-erp-production.up.railway.app/tv-portre';
+  const bosSlot = () => ({ sure: 5000, e1: { menu: katList[0] || '' }, e2: { v: klipler[0] || '', k: '', b: '' }, e3: { menu: katList[0] || '' } });
+  const icSet = (i, ek, alan, deger) => setKurgu(k => k.map((s, j) => j === i ? { ...s, [ek]: { ...s[ek], [alan]: deger } } : s));
+  const tipSet = (i, ek, tip) => setKurgu(k => k.map((s, j) => j !== i ? s : { ...s, [ek]: tip === 'menu' ? { menu: katList[0] || '' } : { v: klipler[0] || '', k: '', b: '' } }));
+  const sureSet = (i, sn) => setKurgu(k => k.map((s, j) => j === i ? { ...s, sure: Math.max(2, Math.min(60, parseInt(sn) || 5)) * 1000 } : s));
+  const slotTasi = (i, yon) => setKurgu(k => { const a = [...k]; const j = i + yon; if (j < 0 || j >= a.length) return a; [a[i], a[j]] = [a[j], a[i]]; return a; });
+  const slotSil = (i) => setKurgu(k => k.filter((_, j) => j !== i));
+  const slotEkle = () => setKurgu(k => [...(k || []), bosSlot()]);
+  const kurguKaydet = async () => {
+    setMesgul('kurgu'); setHata(''); setBilgi('');
+    try { const r = await api('/tv-portre/kurgu', { method: 'POST', body: { slots: kurgu } }); setBilgi(`✓ Kurgu yayınlandı (${r.slot_sayisi} sahne) — TV'yi yenile, güncellenir.`); }
+    catch (e) { setHata(e.message || 'Kaydedilemedi (geçersiz kurgu?)'); }
+    finally { setMesgul(''); }
+  };
+  const kurguSifirla = async () => {
+    if (!window.confirm('Kurgu varsayılana (hazır 7 sahne) dönsün mü? Kaydettiklerin silinir.')) return;
+    setMesgul('kurgu');
+    try { await api('/tv-portre/kurgu-sifirla', { method: 'POST' }); const d = await api('/tv-portre/kurgu'); setKurgu(d.slots || []); setBilgi('✓ Varsayılana dönüldü.'); }
+    catch (e) { setHata(e.message || 'Olmadı'); }
+    finally { setMesgul(''); }
+  };
 
   const ayarKaydet = async () => {
     setMesgul('ayar'); setHata(''); setBilgi('');
@@ -121,6 +149,59 @@ export default function TvMenuYonetim() {
           <button className="btn btn-sm btn-secondary" onClick={() => { navigator.clipboard?.writeText(TV_URL); setBilgi('Link kopyalandı'); }}>Kopyala</button>
           <a className="btn btn-sm btn-primary" href={TV_URL} target="_blank" rel="noreferrer">Aç (TV)</a>
         </div>
+      </div>
+
+      {/* 🎬 KURGU EDİTÖRÜ (İŞ 2 · E2) — dikey /tv-portre sahne dizisi */}
+      <div className="card" style={{ padding: 14, marginBottom: 16, borderLeft: '3px solid var(--green)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 8 }}>
+          <div style={{ fontSize: 14, fontWeight: 700 }}>🎬 Kurgu Editörü <span style={{ fontSize: 11, color: 'var(--text3)', fontWeight: 400 }}>· dikey pano: sahne sırası · klip · süre · yazı</span></div>
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
+            {['1', '2', '3'].map(n => <a key={n} className="btn btn-sm btn-secondary" href={`${PORTRE_URL}?ekran=${n}`} target="_blank" rel="noreferrer">TV{n}</a>)}
+          </div>
+        </div>
+        {kurgu === null ? <div style={{ fontSize: 12, color: 'var(--text3)' }}>Yükleniyor…</div> : (
+          <>
+            {kurgu.map((s, i) => (
+              <div key={i} style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 10, marginBottom: 8, background: 'var(--bg2, var(--bg))' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+                  <b style={{ fontSize: 12 }}>Sahne {i + 1}</b>
+                  <label style={{ fontSize: 11, color: 'var(--text3)' }}>süre(sn) <input type="number" min="2" max="60" value={Math.round((s.sure || 5000) / 1000)} onChange={e => sureSet(i, e.target.value)} style={{ width: 54 }} /></label>
+                  <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
+                    <button className="btn btn-sm btn-ghost" onClick={() => slotTasi(i, -1)} disabled={i === 0}>▲</button>
+                    <button className="btn btn-sm btn-ghost" onClick={() => slotTasi(i, 1)} disabled={i === kurgu.length - 1}>▼</button>
+                    <button className="btn btn-sm btn-danger" onClick={() => slotSil(i)}>🗑</button>
+                  </div>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 8 }}>
+                  {[['e1', '1 · Menü/karar'], ['e2', '2 · Deneyim'], ['e3', '3 · İmza']].map(([ek, lbl]) => {
+                    const ic = s[ek] || {}; const tip = ic.menu != null ? 'menu' : 'video';
+                    return (
+                      <div key={ek} style={{ border: '1px solid var(--border)', borderRadius: 6, padding: 8 }}>
+                        <div style={{ fontSize: 10, color: 'var(--text3)', marginBottom: 4 }}>Ekran {lbl}</div>
+                        <select value={tip} onChange={e => tipSet(i, ek, e.target.value)} style={{ width: '100%', fontSize: 11, marginBottom: 4 }}>
+                          <option value="menu">📋 Menü sayfası</option><option value="video">🎬 Video sahne</option>
+                        </select>
+                        {tip === 'menu'
+                          ? <select value={ic.menu || ''} onChange={e => icSet(i, ek, 'menu', e.target.value)} style={{ width: '100%', fontSize: 11 }}>{katList.map(c => <option key={c} value={c}>{c}</option>)}</select>
+                          : <>
+                              <select value={ic.v || ''} onChange={e => icSet(i, ek, 'v', e.target.value)} style={{ width: '100%', fontSize: 11, marginBottom: 3 }}>{klipler.map(c => <option key={c} value={c}>{c.replace('tulipi_', '')}</option>)}</select>
+                              <input placeholder="üst yazı (kicker)" value={ic.k || ''} onChange={e => icSet(i, ek, 'k', e.target.value)} style={{ width: '100%', fontSize: 11, marginBottom: 3 }} />
+                              <input placeholder="ana yazı (beat)" value={ic.b || ''} onChange={e => icSet(i, ek, 'b', e.target.value)} style={{ width: '100%', fontSize: 11 }} />
+                            </>}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 4 }}>
+              <button className="btn btn-sm btn-secondary" onClick={slotEkle}>+ Sahne Ekle</button>
+              <button className="btn btn-sm btn-primary" onClick={kurguKaydet} disabled={mesgul === 'kurgu'}>💾 Kaydet & Yayınla</button>
+              <button className="btn btn-sm btn-ghost" onClick={kurguSifirla} disabled={mesgul === 'kurgu'}>↺ Varsayılana Dön</button>
+              <span style={{ fontSize: 11, color: 'var(--text3)', alignSelf: 'center' }}>Kaydedince TV'yi yenile. Bozuk kurgu reddedilir (TV kararmaz).</span>
+            </div>
+          </>
+        )}
       </div>
 
       {/* 3 EKRAN MODU (Faz 4) */}
