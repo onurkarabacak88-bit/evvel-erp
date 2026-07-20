@@ -883,7 +883,10 @@ def tv_menu_clip(name: str):
     """Coffee Story gerçek video klipleri (Mixkit Free, ticari kullanım serbest)."""
     if name not in ("dessert", "mocktail", "lifestyle", "craft", "musteri",
                      "espresso", "greenmocktail", "frozen", "kahverengi",
-                     "zanaat", "hayat", "ozen"):
+                     "zanaat", "hayat", "ozen",
+                     # GERÇEK TULİPİ çekimleri (dikey 9:16, F1 2026-07-20) — Otancy galerisinden
+                     "tulipi_latte", "tulipi_espresso", "tulipi_grind",
+                     "tulipi_mekan", "tulipi_iced"):
         raise HTTPException(404, "klip yok")
     # Prod: Vite public/ -> static/tv'ye kopyalar. Dev: public/tv veya src/assets/tv.
     for base in ("static/tv", "public/tv", "src/assets/tv"):
