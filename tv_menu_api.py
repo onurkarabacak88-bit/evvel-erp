@@ -822,7 +822,8 @@ def tv_ayar_yaz(a: AyarModel):
 # Bozuk config = built-in VARSAYILAN'a düşer (TV asla kararmaz). Klip whitelist zorunlu.
 # ─────────────────────────────────────────────────────────────────────────
 PORTRE_KLIP_WL = ["tulipi_mekan", "tulipi_grind", "tulipi_espresso", "tulipi_latte", "tulipi_iced",
-                  "tulipi_gulus", "tulipi_serin", "tulipi_servis", "tulipi_barista", "tulipi_bar"]
+                  "tulipi_gulus", "tulipi_serin", "tulipi_servis", "tulipi_barista", "tulipi_bar",
+                  "tulipi_buhar", "tulipi_sut", "tulipi_surup", "tulipi_pencere", "tulipi_keyif"]
 # ══ NİHAİ PROGRAM (kreatif direktör ajanı kurgusu, 2026-07-21 — sahip talebi) ══
 # 5 perde: Marka Nefesi → Zanaat Zinciri → Duygu → Satış Rampası → Serin İniş/Kapanış.
 # E2 kesintisiz hikâye (çekirdek→ateş→el→servis), E3 duyusal yan-okuma. Fiyat rampası:
@@ -831,20 +832,22 @@ PORTRE_KLIP_WL = ["tulipi_mekan", "tulipi_grind", "tulipi_espresso", "tulipi_lat
 VARSAYILAN_KURGU = [
   # ── PERDE I · MARKA NEFESİ (Codex: açılış vaadi = içerideki emek + marka izi → V5 bar) ──
   {"sure":7000,"e1":{"menu":"Classic Coffees","syf":1},"e2":{"v":"tulipi_bar","k":"TULİPİ","b":"Her gün taze.","m":False},"e3":{"v":"tulipi_mekan","k":"","b":"","m":True}},
-  # ── PERDE II · ZANAAT ZİNCİRİ (E2: çekirdek→ateş→el→servis · E3: duyusal yan-okuma) ──
-  {"sure":7000,"e1":{"menu":"Signature Coffees","syf":1},"e2":{"v":"tulipi_grind","k":"ZANAAT","b":"Önce çekirdek.","m":False},"e3":{"v":"tulipi_barista","k":"USTA","b":"Her fincan elde.","m":False}},
-  {"sure":6000,"e1":{"menu":"Milkshakes"},"e2":{"v":"tulipi_espresso","k":"ZANAAT","b":"Sonra ateş.","m":False},"e3":{"v":"tulipi_iced","k":"SERİN","b":"Soğuk da zanaat.","m":False}},
-  {"sure":6000,"e1":{"menu":"Mocktails"},"e2":{"v":"tulipi_latte","k":"İMZA","b":"Elin son sözü.","m":False},"e3":{"v":"tulipi_serin","k":"TAZE","b":"Serin ve canlı.","m":False}},
+  # ── PERDE II · ZANAAT ZİNCİRİ (E2: çekirdek→ateş→el · E3: yan-okuma; tam çekimler, donma yok) ──
+  {"sure":6500,"e1":{"menu":"Signature Coffees","syf":1},"e2":{"v":"tulipi_grind","k":"ZANAAT","b":"Önce çekirdek.","m":False},"e3":{"v":"tulipi_barista","k":"USTA","b":"Her fincan elde.","m":False}},
+  {"sure":6500,"e1":{"menu":"Milkshakes"},"e2":{"v":"tulipi_espresso","k":"ZANAAT","b":"Sonra ateş.","m":False},"e3":{"v":"tulipi_sut","k":"ZANAAT","b":"Sütün dansı.","m":False}},
+  {"sure":6500,"e1":{"menu":"Mocktails"},"e2":{"v":"tulipi_latte","k":"İMZA","b":"Elin son sözü.","m":False},"e3":{"v":"tulipi_surup","k":"TAZE","b":"Bahçeden bardağa.","m":False}},
+  # ── PERDE III · CANLI VERİ ÜÇLÜSÜ (sosyal kanıt + servis + yeni) ──
   {"sure":6000,"e1":{"cok":True},"e2":{"v":"tulipi_servis","k":"","b":"Ve masana gelir.","m":False},"e3":{"yeni":True}},
-  # ── PERDE III · DUYGU (uzatılmış duygu perdesi) ──
-  {"sure":7500,"e1":{"menu":"Desserts"},"e2":{"v":"tulipi_gulus","k":"","b":"Burada iyi hissedersin.","m":False},"e3":{"sezon":True}},
-  # ── PERDE IV · SATIŞ RAMPASI (vitrin → spot → menü duvarı → ZİRVE) ──
+  {"sure":6500,"e1":{"menu":"Desserts"},"e2":{"oneri":True},"e3":{"sezon":True}},
+  # ── PERDE IV · DUYGU (gülüş + pencere sohbeti — iki gerçek an) ──
+  {"sure":7000,"e1":{"menu":"Milkshakes"},"e2":{"v":"tulipi_gulus","k":"","b":"Burada iyi hissedersin.","m":False},"e3":{"v":"tulipi_pencere","k":"","b":"İyi sohbet, iyi kahve.","m":False}},
+  # ── PERDE V · SATIŞ RAMPASI (vitrin/hero → çift spot → menü duvarı → ZİRVE) ──
   {"sure":6000,"e1":{"vitrin":True},"e2":{"hero":True},"e3":{"vitrin":True}},
   {"sure":7500,"e1":{"menu":"Signature Coffees","syf":2},"e2":{"spot":True},"e3":{"spot":True}},
-  {"sure":9000,"e1":{"menu":"Classic Coffees","syf":2},"e2":{"menu":"Milkshakes"},"e3":{"menu":"Desserts"}},
+  {"sure":9000,"e1":{"menu":"Classic Coffees","syf":2},"e2":{"menu":"Mocktails"},"e3":{"menu":"Desserts"}},
   {"sure":6500,"e1":{"vitrin":True},"e2":{"gunun":True},"e3":{"eslesme":True}},
-  # ── PERDE V · SERİN İNİŞ + KAPANIŞ NEFESİ ──
-  {"sure":6000,"e1":{"menu":"Mocktails"},"e2":{"v":"tulipi_iced","k":"SERİN","b":"Buzlu bir mola.","m":False},"e3":{"v":"tulipi_serin","k":"TAZE","b":"Bahçeden bardağa.","m":False}},
+  # ── PERDE VI · SERİN İNİŞ + KAPANIŞ NEFESİ ──
+  {"sure":6000,"e1":{"yeni":True},"e2":{"v":"tulipi_serin","k":"TAZE","b":"Serin ve canlı.","m":False},"e3":{"v":"tulipi_keyif","k":"","b":"Tadını çıkar.","m":False}},
   {"sure":6500,"e1":{"cok":True},"e2":{"v":"tulipi_mekan","k":"","b":"Zincir gibi hızlı.\nZanaat gibi özenli.","m":False},"e3":{"v":"tulipi_gulus","k":"","b":"Yarın yine bekleriz.","m":True}},
 ]
 
@@ -869,8 +872,8 @@ def _kurgu_dogrula(slots):
             if ("menu" not in c and "v" not in c and not c.get("spot")
                     and not c.get("cok") and not c.get("yeni") and not c.get("sezon")
                     and not c.get("hero") and not c.get("gunun") and not c.get("vitrin")
-                    and not c.get("eslesme")):
-                return f"slot {idx}.{e}: menu, klip (v), spot, cok, yeni, sezon, hero, gunun, vitrin veya eslesme olmalı"
+                    and not c.get("eslesme") and not c.get("oneri")):
+                return f"slot {idx}.{e}: menu, klip (v), spot, cok, yeni, sezon, hero, gunun, vitrin, eslesme veya oneri olmalı"
             if c.get("v") and c["v"] not in PORTRE_KLIP_WL:
                 return f"slot {idx}.{e}: klip whitelist dışı ({c.get('v')})"
     return None
@@ -1011,7 +1014,10 @@ def tv_menu_clip(name: str):
                      # D turu ek kahramanlar (2026-07-20)
                      "tulipi_gulus", "tulipi_serin", "tulipi_servis", "tulipi_barista",
                      # Codex-onaylı açılış (2026-07-21): V5 bar arkası 1-8sn
-                     "tulipi_bar"):
+                     "tulipi_bar",
+                     # Tam-çekim genişleme (2026-07-21, sahip: kesme, bütünlük bozulmasın):
+                     # V13 süt buharı 20sn · V17 süt sıçrama · V11 şurup · V3 pencere · V2 keyif
+                     "tulipi_buhar", "tulipi_sut", "tulipi_surup", "tulipi_pencere", "tulipi_keyif"):
         raise HTTPException(404, "klip yok")
     # Prod: Vite public/ -> static/tv'ye kopyalar. Dev: public/tv veya src/assets/tv.
     for base in ("static/tv", "public/tv", "src/assets/tv"):
@@ -1041,7 +1047,7 @@ _TV_PORTRE_HTML = r"""<!DOCTYPE html>
 *{margin:0;box-sizing:border-box}
 html,body{height:100%;overflow:hidden;background:var(--bg);cursor:none;font-family:'Fraunces',serif;color:var(--cream)}
 #stage{position:fixed;inset:0;background:var(--bg)}
-video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity 1.05s cubic-bezier(.37,0,.24,1);will-change:opacity}
+video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity 1.4s cubic-bezier(.37,0,.24,1);will-change:opacity}
 video.on{opacity:1}
 #scrim{position:absolute;inset:0;pointer-events:none;background:linear-gradient(180deg,rgba(11,7,5,.28) 0%,transparent 26%,transparent 52%,rgba(11,7,5,.72) 100%)}
 #txt{position:absolute;left:0;right:0;bottom:9vh;padding:0 8vw;text-align:center;z-index:3}
@@ -1052,7 +1058,7 @@ video.on{opacity:1}
 #brand b{color:var(--green)}
 .show{opacity:1 !important}
 /* ── MENÜ SAYFASI v2 — pano düzeni: başlık / gövde / alt bant + gerçek fiyat sütunları ── */
-#menu{position:absolute;inset:0;z-index:2;opacity:0;transition:opacity 1.15s cubic-bezier(.37,0,.24,1);display:flex;flex-direction:column;padding:8.5vh 7vw 0;background:radial-gradient(72vw 60vw at 50% 18%,rgba(98,66,34,.22),transparent 64%),linear-gradient(180deg,#1b130f 0%,#0b0705 100%)}
+#menu{position:absolute;inset:0;z-index:2;opacity:0;transition:opacity 1.4s cubic-bezier(.37,0,.24,1);display:flex;flex-direction:column;padding:8.5vh 7vw 0;background:radial-gradient(72vw 60vw at 50% 18%,rgba(98,66,34,.22),transparent 64%),linear-gradient(180deg,#1b130f 0%,#0b0705 100%)}
 #menu.on{opacity:1}
 #mhead{text-align:center;margin-bottom:3.6vh;flex-shrink:0}
 #mbrand{font-size:2vh;font-weight:600;letter-spacing:.34em;color:var(--cream);opacity:.92;margin-bottom:1.6vh}
@@ -1079,7 +1085,7 @@ video.on{opacity:1}
 .gad{font-size:3.4vh;font-weight:500;color:var(--cream);line-height:1.12}
 .gfav{font-size:1.9vh;font-style:italic;color:var(--green-soft);margin-left:1.2vw;white-space:nowrap}
 .gtat{font-size:2vh;font-style:italic;color:var(--muted);line-height:1.15;margin-top:.4vh}
-.gpr{font-size:3.1vh;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+.gpr{font-size:2.9vh;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
 .gpr.c8{color:var(--muted);font-weight:400}
 .gpr.c14{color:var(--cream);font-weight:600}
 .gpr.cice{color:var(--cream);opacity:.78;font-weight:400}
@@ -1166,10 +1172,27 @@ body.yatay #spcup{width:36vh;max-height:38vh}
 #menu.yogun .mfiyat{font-size:2.8vh}
 #menu.yogun .mnote{font-size:1.8vh}
 /* ── İMZA SPOTLIGHT (hero ürün + upsell) — video zemin üstünde ── */
-#spot{position:absolute;inset:0;z-index:2;opacity:0;transition:opacity 1.05s cubic-bezier(.37,0,.24,1);display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:0 8vw;background:linear-gradient(180deg,rgba(11,7,5,.58),rgba(11,7,5,.32) 42%,rgba(11,7,5,.80))}
+#spot{position:absolute;inset:0;z-index:2;opacity:0;transition:opacity 1.4s cubic-bezier(.37,0,.24,1);display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:0 8vw;background:linear-gradient(180deg,rgba(11,7,5,.58),rgba(11,7,5,.32) 42%,rgba(11,7,5,.80))}
 #spot.on{opacity:1}
 #spkick{font-size:2.6vh;font-weight:500;letter-spacing:.4em;color:var(--green);margin-bottom:2.2vh}
 #spcup{display:none;width:30vh;max-width:44vw;max-height:34vh;object-fit:contain;margin-bottom:2.4vh;filter:drop-shadow(0 2.4vh 4.6vh rgba(0,0,0,.72))}
+#spmetin{display:flex;flex-direction:column;align-items:center;text-align:center;min-width:0}
+#spcaz{display:none;font-size:2.3vh;font-style:italic;color:#C8956A;margin-top:1.8vh;letter-spacing:.02em}
+/* ÜRÜN VİTRİNİ (duo): bardak solda, yazı sağda — sahip şablonu */
+#spot.duo{flex-direction:row;justify-content:center;gap:5vw;padding:0 6vw}
+#spot.duo #spcup{margin:0;width:36vw;max-width:36vw;max-height:42vh;flex-shrink:0}
+#spot.duo #spmetin{align-items:flex-start;text-align:left}
+#spot.duo #spnot,#spot.duo #spad{max-width:none}
+/* SONRADAN GELEN YAZI — sahne açılınca kademeli belirir (yalnız opacity, sahip şablonu) */
+#spot.on #spkick{animation:satirBelir .5s ease .25s both}
+#spot.on #spcup{animation:satirBelir .8s ease .4s both}
+#spot.on #spad{animation:satirBelir .7s ease .65s both}
+#spot.on #spnot{animation:satirBelir .7s ease .95s both}
+#spot.on #spcaz{animation:satirBelir .8s ease 1.2s both}
+#spot.on #spfiyat{animation:satirBelir .7s ease 1.45s both}
+#spot.on #sppair{animation:satirBelir .7s ease 1.7s both}
+body.yatay #spot.duo #spcup{width:24vw;max-width:24vw;max-height:54vh}
+body.yatay #spcaz{font-size:2.9vh}
 #spad{font-size:6.4vh;font-weight:500;color:var(--cream);line-height:1.06;text-shadow:0 2px 24px rgba(0,0,0,.6)}
 #spnot{font-size:2.7vh;font-style:italic;color:var(--muted);margin-top:2.2vh;max-width:82vw}
 #spfiyat{font-size:5.6vh;font-weight:600;color:var(--cream);margin-top:2.8vh;font-variant-numeric:tabular-nums}
@@ -1201,12 +1224,15 @@ body.yatay #spcup{width:36vh;max-height:38vh}
     <div id="mfoot"><div id="mfnote"></div></div>
   </div>
   <div id="spot">
-    <div id="spkick">★ İMZA</div>
     <img id="spcup" alt="">
-    <div id="spad"></div>
-    <div id="spnot"></div>
-    <div id="spfiyat"></div>
-    <div id="sppair"></div>
+    <div id="spmetin">
+      <div id="spkick">★ İMZA</div>
+      <div id="spad"></div>
+      <div id="spnot"></div>
+      <div id="spcaz"></div>
+      <div id="spfiyat"></div>
+      <div id="sppair"></div>
+    </div>
   </div>
   <div id="vinyet"></div>
   <div id="hhribbon"></div>
@@ -1244,6 +1270,7 @@ function icKlipleri(c,push){
   if(c.gunun||c.cok||c.yeni||c.vitrin) push('tulipi_mekan');
   if(c.sezon){ push('tulipi_iced'); push('tulipi_serin'); push('tulipi_espresso'); push('tulipi_latte'); }
   if(c.eslesme){ push('tulipi_espresso'); push('tulipi_iced'); push('tulipi_servis'); }
+  if(c.oneri) push('tulipi_buhar');
 }
 function klipListesi(slots){
   var L=[]; var push=function(n){ if(n&&L.indexOf(n)<0) L.push(n); };
@@ -1256,7 +1283,7 @@ var stage=document.getElementById('stage'), veil=document.getElementById('veil')
     vfill=document.getElementById('vfill'), vpct=document.getElementById('vpct'),
     kick=document.getElementById('kick'), beat=document.getElementById('beat'), brand=document.getElementById('brand'),
     menuEl=document.getElementById('menu'), mkat=document.getElementById('mkat'), malt=document.getElementById('malt'), mlist=document.getElementById('mlist'),
-    spotEl=document.getElementById('spot'), spkick=document.getElementById('spkick'), spcup=document.getElementById('spcup'), spad=document.getElementById('spad'), spnot=document.getElementById('spnot'), spfiyat=document.getElementById('spfiyat'), sppair=document.getElementById('sppair'),
+    spotEl=document.getElementById('spot'), spkick=document.getElementById('spkick'), spcup=document.getElementById('spcup'), spad=document.getElementById('spad'), spnot=document.getElementById('spnot'), spcaz=document.getElementById('spcaz'), spfiyat=document.getElementById('spfiyat'), sppair=document.getElementById('sppair'),
     hhribbon=document.getElementById('hhribbon'), vinyet=document.getElementById('vinyet');
 var VID={};   // klip adi -> <video> (hepsi belleğe yüklü, hazır)
 var aktif=null, i=-1;
@@ -1288,15 +1315,23 @@ function sinyalGetir(){
 // İMZA SPOTLIGHT — hero ürün + fiyat + perfect-pair upsell
 function spotCiz(){
   if(!IMZA){ return false; }
+  spotEl.classList.remove('duo');
   spkick.textContent='★ İMZA';
   spcup.style.display='none';
   spfiyat.style.color='';   // altın renk sadece gunun zirvesinde
+  var fk=urunBul(IMZA.ad); cazYaz(fk&&fk.kat);
   spad.textContent=IMZA.ad||'';
   spnot.textContent=IMZA.aciklama||'';
   spfiyat.textContent=(IMZA.fiyat!=null?IMZA.fiyat:'');
   if(PAIR && PAIR.ad){ sppair.innerHTML='<b>+ '+PAIR.ad+'</b> · '+(PAIR.fiyat!=null?PAIR.fiyat+' · ':'')+(PAIR.mesaj||'Yanına yakışır'); sppair.style.display=''; }
   else { sppair.style.display='none'; }
   return true;
+}
+// CEZBEDİCİ ALT YAZILAR — kategori başına tek fısıltı (sahip şablonu: ürün altında davet cümlesi)
+var CAZIBE={'Classic Coffees':'Günün ilk iyi kararı.','Signature Coffees':'Bir yudum imza.','Milkshakes':'Soğuk, yoğun, ödül gibi.','Mocktails':'Yeşil, ferah, hafif.','Desserts':'Kahvenin en tatlı yoldaşı.'};
+function cazYaz(kat){
+  var t=(kat&&CAZIBE[kat])||'';
+  spcaz.textContent=t; spcaz.style.display=t?'block':'none';
 }
 // ürünü canlı menüde bul (ad eşleşmesi) → {u, kat}
 function urunBul(ad){
@@ -1328,8 +1363,10 @@ function urunKlibi(ad,kat){
 function heroCiz(){
   var ad=(SIG&&SIG.en_cok)||(IMZA&&IMZA.ad); if(!ad) return null;
   var f=urunBul(ad);
+  spotEl.classList.remove('duo');
   spkick.textContent=(SIG&&SIG.en_cok)?'BU HAFTA EN ÇOK SEÇİLEN':'TULİPİ İMZASI';
   spcup.style.display='none';
+  cazYaz(f&&f.kat);
   spad.textContent=ad;
   spnot.textContent=(f&&f.u.aciklama)||'';
   spfiyat.textContent=''; spfiyat.style.color='';
@@ -1340,8 +1377,10 @@ function heroCiz(){
 function gununCiz(){
   var ad=SIG&&SIG.en_cok; if(!ad) return null;
   var f=urunBul(ad), sm=SIG&&SIG.saat_modu;
+  spotEl.classList.add('duo');   // sahip şablonu: bardak solda, yazı sağda
   spkick.textContent=(sm&&sm.etiket?sm.etiket+' · ':'')+'GÜNÜN SEÇİMİ';
   spcup.src='/tv-menu/cup/'+bardakSec(ad, f&&f.kat); spcup.style.display='block';
+  cazYaz(f&&f.kat);
   spad.textContent=ad;
   spnot.textContent=(f&&f.u.aciklama)||'';
   var fy=f&&(f.u.f8!=null?f.u.f8:(f.u.f14!=null?f.u.f14:f.u.fice));
@@ -1389,6 +1428,20 @@ function vitrinCiz(){
   return true;
 }
 // 🍽️ EŞLEŞTİRME (dayparting) — saat dilimine göre ikili öneri (sabah kruvasan +%15 yiyecek kanıtı)
+// 🤫 BARİSTANIN ÖNERİSİ — az satılan ürünün ortaya çıkarılması ("bilenin seçimi"); buğulu zemin
+function oneriCiz(){
+  var o=SIG&&SIG.oneri; if(!o||!o.ad) return null;
+  var f=urunBul(o.ad);
+  spotEl.classList.add('duo');
+  spkick.textContent='BARİSTANIN ÖNERİSİ';
+  spcup.src='/tv-menu/cup/'+bardakSec(o.ad, o.kategori||(f&&f.kat)); spcup.style.display='block';
+  cazYaz(o.kategori||(f&&f.kat));
+  spad.textContent=o.ad;
+  spnot.textContent=o.neden||'Çok bilinmez; bilenlerin seçimi.';
+  spfiyat.textContent=(o.fiyat!=null?o.fiyat:''); spfiyat.style.color='';
+  sppair.style.display='none';
+  return 'tulipi_buhar';
+}
 function eslesmeCiz(){
   var sm=(SIG&&SIG.saat_modu)||{}, mod=sm.mod||'aksam';
   var kahve=null, yanina=null, mesaj='', zemin='tulipi_servis';
@@ -1398,8 +1451,10 @@ function eslesmeCiz(){
   else { kahve=(IMZA&&IMZA.ad)||kf['Signature Coffees']||'Latte'; yanina=(PAIR&&PAIR.ad)||'San Sebastian Cheesecake'; mesaj=(PAIR&&PAIR.mesaj)||'Akşamın tatlı dengesi.'; zemin='tulipi_servis'; }
   var fk=urunBul(kahve), fy2=urunBul(yanina);
   if(!fk && !fy2) return null;
+  spotEl.classList.remove('duo');
   spkick.textContent=(sm.etiket||'BUGÜN')+' · BİRLİKTE İYİ';
   spcup.style.display='none';
+  spcaz.style.display='none';
   spad.textContent=kahve+' + '+yanina;
   spnot.textContent=mesaj;
   var f1=fk&&(fk.u.f8!=null?fk.u.f8:(fk.u.f14!=null?fk.u.f14:fk.u.fice));
@@ -1516,7 +1571,7 @@ function menuCizAd(ad, syf){
     for(j=0;j<cols.length;j++){
       c=cols[j]; fv=u[c.key];
       if(fv!=null&&fv!=='') html+='<div class="gpr '+c.cls+'">'+escq(fv)+'</div>';
-      else html+='<div class="gpr cbos">&#8212;</div>';
+      else html+='<div class="gpr cbos"></div>';   // boş hücre sessiz kalır (— işareti muhasebe tablosu hissi veriyordu)
     }
     html+='</div>';
   }
@@ -1581,9 +1636,9 @@ function goster(c){
     return;
   }
   // 🥤 KAHRAMAN ÜRÜN / ⭐ GÜNÜN SEÇİMİ — spot overlay + gerçek çekim zemin (yatay sistemin iyi sahneleri, tek motorda)
-  if(c.hero || c.gunun || c.eslesme){
+  if(c.hero || c.gunun || c.eslesme || c.oneri){
     menuEl.classList.remove('on');
-    var zemAd = c.hero ? heroCiz() : c.gunun ? gununCiz() : eslesmeCiz();   // içerik çizilir + uygun zemin klip adı döner
+    var zemAd = c.hero ? heroCiz() : c.gunun ? gununCiz() : c.oneri ? oneriCiz() : eslesmeCiz();   // içerik çizilir + uygun zemin klip adı döner
     var zem=zemAd&&VID[zemAd];
     if(zem){ try{zem.currentTime=GECEN;}catch(e){} var pz=zem.play(); if(pz&&pz.catch)pz.catch(function(){}); zem.classList.add('on'); if(aktif&&aktif!==zem)aktif.classList.remove('on'); aktif=zem; }
     if(zemAd){ spotEl.classList.add('on'); metinYaz('',''); brand.classList.remove('on'); }
