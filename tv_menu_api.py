@@ -823,31 +823,29 @@ def tv_ayar_yaz(a: AyarModel):
 # ─────────────────────────────────────────────────────────────────────────
 PORTRE_KLIP_WL = ["tulipi_mekan", "tulipi_grind", "tulipi_espresso", "tulipi_latte", "tulipi_iced",
                   "tulipi_gulus", "tulipi_serin", "tulipi_servis", "tulipi_barista"]
-# ══ TAM PROGRAM (sahip: "bütün mekanizmayı hazırla, mükemmel bir menü kur") ══
-# 6 perdeli dramaturji, 13 slot, ~80sn döngü. Roller SAF: E1=karar (hep pano/veri),
-# E2=deneyim (hikâye akışı), E3=imza/upsell. Rampa: fiyat vitrine kadar fısıltı,
-# imza spotlight'ta yükselir, GÜNÜN SEÇİMİ'nde zirve yapar, marka nefesiyle kapanır.
-# Menü panoları 5-9sn (okunacak kadar uzun); videolar tek oynar son karede donar.
+# ══ NİHAİ PROGRAM (kreatif direktör ajanı kurgusu, 2026-07-21 — sahip talebi) ══
+# 5 perde: Marka Nefesi → Zanaat Zinciri → Duygu → Satış Rampası → Serin İniş/Kapanış.
+# E2 kesintisiz hikâye (çekirdek→ateş→el→servis), E3 duyusal yan-okuma. Fiyat rampası:
+# panolar sessiz zemin → vitrin/spot fısıltı → slot 10 ZİRVE (gunun+eslesme tek slotta).
+# 12 slot · 81sn · E1'de video yok · triptik 5 · yeni/sezon 1'er kez · klip tekrarı yok.
 VARSAYILAN_KURGU = [
-  # PERDE 1 — VAAT: üçlü marka açılışı (mekân her ekranda, tek nefes)
-  {"sure":6000,"e1":{"menu":"Classic Coffees"},  "e2":{"v":"tulipi_mekan","k":"TULİPİ","b":"Her gün taze.","m":False},        "e3":{"v":"tulipi_mekan","k":"","b":"","m":True}},
-  # PERDE 2 — ZANAAT: kanıt zinciri E2'de akar (çekirdek→ateş→el), E3 imza koridoru
-  {"sure":7000,"e1":{"menu":"Signature Coffees"},"e2":{"v":"tulipi_grind","k":"Zanaat","b":"Önce çekirdek.","m":True},        "e3":{"v":"tulipi_barista","k":"Usta","b":"Her fincan elde.","m":True}},
-  {"sure":7000,"e1":{"menu":"Milkshakes"},       "e2":{"v":"tulipi_espresso","k":"Zanaat","b":"Sonra ateş.","m":True},        "e3":{"v":"tulipi_latte","k":"İmza","b":"İmza dokunuş.","m":True}},
-  {"sure":6000,"e1":{"menu":"Mocktails"},        "e2":{"v":"tulipi_latte","k":"Usta","b":"Elin son sözü.","m":True},          "e3":{"v":"tulipi_servis","k":"","b":"Ve servis.","m":True}},
-  # PERDE 3 — KANIT: vitrin çifte fiyat blokları + ortada en-çok-seçilenin kendi videosu
-  {"sure":6000,"e1":{"vitrin":True},             "e2":{"hero":True},                                                          "e3":{"vitrin":True}},
-  {"sure":5400,"e1":{"cok":True},                "e2":{"sezon":True},                                                        "e3":{"yeni":True}},
-  # PERDE 4 — DUYGU: nefes (gülüş + serinlik), E1 tatlı sayfası
-  {"sure":5000,"e1":{"menu":"Desserts"},         "e2":{"v":"tulipi_gulus","k":"","b":"Burada iyi hissedersin.","m":True},    "e3":{"v":"tulipi_serin","k":"Taze","b":"Serin ve canlı.","m":True}},
-  # PERDE 5 — SATIŞ RAMPASI: imza spotlight → saat eşleştirmesi → BÜYÜK MENÜ DUVARI → günün seçimi zirvesi
-  {"sure":7000,"e1":{"menu":"Signature Coffees"},"e2":{"spot":True},                                                          "e3":{"spot":True}},
-  {"sure":5000,"e1":{"menu":"Classic Coffees"},  "e2":{"eslesme":True},                                                      "e3":{"sezon":True}},
-  {"sure":9000,"e1":{"menu":"Classic Coffees"},  "e2":{"menu":"Signature Coffees"},                                          "e3":{"menu":"Desserts"}},
-  {"sure":6000,"e1":{"menu":"Milkshakes"},       "e2":{"gunun":True},                                                        "e3":{"vitrin":True}},
-  {"sure":5000,"e1":{"menu":"Mocktails"},        "e2":{"v":"tulipi_iced","k":"Serinlik","b":"Buzlu bir mola.","m":True},      "e3":{"yeni":True}},
-  # PERDE 6 — KAPANIŞ: marka sloganı + veda gülüşü, döngü başa yumuşak bağlanır
-  {"sure":5600,"e1":{"menu":"Signature Coffees"},"e2":{"v":"tulipi_mekan","k":"","b":"Zincir gibi hızlı.\nZanaat gibi özenli.","m":False},"e3":{"v":"tulipi_gulus","k":"","b":"Yarın yine bekleriz.","m":True}},
+  # ── PERDE I · MARKA NEFESİ (açılış triptiği — mekân istisnası) ──
+  {"sure":7000,"e1":{"menu":"Classic Coffees"},"e2":{"v":"tulipi_mekan","k":"TULİPİ","b":"Her gün taze.","m":False},"e3":{"v":"tulipi_mekan","k":"","b":"","m":True}},
+  # ── PERDE II · ZANAAT ZİNCİRİ (E2: çekirdek→ateş→el→servis · E3: duyusal yan-okuma) ──
+  {"sure":7000,"e1":{"menu":"Signature Coffees"},"e2":{"v":"tulipi_grind","k":"ZANAAT","b":"Önce çekirdek.","m":False},"e3":{"v":"tulipi_barista","k":"USTA","b":"Her fincan elde.","m":False}},
+  {"sure":6000,"e1":{"menu":"Milkshakes"},"e2":{"v":"tulipi_espresso","k":"ZANAAT","b":"Sonra ateş.","m":False},"e3":{"v":"tulipi_iced","k":"SERİN","b":"Soğuk da zanaat.","m":False}},
+  {"sure":6000,"e1":{"menu":"Mocktails"},"e2":{"v":"tulipi_latte","k":"İMZA","b":"Elin son sözü.","m":False},"e3":{"v":"tulipi_serin","k":"TAZE","b":"Serin ve canlı.","m":False}},
+  {"sure":6000,"e1":{"cok":True},"e2":{"v":"tulipi_servis","k":"","b":"Ve masana gelir.","m":False},"e3":{"yeni":True}},
+  # ── PERDE III · DUYGU (uzatılmış duygu perdesi) ──
+  {"sure":7500,"e1":{"menu":"Desserts"},"e2":{"v":"tulipi_gulus","k":"","b":"Burada iyi hissedersin.","m":False},"e3":{"sezon":True}},
+  # ── PERDE IV · SATIŞ RAMPASI (vitrin → spot → menü duvarı → ZİRVE) ──
+  {"sure":6000,"e1":{"vitrin":True},"e2":{"hero":True},"e3":{"vitrin":True}},
+  {"sure":7500,"e1":{"menu":"Signature Coffees"},"e2":{"spot":True},"e3":{"spot":True}},
+  {"sure":9000,"e1":{"menu":"Classic Coffees"},"e2":{"menu":"Milkshakes"},"e3":{"menu":"Desserts"}},
+  {"sure":6500,"e1":{"vitrin":True},"e2":{"gunun":True},"e3":{"eslesme":True}},
+  # ── PERDE V · SERİN İNİŞ + KAPANIŞ NEFESİ ──
+  {"sure":6000,"e1":{"menu":"Mocktails"},"e2":{"v":"tulipi_iced","k":"SERİN","b":"Buzlu bir mola.","m":False},"e3":{"v":"tulipi_serin","k":"TAZE","b":"Bahçeden bardağa.","m":False}},
+  {"sure":6500,"e1":{"cok":True},"e2":{"v":"tulipi_mekan","k":"","b":"Zincir gibi hızlı.\nZanaat gibi özenli.","m":False},"e3":{"v":"tulipi_gulus","k":"","b":"Yarın yine bekleriz.","m":True}},
 ]
 
 
@@ -1284,6 +1282,7 @@ function spotCiz(){
   if(!IMZA){ return false; }
   spkick.textContent='★ İMZA';
   spcup.style.display='none';
+  spfiyat.style.color='';   // altın renk sadece gunun zirvesinde
   spad.textContent=IMZA.ad||'';
   spnot.textContent=IMZA.aciklama||'';
   spfiyat.textContent=(IMZA.fiyat!=null?IMZA.fiyat:'');
@@ -1325,7 +1324,7 @@ function heroCiz(){
   spcup.style.display='none';
   spad.textContent=ad;
   spnot.textContent=(f&&f.u.aciklama)||'';
-  spfiyat.textContent='';
+  spfiyat.textContent=''; spfiyat.style.color='';
   sppair.style.display='none';
   return urunKlibi(ad, f&&f.kat);
 }
@@ -1339,6 +1338,7 @@ function gununCiz(){
   spnot.textContent=(f&&f.u.aciklama)||'';
   var fy=f&&(f.u.f8!=null?f.u.f8:(f.u.f14!=null?f.u.f14:f.u.fice));
   spfiyat.textContent=(fy!=null?fy:'');
+  spfiyat.style.color='#C8956A';   // döngünün TEK altın fiyat anı (zirve vurgusu; glow yok)
   if(PAIR && PAIR.ad){ sppair.innerHTML='<b>+ '+PAIR.ad+'</b> · '+(PAIR.fiyat!=null?PAIR.fiyat+' · ':'')+(PAIR.mesaj||'Yanına yakışır'); sppair.style.display=''; }
   else { sppair.style.display='none'; }
   return 'tulipi_mekan';
@@ -1397,6 +1397,7 @@ function eslesmeCiz(){
   var f1=fk&&(fk.u.f8!=null?fk.u.f8:(fk.u.f14!=null?fk.u.f14:fk.u.fice));
   var f2=fy2&&(fy2.u.f8!=null?fy2.u.f8:(fy2.u.f14!=null?fy2.u.f14:fy2.u.fice));
   spfiyat.textContent=(f1!=null&&f2!=null)?(f1+' + '+f2):(f1!=null?f1:(f2!=null?f2:''));
+  spfiyat.style.color='';
   sppair.style.display='none';
   return zemin;
 }
