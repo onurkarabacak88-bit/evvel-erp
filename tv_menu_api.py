@@ -820,7 +820,8 @@ VARSAYILAN_KURGU = [
   {"sure":3200,"e1":{"menu":"Signature Coffees"},"e2":{"v":"tulipi_barista","k":"Usta","b":"Her fincan elde.","m":True},      "e3":{"v":"tulipi_servis","k":"","b":"Ve servis.","m":True}},
   {"sure":3600,"e1":{"menu":"Mocktails"},        "e2":{"v":"tulipi_latte","k":"Usta","b":"Elin son sözü.","m":True},          "e3":{"menu":"Mocktails"}},
   {"sure":6000,"e1":{"menu":"Signature Coffees"},"e2":{"spot":True},                                                          "e3":{"spot":True}},
-  {"sure":4000,"e1":{"menu":"Desserts"},         "e2":{"v":"tulipi_iced","k":"Serinlik","b":"Ya da buzlu bir mola.","m":True},"e3":{"v":"tulipi_iced","k":"Serinlik","b":"Buzlu imza.","m":True}},
+  {"sure":5400,"e1":{"cok":True},                "e2":{"sezon":True},                                                        "e3":{"yeni":True}},
+  {"sure":4000,"e1":{"menu":"Desserts"},         "e2":{"v":"tulipi_iced","k":"Serinlik","b":"Ya da buzlu bir mola.","m":True},"e3":{"sezon":True}},
   {"sure":9000,"e1":{"menu":"Classic Coffees"},  "e2":{"menu":"Signature Coffees"},                                          "e3":{"menu":"Desserts"}},
   {"sure":3600,"e1":{"menu":"Milkshakes"},       "e2":{"v":"tulipi_gulus","k":"","b":"Burada iyi hissedersin.","m":True},    "e3":{"v":"tulipi_serin","k":"Taze","b":"Serin ve canlı.","m":True}},
   {"sure":4600,"e1":{"menu":"Signature Coffees"},"e2":{"v":"tulipi_mekan","k":"","b":"Zincir gibi hızlı.\nZanaat gibi özenli.","m":False},"e3":{"menu":"Mocktails"}},
@@ -844,8 +845,9 @@ def _kurgu_dogrula(slots):
             c = s.get(e)
             if not isinstance(c, dict):
                 return f"slot {idx}.{e} nesne değil"
-            if "menu" not in c and "v" not in c and not c.get("spot"):
-                return f"slot {idx}.{e}: menu, klip (v) veya spot (imza) olmalı"
+            if ("menu" not in c and "v" not in c and not c.get("spot")
+                    and not c.get("cok") and not c.get("yeni") and not c.get("sezon")):
+                return f"slot {idx}.{e}: menu, klip (v), spot, cok, yeni veya sezon olmalı"
             if c.get("v") and c["v"] not in PORTRE_KLIP_WL:
                 return f"slot {idx}.{e}: klip whitelist dışı ({c.get('v')})"
     return None
@@ -1108,7 +1110,7 @@ var stage=document.getElementById('stage'), veil=document.getElementById('veil')
     hhribbon=document.getElementById('hhribbon');
 var VID={};   // klip adi -> <video> (hepsi belleğe yüklü, hazır)
 var aktif=null, i=-1;
-var MENU=[], menuKat=0, IMZA=null, PAIR=null;   // canlı menü + imza ürün + pair (upsell)
+var MENU=[], menuKat=0, IMZA=null, PAIR=null, SIG=null;   // canlı menü + imza + pair + sinyaller
 
 function fiyatMetni(u){
   if(u.f8!=null && u.f14!=null) return u.f8+' / '+u.f14;
@@ -1125,6 +1127,7 @@ function menuGetir(){
 // HAPPY HOUR + canlı sinyaller (Evvel gücü). Aktifse tepede şerit.
 function sinyalGetir(){
   return fetch('/api/tv-signals').then(function(r){return r.json();}).then(function(d){
+    SIG=d||null;
     var hh=d && d.happy_hour;
     if(hh && (hh.mesaj || hh.aktif)){
       hhribbon.textContent='⏰ HAPPY HOUR · '+(hh.mesaj||'Fırsat saati');
@@ -1141,6 +1144,28 @@ function spotCiz(){
   if(PAIR && PAIR.ad){ sppair.innerHTML='<b>+ '+PAIR.ad+'</b> · '+(PAIR.fiyat!=null?PAIR.fiyat+' · ':'')+(PAIR.mesaj||'Yanına yakışır'); sppair.style.display=''; }
   else { sppair.style.display='none'; }
   return true;
+}
+// 🏆 EN ÇOK SATILAN (sosyal kanıt) — #menu içine
+function cokCiz(){
+  var t3=SIG&&SIG.top3; if(!t3||!t3.length) return false;
+  mkat.textContent='Bu Hafta En Çok'; malt.textContent='sizin favoriniz';
+  menuEl.classList.remove('yogun');
+  var html='';
+  t3.slice(0,3).forEach(function(u,ix){
+    html+='<div class="mrow" style="animation-delay:'+(0.3+ix*0.14).toFixed(2)+'s"><span class="mad"><span style="color:var(--green);font-weight:600">'+(ix+1)+'</span>&nbsp;&nbsp;'+(u.ad||'')+'</span><span class="mdot"></span><span class="mfiyat" style="color:var(--green-soft)">&#10084;</span></div>';
+  });
+  mlist.innerHTML=html; return true;
+}
+// ✨ YENİ ÜRÜNLER — #menu içine
+function yeniCiz(){
+  var ys=SIG&&SIG.yeni; if(!ys||!ys.length) return false;
+  mkat.textContent='✨ Yeni'; malt.textContent='menümüzde';
+  menuEl.classList.remove('yogun');
+  var html='';
+  ys.slice(0,5).forEach(function(ad,ix){
+    html+='<div class="mrow" style="animation-delay:'+(0.3+ix*0.1).toFixed(2)+'s"><span class="mad">'+ad+'</span><span class="mdot"></span><span class="mfiyat" style="color:var(--green-soft)">yeni</span></div>';
+  });
+  mlist.innerHTML=html; return true;
 }
 function menuCizAd(ad){
   if(!MENU.length) return false;
@@ -1208,6 +1233,29 @@ function goster(c){
     return;
   }
   spotEl.classList.remove('on');
+  // 🏆 EN ÇOK / ✨ YENİ — #menu overlay'i sosyal kanıt/yeni ürünle doldur
+  if(c.cok || c.yeni){
+    var ok = c.cok ? cokCiz() : yeniCiz();
+    if(ok){ if(aktif){ aktif.classList.remove('on'); aktif=null; } menuEl.classList.add('on'); metinYaz('',''); brand.classList.add('on'); return; }
+    // veri yoksa boş kalmasın: mekan videosuna düş
+    menuEl.classList.remove('on');
+    var vf=VID['tulipi_mekan'];
+    if(vf){ try{vf.currentTime=0;}catch(e){} var pf=vf.play(); if(pf&&pf.catch)pf.catch(function(){}); vf.classList.add('on'); if(aktif&&aktif!==vf)aktif.classList.remove('on'); aktif=vf; }
+    metinYaz('',''); brand.classList.add('on'); return;
+  }
+  // ☀️ MEVSİM/SAAT — mevsime uygun klip + canlı öneri beat'i (fiyatsız, fısıltı)
+  if(c.sezon){
+    menuEl.classList.remove('on');
+    var sm=(SIG&&SIG.saat_modu)||{}, mv=(SIG&&SIG.mevsim)||{}, on=(SIG&&SIG.oneri)||{};
+    var sicak=(mv.ad==='kis'||mv.ad==='kış');
+    var vk = sicak ? (VID['tulipi_espresso']||VID['tulipi_latte']) : (VID['tulipi_iced']||VID['tulipi_serin']);
+    if(vk){ try{vk.currentTime=0;}catch(e){} var pk=vk.play(); if(pk&&pk.catch)pk.catch(function(){}); vk.classList.add('on'); if(aktif&&aktif!==vk)aktif.classList.remove('on'); aktif=vk; }
+    var kick=(sm.etiket||mv.etiket||'BUGÜN');
+    var beat=(on.ad ? on.ad+(on.neden?' · '+on.neden:'') : (sm.oneri||''));
+    metinYaz(kick, beat);
+    brand.classList.remove('on');
+    return;
+  }
   if(c.menu){
     // menü sayfası: videoları söndür, adına göre çiz+göster, alt beat kapalı
     if(!menuCizAd(c.menu)) return;   // menü verisi yoksa video kalsın

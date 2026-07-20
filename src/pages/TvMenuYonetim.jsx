@@ -29,7 +29,13 @@ export default function TvMenuYonetim() {
   const PORTRE_URL = 'https://evvel-erp-production.up.railway.app/tv-portre';
   const bosSlot = () => ({ sure: 5000, e1: { menu: katList[0] || '' }, e2: { v: klipler[0] || '', k: '', b: '' }, e3: { menu: katList[0] || '' } });
   const icSet = (i, ek, alan, deger) => setKurgu(k => k.map((s, j) => j === i ? { ...s, [ek]: { ...s[ek], [alan]: deger } } : s));
-  const tipSet = (i, ek, tip) => setKurgu(k => k.map((s, j) => j !== i ? s : { ...s, [ek]: tip === 'menu' ? { menu: katList[0] || '' } : tip === 'spot' ? { spot: true } : { v: klipler[0] || '', k: '', b: '' } }));
+  const tipSet = (i, ek, tip) => setKurgu(k => k.map((s, j) => j !== i ? s : { ...s, [ek]:
+    tip === 'menu' ? { menu: katList[0] || '' }
+    : tip === 'spot' ? { spot: true }
+    : tip === 'cok' ? { cok: true }
+    : tip === 'yeni' ? { yeni: true }
+    : tip === 'sezon' ? { sezon: true }
+    : { v: klipler[0] || '', k: '', b: '' } }));
   const sureSet = (i, sn) => setKurgu(k => k.map((s, j) => j === i ? { ...s, sure: Math.max(2, Math.min(60, parseInt(sn) || 5)) * 1000 } : s));
   const slotTasi = (i, yon) => setKurgu(k => { const a = [...k]; const j = i + yon; if (j < 0 || j >= a.length) return a; [a[i], a[j]] = [a[j], a[i]]; return a; });
   const slotSil = (i) => setKurgu(k => k.filter((_, j) => j !== i));
@@ -174,17 +180,19 @@ export default function TvMenuYonetim() {
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 8 }}>
                   {[['e1', '1 · Menü/karar'], ['e2', '2 · Deneyim'], ['e3', '3 · İmza']].map(([ek, lbl]) => {
-                    const ic = s[ek] || {}; const tip = ic.spot ? 'spot' : (ic.menu != null ? 'menu' : 'video');
+                    const ic = s[ek] || {}; const tip = ic.spot ? 'spot' : ic.cok ? 'cok' : ic.yeni ? 'yeni' : ic.sezon ? 'sezon' : (ic.menu != null ? 'menu' : 'video');
+                    const OTO = { spot: 'İmza ürün + fiyat + “yanına yakışır” otomatik. İmza/pair’i Yaşayan Menü Ayarları’ndan seç.', cok: '🏆 Bu hafta en çok satılan 3 ürün — canlı satış verisinden otomatik.', yeni: '✨ Menüye yeni eklenen ürünler — canlı veriden otomatik.', sezon: '☀️ Mevsim/saate göre öneri (yazın buzlu, kışın sıcak) — canlı, fiyatsız fısıltı.' };
                     return (
                       <div key={ek} style={{ border: '1px solid var(--border)', borderRadius: 6, padding: 8 }}>
                         <div style={{ fontSize: 10, color: 'var(--text3)', marginBottom: 4 }}>Ekran {lbl}</div>
                         <select value={tip} onChange={e => tipSet(i, ek, e.target.value)} style={{ width: '100%', fontSize: 11, marginBottom: 4 }}>
                           <option value="menu">📋 Menü sayfası</option><option value="video">🎬 Video sahne</option><option value="spot">★ İmza spotlight</option>
+                          <option value="cok">🏆 En çok satılan</option><option value="yeni">✨ Yeni ürünler</option><option value="sezon">☀️ Mevsim/saat</option>
                         </select>
                         {tip === 'menu'
                           ? <select value={ic.menu || ''} onChange={e => icSet(i, ek, 'menu', e.target.value)} style={{ width: '100%', fontSize: 11 }}>{katList.map(c => <option key={c} value={c}>{c}</option>)}</select>
-                          : tip === 'spot'
-                          ? <div style={{ fontSize: 10.5, color: 'var(--text3)', lineHeight: 1.4 }}>İmza ürün + fiyat + “yanına yakışır” otomatik. <br/>İmza/pair’i <b>Yaşayan Menü Ayarları</b>’ndan seç.</div>
+                          : OTO[tip]
+                          ? <div style={{ fontSize: 10.5, color: 'var(--text3)', lineHeight: 1.4 }}>{OTO[tip]}</div>
                           : <>
                               <select value={ic.v || ''} onChange={e => icSet(i, ek, 'v', e.target.value)} style={{ width: '100%', fontSize: 11, marginBottom: 3 }}>{klipler.map(c => <option key={c} value={c}>{c.replace('tulipi_', '')}</option>)}</select>
                               <input placeholder="üst yazı (kicker)" value={ic.k || ''} onChange={e => icSet(i, ek, 'k', e.target.value)} style={{ width: '100%', fontSize: 11, marginBottom: 3 }} />
