@@ -1322,8 +1322,8 @@ function vitrinCiz(){
   for(i=0;i<ads.length && kartlar.length<3;i++){ var f=urunBul(ads[i]); if(f) kartlar.push({ad:ads[i],u:f.u,kat:f.kat}); }
   if(!kartlar.length) return false;
   menuEkstraTemizle();
-  mkat.textContent='TULİPİ Seçimleri';
-  malt.textContent='bu haftanın üçlüsü'; malt.style.display='';
+  mkat.textContent='Haftanın Seçimleri';   // marka adı zaten #mbrand'de — iki kez bağırma (fısıltı kuralı)
+  malt.textContent='gerçek seçimler · her gün güncellenir'; malt.style.display='';
   menuEl.classList.remove('yogun');
   var html='<div id="vitrinRow">';
   kartlar.forEach(function(k,ix){
