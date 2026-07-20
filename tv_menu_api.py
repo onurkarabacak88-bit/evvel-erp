@@ -1037,7 +1037,7 @@ video.on{opacity:1}
 #mbody{flex:1 1 auto;display:flex;flex-direction:column;justify-content:center;min-height:0;overflow:hidden}
 /* fiyat sütun başlıkları — listeyle aynı grid, piksel hizalı */
 #mcols{display:grid;column-gap:2vw;align-items:baseline;padding-bottom:1vh;border-bottom:1px solid rgba(184,155,128,.28);flex-shrink:0}
-#mcols div{font-size:1.8vh;font-weight:500;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);text-align:right;white-space:nowrap}
+#mcols div{font-size:1.6vh;font-weight:500;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);text-align:right;white-space:nowrap}
 #mcols .c14{color:var(--cream);opacity:.88}
 #mlist{display:flex;flex-direction:column}
 @keyframes satirBelir{from{opacity:0}to{opacity:1}}
@@ -1046,7 +1046,7 @@ video.on{opacity:1}
 .grow:last-child{border-bottom:0}
 #menu.cols-1 .grow,#menu.cols-1 #mcols{grid-template-columns:1fr 12vw}
 #menu.cols-2 .grow,#menu.cols-2 #mcols{grid-template-columns:1fr 10.5vw 10.5vw}
-#menu.cols-3 .grow,#menu.cols-3 #mcols{grid-template-columns:1fr 9.5vw 9.5vw 9.5vw}
+#menu.cols-3 .grow,#menu.cols-3 #mcols{grid-template-columns:1fr 9vw 9vw 10.5vw}
 .gname{min-width:0}
 .gad{font-size:3.4vh;font-weight:500;color:var(--cream);line-height:1.12}
 .gfav{font-size:1.9vh;font-style:italic;color:var(--green-soft);margin-left:1.2vw;white-space:nowrap}
@@ -1068,8 +1068,7 @@ video.on{opacity:1}
 #menu.yogun #mkat{font-size:4.2vh}
 #menu.yogun #mkat::after{margin-top:1.2vh}
 #menu.yogun #malt{display:none}
-#menu.yogun #mbody{justify-content:flex-start}
-#menu.yogun #mcols div{font-size:1.6vh}
+#menu.yogun #mcols div{font-size:1.5vh}
 #menu.yogun #mcols{padding-bottom:.7vh}
 #menu.yogun .grow{padding:.45vh 0}
 #menu.yogun .gad{font-size:2.6vh;line-height:1.12}
