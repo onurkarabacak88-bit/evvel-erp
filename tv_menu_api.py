@@ -923,6 +923,19 @@ video.on{opacity:1}
 #brand.on{opacity:.96}
 #brand b{color:var(--green)}
 .show{opacity:1 !important}
+/* ── MENÜ SAYFASI — okunurluk kral: koyu zemin, Fraunces krem, tat notu ── */
+#menu{position:absolute;inset:0;z-index:2;opacity:0;transition:opacity .6s ease;display:flex;flex-direction:column;padding:13vh 8vw 8vh;background:radial-gradient(72vw 60vw at 50% 18%,rgba(98,66,34,.22),transparent 64%),linear-gradient(180deg,#1b130f 0%,#0b0705 100%)}
+#menu.on{opacity:1}
+#mhead{text-align:center;margin-bottom:5.4vh}
+#mkat{font-size:5.4vh;font-weight:500;color:var(--cream);line-height:1.05}
+#mkat::after{content:"";display:block;width:8vw;height:2px;background:var(--green);margin:2vh auto 0;border-radius:2px}
+#malt{font-size:2.1vh;color:var(--muted);letter-spacing:.16em;text-transform:uppercase;margin-top:2vh}
+#mlist{display:flex;flex-direction:column;gap:2.7vh}
+.mrow{display:flex;align-items:baseline;gap:1.6vw}
+.mad{font-size:3.5vh;font-weight:500;color:var(--cream);white-space:nowrap}
+.mnote{flex:1;font-size:2vh;font-style:italic;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transform:translateY(-.3vh)}
+.mdot{flex:1;border-bottom:1px dotted rgba(184,155,128,.30);transform:translateY(-.5vh);min-width:2vw}
+.mfiyat{font-size:3.2vh;font-weight:500;color:var(--cream);white-space:nowrap;font-variant-numeric:tabular-nums}
 /* ön-yükleme perdesi — hazır olana kadar */
 #veil{position:absolute;inset:0;z-index:9;display:flex;flex-direction:column;align-items:center;justify-content:center;background:radial-gradient(60vw 60vw at 50% 38%,rgba(98,66,34,.30),transparent 66%),var(--bg);transition:opacity .8s ease}
 #veil.gone{opacity:0;pointer-events:none}
@@ -934,27 +947,63 @@ video.on{opacity:1}
 <body>
 <div id="stage">
   <div id="scrim"></div>
+  <div id="menu">
+    <div id="mhead"><div id="mkat"></div><div id="malt"></div></div>
+    <div id="mlist"></div>
+  </div>
   <div id="brand">TULİ<b>P</b>İ</div>
   <div id="txt"><div id="kick"></div><div id="beat"></div></div>
   <div id="veil"><div id="vbrand">TULİ<b>P</b>İ</div><div id="vbar"><div id="vfill"></div></div><div id="vpct">HAZIRLANIYOR</div></div>
 </div>
 <script>
-// ── STORYBOARD v1 ────────────────────────────────────────────────────────
+// ── STORYBOARD v2 — video hikâyesi + canlı menü sayfaları ────────────────
 var SAHNE = [
-  {klip:'tulipi_mekan',    kick:'TULİPİ',   beat:'Her gün taze.',                         sure:4200, marka:true},
-  {klip:'tulipi_grind',    kick:'Zanaat',   beat:'Önce çekirdek.',                        sure:3000},
-  {klip:'tulipi_espresso', kick:'Zanaat',   beat:'Sonra ateş.',                           sure:4000},
-  {klip:'tulipi_latte',    kick:'Usta',     beat:'Elin son sözü.',                        sure:3000},
-  {klip:'tulipi_iced',     kick:'Serinlik', beat:'Ya da buzlu bir mola.',                 sure:4000},
-  {klip:'tulipi_mekan',    kick:'',         beat:'Zincir gibi hızlı.\nZanaat gibi özenli.', sure:4600, marka:true}
+  {tip:'video', klip:'tulipi_mekan',    kick:'TULİPİ',   beat:'Her gün taze.',                         sure:4200, marka:false},
+  {tip:'video', klip:'tulipi_grind',    kick:'Zanaat',   beat:'Önce çekirdek.',                        sure:3000, marka:true},
+  {tip:'video', klip:'tulipi_espresso', kick:'Zanaat',   beat:'Sonra ateş.',                           sure:4000, marka:true},
+  {tip:'video', klip:'tulipi_latte',    kick:'Usta',     beat:'Elin son sözü.',                        sure:3000, marka:true},
+  {tip:'menu',  sure:9000},
+  {tip:'menu',  sure:9000},
+  {tip:'video', klip:'tulipi_iced',     kick:'Serinlik', beat:'Ya da buzlu bir mola.',                 sure:4000, marka:true},
+  {tip:'menu',  sure:9000},
+  {tip:'video', klip:'tulipi_mekan',    kick:'',         beat:'Zincir gibi hızlı.\nZanaat gibi özenli.', sure:4600, marka:false}
 ];
-var KLIPLER=[]; SAHNE.forEach(function(s){ if(KLIPLER.indexOf(s.klip)<0) KLIPLER.push(s.klip); });
+var KLIPLER=[]; SAHNE.forEach(function(s){ if(s.klip && KLIPLER.indexOf(s.klip)<0) KLIPLER.push(s.klip); });
 
 var stage=document.getElementById('stage'), veil=document.getElementById('veil'),
     vfill=document.getElementById('vfill'), vpct=document.getElementById('vpct'),
-    kick=document.getElementById('kick'), beat=document.getElementById('beat'), brand=document.getElementById('brand');
+    kick=document.getElementById('kick'), beat=document.getElementById('beat'), brand=document.getElementById('brand'),
+    menuEl=document.getElementById('menu'), mkat=document.getElementById('mkat'), malt=document.getElementById('malt'), mlist=document.getElementById('mlist');
 var VID={};   // klip adi -> <video> (hepsi belleğe yüklü, hazır)
 var aktif=null, i=-1;
+var MENU=[], menuKat=0;   // canlı menü kategorileri (/api/tv-menu)
+
+function fiyatMetni(u){
+  if(u.f8!=null && u.f14!=null) return u.f8+' / '+u.f14;
+  if(u.f8!=null) return ''+u.f8;
+  if(u.f14!=null) return ''+u.f14;
+  if(u.fice!=null) return u.fice+' buzlu';
+  return '';
+}
+function menuGetir(){
+  return fetch('/api/tv-menu').then(function(r){return r.json();}).then(function(d){
+    MENU=(d && d.kategoriler)||[];
+  }).catch(function(){ MENU=[]; });
+}
+function menuCiz(){
+  if(!MENU.length){ return; }
+  var k=MENU[menuKat % MENU.length]; menuKat++;
+  mkat.textContent=k.kategori||'';
+  malt.textContent=k.alt||((k.urunler||[]).length+' seçenek');
+  var html='';
+  (k.urunler||[]).slice(0,10).forEach(function(u){
+    var f=fiyatMetni(u);
+    html+='<div class="mrow"><span class="mad">'+(u.ad||'')+'</span>'
+        + (u.aciklama?'<span class="mnote">'+u.aciklama+'</span>':'<span class="mdot"></span>')
+        + '<span class="mfiyat">'+f+'</span></div>';
+  });
+  mlist.innerHTML=html;
+}
 
 // ── ÖN-BELLEK: her klibi blob olarak indir → objectURL → hazır <video> ──
 // Sahne değişiminde AĞ/DECODE beklemesi olmaz → DONMA YOK (sahip kuralı).
@@ -983,29 +1032,47 @@ function hazirla(){
   return Promise.all(isler);
 }
 
+function metinYaz(kickTxt, beatTxt){
+  kick.classList.remove('show'); beat.classList.remove('show');
+  setTimeout(function(){
+    kick.textContent=kickTxt||''; beat.innerHTML=(beatTxt||'').replace(/\n/g,'<br>');
+    if(kickTxt) kick.classList.add('show');
+    if(beatTxt) beat.classList.add('show');
+  },420);
+}
 function goster(s){
+  if(s.tip==='menu' && MENU.length){
+    // menü sayfası: videoları söndür, menüyü çiz+göster, alt beat'i kapat
+    if(aktif){ aktif.classList.remove('on'); aktif=null; }
+    menuCiz();
+    menuEl.classList.add('on');
+    metinYaz('','');
+    brand.classList.add('on');
+    return;
+  }
+  // video sahnesi
+  menuEl.classList.remove('on');
   var v=VID[s.klip]; if(!v){ return; }
   try{ v.currentTime=0; }catch(e){}
   var pr=v.play(); if(pr&&pr.catch) pr.catch(function(){});
   v.classList.add('on');
   if(aktif && aktif!==v) aktif.classList.remove('on');
   aktif=v;
-  // metin: önce soldur → yaz → belir
-  kick.classList.remove('show'); beat.classList.remove('show');
-  setTimeout(function(){
-    kick.textContent=s.kick||''; beat.innerHTML=(s.beat||'').replace(/\n/g,'<br>');
-    if(s.kick) kick.classList.add('show');
-    beat.classList.add('show');
-  },420);
+  metinYaz(s.kick, s.beat);
   if(s.marka) brand.classList.add('on'); else brand.classList.remove('on');
 }
-function dongu(){ i=(i+1)%SAHNE.length; var s=SAHNE[i]; goster(s); setTimeout(dongu, s.sure); }
+function dongu(){
+  i=(i+1)%SAHNE.length; var s=SAHNE[i];
+  // menü verisi yoksa menü sahnesini atla (video akışı bozulmasın)
+  if(s.tip==='menu' && !MENU.length){ return dongu(); }
+  goster(s); setTimeout(dongu, s.sure);
+}
 
 // TV hep açık; sekme geri gelince aktif video duraksadıysa devam
 document.addEventListener('visibilitychange',function(){ if(!document.hidden && aktif && aktif.paused){ var p=aktif.play(); if(p&&p.catch)p.catch(function(){}); } });
 
-// hepsi belleğe yüklenince perdeyi kaldır ve başla
-hazirla().then(function(){
+// klipler belleğe + menü çekilince perdeyi kaldır ve başla
+Promise.all([hazirla(), menuGetir()]).then(function(){
   setTimeout(function(){ veil.classList.add('gone'); dongu(); }, 400);
 });
 </script>
