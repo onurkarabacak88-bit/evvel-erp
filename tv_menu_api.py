@@ -964,23 +964,22 @@ video.on{opacity:1}
   <div id="veil"><div id="vbrand">TULİ<b>P</b>İ</div><div id="vbar"><div id="vfill"></div></div><div id="vpct">HAZIRLANIYOR</div></div>
 </div>
 <script>
-// ── STORYBOARD v2 — video hikâyesi + canlı menü sayfaları ────────────────
-var SAHNE = [
-  {tip:'video', klip:'tulipi_mekan',    kick:'TULİPİ',   beat:'Her gün taze.',                         sure:4200, marka:false},
-  {tip:'video', klip:'tulipi_grind',    kick:'Zanaat',   beat:'Önce çekirdek.',                        sure:3000, marka:true},
-  {tip:'video', klip:'tulipi_espresso', kick:'Zanaat',   beat:'Sonra ateş.',                           sure:4000, marka:true},
-  {tip:'video', klip:'tulipi_latte',    kick:'Usta',     beat:'Elin son sözü.',                        sure:3000, marka:true},
-  {tip:'menu',  sure:9000},
-  {tip:'menu',  sure:9000},
-  {tip:'video', klip:'tulipi_iced',     kick:'Serinlik', beat:'Ya da buzlu bir mola.',                 sure:4000, marka:true},
-  {tip:'menu',  sure:9000},
-  {tip:'menu',  sure:9000},
-  {tip:'menu',  sure:9000},
-  {tip:'video', klip:'tulipi_mekan',    kick:'',         beat:'Zincir gibi hızlı.\nZanaat gibi özenli.', sure:4600, marka:false}
+// ── 3-EKRAN SLOT KURGUSU (wall-clock senkron triptik) ────────────────────
+// EKRAN: 1=MENÜ(karar) · 2=DENEYİM(hikâye) · 3=İMZA(upsell). Parametresiz = 2.
+var EKRAN=(function(){ var m=location.search.match(/[?&]ekran=([123])/); return m?('e'+m[1]):'e2'; })();
+document.body.setAttribute('data-ekran', EKRAN.slice(1));
+// her slot: {sure, e1, e2, e3}; içerik = {v:'klip',k:'kicker',b:'beat',m:marka} VEYA {menu:'Kategori Adı'}
+var SLOT = [
+  {sure:4200, e1:{menu:'Classic Coffees'},   e2:{v:'tulipi_mekan',k:'TULİPİ',b:'Her gün taze.',m:false},        e3:{v:'tulipi_mekan',k:'',b:'',m:true}},
+  {sure:3600, e1:{menu:'Signature Coffees'}, e2:{v:'tulipi_grind',k:'Zanaat',b:'Önce çekirdek.',m:true},         e3:{menu:'Signature Coffees'}},
+  {sure:4000, e1:{menu:'Milkshakes'},        e2:{v:'tulipi_espresso',k:'Zanaat',b:'Sonra ateş.',m:true},         e3:{v:'tulipi_latte',k:'İmza',b:'İmza dokunuş.',m:true}},
+  {sure:3600, e1:{menu:'Mocktails'},         e2:{v:'tulipi_latte',k:'Usta',b:'Elin son sözü.',m:true},           e3:{menu:'Mocktails'}},
+  {sure:4000, e1:{menu:'Desserts'},          e2:{v:'tulipi_iced',k:'Serinlik',b:'Ya da buzlu bir mola.',m:true}, e3:{v:'tulipi_iced',k:'Serinlik',b:'Buzlu imza.',m:true}},
+  {sure:9000, e1:{menu:'Classic Coffees'},   e2:{menu:'Signature Coffees'},                                       e3:{menu:'Desserts'}},
+  {sure:4600, e1:{menu:'Signature Coffees'}, e2:{v:'tulipi_mekan',k:'',b:'Zincir gibi hızlı.\nZanaat gibi özenli.',m:false}, e3:{menu:'Mocktails'}}
 ];
-// NOT: menü sahnesi sayısı >= kategori sayısı olsun ki HER TUR TÜM kategoriler görünsün.
-// menuCiz() eksikse dinamik ekler (aşağıda).
-var KLIPLER=[]; SAHNE.forEach(function(s){ if(s.klip && KLIPLER.indexOf(s.klip)<0) KLIPLER.push(s.klip); });
+var TOPLAM=0; SLOT.forEach(function(s){ s._bas=TOPLAM; TOPLAM+=s.sure; });
+var KLIPLER=[]; SLOT.forEach(function(s){ ['e1','e2','e3'].forEach(function(e){ var c=s[e]; if(c&&c.v&&KLIPLER.indexOf(c.v)<0) KLIPLER.push(c.v); }); });
 
 var stage=document.getElementById('stage'), veil=document.getElementById('veil'),
     vfill=document.getElementById('vfill'), vpct=document.getElementById('vpct'),
@@ -1002,13 +1001,14 @@ function menuGetir(){
     MENU=(d && d.kategoriler)||[];
   }).catch(function(){ MENU=[]; });
 }
-function menuCiz(){
-  if(!MENU.length){ return; }
-  var k=MENU[menuKat % MENU.length]; menuKat++;
+function menuCizAd(ad){
+  if(!MENU.length) return false;
+  var k=null,j; for(j=0;j<MENU.length;j++){ if(MENU[j].kategori===ad){ k=MENU[j]; break; } }
+  if(!k) k=MENU[0];
   var us=k.urunler||[];
   mkat.textContent=k.kategori||'';
   malt.textContent=k.alt||(us.length+' seçenek');
-  // TÜM ürünler gösterilir; uzun kategoride (Signature 13) sıkışık mod → taşma yok
+  // TÜM ürünler; uzun kategoride (Signature 13) sıkışık mod → taşma yok
   menuEl.classList.toggle('yogun', us.length>9);
   var html='';
   us.forEach(function(u){
@@ -1017,7 +1017,7 @@ function menuCiz(){
         + (u.aciklama?'<span class="mnote">'+u.aciklama+'</span>':'<span class="mdot"></span>')
         + '<span class="mfiyat">'+f+'</span></div>';
   });
-  mlist.innerHTML=html;
+  mlist.innerHTML=html; return true;
 }
 
 // ── ÖN-BELLEK: her klibi blob olarak indir → objectURL → hazır <video> ──
@@ -1055,11 +1055,12 @@ function metinYaz(kickTxt, beatTxt){
     if(beatTxt) beat.classList.add('show');
   },420);
 }
-function goster(s){
-  if(s.tip==='menu' && MENU.length){
-    // menü sayfası: videoları söndür, menüyü çiz+göster, alt beat'i kapat
+function goster(c){
+  if(!c) return;
+  if(c.menu){
+    // menü sayfası: videoları söndür, adına göre çiz+göster, alt beat kapalı
+    if(!menuCizAd(c.menu)) return;   // menü verisi yoksa video kalsın
     if(aktif){ aktif.classList.remove('on'); aktif=null; }
-    menuCiz();
     menuEl.classList.add('on');
     metinYaz('','');
     brand.classList.add('on');
@@ -1067,20 +1068,23 @@ function goster(s){
   }
   // video sahnesi
   menuEl.classList.remove('on');
-  var v=VID[s.klip]; if(!v){ return; }
+  var v=VID[c.v]; if(!v){ return; }
   try{ v.currentTime=0; }catch(e){}
   var pr=v.play(); if(pr&&pr.catch) pr.catch(function(){});
   v.classList.add('on');
   if(aktif && aktif!==v) aktif.classList.remove('on');
   aktif=v;
-  metinYaz(s.kick, s.beat);
-  if(s.marka) brand.classList.add('on'); else brand.classList.remove('on');
+  metinYaz(c.k, c.b);
+  if(c.m) brand.classList.add('on'); else brand.classList.remove('on');
 }
-function dongu(){
-  i=(i+1)%SAHNE.length; var s=SAHNE[i];
-  // menü verisi yoksa menü sahnesini atla (video akışı bozulmasın)
-  if(s.tip==='menu' && !MENU.length){ return dongu(); }
-  goster(s); setTimeout(dongu, s.sure);
+// ── WALL-CLOCK SENKRON: Date.now()%TOPLAM → slot; 3 ekran aynı anda aynı slot = triptik
+var sonSlot=-1;
+function tick(){
+  var t=Date.now()%TOPLAM, idx=0, j;
+  for(j=0;j<SLOT.length;j++){ if(t>=SLOT[j]._bas) idx=j; else break; }
+  if(idx!==sonSlot){ sonSlot=idx; goster(SLOT[idx][EKRAN]); }
+  var kalan=SLOT[idx]._bas+SLOT[idx].sure - t;
+  setTimeout(tick, Math.max(120, Math.min(kalan, 700)));
 }
 
 // TV hep açık; sekme geri gelince aktif video duraksadıysa devam
@@ -1088,7 +1092,7 @@ document.addEventListener('visibilitychange',function(){ if(!document.hidden && 
 
 // klipler belleğe + menü çekilince perdeyi kaldır ve başla
 Promise.all([hazirla(), menuGetir()]).then(function(){
-  setTimeout(function(){ veil.classList.add('gone'); dongu(); }, 400);
+  setTimeout(function(){ veil.classList.add('gone'); tick(); }, 400);
 });
 </script>
 </body></html>"""
