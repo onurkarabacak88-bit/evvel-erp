@@ -1027,6 +1027,8 @@ video.on{opacity:1}
 #menu{position:absolute;inset:0;z-index:2;opacity:0;transition:opacity 1.15s cubic-bezier(.37,0,.24,1);display:flex;flex-direction:column;padding:8.5vh 7vw 0;background:radial-gradient(72vw 60vw at 50% 18%,rgba(98,66,34,.22),transparent 64%),linear-gradient(180deg,#1b130f 0%,#0b0705 100%)}
 #menu.on{opacity:1}
 #mhead{text-align:center;margin-bottom:3.6vh;flex-shrink:0}
+#mbrand{font-size:2vh;font-weight:600;letter-spacing:.34em;color:var(--cream);opacity:.92;margin-bottom:1.6vh}
+#mbrand b{color:var(--green)}
 #mkick{font-size:1.9vh;font-weight:500;letter-spacing:.4em;text-transform:uppercase;color:var(--green);margin-bottom:1.5vh;min-height:1.9vh}
 #mkat{font-size:5.2vh;font-weight:500;color:var(--cream);line-height:1.05}
 #mkat::after{content:"";display:block;width:8vw;height:2px;background:var(--green);margin:1.8vh auto 0;border-radius:2px}
@@ -1035,7 +1037,7 @@ video.on{opacity:1}
 #mbody{flex:1 1 auto;display:flex;flex-direction:column;justify-content:center;min-height:0;overflow:hidden}
 /* fiyat sütun başlıkları — listeyle aynı grid, piksel hizalı */
 #mcols{display:grid;column-gap:2vw;align-items:baseline;padding-bottom:1vh;border-bottom:1px solid rgba(184,155,128,.28);flex-shrink:0}
-#mcols div{font-size:1.8vh;font-weight:500;letter-spacing:.22em;text-transform:uppercase;color:var(--muted);text-align:right}
+#mcols div{font-size:1.8vh;font-weight:500;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);text-align:right;white-space:nowrap}
 #mcols .c14{color:var(--cream);opacity:.88}
 #mlist{display:flex;flex-direction:column}
 @keyframes satirBelir{from{opacity:0}to{opacity:1}}
@@ -1061,6 +1063,7 @@ video.on{opacity:1}
 /* yoğun kategori (10+ ürün: Classic 11, Signature 13) — sıkışık ölçek, taşma yok */
 #menu.yogun{padding-top:4.5vh}
 #menu.yogun #mhead{margin-bottom:1.8vh}
+#menu.yogun #mbrand{display:none}
 #menu.yogun #mkick{font-size:1.7vh;margin-bottom:1vh;min-height:1.7vh}
 #menu.yogun #mkat{font-size:4.2vh}
 #menu.yogun #mkat::after{margin-top:1.2vh}
@@ -1108,7 +1111,7 @@ video.on{opacity:1}
 <div id="stage">
   <div id="scrim"></div>
   <div id="menu">
-    <div id="mhead"><div id="mkick"></div><div id="mkat"></div><div id="malt"></div></div>
+    <div id="mhead"><div id="mbrand">TULİ<b>P</b>İ</div><div id="mkick"></div><div id="mkat"></div><div id="malt"></div></div>
     <div id="mbody">
       <div id="mcols"></div>
       <div id="mlist"></div>
@@ -1354,7 +1357,7 @@ function goster(c){
   // 🏆 EN ÇOK / ✨ YENİ — #menu overlay'i sosyal kanıt/yeni ürünle doldur
   if(c.cok || c.yeni){
     var ok = c.cok ? cokCiz() : yeniCiz();
-    if(ok){ if(aktif){ aktif.classList.remove('on'); aktif=null; } menuEl.classList.add('on'); metinYaz('',''); brand.classList.add('on'); return; }
+    if(ok){ if(aktif){ aktif.classList.remove('on'); aktif=null; } menuEl.classList.add('on'); metinYaz('',''); brand.classList.remove('on'); return; }
     // veri yoksa boş kalmasın: mekan videosuna düş
     menuEl.classList.remove('on');
     var vf=VID['tulipi_mekan'];
@@ -1380,7 +1383,7 @@ function goster(c){
     if(aktif){ aktif.classList.remove('on'); aktif=null; }
     menuEl.classList.add('on');
     metinYaz('','');
-    brand.classList.add('on');
+    brand.classList.remove('on');   // pano kendi TULİPİ imzasını taşır (#mbrand) — üst overlay çakışmasın
     return;
   }
   // video sahnesi
