@@ -824,7 +824,7 @@ def tv_ayar_yaz(a: AyarModel):
 PORTRE_KLIP_WL = ["tulipi_mekan", "tulipi_grind", "tulipi_espresso", "tulipi_latte", "tulipi_iced",
                   "tulipi_gulus", "tulipi_serin", "tulipi_servis", "tulipi_barista", "tulipi_bar",
                   "tulipi_buhar", "tulipi_sut", "tulipi_surup", "tulipi_pencere", "tulipi_keyif",
-                  "tulipi_sohbet", "tulipi_enerji", "tulipi_urun_sicak", "tulipi_urun_soguk"]
+                  "tulipi_sohbet", "tulipi_enerji", "tulipi_urun_sicak", "tulipi_urun_soguk", "tulipi_uclu"]
 # ══ NİHAİ PROGRAM (kreatif direktör ajanı kurgusu, 2026-07-21 — sahip talebi) ══
 # 5 perde: Marka Nefesi → Zanaat Zinciri → Duygu → Satış Rampası → Serin İniş/Kapanış.
 # E2 kesintisiz hikâye (çekirdek→ateş→el→servis), E3 duyusal yan-okuma. Fiyat rampası:
@@ -846,7 +846,7 @@ VARSAYILAN_KURGU = [
   {"sure":9000,"e1":{"menu":"Classic Coffees","syf":2},"e2":{"menu":"Mocktails"},"e3":{"menu":"Desserts"}},
   {"sure":6500,"e1":{"vitrin":True},"e2":{"gunun":True},"e3":{"eslesme":True}},
   # ── PERDE V · SOSYAL KANIT + YÖNLENDİRME (Codex: canlı veri zirveden SONRA daha iyi çalışır) ──
-  {"sure":6000,"e1":{"cok":True},"e2":{"v":"tulipi_servis","k":"","b":"Ve masana gelir.","m":False},"e3":{"yeni":True}},
+  {"sure":6000,"e1":{"cok":True},"e2":{"v":"tulipi_uclu","k":"","b":"Üç dünya.","a":"Sıcak, buzlu, taze.","m":False},"e3":{"yeni":True}},
   {"sure":6500,"e1":{"menu":"Desserts"},"e2":{"oneri":True},"e3":{"sezon":True}},
   # ── PERDE VI · SERİN İNİŞ + KAPANIŞ NEFESİ ──
   {"sure":6000,"e1":{"menu":"Mocktails"},"e2":{"v":"tulipi_serin","k":"TAZE","b":"Serin ve canlı.","a":"Buz, nane, derin nefes.","m":False},"e3":{"v":"tulipi_keyif","k":"","b":"Tadını çıkar.","a":"Acele etme; sıcak, bekler.","m":False}},
@@ -1024,7 +1024,9 @@ def tv_menu_clip(name: str):
                      "tulipi_sohbet", "tulipi_enerji",
                      # Greenbox tekniği (2026-07-21): hareket KLİBE pişirilir — gerçek bardak
                      # cutout + stüdyo ışık havuzu + yüzme + gölge (ffmpeg üretimi, runtime maliyeti 0)
-                     "tulipi_urun_sicak", "tulipi_urun_soguk"):
+                     "tulipi_urun_sicak", "tulipi_urun_soguk",
+                     # üçlü fırlama: mocktail soldan + karton alttan + buzlu sağdan (marka üçlüsü)
+                     "tulipi_uclu"):
         raise HTTPException(404, "klip yok")
     # Prod: Vite public/ -> static/tv'ye kopyalar. Dev: public/tv veya src/assets/tv.
     for base in ("static/tv", "public/tv", "src/assets/tv"):
