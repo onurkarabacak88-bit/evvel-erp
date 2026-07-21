@@ -833,24 +833,24 @@ PORTRE_KLIP_WL = ["tulipi_mekan", "tulipi_grind", "tulipi_espresso", "tulipi_lat
 VARSAYILAN_KURGU = [
   # ── PERDE I · MARKA NEFESİ (alt metin = TULİPİ hikâyesi başlar) ──
   {"sure":7000,"e1":{"menu":"Classic Coffees","syf":1},"e2":{"v":"tulipi_bar","k":"TULİPİ","b":"Her gün taze.","a":"Çekirdek her sabah burada açılır.","m":False},"e3":{"v":"tulipi_mekan","k":"","b":"","m":True}},
-  # ── PERDE II · ZANAAT ZİNCİRİ (alt metin = ürünün iştah hikâyesi) ──
-  {"sure":6500,"e1":{"menu":"Signature Coffees","syf":1},"e2":{"v":"tulipi_grind","k":"ZANAAT","b":"Önce çekirdek.","a":"Doğru öğütüm, doğru fincan.","m":False},"e3":{"v":"tulipi_barista","k":"USTA","b":"Her fincan elde.","a":"Makine değil, el ayarı.","m":False}},
+  # ── PERDE II · ZANAAT ZİNCİRİ (alt metin = ürünün iştah hikâyesi; Codex metin revizyonu) ──
+  {"sure":6500,"e1":{"menu":"Signature Coffees","syf":1},"e2":{"v":"tulipi_grind","k":"ZANAAT","b":"Önce çekirdek.","a":"İnce ayar, temiz tat.","m":False},"e3":{"v":"tulipi_barista","k":"USTA","b":"Her fincan elde.","a":"Makine değil, el ayarı.","m":False}},
   {"sure":6500,"e1":{"menu":"Milkshakes"},"e2":{"v":"tulipi_espresso","k":"ZANAAT","b":"Sonra ateş.","a":"Otuz saniyede yoğun bir öz.","m":False},"e3":{"v":"tulipi_sut","k":"ZANAAT","b":"Sütün dansı.","a":"Kadife köpük, tam kıvamında.","m":False}},
   {"sure":6500,"e1":{"menu":"Mocktails"},"e2":{"v":"tulipi_latte","k":"İMZA","b":"Elin son sözü.","a":"Süt ve espresso, tek desende.","m":False},"e3":{"v":"tulipi_surup","k":"TAZE","b":"Bahçeden bardağa.","a":"Nane tazeliği, buz sesiyle.","m":False}},
-  # ── PERDE III · CANLI VERİ ÜÇLÜSÜ (sosyal kanıt + servis + yeni) ──
-  {"sure":6000,"e1":{"cok":True},"e2":{"v":"tulipi_servis","k":"","b":"Ve masana gelir.","a":"Sıcaklığı elinde hissedersin.","m":False},"e3":{"yeni":True}},
-  {"sure":6500,"e1":{"menu":"Desserts"},"e2":{"oneri":True},"e3":{"sezon":True}},
-  # ── PERDE IV · DUYGU (dört gerçek an: gülüş+pencere, sohbet+tezgâh enerjisi) ──
-  {"sure":7000,"e1":{"menu":"Milkshakes"},"e2":{"v":"tulipi_gulus","k":"","b":"Burada iyi hissedersin.","a":"Kahve bahane, an gerçek.","m":False},"e3":{"v":"tulipi_pencere","k":"","b":"İyi sohbet, iyi kahve.","a":"Pencere kenarı, uzun muhabbet.","m":False}},
-  {"sure":6500,"e1":{"menu":"Desserts"},"e2":{"v":"tulipi_sohbet","k":"","b":"Söz kahveyle koyulaşır.","a":"Masada iki fincan, bir hikâye.","m":False},"e3":{"v":"tulipi_enerji","k":"","b":"Burası hiç durmaz.","a":"Tezgâh dolu, kahve akar.","m":False}},
-  # ── PERDE V · SATIŞ RAMPASI (vitrin/hero → çift spot → menü duvarı → ZİRVE) ──
+  # ── PERDE III · DUYGU ×2 (Codex: 2. duygu slotunda beat YOK, yalnız alt metin — tekrar hissi kırılır) ──
+  {"sure":7000,"e1":{"menu":"Desserts"},"e2":{"v":"tulipi_gulus","k":"","b":"Burada iyi hissedersin.","a":"İlk yudum, ses kesilir.","m":False},"e3":{"v":"tulipi_pencere","k":"","b":"İyi sohbet, iyi kahve.","a":"Cam kenarı, fincan ağır ağır.","m":False}},
+  {"sure":6500,"e1":{"menu":"Milkshakes"},"e2":{"v":"tulipi_sohbet","k":"","b":"","a":"İki fincan, akşam uzar.","m":False},"e3":{"v":"tulipi_enerji","k":"","b":"","a":"Tezgâh dolu, kahve akar.","m":False}},
+  # ── PERDE IV · SATIŞ RAMPASI (önce ARZU: vitrin/hero → çift spot → menü duvarı → ZİRVE) ──
   {"sure":6000,"e1":{"vitrin":True},"e2":{"hero":True},"e3":{"vitrin":True}},
   {"sure":7500,"e1":{"menu":"Signature Coffees","syf":2},"e2":{"spot":True},"e3":{"spot":True}},
   {"sure":9000,"e1":{"menu":"Classic Coffees","syf":2},"e2":{"menu":"Mocktails"},"e3":{"menu":"Desserts"}},
   {"sure":6500,"e1":{"vitrin":True},"e2":{"gunun":True},"e3":{"eslesme":True}},
+  # ── PERDE V · SOSYAL KANIT + YÖNLENDİRME (Codex: canlı veri zirveden SONRA daha iyi çalışır) ──
+  {"sure":6000,"e1":{"cok":True},"e2":{"v":"tulipi_servis","k":"","b":"Ve masana gelir.","m":False},"e3":{"yeni":True}},
+  {"sure":6500,"e1":{"menu":"Desserts"},"e2":{"oneri":True},"e3":{"sezon":True}},
   # ── PERDE VI · SERİN İNİŞ + KAPANIŞ NEFESİ ──
-  {"sure":6000,"e1":{"yeni":True},"e2":{"v":"tulipi_serin","k":"TAZE","b":"Serin ve canlı.","a":"Buz, nane, derin nefes.","m":False},"e3":{"v":"tulipi_keyif","k":"","b":"Tadını çıkar.","a":"Acele etme; sıcak, bekler.","m":False}},
-  {"sure":6500,"e1":{"cok":True},"e2":{"v":"tulipi_mekan","k":"","b":"Zincir gibi hızlı.\nZanaat gibi özenli.","m":False},"e3":{"v":"tulipi_gulus","k":"","b":"Yarın yine bekleriz.","a":"Aynı köşe, taze kahve.","m":True}},
+  {"sure":6000,"e1":{"menu":"Mocktails"},"e2":{"v":"tulipi_serin","k":"TAZE","b":"Serin ve canlı.","a":"Buz, nane, derin nefes.","m":False},"e3":{"v":"tulipi_keyif","k":"","b":"Tadını çıkar.","a":"Acele etme; sıcak, bekler.","m":False}},
+  {"sure":6500,"e1":{"cok":True},"e2":{"v":"tulipi_mekan","k":"","b":"Zincir gibi hızlı.\nZanaat gibi özenli.","m":False},"e3":{"v":"tulipi_gulus","k":"","b":"Yarın yine bekleriz.","a":"Aynı masa, yeni öğütüm.","m":True}},
 ]
 
 
