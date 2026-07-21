@@ -824,7 +824,8 @@ def tv_ayar_yaz(a: AyarModel):
 PORTRE_KLIP_WL = ["tulipi_mekan", "tulipi_grind", "tulipi_espresso", "tulipi_latte", "tulipi_iced",
                   "tulipi_gulus", "tulipi_serin", "tulipi_servis", "tulipi_barista", "tulipi_bar",
                   "tulipi_buhar", "tulipi_sut", "tulipi_surup", "tulipi_pencere", "tulipi_keyif",
-                  "tulipi_sohbet", "tulipi_enerji", "tulipi_urun_sicak", "tulipi_urun_soguk", "tulipi_uclu"]
+                  "tulipi_sohbet", "tulipi_enerji", "tulipi_urun_sicak", "tulipi_urun_soguk", "tulipi_uclu",
+                  "tulipi_urun_yesil"]
 # ══ NİHAİ PROGRAM (kreatif direktör ajanı kurgusu, 2026-07-21 — sahip talebi) ══
 # 5 perde: Marka Nefesi → Zanaat Zinciri → Duygu → Satış Rampası → Serin İniş/Kapanış.
 # E2 kesintisiz hikâye (çekirdek→ateş→el→servis), E3 duyusal yan-okuma. Fiyat rampası:
@@ -1026,7 +1027,7 @@ def tv_menu_clip(name: str):
                      # cutout + stüdyo ışık havuzu + yüzme + gölge (ffmpeg üretimi, runtime maliyeti 0)
                      "tulipi_urun_sicak", "tulipi_urun_soguk",
                      # üçlü fırlama: mocktail soldan + karton alttan + buzlu sağdan (marka üçlüsü)
-                     "tulipi_uclu"):
+                     "tulipi_uclu", "tulipi_urun_yesil"):
         raise HTTPException(404, "klip yok")
     # Prod: Vite public/ -> static/tv'ye kopyalar. Dev: public/tv veya src/assets/tv.
     for base in ("static/tv", "public/tv", "src/assets/tv"):
@@ -1284,11 +1285,11 @@ function icKlipleri(c,push){
   if(c.v) push(c.v);
   if(c.spot) push('tulipi_latte');
   if(c.hero){ push('tulipi_latte'); push('tulipi_iced'); push('tulipi_serin'); }  // ürüne göre seçilir
-  if(c.gunun){ push('tulipi_urun_sicak'); push('tulipi_urun_soguk'); }
+  if(c.gunun){ push('tulipi_urun_sicak'); push('tulipi_urun_soguk'); push('tulipi_urun_yesil'); push('tulipi_uclu'); }
   if(c.cok||c.yeni||c.vitrin) push('tulipi_mekan');
   if(c.sezon){ push('tulipi_iced'); push('tulipi_serin'); push('tulipi_espresso'); push('tulipi_latte'); }
   if(c.eslesme){ push('tulipi_espresso'); push('tulipi_iced'); push('tulipi_servis'); }
-  if(c.oneri) push('tulipi_buhar');
+  if(c.oneri){ push('tulipi_buhar'); push('tulipi_iced'); push('tulipi_serin'); push('tulipi_enerji'); }
 }
 function klipListesi(slots){
   var L=[]; var push=function(n){ if(n&&L.indexOf(n)<0) L.push(n); };
@@ -1407,8 +1408,12 @@ function gununCiz(){
   spfiyat.style.color='#C8956A';   // döngünün TEK altın fiyat anı (zirve vurgusu; glow yok)
   if(PAIR && PAIR.ad){ sppair.innerHTML='<b>+ '+PAIR.ad+'</b> · '+(PAIR.fiyat!=null?PAIR.fiyat+' · ':'')+(PAIR.mesaj||'Yanına yakışır'); sppair.style.display=''; }
   else { sppair.style.display='none'; }
-  var tb=bardakSec(ad, f&&f.kat);
-  return (tb==='iced'||tb==='mocktail') ? 'tulipi_urun_soguk' : 'tulipi_urun_sicak';
+  // ZEMİN ÜRÜNE UYAR: klip üründür — yanlış ürün görseli gösterilmez (sahip kuralı)
+  var s2=(ad||'')+' '+((f&&f.kat)||'');
+  if(/mocktail/i.test(s2)) return 'tulipi_urun_yesil';       // yeşil bardak kahramanı
+  if(/milkshake|frozen/i.test(s2)) return 'tulipi_uclu';     // spesifik görsel yok → marka üçlüsü (nötr)
+  if(/ice|iced|buz|cold/i.test(s2)) return 'tulipi_urun_soguk';
+  return 'tulipi_urun_sicak';
 }
 // 🏪 VİTRİN — Greenbox deseni TULİPİ diliyle: 3 ürün yan yana, bardak + boy/fiyat blokları
 function vitrinCiz(){
@@ -1451,16 +1456,21 @@ function vitrinCiz(){
 // 🤫 BARİSTANIN ÖNERİSİ — az satılan ürünün ortaya çıkarılması ("bilenin seçimi"); buğulu zemin
 function oneriCiz(){
   var o=SIG&&SIG.oneri; if(!o||!o.ad) return null;
-  var f=urunBul(o.ad);
+  var f=urunBul(o.ad), kat=o.kategori||(f&&f.kat);
   spotEl.classList.remove('altta'); spotEl.classList.add('duo');
   spkick.textContent='BARİSTANIN ÖNERİSİ';
-  spcup.src='/tv-menu/cup/'+bardakSec(o.ad, o.kategori||(f&&f.kat)); spcup.style.display='block';
-  cazYaz(o.kategori||(f&&f.kat));
+  spcup.src='/tv-menu/cup/'+bardakSec(o.ad, kat); spcup.style.display='block';
+  cazYaz(kat);
   spad.textContent=o.ad;
   spnot.textContent=o.neden||'Çok bilinmez; bilenlerin seçimi.';
   spfiyat.textContent=(o.fiyat!=null?o.fiyat:''); spfiyat.style.color='';
   sppair.style.display='none';
-  return 'tulipi_buhar';
+  // ZEMİN ÜRÜNE UYAR (sahip kuralı: milkshake önerirken süt köpürtme videosu olmaz)
+  var s=(o.ad||'')+' '+(kat||'');
+  if(/mocktail/i.test(s)) return 'tulipi_serin';           // yeşil mocktail çekimi
+  if(/milkshake|frozen/i.test(s)) return 'tulipi_enerji';  // nötr tezgâh enerjisi
+  if(/ice|iced|buz|cold/i.test(s)) return 'tulipi_iced';   // buzlu kahve çekimi
+  return 'tulipi_buhar';                                   // sıcak kahve = süt buharı ✓
 }
 function eslesmeCiz(){
   var sm=(SIG&&SIG.saat_modu)||{}, mod=sm.mod||'aksam';
