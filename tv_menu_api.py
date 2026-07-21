@@ -824,7 +824,7 @@ def tv_ayar_yaz(a: AyarModel):
 PORTRE_KLIP_WL = ["tulipi_mekan", "tulipi_grind", "tulipi_espresso", "tulipi_latte", "tulipi_iced",
                   "tulipi_gulus", "tulipi_serin", "tulipi_servis", "tulipi_barista", "tulipi_bar",
                   "tulipi_buhar", "tulipi_sut", "tulipi_surup", "tulipi_pencere", "tulipi_keyif",
-                  "tulipi_sohbet", "tulipi_enerji"]
+                  "tulipi_sohbet", "tulipi_enerji", "tulipi_urun_sicak", "tulipi_urun_soguk"]
 # ══ NİHAİ PROGRAM (kreatif direktör ajanı kurgusu, 2026-07-21 — sahip talebi) ══
 # 5 perde: Marka Nefesi → Zanaat Zinciri → Duygu → Satış Rampası → Serin İniş/Kapanış.
 # E2 kesintisiz hikâye (çekirdek→ateş→el→servis), E3 duyusal yan-okuma. Fiyat rampası:
@@ -1021,7 +1021,10 @@ def tv_menu_clip(name: str):
                      # V13 süt buharı 20sn · V17 süt sıçrama · V11 şurup · V3 pencere · V2 keyif
                      "tulipi_buhar", "tulipi_sut", "tulipi_surup", "tulipi_pencere", "tulipi_keyif",
                      # 17/17 tamamlandı (sahip: videoların hepsi kullanılsın)
-                     "tulipi_sohbet", "tulipi_enerji"):
+                     "tulipi_sohbet", "tulipi_enerji",
+                     # Greenbox tekniği (2026-07-21): hareket KLİBE pişirilir — gerçek bardak
+                     # cutout + stüdyo ışık havuzu + yüzme + gölge (ffmpeg üretimi, runtime maliyeti 0)
+                     "tulipi_urun_sicak", "tulipi_urun_soguk"):
         raise HTTPException(404, "klip yok")
     # Prod: Vite public/ -> static/tv'ye kopyalar. Dev: public/tv veya src/assets/tv.
     for base in ("static/tv", "public/tv", "src/assets/tv"):
@@ -1185,6 +1188,9 @@ body.yatay #spcup{width:36vh;max-height:38vh}
 #spcup{display:none;width:30vh;max-width:44vw;max-height:34vh;object-fit:contain;margin-bottom:2.4vh;filter:drop-shadow(0 2.4vh 4.6vh rgba(0,0,0,.72))}
 #spmetin{display:flex;flex-direction:column;align-items:center;text-align:center;min-width:0}
 #spcaz{display:none;font-size:2.3vh;font-style:italic;color:#C8956A;margin-top:1.8vh;letter-spacing:.02em}
+/* ALT YERLEŞİM: klip üründür (süzülen bardak) → metin alt bölgeye iner, ürünü örtmez */
+#spot.altta{justify-content:flex-end;padding-bottom:7vh}
+#spot.altta #spmetin{align-items:center;text-align:center}
 /* ÜRÜN VİTRİNİ (duo): bardak solda, yazı sağda — sahip şablonu */
 #spot.duo{flex-direction:row;justify-content:center;gap:4vw;padding:0 5vw 0 6vw}
 #spot.duo #spcup{margin:0;width:34vw;max-width:34vw;max-height:42vh;flex-shrink:0}
@@ -1276,7 +1282,8 @@ function icKlipleri(c,push){
   if(c.v) push(c.v);
   if(c.spot) push('tulipi_latte');
   if(c.hero){ push('tulipi_latte'); push('tulipi_iced'); push('tulipi_serin'); }  // ürüne göre seçilir
-  if(c.gunun||c.cok||c.yeni||c.vitrin) push('tulipi_mekan');
+  if(c.gunun){ push('tulipi_urun_sicak'); push('tulipi_urun_soguk'); }
+  if(c.cok||c.yeni||c.vitrin) push('tulipi_mekan');
   if(c.sezon){ push('tulipi_iced'); push('tulipi_serin'); push('tulipi_espresso'); push('tulipi_latte'); }
   if(c.eslesme){ push('tulipi_espresso'); push('tulipi_iced'); push('tulipi_servis'); }
   if(c.oneri) push('tulipi_buhar');
@@ -1324,7 +1331,7 @@ function sinyalGetir(){
 // İMZA SPOTLIGHT — hero ürün + fiyat + perfect-pair upsell
 function spotCiz(){
   if(!IMZA){ return false; }
-  spotEl.classList.remove('duo');
+  spotEl.classList.remove('duo'); spotEl.classList.remove('altta');
   spkick.textContent='★ İMZA';
   spcup.style.display='none';
   spfiyat.style.color='';   // altın renk sadece gunun zirvesinde
@@ -1372,7 +1379,7 @@ function urunKlibi(ad,kat){
 function heroCiz(){
   var ad=(SIG&&SIG.en_cok)||(IMZA&&IMZA.ad); if(!ad) return null;
   var f=urunBul(ad);
-  spotEl.classList.remove('duo');
+  spotEl.classList.remove('duo'); spotEl.classList.remove('altta');
   spkick.textContent=(SIG&&SIG.en_cok)?'BU HAFTA EN ÇOK SEÇİLEN':'TULİPİ İMZASI';
   spcup.style.display='none';
   cazYaz(f&&f.kat);
@@ -1386,9 +1393,10 @@ function heroCiz(){
 function gununCiz(){
   var ad=SIG&&SIG.en_cok; if(!ad) return null;
   var f=urunBul(ad), sm=SIG&&SIG.saat_modu;
-  spotEl.classList.add('duo');   // sahip şablonu: bardak solda, yazı sağda
+  spotEl.classList.remove('duo');
+  spotEl.classList.add('altta');   // Greenbox tekniği: süzülen ürün KLİPTE, metin altta — bindirme yok
   spkick.textContent=(sm&&sm.etiket?sm.etiket+' · ':'')+'GÜNÜN SEÇİMİ';
-  spcup.src='/tv-menu/cup/'+bardakSec(ad, f&&f.kat); spcup.style.display='block';
+  spcup.style.display='none';
   cazYaz(f&&f.kat);
   spad.textContent=ad;
   spnot.textContent=(f&&f.u.aciklama)||'';
@@ -1397,7 +1405,8 @@ function gununCiz(){
   spfiyat.style.color='#C8956A';   // döngünün TEK altın fiyat anı (zirve vurgusu; glow yok)
   if(PAIR && PAIR.ad){ sppair.innerHTML='<b>+ '+PAIR.ad+'</b> · '+(PAIR.fiyat!=null?PAIR.fiyat+' · ':'')+(PAIR.mesaj||'Yanına yakışır'); sppair.style.display=''; }
   else { sppair.style.display='none'; }
-  return 'tulipi_mekan';
+  var tb=bardakSec(ad, f&&f.kat);
+  return (tb==='iced'||tb==='mocktail') ? 'tulipi_urun_soguk' : 'tulipi_urun_sicak';
 }
 // 🏪 VİTRİN — Greenbox deseni TULİPİ diliyle: 3 ürün yan yana, bardak + boy/fiyat blokları
 function vitrinCiz(){
@@ -1441,7 +1450,7 @@ function vitrinCiz(){
 function oneriCiz(){
   var o=SIG&&SIG.oneri; if(!o||!o.ad) return null;
   var f=urunBul(o.ad);
-  spotEl.classList.add('duo');
+  spotEl.classList.remove('altta'); spotEl.classList.add('duo');
   spkick.textContent='BARİSTANIN ÖNERİSİ';
   spcup.src='/tv-menu/cup/'+bardakSec(o.ad, o.kategori||(f&&f.kat)); spcup.style.display='block';
   cazYaz(o.kategori||(f&&f.kat));
@@ -1460,7 +1469,7 @@ function eslesmeCiz(){
   else { kahve=(IMZA&&IMZA.ad)||kf['Signature Coffees']||'Latte'; yanina=(PAIR&&PAIR.ad)||'San Sebastian Cheesecake'; mesaj=(PAIR&&PAIR.mesaj)||'Akşamın tatlı dengesi.'; zemin='tulipi_servis'; }
   var fk=urunBul(kahve), fy2=urunBul(yanina);
   if(!fk && !fy2) return null;
-  spotEl.classList.remove('duo');
+  spotEl.classList.remove('duo'); spotEl.classList.remove('altta');
   spkick.textContent=(sm.etiket||'BUGÜN')+' · BİRLİKTE İYİ';
   spcup.style.display='none';
   spcaz.style.display='none';

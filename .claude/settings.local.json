@@ -57,7 +57,9 @@
       "Bash(python -c \"import ast; ast.parse\\(open\\('sube_panel.py',encoding='utf-8'\\).read\\(\\)\\); print\\('sube_panel.py OK'\\)\")",
       "Bash(node -e \"const fs=require\\('fs'\\); const html=fs.readFileSync\\('sube_panel.html','utf8'\\); const opens = \\(html.match\\(/<script[\\\\s>]/g\\)||[]\\).length; const closes = \\(html.match\\(/<\\\\/script>/g\\)||[]\\).length; console.log\\('script tag balance:', opens, 'open vs', closes, 'close'\\); console.log\\('Total lines:', html.split\\('\\\\n'\\).length\\);\")",
       "Bash(python -c \"import ast; ast.parse\\(open\\('sube_panel.py',encoding='utf-8'\\).read\\(\\)\\); ast.parse\\(open\\('database.py',encoding='utf-8'\\).read\\(\\)\\); print\\('OK'\\)\")",
-      "mcp__Claude_in_Chrome__javascript_tool"
+      "mcp__Claude_in_Chrome__javascript_tool",
+      "Bash(curl -s -o /dev/null -w \"sohbet klibi: %{http_code} %{size_download}B\\\\n\" \"https://evvel-erp-production.up.railway.app/tv-menu/clip/tulipi_sohbet\")",
+      "Bash(curl -s -o /dev/null -w \"enerji klibi: %{http_code} %{size_download}B\\\\n\" \"https://evvel-erp-production.up.railway.app/tv-menu/clip/tulipi_enerji\")"
     ]
   }
 }
