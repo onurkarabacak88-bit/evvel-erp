@@ -1380,11 +1380,20 @@ function urunBul(ad){
   }
   return null;
 }
-// ürün adı → slug (backend _slug ile birebir: türkçe kat + alnum→_)
+// Evvel adı → Otancy görsel slug'ı (aynı ürün, farklı yazım — foto eşleşsin)
+var URUN_ALIAS={
+  cikolata_milkshake:'cikolatali_milkshake', cilek_milkshake:'cilekli_milkshake',
+  muz_milkshake:'muzlu_milkshake', vanilya_milkshake:'vanilyali_milkshake',
+  oreo_milkshake:'oreolu_milkshake', oreo_banana_milkshake:'muzlu_oreolu_milkshake',
+  berry_latte:'bery_latte', vanilya_latte:'vanilla_latte',
+  toffee_nut_latte:'toffee_nut', salted_caramel_cappuccino:'salted_caramel'
+};
+// ürün adı → slug (backend _slug ile birebir: türkçe kat + alnum→_) + alias
 function urunSlug(ad){
-  return String(ad||'').toLowerCase()
+  var s=String(ad||'').toLowerCase()
     .replace(/ç/g,'c').replace(/ğ/g,'g').replace(/ı/g,'i').replace(/ö/g,'o').replace(/ş/g,'s').replace(/ü/g,'u')
     .replace(/[^a-z0-9]+/g,'_').replace(/^_|_$/g,'');
+  return URUN_ALIAS[s]||s;
 }
 // GERÇEK ürün fotoğrafını spcup'a koy; yüklenemezse jenerik bardağa düş (Otancy eşleme)
 function urunGorselKoy(ad,kat){
