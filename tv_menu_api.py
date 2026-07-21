@@ -839,7 +839,7 @@ VARSAYILAN_KURGU = [
   {"sure":6500,"e1":{"menu":"Milkshakes"},"e2":{"v":"tulipi_espresso","k":"ZANAAT","b":"Sonra ateş.","a":"Otuz saniyede yoğun bir öz.","m":False},"e3":{"v":"tulipi_sut","k":"ZANAAT","b":"Sütün dansı.","a":"Kadife köpük, tam kıvamında.","m":False}},
   {"sure":6500,"e1":{"menu":"Mocktails"},"e2":{"v":"tulipi_latte","k":"İMZA","b":"Elin son sözü.","a":"Süt ve espresso, tek desende.","m":False},"e3":{"v":"tulipi_surup","k":"TAZE","b":"Bahçeden bardağa.","a":"Nane tazeliği, buz sesiyle.","m":False}},
   # ── PERDE III · DUYGU ×2 (Codex: 2. duygu slotunda beat YOK, yalnız alt metin — tekrar hissi kırılır) ──
-  {"sure":7000,"e1":{"menu":"Desserts"},"e2":{"v":"tulipi_gulus","k":"","b":"Burada iyi hissedersin.","a":"İlk yudum, ses kesilir.","m":False},"e3":{"v":"tulipi_pencere","k":"","b":"İyi sohbet, iyi kahve.","a":"Cam kenarı, fincan ağır ağır.","m":False}},
+  {"sure":7000,"e1":{"menu":"Desserts"},"e2":{"v":"tulipi_gulus","bas":4,"k":"","b":"Burada iyi hissedersin.","a":"İlk yudum, ses kesilir.","m":False},"e3":{"v":"tulipi_pencere","k":"","b":"İyi sohbet, iyi kahve.","a":"Cam kenarı, fincan ağır ağır.","m":False}},
   {"sure":6500,"e1":{"menu":"Milkshakes"},"e2":{"v":"tulipi_sohbet","k":"","b":"","a":"İki fincan, akşam uzar.","m":False},"e3":{"v":"tulipi_enerji","k":"","b":"","a":"Tezgâh dolu, kahve akar.","m":False}},
   # ── PERDE IV · SATIŞ RAMPASI (önce ARZU: vitrin/hero → çift spot → menü duvarı → ZİRVE) ──
   {"sure":6000,"e1":{"vitrin":True},"e2":{"hero":True},"e3":{"vitrin":True}},
@@ -851,7 +851,7 @@ VARSAYILAN_KURGU = [
   {"sure":6500,"e1":{"menu":"Desserts"},"e2":{"oneri":True},"e3":{"sezon":True}},
   # ── PERDE VI · SERİN İNİŞ + KAPANIŞ NEFESİ ──
   {"sure":6000,"e1":{"menu":"Mocktails"},"e2":{"v":"tulipi_serin","k":"TAZE","b":"Serin ve canlı.","a":"Buz, nane, derin nefes.","m":False},"e3":{"v":"tulipi_keyif","k":"","b":"Tadını çıkar.","a":"Acele etme; sıcak, bekler.","m":False}},
-  {"sure":6500,"e1":{"cok":True},"e2":{"v":"tulipi_mekan","k":"","b":"Zincir gibi hızlı.\nZanaat gibi özenli.","m":False},"e3":{"v":"tulipi_gulus","k":"","b":"Yarın yine bekleriz.","a":"Aynı masa, yeni öğütüm.","m":True}},
+  {"sure":6500,"e1":{"cok":True},"e2":{"v":"tulipi_mekan","k":"","b":"Zincir gibi hızlı.\nZanaat gibi özenli.","m":False},"e3":{"v":"tulipi_gulus","bas":4.5,"k":"","b":"Yarın yine bekleriz.","a":"Aynı masa, yeni öğütüm.","m":True}},
 ]
 
 
@@ -1712,10 +1712,10 @@ function goster(c){
     brand.classList.remove('on');   // pano kendi TULİPİ imzasını taşır (#mbrand) — üst overlay çakışmasın
     return;
   }
-  // video sahnesi
+  // video sahnesi — c.bas: klip bu saniyeden başlar (uzun çekimde doğru anı yaşatır, ör. gülüşün açıldığı an)
   menuEl.classList.remove('on');
   var v=VID[c.v]; if(!v){ return; }
-  try{ v.currentTime=GECEN; }catch(e){}
+  try{ v.currentTime=(c.bas||0)+GECEN; }catch(e){}
   var pr=v.play(); if(pr&&pr.catch) pr.catch(function(){});
   v.classList.add('on');
   if(aktif && aktif!==v) aktif.classList.remove('on');

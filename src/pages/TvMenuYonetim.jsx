@@ -208,7 +208,8 @@ export default function TvMenuYonetim() {
                               <select value={ic.v || ''} onChange={e => icSet(i, ek, 'v', e.target.value)} style={{ width: '100%', fontSize: 11, marginBottom: 3 }}>{klipler.map(c => <option key={c} value={c}>{c.replace('tulipi_', '')}</option>)}</select>
                               <input placeholder="üst yazı (kicker)" value={ic.k || ''} onChange={e => icSet(i, ek, 'k', e.target.value)} style={{ width: '100%', fontSize: 11, marginBottom: 3 }} />
                               <input placeholder="ana yazı (beat)" value={ic.b || ''} onChange={e => icSet(i, ek, 'b', e.target.value)} style={{ width: '100%', fontSize: 11, marginBottom: 3 }} />
-                              <input placeholder="alt metin (hikâye/iştah — sonradan süzülür)" value={ic.a || ''} onChange={e => icSet(i, ek, 'a', e.target.value)} style={{ width: '100%', fontSize: 11 }} />
+                              <input placeholder="alt metin (hikâye/iştah — sonradan süzülür)" value={ic.a || ''} onChange={e => icSet(i, ek, 'a', e.target.value)} style={{ width: '100%', fontSize: 11, marginBottom: 3 }} />
+                              <input type="number" min="0" step="0.5" placeholder="başlangıç sn (uzun klipte doğru an)" value={ic.bas ?? ''} onChange={e => icSet(i, ek, 'bas', e.target.value === '' ? null : parseFloat(e.target.value))} style={{ width: '100%', fontSize: 11 }} />
                             </>}
                       </div>
                     );
