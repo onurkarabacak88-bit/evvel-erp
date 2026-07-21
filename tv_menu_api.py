@@ -1323,7 +1323,7 @@ function icKlipleri(c,push){
   if(c.sezon){ push('tulipi_iced'); push('tulipi_serin'); push('tulipi_espresso'); push('tulipi_latte'); }
   if(c.eslesme){ push('tulipi_espresso'); push('tulipi_iced'); push('tulipi_servis'); }
   if(c.oneri){ push('tulipi_buhar'); push('tulipi_iced'); push('tulipi_serin'); push('tulipi_enerji'); }
-  if(c.film){ push('tulipi_sut'); push('tulipi_serin'); push('tulipi_iced'); push('tulipi_buhar'); push('tulipi_espresso'); }
+  if(c.film){ push('tulipi_sut'); push('tulipi_serin'); push('tulipi_iced'); push('tulipi_latte'); push('tulipi_espresso'); push('tulipi_grind'); }
 }
 function klipListesi(slots){
   var L=[]; var push=function(n){ if(n&&L.indexOf(n)<0) L.push(n); };
@@ -1530,19 +1530,37 @@ function burstYak(kat){
   });
 }
 // gerçek ürün fotoğrafı sahnede fırlar+yüzer; zemin = ürüne uygun sıçrama. Dönüş: zemin klip adı.
+// KAHVE/LATTE: gerçek çekim ürünü ANLATIR (akış/döküm görünür) → foto YOK, video tam ekran
+function filmZeminKahve(ad,kat){
+  var s=(ad||'')+' '+(kat||'');
+  if(/latte|cappuccino|flat|white|mocha|macchiato/i.test(s)) return 'tulipi_latte';  // latte-art döküm = kahve akışı
+  if(/espresso|americano/i.test(s)) return 'tulipi_espresso';                          // demleme/ekstraksiyon
+  if(/filtre|filter|turk|dibek|menengic/i.test(s)) return 'tulipi_grind';              // değirmen/çekim
+  if(/ice|iced|cold|buz/i.test(s)) return 'tulipi_iced';
+  return 'tulipi_espresso';
+}
 function filmCiz(){
   var ad=(SIG&&SIG.en_cok)||(IMZA&&IMZA.ad); if(!ad) return null;
   var f=urunBul(ad), kat=f&&f.kat;
+  var s=(ad||'')+' '+(kat||'');
+  var fotoOlmali=/milkshake|frappe|mocktail/i.test(s);  // bu türlerin GERÇEK yapım çekimi yok → foto göster
   spotEl.classList.remove('duo'); spotEl.classList.remove('altta'); spotEl.classList.remove('film');
-  spotEl.classList.remove('film'); void spotEl.offsetWidth; spotEl.classList.add('film');  // her girişte animasyon restart
   spkick.textContent=(SIG&&SIG.en_cok)?'BU HAFTA EN ÇOK':'TULİPİ İMZASI';
-  urunGorselKoy(ad, kat); spcup.style.display='block';
   cazYaz(kat);
   spad.textContent=ad;
   spnot.textContent=(f&&f.u.aciklama)||'';
   var fy=f&&(f.u.f8!=null?f.u.f8:(f.u.f14!=null?f.u.f14:f.u.fice));
   spfiyat.textContent=(fy!=null?fy:''); spfiyat.style.color='#C8956A';
   sppair.style.display='none';
+  if(!fotoOlmali){
+    // KAHVE/LATTE — video kendi anlatır: foto yok, metin altta, kahve akışı tam görünür
+    spcup.style.display='none';
+    spotEl.classList.add('altta');
+    return filmZeminKahve(ad, kat);
+  }
+  // MİLKSHAKE/MOCKTAIL — gerçek ürün fotoğrafı fırlar+yüzer, arkada gerçek sıçrama akar
+  void spotEl.offsetWidth; spotEl.classList.add('film');
+  urunGorselKoy(ad, kat); spcup.style.display='block';
   burstYak(kat);
   return filmZemin(ad, kat);
 }
