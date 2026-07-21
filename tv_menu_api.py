@@ -1179,10 +1179,12 @@ body.yatay #spcup{width:36vh;max-height:38vh}
 #spmetin{display:flex;flex-direction:column;align-items:center;text-align:center;min-width:0}
 #spcaz{display:none;font-size:2.3vh;font-style:italic;color:#C8956A;margin-top:1.8vh;letter-spacing:.02em}
 /* ÜRÜN VİTRİNİ (duo): bardak solda, yazı sağda — sahip şablonu */
-#spot.duo{flex-direction:row;justify-content:center;gap:5vw;padding:0 6vw}
-#spot.duo #spcup{margin:0;width:36vw;max-width:36vw;max-height:42vh;flex-shrink:0}
-#spot.duo #spmetin{align-items:flex-start;text-align:left}
-#spot.duo #spnot,#spot.duo #spad{max-width:none}
+#spot.duo{flex-direction:row;justify-content:center;gap:4vw;padding:0 5vw 0 6vw}
+#spot.duo #spcup{margin:0;width:34vw;max-width:34vw;max-height:42vh;flex-shrink:0}
+#spot.duo #spmetin{align-items:flex-start;text-align:left;flex:1 1 0;min-width:0}
+#spot.duo #spad{font-size:5vh;max-width:none;overflow-wrap:break-word}
+#spot.duo #spnot{max-width:none}
+#spot.duo #spfiyat{font-size:5vh}
 /* SONRADAN GELEN YAZI — sahne açılınca kademeli belirir (yalnız opacity, sahip şablonu) */
 #spot.on #spkick{animation:satirBelir .5s ease .25s both}
 #spot.on #spcup{animation:satirBelir .8s ease .4s both}
