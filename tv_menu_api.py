@@ -667,7 +667,11 @@ def _oneri_motoru(rows, sm_mod, mevsim_ad, haric=None):
         return 0
 
     cands_sirali = sorted(cands, key=lambda r: (adet(r), r.get("sira") or 0))
-    pick = cands_sirali[0]
+    # ROTASYON (sahip 2026-07-21: 'hep çikolatalı milkshake') — en az satan 5 aday
+    # arasında 10 dakikada bir sıradaki: sessiz ürünler SIRAYLA vitrine çıkar,
+    # tüm TV'ler aynı pencerede aynı ürünü gösterir (senkron bozulmaz)
+    adaylar = cands_sirali[:5] or cands_sirali
+    pick = adaylar[(int(time.time()) // 600) % len(adaylar)]
     fy = _fmt(pick.get("f8")) or _fmt(pick.get("f14")) or _fmt(pick.get("fice"))
     return {"ad": pick["ad"], "fiyat": fy, "kategori": pick["kategori"],
             "neden": _ONERI_NEDEN.get(sm_mod, "Bugün dene")}
