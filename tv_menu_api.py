@@ -846,7 +846,7 @@ VARSAYILAN_KURGU = [
   {"sure":7000,"e1":{"menu":"Desserts"},"e2":{"v":"tulipi_gulus","bas":4,"k":"","b":"Burada iyi hissedersin.","a":"İlk yudum, ses kesilir.","m":False},"e3":{"v":"tulipi_pencere","k":"","b":"İyi sohbet, iyi kahve.","a":"Cam kenarı, fincan ağır ağır.","m":False}},
   {"sure":6500,"e1":{"menu":"Milkshakes"},"e2":{"v":"tulipi_sohbet","k":"","b":"","a":"İki fincan, akşam uzar.","m":False},"e3":{"v":"tulipi_enerji","k":"","b":"","a":"Tezgâh dolu, kahve akar.","m":False}},
   # ── PERDE IV · SATIŞ RAMPASI (önce ARZU: ürün filmi → çift spot → menü duvarı → ZİRVE) ──
-  {"sure":6500,"e1":{"vitrin":True},"e2":{"film":True},"e3":{"vitrin":True}},
+  {"sure":13500,"e1":{"vitrin":True},"e2":{"carousel":True},"e3":{"vitrin":True}},
   {"sure":7500,"e1":{"menu":"Signature Coffees","syf":2},"e2":{"spot":True},"e3":{"spot":True}},
   {"sure":9000,"e1":{"menu":"Classic Coffees","syf":2},"e2":{"menu":"Mocktails"},"e3":{"menu":"Desserts"}},
   {"sure":6500,"e1":{"vitrin":True},"e2":{"gunun":True},"e3":{"eslesme":True}},
@@ -879,8 +879,9 @@ def _kurgu_dogrula(slots):
             if ("menu" not in c and "v" not in c and not c.get("spot")
                     and not c.get("cok") and not c.get("yeni") and not c.get("sezon")
                     and not c.get("hero") and not c.get("gunun") and not c.get("vitrin")
-                    and not c.get("eslesme") and not c.get("oneri") and not c.get("film")):
-                return f"slot {idx}.{e}: menu, klip (v), spot, cok, yeni, sezon, hero, gunun, vitrin, eslesme, oneri veya film olmalı"
+                    and not c.get("eslesme") and not c.get("oneri") and not c.get("film")
+                    and not c.get("carousel")):
+                return f"slot {idx}.{e}: menu, klip (v), spot, cok, yeni, sezon, hero, gunun, vitrin, eslesme, oneri, film veya carousel olmalı"
             if c.get("v") and c["v"] not in PORTRE_KLIP_WL:
                 return f"slot {idx}.{e}: klip whitelist dışı ({c.get('v')})"
     return None
@@ -1323,7 +1324,7 @@ function icKlipleri(c,push){
   if(c.sezon){ push('tulipi_iced'); push('tulipi_serin'); push('tulipi_espresso'); push('tulipi_latte'); }
   if(c.eslesme){ push('tulipi_espresso'); push('tulipi_iced'); push('tulipi_servis'); }
   if(c.oneri){ push('tulipi_buhar'); push('tulipi_iced'); push('tulipi_serin'); push('tulipi_enerji'); }
-  if(c.film){ push('tulipi_sut'); push('tulipi_serin'); push('tulipi_iced'); push('tulipi_latte'); push('tulipi_espresso'); push('tulipi_grind'); }
+  if(c.film||c.carousel){ push('tulipi_sut'); push('tulipi_serin'); push('tulipi_iced'); push('tulipi_latte'); push('tulipi_espresso'); push('tulipi_grind'); }
 }
 function klipListesi(slots){
   var L=[]; var push=function(n){ if(n&&L.indexOf(n)<0) L.push(n); };
@@ -1539,30 +1540,46 @@ function filmZeminKahve(ad,kat){
   if(/ice|iced|cold|buz/i.test(s)) return 'tulipi_iced';
   return 'tulipi_espresso';
 }
-function filmCiz(){
-  var ad=(SIG&&SIG.en_cok)||(IMZA&&IMZA.ad); if(!ad) return null;
-  var f=urunBul(ad), kat=f&&f.kat;
-  var s=(ad||'')+' '+(kat||'');
-  var fotoOlmali=/milkshake|frappe|mocktail/i.test(s);  // bu türlerin GERÇEK yapım çekimi yok → foto göster
+// tek ürünü film dilinde çiz (kahve→video / milkshake-mocktail→foto). Dönüş: zemin klip adı.
+function filmUrunCiz(ad, kicker){
+  if(!ad) return null;
+  var f=urunBul(ad), kat=f&&f.kat, s=(ad||'')+' '+(kat||'');
+  var fotoOlmali=/milkshake|frappe|mocktail/i.test(s);
   spotEl.classList.remove('duo'); spotEl.classList.remove('altta'); spotEl.classList.remove('film');
-  spkick.textContent=(SIG&&SIG.en_cok)?'BU HAFTA EN ÇOK':'TULİPİ İMZASI';
-  cazYaz(kat);
-  spad.textContent=ad;
-  spnot.textContent=(f&&f.u.aciklama)||'';
+  spkick.textContent=kicker||'';
+  cazYaz(kat); spad.textContent=ad; spnot.textContent=(f&&f.u.aciklama)||'';
   var fy=f&&(f.u.f8!=null?f.u.f8:(f.u.f14!=null?f.u.f14:f.u.fice));
   spfiyat.textContent=(fy!=null?fy:''); spfiyat.style.color='#C8956A';
   sppair.style.display='none';
-  if(!fotoOlmali){
-    // KAHVE/LATTE — video kendi anlatır: foto yok, metin altta, kahve akışı tam görünür
-    spcup.style.display='none';
-    spotEl.classList.add('altta');
-    return filmZeminKahve(ad, kat);
-  }
-  // MİLKSHAKE/MOCKTAIL — gerçek ürün fotoğrafı fırlar+yüzer, arkada gerçek sıçrama akar
+  if(!fotoOlmali){ spcup.style.display='none'; spotEl.classList.add('altta'); return filmZeminKahve(ad, kat); }
   void spotEl.offsetWidth; spotEl.classList.add('film');
-  urunGorselKoy(ad, kat); spcup.style.display='block';
-  burstYak(kat);
+  urunGorselKoy(ad, kat); spcup.style.display='block'; burstYak(kat);
   return filmZemin(ad, kat);
+}
+function filmCiz(){
+  var ad=(SIG&&SIG.en_cok)||(IMZA&&IMZA.ad); if(!ad) return null;
+  return filmUrunCiz(ad, (SIG&&SIG.en_cok)?'BU HAFTA EN ÇOK':'TULİPİ İMZASI');
+}
+// 🎠 CAROUSEL — top-3 ürün sırayla film dilinde döner (wall-clock senkron, ekranlar aynı ürün)
+var carSon=-1;
+function zeminOynat(klipAd){
+  var v=klipAd&&VID[klipAd]; if(!v) return;
+  try{v.currentTime=0;}catch(e){} var p=v.play(); if(p&&p.catch)p.catch(function(){});
+  v.classList.add('on'); if(aktif&&aktif!==v)aktif.classList.remove('on'); aktif=v;
+}
+function carGoster(){
+  var slot=SLOT[sonSlot]; var c=slot&&slot[EKRAN];
+  if(!c||!c.carousel){ return; }   // sahne değişti → dur
+  var t=Date.now()%TOPLAM, ic=t-slot._bas;
+  var list=(SIG&&SIG.top3?SIG.top3.map(function(x){return x&&x.ad;}):[]).filter(Boolean);
+  if(!list.length && IMZA&&IMZA.ad) list=[IMZA.ad];
+  if(list.length>3) list=list.slice(0,3);
+  if(!list.length){ carTimer=setTimeout(carGoster,400); return; }
+  var per=slot.sure/list.length;
+  var i=Math.min(list.length-1, Math.floor(ic/per));
+  if(i!==carSon){ carSon=i; zeminOynat(filmUrunCiz(list[i], 'EN ÇOK · '+(i+1)+'/'+list.length)); }
+  var kalan=(i+1)*per-ic;
+  carTimer=setTimeout(carGoster, Math.max(150, Math.min(kalan,450)));
 }
 // 🤫 BARİSTANIN ÖNERİSİ — az satılan ürünün ortaya çıkarılması ("bilenin seçimi"); buğulu zemin
 function oneriCiz(){
@@ -1771,6 +1788,13 @@ function metinYaz(kickTxt, beatTxt, altTxt){
 }
 function goster(c){
   if(!c) return;
+  clearTimeout(carTimer); carTimer=null;   // önceki carousel döngüsünü durdur (sahne değişti)
+  if(c.carousel){
+    menuEl.classList.remove('on');
+    carSon=-1; carGoster();
+    spotEl.classList.add('on'); metinYaz('',''); brand.classList.remove('on');
+    return;
+  }
   // ★ İMZA SPOTLIGHT — hero ürün + fiyat + perfect-pair upsell (zemin: latte videosu)
   if(c.spot){
     menuEl.classList.remove('on');
@@ -1835,7 +1859,7 @@ function goster(c){
   if(c.m) brand.classList.add('on'); else brand.classList.remove('on');
 }
 // ── WALL-CLOCK SENKRON: Date.now()%TOPLAM → slot; 3 ekran aynı anda aynı slot = triptik
-var sonSlot=-1, GECEN=0, beatTimer=null, vinyetTimer=null;
+var sonSlot=-1, GECEN=0, beatTimer=null, vinyetTimer=null, carTimer=null;
 function tick(){
   var t=Date.now()%TOPLAM, idx=0, j;
   for(j=0;j<SLOT.length;j++){ if(t>=SLOT[j]._bas) idx=j; else break; }
