@@ -973,6 +973,20 @@ def tv_menu_hero(name: str):
     raise HTTPException(404, "hero dosyasi yok")
 
 
+@router.get("/tv-menu/urun/{slug}")
+def tv_menu_urun_gorsel(slug: str):
+    """Otancy'den indirilen GERÇEK ürün fotoğrafı (içeceğiyle dolu şeffaf PNG).
+    slug = ürün adının sadeleştirilmiş hali (tv-menu JS'teki _slug ile birebir).
+    Yoksa 404 → TV jenerik bardağa (cup) düşer (fail-safe)."""
+    if not re.match(r"^[a-z0-9_]{1,60}$", slug or ""):
+        raise HTTPException(404, "gecersiz slug")
+    for base in ("static/tv/urun", "public/tv/urun"):
+        p = os.path.join(base, slug + ".png")
+        if os.path.exists(p):
+            return FileResponse(p, media_type="image/png")
+    raise HTTPException(404, "urun gorseli yok")
+
+
 @router.get("/tv-menu/cup/{name}")
 def tv_menu_cup(name: str):
     """Gerçek TULİPİ bardak fotoğrafları — imza silüet (her sahnede aynı kare, marka hafızası).
@@ -1366,6 +1380,18 @@ function urunBul(ad){
   }
   return null;
 }
+// ürün adı → slug (backend _slug ile birebir: türkçe kat + alnum→_)
+function urunSlug(ad){
+  return String(ad||'').toLowerCase()
+    .replace(/ç/g,'c').replace(/ğ/g,'g').replace(/ı/g,'i').replace(/ö/g,'o').replace(/ş/g,'s').replace(/ü/g,'u')
+    .replace(/[^a-z0-9]+/g,'_').replace(/^_|_$/g,'');
+}
+// GERÇEK ürün fotoğrafını spcup'a koy; yüklenemezse jenerik bardağa düş (Otancy eşleme)
+function urunGorselKoy(ad,kat){
+  var fb='/tv-menu/cup/'+bardakSec(ad,kat);
+  spcup.onerror=function(){ spcup.onerror=null; spcup.src=fb; };
+  spcup.src='/tv-menu/urun/'+urunSlug(ad);
+}
 // ürün → bardak görseli (/tv-menu/cup/{hot|latte|iced|mocktail})
 function bardakSec(ad,kat){
   var s=(ad||'')+' '+(kat||'');
@@ -1438,7 +1464,7 @@ function vitrinCiz(){
     if(k.u.f14!=null) rows+='<div class="vpr"><span>14 oz</span><b>'+escq(k.u.f14)+'</b></div>';
     if(k.u.fice!=null)rows+='<div class="vpr"><span>Buzlu</span><b>'+escq(k.u.fice)+'</b></div>';
     html+='<div class="vkart" style="animation-delay:'+(0.3+ix*0.16).toFixed(2)+'s">'
-        + '<img class="vcup" src="/tv-menu/cup/'+bardakSec(k.ad,k.kat)+'" alt="">'
+        + '<img class="vcup" src="/tv-menu/urun/'+urunSlug(k.ad)+'" onerror="this.onerror=null;this.src=\'/tv-menu/cup/'+bardakSec(k.ad,k.kat)+'\'" alt="">'
         + '<div class="vad">'+escq(k.ad)+'</div>'
         + (k.u.aciklama?'<div class="vtat">'+escq(k.u.aciklama)+'</div>':'')
         + rows + '</div>';
@@ -1463,7 +1489,7 @@ function oneriCiz(){
   var f=urunBul(o.ad), kat=o.kategori||(f&&f.kat);
   spotEl.classList.remove('altta'); spotEl.classList.add('duo');
   spkick.textContent='BARİSTANIN ÖNERİSİ';
-  spcup.src='/tv-menu/cup/'+bardakSec(o.ad, kat); spcup.style.display='block';
+  urunGorselKoy(o.ad, kat); spcup.style.display='block';
   cazYaz(kat);
   spad.textContent=o.ad;
   spnot.textContent=o.neden||'Çok bilinmez; bilenlerin seçimi.';
