@@ -823,32 +823,34 @@ def tv_ayar_yaz(a: AyarModel):
 # ─────────────────────────────────────────────────────────────────────────
 PORTRE_KLIP_WL = ["tulipi_mekan", "tulipi_grind", "tulipi_espresso", "tulipi_latte", "tulipi_iced",
                   "tulipi_gulus", "tulipi_serin", "tulipi_servis", "tulipi_barista", "tulipi_bar",
-                  "tulipi_buhar", "tulipi_sut", "tulipi_surup", "tulipi_pencere", "tulipi_keyif"]
+                  "tulipi_buhar", "tulipi_sut", "tulipi_surup", "tulipi_pencere", "tulipi_keyif",
+                  "tulipi_sohbet", "tulipi_enerji"]
 # ══ NİHAİ PROGRAM (kreatif direktör ajanı kurgusu, 2026-07-21 — sahip talebi) ══
 # 5 perde: Marka Nefesi → Zanaat Zinciri → Duygu → Satış Rampası → Serin İniş/Kapanış.
 # E2 kesintisiz hikâye (çekirdek→ateş→el→servis), E3 duyusal yan-okuma. Fiyat rampası:
 # panolar sessiz zemin → vitrin/spot fısıltı → slot 10 ZİRVE (gunun+eslesme tek slotta).
 # 12 slot · 81sn · E1'de video yok · triptik 5 · yeni/sezon 1'er kez · klip tekrarı yok.
 VARSAYILAN_KURGU = [
-  # ── PERDE I · MARKA NEFESİ (Codex: açılış vaadi = içerideki emek + marka izi → V5 bar) ──
-  {"sure":7000,"e1":{"menu":"Classic Coffees","syf":1},"e2":{"v":"tulipi_bar","k":"TULİPİ","b":"Her gün taze.","m":False},"e3":{"v":"tulipi_mekan","k":"","b":"","m":True}},
-  # ── PERDE II · ZANAAT ZİNCİRİ (E2: çekirdek→ateş→el · E3: yan-okuma; tam çekimler, donma yok) ──
-  {"sure":6500,"e1":{"menu":"Signature Coffees","syf":1},"e2":{"v":"tulipi_grind","k":"ZANAAT","b":"Önce çekirdek.","m":False},"e3":{"v":"tulipi_barista","k":"USTA","b":"Her fincan elde.","m":False}},
-  {"sure":6500,"e1":{"menu":"Milkshakes"},"e2":{"v":"tulipi_espresso","k":"ZANAAT","b":"Sonra ateş.","m":False},"e3":{"v":"tulipi_sut","k":"ZANAAT","b":"Sütün dansı.","m":False}},
-  {"sure":6500,"e1":{"menu":"Mocktails"},"e2":{"v":"tulipi_latte","k":"İMZA","b":"Elin son sözü.","m":False},"e3":{"v":"tulipi_surup","k":"TAZE","b":"Bahçeden bardağa.","m":False}},
+  # ── PERDE I · MARKA NEFESİ (alt metin = TULİPİ hikâyesi başlar) ──
+  {"sure":7000,"e1":{"menu":"Classic Coffees","syf":1},"e2":{"v":"tulipi_bar","k":"TULİPİ","b":"Her gün taze.","a":"Çekirdek her sabah burada açılır.","m":False},"e3":{"v":"tulipi_mekan","k":"","b":"","m":True}},
+  # ── PERDE II · ZANAAT ZİNCİRİ (alt metin = ürünün iştah hikâyesi) ──
+  {"sure":6500,"e1":{"menu":"Signature Coffees","syf":1},"e2":{"v":"tulipi_grind","k":"ZANAAT","b":"Önce çekirdek.","a":"Doğru öğütüm, doğru fincan.","m":False},"e3":{"v":"tulipi_barista","k":"USTA","b":"Her fincan elde.","a":"Makine değil, el ayarı.","m":False}},
+  {"sure":6500,"e1":{"menu":"Milkshakes"},"e2":{"v":"tulipi_espresso","k":"ZANAAT","b":"Sonra ateş.","a":"Otuz saniyede yoğun bir öz.","m":False},"e3":{"v":"tulipi_sut","k":"ZANAAT","b":"Sütün dansı.","a":"Kadife köpük, tam kıvamında.","m":False}},
+  {"sure":6500,"e1":{"menu":"Mocktails"},"e2":{"v":"tulipi_latte","k":"İMZA","b":"Elin son sözü.","a":"Süt ve espresso, tek desende.","m":False},"e3":{"v":"tulipi_surup","k":"TAZE","b":"Bahçeden bardağa.","a":"Nane tazeliği, buz sesiyle.","m":False}},
   # ── PERDE III · CANLI VERİ ÜÇLÜSÜ (sosyal kanıt + servis + yeni) ──
-  {"sure":6000,"e1":{"cok":True},"e2":{"v":"tulipi_servis","k":"","b":"Ve masana gelir.","m":False},"e3":{"yeni":True}},
+  {"sure":6000,"e1":{"cok":True},"e2":{"v":"tulipi_servis","k":"","b":"Ve masana gelir.","a":"Sıcaklığı elinde hissedersin.","m":False},"e3":{"yeni":True}},
   {"sure":6500,"e1":{"menu":"Desserts"},"e2":{"oneri":True},"e3":{"sezon":True}},
-  # ── PERDE IV · DUYGU (gülüş + pencere sohbeti — iki gerçek an) ──
-  {"sure":7000,"e1":{"menu":"Milkshakes"},"e2":{"v":"tulipi_gulus","k":"","b":"Burada iyi hissedersin.","m":False},"e3":{"v":"tulipi_pencere","k":"","b":"İyi sohbet, iyi kahve.","m":False}},
+  # ── PERDE IV · DUYGU (dört gerçek an: gülüş+pencere, sohbet+tezgâh enerjisi) ──
+  {"sure":7000,"e1":{"menu":"Milkshakes"},"e2":{"v":"tulipi_gulus","k":"","b":"Burada iyi hissedersin.","a":"Kahve bahane, an gerçek.","m":False},"e3":{"v":"tulipi_pencere","k":"","b":"İyi sohbet, iyi kahve.","a":"Pencere kenarı, uzun muhabbet.","m":False}},
+  {"sure":6500,"e1":{"menu":"Desserts"},"e2":{"v":"tulipi_sohbet","k":"","b":"Söz kahveyle koyulaşır.","a":"Masada iki fincan, bir hikâye.","m":False},"e3":{"v":"tulipi_enerji","k":"","b":"Burası hiç durmaz.","a":"Tezgâh dolu, kahve akar.","m":False}},
   # ── PERDE V · SATIŞ RAMPASI (vitrin/hero → çift spot → menü duvarı → ZİRVE) ──
   {"sure":6000,"e1":{"vitrin":True},"e2":{"hero":True},"e3":{"vitrin":True}},
   {"sure":7500,"e1":{"menu":"Signature Coffees","syf":2},"e2":{"spot":True},"e3":{"spot":True}},
   {"sure":9000,"e1":{"menu":"Classic Coffees","syf":2},"e2":{"menu":"Mocktails"},"e3":{"menu":"Desserts"}},
   {"sure":6500,"e1":{"vitrin":True},"e2":{"gunun":True},"e3":{"eslesme":True}},
   # ── PERDE VI · SERİN İNİŞ + KAPANIŞ NEFESİ ──
-  {"sure":6000,"e1":{"yeni":True},"e2":{"v":"tulipi_serin","k":"TAZE","b":"Serin ve canlı.","m":False},"e3":{"v":"tulipi_keyif","k":"","b":"Tadını çıkar.","m":False}},
-  {"sure":6500,"e1":{"cok":True},"e2":{"v":"tulipi_mekan","k":"","b":"Zincir gibi hızlı.\nZanaat gibi özenli.","m":False},"e3":{"v":"tulipi_gulus","k":"","b":"Yarın yine bekleriz.","m":True}},
+  {"sure":6000,"e1":{"yeni":True},"e2":{"v":"tulipi_serin","k":"TAZE","b":"Serin ve canlı.","a":"Buz, nane, derin nefes.","m":False},"e3":{"v":"tulipi_keyif","k":"","b":"Tadını çıkar.","a":"Acele etme; sıcak, bekler.","m":False}},
+  {"sure":6500,"e1":{"cok":True},"e2":{"v":"tulipi_mekan","k":"","b":"Zincir gibi hızlı.\nZanaat gibi özenli.","m":False},"e3":{"v":"tulipi_gulus","k":"","b":"Yarın yine bekleriz.","a":"Aynı köşe, taze kahve.","m":True}},
 ]
 
 
@@ -1017,7 +1019,9 @@ def tv_menu_clip(name: str):
                      "tulipi_bar",
                      # Tam-çekim genişleme (2026-07-21, sahip: kesme, bütünlük bozulmasın):
                      # V13 süt buharı 20sn · V17 süt sıçrama · V11 şurup · V3 pencere · V2 keyif
-                     "tulipi_buhar", "tulipi_sut", "tulipi_surup", "tulipi_pencere", "tulipi_keyif"):
+                     "tulipi_buhar", "tulipi_sut", "tulipi_surup", "tulipi_pencere", "tulipi_keyif",
+                     # 17/17 tamamlandı (sahip: videoların hepsi kullanılsın)
+                     "tulipi_sohbet", "tulipi_enerji"):
         raise HTTPException(404, "klip yok")
     # Prod: Vite public/ -> static/tv'ye kopyalar. Dev: public/tv veya src/assets/tv.
     for base in ("static/tv", "public/tv", "src/assets/tv"):
@@ -1047,18 +1051,21 @@ _TV_PORTRE_HTML = r"""<!DOCTYPE html>
 *{margin:0;box-sizing:border-box}
 html,body{height:100%;overflow:hidden;background:var(--bg);cursor:none;font-family:'Fraunces',serif;color:var(--cream)}
 #stage{position:fixed;inset:0;background:var(--bg)}
-video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity 1.4s cubic-bezier(.37,0,.24,1);will-change:opacity}
+video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity 2.2s cubic-bezier(.4,0,.2,1);will-change:opacity}
 video.on{opacity:1}
 #scrim{position:absolute;inset:0;pointer-events:none;background:linear-gradient(180deg,rgba(11,7,5,.28) 0%,transparent 26%,transparent 52%,rgba(11,7,5,.72) 100%)}
 #txt{position:absolute;left:0;right:0;bottom:9vh;padding:0 8vw;text-align:center;z-index:3}
 #kick{font-size:2.4vh;font-weight:500;letter-spacing:.42em;text-transform:uppercase;color:var(--green);opacity:0;transition:opacity .5s ease;margin-bottom:1.6vh}
-#beat{font-size:6.2vh;line-height:1.08;font-weight:400;color:var(--cream);opacity:0;transition:opacity .55s ease;text-shadow:0 2px 24px rgba(0,0,0,.55)}
+#beat{font-size:6.2vh;line-height:1.08;font-weight:400;color:var(--cream);opacity:0;transition:opacity .8s ease;text-shadow:0 2px 24px rgba(0,0,0,.55)}
+/* ALT METİN — hikâye/iştah katmanı: beat'ten SONRA süzülür (sahip: 'ürünlerin hikâyesi alt metinde') */
+#altm{font-size:2.5vh;line-height:1.4;font-style:italic;color:#C8956A;opacity:0;transition:opacity 1.1s ease;margin-top:2vh;text-shadow:0 2px 18px rgba(0,0,0,.6)}
+body.yatay #altm{font-size:3.1vh}
 #brand{position:absolute;top:6vh;left:0;right:0;text-align:center;font-size:3.1vh;font-weight:600;letter-spacing:.34em;color:var(--cream);opacity:0;transition:opacity .6s ease;z-index:3}
 #brand.on{opacity:.96}
 #brand b{color:var(--green)}
 .show{opacity:1 !important}
 /* ── MENÜ SAYFASI v2 — pano düzeni: başlık / gövde / alt bant + gerçek fiyat sütunları ── */
-#menu{position:absolute;inset:0;z-index:2;opacity:0;transition:opacity 1.4s cubic-bezier(.37,0,.24,1);display:flex;flex-direction:column;padding:8.5vh 7vw 0;background:radial-gradient(72vw 60vw at 50% 18%,rgba(98,66,34,.22),transparent 64%),linear-gradient(180deg,#1b130f 0%,#0b0705 100%)}
+#menu{position:absolute;inset:0;z-index:2;opacity:0;transition:opacity 2.2s cubic-bezier(.4,0,.2,1);display:flex;flex-direction:column;padding:8.5vh 7vw 0;background:radial-gradient(72vw 60vw at 50% 18%,rgba(98,66,34,.22),transparent 64%),linear-gradient(180deg,#1b130f 0%,#0b0705 100%)}
 #menu.on{opacity:1}
 #mhead{text-align:center;margin-bottom:3.6vh;flex-shrink:0}
 #mbrand{font-size:2vh;font-weight:600;letter-spacing:.34em;color:var(--cream);opacity:.92;margin-bottom:1.6vh}
@@ -1172,7 +1179,7 @@ body.yatay #spcup{width:36vh;max-height:38vh}
 #menu.yogun .mfiyat{font-size:2.8vh}
 #menu.yogun .mnote{font-size:1.8vh}
 /* ── İMZA SPOTLIGHT (hero ürün + upsell) — video zemin üstünde ── */
-#spot{position:absolute;inset:0;z-index:2;opacity:0;transition:opacity 1.4s cubic-bezier(.37,0,.24,1);display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:0 8vw;background:linear-gradient(180deg,rgba(11,7,5,.58),rgba(11,7,5,.32) 42%,rgba(11,7,5,.80))}
+#spot{position:absolute;inset:0;z-index:2;opacity:0;transition:opacity 2.2s cubic-bezier(.4,0,.2,1);display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:0 8vw;background:linear-gradient(180deg,rgba(11,7,5,.58),rgba(11,7,5,.32) 42%,rgba(11,7,5,.80))}
 #spot.on{opacity:1}
 #spkick{font-size:2.6vh;font-weight:500;letter-spacing:.4em;color:var(--green);margin-bottom:2.2vh}
 #spcup{display:none;width:30vh;max-width:44vw;max-height:34vh;object-fit:contain;margin-bottom:2.4vh;filter:drop-shadow(0 2.4vh 4.6vh rgba(0,0,0,.72))}
@@ -1239,7 +1246,7 @@ body.yatay #spcaz{font-size:2.9vh}
   <div id="vinyet"></div>
   <div id="hhribbon"></div>
   <div id="brand">TULİ<b>P</b>İ</div>
-  <div id="txt"><div id="kick"></div><div id="beat"></div></div>
+  <div id="txt"><div id="kick"></div><div id="beat"></div><div id="altm"></div></div>
   <div id="veil"><div id="vbrand">TULİ<b>P</b>İ</div><div id="vbar"><div id="vfill"></div></div><div id="vpct">HAZIRLANIYOR</div></div>
 </div>
 <script>
@@ -1283,7 +1290,7 @@ var KLIPLER=klipListesi(SLOT);
 
 var stage=document.getElementById('stage'), veil=document.getElementById('veil'),
     vfill=document.getElementById('vfill'), vpct=document.getElementById('vpct'),
-    kick=document.getElementById('kick'), beat=document.getElementById('beat'), brand=document.getElementById('brand'),
+    kick=document.getElementById('kick'), beat=document.getElementById('beat'), altm=document.getElementById('altm'), brand=document.getElementById('brand'),
     menuEl=document.getElementById('menu'), mkat=document.getElementById('mkat'), malt=document.getElementById('malt'), mlist=document.getElementById('mlist'),
     spotEl=document.getElementById('spot'), spkick=document.getElementById('spkick'), spcup=document.getElementById('spcup'), spad=document.getElementById('spad'), spnot=document.getElementById('spnot'), spcaz=document.getElementById('spcaz'), spfiyat=document.getElementById('spfiyat'), sppair=document.getElementById('sppair'),
     hhribbon=document.getElementById('hhribbon'), vinyet=document.getElementById('vinyet');
@@ -1618,13 +1625,17 @@ function hazirla(){
   return Promise.all(isler);
 }
 
-function metinYaz(kickTxt, beatTxt){
-  kick.classList.remove('show'); beat.classList.remove('show');
+function metinYaz(kickTxt, beatTxt, altTxt){
+  kick.classList.remove('show'); beat.classList.remove('show'); altm.classList.remove('show');
+  clearTimeout(window._altT);
   setTimeout(function(){
     kick.textContent=kickTxt||''; beat.innerHTML=(beatTxt||'').replace(/\n/g,'<br>');
+    altm.textContent=altTxt||'';
     if(kickTxt) kick.classList.add('show');
     if(beatTxt) beat.classList.add('show');
-  },420);
+    // alt metin SONRADAN gelir — beat okunur, hikâye süzülür (sahip şablonu)
+    if(altTxt) window._altT=setTimeout(function(){ altm.classList.add('show'); }, 1100);
+  },600);
 }
 function goster(c){
   if(!c) return;
@@ -1688,7 +1699,7 @@ function goster(c){
   v.classList.add('on');
   if(aktif && aktif!==v) aktif.classList.remove('on');
   aktif=v;
-  metinYaz(c.k, c.b);
+  metinYaz(c.k, c.b, c.a);
   if(c.m) brand.classList.add('on'); else brand.classList.remove('on');
 }
 // ── WALL-CLOCK SENKRON: Date.now()%TOPLAM → slot; 3 ekran aynı anda aynı slot = triptik
@@ -1703,7 +1714,7 @@ function tick(){
     var kalanMs=SLOT[idx]._bas+SLOT[idx].sure - t;
     // beat nefesi: metin sahne bitmeden 400ms önce söner — geçiş "kesme" değil "bırakma" hissi
     clearTimeout(beatTimer); clearTimeout(vinyetTimer);
-    beatTimer=setTimeout(function(){ kick.classList.remove('show'); beat.classList.remove('show'); }, Math.max(300, kalanMs-400));
+    beatTimer=setTimeout(function(){ kick.classList.remove('show'); beat.classList.remove('show'); altm.classList.remove('show'); }, Math.max(300, kalanMs-600));
     // kapanış vinyeti: SON slotun son 1.5sn'i — açılışa zemin hazırlar; diğer slotlarda kapalı
     vinyet.classList.remove('on');
     if(idx===SLOT.length-1) vinyetTimer=setTimeout(function(){ vinyet.classList.add('on'); }, Math.max(0, kalanMs-1500));
