@@ -1319,7 +1319,7 @@ function icKlipleri(c,push){
   if(c.v) push(c.v);
   if(c.spot) push('tulipi_latte');
   if(c.hero){ push('tulipi_latte'); push('tulipi_iced'); push('tulipi_serin'); }  // ürüne göre seçilir
-  if(c.gunun){ push('tulipi_urun_sicak'); push('tulipi_urun_soguk'); push('tulipi_urun_yesil'); push('tulipi_uclu'); }
+  if(c.gunun){ push('tulipi_latte'); push('tulipi_espresso'); push('tulipi_grind'); push('tulipi_iced'); push('tulipi_sut'); push('tulipi_serin'); }
   if(c.cok||c.yeni||c.vitrin) push('tulipi_mekan');
   if(c.sezon){ push('tulipi_iced'); push('tulipi_serin'); push('tulipi_espresso'); push('tulipi_latte'); }
   if(c.eslesme){ push('tulipi_espresso'); push('tulipi_iced'); push('tulipi_servis'); }
@@ -1451,25 +1451,13 @@ function heroCiz(){
 // ⭐ GÜNÜN SEÇİMİ — satış zirvesi: NÖTR mekân zemini + bardak görseli (çakışma yok) + fiyat İLK KEZ + pair
 function gununCiz(){
   var ad=SIG&&SIG.en_cok; if(!ad) return null;
-  var f=urunBul(ad), sm=SIG&&SIG.saat_modu;
-  spotEl.classList.remove('duo');
-  spotEl.classList.add('altta');   // Greenbox tekniği: süzülen ürün KLİPTE, metin altta — bindirme yok
-  spkick.textContent=(sm&&sm.etiket?sm.etiket+' · ':'')+'GÜNÜN SEÇİMİ';
-  spcup.style.display='none';
-  cazYaz(f&&f.kat);
-  spad.textContent=ad;
-  spnot.textContent=(f&&f.u.aciklama)||'';
-  var fy=f&&(f.u.f8!=null?f.u.f8:(f.u.f14!=null?f.u.f14:f.u.fice));
-  spfiyat.textContent=(fy!=null?fy:'');
-  spfiyat.style.color='#C8956A';   // döngünün TEK altın fiyat anı (zirve vurgusu; glow yok)
+  var sm=SIG&&SIG.saat_modu;
+  // FİLM DİLİ: kahve→gerçek yapım çekimi tam ekran (foto yok) · milkshake/mocktail→gerçek foto fırlar
+  var zem=filmUrunCiz(ad, (sm&&sm.etiket?sm.etiket+' · ':'')+'GÜNÜN SEÇİMİ');
+  // günün seçimi farkı: perfect-pair köprüsü (filmUrunCiz gizler, burada geri açılır)
   if(PAIR && PAIR.ad){ sppair.innerHTML='<b>+ '+PAIR.ad+'</b> · '+(PAIR.fiyat!=null?PAIR.fiyat+' · ':'')+(PAIR.mesaj||'Yanına yakışır'); sppair.style.display=''; }
   else { sppair.style.display='none'; }
-  // ZEMİN ÜRÜNE UYAR: klip üründür — yanlış ürün görseli gösterilmez (sahip kuralı)
-  var s2=(ad||'')+' '+((f&&f.kat)||'');
-  if(/mocktail/i.test(s2)) return 'tulipi_urun_yesil';       // yeşil bardak kahramanı
-  if(/milkshake|frozen/i.test(s2)) return 'tulipi_uclu';     // spesifik görsel yok → marka üçlüsü (nötr)
-  if(/ice|iced|buz|cold/i.test(s2)) return 'tulipi_urun_soguk';
-  return 'tulipi_urun_sicak';
+  return zem;
 }
 // 🏪 VİTRİN — Greenbox deseni TULİPİ diliyle: 3 ürün yan yana, bardak + boy/fiyat blokları
 function vitrinCiz(){
