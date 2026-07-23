@@ -1154,7 +1154,14 @@ export default function OdemeMerkezi() {
                   )}
                 </>
               )}
-              {mod !== 'vadeye' && (
+              {/* 💳 KART BORCU: kart kartla ödenmez, faturası da olmaz (sahip kuralı) —
+                  yöntem seçici + fatura eki GİZLİ; ödeme kasadan (nakit/havale) çıkar */}
+              {mod !== 'vadeye' && sec.tip === 'Kredi Kartı' && (
+                <div style={{ fontSize: 12, color: 'var(--text3)', padding: '8px 10px', background: 'var(--bg3)', borderRadius: 8 }}>
+                  💵 Kart borcu kasadan ödenir (nakit/havale){kokpit ? ` — kasada ${fmt(kokpit.kasa)}` : ''}.
+                </div>
+              )}
+              {mod !== 'vadeye' && sec.tip !== 'Kredi Kartı' && (
                 <>
                   <div style={{ display: 'flex', gap: 10 }}>
                     {[['nakit', '💵', 'Kasa', kokpit ? `kasada ${fmt(kokpit.kasa)}` : 'kasadan düşer'], ['kart', '💳', 'Kart', 'kart borcuna yazılır']].map(([k, ikon, ad, alt]) => (
