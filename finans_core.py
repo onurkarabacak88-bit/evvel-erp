@@ -264,6 +264,81 @@ def _taksit_payi_ref(cur, kart_id: str, ref_date: date) -> float:
     return round(toplam, 2)
 
 
+def kart_devreden_bakiye(cur, kart_id: str, kesim_gunu: int, hedef_kesim: date) -> float:
+    """
+    Önceki kesimlerden HEDEF kesime devreden ödenmemiş ekstre bakiyesi (anapara + faiz).
+
+    NEDEN DİNAMİK (2026-07-23, sahip: 'geçmiş aylar Bonus'ta hatalı görünmesin,
+    iki borç olarak kalmasın'): DEVIR satırı DEFTERE YAZILMAZ — kart_borc formülü
+    (HARCAMA+FAIZ+DEVIR−ODEME) değişmediği için toplam borç ÇİFT SAYILMAZ ve geçmiş
+    aylar retroaktif tutarlı görünür (migration yok, veri düzeltme yok).
+
+    Zincir (kartın ilk hareketinden hedef kesime kadar):
+        ekstre_k = tek_cekim_k + taksit_payi_k + faiz_k + devir_{k-1}
+        ödenen_k = ODEME toplamı (kesim_k, kesim_{k+1}]   ← tam ay penceresi:
+                   geç yatan ödeme de devri düşürür (müşteri lehine)
+        devir_k  = max(0, ekstre_k − ödenen_k)
+    Dönüş: devir_{hedef-1} — hedef kesim ekstresine eklenecek bakiye.
+    """
+    cur.execute("""
+        SELECT tarih, islem_turu, tutar, COALESCE(taksit_sayisi, 1) AS taksit_sayisi
+        FROM kart_hareketleri
+        WHERE kart_id = %s AND durum = 'aktif'
+          AND islem_turu IN ('HARCAMA', 'FAIZ', 'ODEME')
+        ORDER BY tarih
+    """, (kart_id,))
+    rows = [dict(r) for r in (cur.fetchall() or [])]
+    if not rows:
+        return 0.0
+    ilk = rows[0]["tarih"]
+    if hasattr(ilk, "hour"):   # datetime -> date (datetime, date'in alt sinifi; isinstance yaniltir)
+        ilk = ilk.date()
+    if ilk >= hedef_kesim:
+        return 0.0
+
+    def _pencere(bas, bit, tur, sadece_tek_cekim=False):
+        t = 0.0
+        for r in rows:
+            tr = r["tarih"]
+            if hasattr(tr, "hour"):
+                tr = tr.date()
+            if bas < tr <= bit and r["islem_turu"] == tur:
+                if sadece_tek_cekim and int(r["taksit_sayisi"]) != 1:
+                    continue  # taksitli harcama tek çekime girmez — payı _taksit_payi_ref verir
+                t += float(r["tutar"])
+        return t
+
+    # İlk hareketi kapsayan kesim: hareket o ayın kesiminden sonraysa sonraki ayın kesimi
+    y, m = ilk.year, ilk.month
+    kes = kesim_tarihi_hesapla(y, m, kesim_gunu)
+    if kes < ilk:
+        m += 1
+        if m > 12:
+            m, y = 1, y + 1
+        kes = kesim_tarihi_hesapla(y, m, kesim_gunu)
+
+    devir = 0.0
+    guard = 0
+    while kes < hedef_kesim and guard < 240:  # 20 yıl emniyet freni
+        guard += 1
+        my, mm = (y, m - 1) if m > 1 else (y - 1, 12)
+        onceki_kes = kesim_tarihi_hesapla(my, mm, kesim_gunu)
+        m += 1
+        if m > 12:
+            m, y = 1, y + 1
+        sonraki_kes = kesim_tarihi_hesapla(y, m, kesim_gunu)
+
+        tek    = _pencere(onceki_kes, kes, "HARCAMA", sadece_tek_cekim=True)
+        faiz   = _pencere(onceki_kes, kes, "FAIZ")
+        odenen = _pencere(kes, sonraki_kes, "ODEME")
+        taksit = _taksit_payi_ref(cur, kart_id, kes)
+        ekstre_k = tek + taksit + faiz + devir
+        devir = max(0.0, ekstre_k - odenen)
+        kes = sonraki_kes
+
+    return round(devir, 2)
+
+
 def kart_ekstre(cur, kart_id: str, kesim_gunu: int, kesim_tarihi: date = None) -> dict:
     """
     Kartın bir kesim dönemine ait ekstresi: tek çekim + taksit payı + devreden faiz.
@@ -333,11 +408,26 @@ def kart_ekstre(cur, kart_id: str, kesim_gunu: int, kesim_tarihi: date = None) -
         """, (kart_id, kesim_tarihi, kesim_tarihi))
         devreden_faiz = float(cur.fetchone()['devreden_faiz'])
 
-    ekstre = tek_cekim + aylik_taksit + devreden_faiz
+    # ── DEVREDEN BAKİYE (2026-07-23): önceki kesimlerin ödenmemiş kalanı bu ekstreye
+    # devreder (banka mantığı) — asgari doğru hesaplanır, faiz motoru bileşik işler.
+    # Dinamik hesap: deftere DEVIR satırı yazılmaz → kart_borc çift saymaz,
+    # geçmiş aylar (Bonus vb.) retroaktif tutarlı görünür.
+    if kesim_tarihi is None:
+        _bugun = bugun_tr()
+        _hedef = kesim_tarihi_hesapla(_bugun.year, _bugun.month, kesim_gunu)
+    else:
+        _hedef = kesim_tarihi
+    devreden_bakiye = kart_devreden_bakiye(cur, kart_id, kesim_gunu, _hedef)
+    # devreden_faiz bu pencerede zaten sayıldıysa zincir de sayar → çift sayımı önle:
+    # zincir devri (anapara+faiz) döner; bu pencerenin kendi FAIZ'i ayrı kalemdir, çakışmaz
+    # (zincir yalnız HEDEF'ten ÖNCEKİ kesimleri işler, pencere (hedef-1ay, hedef] hariç).
+
+    ekstre = tek_cekim + aylik_taksit + devreden_faiz + devreden_bakiye
     return {
         "tek_cekim": tek_cekim,
         "aylik_taksit": aylik_taksit,
         "devreden_faiz": devreden_faiz,
+        "devreden_bakiye": devreden_bakiye,
         "ekstre_toplam": ekstre,
     }
 

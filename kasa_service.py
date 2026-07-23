@@ -329,6 +329,26 @@ def kart_kesim_plani_yaz_tx(cur, k: dict, yil: int, ay: int) -> dict:
         _onay_reddet()
         return {"durum": "atlandi", "neden": "asgari_odendi", "odenecek": odenecek}
 
+    # ── TEK BORÇ KURALI (2026-07-23, sahip: 'ödemedim, iki borç görünüyor') ──
+    # Devreden bakiye artık YENİ kesim ekstresinin içinde (kart_devreden_bakiye) →
+    # ÖNCEKİ ayların bekleyen kart planları ayrı borç satırı olarak KALMAMALI.
+    # Eski planı 'iptal' + not; bekleyen onayı reddet → panelde tek güncel borç görünür.
+    cur.execute("""
+        UPDATE onay_kuyrugu SET durum='reddedildi'
+        WHERE islem_turu='ODEME_PLANI' AND durum='bekliyor'
+          AND kaynak_id IN (SELECT id FROM odeme_plani WHERE kart_id=%s
+              AND durum IN ('bekliyor','onay_bekliyor')
+              AND DATE_TRUNC('month', tarih) < DATE_TRUNC('month', %s::date))
+    """, (k["id"], str(son_odeme_tarihi)))
+    cur.execute("""
+        UPDATE odeme_plani
+        SET durum='iptal',
+            aciklama=COALESCE(aciklama,'') || ' [kalan ' || ROUND(GREATEST(odenecek_tutar - COALESCE(odenen_tutar,0),0)::numeric,2)::text ||
+                     ' TL yeni ekstreye devretti — ' || %s || ']'
+        WHERE kart_id=%s AND durum IN ('bekliyor','onay_bekliyor')
+          AND DATE_TRUNC('month', tarih) < DATE_TRUNC('month', %s::date)
+    """, (str(bu_ay_kesim), k["id"], str(son_odeme_tarihi)))
+
     # Aktif plan yaz (yoksa) veya güncelle (varsa)
     pid = str(uuid.uuid4())
     cur.execute("""
