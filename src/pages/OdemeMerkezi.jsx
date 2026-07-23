@@ -200,13 +200,18 @@ export default function OdemeMerkezi() {
           toast(`Ödendi — ${yontem === 'kart' ? 'karta yazıldı' : 'kasadan düşüldü'}${await dosyaNotu()}`);
         }
       } else if (mod === 'kismi') {
+        const isKart = sec.tip === 'Kredi Kartı';
         if (!tutarN || tutarN <= 0 || tutarN >= Number(sec.tutar)) { setHata('Kısmi tutar 0 ile borç arasında olmalı'); setMesgul(false); return; }
-        if (!kalanVade) { setHata('Kalan borç için yeni vade tarihi seçin'); setMesgul(false); return; }
+        // KART: kalan bir sonraki ekstreye devreder → elle vade tarihi YOK (backend is_kart_plan yolu yok sayar).
+        // Diğer borçlar (vadeli/sabit): kalan için yeni vade zorunlu.
+        if (!isKart && !kalanVade) { setHata('Kalan borç için yeni vade tarihi seçin'); setMesgul(false); return; }
         await api(`/odeme-plani/${sec.id}/kismi-ode`, {
           method: 'POST',
-          body: { odenen_tutar: tutarN, kalan_vade_tarihi: kalanVade, odeme_yontemi: yontem, kart_id: yontem === 'kart' ? kartId : null },
+          body: { odenen_tutar: tutarN, kalan_vade_tarihi: isKart ? bugunISO() : kalanVade, odeme_yontemi: yontem, kart_id: yontem === 'kart' ? kartId : null },
         });
-        toast(`${fmt(tutarN)} ödendi · kalan ${fmt(Number(sec.tutar) - tutarN)} → ${kalanVade}${await dosyaNotu()}`);
+        toast(isKart
+          ? `${fmt(tutarN)} kart ödemesi · kalan ${fmt(Number(sec.tutar) - tutarN)} sonraki ekstreye devreder${await dosyaNotu()}`
+          : `${fmt(tutarN)} ödendi · kalan ${fmt(Number(sec.tutar) - tutarN)} → ${kalanVade}${await dosyaNotu()}`);
       } else {
         await api(`/odeme-plani/${sec.id}/ode`, {
           method: 'POST',
@@ -1132,13 +1137,19 @@ export default function OdemeMerkezi() {
                 <>
                   <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                     <button className={mod === 'tam' ? 'btn btn-primary btn-sm' : 'btn btn-secondary btn-sm'} onClick={() => { setMod('tam'); setTutar(sec.tutar); }}>Tam · {fmt(sec.tutar)}</button>
-                    <button className={mod === 'kismi' ? 'btn btn-primary btn-sm' : 'btn btn-secondary btn-sm'} onClick={() => setMod('kismi')}>✂ Kısmi{sec.asgari != null ? ` (asg ${fmt(sec.asgari)})` : ''}</button>
+                    <button className={mod === 'kismi' ? 'btn btn-primary btn-sm' : 'btn btn-secondary btn-sm'} onClick={() => { setMod('kismi'); if (sec.tip === 'Kredi Kartı' && sec.asgari != null) setTutar(sec.asgari); }}>{sec.tip === 'Kredi Kartı' ? '✂ Asgari/Kısmi' : '✂ Kısmi'}{sec.asgari != null ? ` (asg ${fmt(sec.asgari)})` : ''}</button>
                   </div>
                   {mod === 'kismi' && (
                     <>
                       <input type="number" value={tutar} onChange={e => setTutar(e.target.value)} placeholder="Ödenecek tutar ₺" />
-                      <div style={{ fontSize: 12, color: 'var(--text3)' }}>Kalan borç için yeni vade:</div>
-                      <input type="date" value={kalanVade} onChange={e => setKalanVade(e.target.value)} />
+                      {sec.tip === 'Kredi Kartı' ? (
+                        <div style={{ fontSize: 12, color: 'var(--text3)' }}>💳 Kalan tutar bir sonraki ekstreye devreder — kartın kesim döngüsü izler, vade seçmene gerek yok.</div>
+                      ) : (
+                        <>
+                          <div style={{ fontSize: 12, color: 'var(--text3)' }}>Kalan borç için yeni vade:</div>
+                          <input type="date" value={kalanVade} onChange={e => setKalanVade(e.target.value)} />
+                        </>
+                      )}
                     </>
                   )}
                 </>
