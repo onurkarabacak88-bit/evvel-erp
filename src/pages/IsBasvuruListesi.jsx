@@ -67,26 +67,26 @@ function SkorPanel({ skor }) {
   if (!skor) return null;
   const c = SKOR_CFG[skor.genel] || SKOR_CFG.orta;
   return (
-    <div style={{ background: '#12141c', border: `1px solid ${c.border}`, borderRadius: 14, padding: 18, marginBottom: 20 }}>
+    <div style={{ background: 'var(--bg3)', border: `1px solid ${c.border}`, borderRadius: 14, padding: 18, marginBottom: 20 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
         <div>
-          <div style={{ fontSize: 11, color: '#6b7280', fontWeight: 700, letterSpacing: 0.8, marginBottom: 4 }}>IK DEĞERLENDİRMESİ</div>
+          <div style={{ fontSize: 11, color: 'var(--text2)', fontWeight: 700, letterSpacing: 0.8, marginBottom: 4 }}>IK DEĞERLENDİRMESİ</div>
           <div style={{ fontSize: 18, fontWeight: 800, color: c.renk }}>{skor.genel_label}</div>
         </div>
         <div style={{ textAlign: 'center' }}>
           <div style={{ fontSize: 32, fontWeight: 900, color: c.renk, lineHeight: 1 }}>{skor.toplam}</div>
-          <div style={{ fontSize: 11, color: '#6b7280' }}>/ 100 puan</div>
+          <div style={{ fontSize: 11, color: 'var(--text2)' }}>/ 100 puan</div>
         </div>
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 16 }}>
         {Object.entries(skor.boyutlar).map(([key, b]) => (
           <div key={key}>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-              <span style={{ fontSize: 12, color: '#9ca3af', fontWeight: 600 }}>{b.label}</span>
-              <span style={{ fontSize: 12, color: '#e8e9ec', fontWeight: 700 }}>{b.puan}/20</span>
+              <span style={{ fontSize: 12, color: 'var(--text2)', fontWeight: 600 }}>{b.label}</span>
+              <span style={{ fontSize: 12, color: 'var(--text)', fontWeight: 700 }}>{b.puan}/20</span>
             </div>
-            <div style={{ height: 6, background: '#242736', borderRadius: 99 }}>
-              <div style={{ height: 6, borderRadius: 99, background: b.puan >= 16 ? '#34d399' : b.puan >= 12 ? '#4a9eff' : b.puan >= 8 ? 'var(--orange)' : '#e05c5c', width: `${(b.puan / 20) * 100}%`, transition: 'width 0.6s ease' }} />
+            <div style={{ height: 6, background: 'var(--bg3)', borderRadius: 99 }}>
+              <div style={{ height: 6, borderRadius: 99, background: b.puan >= 16 ? '#34d399' : b.puan >= 12 ? 'var(--accent)' : b.puan >= 8 ? 'var(--orange)' : '#e05c5c', width: `${(b.puan / 20) * 100}%`, transition: 'width 0.6s ease' }} />
             </div>
           </div>
         ))}
@@ -136,23 +136,23 @@ function CVModal({ b, onKapat, onPatch, onSil }) {
 
   const tarihFmt = ts => ts ? new Date(ts).toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
   const Satir = ({ label, deger }) => deger ? (
-    <div style={{ display: 'flex', gap: 12, padding: '8px 0', borderBottom: '1px solid #2a2d35' }}>
-      <span style={{ color: '#6b7280', fontSize: 12, minWidth: 140, fontWeight: 600 }}>{label}</span>
-      <span style={{ color: '#e8e9ec', fontSize: 13, flex: 1 }}>{deger}</span>
+    <div style={{ display: 'flex', gap: 12, padding: '8px 0', borderBottom: '1px solid var(--border)' }}>
+      <span style={{ color: 'var(--text2)', fontSize: 12, minWidth: 140, fontWeight: 600 }}>{label}</span>
+      <span style={{ color: 'var(--text)', fontSize: 13, flex: 1 }}>{deger}</span>
     </div>
   ) : null;
-  const Baslik = ({ label }) => (<div style={{ margin: '14px 0 6px', fontSize: 10, fontWeight: 800, color: '#4a9eff', letterSpacing: 1 }}>{label}</div>);
+  const Baslik = ({ label }) => (<div style={{ margin: '14px 0 6px', fontSize: 10, fontWeight: 800, color: 'var(--accent)', letterSpacing: 1 }}>{label}</div>);
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)', zIndex: 9999, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}
       onClick={e => e.target === e.currentTarget && onKapat()}>
-      <div style={{ background: '#1a1d24', border: '1px solid #2a2d35', borderRadius: '20px 20px 0 0', width: '100%', maxWidth: 580, maxHeight: '92vh', overflowY: 'auto', padding: 24 }}>
+      <div style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: '20px 20px 0 0', width: '100%', maxWidth: 580, maxHeight: '92vh', overflowY: 'auto', padding: 24 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
           <div>
-            <div style={{ fontSize: 20, fontWeight: 800, color: '#e8e9ec' }}>{b.ad_soyad}</div>
-            <div style={{ fontSize: 13, color: '#6b7280', marginTop: 4 }}>{tarihFmt(b.olusturma_ts)}{b.kaynak_sube ? ` · ${b.kaynak_sube}` : ''}</div>
+            <div style={{ fontSize: 20, fontWeight: 800, color: 'var(--text)' }}>{b.ad_soyad}</div>
+            <div style={{ fontSize: 13, color: 'var(--text2)', marginTop: 4 }}>{tarihFmt(b.olusturma_ts)}{b.kaynak_sube ? ` · ${b.kaynak_sube}` : ''}</div>
           </div>
-          <button onClick={onKapat} style={{ background: 'none', border: 'none', color: '#6b7280', fontSize: 22, cursor: 'pointer', padding: 4 }}>✕</button>
+          <button onClick={onKapat} style={{ background: 'none', border: 'none', color: 'var(--text2)', fontSize: 22, cursor: 'pointer', padding: 4 }}>✕</button>
         </div>
 
         {/* Rozetler: durum + öncelik + işe-alındı */}
@@ -160,7 +160,7 @@ function CVModal({ b, onKapat, onPatch, onSil }) {
           <DurumBadge durum={b.durum} />
           <OncelikBadge oncelik={oncelik} />
           {b.ise_alindi && <span style={{ padding: '3px 10px', borderRadius: 20, fontSize: 11, fontWeight: 700, background: 'rgba(52,211,153,0.14)', color: '#34d399', border: '1px solid #34d39955' }}>👤 İşe Alındı</span>}
-          {b.arsivli && <span style={{ padding: '3px 10px', borderRadius: 20, fontSize: 11, fontWeight: 700, background: 'rgba(107,114,128,0.14)', color: '#9ca3af', border: '1px solid #6b728055' }}>📦 Arşivde</span>}
+          {b.arsivli && <span style={{ padding: '3px 10px', borderRadius: 20, fontSize: 11, fontWeight: 700, background: 'rgba(107,114,128,0.14)', color: 'var(--text2)', border: '1px solid #6b728055' }}>📦 Arşivde</span>}
         </div>
 
         <SkorPanel skor={b.skor} />
@@ -181,16 +181,16 @@ function CVModal({ b, onKapat, onPatch, onSil }) {
           <Satir label="📅 Müsait Günler" deger={(b.musait_gunler || []).join(', ') || null} />
           <Satir label="🚀 Başlangıç" deger={BASLANGIC_LABEL[b.baslangic] || b.baslangic} />
           {b.ek_not && (
-            <div style={{ marginTop: 8, padding: 12, background: '#12151b', borderRadius: 8, border: '1px solid #2a2d35' }}>
-              <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 4 }}>EK NOT</div>
-              <div style={{ fontSize: 13, color: '#d1d5db' }}>{b.ek_not}</div>
+            <div style={{ marginTop: 8, padding: 12, background: 'var(--bg3)', borderRadius: 8, border: '1px solid var(--border)' }}>
+              <div style={{ fontSize: 11, color: 'var(--text2)', marginBottom: 4 }}>EK NOT</div>
+              <div style={{ fontSize: 13, color: 'var(--text)' }}>{b.ek_not}</div>
             </div>
           )}
           <Baslik label="DENEYİM & GEÇMİŞ" />
           <Satir label="☕ Kahve Deneyimi" deger={DENEYIM_LABEL[b.kahve_deneyim] || b.kahve_deneyim} />
           <Satir label="💼 Önceki İş" deger={b.onceki_is} />
-          {b.onceki_is_ogrenilen && (<div style={{ padding: '8px 0', borderBottom: '1px solid #2a2d35' }}><div style={{ fontSize: 12, color: '#6b7280', fontWeight: 600, marginBottom: 4 }}>📘 En Çok Ne Öğrendi</div><div style={{ fontSize: 13, color: '#e8e9ec', lineHeight: 1.6 }}>{b.onceki_is_ogrenilen}</div></div>)}
-          {b.onceki_is_iyi_zor && (<div style={{ padding: '8px 0', borderBottom: '1px solid #2a2d35' }}><div style={{ fontSize: 12, color: '#6b7280', fontWeight: 600, marginBottom: 4 }}>⚖️ En İyi & En Zor</div><div style={{ fontSize: 13, color: '#e8e9ec', lineHeight: 1.6 }}>{b.onceki_is_iyi_zor}</div></div>)}
+          {b.onceki_is_ogrenilen && (<div style={{ padding: '8px 0', borderBottom: '1px solid var(--border)' }}><div style={{ fontSize: 12, color: 'var(--text2)', fontWeight: 600, marginBottom: 4 }}>📘 En Çok Ne Öğrendi</div><div style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.6 }}>{b.onceki_is_ogrenilen}</div></div>)}
+          {b.onceki_is_iyi_zor && (<div style={{ padding: '8px 0', borderBottom: '1px solid var(--border)' }}><div style={{ fontSize: 12, color: 'var(--text2)', fontWeight: 600, marginBottom: 4 }}>⚖️ En İyi & En Zor</div><div style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.6 }}>{b.onceki_is_iyi_zor}</div></div>)}
           <Baslik label="DAVRANIŞSAL YANIT (MASKELI SORULAR)" />
           <Satir label="☕ Makine sonrası" deger={MAKINE_LABEL[b.makine_sonrasi] || b.makine_sonrasi} />
           <Satir label="🧹 Yoğunlukta düzen" deger={YOGUN_LABEL[b.yogun_duzen] || b.yogun_duzen} />
@@ -211,7 +211,7 @@ function CVModal({ b, onKapat, onPatch, onSil }) {
           <Satir label="🎯 Neden Bu İş" deger={NEDEN_LABEL[b.neden_bu_is] || b.neden_bu_is} />
           <Satir label="⚡ Tempo Tercihi" deger={TEMPO_LABEL[b.tempo_tercihi] || b.tempo_tercihi} />
           <Satir label="👤 Referans" deger={b.referans_ad ? `${b.referans_ad}${b.referans_tel ? ' · ' + b.referans_tel : ''}` : null} />
-          {b.tanitim && (<div style={{ marginTop: 12, padding: 14, background: '#12151b', borderRadius: 10, border: '1px solid #2a2d35' }}><div style={{ fontSize: 11, color: '#4a9eff', fontWeight: 700, marginBottom: 6 }}>KENDİ TANITIMI</div><div style={{ fontSize: 14, color: '#d1d5db', lineHeight: 1.7 }}>{b.tanitim}</div></div>)}
+          {b.tanitim && (<div style={{ marginTop: 12, padding: 14, background: 'var(--bg3)', borderRadius: 10, border: '1px solid var(--border)' }}><div style={{ fontSize: 11, color: 'var(--accent)', fontWeight: 700, marginBottom: 6 }}>KENDİ TANITIMI</div><div style={{ fontSize: 14, color: 'var(--text)', lineHeight: 1.7 }}>{b.tanitim}</div></div>)}
         </div>
 
         {/* İŞE AL — PERSONEL EKLE */}
@@ -227,11 +227,11 @@ function CVModal({ b, onKapat, onPatch, onSil }) {
 
         {/* DURUM */}
         <div style={{ marginBottom: 14 }}>
-          <div style={{ fontSize: 12, fontWeight: 700, color: '#6b7280', marginBottom: 10, letterSpacing: 0.5 }}>DURUM</div>
+          <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text2)', marginBottom: 10, letterSpacing: 0.5 }}>DURUM</div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
             {Object.entries(DURUM_CFG).map(([key, cfg]) => (
               <button key={key} onClick={() => durumGuncelle(key)} disabled={yukleniyor || durum === key}
-                style={{ padding: '8px 14px', borderRadius: 20, border: `1.5px solid ${cfg.renk}55`, background: durum === key ? cfg.bg : 'transparent', color: durum === key ? cfg.renk : '#6b7280', fontSize: 12, fontWeight: 700, cursor: durum === key ? 'default' : 'pointer', opacity: yukleniyor ? 0.6 : 1 }}>
+                style={{ padding: '8px 14px', borderRadius: 20, border: `1.5px solid ${cfg.renk}55`, background: durum === key ? cfg.bg : 'transparent', color: durum === key ? cfg.renk : 'var(--text2)', fontSize: 12, fontWeight: 700, cursor: durum === key ? 'default' : 'pointer', opacity: yukleniyor ? 0.6 : 1 }}>
                 {cfg.ikon} {cfg.label}{durum === key ? ' ✓' : ''}
               </button>
             ))}
@@ -240,20 +240,20 @@ function CVModal({ b, onKapat, onPatch, onSil }) {
 
         {/* ÖNCELİK (arşivde bile korunur) */}
         <div style={{ marginBottom: 14 }}>
-          <div style={{ fontSize: 12, fontWeight: 700, color: '#6b7280', marginBottom: 10, letterSpacing: 0.5 }}>ÖNCELİK</div>
+          <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text2)', marginBottom: 10, letterSpacing: 0.5 }}>ÖNCELİK</div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
             {[1, 2].map(o => {
               const cfg = ONCELIK_CFG[o];
               return (
                 <button key={o} onClick={() => oncelikSet(oncelik === o ? 0 : o)} disabled={yukleniyor}
-                  style={{ padding: '8px 14px', borderRadius: 20, border: `1.5px solid ${cfg.renk}55`, background: oncelik === o ? cfg.bg : 'transparent', color: oncelik === o ? cfg.renk : '#6b7280', fontSize: 12, fontWeight: 700, cursor: 'pointer', opacity: yukleniyor ? 0.6 : 1 }}>
+                  style={{ padding: '8px 14px', borderRadius: 20, border: `1.5px solid ${cfg.renk}55`, background: oncelik === o ? cfg.bg : 'transparent', color: oncelik === o ? cfg.renk : 'var(--text2)', fontSize: 12, fontWeight: 700, cursor: 'pointer', opacity: yukleniyor ? 0.6 : 1 }}>
                   {cfg.ikon} {cfg.label}{oncelik === o ? ' ✓' : ''}
                 </button>
               );
             })}
             {oncelik > 0 && (
               <button onClick={() => oncelikSet(0)} disabled={yukleniyor}
-                style={{ padding: '8px 12px', borderRadius: 20, border: '1.5px solid #6b728055', background: 'transparent', color: '#6b7280', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
+                style={{ padding: '8px 12px', borderRadius: 20, border: '1.5px solid #6b728055', background: 'transparent', color: 'var(--text2)', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
                 ✖ Önceliği Kaldır
               </button>
             )}
@@ -261,9 +261,9 @@ function CVModal({ b, onKapat, onPatch, onSil }) {
         </div>
 
         {/* ARŞİV + SİL */}
-        <div style={{ borderTop: '1px solid #2a2d35', paddingTop: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
           <button onClick={arsivToggle} disabled={yukleniyor}
-            style={{ width: '100%', padding: 11, borderRadius: 10, border: '1px solid #6b728055', background: 'rgba(107,114,128,0.08)', color: '#9ca3af', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
+            style={{ width: '100%', padding: 11, borderRadius: 10, border: '1px solid #6b728055', background: 'rgba(107,114,128,0.08)', color: 'var(--text2)', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
             {b.arsivli ? '📤 Arşivden Çıkar' : '📦 Arşivle (öncelik & durum korunur)'}
           </button>
           {!silOnay ? (
@@ -274,7 +274,7 @@ function CVModal({ b, onKapat, onPatch, onSil }) {
           ) : (
             <div style={{ display: 'flex', gap: 8 }}>
               <button onClick={sil} disabled={yukleniyor} style={{ flex: 1, padding: 11, borderRadius: 10, border: 'none', background: '#e05c5c', color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>{yukleniyor ? '…' : 'Evet, Sil'}</button>
-              <button onClick={() => setSilOnay(false)} style={{ flex: 1, padding: 11, borderRadius: 10, border: '1px solid #2a2d35', background: 'transparent', color: '#9ca3af', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>Vazgeç</button>
+              <button onClick={() => setSilOnay(false)} style={{ flex: 1, padding: 11, borderRadius: 10, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text2)', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>Vazgeç</button>
             </div>
           )}
         </div>
@@ -293,11 +293,11 @@ function BasvuruKart({ b, onClick, secili, onSec }) {
 
   return (
     <div onClick={onClick} style={{
-      position: 'relative', background: '#1a1d24', border: `1px solid ${secili ? '#4a9eff' : renk + '33'}`,
+      position: 'relative', background: 'var(--bg2)', border: `1px solid ${secili ? 'var(--accent)' : renk + '33'}`,
       borderRadius: 14, padding: '14px 16px 14px 40px', cursor: 'pointer', transition: 'border-color .15s, transform .1s',
     }}
       onMouseEnter={e => { e.currentTarget.style.borderColor = renk + '88'; }}
-      onMouseLeave={e => { e.currentTarget.style.borderColor = secili ? '#4a9eff' : renk + '33'; }}>
+      onMouseLeave={e => { e.currentTarget.style.borderColor = secili ? 'var(--accent)' : renk + '33'; }}>
 
       {/* Tik (checkbox) — kart tıklamasını engeller */}
       <input type="checkbox" checked={secili} onClick={e => e.stopPropagation()} onChange={() => onSec(b.id)}
@@ -305,8 +305,8 @@ function BasvuruKart({ b, onClick, secili, onSec }) {
 
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8, gap: 6 }}>
         <div>
-          <div style={{ fontSize: 14, fontWeight: 800, color: '#e8e9ec' }}>{b.ad_soyad}</div>
-          <div style={{ fontSize: 11, color: '#6b7280', marginTop: 2 }}>
+          <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--text)' }}>{b.ad_soyad}</div>
+          <div style={{ fontSize: 11, color: 'var(--text2)', marginTop: 2 }}>
             {yas && <span>{yas} · </span>}{b.ilce && <span>{b.ilce} · </span>}<span>{tarih}</span>
           </div>
         </div>
@@ -329,8 +329,8 @@ function BasvuruKart({ b, onClick, secili, onSec }) {
       {!b.goruldu_ts && (<div style={{ position: 'absolute', top: 10, right: 10, width: 10, height: 10, borderRadius: '50%', background: 'var(--green)', boxShadow: '0 0 0 3px rgba(34,197,94,0.18)' }} title="Yeni" />)}
 
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-        {b.calisma_tercihi && <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 8, background: '#12151b', color: '#9ca3af' }}>{b.calisma_tercihi === 'tam' ? 'Tam Z.' : b.calisma_tercihi === 'yari' ? 'Yarı Z.' : 'Esnek'}</span>}
-        {b.kahve_deneyim && <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 8, background: '#12151b', color: '#9ca3af' }}>{DENEYIM_LABEL[b.kahve_deneyim] || b.kahve_deneyim}</span>}
+        {b.calisma_tercihi && <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 8, background: 'var(--bg3)', color: 'var(--text2)' }}>{b.calisma_tercihi === 'tam' ? 'Tam Z.' : b.calisma_tercihi === 'yari' ? 'Yarı Z.' : 'Esnek'}</span>}
+        {b.kahve_deneyim && <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 8, background: 'var(--bg3)', color: 'var(--text2)' }}>{DENEYIM_LABEL[b.kahve_deneyim] || b.kahve_deneyim}</span>}
       </div>
     </div>
   );
@@ -429,12 +429,12 @@ export default function IsBasvuruListesi() {
 
       {/* QR + İstatistik */}
       <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: 16, marginBottom: 20 }}>
-        <div style={{ background: '#1a1d24', border: '1px solid #2a2d35', borderRadius: 14, padding: 16, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, minWidth: 150 }}>
+        <div style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 14, padding: 16, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, minWidth: 150 }}>
           <div style={{ background: '#fff', borderRadius: 10, padding: 6 }}>
             <img src="/api/is-basvurusu/qr/indir" alt="Başvuru QR" style={{ width: 100, height: 100, display: 'block' }} onError={e => { e.target.style.display = 'none'; }} />
           </div>
-          <div style={{ fontSize: 11, fontWeight: 700, color: '#e8e9ec', textAlign: 'center' }}>Başvuru QR</div>
-          <a href="/api/is-basvurusu/qr/indir" download="evvel_is_basvurusu_qr.png" style={{ fontSize: 11, padding: '6px 12px', borderRadius: 8, background: '#4a9eff', color: '#fff', textDecoration: 'none', fontWeight: 700 }}>⬇ İndir</a>
+          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text)', textAlign: 'center' }}>Başvuru QR</div>
+          <a href="/api/is-basvurusu/qr/indir" download="evvel_is_basvurusu_qr.png" style={{ fontSize: 11, padding: '6px 12px', borderRadius: 8, background: 'var(--accent)', color: '#fff', textDecoration: 'none', fontWeight: 700 }}>⬇ İndir</a>
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(86px,1fr))', gap: 8 }}>
           {[
@@ -444,11 +444,11 @@ export default function IsBasvuruListesi() {
             { label: '📞 Görüşme',  val: ozet.gorusme||0,  renk: '#4a9eff' },
             { label: '✅ Olumlu',   val: ozet.olumlu||0,   renk: '#4caf84' },
             { label: '👤 İşe Alınan', val: ozet.ise_alindi||0, renk: '#34d399' },
-            { label: '📦 Arşiv',    val: ozet.arsiv||0,    renk: '#6b7280' },
+            { label: '📦 Arşiv',    val: ozet.arsiv||0,    renk: 'var(--text2)' },
           ].map(k => (
-            <div key={k.label} style={{ background: '#1a1d24', border: '1px solid #2a2d35', borderRadius: 10, padding: '10px 12px', textAlign: 'center' }}>
+            <div key={k.label} style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 10, padding: '10px 12px', textAlign: 'center' }}>
               <div style={{ fontSize: 20, fontWeight: 800, color: k.renk }}>{k.val}</div>
-              <div style={{ fontSize: 10, color: '#6b7280', marginTop: 2 }}>{k.label}</div>
+              <div style={{ fontSize: 10, color: 'var(--text2)', marginTop: 2 }}>{k.label}</div>
             </div>
           ))}
         </div>
@@ -501,7 +501,7 @@ export default function IsBasvuruListesi() {
         {secimler.size > 0 && (
           <button onClick={topluArsivle} disabled={topluYukleniyor} style={{
             fontSize: 12, padding: '8px 16px', borderRadius: 10, cursor: 'pointer', fontWeight: 700,
-            background: view === 'aktif' ? '#6b7280' : '#4a9eff', color: '#fff', border: 'none', opacity: topluYukleniyor ? 0.6 : 1,
+            background: view === 'aktif' ? 'var(--text2)' : 'var(--accent)', color: '#fff', border: 'none', opacity: topluYukleniyor ? 0.6 : 1,
           }}>
             {topluYukleniyor ? '⏳…' : view === 'aktif' ? `📦 ${secimler.size} kartı Arşivle` : `📤 ${secimler.size} kartı Arşivden Çıkar`}
           </button>
