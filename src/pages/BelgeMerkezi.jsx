@@ -86,9 +86,20 @@ export default function BelgeMerkezi() {
   // BM-4: Fatura İstek Motoru (ödenmiş ama faturasız ≥eşik ödemeler)
   const [fi, setFi] = useState(null);
   const [fiMesaj, setFiMesaj] = useState('');
+  const [istisnalar, setIstisnalar] = useState([]);   // 🚫 öğrenilen "belge beklenmez" kalıpları — görünür + geri alınabilir
   async function fiYenile() {
     try { setFi(await api('/fatura-istek/liste')); }
     catch { setFi(null); }
+    try { setIstisnalar(await api('/fatura-istek/istisnalar')); }
+    catch { setIstisnalar([]); }
+  }
+  async function istisnaGeriAl(kalip) {
+    if (!window.confirm(`"${kalip}" istisnası geri alınsın mı?\nBir sonraki taramada bu tedarikçi için yeniden fatura istenebilir.`)) return;
+    try {
+      await api('/fatura-istek/istisna-sil', { method: 'POST', body: { kalip } });
+      setFiMesaj(`✓ "${kalip}" istisnası geri alındı — motor yeniden isteyecek`);
+      fiYenile();
+    } catch (e) { alert(e?.message || 'geri alınamadı'); }
   }
   useEffect(() => { fiYenile(); }, []);
   // BM-6: fiyat bandı (band dışı son alımlar)
@@ -445,6 +456,21 @@ export default function BelgeMerkezi() {
                 kendiliğinden kapanır. Teslimat faturaları ayrı takipte
                 {fi.belge_talep_bekleyen > 0 ? ` (Açık Teslimat: ${fi.belge_talep_bekleyen} bekliyor)` : ''}.
               </div>
+              {/* 🚫 öğrenilen istisnalar — GÖRÜNÜR + tek tıkla geri alınır (SÜTAŞ vakası: yanlış öğrenme fark edilemiyordu) */}
+              {istisnalar.length > 0 && (
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', margin: '2px 0 10px' }}>
+                  <span style={{ fontSize: 11, color: 'var(--text3)' }}>🚫 Belge istenmeyecekler (öğrenilen):</span>
+                  {istisnalar.map(x => (
+                    <span key={x.kalip} title={`${x.not_metin || ''} · ${String(x.olusturma || '').slice(0, 10)} — × ile geri al`}
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, padding: '2px 8px',
+                               borderRadius: 20, background: 'var(--bg3)', border: '1px solid var(--border)', color: 'var(--text2)' }}>
+                      {x.kalip}
+                      <button onClick={() => istisnaGeriAl(x.kalip)} title="Geri al — yeniden fatura istensin"
+                        style={{ background: 'none', border: 'none', color: 'var(--red)', cursor: 'pointer', fontWeight: 700, padding: 0, fontSize: 12 }}>×</button>
+                    </span>
+                  ))}
+                </div>
+              )}
               {fi.acik_adet === 0 && <div style={{ color: 'var(--green)', fontSize: 13 }}>Açık istek yok 🎉</div>}
               {(fi.gruplar || []).map(g => (
                 <div key={g.tedarikci} style={{ borderBottom: '1px solid var(--border)', padding: '8px 0' }}>

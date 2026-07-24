@@ -534,6 +534,42 @@ class KapatBody(BaseModel):
     kalici_istisna: bool = False  # 🚫 belge beklenmez — kalıbı ÖĞREN
 
 
+@router.get("/istisnalar")
+def fatura_istek_istisnalar():
+    """Öğrenilen 'belge beklenmez' kalıpları — GÖRÜNÜR olsun ki yanlış öğrenme
+    fark edilsin (2026-07-23, sahip SÜTAŞ vakası: yanlışlıkla kalıcı istisna
+    işaretledi, motor sustu, geri alma yolu yoktu)."""
+    with db() as (_, cur):
+        try:
+            from fatura_api import _belge_istisna_kaliplari
+            _belge_istisna_kaliplari(cur)
+            cur.execute("""SELECT kalip, not_metin, olusturma::text AS olusturma
+                           FROM belge_istisna_kalip ORDER BY olusturma DESC""")
+            return [dict(r) for r in cur.fetchall() or []]
+        except Exception:  # noqa: BLE001
+            return []
+
+
+class IstisnaSilBody(BaseModel):
+    kalip: str
+
+
+@router.post("/istisna-sil")
+def fatura_istek_istisna_sil(body: IstisnaSilBody):
+    """Yanlış öğrenmeyi GERİ AL: kalıp silinir → o tedarikçi için fatura isteme
+    motoru yeniden aday üretir (bir sonraki taramada)."""
+    k = (body.kalip or "").strip()
+    if not k:
+        raise HTTPException(400, "kalip zorunlu")
+    with db() as (_, cur):
+        cur.execute("DELETE FROM belge_istisna_kalip WHERE kalip=%s RETURNING kalip", (k,))
+        silinen = cur.fetchone()
+    if not silinen:
+        raise HTTPException(404, f"Kalıp bulunamadı: {k}")
+    return {"ok": True, "silinen": k,
+            "mesaj": "İstisna geri alındı — bir sonraki taramada bu tedarikçi için yeniden fatura istenebilir."}
+
+
 @router.post("/{istek_id}/kapat")
 def fatura_istek_kapat(istek_id: str, body: KapatBody):
     """Manuel kapanış — açıklama ZORUNLU (kayıt sessizce kapanamaz; kapanış
