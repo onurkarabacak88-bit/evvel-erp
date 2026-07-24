@@ -340,11 +340,17 @@ async def belge_talep_fatura_yukle(talep_id: str, dosya: UploadFile = File(...))
 
     with db() as (_, cur):
         _ensure(cur)
-        cur.execute("SELECT sube_id, talep_id FROM belge_talep WHERE id=%s", (tid,))
+        cur.execute("SELECT sube_id, talep_id, fatura_id, durum FROM belge_talep WHERE id=%s", (tid,))
         bt = cur.fetchone()
     if not bt:
         raise HTTPException(404, "Belge talep bulunamadı")
     bt = dict(bt)
+    # 🛑 katman-2 (2026-07-23, sahip: 'aynı belge iki yerden ekleniyor'):
+    # bu talebin belgesi zaten geldi → ikinci yükleme yeni kayıt AÇMAZ
+    if bt.get("fatura_id"):
+        raise HTTPException(409,
+            "Bu teslimatın belgesi zaten yüklendi (fatura bağlı, talep kapalı). "
+            "Farklı bir belge ise şube panelindeki fatura yükleme akışını kullan.")
     sube_id = bt.get("sube_id")
     siparis_talep_id = bt.get("talep_id")
 
@@ -365,6 +371,18 @@ async def belge_talep_fatura_yukle(talep_id: str, dosya: UploadFile = File(...))
 
     with db() as (conn, cur):
         _ensure_tablolar(cur)
+        # 🛑 katman-1: birebir aynı dosya başka kanaldan (şube foto) zaten girdiyse dur
+        try:
+            from fatura_api import dosya_hash_kontrol
+            dh, es = dosya_hash_kontrol(cur, raw)
+            if es:
+                raise HTTPException(409,
+                    f"Bu belge zaten sistemde — {es.get('tedarikci_ad') or 'kayıt'} "
+                    f"({(es.get('tarih') or es.get('yuklenme') or '')[:10]}). Mükerrer yükleme engellendi.")
+        except HTTPException:
+            raise
+        except Exception:  # noqa: BLE001
+            dh = None  # hash altyapısı yoksa yükleme engellenmez (fail-open)
         if is_pdf:
             try:
                 faturalar = _pdf_faturalara_bol(raw)
@@ -421,6 +439,10 @@ async def belge_talep_fatura_yukle(talep_id: str, dosya: UploadFile = File(...))
             fatura_idler.append(fid)
             ocr_calisacak.append(fid)
 
+        # katman-1 damgası: bu dosyadan doğan tüm kayıtlara hash yaz (sonraki yüklemeler yakalansın)
+        if dh and fatura_idler:
+            cur.execute("UPDATE tedarikci_fatura SET dosya_hash=%s WHERE id = ANY(%s)",
+                        (dh, fatura_idler))
         # 'fatura geldi' sinyali — belge talebini kapat + damga (kapanış kanıtı = fatura)
         cur.execute(
             """UPDATE belge_talep

@@ -124,6 +124,10 @@ def _ensure_tablolar(cur) -> None:
     cur.execute("ALTER TABLE tedarikci_fatura ADD COLUMN IF NOT EXISTS gib_dogrulama TEXT")
     cur.execute("ALTER TABLE tedarikci_fatura ADD COLUMN IF NOT EXISTS gib_dogrulama_ts TIMESTAMPTZ")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_tf_parmak ON tedarikci_fatura (parmak_izi)")
+    # MÜKERRER FRENİ katman-1 (2026-07-23, sahip: 'aynı belge iki yerden ekleniyor'):
+    # dosya içeriği sha256'sı — birebir aynı dosya ikinci kanaldan gelirse ANINDA yakalanır
+    cur.execute("ALTER TABLE tedarikci_fatura ADD COLUMN IF NOT EXISTS dosya_hash TEXT")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_tf_dosya_hash ON tedarikci_fatura (dosya_hash)")
     # BM-8: tam metin arama (simple config — Türkçe ekleri ILIKE yedeğiyle telafi)
     cur.execute("""CREATE INDEX IF NOT EXISTS idx_tf_fts ON tedarikci_fatura
                    USING GIN (to_tsvector('simple',
@@ -330,6 +334,21 @@ def _fatura_json_db_yaz(cur, fatura_id: str, j: Dict[str, Any]) -> int:
                 return 0
         except Exception:  # noqa: BLE001
             pass
+    # 🔐 PARMAK İZİ ANINDA (2026-07-23): gece backfill'i bekleme — OCR biter bitmez
+    # kimlik damgalanır ki mükerrer taraması/duyusu aynı gün çalışsın (katman-2)
+    try:
+        cur.execute(
+            """SELECT tedarikci_vkn, fatura_no, fatura_tarih, toplam_tutar, tedarikci_ad
+               FROM tedarikci_fatura WHERE id=%s""", (fatura_id,))
+        _fr = dict(cur.fetchone() or {})
+        if _fr:
+            cur.execute(
+                "UPDATE tedarikci_fatura SET parmak_izi=%s WHERE id=%s",
+                (_belge_parmak_izi(_fr.get("tedarikci_vkn"), _fr.get("fatura_no"),
+                                   _fr.get("fatura_tarih"), _fr.get("toplam_tutar"),
+                                   _fr.get("tedarikci_ad")), fatura_id))
+    except Exception:  # noqa: BLE001
+        pass
     # DUYU OMURGASI kancası (2026-07-06): fatura işlendi = Katman-2 olay (hata-yutar,
     # source_ref=fatura_id idempotent — yeniden-OCR çift olay üretmez).
     try:
@@ -1089,20 +1108,48 @@ async def fatura_yukle(
         raise HTTPException(400, "Boş dosya")
     mime = foto.content_type or "image/jpeg"
     fid = str(uuid.uuid4())
+    uyari = None
     with db() as (conn, cur):
         _ensure_tablolar(cur)
+        # 🛑 MÜKERRER FRENİ katman-1: birebir aynı dosya daha önce yüklendiyse KAYDETME
+        dh, es = dosya_hash_kontrol(cur, raw)
+        if es:
+            raise HTTPException(409,
+                f"Bu belge zaten yüklü — {es.get('tedarikci_ad') or 'tedarikçi'} "
+                f"({(es.get('tarih') or es.get('yuklenme') or '')[:10]}). "
+                f"Aynı kağıdı ikinci kez fotoğraflamana gerek yok.")
+        # ⚠️ katman-3: aynı teslimata İKİNCİ belge (engel değil — kısmi teslimatta 2 fatura
+        # meşru olabilir; uyar + duyu izi bırak, hüküm insanın)
+        if siparis_talep_id:
+            cur.execute(
+                """SELECT COUNT(*)::int AS n FROM tedarikci_fatura
+                   WHERE siparis_talep_id=%s AND COALESCE(durum,'') <> 'kopya'""",
+                (siparis_talep_id,))
+            n_var = int((cur.fetchone() or {"n": 0})["n"])
+            if n_var > 0:
+                uyari = f"Bu teslimata daha önce {n_var} belge yüklendi — aynı kağıt olmasın?"
+                try:
+                    from duyu_omurga import duyu_olay_yaz
+                    duyu_olay_yaz(
+                        "belge_kimlik", "belge.teslimat.ikinci_belge",
+                        f"{siparis_talep_id}_{n_var + 1}",
+                        entity_scope="teslimat", entity_id=str(siparis_talep_id),
+                        signal_name="Aynı teslimata birden çok belge",
+                        payload={"onceki_adet": n_var})
+                except Exception:  # noqa: BLE001
+                    pass
         cur.execute(
             """
             INSERT INTO tedarikci_fatura
-                (id, sube_id, siparis_talep_id, foto, foto_mime, durum, yukleyen_personel_id)
-            VALUES (%s, %s, %s, %s, %s, 'ocr_bekliyor', %s)
+                (id, sube_id, siparis_talep_id, foto, foto_mime, durum, yukleyen_personel_id, dosya_hash)
+            VALUES (%s, %s, %s, %s, %s, 'ocr_bekliyor', %s, %s)
             """,
-            (fid, sube_id.strip(), (siparis_talep_id or None), raw, mime, (personel_id or None)),
+            (fid, sube_id.strip(), (siparis_talep_id or None), raw, mime, (personel_id or None), dh),
         )
         conn.commit()
     # Asenkron OCR — şubeyi bekletmeden
     threading.Thread(target=_ocr_calistir, args=(fid,), daemon=True).start()
-    return {"fatura_id": fid, "durum": "ocr_bekliyor"}
+    return {"fatura_id": fid, "durum": "ocr_bekliyor", "uyari": uyari}
 
 
 @router.post("/yukle-pdf")
@@ -1142,6 +1189,12 @@ async def fatura_yukle_pdf(
     atlanan = 0
     with db() as (conn, cur):
         _ensure_tablolar(cur)
+        # 🛑 MÜKERRER FRENİ katman-1: birebir aynı PDF dosyası daha önce yüklendiyse dur
+        dh, es = dosya_hash_kontrol(cur, raw)
+        if es:
+            raise HTTPException(409,
+                f"Bu PDF zaten yüklü — {es.get('tedarikci_ad') or 'kayıt'} "
+                f"({(es.get('tarih') or es.get('yuklenme') or '')[:10]}).")
         for f in faturalar:
             fno = (f.get("fatura_no") or "").strip() or None
             metin = (f.get("metin") or "").strip()
@@ -1178,6 +1231,7 @@ async def fatura_yukle_pdf(
                  f.get("onceki_bakiye"), f.get("bakiye_dahil"), metin, (personel_id or None),
                  raw),
             )
+            cur.execute("UPDATE tedarikci_fatura SET dosya_hash=%s WHERE id=%s", (dh, fid))
             yeni_idler.append(fid)
             # ⚡ ANINDA KOD OKUMA (sahip 2026-07-18: 'yeni PDF yükledim ama
             # sıraya aldı — ilk kod çalışmalıydı'): kimlik+tutar+kalemler KODLA
@@ -1244,6 +1298,20 @@ def fatura_sil(fatura_id: str):
     if not n:
         raise HTTPException(404, "Fatura bulunamadı")
     return {"ok": True, "silinen": fid}
+
+
+def dosya_hash_kontrol(cur, raw: bytes):
+    """MÜKERRER FRENİ katman-1: dosya sha256 + aktif (kopya-olmayan) eş kayıt araması.
+    Dönüş: (hash, eş_kayıt_dict|None). İki yükleme kanalı da (şube foto + belge-iste)
+    bunu çağırır — birebir aynı dosya ikinci kez KAYDEDİLMEDEN yakalanır."""
+    import hashlib as _h
+    dh = _h.sha256(raw).hexdigest()
+    cur.execute(
+        """SELECT id, tedarikci_ad, fatura_tarih::text AS tarih, olusturma::text AS yuklenme
+           FROM tedarikci_fatura
+           WHERE dosya_hash=%s AND COALESCE(durum,'') <> 'kopya' LIMIT 1""", (dh,))
+    r = cur.fetchone()
+    return dh, (dict(r) if r else None)
 
 
 def _belge_parmak_izi(vkn, fno, tarih, tutar, ted_ad) -> str:
