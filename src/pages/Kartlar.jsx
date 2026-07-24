@@ -250,18 +250,21 @@ export default function Kartlar() {
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, fontSize: 12 }}>
                 {[
                   ['Limit', fmt(k.limit_tutar)],
-                  ['Kullanılabilir', fmt(k.kalan_limit)],
+                  // faiz borcu limitin ÜSTÜNE taşırabilir (banka gerçeği) — negatifi açıkça "aşım" olarak söyle
+                  (k.kalan_limit ?? 0) < 0
+                    ? ['Kullanılabilir', `⚠ LİMİT AŞIMI ${fmt(Math.abs(k.kalan_limit))}`, false, true]
+                    : ['Kullanılabilir', fmt(k.kalan_limit)],
                   [`Asgari (${ayEtiketi(k.aktif_donem) || 'bu dönem'})`, fmt(k.asgari_odeme), k.asgari_karsilandi],
                   ['Bu Ekstre', fmt(k.bu_ekstre)],
                   ['Faiz / Asgari Oranı', `%${k.faiz_orani} / %${k.asgari_oran ?? 40}`],
                   ['Ham Kesim/Son Öd.', `${k.kesim_gunu}/${k.son_odeme_gunu}. gün`],
                   ['Kart Sahibi', k.sahip || 'İşletme'],
                   ...(k.ortak_grup_uye ? [[`🔗 Ortak Limit (${k.ortak_grup_uye} kart)`, `${fmt(k.ortak_grup_borc)} / ${fmt(k.ortak_grup_limit)}`]] : []),
-                ].map(([label, val, vurgu]) => (
-                  <div key={label} title={vurgu ? `Bu dönem ${fmt(k.bu_donem_odenen)} ödendi — asgarinin üzerinde ✓` : undefined}
-                    style={{ background: vurgu ? 'rgba(46,160,67,0.12)' : 'var(--bg3)', borderRadius: 6, padding: '7px 10px', border: vurgu ? '1px solid var(--green)' : undefined }}>
+                ].map(([label, val, vurgu, asim]) => (
+                  <div key={label} title={vurgu ? `Bu dönem ${fmt(k.bu_donem_odenen)} ödendi — asgarinin üzerinde ✓` : (asim ? 'Faiz borcu limiti aştı — yatan para önce aşımı (faizi) kapatır, sonra limit açılır' : undefined)}
+                    style={{ background: vurgu ? 'rgba(46,160,67,0.12)' : (asim ? 'rgba(192,58,43,0.10)' : 'var(--bg3)'), borderRadius: 6, padding: '7px 10px', border: vurgu ? '1px solid var(--green)' : (asim ? '1px solid var(--red)' : undefined) }}>
                     <div style={{ color: 'var(--text3)', marginBottom: 2, fontSize: 11 }}>{label}</div>
-                    <div className="mono" style={{ color: vurgu ? 'var(--green)' : undefined }}>{val}{vurgu ? ' ✓' : ''}</div>
+                    <div className="mono" style={{ color: vurgu ? 'var(--green)' : (asim ? 'var(--red)' : undefined), fontWeight: asim ? 700 : undefined }}>{val}{vurgu ? ' ✓' : ''}</div>
                   </div>
                 ))}
               </div>
