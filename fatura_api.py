@@ -321,7 +321,13 @@ def _fatura_json_db_yaz(cur, fatura_id: str, j: Dict[str, Any]) -> int:
                      AND UPPER(REGEXP_REPLACE(COALESCE(fatura_no,''),
                                               '[^A-Za-z0-9]','','g'))
                          = UPPER(REGEXP_REPLACE(%s,'[^A-Za-z0-9]','','g'))
-                   ORDER BY olusturma LIMIT 1""", (fatura_id, _kopya_no))
+                   -- ASIL SEÇİMİ FIX (2026-07-25, ATALAY NPE...432 vakası): asıl,
+                   -- SAĞLIKLI nüsha olmalı — eskiden salt olusturma sırası, OCR
+                   -- hatalı/tutarsız kaydı asıl bırakıp okunmuşları kopyalıyordu
+                   -- → borç kuyruğu hiç doğmuyordu.
+                   ORDER BY (CASE WHEN durum IN ('ocr_tamam','okundu')
+                                   AND COALESCE(toplam_tutar,0) > 0 THEN 0 ELSE 1 END),
+                            olusturma LIMIT 1""", (fatura_id, _kopya_no))
             _asil = cur.fetchone()
             if _asil:
                 cur.execute(
@@ -329,6 +335,35 @@ def _fatura_json_db_yaz(cur, fatura_id: str, j: Dict[str, Any]) -> int:
                            ocr_hata='aynı faturanın ikinci nüshası (foto+PDF) — asıl: '
                                     || %s
                        WHERE id=%s""", (str(dict(_asil)["id"]), fatura_id))
+                cur.execute("DELETE FROM tedarikci_fatura_kalem WHERE fatura_id=%s",
+                            (fatura_id,))
+                return 0
+        except Exception:  # noqa: BLE001
+            pass
+    # 📑 NO'SUZ MÜKERRER (2026-07-25, APS/RedBull vakası): OCR fatura no'yu
+    # OKUYAMADIYSA no-bazlı kopya kapanışı çalışamaz → aynı tedarikçi + AYNI
+    # kuruş tutar + no'lu SAĞLIKLI kayıt varsa bu no'suz kayıt onun zayıf
+    # nüshasıdır → kopya. (Aynı gün aynı tutarlı iki GERÇEK fatura ikisi de
+    # no'lu gelir — bu dal yalnız no'suz kaydı kapatır, riski dar.)
+    _tut = _sayi(j.get("toplam_tutar"))
+    _ted = (str(j.get("tedarikci") or "").strip())
+    if len(_kopya_no) < 8 and _tut and _tut > 0 and len(_ted) >= 3:
+        try:
+            cur.execute(
+                """SELECT id FROM tedarikci_fatura
+                   WHERE id <> %s AND COALESCE(durum,'') <> 'kopya'
+                     AND LENGTH(COALESCE(fatura_no,'')) >= 8
+                     AND ABS(COALESCE(toplam_tutar,0) - %s) < 0.01
+                     AND UPPER(REGEXP_REPLACE(COALESCE(tedarikci_ad,''),'[^A-Za-zÇĞİÖŞÜçğıöşü0-9]','','g'))
+                         LIKE UPPER(REGEXP_REPLACE(%s,'[^A-Za-zÇĞİÖŞÜçğıöşü0-9]','','g')) || '%%'
+                   ORDER BY olusturma LIMIT 1""",
+                (fatura_id, _tut, _ted[:20]))
+            _asil2 = cur.fetchone()
+            if _asil2:
+                cur.execute(
+                    """UPDATE tedarikci_fatura SET durum='kopya',
+                           ocr_hata='no''suz nüsha — aynı tedarikçi+tutar, asıl: ' || %s
+                       WHERE id=%s""", (str(dict(_asil2)["id"]), fatura_id))
                 cur.execute("DELETE FROM tedarikci_fatura_kalem WHERE fatura_id=%s",
                             (fatura_id,))
                 return 0
@@ -1821,6 +1856,50 @@ def tedarikci_merkez():
                 "ayrı alt-durumdur: ödeme-temelli (fatura istek) / teslimat-temelli "
                 "(açık teslimat)."),
     }
+
+
+class KopyaYapBody(BaseModel):
+    asil_id: Optional[str] = None
+    neden: str = ""
+
+
+@router.post("/{fatura_id}/kopya-yap")
+def fatura_kopya_yap(fatura_id: str, body: KopyaYapBody):
+    """ONARIM UCU (2026-07-25, ATALAY/APS vakaları): kaydı elle 'kopya' işaretle —
+    çift borç tekilleşir. Foto/PDF silinmez (yasal arşiv), yalnız cari/kuyruk
+    hesaplarından çıkar. neden zorunlu (iz kalsın)."""
+    neden = (body.neden or "").strip()
+    if not neden:
+        raise HTTPException(400, "neden zorunlu — örn. 'aynı faturanın no'suz nüshası'")
+    with db() as (conn, cur):
+        _ensure_tablolar(cur)
+        cur.execute(
+            """UPDATE tedarikci_fatura SET durum='kopya',
+                   ocr_hata='elle kopya işareti: ' || %s || COALESCE(' — asıl: ' || %s, '')
+               WHERE id=%s AND COALESCE(durum,'') <> 'kopya' RETURNING id""",
+            (neden[:160], (body.asil_id or None), fatura_id))
+        r = cur.fetchone()
+        if not r:
+            raise HTTPException(404, "Kayıt bulunamadı ya da zaten kopya")
+        cur.execute("DELETE FROM tedarikci_fatura_kalem WHERE fatura_id=%s", (fatura_id,))
+    return {"ok": True, "kopya": fatura_id}
+
+
+@router.post("/{fatura_id}/kopya-geri-al")
+def fatura_kopya_geri_al(fatura_id: str):
+    """ONARIM UCU: yanlış kopyalanan sağlıklı nüshayı asıla döndür (durum ocr_tamam'a
+    döner; kalemler yeniden okunması için OCR tekrar tetiklenebilir)."""
+    with db() as (conn, cur):
+        _ensure_tablolar(cur)
+        cur.execute(
+            """UPDATE tedarikci_fatura SET durum='ocr_tamam', ocr_hata=NULL
+               WHERE id=%s AND durum='kopya' RETURNING id, ocr_json IS NOT NULL AS js""",
+            (fatura_id,))
+        r = cur.fetchone()
+        if not r:
+            raise HTTPException(404, "Kayıt bulunamadı ya da kopya değil")
+    return {"ok": True, "asil": fatura_id,
+            "not": "Kalemleri yoksa 'ocr-yeniden-dene' ile yeniden okutulabilir."}
 
 
 @router.post("/ocr-yeniden-dene")
