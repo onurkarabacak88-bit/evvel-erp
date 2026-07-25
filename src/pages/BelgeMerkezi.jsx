@@ -16,7 +16,7 @@ const SEKMELER = [
   ['genel', '📊 Genel Bakış'],
   ['tedarikci', '🏪 Tedarikçiler'],
   ['belge', '📄 Belge Akışı'],
-  ['acik', '📨 Belge Açığı'],
+  ['acik', '📄 Fatura Beklenen'],
 ];
 
 export default function BelgeMerkezi() {
@@ -84,6 +84,45 @@ export default function BelgeMerkezi() {
     catch (e) { setAraSonuc({ hata: e?.message || 'arama hatası' }); }
   }
   // BM-4: Fatura İstek Motoru (ödenmiş ama faturasız ≥eşik ödemeler)
+  // 📄 FATURA BEKLENEN (2026-07-26, ATALAY vakası — sahip: "eksik faturayı
+  // anlayabilmem için ayrı başlık kurmalısın"): teslim alınmış ama faturası
+  // gelmemiş teslimatlar + sistem-dışı gelen mal için ELLE kayıt.
+  const [bt, setBt] = useState(null);
+  const [btMesaj, setBtMesaj] = useState('');
+  const [btFormAcik, setBtFormAcik] = useState(false);
+  const [btForm, setBtForm] = useState({ ad: '', tarih: '', not: '' });
+  const btYenile = () => api('/belge-talep/bekleyen').then(setBt).catch(() => setBt(null));
+  useEffect(() => { btYenile(); }, []);
+  async function btElleEkle() {
+    const ad = btForm.ad.trim();
+    if (ad.length < 2) { setBtMesaj('Tedarikçi adı gerekli'); return; }
+    try {
+      await api('/belge-talep/elle', { method: 'POST', body: {
+        tedarikci_ad: ad, teslim_tarihi: btForm.tarih || null, not_metin: btForm.not || null } });
+      setBtForm({ ad: '', tarih: '', not: '' }); setBtFormAcik(false);
+      setBtMesaj('✅ Eklendi — fatura gelene dek burada bekler'); btYenile();
+    } catch (e) { setBtMesaj(e.message || 'Eklenemedi'); }
+  }
+  async function btKapat(t) {
+    const cevap = prompt(
+      `${t.tedarikci_ad} — kapanış kanıtı:\n"f" = fatura geldi · "i" = irsaliye alındı · başka bir şeyse açıklama yazın`,
+      t.gelen_fatura_adet ? 'f' : '');
+    if (cevap === null) return;
+    const c = cevap.trim();
+    const body = c.toLowerCase() === 'f' ? { durum: 'pdf_geldi', kapanis_tipi: 'fatura' }
+      : c.toLowerCase() === 'i' ? { durum: 'kapandi', kapanis_tipi: 'irsaliye' }
+      : { durum: 'kapandi', kapanis_tipi: 'manuel', aciklama: c };
+    if (body.kapanis_tipi === 'manuel' && !c) { setBtMesaj('Manuel kapanışta açıklama zorunlu'); return; }
+    try { await api(`/belge-talep/${t.id}/kapat`, { method: 'POST', body }); setBtMesaj('Kapatıldı'); btYenile(); }
+    catch (e) { setBtMesaj(e.message || 'Kapatılamadı'); }
+  }
+  function btIste(t) {
+    const tel = String(t.tedarikci_tel || '').replace(/\D/g, '');
+    if (!tel) { setBtMesaj('📵 Telefon yok — Tedarikçiler sayfasından numara ekleyin'); return; }
+    const msg = `Merhaba 🙏 ${t.teslim_tarihi ? t.teslim_tarihi + ' tarihli ' : ''}teslimatın faturasını rica ederiz.`;
+    window.open(`https://wa.me/${tel.startsWith('90') ? tel : '90' + tel}?text=${encodeURIComponent(msg)}`, '_blank');
+    api(`/belge-talep/${t.id}/mesaj-gonderildi`, { method: 'POST' }).then(btYenile).catch(() => {});
+  }
   const [fi, setFi] = useState(null);
   const [fiMesaj, setFiMesaj] = useState('');
   const [istisnalar, setIstisnalar] = useState([]);   // 🚫 öğrenilen "belge beklenmez" kalıpları — görünür + geri alınabilir
@@ -302,7 +341,7 @@ export default function BelgeMerkezi() {
                   Belge açığı: ödeme-temelli {(mk.belge_acigi?.odeme_temelli?.acik_adet ?? 0)} istek ·
                   teslimat-temelli {(mk.belge_acigi?.teslimat_temelli?.bekleyen ?? 0)} açık teslimat
                   {(mk.belge_acigi?.teslimat_temelli?.en_yasli_gun || 0) > 0 && ` (en yaşlısı ${mk.belge_acigi.teslimat_temelli.en_yasli_gun}g)`}
-                  {' '}→ 📨 Belge Açığı sekmesi
+                  {' '}→ 📄 Fatura Beklenen sekmesi
                 </div>
               </div>
             </div>
@@ -426,12 +465,77 @@ export default function BelgeMerkezi() {
             </div>
           )}
 
-          {/* ═══ 📨 BELGE AÇIĞI: iki alt-durum (Codex — ayrı kuyruklar, tek sekme) ═══ */}
-          {sekme === 'acik' && mk?.belge_acigi?.teslimat_temelli && (
-            <div className="card" style={{ padding: 12, marginBottom: 14, fontSize: 13 }}>
-              📦 <b>Teslimat-temelli belge açığı:</b> {mk.belge_acigi.teslimat_temelli.bekleyen} açık teslimat
-              {(mk.belge_acigi.teslimat_temelli.en_yasli_gun || 0) > 0 && ` (en yaşlısı ${mk.belge_acigi.teslimat_temelli.en_yasli_gun} gün)`}
-              {' '}— takibi EVVEL Cep → Açık Teslimat ekranında (teslim başına kovalanır; buradaki 📨 liste ise ödeme-temelli).
+          {/* ═══ 📄 FATURA BEKLENEN: teslimat-temelli açık liste + ELLE kayıt
+                 (2026-07-26, ATALAY vakası — masaüstünde görünür başlık) ═══ */}
+          {sekme === 'acik' && (
+            <div className="card" style={{ padding: 16, marginBottom: 14 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+                <div style={{ fontWeight: 800 }}>
+                  📄 Fatura Beklenen — {bt ? bt.toplam : '…'} teslimat
+                  <span style={{ fontWeight: 400, fontSize: 12, color: 'var(--text3)' }}>
+                    {' '}· mal geldi, faturası gelmedi
+                  </span>
+                </div>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  {btMesaj && <span style={{ fontSize: 12, color: 'var(--text3)' }}>{btMesaj}</span>}
+                  <button className="btn btn-secondary" onClick={() => { setBtFormAcik(a => !a); setBtMesaj(''); }}>
+                    {btFormAcik ? '✕ Vazgeç' : '+ Fatura Beklenen Ekle'}
+                  </button>
+                </div>
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--text3)', margin: '4px 0 8px' }}>
+                Şube "Ürün Teslim Al" yapınca kayıt kendiliğinden düşer. Sipariş sistemi dışından gelen mal
+                (ATALAY kahve gibi) için <b>+ Fatura Beklenen Ekle</b> ile elle açın — fatura yüklenene dek burada kalır.
+              </div>
+              {btFormAcik && (
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', padding: '8px 0 10px' }}>
+                  <input list="bt-tedarikci-listesi" placeholder="Tedarikçi *" value={btForm.ad}
+                    onChange={e => setBtForm(f => ({ ...f, ad: e.target.value }))} style={{ minWidth: 180 }} />
+                  <datalist id="bt-tedarikci-listesi">
+                    {(d?.toptancilar || []).map(t => <option key={t.toptanci} value={t.toptanci} />)}
+                  </datalist>
+                  <input type="date" value={btForm.tarih} title="Teslim tarihi (boşsa bugün)"
+                    onChange={e => setBtForm(f => ({ ...f, tarih: e.target.value }))} />
+                  <input placeholder="Not (ne geldi?)" value={btForm.not}
+                    onChange={e => setBtForm(f => ({ ...f, not: e.target.value }))} style={{ minWidth: 200 }} />
+                  <button className="btn btn-primary" onClick={btElleEkle}>Kaydet</button>
+                </div>
+              )}
+              {bt && bt.toplam === 0 && <div style={{ color: 'var(--green)', fontSize: 13 }}>Fatura bekleyen teslimat yok 🎉</div>}
+              {(bt?.talepler || []).map(t => {
+                const gun = Math.floor((t.yas_saat || 0) / 24);
+                const renk = t.oncelik === 'yuksek' ? 'var(--red)' : t.oncelik === 'orta' ? 'var(--orange)' : 'var(--green)';
+                return (
+                  <div key={t.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap',
+                                           alignItems: 'center', borderBottom: '1px solid var(--border)', padding: '7px 0' }}>
+                    <span style={{ fontSize: 13 }}>
+                      <span style={{ color: renk }}>●</span>{' '}
+                      <b>{t.tedarikci_ad || '(tedarikçi belirsiz)'}</b>
+                      {t.kaynak === 'elle' && <span style={{ fontSize: 11, color: 'var(--text3)' }}> · ✍ elle</span>}
+                      {t.sube_adi && t.sube_adi !== '(elle kayıt)' && <span style={{ fontSize: 11, color: 'var(--text3)' }}> · {t.sube_adi}</span>}
+                      <span style={{ fontSize: 11, color: 'var(--text3)' }}>
+                        {' '}· teslim {t.teslim_tarihi || '—'} · {gun < 1 ? 'bugün' : `${gun} gün`}
+                        {t.mesaj_sayisi > 0 && ` · ✉ ${t.mesaj_sayisi} kez istendi`}
+                      </span>
+                      {t.elle_not && <span style={{ fontSize: 11, color: 'var(--text2)' }}> · “{t.elle_not}”</span>}
+                      {t.gelen_fatura_adet > 0 && (
+                        <span style={{ fontSize: 11, color: 'var(--green)', fontWeight: 700 }}
+                          title="Bu tedarikçiden talep sonrası fatura okundu — Belge Akışı'ndan kontrol edip kapatın">
+                          {' '}· 🧾 fatura gelmiş olabilir ({t.gelen_fatura_adet})
+                        </span>
+                      )}
+                    </span>
+                    <span style={{ whiteSpace: 'nowrap', display: 'flex', gap: 6 }}>
+                      <button className="btn btn-secondary" style={{ padding: '0 8px', fontSize: 11 }}
+                        onClick={() => btIste(t)} title={t.tedarikci_tel ? 'WhatsApp fatura isteği' : 'Telefon kayıtlı değil'}>
+                        📲 İste
+                      </button>
+                      <button className="btn btn-secondary" style={{ padding: '0 8px', fontSize: 11 }}
+                        onClick={() => btKapat(t)} title="Kapat (kanıt zorunlu: fatura / irsaliye / açıklama)">✔ Kapat</button>
+                    </span>
+                  </div>
+                );
+              })}
             </div>
           )}
           {/* BM-4 — FATURA İSTE (ödeme-temelli belge açığı) */}

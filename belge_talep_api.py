@@ -61,6 +61,8 @@ def _ensure(cur) -> None:
     # Önemli olan belge TÜRÜ değil, teslimatın sonsuza dek açık kalmaması. Kapanış kanıtı iz bırakır.
     cur.execute("ALTER TABLE belge_talep ADD COLUMN IF NOT EXISTS kapanis_tipi TEXT")
     cur.execute("ALTER TABLE belge_talep ADD COLUMN IF NOT EXISTS kapanis_aciklama TEXT")
+    # ELLE kayıt notu (2026-07-26, ATALAY vakası): sistem-dışı gelen mal için sahip notu
+    cur.execute("ALTER TABLE belge_talep ADD COLUMN IF NOT EXISTS elle_not TEXT")
 
 
 def belge_talep_olustur_izole(ts_id: str) -> None:
@@ -146,17 +148,113 @@ def _oncelik(yas_gun: float, rt: Optional[dict]) -> str:
     return "yuksek" if yas_gun >= 15 else ("orta" if yas_gun >= 7 else "dusuk")
 
 
+class ElleTalepBody(BaseModel):
+    tedarikci_ad: str
+    teslim_tarihi: Optional[str] = None   # YYYY-MM-DD; boşsa bugün
+    not_metin: Optional[str] = None       # "kahve geldi, irsaliye yok" vb.
+
+
+@router.post("/elle")
+def belge_talep_elle(body: ElleTalepBody):
+    """ELLE FATURA-BEKLENEN kaydı (2026-07-26, ATALAY vakası): mal sistem-dışı geldi
+    (toptancı sipariş/teslim-al akışından geçmedi) → hiçbir yerde 'fatura bekleniyor'
+    izi doğmuyordu. Sahip tek satırla açar; kapanış aynı /kapat ucundan (kanıt zorunlu)."""
+    ad = (body.tedarikci_ad or "").strip()
+    if len(ad) < 2:
+        raise HTTPException(400, "tedarikci_ad zorunlu")
+    tarih = (body.teslim_tarihi or "").strip() or None
+    with db() as (_, cur):
+        _ensure(cur)
+        # Telefonu tedarikçi kartından dene (birebir, sonra içerme) — bulunamazsa boş kalır
+        tel = None
+        ted_id = None
+        try:
+            cur.execute("SELECT id, telefon FROM tedarikciler WHERE aktif=TRUE AND LOWER(TRIM(ad))=LOWER(TRIM(%s)) LIMIT 1", (ad,))
+            r = cur.fetchone()
+            if not r:
+                cur.execute("SELECT id, telefon FROM tedarikciler WHERE aktif=TRUE AND (LOWER(ad) LIKE LOWER(%s) OR LOWER(%s) LIKE '%%'||LOWER(TRIM(ad))||'%%') LIMIT 1",
+                            ("%" + ad + "%", ad))
+                r = cur.fetchone()
+            if r:
+                ted_id, tel = dict(r).get("id"), dict(r).get("telefon")
+        except Exception:  # noqa: BLE001 — tel sadece kolaylık, yokluğu engel değil
+            pass
+        tid = "elle-" + str(uuid.uuid4())
+        cur.execute(
+            """INSERT INTO belge_talep
+                   (ts_id, sube_adi, tedarikci_id, tedarikci_ad, tedarikci_tel,
+                    teslim_tarihi, elle_not)
+               VALUES (%s, '(elle kayıt)', %s, %s, %s, COALESCE(%s::date, CURRENT_DATE), %s)
+               RETURNING id""",
+            (tid, ted_id, ad, tel, tarih, (body.not_metin or "").strip() or None),
+        )
+        yeni_id = dict(cur.fetchone())["id"]
+    try:
+        from duyu_omurga import duyu_olay_yaz
+        duyu_olay_yaz(
+            "acik_teslimat", "tedarik.teslimat.acik_dogdu", tid,
+            entity_scope="tedarikci", entity_id=(ted_id or ad),
+            occurred_at=tarih, signal_name="Açık teslimat doğdu (elle)",
+            payload={"tedarikci_ad": ad, "kaynak": "elle"},
+        )
+    except Exception:  # noqa: BLE001
+        pass
+    return {"ok": True, "id": yeni_id}
+
+
+def _gelen_fatura_ipucu(cur, rows: list) -> None:
+    """ÖNERİ-ONLY ipucu: talep sonrası AYNI tedarikçiden sağlıklı fatura geldiyse
+    satıra 'gelen_fatura_adet' yazar — kapanış kararı İNSANDA (yanlış teslimatı
+    otomatik kapatma riski alınmaz). Token eşleşmesi gevşek; hata YUTULUR."""
+    if not rows:
+        return
+    try:
+        try:
+            from fatura_api import _JENERIK, _cari_katla  # tek kaynak (SÜTAŞ dersi)
+        except Exception:  # noqa: BLE001
+            _JENERIK, _cari_katla = set(), (lambda s: str(s or "").upper())
+
+        def _tokenlar(ad):
+            return {w.strip(".,()") for w in _cari_katla(ad).split()
+                    if len(w.strip(".,()")) >= 3 and w.strip(".,()") not in _JENERIK}
+
+        cur.execute(
+            """SELECT tedarikci_ad, fatura_tarih::text AS ft, olusturma
+               FROM tedarikci_fatura
+               WHERE durum IN ('ocr_tamam','okundu') AND COALESCE(toplam_tutar,0) > 0
+                 AND olusturma >= NOW() - INTERVAL '45 days'"""
+        )
+        faturalar = [dict(r) for r in (cur.fetchall() or [])]
+        for d in rows:
+            tset = _tokenlar(d.get("tedarikci_ad"))
+            if not tset:
+                continue
+            adet = 0
+            for f in faturalar:
+                if not (tset & _tokenlar(f.get("tedarikci_ad"))):
+                    continue
+                # fatura talep SONRASI okundu ya da teslim tarihinden yeni tarihli
+                ft = str(f.get("ft") or "")
+                if str(f.get("olusturma") or "") >= str(d.get("olusturma") or "") or \
+                        (ft and ft >= str(d.get("teslim_tarihi") or "9999")):
+                    adet += 1
+            if adet:
+                d["gelen_fatura_adet"] = adet
+    except Exception as e:  # noqa: BLE001 — ipucu çökse liste yaşar
+        logger.warning("gelen fatura ipucu atlandi: %s", str(e)[:120])
+
+
 @router.get("/bekleyen")
 def belge_talep_bekleyen():
-    """Cep: fatura bekleyen teslimatlar (durum='bekliyor'), yaş + mesaj sayısı +
-    AÇIK TESLİMAT bağlamı (tedarikçi ritmi + öncelik — alarm değil, görünürlük)."""
+    """Cep + masaüstü 'Fatura Beklenen': fatura bekleyen teslimatlar (durum='bekliyor'),
+    yaş + mesaj sayısı + AÇIK TESLİMAT bağlamı (tedarikçi ritmi + öncelik) + elle kayıtlar."""
     with db() as (_, cur):
         _ensure(cur)
         ritim = _tedarikci_ritim_map(cur)
         cur.execute(
             """
             SELECT id, ts_id, sube_id, sube_adi, tedarikci_id, tedarikci_ad, tedarikci_tel,
-                   teslim_tarihi, durum, mesaj_sayisi, son_mesaj_ts, olusturma,
+                   teslim_tarihi, durum, mesaj_sayisi, son_mesaj_ts, olusturma, elle_not,
                    ROUND(EXTRACT(EPOCH FROM (NOW() - olusturma)) / 3600.0, 1) AS yas_saat
             FROM belge_talep
             WHERE durum = 'bekliyor'
@@ -170,11 +268,13 @@ def belge_talep_bekleyen():
             d["olusturma"] = str(d.get("olusturma") or "")
             d["son_mesaj_ts"] = str(d.get("son_mesaj_ts") or "")
             d["yas_saat"] = float(d.get("yas_saat") or 0)
+            d["kaynak"] = "elle" if str(d.get("ts_id") or "").startswith("elle-") else "teslimat"
             _tkey = str(d.get("tedarikci_id") or d.get("tedarikci_ad") or "")
             _rt = ritim.get(_tkey)
             d["ritim_medyan_gun"] = _rt["medyan_gun"] if _rt else None
             d["oncelik"] = _oncelik(d["yas_saat"] / 24.0, _rt)
             rows.append(d)
+        _gelen_fatura_ipucu(cur, rows)
     return {"toplam": len(rows), "talepler": rows}
 
 
