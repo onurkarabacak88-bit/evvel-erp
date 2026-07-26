@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { api, fmt } from '../utils/api';
 import { publishGlobalDataRefresh } from '../utils/globalDataRefresh';
 import CariEkstrePanel, { trT, malCariListesi } from '../components/CariEkstrePanel';
+import KartAraOdemeModal from '../components/KartAraOdeme';
 
 // 💸 ÖDEME MERKEZİ v2 (2026-07-19, sahip: "sistemi adam akıllı ele alalım";
 // Codex çaprazlı — "tek form değil TEK KAPI: kuyruk birleşsin, yazıcılar birleşmesin").
@@ -86,6 +87,11 @@ export default function OdemeMerkezi() {
   const [filtre, setFiltre] = useState('tumu');  // 'tumu' | 'bugun' | 'gecikmis' | 'tutar'
   const [sekme, setSekme] = useState('tumu');    // 🗂 alt sekme (SEKMELER)
   const [kdvPoz, setKdvPoz] = useState(null);    // 🏛 Resmi Ödemeler (KDV) bloğu
+  // 💳 ARA ÖDEME (2026-07-27, sahip): dönem kapanmış (planı yok) ama borcu süren
+  // kartlar listeden KAYBOLMASIN — kart özetleri ayrı çekilir, plansızlar ayrı
+  // blokta gösterilir, tek tıkla ara ödeme (ortak KartAraOdemeModal).
+  const [kartOzetler, setKartOzetler] = useState([]);
+  const [araKart, setAraKart] = useState(null);
   const toast = (m, t = 'green') => { setMsg({ m, t }); setTimeout(() => setMsg(null), 5000); };
 
   const yukle = useCallback(() => {
@@ -95,6 +101,7 @@ export default function OdemeMerkezi() {
       .catch(e => { setHata(e?.message || 'Yüklenemedi'); setListe([]); });
     api('/odeme-plani/kokpit?personel=1').then(setKokpit).catch(() => setKokpit(null));
     api('/ops/maliyet/kdv-pozisyon?gun=30').then(setKdvPoz).catch(() => setKdvPoz(null));
+    api('/kartlar').then(r => setKartOzetler(Array.isArray(r) ? r : (r?.kartlar || []))).catch(() => setKartOzetler([]));
     setCariler(null); // ödeme sonrası cari borç listesi tazelensin (iz düşmüş olabilir)
     setEkstreler({}); // ekstreler de taze çekilsin
   }, [pencere]);
@@ -663,6 +670,57 @@ export default function OdemeMerkezi() {
               {sekme === 'personel' && ' Maaş/avans ödemeleri kendi akışından yapılır — burada izlenir.'}
             </div>
           )}
+
+          {/* 💳 ARA ÖDEME BLOĞU (2026-07-27, sahip: 'merkez alandan da ara ödeme imkânı'):
+              dönem kapanmış (aktif planı yok) ama borcu süren kartlar burada HER ZAMAN
+              görünür — kart borçlu bir kart ödeme ekranından asla kaybolmaz. */}
+          {(sekme === 'tumu' || sekme === 'kart') && (() => {
+            const planBasliklar = (liste || []).filter(r => r.tip === 'Kredi Kartı').map(r => String(r.baslik || ''));
+            const plansizlar = kartOzetler.filter(k => (Number(k.guncel_borc) || 0) > 0.01
+              && !planBasliklar.some(b => b.includes(String(k.kart_adi || '—'))));
+            if (plansizlar.length === 0) return null;
+            return (
+              <div style={{ marginTop: 14 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '4px 4px' }}>
+                  <span style={{ fontSize: 12, fontWeight: 800, color: 'var(--text2, var(--text))', letterSpacing: 0.5 }}>
+                    💳 KART ARA ÖDEME ({plansizlar.length}) — dönem kapalı, borç sürüyor
+                  </span>
+                  <span style={{ fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--text2, var(--text))', fontWeight: 700 }}>
+                    {fmt(plansizlar.reduce((s, k) => s + (Number(k.guncel_borc) || 0), 0))}
+                  </span>
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--text3)', padding: '0 4px 4px' }}>
+                  Bu kartların bu dönem planı kapandı (asgari/tam ödendi) ya da yeni ekstre bekleniyor —
+                  istersen beklemeden ara ödeme yap, borç ve gelecek ekstre devri küçülür.
+                </div>
+                {plansizlar.map(k => (
+                  <div key={k.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12,
+                                           padding: '12px 12px', margin: '6px 0', borderRadius: 10,
+                                           background: 'var(--bg2)', borderLeft: '4px solid var(--blue, #60a5fa)' }}>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+                      <span style={{ fontSize: 20 }}>💳</span>
+                      <span style={{ minWidth: 0 }}>
+                        <div style={{ fontWeight: 700, fontSize: 13, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 360 }}>
+                          {(k.banka || '').trim()} {k.kart_adi}
+                        </div>
+                        <div style={{ fontSize: 11, color: 'var(--text3)' }}>
+                          kesim günü {k.kesim_gunu || '—'}{k.son_odeme_tarihi ? ` · sıradaki son ödeme ${k.son_odeme_tarihi}` : ''}
+                        </div>
+                      </span>
+                    </span>
+                    <span style={{ whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 12 }}>
+                      <span style={{ textAlign: 'right' }}>
+                        <div style={{ fontFamily: 'var(--font-mono)', fontWeight: 800, fontSize: 15 }}>{fmt(k.guncel_borc)}</div>
+                        <div style={{ fontSize: 10, color: 'var(--text3)' }}>güncel borç</div>
+                      </span>
+                      <button className="btn btn-primary btn-sm" style={{ minWidth: 100 }}
+                        onClick={() => setAraKart(k)}>💸 Ara Ödeme</button>
+                    </span>
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
         </div>
       )}
 
@@ -1116,6 +1174,14 @@ export default function OdemeMerkezi() {
       <datalist id="omTedarikciler">
         {tedarikciler.map(t => <option key={t.id || t.ad} value={t.ad} />)}
       </datalist>
+
+      {/* 💳 ARA ÖDEME MODALI — ortak bileşen (Kartlar sayfasıyla aynı) */}
+      {araKart && (
+        <KartAraOdemeModal kart={araKart} kasa={kokpit?.kasa}
+          onKapat={() => setAraKart(null)}
+          onOdendi={(n) => { setAraKart(null); toast(`${fmt(n)} ara ödeme kaydedildi — kasadan düştü, kart borcu azaldı`);
+            publishGlobalDataRefresh('kart-ara-odeme'); yukle(); }} />
+      )}
 
       {/* ── TEK ÖDEME MODALI — her tür için aynı pencere ── */}
       {sec && (

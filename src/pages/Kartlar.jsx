@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { api, fmt, fmtDate } from '../utils/api';
+import KartAraOdemeModal from '../components/KartAraOdeme';
 
 const BOSH = { kart_adi: '', banka: '', limit_tutar: '', kesim_gunu: 15, son_odeme_gunu: 25,
   faiz_orani: '', asgari_oran: 40, gecikme_faiz_orani: '', sahip: 'İşletme', ortak_limit_grup: '' };
@@ -13,6 +14,8 @@ export default function Kartlar() {
   // Kart-odaklı araç çubuğu: arama + sıralama (bu sayfada işe yarayan şey budur)
   const [arama, setArama] = useState('');
   const [sirala, setSirala] = useState('borc'); // borc | kullanim | sonodeme | ad
+  // 💳 ARA ÖDEME (2026-07-27, sahip: 'kart alanında öde alanı') — ÖM ile ORTAK modal
+  const [odeKart, setOdeKart] = useState(null);
 
   const load = () => api('/kartlar').then((k) => setKartlar(k || []));
   useEffect(() => { load(); }, []);
@@ -270,6 +273,10 @@ export default function Kartlar() {
               </div>
 
               <div className="flex gap-8" style={{ marginTop: 12 }}>
+                {(Number(k.guncel_borc) || 0) > 0.01 && (
+                  <button className="btn btn-primary btn-sm" title="Kasadan kart borcuna ödeme — dönem/plan beklemeden"
+                    onClick={() => setOdeKart(k)}>💸 Öde</button>
+                )}
                 <button className="btn btn-secondary btn-sm" onClick={() => duzenle(k)}>✏️ Düzenle</button>
                 <button className="btn btn-danger btn-sm" onClick={() => sil(k.id)}>Pasife Al</button>
                 <button className="btn btn-danger btn-sm" title="Kalıcı sil (yalnızca işlemsiz kart)" onClick={() => kaliciSil(k)} style={{ background: 'transparent', color: 'var(--red)' }}>🗑 Sil</button>
@@ -291,6 +298,12 @@ export default function Kartlar() {
           ♻️ Tüm Kartları Tam Sıfırla
         </button>
       </div>
+
+      {odeKart && (
+        <KartAraOdemeModal kart={odeKart}
+          onKapat={() => setOdeKart(null)}
+          onOdendi={(n) => { setOdeKart(null); toast(`${fmt(n)} ödeme kaydedildi — kasadan düştü, kart borcu azaldı`); load(); }} />
+      )}
 
       {showModal && (
         <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setShowModal(false)}>
