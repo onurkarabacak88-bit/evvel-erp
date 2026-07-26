@@ -281,7 +281,12 @@ def kart_kesim_plani_yaz_tx(cur, k: dict, yil: int, ay: int) -> dict:
         ov_borc, ov_asgari = None, None
     if ov_borc is not None:
         odenecek = round(ov_borc, 2)
-        asgari   = round(ov_asgari, 2) if ov_asgari is not None else round(ov_borc * kart_asgari_orani(k), 2)
+        # SAHTE-ÖDENDİ FRENİ (2026-07-26): snapshot'ta asgari 0/boş kalabiliyor
+        # (PDF'ten okunamadı) — 0 asgari, aşağıdaki 'asgari ödendi' koşulunu
+        # 0>=0 ile ödemesiz doğruluyordu → plan ödemesiz kapanıyor, kart ÖM'den
+        # kayboluyordu (4 kart vakası). 0/negatif asgari = değer YOK say, orana düş.
+        asgari   = (round(ov_asgari, 2) if (ov_asgari is not None and float(ov_asgari) > 0)
+                    else round(ov_borc * kart_asgari_orani(k), 2))
     else:
         if bu_ekstre <= 0:
             return {"durum": "atlandi", "neden": "ekstre_yok"}
@@ -317,7 +322,8 @@ def kart_kesim_plani_yaz_tx(cur, k: dict, yil: int, ay: int) -> dict:
         return {"durum": "atlandi", "neden": "tam_odendi", "odenecek": odenecek}
 
     # Asgari ödendiyse → plan 'odendi' (kalan sonraki aya devreder), onay reddet
-    if odenen_kesim >= asgari * 0.999:
+    # (asgari > 0 şartı: sahte-ödendi freni — 0 asgari ödemesiz kapanış üretemez)
+    if asgari > 0 and odenen_kesim > 0 and odenen_kesim >= asgari * 0.999:
         cur.execute("""
             UPDATE odeme_plani SET durum='odendi', odenen_tutar=%s,
                    odeme_tarihi=COALESCE(odeme_tarihi, CURRENT_DATE),

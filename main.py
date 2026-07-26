@@ -1324,6 +1324,39 @@ def kart_plan_mutabakat(uygula: bool = False) -> dict:
     except Exception as e:  # noqa: BLE001
         rapor["hata"] = str(e)[:200]
         logger.warning("kart_plan_mutabakat: %s", str(e)[:200])
+    # R5 SAHTE-ÖDENDİ ONARIMI (2026-07-26, '4 kart ÖM'den kayboldu' vakası):
+    # snapshot asgarisi 0/boş gelince plan yazıcı 'asgari ödendi (0)' ile planı
+    # ÖDEMESİZ kapatıyordu; 'odendi' damga hem borcu gizler hem yeni planın
+    # INSERT'ini bloke eder. KASA İZİ = TEK GERÇEK: 'odendi' ama odenen<=0 VE o ay
+    # kart defterinde ODEME izi yoksa damga sahtedir → 'iptal' (R4 yeniden açar).
+    try:
+        with db() as (conn, cur):
+            cur.execute(
+                """UPDATE odeme_plani op
+                   SET durum='iptal',
+                       aciklama = COALESCE(op.aciklama,'') || ' [sahte-odendi onarımı: ödeme izi yok]'
+                   WHERE op.kart_id IS NOT NULL AND op.durum='odendi'
+                     AND COALESCE(op.odenen_tutar,0) <= 0
+                     AND NOT EXISTS (
+                         SELECT 1 FROM kart_hareketleri kh
+                         WHERE kh.kart_id = op.kart_id AND kh.durum='aktif'
+                           AND kh.islem_turu='ODEME'
+                           AND DATE_TRUNC('month', kh.tarih) = DATE_TRUNC('month', op.tarih))
+                   RETURNING op.id""" if uygula else
+                """SELECT op.id FROM odeme_plani op
+                   WHERE op.kart_id IS NOT NULL AND op.durum='odendi'
+                     AND COALESCE(op.odenen_tutar,0) <= 0
+                     AND NOT EXISTS (
+                         SELECT 1 FROM kart_hareketleri kh
+                         WHERE kh.kart_id = op.kart_id AND kh.durum='aktif'
+                           AND kh.islem_turu='ODEME'
+                           AND DATE_TRUNC('month', kh.tarih) = DATE_TRUNC('month', op.tarih))""")
+            rapor["r5_sahte_odendi_iptal"] = len(cur.fetchall() or [])
+            if uygula:
+                conn.commit()
+    except Exception as e:  # noqa: BLE001
+        rapor["hata"] = (rapor.get("hata") or "") + f" r5: {str(e)[:100]}"
+
     # R4 (2026-07-10 sahip vakası): bu döneme ait EKSTRE SNAPSHOT'ı olan ama aktif
     # planı olmayan kart (eski-odendi blokajı kurbanı) → tek yazıcıyla planı AÇ.
     try:
@@ -1365,6 +1398,7 @@ def kart_plan_mutabakat(uygula: bool = False) -> dict:
                      "r1b": len(rapor.get("r1b_odendi_yaninda_bekleyen") or []),
                      "r1": len(rapor["r1_mukerrer"]), "r2": len(rapor["r2_bayat_tasima"]),
                      "r3": len(rapor["r3_kapama"]),
+                     "r5": rapor.get("r5_sahte_odendi_iptal", 0),
                      "kalan_bekleyen": len(rapor["dokunulmayan_bekleyen"])}
     return rapor
 
