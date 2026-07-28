@@ -311,7 +311,11 @@ export default function TasarimV2({ onGit }) {
   }, [panel]);
 
   const bugunOdemeToplam = bugunOdemeler.reduce((s, o) => s + sayi(o.tutar ?? o.kalan ?? o.tahmini_tutar), 0);
-  const kasaBanka = sayi(panel?.genel_nakit_toplam) + sayi(panel?.genel_kart_toplam);
+  // KASA = kanonik alan panel.kasa (motors.guncel_kasa — kasa izi tek gerçek).
+  // Sahip yakaladı (2026-07-29): genel_nakit_toplam+genel_kart_toplam FARKLI bir
+  // çift toplamdı (1.842.161) ve gerçek kasadan (2.533.389) sapıyordu — klasik
+  // CFO Panel ile v2 aynı sayıyı göstermek ZORUNDA.
+  const kasaBanka = sayi(panel?.kasa);
 
   // ── gezinme ────────────────────────────────────────────────────────────────
   const modObj = MODULLER.find(m => m.id === mod) || MODULLER[0];

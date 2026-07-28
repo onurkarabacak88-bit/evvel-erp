@@ -43,6 +43,9 @@ function ciroUret() {
 
 const SAHTE = {
   '/api/panel': {
+    // kasa = KANONİK alan (motors.guncel_kasa) — v2 kabuk kutusu BUNU okur;
+    // genel_* toplamları farklı agregalardır, kasa yerine kullanılmaz (sahip dersi).
+    kasa: 2533389,
     genel_nakit_toplam: 312400,
     genel_kart_toplam: 273910,
     bu_ay_sadece_ciro: 2184500,
