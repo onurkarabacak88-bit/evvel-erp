@@ -975,16 +975,24 @@ def tv_menu_hero(name: str):
 
 
 @router.get("/tv-menu/urun/{slug}")
-def tv_menu_urun_gorsel(slug: str):
+def tv_menu_urun_gorsel(slug: str, kat: str = ""):
     """Otancy'den indirilen GERÇEK ürün fotoğrafı (içeceğiyle dolu şeffaf PNG).
     slug = ürün adının sadeleştirilmiş hali (tv-menu JS'teki _slug ile birebir).
-    Yoksa 404 → TV jenerik bardağa (cup) düşer (fail-safe)."""
+
+    kat verilirse ÖNCE kategoriye özel dosya aranır ({kat}__{slug}.png): Otancy'de
+    aynı ad iki kategoride farklı fotoğrafla durur (sıcak Latte ≠ buzlu Latte).
+    Bulunmazsa adı-yalın dosyaya, o da yoksa 404 → TV jenerik bardağa düşer."""
     if not re.match(r"^[a-z0-9_]{1,60}$", slug or ""):
         raise HTTPException(404, "gecersiz slug")
+    adaylar = []
+    if re.match(r"^[a-z0-9_]{1,60}$", kat or ""):
+        adaylar.append(kat + "__" + slug + ".png")
+    adaylar.append(slug + ".png")
     for base in ("static/tv/urun", "public/tv/urun"):
-        p = os.path.join(base, slug + ".png")
-        if os.path.exists(p):
-            return FileResponse(p, media_type="image/png")
+        for fname in adaylar:
+            p = os.path.join(base, fname)
+            if os.path.exists(p):
+                return FileResponse(p, media_type="image/png")
     raise HTTPException(404, "urun gorseli yok")
 
 
@@ -1412,11 +1420,22 @@ function urunSlug(ad){
     .replace(/[^a-z0-9]+/g,'_').replace(/^_|_$/g,'');
   return URUN_ALIAS[s]||s;
 }
+// kategori adı → slug (alias YOK; Otancy kategori klasör adıyla birebir)
+function katSlug(kat){
+  return String(kat||'').toLowerCase()
+    .replace(/ç/g,'c').replace(/ğ/g,'g').replace(/ı/g,'i').replace(/ö/g,'o').replace(/ş/g,'s').replace(/ü/g,'u')
+    .replace(/[^a-z0-9]+/g,'_').replace(/^_|_$/g,'');
+}
+// ürün görsel yolu — kategori bilgisi varsa iletilir (sıcak Latte ≠ buzlu Latte)
+function urunGorselYolu(ad,kat){
+  var u='/tv-menu/urun/'+urunSlug(ad), k=katSlug(kat);
+  return k ? (u+'?kat='+k) : u;
+}
 // GERÇEK ürün fotoğrafını spcup'a koy; yüklenemezse jenerik bardağa düş (Otancy eşleme)
 function urunGorselKoy(ad,kat){
   var fb='/tv-menu/cup/'+bardakSec(ad,kat);
   spcup.onerror=function(){ spcup.onerror=null; spcup.src=fb; };
-  spcup.src='/tv-menu/urun/'+urunSlug(ad);
+  spcup.src=urunGorselYolu(ad,kat);
 }
 // ürün → bardak görseli (/tv-menu/cup/{hot|latte|iced|mocktail})
 function bardakSec(ad,kat){
@@ -1478,7 +1497,7 @@ function vitrinCiz(){
     if(k.u.f14!=null) rows+='<div class="vpr"><span>14 oz</span><b>'+escq(k.u.f14)+'</b></div>';
     if(k.u.fice!=null)rows+='<div class="vpr"><span>Buzlu</span><b>'+escq(k.u.fice)+'</b></div>';
     html+='<div class="vkart" style="animation-delay:'+(0.3+ix*0.16).toFixed(2)+'s">'
-        + '<img class="vcup" src="/tv-menu/urun/'+urunSlug(k.ad)+'" onerror="this.onerror=null;this.src=\'/tv-menu/cup/'+bardakSec(k.ad,k.kat)+'\'" alt="">'
+        + '<img class="vcup" src="'+urunGorselYolu(k.ad,k.kat)+'" onerror="this.onerror=null;this.src=\'/tv-menu/cup/'+bardakSec(k.ad,k.kat)+'\'" alt="">'
         + '<div class="vad">'+escq(k.ad)+'</div>'
         + (k.u.aciklama?'<div class="vtat">'+escq(k.u.aciklama)+'</div>':'')
         + rows + '</div>';
