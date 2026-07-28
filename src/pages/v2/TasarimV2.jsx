@@ -154,6 +154,16 @@ export default function TasarimV2({ onGit }) {
     api('/ops/fiyat-zam-alarmlari?gun=90&sadece_yeni=true&limit=50')
       .then(d => koy('fiyatZinciri', Array.isArray(d?.alarmlar) ? d.alarmlar.length : 0))
       .catch(() => {});
+    // Tüketim kontrolü rozeti — satış×reçete beklenene göre %15+ FAZLA açılan
+    // malzeme-gün sayısı (fire bildirimi düşüldükten sonra). Uç gece ön-hesaplı
+    // önbellekten döner (gun=7), kabuk açılışını yormaz.
+    api('/recete/kontrol?gun=7')
+      .then(d => koy('tuketimFark', (Array.isArray(d?.kiyas) ? d.kiyas : [])
+        .filter(s => {
+          const y = s.fark_yuzde_fire_sonrasi ?? s.fark_yuzde;
+          return y != null && y >= 15;
+        }).length))
+      .catch(() => {});
     return () => { iptal = true; };
   }, []);
 

@@ -116,6 +116,9 @@ export const MODULLER = [
     { id: 'ozet', ad: 'Marj Özeti' },
     { id: 'urun', ad: 'Ürün Maliyeti' },
     { id: 'recete', ad: 'Reçeteler' },
+    // Sahip isteği (2026-07-28): satış×reçete beklenen vs ürün-aç gerçek —
+    // fazla kullanım saptama tasarıma geldi (recete_api.kontrol motoru, öneri-only)
+    { id: 'tuketim', ad: 'Tüketim Kontrolü', rozet: 'tuketimFark', renk: '#F87171' },
     { id: 'fiyat', ad: 'Fiyat Zinciri', rozet: 'fiyatZinciri', renk: '#FBBF24' },
   ]},
   { id: 'ekip', ad: 'Personel & Vardiya', kisa: 'Ekip', alt: 'Kadro · plan · bordro', ikon: IK.ekip, gorunumler: [

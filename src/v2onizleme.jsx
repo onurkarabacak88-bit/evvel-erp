@@ -295,6 +295,26 @@ const MALIYET_UC = {
     toplam: 3,
   },
   '/api/ops/fiyat-zam-alarmlari/goruldu': { success: true },
+  '/api/recete/kontrol': {
+    kesit_gun: 7, onayli_urun_es: 42, onayli_malzeme_es: 18,
+    kiyas: [
+      // SÜT: kalıcı tek yönlü fazla kullanım (3 gün +%18..%24) — kırmızı senaryo
+      { malzeme: 'süt', birim: 'ml', gun: gunEkleISO(-3), beklenen_miktar: 41200, gercek_miktar: 48700, fark: 7500, fark_yuzde: 18.2, kaynak: 'bar_sayim_devirli' },
+      { malzeme: 'süt', birim: 'ml', gun: gunEkleISO(-2), beklenen_miktar: 39800, gercek_miktar: 49300, fark: 9500, fark_yuzde: 23.9, bildirilen_fire: 1000, fark_fire_sonrasi: 8500, fark_yuzde_fire_sonrasi: 21.4 },
+      { malzeme: 'süt', birim: 'ml', gun: gunEkleISO(-1), beklenen_miktar: 44100, gercek_miktar: 52600, fark: 8500, fark_yuzde: 19.3, kapanis_gecici: true },
+      // ÇEKİRDEK: uyumlu — yeşil senaryo
+      { malzeme: 'espresso çekirdek', birim: 'g', gun: gunEkleISO(-3), beklenen_miktar: 6100, gercek_miktar: 6300, fark: 200, fark_yuzde: 3.3 },
+      { malzeme: 'espresso çekirdek', birim: 'g', gun: gunEkleISO(-2), beklenen_miktar: 5900, gercek_miktar: 5750, fark: -150, fark_yuzde: -2.5 },
+      { malzeme: 'espresso çekirdek', birim: 'g', gun: gunEkleISO(-1), beklenen_miktar: 6400, gercek_miktar: 6550, fark: 150, fark_yuzde: 2.3, ambalaj_varsayim: true },
+      // VANİLYA ŞURUP: ambalaj tanımsız — dürüst boşluk senaryosu
+      { malzeme: 'vanilya şurup', birim: 'ml', gun: gunEkleISO(-2), beklenen_miktar: 840, acilan_ambalaj: 2, fark: null, eksik: 'ambalaj_icerigi_tanimsiz' },
+      { malzeme: 'vanilya şurup', birim: 'ml', gun: gunEkleISO(-1), beklenen_miktar: 910, acilan_ambalaj: 1, fark: null, eksik: 'ambalaj_icerigi_tanimsiz' },
+      // BARDAK: tek gün fazla — amber senaryo
+      { malzeme: 'karton bardak 8 oz', birim: 'adet', gun: gunEkleISO(-2), beklenen_miktar: 1180, gercek_miktar: 1420, fark: 240, fark_yuzde: 20.3 },
+      { malzeme: 'karton bardak 8 oz', birim: 'adet', gun: gunEkleISO(-1), beklenen_miktar: 1240, gercek_miktar: 1265, fark: 25, fark_yuzde: 2.0 },
+    ],
+    not: 'GÖZLEMDİR, hüküm değil.',
+  },
 };
 
 function borcKocu(url) {

@@ -81,6 +81,8 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
   const [alarmlar, setAlarmlar] = useState(null);
   const [alarmHata, setAlarmHata] = useState('');
   const [esik, setEsik] = useState(15);
+  const [kontrol, setKontrol] = useState(null);
+  const [kontrolHata, setKontrolHata] = useState('');
 
   const ozetYukle = useCallback(() => {
     setOzetHata('');
@@ -109,11 +111,19 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
       .catch((e) => setAlarmHata(e?.message || ''));
   }, []);
 
+  const kontrolYukle = useCallback(() => {
+    setKontrolHata('');
+    api('/recete/kontrol?gun=7')
+      .then((d) => setKontrol(d || {}))
+      .catch((e) => setKontrolHata(e?.message || ''));
+  }, []);
+
   useEffect(() => {
     if (gorunum === 'ozet') ozetYukle();
     if (gorunum === 'urun' || gorunum === 'recete') receteYukle();
     if (gorunum === 'fiyat') alarmYukle();
-  }, [gorunum, ozetYukle, receteYukle, alarmYukle]);
+    if (gorunum === 'tuketim') kontrolYukle();
+  }, [gorunum, ozetYukle, receteYukle, alarmYukle, kontrolYukle]);
 
   // Aktif alış fiyatı haritası: kalem_kodu → {maliyet, birim} (en güncel geçerli)
   const fiyatMap = useMemo(() => {
@@ -353,6 +363,190 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
             İlk 30 reçete gösteriliyor — tamamı Reçete Eşleştirme ekranında ({receteler.length}).
           </div>
         )}
+      </>
+    );
+  }
+
+  // ════════════════════════ GÖRÜNÜM: TÜKETİM KONTROLÜ ═══════════════════════
+  // Sahip isteği (2026-07-28): "satışın verisine göre maliyet — bara giren ürün
+  // açılımını takip edip fazla kullanımı saptayalım." Motor zaten kuruluydu
+  // (recete_api.kontrol): BEKLENEN = Evo satış × reçete, GERÇEK = ürün-aç defteri
+  // × ambalaj içeriği (bar sayımlı malzemede devir-bilinçli). Burada yalnız
+  // TASARIMA getirildi — öneri-only: hiçbir yazma yok, hüküm insanın.
+  if (gorunum === 'tuketim') {
+    if (kontrolHata) return <HataBandi mesaj={kontrolHata} onTekrar={kontrolYukle} />;
+    if (!kontrol) return <Yukleniyor />;
+
+    // Eşleştirme henüz kurulmamışsa dürüst boş durum + köprü
+    if (kontrol.durum === 'eslestirme_bekliyor') {
+      return (
+        <>
+          <KpiSeridi kpiler={[
+            { etiket: 'Onaylı ürün eşleşmesi', deger: String(sayi(kontrol.onayli_urun)), alt: 'reçete ↔ Evo satış adı', renk: R.amber },
+            { etiket: 'Onaylı malzeme', deger: String(sayi(kontrol.onayli_malzeme)), alt: 'reçete ↔ depo kalemi', renk: R.amber },
+            { etiket: 'Bekleyen öneri', deger: String(sayi(kontrol.bekleyen_oneri)), alt: 'onayını bekliyor', renk: R.kirmizi },
+            { etiket: 'Durum', deger: 'kurulum', alt: 'eşleştirme tamamlanmalı' },
+          ]} />
+          <div style={{ ...kartYuzey, padding: '30px 26px', textAlign: 'center' }}>
+            <div style={{ fontFamily: F.baslik, fontSize: 17, fontWeight: 600 }}>
+              Kontrol için eşleştirme onayı gerekiyor
+            </div>
+            <div style={{ fontSize: 13, color: R.not, marginTop: 8, lineHeight: 1.6, maxWidth: 520, margin: '8px auto 0' }}>
+              Satış × reçete karşılaştırması, reçete adlarının Evo satış adlarıyla ve
+              malzemelerin depo kalemleriyle eşleşmesini ister. {sayi(kontrol.bekleyen_oneri)} öneri onay bekliyor.
+            </div>
+            <button
+              onClick={() => onKopru?.('recete-eslestirme')}
+              style={{
+                marginTop: 16, padding: '10px 18px', borderRadius: 11, border: 'none',
+                background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+                fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer',
+              }}
+            >
+              Eşleştirme onayına git
+            </button>
+          </div>
+        </>
+      );
+    }
+
+    const kiyas = Array.isArray(kontrol.kiyas) ? kontrol.kiyas : [];
+    // Malzeme bazında grupla
+    const gruplar = {};
+    kiyas.forEach((s) => {
+      const k = `${s.malzeme}|${s.birim}`;
+      (gruplar[k] = gruplar[k] || { malzeme: s.malzeme, birim: s.birim, gunler: [] }).gunler.push(s);
+    });
+    const netFark = (s) => s.fark_fire_sonrasi ?? s.fark;
+    const netYuzde = (s) => s.fark_yuzde_fire_sonrasi ?? s.fark_yuzde;
+    const grupListe = Object.values(gruplar).map((g) => {
+      const olculen = g.gunler.filter((s) => netFark(s) != null);
+      const fazla = olculen.filter((s) => (netYuzde(s) ?? 0) >= 15);
+      // KALICI TEK YÖNLÜ fark = insanın bakacağı yer (motorun kendi notu):
+      // ölçülen ≥3 gün ve hepsi aynı yönde ve ortalama %10'u aşıyor
+      const ort = olculen.length
+        ? olculen.reduce((t, s) => t + (netYuzde(s) ?? 0), 0) / olculen.length : 0;
+      const kalici = olculen.length >= 3
+        && (olculen.every((s) => netFark(s) > 0) || olculen.every((s) => netFark(s) < 0))
+        && Math.abs(ort) >= 10;
+      return { ...g, olculen, fazla, ort, kalici };
+    }).sort((a, b) => b.fazla.length - a.fazla.length || Math.abs(b.ort) - Math.abs(a.ort));
+    const toplamFazla = grupListe.reduce((t, g) => t + g.fazla.length, 0);
+    const enSert = kiyas.reduce((m, s) => Math.max(m, netYuzde(s) ?? -Infinity), -Infinity);
+    return (
+      <>
+        <KpiSeridi kpiler={[
+          { etiket: 'İzlenen malzeme', deger: String(grupListe.length), alt: `son ${sayi(kontrol.kesit_gun)} gün · onaylı eşleşme` },
+          { etiket: 'Fazla kullanım', deger: String(toplamFazla), alt: 'beklenenden %15+ fazla (gün×malzeme)', renk: toplamFazla > 0 ? R.kirmizi : R.yesil },
+          { etiket: 'En sert sapma', deger: Number.isFinite(enSert) ? `+${pct(enSert).slice(1)}` : '—', alt: 'tek günde', renk: Number.isFinite(enSert) && enSert >= 15 ? R.kirmizi : R.krem },
+          { etiket: 'Eşleşme', deger: `${sayi(kontrol.onayli_urun_es)} ürün · ${sayi(kontrol.onayli_malzeme_es)} malzeme`, alt: 'onaylı köprüler' },
+        ]} />
+
+        {/* Öneri-only ilkesi ekranda (desen 8) — motorun kendi cümlesi */}
+        <div style={{
+          ...kartYuzey, padding: '12px 18px', marginBottom: 14,
+          fontSize: 12, color: R.not, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+        }}>
+          <span style={rozetHap(R.mavi)}>ℹ gözlem</span>
+          Beklenen = Evo satış × reçete · Gerçek = bara açılan ürün (devir bilinçli).
+          Fark ± fire/işçilik payı normaldir — <b style={{ color: R.metin2 }}>KALICI ve TEK YÖNLÜ fark</b> insanın
+          bakacağı yerdir. Bu ekran hüküm vermez, stok akışına dokunmaz.
+        </div>
+
+        {grupListe.length === 0 ? (
+          <BosDurum metin="Kıyaslanabilir gün yok — satış verisi ve ürün-aç kaydı biriktikçe bu ekran dolar." />
+        ) : (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 12, marginBottom: 16 }}>
+            {grupListe.map((g) => (
+              <div key={`${g.malzeme}|${g.birim}`} style={{
+                ...kartYuzey, padding: '16px 18px',
+                border: g.kalici ? `1px solid ${g.ort > 0 ? R.kirmizi : R.amber}55` : kartYuzey.border,
+              }}>
+                <div style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10,
+                  paddingBottom: 10, borderBottom: `1px solid ${R.cizgi2}`, marginBottom: 10, flexWrap: 'wrap',
+                }}>
+                  <div>
+                    <div style={{ fontFamily: F.baslik, fontSize: 15, fontWeight: 600, textTransform: 'capitalize' }}>
+                      {g.malzeme}
+                    </div>
+                    <div style={{ fontSize: 10.5, color: R.not2, marginTop: 2 }}>
+                      {g.olculen.length}/{g.gunler.length} gün ölçülebildi · birim {g.birim}
+                    </div>
+                  </div>
+                  {g.kalici ? (
+                    <span style={rozetHap(g.ort > 0 ? R.kirmizi : R.amber)}>
+                      ⚠ kalıcı {g.ort > 0 ? 'fazla kullanım' : 'eksik açılış'} · ort {g.ort > 0 ? '+' : ''}{Math.round(g.ort)}%
+                    </span>
+                  ) : g.fazla.length > 0 ? (
+                    <span style={rozetHap(R.amber)}>{g.fazla.length} gün fazla</span>
+                  ) : g.olculen.length > 0 ? (
+                    <span style={rozetHap(R.yesil)}>✓ uyumlu</span>
+                  ) : (
+                    <span style={rozetHap(R.not2)}>ölçülemedi</span>
+                  )}
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {g.gunler.slice(-7).map((s, i) => {
+                    const f = netFark(s); const y = netYuzde(s);
+                    return (
+                      <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 9, fontSize: 12 }}>
+                        <span style={{ fontFamily: F.mono, fontSize: 11, color: R.not2, minWidth: 46 }}>{tarihKisa(s.gun)}</span>
+                        <span style={{ color: R.metin2 }}>beklenen <b style={{ fontFamily: F.mono }}>{s.beklenen_miktar}</b></span>
+                        <span style={{ flex: 1, height: 1, background: R.cizgi2 }} />
+                        {f == null ? (
+                          <span style={{ fontSize: 10.5, color: R.not3 }}>
+                            {s.eksik === 'bar_sayim_yok' ? 'bar sayımı yok'
+                              : s.eksik === 'ambalaj_icerigi_tanimsiz' ? 'ambalaj tanımsız'
+                              : s.eksik === 'urun_ac_kaydi_yok' ? 'ürün-aç kaydı yok' : 'ölçülemedi'}
+                          </span>
+                        ) : (
+                          <>
+                            <span style={{ color: R.metin2 }}>gerçek <b style={{ fontFamily: F.mono }}>{s.gercek_miktar}</b></span>
+                            <span style={{
+                              fontFamily: F.mono, fontSize: 11.5, fontWeight: 700, minWidth: 58, textAlign: 'right',
+                              color: (y ?? 0) >= 15 ? R.kirmizi : (y ?? 0) <= -15 ? R.amber : R.yesil,
+                            }}>
+                              {f > 0 ? '+' : ''}{f}{y != null ? ` (%${Math.round(y)})` : ''}
+                            </span>
+                            {s.bildirilen_fire ? (
+                              <span style={{ fontSize: 9.5, color: R.not2 }} title="bildirilen fire düşüldü">🗑 {s.bildirilen_fire}</span>
+                            ) : null}
+                            {s.kapanis_gecici && <span style={{ fontSize: 9.5, color: R.not3 }}>geçici</span>}
+                            {s.ambalaj_varsayim && <span style={{ fontSize: 9.5, color: R.amber }} title="ambalaj içeriği varsayım — teyit bekliyor">≈</span>}
+                          </>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div style={{ display: 'flex', gap: 9, flexWrap: 'wrap', marginBottom: 16 }}>
+          <button
+            onClick={() => onKopru?.('recete-eslestirme')}
+            style={{
+              padding: '9px 16px', borderRadius: 10, border: `1px solid ${R.cizgi3}`,
+              background: R.girinti, color: R.metin2, fontSize: 12, fontWeight: 600,
+              fontFamily: 'inherit', cursor: 'pointer',
+            }}
+          >
+            Reçete & eşleştirme yönetimi
+          </button>
+          <button
+            onClick={() => onKopru?.('duyu-paneli')}
+            style={{
+              padding: '9px 16px', borderRadius: 10, border: `1px solid ${R.cizgi3}`,
+              background: R.girinti, color: R.metin2, fontSize: 12, fontWeight: 600,
+              fontFamily: 'inherit', cursor: 'pointer',
+            }}
+          >
+            Duyu Paneli'nde geçmiş bulgular
+          </button>
+        </div>
       </>
     );
   }
