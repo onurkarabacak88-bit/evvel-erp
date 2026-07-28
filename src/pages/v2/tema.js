@@ -1,0 +1,182 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// EVVEL v2 — "kadife koyu" tasarım dili
+// Kaynak: tasarim/cloud-v2/03_evvel-erp-v2_GUNCEL.dc.html (Cloud Design v2)
+//
+// Bu dosya SADECE v2 kabuğunda (#tasarim-v2) kullanılır. index.css token'larına
+// dokunmaz — mevcut açık-krem tema canlıda olduğu gibi kalır. Tasarım paketi
+// bütün modüllere yayılıp onaylanınca token'lar index.css'e taşınacak.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const R = {
+  // zeminler
+  zemin: '#16100A',
+  ray: '#120C07',
+  sutun: '#1A1209',
+  girinti: '#1F160D',
+  // kart yüzeyleri (gradient uçları)
+  kart1: '#2A2015',
+  kart2: '#221809',
+  kartUst1: '#2E2317',
+  kartUst2: '#231909',
+  // çizgiler
+  cizgi: '#2C2016',
+  cizgi2: '#33251A',
+  cizgi3: '#3A2C1E',
+  // metin
+  krem: '#F3EADC',
+  metin2: '#C4B5A2',
+  not: '#9B8A75',
+  not2: '#8B7B67',
+  not3: '#6E6052',
+  // marka + durum
+  bakir: '#D29A5B',
+  bakirAcik: '#E5B27A',
+  bakirKoyu: '#96602C',
+  yesil: '#4ADE80',
+  kirmizi: '#F87171',
+  amber: '#FBBF24',
+  mavi: '#60A5FA',
+};
+
+export const F = {
+  baslik: "'Fraunces', Georgia, serif",
+  govde: "'Instrument Sans', system-ui, sans-serif",
+  mono: "'JetBrains Mono', monospace",
+};
+
+/** Kart yüzeyi — tasarımdaki standart panel dolgusu. */
+export const kartYuzey = {
+  background: `linear-gradient(165deg, ${R.kart1}, ${R.kart2})`,
+  border: '1px solid rgba(243,233,220,.1)',
+  borderRadius: 18,
+  boxShadow: '0 14px 32px rgba(0,0,0,.32)',
+};
+
+/** Tier → renk. Duyu/öneri listelerinde kullanılır. */
+export const TIER_RENK = {
+  kritik: R.kirmizi,
+  uyari: R.amber,
+  bilgi: R.mavi,
+  iyi: R.yesil,
+};
+
+// ─── İkonlar (lucide çizim dili, stroke-width 1.7) ───────────────────────────
+export const IK = {
+  gosterge: '<path d="m12 14 4-4"/><path d="M3.34 19a10 10 0 1 1 17.32 0"/>',
+  radar: '<circle cx="12" cy="12" r="2"/><path d="M16.24 7.76a6 6 0 0 1 0 8.49"/><path d="M7.76 16.24a6 6 0 0 1 0-8.49"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M4.93 19.07a10 10 0 0 1 0-14.14"/>',
+  banknot: '<rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/><path d="M5.5 12h.01M18.5 12h.01"/>',
+  para: '<circle cx="8" cy="8" r="5.5"/><path d="M18.6 9.4a5.5 5.5 0 1 1-9.2 9.2"/><path d="M8 5.5v5M5.5 8h5"/>',
+  ekip: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="3.75"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.4a3.75 3.75 0 0 1 0 7.2"/>',
+  grafik: '<path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="M8 16.5v-5M13 16.5V8M18 16.5v-3"/>',
+  kart: '<rect x="2" y="5" width="20" height="14" rx="2.5"/><path d="M2 10h20"/><path d="M6 15h4"/>',
+  pusula: '<circle cx="12" cy="12" r="10"/><path d="m16.2 7.8-2.1 6.3-6.3 2.1 2.1-6.3Z"/>',
+  banka: '<path d="M3 21.5h18"/><path d="M5.5 18v-8M10 18v-8M14 18v-8M18.5 18v-8"/><path d="m3 7 9-4.5L21 7v3H3Z"/>',
+  islemci: '<rect x="5" y="5" width="14" height="14" rx="2"/><rect x="9.5" y="9.5" width="5" height="5" rx="1"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/>',
+  onay: '<circle cx="12" cy="12" r="9.5"/><path d="m8.5 12 2.5 2.5 4.5-5"/>',
+  kahve: '<path d="M17 9h1.5a3.5 3.5 0 1 1 0 7H17"/><path d="M3.5 9H17v7.5a4 4 0 0 1-4 4h-5.5a4 4 0 0 1-4-4Z"/><path d="M7 5.5V3.5M10.5 5.5v-2M14 5.5v-2"/>',
+  klasor: '<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.7-.9L9.6 3.9A2 2 0 0 0 7.9 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>',
+  anahtar: '<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76Z"/>',
+  dosya: '<path d="M14.5 2.5H6.5a2 2 0 0 0-2 2v15a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7.5Z"/><path d="M14.5 2.5v5h5"/><path d="M9 13h6M9 16.5h6"/>',
+};
+
+// ─── Modül ağacı ─────────────────────────────────────────────────────────────
+// `hedef` = mevcut uygulamadaki hash rotası. v2'de henüz karşılığı yazılmamış
+// görünümler oraya köprülenir; böylece kabuk baştan gezilebilir olur.
+export const MODULLER = [
+  { id: 'panel', ad: 'Yönetim & Karar', kisa: 'Panel', alt: 'CFO görünümleri', ikon: IK.gosterge, gorunumler: [
+    { id: 'bugun', ad: 'Bugün' },
+    { id: 'ay', ad: 'Ay Özeti' },
+    { id: 'subeler', ad: 'Şube Karnesi' },
+    { id: 'risk', ad: 'Riskler' },
+  ]},
+  { id: 'ops', ad: 'Operasyon', kisa: 'Ops', alt: 'Sipariş · depo · sevk', ikon: IK.radar, gorunumler: [
+    { id: 'akis', ad: 'Sipariş Akışı', hedef: 'ops-merkez' },
+    { id: 'sevkiyat', ad: 'Sevkiyat Hazırlama', hedef: 'sevkiyat-hazirlama' },
+    { id: 'depo', ad: 'Depo Stok', hedef: 'ops-merkez' },
+    { id: 'sayim', ad: 'Bardak & Ürün Sayımı', hedef: 'stok-sayim' },
+    { id: 'hareket', ad: 'Stok Hareketi', hedef: 'ops-merkez' },
+    { id: 'kule', ad: 'Kontrol Kulesi', hedef: 'ops-merkez' },
+  ]},
+  { id: 'odeme', ad: 'Ödeme Merkezi', kisa: 'Ödeme', alt: 'Vade · bakiye · geçmiş', ikon: IK.banknot, gorunumler: [
+    { id: 'bekleyen', ad: 'Bekleyen', hedef: 'odeme-merkezi' },
+    { id: 'takvim', ad: 'Vade Takvimi', hedef: 'odeme-merkezi' },
+    { id: 'tedarikci', ad: 'Tedarikçi Bakiyesi', hedef: 'tedarikciler' },
+    { id: 'gecmis', ad: 'Ödeme Geçmişi', hedef: 'odeme-merkezi' },
+  ]},
+  { id: 'maliyet', ad: 'Kâr & Maliyet', kisa: 'Maliyet', alt: 'Marj · reçete · fiyat', ikon: IK.para, gorunumler: [
+    { id: 'ozet', ad: 'Marj Özeti', hedef: 'maliyet' },
+    { id: 'urun', ad: 'Ürün Marjı', hedef: 'maliyet' },
+    { id: 'recete', ad: 'Reçeteler', hedef: 'recete-eslestirme' },
+    { id: 'fiyat', ad: 'Fiyat Zinciri', hedef: 'maliyet' },
+  ]},
+  { id: 'ekip', ad: 'Personel & Vardiya', kisa: 'Ekip', alt: 'Kadro · plan · bordro', ikon: IK.ekip, gorunumler: [
+    { id: 'kadro', ad: 'Kadro', hedef: 'personel' },
+    { id: 'vardiya', ad: 'Vardiya Planı', hedef: 'vardiya-planlamasi' },
+    { id: 'maas', ad: 'Maaş & Avans', hedef: 'personel' },
+    { id: 'gorev', ad: 'Görev Takibi', hedef: 'gorev-ozet' },
+    { id: 'takip', ad: 'Vardiya Takip', hedef: 'personel-vardiya-takip' },
+    { id: 'basvuru', ad: 'İş Başvuruları', hedef: 'is-basvurusu' },
+    { id: 'pinqr', ad: 'Panel PIN & Görev QR', hedef: 'sube-panel-pin' },
+  ]},
+  { id: 'onaylar', ad: 'Onay Bekleyenler', kisa: 'Onay', alt: 'Kuyruk · ciro onayı', ikon: IK.onay, gorunumler: [
+    { id: 'kuyruk', ad: 'Onay Kuyruğu', hedef: 'onay' },
+    { id: 'ciro', ad: 'Ciro Onayı', hedef: 'ciro-taslak-onay' },
+  ]},
+  { id: 'para', ad: 'Para Hareketleri', kisa: 'Para', alt: 'Ciro · satış · kasa', ikon: IK.kahve, gorunumler: [
+    { id: 'girisi', ad: 'Ciro Girişi', hedef: 'ciro' },
+    { id: 'satis', ad: 'Ürün Satışları', hedef: 'evo-satis' },
+    { id: 'kasa', ad: 'Kasa Teslim', hedef: 'kasa-teslim' },
+    { id: 'gider', ad: 'Anlık Gider', hedef: 'anlik-gider' },
+    { id: 'diskaynak', ad: 'Dış Kaynak Geliri', hedef: 'dis-kaynak' },
+  ]},
+  { id: 'denetim', ad: 'Denetim & Zekâ', kisa: 'Zekâ', alt: '13 tanı motoru · duyu', ikon: IK.islemci, gorunumler: [
+    { id: 'anomali', ad: 'Bugünkü Bulgular', hedef: 'akilli-denetim' },
+    { id: 'motorlar', ad: 'Tanı Motorları · 13', hedef: 'akilli-denetim' },
+    { id: 'olaylar', ad: 'Olay Yelpazesi', hedef: 'akilli-denetim' },
+    { id: 'mutabakat', ad: 'Duyu Mutabakatı', hedef: 'duyu-paneli' },
+    { id: 'bag', ad: 'Bağ Defteri', hedef: 'duyu-paneli' },
+    { id: 'duyu', ad: 'Duyu Paneli', hedef: 'duyu-paneli' },
+    { id: 'strateji', ad: 'Strateji Motoru', hedef: 'strateji' },
+  ]},
+  { id: 'belge', ad: 'Belge Merkezi', kisa: 'Belge', alt: 'Fatura · kapsama · KDV', ikon: IK.dosya, gorunumler: [
+    { id: 'kapsama', ad: 'Belge Kapsama', hedef: 'belge-merkezi' },
+    { id: 'arsiv', ad: 'Fatura Arşivi · FTS', hedef: 'belge-merkezi' },
+    { id: 'istek', ad: 'Fatura İstek · wa.me', hedef: 'belge-merkezi' },
+    { id: 'uyarilar', ad: 'Mükerrer & Parmak İzi', hedef: 'belge-merkezi' },
+    { id: 'cari', ad: 'Cari Ekstre', hedef: 'belge-merkezi' },
+    { id: 'fiyat', ad: 'Fiyat Bandı', hedef: 'belge-merkezi' },
+    { id: 'kdv', ad: 'KDV Kanıt Paketi', hedef: 'belge-merkezi' },
+  ]},
+  { id: 'tanim', ad: 'Tanımlar', kisa: 'Tanım', alt: 'Tedarikçi · TV menü', ikon: IK.klasor, gorunumler: [
+    { id: 'tedarikciler', ad: 'Tedarikçiler', hedef: 'tedarikciler' },
+    { id: 'zincir', ad: 'Teslimat Zinciri', hedef: 'tedarik-dosyasi' },
+    { id: 'dosya', ad: 'Tedarik Dosyası', hedef: 'tedarik-dosyasi' },
+    { id: 'tv', ad: 'TV Menü Yönetimi', hedef: 'tv-menu' },
+  ]},
+  { id: 'sistem', ad: 'Veri & Sistem', kisa: 'Sistem', alt: 'Import · teslim · temizlik', ikon: IK.anahtar, gorunumler: [
+    { id: 'excel', ad: 'Excel Import', hedef: 'excel' },
+    { id: 'teslim', ad: 'Bilgi Teslim', hedef: 'teslim-kayit' },
+    { id: 'temizle', ad: 'Veri Temizle', hedef: 'veri-temizle' },
+  ]},
+  { id: 'kart', ad: 'Kartlar & Borç', kisa: 'Kart', alt: 'Kart · faiz · ekstre', ikon: IK.kart, gorunumler: [
+    { id: 'ozet', ad: 'Kart & Faiz Özeti', hedef: 'kart-merkez' },
+    { id: 'kartlar', ad: 'Kart Dosyaları', hedef: 'kart-yonetimi' },
+    { id: 'koc', ad: 'Borç Koçu', hedef: 'kart-merkez' },
+    { id: 'hareket', ad: 'Hareketler', hedef: 'kart-hareketleri' },
+    { id: 'ekstre', ad: 'Ekstre Durumu', hedef: 'ekstre-yukle' },
+  ]},
+  { id: 'borc', ad: 'Borç Navigasyonu', kisa: 'Borç', alt: 'BBE · ABEK · runway', ikon: IK.pusula, gorunumler: [
+    { id: 'durum', ad: 'Bu Ay Batıyor Muyum?', hedef: 'borc-navigasyon' },
+    { id: 'takvim', ad: 'Borç Takvimi · 36 ay', hedef: 'borc-navigasyon' },
+    { id: 'hedef', ad: 'Hedef Ciro & Ölçek', hedef: 'borc-navigasyon' },
+    { id: 'katki', ad: 'Şube Katkısı', hedef: 'borc-navigasyon' },
+  ]},
+  { id: 'yuk', ad: 'Yükümlülükler', kisa: 'Yük', alt: 'Kredi · sabit gider', ikon: IK.banka, gorunumler: [
+    { id: 'krediler', ad: 'Banka Kredileri', hedef: 'borclar' },
+    { id: 'sabit', ad: 'Sabit Giderler', hedef: 'sabit-giderler' },
+  ]},
+  { id: 'rapor', ad: 'Rapor & Defter', kisa: 'Rapor', alt: 'Aylık · işlem izi', ikon: IK.grafik, gorunumler: [
+    { id: 'aylik', ad: 'Aylık Rapor', hedef: 'rapor' },
+    { id: 'defter', ad: 'İşlem Defteri', hedef: 'ledger' },
+  ]},
+];

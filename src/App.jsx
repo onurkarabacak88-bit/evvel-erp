@@ -51,6 +51,7 @@ import DuyuPaneli from './pages/DuyuPaneli';
 import ReceteEslestirme from './pages/ReceteEslestirme';
 import BelgeMerkezi from './pages/BelgeMerkezi';
 import OdemeMerkezi from './pages/OdemeMerkezi';
+import TasarimV2 from './pages/v2/TasarimV2';
 import './index.css';
 
 // Marka kimliği 2. tur (2026-07-18): kabuk ikonları emoji değil SVG (Ikon.jsx,
@@ -58,6 +59,7 @@ import './index.css';
 const NAV = [
   { group: 'Yönetim & Karar', gicon: 'gosterge', items: [
     { id: 'panel',            label: 'CFO Panel',           icon: 'gosterge' },
+    { id: 'tasarim-v2',       label: 'Yeni Tasarım · pilot', icon: 'gosterge' },
     { id: 'ops-merkez',       label: 'Operasyon Merkezi',   icon: 'radar' },
     { id: 'akilli-denetim',   label: 'Akıllı Denetim',      icon: 'islemci' },
     { id: 'duyu-paneli',      label: 'Duyu Paneli',         icon: 'goz' },
@@ -120,6 +122,7 @@ const NAV = [
 
 const PAGES = {
   panel:              Panel,
+  'tasarim-v2':       TasarimV2,
   'ops-merkez':       OperasyonMerkezi,
   'akilli-denetim':   TruthMotor,
   maliyet:            Maliyet,
@@ -367,6 +370,12 @@ export default function App() {
 
   if (!girisYapildi) {
     return <AdminGirisKapisi onBasarili={() => setGirisYapildi(true)} />;
+  }
+
+  // 🎨 Kadife koyu kabuk (Cloud Design v2 pilotu) — kendi ikon rayı + görünüm
+  // sütunu var, klasik sidebar'ı kullanmaz. Şifre kapısının ARKASINDA durur.
+  if (page === 'tasarim-v2') {
+    return <TasarimV2 onGit={navigate} />;
   }
 
   return (
