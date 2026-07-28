@@ -483,6 +483,79 @@ export function Takvim({ gunler, onGun }) {
   );
 }
 
+// ─── Vardiya ızgarası (şube × 7 gün) ─────────────────────────────────────────
+// Tasarım: ekip.vardiya. Masaüstünde SALT-OKUR — atama şube panelinden/planlama
+// ekranından yapılır; buradan yazmak tek-yazıcı ilkesini deler.
+export function VardiyaIzgara({ baslik, not, gunler, subeler, onHucre }) {
+  return (
+    <div style={{ ...kartYuzey, padding: '20px 22px', marginBottom: 16, overflowX: 'auto' }}>
+      <div style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        paddingBottom: 12, borderBottom: `1px solid ${R.cizgi2}`, marginBottom: 14, gap: 14,
+      }}>
+        <span style={{ fontFamily: F.baslik, fontSize: 15.5, fontWeight: 600 }}>{baslik}</span>
+        {not && <span style={{ fontSize: 11, color: R.not2, whiteSpace: 'nowrap' }}>{not}</span>}
+      </div>
+
+      <div style={{ minWidth: 860 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: `128px repeat(7, 1fr)`, gap: 7, marginBottom: 7 }}>
+          <span />
+          {gunler.map((g, i) => (
+            <div key={i} style={{ textAlign: 'center' }}>
+              <div style={{
+                fontSize: 10, letterSpacing: '.6px', textTransform: 'uppercase',
+                color: g.bugun ? R.bakir : R.not2, fontWeight: 700,
+              }}>
+                {g.haftaAd}
+              </div>
+              <div style={{ fontSize: 11, color: g.bugun ? R.bakir : R.not3, fontFamily: F.mono }}>{g.gunAd}</div>
+            </div>
+          ))}
+        </div>
+
+        {subeler.map((s, si) => (
+          <div key={si} style={{ display: 'grid', gridTemplateColumns: `128px repeat(7, 1fr)`, gap: 7, marginBottom: 7 }}>
+            <div style={{
+              display: 'flex', alignItems: 'center', fontSize: 12.5, fontWeight: 600,
+              color: R.metin2, paddingRight: 8,
+            }}>
+              {s.ad}
+            </div>
+            {s.gunler.map((h, gi) => {
+              const bos = !h.kisiler.length;
+              return (
+                <div
+                  key={gi}
+                  onClick={() => onHucre?.(s, h)}
+                  className={onHucre ? 'v2-hover-kalk' : undefined}
+                  style={{
+                    minHeight: 62, padding: '7px 8px', borderRadius: 11, cursor: onHucre ? 'pointer' : 'default',
+                    display: 'flex', flexDirection: 'column', gap: 3,
+                    background: bos ? 'rgba(248,113,113,.06)' : `linear-gradient(165deg, ${R.kart1}, ${R.kart2})`,
+                    border: `1px solid ${bos ? 'rgba(248,113,113,.28)' : 'rgba(243,233,220,.08)'}`,
+                  }}
+                >
+                  {bos ? (
+                    <span style={{ fontSize: 10.5, color: R.kirmizi, fontWeight: 700 }}>boş</span>
+                  ) : h.kisiler.slice(0, 3).map((k, ki) => (
+                    <span key={ki} style={{ fontSize: 10.5, color: R.krem, lineHeight: 1.35, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {k.ad}
+                      {k.saat && <span style={{ color: R.not2 }}> · {k.saat}</span>}
+                    </span>
+                  ))}
+                  {h.kisiler.length > 3 && (
+                    <span style={{ fontSize: 10, color: R.not2 }}>+{h.kisiler.length - 3} kişi</span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ─── Onay modalı (para hareketi öncesi son kapı) ────────────────────────────
 export function OnayModali({ acik, baslik, altBaslik, tutar, satirlar, not, onaylaAd, onOnayla, onKapat, calisiyor }) {
   if (!acik) return null;

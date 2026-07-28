@@ -17,6 +17,7 @@ import KartModulu from './KartModulu';
 import OdemeModulu from './OdemeModulu';
 import OpsModulu from './OpsModulu';
 import MaliyetModulu from './MaliyetModulu';
+import EkipModulu from './EkipModulu';
 
 // ⚠️ TARİH TUZAĞI: `new Date('2026-07-28T00:00:00')` yerel saat olarak ayrıştırılır,
 // `toISOString()` ise UTC'ye çevirir. Türkiye'de (UTC+3) bu, tarihi BİR GÜN GERİ
@@ -131,6 +132,27 @@ export default function TasarimV2({ onGit }) {
       .then(d => koy('kartGecikmis', (Array.isArray(d) ? d : []).filter(k =>
         Number(k.gun_kaldi) < 0 && Number(k.guncel_borc) > 0 && !k.asgari_karsilandi).length))
       .catch(() => {});
+    // Ekip rozetleri — bu hafta boş vardiya hücresi / onay bekleyen bordro / açık görev
+    (() => {
+      const b = bugunISO();
+      const g = new Date(b + 'T00:00:00Z').getUTCDay();
+      const pzt = gunEkle(b, g === 0 ? -6 : 1 - g);
+      api(`/vardiya/v2/hafta-sube-tablo?pazartesi=${pzt}`)
+        .then(d => {
+          const gunler = d?.gunler || [];
+          const bos = (d?.subeler || []).reduce((t, s) =>
+            t + gunler.filter(x => !((s.gunler || {})[x] || []).length).length, 0);
+          koy('vardiyaAcik', bos);
+        }).catch(() => {});
+      api(`/personel-aylik?yil=${Number(b.slice(0, 4))}&ay=${Number(b.slice(5, 7))}`)
+        .then(d => koy('maasBekleyen', (Array.isArray(d) ? d : [])
+          .filter(x => x.durum && !['odendi', 'onayli'].includes(x.durum)).length))
+        .catch(() => {});
+      api(`/gorev/ozet?tarih=${b}`)
+        .then(d => koy('gorevAcik', (Array.isArray(d) ? d : [])
+          .reduce((t, r) => t + Math.max(0, (Number(r.toplam) || 0) - (Number(r.tamamlanan) || 0)), 0)))
+        .catch(() => {});
+    })();
     api('/kart-hareketleri?limit=200')
       .then(d => koy('hareketBelirsiz', (Array.isArray(d) ? d : [])
         .filter(h => h.islem_turu === 'HARCAMA' && (h.harcama_tipi || 'belirsiz') === 'belirsiz').length))
@@ -317,6 +339,9 @@ export default function TasarimV2({ onGit }) {
           onGorunum={setGorunum}
         />
       );
+    }
+    if (mod === 'ekip') {
+      return <EkipModulu gorunum={gorunum} onCekmece={setCekmece} onKopru={koprule} />;
     }
     if (mod === 'maliyet') {
       return (

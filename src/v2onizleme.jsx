@@ -317,6 +317,89 @@ const MALIYET_UC = {
   },
 };
 
+// ── Personel & Vardiya modülü sahte verisi ──────────────────────────────────
+const PERSONEL = [
+  { id: 'e1', ad_soyad: 'Elif Kaya', gorev: 'barista', sube_id: 's0', sube_adi: 'Zafer', calisma_turu: 'surekli', maas: 31200, baslangic_tarihi: '2025-01-10', aktif: true },
+  { id: 'e2', ad_soyad: 'Mert Solak', gorev: 'barista', sube_id: 's0', sube_adi: 'Zafer', calisma_turu: 'surekli', maas: 29800, baslangic_tarihi: '2025-09-01', aktif: true },
+  { id: 'e3', ad_soyad: 'Zeynep Ar', gorev: 'vardiya sorumlusu', sube_id: 's1', sube_adi: 'Köyceğiz', calisma_turu: 'surekli', maas: 38400, baslangic_tarihi: '2024-06-15', aktif: true },
+  { id: 'e4', ad_soyad: 'Can Demir', gorev: 'barista', sube_id: 's2', sube_adi: 'Gazze', calisma_turu: 'surekli', maas: 28600, baslangic_tarihi: '2026-04-02', aktif: true },
+  { id: 'e5', ad_soyad: 'Sude Yalın', gorev: 'barista', sube_id: 's3', sube_adi: 'Alsancak', calisma_turu: 'part', maas: 0, saatlik_ucret: 190, baslangic_tarihi: '2026-06-20', aktif: true },
+  { id: 'e6', ad_soyad: 'Okan Bal', gorev: 'depo & sevk', sube_id: null, sube_adi: null, calisma_turu: 'surekli', maas: 34000, baslangic_tarihi: '2023-12-01', aktif: true },
+];
+
+const TAKIP = PERSONEL.map((p, i) => ({
+  personel_id: p.id, ad_soyad: p.ad_soyad, calisma_turu: p.calisma_turu, aktif: true,
+  toplam_planlanan_saat: [176, 168, 184, 192, 160, 180][i],
+  toplam_gecikme_dk: [0, 6, 0, 42, 0, 0][i],
+  toplam_fazla_mesai_saat: [0, 0, 2, 14, 0, 1][i],
+}));
+
+const BORDRO = PERSONEL.map((p, i) => ({
+  personel_id: p.id, ad_soyad: p.ad_soyad, gorev: p.gorev, maas: p.maas,
+  calisma_saati: [176, 168, 184, 192, 160, 180][i],
+  fazla_mesai_saat: [0, 0, 2, 14, 0, 1][i],
+  avans_mahsup: [4000, 0, 0, 0, 0, 0][i],
+  mahsup_devir: 0, eksik_gun: 0, manuel_duzeltme: 0, not_aciklama: null,
+  hesaplanan_net: [26480, 25640, 33100, 28940, 22800, 29180][i],
+  durum: ['onayli', 'onayli', 'taslak', 'taslak', 'taslak', 'odendi'][i],
+}));
+
+const HAFTA_PZT = (() => {
+  const d = new Date(bugunISO + 'T00:00:00Z');
+  const g = d.getUTCDay();
+  d.setUTCDate(d.getUTCDate() + (g === 0 ? -6 : 1 - g));
+  return d.toISOString().slice(0, 10);
+})();
+const HAFTA_GUNLER = Array.from({ length: 7 }, (_, i) => {
+  const d = new Date(HAFTA_PZT + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() + i);
+  return d.toISOString().slice(0, 10);
+});
+
+const EKIP_UC = {
+  '/api/personel': PERSONEL,
+  '/api/gorev/vardiya-takip': TAKIP,
+  '/api/personel-aylik': BORDRO,
+  '/api/avans/ozet': { toplam: 4000, adet: 1 },
+  '/api/vardiya/v2/hafta-sube-tablo': {
+    pazartesi: HAFTA_PZT, pazar: HAFTA_GUNLER[6], gunler: HAFTA_GUNLER,
+    subeler: SUBELER.map((ad, si) => ({
+      sube_id: `s${si}`, sube_ad: ad,
+      gunler: Object.fromEntries(HAFTA_GUNLER.map((g, gi) => {
+        // Alsancak cumartesi akşamı BOŞ — tasarımdaki "açık slot" durumu
+        if (si === 3 && gi === 5) return [g, []];
+        if (si === 2 && gi === 6) return [g, []];
+        const kisi = PERSONEL.filter(p => p.sube_id === `s${si}`).map(p => ({
+          ad_soyad: p.ad_soyad, gorev: p.gorev,
+          saat: gi % 2 ? '07:30-16:00' : '15:00-23:30',
+          kapanis: gi % 2 === 0,
+        }));
+        return [g, kisi];
+      })),
+      toplam_atama: 0,
+    })),
+  },
+  '/api/gorev/ozet': [
+    { sube_id: 's0', sube_adi: 'Zafer', vardiya_tip: 'acilis', toplam: 12, tamamlanan: 12 },
+    { sube_id: 's0', sube_adi: 'Zafer', vardiya_tip: 'kapanis', toplam: 8, tamamlanan: 7 },
+    { sube_id: 's1', sube_adi: 'Köyceğiz', vardiya_tip: 'acilis', toplam: 12, tamamlanan: 12 },
+    { sube_id: 's1', sube_adi: 'Köyceğiz', vardiya_tip: 'kapanis', toplam: 8, tamamlanan: 8 },
+    { sube_id: 's2', sube_adi: 'Gazze', vardiya_tip: 'acilis', toplam: 12, tamamlanan: 6 },
+    { sube_id: 's2', sube_adi: 'Gazze', vardiya_tip: 'kapanis', toplam: 8, tamamlanan: 2 },
+    { sube_id: 's3', sube_adi: 'Alsancak', vardiya_tip: 'acilis', toplam: 12, tamamlanan: 11 },
+    { sube_id: 's3', sube_adi: 'Alsancak', vardiya_tip: 'kapanis', toplam: 8, tamamlanan: 8 },
+  ],
+  '/api/is-basvurusu': [
+    { id: 'bv1', ad_soyad: 'Deniz Yücel', pozisyon: 'barista', sube_tercihi: 'Gazze', deneyim: '2 yıl deneyim', durum: 'yeni', oncelik: 1, olusturma: '2026-07-27' },
+    { id: 'bv2', ad_soyad: 'Baran Aksoy', pozisyon: 'depo & sevk', sube_tercihi: 'Alsancak', deneyim: 'B sınıfı ehliyet', durum: 'yeni', oncelik: 0, olusturma: '2026-07-28' },
+    { id: 'bv3', ad_soyad: 'Selin Koç', pozisyon: 'barista', sube_tercihi: 'Zafer', deneyim: 'referans olumlu', durum: 'görüşme', oncelik: 0, olusturma: '2026-07-24' },
+  ],
+  '/api/sube-panel/merkez/personel-panel-pin': PERSONEL.map((p, i) => ({
+    id: p.id, ad_soyad: p.ad_soyad, sube_id: p.sube_id, sube_adi: p.sube_adi,
+    aktif: true, yonetici: i === 2, panel_pin_tanimli: i !== 4,
+  })),
+};
+
 function borcKocu(url) {
   const strateji = /kartopu/.test(url) ? 'kartopu' : 'cig';
   const nakit = Number((url.match(/nakit=(\d+)/) || [])[1] || 0);
@@ -344,7 +427,7 @@ window.fetch = async (url) => {
   // ⚠️ ÖNCE TAM YOL eşleşmesi: `u.includes('/api/ciro')` gibi gevşek kurallar
   // /api/ciro-taslak'ı da yakalıyordu ve rozet 2 yerine 120 çıkıyordu.
   const yol = u.split('?')[0];
-  const TUM = { ...SAHTE, ...KART_UC, ...ODEME_UC, ...OPS_UC, ...MALIYET_UC, '/api/ciro': CIRO };
+  const TUM = { ...SAHTE, ...KART_UC, ...ODEME_UC, ...OPS_UC, ...MALIYET_UC, ...EKIP_UC, '/api/ciro': CIRO };
   if (u.includes('/api/kartlar/borc-kocu')) govde = borcKocu(u);
   else if (Object.prototype.hasOwnProperty.call(TUM, yol)) govde = TUM[yol];
   await new Promise(r => setTimeout(r, 120));

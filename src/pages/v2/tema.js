@@ -121,14 +121,16 @@ export const MODULLER = [
     { id: 'tuketim', ad: 'Tüketim Kontrolü', rozet: 'tuketimFark', renk: '#F87171' },
     { id: 'fiyat', ad: 'Fiyat Zinciri', rozet: 'fiyatZinciri', renk: '#FBBF24' },
   ]},
+  // Personel & Vardiya: v2-YERLİ (EkipModulu.jsx). Maaş/vardiya YAZMAZ — salt-okur,
+  // onay ve atama mevcut guard'lı ekranlardan yapılır.
   { id: 'ekip', ad: 'Personel & Vardiya', kisa: 'Ekip', alt: 'Kadro · plan · bordro', ikon: IK.ekip, gorunumler: [
-    { id: 'kadro', ad: 'Kadro', hedef: 'personel' },
-    { id: 'vardiya', ad: 'Vardiya Planı', rozet: 'vardiyaAcik', renk: '#FBBF24', hedef: 'vardiya-planlamasi' },
-    { id: 'maas', ad: 'Maaş & Avans', rozet: 'maasBekleyen', renk: '#D29A5B', hedef: 'personel' },
-    { id: 'gorev', ad: 'Görev Takibi', rozet: 'gorevAcik', renk: '#60A5FA', hedef: 'gorev-ozet' },
-    { id: 'takip', ad: 'Vardiya Takip', hedef: 'personel-vardiya-takip' },
-    { id: 'basvuru', ad: 'İş Başvuruları', rozet: 'basvuru', renk: '#4ADE80', hedef: 'is-basvurusu' },
-    { id: 'pinqr', ad: 'Panel PIN & Görev QR', hedef: 'sube-panel-pin' },
+    { id: 'kadro', ad: 'Kadro' },
+    { id: 'vardiya', ad: 'Vardiya Planı', rozet: 'vardiyaAcik', renk: '#FBBF24' },
+    { id: 'maas', ad: 'Maaş & Avans', rozet: 'maasBekleyen', renk: '#D29A5B' },
+    { id: 'gorev', ad: 'Görev Takibi', rozet: 'gorevAcik', renk: '#60A5FA' },
+    { id: 'takip', ad: 'Vardiya Takip' },
+    { id: 'basvuru', ad: 'İş Başvuruları', rozet: 'basvuru', renk: '#4ADE80' },
+    { id: 'pinqr', ad: 'Panel PIN & Görev QR' },
   ]},
   { id: 'onaylar', ad: 'Onay Bekleyenler', kisa: 'Onay', alt: 'Kuyruk · ciro onayı', ikon: IK.onay, gorunumler: [
     { id: 'kuyruk', ad: 'Onay Kuyruğu', rozet: 'onay', renk: '#4ADE80', hedef: 'onay' },
