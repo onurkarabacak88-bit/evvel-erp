@@ -71,6 +71,8 @@ export default function TasarimV2({ onGit }) {
   const [cirolar, setCirolar] = useState([]);
   const [subeler, setSubeler] = useState([]);
   const [onaylar, setOnaylar] = useState([]);
+  // Canlı rozet sayaçları — anahtar → sayı/metin. Sayacı olmayan görünüm rozet göstermez.
+  const [rozetler, setRozetler] = useState({});
 
   // ── veri ───────────────────────────────────────────────────────────────────
   const yukle = () => {
@@ -95,6 +97,44 @@ export default function TasarimV2({ onGit }) {
   };
 
   useEffect(yukle, []);
+
+  // ── canlı rozet sayaçları ──────────────────────────────────────────────────
+  // Tasarımda her görünümün yanında bekleyen iş sayısı var (27 görünüm). Oradaki
+  // rakamlar demo; burada GERÇEK uçlardan sayılır. Hepsi hata-yutar: bir uç
+  // düşerse o rozet görünmez, kabuk çalışmaya devam eder.
+  useEffect(() => {
+    let iptal = false;
+    const koy = (k, v) => {
+      if (iptal || v == null || v === 0 || v === '') return;
+      setRozetler(r => ({ ...r, [k]: String(v) }));
+    };
+    api('/onay-kuyrugu?durum=bekliyor&limit=400')
+      .then(d => koy('onay', Array.isArray(d) ? d.length : 0)).catch(() => {});
+    api('/ciro-taslak?durum=bekliyor')
+      .then(d => koy('ciroOnay', Array.isArray(d) ? d.length : 0)).catch(() => {});
+    api('/is-basvurusu/ozet')
+      .then(d => koy('basvuru', Number(d?.yeni) || 0)).catch(() => {});
+    api('/stok-sayim/bekleyen-onay')
+      .then(d => koy('stokSayim', Number(d?.toplam) || 0)).catch(() => {});
+    api(`/ops/truth/gunluk-rapor?tarih=${bugunISO()}`)
+      .then(d => koy('anomali', (d?.subeler || []).reduce((t, r) => t + (Number(r.anomali_sayisi) || 0), 0)))
+      .catch(() => {});
+    api('/odeme-plani/bugun?gun=0&personel=1')
+      .then(d => koy('odemeBekleyen', Array.isArray(d) ? d.length : 0)).catch(() => {});
+    api('/kartlar/borc-faiz-ozet')
+      .then(d => koy('ekstreEksik', Number(d?.bu_ay_eksik_ekstre) || 0)).catch(() => {});
+    // Gecikmiş kart ≠ ekstresi eksik kart: burada son ödeme günü geçmiş ve
+    // asgarisi karşılanmamış kartlar sayılır (kırmızı rozet = gerçekten acil).
+    api('/kartlar')
+      .then(d => koy('kartGecikmis', (Array.isArray(d) ? d : []).filter(k =>
+        Number(k.gun_kaldi) < 0 && Number(k.guncel_borc) > 0 && !k.asgari_karsilandi).length))
+      .catch(() => {});
+    api('/kart-hareketleri?limit=200')
+      .then(d => koy('hareketBelirsiz', (Array.isArray(d) ? d : [])
+        .filter(h => h.islem_turu === 'HARCAMA' && (h.harcama_tipi || 'belirsiz') === 'belirsiz').length))
+      .catch(() => {});
+    return () => { iptal = true; };
+  }, []);
 
   useEffect(() => {
     if (!toast) return undefined;
@@ -169,6 +209,12 @@ export default function TasarimV2({ onGit }) {
   const bugunOdemeler = useMemo(() => {
     const liste = panel?.bugun_odemeler || [];
     return Array.isArray(liste) ? liste : [];
+  }, [panel]);
+
+  // Riskler rozeti zaten yüklü panel verisinden türer (ekstra istek yok).
+  useEffect(() => {
+    const n = (panel?.oneriler?.length || 0) + (panel?.ciro_eksik_gunler?.length || 0);
+    if (n > 0) setRozetler(r => ({ ...r, risk: String(n) }));
   }, [panel]);
 
   const bugunOdemeToplam = bugunOdemeler.reduce((s, o) => s + sayi(o.tutar ?? o.kalan ?? o.tahmini_tutar), 0);
@@ -517,6 +563,9 @@ export default function TasarimV2({ onGit }) {
 
         {MODULLER.map(m => {
           const aktif = m.id === mod;
+          // Tasarım kuralı: modülde KIRMIZI rozetli (acil) bir görünüm varsa
+          // ray ikonunda kırmızı nokta belirir.
+          const acilVar = m.gorunumler.some(g => g.renk === '#F87171' && rozetler[g.rozet]);
           return (
             <div
               key={m.id}
@@ -534,6 +583,12 @@ export default function TasarimV2({ onGit }) {
               <span style={{ fontSize: 8.5, fontWeight: 700, letterSpacing: '.5px', textTransform: 'uppercase' }}>
                 {m.kisa}
               </span>
+              {acilVar && (
+                <span style={{
+                  position: 'absolute', top: 6, right: 6, width: 6, height: 6,
+                  borderRadius: 99, background: R.kirmizi,
+                }} />
+              )}
             </div>
           );
         })}
@@ -576,7 +631,16 @@ export default function TasarimV2({ onGit }) {
                 }}
               >
                 <span style={{ flex: 1, minWidth: 0 }}>{g.ad}</span>
-                {g.hedef && <span style={{ fontSize: 9.5, color: R.not3 }}>↗</span>}
+                {rozetler[g.rozet] && (
+                  <span style={{
+                    minWidth: 19, padding: '1px 6px', borderRadius: 99, fontSize: 10, fontWeight: 700,
+                    fontFamily: F.mono, textAlign: 'center',
+                    background: `${g.renk || R.bakir}22`, color: g.renk || R.bakir,
+                  }}>
+                    {rozetler[g.rozet]}
+                  </span>
+                )}
+                {g.hedef && !rozetler[g.rozet] && <span style={{ fontSize: 9.5, color: R.not3 }}>↗</span>}
               </div>
             );
           })}

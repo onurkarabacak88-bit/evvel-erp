@@ -82,23 +82,29 @@ export const IK = {
 // ─── Modül ağacı ─────────────────────────────────────────────────────────────
 // `hedef` = mevcut uygulamadaki hash rotası. v2'de henüz karşılığı yazılmamış
 // görünümler oraya köprülenir; böylece kabuk baştan gezilebilir olur.
+//
+// `rozet` = CANLI sayaç anahtarı (tasarımdaki sabit demo sayıları değil —
+// TasarimV2.jsx rozetleri gerçek veriden hesaplar). Sayacı henüz bağlanmamış
+// anahtarlar rozet göstermez; ilgili modül v2'ye yazılırken bağlanır.
+// `renk` = tasarımdaki rozet rengi; #F87171 (kırmızı) olan bir görünüm varsa
+// modülün ray ikonunda kırmızı nokta belirir.
 export const MODULLER = [
   { id: 'panel', ad: 'Yönetim & Karar', kisa: 'Panel', alt: 'CFO görünümleri', ikon: IK.gosterge, gorunumler: [
     { id: 'bugun', ad: 'Bugün' },
     { id: 'ay', ad: 'Ay Özeti' },
     { id: 'subeler', ad: 'Şube Karnesi' },
-    { id: 'risk', ad: 'Riskler' },
+    { id: 'risk', ad: 'Riskler', rozet: 'risk', renk: '#F87171' },
   ]},
   { id: 'ops', ad: 'Operasyon', kisa: 'Ops', alt: 'Sipariş · depo · sevk', ikon: IK.radar, gorunumler: [
-    { id: 'akis', ad: 'Sipariş Akışı', hedef: 'ops-merkez' },
-    { id: 'sevkiyat', ad: 'Sevkiyat Hazırlama', hedef: 'sevkiyat-hazirlama' },
-    { id: 'depo', ad: 'Depo Stok', hedef: 'ops-merkez' },
-    { id: 'sayim', ad: 'Bardak & Ürün Sayımı', hedef: 'stok-sayim' },
+    { id: 'akis', ad: 'Sipariş Akışı', rozet: 'opsAcikSiparis', renk: '#D29A5B', hedef: 'ops-merkez' },
+    { id: 'sevkiyat', ad: 'Sevkiyat Hazırlama', rozet: 'opsSevkiyat', renk: '#60A5FA', hedef: 'sevkiyat-hazirlama' },
+    { id: 'depo', ad: 'Depo Stok', rozet: 'opsDepoKritik', renk: '#F87171', hedef: 'ops-merkez' },
+    { id: 'sayim', ad: 'Bardak & Ürün Sayımı', rozet: 'stokSayim', renk: '#FBBF24', hedef: 'stok-sayim' },
     { id: 'hareket', ad: 'Stok Hareketi', hedef: 'ops-merkez' },
     { id: 'kule', ad: 'Kontrol Kulesi', hedef: 'ops-merkez' },
   ]},
   { id: 'odeme', ad: 'Ödeme Merkezi', kisa: 'Ödeme', alt: 'Vade · bakiye · geçmiş', ikon: IK.banknot, gorunumler: [
-    { id: 'bekleyen', ad: 'Bekleyen' },
+    { id: 'bekleyen', ad: 'Bekleyen', rozet: 'odemeBekleyen', renk: '#D29A5B' },
     { id: 'takvim', ad: 'Vade Takvimi' },
     { id: 'tedarikci', ad: 'Tedarikçi Bakiyesi' },
     { id: 'gecmis', ad: 'Ödeme Geçmişi' },
@@ -107,74 +113,74 @@ export const MODULLER = [
     { id: 'ozet', ad: 'Marj Özeti', hedef: 'maliyet' },
     { id: 'urun', ad: 'Ürün Marjı', hedef: 'maliyet' },
     { id: 'recete', ad: 'Reçeteler', hedef: 'recete-eslestirme' },
-    { id: 'fiyat', ad: 'Fiyat Zinciri', hedef: 'maliyet' },
+    { id: 'fiyat', ad: 'Fiyat Zinciri', rozet: 'fiyatZinciri', renk: '#FBBF24', hedef: 'maliyet' },
   ]},
   { id: 'ekip', ad: 'Personel & Vardiya', kisa: 'Ekip', alt: 'Kadro · plan · bordro', ikon: IK.ekip, gorunumler: [
     { id: 'kadro', ad: 'Kadro', hedef: 'personel' },
-    { id: 'vardiya', ad: 'Vardiya Planı', hedef: 'vardiya-planlamasi' },
-    { id: 'maas', ad: 'Maaş & Avans', hedef: 'personel' },
-    { id: 'gorev', ad: 'Görev Takibi', hedef: 'gorev-ozet' },
+    { id: 'vardiya', ad: 'Vardiya Planı', rozet: 'vardiyaAcik', renk: '#FBBF24', hedef: 'vardiya-planlamasi' },
+    { id: 'maas', ad: 'Maaş & Avans', rozet: 'maasBekleyen', renk: '#D29A5B', hedef: 'personel' },
+    { id: 'gorev', ad: 'Görev Takibi', rozet: 'gorevAcik', renk: '#60A5FA', hedef: 'gorev-ozet' },
     { id: 'takip', ad: 'Vardiya Takip', hedef: 'personel-vardiya-takip' },
-    { id: 'basvuru', ad: 'İş Başvuruları', hedef: 'is-basvurusu' },
+    { id: 'basvuru', ad: 'İş Başvuruları', rozet: 'basvuru', renk: '#4ADE80', hedef: 'is-basvurusu' },
     { id: 'pinqr', ad: 'Panel PIN & Görev QR', hedef: 'sube-panel-pin' },
   ]},
   { id: 'onaylar', ad: 'Onay Bekleyenler', kisa: 'Onay', alt: 'Kuyruk · ciro onayı', ikon: IK.onay, gorunumler: [
-    { id: 'kuyruk', ad: 'Onay Kuyruğu', hedef: 'onay' },
-    { id: 'ciro', ad: 'Ciro Onayı', hedef: 'ciro-taslak-onay' },
+    { id: 'kuyruk', ad: 'Onay Kuyruğu', rozet: 'onay', renk: '#4ADE80', hedef: 'onay' },
+    { id: 'ciro', ad: 'Ciro Onayı', rozet: 'ciroOnay', renk: '#4ADE80', hedef: 'ciro-taslak-onay' },
   ]},
   { id: 'para', ad: 'Para Hareketleri', kisa: 'Para', alt: 'Ciro · satış · kasa', ikon: IK.kahve, gorunumler: [
     { id: 'girisi', ad: 'Ciro Girişi', hedef: 'ciro' },
     { id: 'satis', ad: 'Ürün Satışları', hedef: 'evo-satis' },
-    { id: 'kasa', ad: 'Kasa Teslim', hedef: 'kasa-teslim' },
+    { id: 'kasa', ad: 'Kasa Teslim', rozet: 'kasaTeslim', renk: '#FBBF24', hedef: 'kasa-teslim' },
     { id: 'gider', ad: 'Anlık Gider', hedef: 'anlik-gider' },
     { id: 'diskaynak', ad: 'Dış Kaynak Geliri', hedef: 'dis-kaynak' },
   ]},
   { id: 'denetim', ad: 'Denetim & Zekâ', kisa: 'Zekâ', alt: '13 tanı motoru · duyu', ikon: IK.islemci, gorunumler: [
-    { id: 'anomali', ad: 'Bugünkü Bulgular', hedef: 'akilli-denetim' },
+    { id: 'anomali', ad: 'Bugünkü Bulgular', rozet: 'anomali', renk: '#F87171', hedef: 'akilli-denetim' },
     { id: 'motorlar', ad: 'Tanı Motorları · 13', hedef: 'akilli-denetim' },
     { id: 'olaylar', ad: 'Olay Yelpazesi', hedef: 'akilli-denetim' },
-    { id: 'mutabakat', ad: 'Duyu Mutabakatı', hedef: 'duyu-paneli' },
+    { id: 'mutabakat', ad: 'Duyu Mutabakatı', rozet: 'duyuMutabakat', renk: '#FBBF24', hedef: 'duyu-paneli' },
     { id: 'bag', ad: 'Bağ Defteri', hedef: 'duyu-paneli' },
     { id: 'duyu', ad: 'Duyu Paneli', hedef: 'duyu-paneli' },
     { id: 'strateji', ad: 'Strateji Motoru', hedef: 'strateji' },
   ]},
   { id: 'belge', ad: 'Belge Merkezi', kisa: 'Belge', alt: 'Fatura · kapsama · KDV', ikon: IK.dosya, gorunumler: [
-    { id: 'kapsama', ad: 'Belge Kapsama', hedef: 'belge-merkezi' },
+    { id: 'kapsama', ad: 'Belge Kapsama', rozet: 'belgeKapsama', renk: '#FBBF24', hedef: 'belge-merkezi' },
     { id: 'arsiv', ad: 'Fatura Arşivi · FTS', hedef: 'belge-merkezi' },
-    { id: 'istek', ad: 'Fatura İstek · wa.me', hedef: 'belge-merkezi' },
-    { id: 'uyarilar', ad: 'Mükerrer & Parmak İzi', hedef: 'belge-merkezi' },
+    { id: 'istek', ad: 'Fatura İstek · wa.me', rozet: 'faturaIstek', renk: '#D29A5B', hedef: 'belge-merkezi' },
+    { id: 'uyarilar', ad: 'Mükerrer & Parmak İzi', rozet: 'belgeMukerrer', renk: '#F87171', hedef: 'belge-merkezi' },
     { id: 'cari', ad: 'Cari Ekstre', hedef: 'belge-merkezi' },
     { id: 'fiyat', ad: 'Fiyat Bandı', hedef: 'belge-merkezi' },
     { id: 'kdv', ad: 'KDV Kanıt Paketi', hedef: 'belge-merkezi' },
   ]},
   { id: 'tanim', ad: 'Tanımlar', kisa: 'Tanım', alt: 'Tedarikçi · TV menü', ikon: IK.klasor, gorunumler: [
     { id: 'tedarikciler', ad: 'Tedarikçiler', hedef: 'tedarikciler' },
-    { id: 'zincir', ad: 'Teslimat Zinciri', hedef: 'tedarik-dosyasi' },
-    { id: 'dosya', ad: 'Tedarik Dosyası', hedef: 'tedarik-dosyasi' },
+    { id: 'zincir', ad: 'Teslimat Zinciri', rozet: 'teslimatZinciri', renk: '#FBBF24', hedef: 'tedarik-dosyasi' },
+    { id: 'dosya', ad: 'Tedarik Dosyası', rozet: 'tedarikDosyasi', renk: '#FBBF24', hedef: 'tedarik-dosyasi' },
     { id: 'tv', ad: 'TV Menü Yönetimi', hedef: 'tv-menu' },
   ]},
   { id: 'sistem', ad: 'Veri & Sistem', kisa: 'Sistem', alt: 'Import · teslim · temizlik', ikon: IK.anahtar, gorunumler: [
     { id: 'excel', ad: 'Excel Import', hedef: 'excel' },
-    { id: 'teslim', ad: 'Bilgi Teslim', hedef: 'teslim-kayit' },
+    { id: 'teslim', ad: 'Bilgi Teslim', rozet: 'bilgiTeslim', renk: '#60A5FA', hedef: 'teslim-kayit' },
     { id: 'temizle', ad: 'Veri Temizle', hedef: 'veri-temizle' },
   ]},
   // ✅ v2'ye yazıldı — köprü yok, görünümler yerli (KartModulu.jsx)
   { id: 'kart', ad: 'Kartlar & Borç', kisa: 'Kart', alt: 'Kart · faiz · ekstre', ikon: IK.kart, gorunumler: [
-    { id: 'ozet', ad: 'Kart & Faiz Özeti' },
+    { id: 'ozet', ad: 'Kart & Faiz Özeti', rozet: 'kartGecikmis', renk: '#F87171' },
     { id: 'kartlar', ad: 'Kart Dosyaları' },
     { id: 'koc', ad: 'Borç Koçu' },
-    { id: 'hareket', ad: 'Hareketler' },
-    { id: 'ekstre', ad: 'Ekstre Durumu' },
+    { id: 'hareket', ad: 'Hareketler', rozet: 'hareketBelirsiz', renk: '#FBBF24' },
+    { id: 'ekstre', ad: 'Ekstre Durumu', rozet: 'ekstreEksik', renk: '#FBBF24' },
   ]},
   { id: 'borc', ad: 'Borç Navigasyonu', kisa: 'Borç', alt: 'BBE · ABEK · runway', ikon: IK.pusula, gorunumler: [
-    { id: 'durum', ad: 'Bu Ay Batıyor Muyum?', hedef: 'borc-navigasyon' },
+    { id: 'durum', ad: 'Bu Ay Batıyor Muyum?', rozet: 'borcDurum', renk: '#F87171', hedef: 'borc-navigasyon' },
     { id: 'takvim', ad: 'Borç Takvimi · 36 ay', hedef: 'borc-navigasyon' },
     { id: 'hedef', ad: 'Hedef Ciro & Ölçek', hedef: 'borc-navigasyon' },
     { id: 'katki', ad: 'Şube Katkısı', hedef: 'borc-navigasyon' },
   ]},
   { id: 'yuk', ad: 'Yükümlülükler', kisa: 'Yük', alt: 'Kredi · sabit gider', ikon: IK.banka, gorunumler: [
     { id: 'krediler', ad: 'Banka Kredileri', hedef: 'borclar' },
-    { id: 'sabit', ad: 'Sabit Giderler', hedef: 'sabit-giderler' },
+    { id: 'sabit', ad: 'Sabit Giderler', rozet: 'sabitGider', renk: '#D29A5B', hedef: 'sabit-giderler' },
   ]},
   { id: 'rapor', ad: 'Rapor & Defter', kisa: 'Rapor', alt: 'Aylık · işlem izi', ikon: IK.grafik, gorunumler: [
     { id: 'aylik', ad: 'Aylık Rapor', hedef: 'rapor' },

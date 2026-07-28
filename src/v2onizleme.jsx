@@ -58,6 +58,11 @@ const SAHTE = {
   },
   '/api/subeler': SUBELER.map((s, i) => ({ id: `s${i}`, ad: s })),
   '/api/onay-kuyrugu': [{ id: 1 }, { id: 2 }, { id: 3 }],
+  // rozet sayaç uçları
+  '/api/ciro-taslak': [{ id: 1 }, { id: 2 }],
+  '/api/is-basvurusu/ozet': { yeni: 2 },
+  '/api/stok-sayim/bekleyen-onay': { toplam: 5 },
+  '/api/ops/truth/gunluk-rapor': { subeler: [{ anomali_sayisi: 2 }, { anomali_sayisi: 1 }] },
 };
 
 const CIRO = ciroUret();
@@ -160,14 +165,12 @@ function borcKocu(url) {
 window.fetch = async (url) => {
   const u = String(url);
   let govde = null;
+  // ⚠️ ÖNCE TAM YOL eşleşmesi: `u.includes('/api/ciro')` gibi gevşek kurallar
+  // /api/ciro-taslak'ı da yakalıyordu ve rozet 2 yerine 120 çıkıyordu.
   const yol = u.split('?')[0];
+  const TUM = { ...SAHTE, ...KART_UC, ...ODEME_UC, '/api/ciro': CIRO };
   if (u.includes('/api/kartlar/borc-kocu')) govde = borcKocu(u);
-  else if (KART_UC[yol]) govde = KART_UC[yol];
-  else if (ODEME_UC[yol]) govde = ODEME_UC[yol];
-  else if (u.includes('/api/ciro')) govde = CIRO;
-  else if (u.includes('/api/onay-kuyrugu')) govde = SAHTE['/api/onay-kuyrugu'];
-  else if (u.includes('/api/subeler')) govde = SAHTE['/api/subeler'];
-  else if (u.includes('/api/panel')) govde = SAHTE['/api/panel'];
+  else if (Object.prototype.hasOwnProperty.call(TUM, yol)) govde = TUM[yol];
   await new Promise(r => setTimeout(r, 120));
   return { ok: govde != null, status: govde != null ? 200 : 404, statusText: 'OK', json: async () => govde ?? { detail: 'yok' } };
 };
