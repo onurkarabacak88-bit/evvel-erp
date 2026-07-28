@@ -712,13 +712,32 @@ export default function TasarimV2({ onGit }) {
             <button
               onClick={() => koprule('panel')}
               style={{
+                padding: '8px 15px', borderRadius: 10, border: `1px solid ${R.cizgi3}`,
+                background: R.girinti, color: R.metin2, fontSize: 12.5, fontWeight: 600,
+                fontFamily: 'inherit', cursor: 'pointer',
+              }}
+            >
+              Klasik görünüm
+            </button>
+
+            {/*
+              Blueprint'te üst çubukta "Gün Sonu Kapat" var. Ama bu sistemde gün
+              sonunu KASA KİMDEYSE O kapatır (şubede, 5 adımlı mühür/QR akışı) —
+              masaüstünden tek tuşla 4 şubeyi kapatmak o modeli deler.
+              Sahip kararı: buton DURUR ama kapatmaz; kapanışın izlendiği ekrana
+              götürür (Operasyon Merkezi → 📊 Kapanış Takip).
+            */}
+            <button
+              onClick={() => koprule('kapanis-takip')}
+              title="Kapanış takibini açar — kapatma işlemi şubede mühür/QR ile yapılır"
+              style={{
                 padding: '8px 15px', borderRadius: 10, border: 'none',
                 background: `linear-gradient(150deg, #D99A4E, #B06E2C)`, color: '#1C1309',
                 fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer',
                 boxShadow: '0 6px 18px rgba(217,154,78,.24)',
               }}
             >
-              Klasik görünüm
+              Gün Sonu Takibi
             </button>
           </div>
         </header>

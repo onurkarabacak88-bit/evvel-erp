@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { api } from './utils/api';
+import { resolvePageAlias } from './utils/sayfaTakmaAd';
 import { subscribeGlobalDataRefresh } from './utils/globalDataRefresh';
 import BeyinChat from './components/BeyinChat';
 import Ikon from './components/Ikon';
@@ -172,18 +173,8 @@ function readPageFromHash() {
   try {
     const raw = (window.location.hash || '').replace(/^#/, '').split('&')[0];
     const h = decodeURIComponent(raw).trim();
-    if (h === 'sevkiyat-hazirlama') {
-      try {
-        sessionStorage.setItem('ops_merkez_ac_sekme', 'siparis-kontrol');
-        sessionStorage.setItem('ops_kontrol_kulesi_gorunum', 'depo');
-        const sid = sessionStorage.getItem('ops_sevkiyat_hazirlama_sube_id');
-        if (sid) {
-          sessionStorage.setItem('ops_kontrol_kulesi_depo', sid);
-          sessionStorage.removeItem('ops_sevkiyat_hazirlama_sube_id');
-        }
-      } catch (_) {}
-      return 'ops-merkez';
-    }
+    const cozulmus = resolvePageAlias(h);
+    if (cozulmus !== h) return cozulmus;
     if (h && Object.prototype.hasOwnProperty.call(PAGES, h)) return h;
   } catch (_) {}
   return null;
@@ -350,7 +341,8 @@ export default function App() {
   }, [girisYapildi]);
 
   const navigate = (id) => {
-    const p = Object.prototype.hasOwnProperty.call(PAGES, id) ? id : 'panel';
+    const cozulmus = resolvePageAlias(id);
+    const p = Object.prototype.hasOwnProperty.call(PAGES, cozulmus) ? cozulmus : 'panel';
     setPage(p);
     syncHashForPage(p);
   };
