@@ -136,12 +136,16 @@ export const MODULLER = [
     { id: 'kuyruk', ad: 'Onay Kuyruğu', rozet: 'onay', renk: '#4ADE80' },
     { id: 'ciro', ad: 'Ciro Onayı', rozet: 'ciroOnay', renk: '#4ADE80' },
   ]},
+  // Para Hareketleri: v2-YERLİ (ParaModulu.jsx). Tüm görünümler SALT-OKUR;
+  // ciro/gider/dış-kaynak girişi mevcut guard'lı formlara köprüyle gider.
+  // kasaTeslim rozeti BİLEREK bağlanmadı: sistemde "bekleyen teslim" kaydı yok
+  // (kayıt teslimle doğar) — rozet uydurma anlam taşırdı.
   { id: 'para', ad: 'Para Hareketleri', kisa: 'Para', alt: 'Ciro · satış · kasa', ikon: IK.kahve, gorunumler: [
-    { id: 'girisi', ad: 'Ciro Girişi', hedef: 'ciro' },
-    { id: 'satis', ad: 'Ürün Satışları', hedef: 'evo-satis' },
-    { id: 'kasa', ad: 'Kasa Teslim', rozet: 'kasaTeslim', renk: '#FBBF24', hedef: 'kasa-teslim' },
-    { id: 'gider', ad: 'Anlık Gider', hedef: 'anlik-gider' },
-    { id: 'diskaynak', ad: 'Dış Kaynak Geliri', hedef: 'dis-kaynak' },
+    { id: 'girisi', ad: 'Ciro Girişi' },
+    { id: 'satis', ad: 'Ürün Satışları' },
+    { id: 'kasa', ad: 'Kasa Teslim' },
+    { id: 'gider', ad: 'Anlık Gider' },
+    { id: 'diskaynak', ad: 'Dış Kaynak Geliri' },
   ]},
   { id: 'denetim', ad: 'Denetim & Zekâ', kisa: 'Zekâ', alt: '13 tanı motoru · duyu', ikon: IK.islemci, gorunumler: [
     { id: 'anomali', ad: 'Bugünkü Bulgular', rozet: 'anomali', renk: '#F87171', hedef: 'akilli-denetim' },

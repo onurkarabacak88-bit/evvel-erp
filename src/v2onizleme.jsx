@@ -12,13 +12,20 @@ import TasarimV2 from './pages/v2/TasarimV2';
 const SUBELER = ['Zafer', 'Köyceğiz', 'Gazze', 'Alsancak'];
 const AGIRLIK = { Zafer: 1.0, 'Köyceğiz': 0.78, Gazze: 0.62, Alsancak: 0.44 };
 
+// Tarih tuzağı TEZGÂHTA DA geçerli: toISOString UTC'dir — TR'de gece 00:00-03:00
+// arasında "bugün"ü bir gün geri kaydırır, modüllerin yerel-bugün'üyle eşleşmez.
+const yerelISO = (d) => {
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+};
+
 function ciroUret() {
   const satir = [];
   const bugun = new Date();
   for (let g = 29; g >= 0; g--) {
     const d = new Date(bugun);
     d.setDate(d.getDate() - g);
-    const tarih = d.toISOString().slice(0, 10);
+    const tarih = yerelISO(d);
     const dalga = 1 + Math.sin(g / 3) * 0.16 + (d.getDay() === 0 || d.getDay() === 6 ? 0.22 : 0);
     SUBELER.forEach((s, i) => {
       const taban = 26000 * AGIRLIK[s] * dalga;
@@ -112,8 +119,8 @@ const KART_UC = {
 };
 
 // ── Ödeme Merkezi modülü sahte verisi ───────────────────────────────────────
-const bugunISO = new Date().toISOString().slice(0, 10);
-const gunEkleISO = (n) => { const d = new Date(bugunISO + 'T00:00:00'); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
+const bugunISO = yerelISO(new Date());
+const gunEkleISO = (n) => { const d = new Date(bugunISO + 'T00:00:00'); d.setDate(d.getDate() + n); return yerelISO(d); };
 
 const ODEME_UC = {
   '/api/odeme-plani/bugun': [
@@ -547,6 +554,44 @@ const BORC_UC = {
   },
 };
 
+// ── Para Hareketleri modülü sahte verisi ────────────────────────────────────
+const PARA_UC = {
+  '/api/evo/sube-grup-detay': {
+    subeler: {
+      Zafer: { cok_satilan: [
+        { ad: 'Latte', adet: 118, ciro: 21240, grup: 'SICAK KAHVE' },
+        { ad: 'Iced Americano', adet: 84, ciro: 13020, grup: 'SOGUK KAHVE' },
+        { ad: 'Filtre Kahve', adet: 76, ciro: 11020, grup: 'SICAK KAHVE' },
+      ]},
+      'Köyceğiz': { cok_satilan: [
+        { ad: 'Latte', adet: 64, ciro: 11520, grup: 'SICAK KAHVE' },
+        { ad: 'Çikolata Milkshake', adet: 41, ciro: 9430, grup: 'MILKSHAKE' },
+      ]},
+      Gazze: { cok_satilan: [
+        { ad: 'Latte', adet: 36, ciro: 6480, grup: 'SICAK KAHVE' },
+      ]},
+    },
+  },
+  '/api/kasa-teslim': [
+    { id: 'kt1', sube_id: 's0', tarih: bugunISO, tutar: 31200, teslim_turu: 'gun_sonu', teslim_eden_ad: 'Elif K.', teslim_alan_ad: 'ONUR — SAHİP' },
+    { id: 'kt2', sube_id: 's1', tarih: bugunISO, tutar: 8410, teslim_turu: 'ara', teslim_eden_ad: 'Can D.', teslim_alan_ad: 'ONUR — SAHİP' },
+    { id: 'kt3', sube_id: 's2', tarih: gunEkleISO(-1), tutar: 16230, teslim_turu: 'gun_sonu', teslim_eden_ad: 'Sude Y.', teslim_alan_ad: 'ONUR — SAHİP' },
+  ],
+  '/api/anlik-gider': {
+    satirlar: [
+      { id: 'ag1', tarih: bugunISO, tutar: 1840, aciklama: 'Espresso makinesi conta tamiri', sube_adi: 'Zafer' },
+      { id: 'ag2', tarih: bugunISO, tutar: 1100, aciklama: 'Temizlik malzemesi', sube_adi: 'Gazze' },
+      { id: 'ag3', tarih: gunEkleISO(-2), tutar: 700, aciklama: 'Nalbur — raf vidası', sube_adi: 'Köyceğiz' },
+    ],
+    ozet: { toplam: 41280 },
+  },
+  '/api/dis-kaynak': [
+    { id: 'dk1', tarih: gunEkleISO(-4), tutar: 12000, aciklama: 'Barista eğitimi · kurumsal', durum: 'aktif', islem_turu: 'DIS_KAYNAK' },
+    { id: 'dk2', tarih: gunEkleISO(-10), tutar: 16500, aciklama: 'Toptan çekirdek — komşu restoran', durum: 'aktif', islem_turu: 'DIS_KAYNAK' },
+    { id: 'dk3', tarih: gunEkleISO(-19), tutar: 8000, aciklama: 'Mekân kiralama — kapanış sonrası etkinlik', durum: 'aktif', islem_turu: 'DIS_KAYNAK' },
+  ],
+};
+
 function borcKocu(url) {
   const strateji = /kartopu/.test(url) ? 'kartopu' : 'cig';
   const nakit = Number((url.match(/nakit=(\d+)/) || [])[1] || 0);
@@ -574,7 +619,7 @@ window.fetch = async (url) => {
   // ⚠️ ÖNCE TAM YOL eşleşmesi: `u.includes('/api/ciro')` gibi gevşek kurallar
   // /api/ciro-taslak'ı da yakalıyordu ve rozet 2 yerine 120 çıkıyordu.
   const yol = u.split('?')[0];
-  const TUM = { ...SAHTE, ...KART_UC, ...ODEME_UC, ...OPS_UC, ...MALIYET_UC, ...EKIP_UC, ...KUCUK_UC, ...BORC_UC, '/api/ciro': CIRO };
+  const TUM = { ...SAHTE, ...KART_UC, ...ODEME_UC, ...OPS_UC, ...MALIYET_UC, ...EKIP_UC, ...KUCUK_UC, ...BORC_UC, ...PARA_UC, '/api/ciro': CIRO };
   if (u.includes('/api/kartlar/borc-kocu')) govde = borcKocu(u);
   else if (Object.prototype.hasOwnProperty.call(TUM, yol)) govde = TUM[yol];
   await new Promise(r => setTimeout(r, 120));

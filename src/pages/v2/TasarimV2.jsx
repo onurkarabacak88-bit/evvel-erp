@@ -19,6 +19,7 @@ import OpsModulu from './OpsModulu';
 import MaliyetModulu from './MaliyetModulu';
 import EkipModulu from './EkipModulu';
 import BorcModulu from './BorcModulu';
+import ParaModulu from './ParaModulu';
 import { OnayModulu, YukModulu, RaporModulu, SistemModulu, TanimModulu } from './KucukModuller';
 
 // ⚠️ TARİH TUZAĞI: `new Date('2026-07-28T00:00:00')` yerel saat olarak ayrıştırılır,
@@ -361,6 +362,9 @@ export default function TasarimV2({ onGit }) {
     }
     if (mod === 'borc') {
       return <BorcModulu gorunum={gorunum} onCekmece={setCekmece} onKopru={koprule} />;
+    }
+    if (mod === 'para') {
+      return <ParaModulu gorunum={gorunum} onCekmece={setCekmece} onKopru={koprule} />;
     }
     // Küçük modüller (KucukModuller.jsx) — yeni blok gerektirmeyenler
     if (mod === 'onaylar') {
