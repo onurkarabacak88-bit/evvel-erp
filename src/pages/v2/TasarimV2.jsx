@@ -865,16 +865,9 @@ export default function TasarimV2({ onGit }) {
               Yenile
             </button>
 
-            <button
-              onClick={() => koprule('panel')}
-              style={{
-                padding: '8px 15px', borderRadius: 10, border: `1px solid ${R.cizgi3}`,
-                background: R.girinti, color: R.metin2, fontSize: 12.5, fontWeight: 600,
-                fontFamily: 'inherit', cursor: 'pointer',
-              }}
-            >
-              Klasik görünüm
-            </button>
+            {/* "Klasik görünüm" butonu KALDIRILDI (sahip 2026-07-29): ana ekran
+                %100 kadife. Klasik ekranlar silinmedi — v2 köprüleri gerektiğinde
+                götürür; gizli kapı: adres çubuğuna #panel (veya sayfa hash'i). */}
 
             {/*
               Blueprint'te üst çubukta "Gün Sonu Kapat" var. Ama bu sistemde gün
