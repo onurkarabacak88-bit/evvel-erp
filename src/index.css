@@ -9,25 +9,26 @@
    Font çifti: Fraunces (karakterli serif — SADECE başlıklar) + Instrument Sans (gövde);
    rakamlar JetBrains Mono (tabular). Boşluk: 8px taban (--sp-2/4/6/8/10). */
 :root{
-  /* AÇIK KREM LATTE içerik (sahip 2026-07-18: 'profesyoneli sen seç' —
-     dünya standardı back-office: aydınlık çalışma alanı + koyu nav).
-     Kart sayfadan AÇIK durur (kâğıt hissi); tüm renkler krem üstünde AA. */
-  --bg:#F4EEE2;--bg2:#FCFAF4;--bg3:#EDE4D2;
-  --border:#E0D4BE;--text:#2A1F13;--text2:#5D4E3C;--text3:#8A7963;
-  --green:#25794F;--red:#C03A2B;--yellow:#9A7410;--blue:#2E6CA4;--purple:#7A57A6;
-  --orange:#B36A1F;
-  --glass:rgba(246,240,228,.82); /* yapışkan üst bar camı — .kv (koyu) kapsamında koyusu tanımlı */
+  /* ══ KADİFE KOYU — KALICI GEÇİŞ (sahip kararı 2026-07-29, Cloud Design v2) ══
+     v2 kabuğu 15/15 modülle tamamlandıktan sonra token'lar tek merkezden koyuya
+     çevrildi: TÜM eski ekranlar (form/onay/yazma dahil) bu paletle giyinir.
+     Kaynak: tasarim/cloud-v2 README Design Tokens + src/pages/v2/tema.js R. */
+  --bg:#16100A;--bg2:#241B10;--bg3:#2C2016;
+  --border:#33251A;--text:#F3EADC;--text2:#C4B5A2;--text3:#9B8A75;
+  --green:#4ADE80;--red:#F87171;--yellow:#FBBF24;--blue:#60A5FA;--purple:#C084FC;
+  --orange:#F97316;
+  --glass:rgba(22,16,10,.86); /* yapışkan üst bar camı — kadife koyu */
   /* Şiddet (severity) token sözlüğü — Operasyon Merkezi şiddet renkleri için tek kaynak.
      kritik=kırmızı, uyari=turuncu/amber, bilgi=mavi. Mevcut palet tonlarıyla uyumlu. */
   --sev-kritik:#ef4444;--sev-kritik-bg:rgba(239,68,68,0.10);
   --sev-uyari:#f97316;--sev-uyari-bg:rgba(249,115,22,0.10);
   --sev-bilgi:var(--blue);--sev-bilgi-bg:rgba(111,168,216,0.10);
-  /* Bakır vurgu — krem üstünde AA için koyultuldu (#9A5F2E ≈ 4.9:1) */
-  --accent:#9A5F2E;--accent-dim:rgba(154,95,46,.10);--accent-border:rgba(154,95,46,.35);
-  /* Marka gölgeleri — gri değil, kavrulmuş kahveden türetilmiş sıcak ton */
-  --shadow-1:0 3px 12px rgba(70,50,25,.10);
-  --shadow-2:0 8px 26px rgba(70,50,25,.16);
-  --shadow-accent:0 4px 14px rgba(154,95,46,.25);
+  /* Bakır vurgu — kadife koyu zeminde açık ton (#D29A5B, koyu üstünde AA) */
+  --accent:#D29A5B;--accent-dim:rgba(217,154,78,.13);--accent-border:rgba(217,154,78,.38);
+  /* Gölgeler — koyu zeminde gerçek karanlık */
+  --shadow-1:0 3px 12px rgba(0,0,0,.35);
+  --shadow-2:0 8px 26px rgba(0,0,0,.45);
+  --shadow-accent:0 4px 14px rgba(217,154,78,.25);
   /* Kategori renkleri — Panel genelinde tutarlı kaynak */
   --clr-personel:#4a9eff;--clr-personel-bg:rgba(74,158,255,0.10);
   --clr-vadeli:#f97316;--clr-vadeli-bg:rgba(249,115,22,0.10);
@@ -114,18 +115,18 @@ table{width:100%;border-collapse:collapse;font-size:13px}
 th{text-align:left;padding:10px 14px;font-size:11px;font-weight:500;color:var(--text3);text-transform:uppercase;letter-spacing:.4px;border-bottom:1px solid var(--border);white-space:nowrap}
 td{padding:10px 14px;border-bottom:1px solid var(--border)}
 tr:last-child td{border-bottom:none}
-tr:hover td{background:rgba(154,95,46,.05)}
+tr:hover td{background:rgba(217,154,78,.07)}
 .badge{display:inline-flex;align-items:center;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:500}
 .badge-green{background:rgba(76,175,132,.15);color:var(--green)}
 .badge-red{background:rgba(224,92,92,.15);color:var(--red)}
 .badge-yellow{background:rgba(232,197,71,.15);color:var(--yellow)}
 .badge-blue{background:rgba(91,155,214,.15);color:var(--blue)}
-.badge-gray{background:rgba(42,31,19,.08);color:var(--text3)}
+.badge-gray{background:rgba(243,233,220,.09);color:var(--text3)}
 .btn{padding:7px 14px;border-radius:8px;border:none;font-size:13px;cursor:pointer;font-weight:600;transition:transform var(--dur-base) var(--ease-smooth),box-shadow var(--dur-base) var(--ease-smooth),background var(--dur-base) ease,border-color var(--dur-base) ease}
 .btn:active{transform:scale(.985);transition-duration:var(--dur-fast)}
-/* Koyu bakır zemin + krem metin (WCAG AA ≈ 5.2:1) */
-.btn-primary{background:var(--accent);color:#FFF8EC}
-.btn-primary:hover{background:#A97038;box-shadow:var(--shadow-accent);transform:translateY(-1px)}
+/* Bakır gradyan + KOYU metin (kadife koyu — v2 birincil butonuyla birebir) */
+.btn-primary{background:linear-gradient(150deg,#D99A4E,#B06E2C);color:#1C1309}
+.btn-primary:hover{background:linear-gradient(150deg,#E5AC61,#C17A34);box-shadow:var(--shadow-accent);transform:translateY(-1px)}
 .btn-secondary{background:var(--bg3);color:var(--text);border:1px solid var(--border)}
 .btn-secondary:hover{border-color:var(--accent-border);box-shadow:var(--shadow-1);transform:translateY(-1px)}
 .btn-danger{background:rgba(224,92,92,.15);color:var(--red);border:1px solid rgba(224,92,92,.3)}
@@ -181,7 +182,7 @@ tr:hover td{background:rgba(154,95,46,.05)}
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
 ::-webkit-scrollbar{width:10px;height:10px}
 ::-webkit-scrollbar-track{background:var(--bg)}
-::-webkit-scrollbar-thumb{background:#D9CCB2;border-radius:5px;border:2px solid var(--bg)}
+::-webkit-scrollbar-thumb{background:#3A2C1E;border-radius:5px;border:2px solid var(--bg)}
 ::-webkit-scrollbar-thumb:hover{background:var(--accent-border)}
 @keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
 .blink{animation:blink 1s ease-in-out infinite}
@@ -308,7 +309,7 @@ tr:hover td{background:rgba(154,95,46,.05)}
 
 .cfo-section{margin-bottom:4px}
 .cfo-section-hdr{display:flex;align-items:center;gap:10px;padding:7px 12px;border-radius:7px;cursor:pointer;user-select:none;transition:background .12s;margin-bottom:3px}
-.cfo-section-hdr:hover{background:rgba(42,31,19,.04)}
+.cfo-section-hdr:hover{background:rgba(243,233,220,.05)}
 
 .cfo-card{
   display:flex;align-items:center;gap:10px;
@@ -362,7 +363,7 @@ tr:hover td{background:rgba(154,95,46,.05)}
 .maas-pipe{display:flex;align-items:center;flex-wrap:wrap;gap:0}
 .maas-pipe .seg{font-size:10.5px;font-weight:600;color:var(--text3);padding:3px 10px;border-radius:999px;background:var(--bg3);white-space:nowrap;transition:all .28s ease}
 .maas-pipe .seg.done{color:var(--green);background:rgba(76,175,132,.12)}
-.maas-pipe .seg.active{color:#FFF8EC;background:var(--accent);box-shadow:var(--shadow-accent)}
+.maas-pipe .seg.active{color:#1C1309;background:var(--accent);box-shadow:var(--shadow-accent)}
 .maas-pipe .seg.paid{color:#FFF8EC;background:var(--blue);box-shadow:0 2px 10px rgba(46,108,164,.35)}
 .maas-pipe .arw{color:var(--text3);font-size:11px;margin:0 4px;opacity:.55}
 .maas-net{font-family:var(--font-mono);font-size:19px;font-weight:700;letter-spacing:-.4px;color:var(--blue)}

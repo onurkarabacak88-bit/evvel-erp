@@ -60,7 +60,7 @@ import './index.css';
 const NAV = [
   { group: 'Yönetim & Karar', gicon: 'gosterge', items: [
     { id: 'panel',            label: 'CFO Panel',           icon: 'gosterge' },
-    { id: 'tasarim-v2',       label: 'Yeni Tasarım · pilot', icon: 'gosterge' },
+    { id: 'tasarim-v2',       label: 'Kadife Tasarım · varsayılan', icon: 'gosterge' },
     { id: 'ops-merkez',       label: 'Operasyon Merkezi',   icon: 'radar' },
     { id: 'akilli-denetim',   label: 'Akıllı Denetim',      icon: 'islemci' },
     { id: 'duyu-paneli',      label: 'Duyu Paneli',         icon: 'goz' },
@@ -183,7 +183,9 @@ function readPageFromHash() {
 function syncHashForPage(pageId) {
   try {
     const path = window.location.pathname || '/admin';
-    if (!pageId || pageId === 'panel') {
+    // Kalıcı geçiş: hash'siz kök adres = v2 (varsayılan). Klasik panel dahil
+    // diğer her sayfa kendi hash'ini taşır ki yenilemede aynı yere dönülsün.
+    if (!pageId || pageId === 'tasarim-v2') {
       window.history.replaceState(null, '', path);
     } else {
       window.history.replaceState(null, '', `${path}#${encodeURIComponent(pageId)}`);
@@ -283,7 +285,10 @@ export default function App() {
     return <FireFotoYukle bildirimId={fireFotoMatch[1]} token={params.get('t') || ''} />;
   }
 
-  const [page, setPage] = useState(() => readPageFromHash() ?? 'panel');
+  // KALICI GEÇİŞ (sahip kararı 2026-07-29): varsayılan giriş = kadife koyu v2.
+  // Klasik ekranlara v2 üst çubuğundaki "Klasik görünüm" ile ya da #panel
+  // hash'iyle gidilir; hash'siz kök adres her zaman v2 açar.
+  const [page, setPage] = useState(() => readPageFromHash() ?? 'tasarim-v2');
   const mainRef = useRef(null);
   const Page = PAGES[page] || Panel;
   const [onayBekleyen, setOnayBekleyen] = useState(0);
@@ -354,7 +359,7 @@ export default function App() {
   useEffect(() => {
     const onHash = () => {
       const p = readPageFromHash();
-      setPage(p ?? 'panel');
+      setPage(p ?? 'tasarim-v2');
     };
     window.addEventListener('hashchange', onHash);
     return () => window.removeEventListener('hashchange', onHash);
