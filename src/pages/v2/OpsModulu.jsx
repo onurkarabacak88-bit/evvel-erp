@@ -122,6 +122,8 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
   const [sayim, setSayim] = useState(null);
   const [sayimIz, setSayimIz] = useState(null);
   const [sayimHata, setSayimHata] = useState('');
+  const [sayimAcikId, setSayimAcikId] = useState('');
+  const [sayimDetay, setSayimDetay] = useState({});   // gorev_id → detay (kalem farkları)
   // ── HAREKET ───────────────────────────────────────────────────────────────
   const [hareket, setHareket] = useState(null);
   const [hareketHata, setHareketHata] = useState('');
@@ -165,6 +167,18 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     api('/ops/stok-hareketleri?gun=3&limit=150')
       .then((d) => setHareket(Array.isArray(d?.satirlar) ? d.satirlar : (Array.isArray(d) ? d : [])))
       .catch((e) => setHareketHata(e?.message || ''));
+  }, []);
+
+  // Sayım görevi aç/kapa — açılınca kalem farkları bir kez çekilir (salt-okur)
+  const sayimGorevAc = useCallback((gid) => {
+    setSayimAcikId((p) => (p === gid ? '' : gid));
+    setSayimDetay((p) => {
+      if (p[gid]) return p;
+      api(`/stok-sayim/gorev/${gid}`)
+        .then((d) => setSayimDetay((q) => ({ ...q, [gid]: d || { satirlar: [] } })))
+        .catch(() => setSayimDetay((q) => ({ ...q, [gid]: { hata: true, satirlar: [] } })));
+      return p;
+    });
   }, []);
 
   useEffect(() => {
@@ -279,6 +293,9 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
         s.asama_metni,
         s.operasyon_yonlendirme_talimati ? `Talimat: ${s.operasyon_yonlendirme_talimati}` : '',
         s.asama === 'yolda' ? 'Teslim alma ŞUBEDE yapılır (görünür kabul) — masaüstünden teslim işaretlenmez.' : '',
+        s.asama === 'uyumsuzluk' && s.kabul_personel_ad
+          ? `Kabulü yapan: ${s.kabul_personel_ad}${saatKisa(s.kabul_ts) ? ` · ${saatKisa(s.kabul_ts)}` : ''}`
+          : '',
       ].filter(Boolean).join(' · '),
       aksiyonAd: s.asama === 'bekliyor' ? 'Yönlendirme ekranını aç'
         : s.asama === 'depoda' ? 'Sevkiyatı hazırla'
@@ -315,26 +332,49 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
           { etiket: 'Kabul uyumsuzluğu', deger: String(sayi(ozet.uyumsuzluk)), alt: sayi(ozet.uyumsuzluk) > 0 ? 'merkez müdahalesi gerekli' : 'temiz', renk: sayi(ozet.uyumsuzluk) > 0 ? R.kirmizi : R.yesil },
         ]} />
 
-        {/* Risk şeridi TEPEDE (desen 2) — blueprint'te olmayan gerçek aşama */}
+        {/* Risk şeridi TEPEDE (desen 2) — blueprint'te olmayan gerçek aşama.
+            Her uyumsuz sipariş tıklanabilir kart: çekmecede kalemler + aşama metni. */}
         {uyumsuzlar.length > 0 && (
           <div style={{
-            ...kartYuzey, padding: '13px 18px', marginBottom: 14,
-            border: `1px solid ${R.kirmizi}55`, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
+            ...kartYuzey, padding: '14px 18px', marginBottom: 14,
+            border: `1px solid ${R.kirmizi}55`,
           }}>
-            <span style={rozetHap(R.kirmizi)}>⚠ kabul uyumsuzluğu · {uyumsuzlar.length}</span>
-            <span style={{ fontSize: 12.5, color: R.metin2, flex: 1 }}>
-              {uyumsuzlar.slice(0, 3).map((s) => s.sube_adi).join(' · ')} — şube kabulü sevk edilenle uyuşmadı
-            </span>
-            <button
-              onClick={() => onKopru?.('ops-merkez')}
-              style={{
-                padding: '6px 13px', borderRadius: 9, border: `1px solid ${R.kirmizi}55`,
-                background: `${R.kirmizi}18`, color: R.kirmizi, fontSize: 11.5, fontWeight: 700,
-                fontFamily: 'inherit', cursor: 'pointer',
-              }}
-            >
-              İncele
-            </button>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 10 }}>
+              <span style={rozetHap(R.kirmizi)}>⚠ kabul uyumsuzluğu · {uyumsuzlar.length}</span>
+              <span style={{ fontSize: 12, color: R.metin2, flex: 1 }}>
+                şube kabulü sevk edilenle uyuşmadı — merkez kararı gerekli
+              </span>
+              <button
+                onClick={() => onKopru?.('ops-merkez')}
+                style={{
+                  padding: '6px 13px', borderRadius: 9, border: `1px solid ${R.kirmizi}55`,
+                  background: `${R.kirmizi}18`, color: R.kirmizi, fontSize: 11.5, fontWeight: 700,
+                  fontFamily: 'inherit', cursor: 'pointer',
+                }}
+              >
+                Tümünü incele
+              </button>
+            </div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              {uyumsuzlar.slice(0, 6).map((s) => (
+                <div
+                  key={s.id}
+                  onClick={() => siparisAc(s)}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 9, cursor: 'pointer',
+                    padding: '8px 13px', borderRadius: 11,
+                    border: `1px solid ${R.kirmizi}40`,
+                    background: 'linear-gradient(165deg, #2E1B12, #251409)',
+                  }}
+                >
+                  <span style={{ fontSize: 12.5, fontWeight: 700 }}>{s.sube_adi}</span>
+                  <span style={{ fontSize: 10.5, color: R.not2, fontFamily: F.mono }}>{tarihKisa(s.tarih)}</span>
+                  <span style={{ fontSize: 10.5, color: R.kirmizi }}>
+                    {(s.kalemler || []).length} kalem →
+                  </span>
+                </div>
+              ))}
+            </div>
           </div>
         )}
 
@@ -397,9 +437,19 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
                         >
                           {kol.buton}
                         </button>
-                      ) : kol.bilgi ? (
-                        <div style={{ marginTop: 10, fontSize: 10.5, color: R.not2, textAlign: 'center' }}>
-                          {kol.bilgi}
+                      ) : kol.id === 'yolda' ? (
+                        /* Tasarımın devamı: buton yerine iki aşamalı teslim boru
+                           hattı — masaüstünde "Teslim et" yok (şube kabul modeli),
+                           ama süreç görünür kalır (desen 8: kritik bağlam görünür). */
+                        <div style={{
+                          display: 'flex', alignItems: 'center', gap: 5, marginTop: 10,
+                          flexWrap: 'wrap',
+                        }}>
+                          <span style={{ ...rozetHap(R.bakir), fontSize: 9.5 }}>
+                            {s.asama === 'toptanci_bekliyor' ? 'toptancıya verildi ✓' : `depodan çıktı ✓${saatKisa(s.sevkiyat_ts) ? ` ${saatKisa(s.sevkiyat_ts)}` : ''}`}
+                          </span>
+                          <span style={{ color: R.not3, fontSize: 10 }}>→</span>
+                          <span style={{ ...rozetHap(R.amber), fontSize: 9.5 }}>şube kabulü bekleniyor</span>
                         </div>
                       ) : null}
                     </div>
@@ -728,46 +778,113 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16 }}>
             {gorevler.map((g) => {
               const fark = sayi(g.fark_sayisi);
+              const acik = sayimAcikId === String(g.id);
+              const det = sayimDetay[String(g.id)];
               return (
-                <div
-                  key={g.id}
-                  onClick={() => onCekmece?.({
-                    tip: 'SAYIM GÖREVİ',
-                    baslik: `${g.sube_adi || 'Şube'} · ${g.kapsam_tip || 'sayım'}`,
-                    alt: `${g.personel_ad || '—'} · ${saatKisa(g.tamamlama_ts)} ${tarihKisa(g.tamamlama_ts)}`,
-                    kpi: [
-                      { etiket: 'Kalem', deger: String(sayi(g.kalem_sayisi)) },
-                      { etiket: 'Fark', deger: String(fark), renk: fark > 0 ? R.kirmizi : R.yesil },
-                      { etiket: 'Mod', deger: g.mod || '—' },
-                      { etiket: 'Durum', deger: 'onay bekliyor', renk: R.amber },
-                    ],
-                    listeBaslik: 'Ne yapılır?',
-                    satirlar: [
-                      { id: 'a1', baslik: 'Kalem kalem farkları gör', alt: 'sistem vs sayılan', deger: '' },
-                      { id: 'a2', baslik: 'Onayla veya geri al', alt: 'stok ancak onayla değişir', deger: '' },
-                    ],
-                    not: fark > 0
-                      ? `${fark} kalemde sayım sistemle uyuşmuyor — onay öncesi incele.`
-                      : 'Fark yok — sayım sistemle birebir.',
-                    aksiyonAd: 'Onay ekranını aç (Stok Sayım)',
-                    _hedef: 'stok-sayim',
-                  })}
-                  style={{
-                    ...kartYuzey, padding: '13px 18px', cursor: 'pointer',
-                    display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap',
-                    border: fark > 0 ? `1px solid ${R.amber}44` : kartYuzey.border,
-                  }}
-                >
-                  <div style={{ flex: 1, minWidth: 170 }}>
-                    <div style={{ fontSize: 13.5, fontWeight: 700 }}>{g.sube_adi || '—'}</div>
-                    <div style={{ fontSize: 11.5, color: R.not2, marginTop: 3 }}>
-                      {g.personel_ad || '—'} · {sayi(g.kalem_sayisi)} kalem · {tarihKisa(g.tamamlama_ts)} {saatKisa(g.tamamlama_ts)}
+                <div key={g.id} style={{
+                  ...kartYuzey, padding: 0,
+                  border: acik ? `1px solid ${R.bakir}55` : fark > 0 ? `1px solid ${R.amber}44` : kartYuzey.border,
+                }}>
+                  <div
+                    onClick={() => sayimGorevAc(String(g.id))}
+                    style={{
+                      padding: '13px 18px', cursor: 'pointer',
+                      display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap',
+                    }}
+                  >
+                    <div style={{ flex: 1, minWidth: 170 }}>
+                      <div style={{ fontFamily: F.baslik, fontSize: 15, fontWeight: 600 }}>
+                        {g.sube_adi || '—'} · {g.kapsam_tip || 'sayım'}
+                      </div>
+                      <div style={{ fontSize: 11.5, color: R.not2, marginTop: 3 }}>
+                        {g.personel_ad || '—'} · {sayi(g.kalem_sayisi)} kalem · {tarihKisa(g.tamamlama_ts)} {saatKisa(g.tamamlama_ts)}
+                      </div>
                     </div>
+                    <span style={rozetHap(fark > 0 ? R.kirmizi : R.yesil)}>
+                      {fark > 0 ? `${fark} fark` : 'fark yok'}
+                    </span>
+                    <span style={rozetHap(R.amber)}>onay bekliyor</span>
+                    <span style={{ fontSize: 11, color: R.not3 }}>{acik ? 'kapat ▲' : 'incele ▼'}</span>
                   </div>
-                  <span style={rozetHap(fark > 0 ? R.kirmizi : R.yesil)}>
-                    {fark > 0 ? `${fark} fark` : 'fark yok'}
-                  </span>
-                  <span style={rozetHap(R.amber)}>onay bekliyor</span>
+
+                  {acik && (
+                    <div style={{ padding: '0 18px 16px', borderTop: `1px solid ${R.cizgi2}` }}>
+                      {!det ? (
+                        <div style={{ padding: '18px 0', fontSize: 12.5, color: R.not, textAlign: 'center' }}>
+                          Kalem farkları yükleniyor…
+                        </div>
+                      ) : det.hata ? (
+                        <div style={{ padding: '14px 0', fontSize: 12.5, color: R.kirmizi }}>
+                          Detay alınamadı — Stok Sayım ekranından incelenebilir.
+                        </div>
+                      ) : (
+                        <>
+                          {/* Blueprint'in sayım kart grid'i — SALT-OKUR uyarlama:
+                              −/+ keypad yerine sistem→sayılan karşılaştırması.
+                              Fark olan kart amber tonlu (tasarımdaki kutuStil kuralı). */}
+                          <div style={{
+                            display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))',
+                            gap: 11, marginTop: 13,
+                          }}>
+                            {(det.satirlar || []).map((k, i) => {
+                              const f = sayi(k.fark);
+                              const fRenk = f === 0 ? R.yesil : f < 0 ? R.kirmizi : R.amber;
+                              return (
+                                <div key={i} style={{
+                                  padding: '13px 15px', borderRadius: 14,
+                                  border: `1px solid ${f !== 0 ? `${R.amber}44` : 'rgba(243,233,220,.08)'}`,
+                                  background: f !== 0
+                                    ? 'linear-gradient(165deg, #2E2412, #251B09)'
+                                    : 'linear-gradient(165deg, #2C2116, #241A0E)',
+                                }}>
+                                  <div style={{ fontSize: 13, fontWeight: 600 }}>{k.kalem_adi}</div>
+                                  <div style={{ fontSize: 11, color: R.not2, marginTop: 2 }}>
+                                    sistemde {sayi(k.sistem_adet)}
+                                  </div>
+                                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginTop: 9 }}>
+                                    <span style={{ fontFamily: F.mono, fontSize: 20, fontWeight: 700 }}>
+                                      {sayi(k.sayilan_adet)}
+                                    </span>
+                                    <span style={{ fontSize: 10, color: R.not2 }}>sayılan</span>
+                                  </div>
+                                  <div style={{
+                                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                                    paddingTop: 8, marginTop: 9, borderTop: `1px solid ${R.cizgi2}`,
+                                  }}>
+                                    <span style={{ fontSize: 11, color: R.not2 }}>fark</span>
+                                    <span style={{ fontFamily: F.mono, fontSize: 12.5, fontWeight: 700, color: fRenk }}>
+                                      {f === 0 ? '✓ yok' : `${f > 0 ? '+' : ''}${f}`}
+                                    </span>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                          {det.not_aciklama && (
+                            <div style={{ fontSize: 11.5, color: R.not, marginTop: 11 }}>
+                              Personel notu: {det.not_aciklama}
+                            </div>
+                          )}
+                          <div style={{ display: 'flex', gap: 9, marginTop: 13, paddingTop: 13, borderTop: `1px solid ${R.cizgi2}` }}>
+                            <button
+                              onClick={() => onKopru?.('stok-sayim')}
+                              style={{
+                                padding: '9px 17px', borderRadius: 10, border: 'none',
+                                background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+                                fontSize: 12, fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer',
+                                boxShadow: '0 6px 18px rgba(217,154,78,.24)',
+                              }}
+                            >
+                              Onayla / geri al — Stok Sayım ekranı
+                            </button>
+                            <span style={{ fontSize: 11, color: R.not3, alignSelf: 'center' }}>
+                              stok ancak onayla değişir
+                            </span>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  )}
                 </div>
               );
             })}

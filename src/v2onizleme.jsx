@@ -150,7 +150,7 @@ const OPS_UC = {
       { id: 't1', sube_adi: 'Köyceğiz', tarih: bugunISO, asama: 'bekliyor', asama_metni: 'Merkezde sırada — depo yönlendirmesi bekleniyor', hedef_depo_sube_adi: null, kalemler: OPS_KALEM([['Süt 3.5%', 40], ['Karton bardak 8 oz', 2000]]), kalem_sayisi: 2040, personel_ad: 'Elif K.' },
       { id: 't2', sube_adi: 'Gazze', tarih: bugunISO, asama: 'bekliyor', asama_metni: 'Merkezde sırada — depo yönlendirmesi bekleniyor', hedef_depo_sube_adi: null, kalemler: OPS_KALEM([['Çekirdek harman', 12]]), kalem_sayisi: 12, personel_ad: 'Can D.' },
       { id: 't3', sube_adi: 'Alsancak', tarih: bugunISO, asama: 'depoda', asama_metni: 'Depoda hazırlanıyor', hedef_depo_sube_id: 's0', hedef_depo_sube_adi: 'Zafer', sevkiyat_durum: 'depoda_hazirlaniyor', kalemler: OPS_KALEM([['Süt 3.5%', 80], ['Vanilya şurup', 6], ['Peçete (paket)', 20]]), kalem_durumlari: [], kalem_sayisi: 106, personel_ad: 'Sude Y.' },
-      { id: 't4', sube_adi: 'Köyceğiz', tarih: gunEkleISO(-1), asama: 'yolda', asama_metni: 'Depodan çıktı — talep şubesinde kabul bekleniyor', hedef_depo_sube_adi: 'Zafer', kalemler: OPS_KALEM([['Karton bardak 8 oz', 2400]]), kalem_sayisi: 2400 },
+      { id: 't4', sube_adi: 'Köyceğiz', tarih: gunEkleISO(-1), asama: 'yolda', asama_metni: 'Depodan çıktı — talep şubesinde kabul bekleniyor', hedef_depo_sube_adi: 'Zafer', sevkiyat_ts: `${gunEkleISO(-1)} 18:30:00`, kalemler: OPS_KALEM([['Karton bardak 8 oz', 2400]]), kalem_sayisi: 2400 },
       { id: 't5', sube_adi: 'Gazze', tarih: gunEkleISO(-1), asama: 'toptanci_bekliyor', asama_metni: 'Toptancıya yönlendirildi — şube teslim alımı bekleniyor', hedef_depo_sube_adi: null, kalemler: OPS_KALEM([['Cheesecake (dilim)', 24]]), kalem_sayisi: 24 },
       { id: 't6', sube_adi: 'Alsancak', tarih: gunEkleISO(-2), asama: 'uyumsuzluk', asama_metni: 'Kabul uyumsuzluğu — merkez müdahalesi gerekli', hedef_depo_sube_adi: 'Zafer', kalemler: OPS_KALEM([['Süt 3.5%', 60]]), kalem_sayisi: 60 },
       { id: 't7', sube_adi: 'Zafer', tarih: gunEkleISO(-2), asama: 'tamamlandi', asama_metni: 'Teslim alındı (tamamlandı)', hedef_depo_sube_adi: 'Zafer', kalemler: OPS_KALEM([['Peçete (paket)', 30]]), kalem_sayisi: 30 },
@@ -206,6 +206,27 @@ const OPS_UC = {
       { sube_id: 's0', kalem_adi: 'Karton bardak 8 oz', eski_adet: 4200, sayilan_adet: 4160, yeni_adet: 4160, delta: -40, karar: 'sayim', olusturma: `${gunEkleISO(-1)} 23:52:00` },
       { sube_id: 's0', kalem_adi: 'Yeşil çekirdek (harman)', eski_adet: 14, sayilan_adet: 12, yeni_adet: 12, delta: -2, karar: 'sayim', olusturma: `${gunEkleISO(-1)} 23:51:00` },
       { sube_id: 's2', kalem_adi: 'Vanilya şurup', eski_adet: 2, sayilan_adet: 6, yeni_adet: 2, delta: 0, karar: 'sistem', olusturma: `${gunEkleISO(-3)} 22:14:00` },
+    ],
+  },
+  '/api/stok-sayim/gorev/g1': {
+    id: 'g1', sube_adi: 'Zafer', personel_ad: 'Okan B.', mod: 'KONTROL', kapsam_tip: 'bardak',
+    durum: 'tamamlandi', not_aciklama: 'küçük boy bardak kolisi açılmamıştı, saydım',
+    tamamlama_ts: `${gunEkleISO(-1)} 23:40:00`,
+    satirlar: [
+      { kalem_kodu: 'k2', kalem_adi: 'Karton bardak 8 oz', sistem_adet: 4200, sayilan_adet: 4160, fark: -40 },
+      { kalem_kodu: 'k1', kalem_adi: 'Yeşil çekirdek (harman)', sistem_adet: 14, sayilan_adet: 12, fark: -2 },
+      { kalem_kodu: 'k3', kalem_adi: 'Süt 3.5%', sistem_adet: 180, sayilan_adet: 180, fark: 0 },
+      { kalem_kodu: 'k4', kalem_adi: 'Vanilya şurup', sistem_adet: 8, sayilan_adet: 9, fark: 1 },
+      { kalem_kodu: 'k5', kalem_adi: 'Peçete (paket)', sistem_adet: 22, sayilan_adet: 22, fark: 0 },
+    ],
+  },
+  '/api/stok-sayim/gorev/g2': {
+    id: 'g2', sube_adi: 'Gazze', personel_ad: 'Elif K.', mod: 'KONTROL', kapsam_tip: 'tam',
+    durum: 'tamamlandi', not_aciklama: '',
+    tamamlama_ts: `${bugunISO} 09:10:00`,
+    satirlar: [
+      { kalem_kodu: 'k3', kalem_adi: 'Süt 3.5%', sistem_adet: 50, sayilan_adet: 50, fark: 0 },
+      { kalem_kodu: 'k5', kalem_adi: 'Peçete (paket)', sistem_adet: 6, sayilan_adet: 6, fark: 0 },
     ],
   },
   '/api/ops/stok-hareketleri': {
