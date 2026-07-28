@@ -240,6 +240,63 @@ const OPS_UC = {
   },
 };
 
+// ── Maliyet modülü sahte verisi ─────────────────────────────────────────────
+const MALIYET_GUNLER = (() => {
+  const out = [];
+  for (let g = 29; g >= 0; g--) {
+    const d = new Date(); d.setDate(d.getDate() - g);
+    const t = d.toISOString().slice(0, 10);
+    const ciro = 82000 + Math.sin(g / 3) * 9000;
+    const fc = 0.30 + (g < 8 ? 0.04 : 0) + Math.sin(g / 5) * 0.015; // son hafta norm üstü
+    out.push({ tarih: t, sube_adi: 'Zafer', sube_id: 's0', ciro_tl: Math.round(ciro), teorik_maliyet_tl: Math.round(ciro * fc * 0.96), gercek_maliyet_tl: Math.round(ciro * fc), food_cost_pct: Math.round(fc * 1000) / 10, shrinkage_tl: g % 6 === 0 ? 1400 : 0 });
+  }
+  return out;
+})();
+const MALIYET_UC = {
+  '/api/ops/maliyet/ozet': {
+    alis_fiyat_sayisi: 41, recete_sayisi: 75, stok_degeri_tl: 284600,
+    gun_satirlari: MALIYET_GUNLER,
+  },
+  '/api/ops/maliyet/recete-listesi': {
+    receteler: [
+      { urun_id: 'latte', urun_adi: 'Latte', hammaddeler: [
+        { hammadde_kodu: 'k3', hammadde_adi: 'Süt 3.5%', miktar: 0.25, birim: 'L' },
+        { hammadde_kodu: 'k1', hammadde_adi: 'Espresso çekirdek', miktar: 0.018, birim: 'kg' },
+        { hammadde_kodu: 'k2', hammadde_adi: 'Karton bardak 8 oz', miktar: 1, birim: 'adet' },
+      ]},
+      { urun_id: 'filtre', urun_adi: 'Filtre Kahve', hammaddeler: [
+        { hammadde_kodu: 'k1', hammadde_adi: 'Espresso çekirdek', miktar: 0.02, birim: 'kg' },
+        { hammadde_kodu: 'k2', hammadde_adi: 'Karton bardak 8 oz', miktar: 1, birim: 'adet' },
+      ]},
+      { urun_id: 'vanilya-latte', urun_adi: 'Vanilya Latte', hammaddeler: [
+        { hammadde_kodu: 'k3', hammadde_adi: 'Süt 3.5%', miktar: 0.25, birim: 'L' },
+        { hammadde_kodu: 'k1', hammadde_adi: 'Espresso çekirdek', miktar: 0.018, birim: 'kg' },
+        { hammadde_kodu: 'k9', hammadde_adi: 'Vanilya şurup', miktar: 0.03, birim: 'L' },
+      ]},
+    ],
+    toplam: 3,
+  },
+  '/api/ops/maliyet/alis-fiyatlari': {
+    satirlar: [
+      { id: 'f1', kalem_kodu: 'k3', kalem_adi: 'Süt 3.5%', birim: 'L', birim_maliyet_tl: 46, gecerli_baslangic: gunEkleISO(-10), gecerli_bitis: null, tedarikci: 'Sütaş' },
+      { id: 'f2', kalem_kodu: 'k1', kalem_adi: 'Espresso çekirdek', birim: 'kg', birim_maliyet_tl: 940, gecerli_baslangic: gunEkleISO(-30), gecerli_bitis: null, tedarikci: 'Kahve Dünyası' },
+      { id: 'f3', kalem_kodu: 'k2', kalem_adi: 'Karton bardak 8 oz', birim: 'adet', birim_maliyet_tl: 3.8, gecerli_baslangic: gunEkleISO(-20), gecerli_bitis: null, tedarikci: 'Paper Cup Co.' },
+      // k9 vanilya şurup BİLEREK fiyatsız — "fiyatsız hammadde" riski test edilsin
+    ],
+    toplam: 3,
+  },
+  '/api/ops/fiyat-zam-alarmlari': {
+    esik_yuzde: 15,
+    alarmlar: [
+      { id: 'z1', kalem_kodu: 'k3', kalem_adi: 'Süt 3.5%', tedarikci: 'Sütaş', eski_fiyat: 42, yeni_fiyat: 46, artis_yuzde: 9.5, goruldu: false, olusturma: `${gunEkleISO(-10)} 09:12` },
+      { id: 'z2', kalem_kodu: 'k1', kalem_adi: 'Espresso çekirdek', tedarikci: 'Kahve Dünyası', eski_fiyat: 720, yeni_fiyat: 940, artis_yuzde: 30.6, goruldu: false, olusturma: `${gunEkleISO(-30)} 14:40` },
+      { id: 'z3', kalem_kodu: 'k2', kalem_adi: 'Karton bardak 8 oz', tedarikci: 'Paper Cup Co.', eski_fiyat: 3.1, yeni_fiyat: 3.8, artis_yuzde: 22.6, goruldu: true, olusturma: `${gunEkleISO(-20)} 11:05` },
+    ],
+    toplam: 3,
+  },
+  '/api/ops/fiyat-zam-alarmlari/goruldu': { success: true },
+};
+
 function borcKocu(url) {
   const strateji = /kartopu/.test(url) ? 'kartopu' : 'cig';
   const nakit = Number((url.match(/nakit=(\d+)/) || [])[1] || 0);
@@ -267,7 +324,7 @@ window.fetch = async (url) => {
   // ⚠️ ÖNCE TAM YOL eşleşmesi: `u.includes('/api/ciro')` gibi gevşek kurallar
   // /api/ciro-taslak'ı da yakalıyordu ve rozet 2 yerine 120 çıkıyordu.
   const yol = u.split('?')[0];
-  const TUM = { ...SAHTE, ...KART_UC, ...ODEME_UC, ...OPS_UC, '/api/ciro': CIRO };
+  const TUM = { ...SAHTE, ...KART_UC, ...ODEME_UC, ...OPS_UC, ...MALIYET_UC, '/api/ciro': CIRO };
   if (u.includes('/api/kartlar/borc-kocu')) govde = borcKocu(u);
   else if (Object.prototype.hasOwnProperty.call(TUM, yol)) govde = TUM[yol];
   await new Promise(r => setTimeout(r, 120));

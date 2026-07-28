@@ -283,11 +283,10 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
         { etiket: 'Hedef depo', deger: s.hedef_depo_sube_adi || 'atanmadı', renk: s.hedef_depo_sube_adi ? R.krem : R.amber },
       ],
       listeBaslik: 'Talep kalemleri',
-      satirlar: (s.kalemler || []).slice(0, 14).map((k, i) => ({
-        id: `k-${i}`,
-        baslik: k?.urun_ad || '—',
-        alt: k?.birim ? String(k.birim) : '',
-        deger: `${sayi(k?.adet)} adet`,
+      satirlar: (s.kalemler || []).slice(0, 14).map((k) => ({
+        ad: k?.urun_ad || '—',
+        detay: k?.birim ? String(k.birim) : '',
+        tutar: `${sayi(k?.adet)} adet`,
       })),
       not: [
         s.asama_metni,
@@ -728,10 +727,9 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
                 ],
                 listeBaslik: 'Şube kırılımı',
                 satirlar: subeler.map((sb) => ({
-                  id: sb.id,
-                  baslik: sb.ad,
-                  alt: '',
-                  deger: `${sayi((k.adetler || {})[sb.id])} adet`,
+                  ad: sb.ad,
+                  detay: '',
+                  tutar: `${sayi((k.adetler || {})[sb.id])} adet`,
                 })),
                 not: m > 0 && adetAl(k) < m
                   ? 'Minimumun altında — sipariş oluşturma ve hareket geçmişi Operasyon Merkezi\'nde.'

@@ -16,6 +16,7 @@ import { Ikon, KpiSeridi, Hero, Liste, Tablo, Cekmece, Toast, KopruDurumu } from
 import KartModulu from './KartModulu';
 import OdemeModulu from './OdemeModulu';
 import OpsModulu from './OpsModulu';
+import MaliyetModulu from './MaliyetModulu';
 
 // ⚠️ TARİH TUZAĞI: `new Date('2026-07-28T00:00:00')` yerel saat olarak ayrıştırılır,
 // `toISOString()` ise UTC'ye çevirir. Türkiye'de (UTC+3) bu, tarihi BİR GÜN GERİ
@@ -148,6 +149,10 @@ export default function TasarimV2({ onGit }) {
     api('/ops/depo-stok')
       .then(d => koy('opsDepoKritik', (d?.kalemler || [])
         .filter(k => Number(k.min_stok) > 0 && Number(k.toplam) < Number(k.min_stok)).length))
+      .catch(() => {});
+    // Maliyet rozeti — incelenmemiş eşik-üstü fiyat artışları
+    api('/ops/fiyat-zam-alarmlari?gun=90&sadece_yeni=true&limit=50')
+      .then(d => koy('fiyatZinciri', Array.isArray(d?.alarmlar) ? d.alarmlar.length : 0))
       .catch(() => {});
     return () => { iptal = true; };
   }, []);
@@ -300,6 +305,16 @@ export default function TasarimV2({ onGit }) {
           onKopru={koprule}
           onToast={setToast}
           onGorunum={setGorunum}
+        />
+      );
+    }
+    if (mod === 'maliyet') {
+      return (
+        <MaliyetModulu
+          gorunum={gorunum}
+          onCekmece={setCekmece}
+          onKopru={koprule}
+          onToast={setToast}
         />
       );
     }

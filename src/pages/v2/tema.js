@@ -110,11 +110,13 @@ export const MODULLER = [
     { id: 'tedarikci', ad: 'Tedarikçi Bakiyesi' },
     { id: 'gecmis', ad: 'Ödeme Geçmişi' },
   ]},
-  { id: 'maliyet', ad: 'Kâr & Maliyet', kisa: 'Maliyet', alt: 'Marj · reçete · fiyat', ikon: IK.para, gorunumler: [
-    { id: 'ozet', ad: 'Marj Özeti', hedef: 'maliyet' },
-    { id: 'urun', ad: 'Ürün Marjı', hedef: 'maliyet' },
-    { id: 'recete', ad: 'Reçeteler', hedef: 'recete-eslestirme' },
-    { id: 'fiyat', ad: 'Fiyat Zinciri', rozet: 'fiyatZinciri', renk: '#FBBF24', hedef: 'maliyet' },
+  // Kâr & Maliyet: v2-YERLİ (MaliyetModulu.jsx). "Ürün Marjı" → "Ürün Maliyeti":
+  // satış fiyatı sisteme bağlı değil, marj yüzdesi sahte olurdu (düz-dil kuralı).
+  { id: 'maliyet', ad: 'Kâr & Maliyet', kisa: 'Maliyet', alt: 'Maliyet · reçete · fiyat', ikon: IK.para, gorunumler: [
+    { id: 'ozet', ad: 'Marj Özeti' },
+    { id: 'urun', ad: 'Ürün Maliyeti' },
+    { id: 'recete', ad: 'Reçeteler' },
+    { id: 'fiyat', ad: 'Fiyat Zinciri', rozet: 'fiyatZinciri', renk: '#FBBF24' },
   ]},
   { id: 'ekip', ad: 'Personel & Vardiya', kisa: 'Ekip', alt: 'Kadro · plan · bordro', ikon: IK.ekip, gorunumler: [
     { id: 'kadro', ad: 'Kadro', hedef: 'personel' },
