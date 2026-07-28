@@ -592,6 +592,76 @@ const PARA_UC = {
   ],
 };
 
+// ── Denetim & Zekâ modülü sahte verisi ──────────────────────────────────────
+const DENETIM_UC = {
+  '/api/ops/truth/gunluk-rapor': {
+    tarih: bugunISO,
+    subeler: [
+      { sube_id: 's0', sube_ad: 'ZAFER', tarih: bugunISO, motor_aktif: true, motor_mod: 'oneri', son_calisma: `${bugunISO} 00:30`, ana_tani: 'KASA_POS_FARKI', alarm: 'alarm', anomali_sayisi: 2, toplam_karar: 3, boyut_ozet: [{ boyut: 'kasa', durum: 'fark', deger: '−2.340 ₺' }, { boyut: 'stok', durum: 'temiz' }], zeka_ozet: 'Cuma akşamları tekrar eden kasa-POS farkı — vardiya kesişimi şüphesi.', yorum_metni: 'Son 3 cumada aynı yönde fark. Akşam vardiya devrinde sayım disiplinine bakılmalı.' },
+      { sube_id: 's1', sube_ad: 'KÖYCEĞİZ', tarih: bugunISO, motor_aktif: true, motor_mod: 'oneri', son_calisma: `${bugunISO} 00:30`, ana_tani: 'UYUMLU', alarm: 'normal', anomali_sayisi: 1, toplam_karar: 1, boyut_ozet: [], zeka_ozet: 'Süt sarfiyatı reçete üstü seyrediyor.', yorum_metni: '' },
+      { sube_id: 's2', sube_ad: 'GAZZE', tarih: bugunISO, motor_aktif: true, motor_mod: 'oneri', son_calisma: `${bugunISO} 00:30`, ana_tani: 'UYUMLU', alarm: 'normal', anomali_sayisi: 0, toplam_karar: 0, boyut_ozet: [], zeka_ozet: '', yorum_metni: '' },
+      { sube_id: 's3', sube_ad: 'ALSANCAK', tarih: bugunISO, motor_aktif: false, motor_mod: 'read_only', son_calisma: `${gunEkleISO(-42)} 00:30`, ana_tani: 'UYUMLU', alarm: 'normal', anomali_sayisi: 0, toplam_karar: 0, boyut_ozet: [], zeka_ozet: '', yorum_metni: '' },
+    ],
+  },
+  '/api/ops/truth/durum': {
+    global_aktif: true,
+    subeler: [
+      { sube_id: 's0', sube_ad: 'ZAFER', motor_aktif: true, motor_mod: 'oneri', son_calisma: `${bugunISO} 00:30` },
+      { sube_id: 's1', sube_ad: 'KÖYCEĞİZ', motor_aktif: true, motor_mod: 'oneri', son_calisma: `${bugunISO} 00:30` },
+      { sube_id: 's2', sube_ad: 'GAZZE', motor_aktif: true, motor_mod: 'oneri', son_calisma: `${bugunISO} 00:30` },
+      { sube_id: 's3', sube_ad: 'ALSANCAK', motor_aktif: false, motor_mod: 'read_only', son_calisma: `${gunEkleISO(-42)} 00:30` },
+    ],
+  },
+  '/api/duyu/ozet': { toplam_olay: 1846, etiket_sayisi: 21, son_gun_tipleri: [], okuyucular: ['panel', 'beyin', 'whatsapp'] },
+  '/api/duyu/gunluk-notlar': {
+    notlar: [
+      { gun: bugunISO, tip: 'kritik', baslik: 'Bebek kasa-POS farkı 3. kez aynı desende', metin: 'Cuma akşamları tekrarlıyor · kasa–POS motoru' },
+      { gun: gunEkleISO(-1), tip: 'uyari', baslik: 'Aynı tutarlı iki fatura', metin: 'Paper Cup 28.400 ₺ · parmak izi farklı · mükerrer motoru' },
+      { gun: gunEkleISO(-2), tip: 'bilgi', baslik: 'Ataşehir öğle düşüşü açıklandı', metin: 'plaza tadilatı · ciro ritmi motoru · kendiliğinden kapandı' },
+    ],
+    tipler: ['kasa', 'stok', 'ciro', 'belge'],
+  },
+  '/api/duyu/odeme-mutabakat': {
+    kesit: 60,
+    eslesen: 47,
+    dusus_var_odeme_kaydi_yok: [
+      { tarih: gunEkleISO(-3), aciklama: 'BORC_TAKSIT — açıklamasız düşüş', tutar: 20491 },
+    ],
+    odeme_var_dusus_gorulmedi: [
+      { tarih: gunEkleISO(-6), aciklama: 'ESHİM ödeme kaydı', tutar: 40800 },
+    ],
+    not: 'çapa bağımsız',
+  },
+  '/api/beyin/gunluk': {
+    toplam: 2,
+    kayitlar: [
+      { tip: 'gece_sentez', tarih: `${bugunISO} 06:00`, cevap: 'Dün Zafer cirosu hafta ortalamasının %8 üstünde kapandı; kasa-POS farkı yalnız cuma akşamları tekrarlıyor — vardiya kesişimi deseni güçleniyor. Süt tüketimi Köyceğiz\'de reçete beklentisinin üstünde seyretmeye devam etti.' },
+      { tip: 'gece_sentez', tarih: `${gunEkleISO(-1)} 06:00`, cevap: 'Sipariş zinciri temiz; SÜTAŞ vadesi yaklaşırken kasa yeterliliği korunuyor.' },
+    ],
+  },
+  '/api/beyin/bag-dilekleri': {
+    dilekler: [
+      { ref: 'c3b98577', occurred_at: null, payload_json: { dilek: 'Stok reçete farkı ile fire bildirimi arasında hazır bağ istendi — bağ defterinde yoktu.' } },
+    ],
+  },
+  '/api/duyu/kural-karnesi': {
+    ogrenme_aktif: true, n_esigi: 5,
+    karne: [
+      { kural: 'Geç kalma (grace bantlı)', durum: 'sağlıklı', gozlem: 118, not: 'nötr fark günü çapraz-gün' },
+      { kural: 'Temiz hafta', durum: 'sağlıklı', gozlem: 12, not: '' },
+      { kural: 'Cuma kasa kesişimi', durum: 'izlemede', gozlem: 3, not: 'B51 bulgusuna bağlı' },
+    ],
+  },
+  '/api/duyu/sinapsler': { kesit: 14, sinaps_olaylari: 6, kase_canli: true, zincir_canli: true },
+  '/api/strateji': {
+    kasa: 586310, kullanilabilir_nakit: 218400, zorunlu_giderler: 367910, toplam_oneri_tutari: 109650,
+    oneriler: [
+      { baslik: 'Vadesi geçen 2 tedarikçi ödemesini önceliklendir', aciklama: 'çekirdek + süt · gecikirse tedarik riski', renk: 'KIRMIZI', tutar: 109650 },
+      { baslik: 'Süt zammını latte grubuna yansıt', aciklama: 'reçete maliyeti +1,4 ₺/bardak', renk: 'TURUNCU', tutar: 0 },
+    ],
+  },
+};
+
 function borcKocu(url) {
   const strateji = /kartopu/.test(url) ? 'kartopu' : 'cig';
   const nakit = Number((url.match(/nakit=(\d+)/) || [])[1] || 0);
@@ -619,7 +689,7 @@ window.fetch = async (url) => {
   // ⚠️ ÖNCE TAM YOL eşleşmesi: `u.includes('/api/ciro')` gibi gevşek kurallar
   // /api/ciro-taslak'ı da yakalıyordu ve rozet 2 yerine 120 çıkıyordu.
   const yol = u.split('?')[0];
-  const TUM = { ...SAHTE, ...KART_UC, ...ODEME_UC, ...OPS_UC, ...MALIYET_UC, ...EKIP_UC, ...KUCUK_UC, ...BORC_UC, ...PARA_UC, '/api/ciro': CIRO };
+  const TUM = { ...SAHTE, ...KART_UC, ...ODEME_UC, ...OPS_UC, ...MALIYET_UC, ...EKIP_UC, ...KUCUK_UC, ...BORC_UC, ...PARA_UC, ...DENETIM_UC, '/api/ciro': CIRO };
   if (u.includes('/api/kartlar/borc-kocu')) govde = borcKocu(u);
   else if (Object.prototype.hasOwnProperty.call(TUM, yol)) govde = TUM[yol];
   await new Promise(r => setTimeout(r, 120));

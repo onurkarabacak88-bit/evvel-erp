@@ -147,14 +147,16 @@ export const MODULLER = [
     { id: 'gider', ad: 'Anlık Gider' },
     { id: 'diskaynak', ad: 'Dış Kaynak Geliri' },
   ]},
+  // Denetim & Zekâ: v2-YERLİ (DenetimModulu.jsx) — öneri-only; derin inceleme
+  // Akıllı Denetim / Duyu Paneli ekranlarına köprüyle gider.
   { id: 'denetim', ad: 'Denetim & Zekâ', kisa: 'Zekâ', alt: '13 tanı motoru · duyu', ikon: IK.islemci, gorunumler: [
-    { id: 'anomali', ad: 'Bugünkü Bulgular', rozet: 'anomali', renk: '#F87171', hedef: 'akilli-denetim' },
-    { id: 'motorlar', ad: 'Tanı Motorları · 13', hedef: 'akilli-denetim' },
-    { id: 'olaylar', ad: 'Olay Yelpazesi', hedef: 'akilli-denetim' },
-    { id: 'mutabakat', ad: 'Duyu Mutabakatı', rozet: 'duyuMutabakat', renk: '#FBBF24', hedef: 'duyu-paneli' },
-    { id: 'bag', ad: 'Bağ Defteri', hedef: 'duyu-paneli' },
-    { id: 'duyu', ad: 'Duyu Paneli', hedef: 'duyu-paneli' },
-    { id: 'strateji', ad: 'Strateji Motoru', hedef: 'strateji' },
+    { id: 'anomali', ad: 'Bugünkü Bulgular', rozet: 'anomali', renk: '#F87171' },
+    { id: 'motorlar', ad: 'Tanı Motorları · 13' },
+    { id: 'olaylar', ad: 'Olay Yelpazesi' },
+    { id: 'mutabakat', ad: 'Duyu Mutabakatı', rozet: 'duyuMutabakat', renk: '#FBBF24' },
+    { id: 'bag', ad: 'Bağ Defteri' },
+    { id: 'duyu', ad: 'Duyu Paneli' },
+    { id: 'strateji', ad: 'Strateji Motoru' },
   ]},
   { id: 'belge', ad: 'Belge Merkezi', kisa: 'Belge', alt: 'Fatura · kapsama · KDV', ikon: IK.dosya, gorunumler: [
     { id: 'kapsama', ad: 'Belge Kapsama', rozet: 'belgeKapsama', renk: '#FBBF24', hedef: 'belge-merkezi' },

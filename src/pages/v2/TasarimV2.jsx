@@ -20,6 +20,7 @@ import MaliyetModulu from './MaliyetModulu';
 import EkipModulu from './EkipModulu';
 import BorcModulu from './BorcModulu';
 import ParaModulu from './ParaModulu';
+import DenetimModulu from './DenetimModulu';
 import { OnayModulu, YukModulu, RaporModulu, SistemModulu, TanimModulu } from './KucukModuller';
 
 // ⚠️ TARİH TUZAĞI: `new Date('2026-07-28T00:00:00')` yerel saat olarak ayrıştırılır,
@@ -193,6 +194,14 @@ export default function TasarimV2({ onGit }) {
     api('/ops/fiyat-zam-alarmlari?gun=90&sadece_yeni=true&limit=50')
       .then(d => koy('fiyatZinciri', Array.isArray(d?.alarmlar) ? d.alarmlar.length : 0))
       .catch(() => {});
+    // Duyu mutabakatı rozeti — iki yönlü açık fark sayısı (ödeme↔kasa düşüşü)
+    api('/duyu/odeme-mutabakat?gun=60')
+      .then(d => {
+        const a = Array.isArray(d?.dusus_var_odeme_kaydi_yok) ? d.dusus_var_odeme_kaydi_yok.length : 0;
+        const b = Array.isArray(d?.odeme_var_dusus_gorulmedi) ? d.odeme_var_dusus_gorulmedi.length : 0;
+        koy('duyuMutabakat', a + b);
+      })
+      .catch(() => {});
     // Tüketim kontrolü rozeti — satış×reçete beklenene göre %15+ FAZLA açılan
     // malzeme-gün sayısı (fire bildirimi düşüldükten sonra). Uç gece ön-hesaplı
     // önbellekten döner (gun=7), kabuk açılışını yormaz.
@@ -365,6 +374,9 @@ export default function TasarimV2({ onGit }) {
     }
     if (mod === 'para') {
       return <ParaModulu gorunum={gorunum} onCekmece={setCekmece} onKopru={koprule} />;
+    }
+    if (mod === 'denetim') {
+      return <DenetimModulu gorunum={gorunum} onCekmece={setCekmece} onKopru={koprule} />;
     }
     // Küçük modüller (KucukModuller.jsx) — yeni blok gerektirmeyenler
     if (mod === 'onaylar') {
