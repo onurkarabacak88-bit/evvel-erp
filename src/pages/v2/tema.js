@@ -158,14 +158,16 @@ export const MODULLER = [
     { id: 'duyu', ad: 'Duyu Paneli' },
     { id: 'strateji', ad: 'Strateji Motoru' },
   ]},
+  // Belge Merkezi: v2-YERLİ (BelgeModulu.jsx) — /fatura/belge-merkezi omurgası;
+  // fatura isteme/onay yazmaları mevcut Belge Merkezi ekranında (köprü).
   { id: 'belge', ad: 'Belge Merkezi', kisa: 'Belge', alt: 'Fatura · kapsama · KDV', ikon: IK.dosya, gorunumler: [
-    { id: 'kapsama', ad: 'Belge Kapsama', rozet: 'belgeKapsama', renk: '#FBBF24', hedef: 'belge-merkezi' },
-    { id: 'arsiv', ad: 'Fatura Arşivi · FTS', hedef: 'belge-merkezi' },
-    { id: 'istek', ad: 'Fatura İstek · wa.me', rozet: 'faturaIstek', renk: '#D29A5B', hedef: 'belge-merkezi' },
-    { id: 'uyarilar', ad: 'Mükerrer & Parmak İzi', rozet: 'belgeMukerrer', renk: '#F87171', hedef: 'belge-merkezi' },
-    { id: 'cari', ad: 'Cari Ekstre', hedef: 'belge-merkezi' },
-    { id: 'fiyat', ad: 'Fiyat Bandı', hedef: 'belge-merkezi' },
-    { id: 'kdv', ad: 'KDV Kanıt Paketi', hedef: 'belge-merkezi' },
+    { id: 'kapsama', ad: 'Belge Kapsama', rozet: 'belgeKapsama', renk: '#FBBF24' },
+    { id: 'arsiv', ad: 'Fatura Arşivi · FTS' },
+    { id: 'istek', ad: 'Fatura İstek · wa.me', rozet: 'faturaIstek', renk: '#D29A5B' },
+    { id: 'uyarilar', ad: 'Mükerrer & Parmak İzi', rozet: 'belgeMukerrer', renk: '#F87171' },
+    { id: 'cari', ad: 'Cari Ekstre' },
+    { id: 'fiyat', ad: 'Fiyat Bandı' },
+    { id: 'kdv', ad: 'KDV Kanıt Paketi' },
   ]},
   { id: 'tanim', ad: 'Tanımlar', kisa: 'Tanım', alt: 'Tedarikçi · TV menü', ikon: IK.klasor, gorunumler: [
     { id: 'tedarikciler', ad: 'Tedarikçiler' },

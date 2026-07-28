@@ -21,6 +21,7 @@ import EkipModulu from './EkipModulu';
 import BorcModulu from './BorcModulu';
 import ParaModulu from './ParaModulu';
 import DenetimModulu from './DenetimModulu';
+import BelgeModulu from './BelgeModulu';
 import { OnayModulu, YukModulu, RaporModulu, SistemModulu, TanimModulu } from './KucukModuller';
 
 // ⚠️ TARİH TUZAĞI: `new Date('2026-07-28T00:00:00')` yerel saat olarak ayrıştırılır,
@@ -193,6 +194,19 @@ export default function TasarimV2({ onGit }) {
     // Maliyet rozeti — incelenmemiş eşik-üstü fiyat artışları
     api('/ops/fiyat-zam-alarmlari?gun=90&sadece_yeni=true&limit=50')
       .then(d => koy('fiyatZinciri', Array.isArray(d?.alarmlar) ? d.alarmlar.length : 0))
+      .catch(() => {});
+    // Belge rozetleri — kapsama (faturasız harcama adedi), istek (açık istek),
+    // mükerrer (şüpheli + işlenemeyen). belge-merkezi tek uçtan ikisi birden.
+    api(`/fatura/belge-merkezi?ay=${bugunISO().slice(0, 7)}`)
+      .then(d => {
+        koy('belgeKapsama', (Array.isArray(d?.faturasiz_harcamalar) ? d.faturasiz_harcamalar : []).length);
+        const sup = Number(d?.kdv_kanit?.supheli?.adet) || 0;
+        const isle = (Array.isArray(d?.islenemeyen_foto) ? d.islenemeyen_foto : []).length;
+        koy('belgeMukerrer', sup + isle);
+      })
+      .catch(() => {});
+    api('/fatura-istek/liste')
+      .then(d => koy('faturaIstek', Number(d?.acik_adet) || 0))
       .catch(() => {});
     // Duyu mutabakatı rozeti — iki yönlü açık fark sayısı (ödeme↔kasa düşüşü)
     api('/duyu/odeme-mutabakat?gun=60')
@@ -377,6 +391,9 @@ export default function TasarimV2({ onGit }) {
     }
     if (mod === 'denetim') {
       return <DenetimModulu gorunum={gorunum} onCekmece={setCekmece} onKopru={koprule} />;
+    }
+    if (mod === 'belge') {
+      return <BelgeModulu gorunum={gorunum} onCekmece={setCekmece} onKopru={koprule} />;
     }
     // Küçük modüller (KucukModuller.jsx) — yeni blok gerektirmeyenler
     if (mod === 'onaylar') {

@@ -662,6 +662,69 @@ const DENETIM_UC = {
   },
 };
 
+// ── Belge Merkezi modülü sahte verisi ───────────────────────────────────────
+const BELGE_UC = {
+  '/api/fatura/belge-merkezi': {
+    ay: bugunISO.slice(0, 7),
+    kapsama: { isletme_kart_harcamasi: 522435, faturali_eslesen: 168153, kurumsal_otomatik: 30776, faturasiz: 323486, oran_yuzde: 38.1 },
+    toptancilar: [
+      { toptanci: 'KAHVE DÜNYASI ÇEKİRDEK A.Ş.', adet: 4, toplam: 258000, son_fatura: gunEkleISO(-1) },
+      { toptanci: 'SÜTAŞ BÖLGE DAĞITIM', adet: 6, toplam: 187400, son_fatura: bugunISO },
+      { toptanci: 'PAPER CUP CO.', adet: 2, toplam: 56800, son_fatura: gunEkleISO(-4) },
+    ],
+    faturasiz_harcamalar: [
+      { tarih: gunEkleISO(-1), kart: 'Garanti 7015', tutar: 14200, aciklama: 'Teknoloji · tablet POS', tip: 'belirsiz' },
+      { tarih: gunEkleISO(-2), kart: 'Akbank Axess', tutar: 3860, aciklama: 'Akaryakıt · servis aracı', tip: 'isletme' },
+    ],
+    fatura_arsivi: [
+      { id: 'fa1', tedarikci_ad: 'KAHVE DÜNYASI ÇEKİRDEK A.Ş.', tarih: bugunISO, tutar: 68400, durum: 'ocr_tamam', goruntule: '' },
+      { id: 'fa2', tedarikci_ad: 'SÜTAŞ BÖLGE DAĞITIM', tarih: gunEkleISO(-1), tutar: 41250, durum: 'ocr_tamam', goruntule: '' },
+      { id: 'fa3', tedarikci_ad: 'FEZ KAHVE GIDA', tarih: gunEkleISO(-2), tutar: 35148, durum: 'ocr_hata', goruntule: '' },
+    ],
+    islenemeyen_foto: [{ id: 'if1' }],
+    kdv_kanit: {
+      ay: bugunISO.slice(0, 7),
+      indirime_aday: { adet: 21, toplam: 486400 },
+      inceleme: { adet: 6, toplam: 92300 },
+      supheli: { adet: 1, toplam: 28400 },
+      not: 'KDV TUTARI HESAPLANMAZ — hüküm muhasebecinin.',
+    },
+  },
+  '/api/fatura-istek/liste': {
+    acik_adet: 4, acik_toplam: 316530, kdv_riski: 63300,
+    gruplar: [
+      { tedarikci: 'ATALAY KAHVE', tel: '905551112233', adet: 2, toplam: 280000, kurumsal: false, istekler: [
+        { id: 'i1', kaynak_tip: 'anlik_gider', tarih: gunEkleISO(-2), tutar: 180000, aciklama: 'Cari borç ödemesi — fatura bekleniyor' },
+        { id: 'i2', kaynak_tip: 'teslim', tarih: gunEkleISO(-5), tutar: 100000, aciklama: 'Çekirdek teslimi' },
+      ]},
+      { tedarikci: 'BARISTA SERVİS', tel: null, adet: 2, toplam: 36530, kurumsal: false, istekler: [
+        { id: 'i3', kaynak_tip: 'teslim', tarih: gunEkleISO(-3), tutar: 33330, aciklama: 'Makine bakım parçası' },
+      ]},
+    ],
+  },
+  '/api/fatura/fiyat-bandi': {
+    urun_adet: 18, band_disi_adet: 2,
+    band_disi: [
+      { kod: 'k3', ad: 'Süt 3.5% (L)', birim: 'L', gozlem: 12, medyan: 42, aralik: [40.5, 43], son_fiyat: 46, son_tarih: gunEkleISO(-10), son_tedarikci: 'Sütaş' },
+      { kod: 'k2', ad: 'Karton bardak 12 oz', birim: 'adet', gozlem: 7, medyan: 2.6, aralik: [2.45, 2.7], son_fiyat: 3.05, son_tarih: gunEkleISO(-6), son_tedarikci: 'Paper Cup' },
+    ],
+    bantlar: [],
+  },
+  '/api/fatura/cari-ekstre': {
+    arama: 'KAHVE DÜNYASI', fatura_adet: 4,
+    faturalar: [
+      { id: 'cf1', fatura_no: 'KD2026-4471', tarih: bugunISO, tutar: 68400, bakiye_dahil: 129800, goruntule: '' },
+      { id: 'cf2', fatura_no: 'KD2026-4402', tarih: gunEkleISO(-21), tutar: 61400, bakiye_dahil: 61400, goruntule: '' },
+    ],
+    beyan_bakiye: 129800, devir: 64200, devir_not: 'sistem öncesi beyan',
+    fatura_toplam_6ay: 1620000, odeme_izi_toplam_6ay: 1490200, hesaplanan_acik: 129800,
+    aylik: [],
+  },
+  '/api/fatura/ara': [
+    { id: 'ar1', tedarikci_ad: 'SÜTAŞ BÖLGE DAĞITIM', tarih: gunEkleISO(-1), tutar: 41250, durum: 'ocr_tamam' },
+  ],
+};
+
 function borcKocu(url) {
   const strateji = /kartopu/.test(url) ? 'kartopu' : 'cig';
   const nakit = Number((url.match(/nakit=(\d+)/) || [])[1] || 0);
@@ -689,7 +752,7 @@ window.fetch = async (url) => {
   // ⚠️ ÖNCE TAM YOL eşleşmesi: `u.includes('/api/ciro')` gibi gevşek kurallar
   // /api/ciro-taslak'ı da yakalıyordu ve rozet 2 yerine 120 çıkıyordu.
   const yol = u.split('?')[0];
-  const TUM = { ...SAHTE, ...KART_UC, ...ODEME_UC, ...OPS_UC, ...MALIYET_UC, ...EKIP_UC, ...KUCUK_UC, ...BORC_UC, ...PARA_UC, ...DENETIM_UC, '/api/ciro': CIRO };
+  const TUM = { ...SAHTE, ...KART_UC, ...ODEME_UC, ...OPS_UC, ...MALIYET_UC, ...EKIP_UC, ...KUCUK_UC, ...BORC_UC, ...PARA_UC, ...DENETIM_UC, ...BELGE_UC, '/api/ciro': CIRO };
   if (u.includes('/api/kartlar/borc-kocu')) govde = borcKocu(u);
   else if (Object.prototype.hasOwnProperty.call(TUM, yol)) govde = TUM[yol];
   await new Promise(r => setTimeout(r, 120));
