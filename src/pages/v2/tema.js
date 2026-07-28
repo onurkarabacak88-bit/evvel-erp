@@ -95,13 +95,14 @@ export const MODULLER = [
     { id: 'subeler', ad: 'Şube Karnesi' },
     { id: 'risk', ad: 'Riskler', rozet: 'risk', renk: '#F87171' },
   ]},
+  // Operasyon: v2-YERLİ (OpsModulu.jsx) — hedef köprüleri kalktı.
   { id: 'ops', ad: 'Operasyon', kisa: 'Ops', alt: 'Sipariş · depo · sevk', ikon: IK.radar, gorunumler: [
-    { id: 'akis', ad: 'Sipariş Akışı', rozet: 'opsAcikSiparis', renk: '#D29A5B', hedef: 'ops-merkez' },
-    { id: 'sevkiyat', ad: 'Sevkiyat Hazırlama', rozet: 'opsSevkiyat', renk: '#60A5FA', hedef: 'sevkiyat-hazirlama' },
-    { id: 'depo', ad: 'Depo Stok', rozet: 'opsDepoKritik', renk: '#F87171', hedef: 'ops-merkez' },
-    { id: 'sayim', ad: 'Bardak & Ürün Sayımı', rozet: 'stokSayim', renk: '#FBBF24', hedef: 'stok-sayim' },
-    { id: 'hareket', ad: 'Stok Hareketi', hedef: 'ops-merkez' },
-    { id: 'kule', ad: 'Kontrol Kulesi', hedef: 'ops-merkez' },
+    { id: 'akis', ad: 'Sipariş Akışı', rozet: 'opsAcikSiparis', renk: '#D29A5B' },
+    { id: 'sevkiyat', ad: 'Sevkiyat Hazırlama', rozet: 'opsSevkiyat', renk: '#60A5FA' },
+    { id: 'depo', ad: 'Depo Stok', rozet: 'opsDepoKritik', renk: '#F87171' },
+    { id: 'sayim', ad: 'Bardak & Ürün Sayımı', rozet: 'stokSayim', renk: '#FBBF24' },
+    { id: 'hareket', ad: 'Stok Hareketi' },
+    { id: 'kule', ad: 'Kontrol Kulesi' },
   ]},
   { id: 'odeme', ad: 'Ödeme Merkezi', kisa: 'Ödeme', alt: 'Vade · bakiye · geçmiş', ikon: IK.banknot, gorunumler: [
     { id: 'bekleyen', ad: 'Bekleyen', rozet: 'odemeBekleyen', renk: '#D29A5B' },

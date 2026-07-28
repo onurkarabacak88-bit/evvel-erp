@@ -15,6 +15,7 @@ import { R, F, MODULLER, kartYuzey } from './tema';
 import { Ikon, KpiSeridi, Hero, Liste, Tablo, Cekmece, Toast, KopruDurumu } from './parcalar';
 import KartModulu from './KartModulu';
 import OdemeModulu from './OdemeModulu';
+import OpsModulu from './OpsModulu';
 
 // ⚠️ TARİH TUZAĞI: `new Date('2026-07-28T00:00:00')` yerel saat olarak ayrıştırılır,
 // `toISOString()` ise UTC'ye çevirir. Türkiye'de (UTC+3) bu, tarihi BİR GÜN GERİ
@@ -133,6 +134,21 @@ export default function TasarimV2({ onGit }) {
       .then(d => koy('hareketBelirsiz', (Array.isArray(d) ? d : [])
         .filter(h => h.islem_turu === 'HARCAMA' && (h.harcama_tipi || 'belirsiz') === 'belirsiz').length))
       .catch(() => {});
+    // Operasyon rozetleri — kontrol kulesi özeti (sadece açık aşamalar) + depo eşiği.
+    // limit=1: rozet için satır listesi gerekmez, yalnız ozet sayaçları okunur.
+    api('/ops/siparis/kontrol-kulesi?gun=14&sadece_acik=true&limit=1')
+      .then(d => {
+        const o = d?.ozet || {};
+        const acik = ['bekliyor', 'depoda', 'yolda', 'toptanci_bekliyor', 'uyumsuzluk']
+          .reduce((t, k) => t + (Number(o[k]) || 0), 0);
+        koy('opsAcikSiparis', acik);
+        koy('opsSevkiyat', Number(o.depoda) || 0);
+      })
+      .catch(() => {});
+    api('/ops/depo-stok')
+      .then(d => koy('opsDepoKritik', (d?.kalemler || [])
+        .filter(k => Number(k.min_stok) > 0 && Number(k.toplam) < Number(k.min_stok)).length))
+      .catch(() => {});
     return () => { iptal = true; };
   }, []);
 
@@ -234,6 +250,13 @@ export default function TasarimV2({ onGit }) {
 
   const koprule = (hedef) => {
     if (!hedef) return;
+    // Görünüm-içi hedef: '__gorunum:sevkiyat' → eski sayfaya değil, v2'nin kendi
+    // görünümüne geçer (çekmece aksiyonları da modül içinde kalabilsin diye).
+    if (hedef.startsWith('__gorunum:')) {
+      setGorunum(hedef.slice('__gorunum:'.length));
+      setCekmece(null);
+      return;
+    }
     if (onGit) onGit(hedef);
     else window.location.hash = hedef;
   };
@@ -268,6 +291,17 @@ export default function TasarimV2({ onGit }) {
     }
     if (mod === 'odeme') {
       return <OdemeModulu gorunum={gorunum} onCekmece={setCekmece} onKopru={koprule} onToast={setToast} />;
+    }
+    if (mod === 'ops') {
+      return (
+        <OpsModulu
+          gorunum={gorunum}
+          onCekmece={setCekmece}
+          onKopru={koprule}
+          onToast={setToast}
+          onGorunum={setGorunum}
+        />
+      );
     }
 
     if (mod !== 'panel') {
