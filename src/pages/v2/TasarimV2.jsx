@@ -18,6 +18,7 @@ import OdemeModulu from './OdemeModulu';
 import OpsModulu from './OpsModulu';
 import MaliyetModulu from './MaliyetModulu';
 import EkipModulu from './EkipModulu';
+import BorcModulu from './BorcModulu';
 import { OnayModulu, YukModulu, RaporModulu, SistemModulu, TanimModulu } from './KucukModuller';
 
 // ⚠️ TARİH TUZAĞI: `new Date('2026-07-28T00:00:00')` yerel saat olarak ayrıştırılır,
@@ -154,6 +155,8 @@ export default function TasarimV2({ onGit }) {
           .reduce((t, r) => t + Math.max(0, (Number(r.toplam) || 0) - (Number(r.tamamlanan) || 0)), 0)))
         .catch(() => {});
     })();
+    api('/borc-nav/ozet')
+      .then(d => { if (d?.surdurulemez) koy('borcDurum', '!'); }).catch(() => {});
     api('/sabit-giderler')
       .then(d => koy('sabitGider', (Array.isArray(d) ? d : [])
         .filter(g => g.aktif !== false && !g.bu_ay_odendi).length)).catch(() => {});
@@ -355,6 +358,9 @@ export default function TasarimV2({ onGit }) {
     }
     if (mod === 'ekip') {
       return <EkipModulu gorunum={gorunum} onCekmece={setCekmece} onKopru={koprule} />;
+    }
+    if (mod === 'borc') {
+      return <BorcModulu gorunum={gorunum} onCekmece={setCekmece} onKopru={koprule} />;
     }
     // Küçük modüller (KucukModuller.jsx) — yeni blok gerektirmeyenler
     if (mod === 'onaylar') {

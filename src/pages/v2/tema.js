@@ -181,10 +181,10 @@ export const MODULLER = [
     { id: 'ekstre', ad: 'Ekstre Durumu', rozet: 'ekstreEksik', renk: '#FBBF24' },
   ]},
   { id: 'borc', ad: 'Borç Navigasyonu', kisa: 'Borç', alt: 'BBE · ABEK · runway', ikon: IK.pusula, gorunumler: [
-    { id: 'durum', ad: 'Bu Ay Batıyor Muyum?', rozet: 'borcDurum', renk: '#F87171', hedef: 'borc-navigasyon' },
-    { id: 'takvim', ad: 'Borç Takvimi · 36 ay', hedef: 'borc-navigasyon' },
-    { id: 'hedef', ad: 'Hedef Ciro & Ölçek', hedef: 'borc-navigasyon' },
-    { id: 'katki', ad: 'Şube Katkısı', hedef: 'borc-navigasyon' },
+    { id: 'durum', ad: 'Bu Ay Batıyor Muyum?', rozet: 'borcDurum', renk: '#F87171' },
+    { id: 'takvim', ad: 'Borç Takvimi · 36 ay' },
+    { id: 'hedef', ad: 'Hedef Ciro & Ölçek' },
+    { id: 'katki', ad: 'Şube Katkısı' },
   ]},
   { id: 'yuk', ad: 'Yükümlülükler', kisa: 'Yük', alt: 'Kredi · sabit gider', ikon: IK.banka, gorunumler: [
     { id: 'krediler', ad: 'Banka Kredileri' },

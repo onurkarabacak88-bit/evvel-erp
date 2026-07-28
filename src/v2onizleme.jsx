@@ -470,6 +470,83 @@ const KUCUK_UC = {
   ],
 };
 
+// ── Borç Navigasyonu sahte verisi ───────────────────────────────────────────
+const BORC_UC = {
+  '/api/borc-nav/ozet': {
+    guncel_ay: bugunISO.slice(0, 7),
+    kpi: {
+      borc_baski_endeksi: { skor: 72, durum: 'Sürdürülemez — borç çevriliyor ama kapanmıyor', renk: 'KIRMIZI' },
+      tahmini_acik: { bugun: -12400, ay_sonu: -57800, aylik_yapisal: -57800 },
+      runway_ay: 4.2, runway_renk: 'TURUNCU', runway_durum: 'dar',
+      zorunlu_yuk: 244200, hedef_ciro_borc_sabit: 2560000,
+    },
+    abek: { deger: 186400, son_ay: 178200, son3_ort: 181000, ciro_ay: 2184500, nakit_marj_pct: 8.5 },
+    borc: { toplam: 1575900, kart_toplam: 443500, kredi_kalan: 1132400, zorunlu_yuk: 244200, kart_asgari: 161600, kredi_taksiti: 82600 },
+    nakit: { serbest: 586310, ortalama_aylik_odeme: 198400 },
+    hedef_ciro: { marj_pozitif: true, borc_sabit: 2560000, yil_25_azal: 3180000, ay24_bitir: 4240000 },
+    bbe_bilesenler: [
+      { ad: 'Toplam borç / yıllık ABEK', skor: 70.4, agirlik: 0.35 },
+      { ad: 'Zorunlu yük / ABEK', skor: 88.0, agirlik: 0.30 },
+      { ad: 'Kart borcu / aylık ciro', skor: 61.0, agirlik: 0.15 },
+      { ad: 'Nakit tamponu (düşük→kötü)', skor: 54.0, agirlik: 0.10 },
+      { ad: 'Son 90 gün trend', skor: 66.0, agirlik: 0.10 },
+    ],
+    surdurulemez: true,
+    notlar: ['KOSGEB kredisinin ödemesiz dönemi Ocak 27\'de bitiyor — aylık yük +19.400 ₺ artacak'],
+  },
+  '/api/borc-nav/takvim': (() => {
+    const grid = [];
+    const y0 = Number(bugunISO.slice(0, 4)); const m0 = Number(bugunISO.slice(5, 7));
+    for (let i = 0; i < 36; i++) {
+      const t = m0 - 1 + i; const y = y0 + Math.floor(t / 12); const m = (t % 12) + 1;
+      // KOSGEB 6. aydan sonra devreye girer, taşıt kredisi 10. ayda biter
+      const kredi = 82600 + (i >= 6 ? 19400 : 0) - (i >= 10 ? 12800 : 0) - (i >= 15 ? 32400 : 0);
+      const kart = Math.max(40000, 161600 - i * 3200);
+      const zorunlu = Math.max(0, kredi + kart);
+      grid.push({
+        ay: `${y}-${String(m).padStart(2, '0')}`,
+        kredi_taksit: Math.max(0, kredi), kart_min: kart, zorunlu_yuk: zorunlu,
+        abek: 186400, acik: Math.max(0, zorunlu - 186400),
+        kredi_kalan_anapara: Math.max(0, 1132400 - i * 31000),
+      });
+    }
+    const peak = grid.reduce((a, b) => (a.zorunlu_yuk > b.zorunlu_yuk ? a : b));
+    return {
+      uretildi: bugunISO, abek_aylik: 186400, finansal_borc: 1575900,
+      toplam_gelecek_odeme: 2284600, peak,
+      kredi_biten_takvim: [
+        { ad: 'Halkbank Taşıt', ay: `${y0 + 1}-05` },
+        { ad: 'Ziraat İşletme', ay: `${y0 + 1}-10` },
+        { ad: 'KOSGEB', ay: `${y0 + 3}-01` },
+      ],
+      takvim: grid,
+      not: 'Kredi tarafı kesin (amortisman). Kart tarafı yaklaşık (asgari sabit).',
+    };
+  })(),
+  '/api/borc-nav/olcek-plani': {
+    uretildi: bugunISO,
+    parametreler: { mevcut_ciro: 2184500, mevcut_sube: 4, vergi_oran: 0.285 },
+    zorunlu_yuk: 244200, toplam_borc: 1575900,
+    senaryolar: {
+      borc_sabit: { hedef_ciro: 2560000, carpan_mevcut: 1.17, sube_sayisi: 4, yeni_sube: 0, personel_maliyet: 612000, personel_sayisi: 25, uretilen_abek: 244500, ciro_sube_basi: 640000 },
+      yil_25_azal: { hedef_ciro: 3180000, carpan_mevcut: 1.46, sube_sayisi: 5, yeni_sube: 1, personel_maliyet: 748000, personel_sayisi: 30, uretilen_abek: 318700, ciro_sube_basi: 636000 },
+      ay24_bitir: { hedef_ciro: 4240000, carpan_mevcut: 1.94, sube_sayisi: 6, yeni_sube: 2, personel_maliyet: 928000, personel_sayisi: 38, uretilen_abek: 421000, ciro_sube_basi: 706667 },
+    },
+    kapasite_gerceklik: { mevcut_sube_max_ciro: 2840000, mevcut_sube_max_abek: 231000, zorunlu_yuk: 244200, yapilandirma_sart: true },
+  },
+  '/api/borc-nav/sube-katki': {
+    gun: 30, uretildi: bugunISO,
+    subeler: [
+      { sube_id: 's0', sube_adi: 'Zafer', durum: 'aktif', son_ciro_gun: bugunISO, gun_since_ciro: 0, ciro_donem: 798246, kira_aylik: 96000, operasyonel_net_aylik: 92400, ileri_aylik_katki: 92400 },
+      { sube_id: 's1', sube_adi: 'Köyceğiz', durum: 'aktif', son_ciro_gun: bugunISO, gun_since_ciro: 0, ciro_donem: 622631, kira_aylik: 62000, operasyonel_net_aylik: 61800, ileri_aylik_katki: 61800 },
+      { sube_id: 's2', sube_adi: 'Gazze', durum: 'aktif', son_ciro_gun: bugunISO, gun_since_ciro: 0, ciro_donem: 494914, kira_aylik: 48000, operasyonel_net_aylik: 36200, ileri_aylik_katki: 36200 },
+      { sube_id: 's3', sube_adi: 'Alsancak', durum: 'aktif', son_ciro_gun: bugunISO, gun_since_ciro: 0, ciro_donem: 351226, kira_aylik: 42000, operasyonel_net_aylik: -4000, ileri_aylik_katki: -4000 },
+    ],
+    havuz_besleyen_aylik: 190400, havuz_bosaltan_aylik: -4000, net_havuz_aylik: 186400,
+    not: 'Krediler KOLEKTİF — şubeye paylaştırılmaz.',
+  },
+};
+
 function borcKocu(url) {
   const strateji = /kartopu/.test(url) ? 'kartopu' : 'cig';
   const nakit = Number((url.match(/nakit=(\d+)/) || [])[1] || 0);
@@ -497,7 +574,7 @@ window.fetch = async (url) => {
   // ⚠️ ÖNCE TAM YOL eşleşmesi: `u.includes('/api/ciro')` gibi gevşek kurallar
   // /api/ciro-taslak'ı da yakalıyordu ve rozet 2 yerine 120 çıkıyordu.
   const yol = u.split('?')[0];
-  const TUM = { ...SAHTE, ...KART_UC, ...ODEME_UC, ...OPS_UC, ...MALIYET_UC, ...EKIP_UC, ...KUCUK_UC, '/api/ciro': CIRO };
+  const TUM = { ...SAHTE, ...KART_UC, ...ODEME_UC, ...OPS_UC, ...MALIYET_UC, ...EKIP_UC, ...KUCUK_UC, ...BORC_UC, '/api/ciro': CIRO };
   if (u.includes('/api/kartlar/borc-kocu')) govde = borcKocu(u);
   else if (Object.prototype.hasOwnProperty.call(TUM, yol)) govde = TUM[yol];
   await new Promise(r => setTimeout(r, 120));

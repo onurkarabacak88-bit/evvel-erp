@@ -556,6 +556,222 @@ export function VardiyaIzgara({ baslik, not, gunler, subeler, onHucre }) {
   );
 }
 
+// ─── Borç baskı endeksi göstergesi (yarım daire gauge) ──────────────────────
+// Tasarım: borc.durum. Skor 0–100; yay uzunluğu skorla orantılı.
+export function Gauge({ skor, durum, renk = R.kirmizi, bilesenler, baslik = 'Borç baskı endeksi', not, notBaslik, saglik }) {
+  const s = Math.max(0, Math.min(100, Number(skor) || 0));
+  // Yarım daire: (20,100) → (172,100), yarıçap 76. Uzunluk ≈ π·76 ≈ 238.8
+  const yay = 238.8;
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.35fr', gap: 12, marginBottom: 16 }}>
+      <div style={{
+        background: `linear-gradient(165deg, ${R.kartUst1}, ${R.kartUst2})`,
+        border: `1px solid ${renk}4D`, borderRadius: 20, padding: '20px 22px',
+        textAlign: 'center', boxShadow: '0 16px 38px rgba(0,0,0,.36)',
+      }}>
+        <div style={{ fontSize: 10.5, letterSpacing: '1px', textTransform: 'uppercase', color: R.not, fontWeight: 700 }}>
+          {baslik}
+        </div>
+        <svg viewBox="0 0 192 116" style={{ width: '100%', maxWidth: 230, margin: '6px auto 0', display: 'block' }}>
+          <path d="M 20 100 A 76 76 0 0 1 172 100" fill="none" stroke={R.cizgi2} strokeWidth="15" strokeLinecap="round" />
+          <path
+            d="M 20 100 A 76 76 0 0 1 172 100" fill="none" stroke={renk} strokeWidth="15" strokeLinecap="round"
+            strokeDasharray={`${(s / 100) * yay} ${yay}`}
+          />
+          <text x="96" y="88" textAnchor="middle" style={{ fontFamily: F.mono, fontSize: 38, fontWeight: 700, fill: renk }}>
+            {Math.round(s)}
+          </text>
+          <text x="96" y="108" textAnchor="middle" style={{ fontSize: 11, fill: R.not2 }}>/ 100</text>
+        </svg>
+        <div style={{ fontSize: 13.5, fontWeight: 700, color: renk, marginTop: 4 }}>{durum}</div>
+
+        {!!bilesenler?.length && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 9, marginTop: 16, textAlign: 'left' }}>
+            {bilesenler.map((b, i) => (
+              <div key={i}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11.5, color: R.metin2, marginBottom: 4 }}>
+                  <span>{b.ad} <span style={{ color: R.not2 }}>{b.agirlik}</span></span>
+                  <span style={{ fontFamily: F.mono }}>{b.skor}</span>
+                </div>
+                <div style={{ height: 6, borderRadius: 99, background: R.cizgi2, overflow: 'hidden' }}>
+                  <div style={{
+                    height: '100%', borderRadius: 99,
+                    width: `${Math.max(0, Math.min(100, Number(b.skorSayi) || 0))}%`,
+                    background: b.renk || renk,
+                  }} />
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        {not && (
+          <div style={{
+            background: `linear-gradient(165deg, ${renk}1A, ${R.kartUst2})`,
+            border: `1px solid ${renk}57`, borderRadius: 18, padding: '18px 20px',
+          }}>
+            {/* Başlık, gauge'ın altındaki `durum` metnini TEKRAR ETMEZ — aynı cümleyi
+                iki kez yazmak yerine burada "ne anlama geliyor" anlatılır. */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+              <span style={{ width: 9, height: 9, borderRadius: 99, background: renk, flexShrink: 0 }} />
+              <span style={{ fontFamily: F.baslik, fontSize: 16, fontWeight: 600, color: renk }}>
+                {notBaslik || 'Bu ne demek?'}
+              </span>
+            </div>
+            <div style={{ fontSize: 12.5, color: R.metin2, marginTop: 9, lineHeight: 1.65 }}>{not}</div>
+          </div>
+        )}
+        {!!saglik?.length && (
+          <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+            {saglik.map((k, i) => (
+              <div key={i} style={{ ...kartYuzey, borderRadius: 15, padding: '14px 16px', boxShadow: 'none' }}>
+                <div style={{ fontSize: 10, letterSpacing: '.8px', textTransform: 'uppercase', color: R.not, fontWeight: 700 }}>
+                  {k.etiket}
+                </div>
+                <div style={{ whiteSpace: 'nowrap', fontFamily: F.mono, fontSize: 22, fontWeight: 700, marginTop: 5, color: k.renk || R.krem }}>
+                  {k.deger}
+                </div>
+                <div style={{ fontSize: 11, color: R.not2, marginTop: 3 }}>{k.alt}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Aylık yük eğrisi (36 ay) ───────────────────────────────────────────────
+export function YukEgrisi({ baslik, alt, seri, esik, esikAd, notMetni, etiketler, rozetler, onNokta }) {
+  const d = (seri || []).map(x => Number(x.deger) || 0);
+  const { cizgi, alan } = sparkYol(d);
+  const enB = Math.max(...d, Number(esik) || 0, 1);
+  const enK = Math.min(...d, 0);
+  // Eşik çizgisinin y'si sparkYol ile aynı ölçekte olmalı (boy 120, üst pay 8/alt 14)
+  const esikY = Number.isFinite(esik) && enB !== enK
+    ? 120 - 8 - ((esik - enK) / (enB - enK)) * (120 - 22)
+    : null;
+  return (
+    <div style={{ ...kartYuzey, padding: '20px 22px', marginBottom: 16 }}>
+      <div style={{
+        display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 14,
+        paddingBottom: 12, borderBottom: `1px solid ${R.cizgi2}`, marginBottom: 14,
+      }}>
+        <div>
+          <div style={{ fontFamily: F.baslik, fontSize: 15.5, fontWeight: 600 }}>{baslik}</div>
+          {alt && <div style={{ fontSize: 11.5, color: R.not2, marginTop: 4 }}>{alt}</div>}
+        </div>
+        {esikAd && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 11, color: R.not2, whiteSpace: 'nowrap' }}>
+            <span style={{ width: 16, height: 2, background: R.yesil, display: 'inline-block' }} /> {esikAd}
+          </div>
+        )}
+      </div>
+
+      {notMetni && (
+        <div style={{
+          padding: '12px 14px', borderRadius: 12, background: 'rgba(251,191,36,.08)',
+          border: '1px solid rgba(251,191,36,.3)', fontSize: 12.5, color: '#E7DCCB',
+          lineHeight: 1.6, marginBottom: 14,
+        }}>
+          {notMetni}
+        </div>
+      )}
+
+      <svg viewBox="0 0 640 120" preserveAspectRatio="none" style={{ display: 'block', width: '100%', height: 150 }}>
+        <defs>
+          <linearGradient id="v2egrifill" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={R.bakir} stopOpacity=".28" />
+            <stop offset="100%" stopColor={R.bakir} stopOpacity="0" />
+          </linearGradient>
+        </defs>
+        {alan && <path d={alan} fill="url(#v2egrifill)" />}
+        {cizgi && (
+          <path d={cizgi} fill="none" stroke={R.bakir} strokeWidth="2.4" strokeLinejoin="round" strokeLinecap="round"
+            strokeDasharray="640" style={{ animation: 'v2cizim 1.1s cubic-bezier(.22,1,.36,1) .12s both' }} />
+        )}
+        {esikY != null && (
+          <line x1="0" y1={esikY} x2="640" y2={esikY} stroke={R.yesil} strokeWidth="1.4" strokeDasharray="5 5" />
+        )}
+      </svg>
+
+      {!!etiketler?.length && (
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10.5, color: R.not2, marginTop: 6 }}>
+          {etiketler.map((e, i) => <span key={i}>{e}</span>)}
+        </div>
+      )}
+
+      {!!rozetler?.length && (
+        <div style={{ marginTop: 16, paddingTop: 14, borderTop: `1px solid ${R.cizgi2}` }}>
+          <div style={{
+            fontSize: 11, letterSpacing: '.8px', textTransform: 'uppercase', color: R.not2,
+            fontWeight: 700, marginBottom: 9,
+          }}>
+            Krediler ne zaman bitiyor — bitince yük düşer
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7 }}>
+            {rozetler.map((b, i) => (
+              <span key={i} style={{
+                padding: '5px 12px', borderRadius: 99, background: R.cizgi,
+                border: `1px solid ${R.cizgi3}`, fontSize: 11.5, color: R.metin2, whiteSpace: 'nowrap',
+              }}>
+                {b}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Şube katkı çubuğu (ortadan iki yöne) ───────────────────────────────────
+export function KatkiCubugu({ baslik, alt, satirlar, onSatir }) {
+  const enBuyuk = Math.max(...satirlar.map(s => Math.abs(Number(s.deger) || 0)), 1);
+  return (
+    <div style={{ ...kartYuzey, padding: '20px 22px', marginBottom: 16 }}>
+      <div style={{ paddingBottom: 12, borderBottom: `1px solid ${R.cizgi2}`, marginBottom: 16 }}>
+        <div style={{ fontFamily: F.baslik, fontSize: 15.5, fontWeight: 600 }}>{baslik}</div>
+        {alt && <div style={{ fontSize: 11.5, color: R.not2, marginTop: 4 }}>{alt}</div>}
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 11 }}>
+        {satirlar.map((s, i) => {
+          const v = Number(s.deger) || 0;
+          const oran = (Math.abs(v) / enBuyuk) * 50; // yarım genişlik
+          const pozitif = v >= 0;
+          return (
+            <div
+              key={i}
+              onClick={() => onSatir?.(s)}
+              style={{ display: 'flex', alignItems: 'center', gap: 14, cursor: onSatir ? 'pointer' : 'default' }}
+            >
+              <span style={{ width: 104, fontSize: 13, fontWeight: 600, flexShrink: 0 }}>{s.ad}</span>
+              <div style={{ flex: 1, position: 'relative', height: 22, display: 'flex', alignItems: 'center' }}>
+                <span style={{ position: 'absolute', left: '50%', top: 0, bottom: 0, width: 1, background: R.cizgi3 }} />
+                <span style={{
+                  position: 'absolute', height: 14, borderRadius: 4,
+                  left: pozitif ? '50%' : `${50 - oran}%`,
+                  width: `${oran}%`,
+                  background: pozitif ? R.yesil : R.kirmizi,
+                }} />
+              </div>
+              <span style={{
+                width: 128, textAlign: 'right', whiteSpace: 'nowrap', fontFamily: F.mono,
+                fontSize: 13.5, fontWeight: 700, color: pozitif ? R.yesil : R.kirmizi,
+              }}>
+                {s.metin}
+              </span>
+              <span style={{ width: 66, fontSize: 10.5, color: R.not2 }}>{s.durum}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ─── Onay modalı (para hareketi öncesi son kapı) ────────────────────────────
 export function OnayModali({ acik, baslik, altBaslik, tutar, satirlar, not, onaylaAd, onOnayla, onKapat, calisiyor }) {
   if (!acik) return null;
