@@ -513,6 +513,20 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru }) {
             {AY_KISA[ay - 1]} {yil} için vardiya takip kaydı yok.
           </div>
         )}
+        {/* Kapsama denetimi (2026-07-29): derin takip ekranı (izin alacağı, vardiya
+            dışı girişler, geçmiş ay/filtreler) klasikte — köprüsü eksikti, açıldı. */}
+        <div style={{ display: 'flex', gap: 9, marginTop: 2, marginBottom: 16 }}>
+          <button
+            onClick={() => onKopru?.('personel-vardiya-takip')}
+            style={{
+              padding: '9px 16px', borderRadius: 10, border: `1px solid ${R.cizgi3}`,
+              background: R.girinti, color: R.metin2, fontSize: 12, fontWeight: 600,
+              fontFamily: 'inherit', cursor: 'pointer',
+            }}
+          >
+            🕐 Tam takip ekranı (izin alacağı · vardiya dışı · geçmiş aylar)
+          </button>
+        </div>
       </>
     );
   }
@@ -630,6 +644,22 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru }) {
           Panel PIN kaydı bulunamadı.
         </div>
       )}
+      {/* Kapsama denetimi (2026-07-29): görünüm adı "Görev QR" vaat ediyordu ama
+          QR yoklama kodları + şube konum/yarıçap ayarı (gorev-qr sayfası) v2'den
+          HİÇ erişilemiyordu — köprü açıldı. */}
+      <div style={{ display: 'flex', gap: 9, marginTop: 2, marginBottom: 16 }}>
+        <button
+          onClick={() => onKopru?.('gorev-qr')}
+          style={{
+            padding: '9px 17px', borderRadius: 10, border: 'none',
+            background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+            fontSize: 12, fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer',
+            boxShadow: '0 6px 18px rgba(217,154,78,.24)',
+          }}
+        >
+          📱 Görev QR kodları & şube konum ayarı
+        </button>
+      </div>
     </>
   );
 }

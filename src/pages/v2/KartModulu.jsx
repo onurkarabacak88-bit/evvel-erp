@@ -450,6 +450,20 @@ export default function KartModulu({ gorunum, onCekmece, onKopru }) {
           })}
         onAc={(l) => (l._hedef === 'kart-yonetimi' ? kartAc(l._k) : onKopru?.(l._hedef))}
       />
+      {/* Kapsama denetimi bulgusu (2026-07-29): Ekstre Analizi (harcama dağılımı
+          grafikleri + arşiv, klasik kart-analiz) v2'de karşılıksızdı — köprü açıldı. */}
+      <div style={{ display: 'flex', gap: 9, marginTop: 2, marginBottom: 16 }}>
+        <button
+          onClick={() => onKopru?.('kart-analiz')}
+          style={{
+            padding: '9px 16px', borderRadius: 10, border: `1px solid ${R.cizgi3}`,
+            background: R.girinti, color: R.metin2, fontSize: 12, fontWeight: 600,
+            fontFamily: 'inherit', cursor: 'pointer',
+          }}
+        >
+          📊 Ekstre analizi (harcama dağılımı + arşiv)
+        </button>
+      </div>
     </>
   );
 }
