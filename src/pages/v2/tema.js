@@ -98,10 +98,10 @@ export const MODULLER = [
     { id: 'kule', ad: 'Kontrol Kulesi', hedef: 'ops-merkez' },
   ]},
   { id: 'odeme', ad: 'Ödeme Merkezi', kisa: 'Ödeme', alt: 'Vade · bakiye · geçmiş', ikon: IK.banknot, gorunumler: [
-    { id: 'bekleyen', ad: 'Bekleyen', hedef: 'odeme-merkezi' },
-    { id: 'takvim', ad: 'Vade Takvimi', hedef: 'odeme-merkezi' },
-    { id: 'tedarikci', ad: 'Tedarikçi Bakiyesi', hedef: 'tedarikciler' },
-    { id: 'gecmis', ad: 'Ödeme Geçmişi', hedef: 'odeme-merkezi' },
+    { id: 'bekleyen', ad: 'Bekleyen' },
+    { id: 'takvim', ad: 'Vade Takvimi' },
+    { id: 'tedarikci', ad: 'Tedarikçi Bakiyesi' },
+    { id: 'gecmis', ad: 'Ödeme Geçmişi' },
   ]},
   { id: 'maliyet', ad: 'Kâr & Maliyet', kisa: 'Maliyet', alt: 'Marj · reçete · fiyat', ikon: IK.para, gorunumler: [
     { id: 'ozet', ad: 'Marj Özeti', hedef: 'maliyet' },

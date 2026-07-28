@@ -14,11 +14,20 @@ import { api, fmt } from '../../utils/api';
 import { R, F, MODULLER, kartYuzey } from './tema';
 import { Ikon, KpiSeridi, Hero, Liste, Tablo, Cekmece, Toast, KopruDurumu } from './parcalar';
 import KartModulu from './KartModulu';
+import OdemeModulu from './OdemeModulu';
 
-const bugunISO = () => new Date().toISOString().slice(0, 10);
+// ⚠️ TARİH TUZAĞI: `new Date('2026-07-28T00:00:00')` yerel saat olarak ayrıştırılır,
+// `toISOString()` ise UTC'ye çevirir. Türkiye'de (UTC+3) bu, tarihi BİR GÜN GERİ
+// kaydırır — takvim 28'i 27 gösterir, "geçen hafta aynı gün" yanlış güne bakar.
+// Çözüm: gün aritmetiğini baştan sona UTC'de yap, "bugün"ü yerel parçalardan kur.
+const bugunISO = () => {
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+};
 const gunEkle = (iso, n) => {
-  const d = new Date(iso + 'T00:00:00');
-  d.setDate(d.getDate() + n);
+  const d = new Date(iso + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() + n);
   return d.toISOString().slice(0, 10);
 };
 const sayi = (v) => Number(v) || 0;
@@ -31,6 +40,7 @@ const V2_CSS = `
 @keyframes v2yuksel{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
 @keyframes v2belir{from{opacity:0}to{opacity:1}}
 @keyframes v2kay{from{transform:translateX(52px);opacity:.3}to{transform:none;opacity:1}}
+@keyframes v2buyu{from{opacity:0;transform:scale(.96) translateY(10px)}to{opacity:1;transform:none}}
 @keyframes v2cizim{from{stroke-dashoffset:640}to{stroke-dashoffset:0}}
 @keyframes v2cizgiAc{from{transform:scaleX(0)}to{transform:scaleX(1)}}
 .v2-kok ::-webkit-scrollbar{width:10px;height:10px}
@@ -209,6 +219,9 @@ export default function TasarimV2({ onGit }) {
     // v2'ye yazılmış modüller
     if (mod === 'kart') {
       return <KartModulu gorunum={gorunum} onCekmece={setCekmece} onKopru={koprule} />;
+    }
+    if (mod === 'odeme') {
+      return <OdemeModulu gorunum={gorunum} onCekmece={setCekmece} onKopru={koprule} onToast={setToast} />;
     }
 
     if (mod !== 'panel') {

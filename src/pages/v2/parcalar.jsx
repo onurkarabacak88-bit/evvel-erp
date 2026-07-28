@@ -169,7 +169,8 @@ export function Liste({ satirlar, onAc }) {
                 {l.tutar}
               </div>
             )}
-            {l.aksiyon && (
+            {/* Tek aksiyon (yalın) veya çoklu aksiyon (Öde / Ertele gibi) */}
+            {l.aksiyon && !l.aksiyonlar && (
               <button
                 onClick={(e) => { e.stopPropagation(); onAc?.(l); }}
                 style={{
@@ -180,6 +181,35 @@ export function Liste({ satirlar, onAc }) {
               >
                 {l.aksiyon}
               </button>
+            )}
+            {!!l.aksiyonlar?.length && (
+              <div style={{ display: 'flex', gap: 7, flexShrink: 0 }}>
+                {l.aksiyonlar.map((a, ai) => (
+                  <button
+                    key={ai}
+                    onClick={(e) => { e.stopPropagation(); a.onTikla?.(l); }}
+                    style={a.birincil ? {
+                      padding: '6px 14px', borderRadius: 9, border: 'none',
+                      background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+                      fontSize: 12, fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer',
+                    } : {
+                      padding: '6px 12px', borderRadius: 9, border: `1px solid ${R.cizgi3}`,
+                      background: 'transparent', color: R.not, fontSize: 12, fontWeight: 600,
+                      fontFamily: 'inherit', cursor: 'pointer',
+                    }}
+                  >
+                    {a.ad}
+                  </button>
+                ))}
+              </div>
+            )}
+            {l.rozet && (
+              <span style={{
+                flexShrink: 0, padding: '4px 11px', borderRadius: 99, fontSize: 11.5, fontWeight: 700,
+                background: `${l.rozetRenk || R.yesil}24`, color: l.rozetRenk || R.yesil,
+              }}>
+                {l.rozet}
+              </span>
             )}
           </div>
         );
@@ -395,6 +425,129 @@ export function Tablo({ baslik, not, kolonlar, satirlar, onSatir }) {
             ))}
           </tbody>
         </table>
+      </div>
+    </div>
+  );
+}
+
+// ─── Vade takvimi (14 gün) ───────────────────────────────────────────────────
+const HAFTA_KISA = ['Paz', 'Pzt', 'Sal', 'Çar', 'Per', 'Cum', 'Cmt'];
+
+export function Takvim({ gunler, onGun }) {
+  return (
+    <div style={{ ...kartYuzey, padding: '20px 22px', marginBottom: 16 }}>
+      <div style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        paddingBottom: 12, borderBottom: `1px solid ${R.cizgi2}`, marginBottom: 14,
+      }}>
+        <span style={{ fontFamily: F.baslik, fontSize: 15.5, fontWeight: 600 }}>Vade takvimi · 14 gün</span>
+        <span style={{ fontSize: 11, color: R.not2 }}>güne tıkla → o günün ödemeleri</span>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7,1fr)', gap: 8 }}>
+        {gunler.map((g, i) => {
+          const dolu = g.tutar > 0;
+          const renk = g.gecikmis ? R.kirmizi : g.bugun ? R.bakir : dolu ? R.amber : R.cizgi3;
+          return (
+            <div
+              key={i}
+              onClick={() => dolu && onGun?.(g)}
+              className={dolu ? 'v2-hover-kalk' : undefined}
+              style={{
+                padding: '10px 11px', borderRadius: 13, minHeight: 78,
+                display: 'flex', flexDirection: 'column', gap: 4,
+                cursor: dolu ? 'pointer' : 'default',
+                background: dolu
+                  ? `linear-gradient(165deg, ${R.kart1}, ${R.kart2})`
+                  : 'rgba(255,255,255,.015)',
+                border: `1px solid ${dolu ? `${renk}55` : 'rgba(243,233,220,.06)'}`,
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
+                <span style={{ fontSize: 11, fontWeight: 700, color: g.bugun ? R.bakir : R.metin2 }}>{g.gun}</span>
+                <span style={{ fontSize: 9.5, color: R.not2, textTransform: 'uppercase', letterSpacing: '.5px' }}>
+                  {HAFTA_KISA[g.haftaGunu]}
+                </span>
+              </div>
+              <div style={{
+                whiteSpace: 'nowrap', fontFamily: F.mono, fontSize: 13, fontWeight: 700,
+                color: dolu ? renk : R.not3,
+              }}>
+                {dolu ? g.tutarMetin : '—'}
+              </div>
+              <div style={{ fontSize: 10, color: R.not2 }}>{dolu ? `${g.adet} kalem` : 'ödeme yok'}</div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ─── Onay modalı (para hareketi öncesi son kapı) ────────────────────────────
+export function OnayModali({ acik, baslik, altBaslik, tutar, satirlar, not, onaylaAd, onOnayla, onKapat, calisiyor }) {
+  if (!acik) return null;
+  return (
+    <div
+      onClick={onKapat}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 120, display: 'flex', alignItems: 'center',
+        justifyContent: 'center', padding: 20, background: 'rgba(10,6,2,.7)',
+        backdropFilter: 'blur(5px)', WebkitBackdropFilter: 'blur(5px)',
+        animation: 'v2belir .14s ease both',
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width: '100%', maxWidth: 430, borderRadius: 20,
+          background: `linear-gradient(165deg, #2C2116, ${R.kartUst2})`,
+          border: '1px solid rgba(243,233,220,.12)', boxShadow: '0 26px 60px rgba(0,0,0,.5)',
+          animation: 'v2buyu .26s cubic-bezier(.4,0,.2,1) both',
+        }}
+      >
+        <div style={{ padding: '20px 22px 16px', borderBottom: `1px solid ${R.cizgi2}` }}>
+          <div style={{ fontFamily: F.baslik, fontSize: 18, fontWeight: 600 }}>{baslik}</div>
+          <div style={{ fontSize: 12, color: R.not, marginTop: 5 }}>{altBaslik}</div>
+        </div>
+        <div style={{ padding: '20px 22px', display: 'flex', flexDirection: 'column' }}>
+          <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 12 }}>
+            <span style={{ fontSize: 11, letterSpacing: '.8px', textTransform: 'uppercase', color: R.not2, fontWeight: 700 }}>
+              Tutar
+            </span>
+            <span style={{
+              whiteSpace: 'nowrap', fontFamily: F.mono, fontSize: 28, fontWeight: 700,
+              letterSpacing: '-1px', color: R.krem,
+            }}>
+              {tutar}
+            </span>
+          </div>
+          {(satirlar || []).map((s, i) => (
+            <div key={i} style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
+              marginTop: 14, paddingTop: 14, borderTop: `1px solid ${R.cizgi2}`,
+              fontSize: 12.5, color: R.metin2,
+            }}>
+              <span>{s.ad}</span>
+              <span style={{ whiteSpace: 'nowrap', fontFamily: F.mono, fontWeight: 700, color: s.renk || R.yesil }}>
+                {s.deger}
+              </span>
+            </div>
+          ))}
+          {not && <div style={{ fontSize: 11.5, color: R.not2, marginTop: 10, lineHeight: 1.55 }}>{not}</div>}
+        </div>
+        <div style={{ padding: '14px 22px', borderTop: `1px solid ${R.cizgi2}`, display: 'flex', gap: 9, justifyContent: 'flex-end' }}>
+          <button onClick={onKapat} disabled={calisiyor} style={{
+            padding: '9px 16px', borderRadius: 10, border: `1px solid ${R.cizgi3}`,
+            background: 'transparent', color: R.not, fontSize: 12.5, fontWeight: 600,
+            fontFamily: 'inherit', cursor: calisiyor ? 'default' : 'pointer',
+          }}>Vazgeç</button>
+          <button onClick={onOnayla} disabled={calisiyor} style={{
+            padding: '9px 18px', borderRadius: 10, border: 'none',
+            background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+            fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit',
+            cursor: calisiyor ? 'default' : 'pointer', opacity: calisiyor ? 0.6 : 1,
+          }}>{calisiyor ? '…' : onaylaAd}</button>
+        </div>
       </div>
     </div>
   );

@@ -97,6 +97,45 @@ const KART_UC = {
   ],
 };
 
+// ── Ödeme Merkezi modülü sahte verisi ───────────────────────────────────────
+const bugunISO = new Date().toISOString().slice(0, 10);
+const gunEkleISO = (n) => { const d = new Date(bugunISO + 'T00:00:00'); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
+
+const ODEME_UC = {
+  '/api/odeme-plani/bugun': [
+    { id: 'p1', baslik: 'Kahve Dünyası Çekirdek', tip: 'Vadeli Alım', kaynak_tablo: 'vadeli_alimlar', tutar: 68400, asgari: null, tarih: gunEkleISO(-2), gecikmis: true, gun_gecikme: 2, tedarikci: 'Kahve Dünyası' },
+    { id: 'p2', baslik: 'Sütaş Bölge Dağıtım', tip: 'Vadeli Alım', kaynak_tablo: 'vadeli_alimlar', tutar: 41250, asgari: null, tarih: bugunISO, gecikmis: false, gun_gecikme: 0, tedarikci: 'Sütaş' },
+    { id: 'p3', baslik: 'Doğan Emlak — kira', tip: 'Sabit Gider', kaynak_tablo: 'sabit_giderler', tutar: 96000, asgari: null, tarih: gunEkleISO(2), gecikmis: false, gun_gecikme: 0 },
+    { id: 'p4', baslik: 'Paper Cup Co.', tip: 'Vadeli Alım', kaynak_tablo: 'vadeli_alimlar', tutar: 33800, asgari: null, tarih: gunEkleISO(3), gecikmis: false, gun_gecikme: 0, tedarikci: 'Paper Cup Co.' },
+    { id: 'p5', baslik: 'Garanti Bonus İşletme', tip: 'Kredi Kartı', kaynak_tablo: 'kartlar', tutar: 90760, asgari: 90760, tarih: gunEkleISO(5), gecikmis: false, gun_gecikme: 0 },
+    { id: 'p6', baslik: 'Enerjisa', tip: 'Sabit Gider', kaynak_tablo: 'sabit_giderler', tutar: 22640, asgari: null, tarih: gunEkleISO(9), gecikmis: false, gun_gecikme: 0 },
+    { id: 'fatura_x', sabit_gider_id: 'sg9', baslik: '🧾 Su faturası — fatura tutarı girilmedi (≈2.400 ₺ tahmini)', tip: 'Fatura (tutar bekleniyor)', kaynak_tablo: 'sabit_giderler', tutar: 0, tahmini_tutar: 2400, asgari: null, tarih: null, gecikmis: true, gun_gecikme: 3, tutar_girilmedi: true },
+  ],
+  '/api/odeme-plani/kokpit': {
+    kasa: 586310, gecikmis_toplam: 68400, gecikmis_adet: 1,
+    ciro_gunluk_tahmin: 74000, en_dusuk_bakiye: 218400, en_dusuk_tarih: gunEkleISO(5), projeksiyon: [],
+  },
+  '/api/fatura/cari-ozet': {
+    toplam_hesaplanan_acik: 364790, toplam_bekleyen_vade: 352790, toplam_beyan_bakiye: 371000,
+    tedarikciler: [
+      { tedarikci: 'Kahve Dünyası', hesaplanan_acik: 68400, beyan_bakiye: 68400, beyan_hesap_farki: 0, bekleyen_vade_toplam: 68400, fatura_adet_6ay: 24, fatura_toplam_6ay: 1620000, son_fatura: gunEkleISO(-1), en_yakin_vade: gunEkleISO(-2), odeme_izi_var: true, devir: 0 },
+      { tedarikci: 'Doğan Emlak', hesaplanan_acik: 96000, beyan_bakiye: null, beyan_hesap_farki: null, bekleyen_vade_toplam: 96000, fatura_adet_6ay: 6, fatura_toplam_6ay: 576000, son_fatura: gunEkleISO(-27), en_yakin_vade: gunEkleISO(2), odeme_izi_var: true, devir: 0 },
+      { tedarikci: 'Sütaş', hesaplanan_acik: 41250, beyan_bakiye: 96880, beyan_hesap_farki: 55630, bekleyen_vade_toplam: 41250, fatura_adet_6ay: 31, fatura_toplam_6ay: 1090000, son_fatura: bugunISO, en_yakin_vade: bugunISO, odeme_izi_var: true, devir: 111260 },
+      { tedarikci: 'Paper Cup Co.', hesaplanan_acik: 33800, beyan_bakiye: 33800, beyan_hesap_farki: 0, bekleyen_vade_toplam: 33800, fatura_adet_6ay: 9, fatura_toplam_6ay: 243000, son_fatura: gunEkleISO(-4), en_yakin_vade: gunEkleISO(3), odeme_izi_var: true, devir: 0 },
+      { tedarikci: 'ESHİM', hesaplanan_acik: 40800, beyan_bakiye: 40800, beyan_hesap_farki: 0, bekleyen_vade_toplam: 0, fatura_adet_6ay: 2, fatura_toplam_6ay: 40800, son_fatura: gunEkleISO(-40), en_yakin_vade: null, odeme_izi_var: false, devir: 0 },
+      { tedarikci: 'Enerjisa', hesaplanan_acik: 22640, beyan_bakiye: 22640, beyan_hesap_farki: 0, bekleyen_vade_toplam: 22640, fatura_adet_6ay: 6, fatura_toplam_6ay: 134000, son_fatura: gunEkleISO(-8), en_yakin_vade: gunEkleISO(9), odeme_izi_var: true, devir: 0 },
+    ],
+  },
+  '/api/ledger': [
+    { id: 'l1', tarih: gunEkleISO(-2), islem_turu: 'FATURA_ODEMESI', tutar: -39800, aciklama: 'Sütaş Bölge Dağıtım', kaynak_tablo: 'vadeli_alimlar' },
+    { id: 'l2', tarih: gunEkleISO(-4), islem_turu: 'KART_ODEME', tutar: -28400, aciklama: 'Paper Cup Co.', kaynak_tablo: 'kart_hareketleri' },
+    { id: 'l3', tarih: gunEkleISO(-7), islem_turu: 'FATURA_ODEMESI', tutar: -64200, aciklama: 'Kahve Dünyası Çekirdek', kaynak_tablo: 'vadeli_alimlar' },
+    { id: 'l4', tarih: gunEkleISO(-10), islem_turu: 'PERSONEL_MAAS', tutar: -184000, aciklama: 'Temmuz maaş ödemesi', kaynak_tablo: 'personel' },
+    { id: 'l5', tarih: gunEkleISO(-27), islem_turu: 'FATURA_ODEMESI', tutar: -96000, aciklama: 'Doğan Emlak kira', kaynak_tablo: 'sabit_giderler' },
+    { id: 'l6', tarih: gunEkleISO(-3), islem_turu: 'CIRO', tutar: 74000, aciklama: 'Günlük ciro', kaynak_tablo: 'ciro' },
+  ],
+};
+
 function borcKocu(url) {
   const strateji = /kartopu/.test(url) ? 'kartopu' : 'cig';
   const nakit = Number((url.match(/nakit=(\d+)/) || [])[1] || 0);
@@ -124,6 +163,7 @@ window.fetch = async (url) => {
   const yol = u.split('?')[0];
   if (u.includes('/api/kartlar/borc-kocu')) govde = borcKocu(u);
   else if (KART_UC[yol]) govde = KART_UC[yol];
+  else if (ODEME_UC[yol]) govde = ODEME_UC[yol];
   else if (u.includes('/api/ciro')) govde = CIRO;
   else if (u.includes('/api/onay-kuyrugu')) govde = SAHTE['/api/onay-kuyrugu'];
   else if (u.includes('/api/subeler')) govde = SAHTE['/api/subeler'];
