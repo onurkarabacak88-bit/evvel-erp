@@ -26,6 +26,13 @@ const trSayi = (n, b = 1) => (Number(n) || 0).toFixed(b).replace('.', ',');
 // ⚠️ Türkçe büyük-İ tuzağı: JS'in varsayılan toLowerCase()'i 'İ' → 'i̇' (birleşik
 // noktalı i) üretir, ekranda "geci̇kti̇" gibi bozuk çıkar. Daima tr yerelini kullan.
 const trKucuk = (s) => String(s || '').toLocaleLowerCase('tr');
+// ⚠️ İKİ YÖNLÜ TÜRKÇE-I TUZAĞI:
+//   trKucuk  → 'İ'yi doğru çevirir ama ASCII 'I'yı NOKTASIZ 'ı' yapar.
+//              'FAIZ' → 'faız', 'CIRO' → 'cıro' (yanlış).
+//   slugAd   → veritabanı slug'ları (ASCII, BÜYÜK, alt çizgili) için: düz
+//              toLowerCase + alt çizgi → boşluk. 'ANLIK_GIDER' → 'anlik gider'.
+// Kural: TÜRKÇE metinde trKucuk, DB SLUG'ında slugAd.
+const slugAd = (s) => String(s || '').toLowerCase().replace(/_/g, ' ');
 
 const AY_KISA = ['Oca', 'Şub', 'Mar', 'Nis', 'May', 'Haz', 'Tem', 'Ağu', 'Eyl', 'Eki', 'Kas', 'Ara'];
 /** '2026-07-22' → '22 Tem' (tasarımdaki kısa tarih biçimi). */
@@ -362,7 +369,7 @@ export default function KartModulu({ gorunum, onCekmece, onKopru }) {
                 { v: h.kart_adi || h.banka || '—', renk: R.not },
                 { v: h.aciklama || (odeme ? 'Kart ödemesi' : 'Harcama'), kalin: true },
                 { v: fmt(sayi(h.tutar)), mono: true, sag: true, renk: odeme ? R.yesil : R.krem },
-                { v: trKucuk(h.islem_turu), rozet: odeme ? R.yesil : h.islem_turu === 'FAIZ' ? R.kirmizi : R.bakir },
+                { v: slugAd(h.islem_turu), rozet: odeme ? R.yesil : h.islem_turu === 'FAIZ' ? R.kirmizi : R.bakir },
                 { v: sinif === 'isletme' ? 'işletme' : sinif === 'sahsi' ? 'şahsi' : 'belirsiz', rozet: sinif === 'isletme' ? R.yesil : sinif === 'sahsi' ? R.mavi : R.amber },
               ],
             };
@@ -375,7 +382,7 @@ export default function KartModulu({ gorunum, onCekmece, onKopru }) {
               alt: `${h.kart_adi || h.banka || 'Kart'} · ${kisaTarih(h.tarih)}`,
               kpi: [
                 { etiket: 'Tutar', deger: fmt(sayi(h.tutar)) },
-                { etiket: 'Tür', deger: trKucuk(h.islem_turu) },
+                { etiket: 'Tür', deger: slugAd(h.islem_turu) },
                 { etiket: 'Taksit', deger: sayi(h.taksit_sayisi) > 1 ? `${h.taksit_sayisi} ay` : 'tek çekim' },
                 { etiket: 'Sınıf', deger: h.harcama_tipi || 'belirsiz' },
               ],

@@ -23,6 +23,13 @@ import { KpiSeridi, Tablo, Liste, Takvim, OnayModali } from './parcalar';
 const sayi = (v) => Number(v) || 0;
 const trSayi = (n, b = 1) => (Number(n) || 0).toFixed(b).replace('.', ',');
 const trKucuk = (s) => String(s || '').toLocaleLowerCase('tr');
+// ⚠️ İKİ YÖNLÜ TÜRKÇE-I TUZAĞI:
+//   trKucuk  → 'İ'yi doğru çevirir ama ASCII 'I'yı NOKTASIZ 'ı' yapar.
+//              'FAIZ' → 'faız', 'CIRO' → 'cıro' (yanlış).
+//   slugAd   → veritabanı slug'ları (ASCII, BÜYÜK, alt çizgili) için: düz
+//              toLowerCase + alt çizgi → boşluk. 'ANLIK_GIDER' → 'anlik gider'.
+// Kural: TÜRKÇE metinde trKucuk, DB SLUG'ında slugAd.
+const slugAd = (s) => String(s || '').toLowerCase().replace(/_/g, ' ');
 
 const AY_KISA = ['Oca', 'Şub', 'Mar', 'Nis', 'May', 'Haz', 'Tem', 'Ağu', 'Eyl', 'Eki', 'Kas', 'Ara'];
 // ⚠️ Tarih tuzağı için bkz. TasarimV2.jsx — gün aritmetiği UTC'de yapılır.
@@ -425,7 +432,7 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
             hucreler: [
               { v: kisaTarih(r.tarih), mono: true },
               { v: r.aciklama || YONTEM[r.islem_turu] || 'Ödeme', kalin: true },
-              { v: YONTEM[r.islem_turu] || trKucuk(r.islem_turu), rozet: r.islem_turu === 'KART_ODEME' ? R.amber : R.yesil },
+              { v: YONTEM[r.islem_turu] || slugAd(r.islem_turu), rozet: r.islem_turu === 'KART_ODEME' ? R.amber : R.yesil },
               { v: fmt(Math.abs(sayi(r.tutar))), mono: true, sag: true },
               { v: r.kaynak_tablo || '—', renk: R.not },
             ],
@@ -435,10 +442,10 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
             onCekmece?.({
               tip: 'ÖDEME KAYDI',
               baslik: r.aciklama || 'Ödeme',
-              alt: `${kisaTarih(r.tarih)} · ${YONTEM[r.islem_turu] || trKucuk(r.islem_turu)}`,
+              alt: `${kisaTarih(r.tarih)} · ${YONTEM[r.islem_turu] || slugAd(r.islem_turu)}`,
               kpi: [
                 { etiket: 'Tutar', deger: fmt(Math.abs(sayi(r.tutar))) },
-                { etiket: 'İşlem türü', deger: trKucuk(r.islem_turu) },
+                { etiket: 'İşlem türü', deger: slugAd(r.islem_turu) },
               ],
               listeBaslik: 'Kaynak bağlantısı',
               satirlar: [

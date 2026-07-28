@@ -57,9 +57,18 @@ const SAHTE = {
     ],
   },
   '/api/subeler': SUBELER.map((s, i) => ({ id: `s${i}`, ad: s })),
-  '/api/onay-kuyrugu': [{ id: 1 }, { id: 2 }, { id: 3 }],
+  '/api/onay-kuyrugu': [
+    { id: 'ok1', islem_turu: 'ANLIK_GIDER', kaynak_tablo: 'anlik_giderler', aciklama: 'Kadıköy — cam silme hizmeti', tutar: 1800, tarih: '2026-07-25', durum: 'bekliyor' },
+    { id: 'ok2', islem_turu: 'PERSONEL_AVANS', kaynak_tablo: 'personel', aciklama: 'Elif Kaya avans talebi', tutar: 4000, tarih: '2026-07-27', durum: 'bekliyor' },
+    { id: 'ok3', islem_turu: 'FIRE', kaynak_tablo: 'fire_bildirim', aciklama: 'Gazze — 6 dilim cheesecake fire', tutar: 950, tarih: '2026-07-28', durum: 'bekliyor' },
+    { id: 'ok4', islem_turu: 'KASA_FARK', kaynak_tablo: 'kasa', aciklama: 'Zafer kasa sayım farkı', tutar: 230, tarih: '2026-07-26', durum: 'bekliyor' },
+    { id: 'ok5', islem_turu: 'STOK_DUZELTME', kaynak_tablo: 'envanter_duzeltme', aciklama: 'Merkez depo — 2 kg çekirdek düzeltme', tutar: 2000, tarih: '2026-07-24', durum: 'bekliyor' },
+  ],
   // rozet sayaç uçları
-  '/api/ciro-taslak': [{ id: 1 }, { id: 2 }],
+  '/api/ciro-taslak': [
+    { id: 'ct1', sube_id: 's2', sube_adi: 'Gazze', tarih: '2026-07-28', nakit: 6100, pos: 9800, online: 1900, aciklama: 'akşam vardiyası', durum: 'bekliyor' },
+    { id: 'ct2', sube_id: 's1', sube_adi: 'Köyceğiz', tarih: '2026-07-28', nakit: 7400, pos: 11200, online: 2100, aciklama: null, durum: 'bekliyor' },
+  ],
   '/api/is-basvurusu/ozet': { yeni: 2 },
   '/api/stok-sayim/bekleyen-onay': { toplam: 5 },
   '/api/ops/truth/gunluk-rapor': { subeler: [{ anomali_sayisi: 2 }, { anomali_sayisi: 1 }] },
@@ -400,6 +409,67 @@ const EKIP_UC = {
   })),
 };
 
+// ── Küçük modüller (onaylar / yük / rapor / sistem / tanım) sahte verisi ────
+const KUCUK_UC = {
+  '/api/borclar': [
+    { id: 'kr1', kurum: 'Ziraat — İşletme Kredisi', borc_turu: 'isletme', toplam_borc: 486000, aylik_taksit: 32400, kalan_vade: 15, toplam_vade: 36, baslangic_tarihi: '2024-05-01', odeme_gunu: 5, aktif: true },
+    { id: 'kr2', kurum: 'Halkbank — Taşıt', borc_turu: 'tasit', toplam_borc: 128400, aylik_taksit: 12800, kalan_vade: 10, toplam_vade: 24, baslangic_tarihi: '2025-09-01', odeme_gunu: 12, aktif: true },
+    { id: 'kr3', kurum: 'KOSGEB', borc_turu: 'destek', toplam_borc: 240000, aylik_taksit: 0, kalan_vade: 48, toplam_vade: 48, baslangic_tarihi: '2026-01-01', odeme_gunu: 20, aktif: true },
+  ],
+  '/api/sabit-giderler': [
+    { id: 'sg1', gider_adi: 'Zafer kira', kategori: 'kira', tutar: 96000, periyot: 'aylik', odeme_gunu: 1, sube_adi: 'Zafer', odeme_yontemi: 'havale', aktif: true, bu_ay_odendi: true },
+    { id: 'sg2', gider_adi: 'Köyceğiz kira', kategori: 'kira', tutar: 62000, periyot: 'aylik', odeme_gunu: 1, sube_adi: 'Köyceğiz', odeme_yontemi: 'havale', aktif: true, bu_ay_odendi: true },
+    { id: 'sg3', gider_adi: 'Elektrik', kategori: 'enerji', tutar: 0, periyot: 'aylik', odeme_gunu: 15, sube_adi: null, odeme_yontemi: 'otomatik', aktif: true, bu_ay_odendi: false },
+    { id: 'sg4', gider_adi: 'İnternet & POS hattı', kategori: 'abonelik', tutar: 4800, periyot: 'aylik', odeme_gunu: 8, sube_adi: null, odeme_yontemi: 'otomatik', aktif: true, bu_ay_odendi: false },
+    { id: 'sg5', gider_adi: 'Muhasebe', kategori: 'hizmet', tutar: 14000, periyot: 'aylik', odeme_gunu: 10, sube_adi: null, odeme_yontemi: 'havale', aktif: true, bu_ay_odendi: false },
+  ],
+  '/api/rapor/aylik': {
+    donem: bugunISO.slice(0, 7),
+    trend12: [
+      { ay: '2026-02', ay_kisa: 'Şub', ciro: 1712400, gelir: 1740000, gider: 1482300, net: 257700 },
+      { ay: '2026-03', ay_kisa: 'Mar', ciro: 1792600, gelir: 1810400, gider: 1542400, net: 268000 },
+      { ay: '2026-04', ay_kisa: 'Nis', ciro: 1812600, gelir: 1836900, gider: 1534300, net: 302600 },
+      { ay: '2026-05', ay_kisa: 'May', ciro: 1938400, gelir: 1962800, gider: 1618900, net: 343900 },
+      { ay: '2026-06', ay_kisa: 'Haz', ciro: 2041800, gelir: 2068400, gider: 1693100, net: 375300 },
+      { ay: '2026-07', ay_kisa: 'Tem', ciro: 2184500, gelir: 2210300, gider: 1771640, net: 438660 },
+    ],
+  },
+  '/api/ledger': [
+    { id: 'l1', tarih: gunEkleISO(-1), islem_turu: 'CIRO', tutar: 74000, aciklama: 'Günlük ciro · 4 şube', kaynak_tablo: 'ciro' },
+    { id: 'l2', tarih: gunEkleISO(-2), islem_turu: 'FATURA_ODEMESI', tutar: -39800, aciklama: 'Sütaş Bölge Dağıtım', kaynak_tablo: 'vadeli_alimlar' },
+    { id: 'l3', tarih: gunEkleISO(-4), islem_turu: 'KART_ODEME', tutar: -28400, aciklama: 'Paper Cup Co.', kaynak_tablo: 'kart_hareketleri' },
+    { id: 'l4', tarih: gunEkleISO(-10), islem_turu: 'PERSONEL_MAAS', tutar: -184000, aciklama: 'Temmuz maaş ödemesi', kaynak_tablo: 'personel' },
+  ],
+  '/api/teslim-bildirim/liste': {
+    olaylar: [
+      { anahtar: 't1', sube_adi: 'Zafer', baslik: '21 kalem / 214 adet depoya işlendi', detay: 'haftalık sipariş', zaman: bugunISO, tutar: 18900, gorildi: false },
+      { anahtar: 't2', sube_adi: 'Gazze', baslik: '17 kalem / 168 adet teslim alındı', detay: 'görüldü işaretlendi', zaman: gunEkleISO(-1), tutar: 15600, gorildi: true },
+    ],
+  },
+  '/api/ops/siparis/depo-akisi-kalinti': { toplam: 3, kayitlar: [{ id: 1 }, { id: 2 }, { id: 3 }] },
+  '/api/tedarikciler': [
+    { id: 'td1', ad: 'Kahve Dünyası Çekirdek', kategori: 'çekirdek', telefon: '05321234567', aciklama: '12 ay fiyat kilidi', aktif: true },
+    { id: 'td2', ad: 'Sütaş Bölge Dağıtım', kategori: 'süt & krema', telefon: '05339876543', aciklama: 'haftada 2 teslim', aktif: true },
+    { id: 'td3', ad: 'Paper Cup Co.', kategori: 'ambalaj', telefon: null, aciklama: 'teklif alındı', aktif: true },
+    { id: 'td4', ad: 'Monin Türkiye', kategori: 'şurup & sos', telefon: '02123334455', aciklama: 'yıllık anlaşma', aktif: true },
+  ],
+  '/api/ops/tedarik-dosyasi': {
+    toplam: 4,
+    dosyalar: [
+      { talep_id: 'a1b2c3d4e5', sube_adi: 'Zafer', tarih: gunEkleISO(-2), durum: 'tamamlandi', kabul_durum: 'tam', tedarikciler: 'Kahve Dünyası', fatura_say: 1 },
+      { talep_id: 'f6g7h8i9j0', sube_adi: 'Köyceğiz', tarih: gunEkleISO(-5), durum: 'tamamlandi', kabul_durum: 'uyumsuz', tedarikciler: 'Sütaş', fatura_say: 1 },
+      { talep_id: 'k1l2m3n4o5', sube_adi: 'Gazze', tarih: gunEkleISO(-8), durum: 'tamamlandi', kabul_durum: 'tam', tedarikciler: 'Paper Cup', fatura_say: 0 },
+      { talep_id: 'p6q7r8s9t0', sube_adi: 'Alsancak', tarih: gunEkleISO(-12), durum: 'tamamlandi', kabul_durum: 'tam', tedarikciler: 'Monin', fatura_say: 2 },
+    ],
+  },
+  '/api/tv-menu/liste': [
+    { id: 'tv1', ad: 'Filtre Kahve', kategori: 'Sıcak Kahveler', f8: 78, f14: 92, fice: 0, sira: 1, aktif: true, gorunur: true },
+    { id: 'tv2', ad: 'Latte', kategori: 'Sıcak Kahveler', f8: 105, f14: 120, fice: 110, sira: 2, aktif: true, gorunur: true },
+    { id: 'tv3', ad: 'Zebra Mocha', kategori: 'Hot Specials', f8: 128, f14: 142, fice: 0, sira: 3, aktif: true, gorunur: true },
+    { id: 'tv4', ad: 'Tiramisu Latte', kategori: 'Hot Specials', f8: 0, f14: 0, fice: 0, sira: 4, aktif: false, gorunur: false },
+  ],
+};
+
 function borcKocu(url) {
   const strateji = /kartopu/.test(url) ? 'kartopu' : 'cig';
   const nakit = Number((url.match(/nakit=(\d+)/) || [])[1] || 0);
@@ -427,7 +497,7 @@ window.fetch = async (url) => {
   // ⚠️ ÖNCE TAM YOL eşleşmesi: `u.includes('/api/ciro')` gibi gevşek kurallar
   // /api/ciro-taslak'ı da yakalıyordu ve rozet 2 yerine 120 çıkıyordu.
   const yol = u.split('?')[0];
-  const TUM = { ...SAHTE, ...KART_UC, ...ODEME_UC, ...OPS_UC, ...MALIYET_UC, ...EKIP_UC, '/api/ciro': CIRO };
+  const TUM = { ...SAHTE, ...KART_UC, ...ODEME_UC, ...OPS_UC, ...MALIYET_UC, ...EKIP_UC, ...KUCUK_UC, '/api/ciro': CIRO };
   if (u.includes('/api/kartlar/borc-kocu')) govde = borcKocu(u);
   else if (Object.prototype.hasOwnProperty.call(TUM, yol)) govde = TUM[yol];
   await new Promise(r => setTimeout(r, 120));

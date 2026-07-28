@@ -18,6 +18,7 @@ import OdemeModulu from './OdemeModulu';
 import OpsModulu from './OpsModulu';
 import MaliyetModulu from './MaliyetModulu';
 import EkipModulu from './EkipModulu';
+import { OnayModulu, YukModulu, RaporModulu, SistemModulu, TanimModulu } from './KucukModuller';
 
 // ⚠️ TARİH TUZAĞI: `new Date('2026-07-28T00:00:00')` yerel saat olarak ayrıştırılır,
 // `toISOString()` ise UTC'ye çevirir. Türkiye'de (UTC+3) bu, tarihi BİR GÜN GERİ
@@ -153,6 +154,18 @@ export default function TasarimV2({ onGit }) {
           .reduce((t, r) => t + Math.max(0, (Number(r.toplam) || 0) - (Number(r.tamamlanan) || 0)), 0)))
         .catch(() => {});
     })();
+    api('/sabit-giderler')
+      .then(d => koy('sabitGider', (Array.isArray(d) ? d : [])
+        .filter(g => g.aktif !== false && !g.bu_ay_odendi).length)).catch(() => {});
+    api('/ops/tedarik-dosyasi?gun=60&limit=150')
+      .then(d => {
+        const ds = d?.dosyalar || [];
+        koy('teslimatZinciri', ds.filter(x => (Number(x.fatura_say) || 0) === 0).length);
+        koy('tedarikDosyasi', ds.filter(x => String(x.kabul_durum || '').toLocaleLowerCase('tr').includes('uyum')).length);
+      }).catch(() => {});
+    api('/teslim-bildirim/liste?gun=7')
+      .then(d => koy('bilgiTeslim', ((d?.olaylar) || (Array.isArray(d) ? d : []))
+        .filter(o => !o.gorulme_zamani && !o.gorildi).length)).catch(() => {});
     api('/kart-hareketleri?limit=200')
       .then(d => koy('hareketBelirsiz', (Array.isArray(d) ? d : [])
         .filter(h => h.islem_turu === 'HARCAMA' && (h.harcama_tipi || 'belirsiz') === 'belirsiz').length))
@@ -342,6 +355,22 @@ export default function TasarimV2({ onGit }) {
     }
     if (mod === 'ekip') {
       return <EkipModulu gorunum={gorunum} onCekmece={setCekmece} onKopru={koprule} />;
+    }
+    // Küçük modüller (KucukModuller.jsx) — yeni blok gerektirmeyenler
+    if (mod === 'onaylar') {
+      return <OnayModulu gorunum={gorunum} onCekmece={setCekmece} onKopru={koprule} />;
+    }
+    if (mod === 'yuk') {
+      return <YukModulu gorunum={gorunum} onCekmece={setCekmece} onKopru={koprule} />;
+    }
+    if (mod === 'rapor') {
+      return <RaporModulu gorunum={gorunum} onCekmece={setCekmece} onKopru={koprule} />;
+    }
+    if (mod === 'sistem') {
+      return <SistemModulu gorunum={gorunum} onCekmece={setCekmece} onKopru={koprule} />;
+    }
+    if (mod === 'tanim') {
+      return <TanimModulu gorunum={gorunum} onCekmece={setCekmece} onKopru={koprule} />;
     }
     if (mod === 'maliyet') {
       return (

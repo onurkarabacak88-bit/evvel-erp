@@ -133,8 +133,8 @@ export const MODULLER = [
     { id: 'pinqr', ad: 'Panel PIN & Görev QR' },
   ]},
   { id: 'onaylar', ad: 'Onay Bekleyenler', kisa: 'Onay', alt: 'Kuyruk · ciro onayı', ikon: IK.onay, gorunumler: [
-    { id: 'kuyruk', ad: 'Onay Kuyruğu', rozet: 'onay', renk: '#4ADE80', hedef: 'onay' },
-    { id: 'ciro', ad: 'Ciro Onayı', rozet: 'ciroOnay', renk: '#4ADE80', hedef: 'ciro-taslak-onay' },
+    { id: 'kuyruk', ad: 'Onay Kuyruğu', rozet: 'onay', renk: '#4ADE80' },
+    { id: 'ciro', ad: 'Ciro Onayı', rozet: 'ciroOnay', renk: '#4ADE80' },
   ]},
   { id: 'para', ad: 'Para Hareketleri', kisa: 'Para', alt: 'Ciro · satış · kasa', ikon: IK.kahve, gorunumler: [
     { id: 'girisi', ad: 'Ciro Girişi', hedef: 'ciro' },
@@ -162,15 +162,15 @@ export const MODULLER = [
     { id: 'kdv', ad: 'KDV Kanıt Paketi', hedef: 'belge-merkezi' },
   ]},
   { id: 'tanim', ad: 'Tanımlar', kisa: 'Tanım', alt: 'Tedarikçi · TV menü', ikon: IK.klasor, gorunumler: [
-    { id: 'tedarikciler', ad: 'Tedarikçiler', hedef: 'tedarikciler' },
-    { id: 'zincir', ad: 'Teslimat Zinciri', rozet: 'teslimatZinciri', renk: '#FBBF24', hedef: 'tedarik-dosyasi' },
-    { id: 'dosya', ad: 'Tedarik Dosyası', rozet: 'tedarikDosyasi', renk: '#FBBF24', hedef: 'tedarik-dosyasi' },
-    { id: 'tv', ad: 'TV Menü Yönetimi', hedef: 'tv-menu' },
+    { id: 'tedarikciler', ad: 'Tedarikçiler' },
+    { id: 'zincir', ad: 'Teslimat Zinciri', rozet: 'teslimatZinciri', renk: '#FBBF24' },
+    { id: 'dosya', ad: 'Tedarik Dosyası', rozet: 'tedarikDosyasi', renk: '#FBBF24' },
+    { id: 'tv', ad: 'TV Menü Yönetimi' },
   ]},
   { id: 'sistem', ad: 'Veri & Sistem', kisa: 'Sistem', alt: 'Import · teslim · temizlik', ikon: IK.anahtar, gorunumler: [
-    { id: 'excel', ad: 'Excel Import', hedef: 'excel' },
-    { id: 'teslim', ad: 'Bilgi Teslim', rozet: 'bilgiTeslim', renk: '#60A5FA', hedef: 'teslim-kayit' },
-    { id: 'temizle', ad: 'Veri Temizle', hedef: 'veri-temizle' },
+    { id: 'excel', ad: 'Excel Import' },
+    { id: 'teslim', ad: 'Bilgi Teslim', rozet: 'bilgiTeslim', renk: '#60A5FA' },
+    { id: 'temizle', ad: 'Veri Temizle' },
   ]},
   // ✅ v2'ye yazıldı — köprü yok, görünümler yerli (KartModulu.jsx)
   { id: 'kart', ad: 'Kartlar & Borç', kisa: 'Kart', alt: 'Kart · faiz · ekstre', ikon: IK.kart, gorunumler: [
@@ -187,11 +187,11 @@ export const MODULLER = [
     { id: 'katki', ad: 'Şube Katkısı', hedef: 'borc-navigasyon' },
   ]},
   { id: 'yuk', ad: 'Yükümlülükler', kisa: 'Yük', alt: 'Kredi · sabit gider', ikon: IK.banka, gorunumler: [
-    { id: 'krediler', ad: 'Banka Kredileri', hedef: 'borclar' },
-    { id: 'sabit', ad: 'Sabit Giderler', rozet: 'sabitGider', renk: '#D29A5B', hedef: 'sabit-giderler' },
+    { id: 'krediler', ad: 'Banka Kredileri' },
+    { id: 'sabit', ad: 'Sabit Giderler', rozet: 'sabitGider', renk: '#D29A5B' },
   ]},
   { id: 'rapor', ad: 'Rapor & Defter', kisa: 'Rapor', alt: 'Aylık · işlem izi', ikon: IK.grafik, gorunumler: [
-    { id: 'aylik', ad: 'Aylık Rapor', hedef: 'rapor' },
-    { id: 'defter', ad: 'İşlem Defteri', hedef: 'ledger' },
+    { id: 'aylik', ad: 'Aylık Rapor' },
+    { id: 'defter', ad: 'İşlem Defteri' },
   ]},
 ];
