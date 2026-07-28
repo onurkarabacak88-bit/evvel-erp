@@ -359,6 +359,9 @@ export function Borclar({ onNavigate }) {
     try{
       const r = await api(`/borclar/${odeModal.id}/ode`, {method:'POST', body:{
         tutar, tarih: odeForm.tarih, aciklama: odeForm.aciklama || undefined,
+        // CAS: ekranda görülen taksit no'su — sunucuda değiştiyse 409 döner,
+        // yanlış taksite ödeme yazılamaz (çift tık / ikinci pencere koruması)
+        beklenen_taksit_no: odeModal.siradaki_taksit_no ?? undefined,
       }});
       toast(r.kapandi ? '✓ Ödeme yapıldı — borç kapandı' : `✓ ${parseInt(tutar).toLocaleString('tr-TR')} ₺ kasadan düşüldü`);
       setOdeModal(null);
@@ -392,7 +395,27 @@ export function Borclar({ onNavigate }) {
                 <td><span className={`badge ${b.aktif?'badge-green':'badge-gray'}`}>{b.aktif?'Aktif':'Kapandı'}</span></td>
                 <td>
                   <div className="flex gap-8">
-                    {b.aktif && (
+                    {b.aktif && (b.toplam_vade ? (
+                      /* Vade takipli kredi — TAKSİT DÖNEMİ modeli (takvim ayı değil):
+                         gecikmeli ödemede iki taksit aynı aya düşebilir; Öde hep açık,
+                         hangi taksit olduğu rozet + modalda görünür (KOÇ FİNANS dersi) */
+                      b.siradaki_taksit_no == null ? (
+                        <span className="badge badge-green" style={{alignSelf:'center'}}>✓ Taksitler bitti</span>
+                      ) : (
+                        <>
+                          <span className={`badge ${b.vadesi_gecmis_odenmemis?'badge-red':'badge-green'}`}
+                            style={{alignSelf:'center'}}
+                            title={b.son_odeme ? `Son ödeme: ${b.son_odeme}` : ''}>
+                            {b.vadesi_gecmis_odenmemis ? '⚠ gecikmiş' : '✓ güncel'}
+                          </span>
+                          <button className="btn btn-primary btn-sm" onClick={()=>odeAc(b)}
+                            title={`Sıradaki: ${b.siradaki_taksit_no}/${b.toplam_vade}. taksit${b.siradaki_taksit_vade?` · vade ${b.siradaki_taksit_vade}`:''}`}>
+                            💰 Öde
+                          </button>
+                        </>
+                      )
+                    ) : (
+                      /* Vade takibi olmayan borç — eski ay-bazlı davranış */
                       b.bu_ay_odendi ? (
                         <button className="btn btn-sm" disabled
                           style={{background:'rgba(40,180,99,0.15)',color:'var(--green)',cursor:'default',border:'1px solid rgba(40,180,99,0.3)'}}
@@ -405,7 +428,7 @@ export function Borclar({ onNavigate }) {
                           💰 Öde
                         </button>
                       )
-                    )}
+                    ))}
                     <button className="btn btn-ghost btn-sm" onClick={()=>gecmisAc(b)}>📋 Geçmiş</button>
                     <button className="btn btn-ghost btn-sm" onClick={()=>{setForm({kurum:b.kurum,borc_turu:b.borc_turu,toplam_borc:b.toplam_borc,aylik_taksit:b.aylik_taksit,kalan_vade:b.kalan_vade,toplam_vade:b.toplam_vade,baslangic_tarihi:b.baslangic_tarihi?.slice(0,10)||'',odeme_gunu:b.odeme_gunu});setDuzenleId(b.id);setShowModal(true);}}>✏️</button>
                     <button className="btn btn-danger btn-sm" onClick={()=>sil(b.id)}>Kapat</button>
@@ -481,9 +504,19 @@ export function Borclar({ onNavigate }) {
               <button className="modal-close" onClick={()=>setOdeModal(null)}>✕</button>
             </div>
             <div className="modal-body">
+              {odeModal.siradaki_taksit_no != null && odeModal.toplam_vade && (
+                <div style={{background:'rgba(154,95,46,0.08)',border:'1px solid rgba(154,95,46,0.3)',
+                  borderRadius:8,padding:'10px 12px',fontSize:12.5,marginBottom:10,fontWeight:600}}>
+                  📅 Ödenecek: <strong>{odeModal.siradaki_taksit_no}/{odeModal.toplam_vade}. taksit</strong>
+                  {odeModal.siradaki_taksit_vade ? <> · vade {odeModal.siradaki_taksit_vade}</> : null}
+                  {odeModal.vadesi_gecmis_odenmemis
+                    ? <span style={{color:'var(--red)'}}> · gecikmiş</span>
+                    : null}
+                </div>
+              )}
               <div style={{background:'rgba(255,180,0,0.08)',border:'1px solid rgba(255,180,0,0.3)',
                 borderRadius:8,padding:'10px 12px',fontSize:12,marginBottom:14}}>
-                ⚠️ Ödeme onaylandığında <strong>kasadan düşülür</strong> (BORC_TAKSIT) ve bu borcun kalan vadesi <strong>1 azalır</strong>. Aynı ay tekrar ödeme yapılamaz.
+                ⚠️ Ödeme onaylandığında <strong>kasadan düşülür</strong> (BORC_TAKSIT) ve bu borcun kalan vadesi <strong>1 azalır</strong>. Aynı taksit ikinci kez ödenemez — gecikmede iki taksit aynı takvim ayında ödenebilir.
               </div>
               <div className="form-row cols-2">
                 <div className="form-group">

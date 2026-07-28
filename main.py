@@ -7735,12 +7735,60 @@ class KasaDuzeltModel(BaseModel):
     baslangic: date
     bitis: Optional[date] = None
 
+def _borc_siradaki_taksit(borc: dict):
+    """
+    Sayaç bazlı sıradaki taksit: no = toplam_vade - kalan_vade + 1.
+    Vade tarihi = ilk_taksit_tarihi + (no-1) ay; ilk taksit tarihi yoksa
+    başlangıç ayı + odeme_gunu üzerinden tahmin edilir.
+
+    ⚠ NEDEN TAKVİM AYI DEĞİL (KOÇ FİNANS dersi, 2026-07-28): gecikmeli ödemede
+    iki FARKLI taksit aynı takvim ayına düşebilir — Haziran taksiti (vade 29.06)
+    04.07'de ödendi, Temmuz taksiti (vade 29.07) aynı ay içinde kaydedilmek
+    istendi. Ay-bazlı kontrol bunu "çift ödeme" sanıp meşru taksidi bloke etti.
+    Taksidin kimliği takvim ayı değil TAKSİT NUMARASIDIR; kalan_vade her ödemede
+    düştüğü için sayaç kasa iziyle birlikte ilerler (kasa izi = tek gerçek).
+    Dönüş: (taksit_no | None, vade_tarihi | None). None = vade takibi yapılamıyor
+    (toplam_vade tanımsız) ya da tüm taksitler bitti.
+    """
+    toplam_vade = borc.get('toplam_vade')
+    kalan_vade = borc.get('kalan_vade')
+    if not toplam_vade or kalan_vade is None:
+        return None, None
+    no = int(toplam_vade) - int(kalan_vade) + 1
+    if no < 1 or no > int(toplam_vade):
+        return None, None
+    ilk = borc.get('ilk_taksit_tarihi')
+    if isinstance(ilk, str):
+        try:
+            ilk = date.fromisoformat(ilk[:10])
+        except ValueError:
+            ilk = None
+    if not ilk:
+        bas = borc.get('baslangic_tarihi')
+        if isinstance(bas, str):
+            try:
+                bas = date.fromisoformat(bas[:10])
+            except ValueError:
+                bas = None
+        if bas:
+            gun = int(borc.get('odeme_gunu') or 1)
+            gun = min(gun, calendar.monthrange(bas.year, bas.month)[1])
+            # kredi genelde başlangıçtan bir ay sonra ilk taksite döner
+            ilk = ay_ekle(date(bas.year, bas.month, gun), 1)
+    if not ilk:
+        return no, None
+    return no, ay_ekle(ilk, no - 1)
+
+
 @app.get("/api/borclar")
 def borclar_listele():
     """
-    Borç listesi + her kayıt için bu ay ödenip ödenmediği (bu_ay_odendi) ve
-    son ödeme tarihi (son_odeme) bilgisi. Frontend bunlara göre "Öde / Ödendi"
-    butonunu yönetir.
+    Borç listesi + taksit dönemi durumu. Frontend "Öde" butonunu ve
+    güncel/gecikmiş rozetini bunlara göre yönetir:
+    - siradaki_taksit_no / siradaki_taksit_vade: sayaç bazlı sıradaki taksit
+    - vadesi_gecmis_odenmemis: sıradaki taksitin vadesi geçti (gecikmiş)
+    - bu_ay_odendi: GERİYE UYUM alanı — artık "vadesi gelmiş tüm taksitler
+      ödendi" anlamında (dönem bazlı; takvim ayı DEĞİL — KOÇ FİNANS dersi)
     """
     with db() as (conn, cur):
         cur.execute("SELECT * FROM borc_envanteri ORDER BY kurum")
@@ -7750,12 +7798,7 @@ def borclar_listele():
         ids = [b['id'] for b in borclar]
         cur.execute(
             """
-            SELECT kaynak_id,
-                   MAX(tarih) AS son_odeme,
-                   BOOL_OR(
-                       EXTRACT(YEAR FROM tarih) = EXTRACT(YEAR FROM CURRENT_DATE)
-                       AND EXTRACT(MONTH FROM tarih) = EXTRACT(MONTH FROM CURRENT_DATE)
-                   ) AS bu_ay_odendi
+            SELECT kaynak_id, MAX(tarih) AS son_odeme
             FROM kasa_hareketleri
             WHERE kaynak_tablo='borc_envanteri'
               AND kaynak_id = ANY(%s)
@@ -7767,10 +7810,26 @@ def borclar_listele():
             (ids,),
         )
         odeme_map = {str(r['kaynak_id']): r for r in cur.fetchall()}
+        bugun = date.today()
         for b in borclar:
             rec = odeme_map.get(str(b['id'])) or {}
-            b['bu_ay_odendi'] = bool(rec.get('bu_ay_odendi') or False)
-            b['son_odeme']    = str(rec['son_odeme']) if rec.get('son_odeme') else None
+            b['son_odeme'] = str(rec['son_odeme']) if rec.get('son_odeme') else None
+            no, vade = _borc_siradaki_taksit(b)
+            b['siradaki_taksit_no'] = no
+            b['siradaki_taksit_vade'] = str(vade) if vade else None
+            b['vadesi_gecmis_odenmemis'] = bool(vade and vade <= bugun)
+            # Dönem bazlı "güncel" bayrağı: vadesi gelmiş ödenmemiş taksit yok.
+            # Vade takibi yapılamayan borçta (toplam_vade tanımsız) eski takvim-ayı
+            # davranışı korunur — regresyon olmasın.
+            if no is None and b.get('toplam_vade'):
+                b['bu_ay_odendi'] = True   # tüm taksitler bitti
+            elif no is None:
+                son = rec.get('son_odeme')
+                b['bu_ay_odendi'] = bool(
+                    son and son.year == bugun.year and son.month == bugun.month
+                )
+            else:
+                b['bu_ay_odendi'] = not b['vadesi_gecmis_odenmemis'] if vade else False
         return borclar
 
 
@@ -7778,6 +7837,10 @@ class BorcOdemeBody(BaseModel):
     tutar: Optional[float] = None
     tarih: Optional[str] = None
     aciklama: Optional[str] = None
+    # CAS: frontend'in ekranda gördüğü sıradaki taksit no'su. Sunucudakiyle
+    # uyuşmazsa (başka pencere/çift tık az önce ödedi) 409 döner — yanlış
+    # taksite ödeme yazılamaz. Vade takipli kredilerde zorunlu.
+    beklenen_taksit_no: Optional[int] = None
 
 
 @app.post("/api/borclar/{bid}/ode")
@@ -7806,32 +7869,59 @@ def borc_ode(bid: str, body: BorcOdemeBody):
 
         tarih = (body.tarih or date.today().isoformat())[:10]
 
-        # ÇİFT ÖDEME KAPISI: bu ay manuel VEYA plan/onay yolundan ödenmiş mi?
-        # Plan ödemesi kasaya kaynak_tablo='odeme_plani' (kaynak_id=plan_id) yazar; manuel
-        # ise kaynak_tablo='borc_envanteri'. İkisini birlikte kontrol et — yoksa aynı taksit
-        # iki yoldan ödenip kasadan iki kez düşer, kalan vade fazladan azalır.
-        cur.execute(
-            """
-            SELECT 1 FROM kasa_hareketleri kh
-            WHERE kh.islem_turu='BORC_TAKSIT' AND kh.kasa_etkisi=TRUE AND kh.durum='aktif'
-              AND EXTRACT(YEAR FROM kh.tarih)  = EXTRACT(YEAR FROM %s::date)
-              AND EXTRACT(MONTH FROM kh.tarih) = EXTRACT(MONTH FROM %s::date)
-              AND (
-                    (kh.kaynak_tablo='borc_envanteri' AND kh.kaynak_id=%s)
-                 OR (kh.kaynak_tablo='odeme_plani' AND kh.kaynak_id IN (
-                        SELECT id FROM odeme_plani
-                        WHERE kaynak_tablo='borc_envanteri' AND kaynak_id=%s))
-              )
-            LIMIT 1
-            """,
-            (tarih, tarih, bid, bid),
-        )
-        if cur.fetchone():
-            raise HTTPException(409, "Bu ay için zaten ödeme kaydı var (manuel veya plandan)")
+        # ÇİFT ÖDEME KAPISI — TAKSİT DÖNEMİ BAZLI (KOÇ FİNANS dersi, 2026-07-28).
+        # Eski kapı TAKVİM AYINA bakıyordu: gecikmeli ödemede iki farklı taksit
+        # aynı takvim ayına düşünce (Haziran taksiti 04.07'de ödendi, Temmuz
+        # taksiti 28.07'de kaydedilmek istendi) meşru ödemeyi 409'la bloke etti.
+        # Taksidin kimliği takvim ayı değil TAKSİT NO'sudur: kalan_vade her
+        # ödemede düştüğü için sayaç kasa iziyle birlikte ilerler.
+        taksit_no, taksit_vade = _borc_siradaki_taksit(dict(borc))
+        if borc['toplam_vade']:
+            # CAS: ekranda görülen taksit ile sunucudaki sıradaki taksit aynı mı?
+            # Çift tık / ikinci pencere aynı no'yu gönderir → ilki öder, ikincisi
+            # burada 409 alır (kalan_vade düştüğü için no ilerlemiştir).
+            if body.beklenen_taksit_no is None:
+                raise HTTPException(
+                    409,
+                    "Ödeme ekranı eski sürümde — sayfayı yenileyip (Ctrl+F5) tekrar deneyin",
+                )
+            if taksit_no is None:
+                raise HTTPException(400, "Bu borcun tüm taksitleri zaten ödenmiş görünüyor")
+            if int(body.beklenen_taksit_no) != int(taksit_no):
+                raise HTTPException(
+                    409,
+                    f"Sıradaki taksit değişti (şimdi {taksit_no}/{borc['toplam_vade']}) — "
+                    "bu taksit az önce başka bir yerden ödenmiş olabilir; listeyi yenileyin",
+                )
+            idem = f"borc-ode:{bid}:taksit-{taksit_no}"
+        else:
+            # Vade takibi yapılamayan borç (toplam_vade tanımsız): eski takvim-ayı
+            # koruması aynen korunur — regresyon yok.
+            cur.execute(
+                """
+                SELECT 1 FROM kasa_hareketleri kh
+                WHERE kh.islem_turu='BORC_TAKSIT' AND kh.kasa_etkisi=TRUE AND kh.durum='aktif'
+                  AND EXTRACT(YEAR FROM kh.tarih)  = EXTRACT(YEAR FROM %s::date)
+                  AND EXTRACT(MONTH FROM kh.tarih) = EXTRACT(MONTH FROM %s::date)
+                  AND (
+                        (kh.kaynak_tablo='borc_envanteri' AND kh.kaynak_id=%s)
+                     OR (kh.kaynak_tablo='odeme_plani' AND kh.kaynak_id IN (
+                            SELECT id FROM odeme_plani
+                            WHERE kaynak_tablo='borc_envanteri' AND kaynak_id=%s))
+                  )
+                LIMIT 1
+                """,
+                (tarih, tarih, bid, bid),
+            )
+            if cur.fetchone():
+                raise HTTPException(409, "Bu ay için zaten ödeme kaydı var (manuel veya plandan)")
+            idem = f"borc-ode:{bid}:{tarih[:7]}"  # ay bazlı idempotent (vadesiz borç)
 
         aciklama = (body.aciklama or f"{borc['kurum']} — {borc['borc_turu']} taksiti").strip()
+        if borc['toplam_vade'] and taksit_no:
+            aciklama = f"{aciklama} ({taksit_no}/{borc['toplam_vade']}. taksit"
+            aciklama += f", vade {taksit_vade})" if taksit_vade else ")"
         ref_id = str(uuid.uuid4())
-        idem = f"borc-ode:{bid}:{tarih[:7]}"  # ay bazlı idempotent
         insert_kasa_hareketi(
             cur, tarih, 'BORC_TAKSIT', -abs(tutar), aciklama,
             'borc_envanteri', bid, ref_id, 'BORC_TAKSIT', idempotency_key=idem,
