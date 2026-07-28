@@ -62,10 +62,69 @@ const SAHTE = {
 
 const CIRO = ciroUret();
 
+// ── Kartlar & Borç modülü sahte verisi ──────────────────────────────────────
+const K = [
+  { id: 'k1', kart_adi: 'Garanti Bonus İşletme', banka: 'Garanti', sahip: 'İşletme', limit_tutar: 250000, guncel_borc: 184300, faiz_orani: 52, kesim_gunu: 12, gun_kaldi: -2, asgari_odeme: 90760, asgari_karsilandi: false, ekstre_gercek: true, gelecek_taksit_anapara: 42600, toplam_borc_taksitli: 226900, son_odeme_tarihi: '2026-07-22', aktif_son_odeme: '2026-07-22' },
+  { id: 'k2', kart_adi: 'Yapı Kredi World', banka: 'Yapı Kredi', sahip: 'Onur K.', limit_tutar: 150000, guncel_borc: 96800, faiz_orani: 58, kesim_gunu: 8, gun_kaldi: 0, asgari_odeme: 43680, asgari_karsilandi: false, ekstre_gercek: true, gelecek_taksit_anapara: 12400, toplam_borc_taksitli: 109200, son_odeme_tarihi: '2026-07-28', aktif_son_odeme: '2026-07-28' },
+  { id: 'k3', kart_adi: 'İş Bankası Maximum', banka: 'İş Bankası', sahip: 'Onur K.', limit_tutar: 120000, guncel_borc: 54200, faiz_orani: 49, kesim_gunu: 26, gun_kaldi: 9, asgari_odeme: 16260, asgari_karsilandi: false, ekstre_gercek: false, gelecek_taksit_anapara: 0, toplam_borc_taksitli: 54200, son_odeme_tarihi: '2026-08-06', aktif_son_odeme: '2026-08-06' },
+  { id: 'k4', kart_adi: 'Akbank Axess', banka: 'Akbank', sahip: 'İşletme', limit_tutar: 90000, guncel_borc: 31900, faiz_orani: 45, kesim_gunu: 2, gun_kaldi: 14, asgari_odeme: 9570, asgari_karsilandi: true, ekstre_gercek: true, gelecek_taksit_anapara: 8900, toplam_borc_taksitli: 40800, son_odeme_tarihi: '2026-08-11', aktif_son_odeme: '2026-08-11' },
+  { id: 'k5', kart_adi: 'Ziraat Bankkart', banka: 'Ziraat', sahip: 'Onur K.', limit_tutar: 50000, guncel_borc: 12400, faiz_orani: 0, kesim_gunu: 18, gun_kaldi: 21, asgari_odeme: 3720, asgari_karsilandi: false, ekstre_gercek: true, gelecek_taksit_anapara: 0, toplam_borc_taksitli: 12400, son_odeme_tarihi: '2026-08-18', aktif_son_odeme: '2026-08-18' },
+];
+
+const KART_UC = {
+  '/api/kartlar': K,
+  '/api/kartlar/borc-faiz-ozet': {
+    toplam_borc: 379600, toplam_taksit: 63900, toplam_borc_taksitli: 443500,
+    toplam_odenen_faiz: 34020, kart_adet: 5, bu_ay_eksik_ekstre: 1,
+    kartlar: K.map((k, i) => ({
+      kart_id: k.id, kart_adi: k.kart_adi, sahip: k.sahip, limit: k.limit_tutar,
+      guncel_borc: k.guncel_borc, gelecek_taksit_anapara: k.gelecek_taksit_anapara,
+      toplam_borc_taksitli: k.toplam_borc_taksitli,
+      toplam_odenen_faiz: [18400, 9100, 3200, 2400, 920][i],
+      bu_ay_ekstre_var: k.ekstre_gercek,
+    })),
+  },
+  '/api/kartlar/harcama-ozet': {
+    genel: { isletme: 114700, sahsi: 8340, belirsiz: 16340, toplam: 139380 },
+    kartlar: [],
+  },
+  '/api/kart-hareketleri': [
+    { id: 'h1', tarih: '2026-07-27', kart_adi: 'Garanti Bonus İşletme', islem_turu: 'HARCAMA', tutar: 68400, aciklama: 'Kahve Dünyası — çekirdek alımı', harcama_tipi: 'isletme', taksit_sayisi: 1, ana_para: 68400, faiz_tutari: 0 },
+    { id: 'h2', tarih: '2026-07-26', kart_adi: 'Yapı Kredi World', islem_turu: 'HARCAMA', tutar: 16340, aciklama: 'Market — açıklama yok', harcama_tipi: 'belirsiz', taksit_sayisi: 1, ana_para: 16340, faiz_tutari: 0 },
+    { id: 'h3', tarih: '2026-07-25', kart_adi: 'Akbank Axess', islem_turu: 'ODEME', tutar: 9570, aciklama: 'Asgari ödeme', harcama_tipi: 'isletme', taksit_sayisi: 1, ana_para: 9570, faiz_tutari: 0 },
+    { id: 'h4', tarih: '2026-07-24', kart_adi: 'Garanti Bonus İşletme', islem_turu: 'FAIZ', tutar: 9832, aciklama: 'Dönem faizi (KKDF/BSMV dahil)', harcama_tipi: 'isletme', taksit_sayisi: 1, ana_para: 0, faiz_tutari: 9832 },
+    { id: 'h5', tarih: '2026-07-22', kart_adi: 'Yapı Kredi World', islem_turu: 'HARCAMA', tutar: 8340, aciklama: 'Kişisel — restoran', harcama_tipi: 'sahsi', taksit_sayisi: 3, ana_para: 8340, faiz_tutari: 0 },
+  ],
+};
+
+function borcKocu(url) {
+  const strateji = /kartopu/.test(url) ? 'kartopu' : 'cig';
+  const nakit = Number((url.match(/nakit=(\d+)/) || [])[1] || 0);
+  const satir = K.map(k => ({
+    kart_id: k.id, kart_adi: k.kart_adi, sahip: k.sahip, borc: k.toplam_borc_taksitli,
+    faiz_yillik: k.faiz_orani, aylik_faiz: Math.round(k.toplam_borc_taksitli * k.faiz_orani / 100 / 12),
+    asgari: k.asgari_odeme, faiz_belirsiz: k.faiz_orani <= 0, onerilen_odeme: k.asgari_odeme,
+  }));
+  satir.sort((a, b) => (strateji === 'kartopu' ? a.borc - b.borc : b.faiz_yillik - a.faiz_yillik));
+  const toplamAsgari = satir.reduce((s, k) => s + k.asgari, 0);
+  const artan = Math.max(0, nakit - toplamAsgari);
+  if (satir[0]) satir[0].onerilen_odeme += artan;
+  return {
+    strateji, nakit, toplam_borc: satir.reduce((s, k) => s + k.borc, 0),
+    toplam_aylik_faiz: satir.reduce((s, k) => s + k.aylik_faiz, 0),
+    toplam_asgari: toplamAsgari,
+    asgari_karsilaniyor: nakit >= toplamAsgari,
+    artan_nakit: artan, oncelik: satir[0], kartlar: satir,
+  };
+}
+
 window.fetch = async (url) => {
   const u = String(url);
   let govde = null;
-  if (u.includes('/api/ciro')) govde = CIRO;
+  const yol = u.split('?')[0];
+  if (u.includes('/api/kartlar/borc-kocu')) govde = borcKocu(u);
+  else if (KART_UC[yol]) govde = KART_UC[yol];
+  else if (u.includes('/api/ciro')) govde = CIRO;
   else if (u.includes('/api/onay-kuyrugu')) govde = SAHTE['/api/onay-kuyrugu'];
   else if (u.includes('/api/subeler')) govde = SAHTE['/api/subeler'];
   else if (u.includes('/api/panel')) govde = SAHTE['/api/panel'];

@@ -188,6 +188,145 @@ export function Liste({ satirlar, onAc }) {
   );
 }
 
+// ─── Durum şeridi (kart döngüsü rozetleri) ──────────────────────────────────
+export function Serit({ rozetler, onAc }) {
+  if (!rozetler?.length) return null;
+  return (
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7, marginBottom: 16 }}>
+      {rozetler.map((s, i) => (
+        <span
+          key={i}
+          onClick={() => onAc?.(s)}
+          style={{
+            padding: '5px 13px', borderRadius: 99, fontSize: 11.5, fontWeight: 700,
+            whiteSpace: 'nowrap', cursor: onAc ? 'pointer' : 'default',
+            background: `${s.renk}1F`, color: s.renk, border: `1px solid ${s.renk}44`,
+          }}
+        >
+          {s.ad} · {s.durum}{s.ek ? ` ${s.ek}` : ''}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+// ─── Borç Koçu (strateji seçimi + öncelik + sıralı kart tablosu) ─────────────
+const KOC_IZGARA = '34px 1.6fr 1fr 70px 1fr 1fr 1fr';
+
+export function BorcKocu({
+  strateji, onStrateji, nakit, onNakit,
+  oncelikAd, oncelikNot, ozetNot, satirlar,
+}) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 16 }}>
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+        padding: '14px 16px', borderRadius: 16, ...kartYuzey, boxShadow: 'none',
+      }}>
+        <span style={{ fontSize: 11, letterSpacing: '.8px', textTransform: 'uppercase', color: R.not2, fontWeight: 700 }}>
+          Strateji
+        </span>
+        {[['cig', 'Çığ · en yüksek faiz'], ['kartopu', 'Kartopu · en küçük borç']].map(([id, ad]) => (
+          <div
+            key={id}
+            onClick={() => onStrateji?.(id)}
+            style={{
+              padding: '7px 15px', borderRadius: 10, fontSize: 12.5, fontWeight: 700, cursor: 'pointer',
+              border: `1px solid ${strateji === id ? R.bakir : R.cizgi3}`,
+              color: strateji === id ? R.bakir : R.metin2,
+              background: strateji === id ? 'rgba(217,154,78,.12)' : 'transparent',
+            }}
+          >
+            {ad}
+          </div>
+        ))}
+        <span style={{ marginLeft: 'auto', fontSize: 11.5, color: R.not2, display: 'flex', alignItems: 'center', gap: 8 }}>
+          Bu ay ödeyebileceğin nakit:
+          <input
+            type="number"
+            value={nakit}
+            onChange={(e) => onNakit?.(e.target.value)}
+            style={{
+              width: 120, padding: '6px 10px', borderRadius: 8, border: `1px solid ${R.cizgi3}`,
+              background: R.girinti, color: R.krem, fontFamily: F.mono, fontSize: 12.5,
+              fontWeight: 700, textAlign: 'right',
+            }}
+          />
+        </span>
+      </div>
+
+      {oncelikAd && (
+        <div style={{
+          padding: '18px 20px', borderRadius: 18,
+          background: `linear-gradient(165deg, rgba(217,154,78,.13), ${R.kartUst2})`,
+          border: '1px solid rgba(217,154,78,.34)',
+        }}>
+          <div style={{ fontSize: 12, color: R.metin2 }}>Önce bunu kapat:</div>
+          <div style={{ fontFamily: F.baslik, fontSize: 21, fontWeight: 600, color: R.bakir, marginTop: 4 }}>
+            {oncelikAd}
+          </div>
+          {oncelikNot && (
+            <div style={{ fontSize: 12.5, color: R.metin2, marginTop: 6, lineHeight: 1.6 }}>{oncelikNot}</div>
+          )}
+          {ozetNot && (
+            <div style={{ fontSize: 12.5, color: R.yesil, marginTop: 10, lineHeight: 1.6 }}>{ozetNot}</div>
+          )}
+        </div>
+      )}
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 7, overflowX: 'auto' }}>
+        <div style={{
+          display: 'grid', gridTemplateColumns: KOC_IZGARA, gap: 12, padding: '0 14px', minWidth: 720,
+          fontSize: 10, letterSpacing: '.6px', textTransform: 'uppercase', color: R.not2, fontWeight: 700,
+        }}>
+          <span>#</span><span>Kart</span>
+          <span style={{ textAlign: 'right' }}>Borç</span>
+          <span style={{ textAlign: 'right' }}>Faiz</span>
+          <span style={{ textAlign: 'right' }}>Aylık faiz</span>
+          <span style={{ textAlign: 'right' }}>Asgari</span>
+          <span style={{ textAlign: 'right' }}>Önerilen</span>
+        </div>
+        {satirlar.map((k, i) => (
+          <div
+            key={k.id || i}
+            style={{
+              display: 'grid', gridTemplateColumns: KOC_IZGARA, gap: 12, alignItems: 'center',
+              padding: '12px 14px', borderRadius: 13, minWidth: 720,
+              background: `linear-gradient(165deg, ${R.kart1}, ${R.kart2})`,
+              border: `1px solid ${i === 0 ? 'rgba(217,154,78,.4)' : 'rgba(243,233,220,.08)'}`,
+            }}
+          >
+            <span style={{
+              width: 22, height: 22, borderRadius: 99, display: 'flex', alignItems: 'center',
+              justifyContent: 'center', fontSize: 11, fontWeight: 700, fontFamily: F.mono,
+              background: i === 0 ? R.bakir : R.cizgi2, color: i === 0 ? '#1C1309' : R.not,
+            }}>
+              {i + 1}
+            </span>
+            <span>
+              <span style={{ fontWeight: 600 }}>{k.ad}</span>
+              <span style={{ display: 'block', fontSize: 10.5, color: R.not2 }}>{k.sahip}</span>
+            </span>
+            <span style={{ whiteSpace: 'nowrap', textAlign: 'right', fontFamily: F.mono }}>{k.borc}</span>
+            <span style={{ textAlign: 'right', fontFamily: F.mono, color: k.faizBelirsiz ? R.not2 : R.kirmizi }}>
+              {k.faiz}
+            </span>
+            <span style={{ whiteSpace: 'nowrap', textAlign: 'right', fontFamily: F.mono, color: R.amber }}>
+              {k.aylikFaiz}
+            </span>
+            <span style={{ whiteSpace: 'nowrap', textAlign: 'right', fontFamily: F.mono, color: R.metin2 }}>
+              {k.asgari}
+            </span>
+            <span style={{ whiteSpace: 'nowrap', textAlign: 'right', fontFamily: F.mono, fontWeight: 700, color: R.yesil }}>
+              {k.onerilen}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ─── Tablo ───────────────────────────────────────────────────────────────────
 export function Tablo({ baslik, not, kolonlar, satirlar, onSatir }) {
   return (

@@ -13,6 +13,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { api, fmt } from '../../utils/api';
 import { R, F, MODULLER, kartYuzey } from './tema';
 import { Ikon, KpiSeridi, Hero, Liste, Tablo, Cekmece, Toast, KopruDurumu } from './parcalar';
+import KartModulu from './KartModulu';
 
 const bugunISO = () => new Date().toISOString().slice(0, 10);
 const gunEkle = (iso, n) => {
@@ -203,6 +204,11 @@ export default function TasarimV2({ onGit }) {
           </button>
         </div>
       );
+    }
+
+    // v2'ye yazılmış modüller
+    if (mod === 'kart') {
+      return <KartModulu gorunum={gorunum} onCekmece={setCekmece} onKopru={koprule} />;
     }
 
     if (mod !== 'panel') {

@@ -158,12 +158,13 @@ export const MODULLER = [
     { id: 'teslim', ad: 'Bilgi Teslim', hedef: 'teslim-kayit' },
     { id: 'temizle', ad: 'Veri Temizle', hedef: 'veri-temizle' },
   ]},
+  // ✅ v2'ye yazıldı — köprü yok, görünümler yerli (KartModulu.jsx)
   { id: 'kart', ad: 'Kartlar & Borç', kisa: 'Kart', alt: 'Kart · faiz · ekstre', ikon: IK.kart, gorunumler: [
-    { id: 'ozet', ad: 'Kart & Faiz Özeti', hedef: 'kart-merkez' },
-    { id: 'kartlar', ad: 'Kart Dosyaları', hedef: 'kart-yonetimi' },
-    { id: 'koc', ad: 'Borç Koçu', hedef: 'kart-merkez' },
-    { id: 'hareket', ad: 'Hareketler', hedef: 'kart-hareketleri' },
-    { id: 'ekstre', ad: 'Ekstre Durumu', hedef: 'ekstre-yukle' },
+    { id: 'ozet', ad: 'Kart & Faiz Özeti' },
+    { id: 'kartlar', ad: 'Kart Dosyaları' },
+    { id: 'koc', ad: 'Borç Koçu' },
+    { id: 'hareket', ad: 'Hareketler' },
+    { id: 'ekstre', ad: 'Ekstre Durumu' },
   ]},
   { id: 'borc', ad: 'Borç Navigasyonu', kisa: 'Borç', alt: 'BBE · ABEK · runway', ikon: IK.pusula, gorunumler: [
     { id: 'durum', ad: 'Bu Ay Batıyor Muyum?', hedef: 'borc-navigasyon' },
