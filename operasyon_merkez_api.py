@@ -11373,6 +11373,69 @@ def ops_siparis_sevkiyat_subeler_ozet(gun: int = 90):
     return {"gun_sayi": gun_sayi, "satirlar": satirlar}
 
 
+@router.get("/vade-disiplini")
+def ops_vade_disiplini(gun: int = 90):
+    """
+    SALT-OKUR DUYU 5/6 (2026-07-29): VADE DİSİPLİNİ — ödenmiş planlarda vade
+    tarihi ↔ gerçek ödeme tarihi farkı. Ham veri ZATEN kayıtlı (odeme_plani
+    tarih + odeme_tarihi); bu uç yalnız türetir. Koç Finans vakası tam bu kör
+    noktadandı: gecikme DESENİ görünmüyordu.
+    Not: tedarikçi bazlı kırılım v1'de yok — plan satırında yapılandırılmış
+    tedarikçi kimliği taşınmıyor (açıklama serbest metin, uydurma gruplanmaz).
+    """
+    g = max(7, min(365, int(gun or 90)))
+    with db() as (conn, cur):
+        cur.execute(
+            """
+            SELECT tarih, odeme_tarihi, odenecek_tutar, aciklama, kaynak_tablo
+            FROM odeme_plani
+            WHERE durum = 'odendi' AND odeme_tarihi IS NOT NULL AND tarih IS NOT NULL
+              AND odeme_tarihi >= CURRENT_DATE - (%s * INTERVAL '1 day')
+            ORDER BY odeme_tarihi DESC
+            LIMIT 800
+            """,
+            (g,),
+        )
+        rows = [dict(r) for r in (cur.fetchall() or [])]
+    gecikmeler = []
+    en_gecler = []
+    erken = zamaninda = hafif = gec = 0
+    for r in rows:
+        try:
+            fark = (r["odeme_tarihi"] - r["tarih"]).days
+        except (TypeError, AttributeError):
+            continue
+        gecikmeler.append(fark)
+        if fark < 0:
+            erken += 1
+        elif fark == 0:
+            zamaninda += 1
+        elif fark <= 3:
+            hafif += 1
+        else:
+            gec += 1
+            en_gecler.append({
+                "aciklama": str(r.get("aciklama") or "")[:70],
+                "vade": str(r.get("tarih") or ""),
+                "odeme": str(r.get("odeme_tarihi") or ""),
+                "gecikme_gun": fark,
+                "tutar": float(r.get("odenecek_tutar") or 0),
+                "kaynak": r.get("kaynak_tablo"),
+            })
+    en_gecler.sort(key=lambda x: -x["gecikme_gun"])
+    return {
+        "kesit_gun": g,
+        "odenen_plan": len(gecikmeler),
+        "ort_gecikme_gun": round(sum(gecikmeler) / len(gecikmeler), 1) if gecikmeler else None,
+        "erken": erken, "zamaninda": zamaninda, "hafif_gec": hafif, "gec": gec,
+        "gec_orani_yuzde": round(gec / len(gecikmeler) * 100, 1) if gecikmeler else None,
+        "en_gecler": en_gecler[:8],
+        "not": "GÖZLEMDİR: plan vadesi ↔ gerçek ödeme günü. Negatif=erken. "
+               "Tedarikçi kırılımı v1'de yok (plan satırında yapılandırılmış "
+               "kimlik taşınmıyor — uydurma gruplanmaz).",
+    }
+
+
 # ─── DUYU 3/6: BULGU YAŞAM DÖNGÜSÜ (2026-07-29) ──────────────────────────────
 # Motor bulgularına insan kararı işareti: append-only defter (UPDATE/DELETE ucu
 # YOK). Yanlış alarm oranı ve çözüm süresi ancak bu işaretlerle ölçülebilir —
@@ -11393,6 +11456,12 @@ def _ensure_bulgu_izi(cur):
     cur.execute(
         "CREATE INDEX IF NOT EXISTS idx_bulgu_izi_ref ON duyu_bulgu_izi (bulgu_ref, olusturma DESC)"
     )
+    # DUYU 4/6 (öneri akıbeti): 'uygulandi' kararı eklendi — CHECK idempotent tazelenir
+    cur.execute("ALTER TABLE duyu_bulgu_izi DROP CONSTRAINT IF EXISTS duyu_bulgu_izi_karar_check")
+    cur.execute(
+        "ALTER TABLE duyu_bulgu_izi ADD CONSTRAINT duyu_bulgu_izi_karar_check "
+        "CHECK (karar IN ('goruldu','cozuldu','yanlis_alarm','uygulandi'))"
+    )
 
 
 @router.post("/bulgu-izi")
@@ -11403,8 +11472,8 @@ def ops_bulgu_izi_yaz(body: dict = None):
     body = body or {}
     ref = str(body.get("bulgu_ref") or "").strip()
     karar = str(body.get("karar") or "").strip()
-    if not ref or karar not in ("goruldu", "cozuldu", "yanlis_alarm"):
-        raise HTTPException(400, "bulgu_ref + karar (goruldu|cozuldu|yanlis_alarm) zorunlu")
+    if not ref or karar not in ("goruldu", "cozuldu", "yanlis_alarm", "uygulandi"):
+        raise HTTPException(400, "bulgu_ref + karar (goruldu|cozuldu|yanlis_alarm|uygulandi) zorunlu")
     notm = (str(body.get("not_metin") or "").strip() or None)
     with db() as (conn, cur):
         _ensure_bulgu_izi(cur)
@@ -11434,7 +11503,7 @@ def ops_bulgu_izi_ozet(gun: int = 30):
             (g,),
         )
         rows = [dict(r) for r in (cur.fetchall() or [])]
-    sayilar = {"goruldu": 0, "cozuldu": 0, "yanlis_alarm": 0}
+    sayilar = {"goruldu": 0, "cozuldu": 0, "yanlis_alarm": 0, "uygulandi": 0}
     cozum_saatleri = []
     isaretli_refler = []
     for r in rows:
@@ -11460,6 +11529,7 @@ def ops_bulgu_izi_ozet(gun: int = 30):
         "goruldu": sayilar["goruldu"],
         "cozulen": sayilar["cozuldu"],
         "yanlis_alarm": sayilar["yanlis_alarm"],
+        "uygulanan": sayilar["uygulandi"],
         "yanlis_alarm_orani_yuzde": round(sayilar["yanlis_alarm"] / kapali * 100, 1) if kapali else None,
         "ort_cozum_saat": round(sum(cozum_saatleri) / len(cozum_saatleri), 1) if cozum_saatleri else None,
         "isaretli_refler": isaretli_refler[:200],

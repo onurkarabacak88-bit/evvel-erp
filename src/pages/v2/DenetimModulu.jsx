@@ -142,7 +142,10 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast }) 
   const bulguIsaretle = useCallback((ref, karar) => {
     setIsaretliler((p) => ({ ...p, [ref]: karar }));
     api('/ops/bulgu-izi', { method: 'POST', body: { bulgu_ref: ref, karar } })
-      .then(() => onToast?.(karar === 'cozuldu' ? '✓ Çözüldü olarak işaretlendi' : '✗ Yanlış alarm olarak işaretlendi'))
+      .then(() => onToast?.(
+        karar === 'cozuldu' ? '✓ Çözüldü olarak işaretlendi'
+          : karar === 'uygulandi' ? '✓ Uygulandı — akıbet defterine yazıldı'
+            : '✗ Yanlış alarm olarak işaretlendi'))
       .catch(() => {
         setIsaretliler((p) => { const q = { ...p }; delete q[ref]; return q; });
         onToast?.('İşaret kaydedilemedi');
@@ -185,6 +188,14 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast }) 
     api('/strateji')
       .then((d) => setStrateji(d || {}))
       .catch((e) => setStratejiHata(e?.message || ''));
+    api('/ops/bulgu-izi/ozet?gun=30')
+      .then((d) => {
+        setIziOzet(d || {});
+        const m = {};
+        (d?.isaretli_refler || []).forEach((x) => { m[x.ref] = x.karar; });
+        setIsaretliler((p) => ({ ...m, ...p }));
+      })
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -547,23 +558,35 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast }) 
       <>
         <KpiSeridi kpiler={[
           { etiket: 'Açık öneri', deger: String(oneriler.length), alt: 'motor üretimi', renk: oneriler.length > 0 ? R.amber : R.yesil },
-          { etiket: 'Kasa', deger: fmt(sayi(strateji.kasa)), alt: 'anlık' },
+          { etiket: 'Uygulanan (30g)', deger: String(sayi(iziOzet?.uygulanan)), alt: 'işaret defterinden', renk: sayi(iziOzet?.uygulanan) > 0 ? R.yesil : R.krem },
           { etiket: 'Kullanılabilir nakit', deger: fmt(sayi(strateji.kullanilabilir_nakit)), alt: 'zorunlu yük sonrası', renk: sayi(strateji.kullanilabilir_nakit) >= 0 ? R.yesil : R.kirmizi },
           { etiket: 'Öneri toplamı', deger: fmt(sayi(strateji.toplam_oneri_tutari)), alt: 'önerilen hareket tutarı' },
         ]} />
-        <OneriSeridi metin="Motor yalnız önerir — 'ölçülen etki' metriği sistemde henüz takip edilmiyor; uygulanan önerilerin izi eklendiğinde burada görünecek." />
+        {/* DUYU 4/6 — öneri akıbeti: "Uyguladım" işareti append-only deftere yazılır.
+            Otomatik "ölçülen etki" hesabı BİLEREK yok: hangi KPI'ya bağlanacağı
+            öneriye göre değişir, uydurma rakam basılmaz — izi tutulur, etki insan
+            notuyla/ileriki iterasyonla bağlanır. */}
+        <OneriSeridi metin="Motor yalnız önerir — 'Uyguladım' işareti akıbet defterine yazılır; hangi önerinin hayata geçtiği artık ölçülüyor." />
         {oneriler.length === 0 ? (
           <BosDurum metin="Şu an açık strateji önerisi yok." />
         ) : (
           <Liste
-            satirlar={oneriler.map((o, i) => ({
-              id: o.id || `o-${i}`,
-              baslik: kisalt(o.baslik || o.oneri || o.aciklama, 90),
-              alt: kisalt(o.detay || o.gerekce || o.aciklama, 120),
-              tutar: o.tutar != null || o.tavsiye_tutar != null ? fmt(sayi(o.tutar ?? o.tavsiye_tutar)) : '',
-              tier: /KIRMIZI|kritik/i.test(String(o.renk || o.oncelik || '')) ? 'kritik'
-                : /TURUNCU|uyari/i.test(String(o.renk || o.oncelik || '')) ? 'uyari' : 'bilgi',
-            }))}
+            satirlar={oneriler.map((o, i) => {
+              const ham = String(o.baslik || o.oneri || o.aciklama || `oneri-${i}`);
+              const ref = `strateji:${ham.toLowerCase().replace(/[^a-z0-9ğüşıöç]+/gi, '-').slice(0, 60)}`;
+              const isaret = isaretliler[ref];
+              return {
+                id: o.id || `o-${i}`,
+                baslik: kisalt(ham, 90),
+                alt: kisalt(o.detay || o.gerekce || o.aciklama, 120),
+                tutar: o.tutar != null || o.tavsiye_tutar != null ? fmt(sayi(o.tutar ?? o.tavsiye_tutar)) : '',
+                tier: /KIRMIZI|kritik/i.test(String(o.renk || o.oncelik || '')) ? 'kritik'
+                  : /TURUNCU|uyari/i.test(String(o.renk || o.oncelik || '')) ? 'uyari' : 'bilgi',
+                ...(isaret === 'uygulandi'
+                  ? { rozet: 'uygulandı ✓', rozetRenk: R.yesil }
+                  : { aksiyonlar: [{ ad: '✓ Uyguladım', birincil: true, onTikla: () => bulguIsaretle(ref, 'uygulandi') }] }),
+              };
+            })}
           />
         )}
         <KopruButon ad="Strateji ekranını aç" onTikla={() => onKopru?.('strateji')} />

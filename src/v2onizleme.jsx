@@ -196,6 +196,15 @@ const OPS_UC = {
   },
   '/api/ops/siparis/sevkiyat-guncelle': { ok: true },
   '/api/ops/bulgu-izi': { ok: true, id: 'iz1' },
+  '/api/ops/vade-disiplini': {
+    kesit_gun: 90, odenen_plan: 42, ort_gecikme_gun: 1.8,
+    erken: 9, zamaninda: 21, hafif_gec: 8, gec: 4, gec_orani_yuzde: 9.5,
+    en_gecler: [
+      { aciklama: 'KOC FINANS ARAC — Kredi taksiti', vade: gunEkleISO(-27), odeme: gunEkleISO(-24), gecikme_gun: 3, tutar: 208116 },
+      { aciklama: 'Sütaş Bölge Dağıtım', vade: gunEkleISO(-9), odeme: gunEkleISO(-3), gecikme_gun: 6, tutar: 41250 },
+    ],
+    not: 'GÖZLEMDİR',
+  },
   '/api/ops/bulgu-izi/ozet': {
     kesit_gun: 30, isaretli_bulgu: 9, goruldu: 2, cozulen: 6, yanlis_alarm: 1,
     yanlis_alarm_orani_yuzde: 14.3, ort_cozum_saat: 4.2,

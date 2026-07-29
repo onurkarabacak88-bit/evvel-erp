@@ -66,6 +66,7 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
   const [kokpit, setKokpit] = useState(null);
   const [cari, setCari] = useState(null);
   const [gecmis, setGecmis] = useState([]);
+  const [vade, setVade] = useState(null);   // duyu 5/6: vade disiplini (salt-okur)
   const [modal, setModal] = useState(null);
   const [calisiyor, setCalisiyor] = useState(false);
 
@@ -91,6 +92,9 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
       setHata(e?.message || 'Beklenmeyen bir hata oluştu.');
       setYukleniyor(false);
     });
+    api('/ops/vade-disiplini?gun=90')
+      .then((d) => setVade(d || {}))
+      .catch(() => setVade({}));
   };
 
   useEffect(yukle, []);
@@ -420,6 +424,41 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
         { etiket: 'Gecikmiş kalan', deger: fmt(gecikmisToplam), alt: gecikmisSatir.length ? `${gecikmisSatir.length} kalem` : 'gecikme yok', renk: gecikmisSatir.length ? R.kirmizi : R.yesil },
         { etiket: 'Kasa', deger: fmt(kasa), alt: 'anlık bakiye', renk: kasa >= 0 ? R.yesil : R.kirmizi },
       ]} />
+      {/* DUYU 5/6 — VADE DİSİPLİNİ: plan vadesi ↔ gerçek ödeme günü (salt-okur).
+          Koç Finans vakası tam bu kör noktadandı — gecikme deseni artık görünür. */}
+      {vade && sayi(vade.odenen_plan) > 0 && (
+        <div style={{
+          ...kartYuzey, padding: '16px 18px', marginBottom: 14,
+          border: sayi(vade.gec) > 0 ? `1px solid ${R.amber}44` : kartYuzey.border,
+        }}>
+          <div style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            paddingBottom: 10, borderBottom: `1px solid ${R.cizgi2}`, marginBottom: 11, flexWrap: 'wrap', gap: 8,
+          }}>
+            <span style={{ fontFamily: F.baslik, fontSize: 14.5, fontWeight: 600 }}>
+              📅 Vade disiplini · son {sayi(vade.kesit_gun)} gün
+            </span>
+            <span style={{ fontSize: 10.5, color: R.not2 }}>plan vadesi ↔ gerçek ödeme günü · negatif = erken</span>
+          </div>
+          <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', fontSize: 12.5 }}>
+            <span>Ödenen plan <b style={{ fontFamily: F.mono }}>{sayi(vade.odenen_plan)}</b></span>
+            <span>ort. sapma <b style={{ fontFamily: F.mono, color: sayi(vade.ort_gecikme_gun) > 0 ? R.amber : R.yesil }}>{vade.ort_gecikme_gun > 0 ? '+' : ''}{vade.ort_gecikme_gun ?? '—'} gün</b></span>
+            <span>erken/zamanında <b style={{ fontFamily: F.mono, color: R.yesil }}>{sayi(vade.erken) + sayi(vade.zamaninda)}</b></span>
+            <span>hafif geç (≤3g) <b style={{ fontFamily: F.mono, color: R.amber }}>{sayi(vade.hafif_gec)}</b></span>
+            <span>geç (&gt;3g) <b style={{ fontFamily: F.mono, color: sayi(vade.gec) > 0 ? R.kirmizi : R.yesil }}>{sayi(vade.gec)}</b>{vade.gec_orani_yuzde != null ? ` · %${vade.gec_orani_yuzde}` : ''}</span>
+          </div>
+          {(vade.en_gecler || []).slice(0, 4).map((g, i) => (
+            <div key={i} style={{
+              display: 'flex', alignItems: 'center', gap: 10, fontSize: 12,
+              padding: '7px 0', borderTop: i === 0 ? `1px solid ${R.cizgi2}` : 'none', marginTop: i === 0 ? 10 : 0,
+            }}>
+              <span style={{ fontFamily: F.mono, fontWeight: 700, color: R.kirmizi, minWidth: 58 }}>+{g.gecikme_gun} gün</span>
+              <span style={{ flex: 1, color: R.metin2 }}>{g.aciklama || '—'}</span>
+              <span style={{ fontFamily: F.mono, fontWeight: 700 }}>{fmt(sayi(g.tutar))}</span>
+            </div>
+          ))}
+        </div>
+      )}
       {gecmis.length ? (
         <Tablo
           baslik={`Ödeme geçmişi · ${ayAdi}`}
