@@ -439,16 +439,94 @@ export function OnayModulu({ gorunum, onCekmece, onKopru, onToast }) {
 // ═════════════════════════════════════════════════════════════════════════════
 // 2) YÜKÜMLÜLÜKLER — yuk.krediler / yuk.sabit
 // ═════════════════════════════════════════════════════════════════════════════
-export function YukModulu({ gorunum, onCekmece, onKopru }) {
+export function YukModulu({ gorunum, onCekmece, onKopru, onToast }) {
   const { yukleniyor, hata, veri, yukle } = useVeri([
     ['/borclar', []],
     ['/sabit-giderler', []],
     ['/sabit-giderler/odemeler', null],
+    ['/subeler', []],
   ]);
+  // v2-YERLİ sabit gider CRUD (köprü kaldırma turu) — klasik guard'lar korunur
+  const [sgForm, setSgForm] = useState(null);      // {duzenleId?, gider_adi, tip, kategori, ...}
+  const [sgMesgul, setSgMesgul] = useState(false);
+  const [sgKapatSor, setSgKapatSor] = useState('');
+  const [sgKartlar, setSgKartlar] = useState([]);
   if (yukleniyor) return <Yukleniyor ad="Yükümlülükler" />;
   if (hata) return <Hata mesaj={hata} onTekrar={yukle} />;
 
-  const [krediHam, sabitHam, odemeler] = veri;
+  const SG_ZORUNLU_KAT = ['Kira'];
+  const sgAc = (g) => {
+    setSgForm(g ? {
+      duzenleId: g.id, gider_adi: g.gider_adi || '', tip: g.tip || 'sabit',
+      kategori: g.kategori || 'Kira', tutar: g.tutar != null ? String(g.tutar) : '',
+      periyot: g.periyot || 'aylik', odeme_gunu: g.odeme_gunu || 1,
+      sube_id: g.sube_id || '', baslangic_tarihi: String(g.baslangic_tarihi || '').slice(0, 10),
+      gecerlilik_tarihi: '', sozlesme_sure_ay: g.sozlesme_sure_ay || '',
+      kira_artis_periyot: g.kira_artis_periyot || '',
+      odeme_yontemi: g.odeme_yontemi || 'nakit', kart_id: g.kart_id || '',
+      stopaj_yuzde: g.stopaj_oran ? String(Math.round(Number(g.stopaj_oran) * 100)) : '',
+    } : {
+      duzenleId: null, gider_adi: '', tip: 'sabit', kategori: 'Kira', tutar: '',
+      periyot: 'aylik', odeme_gunu: 1, sube_id: '', baslangic_tarihi: '',
+      gecerlilik_tarihi: '', sozlesme_sure_ay: '', kira_artis_periyot: '',
+      odeme_yontemi: 'nakit', kart_id: '', stopaj_yuzde: '',
+    });
+    if (!sgKartlar.length) api('/kartlar').then((d) => setSgKartlar(Array.isArray(d) ? d : [])).catch(() => {});
+  };
+
+  const sgKaydet = async () => {
+    const f = sgForm;
+    const degisken = f.tip === 'degisken';
+    const kiraGibi = !degisken && SG_ZORUNLU_KAT.includes(f.kategori);
+    if (!f.gider_adi.trim()) { onToast?.('Gider adı zorunlu'); return; }
+    if (!degisken && !(parseFloat(f.tutar) > 0)) { onToast?.('Geçerli bir tutar girin'); return; }
+    if (!f.odeme_gunu) { onToast?.('Ödeme günü zorunlu'); return; }
+    if (!degisken && !f.sube_id) { onToast?.('Şube seçimi zorunlu — şubesiz gider kâr hesabına girmez'); return; }
+    if (kiraGibi && !f.duzenleId && !f.baslangic_tarihi) { onToast?.('Kira için başlangıç tarihi zorunlu'); return; }
+    if (kiraGibi && f.duzenleId && !f.gecerlilik_tarihi) { onToast?.('Hangi aydan itibaren geçerli? — tarih zorunlu'); return; }
+    setSgMesgul(true);
+    try {
+      const body = {
+        gider_adi: f.gider_adi, kategori: f.kategori, tip: f.tip || 'sabit',
+        tutar: parseFloat(f.tutar) || 0, periyot: f.periyot || 'aylik',
+        odeme_gunu: parseInt(f.odeme_gunu, 10) || 1,
+        odeme_yontemi: f.odeme_yontemi || 'nakit',
+        sube_id: f.sube_id || null, kart_id: f.kart_id || null,
+        baslangic_tarihi: f.baslangic_tarihi || null,
+        gecerlilik_tarihi: f.gecerlilik_tarihi || null,
+        sozlesme_sure_ay: f.sozlesme_sure_ay ? parseInt(f.sozlesme_sure_ay, 10) : null,
+        kira_artis_periyot: f.kira_artis_periyot || null,
+        stopaj_oran: f.kategori === 'Kira' ? ((parseFloat(f.stopaj_yuzde) || 0) / 100) : 0,
+      };
+      if (f.duzenleId) await api(`/sabit-giderler/${f.duzenleId}`, { method: 'PUT', body });
+      else await api('/sabit-giderler', { method: 'POST', body });
+      onToast?.('✓ Sabit gider kaydedildi');
+      setSgForm(null);
+      yukle();
+    } catch (e) {
+      onToast?.(e?.message || 'Kaydedilemedi');
+    } finally {
+      setSgMesgul(false);
+    }
+  };
+
+  const sgKapat = async (id) => {
+    setSgMesgul(true);
+    try {
+      const r = await api(`/sabit-giderler/${id}`, { method: 'DELETE' });
+      onToast?.(sayi(r?.iptal_edilen_plan) > 0
+        ? `Kapatıldı — ${r.iptal_edilen_plan} bekleyen plan iptal edildi`
+        : 'Gider kapatıldı');
+      setSgKapatSor('');
+      yukle();
+    } catch (e) {
+      onToast?.(e?.message || 'Kapatılamadı');
+    } finally {
+      setSgMesgul(false);
+    }
+  };
+
+  const [krediHam, sabitHam, odemeler, sgSubeler] = veri;
   const krediler = (Array.isArray(krediHam) ? krediHam : []).filter(k => k.aktif !== false);
   const sabitler = (Array.isArray(sabitHam) ? sabitHam : []).filter(g => g.aktif !== false);
 
@@ -538,27 +616,35 @@ export function YukModulu({ gorunum, onCekmece, onKopru }) {
         { etiket: 'Bu ay ödenen', deger: String(odendi.length), alt: fmt(odendi.reduce((s, g) => s + sayi(g.tutar), 0)), renk: R.yesil },
         { etiket: 'Bu ay bekleyen', deger: String(bekleyen.length), alt: fmt(bekleyen.reduce((s, g) => s + sayi(g.tutar), 0)), renk: bekleyen.length ? R.amber : R.yesil },
       ]} />
+      <div style={{ display: 'flex', gap: 9, marginBottom: 12 }}>
+        <button onClick={() => sgAc(null)} style={{
+          padding: '9px 17px', borderRadius: 10, border: 'none', cursor: 'pointer',
+          background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+          fontSize: 12, fontWeight: 700, fontFamily: 'inherit',
+        }}>
+          + Yeni sabit gider
+        </button>
+      </div>
       {sabitler.length ? (
-        <Tablo
-          baslik={`Sabit giderler · ${AY_KISA[Number(isoBugun().slice(5, 7)) - 1]}`}
-          not="satıra tıkla → gider dosyası"
-          kolonlar={[
-            { ad: 'Gider' }, { ad: 'Kategori' }, { ad: 'Yer' },
-            { ad: 'Tutar', sag: true }, { ad: 'Ödeme günü', sag: true }, { ad: 'Durum' },
-          ]}
+        <Liste
           satirlar={sabitler.map(g => ({
             id: g.id, _g: g,
-            hucreler: [
-              { v: g.gider_adi, kalin: true },
-              { v: g.kategori || '—', renk: R.not },
-              { v: g.sube_adi || 'genel', renk: R.not },
-              { v: sayi(g.tutar) ? fmt(g.tutar) : '≈ değişken', mono: true, sag: true, renk: sayi(g.tutar) ? R.krem : R.amber },
-              { v: g.odeme_gunu ? `ayın ${g.odeme_gunu}` : '—', mono: true, sag: true },
-              { v: g.bu_ay_odendi ? 'ödendi' : 'bekliyor', rozet: g.bu_ay_odendi ? R.yesil : R.amber },
+            baslik: g.gider_adi,
+            alt: `${g.kategori || '—'} · ${g.sube_adi || 'genel'} · ${slugAd(g.periyot) || 'aylık'}${g.odeme_gunu ? ` · ayın ${g.odeme_gunu}` : ''}`,
+            tutar: sayi(g.tutar) ? fmt(g.tutar) : '≈ değişken',
+            tier: g.bu_ay_odendi ? 'olumlu' : 'uyari',
+            rozet: g.bu_ay_odendi ? 'ödendi' : 'bekliyor',
+            rozetRenk: g.bu_ay_odendi ? R.yesil : R.amber,
+            aksiyonlar: sgKapatSor === String(g.id) ? [
+              { ad: sgMesgul ? '…' : 'Eminim — kapat', birincil: true, onTikla: () => !sgMesgul && sgKapat(g.id) },
+              { ad: 'Vazgeç', onTikla: () => setSgKapatSor('') },
+            ] : [
+              { ad: '✎ Düzenle', birincil: true, onTikla: () => sgAc(g) },
+              { ad: 'Kapat', onTikla: () => setSgKapatSor(String(g.id)) },
             ],
           }))}
-          onSatir={(row) => {
-            const g = row._g;
+          onAc={(l) => {
+            const g = l._g;
             onCekmece?.({
               tip: 'SABİT GİDER',
               baslik: g.gider_adi,
@@ -575,16 +661,157 @@ export function YukModulu({ gorunum, onCekmece, onKopru }) {
                 { ad: 'Başlangıç', detay: 'ilk dönem', tutar: kisaTarih(g.baslangic_tarihi) },
               ],
               not: sayi(g.tutar)
-                ? 'Sabit tutarlı gider — ödeme kuyruğuna otomatik düşer.'
-                : 'Değişken tutarlı: her ay fatura tutarı sorulur, girilene kadar toplamlara karışmaz.',
-              aksiyonAd: 'Sabit giderleri aç',
-              _hedef: 'sabit-giderler',
+                ? 'Sabit tutarlı gider — ödeme kuyruğuna otomatik düşer. Düzenleme/kapatma satır butonlarından.'
+                : 'Değişken tutarlı: her ay fatura tutarı sorulur; ödemesi hatırlatma akışından girilir.',
             });
           }}
         />
       ) : (
-        <Bos baslik="Sabit gider tanımlı değil" aciklama="Kira, enerji, abonelik gibi düzenli giderler tanımlanınca ödeme kuyruğuna otomatik düşer." aksiyon="Sabit giderleri aç" onAksiyon={() => onKopru?.('sabit-giderler')} />
+        <Bos baslik="Sabit gider tanımlı değil" aciklama="Kira, enerji, abonelik gibi düzenli giderler tanımlanınca ödeme kuyruğuna otomatik düşer." aksiyon="+ Yeni sabit gider" onAksiyon={() => sgAc(null)} />
       )}
+
+      {/* ── YERLİ SABİT GİDER FORMU (klasik doğrulamalar korunur) ── */}
+      {sgForm && (() => {
+        const f = sgForm;
+        const alan = (k, v) => setSgForm((p) => ({ ...p, [k]: v }));
+        const degisken = f.tip === 'degisken';
+        const kiraGibi = SG_ZORUNLU_KAT.includes(f.kategori);
+        return (
+          <KucukModal
+            baslik={f.duzenleId ? 'Gideri Düzenle' : 'Yeni Sabit Gider'}
+            alt="ödeme kuyruğuna otomatik düşer"
+            onKapat={() => !sgMesgul && setSgForm(null)}
+            genislik={560}
+          >
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 13 }}>
+              <div style={{ gridColumn: '1/-1' }}>
+                <label style={{ fontSize: 10.5, letterSpacing: '.7px', textTransform: 'uppercase', color: R.not2, fontWeight: 700, marginBottom: 6, display: 'block' }}>Gider adı *</label>
+                <input value={f.gider_adi} onChange={(e) => alan('gider_adi', e.target.value)} style={modalAlanStil} />
+              </div>
+              <div style={{ gridColumn: '1/-1', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {[['sabit', '📌 Sabit — her ay aynı tutar'], ['degisken', '📄 Değişken — elektrik/su gibi']].map(([t, ad]) => (
+                  <div key={t} onClick={() => alan('tip', t)} style={{
+                    padding: '8px 14px', borderRadius: 10, fontSize: 12, fontWeight: 700, cursor: 'pointer',
+                    border: `1px solid ${f.tip === t ? R.bakir : R.cizgi3}`,
+                    color: f.tip === t ? R.bakir : R.metin2,
+                    background: f.tip === t ? 'rgba(217,154,78,.12)' : 'transparent',
+                  }}>{ad}</div>
+                ))}
+                {degisken && (
+                  <div style={{ width: '100%', fontSize: 11.5, color: R.amber, lineHeight: 1.5 }}>
+                    ⚡ Değişken gider hatırlatmadır — ödeme geldiğinde tutar sorulur, Anlık Gider olarak işlenir.
+                  </div>
+                )}
+              </div>
+              <div>
+                <label style={{ fontSize: 10.5, letterSpacing: '.7px', textTransform: 'uppercase', color: R.not2, fontWeight: 700, marginBottom: 6, display: 'block' }}>Kategori</label>
+                <select value={f.kategori} onChange={(e) => alan('kategori', e.target.value)} style={modalAlanStil}>
+                  {['Kira', 'Fatura', 'Abonelik', 'Ulaşım', 'Diğer'].map((k) => <option key={k}>{k}</option>)}
+                </select>
+              </div>
+              <div>
+                <label style={{ fontSize: 10.5, letterSpacing: '.7px', textTransform: 'uppercase', color: R.not2, fontWeight: 700, marginBottom: 6, display: 'block' }}>Tutar (₺){degisken ? '' : ' *'}</label>
+                <input type="number" value={f.tutar} onChange={(e) => alan('tutar', e.target.value)}
+                  style={{ ...modalAlanStil, fontFamily: F.mono, textAlign: 'right' }} />
+              </div>
+              <div>
+                <label style={{ fontSize: 10.5, letterSpacing: '.7px', textTransform: 'uppercase', color: R.not2, fontWeight: 700, marginBottom: 6, display: 'block' }}>Periyot</label>
+                <select value={f.periyot} onChange={(e) => alan('periyot', e.target.value)} style={modalAlanStil}>
+                  {[['aylik', 'Aylık'], ['3aylik', '3 Aylık'], ['6aylik', '6 Aylık'], ['yillik', 'Yıllık'], ['haftalik', 'Haftalık']].map(([v, ad]) => <option key={v} value={v}>{ad}</option>)}
+                </select>
+              </div>
+              <div>
+                <label style={{ fontSize: 10.5, letterSpacing: '.7px', textTransform: 'uppercase', color: R.not2, fontWeight: 700, marginBottom: 6, display: 'block' }}>Ödeme günü *</label>
+                <input type="number" min={1} max={31} value={f.odeme_gunu} onChange={(e) => alan('odeme_gunu', e.target.value)}
+                  style={{ ...modalAlanStil, fontFamily: F.mono, textAlign: 'right' }} />
+              </div>
+              <div>
+                <label style={{ fontSize: 10.5, letterSpacing: '.7px', textTransform: 'uppercase', color: R.not2, fontWeight: 700, marginBottom: 6, display: 'block' }}>Şube{degisken ? '' : ' *'}</label>
+                <select value={f.sube_id} onChange={(e) => alan('sube_id', e.target.value)} style={modalAlanStil}>
+                  <option value="">Seçin…</option>
+                  {(sgSubeler || []).map((s) => <option key={s.id} value={s.id}>{s.ad}</option>)}
+                </select>
+                {!degisken && <div style={{ fontSize: 10.5, color: R.not, marginTop: 4 }}>şubesiz gider kâr hesabına girmez</div>}
+              </div>
+              {!f.duzenleId && (
+                <div>
+                  <label style={{ fontSize: 10.5, letterSpacing: '.7px', textTransform: 'uppercase', color: R.not2, fontWeight: 700, marginBottom: 6, display: 'block' }}>Başlangıç tarihi{kiraGibi ? ' *' : ''}</label>
+                  <input type="date" value={f.baslangic_tarihi} onChange={(e) => alan('baslangic_tarihi', e.target.value)}
+                    style={{ ...modalAlanStil, colorScheme: 'dark' }} />
+                </div>
+              )}
+              {f.duzenleId && kiraGibi && (
+                <div style={{ gridColumn: '1/-1', padding: '11px 14px', borderRadius: 12, background: `${R.amber}12`, border: `1px solid ${R.amber}55` }}>
+                  <label style={{ fontSize: 10.5, letterSpacing: '.7px', textTransform: 'uppercase', color: R.amber, fontWeight: 700, marginBottom: 6, display: 'block' }}>📅 Hangi aydan itibaren geçerli? *</label>
+                  <input type="date" value={f.gecerlilik_tarihi} onChange={(e) => alan('gecerlilik_tarihi', e.target.value)}
+                    style={{ ...modalAlanStil, colorScheme: 'dark' }} />
+                  <div style={{ fontSize: 10.5, color: R.not, marginTop: 5 }}>Eski kayıt kapanır, bu tarihten itibaren yeni tutar geçerli olur.</div>
+                </div>
+              )}
+              {['Kira', 'Abonelik'].includes(f.kategori) && (
+                <>
+                  <div>
+                    <label style={{ fontSize: 10.5, letterSpacing: '.7px', textTransform: 'uppercase', color: R.not2, fontWeight: 700, marginBottom: 6, display: 'block' }}>📋 Sözleşme süresi (ay)</label>
+                    <input type="number" min={1} max={120} placeholder="örn. 12" value={f.sozlesme_sure_ay}
+                      onChange={(e) => alan('sozlesme_sure_ay', e.target.value)}
+                      style={{ ...modalAlanStil, fontFamily: F.mono, textAlign: 'right' }} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 10.5, letterSpacing: '.7px', textTransform: 'uppercase', color: R.not2, fontWeight: 700, marginBottom: 6, display: 'block' }}>📈 Kira artış periyodu</label>
+                    <select value={f.kira_artis_periyot} onChange={(e) => alan('kira_artis_periyot', e.target.value)} style={modalAlanStil}>
+                      <option value="">Yok</option>
+                      {[['6ay', '6 Aylık'], ['1yil', 'Yıllık'], ['2yil', '2 Yıllık'], ['5yil', '5 Yıllık']].map(([v, ad]) => <option key={v} value={v}>{ad}</option>)}
+                    </select>
+                  </div>
+                  {f.kategori === 'Kira' && (
+                    <div style={{ gridColumn: '1/-1' }}>
+                      <label style={{ fontSize: 10.5, letterSpacing: '.7px', textTransform: 'uppercase', color: R.not2, fontWeight: 700, marginBottom: 6, display: 'block' }}>🏠 Stopaj oranı (%)</label>
+                      <input type="number" value={f.stopaj_yuzde} placeholder="0 (şahıs kirasında 20)"
+                        onChange={(e) => alan('stopaj_yuzde', e.target.value)}
+                        style={{ ...modalAlanStil, fontFamily: F.mono, textAlign: 'right' }} />
+                      <div style={{ fontSize: 10.5, color: R.not, marginTop: 4 }}>
+                        Şahıstan işyeri kirasında %20 stopaj vergi dairesine ödenir.
+                        {parseFloat(f.stopaj_yuzde) > 0 && parseFloat(f.tutar) > 0 &&
+                          ` Aylık stopaj: ${fmt(Math.round((parseFloat(f.tutar) * parseFloat(f.stopaj_yuzde)) / 100))}`}
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+              <div style={{ gridColumn: '1/-1', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                {[['nakit', '💵 Nakit'], ['kart', '💳 Kart talimatı']].map(([y, ad]) => (
+                  <div key={y} onClick={() => alan('odeme_yontemi', y)} style={{
+                    padding: '8px 14px', borderRadius: 10, fontSize: 12, fontWeight: 700, cursor: 'pointer',
+                    border: `1px solid ${f.odeme_yontemi === y ? R.bakir : R.cizgi3}`,
+                    color: f.odeme_yontemi === y ? R.bakir : R.metin2,
+                    background: f.odeme_yontemi === y ? 'rgba(217,154,78,.12)' : 'transparent',
+                  }}>{ad}</div>
+                ))}
+                {f.odeme_yontemi === 'kart' && (
+                  <select value={f.kart_id} onChange={(e) => alan('kart_id', e.target.value)}
+                    style={{ ...modalAlanStil, width: 'auto', minWidth: 170 }}>
+                    <option value="">Kart seçin</option>
+                    {sgKartlar.map((k) => <option key={k.id} value={k.id}>{k.ad || k.kart_adi || k.banka}</option>)}
+                  </select>
+                )}
+              </div>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 18 }}>
+              <button disabled={sgMesgul} onClick={() => setSgForm(null)} style={{
+                padding: '10px 18px', borderRadius: 10, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+                background: 'transparent', color: R.metin2, fontSize: 12.5, fontWeight: 600, fontFamily: 'inherit',
+              }}>İptal</button>
+              <button disabled={sgMesgul} onClick={sgKaydet} style={{
+                padding: '10px 20px', borderRadius: 10, border: 'none', cursor: 'pointer',
+                background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+                fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit',
+              }}>
+                {sgMesgul ? 'Kaydediliyor…' : 'Kaydet'}
+              </button>
+            </div>
+          </KucukModal>
+        );
+      })()}
     </>
   );
 }
