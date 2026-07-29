@@ -519,23 +519,51 @@ export function SistemModulu({ gorunum, onCekmece, onKopru }) {
   const { yukleniyor, hata, veri, yukle } = useVeri([
     ['/teslim-bildirim/liste?gun=7', null],
     ['/ops/siparis/depo-akisi-kalinti', null],
+    ['/import-izi?limit=30', null],  // DUYU 6/6: import iz defteri
   ]);
   if (yukleniyor) return <Yukleniyor ad="Sistem" />;
   if (hata) return <Hata mesaj={hata} onTekrar={yukle} />;
 
-  const [teslimHam, kalinti] = veri;
+  const [teslimHam, kalinti, importIzi] = veri;
   const olaylar = teslimHam?.olaylar || (Array.isArray(teslimHam) ? teslimHam : []);
 
   if (gorunum === 'excel') {
-    // ⚠️ Excel import'un okunabilir bir "geçmiş" ucu YOK — tasarımdaki
-    // "son import / eşleşme oranı" rakamları uydurma olurdu. Dürüst kutu.
+    // DUYU 6/6 (2026-07-29): "Yükleme geçmişi kayıt altına alınmıyor" eksiği
+    // KAPANDI — import_izi append-only defteri her yüklemeyi damgalar.
+    const izler = importIzi?.kayitlar || [];
     return (
-      <Bos
-        baslik="Excel Import"
-        aciklama="Banka ekstresi ve POS dosyaları (XLSX · CSV) buradan yüklenir. Yükleme geçmişi henüz kayıt altına alınmıyor — bu yüzden burada sayı gösterilmiyor. Yükleme işlemi mevcut ekranda yapılır."
-        aksiyon="Excel Import'u aç"
-        onAksiyon={() => onKopru?.('excel')}
-      />
+      <>
+        <KpiSeridi kpiler={[
+          { etiket: 'Kayıtlı yükleme', deger: String(izler.length), alt: 'iz defteri (append-only)' },
+          { etiket: 'Son yükleme', deger: izler[0] ? String(izler[0].olusturma).slice(5, 16) : '—', alt: izler[0] ? `${izler[0].toplam_eklenen ?? 0} satır eklendi` : 'henüz iz yok' },
+          { etiket: 'Toplam eklenen', deger: String(izler.reduce((s, r) => s + (Number(r.toplam_eklenen) || 0), 0)), alt: 'izlenen yüklemelerde', renk: R.yesil },
+          { etiket: 'Hatalı satır', deger: String(izler.reduce((s, r) => s + (Number(r.hata_sayisi) || 0), 0)), alt: 'atlanan kayıtlar', renk: izler.some(r => Number(r.hata_sayisi) > 0) ? R.amber : R.yesil },
+        ]} />
+        {izler.length === 0 ? (
+          <Bos
+            baslik="Excel Import"
+            aciklama="Banka ekstresi ve POS dosyaları (XLSX · CSV) buradan yüklenir. İz defteri bu ilk kurulumla açıldı — bundan sonraki her yükleme burada damgalanır."
+            aksiyon="Excel Import'u aç"
+            onAksiyon={() => onKopru?.('excel')}
+          />
+        ) : (
+          <Tablo
+            baslik="Yükleme iz defteri"
+            not="her import kim/ne zaman/kaç satır iziyle damgalanır"
+            kolonlar={[{ ad: 'Zaman' }, { ad: 'Dosya' }, { ad: 'Eklenen', sag: true }, { ad: 'Hata', sag: true }]}
+            satirlar={izler.map((r, i) => ({
+              id: `iz-${i}`,
+              hucreler: [
+                { v: String(r.olusturma || '—'), mono: true, renk: R.not },
+                { v: r.dosya_adi || '—', kalin: true },
+                { v: String(r.toplam_eklenen ?? 0), mono: true, sag: true, renk: R.yesil },
+                { v: String(r.hata_sayisi ?? 0), mono: true, sag: true, renk: Number(r.hata_sayisi) > 0 ? R.amber : R.not },
+              ],
+            }))}
+            onSatir={() => onKopru?.('excel')}
+          />
+        )}
+      </>
     );
   }
 

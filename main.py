@@ -8675,11 +8675,66 @@ async def excel_import(dosya: UploadFile = File(...)):
                     detay[sheet_name] = {'eklenen': eklenen, 'hata': hata, 'atlanan': atlanan}
                     toplam += eklenen
 
+        # DUYU 6/6 (2026-07-29): IMPORT İZ DEFTERİ — hata-yutar append-only yazıcı.
+        # Kim/ne zaman/hangi dosya/kaç satır — "bu sayılar nereden geldi"nin izi.
+        # Yazıcı hatası import'u ASLA engellemez (duyu kuralı).
+        try:
+            with db() as (conn, cur):
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS import_izi (
+                        id         TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+                        dosya_adi  TEXT,
+                        kaynak     TEXT NOT NULL DEFAULT 'excel-import',
+                        toplam_eklenen INT,
+                        hata_sayisi    INT,
+                        detay_json     TEXT,
+                        olusturma  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                    )
+                    """
+                )
+                _hata_toplam = sum(int(v.get('hata') or 0) for v in detay.values())
+                cur.execute(
+                    "INSERT INTO import_izi (dosya_adi, kaynak, toplam_eklenen, hata_sayisi, detay_json) "
+                    "VALUES (%s,%s,%s,%s,%s)",
+                    (str(getattr(dosya, 'filename', '') or '')[:200], 'excel-import',
+                     int(toplam), _hata_toplam,
+                     json.dumps({k: {'eklenen': v.get('eklenen'), 'hata': v.get('hata')}
+                                 for k, v in detay.items()}, ensure_ascii=False)[:2000]),
+                )
+        except Exception:
+            pass  # iz yazıcı sessiz düşer — import sonucu etkilenmez
+
         return {"success": True, "toplam": toplam, "detay": detay}
     except ImportError:
         raise HTTPException(500, "openpyxl kurulu değil")
     except Exception as e:
         raise HTTPException(500, str(e))
+
+
+@app.get("/api/import-izi")
+def import_izi_liste(limit: int = 50):
+    """SALT-OKUR: import iz defteri — son yüklemeler (dosya, eklenen, hata, zaman)."""
+    lim = max(1, min(200, int(limit or 50)))
+    with db() as (conn, cur):
+        cur.execute("SELECT to_regclass('public.import_izi') AS t")
+        if not (cur.fetchone() or {}).get("t"):
+            return {"kayitlar": [], "toplam": 0, "not": "Henüz iz yok — ilk yüklemeyle başlar."}
+        cur.execute(
+            "SELECT dosya_adi, kaynak, toplam_eklenen, hata_sayisi, detay_json, olusturma "
+            "FROM import_izi ORDER BY olusturma DESC LIMIT %s",
+            (lim,),
+        )
+        out = []
+        for r in cur.fetchall() or []:
+            d = dict(r)
+            d["olusturma"] = str(d.get("olusturma") or "")[:16]
+            try:
+                d["detay"] = json.loads(d.pop("detay_json") or "{}")
+            except Exception:
+                d["detay"] = {}
+            out.append(d)
+    return {"kayitlar": out, "toplam": len(out)}
 
 
 # ── ÇIFT KAYIT KONTROL ENDPOINTLERİ ───────────────────────────

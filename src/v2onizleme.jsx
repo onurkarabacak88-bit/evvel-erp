@@ -196,6 +196,13 @@ const OPS_UC = {
   },
   '/api/ops/siparis/sevkiyat-guncelle': { ok: true },
   '/api/ops/bulgu-izi': { ok: true, id: 'iz1' },
+  '/api/import-izi': {
+    kayitlar: [
+      { dosya_adi: 'garanti_ekstre_temmuz.xlsx', kaynak: 'excel-import', toplam_eklenen: 142, hata_sayisi: 3, detay: { ciro: { eklenen: 142, hata: 3 } }, olusturma: `${gunEkleISO(-1)} 21:14` },
+      { dosya_adi: 'pos_haziran.xlsx', kaynak: 'excel-import', toplam_eklenen: 96, hata_sayisi: 0, detay: {}, olusturma: `${gunEkleISO(-12)} 18:02` },
+    ],
+    toplam: 2,
+  },
   '/api/ops/vade-disiplini': {
     kesit_gun: 90, odenen_plan: 42, ort_gecikme_gun: 1.8,
     erken: 9, zamaninda: 21, hafif_gec: 8, gec: 4, gec_orani_yuzde: 9.5,
