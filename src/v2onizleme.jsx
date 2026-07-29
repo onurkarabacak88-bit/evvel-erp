@@ -742,10 +742,14 @@ const DENETIM_UC = {
   '/api/strateji': {
     kasa: 586310, kullanilabilir_nakit: 218400, zorunlu_giderler: 367910, toplam_oneri_tutari: 109650,
     oneriler: [
-      { baslik: 'Vadesi geçen 2 tedarikçi ödemesini önceliklendir', aciklama: 'çekirdek + süt · gecikirse tedarik riski', renk: 'KIRMIZI', tutar: 109650 },
-      { baslik: 'Süt zammını latte grubuna yansıt', aciklama: 'reçete maliyeti +1,4 ₺/bardak', renk: 'TURUNCU', tutar: 0 },
+      // Gerçek uç sözleşmesi: odeme_id + tavsiye_tutar + oneri_turu (ERTELE hariç uygulanabilir)
+      { id: 'o1', odeme_id: 'op-101', oneri_turu: 'ODE', tavsiye_tutar: 74200, baslik: 'FEZ KAHVE vadesi geçen ödemesini kapat', aciklama: 'gecikirse tedarik riski', renk: 'KIRMIZI', tutar: 74200 },
+      { id: 'o2', odeme_id: 'op-102', oneri_turu: 'ODE', tavsiye_tutar: 35450, baslik: 'SÜTAŞ asgari ödemesi', aciklama: 'faiz işlemeye başladı', renk: 'KIRMIZI', tutar: 35450 },
+      { id: 'o3', odeme_id: 'op-103', oneri_turu: 'ERTELE', tavsiye_tutar: 0, baslik: 'Kırtasiye ödemesini 10 gün ertele', aciklama: 'nakit önceliği yüksek kalemlerde', renk: 'TURUNCU', tutar: 0 },
+      { id: 'o4', baslik: 'Süt zammını latte grubuna yansıt', aciklama: 'reçete maliyeti +1,4 ₺/bardak', renk: 'TURUNCU', tutar: 0 },
     ],
   },
+  '/api/toplu-odeme': { uygulanan: 2 },
 };
 
 // ── Belge Merkezi modülü sahte verisi ───────────────────────────────────────

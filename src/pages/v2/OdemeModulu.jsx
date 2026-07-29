@@ -652,8 +652,8 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
                 not: t.fark != null && Math.abs(t.fark) > Math.max(500, t.acik * 0.05)
                   ? 'İKİ GÖZ UYUŞMUYOR: tedarikçinin beyanı ile bizim hesabımız arasında fark var — eksik fatura, eksik ödeme kaydı ya da sistem-öncesi bakiye olabilir. Hüküm insanın.'
                   : 'Beyan ile hesap uyumlu görünüyor.',
-                aksiyonAd: 'Tedarikçi kontrolünü aç',
-                _hedef: 'belge-merkezi',
+                aksiyonAd: 'Cari ekstreyi aç',
+                _hedef: '__modul:belge:cari',
               });
             }}
           />

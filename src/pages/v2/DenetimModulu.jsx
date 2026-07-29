@@ -142,6 +142,10 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
   const [duyuHata, setDuyuHata] = useState('');
   const [strateji, setStrateji] = useState(null);
   const [stratejiHata, setStratejiHata] = useState('');
+  // Toplu ödeme koşusu (klasik Strateji ekranının tek yazma akışı) — TEK
+  // TRANSACTION: biri düşerse hepsi geri alınır (uçtaki guard).
+  const [topluSor, setTopluSor] = useState(false);
+  const [topluMesgul, setTopluMesgul] = useState(false);
 
   const truthYukle = useCallback(() => {
     setTruthHata('');
@@ -254,6 +258,26 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
       onToast?.(e?.message || 'Kaydedilemedi');
     } finally {
       setNotMesgul(false);
+    }
+  };
+
+  const topluUygula = async () => {
+    const uygulanabilir = (strateji?.oneriler || []).filter(
+      (o) => o.oneri_turu !== 'ERTELE' && o.odeme_id && sayi(o.tavsiye_tutar) > 0);
+    if (!uygulanabilir.length) { onToast?.('Uygulanabilir öneri yok'); setTopluSor(false); return; }
+    setTopluMesgul(true);
+    try {
+      const r = await api('/toplu-odeme', {
+        method: 'POST',
+        body: { odemeler: uygulanabilir.map((o) => ({ odeme_id: o.odeme_id, tutar: sayi(o.tavsiye_tutar) })) },
+      });
+      onToast?.(`✓ ${sayi(r?.uygulanan)}/${uygulanabilir.length} ödeme uygulandı`);
+      setTopluSor(false);
+      stratejiYukle();
+    } catch (e) {
+      onToast?.(e?.message || 'Toplu ödeme başarısız — hiçbiri uygulanmadı');
+    } finally {
+      setTopluMesgul(false);
     }
   };
 
@@ -805,7 +829,48 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
             })}
           />
         )}
-        <KopruButon ad="Strateji ekranını aç" onTikla={() => onKopru?.('strateji')} />
+        {(() => {
+          const uygulanabilir = (strateji?.oneriler || []).filter(
+            (o) => o.oneri_turu !== 'ERTELE' && o.odeme_id && sayi(o.tavsiye_tutar) > 0);
+          if (!uygulanabilir.length) return null;
+          const toplam = uygulanabilir.reduce((t, o) => t + sayi(o.tavsiye_tutar), 0);
+          return (
+            <div style={{ ...kartYuzey, padding: '16px 18px', marginTop: 14, marginBottom: 16 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                <div style={{ flex: 1, minWidth: 220 }}>
+                  <div style={{ fontFamily: F.baslik, fontSize: 14.5, fontWeight: 600 }}>
+                    Önerilen ödeme koşusu — {uygulanabilir.length} kalem
+                  </div>
+                  <div style={{ fontSize: 11.5, color: R.not, marginTop: 4 }}>
+                    toplam <b style={{ fontFamily: F.mono, color: R.bakir }}>{fmt(toplam)}</b> · tek işlemde uygulanır,
+                    biri düşerse hiçbiri yazılmaz
+                  </div>
+                </div>
+                {topluSor ? (
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button disabled={topluMesgul} onClick={topluUygula} style={{
+                      padding: '9px 16px', borderRadius: 10, border: 'none', cursor: 'pointer',
+                      background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+                      fontSize: 12, fontWeight: 700, fontFamily: 'inherit',
+                    }}>{topluMesgul ? 'Uygulanıyor…' : `Eminim — ${fmt(toplam)} öde`}</button>
+                    <button onClick={() => setTopluSor(false)} style={{
+                      padding: '9px 14px', borderRadius: 10, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+                      background: 'transparent', color: R.metin2, fontSize: 12, fontWeight: 600, fontFamily: 'inherit',
+                    }}>Vazgeç</button>
+                  </div>
+                ) : (
+                  <button onClick={() => setTopluSor(true)} style={{
+                    padding: '9px 17px', borderRadius: 10, border: 'none', cursor: 'pointer',
+                    background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+                    fontSize: 12, fontWeight: 700, fontFamily: 'inherit',
+                  }}>
+                    ⚡ Önerileri toplu uygula
+                  </button>
+                )}
+              </div>
+            </div>
+          );
+        })()}
       </>
     );
   }
