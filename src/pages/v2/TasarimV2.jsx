@@ -376,6 +376,18 @@ export default function TasarimV2({ onGit }) {
       setCekmece(null);
       return;
     }
+    // Modül-arası hedef: '__modul:para:girisi' → klasik sayfaya değil, v2'nin
+    // kendi modül+görünümüne geçer (köprüleri v2-yerlisine çevirme turu).
+    if (hedef.startsWith('__modul:')) {
+      const [, mid, gid] = hedef.split(':');
+      const m = MODULLER.find((x) => x.id === mid);
+      if (m) {
+        setMod(mid);
+        setGorunum(gid && m.gorunumler.some((g) => g.id === gid) ? gid : m.gorunumler[0].id);
+        setCekmece(null);
+      }
+      return;
+    }
     if (onGit) onGit(hedef);
     else window.location.hash = hedef;
   };
@@ -429,7 +441,7 @@ export default function TasarimV2({ onGit }) {
       return <BorcModulu gorunum={gorunum} onCekmece={setCekmece} onKopru={koprule} />;
     }
     if (mod === 'para') {
-      return <ParaModulu gorunum={gorunum} onCekmece={setCekmece} onKopru={koprule} />;
+      return <ParaModulu gorunum={gorunum} onCekmece={setCekmece} onKopru={koprule} onToast={setToast} />;
     }
     if (mod === 'denetim') {
       return <DenetimModulu gorunum={gorunum} onCekmece={setCekmece} onKopru={koprule} onToast={setToast} />;
@@ -552,7 +564,7 @@ export default function TasarimV2({ onGit }) {
             })(),
             not: 'Rakamlar ciro defterinden geliyor — onaylanmış (aktif) kayıtlar.',
             aksiyonAd: 'Ciro defterini aç',
-            _hedef: 'ciro',
+            _hedef: '__modul:para:girisi',
           })}
         />
         {oneriListe.length > 0 ? (
@@ -688,7 +700,7 @@ export default function TasarimV2({ onGit }) {
                 ? `Bu şubede ${d.gunSayisi - s.gunSayisi} gün ciro kaydı eksik — karşılaştırma bu yüzden düşük çıkabilir.`
                 : 'Ay boyunca eksik gün yok, karne tam.',
               aksiyonAd: 'Ciro defterini aç',
-              _hedef: 'ciro',
+              _hedef: '__modul:para:girisi',
             });
           }}
         />
@@ -721,7 +733,7 @@ export default function TasarimV2({ onGit }) {
         id: `e-${i}`,
         baslik: `${g.sube_adi || g.sube || 'Şube'} · ${String(g.tarih || g).slice(0, 10)} cirosu girilmemiş`,
         alt: 'kâr ve kasa rakamları bu gün için eksik hesaplanır',
-        tutar: '', tier: 'uyari', aksiyon: 'Ciro gir', _hedef: 'ciro',
+        tutar: '', tier: 'uyari', aksiyon: 'Ciro gir', _hedef: '__modul:para:girisi',
       })),
     ];
 

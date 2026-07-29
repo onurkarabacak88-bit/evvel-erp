@@ -93,12 +93,29 @@ function KopruButon({ ad, onTikla, birincil }) {
   );
 }
 
-export default function ParaModulu({ gorunum, onCekmece, onKopru }) {
+// Kadife form alanı stili (yerli giriş — köprüsüz)
+const alanStil = {
+  width: '100%', boxSizing: 'border-box', padding: '9px 12px', borderRadius: 10,
+  border: `1px solid ${R.cizgi3}`, background: R.girinti, color: R.krem,
+  fontSize: 13, fontFamily: 'inherit', outline: 'none',
+};
+const alanEtiket = {
+  fontSize: 10.5, letterSpacing: '.7px', textTransform: 'uppercase',
+  color: R.not2, fontWeight: 700, marginBottom: 6, display: 'block',
+};
+
+export default function ParaModulu({ gorunum, onCekmece, onKopru, onToast }) {
   // ── CİRO GİRİŞİ ───────────────────────────────────────────────────────────
   const [cirolar, setCirolar] = useState(null);
   const [subeler, setSubeler] = useState([]);
   const [taslaklar, setTaslaklar] = useState([]);
   const [ciroHata, setCiroHata] = useState('');
+  // v2-YERLİ ciro formu (2026-07-29 sahip kararı: köprüler kalkıyor) — aynı
+  // guard'lı uca yazar (POST /ciro: mükerrer uyarı + force; DELETE: kasa iadesi)
+  const [ciroForm, setCiroForm] = useState(null);      // null=kapalı | {tarih,sube_id,nakit,pos,online,aciklama}
+  const [ciroDup, setCiroDup] = useState('');          // mükerrer uyarı metni
+  const [ciroMesgul, setCiroMesgul] = useState(false);
+  const [iptalSor, setIptalSor] = useState('');        // iki-adımlı iptal onayı (kayıt id)
   // ── ÜRÜN SATIŞLARI ────────────────────────────────────────────────────────
   const [satisGun, setSatisGun] = useState(() => bugunISO());
   const [satis, setSatis] = useState(null);
@@ -128,6 +145,37 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru }) {
       setTaslaklar(Array.isArray(t) ? t : []);
     }).catch((e) => setCiroHata(e?.message || ''));
   }, []);
+
+  const ciroKaydet = async (force = false) => {
+    if (!ciroForm?.sube_id) { onToast?.('Şube seçmeden ciro kaydedilmez'); return; }
+    setCiroMesgul(true);
+    setCiroDup('');
+    try {
+      const res = await api('/ciro', { method: 'POST', body: { ...ciroForm, force } });
+      if (res?.warning) { setCiroDup(res.mesaj || 'Benzer kayıt var.'); return; }
+      onToast?.('✓ Ciro kaydedildi — merkez kasaya eklendi');
+      setCiroForm(null);
+      ciroYukle();
+    } catch (e) {
+      onToast?.(e?.message || 'Ciro kaydedilemedi');
+    } finally {
+      setCiroMesgul(false);
+    }
+  };
+
+  const ciroIptal = async (id) => {
+    setCiroMesgul(true);
+    try {
+      await api(`/ciro/${id}`, { method: 'DELETE' });
+      onToast?.('Ciro iptal edildi — kasadan iade edildi');
+      setIptalSor('');
+      ciroYukle();
+    } catch (e) {
+      onToast?.(e?.message || 'İptal edilemedi');
+    } finally {
+      setCiroMesgul(false);
+    }
+  };
 
   const satisYukle = useCallback((gun) => {
     setSatisHata('');
@@ -227,18 +275,172 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru }) {
                       {fmt(sayi(kayit.toplam) || sayi(kayit.nakit) + sayi(kayit.pos) + sayi(kayit.online))}
                     </span>
                     <span style={rozetHap(R.yesil)}>✓ girildi</span>
+                    {iptalSor === String(kayit.id) ? (
+                      <span style={{ display: 'flex', gap: 6 }}>
+                        <button disabled={ciroMesgul} onClick={() => ciroIptal(kayit.id)} style={{
+                          padding: '6px 12px', borderRadius: 9, border: 'none', cursor: 'pointer',
+                          background: `${R.kirmizi}22`, color: R.kirmizi, fontSize: 11.5, fontWeight: 700, fontFamily: 'inherit',
+                        }}>
+                          Eminim — kasadan iade et
+                        </button>
+                        <button onClick={() => setIptalSor('')} style={{
+                          padding: '6px 10px', borderRadius: 9, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+                          background: 'transparent', color: R.metin2, fontSize: 11.5, fontWeight: 600, fontFamily: 'inherit',
+                        }}>
+                          Vazgeç
+                        </button>
+                      </span>
+                    ) : (
+                      <button onClick={() => setIptalSor(String(kayit.id))} style={{
+                        padding: '6px 11px', borderRadius: 9, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+                        background: 'transparent', color: R.not, fontSize: 11.5, fontWeight: 600, fontFamily: 'inherit',
+                      }}>
+                        İptal
+                      </button>
+                    )}
                   </>
                 ) : (
-                  <span style={rozetHap(R.amber)}>bekliyor</span>
+                  <>
+                    <span style={rozetHap(R.amber)}>bekliyor</span>
+                    <KopruButon birincil ad="Ciro gir" onTikla={() => {
+                      setCiroDup('');
+                      setCiroForm({ tarih: bugun, sube_id: String(s.id), nakit: '', pos: '', online: '', aciklama: '' });
+                    }} />
+                  </>
                 )}
               </div>
             );
           })}
         </div>
         <div style={{ display: 'flex', gap: 9, flexWrap: 'wrap', marginBottom: 16 }}>
-          <KopruButon birincil ad="Ciro girişini aç" onTikla={() => onKopru?.('ciro')} />
+          <KopruButon birincil ad="+ Ciro Gir (serbest tarih/şube)" onTikla={() => {
+            setCiroDup('');
+            setCiroForm({ tarih: bugun, sube_id: '', nakit: '', pos: '', online: '', aciklama: '' });
+          }} />
           {taslaklar.length > 0 && <KopruButon ad={`Ciro onayı (${taslaklar.length})`} onTikla={() => onKopru?.('ciro-taslak-onay')} />}
         </div>
+
+        {/* ── YERLİ CİRO FORMU (kadife modal — köprü kaldırıldı, aynı uca yazar) ── */}
+        {ciroForm && (() => {
+          const sube = (subeler || []).find((x) => String(x.id) === String(ciroForm.sube_id));
+          const posK = (sayi(ciroForm.pos) * (sayi(sube?.pos_oran))) / 100;
+          const onlK = (sayi(ciroForm.online) * (sayi(sube?.online_oran))) / 100;
+          const yanan = posK + onlK;
+          const toplamG = sayi(ciroForm.nakit) + sayi(ciroForm.pos) + sayi(ciroForm.online);
+          const alan = (k, v) => setCiroForm((f) => ({ ...f, [k]: v }));
+          return (
+            <div
+              onClick={(e) => { if (e.target === e.currentTarget && !ciroMesgul) setCiroForm(null); }}
+              style={{
+                position: 'fixed', inset: 0, zIndex: 90, background: 'rgba(10,6,2,.66)',
+                backdropFilter: 'blur(3px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+              }}
+            >
+              <div style={{ ...kartYuzey, width: 520, maxWidth: '96vw', maxHeight: '92vh', overflowY: 'auto', padding: '24px 26px' }}>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 18 }}>
+                  <div style={{ fontFamily: F.baslik, fontSize: 21, fontWeight: 600 }}>Ciro Gir</div>
+                  <div style={{ fontSize: 11.5, color: R.not2 }}>kaydedilince merkez kasaya eklenir</div>
+                  <button onClick={() => !ciroMesgul && setCiroForm(null)} style={{
+                    marginLeft: 'auto', border: 'none', background: 'transparent', color: R.not,
+                    fontSize: 16, cursor: 'pointer', fontFamily: 'inherit',
+                  }}>✕</button>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+                  <div>
+                    <label style={alanEtiket}>Tarih</label>
+                    <input type="date" value={ciroForm.tarih} onChange={(e) => alan('tarih', e.target.value)}
+                      style={{ ...alanStil, colorScheme: 'dark' }} />
+                  </div>
+                  <div>
+                    <label style={alanEtiket}>Şube *</label>
+                    <select value={ciroForm.sube_id} onChange={(e) => alan('sube_id', e.target.value)} style={alanStil}>
+                      <option value="">Seçin</option>
+                      {(subeler || []).map((x) => <option key={x.id} value={x.id}>{x.ad}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label style={alanEtiket}>Nakit (₺)</label>
+                    <input type="number" value={ciroForm.nakit} onChange={(e) => alan('nakit', e.target.value)}
+                      style={{ ...alanStil, fontFamily: F.mono, textAlign: 'right' }} />
+                  </div>
+                  <div>
+                    <label style={alanEtiket}>POS (₺)</label>
+                    <input type="number" value={ciroForm.pos} onChange={(e) => alan('pos', e.target.value)}
+                      style={{ ...alanStil, fontFamily: F.mono, textAlign: 'right' }} />
+                  </div>
+                  <div>
+                    <label style={alanEtiket}>Online (₺)</label>
+                    <input type="number" value={ciroForm.online} onChange={(e) => alan('online', e.target.value)}
+                      style={{ ...alanStil, fontFamily: F.mono, textAlign: 'right' }} />
+                  </div>
+                  <div>
+                    <label style={alanEtiket}>Açıklama</label>
+                    <input value={ciroForm.aciklama} onChange={(e) => alan('aciklama', e.target.value)} style={alanStil} />
+                  </div>
+                </div>
+
+                {/* Anlık toplam + yanan para (finansman maliyeti) */}
+                <div style={{
+                  marginTop: 16, padding: '12px 16px', borderRadius: 12, background: R.girinti,
+                  border: `1px solid ${R.cizgi3}`, display: 'flex', gap: 18, flexWrap: 'wrap', fontSize: 12.5,
+                }}>
+                  <span style={{ color: R.metin2 }}>
+                    Toplam: <strong style={{ fontFamily: F.mono, color: R.krem }}>{fmt(toplamG)}</strong>
+                  </span>
+                  {yanan > 0 && (
+                    <>
+                      {posK > 0 && <span style={{ color: R.metin2 }}>POS kesinti (%{sayi(sube?.pos_oran)}): <strong style={{ fontFamily: F.mono, color: R.kirmizi }}>−{fmt(posK)}</strong></span>}
+                      {onlK > 0 && <span style={{ color: R.metin2 }}>Online kesinti (%{sayi(sube?.online_oran)}): <strong style={{ fontFamily: F.mono, color: R.kirmizi }}>−{fmt(onlK)}</strong></span>}
+                      <span style={{ color: R.kirmizi, fontWeight: 700 }}>🔥 Yanan: {fmt(yanan)}</span>
+                    </>
+                  )}
+                </div>
+
+                {ciroDup && (
+                  <div style={{
+                    marginTop: 14, padding: '13px 16px', borderRadius: 12,
+                    background: `${R.kirmizi}14`, border: `1px solid ${R.kirmizi}55`,
+                  }}>
+                    <div style={{ fontSize: 12.5, color: R.kirmizi, fontWeight: 700 }}>⚠ Benzer kayıt var</div>
+                    <div style={{ fontSize: 12, color: R.metin2, marginTop: 5, lineHeight: 1.55 }}>{ciroDup}</div>
+                    <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+                      <button disabled={ciroMesgul} onClick={() => ciroKaydet(true)} style={{
+                        padding: '7px 13px', borderRadius: 9, border: 'none', cursor: 'pointer',
+                        background: `${R.kirmizi}26`, color: R.kirmizi, fontSize: 12, fontWeight: 700, fontFamily: 'inherit',
+                      }}>
+                        Yine de kaydet
+                      </button>
+                      <button onClick={() => setCiroDup('')} style={{
+                        padding: '7px 12px', borderRadius: 9, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+                        background: 'transparent', color: R.metin2, fontSize: 12, fontWeight: 600, fontFamily: 'inherit',
+                      }}>
+                        Vazgeç
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 20 }}>
+                  <button disabled={ciroMesgul} onClick={() => setCiroForm(null)} style={{
+                    padding: '10px 18px', borderRadius: 10, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+                    background: 'transparent', color: R.metin2, fontSize: 12.5, fontWeight: 600, fontFamily: 'inherit',
+                  }}>
+                    İptal
+                  </button>
+                  <button disabled={ciroMesgul || !ciroForm.sube_id || ciroDup !== ''} onClick={() => ciroKaydet(false)} style={{
+                    padding: '10px 20px', borderRadius: 10, border: 'none',
+                    background: (!ciroForm.sube_id || ciroDup !== '') ? R.girinti : 'linear-gradient(150deg, #D99A4E, #B06E2C)',
+                    color: (!ciroForm.sube_id || ciroDup !== '') ? R.not : '#1C1309',
+                    fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit',
+                    cursor: (!ciroForm.sube_id || ciroDup !== '') ? 'default' : 'pointer',
+                  }}>
+                    {ciroMesgul ? 'Kaydediliyor…' : 'Kaydet'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
       </>
     );
   }

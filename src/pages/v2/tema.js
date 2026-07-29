@@ -136,8 +136,9 @@ export const MODULLER = [
     { id: 'kuyruk', ad: 'Onay Kuyruğu', rozet: 'onay', renk: '#4ADE80' },
     { id: 'ciro', ad: 'Ciro Onayı', rozet: 'ciroOnay', renk: '#4ADE80' },
   ]},
-  // Para Hareketleri: v2-YERLİ (ParaModulu.jsx). Tüm görünümler SALT-OKUR;
-  // ciro/gider/dış-kaynak girişi mevcut guard'lı formlara köprüyle gider.
+  // Para Hareketleri: v2-YERLİ (ParaModulu.jsx). Ciro Girişi artık YERLİ kadife
+  // form (2026-07-29, köprü kaldırma turu) — aynı guard'lı uca yazar (POST /ciro:
+  // mükerrer+force, DELETE: kasa iadesi). Gider/dış-kaynak girişi hâlâ köprülü.
   // kasaTeslim rozeti BİLEREK bağlanmadı: sistemde "bekleyen teslim" kaydı yok
   // (kayıt teslimle doğar) — rozet uydurma anlam taşırdı.
   { id: 'para', ad: 'Para Hareketleri', kisa: 'Para', alt: 'Ciro · satış · kasa', ikon: IK.kahve, gorunumler: [
