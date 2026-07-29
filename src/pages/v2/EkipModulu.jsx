@@ -861,7 +861,7 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
               tier: trKucuk(b.durum) === 'yeni' ? 'uyari' : 'bilgi',
               aksiyon: 'İncele',
             }))}
-            onAc={() => onKopru?.('is-basvurusu')}
+            onAc={() => onKopru?.('__modul:ekip:basvuru')}
           />
         ) : (
           <div style={{ ...kartYuzey, padding: '38px 30px', textAlign: 'center', color: R.not }}>

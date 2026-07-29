@@ -592,12 +592,12 @@ export function YukModulu({ gorunum, onCekmece, onKopru, onToast }) {
                   ? 'Taksit ödeme kuyruğuna otomatik düşer; ödeme Ödeme Merkezi\'nden yapılır.'
                   : 'Ödemesiz dönemde — taksit başladığında aylık yük artacak, borç takviminde görünür.',
                 aksiyonAd: 'Borç envanterini aç',
-                _hedef: 'borclar',
+                _hedef: '__modul:yuk:krediler',
               });
             }}
           />
         ) : (
-          <Bos baslik="Kayıtlı kredi yok" aciklama="Borç envanterine kredi girildiğinde aylık yük buradan izlenir." aksiyon="Borç envanterini aç" onAksiyon={() => onKopru?.('borclar')} />
+          <Bos baslik="Kayıtlı kredi yok" aciklama="Borç envanterine kredi girildiğinde aylık yük buradan izlenir." aksiyon="Borç envanterini aç" onAksiyon={() => onKopru?.('__modul:yuk:krediler')} />
         )}
       </>
     );
@@ -834,7 +834,7 @@ export function RaporModulu({ gorunum, onCekmece, onKopru }) {
     // trend12 tek çağrıda 12 ay verir — ay ay 12 istek atmaya gerek yok.
     const trend = (rapor?.trend12 || []).filter(t => sayi(t.ciro) > 0 || sayi(t.gider) > 0);
     if (!trend.length) {
-      return <Bos baslik="Aylık rapor verisi yok" aciklama="Ciro ve gider kaydı biriktikçe aylık karşılaştırma burada oluşur." aksiyon="Aylık raporu aç" onAksiyon={() => onKopru?.('rapor')} />;
+      return <Bos baslik="Aylık rapor verisi yok" aciklama="Ciro ve gider kaydı biriktikçe aylık karşılaştırma burada oluşur." aksiyon="Aylık raporu aç" onAksiyon={() => onKopru?.('__modul:rapor:aylik')} />;
     }
     const son = trend[trend.length - 1];
     const toplamCiro = trend.reduce((s, t) => s + sayi(t.ciro), 0);
@@ -886,7 +886,7 @@ export function RaporModulu({ gorunum, onCekmece, onKopru }) {
               ],
               not: 'Rakamlar kasa hareketlerinden gelir — kasa izi tek gerçek.',
               aksiyonAd: 'Aylık raporu aç',
-              _hedef: 'rapor',
+              _hedef: '__modul:rapor:aylik',
             });
           }}
         />
@@ -984,7 +984,7 @@ export function SistemModulu({ gorunum, onCekmece, onKopru }) {
             baslik="Excel Import"
             aciklama="Banka ekstresi ve POS dosyaları (XLSX · CSV) buradan yüklenir. İz defteri bu ilk kurulumla açıldı — bundan sonraki her yükleme burada damgalanır."
             aksiyon="Excel Import'u aç"
-            onAksiyon={() => onKopru?.('excel')}
+            onAksiyon={() => onKopru?.('__modul:sistem:excel')}
           />
         ) : (
           <Tablo
@@ -1000,7 +1000,7 @@ export function SistemModulu({ gorunum, onCekmece, onKopru }) {
                 { v: String(r.hata_sayisi ?? 0), mono: true, sag: true, renk: Number(r.hata_sayisi) > 0 ? R.amber : R.not },
               ],
             }))}
-            onSatir={() => onKopru?.('excel')}
+            onSatir={() => onKopru?.('__modul:sistem:excel')}
           />
         )}
       </>
@@ -1308,7 +1308,7 @@ export function TanimModulu({ gorunum, onCekmece, onKopru, onToast }) {
                   ? 'Bu teslimatın faturası henüz gelmemiş — belge talep motoru tedarikçiyi kovalar.'
                   : 'Zincirin dört noktası da kayıtlı; adet ve fiyat varyansı Tedarik Dosyası detayında.',
                 aksiyonAd: 'Tedarik dosyasını aç',
-                _hedef: 'tedarik-dosyasi',
+                _hedef: '__modul:tanim:dosya',
               });
             }}
           />

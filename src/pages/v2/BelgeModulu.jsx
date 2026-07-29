@@ -33,6 +33,17 @@ const kisalt = (s, n = 90) => {
   return t.length > n ? t.slice(0, n) + '…' : t;
 };
 
+// Yerli form stilleri (köprü kaldırma turu)
+const bmAlanStil = {
+  width: '100%', boxSizing: 'border-box', padding: '9px 12px', borderRadius: 10,
+  border: `1px solid ${R.cizgi3}`, background: R.girinti, color: R.krem,
+  fontSize: 13, fontFamily: 'inherit', outline: 'none',
+};
+const bmEtiket = {
+  fontSize: 10.5, letterSpacing: '.7px', textTransform: 'uppercase',
+  color: R.not2, fontWeight: 700, marginBottom: 6, display: 'block',
+};
+
 const rozetHap = (renk) => ({
   padding: '3px 10px', borderRadius: 99, fontSize: 10.5, fontWeight: 700,
   background: `${renk}22`, color: renk, whiteSpace: 'nowrap',
@@ -88,11 +99,18 @@ function KopruButon({ ad, onTikla, birincil }) {
   );
 }
 
-export default function BelgeModulu({ gorunum, onCekmece, onKopru }) {
+export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast }) {
   const [merkez, setMerkez] = useState(null);
   const [merkezHata, setMerkezHata] = useState('');
   const [istek, setIstek] = useState(null);
   const [istekHata, setIstekHata] = useState('');
+  // ── YERLİ BELGE TALEP YÖNETİMİ (köprü kaldırma turu, 2026-07-30) ──────────
+  // Klasik BelgeMerkezi'nin "Açık Teslimat" akışı: elle talep aç · WhatsApp ile
+  // fatura iste (wa.me + mesaj-gönderildi izi) · kanıtla kapat. Uçlar aynen.
+  const [talep, setTalep] = useState(null);
+  const [talepForm, setTalepForm] = useState(null);     // {ad, tarih, not}
+  const [kapatForm, setKapatForm] = useState(null);     // {t, tip, aciklama}
+  const [talepMesgul, setTalepMesgul] = useState(false);
   const [bant, setBant] = useState(null);
   const [bantHata, setBantHata] = useState('');
   const [cariSecim, setCariSecim] = useState('');
@@ -109,12 +127,66 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru }) {
       .catch((e) => setMerkezHata(e?.message || ''));
   }, []);
 
+  const talepYukle = useCallback(() => {
+    api('/belge-talep/bekleyen')
+      .then((d) => setTalep(d || {}))
+      .catch(() => setTalep({}));
+  }, []);
+
+  const talepEkle = async () => {
+    const ad = (talepForm?.ad || '').trim();
+    if (ad.length < 2) { onToast?.('Tedarikçi adı gerekli'); return; }
+    setTalepMesgul(true);
+    try {
+      await api('/belge-talep/elle', {
+        method: 'POST',
+        body: { tedarikci_ad: ad, teslim_tarihi: talepForm.tarih || null, not_metin: talepForm.not || null },
+      });
+      onToast?.('✓ Talep açıldı — fatura gelene dek burada bekler');
+      setTalepForm(null);
+      talepYukle();
+    } catch (e) {
+      onToast?.(e?.message || 'Eklenemedi');
+    } finally {
+      setTalepMesgul(false);
+    }
+  };
+
+  const talepKapat = async () => {
+    const { t, tip, aciklama } = kapatForm || {};
+    if (!t?.id) return;
+    if (tip === 'manuel' && !(aciklama || '').trim()) { onToast?.('Manuel kapanışta açıklama zorunlu'); return; }
+    setTalepMesgul(true);
+    try {
+      const body = tip === 'fatura' ? { durum: 'pdf_geldi', kapanis_tipi: 'fatura' }
+        : tip === 'irsaliye' ? { durum: 'kapandi', kapanis_tipi: 'irsaliye' }
+        : { durum: 'kapandi', kapanis_tipi: 'manuel', aciklama: aciklama.trim() };
+      await api(`/belge-talep/${t.id}/kapat`, { method: 'POST', body });
+      onToast?.(`${t.tedarikci_ad} talebi kapatıldı`);
+      setKapatForm(null);
+      talepYukle();
+    } catch (e) {
+      onToast?.(e?.message || 'Kapatılamadı');
+    } finally {
+      setTalepMesgul(false);
+    }
+  };
+
+  const talepIste = (t) => {
+    const tel = String(t.tedarikci_tel || '').replace(/\D/g, '');
+    if (!tel) { onToast?.('📵 Telefon yok — Tanımlar ▸ Tedarikçiler\'den numara ekleyin'); return; }
+    const msg = `Merhaba 🙏 ${t.teslim_tarihi ? `${t.teslim_tarihi} tarihli ` : ''}teslimatın faturasını rica ederiz.`;
+    window.open(`https://wa.me/${tel.startsWith('90') ? tel : `90${tel}`}?text=${encodeURIComponent(msg)}`, '_blank');
+    api(`/belge-talep/${t.id}/mesaj-gonderildi`, { method: 'POST' }).then(talepYukle).catch(() => {});
+  };
+
   const istekYukle = useCallback(() => {
     setIstekHata('');
+    talepYukle();
     api('/fatura-istek/liste')
       .then((d) => setIstek(d || {}))
       .catch((e) => setIstekHata(e?.message || ''));
-  }, []);
+  }, [talepYukle]);
 
   const bantYukle = useCallback(() => {
     setBantHata('');
@@ -340,7 +412,174 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru }) {
             ))}
           </div>
         )}
-        <KopruButon birincil ad="Fatura istek yönetimi (Belge Merkezi)" onTikla={() => onKopru?.('belge-merkezi')} />
+        {/* ── AÇIK TESLİMAT / BELGE TALEBİ (yerli — klasik akış kadifede) ── */}
+        {(() => {
+          const talepler = Array.isArray(talep?.talepler) ? talep.talepler : (Array.isArray(talep) ? talep : []);
+          return (
+            <div style={{ ...kartYuzey, padding: '16px 18px', marginBottom: 16 }}>
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
+                paddingBottom: 11, borderBottom: `1px solid ${R.cizgi2}`, marginBottom: 12,
+              }}>
+                <span style={{ fontFamily: F.baslik, fontSize: 15, fontWeight: 600 }}>
+                  📦 Açık teslimat · belge takibi
+                </span>
+                <span style={{ fontSize: 11, color: R.not2, flex: 1 }}>
+                  teslim alındı, faturası bekliyor — WhatsApp'la iste, gelince kapat
+                </span>
+                <button onClick={() => setTalepForm({ ad: '', tarih: '', not: '' })} style={{
+                  padding: '7px 14px', borderRadius: 10, border: 'none', cursor: 'pointer',
+                  background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+                  fontSize: 11.5, fontWeight: 700, fontFamily: 'inherit',
+                }}>
+                  + Elle talep aç
+                </button>
+              </div>
+              {talepler.length === 0 ? (
+                <div style={{ fontSize: 12.5, color: R.not, textAlign: 'center', padding: '14px 0' }}>
+                  Bekleyen belge talebi yok — teslim alınan her şeyin belgesi gelmiş. ✓
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {talepler.slice(0, 12).map((t) => (
+                    <div key={t.id} style={{
+                      display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+                      padding: '10px 14px', borderRadius: 12, background: R.girinti,
+                      border: `1px solid ${R.cizgi3}`,
+                    }}>
+                      <div style={{ flex: 1, minWidth: 160 }}>
+                        <div style={{ fontSize: 13, fontWeight: 700 }}>{t.tedarikci_ad || '—'}</div>
+                        <div style={{ fontSize: 11, color: R.not2, marginTop: 2 }}>
+                          {t.teslim_tarihi ? `${tarihKisa(t.teslim_tarihi)} teslim` : 'tarih yok'}
+                          {sayi(t.gelen_fatura_adet) > 0 ? ` · ${sayi(t.gelen_fatura_adet)} fatura geldi` : ''}
+                          {t.mesaj_gonderildi_ts ? ' · mesaj gönderildi' : ''}
+                          {t.tedarikci_tel ? '' : ' · 📵 telefon yok'}
+                        </div>
+                      </div>
+                      <button onClick={() => talepIste(t)} style={{
+                        padding: '6px 12px', borderRadius: 9, cursor: 'pointer',
+                        border: `1px solid ${R.yesil}55`, background: `${R.yesil}18`,
+                        color: R.yesil, fontSize: 11.5, fontWeight: 700, fontFamily: 'inherit',
+                      }}>
+                        💬 Fatura iste
+                      </button>
+                      <button onClick={() => setKapatForm({ t, tip: sayi(t.gelen_fatura_adet) > 0 ? 'fatura' : 'irsaliye', aciklama: '' })} style={{
+                        padding: '6px 12px', borderRadius: 9, cursor: 'pointer',
+                        border: `1px solid ${R.cizgi3}`, background: 'transparent',
+                        color: R.metin2, fontSize: 11.5, fontWeight: 600, fontFamily: 'inherit',
+                      }}>
+                        ✓ Kapat
+                      </button>
+                    </div>
+                  ))}
+                  {talepler.length > 12 && (
+                    <div style={{ fontSize: 11, color: R.not2, textAlign: 'center' }}>
+                      +{talepler.length - 12} talep daha
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
+        {/* elle talep formu */}
+        {talepForm && (
+          <div onClick={(e) => { if (e.target === e.currentTarget && !talepMesgul) setTalepForm(null); }} style={{
+            position: 'fixed', inset: 0, zIndex: 90, background: 'rgba(10,6,2,.66)',
+            backdropFilter: 'blur(3px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+          }}>
+            <div style={{ ...kartYuzey, width: 470, maxWidth: '96vw', padding: '24px 26px' }}>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 14 }}>
+                <div style={{ fontFamily: F.baslik, fontSize: 20, fontWeight: 600 }}>Elle Belge Talebi</div>
+                <button onClick={() => setTalepForm(null)} style={{
+                  marginLeft: 'auto', border: 'none', background: 'transparent', color: R.not,
+                  fontSize: 16, cursor: 'pointer', fontFamily: 'inherit',
+                }}>✕</button>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <div style={{ gridColumn: '1/-1' }}>
+                  <label style={bmEtiket}>Tedarikçi adı *</label>
+                  <input value={talepForm.ad} onChange={(e) => setTalepForm((f) => ({ ...f, ad: e.target.value }))} style={bmAlanStil} />
+                </div>
+                <div>
+                  <label style={bmEtiket}>Teslim tarihi</label>
+                  <input type="date" value={talepForm.tarih} onChange={(e) => setTalepForm((f) => ({ ...f, tarih: e.target.value }))}
+                    style={{ ...bmAlanStil, colorScheme: 'dark' }} />
+                </div>
+                <div>
+                  <label style={bmEtiket}>Not</label>
+                  <input value={talepForm.not} onChange={(e) => setTalepForm((f) => ({ ...f, not: e.target.value }))} style={bmAlanStil} />
+                </div>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 16 }}>
+                <button disabled={talepMesgul} onClick={() => setTalepForm(null)} style={{
+                  padding: '10px 18px', borderRadius: 10, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+                  background: 'transparent', color: R.metin2, fontSize: 12.5, fontWeight: 600, fontFamily: 'inherit',
+                }}>İptal</button>
+                <button disabled={talepMesgul} onClick={talepEkle} style={{
+                  padding: '10px 20px', borderRadius: 10, border: 'none', cursor: 'pointer',
+                  background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+                  fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit',
+                }}>{talepMesgul ? 'Ekleniyor…' : 'Talebi aç'}</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* kapanış kanıtı modalı (klasikte prompt idi) */}
+        {kapatForm && (
+          <div onClick={(e) => { if (e.target === e.currentTarget && !talepMesgul) setKapatForm(null); }} style={{
+            position: 'fixed', inset: 0, zIndex: 90, background: 'rgba(10,6,2,.66)',
+            backdropFilter: 'blur(3px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+          }}>
+            <div style={{ ...kartYuzey, width: 480, maxWidth: '96vw', padding: '24px 26px' }}>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 6 }}>
+                <div style={{ fontFamily: F.baslik, fontSize: 20, fontWeight: 600 }}>Talebi Kapat</div>
+                <button onClick={() => setKapatForm(null)} style={{
+                  marginLeft: 'auto', border: 'none', background: 'transparent', color: R.not,
+                  fontSize: 16, cursor: 'pointer', fontFamily: 'inherit',
+                }}>✕</button>
+              </div>
+              <div style={{ fontSize: 12.5, color: R.metin2, marginBottom: 14 }}>
+                {kapatForm.t.tedarikci_ad} — kapanış kanıtı nedir?
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
+                {[
+                  ['fatura', '📄 Fatura geldi', 'PDF/foto arşivde — KDV kanıtı tamam'],
+                  ['irsaliye', '📋 İrsaliye alındı', 'fatura sonra gelecek, teslim kanıtı var'],
+                  ['manuel', '✍️ Diğer (açıklama yaz)', 'iade, iptal, hatalı kayıt vb.'],
+                ].map(([tip, ad, aciklama]) => (
+                  <div key={tip} onClick={() => setKapatForm((f) => ({ ...f, tip }))} style={{
+                    padding: '11px 14px', borderRadius: 12, cursor: 'pointer',
+                    border: `1px solid ${kapatForm.tip === tip ? R.bakir : R.cizgi3}`,
+                    background: kapatForm.tip === tip ? 'rgba(217,154,78,.12)' : R.girinti,
+                  }}>
+                    <div style={{ fontSize: 12.5, fontWeight: 700, color: kapatForm.tip === tip ? R.bakir : R.krem }}>{ad}</div>
+                    <div style={{ fontSize: 11, color: R.not, marginTop: 3 }}>{aciklama}</div>
+                  </div>
+                ))}
+              </div>
+              {kapatForm.tip === 'manuel' && (
+                <div style={{ marginTop: 12 }}>
+                  <label style={bmEtiket}>Açıklama *</label>
+                  <input value={kapatForm.aciklama} onChange={(e) => setKapatForm((f) => ({ ...f, aciklama: e.target.value }))} style={bmAlanStil} />
+                </div>
+              )}
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 16 }}>
+                <button disabled={talepMesgul} onClick={() => setKapatForm(null)} style={{
+                  padding: '10px 18px', borderRadius: 10, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+                  background: 'transparent', color: R.metin2, fontSize: 12.5, fontWeight: 600, fontFamily: 'inherit',
+                }}>Vazgeç</button>
+                <button disabled={talepMesgul} onClick={talepKapat} style={{
+                  padding: '10px 20px', borderRadius: 10, border: 'none', cursor: 'pointer',
+                  background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+                  fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit',
+                }}>{talepMesgul ? 'Kapatılıyor…' : 'Kapat'}</button>
+              </div>
+            </div>
+          </div>
+        )}
       </>
     );
   }

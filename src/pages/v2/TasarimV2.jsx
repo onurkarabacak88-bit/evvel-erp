@@ -447,7 +447,7 @@ export default function TasarimV2({ onGit }) {
       return <DenetimModulu gorunum={gorunum} onCekmece={setCekmece} onKopru={koprule} onToast={setToast} />;
     }
     if (mod === 'belge') {
-      return <BelgeModulu gorunum={gorunum} onCekmece={setCekmece} onKopru={koprule} />;
+      return <BelgeModulu gorunum={gorunum} onCekmece={setCekmece} onKopru={koprule} onToast={setToast} />;
     }
     // Küçük modüller (KucukModuller.jsx) — yeni blok gerektirmeyenler
     if (mod === 'onaylar') {

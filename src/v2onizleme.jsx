@@ -756,6 +756,15 @@ const BELGE_UC = {
       not: 'KDV TUTARI HESAPLANMAZ — hüküm muhasebecinin.',
     },
   },
+  // Açık teslimat / belge talebi (v2 yerli akış — köprü kaldırma turu)
+  '/api/belge-talep/bekleyen': {
+    talepler: [
+      { id: 'bt1', tedarikci_ad: 'FEZ KAHVE', tedarikci_tel: '5321234567', teslim_tarihi: gunEkleISO(-3), gelen_fatura_adet: 0, mesaj_gonderildi_ts: null },
+      { id: 'bt2', tedarikci_ad: 'SÜTAŞ', tedarikci_tel: '5339876543', teslim_tarihi: gunEkleISO(-6), gelen_fatura_adet: 1, mesaj_gonderildi_ts: gunEkleISO(-1) },
+      { id: 'bt3', tedarikci_ad: 'ATALAY KAHVE', tedarikci_tel: '', teslim_tarihi: gunEkleISO(-9), gelen_fatura_adet: 0, mesaj_gonderildi_ts: null },
+    ],
+  },
+  '/api/belge-talep/elle': { ok: true },
   '/api/fatura-istek/liste': {
     acik_adet: 4, acik_toplam: 316530, kdv_riski: 63300,
     gruplar: [

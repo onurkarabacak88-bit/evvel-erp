@@ -278,7 +278,7 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
                 ? `${_h.fiyatsiz} hammaddenin alış fiyatı tanımsız — maliyet gerçekte daha yüksek. Fiyatlar Kâr & Maliyet ekranından girilir.`
                 : 'Tüm hammaddelerin güncel alış fiyatı tanımlı.',
               aksiyonAd: 'Reçete / fiyat yönetimini aç',
-              _hedef: 'maliyet',
+              _hedef: '__modul:maliyet:ozet',
             })}
           />
         )}

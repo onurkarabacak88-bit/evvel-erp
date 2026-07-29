@@ -989,7 +989,7 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
                           )}
                           <div style={{ display: 'flex', gap: 9, marginTop: 13, paddingTop: 13, borderTop: `1px solid ${R.cizgi2}` }}>
                             <button
-                              onClick={() => onKopru?.('stok-sayim')}
+                              onClick={() => onKopru?.('__modul:ops:sayim')}
                               style={{
                                 padding: '9px 17px', borderRadius: 10, border: 'none',
                                 background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',

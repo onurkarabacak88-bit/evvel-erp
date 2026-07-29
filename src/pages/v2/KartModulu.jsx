@@ -758,7 +758,7 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
               id: k.id, _k: k, tier: 'kritik',
               baslik: `${k.ad} · son ödeme geçti`,
               alt: `${gunMetni(k.gunKaldi)} · gecikme faizi işliyor`,
-              tutar: fmt(k.toplam), aksiyon: 'Ödemeye git', _hedef: 'odeme-merkezi',
+              tutar: fmt(k.toplam), aksiyon: 'Ödemeye git', _hedef: '__modul:odeme:bekleyen',
             };
             if (!k.ekstreVar) return {
               id: k.id, _k: k, tier: 'uyari',
@@ -770,13 +770,13 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
               id: k.id, _k: k, tier: 'kritik',
               baslik: `${k.ad} · son ödeme ${gunMetni(k.gunKaldi)}`,
               alt: `asgari ${fmt(k.asgari)} · tam ödeme ${fmt(k.toplam)}`,
-              tutar: fmt(k.toplam), aksiyon: 'Ödemeye git', _hedef: 'odeme-merkezi',
+              tutar: fmt(k.toplam), aksiyon: 'Ödemeye git', _hedef: '__modul:odeme:bekleyen',
             };
             return {
               id: k.id, _k: k, tier: k.durum === 'odendi' ? 'iyi' : 'bilgi',
               baslik: `${k.ad} · ${trKucuk(DONGU[k.durum].ad)}`,
               alt: `kesim ayın ${k.kesim || '—'} · dönem borcu ${fmt(k.donem)} doğrulandı`,
-              tutar: fmt(k.toplam), aksiyon: 'Detay', _hedef: 'kart-yonetimi',
+              tutar: fmt(k.toplam), aksiyon: 'Detay', _hedef: '__modul:kart:kartlar',
             };
           })}
         onAc={(l) => (l._hedef === 'kart-yonetimi' ? kartAc(l._k)

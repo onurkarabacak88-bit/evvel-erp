@@ -671,7 +671,7 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru, onToast }) {
                 .map(([sad, adet]) => ({ ad: sad, detay: '', tutar: `${adet} adet` })),
               not: 'Reçete maliyeti ve tüketim kıyası Kâr & Maliyet modülünde.',
               aksiyonAd: 'Satış analizini aç (Evo)',
-              _hedef: 'evo-satis',
+              _hedef: '__modul:para:satis',
             })}
           />
         )}

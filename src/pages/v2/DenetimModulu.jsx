@@ -280,7 +280,7 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast }) 
               })),
               not: kisalt(_s.yorum_metni || _s.zeka_ozet, 300) || 'Bu gün için yorum üretilmedi.',
               aksiyonAd: 'Akıllı Denetim ekranını aç',
-              _hedef: 'akilli-denetim',
+              _hedef: '__modul:denetim:motorlar',
             })}
           />
         )}
@@ -331,7 +331,7 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast }) 
                 ],
               };
             })}
-            onSatir={() => onKopru?.('akilli-denetim')}
+            onSatir={() => onKopru?.('__modul:denetim:motorlar')}
           />
         )}
       </>
