@@ -122,9 +122,10 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
   // Bekleyen sipariş → hedef depo ataması artık kadife modal; aynı guard'lı uç:
   // POST /ops/siparis/sevkiyata-gonder. Toptancı akışı (liste+yazdırma) klasik
   // kulede kalır — modaldan köprü verilir (işlev kaybı yasak).
-  const [yonForm, setYonForm] = useState(null);   // {sip, depo:'', talimat:''}
+  const [yonForm, setYonForm] = useState(null);   // {sip, mod:'depo'|'toptanci', depo, talimat, tedarikciId, secili:Set, not}
   const [depolar, setDepolar] = useState([]);
   const [yonMesgul, setYonMesgul] = useState(false);
+  const [tedarikciler, setTedarikciler] = useState([]);
   // ── SAYIM ─────────────────────────────────────────────────────────────────
   const [sayim, setSayim] = useState(null);
   const [sayimIz, setSayimIz] = useState(null);
@@ -150,12 +151,87 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
   }, []);
 
   const yonAc = (sip) => {
-    setYonForm({ sip, depo: '', talimat: '' });
+    const kalemler = Array.isArray(sip?.kalemler) ? sip.kalemler : [];
+    setYonForm({
+      sip, mod: 'depo', depo: '', talimat: '',
+      tedarikciId: '', not: '',
+      // varsayılan: tüm kalemler seçili (kısmi gönderim için tek tek kaldırılır)
+      secili: kalemler.map((_, i) => i),
+    });
     if (!depolar.length) {
       api('/ops/subeler/depolar')
         .then((r) => setDepolar(Array.isArray(r?.satirlar) ? r.satirlar : []))
         .catch(() => setDepolar([]));
     }
+    if (!tedarikciler.length) {
+      api('/tedarikciler?aktif=true')
+        .then((r) => setTedarikciler(Array.isArray(r) ? r : (r?.tedarikciler || [])))
+        .catch(() => setTedarikciler([]));
+    }
+  };
+
+  /** Seçili kalemleri toptancıya yolla — klasik kule ile AYNI uç. */
+  const toptanciyaYolla = async () => {
+    const f = yonForm;
+    const ted = (tedarikciler || []).find((t) => String(t.id) === String(f?.tedarikciId));
+    if (!ted) { onToast?.('Kayıtlı tedarikçi seçin'); return; }
+    const hamKalemler = Array.isArray(f.sip?.kalemler) ? f.sip.kalemler : [];
+    const kalemler = hamKalemler.filter((_, i) => f.secili.includes(i));
+    if (!kalemler.length) { onToast?.('En az bir kalem seçin'); return; }
+    setYonMesgul(true);
+    try {
+      const r = await api('/ops/siparis/toptanciya-yolla', {
+        method: 'POST',
+        body: {
+          talep_id: f.sip.id,
+          tedarikci_id: ted.id,
+          tedarikci_ad: ted.ad,
+          not_aciklama: (f.not || '').trim() || null,
+          kalemler,
+        },
+      });
+      const tel = String(ted.telefon || '').replace(/\D/g, '');
+      const waNot = r?.wa_basarili ? ' · WhatsApp gönderildi' : (tel ? '' : ' · telefon yok, WhatsApp gitmedi');
+      const kalan = sayi(r?.kalan_adet);
+      onToast?.(`🚚 ${ted.ad} — ${sayi(r?.toplam_adet)} adet yollandı${waNot}${
+        r?.tam_gonderildi === false ? ` · ${kalan} adet kuyrukta kaldı` : ''}`);
+      setYonForm(null);
+      kuleYukle();
+    } catch (e) {
+      onToast?.(e?.message || 'Toptancıya gönderim hatası');
+    } finally {
+      setYonMesgul(false);
+    }
+  };
+
+  /** Seçili kalemleri temiz bir pencerede yazdır (klasik kule deseni). */
+  const toptanciYazdir = () => {
+    const f = yonForm;
+    const ted = (tedarikciler || []).find((t) => String(t.id) === String(f?.tedarikciId));
+    const hamKalemler = Array.isArray(f.sip?.kalemler) ? f.sip.kalemler : [];
+    const kalemler = hamKalemler.filter((_, i) => f.secili.includes(i));
+    if (!kalemler.length) { onToast?.('Yazdırmak için en az bir kalem seçin'); return; }
+    const satirlar = kalemler.map((k, i) =>
+      `<tr><td style="padding:12px 14px;font-size:18px;border-bottom:1px solid #e0e0e0">${i + 1}. ${k.urun_ad || k.kalem_adi || '—'}</td>`
+      + `<td style="padding:12px 16px;font-size:22px;font-weight:900;text-align:right;border-bottom:1px solid #e0e0e0">× ${sayi(k.adet)}</td></tr>`).join('');
+    const toplam = kalemler.reduce((t, k) => t + sayi(k.adet), 0);
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${ted?.ad || 'Toptanci'} — ${f.sip.sube_adi || ''}</title>`
+      + `<style>*{box-sizing:border-box;margin:0;padding:0}body{background:#fff;font-family:Arial,sans-serif}@media print{@page{margin:12mm}}</style>`
+      + `</head><body><div style="padding:40px 44px;max-width:640px">`
+      + `<div style="border-bottom:3px solid #111;padding-bottom:16px;margin-bottom:24px">`
+      + `<div style="font-size:11px;color:#888;letter-spacing:.1em;margin-bottom:8px">TOPTANCI SİPARİŞ LİSTESİ</div>`
+      + `<div style="font-size:26px;font-weight:900">${f.sip.sube_adi || '—'}</div>`
+      + `<div style="font-size:20px;font-weight:800;margin-top:8px">▸ ${ted?.ad || '—'}</div>`
+      + `<div style="font-size:13px;color:#666;margin-top:10px">📅 ${String(f.sip.tarih || '').slice(0, 10)}</div></div>`
+      + `<table style="width:100%;border-collapse:collapse">${satirlar}</table>`
+      + ((f.not || '').trim() ? `<div style="margin-top:24px;padding:12px 14px;background:#f5f5f5;border-radius:8px;font-size:13px;color:#555">Not: ${f.not}</div>` : '')
+      + `<div style="margin-top:28px;border-top:1px solid #ccc;padding-top:12px;font-size:12px;color:#aaa">`
+      + `${kalemler.length} kalem · ${toplam} toplam adet</div></div>`
+      + `<script>window.onload=function(){window.print()}<\/script></body></html>`;
+    const w = window.open('', '_blank', 'width=700,height=920');
+    if (!w) { onToast?.('Yazdırma penceresi engellendi — tarayıcı izinlerini kontrol edin'); return; }
+    w.document.write(html);
+    w.document.close();
   };
 
   const yonKaydet = async () => {
@@ -338,10 +414,11 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
           ? `Kabulü yapan: ${s.kabul_personel_ad}${saatKisa(s.kabul_ts) ? ` · ${saatKisa(s.kabul_ts)}` : ''}`
           : '',
       ].filter(Boolean).join(' · '),
-      aksiyonAd: s.asama === 'bekliyor' ? 'Yönlendirme ekranını aç'
-        : s.asama === 'depoda' ? 'Sevkiyatı hazırla'
-        : 'Operasyon Merkezi\'ni aç',
-      _hedef: s.asama === 'depoda' ? '__gorunum:sevkiyat' : (s.asama === 'bekliyor' ? 'sevkiyat-hazirlama' : 'ops-merkez'),
+      ...(s.asama === 'bekliyor'
+        ? { aksiyonlar: [{ ad: '→ Yönlendir (depo / toptancı)', birincil: true, onTikla: () => yonAc(s) }] }
+        : s.asama === 'depoda'
+          ? { aksiyonAd: 'Sevkiyatı hazırla', _hedef: '__gorunum:sevkiyat' }
+          : { aksiyonAd: 'Operasyon Merkezi\'ni aç', _hedef: 'ops-merkez' }),
     });
   };
 
@@ -522,10 +599,115 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
                   fontSize: 16, cursor: 'pointer', fontFamily: 'inherit',
                 }}>✕</button>
               </div>
-              <div style={{ fontSize: 12.5, color: R.metin2, marginBottom: 16 }}>
+              <div style={{ fontSize: 12.5, color: R.metin2, marginBottom: 14 }}>
                 {yonForm.sip.sube_adi || '—'} · {tarihKisa(yonForm.sip.tarih)} · {(yonForm.sip.kalemler || []).length} kalem
               </div>
 
+              {/* Mod anahtarı — klasik kulenin depo/toptancı ikilisi */}
+              <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
+                {[['depo', '🏭 Depo sevk'], ['toptanci', '🚚 Toptancıya yolla']].map(([m, ad]) => (
+                  <div key={m} onClick={() => setYonForm((f) => ({ ...f, mod: m }))} style={{
+                    padding: '8px 15px', borderRadius: 10, fontSize: 12, fontWeight: 700, cursor: 'pointer',
+                    border: `1px solid ${yonForm.mod === m ? R.bakir : R.cizgi3}`,
+                    color: yonForm.mod === m ? R.bakir : R.metin2,
+                    background: yonForm.mod === m ? 'rgba(217,154,78,.12)' : 'transparent',
+                  }}>{ad}</div>
+                ))}
+              </div>
+
+              {yonForm.mod === 'toptanci' ? (
+                <>
+                  <label style={{ fontSize: 10.5, letterSpacing: '.7px', textTransform: 'uppercase', color: R.not2, fontWeight: 700, marginBottom: 6, display: 'block' }}>
+                    Toptancı *
+                  </label>
+                  <select
+                    value={yonForm.tedarikciId}
+                    onChange={(e) => setYonForm((f) => ({ ...f, tedarikciId: e.target.value }))}
+                    style={{
+                      width: '100%', boxSizing: 'border-box', padding: '9px 12px', borderRadius: 10,
+                      border: `1px solid ${R.cizgi3}`, background: R.girinti, color: R.krem,
+                      fontSize: 13, fontFamily: 'inherit', outline: 'none',
+                    }}
+                  >
+                    <option value="">Kayıtlı tedarikçi seçin…</option>
+                    {tedarikciler.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.ad}{t.telefon ? '' : '  (telefon yok — WhatsApp gitmez)'}
+                      </option>
+                    ))}
+                  </select>
+
+                  <label style={{ fontSize: 10.5, letterSpacing: '.7px', textTransform: 'uppercase', color: R.not2, fontWeight: 700, margin: '14px 0 6px', display: 'block' }}>
+                    Gönderilecek kalemler ({yonForm.secili.length}/{(yonForm.sip.kalemler || []).length})
+                  </label>
+                  <div style={{
+                    maxHeight: 190, overflowY: 'auto', borderRadius: 11,
+                    border: `1px solid ${R.cizgi3}`, background: R.girinti, padding: '8px 10px',
+                  }}>
+                    {(yonForm.sip.kalemler || []).map((k, i) => {
+                      const secili = yonForm.secili.includes(i);
+                      return (
+                        <div
+                          key={i}
+                          onClick={() => setYonForm((f) => ({
+                            ...f,
+                            secili: secili ? f.secili.filter((x) => x !== i) : [...f.secili, i],
+                          }))}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: 9, padding: '6px 4px',
+                            cursor: 'pointer', fontSize: 12.5,
+                            color: secili ? R.krem : R.not, opacity: secili ? 1 : 0.55,
+                          }}
+                        >
+                          <span style={{ color: secili ? R.yesil : R.not2, fontSize: 13 }}>{secili ? '✓' : '□'}</span>
+                          <span style={{ flex: 1 }}>{k.urun_ad || k.kalem_adi || '—'}</span>
+                          <span style={{ fontFamily: F.mono, fontWeight: 700 }}>× {sayi(k.adet)}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <label style={{ fontSize: 10.5, letterSpacing: '.7px', textTransform: 'uppercase', color: R.not2, fontWeight: 700, margin: '14px 0 6px', display: 'block' }}>
+                    Sipariş notu (isteğe bağlı)
+                  </label>
+                  <textarea
+                    rows={2}
+                    value={yonForm.not}
+                    onChange={(e) => setYonForm((f) => ({ ...f, not: e.target.value }))}
+                    placeholder="toptancıya iletilecek not…"
+                    style={{
+                      width: '100%', boxSizing: 'border-box', padding: '9px 12px', borderRadius: 10,
+                      border: `1px solid ${R.cizgi3}`, background: R.girinti, color: R.krem,
+                      fontSize: 13, fontFamily: 'inherit', outline: 'none', resize: 'vertical',
+                    }}
+                  />
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 18, flexWrap: 'wrap' }}>
+                    <button onClick={toptanciYazdir} style={{
+                      padding: '9px 14px', borderRadius: 10, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+                      background: 'transparent', color: R.metin2, fontSize: 11.5, fontWeight: 600, fontFamily: 'inherit',
+                    }}>
+                      🖨 Listeyi yazdır
+                    </button>
+                    <div style={{ marginLeft: 'auto', display: 'flex', gap: 10 }}>
+                      <button disabled={yonMesgul} onClick={() => setYonForm(null)} style={{
+                        padding: '10px 18px', borderRadius: 10, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+                        background: 'transparent', color: R.metin2, fontSize: 12.5, fontWeight: 600, fontFamily: 'inherit',
+                      }}>Vazgeç</button>
+                      <button disabled={yonMesgul || !yonForm.tedarikciId || !yonForm.secili.length} onClick={toptanciyaYolla} style={{
+                        padding: '10px 20px', borderRadius: 10, border: 'none',
+                        background: (yonForm.tedarikciId && yonForm.secili.length) ? 'linear-gradient(150deg, #D99A4E, #B06E2C)' : R.girinti,
+                        color: (yonForm.tedarikciId && yonForm.secili.length) ? '#1C1309' : R.not,
+                        fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit',
+                        cursor: (yonForm.tedarikciId && yonForm.secili.length) ? 'pointer' : 'default',
+                      }}>
+                        {yonMesgul ? 'Yollanıyor…' : 'Toptancıya yolla'}
+                      </button>
+                    </div>
+                  </div>
+                </>
+              ) : (
+              <>
               <label style={{ fontSize: 10.5, letterSpacing: '.7px', textTransform: 'uppercase', color: R.not2, fontWeight: 700, marginBottom: 6, display: 'block' }}>
                 Hedef depo *
               </label>
@@ -558,15 +740,6 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
               />
 
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 18, flexWrap: 'wrap' }}>
-                <button
-                  onClick={() => onKopru?.('sevkiyat-hazirlama')}
-                  style={{
-                    padding: '9px 14px', borderRadius: 10, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
-                    background: 'transparent', color: R.metin2, fontSize: 11.5, fontWeight: 600, fontFamily: 'inherit',
-                  }}
-                >
-                  🚚 Toptancı akışı (kule)
-                </button>
                 <div style={{ marginLeft: 'auto', display: 'flex', gap: 10 }}>
                   <button disabled={yonMesgul} onClick={() => setYonForm(null)} style={{
                     padding: '10px 18px', borderRadius: 10, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
@@ -582,6 +755,8 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
                   </button>
                 </div>
               </div>
+              </>
+              )}
             </div>
           </div>
         )}
