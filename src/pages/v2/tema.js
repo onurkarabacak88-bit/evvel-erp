@@ -194,6 +194,7 @@ export const MODULLER = [
   { id: 'borc', ad: 'Borç Navigasyonu', kisa: 'Borç', alt: 'BBE · ABEK · runway', ikon: IK.pusula, gorunumler: [
     { id: 'durum', ad: 'Bu Ay Batıyor Muyum?', rozet: 'borcDurum', renk: '#F87171' },
     { id: 'takvim', ad: 'Borç Takvimi · 36 ay' },
+    { id: 'projeksiyon', ad: 'Nakit Projeksiyonu · 12 ay' },
     { id: 'hedef', ad: 'Hedef Ciro & Ölçek' },
     { id: 'katki', ad: 'Şube Katkısı' },
   ]},

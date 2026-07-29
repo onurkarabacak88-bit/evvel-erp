@@ -601,6 +601,23 @@ const BORC_UC = {
     havuz_besleyen_aylik: 190400, havuz_bosaltan_aylik: -4000, net_havuz_aylik: 186400,
     not: 'Krediler KOLEKTİF — şubeye paylaştırılmaz.',
   },
+  // 12 aylık projeksiyon (v2 5. görünüm): sarmal senaryosu — ABEK faizi karşılamıyor
+  '/api/borc-nav/projeksiyon': (() => {
+    const bas = 1575900; const faiz = 0.041; const abek = 244500;
+    const seri = []; let b = bas;
+    for (let i = 1; i <= 12; i++) { b = Math.round(b * (1 + faiz) - abek); seri.push({ ay: i, toplam_borc: b }); }
+    const son = seri[seri.length - 1].toplam_borc;
+    return {
+      seri, spiral: bas * faiz > abek,
+      varsayim: { baslangic_borc: bas, abek_aylik: abek, efektif_aylik_faiz_pct: 4.1 },
+      aylik_faiz_tl: Math.round(bas * faiz),
+      abek_aciligi_faize_karsi: Math.max(0, Math.round(bas * faiz - abek)),
+      ikiye_katlanma_ay: null,
+      ay_sonu_borc: son,
+      artis_pct: Math.round(((son - bas) / bas) * 100),
+      borc_sabit_icin_gereken_aylik_odeme: Math.round(bas * faiz),
+    };
+  })(),
 };
 
 // ── Para Hareketleri modülü sahte verisi ────────────────────────────────────

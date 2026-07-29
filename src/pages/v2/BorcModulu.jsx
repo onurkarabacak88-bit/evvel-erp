@@ -41,6 +41,9 @@ export default function BorcModulu({ gorunum, onCekmece, onKopru }) {
   const [takvim, setTakvim] = useState(null);
   const [olcek, setOlcek] = useState(null);
   const [katki, setKatki] = useState(null);
+  // 5. görünüm (köprü kaldırma turu, 2026-07-30): klasik BorcNavigasyon'daki
+  // 12 aylık projeksiyon v2'de karşılıksızdı — köprü yerine yerli görünüm.
+  const [proj, setProj] = useState(null);
 
   const yukle = () => {
     setYukleniyor(true);
@@ -50,8 +53,9 @@ export default function BorcModulu({ gorunum, onCekmece, onKopru }) {
       api('/borc-nav/takvim?ay=36').catch(() => null),
       api('/borc-nav/olcek-plani').catch(() => null),
       api('/borc-nav/sube-katki?gun=30').catch(() => null),
-    ]).then(([o, t, ol, k]) => {
-      setOzet(o); setTakvim(t); setOlcek(ol); setKatki(k);
+      api('/borc-nav/projeksiyon?ay=12').catch(() => null),
+    ]).then(([o, t, ol, k, p]) => {
+      setOzet(o); setTakvim(t); setOlcek(ol); setKatki(k); setProj(p);
       if (!o && !t) setHata('Borç navigasyon verileri alınamadı.');
       setYukleniyor(false);
     }).catch((e) => {
@@ -242,8 +246,8 @@ export default function BorcModulu({ gorunum, onCekmece, onKopru }) {
                 { ad: 'Açık', detay: 'zorunlu yük − ABEK', tutar: fmt(sayi(g.acik)) },
               ],
               not: takvim.not || 'Kredi tarafı kesin (amortisman), kart tarafı yaklaşık (asgari sabit varsayımı).',
-              aksiyonAd: 'Borç navigasyonunu aç',
-              _hedef: 'borc-navigasyon',
+              aksiyonAd: 'Nakit projeksiyonuna git',
+              _hedef: '__gorunum:projeksiyon',
             });
           }}
         />
@@ -328,11 +332,98 @@ export default function BorcModulu({ gorunum, onCekmece, onKopru }) {
               not: kap.yapilandirma_sart
                 ? `Mevcut ${sayi(par.mevcut_sube)} şube tam kapasitede bile ${fmt(sayi(kap.mevcut_sube_max_abek))} ABEK üretiyor; zorunlu yük ${fmt(sayi(kap.zorunlu_yuk))}. Yani ciro artışı tek başına yetmez — yapılandırma şart.`
                 : 'Mevcut yapı bu hedefi taşıyabilir.',
-              aksiyonAd: 'Borç navigasyonunu aç',
-              _hedef: 'borc-navigasyon',
+              aksiyonAd: 'Nakit projeksiyonuna git',
+              _hedef: '__gorunum:projeksiyon',
             });
           }}
         />
+      </>
+    );
+  }
+
+  // ── 5) Nakit Projeksiyonu (12 ay) — klasik köprü yerine yerli görünüm ──────
+  if (gorunum === 'projeksiyon') {
+    const seri = proj?.seri || [];
+    if (!seri.length) {
+      return (
+        <div style={{ ...kartYuzey, padding: '38px 30px', textAlign: 'center', color: R.not }}>
+          Projeksiyon hesaplanamadı — borç ve ABEK verisi biriktikçe 12 aylık gidişat burada çizilir.
+        </div>
+      );
+    }
+    const bas = sayi(proj?.varsayim?.baslangic_borc);
+    const degerler = [bas, ...seri.map(s => sayi(s.toplam_borc))];
+    const enB = Math.max(...degerler); const enK = Math.min(...degerler);
+    const G = 640; const Y = 190; const solB = 10; const sagB = 10; const ustB = 16; const altB = 24;
+    const n = degerler.length;
+    const xk = (i) => solB + (i / Math.max(1, n - 1)) * (G - solB - sagB);
+    const yk = (v) => ustB + (1 - (v - enK) / Math.max(1, enB - enK)) * (Y - ustB - altB);
+    const cizgi = degerler.map((v, i) => `${xk(i)},${yk(v)}`).join(' ');
+    const alan = `${xk(0)},${yk(enK)} ${cizgi} ${xk(n - 1)},${yk(enK)}`;
+    const sarmal = !!proj.spiral;
+    const renk = sarmal ? R.kirmizi : R.yesil;
+    return (
+      <>
+        <KpiSeridi kpiler={[
+          { etiket: 'Bugünkü borç', deger: fmt(bas), alt: 'başlangıç tabanı', renk: R.krem },
+          { etiket: '12 ay sonu', deger: fmt(sayi(proj.ay_sonu_borc)), alt: `${sayi(proj.artis_pct) > 0 ? '+' : ''}${sayi(proj.artis_pct)}% değişim`, renk },
+          { etiket: 'Aylık faiz', deger: fmt(sayi(proj.aylik_faiz_tl)), alt: `efektif %${sayi(proj.varsayim?.efektif_aylik_faiz_pct)}/ay`, renk: R.kirmizi },
+          { etiket: 'ABEK (ödeme gücü)', deger: fmt(sayi(proj.varsayim?.abek_aylik)), alt: sarmal ? 'faizi karşılamıyor' : 'faizi karşılıyor', renk: sarmal ? R.kirmizi : R.yesil },
+        ]} />
+
+        {sarmal && (
+          <div style={{
+            ...kartYuzey, padding: '14px 18px', marginBottom: 14,
+            border: `1px solid ${R.kirmizi}66`, background: `linear-gradient(165deg, rgba(248,113,113,.10), ${R.kartUst2 || R.girinti})`,
+          }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: R.kirmizi }}>🌀 Sarmal uyarısı</div>
+            <div style={{ fontSize: 12.5, color: R.metin2, marginTop: 6, lineHeight: 1.6 }}>
+              Aylık ödeme kapasitesi (ABEK) faizi bile karşılamıyor — faize karşı açık{' '}
+              <b style={{ fontFamily: F.mono, color: R.kirmizi }}>{fmt(sayi(proj.abek_aciligi_faize_karsi))}/ay</b>.
+              {proj.ikiye_katlanma_ay
+                ? <> Bu gidişatla borç <b>~{sayi(proj.ikiye_katlanma_ay)} ayda ikiye katlanır</b>.</>
+                : ' Borç sürekli büyür.'}
+            </div>
+          </div>
+        )}
+
+        <div style={{ ...kartYuzey, padding: '18px 20px', marginBottom: 14 }}>
+          <div style={{
+            display: 'flex', alignItems: 'baseline', justifyContent: 'space-between',
+            paddingBottom: 11, borderBottom: `1px solid ${R.cizgi2}`, marginBottom: 14, flexWrap: 'wrap', gap: 8,
+          }}>
+            <span style={{ fontFamily: F.baslik, fontSize: 15, fontWeight: 600 }}>🔮 Borç eğrisi · 12 ay</span>
+            <span style={{ fontSize: 11, color: R.not2 }}>
+              her ay faiz geliyor, ABEK kadarı ödeniyor → fark borca ekleniyor
+            </span>
+          </div>
+          <svg viewBox={`0 0 ${G} ${Y}`} style={{ width: '100%', display: 'block' }}>
+            <line x1={solB} y1={yk(bas)} x2={G - sagB} y2={yk(bas)} stroke={R.cizgi3} strokeDasharray="4 4" />
+            <text x={G - sagB} y={yk(bas) - 5} textAnchor="end" style={{ fontSize: 10, fill: R.not2 }}>bugün {fmt(bas)}</text>
+            <polygon points={alan} fill={renk} opacity="0.13" />
+            <polyline points={cizgi} fill="none" stroke={renk} strokeWidth="2.5" />
+            {degerler.map((v, i) => (i % 2 === 0 ? (
+              <g key={i}>
+                <circle cx={xk(i)} cy={yk(v)} r="2.8" fill={renk} />
+                <text x={xk(i)} y={Y - 7} textAnchor="middle" style={{ fontSize: 9, fill: R.not2 }}>
+                  {i === 0 ? 'şimdi' : `${i}a`}
+                </text>
+              </g>
+            ) : null))}
+          </svg>
+        </div>
+
+        <div style={{
+          ...kartYuzey, padding: '14px 18px', display: 'flex', gap: 20,
+          flexWrap: 'wrap', fontSize: 12.5, color: R.metin2, marginBottom: 16,
+        }}>
+          <span>Borcun DURMASI için gereken aylık ödeme:{' '}
+            <b style={{ fontFamily: F.mono, color: R.bakir }}>{fmt(sayi(proj.borc_sabit_icin_gereken_aylik_odeme))}</b>
+          </span>
+          <span style={{ color: R.not }}>
+            Şu anki kapasite {fmt(sayi(proj.varsayim?.abek_aylik))} → aradaki fark her ay borca ekleniyor.
+          </span>
+        </div>
       </>
     );
   }
@@ -386,8 +477,8 @@ export default function BorcModulu({ gorunum, onCekmece, onKopru }) {
             not: s.durum === 'kapali'
               ? 'Kapalı şube: gelir yok ama kira sürüyor — ileriye dönük etkisi saf drenaj.'
               : (katki.not || 'Katkı = operasyonel nakit (kira dahil, finansman hariç). Krediler kolektiftir, şubeye paylaştırılmaz.'),
-            aksiyonAd: 'Borç navigasyonunu aç',
-            _hedef: 'borc-navigasyon',
+            aksiyonAd: 'Nakit projeksiyonuna git',
+            _hedef: '__gorunum:projeksiyon',
           });
         }}
       />
