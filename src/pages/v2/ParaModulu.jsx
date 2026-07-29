@@ -17,7 +17,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { api, fmt } from '../../utils/api';
 import { R, F, kartYuzey } from './tema';
-import { KpiSeridi, Tablo } from './parcalar';
+import { KpiSeridi, Tablo, Liste } from './parcalar';
 
 const sayi = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 // Tarih tuzağı (bkz TasarimV2): "bugün" yerel parçalardan, aritmetik UTC'de
@@ -128,10 +128,20 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru, onToast }) {
   const [giderler, setGiderler] = useState(null);
   const [giderOzet, setGiderOzet] = useState(null);
   const [giderHata, setGiderHata] = useState('');
+  // v2-YERLİ gider formu (köprü kaldırma turu): aynı guard'lı uçlar
+  const [giderForm, setGiderForm] = useState(null);   // {tarih,kategori,tutar,aciklama,sube,odeme_yontemi,kart_id,tedarikci}
+  const [giderDup, setGiderDup] = useState('');
+  const [kartlar, setKartlar] = useState([]);
+  const [kartOneri, setKartOneri] = useState(null);
+  const [giderIptalSor, setGiderIptalSor] = useState('');
   // ── DIŞ KAYNAK ────────────────────────────────────────────────────────────
   const [dkAy, setDkAy] = useState(() => bugunISO().slice(0, 7));
   const [diskaynak, setDiskaynak] = useState(null);
   const [dkHata, setDkHata] = useState('');
+  const [dkForm, setDkForm] = useState(null);         // {tarih,kategori,tutar,aciklama}
+  const [dkDup, setDkDup] = useState('');
+  const [dkIptalSor, setDkIptalSor] = useState('');
+  const [formMesgul, setFormMesgul] = useState(false);
 
   const ciroYukle = useCallback(() => {
     setCiroHata('');
@@ -174,6 +184,91 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru, onToast }) {
       onToast?.(e?.message || 'İptal edilemedi');
     } finally {
       setCiroMesgul(false);
+    }
+  };
+
+  // Gider formunu aç: kart listesi tembel yüklenir (yalnız form açılınca)
+  const giderFormAc = () => {
+    setGiderDup('');
+    setKartOneri(null);
+    setGiderForm({
+      tarih: bugunISO(), kategori: 'Diğer', tutar: '', aciklama: '',
+      sube: 'MERKEZ', odeme_yontemi: 'nakit', kart_id: '', tedarikci: '',
+    });
+    if (!kartlar.length) api('/kartlar').then((d) => setKartlar(Array.isArray(d) ? d : [])).catch(() => {});
+  };
+
+  const giderKaydet = async (force = false) => {
+    if (!sayi(giderForm?.tutar)) { onToast?.('Tutar girmeden gider kaydedilmez'); return; }
+    if (giderForm.odeme_yontemi === 'kart' && !giderForm.kart_id) { onToast?.('Kart seçimi zorunlu'); return; }
+    setFormMesgul(true);
+    setGiderDup('');
+    try {
+      const body = { ...giderForm, force };
+      if (body.odeme_yontemi === 'nakit') delete body.kart_id;
+      const res = await api('/anlik-gider', { method: 'POST', body });
+      if (res?.warning) { setGiderDup(res.mesaj || 'Benzer kayıt var.'); return; }
+      onToast?.(giderForm.odeme_yontemi === 'kart'
+        ? '✓ Gider kaydedildi — kart borcuna eklendi'
+        : '✓ Gider kaydedildi — kasadan düşüldü');
+      setGiderForm(null);
+      giderYukle();
+    } catch (e) {
+      onToast?.(e?.message || 'Gider kaydedilemedi');
+    } finally {
+      setFormMesgul(false);
+    }
+  };
+
+  const giderSil = async (g) => {
+    setFormMesgul(true);
+    try {
+      await api(`/anlik-gider/${g.id}`, { method: 'DELETE' });
+      onToast?.(g?.odeme_yontemi === 'kart' ? 'İptal — kart borcundan düşüldü' : 'İptal — kasaya iade edildi');
+      setGiderIptalSor('');
+      giderYukle();
+    } catch (e) {
+      onToast?.(e?.message || 'İptal edilemedi');
+    } finally {
+      setFormMesgul(false);
+    }
+  };
+
+  // Kart önerisi (salt-okur yardım): tutar + kart modundayken istenir
+  const kartOneriGetir = (tutar) => {
+    api(`/anlik-gider-kart-oneri?tutar=${sayi(tutar)}`)
+      .then((d) => setKartOneri(d || null))
+      .catch(() => setKartOneri(null));
+  };
+
+  const dkKaydet = async (force = false) => {
+    if (!sayi(dkForm?.tutar)) { onToast?.('Tutar girmeden gelir kaydedilmez'); return; }
+    setFormMesgul(true);
+    setDkDup('');
+    try {
+      const res = await api('/dis-kaynak', { method: 'POST', body: { ...dkForm, force } });
+      if (res?.warning) { setDkDup(res.mesaj || 'Benzer kayıt var.'); return; }
+      onToast?.('✓ Gelir kaydedildi — kasaya eklendi');
+      setDkForm(null);
+      dkYukle(dkAy);
+    } catch (e) {
+      onToast?.(e?.message || 'Gelir kaydedilemedi');
+    } finally {
+      setFormMesgul(false);
+    }
+  };
+
+  const dkSil = async (id) => {
+    setFormMesgul(true);
+    try {
+      await api(`/dis-kaynak/${id}`, { method: 'DELETE' });
+      onToast?.('İptal edildi — kasadan düşüldü');
+      setDkIptalSor('');
+      dkYukle(dkAy);
+    } catch (e) {
+      onToast?.(e?.message || 'İptal edilemedi');
+    } finally {
+      setFormMesgul(false);
     }
   };
 
@@ -650,32 +745,155 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru, onToast }) {
           { etiket: 'Kayıt sayısı', deger: String(giderler.length), alt: 'bu ay' },
           { etiket: 'En büyük kalem', deger: enBuyuk ? fmt(sayi(enBuyuk.tutar)) : '—', alt: enBuyuk ? String(enBuyuk.aciklama || '').slice(0, 26) : 'kayıt yok' },
         ]} />
+        <div style={{ display: 'flex', gap: 9, marginBottom: 14 }}>
+          <KopruButon birincil ad="+ Anlık gider gir" onTikla={giderFormAc} />
+        </div>
         {giderler.length === 0 ? (
           <BosDurum metin="Bu ay anlık gider kaydı yok — plan dışı harcama girilmemiş." />
         ) : (
-          <Tablo
-            baslik="Anlık giderler · bu ay"
-            not="kayıt anında kasadan düşer"
-            kolonlar={[
-              { ad: 'Tarih' }, { ad: 'Açıklama' }, { ad: 'Şube' }, { ad: 'Tutar', sag: 1 },
-            ]}
+          <Liste
             satirlar={[...giderler]
               .sort((a, b) => String(b.tarih).localeCompare(String(a.tarih)))
               .slice(0, 40)
               .map((g, i) => ({
-                id: g.id || `g-${i}`,
-                hucreler: [
-                  { v: tarihKisa(g.tarih), mono: true, renk: R.not },
-                  { v: g.aciklama || '—', kalin: true },
-                  { v: g.sube_adi || subeAd[String(g.sube_id)] || g.sube || '—', renk: R.not },
-                  { v: fmt(sayi(g.tutar)), mono: true, sag: true, renk: R.kirmizi },
+                id: g.id || `g-${i}`, _g: g,
+                baslik: g.aciklama || g.kategori || 'Gider',
+                alt: `${tarihKisa(g.tarih)} · ${g.kategori || '—'} · ${g.sube_adi || subeAd[String(g.sube_id)] || g.sube || '—'}${g.odeme_yontemi === 'kart' ? ' · 💳 kart' : ''}`,
+                tutar: fmt(sayi(g.tutar)),
+                tier: 'uyari',
+                aksiyonlar: giderIptalSor === String(g.id) ? [
+                  { ad: formMesgul ? '…' : 'Eminim — iptal et', birincil: true, onTikla: () => !formMesgul && giderSil(g) },
+                  { ad: 'Vazgeç', onTikla: () => setGiderIptalSor('') },
+                ] : [
+                  { ad: 'İptal', onTikla: () => setGiderIptalSor(String(g.id)) },
                 ],
               }))}
           />
         )}
-        <div style={{ display: 'flex', gap: 9, marginTop: 2, marginBottom: 16 }}>
-          <KopruButon birincil ad="Anlık gider gir" onTikla={() => onKopru?.('anlik-gider')} />
-        </div>
+
+        {/* ── YERLİ GİDER FORMU (kadife modal) ── */}
+        {giderForm && (() => {
+          const alan = (k, v) => setGiderForm((f) => ({ ...f, [k]: v }));
+          const oneriIlk = Array.isArray(kartOneri?.oneriler) ? kartOneri.oneriler[0] : (Array.isArray(kartOneri) ? kartOneri[0] : null);
+          return (
+            <div
+              onClick={(e) => { if (e.target === e.currentTarget && !formMesgul) setGiderForm(null); }}
+              style={{
+                position: 'fixed', inset: 0, zIndex: 90, background: 'rgba(10,6,2,.66)',
+                backdropFilter: 'blur(3px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+              }}
+            >
+              <div style={{ ...kartYuzey, width: 540, maxWidth: '96vw', maxHeight: '92vh', overflowY: 'auto', padding: '24px 26px' }}>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 18 }}>
+                  <div style={{ fontFamily: F.baslik, fontSize: 21, fontWeight: 600 }}>Anlık Gider</div>
+                  <div style={{ fontSize: 11.5, color: R.not2 }}>nakit: kasadan düşer · kart: borca eklenir</div>
+                  <button onClick={() => !formMesgul && setGiderForm(null)} style={{
+                    marginLeft: 'auto', border: 'none', background: 'transparent', color: R.not,
+                    fontSize: 16, cursor: 'pointer', fontFamily: 'inherit',
+                  }}>✕</button>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+                  <div>
+                    <label style={alanEtiket}>Tarih</label>
+                    <input type="date" value={giderForm.tarih} onChange={(e) => alan('tarih', e.target.value)}
+                      style={{ ...alanStil, colorScheme: 'dark' }} />
+                  </div>
+                  <div>
+                    <label style={alanEtiket}>Kategori</label>
+                    <select value={giderForm.kategori} onChange={(e) => alan('kategori', e.target.value)} style={alanStil}>
+                      {['Nakit Alım', 'Market', 'Fatura', 'Kargo', 'Yemek', 'Yakıt', 'Bakım', 'Diğer'].map((k) => <option key={k}>{k}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label style={alanEtiket}>Tutar (₺) *</label>
+                    <input type="number" value={giderForm.tutar} onChange={(e) => alan('tutar', e.target.value)}
+                      style={{ ...alanStil, fontFamily: F.mono, textAlign: 'right' }} />
+                  </div>
+                  <div>
+                    <label style={alanEtiket}>Şube</label>
+                    <select value={giderForm.sube} onChange={(e) => alan('sube', e.target.value)} style={alanStil}>
+                      {['MERKEZ', 'TEMA', 'ZAFER', 'ALSANCAK', 'KOYCEGIZ'].map((s) => <option key={s}>{s}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label style={alanEtiket}>Açıklama</label>
+                    <input value={giderForm.aciklama} onChange={(e) => alan('aciklama', e.target.value)} style={alanStil} />
+                  </div>
+                  <div>
+                    <label style={alanEtiket}>Tedarikçi (varsa)</label>
+                    <input value={giderForm.tedarikci} onChange={(e) => alan('tedarikci', e.target.value)}
+                      placeholder="cari eşleşme için" style={alanStil} />
+                  </div>
+                </div>
+
+                {/* Ödeme yöntemi */}
+                <div style={{ display: 'flex', gap: 8, marginTop: 16, alignItems: 'center', flexWrap: 'wrap' }}>
+                  {[['nakit', '💵 Nakit — kasadan'], ['kart', '💳 Kart — borca yaz']].map(([y, ad]) => (
+                    <div key={y} onClick={() => {
+                      alan('odeme_yontemi', y);
+                      if (y === 'kart') kartOneriGetir(giderForm.tutar);
+                    }} style={{
+                      padding: '8px 15px', borderRadius: 10, fontSize: 12.5, fontWeight: 700, cursor: 'pointer',
+                      border: `1px solid ${giderForm.odeme_yontemi === y ? R.bakir : R.cizgi3}`,
+                      color: giderForm.odeme_yontemi === y ? R.bakir : R.metin2,
+                      background: giderForm.odeme_yontemi === y ? 'rgba(217,154,78,.12)' : 'transparent',
+                    }}>
+                      {ad}
+                    </div>
+                  ))}
+                  {giderForm.odeme_yontemi === 'kart' && (
+                    <select value={giderForm.kart_id} onChange={(e) => alan('kart_id', e.target.value)}
+                      style={{ ...alanStil, width: 'auto', minWidth: 180 }}>
+                      <option value="">Kart seçin *</option>
+                      {kartlar.map((k) => <option key={k.id} value={k.id}>{k.ad || k.kart_adi || k.banka}</option>)}
+                    </select>
+                  )}
+                </div>
+                {giderForm.odeme_yontemi === 'kart' && oneriIlk && (
+                  <div style={{ fontSize: 11.5, color: R.not, marginTop: 8 }}>
+                    💡 Önerilen kart: <strong style={{ color: R.bakir }}>{oneriIlk.ad || oneriIlk.kart_adi || '—'}</strong>
+                    {oneriIlk.neden ? ` — ${oneriIlk.neden}` : ''}
+                  </div>
+                )}
+
+                {giderDup && (
+                  <div style={{
+                    marginTop: 14, padding: '13px 16px', borderRadius: 12,
+                    background: `${R.kirmizi}14`, border: `1px solid ${R.kirmizi}55`,
+                  }}>
+                    <div style={{ fontSize: 12.5, color: R.kirmizi, fontWeight: 700 }}>⚠ Benzer kayıt var</div>
+                    <div style={{ fontSize: 12, color: R.metin2, marginTop: 5, lineHeight: 1.55 }}>{giderDup}</div>
+                    <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+                      <button disabled={formMesgul} onClick={() => giderKaydet(true)} style={{
+                        padding: '7px 13px', borderRadius: 9, border: 'none', cursor: 'pointer',
+                        background: `${R.kirmizi}26`, color: R.kirmizi, fontSize: 12, fontWeight: 700, fontFamily: 'inherit',
+                      }}>Yine de kaydet</button>
+                      <button onClick={() => setGiderDup('')} style={{
+                        padding: '7px 12px', borderRadius: 9, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+                        background: 'transparent', color: R.metin2, fontSize: 12, fontWeight: 600, fontFamily: 'inherit',
+                      }}>Vazgeç</button>
+                    </div>
+                  </div>
+                )}
+
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 20 }}>
+                  <button disabled={formMesgul} onClick={() => setGiderForm(null)} style={{
+                    padding: '10px 18px', borderRadius: 10, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+                    background: 'transparent', color: R.metin2, fontSize: 12.5, fontWeight: 600, fontFamily: 'inherit',
+                  }}>İptal</button>
+                  <button disabled={formMesgul || giderDup !== ''} onClick={() => giderKaydet(false)} style={{
+                    padding: '10px 20px', borderRadius: 10, border: 'none',
+                    background: giderDup !== '' ? R.girinti : 'linear-gradient(150deg, #D99A4E, #B06E2C)',
+                    color: giderDup !== '' ? R.not : '#1C1309', fontSize: 12.5, fontWeight: 700,
+                    fontFamily: 'inherit', cursor: giderDup !== '' ? 'default' : 'pointer',
+                  }}>
+                    {formMesgul ? 'Kaydediliyor…' : 'Kaydet'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
       </>
     );
   }
@@ -712,32 +930,116 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru, onToast }) {
             </div>
           ))}
         </div>
+        <div style={{ display: 'flex', gap: 9, marginBottom: 14 }}>
+          <KopruButon birincil ad="+ Gelir ekle" onTikla={() => {
+            setDkDup('');
+            setDkForm({ tarih: bugunISO(), kategori: 'Aile Desteği', tutar: '', aciklama: '' });
+          }} />
+        </div>
         {diskaynak.length === 0 ? (
           <BosDurum metin="Bu dönemde dış kaynak geliri kaydı yok." />
         ) : (
-          <Tablo
-            baslik={`Dış kaynak gelirleri · ${dkAy}`}
-            not="ciro dışı gelirler — kasaya işlenir"
-            kolonlar={[
-              { ad: 'Tarih' }, { ad: 'Açıklama' }, { ad: 'Durum' }, { ad: 'Tutar', sag: 1 },
-            ]}
+          <Liste
             satirlar={[...diskaynak]
               .sort((a, b) => String(b.tarih).localeCompare(String(a.tarih)))
               .slice(0, 40)
               .map((r, i) => ({
-                id: r.id || `d-${i}`,
-                hucreler: [
-                  { v: tarihKisa(r.tarih), mono: true, renk: R.not },
-                  { v: r.aciklama || '—', kalin: true },
-                  { v: r.durum === 'aktif' ? 'işlendi' : (r.durum || '—'), rozet: r.durum === 'aktif' ? R.yesil : R.amber },
-                  { v: fmt(sayi(r.tutar)), mono: true, sag: true, renk: R.yesil, kalin: true },
+                id: r.id || `d-${i}`, _r: r,
+                baslik: r.aciklama || r.kategori || 'Gelir',
+                alt: `${tarihKisa(r.tarih)} · ${r.kategori || '—'} · ${r.durum === 'aktif' ? 'işlendi' : (r.durum || '—')}`,
+                tutar: fmt(sayi(r.tutar)),
+                tier: 'olumlu',
+                aksiyonlar: dkIptalSor === String(r.id) ? [
+                  { ad: formMesgul ? '…' : 'Eminim — kasadan düş', birincil: true, onTikla: () => !formMesgul && dkSil(r.id) },
+                  { ad: 'Vazgeç', onTikla: () => setDkIptalSor('') },
+                ] : [
+                  { ad: 'İptal', onTikla: () => setDkIptalSor(String(r.id)) },
                 ],
               }))}
           />
         )}
-        <div style={{ display: 'flex', gap: 9, marginTop: 2, marginBottom: 16 }}>
-          <KopruButon birincil ad="Dış kaynak geliri gir" onTikla={() => onKopru?.('dis-kaynak')} />
-        </div>
+
+        {/* ── YERLİ DIŞ KAYNAK FORMU ── */}
+        {dkForm && (() => {
+          const alan = (k, v) => setDkForm((f) => ({ ...f, [k]: v }));
+          return (
+            <div
+              onClick={(e) => { if (e.target === e.currentTarget && !formMesgul) setDkForm(null); }}
+              style={{
+                position: 'fixed', inset: 0, zIndex: 90, background: 'rgba(10,6,2,.66)',
+                backdropFilter: 'blur(3px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+              }}
+            >
+              <div style={{ ...kartYuzey, width: 480, maxWidth: '96vw', padding: '24px 26px' }}>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 18 }}>
+                  <div style={{ fontFamily: F.baslik, fontSize: 21, fontWeight: 600 }}>Dış Kaynak Geliri</div>
+                  <div style={{ fontSize: 11.5, color: R.not2 }}>ciro dışı — kasaya eklenir</div>
+                  <button onClick={() => !formMesgul && setDkForm(null)} style={{
+                    marginLeft: 'auto', border: 'none', background: 'transparent', color: R.not,
+                    fontSize: 16, cursor: 'pointer', fontFamily: 'inherit',
+                  }}>✕</button>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+                  <div>
+                    <label style={alanEtiket}>Tarih</label>
+                    <input type="date" value={dkForm.tarih} onChange={(e) => alan('tarih', e.target.value)}
+                      style={{ ...alanStil, colorScheme: 'dark' }} />
+                  </div>
+                  <div>
+                    <label style={alanEtiket}>Kategori</label>
+                    <select value={dkForm.kategori} onChange={(e) => alan('kategori', e.target.value)} style={alanStil}>
+                      {['Aile Desteği', 'Banka Kredisi', 'Ortak Sermayesi', 'Kişisel Borç', 'Devlet Desteği', 'Diğer Gelir'].map((k) => <option key={k}>{k}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label style={alanEtiket}>Tutar (₺) *</label>
+                    <input type="number" value={dkForm.tutar} onChange={(e) => alan('tutar', e.target.value)}
+                      style={{ ...alanStil, fontFamily: F.mono, textAlign: 'right' }} />
+                  </div>
+                  <div>
+                    <label style={alanEtiket}>Açıklama</label>
+                    <input value={dkForm.aciklama} onChange={(e) => alan('aciklama', e.target.value)} style={alanStil} />
+                  </div>
+                </div>
+
+                {dkDup && (
+                  <div style={{
+                    marginTop: 14, padding: '13px 16px', borderRadius: 12,
+                    background: `${R.kirmizi}14`, border: `1px solid ${R.kirmizi}55`,
+                  }}>
+                    <div style={{ fontSize: 12.5, color: R.kirmizi, fontWeight: 700 }}>⚠ Benzer kayıt var</div>
+                    <div style={{ fontSize: 12, color: R.metin2, marginTop: 5, lineHeight: 1.55 }}>{dkDup}</div>
+                    <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+                      <button disabled={formMesgul} onClick={() => dkKaydet(true)} style={{
+                        padding: '7px 13px', borderRadius: 9, border: 'none', cursor: 'pointer',
+                        background: `${R.kirmizi}26`, color: R.kirmizi, fontSize: 12, fontWeight: 700, fontFamily: 'inherit',
+                      }}>Yine de kaydet</button>
+                      <button onClick={() => setDkDup('')} style={{
+                        padding: '7px 12px', borderRadius: 9, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+                        background: 'transparent', color: R.metin2, fontSize: 12, fontWeight: 600, fontFamily: 'inherit',
+                      }}>Vazgeç</button>
+                    </div>
+                  </div>
+                )}
+
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 20 }}>
+                  <button disabled={formMesgul} onClick={() => setDkForm(null)} style={{
+                    padding: '10px 18px', borderRadius: 10, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+                    background: 'transparent', color: R.metin2, fontSize: 12.5, fontWeight: 600, fontFamily: 'inherit',
+                  }}>İptal</button>
+                  <button disabled={formMesgul || dkDup !== ''} onClick={() => dkKaydet(false)} style={{
+                    padding: '10px 20px', borderRadius: 10, border: 'none',
+                    background: dkDup !== '' ? R.girinti : 'linear-gradient(150deg, #D99A4E, #B06E2C)',
+                    color: dkDup !== '' ? R.not : '#1C1309', fontSize: 12.5, fontWeight: 700,
+                    fontFamily: 'inherit', cursor: dkDup !== '' ? 'default' : 'pointer',
+                  }}>
+                    {formMesgul ? 'Kaydediliyor…' : 'Kaydet'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
       </>
     );
   }
