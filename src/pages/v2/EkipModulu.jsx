@@ -92,9 +92,17 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru }) {
   const [pinler, setPinler] = useState([]);
 
   const bugun = isoBugun();
-  const yil = Number(bugun.slice(0, 4));
-  const ay = Number(bugun.slice(5, 7));
+  const buYil = Number(bugun.slice(0, 4));
+  const buAy = Number(bugun.slice(5, 7));
   const pazartesi = pazartesiBul(bugun);
+
+  // Dönem seçimi (sahip isteği 2026-07-29): maaş/takip AY, görev GÜN gezinir —
+  // "bu aya sabit" sınırlaması kalktı; geçmiş bordro/takip kadifede görünür.
+  const [donem, setDonem] = useState({ yil: buYil, ay: buAy });
+  const [gorevTarih, setGorevTarih] = useState(bugun);
+  const yil = donem.yil;
+  const ay = donem.ay;
+  const [donemYukleniyor, setDonemYukleniyor] = useState(false);
 
   const yukle = () => {
     setYukleniyor(true);
@@ -102,10 +110,10 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru }) {
     Promise.all([
       api('/personel?aktif=true').catch(() => []),
       api(`/vardiya/v2/hafta-sube-tablo?pazartesi=${pazartesi}`).catch(() => null),
-      api(`/personel-aylik?yil=${yil}&ay=${ay}`).catch(() => []),
+      api(`/personel-aylik?yil=${donem.yil}&ay=${donem.ay}`).catch(() => []),
       api('/avans/ozet').catch(() => null),
-      api(`/gorev/ozet?tarih=${bugun}`).catch(() => []),
-      api(`/gorev/vardiya-takip?yil=${yil}&ay=${ay}`).catch(() => null),
+      api(`/gorev/ozet?tarih=${gorevTarih}`).catch(() => []),
+      api(`/gorev/vardiya-takip?yil=${donem.yil}&ay=${donem.ay}`).catch(() => null),
       api('/is-basvurusu?limit=200').catch(() => []),
       api('/is-basvurusu/ozet').catch(() => null),
       api('/sube-panel/merkez/personel-panel-pin').catch(() => []),
@@ -128,6 +136,61 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru }) {
   };
 
   useEffect(yukle, []);
+
+  // Dönem/gün değişince yalnız İLGİLİ uçlar tazelenir — tam ekran yükleme yok.
+  const ayDegistir = (d) => {
+    setDonem(({ yil: y0, ay: a0 }) => {
+      let a = a0 + d; let y = y0;
+      if (a < 1) { a = 12; y -= 1; }
+      if (a > 12) { a = 1; y += 1; }
+      if (y > buYil || (y === buYil && a > buAy)) return { yil: y0, ay: a0 }; // geleceğe gitme
+      setDonemYukleniyor(true);
+      Promise.all([
+        api(`/personel-aylik?yil=${y}&ay=${a}`).catch(() => []),
+        api(`/gorev/vardiya-takip?yil=${y}&ay=${a}`).catch(() => null),
+      ]).then(([b, vt]) => {
+        setBordro(Array.isArray(b) ? b : []);
+        setTakip(Array.isArray(vt) ? vt : (vt?.personeller || []));
+        setDonemYukleniyor(false);
+      });
+      return { yil: y, ay: a };
+    });
+  };
+  const gorevGunDegistir = (d) => {
+    setGorevTarih((t0) => {
+      const dt = new Date(t0 + 'T00:00:00Z');
+      dt.setUTCDate(dt.getUTCDate() + d);
+      const t = dt.toISOString().slice(0, 10);
+      if (t > bugun) return t0; // geleceğe gitme
+      setDonemYukleniyor(true);
+      api(`/gorev/ozet?tarih=${t}`).catch(() => [])
+        .then((go) => { setGorevOzet(Array.isArray(go) ? go : []); setDonemYukleniyor(false); });
+      return t;
+    });
+  };
+
+  /** ‹ dönem › gezgini — maaş/takip (ay) ve görev (gün) görünümlerinde. */
+  const DonemSecici = ({ etiket, onGeri, onIleri, ileriKapali }) => (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+      <button onClick={onGeri} style={{
+        width: 30, height: 30, borderRadius: 9, border: `1px solid ${R.cizgi3}`,
+        background: R.girinti, color: R.metin2, fontSize: 14, fontFamily: 'inherit', cursor: 'pointer',
+      }}>‹</button>
+      <span style={{
+        padding: '6px 14px', borderRadius: 99, fontSize: 12.5, fontWeight: 700,
+        background: `${R.bakir}18`, color: R.bakir, border: `1px solid ${R.bakir}44`,
+        fontFamily: F.mono, minWidth: 96, textAlign: 'center',
+      }}>
+        {donemYukleniyor ? '…' : etiket}
+      </span>
+      <button onClick={onIleri} disabled={ileriKapali} style={{
+        width: 30, height: 30, borderRadius: 9, border: `1px solid ${R.cizgi3}`,
+        background: R.girinti, color: ileriKapali ? R.not3 : R.metin2, fontSize: 14,
+        fontFamily: 'inherit', cursor: ileriKapali ? 'default' : 'pointer', opacity: ileriKapali ? 0.5 : 1,
+      }}>›</button>
+      {ileriKapali && <span style={{ fontSize: 10.5, color: R.not3 }}>güncel dönem</span>}
+    </div>
+  );
 
   /** Vardiya takibindeki kişi bazlı toplamları personel id ile eşler. */
   const takipMap = useMemo(() => {
@@ -328,6 +391,12 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru }) {
     const toplamFm = bordro.reduce((s, b) => s + sayi(b.fazla_mesai_saat), 0);
     return (
       <>
+        <DonemSecici
+          etiket={`${AY_KISA[ay - 1]} ${yil}`}
+          onGeri={() => ayDegistir(-1)}
+          onIleri={() => ayDegistir(1)}
+          ileriKapali={yil === buYil && ay === buAy}
+        />
         <KpiSeridi kpiler={[
           { etiket: `${AY_KISA[ay - 1]} bordro`, deger: fmt(toplamNet), alt: `${bordro.length} kişi · hesaplanan net` },
           { etiket: 'Onay bekleyen', deger: String(bekleyen.length), alt: bekleyen.length ? 'taslak bordro' : 'hepsi onaylı', renk: bekleyen.length ? R.amber : R.yesil },
@@ -401,10 +470,17 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru }) {
       subeGrup[k].bloklar.push({ tip: g.vardiya_tip, toplam: sayi(g.toplam), tamam: sayi(g.tamamlanan) });
     });
     const subeler = Object.values(subeGrup).sort((a, b) => a.ad.localeCompare(b.ad, 'tr'));
+    const gorevGunEtiket = `${Number(gorevTarih.slice(8, 10))} ${AY_KISA[Number(gorevTarih.slice(5, 7)) - 1]}`;
     return (
       <>
+        <DonemSecici
+          etiket={gorevTarih === bugun ? `Bugün · ${gorevGunEtiket}` : gorevGunEtiket}
+          onGeri={() => gorevGunDegistir(-1)}
+          onIleri={() => gorevGunDegistir(1)}
+          ileriKapali={gorevTarih === bugun}
+        />
         <KpiSeridi kpiler={[
-          { etiket: 'Bugünkü görev', deger: String(toplam), alt: `${subeler.length} şube · vardiya blokları` },
+          { etiket: gorevTarih === bugun ? 'Bugünkü görev' : `${gorevGunEtiket} görevi`, deger: String(toplam), alt: `${subeler.length} şube · vardiya blokları` },
           { etiket: 'Tamamlanan', deger: String(tamam), alt: toplam ? `%${trSayi((tamam / toplam) * 100, 0)}` : '—', renk: R.yesil },
           { etiket: 'Açık', deger: String(acik), alt: acik ? 'henüz işaretlenmedi' : 'hepsi kapandı', renk: acik ? R.amber : R.yesil },
           { etiket: 'Aktif kadro', deger: String(personel.length), alt: 'görev atanabilir personel', renk: R.krem },
@@ -471,6 +547,12 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru }) {
     const gecikenler = satir.filter(t => sayi(t.toplam_gecikme_dk) > 0);
     return (
       <>
+        <DonemSecici
+          etiket={`${AY_KISA[ay - 1]} ${yil}`}
+          onGeri={() => ayDegistir(-1)}
+          onIleri={() => ayDegistir(1)}
+          ileriKapali={yil === buYil && ay === buAy}
+        />
         <KpiSeridi kpiler={[
           { etiket: 'Aylık toplam saat', deger: `${trSayi(toplamSaat, 0)} sa`, alt: `${satir.length} personel · ${AY_KISA[ay - 1]}` },
           { etiket: 'Toplam gecikme', deger: `${trSayi(toplamGecikme, 0)} dk`, alt: gecikenler.length ? `${gecikenler.length} personel` : 'gecikme yok', renk: toplamGecikme > 0 ? R.amber : R.yesil },
