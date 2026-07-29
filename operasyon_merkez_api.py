@@ -11373,6 +11373,99 @@ def ops_siparis_sevkiyat_subeler_ozet(gun: int = 90):
     return {"gun_sayi": gun_sayi, "satirlar": satirlar}
 
 
+@router.get("/siparis/sevkiyat-hiz")
+def ops_siparis_sevkiyat_hiz(gun: int = 30):
+    """
+    SALT-OKUR DUYU (2026-07-29, sahip: 'ölçebilir halde olup ölçmediğimiz'):
+    SEVKİYAT HIZI — siparis_talep'te ZATEN duran zaman damgalarından türetilir
+    (olusturma → tahsis_ts → sevkiyat_ts → kabul_ts). Hiçbir şey yazmaz.
+    Cevapladığı soru: 'talepten teslime kaç saat; hangi depo yavaş?'
+    """
+    g = max(1, min(365, int(gun or 30)))
+    with db() as (conn, cur):
+        cur.execute(
+            """
+            SELECT t.id, s.ad AS sube_adi,
+                   COALESCE(t.hedef_depo_sube_id, t.sevkiyat_sube_id)::text AS depo_id,
+                   d.ad AS depo_adi,
+                   t.olusturma, t.tahsis_ts, t.sevkiyat_ts, t.kabul_ts
+            FROM siparis_talep t
+            JOIN subeler s ON s.id = t.sube_id
+            LEFT JOIN subeler d ON d.id = COALESCE(t.hedef_depo_sube_id, t.sevkiyat_sube_id)
+            WHERE t.kabul_ts IS NOT NULL AND t.olusturma IS NOT NULL
+              AND t.tarih >= CURRENT_DATE - (%s * INTERVAL '1 day')
+            ORDER BY t.kabul_ts DESC
+            LIMIT 300
+            """,
+            (g,),
+        )
+        rows = [dict(r) for r in (cur.fetchall() or [])]
+
+    def _saat(a, b):
+        try:
+            if a and b:
+                v = (b - a).total_seconds() / 3600.0
+                return round(v, 1) if 0 <= v <= 24 * 30 else None  # negatif/absürt damga elenir
+        except Exception:
+            return None
+        return None
+
+    toplamlar = []
+    hazirliklar = []
+    yollar = []
+    depo_map = {}
+    son = []
+    for r in rows:
+        top = _saat(r.get("olusturma"), r.get("kabul_ts"))
+        haz = _saat(r.get("tahsis_ts") or r.get("olusturma"), r.get("sevkiyat_ts"))
+        yol = _saat(r.get("sevkiyat_ts"), r.get("kabul_ts"))
+        if top is None:
+            continue
+        toplamlar.append(top)
+        if haz is not None:
+            hazirliklar.append(haz)
+        if yol is not None:
+            yollar.append(yol)
+        dk = r.get("depo_id") or "-"
+        dm = depo_map.setdefault(dk, {"depo_adi": r.get("depo_adi") or "—", "n": 0, "toplam": 0.0})
+        dm["n"] += 1
+        dm["toplam"] += top
+        if len(son) < 10:
+            son.append({
+                "sube": r.get("sube_adi"), "depo": r.get("depo_adi") or "—",
+                "toplam_saat": top, "hazirlik_saat": haz, "yol_saat": yol,
+                "kabul": str(r.get("kabul_ts") or "")[:16],
+            })
+
+    def _ort(xs):
+        return round(sum(xs) / len(xs), 1) if xs else None
+
+    def _medyan(xs):
+        if not xs:
+            return None
+        ss = sorted(xs)
+        n = len(ss)
+        return round(ss[n // 2] if n % 2 else (ss[n // 2 - 1] + ss[n // 2]) / 2, 1)
+
+    depolar = [
+        {"depo_adi": v["depo_adi"], "teslim": v["n"], "ort_saat": round(v["toplam"] / v["n"], 1)}
+        for v in depo_map.values() if v["n"] > 0
+    ]
+    depolar.sort(key=lambda x: -x["ort_saat"])
+    return {
+        "kesit_gun": g,
+        "teslim_adet": len(toplamlar),
+        "ort_saat": _ort(toplamlar),
+        "medyan_saat": _medyan(toplamlar),
+        "hazirlik_ort_saat": _ort(hazirliklar),
+        "yol_ort_saat": _ort(yollar),
+        "depolar": depolar,
+        "son_teslimler": son,
+        "not": "GÖZLEMDİR: mevcut zaman damgalarından türetilir; damgası eksik "
+               "kayıt hesaba girmez (dürüst boşluk). Yazma yok.",
+    }
+
+
 @router.get("/siparis/sevkiyat-listesi")
 def ops_siparis_sevkiyat_listesi(
     sevkiyat_sube_id: Optional[str] = None,

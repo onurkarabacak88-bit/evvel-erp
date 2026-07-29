@@ -235,6 +235,40 @@ export default function TasarimV2({ onGit }) {
     return () => clearTimeout(t);
   }, [toast]);
 
+  // ── YENİ SİPARİŞ BİLDİRİMİ (sahip 2026-07-29: "klasikte modal olarak
+  // geliyordu, v2'de yok") — klasik hub'ın izleme deseni kadifeye taşındı:
+  // 60 sn'de bir kontrol kulesi taranır; İLK yükleme tohumlar (modal açmaz),
+  // sonrasında görülmemiş 'bekliyor' talebi düşerse BİLGİ MODALI açılır.
+  const [siparisBildirim, setSiparisBildirim] = useState(null);
+  const gorulenTalepRef = React.useRef(new Set());
+  const bildirimIlkRef = React.useRef(true);
+  useEffect(() => {
+    let iptal = false;
+    const tara = () => {
+      api('/ops/siparis/kontrol-kulesi?gun=3&sadece_acik=true&limit=60')
+        .then((d) => {
+          if (iptal) return;
+          const bekleyenler = (Array.isArray(d?.satirlar) ? d.satirlar : [])
+            .filter((s) => s.asama === 'bekliyor');
+          const seen = gorulenTalepRef.current;
+          if (bildirimIlkRef.current) {
+            bekleyenler.forEach((s) => seen.add(String(s.id)));
+            bildirimIlkRef.current = false;
+            return;
+          }
+          const yeniler = bekleyenler.filter((s) => !seen.has(String(s.id)));
+          if (yeniler.length) {
+            yeniler.forEach((s) => seen.add(String(s.id)));
+            setSiparisBildirim({ yeniler });
+          }
+        })
+        .catch(() => {});
+    };
+    tara();
+    const t = setInterval(tara, 60000);
+    return () => { iptal = true; clearInterval(t); };
+  }, []);
+
   // ── türetilmiş veriler ─────────────────────────────────────────────────────
   const veri = useMemo(() => {
     const bugun = bugunISO();
@@ -444,6 +478,18 @@ export default function TasarimV2({ onGit }) {
       { etiket: 'Kart + online', deger: fmt(d.gunKart), alt: `payı %${yuzde(d.gunKart, d.gunToplam).toFixed(0)}`, renk: R.krem },
       { etiket: 'Bugün ödenecek', deger: fmt(bugunOdemeToplam), alt: `${bugunOdemeler.length} kalem · vadesi bugün/geçmiş`, renk: bugunOdemeToplam > 0 ? R.kirmizi : R.yesil },
     ];
+    // CFO HIZLI BAKIŞ (sahip 2026-07-29): klasik CFO panelin "tek bakışta" özeti —
+    // kasa/serbest nakit/dayanma/yük/ay cirosu — v2 Bugün'e taşındı. Kaynak
+    // alanlar birebir /api/panel (kasa = kanonik).
+    const gunDayanir = sayi(panel?.kac_gun_dayanir);
+    const cfoKpiler = panel ? [
+      { etiket: 'Kasa', deger: fmt(sayi(panel.kasa)), alt: 'kanonik · kasa izi', renk: R.yesil },
+      { etiket: 'Serbest nakit', deger: fmt(sayi(panel.serbest_nakit)), alt: 'zorunlu yük sonrası', renk: sayi(panel.serbest_nakit) >= 0 ? R.krem : R.kirmizi },
+      { etiket: 'Kaç gün dayanır', deger: gunDayanir ? `${trSayi(gunDayanir, 0)} gün` : '—', alt: 'ciro dursa bile', renk: gunDayanir >= 30 ? R.yesil : gunDayanir >= 10 ? R.amber : R.kirmizi },
+      { etiket: '7 gün yükü', deger: fmt(sayi(panel.yuk_7)), alt: 'vadesi gelen ödemeler' },
+      { etiket: '30 gün yükü', deger: fmt(sayi(panel.yuk_30)), alt: 'aylık zorunlu çıkış' },
+      { etiket: 'Bu ay ciro', deger: fmt(sayi(panel.bu_ay_sadece_ciro)), alt: `nakit ${fmt(sayi(panel.bu_ay_nakit)).replace(' ₺', '')} · pos ${fmt(sayi(panel.bu_ay_pos)).replace(' ₺', '')} · online ${fmt(sayi(panel.bu_ay_online)).replace(' ₺', '')}` },
+    ] : [];
 
     const enIyi = d.subeGunListe[0]?.[1] || 0;
     const ikincil = d.subeGunListe.slice(0, 4).map(([ad, tutar]) => ({
@@ -470,6 +516,7 @@ export default function TasarimV2({ onGit }) {
     return (
       <>
         <KpiSeridi kpiler={kpiler} />
+        {cfoKpiler.length > 0 && <KpiSeridi kpiler={cfoKpiler} />}
         <Hero
           etiket={d.odakBugunMu ? 'Bugün · son 14 gün ritmi' : `${d.odakGun} · son 14 gün ritmi`}
           deger={fmt(d.gunToplam)}
@@ -911,6 +958,60 @@ export default function TasarimV2({ onGit }) {
           onAksiyon={() => koprule(cekmece?._hedef)}
           onKapat={() => setCekmece(null)}
         />
+        {/* Yeni sipariş bilgi modalı — kadife dilinde, klasik hub bildiriminin karşılığı */}
+        {siparisBildirim && (
+          <div
+            onClick={() => setSiparisBildirim(null)}
+            style={{
+              position: 'fixed', inset: 0, zIndex: 130, display: 'flex', alignItems: 'center',
+              justifyContent: 'center', padding: 20, background: 'rgba(10,6,2,.7)',
+              backdropFilter: 'blur(5px)', WebkitBackdropFilter: 'blur(5px)',
+              animation: 'v2belir .14s ease both',
+            }}
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                width: '100%', maxWidth: 420, borderRadius: 20,
+                background: 'linear-gradient(165deg, #2C2116, #231909)',
+                border: `1px solid ${R.bakir}44`, boxShadow: '0 26px 60px rgba(0,0,0,.5), 0 0 40px rgba(217,154,78,.12)',
+                animation: 'v2buyu .26s cubic-bezier(.4,0,.2,1) both',
+              }}
+            >
+              <div style={{ padding: '20px 22px 14px', borderBottom: `1px solid ${R.cizgi2}` }}>
+                <div style={{ fontFamily: F.baslik, fontSize: 18, fontWeight: 600 }}>
+                  📬 {siparisBildirim.yeniler.length === 1 ? 'Yeni sipariş talebi' : `${siparisBildirim.yeniler.length} yeni sipariş talebi`}
+                </div>
+                <div style={{ fontSize: 12, color: R.not, marginTop: 4 }}>şubeden merkeze düştü — depo yönlendirmesi bekliyor</div>
+              </div>
+              <div style={{ padding: '16px 22px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {siparisBildirim.yeniler.slice(0, 4).map((s) => (
+                  <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                    <span style={{ fontSize: 13.5, fontWeight: 700, flex: 1 }}>{s.sube_adi || 'Şube'}</span>
+                    <span style={{ fontSize: 11.5, color: R.metin2 }}>
+                      {(s.kalemler || []).length} kalem · {sayi(s.kalem_sayisi)} adet
+                    </span>
+                  </div>
+                ))}
+                {siparisBildirim.yeniler.length > 4 && (
+                  <div style={{ fontSize: 11, color: R.not3 }}>+{siparisBildirim.yeniler.length - 4} talep daha…</div>
+                )}
+              </div>
+              <div style={{ padding: '14px 22px', borderTop: `1px solid ${R.cizgi2}`, display: 'flex', gap: 9, justifyContent: 'flex-end' }}>
+                <button onClick={() => setSiparisBildirim(null)} style={{
+                  padding: '9px 16px', borderRadius: 10, border: `1px solid ${R.cizgi3}`,
+                  background: 'transparent', color: R.not, fontSize: 12.5, fontWeight: 600,
+                  fontFamily: 'inherit', cursor: 'pointer',
+                }}>Kapat</button>
+                <button onClick={() => { setSiparisBildirim(null); setMod('ops'); setGorunum('akis'); setCekmece(null); }} style={{
+                  padding: '9px 18px', borderRadius: 10, border: 'none',
+                  background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+                  fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer',
+                }}>Sipariş Akışını aç</button>
+              </div>
+            </div>
+          </div>
+        )}
         <Toast metin={toast} />
       </main>
     </div>

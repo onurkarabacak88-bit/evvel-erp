@@ -195,6 +195,16 @@ const OPS_UC = {
     ],
   },
   '/api/ops/siparis/sevkiyat-guncelle': { ok: true },
+  '/api/ops/siparis/sevkiyat-hiz': {
+    kesit_gun: 30, teslim_adet: 14, ort_saat: 6.4, medyan_saat: 5.2,
+    hazirlik_ort_saat: 3.1, yol_ort_saat: 2.8,
+    depolar: [
+      { depo_adi: 'Zafer', teslim: 11, ort_saat: 5.8 },
+      { depo_adi: 'Köyceğiz', teslim: 3, ort_saat: 9.6 },
+    ],
+    son_teslimler: [],
+    not: 'GÖZLEMDİR',
+  },
   '/api/ops/siparis/sevkiyat-subeler-ozet': {
     satirlar: [
       { depo_sube_id: 's0', depo_sube_adi: 'Zafer', sube_tipi: 'depo', toplam: 9, hazirlikta: 2, gonderildi: 1, teslim_edildi: 6, son_talep_tarih: bugunISO },
