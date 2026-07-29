@@ -74,7 +74,7 @@ const gunMetni = (g) => {
   return `${n} gün`;
 };
 
-export default function KartModulu({ gorunum, onCekmece, onKopru }) {
+export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
   const [yukleniyor, setYukleniyor] = useState(true);
   const [hata, setHata] = useState('');
   const [kartlar, setKartlar] = useState([]);
@@ -84,6 +84,21 @@ export default function KartModulu({ gorunum, onCekmece, onKopru }) {
   const [koc, setKoc] = useState(null);
   const [strateji, setStrateji] = useState('cig');
   const [nakit, setNakit] = useState(200000);
+  // ── YERLİ EKSTRE YÜKLEME (köprü kaldırma turu, 2026-07-30) ─────────────────
+  // Klasik EkstreYukle.jsx akışı AYNEN: PDF → /kartlar/ekstre-yukle (önizleme,
+  // kayıt yazmaz) → ⚡ tek-tık mutabakat (import + eşik-onaylı devir kapama).
+  const [eksModal, setEksModal] = useState(false);
+  const [eksYukleniyor, setEksYukleniyor] = useState(false);
+  const [eksSonuc, setEksSonuc] = useState(null);
+  const [eksHata, setEksHata] = useState('');
+  const [eksDosyaAdi, setEksDosyaAdi] = useState('');
+  const [eksLastFile, setEksLastFile] = useState(null);
+  const [eksTtBusy, setEksTtBusy] = useState(false);
+  const [eksImpSonuc, setEksImpSonuc] = useState(null);
+  const [eksOnaySor, setEksOnaySor] = useState(null);   // eşik üstü fark onayı {fark, ekstreBorc, yeniBorc, impOzet}
+  const [kartEkleBusy, setKartEkleBusy] = useState(false);
+  const [manForm, setManForm] = useState(null);          // manuel ekstre {kart_id, donem, son_odeme, donem_borcu, asgari_tutar, faiz_orani}
+  const [manBusy, setManBusy] = useState(false);
 
   const yukle = () => {
     setYukleniyor(true);
@@ -172,10 +187,171 @@ export default function KartModulu({ gorunum, onCekmece, onKopru }) {
     ],
     not: k.ekstreVar
       ? 'Bu dönem ekstresi yüklü — rakamlar ekstreyle doğrulandı.'
-      : 'Bu dönem ekstresi YÜKLENMEDİ — dönem borcu tahminî hesaplanıyor.',
-    aksiyonAd: k.ekstreVar ? 'Kart yönetimini aç' : 'Ekstre yükle',
-    _hedef: k.ekstreVar ? 'kart-yonetimi' : 'ekstre-yukle',
+      : 'Bu dönem ekstresi YÜKLENMEDİ — Ekstre Durumu görünümünden PDF yükleyin.',
+    aksiyonAd: k.ekstreVar ? 'Kart yönetimini aç' : 'Ekstre durumuna git',
+    _hedef: k.ekstreVar ? 'kart-yonetimi' : '__gorunum:ekstre',
   });
+
+  // ── ekstre yükleme fonksiyonları (klasik EkstreYukle.jsx sözleşmesi) ───────
+  const BANKA_AD = { axess: 'Axess', worldcard: 'Yapı Kredi', enpara: 'Enpara', ziraat: 'Ziraat', garanti: 'Garanti' };
+  const FORMAT_AD = { worldcard: 'Worldcard / Yapı Kredi', enpara: 'Enpara', axess: 'Axess / Akbank', ziraat: 'Ziraat Bankkart', garanti: 'Garanti Bonus' };
+  const gunCikar = (d) => {
+    const s = String(d || '');
+    let m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (m) return parseInt(m[3], 10);
+    m = s.match(/(\d{1,2})[./](\d{1,2})[./](\d{2,4})/);
+    if (m) return parseInt(m[1], 10);
+    return 1;
+  };
+
+  const eksAc = () => {
+    setEksModal(true);
+    setEksSonuc(null); setEksHata(''); setEksDosyaAdi(''); setEksImpSonuc(null);
+    setEksOnaySor(null); setManForm(null);
+  };
+
+  const eksDosyaYukle = async (file) => {
+    if (!file) return;
+    setEksLastFile(file);
+    setEksDosyaAdi(file.name);
+    setEksHata(''); setEksSonuc(null); setEksImpSonuc(null); setEksOnaySor(null);
+    setEksYukleniyor(true);
+    const fd = new FormData();
+    fd.append('dosya', file);
+    try {
+      // api util JSON gövde varsayar — dosya için düz fetch (klasik desen)
+      const res = await fetch('/api/kartlar/ekstre-yukle', { method: 'POST', body: fd });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Ayrıştırılamadı');
+      setEksSonuc(data);
+    } catch (e) {
+      setEksHata(e?.message || 'Dosya işlenemedi');
+    } finally {
+      setEksYukleniyor(false);
+    }
+  };
+
+  /** İmport sonrası kalan farkı devirle kapat + sonucu işle (ortak kuyruk). */
+  const eksDevirVeBitir = async (impOzet, yeniBorcIn, devirGerekli) => {
+    const kart = eksSonuc?.eslesen_kart;
+    const ekstreBorc = eksSonuc?.mutabakat?.ekstre_borc ?? eksSonuc?.donem_borcu ?? 0;
+    let yeniBorc = yeniBorcIn;
+    let devirYapildi = false; let devirDuzeltme = 0;
+    if (devirGerekli) {
+      const r2 = await fetch(`/api/kartlar/${kart.id}/manuel-ekstre`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          donem: eksSonuc.kesim_tarihi, son_odeme: eksSonuc.son_odeme_tarihi || null,
+          donem_borcu: eksSonuc.donem_borcu, asgari_tutar: eksSonuc.asgari_tutar || null,
+          faiz_orani: eksSonuc.akdi_faiz_yillik || null,
+        }),
+      });
+      const d2 = await r2.json();
+      if (!r2.ok) throw new Error(d2.detail || 'Mutabakat düzeltmesi yapılamadı');
+      devirDuzeltme = Math.round((ekstreBorc - (yeniBorc ?? 0)) * 100) / 100;
+      yeniBorc = d2.yeni_borc; devirYapildi = true;
+    }
+    const sonFark = Math.round((ekstreBorc - (yeniBorc ?? 0)) * 100) / 100;
+    setEksSonuc((sn) => ({ ...sn, mutabakat: { ...sn.mutabakat, sistem_borc: yeniBorc, fark: sonFark, tutar_uyumlu: Math.abs(sonFark) < 1 } }));
+    setEksImpSonuc({ ...impOzet, tek_tik: true, devir: devirYapildi, devir_duzeltme: devirDuzeltme, yeni_sistem_borc: yeniBorc, buyuk_fark_onay_gerek: Math.abs(sonFark) > 1 });
+    onToast?.('⚡ Mutabakat tamam — kart borcu ekstreyle eşitlendi');
+    yukle();  // kart listesi/rozetler tazelensin
+  };
+
+  /** ⚡ TEK TIK MUTABAKAT — klasik mantık aynen: import → eşik-onaylı devir. */
+  const eksTekTik = async () => {
+    const kart = eksSonuc?.eslesen_kart;
+    if (!kart?.id || !eksSonuc) return;
+    setEksTtBusy(true); setEksHata(''); setEksImpSonuc(null); setEksOnaySor(null);
+    try {
+      const islemler = (eksSonuc.islemler || []).filter((x) => x && x.durum === 'yeni')
+        .map((x) => ({ tarih: x.tarih, tutar: x.tutar, tip: x.tip, aciklama: x.aciklama,
+                       kategori: x.kategori, harcama_tipi: x.oneri_tipi || undefined,
+                       taksit_sayisi: x.taksit_sayisi || undefined,
+                       taksit_anapara: x.taksit_anapara || undefined }));
+      let yeniBorc = eksSonuc?.mutabakat?.sistem_borc;
+      let impOzet = { yazilan: 0, atlanan_veya_mevcut: 0 };
+      if (islemler.length) {
+        const r1 = await fetch('/api/kartlar/ekstre-import', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ kart_id: kart.id, islemler }),
+        });
+        const d1 = await r1.json();
+        if (!r1.ok) throw new Error(d1.detail || 'İçe aktarılamadı');
+        impOzet = d1; yeniBorc = d1.yeni_sistem_borc;
+      }
+      const ekstreBorc = eksSonuc?.mutabakat?.ekstre_borc ?? eksSonuc?.donem_borcu ?? 0;
+      const fark = Math.round((ekstreBorc - (yeniBorc ?? 0)) * 100) / 100;
+      const esik = Math.max(5000, Math.abs(ekstreBorc) * 0.05);
+      if (Math.abs(fark) > 1 && Math.abs(fark) > esik) {
+        // Eşik üstü — kadife onay kutusu (klasikte window.confirm idi)
+        setEksOnaySor({ fark, ekstreBorc, yeniBorc, impOzet });
+        return;
+      }
+      await eksDevirVeBitir(impOzet, yeniBorc, Math.abs(fark) > 1);
+    } catch (e) {
+      setEksHata(e?.message || 'Mutabakat başarısız');
+    } finally {
+      setEksTtBusy(false);
+    }
+  };
+
+  const eksKartiEkle = async () => {
+    if (!eksSonuc) return;
+    const bankaLabel = BANKA_AD[eksSonuc.banka_format] || eksSonuc.banka_format || 'Banka';
+    setKartEkleBusy(true); setEksHata('');
+    try {
+      const r = await fetch('/api/kartlar', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          kart_adi: `${bankaLabel} ${eksSonuc.kart_sahibi || ''} ${eksSonuc.son_dort || ''}`.replace(/\s+/g, ' ').trim(),
+          banka: bankaLabel,
+          limit_tutar: eksSonuc.limit || 0,
+          kesim_gunu: gunCikar(eksSonuc.kesim_tarihi),
+          son_odeme_gunu: gunCikar(eksSonuc.son_odeme_tarihi),
+          faiz_orani: eksSonuc.akdi_faiz_yillik || 0,
+          asgari_oran: eksSonuc.asgari_oran || 40,
+          gecikme_faiz_orani: eksSonuc.gecikme_faiz_yillik || 0,
+          son_dort_hane: eksSonuc.son_dort || null,
+          sahip: eksSonuc.kart_sahibi || 'İşletme',
+        }),
+      });
+      if (!r.ok) { const d = await r.json(); throw new Error(d.detail || 'Kart eklenemedi'); }
+      onToast?.('✓ Kart eklendi — ekstre yeniden eşleştiriliyor');
+      if (eksLastFile) await eksDosyaYukle(eksLastFile);
+    } catch (e) {
+      setEksHata(e?.message || 'Kart eklenemedi');
+    } finally {
+      setKartEkleBusy(false);
+    }
+  };
+
+  const eksManuelKaydet = async () => {
+    if (!manForm?.kart_id || !manForm?.donem || !manForm?.donem_borcu) {
+      setEksHata('Kart, kesim tarihi ve dönem borcu zorunlu.'); return;
+    }
+    setManBusy(true); setEksHata('');
+    try {
+      const r = await fetch(`/api/kartlar/${manForm.kart_id}/manuel-ekstre`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          donem: manForm.donem, son_odeme: manForm.son_odeme || null,
+          donem_borcu: parseFloat(manForm.donem_borcu),
+          asgari_tutar: manForm.asgari_tutar ? parseFloat(manForm.asgari_tutar) : null,
+          faiz_orani: manForm.faiz_orani ? parseFloat(manForm.faiz_orani) : null,
+        }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.detail || 'Kaydedilemedi');
+      onToast?.(`✓ Manuel ekstre kaydedildi — yeni borç ${fmt(sayi(d.yeni_borc))}`);
+      setManForm(null);
+      yukle();
+    } catch (e) {
+      setEksHata(e?.message || 'Kaydedilemedi');
+    } finally {
+      setManBusy(false);
+    }
+  };
 
   if (yukleniyor) {
     return <div style={{ ...kartYuzey, padding: '46px 30px', textAlign: 'center', color: R.not }}>Kart verileri yükleniyor…</div>;
@@ -433,7 +609,7 @@ export default function KartModulu({ gorunum, onCekmece, onKopru }) {
               id: k.id, _k: k, tier: 'uyari',
               baslik: `${k.ad} · ekstre yüklenmedi`,
               alt: `kesim ayın ${k.kesim || '—'} · dönem borcu tahminî hesaplanıyor`,
-              tutar: fmt(k.donem), aksiyon: 'Ekstre yükle', _hedef: 'ekstre-yukle',
+              tutar: fmt(k.donem), aksiyon: 'Ekstre yükle', _hedef: '__yerli:ekstre',
             };
             if (k.durum === 'odeme_bekliyor') return {
               id: k.id, _k: k, tier: 'kritik',
@@ -448,11 +624,23 @@ export default function KartModulu({ gorunum, onCekmece, onKopru }) {
               tutar: fmt(k.toplam), aksiyon: 'Detay', _hedef: 'kart-yonetimi',
             };
           })}
-        onAc={(l) => (l._hedef === 'kart-yonetimi' ? kartAc(l._k) : onKopru?.(l._hedef))}
+        onAc={(l) => (l._hedef === 'kart-yonetimi' ? kartAc(l._k)
+          : l._hedef === '__yerli:ekstre' ? eksAc()
+          : onKopru?.(l._hedef))}
       />
       {/* Kapsama denetimi bulgusu (2026-07-29): Ekstre Analizi (harcama dağılımı
           grafikleri + arşiv, klasik kart-analiz) v2'de karşılıksızdı — köprü açıldı. */}
       <div style={{ display: 'flex', gap: 9, marginTop: 2, marginBottom: 16 }}>
+        <button
+          onClick={eksAc}
+          style={{
+            padding: '9px 17px', borderRadius: 10, border: 'none', cursor: 'pointer',
+            background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+            fontSize: 12, fontWeight: 700, fontFamily: 'inherit',
+          }}
+        >
+          📄 Ekstre yükle (PDF)
+        </button>
         <button
           onClick={() => onKopru?.('kart-analiz')}
           style={{
@@ -464,6 +652,192 @@ export default function KartModulu({ gorunum, onCekmece, onKopru }) {
           📊 Ekstre analizi (harcama dağılımı + arşiv)
         </button>
       </div>
+
+      {/* ── YERLİ EKSTRE YÜKLEME MODALI (klasik EkstreYukle akışı kadifede) ── */}
+      {eksModal && (() => {
+        const m = eksSonuc?.mutabakat;
+        const kart = eksSonuc?.eslesen_kart;
+        return (
+          <div
+            onClick={(e) => { if (e.target === e.currentTarget && !eksYukleniyor && !eksTtBusy) setEksModal(false); }}
+            style={{
+              position: 'fixed', inset: 0, zIndex: 90, background: 'rgba(10,6,2,.66)',
+              backdropFilter: 'blur(3px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+            }}
+          >
+            <div style={{ ...kartYuzey, width: 620, maxWidth: '96vw', maxHeight: '92vh', overflowY: 'auto', padding: '24px 26px' }}>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 6 }}>
+                <div style={{ fontFamily: F.baslik, fontSize: 21, fontWeight: 600 }}>📄 Ekstre Yükle</div>
+                <div style={{ fontSize: 11.5, color: R.not2 }}>önizleme — kayıt yazılmaz</div>
+                <button onClick={() => setEksModal(false)} style={{
+                  marginLeft: 'auto', border: 'none', background: 'transparent', color: R.not,
+                  fontSize: 16, cursor: 'pointer', fontFamily: 'inherit',
+                }}>✕</button>
+              </div>
+              <div style={{ fontSize: 12, color: R.metin2, marginBottom: 14 }}>
+                Banka PDF ekstresini seç → otomatik ayrıştır + mutabakat. Sonra ⚡ tek tıkla kapat.
+              </div>
+
+              {/* Dosya seçimi */}
+              <label style={{
+                display: 'block', padding: '22px 18px', borderRadius: 14, textAlign: 'center',
+                border: `1px dashed ${R.bakir}66`, background: R.girinti, cursor: 'pointer', marginBottom: 14,
+              }}>
+                <input type="file" accept="application/pdf" style={{ display: 'none' }}
+                  onChange={(e) => eksDosyaYukle(e.target.files?.[0])} />
+                <div style={{ fontSize: 13, fontWeight: 700, color: R.bakir }}>
+                  {eksYukleniyor ? '⏳ Ayrıştırılıyor…' : (eksDosyaAdi || 'PDF seçmek için tıkla')}
+                </div>
+                {!eksYukleniyor && eksDosyaAdi && <div style={{ fontSize: 11, color: R.not, marginTop: 4 }}>başka dosya seçmek için tekrar tıkla</div>}
+              </label>
+
+              {eksHata && (
+                <div style={{ padding: '11px 15px', borderRadius: 12, background: `${R.kirmizi}14`, border: `1px solid ${R.kirmizi}55`, fontSize: 12.5, color: R.kirmizi, marginBottom: 12 }}>
+                  {eksHata}
+                </div>
+              )}
+
+              {/* Ayrıştırma sonucu */}
+              {eksSonuc && (
+                <>
+                  <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', fontSize: 12.5, marginBottom: 12 }}>
+                    <span>Banka: <b>{FORMAT_AD[eksSonuc.banka_format] || eksSonuc.banka_format || '—'}</b></span>
+                    <span>Kart: {kart
+                      ? <b style={{ color: R.yesil }}>{kart.kart_adi || kart.ad || kart.banka}</b>
+                      : <b style={{ color: R.amber }}>eşleşen kart bulunamadı</b>}
+                    </span>
+                    {eksSonuc.son_dort && <span style={{ fontFamily: F.mono, color: R.not }}>…{eksSonuc.son_dort}</span>}
+                  </div>
+
+                  {!kart && (
+                    <button disabled={kartEkleBusy} onClick={eksKartiEkle} style={{
+                      padding: '9px 17px', borderRadius: 10, border: 'none', cursor: 'pointer', marginBottom: 12,
+                      background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+                      fontSize: 12, fontWeight: 700, fontFamily: 'inherit',
+                    }}>
+                      {kartEkleBusy ? 'Ekleniyor…' : '+ Bu kartı sisteme ekle'}
+                    </button>
+                  )}
+
+                  {m && (
+                    <div style={{
+                      display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 10,
+                      padding: '13px 15px', borderRadius: 12, background: R.girinti,
+                      border: `1px solid ${m.tutar_uyumlu ? `${R.yesil}55` : `${R.amber}55`}`, marginBottom: 12,
+                    }}>
+                      {[
+                        ['Ekstre borcu', fmt(sayi(m.ekstre_borc)), R.krem],
+                        ['Sistem borcu', fmt(sayi(m.sistem_borc)), R.krem],
+                        ['Fark', fmt(sayi(m.fark)), m.tutar_uyumlu ? R.yesil : R.kirmizi],
+                        ['Yeni işlem', String(sayi(m.yeni_islem_adet)), sayi(m.yeni_islem_adet) ? R.amber : R.yesil],
+                      ].map(([et, dg, renk]) => (
+                        <div key={et}>
+                          <div style={{ fontSize: 10, letterSpacing: '.6px', textTransform: 'uppercase', color: R.not2, fontWeight: 700 }}>{et}</div>
+                          <div style={{ fontFamily: F.mono, fontSize: 14.5, fontWeight: 700, color: renk, marginTop: 3 }}>{dg}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Eşik üstü fark onayı — klasikte window.confirm idi */}
+                  {eksOnaySor && (
+                    <div style={{ padding: '13px 16px', borderRadius: 12, background: `${R.amber}12`, border: `1px solid ${R.amber}66`, marginBottom: 12 }}>
+                      <div style={{ fontSize: 12.5, fontWeight: 700, color: R.amber }}>
+                        ⚠ Fark güvenlik eşiğinin üstünde: {fmt(Math.abs(eksOnaySor.fark))}
+                      </div>
+                      <div style={{ fontSize: 12, color: R.metin2, marginTop: 6, lineHeight: 1.55 }}>
+                        Bu genelde İLK mutabakatta eski devir tabanından kaynaklanır ve güvenlidir
+                        (düzeltme birikmez, her zaman yeniden hesaplanır). Sistem borcu ekstre
+                        borcuna ({fmt(sayi(eksOnaySor.ekstreBorc))}) eşitlensin mi?
+                      </div>
+                      <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+                        <button disabled={eksTtBusy} onClick={async () => {
+                          setEksTtBusy(true);
+                          try { await eksDevirVeBitir(eksOnaySor.impOzet, eksOnaySor.yeniBorc, true); setEksOnaySor(null); }
+                          catch (e) { setEksHata(e?.message || 'Düzeltme yapılamadı'); }
+                          finally { setEksTtBusy(false); }
+                        }} style={{
+                          padding: '8px 15px', borderRadius: 9, border: 'none', cursor: 'pointer',
+                          background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+                          fontSize: 12, fontWeight: 700, fontFamily: 'inherit',
+                        }}>Evet, eşitle</button>
+                        <button onClick={() => setEksOnaySor(null)} style={{
+                          padding: '8px 13px', borderRadius: 9, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+                          background: 'transparent', color: R.metin2, fontSize: 12, fontWeight: 600, fontFamily: 'inherit',
+                        }}>Vazgeç</button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Sonuç özeti */}
+                  {eksImpSonuc && (
+                    <div style={{ padding: '11px 15px', borderRadius: 12, background: `${R.yesil}12`, border: `1px solid ${R.yesil}55`, fontSize: 12.5, color: R.metin2, marginBottom: 12, lineHeight: 1.6 }}>
+                      ✓ {sayi(eksImpSonuc.yazilan)} işlem aktarıldı
+                      {sayi(eksImpSonuc.atlanan_veya_mevcut) ? ` · ${sayi(eksImpSonuc.atlanan_veya_mevcut)} zaten kayıtlıydı` : ''}
+                      {eksImpSonuc.devir ? ` · devir düzeltmesi ${fmt(Math.abs(sayi(eksImpSonuc.devir_duzeltme)))}` : ''}
+                      {' — yeni sistem borcu '}<b style={{ fontFamily: F.mono }}>{fmt(sayi(eksImpSonuc.yeni_sistem_borc))}</b>
+                    </div>
+                  )}
+
+                  {kart && !eksImpSonuc && !eksOnaySor && (
+                    <button disabled={eksTtBusy} onClick={eksTekTik} style={{
+                      width: '100%', padding: '12px 0', borderRadius: 12, border: 'none', cursor: 'pointer',
+                      background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+                      fontSize: 13.5, fontWeight: 800, fontFamily: 'inherit', marginBottom: 12,
+                    }}>
+                      {eksTtBusy ? 'Mutabakat yapılıyor…' : '⚡ Tek Tık Mutabakat — aktar + farkı kapat'}
+                    </button>
+                  )}
+                </>
+              )}
+
+              {/* Manuel ekstre (Axess gibi PDF'i okunamayan kartlar) */}
+              {manForm ? (
+                <div style={{ padding: '14px 16px', borderRadius: 12, background: R.girinti, border: `1px solid ${R.bakir}44` }}>
+                  <div style={{ fontSize: 12.5, fontWeight: 700, color: R.bakir, marginBottom: 12 }}>Manuel ekstre girişi</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                    <div>
+                      <div style={{ fontSize: 10.5, textTransform: 'uppercase', letterSpacing: '.7px', color: R.not2, fontWeight: 700, marginBottom: 6 }}>Kart *</div>
+                      <select value={manForm.kart_id} onChange={(e) => setManForm((f) => ({ ...f, kart_id: e.target.value }))}
+                        style={{ width: '100%', boxSizing: 'border-box', padding: '9px 12px', borderRadius: 10, border: `1px solid ${R.cizgi3}`, background: R.girinti, color: R.krem, fontSize: 13, fontFamily: 'inherit' }}>
+                        <option value="">Seçin…</option>
+                        {kartlar.map((k) => <option key={k.id} value={k.id}>{k.kart_adi || k.banka}</option>)}
+                      </select>
+                    </div>
+                    {[['donem', 'Kesim tarihi *', 'date'], ['son_odeme', 'Son ödeme', 'date'],
+                      ['donem_borcu', 'Dönem borcu (₺) *', 'number'], ['asgari_tutar', 'Asgari (₺)', 'number'],
+                      ['faiz_orani', 'Yıllık faiz %', 'number']].map(([k, ad, tip]) => (
+                      <div key={k}>
+                        <div style={{ fontSize: 10.5, textTransform: 'uppercase', letterSpacing: '.7px', color: R.not2, fontWeight: 700, marginBottom: 6 }}>{ad}</div>
+                        <input type={tip} value={manForm[k]} onChange={(e) => setManForm((f) => ({ ...f, [k]: e.target.value }))}
+                          style={{ width: '100%', boxSizing: 'border-box', padding: '9px 12px', borderRadius: 10, border: `1px solid ${R.cizgi3}`, background: R.girinti, color: R.krem, fontSize: 13, fontFamily: tip === 'number' ? F.mono : 'inherit', textAlign: tip === 'number' ? 'right' : 'left', colorScheme: 'dark' }} />
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 12 }}>
+                    <button disabled={manBusy} onClick={() => setManForm(null)} style={{
+                      padding: '8px 15px', borderRadius: 10, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+                      background: 'transparent', color: R.metin2, fontSize: 12, fontWeight: 600, fontFamily: 'inherit',
+                    }}>Vazgeç</button>
+                    <button disabled={manBusy} onClick={eksManuelKaydet} style={{
+                      padding: '8px 17px', borderRadius: 10, border: 'none', cursor: 'pointer',
+                      background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+                      fontSize: 12, fontWeight: 700, fontFamily: 'inherit',
+                    }}>{manBusy ? 'Kaydediliyor…' : 'Kaydet'}</button>
+                  </div>
+                </div>
+              ) : (
+                <button onClick={() => setManForm({ kart_id: '', donem: '', son_odeme: '', donem_borcu: '', asgari_tutar: '', faiz_orani: '' })} style={{
+                  padding: '8px 14px', borderRadius: 10, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+                  background: 'transparent', color: R.metin2, fontSize: 11.5, fontWeight: 600, fontFamily: 'inherit',
+                }}>
+                  ✍️ PDF okunmuyor mu? Manuel ekstre gir (Axess vb.)
+                </button>
+              )}
+            </div>
+          </div>
+        );
+      })()}
     </>
   );
 }

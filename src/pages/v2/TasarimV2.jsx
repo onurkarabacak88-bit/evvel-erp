@@ -418,7 +418,7 @@ export default function TasarimV2({ onGit }) {
 
     // v2'ye yazılmış modüller
     if (mod === 'kart') {
-      return <KartModulu gorunum={gorunum} onCekmece={setCekmece} onKopru={koprule} />;
+      return <KartModulu gorunum={gorunum} onCekmece={setCekmece} onKopru={koprule} onToast={setToast} />;
     }
     if (mod === 'odeme') {
       return <OdemeModulu gorunum={gorunum} onCekmece={setCekmece} onKopru={koprule} onToast={setToast} />;
