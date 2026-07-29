@@ -1079,14 +1079,49 @@ export function SistemModulu({ gorunum, onCekmece, onKopru }) {
 // ═════════════════════════════════════════════════════════════════════════════
 // 5) TANIMLAR — tanim.tedarikciler / zincir / dosya / tv
 // ═════════════════════════════════════════════════════════════════════════════
-export function TanimModulu({ gorunum, onCekmece, onKopru }) {
+export function TanimModulu({ gorunum, onCekmece, onKopru, onToast }) {
   const { yukleniyor, hata, veri, yukle } = useVeri([
     ['/tedarikciler', []],
     ['/ops/tedarik-dosyasi?gun=60&limit=150', null],
     ['/tv-menu/liste', []],
   ]);
+  // v2-YERLİ tedarikçi CRUD (köprü kaldırma turu) — klasik uçlar aynen
+  const [tedForm, setTedForm] = useState(null);   // {duzenleId?, ad, kategori, telefon, aciklama}
+  const [tedMesgul, setTedMesgul] = useState(false);
+  const [tedPasifSor, setTedPasifSor] = useState('');
   if (yukleniyor) return <Yukleniyor ad="Tanımlar" />;
   if (hata) return <Hata mesaj={hata} onTekrar={yukle} />;
+
+  const tedKaydet = async () => {
+    if (!(tedForm?.ad || '').trim()) { onToast?.('Tedarikçi adı zorunlu'); return; }
+    setTedMesgul(true);
+    try {
+      const body = { ad: tedForm.ad, kategori: tedForm.kategori || '', telefon: tedForm.telefon || '', aciklama: tedForm.aciklama || '' };
+      if (tedForm.duzenleId) await api(`/tedarikciler/${tedForm.duzenleId}`, { method: 'PUT', body });
+      else await api('/tedarikciler', { method: 'POST', body });
+      onToast?.(tedForm.duzenleId ? '✓ Tedarikçi güncellendi' : '✓ Tedarikçi eklendi');
+      setTedForm(null);
+      yukle();
+    } catch (e) {
+      onToast?.(e?.message || 'Kaydedilemedi');
+    } finally {
+      setTedMesgul(false);
+    }
+  };
+
+  const tedPasife = async (id) => {
+    setTedMesgul(true);
+    try {
+      await api(`/tedarikciler/${id}`, { method: 'DELETE' });
+      onToast?.('Tedarikçi pasife alındı');
+      setTedPasifSor('');
+      yukle();
+    } catch (e) {
+      onToast?.(e?.message || 'Pasife alınamadı');
+    } finally {
+      setTedMesgul(false);
+    }
+  };
 
   const [tedHam, dosyaHam, tvHam] = veri;
   const tedarikciler = (Array.isArray(tedHam) ? tedHam : []).filter(t => t.aktif !== false);
@@ -1103,23 +1138,40 @@ export function TanimModulu({ gorunum, onCekmece, onKopru }) {
           { etiket: 'Telefonu eksik', deger: String(tedarikciler.filter(t => !t.telefon).length), alt: 'fatura isteği gönderilemez', renk: tedarikciler.some(t => !t.telefon) ? R.amber : R.yesil },
           { etiket: 'Kategori', deger: String(kategoriler.length), alt: kategoriler.slice(0, 3).join(', ') || '—', renk: R.krem },
         ]} />
+        <div style={{ display: 'flex', gap: 9, marginBottom: 12 }}>
+          <button onClick={() => setTedForm({ duzenleId: null, ad: '', kategori: '', telefon: '', aciklama: '' })} style={{
+            padding: '9px 17px', borderRadius: 10, border: 'none', cursor: 'pointer',
+            background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+            fontSize: 12, fontWeight: 700, fontFamily: 'inherit',
+          }}>
+            + Tedarikçi ekle
+          </button>
+          <span style={{ fontSize: 11.5, color: R.not, alignSelf: 'center' }}>
+            şube personeli Ürün Teslim Al'da yalnız bu listeden seçer
+          </span>
+        </div>
         {tedarikciler.length ? (
-          <Tablo
-            baslik="Tedarikçi tanımları"
-            not="satıra tıkla → tedarikçi dosyası"
-            kolonlar={[{ ad: 'Tedarikçi' }, { ad: 'Kategori' }, { ad: 'Telefon' }, { ad: 'Açıklama' }, { ad: 'Durum' }]}
+          <Liste
             satirlar={tedarikciler.map(t => ({
               id: t.id, _t: t,
-              hucreler: [
-                { v: t.ad, kalin: true },
-                { v: t.kategori || '—', renk: R.not },
-                { v: t.telefon || '—', mono: true, renk: t.telefon ? R.krem : R.amber },
-                { v: t.aciklama || '—', renk: R.not },
-                { v: t.telefon ? 'tam' : 'telefon eksik', rozet: t.telefon ? R.yesil : R.amber },
+              baslik: t.ad,
+              alt: `${t.kategori || 'kategori yok'} · ${t.telefon || 'telefon eksik'}${t.aciklama ? ` · ${t.aciklama}` : ''}`,
+              tutar: '',
+              tier: t.telefon ? 'olumlu' : 'uyari',
+              rozet: t.telefon ? 'tam' : 'telefon eksik',
+              rozetRenk: t.telefon ? R.yesil : R.amber,
+              aksiyonlar: tedPasifSor === String(t.id) ? [
+                { ad: tedMesgul ? '…' : 'Eminim — pasife al', birincil: true, onTikla: () => !tedMesgul && tedPasife(t.id) },
+                { ad: 'Vazgeç', onTikla: () => setTedPasifSor('') },
+              ] : [
+                { ad: '✎ Düzenle', birincil: true, onTikla: () => setTedForm({
+                  duzenleId: t.id, ad: t.ad || '', kategori: t.kategori || '', telefon: t.telefon || '', aciklama: t.aciklama || '',
+                }) },
+                { ad: 'Pasife al', onTikla: () => setTedPasifSor(String(t.id)) },
               ],
             }))}
-            onSatir={(row) => {
-              const t = row._t;
+            onAc={(l) => {
+              const t = l._t;
               onCekmece?.({
                 tip: 'TEDARİKÇİ',
                 baslik: t.ad,
@@ -1134,15 +1186,59 @@ export function TanimModulu({ gorunum, onCekmece, onKopru }) {
                   { ad: 'Açıklama', detay: 'not', tutar: t.aciklama || '—' },
                 ],
                 not: t.telefon
-                  ? 'Fatura isteği WhatsApp ile tek dokunuşla gönderilebilir.'
+                  ? 'Fatura isteği WhatsApp ile tek dokunuşla gönderilebilir. Düzenleme satır butonlarından.'
                   : 'Telefon kayıtlı değil — fatura isteği motoru bu tedarikçiye mesaj gönderemez.',
-                aksiyonAd: 'Tedarikçileri aç',
-                _hedef: 'tedarikciler',
               });
             }}
           />
         ) : (
-          <Bos baslik="Tanımlı tedarikçi yok" aksiyon="Tedarikçileri aç" onAksiyon={() => onKopru?.('tedarikciler')} />
+          <Bos baslik="Tanımlı tedarikçi yok" aksiyon="+ Tedarikçi ekle" onAksiyon={() => setTedForm({ duzenleId: null, ad: '', kategori: '', telefon: '', aciklama: '' })} />
+        )}
+
+        {/* ── YERLİ TEDARİKÇİ FORMU ── */}
+        {tedForm && (
+          <KucukModal
+            baslik={tedForm.duzenleId ? 'Tedarikçiyi Düzenle' : 'Yeni Tedarikçi'}
+            alt="şube teslim alım listesinde görünür"
+            onKapat={() => !tedMesgul && setTedForm(null)}
+          >
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 13 }}>
+              <div style={{ gridColumn: '1/-1' }}>
+                <label style={{ fontSize: 10.5, letterSpacing: '.7px', textTransform: 'uppercase', color: R.not2, fontWeight: 700, marginBottom: 6, display: 'block' }}>Tedarikçi adı *</label>
+                <input value={tedForm.ad} onChange={(e) => setTedForm((f) => ({ ...f, ad: e.target.value }))} style={modalAlanStil} />
+              </div>
+              <div>
+                <label style={{ fontSize: 10.5, letterSpacing: '.7px', textTransform: 'uppercase', color: R.not2, fontWeight: 700, marginBottom: 6, display: 'block' }}>Kategori</label>
+                <select value={tedForm.kategori} onChange={(e) => setTedForm((f) => ({ ...f, kategori: e.target.value }))} style={modalAlanStil}>
+                  <option value="">Seçin…</option>
+                  {['Gıda', 'İçecek', 'Ambalaj', 'Temizlik', 'Kırtasiye', 'Teknik', 'Diğer'].map((k) => <option key={k}>{k}</option>)}
+                </select>
+              </div>
+              <div>
+                <label style={{ fontSize: 10.5, letterSpacing: '.7px', textTransform: 'uppercase', color: R.not2, fontWeight: 700, marginBottom: 6, display: 'block' }}>Telefon</label>
+                <input value={tedForm.telefon} placeholder="5xx… (fatura isteği için)"
+                  onChange={(e) => setTedForm((f) => ({ ...f, telefon: e.target.value }))}
+                  style={{ ...modalAlanStil, fontFamily: F.mono }} />
+              </div>
+              <div style={{ gridColumn: '1/-1' }}>
+                <label style={{ fontSize: 10.5, letterSpacing: '.7px', textTransform: 'uppercase', color: R.not2, fontWeight: 700, marginBottom: 6, display: 'block' }}>Açıklama</label>
+                <input value={tedForm.aciklama} onChange={(e) => setTedForm((f) => ({ ...f, aciklama: e.target.value }))} style={modalAlanStil} />
+              </div>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 18 }}>
+              <button disabled={tedMesgul} onClick={() => setTedForm(null)} style={{
+                padding: '10px 18px', borderRadius: 10, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+                background: 'transparent', color: R.metin2, fontSize: 12.5, fontWeight: 600, fontFamily: 'inherit',
+              }}>İptal</button>
+              <button disabled={tedMesgul} onClick={tedKaydet} style={{
+                padding: '10px 20px', borderRadius: 10, border: 'none', cursor: 'pointer',
+                background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+                fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit',
+              }}>
+                {tedMesgul ? 'Kaydediliyor…' : 'Kaydet'}
+              </button>
+            </div>
+          </KucukModal>
         )}
       </>
     );
