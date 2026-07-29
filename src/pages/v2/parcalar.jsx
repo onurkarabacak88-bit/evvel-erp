@@ -843,7 +843,10 @@ export function OnayModali({ acik, baslik, altBaslik, tutar, satirlar, not, onay
 }
 
 // ─── Detay çekmecesi ─────────────────────────────────────────────────────────
-export function Cekmece({ acik, tip, baslik, alt, kpi, listeBaslik, satirlar, not, aksiyonAd, onAksiyon, onKapat }) {
+// Çekmece aksiyon sözleşmesi: tek aksiyon için {aksiyonAd, onAksiyon};
+// ÇOKLU aksiyon için aksiyonlar:[{ad, birincil?, onTikla}] (köprü kaldırma turu,
+// 2026-07-30 — "düzenle + işten çıkış" gibi iki yollu dosyalar için).
+export function Cekmece({ acik, tip, baslik, alt, kpi, listeBaslik, satirlar, not, aksiyonAd, onAksiyon, aksiyonlar, onKapat }) {
   if (!acik) return null;
   return (
     <>
@@ -932,7 +935,7 @@ export function Cekmece({ acik, tip, baslik, alt, kpi, listeBaslik, satirlar, no
         </div>
 
         <div style={{ padding: '14px 22px', borderTop: `1px solid ${R.cizgi}`, display: 'flex', gap: 9 }}>
-          {aksiyonAd && (
+          {aksiyonAd && !aksiyonlar?.length && (
             <button onClick={onAksiyon} style={{
               flex: 1, padding: 10, borderRadius: 10, border: 'none',
               background: `linear-gradient(150deg, #D99A4E, #B06E2C)`, color: '#1C1309',
@@ -941,6 +944,19 @@ export function Cekmece({ acik, tip, baslik, alt, kpi, listeBaslik, satirlar, no
               {aksiyonAd}
             </button>
           )}
+          {!!aksiyonlar?.length && aksiyonlar.map((a, ai) => (
+            <button key={ai} onClick={() => a.onTikla?.()} style={a.birincil ? {
+              flex: 1, padding: 10, borderRadius: 10, border: 'none',
+              background: `linear-gradient(150deg, #D99A4E, #B06E2C)`, color: '#1C1309',
+              fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer',
+            } : {
+              padding: '10px 14px', borderRadius: 10, border: `1px solid ${R.cizgi3}`,
+              background: 'transparent', color: R.metin2, fontSize: 12.5, fontWeight: 600,
+              fontFamily: 'inherit', cursor: 'pointer', whiteSpace: 'nowrap',
+            }}>
+              {a.ad}
+            </button>
+          ))}
           <button onClick={onKapat} style={{
             padding: '10px 16px', borderRadius: 10, border: `1px solid ${R.cizgi3}`,
             background: 'transparent', color: R.not, fontSize: 12.5, fontWeight: 600,

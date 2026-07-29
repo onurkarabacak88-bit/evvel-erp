@@ -435,7 +435,7 @@ export default function TasarimV2({ onGit }) {
       );
     }
     if (mod === 'ekip') {
-      return <EkipModulu gorunum={gorunum} onCekmece={setCekmece} onKopru={koprule} />;
+      return <EkipModulu gorunum={gorunum} onCekmece={setCekmece} onKopru={koprule} onToast={setToast} />;
     }
     if (mod === 'borc') {
       return <BorcModulu gorunum={gorunum} onCekmece={setCekmece} onKopru={koprule} />;
@@ -972,6 +972,12 @@ export default function TasarimV2({ onGit }) {
           not={cekmece?.not}
           aksiyonAd={cekmece?.aksiyonAd}
           onAksiyon={() => koprule(cekmece?._hedef)}
+          // Çoklu aksiyon (modül kendi işini yapar): tıklayınca çekmece kapanır,
+          // modülün açtığı form/onay öne gelsin.
+          aksiyonlar={(cekmece?.aksiyonlar || []).map((a) => ({
+            ...a,
+            onTikla: () => { setCekmece(null); a.onTikla?.(); },
+          }))}
           onKapat={() => setCekmece(null)}
         />
         {/* Yeni sipariş bilgi modalı — kadife dilinde, klasik hub bildiriminin karşılığı */}

@@ -74,14 +74,32 @@ const TUR_AD = { surekli: 'sürekli', part: 'part-time', gunluk: 'günlük', sta
 const turAd = (t) => TUR_AD[t] || trKucuk(t) || '—';
 
 /** Sürekli personelde aylık ücret, part-time'da saatlik ücret gösterilir. */
+// Yerli form stilleri (köprü kaldırma turu)
+const ekAlanStil = {
+  width: '100%', boxSizing: 'border-box', padding: '9px 12px', borderRadius: 10,
+  border: `1px solid ${R.cizgi3}`, background: R.girinti, color: R.krem,
+  fontSize: 13, fontFamily: 'inherit', outline: 'none',
+};
+const ekEtiket = {
+  fontSize: 10.5, letterSpacing: '.7px', textTransform: 'uppercase',
+  color: R.not2, fontWeight: 700, marginBottom: 6, display: 'block',
+};
+
 const ucretMetni = (p) => (sayi(p.maas) > 0
   ? fmt(sayi(p.maas))
   : sayi(p.saatlik_ucret) > 0 ? `${fmt(p.saatlik_ucret)}/sa` : '—');
 
-export default function EkipModulu({ gorunum, onCekmece, onKopru }) {
+export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
   const [yukleniyor, setYukleniyor] = useState(true);
   const [hata, setHata] = useState('');
   const [personel, setPersonel] = useState([]);
+  // ── YERLİ PERSONEL CRUD (köprü kaldırma turu, 2026-07-30) ─────────────────
+  // Klasik Personel.jsx sözleşmesi aynen. Bordro/maaş ödemesi ve vardiya
+  // planlama BİLEREK taşınmadı (maaş guard'lı akış + 5338 satırlık planlayıcı).
+  const [pForm, setPForm] = useState(null);      // {duzenleId?, ad_soyad, gorev, ...}
+  const [pMesgul, setPMesgul] = useState(false);
+  const [cikisForm, setCikisForm] = useState(null);  // {id, ad, neden}
+  const [subeListe, setSubeListe] = useState([]);
   const [hafta, setHafta] = useState(null);
   const [bordro, setBordro] = useState([]);
   const [avans, setAvans] = useState(null);
@@ -136,6 +154,65 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru }) {
   };
 
   useEffect(yukle, []);
+
+  // ── personel formu (klasik Personel.jsx sözleşmesi) ────────────────────────
+  const pFormAc = (p) => {
+    setPForm(p ? {
+      duzenleId: p.id, ad_soyad: p.ad_soyad || '', gorev: p.gorev || '',
+      calisma_turu: p.calisma_turu || 'surekli', maas: p.maas ?? '',
+      saatlik_ucret: p.saatlik_ucret ?? '', yemek_ucreti: p.yemek_ucreti ?? '',
+      yol_ucreti: p.yol_ucreti ?? '', sube_id: p.sube_id || '',
+      baslangic_tarihi: String(p.baslangic_tarihi || '').slice(0, 10),
+      telefon: p.telefon || '', notlar: p.notlar || '',
+    } : {
+      duzenleId: null, ad_soyad: '', gorev: '', calisma_turu: 'surekli', maas: '',
+      saatlik_ucret: '', yemek_ucreti: '', yol_ucreti: '', sube_id: '',
+      baslangic_tarihi: '', telefon: '', notlar: '',
+    });
+    if (!subeListe.length) api('/subeler').then((d) => setSubeListe(Array.isArray(d) ? d : [])).catch(() => {});
+  };
+
+  const pKaydet = async () => {
+    const f = pForm;
+    if (!(f?.ad_soyad || '').trim()) { onToast?.('Ad soyad zorunlu'); return; }
+    setPMesgul(true);
+    try {
+      const body = {
+        ad_soyad: f.ad_soyad.trim(), gorev: f.gorev || null,
+        calisma_turu: f.calisma_turu, maas: f.maas ? Number(f.maas) : 0,
+        saatlik_ucret: f.saatlik_ucret ? Number(f.saatlik_ucret) : 0,
+        yemek_ucreti: f.yemek_ucreti ? Number(f.yemek_ucreti) : 0,
+        yol_ucreti: f.yol_ucreti ? Number(f.yol_ucreti) : 0,
+        odeme_gunu: 1, sube_id: f.sube_id || null,
+        baslangic_tarihi: f.baslangic_tarihi || null,
+        notlar: f.notlar || null, telefon: (f.telefon || '').trim() || null,
+      };
+      if (f.duzenleId) await api(`/personel/${f.duzenleId}`, { method: 'PUT', body });
+      else await api('/personel', { method: 'POST', body });
+      onToast?.(f.duzenleId ? '✓ Personel güncellendi' : '✓ Personel eklendi');
+      setPForm(null);
+      yukle();
+    } catch (e) {
+      onToast?.(e?.message || 'Kaydedilemedi');
+    } finally {
+      setPMesgul(false);
+    }
+  };
+
+  const cikisYap = async () => {
+    if (!cikisForm?.id) return;
+    setPMesgul(true);
+    try {
+      await api(`/personel/${cikisForm.id}/cikis?neden=${encodeURIComponent(cikisForm.neden || '')}`, { method: 'POST' });
+      onToast?.(`${cikisForm.ad} işten çıkış kaydı yapıldı`);
+      setCikisForm(null);
+      yukle();
+    } catch (e) {
+      onToast?.(e?.message || 'Çıkış kaydedilemedi');
+    } finally {
+      setPMesgul(false);
+    }
+  };
 
   // Dönem/gün değişince yalnız İLGİLİ uçlar tazelenir — tam ekran yükleme yok.
   const ayDegistir = (d) => {
@@ -240,11 +317,143 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru }) {
       ],
       not: kd != null && kd < 3
         ? 'Deneme süresinde — ilk 3 ay yakın takip edilir.'
-        : 'Bordro hesabı maaş çekirdeğinden gelir; onay ve ödeme Personel ekranından yapılır.',
-      aksiyonAd: 'Personel ekranını aç',
-      _hedef: 'personel',
+        : 'Bordro hesabı maaş çekirdeğinden gelir; maaş onayı Maaş & Avans görünümünde.',
+      aksiyonlar: [
+        { ad: '✎ Bilgileri düzenle', birincil: true, onTikla: () => pFormAc(p) },
+        { ad: 'İşten çıkış', onTikla: () => setCikisForm({ id: p.id, ad: p.ad_soyad, neden: '' }) },
+      ],
     });
   };
+
+  // ── personel formu + çıkış modalı (kadro görünümünde render edilir) ────────
+  const personelModali = (
+    <>
+      {pForm && (() => {
+        const alan = (k, v) => setPForm((f) => ({ ...f, [k]: v }));
+        const partTime = pForm.calisma_turu === 'part_time';
+        return (
+          <div onClick={(e) => { if (e.target === e.currentTarget && !pMesgul) setPForm(null); }} style={{
+            position: 'fixed', inset: 0, zIndex: 90, background: 'rgba(10,6,2,.66)',
+            backdropFilter: 'blur(3px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+          }}>
+            <div style={{ ...kartYuzey, width: 560, maxWidth: '96vw', maxHeight: '92vh', overflowY: 'auto', padding: '24px 26px' }}>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 18 }}>
+                <div style={{ fontFamily: F.baslik, fontSize: 21, fontWeight: 600 }}>
+                  {pForm.duzenleId ? 'Personeli Düzenle' : 'Yeni Personel'}
+                </div>
+                <button onClick={() => !pMesgul && setPForm(null)} style={{
+                  marginLeft: 'auto', border: 'none', background: 'transparent', color: R.not,
+                  fontSize: 16, cursor: 'pointer', fontFamily: 'inherit',
+                }}>✕</button>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 13 }}>
+                <div>
+                  <label style={ekEtiket}>Ad soyad *</label>
+                  <input value={pForm.ad_soyad} onChange={(e) => alan('ad_soyad', e.target.value)} style={ekAlanStil} />
+                </div>
+                <div>
+                  <label style={ekEtiket}>Görev</label>
+                  <input value={pForm.gorev} placeholder="barista, müdür…"
+                    onChange={(e) => alan('gorev', e.target.value)} style={ekAlanStil} />
+                </div>
+                <div>
+                  <label style={ekEtiket}>Çalışma türü</label>
+                  <select value={pForm.calisma_turu} onChange={(e) => alan('calisma_turu', e.target.value)} style={ekAlanStil}>
+                    <option value="surekli">Sürekli (aylık maaş)</option>
+                    <option value="part_time">Part-time (saatlik)</option>
+                  </select>
+                </div>
+                <div>
+                  <label style={ekEtiket}>Şube</label>
+                  <select value={pForm.sube_id} onChange={(e) => alan('sube_id', e.target.value)} style={ekAlanStil}>
+                    <option value="">Merkez / atanmamış</option>
+                    {subeListe.map((s) => <option key={s.id} value={s.id}>{s.ad}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label style={ekEtiket}>{partTime ? 'Saatlik ücret (₺)' : 'Aylık maaş (₺)'}</label>
+                  <input type="number" value={partTime ? pForm.saatlik_ucret : pForm.maas}
+                    onChange={(e) => alan(partTime ? 'saatlik_ucret' : 'maas', e.target.value)}
+                    style={{ ...ekAlanStil, fontFamily: F.mono, textAlign: 'right' }} />
+                </div>
+                <div>
+                  <label style={ekEtiket}>Başlangıç tarihi</label>
+                  <input type="date" value={pForm.baslangic_tarihi} onChange={(e) => alan('baslangic_tarihi', e.target.value)}
+                    style={{ ...ekAlanStil, colorScheme: 'dark' }} />
+                </div>
+                <div>
+                  <label style={ekEtiket}>Yemek ücreti (₺)</label>
+                  <input type="number" value={pForm.yemek_ucreti} onChange={(e) => alan('yemek_ucreti', e.target.value)}
+                    style={{ ...ekAlanStil, fontFamily: F.mono, textAlign: 'right' }} />
+                </div>
+                <div>
+                  <label style={ekEtiket}>Yol ücreti (₺)</label>
+                  <input type="number" value={pForm.yol_ucreti} onChange={(e) => alan('yol_ucreti', e.target.value)}
+                    style={{ ...ekAlanStil, fontFamily: F.mono, textAlign: 'right' }} />
+                </div>
+                <div>
+                  <label style={ekEtiket}>Telefon</label>
+                  <input value={pForm.telefon} onChange={(e) => alan('telefon', e.target.value)}
+                    style={{ ...ekAlanStil, fontFamily: F.mono }} />
+                </div>
+                <div>
+                  <label style={ekEtiket}>Not</label>
+                  <input value={pForm.notlar} onChange={(e) => alan('notlar', e.target.value)} style={ekAlanStil} />
+                </div>
+              </div>
+              <div style={{ fontSize: 11, color: R.not, marginTop: 12, lineHeight: 1.5 }}>
+                Maaş ödemesi ve bordro onayı Maaş & Avans görünümünde — burada yalnız kadro bilgisi tutulur.
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 16 }}>
+                <button disabled={pMesgul} onClick={() => setPForm(null)} style={{
+                  padding: '10px 18px', borderRadius: 10, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+                  background: 'transparent', color: R.metin2, fontSize: 12.5, fontWeight: 600, fontFamily: 'inherit',
+                }}>İptal</button>
+                <button disabled={pMesgul} onClick={pKaydet} style={{
+                  padding: '10px 20px', borderRadius: 10, border: 'none', cursor: 'pointer',
+                  background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+                  fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit',
+                }}>{pMesgul ? 'Kaydediliyor…' : 'Kaydet'}</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {cikisForm && (
+        <div onClick={(e) => { if (e.target === e.currentTarget && !pMesgul) setCikisForm(null); }} style={{
+          position: 'fixed', inset: 0, zIndex: 90, background: 'rgba(10,6,2,.66)',
+          backdropFilter: 'blur(3px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+        }}>
+          <div style={{ ...kartYuzey, width: 460, maxWidth: '96vw', padding: '24px 26px' }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 8 }}>
+              <div style={{ fontFamily: F.baslik, fontSize: 20, fontWeight: 600 }}>İşten Çıkış</div>
+              <button onClick={() => !pMesgul && setCikisForm(null)} style={{
+                marginLeft: 'auto', border: 'none', background: 'transparent', color: R.not,
+                fontSize: 16, cursor: 'pointer', fontFamily: 'inherit',
+              }}>✕</button>
+            </div>
+            <div style={{ fontSize: 12.5, color: R.metin2, marginBottom: 14 }}>
+              <b>{cikisForm.ad}</b> pasife alınacak; kadrodan çıkar, geçmiş bordro kayıtları korunur.
+            </div>
+            <label style={ekEtiket}>Çıkış nedeni</label>
+            <input value={cikisForm.neden} placeholder="istifa, dönem sonu…"
+              onChange={(e) => setCikisForm((f) => ({ ...f, neden: e.target.value }))} style={ekAlanStil} />
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 16 }}>
+              <button disabled={pMesgul} onClick={() => setCikisForm(null)} style={{
+                padding: '10px 18px', borderRadius: 10, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+                background: 'transparent', color: R.metin2, fontSize: 12.5, fontWeight: 600, fontFamily: 'inherit',
+              }}>Vazgeç</button>
+              <button disabled={pMesgul} onClick={cikisYap} style={{
+                padding: '10px 20px', borderRadius: 10, border: 'none', cursor: 'pointer',
+                background: `${R.kirmizi}26`, color: R.kirmizi, fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit',
+              }}>{pMesgul ? 'İşleniyor…' : 'Çıkışı kaydet'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
 
   // ── 1) Kadro ───────────────────────────────────────────────────────────────
   if (gorunum === 'kadro') {
@@ -295,6 +504,19 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru }) {
           }))}
           onSatir={(row) => personelAc(row._p)}
         />
+        <div style={{ display: 'flex', gap: 9, marginTop: 12, marginBottom: 16, flexWrap: 'wrap' }}>
+          <button onClick={() => pFormAc(null)} style={{
+            padding: '9px 17px', borderRadius: 10, border: 'none', cursor: 'pointer',
+            background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+            fontSize: 12, fontWeight: 700, fontFamily: 'inherit',
+          }}>
+            + Personel ekle
+          </button>
+          <span style={{ fontSize: 11.5, color: R.not, alignSelf: 'center' }}>
+            düzenleme ve işten çıkış için satıra tıkla
+          </span>
+        </div>
+        {personelModali}
       </>
     );
   }
@@ -441,9 +663,9 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru }) {
                   { ad: 'Eksik gün', detay: 'devamsızlık', tutar: b.eksik_gun ? `${trSayi(b.eksik_gun, 0)} gün` : '—' },
                   { ad: 'Manuel düzeltme', detay: b.not_aciklama || 'not yok', tutar: fmt(sayi(b.manuel_duzeltme)) },
                 ],
-                not: 'Hesap maaş çekirdeğinden gelir. Onay ve ödeme buradan YAPILMAZ — Personel ekranındaki guard\'lı akış kullanılır.',
+                not: 'Hesap maaş çekirdeğinden gelir. Bordro onayı ve ödemesi guard\'lı maaş akışında yapılır (Personel ekranı).',
                 aksiyonAd: 'Personel ekranını aç',
-                _hedef: 'personel',
+                _hedef: 'personel',   // maaş onay/ödeme akışı klasikte (guard'lı) — bilinçli
               });
             }}
           />
@@ -524,8 +746,6 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru }) {
                   tutar: `${b.tamam}/${b.toplam}`,
                 })),
                 not: 'Görevler QR ile personel telefonundan işaretlenir; kanıt fotoğrafı görev kaydında durur.',
-                aksiyonAd: 'Görev takibini aç',
-                _hedef: 'gorev-ozet',
               });
             }}
           />
@@ -609,6 +829,8 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru }) {
             🕐 Tam takip ekranı (izin alacağı · vardiya dışı · geçmiş aylar)
           </button>
         </div>
+        {/* Bu görünümden de personel dosyası açılıyor → düzenle/çıkış modalları burada da gerekli */}
+        {personelModali}
       </>
     );
   }
