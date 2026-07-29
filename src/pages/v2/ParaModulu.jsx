@@ -124,6 +124,15 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru, onToast }) {
   const [teslimler, setTeslimler] = useState(null);
   const [teslimHata, setTeslimHata] = useState('');
   const [paraYolda, setParaYolda] = useState(null);  // duyu 2/6 (salt-okur)
+  // v2-YERLİ (köprü kaldırma): filtre hapları + teslim alıcı yönetimi
+  // (teslim kaydının KENDİSİ QR/şube akışında doğar — burada yazılmaz)
+  const [teslimSube, setTeslimSube] = useState('');
+  const [teslimTur, setTeslimTur] = useState('');
+  const [aliciModal, setAliciModal] = useState(false);
+  const [alicilar, setAlicilar] = useState(null);
+  const [aliciForm, setAliciForm] = useState(null);  // {id?, ad, unvan, sube_id}
+  const [aliciMesgul, setAliciMesgul] = useState(false);
+  const [aliciPasifSor, setAliciPasifSor] = useState('');
   // ── ANLIK GİDER ───────────────────────────────────────────────────────────
   const [giderler, setGiderler] = useState(null);
   const [giderOzet, setGiderOzet] = useState(null);
@@ -294,6 +303,43 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru, onToast }) {
       .then((d) => setParaYolda(d || {}))
       .catch(() => setParaYolda({}));
   }, [subeler]);
+
+  const alicilariYukle = () => {
+    api('/kasa-teslim-alici')
+      .then((r) => setAlicilar(Array.isArray(r?.alicilar) ? r.alicilar : []))
+      .catch(() => setAlicilar([]));
+  };
+
+  const aliciKaydet = async () => {
+    if (!(aliciForm?.ad || '').trim()) { onToast?.('Alıcı adı zorunlu'); return; }
+    setAliciMesgul(true);
+    try {
+      const body = { ad: aliciForm.ad, unvan: aliciForm.unvan || '', sube_id: aliciForm.sube_id || '' };
+      if (aliciForm.id) await api(`/kasa-teslim-alici/${aliciForm.id}`, { method: 'PUT', body });
+      else await api('/kasa-teslim-alici', { method: 'POST', body });
+      onToast?.(aliciForm.id ? '✓ Alıcı güncellendi' : '✓ Alıcı eklendi');
+      setAliciForm(null);
+      alicilariYukle();
+    } catch (e) {
+      onToast?.(e?.message || 'Kaydedilemedi');
+    } finally {
+      setAliciMesgul(false);
+    }
+  };
+
+  const aliciPasife = async (id) => {
+    setAliciMesgul(true);
+    try {
+      await api(`/kasa-teslim-alici/${id}`, { method: 'DELETE' });
+      onToast?.('Alıcı pasife alındı');
+      setAliciPasifSor('');
+      alicilariYukle();
+    } catch (e) {
+      onToast?.(e?.message || 'Pasife alınamadı');
+    } finally {
+      setAliciMesgul(false);
+    }
+  };
 
   const giderYukle = useCallback(() => {
     setGiderHata('');
@@ -696,35 +742,179 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru, onToast }) {
             ))}
           </div>
         )}
-        {teslimler.length === 0 ? (
-          <BosDurum metin="Bu ay kasa teslim kaydı yok." />
-        ) : (
-          <Tablo
-            baslik="Kasa teslimleri · bu ay"
-            not="teslim eden → alan; kayıt kasa iziyle doğar"
-            kolonlar={[
-              { ad: 'Tarih' }, { ad: 'Şube' }, { ad: 'Tür' }, { ad: 'Teslim eden → alan' }, { ad: 'Tutar', sag: 1 },
-            ]}
-            satirlar={[...teslimler]
-              .sort((a, b) => String(b.tarih).localeCompare(String(a.tarih)))
-              .slice(0, 40)
-              .map((t, i) => ({
-                id: t.id || `t-${i}`,
-                hucreler: [
-                  { v: tarihKisa(t.tarih), mono: true, renk: R.not },
-                  { v: subeAd[String(t.sube_id)] || t.sube_adi || '—', kalin: true },
-                  t.teslim_turu === 'gun_sonu'
-                    ? { v: '🌙 gün sonu', rozet: R.mavi }
-                    : { v: '🔄 ara', rozet: R.amber },
-                  { v: `${t.teslim_eden_ad || '—'} → ${t.teslim_alan_ad || '—'}`, renk: R.metin2 },
-                  { v: fmt(sayi(t.tutar)), mono: true, sag: true, kalin: true },
-                ],
-              }))}
-          />
-        )}
-        <div style={{ display: 'flex', gap: 9, marginTop: 2, marginBottom: 16 }}>
-          <KopruButon ad="Kasa Teslim ekranını aç" onTikla={() => onKopru?.('kasa-teslim')} />
+        {/* Filtre hapları (şube + tür) — klasik ekranın filtreleri yerlileşti */}
+        <div style={{ display: 'flex', gap: 6, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+          {[['', 'Tüm şubeler'], ...(subeler || []).map((s) => [String(s.id), s.ad])].map(([id, ad]) => (
+            <div key={`s${id}`} onClick={() => setTeslimSube(id)} style={{
+              padding: '5px 12px', borderRadius: 99, fontSize: 11.5, fontWeight: 600, cursor: 'pointer',
+              background: teslimSube === id ? `${R.bakir}22` : R.girinti,
+              color: teslimSube === id ? R.bakir : R.not,
+              border: `1px solid ${teslimSube === id ? `${R.bakir}55` : R.cizgi3}`,
+            }}>{ad}</div>
+          ))}
+          <span style={{ width: 1, height: 18, background: R.cizgi3 }} />
+          {[['', 'Hepsi'], ['ara', '🔄 ara'], ['gun_sonu', '🌙 gün sonu']].map(([id, ad]) => (
+            <div key={`t${id}`} onClick={() => setTeslimTur(id)} style={{
+              padding: '5px 12px', borderRadius: 99, fontSize: 11.5, fontWeight: 600, cursor: 'pointer',
+              background: teslimTur === id ? `${R.bakir}22` : R.girinti,
+              color: teslimTur === id ? R.bakir : R.not,
+              border: `1px solid ${teslimTur === id ? `${R.bakir}55` : R.cizgi3}`,
+            }}>{ad}</div>
+          ))}
+          <button onClick={() => { setAliciModal(true); if (alicilar == null) alicilariYukle(); }} style={{
+            marginLeft: 'auto', padding: '7px 14px', borderRadius: 10, border: `1px solid ${R.cizgi3}`,
+            background: R.girinti, color: R.metin2, fontSize: 11.5, fontWeight: 600,
+            fontFamily: 'inherit', cursor: 'pointer',
+          }}>
+            👤 Teslim alıcılarını yönet
+          </button>
         </div>
+        {(() => {
+          const suzulmus = teslimler.filter((t) =>
+            (!teslimSube || String(t.sube_id) === teslimSube) &&
+            (!teslimTur || t.teslim_turu === teslimTur));
+          return suzulmus.length === 0 ? (
+            <BosDurum metin={teslimler.length === 0 ? 'Bu ay kasa teslim kaydı yok.' : 'Bu filtrede teslim kaydı yok.'} />
+          ) : (
+            <Tablo
+              baslik="Kasa teslimleri · bu ay"
+              not="teslim eden → alan; kayıt kasa iziyle doğar (yazma QR/şube akışında)"
+              kolonlar={[
+                { ad: 'Tarih' }, { ad: 'Şube' }, { ad: 'Tür' }, { ad: 'Teslim eden → alan' }, { ad: 'Tutar', sag: 1 },
+              ]}
+              satirlar={[...suzulmus]
+                .sort((a, b) => String(b.tarih).localeCompare(String(a.tarih)))
+                .slice(0, 40)
+                .map((t, i) => ({
+                  id: t.id || `t-${i}`,
+                  hucreler: [
+                    { v: tarihKisa(t.tarih), mono: true, renk: R.not },
+                    { v: subeAd[String(t.sube_id)] || t.sube_adi || '—', kalin: true },
+                    t.teslim_turu === 'gun_sonu'
+                      ? { v: '🌙 gün sonu', rozet: R.mavi }
+                      : { v: '🔄 ara', rozet: R.amber },
+                    { v: `${t.teslim_eden_ad || '—'} → ${t.teslim_alan_ad || '—'}`, renk: R.metin2 },
+                    { v: fmt(sayi(t.tutar)), mono: true, sag: true, kalin: true },
+                  ],
+                }))}
+            />
+          );
+        })()}
+
+        {/* ── TESLİM ALICI YÖNETİMİ (kadife modal — klasik CRUD yerlileşti) ── */}
+        {aliciModal && (
+          <div
+            onClick={(e) => { if (e.target === e.currentTarget && !aliciMesgul) { setAliciModal(false); setAliciForm(null); } }}
+            style={{
+              position: 'fixed', inset: 0, zIndex: 90, background: 'rgba(10,6,2,.66)',
+              backdropFilter: 'blur(3px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+            }}
+          >
+            <div style={{ ...kartYuzey, width: 540, maxWidth: '96vw', maxHeight: '90vh', overflowY: 'auto', padding: '24px 26px' }}>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 16 }}>
+                <div style={{ fontFamily: F.baslik, fontSize: 21, fontWeight: 600 }}>Teslim Alıcıları</div>
+                <div style={{ fontSize: 11.5, color: R.not2 }}>kasayı teslim alabilecek kişiler</div>
+                <button onClick={() => { setAliciModal(false); setAliciForm(null); }} style={{
+                  marginLeft: 'auto', border: 'none', background: 'transparent', color: R.not,
+                  fontSize: 16, cursor: 'pointer', fontFamily: 'inherit',
+                }}>✕</button>
+              </div>
+
+              {alicilar == null ? (
+                <div style={{ padding: '20px 0', textAlign: 'center', color: R.not, fontSize: 13 }}>Yükleniyor…</div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16 }}>
+                  {alicilar.length === 0 && (
+                    <div style={{ fontSize: 12.5, color: R.not, textAlign: 'center', padding: '12px 0' }}>
+                      Kayıtlı teslim alıcısı yok — aşağıdan ekleyin.
+                    </div>
+                  )}
+                  {alicilar.map((a) => (
+                    <div key={a.id} style={{
+                      display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px',
+                      borderRadius: 12, background: R.girinti, border: `1px solid ${R.cizgi3}`,
+                    }}>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: 13, fontWeight: 700 }}>{a.ad}</div>
+                        <div style={{ fontSize: 11, color: R.not2, marginTop: 2 }}>
+                          {a.unvan || '—'}{a.sube_adi ? ` · ${a.sube_adi}` : ''}
+                        </div>
+                      </div>
+                      <button onClick={() => setAliciForm({ id: a.id, ad: a.ad || '', unvan: a.unvan || '', sube_id: a.sube_id || '' })} style={{
+                        padding: '6px 11px', borderRadius: 9, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+                        background: 'transparent', color: R.metin2, fontSize: 11.5, fontWeight: 600, fontFamily: 'inherit',
+                      }}>Düzenle</button>
+                      {aliciPasifSor === String(a.id) ? (
+                        <>
+                          <button disabled={aliciMesgul} onClick={() => aliciPasife(a.id)} style={{
+                            padding: '6px 11px', borderRadius: 9, border: 'none', cursor: 'pointer',
+                            background: `${R.kirmizi}22`, color: R.kirmizi, fontSize: 11.5, fontWeight: 700, fontFamily: 'inherit',
+                          }}>Eminim</button>
+                          <button onClick={() => setAliciPasifSor('')} style={{
+                            padding: '6px 9px', borderRadius: 9, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+                            background: 'transparent', color: R.metin2, fontSize: 11.5, fontFamily: 'inherit',
+                          }}>Vazgeç</button>
+                        </>
+                      ) : (
+                        <button onClick={() => setAliciPasifSor(String(a.id))} style={{
+                          padding: '6px 11px', borderRadius: 9, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+                          background: 'transparent', color: R.not, fontSize: 11.5, fontWeight: 600, fontFamily: 'inherit',
+                        }}>Pasife al</button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {aliciForm ? (
+                <div style={{ padding: '14px 16px', borderRadius: 12, background: R.girinti, border: `1px solid ${R.bakir}44` }}>
+                  <div style={{ fontSize: 12.5, fontWeight: 700, color: R.bakir, marginBottom: 12 }}>
+                    {aliciForm.id ? 'Alıcıyı düzenle' : 'Yeni teslim alıcısı'}
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                    <div>
+                      <label style={alanEtiket}>Ad *</label>
+                      <input value={aliciForm.ad} onChange={(e) => setAliciForm((f) => ({ ...f, ad: e.target.value }))} style={alanStil} />
+                    </div>
+                    <div>
+                      <label style={alanEtiket}>Unvan</label>
+                      <input value={aliciForm.unvan} onChange={(e) => setAliciForm((f) => ({ ...f, unvan: e.target.value }))}
+                        placeholder="örn. muhasebe" style={alanStil} />
+                    </div>
+                    <div>
+                      <label style={alanEtiket}>Şube (isteğe bağlı)</label>
+                      <select value={aliciForm.sube_id} onChange={(e) => setAliciForm((f) => ({ ...f, sube_id: e.target.value }))} style={alanStil}>
+                        <option value="">Tüm şubeler</option>
+                        {(subeler || []).map((s) => <option key={s.id} value={s.id}>{s.ad}</option>)}
+                      </select>
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 14 }}>
+                    <button disabled={aliciMesgul} onClick={() => setAliciForm(null)} style={{
+                      padding: '8px 15px', borderRadius: 10, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+                      background: 'transparent', color: R.metin2, fontSize: 12, fontWeight: 600, fontFamily: 'inherit',
+                    }}>Vazgeç</button>
+                    <button disabled={aliciMesgul} onClick={aliciKaydet} style={{
+                      padding: '8px 17px', borderRadius: 10, border: 'none', cursor: 'pointer',
+                      background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+                      fontSize: 12, fontWeight: 700, fontFamily: 'inherit',
+                    }}>
+                      {aliciMesgul ? 'Kaydediliyor…' : 'Kaydet'}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button onClick={() => setAliciForm({ ad: '', unvan: '', sube_id: '' })} style={{
+                  padding: '9px 17px', borderRadius: 10, border: 'none', cursor: 'pointer',
+                  background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+                  fontSize: 12, fontWeight: 700, fontFamily: 'inherit',
+                }}>
+                  + Yeni alıcı ekle
+                </button>
+              )}
+            </div>
+          </div>
+        )}
       </>
     );
   }

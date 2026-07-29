@@ -196,6 +196,7 @@ const OPS_UC = {
   },
   '/api/ops/siparis/sevkiyat-guncelle': { ok: true },
   '/api/ops/subeler/depolar': { satirlar: [{ id: 's1', ad: 'Zafer (Merkez Depo)' }, { id: 's2', ad: 'Köyceğiz' }] },
+  '/api/kasa-teslim-alici': { alicilar: [{ id: 'a1', ad: 'Fethi Bey', unvan: 'sahip', sube_id: '', sube_adi: '' }, { id: 'a2', ad: 'Ayşe Hanım', unvan: 'muhasebe', sube_id: 's1', sube_adi: 'Zafer' }] },
   '/api/ops/siparis/sevkiyata-gonder': { ok: true },
   '/api/ops/bulgu-izi': { ok: true, id: 'iz1' },
   '/api/import-izi': {
