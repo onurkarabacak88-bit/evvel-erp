@@ -2948,6 +2948,85 @@ def _bag_evo_ciro() -> List[dict]:
     return out[:12]
 
 
+# ── YENİ DUYULARIN BAĞLARI (2026-07-29, sahip: "hepsini sırayla kur" turu) ────
+# 6 yeni duyu bağ defterine örülür: cümleleri KOD kurar, beyin AKTARIR.
+# Her üretici tembel import kullanır (döngüsel import olmasın) ve yalnız
+# SİNYAL varken konuşur — temiz günde sessizlik de bilgidir.
+
+def _bag_sevkiyat_hiz():
+    from operasyon_merkez_api import ops_siparis_sevkiyat_hiz
+    from datetime import date as _d
+    d = ops_siparis_sevkiyat_hiz(gun=30)
+    out = []
+    bugun = _d.today().isoformat()
+    if d.get("ort_saat") is not None and int(d.get("teslim_adet") or 0) >= 3:
+        out.append({"alanlar": ["sevkiyat", "hiz"], "tarih": bugun, "guven": "hesap",
+                    "cumle": (f"Sevkiyat hızı (30g): talepten teslime ort {d['ort_saat']} sa "
+                              f"(medyan {d.get('medyan_saat')}, {d['teslim_adet']} teslim; "
+                              f"depo hazırlık {d.get('hazirlik_ort_saat')} sa · yol {d.get('yol_ort_saat')} sa)")})
+        depolar = d.get("depolar") or []
+        if len(depolar) >= 2 and depolar[-1].get("ort_saat"):
+            en_yavas, en_hizli = depolar[0], depolar[-1]
+            if float(en_yavas["ort_saat"]) >= 1.8 * float(en_hizli["ort_saat"]):
+                out.append({"alanlar": ["sevkiyat", "hiz"], "tarih": bugun, "guven": "hesap",
+                            "cumle": (f"Depo hız farkı: {en_yavas['depo_adi']} ort {en_yavas['ort_saat']} sa, "
+                                      f"{en_hizli['depo_adi']} {en_hizli['ort_saat']} sa — yavaş depoda "
+                                      "hazırlık düzeni incelenmeye aday (gözlem, hüküm değil)")})
+    return out[:3]
+
+
+def _bag_para_yolda():
+    from operasyon_merkez_api import ops_para_yolda
+    from datetime import date as _d
+    d = ops_para_yolda(gun=14)
+    out = []
+    bugun = _d.today().isoformat()
+    for b in (d.get("bekleyenler") or [])[:3]:
+        if b.get("gecikmis"):
+            tutar = f" (~{int(b['beklenen_tutar']):,} ₺)".replace(",", ".") if b.get("beklenen_tutar") else ""
+            out.append({"alanlar": ["kasa", "teslim"], "tarih": b.get("tarih") or bugun, "guven": "hesap",
+                        "cumle": (f"{b.get('sube')} {b.get('tarih')} kapanışının gün sonu teslimi "
+                                  f"{int(b.get('gecen_saat') or 0)} saattir kayıtsız{tutar} — para yolda")})
+    if d.get("ort_teslim_saat") is not None and float(d["ort_teslim_saat"]) > 24:
+        out.append({"alanlar": ["kasa", "teslim"], "tarih": bugun, "guven": "hesap",
+                    "cumle": (f"Kapanış→teslim ortalaması {d['ort_teslim_saat']} saate çıktı "
+                              f"(14g, {d.get('eslesen_adet')} eşleşme) — teslim ritmi yavaşlıyor")})
+    return out[:3]
+
+
+def _bag_vade_disiplini():
+    from operasyon_merkez_api import ops_vade_disiplini
+    from datetime import date as _d
+    d = ops_vade_disiplini(gun=90)
+    out = []
+    bugun = _d.today().isoformat()
+    if d.get("gec_orani_yuzde") is not None and float(d["gec_orani_yuzde"]) >= 10:
+        ornek = (d.get("en_gecler") or [{}])[0]
+        ek = f" — en geç: {ornek.get('aciklama')} (+{ornek.get('gecikme_gun')} gün)" if ornek.get("aciklama") else ""
+        out.append({"alanlar": ["odeme", "vade"], "tarih": bugun, "guven": "hesap",
+                    "cumle": (f"Vade disiplini (90g): ödenen planların %{d['gec_orani_yuzde']}'i "
+                              f"3+ gün geç ödendi (ort sapma {d.get('ort_gecikme_gun')} gün){ek}")})
+    return out[:2]
+
+
+def _bag_bulgu_dongusu():
+    from operasyon_merkez_api import ops_bulgu_izi_ozet
+    from datetime import date as _d
+    d = ops_bulgu_izi_ozet(gun=30)
+    out = []
+    bugun = _d.today().isoformat()
+    oran = d.get("yanlis_alarm_orani_yuzde")
+    if oran is not None and float(oran) >= 30 and int(d.get("yanlis_alarm") or 0) >= 2:
+        out.append({"alanlar": ["denetim", "isabet"], "tarih": bugun, "guven": "hesap",
+                    "cumle": (f"Motor bulgularının %{oran}'i yanlış alarm işaretlendi (30g, "
+                              f"{d.get('yanlis_alarm')} adet) — eşikler gözden geçirilmeye aday")})
+    if int(d.get("cozulen") or 0) >= 3 and d.get("ort_cozum_saat") is not None:
+        out.append({"alanlar": ["denetim", "isabet"], "tarih": bugun, "guven": "hesap",
+                    "cumle": (f"30 günde {d['cozulen']} bulgu çözüldü işaretlendi "
+                              f"(ort ≈{d['ort_cozum_saat']} sa — gece doğum varsayımıyla)")})
+    return out[:2]
+
+
 _BAG_KAYNAKLARI = [
     ("stok_hipotez", _bag_stok_hipotez),
     ("tutarsizlik", _bag_tutarsizlik),
@@ -2966,6 +3045,12 @@ _BAG_KAYNAKLARI = [
     ("personel_puan", _bag_personel_puan),
     ("ciro_kasa", _bag_ciro_kasa),
     ("evo_ciro", _bag_evo_ciro),
+    # Yeni duyular (2026-07-29) — tavan kontrolü: 21 kaynak × küçük katkı,
+    # beyin aktarım dilimi [:80] (35-kesme dersi sonrası genişletilmişti).
+    ("sevkiyat_hiz", _bag_sevkiyat_hiz),
+    ("para_yolda", _bag_para_yolda),
+    ("vade_disiplini", _bag_vade_disiplini),
+    ("bulgu_dongusu", _bag_bulgu_dongusu),
 ]
 
 
