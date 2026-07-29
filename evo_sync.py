@@ -1018,14 +1018,13 @@ def evo_hs_rapor(
     """
     from datetime import date as _date
     bugun = bugun_tr()
-    if tarih1:
-        bastar = datetime.strptime(tarih1, "%d.%m.%Y").date()
-    else:
-        bastar = bugun
-    if tarih2:
-        bittar = datetime.strptime(tarih2, "%d.%m.%Y").date()
-    else:
-        bittar = bugun
+    # Sağlamlık (2026-07-29): hatalı tarih formatı ham 500 patlatıyordu —
+    # ValueError artık 400 + açık mesajla döner (DD.MM.YYYY beklenir).
+    try:
+        bastar = datetime.strptime(tarih1, "%d.%m.%Y").date() if tarih1 else bugun
+        bittar = datetime.strptime(tarih2, "%d.%m.%Y").date() if tarih2 else bugun
+    except ValueError:
+        raise HTTPException(400, "tarih formatı DD.MM.YYYY olmalı (ör. 28.07.2026)")
 
     kaynak = "hs_rapor"
     sonuc: Dict[str, float] = {}
