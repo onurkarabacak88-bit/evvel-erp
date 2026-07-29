@@ -236,6 +236,18 @@ def parametre_guncelle(payload: dict):
 
 
 # ── EŞLEŞTİRME: otomatik ÖNERİ + insan onayı ─────────────────────────────────
+def _evo_katalog_adlar() -> set:
+    """Evo stok kartları TAM katalogundan aktif ürün adları. Sahip teyidi
+    (2026-07-29): tüm reçeteli ürünler Evo'da kayıtlı ama cok_satilan TOP-LİSTE
+    kesitinde görünmüyor — aday havuzu katalogla dolar. Hata-yutar: Evo
+    erişilemezse boş küme döner, motor eski kesitle çalışmaya devam eder."""
+    try:
+        from evo_sync import evo_stok_katalog  # tembel import (döngü koruması)
+        return {u["ad"] for u in evo_stok_katalog() if u.get("aktif") and u.get("ad")}
+    except Exception:
+        return set()
+
+
 def _benzerlik(a: str, b: str) -> float:
     """Basit token-kesişim benzerliği (0-1). LLM yok — deterministik."""
     ta, tb = set(_norm(a).split()), set(_norm(b).split())
@@ -263,6 +275,7 @@ def eslestirme_oner():
                     ad = str(u.get("ad") or "").strip()
                     if ad:
                         evo_adlar.add(ad)
+        evo_adlar |= _evo_katalog_adlar()  # TAM katalog (top-liste kesitini aşar)
         cur.execute("SELECT urun_ad FROM recete WHERE aktif=TRUE")
         recete_urunler = [dict(r)["urun_ad"] for r in cur.fetchall() or []]
         for ru in recete_urunler:
@@ -347,6 +360,7 @@ def eslestirme_adaylar():
                     ad = str(u.get("ad") or "").strip()
                     if ad:
                         evo_adlar.add(ad)
+        evo_adlar |= _evo_katalog_adlar()  # TAM katalog (top-liste kesitini aşar)
         cur.execute("""
             SELECT DISTINCT kalem_kodu, kalem_adi FROM (
                 SELECT kalem_kodu, kalem_adi FROM sube_depo_stok_hareket

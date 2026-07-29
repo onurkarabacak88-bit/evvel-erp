@@ -1006,6 +1006,65 @@ def evo_set_web_token(token: str = Query(..., description="Browser localStorage'
     return {"durum": "ok", "mesaj": "Token güncellendi ✅", "token_baslangic": _hs_web_token[:8] + "..."}
 
 
+# ─────────────────────────────────────────────
+# ÜRÜN KATALOĞU — stok kartları TAM listesi (REST jq_list, sayfalı)
+# Neden: hs_rapor Cok_Satilan yalnız TOP-LİSTE kesiti verir; sahip teyidi
+# (2026-07-29): reçetedeki ürünlerin HEPSİ Evo'da kayıtlı ama satışı
+# görünmeyenler kesitte yok. Katalog eşleştirme motorunun aday havuzunu doldurur.
+# ─────────────────────────────────────────────
+_stok_katalog_cache: Dict[str, Any] = {}
+
+
+def evo_stok_katalog(max_sayfa: int = 40) -> List[Dict[str, Any]]:
+    """Evo stok kartlarının tamamı (sayfa sayfa jq_list; 10 dk bellek cache).
+    Salt-okur; hata durumunda boş liste yerine exception fırlatır — çağıran
+    hata-yutar sarmalıyla karar verir."""
+    import time as _t
+    if _stok_katalog_cache.get("veri") is not None and \
+            _t.time() - _stok_katalog_cache.get("ts", 0) < 600:
+        return _stok_katalog_cache["veri"]
+    tum: List[Dict[str, Any]] = []
+    gorulen: set = set()
+    for sayfa in range(max_sayfa):
+        data = _evo_post("stok", {"cmd": "jq_list", "sayfa": str(sayfa), "ara": ""})
+        veri = data.get("veri", {})
+        ana = (veri.get("Ana") or []) if isinstance(veri, dict) else (veri or [])
+        if not ana:
+            break
+        yeni = 0
+        for r in ana:
+            aid = str(r.get("a_id") or "")
+            if aid and aid in gorulen:
+                continue  # sayfa aşımında Evo son sayfayı tekrar döndürebilir
+            gorulen.add(aid)
+            yeni += 1
+            tum.append({
+                "id":       aid,
+                "kod":      str(r.get("a_kod") or ""),
+                "ad":       str(r.get("a_adi") or "").strip(),
+                "alt_ad":   str(r.get("a_alt_adi") or "").strip(),
+                "aktif":    str(r.get("aktif_pasif") or "") == "Aktif",
+                "kart_tur": str(r.get("a_kart_tur") or ""),
+            })
+        if yeni == 0:
+            break
+        if len(ana) < 30:  # gözlenen sayfa boyu 30 — eksik sayfa = son sayfa
+            break
+    _stok_katalog_cache["veri"] = tum
+    _stok_katalog_cache["ts"] = _t.time()
+    log.info("evo stok katalog: %d kart (%d sayfa tarandı)", len(tum), sayfa + 1)
+    return tum
+
+
+@router.get("/urun-katalog")
+def evo_urun_katalog_endpoint(sadece_aktif: bool = Query(default=True)):
+    """Evo stok kartları tam katalog — reçete eşleştirme aday havuzu için."""
+    kat = evo_stok_katalog()
+    if sadece_aktif:
+        kat = [u for u in kat if u["aktif"]]
+    return {"toplam": len(kat), "urunler": kat}
+
+
 @router.get("/hs-rapor")
 def evo_hs_rapor(
     tarih1: str = Query(None, description="DD.MM.YYYY — başlangıç (boş=bugün)"),
