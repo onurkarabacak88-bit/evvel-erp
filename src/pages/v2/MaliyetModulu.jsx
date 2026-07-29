@@ -30,6 +30,17 @@ const tarihKisa = (iso) => {
 };
 const pct = (v) => `%${Number(v).toLocaleString('tr-TR', { maximumFractionDigits: 1 })}`;
 
+// Yerli form stilleri (köprü kaldırma turu)
+const mlAlanStil = {
+  width: '100%', boxSizing: 'border-box', padding: '9px 12px', borderRadius: 10,
+  border: `1px solid ${R.cizgi3}`, background: R.girinti, color: R.krem,
+  fontSize: 13, fontFamily: 'inherit', outline: 'none',
+};
+const mlEtiket = {
+  fontSize: 10.5, letterSpacing: '.7px', textTransform: 'uppercase',
+  color: R.not2, fontWeight: 700, marginBottom: 6, display: 'block',
+};
+
 const rozetHap = (renk) => ({
   padding: '3px 10px', borderRadius: 99, fontSize: 10.5, fontWeight: 700,
   background: `${renk}22`, color: renk, whiteSpace: 'nowrap',
@@ -83,6 +94,15 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
   const [esik, setEsik] = useState(15);
   const [kontrol, setKontrol] = useState(null);
   const [kontrolHata, setKontrolHata] = useState('');
+  // ── YERLİ REÇETE EŞLEŞTİRME (köprü kaldırma turu, 2026-07-30) ─────────────
+  // Kural (2026-07-29 sahip onayı): reçete "Ice X" = Evo "X Ice"; sade ad = "X 14 Oz".
+  // Öneriler onaysız KULLANILMAZ (duyu anayasası) — bu ekran yalnız karar verir.
+  const [eslModal, setEslModal] = useState(false);
+  const [eslListe, setEslListe] = useState(null);
+  const [eslMesgul, setEslMesgul] = useState('');      // işlenen öneri id'si
+  const [eslTip, setEslTip] = useState('urun');        // urun | malzeme sekmesi
+  const [elleForm, setElleForm] = useState(null);      // {tip, kaynak_ad, hedef_ad, hedef_kod}
+  const [adaylar, setAdaylar] = useState(null);
 
   const ozetYukle = useCallback(() => {
     setOzetHata('');
@@ -117,6 +137,73 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
       .then((d) => setKontrol(d || {}))
       .catch((e) => setKontrolHata(e?.message || ''));
   }, []);
+
+  // ── eşleştirme ekranı (klasik ReceteEslestirme sözleşmesi) ────────────────
+  const eslYukle = () => {
+    api('/recete/eslestirmeler')
+      .then((d) => setEslListe(Array.isArray(d?.eslestirmeler) ? d.eslestirmeler : []))
+      .catch(() => setEslListe([]));
+  };
+
+  const eslAc = () => {
+    setEslModal(true);
+    setEslListe(null);
+    setElleForm(null);
+    eslYukle();
+    if (!adaylar) {
+      api('/recete/eslestirme-adaylar')
+        .then((d) => setAdaylar(d || {}))
+        .catch(() => setAdaylar({}));
+    }
+  };
+
+  const eslKarar = async (id, karar) => {
+    setEslMesgul(id);
+    try {
+      await api('/recete/eslestirme-karar', { method: 'POST', body: { id, karar } });
+      onToast?.(karar === 'onayli' ? '✓ Eşleştirme onaylandı' : '✗ Öneri reddedildi');
+      eslYukle();
+      kontrolYukle();
+    } catch (e) {
+      onToast?.(e?.message || 'İşlem başarısız');
+    } finally {
+      setEslMesgul('');
+    }
+  };
+
+  const eslOnerUret = async () => {
+    setEslMesgul('oner');
+    try {
+      const r = await api('/recete/eslestirme-oner', { method: 'POST', body: {} });
+      onToast?.(`🔍 ${sayi(r?.yeni_oneri)} yeni öneri üretildi — onayını bekliyor`);
+      eslYukle();
+    } catch (e) {
+      onToast?.(e?.message || 'Öneri üretilemedi');
+    } finally {
+      setEslMesgul('');
+    }
+  };
+
+  const elleEkle = async () => {
+    const f = elleForm;
+    if (!f?.kaynak_ad || !f?.hedef_ad) { onToast?.('Kaynak ve hedef seçilmeli'); return; }
+    if (f.tip === 'malzeme' && !f.hedef_kod) { onToast?.('Malzeme eşleştirmesinde depo kalemi seçilmeli'); return; }
+    setEslMesgul('elle');
+    try {
+      await api('/recete/eslestirme-ekle', {
+        method: 'POST',
+        body: { tip: f.tip, kaynak_ad: f.kaynak_ad, hedef_ad: f.hedef_ad, hedef_kod: f.hedef_kod || null },
+      });
+      onToast?.('✓ Elle eşleştirme kaydedildi (insan kararı = onaylı)');
+      setElleForm(null);
+      eslYukle();
+      kontrolYukle();
+    } catch (e) {
+      onToast?.(e?.message || 'Eklenemedi');
+    } finally {
+      setEslMesgul('');
+    }
+  };
 
   useEffect(() => {
     if (gorunum === 'ozet') ozetYukle();
@@ -367,6 +454,170 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
     );
   }
 
+  // ── YERLİ EŞLEŞTİRME MODALI (her görünümden açılabilir) ───────────────────
+  const eslestirmeModali = eslModal && (() => {
+    const hepsi = eslListe || [];
+    const oneriler = hepsi.filter((r) => r.durum === 'oneri' && r.tip === eslTip);
+    const onaylilar = hepsi.filter((r) => r.durum === 'onayli' && r.tip === eslTip);
+    const kaynakListe = eslTip === 'urun' ? (adaylar?.recete_urunler || []) : (adaylar?.recete_malzemeler || []);
+    const hedefListe = eslTip === 'urun' ? (adaylar?.evo_adlar || []) : (adaylar?.depo_kalemler || []);
+    return (
+      <div onClick={(e) => { if (e.target === e.currentTarget && !eslMesgul) setEslModal(false); }} style={{
+        position: 'fixed', inset: 0, zIndex: 90, background: 'rgba(10,6,2,.66)',
+        backdropFilter: 'blur(3px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+      }}>
+        <div style={{ ...kartYuzey, width: 680, maxWidth: '96vw', maxHeight: '92vh', overflowY: 'auto', padding: '24px 26px' }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 6, flexWrap: 'wrap' }}>
+            <div style={{ fontFamily: F.baslik, fontSize: 21, fontWeight: 600 }}>🔗 Reçete Eşleştirme</div>
+            <div style={{ fontSize: 11.5, color: R.not2 }}>öneriler onaysız KULLANILMAZ</div>
+            <button onClick={() => setEslModal(false)} style={{
+              marginLeft: 'auto', border: 'none', background: 'transparent', color: R.not,
+              fontSize: 16, cursor: 'pointer', fontFamily: 'inherit',
+            }}>✕</button>
+          </div>
+          <div style={{ fontSize: 11.5, color: R.not, marginBottom: 14, lineHeight: 1.55 }}>
+            Kural: reçetedeki <b>"Ice X"</b> = Evo'daki <b>"X Ice"</b> · sade ad = <b>"X 14 Oz"</b>.
+            Eşleşmeyen ürünün satışı tüketim kontrolüne girmez.
+          </div>
+
+          <div style={{ display: 'flex', gap: 7, marginBottom: 14, flexWrap: 'wrap', alignItems: 'center' }}>
+            {[['urun', '🥤 Ürün ↔ Evo satış'], ['malzeme', '📦 Malzeme ↔ depo']].map(([t, ad]) => (
+              <div key={t} onClick={() => setEslTip(t)} style={{
+                padding: '7px 14px', borderRadius: 99, fontSize: 12, fontWeight: 700, cursor: 'pointer',
+                border: `1px solid ${eslTip === t ? R.bakir : R.cizgi3}`,
+                color: eslTip === t ? R.bakir : R.metin2,
+                background: eslTip === t ? 'rgba(217,154,78,.12)' : 'transparent',
+              }}>{ad}</div>
+            ))}
+            <button disabled={!!eslMesgul} onClick={eslOnerUret} style={{
+              marginLeft: 'auto', padding: '7px 13px', borderRadius: 10, cursor: 'pointer',
+              border: `1px solid ${R.cizgi3}`, background: R.girinti, color: R.metin2,
+              fontSize: 11.5, fontWeight: 600, fontFamily: 'inherit',
+            }}>
+              {eslMesgul === 'oner' ? 'Taranıyor…' : '🔍 Öneri üret (Evo katalogunu tara)'}
+            </button>
+          </div>
+
+          {eslListe == null ? (
+            <div style={{ padding: '24px 0', textAlign: 'center', color: R.not, fontSize: 13 }}>Yükleniyor…</div>
+          ) : (
+            <>
+              <div style={{ fontSize: 11, letterSpacing: '.7px', textTransform: 'uppercase', color: R.not2, fontWeight: 700, marginBottom: 8 }}>
+                Onay bekleyen ({oneriler.length})
+              </div>
+              {oneriler.length === 0 ? (
+                <div style={{ fontSize: 12.5, color: R.not, padding: '10px 0 16px' }}>
+                  Bekleyen öneri yok. Yeni ürün eklendiyse "Öneri üret"e bas.
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 7, marginBottom: 16 }}>
+                  {oneriler.slice(0, 40).map((r) => (
+                    <div key={r.id} style={{
+                      display: 'flex', alignItems: 'center', gap: 9, flexWrap: 'wrap',
+                      padding: '9px 13px', borderRadius: 11, background: R.girinti, border: `1px solid ${R.cizgi3}`,
+                    }}>
+                      <div style={{ flex: 1, minWidth: 200, fontSize: 12.5 }}>
+                        <span style={{ color: R.metin2 }}>{r.kaynak_ad}</span>
+                        <span style={{ color: R.not2, margin: '0 7px' }}>→</span>
+                        <span style={{ fontWeight: 700 }}>{r.hedef_ad}</span>
+                        {r.benzerlik != null && (
+                          <span style={{ ...rozetHap(r.benzerlik >= 0.99 ? R.yesil : r.benzerlik >= 0.7 ? R.amber : R.kirmizi), marginLeft: 8 }}>
+                            %{Math.round(sayi(r.benzerlik) * 100)}
+                          </span>
+                        )}
+                      </div>
+                      <button disabled={!!eslMesgul} onClick={() => eslKarar(r.id, 'onayli')} style={{
+                        padding: '6px 12px', borderRadius: 9, border: 'none', cursor: 'pointer',
+                        background: `${R.yesil}22`, color: R.yesil, fontSize: 11.5, fontWeight: 700, fontFamily: 'inherit',
+                      }}>{eslMesgul === r.id ? '…' : '✓ Onayla'}</button>
+                      <button disabled={!!eslMesgul} onClick={() => eslKarar(r.id, 'reddedildi')} style={{
+                        padding: '6px 12px', borderRadius: 9, cursor: 'pointer',
+                        border: `1px solid ${R.cizgi3}`, background: 'transparent',
+                        color: R.not, fontSize: 11.5, fontWeight: 600, fontFamily: 'inherit',
+                      }}>✗ Reddet</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* elle eşleştirme */}
+              {elleForm ? (
+                <div style={{ padding: '13px 16px', borderRadius: 12, background: R.girinti, border: `1px solid ${R.bakir}44`, marginBottom: 14 }}>
+                  <div style={{ fontSize: 12.5, fontWeight: 700, color: R.bakir, marginBottom: 11 }}>
+                    Elle eşleştir ({eslTip === 'urun' ? 'ürün' : 'malzeme'}) — insan kararı doğrudan onaylıdır
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 11 }}>
+                    <div>
+                      <label style={mlEtiket}>Reçetedeki ad</label>
+                      <select value={elleForm.kaynak_ad} onChange={(e) => setElleForm((f) => ({ ...f, kaynak_ad: e.target.value }))} style={mlAlanStil}>
+                        <option value="">Seçin…</option>
+                        {kaynakListe.map((k) => <option key={k} value={k}>{k}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label style={mlEtiket}>{eslTip === 'urun' ? 'Evo satış adı' : 'Depo kalemi'}</label>
+                      <select
+                        value={eslTip === 'urun' ? elleForm.hedef_ad : elleForm.hedef_kod}
+                        onChange={(e) => {
+                          if (eslTip === 'urun') setElleForm((f) => ({ ...f, hedef_ad: e.target.value, hedef_kod: '' }));
+                          else {
+                            const k = (hedefListe || []).find((x) => String(x.kalem_kodu) === e.target.value);
+                            setElleForm((f) => ({ ...f, hedef_kod: e.target.value, hedef_ad: k?.kalem_adi || '' }));
+                          }
+                        }}
+                        style={mlAlanStil}
+                      >
+                        <option value="">Seçin…</option>
+                        {eslTip === 'urun'
+                          ? (hedefListe || []).map((a) => <option key={a} value={a}>{a}</option>)
+                          : (hedefListe || []).map((k) => <option key={k.kalem_kodu} value={k.kalem_kodu}>{k.kalem_adi}</option>)}
+                      </select>
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 9, marginTop: 12 }}>
+                    <button disabled={!!eslMesgul} onClick={() => setElleForm(null)} style={{
+                      padding: '8px 15px', borderRadius: 10, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+                      background: 'transparent', color: R.metin2, fontSize: 12, fontWeight: 600, fontFamily: 'inherit',
+                    }}>Vazgeç</button>
+                    <button disabled={!!eslMesgul} onClick={elleEkle} style={{
+                      padding: '8px 16px', borderRadius: 10, border: 'none', cursor: 'pointer',
+                      background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+                      fontSize: 12, fontWeight: 700, fontFamily: 'inherit',
+                    }}>{eslMesgul === 'elle' ? 'Kaydediliyor…' : 'Eşleştir'}</button>
+                  </div>
+                </div>
+              ) : (
+                <button onClick={() => setElleForm({ tip: eslTip, kaynak_ad: '', hedef_ad: '', hedef_kod: '' })} style={{
+                  padding: '8px 15px', borderRadius: 10, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+                  background: 'transparent', color: R.metin2, fontSize: 12, fontWeight: 600,
+                  fontFamily: 'inherit', marginBottom: 14,
+                }}>
+                  ✍️ Elle eşleştir (öneri yoksa)
+                </button>
+              )}
+
+              <div style={{ fontSize: 11, letterSpacing: '.7px', textTransform: 'uppercase', color: R.not2, fontWeight: 700, marginBottom: 8 }}>
+                Onaylı eşleşmeler ({onaylilar.length})
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 5, maxHeight: 200, overflowY: 'auto' }}>
+                {onaylilar.length === 0 ? (
+                  <div style={{ fontSize: 12.5, color: R.not }}>Henüz onaylı eşleşme yok.</div>
+                ) : onaylilar.slice(0, 60).map((r) => (
+                  <div key={r.id} style={{ fontSize: 12, color: R.metin2, display: 'flex', gap: 8, alignItems: 'center' }}>
+                    <span style={{ color: R.yesil }}>✓</span>
+                    <span style={{ color: R.not }}>{r.kaynak_ad}</span>
+                    <span style={{ color: R.not2 }}>→</span>
+                    <span>{r.hedef_ad}</span>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    );
+  })();
+
   // ════════════════════════ GÖRÜNÜM: TÜKETİM KONTROLÜ ═══════════════════════
   // Sahip isteği (2026-07-28): "satışın verisine göre maliyet — bara giren ürün
   // açılımını takip edip fazla kullanımı saptayalım." Motor zaten kuruluydu
@@ -396,7 +647,7 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
               malzemelerin depo kalemleriyle eşleşmesini ister. {sayi(kontrol.bekleyen_oneri)} öneri onay bekliyor.
             </div>
             <button
-              onClick={() => onKopru?.('recete-eslestirme')}
+              onClick={() => eslAc()}
               style={{
                 marginTop: 16, padding: '10px 18px', borderRadius: 11, border: 'none',
                 background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
@@ -406,6 +657,7 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
               Eşleştirme onayına git
             </button>
           </div>
+          {eslestirmeModali}
         </>
       );
     }
@@ -527,7 +779,7 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
 
         <div style={{ display: 'flex', gap: 9, flexWrap: 'wrap', marginBottom: 16 }}>
           <button
-            onClick={() => onKopru?.('recete-eslestirme')}
+            onClick={() => eslAc()}
             style={{
               padding: '9px 16px', borderRadius: 10, border: `1px solid ${R.cizgi3}`,
               background: R.girinti, color: R.metin2, fontSize: 12, fontWeight: 600,
@@ -547,6 +799,7 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
             Duyu Paneli'nde geçmiş bulgular
           </button>
         </div>
+        {eslestirmeModali}
       </>
     );
   }

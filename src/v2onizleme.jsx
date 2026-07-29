@@ -360,6 +360,26 @@ const MALIYET_UC = {
     toplam: 3,
   },
   '/api/ops/fiyat-zam-alarmlari/goruldu': { success: true },
+  // Reçete eşleştirme (v2 yerli onay ekranı — köprü kaldırma turu)
+  '/api/recete/eslestirmeler': {
+    eslestirmeler: [
+      { id: 'e1', tip: 'urun', kaynak_ad: 'ice cookie latte', hedef_ad: 'Cookie Latte Ice', benzerlik: 1.0, durum: 'oneri' },
+      { id: 'e2', tip: 'urun', kaynak_ad: 'mocha 8 oz', hedef_ad: 'White Mocha 8 Oz', benzerlik: 0.75, durum: 'oneri' },
+      { id: 'e3', tip: 'malzeme', kaynak_ad: 'kakao tozu', hedef_ad: 'Kakao', hedef_kod: 'STK-KAKAO', benzerlik: 0.66, durum: 'oneri' },
+      { id: 'e4', tip: 'urun', kaynak_ad: 'espresso', hedef_ad: 'Espresso', benzerlik: 1.0, durum: 'onayli' },
+      { id: 'e5', tip: 'urun', kaynak_ad: 'ice latte', hedef_ad: 'Latte Ice', benzerlik: 1.0, durum: 'onayli' },
+      { id: 'e6', tip: 'malzeme', kaynak_ad: 'sut', hedef_ad: 'Süt 3.5%', hedef_kod: 'STK-SUT', benzerlik: 1.0, durum: 'onayli' },
+    ],
+  },
+  '/api/recete/eslestirme-adaylar': {
+    recete_urunler: ['Taro Latte', 'Pop Latte', 'Velvet Latte', 'Madagaskar Latte'],
+    recete_malzemeler: ['taro tozu', 'kakao tozu', 'madagaskar vanilya'],
+    evo_adlar: ['Taro Latte 14 Oz', 'Pop Latte Ice', 'RED VELVET', 'Espresso'],
+    depo_kalemler: [{ kalem_kodu: 'STK-TARO', kalem_adi: 'Taro Tozu' }, { kalem_kodu: 'STK-KAKAO', kalem_adi: 'Kakao' }],
+  },
+  '/api/recete/eslestirme-karar': { ok: true },
+  '/api/recete/eslestirme-ekle': { ok: true },
+  '/api/recete/eslestirme-oner': { ok: true, yeni_oneri: 3 },
   '/api/recete/kontrol': {
     kesit_gun: 7, onayli_urun_es: 42, onayli_malzeme_es: 18,
     kiyas: [
