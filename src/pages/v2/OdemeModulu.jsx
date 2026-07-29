@@ -18,7 +18,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { api, fmt } from '../../utils/api';
 import { R, F, kartYuzey } from './tema';
-import { KpiSeridi, Tablo, Liste, Takvim, OnayModali } from './parcalar';
+import { KpiSeridi, Tablo, Liste, Takvim } from './parcalar';
 
 const sayi = (v) => Number(v) || 0;
 const trSayi = (n, b = 1) => (Number(n) || 0).toFixed(b).replace('.', ',');
@@ -57,6 +57,26 @@ const YONTEM = {
   PERSONEL_MAAS: 'maaş ödemesi',
   PERSONEL_AVANS: 'avans',
   TEDARIKCI_ODEME: 'tedarikçi ödemesi',
+};
+
+/** 📎 Fatura eki — klasik ÖM ile aynı boru hattı (PDF→yukle-pdf, foto→yukle). */
+async function faturaEkiYukle(dosya) {
+  const fd = new FormData();
+  const isPdf = /pdf/i.test(dosya.type || '') || /\.pdf$/i.test(dosya.name || '');
+  fd.append(isPdf ? 'pdf' : 'foto', dosya);
+  const res = await fetch(isPdf ? '/api/fatura/yukle-pdf' : '/api/fatura/yukle', { method: 'POST', body: fd });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error((data && data.detail) || 'fatura yüklenemedi');
+}
+
+const omAlanStil = {
+  width: '100%', boxSizing: 'border-box', padding: '9px 12px', borderRadius: 10,
+  border: `1px solid ${R.cizgi3}`, background: R.girinti, color: R.krem,
+  fontSize: 13, fontFamily: 'inherit', outline: 'none',
+};
+const omEtiket = {
+  fontSize: 10.5, letterSpacing: '.7px', textTransform: 'uppercase',
+  color: R.not2, fontWeight: 700, marginBottom: 6, display: 'block',
 };
 
 export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
@@ -126,55 +146,91 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
   const toplamKuyruk = tutarli.reduce((s, o) => s + o._tutar, 0);
   const tutarsizNot = tutarsiz.length ? ` · ${tutarsiz.length} kalem tutarsız` : '';
 
-  // ── ödeme / erteleme (mevcut tek-yazıcı uçlara delege) ─────────────────────
+  // ── ÖDEME KOŞUSU v2-YERLİ (köprü kaldırma turu, 2026-07-30) ────────────────
+  // Klasik ÖM sihirbazının çekirdeği: tam/kısmi + nakit/kart + fatura eki +
+  // tutarsız fatura (öde / vadeye yaz) + tarih seçmeli ertele + taahhüt.
+  // TEK YAZICI İLKESİ korunur: hepsi mevcut guard'lı uçlara delege.
+  const [kartListe, setKartListe] = useState([]);
+  const kartlariGetir = () => {
+    if (!kartListe.length) api('/kartlar').then((d) => setKartListe(Array.isArray(d) ? d : [])).catch(() => {});
+  };
+
   const odemeyiAc = (o) => {
+    kartlariGetir();
     if (o.tutar_girilmedi) {
-      onToast?.('Bu faturanın tutarı girilmemiş — önce tutarı gir.');
-      onKopru?.('odeme-merkezi');
+      // tutarsız fatura → tutar sor + ödendi/vadeye-yaz kararı (klasik akış)
+      setModal({ tip: 'tutar', satir: o, tutar: o._tahmin ? String(o._tahmin) : '', yontem: 'nakit', kartId: '', dosya: null });
       return;
     }
-    setModal({
-      tip: 'ode',
-      satir: o,
-      baslik: 'Ödemeyi onayla',
-      altBaslik: `${o.baslik} · ${o.tip}`,
-      tutar: fmt(o._tutar),
-      satirlar: [
-        { ad: 'Ödeme sonrası kasa', deger: fmt(kasa - o._tutar), renk: kasa - o._tutar >= 0 ? R.yesil : R.kirmizi },
-      ],
-      not: 'Kayıt işlem defterine yazılır ve tedarikçi bakiyesinden düşülür. Geri almak için defterden ters kayıt gerekir.',
-      onaylaAd: 'Öde ve kaydet',
-    });
+    setModal({ tip: 'ode', satir: o, mod: 'tam', yontem: 'nakit', kartId: '', kismiTutar: '', kalanVade: isoEkle(o._tarih || bugun, 30), dosya: null });
   };
 
   const erteleyiAc = (o) => {
-    const yeni = isoEkle(o._tarih || bugun, 7);
-    setModal({
-      tip: 'ertele',
-      satir: o,
-      yeniTarih: yeni,
-      baslik: 'Ödemeyi ertele',
-      altBaslik: `${o.baslik} · ${o.tip}`,
-      tutar: fmt(o._tutar),
-      satirlar: [
-        { ad: 'Mevcut vade', deger: kisaTarih(o._tarih), renk: R.amber },
-        { ad: 'Yeni vade', deger: kisaTarih(yeni), renk: R.bakir },
-      ],
-      not: 'Erteleme kasa izine dokunmaz; yalnızca ödeme kuyruğundaki vade tarihini ileri alır.',
-      onaylaAd: '7 gün ertele',
-    });
+    setModal({ tip: 'ertele', satir: o, yeniTarih: isoEkle(o._tarih || bugun, 7) });
+  };
+
+  const dosyaNotu = async (dosya) => {
+    if (!dosya) return '';
+    try { await faturaEkiYukle(dosya); return ' · 📎 fatura arşive alındı'; }
+    catch (e) { return ` · ⚠ fatura yüklenemedi: ${e.message}`; }
   };
 
   const modalOnayla = async () => {
     if (!modal) return;
+    const o = modal.satir;
     setCalisiyor(true);
     try {
       if (modal.tip === 'ode') {
-        await api(`/odeme-plani/${modal.satir.id}/ode`, { method: 'POST' });
-        onToast?.(`${modal.satir.baslik} ödendi`);
+        if (modal.yontem === 'kart' && !modal.kartId) { onToast?.('Kart seçin'); setCalisiyor(false); return; }
+        if (modal.mod === 'kismi') {
+          const t = Number(String(modal.kismiTutar).replace(',', '.'));
+          const isKart = o.tip === 'Kredi Kartı';
+          if (!t || t <= 0 || t >= o._tutar) { onToast?.('Kısmi tutar 0 ile borç arasında olmalı'); setCalisiyor(false); return; }
+          if (!isKart && !modal.kalanVade) { onToast?.('Kalan borç için yeni vade seçin'); setCalisiyor(false); return; }
+          await api(`/odeme-plani/${o.id}/kismi-ode`, {
+            method: 'POST',
+            body: { odenen_tutar: t, kalan_vade_tarihi: isKart ? bugun : modal.kalanVade, odeme_yontemi: modal.yontem, kart_id: modal.yontem === 'kart' ? modal.kartId : null },
+          });
+          onToast?.(isKart
+            ? `${fmt(t)} ödendi · kalan ${fmt(o._tutar - t)} sonraki ekstreye devreder${await dosyaNotu(modal.dosya)}`
+            : `${fmt(t)} ödendi · kalan ${fmt(o._tutar - t)} → ${kisaTarih(modal.kalanVade)}${await dosyaNotu(modal.dosya)}`);
+        } else {
+          await api(`/odeme-plani/${o.id}/ode`, {
+            method: 'POST',
+            body: { odeme_yontemi: modal.yontem, kart_id: modal.yontem === 'kart' ? modal.kartId : null },
+          });
+          onToast?.(`${o.baslik} ödendi — ${modal.yontem === 'kart' ? 'karta yazıldı' : 'kasadan düşüldü'}${await dosyaNotu(modal.dosya)}`);
+        }
+      } else if (modal.tip === 'tutar') {
+        const t = Number(String(modal.tutar).replace(',', '.'));
+        if (!t || t <= 0) { onToast?.('Fatura tutarını girin'); setCalisiyor(false); return; }
+        if (modal.karar === 'vadeye') {
+          await api('/fatura-vadeye-yaz', { method: 'POST', body: { sabit_gider_id: o.sabit_gider_id, tutar: t } });
+          onToast?.(`${fmt(t)} vadeye yazıldı — kasa etkilenmedi`);
+        } else {
+          if (modal.yontem === 'kart' && !modal.kartId) { onToast?.('Kart seçin'); setCalisiyor(false); return; }
+          await api('/fatura-ode', {
+            method: 'POST',
+            body: { sabit_gider_id: o.sabit_gider_id, tutar: t, tarih: bugun, odeme_yontemi: modal.yontem, kart_id: modal.yontem === 'kart' ? modal.kartId : null },
+          });
+          onToast?.(`Ödendi — ${modal.yontem === 'kart' ? 'karta yazıldı' : 'kasadan düşüldü'}${await dosyaNotu(modal.dosya)}`);
+        }
+      } else if (modal.tip === 'taahhut') {
+        const t = Number(String(modal.tutar).replace(',', '.'));
+        if (!(modal.tedarikci || '').trim() || !t || !modal.vade) { onToast?.('Tedarikçi, tutar ve vade zorunlu'); setCalisiyor(false); return; }
+        const r = await api('/vadeli-alimlar', {
+          method: 'POST',
+          body: {
+            tedarikci: modal.tedarikci.trim(), tutar: t, vade_tarihi: modal.vade,
+            aciklama: `🤝 Taahhüt: ${(modal.aciklama || '').trim() || 'ödeme sözü'}`,
+            ...(modal.force ? { force: true } : {}),
+          },
+        });
+        if (r?.warning) { setModal((m) => ({ ...m, uyari: r.mesaj || 'Benzer kayıt olabilir' })); setCalisiyor(false); return; }
+        onToast?.(`🤝 Taahhüt kaydedildi — ${kisaTarih(modal.vade)} günü bekleyenlerde görünecek`);
       } else {
-        await api(`/odeme-plani/${modal.satir.id}/ertele?yeni_tarih=${encodeURIComponent(modal.yeniTarih)}`, { method: 'POST' });
-        onToast?.(`${modal.satir.baslik} ${kisaTarih(modal.yeniTarih)} tarihine ertelendi`);
+        await api(`/odeme-plani/${o.id}/ertele?yeni_tarih=${encodeURIComponent(modal.yeniTarih)}`, { method: 'POST' });
+        onToast?.(`${o.baslik} ${kisaTarih(modal.yeniTarih)} tarihine ertelendi`);
       }
       setModal(null);
       yukle();
@@ -201,20 +257,209 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
     );
   }
 
-  const modalBlok = (
-    <OnayModali
-      acik={!!modal}
-      baslik={modal?.baslik}
-      altBaslik={modal?.altBaslik}
-      tutar={modal?.tutar}
-      satirlar={modal?.satirlar}
-      not={modal?.not}
-      onaylaAd={modal?.onaylaAd}
-      calisiyor={calisiyor}
-      onOnayla={modalOnayla}
-      onKapat={() => !calisiyor && setModal(null)}
-    />
+  // ── zengin ödeme modalı (tam/kısmi + yöntem + ek + tutarsız + ertele + taahhüt) ──
+  const guncelle = (k, v) => setModal((m) => ({ ...m, [k]: v }));
+  const yontemSecici = (
+    <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 12 }}>
+      {[['nakit', '💵 Nakit / havale'], ['kart', '💳 Kart']].map(([y, ad]) => (
+        <div key={y} onClick={() => guncelle('yontem', y)} style={{
+          padding: '8px 14px', borderRadius: 10, fontSize: 12, fontWeight: 700, cursor: 'pointer',
+          border: `1px solid ${modal?.yontem === y ? R.bakir : R.cizgi3}`,
+          color: modal?.yontem === y ? R.bakir : R.metin2,
+          background: modal?.yontem === y ? 'rgba(217,154,78,.12)' : 'transparent',
+        }}>{ad}</div>
+      ))}
+      {modal?.yontem === 'kart' && (
+        <select value={modal.kartId} onChange={(e) => guncelle('kartId', e.target.value)}
+          style={{ ...omAlanStil, width: 'auto', minWidth: 170 }}>
+          <option value="">Kart seçin *</option>
+          {kartListe.map((k) => <option key={k.id} value={k.id}>{k.kart_adi || k.banka}</option>)}
+        </select>
+      )}
+    </div>
   );
+  const ekSecici = (
+    <label style={{ display: 'block', marginTop: 12, fontSize: 11.5, color: R.not, cursor: 'pointer' }}>
+      <input type="file" accept="application/pdf,image/*" style={{ display: 'none' }}
+        onChange={(e) => guncelle('dosya', e.target.files?.[0] || null)} />
+      📎 {modal?.dosya ? `${modal.dosya.name} — arşive eklenecek` : 'Fatura eki iliştir (isteğe bağlı — PDF/foto)'}
+    </label>
+  );
+  const modalBlok = modal && (() => {
+    const o = modal.satir;
+    const kapat = () => !calisiyor && setModal(null);
+    const dugme = (ad, birincil, tikla, pasif) => (
+      <button disabled={calisiyor || pasif} onClick={tikla} style={birincil ? {
+        padding: '10px 20px', borderRadius: 10, border: 'none',
+        background: pasif ? R.girinti : 'linear-gradient(150deg, #D99A4E, #B06E2C)',
+        color: pasif ? R.not : '#1C1309', fontSize: 12.5, fontWeight: 700,
+        fontFamily: 'inherit', cursor: pasif ? 'default' : 'pointer',
+      } : {
+        padding: '10px 18px', borderRadius: 10, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+        background: 'transparent', color: R.metin2, fontSize: 12.5, fontWeight: 600, fontFamily: 'inherit',
+      }}>{calisiyor && birincil ? 'İşleniyor…' : ad}</button>
+    );
+    return (
+      <div onClick={(e) => { if (e.target === e.currentTarget) kapat(); }} style={{
+        position: 'fixed', inset: 0, zIndex: 90, background: 'rgba(10,6,2,.66)',
+        backdropFilter: 'blur(3px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+      }}>
+        <div style={{ ...kartYuzey, width: 540, maxWidth: '96vw', maxHeight: '92vh', overflowY: 'auto', padding: '24px 26px' }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 6 }}>
+            <div style={{ fontFamily: F.baslik, fontSize: 21, fontWeight: 600 }}>
+              {modal.tip === 'ode' ? 'Ödemeyi Onayla'
+                : modal.tip === 'tutar' ? '⚡ Fatura Tutarı'
+                : modal.tip === 'taahhut' ? '🤝 Yeni Taahhüt'
+                : 'Ödemeyi Ertele'}
+            </div>
+            <button onClick={kapat} style={{
+              marginLeft: 'auto', border: 'none', background: 'transparent', color: R.not,
+              fontSize: 16, cursor: 'pointer', fontFamily: 'inherit',
+            }}>✕</button>
+          </div>
+          {o && (
+            <div style={{ fontSize: 12.5, color: R.metin2, marginBottom: 14 }}>
+              {o.baslik} · {o.tip}{o._tarih ? ` · vade ${kisaTarih(o._tarih)}` : ''}
+            </div>
+          )}
+
+          {modal.tip === 'ode' && (
+            <>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {[['tam', `Tamamını öde — ${fmt(o._tutar)}`], ['kismi', 'Kısmi öde']].map(([m2, ad]) => (
+                  <div key={m2} onClick={() => guncelle('mod', m2)} style={{
+                    padding: '8px 14px', borderRadius: 10, fontSize: 12, fontWeight: 700, cursor: 'pointer',
+                    border: `1px solid ${modal.mod === m2 ? R.bakir : R.cizgi3}`,
+                    color: modal.mod === m2 ? R.bakir : R.metin2,
+                    background: modal.mod === m2 ? 'rgba(217,154,78,.12)' : 'transparent',
+                  }}>{ad}</div>
+                ))}
+              </div>
+              {modal.mod === 'kismi' && (
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 12 }}>
+                  <div>
+                    <label style={omEtiket}>Ödenecek tutar (₺) *</label>
+                    <input type="number" value={modal.kismiTutar} onChange={(e) => guncelle('kismiTutar', e.target.value)}
+                      style={{ ...omAlanStil, fontFamily: F.mono, textAlign: 'right' }} />
+                  </div>
+                  {o.tip === 'Kredi Kartı' ? (
+                    <div style={{ fontSize: 11.5, color: R.not, alignSelf: 'end', paddingBottom: 8 }}>
+                      kalan sonraki ekstreye devreder
+                    </div>
+                  ) : (
+                    <div>
+                      <label style={omEtiket}>Kalan borcun yeni vadesi *</label>
+                      <input type="date" value={modal.kalanVade} onChange={(e) => guncelle('kalanVade', e.target.value)}
+                        style={{ ...omAlanStil, colorScheme: 'dark' }} />
+                    </div>
+                  )}
+                </div>
+              )}
+              {yontemSecici}
+              {ekSecici}
+              <div style={{
+                marginTop: 14, padding: '11px 15px', borderRadius: 12, background: R.girinti,
+                border: `1px solid ${R.cizgi3}`, fontSize: 12.5, color: R.metin2,
+              }}>
+                Ödeme sonrası kasa: <strong style={{ fontFamily: F.mono, color: (kasa - (modal.mod === 'kismi' ? Number(String(modal.kismiTutar).replace(',', '.')) || 0 : o._tutar)) >= 0 ? R.yesil : R.kirmizi }}>
+                  {fmt(kasa - (modal.mod === 'kismi' ? Number(String(modal.kismiTutar).replace(',', '.')) || 0 : o._tutar))}
+                </strong>
+                {modal.yontem === 'kart' ? ' — kart seçiliyken kasadan çıkmaz, kart borcuna yazılır.' : ''}
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 18 }}>
+                {dugme('Vazgeç', false, kapat)}
+                {dugme(modal.mod === 'kismi' ? 'Kısmi öde ve kaydet' : 'Öde ve kaydet', true, modalOnayla)}
+              </div>
+            </>
+          )}
+
+          {modal.tip === 'tutar' && (
+            <>
+              <div style={{ fontSize: 12, color: R.amber, marginBottom: 12 }}>
+                ⚡ Bu faturanın tutarı girilmemiş{o._tahmin ? ` — geçmiş ort. ≈ ${fmt(o._tahmin)}` : ''}. Tutarı gir, sonra ne olduğunu söyle.
+              </div>
+              <label style={omEtiket}>Fatura tutarı (₺) *</label>
+              <input type="number" value={modal.tutar} onChange={(e) => guncelle('tutar', e.target.value)}
+                style={{ ...omAlanStil, fontFamily: F.mono, textAlign: 'right' }} />
+              {yontemSecici}
+              {ekSecici}
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 18, flexWrap: 'wrap' }}>
+                {dugme('Vazgeç', false, kapat)}
+                {dugme('Ödenmedi — vadeye yaz', false, () => { guncelle('karar', 'vadeye'); setTimeout(modalOnayla, 0); })}
+                {dugme('Ödendi — kasadan/karttan düş', true, () => { guncelle('karar', 'odendi'); setTimeout(modalOnayla, 0); })}
+              </div>
+            </>
+          )}
+
+          {modal.tip === 'taahhut' && (
+            <>
+              <div style={{ fontSize: 12, color: R.metin2, marginBottom: 12, lineHeight: 1.5 }}>
+                Para ÇIKMADI — tedarikçiye ödeme sözü. Borç yaratmaz; faturası gelince kendiliğinden birleşir.
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <div style={{ gridColumn: '1/-1' }}>
+                  <label style={omEtiket}>Tedarikçi *</label>
+                  <input value={modal.tedarikci || ''} onChange={(e) => guncelle('tedarikci', e.target.value)} style={omAlanStil} />
+                </div>
+                <div>
+                  <label style={omEtiket}>Tutar (₺) *</label>
+                  <input type="number" value={modal.tutar || ''} onChange={(e) => guncelle('tutar', e.target.value)}
+                    style={{ ...omAlanStil, fontFamily: F.mono, textAlign: 'right' }} />
+                </div>
+                <div>
+                  <label style={omEtiket}>Vade tarihi *</label>
+                  <input type="date" value={modal.vade || ''} onChange={(e) => guncelle('vade', e.target.value)}
+                    style={{ ...omAlanStil, colorScheme: 'dark' }} />
+                </div>
+                <div style={{ gridColumn: '1/-1' }}>
+                  <label style={omEtiket}>Açıklama</label>
+                  <input value={modal.aciklama || ''} onChange={(e) => guncelle('aciklama', e.target.value)} style={omAlanStil} />
+                </div>
+              </div>
+              {modal.uyari && (
+                <div style={{ marginTop: 12, padding: '11px 15px', borderRadius: 12, background: `${R.kirmizi}14`, border: `1px solid ${R.kirmizi}55` }}>
+                  <div style={{ fontSize: 12, color: R.kirmizi, fontWeight: 700 }}>⚠ {modal.uyari}</div>
+                  <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                    {dugme('Yine de kaydet', true, () => { guncelle('force', true); setTimeout(modalOnayla, 0); })}
+                    {dugme('Vazgeç', false, () => guncelle('uyari', ''))}
+                  </div>
+                </div>
+              )}
+              {!modal.uyari && (
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 18 }}>
+                  {dugme('Vazgeç', false, kapat)}
+                  {dugme('Taahhüdü kaydet', true, modalOnayla)}
+                </div>
+              )}
+            </>
+          )}
+
+          {modal.tip === 'ertele' && (
+            <>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <div>
+                  <label style={omEtiket}>Mevcut vade</label>
+                  <div style={{ ...omAlanStil, background: 'transparent', border: `1px dashed ${R.cizgi3}` }}>{kisaTarih(o._tarih)}</div>
+                </div>
+                <div>
+                  <label style={omEtiket}>Yeni vade *</label>
+                  <input type="date" value={modal.yeniTarih} onChange={(e) => guncelle('yeniTarih', e.target.value)}
+                    style={{ ...omAlanStil, colorScheme: 'dark' }} />
+                </div>
+              </div>
+              <div style={{ fontSize: 11.5, color: R.not, marginTop: 10 }}>
+                Erteleme kasa izine dokunmaz; yalnızca kuyruk vadesini ileri alır.
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 18 }}>
+                {dugme('Vazgeç', false, kapat)}
+                {dugme('Ertele', true, modalOnayla, !modal.yeniTarih)}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    );
+  })();
 
   // ── 1) Bekleyen ────────────────────────────────────────────────────────────
   if (gorunum === 'bekleyen') {
@@ -226,6 +471,18 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
           { etiket: 'Gecikmiş', deger: fmt(gecikmisToplam), alt: gecikmisSatir.length ? `${gecikmisSatir.length} kalem` : 'gecikme yok', renk: gecikmisSatir.length ? R.kirmizi : R.yesil },
           { etiket: 'Ödeme sonrası kasa', deger: fmt(kasa - bugunToplam), alt: 'bugünküler düşülmüş', renk: kasa - bugunToplam >= 0 ? R.yesil : R.kirmizi },
         ]} />
+        <div style={{ display: 'flex', gap: 9, marginBottom: 12, flexWrap: 'wrap' }}>
+          <button onClick={() => setModal({ tip: 'taahhut', tedarikci: '', tutar: '', vade: isoEkle(bugun, 7), aciklama: '' })} style={{
+            padding: '9px 17px', borderRadius: 10, border: 'none', cursor: 'pointer',
+            background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+            fontSize: 12, fontWeight: 700, fontFamily: 'inherit',
+          }}>
+            🤝 Yeni taahhüt (ödeme sözü)
+          </button>
+          <span style={{ fontSize: 11.5, color: R.not, alignSelf: 'center' }}>
+            para çıkmadı — söz; faturası gelince kendiliğinden birleşir
+          </span>
+        </div>
         {satirlar.length ? (
           <Liste
             satirlar={satirlar.map(o => ({
@@ -235,7 +492,7 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
               tutar: o.tutar_girilmedi ? (o._tahmin ? `≈ ${fmt(o._tahmin)}` : 'tutar yok') : fmt(o._tutar),
               tier: o._gecikmis ? 'kritik' : o._bugunMu ? 'uyari' : o.tutar_girilmedi ? 'uyari' : 'bilgi',
               aksiyonlar: o.tutar_girilmedi
-                ? [{ ad: 'Tutarı gir', birincil: true, onTikla: () => onKopru?.('odeme-merkezi') }]
+                ? [{ ad: 'Tutarı gir', birincil: true, onTikla: () => odemeyiAc(o) }]
                 : [
                   { ad: 'Öde', birincil: true, onTikla: () => odemeyiAc(o) },
                   { ad: 'Ertele', onTikla: () => erteleyiAc(o) },
@@ -258,8 +515,6 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
                 { ad: 'Bu ödeme sonrası', detay: 'tek kalem', tutar: fmt(kasa - l._o._tutar) },
               ],
               not: l._o.tedarikci ? `Tedarikçi: ${l._o.tedarikci}` : 'Bu kalem bir tedarikçiye bağlanmamış.',
-              aksiyonAd: 'Ödeme Merkezi\'ni aç',
-              _hedef: 'odeme-merkezi',
             })}
           />
         ) : (
@@ -317,8 +572,8 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
             listeBaslik: 'Kalemler',
             satirlar: g._satirlar.map(o => ({ ad: o.baslik, detay: o.tip, tutar: fmt(o._tutar) })),
             not: 'Ödeme yapmak için Bekleyen görünümünü kullan — orada kalem kalem Öde/Ertele var.',
-            aksiyonAd: 'Ödeme Merkezi\'ni aç',
-            _hedef: 'odeme-merkezi',
+            aksiyonAd: 'Bekleyen ödemelere git',
+            _hedef: '__gorunum:bekleyen',
           })}
         />
         {modalBlok}
