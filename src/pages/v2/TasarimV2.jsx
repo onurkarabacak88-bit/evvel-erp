@@ -444,7 +444,7 @@ export default function TasarimV2({ onGit }) {
       return <ParaModulu gorunum={gorunum} onCekmece={setCekmece} onKopru={koprule} onToast={setToast} />;
     }
     if (mod === 'denetim') {
-      return <DenetimModulu gorunum={gorunum} onCekmece={setCekmece} onKopru={koprule} onToast={setToast} />;
+      return <DenetimModulu gorunum={gorunum} onCekmece={setCekmece} onKopru={koprule} onToast={setToast} onGorunum={setGorunum} />;
     }
     if (mod === 'belge') {
       return <BelgeModulu gorunum={gorunum} onCekmece={setCekmece} onKopru={koprule} onToast={setToast} />;

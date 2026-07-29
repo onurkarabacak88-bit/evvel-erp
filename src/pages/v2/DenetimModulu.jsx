@@ -34,6 +34,17 @@ const kisalt = (s, n = 150) => {
   return t.length > n ? t.slice(0, n) + '…' : t;
 };
 
+// Yerli form stilleri (köprü kaldırma turu)
+const dnAlanStil = {
+  width: '100%', boxSizing: 'border-box', padding: '9px 12px', borderRadius: 10,
+  border: `1px solid ${R.cizgi3}`, background: R.girinti, color: R.krem,
+  fontSize: 13, fontFamily: 'inherit', outline: 'none',
+};
+const dnEtiket = {
+  fontSize: 10.5, letterSpacing: '.7px', textTransform: 'uppercase',
+  color: R.not2, fontWeight: 700, marginBottom: 6, display: 'block',
+};
+
 const rozetHap = (renk) => ({
   padding: '3px 10px', borderRadius: 99, fontSize: 10.5, fontWeight: 700,
   background: `${renk}22`, color: renk, whiteSpace: 'nowrap',
@@ -100,7 +111,7 @@ function KopruButon({ ad, onTikla, birincil }) {
   );
 }
 
-export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast }) {
+export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, onGorunum }) {
   const [rapor, setRapor] = useState(null);          // truth gunluk-rapor
   const [durum, setDurum] = useState(null);          // truth durum
   const [truthHata, setTruthHata] = useState('');
@@ -113,6 +124,18 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast }) 
   const [mutHata, setMutHata] = useState('');
   const [beyin, setBeyin] = useState(null);
   const [dilekler, setDilekler] = useState(null);
+  // ── YERLİ BEYİN SOHBETİ (köprü kaldırma turu, 2026-07-30) ─────────────────
+  // Klasik DuyuPaneli'nin en değerli parçası: hafızalı sohbet (/beyin/sor) +
+  // cevap etiketleme (/beyin/cevap-etiket). Beyin karar vermez, kayda işaret eder.
+  const [soru, setSoru] = useState('');
+  const [mesajlar, setMesajlar] = useState([]);   // {rol:'sen'|'beyin', metin, ...}
+  const [oturumId, setOturumId] = useState(null);
+  const [sohbetMesgul, setSohbetMesgul] = useState(false);
+  const [sohbetHata, setSohbetHata] = useState('');
+  // Günlük not (işletme günlüğü — duyu dilekleriyle doğan akış)
+  const [notForm, setNotForm] = useState(null);   // {baslik, tip, sube_id}
+  const [notMesgul, setNotMesgul] = useState(false);
+  const [notSubeler, setNotSubeler] = useState([]);
   const [bagHata, setBagHata] = useState('');
   const [karne, setKarne] = useState(null);
   const [sinaps, setSinaps] = useState(null);
@@ -182,6 +205,57 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast }) 
       .catch((e) => setDuyuHata(e?.message || ''));
     api('/duyu/sinapsler?gun=14').then((d) => setSinaps(d || {})).catch(() => setSinaps({}));
   }, []);
+
+  // ── beyin sohbeti (klasik DuyuPaneli sözleşmesi aynen) ────────────────────
+  const sor = async () => {
+    const s = soru.trim();
+    if (s.length < 3 || sohbetMesgul) return;
+    setSohbetMesgul(true);
+    setSohbetHata('');
+    setSoru('');
+    setMesajlar((m) => [...m, { rol: 'sen', metin: s }]);
+    try {
+      const r = await api('/beyin/sor', { method: 'POST', body: { soru: s, oturum_id: oturumId } });
+      if (r?.oturum_id) setOturumId(r.oturum_id);
+      setMesajlar((m) => [...m, {
+        rol: 'beyin', metin: r?.cevap || '—', bloklar: r?.bloklar,
+        etiket: r?.etiket, dipnot: r?.dipnot, gunlukId: r?.gunluk_id, puan: null,
+      }]);
+    } catch (e) {
+      setSohbetHata(e?.message || 'Beyin yanıt veremedi');
+    } finally {
+      setSohbetMesgul(false);
+    }
+  };
+
+  const cevapEtiketle = (gunlukId, karar) => {
+    api('/beyin/cevap-etiket', { method: 'POST', body: { gunluk_id: gunlukId, karar } })
+      .then(() => setMesajlar((ms) => ms.map((x) => (x.gunlukId === gunlukId ? { ...x, puan: karar } : x))))
+      .catch(() => {});
+  };
+
+  const notAc = () => {
+    setNotForm({ baslik: '', tip: 'gozlem', sube_id: '' });
+    if (!notSubeler.length) api('/subeler').then((d) => setNotSubeler(Array.isArray(d) ? d : [])).catch(() => {});
+  };
+
+  const notKaydet = async () => {
+    if (!(notForm?.baslik || '').trim()) { onToast?.('Not başlığı gerekli'); return; }
+    setNotMesgul(true);
+    try {
+      await api('/duyu/gunluk-not', {
+        method: 'POST',
+        body: { baslik: notForm.baslik.trim(), tip: notForm.tip, sube_id: notForm.sube_id || null },
+      });
+      onToast?.('✓ İşletme günlüğüne yazıldı — beyin bunu okur');
+      setNotForm(null);
+      olayYukle();
+    } catch (e) {
+      onToast?.(e?.message || 'Kaydedilemedi');
+    } finally {
+      setNotMesgul(false);
+    }
+  };
 
   const stratejiYukle = useCallback(() => {
     setStratejiHata('');
@@ -374,7 +448,7 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast }) 
             ))}
           </div>
         )}
-        <KopruButon ad="Duyu Paneli'ni aç" onTikla={() => onKopru?.('duyu-paneli')} />
+        <KopruButon ad="🧠 Beyinle konuş (Duyu Ağı)" onTikla={() => onGorunum?.('duyu')} />
       </>
     );
   }
@@ -440,7 +514,7 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast }) 
             ))}
           </div>
         )}
-        <KopruButon ad="Duyu Paneli'nde tam mutabakat" onTikla={() => onKopru?.('duyu-paneli')} />
+        <KopruButon ad="🧠 Beyne sor (Duyu Ağı)" onTikla={() => onGorunum?.('duyu')} />
       </>
     );
   }
@@ -500,7 +574,7 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast }) 
             ))}
           </div>
         )}
-        <KopruButon ad="Duyu Paneli'nde Bağ Defteri" onTikla={() => onKopru?.('duyu-paneli')} />
+        <KopruButon ad="🧠 Bağları beyne sor (Duyu Ağı)" onTikla={() => onGorunum?.('duyu')} />
       </>
     );
   }
@@ -541,10 +615,152 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast }) 
                 { v: kisalt(k.not || k.aciklama || '', 60), renk: R.not },
               ],
             }))}
-            onSatir={() => onKopru?.('duyu-paneli')}
           />
         )}
-        <KopruButon birincil ad="Tam Duyu Paneli'ni aç" onTikla={() => onKopru?.('duyu-paneli')} />
+
+        {/* ── EVVEL BEYNİ'YLE KONUŞ (yerli — klasik Duyu Paneli'nin çekirdeği) ── */}
+        <div style={{ ...kartYuzey, padding: '18px 20px', marginTop: 14, marginBottom: 16, borderLeft: `3px solid ${R.bakir}` }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap', marginBottom: 4 }}>
+            <span style={{ fontFamily: F.baslik, fontSize: 16, fontWeight: 600 }}>🧠 Evvel Beyni'yle Konuş</span>
+            <span style={{ fontSize: 11, color: R.not2, flex: 1 }}>sohbet hafızalı — takip sorusu sorabilirsin</span>
+            {mesajlar.length > 0 && (
+              <button onClick={() => { setMesajlar([]); setOturumId(null); setSohbetHata(''); }} style={{
+                padding: '5px 11px', borderRadius: 9, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+                background: 'transparent', color: R.not, fontSize: 11, fontFamily: 'inherit',
+              }}>🆕 Yeni sohbet</button>
+            )}
+          </div>
+          <div style={{ fontSize: 11.5, color: R.not, marginBottom: 12, lineHeight: 1.55 }}>
+            "Bugün sorunlar nedir?" diye başla, "peki Köyceğiz'de?" diye devam et — önceki soruları hatırlar.
+            Karar vermez, isim vermez; kayıtları anlatır, kayda işaret eder.
+          </div>
+
+          {mesajlar.length > 0 && (
+            <div style={{ maxHeight: 420, overflowY: 'auto', marginBottom: 12, display: 'flex', flexDirection: 'column', gap: 9 }}>
+              {mesajlar.map((m, i) => (
+                <div key={i} style={{
+                  padding: '11px 14px', borderRadius: 12, fontSize: 12.5, lineHeight: 1.62,
+                  background: m.rol === 'sen' ? 'rgba(217,154,78,.10)' : R.girinti,
+                  border: `1px solid ${m.rol === 'sen' ? `${R.bakir}44` : R.cizgi3}`,
+                  color: R.metin2, whiteSpace: 'pre-wrap',
+                }}>
+                  <div style={{
+                    fontSize: 10, letterSpacing: '.7px', textTransform: 'uppercase', fontWeight: 700,
+                    color: m.rol === 'sen' ? R.bakir : R.not2, marginBottom: 5,
+                  }}>
+                    {m.rol === 'sen' ? 'sen' : 'beyin'}
+                    {m.etiket ? ` · ${m.etiket}` : ''}
+                  </div>
+                  {m.metin}
+                  {m.dipnot && (
+                    <div style={{ fontSize: 11, color: R.not2, marginTop: 7, fontStyle: 'italic' }}>{m.dipnot}</div>
+                  )}
+                  {!!(m.bloklar || []).length && (
+                    <div style={{ fontSize: 10.5, color: R.not2, marginTop: 7 }}>
+                      okuduğu pencereler: {(m.bloklar || []).join(', ')}
+                    </div>
+                  )}
+                  {m.rol === 'beyin' && m.gunlukId && (
+                    <div style={{ display: 'flex', gap: 6, marginTop: 9 }}>
+                      {[['iyi', '👍 iyi cevap'], ['kotu', '👎 kötü']].map(([karar, ad]) => (
+                        <button key={karar} onClick={() => cevapEtiketle(m.gunlukId, karar)} style={{
+                          padding: '4px 10px', borderRadius: 8, cursor: 'pointer', fontFamily: 'inherit', fontSize: 10.5,
+                          border: `1px solid ${m.puan === karar ? R.bakir : R.cizgi3}`,
+                          background: m.puan === karar ? 'rgba(217,154,78,.14)' : 'transparent',
+                          color: m.puan === karar ? R.bakir : R.not,
+                          fontWeight: m.puan === karar ? 700 : 500,
+                        }}>{ad}</button>
+                      ))}
+                      {m.puan && <span style={{ fontSize: 10.5, color: R.yesil, alignSelf: 'center' }}>✓ üslup rehberine işlendi</span>}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {sohbetHata && (
+            <div style={{ fontSize: 12, color: R.kirmizi, marginBottom: 10 }}>{sohbetHata}</div>
+          )}
+
+          <div style={{ display: 'flex', gap: 9, flexWrap: 'wrap' }}>
+            <input
+              value={soru}
+              onChange={(e) => setSoru(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') sor(); }}
+              placeholder="örn. bu hafta reçetelere göre fazla giden malzeme var mı?"
+              style={{
+                flex: 1, minWidth: 240, boxSizing: 'border-box', padding: '10px 14px', borderRadius: 10,
+                border: `1px solid ${R.cizgi3}`, background: R.girinti, color: R.krem,
+                fontSize: 13, fontFamily: 'inherit', outline: 'none',
+              }}
+            />
+            <button disabled={sohbetMesgul || soru.trim().length < 3} onClick={sor} style={{
+              padding: '10px 20px', borderRadius: 10, border: 'none',
+              background: soru.trim().length < 3 ? R.girinti : 'linear-gradient(150deg, #D99A4E, #B06E2C)',
+              color: soru.trim().length < 3 ? R.not : '#1C1309', fontSize: 12.5, fontWeight: 700,
+              fontFamily: 'inherit', cursor: soru.trim().length < 3 ? 'default' : 'pointer',
+            }}>
+              {sohbetMesgul ? 'Düşünüyor…' : 'Sor'}
+            </button>
+            <button onClick={notAc} style={{
+              padding: '10px 16px', borderRadius: 10, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+              background: 'transparent', color: R.metin2, fontSize: 12, fontWeight: 600, fontFamily: 'inherit',
+            }}>
+              📓 Günlüğe not
+            </button>
+          </div>
+        </div>
+
+        {/* günlük not modalı */}
+        {notForm && (
+          <div onClick={(e) => { if (e.target === e.currentTarget && !notMesgul) setNotForm(null); }} style={{
+            position: 'fixed', inset: 0, zIndex: 90, background: 'rgba(10,6,2,.66)',
+            backdropFilter: 'blur(3px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+          }}>
+            <div style={{ ...kartYuzey, width: 480, maxWidth: '96vw', padding: '24px 26px' }}>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 6 }}>
+                <div style={{ fontFamily: F.baslik, fontSize: 20, fontWeight: 600 }}>📓 İşletme Günlüğü</div>
+                <button onClick={() => setNotForm(null)} style={{
+                  marginLeft: 'auto', border: 'none', background: 'transparent', color: R.not,
+                  fontSize: 16, cursor: 'pointer', fontFamily: 'inherit',
+                }}>✕</button>
+              </div>
+              <div style={{ fontSize: 12, color: R.not, marginBottom: 14, lineHeight: 1.55 }}>
+                Rakamların açıklamadığı şeyi buraya yaz — beyin bunu okur ("o gün su kesintisi vardı" gibi).
+              </div>
+              <label style={dnEtiket}>Not *</label>
+              <input value={notForm.baslik} placeholder="örn. Zafer'de klima arızası, akşam kapandı"
+                onChange={(e) => setNotForm((f) => ({ ...f, baslik: e.target.value }))} style={dnAlanStil} />
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 12 }}>
+                <div>
+                  <label style={dnEtiket}>Tip</label>
+                  <select value={notForm.tip} onChange={(e) => setNotForm((f) => ({ ...f, tip: e.target.value }))} style={dnAlanStil}>
+                    {[['gozlem', 'Gözlem'], ['olay', 'Olay'], ['aksiyon', 'Aksiyon'], ['not', 'Not']].map(([v, ad]) => <option key={v} value={v}>{ad}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label style={dnEtiket}>Şube (varsa)</label>
+                  <select value={notForm.sube_id} onChange={(e) => setNotForm((f) => ({ ...f, sube_id: e.target.value }))} style={dnAlanStil}>
+                    <option value="">Genel</option>
+                    {notSubeler.map((s) => <option key={s.id} value={s.id}>{s.ad}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 16 }}>
+                <button disabled={notMesgul} onClick={() => setNotForm(null)} style={{
+                  padding: '10px 18px', borderRadius: 10, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+                  background: 'transparent', color: R.metin2, fontSize: 12.5, fontWeight: 600, fontFamily: 'inherit',
+                }}>İptal</button>
+                <button disabled={notMesgul} onClick={notKaydet} style={{
+                  padding: '10px 20px', borderRadius: 10, border: 'none', cursor: 'pointer',
+                  background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+                  fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit',
+                }}>{notMesgul ? 'Yazılıyor…' : 'Günlüğe yaz'}</button>
+              </div>
+            </div>
+          </div>
+        )}
       </>
     );
   }

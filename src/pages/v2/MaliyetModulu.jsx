@@ -537,7 +537,7 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
             Reçete & eşleştirme yönetimi
           </button>
           <button
-            onClick={() => onKopru?.('duyu-paneli')}
+            onClick={() => onKopru?.('__modul:denetim:duyu')}
             style={{
               padding: '9px 16px', borderRadius: 10, border: `1px solid ${R.cizgi3}`,
               background: R.girinti, color: R.metin2, fontSize: 12, fontWeight: 600,
