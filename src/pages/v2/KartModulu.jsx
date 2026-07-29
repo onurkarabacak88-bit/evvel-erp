@@ -99,6 +99,12 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
   const [kartEkleBusy, setKartEkleBusy] = useState(false);
   const [manForm, setManForm] = useState(null);          // manuel ekstre {kart_id, donem, son_odeme, donem_borcu, asgari_tutar, faiz_orani}
   const [manBusy, setManBusy] = useState(false);
+  // ── YERLİ KART CRUD (köprü kaldırma turu) — klasik Kartlar.jsx sözleşmesi ──
+  // PIN'li tehlikeli uçlar (kalıcı-sil / ledger-sıfırla / tam-sıfırla) BİLEREK
+  // taşınmadı — sahip kararına kadar klasikte kalır.
+  const [kartForm, setKartForm] = useState(null);        // {duzenleId?, kart_adi, banka, ...}
+  const [kartMesgul, setKartMesgul] = useState(false);
+  const [kartPasifSor, setKartPasifSor] = useState('');
 
   const yukle = () => {
     setYukleniyor(true);
@@ -186,11 +192,56 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
       { ad: 'Kesim günü', detay: `ayın ${k.kesim}`, tutar: gunMetni(k.gunKaldi) },
     ],
     not: k.ekstreVar
-      ? 'Bu dönem ekstresi yüklü — rakamlar ekstreyle doğrulandı.'
+      ? 'Bu dönem ekstresi yüklü — rakamlar ekstreyle doğrulandı. Düzenleme Kart Dosyaları satır butonlarından.'
       : 'Bu dönem ekstresi YÜKLENMEDİ — Ekstre Durumu görünümünden PDF yükleyin.',
-    aksiyonAd: k.ekstreVar ? 'Kart yönetimini aç' : 'Ekstre durumuna git',
-    _hedef: k.ekstreVar ? 'kart-yonetimi' : '__gorunum:ekstre',
+    ...(k.ekstreVar ? {} : { aksiyonAd: 'Ekstre durumuna git', _hedef: '__gorunum:ekstre' }),
   });
+
+  const kartFormAc = (k) => {
+    const ham = k ? kartlar.find((x) => String(x.id) === String(k.id)) : null;
+    setKartForm(ham ? {
+      duzenleId: ham.id, kart_adi: ham.kart_adi || '', banka: ham.banka || '',
+      limit_tutar: ham.limit_tutar ?? '', kesim_gunu: ham.kesim_gunu ?? 15,
+      son_odeme_gunu: ham.son_odeme_gunu ?? 25, faiz_orani: ham.faiz_orani ?? '',
+      asgari_oran: ham.asgari_oran ?? 40, gecikme_faiz_orani: ham.gecikme_faiz_orani ?? 0,
+      sahip: ham.sahip ?? 'İşletme', ortak_limit_grup: ham.ortak_limit_grup ?? '',
+    } : {
+      duzenleId: null, kart_adi: '', banka: '', limit_tutar: '', kesim_gunu: 15,
+      son_odeme_gunu: 25, faiz_orani: '', asgari_oran: 40, gecikme_faiz_orani: '',
+      sahip: 'İşletme', ortak_limit_grup: '',
+    });
+  };
+
+  const kartKaydet = async () => {
+    if (!(kartForm?.kart_adi || '').trim()) { onToast?.('Kart adı zorunlu'); return; }
+    setKartMesgul(true);
+    try {
+      const { duzenleId, ...body } = kartForm;
+      if (duzenleId) await api(`/kartlar/${duzenleId}`, { method: 'PUT', body });
+      else await api('/kartlar', { method: 'POST', body });
+      onToast?.(duzenleId ? '✓ Kart güncellendi' : '✓ Kart eklendi');
+      setKartForm(null);
+      yukle();
+    } catch (e) {
+      onToast?.(e?.message || 'Kaydedilemedi');
+    } finally {
+      setKartMesgul(false);
+    }
+  };
+
+  const kartPasife = async (id) => {
+    setKartMesgul(true);
+    try {
+      await api(`/kartlar/${id}`, { method: 'DELETE' });
+      onToast?.('Kart pasife alındı');
+      setKartPasifSor('');
+      yukle();
+    } catch (e) {
+      onToast?.(e?.message || 'Pasife alınamadı');
+    } finally {
+      setKartMesgul(false);
+    }
+  };
 
   // ── ekstre yükleme fonksiyonları (klasik EkstreYukle.jsx sözleşmesi) ───────
   const BANKA_AD = { axess: 'Axess', worldcard: 'Yapı Kredi', enpara: 'Enpara', ziraat: 'Ziraat', garanti: 'Garanti' };
@@ -440,27 +491,133 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
           { etiket: 'En pahalı faiz', deger: enPahali ? `%${trSayi(enPahali.faizYillik)}/yıl` : '—', alt: enPahali ? enPahali.ad : 'faiz oranı girilmemiş', renk: enPahali ? R.kirmizi : R.not },
           { etiket: 'En yakın son ödeme', deger: yakin ? gunMetni(yakin.gunKaldi) : '—', alt: yakin ? yakin.ad : 'vadesi gelen yok', renk: R.amber },
         ]} />
-        <Tablo
-          baslik="Kart dosyaları · limit ve döngü"
-          not="satıra tıkla → kart dosyası"
-          kolonlar={[
-            { ad: 'Kart' }, { ad: 'Limit', sag: true }, { ad: 'Kullanım', sag: true },
-            { ad: 'Yıllık faiz', sag: true }, { ad: 'Kesim' }, { ad: 'Son ödeme' }, { ad: 'Döngü' },
-          ]}
+        <div style={{ display: 'flex', gap: 9, marginBottom: 12 }}>
+          <button onClick={() => kartFormAc(null)} style={{
+            padding: '9px 17px', borderRadius: 10, border: 'none', cursor: 'pointer',
+            background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+            fontSize: 12, fontWeight: 700, fontFamily: 'inherit',
+          }}>
+            + Kart ekle
+          </button>
+        </div>
+        <Liste
           satirlar={kartSatir.map(k => ({
             id: k.id, _k: k,
-            hucreler: [
-              { v: k.ad, kalin: true },
-              { v: fmt(k.limit), mono: true, sag: true },
-              { v: `%${trSayi(k.kullanim, 0)}`, bar: k.kullanim, sag: true, renk: k.kullanim > 80 ? R.kirmizi : k.kullanim > 60 ? R.amber : R.yesil },
-              { v: k.faizYillik > 0 ? `%${trSayi(k.faizYillik)}` : '—', mono: true, sag: true, renk: k.faizYillik >= 55 ? R.kirmizi : k.faizYillik > 0 ? R.amber : R.not },
-              { v: k.kesim ? `ayın ${k.kesim}` : '—', mono: true },
-              { v: kisaTarih(k.sonOdeme), mono: true },
-              { v: trKucuk(DONGU[k.durum].ad), rozet: DONGU[k.durum].renk },
+            baslik: k.ad,
+            alt: `limit ${fmt(k.limit)} · kullanım %${trSayi(k.kullanim, 0)}${k.faizYillik > 0 ? ` · faiz %${trSayi(k.faizYillik)}/yıl` : ''} · kesim ayın ${k.kesim || '—'} · son ödeme ${kisaTarih(k.sonOdeme)}`,
+            tutar: fmt(k.toplam),
+            tier: k.durum === 'gecikti' ? 'kritik' : k.durum === 'ekstre_bekleniyor' ? 'uyari' : k.durum === 'odendi' ? 'olumlu' : 'bilgi',
+            rozet: trKucuk(DONGU[k.durum].ad),
+            rozetRenk: DONGU[k.durum].renk,
+            aksiyonlar: kartPasifSor === String(k.id) ? [
+              { ad: kartMesgul ? '…' : 'Eminim — pasife al', birincil: true, onTikla: () => !kartMesgul && kartPasife(k.id) },
+              { ad: 'Vazgeç', onTikla: () => setKartPasifSor('') },
+            ] : [
+              { ad: '✎ Düzenle', birincil: true, onTikla: () => kartFormAc(k) },
+              { ad: 'Pasife al', onTikla: () => setKartPasifSor(String(k.id)) },
             ],
           }))}
-          onSatir={(row) => kartAc(row._k)}
+          onAc={(l) => kartAc(l._k)}
         />
+
+        {/* ── YERLİ KART FORMU (klasik Kartlar.jsx alanları aynen) ── */}
+        {kartForm && (() => {
+          const alan = (k, v) => setKartForm((f) => ({ ...f, [k]: v }));
+          const alanStil = {
+            width: '100%', boxSizing: 'border-box', padding: '9px 12px', borderRadius: 10,
+            border: `1px solid ${R.cizgi3}`, background: R.girinti, color: R.krem,
+            fontSize: 13, fontFamily: 'inherit', outline: 'none',
+          };
+          const et = { fontSize: 10.5, letterSpacing: '.7px', textTransform: 'uppercase', color: R.not2, fontWeight: 700, marginBottom: 6, display: 'block' };
+          return (
+            <div
+              onClick={(e) => { if (e.target === e.currentTarget && !kartMesgul) setKartForm(null); }}
+              style={{
+                position: 'fixed', inset: 0, zIndex: 90, background: 'rgba(10,6,2,.66)',
+                backdropFilter: 'blur(3px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+              }}
+            >
+              <div style={{ ...kartYuzey, width: 560, maxWidth: '96vw', maxHeight: '92vh', overflowY: 'auto', padding: '24px 26px' }}>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 18 }}>
+                  <div style={{ fontFamily: F.baslik, fontSize: 21, fontWeight: 600 }}>
+                    {kartForm.duzenleId ? 'Kartı Düzenle' : 'Yeni Kart'}
+                  </div>
+                  <button onClick={() => !kartMesgul && setKartForm(null)} style={{
+                    marginLeft: 'auto', border: 'none', background: 'transparent', color: R.not,
+                    fontSize: 16, cursor: 'pointer', fontFamily: 'inherit',
+                  }}>✕</button>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 13 }}>
+                  <div>
+                    <label style={et}>Kart adı *</label>
+                    <input value={kartForm.kart_adi} onChange={(e) => alan('kart_adi', e.target.value)} style={alanStil} />
+                  </div>
+                  <div>
+                    <label style={et}>Banka</label>
+                    <input value={kartForm.banka} onChange={(e) => alan('banka', e.target.value)} style={alanStil} />
+                  </div>
+                  <div>
+                    <label style={et}>Limit (₺)</label>
+                    <input type="number" value={kartForm.limit_tutar} onChange={(e) => alan('limit_tutar', e.target.value)}
+                      style={{ ...alanStil, fontFamily: F.mono, textAlign: 'right' }} />
+                  </div>
+                  <div>
+                    <label style={et}>Sahip</label>
+                    <select value={kartForm.sahip} onChange={(e) => alan('sahip', e.target.value)} style={alanStil}>
+                      {['İşletme', 'Şahsi'].map((s) => <option key={s}>{s}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label style={et}>Kesim günü</label>
+                    <input type="number" min={1} max={31} value={kartForm.kesim_gunu} onChange={(e) => alan('kesim_gunu', e.target.value)}
+                      style={{ ...alanStil, fontFamily: F.mono, textAlign: 'right' }} />
+                  </div>
+                  <div>
+                    <label style={et}>Son ödeme günü</label>
+                    <input type="number" min={1} max={31} value={kartForm.son_odeme_gunu} onChange={(e) => alan('son_odeme_gunu', e.target.value)}
+                      style={{ ...alanStil, fontFamily: F.mono, textAlign: 'right' }} />
+                  </div>
+                  <div>
+                    <label style={et}>Yıllık faiz %</label>
+                    <input type="number" value={kartForm.faiz_orani} onChange={(e) => alan('faiz_orani', e.target.value)}
+                      style={{ ...alanStil, fontFamily: F.mono, textAlign: 'right' }} />
+                  </div>
+                  <div>
+                    <label style={et}>Asgari oran %</label>
+                    <input type="number" value={kartForm.asgari_oran} onChange={(e) => alan('asgari_oran', e.target.value)}
+                      style={{ ...alanStil, fontFamily: F.mono, textAlign: 'right' }} />
+                  </div>
+                  <div>
+                    <label style={et}>Gecikme faizi %</label>
+                    <input type="number" value={kartForm.gecikme_faiz_orani} onChange={(e) => alan('gecikme_faiz_orani', e.target.value)}
+                      style={{ ...alanStil, fontFamily: F.mono, textAlign: 'right' }} />
+                  </div>
+                  <div>
+                    <label style={et}>Ortak limit grubu</label>
+                    <input value={kartForm.ortak_limit_grup} placeholder="aynı limiti paylaşanlar"
+                      onChange={(e) => alan('ortak_limit_grup', e.target.value)} style={alanStil} />
+                  </div>
+                </div>
+                <div style={{ fontSize: 11, color: R.not, marginTop: 12, lineHeight: 1.5 }}>
+                  Kalıcı silme / sıfırlama gibi PIN'li işlemler güvenlik gereği klasik Kartlar ekranında.
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 16 }}>
+                  <button disabled={kartMesgul} onClick={() => setKartForm(null)} style={{
+                    padding: '10px 18px', borderRadius: 10, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+                    background: 'transparent', color: R.metin2, fontSize: 12.5, fontWeight: 600, fontFamily: 'inherit',
+                  }}>İptal</button>
+                  <button disabled={kartMesgul} onClick={kartKaydet} style={{
+                    padding: '10px 20px', borderRadius: 10, border: 'none', cursor: 'pointer',
+                    background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+                    fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit',
+                  }}>
+                    {kartMesgul ? 'Kaydediliyor…' : 'Kaydet'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
       </>
     );
   }
@@ -568,10 +725,8 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
                 { ad: 'Faiz tutarı', detay: 'KKDF/BSMV dahil', tutar: fmt(sayi(h.faiz_tutari)) },
               ],
               not: (h.harcama_tipi || 'belirsiz') === 'belirsiz'
-                ? 'Bu hareket işletme mi şahsi mi belirlenmemiş — sınıflandırılmadan işletmenin gerçek kart yükü doğru çıkmaz.'
+                ? 'Bu hareket işletme mi şahsi mi belirlenmemiş — sınıflandırılmadan işletmenin gerçek kart yükü doğru çıkmaz. Sınıflandırma klasik Kart Hareketleri ekranında.'
                 : 'Sınıflandırma yapılmış; işletme/şahsi ayrımı raporlara doğru yansıyor.',
-              aksiyonAd: 'Kart hareketlerini aç',
-              _hedef: 'kart-hareketleri',
             });
           }}
         />
