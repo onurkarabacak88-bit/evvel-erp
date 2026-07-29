@@ -195,6 +195,16 @@ const OPS_UC = {
     ],
   },
   '/api/ops/siparis/sevkiyat-guncelle': { ok: true },
+  '/api/ops/para-yolda': {
+    kesit_gun: 14, kapanis_adet: 38, eslesen_adet: 35, bekleyen_adet: 3, gecikmis_adet: 1,
+    ort_teslim_saat: 13.4, medyan_teslim_saat: 12.1,
+    bekleyenler: [
+      { sube: 'Köyceğiz', tarih: gunEkleISO(-2), kapanis_saat: '23:41', gecen_saat: 39.2, gecikmis: true, beklenen_tutar: 18400 },
+      { sube: 'Zafer', tarih: gunEkleISO(-1), kapanis_saat: '23:52', gecen_saat: 11.6, gecikmis: false, beklenen_tutar: 31200 },
+      { sube: 'Gazze', tarih: bugunISO, kapanis_saat: '00:14', gecen_saat: 9.8, gecikmis: false, beklenen_tutar: null },
+    ],
+    not: 'GÖZLEMDİR',
+  },
   '/api/ops/siparis/sevkiyat-hiz': {
     kesit_gun: 30, teslim_adet: 14, ort_saat: 6.4, medyan_saat: 5.2,
     hazirlik_ort_saat: 3.1, yol_ort_saat: 2.8,

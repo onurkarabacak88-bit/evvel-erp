@@ -11373,6 +11373,121 @@ def ops_siparis_sevkiyat_subeler_ozet(gun: int = 90):
     return {"gun_sayi": gun_sayi, "satirlar": satirlar}
 
 
+@router.get("/para-yolda")
+def ops_para_yolda(gun: int = 14):
+    """
+    SALT-OKUR DUYU 2/6 (2026-07-29): PARA YOLDA — gün sonu kapanışı yapılmış
+    (sube_operasyon_event KAPANIS, cevap_ts dolu) ama gun_sonu KASA TESLİMİ
+    henüz kaydedilmemiş şube-günler + kapanış→teslim ortalama süresi.
+    Ham veri ZATEN kayıtlı (kapanış cevap_ts / kasa_sayim / devir + kasa_teslim
+    olusturma) — bu uç yalnız türetir, hiçbir şey yazmaz.
+    """
+    g = max(2, min(90, int(gun or 14)))
+    with db() as (conn, cur):
+        cur.execute(
+            """
+            SELECT e.sube_id::text AS sube_id, s.ad AS sube_adi, e.tarih,
+                   e.cevap_ts, e.kasa_sayim, e.teslim, e.devir
+            FROM sube_operasyon_event e
+            JOIN subeler s ON s.id = e.sube_id
+            WHERE e.tip = 'KAPANIS' AND e.durum = 'tamamlandi'
+              AND e.cevap_ts IS NOT NULL
+              AND e.tarih >= CURRENT_DATE - (%s * INTERVAL '1 day')
+            ORDER BY e.cevap_ts
+            """,
+            (g,),
+        )
+        kapanislar = [dict(r) for r in (cur.fetchall() or [])]
+        cur.execute(
+            """
+            SELECT sube_id::text AS sube_id, tarih, tutar, olusturma
+            FROM kasa_teslim
+            WHERE teslim_turu = 'gun_sonu'
+              AND tarih >= CURRENT_DATE - ((%s + 2) * INTERVAL '1 day')
+            ORDER BY olusturma
+            """,
+            (g,),
+        )
+        teslimler = [dict(r) for r in (cur.fetchall() or [])]
+
+    kullanildi = set()
+    sureler = []
+    bekleyenler = []
+    eslesen = 0
+    from datetime import datetime, timezone
+    simdi = datetime.now(timezone.utc)
+    for k in kapanislar:
+        kts = k.get("cevap_ts")
+        es = None
+        for i, t in enumerate(teslimler):
+            if i in kullanildi or t["sube_id"] != k["sube_id"]:
+                continue
+            tts = t.get("olusturma")
+            try:
+                if tts and kts and tts >= kts and (tts - kts).total_seconds() <= 3 * 86400:
+                    es = (i, t)
+                    break
+            except TypeError:
+                continue
+        if es:
+            kullanildi.add(es[0])
+            eslesen += 1
+            try:
+                saat = (es[1]["olusturma"] - kts).total_seconds() / 3600.0
+                if 0 <= saat <= 72:
+                    sureler.append(round(saat, 1))
+            except TypeError:
+                pass
+        else:
+            try:
+                kref = kts if kts.tzinfo else kts.replace(tzinfo=timezone.utc)
+                gecen = round((simdi - kref).total_seconds() / 3600.0, 1)
+            except Exception:
+                gecen = None
+            beklenen = None
+            try:
+                if k.get("teslim") is not None:
+                    beklenen = float(k["teslim"])
+                elif k.get("kasa_sayim") is not None:
+                    beklenen = max(0.0, float(k["kasa_sayim"]) - float(k.get("devir") or 0))
+            except (TypeError, ValueError):
+                beklenen = None
+            bekleyenler.append({
+                "sube": k.get("sube_adi"),
+                "tarih": str(k.get("tarih") or ""),
+                "kapanis_saat": str(kts or "")[11:16],
+                "gecen_saat": gecen,
+                # ertesi gün öğlene kadar teslim olağan — 18 saati aşan gecikmiştir
+                "gecikmis": bool(gecen is not None and gecen > 18),
+                "beklenen_tutar": beklenen,
+            })
+
+    def _ort(xs):
+        return round(sum(xs) / len(xs), 1) if xs else None
+
+    def _medyan(xs):
+        if not xs:
+            return None
+        ss = sorted(xs)
+        n = len(ss)
+        return round(ss[n // 2] if n % 2 else (ss[n // 2 - 1] + ss[n // 2]) / 2, 1)
+
+    bekleyenler.sort(key=lambda x: -(x.get("gecen_saat") or 0))
+    return {
+        "kesit_gun": g,
+        "kapanis_adet": len(kapanislar),
+        "eslesen_adet": eslesen,
+        "bekleyen_adet": len(bekleyenler),
+        "gecikmis_adet": sum(1 for b in bekleyenler if b["gecikmis"]),
+        "ort_teslim_saat": _ort(sureler),
+        "medyan_teslim_saat": _medyan(sureler),
+        "bekleyenler": bekleyenler[:20],
+        "not": "GÖZLEMDİR: kapanış cevap_ts ↔ gun_sonu teslim olusturma eşlemesi. "
+               "Ertesi gün öğlene kadar teslim olağandır; 18 saati aşan 'gecikmiş' "
+               "sayılır. Yazma yok — hüküm insanın.",
+    }
+
+
 @router.get("/siparis/sevkiyat-hiz")
 def ops_siparis_sevkiyat_hiz(gun: int = 30):
     """

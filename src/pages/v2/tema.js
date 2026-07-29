@@ -143,7 +143,9 @@ export const MODULLER = [
   { id: 'para', ad: 'Para Hareketleri', kisa: 'Para', alt: 'Ciro · satış · kasa', ikon: IK.kahve, gorunumler: [
     { id: 'girisi', ad: 'Ciro Girişi' },
     { id: 'satis', ad: 'Ürün Satışları' },
-    { id: 'kasa', ad: 'Kasa Teslim' },
+    // kasaTeslim rozeti GERİ geldi (duyu 2/6): artık uydurma değil — para-yolda
+    // ucundan türetilen "teslim edilmemiş kapanış" sayısı.
+    { id: 'kasa', ad: 'Kasa Teslim', rozet: 'kasaTeslim', renk: '#FBBF24' },
     { id: 'gider', ad: 'Anlık Gider' },
     { id: 'diskaynak', ad: 'Dış Kaynak Geliri' },
   ]},

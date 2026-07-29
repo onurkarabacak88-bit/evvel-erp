@@ -106,6 +106,7 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru }) {
   // ── KASA TESLİM ───────────────────────────────────────────────────────────
   const [teslimler, setTeslimler] = useState(null);
   const [teslimHata, setTeslimHata] = useState('');
+  const [paraYolda, setParaYolda] = useState(null);  // duyu 2/6 (salt-okur)
   // ── ANLIK GİDER ───────────────────────────────────────────────────────────
   const [giderler, setGiderler] = useState(null);
   const [giderOzet, setGiderOzet] = useState(null);
@@ -146,6 +147,9 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru }) {
       setTeslimler(Array.isArray(k) ? k : (k?.satirlar || []));
       if (!subeler.length && Array.isArray(s)) setSubeler(s);
     }).catch((e) => setTeslimHata(e?.message || ''));
+    api('/ops/para-yolda?gun=14')
+      .then((d) => setParaYolda(d || {}))
+      .catch(() => setParaYolda({}));
   }, [subeler]);
 
   const giderYukle = useCallback(() => {
@@ -349,8 +353,52 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru }) {
           { etiket: 'Bu ay gün sonu', deger: String(gunSonu.length), alt: fmt(toplam(gunSonu)) },
           { etiket: 'Bu ay toplam', deger: fmt(toplam(teslimler)), alt: `${teslimler.length} teslim kaydı` },
         ]} />
-        {/* Bilinçli eksik: "teslim bekleyen" gösterilmiyor — sistemde bekleyen
-            teslim kaydı yok (kayıt teslimle doğar); olmayan veri uydurulmaz. */}
+        {/* PARA YOLDA DUYUSU 2/6 (2026-07-29): "teslim bekleyen" artık uydurma
+            değil TÜRETİLMİŞ veri — kapanış cevap_ts ↔ gun_sonu teslim eşlemesi. */}
+        {paraYolda && sayi(paraYolda.kapanis_adet) > 0 && (
+          <div style={{
+            ...kartYuzey, padding: '16px 18px', marginBottom: 14,
+            border: sayi(paraYolda.gecikmis_adet) > 0 ? `1px solid ${R.kirmizi}55` : kartYuzey.border,
+          }}>
+            <div style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              paddingBottom: 10, borderBottom: `1px solid ${R.cizgi2}`, marginBottom: 11, flexWrap: 'wrap', gap: 8,
+            }}>
+              <span style={{ fontFamily: F.baslik, fontSize: 14.5, fontWeight: 600 }}>
+                💸 Para yolda · son {sayi(paraYolda.kesit_gun)} gün
+              </span>
+              <span style={{ fontSize: 10.5, color: R.not2 }}>
+                kapanış ↔ gün sonu teslimi eşlemesi · 18 saati aşan gecikmiş sayılır
+              </span>
+            </div>
+            <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', fontSize: 12.5, marginBottom: sayi(paraYolda.bekleyen_adet) > 0 ? 11 : 0 }}>
+              <span>Kapanış <b style={{ fontFamily: F.mono }}>{sayi(paraYolda.kapanis_adet)}</b></span>
+              <span>teslimle eşleşen <b style={{ fontFamily: F.mono, color: R.yesil }}>{sayi(paraYolda.eslesen_adet)}</b></span>
+              <span>bekleyen <b style={{ fontFamily: F.mono, color: sayi(paraYolda.bekleyen_adet) > 0 ? R.amber : R.yesil }}>{sayi(paraYolda.bekleyen_adet)}</b></span>
+              <span>gecikmiş <b style={{ fontFamily: F.mono, color: sayi(paraYolda.gecikmis_adet) > 0 ? R.kirmizi : R.yesil }}>{sayi(paraYolda.gecikmis_adet)}</b></span>
+              <span style={{ color: R.not2 }}>
+                ort. kapanış→teslim {paraYolda.ort_teslim_saat != null ? `${paraYolda.ort_teslim_saat} sa` : '—'}
+              </span>
+            </div>
+            {(paraYolda.bekleyenler || []).slice(0, 6).map((b, i) => (
+              <div key={i} style={{
+                display: 'flex', alignItems: 'center', gap: 10, fontSize: 12.5,
+                padding: '8px 0', borderTop: i === 0 ? `1px solid ${R.cizgi2}` : 'none',
+              }}>
+                <span style={rozetHap(b.gecikmis ? R.kirmizi : R.amber)}>
+                  {b.gecikmis ? 'gecikmiş' : 'yolda'}
+                </span>
+                <span style={{ fontWeight: 700, flex: 1 }}>{b.sube}</span>
+                <span style={{ color: R.not2, fontSize: 11.5 }}>
+                  {tarihKisa(b.tarih)} {b.kapanis_saat} kapanış · {b.gecen_saat != null ? `${Math.round(b.gecen_saat)} sa geçti` : ''}
+                </span>
+                {b.beklenen_tutar != null && (
+                  <span style={{ fontFamily: F.mono, fontWeight: 700 }}>{fmt(sayi(b.beklenen_tutar))}</span>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
         {teslimler.length === 0 ? (
           <BosDurum metin="Bu ay kasa teslim kaydı yok." />
         ) : (

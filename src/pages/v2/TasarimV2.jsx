@@ -208,6 +208,10 @@ export default function TasarimV2({ onGit }) {
     api('/fatura-istek/liste')
       .then(d => koy('faturaIstek', Number(d?.acik_adet) || 0))
       .catch(() => {});
+    // kasaTeslim rozeti (duyu 2/6) — teslim edilmemiş gün sonu kapanışı sayısı
+    api('/ops/para-yolda?gun=14')
+      .then(d => koy('kasaTeslim', Number(d?.bekleyen_adet) || 0))
+      .catch(() => {});
     // Duyu mutabakatı rozeti — iki yönlü açık fark sayısı (ödeme↔kasa düşüşü)
     api('/duyu/odeme-mutabakat?gun=60')
       .then(d => {
