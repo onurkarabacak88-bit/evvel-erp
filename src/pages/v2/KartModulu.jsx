@@ -67,6 +67,11 @@ function donguDurumu(k, ekstreVar) {
   return 'yuklendi';
 }
 
+const kisalt = (t, n = 40) => {
+  const x = String(t || '').trim();
+  return x.length > n ? `${x.slice(0, n)}…` : x;
+};
+
 const gunMetni = (g) => {
   const n = Math.trunc(sayi(g));
   if (n < 0) return `${Math.abs(n)} gün geçti`;
@@ -105,6 +110,11 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
   const [kartForm, setKartForm] = useState(null);        // {duzenleId?, kart_adi, banka, ...}
   const [kartMesgul, setKartMesgul] = useState(false);
   const [kartPasifSor, setKartPasifSor] = useState('');
+  // ── YERLİ KART ANALİZİ (köprü kaldırma turu, 2026-07-30) ──────────────────
+  // Klasik KartEkstreAnaliz'in iki bloğu: aylık borç/faiz eğrisi + kategori
+  // dağılımı (/kartlar/analiz) ve dönem arşivi (/kartlar/ekstre-arsiv).
+  const [analiz, setAnaliz] = useState(null);
+  const [arsiv, setArsiv] = useState(null);
 
   const yukle = () => {
     setYukleniyor(true);
@@ -114,7 +124,11 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
       api('/kartlar/borc-faiz-ozet').catch(() => null),
       api('/kartlar/harcama-ozet').catch(() => null),
       api('/kart-hareketleri?limit=200').catch(() => []),
-    ]).then(([k, o, h, hr]) => {
+      api('/kartlar/analiz').catch(() => null),
+      api('/kartlar/ekstre-arsiv').catch(() => null),
+    ]).then(([k, o, h, hr, an, ar]) => {
+      setAnaliz(an);
+      setArsiv(ar);
       setKartlar(Array.isArray(k) ? k : []);
       setOzet(o);
       setHarcama(h);
@@ -796,17 +810,128 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
         >
           📄 Ekstre yükle (PDF)
         </button>
-        <button
-          onClick={() => onKopru?.('kart-analiz')}
-          style={{
-            padding: '9px 16px', borderRadius: 10, border: `1px solid ${R.cizgi3}`,
-            background: R.girinti, color: R.metin2, fontSize: 12, fontWeight: 600,
-            fontFamily: 'inherit', cursor: 'pointer',
-          }}
-        >
-          📊 Ekstre analizi (harcama dağılımı + arşiv)
-        </button>
       </div>
+
+      {/* ── YERLİ EKSTRE ANALİZİ: aylık borç/faiz + kategori dağılımı ── */}
+      {(() => {
+        const aylik = Array.isArray(analiz?.aylik) ? analiz.aylik : [];
+        const kategori = Array.isArray(analiz?.kategori) ? analiz.kategori : [];
+        if (!aylik.length && !kategori.length) return null;
+        const enBuyukBorc = Math.max(1, ...aylik.map((a) => sayi(a.borc)));
+        const katToplam = Math.max(1, kategori.reduce((t, k) => t + sayi(k.tutar), 0));
+        return (
+          <div style={{ ...kartYuzey, padding: '18px 20px', marginBottom: 14 }}>
+            <div style={{
+              display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap',
+              paddingBottom: 11, borderBottom: `1px solid ${R.cizgi2}`, marginBottom: 14,
+            }}>
+              <span style={{ fontFamily: F.baslik, fontSize: 15.5, fontWeight: 600 }}>📊 Ekstre analizi</span>
+              <span style={{ fontSize: 11, color: R.not2, flex: 1 }}>
+                dönem dönem borç ve ödenen faiz · harcamanın nereye gittiği
+              </span>
+            </div>
+
+            {aylik.length > 0 && (
+              <>
+                <div style={{ fontSize: 10.5, letterSpacing: '.7px', textTransform: 'uppercase', color: R.not2, fontWeight: 700, marginBottom: 9 }}>
+                  Dönem borcu ve ödenen faiz
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 7, marginBottom: 18 }}>
+                  {aylik.slice(-8).map((a, i) => {
+                    const oran = (sayi(a.borc) / enBuyukBorc) * 100;
+                    return (
+                      <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                        <span style={{ width: 62, fontSize: 11, color: R.not2, fontFamily: F.mono }}>
+                          {kisaTarih(a.donem)}
+                        </span>
+                        <div style={{ flex: 1, minWidth: 90, height: 16, borderRadius: 8, background: R.girinti, overflow: 'hidden' }}>
+                          <div style={{
+                            width: `${Math.max(2, oran)}%`, height: '100%', borderRadius: 8,
+                            background: 'linear-gradient(90deg, rgba(217,154,78,.55), rgba(217,154,78,.9))',
+                          }} />
+                        </div>
+                        <span style={{ width: 100, textAlign: 'right', fontFamily: F.mono, fontSize: 12, fontWeight: 700 }}>
+                          {fmt(sayi(a.borc))}
+                        </span>
+                        <span style={{ width: 104, textAlign: 'right', fontFamily: F.mono, fontSize: 11.5, color: R.kirmizi }}>
+                          faiz {fmt(sayi(a.faiz))}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+
+            {kategori.length > 0 && (
+              <>
+                <div style={{ fontSize: 10.5, letterSpacing: '.7px', textTransform: 'uppercase', color: R.not2, fontWeight: 700, marginBottom: 9 }}>
+                  Harcama dağılımı · kategori
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {kategori.slice(0, 10).map((k, i) => {
+                    const pay = (sayi(k.tutar) / katToplam) * 100;
+                    return (
+                      <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                        <span style={{ width: 132, fontSize: 12, color: R.metin2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {k.kategori || '—'}
+                        </span>
+                        <div style={{ flex: 1, minWidth: 80, height: 14, borderRadius: 7, background: R.girinti, overflow: 'hidden' }}>
+                          <div style={{
+                            width: `${Math.max(2, pay)}%`, height: '100%', borderRadius: 7,
+                            background: pay >= 30 ? R.kirmizi : pay >= 15 ? R.amber : R.mavi, opacity: 0.78,
+                          }} />
+                        </div>
+                        <span style={{ width: 52, textAlign: 'right', fontFamily: F.mono, fontSize: 11.5, color: R.not }}>
+                          %{trSayi(pay, 0)}
+                        </span>
+                        <span style={{ width: 100, textAlign: 'right', fontFamily: F.mono, fontSize: 12, fontWeight: 700 }}>
+                          {fmt(sayi(k.tutar))}
+                        </span>
+                        <span style={{ width: 62, textAlign: 'right', fontSize: 11, color: R.not2 }}>
+                          {sayi(k.adet)} işlem
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+          </div>
+        );
+      })()}
+
+      {/* ── DÖNEM ARŞİVİ (klasik ekstre arşivi) ── */}
+      {(() => {
+        const kartlarArsiv = Array.isArray(arsiv?.kartlar) ? arsiv.kartlar : [];
+        const donemler = kartlarArsiv.flatMap((k) => (k.donemler || []).map((d) => ({ ...d, kartAd: k.kart_adi, banka: k.banka })));
+        if (!donemler.length) return null;
+        return (
+          <Tablo
+            baslik="Ekstre arşivi · yüklenmiş dönemler"
+            not="dönem borcu, harcama, ödeme ve faiz — ekstre yükleyince dolar"
+            kolonlar={[
+              { ad: 'Kart' }, { ad: 'Dönem' }, { ad: 'Dönem borcu', sag: true },
+              { ad: 'Harcama', sag: true }, { ad: 'Ödeme', sag: true }, { ad: 'Faiz', sag: true },
+            ]}
+            satirlar={donemler
+              .slice()
+              .sort((a, b) => String(b.donem).localeCompare(String(a.donem)))
+              .slice(0, 40)
+              .map((d, i) => ({
+                id: `${d.kartAd}-${d.donem}-${i}`,
+                hucreler: [
+                  { v: kisalt(d.kartAd || d.banka || '—', 26), kalin: true },
+                  { v: kisaTarih(d.donem), mono: true, renk: R.not },
+                  { v: fmt(sayi(d.donem_borcu)), mono: true, sag: true, kalin: true },
+                  { v: fmt(sayi(d.donem_harcama)), mono: true, sag: true, renk: R.amber },
+                  { v: fmt(sayi(d.donem_odeme)), mono: true, sag: true, renk: R.yesil },
+                  { v: fmt(sayi(d.donem_faizi)), mono: true, sag: true, renk: sayi(d.donem_faizi) > 0 ? R.kirmizi : R.not },
+                ],
+              }))}
+          />
+        );
+      })()}
 
       {/* ── YERLİ EKSTRE YÜKLEME MODALI (klasik EkstreYukle akışı kadifede) ── */}
       {eksModal && (() => {

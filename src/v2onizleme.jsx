@@ -112,6 +112,30 @@ const KART_UC = {
     genel: { isletme: 114700, sahsi: 8340, belirsiz: 16340, toplam: 139380 },
     kartlar: [],
   },
+  '/api/kartlar/analiz': {
+    aylik: [
+      { donem: '2026-03-01', borc: 476654, faiz: 15272 },
+      { donem: '2026-05-01', borc: 1203910, faiz: 41393 },
+      { donem: '2026-06-01', borc: 2427886, faiz: 53545 },
+      { donem: '2026-07-01', borc: 2469341, faiz: 86214 },
+    ],
+    kategori: [
+      { kategori: 'Diğer', tutar: 749585, adet: 166 },
+      { kategori: 'Faturalar', tutar: 110262, adet: 24 },
+      { kategori: 'Market', tutar: 100040, adet: 40 },
+      { kategori: 'Online Alışveriş', tutar: 76971, adet: 66 },
+      { kategori: 'Vergi & SGK', tutar: 40934, adet: 5 },
+    ],
+  },
+  '/api/kartlar/ekstre-arsiv': {
+    kartlar: [{
+      kart_id: 'k1', kart_adi: 'Axess 6616', banka: 'Axess',
+      donemler: [
+        { donem: '2026-07-01', kesim_tarihi: '2026-07-06', son_odeme_tarihi: '2026-07-16', donem_borcu: 38883, donem_harcama: 9124, donem_odeme: 10098, donem_faizi: 1496 },
+        { donem: '2026-06-01', kesim_tarihi: '2026-06-06', son_odeme_tarihi: '2026-06-16', donem_borcu: 38361, donem_harcama: 12400, donem_odeme: 8200, donem_faizi: 1310 },
+      ],
+    }],
+  },
   '/api/kart-hareketleri': [
     { id: 'h1', tarih: '2026-07-27', kart_adi: 'Garanti Bonus İşletme', islem_turu: 'HARCAMA', tutar: 68400, aciklama: 'Kahve Dünyası — çekirdek alımı', harcama_tipi: 'isletme', taksit_sayisi: 1, ana_para: 68400, faiz_tutari: 0 },
     { id: 'h2', tarih: '2026-07-26', kart_adi: 'Yapı Kredi World', islem_turu: 'HARCAMA', tutar: 16340, aciklama: 'Market — açıklama yok', harcama_tipi: 'belirsiz', taksit_sayisi: 1, ana_para: 16340, faiz_tutari: 0 },
@@ -444,6 +468,14 @@ const HAFTA_GUNLER = Array.from({ length: 7 }, (_, i) => {
 const EKIP_UC = {
   '/api/personel': PERSONEL,
   '/api/gorev/vardiya-takip': TAKIP,
+  '/api/gorev/izin-alacagi': {
+    baslangic: gunEkleISO(-60), bitis: bugunISO,
+    personeller: [
+      { personel_id: 'p1', ad_soyad: 'AYŞENAZ DAL', borclu_hafta_sayisi: 0, verilen_izin_gun: 1, net_alacak_gun: 0, izinler: [], borclu_haftalar: [] },
+      { personel_id: 'p2', ad_soyad: 'MEHMET YILMAZ', borclu_hafta_sayisi: 2, verilen_izin_gun: 0, net_alacak_gun: 2, izinler: [], borclu_haftalar: [] },
+    ],
+  },
+  '/api/gorev/yoklama': [],
   '/api/personel-aylik': BORDRO,
   '/api/avans/ozet': { toplam: 4000, adet: 1 },
   '/api/vardiya/v2/hafta-sube-tablo': {

@@ -100,6 +100,11 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
   const [pMesgul, setPMesgul] = useState(false);
   const [cikisForm, setCikisForm] = useState(null);  // {id, ad, neden}
   const [subeListe, setSubeListe] = useState([]);
+  // ── DERİN TAKİP (köprü kaldırma turu, 2026-07-30) ─────────────────────────
+  // Klasik PersonelVardiyaTakip'in iki bloğu: izin alacağı (borçlu hafta ↔
+  // verilen izin) ve o gün vardiya dışı görünen girişler.
+  const [izin, setIzin] = useState(null);
+  const [vardiyaDisi, setVardiyaDisi] = useState(null);
   const [hafta, setHafta] = useState(null);
   const [bordro, setBordro] = useState([]);
   const [avans, setAvans] = useState(null);
@@ -135,7 +140,11 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
       api('/is-basvurusu?limit=200').catch(() => []),
       api('/is-basvurusu/ozet').catch(() => null),
       api('/sube-panel/merkez/personel-panel-pin').catch(() => []),
-    ]).then(([p, h, b, av, go, vt, bs, bo, pin]) => {
+      api('/gorev/izin-alacagi').catch(() => null),
+      api(`/gorev/yoklama?tarih=${bugun}&sadece_vardiya_disi=true`).catch(() => []),
+    ]).then(([p, h, b, av, go, vt, bs, bo, pin, iz, vd]) => {
+      setIzin(iz);
+      setVardiyaDisi(Array.isArray(vd) ? vd : (vd?.kayitlar || []));
       setPersonel(Array.isArray(p) ? p : []);
       setHafta(h);
       setBordro(Array.isArray(b) ? b : []);
@@ -815,20 +824,98 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
             {AY_KISA[ay - 1]} {yil} için vardiya takip kaydı yok.
           </div>
         )}
-        {/* Kapsama denetimi (2026-07-29): derin takip ekranı (izin alacağı, vardiya
-            dışı girişler, geçmiş ay/filtreler) klasikte — köprüsü eksikti, açıldı. */}
-        <div style={{ display: 'flex', gap: 9, marginTop: 2, marginBottom: 16 }}>
-          <button
-            onClick={() => onKopru?.('personel-vardiya-takip')}
-            style={{
-              padding: '9px 16px', borderRadius: 10, border: `1px solid ${R.cizgi3}`,
-              background: R.girinti, color: R.metin2, fontSize: 12, fontWeight: 600,
-              fontFamily: 'inherit', cursor: 'pointer',
-            }}
-          >
-            🕐 Tam takip ekranı (izin alacağı · vardiya dışı · geçmiş aylar)
-          </button>
-        </div>
+        {/* ── İZİN ALACAĞI (yerli — klasik derin takip bloğu) ── */}
+        {(() => {
+          const kisiler = Array.isArray(izin?.personeller) ? izin.personeller : [];
+          const alacakli = kisiler.filter((k) => sayi(k.net_alacak_gun) > 0 || sayi(k.borclu_hafta_sayisi) > 0);
+          if (!kisiler.length) return null;
+          return (
+            <div style={{ ...kartYuzey, padding: '16px 18px', marginTop: 14, marginBottom: 14 }}>
+              <div style={{
+                display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap',
+                paddingBottom: 10, borderBottom: `1px solid ${R.cizgi2}`, marginBottom: 12,
+              }}>
+                <span style={{ fontFamily: F.baslik, fontSize: 15, fontWeight: 600 }}>🏖 İzin alacağı</span>
+                <span style={{ fontSize: 11, color: R.not2, flex: 1 }}>
+                  {izin.baslangic ? `${kisaTarih(izin.baslangic)} – ${kisaTarih(izin.bitis)}` : 'dönem'} ·
+                  haftalık izin hakkı ↔ verilen izin
+                </span>
+                <span style={{ fontSize: 11.5, color: alacakli.length ? R.amber : R.yesil, fontWeight: 700 }}>
+                  {alacakli.length ? `${alacakli.length} kişide alacak/borç var` : 'hepsi dengede ✓'}
+                </span>
+              </div>
+              {alacakli.length === 0 ? (
+                <div style={{ fontSize: 12.5, color: R.not, padding: '8px 0' }}>
+                  Bu dönemde izin alacağı biriken personel yok — haftalık izinler kullanılmış.
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+                  {alacakli.slice(0, 12).map((k) => (
+                    <div key={k.personel_id} style={{
+                      display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+                      padding: '9px 13px', borderRadius: 11, background: R.girinti, border: `1px solid ${R.cizgi3}`,
+                    }}>
+                      <span style={{ flex: 1, minWidth: 150, fontSize: 12.5, fontWeight: 700 }}>{k.ad_soyad}</span>
+                      <span style={{ fontSize: 11.5, color: R.not }}>
+                        verilen izin <b style={{ fontFamily: F.mono, color: R.krem }}>{trSayi(sayi(k.verilen_izin_gun), 1)} gün</b>
+                      </span>
+                      {sayi(k.borclu_hafta_sayisi) > 0 && (
+                        <span style={{ fontSize: 11.5, color: R.amber }}>
+                          izinsiz hafta <b style={{ fontFamily: F.mono }}>{sayi(k.borclu_hafta_sayisi)}</b>
+                        </span>
+                      )}
+                      <span style={{
+                        fontFamily: F.mono, fontSize: 12.5, fontWeight: 700,
+                        color: sayi(k.net_alacak_gun) > 0 ? R.kirmizi : R.yesil,
+                      }}>
+                        net {trSayi(sayi(k.net_alacak_gun), 1)} gün
+                      </span>
+                    </div>
+                  ))}
+                  {alacakli.length > 12 && (
+                    <div style={{ fontSize: 11, color: R.not2, textAlign: 'center' }}>+{alacakli.length - 12} kişi daha</div>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
+        {/* ── VARDİYA DIŞI GİRİŞLER (bugün) ── */}
+        {(() => {
+          const kayitlar = Array.isArray(vardiyaDisi) ? vardiyaDisi : [];
+          return (
+            <div style={{
+              ...kartYuzey, padding: '14px 18px', marginBottom: 16,
+              border: kayitlar.length ? `1px solid ${R.amber}55` : kartYuzey.border,
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                <span style={{ fontFamily: F.baslik, fontSize: 14.5, fontWeight: 600 }}>🚪 Vardiya dışı giriş · bugün</span>
+                <span style={{ fontSize: 11.5, color: R.not2, flex: 1 }}>
+                  planında olmadığı halde panele giren personel
+                </span>
+                <span style={{
+                  fontSize: 12, fontWeight: 700,
+                  color: kayitlar.length ? R.amber : R.yesil,
+                }}>
+                  {kayitlar.length ? `${kayitlar.length} kayıt` : 'yok ✓'}
+                </span>
+              </div>
+              {kayitlar.length > 0 && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 11 }}>
+                  {kayitlar.slice(0, 8).map((k, i) => (
+                    <div key={i} style={{ display: 'flex', gap: 10, fontSize: 12, color: R.metin2, flexWrap: 'wrap' }}>
+                      <span style={{ fontWeight: 700 }}>{k.ad_soyad || k.personel_ad || '—'}</span>
+                      <span style={{ color: R.not }}>{k.sube_adi || '—'}</span>
+                      <span style={{ fontFamily: F.mono, color: R.not2 }}>{k.giris_saat || k.saat || ''}</span>
+                      {k.aciklama && <span style={{ color: R.not }}>{k.aciklama}</span>}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })()}
         {/* Bu görünümden de personel dosyası açılıyor → düzenle/çıkış modalları burada da gerekli */}
         {personelModali}
       </>
