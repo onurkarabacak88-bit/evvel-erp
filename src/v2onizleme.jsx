@@ -195,6 +195,13 @@ const OPS_UC = {
     ],
   },
   '/api/ops/siparis/sevkiyat-guncelle': { ok: true },
+  '/api/ops/bulgu-izi': { ok: true, id: 'iz1' },
+  '/api/ops/bulgu-izi/ozet': {
+    kesit_gun: 30, isaretli_bulgu: 9, goruldu: 2, cozulen: 6, yanlis_alarm: 1,
+    yanlis_alarm_orani_yuzde: 14.3, ort_cozum_saat: 4.2,
+    isaretli_refler: [{ ref: `truth:s3:${bugunISO}:UYUMLU`, karar: 'cozuldu' }],
+    not: 'append-only',
+  },
   '/api/ops/para-yolda': {
     kesit_gun: 14, kapanis_adet: 38, eslesen_adet: 35, bekleyen_adet: 3, gecikmis_adet: 1,
     ort_teslim_saat: 13.4, medyan_teslim_saat: 12.1,

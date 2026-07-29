@@ -11373,6 +11373,101 @@ def ops_siparis_sevkiyat_subeler_ozet(gun: int = 90):
     return {"gun_sayi": gun_sayi, "satirlar": satirlar}
 
 
+# ─── DUYU 3/6: BULGU YAŞAM DÖNGÜSÜ (2026-07-29) ──────────────────────────────
+# Motor bulgularına insan kararı işareti: append-only defter (UPDATE/DELETE ucu
+# YOK). Yanlış alarm oranı ve çözüm süresi ancak bu işaretlerle ölçülebilir —
+# motorun isabetini ölçmeden motor öğrenemezdi (kör nokta kapanıyor).
+def _ensure_bulgu_izi(cur):
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS duyu_bulgu_izi (
+            id         TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+            bulgu_ref  TEXT NOT NULL,           -- truth:{sube_id}:{tarih}:{ana_tani}
+            kaynak     TEXT NOT NULL DEFAULT 'truth',
+            karar      TEXT NOT NULL CHECK (karar IN ('goruldu','cozuldu','yanlis_alarm')),
+            not_metin  TEXT,
+            olusturma  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_bulgu_izi_ref ON duyu_bulgu_izi (bulgu_ref, olusturma DESC)"
+    )
+
+
+@router.post("/bulgu-izi")
+def ops_bulgu_izi_yaz(body: dict = None):
+    """İnsan kararı işareti (append-only): {bulgu_ref, karar, not_metin?}.
+    Karar: goruldu | cozuldu | yanlis_alarm. Silme/güncelleme YOK — fikir
+    değişirse yeni satır atılır, son satır geçerli sayılır."""
+    body = body or {}
+    ref = str(body.get("bulgu_ref") or "").strip()
+    karar = str(body.get("karar") or "").strip()
+    if not ref or karar not in ("goruldu", "cozuldu", "yanlis_alarm"):
+        raise HTTPException(400, "bulgu_ref + karar (goruldu|cozuldu|yanlis_alarm) zorunlu")
+    notm = (str(body.get("not_metin") or "").strip() or None)
+    with db() as (conn, cur):
+        _ensure_bulgu_izi(cur)
+        cur.execute(
+            "INSERT INTO duyu_bulgu_izi (bulgu_ref, karar, not_metin) VALUES (%s,%s,%s) RETURNING id",
+            (ref, karar, notm),
+        )
+        rid = (cur.fetchone() or {}).get("id")
+    return {"ok": True, "id": rid}
+
+
+@router.get("/bulgu-izi/ozet")
+def ops_bulgu_izi_ozet(gun: int = 30):
+    """SALT-OKUR: işaret defteri özeti — bulgu başına SON karar geçerli.
+    Çözüm süresi: bulgu_ref içindeki tarihten (gece 00:30 doğum varsayımı)
+    'cozuldu' işaretine kadar geçen saat — varsayım etikette açık."""
+    g = max(1, min(365, int(gun or 30)))
+    with db() as (conn, cur):
+        _ensure_bulgu_izi(cur)
+        cur.execute(
+            """
+            SELECT DISTINCT ON (bulgu_ref) bulgu_ref, karar, olusturma
+            FROM duyu_bulgu_izi
+            WHERE olusturma >= NOW() - (%s * INTERVAL '1 day')
+            ORDER BY bulgu_ref, olusturma DESC
+            """,
+            (g,),
+        )
+        rows = [dict(r) for r in (cur.fetchall() or [])]
+    sayilar = {"goruldu": 0, "cozuldu": 0, "yanlis_alarm": 0}
+    cozum_saatleri = []
+    isaretli_refler = []
+    for r in rows:
+        sayilar[r["karar"]] = sayilar.get(r["karar"], 0) + 1
+        isaretli_refler.append({"ref": r["bulgu_ref"], "karar": r["karar"]})
+        if r["karar"] == "cozuldu":
+            # ref: truth:{sube}:{YYYY-MM-DD}:{tani} → doğum ≈ tarih 00:30
+            try:
+                parcalar = str(r["bulgu_ref"]).split(":")
+                tarih_s = next(p for p in parcalar if len(p) == 10 and p[4] == "-")
+                from datetime import datetime, timezone, timedelta
+                dogum = datetime.fromisoformat(tarih_s).replace(
+                    hour=0, minute=30, tzinfo=timezone(timedelta(hours=3)))
+                saat = (r["olusturma"] - dogum).total_seconds() / 3600.0
+                if 0 <= saat <= 24 * 30:
+                    cozum_saatleri.append(saat)
+            except (StopIteration, ValueError, TypeError):
+                pass
+    kapali = sayilar["cozuldu"] + sayilar["yanlis_alarm"]
+    return {
+        "kesit_gun": g,
+        "isaretli_bulgu": len(rows),
+        "goruldu": sayilar["goruldu"],
+        "cozulen": sayilar["cozuldu"],
+        "yanlis_alarm": sayilar["yanlis_alarm"],
+        "yanlis_alarm_orani_yuzde": round(sayilar["yanlis_alarm"] / kapali * 100, 1) if kapali else None,
+        "ort_cozum_saat": round(sum(cozum_saatleri) / len(cozum_saatleri), 1) if cozum_saatleri else None,
+        "isaretli_refler": isaretli_refler[:200],
+        "not": "Bulgu başına SON karar geçerli (append-only). Çözüm süresi gece "
+               "00:30 doğum VARSAYIMIYLA hesaplanır — yaklaşıktır.",
+    }
+
+
 @router.get("/para-yolda")
 def ops_para_yolda(gun: int = 14):
     """

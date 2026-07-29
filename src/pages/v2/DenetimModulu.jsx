@@ -100,10 +100,12 @@ function KopruButon({ ad, onTikla, birincil }) {
   );
 }
 
-export default function DenetimModulu({ gorunum, onCekmece, onKopru }) {
+export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast }) {
   const [rapor, setRapor] = useState(null);          // truth gunluk-rapor
   const [durum, setDurum] = useState(null);          // truth durum
   const [truthHata, setTruthHata] = useState('');
+  const [iziOzet, setIziOzet] = useState(null);      // duyu 3/6: bulgu yaşam döngüsü
+  const [isaretliler, setIsaretliler] = useState({}); // ref → karar (oturum içi)
   const [ozet, setOzet] = useState(null);            // duyu ozet
   const [notlar, setNotlar] = useState(null);        // duyu gunluk-notlar
   const [olayHata, setOlayHata] = useState('');
@@ -126,7 +128,26 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru }) {
     api('/ops/truth/durum')
       .then((d) => setDurum(d || {}))
       .catch(() => setDurum({}));
+    api('/ops/bulgu-izi/ozet?gun=30')
+      .then((d) => {
+        setIziOzet(d || {});
+        const m = {};
+        (d?.isaretli_refler || []).forEach((x) => { m[x.ref] = x.karar; });
+        setIsaretliler((p) => ({ ...m, ...p }));
+      })
+      .catch(() => setIziOzet({}));
   }, []);
+
+  // Bulgu işareti (append-only defter) — çift tık koruması yerel state'te
+  const bulguIsaretle = useCallback((ref, karar) => {
+    setIsaretliler((p) => ({ ...p, [ref]: karar }));
+    api('/ops/bulgu-izi', { method: 'POST', body: { bulgu_ref: ref, karar } })
+      .then(() => onToast?.(karar === 'cozuldu' ? '✓ Çözüldü olarak işaretlendi' : '✗ Yanlış alarm olarak işaretlendi'))
+      .catch(() => {
+        setIsaretliler((p) => { const q = { ...p }; delete q[ref]; return q; });
+        onToast?.('İşaret kaydedilemedi');
+      });
+  }, [onToast]);
 
   const olayYukle = useCallback(() => {
     setOlayHata('');
@@ -191,21 +212,45 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru }) {
           { etiket: 'Uyumlu şube', deger: `${uyumlu.length} / ${subeler.length}`, alt: 'ana tanı UYUMLU', renk: R.yesil },
           { etiket: 'Tarih', deger: tarihKisa(rapor.tarih), alt: 'gece koşusu + gün içi' },
         ]} />
-        <OneriSeridi metin="Motor yalnız ÖNERİR — bulgular insan onayı bekler; hiçbir kayıt kendiliğinden değişmez." />
+        {/* DUYU 3/6 — bulgu yaşam döngüsü: işaret defterinden türeyen ölçümler */}
+        {iziOzet && sayi(iziOzet.isaretli_bulgu) > 0 && (
+          <KpiSeridi kpiler={[
+            { etiket: 'Çözülen (30g)', deger: String(sayi(iziOzet.cozulen)), alt: 'insan işaretiyle', renk: R.yesil },
+            { etiket: 'Yanlış alarm', deger: String(sayi(iziOzet.yanlis_alarm)), alt: iziOzet.yanlis_alarm_orani_yuzde != null ? `oran %${iziOzet.yanlis_alarm_orani_yuzde}` : '—', renk: sayi(iziOzet.yanlis_alarm) > 0 ? R.amber : R.yesil },
+            { etiket: 'Ort. çözüm süresi', deger: iziOzet.ort_cozum_saat != null ? `${iziOzet.ort_cozum_saat} sa` : '—', alt: 'gece doğum varsayımıyla ≈' },
+            { etiket: 'İşaretli bulgu', deger: String(sayi(iziOzet.isaretli_bulgu)), alt: 'append-only defter' },
+          ]} />
+        )}
+        <OneriSeridi metin="Motor yalnız ÖNERİR — bulgular insan onayı bekler. Kartlardaki ✓/✗ işaretleri append-only deftere yazılır; motorun isabeti bu işaretlerle ölçülür." />
         {subeler.length === 0 ? (
           <BosDurum metin="Bugün için tanı raporu yok — motor gece koşusuyla dolar." />
         ) : (
           <Liste
-            satirlar={subeler.map((s) => ({
-              id: s.sube_id,
-              baslik: `${s.sube_ad} · ${s.ana_tani || '—'}`,
-              alt: kisalt(s.zeka_ozet || s.yorum_metni, 110)
-                || (sayi(s.anomali_sayisi) > 0 ? `${sayi(s.anomali_sayisi)} anomali · ${sayi(s.toplam_karar)} karar` : 'temiz gün'),
-              tutar: sayi(s.anomali_sayisi) > 0 ? `${sayi(s.anomali_sayisi)} bulgu` : '',
-              tier: s.alarm && s.alarm !== 'normal' ? 'kritik' : sayi(s.anomali_sayisi) > 0 ? 'uyari' : 'iyi',
-              aksiyon: 'İncele',
-              _s: s,
-            }))}
+            satirlar={subeler.map((s) => {
+              const ref = `truth:${s.sube_id}:${String(s.tarih || rapor.tarih || '').slice(0, 10)}:${s.ana_tani || 'GENEL'}`;
+              const isaret = isaretliler[ref];
+              const bulgulu = sayi(s.anomali_sayisi) > 0;
+              return {
+                id: s.sube_id,
+                baslik: `${s.sube_ad} · ${s.ana_tani || '—'}`,
+                alt: kisalt(s.zeka_ozet || s.yorum_metni, 110)
+                  || (bulgulu ? `${sayi(s.anomali_sayisi)} anomali · ${sayi(s.toplam_karar)} karar` : 'temiz gün'),
+                tutar: bulgulu ? `${sayi(s.anomali_sayisi)} bulgu` : '',
+                tier: s.alarm && s.alarm !== 'normal' ? 'kritik' : bulgulu ? 'uyari' : 'iyi',
+                // Yaşam döngüsü işaretleri: yalnız bulgulu + henüz işaretsiz kartta
+                ...(bulgulu && !isaret ? {
+                  aksiyonlar: [
+                    { ad: '✓ Çözüldü', birincil: true, onTikla: () => bulguIsaretle(ref, 'cozuldu') },
+                    { ad: '✗ Yanlış alarm', onTikla: () => bulguIsaretle(ref, 'yanlis_alarm') },
+                  ],
+                } : {}),
+                ...(isaret ? {
+                  rozet: isaret === 'cozuldu' ? 'çözüldü ✓' : 'yanlış alarm',
+                  rozetRenk: isaret === 'cozuldu' ? R.yesil : R.amber,
+                } : (!bulgulu ? { aksiyon: 'İncele' } : {})),
+                _s: s,
+              };
+            })}
             onAc={({ _s }) => onCekmece?.({
               tip: 'ŞUBE TANISI',
               baslik: _s.sube_ad,
