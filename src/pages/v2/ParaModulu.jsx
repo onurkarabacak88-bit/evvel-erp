@@ -317,7 +317,7 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru, onToast }) {
             setCiroDup('');
             setCiroForm({ tarih: bugun, sube_id: '', nakit: '', pos: '', online: '', aciklama: '' });
           }} />
-          {taslaklar.length > 0 && <KopruButon ad={`Ciro onayı (${taslaklar.length})`} onTikla={() => onKopru?.('ciro-taslak-onay')} />}
+          {taslaklar.length > 0 && <KopruButon ad={`Ciro onayı (${taslaklar.length})`} onTikla={() => onKopru?.('__modul:onaylar:ciro')} />}
         </div>
 
         {/* ── YERLİ CİRO FORMU (kadife modal — köprü kaldırıldı, aynı uca yazar) ── */}

@@ -11,13 +11,15 @@
 //   SistemModulu  → sistem.excel / sistem.teslim / sistem.temizle
 //   TanimModulu   → tanim.tedarikciler / tanim.zincir / tanim.dosya / tanim.tv
 //
-// ⚠️ Hepsi SALT-OKUR. Onaylama, ödeme, silme, fiyat basma gibi yazma işleri
-// mevcut guard'lı ekranlarda kalır — buradan köprülenir.
+// ⚠️ Çoğu SALT-OKUR. İstisna (köprü kaldırma turu, 2026-07-29): OnayModulu
+// onay/red artık YERLİ — klasik guard'lı uçlara yazar (onay-kuyrugu onayla/
+// reddet/toplu-onayla + ciro-taslak onayla/reddet). Diğer yazma işleri
+// (ödeme, silme, fiyat basma…) hâlâ köprülü.
 // ─────────────────────────────────────────────────────────────────────────────
 import React, { useEffect, useState } from 'react';
 import { api, fmt } from '../../utils/api';
 import { R, F, kartYuzey } from './tema';
-import { KpiSeridi, Tablo, Liste } from './parcalar';
+import { KpiSeridi, Tablo, Liste, OnayModali } from './parcalar';
 
 const sayi = (v) => Number(v) || 0;
 const trSayi = (n, b = 1) => (Number(n) || 0).toFixed(b).replace('.', ',');
@@ -91,17 +93,71 @@ function useVeri(istekler, bagimlilik = []) {
   return { ...durum, yukle };
 }
 
+// ─── küçük kadife modal (yerli onay/red akışları için) ──────────────────────
+function KucukModal({ baslik, alt, onKapat, children, genislik = 470 }) {
+  return (
+    <div
+      onClick={(e) => { if (e.target === e.currentTarget) onKapat?.(); }}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 90, background: 'rgba(10,6,2,.66)',
+        backdropFilter: 'blur(3px)', display: 'flex', alignItems: 'center',
+        justifyContent: 'center', padding: 20,
+      }}
+    >
+      <div style={{ ...kartYuzey, width: genislik, maxWidth: '96vw', maxHeight: '90vh', overflowY: 'auto', padding: '22px 24px' }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 14 }}>
+          <div style={{ fontFamily: F.baslik, fontSize: 19, fontWeight: 600 }}>{baslik}</div>
+          {alt && <div style={{ fontSize: 11.5, color: R.not2, flex: 1 }}>{alt}</div>}
+          <button onClick={onKapat} style={{
+            marginLeft: 'auto', border: 'none', background: 'transparent', color: R.not,
+            fontSize: 16, cursor: 'pointer', fontFamily: 'inherit',
+          }}>✕</button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+const modalAlanStil = {
+  width: '100%', boxSizing: 'border-box', padding: '9px 12px', borderRadius: 10,
+  border: `1px solid ${R.cizgi3}`, background: R.girinti, color: R.krem,
+  fontSize: 13, fontFamily: 'inherit', outline: 'none',
+};
+
 // ═════════════════════════════════════════════════════════════════════════════
 // 1) ONAY BEKLEYENLER — onaylar.kuyruk / onaylar.ciro
+// Onay/red artık v2-YERLİ (köprü kaldırma turu, 2026-07-29): klasik ekranın
+// guard'lı uçları AYNEN kullanılır (onayla=kasadan düşer, reddet neden'li).
 // ═════════════════════════════════════════════════════════════════════════════
-export function OnayModulu({ gorunum, onCekmece, onKopru }) {
+export function OnayModulu({ gorunum, onCekmece, onKopru, onToast }) {
   const { yukleniyor, hata, veri, yukle } = useVeri([
     ['/onay-kuyrugu?durum=bekliyor&limit=400', []],
     ['/ciro-taslak?durum=bekliyor', []],
     ['/subeler', []],
   ]);
+  const [mesgul, setMesgul] = useState(false);
+  const [reddetSor, setReddetSor] = useState(null);   // onay kaydı (kuyruk reddi)
+  const [topluSor, setTopluSor] = useState(false);    // toplu onay son kapısı
+  const [ciroSor, setCiroSor] = useState(null);       // {kayit,nakit,pos,online}
+  const [ciroRed, setCiroRed] = useState(null);       // {kayit,neden}
   if (yukleniyor) return <Yukleniyor ad="Onay kuyruğu" />;
   if (hata) return <Hata mesaj={hata} onTekrar={yukle} />;
+
+  const calistir = async (islem, basari) => {
+    setMesgul(true);
+    try {
+      const r = await islem();
+      onToast?.(typeof basari === 'function' ? basari(r) : basari);
+      yukle();
+      return true;
+    } catch (e) {
+      onToast?.(e?.message || 'İşlem başarısız');
+      return false;
+    } finally {
+      setMesgul(false);
+    }
+  };
 
   const [kuyrukHam, ciroHam, subeler] = veri;
   const kuyruk = Array.isArray(kuyrukHam) ? kuyrukHam : [];
@@ -127,6 +183,17 @@ export function OnayModulu({ gorunum, onCekmece, onKopru }) {
           { etiket: 'En eski', deger: enEski ? `${enEski} gün` : '—', alt: enEski > 2 ? 'gecikiyor' : 'taze', renk: enEski > 2 ? R.kirmizi : R.krem },
           { etiket: 'Kasa hatası ayrı', deger: String(kuyruk.length - satir.length), alt: 'onay değil · kasa uyumsuzluğu', renk: R.not },
         ]} />
+        {satir.length > 1 && (
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
+            <button disabled={mesgul} onClick={() => setTopluSor(true)} style={{
+              padding: '9px 17px', borderRadius: 10, border: 'none', cursor: 'pointer',
+              background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+              fontSize: 12, fontWeight: 700, fontFamily: 'inherit',
+            }}>
+              Hepsini onayla ({satir.length})
+            </button>
+          </div>
+        )}
         {satir.length ? (
           <Liste
             satirlar={satir.slice(0, 60).map(o => ({
@@ -135,7 +202,13 @@ export function OnayModulu({ gorunum, onCekmece, onKopru }) {
               alt: `${slugAd(o.islem_turu)} · ${kisaTarih(o.tarih)}${o.kaynak_tablo ? ` · ${o.kaynak_tablo}` : ''}`,
               tutar: sayi(o.tutar) ? fmt(o.tutar) : '',
               tier: (gunFark(o.tarih) ?? 0) > 2 ? 'kritik' : 'uyari',
-              aksiyon: 'Onay kuyruğunu aç',
+              aksiyonlar: [
+                { ad: '✓ Onayla', birincil: true, onTikla: () => !mesgul && calistir(
+                  () => api(`/onay-kuyrugu/${o.id}/onayla`, { method: 'POST' }),
+                  '✓ Onaylandı — kasadan düşüldü',
+                ) },
+                { ad: '✗ Reddet', onTikla: () => setReddetSor(o) },
+              ],
             }))}
             onAc={(l) => onCekmece?.({
               tip: 'ONAY KAYDI',
@@ -150,13 +223,66 @@ export function OnayModulu({ gorunum, onCekmece, onKopru }) {
                 { ad: 'İşlem türü', detay: 'kuyruk sınıfı', tutar: slugAd(l._o.islem_turu) },
                 { ad: 'Kaynak tablo', detay: 'kaydın geldiği yer', tutar: l._o.kaynak_tablo || '—' },
               ],
-              not: 'Onaylama ve reddetme buradan YAPILMAZ — Onay Kuyruğu ekranındaki guard\'lı akış kullanılır.',
-              aksiyonAd: 'Onay kuyruğunu aç',
-              _hedef: 'onay',
+              not: 'Onay/red satırın sağındaki butonlardan verilir — onay kasadan düşer, red neden sorar.',
             })}
           />
         ) : (
           <Bos baslik="Onay bekleyen kayıt yok" aciklama="Kuyruk temiz — gider, avans, fire ve tanım değişiklikleri onaylanmış." renk={R.yesil} />
+        )}
+
+        {/* Toplu onay son kapısı */}
+        <OnayModali
+          acik={topluSor}
+          baslik="Toplu onay"
+          altBaslik={`${satir.length} bekleyen kayıt onaylanacak`}
+          tutar={fmt(toplam)}
+          satirlar={satir.slice(0, 8).map(o => ({
+            ad: (o.aciklama || slugAd(o.islem_turu) || 'kayıt').slice(0, 44),
+            deger: sayi(o.tutar) ? fmt(o.tutar) : '—',
+          })).concat(satir.length > 8 ? [{ ad: `… ve ${satir.length - 8} kayıt daha`, deger: '' }] : [])}
+          not="Onaylanan her gider kasadan düşülür. Bu işlem tek tek geri alınır (ters kayıt)."
+          onaylaAd={mesgul ? 'Onaylanıyor…' : `Evet, ${satir.length} kaydı onayla`}
+          calisiyor={mesgul}
+          onOnayla={async () => {
+            const ok = await calistir(
+              () => api('/onay-kuyrugu/toplu-onayla', { method: 'POST', body: { ids: satir.map(o => o.id) } }),
+              (r) => `✓ ${r?.onaylanan ?? '?'}/${r?.toplam ?? satir.length} onaylandı${sayi(r?.hata) > 0 ? ` · ${r.hata} hata` : ''}`,
+            );
+            if (ok) setTopluSor(false);
+          }}
+          onKapat={() => setTopluSor(false)}
+        />
+
+        {/* Red sebebi — klasik ekranın iki anlamlı seçeneği korunur */}
+        {reddetSor && (
+          <KucukModal
+            baslik="Reddetme sebebi"
+            alt={(reddetSor.aciklama || slugAd(reddetSor.islem_turu) || '').slice(0, 60)}
+            onKapat={() => setReddetSor(null)}
+          >
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {[
+                ['hata', '🔧 Hata', 'Plan yanlış oluştu. Kaynak aktif kalır, gelecek ay tekrar üretilir.', R.cizgi3, R.krem],
+                ['surec_bitti', '🚫 Süreç bitti', 'İlişki kesildi. Kaynak kapatılır, bir daha plan üretilmez.', `${R.kirmizi}66`, R.kirmizi],
+              ].map(([neden, ad, aciklama, kenar, renk]) => (
+                <button key={neden} disabled={mesgul} onClick={async () => {
+                  const ok = await calistir(
+                    () => api(`/onay-kuyrugu/${reddetSor.id}/reddet`, { method: 'POST', body: { neden } }),
+                    neden === 'surec_bitti'
+                      ? 'Reddedildi — kaynak kapatıldı, plan üretilmeyecek'
+                      : 'Reddedildi — plan iptal, kaynak aktif',
+                  );
+                  if (ok) setReddetSor(null);
+                }} style={{
+                  textAlign: 'left', padding: '13px 16px', borderRadius: 12, cursor: 'pointer',
+                  border: `1px solid ${kenar}`, background: R.girinti, fontFamily: 'inherit',
+                }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: renk }}>{ad}</div>
+                  <div style={{ fontSize: 11.5, color: R.not, marginTop: 4, lineHeight: 1.5 }}>{aciklama}</div>
+                </button>
+              ))}
+            </div>
+          </KucukModal>
         )}
       </>
     );
@@ -174,26 +300,25 @@ export function OnayModulu({ gorunum, onCekmece, onKopru }) {
         { etiket: 'Onay sonrası', deger: 'deftere işlenir', alt: 'geri alma: ters kayıt', renk: R.not },
       ]} />
       {ciro.length ? (
-        <Tablo
-          baslik="Bekleyen ciro onayları"
-          not="satıra tıkla → taslak ayrıntısı"
-          kolonlar={[
-            { ad: 'Şube' }, { ad: 'Tarih' }, { ad: 'Nakit', sag: true },
-            { ad: 'POS', sag: true }, { ad: 'Online', sag: true }, { ad: 'Toplam', sag: true },
-          ]}
-          satirlar={ciro.map(c => ({
-            id: c.id, _c: c,
-            hucreler: [
-              { v: c.sube_adi || subeAd(c.sube_id), kalin: true },
-              { v: kisaTarih(c.tarih), mono: true },
-              { v: fmt(sayi(c.nakit)), mono: true, sag: true },
-              { v: fmt(sayi(c.pos)), mono: true, sag: true },
-              { v: fmt(sayi(c.online)), mono: true, sag: true },
-              { v: fmt(sayi(c.nakit) + sayi(c.pos) + sayi(c.online)), mono: true, sag: true, kalin: true },
-            ],
-          }))}
-          onSatir={(row) => {
-            const c = row._c;
+        <Liste
+          satirlar={ciro.map(c => {
+            const t = sayi(c.nakit) + sayi(c.pos) + sayi(c.online);
+            return {
+              id: c.id, _c: c,
+              baslik: c.sube_adi || subeAd(c.sube_id),
+              alt: `${kisaTarih(c.tarih)} · nakit ${fmt(sayi(c.nakit))} · POS ${fmt(sayi(c.pos))} · online ${fmt(sayi(c.online))}`,
+              tutar: fmt(t),
+              tier: 'uyari',
+              aksiyonlar: [
+                { ad: '✓ Onayla', birincil: true, onTikla: () => setCiroSor({
+                  kayit: c, nakit: String(sayi(c.nakit)), pos: String(sayi(c.pos)), online: String(sayi(c.online)),
+                }) },
+                { ad: '✗ Reddet', onTikla: () => setCiroRed({ kayit: c, neden: '' }) },
+              ],
+            };
+          })}
+          onAc={(l) => {
+            const c = l._c;
             const t = sayi(c.nakit) + sayi(c.pos) + sayi(c.online);
             onCekmece?.({
               tip: 'CİRO TASLAĞI',
@@ -210,14 +335,102 @@ export function OnayModulu({ gorunum, onCekmece, onKopru }) {
                 { ad: 'Online', detay: 'platform', tutar: fmt(sayi(c.online)) },
                 { ad: 'Açıklama', detay: 'personel notu', tutar: c.aciklama || '—' },
               ],
-              not: 'Onaylandığında ciro defterine işlenir. Onay Ciro Onayı ekranından verilir.',
-              aksiyonAd: 'Ciro onayını aç',
-              _hedef: 'ciro-taslak-onay',
+              not: 'Onay/red satırın sağındaki butonlardan verilir — onayda tutarlar düzeltilebilir.',
             });
           }}
         />
       ) : (
         <Bos baslik="Bekleyen ciro onayı yok" aciklama="Şubelerden gelen tüm ciro taslakları işlenmiş." renk={R.yesil} />
+      )}
+
+      {/* Ciro onayı — tutarlar düzeltilebilir (klasik ekran davranışı korunur) */}
+      {ciroSor && (() => {
+        const t = sayi(ciroSor.nakit) + sayi(ciroSor.pos) + sayi(ciroSor.online);
+        const alan = (k, v) => setCiroSor(s => ({ ...s, [k]: v }));
+        return (
+          <KucukModal
+            baslik="Ciroyu onayla"
+            alt={`${ciroSor.kayit.sube_adi || subeAd(ciroSor.kayit.sube_id)} · ${kisaTarih(ciroSor.kayit.tarih)}`}
+            onKapat={() => !mesgul && setCiroSor(null)}
+          >
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+              {[['nakit', 'Nakit (₺)'], ['pos', 'POS (₺)'], ['online', 'Online (₺)']].map(([k, ad]) => (
+                <div key={k}>
+                  <label style={{ fontSize: 10.5, letterSpacing: '.7px', textTransform: 'uppercase', color: R.not2, fontWeight: 700, marginBottom: 6, display: 'block' }}>{ad}</label>
+                  <input type="number" value={ciroSor[k]} onChange={(e) => alan(k, e.target.value)}
+                    style={{ ...modalAlanStil, fontFamily: F.mono, textAlign: 'right' }} />
+                </div>
+              ))}
+            </div>
+            <div style={{
+              marginTop: 14, padding: '11px 15px', borderRadius: 12, background: R.girinti,
+              border: `1px solid ${R.cizgi3}`, fontSize: 12.5, color: R.metin2,
+            }}>
+              Toplam <strong style={{ fontFamily: F.mono, color: R.krem }}>{fmt(t)}</strong> — onaylanınca ciro defterine ve kasaya işlenir.
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 18 }}>
+              <button disabled={mesgul} onClick={() => setCiroSor(null)} style={{
+                padding: '10px 18px', borderRadius: 10, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+                background: 'transparent', color: R.metin2, fontSize: 12.5, fontWeight: 600, fontFamily: 'inherit',
+              }}>Vazgeç</button>
+              <button disabled={mesgul || t <= 0} onClick={async () => {
+                const ok = await calistir(
+                  () => api(`/ciro-taslak/${ciroSor.kayit.id}/onayla`, {
+                    method: 'POST',
+                    body: { nakit: sayi(ciroSor.nakit), pos: sayi(ciroSor.pos), online: sayi(ciroSor.online) },
+                  }),
+                  (r) => `✓ Onaylandı — net kasa: ${fmt(sayi(r?.net_tutar))}`,
+                );
+                if (ok) setCiroSor(null);
+              }} style={{
+                padding: '10px 20px', borderRadius: 10, border: 'none',
+                background: t > 0 ? 'linear-gradient(150deg, #D99A4E, #B06E2C)' : R.girinti,
+                color: t > 0 ? '#1C1309' : R.not, fontSize: 12.5, fontWeight: 700,
+                fontFamily: 'inherit', cursor: t > 0 ? 'pointer' : 'default',
+              }}>
+                {mesgul ? 'Onaylanıyor…' : 'Onayla — kasaya işle'}
+              </button>
+            </div>
+          </KucukModal>
+        );
+      })()}
+
+      {/* Ciro reddi — neden'li, şube yeni taslak gönderebilir */}
+      {ciroRed && (
+        <KucukModal
+          baslik="Taslağı reddet"
+          alt={`${ciroRed.kayit.sube_adi || subeAd(ciroRed.kayit.sube_id)} · ${kisaTarih(ciroRed.kayit.tarih)}`}
+          onKapat={() => !mesgul && setCiroRed(null)}
+        >
+          <label style={{ fontSize: 10.5, letterSpacing: '.7px', textTransform: 'uppercase', color: R.not2, fontWeight: 700, marginBottom: 6, display: 'block' }}>
+            Red nedeni
+          </label>
+          <input value={ciroRed.neden} placeholder="örn. tutar hatalı"
+            onChange={(e) => setCiroRed(s => ({ ...s, neden: e.target.value }))} style={modalAlanStil} />
+          <div style={{ fontSize: 11.5, color: R.not, marginTop: 10, lineHeight: 1.5 }}>
+            Reddedilen taslak silinmez — şube düzeltip yeni taslak gönderebilir.
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 16 }}>
+            <button disabled={mesgul} onClick={() => setCiroRed(null)} style={{
+              padding: '10px 18px', borderRadius: 10, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+              background: 'transparent', color: R.metin2, fontSize: 12.5, fontWeight: 600, fontFamily: 'inherit',
+            }}>Vazgeç</button>
+            <button disabled={mesgul} onClick={async () => {
+              const ok = await calistir(
+                () => api(`/ciro-taslak/${ciroRed.kayit.id}/reddet`, {
+                  method: 'POST', body: { neden: (ciroRed.neden || '').trim() || 'Tutar hatalı' },
+                }),
+                'Taslak reddedildi — şube yeni taslak gönderebilir',
+              );
+              if (ok) setCiroRed(null);
+            }} style={{
+              padding: '10px 20px', borderRadius: 10, border: 'none', cursor: 'pointer',
+              background: `${R.kirmizi}26`, color: R.kirmizi, fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit',
+            }}>
+              {mesgul ? 'Reddediliyor…' : 'Reddet'}
+            </button>
+          </div>
+        </KucukModal>
       )}
     </>
   );

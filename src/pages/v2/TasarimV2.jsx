@@ -451,7 +451,7 @@ export default function TasarimV2({ onGit }) {
     }
     // Küçük modüller (KucukModuller.jsx) — yeni blok gerektirmeyenler
     if (mod === 'onaylar') {
-      return <OnayModulu gorunum={gorunum} onCekmece={setCekmece} onKopru={koprule} />;
+      return <OnayModulu gorunum={gorunum} onCekmece={setCekmece} onKopru={koprule} onToast={setToast} />;
     }
     if (mod === 'yuk') {
       return <YukModulu gorunum={gorunum} onCekmece={setCekmece} onKopru={koprule} />;
