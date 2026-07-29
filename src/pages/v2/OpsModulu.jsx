@@ -251,7 +251,7 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     }
     setBusy(true);
     try {
-      await api('/ops/siparis/sevkiyat-guncelle', {
+      const r = await api('/ops/siparis/sevkiyat-guncelle', {
         method: 'POST',
         body: {
           talep_id: seciliTalep.id,
@@ -261,8 +261,12 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
           gonderildi: !!gonderildi,
         },
       });
+      // Uyumsuzluk = sinyal, kapı değil: sevk engellemez ama uyarı gösterilir
+      const uy = Number(r?.uyumsuzluk_uyarisi) || 0;
       onToast?.(gonderildi
-        ? '🚚 Yola çıkarıldı — talep şubesinde «Depodan Gelen» açıldı'
+        ? (uy > 0
+          ? `🚚 Yola çıkarıldı — ⚠ bu depoda ${uy} çözülmemiş kabul uyumsuzluğu bekliyor`
+          : '🚚 Yola çıkarıldı — talep şubesinde «Depodan Gelen» açıldı')
         : '✓ Hazırlık kaydedildi (stok çıkmadı)');
       setSeciliId('');
       sevkYukle();

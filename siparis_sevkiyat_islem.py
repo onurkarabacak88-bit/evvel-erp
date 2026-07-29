@@ -262,16 +262,24 @@ def siparis_sevkiyat_kalem_guncelle_execute(
     mevcut_durum = str(row.get("durum") or "")
     if mevcut_durum == "teslim_edildi":
         raise HTTPException(409, "Talep zaten teslim edildi")
+    # ── UYUMSUZLUK = SİNYAL, KAPI DEĞİL (sahip kararı 2026-07-29) ──────────────
+    # Eski davranış: depoda TEK çözülmemiş kabul uyumsuzluğu varken TÜM yeni
+    # sevkiyatlar 409 ile kilitleniyordu → şube işleyişi duruyordu. Sahip:
+    # "uyumsuzluklar şube panelin çalışmasına engel olmasın." Sert blok kalktı;
+    # uyumsuzluk sayısı UYARI olarak rapora ve yanıta işlenir — kanban risk
+    # şeridi + duyu/bağ katmanı zaten takipte, uzlaştırma yine insanın işi.
+    uyumsuz_sayi = 0
     if bool(gonderildi):
         uyumsuz_sayi = _kaynak_depo_aktif_uyumsuzluk_sayisi(cur, sevk_sid, tid)
-        if uyumsuz_sayi > 0:
-            raise HTTPException(
-                409,
-                f"Sevkiyat blokajı aktif: {uyumsuz_sayi} çözülmemiş kabul uyumsuzluğu var. "
-                "Önce Operasyon Merkezi > Sevkiyat uyumsuzlukları ekranından uzlaştırın.",
-            )
 
     rapor_metni, rapor_uyari = build_depo_sevkiyat_rapor(durumlar, personel_ad=personel_ad)
+    if uyumsuz_sayi > 0:
+        rapor_metni += (
+            f"\n⚠ Not: bu depoda {uyumsuz_sayi} çözülmemiş kabul uyumsuzluğu var — "
+            "sevk ENGELLENMEDİ; uzlaştırma Operasyon Merkezi ▸ Sevkiyat "
+            "uyumsuzluklarında bekliyor."
+        )
+        rapor_uyari = True
 
     sevk_kalemleri: List[Dict[str, Any]] = []
     if bool(gonderildi):
@@ -369,4 +377,7 @@ def siparis_sevkiyat_kalem_guncelle_execute(
         "sevkiyat_durum": eski_durum_karsilik,
         "depo_sevkiyat_rapor_metni": rapor_metni,
         "depo_sevkiyat_rapor_uyari": rapor_uyari,
+        # Sinyal (kapı değil): depoda çözülmemiş kabul uyumsuzluğu sayısı —
+        # sevk engellenmez, arayüz uyarı gösterebilir.
+        "uyumsuzluk_uyarisi": uyumsuz_sayi,
     }
