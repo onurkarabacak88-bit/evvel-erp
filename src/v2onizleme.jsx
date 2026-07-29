@@ -195,6 +195,8 @@ const OPS_UC = {
     ],
   },
   '/api/ops/siparis/sevkiyat-guncelle': { ok: true },
+  '/api/ops/subeler/depolar': { satirlar: [{ id: 's1', ad: 'Zafer (Merkez Depo)' }, { id: 's2', ad: 'Köyceğiz' }] },
+  '/api/ops/siparis/sevkiyata-gonder': { ok: true },
   '/api/ops/bulgu-izi': { ok: true, id: 'iz1' },
   '/api/import-izi': {
     kayitlar: [

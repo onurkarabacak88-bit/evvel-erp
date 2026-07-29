@@ -118,6 +118,13 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
   const [depo, setDepo] = useState(null);
   const [depoHata, setDepoHata] = useState('');
   const [depoSube, setDepoSube] = useState('');   // '' = tüm şubeler
+  // ── YERLİ DEPO YÖNLENDİRME (köprü kaldırma turu, 2026-07-29) ──────────────
+  // Bekleyen sipariş → hedef depo ataması artık kadife modal; aynı guard'lı uç:
+  // POST /ops/siparis/sevkiyata-gonder. Toptancı akışı (liste+yazdırma) klasik
+  // kulede kalır — modaldan köprü verilir (işlev kaybı yasak).
+  const [yonForm, setYonForm] = useState(null);   // {sip, depo:'', talimat:''}
+  const [depolar, setDepolar] = useState([]);
+  const [yonMesgul, setYonMesgul] = useState(false);
   // ── SAYIM ─────────────────────────────────────────────────────────────────
   const [sayim, setSayim] = useState(null);
   const [sayimIz, setSayimIz] = useState(null);
@@ -141,6 +148,33 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
       .then((d) => setHiz(d || {}))
       .catch(() => setHiz({}));
   }, []);
+
+  const yonAc = (sip) => {
+    setYonForm({ sip, depo: '', talimat: '' });
+    if (!depolar.length) {
+      api('/ops/subeler/depolar')
+        .then((r) => setDepolar(Array.isArray(r?.satirlar) ? r.satirlar : []))
+        .catch(() => setDepolar([]));
+    }
+  };
+
+  const yonKaydet = async () => {
+    if (!yonForm?.depo) { onToast?.('Önce hedef depo seçin'); return; }
+    setYonMesgul(true);
+    try {
+      const body = { talep_id: yonForm.sip.id, hedef_depo_sube_id: yonForm.depo };
+      const tal = (yonForm.talimat || '').trim();
+      if (tal) body.operasyon_yonlendirme_talimati = tal;
+      await api('/ops/siparis/sevkiyata-gonder', { method: 'POST', body });
+      onToast?.('🏭 Depoya yönlendirildi — merkez kuyruğundan çıktı');
+      setYonForm(null);
+      kuleYukle();
+    } catch (e) {
+      onToast?.(e?.message || 'Yönlendirme başarısız');
+    } finally {
+      setYonMesgul(false);
+    }
+  };
 
   const sevkYukle = useCallback(() => {
     setSevkHata('');
@@ -325,7 +359,7 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
       .reduce((t, k) => t + sayi(ozet[k]), 0);
     const uyumsuzlar = satirlar.filter((s) => s.asama === 'uyumsuzluk');
     const kolonlar = [
-      { id: 'bekliyor', asamalar: ['bekliyor'], buton: 'Yönlendir →', hedef: 'sevkiyat-hazirlama' },
+      { id: 'bekliyor', asamalar: ['bekliyor'], buton: '🏭 Depoya yönlendir', yerliYonlendir: true },
       { id: 'depoda', asamalar: ['depoda'], buton: 'Sevkiyatı hazırla →', gorunum: 'sevkiyat' },
       { id: 'yolda', asamalar: ['yolda', 'toptanci_bekliyor'], bilgi: 'şube kabulü bekleniyor' },
       { id: 'tamamlandi', asamalar: ['tamamlandi'] },
@@ -433,7 +467,8 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
-                            if (kol.gorunum) onGorunum?.(kol.gorunum);
+                            if (kol.yerliYonlendir) yonAc(s);
+                            else if (kol.gorunum) onGorunum?.(kol.gorunum);
                             else onKopru?.(kol.hedef);
                           }}
                           style={{
@@ -469,6 +504,87 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
             );
           })}
         </div>
+
+        {/* ── YERLİ DEPO YÖNLENDİRME MODALI (köprü kaldırıldı) ── */}
+        {yonForm && (
+          <div
+            onClick={(e) => { if (e.target === e.currentTarget && !yonMesgul) setYonForm(null); }}
+            style={{
+              position: 'fixed', inset: 0, zIndex: 90, background: 'rgba(10,6,2,.66)',
+              backdropFilter: 'blur(3px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+            }}
+          >
+            <div style={{ ...kartYuzey, width: 500, maxWidth: '96vw', padding: '24px 26px' }}>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 6 }}>
+                <div style={{ fontFamily: F.baslik, fontSize: 21, fontWeight: 600 }}>Depoya Yönlendir</div>
+                <button onClick={() => !yonMesgul && setYonForm(null)} style={{
+                  marginLeft: 'auto', border: 'none', background: 'transparent', color: R.not,
+                  fontSize: 16, cursor: 'pointer', fontFamily: 'inherit',
+                }}>✕</button>
+              </div>
+              <div style={{ fontSize: 12.5, color: R.metin2, marginBottom: 16 }}>
+                {yonForm.sip.sube_adi || '—'} · {tarihKisa(yonForm.sip.tarih)} · {(yonForm.sip.kalemler || []).length} kalem
+              </div>
+
+              <label style={{ fontSize: 10.5, letterSpacing: '.7px', textTransform: 'uppercase', color: R.not2, fontWeight: 700, marginBottom: 6, display: 'block' }}>
+                Hedef depo *
+              </label>
+              <select
+                value={yonForm.depo}
+                onChange={(e) => setYonForm((f) => ({ ...f, depo: e.target.value }))}
+                style={{
+                  width: '100%', boxSizing: 'border-box', padding: '9px 12px', borderRadius: 10,
+                  border: `1px solid ${R.cizgi3}`, background: R.girinti, color: R.krem,
+                  fontSize: 13, fontFamily: 'inherit', outline: 'none',
+                }}
+              >
+                <option value="">Depo seçin…</option>
+                {depolar.map((d) => <option key={d.id} value={d.id}>{d.ad}</option>)}
+              </select>
+
+              <label style={{ fontSize: 10.5, letterSpacing: '.7px', textTransform: 'uppercase', color: R.not2, fontWeight: 700, margin: '14px 0 6px', display: 'block' }}>
+                Operasyon talimatı (isteğe bağlı)
+              </label>
+              <textarea
+                rows={2}
+                value={yonForm.talimat}
+                onChange={(e) => setYonForm((f) => ({ ...f, talimat: e.target.value }))}
+                placeholder="depo personeline not…"
+                style={{
+                  width: '100%', boxSizing: 'border-box', padding: '9px 12px', borderRadius: 10,
+                  border: `1px solid ${R.cizgi3}`, background: R.girinti, color: R.krem,
+                  fontSize: 13, fontFamily: 'inherit', outline: 'none', resize: 'vertical',
+                }}
+              />
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 18, flexWrap: 'wrap' }}>
+                <button
+                  onClick={() => onKopru?.('sevkiyat-hazirlama')}
+                  style={{
+                    padding: '9px 14px', borderRadius: 10, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+                    background: 'transparent', color: R.metin2, fontSize: 11.5, fontWeight: 600, fontFamily: 'inherit',
+                  }}
+                >
+                  🚚 Toptancı akışı (kule)
+                </button>
+                <div style={{ marginLeft: 'auto', display: 'flex', gap: 10 }}>
+                  <button disabled={yonMesgul} onClick={() => setYonForm(null)} style={{
+                    padding: '10px 18px', borderRadius: 10, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+                    background: 'transparent', color: R.metin2, fontSize: 12.5, fontWeight: 600, fontFamily: 'inherit',
+                  }}>Vazgeç</button>
+                  <button disabled={yonMesgul || !yonForm.depo} onClick={yonKaydet} style={{
+                    padding: '10px 20px', borderRadius: 10, border: 'none',
+                    background: yonForm.depo ? 'linear-gradient(150deg, #D99A4E, #B06E2C)' : R.girinti,
+                    color: yonForm.depo ? '#1C1309' : R.not, fontSize: 12.5, fontWeight: 700,
+                    fontFamily: 'inherit', cursor: yonForm.depo ? 'pointer' : 'default',
+                  }}>
+                    {yonMesgul ? 'Yönlendiriliyor…' : 'Depoya yönlendir'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </>
     );
   }
