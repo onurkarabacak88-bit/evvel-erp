@@ -111,6 +111,11 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast }) {
   const [talepForm, setTalepForm] = useState(null);     // {ad, tarih, not}
   const [kapatForm, setKapatForm] = useState(null);     // {t, tip, aciklama}
   const [talepMesgul, setTalepMesgul] = useState(false);
+  // Açılış devri beyanı (sistem öncesi bakiye) — klasik BelgeMerkezi akışı
+  const [devirForm, setDevirForm] = useState(null);   // {tedarikci, tutar, aciklama}
+  const [devirMesgul, setDevirMesgul] = useState(false);
+  // Belge yükleme (faturasız harcamaya PDF/foto ekle) — klasik boru hattı
+  const [yukMesgul, setYukMesgul] = useState(false);
   const [bant, setBant] = useState(null);
   const [bantHata, setBantHata] = useState('');
   const [cariSecim, setCariSecim] = useState('');
@@ -180,6 +185,45 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast }) {
     api(`/belge-talep/${t.id}/mesaj-gonderildi`, { method: 'POST' }).then(talepYukle).catch(() => {});
   };
 
+  /** 📎 Fatura/belge yükle — PDF ise LLM kalem ayrıştırma, foto ise OCR yolu. */
+  const belgeYukle = async (dosya) => {
+    if (!dosya) return;
+    setYukMesgul(true);
+    try {
+      const fd = new FormData();
+      const isPdf = /pdf/i.test(dosya.type || '') || /\.pdf$/i.test(dosya.name || '');
+      fd.append(isPdf ? 'pdf' : 'foto', dosya);
+      const res = await fetch(isPdf ? '/api/fatura/yukle-pdf' : '/api/fatura/yukle', { method: 'POST', body: fd });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(d?.detail || 'Yüklenemedi');
+      onToast?.(`📎 Belge arşive alındı${d?.kalem_sayisi ? ` — ${d.kalem_sayisi} kalem ayrıştırıldı` : ''}`);
+      merkezYukle();
+    } catch (e) {
+      onToast?.(e?.message || 'Belge yüklenemedi');
+    } finally {
+      setYukMesgul(false);
+    }
+  };
+
+  const devirKaydet = async () => {
+    const t = Number(String(devirForm?.tutar || '').replace(',', '.'));
+    if (!devirForm?.tedarikci || !Number.isFinite(t)) { onToast?.('Tedarikçi ve tutar gerekli'); return; }
+    setDevirMesgul(true);
+    try {
+      await api('/fatura/cari-devir', {
+        method: 'POST',
+        body: { tedarikci: devirForm.tedarikci, tutar: t, aciklama: (devirForm.aciklama || '').trim() || null },
+      });
+      onToast?.(`✓ Açılış devri kaydedildi — ${devirForm.tedarikci}`);
+      setDevirForm(null);
+      cariYukle(devirForm.tedarikci);
+    } catch (e) {
+      onToast?.(e?.message || 'Devir kaydedilemedi');
+    } finally {
+      setDevirMesgul(false);
+    }
+  };
+
   const istekYukle = useCallback(() => {
     setIstekHata('');
     talepYukle();
@@ -240,6 +284,22 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast }) {
           { etiket: 'Kart harcaması', deger: fmt(sayi(k.isletme_kart_harcamasi)), alt: `${merkez.ay || buAyISO()} · işletme` },
         ]} />
 
+        {/* Yerli belge yükleme (köprü kaldırma turu): faturasız harcamaya ek */}
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 14, flexWrap: 'wrap' }}>
+          <label style={{
+            padding: '9px 17px', borderRadius: 10, cursor: yukMesgul ? 'default' : 'pointer',
+            background: yukMesgul ? R.girinti : 'linear-gradient(150deg, #D99A4E, #B06E2C)',
+            color: yukMesgul ? R.not : '#1C1309', fontSize: 12, fontWeight: 700, fontFamily: 'inherit',
+          }}>
+            <input type="file" accept="application/pdf,image/*" style={{ display: 'none' }} disabled={yukMesgul}
+              onChange={(e) => { belgeYukle(e.target.files?.[0]); e.target.value = ''; }} />
+            {yukMesgul ? '⏳ Yükleniyor…' : '📎 Belge yükle (PDF / foto)'}
+          </label>
+          <span style={{ fontSize: 11.5, color: R.not }}>
+            PDF: kalemler otomatik ayrıştırılır · foto: OCR ile okunur — arşive girer, kapsama oranı güncellenir
+          </span>
+        </div>
+
         {/* Kapsama barı — blueprint'in yeşil/kırmızı oran şeridi */}
         <div style={{ ...kartYuzey, padding: '18px 20px', marginBottom: 14 }}>
           <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12, marginBottom: 12 }}>
@@ -269,9 +329,9 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast }) {
               alt: `${tarihKisa(h.tarih)} · ${kisalt(h.kart, 34)}${h.tip ? ` · ${h.tip}` : ''}`,
               tutar: fmt(sayi(h.tutar)),
               tier: sayi(h.tutar) >= 10000 ? 'kritik' : 'uyari',
-              aksiyon: 'Belge Merkezi',
+              aksiyon: '',
             }))}
-            onAc={() => onKopru?.('belge-merkezi')}
+            onAc={() => onToast?.('Bu harcamanın faturasını yukarıdaki 📎 Belge yükle ile arşive ekleyin.')}
           />
         )}
       </>
@@ -359,7 +419,7 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast }) {
             }))}
             onSatir={({ _b }) => {
               if (_b.goruntule) window.open(_b.goruntule, '_blank');
-              else onKopru?.('belge-merkezi');
+              else onToast?.('Bu kaydın PDF/foto eki yok — görüntülenecek belge bulunmuyor.');
             }}
           />
         )}
@@ -622,9 +682,9 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast }) {
                   alt: `${tarihKisa(b.tarih)} · durum: ${b.durum}`,
                   tutar: fmt(sayi(b.tutar)),
                   tier: 'kritik',
-                  aksiyon: 'İncele',
+                  aksiyon: '',
                 }))}
-                onAc={() => onKopru?.('belge-merkezi')}
+                onAc={() => onToast?.('İşlenemeyen belge: fotoğraf okunamadı — 📎 Belge yükle ile daha net bir kopya yükleyin.')}
               />
             )}
             {sayi(inceleme.adet) > 0 && (
@@ -639,7 +699,6 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast }) {
             )}
           </>
         )}
-        <KopruButon ad="Belge Merkezi'ni aç" onTikla={() => onKopru?.('belge-merkezi')} />
       </>
     );
   }
@@ -699,11 +758,71 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast }) {
                 }))}
                 onSatir={({ _f }) => {
                   if (_f.goruntule) window.open(_f.goruntule, '_blank');
-                  else onKopru?.('belge-merkezi');
+                  else onToast?.('Bu faturanın PDF/foto eki yok — arşivde görüntülenecek belge bulunmuyor.');
                 }}
               />
             )}
           </>
+        )}
+
+        {cariSecim && (
+          <div style={{ display: 'flex', gap: 9, marginTop: 12, marginBottom: 16, flexWrap: 'wrap' }}>
+            <button onClick={() => setDevirForm({
+              tedarikci: cariSecim,
+              tutar: cari?.devir != null ? String(sayi(cari.devir)) : '',
+              aciklama: cari?.devir_not || '',
+            })} style={{
+              padding: '9px 16px', borderRadius: 10, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+              background: R.girinti, color: R.metin2, fontSize: 12, fontWeight: 600, fontFamily: 'inherit',
+            }}>
+              ⚖️ Açılış devri beyan et
+            </button>
+            <span style={{ fontSize: 11.5, color: R.not, alignSelf: 'center' }}>
+              sistem öncesi bakiye — hesaplanan açığa eklenir (+borç / −avans)
+            </span>
+          </div>
+        )}
+
+        {/* açılış devri modalı */}
+        {devirForm && (
+          <div onClick={(e) => { if (e.target === e.currentTarget && !devirMesgul) setDevirForm(null); }} style={{
+            position: 'fixed', inset: 0, zIndex: 90, background: 'rgba(10,6,2,.66)',
+            backdropFilter: 'blur(3px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+          }}>
+            <div style={{ ...kartYuzey, width: 480, maxWidth: '96vw', padding: '24px 26px' }}>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 6 }}>
+                <div style={{ fontFamily: F.baslik, fontSize: 20, fontWeight: 600 }}>⚖️ Açılış Devri</div>
+                <button onClick={() => setDevirForm(null)} style={{
+                  marginLeft: 'auto', border: 'none', background: 'transparent', color: R.not,
+                  fontSize: 16, cursor: 'pointer', fontFamily: 'inherit',
+                }}>✕</button>
+              </div>
+              <div style={{ fontSize: 12.5, color: R.metin2, marginBottom: 14, lineHeight: 1.55 }}>
+                <b>{devirForm.tedarikci}</b> — sistem kurulmadan önceki bakiye beyanı.
+                Artı değer BORÇ (ona borçluyuz), eksi değer AVANS (fazla ödeme) anlamına gelir.
+              </div>
+              <label style={bmEtiket}>Devir tutarı (₺) *</label>
+              <input type="number" value={devirForm.tutar}
+                onChange={(e) => setDevirForm((f) => ({ ...f, tutar: e.target.value }))}
+                style={{ ...bmAlanStil, fontFamily: F.mono, textAlign: 'right' }} />
+              <div style={{ marginTop: 12 }}>
+                <label style={bmEtiket}>Açıklama / dayanak</label>
+                <input value={devirForm.aciklama} placeholder="örn. Haziran ekstre mutabakatı"
+                  onChange={(e) => setDevirForm((f) => ({ ...f, aciklama: e.target.value }))} style={bmAlanStil} />
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 16 }}>
+                <button disabled={devirMesgul} onClick={() => setDevirForm(null)} style={{
+                  padding: '10px 18px', borderRadius: 10, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+                  background: 'transparent', color: R.metin2, fontSize: 12.5, fontWeight: 600, fontFamily: 'inherit',
+                }}>İptal</button>
+                <button disabled={devirMesgul} onClick={devirKaydet} style={{
+                  padding: '10px 20px', borderRadius: 10, border: 'none', cursor: 'pointer',
+                  background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+                  fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit',
+                }}>{devirMesgul ? 'Kaydediliyor…' : 'Devri kaydet'}</button>
+              </div>
+            </div>
+          </div>
         )}
       </>
     );
@@ -787,7 +906,6 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast }) {
           KDV TUTARI HESAPLANMAZ — hüküm muhasebecinin. Bu ekran yalnız belge KANITININ
           sağlamlığını sınıflar; eksikler fatura onay ekranında no/VKN girilerek kapanır.
         </div>
-        <KopruButon birincil ad="Belge Merkezi'nde KDV paketi" onTikla={() => onKopru?.('belge-merkezi')} />
       </>
     );
   }
