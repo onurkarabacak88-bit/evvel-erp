@@ -493,7 +493,7 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
               ],
               not: 'Bu kayıt kasa izinden geliyor — plan durumu bu izden türer, elle işaretleme yoktur.',
               aksiyonAd: 'İşlem defterini aç',
-              _hedef: 'ledger',
+              _hedef: '__modul:rapor:defter',
             });
           }}
         />

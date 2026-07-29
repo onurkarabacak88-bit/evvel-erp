@@ -941,12 +941,12 @@ export function RaporModulu({ gorunum, onCekmece, onKopru }) {
               ],
               not: 'İşlem defteri append-only\'dir; düzeltme ters kayıtla yapılır.',
               aksiyonAd: 'İşlem defterini aç',
-              _hedef: 'ledger',
+              _hedef: '__modul:rapor:defter',
             });
           }}
         />
       ) : (
-        <Bos baslik="Bu ay defter kaydı yok" aciklama="Kasa hareketi oluştukça işlem defteri dolar." aksiyon="İşlem defterini aç" onAksiyon={() => onKopru?.('ledger')} />
+        <Bos baslik="Bu ay defter kaydı yok" aciklama="Kasa hareketi oluştukça işlem defteri dolar." aksiyon="İşlem defterini aç" onAksiyon={() => onKopru?.('__modul:rapor:defter')} />
       )}
     </>
   );
