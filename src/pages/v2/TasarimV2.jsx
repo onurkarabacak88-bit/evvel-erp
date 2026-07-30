@@ -515,7 +515,7 @@ export default function TasarimV2({ onGit }) {
           <div style={{ fontFamily: F.baslik, fontSize: 18, fontWeight: 600, color: R.kirmizi }}>{hata}</div>
           <button onClick={yukle} style={{
             marginTop: 16, padding: '10px 20px', borderRadius: 10, border: 'none',
-            background: `linear-gradient(150deg, #D99A4E, #B06E2C)`, color: '#1C1309',
+            background: `linear-gradient(150deg, #E0A559, #AF6C29)`, color: '#1C1309',
             fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer',
           }}>
             Tekrar dene
@@ -957,8 +957,8 @@ export default function TasarimV2({ onGit }) {
               style={{
                 position: 'relative', flexShrink: 0, width: 52, padding: '9px 0 7px', borderRadius: 12,
                 display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5, cursor: 'pointer',
-                color: aktif ? R.bakir : R.not,
-                background: aktif ? 'rgba(217,154,78,.13)' : 'transparent',
+                color: aktif ? R.bakirAcik : R.not,
+                background: aktif ? 'rgba(217,154,78,.14)' : 'transparent',
               }}
             >
               <Ikon yol={m.ikon} />
@@ -1008,8 +1008,10 @@ export default function TasarimV2({ onGit }) {
                 style={{
                   display: 'flex', alignItems: 'center', gap: 9, padding: '9px 11px', borderRadius: 9,
                   cursor: 'pointer', fontSize: 12.5,
-                  color: aktif ? R.krem : R.metin2,
-                  background: aktif ? 'rgba(217,154,78,.1)' : 'transparent',
+                  // Aktif durum tek sözlükten: zemin .14 · metin #E5B27A · ağırlık 600
+                  color: aktif ? R.bakirAcik : R.metin2,
+                  fontWeight: aktif ? 600 : 400,
+                  background: aktif ? 'rgba(217,154,78,.14)' : 'transparent',
                   borderLeft: `2px solid ${aktif ? R.bakir : 'transparent'}`,
                 }}
               >
@@ -1082,7 +1084,7 @@ export default function TasarimV2({ onGit }) {
                     style={{
                       padding: '5px 13px', borderRadius: 7, fontSize: 11.5, fontWeight: 600, cursor: 'pointer',
                       color: gorunum === hedefGorunum ? '#1C1309' : R.not,
-                      background: gorunum === hedefGorunum ? `linear-gradient(150deg, #D99A4E, #B06E2C)` : 'transparent',
+                      background: gorunum === hedefGorunum ? `linear-gradient(150deg, #E0A559, #AF6C29)` : 'transparent',
                     }}
                   >
                     {ad}
@@ -1139,7 +1141,7 @@ export default function TasarimV2({ onGit }) {
               title="Kapanış takibini açar — kapatma işlemi şubede mühür/QR ile yapılır"
               style={{
                 padding: '8px 15px', borderRadius: 10, border: 'none',
-                background: `linear-gradient(150deg, #D99A4E, #B06E2C)`, color: '#1C1309',
+                background: `linear-gradient(150deg, #E0A559, #AF6C29)`, color: '#1C1309',
                 fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer',
                 boxShadow: '0 6px 18px rgba(217,154,78,.24)',
               }}
@@ -1166,7 +1168,7 @@ export default function TasarimV2({ onGit }) {
                     display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0, cursor: 'pointer',
                     padding: '7px 13px', borderRadius: 99, fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap',
                     color: aktif ? R.bakirAcik : R.metin2,
-                    background: aktif ? 'rgba(217,154,78,.12)' : R.girinti,
+                    background: aktif ? 'rgba(217,154,78,.14)' : R.girinti,
                     border: `1px solid ${aktif ? 'rgba(217,154,78,.38)' : R.cizgi}`,
                   }}
                 >
@@ -1226,7 +1228,7 @@ export default function TasarimV2({ onGit }) {
               style={{
                 width: '100%', maxWidth: 420, borderRadius: 20,
                 background: 'linear-gradient(165deg, #2C2116, #231909)',
-                border: `1px solid ${R.bakir}44`, boxShadow: '0 26px 60px rgba(0,0,0,.5), 0 0 40px rgba(217,154,78,.12)',
+                border: `1px solid ${R.bakir}44`, boxShadow: '0 26px 60px rgba(0,0,0,.5), 0 0 40px rgba(217,154,78,.14)',
                 animation: 'v2buyu .26s cubic-bezier(.4,0,.2,1) both',
               }}
             >
@@ -1257,7 +1259,7 @@ export default function TasarimV2({ onGit }) {
                 }}>Kapat</button>
                 <button onClick={() => { setSiparisBildirim(null); setMod('ops'); setGorunum('akis'); setCekmece(null); }} style={{
                   padding: '9px 18px', borderRadius: 10, border: 'none',
-                  background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+                  background: 'linear-gradient(150deg, #E0A559, #AF6C29)', color: '#1C1309',
                   fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer',
                 }}>Sipariş Akışını aç</button>
               </div>
@@ -1327,7 +1329,7 @@ export default function TasarimV2({ onGit }) {
                       style={{
                         display: 'flex', alignItems: 'center', gap: 11, padding: '9px 11px',
                         borderRadius: 8, cursor: 'pointer',
-                        background: secili ? 'rgba(217,154,78,.13)' : 'transparent',
+                        background: secili ? 'rgba(217,154,78,.14)' : 'transparent',
                       }}
                     >
                       <span style={{

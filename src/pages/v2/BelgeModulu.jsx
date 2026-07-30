@@ -140,7 +140,7 @@ function KopruButon({ ad, onTikla, birincil }) {
   return (
     <button onClick={onTikla} style={birincil ? {
       padding: '9px 17px', borderRadius: 10, border: 'none',
-      background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+      background: 'linear-gradient(150deg, #E0A559, #AF6C29)', color: '#1C1309',
       fontSize: 12, fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer',
       boxShadow: '0 6px 18px rgba(217,154,78,.24)',
     } : {
@@ -342,7 +342,7 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast }) {
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 14, flexWrap: 'wrap' }}>
           <label style={{
             padding: '9px 17px', borderRadius: 10, cursor: yukMesgul ? 'default' : 'pointer',
-            background: yukMesgul ? R.girinti : 'linear-gradient(150deg, #D99A4E, #B06E2C)',
+            background: yukMesgul ? R.girinti : 'linear-gradient(150deg, #E0A559, #AF6C29)',
             color: yukMesgul ? R.not : '#1C1309', fontSize: 12, fontWeight: 700, fontFamily: 'inherit',
           }}>
             <input type="file" accept="application/pdf,image/*" style={{ display: 'none' }} disabled={yukMesgul}
@@ -442,7 +442,7 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast }) {
           )}
           <button onClick={ara} disabled={araniyor} style={{
             padding: '8px 15px', borderRadius: 9, border: 'none',
-            background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+            background: 'linear-gradient(150deg, #E0A559, #AF6C29)', color: '#1C1309',
             fontSize: 12, fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer', opacity: araniyor ? 0.6 : 1,
           }}>
             {araniyor ? '…' : 'Ara'}
@@ -540,7 +540,7 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast }) {
                 </span>
                 <button onClick={() => setTalepForm({ ad: '', tarih: '', not: '' })} style={{
                   padding: '7px 14px', borderRadius: 10, border: 'none', cursor: 'pointer',
-                  background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+                  background: 'linear-gradient(150deg, #E0A559, #AF6C29)', color: '#1C1309',
                   fontSize: 11.5, fontWeight: 700, fontFamily: 'inherit',
                 }}>
                   + Elle talep aç
@@ -630,7 +630,7 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast }) {
                 }}>İptal</button>
                 <button disabled={talepMesgul} onClick={talepEkle} style={{
                   padding: '10px 20px', borderRadius: 10, border: 'none', cursor: 'pointer',
-                  background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+                  background: 'linear-gradient(150deg, #E0A559, #AF6C29)', color: '#1C1309',
                   fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit',
                 }}>{talepMesgul ? 'Ekleniyor…' : 'Talebi aç'}</button>
               </div>
@@ -664,7 +664,7 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast }) {
                   <div key={tip} onClick={() => setKapatForm((f) => ({ ...f, tip }))} style={{
                     padding: '11px 14px', borderRadius: 12, cursor: 'pointer',
                     border: `1px solid ${kapatForm.tip === tip ? R.bakir : R.cizgi3}`,
-                    background: kapatForm.tip === tip ? 'rgba(217,154,78,.12)' : R.girinti,
+                    background: kapatForm.tip === tip ? 'rgba(217,154,78,.14)' : R.girinti,
                   }}>
                     <div style={{ fontSize: 12.5, fontWeight: 700, color: kapatForm.tip === tip ? R.bakir : R.krem }}>{ad}</div>
                     <div style={{ fontSize: 11, color: R.not, marginTop: 3 }}>{aciklama}</div>
@@ -684,7 +684,7 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast }) {
                 }}>Vazgeç</button>
                 <button disabled={talepMesgul} onClick={talepKapat} style={{
                   padding: '10px 20px', borderRadius: 10, border: 'none', cursor: 'pointer',
-                  background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+                  background: 'linear-gradient(150deg, #E0A559, #AF6C29)', color: '#1C1309',
                   fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit',
                 }}>{talepMesgul ? 'Kapatılıyor…' : 'Kapat'}</button>
               </div>
@@ -866,7 +866,7 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast }) {
                 }}>İptal</button>
                 <button disabled={devirMesgul} onClick={devirKaydet} style={{
                   padding: '10px 20px', borderRadius: 10, border: 'none', cursor: 'pointer',
-                  background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+                  background: 'linear-gradient(150deg, #E0A559, #AF6C29)', color: '#1C1309',
                   fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit',
                 }}>{devirMesgul ? 'Kaydediliyor…' : 'Devri kaydet'}</button>
               </div>

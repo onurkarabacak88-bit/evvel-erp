@@ -75,7 +75,7 @@ export default function BorcModulu({ gorunum, onCekmece, onKopru }) {
         <div style={{ fontFamily: F.baslik, fontSize: 18, fontWeight: 600, color: R.kirmizi }}>{hata}</div>
         <button onClick={yukle} style={{
           marginTop: 16, padding: '10px 20px', borderRadius: 10, border: 'none',
-          background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+          background: 'linear-gradient(150deg, #E0A559, #AF6C29)', color: '#1C1309',
           fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer',
         }}>Tekrar dene</button>
       </div>

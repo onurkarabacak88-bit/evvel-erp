@@ -73,7 +73,7 @@ function KopruButon({ ad, onTikla, birincil }) {
   return (
     <button onClick={onTikla} style={birincil ? {
       padding: '9px 17px', borderRadius: 10, border: 'none',
-      background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+      background: 'linear-gradient(150deg, #E0A559, #AF6C29)', color: '#1C1309',
       fontSize: 12, fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer',
       boxShadow: '0 6px 18px rgba(217,154,78,.24)',
     } : {
@@ -563,7 +563,7 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru, onToast }) {
                   </button>
                   <button disabled={ciroMesgul || !ciroForm.sube_id || ciroDup !== ''} onClick={() => ciroKaydet(false)} style={{
                     padding: '10px 20px', borderRadius: 10, border: 'none',
-                    background: (!ciroForm.sube_id || ciroDup !== '') ? R.girinti : 'linear-gradient(150deg, #D99A4E, #B06E2C)',
+                    background: (!ciroForm.sube_id || ciroDup !== '') ? R.girinti : 'linear-gradient(150deg, #E0A559, #AF6C29)',
                     color: (!ciroForm.sube_id || ciroDup !== '') ? R.not : '#1C1309',
                     fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit',
                     cursor: (!ciroForm.sube_id || ciroDup !== '') ? 'default' : 'pointer',
@@ -889,7 +889,7 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru, onToast }) {
                     }}>Vazgeç</button>
                     <button disabled={aliciMesgul} onClick={aliciKaydet} style={{
                       padding: '8px 17px', borderRadius: 10, border: 'none', cursor: 'pointer',
-                      background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+                      background: 'linear-gradient(150deg, #E0A559, #AF6C29)', color: '#1C1309',
                       fontSize: 12, fontWeight: 700, fontFamily: 'inherit',
                     }}>
                       {aliciMesgul ? 'Kaydediliyor…' : 'Kaydet'}
@@ -899,7 +899,7 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru, onToast }) {
               ) : (
                 <button onClick={() => setAliciForm({ ad: '', unvan: '', sube_id: '' })} style={{
                   padding: '9px 17px', borderRadius: 10, border: 'none', cursor: 'pointer',
-                  background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+                  background: 'linear-gradient(150deg, #E0A559, #AF6C29)', color: '#1C1309',
                   fontSize: 12, fontWeight: 700, fontFamily: 'inherit',
                 }}>
                   + Yeni alıcı ekle
@@ -1019,7 +1019,7 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru, onToast }) {
                       padding: '8px 15px', borderRadius: 10, fontSize: 12.5, fontWeight: 700, cursor: 'pointer',
                       border: `1px solid ${giderForm.odeme_yontemi === y ? R.bakir : R.cizgi3}`,
                       color: giderForm.odeme_yontemi === y ? R.bakir : R.metin2,
-                      background: giderForm.odeme_yontemi === y ? 'rgba(217,154,78,.12)' : 'transparent',
+                      background: giderForm.odeme_yontemi === y ? 'rgba(217,154,78,.14)' : 'transparent',
                     }}>
                       {ad}
                     </div>
@@ -1066,7 +1066,7 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru, onToast }) {
                   }}>İptal</button>
                   <button disabled={formMesgul || giderDup !== ''} onClick={() => giderKaydet(false)} style={{
                     padding: '10px 20px', borderRadius: 10, border: 'none',
-                    background: giderDup !== '' ? R.girinti : 'linear-gradient(150deg, #D99A4E, #B06E2C)',
+                    background: giderDup !== '' ? R.girinti : 'linear-gradient(150deg, #E0A559, #AF6C29)',
                     color: giderDup !== '' ? R.not : '#1C1309', fontSize: 12.5, fontWeight: 700,
                     fontFamily: 'inherit', cursor: giderDup !== '' ? 'default' : 'pointer',
                   }}>
@@ -1212,7 +1212,7 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru, onToast }) {
                   }}>İptal</button>
                   <button disabled={formMesgul || dkDup !== ''} onClick={() => dkKaydet(false)} style={{
                     padding: '10px 20px', borderRadius: 10, border: 'none',
-                    background: dkDup !== '' ? R.girinti : 'linear-gradient(150deg, #D99A4E, #B06E2C)',
+                    background: dkDup !== '' ? R.girinti : 'linear-gradient(150deg, #E0A559, #AF6C29)',
                     color: dkDup !== '' ? R.not : '#1C1309', fontSize: 12.5, fontWeight: 700,
                     fontFamily: 'inherit', cursor: dkDup !== '' ? 'default' : 'pointer',
                   }}>

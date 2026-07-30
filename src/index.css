@@ -24,7 +24,7 @@
   --sev-uyari:#f97316;--sev-uyari-bg:rgba(249,115,22,0.10);
   --sev-bilgi:var(--blue);--sev-bilgi-bg:rgba(111,168,216,0.10);
   /* Bakır vurgu — kadife koyu zeminde açık ton (#D29A5B, koyu üstünde AA) */
-  --accent:#D29A5B;--accent-dim:rgba(217,154,78,.13);--accent-border:rgba(217,154,78,.38);
+  --accent:#D29A5B;--accent-dim:rgba(217,154,78,.14);--accent-border:rgba(217,154,78,.38);
   /* Gölgeler — koyu zeminde gerçek karanlık */
   --shadow-1:0 3px 12px rgba(0,0,0,.35);
   --shadow-2:0 8px 26px rgba(0,0,0,.45);
@@ -55,7 +55,7 @@ body{font-family:'Instrument Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',s
 .sidebar{
   --bg:#191009;--bg2:#211710;--bg3:#2B2016;
   --border:#3A2C1E;--text:#F1E9DD;--text2:#C4B5A2;--text3:#8B7B67;
-  --accent:#D29A5B;--accent-dim:rgba(210,154,91,.13);--accent-border:rgba(210,154,91,.35);
+  --accent:#D29A5B;--accent-dim:rgba(210,154,91,.14);--accent-border:rgba(210,154,91,.35);
   width:220px;background:linear-gradient(180deg,#241A12 0%,#1D150E 55%,#191009 100%);
   border-right:1px solid #3A2C1E;display:flex;flex-direction:column;flex-shrink:0}
 .sidebar-logo{position:relative;padding:var(--sp-6) var(--sp-4) var(--sp-4);border-bottom:1px solid var(--border)}
@@ -125,7 +125,7 @@ tr:hover td{background:rgba(217,154,78,.07)}
 .btn{padding:7px 14px;border-radius:8px;border:none;font-size:13px;cursor:pointer;font-weight:600;transition:transform var(--dur-base) var(--ease-smooth),box-shadow var(--dur-base) var(--ease-smooth),background var(--dur-base) ease,border-color var(--dur-base) ease}
 .btn:active{transform:scale(.985);transition-duration:var(--dur-fast)}
 /* Bakır gradyan + KOYU metin (kadife koyu — v2 birincil butonuyla birebir) */
-.btn-primary{background:linear-gradient(150deg,#D99A4E,#B06E2C);color:#1C1309}
+.btn-primary{background:linear-gradient(150deg,#E0A559,#AF6C29);color:#1C1309}
 .btn-primary:hover{background:linear-gradient(150deg,#E5AC61,#C17A34);box-shadow:var(--shadow-accent);transform:translateY(-1px)}
 .btn-secondary{background:var(--bg3);color:var(--text);border:1px solid var(--border)}
 .btn-secondary:hover{border-color:var(--accent-border);box-shadow:var(--shadow-1);transform:translateY(-1px)}
@@ -447,7 +447,7 @@ tr:hover td{background:rgba(217,154,78,.07)}
 .main:has(.kv){
   --bg:#1D140C;--bg2:#261C11;--bg3:#2E2317;
   --border:#3A2C1E;--text:#F1E9DD;--text2:#C4B5A2;--text3:#9B8A75;
-  --accent:#D29A5B;--accent-dim:rgba(210,154,91,.13);--accent-border:rgba(210,154,91,.35);
+  --accent:#D29A5B;--accent-dim:rgba(210,154,91,.14);--accent-border:rgba(210,154,91,.35);
   --glass:rgba(29,20,12,.82);
   --green:#4ADE80;--red:#F87171;--yellow:#FBBF24;--blue:#60A5FA;--purple:#A78BFA;--orange:#FB923C;
   /* color şart: renk vermeyen öğeler (h1 gibi) body'nin AÇIK-tema hesaplanmış

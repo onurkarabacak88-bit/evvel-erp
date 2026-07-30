@@ -56,7 +56,7 @@ const Hata = ({ mesaj, onTekrar }) => (
     <div style={{ fontFamily: F.baslik, fontSize: 18, fontWeight: 600, color: R.kirmizi }}>{mesaj}</div>
     <button onClick={onTekrar} style={{
       marginTop: 16, padding: '10px 20px', borderRadius: 10, border: 'none',
-      background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+      background: 'linear-gradient(150deg, #E0A559, #AF6C29)', color: '#1C1309',
       fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer',
     }}>Tekrar dene</button>
   </div>
@@ -74,7 +74,7 @@ const Bos = ({ baslik, aciklama, aksiyon, onAksiyon, renk = R.not }) => (
     {aksiyon && (
       <button onClick={onAksiyon} style={{
         marginTop: 16, padding: '10px 20px', borderRadius: 10, border: 'none',
-        background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+        background: 'linear-gradient(150deg, #E0A559, #AF6C29)', color: '#1C1309',
         fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer',
       }}>{aksiyon}</button>
     )}
@@ -433,7 +433,7 @@ export function OnayModulu({ gorunum, onCekmece, onKopru, onToast }) {
                 if (ok) setCiroSor(null);
               }} style={{
                 padding: '10px 20px', borderRadius: 10, border: 'none',
-                background: t > 0 ? 'linear-gradient(150deg, #D99A4E, #B06E2C)' : R.girinti,
+                background: t > 0 ? 'linear-gradient(150deg, #E0A559, #AF6C29)' : R.girinti,
                 color: t > 0 ? '#1C1309' : R.not, fontSize: 12.5, fontWeight: 700,
                 fontFamily: 'inherit', cursor: t > 0 ? 'pointer' : 'default',
               }}>
@@ -668,7 +668,7 @@ export function YukModulu({ gorunum, onCekmece, onKopru, onToast }) {
       <div style={{ display: 'flex', gap: 9, marginBottom: 12 }}>
         <button onClick={() => sgAc(null)} style={{
           padding: '9px 17px', borderRadius: 10, border: 'none', cursor: 'pointer',
-          background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+          background: 'linear-gradient(150deg, #E0A559, #AF6C29)', color: '#1C1309',
           fontSize: 12, fontWeight: 700, fontFamily: 'inherit',
         }}>
           + Yeni sabit gider
@@ -743,7 +743,7 @@ export function YukModulu({ gorunum, onCekmece, onKopru, onToast }) {
                     padding: '8px 14px', borderRadius: 10, fontSize: 12, fontWeight: 700, cursor: 'pointer',
                     border: `1px solid ${f.tip === t ? R.bakir : R.cizgi3}`,
                     color: f.tip === t ? R.bakir : R.metin2,
-                    background: f.tip === t ? 'rgba(217,154,78,.12)' : 'transparent',
+                    background: f.tip === t ? 'rgba(217,154,78,.14)' : 'transparent',
                   }}>{ad}</div>
                 ))}
                 {degisken && (
@@ -833,7 +833,7 @@ export function YukModulu({ gorunum, onCekmece, onKopru, onToast }) {
                     padding: '8px 14px', borderRadius: 10, fontSize: 12, fontWeight: 700, cursor: 'pointer',
                     border: `1px solid ${f.odeme_yontemi === y ? R.bakir : R.cizgi3}`,
                     color: f.odeme_yontemi === y ? R.bakir : R.metin2,
-                    background: f.odeme_yontemi === y ? 'rgba(217,154,78,.12)' : 'transparent',
+                    background: f.odeme_yontemi === y ? 'rgba(217,154,78,.14)' : 'transparent',
                   }}>{ad}</div>
                 ))}
                 {f.odeme_yontemi === 'kart' && (
@@ -852,7 +852,7 @@ export function YukModulu({ gorunum, onCekmece, onKopru, onToast }) {
               }}>İptal</button>
               <button disabled={sgMesgul} onClick={sgKaydet} style={{
                 padding: '10px 20px', borderRadius: 10, border: 'none', cursor: 'pointer',
-                background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+                background: 'linear-gradient(150deg, #E0A559, #AF6C29)', color: '#1C1309',
                 fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit',
               }}>
                 {sgMesgul ? 'Kaydediliyor…' : 'Kaydet'}
@@ -1261,7 +1261,7 @@ export function SistemModulu({ gorunum, onCekmece, onKopru, onToast }) {
               style={{
                 padding: '10px 20px', borderRadius: 10, border: 'none',
                 background: (tmzForm.onay || '').trim() === TMZ_ONAY
-                  ? (tmzForm.tip === 'sifirla' ? `${R.kirmizi}30` : 'linear-gradient(150deg, #D99A4E, #B06E2C)')
+                  ? (tmzForm.tip === 'sifirla' ? `${R.kirmizi}30` : 'linear-gradient(150deg, #E0A559, #AF6C29)')
                   : R.girinti,
                 color: (tmzForm.onay || '').trim() === TMZ_ONAY
                   ? (tmzForm.tip === 'sifirla' ? R.kirmizi : '#1C1309') : R.not,
@@ -1400,7 +1400,7 @@ export function TanimModulu({ gorunum, onCekmece, onKopru, onToast }) {
         <div style={{ display: 'flex', gap: 9, marginBottom: 12 }}>
           <button onClick={() => setTedForm({ duzenleId: null, ad: '', kategori: '', telefon: '', aciklama: '' })} style={{
             padding: '9px 17px', borderRadius: 10, border: 'none', cursor: 'pointer',
-            background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+            background: 'linear-gradient(150deg, #E0A559, #AF6C29)', color: '#1C1309',
             fontSize: 12, fontWeight: 700, fontFamily: 'inherit',
           }}>
             + Tedarikçi ekle
@@ -1491,7 +1491,7 @@ export function TanimModulu({ gorunum, onCekmece, onKopru, onToast }) {
               }}>İptal</button>
               <button disabled={tedMesgul} onClick={tedKaydet} style={{
                 padding: '10px 20px', borderRadius: 10, border: 'none', cursor: 'pointer',
-                background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+                background: 'linear-gradient(150deg, #E0A559, #AF6C29)', color: '#1C1309',
                 fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit',
               }}>
                 {tedMesgul ? 'Kaydediliyor…' : 'Kaydet'}
@@ -1718,7 +1718,7 @@ export function TanimModulu({ gorunum, onCekmece, onKopru, onToast }) {
                 padding: '8px 14px', borderRadius: 10, fontSize: 12, fontWeight: 700, cursor: 'pointer',
                 border: `1px solid ${tvForm[k] ? R.bakir : R.cizgi3}`,
                 color: tvForm[k] ? R.bakir : R.metin2,
-                background: tvForm[k] ? 'rgba(217,154,78,.12)' : 'transparent',
+                background: tvForm[k] ? 'rgba(217,154,78,.14)' : 'transparent',
               }}>{tvForm[k] ? '✓ ' : '□ '}{ad}</div>
             ))}
           </div>
@@ -1747,7 +1747,7 @@ export function TanimModulu({ gorunum, onCekmece, onKopru, onToast }) {
               }}>İptal</button>
               <button disabled={tvMesgul} onClick={tvKaydet} style={{
                 padding: '10px 20px', borderRadius: 10, border: 'none', cursor: 'pointer',
-                background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+                background: 'linear-gradient(150deg, #E0A559, #AF6C29)', color: '#1C1309',
                 fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit',
               }}>{tvMesgul ? 'Kaydediliyor…' : 'Kaydet'}</button>
             </div>

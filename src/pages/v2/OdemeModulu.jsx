@@ -250,7 +250,7 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
         <div style={{ fontFamily: F.baslik, fontSize: 18, fontWeight: 600, color: R.kirmizi }}>{hata}</div>
         <button onClick={yukle} style={{
           marginTop: 16, padding: '10px 20px', borderRadius: 10, border: 'none',
-          background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+          background: 'linear-gradient(150deg, #E0A559, #AF6C29)', color: '#1C1309',
           fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer',
         }}>Tekrar dene</button>
       </div>
@@ -298,7 +298,7 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
           padding: '8px 14px', borderRadius: 10, fontSize: 12, fontWeight: 700, cursor: 'pointer',
           border: `1px solid ${modal?.yontem === y ? R.bakir : R.cizgi3}`,
           color: modal?.yontem === y ? R.bakir : R.metin2,
-          background: modal?.yontem === y ? 'rgba(217,154,78,.12)' : 'transparent',
+          background: modal?.yontem === y ? 'rgba(217,154,78,.14)' : 'transparent',
         }}>{ad}</div>
       ))}
       {modal?.yontem === 'kart' && (
@@ -324,7 +324,7 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
     const dugme = (ad, birincil, tikla, pasif) => (
       <button disabled={calisiyor || pasif} onClick={tikla} style={birincil ? {
         padding: '10px 20px', borderRadius: 10, border: 'none',
-        background: pasif ? R.girinti : 'linear-gradient(150deg, #D99A4E, #B06E2C)',
+        background: pasif ? R.girinti : 'linear-gradient(150deg, #E0A559, #AF6C29)',
         color: pasif ? R.not : '#1C1309', fontSize: 12.5, fontWeight: 700,
         fontFamily: 'inherit', cursor: pasif ? 'default' : 'pointer',
       } : {
@@ -364,7 +364,7 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
                     padding: '8px 14px', borderRadius: 10, fontSize: 12, fontWeight: 700, cursor: 'pointer',
                     border: `1px solid ${modal.mod === m2 ? R.bakir : R.cizgi3}`,
                     color: modal.mod === m2 ? R.bakir : R.metin2,
-                    background: modal.mod === m2 ? 'rgba(217,154,78,.12)' : 'transparent',
+                    background: modal.mod === m2 ? 'rgba(217,154,78,.14)' : 'transparent',
                   }}>{ad}</div>
                 ))}
               </div>
@@ -507,7 +507,7 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
         <div style={{ display: 'flex', gap: 9, marginBottom: 12, flexWrap: 'wrap' }}>
           <button onClick={() => setModal({ tip: 'taahhut', tedarikci: '', tutar: '', vade: isoEkle(bugun, 7), aciklama: '' })} style={{
             padding: '9px 17px', borderRadius: 10, border: 'none', cursor: 'pointer',
-            background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+            background: 'linear-gradient(150deg, #E0A559, #AF6C29)', color: '#1C1309',
             fontSize: 12, fontWeight: 700, fontFamily: 'inherit',
           }}>
             🤝 Yeni taahhüt (ödeme sözü)

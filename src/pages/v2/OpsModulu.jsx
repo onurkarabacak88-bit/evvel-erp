@@ -699,7 +699,7 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
                     padding: '8px 15px', borderRadius: 10, fontSize: 12, fontWeight: 700, cursor: 'pointer',
                     border: `1px solid ${yonForm.mod === m ? R.bakir : R.cizgi3}`,
                     color: yonForm.mod === m ? R.bakir : R.metin2,
-                    background: yonForm.mod === m ? 'rgba(217,154,78,.12)' : 'transparent',
+                    background: yonForm.mod === m ? 'rgba(217,154,78,.14)' : 'transparent',
                   }}>{ad}</div>
                 ))}
               </div>
@@ -785,7 +785,7 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
                       }}>Vazgeç</button>
                       <button disabled={yonMesgul || !yonForm.tedarikciId || !yonForm.secili.length} onClick={toptanciyaYolla} style={{
                         padding: '10px 20px', borderRadius: 10, border: 'none',
-                        background: (yonForm.tedarikciId && yonForm.secili.length) ? 'linear-gradient(150deg, #D99A4E, #B06E2C)' : R.girinti,
+                        background: (yonForm.tedarikciId && yonForm.secili.length) ? 'linear-gradient(150deg, #E0A559, #AF6C29)' : R.girinti,
                         color: (yonForm.tedarikciId && yonForm.secili.length) ? '#1C1309' : R.not,
                         fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit',
                         cursor: (yonForm.tedarikciId && yonForm.secili.length) ? 'pointer' : 'default',
@@ -836,7 +836,7 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
                   }}>Vazgeç</button>
                   <button disabled={yonMesgul || !yonForm.depo} onClick={yonKaydet} style={{
                     padding: '10px 20px', borderRadius: 10, border: 'none',
-                    background: yonForm.depo ? 'linear-gradient(150deg, #D99A4E, #B06E2C)' : R.girinti,
+                    background: yonForm.depo ? 'linear-gradient(150deg, #E0A559, #AF6C29)' : R.girinti,
                     color: yonForm.depo ? '#1C1309' : R.not, fontSize: 12.5, fontWeight: 700,
                     fontFamily: 'inherit', cursor: yonForm.depo ? 'pointer' : 'default',
                   }}>
@@ -987,7 +987,7 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
                           onClick={() => sevkKaydet(true)}
                           style={{
                             padding: '10px 18px', borderRadius: 11, border: 'none',
-                            background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+                            background: 'linear-gradient(150deg, #E0A559, #AF6C29)', color: '#1C1309',
                             fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit',
                             cursor: busy ? 'wait' : 'pointer', opacity: busy ? 0.6 : 1,
                             boxShadow: '0 6px 18px rgba(217,154,78,.24)',
@@ -1256,7 +1256,7 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
                               onClick={() => onKopru?.('__modul:ops:sayim')}
                               style={{
                                 padding: '9px 17px', borderRadius: 10, border: 'none',
-                                background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+                                background: 'linear-gradient(150deg, #E0A559, #AF6C29)', color: '#1C1309',
                                 fontSize: 12, fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer',
                                 boxShadow: '0 6px 18px rgba(217,154,78,.24)',
                               }}
@@ -1415,7 +1415,7 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
               padding: '6px 13px', borderRadius: 99, fontSize: 11.5, fontWeight: 700, cursor: 'pointer',
               border: `1px solid ${barSekme === id ? R.bakir : R.cizgi3}`,
               color: barSekme === id ? R.bakir : R.metin2,
-              background: barSekme === id ? 'rgba(217,154,78,.12)' : R.girinti,
+              background: barSekme === id ? 'rgba(217,154,78,.14)' : R.girinti,
             }}>{ad}</div>
           ))}
         </div>
@@ -1593,7 +1593,7 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
               padding: '6px 13px', borderRadius: 99, fontSize: 11.5, fontWeight: 700, cursor: 'pointer',
               border: `1px solid ${dnSekme === id ? R.bakir : R.cizgi3}`,
               color: dnSekme === id ? R.bakir : R.metin2,
-              background: dnSekme === id ? 'rgba(217,154,78,.12)' : R.girinti,
+              background: dnSekme === id ? 'rgba(217,154,78,.14)' : R.girinti,
             }}>{ad}</div>
           ))}
         </div>
@@ -1733,7 +1733,7 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
               padding: '6px 13px', borderRadius: 99, fontSize: 11.5, fontWeight: 700, cursor: 'pointer',
               border: `1px solid ${tsSekme === id ? R.bakir : R.cizgi3}`,
               color: tsSekme === id ? R.bakir : R.metin2,
-              background: tsSekme === id ? 'rgba(217,154,78,.12)' : R.girinti,
+              background: tsSekme === id ? 'rgba(217,154,78,.14)' : R.girinti,
             }}>{ad}</div>
           ))}
         </div>

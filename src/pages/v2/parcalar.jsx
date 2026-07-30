@@ -36,7 +36,7 @@ export function KpiSeridi({ kpiler }) {
   if (!kpiler?.length) return null;
   return (
     <div style={{
-      display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(190px,1fr))',
+      display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(178px,1fr))',
       gap: 11, marginBottom: 16,
     }}>
       {kpiler.map((k, i) => (
@@ -294,7 +294,7 @@ export function Liste({ satirlar, baslik, onAc, secilebilir, secili, onSec, onHe
               position: 'relative', display: 'flex', alignItems: 'center', gap: 14,
               padding: '13px 16px 13px 18px', borderRadius: 14, overflow: 'hidden',
               background: isaretli
-                ? `linear-gradient(165deg, rgba(217,154,78,.12), ${R.kart2})`
+                ? `linear-gradient(165deg, rgba(217,154,78,.14), ${R.kart2})`
                 : `linear-gradient(165deg, ${R.kart1}, ${R.kart2})`,
               border: `1px solid ${isaretli ? 'rgba(217,154,78,.38)' : 'rgba(243,233,220,.09)'}`,
               cursor: onAc ? 'pointer' : 'default',
@@ -334,7 +334,7 @@ export function Liste({ satirlar, baslik, onAc, secilebilir, secili, onSec, onHe
                     onClick={(e) => { e.stopPropagation(); a.onTikla?.(l); }}
                     style={a.birincil ? {
                       padding: '6px 14px', borderRadius: 9, border: 'none',
-                      background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+                      background: 'linear-gradient(150deg, #E0A559, #AF6C29)', color: '#1C1309',
                       fontSize: 12, fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer',
                     } : {
                       padding: '6px 12px', borderRadius: 9, border: `1px solid ${R.cizgi3}`,
@@ -408,7 +408,7 @@ export function BorcKocu({
               padding: '7px 15px', borderRadius: 10, fontSize: 12.5, fontWeight: 700, cursor: 'pointer',
               border: `1px solid ${strateji === id ? R.bakir : R.cizgi3}`,
               color: strateji === id ? R.bakir : R.metin2,
-              background: strateji === id ? 'rgba(217,154,78,.12)' : 'transparent',
+              background: strateji === id ? 'rgba(217,154,78,.14)' : 'transparent',
             }}
           >
             {ad}
@@ -432,7 +432,7 @@ export function BorcKocu({
       {oncelikAd && (
         <div style={{
           padding: '18px 20px', borderRadius: 18,
-          background: `linear-gradient(165deg, rgba(217,154,78,.13), ${R.kartUst2})`,
+          background: `linear-gradient(165deg, rgba(217,154,78,.14), ${R.kartUst2})`,
           border: '1px solid rgba(217,154,78,.34)',
         }}>
           <div style={{ fontSize: 12, color: R.metin2 }}>Önce bunu kapat:</div>
@@ -1041,7 +1041,7 @@ export function OnayModali({
                       style={{
                         padding: '10px 11px', borderRadius: 10, cursor: 'pointer', textAlign: 'left',
                         border: `1px solid ${sec ? 'rgba(217,154,78,.6)' : R.cizgi3}`,
-                        background: sec ? 'rgba(217,154,78,.12)' : 'transparent',
+                        background: sec ? 'rgba(217,154,78,.14)' : 'transparent',
                       }}
                     >
                       <div style={{ fontSize: 12, fontWeight: 600, color: sec ? R.bakirAcik : R.metin2 }}>{k.ad}</div>
@@ -1088,7 +1088,7 @@ export function OnayModali({
           <button onClick={onOnayla} disabled={calisiyor} style={{
             padding: '9px 18px', borderRadius: 10,
             border: tehlike ? `1px solid ${R.kirmizi}55` : 'none',
-            background: tehlike ? `${R.kirmizi}26` : 'linear-gradient(150deg, #D99A4E, #B06E2C)',
+            background: tehlike ? `${R.kirmizi}26` : 'linear-gradient(150deg, #E0A559, #AF6C29)',
             color: tehlike ? R.kirmizi : '#1C1309',
             fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit',
             cursor: calisiyor ? 'default' : 'pointer', opacity: calisiyor ? 0.6 : 1,
@@ -1201,7 +1201,7 @@ function CekmeceSekme({ aktif, onSec }) {
             flex: 1, textAlign: 'center', padding: '6px 10px', borderRadius: 7,
             fontSize: 11.5, fontWeight: 600, cursor: 'pointer',
             color: aktif === id ? '#1C1309' : R.not,
-            background: aktif === id ? 'linear-gradient(150deg, #D99A4E, #B06E2C)' : 'transparent',
+            background: aktif === id ? 'linear-gradient(150deg, #E0A559, #AF6C29)' : 'transparent',
           }}
         >
           {ad}
@@ -1435,7 +1435,7 @@ export function Cekmece({
           {aksiyonAd && !aksiyonlar?.length && (
             <button onClick={onAksiyon} style={{
               flex: 1, padding: 10, borderRadius: 10, border: 'none',
-              background: `linear-gradient(150deg, #D99A4E, #B06E2C)`, color: '#1C1309',
+              background: `linear-gradient(150deg, #E0A559, #AF6C29)`, color: '#1C1309',
               fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer',
             }}>
               {aksiyonAd}
@@ -1444,7 +1444,7 @@ export function Cekmece({
           {!!aksiyonlar?.length && aksiyonlar.map((a, ai) => (
             <button key={ai} onClick={() => a.onTikla?.()} style={a.birincil ? {
               flex: 1, padding: 10, borderRadius: 10, border: 'none',
-              background: `linear-gradient(150deg, #D99A4E, #B06E2C)`, color: '#1C1309',
+              background: `linear-gradient(150deg, #E0A559, #AF6C29)`, color: '#1C1309',
               fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer',
             } : {
               padding: '10px 14px', borderRadius: 10, border: `1px solid ${R.cizgi3}`,
@@ -1501,7 +1501,7 @@ export function KopruDurumu({ ad, onGit }) {
       {onGit && (
         <button onClick={onGit} style={{
           marginTop: 4, padding: '10px 20px', borderRadius: 10, border: 'none',
-          background: `linear-gradient(150deg, #D99A4E, #B06E2C)`, color: '#1C1309',
+          background: `linear-gradient(150deg, #E0A559, #AF6C29)`, color: '#1C1309',
           fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer',
         }}>
           Mevcut ekranı aç

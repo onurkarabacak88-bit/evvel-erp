@@ -482,7 +482,7 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
                 padding: '7px 14px', borderRadius: 99, fontSize: 12, fontWeight: 700, cursor: 'pointer',
                 border: `1px solid ${eslTip === t ? R.bakir : R.cizgi3}`,
                 color: eslTip === t ? R.bakir : R.metin2,
-                background: eslTip === t ? 'rgba(217,154,78,.12)' : 'transparent',
+                background: eslTip === t ? 'rgba(217,154,78,.14)' : 'transparent',
               }}>{ad}</div>
             ))}
             <button disabled={!!eslMesgul} onClick={eslOnerUret} style={{
@@ -577,7 +577,7 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
                     }}>Vazgeç</button>
                     <button disabled={!!eslMesgul} onClick={elleEkle} style={{
                       padding: '8px 16px', borderRadius: 10, border: 'none', cursor: 'pointer',
-                      background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+                      background: 'linear-gradient(150deg, #E0A559, #AF6C29)', color: '#1C1309',
                       fontSize: 12, fontWeight: 700, fontFamily: 'inherit',
                     }}>{eslMesgul === 'elle' ? 'Kaydediliyor…' : 'Eşleştir'}</button>
                   </div>
@@ -646,7 +646,7 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
               onClick={() => eslAc()}
               style={{
                 marginTop: 16, padding: '10px 18px', borderRadius: 11, border: 'none',
-                background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+                background: 'linear-gradient(150deg, #E0A559, #AF6C29)', color: '#1C1309',
                 fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer',
               }}
             >

@@ -651,7 +651,7 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
         <div style={{ fontFamily: F.baslik, fontSize: 18, fontWeight: 600, color: R.kirmizi }}>{hata}</div>
         <button onClick={yukle} style={{
           marginTop: 16, padding: '10px 20px', borderRadius: 10, border: 'none',
-          background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+          background: 'linear-gradient(150deg, #E0A559, #AF6C29)', color: '#1C1309',
           fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer',
         }}>Tekrar dene</button>
       </div>
@@ -777,7 +777,7 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
                 }}>İptal</button>
                 <button disabled={pMesgul} onClick={pKaydet} style={{
                   padding: '10px 20px', borderRadius: 10, border: 'none', cursor: 'pointer',
-                  background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+                  background: 'linear-gradient(150deg, #E0A559, #AF6C29)', color: '#1C1309',
                   fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit',
                 }}>{pMesgul ? 'Kaydediliyor…' : 'Kaydet'}</button>
               </div>
@@ -831,7 +831,7 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
           <div style={{ fontSize: 13, color: R.kirmizi }}>Veri alınamadı — {pdHata}</div>
           <button onClick={pdYukle} style={{
             marginTop: 14, padding: '9px 18px', borderRadius: 10, border: 'none', cursor: 'pointer',
-            background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+            background: 'linear-gradient(150deg, #E0A559, #AF6C29)', color: '#1C1309',
             fontSize: 12, fontWeight: 700, fontFamily: 'inherit',
           }}>🔄 Tekrar dene</button>
         </div>
@@ -868,7 +868,7 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
               padding: '6px 13px', borderRadius: 99, fontSize: 11.5, fontWeight: 700, cursor: 'pointer',
               border: `1px solid ${pdSekme === id ? R.bakir : R.cizgi3}`,
               color: pdSekme === id ? R.bakir : R.metin2,
-              background: pdSekme === id ? 'rgba(217,154,78,.12)' : R.girinti,
+              background: pdSekme === id ? 'rgba(217,154,78,.14)' : R.girinti,
             }}>{ad}</div>
           ))}
         </div>
@@ -1086,7 +1086,7 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
         <div style={{ display: 'flex', gap: 9, marginTop: 12, marginBottom: 16, flexWrap: 'wrap' }}>
           <button onClick={() => pFormAc(null)} style={{
             padding: '9px 17px', borderRadius: 10, border: 'none', cursor: 'pointer',
-            background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+            background: 'linear-gradient(150deg, #E0A559, #AF6C29)', color: '#1C1309',
             fontSize: 12, fontWeight: 700, fontFamily: 'inherit',
           }}>
             + Personel ekle
@@ -1357,7 +1357,7 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
                   onClick={() => vpAta(false)}
                   style={{
                     padding: '10px 20px', borderRadius: 10, border: 'none',
-                    background: vpAtaModal.personelId ? 'linear-gradient(150deg, #D99A4E, #B06E2C)' : R.girinti,
+                    background: vpAtaModal.personelId ? 'linear-gradient(150deg, #E0A559, #AF6C29)' : R.girinti,
                     color: vpAtaModal.personelId ? '#1C1309' : R.not,
                     fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit',
                     cursor: vpAtaModal.personelId ? 'pointer' : 'default',
@@ -1406,7 +1406,7 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
                   }}>Vazgeç</button>
                   <button disabled={!!vpMesgul || !vpKopyaModal.hedef} onClick={() => vpGunKopyala(vpKopyaModal.hedef)} style={{
                     padding: '10px 18px', borderRadius: 10, border: 'none', cursor: 'pointer',
-                    background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+                    background: 'linear-gradient(150deg, #E0A559, #AF6C29)', color: '#1C1309',
                     fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit',
                   }}>{vpMesgul === 'kopyala' ? 'Kopyalanıyor…' : 'Kopyala'}</button>
                 </div>
@@ -1566,7 +1566,7 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
                   }}>Vazgeç</button>
                   <button disabled={bMesgul || (tip === 'ode' && !b.odeme_id)} onClick={bYap} style={{
                     padding: '10px 20px', borderRadius: 10, border: 'none', cursor: 'pointer',
-                    background: TEHLIKE ? `${R.kirmizi}26` : 'linear-gradient(150deg, #D99A4E, #B06E2C)',
+                    background: TEHLIKE ? `${R.kirmizi}26` : 'linear-gradient(150deg, #E0A559, #AF6C29)',
                     color: TEHLIKE ? R.kirmizi : '#1C1309', fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit',
                   }}>{bMesgul ? 'İşleniyor…' : BASLIK}</button>
                 </div>
@@ -2149,7 +2149,7 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
               }}>Vazgeç</button>
               <button disabled={pinMesgul} onClick={pinKaydet} style={{
                 padding: '10px 20px', borderRadius: 10, border: 'none', cursor: 'pointer',
-                background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+                background: 'linear-gradient(150deg, #E0A559, #AF6C29)', color: '#1C1309',
                 fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit',
               }}>{pinMesgul ? 'Kaydediliyor…' : 'PIN\'i kaydet'}</button>
             </div>
@@ -2217,7 +2217,7 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
               }}>Vazgeç</button>
               <button disabled={qrMesgul || !qrModal.lat || !qrModal.lng} onClick={konumKaydet} style={{
                 padding: '10px 20px', borderRadius: 10, border: 'none', cursor: 'pointer',
-                background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+                background: 'linear-gradient(150deg, #E0A559, #AF6C29)', color: '#1C1309',
                 fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit',
               }}>{qrMesgul ? 'Kaydediliyor…' : 'Konumu kaydet'}</button>
             </div>

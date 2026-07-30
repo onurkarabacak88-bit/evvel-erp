@@ -91,7 +91,7 @@ function KopruButon({ ad, onTikla, birincil }) {
   return (
     <button onClick={onTikla} style={birincil ? {
       padding: '9px 17px', borderRadius: 10, border: 'none',
-      background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+      background: 'linear-gradient(150deg, #E0A559, #AF6C29)', color: '#1C1309',
       fontSize: 12, fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer',
       boxShadow: '0 6px 18px rgba(217,154,78,.24)',
     } : {
@@ -734,7 +734,7 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
             />
             <button disabled={sohbetMesgul || soru.trim().length < 3} onClick={sor} style={{
               padding: '10px 20px', borderRadius: 10, border: 'none',
-              background: soru.trim().length < 3 ? R.girinti : 'linear-gradient(150deg, #D99A4E, #B06E2C)',
+              background: soru.trim().length < 3 ? R.girinti : 'linear-gradient(150deg, #E0A559, #AF6C29)',
               color: soru.trim().length < 3 ? R.not : '#1C1309', fontSize: 12.5, fontWeight: 700,
               fontFamily: 'inherit', cursor: soru.trim().length < 3 ? 'default' : 'pointer',
             }}>
@@ -791,7 +791,7 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
                 }}>İptal</button>
                 <button disabled={notMesgul} onClick={notKaydet} style={{
                   padding: '10px 20px', borderRadius: 10, border: 'none', cursor: 'pointer',
-                  background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+                  background: 'linear-gradient(150deg, #E0A559, #AF6C29)', color: '#1C1309',
                   fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit',
                 }}>{notMesgul ? 'Yazılıyor…' : 'Günlüğe yaz'}</button>
               </div>
@@ -885,7 +885,7 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
                   <div style={{ display: 'flex', gap: 8 }}>
                     <button disabled={topluMesgul} onClick={topluUygula} style={{
                       padding: '9px 16px', borderRadius: 10, border: 'none', cursor: 'pointer',
-                      background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+                      background: 'linear-gradient(150deg, #E0A559, #AF6C29)', color: '#1C1309',
                       fontSize: 12, fontWeight: 700, fontFamily: 'inherit',
                     }}>{topluMesgul ? 'Uygulanıyor…' : `Eminim — ${fmt(toplam)} öde`}</button>
                     <button onClick={() => setTopluSor(false)} style={{
@@ -896,7 +896,7 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
                 ) : (
                   <button onClick={() => setTopluSor(true)} style={{
                     padding: '9px 17px', borderRadius: 10, border: 'none', cursor: 'pointer',
-                    background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+                    background: 'linear-gradient(150deg, #E0A559, #AF6C29)', color: '#1C1309',
                     fontSize: 12, fontWeight: 700, fontFamily: 'inherit',
                   }}>
                     ⚡ Önerileri toplu uygula

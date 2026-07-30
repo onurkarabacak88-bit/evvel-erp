@@ -427,7 +427,7 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
         <div style={{ fontFamily: F.baslik, fontSize: 18, fontWeight: 600, color: R.kirmizi }}>{hata}</div>
         <button onClick={yukle} style={{
           marginTop: 16, padding: '10px 20px', borderRadius: 10, border: 'none',
-          background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+          background: 'linear-gradient(150deg, #E0A559, #AF6C29)', color: '#1C1309',
           fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer',
         }}>Tekrar dene</button>
       </div>
@@ -508,7 +508,7 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
         <div style={{ display: 'flex', gap: 9, marginBottom: 12 }}>
           <button onClick={() => kartFormAc(null)} style={{
             padding: '9px 17px', borderRadius: 10, border: 'none', cursor: 'pointer',
-            background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+            background: 'linear-gradient(150deg, #E0A559, #AF6C29)', color: '#1C1309',
             fontSize: 12, fontWeight: 700, fontFamily: 'inherit',
           }}>
             + Kart ekle
@@ -622,7 +622,7 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
                   }}>İptal</button>
                   <button disabled={kartMesgul} onClick={kartKaydet} style={{
                     padding: '10px 20px', borderRadius: 10, border: 'none', cursor: 'pointer',
-                    background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+                    background: 'linear-gradient(150deg, #E0A559, #AF6C29)', color: '#1C1309',
                     fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit',
                   }}>
                     {kartMesgul ? 'Kaydediliyor…' : 'Kaydet'}
@@ -804,7 +804,7 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
           onClick={eksAc}
           style={{
             padding: '9px 17px', borderRadius: 10, border: 'none', cursor: 'pointer',
-            background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+            background: 'linear-gradient(150deg, #E0A559, #AF6C29)', color: '#1C1309',
             fontSize: 12, fontWeight: 700, fontFamily: 'inherit',
           }}
         >
@@ -992,7 +992,7 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
                   {!kart && (
                     <button disabled={kartEkleBusy} onClick={eksKartiEkle} style={{
                       padding: '9px 17px', borderRadius: 10, border: 'none', cursor: 'pointer', marginBottom: 12,
-                      background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+                      background: 'linear-gradient(150deg, #E0A559, #AF6C29)', color: '#1C1309',
                       fontSize: 12, fontWeight: 700, fontFamily: 'inherit',
                     }}>
                       {kartEkleBusy ? 'Ekleniyor…' : '+ Bu kartı sisteme ekle'}
@@ -1038,7 +1038,7 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
                           finally { setEksTtBusy(false); }
                         }} style={{
                           padding: '8px 15px', borderRadius: 9, border: 'none', cursor: 'pointer',
-                          background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+                          background: 'linear-gradient(150deg, #E0A559, #AF6C29)', color: '#1C1309',
                           fontSize: 12, fontWeight: 700, fontFamily: 'inherit',
                         }}>Evet, eşitle</button>
                         <button onClick={() => setEksOnaySor(null)} style={{
@@ -1062,7 +1062,7 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
                   {kart && !eksImpSonuc && !eksOnaySor && (
                     <button disabled={eksTtBusy} onClick={eksTekTik} style={{
                       width: '100%', padding: '12px 0', borderRadius: 12, border: 'none', cursor: 'pointer',
-                      background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+                      background: 'linear-gradient(150deg, #E0A559, #AF6C29)', color: '#1C1309',
                       fontSize: 13.5, fontWeight: 800, fontFamily: 'inherit', marginBottom: 12,
                     }}>
                       {eksTtBusy ? 'Mutabakat yapılıyor…' : '⚡ Tek Tık Mutabakat — aktar + farkı kapat'}
@@ -1101,7 +1101,7 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
                     }}>Vazgeç</button>
                     <button disabled={manBusy} onClick={eksManuelKaydet} style={{
                       padding: '8px 17px', borderRadius: 10, border: 'none', cursor: 'pointer',
-                      background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+                      background: 'linear-gradient(150deg, #E0A559, #AF6C29)', color: '#1C1309',
                       fontSize: 12, fontWeight: 700, fontFamily: 'inherit',
                     }}>{manBusy ? 'Kaydediliyor…' : 'Kaydet'}</button>
                   </div>
