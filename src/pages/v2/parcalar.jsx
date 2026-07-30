@@ -906,7 +906,56 @@ export function OnayModali({ acik, baslik, altBaslik, tutar, satirlar, not, onay
 // Çekmece aksiyon sözleşmesi: tek aksiyon için {aksiyonAd, onAksiyon};
 // ÇOKLU aksiyon için aksiyonlar:[{ad, birincil?, onTikla}] (köprü kaldırma turu,
 // 2026-07-30 — "düzenle + işten çıkış" gibi iki yollu dosyalar için).
-export function Cekmece({ acik, tip, baslik, alt, kpi, listeBaslik, satirlar, not, aksiyonAd, onAksiyon, aksiyonlar, onKapat }) {
+/** Çekmece sekme kontrolü — Özet · Belgeler · İz (yeni handoff).
+ *  Belgeler/İz sekmeleri modülün GEÇTİĞİ veriyle dolar; veri yoksa sekme
+ *  dürüst boş durum gösterir (uydurma belge/iz üretilmez). */
+function CekmeceSekme({ aktif, onSec }) {
+  const S = [['ozet', 'Özet'], ['belge', 'Belgeler'], ['iz', 'İz']];
+  return (
+    <div style={{
+      display: 'flex', gap: 3, margin: '14px 22px 0', padding: 3,
+      borderRadius: 10, background: R.girinti, border: `1px solid ${R.cizgi}`,
+    }}>
+      {S.map(([id, ad]) => (
+        <div
+          key={id}
+          onClick={() => onSec(id)}
+          style={{
+            flex: 1, textAlign: 'center', padding: '6px 10px', borderRadius: 7,
+            fontSize: 11.5, fontWeight: 600, cursor: 'pointer',
+            color: aktif === id ? '#1C1309' : R.not,
+            background: aktif === id ? 'linear-gradient(150deg, #D99A4E, #B06E2C)' : 'transparent',
+          }}
+        >
+          {ad}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** Sekme boş durumu — neden boş olduğunu SÖYLER, sessizce boş kalmaz. */
+function SekmeBos({ baslik, aciklama }) {
+  return (
+    <div style={{
+      border: `1px dashed ${R.cizgi3}`, borderRadius: 14, padding: '30px 20px', textAlign: 'center',
+    }}>
+      <div style={{ fontFamily: F.baslik, fontSize: 15, color: R.metin2 }}>{baslik}</div>
+      <div style={{ fontSize: 12, color: R.not2, marginTop: 6, lineHeight: 1.6, maxWidth: 320, margin: '6px auto 0' }}>
+        {aciklama}
+      </div>
+    </div>
+  );
+}
+
+export function Cekmece({
+  acik, tip, baslik, alt, kpi, listeBaslik, satirlar, not,
+  aksiyonAd, onAksiyon, aksiyonlar, onKapat,
+  belgeler, iz, dosyaBilgi,
+}) {
+  const [sekme, setSekme] = React.useState('ozet');
+  // Her açılışta Özet'e döner (blueprint kuralı)
+  React.useEffect(() => { setSekme('ozet'); }, [acik, tip, baslik]);
   if (!acik) return null;
   return (
     <>
@@ -944,8 +993,119 @@ export function Cekmece({ acik, tip, baslik, alt, kpi, listeBaslik, satirlar, no
           </div>
         </div>
 
+        <CekmeceSekme aktif={sekme} onSec={setSekme} />
+
         <div style={{ flex: 1, overflowY: 'auto', padding: '18px 22px 22px', display: 'flex', flexDirection: 'column', gap: 18 }}>
-          {!!kpi?.length && (
+          {sekme === 'belge' && (
+            belgeler?.length ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
+                {belgeler.map((b, i) => (
+                  <a
+                    key={i}
+                    href={b.url || undefined}
+                    target={b.url ? '_blank' : undefined}
+                    rel="noreferrer"
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 12, padding: '11px 13px',
+                      borderRadius: 12, background: R.kart1, border: '1px solid rgba(243,233,220,.08)',
+                      textDecoration: 'none', color: 'inherit', cursor: b.url ? 'pointer' : 'default',
+                    }}
+                  >
+                    <span style={{
+                      flexShrink: 0, width: 34, height: 34, borderRadius: 9,
+                      border: `1px solid ${R.bakir}55`, color: R.bakir, display: 'flex',
+                      alignItems: 'center', justifyContent: 'center', fontSize: 9, fontWeight: 700,
+                    }}>
+                      {(b.tur || 'DOSYA').slice(0, 4).toUpperCase()}
+                    </span>
+                    <span style={{ flex: 1, minWidth: 0 }}>
+                      <span style={{ display: 'block', fontSize: 12.5, fontWeight: 600 }}>{b.ad}</span>
+                      <span style={{ display: 'block', fontSize: 11, color: R.not2, marginTop: 2 }}>{b.boyut || b.detay || '—'}</span>
+                    </span>
+                    {b.rozet && (
+                      <span style={{
+                        flexShrink: 0, padding: '3px 9px', borderRadius: 99, fontSize: 10.5, fontWeight: 700,
+                        background: `${b.rozetRenk || R.yesil}22`, color: b.rozetRenk || R.yesil,
+                      }}>
+                        {b.rozet}
+                      </span>
+                    )}
+                  </a>
+                ))}
+              </div>
+            ) : (
+              <SekmeBos
+                baslik="Bağlı belge yok"
+                aciklama="Bu kayda iliştirilmiş fatura/fiş bulunmuyor. Belgeler tedarikçi faturası yüklendiğinde ya da fatura isteği kapandığında burada görünür."
+              />
+            )
+          )}
+
+          {sekme === 'iz' && (
+            <>
+              {iz?.length ? (
+                <div>
+                  <div style={{
+                    fontSize: 11, letterSpacing: '.8px', textTransform: 'uppercase', color: R.not2,
+                    fontWeight: 700, paddingBottom: 9, borderBottom: `1px solid ${R.cizgi}`, marginBottom: 13,
+                  }}>
+                    İşlem izi · değişmez kayıt
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column' }}>
+                    {iz.map((a, i) => {
+                      const renk = a.renk || (a.bekliyor ? R.amber : R.yesil);
+                      const son = i === iz.length - 1;
+                      return (
+                        <div key={i} style={{ display: 'flex', gap: 13 }}>
+                          <div style={{ flexShrink: 0, width: 22, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                            <span style={{
+                              width: 9, height: 9, borderRadius: 99, marginTop: 4,
+                              background: a.bekliyor ? 'transparent' : renk,
+                              boxShadow: a.bekliyor ? `inset 0 0 0 1.5px ${renk}` : `0 0 0 3px ${renk}26`,
+                            }} />
+                            {!son && <span style={{ flex: 1, width: 1, background: R.cizgi3, marginTop: 4 }} />}
+                          </div>
+                          <div style={{ paddingBottom: son ? 0 : 16, minWidth: 0 }}>
+                            <div style={{ fontSize: 12.5, fontWeight: 600, color: a.bekliyor ? R.metin2 : R.krem }}>{a.ad}</div>
+                            <div style={{ fontSize: 11, color: R.not2, marginTop: 2, lineHeight: 1.5 }}>{a.detay}</div>
+                            {a.zaman && (
+                              <div style={{ fontFamily: F.mono, fontSize: 10, color: '#6E6052', marginTop: 3 }}>{a.zaman}</div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : (
+                <SekmeBos
+                  baslik="İşlem izi tutulmuyor"
+                  aciklama="Bu kayıt tipi için adım adım iz defteri yok. Para hareketleri (ödeme, ciro, kasa) İşlem Defteri'nde değişmez kayıt olarak durur."
+                />
+              )}
+
+              {dosyaBilgi && (
+                <div>
+                  <div style={{
+                    fontSize: 11, letterSpacing: '.8px', textTransform: 'uppercase', color: R.not2,
+                    fontWeight: 700, paddingBottom: 9, borderBottom: `1px solid ${R.cizgi}`, marginBottom: 11,
+                  }}>
+                    Dosya bilgisi
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {Object.entries(dosyaBilgi).map(([k, v]) => (
+                      <div key={k} style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 12 }}>
+                        <span style={{ color: R.not2 }}>{k}</span>
+                        <span style={{ fontFamily: F.mono, fontSize: 11.5, color: R.metin2, textAlign: 'right' }}>{v}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+
+          {sekme === 'ozet' && !!kpi?.length && (
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 9 }}>
               {kpi.map((k, i) => (
                 <div key={i} style={{ background: R.kart1, border: '1px solid rgba(243,233,220,.08)', borderRadius: 13, padding: '12px 14px' }}>
@@ -960,7 +1120,7 @@ export function Cekmece({ acik, tip, baslik, alt, kpi, listeBaslik, satirlar, no
             </div>
           )}
 
-          {!!satirlar?.length && (
+          {sekme === 'ozet' && !!satirlar?.length && (
             <div>
               <div style={{
                 fontSize: 11, letterSpacing: '.8px', textTransform: 'uppercase', color: R.not2,
@@ -984,7 +1144,7 @@ export function Cekmece({ acik, tip, baslik, alt, kpi, listeBaslik, satirlar, no
             </div>
           )}
 
-          {not && (
+          {sekme === 'ozet' && not && (
             <div style={{
               padding: '13px 15px', borderRadius: 13, background: 'rgba(217,154,78,.09)',
               border: '1px solid rgba(217,154,78,.28)', fontSize: 12.5, color: '#E7DCCB', lineHeight: 1.6,

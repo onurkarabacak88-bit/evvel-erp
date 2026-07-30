@@ -75,6 +75,67 @@ function HataBandi({ mesaj, onTekrar }) {
     </div>
   );
 }
+/** Fatura satırı → 3 sekmeli çekmece (Özet · Belgeler · İz).
+ *  Yeni handoff'un merkez deseni: "tablo → tıkla → özet + bağlı belgeler +
+ *  değişmez işlem izi". İz ADIMLARI YALNIZ GERÇEK ALANLARDAN türetilir —
+ *  veri yoksa adım hiç yazılmaz (uydurma zincir yok). */
+function faturaCekmecesi(b) {
+  const ocrTamam = /tamam/i.test(String(b.durum || ''));
+  const ocrHata = /hata/i.test(String(b.durum || ''));
+  const iz = [
+    {
+      ad: 'Belge arşive girdi',
+      detay: b.kaynak || 'PDF/foto yüklemesi',
+      zaman: tarihKisa(b.tarih),
+    },
+  ];
+  if (b.durum) {
+    iz.push({
+      ad: ocrTamam ? 'Kalemler okundu' : ocrHata ? 'Okuma başarısız' : `Durum: ${b.durum}`,
+      detay: ocrTamam ? 'satır satır çözümlendi' : ocrHata ? 'elle kontrol gerekir' : 'işleniyor',
+      renk: ocrTamam ? R.yesil : ocrHata ? R.kirmizi : R.amber,
+      bekliyor: !ocrTamam && !ocrHata,
+    });
+  }
+  if (b.parmak_izi || b.mukerrer != null) {
+    iz.push({
+      ad: b.mukerrer ? 'Mükerrer şüphesi' : 'Parmak izi alındı',
+      detay: b.mukerrer ? 'aynı belge daha önce girmiş olabilir' : 'aynı belge iki kez girmez',
+      renk: b.mukerrer ? R.kirmizi : R.yesil,
+    });
+  }
+  if (b.gib_damga || b.gib) {
+    iz.push({ ad: 'GİB damgası doğrulandı', detay: 'resmî belge', renk: R.yesil });
+  }
+  return {
+    tip: 'FATURA KAYDI',
+    baslik: kisalt(b.tedarikci_ad || b.toptanci || b.fatura_no || 'Fatura', 60),
+    alt: `${tarihKisa(b.tarih)}${b.fatura_no ? ` · ${b.fatura_no}` : ''}`,
+    kpi: [
+      { etiket: 'Tutar', deger: fmt(sayi(b.tutar)), renk: R.krem },
+      { etiket: 'Tarih', deger: tarihKisa(b.tarih) },
+      { etiket: 'Durum', deger: ocrTamam ? 'işlendi' : (b.durum || '—'), renk: ocrTamam ? R.yesil : ocrHata ? R.kirmizi : R.amber },
+      ...(b.bakiye_dahil != null ? [{ etiket: 'Bakiye (dahil)', deger: fmt(sayi(b.bakiye_dahil)) }] : []),
+    ],
+    listeBaslik: 'Belge',
+    satirlar: [
+      { ad: 'Tedarikçi', detay: 'cari kimlik', tutar: kisalt(b.tedarikci_ad || b.toptanci || '—', 34) },
+      { ad: 'Belge no', detay: 'fatura numarası', tutar: b.fatura_no || '—' },
+      { ad: 'Tutar', detay: 'belge üzerindeki', tutar: fmt(sayi(b.tutar)) },
+    ],
+    not: 'Fatura arşivi KDV kanıtının temelidir — belge 10 yıl saklanır, silinmez.',
+    belgeler: b.goruntule
+      ? [{ ad: `${kisalt(b.tedarikci_ad || b.toptanci || 'Fatura', 30)} · belge`, tur: 'PDF', boyut: 'arşivdeki asıl belge', url: b.goruntule, rozet: 'arşivde', rozetRenk: R.yesil }]
+      : [],
+    iz,
+    dosyaBilgi: {
+      'Kayıt no': String(b.id || '—'),
+      'Kaynak modül': 'Belge Merkezi',
+      'Belge tarihi': tarihKisa(b.tarih),
+    },
+  };
+}
+
 function BosDurum({ metin }) {
   return (
     <div style={{ ...kartYuzey, padding: '34px 30px', textAlign: 'center' }}>
@@ -417,10 +478,7 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast }) {
                 { v: fmt(sayi(b.tutar)), mono: true, sag: true, kalin: true },
               ],
             }))}
-            onSatir={({ _b }) => {
-              if (_b.goruntule) window.open(_b.goruntule, '_blank');
-              else onToast?.('Bu kaydın PDF/foto eki yok — görüntülenecek belge bulunmuyor.');
-            }}
+            onSatir={({ _b }) => onCekmece?.(faturaCekmecesi(_b))}
           />
         )}
       </>
@@ -756,10 +814,8 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast }) {
                     { v: f.bakiye_dahil != null ? fmt(sayi(f.bakiye_dahil)) : '—', mono: true, sag: true, renk: R.metin2 },
                   ],
                 }))}
-                onSatir={({ _f }) => {
-                  if (_f.goruntule) window.open(_f.goruntule, '_blank');
-                  else onToast?.('Bu faturanın PDF/foto eki yok — arşivde görüntülenecek belge bulunmuyor.');
-                }}
+                onSatir={({ _f }) => onCekmece?.(faturaCekmecesi({ ...
+                  _f, tedarikci_ad: _f.tedarikci_ad || cariSecim }))}
               />
             )}
           </>

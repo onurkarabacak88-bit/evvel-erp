@@ -1142,6 +1142,11 @@ export default function TasarimV2({ onGit }) {
           listeBaslik={cekmece?.listeBaslik}
           satirlar={cekmece?.satirlar}
           not={cekmece?.not}
+          // Belgeler / İz sekmeleri (yeni handoff): modül veri geçerse dolar,
+          // geçmezse sekme NEDEN boş olduğunu söyler — uydurma belge/iz yok.
+          belgeler={cekmece?.belgeler}
+          iz={cekmece?.iz}
+          dosyaBilgi={cekmece?.dosyaBilgi}
           aksiyonAd={cekmece?.aksiyonAd}
           onAksiyon={() => koprule(cekmece?._hedef)}
           // Çoklu aksiyon (modül kendi işini yapar): tıklayınca çekmece kapanır,

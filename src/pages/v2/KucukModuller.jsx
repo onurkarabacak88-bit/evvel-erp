@@ -945,8 +945,19 @@ export function RaporModulu({ gorunum, onCekmece, onKopru }) {
                 { ad: 'İşlem türü', detay: 'defter sınıfı', tutar: slugAd(r.islem_turu) },
               ],
               not: 'İşlem defteri append-only\'dir; düzeltme ters kayıtla yapılır.',
-              aksiyonAd: 'İşlem defterini aç',
-              _hedef: '__modul:rapor:defter',
+              // İz sekmesi (yeni handoff): defter kaydının kendisi ZATEN değişmez
+              // iz — adımlar kaydın gerçek alanlarından türer, uydurulmaz.
+              iz: [
+                { ad: 'Kayıt doğdu', detay: `kaynak: ${r.kaynak_tablo || 'bilinmiyor'}`, zaman: kisaTarih(r.tarih) },
+                { ad: 'Deftere yazıldı', detay: 'append-only · silinemez', renk: R.yesil },
+                { ad: 'Düzeltme yolu', detay: 'ters kayıt (silme yok)', bekliyor: true, renk: R.not },
+              ],
+              dosyaBilgi: {
+                'Kayıt no': String(r.id || '—'),
+                'Kaynak tablo': r.kaynak_tablo || '—',
+                'İşlem türü': slugAd(r.islem_turu),
+                'Tarih': kisaTarih(r.tarih),
+              },
             });
           }}
         />
