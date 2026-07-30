@@ -219,6 +219,34 @@ const OPS_UC = {
     ],
   },
   '/api/ops/siparis/sevkiyat-guncelle': { ok: true },
+  // Tedarik & Sinyal (ops-merkez P3 sekmeleri)
+  '/api/ops/toptanci-teslimler': {
+    gun: 14, toplam_sube: 2,
+    subeler: [
+      { sube_id: 's0', sube_adi: 'ZAFER', toplam: 4, son_tarih: bugunISO },
+      { sube_id: 's1', sube_adi: 'KÖYCEĞİZ', toplam: 2, son_tarih: bugunISO },
+    ],
+  },
+  '/api/ops/sube-notlar': {
+    satirlar: [
+      { id: 'n1', sube_adi: 'ZAFER', tarih: bugunISO, metin: 'Klima arızası, akşam serviste sıkıntı oldu.' },
+      { id: 'n2', sube_adi: 'KÖYCEĞİZ', tarih: bugunISO, metin: '[YARIM_ISLEM_BILDIRIM] URUN_AC taslak olarak kaldı' },
+    ],
+  },
+  '/api/ops/stok-tahmin': {
+    gun: 14,
+    tahminler: [
+      { urun_ad: 'plastik kapak', ort_gunluk_tuketim: 126.9, gozlem_gun: 13, tahmin_7gun: 888.5, kalan_gun: 4 },
+      { urun_ad: 'süt 3.5%', ort_gunluk_tuketim: 18.4, gozlem_gun: 12, tahmin_7gun: 128.8, kalan_gun: 12 },
+    ],
+  },
+  '/api/ops/kpi-delta': {
+    donem: 'ay', gun: 30,
+    kpilar: [
+      { anahtar: 'ciro', etiket: 'Ciro', simdi: 1172830, onceki: 1159635, delta_pct: 1.14, yon: 'iyi' },
+      { anahtar: 'food_cost', etiket: 'Food cost', simdi: 34.2, onceki: 31.8, delta_pct: 7.5, yon: 'kotu' },
+    ],
+  },
   // Personel Denetimi (ops-merkez P2 sekmeleri)
   '/api/ops/personel-davranis-analiz': {
     gun_sayi: 45,

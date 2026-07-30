@@ -35,6 +35,7 @@ const bugunYerelISO = () => {
 };
 
 const AYLAR = ['Oca', 'Şub', 'Mar', 'Nis', 'May', 'Haz', 'Tem', 'Ağu', 'Eyl', 'Eki', 'Kas', 'Ara'];
+const trSayi = (n, b = 1) => (Number(n) || 0).toFixed(b).replace('.', ',');
 const gunEkleISO = (iso, n) => {
   const d = new Date(iso + 'T00:00:00Z');
   d.setUTCDate(d.getUTCDate() + n);
@@ -156,6 +157,14 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
   const [dnKontrol, setDnKontrol] = useState(null);
   const [dnKayip, setDnKayip] = useState(null);
   const [dnHata, setDnHata] = useState('');
+  // ── TEDARİK & SİNYAL (ops-merkez P3 sekmeleri, 2026-07-30) ────────────────
+  // toptancıdan gelenler · şube notları · stok tahmini · KPI delta
+  const [tsSekme, setTsSekme] = useState('teslim');
+  const [tsTeslim, setTsTeslim] = useState(null);
+  const [tsNotlar, setTsNotlar] = useState(null);
+  const [tsTahmin, setTsTahmin] = useState(null);
+  const [tsKpi, setTsKpi] = useState(null);
+  const [tsHata, setTsHata] = useState('');
   // ── SAYIM ─────────────────────────────────────────────────────────────────
   const [sayim, setSayim] = useState(null);
   const [sayimIz, setSayimIz] = useState(null);
@@ -215,6 +224,22 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     api('/ops/stok-kayip-analiz?gun=45')
       .then((d) => setDnKayip(d || {}))
       .catch(() => setDnKayip({}));
+  }, []);
+
+  const tedarikYukle = useCallback(() => {
+    setTsHata('');
+    api('/ops/toptanci-teslimler?gun=14')
+      .then((d) => setTsTeslim(d || {}))
+      .catch((e) => setTsHata(e?.message || ''));
+    api('/ops/sube-notlar?limit=60')
+      .then((d) => setTsNotlar(Array.isArray(d?.satirlar) ? d.satirlar : []))
+      .catch(() => setTsNotlar([]));
+    api('/ops/stok-tahmin')
+      .then((d) => setTsTahmin(d || {}))
+      .catch(() => setTsTahmin({}));
+    api('/ops/kpi-delta?donem=ay')
+      .then((d) => setTsKpi(d || {}))
+      .catch(() => setTsKpi({}));
   }, []);
 
   const yonAc = (sip) => {
@@ -370,8 +395,9 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     if (gorunum === 'hareket') hareketYukle();
     if (gorunum === 'bar') barYukle(barTarih);
     if (gorunum === 'denetim') denetimYukle(barTarih);
+    if (gorunum === 'tedarik') tedarikYukle();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gorunum, kuleYukle, sevkYukle, depoYukle, sayimYukle, hareketYukle, barYukle, denetimYukle]);
+  }, [gorunum, kuleYukle, sevkYukle, depoYukle, sayimYukle, hareketYukle, barYukle, denetimYukle, tedarikYukle]);
 
   // ── seçili sevkiyat talebi değişince kalem durumlarını hazırla ────────────
   const seciliTalep = useMemo(
@@ -488,7 +514,7 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
         ? { aksiyonlar: [{ ad: '→ Yönlendir (depo / toptancı)', birincil: true, onTikla: () => yonAc(s) }] }
         : s.asama === 'depoda'
           ? { aksiyonAd: 'Sevkiyatı hazırla', _hedef: '__gorunum:sevkiyat' }
-          : { aksiyonAd: 'Operasyon Merkezi\'ni aç', _hedef: 'ops-merkez' }),
+          : { aksiyonAd: 'Kontrol kulesinde izle', _hedef: '__gorunum:kule' }),
     });
   };
 
@@ -533,7 +559,7 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
                 şube kabulü sevk edilenle uyuşmadı — merkez kararı gerekli
               </span>
               <button
-                onClick={() => onKopru?.('ops-merkez')}
+                onClick={() => onGorunum?.('denetim')}
                 style={{
                   padding: '6px 13px', borderRadius: 9, border: `1px solid ${R.kirmizi}55`,
                   background: `${R.kirmizi}18`, color: R.kirmizi, fontSize: 11.5, fontWeight: 700,
@@ -1101,10 +1127,10 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
                   tutar: `${sayi((k.adetler || {})[sb.id])} adet`,
                 })),
                 not: m > 0 && adetAl(k) < m
-                  ? 'Minimumun altında — sipariş oluşturma ve hareket geçmişi Operasyon Merkezi\'nde.'
-                  : 'Hareket geçmişi ve sipariş akışı Operasyon Merkezi\'nde.',
-                aksiyonAd: 'Operasyon Merkezi\'ni aç',
-                _hedef: 'ops-merkez',
+                  ? 'Minimumun altında — sipariş için Sipariş Akışı, geçmiş için Stok Hareketi görünümü.'
+                  : 'Hareket geçmişi Stok Hareketi görünümünde.',
+                aksiyonAd: 'Stok hareketine git',
+                _hedef: '__gorunum:hareket',
               });
             }}
           />
@@ -1678,6 +1704,133 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
           ℹ Hepsi ÖNERİ-ONLY: bu ekran uyumsuzluğu GÖSTERİR, hüküm vermez.
           Uzlaştırma/çözüm işaretleri ilgili guard'lı akışlarda yapılır.
         </div>
+      </>
+    );
+  }
+
+  // ════════════════════════ GÖRÜNÜM: TEDARİK & SİNYAL ═══════════════════════
+  // ops-merkez P3: toptancıdan gelenler · şube notları · stok tahmini · KPI delta
+  if (gorunum === 'tedarik') {
+    if (tsHata) return <HataBandi mesaj={tsHata} onTekrar={tedarikYukle} />;
+    if (!tsTeslim) return <Yukleniyor />;
+    const teslimSube = Array.isArray(tsTeslim?.subeler) ? tsTeslim.subeler : [];
+    const notlar = Array.isArray(tsNotlar) ? tsNotlar : [];
+    const tahminler = Array.isArray(tsTahmin?.tahminler) ? tsTahmin.tahminler : [];
+    const kpilar = Array.isArray(tsKpi?.kpilar) ? tsKpi.kpilar : [];
+    const kritikTahmin = tahminler.filter((t) => sayi(t.kalan_gun) > 0 && sayi(t.kalan_gun) <= 7);
+    const kotuKpi = kpilar.filter((k) => k.yon === 'kotu');
+    const ALT = [
+      ['teslim', `\u{1F4E6} Toptancıdan gelen (${teslimSube.length})`],
+      ['notlar', `\u{1F4DD} Şube notları (${notlar.length})`],
+      ['tahmin', `\u{1F52E} Stok tahmini (${tahminler.length})`],
+      ['kpi', `\u{1F4CA} KPI değişimi (${kpilar.length})`],
+    ];
+    return (
+      <>
+        <KpiSeridi kpiler={[
+          { etiket: 'Teslim alan şube', deger: `${teslimSube.length} şube`, alt: `son ${sayi(tsTeslim?.gun) || 14} gün`, renk: R.krem },
+          { etiket: 'Şube notu', deger: String(notlar.length), alt: 'merkeze düşen kayıt', renk: notlar.length ? R.mavi : R.yesil },
+          { etiket: 'Tükenme riski', deger: String(kritikTahmin.length), alt: kritikTahmin.length ? '7 günden az kalan kalem' : 'kritik kalem yok', renk: kritikTahmin.length ? R.kirmizi : R.yesil },
+          { etiket: 'Kötüleşen KPI', deger: String(kotuKpi.length), alt: kotuKpi.length ? kotuKpi.map((k) => k.etiket).slice(0, 2).join(', ') : 'tümü iyi/nötr', renk: kotuKpi.length ? R.amber : R.yesil },
+        ]} />
+
+        <div style={{ display: 'flex', gap: 7, marginBottom: 14, flexWrap: 'wrap' }}>
+          {ALT.map(([id, ad]) => (
+            <div key={id} onClick={() => setTsSekme(id)} style={{
+              padding: '6px 13px', borderRadius: 99, fontSize: 11.5, fontWeight: 700, cursor: 'pointer',
+              border: `1px solid ${tsSekme === id ? R.bakir : R.cizgi3}`,
+              color: tsSekme === id ? R.bakir : R.metin2,
+              background: tsSekme === id ? 'rgba(217,154,78,.12)' : R.girinti,
+            }}>{ad}</div>
+          ))}
+        </div>
+
+        {tsSekme === 'teslim' && (teslimSube.length ? (
+          <Tablo
+            baslik={`Toptancıdan gelenler · son ${sayi(tsTeslim?.gun) || 14} gün`}
+            not="şube panelinden girilen teslim alımları"
+            kolonlar={[{ ad: 'Şube' }, { ad: 'Teslim adedi', sag: true }, { ad: 'Son teslim' }]}
+            satirlar={teslimSube.map((x, i) => ({
+              id: x.sube_id || `t-${i}`,
+              hucreler: [
+                { v: x.sube_adi || '—', kalin: true },
+                { v: String(sayi(x.toplam)), mono: true, sag: true, kalin: true },
+                { v: tarihKisa(x.son_tarih), mono: true, renk: R.not },
+              ],
+            }))}
+          />
+        ) : <BosDurum metin="Son 14 günde toptancıdan teslim alımı kaydı yok." />)}
+
+        {tsSekme === 'notlar' && (notlar.length ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16 }}>
+            {notlar.slice(0, 30).map((n, i) => {
+              const sistemNotu = /^\[/.test(String(n.metin || ''));
+              return (
+                <div key={n.id || `n-${i}`} style={{
+                  ...kartYuzey, padding: '12px 16px',
+                  borderLeft: `3px solid ${sistemNotu ? R.mavi : R.bakir}`,
+                }}>
+                  <div style={{ display: 'flex', gap: 10, alignItems: 'baseline', flexWrap: 'wrap', marginBottom: 5 }}>
+                    <span style={{ fontSize: 12.5, fontWeight: 700 }}>{n.sube_adi || n.sube_id || '—'}</span>
+                    <span style={{ fontSize: 11, color: R.not2, fontFamily: F.mono }}>{tarihKisa(n.tarih || n.olusturma)}</span>
+                    {sistemNotu && <span style={rozetHap(R.mavi)}>sistem</span>}
+                  </div>
+                  <div style={{ fontSize: 12.5, color: R.metin2, lineHeight: 1.55 }}>{n.metin || '—'}</div>
+                </div>
+              );
+            })}
+          </div>
+        ) : <BosDurum metin="Şube notu yok." />)}
+
+        {tsSekme === 'tahmin' && (tahminler.length ? (
+          <Tablo
+            baslik={`Stok tahmini · ${sayi(tsTahmin?.gun) || 14} günlük tüketim ortalaması`}
+            not="ortalama tüketimden ileriye projeksiyon — sipariş planı için"
+            kolonlar={[
+              { ad: 'Ürün' }, { ad: 'Günlük ort.', sag: true }, { ad: '7 gün tahmini', sag: true },
+              { ad: 'Gözlem', sag: true }, { ad: 'Durum' },
+            ]}
+            satirlar={[...tahminler]
+              .sort((a, b) => sayi(b.ort_gunluk_tuketim) - sayi(a.ort_gunluk_tuketim))
+              .slice(0, 40)
+              .map((x, i) => ({
+                id: x.urun_ad || `th-${i}`,
+                hucreler: [
+                  { v: x.urun_ad || '—', kalin: true },
+                  { v: x.ort_gunluk_tuketim != null ? String(Math.round(sayi(x.ort_gunluk_tuketim) * 10) / 10) : '—', mono: true, sag: true },
+                  { v: x.tahmin_7gun != null ? String(Math.round(sayi(x.tahmin_7gun))) : '—', mono: true, sag: true, kalin: true },
+                  { v: `${sayi(x.gozlem_gun)} gün`, mono: true, sag: true, renk: R.not },
+                  sayi(x.gozlem_gun) >= 10
+                    ? { v: 'güvenilir', rozet: R.yesil }
+                    : { v: 'az gözlem', rozet: R.amber },
+                ],
+              }))}
+          />
+        ) : <BosDurum metin="Stok tahmini için yeterli tüketim verisi yok." />)}
+
+        {tsSekme === 'kpi' && (kpilar.length ? (
+          <Tablo
+            baslik={`KPI değişimi · ${tsKpi?.donem || 'ay'} (${sayi(tsKpi?.gun)} gün)`}
+            not="önceki dönemle karşılaştırma — yön motor tarafından belirlenir"
+            kolonlar={[{ ad: 'Gösterge' }, { ad: 'Şimdi', sag: true }, { ad: 'Önceki', sag: true }, { ad: 'Değişim', sag: true }, { ad: 'Yön' }]}
+            satirlar={kpilar.map((k, i) => ({
+              id: k.anahtar || `kp-${i}`,
+              hucreler: [
+                { v: k.etiket || k.anahtar || '—', kalin: true },
+                { v: fmt(sayi(k.simdi)), mono: true, sag: true, kalin: true },
+                { v: fmt(sayi(k.onceki)), mono: true, sag: true, renk: R.not },
+                {
+                  v: `${sayi(k.delta_pct) > 0 ? '+' : ''}${trSayi(sayi(k.delta_pct), 1)}%`,
+                  mono: true, sag: true,
+                  renk: k.yon === 'iyi' ? R.yesil : k.yon === 'kotu' ? R.kirmizi : R.not,
+                },
+                k.yon === 'iyi'
+                  ? { v: 'iyileşti', rozet: R.yesil }
+                  : k.yon === 'kotu' ? { v: 'kötüleşti', rozet: R.kirmizi } : { v: 'nötr', rozet: R.not },
+              ],
+            }))}
+          />
+        ) : <BosDurum metin="KPI karşılaştırma verisi yok." />)}
       </>
     );
   }
