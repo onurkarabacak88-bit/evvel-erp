@@ -11,7 +11,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { api, fmt, istekHatalari, istekHatalariniTemizle, istekHatasiDinle } from '../../utils/api';
-import { R, F, MODULLER, GUN_SONU_MODULLERI, kartYuzey } from './tema';
+import { R, F, MODULLER, GUN_SONU_MODULLERI, TARIH_GEZGINI_EKRANLARI, kartYuzey } from './tema';
 import { Ikon, KpiSeridi, Hero, Liste, Tablo, Cekmece, Toast, KopruDurumu, HataBandi } from './parcalar';
 import KartModulu from './KartModulu';
 import OdemeModulu from './OdemeModulu';
@@ -43,6 +43,15 @@ const AY_KISA_V2 = ['Oca', 'Şub', 'Mar', 'Nis', 'May', 'Haz', 'Tem', 'Ağu', 'E
 const kisaGun = (iso) => {
   const m = String(iso || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
   return m ? `${Number(m[3])} ${AY_KISA_V2[Number(m[2]) - 1]}` : String(iso || '');
+};
+
+const HAFTA_ADI = ['Pazar', 'Pazartesi', 'Salı', 'Çarşamba', 'Perşembe', 'Cuma', 'Cumartesi'];
+/** '2026-07-29' → '29 Tem 2026 · Çarşamba' (UTC'de kurulur, gün kaymaz). */
+const uzunGun = (iso) => {
+  const m = String(iso || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return String(iso || '');
+  const g = new Date(`${iso}T00:00:00Z`).getUTCDay();
+  return `${Number(m[3])} ${AY_KISA_V2[Number(m[2]) - 1]} ${m[1]} · ${HAFTA_ADI[g]}`;
 };
 
 const sayi = (v) => Number(v) || 0;
@@ -102,6 +111,8 @@ export default function TasarimV2({ onGit }) {
   const [toast, setToast] = useState('');
   // Komut paleti (yeni handoff): ⌘K / Ctrl+K / '/' ile 40 ekrana tek yerden erişim
   const [subeOps, setSubeOps] = useState(null);   // şube × sevkiyat trafiği
+  // TARİH GEZGİNİ: null = CANLI (bugün/son gün). Dolu ise geçmiş gün modu.
+  const [secilenGun, setSecilenGun] = useState(null);
   const [palet, setPalet] = useState(false);
   const [paletQ, setPaletQ] = useState('');
   const [paletI, setPaletI] = useState(0);
@@ -323,7 +334,9 @@ export default function TasarimV2({ onGit }) {
     // Son ciro girilen gün — bugün henüz girilmemişse "en güncel gün"ü göster.
     const gunler = [...new Set(hepsi.map(r => r.tarih))].sort();
     const sonGun = gunler[gunler.length - 1] || bugun;
-    const odakGun = hepsi.some(r => r.tarih === bugun) ? bugun : sonGun;
+    // Tarih gezgini seçiliyse odak O GÜN olur — veri gerçekten o günden süzülür,
+    // ölçekleme/uydurma yok. Seçilen günde kayıt yoksa liste boş çıkar (dürüst).
+    const odakGun = secilenGun || (hepsi.some(r => r.tarih === bugun) ? bugun : sonGun);
     const odakBugunMu = odakGun === bugun;
 
     const gunSatir = hepsi.filter(r => r.tarih === odakGun);
@@ -372,7 +385,7 @@ export default function TasarimV2({ onGit }) {
       subeGunListe, subeAyListe, ayToplam, ayOnEk, aySatir,
       gunSayisi: new Set(aySatir.map(r => r.tarih)).size,
     };
-  }, [cirolar]);
+  }, [cirolar, secilenGun]);
 
   const bugunOdemeler = useMemo(() => {
     const liste = panel?.bugun_odemeler || [];
@@ -395,6 +408,27 @@ export default function TasarimV2({ onGit }) {
   // ── gezinme ────────────────────────────────────────────────────────────────
   const modObj = MODULLER.find(m => m.id === mod) || MODULLER[0];
   const gorunumObj = modObj.gorunumler.find(g => g.id === gorunum) || modObj.gorunumler[0];
+
+  /** Geçmiş gün modunda "Bugün" kelimesi KULLANILMAZ; etiket o günün tarihine
+   *  döner. Canlı günde eski davranış aynen sürer. */
+  const gunEtiketi = (tip) => {
+    const canli = !secilenGun && veri.odakBugunMu;
+    if (tip === 'ciro') return canli ? 'Bugünkü ciro' : `${kisaGun(veri.odakGun)} cirosu`;
+    return canli ? 'Bugün' : kisaGun(veri.odakGun);
+  };
+
+  // ── TARİH GEZGİNİ türetimleri ──────────────────────────────────────────────
+  const gezginVar = TARIH_GEZGINI_EKRANLARI.includes(`${mod}.${gorunum}`);
+  const odakGunSimdi = secilenGun || veri.odakGun || bugunISO();
+  const gecmisGunMu = !!secilenGun && secilenGun < bugunISO();
+  const okStil = {
+    width: 26, height: 26, borderRadius: 7, cursor: 'pointer',
+    border: `1px solid ${R.cizgi3}`, background: 'transparent', color: R.metin2,
+    fontSize: 14, fontFamily: 'inherit', lineHeight: 1, padding: 0,
+  };
+  // Gezgin kapsam dışı bir ekrana geçilirse seçim DÜŞER — aksi hâlde geri
+  // dönüldüğünde eski gün sessizce yürürlükte kalır (tarih yalanı riski).
+  useEffect(() => { if (!gezginVar && secilenGun) setSecilenGun(null); }, [gezginVar]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   const modSec = (id) => {
     const m = MODULLER.find(x => x.id === id);
@@ -647,7 +681,9 @@ export default function TasarimV2({ onGit }) {
     const d = veri;
     const kpiler = [
       // Sparkline: GERÇEK son 14 gün serisi (uydurma seed yok)
-      { etiket: d.odakBugunMu ? 'Bugünkü ciro' : 'Son gün cirosu', deger: fmt(d.gunToplam), alt: `${d.subeGunListe.length} şube · ${d.odakGun}`, seri: d.seri },
+      // ETİKET TÜRETME (handoff zorunlu kuralı): geçmiş günde "Bugün" geçen her
+      // etiket O GÜNÜN tarihine çevrilir — yoksa arayüz yalan söyler.
+      { etiket: gunEtiketi('ciro'), deger: fmt(d.gunToplam), alt: `${d.subeGunListe.length} şube · ${kisaGun(d.odakGun)}`, seri: d.seri },
       { etiket: 'Nakit', deger: fmt(d.gunNakit), alt: `payı %${yuzde(d.gunNakit, d.gunToplam).toFixed(0)}`, renk: R.krem },
       { etiket: 'Kart + online', deger: fmt(d.gunKart), alt: `payı %${yuzde(d.gunKart, d.gunToplam).toFixed(0)}`, renk: R.krem },
       { etiket: 'Bugün ödenecek', deger: fmt(bugunOdemeToplam), alt: `${bugunOdemeler.length} kalem · vadesi bugün/geçmiş`, renk: bugunOdemeToplam > 0 ? R.kirmizi : R.yesil },
@@ -692,7 +728,7 @@ export default function TasarimV2({ onGit }) {
         <KpiSeridi kpiler={kpiler} />
         {cfoKpiler.length > 0 && <KpiSeridi kpiler={cfoKpiler} />}
         <Hero
-          etiket={d.odakBugunMu ? 'Bugün · son 14 gün ritmi' : `${d.odakGun} · son 14 gün ritmi`}
+          etiket={`${gunEtiketi('baslik')} · son 14 gün ritmi`}
           deger={fmt(d.gunToplam)}
           delta={d.delta == null ? '' : `%${trSayi(Math.abs(d.delta))} ${d.delta >= 0 ? '↑' : '↓'}`}
           deltaTip={d.delta == null ? 'notr' : d.delta >= 0 ? 'iyi' : 'kotu'}
@@ -1125,6 +1161,47 @@ export default function TasarimV2({ onGit }) {
               </div>
             )}
 
+            {/* ── TARİH GEZGİNİ (yeni handoff) ─────────────────────────────
+                YALNIZ beyaz listedeki ekranlarda çıkar (tema.js). Gün kavramı
+                olmayan ya da o günün verisini getiremediğimiz ekranda gezgin
+                göstermek "yanlış tarih iddiası" olur — bu yüzden liste dar. */}
+            {gezginVar && (
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: 3, padding: 3, borderRadius: 10,
+                background: R.girinti, border: `1px solid ${R.cizgi}`,
+              }}>
+                <button
+                  onClick={() => setSecilenGun(gunEkle(odakGunSimdi, -1))}
+                  title="Önceki gün"
+                  style={okStil}
+                >‹</button>
+                <div
+                  onClick={() => setSecilenGun(null)}
+                  title={gecmisGunMu ? 'Bugüne dön' : 'Canlı gün'}
+                  style={{
+                    minWidth: 92, textAlign: 'center', padding: '2px 8px', cursor: 'pointer',
+                    lineHeight: 1.2,
+                  }}
+                >
+                  <div style={{ fontSize: 11.5, fontWeight: 700, color: gecmisGunMu ? R.amber : R.krem }}>
+                    {kisaGun(odakGunSimdi)}
+                  </div>
+                  <div style={{ fontSize: 9.5, color: R.not2 }}>
+                    {gecmisGunMu ? 'geçmiş gün' : 'canlı'}
+                  </div>
+                </div>
+                <button
+                  onClick={() => {
+                    const y2 = gunEkle(odakGunSimdi, 1);
+                    setSecilenGun(y2 >= bugunISO ? null : y2);   // geleceğe geçilmez
+                  }}
+                  disabled={!gecmisGunMu}
+                  title={gecmisGunMu ? 'Sonraki gün' : 'Gelecek gün yok'}
+                  style={{ ...okStil, opacity: gecmisGunMu ? 1 : 0.35, cursor: gecmisGunMu ? 'pointer' : 'default' }}
+                >›</button>
+              </div>
+            )}
+
             {/* Arama tetikleyici — salt-okur; tıklama komut paletini açar (yeni handoff) */}
             <div
               onClick={paletAc}
@@ -1204,6 +1281,35 @@ export default function TasarimV2({ onGit }) {
               deneme={hataDefteri[0].adet > 1 ? `${hataDefteri[0].adet}. kez` : null}
               onTekrar={() => { istekHatalariniTemizle(); setHataDefteri([]); yukle(); }}
             />
+          )}
+
+          {gezginVar && gecmisGunMu && (
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 13, padding: '13px 16px',
+              borderRadius: 12, marginBottom: 16, flexWrap: 'wrap',
+              background: 'linear-gradient(165deg, rgba(251,191,36,.10), #221809)',
+              border: '1px solid rgba(251,191,36,.30)',
+            }}>
+              <div style={{ flex: 1, minWidth: 220 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: R.amber }}>
+                  {uzunGun(odakGunSimdi)}
+                </div>
+                <div style={{ fontSize: 12.5, color: R.metin2, marginTop: 3, lineHeight: 1.55 }}>
+                  Geçmiş gün görüntüleniyor. Rakamlar o günün kapanışıdır; canlı
+                  değildir ve buradan düzeltme kaydı girilemez.
+                </div>
+              </div>
+              <button
+                onClick={() => setSecilenGun(null)}
+                style={{
+                  flexShrink: 0, padding: '8px 15px', borderRadius: 9, cursor: 'pointer',
+                  border: `1px solid ${R.amber}55`, background: `${R.amber}18`,
+                  color: R.amber, fontSize: 12, fontWeight: 700, fontFamily: 'inherit',
+                }}
+              >
+                Bugüne dön
+              </button>
+            </div>
           )}
 
           {/* Dar ekran gezinmesi: 222px kolon gizlenince görünümler çip olur */}

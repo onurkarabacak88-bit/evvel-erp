@@ -94,6 +94,28 @@ export const IK = {
  *  kullanıcıyı yanlış yönlendirir. */
 export const GUN_SONU_MODULLERI = ['panel', 'para', 'odeme', 'ops', 'onaylar'];
 
+/** TARİH GEZGİNİ BEYAZ LİSTESİ — 'modul.gorunum' biçiminde.
+ *
+ *  ⚠️ HANDOFF'UN KRİTİK KURALI: gezgin, GÜN KAVRAMI OLMAYAN ekranda render
+ *  EDİLMEZ. Aksi hâlde arayüz YANLIŞ TARİH İDDİA EDER — sarı bant "29 Temmuz
+ *  kapanışıdır" derken ekran başka bir günün sabit verisini gösterir. Finansal
+ *  üründe bu doğrudan yanlış bilgidir.
+ *
+ *  Bu yüzden liste DAR tutulur; bir ekran ancak İKİ şartı da sağlarsa girer:
+ *    1. gerçekten gün-kapsamlı (aylık/kümülatif/master-data DEĞİL), ve
+ *    2. o günün verisini GERÇEKTEN getirebiliyoruz (uydurma ölçekleme yok).
+ *
+ *  Bilinçli DIŞARIDA kalanlar:
+ *   · panel.ay · panel.subeler · maliyet.ozet · rapor.aylik  → AYLIK
+ *   · ops.depo · odeme.tedarikci · borc.takvim              → KÜMÜLATİF/ANLIK
+ *   · tanim.* · sistem.*                                     → MASTER DATA
+ *   · ops.bar · ekip.gorev · ekip.maas · ekip.takip          → KENDİ gün/ay
+ *     seçicileri var; ikinci bir kontrol "tek eylem tek yer" kuralını çiğner
+ *   · panel.risk · panel.strateji · denetim.*                → uçları tarih
+ *     parametresi almıyor; gezgin koyarsak tarih yalanı olur (uç eklenince girer)
+ */
+export const TARIH_GEZGINI_EKRANLARI = ['panel.bugun'];
+
 export const MODULLER = [
   // ══════════════════ BLOK: KARAR ══════════════════
   { id: 'panel', blok: 'Karar', ad: 'Yönetim & Karar', kisa: 'Panel', alt: 'CFO görünümleri', ikon: IK.gosterge, gorunumler: [
