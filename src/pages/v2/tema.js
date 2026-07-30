@@ -88,6 +88,12 @@ export const IK = {
 // anahtarlar rozet göstermez; ilgili modül v2'ye yazılırken bağlanır.
 // `renk` = tasarımdaki rozet rengi; #F87171 (kırmızı) olan bir görünüm varsa
 // modülün ray ikonunda kırmızı nokta belirir.
+/** Üst çubuktaki "Gün Sonu Takibi" YALNIZ günlük operasyon modüllerinde çıkar.
+ *  Kural (yeni handoff): başlıktaki birincil eylem içerikle ilgisizse render
+ *  edilmez — TV menüsü düzenlerken ya da borç takvimine bakarken orada durması
+ *  kullanıcıyı yanlış yönlendirir. */
+export const GUN_SONU_MODULLERI = ['panel', 'para', 'odeme', 'ops', 'onaylar'];
+
 export const MODULLER = [
   // ══════════════════ BLOK: KARAR ══════════════════
   { id: 'panel', blok: 'Karar', ad: 'Yönetim & Karar', kisa: 'Panel', alt: 'CFO görünümleri', ikon: IK.gosterge, gorunumler: [

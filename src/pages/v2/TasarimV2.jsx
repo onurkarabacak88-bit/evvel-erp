@@ -11,7 +11,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { api, fmt } from '../../utils/api';
-import { R, F, MODULLER, kartYuzey } from './tema';
+import { R, F, MODULLER, GUN_SONU_MODULLERI, kartYuzey } from './tema';
 import { Ikon, KpiSeridi, Hero, Liste, Tablo, Cekmece, Toast, KopruDurumu } from './parcalar';
 import KartModulu from './KartModulu';
 import OdemeModulu from './OdemeModulu';
@@ -1159,18 +1159,25 @@ export default function TasarimV2({ onGit }) {
               Sahip kararı: buton DURUR ama kapatmaz; kapanışın izlendiği ekrana
               götürür (Operasyon Merkezi → 📊 Kapanış Takip).
             */}
-            <button
-              onClick={() => koprule('__modul:ops:bar')}
-              title="Kapanış takibini açar — kapatma işlemi şubede mühür/QR ile yapılır"
-              style={{
-                padding: '8px 15px', borderRadius: 10, border: 'none',
-                background: `linear-gradient(150deg, #E0A559, #AF6C29)`, color: '#1C1309',
-                fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer',
-                boxShadow: '0 6px 18px rgba(217,154,78,.24)',
-              }}
-            >
-              Gün Sonu Takibi
-            </button>
+            {/* BAĞLAMA GÖRE BİRİNCİL EYLEM (yeni handoff kuralı, 2026-07-30):
+                başlıktaki birincil eylem İÇERİKLE İLGİSİZSE render edilmez.
+                Gün sonu yalnız GÜNLÜK OPERASYON modüllerinde anlamlı; TV menüsü
+                düzenlerken ya da borç takvimine bakarken orada durması
+                kullanıcıyı yanlış yönlendirir. */}
+            {GUN_SONU_MODULLERI.includes(mod) && (
+              <button
+                onClick={() => koprule('__modul:ops:bar')}
+                title="Kapanış takibini açar — kapatma işlemi şubede mühür/QR ile yapılır"
+                style={{
+                  padding: '8px 15px', borderRadius: 10, border: 'none',
+                  background: `linear-gradient(150deg, #E0A559, #AF6C29)`, color: '#1C1309',
+                  fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer',
+                  boxShadow: '0 6px 18px rgba(217,154,78,.24)',
+                }}
+              >
+                Gün Sonu Takibi
+              </button>
+            )}
           </div>
         </header>
 
