@@ -119,6 +119,10 @@ function KucukModal({ baslik, alt, onKapat, children, genislik = 470 }) {
   );
 }
 
+const modalEtiket = {
+  fontSize: 10.5, letterSpacing: '.7px', textTransform: 'uppercase',
+  color: R.not2, fontWeight: 700, marginBottom: 6, display: 'block',
+};
 const modalAlanStil = {
   width: '100%', boxSizing: 'border-box', padding: '9px 12px', borderRadius: 10,
   border: `1px solid ${R.cizgi3}`, background: R.girinti, color: R.krem,
@@ -955,7 +959,13 @@ export function RaporModulu({ gorunum, onCekmece, onKopru }) {
 // ═════════════════════════════════════════════════════════════════════════════
 // 4) VERİ & SİSTEM — sistem.excel / sistem.teslim / sistem.temizle
 // ═════════════════════════════════════════════════════════════════════════════
-export function SistemModulu({ gorunum, onCekmece, onKopru }) {
+export function SistemModulu({ gorunum, onCekmece, onKopru, onToast }) {
+  // ── YERLİ TEMİZLİK (köprü kaldırma turu, 2026-07-30) ──────────────────────
+  // TEHLİKELİ uçlar; klasikteki yazılı onay ('EVET_SIL') AYNEN korunur +
+  // kadifede ikinci kapı (onay metni yazılmadan buton açılmaz).
+  const [tmzForm, setTmzForm] = useState(null);   // {tip:'depo'|'sifirla', onay:''}
+  const [tmzMesgul, setTmzMesgul] = useState(false);
+  const [tmzSonuc, setTmzSonuc] = useState('');
   const { yukleniyor, hata, veri, yukle } = useVeri([
     ['/teslim-bildirim/liste?gun=7', null],
     ['/ops/siparis/depo-akisi-kalinti', null],
@@ -966,6 +976,32 @@ export function SistemModulu({ gorunum, onCekmece, onKopru }) {
 
   const [teslimHam, kalinti, importIzi] = veri;
   const olaylar = teslimHam?.olaylar || (Array.isArray(teslimHam) ? teslimHam : []);
+
+  const TMZ_ONAY = 'EVET_SIL';
+  const temizlikYap = async () => {
+    const f = tmzForm;
+    if ((f?.onay || '').trim() !== TMZ_ONAY) { onToast?.(`Onay kutusuna tam olarak «${TMZ_ONAY}» yazın`); return; }
+    setTmzMesgul(true);
+    setTmzSonuc('');
+    try {
+      if (f.tip === 'depo') {
+        const r = await api('/ops/siparis/depo-akisi-temizle', { method: 'POST', body: { onay: TMZ_ONAY } });
+        const n = sayi(r?.silinen) || sayi(r?.temizlenen) || 0;
+        setTmzSonuc(`✓ Depo akışı kalıntısı temizlendi${n ? ` — ${n} kayıt` : ''}`);
+        onToast?.('✓ Depo akışı kalıntısı temizlendi');
+      } else {
+        const r = await api('/sistem-sifirla', { method: 'POST', body: { onay: TMZ_ONAY, tablolar: [] } });
+        setTmzSonuc(`✓ Sıfırlama tamam${r?.silinen_tablo ? ` — ${r.silinen_tablo} tablo` : ''}`);
+        onToast?.('✓ Sistem sıfırlandı');
+      }
+      setTmzForm(null);
+      yukle();
+    } catch (e) {
+      onToast?.(e?.message || 'İşlem başarısız');
+    } finally {
+      setTmzMesgul(false);
+    }
+  };
 
   if (gorunum === 'excel') {
     // DUYU 6/6 (2026-07-29): "Yükleme geçmişi kayıt altına alınmıyor" eksiği
@@ -1052,26 +1088,84 @@ export function SistemModulu({ gorunum, onCekmece, onKopru }) {
             id: 'kalinti',
             baslik: `Depo akışı kalıntısı · ${kalintiAdet} kayıt`,
             alt: 'tamamlanmış sipariş akışından artakalan geçici kayıtlar',
-            tutar: `${kalintiAdet} kayıt`, tier: 'uyari', aksiyon: 'Veri Temizle\'yi aç',
-            _hedef: 'veri-temizle',
+            tutar: `${kalintiAdet} kayıt`, tier: 'uyari',
+            aksiyonlar: [{ ad: 'Temizle', birincil: true, onTikla: () => { setTmzSonuc(''); setTmzForm({ tip: 'depo', onay: '' }); } }],
           }] : []),
           {
             id: 'merkez',
             baslik: 'Merkez sipariş temizliği',
             alt: 'tamamlanmış siparişlerin eskileri arşive iner',
-            tutar: 'arşiv', tier: 'bilgi', aksiyon: 'Temizliği aç',
-            _hedef: 'merkez-temizlik',
+            tutar: 'arşiv', tier: 'bilgi',
+            aksiyon: 'Sipariş akışını aç', _hedef: '__modul:ops:kule',
           },
           {
             id: 'sifirla',
             baslik: 'Sistem sıfırlama',
             alt: 'TÜM işlem verisini siler — yalnızca demo/kurulum aşamasında kullanılır',
-            tutar: 'tehlikeli', tier: 'kritik', aksiyon: 'Veri Temizle\'yi aç',
-            _hedef: 'veri-temizle',
+            tutar: 'tehlikeli', tier: 'kritik',
+            aksiyonlar: [{ ad: '⚠ Sıfırlama kapısı', onTikla: () => { setTmzSonuc(''); setTmzForm({ tip: 'sifirla', onay: '' }); } }],
           },
         ]}
-        onAc={(l) => onKopru?.(l._hedef)}
+        onAc={(l) => l._hedef && onKopru?.(l._hedef)}
       />
+
+      {tmzSonuc && (
+        <div style={{
+          ...kartYuzey, padding: '13px 17px', marginTop: 14,
+          border: `1px solid ${R.yesil}55`, fontSize: 12.5, color: R.metin2,
+        }}>{tmzSonuc}</div>
+      )}
+
+      {/* ── YERLİ TEMİZLİK KAPISI (yazılı onay zorunlu) ── */}
+      {tmzForm && (
+        <KucukModal
+          baslik={tmzForm.tip === 'depo' ? 'Depo Akışı Kalıntısı' : '⚠ Sistem Sıfırlama'}
+          alt={tmzForm.tip === 'depo' ? 'tamamlanmış akıştan artakalan geçici kayıtlar' : 'TÜM işlem verisi silinir'}
+          onKapat={() => !tmzMesgul && setTmzForm(null)}
+          genislik={500}
+        >
+          <div style={{
+            padding: '13px 16px', borderRadius: 12, marginBottom: 14,
+            background: tmzForm.tip === 'sifirla' ? `${R.kirmizi}14` : `${R.amber}12`,
+            border: `1px solid ${tmzForm.tip === 'sifirla' ? `${R.kirmizi}66` : `${R.amber}55`}`,
+          }}>
+            <div style={{ fontSize: 12.5, fontWeight: 700, color: tmzForm.tip === 'sifirla' ? R.kirmizi : R.amber }}>
+              {tmzForm.tip === 'sifirla' ? 'BU İŞLEM GERİ ALINAMAZ' : 'Bu işlem geri alınamaz'}
+            </div>
+            <div style={{ fontSize: 12, color: R.metin2, marginTop: 6, lineHeight: 1.55 }}>
+              {tmzForm.tip === 'depo'
+                ? 'Yalnızca tamamlanmış sipariş akışının geçici kayıtları silinir; kasa izi ve defter kayıtları ETKİLENMEZ.'
+                : 'Ciro, gider, sipariş, kasa — tüm işlem verisi silinir. Yalnızca demo/kurulum aşamasında kullanılır. Gerçek veriyle çalışıyorsan BU KAPIYI KAPAT.'}
+            </div>
+          </div>
+          <label style={modalEtiket}>Onaylamak için «{TMZ_ONAY}» yazın</label>
+          <input value={tmzForm.onay} placeholder={TMZ_ONAY}
+            onChange={(e) => setTmzForm((f) => ({ ...f, onay: e.target.value }))}
+            style={{ ...modalAlanStil, fontFamily: F.mono, letterSpacing: '1px' }} />
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 16 }}>
+            <button disabled={tmzMesgul} onClick={() => setTmzForm(null)} style={{
+              padding: '10px 18px', borderRadius: 10, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+              background: 'transparent', color: R.metin2, fontSize: 12.5, fontWeight: 600, fontFamily: 'inherit',
+            }}>Vazgeç</button>
+            <button
+              disabled={tmzMesgul || (tmzForm.onay || '').trim() !== TMZ_ONAY}
+              onClick={temizlikYap}
+              style={{
+                padding: '10px 20px', borderRadius: 10, border: 'none',
+                background: (tmzForm.onay || '').trim() === TMZ_ONAY
+                  ? (tmzForm.tip === 'sifirla' ? `${R.kirmizi}30` : 'linear-gradient(150deg, #D99A4E, #B06E2C)')
+                  : R.girinti,
+                color: (tmzForm.onay || '').trim() === TMZ_ONAY
+                  ? (tmzForm.tip === 'sifirla' ? R.kirmizi : '#1C1309') : R.not,
+                fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit',
+                cursor: (tmzForm.onay || '').trim() === TMZ_ONAY ? 'pointer' : 'default',
+              }}
+            >
+              {tmzMesgul ? 'İşleniyor…' : (tmzForm.tip === 'depo' ? 'Kalıntıyı temizle' : 'Sıfırla')}
+            </button>
+          </div>
+        </KucukModal>
+      )}
     </>
   );
 }
@@ -1089,6 +1183,63 @@ export function TanimModulu({ gorunum, onCekmece, onKopru, onToast }) {
   const [tedForm, setTedForm] = useState(null);   // {duzenleId?, ad, kategori, telefon, aciklama}
   const [tedMesgul, setTedMesgul] = useState(false);
   const [tedPasifSor, setTedPasifSor] = useState('');
+  // ── YERLİ TV MENÜ DÜZENLEME (köprü kaldırma turu, 2026-07-30) ─────────────
+  // Klasik TvMenuYonetim'in ürün formu: fiyat (8oz/14oz/ice) · sıra · aktiflik.
+  // TV'nin KENDİ tasarım dili (TULİPİ) korunur — bu yalnız yönetim yüzü.
+  const [tvForm, setTvForm] = useState(null);      // {id, ad, kategori, f8, f14, fice, sira, aktif, yeni, aciklama}
+  const [tvMesgul, setTvMesgul] = useState(false);
+  const [tvSilSor, setTvSilSor] = useState('');
+  const tvKaydet = async () => {
+    const f = tvForm;
+    if (!(f?.ad || '').trim()) { onToast?.('Ürün adı zorunlu'); return; }
+    setTvMesgul(true);
+    try {
+      const sayiVeyaNull = (v) => (v === '' || v == null ? null : Number(String(v).replace(',', '.')));
+      await api(`/tv-menu/urun/${f.id}`, {
+        method: 'PUT',
+        body: {
+          kategori: f.kategori || null, ad: f.ad, aciklama: f.aciklama || null,
+          f8: sayiVeyaNull(f.f8), f14: sayiVeyaNull(f.f14), fice: sayiVeyaNull(f.fice),
+          sira: sayi(f.sira), aktif: f.aktif !== false, yeni: f.yeni === true,
+        },
+      });
+      onToast?.(`✓ ${f.ad} kaydedildi — TV ~1 dk içinde güncellenir`);
+      setTvForm(null);
+      yukle();
+    } catch (e) {
+      onToast?.(e?.message || 'Kaydedilemedi');
+    } finally {
+      setTvMesgul(false);
+    }
+  };
+
+  const tvSil = async (u) => {
+    setTvMesgul(true);
+    try {
+      await api(`/tv-menu/urun/${u.id}`, { method: 'DELETE' });
+      onToast?.(`${u.ad} TV menüsünden silindi`);
+      setTvSilSor('');
+      yukle();
+    } catch (e) {
+      onToast?.(e?.message || 'Silinemedi');
+    } finally {
+      setTvMesgul(false);
+    }
+  };
+
+  const tvEvoFiyat = async () => {
+    setTvMesgul(true);
+    try {
+      const r = await api('/tv-menu/evo-fiyat-uygula?gun=30', { method: 'POST' });
+      onToast?.(`💰 Evo fiyatları uygulandı${r?.guncellenen != null ? ` — ${r.guncellenen} ürün` : ''}`);
+      yukle();
+    } catch (e) {
+      onToast?.(e?.message || 'Fiyat uygulanamadı');
+    } finally {
+      setTvMesgul(false);
+    }
+  };
+
   if (yukleniyor) return <Yukleniyor ad="Tanımlar" />;
   if (hata) return <Hata mesaj={hata} onTekrar={yukle} />;
 
@@ -1376,13 +1527,124 @@ export function TanimModulu({ gorunum, onCekmece, onKopru, onToast }) {
                 { ad: 'Ice', detay: 'soğuk', tutar: sayi(u.fice) ? fmt(u.fice) : '—' },
               ],
               not: 'TV menü TULİPİ markasının kendi tasarım dilini kullanır — müşteri ekranı kadife koyuya çevrilmez, burası yalnız yönetim görünümü.',
-              aksiyonAd: 'TV Menü yönetimini aç',
-              _hedef: 'tv-menu',
+              aksiyonlar: [
+                { ad: '✎ Fiyat / sıra düzenle', birincil: true, onTikla: () => setTvForm({
+                  id: u.id, ad: u.ad || '', kategori: u.kategori || '', aciklama: u.aciklama || '',
+                  f8: u.f8 ?? '', f14: u.f14 ?? '', fice: u.fice ?? '',
+                  sira: u.sira ?? 0, aktif: u.aktif !== false, yeni: u.yeni === true,
+                }) },
+                { ad: (u.aktif !== false && u.gorunur !== false) ? 'Menüden kaldır' : 'Menüye al', onTikla: async () => {
+                  setTvMesgul(true);
+                  try {
+                    const sayiVeyaNull = (v) => (v === '' || v == null ? null : Number(v));
+                    await api(`/tv-menu/urun/${u.id}`, {
+                      method: 'PUT',
+                      body: {
+                        kategori: u.kategori || null, ad: u.ad, aciklama: u.aciklama || null,
+                        f8: sayiVeyaNull(u.f8), f14: sayiVeyaNull(u.f14), fice: sayiVeyaNull(u.fice),
+                        sira: sayi(u.sira), aktif: !(u.aktif !== false), yeni: u.yeni === true,
+                      },
+                    });
+                    onToast?.((u.aktif !== false) ? `${u.ad} menüden kaldırıldı` : `${u.ad} menüye alındı`);
+                    yukle();
+                  } catch (e) { onToast?.(e?.message || 'Değiştirilemedi'); }
+                  finally { setTvMesgul(false); }
+                } },
+              ],
             });
           }}
         />
       ) : (
-        <Bos baslik="TV menüsünde ürün yok" aksiyon="TV Menü yönetimini aç" onAksiyon={() => onKopru?.('tv-menu')} />
+        <Bos baslik="TV menüsünde ürün yok" aciklama="Menü ürünleri tanımlanınca TV ekranında görünür." />
+      )}
+
+      <div style={{ display: 'flex', gap: 9, marginTop: 12, marginBottom: 16, flexWrap: 'wrap' }}>
+        <button disabled={tvMesgul} onClick={tvEvoFiyat} style={{
+          padding: '9px 16px', borderRadius: 10, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+          background: R.girinti, color: R.metin2, fontSize: 12, fontWeight: 600, fontFamily: 'inherit',
+        }}>
+          {tvMesgul ? 'Uygulanıyor…' : '\u{1F4B0} Evo satış fiyatlarını uygula (30 gün)'}
+        </button>
+        <span style={{ fontSize: 11.5, color: R.not, alignSelf: 'center' }}>
+          fiyat düzenleme ve yayın durumu satıra tıklayınca çekmecede
+        </span>
+      </div>
+
+      {/* ── YERLİ TV ÜRÜN FORMU ── */}
+      {tvForm && (
+        <KucukModal
+          baslik="TV Menü Ürünü"
+          alt="kaydedince TV ~1 dk içinde güncellenir"
+          onKapat={() => !tvMesgul && setTvForm(null)}
+          genislik={520}
+        >
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 13 }}>
+            <div style={{ gridColumn: '1/-1' }}>
+              <label style={modalEtiket}>Ürün adı *</label>
+              <input value={tvForm.ad} onChange={(e) => setTvForm((f) => ({ ...f, ad: e.target.value }))} style={modalAlanStil} />
+            </div>
+            <div>
+              <label style={modalEtiket}>Kategori</label>
+              <input value={tvForm.kategori} onChange={(e) => setTvForm((f) => ({ ...f, kategori: e.target.value }))} style={modalAlanStil} />
+            </div>
+            <div>
+              <label style={modalEtiket}>Sıra</label>
+              <input type="number" value={tvForm.sira} onChange={(e) => setTvForm((f) => ({ ...f, sira: e.target.value }))}
+                style={{ ...modalAlanStil, fontFamily: F.mono, textAlign: 'right' }} />
+            </div>
+            {[['f8', '8 oz fiyat (₺)'], ['f14', '14 oz fiyat (₺)'], ['fice', 'Ice fiyat (₺)']].map(([k, ad]) => (
+              <div key={k}>
+                <label style={modalEtiket}>{ad}</label>
+                <input type="number" value={tvForm[k]} onChange={(e) => setTvForm((f) => ({ ...f, [k]: e.target.value }))}
+                  style={{ ...modalAlanStil, fontFamily: F.mono, textAlign: 'right' }} />
+              </div>
+            ))}
+            <div style={{ gridColumn: '1/-1' }}>
+              <label style={modalEtiket}>Açıklama</label>
+              <input value={tvForm.aciklama} onChange={(e) => setTvForm((f) => ({ ...f, aciklama: e.target.value }))} style={modalAlanStil} />
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 8, marginTop: 14, flexWrap: 'wrap' }}>
+            {[['aktif', 'Yayında'], ['yeni', '\u{2728} YENİ etiketi']].map(([k, ad]) => (
+              <div key={k} onClick={() => setTvForm((f) => ({ ...f, [k]: !f[k] }))} style={{
+                padding: '8px 14px', borderRadius: 10, fontSize: 12, fontWeight: 700, cursor: 'pointer',
+                border: `1px solid ${tvForm[k] ? R.bakir : R.cizgi3}`,
+                color: tvForm[k] ? R.bakir : R.metin2,
+                background: tvForm[k] ? 'rgba(217,154,78,.12)' : 'transparent',
+              }}>{tvForm[k] ? '✓ ' : '□ '}{ad}</div>
+            ))}
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 18, flexWrap: 'wrap' }}>
+            {tvSilSor === String(tvForm.id) ? (
+              <>
+                <button disabled={tvMesgul} onClick={() => tvSil(tvForm)} style={{
+                  padding: '9px 14px', borderRadius: 10, border: 'none', cursor: 'pointer',
+                  background: `${R.kirmizi}26`, color: R.kirmizi, fontSize: 11.5, fontWeight: 700, fontFamily: 'inherit',
+                }}>Eminim — menüden sil</button>
+                <button onClick={() => setTvSilSor('')} style={{
+                  padding: '9px 12px', borderRadius: 10, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+                  background: 'transparent', color: R.metin2, fontSize: 11.5, fontFamily: 'inherit',
+                }}>Vazgeç</button>
+              </>
+            ) : (
+              <button onClick={() => setTvSilSor(String(tvForm.id))} style={{
+                padding: '9px 14px', borderRadius: 10, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+                background: 'transparent', color: R.not, fontSize: 11.5, fontWeight: 600, fontFamily: 'inherit',
+              }}>Sil</button>
+            )}
+            <div style={{ marginLeft: 'auto', display: 'flex', gap: 10 }}>
+              <button disabled={tvMesgul} onClick={() => setTvForm(null)} style={{
+                padding: '10px 18px', borderRadius: 10, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+                background: 'transparent', color: R.metin2, fontSize: 12.5, fontWeight: 600, fontFamily: 'inherit',
+              }}>İptal</button>
+              <button disabled={tvMesgul} onClick={tvKaydet} style={{
+                padding: '10px 20px', borderRadius: 10, border: 'none', cursor: 'pointer',
+                background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+                fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit',
+              }}>{tvMesgul ? 'Kaydediliyor…' : 'Kaydet'}</button>
+            </div>
+          </div>
+        </KucukModal>
       )}
     </>
   );
