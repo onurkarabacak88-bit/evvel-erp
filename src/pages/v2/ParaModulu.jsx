@@ -17,7 +17,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { api, fmt } from '../../utils/api';
 import { R, F, kartYuzey } from './tema';
-import { KpiSeridi, Tablo, Liste } from './parcalar';
+import { KpiSeridi, Tablo, Liste, BosDurum } from './parcalar';
 
 const sayi = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 // Tarih tuzağı (bkz TasarimV2): "bugün" yerel parçalardan, aritmetik UTC'de
@@ -66,13 +66,6 @@ function HataBandi({ mesaj, onTekrar }) {
       }}>
         🔄 Tekrar dene
       </button>
-    </div>
-  );
-}
-function BosDurum({ metin }) {
-  return (
-    <div style={{ ...kartYuzey, padding: '34px 30px', textAlign: 'center' }}>
-      <div style={{ fontSize: 13, color: R.not }}>{metin}</div>
     </div>
   );
 }

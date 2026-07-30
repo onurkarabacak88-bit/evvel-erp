@@ -50,7 +50,33 @@ export function KpiSeridi({ kpiler }) {
           }}>
             {k.deger}
           </div>
-          <div style={{ fontSize: 11, color: R.not2, marginTop: 3 }}>{k.alt}</div>
+          <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 10, marginTop: 3 }}>
+            <div style={{ fontSize: 11, color: R.not2 }}>{k.alt}</div>
+            {/* ⚠️ Sparkline YALNIZ gerçek zaman serisi verilirse çizilir.
+                Blueprint "etiket+değerden seed'lenen sözde-rastgele seri"
+                öneriyor — o uydurma grafiktir, sahte sayı yasağını çiğner.
+                Serisi olmayan KPI'da çizgi HİÇ çıkmaz. */}
+            {Array.isArray(k.seri) && k.seri.filter(Number.isFinite).length > 2 && (() => {
+              const s = k.seri.filter(Number.isFinite);
+              const enB = Math.max(...s); const enK = Math.min(...s);
+              const ar = enB - enK || 1;
+              const nk = (v, idx) => `${((idx / (s.length - 1)) * 74).toFixed(1)},${(22 - ((v - enK) / ar) * 19).toFixed(1)}`;
+              const yol = s.map((v, idx) => `${idx === 0 ? 'M' : 'L'}${nk(v, idx)}`).join(' ');
+              const yon = s[s.length - 1] - s[0];
+              const renk = k.renk || R.bakir;
+              return (
+                <svg width="74" height="24" viewBox="0 0 74 24" style={{ display: 'block', flexShrink: 0, overflow: 'visible' }}>
+                  <path d={`${yol} L74,24 L0,24 Z`} fill={renk} opacity=".14" />
+                  <path d={yol} fill="none" stroke={renk} strokeWidth="1.6" strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
+                  {yon !== 0 && (
+                    <text x="74" y="7" textAnchor="end" fontSize="9" fill={yon > 0 ? R.yesil : R.kirmizi}>
+                      {yon > 0 ? '↗' : '↘'}
+                    </text>
+                  )}
+                </svg>
+              );
+            })()}
+          </div>
         </div>
       ))}
     </div>
@@ -204,12 +230,61 @@ export function Hero({
 }
 
 // ─── Bulgu / öneri listesi ───────────────────────────────────────────────────
-export function Liste({ satirlar, onAc }) {
+/** 18px seçim kutusu — işaretliyse bakır dolgu + koyu ✓ (yeni handoff). */
+function SecimKutusu({ isaretli, boyut = 18, onTikla }) {
+  return (
+    <span
+      onClick={(e) => { e.stopPropagation(); onTikla?.(); }}
+      role="checkbox"
+      aria-checked={!!isaretli}
+      style={{
+        flexShrink: 0, width: boyut, height: boyut, borderRadius: 5, cursor: 'pointer',
+        border: `1px solid ${isaretli ? R.bakir : R.cizgi3}`,
+        background: isaretli ? R.bakir : 'transparent',
+        color: '#1C1309', display: 'flex', alignItems: 'center', justifyContent: 'center',
+        fontSize: boyut * 0.62, fontWeight: 700, lineHeight: 1,
+      }}
+    >
+      {isaretli ? '✓' : ''}
+    </span>
+  );
+}
+
+export function Liste({ satirlar, baslik, onAc, secilebilir, secili, onSec, onHepsi }) {
   if (!satirlar?.length) return null;
+  // Seçilebilir satır = kendi `secilemez` bayrağı olmayan satır
+  const uygun = satirlar.filter((l) => !l.secilemez);
+  const secilenSayi = uygun.filter((l) => secili?.[l.id]).length;
+  const hepsiSecili = uygun.length > 0 && secilenSayi === uygun.length;
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+      {secilebilir && uygun.length > 1 && (
+        <div
+          onClick={() => onHepsi?.(!hepsiSecili)}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 11, padding: '9px 16px',
+            borderRadius: 12, cursor: 'pointer', background: R.girinti,
+            border: `1px solid ${R.cizgi}`, fontSize: 12, color: R.metin2,
+          }}
+        >
+          <SecimKutusu isaretli={hepsiSecili} boyut={16} onTikla={() => onHepsi?.(!hepsiSecili)} />
+          <span>{hepsiSecili ? 'Seçimi kaldır' : 'Tümünü seç'}</span>
+          <span style={{ marginLeft: 'auto', color: R.not2 }}>
+            karar bekleyen {uygun.length} kayıt
+          </span>
+        </div>
+      )}
+      {baslik && (
+        <div style={{
+          fontSize: 11, letterSpacing: '.8px', textTransform: 'uppercase',
+          color: R.not2, fontWeight: 700, padding: '4px 2px',
+        }}>
+          {baslik}
+        </div>
+      )}
       {satirlar.map((l, i) => {
         const renk = TIER_RENK[l.tier] || R.mavi;
+        const isaretli = !!secili?.[l.id];
         return (
           <div
             key={l.id || i}
@@ -218,12 +293,17 @@ export function Liste({ satirlar, onAc }) {
             style={{
               position: 'relative', display: 'flex', alignItems: 'center', gap: 14,
               padding: '13px 16px 13px 18px', borderRadius: 14, overflow: 'hidden',
-              background: `linear-gradient(165deg, ${R.kart1}, ${R.kart2})`,
-              border: '1px solid rgba(243,233,220,.09)',
+              background: isaretli
+                ? `linear-gradient(165deg, rgba(217,154,78,.12), ${R.kart2})`
+                : `linear-gradient(165deg, ${R.kart1}, ${R.kart2})`,
+              border: `1px solid ${isaretli ? 'rgba(217,154,78,.38)' : 'rgba(243,233,220,.09)'}`,
               cursor: onAc ? 'pointer' : 'default',
             }}
           >
             <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 3, background: renk }} />
+            {secilebilir && !l.secilemez && (
+              <SecimKutusu isaretli={isaretli} onTikla={() => onSec?.(l.id)} />
+            )}
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: 13.5, fontWeight: 600, lineHeight: 1.35 }}>{l.baslik}</div>
               <div style={{ fontSize: 11.5, color: R.not2, marginTop: 3 }}>{l.alt}</div>
@@ -897,8 +977,20 @@ export function KatkiCubugu({ baslik, alt, satirlar, onSatir }) {
 }
 
 // ─── Onay modalı (para hareketi öncesi son kapı) ────────────────────────────
-export function OnayModali({ acik, baslik, altBaslik, tutar, satirlar, not, onaylaAd, onOnayla, onKapat, calisiyor }) {
+export function OnayModali({
+  acik, baslik, altBaslik, tutar, satirlar, not, onaylaAd, onOnayla, onKapat, calisiyor,
+  tehlike, kaynaklar, kaynak, onKaynak, tutarSayi,
+}) {
   if (!acik) return null;
+  // Ödeme kaynağı seçimi (yeni handoff): para hareketi doğuran onayda paranın
+  // NEREDEN çıkacağı seçilir ve seçilen kaynağın ödeme SONRASI bakiyesi canlı
+  // görünür. Bakiyeler gerçek hesaplardan gelir — kaynak listesi boşsa blok hiç
+  // çıkmaz (uydurma hesap gösterilmez).
+  const kList = Array.isArray(kaynaklar) ? kaynaklar : [];
+  const seciliKaynak = kList.find((k) => k.id === kaynak) || kList[0];
+  const sonrasi = seciliKaynak && Number.isFinite(Number(seciliKaynak.bakiye))
+    ? Number(seciliKaynak.bakiye) - (Number(tutarSayi) || 0)
+    : null;
   return (
     <div
       onClick={onKapat}
@@ -934,6 +1026,45 @@ export function OnayModali({ acik, baslik, altBaslik, tutar, satirlar, not, onay
               {tutar}
             </span>
           </div>
+          {kList.length > 0 && (
+            <div style={{ marginTop: 16 }}>
+              <div style={{ fontSize: 11, letterSpacing: '.8px', textTransform: 'uppercase', color: R.not2, fontWeight: 700, marginBottom: 9 }}>
+                Ödeme kaynağı
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: `repeat(${Math.min(3, kList.length)}, 1fr)`, gap: 7 }}>
+                {kList.map((k) => {
+                  const sec = seciliKaynak?.id === k.id;
+                  return (
+                    <div
+                      key={k.id}
+                      onClick={() => onKaynak?.(k.id)}
+                      style={{
+                        padding: '10px 11px', borderRadius: 10, cursor: 'pointer', textAlign: 'left',
+                        border: `1px solid ${sec ? 'rgba(217,154,78,.6)' : R.cizgi3}`,
+                        background: sec ? 'rgba(217,154,78,.12)' : 'transparent',
+                      }}
+                    >
+                      <div style={{ fontSize: 12, fontWeight: 600, color: sec ? R.bakirAcik : R.metin2 }}>{k.ad}</div>
+                      <div style={{ fontFamily: F.mono, fontSize: 10.5, color: R.not2, marginTop: 3 }}>
+                        {k.bakiyeMetin}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              {sonrasi != null && (
+                <div style={{
+                  display: 'flex', justifyContent: 'space-between', gap: 12, marginTop: 12,
+                  paddingTop: 12, borderTop: `1px solid ${R.cizgi2}`, fontSize: 12.5, color: R.metin2,
+                }}>
+                  <span>{seciliKaynak.ad} · ödeme sonrası</span>
+                  <span style={{ whiteSpace: 'nowrap', fontFamily: F.mono, fontWeight: 700, color: sonrasi < 0 ? R.kirmizi : R.yesil }}>
+                    {seciliKaynak.bicim ? seciliKaynak.bicim(sonrasi) : String(sonrasi)}
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
           {(satirlar || []).map((s, i) => (
             <div key={i} style={{
               display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
@@ -955,8 +1086,10 @@ export function OnayModali({ acik, baslik, altBaslik, tutar, satirlar, not, onay
             fontFamily: 'inherit', cursor: calisiyor ? 'default' : 'pointer',
           }}>Vazgeç</button>
           <button onClick={onOnayla} disabled={calisiyor} style={{
-            padding: '9px 18px', borderRadius: 10, border: 'none',
-            background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+            padding: '9px 18px', borderRadius: 10,
+            border: tehlike ? `1px solid ${R.kirmizi}55` : 'none',
+            background: tehlike ? `${R.kirmizi}26` : 'linear-gradient(150deg, #D99A4E, #B06E2C)',
+            color: tehlike ? R.kirmizi : '#1C1309',
             fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit',
             cursor: calisiyor ? 'default' : 'pointer', opacity: calisiyor ? 0.6 : 1,
           }}>{calisiyor ? '…' : onaylaAd}</button>
@@ -970,6 +1103,86 @@ export function OnayModali({ acik, baslik, altBaslik, tutar, satirlar, not, onay
 // Çekmece aksiyon sözleşmesi: tek aksiyon için {aksiyonAd, onAksiyon};
 // ÇOKLU aksiyon için aksiyonlar:[{ad, birincil?, onTikla}] (köprü kaldırma turu,
 // 2026-07-30 — "düzenle + işten çıkış" gibi iki yollu dosyalar için).
+/** Yüzen seçim çubuğu (alt orta) — seçim varken belirir.
+ *  ⚠️ Blueprint burada "Geri al" düğmesi de istiyor; BİZDE YOK ve bilinçli:
+ *  onay kasadan para düşürür, geri alma ancak TERS KAYITLA olur (silme yok).
+ *  Sahte bir "geri al" düğmesi kullanıcıya olmayan bir güvence satardı —
+ *  onun yerine emniyet kapısı ONAY MODALI: ne onaylandığı tek tek gösterilir. */
+export function SecimCubugu({ sayi, onOnayla, onReddet, onTemizle, onaylaAd = 'Seçilenleri onayla', reddetAd = 'Reddet', mesgul }) {
+  if (!sayi) return null;
+  return (
+    <div style={{
+      position: 'fixed', left: '50%', bottom: 26, transform: 'translateX(-50%)', zIndex: 205,
+      display: 'flex', alignItems: 'center', gap: 14, padding: '11px 16px', borderRadius: 12,
+      background: 'linear-gradient(168deg,#33261A,#241A0E)', border: `1px solid ${R.bakir}44`,
+      boxShadow: '0 20px 44px -14px rgba(0,0,0,.8)',
+      animation: 'v2yuksel .2s cubic-bezier(.22,1,.36,1) both',
+    }}>
+      <span style={{ fontFamily: F.mono, fontSize: 15, fontWeight: 700, color: R.bakirAcik }}>{sayi}</span>
+      <span style={{ fontSize: 12.5, color: R.metin2 }}>kayıt seçildi</span>
+      <span style={{ width: 1, height: 20, background: R.cizgi3 }} />
+      {onOnayla && (
+        <button disabled={mesgul} onClick={onOnayla} style={{
+          padding: '8px 15px', borderRadius: 9, border: 'none', cursor: 'pointer',
+          background: `${R.yesil}26`, color: R.yesil, fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit',
+        }}>
+          {mesgul ? '…' : onaylaAd}
+        </button>
+      )}
+      {onReddet && (
+        <button disabled={mesgul} onClick={onReddet} style={{
+          padding: '8px 15px', borderRadius: 9, cursor: 'pointer',
+          border: `1px solid ${R.kirmizi}55`, background: 'transparent',
+          color: R.kirmizi, fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit',
+        }}>
+          {reddetAd}
+        </button>
+      )}
+      <button disabled={mesgul} onClick={onTemizle} style={{
+        padding: '8px 12px', borderRadius: 9, border: 'none', background: 'transparent',
+        color: R.not, fontSize: 12.5, fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer',
+      }}>
+        Temizle
+      </button>
+    </div>
+  );
+}
+
+/** Boş durum — yeni handoff'un kanonik biçimi: kesikli çerçeve, 38px bakır
+ *  çerçeveli daire içinde ✓, Fraunces başlık, altında açıklama.
+ *  Geriye uyum: eski çağrılar tek `metin` prop'u geçiyordu; o zaman metin
+ *  açıklamaya düşer, başlık varsayılan olur.
+ *  `tamam=false` verilirse (ör. veri hiç yok) daire ✓ yerine — gösterir:
+ *  boş kuyruk ile boş veri farklı şeylerdir. */
+export function BosDurum({ baslik, aciklama, metin, tamam = false, ikon }) {
+  const alt = aciklama || metin || '';
+  // ⚠️ Varsayılan NÖTR: "kayıt yok" ile "kuyruk temizlendi" AYNI ŞEY DEĞİL.
+  // Başarı anlamı (✓ + yeşilimsi bakır daire) yalnız çağıran açıkça
+  // `tamam` derse verilir; aksi halde "—" ve nötr başlık.
+  const ust = baslik || (tamam ? 'Kuyruk temiz' : 'Kayıt yok');
+  return (
+    <div style={{
+      border: `1px dashed ${R.cizgi3}`, borderRadius: 16, padding: '34px 24px',
+      textAlign: 'center', marginBottom: 16,
+    }}>
+      <div style={{
+        width: 38, height: 38, borderRadius: 99, margin: '0 auto 13px',
+        border: `1px solid ${tamam ? R.bakir : R.cizgi3}`,
+        color: tamam ? R.bakir : R.not2,
+        display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16,
+      }}>
+        {ikon || (tamam ? '✓' : '—')}
+      </div>
+      <div style={{ fontFamily: F.baslik, fontSize: 17, fontWeight: 600, color: R.metin2 }}>{ust}</div>
+      {alt && (
+        <div style={{ fontSize: 12.5, color: R.not2, marginTop: 7, lineHeight: 1.6, maxWidth: 380, margin: '7px auto 0' }}>
+          {alt}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** Çekmece sekme kontrolü — Özet · Belgeler · İz (yeni handoff).
  *  Belgeler/İz sekmeleri modülün GEÇTİĞİ veriyle dolar; veri yoksa sekme
  *  dürüst boş durum gösterir (uydurma belge/iz üretilmez). */

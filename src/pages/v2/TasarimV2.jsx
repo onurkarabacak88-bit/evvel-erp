@@ -626,7 +626,8 @@ export default function TasarimV2({ onGit }) {
   function PanelBugun() {
     const d = veri;
     const kpiler = [
-      { etiket: d.odakBugunMu ? 'Bugünkü ciro' : 'Son gün cirosu', deger: fmt(d.gunToplam), alt: `${d.subeGunListe.length} şube · ${d.odakGun}` },
+      // Sparkline: GERÇEK son 14 gün serisi (uydurma seed yok)
+      { etiket: d.odakBugunMu ? 'Bugünkü ciro' : 'Son gün cirosu', deger: fmt(d.gunToplam), alt: `${d.subeGunListe.length} şube · ${d.odakGun}`, seri: d.seri },
       { etiket: 'Nakit', deger: fmt(d.gunNakit), alt: `payı %${yuzde(d.gunNakit, d.gunToplam).toFixed(0)}`, renk: R.krem },
       { etiket: 'Kart + online', deger: fmt(d.gunKart), alt: `payı %${yuzde(d.gunKart, d.gunToplam).toFixed(0)}`, renk: R.krem },
       { etiket: 'Bugün ödenecek', deger: fmt(bugunOdemeToplam), alt: `${bugunOdemeler.length} kalem · vadesi bugün/geçmiş`, renk: bugunOdemeToplam > 0 ? R.kirmizi : R.yesil },
@@ -1064,21 +1065,31 @@ export default function TasarimV2({ onGit }) {
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
-            <div style={{ display: 'flex', gap: 3, padding: 3, borderRadius: 10, background: R.girinti, border: `1px solid ${R.cizgi}` }}>
-              {[['gun', 'Gün'], ['hafta', 'Hafta'], ['ay', 'Ay']].map(([id, ad]) => (
-                <div
-                  key={id}
-                  onClick={() => { setDonem(id); if (mod === 'panel') setGorunum(id === 'ay' ? 'ay' : 'bugun'); }}
-                  style={{
-                    padding: '5px 11px', borderRadius: 7, fontSize: 11.5, fontWeight: 600, cursor: 'pointer',
-                    color: donem === id ? '#1C1309' : R.not,
-                    background: donem === id ? `linear-gradient(150deg, #D99A4E, #B06E2C)` : 'transparent',
-                  }}
-                >
-                  {ad}
-                </div>
-              ))}
-            </div>
+            {/* ── DÖNEM SEÇİCİ — yalnız GERÇEKTEN dönem değiştiren yerde ──────
+                Denetim (2026-07-30): seçici 14 modülün hepsinde duruyordu ama
+                YALNIZ Panel'de iş yapıyordu; kalan 13'te tıklanıyor, hiçbir şey
+                değişmiyordu — sessiz yalan. Artık sadece Panel'de görünür.
+                ⚠️ Blueprint 3 dilim (Gün/Hafta/Ay) ve sabit katsayıyla ₺
+                ölçekleme öneriyor (Hafta ×6,4 / Ay ×27,8). O ÇARPIM UYDURMADIR
+                — bizde her dilim GERÇEK bir görünüme düşer. Haftalık toplam
+                görünümü henüz yok, o yüzden "Hafta" dilimi de yok. */}
+            {mod === 'panel' && (
+              <div style={{ display: 'flex', gap: 3, padding: 3, borderRadius: 10, background: R.girinti, border: `1px solid ${R.cizgi}` }}>
+                {[['gun', 'Gün', 'bugun'], ['ay', 'Ay', 'ay']].map(([id, ad, hedefGorunum]) => (
+                  <div
+                    key={id}
+                    onClick={() => { setDonem(id); setGorunum(hedefGorunum); setCekmece(null); }}
+                    style={{
+                      padding: '5px 13px', borderRadius: 7, fontSize: 11.5, fontWeight: 600, cursor: 'pointer',
+                      color: gorunum === hedefGorunum ? '#1C1309' : R.not,
+                      background: gorunum === hedefGorunum ? `linear-gradient(150deg, #D99A4E, #B06E2C)` : 'transparent',
+                    }}
+                  >
+                    {ad}
+                  </div>
+                ))}
+              </div>
+            )}
 
             {/* Arama tetikleyici — salt-okur; tıklama komut paletini açar (yeni handoff) */}
             <div

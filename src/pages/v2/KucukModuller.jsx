@@ -19,7 +19,7 @@
 import React, { useEffect, useState } from 'react';
 import { api, fmt } from '../../utils/api';
 import { R, F, kartYuzey } from './tema';
-import { KpiSeridi, Tablo, Liste, OnayModali } from './parcalar';
+import { KpiSeridi, Tablo, Liste, OnayModali, SecimCubugu, BosDurum } from './parcalar';
 
 const sayi = (v) => Number(v) || 0;
 const trSayi = (n, b = 1) => (Number(n) || 0).toFixed(b).replace('.', ',');
@@ -144,6 +144,9 @@ export function OnayModulu({ gorunum, onCekmece, onKopru, onToast }) {
   const [mesgul, setMesgul] = useState(false);
   const [reddetSor, setReddetSor] = useState(null);   // onay kaydı (kuyruk reddi)
   const [topluSor, setTopluSor] = useState(false);    // toplu onay son kapısı
+  // Toplu seçim (yeni handoff): hangi kayıtların onaylanacağını KULLANICI seçer
+  const [secili, setSecili] = useState({});
+  const [topluRed, setTopluRed] = useState(false);
   const [ciroSor, setCiroSor] = useState(null);       // {kayit,nakit,pos,online}
   const [ciroRed, setCiroRed] = useState(null);       // {kayit,neden}
   if (yukleniyor) return <Yukleniyor ad="Onay kuyruğu" />;
@@ -180,6 +183,8 @@ export function OnayModulu({ gorunum, onCekmece, onKopru, onToast }) {
       return Number.isFinite(d) ? d : null;
     };
     const enEski = satir.reduce((a, o) => Math.max(a, gunFark(o.tarih) ?? 0), 0);
+    const seciliListe = satir.filter(o => secili[o.id]);
+    const seciliToplam = seciliListe.reduce((s2, o) => s2 + sayi(o.tutar), 0);
     return (
       <>
         <KpiSeridi kpiler={[
@@ -188,19 +193,18 @@ export function OnayModulu({ gorunum, onCekmece, onKopru, onToast }) {
           { etiket: 'En eski', deger: enEski ? `${enEski} gün` : '—', alt: enEski > 2 ? 'gecikiyor' : 'taze', renk: enEski > 2 ? R.kirmizi : R.krem },
           { etiket: 'Kasa hatası ayrı', deger: String(kuyruk.length - satir.length), alt: 'onay değil · kasa uyumsuzluğu', renk: R.not },
         ]} />
-        {satir.length > 1 && (
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
-            <button disabled={mesgul} onClick={() => setTopluSor(true)} style={{
-              padding: '9px 17px', borderRadius: 10, border: 'none', cursor: 'pointer',
-              background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
-              fontSize: 12, fontWeight: 700, fontFamily: 'inherit',
-            }}>
-              Hepsini onayla ({satir.length})
-            </button>
-          </div>
-        )}
         {satir.length ? (
           <Liste
+            secilebilir
+            secili={secili}
+            onSec={(id) => setSecili(s2 => {
+              const y = { ...s2 };
+              if (y[id]) delete y[id]; else y[id] = true;
+              return y;
+            })}
+            onHepsi={(hepsiMi) => setSecili(hepsiMi
+              ? Object.fromEntries(satir.slice(0, 60).map(o => [o.id, true]))
+              : {})}
             satirlar={satir.slice(0, 60).map(o => ({
               id: o.id, _o: o,
               baslik: o.aciklama || slugAd(o.islem_turu) || 'Onay kaydı',
@@ -232,28 +236,68 @@ export function OnayModulu({ gorunum, onCekmece, onKopru, onToast }) {
             })}
           />
         ) : (
-          <Bos baslik="Onay bekleyen kayıt yok" aciklama="Kuyruk temiz — gider, avans, fire ve tanım değişiklikleri onaylanmış." renk={R.yesil} />
+          <BosDurum tamam baslik="Kuyruk temiz" aciklama="Onay bekleyen kayıt yok — gider, avans, fire ve tanım değişiklikleri onaylanmış." />
         )}
+
+        {/* Seçim çubuğu — hangi kayıtların onaylanacağını kullanıcı seçer */}
+        <SecimCubugu
+          sayi={seciliListe.length}
+          mesgul={mesgul}
+          onaylaAd={`✓ ${seciliListe.length} kaydı onayla`}
+          onOnayla={() => setTopluSor(true)}
+          onReddet={() => setTopluRed(true)}
+          onTemizle={() => setSecili({})}
+        />
+
+        {/* Toplu red son kapısı — sebep 'hata' (kaynak aktif kalır) */}
+        <OnayModali
+          acik={topluRed}
+          baslik="Toplu red"
+          altBaslik={`${seciliListe.length} seçili kayıt reddedilecek`}
+          tutar={fmt(seciliToplam)}
+          satirlar={seciliListe.slice(0, 8).map(o => ({
+            ad: (o.aciklama || slugAd(o.islem_turu) || 'kayıt').slice(0, 44),
+            deger: sayi(o.tutar) ? fmt(o.tutar) : '—',
+          })).concat(seciliListe.length > 8 ? [{ ad: `… ve ${seciliListe.length - 8} kayıt daha`, deger: '' }] : [])}
+          not="Sebep 'hata' olarak yazılır: kaynak AKTİF kalır, gelecek ay planı yeniden üretilir. İlişkiyi kapatmak için satırdaki 'Süreç bitti' seçeneğini kullanın."
+          onaylaAd={mesgul ? 'Reddediliyor…' : `Evet, ${seciliListe.length} kaydı reddet`}
+          calisiyor={mesgul}
+          tehlike
+          onOnayla={async () => {
+            let basarili = 0;
+            for (const o of seciliListe) {
+              try {
+                await api(`/onay-kuyrugu/${o.id}/reddet`, { method: 'POST', body: { neden: 'hata' } });
+                basarili += 1;
+              } catch { /* tek kayıt düşse akış durmasın */ }
+            }
+            onToast?.(`${basarili}/${seciliListe.length} kayıt reddedildi`);
+            setTopluRed(false);
+            setSecili({});
+            yukle();
+          }}
+          onKapat={() => setTopluRed(false)}
+        />
 
         {/* Toplu onay son kapısı */}
         <OnayModali
           acik={topluSor}
           baslik="Toplu onay"
-          altBaslik={`${satir.length} bekleyen kayıt onaylanacak`}
-          tutar={fmt(toplam)}
-          satirlar={satir.slice(0, 8).map(o => ({
+          altBaslik={`${seciliListe.length} seçili kayıt onaylanacak`}
+          tutar={fmt(seciliToplam)}
+          satirlar={seciliListe.slice(0, 8).map(o => ({
             ad: (o.aciklama || slugAd(o.islem_turu) || 'kayıt').slice(0, 44),
             deger: sayi(o.tutar) ? fmt(o.tutar) : '—',
-          })).concat(satir.length > 8 ? [{ ad: `… ve ${satir.length - 8} kayıt daha`, deger: '' }] : [])}
+          })).concat(seciliListe.length > 8 ? [{ ad: `… ve ${seciliListe.length - 8} kayıt daha`, deger: '' }] : [])}
           not="Onaylanan her gider kasadan düşülür. Bu işlem tek tek geri alınır (ters kayıt)."
-          onaylaAd={mesgul ? 'Onaylanıyor…' : `Evet, ${satir.length} kaydı onayla`}
+          onaylaAd={mesgul ? 'Onaylanıyor…' : `Evet, ${seciliListe.length} kaydı onayla`}
           calisiyor={mesgul}
           onOnayla={async () => {
             const ok = await calistir(
-              () => api('/onay-kuyrugu/toplu-onayla', { method: 'POST', body: { ids: satir.map(o => o.id) } }),
-              (r) => `✓ ${r?.onaylanan ?? '?'}/${r?.toplam ?? satir.length} onaylandı${sayi(r?.hata) > 0 ? ` · ${r.hata} hata` : ''}`,
+              () => api('/onay-kuyrugu/toplu-onayla', { method: 'POST', body: { ids: seciliListe.map(o => o.id) } }),
+              (r) => `✓ ${r?.onaylanan ?? '?'}/${r?.toplam ?? seciliListe.length} onaylandı${sayi(r?.hata) > 0 ? ` · ${r.hata} hata` : ''}`,
             );
-            if (ok) setTopluSor(false);
+            if (ok) { setTopluSor(false); setSecili({}); }
           }}
           onKapat={() => setTopluSor(false)}
         />

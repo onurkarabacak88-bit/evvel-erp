@@ -15,7 +15,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { api, fmt } from '../../utils/api';
 import { R, F, kartYuzey } from './tema';
-import { KpiSeridi, Liste, Tablo } from './parcalar';
+import { KpiSeridi, Liste, Tablo, BosDurum } from './parcalar';
 
 const sayi = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 const AYLAR = ['Oca', 'Şub', 'Mar', 'Nis', 'May', 'Haz', 'Tem', 'Ağu', 'Eyl', 'Eki', 'Kas', 'Ara'];
@@ -136,13 +136,6 @@ function faturaCekmecesi(b) {
   };
 }
 
-function BosDurum({ metin }) {
-  return (
-    <div style={{ ...kartYuzey, padding: '34px 30px', textAlign: 'center' }}>
-      <div style={{ fontSize: 13, color: R.not }}>{metin}</div>
-    </div>
-  );
-}
 function KopruButon({ ad, onTikla, birincil }) {
   return (
     <button onClick={onTikla} style={birincil ? {

@@ -259,6 +259,38 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
 
   // ── zengin ödeme modalı (tam/kısmi + yöntem + ek + tutarsız + ertele + taahhüt) ──
   const guncelle = (k, v) => setModal((m) => ({ ...m, [k]: v }));
+
+  /** Seçili kaynağın ödeme sonrası durumu. Nakit → kasa bakiyesi; kart →
+   *  kullanılabilir limit. Veri yoksa şerit HİÇ çıkmaz (uydurma bakiye yok). */
+  const kaynakDurumu = (() => {
+    if (!modal) return null;
+    const tutar = modal.mod === 'kismi' ? sayi(modal.kismiTutar) : sayi(modal.satir?._tutar ?? modal.satir?.tutar);
+    if (modal.yontem === 'nakit') {
+      // kasa = Nakit Kokpiti'nin kanonik kasası (modülün zaten okuduğu sayı)
+      if (!Number.isFinite(kasa) || kasa === 0) return null;
+      const sonra = kasa - tutar;
+      return (
+        <div style={{ width: '100%', fontSize: 11.5, color: R.not, marginTop: 4 }}>
+          Kasa {fmt(kasa)} → ödeme sonrası{' '}
+          <b style={{ fontFamily: F.mono, color: sonra < 0 ? R.kirmizi : R.yesil }}>{fmt(sonra)}</b>
+          {sonra < 0 && <span style={{ color: R.kirmizi }}> · kasa eksiye düşer</span>}
+        </div>
+      );
+    }
+    const k = kartListe.find((x) => String(x.id) === String(modal.kartId));
+    if (!k) return null;
+    const limit = sayi(k.limit_tutar);
+    const borc = sayi(k.guncel_borc);
+    if (!limit) return null;
+    const kalan = limit - borc - tutar;
+    return (
+      <div style={{ width: '100%', fontSize: 11.5, color: R.not, marginTop: 4 }}>
+        {k.kart_adi || k.banka} · kullanılabilir {fmt(limit - borc)} → harcama sonrası{' '}
+        <b style={{ fontFamily: F.mono, color: kalan < 0 ? R.kirmizi : R.yesil }}>{fmt(kalan)}</b>
+        {kalan < 0 && <span style={{ color: R.kirmizi }}> · limit aşılır</span>}
+      </div>
+    );
+  })();
   const yontemSecici = (
     <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 12 }}>
       {[['nakit', '💵 Nakit / havale'], ['kart', '💳 Kart']].map(([y, ad]) => (
@@ -276,6 +308,7 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
           {kartListe.map((k) => <option key={k.id} value={k.id}>{k.kart_adi || k.banka}</option>)}
         </select>
       )}
+      {kaynakDurumu}
     </div>
   );
   const ekSecici = (
