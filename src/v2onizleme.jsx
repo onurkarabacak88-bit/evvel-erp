@@ -174,6 +174,13 @@ const ODEME_UC = {
       { tedarikci: 'Enerjisa', hesaplanan_acik: 22640, beyan_bakiye: 22640, beyan_hesap_farki: 0, bekleyen_vade_toplam: 22640, fatura_adet_6ay: 6, fatura_toplam_6ay: 134000, son_fatura: gunEkleISO(-8), en_yakin_vade: gunEkleISO(9), odeme_izi_var: true, devir: 0 },
     ],
   },
+  '/api/uyarilar': [
+    { id: 'u1', seviye: 'KRITIK', mesaj: 'Zafer kasa açığı 3 gündür kapanmadı — 2.480 ₺', sube_ad: 'Zafer', tarih: bugunISO, tutar: 2480, kategori: 'kasa' },
+    { id: 'u2', seviye: 'KRITIK', mesaj: 'KOÇ FİNANS taksiti bugün vadesinde — ödenmedi', sube_ad: null, tarih: bugunISO, tutar: 18400, kategori: 'borç' },
+    { id: 'u3', seviye: 'UYARI', mesaj: 'Gazze şubesinde 2 gündür ürün-aç kaydı yok', sube_ad: 'Gazze', tarih: gunEkleISO(-1), kategori: 'operasyon' },
+    { id: 'u4', seviye: 'UYARI', mesaj: 'Sütaş faturası 9 gündür gelmedi (teslim alındı)', sube_ad: null, tarih: gunEkleISO(-9), tutar: 41250, kategori: 'belge' },
+    { id: 'u5', seviye: 'BILGI', mesaj: 'Köyceğiz hafta sonu cirosu geçen haftaya göre %12 arttı', sube_ad: 'Köyceğiz', tarih: gunEkleISO(-2), kategori: 'ciro' },
+  ],
   '/api/ledger': [
     { id: 'l1', tarih: gunEkleISO(-2), islem_turu: 'FATURA_ODEMESI', tutar: -39800, aciklama: 'Sütaş Bölge Dağıtım', kaynak_tablo: 'vadeli_alimlar' },
     { id: 'l2', tarih: gunEkleISO(-4), islem_turu: 'KART_ODEME', tutar: -28400, aciklama: 'Paper Cup Co.', kaynak_tablo: 'kart_hareketleri' },

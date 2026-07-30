@@ -119,6 +119,9 @@ export const TARIH_GEZGINI_EKRANLARI = ['panel.bugun'];
 export const MODULLER = [
   // ══════════════════ BLOK: KARAR ══════════════════
   { id: 'panel', blok: 'Karar', ad: 'Yönetim & Karar', kisa: 'Panel', alt: 'CFO görünümleri', ikon: IK.gosterge, gorunumler: [
+    // Sahip isteği (2026-07-31): klasik CFO panelde HER ŞEY tek ekrandaydı;
+    // o "tek bakışta hepsi" görünümü kadifede Genel Bakış olarak yaşıyor.
+    { id: 'genel', ad: 'Genel Bakış', rozet: 'genelAcik', renk: '#F87171' },
     { id: 'bugun', ad: 'Bugün' },
     { id: 'ay', ad: 'Ay Özeti' },
     { id: 'subeler', ad: 'Şube Karnesi' },
