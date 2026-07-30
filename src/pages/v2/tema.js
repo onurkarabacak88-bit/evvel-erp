@@ -131,6 +131,7 @@ export const MODULLER = [
     { id: 'maas', ad: 'Maaş & Avans', rozet: 'maasBekleyen', renk: '#D29A5B' },
     { id: 'gorev', ad: 'Görev Takibi', rozet: 'gorevAcik', renk: '#60A5FA' },
     { id: 'takip', ad: 'Vardiya Takip' },
+    { id: 'denetim', ad: 'Personel Denetimi', rozet: 'ekipDenetim', renk: '#FBBF24' },
     { id: 'basvuru', ad: 'İş Başvuruları', rozet: 'basvuru', renk: '#4ADE80' },
     { id: 'pinqr', ad: 'Panel PIN & Görev QR' },
   ]},

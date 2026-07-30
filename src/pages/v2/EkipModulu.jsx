@@ -105,6 +105,15 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
   // verilen izin) ve o gün vardiya dışı görünen girişler.
   const [izin, setIzin] = useState(null);
   const [vardiyaDisi, setVardiyaDisi] = useState(null);
+  // ── PERSONEL DENETİMİ (ops-merkez P2 sekmeleri, 2026-07-30) ───────────────
+  // davranış analizi · puan defteri · geç kalma · kasa açık analizi + kasiyer karne
+  const [pdSekme, setPdSekme] = useState('davranis');
+  const [pdDavranis, setPdDavranis] = useState(null);
+  const [pdPuan, setPdPuan] = useState(null);
+  const [pdGec, setPdGec] = useState(null);
+  const [pdKasa, setPdKasa] = useState(null);
+  const [pdKarne, setPdKarne] = useState(null);
+  const [pdHata, setPdHata] = useState('');
   const [hafta, setHafta] = useState(null);
   const [bordro, setBordro] = useState([]);
   const [avans, setAvans] = useState(null);
@@ -163,6 +172,31 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
   };
 
   useEffect(yukle, []);
+
+  const pdYukle = () => {
+    setPdHata('');
+    const ym = `${donem.yil}-${String(donem.ay).padStart(2, '0')}`;
+    api('/ops/personel-davranis-analiz?gun=45')
+      .then((d) => setPdDavranis(d || {}))
+      .catch((e) => setPdHata(e?.message || ''));
+    api('/ops/sube-personel-puan')
+      .then((d) => setPdPuan(d || {}))
+      .catch(() => setPdPuan({}));
+    api(`/ops/gec-kalan-personel?year_month=${ym}`)
+      .then((d) => setPdGec(d || {}))
+      .catch(() => setPdGec({}));
+    api('/ops/kasa-acik-analiz?gun_sayi=30')
+      .then((d) => setPdKasa(d || {}))
+      .catch(() => setPdKasa({}));
+    api('/ops/kasiyer-karne?gun=30')
+      .then((d) => setPdKarne(Array.isArray(d?.karne) ? d.karne : []))
+      .catch(() => setPdKarne([]));
+  };
+
+  useEffect(() => {
+    if (gorunum === 'denetim') pdYukle();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gorunum, donem.yil, donem.ay]);
 
   // ── personel formu (klasik Personel.jsx sözleşmesi) ────────────────────────
   const pFormAc = (p) => {
@@ -463,6 +497,219 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
       )}
     </>
   );
+
+  // ── 8) PERSONEL DENETİMİ (ops-merkez P2) ──────────────────────────────────
+  // Klasik Operasyon Merkezi'nin 4 personel sekmesi tek yerde — ÖNERİ-ONLY,
+  // isim verir ama hüküm vermez (puan maaşa bağlanmaz kuralı korunur).
+  if (gorunum === 'denetim') {
+    if (pdHata) {
+      return (
+        <div style={{ ...kartYuzey, padding: '34px 30px', textAlign: 'center', border: `1px solid ${R.kirmizi}55` }}>
+          <div style={{ fontSize: 13, color: R.kirmizi }}>Veri alınamadı — {pdHata}</div>
+          <button onClick={pdYukle} style={{
+            marginTop: 14, padding: '9px 18px', borderRadius: 10, border: 'none', cursor: 'pointer',
+            background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+            fontSize: 12, fontWeight: 700, fontFamily: 'inherit',
+          }}>🔄 Tekrar dene</button>
+        </div>
+      );
+    }
+    if (!pdDavranis) {
+      return <div style={{ ...kartYuzey, padding: '40px 30px', textAlign: 'center', color: R.not, fontSize: 13 }}>Personel denetimi yükleniyor…</div>;
+    }
+    const davranis = Array.isArray(pdDavranis?.personel_ozet) ? pdDavranis.personel_ozet : [];
+    const puanlar = Array.isArray(pdPuan?.personeller) ? pdPuan.personeller : [];
+    const gecSatir = Array.isArray(pdGec?.satirlar) ? pdGec.satirlar : [];
+    const kasaSatir = Array.isArray(pdKasa?.personeller) ? pdKasa.personeller
+      : (Array.isArray(pdKasa?.satirlar) ? pdKasa.satirlar : []);
+    const karne = Array.isArray(pdKarne) ? pdKarne : [];
+    const ALT = [
+      ['davranis', `\u{1F464} Davranış (${davranis.length})`],
+      ['puan', `\u{1F3C5} Puan (${puanlar.length})`],
+      ['gec', `\u{23F0} Geç kalma (${gecSatir.length})`],
+      ['kasa', `\u{1F4B5} Kasa açığı (${kasaSatir.length})`],
+    ];
+    const enDusukPuan = puanlar.length ? puanlar.reduce((a, b) => (sayi(a.puan) <= sayi(b.puan) ? a : b)) : null;
+    return (
+      <>
+        <KpiSeridi kpiler={[
+          { etiket: 'İzlenen personel', deger: String(davranis.length), alt: 'son 45 gün davranış', renk: R.krem },
+          { etiket: 'Kritik geç kalma', deger: String(sayi(pdGec?.kritik_personel_sayisi)), alt: `${sayi(pdGec?.gecikme_toplam_adet)} gecikme · eşik ${sayi(pdGec?.kritik_dk)} dk`, renk: sayi(pdGec?.kritik_personel_sayisi) ? R.amber : R.yesil },
+          { etiket: 'En düşük puan', deger: enDusukPuan ? String(sayi(enDusukPuan.puan)) : '—', alt: enDusukPuan ? enDusukPuan.ad_soyad : 'veri yok', renk: enDusukPuan && sayi(enDusukPuan.puan) < 70 ? R.kirmizi : R.krem },
+          { etiket: 'Kasa açığı olan', deger: String(kasaSatir.length), alt: 'son 30 gün', renk: kasaSatir.length ? R.kirmizi : R.yesil },
+        ]} />
+
+        <div style={{ display: 'flex', gap: 7, marginBottom: 14, flexWrap: 'wrap' }}>
+          {ALT.map(([id, ad]) => (
+            <div key={id} onClick={() => setPdSekme(id)} style={{
+              padding: '6px 13px', borderRadius: 99, fontSize: 11.5, fontWeight: 700, cursor: 'pointer',
+              border: `1px solid ${pdSekme === id ? R.bakir : R.cizgi3}`,
+              color: pdSekme === id ? R.bakir : R.metin2,
+              background: pdSekme === id ? 'rgba(217,154,78,.12)' : R.girinti,
+            }}>{ad}</div>
+          ))}
+        </div>
+
+        {pdSekme === 'davranis' && (davranis.length ? (
+          <Tablo
+            baslik="Davranış analizi · son 45 gün"
+            not="gözlem toplamı — hüküm değil; puan maaşa bağlanmaz"
+            kolonlar={[
+              { ad: 'Personel' }, { ad: 'Şube' }, { ad: 'Vardiya', sag: true },
+              { ad: 'Gecikme', sag: true }, { ad: 'Kasa farkı', sag: true }, { ad: 'Durum' },
+            ]}
+            satirlar={davranis.slice(0, 40).map((x, i) => {
+              const gec = sayi(x.gecikme_dk ?? x.toplam_gecikme_dk);
+              const fark = sayi(x.kasa_fark ?? x.toplam_kasa_fark);
+              return {
+                id: x.personel_id || `d-${i}`,
+                hucreler: [
+                  { v: x.personel_ad || x.ad_soyad || '—', kalin: true },
+                  { v: x.sube_adi || x.sube_ad || '—', renk: R.not },
+                  { v: String(sayi(x.vardiya_sayisi ?? x.vardiya)), mono: true, sag: true },
+                  { v: gec ? `${trSayi(gec, 0)} dk` : '—', mono: true, sag: true, renk: gec > 30 ? R.amber : R.not },
+                  { v: fark ? fmt(fark) : '—', mono: true, sag: true, renk: fark ? R.kirmizi : R.not },
+                  (gec > 30 || fark)
+                    ? { v: 'izlemede', rozet: R.amber }
+                    : { v: 'normal', rozet: R.yesil },
+                ],
+              };
+            })}
+          />
+        ) : (
+          <div style={{ ...kartYuzey, padding: '34px 30px', textAlign: 'center' }}>
+            <div style={{ fontFamily: F.baslik, fontSize: 17, fontWeight: 600, color: R.not }}>Davranış verisi yok</div>
+            <div style={{ fontSize: 12.5, color: R.not, marginTop: 7 }}>Vardiya ve kasa kaydı biriktikçe analiz oluşur.</div>
+          </div>
+        ))}
+
+        {pdSekme === 'puan' && (puanlar.length ? (
+          <Tablo
+            baslik="Puan defteri · lig tablosu"
+            not="kural=VERİ; gece motoru hesaplar — puan maaşa/avansa BAĞLANMAZ"
+            kolonlar={[
+              { ad: 'Personel' }, { ad: 'Puan', sag: true }, { ad: 'Tamam', sag: true },
+              { ad: 'Gecikti', sag: true }, { ad: 'Durum' },
+            ]}
+            satirlar={[...puanlar]
+              .sort((a, b) => sayi(b.puan) - sayi(a.puan))
+              .slice(0, 40)
+              .map((x, i) => ({
+                id: x.personel_id || `p-${i}`,
+                hucreler: [
+                  { v: x.ad_soyad || '—', kalin: true },
+                  { v: String(sayi(x.puan)), mono: true, sag: true, kalin: true, renk: sayi(x.puan) >= 90 ? R.yesil : sayi(x.puan) >= 70 ? R.amber : R.kirmizi },
+                  { v: String(sayi(x.tamam)), mono: true, sag: true, renk: R.yesil },
+                  { v: String(sayi(x.gecikti)), mono: true, sag: true, renk: sayi(x.gecikti) ? R.amber : R.not },
+                  sayi(x.puan) >= 90
+                    ? { v: 'örnek', rozet: R.yesil }
+                    : sayi(x.puan) >= 70 ? { v: 'iyi', rozet: R.mavi } : { v: 'destek gerek', rozet: R.amber },
+                ],
+              }))}
+          />
+        ) : (
+          <div style={{ ...kartYuzey, padding: '34px 30px', textAlign: 'center' }}>
+            <div style={{ fontFamily: F.baslik, fontSize: 17, fontWeight: 600, color: R.not }}>Puan verisi yok</div>
+            <div style={{ fontSize: 12.5, color: R.not, marginTop: 7 }}>Görev tamamlama kayıtları biriktikçe puan oluşur.</div>
+          </div>
+        ))}
+
+        {pdSekme === 'gec' && (gecSatir.length ? (
+          <Tablo
+            baslik={`Geç kalma · ${AY_KISA[ay - 1]} ${yil}`}
+            not={`grace ${sayi(pdGec?.gecikme_dk)} dk · kritik eşik ${sayi(pdGec?.kritik_dk)} dk`}
+            kolonlar={[
+              { ad: 'Personel' }, { ad: 'Şube' }, { ad: 'Gecikme adedi', sag: true },
+              { ad: 'Toplam dk', sag: true }, { ad: 'Durum' },
+            ]}
+            satirlar={gecSatir.slice(0, 40).map((x, i) => {
+              const dk = sayi(x.toplam_gecikme_dk ?? x.gecikme_dk);
+              const adet = sayi(x.gecikme_adet ?? x.adet);
+              return {
+                id: x.personel_id || `g-${i}`,
+                hucreler: [
+                  { v: x.ad_soyad || x.personel_ad || '—', kalin: true },
+                  { v: x.sube_adi || x.sube_ad || '—', renk: R.not },
+                  { v: String(adet), mono: true, sag: true },
+                  { v: dk ? `${trSayi(dk, 0)} dk` : '—', mono: true, sag: true, renk: dk > 60 ? R.kirmizi : R.amber },
+                  x.kritik
+                    ? { v: 'kritik', rozet: R.kirmizi }
+                    : { v: 'izlemede', rozet: R.amber },
+                ],
+              };
+            })}
+          />
+        ) : (
+          <div style={{ ...kartYuzey, padding: '34px 30px', textAlign: 'center' }}>
+            <div style={{ fontFamily: F.baslik, fontSize: 17, fontWeight: 600, color: R.yesil }}>Geç kalma kaydı yok</div>
+            <div style={{ fontSize: 12.5, color: R.not, marginTop: 7 }}>Bu dönemde grace süresini aşan giriş yok.</div>
+          </div>
+        ))}
+
+        {pdSekme === 'kasa' && (
+          <>
+            {kasaSatir.length ? (
+              <Tablo
+                baslik="Kasa açığı analizi · son 30 gün"
+                not="kasa farkı olan vardiyalar — özensizlik ≠ açık (şüphe skoru ayrı)"
+                kolonlar={[
+                  { ad: 'Personel' }, { ad: 'Şube' }, { ad: 'Vardiya', sag: true },
+                  { ad: 'Toplam fark', sag: true }, { ad: 'Durum' },
+                ]}
+                satirlar={kasaSatir.slice(0, 30).map((x, i) => {
+                  const fark = sayi(x.toplam_fark ?? x.fark);
+                  return {
+                    id: x.personel_id || `k-${i}`,
+                    hucreler: [
+                      { v: x.ad_soyad || x.personel_ad || '—', kalin: true },
+                      { v: x.sube_adi || x.sube_ad || '—', renk: R.not },
+                      { v: String(sayi(x.vardiya_sayisi ?? x.adet)), mono: true, sag: true },
+                      { v: fmt(fark), mono: true, sag: true, kalin: true, renk: fark < 0 ? R.kirmizi : R.yesil },
+                      Math.abs(fark) > 500
+                        ? { v: 'incele', rozet: R.kirmizi }
+                        : { v: 'küçük fark', rozet: R.amber },
+                    ],
+                  };
+                })}
+              />
+            ) : (
+          <div style={{ ...kartYuzey, padding: '34px 30px', textAlign: 'center' }}>
+            <div style={{ fontFamily: F.baslik, fontSize: 17, fontWeight: 600, color: R.yesil }}>Kasa açığı yok</div>
+            <div style={{ fontSize: 12.5, color: R.not, marginTop: 7 }}>Son 30 günde kasa farkı olan personel kaydı bulunmuyor.</div>
+          </div>
+        )}
+            {karne.length > 0 && (
+              <div style={{ marginTop: 14 }}>
+                <Tablo
+                  baslik="Kasiyer karnesi · son 30 gün"
+                  not="işlem hacmi ve doğruluk oranı"
+                  kolonlar={[{ ad: 'Kasiyer' }, { ad: 'Vardiya', sag: true }, { ad: 'Temiz gün', sag: true }, { ad: 'Oran', sag: true }]}
+                  satirlar={karne.slice(0, 20).map((x, i) => {
+                    const vard = sayi(x.vardiya ?? x.vardiya_sayisi) || 1;
+                    const temiz = sayi(x.temiz ?? x.temiz_gun);
+                    return {
+                      id: x.personel_id || `kr-${i}`,
+                      hucreler: [
+                        { v: x.ad_soyad || x.personel_ad || '—', kalin: true },
+                        { v: String(vard), mono: true, sag: true },
+                        { v: String(temiz), mono: true, sag: true, renk: R.yesil },
+                        { v: `%${trSayi((temiz / vard) * 100, 0)}`, mono: true, sag: true, renk: (temiz / vard) >= 0.9 ? R.yesil : R.amber },
+                      ],
+                    };
+                  })}
+                />
+              </div>
+            )}
+          </>
+        )}
+
+        <div style={{ fontSize: 11.5, color: R.not, marginTop: 12, marginBottom: 16, lineHeight: 1.55 }}>
+          ℹ ÖNERİ-ONLY: bu ekran gözlem toplar, hüküm vermez. Puan maaşa/avansa bağlanmaz;
+          disiplin kararı sahibin.
+        </div>
+      </>
+    );
+  }
 
   // ── 1) Kadro ───────────────────────────────────────────────────────────────
   if (gorunum === 'kadro') {

@@ -219,6 +219,37 @@ const OPS_UC = {
     ],
   },
   '/api/ops/siparis/sevkiyat-guncelle': { ok: true },
+  // Personel Denetimi (ops-merkez P2 sekmeleri)
+  '/api/ops/personel-davranis-analiz': {
+    gun_sayi: 45,
+    personel_ozet: [
+      { personel_id: 'pd1', personel_ad: 'Elif Kaya', sube_adi: 'ZAFER', vardiya_sayisi: 22, gecikme_dk: 18, kasa_fark: 0 },
+      { personel_id: 'pd2', personel_ad: 'Mert Can', sube_adi: 'KÖYCEĞİZ', vardiya_sayisi: 19, gecikme_dk: 62, kasa_fark: -340 },
+    ],
+  },
+  '/api/ops/sube-personel-puan': {
+    personeller: [
+      { personel_id: 'pp1', ad_soyad: 'DENİZ KÜÇÜKKIRLI', puan: 100, tamam: 34, gecikti: 0 },
+      { personel_id: 'pp2', ad_soyad: 'Mert Can', puan: 68, tamam: 21, gecikti: 6 },
+    ],
+  },
+  '/api/ops/gec-kalan-personel': {
+    year_month: bugunISO.slice(0, 7), gecikme_dk: 5, kritik_dk: 15,
+    toplam_personel: 6, gecikme_toplam_adet: 23, kritik_personel_sayisi: 2,
+    satirlar: [
+      { personel_id: 'g1', ad_soyad: 'Mert Can', sube_adi: 'KÖYCEĞİZ', gecikme_adet: 6, toplam_gecikme_dk: 62, kritik: true },
+      { personel_id: 'g2', ad_soyad: 'Elif Kaya', sube_adi: 'ZAFER', gecikme_adet: 3, toplam_gecikme_dk: 18, kritik: false },
+    ],
+  },
+  '/api/ops/kasa-acik-analiz': {
+    personeller: [{ personel_id: 'ka1', ad_soyad: 'Mert Can', sube_adi: 'KÖYCEĞİZ', vardiya_sayisi: 19, toplam_fark: -340 }],
+  },
+  '/api/ops/kasiyer-karne': {
+    karne: [
+      { personel_id: 'kr1', ad_soyad: 'Elif Kaya', vardiya: 22, temiz: 22 },
+      { personel_id: 'kr2', ad_soyad: 'Mert Can', vardiya: 19, temiz: 16 },
+    ],
+  },
   // Merkez Denetim (ops-merkez P1 sekmeleri)
   '/api/ops/urun-uyumsuzluk': {
     tarih: bugunISO, gun_toplam: 2, gun_bekleyen: 1, gun_cozuldu: 1,
