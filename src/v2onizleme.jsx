@@ -622,6 +622,18 @@ const EKIP_UC = {
   '/api/gorev/yoklama': [],
   '/api/personel-aylik': BORDRO,
   '/api/avans/ozet': { toplam: 4000, adet: 1 },
+  // Son köprü turu (2026-07-30): QR + konum artık v2-yerlisi
+  '/api/gorev/qr-liste': SUBELER.map((ad, i) => ({
+    sube_id: `s${i}`, sube_ad: ad,
+    qr_url: `data:image/svg+xml;utf8,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="180" height="180"><rect width="180" height="180" fill="#fff"/><text x="90" y="95" text-anchor="middle" font-size="14">QR</text></svg>')}`,
+    giris_url: `https://ornek/gorev-giris/s${i}`,
+  })),
+  '/api/subeler': SUBELER.map((ad, i) => ({
+    id: `s${i}`, ad, aktif: true,
+    lat: i < 2 ? 37.12 + i / 100 : null,
+    lng: i < 2 ? 28.98 + i / 100 : null,
+    konum_radius_m: 150,
+  })),
   '/api/vardiya/v2/hafta-sube-tablo': {
     pazartesi: HAFTA_PZT, pazar: HAFTA_GUNLER[6], gunler: HAFTA_GUNLER,
     subeler: SUBELER.map((ad, si) => ({
@@ -699,6 +711,13 @@ const KUCUK_UC = {
     ],
   },
   '/api/ops/siparis/depo-akisi-kalinti': { toplam: 3, kayitlar: [{ id: 1 }, { id: 2 }, { id: 3 }] },
+  // Son köprü turu: şube→merkez bilgi teslim defteri artık v2-yerlisi
+  '/api/bilgi-teslim-kayitlari': {
+    satirlar: [
+      { id: 'bt1', olusturma: `${gunEkleISO(-1)}T18:42:00`, sube_adi: 'Zafer', personel_ad: 'AYŞENAZ DAL', metin: 'Espresso makinesi 2 numaralı grup basınç düşürüyor, teknik servis çağrıldı.' },
+      { id: 'bt2', olusturma: `${gunEkleISO(-3)}T09:15:00`, sube_adi: 'Gazze', personel_ad: 'MEHMET YILMAZ', metin: 'Süt teslimatı eksik geldi — 6 koli yerine 4 koli.' },
+    ],
+  },
   '/api/tedarikciler': [
     { id: 'td1', ad: 'Kahve Dünyası Çekirdek', kategori: 'çekirdek', telefon: '05321234567', aciklama: '12 ay fiyat kilidi', aktif: true },
     { id: 'td2', ad: 'Sütaş Bölge Dağıtım', kategori: 'süt & krema', telefon: '05339876543', aciklama: 'haftada 2 teslim', aktif: true },

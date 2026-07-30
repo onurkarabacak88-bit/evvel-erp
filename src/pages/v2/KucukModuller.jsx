@@ -23,6 +23,7 @@ import { KpiSeridi, Tablo, Liste, OnayModali } from './parcalar';
 
 const sayi = (v) => Number(v) || 0;
 const trSayi = (n, b = 1) => (Number(n) || 0).toFixed(b).replace('.', ',');
+const kisalt = (s, n = 60) => { const t = String(s ?? ''); return t.length > n ? `${t.slice(0, n - 1)}…` : t; };
 const trKucuk = (s) => String(s || '').toLocaleLowerCase('tr');
 // ⚠️ İKİ YÖNLÜ TÜRKÇE-I TUZAĞI:
 //   trKucuk  → 'İ'yi doğru çevirir ama ASCII 'I'yı NOKTASIZ 'ı' yapar.
@@ -970,12 +971,14 @@ export function SistemModulu({ gorunum, onCekmece, onKopru, onToast }) {
     ['/teslim-bildirim/liste?gun=7', null],
     ['/ops/siparis/depo-akisi-kalinti', null],
     ['/import-izi?limit=30', null],  // DUYU 6/6: import iz defteri
+    ['/bilgi-teslim-kayitlari?gun=30&limit=500', null],  // köprü kalktı: şube→merkez not defteri
   ]);
   if (yukleniyor) return <Yukleniyor ad="Sistem" />;
   if (hata) return <Hata mesaj={hata} onTekrar={yukle} />;
 
-  const [teslimHam, kalinti, importIzi] = veri;
+  const [teslimHam, kalinti, importIzi, bilgiHam] = veri;
   const olaylar = teslimHam?.olaylar || (Array.isArray(teslimHam) ? teslimHam : []);
+  const bilgiKayitlari = bilgiHam?.satirlar || (Array.isArray(bilgiHam) ? bilgiHam : []);
 
   const TMZ_ONAY = 'EVET_SIL';
   const temizlikYap = async () => {
@@ -1045,28 +1048,78 @@ export function SistemModulu({ gorunum, onCekmece, onKopru, onToast }) {
 
   if (gorunum === 'teslim') {
     const gorulmemis = olaylar.filter(o => !o.gorulme_zamani && !o.gorildi);
+    const bkSube = new Set(bilgiKayitlari.map(r => r.sube_adi || r.sube_id).filter(Boolean)).size;
     return (
       <>
         <KpiSeridi kpiler={[
           { etiket: 'Son 7 gün teslim', deger: String(olaylar.length), alt: 'şube depo teslimleri' },
           { etiket: 'Görülmemiş', deger: String(gorulmemis.length), alt: gorulmemis.length ? 'bildirim bekliyor' : 'hepsi görüldü', renk: gorulmemis.length ? R.mavi : R.yesil },
-          { etiket: 'Şube', deger: String(new Set(olaylar.map(o => o.sube_adi).filter(Boolean)).size), alt: 'teslim alan', renk: R.krem },
+          { etiket: 'Bilgi teslimi', deger: String(bilgiKayitlari.length), alt: `son 30 gün · ${bkSube} şube`, renk: R.krem },
           { etiket: 'Kalıcı onay', deger: '"Tamam" sunucuda', alt: 'bir daha çıkmaz', renk: R.not },
         ]} />
         {olaylar.length ? (
           <Liste
+            baslik="Depo teslim bildirimleri · son 7 gün"
             satirlar={olaylar.slice(0, 40).map((o, i) => ({
               id: o.anahtar || i, _o: o,
               baslik: `${o.sube_adi || 'Şube'} · ${o.baslik || 'teslim işlendi'}`,
               alt: [o.zaman ? kisaTarih(o.zaman) : null, o.detay].filter(Boolean).join(' · ') || 'ayrıntı yok',
               tutar: sayi(o.tutar) ? fmt(o.tutar) : '',
               tier: (!o.gorulme_zamani && !o.gorildi) ? 'bilgi' : 'iyi',
-              aksiyon: 'Bilgi teslimi aç',
+              aksiyon: 'Bildirimi aç',
             }))}
-            onAc={() => onKopru?.('teslim-kayit')}
+            onAc={({ _o }) => onCekmece?.({
+              tip: 'TESLİM BİLDİRİMİ',
+              baslik: `${_o.sube_adi || 'Şube'} · ${_o.baslik || 'teslim işlendi'}`,
+              alt: _o.zaman ? kisaTarih(_o.zaman) : 'zaman yok',
+              kpi: [
+                { etiket: 'Şube', deger: _o.sube_adi || '—' },
+                { etiket: 'Zaman', deger: _o.zaman ? kisaTarih(_o.zaman) : '—' },
+                { etiket: 'Tutar', deger: sayi(_o.tutar) ? fmt(_o.tutar) : '—', renk: sayi(_o.tutar) ? R.yesil : R.not },
+                { etiket: 'Durum', deger: (!_o.gorulme_zamani && !_o.gorildi) ? 'görülmedi' : 'görüldü', renk: (!_o.gorulme_zamani && !_o.gorildi) ? R.mavi : R.yesil },
+              ],
+              listeBaslik: 'Bildirim',
+              satirlar: [
+                { ad: 'Ayrıntı', detay: 'bildirim metni', tutar: _o.detay || '—' },
+                { ad: 'Anahtar', detay: 'kalıcı onay kimliği', tutar: String(_o.anahtar || '—').slice(0, 24) },
+                { ad: 'Görülme', detay: 'sunucuda saklanır', tutar: _o.gorulme_zamani ? kisaTarih(_o.gorulme_zamani) : 'henüz yok' },
+              ],
+              not: '"Tamam" dediğinde onay sunucuya yazılır — bildirim bir daha çıkmaz. Bu kayıt teslimin kendisi değil, teslimin haberidir.',
+            })}
           />
         ) : (
           <Bos baslik="Son 7 günde teslim bildirimi yok" aciklama="Şube depodan teslim aldığında bildirim burada görünür." renk={R.yesil} />
+        )}
+
+        {/* Köprü kalktı (2026-07-30): şube→merkez bilgi teslim defteri artık burada */}
+        {bilgiKayitlari.length > 0 && (
+          <Tablo
+            baslik="Bilgi teslim kayıtları · son 30 gün"
+            not="şubelerin merkeze ilettiği not defteri · satıra tıkla → kaydın tamamı"
+            kolonlar={[{ ad: 'Zaman' }, { ad: 'Şube' }, { ad: 'Personel' }, { ad: 'Kayıt' }]}
+            satirlar={bilgiKayitlari.slice(0, 60).map((r, i) => ({
+              id: r.id || `bk-${i}`, _r: r,
+              hucreler: [
+                { v: String(r.olusturma || '—').replace('T', ' ').slice(0, 16), mono: true, renk: R.not },
+                { v: r.sube_adi || r.sube_id || '—', kalin: true },
+                { v: r.personel_ad || r.personel_id || '—' },
+                { v: kisalt(r.metin || '—', 60) },
+              ],
+            }))}
+            onSatir={({ _r }) => onCekmece?.({
+              tip: 'BİLGİ TESLİMİ',
+              baslik: _r.personel_ad || _r.personel_id || 'Personel kaydı',
+              alt: `${_r.sube_adi || _r.sube_id || 'şube yok'} · ${String(_r.olusturma || '').replace('T', ' ').slice(0, 16)}`,
+              kpi: [
+                { etiket: 'Şube', deger: _r.sube_adi || _r.sube_id || '—' },
+                { etiket: 'Personel', deger: _r.personel_ad || '—' },
+                { etiket: 'Zaman', deger: String(_r.olusturma || '—').replace('T', ' ').slice(0, 16) },
+              ],
+              listeBaslik: 'Teslim edilen bilgi',
+              satirlar: [{ ad: 'Metin', detay: 'personelin yazdığı', tutar: _r.metin || '—' }],
+              not: 'Şube personeli merkeze bir not bıraktığında buraya düşer. Salt-okunur defterdir — merkez silmez, düzeltmez.',
+            })}
+          />
         )}
       </>
     );

@@ -141,6 +141,20 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
   const [basvurular, setBasvurular] = useState([]);
   const [basvuruOzet, setBasvuruOzet] = useState(null);
   const [pinler, setPinler] = useState([]);
+  // ── SON KÖPRÜ TURU (2026-07-30) — klasikle bağ kalmasın ────────────────────
+  // Bordro onay/ödeme, panel PIN ve QR/konum ayarı artık YERLİ. Uçlar aynı
+  // guard'lı uçlar; maaş hesabı hâlâ maas_service'in tekelinde — burada
+  // yalnız o çekirdeğin AÇTIĞI kapılar (kaydet/onayla/öde/kilit) kullanılır.
+  const [bMesgul, setBMesgul] = useState(false);
+  const [bModal, setBModal] = useState(null);      // {tip, b, form}
+  const [bGecmis, setBGecmis] = useState(null);    // geçmiş dizisi
+  const [pinModal, setPinModal] = useState(null);  // {id, ad, pin}
+  const [pinOnay, setPinOnay] = useState({ id: '', pin: '' });
+  const [pinMesgul, setPinMesgul] = useState(false);
+  const [merkezKey, setMerkezKey] = useState('');
+  const [qrListe, setQrListe] = useState(null);
+  const [qrModal, setQrModal] = useState(null);    // {sube_id, sube_ad, lat, lng, radius, yapistir}
+  const [qrMesgul, setQrMesgul] = useState(false);
 
   const bugun = isoBugun();
   const buYil = Number(bugun.slice(0, 4));
@@ -191,6 +205,200 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
   };
 
   useEffect(yukle, []);
+
+  // Merkez mutasyon anahtarı — sunucuda EVVEL_MERKEZ_MUTASYON_ANAHTARI tanımlıysa
+  // PIN/yönetici değişikliği için gerekir; tarayıcıda saklanır (klasikteki gibi).
+  useEffect(() => {
+    try { setMerkezKey((localStorage.getItem('evvelMerkezMutasyonKey') || '').trim()); } catch { /* yok */ }
+  }, []);
+
+  // QR kartları görünüme girilince yüklenir (ana yüke ek yük bindirmesin).
+  useEffect(() => {
+    if (gorunum === 'pinqr' && qrListe === null) qrYukle();
+  }, [gorunum]);   // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── BORDRO YERLİ AKIŞ ──────────────────────────────────────────────────────
+  const bAc = (tip, b) => {
+    if (tip === 'gecmis') {
+      setBGecmis({ ad: b.ad_soyad, satirlar: null });
+      api(`/personel-aylik/${b.personel_id}/gecmis`)
+        .then((d) => setBGecmis({ ad: b.ad_soyad, satirlar: Array.isArray(d) ? d : [] }))
+        .catch(() => setBGecmis({ ad: b.ad_soyad, satirlar: [] }));
+      return;
+    }
+    setBModal({
+      tip, b,
+      form: {
+        calisma_saati: b.calisma_saati ?? '',
+        fazla_mesai_saat: b.fazla_mesai_saat ?? '',
+        bayram_mesai_saat: b.bayram_mesai_saat ?? '',
+        eksik_gun: b.eksik_gun ?? '',
+        raporlu_gun: b.raporlu_gun ?? '',
+        rapor_kesinti: !!b.rapor_kesinti,
+        manuel_duzeltme: b.manuel_duzeltme ?? '',
+        not_aciklama: b.not_aciklama || '',
+      },
+    });
+  };
+
+  const bYap = async () => {
+    const { tip, b, form } = bModal || {};
+    if (!tip) return;
+    const pid = b.personel_id;
+    const q = `yil=${yil}&ay=${ay}`;
+    setBMesgul(true);
+    try {
+      if (tip === 'doldur') {
+        const r = await api(`/personel-aylik/${pid}/vardiya-aktar?${q}`, { method: 'POST' });
+        onToast?.(`✓ Vardiya aktarıldı — net ${fmt(sayi(r?.hesaplanan_net))}`);
+      } else if (tip === 'kaydet') {
+        const r = await api(`/personel-aylik/${pid}?${q}`, {
+          method: 'POST',
+          body: {
+            calisma_saati: sayi(form.calisma_saati),
+            fazla_mesai_saat: sayi(form.fazla_mesai_saat),
+            bayram_mesai_saat: sayi(form.bayram_mesai_saat),
+            eksik_gun: sayi(form.eksik_gun),
+            raporlu_gun: sayi(form.raporlu_gun),
+            rapor_kesinti: !!form.rapor_kesinti,
+            manuel_duzeltme: sayi(form.manuel_duzeltme),
+            not_aciklama: (form.not_aciklama || '').trim() || null,
+          },
+        });
+        onToast?.(`✓ Kaydedildi — net ${fmt(sayi(r?.hesaplanan_net))}`);
+      } else if (tip === 'onayla') {
+        await api(`/personel-aylik/${pid}/onayla?${q}`, { method: 'POST' });
+        onToast?.('✓ Onaylandı — tutar kilitlendi, ödeme açıldı');
+      } else if (tip === 'ode') {
+        if (!b.odeme_id) throw new Error('Ödeme planı yok — önce onayla');
+        await api(`/odeme-plani/${b.odeme_id}/ode`, { method: 'POST', body: { odeme_yontemi: 'nakit' } });
+        onToast?.('💰 Ödendi — kasadan düşüldü');
+      } else if (tip === 'kilit') {
+        await api(`/personel-aylik/${pid}/kilit-ac?${q}`, { method: 'POST' });
+        onToast?.('🔓 Kilit açıldı — düzeltip tekrar onayla');
+      } else if (tip === 'sil') {
+        await api(`/personel-aylik/${pid}?${q}`, { method: 'DELETE' });
+        onToast?.('Kayıt silindi — taslağa döndü');
+      }
+      setBModal(null);
+      yukle();
+    } catch (e) {
+      onToast?.(e?.message || 'İşlem başarısız');
+    } finally {
+      setBMesgul(false);
+    }
+  };
+
+  /** Bordronun AŞAMASINA göre açık kapılar — kapalı olan düğme hiç görünmez. */
+  const bordroAksiyonlari = (b) => {
+    const d = String(b.durum || 'taslak');
+    const A = [];
+    if (d === 'odendi') {
+      A.push({ ad: '🕘 Geçmiş aylar', onTikla: () => bAc('gecmis', b) });
+      return A;
+    }
+    if (d === 'onayli') {
+      A.push({ ad: '💰 Öde (kasadan düş)', birincil: true, onTikla: () => bAc('ode', b) });
+      A.push({ ad: '🔓 Kilidi aç', onTikla: () => bAc('kilit', b) });
+      A.push({ ad: '🕘 Geçmiş aylar', onTikla: () => bAc('gecmis', b) });
+      return A;
+    }
+    A.push({ ad: '✓ Onayla (tutarı kilitle)', birincil: true, onTikla: () => bAc('onayla', b) });
+    A.push({ ad: '🗓 Vardiyadan doldur', onTikla: () => bAc('doldur', b) });
+    A.push({ ad: '✎ Düzelt & kaydet', onTikla: () => bAc('kaydet', b) });
+    A.push({ ad: '🕘 Geçmiş aylar', onTikla: () => bAc('gecmis', b) });
+    A.push({ ad: '🗑 Kaydı sil', onTikla: () => bAc('sil', b) });
+    return A;
+  };
+
+  // ── PANEL PIN YERLİ AKIŞ ───────────────────────────────────────────────────
+  const yoneticiVar = pinler.some((p) => p.yonetici);
+  /** Yönetici varsa değişiklik için yönetici kimliği + PIN'i şarttır (klasik kural). */
+  const pinOnayGovde = () => {
+    if (!yoneticiVar) return {};
+    return { onaylayan_personel_id: (pinOnay.id || '').trim(), onaylayan_pin: (pinOnay.pin || '').trim() };
+  };
+  const pinOnayGecerli = () => {
+    if (!yoneticiVar) return true;
+    const ok = (pinOnay.id || '').trim() && /^\d{4}$/.test((pinOnay.pin || '').trim());
+    if (!ok) onToast?.('Önce onaylayan yöneticiyi seçip 4 haneli PIN\'ini girin');
+    return !!ok;
+  };
+
+  const pinKaydet = async () => {
+    const pin = (pinModal?.pin || '').trim();
+    if (!/^\d{4}$/.test(pin)) { onToast?.('4 haneli PIN girin'); return; }
+    if (!pinOnayGecerli()) return;
+    setPinMesgul(true);
+    try {
+      await api(`/sube-panel/merkez/personel/${encodeURIComponent(pinModal.id)}/panel-pin`, {
+        method: 'PUT', body: { pin, ...pinOnayGovde() },
+      });
+      onToast?.('✓ PIN kaydedildi — tüm şube panellerinde geçerli');
+      setPinModal(null);
+      yukle();
+    } catch (e) {
+      onToast?.(e?.message || 'PIN kaydedilemedi');
+    } finally { setPinMesgul(false); }
+  };
+
+  const yoneticiDegistir = async (p, yonetici) => {
+    if (!pinOnayGecerli()) return;
+    setPinMesgul(true);
+    try {
+      await api(`/sube-panel/merkez/personel/${encodeURIComponent(p.id)}/panel-yonetici`, {
+        method: 'PUT', body: { yonetici, ...pinOnayGovde() },
+      });
+      onToast?.(yonetici ? '✓ Yönetici işaretlendi' : '✓ Yönetici kaldırıldı');
+      yukle();
+    } catch (e) {
+      onToast?.(e?.message || 'İşlem başarısız');
+    } finally { setPinMesgul(false); }
+  };
+
+  const merkezKeyKaydet = () => {
+    try {
+      const v = (merkezKey || '').trim();
+      if (v) localStorage.setItem('evvelMerkezMutasyonKey', v);
+      else localStorage.removeItem('evvelMerkezMutasyonKey');
+      onToast?.(v ? '✓ Merkez anahtarı bu tarayıcıda saklandı' : 'Anahtar silindi');
+    } catch {
+      onToast?.('Tarayıcı deposu kullanılamıyor');
+    }
+  };
+
+  // ── QR + ŞUBE KONUMU YERLİ AKIŞ ────────────────────────────────────────────
+  const qrYukle = () => {
+    Promise.all([
+      api('/gorev/qr-liste').catch(() => []),
+      api('/subeler').catch(() => []),
+    ]).then(([qr, sb]) => {
+      const detay = Object.fromEntries((sb || []).map((s) => [s.id, s]));
+      setQrListe((Array.isArray(qr) ? qr : []).map((s) => ({
+        ...s,
+        lat: detay[s.sube_id]?.lat ?? null,
+        lng: detay[s.sube_id]?.lng ?? null,
+        konum_radius_m: detay[s.sube_id]?.konum_radius_m ?? 150,
+      })));
+    }).catch(() => setQrListe([]));
+  };
+
+  const konumKaydet = async () => {
+    const lat = parseFloat(qrModal?.lat), lng = parseFloat(qrModal?.lng);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) { onToast?.('Enlem/boylam eksik'); return; }
+    setQrMesgul(true);
+    try {
+      await api(`/gorev/sube-konum/${qrModal.sube_id}`, {
+        method: 'PUT',
+        body: { lat, lng, konum_radius_m: parseInt(qrModal.radius, 10) || 150 },
+      });
+      onToast?.(`✓ ${qrModal.sube_ad} konumu kaydedildi (±${parseInt(qrModal.radius, 10) || 150}m)`);
+      setQrModal(null);
+      qrYukle();
+    } catch (e) {
+      onToast?.(e?.message || 'Konum kaydedilemedi');
+    } finally { setQrMesgul(false); }
+  };
 
   const vpYukle = (tarih) => {
     setVpHata('');
@@ -1268,15 +1476,134 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
                   { ad: 'Eksik gün', detay: 'devamsızlık', tutar: b.eksik_gun ? `${trSayi(b.eksik_gun, 0)} gün` : '—' },
                   { ad: 'Manuel düzeltme', detay: b.not_aciklama || 'not yok', tutar: fmt(sayi(b.manuel_duzeltme)) },
                 ],
-                not: 'Hesap maaş çekirdeğinden gelir. Bordro onayı ve ödemesi guard\'lı maaş akışında yapılır (Personel ekranı).',
-                aksiyonAd: 'Personel ekranını aç',
-                _hedef: 'personel',   // maaş onay/ödeme akışı klasikte (guard'lı) — bilinçli
+                not: 'Hesap maaş çekirdeğinin (maas_service) tekelindedir — buradaki düğmeler o çekirdeğin açtığı kapılardır, yeni bir para yolu değil. Ödeme kasa izine yazılır.',
+                aksiyonlar: bordroAksiyonlari(b),
               });
             }}
           />
         ) : (
           <div style={{ ...kartYuzey, padding: '38px 30px', textAlign: 'center', color: R.not }}>
             {AY_KISA[ay - 1]} {yil} için bordro kaydı bulunamadı.
+          </div>
+        )}
+
+        {/* ── YERLİ BORDRO İŞLEMİ (köprü kalktı 2026-07-30) ─────────────────── */}
+        {bModal && (() => {
+          const { tip, b, form } = bModal;
+          const BASLIK = {
+            doldur: 'Vardiyadan doldur', kaydet: 'Bordroyu düzelt', onayla: 'Bordroyu onayla',
+            ode: 'Maaş ödemesi', kilit: 'Kilidi aç', sil: 'Aylık kaydı sil',
+          }[tip];
+          const ANLAT = {
+            doldur: 'Vardiya defterindeki gerçekleşen saatler bu aya aktarılır ve net yeniden hesaplanır. Elle girdiğin düzeltmeler EZİLİR.',
+            kaydet: 'Girdiğin değerler maaş çekirdeğine gider, net orada hesaplanır. Buradaki alanlar hesabın girdisidir — sonucu değil.',
+            onayla: 'Tutar KİLİTLENİR ve ödeme planı açılır. Onaydan sonra düzeltme ancak kilidi açarak yapılır.',
+            ode: 'Kasadan düşülür ve kasa izine yazılır. Kasa izi tek gerçektir — bu adım geri alınmaz.',
+            kilit: 'Kayıt taslağa döner, düzeltip yeniden onaylayabilirsin. ÖDENMİŞ kayıt açılmaz.',
+            sil: 'Bu ayın bordro kaydı silinir, personel taslak duruma döner. Geçmiş aylar etkilenmez.',
+          }[tip];
+          const TEHLIKE = tip === 'ode' || tip === 'sil';
+          const alan = (k, etiket, ipucu) => (
+            <div style={{ flex: '1 1 140px' }}>
+              <label style={ekEtiket}>{etiket}</label>
+              <input value={form[k]} inputMode="decimal" placeholder={ipucu || '0'}
+                onChange={(e) => setBModal((m) => ({ ...m, form: { ...m.form, [k]: e.target.value } }))}
+                style={ekAlanStil} />
+            </div>
+          );
+          return (
+            <div onClick={(e) => { if (e.target === e.currentTarget && !bMesgul) setBModal(null); }} style={{
+              position: 'fixed', inset: 0, zIndex: 90, background: 'rgba(10,6,2,.66)',
+              backdropFilter: 'blur(3px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+            }}>
+              <div style={{ ...kartYuzey, width: tip === 'kaydet' ? 600 : 460, maxWidth: '96vw', padding: '24px 26px', maxHeight: '90vh', overflowY: 'auto' }}>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 6 }}>
+                  <div style={{ fontFamily: F.baslik, fontSize: 20, fontWeight: 600 }}>{BASLIK}</div>
+                  <button onClick={() => !bMesgul && setBModal(null)} style={{
+                    marginLeft: 'auto', border: 'none', background: 'transparent', color: R.not,
+                    fontSize: 16, cursor: 'pointer', fontFamily: 'inherit',
+                  }}>✕</button>
+                </div>
+                <div style={{ fontSize: 12.5, color: R.metin2, marginBottom: 4 }}>
+                  <b>{b.ad_soyad}</b> · {AY_KISA[ay - 1]} {yil} · hesaplanan net <b style={{ color: R.yesil }}>{fmt(sayi(b.hesaplanan_net))}</b>
+                </div>
+                <div style={{ fontSize: 12, color: R.not, lineHeight: 1.65, marginBottom: 16 }}>{ANLAT}</div>
+
+                {tip === 'kaydet' && (
+                  <>
+                    <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                      {alan('calisma_saati', 'Çalışma saati')}
+                      {alan('fazla_mesai_saat', 'Fazla mesai (sa)')}
+                      {alan('bayram_mesai_saat', 'Bayram mesai (sa)')}
+                    </div>
+                    <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                      {alan('eksik_gun', 'Eksik gün')}
+                      {alan('raporlu_gun', 'Raporlu gün')}
+                      {alan('manuel_duzeltme', 'Manuel düzeltme (₺)', '± tutar')}
+                    </div>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, color: R.metin2, margin: '6px 0 12px' }}>
+                      <input type="checkbox" checked={!!form.rapor_kesinti}
+                        onChange={(e) => setBModal((m) => ({ ...m, form: { ...m.form, rapor_kesinti: e.target.checked } }))} />
+                      Raporlu günler ücretten kesilsin
+                    </label>
+                    <label style={ekEtiket}>Not (düzeltmenin gerekçesi)</label>
+                    <input value={form.not_aciklama} placeholder="neden elle düzeltildi?"
+                      onChange={(e) => setBModal((m) => ({ ...m, form: { ...m.form, not_aciklama: e.target.value } }))}
+                      style={ekAlanStil} />
+                  </>
+                )}
+
+                {tip === 'ode' && !b.odeme_id && (
+                  <div style={{ fontSize: 12, color: R.amber, marginBottom: 12 }}>
+                    ⚠️ Bu bordroda ödeme planı yok — önce onaylanması gerekir.
+                  </div>
+                )}
+
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 16 }}>
+                  <button disabled={bMesgul} onClick={() => setBModal(null)} style={{
+                    padding: '10px 18px', borderRadius: 10, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+                    background: 'transparent', color: R.metin2, fontSize: 12.5, fontWeight: 600, fontFamily: 'inherit',
+                  }}>Vazgeç</button>
+                  <button disabled={bMesgul || (tip === 'ode' && !b.odeme_id)} onClick={bYap} style={{
+                    padding: '10px 20px', borderRadius: 10, border: 'none', cursor: 'pointer',
+                    background: TEHLIKE ? `${R.kirmizi}26` : 'linear-gradient(150deg, #D99A4E, #B06E2C)',
+                    color: TEHLIKE ? R.kirmizi : '#1C1309', fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit',
+                  }}>{bMesgul ? 'İşleniyor…' : BASLIK}</button>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* Geçmiş aylar — salt-okur */}
+        {bGecmis && (
+          <div onClick={(e) => { if (e.target === e.currentTarget) setBGecmis(null); }} style={{
+            position: 'fixed', inset: 0, zIndex: 90, background: 'rgba(10,6,2,.66)',
+            backdropFilter: 'blur(3px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+          }}>
+            <div style={{ ...kartYuzey, width: 520, maxWidth: '96vw', padding: '24px 26px', maxHeight: '86vh', overflowY: 'auto' }}>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 12 }}>
+                <div style={{ fontFamily: F.baslik, fontSize: 20, fontWeight: 600 }}>{bGecmis.ad} · geçmiş</div>
+                <button onClick={() => setBGecmis(null)} style={{
+                  marginLeft: 'auto', border: 'none', background: 'transparent', color: R.not,
+                  fontSize: 16, cursor: 'pointer', fontFamily: 'inherit',
+                }}>✕</button>
+              </div>
+              {bGecmis.satirlar === null ? (
+                <div style={{ fontSize: 12.5, color: R.not }}>Yükleniyor…</div>
+              ) : bGecmis.satirlar.length === 0 ? (
+                <div style={{ fontSize: 12.5, color: R.not }}>Geçmiş aylık kayıt yok.</div>
+              ) : bGecmis.satirlar.map((g, i) => (
+                <div key={i} style={{
+                  display: 'flex', alignItems: 'baseline', gap: 10, padding: '9px 0',
+                  borderBottom: `1px solid ${R.cizgi3}`, fontSize: 12.5,
+                }}>
+                  <span style={{ color: R.metin2, minWidth: 82 }}>{AY_KISA[(Number(g.ay) || 1) - 1]} {g.yil}</span>
+                  <span style={{ color: R.not, fontSize: 11.5 }}>{g.durum || '—'}</span>
+                  <span style={{ marginLeft: 'auto', fontWeight: 700 }}>{fmt(sayi(g.hesaplanan_net))}</span>
+                </div>
+              ))}
+            </div>
           </div>
         )}
       </>
@@ -1620,9 +1947,7 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
                 detay: k.yonetici ? 'panel yöneticisi' : 'personel',
                 tutar: k.panel_pin_tanimli ? 'PIN var' : 'PIN yok',
               })),
-              not: 'Şube panelinin ortak PIN\'i yoktur — her personel kendi PIN\'iyle girer. PIN yenileme Personel Panel PIN ekranından yapılır.',
-              aksiyonAd: 'Panel PIN ekranını aç',
-              _hedef: 'sube-panel-pin',
+              not: 'Şube panelinin ortak PIN\'i yoktur — her personel kendi PIN\'iyle girer. PIN aşağıdaki personel tablosundan atanır.',
             });
           }}
         />
@@ -1631,22 +1956,274 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
           Panel PIN kaydı bulunamadı.
         </div>
       )}
-      {/* Kapsama denetimi (2026-07-29): görünüm adı "Görev QR" vaat ediyordu ama
-          QR yoklama kodları + şube konum/yarıçap ayarı (gorev-qr sayfası) v2'den
-          HİÇ erişilemiyordu — köprü açıldı. */}
-      <div style={{ display: 'flex', gap: 9, marginTop: 2, marginBottom: 16 }}>
-        <button
-          onClick={() => onKopru?.('gorev-qr')}
-          style={{
-            padding: '9px 17px', borderRadius: 10, border: 'none',
-            background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
-            fontSize: 12, fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer',
-            boxShadow: '0 6px 18px rgba(217,154,78,.24)',
-          }}
-        >
-          📱 Görev QR kodları & şube konum ayarı
-        </button>
+      {/* ── YÖNETİCİ ONAY KAPISI (klasik kural aynen) ─────────────────────── */}
+      {yoneticiVar && (
+        <div style={{ ...kartYuzey, padding: '18px 22px', marginBottom: 16 }}>
+          <div style={{ fontFamily: F.baslik, fontSize: 15, fontWeight: 600, marginBottom: 4 }}>Panel yöneticisi onayı</div>
+          <div style={{ fontSize: 12, color: R.not, lineHeight: 1.6, marginBottom: 12 }}>
+            En az bir yönetici tanımlıyken PIN veya yönetici rolü değişikliği için bir yöneticinin kimliği ve PIN'i gerekir.
+            Bu alan doldurulmadan aşağıdaki düğmeler iş yapmaz.
+          </div>
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+            <div style={{ flex: '1 1 220px' }}>
+              <label style={ekEtiket}>Onaylayan yönetici</label>
+              <select value={pinOnay.id} onChange={(e) => setPinOnay((o) => ({ ...o, id: e.target.value }))} style={ekAlanStil}>
+                <option value="">Seçin</option>
+                {pinler.filter(p => p.yonetici).map(p => (
+                  <option key={p.id} value={p.id}>{p.ad_soyad}</option>
+                ))}
+              </select>
+            </div>
+            <div style={{ flex: '0 0 130px' }}>
+              <label style={ekEtiket}>Yönetici PIN</label>
+              <input value={pinOnay.pin} placeholder="••••" inputMode="numeric" maxLength={4}
+                onChange={(e) => setPinOnay((o) => ({ ...o, pin: e.target.value.replace(/\D/g, '').slice(0, 4) }))}
+                style={{ ...ekAlanStil, letterSpacing: '0.28em' }} />
+            </div>
+          </div>
+        </div>
+      )}
+      {!yoneticiVar && pinler.length > 0 && (
+        <div style={{ ...kartYuzey, padding: '14px 20px', marginBottom: 16, fontSize: 12, color: R.amber, lineHeight: 1.6 }}>
+          İlk kurulum: henüz panel yöneticisi yok — PIN ve yönetici atamaları onaysız yapılabilir.
+          İlk yöneticiyi işaretledikten sonra her değişiklik yönetici onayı ister.
+        </div>
+      )}
+
+      {/* ── PERSONEL PIN TABLOSU — köprü kalktı, atama burada ──────────────── */}
+      {pinler.length > 0 && (
+        <Tablo
+          baslik="Personel panel PIN'leri"
+          not="satıra tıkla → PIN ata / yönetici yetkisi · aynı PIN tüm şubelerde geçerli"
+          kolonlar={[{ ad: 'Ad soyad' }, { ad: 'Şube (kayıt)' }, { ad: 'PIN' }, { ad: 'Yönetici' }]}
+          satirlar={pinler.map(p => ({
+            id: p.id, _p: p,
+            hucreler: [
+              { v: p.ad_soyad, kalin: true },
+              { v: p.sube_adi || '—', renk: R.not },
+              { v: p.panel_pin_tanimli ? 'tanımlı' : 'yok', rozet: p.panel_pin_tanimli ? R.yesil : R.amber },
+              { v: p.yonetici ? 'yönetici' : '—', renk: p.yonetici ? R.mavi : R.not },
+            ],
+          }))}
+          onSatir={({ _p }) => onCekmece?.({
+            tip: 'PANEL KİMLİĞİ',
+            baslik: _p.ad_soyad,
+            alt: `${_p.sube_adi || 'şube atanmamış'} · ${_p.panel_pin_tanimli ? 'PIN tanımlı' : 'PIN yok'}`,
+            kpi: [
+              { etiket: 'PIN', deger: _p.panel_pin_tanimli ? 'tanımlı' : 'yok', renk: _p.panel_pin_tanimli ? R.yesil : R.amber },
+              { etiket: 'Yönetici', deger: _p.yonetici ? 'evet' : 'hayır', renk: _p.yonetici ? R.mavi : R.not },
+              { etiket: 'Kayıt şubesi', deger: _p.sube_adi || '—' },
+            ],
+            listeBaslik: 'PIN neyi açar',
+            satirlar: [
+              { ad: 'Kasa kilidi', detay: 'şube paneli', tutar: 'PIN ister' },
+              { ad: 'Kapanış onayı', detay: 'mühür adımı', tutar: 'PIN ister' },
+              { ad: 'Vardiya devri', detay: 'kasa el değiştirme', tutar: 'PIN ister' },
+            ],
+            not: 'PIN personele aittir, şubeye değil — personel hangi şubede çalışırsa çalışsın aynı PIN geçerlidir. Yönetici yetkisi cep override kapısını açar.',
+            aksiyonlar: [
+              { ad: _p.panel_pin_tanimli ? '🔑 PIN değiştir' : '🔑 PIN ata', birincil: true, onTikla: () => setPinModal({ id: _p.id, ad: _p.ad_soyad, pin: '' }) },
+              { ad: _p.yonetici ? '↓ Yönetici yetkisini kaldır' : '↑ Yönetici yap', onTikla: () => yoneticiDegistir(_p, !_p.yonetici) },
+            ],
+          })}
+        />
+      )}
+
+      {/* ── ŞUBE QR KODLARI + KONUM (köprü kalktı 2026-07-30) ──────────────── */}
+      <div style={{ ...kartYuzey, padding: '20px 24px', marginBottom: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 4 }}>
+          <div style={{ fontFamily: F.baslik, fontSize: 17, fontWeight: 600 }}>Şube QR kodları</div>
+          <div style={{ fontSize: 11.5, color: R.not }}>
+            {qrListe === null ? 'yükleniyor…' : `${qrListe.filter(s => s.lat && s.lng).length}/${qrListe.length} şubede konum tanımlı`}
+          </div>
+          <button onClick={qrYukle} style={{
+            marginLeft: 'auto', padding: '6px 13px', borderRadius: 9, cursor: 'pointer',
+            border: `1px solid ${R.cizgi3}`, background: 'transparent', color: R.metin2,
+            fontSize: 11.5, fontWeight: 600, fontFamily: 'inherit',
+          }}>↻ Yenile</button>
+        </div>
+        <div style={{ fontSize: 12, color: R.not, lineHeight: 1.65, marginBottom: 16 }}>
+          Her şubenin kodunu kasaya asın — personel okutunca görev listesine düşer. Konum tanımlı değilse
+          personel <b>herhangi bir yerden</b> giriş yapabilir; tanımlıysa sistem şubede olup olmadığını doğrular.
+        </div>
+        {qrListe === null ? (
+          <div style={{ fontSize: 12.5, color: R.not, padding: '20px 0', textAlign: 'center' }}>QR kodlar hazırlanıyor…</div>
+        ) : qrListe.length === 0 ? (
+          <div style={{ fontSize: 12.5, color: R.not, padding: '20px 0', textAlign: 'center' }}>QR listesi alınamadı.</div>
+        ) : (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(230px, 1fr))', gap: 16 }}>
+            {qrListe.map(s => {
+              const konumVar = !!(s.lat && s.lng);
+              return (
+                <div key={s.sube_id} style={{
+                  border: `1px solid ${R.cizgi3}`, borderRadius: 14, padding: 16, textAlign: 'center',
+                  background: 'rgba(255,255,255,.02)',
+                }}>
+                  <div style={{ fontSize: 13.5, fontWeight: 700, marginBottom: 12 }}>{s.sube_ad}</div>
+                  <div style={{ background: '#fff', borderRadius: 10, padding: 9, display: 'inline-block', marginBottom: 12 }}>
+                    <img src={s.qr_url} alt={`${s.sube_ad} QR`} style={{ width: 148, height: 148, display: 'block' }} />
+                  </div>
+                  <div style={{
+                    fontSize: 11, marginBottom: 10,
+                    color: konumVar ? R.yesil : R.amber,
+                  }}>
+                    {konumVar ? `📍 konum tanımlı · ±${s.konum_radius_m ?? 150}m` : '📍 konum tanımlı değil'}
+                  </div>
+                  <div style={{ display: 'flex', gap: 7, justifyContent: 'center', flexWrap: 'wrap' }}>
+                    <a href={s.qr_url} download={`${s.sube_ad}_qr.png`} style={{
+                      padding: '6px 12px', borderRadius: 8, fontSize: 11.5, fontWeight: 600,
+                      background: `${R.bakir}22`, color: R.bakir, border: `1px solid ${R.bakir}44`,
+                      textDecoration: 'none',
+                    }}>İndir</a>
+                    <a href={s.giris_url} target="_blank" rel="noreferrer" style={{
+                      padding: '6px 12px', borderRadius: 8, fontSize: 11.5, fontWeight: 600,
+                      background: 'transparent', color: R.metin2, border: `1px solid ${R.cizgi3}`,
+                      textDecoration: 'none',
+                    }}>Önizle</a>
+                    <button onClick={() => setQrModal({
+                      sube_id: s.sube_id, sube_ad: s.sube_ad,
+                      lat: s.lat ?? '', lng: s.lng ?? '', radius: s.konum_radius_m ?? 150, yapistir: '',
+                    })} style={{
+                      padding: '6px 12px', borderRadius: 8, fontSize: 11.5, fontWeight: 600, cursor: 'pointer',
+                      background: 'transparent', color: konumVar ? R.metin2 : R.amber,
+                      border: `1px solid ${konumVar ? R.cizgi3 : `${R.amber}55`}`, fontFamily: 'inherit',
+                    }}>Konum</button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+        <div style={{ fontSize: 11.5, color: R.not, lineHeight: 1.7, marginTop: 16, paddingTop: 14, borderTop: `1px solid ${R.cizgi3}` }}>
+          QR'sız giriş de mümkün — personel şu adresi telefona kaydedebilir:{' '}
+          <a href={`${window.location.origin}/gorev-pin`} target="_blank" rel="noreferrer"
+            style={{ color: R.mavi, fontWeight: 700, textDecoration: 'none' }}>
+            {window.location.origin}/gorev-pin
+          </a>
+        </div>
       </div>
+
+      {/* Sunucu mutasyon anahtarı — üretimde tanımlıysa gerekir */}
+      <details style={{ ...kartYuzey, padding: '14px 20px', marginBottom: 16, fontSize: 12, color: R.metin2 }}>
+        <summary style={{ cursor: 'pointer', fontWeight: 600 }}>Sunucu mutasyon anahtarı (isteğe bağlı)</summary>
+        <div style={{ fontSize: 11.5, color: R.not, lineHeight: 1.65, margin: '10px 0' }}>
+          Sunucuda <code>EVVEL_MERKEZ_MUTASYON_ANAHTARI</code> tanımlıysa PIN/yönetici değişiklikleri
+          <code> X-Evvel-Merkez-Key</code> başlığı ister. Anahtar yalnız bu tarayıcıda saklanır.
+        </div>
+        <div style={{ display: 'flex', gap: 9, alignItems: 'center', flexWrap: 'wrap' }}>
+          <input type="password" autoComplete="off" placeholder="Sunucudakiyle aynı anahtar"
+            value={merkezKey} onChange={(e) => setMerkezKey(e.target.value)}
+            style={{ ...ekAlanStil, flex: '1 1 220px', marginBottom: 0 }} />
+          <button onClick={merkezKeyKaydet} style={{
+            padding: '9px 16px', borderRadius: 9, cursor: 'pointer', border: `1px solid ${R.cizgi3}`,
+            background: 'transparent', color: R.metin2, fontSize: 12, fontWeight: 600, fontFamily: 'inherit',
+          }}>Kaydet / temizle</button>
+        </div>
+      </details>
+
+      {/* PIN atama modalı */}
+      {pinModal && (
+        <div onClick={(e) => { if (e.target === e.currentTarget && !pinMesgul) setPinModal(null); }} style={{
+          position: 'fixed', inset: 0, zIndex: 90, background: 'rgba(10,6,2,.66)',
+          backdropFilter: 'blur(3px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+        }}>
+          <div style={{ ...kartYuzey, width: 400, maxWidth: '96vw', padding: '24px 26px' }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 6 }}>
+              <div style={{ fontFamily: F.baslik, fontSize: 20, fontWeight: 600 }}>Panel PIN</div>
+              <button onClick={() => !pinMesgul && setPinModal(null)} style={{
+                marginLeft: 'auto', border: 'none', background: 'transparent', color: R.not,
+                fontSize: 16, cursor: 'pointer', fontFamily: 'inherit',
+              }}>✕</button>
+            </div>
+            <div style={{ fontSize: 12.5, color: R.metin2, marginBottom: 14 }}>
+              <b>{pinModal.ad}</b> — bu PIN tüm şubelerdeki panel işlemlerinde kullanılır.
+            </div>
+            <label style={ekEtiket}>4 haneli PIN</label>
+            <input value={pinModal.pin} placeholder="••••" inputMode="numeric" maxLength={4} autoFocus
+              onChange={(e) => setPinModal((m) => ({ ...m, pin: e.target.value.replace(/\D/g, '').slice(0, 4) }))}
+              style={{ ...ekAlanStil, letterSpacing: '0.3em', fontSize: 18, textAlign: 'center' }} />
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 16 }}>
+              <button disabled={pinMesgul} onClick={() => setPinModal(null)} style={{
+                padding: '10px 18px', borderRadius: 10, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+                background: 'transparent', color: R.metin2, fontSize: 12.5, fontWeight: 600, fontFamily: 'inherit',
+              }}>Vazgeç</button>
+              <button disabled={pinMesgul} onClick={pinKaydet} style={{
+                padding: '10px 20px', borderRadius: 10, border: 'none', cursor: 'pointer',
+                background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+                fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit',
+              }}>{pinMesgul ? 'Kaydediliyor…' : 'PIN\'i kaydet'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Şube konum modalı */}
+      {qrModal && (
+        <div onClick={(e) => { if (e.target === e.currentTarget && !qrMesgul) setQrModal(null); }} style={{
+          position: 'fixed', inset: 0, zIndex: 90, background: 'rgba(10,6,2,.66)',
+          backdropFilter: 'blur(3px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+        }}>
+          <div style={{ ...kartYuzey, width: 470, maxWidth: '96vw', padding: '24px 26px', maxHeight: '90vh', overflowY: 'auto' }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 6 }}>
+              <div style={{ fontFamily: F.baslik, fontSize: 20, fontWeight: 600 }}>{qrModal.sube_ad} · konum</div>
+              <button onClick={() => !qrMesgul && setQrModal(null)} style={{
+                marginLeft: 'auto', border: 'none', background: 'transparent', color: R.not,
+                fontSize: 16, cursor: 'pointer', fontFamily: 'inherit',
+              }}>✕</button>
+            </div>
+            <div style={{ fontSize: 12, color: R.not, lineHeight: 1.65, marginBottom: 16 }}>
+              Konum tanımlıysa QR ile giriş yalnız şubenin yakınından yapılabilir. En kolay yol:
+              maps.google.com'da şubeye sağ tıkla → koordinatı kopyala → aşağıya yapıştır.
+            </div>
+            <label style={ekEtiket}>Google Maps koordinatı yapıştır</label>
+            <input value={qrModal.yapistir} placeholder="37.1234567, 28.9876543"
+              onChange={(e) => {
+                const v = e.target.value;
+                const m = v.match(/(-?\d+\.\d+)[,\s]+(-?\d+\.\d+)/);
+                setQrModal((q) => ({ ...q, yapistir: v, ...(m ? { lat: m[1], lng: m[2] } : {}) }));
+              }}
+              style={ekAlanStil} />
+            <button onClick={() => {
+              if (!navigator.geolocation) { onToast?.('Tarayıcı konum desteklemiyor'); return; }
+              navigator.geolocation.getCurrentPosition(
+                (pos) => setQrModal((q) => ({ ...q, lat: pos.coords.latitude.toFixed(7), lng: pos.coords.longitude.toFixed(7) })),
+                () => onToast?.('Konum izni reddedildi — Maps yöntemini kullanın'),
+                { enableHighAccuracy: true, timeout: 10000 },
+              );
+            }} style={{
+              width: '100%', padding: '9px 12px', borderRadius: 9, cursor: 'pointer', marginBottom: 14,
+              border: `1px solid ${R.cizgi3}`, background: 'transparent', color: R.metin2,
+              fontSize: 12, fontWeight: 600, fontFamily: 'inherit',
+            }}>📡 Şu anki GPS konumumu al</button>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <div style={{ flex: 1 }}>
+                <label style={ekEtiket}>Enlem (lat)</label>
+                <input value={qrModal.lat} onChange={(e) => setQrModal((q) => ({ ...q, lat: e.target.value }))} style={ekAlanStil} />
+              </div>
+              <div style={{ flex: 1 }}>
+                <label style={ekEtiket}>Boylam (lng)</label>
+                <input value={qrModal.lng} onChange={(e) => setQrModal((q) => ({ ...q, lng: e.target.value }))} style={ekAlanStil} />
+              </div>
+            </div>
+            <label style={ekEtiket}>İzin verilen mesafe — {qrModal.radius}m</label>
+            <input type="range" min="50" max="500" step="25" value={qrModal.radius}
+              onChange={(e) => setQrModal((q) => ({ ...q, radius: e.target.value }))}
+              style={{ width: '100%', marginBottom: 4 }} />
+            <div style={{ fontSize: 11, color: R.not, marginBottom: 14 }}>Küçük şubeler için 100m, büyük için 200m önerilir.</div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+              <button disabled={qrMesgul} onClick={() => setQrModal(null)} style={{
+                padding: '10px 18px', borderRadius: 10, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+                background: 'transparent', color: R.metin2, fontSize: 12.5, fontWeight: 600, fontFamily: 'inherit',
+              }}>Vazgeç</button>
+              <button disabled={qrMesgul || !qrModal.lat || !qrModal.lng} onClick={konumKaydet} style={{
+                padding: '10px 20px', borderRadius: 10, border: 'none', cursor: 'pointer',
+                background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+                fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit',
+              }}>{qrMesgul ? 'Kaydediliyor…' : 'Konumu kaydet'}</button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }

@@ -169,13 +169,26 @@ const PAGES = {
   'ev-tasarim':       EvTasarim,
 };
 
+// ── KLASİK TASARIM GÖRÜNMEZ (sahip kararı 2026-07-30) ────────────────────────
+// "Silme yerine tamamen görünmez yap — sadece yeni olanı göreyim."
+// Klasik ekranların HİÇBİRİ silinmedi: PAGES sözlüğü, sayfa dosyaları ve NAV
+// listesi dosyada duruyor. Ama artık hiçbir yol oraya çıkmıyor:
+//   · v2'de klasiğe giden köprü kalmadı (son 4'ü de yerli oldu)
+//   · düz '#panel' gibi eski hash'ler de artık v2 açar
+//   · klasik kabuk YALNIZ '#klasik:<sayfa>' yazılırsa açılır (acil kurtarma)
+// Bu kapı bilinçlidir: bir v2 ekranı bozulursa iş durmasın diye eski ekran
+// hâlâ ayakta — ama kimse kazara oraya düşmez.
+const KLASIK_ONEK = 'klasik:';
+
 function readPageFromHash() {
   try {
     const raw = (window.location.hash || '').replace(/^#/, '').split('&')[0];
     const h = decodeURIComponent(raw).trim();
-    const cozulmus = resolvePageAlias(h);
-    if (cozulmus !== h) return cozulmus;
-    if (h && Object.prototype.hasOwnProperty.call(PAGES, h)) return h;
+    if (!h.startsWith(KLASIK_ONEK)) return null;   // klasik görünmez: her şey v2
+    const g = h.slice(KLASIK_ONEK.length).trim();
+    const cozulmus = resolvePageAlias(g);
+    if (cozulmus !== g) return cozulmus;
+    if (g && Object.prototype.hasOwnProperty.call(PAGES, g)) return g;
   } catch (_) {}
   return null;
 }
@@ -183,12 +196,13 @@ function readPageFromHash() {
 function syncHashForPage(pageId) {
   try {
     const path = window.location.pathname || '/admin';
-    // Kalıcı geçiş: hash'siz kök adres = v2 (varsayılan). Klasik panel dahil
-    // diğer her sayfa kendi hash'ini taşır ki yenilemede aynı yere dönülsün.
+    // Kalıcı geçiş: hash'siz kök adres = v2 (varsayılan). Klasik ekran açıksa
+    // hash 'klasik:' önekiyle yazılır — yenilemede aynı yere döner, ama o
+    // adres paylaşılmadıkça kimse klasiğe düşmez.
     if (!pageId || pageId === 'tasarim-v2') {
       window.history.replaceState(null, '', path);
     } else {
-      window.history.replaceState(null, '', `${path}#${encodeURIComponent(pageId)}`);
+      window.history.replaceState(null, '', `${path}#${KLASIK_ONEK}${encodeURIComponent(pageId)}`);
     }
   } catch (_) {}
 }
@@ -470,6 +484,29 @@ export default function App() {
         </div>
       </aside>
       <main className="main" ref={mainRef}>
+        {/* Emeklilik şeridi: buraya ancak '#klasik:' yazarak gelinir. Ekran
+            silinmedi ama artık ürünün parçası değil — dönüş kapısı hep açık. */}
+        <div style={{
+          position: 'sticky', top: 0, zIndex: 41,
+          display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+          padding: '8px 20px', fontSize: 12,
+          background: 'var(--accent-dim, rgba(200,149,106,.12))',
+          borderBottom: '1px solid var(--accent-border, rgba(200,149,106,.3))',
+        }}>
+          <span>
+            <b>Emekli tasarım.</b> Bu ekran arşivde duruyor; günlük işin tamamı kadife tasarımda.
+          </span>
+          <button
+            onClick={() => navigate('tasarim-v2')}
+            style={{
+              marginLeft: 'auto', padding: '5px 14px', borderRadius: 7, cursor: 'pointer',
+              background: 'var(--accent)', border: 'none', color: '#1C1309',
+              fontSize: 12, fontWeight: 700,
+            }}
+          >
+            ← Kadife tasarıma dön
+          </button>
+        </div>
         {page !== 'panel' && (
           <div style={{
             position: 'sticky', top: 0, zIndex: 40,

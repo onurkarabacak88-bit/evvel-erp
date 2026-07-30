@@ -841,7 +841,7 @@ export default function OdemeMerkezi() {
                       <button className="btn btn-secondary btn-sm" title="Belge arşivi, beyan, devir, fatura kovalama — Tedarikçi Kontrol'de incele"
                         onClick={() => {
                           try { sessionStorage.setItem('tm_ac_tedarikci', t.tedarikci); } catch { /* yoksay */ }
-                          window.location.hash = 'belge-merkezi';
+                          window.location.hash = 'klasik:belge-merkezi';
                         }}>🏦 Tedarikçi 360</button>
                     </span>
                   </div>

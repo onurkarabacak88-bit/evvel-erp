@@ -3128,7 +3128,7 @@ function DetayModal({ sube_id, sube_ad, tarih, onKapat, onGorevAcildi }) {
                       {/* Kasa boyutu için Operasyon Merkezi shortcut */}
                       {anomali && k.boyut === 'kasa' && (
                         <a
-                          href="#ops-merkez"
+                          href="#klasik:ops-merkez"
                           onClick={() => {
                             try {
                               sessionStorage.setItem('ops_merkez_ac_sekme', 'kasa-uyumsuzlugu');

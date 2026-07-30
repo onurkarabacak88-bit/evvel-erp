@@ -15104,7 +15104,7 @@ export default function OperasyonMerkezi() {
                                     sessionStorage.setItem('ops_kontrol_kulesi_gorunum', 'depo');
                                     sessionStorage.setItem('ops_kontrol_kulesi_depo', sid);
                                   } catch (_) {}
-                                  window.location.hash = 'ops-merkez';
+                                  window.location.hash = 'klasik:ops-merkez';
                                   acOpsModul('siparis-kontrol', 'siparis-tedarik');
                                 }}
                               >

@@ -665,7 +665,7 @@ export default function BelgeMerkezi() {
                             title="Bu tedarikçinin ödeme akışı Ödeme Merkezi'nde"
                             onClick={() => {
                               try { sessionStorage.setItem('om_ac_tedarikci', t.toptanci); } catch { /* yoksay */ }
-                              window.location.hash = 'odeme-merkezi';
+                              window.location.hash = 'klasik:odeme-merkezi';
                             }}>💸 Ödeme ekranında aç</button>
                           🧾 Beyan (tedarikçinin fatura üstü bakiyesi):{' '}
                           <b>{cari[t.toptanci].beyan_bakiye != null ? `≈ ${fmt(cari[t.toptanci].beyan_bakiye)}` : 'fatura üstünde yok'}</b>
