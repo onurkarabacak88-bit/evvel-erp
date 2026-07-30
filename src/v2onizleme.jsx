@@ -174,6 +174,15 @@ const ODEME_UC = {
       { tedarikci: 'Enerjisa', hesaplanan_acik: 22640, beyan_bakiye: 22640, beyan_hesap_farki: 0, bekleyen_vade_toplam: 22640, fatura_adet_6ay: 6, fatura_toplam_6ay: 134000, son_fatura: gunEkleISO(-8), en_yakin_vade: gunEkleISO(9), odeme_izi_var: true, devir: 0 },
     ],
   },
+  '/api/fatura/cari-odenecekler': {
+    tedarikci: 'SÜTAŞ BÖLGE DAĞITIM',
+    acik_faturalar: [
+      { fatura_id: 'f1', fatura_no: 'ST-2026-1180', tarih: gunEkleISO(-38), tutar: 41250, kapatilan: 0, kalan: 41250 },
+      { fatura_id: 'f2', fatura_no: 'ST-2026-1204', tarih: gunEkleISO(-21), tutar: 38900, kapatilan: 10000, kalan: 28900 },
+      { fatura_id: 'f3', fatura_no: 'ST-2026-1233', tarih: gunEkleISO(-6), tutar: 44100, kapatilan: 0, kalan: 44100 },
+    ],
+    acik_toplam: 114250,
+  },
   '/api/uyarilar': [
     { id: 'u1', seviye: 'KRITIK', mesaj: 'Zafer kasa açığı 3 gündür kapanmadı — 2.480 ₺', sube_ad: 'Zafer', tarih: bugunISO, tutar: 2480, kategori: 'kasa' },
     { id: 'u2', seviye: 'KRITIK', mesaj: 'KOÇ FİNANS taksiti bugün vadesinde — ödenmedi', sube_ad: null, tarih: bugunISO, tutar: 18400, kategori: 'borç' },

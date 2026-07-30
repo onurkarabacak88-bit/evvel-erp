@@ -151,6 +151,12 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
   // tutarsız fatura (öde / vadeye yaz) + tarih seçmeli ertele + taahhüt.
   // TEK YAZICI İLKESİ korunur: hepsi mevcut guard'lı uçlara delege.
   const [kartListe, setKartListe] = useState([]);
+  // ── BORÇ ÖDE (cari hesaba ödeme, 2026-07-31) ──────────────────────────────
+  // Sahip kararı: alım ≠ ödeme. Bu akış bir ALIM kaydına iliştirmeden, doğrudan
+  // tedarikçinin cari hesabına ödeme yapar; para FIFO ile en eski borçtan kapatır.
+  const [borcModal, setBorcModal] = useState(null);   // {ted, tutar, yontem, kartId, elle, secim{}}
+  const [borcAcik, setBorcAcik] = useState(null);     // /cari-odenecekler cevabı
+  const [borcMesgul, setBorcMesgul] = useState(false);
   const kartlariGetir = () => {
     if (!kartListe.length) api('/kartlar').then((d) => setKartListe(Array.isArray(d) ? d : [])).catch(() => {});
   };
@@ -260,6 +266,66 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
   // ── zengin ödeme modalı (tam/kısmi + yöntem + ek + tutarsız + ertele + taahhüt) ──
   const guncelle = (k, v) => setModal((m) => ({ ...m, [k]: v }));
 
+  /** Borç Öde akışını aç: tedarikçinin AÇIK faturalarını FIFO sırayla getir. */
+  const borcOdeAc = async (tedAd, onerilenTutar) => {
+    setBorcModal({ ted: tedAd, tutar: onerilenTutar ? String(Math.round(onerilenTutar)) : '', yontem: 'nakit', kartId: '', elle: false, secim: {} });
+    setBorcAcik(null);
+    try {
+      const d = await api(`/fatura/cari-odenecekler?tedarikci=${encodeURIComponent(tedAd)}`);
+      setBorcAcik(d || { acik_faturalar: [], acik_toplam: 0 });
+    } catch (e) {
+      setBorcAcik({ acik_faturalar: [], acik_toplam: 0, _hata: e?.message || 'açık faturalar alınamadı' });
+    }
+  };
+
+  /** FIFO önizleme: girilen tutar hangi faturaları kapatır? (sunucudaki kuralın aynısı) */
+  const borcOnizleme = () => {
+    const liste = borcAcik?.acik_faturalar || [];
+    const t = sayi(borcModal?.tutar);
+    if (!t || !liste.length) return { satirlar: [], avans: t || 0 };
+    if (borcModal?.elle) {
+      const sat = liste
+        .filter((f) => sayi(borcModal.secim[f.fatura_id]) > 0)
+        .map((f) => ({ ...f, kapanan: Math.min(sayi(borcModal.secim[f.fatura_id]), f.kalan) }));
+      const toplam = sat.reduce((a, b) => a + b.kapanan, 0);
+      return { satirlar: sat, avans: Math.max(0, t - toplam) };
+    }
+    let kalan = t; const sat = [];
+    for (const f of liste) {
+      if (kalan <= 0.01) break;
+      const pay = Math.min(f.kalan, kalan);
+      sat.push({ ...f, kapanan: pay });
+      kalan -= pay;
+    }
+    return { satirlar: sat, avans: Math.max(0, kalan) };
+  };
+
+  const borcOdeGonder = async () => {
+    const t = sayi(borcModal?.tutar);
+    if (t <= 0) { onToast?.('Ödeme tutarı girin'); return; }
+    if (borcModal.yontem === 'kart' && !borcModal.kartId) { onToast?.('Kart seçin'); return; }
+    setBorcMesgul(true);
+    try {
+      const govde = {
+        tedarikci: borcModal.ted, tutar: t,
+        odeme_yontemi: borcModal.yontem,
+        kart_id: borcModal.yontem === 'kart' ? borcModal.kartId : null,
+      };
+      if (borcModal.elle) {
+        govde.tahsis = (borcAcik?.acik_faturalar || [])
+          .filter((f) => sayi(borcModal.secim[f.fatura_id]) > 0)
+          .map((f) => ({ fatura_id: f.fatura_id, tutar: sayi(borcModal.secim[f.fatura_id]) }));
+      }
+      const r = await api('/fatura/cari-ode', { method: 'POST', body: govde });
+      const kapanan = (r?.kapatilan_faturalar || []).length;
+      onToast?.(r?.mesaj || `✓ ${fmt(t)} ödendi · ${kapanan} fatura kapandı`);
+      setBorcModal(null); setBorcAcik(null);
+      yukle();
+    } catch (e) {
+      onToast?.(e?.message || 'Ödeme başarısız');
+    } finally { setBorcMesgul(false); }
+  };
+
   /** Seçili kaynağın ödeme sonrası durumu. Nakit → kasa bakiyesi; kart →
    *  kullanılabilir limit. Veri yoksa şerit HİÇ çıkmaz (uydurma bakiye yok). */
   const kaynakDurumu = (() => {
@@ -318,6 +384,135 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
       📎 {modal?.dosya ? `${modal.dosya.name} — arşive eklenecek` : 'Fatura eki iliştir (isteğe bağlı — PDF/foto)'}
     </label>
   );
+  // ── BORÇ ÖDE MODALI: FIFO önizlemeli ──────────────────────────────────────
+  // Sahip kararı: alım ≠ ödeme. Bu modal fatura İSTEMEZ; girilen tutarın hangi
+  // faturaları kapatacağını CANLI gösterir (sunucudaki FIFO kuralının aynısı).
+  const borcOdeModali = borcModal && (() => {
+    const { satirlar: onizleme, avans } = borcOnizleme();
+    const acikToplam = sayi(borcAcik?.acik_toplam);
+    const t = sayi(borcModal.tutar);
+    const kapat = () => { if (!borcMesgul) { setBorcModal(null); setBorcAcik(null); } };
+    return (
+      <div onClick={(e) => { if (e.target === e.currentTarget) kapat(); }} style={{
+        position: 'fixed', inset: 0, zIndex: 120, background: 'rgba(10,6,2,.7)',
+        backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center',
+        justifyContent: 'center', padding: 20,
+      }}>
+        <div style={{ ...kartYuzey, width: 560, maxWidth: '96vw', maxHeight: '92vh', overflowY: 'auto', padding: '24px 26px' }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 4 }}>
+            <div style={{ fontFamily: F.baslik, fontSize: 20, fontWeight: 600 }}>Borç öde</div>
+            <button onClick={kapat} style={{
+              marginLeft: 'auto', border: 'none', background: 'transparent', color: R.not,
+              fontSize: 16, cursor: 'pointer', fontFamily: 'inherit',
+            }}>x</button>
+          </div>
+          <div style={{ fontSize: 12.5, color: R.metin2, marginBottom: 4 }}>
+            <b>{borcModal.ted}</b>{borcAcik ? ` - acik bakiye ${fmt(acikToplam)}` : ' - acik faturalar yukleniyor...'}
+          </div>
+          <div style={{ fontSize: 11.5, color: R.not2, lineHeight: 1.6, marginBottom: 16 }}>
+            Bu bir <b>odeme</b>dir, alim degil - fatura istemez. Para en eski borctan
+            kapatir; asagida hangi faturalarin kapanacagini gorursun.
+          </div>
+
+          <label style={omEtiket}>Odenecek tutar</label>
+          <input value={borcModal.tutar} inputMode="decimal" autoFocus placeholder="0"
+            onChange={(e) => setBorcModal((m) => ({ ...m, tutar: e.target.value }))}
+            style={omAlanStil} />
+
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
+            {[['nakit', 'Nakit / havale'], ['kart', 'Kart']].map(([id, ad]) => (
+              <div key={id} onClick={() => setBorcModal((m) => ({ ...m, yontem: id }))} style={{
+                padding: '8px 14px', borderRadius: 10, fontSize: 12, fontWeight: 700, cursor: 'pointer',
+                border: `1px solid ${borcModal.yontem === id ? R.bakir : R.cizgi3}`,
+                color: borcModal.yontem === id ? R.bakir : R.metin2,
+                background: borcModal.yontem === id ? 'rgba(217,154,78,.14)' : 'transparent',
+              }}>{ad}</div>
+            ))}
+            {borcModal.yontem === 'kart' && (
+              <select value={borcModal.kartId} onChange={(e) => setBorcModal((m) => ({ ...m, kartId: e.target.value }))}
+                style={{ ...omAlanStil, width: 'auto', minWidth: 170, marginBottom: 0 }}>
+                <option value="">Kart secin *</option>
+                {kartListe.map((k) => <option key={k.id} value={k.id}>{k.kart_adi || k.banka}</option>)}
+              </select>
+            )}
+          </div>
+
+          {borcAcik && (borcAcik.acik_faturalar || []).length > 0 && (
+            <div style={{ border: `1px solid ${R.cizgi3}`, borderRadius: 12, padding: '12px 14px', marginBottom: 14 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 11, letterSpacing: '.7px', textTransform: 'uppercase', color: R.not2, fontWeight: 700 }}>
+                  Kapanacak faturalar
+                </span>
+                <label style={{ marginLeft: 'auto', fontSize: 11.5, color: R.metin2, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <input type="checkbox" checked={borcModal.elle}
+                    onChange={(e) => setBorcModal((m) => ({ ...m, elle: e.target.checked, secim: {} }))} />
+                  ben seceyim
+                </label>
+              </div>
+              {(borcAcik.acik_faturalar || []).slice(0, 12).map((f) => {
+                const o = onizleme.find((x) => x.fatura_id === f.fatura_id);
+                const kapanan = o ? o.kapanan : 0;
+                const tam = kapanan >= f.kalan - 0.01;
+                return (
+                  <div key={f.fatura_id} style={{
+                    display: 'flex', alignItems: 'center', gap: 10, padding: '7px 0',
+                    borderBottom: `1px solid ${R.cizgi2}`, fontSize: 12,
+                  }}>
+                    <span style={{ color: R.not, fontFamily: F.mono, fontSize: 11, minWidth: 52 }}>{kisaTarih(f.tarih)}</span>
+                    <span style={{ flex: 1, minWidth: 0, color: R.metin2 }}>{f.fatura_no || 'belge no yok'}</span>
+                    <span style={{ fontFamily: F.mono, fontSize: 11.5, color: R.not2 }}>{fmt(f.kalan)}</span>
+                    {borcModal.elle ? (
+                      <input value={borcModal.secim[f.fatura_id] ?? ''} placeholder="0" inputMode="decimal"
+                        onChange={(e) => setBorcModal((m) => ({ ...m, secim: { ...m.secim, [f.fatura_id]: e.target.value } }))}
+                        style={{ ...omAlanStil, width: 92, marginBottom: 0, padding: '5px 8px', fontSize: 12 }} />
+                    ) : (
+                      <span style={{
+                        minWidth: 82, textAlign: 'right', fontFamily: F.mono, fontSize: 12, fontWeight: 700,
+                        color: kapanan > 0 ? (tam ? R.yesil : R.amber) : R.not3,
+                      }}>
+                        {kapanan > 0 ? `-${fmt(kapanan)}` : '-'}
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
+              {avans > 0.01 && (
+                <div style={{ fontSize: 11.5, color: R.amber, marginTop: 9 }}>
+                  {fmt(avans)} borcu asiyor - avans olarak kalir.
+                </div>
+              )}
+            </div>
+          )}
+
+          {borcAcik && (borcAcik.acik_faturalar || []).length === 0 && (
+            <div style={{
+              padding: '12px 14px', borderRadius: 12, marginBottom: 14, fontSize: 12, lineHeight: 1.6,
+              background: 'rgba(96,165,250,.09)', border: '1px solid rgba(96,165,250,.26)', color: R.metin2,
+            }}>
+              Bu tedarikcide kapatacak acik fatura yok. Odeme yine de yapilir -
+              <b> belgesiz</b> isaretlenir ve Belge Merkezi fatura kovalar.
+            </div>
+          )}
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 6 }}>
+            <button disabled={borcMesgul} onClick={kapat} style={{
+              padding: '10px 18px', borderRadius: 10, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+              background: 'transparent', color: R.metin2, fontSize: 12.5, fontWeight: 600, fontFamily: 'inherit',
+            }}>Vazgec</button>
+            <button disabled={borcMesgul || t <= 0} onClick={borcOdeGonder} style={{
+              padding: '10px 20px', borderRadius: 10, border: 'none',
+              cursor: borcMesgul || t <= 0 ? 'default' : 'pointer',
+              background: t > 0 ? 'linear-gradient(150deg, #E0A559, #AF6C29)' : R.girinti,
+              color: t > 0 ? '#1C1309' : R.not, fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit',
+            }}>
+              {borcMesgul ? 'Odeniyor...' : t > 0 ? `${fmt(t)} ode` : 'Tutar girin'}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  })();
+
   const modalBlok = modal && (() => {
     const o = modal.satir;
     const kapat = () => !calisiyor && setModal(null);
@@ -557,6 +752,7 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
           </div>
         )}
         {modalBlok}
+        {borcOdeModali}
       </>
     );
   }
@@ -610,6 +806,7 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
           })}
         />
         {modalBlok}
+        {borcOdeModali}
       </>
     );
   }
@@ -642,7 +839,7 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
         {ted.length ? (
           <Tablo
             baslik="Tedarikçi bakiyesi"
-            not="satıra tıkla → tedarikçi dosyası"
+            not="satıra tıkla → dosya + borç öde"
             kolonlar={[
               { ad: 'Tedarikçi' }, { ad: 'Açık bakiye', sag: true }, { ad: 'Beyan', sag: true },
               { ad: 'Fark', sag: true }, { ad: 'Kuyrukta', sag: true }, { ad: '6 ay hacim', sag: true }, { ad: 'Durum' },
@@ -685,8 +882,11 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
                 not: t.fark != null && Math.abs(t.fark) > Math.max(500, t.acik * 0.05)
                   ? 'İKİ GÖZ UYUŞMUYOR: tedarikçinin beyanı ile bizim hesabımız arasında fark var — eksik fatura, eksik ödeme kaydı ya da sistem-öncesi bakiye olabilir. Hüküm insanın.'
                   : 'Beyan ile hesap uyumlu görünüyor.',
-                aksiyonAd: 'Cari ekstreyi aç',
-                _hedef: '__modul:belge:cari',
+                aksiyonlar: [
+                  { ad: `💸 Borç öde${t.acik > 0 ? ` · ${fmt(t.acik)}` : ''}`, birincil: true,
+                    onTikla: () => borcOdeAc(t.ad, t.acik) },
+                  { ad: 'Cari ekstreyi aç', onTikla: () => onKopru?.('__modul:belge:cari') },
+                ],
               });
             }}
           />
@@ -696,6 +896,7 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
           </div>
         )}
         {modalBlok}
+        {borcOdeModali}
       </>
     );
   }
@@ -791,6 +992,7 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
         </div>
       )}
       {modalBlok}
+      {borcOdeModali}
     </>
   );
 }
