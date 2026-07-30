@@ -21,7 +21,7 @@
 // ile birebir aynı sözleşme + aynı kaynak kurallar). Başka yazma ucu yok.
 // ─────────────────────────────────────────────────────────────────────────────
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { api } from '../../utils/api';
+import { api, fmt } from '../../utils/api';
 import { R, F, kartYuzey } from './tema';
 import { KpiSeridi, Tablo } from './parcalar';
 
@@ -35,6 +35,11 @@ const bugunYerelISO = () => {
 };
 
 const AYLAR = ['Oca', 'Şub', 'Mar', 'Nis', 'May', 'Haz', 'Tem', 'Ağu', 'Eyl', 'Eki', 'Kas', 'Ara'];
+const gunEkleISO = (iso, n) => {
+  const d = new Date(iso + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+};
 const tarihKisa = (iso) => {
   const s = String(iso || '').slice(0, 10);
   if (!s || s.length < 10) return '—';
@@ -57,6 +62,12 @@ const ASAMA = {
   tamamlandi: { ad: 'TAMAMLANDI', renk: R.yesil },
   iptal: { ad: 'İPTAL', renk: R.not2 },
   gonderilmedi: { ad: 'GÖNDERİLMEDİ', renk: R.not2 },
+};
+
+const okButon = {
+  width: 26, height: 26, borderRadius: 8, border: `1px solid ${R.cizgi3}`,
+  background: R.girinti, color: R.metin2, fontSize: 13, cursor: 'pointer',
+  fontFamily: 'inherit', lineHeight: 1,
 };
 
 const rozetHap = (renk) => ({
@@ -126,6 +137,16 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
   const [depolar, setDepolar] = useState([]);
   const [yonMesgul, setYonMesgul] = useState(false);
   const [tedarikciler, setTedarikciler] = useState([]);
+  // ── BAR AKIŞI (ops-merkez P0 sekmeleri, 2026-07-30) ───────────────────────
+  // Klasik Operasyon Merkezi'nin 5 sekmesi (açılış kasa takip · kapanış takip ·
+  // ürün-aç akışı · kullanılan ürünler) tek kadife görünümde alt-sekmeli.
+  const [barSekme, setBarSekme] = useState('acilis');
+  const [barTarih, setBarTarih] = useState(() => bugunYerelISO());
+  const [acilisTakip, setAcilisTakip] = useState(null);
+  const [kapanisTakip, setKapanisTakip] = useState(null);
+  const [urunAcAkis, setUrunAcAkis] = useState(null);
+  const [barOzet, setBarOzet] = useState(null);
+  const [barHata, setBarHata] = useState('');
   // ── SAYIM ─────────────────────────────────────────────────────────────────
   const [sayim, setSayim] = useState(null);
   const [sayimIz, setSayimIz] = useState(null);
@@ -148,6 +169,23 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     api('/ops/siparis/sevkiyat-hiz?gun=30')
       .then((d) => setHiz(d || {}))
       .catch(() => setHiz({}));
+  }, []);
+
+  const barYukle = useCallback((tarih) => {
+    setBarHata('');
+    const t = tarih || bugunYerelISO();
+    api(`/ops/acilis-kasa-takip?tarih=${t}`)
+      .then((d) => setAcilisTakip(d || {}))
+      .catch((e) => setBarHata(e?.message || ''));
+    api(`/ops/kapanis-takip?tarih=${t}`)
+      .then((d) => setKapanisTakip(d || {}))
+      .catch(() => setKapanisTakip({}));
+    api(`/ops/v2/urun-ac-akis?tarih=${t}`)
+      .then((d) => setUrunAcAkis(d || {}))
+      .catch(() => setUrunAcAkis({}));
+    api('/ops/bar-ozet?limit=60')
+      .then((d) => setBarOzet(Array.isArray(d?.satirlar) ? d.satirlar : []))
+      .catch(() => setBarOzet([]));
   }, []);
 
   const yonAc = (sip) => {
@@ -301,7 +339,9 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     if (gorunum === 'depo') depoYukle();
     if (gorunum === 'sayim') sayimYukle();
     if (gorunum === 'hareket') hareketYukle();
-  }, [gorunum, kuleYukle, sevkYukle, depoYukle, sayimYukle, hareketYukle]);
+    if (gorunum === 'bar') barYukle(barTarih);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gorunum, kuleYukle, sevkYukle, depoYukle, sayimYukle, hareketYukle, barYukle]);
 
   // ── seçili sevkiyat talebi değişince kalem durumlarını hazırla ────────────
   const seciliTalep = useMemo(
@@ -1273,6 +1313,184 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
   }
 
   // ════════════════════════ GÖRÜNÜM: KONTROL KULESİ ═════════════════════════
+  // ════════════════════════ GÖRÜNÜM: BAR AKIŞI ══════════════════════════════
+  // Operasyon Merkezi'nin 5 P0 sekmesi tek yerde (sahip hedefi: eski sürüm kalkacak):
+  // açılış kasası · kapanış · ürün-aç akışı · kullanılan ürünler.
+  // SALT-OKUR: kapanış/açılış YAZMA şubede QR akışında (kasa izi tek gerçek).
+  if (gorunum === 'bar') {
+    if (barHata) return <HataBandi mesaj={barHata} onTekrar={() => barYukle(barTarih)} />;
+    if (!acilisTakip) return <Yukleniyor />;
+    const acilisSatir = Array.isArray(acilisTakip?.satirlar) ? acilisTakip.satirlar : [];
+    const kapanisSatir = Array.isArray(kapanisTakip?.satirlar) ? kapanisTakip.satirlar : [];
+    const acilanSube = acilisSatir.filter((x) => x.acilis_tamam).length;
+    const kapananSube = kapanisSatir.filter((x) => x.kapanis_tamam).length;
+    const farkliAcilis = acilisSatir.filter((x) => sayi(x.fark_tl) !== 0 && x.fark_tl != null);
+    const teslimBekleyen = kapanisSatir.filter((x) => x.kapanis_tamam && !sayi(x.teslim_kasa_tl));
+    const acAkis = Array.isArray(urunAcAkis?.kayitlar) ? urunAcAkis.kayitlar : [];
+    const gunDegis = (n) => {
+      const y = gunEkleISO(barTarih, n);
+      if (y > bugunYerelISO()) return;   // geleceğe gitme
+      setBarTarih(y);
+      barYukle(y);
+    };
+    const ALT = [
+      ['acilis', `\u{1F305} Açılış (${acilanSube}/${acilisSatir.length})`],
+      ['kapanis', `\u{1F311} Kapanış (${kapananSube}/${kapanisSatir.length})`],
+      ['urunac', `\u{1F7E2} Ürün-aç (${sayi(urunAcAkis?.toplam_islem)})`],
+      ['kullanilan', '\u{1F7E0} Kullanılan ürünler'],
+    ];
+    return (
+      <>
+        <KpiSeridi kpiler={[
+          { etiket: 'Açılan şube', deger: `${acilanSube} / ${acilisSatir.length}`, alt: barTarih === bugunYerelISO() ? 'bugün' : barTarih, renk: acilanSube === acilisSatir.length && acilisSatir.length ? R.yesil : R.amber },
+          { etiket: 'Kapanan şube', deger: `${kapananSube} / ${kapanisSatir.length}`, alt: kapananSube < kapanisSatir.length ? 'kapanış bekleniyor' : 'tamamlandı', renk: kapananSube === kapanisSatir.length && kapanisSatir.length ? R.yesil : R.amber },
+          { etiket: 'Açılış farkı', deger: String(farkliAcilis.length), alt: farkliAcilis.length ? 'devir ile uyuşmayan' : 'devirle uyumlu', renk: farkliAcilis.length ? R.kirmizi : R.yesil },
+          { etiket: 'Teslim bekleyen', deger: String(teslimBekleyen.length), alt: 'kapandı ama kasa teslim edilmedi', renk: teslimBekleyen.length ? R.amber : R.yesil },
+        ]} />
+
+        {/* gün gezgini + alt sekmeler */}
+        <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap', alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+            <button onClick={() => gunDegis(-1)} style={okButon}>‹</button>
+            <span style={{ fontFamily: F.mono, fontSize: 12.5, fontWeight: 700, minWidth: 92, textAlign: 'center' }}>
+              {tarihKisa(barTarih)}
+            </span>
+            <button onClick={() => gunDegis(1)} disabled={barTarih >= bugunYerelISO()} style={{
+              ...okButon, opacity: barTarih >= bugunYerelISO() ? 0.35 : 1,
+              cursor: barTarih >= bugunYerelISO() ? 'default' : 'pointer',
+            }}>›</button>
+          </div>
+          <span style={{ width: 1, height: 20, background: R.cizgi3 }} />
+          {ALT.map(([id, ad]) => (
+            <div key={id} onClick={() => setBarSekme(id)} style={{
+              padding: '6px 13px', borderRadius: 99, fontSize: 11.5, fontWeight: 700, cursor: 'pointer',
+              border: `1px solid ${barSekme === id ? R.bakir : R.cizgi3}`,
+              color: barSekme === id ? R.bakir : R.metin2,
+              background: barSekme === id ? 'rgba(217,154,78,.12)' : R.girinti,
+            }}>{ad}</div>
+          ))}
+        </div>
+
+        {barSekme === 'acilis' && (acilisSatir.length ? (
+          <Tablo
+            baslik={`Açılış kasası · ${tarihKisa(barTarih)}`}
+            not="dünkü kapanış devri ile sabah sayımı karşılaştırılır"
+            kolonlar={[
+              { ad: 'Şube' }, { ad: 'Durum' }, { ad: 'Açılış saati' }, { ad: 'Personel' },
+              { ad: 'Sayılan', sag: 1 }, { ad: 'Beklenen devir', sag: 1 }, { ad: 'Fark', sag: 1 },
+            ]}
+            satirlar={acilisSatir.map((x, i) => ({
+              id: x.sube_id || `a-${i}`,
+              hucreler: [
+                { v: x.sube_adi || '—', kalin: true },
+                x.acilis_tamam
+                  ? { v: 'açıldı', rozet: R.yesil }
+                  : { v: x.acilis_durum || 'bekliyor', rozet: R.amber },
+                { v: saatKisa(x.acilis_ts) || x.personel_saat || '—', mono: true, renk: R.not },
+                { v: x.personel_ad || '—', renk: R.not },
+                { v: x.acilis_kasa_tl != null ? fmt(sayi(x.acilis_kasa_tl)) : '—', mono: true, sag: true },
+                { v: x.beklenen_devir_tl != null ? fmt(sayi(x.beklenen_devir_tl)) : '—', mono: true, sag: true, renk: R.not },
+                x.fark_tl == null
+                  ? { v: '—', sag: true, renk: R.not }
+                  : { v: fmt(sayi(x.fark_tl)), mono: true, sag: true, kalin: true, renk: sayi(x.fark_tl) === 0 ? R.yesil : R.kirmizi },
+              ],
+            }))}
+          />
+        ) : <BosDurum metin="Bu gün için açılış kaydı yok." />)}
+
+        {barSekme === 'kapanis' && (kapanisSatir.length ? (
+          <Tablo
+            baslik={`Kapanış takibi · ${tarihKisa(barTarih)}`}
+            not={`kapanış son teslim saati: ${sayi(kapanisTakip?.kapanis_son_teslim_saat) || 2}:00`}
+            kolonlar={[
+              { ad: 'Şube' }, { ad: 'Kapanış' }, { ad: 'Saat' }, { ad: 'Personel' },
+              { ad: 'Kasa sayımı', sag: 1 }, { ad: 'Devir', sag: 1 }, { ad: 'Teslim', sag: 1 }, { ad: 'Ciro taslağı' },
+            ]}
+            satirlar={kapanisSatir.map((x, i) => ({
+              id: x.sube_id || `k-${i}`,
+              hucreler: [
+                { v: x.sube_adi || '—', kalin: true },
+                x.kapanis_tamam
+                  ? { v: 'kapandı', rozet: R.yesil }
+                  : { v: x.acildi ? 'açık' : 'açılmadı', rozet: x.acildi ? R.amber : R.not },
+                { v: saatKisa(x.kapanis_ts) || '—', mono: true, renk: R.not },
+                { v: x.kapanis_personel || '—', renk: R.not },
+                { v: fmt(sayi(x.kasa_sayim)), mono: true, sag: true },
+                { v: fmt(sayi(x.devir)), mono: true, sag: true, renk: R.not },
+                { v: sayi(x.teslim_kasa_tl) ? fmt(sayi(x.teslim_kasa_tl)) : '—', mono: true, sag: true, renk: sayi(x.teslim_kasa_tl) ? R.yesil : R.amber },
+                x.taslak_var
+                  ? { v: x.taslak_durum || 'gönderildi', rozet: R.mavi }
+                  : { v: '—', renk: R.not },
+              ],
+            }))}
+          />
+        ) : <BosDurum metin="Bu gün için kapanış kaydı yok." />)}
+
+        {barSekme === 'urunac' && (acAkis.length ? (
+          <Tablo
+            baslik={`Ürün-aç akışı · ${tarihKisa(barTarih)}`}
+            not={`${sayi(urunAcAkis?.toplam_islem)} işlem · ${sayi(urunAcAkis?.toplam_adet)} adet — bara verilen ürünler`}
+            kolonlar={[{ ad: 'Şube' }, { ad: 'Saat' }, { ad: 'Personel' }, { ad: 'Ürün' }, { ad: 'Adet', sag: 1 }]}
+            satirlar={acAkis.slice(0, 60).map((x, i) => ({
+              id: x.id || `u-${i}`,
+              hucreler: [
+                { v: x.sube_adi || '—', kalin: true },
+                { v: saatKisa(x.zaman || x.ts) || '—', mono: true, renk: R.not },
+                { v: x.personel_ad || '—', renk: R.not },
+                { v: x.urun_ad || x.kalem_adi || '—' },
+                { v: String(sayi(x.adet)), mono: true, sag: true, kalin: true },
+              ],
+            }))}
+          />
+        ) : <BosDurum metin={`${tarihKisa(barTarih)} için ürün-aç kaydı yok — bara ürün verilmemiş ya da kayıt girilmemiş.`} />)}
+
+        {barSekme === 'kullanilan' && (() => {
+          const satir = (barOzet || []).filter((x) => !barTarih || String(x.tarih).slice(0, 10) === barTarih);
+          const gosterilen = satir.length ? satir : (barOzet || []).slice(0, 8);
+          if (!gosterilen.length) return <BosDurum metin="Bar özeti verisi yok." />;
+          return (
+            <>
+              {!satir.length && (
+                <div style={{ fontSize: 11.5, color: R.amber, marginBottom: 10 }}>
+                  ⚠ {tarihKisa(barTarih)} için bar kaydı yok — son günler gösteriliyor.
+                </div>
+              )}
+              <Tablo
+                baslik="Kullanılan ürünler · açılış + ürün-aç − kapanış"
+                not="devir-bilinçli hesap; kapanış tamamlanmadan gün geçici sayılır"
+                kolonlar={[
+                  { ad: 'Şube' }, { ad: 'Tarih' }, { ad: 'Kapanış' },
+                  { ad: 'Bardak (K/B/P)', sag: 1 }, { ad: 'Süt (L)', sag: 1 }, { ad: 'Su', sag: 1 },
+                ]}
+                satirlar={gosterilen.slice(0, 40).map((x, i) => {
+                  const st = x.satilan || {};
+                  return {
+                    id: `${x.sube_id}-${x.tarih}-${i}`,
+                    hucreler: [
+                      { v: x.sube_adi || '—', kalin: true },
+                      { v: tarihKisa(x.tarih), mono: true, renk: R.not },
+                      x.kapanis_gercek
+                        ? { v: 'kesin', rozet: R.yesil }
+                        : { v: 'geçici', rozet: R.amber },
+                      { v: `${sayi(st.bardak_kucuk)} / ${sayi(st.bardak_buyuk)} / ${sayi(st.bardak_plastik)}`, mono: true, sag: true },
+                      { v: sayi(st.sut_litre) ? String(sayi(st.sut_litre)) : '—', mono: true, sag: true },
+                      { v: sayi(st.su_adet) ? String(sayi(st.su_adet)) : '—', mono: true, sag: true },
+                    ],
+                  };
+                })}
+              />
+            </>
+          );
+        })()}
+
+        <div style={{ fontSize: 11.5, color: R.not, marginTop: 12, marginBottom: 16, lineHeight: 1.55 }}>
+          ℹ Bu görünüm SALT-OKUR: açılış/kapanış kaydı şubede QR akışında doğar (kasa izi tek gerçek).
+          Merkezden kapatma gerekiyorsa Operasyon Merkezi'ndeki yönetici akışı kullanılır.
+        </div>
+      </>
+    );
+  }
+
   if (gorunum === 'kule') {
     if (kuleHata) return <HataBandi mesaj={kuleHata} onTekrar={kuleYukle} />;
     if (!kule || subeOzet == null) return <Yukleniyor />;

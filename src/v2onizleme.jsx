@@ -219,6 +219,37 @@ const OPS_UC = {
     ],
   },
   '/api/ops/siparis/sevkiyat-guncelle': { ok: true },
+  // Bar Akışı (ops-merkez P0 sekmeleri)
+  '/api/ops/acilis-kasa-takip': {
+    tarih: bugunISO, is_gunu_tr: bugunISO,
+    satirlar: [
+      { sube_id: 's0', sube_adi: 'ZAFER', acilis_durum: 'tamam', acilis_tamam: true, acilis_ts: bugunISO + ' 08:12:00', personel_ad: 'Elif Kaya', acilis_kasa_tl: 3200, beklenen_devir_tl: 3200, fark_tl: 0 },
+      { sube_id: 's1', sube_adi: 'KÖYCEĞİZ', acilis_durum: 'tamam', acilis_tamam: true, acilis_ts: bugunISO + ' 08:41:00', personel_ad: 'Mert Can', acilis_kasa_tl: 2800, beklenen_devir_tl: 3000, fark_tl: -200 },
+      { sube_id: 's2', sube_adi: 'ALSANCAK', acilis_durum: 'bekliyor', acilis_tamam: false, acilis_ts: '', personel_ad: '', acilis_kasa_tl: null, beklenen_devir_tl: null, fark_tl: null },
+    ],
+  },
+  '/api/ops/kapanis-takip': {
+    tarih: bugunISO, kapanis_son_teslim_saat: 2,
+    satirlar: [
+      { sube_id: 's0', sube_adi: 'ZAFER', acildi: true, kapanis_tamam: true, kapanis_ts: bugunISO + ' 23:48:00', kapanis_personel: 'Elif Kaya', kasa_sayim: 21400, devir: 3200, teslim_kasa_tl: 18200, taslak_var: true, taslak_durum: 'onay bekliyor' },
+      { sube_id: 's1', sube_adi: 'KÖYCEĞİZ', acildi: true, kapanis_tamam: true, kapanis_ts: bugunISO + ' 23:12:00', kapanis_personel: 'Mert Can', kasa_sayim: 15600, devir: 3000, teslim_kasa_tl: 0, taslak_var: false, taslak_durum: '' },
+      { sube_id: 's2', sube_adi: 'ALSANCAK', acildi: false, kapanis_tamam: false, kapanis_ts: '', kapanis_personel: '', kasa_sayim: 0, devir: 0, teslim_kasa_tl: 0, taslak_var: false, taslak_durum: '' },
+    ],
+  },
+  '/api/ops/v2/urun-ac-akis': {
+    tarih: bugunISO, toplam_islem: 3, toplam_adet: 14,
+    kayitlar: [
+      { id: 'ua1', sube_adi: 'ZAFER', zaman: bugunISO + ' 09:20:00', personel_ad: 'Elif Kaya', urun_ad: 'Süt 3.5%', adet: 6 },
+      { id: 'ua2', sube_adi: 'ZAFER', zaman: bugunISO + ' 13:05:00', personel_ad: 'Elif Kaya', urun_ad: 'Plastik bardak', adet: 5 },
+      { id: 'ua3', sube_adi: 'KÖYCEĞİZ', zaman: bugunISO + ' 15:40:00', personel_ad: 'Mert Can', urun_ad: 'Karamel şurup', adet: 3 },
+    ],
+  },
+  '/api/ops/bar-ozet': {
+    satirlar: [
+      { sube_id: 's0', sube_adi: 'ZAFER', tarih: bugunISO, kapanis_gercek: true, satilan: { bardak_kucuk: 48, bardak_buyuk: 62, bardak_plastik: 35, sut_litre: 18, su_adet: 22 } },
+      { sube_id: 's1', sube_adi: 'KÖYCEĞİZ', tarih: bugunISO, kapanis_gercek: false, satilan: { bardak_kucuk: 31, bardak_buyuk: 44, bardak_plastik: 19, sut_litre: 12, su_adet: 14 } },
+    ],
+  },
   '/api/ops/subeler/depolar': { satirlar: [{ id: 's1', ad: 'Zafer (Merkez Depo)' }, { id: 's2', ad: 'Köyceğiz' }] },
   '/api/kasa-teslim-alici': { alicilar: [{ id: 'a1', ad: 'Fethi Bey', unvan: 'sahip', sube_id: '', sube_adi: '' }, { id: 'a2', ad: 'Ayşe Hanım', unvan: 'muhasebe', sube_id: 's1', sube_adi: 'Zafer' }] },
   '/api/ops/siparis/sevkiyata-gonder': { ok: true },

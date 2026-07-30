@@ -940,7 +940,7 @@ export default function TasarimV2({ onGit }) {
               götürür (Operasyon Merkezi → 📊 Kapanış Takip).
             */}
             <button
-              onClick={() => koprule('kapanis-takip')}
+              onClick={() => koprule('__modul:ops:bar')}
               title="Kapanış takibini açar — kapatma işlemi şubede mühür/QR ile yapılır"
               style={{
                 padding: '8px 15px', borderRadius: 10, border: 'none',
