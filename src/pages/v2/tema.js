@@ -89,14 +89,32 @@ export const IK = {
 // `renk` = tasarımdaki rozet rengi; #F87171 (kırmızı) olan bir görünüm varsa
 // modülün ray ikonunda kırmızı nokta belirir.
 export const MODULLER = [
-  { id: 'panel', ad: 'Yönetim & Karar', kisa: 'Panel', alt: 'CFO görünümleri', ikon: IK.gosterge, gorunumler: [
+  // ══════════════════ BLOK: KARAR ══════════════════
+  { id: 'panel', blok: 'Karar', ad: 'Yönetim & Karar', kisa: 'Panel', alt: 'CFO görünümleri', ikon: IK.gosterge, gorunumler: [
     { id: 'bugun', ad: 'Bugün' },
     { id: 'ay', ad: 'Ay Özeti' },
     { id: 'subeler', ad: 'Şube Karnesi' },
     { id: 'risk', ad: 'Riskler', rozet: 'risk', renk: '#F87171' },
   ]},
+  // Denetim & Zekâ: v2-YERLİ (DenetimModulu.jsx) — öneri-only; derin inceleme
+  // Akıllı Denetim / Duyu Paneli ekranlarına köprüyle gider.
+  { id: 'denetim', blok: 'Karar', ad: 'Denetim & Zekâ', kisa: 'Zekâ', alt: '13 tanı motoru · duyu', ikon: IK.islemci, gorunumler: [
+    { id: 'anomali', ad: 'Bugünkü Bulgular', rozet: 'anomali', renk: '#F87171' },
+    { id: 'motorlar', ad: 'Tanı Motorları · 13' },
+    { id: 'olaylar', ad: 'Olay Yelpazesi' },
+    { id: 'mutabakat', ad: 'Duyu Mutabakatı', rozet: 'duyuMutabakat', renk: '#FBBF24' },
+    { id: 'bag', ad: 'Bağ Defteri' },
+    { id: 'duyu', ad: 'Duyu Paneli' },
+    { id: 'strateji', ad: 'Strateji Motoru' },
+  ]},
+  { id: 'rapor', blok: 'Karar', ad: 'Rapor & Defter', kisa: 'Rapor', alt: 'Aylık · işlem izi', ikon: IK.grafik, gorunumler: [
+    { id: 'aylik', ad: 'Aylık Rapor' },
+    { id: 'defter', ad: 'İşlem Defteri' },
+  ]},
+
+  // ══════════════════ BLOK: GÜNLÜK İŞ ══════════════════
   // Operasyon: v2-YERLİ (OpsModulu.jsx) — hedef köprüleri kalktı.
-  { id: 'ops', ad: 'Operasyon', kisa: 'Ops', alt: 'Sipariş · depo · sevk', ikon: IK.radar, gorunumler: [
+  { id: 'ops', blok: 'Günlük iş', ad: 'Operasyon', kisa: 'Ops', alt: 'Sipariş · depo · sevk', ikon: IK.radar, gorunumler: [
     { id: 'akis', ad: 'Sipariş Akışı', rozet: 'opsAcikSiparis', renk: '#D29A5B' },
     { id: 'bar', ad: 'Bar Akışı · gün', rozet: 'barAcik', renk: '#FBBF24' },
     { id: 'denetim', ad: 'Merkez Denetim', rozet: 'opsDenetim', renk: '#F87171' },
@@ -107,15 +125,35 @@ export const MODULLER = [
     { id: 'hareket', ad: 'Stok Hareketi' },
     { id: 'kule', ad: 'Kontrol Kulesi' },
   ]},
-  { id: 'odeme', ad: 'Ödeme Merkezi', kisa: 'Ödeme', alt: 'Vade · bakiye · geçmiş', ikon: IK.banknot, gorunumler: [
+  // Para Hareketleri: v2-YERLİ (ParaModulu.jsx). Ciro Girişi artık YERLİ kadife
+  // form (2026-07-29, köprü kaldırma turu) — aynı guard'lı uca yazar (POST /ciro:
+  // mükerrer+force, DELETE: kasa iadesi). Gider/dış-kaynak girişi hâlâ köprülü.
+  // kasaTeslim rozeti BİLEREK bağlanmadı: sistemde "bekleyen teslim" kaydı yok
+  // (kayıt teslimle doğar) — rozet uydurma anlam taşırdı.
+  { id: 'para', blok: 'Günlük iş', ad: 'Para Hareketleri', kisa: 'Para', alt: 'Ciro · satış · kasa', ikon: IK.kahve, gorunumler: [
+    { id: 'girisi', ad: 'Ciro Girişi' },
+    { id: 'satis', ad: 'Ürün Satışları' },
+    // kasaTeslim rozeti GERİ geldi (duyu 2/6): artık uydurma değil — para-yolda
+    // ucundan türetilen "teslim edilmemiş kapanış" sayısı.
+    { id: 'kasa', ad: 'Kasa Teslim', rozet: 'kasaTeslim', renk: '#FBBF24' },
+    { id: 'gider', ad: 'Anlık Gider' },
+    { id: 'diskaynak', ad: 'Dış Kaynak Geliri' },
+  ]},
+  { id: 'odeme', blok: 'Günlük iş', ad: 'Ödeme Merkezi', kisa: 'Ödeme', alt: 'Vade · bakiye · geçmiş', ikon: IK.banknot, gorunumler: [
     { id: 'bekleyen', ad: 'Bekleyen', rozet: 'odemeBekleyen', renk: '#D29A5B' },
     { id: 'takvim', ad: 'Vade Takvimi' },
     { id: 'tedarikci', ad: 'Tedarikçi Bakiyesi' },
     { id: 'gecmis', ad: 'Ödeme Geçmişi' },
   ]},
+  { id: 'onaylar', blok: 'Günlük iş', ad: 'Onay Bekleyenler', kisa: 'Onay', alt: 'Kuyruk · ciro onayı', ikon: IK.onay, gorunumler: [
+    { id: 'kuyruk', ad: 'Onay Kuyruğu', rozet: 'onay', renk: '#4ADE80' },
+    { id: 'ciro', ad: 'Ciro Onayı', rozet: 'ciroOnay', renk: '#4ADE80' },
+  ]},
+
+  // ══════════════════ BLOK: FİNANS ══════════════════
   // Kâr & Maliyet: v2-YERLİ (MaliyetModulu.jsx). "Ürün Marjı" → "Ürün Maliyeti":
   // satış fiyatı sisteme bağlı değil, marj yüzdesi sahte olurdu (düz-dil kuralı).
-  { id: 'maliyet', ad: 'Kâr & Maliyet', kisa: 'Maliyet', alt: 'Maliyet · reçete · fiyat', ikon: IK.para, gorunumler: [
+  { id: 'maliyet', blok: 'Finans', ad: 'Kâr & Maliyet', kisa: 'Maliyet', alt: 'Maliyet · reçete · fiyat', ikon: IK.para, gorunumler: [
     { id: 'ozet', ad: 'Marj Özeti' },
     { id: 'urun', ad: 'Ürün Maliyeti' },
     { id: 'recete', ad: 'Reçeteler' },
@@ -124,9 +162,30 @@ export const MODULLER = [
     { id: 'tuketim', ad: 'Tüketim Kontrolü', rozet: 'tuketimFark', renk: '#F87171' },
     { id: 'fiyat', ad: 'Fiyat Zinciri', rozet: 'fiyatZinciri', renk: '#FBBF24' },
   ]},
+  // ✅ v2'ye yazıldı — köprü yok, görünümler yerli (KartModulu.jsx)
+  { id: 'kart', blok: 'Finans', ad: 'Kartlar & Borç', kisa: 'Kart', alt: 'Kart · faiz · ekstre', ikon: IK.kart, gorunumler: [
+    { id: 'ozet', ad: 'Kart & Faiz Özeti', rozet: 'kartGecikmis', renk: '#F87171' },
+    { id: 'kartlar', ad: 'Kart Dosyaları' },
+    { id: 'koc', ad: 'Borç Koçu' },
+    { id: 'hareket', ad: 'Hareketler', rozet: 'hareketBelirsiz', renk: '#FBBF24' },
+    { id: 'ekstre', ad: 'Ekstre Durumu', rozet: 'ekstreEksik', renk: '#FBBF24' },
+  ]},
+  { id: 'borc', blok: 'Finans', ad: 'Borç Navigasyonu', kisa: 'Borç', alt: 'BBE · ABEK · runway', ikon: IK.pusula, gorunumler: [
+    { id: 'durum', ad: 'Bu Ay Batıyor Muyum?', rozet: 'borcDurum', renk: '#F87171' },
+    { id: 'takvim', ad: 'Borç Takvimi · 36 ay' },
+    { id: 'projeksiyon', ad: 'Nakit Projeksiyonu · 12 ay' },
+    { id: 'hedef', ad: 'Hedef Ciro & Ölçek' },
+    { id: 'katki', ad: 'Şube Katkısı' },
+  ]},
+  { id: 'yuk', blok: 'Finans', ad: 'Yükümlülükler', kisa: 'Yük', alt: 'Kredi · sabit gider', ikon: IK.banka, gorunumler: [
+    { id: 'krediler', ad: 'Banka Kredileri' },
+    { id: 'sabit', ad: 'Sabit Giderler', rozet: 'sabitGider', renk: '#D29A5B' },
+  ]},
+
+  // ══════════════════ BLOK: KAYIT & KURULUM ══════════════════
   // Personel & Vardiya: v2-YERLİ (EkipModulu.jsx). Maaş/vardiya YAZMAZ — salt-okur,
   // onay ve atama mevcut guard'lı ekranlardan yapılır.
-  { id: 'ekip', ad: 'Personel & Vardiya', kisa: 'Ekip', alt: 'Kadro · plan · bordro', ikon: IK.ekip, gorunumler: [
+  { id: 'ekip', blok: 'Kayıt & kurulum', ad: 'Personel & Vardiya', kisa: 'Ekip', alt: 'Kadro · plan · bordro', ikon: IK.ekip, gorunumler: [
     { id: 'kadro', ad: 'Kadro' },
     { id: 'vardiya', ad: 'Vardiya Planı', rozet: 'vardiyaAcik', renk: '#FBBF24' },
     { id: 'maas', ad: 'Maaş & Avans', rozet: 'maasBekleyen', renk: '#D29A5B' },
@@ -136,38 +195,9 @@ export const MODULLER = [
     { id: 'basvuru', ad: 'İş Başvuruları', rozet: 'basvuru', renk: '#4ADE80' },
     { id: 'pinqr', ad: 'Panel PIN & Görev QR' },
   ]},
-  { id: 'onaylar', ad: 'Onay Bekleyenler', kisa: 'Onay', alt: 'Kuyruk · ciro onayı', ikon: IK.onay, gorunumler: [
-    { id: 'kuyruk', ad: 'Onay Kuyruğu', rozet: 'onay', renk: '#4ADE80' },
-    { id: 'ciro', ad: 'Ciro Onayı', rozet: 'ciroOnay', renk: '#4ADE80' },
-  ]},
-  // Para Hareketleri: v2-YERLİ (ParaModulu.jsx). Ciro Girişi artık YERLİ kadife
-  // form (2026-07-29, köprü kaldırma turu) — aynı guard'lı uca yazar (POST /ciro:
-  // mükerrer+force, DELETE: kasa iadesi). Gider/dış-kaynak girişi hâlâ köprülü.
-  // kasaTeslim rozeti BİLEREK bağlanmadı: sistemde "bekleyen teslim" kaydı yok
-  // (kayıt teslimle doğar) — rozet uydurma anlam taşırdı.
-  { id: 'para', ad: 'Para Hareketleri', kisa: 'Para', alt: 'Ciro · satış · kasa', ikon: IK.kahve, gorunumler: [
-    { id: 'girisi', ad: 'Ciro Girişi' },
-    { id: 'satis', ad: 'Ürün Satışları' },
-    // kasaTeslim rozeti GERİ geldi (duyu 2/6): artık uydurma değil — para-yolda
-    // ucundan türetilen "teslim edilmemiş kapanış" sayısı.
-    { id: 'kasa', ad: 'Kasa Teslim', rozet: 'kasaTeslim', renk: '#FBBF24' },
-    { id: 'gider', ad: 'Anlık Gider' },
-    { id: 'diskaynak', ad: 'Dış Kaynak Geliri' },
-  ]},
-  // Denetim & Zekâ: v2-YERLİ (DenetimModulu.jsx) — öneri-only; derin inceleme
-  // Akıllı Denetim / Duyu Paneli ekranlarına köprüyle gider.
-  { id: 'denetim', ad: 'Denetim & Zekâ', kisa: 'Zekâ', alt: '13 tanı motoru · duyu', ikon: IK.islemci, gorunumler: [
-    { id: 'anomali', ad: 'Bugünkü Bulgular', rozet: 'anomali', renk: '#F87171' },
-    { id: 'motorlar', ad: 'Tanı Motorları · 13' },
-    { id: 'olaylar', ad: 'Olay Yelpazesi' },
-    { id: 'mutabakat', ad: 'Duyu Mutabakatı', rozet: 'duyuMutabakat', renk: '#FBBF24' },
-    { id: 'bag', ad: 'Bağ Defteri' },
-    { id: 'duyu', ad: 'Duyu Paneli' },
-    { id: 'strateji', ad: 'Strateji Motoru' },
-  ]},
   // Belge Merkezi: v2-YERLİ (BelgeModulu.jsx) — /fatura/belge-merkezi omurgası;
   // fatura isteme/onay yazmaları mevcut Belge Merkezi ekranında (köprü).
-  { id: 'belge', ad: 'Belge Merkezi', kisa: 'Belge', alt: 'Fatura · kapsama · KDV', ikon: IK.dosya, gorunumler: [
+  { id: 'belge', blok: 'Kayıt & kurulum', ad: 'Belge Merkezi', kisa: 'Belge', alt: 'Fatura · kapsama · KDV', ikon: IK.dosya, gorunumler: [
     { id: 'kapsama', ad: 'Belge Kapsama', rozet: 'belgeKapsama', renk: '#FBBF24' },
     { id: 'arsiv', ad: 'Fatura Arşivi · FTS' },
     { id: 'istek', ad: 'Fatura İstek · wa.me', rozet: 'faturaIstek', renk: '#D29A5B' },
@@ -176,38 +206,15 @@ export const MODULLER = [
     { id: 'fiyat', ad: 'Fiyat Bandı' },
     { id: 'kdv', ad: 'KDV Kanıt Paketi' },
   ]},
-  { id: 'tanim', ad: 'Tanımlar', kisa: 'Tanım', alt: 'Tedarikçi · TV menü', ikon: IK.klasor, gorunumler: [
+  { id: 'tanim', blok: 'Kayıt & kurulum', ad: 'Tanımlar', kisa: 'Tanım', alt: 'Tedarikçi · TV menü', ikon: IK.klasor, gorunumler: [
     { id: 'tedarikciler', ad: 'Tedarikçiler' },
     { id: 'zincir', ad: 'Teslimat Zinciri', rozet: 'teslimatZinciri', renk: '#FBBF24' },
     { id: 'dosya', ad: 'Tedarik Dosyası', rozet: 'tedarikDosyasi', renk: '#FBBF24' },
     { id: 'tv', ad: 'TV Menü Yönetimi' },
   ]},
-  { id: 'sistem', ad: 'Veri & Sistem', kisa: 'Sistem', alt: 'Import · teslim · temizlik', ikon: IK.anahtar, gorunumler: [
+  { id: 'sistem', blok: 'Kayıt & kurulum', ad: 'Veri & Sistem', kisa: 'Sistem', alt: 'Import · teslim · temizlik', ikon: IK.anahtar, gorunumler: [
     { id: 'excel', ad: 'Excel Import' },
     { id: 'teslim', ad: 'Bilgi Teslim', rozet: 'bilgiTeslim', renk: '#60A5FA' },
     { id: 'temizle', ad: 'Veri Temizle' },
-  ]},
-  // ✅ v2'ye yazıldı — köprü yok, görünümler yerli (KartModulu.jsx)
-  { id: 'kart', ad: 'Kartlar & Borç', kisa: 'Kart', alt: 'Kart · faiz · ekstre', ikon: IK.kart, gorunumler: [
-    { id: 'ozet', ad: 'Kart & Faiz Özeti', rozet: 'kartGecikmis', renk: '#F87171' },
-    { id: 'kartlar', ad: 'Kart Dosyaları' },
-    { id: 'koc', ad: 'Borç Koçu' },
-    { id: 'hareket', ad: 'Hareketler', rozet: 'hareketBelirsiz', renk: '#FBBF24' },
-    { id: 'ekstre', ad: 'Ekstre Durumu', rozet: 'ekstreEksik', renk: '#FBBF24' },
-  ]},
-  { id: 'borc', ad: 'Borç Navigasyonu', kisa: 'Borç', alt: 'BBE · ABEK · runway', ikon: IK.pusula, gorunumler: [
-    { id: 'durum', ad: 'Bu Ay Batıyor Muyum?', rozet: 'borcDurum', renk: '#F87171' },
-    { id: 'takvim', ad: 'Borç Takvimi · 36 ay' },
-    { id: 'projeksiyon', ad: 'Nakit Projeksiyonu · 12 ay' },
-    { id: 'hedef', ad: 'Hedef Ciro & Ölçek' },
-    { id: 'katki', ad: 'Şube Katkısı' },
-  ]},
-  { id: 'yuk', ad: 'Yükümlülükler', kisa: 'Yük', alt: 'Kredi · sabit gider', ikon: IK.banka, gorunumler: [
-    { id: 'krediler', ad: 'Banka Kredileri' },
-    { id: 'sabit', ad: 'Sabit Giderler', rozet: 'sabitGider', renk: '#D29A5B' },
-  ]},
-  { id: 'rapor', ad: 'Rapor & Defter', kisa: 'Rapor', alt: 'Aylık · işlem izi', ikon: IK.grafik, gorunumler: [
-    { id: 'aylik', ad: 'Aylık Rapor' },
-    { id: 'defter', ad: 'İşlem Defteri' },
   ]},
 ];

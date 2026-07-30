@@ -358,7 +358,57 @@ export function BorcKocu({
 }
 
 // ─── Tablo ───────────────────────────────────────────────────────────────────
+/** Sıralamada sayı kabul edilen BİRİMLER. Kapalı liste bilinçli: "18 Tem"
+ *  (tarih) sayıya çevrilirse aylar karışır — ay kısaltmaları listede YOK,
+ *  o yüzden tarihler metin gibi sıralanır. */
+const SIRA_BIRIM = /^(ay|sa|s|saat|gün|gun|adet|kalem|kişi|kisi|kg|lt|ml|g|x|puan|hafta|yıl|yil)$/i;
+
+/** Sıralama için hücre değerini çöz: tr-TR sayı ise sayısal, değilse metin.
+ *  Oran ifadeleri ("4 / 5") metin sayılır — yanlış sıralamaktansa dürüst
+ *  metin sıralaması yapar. */
+function siralamaDegeri(h) {
+  const ham = h?.v;
+  if (ham == null) return { s: null, m: '' };
+  const metin = String(ham).trim();
+  if (/\d\s*\/\s*\d/.test(metin)) return { s: null, m: metin };
+
+  // "1.234.567,89 ₺" · "%22,4" · "−12,5 sa" · "18 ay" → sayı
+  const cekirdek = metin.replace(/[₺%]/g, '').replace(/−/g, '-').trim();
+  const m = cekirdek.match(/^(-?[\d.]+(?:,\d+)?)\s*([^\s]*)$/);
+  if (m) {
+    const kuyruk = m[2];
+    if (!kuyruk || SIRA_BIRIM.test(kuyruk)) {
+      const n = Number(m[1].replace(/\./g, '').replace(',', '.'));
+      if (Number.isFinite(n)) return { s: n, m: metin };
+    }
+  }
+  return { s: null, m: metin };
+}
+
 export function Tablo({ baslik, not, kolonlar, satirlar, onSatir }) {
+  // Yeni handoff: başlığa tık → 1. artan, 2. azalan, 3. sıfırla (özgün sıra).
+  // Sıralama SALT GÖRSEL — veriyi değiştirmez, sunucuya gitmez.
+  const [sirala, setSirala] = React.useState(null);   // {kol, yon}
+
+  const kolTikla = (i) => {
+    setSirala((s) => {
+      if (!s || s.kol !== i) return { kol: i, yon: 1 };
+      if (s.yon === 1) return { kol: i, yon: -1 };
+      return null;
+    });
+  };
+
+  const gosterilen = React.useMemo(() => {
+    if (!sirala) return satirlar;
+    const { kol, yon } = sirala;
+    return [...satirlar].sort((a, b) => {
+      const x = siralamaDegeri(a.hucreler?.[kol]);
+      const y = siralamaDegeri(b.hucreler?.[kol]);
+      if (x.s != null && y.s != null) return (x.s - y.s) * yon;
+      return x.m.localeCompare(y.m, 'tr') * yon;
+    });
+  }, [satirlar, sirala]);
+
   return (
     <div style={{ ...kartYuzey, overflow: 'hidden', marginBottom: 16 }}>
       <div style={{
@@ -372,20 +422,30 @@ export function Tablo({ baslik, not, kolonlar, satirlar, onSatir }) {
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, minWidth: 720 }}>
           <thead>
             <tr>
-              {kolonlar.map((k, i) => (
-                <th key={i} style={{
-                  padding: '11px 20px', textAlign: k.sag ? 'right' : 'left',
-                  fontSize: 10, letterSpacing: '.6px', textTransform: 'uppercase',
-                  color: R.not2, fontWeight: 700, borderBottom: `1px solid ${R.cizgi2}`,
-                  whiteSpace: 'nowrap',
-                }}>
-                  {k.ad}
-                </th>
-              ))}
+              {kolonlar.map((k, i) => {
+                const s = sirala?.kol === i ? sirala.yon : 0;
+                return (
+                  <th
+                    key={i}
+                    onClick={() => kolTikla(i)}
+                    title="Sırala — 1. tık artan, 2. azalan, 3. sıfırlar"
+                    style={{
+                      padding: '11px 20px', textAlign: k.sag ? 'right' : 'left',
+                      fontSize: 10, letterSpacing: '.6px', textTransform: 'uppercase',
+                      color: s ? R.bakirAcik : R.not2, fontWeight: 700,
+                      borderBottom: `1px solid ${R.cizgi2}`, whiteSpace: 'nowrap',
+                      cursor: 'pointer', userSelect: 'none',
+                    }}
+                  >
+                    {k.ad}
+                    {s !== 0 && <span style={{ marginLeft: 5 }}>{s === 1 ? '↑' : '↓'}</span>}
+                  </th>
+                );
+              })}
             </tr>
           </thead>
           <tbody>
-            {satirlar.map((s, si) => (
+            {gosterilen.map((s, si) => (
               <tr
                 key={s.id || si}
                 onClick={() => onSatir?.(s)}

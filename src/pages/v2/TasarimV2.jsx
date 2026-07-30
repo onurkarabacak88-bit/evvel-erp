@@ -9,7 +9,7 @@
 // Not: bu kabuk mevcut açık-krem temayı DEĞİŞTİRMEZ — #tasarim-v2 rotasında ayrı
 // yaşar. Pilot onaylanırsa tema token'ları index.css'e taşınır.
 // ─────────────────────────────────────────────────────────────────────────────
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { api, fmt } from '../../utils/api';
 import { R, F, MODULLER, kartYuzey } from './tema';
 import { Ikon, KpiSeridi, Hero, Liste, Tablo, Cekmece, Toast, KopruDurumu } from './parcalar';
@@ -40,6 +40,12 @@ const gunEkle = (iso, n) => {
 };
 const sayi = (v) => Number(v) || 0;
 const yuzde = (a, b) => (b ? (a / b) * 100 : 0);
+
+/** Aramada Türkçe karakter duyarsızlığı: 'maas' → "Maaş & Avans" bulunur.
+ *  ⚠️ Türkçe-I tuzağı: toLocaleLowerCase('tr') 'I'yı 'ı' yapar; burada zaten
+ *  hemen ardından 'ı'→'i' indirgemesi geldiği için iki yön de aynı yere düşer. */
+const TR_HARF = { ç: 'c', ğ: 'g', ı: 'i', ö: 'o', ş: 's', ü: 'u', â: 'a', î: 'i', û: 'u' };
+const sadeles = (s) => String(s ?? '').toLocaleLowerCase('tr').replace(/[çğıöşüâîû]/g, (c) => TR_HARF[c]);
 /** TR ondalık: 6.8 → "6,8" */
 const trSayi = (n, basamak = 1) => n.toFixed(basamak).replace('.', ',');
 
@@ -63,6 +69,21 @@ const V2_CSS = `
 .v2-mod:hover{background:#1F160D;color:#F3EADC}
 .v2-gorunum{transition:background .16s,color .16s}
 .v2-gorunum:hover{background:#221809;color:#F3EADC}
+.v2-arama{transition:border-color .16s,box-shadow .16s}
+.v2-arama:hover{border-color:rgba(217,154,78,.4)}
+.v2-kok ::selection{background:rgba(217,154,78,.32);color:#FFF6E9}
+.v2-kok :focus-visible{outline:2px solid #D29A5B;outline-offset:2px;border-radius:4px}
+/* Duyarlı kabuk (yeni handoff): dar ekranda görünüm kolonu çip satırına döner,
+   çok darda ray incelir. Kolonun yerine geçen çip satırı içerik üstünde yaşar. */
+.v2-cip-satiri{display:none}
+@media (max-width:1040px){
+  .v2-sutun{display:none!important}
+  .v2-cip-satiri{display:flex!important}
+}
+@media (max-width:720px){
+  .v2-ray{width:56px!important}
+  .v2-mod{width:44px!important}
+}
 @media (prefers-reduced-motion:reduce){.v2-kok *{animation:none!important;transition:none!important}}
 `;
 
@@ -72,6 +93,11 @@ export default function TasarimV2({ onGit }) {
   const [donem, setDonem] = useState('gun');
   const [cekmece, setCekmece] = useState(null);
   const [toast, setToast] = useState('');
+  // Komut paleti (yeni handoff): ⌘K / Ctrl+K / '/' ile 40 ekrana tek yerden erişim
+  const [palet, setPalet] = useState(false);
+  const [paletQ, setPaletQ] = useState('');
+  const [paletI, setPaletI] = useState(0);
+  const paletRef = useRef(null);
   const [yukleniyor, setYukleniyor] = useState(true);
   const [hata, setHata] = useState('');
 
@@ -391,6 +417,78 @@ export default function TasarimV2({ onGit }) {
     if (onGit) onGit(hedef);
     else window.location.hash = hedef;
   };
+
+  // ── KOMUT PALETİ (yeni handoff) ────────────────────────────────────────────
+  // ⌘K / Ctrl+K / '/' ile açılır. Arama TÜRKÇE KARAKTER DUYARSIZ: 'maas' yazınca
+  // "Maaş & Avans" bulunur. Rozet sayıları canlıdan gelir (sahte sayı yok kuralı).
+  const paletAc = () => { setPalet(true); setPaletQ(''); setPaletI(0); };
+  const paletKapat = () => setPalet(false);
+
+  const paletListe = () => {
+    const q = sadeles(paletQ);
+    const o = [];
+    MODULLER.forEach((m) => m.gorunumler.forEach((g) => {
+      const metin = sadeles(`${m.ad} ${m.kisa} ${g.ad} ${m.blok}`);
+      if (!q || metin.includes(q)) {
+        o.push({ mod: m.id, view: g.id, ad: g.ad, modAd: m.ad, blok: m.blok, rozet: rozetler[g.rozet], renk: g.renk });
+      }
+    }));
+    return o.slice(0, 40);
+  };
+
+  const paletGit = (s) => {
+    if (!s) return;
+    setMod(s.mod);
+    setGorunum(s.view);
+    setPalet(false);
+    setCekmece(null);
+  };
+
+  const paletTus = (e) => {
+    const l = paletListe();
+    if (e.key === 'ArrowDown') { e.preventDefault(); setPaletI((i) => Math.min(l.length - 1, i + 1)); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setPaletI((i) => Math.max(0, i - 1)); }
+    else if (e.key === 'Enter') { e.preventDefault(); paletGit(l[paletI]); }
+    else if (e.key === 'Escape') { e.preventDefault(); setPalet(false); }
+  };
+
+  // Palet açılınca odak girdiye düşer
+  useEffect(() => {
+    if (palet) { const t = setTimeout(() => paletRef.current?.focus(), 30); return () => clearTimeout(t); }
+  }, [palet]);
+
+  // ── GLOBAL KLAVYE (yeni handoff) ───────────────────────────────────────────
+  // ⌘K/Ctrl+K/'/' palet · Esc katmanları SIRAYLA kapatır (palet → çekmece) ·
+  // j/k modül içinde sonraki/önceki görünüm. Bir girdiye yazarken kısayol yok.
+  useEffect(() => {
+    const isle = (e) => {
+      const hedef = e.target;
+      const yaziyor = hedef && (
+        hedef.tagName === 'INPUT' || hedef.tagName === 'TEXTAREA' ||
+        hedef.tagName === 'SELECT' || hedef.isContentEditable
+      );
+      if ((e.key === 'k' || e.key === 'K') && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault(); paletAc(); return;
+      }
+      if (e.key === 'Escape') {
+        if (palet) { setPalet(false); return; }
+        if (yaziyor) { hedef.blur(); return; }
+        if (cekmece) { setCekmece(null); return; }
+        return;
+      }
+      if (yaziyor || palet) return;
+      if (e.key === '/') { e.preventDefault(); paletAc(); return; }
+      if (e.key === 'j' || e.key === 'k') {
+        const m = MODULLER.find((x) => x.id === mod);
+        if (!m) return;
+        const i = m.gorunumler.findIndex((g) => g.id === gorunum);
+        const y = e.key === 'j' ? Math.min(m.gorunumler.length - 1, i + 1) : Math.max(0, i - 1);
+        if (y !== i) { setGorunum(m.gorunumler[y].id); setCekmece(null); }
+      }
+    };
+    window.addEventListener('keydown', isle);
+    return () => window.removeEventListener('keydown', isle);
+  }, [palet, cekmece, mod, gorunum]);
 
   // ── görünüm gövdeleri ──────────────────────────────────────────────────────
   const govde = () => {
@@ -763,8 +861,17 @@ export default function TasarimV2({ onGit }) {
     }}>
       <style>{V2_CSS}</style>
 
+      {/* Kâğıt dokusu (marka dokunuşu) — tıklamayı engellemez, en üstte durur */}
+      <div aria-hidden="true" style={{
+        position: 'fixed', inset: 0, zIndex: 200, pointerEvents: 'none',
+        opacity: 0.05, mixBlendMode: 'overlay',
+        backgroundImage: `url("data:image/svg+xml;utf8,${encodeURIComponent(
+          '<svg xmlns="http://www.w3.org/2000/svg" width="160" height="160"><filter id="n"><feTurbulence type="fractalNoise" baseFrequency="0.85" numOctaves="3" stitchTiles="stitch"/></filter><rect width="160" height="160" filter="url(#n)"/></svg>'
+        )}")`,
+      }} />
+
       {/* ikon rayı */}
-      <div style={{
+      <div className="v2-ray" style={{
         width: 74, flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'center',
         gap: 6, padding: '16px 0 12px', background: R.ray, borderRight: `1px solid ${R.cizgi}`,
         overflowY: 'auto', overflowX: 'hidden', minHeight: 0, scrollbarWidth: 'none',
@@ -780,14 +887,27 @@ export default function TasarimV2({ onGit }) {
           }} />
         </div>
 
-        {MODULLER.map(m => {
+        {MODULLER.map((m, i) => {
           const aktif = m.id === mod;
           // Tasarım kuralı: modülde KIRMIZI rozetli (acil) bir görünüm varsa
           // ray ikonunda kırmızı nokta belirir.
           const acilVar = m.gorunumler.some(g => g.renk === '#F87171' && rozetler[g.rozet]);
+          // Yeni handoff: ray 4 anlamsal bloğa ayrılır; her blok başında
+          // 44px genişliğinde üst kenarlıklı etiket durur.
+          const blokBasi = i === 0 || MODULLER[i - 1].blok !== m.blok;
           return (
+            <React.Fragment key={m.id}>
+            {blokBasi && (
+              <div style={{
+                width: 44, flexShrink: 0, paddingTop: 9, marginTop: 3,
+                borderTop: `1px solid ${R.cizgi}`, fontSize: 7.5, fontWeight: 700,
+                letterSpacing: '.7px', textTransform: 'uppercase', color: '#5E5142',
+                textAlign: 'center', lineHeight: 1.25,
+              }}>
+                {m.blok}
+              </div>
+            )}
             <div
-              key={m.id}
               onClick={() => modSec(m.id)}
               title={m.ad}
               className="v2-mod"
@@ -809,6 +929,7 @@ export default function TasarimV2({ onGit }) {
                 }} />
               )}
             </div>
+            </React.Fragment>
           );
         })}
 
@@ -821,8 +942,8 @@ export default function TasarimV2({ onGit }) {
         </div>
       </div>
 
-      {/* görünüm sütunu */}
-      <div style={{
+      {/* görünüm sütunu — ≤1040px'te gizlenir, yerini çip satırı alır */}
+      <div className="v2-sutun" style={{
         width: 222, flexShrink: 0, display: 'flex', flexDirection: 'column',
         background: R.sutun, borderRight: `1px solid ${R.cizgi}`,
       }}>
@@ -917,6 +1038,27 @@ export default function TasarimV2({ onGit }) {
               ))}
             </div>
 
+            {/* Arama tetikleyici — salt-okur; tıklama komut paletini açar (yeni handoff) */}
+            <div
+              onClick={paletAc}
+              className="v2-arama"
+              title="Modül, ekran ara — ⌘K"
+              style={{
+                display: 'flex', alignItems: 'center', gap: 8, padding: '7px 12px', borderRadius: 10,
+                background: R.girinti, border: `1px solid ${R.cizgi}`, color: R.not2, fontSize: 12.5,
+                width: 'clamp(150px, 16vw, 230px)', cursor: 'pointer',
+              }}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                strokeWidth="1.7" strokeLinecap="round" style={{ flexShrink: 0 }}>
+                <circle cx="11" cy="11" r="7" /><path d="m16 16 5 5" />
+              </svg>
+              <span style={{ flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                Ara — modül, ekran
+              </span>
+              <span style={{ fontFamily: F.mono, fontSize: 10, color: '#6E6052', flexShrink: 0 }}>⌘K</span>
+            </div>
+
             <button
               onClick={() => { yukle(); setToast('Veriler tazelendi'); }}
               style={{
@@ -958,6 +1100,36 @@ export default function TasarimV2({ onGit }) {
           padding: '22px 30px 60px', maxWidth: 1420, margin: '0 auto',
           animation: 'v2yuksel .28s cubic-bezier(.22,1,.36,1) both',
         }}>
+          {/* Dar ekran gezinmesi: 222px kolon gizlenince görünümler çip olur */}
+          <div className="v2-cip-satiri" style={{ gap: 7, overflowX: 'auto', paddingBottom: 2, marginBottom: 16 }}>
+            {modObj.gorunumler.map((g) => {
+              const aktif = g.id === gorunum;
+              const sayac = rozetler[g.rozet];
+              return (
+                <div
+                  key={g.id}
+                  onClick={() => { setGorunum(g.id); setCekmece(null); }}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0, cursor: 'pointer',
+                    padding: '7px 13px', borderRadius: 99, fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap',
+                    color: aktif ? R.bakirAcik : R.metin2,
+                    background: aktif ? 'rgba(217,154,78,.12)' : R.girinti,
+                    border: `1px solid ${aktif ? 'rgba(217,154,78,.38)' : R.cizgi}`,
+                  }}
+                >
+                  {g.ad}
+                  {sayac > 0 && (
+                    <span style={{
+                      fontFamily: F.mono, fontSize: 9.5, fontWeight: 700, padding: '1px 6px',
+                      borderRadius: 99, background: `${g.renk || R.bakir}26`, color: g.renk || R.bakir,
+                    }}>
+                      {sayac}
+                    </span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
           {govde()}
         </div>
 
@@ -1036,6 +1208,110 @@ export default function TasarimV2({ onGit }) {
         )}
         <Toast metin={toast} />
       </main>
+
+      {/* ── KOMUT PALETİ (580px, üstten %12) ──────────────────────────────── */}
+      {palet && (() => {
+        const sonuc = paletListe();
+        return (
+          <div
+            onClick={paletKapat}
+            style={{
+              position: 'fixed', inset: 0, zIndex: 150, display: 'flex',
+              alignItems: 'flex-start', justifyContent: 'center', padding: '12vh 20px 20px',
+              background: 'rgba(10,6,2,.72)', backdropFilter: 'blur(6px)',
+              WebkitBackdropFilter: 'blur(6px)', animation: 'v2belir .14s ease both',
+            }}
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                width: '100%', maxWidth: 580, borderRadius: 16, overflow: 'hidden',
+                background: 'linear-gradient(168deg,#2E2216,#20170B)',
+                border: '1px solid rgba(243,233,220,.13)',
+                boxShadow: '0 34px 80px -24px rgba(0,0,0,.85), inset 0 1px 0 rgba(255,241,224,.07)',
+                animation: 'v2buyu .2s cubic-bezier(.4,0,.2,1) both',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '15px 18px', borderBottom: `1px solid ${R.cizgi3}` }}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={R.bakir}
+                  strokeWidth="1.8" strokeLinecap="round" style={{ flexShrink: 0 }}>
+                  <circle cx="11" cy="11" r="7" /><path d="m16 16 5 5" />
+                </svg>
+                <input
+                  ref={paletRef}
+                  value={paletQ}
+                  onChange={(e) => { setPaletQ(e.target.value); setPaletI(0); }}
+                  onKeyDown={paletTus}
+                  placeholder="Modül, ekran veya kayıt ara…"
+                  style={{
+                    flex: 1, minWidth: 0, background: 'transparent', border: 'none', outline: 'none',
+                    color: R.krem, fontSize: 15, fontFamily: 'inherit',
+                  }}
+                />
+                <span style={{ fontFamily: F.mono, fontSize: 10, color: '#6E6052', flexShrink: 0 }}>esc</span>
+              </div>
+
+              <div style={{ maxHeight: '46vh', overflowY: 'auto', overflowX: 'hidden', padding: 8 }}>
+                {sonuc.length === 0 ? (
+                  <div style={{ padding: '32px 18px', textAlign: 'center' }}>
+                    <div style={{ fontFamily: F.baslik, fontSize: 15, color: R.metin2 }}>Eşleşen ekran yok</div>
+                    <div style={{ fontSize: 12, color: '#6E6052', marginTop: 5 }}>
+                      «{paletQ}» için sonuç bulunamadı — modül adı ya da ekran adı deneyin
+                    </div>
+                  </div>
+                ) : sonuc.map((p, i) => {
+                  const secili = i === paletI;
+                  return (
+                    <div
+                      key={`${p.mod}.${p.view}`}
+                      onClick={() => paletGit(p)}
+                      onMouseEnter={() => setPaletI(i)}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 11, padding: '9px 11px',
+                        borderRadius: 8, cursor: 'pointer',
+                        background: secili ? 'rgba(217,154,78,.13)' : 'transparent',
+                      }}
+                    >
+                      <span style={{
+                        width: 74, flexShrink: 0, fontSize: 9, fontWeight: 700, letterSpacing: '.6px',
+                        textTransform: 'uppercase', color: '#5E5142',
+                      }}>
+                        {p.blok}
+                      </span>
+                      <span style={{ flex: 1, minWidth: 0 }}>
+                        <span style={{ display: 'block', fontSize: 13.5, fontWeight: 600, color: secili ? R.bakirAcik : R.krem }}>
+                          {p.ad}
+                        </span>
+                        <span style={{ display: 'block', fontSize: 11, color: R.not2, marginTop: 2 }}>{p.modAd}</span>
+                      </span>
+                      {p.rozet > 0 && (
+                        <span style={{
+                          fontFamily: F.mono, fontSize: 10, fontWeight: 700, padding: '2px 7px',
+                          borderRadius: 99, background: `${p.renk || R.bakir}26`, color: p.renk || R.bakir,
+                        }}>
+                          {p.rozet}
+                        </span>
+                      )}
+                      <span style={{ fontFamily: F.mono, fontSize: 10, color: '#6E6052', flexShrink: 0 }}>
+                        {secili ? '↵' : ''}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: 16, padding: '10px 18px',
+                borderTop: `1px solid ${R.cizgi3}`, background: 'rgba(18,12,7,.5)',
+                fontSize: 10.5, color: '#6E6052',
+              }}>
+                <span>↑↓ gez</span><span>↵ aç</span><span>esc kapat</span>
+                <span style={{ marginLeft: 'auto' }}>{MODULLER.reduce((s, m) => s + m.gorunumler.length, 0)} ekran</span>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
