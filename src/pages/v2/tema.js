@@ -99,6 +99,7 @@ export const MODULLER = [
   { id: 'ops', ad: 'Operasyon', kisa: 'Ops', alt: 'Sipariş · depo · sevk', ikon: IK.radar, gorunumler: [
     { id: 'akis', ad: 'Sipariş Akışı', rozet: 'opsAcikSiparis', renk: '#D29A5B' },
     { id: 'bar', ad: 'Bar Akışı · gün', rozet: 'barAcik', renk: '#FBBF24' },
+    { id: 'denetim', ad: 'Merkez Denetim', rozet: 'opsDenetim', renk: '#F87171' },
     { id: 'sevkiyat', ad: 'Sevkiyat Hazırlama', rozet: 'opsSevkiyat', renk: '#60A5FA' },
     { id: 'depo', ad: 'Depo Stok', rozet: 'opsDepoKritik', renk: '#F87171' },
     { id: 'sayim', ad: 'Bardak & Ürün Sayımı', rozet: 'stokSayim', renk: '#FBBF24' },

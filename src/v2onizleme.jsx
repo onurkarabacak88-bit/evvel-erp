@@ -219,6 +219,34 @@ const OPS_UC = {
     ],
   },
   '/api/ops/siparis/sevkiyat-guncelle': { ok: true },
+  // Merkez Denetim (ops-merkez P1 sekmeleri)
+  '/api/ops/urun-uyumsuzluk': {
+    tarih: bugunISO, gun_toplam: 2, gun_bekleyen: 1, gun_cozuldu: 1,
+    liste: [
+      { id: 'u1', sube_adi: 'ZAFER', tip: 'URUN_AC_UYUMSUZLUK', urun_ad: 'Plastik bardak', fark: -18, cozuldu: false },
+      { id: 'u2', sube_adi: 'KÖYCEĞİZ', tip: 'SAYIM_FARK', urun_ad: 'Süt 3.5%', fark: 4, cozuldu: true },
+    ],
+  },
+  '/api/ops/fire-bildirimler': {
+    tarih: bugunISO, gun_toplam: 1, toplam_adet_gun: 3,
+    kayitlar: [{ id: 'f1', sube_ad: 'ZAFER', tarih: bugunISO, urun_ad: 'Cheesecake', adet: 3, sebep: 'son kullanma' }],
+    son_kayitlar: [],
+  },
+  '/api/ops/gider-fis-bekleyen': {
+    kayitlar: [
+      { id: 'g1', aciklama: 'Market alışverişi', tarih: bugunISO, sube_adi: 'MERKEZ', tutar: 1240 },
+      { id: 'g2', aciklama: 'Kargo ödemesi', tarih: bugunISO, sube_adi: 'ZAFER', tutar: 380 },
+    ],
+  },
+  '/api/ops/kontrol-ozet': {
+    subeler: [
+      { sube_id: 's0', sube_adi: 'ZAFER', tamam: 8, toplam: 8 },
+      { sube_id: 's1', sube_adi: 'KÖYCEĞİZ', tamam: 6, toplam: 8 },
+    ],
+  },
+  '/api/ops/stok-kayip-analiz': {
+    kalemler: [{ id: 'k1', kalem_adi: 'Plastik bardak', sube_adi: 'ZAFER', kayip: 698, not: 'kayıtsız çıkış şüphesi' }],
+  },
   // Bar Akışı (ops-merkez P0 sekmeleri)
   '/api/ops/acilis-kasa-takip': {
     tarih: bugunISO, is_gunu_tr: bugunISO,

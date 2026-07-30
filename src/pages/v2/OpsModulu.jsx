@@ -147,6 +147,15 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
   const [urunAcAkis, setUrunAcAkis] = useState(null);
   const [barOzet, setBarOzet] = useState(null);
   const [barHata, setBarHata] = useState('');
+  // ── MERKEZ DENETİM (ops-merkez P1 sekmeleri, 2026-07-30) ──────────────────
+  // urun-uyumsuzluk · fire-bildirim · gider fişi · kontrol özeti · stok kaybı
+  const [dnSekme, setDnSekme] = useState('uyumsuz');
+  const [dnUyumsuz, setDnUyumsuz] = useState(null);
+  const [dnFire, setDnFire] = useState(null);
+  const [dnFis, setDnFis] = useState(null);
+  const [dnKontrol, setDnKontrol] = useState(null);
+  const [dnKayip, setDnKayip] = useState(null);
+  const [dnHata, setDnHata] = useState('');
   // ── SAYIM ─────────────────────────────────────────────────────────────────
   const [sayim, setSayim] = useState(null);
   const [sayimIz, setSayimIz] = useState(null);
@@ -186,6 +195,26 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     api('/ops/bar-ozet?limit=60')
       .then((d) => setBarOzet(Array.isArray(d?.satirlar) ? d.satirlar : []))
       .catch(() => setBarOzet([]));
+  }, []);
+
+  const denetimYukle = useCallback((tarih) => {
+    setDnHata('');
+    const t = tarih || bugunYerelISO();
+    api(`/ops/urun-uyumsuzluk?tarih=${t}`)
+      .then((d) => setDnUyumsuz(d || {}))
+      .catch((e) => setDnHata(e?.message || ''));
+    api(`/ops/fire-bildirimler?tarih=${t}`)
+      .then((d) => setDnFire(d || {}))
+      .catch(() => setDnFire({}));
+    api('/ops/gider-fis-bekleyen?gun=7')
+      .then((d) => setDnFis(d || {}))
+      .catch(() => setDnFis({}));
+    api('/ops/kontrol-ozet')
+      .then((d) => setDnKontrol(d || {}))
+      .catch(() => setDnKontrol({}));
+    api('/ops/stok-kayip-analiz?gun=45')
+      .then((d) => setDnKayip(d || {}))
+      .catch(() => setDnKayip({}));
   }, []);
 
   const yonAc = (sip) => {
@@ -340,8 +369,9 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     if (gorunum === 'sayim') sayimYukle();
     if (gorunum === 'hareket') hareketYukle();
     if (gorunum === 'bar') barYukle(barTarih);
+    if (gorunum === 'denetim') denetimYukle(barTarih);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gorunum, kuleYukle, sevkYukle, depoYukle, sayimYukle, hareketYukle, barYukle]);
+  }, [gorunum, kuleYukle, sevkYukle, depoYukle, sayimYukle, hareketYukle, barYukle, denetimYukle]);
 
   // ── seçili sevkiyat talebi değişince kalem durumlarını hazırla ────────────
   const seciliTalep = useMemo(
@@ -1486,6 +1516,167 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
         <div style={{ fontSize: 11.5, color: R.not, marginTop: 12, marginBottom: 16, lineHeight: 1.55 }}>
           ℹ Bu görünüm SALT-OKUR: açılış/kapanış kaydı şubede QR akışında doğar (kasa izi tek gerçek).
           Merkezden kapatma gerekiyorsa Operasyon Merkezi'ndeki yönetici akışı kullanılır.
+        </div>
+      </>
+    );
+  }
+
+  // ════════════════════════ GÖRÜNÜM: MERKEZ DENETİM ═════════════════════════
+  // Operasyon Merkezi'nin denetim sekmeleri (P1) tek yerde — hepsi ÖNERİ-ONLY.
+  if (gorunum === 'denetim') {
+    if (dnHata) return <HataBandi mesaj={dnHata} onTekrar={() => denetimYukle(barTarih)} />;
+    if (!dnUyumsuz) return <Yukleniyor />;
+    const uyumsuzListe = Array.isArray(dnUyumsuz?.liste) ? dnUyumsuz.liste : [];
+    const fireKayit = Array.isArray(dnFire?.kayitlar) && dnFire.kayitlar.length
+      ? dnFire.kayitlar : (Array.isArray(dnFire?.son_kayitlar) ? dnFire.son_kayitlar : []);
+    const fisListe = Array.isArray(dnFis?.kayitlar) ? dnFis.kayitlar
+      : (Array.isArray(dnFis?.satirlar) ? dnFis.satirlar : (Array.isArray(dnFis) ? dnFis : []));
+    const kayipListe = Array.isArray(dnKayip?.kalemler) ? dnKayip.kalemler
+      : (Array.isArray(dnKayip?.satirlar) ? dnKayip.satirlar : []);
+    const kontrolSatir = Array.isArray(dnKontrol?.subeler) ? dnKontrol.subeler
+      : (Array.isArray(dnKontrol?.satirlar) ? dnKontrol.satirlar : []);
+    const gunDegis = (n) => {
+      const y = gunEkleISO(barTarih, n);
+      if (y > bugunYerelISO()) return;
+      setBarTarih(y);
+      denetimYukle(y);
+    };
+    const ALT = [
+      ['uyumsuz', `\u{1F9EA} Ürün uyumsuzluğu (${sayi(dnUyumsuz?.gun_bekleyen)})`],
+      ['fire', `\u{1F525} Fire (${fireKayit.length})`],
+      ['fis', `\u{1F9FE} Gider fişi (${fisListe.length})`],
+      ['kontrol', '\u{1F50D} Kontrol özeti'],
+      ['kayip', `\u{1F4C9} Stok kaybı (${kayipListe.length})`],
+    ];
+    return (
+      <>
+        <KpiSeridi kpiler={[
+          { etiket: 'Bekleyen uyumsuzluk', deger: String(sayi(dnUyumsuz?.gun_bekleyen)), alt: `${sayi(dnUyumsuz?.gun_toplam)} kayıt · ${sayi(dnUyumsuz?.gun_cozuldu)} çözüldü`, renk: sayi(dnUyumsuz?.gun_bekleyen) ? R.kirmizi : R.yesil },
+          { etiket: 'Fire bildirimi', deger: String(sayi(dnFire?.gun_toplam)), alt: `${sayi(dnFire?.toplam_adet_gun)} adet · ${tarihKisa(barTarih)}`, renk: sayi(dnFire?.gun_toplam) ? R.amber : R.yesil },
+          { etiket: 'Fişsiz gider', deger: String(fisListe.length), alt: 'son 7 gün · belge bekliyor', renk: fisListe.length ? R.amber : R.yesil },
+          { etiket: 'Stok kaybı kalemi', deger: String(kayipListe.length), alt: 'son 45 gün analizi', renk: kayipListe.length ? R.amber : R.yesil },
+        ]} />
+
+        <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap', alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+            <button onClick={() => gunDegis(-1)} style={okButon}>‹</button>
+            <span style={{ fontFamily: F.mono, fontSize: 12.5, fontWeight: 700, minWidth: 92, textAlign: 'center' }}>
+              {tarihKisa(barTarih)}
+            </span>
+            <button onClick={() => gunDegis(1)} disabled={barTarih >= bugunYerelISO()} style={{
+              ...okButon, opacity: barTarih >= bugunYerelISO() ? 0.35 : 1,
+              cursor: barTarih >= bugunYerelISO() ? 'default' : 'pointer',
+            }}>›</button>
+          </div>
+          <span style={{ width: 1, height: 20, background: R.cizgi3 }} />
+          {ALT.map(([id, ad]) => (
+            <div key={id} onClick={() => setDnSekme(id)} style={{
+              padding: '6px 13px', borderRadius: 99, fontSize: 11.5, fontWeight: 700, cursor: 'pointer',
+              border: `1px solid ${dnSekme === id ? R.bakir : R.cizgi3}`,
+              color: dnSekme === id ? R.bakir : R.metin2,
+              background: dnSekme === id ? 'rgba(217,154,78,.12)' : R.girinti,
+            }}>{ad}</div>
+          ))}
+        </div>
+
+        {dnSekme === 'uyumsuz' && (uyumsuzListe.length ? (
+          <Tablo
+            baslik={`Ürün uyumsuzlukları · ${tarihKisa(barTarih)}`}
+            not="formül → fark → çözüm; hüküm insanın (öneri-only)"
+            kolonlar={[{ ad: 'Şube' }, { ad: 'Tip' }, { ad: 'Ürün' }, { ad: 'Fark', sag: 1 }, { ad: 'Durum' }]}
+            satirlar={uyumsuzListe.slice(0, 40).map((x, i) => ({
+              id: x.id || `uy-${i}`,
+              hucreler: [
+                { v: x.sube_adi || x.sube_ad || '—', kalin: true },
+                { v: String(x.tip || '—').replace(/_/g, ' ').toLowerCase(), renk: R.not },
+                { v: x.urun_ad || x.kalem_adi || '—' },
+                { v: String(sayi(x.fark ?? x.fark_adet)), mono: true, sag: true, kalin: true, renk: R.kirmizi },
+                x.cozuldu || x.durum === 'cozuldu'
+                  ? { v: 'çözüldü', rozet: R.yesil }
+                  : { v: 'bekliyor', rozet: R.amber },
+              ],
+            }))}
+          />
+        ) : <BosDurum metin={`${tarihKisa(barTarih)} için ürün uyumsuzluğu yok — sayımlar tutuyor. ✓`} />)}
+
+        {dnSekme === 'fire' && (fireKayit.length ? (
+          <Tablo
+            baslik="Fire bildirimleri"
+            not={sayi(dnFire?.gun_toplam) ? `${tarihKisa(barTarih)} günü` : 'bugün kayıt yok — son bildirimler'}
+            kolonlar={[{ ad: 'Şube' }, { ad: 'Tarih' }, { ad: 'Ürün' }, { ad: 'Adet', sag: 1 }, { ad: 'Sebep' }]}
+            satirlar={fireKayit.slice(0, 40).map((x, i) => ({
+              id: x.id || `f-${i}`,
+              hucreler: [
+                { v: x.sube_ad || x.sube_adi || '—', kalin: true },
+                { v: tarihKisa(x.tarih), mono: true, renk: R.not },
+                { v: x.urun_ad || x.kalem_adi || '—' },
+                { v: String(sayi(x.adet)), mono: true, sag: true, kalin: true, renk: R.amber },
+                { v: x.sebep || x.aciklama || '—', renk: R.not },
+              ],
+            }))}
+          />
+        ) : <BosDurum metin="Fire bildirimi yok." />)}
+
+        {dnSekme === 'fis' && (fisListe.length ? (
+          <Tablo
+            baslik="Fişi bekleyen giderler · son 7 gün"
+            not="kasadan çıktı ama belge yüklenmedi — KDV kanıtı eksik"
+            kolonlar={[{ ad: 'Açıklama' }, { ad: 'Tarih' }, { ad: 'Şube' }, { ad: 'Tutar', sag: 1 }]}
+            satirlar={fisListe.slice(0, 40).map((x, i) => ({
+              id: x.id || `fi-${i}`,
+              hucreler: [
+                { v: x.aciklama || x.baslik || '—', kalin: true },
+                { v: tarihKisa(x.tarih), mono: true, renk: R.not },
+                { v: x.sube_adi || x.sube || '—', renk: R.not },
+                { v: fmt(sayi(x.tutar)), mono: true, sag: true, kalin: true, renk: R.kirmizi },
+              ],
+            }))}
+          />
+        ) : <BosDurum metin="Fişi bekleyen gider yok — tüm harcamaların belgesi var. ✓" />)}
+
+        {dnSekme === 'kontrol' && (kontrolSatir.length ? (
+          <Tablo
+            baslik="Kontrol özeti · şube bazlı"
+            not="günlük kontrol adımlarının tamamlanma durumu"
+            kolonlar={[{ ad: 'Şube' }, { ad: 'Tamamlanan', sag: 1 }, { ad: 'Toplam', sag: 1 }, { ad: 'Durum' }]}
+            satirlar={kontrolSatir.slice(0, 20).map((x, i) => {
+              const tamam = sayi(x.tamam ?? x.tamamlanan);
+              const toplam = sayi(x.toplam) || 1;
+              return {
+                id: x.sube_id || `kn-${i}`,
+                hucreler: [
+                  { v: x.sube_adi || x.sube_ad || '—', kalin: true },
+                  { v: String(tamam), mono: true, sag: true },
+                  { v: String(toplam), mono: true, sag: true, renk: R.not },
+                  tamam >= toplam
+                    ? { v: 'tamam', rozet: R.yesil }
+                    : { v: `${toplam - tamam} eksik`, rozet: R.amber },
+                ],
+              };
+            })}
+          />
+        ) : <BosDurum metin="Kontrol özeti verisi yok." />)}
+
+        {dnSekme === 'kayip' && (kayipListe.length ? (
+          <Tablo
+            baslik="Stok kaybı analizi · son 45 gün"
+            not="kayıtlı hareketle açıklanmayan azalma — aday, hüküm değil"
+            kolonlar={[{ ad: 'Kalem' }, { ad: 'Şube' }, { ad: 'Kayıp', sag: 1 }, { ad: 'Not' }]}
+            satirlar={kayipListe.slice(0, 40).map((x, i) => ({
+              id: x.id || `ky-${i}`,
+              hucreler: [
+                { v: x.kalem_adi || x.urun_ad || '—', kalin: true },
+                { v: x.sube_adi || x.sube_ad || '—', renk: R.not },
+                { v: String(sayi(x.kayip ?? x.fark ?? x.adet)), mono: true, sag: true, kalin: true, renk: R.kirmizi },
+                { v: x.not || x.aciklama || '—', renk: R.not },
+              ],
+            }))}
+          />
+        ) : <BosDurum metin="Stok kaybı bulgusu yok — hareketler dengede. ✓" />)}
+
+        <div style={{ fontSize: 11.5, color: R.not, marginTop: 12, marginBottom: 16, lineHeight: 1.55 }}>
+          ℹ Hepsi ÖNERİ-ONLY: bu ekran uyumsuzluğu GÖSTERİR, hüküm vermez.
+          Uzlaştırma/çözüm işaretleri ilgili guard'lı akışlarda yapılır.
         </div>
       </>
     );
