@@ -13,6 +13,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { api, fmt, istekHatalari, istekHatalariniTemizle, istekHatasiDinle } from '../../utils/api';
 import { R, F, MODULLER, GUN_SONU_MODULLERI, TARIH_GEZGINI_EKRANLARI, kartYuzey } from './tema';
 import { Ikon, KpiSeridi, Hero, Liste, Tablo, Cekmece, Toast, KopruDurumu, HataBandi } from './parcalar';
+import GenelModulu from './GenelModulu';
 import KartModulu from './KartModulu';
 import OdemeModulu from './OdemeModulu';
 import OpsModulu from './OpsModulu';
@@ -615,6 +616,9 @@ export default function TasarimV2({ onGit }) {
     }
 
     // v2'ye yazılmış modüller
+    if (mod === 'genel') {
+      return <GenelModulu gorunum={gorunum} onCekmece={setCekmece} onKopru={koprule} />;
+    }
     if (mod === 'kart') {
       return <KartModulu gorunum={gorunum} onCekmece={setCekmece} onKopru={koprule} onToast={setToast} />;
     }
@@ -681,129 +685,11 @@ export default function TasarimV2({ onGit }) {
       return <KopruDurumu ad={gorunumObj.ad} onGit={() => koprule(gorunumObj.hedef)} />;
     }
 
-    if (gorunum === 'genel') return <PanelGenel />;
     if (gorunum === 'bugun') return <PanelBugun />;
     if (gorunum === 'ay') return <PanelAy />;
     if (gorunum === 'subeler') return <PanelSubeler />;
     return <PanelRisk />;
   };
-
-  // ── PANEL ▸ GENEL BAKIŞ ────────────────────────────────────────────────────
-  // Sahip isteği (2026-07-31): "eski CFO ekranında hepsini tek yerde
-  // görüyordum". Klasik panelin TRİAJ mantığı (kritik → uyarı → bilgi → bugün)
-  // kadife dilinde tek sayfada; hiçbir bölüm katlanmaz, kaydırınca hepsi görünür.
-  // Kaynak: /uyarilar (seviye) + /onay-kuyrugu + /panel + ciro verisi.
-  function PanelGenel() {
-    const d = veri;
-    const uy = Array.isArray(uyarilar) ? uyarilar : [];
-    const seviye = (u) => String(u.seviye || u.tier || '').toUpperCase();
-    const kritik = uy.filter((u) => seviye(u) === 'KRITIK');
-    const uyari = uy.filter((u) => ['UYARI', 'ORTA'].includes(seviye(u)));
-    const bilgi = uy.filter((u) => !['KRITIK', 'UYARI', 'ORTA'].includes(seviye(u)));
-    const onayBekleyen = (onaylar || []).filter(
-      (o) => !String(o.islem_turu || '').toUpperCase().includes('KASA'),
-    );
-    const metin = (u) => u.mesaj || u.baslik || u.aciklama || u.metin || 'Uyarı';
-
-    /** Triaj bölümü — klasik panelin rBolum'ünün kadife karşılığı. */
-    const bolum = (baslik, kayitlar, renk, bosMetin) => (
-      <div style={{ marginBottom: 16 }}>
-        <div style={{
-          display: 'flex', alignItems: 'center', gap: 9, marginBottom: 9,
-          paddingBottom: 8, borderBottom: `1px solid ${R.cizgi}`,
-        }}>
-          <span style={{ width: 7, height: 7, borderRadius: 99, background: renk }} />
-          <span style={{ fontSize: 11, letterSpacing: '.8px', textTransform: 'uppercase', fontWeight: 700, color: R.metin2 }}>
-            {baslik}
-          </span>
-          <span style={{ fontFamily: F.mono, fontSize: 11, color: renk, fontWeight: 700 }}>
-            {kayitlar.length}
-          </span>
-        </div>
-        {kayitlar.length === 0 ? (
-          <div style={{ fontSize: 12, color: R.not2, paddingLeft: 16 }}>{bosMetin}</div>
-        ) : (
-          <Liste
-            satirlar={kayitlar.slice(0, 12).map((u, i) => ({
-              id: u.id || `${baslik}-${i}`,
-              _u: u,
-              baslik: kisalt(metin(u), 88),
-              alt: [u.sube_ad || u.sube_adi, u.tarih ? kisaGun(u.tarih) : null, u.kategori]
-                .filter(Boolean).join(' · ') || 'genel',
-              tutar: sayi(u.tutar) ? fmt(u.tutar) : '',
-              tier: renk === R.kirmizi ? 'kritik' : renk === R.amber ? 'uyari' : 'bilgi',
-            }))}
-            onAc={({ _u }) => setCekmece({
-              tip: 'UYARI KAYDI',
-              baslik: kisalt(metin(_u), 70),
-              alt: [_u.sube_ad || _u.sube_adi, _u.tarih ? kisaGun(_u.tarih) : null].filter(Boolean).join(' · ') || 'genel',
-              kpi: [
-                { etiket: 'Seviye', deger: (seviye(_u) || 'bilgi').toLowerCase(), renk: renk },
-                { etiket: 'Şube', deger: _u.sube_ad || _u.sube_adi || '—' },
-                ...(sayi(_u.tutar) ? [{ etiket: 'Tutar', deger: fmt(_u.tutar) }] : []),
-                ...(_u.tarih ? [{ etiket: 'Tarih', deger: kisaGun(_u.tarih) }] : []),
-              ],
-              listeBaslik: 'Kayıt',
-              satirlar: [
-                { ad: 'Uyarı', detay: 'motor/kural çıktısı', tutar: kisalt(metin(_u), 80) },
-                { ad: 'Kategori', detay: 'sınıf', tutar: _u.kategori || _u.tip || '—' },
-              ],
-              not: 'Genel Bakış klasik CFO panelin triaj mantığını taşır — uyarılar ÖNERİDİR, hüküm insanındır.',
-            })}
-          />
-        )}
-      </div>
-    );
-
-    return (
-      <>
-        {/* Komut şeridi: klasik panelin "tek satırda tüm kritik sayılar" bandı */}
-        <KpiSeridi kpiler={[
-          { etiket: 'Kasa + banka', deger: yukleniyor ? '…' : fmt(kasaBanka), alt: 'kanonik bakiye', renk: kasaBanka >= 0 ? R.yesil : R.kirmizi },
-          { etiket: 'Bugün ödenecek', deger: fmt(bugunOdemeToplam), alt: `${bugunOdemeler.length} kalem · vadesi bugün/geçmiş`, renk: bugunOdemeToplam > 0 ? R.kirmizi : R.yesil },
-          { etiket: 'Kritik uyarı', deger: String(kritik.length), alt: kritik.length ? 'bugün müdahale' : 'temiz', renk: kritik.length ? R.kirmizi : R.yesil },
-          { etiket: 'Onay bekleyen', deger: String(onayBekleyen.length), alt: onayBekleyen.length ? 'karar bekliyor' : 'kuyruk boş', renk: onayBekleyen.length ? R.amber : R.yesil },
-        ]} />
-        <KpiSeridi kpiler={[
-          { etiket: gunEtiketi('ciro'), deger: fmt(d.gunToplam), alt: `${d.subeGunListe.length} şube · ${kisaGun(d.odakGun)}`, seri: d.seri },
-          { etiket: 'Ay cirosu', deger: fmt(d.ayToplam), alt: `${d.gunSayisi} gün`, renk: R.krem },
-          { etiket: 'Toplam uyarı', deger: String(uy.length), alt: 'kritik + uyarı + bilgi', renk: uy.length ? R.amber : R.yesil },
-          { etiket: 'Aktif şube', deger: String(d.subeAyListe.length), alt: `${subeler.length} tanımlı`, renk: R.krem },
-        ]} />
-
-        <div style={{ ...kartYuzey, padding: '20px 22px', marginBottom: 16 }}>
-          <div style={{ fontFamily: F.baslik, fontSize: 17, fontWeight: 600, marginBottom: 4 }}>
-            Karar tahtası
-          </div>
-          <div style={{ fontSize: 12, color: R.not2, lineHeight: 1.6, marginBottom: 16 }}>
-            Klasik CFO panelinin tek-ekran görünümü: her şey burada, hiçbir bölüm
-            katlı değil. Satıra tıkla → kaydın dosyası.
-          </div>
-          {bolum('Kritik — bugün müdahale', kritik, R.kirmizi, 'Kritik uyarı yok.')}
-          {bolum('Uyarı — bu hafta bak', uyari, R.amber, 'Uyarı seviyesinde kayıt yok.')}
-          {bolum('Bilgi — takipte', bilgi, R.mavi, 'Bilgi notu yok.')}
-        </div>
-
-        {bugunOdemeler.length > 0 && (
-          <Tablo
-            baslik={`Bugün ödenecekler · ${fmt(bugunOdemeToplam)}`}
-            not="satıra tıkla → ödeme dosyası · ödeme Ödeme Merkezi'nde yapılır"
-            kolonlar={[{ ad: 'Kalem' }, { ad: 'Vade' }, { ad: 'Tutar', sag: true }]}
-            satirlar={bugunOdemeler.slice(0, 12).map((o, i) => ({
-              id: o.id || `o-${i}`,
-              _o: o,
-              hucreler: [
-                { v: kisalt(o.aciklama || o.baslik || o.tedarikci || 'Ödeme', 54), kalin: true },
-                { v: o.vade_tarihi || o.tarih ? kisaGun(o.vade_tarihi || o.tarih) : '—', mono: true, renk: R.not },
-                { v: fmt(sayi(o.tutar ?? o.kalan_tutar)), mono: true, sag: true, kalin: true, renk: R.kirmizi },
-              ],
-            }))}
-            onSatir={() => koprule('__modul:odeme:bekleyen')}
-          />
-        )}
-      </>
-    );
-  }
 
   function PanelBugun() {
     const d = veri;
