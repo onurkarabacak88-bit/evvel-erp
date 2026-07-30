@@ -1204,7 +1204,7 @@ export function SistemModulu({ gorunum, onCekmece, onKopru, onToast }) {
             baslik: 'Merkez sipariş temizliği',
             alt: 'tamamlanmış siparişlerin eskileri arşive iner',
             tutar: 'arşiv', tier: 'bilgi',
-            aksiyon: 'Sipariş akışını aç', _hedef: '__modul:ops:kule',
+            aksiyon: 'Sipariş akışını aç', _hedef: '__modul:ops:akis',
           },
           {
             id: 'sifirla',

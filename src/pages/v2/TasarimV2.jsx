@@ -101,6 +101,7 @@ export default function TasarimV2({ onGit }) {
   const [cekmece, setCekmece] = useState(null);
   const [toast, setToast] = useState('');
   // Komut paleti (yeni handoff): ⌘K / Ctrl+K / '/' ile 40 ekrana tek yerden erişim
+  const [subeOps, setSubeOps] = useState(null);   // şube × sevkiyat trafiği
   const [palet, setPalet] = useState(false);
   const [paletQ, setPaletQ] = useState('');
   const [paletI, setPaletI] = useState(0);
@@ -462,6 +463,16 @@ export default function TasarimV2({ onGit }) {
     else if (e.key === 'Escape') { e.preventDefault(); setPalet(false); }
   };
 
+  // Şube Karnesi'nin OPERASYONEL kolonları (Kontrol Kulesi birleşti, 2026-07-30):
+  // şubenin DEPO rolündeki sevkiyat trafiği. Karne görünümüne girilince yüklenir,
+  // ana yüke binmez. Veri gelmezse kolonlar '—' gösterir (uydurma sayı yok).
+  useEffect(() => {
+    if (gorunum !== 'subeler' || subeOps !== null) return;
+    api('/ops/siparis/sevkiyat-subeler-ozet')
+      .then((d) => setSubeOps(Array.isArray(d?.satirlar) ? d.satirlar : (Array.isArray(d) ? d : [])))
+      .catch(() => setSubeOps([]));
+  }, [gorunum, subeOps]);
+
   // Palet açılınca odak girdiye düşer
   useEffect(() => {
     if (palet) { const t = setTimeout(() => paletRef.current?.focus(), 30); return () => clearTimeout(t); }
@@ -790,6 +801,10 @@ export default function TasarimV2({ onGit }) {
     const enIyi = d.subeAyListe[0];
     const enZayif = d.subeAyListe[d.subeAyListe.length - 1];
     const enBuyukPay = enIyi.pay || 1;
+    /** Şube adına göre sevkiyat trafiği satırı (Kontrol Kulesi'nden gelen kolonlar). */
+    const opsOf = (ad) => (subeOps || []).find(
+      (o) => String(o.depo_sube_adi || o.sube_adi || '').toLocaleLowerCase('tr') === String(ad || '').toLocaleLowerCase('tr'),
+    );
 
     const kpiler = [
       { etiket: 'En yüksek ciro', deger: enIyi.ad, alt: fmt(enIyi.toplam), renk: R.yesil },
@@ -803,11 +818,13 @@ export default function TasarimV2({ onGit }) {
         <KpiSeridi kpiler={kpiler} />
         <Tablo
           baslik={`Şube karnesi · ${d.ayOnEk}`}
-          not="satıra tıkla → şube dosyası"
+          not="satıra tıkla → şube dosyası · son iki kolon depo rolündeki sevkiyat trafiği"
           kolonlar={[
             { ad: 'Şube' }, { ad: 'Ciro', sag: true }, { ad: 'Nakit', sag: true },
             { ad: 'Kart + online', sag: true }, { ad: 'Günlük ort.', sag: true },
             { ad: 'Zincir payı', sag: true }, { ad: 'Kayıt' },
+            // ── Kontrol Kulesi birleşti: şubenin DEPO rolündeki trafiği ──
+            { ad: 'Depo yükü', sag: true }, { ad: 'Yolda', sag: true },
           ]}
           satirlar={d.subeAyListe.map(s => ({
             id: s.ad,
@@ -820,6 +837,12 @@ export default function TasarimV2({ onGit }) {
               { v: fmt(s.toplam / (s.gunSayisi || 1)), mono: true, sag: true },
               { v: `%${trSayi(s.pay)}`, bar: (s.pay / enBuyukPay) * 100, sag: true, renk: s.pay >= enBuyukPay * 0.8 ? R.yesil : s.pay >= enBuyukPay * 0.5 ? R.amber : R.kirmizi },
               { v: `${s.gunSayisi} gün`, rozet: s.gunSayisi >= d.gunSayisi ? R.yesil : R.amber },
+              // Operasyonel: veri gelmediyse '—' (uydurma sayı yok)
+              { v: opsOf(s.ad) ? String(sayi(opsOf(s.ad).toplam)) : '—', mono: true, sag: true,
+                renk: opsOf(s.ad) && sayi(opsOf(s.ad).toplam) > 0 ? R.krem : R.not },
+              { v: opsOf(s.ad) ? String(sayi(opsOf(s.ad).hazirlikta) + sayi(opsOf(s.ad).gonderildi)) : '—',
+                mono: true, sag: true,
+                renk: opsOf(s.ad) && (sayi(opsOf(s.ad).hazirlikta) + sayi(opsOf(s.ad).gonderildi)) > 0 ? R.bakir : R.not },
             ],
           }))}
           onSatir={(row) => {

@@ -102,7 +102,6 @@ export const MODULLER = [
   { id: 'denetim', blok: 'Karar', ad: 'Denetim & Zekâ', kisa: 'Zekâ', alt: '13 tanı motoru · duyu', ikon: IK.islemci, gorunumler: [
     { id: 'anomali', ad: 'Bugünkü Bulgular', rozet: 'anomali', renk: '#F87171' },
     { id: 'motorlar', ad: 'Tanı Motorları · 13' },
-    { id: 'olaylar', ad: 'Olay Yelpazesi' },
     { id: 'mutabakat', ad: 'Duyu Mutabakatı', rozet: 'duyuMutabakat', renk: '#FBBF24' },
     { id: 'bag', ad: 'Bağ Defteri' },
     { id: 'duyu', ad: 'Sinyal İzleme' },
@@ -124,7 +123,6 @@ export const MODULLER = [
     { id: 'depo', ad: 'Depo Stok', rozet: 'opsDepoKritik', renk: '#F87171' },
     { id: 'sayim', ad: 'Bardak & Ürün Sayımı', rozet: 'stokSayim', renk: '#FBBF24' },
     { id: 'hareket', ad: 'Stok Hareketi' },
-    { id: 'kule', ad: 'Kontrol Kulesi' },
   ]},
   // Para Hareketleri: v2-YERLİ (ParaModulu.jsx). Ciro Girişi artık YERLİ kadife
   // form (2026-07-29, köprü kaldırma turu) — aynı guard'lı uca yazar (POST /ciro:

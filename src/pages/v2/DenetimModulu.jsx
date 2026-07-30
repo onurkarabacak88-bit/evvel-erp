@@ -104,6 +104,30 @@ function KopruButon({ ad, onTikla, birincil }) {
   );
 }
 
+/** Ham gözlem satırı → çekmece. Bulgular ekranının ham katmanı ile eski
+ *  Olay Yelpazesi aynı çekmeceyi paylaşır; tanım tek yerde durur. */
+function hamOlayCekmecesi(n) {
+  return {
+    tip: 'OLAY KAYDI',
+    baslik: kisalt(n.baslik || n.tip || 'Gözlem', 70),
+    alt: `${tarihKisa(n.gun || n.tarih)}${n.sube_adi ? ` · ${n.sube_adi}` : ''}${n.tip ? ` · ${n.tip}` : ''}`,
+    kpi: [
+      { etiket: 'Tarih', deger: tarihKisa(n.gun || n.tarih) },
+      { etiket: 'Tip', deger: n.tip || 'gözlem' },
+      { etiket: 'Şube', deger: n.sube_adi || 'genel' },
+      { etiket: 'Kaynak', deger: n.kaynak || (String(n.baslik || '').startsWith('[') ? 'sistem' : 'insan') },
+    ],
+    listeBaslik: 'Kayıt',
+    satirlar: [
+      { ad: 'Not', detay: 'ham gözlem', tutar: kisalt(n.metin || n.ozet || n.not || n.baslik || '—', 90) },
+      { ad: 'Kayıt zamanı', detay: 'append-only defter', tutar: n.olusturma ? String(n.olusturma).slice(0, 16).replace('T', ' ') : '—' },
+    ],
+    not: 'Olaylar HAM gözlemdir — beyin bu notu okur ama yorum ayrı katmandadır (duyu duysun, beyin sonra çalışsın).',
+    aksiyonAd: '🧠 Beyne bu olayı sor',
+    _hedef: '__gorunum:duyu',
+  };
+}
+
 export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, onGorunum }) {
   const [rapor, setRapor] = useState(null);          // truth gunluk-rapor
   const [durum, setDurum] = useState(null);          // truth durum
@@ -113,6 +137,8 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
   const [ozet, setOzet] = useState(null);            // duyu ozet
   const [notlar, setNotlar] = useState(null);        // duyu gunluk-notlar
   const [olayHata, setOlayHata] = useState('');
+  // Bugünkü Bulgular iki katman: 'cikarim' (motor) · 'ham' (olay defteri)
+  const [bulguKatman, setBulguKatman] = useState('cikarim');
   const [mutabakat, setMutabakat] = useState(null);
   const [mutHata, setMutHata] = useState('');
   const [beyin, setBeyin] = useState(null);
@@ -291,7 +317,8 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
 
   useEffect(() => {
     if (gorunum === 'anomali' || gorunum === 'motorlar') truthYukle();
-    if (gorunum === 'olaylar') olayYukle();
+    // Bulgular ekranı iki katman taşır (çıkarım + ham gözlem) — ikisi de yüklenir
+    if (gorunum === 'anomali' || gorunum === 'olaylar') olayYukle();
     if (gorunum === 'mutabakat') mutYukle();
     if (gorunum === 'bag') bagYukle();
     if (gorunum === 'duyu') duyuYukle();
@@ -306,6 +333,8 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
     const toplamAnomali = subeler.reduce((t, s) => t + sayi(s.anomali_sayisi), 0);
     const alarmli = subeler.filter((s) => s.alarm && s.alarm !== 'normal');
     const uyumlu = subeler.filter((s) => s.ana_tani === 'UYUMLU');
+    const hamListe = Array.isArray(notlar?.notlar) ? notlar.notlar : [];
+    const hamTipler = Array.isArray(notlar?.tipler) ? notlar.tipler : [];
     return (
       <>
         <KpiSeridi kpiler={[
@@ -323,6 +352,62 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
             { etiket: 'İşaretli bulgu', deger: String(sayi(iziOzet.isaretli_bulgu)), alt: 'append-only defter' },
           ]} />
         )}
+        {/* ── İKİ KATMAN (sahip kararı 2026-07-30) ────────────────────────────
+            Tasarım "tek varlık → tek ekran" diyor; bizim ilkemiz "ham veri
+            kaybolmaz" diyor. İkisi de sağlanıyor: TEK ekran, İKİ katman.
+            Çıkarım = motorun yorumu · Ham gözlem = olay defteri (append-only).
+            Ham katman ÖNCE toplanır, çıkarım SONRA okunur — sıra bozulmaz. */}
+        <div style={{
+          display: 'flex', gap: 3, padding: 3, marginBottom: 14, borderRadius: 10,
+          background: R.girinti, border: `1px solid ${R.cizgi}`, width: 'fit-content',
+        }}>
+          {[['cikarim', `Bulgular · ${toplamAnomali}`], ['ham', `Ham gözlem · ${hamListe.length}`]].map(([id, ad]) => (
+            <div
+              key={id}
+              onClick={() => setBulguKatman(id)}
+              style={{
+                padding: '6px 14px', borderRadius: 7, fontSize: 11.5, fontWeight: 600, cursor: 'pointer',
+                color: bulguKatman === id ? '#1C1309' : R.not,
+                background: bulguKatman === id ? 'linear-gradient(150deg, #E0A559, #AF6C29)' : 'transparent',
+              }}
+            >
+              {ad}
+            </div>
+          ))}
+        </div>
+
+        {bulguKatman === 'ham' ? (
+          <>
+            <OneriSeridi metin="Ham gözlem katmanı — olaylar olduğu gibi durur (duyu duysun, beyin sonra). Kayıt append-only'dir; buradaki hiçbir satır motorun yorumuyla değiştirilmez." />
+            {hamListe.length === 0 ? (
+              <BosDurum baslik="Ham gözlem yok" aciklama="Son 7 günde olay defterine not düşmemiş — defter sakin ya da notlar henüz üretilmedi." />
+            ) : (
+              <Liste
+                satirlar={hamListe.slice(0, 30).map((n, i) => ({
+                  id: n.id || `n-${i}`,
+                  _n: n,
+                  baslik: kisalt(n.baslik || n.tip || n.etiket || 'Gözlem', 70),
+                  alt: `${tarihKisa(n.gun || n.tarih)} · ${kisalt(n.metin || n.ozet || n.not || '', 110)}`,
+                  tutar: '',
+                  tier: /kritik|alarm/i.test(String(n.tip || n.seviye || '')) ? 'kritik'
+                    : /uyari|dikkat/i.test(String(n.tip || n.seviye || '')) ? 'uyari' : 'bilgi',
+                }))}
+                onAc={({ _n }) => onCekmece?.(hamOlayCekmecesi(_n))}
+              />
+            )}
+            {hamTipler.length > 0 && (
+              <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap', marginBottom: 16 }}>
+                {hamTipler.slice(0, 12).map((t, i) => (
+                  <span key={i} style={rozetHap(R.mavi)}>
+                    {typeof t === 'string' ? t : (t?.tip || t?.ad || '—')}
+                    {typeof t === 'object' && t?.adet != null ? ` · ${t.adet}` : ''}
+                  </span>
+                ))}
+              </div>
+            )}
+          </>
+        ) : (
+        <>
         <OneriSeridi metin="Motor yalnız ÖNERİR — bulgular insan onayı bekler. Kartlardaki ✓/✗ işaretleri append-only deftere yazılır; motorun isabeti bu işaretlerle ölçülür." />
         {subeler.length === 0 ? (
           <BosDurum metin="Bugün için tanı raporu yok — motor gece koşusuyla dolar." />
@@ -374,6 +459,8 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
               _hedef: '__modul:denetim:motorlar',
             })}
           />
+        )}
+        </>
         )}
       </>
     );
@@ -429,66 +516,12 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
     );
   }
 
-  // ════════════════════════ GÖRÜNÜM: OLAY YELPAZESİ ═════════════════════════
-  if (gorunum === 'olaylar') {
-    if (olayHata) return <HataBandi mesaj={olayHata} onTekrar={olayYukle} />;
-    if (!ozet || notlar == null) return <Yukleniyor />;
-    const notListe = Array.isArray(notlar?.notlar) ? notlar.notlar : [];
-    const tipler = Array.isArray(notlar?.tipler) ? notlar.tipler : [];
-    return (
-      <>
-        <KpiSeridi kpiler={[
-          { etiket: 'Toplam olay', deger: String(sayi(ozet.toplam_olay)), alt: 'olay yelpazesi defteri' },
-          { etiket: 'Etiket çeşidi', deger: String(sayi(ozet.etiket_sayisi)), alt: 'izlenen olay tipi' },
-          { etiket: 'Son 7 gün notu', deger: String(notListe.length), alt: 'günlük gözlem notu' },
-          { etiket: 'Okuyucular', deger: String((ozet.okuyucular || []).length || '—'), alt: 'salt-okur uçlar' },
-        ]} />
-        <OneriSeridi metin="Olaylar ham gözlemdir (duyu duysun, beyin sonra) — kayıt append-only, yorum ayrı katmanda." />
-        {notListe.length === 0 ? (
-          <BosDurum metin="Son 7 günde günlük not yok — olay defteri sakin ya da notlar henüz üretilmedi." />
-        ) : (
-          <Liste
-            satirlar={notListe.slice(0, 20).map((n, i) => ({
-              id: n.id || `n-${i}`,
-              _n: n,
-              baslik: kisalt(n.baslik || n.tip || n.etiket || 'Gözlem', 70),
-              alt: `${tarihKisa(n.gun || n.tarih)} · ${kisalt(n.metin || n.ozet || n.not || '', 110)}`,
-              tutar: '',
-              tier: /kritik|alarm/i.test(String(n.tip || n.seviye || '')) ? 'kritik'
-                : /uyari|dikkat/i.test(String(n.tip || n.seviye || '')) ? 'uyari' : 'bilgi',
-            }))}
-            onAc={({ _n }) => onCekmece?.({
-              tip: 'OLAY KAYDI',
-              baslik: kisalt(_n.baslik || _n.tip || 'Gözlem', 70),
-              alt: `${tarihKisa(_n.gun || _n.tarih)}${_n.sube_adi ? ` · ${_n.sube_adi}` : ''}${_n.tip ? ` · ${_n.tip}` : ''}`,
-              kpi: [
-                { etiket: 'Tarih', deger: tarihKisa(_n.gun || _n.tarih) },
-                { etiket: 'Tip', deger: _n.tip || 'gözlem' },
-                { etiket: 'Şube', deger: _n.sube_adi || 'genel' },
-                { etiket: 'Kaynak', deger: _n.kaynak || (String(_n.baslik || '').startsWith('[') ? 'sistem' : 'insan') },
-              ],
-              listeBaslik: 'Kayıt',
-              satirlar: [
-                { ad: 'Not', detay: 'ham gözlem', tutar: kisalt(_n.metin || _n.ozet || _n.not || _n.baslik || '—', 90) },
-                { ad: 'Kayıt zamanı', detay: 'append-only defter', tutar: _n.olusturma ? String(_n.olusturma).slice(0, 16).replace('T', ' ') : '—' },
-              ],
-              not: 'Olaylar HAM gözlemdir — beyin bu notu okur ama yorum ayrı katmandadır (duyu duysun, beyin sonra çalışsın).',
-              aksiyonAd: '🧠 Beyne bu olayı sor',
-              _hedef: '__gorunum:duyu',
-            })}
-          />
-        )}
-        {tipler.length > 0 && (
-          <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap', marginBottom: 16 }}>
-            {tipler.slice(0, 12).map((t, i) => (
-              <span key={i} style={rozetHap(R.mavi)}>{typeof t === 'string' ? t : (t?.tip || t?.ad || '—')}</span>
-            ))}
-          </div>
-        )}
-        <KopruButon ad="🧠 Beyinle konuş (Duyu Ağı)" onTikla={() => onGorunum?.('duyu')} />
-      </>
-    );
-  }
+  // ── OLAY YELPAZESİ BİRLEŞTİ (2026-07-30) ──────────────────────────────────
+  // Tasarımın "tek varlık → tek ekran" kuralı gereği ayrı görünüm kaldırıldı;
+  // içeriği Bugünkü Bulgular ekranının HAM GÖZLEM katmanına taşındı. Ham veri
+  // silinmedi, yalnızca çıkarımla AYNI ekranda ama AYRI katmanda duruyor.
+  // Eski '#…:olaylar' adresi gelirse aşağıdaki yönlendirme çalışır.
+  if (gorunum === 'olaylar') { onGorunum?.('anomali'); return null; }
 
   // ════════════════════════ GÖRÜNÜM: DUYU MUTABAKATI ════════════════════════
   if (gorunum === 'mutabakat') {

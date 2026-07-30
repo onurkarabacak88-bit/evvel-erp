@@ -507,7 +507,7 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
         ? { aksiyonlar: [{ ad: '→ Yönlendir (depo / toptancı)', birincil: true, onTikla: () => yonAc(s) }] }
         : s.asama === 'depoda'
           ? { aksiyonAd: 'Sevkiyatı hazırla', _hedef: '__gorunum:sevkiyat' }
-          : { aksiyonAd: 'Kontrol kulesinde izle', _hedef: '__gorunum:kule' }),
+          : { aksiyonAd: 'Sipariş akışında izle', _hedef: '__gorunum:akis' }),
     });
   };
 
@@ -516,6 +516,41 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
   // çekmece aksiyonu eski sayfaya köprüler. (__gorunum: önekini TasarimV2 çözer.)
 
   // ════════════════════════ GÖRÜNÜM: SİPARİŞ AKIŞI ══════════════════════════
+  // ── SEVKİYAT HIZI DUYUSU (2026-07-29) ─────────────────────────────────────
+  // Mevcut zaman damgalarından türeyen salt-okur ölçüm: 'talepten teslime kaç
+  // saat, hangi depo yavaş?'. Kontrol Kulesi Şube Karnesi'yle BİRLEŞİNCE
+  // (2026-07-30) bu şerit Sipariş Akışı'na taşındı — duyu kaybolmadı.
+  const hizSeridi = (hiz && sayi(hiz.teslim_adet) > 0) ? (
+        <div style={{ ...kartYuzey, padding: '16px 18px', marginBottom: 14 }}>
+          <div style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            paddingBottom: 10, borderBottom: `1px solid ${R.cizgi2}`, marginBottom: 11, flexWrap: 'wrap', gap: 8,
+          }}>
+            <span style={{ fontFamily: F.baslik, fontSize: 14.5, fontWeight: 600 }}>⏱ Sevkiyat hızı · son {sayi(hiz.kesit_gun)} gün</span>
+            <span style={{ fontSize: 10.5, color: R.not2 }}>zaman damgalarından türetilir · damgasız kayıt hesaba girmez</span>
+          </div>
+          <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', fontSize: 12.5 }}>
+            <span>Talep→teslim ort <b style={{ fontFamily: F.mono, color: R.bakir }}>{hiz.ort_saat ?? '—'} sa</b></span>
+            <span>medyan <b style={{ fontFamily: F.mono }}>{hiz.medyan_saat ?? '—'} sa</b></span>
+            <span>depo hazırlık <b style={{ fontFamily: F.mono }}>{hiz.hazirlik_ort_saat ?? '—'} sa</b></span>
+            <span>yolda <b style={{ fontFamily: F.mono }}>{hiz.yol_ort_saat ?? '—'} sa</b></span>
+            <span style={{ color: R.not2 }}>{sayi(hiz.teslim_adet)} ölçülen teslim</span>
+          </div>
+          {(hiz.depolar || []).length > 0 && (
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
+              {(hiz.depolar || []).slice(0, 5).map((dp, i) => (
+                <span key={i} style={{
+                  ...rozetHap(i === 0 && (hiz.depolar || []).length > 1 ? R.amber : R.mavi),
+                  fontFamily: F.mono,
+                }}>
+                  {dp.depo_adi}: {dp.ort_saat} sa · {dp.teslim} teslim
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+  ) : null;
+
   if (gorunum === 'akis') {
     if (kuleHata) return <HataBandi mesaj={kuleHata} onTekrar={kuleYukle} />;
     if (!kule) return <Yukleniyor />;
@@ -538,6 +573,9 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
           { etiket: 'Depoda hazırlanan', deger: String(sayi(ozet.depoda)), alt: 'sevk bekliyor', renk: sayi(ozet.depoda) > 0 ? R.mavi : R.krem },
           { etiket: 'Kabul uyumsuzluğu', deger: String(sayi(ozet.uyumsuzluk)), alt: sayi(ozet.uyumsuzluk) > 0 ? 'merkez müdahalesi gerekli' : 'temiz', renk: sayi(ozet.uyumsuzluk) > 0 ? R.kirmizi : R.yesil },
         ]} />
+
+        {/* Kontrol Kulesi birleşti (2026-07-30): hız duyusu akışın yanına geldi */}
+        {hizSeridi}
 
         {/* Risk şeridi TEPEDE (desen 2) — blueprint'te olmayan gerçek aşama.
             Her uyumsuz sipariş tıklanabilir kart: çekmecede kalemler + aşama metni. */}
@@ -1828,7 +1866,14 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     );
   }
 
-  if (gorunum === 'kule') {
+  // ── KONTROL KULESİ BİRLEŞTİ (2026-07-30, sahip kararı) ────────────────────
+  // Tasarımın "tek varlık → tek ekran" kuralı: şubeyi iki ayrı tablo listeliyordu.
+  // Kulenin ŞUBE tablosu Panel ▸ Şube Karnesi'ne operasyonel kolon olarak girdi;
+  // hız duyusu Sipariş Akışı'na taşındı. Kule görünümü menüden kalktı ama
+  // KODU DURUYOR — eski adres gelirse akışa yönlenir, iş durmaz.
+  if (gorunum === 'kule') { onGorunum?.('akis'); return null; }
+
+  if (gorunum === '__kule_arsiv') {
     if (kuleHata) return <HataBandi mesaj={kuleHata} onTekrar={kuleYukle} />;
     if (!kule || subeOzet == null) return <Yukleniyor />;
     const ozet = kule.ozet || {};
@@ -1843,38 +1888,7 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
           { etiket: 'Yolda', deger: String(sayi(ozet.yolda) + sayi(ozet.toptanci_bekliyor)), alt: 'kabul bekleyen', renk: R.bakir },
           { etiket: 'Tamamlanan', deger: String(sayi(ozet.tamamlandi)), alt: 'son 14 gün', renk: R.yesil },
         ]} />
-        {/* SEVKİYAT HIZI DUYUSU (2026-07-29): mevcut zaman damgalarından türetilen
-            salt-okur ölçüm — 'talepten teslime kaç saat, hangi depo yavaş?' */}
-        {hiz && sayi(hiz.teslim_adet) > 0 && (
-          <div style={{ ...kartYuzey, padding: '16px 18px', marginBottom: 14 }}>
-            <div style={{
-              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-              paddingBottom: 10, borderBottom: `1px solid ${R.cizgi2}`, marginBottom: 11, flexWrap: 'wrap', gap: 8,
-            }}>
-              <span style={{ fontFamily: F.baslik, fontSize: 14.5, fontWeight: 600 }}>⏱ Sevkiyat hızı · son {sayi(hiz.kesit_gun)} gün</span>
-              <span style={{ fontSize: 10.5, color: R.not2 }}>zaman damgalarından türetilir · damgasız kayıt hesaba girmez</span>
-            </div>
-            <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', fontSize: 12.5 }}>
-              <span>Talep→teslim ort <b style={{ fontFamily: F.mono, color: R.bakir }}>{hiz.ort_saat ?? '—'} sa</b></span>
-              <span>medyan <b style={{ fontFamily: F.mono }}>{hiz.medyan_saat ?? '—'} sa</b></span>
-              <span>depo hazırlık <b style={{ fontFamily: F.mono }}>{hiz.hazirlik_ort_saat ?? '—'} sa</b></span>
-              <span>yolda <b style={{ fontFamily: F.mono }}>{hiz.yol_ort_saat ?? '—'} sa</b></span>
-              <span style={{ color: R.not2 }}>{sayi(hiz.teslim_adet)} ölçülen teslim</span>
-            </div>
-            {(hiz.depolar || []).length > 0 && (
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
-                {(hiz.depolar || []).slice(0, 5).map((dp, i) => (
-                  <span key={i} style={{
-                    ...rozetHap(i === 0 && (hiz.depolar || []).length > 1 ? R.amber : R.mavi),
-                    fontFamily: F.mono,
-                  }}>
-                    {dp.depo_adi}: {dp.ort_saat} sa · {dp.teslim} teslim
-                  </span>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
+        {hizSeridi}
         {yuklu.length === 0 ? (
           <BosDurum metin="Son 30 günde depo olarak atanan şube yok — sevkiyat trafiği bulunmuyor." />
         ) : (
