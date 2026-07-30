@@ -75,6 +75,14 @@ const turAd = (t) => TUR_AD[t] || trKucuk(t) || '—';
 
 /** Sürekli personelde aylık ücret, part-time'da saatlik ücret gösterilir. */
 // Yerli form stilleri (köprü kaldırma turu)
+const vpOk = {
+  width: 26, height: 26, borderRadius: 8, border: `1px solid ${R.cizgi3}`,
+  background: R.girinti, color: R.metin2, fontSize: 13, cursor: 'pointer',
+  fontFamily: 'inherit', lineHeight: 1,
+};
+const rozetHapV = {
+  padding: '2px 8px', borderRadius: 99, fontSize: 10, fontWeight: 700, whiteSpace: 'nowrap',
+};
 const ekAlanStil = {
   width: '100%', boxSizing: 'border-box', padding: '9px 12px', borderRadius: 10,
   border: `1px solid ${R.cizgi3}`, background: R.girinti, color: R.krem,
@@ -114,6 +122,17 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
   const [pdKasa, setPdKasa] = useState(null);
   const [pdKarne, setPdKarne] = useState(null);
   const [pdHata, setPdHata] = useState('');
+  // ── YERLİ VARDİYA PLANLAYICI (köprü kaldırma turu, 2026-07-30) ────────────
+  // Klasik VardiyaPlanlamaV2 (5338 satır) çekirdeği: gün planı + atama/sil +
+  // çakışma kontrolü. Sürükle-bırak yerine TIKLA-ATA (dokunmatikte de çalışır).
+  // Uçlar aynen: /vardiya/v2/gun · /assign · /atama/check · /atama/{id} DELETE ·
+  // /gun-kopyala · /gun-temizle
+  const [vpTarih, setVpTarih] = useState(() => isoBugun());
+  const [vpGun, setVpGun] = useState(null);
+  const [vpHata, setVpHata] = useState('');
+  const [vpMesgul, setVpMesgul] = useState('');
+  const [vpAtaModal, setVpAtaModal] = useState(null);   // {slot, subeAd, personelId, uyari, override}
+  const [vpKopyaModal, setVpKopyaModal] = useState(null);
   const [hafta, setHafta] = useState(null);
   const [bordro, setBordro] = useState([]);
   const [avans, setAvans] = useState(null);
@@ -172,6 +191,102 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
   };
 
   useEffect(yukle, []);
+
+  const vpYukle = (tarih) => {
+    setVpHata('');
+    const t = tarih || vpTarih;
+    api(`/vardiya/v2/gun?tarih=${t}`)
+      .then((d) => setVpGun(d || {}))
+      .catch((e) => setVpHata(e?.message || ''));
+  };
+
+  const vpGunDegis = (n) => {
+    const y = isoEkle(vpTarih, n);
+    setVpTarih(y);
+    vpYukle(y);
+  };
+
+  /** Atama kapısı: önce check (çakışma=kesin engel), sonra assign. */
+  const vpAta = async (zorla = false) => {
+    const m = vpAtaModal;
+    if (!m?.personelId) { onToast?.('Personel seçin'); return; }
+    setVpMesgul('ata');
+    try {
+      const body = {
+        personel_id: m.personelId, slot_id: m.slot.id, tarih: vpTarih,
+        override: zorla, otomatik_saat_cozumu: true,
+      };
+      if (!zorla) {
+        const c = await api('/vardiya/v2/atama/check', { method: 'POST', body });
+        const uyarilar = Array.isArray(c?.uyarilar) ? c.uyarilar : [];
+        if (c?.cakisma_var === true) {
+          setVpAtaModal((f) => ({ ...f, uyari: 'Bu personel aynı saatte başka bir slotta atanmış — çakışma engeldir.', override: false }));
+          setVpMesgul('');
+          return;
+        }
+        if (c?.override_gerekir === true || uyarilar.length) {
+          const metin = uyarilar.map((u) => (typeof u === 'string' ? u : (u.mesaj || u.aciklama || ''))).filter(Boolean).join(' · ');
+          setVpAtaModal((f) => ({ ...f, uyari: metin || 'Bu atama için uyarı var.', override: true }));
+          setVpMesgul('');
+          return;
+        }
+      }
+      await api('/vardiya/v2/assign', { method: 'POST', body });
+      onToast?.('✓ Vardiya atandı');
+      setVpAtaModal(null);
+      vpYukle(vpTarih);
+    } catch (e) {
+      onToast?.(e?.message || 'Atama yapılamadı');
+    } finally {
+      setVpMesgul('');
+    }
+  };
+
+  const vpAtamaSil = async (atamaId, ad) => {
+    setVpMesgul(atamaId);
+    try {
+      await api(`/vardiya/v2/atama/${atamaId}`, { method: 'DELETE' });
+      onToast?.(`${ad || 'Atama'} kaldırıldı`);
+      vpYukle(vpTarih);
+    } catch (e) {
+      onToast?.(e?.message || 'Kaldırılamadı');
+    } finally {
+      setVpMesgul('');
+    }
+  };
+
+  const vpGunTemizle = async () => {
+    setVpMesgul('temizle');
+    try {
+      await api(`/vardiya/v2/gun-temizle?tarih=${vpTarih}`, { method: 'POST' });
+      onToast?.(`${kisaTarih(vpTarih)} planı temizlendi`);
+      setVpKopyaModal(null);
+      vpYukle(vpTarih);
+    } catch (e) {
+      onToast?.(e?.message || 'Temizlenemedi');
+    } finally {
+      setVpMesgul('');
+    }
+  };
+
+  const vpGunKopyala = async (hedef) => {
+    if (!hedef) { onToast?.('Hedef gün seçin'); return; }
+    setVpMesgul('kopyala');
+    try {
+      await api(`/vardiya/v2/gun-kopyala?kaynak=${vpTarih}&hedef=${hedef}&temizle=true`, { method: 'POST' });
+      onToast?.(`${kisaTarih(vpTarih)} planı ${kisaTarih(hedef)} gününe kopyalandı`);
+      setVpKopyaModal(null);
+    } catch (e) {
+      onToast?.(e?.message || 'Kopyalanamadı');
+    } finally {
+      setVpMesgul('');
+    }
+  };
+
+  useEffect(() => {
+    if (gorunum === 'vardiya') vpYukle(vpTarih);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gorunum]);
 
   const pdYukle = () => {
     setPdHata('');
@@ -524,10 +639,10 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
       : (Array.isArray(pdKasa?.satirlar) ? pdKasa.satirlar : []);
     const karne = Array.isArray(pdKarne) ? pdKarne : [];
     const ALT = [
-      ['davranis', `\u{1F464} Davranış (${davranis.length})`],
-      ['puan', `\u{1F3C5} Puan (${puanlar.length})`],
-      ['gec', `\u{23F0} Geç kalma (${gecSatir.length})`],
-      ['kasa', `\u{1F4B5} Kasa açığı (${kasaSatir.length})`],
+      ['davranis', `👤 Davranış (${davranis.length})`],
+      ['puan', `🏅 Puan (${puanlar.length})`],
+      ['gec', `⏰ Geç kalma (${gecSatir.length})`],
+      ['kasa', `💵 Kasa açığı (${kasaSatir.length})`],
     ];
     const enDusukPuan = puanlar.length ? puanlar.reduce((a, b) => (sayi(a.puan) <= sayi(b.puan) ? a : b)) : null;
     return (
@@ -812,13 +927,8 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
         <div style={{ ...kartYuzey, padding: '38px 30px', textAlign: 'center' }}>
           <div style={{ fontFamily: F.baslik, fontSize: 18, fontWeight: 600 }}>Bu hafta için vardiya planı yok</div>
           <div style={{ fontSize: 13, color: R.not, marginTop: 8, lineHeight: 1.6 }}>
-            {kisaTarih(pazartesi)} haftası boş. Plan Vardiya Planlaması ekranından kurulur.
+            {kisaTarih(pazartesi)} haftası boş. Aşağıdaki gün planlayıcıdan atama yapabilirsin.
           </div>
-          <button onClick={() => onKopru?.('vardiya-planlamasi')} style={{
-            marginTop: 16, padding: '10px 20px', borderRadius: 10, border: 'none',
-            background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
-            fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer',
-          }}>Vardiya planlamasını aç</button>
         </div>
       );
     }
@@ -851,12 +961,251 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
               tutar: k.saat || '—',
             })),
             not: h.kisiler.length
-              ? 'Atamayı değiştirmek için Vardiya Planlaması ekranını kullan — buradan yazılmaz.'
+              ? 'Atamayı değiştirmek için aşağıdaki gün planlayıcıyı kullan (o güne geçer).'
               : 'Bu gün-şube için kimse atanmamış. Açık slot, kapanış sorumlusu boşluğu anlamına da gelebilir.',
-            aksiyonAd: 'Vardiya planlamasını aç',
-            _hedef: 'vardiya-planlamasi',
+            aksiyonlar: [{
+              ad: `→ ${kisaTarih(h.iso)} gününü planla`,
+              birincil: true,
+              onTikla: () => { setVpTarih(h.iso); vpYukle(h.iso); },
+            }],
           })}
         />
+
+        {/* ══════════ YERLİ GÜN PLANLAYICI (klasik VardiyaPlanlamaV2 çekirdeği) ══════════ */}
+        <div style={{ ...kartYuzey, padding: '18px 20px', marginTop: 16, marginBottom: 16 }}>
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
+            paddingBottom: 12, borderBottom: `1px solid ${R.cizgi2}`, marginBottom: 14,
+          }}>
+            <span style={{ fontFamily: F.baslik, fontSize: 15.5, fontWeight: 600 }}>🗓 Gün planlayıcı</span>
+            <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+              <button onClick={() => vpGunDegis(-1)} style={vpOk}>‹</button>
+              <span style={{ fontFamily: F.mono, fontSize: 12.5, fontWeight: 700, minWidth: 92, textAlign: 'center' }}>
+                {kisaTarih(vpTarih)}
+              </span>
+              <button onClick={() => vpGunDegis(1)} style={vpOk}>›</button>
+            </div>
+            <span style={{ fontSize: 11, color: R.not2, flex: 1 }}>
+              slota tıkla → personel ata · çakışma engeldir, uyarıda onay sorar
+            </span>
+            <button onClick={() => setVpKopyaModal({ hedef: isoEkle(vpTarih, 1) })} style={{
+              padding: '7px 13px', borderRadius: 10, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+              background: R.girinti, color: R.metin2, fontSize: 11.5, fontWeight: 600, fontFamily: 'inherit',
+            }}>
+              📋 Kopyala / temizle
+            </button>
+          </div>
+
+          {vpHata ? (
+            <div style={{ fontSize: 12.5, color: R.kirmizi }}>
+              Gün planı alınamadı — {vpHata}
+              <button onClick={() => vpYukle(vpTarih)} style={{
+                marginLeft: 10, padding: '5px 11px', borderRadius: 8, border: `1px solid ${R.kirmizi}55`,
+                background: `${R.kirmizi}18`, color: R.kirmizi, fontSize: 11, cursor: 'pointer', fontFamily: 'inherit',
+              }}>Tekrar dene</button>
+            </div>
+          ) : !vpGun ? (
+            <div style={{ fontSize: 12.5, color: R.not, textAlign: 'center', padding: '18px 0' }}>Gün planı yükleniyor…</div>
+          ) : (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 12 }}>
+              {(vpGun.subeler || []).map((sb) => {
+                const slotlar = Array.isArray(sb.slotlar) ? sb.slotlar : [];
+                const eksikVar = slotlar.some((sv) => sayi(sv.eksik) > 0);
+                return (
+                  <div key={sb.sube_id} style={{
+                    background: 'linear-gradient(165deg, #241A10, #1E1509)',
+                    border: `1px solid ${eksikVar ? `${R.amber}44` : 'rgba(243,233,220,.08)'}`,
+                    borderRadius: 14, padding: 13,
+                  }}>
+                    <div style={{
+                      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                      paddingBottom: 9, borderBottom: `1px solid ${R.cizgi2}`, marginBottom: 10,
+                    }}>
+                      <span style={{ fontSize: 13, fontWeight: 700 }}>{sb.sube_ad || '—'}</span>
+                      <span style={{ fontSize: 10.5, color: R.not2, fontFamily: F.mono }}>
+                        {sayi(sb.atanan_benzersiz_kisi)} kişi
+                      </span>
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      {slotlar.length === 0 && (
+                        <div style={{ fontSize: 11.5, color: R.not3, textAlign: 'center', padding: '10px 0' }}>slot tanımı yok</div>
+                      )}
+                      {slotlar.map((sv) => {
+                        const slot = sv.slot || {};
+                        const atamalar = Array.isArray(sv.atamalar) ? sv.atamalar : [];
+                        const eksik = sayi(sv.eksik);
+                        const saat = `${String(slot.baslangic_saat || '').slice(0, 5)}–${String(slot.bitis_saat || '').slice(0, 5)}`;
+                        return (
+                          <div key={slot.id} style={{
+                            padding: '10px 12px', borderRadius: 11,
+                            background: R.girinti,
+                            border: `1px solid ${eksik > 0 ? `${R.amber}55` : R.cizgi3}`,
+                          }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                              <span style={{ fontSize: 12.5, fontWeight: 700, flex: 1 }}>{slot.ad || 'vardiya'}</span>
+                              <span style={{ fontFamily: F.mono, fontSize: 11, color: R.not2 }}>{saat}</span>
+                              {eksik > 0 && <span style={{ ...rozetHapV, background: `${R.amber}22`, color: R.amber }}>{eksik} eksik</span>}
+                            </div>
+                            {atamalar.length > 0 && (
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: 5, marginTop: 8 }}>
+                                {atamalar.map((a) => (
+                                  <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
+                                    <span style={{ color: R.yesil }}>✓</span>
+                                    <span style={{ flex: 1, color: R.metin2 }}>
+                                      {a.ad_soyad || `${a.ad || ''} ${a.soyad || ''}`.trim() || '—'}
+                                      {a.kapanis ? ' · kapanış' : ''}
+                                    </span>
+                                    <button
+                                      disabled={vpMesgul === a.id}
+                                      onClick={() => vpAtamaSil(a.id, a.ad_soyad || a.ad)}
+                                      style={{
+                                        padding: '3px 9px', borderRadius: 7, cursor: 'pointer', fontFamily: 'inherit',
+                                        border: `1px solid ${R.cizgi3}`, background: 'transparent',
+                                        color: R.not, fontSize: 10.5,
+                                      }}
+                                    >
+                                      {vpMesgul === a.id ? '…' : 'kaldır'}
+                                    </button>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                            <button
+                              onClick={() => setVpAtaModal({ slot, subeAd: sb.sube_ad, personelId: '', uyari: '', override: false })}
+                              style={{
+                                width: '100%', marginTop: 9, padding: '6px 0', borderRadius: 8,
+                                border: `1px solid ${R.bakir}55`, background: `${R.bakir}1a`,
+                                color: R.bakir, fontSize: 11.5, fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer',
+                              }}
+                            >
+                              + Personel ata
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* atama modalı */}
+        {vpAtaModal && (
+          <div onClick={(e) => { if (e.target === e.currentTarget && !vpMesgul) setVpAtaModal(null); }} style={{
+            position: 'fixed', inset: 0, zIndex: 90, background: 'rgba(10,6,2,.66)',
+            backdropFilter: 'blur(3px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+          }}>
+            <div style={{ ...kartYuzey, width: 480, maxWidth: '96vw', padding: '24px 26px' }}>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 6 }}>
+                <div style={{ fontFamily: F.baslik, fontSize: 20, fontWeight: 600 }}>Vardiya Ataması</div>
+                <button onClick={() => !vpMesgul && setVpAtaModal(null)} style={{
+                  marginLeft: 'auto', border: 'none', background: 'transparent', color: R.not,
+                  fontSize: 16, cursor: 'pointer', fontFamily: 'inherit',
+                }}>✕</button>
+              </div>
+              <div style={{ fontSize: 12.5, color: R.metin2, marginBottom: 14 }}>
+                {vpAtaModal.subeAd} · {vpAtaModal.slot.ad || 'vardiya'} ·{' '}
+                {String(vpAtaModal.slot.baslangic_saat || '').slice(0, 5)}–{String(vpAtaModal.slot.bitis_saat || '').slice(0, 5)} ·{' '}
+                {kisaTarih(vpTarih)}
+              </div>
+              <label style={ekEtiket}>Personel *</label>
+              <select
+                value={vpAtaModal.personelId}
+                onChange={(e) => setVpAtaModal((f) => ({ ...f, personelId: e.target.value, uyari: '', override: false }))}
+                style={ekAlanStil}
+              >
+                <option value="">Seçin…</option>
+                {personel.map((p) => <option key={p.id} value={p.id}>{p.ad_soyad}{p.sube_adi ? ` · ${p.sube_adi}` : ''}</option>)}
+              </select>
+
+              {vpAtaModal.uyari && (
+                <div style={{
+                  marginTop: 13, padding: '12px 15px', borderRadius: 12,
+                  background: vpAtaModal.override ? `${R.amber}12` : `${R.kirmizi}14`,
+                  border: `1px solid ${vpAtaModal.override ? `${R.amber}66` : `${R.kirmizi}55`}`,
+                }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: vpAtaModal.override ? R.amber : R.kirmizi }}>
+                    {vpAtaModal.override ? '⚠ Uyarı var' : '⛔ Çakışma — atanamaz'}
+                  </div>
+                  <div style={{ fontSize: 12, color: R.metin2, marginTop: 5, lineHeight: 1.5 }}>{vpAtaModal.uyari}</div>
+                  {vpAtaModal.override && (
+                    <button disabled={vpMesgul === 'ata'} onClick={() => vpAta(true)} style={{
+                      marginTop: 10, padding: '7px 14px', borderRadius: 9, border: 'none', cursor: 'pointer',
+                      background: `${R.amber}26`, color: R.amber, fontSize: 11.5, fontWeight: 700, fontFamily: 'inherit',
+                    }}>{vpMesgul === 'ata' ? 'Atanıyor…' : 'Yine de ata'}</button>
+                  )}
+                </div>
+              )}
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 18 }}>
+                <button disabled={!!vpMesgul} onClick={() => setVpAtaModal(null)} style={{
+                  padding: '10px 18px', borderRadius: 10, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+                  background: 'transparent', color: R.metin2, fontSize: 12.5, fontWeight: 600, fontFamily: 'inherit',
+                }}>Vazgeç</button>
+                <button
+                  disabled={!!vpMesgul || !vpAtaModal.personelId || (!!vpAtaModal.uyari && !vpAtaModal.override)}
+                  onClick={() => vpAta(false)}
+                  style={{
+                    padding: '10px 20px', borderRadius: 10, border: 'none',
+                    background: vpAtaModal.personelId ? 'linear-gradient(150deg, #D99A4E, #B06E2C)' : R.girinti,
+                    color: vpAtaModal.personelId ? '#1C1309' : R.not,
+                    fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit',
+                    cursor: vpAtaModal.personelId ? 'pointer' : 'default',
+                  }}
+                >
+                  {vpMesgul === 'ata' ? 'Kontrol ediliyor…' : 'Ata'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* kopyala / temizle modalı */}
+        {vpKopyaModal && (
+          <div onClick={(e) => { if (e.target === e.currentTarget && !vpMesgul) setVpKopyaModal(null); }} style={{
+            position: 'fixed', inset: 0, zIndex: 90, background: 'rgba(10,6,2,.66)',
+            backdropFilter: 'blur(3px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+          }}>
+            <div style={{ ...kartYuzey, width: 460, maxWidth: '96vw', padding: '24px 26px' }}>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 6 }}>
+                <div style={{ fontFamily: F.baslik, fontSize: 20, fontWeight: 600 }}>Gün Planı Kopyala</div>
+                <button onClick={() => !vpMesgul && setVpKopyaModal(null)} style={{
+                  marginLeft: 'auto', border: 'none', background: 'transparent', color: R.not,
+                  fontSize: 16, cursor: 'pointer', fontFamily: 'inherit',
+                }}>✕</button>
+              </div>
+              <div style={{ fontSize: 12.5, color: R.metin2, marginBottom: 14 }}>
+                <b>{kisaTarih(vpTarih)}</b> planı hedef güne kopyalanır (hedefin mevcut planı silinir).
+              </div>
+              <label style={ekEtiket}>Hedef gün</label>
+              <input type="date" value={vpKopyaModal.hedef}
+                onChange={(e) => setVpKopyaModal((f) => ({ ...f, hedef: e.target.value }))}
+                style={{ ...ekAlanStil, colorScheme: 'dark' }} />
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 18, flexWrap: 'wrap' }}>
+                <button disabled={!!vpMesgul} onClick={vpGunTemizle} style={{
+                  padding: '9px 14px', borderRadius: 10, cursor: 'pointer', fontFamily: 'inherit',
+                  border: `1px solid ${R.kirmizi}55`, background: `${R.kirmizi}18`,
+                  color: R.kirmizi, fontSize: 11.5, fontWeight: 700,
+                }}>
+                  {vpMesgul === 'temizle' ? 'Temizleniyor…' : `${kisaTarih(vpTarih)} planını temizle`}
+                </button>
+                <div style={{ marginLeft: 'auto', display: 'flex', gap: 10 }}>
+                  <button disabled={!!vpMesgul} onClick={() => setVpKopyaModal(null)} style={{
+                    padding: '10px 16px', borderRadius: 10, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+                    background: 'transparent', color: R.metin2, fontSize: 12.5, fontWeight: 600, fontFamily: 'inherit',
+                  }}>Vazgeç</button>
+                  <button disabled={!!vpMesgul || !vpKopyaModal.hedef} onClick={() => vpGunKopyala(vpKopyaModal.hedef)} style={{
+                    padding: '10px 18px', borderRadius: 10, border: 'none', cursor: 'pointer',
+                    background: 'linear-gradient(150deg, #D99A4E, #B06E2C)', color: '#1C1309',
+                    fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit',
+                  }}>{vpMesgul === 'kopyala' ? 'Kopyalanıyor…' : 'Kopyala'}</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </>
     );
   }

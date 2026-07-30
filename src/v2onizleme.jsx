@@ -247,6 +247,32 @@ const OPS_UC = {
       { anahtar: 'food_cost', etiket: 'Food cost', simdi: 34.2, onceki: 31.8, delta_pct: 7.5, yon: 'kotu' },
     ],
   },
+  // Vardiya gün planlayıcı (yerli atama akışı)
+  '/api/vardiya/v2/gun': {
+    tarih: bugunISO, haftanin_gunu: 4,
+    subeler: [
+      {
+        sube_id: 's0', sube_ad: 'ZAFER', atanan_benzersiz_kisi: 2,
+        slotlar: [
+          { slot: { id: 'sl1', ad: 'Sabah', baslangic_saat: '08:00:00', bitis_saat: '16:00:00', min_personel: 2, ideal_personel: 2 },
+            atamalar: [{ id: 'at1', ad_soyad: 'Elif Kaya', kapanis: false }], atanan_personel: 1, eksik: 1 },
+          { slot: { id: 'sl2', ad: 'Akşam · kapanış', baslangic_saat: '16:00:00', bitis_saat: '23:59:00', min_personel: 1, ideal_personel: 2 },
+            atamalar: [{ id: 'at2', ad_soyad: 'Mert Can', kapanis: true }], atanan_personel: 1, eksik: 0 },
+        ],
+      },
+      {
+        sube_id: 's1', sube_ad: 'KÖYCEĞİZ', atanan_benzersiz_kisi: 0,
+        slotlar: [
+          { slot: { id: 'sl3', ad: 'Serbest', baslangic_saat: '10:30:00', bitis_saat: '23:59:00', min_personel: 0, ideal_personel: 1 },
+            atamalar: [], atanan_personel: 0, eksik: 0 },
+        ],
+      },
+    ],
+  },
+  '/api/vardiya/v2/atama/check': { cakisma_var: false, override_gerekir: false, uyarilar: [] },
+  '/api/vardiya/v2/assign': { ok: true },
+  '/api/vardiya/v2/gun-kopyala': { ok: true },
+  '/api/vardiya/v2/gun-temizle': { ok: true },
   // Personel Denetimi (ops-merkez P2 sekmeleri)
   '/api/ops/personel-davranis-analiz': {
     gun_sayi: 45,

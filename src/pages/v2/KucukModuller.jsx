@@ -1563,7 +1563,7 @@ export function TanimModulu({ gorunum, onCekmece, onKopru, onToast }) {
           padding: '9px 16px', borderRadius: 10, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
           background: R.girinti, color: R.metin2, fontSize: 12, fontWeight: 600, fontFamily: 'inherit',
         }}>
-          {tvMesgul ? 'Uygulanıyor…' : '\u{1F4B0} Evo satış fiyatlarını uygula (30 gün)'}
+          {tvMesgul ? 'Uygulanıyor…' : '💰 Evo satış fiyatlarını uygula (30 gün)'}
         </button>
         <span style={{ fontSize: 11.5, color: R.not, alignSelf: 'center' }}>
           fiyat düzenleme ve yayın durumu satıra tıklayınca çekmecede
@@ -1605,7 +1605,7 @@ export function TanimModulu({ gorunum, onCekmece, onKopru, onToast }) {
             </div>
           </div>
           <div style={{ display: 'flex', gap: 8, marginTop: 14, flexWrap: 'wrap' }}>
-            {[['aktif', 'Yayında'], ['yeni', '\u{2728} YENİ etiketi']].map(([k, ad]) => (
+            {[['aktif', 'Yayında'], ['yeni', '✨ YENİ etiketi']].map(([k, ad]) => (
               <div key={k} onClick={() => setTvForm((f) => ({ ...f, [k]: !f[k] }))} style={{
                 padding: '8px 14px', borderRadius: 10, fontSize: 12, fontWeight: 700, cursor: 'pointer',
                 border: `1px solid ${tvForm[k] ? R.bakir : R.cizgi3}`,

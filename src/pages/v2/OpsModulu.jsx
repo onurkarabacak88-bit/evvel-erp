@@ -1390,10 +1390,10 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
       barYukle(y);
     };
     const ALT = [
-      ['acilis', `\u{1F305} Açılış (${acilanSube}/${acilisSatir.length})`],
-      ['kapanis', `\u{1F311} Kapanış (${kapananSube}/${kapanisSatir.length})`],
-      ['urunac', `\u{1F7E2} Ürün-aç (${sayi(urunAcAkis?.toplam_islem)})`],
-      ['kullanilan', '\u{1F7E0} Kullanılan ürünler'],
+      ['acilis', `🌅 Açılış (${acilanSube}/${acilisSatir.length})`],
+      ['kapanis', `🌑 Kapanış (${kapananSube}/${kapanisSatir.length})`],
+      ['urunac', `🟢 Ürün-aç (${sayi(urunAcAkis?.toplam_islem)})`],
+      ['kullanilan', '🟠 Kullanılan ürünler'],
     ];
     return (
       <>
@@ -1568,11 +1568,11 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
       denetimYukle(y);
     };
     const ALT = [
-      ['uyumsuz', `\u{1F9EA} Ürün uyumsuzluğu (${sayi(dnUyumsuz?.gun_bekleyen)})`],
-      ['fire', `\u{1F525} Fire (${fireKayit.length})`],
-      ['fis', `\u{1F9FE} Gider fişi (${fisListe.length})`],
-      ['kontrol', '\u{1F50D} Kontrol özeti'],
-      ['kayip', `\u{1F4C9} Stok kaybı (${kayipListe.length})`],
+      ['uyumsuz', `🧪 Ürün uyumsuzluğu (${sayi(dnUyumsuz?.gun_bekleyen)})`],
+      ['fire', `🔥 Fire (${fireKayit.length})`],
+      ['fis', `🧾 Gider fişi (${fisListe.length})`],
+      ['kontrol', '🔍 Kontrol özeti'],
+      ['kayip', `📉 Stok kaybı (${kayipListe.length})`],
     ];
     return (
       <>
@@ -1720,10 +1720,10 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     const kritikTahmin = tahminler.filter((t) => sayi(t.kalan_gun) > 0 && sayi(t.kalan_gun) <= 7);
     const kotuKpi = kpilar.filter((k) => k.yon === 'kotu');
     const ALT = [
-      ['teslim', `\u{1F4E6} Toptancıdan gelen (${teslimSube.length})`],
-      ['notlar', `\u{1F4DD} Şube notları (${notlar.length})`],
-      ['tahmin', `\u{1F52E} Stok tahmini (${tahminler.length})`],
-      ['kpi', `\u{1F4CA} KPI değişimi (${kpilar.length})`],
+      ['teslim', `📦 Toptancıdan gelen (${teslimSube.length})`],
+      ['notlar', `📝 Şube notları (${notlar.length})`],
+      ['tahmin', `🔮 Stok tahmini (${tahminler.length})`],
+      ['kpi', `📊 KPI değişimi (${kpilar.length})`],
     ];
     return (
       <>
