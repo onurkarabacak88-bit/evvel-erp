@@ -23,7 +23,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { api, fmt } from '../../utils/api';
 import { R, F, kartYuzey } from './tema';
-import { KpiSeridi, Tablo, BosDurum } from './parcalar';
+import { KpiSeridi, Tablo, BosDurum, HataBandi } from './parcalar';
 
 const sayi = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 
@@ -81,28 +81,6 @@ function Yukleniyor() {
   return (
     <div style={{ ...kartYuzey, padding: '38px 30px', textAlign: 'center', color: R.not, fontSize: 13 }}>
       Yükleniyor…
-    </div>
-  );
-}
-function HataBandi({ mesaj, onTekrar }) {
-  return (
-    <div style={{
-      ...kartYuzey, padding: '16px 20px', marginBottom: 16, display: 'flex',
-      alignItems: 'center', gap: 14, border: `1px solid ${R.kirmizi}55`,
-    }}>
-      <span style={{ fontSize: 13, color: R.kirmizi, flex: 1 }}>
-        Veri alınamadı — {mesaj || 'sunucuya ulaşılamadı'}. Bu "veri yok" değil, bağlantı sorunu.
-      </span>
-      <button
-        onClick={onTekrar}
-        style={{
-          padding: '7px 14px', borderRadius: 9, border: `1px solid ${R.kirmizi}55`,
-          background: `${R.kirmizi}18`, color: R.kirmizi, fontSize: 12, fontWeight: 700,
-          fontFamily: 'inherit', cursor: 'pointer',
-        }}
-      >
-        🔄 Tekrar dene
-      </button>
     </div>
   );
 }

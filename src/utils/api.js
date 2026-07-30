@@ -32,6 +32,45 @@ function detailToMessage(detail) {
   return String(detail);
 }
 
+// ─── İSTEK HATASI DUYUSU (yeni handoff: "sessiz .catch yasak") ───────────────
+// Sorun: v2'de 100+ `.catch(() => [])` var. Bir uç düştüğünde ekran sessizce
+// "kayıt yok" diyordu — bu YANLIŞ BİLGİ ("veri yok" ≠ "sistem bozuk").
+// Her catch'i tek tek yamamak yerine TEK BOĞAZ NOKTASINA duyu koyuyoruz:
+// api() zaten hepsinin geçtiği yer. Başarısız GET'ler burada biriktirilir,
+// kabuk bunu okuyup kanonik hata bandını doğurur. Yutan catch akışı bozmaz,
+// ama artık SESSİZ değil — iz kalır.
+const _hatalar = new Map();          // yol → { yol, mesaj, kod, adet, zaman }
+const _dinleyiciler = new Set();
+
+function _hataYaz(yol, mesaj, kod) {
+  const onceki = _hatalar.get(yol);
+  _hatalar.set(yol, {
+    yol,
+    mesaj: String(mesaj || '').slice(0, 160),
+    kod: kod || null,
+    adet: (onceki?.adet || 0) + 1,
+    zaman: new Date().toISOString(),
+  });
+  _dinleyiciler.forEach((f) => { try { f(); } catch { /* dinleyici çökerse akış yaşar */ } });
+}
+
+/** Kabuk buradan okur: o an açık ekranda başarısız olan istekler. */
+export function istekHatalari() {
+  return [..._hatalar.values()];
+}
+
+/** Görünüm değişince / kullanıcı 'tekrar dene' deyince defter temizlenir. */
+export function istekHatalariniTemizle() {
+  if (_hatalar.size === 0) return;
+  _hatalar.clear();
+  _dinleyiciler.forEach((f) => { try { f(); } catch { /* yut */ } });
+}
+
+export function istekHatasiDinle(fn) {
+  _dinleyiciler.add(fn);
+  return () => _dinleyiciler.delete(fn);
+}
+
 export async function api(path, opts = {}) {
   const method = (opts.method || 'GET').toUpperCase();
   const headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
@@ -46,15 +85,30 @@ export async function api(path, opts = {}) {
   } catch {
     /* ignore */
   }
-  const res = await fetch(`${BASE}/api${path}`, {
-    headers,
-    ...opts,
-    body: opts.body ? JSON.stringify(opts.body) : undefined,
-  });
+  let res;
+  try {
+    res = await fetch(`${BASE}/api${path}`, {
+      headers,
+      ...opts,
+      body: opts.body ? JSON.stringify(opts.body) : undefined,
+    });
+  } catch (e) {
+    // Ağ seviyesinde düşüş (bağlantı yok / CORS / iptal)
+    if (method === 'GET') _hataYaz(path, e?.message || 'ağa ulaşılamadı', 'AG_HATASI');
+    throw e;
+  }
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
     const msg = detailToMessage(err.detail);
+    // YALNIZ okuma istekleri deftere yazılır: yazma hataları zaten kullanıcıya
+    // toast/modal ile dönüyor, ikinci kez bant açmak gürültü olur.
+    if (method === 'GET') _hataYaz(path, msg || res.statusText, `HTTP_${res.status}`);
     throw new Error(msg || res.statusText || 'İstek başarısız');
+  }
+  // Uç düzelirse kendi izini siler — bant asılı kalmaz
+  if (method === 'GET' && _hatalar.has(path)) {
+    _hatalar.delete(path);
+    _dinleyiciler.forEach((f) => { try { f(); } catch { /* yut */ } });
   }
   return res.json();
 }

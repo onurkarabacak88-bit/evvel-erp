@@ -10,9 +10,9 @@
 // yaşar. Pilot onaylanırsa tema token'ları index.css'e taşınır.
 // ─────────────────────────────────────────────────────────────────────────────
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { api, fmt } from '../../utils/api';
+import { api, fmt, istekHatalari, istekHatalariniTemizle, istekHatasiDinle } from '../../utils/api';
 import { R, F, MODULLER, GUN_SONU_MODULLERI, kartYuzey } from './tema';
-import { Ikon, KpiSeridi, Hero, Liste, Tablo, Cekmece, Toast, KopruDurumu } from './parcalar';
+import { Ikon, KpiSeridi, Hero, Liste, Tablo, Cekmece, Toast, KopruDurumu, HataBandi } from './parcalar';
 import KartModulu from './KartModulu';
 import OdemeModulu from './OdemeModulu';
 import OpsModulu from './OpsModulu';
@@ -472,6 +472,15 @@ export default function TasarimV2({ onGit }) {
       .then((d) => setSubeOps(Array.isArray(d?.satirlar) ? d.satirlar : (Array.isArray(d) ? d : [])))
       .catch(() => setSubeOps([]));
   }, [gorunum, subeOps]);
+
+  // ── İSTEK HATASI BANDI (yeni handoff: "veri yok" ≠ "sistem bozuk") ────────
+  // api() düşen GET'leri deftere yazar; kabuk burada okuyup KANONİK hata bandını
+  // içeriğin EN ÜSTÜNDE gösterir. Böylece 100+ sessiz catch'i tek tek yamamadan
+  // "sessiz .catch yasak" kuralı sağlanır: akış yaşar ama iz görünür.
+  const [hataDefteri, setHataDefteri] = useState([]);
+  useEffect(() => istekHatasiDinle(() => setHataDefteri(istekHatalari())), []);
+  // Görünüm değişince defter sıfırlanır — önceki ekranın hatası burada asılı kalmaz
+  useEffect(() => { istekHatalariniTemizle(); setHataDefteri([]); }, [mod, gorunum]);
 
   // Palet açılınca odak girdiye düşer
   useEffect(() => {
@@ -1185,6 +1194,18 @@ export default function TasarimV2({ onGit }) {
           padding: '22px 30px 60px', maxWidth: 1420, margin: '0 auto',
           animation: 'v2yuksel .28s cubic-bezier(.22,1,.36,1) both',
         }}>
+          {hataDefteri.length > 0 && (
+            <HataBandi
+              mesaj={hataDefteri[0].mesaj}
+              kod={hataDefteri[0].kod}
+              kaynak={hataDefteri.length > 1
+                ? `${hataDefteri[0].yol} +${hataDefteri.length - 1} uç daha`
+                : hataDefteri[0].yol}
+              deneme={hataDefteri[0].adet > 1 ? `${hataDefteri[0].adet}. kez` : null}
+              onTekrar={() => { istekHatalariniTemizle(); setHataDefteri([]); yukle(); }}
+            />
+          )}
+
           {/* Dar ekran gezinmesi: 222px kolon gizlenince görünümler çip olur */}
           <div className="v2-cip-satiri" style={{ gap: 7, overflowX: 'auto', paddingBottom: 2, marginBottom: 16 }}>
             {modObj.gorunumler.map((g) => {

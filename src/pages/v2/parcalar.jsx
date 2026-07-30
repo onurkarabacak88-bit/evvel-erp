@@ -1148,6 +1148,64 @@ export function SecimCubugu({ sayi, onOnayla, onReddet, onTemizle, onaylaAd = 'S
   );
 }
 
+/** HATA BANDI — boş durumdan AYRI (yeni handoff kuralı, 2026-07-30).
+ *  "veri yok" ile "sistem bozuk" asla aynı görünmez: boş durum kesikli çerçeve
+ *  + nötr daire, hata BU banttır (kırmızı, role="alert", içeriğin en üstünde).
+ *  Makine okunur teknik satır destek için: kod · kaynak uç · deneme sayısı.
+ *  Bilmediğimiz alanı UYDURMAYIZ — yoksa o parça hiç yazılmaz. */
+export function HataBandi({ mesaj, kod, kaynak, deneme, onTekrar }) {
+  const teknik = [
+    kod ? `hata: ${kod}` : null,
+    kaynak ? `kaynak: ${kaynak}` : null,
+    deneme ? `deneme ${deneme}` : null,
+  ].filter(Boolean).join(' · ');
+  return (
+    <div
+      role="alert"
+      style={{
+        display: 'flex', alignItems: 'flex-start', gap: 13, padding: '14px 17px',
+        borderRadius: 12, marginBottom: 16,
+        background: 'linear-gradient(165deg, rgba(248,113,113,.11), #221809)',
+        border: '1px solid rgba(248,113,113,.34)',
+      }}
+    >
+      <span style={{
+        flexShrink: 0, width: 28, height: 28, borderRadius: 99, marginTop: 1,
+        border: `1px solid ${R.kirmizi}66`, color: R.kirmizi,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        fontSize: 15, fontWeight: 700, lineHeight: 1,
+      }}>!</span>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 13.5, fontWeight: 700, color: '#FCA5A5' }}>
+          Veri alınamadı
+        </div>
+        <div style={{ fontSize: 12.5, color: R.metin2, marginTop: 4, lineHeight: 1.55 }}>
+          Bu bir «kayıt yok» durumu değil — bağlantı hatası. Ekrandaki sayılar
+          eksik olabilir; karar vermeden önce tekrar deneyin.
+          {mesaj ? ` (${String(mesaj).slice(0, 120)})` : ''}
+        </div>
+        {teknik && (
+          <div style={{ fontFamily: F.mono, fontSize: 10.5, color: R.not2, marginTop: 5 }}>
+            {teknik}
+          </div>
+        )}
+      </div>
+      {onTekrar && (
+        <button
+          onClick={onTekrar}
+          style={{
+            flexShrink: 0, padding: '7px 14px', borderRadius: 9, cursor: 'pointer',
+            border: `1px solid ${R.kirmizi}55`, background: `${R.kirmizi}18`,
+            color: R.kirmizi, fontSize: 12, fontWeight: 700, fontFamily: 'inherit',
+          }}
+        >
+          🔄 Tekrar dene
+        </button>
+      )}
+    </div>
+  );
+}
+
 /** Boş durum — yeni handoff'un kanonik biçimi: kesikli çerçeve, 38px bakır
  *  çerçeveli daire içinde ✓, Fraunces başlık, altında açıklama.
  *  Geriye uyum: eski çağrılar tek `metin` prop'u geçiyordu; o zaman metin
