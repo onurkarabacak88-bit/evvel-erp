@@ -3450,3 +3450,233 @@ def fatura_kalem_onayla(kalem_id: str, body: FaturaKalemOnayBody):
             "mesaj": ("✅ Güncel fiyat oldu" if guncel_oldu
                       else f"⏳ {bas} tarihli geçmiş kayıt — daha yeni fiyat var, güncel maliyet değişmedi. "
                            "Güncel yapmak için 'güncel fiyat yap' ile onayla.")}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# CARİ HESABA ÖDEME — "alım ≠ ödeme" (sahip kararı 2026-07-31)
+#
+# SORUN: sistemde tedarikçi cari hesabına DOĞRUDAN ödeme yapacak uç yoktu; cari
+# yalnız OKUNUYORDU. Beş "öde" ucunun hepsi bir ALIM/PLAN kaydına asılıydı, bu
+# yüzden "eski borçtan 20.000 verdim" demek için kullanıcı zorunlu olarak bir
+# alım kaydına iliştiriyor, o kayıt da doğal olarak BELGESİNİ soruyordu.
+# Ödemenin kendi kimliği yoktu; ödemeler cari ekstrede METİN EŞLEŞMESİYLE
+# TAHMİN ediliyordu (öneri-only).
+#
+# MODEL: Alım borç DOĞURUR (kanıtı fatura) · Ödeme borcu KAPATIR (kanıtı KASA İZİ).
+#
+# ⚠️ PARALEL PARA YOLU AÇILMADI: para yazma işi mevcut tek yazıcıya —
+# `odeme_plani` + main.odeme_yap — DELEGE edilir. Buradaki kod yalnız
+# (a) plan satırı doğurur, (b) FIFO tahsis defterine yazar. Kasa/kart/çift-ödeme
+# guard'ları olduğu gibi mevcut akışta kalır.
+#
+# Sahip kararları: FIFO + elle müdahale · belge eksiği ödemeyi DURDURMAZ
+# (ayrı sinyal) · Ödeme Merkezi tek kapı.
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _ensure_cari_odeme_tablolar(cur) -> None:
+    """Cari ödeme + FIFO tahsis defteri (append-only). Hata-yutar, idempotent."""
+    try:
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS cari_odeme (
+                id UUID PRIMARY KEY,
+                tedarikci_ad TEXT NOT NULL,
+                tutar NUMERIC NOT NULL,
+                tarih DATE NOT NULL,
+                odeme_yontemi TEXT DEFAULT 'nakit',
+                kart_id UUID,
+                aciklama TEXT,
+                plan_id UUID,
+                belgesiz BOOLEAN DEFAULT FALSE,
+                olusturma TIMESTAMP DEFAULT NOW()
+            )""")
+        # Tahsis defteri: bu ödemenin HANGİ faturayı ne kadar kapattığı.
+        # APPEND-ONLY — düzeltme ters kayıtla yapılır, satır silinmez.
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS cari_odeme_tahsis (
+                id UUID PRIMARY KEY,
+                odeme_id UUID NOT NULL,
+                fatura_id UUID,
+                fatura_no TEXT,
+                fatura_tarih DATE,
+                kapatilan NUMERIC NOT NULL,
+                otomatik BOOLEAN DEFAULT TRUE,
+                olusturma TIMESTAMP DEFAULT NOW()
+            )""")
+        cur.execute("CREATE INDEX IF NOT EXISTS ix_cari_odeme_ted ON cari_odeme (tedarikci_ad)")
+        cur.execute("CREATE INDEX IF NOT EXISTS ix_cari_tahsis_odeme ON cari_odeme_tahsis (odeme_id)")
+        cur.execute("CREATE INDEX IF NOT EXISTS ix_cari_tahsis_fatura ON cari_odeme_tahsis (fatura_id)")
+    except Exception:
+        pass
+
+
+def _cari_kapatilan_toplam(cur, fatura_ids: list) -> dict:
+    """Fatura başına DAHA ÖNCE kapatılmış tutar (tahsis defterinden)."""
+    if not fatura_ids:
+        return {}
+    try:
+        cur.execute(
+            "SELECT fatura_id, COALESCE(SUM(kapatilan),0)::float AS k "
+            "FROM cari_odeme_tahsis WHERE fatura_id = ANY(%s) GROUP BY fatura_id",
+            (fatura_ids,))
+        return {str(r["fatura_id"]): float(r["k"]) for r in cur.fetchall() or []}
+    except Exception:
+        return {}
+
+
+class CariOdemeModel(BaseModel):
+    tedarikci: str
+    tutar: float
+    tarih: Optional[str] = None
+    odeme_yontemi: str = "nakit"          # 'nakit' | 'kart'
+    kart_id: Optional[str] = None
+    aciklama: Optional[str] = None
+    # Elle dağıtım: [{fatura_id, tutar}] — boşsa FIFO (en eskiden kapat)
+    tahsis: Optional[list] = None
+
+
+@router.get("/cari-odenecekler")
+def cari_odenecekler(tedarikci: str = ""):
+    """Bu tedarikçinin AÇIK faturaları — FIFO sırasıyla (en eski önce).
+    Ödeme ekranı 'bu para hangi faturaları kapatacak' önizlemesini bundan kurar."""
+    ara = (tedarikci or "").strip()
+    if len(ara) < 3:
+        raise HTTPException(400, "tedarikci parametresi en az 3 karakter")
+    ekstre = cari_ekstre(tedarikci=ara)
+    faturalar = ekstre.get("faturalar") or []
+    with db() as (_, cur):
+        _ensure_cari_odeme_tablolar(cur)
+        ids = [f["id"] for f in faturalar if f.get("id")]
+        kapatilan = _cari_kapatilan_toplam(cur, ids)
+    acik = []
+    for f in faturalar:
+        tut = float(f.get("tutar") or 0)
+        kap = float(kapatilan.get(str(f.get("id")), 0))
+        kalan = round(tut - kap, 2)
+        if kalan > 0.01:
+            acik.append({
+                "fatura_id": f.get("id"), "fatura_no": f.get("fatura_no"),
+                "tarih": f.get("tarih"), "tutar": tut,
+                "kapatilan": kap, "kalan": kalan,
+            })
+    acik.sort(key=lambda x: (x["tarih"] or "", x["fatura_no"] or ""))
+    return {
+        "tedarikci": ara,
+        "acik_faturalar": acik,
+        "acik_toplam": round(sum(a["kalan"] for a in acik), 2),
+        "not": "FIFO: ödeme en eski faturadan kapatır. Elle dağıtım için tahsis listesi gönderin.",
+    }
+
+
+@router.post("/cari-ode")
+def cari_ode(body: CariOdemeModel):
+    """TEDARİKÇİ CARİ HESABINA ÖDEME — borcu kapatan olay.
+
+    Akış:
+      1. Açık faturalar FIFO sıraya dizilir (ya da elle tahsis alınır)
+      2. `odeme_plani` satırı doğar (kaynak_tablo='cari_odeme')
+      3. PARA YAZMA mevcut tek yazıcıya delege edilir → main.odeme_yap
+         (kasa izi · çift-ödeme guard · kart limiti orada)
+      4. Tahsis defterine append-only yazılır
+    Belge YOKLUĞU ödemeyi DURDURMAZ — `belgesiz` bayrağı ile işaretlenir,
+    Belge Merkezi bunu açık iş olarak kovalar (sahip kararı).
+    """
+    ted = (body.tedarikci or "").strip()
+    tutar = round(float(body.tutar or 0), 2)
+    if len(ted) < 3:
+        raise HTTPException(400, "Tedarikçi adı en az 3 karakter olmalı")
+    if tutar <= 0:
+        raise HTTPException(400, "Ödeme tutarı sıfırdan büyük olmalı")
+    if body.odeme_yontemi == "kart" and not body.kart_id:
+        raise HTTPException(400, "Kart ödemesinde kart seçimi zorunlu")
+
+    tarih = (body.tarih or date.today().isoformat())[:10]
+    acik = cari_odenecekler(tedarikci=ted)["acik_faturalar"]
+
+    # ── TAHSİS: elle mi, FIFO mu ──────────────────────────────────────────
+    kalanlar = {str(a["fatura_id"]): a for a in acik if a.get("fatura_id")}
+    dagitim, kalan_para = [], tutar
+    if body.tahsis:
+        for t in body.tahsis:
+            fid = str(t.get("fatura_id") or "")
+            pay = round(float(t.get("tutar") or 0), 2)
+            a = kalanlar.get(fid)
+            if not a or pay <= 0:
+                continue
+            pay = min(pay, a["kalan"], kalan_para)
+            if pay <= 0:
+                continue
+            dagitim.append({**a, "kapatilan": pay, "otomatik": False})
+            kalan_para = round(kalan_para - pay, 2)
+    else:
+        for a in acik:                       # zaten FIFO sıralı (en eski önce)
+            if kalan_para <= 0.01:
+                break
+            pay = min(a["kalan"], kalan_para)
+            dagitim.append({**a, "kapatilan": pay, "otomatik": True})
+            kalan_para = round(kalan_para - pay, 2)
+
+    # ── 1) Ödeme kaydı + plan satırı ──────────────────────────────────────
+    oid = str(uuid.uuid4())
+    pid = str(uuid.uuid4())
+    belgesiz = len(acik) == 0            # kapatacak fatura yok → belgesiz ödeme
+    with db() as (conn, cur):
+        _ensure_cari_odeme_tablolar(cur)
+        cur.execute(
+            """INSERT INTO odeme_plani
+                 (id, kart_id, tarih, referans_ay, odenecek_tutar, asgari_tutar,
+                  aciklama, durum, kaynak_tablo, kaynak_id)
+               VALUES (%s, NULL, %s, DATE_TRUNC('month', %s::date), %s, %s, %s,
+                       'bekliyor', 'cari_odeme', %s)""",
+            (pid, tarih, tarih, tutar, tutar,
+             f"Cari ödeme: {ted}" + (f" — {body.aciklama}" if body.aciklama else ""), oid))
+        cur.execute(
+            """INSERT INTO cari_odeme
+                 (id, tedarikci_ad, tutar, tarih, odeme_yontemi, kart_id,
+                  aciklama, plan_id, belgesiz)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+            (oid, ted, tutar, tarih, body.odeme_yontemi,
+             body.kart_id, body.aciklama, pid, belgesiz))
+        conn.commit()
+
+    # ── 2) PARA YAZMA: mevcut tek yazıcıya delege ─────────────────────────
+    from main import odeme_yap, VadeliOdeModel as _VOM
+    try:
+        odeme_yap(pid, tutar, _VOM(odeme_yontemi=body.odeme_yontemi, kart_id=body.kart_id))
+    except HTTPException:
+        # Para yazılamadıysa ödeme kaydı da kalmasın (yetim kayıt üretme)
+        with db() as (conn2, cur2):
+            cur2.execute("DELETE FROM cari_odeme WHERE id=%s", (oid,))
+            cur2.execute("DELETE FROM odeme_plani WHERE id=%s AND durum='bekliyor'", (pid,))
+            conn2.commit()
+        raise
+
+    # ── 3) Tahsis defteri (append-only) ───────────────────────────────────
+    with db() as (conn, cur):
+        for d in dagitim:
+            cur.execute(
+                """INSERT INTO cari_odeme_tahsis
+                     (id, odeme_id, fatura_id, fatura_no, fatura_tarih, kapatilan, otomatik)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s)""",
+                (str(uuid.uuid4()), oid, d.get("fatura_id"), d.get("fatura_no"),
+                 d.get("tarih"), d["kapatilan"], d.get("otomatik", True)))
+        conn.commit()
+
+    return {
+        "ok": True,
+        "odeme_id": oid,
+        "plan_id": pid,
+        "tedarikci": ted,
+        "tutar": tutar,
+        "kapatilan_faturalar": [
+            {"fatura_no": d.get("fatura_no"), "tarih": d.get("tarih"),
+             "kapatilan": d["kapatilan"], "tam_kapandi": d["kapatilan"] >= d["kalan"] - 0.01}
+            for d in dagitim
+        ],
+        "avans_kalan": round(kalan_para, 2),   # borçtan fazla ödendiyse avans
+        "belgesiz": belgesiz,
+        "mesaj": (
+            f"✓ {ted} — {tutar:,.0f} ₺ ödendi, {len(dagitim)} fatura kapatıldı"
+            if dagitim else
+            f"✓ {ted} — {tutar:,.0f} ₺ ödendi (kapatacak açık fatura yok, avans/belgesiz)"
+        ),
+    }
