@@ -157,11 +157,29 @@ export default function BorcModulu({ gorunum, onCekmece, onKopru }) {
           <Liste
             satirlar={(ozet.notlar || []).slice(0, 6).map((n, i) => ({
               id: `n${i}`,
+              _n: n,
               baslik: typeof n === 'string' ? n : (n.baslik || 'Not'),
               alt: typeof n === 'string' ? 'motor notu' : (n.aciklama || ''),
               tutar: '',
               tier: 'bilgi',
             }))}
+            onAc={({ _n }) => onCekmece?.({
+              tip: 'MOTOR NOTU',
+              baslik: typeof _n === 'string' ? _n : (_n.baslik || 'Not'),
+              alt: 'borç navigasyon motoru · öneri-only',
+              kpi: [
+                { etiket: 'Toplam borç', deger: fmt(sayi(borc.toplam)), renk: R.kirmizi },
+                { etiket: 'ABEK', deger: fmt(sayi(abek.deger)), renk: sayi(abek.deger) > 0 ? R.yesil : R.kirmizi },
+              ],
+              listeBaslik: 'Notun dayanağı',
+              satirlar: [
+                { ad: 'Açıklama', detay: 'motor gerekçesi', tutar: typeof _n === 'string' ? '—' : (_n.aciklama || '—') },
+                { ad: 'Zorunlu yük', detay: 'kart asgari + kredi taksiti', tutar: fmt(sayi(borc.zorunlu_yuk)) },
+              ],
+              not: 'Bu not motorun gözlemidir; karar sahibin. Ayrıntılı gidişat için Nakit Projeksiyonu görünümüne bak.',
+              aksiyonAd: 'Nakit projeksiyonuna git',
+              _hedef: '__gorunum:projeksiyon',
+            })}
           />
         )}
       </>

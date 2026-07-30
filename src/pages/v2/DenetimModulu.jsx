@@ -457,12 +457,32 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
           <Liste
             satirlar={notListe.slice(0, 20).map((n, i) => ({
               id: n.id || `n-${i}`,
+              _n: n,
               baslik: kisalt(n.baslik || n.tip || n.etiket || 'Gözlem', 70),
               alt: `${tarihKisa(n.gun || n.tarih)} · ${kisalt(n.metin || n.ozet || n.not || '', 110)}`,
               tutar: '',
               tier: /kritik|alarm/i.test(String(n.tip || n.seviye || '')) ? 'kritik'
                 : /uyari|dikkat/i.test(String(n.tip || n.seviye || '')) ? 'uyari' : 'bilgi',
             }))}
+            onAc={({ _n }) => onCekmece?.({
+              tip: 'OLAY KAYDI',
+              baslik: kisalt(_n.baslik || _n.tip || 'Gözlem', 70),
+              alt: `${tarihKisa(_n.gun || _n.tarih)}${_n.sube_adi ? ` · ${_n.sube_adi}` : ''}${_n.tip ? ` · ${_n.tip}` : ''}`,
+              kpi: [
+                { etiket: 'Tarih', deger: tarihKisa(_n.gun || _n.tarih) },
+                { etiket: 'Tip', deger: _n.tip || 'gözlem' },
+                { etiket: 'Şube', deger: _n.sube_adi || 'genel' },
+                { etiket: 'Kaynak', deger: _n.kaynak || (String(_n.baslik || '').startsWith('[') ? 'sistem' : 'insan') },
+              ],
+              listeBaslik: 'Kayıt',
+              satirlar: [
+                { ad: 'Not', detay: 'ham gözlem', tutar: kisalt(_n.metin || _n.ozet || _n.not || _n.baslik || '—', 90) },
+                { ad: 'Kayıt zamanı', detay: 'append-only defter', tutar: _n.olusturma ? String(_n.olusturma).slice(0, 16).replace('T', ' ') : '—' },
+              ],
+              not: 'Olaylar HAM gözlemdir — beyin bu notu okur ama yorum ayrı katmandadır (duyu duysun, beyin sonra çalışsın).',
+              aksiyonAd: '🧠 Beyne bu olayı sor',
+              _hedef: '__gorunum:duyu',
+            })}
           />
         )}
         {tipler.length > 0 && (
@@ -817,6 +837,8 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
               const isaret = isaretliler[ref];
               return {
                 id: o.id || `o-${i}`,
+                _o: o,
+                _ref: ref,
                 baslik: kisalt(ham, 90),
                 alt: kisalt(o.detay || o.gerekce || o.aciklama, 120),
                 tutar: o.tutar != null || o.tavsiye_tutar != null ? fmt(sayi(o.tutar ?? o.tavsiye_tutar)) : '',
@@ -826,6 +848,26 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
                   ? { rozet: 'uygulandı ✓', rozetRenk: R.yesil }
                   : { aksiyonlar: [{ ad: '✓ Uyguladım', birincil: true, onTikla: () => bulguIsaretle(ref, 'uygulandi') }] }),
               };
+            })}
+            onAc={({ _o, _ref }) => onCekmece?.({
+              tip: 'STRATEJİ ÖNERİSİ',
+              baslik: kisalt(String(_o.baslik || _o.oneri || _o.aciklama || 'Öneri'), 80),
+              alt: `${_o.oneri_turu ? String(_o.oneri_turu).toLowerCase() : 'öneri'}${_o.sube_adi ? ` · ${_o.sube_adi}` : ''}`,
+              kpi: [
+                { etiket: 'Tavsiye tutar', deger: (_o.tutar != null || _o.tavsiye_tutar != null) ? fmt(sayi(_o.tutar ?? _o.tavsiye_tutar)) : '—' },
+                { etiket: 'Öncelik', deger: String(_o.oncelik || _o.renk || 'normal').toLowerCase() },
+                { etiket: 'Tür', deger: String(_o.oneri_turu || '—').toLowerCase() },
+                { etiket: 'Akıbet', deger: isaretliler[_ref] === 'uygulandi' ? 'uygulandı' : 'bekliyor', renk: isaretliler[_ref] === 'uygulandi' ? R.yesil : R.amber },
+              ],
+              listeBaslik: 'Gerekçe',
+              satirlar: [
+                { ad: 'Motor gerekçesi', detay: 'neden önerildi', tutar: kisalt(_o.detay || _o.gerekce || _o.aciklama || '—', 90) },
+                ...(_o.odeme_id ? [{ ad: 'Bağlı ödeme', detay: 'kuyruk kalemi', tutar: String(_o.odeme_id).slice(0, 12) }] : []),
+              ],
+              not: 'Motor yalnız ÖNERİR — hüküm insanın. "Uyguladım" işareti akıbet defterine yazılır, motorun isabeti bununla ölçülür.',
+              ...(isaretliler[_ref] === 'uygulandi' ? {} : {
+                aksiyonlar: [{ ad: '✓ Uyguladım', birincil: true, onTikla: () => bulguIsaretle(_ref, 'uygulandi') }],
+              }),
             })}
           />
         )}
