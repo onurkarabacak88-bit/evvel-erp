@@ -514,6 +514,32 @@ export default function TasarimV2({ onGit }) {
       );
     }
 
+    // ── IA REVİZYONU (yeni handoff): TAŞINAN GÖRÜNÜMLER ─────────────────────
+    // Görünümler modüller arasında yer değiştirdi ama KODLARI taşınmadı —
+    // sadece hangi modülün altında göründükleri değişti. Bu eşleme, ekranın
+    // yeni evi ile onu üreten bileşeni birbirine bağlar.
+    //   Banka Kredileri : Yükümlülükler → Borç & Kredi   (kredi de borçtur)
+    //   Sabit Giderler  : Yükümlülükler → Ödeme Merkezi  (tekrarlayan ödeme)
+    //   Anlık Gider     : Gelir & Kasa  → Ödeme Merkezi  (IA kuralı: gelir≠gider)
+    //   Teslimat Zinciri: Tanımlar      → Operasyon      (master data değil, akış)
+    //   Strateji        : Denetim       → Yönetim & Karar (karar ekranı)
+    // 'yuk' modülü boşaldığı için ray'dan kalktı; bileşeni (YukModulu) yaşıyor.
+    if (mod === 'kart' && gorunum === 'krediler') {
+      return <YukModulu gorunum="krediler" onCekmece={setCekmece} onKopru={koprule} onToast={setToast} />;
+    }
+    if (mod === 'odeme' && gorunum === 'sabit') {
+      return <YukModulu gorunum="sabit" onCekmece={setCekmece} onKopru={koprule} onToast={setToast} />;
+    }
+    if (mod === 'odeme' && gorunum === 'gider') {
+      return <ParaModulu gorunum="gider" onCekmece={setCekmece} onKopru={koprule} onToast={setToast} />;
+    }
+    if (mod === 'ops' && gorunum === 'zincir') {
+      return <TanimModulu gorunum="zincir" onCekmece={setCekmece} onKopru={koprule} onToast={setToast} />;
+    }
+    if (mod === 'panel' && gorunum === 'strateji') {
+      return <DenetimModulu gorunum="strateji" onCekmece={setCekmece} onKopru={koprule} onToast={setToast} onGorunum={setGorunum} />;
+    }
+
     // v2'ye yazılmış modüller
     if (mod === 'kart') {
       return <KartModulu gorunum={gorunum} onCekmece={setCekmece} onKopru={koprule} onToast={setToast} />;
@@ -551,6 +577,9 @@ export default function TasarimV2({ onGit }) {
     if (mod === 'onaylar') {
       return <OnayModulu gorunum={gorunum} onCekmece={setCekmece} onKopru={koprule} onToast={setToast} />;
     }
+    // 'yuk' modülü IA revizyonunda kalktı — görünümleri Borç & Kredi ile Ödeme
+    // Merkezi'ne dağıldı (yukarıdaki eşleme). Eski #yuk adresi gelirse iş
+    // durmasın diye bileşen hâlâ cevap verir.
     if (mod === 'yuk') {
       return <YukModulu gorunum={gorunum} onCekmece={setCekmece} onKopru={koprule} onToast={setToast} />;
     }

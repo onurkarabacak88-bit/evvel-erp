@@ -597,12 +597,12 @@ export function YukModulu({ gorunum, onCekmece, onKopru, onToast }) {
                   ? 'Taksit ödeme kuyruğuna otomatik düşer; ödeme Ödeme Merkezi\'nden yapılır.'
                   : 'Ödemesiz dönemde — taksit başladığında aylık yük artacak, borç takviminde görünür.',
                 aksiyonAd: 'Borç envanterini aç',
-                _hedef: '__modul:yuk:krediler',
+                _hedef: '__modul:kart:krediler',
               });
             }}
           />
         ) : (
-          <Bos baslik="Kayıtlı kredi yok" aciklama="Borç envanterine kredi girildiğinde aylık yük buradan izlenir." aksiyon="Borç envanterini aç" onAksiyon={() => onKopru?.('__modul:yuk:krediler')} />
+          <Bos baslik="Kayıtlı kredi yok" aciklama="Borç envanterine kredi girildiğinde aylık yük buradan izlenir." aksiyon="Borç envanterini aç" onAksiyon={() => onKopru?.('__modul:kart:krediler')} />
         )}
       </>
     );
