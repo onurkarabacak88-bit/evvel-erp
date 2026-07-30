@@ -58,9 +58,35 @@ export function KpiSeridi({ kpiler }) {
 }
 
 // ─── Hero (büyük rakam + sparkline + ikincil kartlar) ────────────────────────
-export function Hero({ etiket, deger, delta, deltaTip = 'iyi', not, seri, ikincil, onIkincil }) {
+export function Hero({
+  etiket, deger, delta, deltaTip = 'iyi', not, seri, ikincil, onIkincil,
+  seriEtiket, seriAd = 'değer', seriBicim,
+}) {
   const { cizgi, alan } = sparkYol(seri);
   const deltaRenk = deltaTip === 'kotu' ? R.kirmizi : deltaTip === 'notr' ? R.amber : R.yesil;
+
+  // ── Etkileşimli grafik (yeni handoff): fareyle gez → crosshair + tooltip.
+  // Gösterilen sayı SERİNİN GERÇEK DEĞERİDİR — çizginin y'sinden geri
+  // hesaplanmaz (yuvarlama hatası olmasın, rakam grafikten sapmasın).
+  const [imlec, setImlec] = React.useState(null);   // {i, x}
+  const d = (seri || []).filter((v) => Number.isFinite(v));
+  const nokta = (i) => {
+    const enB = Math.max(...d); const enK = Math.min(...d);
+    const aralik = enB - enK || 1;
+    return {
+      x: (i * (640 / (d.length - 1))),
+      y: 120 - 8 - ((d[i] - enK) / aralik) * (120 - 22),
+    };
+  };
+  const grafGez = (e) => {
+    if (d.length < 2) return;
+    const kutu = e.currentTarget.getBoundingClientRect();
+    const t = Math.max(0, Math.min(1, (e.clientX - kutu.left) / kutu.width));
+    setImlec({ i: Math.round(t * (d.length - 1)), oran: t });
+  };
+  const okunan = imlec ? d[imlec.i] : null;
+  const okunanEtiket = imlec && seriEtiket?.[imlec.i];
+  const bicimle = (v) => (seriBicim ? seriBicim(v) : String(v));
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr', gap: 12, marginBottom: 16 }}>
       <div style={{
@@ -93,22 +119,60 @@ export function Hero({ etiket, deger, delta, deltaTip = 'iyi', not, seri, ikinci
             {not}
           </div>
         )}
-        <svg viewBox="0 0 640 120" preserveAspectRatio="none" style={{ display: 'block', width: '100%', height: 116, marginTop: 12 }}>
-          <defs>
-            <linearGradient id="v2herofill" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor={R.bakir} stopOpacity=".3" />
-              <stop offset="100%" stopColor={R.bakir} stopOpacity="0" />
-            </linearGradient>
-          </defs>
-          {alan && <path d={alan} fill="url(#v2herofill)" />}
-          {cizgi && (
-            <path
-              d={cizgi} fill="none" stroke={R.bakir} strokeWidth="2.4"
-              strokeLinejoin="round" strokeLinecap="round" strokeDasharray="640"
-              style={{ animation: 'v2cizim 1.1s cubic-bezier(.22,1,.36,1) .12s both' }}
-            />
+        <div
+          onMouseMove={grafGez}
+          onMouseLeave={() => setImlec(null)}
+          style={{ position: 'relative', cursor: d.length > 1 ? 'crosshair' : 'default', marginTop: 12 }}
+        >
+          <svg viewBox="0 0 640 120" preserveAspectRatio="none" style={{ display: 'block', width: '100%', height: 116 }}>
+            <defs>
+              <linearGradient id="v2herofill" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor={R.bakir} stopOpacity=".3" />
+                <stop offset="100%" stopColor={R.bakir} stopOpacity="0" />
+              </linearGradient>
+            </defs>
+            {alan && <path d={alan} fill="url(#v2herofill)" />}
+            {cizgi && (
+              <path
+                d={cizgi} fill="none" stroke={R.bakir} strokeWidth="2.4"
+                strokeLinejoin="round" strokeLinecap="round" strokeDasharray="640"
+                style={{ animation: 'v2cizim 1.1s cubic-bezier(.22,1,.36,1) .12s both' }}
+              />
+            )}
+            {imlec && d.length > 1 && (() => {
+              const p = nokta(imlec.i);
+              return (
+                <>
+                  <line
+                    x1={p.x} y1="0" x2={p.x} y2="120"
+                    stroke="rgba(229,178,122,.45)" strokeWidth="1"
+                    strokeDasharray="4 4" vectorEffect="non-scaling-stroke"
+                  />
+                  <circle
+                    cx={p.x} cy={p.y} r="7" fill={R.bakirAcik}
+                    stroke={R.kart2} strokeWidth="4" vectorEffect="non-scaling-stroke"
+                  />
+                </>
+              );
+            })()}
+          </svg>
+          {imlec && okunan != null && (
+            <div style={{
+              position: 'absolute', top: 4, pointerEvents: 'none',
+              ...(imlec.oran > 0.62 ? { right: `${(1 - imlec.oran) * 100}%`, marginRight: 10 } : { left: `${imlec.oran * 100}%`, marginLeft: 10 }),
+              padding: '7px 11px', borderRadius: 10, whiteSpace: 'nowrap',
+              background: 'linear-gradient(168deg,#33261A,#241A0E)',
+              border: `1px solid ${R.bakir}55`, boxShadow: '0 12px 28px rgba(0,0,0,.5)',
+            }}>
+              <div style={{ fontSize: 10, letterSpacing: '.6px', textTransform: 'uppercase', color: R.not2, fontWeight: 700 }}>
+                {okunanEtiket ? `${okunanEtiket} · ${seriAd}` : seriAd}
+              </div>
+              <div style={{ fontFamily: F.mono, fontSize: 14, fontWeight: 700, marginTop: 2, color: R.krem }}>
+                {bicimle(okunan)}
+              </div>
+            </div>
           )}
-        </svg>
+        </div>
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>

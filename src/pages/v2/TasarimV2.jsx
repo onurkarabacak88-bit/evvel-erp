@@ -38,6 +38,13 @@ const gunEkle = (iso, n) => {
   d.setUTCDate(d.getUTCDate() + n);
   return d.toISOString().slice(0, 10);
 };
+const AY_KISA_V2 = ['Oca', 'Şub', 'Mar', 'Nis', 'May', 'Haz', 'Tem', 'Ağu', 'Eyl', 'Eki', 'Kas', 'Ara'];
+/** '2026-07-22' → '22 Tem'. Metin üzerinden çalışır, Date kurmaz (UTC kayması yok). */
+const kisaGun = (iso) => {
+  const m = String(iso || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? `${Number(m[3])} ${AY_KISA_V2[Number(m[2]) - 1]}` : String(iso || '');
+};
+
 const sayi = (v) => Number(v) || 0;
 const yuzde = (a, b) => (b ? (a / b) * 100 : 0);
 
@@ -328,11 +335,14 @@ export default function TasarimV2({ onGit }) {
     const oncekiToplam = hepsi.filter(r => r.tarih === oncekiHafta).reduce((s, r) => s + r.toplam, 0);
     const delta = oncekiToplam ? ((gunToplam - oncekiToplam) / oncekiToplam) * 100 : null;
 
-    // Sparkline: odak günden geriye 14 gün
+    // Sparkline: odak günden geriye 14 gün (grafiğin üzerinde gezerken
+    // hangi günü okuduğun görünsün diye etiketleri de biriktiriyoruz)
     const seri = [];
+    const seriEtiket = [];
     for (let i = 13; i >= 0; i--) {
       const g = gunEkle(odakGun, -i);
       seri.push(hepsi.filter(r => r.tarih === g).reduce((s, r) => s + r.toplam, 0));
+      seriEtiket.push(kisaGun(g));
     }
 
     // Şube kırılımı — odak gün
@@ -357,7 +367,7 @@ export default function TasarimV2({ onGit }) {
       .sort((a, b) => b.toplam - a.toplam);
 
     return {
-      odakGun, odakBugunMu, gunToplam, gunNakit, gunKart, delta, seri,
+      odakGun, odakBugunMu, gunToplam, gunNakit, gunKart, delta, seri, seriEtiket,
       subeGunListe, subeAyListe, ayToplam, ayOnEk, aySatir,
       gunSayisi: new Set(aySatir.map(r => r.tarih)).size,
     };
@@ -671,6 +681,9 @@ export default function TasarimV2({ onGit }) {
               : `Geçen haftanın aynı günü ${fmt(veri.seri[6] || 0)}. Kasa + banka toplamı ${fmt(kasaBanka)}; bugün ödenmesi gereken ${fmt(bugunOdemeToplam)}.`
           }
           seri={d.seri}
+          seriEtiket={d.seriEtiket}
+          seriAd="günlük ciro"
+          seriBicim={fmt}
           ikincil={ikincil}
           onIkincil={(h) => setCekmece({
             tip: 'ŞUBE', baslik: h._ad, alt: `${d.odakGun} · gün cirosu`,

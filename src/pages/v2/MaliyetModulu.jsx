@@ -279,6 +279,9 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
             deltaTip={bench?.tip || 'notr'}
             not={`Son ${siraliGunler.length} günün toplamı: ciro ${fmt(toplamCiro)} · ürün maliyeti ${fmt(toplamMaliyet)}. Kahve zinciri normu %28–35 — çizgi bu bandın üstüne çıktığı gün maliyet yönetimi gerektirir.`}
             seri={seri}
+            seriEtiket={siraliGunler.map(tarihKisa)}
+            seriAd="food cost"
+            seriBicim={pct}
             ikincil={[
               { etiket: 'En iyi gün', alt: 'en düşük food cost', deger: seri.length ? pct(Math.min(...seri.filter((x) => x > 0))) : '—', renk: R.yesil },
               { etiket: 'En kötü gün', alt: 'en yüksek food cost', deger: seri.length ? pct(Math.max(...seri)) : '—', renk: R.kirmizi },
