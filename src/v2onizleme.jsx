@@ -235,11 +235,38 @@ const ODEME_UC = {
       ]},
     ],
   },
+  // tip + detay_json GERÇEK uçtan geliyor (operasyon_merkez_api ops_kasa_uyumsuzluk_listesi)
+  // — kaynak düzeltme kutuları bu iki alana bakar, sahte veride de olmalı.
   '/api/ops/kasa-uyumsuzluk': {
     uyarilar: [
-      { id: 'ku1', sube_adi: 'Zafer', tarih: gunEkleISO(-2), fark_tl: -2480, durum: 'acik' },
-      { id: 'ku2', sube_adi: 'Alsancak', tarih: gunEkleISO(-5), fark_tl: 1150, durum: 'acik' },
+      { id: 'ku1', tip: 'KAPANIS_KASA_FARK', sube_adi: 'Zafer', tarih: gunEkleISO(-2), fark_tl: -2480, durum: 'acik',
+        detay_json: { acilis_kasa: 1500, z_nakit: 8400, teslim: 6000, devir: 1420 } },
+      { id: 'ku2', tip: 'ACILIS_KASA_FARK', sube_adi: 'Alsancak', tarih: gunEkleISO(-5), fark_tl: 1150, durum: 'acik',
+        detay_json: { acilis_kasa: 2570, teslim: 4800, devir: 1420 } },
+      { id: 'ku3', tip: 'KAPANIS_KASA_FARK', sube_adi: 'Gazze', tarih: gunEkleISO(-1), fark_tl: 3200, durum: 'acik',
+        detay_json: { acilis_kasa: 1200, z_nakit: 0, teslim: 0, devir: 1200 } },
     ],
+  },
+  '/api/ops/kasa-uyumsuzluk/ku1/duzeltme-tarihce': {
+    uyari_id: 'ku1',
+    tarihce: [
+      { id: 'kd2', sebep: 'gider_eksik', hedef_tablo: 'anlik_giderler', hedef_id: 'g9',
+        eski_fark_tl: -2480, yeni_fark_tl: -480, notu: 'Mutfak nakit alışverişi fişsiz kalmıştı',
+        personel_ad: 'Merve Karabacak', olusturma: `${gunEkleISO(-1)}T14:22:00`, geri_alindi_mi: false },
+      { id: 'kd1', sebep: 'acilis_yanlis', hedef_tablo: 'sube_operasyon_event', hedef_id: 'e4',
+        eski_fark_tl: -3100, yeni_fark_tl: -2480, notu: null,
+        personel_ad: 'Merve Karabacak', olusturma: `${gunEkleISO(-2)}T09:05:00`,
+        geri_alindi_mi: true, geri_alma_ts: `${gunEkleISO(-2)}T09:41:00`, geri_alan_personel_ad: 'Merve Karabacak' },
+    ],
+  },
+  '/api/ops/kasa-uyumsuzluk/ku2/duzeltme-tarihce': { uyari_id: 'ku2', tarihce: [] },
+  // Yazma uçları — tezgâh method'a bakmaz, cevap gövdesini doğrulamak için var
+  '/api/ops/kasa-uyumsuzluk/ku1/kaynak-duzelt': {
+    eski_fark: -2480, yeni_fark: 0, otomatik_cozuldu: true,
+    cascade: [{ otomatik_cozuldu: true }, { otomatik_cozuldu: false }],
+  },
+  '/api/ops/kasa-uyumsuzluk/duzeltme/kd2/geri-al': {
+    yeni_fark: -2480, otomatik_cozuldu: false, restore: 'anlik_giderler kaydı silindi',
   },
   '/api/ops/personel-vardiya-uyumsuzluk': {
     year_month: bugunISO.slice(0, 7), toplam: 1,

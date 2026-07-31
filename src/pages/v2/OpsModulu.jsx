@@ -110,6 +110,80 @@ const opsEtiket = {
   color: R.not2, fontWeight: 700, marginBottom: 6, display: 'block',
 };
 
+// ── KASA KAYNAK DÜZELTME (sunucu sözleşmesi: operasyon_merkez_api._SEBEPLER) ──
+// Klasik OperasyonMerkezi.kkDuzeltPayloadDogrula ile birebir; sunucu 400'ü
+// beklemeden aynı cümleyi burada söyleriz (PIN boşuna harcanmasın).
+function kdDogrula(sebep, payload, uyariTip) {
+  const p = payload || {};
+  if (sebep === 'ciro_yanlis') {
+    if (uyariTip === 'ACILIS_KASA_FARK') return 'Devir uyumsuzluğu için ciro düzeltmesi uygun değil.';
+    if (p.yeni_nakit == null && p.yeni_pos == null && p.yeni_online == null) {
+      return 'En az bir ciro alanı girin (nakit, POS veya online).';
+    }
+  }
+  if (sebep === 'acilis_yanlis') {
+    if (p.yeni_acilis_kasa == null || !Number.isFinite(Number(p.yeni_acilis_kasa)) || Number(p.yeni_acilis_kasa) < 0) {
+      return 'Yeni açılış kasa sayımı (₺) zorunlu — 0 veya pozitif sayı girin.';
+    }
+  }
+  if (sebep === 'devir_yanlis') {
+    if (p.yeni_teslim == null && p.yeni_devir == null) return 'Teslim veya devir alanından en az birini girin.';
+  }
+  if (sebep === 'gider_eksik') {
+    if (uyariTip === 'ACILIS_KASA_FARK') return 'Devir uyumsuzluğu için gider eklenemez.';
+    if (p.tutar == null || !Number.isFinite(Number(p.tutar)) || Number(p.tutar) <= 0) {
+      return 'Gider tutarı 0\'dan büyük olmalı.';
+    }
+  }
+  if (sebep === 'ciro_fazla') {
+    if (uyariTip === 'ACILIS_KASA_FARK') return 'Devir uyumsuzluğu için ciro fazla eklenemez.';
+    if (p.tutar == null || !Number.isFinite(Number(p.tutar)) || Number(p.tutar) <= 0) {
+      return 'Ciroya eklenecek tutar 0\'dan büyük olmalı.';
+    }
+  }
+  return null; // gercek_acik → kaynak değişmez, doğrulama gerekmez
+}
+
+/** Gelişmiş sebep listesi — uyarı tipine + fark yönüne göre daralır. */
+function kdSebepler(uyariTip, farkTl) {
+  const fark = Number(farkTl) || 0;
+  const devir = uyariTip === 'ACILIS_KASA_FARK';
+  const fazla = devir ? fark > 0 : fark < 0;
+  const gercek = fazla ? '⚠️ Gerçek fazla — kaynak değişmez' : '⚠️ Gerçek açık — kaynak değişmez';
+  if (devir) {
+    return [
+      ['acilis_yanlis', '🌅 Sabahçı kasa sayımı yanlış (bugünkü açılış)'],
+      ['devir_yanlis', '🌙 Akşamcı devir/teslim yanlış (önceki gün kapanış)'],
+      ['gercek_acik', gercek],
+    ];
+  }
+  return [
+    ['ciro_yanlis', '📝 Ciro yanlış (nakit / POS / online)'],
+    fazla ? ['ciro_fazla', '💰 Z eksik basılmış — nakit ciroya ekle']
+          : ['gider_eksik', '💸 Eksik nakit gider (anlık gidere ekle)'],
+    ['devir_yanlis', '🌙 Kapanış teslim / devir yanlış (aynı gün)'],
+    ['acilis_yanlis', '🌅 Açılış kasa sayımı yanlış'],
+    ['gercek_acik', gercek],
+  ];
+}
+
+const KD_SEBEP_AD = {
+  ciro_yanlis: 'Ciro düzeltildi',
+  acilis_yanlis: 'Açılış sayımı düzeltildi',
+  gider_eksik: 'Eksik nakit gider eklendi',
+  ciro_fazla: 'Ciroya nakit eklendi',
+  devir_yanlis: 'Teslim / devir düzeltildi',
+  gercek_acik: 'Gerçek fark kabul edildi (kaynak değişmedi)',
+};
+
+const zamanKisa = (s) => (s ? String(s).slice(0, 16).replace('T', ' ') : '—');
+
+const kdKutuStil = (aktif) => ({
+  ...opsAlanStil, marginBottom: 0, marginTop: 4,
+  borderColor: aktif ? R.bakirAcik : R.cizgi3, fontWeight: aktif ? 700 : 400,
+  fontFamily: F.mono,
+});
+
 export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGorunum }) {
   // ── SİPARİŞ AKIŞI + KULE ortak verisi ─────────────────────────────────────
   const [kule, setKule] = useState(null);        // kontrol-kulesi cevabı
@@ -121,8 +195,13 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
   const [uzPers, setUzPers] = useState(null);      // personel-vardiya
   const [uzHata, setUzHata] = useState('');
   const [uzAlt, setUzAlt] = useState('sevkiyat');
-  const [uzModal, setUzModal] = useState(null);    // {tip, kayit, adet, notu}
+  const [uzModal, setUzModal] = useState(null);    // {tip, kayit, adet, notu, sayfa?, sebep?, payload?, gelismis?, pin?}
   const [uzMesgul, setUzMesgul] = useState('');
+  // Kasa KAYNAK düzeltme + düzeltme tarihçesi (İŞLETME PIN'li — 2026-07-31)
+  const [kdMesgul, setKdMesgul] = useState(false);
+  const [thVeri, setThVeri] = useState(null);      // {yukleniyor, tarihce[], hata}
+  const [thOnay, setThOnay] = useState(null);      // {kayit, pin, notu} — iki adımlı geri alma
+  const [thMesgul, setThMesgul] = useState('');    // geri alınmakta olan audit id
 
   // ── CİRO FARK DEFTERİ (Faz 6c) — uzlaştırma masasının 4. kalemi ──────────
   const [uzFark, setUzFark] = useState([]);
@@ -288,6 +367,91 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     } catch (e) {
       onToast?.(e?.message || 'Yeniden hesaplanamadı');
     } finally { setUzMesgul(''); }
+  };
+
+  /**
+   * KAYNAĞI DÜZELT — /coz'dan farkı: bu uç gerçek mali kaydı (ciro/açılış/gider/
+   * devir) değiştirir, sonra farkı yeniden hesaplar. Bu yüzden İŞLETME onayı
+   * (Merve Karabacak PIN) ister; sunucu doğrular, hatalıysa 403 döner.
+   */
+  const kdGonder = async () => {
+    const m = uzModal;
+    if (!m?.kayit?.id) return;
+    const uyariTip = String(m.kayit.tip || '');
+    const sebep = m.sebep || '';
+    if (!sebep) { onToast?.('Önce yanlış olan kutuyu düzelt veya bir sebep seç'); return; }
+    const hata = kdDogrula(sebep, m.payload, uyariTip);
+    if (hata) { onToast?.(hata); return; }
+    const pin = String(m.pin || '').replace(/\s/g, '');
+    if (!/^\d{4}$/.test(pin)) { onToast?.('İşletme onay PIN kodu 4 haneli olmalı'); return; }
+
+    setKdMesgul(true);
+    try {
+      const r = await api(`/ops/kasa-uyumsuzluk/${encodeURIComponent(m.kayit.id)}/kaynak-duzelt`, {
+        method: 'POST',
+        body: {
+          sebep,
+          payload: m.payload || {},
+          notu: (m.notu || '').trim() || null,
+          onay_pin: pin,
+        },
+      });
+      if (r?.durum === 'zaten_cozulmus') {
+        onToast?.('Bu uyarı zaten çözülmüş — ikinci mali kayıt yazılmadı');
+      } else {
+        const eski = fmt(sayi(r?.eski_fark));
+        const yeni = fmt(sayi(r?.yeni_fark));
+        // Cascade: aynı şubenin bağlı günleri de etkilenmiş olabilir — susturma.
+        const cas = Array.isArray(r?.cascade) ? r.cascade : [];
+        let casMsg = '';
+        if (cas.length) {
+          const cozulen = cas.filter((c) => c?.otomatik_cozuldu).length;
+          const acik = cas.length - cozulen;
+          const p = [];
+          if (cozulen) p.push(`${cozulen} bağlı uyarı çözüldü`);
+          if (acik) p.push(`${acik} bağlı uyarı hâlâ açık`);
+          casMsg = ` · 🔗 ${p.join(', ')}`;
+        }
+        onToast?.(r?.otomatik_cozuldu
+          ? `✓ Kaynak düzeltildi — fark sıfırlandı (${eski} → 0)${casMsg}`
+          : `🔧 Kaynak düzeltildi — ${eski} → ${yeni}${casMsg}`);
+      }
+      setUzModal(null);
+      uzYukle();
+    } catch (e) {
+      onToast?.(e?.message || 'Düzeltme başarısız — PIN yanlış olabilir');
+    } finally { setKdMesgul(false); }
+  };
+
+  /** Düzeltme tarihçesini yükle (salt-okur audit defteri). */
+  const thYukle = useCallback((uyariId) => {
+    setThVeri({ yukleniyor: true, tarihce: [], hata: '' });
+    api(`/ops/kasa-uyumsuzluk/${encodeURIComponent(uyariId)}/duzeltme-tarihce`)
+      .then((r) => setThVeri({ yukleniyor: false, tarihce: Array.isArray(r?.tarihce) ? r.tarihce : [], hata: '' }))
+      .catch((e) => setThVeri({ yukleniyor: false, tarihce: [], hata: e?.message || 'Tarihçe yüklenemedi' }));
+  }, []);
+
+  /** Bir düzeltmeyi GERİ AL — eski değerler restore edilir, fark yeniden hesaplanır. */
+  const thGeriAl = async () => {
+    const o = thOnay;
+    if (!o?.kayit?.id || !uzModal?.kayit?.id) return;
+    const pin = String(o.pin || '').replace(/\s/g, '');
+    if (!/^\d{4}$/.test(pin)) { onToast?.('İşletme onay PIN kodu 4 haneli olmalı'); return; }
+    setThMesgul(o.kayit.id);
+    try {
+      const r = await api(`/ops/kasa-uyumsuzluk/duzeltme/${encodeURIComponent(o.kayit.id)}/geri-al`, {
+        method: 'POST',
+        body: { notu: (o.notu || '').trim() || null, onay_pin: pin },
+      });
+      onToast?.(r?.otomatik_cozuldu
+        ? `↶ Geri alındı — fark sıfırlandı · ${r?.restore || ''}`
+        : `↶ Geri alındı — yeni fark ${fmt(sayi(r?.yeni_fark))} · ${r?.restore || ''}`);
+      setThOnay(null);
+      thYukle(uzModal.kayit.id);
+      uzYukle();
+    } catch (e) {
+      onToast?.(e?.message || 'Geri alma başarısız — PIN yanlış olabilir');
+    } finally { setThMesgul(''); }
   };
 
   // ── SEVKİYAT ──────────────────────────────────────────────────────────────
@@ -1872,31 +2036,39 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
           />
         ))}
 
-        {/* ⚠️ PIN'li işlemler bilinçli DIŞARIDA */}
+        {/* İki farklı iş — karıştırılırsa mali kayıt yanlış yerden düzelir */}
         <div style={{
           padding: '12px 15px', borderRadius: 12, marginTop: 4, fontSize: 11.5, lineHeight: 1.65,
           background: 'rgba(96,165,250,.08)', border: '1px solid rgba(96,165,250,.24)', color: R.metin2,
         }}>
-          <b>Kaynak düzeltme</b> ve <b>düzeltmeyi geri alma</b> bu ekranda yok — o iki işlem
-          mali kaydı değiştirir ve <b>işletme PIN onayı</b> ister. Kadifede PIN akışı
-          kurulana kadar bilinçli olarak dışarıda; buradaki "çöz" yalnız farkı kapatır,
-          kaynağa dokunmaz.
+          Kasa satırında <b>iki ayrı iş</b> var: <b>Farkı kapat</b> kaynağa dokunmaz, farkı
+          olduğu gibi kabul edip kaydı çözüldü işaretler. <b>Kaynağı düzelt</b> ise gerçek
+          mali kaydı (ciro / açılış / gider / devir) değiştirir, fark yeniden hesaplanır —
+          bu yüzden <b>işletme onay PIN'i</b> ister ve <b>Tarihçe</b> sayfasından geri alınabilir.
         </div>
 
         {uzModal && (() => {
           const m = uzModal;
-          const BAS = { sevkiyat: 'Sevkiyat uzlaşması', kasa: 'Kasa uyumsuzluğunu çöz', personel: 'Personel-vardiya uzlaşması' }[m.tip];
+          // Kasa satırı 3 sayfalı: farkı kapat · kaynağı düzelt (PIN) · tarihçe (geri al)
+          const sayfa = m.tip === 'kasa' ? (m.sayfa || 'coz') : 'coz';
+          const kilit = !!uzMesgul || kdMesgul || !!thMesgul;
+          const BAS = sayfa === 'kaynak' ? 'Kasa farkı — kaynağı düzelt'
+            : sayfa === 'tarihce' ? 'Düzeltme tarihçesi'
+            : { sevkiyat: 'Sevkiyat uzlaşması', kasa: 'Kasa uyumsuzluğunu çöz', personel: 'Personel-vardiya uzlaşması' }[m.tip];
           const gon = sayi(m.kayit.gonderilen_adet ?? m.kayit.gonderilen);
           const kab = sayi(m.kayit.kabul_adet ?? m.kayit.kabul_edilen);
           return (
-            <div onClick={(e) => { if (e.target === e.currentTarget && !uzMesgul) setUzModal(null); }} style={{
+            <div onClick={(e) => { if (e.target === e.currentTarget && !kilit) setUzModal(null); }} style={{
               position: 'fixed', inset: 0, zIndex: 120, background: 'rgba(10,6,2,.7)',
               backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
             }}>
-              <div style={{ ...kartYuzey, width: 460, maxWidth: '96vw', padding: '24px 26px' }}>
+              <div style={{
+                ...kartYuzey, width: sayfa === 'coz' ? 460 : 620, maxWidth: '96vw',
+                maxHeight: '90vh', overflowY: 'auto', padding: '24px 26px',
+              }}>
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 6 }}>
                   <div style={{ fontFamily: F.baslik, fontSize: 20, fontWeight: 600 }}>{BAS}</div>
-                  <button onClick={() => !uzMesgul && setUzModal(null)} style={{
+                  <button onClick={() => !kilit && setUzModal(null)} style={{
                     marginLeft: 'auto', border: 'none', background: 'transparent', color: R.not,
                     fontSize: 16, cursor: 'pointer', fontFamily: 'inherit',
                   }}>x</button>
@@ -1923,7 +2095,7 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
                   </>
                 )}
 
-                {m.tip === 'kasa' && (
+                {m.tip === 'kasa' && sayfa === 'coz' && (
                   <>
                     <div style={{ fontSize: 12.5, color: R.metin2, marginBottom: 4 }}>
                       <b>{m.kayit.sube_adi || m.kayit.sube_ad || 'Şube'}</b> · {tarihKisa(m.kayit.tarih || m.kayit.gun)}
@@ -1935,6 +2107,351 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
                     <input value={m.adet} inputMode="decimal" placeholder="orn. -25.50"
                       onChange={(e) => setUzModal((p) => ({ ...p, adet: e.target.value }))}
                       style={opsAlanStil} />
+                    <div style={{ fontSize: 11.5, color: R.not2, marginTop: -4, marginBottom: 12, lineHeight: 1.6 }}>
+                      Bu yol kaynağa <b>dokunmaz</b> — ciro/açılış/gider kaydı olduğu gibi kalır,
+                      fark kabul edilip kayıt çözüldü işaretlenir. Yanlış olan gerçek bir kayıtsa
+                      aşağıdan <b>Kaynağı düzelt</b>'e geç.
+                    </div>
+                    <div style={{ display: 'flex', gap: 9, flexWrap: 'wrap', marginBottom: 14 }}>
+                      <button disabled={kilit} onClick={() => setUzModal((p) => ({
+                        ...p, sayfa: 'kaynak', sebep: '', payload: {}, gelismis: false, pin: '',
+                      }))} style={{
+                        padding: '9px 14px', borderRadius: 10, cursor: 'pointer', fontFamily: 'inherit',
+                        border: `1px solid ${R.bakirAcik}55`, background: `${R.bakirAcik}18`,
+                        color: R.bakirAcik, fontSize: 12, fontWeight: 700,
+                      }}>🔧 Kaynağı düzelt (PIN'li)</button>
+                      <button disabled={kilit} onClick={() => {
+                        setThOnay(null); thYukle(m.kayit.id);
+                        setUzModal((p) => ({ ...p, sayfa: 'tarihce' }));
+                      }} style={{
+                        padding: '9px 14px', borderRadius: 10, cursor: 'pointer', fontFamily: 'inherit',
+                        border: `1px solid ${R.cizgi3}`, background: 'transparent',
+                        color: R.metin2, fontSize: 12, fontWeight: 600,
+                      }}>📜 Tarihçe</button>
+                    </div>
+                  </>
+                )}
+
+                {/* ── KAYNAĞI DÜZELT — mali kaydı değiştirir, İŞLETME PIN'i şart ── */}
+                {sayfa === 'kaynak' && (() => {
+                  const dj = m.kayit.detay_json || {};
+                  const tip = String(m.kayit.tip || '');
+                  const devir = tip === 'ACILIS_KASA_FARK';
+                  const fark = sayi(m.kayit.fark_tl ?? m.kayit.fark);
+                  const fazla = devir ? fark > 0 : fark < 0;
+                  const kutular = [{ etiket: '🌅 Açılış kasası', sebep: 'acilis_yanlis', pk: 'yeni_acilis_kasa', mev: dj.acilis_kasa }];
+                  if (!devir) kutular.push({ etiket: '📝 Nakit ciro (Z)', sebep: 'ciro_yanlis', pk: 'yeni_nakit', mev: dj.z_nakit });
+                  kutular.push({ etiket: '💵 Müdüre teslim', sebep: 'devir_yanlis', pk: 'yeni_teslim', mev: dj.teslim });
+                  kutular.push({ etiket: '🌙 Kasada kalan (devir)', sebep: 'devir_yanlis', pk: 'yeni_devir', mev: dj.devir });
+                  const mevFmt = (v) => (v != null && Number.isFinite(Number(v)) ? fmt(Number(v)) : '—');
+                  const setPayload = (pk, v) => setUzModal((p) => ({
+                    ...p, payload: { ...(p.payload || {}), [pk]: v },
+                  }));
+                  return (
+                    <>
+                      <div style={{ fontSize: 12.5, color: R.metin2, marginBottom: 4 }}>
+                        <b>{m.kayit.sube_adi || m.kayit.sube_ad || 'Şube'}</b> · {tarihKisa(m.kayit.tarih || m.kayit.gun)} ·
+                        {' '}fark <b style={{ fontFamily: F.mono, color: fazla ? R.yesil : R.kirmizi }}>{fmt(fark)}</b>
+                      </div>
+                      <div style={{ fontSize: 11, color: R.not2, marginBottom: 14 }}>
+                        {devir
+                          ? 'Devir: + sabah fazla saydı · − sabah eksik saydı'
+                          : 'Kapanış: + kasa açığı (eksik nakit) · − kasa fazlası'}
+                      </div>
+
+                      {/* Z nakit 0 ise asıl sebep büyük ihtimalle onaylanmamış ciro */}
+                      {!devir && (dj.z_nakit ?? -1) === 0 && Math.abs(fark) > 50 && (
+                        <div style={{
+                          padding: '11px 14px', borderRadius: 11, marginBottom: 14, fontSize: 11.5, lineHeight: 1.6,
+                          background: 'rgba(251,191,36,.09)', border: '1px solid rgba(251,191,36,.34)', color: R.metin2,
+                        }}>
+                          <b style={{ color: R.amber }}>Z nakit 0 ₺ görünüyor — önce ciro onayına bak.</b><br />
+                          Şube ciro girişi henüz onaylanmamış olabilir; onaylanırsa bu fark kendiliğinden
+                          kapanır ve buradaki düzeltmeye gerek kalmaz.
+                          <button disabled={kilit} onClick={() => { setUzModal(null); onKopru?.('__modul:onaylar:ciro'); }} style={{
+                            display: 'block', marginTop: 8, padding: '6px 12px', borderRadius: 8, cursor: 'pointer',
+                            border: '1px solid rgba(251,191,36,.4)', background: 'rgba(251,191,36,.14)',
+                            color: R.amber, fontSize: 11, fontWeight: 700, fontFamily: 'inherit',
+                          }}>→ Bekleyen ciro onaylarına git</button>
+                        </div>
+                      )}
+
+                      {devir && (
+                        <div style={{
+                          padding: '10px 14px', borderRadius: 11, marginBottom: 14, fontSize: 11.5, lineHeight: 1.6,
+                          background: 'rgba(96,165,250,.08)', border: '1px solid rgba(96,165,250,.24)', color: R.metin2,
+                        }}>
+                          Sabahçı az saydıysa <b>açılış kasası</b> kutusunu düzelt. Akşamcı yanlış
+                          bıraktıysa <b>teslim / devir</b> kutusunu — o düzeltme <b>önceki günün kapanışına</b> yazılır.
+                          Emin değilsen aşağıdaki <b>fark gerçek</b> düğmesini seç ve notu yaz.
+                        </div>
+                      )}
+
+                      <div style={{ fontSize: 11.5, color: R.not2, marginBottom: 10, lineHeight: 1.6 }}>
+                        Yalnız <b>yanlış olan kutuyu</b> değiştir — sistem hangisini değiştirdiğini anlar,
+                        gerçek kaydı düzeltir ve farkı yeniden hesaplar.
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
+                        {kutular.map((k) => {
+                          const duzenlenen = m.sebep === k.sebep ? m.payload?.[k.pk] : undefined;
+                          const aktif = duzenlenen != null;
+                          return (
+                            <label key={k.pk} style={{ fontSize: 11, color: R.not2 }}>
+                              {k.etiket} <span style={{ color: R.metin2 }}>· şu an {mevFmt(k.mev)}</span>
+                              <input
+                                inputMode="decimal" disabled={kilit}
+                                value={duzenlenen ?? (k.mev ?? '')}
+                                onChange={(e) => {
+                                  const v = e.target.value === '' ? undefined : Number(e.target.value);
+                                  // Tek kutu kuralı: yeni kutuya geçince önceki düzenleme düşer
+                                  setUzModal((p) => ({ ...p, gelismis: false, sebep: k.sebep, payload: { [k.pk]: v } }));
+                                }}
+                                style={kdKutuStil(aktif)} />
+                            </label>
+                          );
+                        })}
+                      </div>
+
+                      <button disabled={kilit} onClick={() => setUzModal((p) => ({
+                        ...p, gelismis: false, sebep: 'gercek_acik', payload: {},
+                      }))} style={{
+                        width: '100%', padding: '10px', borderRadius: 10, cursor: 'pointer', fontFamily: 'inherit',
+                        fontSize: 12, fontWeight: m.sebep === 'gercek_acik' ? 700 : 600, marginBottom: 8,
+                        border: `1px solid ${m.sebep === 'gercek_acik' ? 'rgba(220,38,38,.5)' : R.cizgi3}`,
+                        background: m.sebep === 'gercek_acik' ? 'rgba(220,38,38,.16)' : 'transparent',
+                        color: m.sebep === 'gercek_acik' ? '#FCA5A5' : R.metin2,
+                      }}>
+                        ⚠️ Veri doğru, fark gerçek {fazla ? 'fazla' : 'açık'} — kaynak değişmez
+                      </button>
+
+                      <button disabled={kilit} onClick={() => setUzModal((p) => ({ ...p, gelismis: !p.gelismis }))} style={{
+                        background: 'none', border: 'none', color: R.not, fontSize: 11, cursor: 'pointer',
+                        textDecoration: 'underline', fontFamily: 'inherit', padding: 0, marginBottom: 12,
+                      }}>
+                        {m.gelismis ? '▲ Gelişmişi gizle' : '⚙️ Gelişmiş (eksik gider / Z fazla / sebep seç)'}
+                      </button>
+
+                      {m.gelismis && (
+                        <>
+                          <label style={opsEtiket}>Sebep</label>
+                          <select value={m.sebep || ''} disabled={kilit}
+                            onChange={(e) => setUzModal((p) => ({ ...p, sebep: e.target.value, payload: {} }))}
+                            style={opsAlanStil}>
+                            <option value="">— seç —</option>
+                            {kdSebepler(tip, fark).map(([v, ad]) => <option key={v} value={v}>{ad}</option>)}
+                          </select>
+
+                          {m.sebep === 'ciro_yanlis' && (
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, marginBottom: 12 }}>
+                              {[['yeni_nakit', 'NAKİT'], ['yeni_pos', 'POS'], ['yeni_online', 'ONLINE']].map(([pk, ad]) => (
+                                <label key={pk} style={{ fontSize: 11, color: R.not2 }}>
+                                  {ad} (₺)
+                                  <input inputMode="decimal" disabled={kilit} placeholder="boş = değiştirme"
+                                    value={m.payload?.[pk] ?? ''}
+                                    onChange={(e) => setPayload(pk, e.target.value === '' ? undefined : Number(e.target.value))}
+                                    style={kdKutuStil(m.payload?.[pk] != null)} />
+                                </label>
+                              ))}
+                            </div>
+                          )}
+
+                          {m.sebep === 'gider_eksik' && (
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 12 }}>
+                              <label style={{ fontSize: 11, color: R.not2 }}>
+                                Kategori
+                                <input disabled={kilit} placeholder="orn. Mutfak" value={m.payload?.kategori ?? ''}
+                                  onChange={(e) => setPayload('kategori', e.target.value)}
+                                  style={{ ...kdKutuStil(false), fontFamily: 'inherit' }} />
+                              </label>
+                              <label style={{ fontSize: 11, color: R.not2 }}>
+                                Tutar (₺)
+                                <input inputMode="decimal" disabled={kilit} placeholder={Math.abs(fark).toFixed(2)}
+                                  value={m.payload?.tutar ?? ''}
+                                  onChange={(e) => setPayload('tutar', e.target.value === '' ? undefined : Number(e.target.value))}
+                                  style={kdKutuStil(m.payload?.tutar != null)} />
+                              </label>
+                              <label style={{ fontSize: 11, color: R.not2, gridColumn: '1 / -1' }}>
+                                Açıklama (opsiyonel)
+                                <input disabled={kilit} value={m.payload?.aciklama ?? ''}
+                                  onChange={(e) => setPayload('aciklama', e.target.value)}
+                                  style={{ ...kdKutuStil(false), fontFamily: 'inherit' }} />
+                              </label>
+                            </div>
+                          )}
+
+                          {m.sebep === 'ciro_fazla' && (
+                            <>
+                              <div style={{
+                                padding: '10px 13px', borderRadius: 10, marginBottom: 10, fontSize: 11.5, lineHeight: 1.6,
+                                background: 'rgba(74,222,128,.09)', border: '1px solid rgba(74,222,128,.3)', color: R.metin2,
+                              }}>
+                                Kasada beklenenden <b style={{ fontFamily: F.mono }}>{fmt(Math.abs(fark))}</b> fazla var.
+                                Z raporu eksik basılmış olabilir; bu tutar <b>nakit ciroya eklenir</b>
+                                (bildirilmemiş satış). POS ve online'a dokunulmaz.
+                              </div>
+                              <label style={{ fontSize: 11, color: R.not2, display: 'block', marginBottom: 12 }}>
+                                Ciroya eklenecek nakit (₺)
+                                <input inputMode="decimal" disabled={kilit} placeholder={Math.abs(fark).toFixed(2)}
+                                  value={m.payload?.tutar ?? ''}
+                                  onChange={(e) => setPayload('tutar', e.target.value === '' ? undefined : Number(e.target.value))}
+                                  style={kdKutuStil(m.payload?.tutar != null)} />
+                              </label>
+                            </>
+                          )}
+
+                          {m.sebep === 'gercek_acik' && (
+                            <div style={{
+                              padding: '10px 13px', borderRadius: 10, marginBottom: 12, fontSize: 11.5, lineHeight: 1.6,
+                              background: fazla ? 'rgba(74,222,128,.09)' : 'rgba(220,38,38,.1)',
+                              border: `1px solid ${fazla ? 'rgba(74,222,128,.28)' : 'rgba(220,38,38,.3)'}`,
+                              color: R.metin2,
+                            }}>
+                              Kaynak veriler (ciro / açılış / gider) <b>değişmez</b>. Fark olduğu gibi kalır,
+                              kayıt çözüldü işaretlenir; {fazla
+                                ? 'fazla tutar muhasebede ayrıca raporlanır.'
+                                : 'kasa açığı şubeye/personele yansır.'}
+                            </div>
+                          )}
+                        </>
+                      )}
+
+                      <label style={opsEtiket}>Düzeltme notu (opsiyonel)</label>
+                      <input disabled={kilit} value={m.notu}
+                        placeholder="orn. Açılış sayımında 200 ₺ atlanmış, kasiyer doğrulandı."
+                        onChange={(e) => setUzModal((p) => ({ ...p, notu: e.target.value }))}
+                        style={opsAlanStil} />
+
+                      <label style={opsEtiket}>İşletme onay PIN kodu (4 hane)</label>
+                      <input type="password" inputMode="numeric" maxLength={4} disabled={kilit}
+                        value={m.pin || ''} placeholder="••••"
+                        onChange={(e) => setUzModal((p) => ({ ...p, pin: e.target.value.replace(/\D/g, '') }))}
+                        style={{ ...opsAlanStil, letterSpacing: '6px', fontFamily: F.mono, marginBottom: 6 }} />
+                      <div style={{ fontSize: 11, color: R.not2, marginBottom: 14, lineHeight: 1.6 }}>
+                        Mali kayıt değişeceği için <b>Merve Karabacak'ın</b> panel PIN'i gerekir.
+                        PIN'i sunucu doğrular; yanlışsa hiçbir şey yazılmaz.
+                      </div>
+
+                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
+                        <button disabled={kilit} onClick={() => setUzModal((p) => ({ ...p, sayfa: 'coz', pin: '' }))} style={{
+                          padding: '10px 16px', borderRadius: 10, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+                          background: 'transparent', color: R.metin2, fontSize: 12.5, fontWeight: 600, fontFamily: 'inherit',
+                        }}>‹ Geri</button>
+                        <button disabled={kilit} onClick={kdGonder} style={{
+                          padding: '10px 20px', borderRadius: 10, border: 'none', cursor: 'pointer', marginLeft: 'auto',
+                          background: 'linear-gradient(150deg, #E0A559, #AF6C29)', color: '#1C1309',
+                          fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit',
+                        }}>{kdMesgul ? 'Düzeltiliyor…' : '🔧 Düzelt ve yeniden hesapla'}</button>
+                      </div>
+
+                      <div style={{ fontSize: 10.5, color: R.not2, marginTop: 12, lineHeight: 1.6 }}>
+                        Kaynak güncellenir → kasa formülü yeniden hesaplanır → onay kuyruğundaki
+                        KASA_FARK kaydı senkronlanır. Yeni fark 0 olursa kayıt otomatik çözüldü
+                        işaretlenir. Her düzeltme <b>Tarihçe</b>'ye yazılır ve geri alınabilir.
+                      </div>
+                    </>
+                  );
+                })()}
+
+                {/* ── TARİHÇE — audit defteri + geri alma ── */}
+                {sayfa === 'tarihce' && (
+                  <>
+                    <div style={{ fontSize: 12.5, color: R.metin2, marginBottom: 12 }}>
+                      <b>{m.kayit.sube_adi || m.kayit.sube_ad || 'Şube'}</b> · {tarihKisa(m.kayit.tarih || m.kayit.gun)}
+                    </div>
+                    {thVeri?.yukleniyor && <div style={{ fontSize: 12, color: R.not2, padding: '18px 0' }}>Tarihçe yükleniyor…</div>}
+                    {!!thVeri?.hata && (
+                      <div style={{
+                        padding: '11px 14px', borderRadius: 11, marginBottom: 12, fontSize: 11.5,
+                        background: 'rgba(220,38,38,.1)', border: '1px solid rgba(220,38,38,.3)', color: '#FCA5A5',
+                      }}>
+                        {thVeri.hata}
+                        <button onClick={() => thYukle(m.kayit.id)} style={{
+                          marginLeft: 10, background: 'none', border: 'none', color: R.mavi,
+                          fontSize: 11, cursor: 'pointer', textDecoration: 'underline', fontFamily: 'inherit',
+                        }}>tekrar dene</button>
+                      </div>
+                    )}
+                    {!thVeri?.yukleniyor && !thVeri?.hata && (thVeri?.tarihce || []).length === 0 && (
+                      <div style={{ fontSize: 12, color: R.not2, padding: '18px 0', lineHeight: 1.6 }}>
+                        Bu uyarı için henüz kaynak düzeltmesi yapılmamış — geri alınacak bir şey yok.
+                      </div>
+                    )}
+                    {(thVeri?.tarihce || []).map((t) => {
+                      const geriAlindi = !!t.geri_alindi_mi;
+                      const acik = thOnay?.kayit?.id === t.id;
+                      return (
+                        <div key={t.id} style={{
+                          padding: '12px 14px', borderRadius: 12, marginBottom: 10,
+                          background: R.girinti, border: `1px solid ${geriAlindi ? R.cizgi : R.cizgi3}`,
+                          opacity: geriAlindi ? 0.62 : 1,
+                        }}>
+                          <div style={{ display: 'flex', gap: 10, alignItems: 'baseline', flexWrap: 'wrap' }}>
+                            <b style={{ fontSize: 12.5, color: R.krem }}>{KD_SEBEP_AD[t.sebep] || t.sebep}</b>
+                            <span style={{ fontSize: 11, color: R.not2, fontFamily: F.mono }}>{zamanKisa(t.olusturma)}</span>
+                            {geriAlindi && (
+                              <span style={{
+                                fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 99,
+                                background: 'rgba(220,38,38,.16)', color: '#FCA5A5',
+                              }}>↶ geri alındı</span>
+                            )}
+                          </div>
+                          <div style={{ fontSize: 11.5, color: R.not2, marginTop: 5, lineHeight: 1.6 }}>
+                            Fark <b style={{ fontFamily: F.mono, color: R.metin2 }}>{fmt(sayi(t.eski_fark_tl))}</b>
+                            {' → '}<b style={{ fontFamily: F.mono, color: R.metin2 }}>{fmt(sayi(t.yeni_fark_tl))}</b>
+                            {' · '}{t.hedef_tablo || 'kaynak değişmedi'}
+                            {t.personel_ad ? ` · ${t.personel_ad}` : ''}
+                            {t.notu ? <><br />“{kisalt(t.notu, 120)}”</> : null}
+                            {geriAlindi && t.geri_alan_personel_ad ? <br /> : null}
+                            {geriAlindi && t.geri_alan_personel_ad
+                              ? `Geri alan: ${t.geri_alan_personel_ad} · ${zamanKisa(t.geri_alma_ts)}` : ''}
+                          </div>
+                          {!geriAlindi && !acik && (
+                            <button disabled={kilit} onClick={() => setThOnay({ kayit: t, pin: '', notu: '' })} style={{
+                              marginTop: 9, padding: '6px 12px', borderRadius: 9, cursor: 'pointer',
+                              border: `1px solid ${R.cizgi3}`, background: 'transparent', color: R.metin2,
+                              fontSize: 11, fontWeight: 600, fontFamily: 'inherit',
+                            }}>↶ Bu düzeltmeyi geri al</button>
+                          )}
+                          {acik && (
+                            <div style={{
+                              marginTop: 10, padding: '12px 13px', borderRadius: 11,
+                              background: 'rgba(220,38,38,.08)', border: '1px solid rgba(220,38,38,.28)',
+                            }}>
+                              <div style={{ fontSize: 11.5, color: R.metin2, lineHeight: 1.6, marginBottom: 10 }}>
+                                <b style={{ color: '#FCA5A5' }}>Geri alınca ne olur:</b>{' '}
+                                {t.hedef_tablo ? <><b>{t.hedef_tablo}</b> tablosundaki eski değerler geri yazılır</>
+                                  : 'kaydın çözüldü işareti kaldırılır'} ve fark yeniden hesaplanır —
+                                {' '}<b style={{ fontFamily: F.mono }}>{fmt(sayi(t.yeni_fark_tl))}</b> yerine
+                                {' '}<b style={{ fontFamily: F.mono }}>{fmt(sayi(t.eski_fark_tl))}</b> beklenir.
+                              </div>
+                              <input disabled={!!thMesgul} value={thOnay.notu} placeholder="Geri alma sebebi (opsiyonel)"
+                                onChange={(e) => setThOnay((p) => ({ ...p, notu: e.target.value }))}
+                                style={opsAlanStil} />
+                              <input type="password" inputMode="numeric" maxLength={4} disabled={!!thMesgul}
+                                value={thOnay.pin} placeholder="İşletme PIN (4 hane)"
+                                onChange={(e) => setThOnay((p) => ({ ...p, pin: e.target.value.replace(/\D/g, '') }))}
+                                style={{ ...opsAlanStil, letterSpacing: '6px', fontFamily: F.mono }} />
+                              <div style={{ display: 'flex', gap: 9, justifyContent: 'flex-end' }}>
+                                <button disabled={!!thMesgul} onClick={() => setThOnay(null)} style={{
+                                  padding: '8px 14px', borderRadius: 9, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+                                  background: 'transparent', color: R.metin2, fontSize: 11.5, fontWeight: 600, fontFamily: 'inherit',
+                                }}>Vazgeç</button>
+                                <button disabled={!!thMesgul} onClick={thGeriAl} style={{
+                                  padding: '8px 16px', borderRadius: 9, border: '1px solid rgba(220,38,38,.5)', cursor: 'pointer',
+                                  background: 'rgba(220,38,38,.2)', color: '#FCA5A5', fontSize: 11.5, fontWeight: 700, fontFamily: 'inherit',
+                                }}>{thMesgul === t.id ? 'Geri alınıyor…' : '↶ Evet, geri al'}</button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                    <div style={{ display: 'flex', marginTop: 14 }}>
+                      <button disabled={kilit} onClick={() => { setThOnay(null); setUzModal((p) => ({ ...p, sayfa: 'coz' })); }} style={{
+                        padding: '10px 16px', borderRadius: 10, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+                        background: 'transparent', color: R.metin2, fontSize: 12.5, fontWeight: 600, fontFamily: 'inherit',
+                      }}>‹ Geri</button>
+                    </div>
                   </>
                 )}
 
@@ -1948,6 +2465,7 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
                   </div>
                 )}
 
+                {sayfa === 'coz' && (<>
                 <label style={opsEtiket}>Not (opsiyonel)</label>
                 <input value={m.notu} placeholder="orn. Stok yetersiz, kalan adet iptal kabul edildi."
                   onChange={(e) => setUzModal((p) => ({ ...p, notu: e.target.value }))}
@@ -1973,6 +2491,7 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
                     }}>{uzMesgul ? 'Uygulanıyor…' : 'Uzlaştır'}</button>
                   </div>
                 </div>
+                </>)}
               </div>
             </div>
           );
