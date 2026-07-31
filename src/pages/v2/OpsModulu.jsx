@@ -205,6 +205,9 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
 
   // ── CİRO FARK DEFTERİ (Faz 6c) — uzlaştırma masasının 4. kalemi ──────────
   const [uzFark, setUzFark] = useState([]);
+  // Talep ↔ tahsis uyumsuzluğu: okuma ucu ZATEN vardı (/ops/v2/siparis-akis
+  // içindeki tahsis[] dizisi) — v2 bu ucu hiç çağırmıyordu (2026-07-31).
+  const [uzTahsis, setUzTahsis] = useState([]);
   const [fdModal, setFdModal] = useState(null);   // {tip, kayit, aciklama}
   const [fdMesgul, setFdMesgul] = useState(false);
 
@@ -239,11 +242,36 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
       api('/ops/kasa-uyumsuzluk').catch(() => null),
       api('/ops/personel-vardiya-uyumsuzluk').catch(() => null),
       api('/ciro-taslak/fark-defteri?gun=45').catch(() => null),
-    ]).then(([sv, ks, pr, fd]) => {
+      api('/ops/v2/siparis-akis?limit=200').catch(() => null),
+    ]).then(([sv, ks, pr, fd, ak]) => {
       setUzSevk(sv || { satirlar: [] });
       setUzKasa(ks || {});
       setUzPers(pr || { kayitlar: [] });
       setUzFark(Array.isArray(fd?.satirlar) ? fd.satirlar : (Array.isArray(fd?.kayitlar) ? fd.kayitlar : (Array.isArray(fd) ? fd : [])));
+      // Talebi düzleştir: her kalem ayrı satır; yalnız talep≠tahsis ve HENÜZ
+      // uzlaşılmamış olanlar. (Uzlaşılmış kalem 'tam' durumda ve iki sayı eşit.)
+      const akis = Array.isArray(ak?.siparis_akis) ? ak.siparis_akis : [];
+      const satirlar = [];
+      akis.forEach((t) => {
+        (Array.isArray(t.tahsis) ? t.tahsis : []).forEach((k) => {
+          if (!k || typeof k !== 'object') return;
+          if (k.uzlasildi) return;
+          const talep = sayi(k.talep_adet);
+          const tahsis = sayi(k.tahsis_adet);
+          if (talep === tahsis) return;
+          satirlar.push({
+            talep_id: t.id,
+            urun_id: k.kalem_kodu || k.urun_id || '',
+            kalem_adi: k.kalem_adi || k.kalem_kodu || k.urun_id || '—',
+            sube_adi: t.sube_adi || '—',
+            tarih: t.tarih || t.olusturma || '',
+            talep_adet: talep,
+            tahsis_adet: tahsis,
+            durum: k.durum || '',
+          });
+        });
+      });
+      setUzTahsis(satirlar.filter((s) => s.talep_id && s.urun_id));
     }).catch((e) => setUzHata(e?.message || 'Uzlaştırma verisi alınamadı'));
   }, []);
 
@@ -347,6 +375,18 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
           body: { notu: (m.notu || '').trim() || null },
         });
         onToast?.('✓ Personel-vardiya uyumsuzluğu çözüldü');
+      } else if (m.tip === 'tahsis') {
+        // Uzlaşma adedi HEM talebin HEM tahsisin yeni değeri olur; kalem 'tam'a geçer
+        await api('/ops/siparis/talep-tahsis-uyumsuzluk-coz', {
+          method: 'POST',
+          body: {
+            talep_id: m.kayit.talep_id,
+            urun_id: m.kayit.urun_id,
+            cozum_adet: Math.max(0, Math.round(sayi(m.adet))),
+            notu: (m.notu || '').trim() || null,
+          },
+        });
+        onToast?.(`✓ ${m.kayit.kalem_adi} uzlaştırıldı — talep ve tahsis ${Math.max(0, Math.round(sayi(m.adet)))} oldu`);
       }
       setUzModal(null);
       uzYukle();
@@ -1900,6 +1940,7 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
 
     const ALT = [
       ['sevkiyat', `🚚 Sevkiyat (${sevkSatir.length})`],
+      ['tahsis', `📦 Talep ↔ tahsis (${uzTahsis.length})`],
       ['kasa', `💰 Kasa (${acikKasa.length})`],
       ['personel', `👥 Personel-vardiya (${acikPers.length})`],
       ['ciro', `🧾 Ciro farkı (${acikFark.length})`],
@@ -1911,7 +1952,7 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
           { etiket: 'Sevkiyat uyumsuzluğu', deger: String(sevkSatir.length), alt: 'son 30 gün · kabul farkı', renk: sevkSatir.length ? R.amber : R.yesil },
           { etiket: 'Kasa uyumsuzluğu', deger: String(acikKasa.length), alt: acikKasa.length ? 'açık kayıt' : 'temiz', renk: acikKasa.length ? R.kirmizi : R.yesil },
           { etiket: 'Personel-vardiya', deger: String(acikPers.length), alt: acikPers.length ? 'açık kayıt' : 'temiz', renk: acikPers.length ? R.amber : R.yesil },
-          { etiket: 'İlke', deger: 'uzlaştır, sil değil', alt: 'karar audit defterine yazılır', renk: R.not },
+          { etiket: 'Talep ↔ tahsis', deger: String(uzTahsis.length), alt: uzTahsis.length ? 'kalem uyuşmuyor' : 'temiz', renk: uzTahsis.length ? R.amber : R.yesil },
         ]} />
 
         <OneriSeridi metin="Uzlaştırma kaydı SİLMEZ — farkı kapatır ve kararı audit defterine yazar. Uzlaşma adedi hem talebin hem tahsisin yeni değeri olur; kalem 'tam' duruma geçer." />
@@ -1955,6 +1996,46 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
               notu: '',
             })}
           />
+        ))}
+
+        {uzAlt === 'tahsis' && (uzTahsis.length === 0 ? (
+          <BosDurum tamam baslik="Talep ↔ tahsis uyumsuzluğu yok"
+            aciklama="Şubenin istediği adet ile depoda tahsis edilen adet her kalemde örtüşüyor." />
+        ) : (
+          <>
+            <div style={{ fontSize: 11.5, color: R.not2, lineHeight: 1.7, marginBottom: 12 }}>
+              Şube <b>şu kadar istedi</b>, depo <b>şu kadar ayırdı</b> — ikisi tutmuyor.
+              Genelde stok yetmediği için olur ve kalan adet fiilen iptal edilmiştir;
+              ama sipariş kaydı hâlâ eski sayıyı taşıdığı için zincir "eksik" görünür.
+              Uzlaştırma <b>iki sayıyı da</b> senin verdiğin adede eşitler ve kalemi
+              "tam" duruma geçirir.
+            </div>
+            <Tablo
+              baslik="Talep ↔ tahsis uyumsuzlukları · son 200 sipariş"
+              not="satıra tıkla → uzlaştır"
+              kolonlar={[{ ad: 'Şube' }, { ad: 'Tarih' }, { ad: 'Kalem' }, { ad: 'Talep', sag: true }, { ad: 'Tahsis', sag: true }, { ad: 'Fark', sag: true }]}
+              satirlar={uzTahsis.slice(0, 60).map((t, i) => {
+                const fark = t.tahsis_adet - t.talep_adet;
+                return {
+                  id: `${t.talep_id}-${t.urun_id}-${i}`, _t: t,
+                  hucreler: [
+                    { v: t.sube_adi, kalin: true },
+                    { v: tarihKisa(t.tarih), mono: true, renk: R.not },
+                    { v: kisalt(t.kalem_adi, 34) },
+                    { v: String(t.talep_adet), mono: true, sag: true },
+                    { v: String(t.tahsis_adet), mono: true, sag: true },
+                    { v: (fark > 0 ? '+' : '') + String(fark), mono: true, sag: true, kalin: true, renk: R.amber },
+                  ],
+                };
+              })}
+              onSatir={({ _t }) => setUzModal({
+                tip: 'tahsis', kayit: _t,
+                // Varsayılan = TAHSİS: fiilen gönderilen/ayrılan gerçek sayı odur
+                adet: String(_t.tahsis_adet),
+                notu: '',
+              })}
+            />
+          </>
         ))}
 
         {uzAlt === 'kasa' && (acikKasa.length === 0 ? (
@@ -2036,8 +2117,9 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
           />
         ))}
 
-        {/* İki farklı iş — karıştırılırsa mali kayıt yanlış yerden düzelir */}
-        <div style={{
+        {/* İki farklı iş — karıştırılırsa mali kayıt yanlış yerden düzelir.
+            KASA'ya özel; diğer sekmelerde gösterilirse yanlış yere bakılır. */}
+        {uzAlt === 'kasa' && <div style={{
           padding: '12px 15px', borderRadius: 12, marginTop: 4, fontSize: 11.5, lineHeight: 1.65,
           background: 'rgba(96,165,250,.08)', border: '1px solid rgba(96,165,250,.24)', color: R.metin2,
         }}>
@@ -2045,7 +2127,7 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
           olduğu gibi kabul edip kaydı çözüldü işaretler. <b>Kaynağı düzelt</b> ise gerçek
           mali kaydı (ciro / açılış / gider / devir) değiştirir, fark yeniden hesaplanır —
           bu yüzden <b>işletme onay PIN'i</b> ister ve <b>Tarihçe</b> sayfasından geri alınabilir.
-        </div>
+        </div>}
 
         {uzModal && (() => {
           const m = uzModal;
@@ -2054,7 +2136,8 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
           const kilit = !!uzMesgul || kdMesgul || !!thMesgul;
           const BAS = sayfa === 'kaynak' ? 'Kasa farkı — kaynağı düzelt'
             : sayfa === 'tarihce' ? 'Düzeltme tarihçesi'
-            : { sevkiyat: 'Sevkiyat uzlaşması', kasa: 'Kasa uyumsuzluğunu çöz', personel: 'Personel-vardiya uzlaşması' }[m.tip];
+            : { sevkiyat: 'Sevkiyat uzlaşması', kasa: 'Kasa uyumsuzluğunu çöz',
+                personel: 'Personel-vardiya uzlaşması', tahsis: 'Talep ↔ tahsis uzlaşması' }[m.tip];
           const gon = sayi(m.kayit.gonderilen_adet ?? m.kayit.gonderilen);
           const kab = sayi(m.kayit.kabul_adet ?? m.kayit.kabul_edilen);
           return (
@@ -2094,6 +2177,46 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
                     </div>
                   </>
                 )}
+
+                {m.tip === 'tahsis' && (() => {
+                  const girilen = Math.max(0, Math.round(sayi(m.adet)));
+                  const talep = sayi(m.kayit.talep_adet);
+                  const tahsis = sayi(m.kayit.tahsis_adet);
+                  return (
+                    <>
+                      <div style={{ fontSize: 12.5, color: R.metin2, marginBottom: 4 }}>
+                        <b>{kisalt(m.kayit.kalem_adi, 42)}</b>
+                      </div>
+                      <div style={{ fontSize: 12, color: R.not2, marginBottom: 14 }}>
+                        {m.kayit.sube_adi} · {tarihKisa(m.kayit.tarih)} ·
+                        {' '}Talep <b style={{ fontFamily: F.mono }}>{talep}</b> ·
+                        {' '}Tahsis <b style={{ fontFamily: F.mono }}>{tahsis}</b> ·
+                        {' '}Fark <b style={{ fontFamily: F.mono, color: R.amber }}>{tahsis - talep}</b>
+                      </div>
+                      <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
+                        {[[tahsis, `Tahsisi kabul et (${tahsis})`], [talep, `Talebi kabul et (${talep})`]].map(([v, ad]) => (
+                          <div key={ad} onClick={() => setUzModal((p) => ({ ...p, adet: String(v) }))} style={{
+                            padding: '7px 13px', borderRadius: 10, fontSize: 11.5, fontWeight: 700, cursor: 'pointer',
+                            border: `1px solid ${girilen === v ? R.bakir : R.cizgi3}`,
+                            color: girilen === v ? R.bakir : R.metin2,
+                            background: girilen === v ? 'rgba(217,154,78,.14)' : 'transparent',
+                          }}>{ad}</div>
+                        ))}
+                      </div>
+                      <label style={opsEtiket}>Uzlaşma adedi</label>
+                      <input value={m.adet} inputMode="numeric"
+                        onChange={(e) => setUzModal((p) => ({ ...p, adet: e.target.value }))}
+                        style={opsAlanStil} />
+                      <div style={{ fontSize: 11, color: R.not2, marginTop: -6, marginBottom: 12, lineHeight: 1.6 }}>
+                        Bu adet <b>hem talebin hem tahsisin</b> yeni değeri olur — kalem
+                        "tam" duruma geçer ve karar operasyon defterine yazılır.
+                        {girilen !== tahsis && girilen !== talep && (
+                          <> Girdiğin sayı ikisinden de farklı; <b>gerçekte ne gittiyse</b> onu yaz.</>
+                        )}
+                      </div>
+                    </>
+                  );
+                })()}
 
                 {m.tip === 'kasa' && sayfa === 'coz' && (
                   <>

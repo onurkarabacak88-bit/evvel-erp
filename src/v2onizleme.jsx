@@ -237,6 +237,26 @@ const ODEME_UC = {
   },
   // tip + detay_json GERÇEK uçtan geliyor (operasyon_merkez_api ops_kasa_uyumsuzluk_listesi)
   // — kaynak düzeltme kutuları bu iki alana bakar, sahte veride de olmalı.
+  // tahsis[] = kalem_durumlari; uzlaşılmış kalem de var (listede ÇIKMAMALI)
+  '/api/ops/v2/siparis-akis': {
+    toplam: 3,
+    siparis_akis: [
+      { id: 'st1', sube_adi: 'Zafer', tarih: gunEkleISO(-1), durum: 'onaylandi', tahsis: [
+        { kalem_kodu: 'u1', kalem_adi: 'Karton bardak 12oz', talep_adet: 40, tahsis_adet: 25, durum: 'kismi' },
+        { kalem_kodu: 'u2', kalem_adi: 'Filtre kâğıdı', talep_adet: 10, tahsis_adet: 10, durum: 'tam' },
+      ]},
+      { id: 'st2', sube_adi: 'Gazze', tarih: gunEkleISO(-3), durum: 'onaylandi', tahsis: [
+        { kalem_kodu: 'u5', kalem_adi: 'Çekirdek kahve 1kg', talep_adet: 12, tahsis_adet: 8, durum: 'kismi' },
+        { kalem_kodu: 'u6', kalem_adi: 'Şurup · karamel', talep_adet: 4, tahsis_adet: 6, durum: 'kismi' },
+      ]},
+      { id: 'st3', sube_adi: 'Alsancak', tarih: gunEkleISO(-6), durum: 'tamamlandi', tahsis: [
+        { kalem_kodu: 'u9', kalem_adi: 'Pipet', talep_adet: 30, tahsis_adet: 20, durum: 'tam', uzlasildi: true },
+      ]},
+    ],
+  },
+  '/api/ops/siparis/talep-tahsis-uyumsuzluk-coz': {
+    success: true, kalem_adi: 'Karton bardak 12oz', onceki_talep_adet: 40, onceki_tahsis_adet: 25, cozum_adet: 25,
+  },
   '/api/ops/kasa-uyumsuzluk': {
     uyarilar: [
       { id: 'ku1', tip: 'KAPANIS_KASA_FARK', sube_adi: 'Zafer', tarih: gunEkleISO(-2), fark_tl: -2480, durum: 'acik',
