@@ -210,6 +210,115 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
     );
   })();
 
+  // ── KART KALICI SİL + LEDGER SIFIRLA (2026-07-31) ─────────────────────────
+  // "Pasife al" zaten vardı ve doğru varsayılan o (defter bütünlüğü). Bu ikisi
+  // İSTİSNA işlemler: ikisi de işletme PIN'i ister, sunucu doğrular.
+  const [ktkModal, setKtkModal] = useState(null);   // {tip, kart?}
+  const [ktkPin, setKtkPin] = useState('');
+  const [ktkYazi, setKtkYazi] = useState('');
+  const [ktkMesgul, setKtkMesgul] = useState(false);
+
+  const ktkKapat = () => { if (!ktkMesgul) { setKtkModal(null); setKtkPin(''); setKtkYazi(''); } };
+
+  const ktkUygula = async () => {
+    const m = ktkModal;
+    if (!m) return;
+    if (!/^\d{4}$/.test(ktkPin.trim())) { onToast?.('İşletme onay PIN kodu 4 haneli olmalı'); return; }
+    if (m.tip === 'ledger-hepsi' && ktkYazi.trim() !== 'TUM KARTLAR') {
+      onToast?.('Onay kutusuna tam olarak «TUM KARTLAR» yazın'); return;
+    }
+    setKtkMesgul(true);
+    try {
+      if (m.tip === 'kalici-sil') {
+        await api(`/kartlar/${m.kart.id}/kalici-sil`, { method: 'POST', body: { onay_pin: ktkPin.trim() } });
+        onToast?.('✓ Kart kalıcı olarak silindi');
+      } else if (m.tip === 'ledger') {
+        await api(`/kartlar/${m.kart.id}/ledger-sifirla`, { method: 'POST', body: { onay_pin: ktkPin.trim(), hepsi: false } });
+        onToast?.('✓ Kart hareketleri iptal edildi — borç sıfırlandı');
+      } else if (m.tip === 'ledger-hepsi') {
+        await api('/kartlar/__hepsi__/ledger-sifirla', { method: 'POST', body: { onay_pin: ktkPin.trim(), hepsi: true } });
+        onToast?.('✓ Tüm kartların hareketleri iptal edildi');
+      }
+      ktkKapat();
+      yukle();
+    } catch (e) {
+      onToast?.(e?.message || 'İşlem başarısız — PIN hatalı olabilir');
+    } finally { setKtkMesgul(false); }
+  };
+
+  const ktkModalBlok = ktkModal && (() => {
+    const T = {
+      'kalici-sil': {
+        baslik: 'Kartı kalıcı sil',
+        anlat: 'Kart kayıtlardan TAMAMEN kaldırılır ve geri gelmez. Normalde doğru işlem «Pasife al»dır — o kartı kullanımdan çıkarır ama geçmiş hareketleri ve defter bütünlüğünü korur. Kalıcı silme yalnız yanlış açılmış / hiç kullanılmamış kart içindir.',
+        buton: 'Kalıcı sil',
+      },
+      'ledger': {
+        baslik: 'Kart hareketlerini sıfırla',
+        anlat: 'Bu kartın tüm hareketleri iptal edilir ve kart borcu sıfırlanır. Bozuk/karışık ekstre içe aktarımını temizlemek ve açılış devri kurmadan ÖNCE çalıştırmak içindir. Manuel kasa hareketleriniz bundan etkilenir — devam etmeden emin ol.',
+        buton: 'Hareketleri sıfırla',
+      },
+      'ledger-hepsi': {
+        baslik: 'TÜM kartların hareketlerini sıfırla',
+        anlat: 'Bütün aktif kartların hareketleri iptal edilir ve borçları sıfırlanır. Bu, kart defterini baştan kurmak demektir — yalnız açılış devri öncesi tek seferlik temizlik için. Yanlışlıkla çalıştırılırsa tüm kart borç geçmişi silinir.',
+        buton: 'Hepsini sıfırla',
+      },
+    }[ktkModal.tip] || {};
+    return (
+      <div onClick={(e) => { if (e.target === e.currentTarget) ktkKapat(); }} style={{
+        position: 'fixed', inset: 0, zIndex: 135, background: 'rgba(10,6,2,.75)',
+        backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+      }}>
+        <div style={{ ...kartYuzey, width: 470, maxWidth: '96vw', padding: '24px 26px' }}>
+          <div style={{ fontFamily: F.baslik, fontSize: 19, fontWeight: 600, marginBottom: 6, color: R.kirmizi }}>
+            {T.baslik}
+          </div>
+          {ktkModal.kart && (
+            <div style={{ fontSize: 12.5, color: R.metin2, marginBottom: 4 }}>
+              <b>{ktkModal.kart.ad || ktkModal.kart.kart_adi || ktkModal.kart.banka}</b>
+            </div>
+          )}
+          <div style={{ fontSize: 12, color: R.not2, lineHeight: 1.7, marginBottom: 14 }}>{T.anlat}</div>
+
+          {ktkModal.tip === 'ledger-hepsi' && (
+            <>
+              <label style={{ display: 'block', fontSize: 10.5, letterSpacing: '.7px', textTransform: 'uppercase', color: R.not2, fontWeight: 700, marginBottom: 5 }}>
+                Onaylamak için «TUM KARTLAR» yazın
+              </label>
+              <input value={ktkYazi} onChange={(e) => setKtkYazi(e.target.value)} autoFocus style={{
+                width: '100%', boxSizing: 'border-box', padding: '9px 12px', borderRadius: 10,
+                border: `1px solid ${R.cizgi3}`, background: R.girinti, color: R.krem,
+                fontSize: 13, fontFamily: 'inherit', outline: 'none', marginBottom: 8,
+              }} />
+            </>
+          )}
+          <label style={{ display: 'block', fontSize: 10.5, letterSpacing: '.7px', textTransform: 'uppercase', color: R.not2, fontWeight: 700, marginBottom: 5 }}>
+            İşletme onay PIN kodu (4 hane)
+          </label>
+          <input type="password" inputMode="numeric" maxLength={4} value={ktkPin} autoComplete="off"
+            onChange={(e) => setKtkPin(e.target.value.replace(/\D/g, ''))} style={{
+              width: 140, boxSizing: 'border-box', padding: '9px 12px', borderRadius: 10,
+              border: `1px solid ${R.cizgi3}`, background: R.girinti, color: R.krem,
+              fontSize: 13, fontFamily: 'inherit', outline: 'none', letterSpacing: 6,
+            }} />
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 16 }}>
+            <button disabled={ktkMesgul} onClick={ktkKapat} style={{
+              padding: '10px 18px', borderRadius: 10, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+              background: 'transparent', color: R.metin2, fontSize: 12.5, fontWeight: 600, fontFamily: 'inherit',
+            }}>Vazgeç</button>
+            <button disabled={ktkMesgul || ktkPin.length !== 4} onClick={ktkUygula} style={{
+              padding: '10px 20px', borderRadius: 10, cursor: 'pointer', fontSize: 12.5, fontWeight: 700,
+              fontFamily: 'inherit', border: `1px solid ${R.kirmizi}55`,
+              background: `${R.kirmizi}26`, color: R.kirmizi,
+              opacity: ktkPin.length === 4 ? 1 : 0.45,
+            }}>{ktkMesgul ? 'İşleniyor…' : T.buton}</button>
+          </div>
+        </div>
+      </div>
+    );
+  })();
+
   useEffect(yukle, []);
 
   // Borç Koçu ayrı uç — strateji/nakit değişince tazelenir.
@@ -598,10 +707,26 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
             ] : [
               { ad: '✎ Düzenle', birincil: true, onTikla: () => kartFormAc(k) },
               { ad: 'Pasife al', onTikla: () => setKartPasifSor(String(k.id)) },
+              // İSTİSNA işlemler — ikisi de işletme PIN'i ister
+              { ad: 'Hareketleri sıfırla', onTikla: () => setKtkModal({ tip: 'ledger', kart: k }) },
+              { ad: 'Kalıcı sil', onTikla: () => setKtkModal({ tip: 'kalici-sil', kart: k }) },
             ],
           }))}
           onAc={(l) => kartAc(l._k)}
         />
+
+        {ktkModalBlok}
+        {/* Tek seferlik temizlik — açılış devri öncesi; sıradan kullanım değil */}
+        <div style={{ marginTop: 16, paddingTop: 12, borderTop: `1px solid ${R.cizgi3}` }}>
+          <div style={{ fontSize: 11, color: R.not2, lineHeight: 1.6, marginBottom: 8 }}>
+            Kart defterini baştan kurmak (açılış devri öncesi tek seferlik temizlik):
+          </div>
+          <button onClick={() => setKtkModal({ tip: 'ledger-hepsi' })} style={{
+            padding: '8px 14px', borderRadius: 9, cursor: 'pointer', fontFamily: 'inherit',
+            fontSize: 11.5, fontWeight: 600, border: `1px solid ${R.kirmizi}44`,
+            background: 'transparent', color: R.kirmizi,
+          }}>⚠ Tüm kartların hareketlerini sıfırla</button>
+        </div>
 
         {/* ── YERLİ KART FORMU (klasik Kartlar.jsx alanları aynen) ── */}
         {kartForm && (() => {
