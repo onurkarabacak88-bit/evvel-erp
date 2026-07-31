@@ -871,6 +871,14 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
           body: { talep_id: tid, aciklama: (m.aciklama || '').trim() || undefined },
         });
         onToast?.('🚫 Sipariş merkezden iptal edildi');
+      } else if (m.tip === 'akis-iptal') {
+        // GEÇ aşama iptali: merkez-iptal bu aşamaları REDDEDER (backend kuralı).
+        // Sevk edilmiş adetler kaynak depoya iade edilir.
+        await api('/ops/siparis/akisi-iptal', {
+          method: 'POST',
+          body: { talep_id: tid, aciklama: (m.aciklama || '').trim() || undefined },
+        });
+        onToast?.('🚫 Akış iptal edildi — sevk edilen adetler depoya iade edildi');
       } else if (m.tip === 'geri-al') {
         await api(`/ops/siparis/${encodeURIComponent(tid)}/toptanci-geri-al`, { method: 'POST' });
         onToast?.('↩ Sipariş kuyruğa geri alındı');
@@ -935,7 +943,12 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
         if (bitti) {
           A.push({ ad: '🔄 Yeniden aç', birincil: true, onTikla: () => setYsModal({ tip: 'yeniden-ac', talep: s, aciklama: '' }) });
         } else {
-          A.push({ ad: '🚫 Merkezden iptal et', onTikla: () => setYsModal({ tip: 'iptal', talep: s, aciklama: '' }) });
+          // Aşamaya göre DOĞRU uç: merkez-iptal yalnız bekliyor/onaylandi'yı kabul
+          // eder; depo hazırlık ve yolda için akisi-iptal gerekiyor (backend kuralı).
+          const gecAsama = /depo|hazirlik|hazırlık|yolda|sevk/i.test(String(s.asama || ''));
+          A.push(gecAsama
+            ? { ad: '🚫 Akışı iptal et', onTikla: () => setYsModal({ tip: 'akis-iptal', talep: s, aciklama: '' }) }
+            : { ad: '🚫 Merkezden iptal et', onTikla: () => setYsModal({ tip: 'iptal', talep: s, aciklama: '' }) });
         }
         // Özel talep (katalogda olmayan istek) → 3 yollu karar
         if (s.ozel_talep || s.ozel || s.katalog_disi) {
@@ -976,6 +989,11 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
         baslik: 'Siparişi merkezden iptal et',
         anlat: 'Talep iptal edilir ve kuyruktan düşer. Şube bu siparişi göremez; gerekirse yeniden açılabilir.',
         buton: 'Evet, iptal et', tehlike: true, notAlani: 'İptal nedeni (isteğe bağlı)',
+      },
+      'akis-iptal': {
+        baslik: 'Akıştaki siparişi iptal et',
+        anlat: 'Sipariş depoda hazırlanıyor ya da yolda. İptal edilince yolda stok satırları kaldırılır ve SEVK EDİLMİŞ ADETLER kaynak depoya iade edilir — depo stoğu geri artar. Fiziksel olarak yola çıkmış mal varsa onu da geri getirmeniz gerekir.',
+        buton: 'Evet, akışı iptal et', tehlike: true, notAlani: 'İptal nedeni (isteğe bağlı)',
       },
       'geri-al': {
         baslik: 'Toptancıdan geri al',
