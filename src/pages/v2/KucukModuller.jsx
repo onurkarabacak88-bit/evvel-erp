@@ -486,6 +486,41 @@ export function OnayModulu({ gorunum, onCekmece, onKopru, onToast }) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
+const yukBtn = {
+  padding: '9px 16px', borderRadius: 9, cursor: 'pointer', fontFamily: 'inherit',
+  fontSize: 12, fontWeight: 600, border: `1px solid ${R.cizgi3}`,
+  background: 'transparent', color: R.metin2,
+};
+const yukMini = {
+  padding: '4px 10px', borderRadius: 7, cursor: 'pointer', fontFamily: 'inherit',
+  fontSize: 11, fontWeight: 600, border: `1px solid ${R.cizgi3}`,
+  background: 'transparent', color: R.metin2,
+};
+const yukEtiket = {
+  fontSize: 10.5, letterSpacing: '.7px', textTransform: 'uppercase',
+  color: R.not2, fontWeight: 700, margin: '10px 0 5px', display: 'block',
+};
+const yukAlan = {
+  width: '100%', boxSizing: 'border-box', padding: '9px 12px', borderRadius: 10,
+  border: `1px solid ${R.cizgi3}`, background: R.girinti, color: R.krem,
+  fontSize: 13, fontFamily: 'inherit', outline: 'none',
+};
+const BORC_BOS = { kurum: '', borc_turu: 'Kredi', toplam_borc: '', aylik_taksit: '',
+  kalan_vade: '', toplam_vade: '', baslangic_tarihi: '', odeme_gunu: 1,
+  faiz_orani: '', odemesiz_ay: '' };
+const BORC_ALAN = [
+  ['kurum', 'Kurum / alacaklı', 'text'],
+  ['borc_turu', 'Borç türü', 'text'],
+  ['aylik_taksit', 'Aylık taksit ₺', 'decimal'],
+  ['toplam_borc', 'Toplam borç ₺', 'decimal'],
+  ['kalan_vade', 'Kalan vade (ay)', 'number'],
+  ['toplam_vade', 'Toplam vade (ay)', 'number'],
+  ['odeme_gunu', 'Ödeme günü (1–31)', 'number'],
+  ['faiz_orani', 'Aylık faiz %', 'decimal'],
+  ['odemesiz_ay', 'Ödemesiz dönem (ay)', 'number'],
+  ['baslangic_tarihi', 'Başlangıç tarihi', 'date'],
+];
+
 // 2) YÜKÜMLÜLÜKLER — yuk.krediler / yuk.sabit
 // ═════════════════════════════════════════════════════════════════════════════
 export function YukModulu({ gorunum, onCekmece, onKopru, onToast }) {
@@ -500,6 +535,8 @@ export function YukModulu({ gorunum, onCekmece, onKopru, onToast }) {
   const [sgMesgul, setSgMesgul] = useState(false);
   const [sgKapatSor, setSgKapatSor] = useState('');
   const [sgKartlar, setSgKartlar] = useState([]);
+  const [brModal, setBrModal] = useState(null);   // {tip, borc?, form?}
+  const [brMesgul, setBrMesgul] = useState(false);
   if (yukleniyor) return <Yukleniyor ad="Yükümlülükler" />;
   if (hata) return <Hata mesaj={hata} onTekrar={yukle} />;
 
@@ -579,6 +616,130 @@ export function YukModulu({ gorunum, onCekmece, onKopru, onToast }) {
   const krediler = (Array.isArray(krediHam) ? krediHam : []).filter(k => k.aktif !== false);
   const sabitler = (Array.isArray(sabitHam) ? sabitHam : []).filter(g => g.aktif !== false);
 
+  // ── BANKA KREDİSİ CRUD + TAKSİT ÖDEME (2026-07-31) ────────────────────────
+  // Ekran krediyi GÖSTERİYORDU; ekleme/düzenleme/silme/ödeme uçlarının hiçbiri
+  // v2'de yoktu (klasik Pages.jsx'te vardı).
+  const brSayi = (v) => (String(v ?? '').trim() === '' ? null : Number(String(v).replace(',', '.')));
+
+  const brUygula = async () => {
+    const m = brModal;
+    if (!m) return;
+    setBrMesgul(true);
+    try {
+      if (m.tip === 'ekle' || m.tip === 'duzenle') {
+        const f = m.form || {};
+        if (!String(f.kurum || '').trim()) { onToast?.('Kurum/alacaklı adı zorunlu'); setBrMesgul(false); return; }
+        const taksit = brSayi(f.aylik_taksit);
+        if (taksit == null || taksit < 0) { onToast?.('Aylık taksit geçersiz'); setBrMesgul(false); return; }
+        const gun = Number(f.odeme_gunu) || 0;
+        if (gun < 1 || gun > 31) { onToast?.('Ödeme günü 1–31 arası olmalı'); setBrMesgul(false); return; }
+        const govde = {
+          kurum: String(f.kurum).trim(), borc_turu: (f.borc_turu || 'Kredi').trim() || 'Kredi',
+          toplam_borc: brSayi(f.toplam_borc), aylik_taksit: taksit,
+          kalan_vade: brSayi(f.kalan_vade), toplam_vade: brSayi(f.toplam_vade),
+          baslangic_tarihi: f.baslangic_tarihi || null, odeme_gunu: gun,
+          faiz_orani: brSayi(f.faiz_orani), odemesiz_ay: brSayi(f.odemesiz_ay),
+        };
+        if (m.tip === 'ekle') {
+          await api('/borclar', { method: 'POST', body: govde });
+          onToast?.('✓ Kredi eklendi');
+        } else {
+          await api(`/borclar/${m.borc.id}`, { method: 'PUT', body: govde });
+          onToast?.('✓ Kredi güncellendi');
+        }
+      } else if (m.tip === 'sil') {
+        await api(`/borclar/${m.borc.id}`, { method: 'DELETE' });
+        onToast?.('✓ Kredi kaydı silindi');
+      } else if (m.tip === 'ode') {
+        await api(`/borclar/${m.borc.id}/ode`, { method: 'POST', body: {
+          tutar: brSayi(m.tutar), tarih: m.tarih || null,
+          aciklama: (m.aciklama || '').trim() || null,
+          beklenen_taksit_no: m.borc.siradaki_taksit_no ?? null,
+        } });
+        onToast?.('✓ Taksit ödendi — kasadan düşüldü, kalan vade azaldı');
+      }
+      setBrModal(null);
+      yukle();
+    } catch (e) {
+      onToast?.(e?.message || 'İşlem başarısız');
+    } finally { setBrMesgul(false); }
+  };
+
+  const brModalBlok = brModal && (() => {
+    const kapat = () => { if (!brMesgul) setBrModal(null); };
+    const T = {
+      'ekle': { baslik: 'Yeni kredi / borç', buton: 'Ekle', tehlike: false,
+        anlat: 'Banka kredisi, taşıt kredisi, senet — düzenli taksitli her borç. «Ödeme günü» taksitin ayın kaçında düştüğüdür; gecikme takibi buradan çalışır. Ödemesiz dönem girersen ilk taksit o kadar ay sonra başlar.' },
+      'duzenle': { baslik: 'Krediyi düzenle', buton: 'Kaydet', tehlike: false,
+        anlat: 'Yapılandırma veya faiz değişikliğinde güncelle. Geçmiş ödemeler etkilenmez.' },
+      'sil': { baslik: 'Kredi kaydını sil', buton: 'Sil', tehlike: true,
+        anlat: 'Kayıt kaldırılır ve borç takibinden düşer. Biten bir krediyi silmek yerine kalan vadeyi 0 yapmak daha izlenebilir — silme yalnız hatalı kayıt içindir.' },
+      'ode': { baslik: 'Taksit öde', buton: 'Ödemeyi yaz', tehlike: true,
+        anlat: 'Tutar KASADAN düşer (BORC_TAKSIT izi), kalan vade bir azalır, toplam borçtan indirilir. Aynı dönemin taksiti ikinci kez ödenemez — sunucu engeller. Kasa defterine yazılan kayıt geri alınamaz.' },
+    }[brModal.tip] || {};
+    const f = brModal.form || {};
+    return (
+      <div onClick={(e) => { if (e.target === e.currentTarget) kapat(); }} style={{
+        position: 'fixed', inset: 0, zIndex: 120, background: 'rgba(10,6,2,.72)',
+        backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+      }}>
+        <div style={{ ...kartYuzey, width: 500, maxWidth: '96vw', padding: '24px 26px', maxHeight: '88vh', overflowY: 'auto' }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 6 }}>
+            <div style={{ fontFamily: F.baslik, fontSize: 19, fontWeight: 600 }}>{T.baslik}</div>
+            <button onClick={kapat} style={{ marginLeft: 'auto', border: 'none', background: 'transparent', color: R.not, fontSize: 16, cursor: 'pointer', fontFamily: 'inherit' }}>x</button>
+          </div>
+          {brModal.borc && (
+            <div style={{ fontSize: 12.5, color: R.metin2, marginBottom: 4 }}>
+              <b>{brModal.borc.kurum}</b> · aylık {fmt(sayi(brModal.borc.aylik_taksit))} ₺
+              {brModal.borc.kalan_vade != null ? ` · ${sayi(brModal.borc.kalan_vade)} ay kaldı` : ''}
+            </div>
+          )}
+          <div style={{ fontSize: 12, color: R.not2, lineHeight: 1.65, marginBottom: 14 }}>{T.anlat}</div>
+          {(brModal.tip === 'ekle' || brModal.tip === 'duzenle') && (
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+              {BORC_ALAN.map(([k, ad, tip]) => (
+                <div key={k} style={{ minWidth: tip === 'text' ? 180 : 130, flex: tip === 'text' ? 1 : '0 0 auto' }}>
+                  <label style={yukEtiket}>{ad}</label>
+                  <input
+                    type={tip === 'date' ? 'date' : tip === 'number' ? 'number' : 'text'}
+                    inputMode={tip === 'decimal' ? 'decimal' : undefined}
+                    value={f[k] ?? ''}
+                    onChange={(e) => setBrModal((p) => ({ ...p, form: { ...p.form, [k]: e.target.value } }))}
+                    style={yukAlan} />
+                </div>
+              ))}
+            </div>
+          )}
+          {brModal.tip === 'ode' && (
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+              <div style={{ maxWidth: 150 }}><label style={yukEtiket}>Tutar ₺ (boş = taksit)</label>
+                <input inputMode="decimal" value={brModal.tutar ?? ''} autoFocus
+                  onChange={(e) => setBrModal((p) => ({ ...p, tutar: e.target.value }))} style={yukAlan} /></div>
+              <div style={{ maxWidth: 160 }}><label style={yukEtiket}>Tarih</label>
+                <input type="date" value={brModal.tarih ?? ''}
+                  onChange={(e) => setBrModal((p) => ({ ...p, tarih: e.target.value }))} style={yukAlan} /></div>
+              <div style={{ minWidth: 180, flex: 1 }}><label style={yukEtiket}>Açıklama</label>
+                <input value={brModal.aciklama ?? ''}
+                  onChange={(e) => setBrModal((p) => ({ ...p, aciklama: e.target.value }))} style={yukAlan} /></div>
+            </div>
+          )}
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 16 }}>
+            <button disabled={brMesgul} onClick={kapat} style={{
+              padding: '10px 18px', borderRadius: 10, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+              background: 'transparent', color: R.metin2, fontSize: 12.5, fontWeight: 600, fontFamily: 'inherit',
+            }}>Vazgeç</button>
+            <button disabled={brMesgul} onClick={brUygula} style={{
+              padding: '10px 20px', borderRadius: 10, cursor: 'pointer', fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit',
+              border: T.tehlike ? `1px solid ${R.kirmizi}55` : 'none',
+              background: T.tehlike ? `${R.kirmizi}26` : 'linear-gradient(150deg, #E0A559, #AF6C29)',
+              color: T.tehlike ? R.kirmizi : '#1C1309',
+            }}>{brMesgul ? 'İşleniyor…' : T.buton}</button>
+          </div>
+        </div>
+      </div>
+    );
+  })();
+
   if (gorunum === 'krediler') {
     const kalanTop = krediler.reduce((s, k) => s + sayi(k.toplam_borc), 0);
     const taksitTop = krediler.reduce((s, k) => s + sayi(k.aylik_taksit), 0);
@@ -594,6 +755,10 @@ export function YukModulu({ gorunum, onCekmece, onKopru, onToast }) {
           { etiket: 'Ödemesiz dönemde', deger: String(odemesiz.length), alt: odemesiz.length ? 'taksiti henüz başlamadı' : 'yok', renk: odemesiz.length ? R.amber : R.yesil },
           { etiket: 'İlk biten', deger: enYakinBitis ? `${enYakinBitis.kalan_vade} taksit` : '—', alt: enYakinBitis ? enYakinBitis.kurum : 'veri yok', renk: R.yesil },
         ]} />
+        {brModalBlok}
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
+          <button onClick={() => setBrModal({ tip: 'ekle', form: { ...BORC_BOS } })} style={yukBtn}>+ Kredi / borç ekle</button>
+        </div>
         {krediler.length ? (
           <Tablo
             baslik="Banka kredileri"
@@ -601,7 +766,7 @@ export function YukModulu({ gorunum, onCekmece, onKopru, onToast }) {
             kolonlar={[
               { ad: 'Kurum' }, { ad: 'Tür' }, { ad: 'Kalan borç', sag: true },
               { ad: 'Aylık taksit', sag: true }, { ad: 'Kalan vade', sag: true },
-              { ad: 'Ödeme günü', sag: true }, { ad: 'Durum' },
+              { ad: 'Ödeme günü', sag: true }, { ad: 'Durum' }, { ad: 'İşlem' },
             ]}
             satirlar={krediler.map(k => ({
               id: k.id, _k: k,
@@ -613,9 +778,26 @@ export function YukModulu({ gorunum, onCekmece, onKopru, onToast }) {
                 { v: `${sayi(k.kalan_vade)}/${sayi(k.toplam_vade)}`, mono: true, sag: true },
                 { v: k.odeme_gunu ? `ayın ${k.odeme_gunu}` : '—', mono: true, sag: true },
                 {
-                  v: sayi(k.aylik_taksit) ? 'ödeniyor' : 'ödemesiz dönem',
-                  rozet: sayi(k.aylik_taksit) ? R.yesil : R.amber,
+                  v: k.bu_ay_odendi ? 'bu dönem ödendi' : sayi(k.aylik_taksit) ? 'taksit bekliyor' : 'ödemesiz dönem',
+                  rozet: k.bu_ay_odendi ? R.yesil : sayi(k.aylik_taksit) ? R.amber : R.mavi,
                 },
+                { v: (
+                    <span style={{ display: 'flex', gap: 5 }} onClick={(e) => e.stopPropagation()}>
+                      {!k.bu_ay_odendi && sayi(k.aylik_taksit) > 0 && (
+                        <button onClick={() => setBrModal({ tip: 'ode', borc: k, tutar: '', tarih: '', aciklama: '' })} style={yukMini}>Öde</button>
+                      )}
+                      <button onClick={() => setBrModal({ tip: 'duzenle', borc: k, form: {
+                        kurum: k.kurum ?? '', borc_turu: k.borc_turu ?? 'Kredi',
+                        toplam_borc: k.toplam_borc ?? '', aylik_taksit: k.aylik_taksit ?? '',
+                        kalan_vade: k.kalan_vade ?? '', toplam_vade: k.toplam_vade ?? '',
+                        baslangic_tarihi: String(k.baslangic_tarihi || '').slice(0, 10),
+                        odeme_gunu: k.odeme_gunu ?? 1, faiz_orani: k.faiz_orani ?? '',
+                        odemesiz_ay: k.odemesiz_ay ?? '',
+                      } })} style={yukMini}>Düzenle</button>
+                      <button onClick={() => setBrModal({ tip: 'sil', borc: k })}
+                        style={{ ...yukMini, color: R.kirmizi, borderColor: `${R.kirmizi}44` }}>Sil</button>
+                    </span>
+                  ) },
               ],
             }))}
             onSatir={(row) => {

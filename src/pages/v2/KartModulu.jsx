@@ -79,6 +79,12 @@ const gunMetni = (g) => {
   return `${n} gün`;
 };
 
+const kMini = {
+  padding: '4px 10px', borderRadius: 7, cursor: 'pointer', fontFamily: 'inherit',
+  fontSize: 11, fontWeight: 600, border: `1px solid ${R.cizgi3}`,
+  background: 'transparent', color: R.metin2,
+};
+
 export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
   const [yukleniyor, setYukleniyor] = useState(true);
   const [hata, setHata] = useState('');
@@ -140,6 +146,69 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
       setYukleniyor(false);
     });
   };
+
+  // ── KART HAREKETİ EYLEMLERİ (2026-07-31) ──────────────────────────────────
+  // v2 hareketleri gösteriyordu ama sınıflandıramıyor/silemiyordu.
+  const [khModal, setKhModal] = useState(null);   // {tip: 'sil'|'tip', hareket, harcama?}
+  const [khMesgul, setKhMesgul] = useState(false);
+
+  const khUygula = async () => {
+    const m = khModal;
+    if (!m) return;
+    setKhMesgul(true);
+    try {
+      if (m.tip === 'sil') {
+        await api(`/kart-hareketleri/${m.hareket.id}`, { method: 'DELETE' });
+        onToast?.('✓ Hareket silindi');
+      } else {
+        // tip SORGU parametresi — gövdeye koyulursa 422 döner
+        await api(`/kart-hareketleri/${m.hareket.id}/harcama-tipi?tip=${m.harcama}`, { method: 'POST' });
+        onToast?.(m.harcama === 'isletme' ? '✓ İşletme harcaması olarak işaretlendi' : '✓ Şahsi harcama olarak işaretlendi');
+      }
+      setKhModal(null);
+      yukle();
+    } catch (e) {
+      onToast?.(e?.message || 'İşlem başarısız');
+    } finally { setKhMesgul(false); }
+  };
+
+  const khModalBlok = khModal && (() => {
+    const kapat = () => { if (!khMesgul) setKhModal(null); };
+    const sil = khModal.tip === 'sil';
+    return (
+      <div onClick={(e) => { if (e.target === e.currentTarget) kapat(); }} style={{
+        position: 'fixed', inset: 0, zIndex: 120, background: 'rgba(10,6,2,.72)',
+        backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+      }}>
+        <div style={{ ...kartYuzey, width: 430, maxWidth: '96vw', padding: '24px 26px' }}>
+          <div style={{ fontFamily: F.baslik, fontSize: 19, fontWeight: 600, marginBottom: 6 }}>
+            {sil ? 'Hareketi sil' : 'Harcama tipini belirle'}
+          </div>
+          <div style={{ fontSize: 12.5, color: R.metin2, marginBottom: 4 }}>
+            <b>{khModal.hareket?.aciklama || 'Hareket'}</b>
+            {khModal.hareket?.tutar != null ? ` · ${fmt(sayi(khModal.hareket.tutar))} ₺` : ''}
+          </div>
+          <div style={{ fontSize: 12, color: R.not2, lineHeight: 1.65, marginBottom: 14 }}>
+            {sil
+              ? 'Hareket kart defterinden kaldırılır. Ekstreden gelen bir satırsa bir sonraki içe aktarımda geri gelebilir — kalıcı düzeltme ekstre tarafında yapılır.'
+              : 'İşletme/şahsi ayrımı gider ve KDV hesabına girer; belirsiz kalan hareketler maliyete yazılmaz.'}
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 6 }}>
+            <button disabled={khMesgul} onClick={kapat} style={{
+              padding: '10px 18px', borderRadius: 10, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+              background: 'transparent', color: R.metin2, fontSize: 12.5, fontWeight: 600, fontFamily: 'inherit',
+            }}>Vazgeç</button>
+            <button disabled={khMesgul} onClick={khUygula} style={{
+              padding: '10px 20px', borderRadius: 10, cursor: 'pointer', fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit',
+              border: sil ? `1px solid ${R.kirmizi}55` : 'none',
+              background: sil ? `${R.kirmizi}26` : 'linear-gradient(150deg, #E0A559, #AF6C29)',
+              color: sil ? R.kirmizi : '#1C1309',
+            }}>{khMesgul ? 'İşleniyor…' : (sil ? 'Sil' : 'İşaretle')}</button>
+          </div>
+        </div>
+      </div>
+    );
+  })();
 
   useEffect(yukle, []);
 
@@ -699,12 +768,13 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
           { etiket: 'Şahsi', deger: pay(g.sahsi), alt: fmt(sayi(g.sahsi)), renk: R.mavi },
           { etiket: 'Sınıflandırılmayan', deger: `${belirsizAdet} hareket`, alt: `${fmt(sayi(g.belirsiz))} · karar bekliyor`, renk: belirsizAdet ? R.amber : R.yesil },
         ]} />
+        {khModalBlok}
         <Tablo
           baslik="Kart hareketleri · işletme / şahsi"
           not="satıra tıkla → sınıflandır"
           kolonlar={[
             { ad: 'Tarih' }, { ad: 'Kart' }, { ad: 'Açıklama' },
-            { ad: 'Tutar', sag: true }, { ad: 'Tür' }, { ad: 'Sınıf' },
+            { ad: 'Tutar', sag: true }, { ad: 'Tür' }, { ad: 'Sınıf' }, { ad: 'İşlem' },
           ]}
           satirlar={hareketler.slice(0, 120).map(h => {
             const sinif = h.harcama_tipi || 'belirsiz';
@@ -718,6 +788,14 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
                 { v: fmt(sayi(h.tutar)), mono: true, sag: true, renk: odeme ? R.yesil : R.krem },
                 { v: slugAd(h.islem_turu), rozet: odeme ? R.yesil : h.islem_turu === 'FAIZ' ? R.kirmizi : R.bakir },
                 { v: sinif === 'isletme' ? 'işletme' : sinif === 'sahsi' ? 'şahsi' : 'belirsiz', rozet: sinif === 'isletme' ? R.yesil : sinif === 'sahsi' ? R.mavi : R.amber },
+                { v: (
+                    <span style={{ display: 'flex', gap: 5 }} onClick={(e) => e.stopPropagation()}>
+                      {sinif !== 'isletme' && <button onClick={() => setKhModal({ tip: 'tip', hareket: h, harcama: 'isletme' })} style={kMini}>İşletme</button>}
+                      {sinif !== 'sahsi' && <button onClick={() => setKhModal({ tip: 'tip', hareket: h, harcama: 'sahsi' })} style={kMini}>Şahsi</button>}
+                      <button onClick={() => setKhModal({ tip: 'sil', hareket: h })}
+                        style={{ ...kMini, color: R.kirmizi, borderColor: `${R.kirmizi}44` }}>Sil</button>
+                    </span>
+                  ) },
               ],
             };
           })}
