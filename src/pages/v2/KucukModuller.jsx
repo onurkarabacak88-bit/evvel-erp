@@ -16,7 +16,7 @@
 // reddet/toplu-onayla + ciro-taslak onayla/reddet). Diğer yazma işleri
 // (ödeme, silme, fiyat basma…) hâlâ köprülü.
 // ─────────────────────────────────────────────────────────────────────────────
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api, fmt } from '../../utils/api';
 import { R, F, kartYuzey } from './tema';
 import { KpiSeridi, Tablo, Liste, OnayModali, SecimCubugu, BosDurum } from './parcalar';
@@ -1397,6 +1397,39 @@ export function RaporModulu({ gorunum, onCekmece, onKopru, onToast }) {
 // 4) VERİ & SİSTEM — sistem.excel / sistem.teslim / sistem.temizle
 // ═════════════════════════════════════════════════════════════════════════════
 export function SistemModulu({ gorunum, onCekmece, onKopru, onToast }) {
+  // ── EXCEL IMPORT (2026-07-31) — iz defteri vardı, YÜKLEME yoktu ────────────
+  // Uç multipart ister → api() JSON-only olduğu için ham fetch kullanılır
+  // (KartModulu ekstre yüklemesiyle aynı desen).
+  const [xlsMesgul, setXlsMesgul] = useState(false);
+  const [xlsSonuc, setXlsSonuc] = useState(null);
+  const [xlsDosyaAdi, setXlsDosyaAdi] = useState('');
+  const xlsRef = useRef(null);
+
+  const xlsYukle = async (dosya) => {
+    if (!dosya) return;
+    setXlsMesgul(true);
+    setXlsSonuc(null);
+    setXlsDosyaAdi(dosya.name || '');
+    try {
+      const fd = new FormData();
+      fd.append('dosya', dosya);
+      const res = await fetch('/api/excel-import', { method: 'POST', body: fd });
+      const d = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(d?.detail || `Yükleme başarısız (HTTP ${res.status})`);
+      setXlsSonuc(d);
+      const eklenen = Object.values(d?.detay || {}).reduce((s, b) => s + (Number(b?.eklenen) || 0), 0);
+      const hata = Object.values(d?.detay || {}).reduce((s, b) => s + (Number(b?.hata) || 0), 0);
+      onToast?.(hata
+        ? `${eklenen} satır eklendi · ${hata} satır atlandı — aşağıda sekme sekme ayrıntı var`
+        : `✓ ${eklenen} satır eklendi (${sayi(d?.toplam)} satır işlendi)`);
+    } catch (e) {
+      onToast?.(e?.message || 'Excel yüklenemedi');
+    } finally {
+      setXlsMesgul(false);
+      if (xlsRef.current) xlsRef.current.value = '';
+    }
+  };
+
   // ── YERLİ TEMİZLİK (köprü kaldırma turu, 2026-07-30) ──────────────────────
   // TEHLİKELİ uçlar; klasikteki yazılı onay ('EVET_SIL') AYNEN korunur +
   // kadifede ikinci kapı (onay metni yazılmadan buton açılmaz).
@@ -1454,12 +1487,78 @@ export function SistemModulu({ gorunum, onCekmece, onKopru, onToast }) {
           { etiket: 'Toplam eklenen', deger: String(izler.reduce((s, r) => s + (Number(r.toplam_eklenen) || 0), 0)), alt: 'izlenen yüklemelerde', renk: R.yesil },
           { etiket: 'Hatalı satır', deger: String(izler.reduce((s, r) => s + (Number(r.hata_sayisi) || 0), 0)), alt: 'atlanan kayıtlar', renk: izler.some(r => Number(r.hata_sayisi) > 0) ? R.amber : R.yesil },
         ]} />
+        {/* ── YÜKLEME — iz defteri vardı ama dosya yükleme yoktu (ölü döngü:
+            "Excel Import'u aç" düğmesi kendi görünümüne dönüyordu) ── */}
+        <div style={{ ...kartYuzey, padding: '18px 20px', marginBottom: 14 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
+            <span style={{ fontFamily: F.baslik, fontSize: 15, fontWeight: 600 }}>📊 Excel yükle</span>
+            <span style={{ fontSize: 11.5, color: R.not2, flex: 1, minWidth: 220 }}>
+              EVVEL şablonu · .xlsx / .xls — sekme adı hangi tabloya gideceğini belirler
+            </span>
+            <input ref={xlsRef} type="file" accept=".xlsx,.xls" style={{ display: 'none' }}
+              onChange={(e) => e.target.files?.[0] && xlsYukle(e.target.files[0])} />
+            <button disabled={xlsMesgul} onClick={() => xlsRef.current?.click()} style={{
+              padding: '9px 17px', borderRadius: 10, cursor: xlsMesgul ? 'wait' : 'pointer',
+              border: `1px solid ${R.bakir}55`, background: `${R.bakir}22`, color: R.bakir,
+              fontSize: 12, fontWeight: 700, fontFamily: 'inherit',
+            }}>{xlsMesgul ? '⏳ işleniyor…' : '📁 Dosya seç'}</button>
+          </div>
+          <div style={{ fontSize: 11, color: R.not2, lineHeight: 1.7 }}>
+            Tanınan sekmeler: <span style={{ fontFamily: F.mono }}>ciro · kartlar ·
+            kart_hareketleri · borclar · personel · sabit_giderler · vadeli_alimlar</span>
+            <br />
+            Her satır <b>kendi kapsülünde</b> işlenir: hatalı satır kalanları bozmaz,
+            atlanır ve aşağıda sayılır. Aynı kayıt ikinci kez gelirse <b>eklenmez</b>
+            (çakışma sessizce geçilir) — dosyayı yeniden yüklemek mükerrer kayıt üretmez.
+          </div>
+        </div>
+
+        {/* Yükleme sonucu — sekme sekme, atlanan satır SEBEBİYLE */}
+        {xlsSonuc && (() => {
+          const detay = Object.entries(xlsSonuc.detay || {});
+          const eklenen = detay.reduce((s, [, b]) => s + (Number(b?.eklenen) || 0), 0);
+          const hata = detay.reduce((s, [, b]) => s + (Number(b?.hata) || 0), 0);
+          return (
+            <div style={{
+              ...kartYuzey, padding: '16px 19px', marginBottom: 14,
+              border: `1px solid ${hata ? `${R.amber}55` : `${R.yesil}44`}`,
+            }}>
+              <div style={{ fontSize: 12.5, color: R.metin2, marginBottom: 11 }}>
+                <b>{xlsDosyaAdi || 'Dosya'}</b> · {sayi(xlsSonuc.toplam)} satır işlendi ·{' '}
+                <b style={{ color: R.yesil }}>{eklenen} eklendi</b>
+                {hata ? <> · <b style={{ color: R.amber }}>{hata} atlandı</b></> : null}
+              </div>
+              {detay.length === 0 ? (
+                <div style={{ fontSize: 12, color: R.not2 }}>
+                  Tanınan sekme bulunamadı — sekme adları yukarıdaki listeyle birebir olmalı.
+                </div>
+              ) : detay.map(([tablo, b]) => (
+                <div key={tablo} style={{
+                  display: 'flex', alignItems: 'flex-start', gap: 10, padding: '9px 12px',
+                  borderRadius: 10, background: R.girinti, border: `1px solid ${R.cizgi3}`,
+                  marginBottom: 7, fontSize: 12,
+                }}>
+                  <b style={{ minWidth: 130 }}>{tablo}</b>
+                  <span style={{ color: R.yesil, fontFamily: F.mono }}>{sayi(b?.eklenen)} eklendi</span>
+                  {sayi(b?.hata) > 0 && (
+                    <span style={{ color: R.amber, fontFamily: F.mono }}>{sayi(b?.hata)} atlandı</span>
+                  )}
+                  {Array.isArray(b?.atlanan) && b.atlanan.length > 0 && (
+                    <span style={{ color: R.not2, fontSize: 11, flex: 1, lineHeight: 1.6 }}>
+                      {b.atlanan.slice(0, 3).map((a) => String(a)).join(' · ')}
+                      {b.atlanan.length > 3 ? ` … +${b.atlanan.length - 3}` : ''}
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+          );
+        })()}
+
         {izler.length === 0 ? (
           <Bos
-            baslik="Excel Import"
-            aciklama="Banka ekstresi ve POS dosyaları (XLSX · CSV) buradan yüklenir. İz defteri bu ilk kurulumla açıldı — bundan sonraki her yükleme burada damgalanır."
-            aksiyon="Excel Import'u aç"
-            onAksiyon={() => onKopru?.('__modul:sistem:excel')}
+            baslik="Henüz yükleme izi yok"
+            aciklama="İz defteri açık — yukarıdan yapacağın ilk yükleme burada kim/ne zaman/kaç satır olarak damgalanacak."
           />
         ) : (
           <Tablo
@@ -1475,7 +1574,6 @@ export function SistemModulu({ gorunum, onCekmece, onKopru, onToast }) {
                 { v: String(r.hata_sayisi ?? 0), mono: true, sag: true, renk: Number(r.hata_sayisi) > 0 ? R.amber : R.not },
               ],
             }))}
-            onSatir={() => onKopru?.('__modul:sistem:excel')}
           />
         )}
       </>
