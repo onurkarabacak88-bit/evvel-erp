@@ -644,7 +644,9 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     if (!/^\d{4}$/.test(kgPin.trim())) { onToast?.('İşletme onay PIN kodu 4 haneli olmalı'); return; }
     setMdMesgul(true);
     try {
-      const r = await api(`/api/sube/${kgSube}/kapanis-geri-al`, {
+      // ⚠️ Router prefix /api/sube-panel; api() zaten /api ekliyor.
+      // Önceki hâli /api/sube/... idi → /api/api/sube/... olup 404 veriyordu.
+      const r = await api(`/sube-panel/${kgSube}/kapanis-geri-al`, {
         method: 'POST',
         body: { onay_pin: kgPin.trim(), tarih: kgTarih, sebep: kgSebep.trim() || null },
       });
