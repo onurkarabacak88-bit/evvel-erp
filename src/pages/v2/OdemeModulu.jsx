@@ -18,7 +18,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { api, fmt } from '../../utils/api';
 import { R, F, kartYuzey } from './tema';
-import { KpiSeridi, Tablo, Liste, Takvim } from './parcalar';
+import { KpiSeridi, Tablo, Liste, Takvim, SecimCubugu, OnayModali } from './parcalar';
 
 const sayi = (v) => Number(v) || 0;
 const trSayi = (n, b = 1) => (Number(n) || 0).toFixed(b).replace('.', ',');
@@ -157,6 +157,12 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
   const [borcModal, setBorcModal] = useState(null);   // {ted, tutar, yontem, kartId, elle, secim{}}
   const [borcAcik, setBorcAcik] = useState(null);     // /cari-odenecekler cevabı
   const [borcMesgul, setBorcMesgul] = useState(false);
+  // ── TOPLU ÖDEME KOŞUSU (tek kapı kararı, 2026-07-31) ──────────────────────
+  // Backend /toplu-odeme TEK TRANSACTION uygular: biri düşerse hepsi rollback.
+  // Advisory lock kasadan-çıkaran toplu işlemleri serileştirir (main.py MN5).
+  const [topluSecim, setTopluSecim] = useState({});
+  const [topluSor, setTopluSor] = useState(false);
+  const [topluMesgul, setTopluMesgul] = useState(false);
   const kartlariGetir = () => {
     if (!kartListe.length) api('/kartlar').then((d) => setKartListe(Array.isArray(d) ? d : [])).catch(() => {});
   };
@@ -324,6 +330,26 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
     } catch (e) {
       onToast?.(e?.message || 'Ödeme başarısız');
     } finally { setBorcMesgul(false); }
+  };
+
+  /** Seçilen bekleyen ödemeleri TEK transaction'da uygula. */
+  const topluOdeGonder = async (secililer) => {
+    if (!secililer.length) return;
+    setTopluMesgul(true);
+    try {
+      const r = await api('/toplu-odeme', {
+        method: 'POST',
+        body: { odemeler: secililer.map((o) => ({ odeme_id: o._id, tutar: sayi(o._tutar) })) },
+      });
+      onToast?.(`✓ ${sayi(r?.uygulanan) || secililer.length}/${secililer.length} ödeme uygulandı`);
+      setTopluSecim({}); setTopluSor(false);
+      yukle();
+    } catch (e) {
+      // Tek transaction: biri düşerse HİÇBİRİ uygulanmaz — mesaj bunu söylemeli
+      onToast?.(`${e?.message || 'Toplu ödeme başarısız'} — hiçbiri uygulanmadı`);
+    } finally {
+      setTopluMesgul(false);
+    }
   };
 
   /** Seçili kaynağın ödeme sonrası durumu. Nakit → kasa bakiyesi; kart →
@@ -713,8 +739,20 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
         </div>
         {satirlar.length ? (
           <Liste
+            secilebilir
+            secili={topluSecim}
+            onSec={(id) => setTopluSecim((p) => {
+              const y = { ...p };
+              if (y[id]) delete y[id]; else y[id] = true;
+              return y;
+            })}
+            onHepsi={(hepsiMi) => setTopluSecim(hepsiMi
+              ? Object.fromEntries(satirlar.filter((x) => !x.tutar_girilmedi).map((x) => [x.id, true]))
+              : {})}
             satirlar={satirlar.map(o => ({
               id: o.id,
+              // Tutarı girilmemiş kalem toplu koşuya GİREMEZ — ne ödeneceği belli değil
+              secilemez: !!o.tutar_girilmedi,
               baslik: o.baslik,
               alt: `${o.tip}${o._tarih ? ` · vade ${kisaTarih(o._tarih)}` : ''}${o._gecikmis ? ` · ${o.gun_gecikme} gün gecikme` : ''}`,
               tutar: o.tutar_girilmedi ? (o._tahmin ? `≈ ${fmt(o._tahmin)}` : 'tutar yok') : fmt(o._tutar),
@@ -751,6 +789,38 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
             <div style={{ fontSize: 13, color: R.not, marginTop: 8 }}>Önümüzdeki 14 günde vadesi gelen kalem bulunmuyor.</div>
           </div>
         )}
+        {(() => {
+          const secililer = satirlar.filter((o) => topluSecim[o.id] && !o.tutar_girilmedi);
+          const toplam = secililer.reduce((a, o) => a + sayi(o._tutar), 0);
+          return (
+            <>
+              <SecimCubugu
+                sayi={secililer.length}
+                mesgul={topluMesgul}
+                onaylaAd={`💸 ${fmt(toplam)} öde`}
+                onOnayla={() => setTopluSor(true)}
+                onTemizle={() => setTopluSecim({})}
+              />
+              <OnayModali
+                acik={topluSor}
+                baslik="Toplu ödeme koşusu"
+                altBaslik={`${secililer.length} kalem tek seferde ödenecek`}
+                tutar={fmt(toplam)}
+                tutarSayi={toplam}
+                satirlar={secililer.slice(0, 8).map((o) => ({
+                  ad: String(o.baslik || '').slice(0, 44),
+                  deger: fmt(sayi(o._tutar)),
+                })).concat(secililer.length > 8
+                  ? [{ ad: `… ve ${secililer.length - 8} kalem daha`, deger: '' }] : [])}
+                not="TEK TRANSACTION: biri düşerse HİÇBİRİ uygulanmaz (rollback). Kasa yeterliliği kilit altında kontrol edilir; ödemeler kasa izine yazılır."
+                onaylaAd={topluMesgul ? 'Ödeniyor…' : `Evet, ${secililer.length} kalemi öde`}
+                calisiyor={topluMesgul}
+                onOnayla={() => topluOdeGonder(secililer)}
+                onKapat={() => setTopluSor(false)}
+              />
+            </>
+          );
+        })()}
         {modalBlok}
         {borcOdeModali}
       </>
