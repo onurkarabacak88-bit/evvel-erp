@@ -191,6 +191,17 @@ const ODEME_UC = {
       { stok_yolda_id: 'sy3', sube_adi: 'Zafer', kalem_adi: 'Vanilya şurup', gonderilen_adet: 6, kabul_adet: 4 },
     ],
   },
+  '/api/ops/siparis/katalog': {
+    kategoriler: [
+      { id: 'k1', kod: 'kahve', ad: 'Kahve & Çekirdek', emoji: '☕', sira: 1, urunler: [
+        { id: 'u1', ad: 'Yeşil çekirdek 1kg', aktif: true, birim_fiyat_tl: 420, depo_stok_kalem_kodu: 'STK-001' },
+        { id: 'u2', ad: 'Filtre kahve 250g', aktif: true, birim_fiyat_tl: null, depo_stok_kalem_kodu: 'STK-002' },
+      ]},
+      { id: 'k2', kod: 'ambalaj', ad: 'Ambalaj', emoji: '📦', sira: 2, urunler: [
+        { id: 'u3', ad: 'Karton bardak 12oz', aktif: true, birim_fiyat_tl: 3.2, depo_stok_kalem_kodu: null },
+      ]},
+    ],
+  },
   '/api/ops/kasa-uyumsuzluk': {
     uyarilar: [
       { id: 'ku1', sube_adi: 'Zafer', tarih: gunEkleISO(-2), fark_tl: -2480, durum: 'acik' },

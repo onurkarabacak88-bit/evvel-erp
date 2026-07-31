@@ -137,6 +137,74 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     }).catch((e) => setUzHata(e?.message || 'Uzlaştırma verisi alınamadı'));
   }, []);
 
+  const ktMiniBtn = {
+    padding: '5px 11px', borderRadius: 8, cursor: 'pointer', border: `1px solid ${R.cizgi3}`,
+    background: 'transparent', color: R.metin2, fontSize: 11, fontWeight: 600, fontFamily: 'inherit',
+  };
+
+  // ── SİPARİŞ KATALOĞU (Faz 3, 2026-07-31) ──────────────────────────────────
+  const [ktKatalog, setKtKatalog] = useState(null);
+  const [ktHata, setKtHata] = useState('');
+  const [ktModal, setKtModal] = useState(null);   // {tip, kategori, urun, ad, deger}
+  const [ktMesgul, setKtMesgul] = useState(false);
+  const [ktSyncOnay, setKtSyncOnay] = useState('');
+
+  const ktYukle = useCallback(() => {
+    setKtHata('');
+    api('/ops/siparis/katalog')
+      .then((d) => setKtKatalog(Array.isArray(d?.kategoriler) ? d.kategoriler : []))
+      .catch((e) => setKtHata(e?.message || 'Katalog alınamadı'));
+  }, []);
+
+  const ktUygula = async () => {
+    const m = ktModal;
+    if (!m) return;
+    setKtMesgul(true);
+    try {
+      if (m.tip === 'kategori') {
+        const ad = (m.ad || '').trim();
+        if (ad.length < 2) { onToast?.('Kategori adı en az 2 karakter'); setKtMesgul(false); return; }
+        await api('/ops/siparis/kategori', { method: 'POST', body: { ad, emoji: (m.deger || '📦').trim() || '📦' } });
+        onToast?.(`✓ «${ad}» kategorisi oluşturuldu`);
+      } else if (m.tip === 'urun') {
+        const ad = (m.ad || '').trim();
+        if (!ad) { onToast?.('Ürün adı girin'); setKtMesgul(false); return; }
+        await api('/ops/siparis/urun', {
+          method: 'POST',
+          body: { kategori_kod: m.kategori.kod, urun_adi: ad, aciklama: (m.deger || '').trim() || null },
+        });
+        onToast?.(`✓ «${ad}» kataloğa eklendi`);
+      } else if (m.tip === 'ad') {
+        const ad = (m.ad || '').trim();
+        if (!ad) { onToast?.('Yeni ad girin'); setKtMesgul(false); return; }
+        await api('/ops/siparis/urun-ad', {
+          method: 'POST',
+          body: { kategori_kod: m.kategori.kod, urun_id: m.urun.id, yeni_ad: ad },
+        });
+        onToast?.('✓ Ürün adı güncellendi');
+      } else if (m.tip === 'fiyat') {
+        const f = String(m.deger).trim().replace(',', '.');
+        if (f !== '' && !Number.isFinite(Number(f))) { onToast?.('Geçerli bir fiyat girin'); setKtMesgul(false); return; }
+        await api('/ops/siparis/urun-fiyat', {
+          method: 'POST',
+          body: { kategori_kod: m.kategori.kod, urun_id: m.urun.id, birim_fiyat_tl: f === '' ? null : Number(f) },
+        });
+        onToast?.('✓ Birim fiyat güncellendi');
+      } else if (m.tip === 'pasif') {
+        await api('/ops/siparis/urun-durum', {
+          method: 'POST',
+          body: { kategori_kod: m.kategori.kod, urun_id: m.urun.id, aktif: false },
+        });
+        onToast?.('✓ Ürün pasife alındı — şubeler artık sipariş edemez');
+      }
+      setKtModal(null);
+      ktYukle();
+    } catch (e) {
+      onToast?.(e?.message || 'İşlem başarısız');
+    } finally { setKtMesgul(false); }
+  };
+
+
   /** Uzlaştırmayı uygula — her tip KENDİ ucuna ve KENDİ gövdesine gider. */
   const uzUygula = async () => {
     const m = uzModal;
@@ -469,8 +537,9 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     if (gorunum === 'denetim') denetimYukle(barTarih);
     if (gorunum === 'tedarik') tedarikYukle();
     if (gorunum === 'uzlastir') uzYukle();
+    if (gorunum === 'katalog') ktYukle();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gorunum, kuleYukle, sevkYukle, depoYukle, sayimYukle, hareketYukle, barYukle, denetimYukle, tedarikYukle, uzYukle]);
+  }, [gorunum, kuleYukle, sevkYukle, depoYukle, sayimYukle, hareketYukle, barYukle, denetimYukle, tedarikYukle, uzYukle, ktYukle]);
 
   // ── seçili sevkiyat talebi değişince kalem durumlarını hazırla ────────────
   const seciliTalep = useMemo(
@@ -656,6 +725,88 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
   // Çekmece aksiyonu TasarimV2'de koprule(_hedef) çağırır; görünüm-içi hedefler
   // için köprüyü burada yakalayamayız → kart üstündeki butonlar görünüm değiştirir,
   // çekmece aksiyonu eski sayfaya köprüler. (__gorunum: önekini TasarimV2 çözer.)
+
+  /** TEK SEFERLİK toplu migration — geçmiş sipariş kayıtlarını da değiştirir. */
+  const ktSyncYap = async () => {
+    if (ktSyncOnay.trim() !== 'EVET_ESITLE') { onToast?.('Onay kutusuna tam olarak «EVET_ESITLE» yazın'); return; }
+    setKtMesgul(true);
+    try {
+      const r = await api('/ops/siparis/sync-urun-adlari', { method: 'POST' });
+      onToast?.(`✓ Adlar eşitlendi${r?.guncellenen != null ? ` — ${sayi(r.guncellenen)} kayıt` : ''}`);
+      setKtSyncOnay('');
+      ktYukle();
+    } catch (e) {
+      onToast?.(e?.message || 'Eşitleme başarısız');
+    } finally { setKtMesgul(false); }
+  };
+
+  // Katalog modalı — tek modal, tipe göre alan gösterir
+  const ktModalBlok = ktModal && (() => {
+    const m = ktModal;
+    const T = {
+      kategori: { b: 'Yeni kategori', a: 'Şubelerin sipariş ekranında görünecek başlık.', ad: 'Kategori adı', ek: 'Emoji', btn: 'Kategoriyi oluştur' },
+      urun:     { b: 'Yeni ürün', a: 'Bu kategoriye ürün ekler. Aynı ad daha önce pasife alınmışsa yeniden aktif olur.', ad: 'Ürün adı', ek: 'Açıklama (isteğe bağlı)', btn: 'Ürünü ekle' },
+      ad:       { b: 'Ürün adını değiştir', a: 'Ad değişir; geçmiş siparişler etkilenmez.', ad: 'Yeni ad', ek: null, btn: 'Adı kaydet' },
+      fiyat:    { b: 'Birim fiyat', a: 'Maliyet hesabı bu fiyatı kullanır. Boş bırakırsan ürün fiyatsız kalır.', ad: null, ek: 'Birim fiyat (₺)', btn: 'Fiyatı kaydet' },
+      pasif:    { b: 'Ürünü pasife al', a: 'Şubeler bu ürünü artık sipariş edemez ve ürün bu listeden kaybolur. Geçmiş siparişler korunur.', ad: null, ek: null, btn: 'Evet, pasife al', tehlike: true },
+    }[m.tip];
+    const kapat = () => { if (!ktMesgul) setKtModal(null); };
+    return (
+      <div onClick={(e) => { if (e.target === e.currentTarget) kapat(); }} style={{
+        position: 'fixed', inset: 0, zIndex: 120, background: 'rgba(10,6,2,.7)',
+        backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+      }}>
+        <div style={{ ...kartYuzey, width: 430, maxWidth: '96vw', padding: '24px 26px' }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 6 }}>
+            <div style={{ fontFamily: F.baslik, fontSize: 19, fontWeight: 600 }}>{T.b}</div>
+            <button onClick={kapat} style={{
+              marginLeft: 'auto', border: 'none', background: 'transparent', color: R.not,
+              fontSize: 16, cursor: 'pointer', fontFamily: 'inherit',
+            }}>x</button>
+          </div>
+          {(m.kategori || m.urun) && (
+            <div style={{ fontSize: 12.5, color: R.metin2, marginBottom: 4 }}>
+              {m.urun ? <b>{m.urun.ad}</b> : null}
+              {m.urun && m.kategori ? ' · ' : ''}
+              {m.kategori ? `${m.kategori.emoji || ''} ${m.kategori.ad}` : ''}
+            </div>
+          )}
+          <div style={{ fontSize: 12, color: R.not2, lineHeight: 1.65, marginBottom: 16 }}>{T.a}</div>
+
+          {T.ad && (
+            <>
+              <label style={opsEtiket}>{T.ad}</label>
+              <input value={m.ad} autoFocus
+                onChange={(e) => setKtModal((p) => ({ ...p, ad: e.target.value }))}
+                style={opsAlanStil} />
+            </>
+          )}
+          {T.ek && (
+            <>
+              <label style={opsEtiket}>{T.ek}</label>
+              <input value={m.deger} inputMode={m.tip === 'fiyat' ? 'decimal' : undefined}
+                onChange={(e) => setKtModal((p) => ({ ...p, deger: e.target.value }))}
+                style={opsAlanStil} />
+            </>
+          )}
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 6 }}>
+            <button disabled={ktMesgul} onClick={kapat} style={{
+              padding: '10px 18px', borderRadius: 10, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+              background: 'transparent', color: R.metin2, fontSize: 12.5, fontWeight: 600, fontFamily: 'inherit',
+            }}>Vazgeç</button>
+            <button disabled={ktMesgul} onClick={ktUygula} style={{
+              padding: '10px 20px', borderRadius: 10, cursor: 'pointer',
+              border: T.tehlike ? `1px solid ${R.kirmizi}55` : 'none',
+              background: T.tehlike ? `${R.kirmizi}26` : 'linear-gradient(150deg, #E0A559, #AF6C29)',
+              color: T.tehlike ? R.kirmizi : '#1C1309',
+              fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit',
+            }}>{ktMesgul ? 'İşleniyor…' : T.btn}</button>
+          </div>
+        </div>
+      </div>
+    );
+  })();
 
   // ── YAŞAM DÖNGÜSÜ ONAY MODALI ─────────────────────────────────────────────
   // Klasikte window.confirm + prompt vardı. Kadifede: ne olacağını AÇIKÇA yazan
@@ -1114,6 +1265,120 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
             </div>
           </div>
         )}
+      </>
+    );
+  }
+
+  // ════════════════════════ GÖRÜNÜM: SİPARİŞ KATALOĞU ══════════════════════
+  // Şubelerin sipariş edebildiği ürün listesi. v2'de HİÇ yönetilemiyordu.
+  if (gorunum === 'katalog') {
+    if (ktHata) return <HataBandi mesaj={ktHata} onTekrar={ktYukle} />;
+    if (!ktKatalog) return <Yukleniyor />;
+
+    const toplamUrun = ktKatalog.reduce((a, k) => a + (k.urunler || []).length, 0);
+    const fiyatsiz = ktKatalog.reduce((a, k) =>
+      a + (k.urunler || []).filter((u) => u.birim_fiyat_tl == null).length, 0);
+    const eslesmemis = ktKatalog.reduce((a, k) =>
+      a + (k.urunler || []).filter((u) => !u.depo_stok_kalem_kodu).length, 0);
+
+    return (
+      <>
+        <KpiSeridi kpiler={[
+          { etiket: 'Kategori', deger: String(ktKatalog.length), alt: 'aktif katalog başlığı' },
+          { etiket: 'Ürün', deger: String(toplamUrun), alt: 'şubelerin sipariş edebildiği' },
+          { etiket: 'Fiyatsız ürün', deger: String(fiyatsiz), alt: fiyatsiz ? 'maliyet hesabına girmez' : 'hepsi fiyatlı', renk: fiyatsiz ? R.amber : R.yesil },
+          { etiket: 'Depo eşleşmesi yok', deger: String(eslesmemis), alt: eslesmemis ? 'stok düşmez' : 'hepsi eşleşti', renk: eslesmemis ? R.amber : R.yesil },
+        ]} />
+
+        <div style={{
+          padding: '11px 15px', borderRadius: 12, marginBottom: 14, fontSize: 11.5, lineHeight: 1.65,
+          background: 'rgba(96,165,250,.08)', border: '1px solid rgba(96,165,250,.24)', color: R.metin2,
+        }}>
+          Bu liste yalnız <b>aktif</b> kayıtları gösterir. Bir ürünü pasife aldığında
+          buradan kaybolur — şubeler onu artık sipariş edemez, ama geçmiş siparişleri
+          durur. Geri açmak şu an bu ekrandan yapılamıyor.
+        </div>
+
+        <div style={{ display: 'flex', gap: 9, flexWrap: 'wrap', marginBottom: 16 }}>
+          <button onClick={() => setKtModal({ tip: 'kategori', ad: '', deger: '📦' })} style={{
+            padding: '9px 17px', borderRadius: 10, border: 'none', cursor: 'pointer',
+            background: 'linear-gradient(150deg, #E0A559, #AF6C29)', color: '#1C1309',
+            fontSize: 12, fontWeight: 700, fontFamily: 'inherit',
+          }}>+ Kategori ekle</button>
+        </div>
+
+        {ktKatalog.length === 0 ? (
+          <BosDurum baslik="Katalog boş" aciklama="Henüz kategori tanımlanmamış. Şubelerin sipariş verebilmesi için önce kategori, sonra ürün ekleyin." />
+        ) : ktKatalog.map((k) => (
+          <div key={k.kod} style={{ ...kartYuzey, padding: '18px 20px', marginBottom: 14 }}>
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12,
+              paddingBottom: 10, borderBottom: `1px solid ${R.cizgi2}`, flexWrap: 'wrap',
+            }}>
+              <span style={{ fontSize: 17 }}>{k.emoji || '📦'}</span>
+              <span style={{ fontFamily: F.baslik, fontSize: 15.5, fontWeight: 600 }}>{k.ad}</span>
+              <span style={{ fontFamily: F.mono, fontSize: 11, color: R.not2 }}>
+                {(k.urunler || []).length} ürün
+              </span>
+              <button onClick={() => setKtModal({ tip: 'urun', kategori: k, ad: '', deger: '' })} style={{
+                marginLeft: 'auto', padding: '6px 13px', borderRadius: 9, cursor: 'pointer',
+                border: `1px solid ${R.cizgi3}`, background: R.girinti, color: R.metin2,
+                fontSize: 11.5, fontWeight: 600, fontFamily: 'inherit',
+              }}>+ Ürün</button>
+            </div>
+
+            {(k.urunler || []).length === 0 ? (
+              <div style={{ fontSize: 12, color: R.not2 }}>Bu kategoride ürün yok.</div>
+            ) : (k.urunler || []).map((u) => (
+              <div key={u.id} style={{
+                display: 'flex', alignItems: 'center', gap: 10, padding: '9px 0',
+                borderBottom: `1px solid ${R.cizgi2}`, fontSize: 12.5, flexWrap: 'wrap',
+              }}>
+                <span style={{ flex: 1, minWidth: 140 }}>
+                  {u.ad}
+                  {!u.depo_stok_kalem_kodu && (
+                    <span style={{ ...rozetHap(R.amber), marginLeft: 8, fontSize: 10 }}>depo eşleşmesi yok</span>
+                  )}
+                </span>
+                <span style={{
+                  fontFamily: F.mono, fontSize: 12, minWidth: 78, textAlign: 'right',
+                  color: u.birim_fiyat_tl == null ? R.not3 : R.krem,
+                }}>
+                  {u.birim_fiyat_tl == null ? 'fiyatsız' : fmt(sayi(u.birim_fiyat_tl))}
+                </span>
+                <button onClick={() => setKtModal({ tip: 'ad', kategori: k, urun: u, ad: u.ad, deger: '' })} style={ktMiniBtn}>ad</button>
+                <button onClick={() => setKtModal({ tip: 'fiyat', kategori: k, urun: u, ad: '', deger: u.birim_fiyat_tl == null ? '' : String(u.birim_fiyat_tl) })} style={ktMiniBtn}>fiyat</button>
+                <button onClick={() => setKtModal({ tip: 'pasif', kategori: k, urun: u, ad: '', deger: '' })} style={{ ...ktMiniBtn, color: R.kirmizi, borderColor: `${R.kirmizi}44` }}>pasife al</button>
+              </div>
+            ))}
+          </div>
+        ))}
+
+        {/* TEHLİKELİ: toplu migration — yazılı onay kapısı */}
+        <div style={{ ...kartYuzey, padding: '16px 20px', border: `1px solid ${R.kirmizi}33` }}>
+          <div style={{ fontFamily: F.baslik, fontSize: 14.5, fontWeight: 600, marginBottom: 6 }}>
+            Ürün adlarını depo ile eşitle
+          </div>
+          <div style={{ fontSize: 11.5, color: R.not2, lineHeight: 1.65, marginBottom: 12 }}>
+            <b>Tek seferlik toplu işlem.</b> Katalogdaki ürün adlarını deponun kanonik
+            adıyla değiştirir ve <b>geçmiş sipariş kayıtlarının içindeki adları da</b>
+            günceller. Geri alınamaz — emin değilsen çalıştırma.
+          </div>
+          <div style={{ display: 'flex', gap: 9, flexWrap: 'wrap', alignItems: 'center' }}>
+            <input value={ktSyncOnay} placeholder="Onaylamak için EVET_ESITLE yazın"
+              onChange={(e) => setKtSyncOnay(e.target.value)}
+              style={{ ...opsAlanStil, flex: '1 1 240px', marginBottom: 0 }} />
+            <button disabled={ktMesgul || ktSyncOnay.trim() !== 'EVET_ESITLE'} onClick={ktSyncYap} style={{
+              padding: '9px 16px', borderRadius: 10, fontSize: 12, fontWeight: 700, fontFamily: 'inherit',
+              cursor: ktSyncOnay.trim() === 'EVET_ESITLE' ? 'pointer' : 'default',
+              border: `1px solid ${R.kirmizi}55`,
+              background: ktSyncOnay.trim() === 'EVET_ESITLE' ? `${R.kirmizi}26` : R.girinti,
+              color: ktSyncOnay.trim() === 'EVET_ESITLE' ? R.kirmizi : R.not3,
+            }}>{ktMesgul ? 'Eşitleniyor…' : 'Adları eşitle'}</button>
+          </div>
+        </div>
+
+        {ktModalBlok}
       </>
     );
   }
