@@ -16,7 +16,7 @@
 // reddet/toplu-onayla + ciro-taslak onayla/reddet). Diğer yazma işleri
 // (ödeme, silme, fiyat basma…) hâlâ köprülü.
 // ─────────────────────────────────────────────────────────────────────────────
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { api, fmt } from '../../utils/api';
 import { R, F, kartYuzey } from './tema';
 import { KpiSeridi, Tablo, Liste, OnayModali, SecimCubugu, BosDurum } from './parcalar';
@@ -1050,12 +1050,58 @@ export function YukModulu({ gorunum, onCekmece, onKopru, onToast }) {
 // ═════════════════════════════════════════════════════════════════════════════
 // 3) RAPOR & DEFTER — rapor.aylik / rapor.defter
 // ═════════════════════════════════════════════════════════════════════════════
-export function RaporModulu({ gorunum, onCekmece, onKopru }) {
+export function RaporModulu({ gorunum, onCekmece, onKopru, onToast }) {
   const ay = isoBugun().slice(0, 7);
+  // ⚠️ TÜM useState'ler koşullu return'lerin ÜSTÜNDE — aşağıda erken return var,
+  // hook sırası bozulursa ekran beyaza düşer (v2 boyunca tekrarlayan tuzak).
+  const [muhurAy, setMuhurAy] = useState(() => {
+    // Varsayılan: GEÇEN ay — mühürlenen şey biten dönemdir, süren ay değil.
+    const d = new Date();
+    const y = d.getMonth() === 0 ? d.getFullYear() - 1 : d.getFullYear();
+    const m = d.getMonth() === 0 ? 12 : d.getMonth();
+    return `${y}-${String(m).padStart(2, '0')}`;
+  });
+  const [muhurVeri, setMuhurVeri] = useState(null);   // {yukleniyor, muhur|null}
+  const [muhurOnay, setMuhurOnay] = useState(null);   // {ad} — iki adımlı onay
+  const [muhurMesgul, setMuhurMesgul] = useState(false);
+
+  const muhurDurumYukle = useCallback((donem) => {
+    const [y, m] = String(donem).split('-');
+    setMuhurVeri({ yukleniyor: true, muhur: null });
+    api(`/rapor/aylik?yil=${Number(y)}&ay=${Number(m)}`)
+      .then((r) => setMuhurVeri({ yukleniyor: false, muhur: r?.muhur || null }))
+      .catch(() => setMuhurVeri({ yukleniyor: false, muhur: null }));
+  }, []);
+
+  useEffect(() => {
+    if (gorunum === 'aylik') muhurDurumYukle(muhurAy);
+  }, [gorunum, muhurAy, muhurDurumYukle]);
+
+  const muhurle = async () => {
+    const [y, m] = String(muhurAy).split('-');
+    setMuhurMesgul(true);
+    try {
+      const r = await api('/rapor/aylik/muhurle', {
+        method: 'POST',
+        body: { yil: Number(y), ay: Number(m), muhurleyen_ad: (muhurOnay?.ad || '').trim() || 'CFO' },
+      });
+      onToast?.(`🔒 ${r?.donem || muhurAy} mühürlendi — imza ${r?.hash || ''}`);
+      setMuhurOnay(null);
+      muhurDurumYukle(muhurAy);
+    } catch (e) {
+      // 409 = zaten mühürlü; sunucu ikinci mührü yazmaz
+      onToast?.(e?.message || 'Mühürlenemedi');
+      muhurDurumYukle(muhurAy);
+    } finally {
+      setMuhurMesgul(false);
+    }
+  };
+
   const { yukleniyor, hata, veri, yukle } = useVeri([
     ['/rapor/aylik', null],
     [`/ledger?limit=300&ay=${ay}`, null],
   ]);
+
   if (yukleniyor) return <Yukleniyor ad="Rapor" />;
   if (hata) return <Hata mesaj={hata} onTekrar={yukle} />;
 
@@ -1073,8 +1119,100 @@ export function RaporModulu({ gorunum, onCekmece, onKopru }) {
     const marj = (t) => (sayi(t.gelir) ? (sayi(t.net) / sayi(t.gelir)) * 100 : 0);
     const enIyi = trend.reduce((a, b) => (marj(a) >= marj(b) ? a : b));
     const enZayif = trend.reduce((a, b) => (marj(a) <= marj(b) ? a : b));
+    // ── DÖNEM MÜHRÜ — tek yönlü kapı, açma ucu YOK ──────────────────────────
+    const muhurlu = !!muhurVeri?.muhur?.muhurlu;
+    const aySecenek = [...trend].slice(-13).reverse().map((t) => t.ay);
+    const muhurSeridi = (
+      <div style={{
+        ...kartYuzey, padding: '14px 18px', marginBottom: 14,
+        border: muhurlu ? `1px solid ${R.yesil}44` : kartYuzey.border,
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+          <span style={{ fontFamily: F.baslik, fontSize: 14.5, fontWeight: 600 }}>
+            {muhurlu ? '🔒 Dönem mühürlü' : '🔓 Dönem mührü'}
+          </span>
+          <select value={muhurAy} disabled={muhurMesgul}
+            onChange={(e) => { setMuhurOnay(null); setMuhurAy(e.target.value); }}
+            style={{
+              padding: '6px 11px', borderRadius: 9, fontSize: 12, fontFamily: 'inherit',
+              border: `1px solid ${R.cizgi3}`, background: R.girinti, color: R.krem, outline: 'none',
+            }}>
+            {(aySecenek.includes(muhurAy) ? aySecenek : [muhurAy, ...aySecenek]).map((a) => (
+              <option key={a} value={a}>{a}</option>
+            ))}
+          </select>
+          {muhurVeri?.yukleniyor ? (
+            <span style={{ fontSize: 11.5, color: R.not2 }}>durum okunuyor…</span>
+          ) : muhurlu ? (
+            <span style={{ fontSize: 11.5, color: R.yesil }}>
+              {muhurVeri.muhur.muhurleyen_ad || 'CFO'} ·{' '}
+              {String(muhurVeri.muhur.muhur_ts || '').slice(0, 16).replace('T', ' ')}
+            </span>
+          ) : !muhurOnay ? (
+            <button onClick={() => setMuhurOnay({ ad: 'CFO' })} style={{
+              marginLeft: 'auto', padding: '7px 14px', borderRadius: 10, cursor: 'pointer',
+              border: `1px solid ${R.bakir}55`, background: `${R.bakir}22`, color: R.bakir,
+              fontSize: 11.5, fontWeight: 700, fontFamily: 'inherit',
+            }}>🔒 Bu dönemi mühürle</button>
+          ) : null}
+        </div>
+
+        {!muhurVeri?.yukleniyor && !muhurlu && !muhurOnay && (
+          <div style={{ fontSize: 11, color: R.not2, marginTop: 9, lineHeight: 1.6 }}>
+            Mühürlenmemiş dönem her açılışta <b>yeniden hesaplanır</b> — geçmişe dönük bir
+            düzeltme rakamı değiştirebilir. Mühür o ayı dondurur.
+          </div>
+        )}
+
+        {muhurlu && (
+          <div style={{ fontSize: 11, color: R.not2, marginTop: 9, lineHeight: 1.6 }}>
+            Bu ay artık <b>canlı hesaptan değil dondurulmuş kayıttan</b> okunuyor. Sonradan
+            yapılan düzeltmeler bu dönemin rakamlarını değiştirmez.
+          </div>
+        )}
+
+        {muhurOnay && !muhurlu && (
+          <div style={{
+            marginTop: 12, padding: '13px 15px', borderRadius: 12,
+            background: 'rgba(220,38,38,.08)', border: '1px solid rgba(220,38,38,.28)',
+          }}>
+            <div style={{ fontSize: 12, color: R.metin2, lineHeight: 1.65, marginBottom: 11 }}>
+              <b style={{ color: '#FCA5A5' }}>Bu işlemin geri alması yok.</b>{' '}
+              <b>{muhurAy}</b> dönemi mühürlenince rakamlar dondurulur; sistemde mührü
+              açan bir uç <b>yok</b>. Mühürden sonra o aya ait düzeltme yaparsan rapor
+              değişmez — fark yalnız canlı defterde görünür. Ay gerçekten kapandıysa mühürle.
+            </div>
+            <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+              <div style={{ flex: 1, minWidth: 180 }}>
+                <label style={{ fontSize: 10.5, letterSpacing: '.7px', textTransform: 'uppercase',
+                  color: R.not2, fontWeight: 700, marginBottom: 5, display: 'block' }}>
+                  Mühürleyen (kayda yazılır)
+                </label>
+                <input value={muhurOnay.ad} disabled={muhurMesgul}
+                  onChange={(e) => setMuhurOnay({ ad: e.target.value })}
+                  style={{
+                    width: '100%', boxSizing: 'border-box', padding: '8px 11px', borderRadius: 9,
+                    fontSize: 12.5, fontFamily: 'inherit', border: `1px solid ${R.cizgi3}`,
+                    background: R.girinti, color: R.krem, outline: 'none',
+                  }} />
+              </div>
+              <button disabled={muhurMesgul} onClick={() => setMuhurOnay(null)} style={{
+                padding: '9px 15px', borderRadius: 10, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+                background: 'transparent', color: R.metin2, fontSize: 12, fontWeight: 600, fontFamily: 'inherit',
+              }}>Vazgeç</button>
+              <button disabled={muhurMesgul} onClick={muhurle} style={{
+                padding: '9px 17px', borderRadius: 10, border: '1px solid rgba(220,38,38,.5)', cursor: 'pointer',
+                background: 'rgba(220,38,38,.2)', color: '#FCA5A5', fontSize: 12, fontWeight: 700, fontFamily: 'inherit',
+              }}>{muhurMesgul ? 'Mühürleniyor…' : `🔒 Evet, ${muhurAy} dönemini mühürle`}</button>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+
     return (
       <>
+        {muhurSeridi}
         <KpiSeridi kpiler={[
           { etiket: `${trend.length} ay ciro`, deger: fmt(toplamCiro), alt: `${trend[0].ay_kisa} – ${son.ay_kisa}` },
           { etiket: `${trend.length} ay net`, deger: fmt(toplamNet), alt: toplamCiro ? `ortalama marj %${trSayi((toplamNet / toplamCiro) * 100)}` : '—', renk: toplamNet >= 0 ? R.yesil : R.kirmizi },

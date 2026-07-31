@@ -662,7 +662,7 @@ export default function TasarimV2({ onGit }) {
       return <YukModulu gorunum={gorunum} onCekmece={setCekmece} onKopru={koprule} onToast={setToast} />;
     }
     if (mod === 'rapor') {
-      return <RaporModulu gorunum={gorunum} onCekmece={setCekmece} onKopru={koprule} />;
+      return <RaporModulu gorunum={gorunum} onCekmece={setCekmece} onKopru={koprule} onToast={setToast} />;
     }
     if (mod === 'sistem') {
       return <SistemModulu gorunum={gorunum} onCekmece={setCekmece} onKopru={koprule} onToast={setToast} />;

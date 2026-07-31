@@ -115,12 +115,40 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
   // taşınmadı — sahip kararına kadar klasikte kalır.
   const [kartForm, setKartForm] = useState(null);        // {duzenleId?, kart_adi, banka, ...}
   const [kartMesgul, setKartMesgul] = useState(false);
+  // Ekstre faizi üretimi (2026-07-31) — gece motoru zaten yazar, bu ELLE tetikler
+  const [faizMesgul, setFaizMesgul] = useState(false);
+  const [faizSonuc, setFaizSonuc] = useState(null);      // {yazilan, kartlar[]}
   const [kartPasifSor, setKartPasifSor] = useState('');
   // ── YERLİ KART ANALİZİ (köprü kaldırma turu, 2026-07-30) ──────────────────
   // Klasik KartEkstreAnaliz'in iki bloğu: aylık borç/faiz eğrisi + kategori
   // dağılımı (/kartlar/analiz) ve dönem arşivi (/kartlar/ekstre-arsiv).
   const [analiz, setAnaliz] = useState(null);
   const [arsiv, setArsiv] = useState(null);
+
+  /**
+   * Ekstre faizini hesapla-yaz. Gece motoru bunu zaten koşar; buradaki düğme
+   * ekstre elle yüklendiğinde beklememek içindir. Sunucu kart kart durum döner
+   * (yazildi / zaten_yazilmis / tam_odendi / ekstre_yok / henuz_* / faiz_cok_kucuk)
+   * — sayıyı özetlemek yerine NEDENİ göstermek işin aslı.
+   */
+  const faizUret = async () => {
+    setFaizMesgul(true);
+    setFaizSonuc(null);
+    try {
+      const r = await api('/kartlar/faiz-uret', { method: 'POST' });
+      const satirlar = Array.isArray(r?.kartlar) ? r.kartlar : [];
+      const yazilan = satirlar.filter((k) => k?.durum === 'yazildi');
+      setFaizSonuc({ donem: r?.donem || '', yazilan: yazilan.length, kartlar: satirlar });
+      onToast?.(yazilan.length
+        ? `${yazilan.length} karta faiz yazıldı — aşağıda kart kart neden yazıldığı var`
+        : 'Faiz yazılacak kart çıkmadı — sebepleri aşağıda kart kart yazılı');
+      yukle();
+    } catch (e) {
+      onToast?.(e?.message || 'Faiz üretilemedi');
+    } finally {
+      setFaizMesgul(false);
+    }
+  };
 
   const yukle = () => {
     setYukleniyor(true);
@@ -663,6 +691,65 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
           }))}
           onSatir={(row) => kartAc(row._k)}
         />
+
+        {/* ── EKSTRE FAİZİ ÜRET — gece motorunun elle tetiklenmiş hâli ────────── */}
+        <div style={{ ...kartYuzey, padding: '15px 18px', marginTop: 14 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+            <span style={{ fontFamily: F.baslik, fontSize: 14.5, fontWeight: 600 }}>💢 Ekstre faizi</span>
+            <span style={{ fontSize: 11.5, color: R.not2, flex: 1, minWidth: 220 }}>
+              Sistem her gece kesim/son ödeme döngüsüne göre faizi kendisi yazar.
+              Bu düğme ekstreyi <b>az önce yüklediysen</b> beklememek içindir.
+            </span>
+            <button disabled={faizMesgul} onClick={faizUret} style={{
+              padding: '8px 15px', borderRadius: 10, cursor: faizMesgul ? 'wait' : 'pointer',
+              border: `1px solid ${R.bakir}55`, background: `${R.bakir}22`, color: R.bakir,
+              fontSize: 11.5, fontWeight: 700, fontFamily: 'inherit',
+            }}>{faizMesgul ? '⏳ hesaplanıyor…' : '💢 Faizi şimdi hesapla'}</button>
+          </div>
+
+          {faizSonuc && (
+            <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${R.cizgi2}` }}>
+              <div style={{ fontSize: 12, color: R.metin2, marginBottom: 9 }}>
+                <b>{faizSonuc.donem || 'bu ay'}</b> · {faizSonuc.kartlar.length} kart tarandı ·{' '}
+                <b style={{ color: faizSonuc.yazilan ? R.amber : R.yesil }}>
+                  {faizSonuc.yazilan} karta faiz yazıldı
+                </b>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {faizSonuc.kartlar.map((k, i) => {
+                  const D = {
+                    yazildi: ['faiz yazıldı', R.amber],
+                    zaten_yazilmis: ['bu dönem zaten yazılmıştı', R.not],
+                    tam_odendi: ['tam ödenmiş — faiz doğmaz', R.yesil],
+                    ekstre_yok: ['ekstre yüklenmemiş', R.amber],
+                    faiz_cok_kucuk: ['faiz eşiğin altında', R.not],
+                    henuz_son_odeme_gecmedi: ['son ödeme günü geçmedi', R.not],
+                    henuz_kapanmis_kesim_yok: ['kapanmış kesim yok', R.not],
+                  }[k?.durum] || [k?.hata ? `hata: ${k.hata}` : (k?.durum || '—'), R.kirmizi];
+                  const kartAdi = kartlar.find((x) => String(x.id) === String(k?.kart_id));
+                  return (
+                    <div key={k?.kart_id || `f-${i}`} style={{
+                      display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px',
+                      borderRadius: 10, background: R.girinti, border: `1px solid ${R.cizgi3}`, fontSize: 12,
+                    }}>
+                      <b style={{ flex: 1, minWidth: 0 }}>
+                        {k?.kart_adi || kartAdi?.kart_adi || kartAdi?.banka || `#${k?.kart_id || '—'}`}
+                      </b>
+                      <span style={{ color: D[1] }}>{D[0]}</span>
+                      {sayi(k?.faiz) > 0 && (
+                        <span style={{ fontFamily: F.mono, fontWeight: 700, color: R.amber }}>{fmt(sayi(k.faiz))}</span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+              <div style={{ fontSize: 10.5, color: R.not2, marginTop: 10, lineHeight: 1.6 }}>
+                Yazılan faiz kart borcuna işlenir; kasadan para çıkmaz. Aynı dönem
+                ikinci kez çalıştırılırsa üstüne yazmaz — "zaten yazılmıştı" der.
+              </div>
+            </div>
+          )}
+        </div>
       </>
     );
   }

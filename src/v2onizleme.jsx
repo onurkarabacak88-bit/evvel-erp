@@ -805,6 +805,19 @@ const KUCUK_UC = {
       { ay: '2026-07', ay_kisa: 'Tem', ciro: 2184500, gelir: 2210300, gider: 1771640, net: 438660 },
     ],
   },
+  // Tek yönlü kapı — tezgâhta yalnız cevabı doğrularız (mühür açma ucu YOK)
+  '/api/rapor/aylik/muhurle': { success: true, donem: '2026-06', hash: 'a91c4f77b2e30d15', muhurleyen_ad: 'CFO' },
+  // Kart kart durum — etiket haritasının tüm dallarını sürmek için karışık
+  '/api/kartlar/faiz-uret': {
+    donem: '2026-07', yazilan: 1,
+    kartlar: [
+      { kart_id: 'k1', kart_adi: 'Garanti İşletme', durum: 'yazildi', faiz: 4820.5 },
+      { kart_id: 'k2', kart_adi: 'Yapı Kredi Onur', durum: 'tam_odendi', faiz: 0 },
+      { kart_id: 'k3', kart_adi: 'Akbank Merve', durum: 'ekstre_yok', faiz: 0 },
+      { kart_id: 'k4', kart_adi: 'İş Bankası', durum: 'zaten_yazilmis', faiz: 0 },
+      { kart_id: 'k5', kart_adi: 'Ziraat', durum: 'faiz_cok_kucuk', faiz: 0 },
+    ],
+  },
   '/api/ledger': [
     { id: 'l1', tarih: gunEkleISO(-1), islem_turu: 'CIRO', tutar: 74000, aciklama: 'Günlük ciro · 4 şube', kaynak_tablo: 'ciro' },
     { id: 'l2', tarih: gunEkleISO(-2), islem_turu: 'FATURA_ODEMESI', tutar: -39800, aciklama: 'Sütaş Bölge Dağıtım', kaynak_tablo: 'vadeli_alimlar' },

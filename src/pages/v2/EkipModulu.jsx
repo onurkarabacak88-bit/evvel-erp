@@ -935,7 +935,11 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
     if (!cikisForm?.id) return;
     setPMesgul(true);
     try {
-      await api(`/personel/${cikisForm.id}/cikis?neden=${encodeURIComponent(cikisForm.neden || '')}`, { method: 'POST' });
+      // Adres şablonunun İÇİNDE tırnak bırakma: denetim betiğinin çıkarıcısı
+      // `${... || ''}` gördüğünde şablonu okuyamıyor, uç "v2'de yok" görünüyor.
+      // Değeri önce hesapla, şablona sade değişken koy.
+      const neden = encodeURIComponent(cikisForm.neden || '');
+      await api(`/personel/${cikisForm.id}/cikis?neden=${neden}`, { method: 'POST' });
       onToast?.(`${cikisForm.ad} işten çıkış kaydı yapıldı`);
       setCikisForm(null);
       yukle();
