@@ -183,6 +183,8 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
   const yil = donem.yil;
   const ay = donem.ay;
   const [donemYukleniyor, setDonemYukleniyor] = useState(false);
+  const [silForm, setSilForm] = useState(null);     // {id, ad}
+  const [syncOnay, setSyncOnay] = useState(false);
 
   const yukle = () => {
     setYukleniyor(true);
@@ -872,6 +874,37 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
     }
   };
 
+  // ── PERSONEL SİL + VARDİYA SYNC (2026-07-31) ──────────────────────────────
+  // Tam grep: /cikis ZATEN vardı (dokunulmadı); DELETE /personel/{id} ve
+  // POST /personel-aylik/vardiya-sync v2'de HİÇ yoktu.
+
+  /** Kalıcı silme — çıkıştan FARKLI: çıkış pasife alır, bu kaydı yok eder. */
+  const personelSil = async () => {
+    if (!silForm?.id) return;
+    setPMesgul(true);
+    try {
+      await api(`/personel/${silForm.id}`, { method: 'DELETE' });
+      onToast?.(`${silForm.ad} kaydı silindi`);
+      setSilForm(null);
+      yukle();
+    } catch (e) {
+      onToast?.(e?.message || 'Silinemedi — geçmiş kaydı olan personel silinemeyebilir');
+    } finally { setPMesgul(false); }
+  };
+
+  /** Seçili dönemin vardiya verisini aylık maaş + ödeme planına senkronlar. */
+  const vardiyaSync = async () => {
+    setPMesgul(true);
+    try {
+      const r = await api(`/personel-aylik/vardiya-sync?yil=${donem.yil}&ay=${donem.ay}`, { method: 'POST' });
+      onToast?.(`✓ ${donem.ay}/${donem.yil} vardiya verisi aktarıldı${r?.guncellenen != null ? ` — ${sayi(r.guncellenen)} kayıt` : ''}`);
+      setSyncOnay(false);
+      yukle();
+    } catch (e) {
+      onToast?.(e?.message || 'Senkronizasyon başarısız');
+    } finally { setPMesgul(false); }
+  };
+
   const cikisYap = async () => {
     if (!cikisForm?.id) return;
     setPMesgul(true);
@@ -994,6 +1027,7 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
       aksiyonlar: [
         { ad: '✎ Bilgileri düzenle', birincil: true, onTikla: () => pFormAc(p) },
         { ad: 'İşten çıkış', onTikla: () => setCikisForm({ id: p.id, ad: p.ad_soyad, neden: '' }) },
+        { ad: 'Kaydı sil', onTikla: () => setSilForm({ id: p.id, ad: p.ad_soyad }) },
       ],
     });
   };
@@ -1092,6 +1126,68 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
           </div>
         );
       })()}
+
+      {silForm && (
+        <div onClick={(e) => { if (e.target === e.currentTarget && !pMesgul) setSilForm(null); }} style={{
+          position: 'fixed', inset: 0, zIndex: 130, background: 'rgba(10,6,2,.72)',
+          backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+        }}>
+          <div style={{ ...kartYuzey, width: 430, maxWidth: '96vw', padding: '24px 26px' }}>
+            <div style={{ fontFamily: F.baslik, fontSize: 19, fontWeight: 600, marginBottom: 6 }}>Personel kaydını sil</div>
+            <div style={{ fontSize: 12, color: R.not2, lineHeight: 1.7, marginBottom: 14 }}>
+              <b>{silForm.ad}</b> kaydı tamamen silinir ve geri gelmez.
+              <br /><br />İşten ayrılan biri için <b>«İşten çıkış»</b> doğru seçim —
+              o pasife alır, bordro ve vardiya geçmişi durur. Silme yalnız
+              <b> yanlış/mükerrer kayıt</b> içindir; geçmişi olan personel
+              sunucuda silinemeyebilir.
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+              <button disabled={pMesgul} onClick={() => setSilForm(null)} style={{
+                padding: '10px 18px', borderRadius: 10, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+                background: 'transparent', color: R.metin2, fontSize: 12.5, fontWeight: 600, fontFamily: 'inherit',
+              }}>Vazgeç</button>
+              <button disabled={pMesgul} onClick={personelSil} style={{
+                padding: '10px 20px', borderRadius: 10, cursor: 'pointer', fontSize: 12.5, fontWeight: 700,
+                fontFamily: 'inherit', border: `1px solid ${R.kirmizi}55`,
+                background: `${R.kirmizi}26`, color: R.kirmizi,
+              }}>{pMesgul ? 'İşleniyor…' : 'Kalıcı sil'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {syncOnay && (
+        <div onClick={(e) => { if (e.target === e.currentTarget && !pMesgul) setSyncOnay(false); }} style={{
+          position: 'fixed', inset: 0, zIndex: 130, background: 'rgba(10,6,2,.72)',
+          backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+        }}>
+          <div style={{ ...kartYuzey, width: 450, maxWidth: '96vw', padding: '24px 26px' }}>
+            <div style={{ fontFamily: F.baslik, fontSize: 19, fontWeight: 600, marginBottom: 6 }}>
+              Vardiya verisini maaşa aktar
+            </div>
+            <div style={{ fontSize: 12.5, color: R.metin2, marginBottom: 4 }}>
+              <b>{donem.ay}/{donem.yil}</b> dönemi
+            </div>
+            <div style={{ fontSize: 12, color: R.not2, lineHeight: 1.7, marginBottom: 14 }}>
+              Seçili ayın vardiya kayıtları aylık maaş kayıtlarına ve ödeme planına
+              işlenir. Vardiya planında sonradan değişiklik yaptıysan bordronun
+              güncel olması için bunu çalıştır. <b>Onaylanmış/kilitli</b> bordrolar
+              korunur.
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+              <button disabled={pMesgul} onClick={() => setSyncOnay(false)} style={{
+                padding: '10px 18px', borderRadius: 10, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+                background: 'transparent', color: R.metin2, fontSize: 12.5, fontWeight: 600, fontFamily: 'inherit',
+              }}>Vazgeç</button>
+              <button disabled={pMesgul} onClick={vardiyaSync} style={{
+                padding: '10px 20px', borderRadius: 10, cursor: 'pointer', fontSize: 12.5, fontWeight: 700,
+                fontFamily: 'inherit', border: 'none',
+                background: 'linear-gradient(150deg, #E0A559, #AF6C29)', color: '#1C1309',
+              }}>{pMesgul ? 'Aktarılıyor…' : 'Aktar'}</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {cikisForm && (
         <div onClick={(e) => { if (e.target === e.currentTarget && !pMesgul) setCikisForm(null); }} style={{
@@ -2319,6 +2415,16 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
           onIleri={() => ayDegistir(1)}
           ileriKapali={yil === buYil && ay === buAy}
         />
+        {/* silForm + syncOnay modalları personelModali parçasının içinde */}
+        {personelModali}
+        {/* Vardiya→maaş aktarımı: plan sonradan değiştiyse bordroyu tazeler */}
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
+          <button onClick={() => setSyncOnay(true)} style={{
+            padding: '9px 16px', borderRadius: 9, cursor: 'pointer', fontFamily: 'inherit',
+            fontSize: 12, fontWeight: 600, border: `1px solid ${R.cizgi3}`,
+            background: 'transparent', color: R.metin2,
+          }}>🔄 Vardiya verisini maaşa aktar</button>
+        </div>
         <KpiSeridi kpiler={[
           { etiket: `${AY_KISA[ay - 1]} bordro`, deger: fmt(toplamNet), alt: `${bordro.length} kişi · hesaplanan net` },
           { etiket: 'Onay bekleyen', deger: String(bekleyen.length), alt: bekleyen.length ? 'taslak bordro' : 'hepsi onaylı', renk: bekleyen.length ? R.amber : R.yesil },
