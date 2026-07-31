@@ -347,6 +347,120 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
     finally { setPlMesgul(false); }
   };
 
+  // ── FAZ 5c: serbest atama · preset · kısıt · hedef · kasıtlı boş ──────────
+  const [sbForm, setSbForm] = useState({ personel_id: '', sube_id: '', baslangic_saat: '09:00', bitis_saat: '17:00', aciklama: '', override: false, kesinlestir: false });
+  const [presetler, setPresetler] = useState(null);
+  const [prForm, setPrForm] = useState({ kod: '', ad: '', bas_saat: '09:00', bit_saat: '17:00', gece_vardiyasi: false, sira: 0, aktif: true });
+  const [ksPersonel, setKsPersonel] = useState('');
+  const [ksVeri, setKsVeri] = useState(null);
+  const [hdSube, setHdSube] = useState('');
+  const [hdSayi, setHdSayi] = useState('');
+
+  const presetYukle = useCallback(() => {
+    api('/vardiya/v2/preset')
+      .then((d) => setPresetler(Array.isArray(d) ? d : (d?.presetler || d?.satirlar || [])))
+      .catch(() => setPresetler([]));
+  }, []);
+
+  const kisitYukle = useCallback((pid) => {
+    if (!pid) { setKsVeri(null); return; }
+    api(`/vardiya/v2/kisit/${pid}`)
+      .then((d) => setKsVeri(d || {}))
+      .catch(() => setKsVeri({}));
+  }, []);
+
+  /** Slot dışı, serbest saatli atama. Önce serbest slot hazırlanır. */
+  const serbestAta = async () => {
+    const f = sbForm;
+    if (!f.personel_id || !f.sube_id) { onToast?.('Personel ve şube seçin'); return; }
+    setPlMesgul(true);
+    try {
+      await api('/vardiya/v2/serbest-slot-hazirla', { method: 'POST' });
+      await api('/vardiya/v2/atama-serbest', { method: 'POST', body: {
+        personel_id: f.personel_id, sube_id: f.sube_id, tarih: vpTarih,
+        baslangic_saat: f.baslangic_saat, bitis_saat: f.bitis_saat,
+        override: !!f.override, aciklama: f.aciklama.trim() || null,
+        kesinlestir: !!f.kesinlestir,
+      } });
+      onToast?.('✓ Serbest saatli atama yapıldı');
+      setSbForm((p) => ({ ...p, aciklama: '', override: false }));
+      vpYukle(vpTarih); yukle();
+    } catch (e) { onToast?.(e?.message || 'Atama başarısız — çakışma olabilir'); }
+    finally { setPlMesgul(false); }
+  };
+
+  const presetKaydet = async () => {
+    const f = prForm;
+    if (!f.kod.trim() || !f.ad.trim()) { onToast?.('Kod ve ad girin'); return; }
+    setPlMesgul(true);
+    try {
+      await api('/vardiya/v2/preset', { method: 'POST', body: {
+        kod: f.kod.trim(), ad: f.ad.trim(), bas_saat: f.bas_saat, bit_saat: f.bit_saat,
+        gece_vardiyasi: !!f.gece_vardiyasi, renk: null, sira: Number(f.sira) || 0, aktif: true,
+      } });
+      onToast?.('✓ Preset kaydedildi');
+      setPrForm({ kod: '', ad: '', bas_saat: '09:00', bit_saat: '17:00', gece_vardiyasi: false, sira: 0, aktif: true });
+      presetYukle();
+    } catch (e) { onToast?.(e?.message || 'Preset kaydedilemedi'); }
+    finally { setPlMesgul(false); }
+  };
+
+  const presetSil = async (kod) => {
+    setPlMesgul(true);
+    try {
+      await api(`/vardiya/v2/preset/${encodeURIComponent(kod)}`, { method: 'DELETE' });
+      onToast?.('✓ Preset silindi'); presetYukle();
+    } catch (e) { onToast?.(e?.message || 'Silinemedi'); }
+    finally { setPlMesgul(false); }
+  };
+
+  const kisitKaydet = async () => {
+    if (!ksPersonel) { onToast?.('Personel seçin'); return; }
+    setPlMesgul(true);
+    try {
+      const k = ksVeri || {};
+      await api(`/vardiya/v2/kisit/${ksPersonel}`, { method: 'PUT', body: {
+        max_gunluk_saat: Number(k.max_gunluk_saat) || 9.5,
+        max_haftalik_saat: Number(k.max_haftalik_saat) || 57,
+        izinli_subeler: Array.isArray(k.izinli_subeler) ? k.izinli_subeler : [],
+        yasak_subeler: Array.isArray(k.yasak_subeler) ? k.yasak_subeler : [],
+        calisilabilir_saat_min: k.calisilabilir_saat_min || null,
+        calisilabilir_saat_max: k.calisilabilir_saat_max || null,
+        min_gecis_dk: Number(k.min_gecis_dk) || 30,
+        vardiya_preset_json: k.vardiya_preset_json || {},
+        gun_saat_kisitlari_json: k.gun_saat_kisitlari_json || {},
+        yemek_sube_id: k.yemek_sube_id || null,
+      } });
+      onToast?.('✓ Kısıtlar kaydedildi — motor bunlara uyar');
+    } catch (e) { onToast?.(e?.message || 'Kısıt kaydedilemedi'); }
+    finally { setPlMesgul(false); }
+  };
+
+  const hedefKaydet = async () => {
+    if (!hdSube) { onToast?.('Şube seçin'); return; }
+    setPlMesgul(true);
+    try {
+      await api('/vardiya/v2/sube-gun-hedef', { method: 'PUT', body: {
+        sube_id: hdSube, tarih: vpTarih,
+        hedef_personel: String(hdSayi).trim() === '' ? null : Number(hdSayi),
+      } });
+      onToast?.(String(hdSayi).trim() === '' ? '✓ Hedef kaldırıldı' : `✓ Hedef ${sayi(hdSayi)} kişi olarak kaydedildi`);
+      vpYukle(vpTarih);
+    } catch (e) { onToast?.(e?.message || 'Hedef kaydedilemedi'); }
+    finally { setPlMesgul(false); }
+  };
+
+  /** "Bu kişi bugün bilerek boş" — eksik uyarısı üretmesin diye. */
+  const kasitliBos = async (pid, deger) => {
+    setPlMesgul(true);
+    try {
+      await api('/vardiya/v2/personel-gun', { method: 'PUT', body: { personel_id: pid, tarih: vpTarih, kasitli_bos: !!deger } });
+      onToast?.(deger ? '✓ Bugün bilerek boş işaretlendi' : '✓ İşaret kaldırıldı');
+      vpYukle(vpTarih);
+    } catch (e) { onToast?.(e?.message || 'İşaretlenemedi'); }
+    finally { setPlMesgul(false); }
+  };
+
   useEffect(yukle, []);
 
   // Merkez mutasyon anahtarı — sunucuda EVVEL_MERKEZ_MUTASYON_ANAHTARI tanımlıysa
@@ -1530,8 +1644,8 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
             )}
           </div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 12 }}>
-            {[['slot', '🧱 Slot iskeleti'], ['kilit', '🔒 Gün kilidi'], ['motor', '⚙️ Otomatik doldur'], ['izin', '🌴 İzin']].map(([k, ad]) => (
-              <button key={k} onClick={() => setPlSekme(plSekme === k ? '' : k)} style={{
+            {[['slot', '🧱 Slot iskeleti'], ['kilit', '🔒 Gün kilidi'], ['motor', '⚙️ Otomatik doldur'], ['izin', '🌴 İzin'], ['serbest', '🕐 Serbest atama'], ['preset', '⏱ Preset'], ['kisit', '🚧 Kısıtlar']].map(([k, ad]) => (
+              <button key={k} onClick={() => { setPlSekme(plSekme === k ? '' : k); if (k === 'preset') presetYukle(); }} style={{
                 padding: '7px 14px', borderRadius: 9, cursor: 'pointer', fontFamily: 'inherit',
                 fontSize: 12, fontWeight: 600,
                 border: `1px solid ${plSekme === k ? R.bakir : R.cizgi3}`,
@@ -1583,6 +1697,24 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
                   }) : <div style={{ fontSize: 11.5, color: R.not, padding: '6px 0' }}>Bu şubede slot yok — yukarıdan üretebilirsin.</div>}
                 </div>
               ))}
+              {/* Şube-gün hedefi: slotlardan bağımsız "bugün kaç kişi olmalı" beyanı */}
+              <div style={{ borderTop: `1px solid ${R.cizgi3}`, paddingTop: 12, marginTop: 6 }}>
+                <div style={{ fontSize: 11.5, color: R.not2, lineHeight: 1.7, marginBottom: 8 }}>
+                  <b>Günlük hedef kişi</b> — slot toplamından bağımsız olarak
+                  {' '}<b>{kisaTarih(vpTarih)}</b> günü için «kaç kişi olmalı» dersin.
+                  Yoğun/sakin günleri slot iskeletini bozmadan ayarlamanı sağlar. Boş bırakırsan hedef kalkar.
+                </div>
+                <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                  <div style={{ minWidth: 160 }}><label style={ekEtiket}>Şube</label>
+                    <select value={hdSube} onChange={(e) => setHdSube(e.target.value)} style={ekAlanStil}>
+                      <option value="">— seçin —</option>
+                      {(vpGun?.subeler || []).map((x) => <option key={x.sube_id} value={x.sube_id}>{x.sube_ad || x.ad}</option>)}
+                    </select></div>
+                  <div style={{ maxWidth: 110 }}><label style={ekEtiket}>Hedef kişi</label>
+                    <input type="number" min={0} value={hdSayi} onChange={(e) => setHdSayi(e.target.value)} style={ekAlanStil} /></div>
+                  <button disabled={plMesgul} onClick={hedefKaydet} style={{ ...plBtn, marginBottom: 2 }}>Hedefi kaydet</button>
+                </div>
+              </div>
             </div>
           )}
 
@@ -1664,6 +1796,161 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
               <label style={ekEtiket}>Açıklama (isteğe bağlı)</label>
               <input value={izForm.aciklama} onChange={(e) => setIzForm((p) => ({ ...p, aciklama: e.target.value }))} style={ekAlanStil} />
               <button disabled={plMesgul} onClick={izinEkle} style={plBtn}>{plMesgul ? 'Kaydediliyor…' : 'İzni kaydet'}</button>
+              {/* Kasıtlı boş: izin değil, "bugün bilerek çalışmıyor" beyanı */}
+              <div style={{ borderTop: `1px solid ${R.cizgi3}`, paddingTop: 12, marginTop: 14 }}>
+                <div style={{ fontSize: 11.5, color: R.not2, lineHeight: 1.7, marginBottom: 8 }}>
+                  <b>Bilerek boş</b> — izin değil. Kişi <b>{kisaTarih(vpTarih)}</b> günü
+                  planda yok ama bu bir eksiklik değil; sistem «atanmamış» uyarısı üretmesin diye işaretlenir.
+                </div>
+                <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                  <div style={{ minWidth: 180 }}><label style={ekEtiket}>Personel</label>
+                    <select value={izForm.personel_id} onChange={(e) => setIzForm((p) => ({ ...p, personel_id: e.target.value }))} style={ekAlanStil}>
+                      <option value="">— seçin —</option>
+                      {personel.map((p) => <option key={p.id} value={p.id}>{p.ad_soyad || p.ad}</option>)}
+                    </select></div>
+                  <button disabled={plMesgul || !izForm.personel_id} onClick={() => kasitliBos(izForm.personel_id, true)}
+                    style={{ ...plBtn, marginBottom: 2, opacity: izForm.personel_id ? 1 : 0.45 }}>Bilerek boş işaretle</button>
+                  <button disabled={plMesgul || !izForm.personel_id} onClick={() => kasitliBos(izForm.personel_id, false)}
+                    style={{ ...plBtn, marginBottom: 2, opacity: izForm.personel_id ? 1 : 0.45 }}>İşareti kaldır</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {plSekme === 'serbest' && (
+            <div style={{ marginTop: 14, maxWidth: 680 }}>
+              <div style={{ fontSize: 11.5, color: R.not2, lineHeight: 1.7, marginBottom: 12 }}>
+                Slota sığmayan durumlar için: kişiyi <b>istediğin saat aralığında</b>
+                {' '}<b>{kisaTarih(vpTarih)}</b> gününe atar. Gece sarkması otomatik anlaşılır
+                (bitiş, başlangıçtan küçükse ertesi gün). Çakışma varsa engellenir —
+                bilerek geçmek istiyorsan «zorla» işaretle.
+              </div>
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                <div style={{ minWidth: 170 }}><label style={ekEtiket}>Personel</label>
+                  <select value={sbForm.personel_id} onChange={(e) => setSbForm((p) => ({ ...p, personel_id: e.target.value }))} style={ekAlanStil}>
+                    <option value="">— seçin —</option>
+                    {personel.map((p) => <option key={p.id} value={p.id}>{p.ad_soyad || p.ad}</option>)}
+                  </select></div>
+                <div style={{ minWidth: 150 }}><label style={ekEtiket}>Şube</label>
+                  <select value={sbForm.sube_id} onChange={(e) => setSbForm((p) => ({ ...p, sube_id: e.target.value }))} style={ekAlanStil}>
+                    <option value="">— seçin —</option>
+                    {(vpGun?.subeler || []).map((x) => <option key={x.sube_id} value={x.sube_id}>{x.sube_ad || x.ad}</option>)}
+                  </select></div>
+                <div><label style={ekEtiket}>Başlangıç</label>
+                  <input type="time" value={sbForm.baslangic_saat} onChange={(e) => setSbForm((p) => ({ ...p, baslangic_saat: e.target.value }))} style={ekAlanStil} /></div>
+                <div><label style={ekEtiket}>Bitiş</label>
+                  <input type="time" value={sbForm.bitis_saat} onChange={(e) => setSbForm((p) => ({ ...p, bitis_saat: e.target.value }))} style={ekAlanStil} /></div>
+              </div>
+              <label style={ekEtiket}>Açıklama</label>
+              <input value={sbForm.aciklama} onChange={(e) => setSbForm((p) => ({ ...p, aciklama: e.target.value }))} style={ekAlanStil} />
+              <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', margin: '10px 0' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 12, color: R.metin2, cursor: 'pointer' }}>
+                  <input type="checkbox" checked={sbForm.override} onChange={(e) => setSbForm((p) => ({ ...p, override: e.target.checked }))} />
+                  Çakışmaya rağmen zorla
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 12, color: R.metin2, cursor: 'pointer' }}>
+                  <input type="checkbox" checked={sbForm.kesinlestir} onChange={(e) => setSbForm((p) => ({ ...p, kesinlestir: e.target.checked }))} />
+                  Kesinleştir
+                </label>
+              </div>
+              <button disabled={plMesgul} onClick={serbestAta} style={plBtn}>{plMesgul ? 'Atanıyor…' : 'Serbest ata'}</button>
+            </div>
+          )}
+
+          {plSekme === 'preset' && (
+            <div style={{ marginTop: 14, maxWidth: 680 }}>
+              <div style={{ fontSize: 11.5, color: R.not2, lineHeight: 1.7, marginBottom: 12 }}>
+                Preset = sık kullanılan <b>hazır vardiya kalıbı</b> (ör. «Sabah 08–16»).
+                Bir kez tanımlarsın, planlarken tekrar saat yazmazsın.
+              </div>
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                <div style={{ maxWidth: 110 }}><label style={ekEtiket}>Kod</label>
+                  <input value={prForm.kod} onChange={(e) => setPrForm((p) => ({ ...p, kod: e.target.value }))} style={ekAlanStil} /></div>
+                <div style={{ minWidth: 160 }}><label style={ekEtiket}>Ad</label>
+                  <input value={prForm.ad} onChange={(e) => setPrForm((p) => ({ ...p, ad: e.target.value }))} style={ekAlanStil} /></div>
+                <div><label style={ekEtiket}>Başlangıç</label>
+                  <input type="time" value={prForm.bas_saat} onChange={(e) => setPrForm((p) => ({ ...p, bas_saat: e.target.value }))} style={ekAlanStil} /></div>
+                <div><label style={ekEtiket}>Bitiş</label>
+                  <input type="time" value={prForm.bit_saat} onChange={(e) => setPrForm((p) => ({ ...p, bit_saat: e.target.value }))} style={ekAlanStil} /></div>
+              </div>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 12, color: R.metin2, cursor: 'pointer', margin: '10px 0' }}>
+                <input type="checkbox" checked={prForm.gece_vardiyasi} onChange={(e) => setPrForm((p) => ({ ...p, gece_vardiyasi: e.target.checked }))} />
+                Gece vardiyası
+              </label>
+              <button disabled={plMesgul} onClick={presetKaydet} style={plBtn}>Preseti kaydet</button>
+              <div style={{ marginTop: 14 }}>
+                {presetler === null ? <div style={{ fontSize: 12, color: R.not }}>Yükleniyor…</div>
+                  : presetler.length ? presetler.map((x, i) => (
+                  <div key={x.kod || i} style={{
+                    display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px',
+                    borderRadius: 9, background: R.girinti, marginBottom: 5, fontSize: 12,
+                  }}>
+                    <span style={{ fontWeight: 600 }}>{x.ad || x.kod}</span>
+                    <span style={{ color: R.not, fontFamily: 'ui-monospace, monospace' }}>
+                      {x.bas_saat}–{x.bit_saat}{x.gece_vardiyasi ? ' 🌙' : ''}
+                    </span>
+                    <span style={{ color: R.not2 }}>kod: {x.kod}</span>
+                    <button onClick={() => presetSil(x.kod)} style={{ ...plMini, marginLeft: 'auto', color: R.kirmizi, borderColor: `${R.kirmizi}44` }}>Sil</button>
+                  </div>
+                )) : <div style={{ fontSize: 11.5, color: R.not }}>Henüz preset yok.</div>}
+              </div>
+            </div>
+          )}
+
+          {plSekme === 'kisit' && (
+            <div style={{ marginTop: 14, maxWidth: 680 }}>
+              <div style={{ fontSize: 11.5, color: R.not2, lineHeight: 1.7, marginBottom: 12 }}>
+                Kısıtlar <b>motorun uyduğu kurallardır</b> — kimse günlük/haftalık
+                saat tavanının üstüne, çalışamayacağı saate veya yasaklı şubeye atanmaz.
+              </div>
+              <div style={{ minWidth: 200, maxWidth: 260 }}>
+                <label style={ekEtiket}>Personel</label>
+                <select value={ksPersonel} onChange={(e) => { setKsPersonel(e.target.value); kisitYukle(e.target.value); }} style={ekAlanStil}>
+                  <option value="">— seçin —</option>
+                  {personel.map((p) => <option key={p.id} value={p.id}>{p.ad_soyad || p.ad}</option>)}
+                </select>
+              </div>
+              {ksPersonel && ksVeri && (
+                <>
+                  <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                    <div style={{ maxWidth: 130 }}><label style={ekEtiket}>Günlük tavan (saat)</label>
+                      <input type="number" step="0.5" value={ksVeri.max_gunluk_saat ?? 9.5}
+                        onChange={(e) => setKsVeri((p) => ({ ...p, max_gunluk_saat: e.target.value }))} style={ekAlanStil} /></div>
+                    <div style={{ maxWidth: 130 }}><label style={ekEtiket}>Haftalık tavan</label>
+                      <input type="number" step="0.5" value={ksVeri.max_haftalik_saat ?? 57}
+                        onChange={(e) => setKsVeri((p) => ({ ...p, max_haftalik_saat: e.target.value }))} style={ekAlanStil} /></div>
+                    <div style={{ maxWidth: 130 }}><label style={ekEtiket}>En erken saat</label>
+                      <input type="time" value={ksVeri.calisilabilir_saat_min || ''}
+                        onChange={(e) => setKsVeri((p) => ({ ...p, calisilabilir_saat_min: e.target.value }))} style={ekAlanStil} /></div>
+                    <div style={{ maxWidth: 130 }}><label style={ekEtiket}>En geç saat</label>
+                      <input type="time" value={ksVeri.calisilabilir_saat_max || ''}
+                        onChange={(e) => setKsVeri((p) => ({ ...p, calisilabilir_saat_max: e.target.value }))} style={ekAlanStil} /></div>
+                    <div style={{ maxWidth: 150 }}><label style={ekEtiket}>Vardiyalar arası min (dk)</label>
+                      <input type="number" value={ksVeri.min_gecis_dk ?? 30}
+                        onChange={(e) => setKsVeri((p) => ({ ...p, min_gecis_dk: e.target.value }))} style={ekAlanStil} /></div>
+                  </div>
+                  <label style={ekEtiket}>Yasaklı şubeler (bu kişi buralara atanmaz)</label>
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12 }}>
+                    {(vpGun?.subeler || []).map((sb) => {
+                      const yasak = (ksVeri.yasak_subeler || []).includes(sb.sube_id);
+                      return (
+                        <button key={sb.sube_id} onClick={() => setKsVeri((p) => ({
+                          ...p, yasak_subeler: yasak
+                            ? (p.yasak_subeler || []).filter((x) => x !== sb.sube_id)
+                            : [...(p.yasak_subeler || []), sb.sube_id],
+                        }))} style={{
+                          padding: '6px 12px', borderRadius: 8, cursor: 'pointer', fontFamily: 'inherit',
+                          fontSize: 11.5, fontWeight: 600,
+                          border: `1px solid ${yasak ? R.kirmizi : R.cizgi3}`,
+                          background: yasak ? `${R.kirmizi}22` : 'transparent',
+                          color: yasak ? R.kirmizi : R.not,
+                        }}>{yasak ? '⛔ ' : ''}{sb.sube_ad || sb.ad}</button>
+                      );
+                    })}
+                  </div>
+                  <button disabled={plMesgul} onClick={kisitKaydet} style={plBtn}>Kısıtları kaydet</button>
+                </>
+              )}
             </div>
           )}
         </div>
