@@ -118,6 +118,9 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
   // Ekstre faizi üretimi (2026-07-31) — gece motoru zaten yazar, bu ELLE tetikler
   const [faizMesgul, setFaizMesgul] = useState(false);
   const [faizSonuc, setFaizSonuc] = useState(null);      // {yazilan, kartlar[]}
+  // Ekstre dönemi silme (2026-07-31) — GERİ ALINAMAZ, iki adımlı onay şart
+  const [donemSil, setDonemSil] = useState(null);        // {kartId, kartAd, donem}
+  const [donemSilMesgul, setDonemSilMesgul] = useState(false);
   const [kartPasifSor, setKartPasifSor] = useState('');
   // ── YERLİ KART ANALİZİ (köprü kaldırma turu, 2026-07-30) ──────────────────
   // Klasik KartEkstreAnaliz'in iki bloğu: aylık borç/faiz eğrisi + kategori
@@ -147,6 +150,28 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
       onToast?.(e?.message || 'Faiz üretilemedi');
     } finally {
       setFaizMesgul(false);
+    }
+  };
+
+  /**
+   * Bir kartın TEK AYINI sil. Sunucu o aya ait HARCAMA/FAİZ hareketlerini ve
+   * dönem snapshot'ını GERÇEKTEN siler (soft-delete değil, geri alma ucu yok).
+   * ÖDEME/DEVİR hareketlerine dokunmaz — onlar kasa tarafının kaydı.
+   * Kullanım amacı: yanlış ekstre yüklendiyse silip doğrusunu yüklemek.
+   */
+  const donemSilUygula = async () => {
+    const d = donemSil;
+    if (!d?.kartId || !d?.donem) return;
+    setDonemSilMesgul(true);
+    try {
+      const r = await api(`/kartlar/${encodeURIComponent(d.kartId)}/ekstre-donem/${encodeURIComponent(d.donem)}`, { method: 'DELETE' });
+      onToast?.(`${r?.kart_adi || d.kartAd} · ${kisaTarih(d.donem)} dönemi silindi — ${sayi(r?.silinen_hareket)} hareket kalktı, şimdi doğru ekstreyi yükleyebilirsin`);
+      setDonemSil(null);
+      yukle();
+    } catch (e) {
+      onToast?.(e?.message || 'Dönem silinemedi');
+    } finally {
+      setDonemSilMesgul(false);
     }
   };
 
@@ -1194,22 +1219,22 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
       {/* ── DÖNEM ARŞİVİ (klasik ekstre arşivi) ── */}
       {(() => {
         const kartlarArsiv = Array.isArray(arsiv?.kartlar) ? arsiv.kartlar : [];
-        const donemler = kartlarArsiv.flatMap((k) => (k.donemler || []).map((d) => ({ ...d, kartAd: k.kart_adi, banka: k.banka })));
+        const donemler = kartlarArsiv.flatMap((k) => (k.donemler || []).map((d) => ({ ...d, kartId: k.kart_id, kartAd: k.kart_adi, banka: k.banka })));
         if (!donemler.length) return null;
         return (
           <Tablo
             baslik="Ekstre arşivi · yüklenmiş dönemler"
-            not="dönem borcu, harcama, ödeme ve faiz — ekstre yükleyince dolar"
+            not="satıra tıkla → yanlış yüklenen dönemi sil ve yeniden yükle"
             kolonlar={[
               { ad: 'Kart' }, { ad: 'Dönem' }, { ad: 'Dönem borcu', sag: true },
-              { ad: 'Harcama', sag: true }, { ad: 'Ödeme', sag: true }, { ad: 'Faiz', sag: true },
+              { ad: 'Harcama', sag: true }, { ad: 'Ödeme', sag: true }, { ad: 'Faiz', sag: true }, { ad: '' },
             ]}
             satirlar={donemler
               .slice()
               .sort((a, b) => String(b.donem).localeCompare(String(a.donem)))
               .slice(0, 40)
               .map((d, i) => ({
-                id: `${d.kartAd}-${d.donem}-${i}`,
+                id: `${d.kartAd}-${d.donem}-${i}`, _d: d,
                 hucreler: [
                   { v: kisalt(d.kartAd || d.banka || '—', 26), kalin: true },
                   { v: kisaTarih(d.donem), mono: true, renk: R.not },
@@ -1217,11 +1242,65 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
                   { v: fmt(sayi(d.donem_harcama)), mono: true, sag: true, renk: R.amber },
                   { v: fmt(sayi(d.donem_odeme)), mono: true, sag: true, renk: R.yesil },
                   { v: fmt(sayi(d.donem_faizi)), mono: true, sag: true, renk: sayi(d.donem_faizi) > 0 ? R.kirmizi : R.not },
+                  { v: d.kartId ? '🗑 sil' : '', renk: R.kirmizi },
                 ],
               }))}
+            onSatir={({ _d }) => {
+              if (!_d?.kartId) { onToast?.('Bu satırda kart kimliği yok — silme yapılamaz'); return; }
+              setDonemSil({ kartId: _d.kartId, kartAd: _d.kartAd || _d.banka || 'Kart', donem: _d.donem });
+            }}
           />
         );
       })()}
+
+      {/* ── DÖNEM SİLME ONAYI — geri alınamaz, ne silinip ne kaldığı yazılı ── */}
+      {donemSil && (
+        <div
+          onClick={(e) => { if (e.target === e.currentTarget && !donemSilMesgul) setDonemSil(null); }}
+          style={{
+            position: 'fixed', inset: 0, zIndex: 95, background: 'rgba(10,6,2,.7)',
+            backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+          }}
+        >
+          <div style={{ ...kartYuzey, width: 500, maxWidth: '96vw', padding: '24px 26px' }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 6 }}>
+              <div style={{ fontFamily: F.baslik, fontSize: 20, fontWeight: 600 }}>Ekstre dönemini sil</div>
+              <button onClick={() => !donemSilMesgul && setDonemSil(null)} style={{
+                marginLeft: 'auto', border: 'none', background: 'transparent', color: R.not,
+                fontSize: 16, cursor: 'pointer', fontFamily: 'inherit',
+              }}>✕</button>
+            </div>
+            <div style={{ fontSize: 12.5, color: R.metin2, marginBottom: 14 }}>
+              <b>{donemSil.kartAd}</b> · {kisaTarih(donemSil.donem)}
+            </div>
+            <div style={{
+              padding: '13px 15px', borderRadius: 12, marginBottom: 16,
+              background: 'rgba(220,38,38,.08)', border: '1px solid rgba(220,38,38,.28)',
+              fontSize: 12, color: R.metin2, lineHeight: 1.7,
+            }}>
+              <b style={{ color: '#FCA5A5' }}>Bu işlemin geri alması yok.</b> Kayıtlar gerçekten silinir.
+              <div style={{ marginTop: 9 }}>
+                <b>Silinecek:</b> bu aya ait <b>harcama</b> ve <b>faiz</b> hareketleri + dönem özeti<br />
+                <b>Korunacak:</b> <b>ödeme</b> ve <b>devir</b> kayıtları — onlar kasa tarafının izi, dokunulmaz
+              </div>
+              <div style={{ marginTop: 9, color: R.not2 }}>
+                Kullanım amacı: yanlış ekstre yüklendiyse silip doğrusunu yüklemek.
+                Silme sonrası kartın dönem borcu yeniden hesaplanır.
+              </div>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+              <button disabled={donemSilMesgul} onClick={() => setDonemSil(null)} style={{
+                padding: '10px 18px', borderRadius: 10, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+                background: 'transparent', color: R.metin2, fontSize: 12.5, fontWeight: 600, fontFamily: 'inherit',
+              }}>Vazgeç</button>
+              <button disabled={donemSilMesgul} onClick={donemSilUygula} style={{
+                padding: '10px 18px', borderRadius: 10, border: '1px solid rgba(220,38,38,.5)', cursor: 'pointer',
+                background: 'rgba(220,38,38,.2)', color: '#FCA5A5', fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit',
+              }}>{donemSilMesgul ? 'Siliniyor…' : '🗑 Evet, bu dönemi sil'}</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── YERLİ EKSTRE YÜKLEME MODALI (klasik EkstreYukle akışı kadifede) ── */}
       {eksModal && (() => {

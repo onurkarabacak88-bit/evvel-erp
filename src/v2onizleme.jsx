@@ -136,6 +136,8 @@ const KART_UC = {
       ],
     }],
   },
+  // Dönem silme (DELETE) — tezgâh method'a bakmaz, yalnız cevabı doğrularız
+  '/api/kartlar/k1/ekstre-donem/2026-07-01': { success: true, kart_adi: 'Axess 6616', silinen_hareket: 23, silinen_donem: 1 },
   '/api/kart-hareketleri': [
     { id: 'h1', tarih: '2026-07-27', kart_adi: 'Garanti Bonus İşletme', islem_turu: 'HARCAMA', tutar: 68400, aciklama: 'Kahve Dünyası — çekirdek alımı', harcama_tipi: 'isletme', taksit_sayisi: 1, ana_para: 68400, faiz_tutari: 0 },
     { id: 'h2', tarih: '2026-07-26', kart_adi: 'Yapı Kredi World', islem_turu: 'HARCAMA', tutar: 16340, aciklama: 'Market — açıklama yok', harcama_tipi: 'belirsiz', taksit_sayisi: 1, ana_para: 16340, faiz_tutari: 0 },
