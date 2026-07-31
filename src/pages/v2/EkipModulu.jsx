@@ -108,6 +108,10 @@ const plMini = {
   background: 'transparent', color: R.metin2,
 };
 
+const BV_DURUM_AD = {
+  bekliyor: 'Bekliyor', gorusme: 'Görüşme', olumlu: 'Olumlu', olumsuz: 'Olumsuz',
+};
+
 export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
   const [yukleniyor, setYukleniyor] = useState(true);
   const [hata, setHata] = useState('');
@@ -459,6 +463,51 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
       vpYukle(vpTarih);
     } catch (e) { onToast?.(e?.message || 'İşaretlenemedi'); }
     finally { setPlMesgul(false); }
+  };
+
+  // ── İŞ BAŞVURULARI EYLEMLERİ (Faz 8, 2026-07-31) ──────────────────────────
+  // v2 başvuruları GÖSTERİYORDU, hiçbirine dokunamıyordu: durum verilemiyor,
+  // öncelik işaretlenemiyor, arşivlenemiyor, işe alınamıyordu (7/7 eksik).
+  const [bvModal, setBvModal] = useState(null);   // {tip, basvuru?, ...}
+  const [bvMesgul, setBvMesgul] = useState(false);
+  const [bvSecim, setBvSecim] = useState([]);     // toplu arşiv için id listesi
+
+  const bvUygula = async () => {
+    const m = bvModal;
+    if (!m) return;
+    setBvMesgul(true);
+    try {
+      const bid = m.basvuru?.id;
+      if (m.tip === 'durum') {
+        await api(`/is-basvurusu/${bid}/durum`, { method: 'PATCH', body: { durum: m.durum } });
+        onToast?.(`✓ Durum «${BV_DURUM_AD[m.durum] || m.durum}» yapıldı`);
+      } else if (m.tip === 'oncelik') {
+        await api(`/is-basvurusu/${bid}/oncelik`, { method: 'PATCH', body: { oncelik: Number(m.oncelik) || 0 } });
+        onToast?.(Number(m.oncelik) ? `✓ ${m.oncelik}. öncelik işaretlendi` : '✓ Öncelik kaldırıldı');
+      } else if (m.tip === 'arsiv') {
+        await api(`/is-basvurusu/${bid}/arsiv`, { method: 'PATCH', body: { arsivli: !!m.arsivli } });
+        onToast?.(m.arsivli ? '✓ Arşivlendi — durum ve öncelik korundu' : '✓ Arşivden çıkarıldı');
+      } else if (m.tip === 'toplu-arsiv') {
+        const r = await api('/is-basvurusu/toplu-arsiv', { method: 'POST', body: { ids: bvSecim, arsivli: true } });
+        onToast?.(`✓ ${sayi(r?.guncellenen ?? bvSecim.length)} başvuru arşivlendi`);
+        setBvSecim([]);
+      } else if (m.tip === 'ise-al') {
+        const r = await api(`/is-basvurusu/${bid}/ise-al`, { method: 'POST', body: { gorev: (m.gorev || '').trim() || null } });
+        onToast?.(r?.zaten_alinmis ? 'Bu kişi zaten işe alınmış — personel kaydı var' : '✓ İşe alındı, personel kaydı açıldı');
+      } else if (m.tip === 'sil') {
+        await api(`/is-basvurusu/${bid}`, { method: 'DELETE' });
+        onToast?.('✓ Başvuru silindi');
+      }
+      setBvModal(null);
+      yukle();
+    } catch (e) {
+      onToast?.(e?.message || 'İşlem başarısız');
+    } finally { setBvMesgul(false); }
+  };
+
+  /** Başvuruyu açarken okundu damgası — sessiz, hata yutulur (izleme verisi). */
+  const bvGor = (b) => {
+    if (b?.id && !b.goruldu) api(`/is-basvurusu/${b.id}/gor`, { method: 'PATCH' }).catch(() => {});
   };
 
   useEffect(yukle, []);
@@ -1082,6 +1131,125 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
   // ── 8) PERSONEL DENETİMİ (ops-merkez P2) ──────────────────────────────────
   // Klasik Operasyon Merkezi'nin 4 personel sekmesi tek yerde — ÖNERİ-ONLY,
   // isim verir ama hüküm vermez (puan maaşa bağlanmaz kuralı korunur).
+  // ── FAZ 8: BAŞVURU YÖNETİM MODALI ─────────────────────────────────────────
+  // Backend'de durum · öncelik · arşiv AYRI BOYUTLAR (biri diğerini ezmez).
+  // Ekran da öyle: tek açılır liste değil, üç bağımsız denetim.
+  const bvModalBlok = bvModal && (() => {
+    const b = bvModal.basvuru || {};
+    // Alt onaydan vazgecince YONETIM cekmecesine don, hepsini kapatma.
+    const kapat = () => {
+      if (bvMesgul) return;
+      if (bvModal.tip !== 'yonet' && bvModal.tip !== 'toplu-arsiv' && b.id) setBvModal({ tip: 'yonet', basvuru: b });
+      else setBvModal(null);
+    };
+    const dv = trKucuk(b.durum) || 'bekliyor';
+    const onc = sayi(b.oncelik);
+
+    if (bvModal.tip !== 'yonet') {
+      const T = {
+        'durum': { baslik: 'Durumu değiştir', anlat: `«${BV_DURUM_AD[bvModal.durum] || bvModal.durum}» yapılacak. Öncelik ve arşiv durumu DEĞİŞMEZ — ayrı boyutlar.`, tehlike: false, buton: 'Değiştir' },
+        'oncelik': { baslik: 'Önceliği ayarla', anlat: 'Öncelik işareti durumu ve arşivi etkilemez; arşivdeyken de korunur.', tehlike: false, buton: 'Kaydet' },
+        'arsiv': { baslik: bvModal.arsivli ? 'Arşivle' : 'Arşivden çıkar', anlat: bvModal.arsivli ? 'Listeden kalkar ama SİLİNMEZ — durum ve öncelik korunur, istediğinde geri çıkarırsın.' : 'Başvuru yeniden aktif listeye döner.', tehlike: false, buton: 'Onayla' },
+        'toplu-arsiv': { baslik: 'Seçilenleri arşivle', anlat: `${bvSecim.length} başvuru arşive taşınır. Silinmez; durum ve öncelikleri korunur.`, tehlike: false, buton: 'Arşivle' },
+        'ise-al': { baslik: 'İşe al', anlat: 'Başvurudan PERSONEL KAYDI açılır ve kişi kadroya girer. Bu kişi artık vardiya planına atanabilir, maaş motoruna dahil olur. Zaten alınmışsa yeni kayıt açılmaz.', tehlike: false, buton: 'İşe al' },
+        'sil': { baslik: 'Başvuruyu sil', anlat: 'Kayıt tamamen silinir ve geri gelmez. Görüşmediğin birini elemek için ARŞİV daha doğru — silme yalnız hatalı/çöp kayıt içindir.', tehlike: true, buton: 'Kalıcı sil' },
+      }[bvModal.tip] || {};
+      return (
+        <div onClick={(e) => { if (e.target === e.currentTarget) kapat(); }} style={{
+          position: 'fixed', inset: 0, zIndex: 130, background: 'rgba(10,6,2,.72)',
+          backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+        }}>
+          <div style={{ ...kartYuzey, width: 430, maxWidth: '96vw', padding: '24px 26px' }}>
+            <div style={{ fontFamily: F.baslik, fontSize: 19, fontWeight: 600, marginBottom: 6 }}>{T.baslik}</div>
+            {b.ad_soyad && <div style={{ fontSize: 12.5, color: R.metin2, marginBottom: 4 }}><b>{b.ad_soyad}</b>{b.pozisyon ? ` · ${b.pozisyon}` : ''}</div>}
+            <div style={{ fontSize: 12, color: R.not2, lineHeight: 1.65, marginBottom: 14 }}>{T.anlat}</div>
+            {bvModal.tip === 'ise-al' && (
+              <>
+                <label style={ekEtiket}>Görev / pozisyon</label>
+                <input value={bvModal.gorev ?? (b.pozisyon || '')} autoFocus
+                  onChange={(e) => setBvModal((p) => ({ ...p, gorev: e.target.value }))} style={ekAlanStil} />
+              </>
+            )}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 14 }}>
+              <button disabled={bvMesgul} onClick={kapat} style={{
+                padding: '10px 18px', borderRadius: 10, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+                background: 'transparent', color: R.metin2, fontSize: 12.5, fontWeight: 600, fontFamily: 'inherit',
+              }}>Vazgeç</button>
+              <button disabled={bvMesgul} onClick={bvUygula} style={{
+                padding: '10px 20px', borderRadius: 10, cursor: 'pointer', fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit',
+                border: T.tehlike ? `1px solid ${R.kirmizi}55` : 'none',
+                background: T.tehlike ? `${R.kirmizi}26` : 'linear-gradient(150deg, #E0A559, #AF6C29)',
+                color: T.tehlike ? R.kirmizi : '#1C1309',
+              }}>{bvMesgul ? 'İşleniyor…' : T.buton}</button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div onClick={(e) => { if (e.target === e.currentTarget) kapat(); }} style={{
+        position: 'fixed', inset: 0, zIndex: 125, background: 'rgba(10,6,2,.7)',
+        backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+      }}>
+        <div style={{ ...kartYuzey, width: 500, maxWidth: '96vw', padding: '24px 26px', maxHeight: '88vh', overflowY: 'auto' }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 4 }}>
+            <div style={{ fontFamily: F.baslik, fontSize: 20, fontWeight: 600 }}>{b.ad_soyad || 'Başvuru'}</div>
+            <button onClick={kapat} style={{ marginLeft: 'auto', border: 'none', background: 'transparent', color: R.not, fontSize: 16, cursor: 'pointer', fontFamily: 'inherit' }}>x</button>
+          </div>
+          <div style={{ fontSize: 12.5, color: R.metin2, marginBottom: 16, lineHeight: 1.7 }}>
+            {[b.pozisyon, b.telefon, b.sube_tercihi || b.sube, b.ilce,
+              b.dogum_yili ? `${b.dogum_yili} doğumlu` : null,
+              b.olusturma ? kisaTarih(b.olusturma) : null].filter(Boolean).join(' · ')}
+            {b.personel_id && <><br /><span style={{ color: R.yesil, fontWeight: 700 }}>✓ İşe alınmış — personel kaydı var</span></>}
+          </div>
+
+          <label style={ekEtiket}>Durum</label>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12 }}>
+            {['bekliyor', 'gorusme', 'olumlu', 'olumsuz'].map((d) => (
+              <button key={d} onClick={() => setBvModal({ tip: 'durum', basvuru: b, durum: d })} style={{
+                padding: '7px 14px', borderRadius: 9, cursor: 'pointer', fontFamily: 'inherit',
+                fontSize: 12, fontWeight: 600,
+                border: `1px solid ${dv === d ? R.bakir : R.cizgi3}`,
+                background: dv === d ? `${R.bakir}1E` : 'transparent',
+                color: dv === d ? R.bakir : R.metin2,
+              }}>{BV_DURUM_AD[d]}</button>
+            ))}
+          </div>
+
+          <label style={ekEtiket}>Öncelik · durumu ve arşivi etkilemez</label>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12 }}>
+            {[[1, '★ Birinci'], [2, '☆ İkinci'], [0, 'Yok']].map(([v, ad]) => (
+              <button key={v} onClick={() => setBvModal({ tip: 'oncelik', basvuru: b, oncelik: v })} style={{
+                padding: '7px 14px', borderRadius: 9, cursor: 'pointer', fontFamily: 'inherit',
+                fontSize: 12, fontWeight: 600,
+                border: `1px solid ${onc === v ? R.amber : R.cizgi3}`,
+                background: onc === v ? `${R.amber}1E` : 'transparent',
+                color: onc === v ? R.amber : R.metin2,
+              }}>{ad}</button>
+            ))}
+          </div>
+
+          <div style={{ borderTop: `1px solid ${R.cizgi3}`, paddingTop: 14, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {!b.personel_id && (
+              <button onClick={() => setBvModal({ tip: 'ise-al', basvuru: b, gorev: b.pozisyon || '' })} style={{
+                padding: '9px 18px', borderRadius: 9, border: 'none', cursor: 'pointer',
+                background: 'linear-gradient(150deg, #E0A559, #AF6C29)', color: '#1C1309',
+                fontSize: 12, fontWeight: 700, fontFamily: 'inherit',
+              }}>İşe al</button>
+            )}
+            <button onClick={() => setBvModal({ tip: 'arsiv', basvuru: b, arsivli: !b.arsivli })} style={plBtn}>
+              {b.arsivli ? 'Arşivden çıkar' : 'Arşivle'}
+            </button>
+            <button onClick={() => setBvModal({ tip: 'sil', basvuru: b })} style={{
+              ...plBtn, marginLeft: 'auto', color: R.kirmizi, borderColor: `${R.kirmizi}44`,
+            }}>Sil</button>
+          </div>
+        </div>
+      </div>
+    );
+  })();
+
   if (gorunum === 'denetim') {
     if (pdHata) {
       return (
@@ -2571,6 +2739,7 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
     const gorusme = bs.filter(b => trKucuk(b.durum).includes('görüş') || trKucuk(b.durum).includes('gorus'));
     return (
       <>
+        {bvModalBlok}
         <KpiSeridi kpiler={[
           { etiket: 'Yeni başvuru', deger: String(basvuruOzet?.yeni ?? yeni.length), alt: 'okunmamış', renk: (basvuruOzet?.yeni ?? yeni.length) ? R.yesil : R.krem },
           { etiket: 'Görüşme aşamasında', deger: String(gorusme.length), alt: gorusme.length ? 'planlandı' : 'yok', renk: R.mavi },
@@ -2578,20 +2747,50 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
           { etiket: 'Öncelikli', deger: String(bs.filter(b => sayi(b.oncelik) > 0).length), alt: 'işaretlenmiş', renk: R.amber },
         ]} />
         {bs.length ? (
-          <Liste
-            satirlar={bs.slice(0, 40).map(b => ({
-              id: b.id, _b: b,
-              baslik: `${b.ad_soyad || b.ad || 'Başvuru'}${b.pozisyon ? ` · ${b.pozisyon}` : ''}`,
-              alt: [b.sube_tercihi || b.sube, b.deneyim, b.olusturma ? kisaTarih(b.olusturma) : null]
-                .filter(Boolean).join(' · ') || 'ayrıntı girilmemiş',
-              tutar: '',
-              rozet: trKucuk(b.durum) || 'yeni',
-              rozetRenk: trKucuk(b.durum) === 'yeni' ? R.yesil : R.mavi,
-              tier: trKucuk(b.durum) === 'yeni' ? 'uyari' : 'bilgi',
-              aksiyon: 'İncele',
-            }))}
-            onAc={() => onKopru?.('__modul:ekip:basvuru')}
-          />
+          <>
+            {/* Faz 8: toplu arşiv çubuğu — seçim varken görünür */}
+            {!!bvSecim.length && (
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: 12, padding: '10px 16px',
+                borderRadius: 10, background: `${R.bakir}1A`, border: `1px solid ${R.bakir}44`,
+                marginBottom: 12, fontSize: 12.5,
+              }}>
+                <b>{bvSecim.length} başvuru seçildi</b>
+                <button onClick={() => setBvModal({ tip: 'toplu-arsiv' })} style={{
+                  marginLeft: 'auto', padding: '7px 16px', borderRadius: 9, border: 'none', cursor: 'pointer',
+                  background: 'linear-gradient(150deg, #E0A559, #AF6C29)', color: '#1C1309',
+                  fontSize: 12, fontWeight: 700, fontFamily: 'inherit',
+                }}>Seçilenleri arşivle</button>
+                <button onClick={() => setBvSecim([])} style={{
+                  padding: '7px 14px', borderRadius: 9, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+                  background: 'transparent', color: R.metin2, fontSize: 12, fontWeight: 600, fontFamily: 'inherit',
+                }}>Seçimi bırak</button>
+              </div>
+            )}
+            <Liste
+              secilebilir
+              secili={bvSecim}
+              onSec={(id) => setBvSecim((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]))}
+              onHepsi={() => setBvSecim((p) => (p.length === bs.length ? [] : bs.map((b) => b.id)))}
+              satirlar={bs.slice(0, 40).map(b => {
+                const d = trKucuk(b.durum) || 'yeni';
+                const onc = sayi(b.oncelik);
+                return {
+                  id: b.id, _b: b,
+                  baslik: `${onc ? `${onc === 1 ? '★' : '☆'} ` : ''}${b.ad_soyad || b.ad || 'Başvuru'}${b.pozisyon ? ` · ${b.pozisyon}` : ''}`,
+                  alt: [b.sube_tercihi || b.sube, b.deneyim, b.olusturma ? kisaTarih(b.olusturma) : null,
+                        b.arsivli ? 'arşivde' : null, b.personel_id ? 'işe alındı ✓' : null]
+                    .filter(Boolean).join(' · ') || 'ayrıntı girilmemiş',
+                  tutar: '',
+                  rozet: BV_DURUM_AD[d] || d,
+                  rozetRenk: d === 'yeni' ? R.yesil : d === 'olumlu' ? R.yesil : d === 'olumsuz' ? R.kirmizi : R.mavi,
+                  tier: b.personel_id ? 'iyi' : d === 'yeni' ? 'uyari' : 'bilgi',
+                  aksiyonlar: [{ ad: 'Yönet', onTikla: () => { bvGor(b); setBvModal({ tip: 'yonet', basvuru: b }); } }],
+                };
+              })}
+              onAc={(r) => { bvGor(r?._b || r); setBvModal({ tip: 'yonet', basvuru: r?._b || r }); }}
+            />
+          </>
         ) : (
           <div style={{ ...kartYuzey, padding: '38px 30px', textAlign: 'center', color: R.not }}>
             Açık iş başvurusu yok.
