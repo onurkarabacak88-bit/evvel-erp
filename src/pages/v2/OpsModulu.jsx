@@ -187,6 +187,11 @@ const kdKutuStil = (aktif) => ({
 export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGorunum }) {
   // ── SİPARİŞ AKIŞI + KULE ortak verisi ─────────────────────────────────────
   const [kule, setKule] = useState(null);        // kontrol-kulesi cevabı
+  // Sipariş birleştirme (2026-07-31) — MEVCUT akış kanbanının 'bekliyor'
+  // kolonunda çalışır; ayrı ekran/görünüm AÇILMADI.
+  const [birlSecili, setBirlSecili] = useState({});  // talep_id → sube_id
+  const [birlNot, setBirlNot] = useState('');
+  const [birlMesgul, setBirlMesgul] = useState(false);
   const [kuleHata, setKuleHata] = useState('');
   const [subeOzet, setSubeOzet] = useState(null); // sevkiyat-subeler-ozet
   // ── UZLAŞTIRMA (uyumsuzluk ÇÖZME, 2026-07-31) ─────────────────────────────
@@ -563,6 +568,41 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
       .then((d) => setHiz(d || {}))
       .catch(() => setHiz({}));
   }, []);
+
+  /** Kart seçimini aç/kapat. Sunucu kuralı: hepsi AYNI şubeden olmalı. */
+  const birlTogglaBirlestir = (talepId, subeId) => {
+    setBirlSecili((p) => {
+      const n = { ...p };
+      if (n[talepId]) delete n[talepId];
+      else n[talepId] = String(subeId || '');
+      return n;
+    });
+  };
+  const birlTemizle = () => { setBirlSecili({}); setBirlNot(''); };
+
+  /**
+   * 2+ bekleyen siparişi TEK siparişe indirir. Sunucu kuralları
+   * (operasyon_merkez_api:17905): aynı şube · hepsi 'bekliyor' · hiçbiri depoya
+   * yönlendirilmemiş · aynı ürün adetleri TOPLANIR · eskiler 'iptal' olur.
+   */
+  const birlestirGonder = async () => {
+    const idler = Object.keys(birlSecili);
+    if (idler.length < 2) { onToast?.('En az 2 sipariş seçin'); return; }
+    setBirlMesgul(true);
+    try {
+      const r = await api('/ops/siparis/birlestir', {
+        method: 'POST',
+        body: { talep_idler: idler, not_aciklama: (birlNot || '').trim() || null },
+      });
+      onToast?.(`${sayi(r?.birlesik_talep_sayisi) || idler.length} sipariş tek siparişe indi — ${sayi(r?.kalem_sayisi)} kalem · yeni #${String(r?.yeni_talep_id || '').slice(-8)}`);
+      birlTemizle();
+      kuleYukle();
+    } catch (e) {
+      onToast?.(e?.message || 'Birleştirme başarısız');
+    } finally {
+      setBirlMesgul(false);
+    }
+  };
 
   const barYukle = useCallback((tarih) => {
     setBarHata('');
@@ -1381,6 +1421,63 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
           </div>
         )}
 
+        {/* ── SİPARİŞ BİRLEŞTİRME — mevcut kanbanın 'bekliyor' kolonunda ──────
+            Aynı şubenin gün içinde attığı birden çok talep tek sevkiyata iner. */}
+        {(() => {
+          const bekleyenler = satirlar.filter((s) => s.asama === 'bekliyor');
+          if (bekleyenler.length < 2) return null;
+          const secIdler = Object.keys(birlSecili);
+          const secSubeler = [...new Set(Object.values(birlSecili))];
+          const secSubeAdi = secIdler.length
+            ? (bekleyenler.find((s) => String(s.id) === secIdler[0])?.sube_adi || '—') : '';
+          if (secIdler.length === 0) {
+            return (
+              <div style={{
+                padding: '10px 15px', borderRadius: 12, marginBottom: 12,
+                fontSize: 11.5, color: R.not2, lineHeight: 1.6,
+                background: R.girinti, border: `1px solid ${R.cizgi3}`,
+              }}>
+                🔗 Aynı şubeden <b>2 veya daha fazla</b> bekleyen siparişi işaretleyip
+                tek siparişe birleştirebilirsin — aynı ürünlerin adetleri toplanır,
+                depoya tek liste gider.
+              </div>
+            );
+          }
+          const yeterli = secIdler.length >= 2 && secSubeler.length === 1;
+          return (
+            <div style={{
+              ...kartYuzey, padding: '13px 16px', marginBottom: 12,
+              border: `1px solid ${yeterli ? `${R.bakir}55` : `${R.amber}55`}`,
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 10 }}>
+                <span style={rozetHap(yeterli ? R.bakir : R.amber)}>
+                  {secIdler.length} sipariş seçili
+                </span>
+                <span style={{ fontSize: 12, color: R.metin2, flex: 1, minWidth: 200 }}>
+                  {secSubeler.length > 1
+                    ? '⚠️ Farklı şubelerden seçim yapılmış — birleştirme yalnız AYNI şube içinde olur.'
+                    : secIdler.length < 2
+                      ? `${secSubeAdi} · en az 2 sipariş gerekir`
+                      : `${secSubeAdi} · seçilenler tek siparişe inecek, eskiler iptal olacak`}
+                </span>
+                <button onClick={birlTemizle} disabled={birlMesgul} style={{
+                  padding: '7px 13px', borderRadius: 9, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+                  background: 'transparent', color: R.metin2, fontSize: 11.5, fontWeight: 600, fontFamily: 'inherit',
+                }}>Seçimi temizle</button>
+                <button onClick={birlestirGonder} disabled={!yeterli || birlMesgul} style={{
+                  padding: '7px 15px', borderRadius: 9, border: 'none',
+                  cursor: yeterli && !birlMesgul ? 'pointer' : 'not-allowed',
+                  background: yeterli ? 'linear-gradient(150deg, #E0A559, #AF6C29)' : R.girinti,
+                  color: yeterli ? '#1C1309' : R.not3,
+                  fontSize: 11.5, fontWeight: 700, fontFamily: 'inherit',
+                }}>{birlMesgul ? 'Birleştiriliyor…' : '🔗 Birleştir'}</button>
+              </div>
+              <input value={birlNot} disabled={birlMesgul} placeholder="Merkez notu (opsiyonel) — orn. Aynı gün üç ayrı talep geldi, tek sevke indirildi."
+                onChange={(e) => setBirlNot(e.target.value)} style={{ ...opsAlanStil, marginBottom: 0 }} />
+            </div>
+          );
+        })()}
+
         <div style={{
           display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))',
           gap: 11, alignItems: 'start', marginBottom: 16,
@@ -1419,6 +1516,43 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
                         <span style={{ fontSize: 13, fontWeight: 700 }}>{s.sube_adi || '—'}</span>
                         <span style={{ fontFamily: F.mono, fontSize: 10, color: R.not2 }}>{tarihKisa(s.tarih)}</span>
+                        {/* Birleştirme seçimi — yalnız merkez kuyruğunda ve
+                            yönlendirilmemiş kartta; sunucu ikisini de reddeder. */}
+                        {kol.id === 'bekliyor' && satirlar.filter((x) => x.asama === 'bekliyor').length >= 2 && (() => {
+                          const secili = !!birlSecili[s.id];
+                          const yonlendirilmis = !!s.hedef_depo_sube_adi;
+                          const secSubeler = [...new Set(Object.values(birlSecili))];
+                          const baskaSube = secSubeler.length > 0 && !secili
+                            && !secSubeler.includes(String(s.sube_id || ''));
+                          const kapali = yonlendirilmis || baskaSube;
+                          return (
+                            <div
+                              title={yonlendirilmis ? 'Depoya yönlendirilmiş — birleştirilemez'
+                                : baskaSube ? 'Birleştirme aynı şube içinde olur'
+                                : secili ? 'Seçimi kaldır' : 'Birleştirmek için seç'}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (kapali) {
+                                  onToast?.(yonlendirilmis
+                                    ? 'Bu sipariş depoya yönlendirilmiş — birleştirilemez'
+                                    : 'Birleştirme yalnız AYNI şubenin siparişleri arasında olur');
+                                  return;
+                                }
+                                birlTogglaBirlestir(s.id, s.sube_id);
+                              }}
+                              style={{
+                                width: 18, height: 18, borderRadius: 6, flexShrink: 0,
+                                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                fontSize: 11, fontWeight: 800, lineHeight: 1,
+                                cursor: kapali ? 'not-allowed' : 'pointer',
+                                opacity: kapali ? 0.35 : 1,
+                                border: `1px solid ${secili ? R.bakir : R.cizgi3}`,
+                                background: secili ? R.bakir : 'transparent',
+                                color: secili ? '#1C1309' : 'transparent',
+                              }}
+                            >✓</div>
+                          );
+                        })()}
                       </div>
                       <div style={{ fontSize: 11.5, color: R.metin2, marginTop: 5, lineHeight: 1.45 }}>
                         {(s.kalemler || []).length} kalem · {sayi(s.kalem_sayisi)} adet
