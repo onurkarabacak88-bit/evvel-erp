@@ -854,6 +854,44 @@ const KUCUK_UC = {
   ],
   '/api/rapor/aylik': {
     donem: bugunISO.slice(0, 7),
+    // ⚠️ 15 bölümün 13'ü v2'de kullanılmıyordu (okuma boşluğu denetimi) — mock'ta
+    // da yoktu. Gerçek uç hepsini döndürüyor (main.py:10003).
+    donem_label: 'Temmuz 2026',
+    yonetici_ozeti: [
+      { tip: 'notr', metin: 'Bu ay ciro: 2.184.500 ₺.' },
+      { tip: 'iyi', metin: 'En güçlü şube: Zafer (842.300 ₺).' },
+      { tip: 'uyari', metin: 'Ay sonu kasa 2.533.389 ₺ — mevcut gider hızıyla ~43 gün dayanır.' },
+      { tip: 'uyari', metin: "POS kesintisi cironun %1,87'i (40.850 ₺)." },
+      { tip: 'kotu', metin: 'Kasa açığı: 3 şube-gün, toplam 4.180 ₺ eksik kaydedildi.' },
+    ],
+    kpi: { net_kar_marji: 19.8, gider_ciro_orani: 81.1, pos_yanan_orani: 1.87,
+           pos_kesinti_toplam: 40850, gunluk_ortalama_gider: 59054, runway_gun: 43, bitis_kasa: 2533389 },
+    projeksiyon: { mevcut_kasa: 2533389, gunluk_gelir: 71300, gunluk_gider: 59054,
+                   net_gunluk: 12246, aylik_sabit_gider: 214000, aylik_maas: 386000,
+                   bekleyen_taksit_90: 148600, runway_gun: 43, ufuklar: [] },
+    denetim_ozeti: {
+      kasa: { acik_tl: 4180, fazla_tl: 960, acik_gun: 3, olay: 5 },
+      kasa_sube: [], fire: { toplam_bildirim: 7, toplam_adet: 34, sebepler: ['bozulma', 'düşürme', 'yanlış hazırlama'] },
+      uyumsuzluk: { acik_adet: 3, bekleyen_fark: 19 },
+    },
+    sabit_detay: [
+      { gider_adi: 'Zafer kira', kategori: 'kira', odenen: 62000, odeme_tarihi: '2026-07-05' },
+      { gider_adi: 'Elektrik · 4 şube', kategori: 'fatura', odenen: 38400, odeme_tarihi: '2026-07-12' },
+      { gider_adi: 'Muhasebe', kategori: 'hizmet', odenen: 14000, odeme_tarihi: '2026-07-10' },
+    ],
+    personel_detay: [
+      { ad_soyad: 'ELİF KAYA', gorev: 'barista', odenen: 31500, odeme_tarihi: '2026-07-05' },
+      { ad_soyad: 'CAN DEMİR', gorev: 'barista', odenen: 29800, odeme_tarihi: '2026-07-05' },
+    ],
+    anlik_kategoriler: [
+      { kategori: 'Mutfak', adet: 14, toplam: 18600 },
+      { kategori: 'Temizlik', adet: 9, toplam: 7400 },
+      { kategori: 'Bakım', adet: 4, toplam: 5200 },
+    ],
+    kart_detay: [
+      { kart_adi: 'Garanti İşletme', banka: 'Garanti', anapara: 84200, faiz: 4820, adet: 3 },
+      { kart_adi: 'Axess 6616', banka: 'Akbank', anapara: 38400, faiz: 1496, adet: 2 },
+    ],
     trend12: [
       { ay: '2026-02', ay_kisa: 'Şub', ciro: 1712400, gelir: 1740000, gider: 1482300, net: 257700 },
       { ay: '2026-03', ay_kisa: 'Mar', ciro: 1792600, gelir: 1810400, gider: 1542400, net: 268000 },

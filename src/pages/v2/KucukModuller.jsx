@@ -1271,9 +1271,155 @@ export function RaporModulu({ gorunum, onCekmece, onKopru, onToast }) {
       </div>
     );
 
+    // ── AYLIK RAPORUN DÜŞEN BÖLÜMLERİ (okuma boşluğu denetimi, 2026-07-31) ──
+    // /rapor/aylik 15 bölüm döndürüyor; v2 yalnız trend12 + muhur kullanıyordu.
+    // Cevap ZATEN çekiliyor — yeni istek yok, yalnız gösterim.
+    // ⚠️ Kasıtlı dışarıda: `sube_karne` (skor/harf) ve nakit projeksiyonu
+    // EĞRİSİ — ikisinin de v2'de kendi evi var (Panel ▸ Şube Karnesi,
+    // Sağlık ▸ Nakit Projeksiyonu · 12 ay). Aynı işi ikinci ekrana kurma kuralı.
+    const ozetR = rapor?.ozet || {};
+    const kpiR = rapor?.kpi || {};
+    const proj = rapor?.projeksiyon || {};
+    const den = rapor?.denetim_ozeti || {};
+    const yonetici = Array.isArray(rapor?.yonetici_ozeti) ? rapor.yonetici_ozeti : [];
+    const TIP_RENK = { iyi: R.yesil, uyari: R.amber, kotu: R.kirmizi, risk: R.kirmizi, notr: R.not };
+    const yuzde = (v) => (v == null ? '—' : `%${trSayi(sayi(v))}`);
+
+    const raporBolumleri = (
+      <>
+        {yonetici.length > 0 && (
+          <div style={{ ...kartYuzey, padding: '16px 19px', marginBottom: 14 }}>
+            <div style={{ fontFamily: F.baslik, fontSize: 15, fontWeight: 600, marginBottom: 11 }}>
+              🧭 Yönetici özeti · {rapor?.donem_label || ''}
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {yonetici.map((y, i) => {
+                const renk = TIP_RENK[String(y?.tip || 'notr')] || R.not;
+                return (
+                  <div key={i} style={{ display: 'flex', gap: 10, alignItems: 'flex-start', fontSize: 12.5, lineHeight: 1.65 }}>
+                    <span style={{ color: renk, fontWeight: 800, lineHeight: 1.4 }}>•</span>
+                    <span style={{ color: R.metin2 }}>{y?.metin}</span>
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{ fontSize: 10.5, color: R.not2, marginTop: 11, lineHeight: 1.6 }}>
+              Bu cümleleri sunucu kuruyor (kasa · ciro · POS · denetim · projeksiyon verisinden).
+            </div>
+          </div>
+        )}
+
+        {(kpiR.net_kar_marji != null || kpiR.runway_gun != null) && (
+          <KpiSeridi kpiler={[
+            { etiket: 'Net kâr marjı', deger: yuzde(kpiR.net_kar_marji), alt: rapor?.donem_label || 'bu ay', renk: sayi(kpiR.net_kar_marji) >= 15 ? R.yesil : sayi(kpiR.net_kar_marji) >= 8 ? R.amber : R.kirmizi },
+            { etiket: 'Gider / ciro', deger: yuzde(kpiR.gider_ciro_orani), alt: 'ne kadarı gidere gitti', renk: sayi(kpiR.gider_ciro_orani) > 85 ? R.kirmizi : R.krem },
+            { etiket: 'POS kesintisi', deger: yuzde(kpiR.pos_yanan_orani), alt: sayi(kpiR.pos_kesinti_toplam) ? `${fmt(sayi(kpiR.pos_kesinti_toplam))} yandı` : 'bankaya giden pay', renk: R.amber },
+            { etiket: 'Kasa kaç gün dayanır', deger: kpiR.runway_gun != null ? `${sayi(kpiR.runway_gun)} gün` : '—', alt: `ay sonu kasa ${fmt(sayi(kpiR.bitis_kasa))}`, renk: sayi(kpiR.runway_gun) < 30 ? R.kirmizi : R.yesil },
+          ]} />
+        )}
+
+        {(sayi(den?.kasa?.acik_tl) > 0 || sayi(den?.kasa?.fazla_tl) > 0 || sayi(den?.uyumsuzluk?.acik_adet) > 0 || sayi(den?.fire?.toplam_bildirim) > 0) && (
+          <div style={{ ...kartYuzey, padding: '16px 19px', marginBottom: 14 }}>
+            <div style={{ fontFamily: F.baslik, fontSize: 15, fontWeight: 600, marginBottom: 11 }}>
+              🔍 Denetim özeti · {rapor?.donem_label || ''}
+            </div>
+            <div style={{ display: 'flex', gap: 22, flexWrap: 'wrap', fontSize: 12.5, lineHeight: 1.7 }}>
+              <span>Kasa açığı <b style={{ fontFamily: F.mono, color: sayi(den?.kasa?.acik_tl) > 0 ? R.kirmizi : R.yesil }}>{fmt(sayi(den?.kasa?.acik_tl))}</b>
+                <span style={{ color: R.not2 }}> · {sayi(den?.kasa?.acik_gun)} şube-gün</span></span>
+              <span>Kasa fazlası <b style={{ fontFamily: F.mono, color: sayi(den?.kasa?.fazla_tl) > 0 ? R.amber : R.yesil }}>{fmt(sayi(den?.kasa?.fazla_tl))}</b></span>
+              <span>Fire <b style={{ fontFamily: F.mono }}>{sayi(den?.fire?.toplam_adet)}</b>
+                <span style={{ color: R.not2 }}> adet · {sayi(den?.fire?.toplam_bildirim)} bildirim</span></span>
+              <span>Sevkiyat uyumsuzluğu <b style={{ fontFamily: F.mono, color: sayi(den?.uyumsuzluk?.acik_adet) > 0 ? R.amber : R.yesil }}>{sayi(den?.uyumsuzluk?.acik_adet)}</b>
+                <span style={{ color: R.not2 }}> açık · {sayi(den?.uyumsuzluk?.bekleyen_fark)} adet fark</span></span>
+            </div>
+            {Array.isArray(den?.fire?.sebepler) && den.fire.sebepler.length > 0 && (
+              <div style={{ fontSize: 11.5, color: R.not2, marginTop: 10, lineHeight: 1.6 }}>
+                Fire sebepleri: {den.fire.sebepler.slice(0, 6).map((s) => (typeof s === 'string' ? s : `${s?.sebep || '—'} (${sayi(s?.adet)})`)).join(' · ')}
+              </div>
+            )}
+            <div style={{ fontSize: 10.5, color: R.not2, marginTop: 10 }}>
+              Çözüm masası: Ops ▸ Uzlaştırma. Buradaki sayılar dönem fotoğrafıdır, müdahale değildir.
+            </div>
+          </div>
+        )}
+
+        {(sayi(proj.net_gunluk) !== 0 || sayi(proj.aylik_sabit_gider) > 0 || sayi(proj.aylik_maas) > 0) && (
+          <div style={{ ...kartYuzey, padding: '16px 19px', marginBottom: 14 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 11 }}>
+              <span style={{ fontFamily: F.baslik, fontSize: 15, fontWeight: 600 }}>💧 Nakit hızı · 90 gün run-rate</span>
+              <button onClick={() => onKopru?.('__modul:borc:projeksiyon')} style={{
+                marginLeft: 'auto', padding: '6px 13px', borderRadius: 9, cursor: 'pointer',
+                border: `1px solid ${R.cizgi3}`, background: 'transparent', color: R.metin2,
+                fontSize: 11, fontWeight: 600, fontFamily: 'inherit',
+              }}>12 aylık eğri → Finansal Sağlık</button>
+            </div>
+            <div style={{ display: 'flex', gap: 22, flexWrap: 'wrap', fontSize: 12.5, lineHeight: 1.7 }}>
+              <span>Günlük gelir <b style={{ fontFamily: F.mono, color: R.yesil }}>{fmt(sayi(proj.gunluk_gelir))}</b></span>
+              <span>Günlük gider <b style={{ fontFamily: F.mono, color: R.kirmizi }}>{fmt(sayi(proj.gunluk_gider))}</b></span>
+              <span>Günlük net <b style={{ fontFamily: F.mono, color: sayi(proj.net_gunluk) >= 0 ? R.yesil : R.kirmizi }}>{fmt(sayi(proj.net_gunluk))}</b></span>
+              <span>Aylık sabit gider <b style={{ fontFamily: F.mono }}>{fmt(sayi(proj.aylik_sabit_gider))}</b></span>
+              <span>Aylık maaş <b style={{ fontFamily: F.mono }}>{fmt(sayi(proj.aylik_maas))}</b></span>
+              {sayi(proj.bekleyen_taksit_90) > 0 && (
+                <span>90 gün taksit yükü <b style={{ fontFamily: F.mono, color: R.amber }}>{fmt(sayi(proj.bekleyen_taksit_90))}</b></span>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Para nereye gitti — dört kalem tek yerde */}
+        {(() => {
+          const bloklar = [
+            ['🏠 Sabit giderler', rapor?.sabit_detay, (r) => r.gider_adi, (r) => r.kategori || kisaTarih(r.odeme_tarihi), (r) => sayi(r.odenen)],
+            ['👤 Personel', rapor?.personel_detay, (r) => r.ad_soyad, (r) => r.gorev || kisaTarih(r.odeme_tarihi), (r) => sayi(r.odenen)],
+            ['⚡ Anlık gider', rapor?.anlik_kategoriler, (r) => r.kategori || '—', (r) => `${sayi(r.adet)} kayıt`, (r) => sayi(r.toplam)],
+            ['💳 Kart ödemeleri', rapor?.kart_detay, (r) => r.kart_adi || r.banka, (r) => `${sayi(r.adet)} ödeme`, (r) => sayi(r.anapara) + sayi(r.faiz)],
+          ].filter(([, dizi]) => Array.isArray(dizi) && dizi.length > 0);
+          if (!bloklar.length) return null;
+          return (
+            <div style={{ ...kartYuzey, padding: '16px 19px', marginBottom: 14 }}>
+              <div style={{ fontFamily: F.baslik, fontSize: 15, fontWeight: 600, marginBottom: 4 }}>
+                💸 Para nereye gitti · {rapor?.donem_label || ''}
+              </div>
+              <div style={{ fontSize: 11, color: R.not2, marginBottom: 13 }}>
+                kasadan çıkan tutarların kalem kalem dökümü
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: 14 }}>
+                {bloklar.map(([ad, dizi, adFn, altFn, tutarFn]) => {
+                  const sirali = [...dizi].sort((a, b) => tutarFn(b) - tutarFn(a));
+                  const toplam = sirali.reduce((s, r) => s + tutarFn(r), 0);
+                  return (
+                    <div key={ad}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
+                        paddingBottom: 7, borderBottom: `1px solid ${R.cizgi2}`, marginBottom: 8 }}>
+                        <span style={{ fontSize: 12.5, fontWeight: 700 }}>{ad}</span>
+                        <span style={{ fontFamily: F.mono, fontSize: 12.5, color: R.kirmizi }}>{fmt(toplam)}</span>
+                      </div>
+                      {sirali.slice(0, 6).map((r, i) => (
+                        <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'baseline', fontSize: 11.5, padding: '3px 0' }}>
+                          <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {adFn(r)}
+                          </span>
+                          <span style={{ color: R.not2, fontSize: 10.5 }}>{altFn(r)}</span>
+                          <span style={{ fontFamily: F.mono }}>{fmt(tutarFn(r))}</span>
+                        </div>
+                      ))}
+                      {sirali.length > 6 && (
+                        <div style={{ fontSize: 10.5, color: R.not2, marginTop: 4 }}>… ve {sirali.length - 6} kalem daha</div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })()}
+      </>
+    );
+
     return (
       <>
         {muhurSeridi}
+        {raporBolumleri}
         <KpiSeridi kpiler={[
           { etiket: `${trend.length} ay ciro`, deger: fmt(toplamCiro), alt: `${trend[0].ay_kisa} – ${son.ay_kisa}` },
           { etiket: `${trend.length} ay net`, deger: fmt(toplamNet), alt: toplamCiro ? `ortalama marj %${trSayi((toplamNet / toplamCiro) * 100)}` : '—', renk: toplamNet >= 0 ? R.yesil : R.kirmizi },
