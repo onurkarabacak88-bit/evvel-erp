@@ -124,16 +124,47 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
   const [uzModal, setUzModal] = useState(null);    // {tip, kayit, adet, notu}
   const [uzMesgul, setUzMesgul] = useState('');
 
+  // ── CİRO FARK DEFTERİ (Faz 6c) — uzlaştırma masasının 4. kalemi ──────────
+  const [uzFark, setUzFark] = useState([]);
+  const [fdModal, setFdModal] = useState(null);   // {tip, kayit, aciklama}
+  const [fdMesgul, setFdMesgul] = useState(false);
+
+  const fdUygula = async () => {
+    const m = fdModal;
+    if (!m) return;
+    setFdMesgul(true);
+    try {
+      if (m.tip === 'karar') {
+        await api(`/ciro-taslak/fark-defteri/${m.kayit.id}/karar`, { method: 'POST', body: {
+          karar: m.karar, aciklama: (m.aciklama || '').trim() || null,
+        } });
+        onToast?.(m.karar === 'acik' ? '✓ Karar geri alındı' : '✓ Karar kaydedildi');
+      } else if (m.tip === 'gelire') {
+        await api(`/ciro-taslak/fark-defteri/${m.kayit.id}/gelire-yaz`, { method: 'POST' });
+        onToast?.('✓ Fazla tutar dış kaynak geliri olarak yazıldı');
+      } else if (m.tip === 'gidere') {
+        await api(`/ciro-taslak/fark-defteri/${m.kayit.id}/gidere-yaz`, { method: 'POST' });
+        onToast?.('✓ Eksik tutar anlık gider olarak yazıldı');
+      }
+      setFdModal(null);
+      uzYukle();
+    } catch (e) {
+      onToast?.(e?.message || 'İşlem başarısız');
+    } finally { setFdMesgul(false); }
+  };
+
   const uzYukle = useCallback(() => {
     setUzHata('');
     Promise.all([
       api('/ops/siparis/sevkiyat-uyumsuzluklar?gun=30&limit=300').catch(() => null),
       api('/ops/kasa-uyumsuzluk').catch(() => null),
       api('/ops/personel-vardiya-uyumsuzluk').catch(() => null),
-    ]).then(([sv, ks, pr]) => {
+      api('/ciro-taslak/fark-defteri?gun=45').catch(() => null),
+    ]).then(([sv, ks, pr, fd]) => {
       setUzSevk(sv || { satirlar: [] });
       setUzKasa(ks || {});
       setUzPers(pr || { kayitlar: [] });
+      setUzFark(Array.isArray(fd?.satirlar) ? fd.satirlar : (Array.isArray(fd?.kayitlar) ? fd.kayitlar : (Array.isArray(fd) ? fd : [])));
     }).catch((e) => setUzHata(e?.message || 'Uzlaştırma verisi alınamadı'));
   }, []);
 
@@ -1508,6 +1539,68 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     );
   }
 
+  // ── FAZ 6c ONAY MODALI ────────────────────────────────────────────────────
+  const fdModalBlok = fdModal && (() => {
+    const f = fdModal.kayit || {};
+    const fark = sayi(f.fark);
+    const T = fdModal.tip === 'karar' ? {
+      baslik: fdModal.karar === 'acik' ? 'Kararı geri al'
+        : fdModal.karar === 'girilen_dogru' ? 'Kasaya girilen doğru' : 'Evo satışı doğru',
+      anlat: fdModal.karar === 'acik'
+        ? 'Kayıt yeniden karar bekler duruma döner. Para yazma işlemi yapılmışsa bu onu geri almaz.'
+        : (fdModal.karar === 'girilen_dogru'
+          ? 'Kasadaki tutarın gerçek olduğunu söylüyorsun — fark Evo tarafındaki eksik/hatalı kayıttan geliyor demektir.'
+          : 'Evo satışının gerçek olduğunu söylüyorsun — fark kasa girişindeki hatadan geliyor demektir.'),
+      tehlike: false, buton: 'Kararı kaydet',
+    } : fdModal.tip === 'gelire' ? {
+      baslik: 'Fazlayı gelire yaz',
+      anlat: 'Kasadaki fazla tutar DIŞ KAYNAK GELİRİ olarak kasa defterine işlenir. P&L cirosu Evo\'da kalır (satış gerçeği değişmez); bu para satış dışı gelirdir. Kasa defterine yazılan kayıt geri alınamaz.',
+      tehlike: true, buton: 'Gelire yaz',
+    } : {
+      baslik: 'Eksiği gidere yaz',
+      anlat: 'Eksik tutar ANLIK GİDER olarak kasa defterine işlenir. Kasa defterine yazılan kayıt geri alınamaz — önce farkın gerçekten kayıp olduğundan emin ol.',
+      tehlike: true, buton: 'Gidere yaz',
+    };
+    const kapat = () => { if (!fdMesgul) setFdModal(null); };
+    return (
+      <div onClick={(e) => { if (e.target === e.currentTarget) kapat(); }} style={{
+        position: 'fixed', inset: 0, zIndex: 120, background: 'rgba(10,6,2,.7)',
+        backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+      }}>
+        <div style={{ ...kartYuzey, width: 450, maxWidth: '96vw', padding: '24px 26px' }}>
+          <div style={{ fontFamily: F.baslik, fontSize: 19, fontWeight: 600, marginBottom: 6 }}>{T.baslik}</div>
+          <div style={{ fontSize: 12.5, color: R.metin2, marginBottom: 4 }}>
+            <b>{f.sube_ad || f.sube_id || 'Şube'}</b> · {tarihKisa(f.tarih)}
+          </div>
+          <div style={{ fontSize: 12, color: R.not, marginBottom: 12, fontFamily: 'ui-monospace, monospace' }}>
+            Kasa {fmt(sayi(f.girilen))} ₺ · Evo {fmt(sayi(f.evo))} ₺ · Fark{' '}
+            <b style={{ color: fark < 0 ? R.kirmizi : R.yesil }}>{fark > 0 ? '+' : ''}{fmt(fark)} ₺</b>
+          </div>
+          <div style={{ fontSize: 12, color: R.not2, lineHeight: 1.65, marginBottom: 14 }}>{T.anlat}</div>
+          {fdModal.tip === 'karar' && fdModal.karar !== 'acik' && (
+            <>
+              <label style={opsEtiket}>Gerekçe (isteğe bağlı)</label>
+              <input value={fdModal.aciklama || ''} autoFocus
+                onChange={(e) => setFdModal((p) => ({ ...p, aciklama: e.target.value }))} style={opsAlanStil} />
+            </>
+          )}
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 6 }}>
+            <button disabled={fdMesgul} onClick={kapat} style={{
+              padding: '10px 18px', borderRadius: 10, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+              background: 'transparent', color: R.metin2, fontSize: 12.5, fontWeight: 600, fontFamily: 'inherit',
+            }}>Vazgeç</button>
+            <button disabled={fdMesgul} onClick={fdUygula} style={{
+              padding: '10px 20px', borderRadius: 10, cursor: 'pointer', fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit',
+              border: T.tehlike ? `1px solid ${R.kirmizi}55` : 'none',
+              background: T.tehlike ? `${R.kirmizi}26` : 'linear-gradient(150deg, #E0A559, #AF6C29)',
+              color: T.tehlike ? R.kirmizi : '#1C1309',
+            }}>{fdMesgul ? 'İşleniyor…' : T.buton}</button>
+          </div>
+        </div>
+      </div>
+    );
+  })();
+
   // ── FAZ 4 MODALLARI ───────────────────────────────────────────────────────
   const mdModalBlok = mdModal && (() => {
     const T = {
@@ -1617,11 +1710,15 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     const persSatir = Array.isArray(uzPers?.kayitlar) ? uzPers.kayitlar : [];
     const acikKasa = kasaSatir.filter((k) => !/(cozuldu|çözüldü)/i.test(String(k.durum || '')));
     const acikPers = persSatir.filter((p) => !/(cozuldu|çözüldü)/i.test(String(p.durum || '')));
+    // 'acik' = henüz karar verilmemiş; yazılmış olanlar (gelire/gidere) kapanmış sayılır
+    const farkSatir = Array.isArray(uzFark) ? uzFark : [];
+    const acikFark = farkSatir.filter((f) => !/(gelire_yazildi|gidere_yazildi|girilen_dogru|evo_dogru)/i.test(String(f.durum || '')));
 
     const ALT = [
       ['sevkiyat', `🚚 Sevkiyat (${sevkSatir.length})`],
       ['kasa', `💰 Kasa (${acikKasa.length})`],
       ['personel', `👥 Personel-vardiya (${acikPers.length})`],
+      ['ciro', `🧾 Ciro farkı (${acikFark.length})`],
     ];
 
     return (
@@ -1696,6 +1793,44 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
             onSatir={({ _k }) => setUzModal({ tip: 'kasa', kayit: _k, adet: '', notu: '' })}
           />
         ))}
+
+        {uzAlt === 'ciro' && (farkSatir.length ? (
+          <>
+            <div style={{ fontSize: 11.5, color: R.not2, lineHeight: 1.7, marginBottom: 12 }}>
+              Kasaya girilen ciro ile Evo satışı tutmadığında buraya düşer.
+              İki soru var: <b>hangisi doğru</b> (karar) ve <b>aradaki para ne oldu</b>
+              (fazlaysa gelir, eksikse gider yazılır). Para yazma işlemi kasa
+              defterine işlenir ve <b>geri alınamaz</b> — önce kararı ver.
+            </div>
+            <Liste satirlar={farkSatir.slice(0, 60).map((f) => {
+              const fark = sayi(f.fark);
+              const yazildi = /(gelire_yazildi|gidere_yazildi)/i.test(String(f.durum || ''));
+              const kararli = /(girilen_dogru|evo_dogru)/i.test(String(f.durum || ''));
+              const eylemler = [];
+              if (!yazildi) {
+                if (!kararli) {
+                  eylemler.push({ ad: 'Kasa doğru', onTikla: () => setFdModal({ tip: 'karar', karar: 'girilen_dogru', kayit: f, aciklama: '' }) });
+                  eylemler.push({ ad: 'Evo doğru', onTikla: () => setFdModal({ tip: 'karar', karar: 'evo_dogru', kayit: f, aciklama: '' }) });
+                } else {
+                  eylemler.push({ ad: 'Kararı geri al', onTikla: () => setFdModal({ tip: 'karar', karar: 'acik', kayit: f, aciklama: '' }) });
+                }
+                if (fark > 0) eylemler.push({ ad: 'Gelire yaz', onTikla: () => setFdModal({ tip: 'gelire', kayit: f }) });
+                if (fark < 0) eylemler.push({ ad: 'Gidere yaz', onTikla: () => setFdModal({ tip: 'gidere', kayit: f }) });
+              }
+              return {
+                baslik: `${f.sube_ad || f.sube_id || '—'} · ${tarihKisa(f.tarih)}`,
+                alt: `Kasa ${fmt(sayi(f.girilen))} ₺ · Evo ${fmt(sayi(f.evo))} ₺${
+                  yazildi ? ` — ${/gelire/i.test(String(f.durum)) ? 'gelire yazıldı' : 'gidere yazıldı'}`
+                  : kararli ? ` — ${/girilen/i.test(String(f.durum)) ? 'kasa doğru denildi' : 'Evo doğru denildi'}` : ''}`,
+                tutar: `${fark > 0 ? '+' : ''}${fmt(fark)} ₺`,
+                tier: yazildi || kararli ? 'iyi' : (Math.abs(fark) >= 500 ? 'kritik' : 'uyari'),
+                aksiyonlar: eylemler.length ? eylemler : undefined,
+              };
+            })} />
+          </>
+        ) : <BosDurum metin="Ciro farkı yok — kasa ile Evo satışı örtüşüyor. ✓" tamam />)}
+
+        {fdModalBlok}
 
         {uzAlt === 'personel' && (acikPers.length === 0 ? (
           <BosDurum tamam baslik="Personel-vardiya uyumsuzluğu yok" aciklama="Vardiya kaydı ile fiili giriş-çıkış uyumlu." />

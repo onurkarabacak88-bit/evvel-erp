@@ -191,6 +191,11 @@ const ODEME_UC = {
       { stok_yolda_id: 'sy3', sube_adi: 'Zafer', kalem_adi: 'Vanilya şurup', gonderilen_adet: 6, kabul_adet: 4 },
     ],
   },
+  '/api/ciro-taslak/fark-defteri': { satirlar: [
+    { id: 'f1', sube_id: 's1', sube_ad: 'Zafer', tarih: '2026-07-29', girilen: 18400, evo: 17650, fark: 750, durum: 'acik' },
+    { id: 'f2', sube_id: 's2', sube_ad: 'Gazze', tarih: '2026-07-28', girilen: 12100, evo: 12980, fark: -880, durum: 'acik' },
+    { id: 'f3', sube_id: 's1', sube_ad: 'Zafer', tarih: '2026-07-27', girilen: 9400, evo: 9400, fark: 0, durum: 'girilen_dogru' },
+  ] },
   '/api/ops/guvenlik-alarmlar': {
     limitler: { pencere_dk: 15, pin_kilit_esik: 2, pin_hatali_esik: 8 },
     alarm_sayisi: 1, toplam_alarm_kaydi: 2,

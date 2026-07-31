@@ -54,6 +54,17 @@ function Yukleniyor() {
   );
 }
 
+const mlBtn = {
+  padding: '9px 16px', borderRadius: 9, cursor: 'pointer', fontFamily: 'inherit',
+  fontSize: 12, fontWeight: 600, border: `1px solid ${R.cizgi3}`,
+  background: 'transparent', color: R.metin2,
+};
+const mlMini = {
+  padding: '4px 10px', borderRadius: 7, cursor: 'pointer', fontFamily: 'inherit',
+  fontSize: 11, fontWeight: 600, border: `1px solid ${R.cizgi3}`,
+  background: 'transparent', color: R.metin2,
+};
+
 export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) {
   const [ozet, setOzet] = useState(null);
   const [ozetHata, setOzetHata] = useState('');
@@ -94,6 +105,7 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
 
   const alarmYukle = useCallback(() => {
     setAlarmHata('');
+    kdvYukle();
     api('/ops/fiyat-zam-alarmlari?gun=180&limit=60')
       .then((d) => {
         setAlarmlar(Array.isArray(d?.alarmlar) ? d.alarmlar : []);
@@ -176,6 +188,62 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
     }
   };
 
+  // ── FİYAT & KDV YÖNETİMİ (Faz 6, 2026-07-31) ──────────────────────────────
+  // v2 fiyatları GÖSTERİYORDU ama düzeltemiyordu: yanlış alış fiyatı, eksik KDV
+  // oranı, çöp kalem kaydı — hepsi klasikte çözülüyordu, burada değil.
+  const [fyModal, setFyModal] = useState(null);   // {tip, ...}
+  const [fyMesgul, setFyMesgul] = useState(false);
+  const [kdvOranlar, setKdvOranlar] = useState(null);
+
+  const kdvYukle = useCallback(() => {
+    api('/ops/maliyet/kdv-oranlari')
+      .then((d) => setKdvOranlar(Array.isArray(d?.satirlar) ? d.satirlar : (Array.isArray(d) ? d : [])))
+      .catch(() => setKdvOranlar([]));
+  }, []);
+
+  const fyUygula = async () => {
+    const m = fyModal;
+    if (!m) return;
+    setFyMesgul(true);
+    try {
+      if (m.tip === 'fiyat') {
+        const kod = String(m.kalem_kodu || '').trim();
+        const tutar = Number(String(m.birim_maliyet_tl).replace(',', '.'));
+        if (!kod) { onToast?.('Kalem kodu zorunlu'); setFyMesgul(false); return; }
+        if (!Number.isFinite(tutar) || tutar < 0) { onToast?.('Geçerli bir fiyat girin (negatif olamaz)'); setFyMesgul(false); return; }
+        await api('/ops/maliyet/alis-fiyat-kaydet', { method: 'POST', body: {
+          kalem_kodu: kod, kalem_adi: (m.kalem_adi || '').trim() || null,
+          birim: (m.birim || 'adet').trim() || 'adet', birim_maliyet_tl: tutar,
+          gecerli_baslangic: m.gecerli_baslangic || null,
+          tedarikci: (m.tedarikci || '').trim() || null,
+          notlar: (m.notlar || '').trim() || null,
+        } });
+        onToast?.('✓ Alış fiyatı kaydedildi');
+      } else if (m.tip === 'fiyat-sil') {
+        await api(`/ops/maliyet/alis-fiyat-sil/${m.fiyat.id}`, { method: 'DELETE' });
+        onToast?.('✓ Fiyat kaydı silindi — bir önceki fiyat geçerli olur');
+      } else if (m.tip === 'kdv') {
+        const y = Number(String(m.kdv_yuzde).replace(',', '.'));
+        if (!Number.isFinite(y) || y < 0 || y > 40) { onToast?.('KDV yüzdesi 0–40 arası olmalı'); setFyMesgul(false); return; }
+        await api('/ops/maliyet/kdv-oran-kaydet', { method: 'POST', body: {
+          kalem_kodu: m.kalem_kodu, kalem_adi: m.kalem_adi || null, kdv_yuzde: y,
+        } });
+        onToast?.(`✓ KDV %${y} olarak kaydedildi`);
+      } else if (m.tip === 'kdv-oto') {
+        const r = await api(`/ops/maliyet/kdv-oran-otomatik?force=${m.force ? 'true' : 'false'}`, { method: 'POST' });
+        const a = r?.atanan || {};
+        onToast?.(`✓ KDV atandı — %1: ${sayi(a['%1'])} · %10: ${sayi(a['%10'])} · %20: ${sayi(a['%20'])}`);
+      } else if (m.tip === 'kalem-temizle') {
+        await api(`/ops/maliyet/kalem-temizle/${encodeURIComponent(m.kalem_kodu)}`, { method: 'DELETE' });
+        onToast?.('✓ Kalemin tüm fiyat geçmişi silindi');
+      }
+      setFyModal(null);
+      receteYukle(); kdvYukle();
+    } catch (e) {
+      onToast?.(e?.message || 'İşlem başarısız');
+    } finally { setFyMesgul(false); }
+  };
+
   useEffect(() => {
     if (gorunum === 'ozet') ozetYukle();
     if (gorunum === 'urun' || gorunum === 'recete') receteYukle();
@@ -209,6 +277,110 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
   }, [fiyatMap]);
 
   // ════════════════════════ GÖRÜNÜM: MARJ ÖZETİ ═════════════════════════════
+  // ── FAZ 6 ONAY/FORM MODALI ────────────────────────────────────────────────
+  const fyModalBlok = fyModal && (() => {
+    const T = {
+      'fiyat': { baslik: 'Alış fiyatı gir', tehlike: false, buton: 'Fiyatı kaydet',
+        anlat: 'Girilen tutar AÇILIŞ birimi fiyatıdır — içerik katsayısı uygulanmaz. Yeni tarihli kayıt eskisini geçersiz kılmaz, zincire eklenir; geçmiş maliyet hesapları bozulmaz.' },
+      'fiyat-sil': { baslik: 'Fiyat kaydını sil', tehlike: true, buton: 'Sil',
+        anlat: 'Bu tek fiyat satırı kaldırılır; zincirde bir önceki fiyat geçerli olur. Yanlış/test kaydını düzeltmek içindir.' },
+      'kdv': { baslik: 'KDV oranı ata', tehlike: false, buton: 'KDV\'yi kaydet',
+        anlat: 'Türkiye oranları: %1 (temel gıda), %10, %20. Oran net kâr hesabına girer — yanlış oran kârı olduğundan yüksek/düşük gösterir.' },
+      'kdv-oto': { baslik: 'KDV oranlarını otomatik doldur', tehlike: !!fyModal.force, buton: 'Çalıştır',
+        anlat: 'Kalem adına bakan kural motoru KDV oranı önerir ve yazar. Bu bir TAHMİNDİR — sonucu gözden geçir.' },
+      'kalem-temizle': { baslik: 'Kalemin fiyat geçmişini temizle', tehlike: true, buton: 'Temizle',
+        anlat: 'Bu kaleme ait TÜM alış fiyatı kayıtları silinir — tek satır değil, geçmişin tamamı. Geçmiş maliyet hesapları bu kalemde fiyatsız kalır.' },
+    }[fyModal.tip] || {};
+    const kapat = () => { if (!fyMesgul) setFyModal(null); };
+    return (
+      <div onClick={(e) => { if (e.target === e.currentTarget) kapat(); }} style={{
+        position: 'fixed', inset: 0, zIndex: 120, background: 'rgba(10,6,2,.7)',
+        backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+      }}>
+        <div style={{ ...kartYuzey, width: 470, maxWidth: '96vw', padding: '24px 26px', maxHeight: '88vh', overflowY: 'auto' }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 6 }}>
+            <div style={{ fontFamily: F.baslik, fontSize: 19, fontWeight: 600 }}>{T.baslik}</div>
+            <button onClick={kapat} style={{ marginLeft: 'auto', border: 'none', background: 'transparent', color: R.not, fontSize: 16, cursor: 'pointer', fontFamily: 'inherit' }}>x</button>
+          </div>
+          {(fyModal.kalem_adi || fyModal.fiyat) && (
+            <div style={{ fontSize: 12.5, color: R.metin2, marginBottom: 4 }}>
+              <b>{fyModal.kalem_adi || fyModal.fiyat?.kalem_adi || fyModal.fiyat?.kalem_kodu}</b>
+              {fyModal.fiyat ? ` · ${fmt(sayi(fyModal.fiyat.birim_maliyet_tl))} ₺` : ''}
+            </div>
+          )}
+          <div style={{ fontSize: 12, color: R.not2, lineHeight: 1.65, marginBottom: 14 }}>{T.anlat}</div>
+
+          {fyModal.tip === 'fiyat' && (
+            <>
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                <div style={{ minWidth: 150, flex: 1 }}><label style={mlEtiket}>Kalem kodu</label>
+                  <input value={fyModal.kalem_kodu} onChange={(e) => setFyModal((p) => ({ ...p, kalem_kodu: e.target.value }))} style={mlAlanStil} /></div>
+                <div style={{ minWidth: 150, flex: 1 }}><label style={mlEtiket}>Kalem adı</label>
+                  <input value={fyModal.kalem_adi} onChange={(e) => setFyModal((p) => ({ ...p, kalem_adi: e.target.value }))} style={mlAlanStil} /></div>
+              </div>
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                <div style={{ maxWidth: 140 }}><label style={mlEtiket}>Birim maliyet ₺</label>
+                  <input inputMode="decimal" value={fyModal.birim_maliyet_tl} onChange={(e) => setFyModal((p) => ({ ...p, birim_maliyet_tl: e.target.value }))} style={mlAlanStil} /></div>
+                <div style={{ maxWidth: 110 }}><label style={mlEtiket}>Birim</label>
+                  <input value={fyModal.birim} onChange={(e) => setFyModal((p) => ({ ...p, birim: e.target.value }))} style={mlAlanStil} /></div>
+                <div style={{ maxWidth: 150 }}><label style={mlEtiket}>Geçerlilik başlangıcı</label>
+                  <input type="date" value={fyModal.gecerli_baslangic} onChange={(e) => setFyModal((p) => ({ ...p, gecerli_baslangic: e.target.value }))} style={mlAlanStil} /></div>
+              </div>
+              <label style={mlEtiket}>Tedarikçi</label>
+              <input value={fyModal.tedarikci} onChange={(e) => setFyModal((p) => ({ ...p, tedarikci: e.target.value }))} style={mlAlanStil} />
+              <label style={mlEtiket}>Not</label>
+              <input value={fyModal.notlar} onChange={(e) => setFyModal((p) => ({ ...p, notlar: e.target.value }))} style={mlAlanStil} />
+            </>
+          )}
+          {fyModal.tip === 'kdv' && (
+            <>
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                <div style={{ minWidth: 150, flex: 1 }}><label style={mlEtiket}>Kalem kodu</label>
+                  <input value={fyModal.kalem_kodu} onChange={(e) => setFyModal((p) => ({ ...p, kalem_kodu: e.target.value }))} style={mlAlanStil} /></div>
+                <div style={{ maxWidth: 120 }}><label style={mlEtiket}>KDV %</label>
+                  <input inputMode="decimal" value={fyModal.kdv_yuzde} onChange={(e) => setFyModal((p) => ({ ...p, kdv_yuzde: e.target.value }))} style={mlAlanStil} /></div>
+              </div>
+              <div style={{ display: 'flex', gap: 7, marginTop: 10 }}>
+                {[1, 10, 20].map((y) => (
+                  <button key={y} onClick={() => setFyModal((p) => ({ ...p, kdv_yuzde: y }))} style={{
+                    ...mlMini, padding: '6px 14px',
+                    borderColor: sayi(fyModal.kdv_yuzde) === y ? R.bakir : R.cizgi3,
+                    color: sayi(fyModal.kdv_yuzde) === y ? R.bakir : R.not,
+                    background: sayi(fyModal.kdv_yuzde) === y ? `${R.bakir}1E` : 'transparent',
+                  }}>%{y}</button>
+                ))}
+              </div>
+            </>
+          )}
+          {fyModal.tip === 'kdv-oto' && (
+            <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, fontSize: 12, color: R.metin2, cursor: 'pointer', lineHeight: 1.6 }}>
+              <input type="checkbox" checked={!!fyModal.force} style={{ marginTop: 3 }}
+                onChange={(e) => setFyModal((p) => ({ ...p, force: e.target.checked }))} />
+              <span>
+                <b>Elle ayarları da ez</b> — işaretlemezsen yalnız KDV'si tanımsız kalemler
+                doldurulur ve senin elle girdiğin oranlar KORUNUR. İşaretlersen tüm kalemler
+                kural sonucuyla yeniden yazılır; <b>elle girilenler kaybolur</b>.
+              </span>
+            </label>
+          )}
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 16 }}>
+            <button disabled={fyMesgul} onClick={kapat} style={{
+              padding: '10px 18px', borderRadius: 10, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+              background: 'transparent', color: R.metin2, fontSize: 12.5, fontWeight: 600, fontFamily: 'inherit',
+            }}>Vazgeç</button>
+            <button disabled={fyMesgul} onClick={fyUygula} style={{
+              padding: '10px 20px', borderRadius: 10, cursor: 'pointer', fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit',
+              border: T.tehlike ? `1px solid ${R.kirmizi}55` : 'none',
+              background: T.tehlike ? `${R.kirmizi}26` : 'linear-gradient(150deg, #E0A559, #AF6C29)',
+              color: T.tehlike ? R.kirmizi : '#1C1309',
+            }}>{fyMesgul ? 'İşleniyor…' : T.buton}</button>
+          </div>
+        </div>
+      </div>
+    );
+  })();
+
   if (gorunum === 'ozet') {
     if (ozetHata) return <HataBandi mesaj={ozetHata} onTekrar={ozetYukle} />;
     if (!ozet) return <Yukleniyor />;
@@ -791,6 +963,72 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
           { etiket: 'En sert artış', deger: alarmlar.length ? pct(Math.max(...alarmlar.map((a) => sayi(a.artis_yuzde)))) : '—', alt: 'tek kalemde', renk: R.kirmizi },
           { etiket: 'Kaynak', deger: 'onaylı fiyat', alt: 'OCR değil — öneri-only ilkesi' },
         ]} />
+
+        {/* ══ FİYAT & KDV YÖNETİMİ (Faz 6) — zinciri sadece izlemek yetmiyor ══ */}
+        <div style={{ ...kartYuzey, padding: '16px 18px', marginBottom: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 10 }}>
+            <div style={{ fontFamily: F.baslik, fontSize: 15, fontWeight: 600 }}>Fiyat & KDV yönetimi</div>
+            <div style={{ fontSize: 11.5, color: R.not2 }}>
+              {sayi(fiyatlar?.length)} kalemde fiyat · {kdvOranlar === null ? '…' : `${sayi(kdvOranlar.length)} kalemde KDV tanımlı`}
+            </div>
+          </div>
+          <div style={{ fontSize: 11.5, color: R.not2, lineHeight: 1.7, marginBottom: 12 }}>
+            Alış fiyatı ürün maliyetinin, KDV oranı da net kârın <b>girdisidir</b> —
+            eksik ya da yanlışsa marj tablosu yanlış çıkar. Elle girilen fiyat
+            <b> açılış birimi</b> fiyatıdır; içerik katsayısı uygulanmaz.
+          </div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <button onClick={() => setFyModal({ tip: 'fiyat', kalem_kodu: '', kalem_adi: '', birim: 'adet', birim_maliyet_tl: '', gecerli_baslangic: '', tedarikci: '', notlar: '' })}
+              style={mlBtn}>+ Alış fiyatı gir</button>
+            <button onClick={() => setFyModal({ tip: 'kdv', kalem_kodu: '', kalem_adi: '', kdv_yuzde: 20 })}
+              style={mlBtn}>% KDV oranı ata</button>
+            <button onClick={() => setFyModal({ tip: 'kdv-oto', force: false })}
+              style={mlBtn}>⚡ KDV'yi otomatik doldur</button>
+          </div>
+
+          {/* Fiyatı olan kalemler — düzelt / sil / KDV ata */}
+          {!!(fiyatlar || []).length && (
+            <div style={{ marginTop: 14, maxHeight: 340, overflowY: 'auto' }}>
+              {(fiyatlar || []).slice(0, 60).map((f, i) => {
+                const kdv = (kdvOranlar || []).find((k) => String(k.kalem_kodu) === String(f.kalem_kodu));
+                return (
+                  <div key={f.id || i} style={{
+                    display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px',
+                    borderRadius: 9, background: R.girinti, marginBottom: 5, fontSize: 12, flexWrap: 'wrap',
+                  }}>
+                    <span style={{ fontWeight: 600 }}>{f.kalem_adi || f.kalem_kodu}</span>
+                    <span style={{ color: R.not, fontFamily: 'ui-monospace, monospace' }}>
+                      {fmt(sayi(f.birim_maliyet_tl))} ₺ / {f.birim || 'adet'}
+                    </span>
+                    {kdv ? (
+                      <span style={{ fontSize: 10.5, fontWeight: 700, padding: '2px 8px', borderRadius: 999, background: `${R.yesil}1E`, color: R.yesil }}>
+                        KDV %{Math.round(sayi(kdv.kdv_oran) * 100) || sayi(kdv.kdv_yuzde)}
+                      </span>
+                    ) : (
+                      <span style={{ fontSize: 10.5, fontWeight: 700, padding: '2px 8px', borderRadius: 999, background: `${R.amber}22`, color: R.amber }}>
+                        KDV tanımsız
+                      </span>
+                    )}
+                    <span style={{ marginLeft: 'auto', display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                      <button onClick={() => setFyModal({ tip: 'fiyat', kalem_kodu: f.kalem_kodu, kalem_adi: f.kalem_adi || '', birim: f.birim || 'adet', birim_maliyet_tl: String(sayi(f.birim_maliyet_tl)), gecerli_baslangic: '', tedarikci: f.tedarikci || '', notlar: '' })}
+                        style={mlMini}>Yeni fiyat</button>
+                      <button onClick={() => setFyModal({ tip: 'kdv', kalem_kodu: f.kalem_kodu, kalem_adi: f.kalem_adi || '', kdv_yuzde: kdv ? Math.round(sayi(kdv.kdv_oran) * 100) || 20 : 20 })}
+                        style={mlMini}>KDV</button>
+                      {f.id && (
+                        <button onClick={() => setFyModal({ tip: 'fiyat-sil', fiyat: f })}
+                          style={{ ...mlMini, color: R.kirmizi, borderColor: `${R.kirmizi}44` }}>Sil</button>
+                      )}
+                      <button onClick={() => setFyModal({ tip: 'kalem-temizle', kalem_kodu: f.kalem_kodu, kalem_adi: f.kalem_adi })}
+                        style={{ ...mlMini, color: R.kirmizi, borderColor: `${R.kirmizi}44` }}>Kalemi temizle</button>
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {fyModalBlok}
         {alarmlar.length === 0 ? (
           <BosDurum metin={`Son 180 günde %${esik} eşiğini aşan fiyat artışı yok — tedarik fiyatları sakin.`} />
         ) : (
