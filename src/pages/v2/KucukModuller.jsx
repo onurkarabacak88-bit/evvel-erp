@@ -361,6 +361,8 @@ export function OnayModulu({ gorunum, onCekmece, onKopru, onToast }) {
               aksiyonlar: [
                 { ad: '✓ Onayla', birincil: true, onTikla: () => setCiroSor({
                   kayit: c, nakit: String(sayi(c.nakit)), pos: String(sayi(c.pos)), online: String(sayi(c.online)),
+                  // Değişiklik tespiti için ŞUBENİN gönderdiği ilk hâl saklanır
+                  ilk: { nakit: sayi(c.nakit), pos: sayi(c.pos), online: sayi(c.online) },
                 }) },
                 { ad: '✗ Reddet', onTikla: () => setCiroRed({ kayit: c, neden: '' }) },
               ],
@@ -417,11 +419,70 @@ export function OnayModulu({ gorunum, onCekmece, onKopru, onToast }) {
             }}>
               Toplam <strong style={{ fontFamily: F.mono, color: R.krem }}>{fmt(t)}</strong> — onaylanınca ciro defterine ve kasaya işlenir.
             </div>
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 18 }}>
+
+            {/* Sunucunun PATCH tarafındaki çift-sayım freni burada ÖNCEDEN söylenir
+                (onayla ucunda bu kontrol yok — sessizce iki kez sayılabilirdi). */}
+            {(() => {
+              const n = sayi(ciroSor.nakit), p = sayi(ciroSor.pos), o = sayi(ciroSor.online);
+              if (!(o > 0.001 && n > 0.001 && p > 0.001 && Math.abs(o - (n + p)) < 0.01)) return null;
+              return (
+                <div style={{
+                  marginTop: 10, padding: '10px 14px', borderRadius: 11, fontSize: 11.5, lineHeight: 1.6,
+                  background: 'rgba(251,191,36,.09)', border: '1px solid rgba(251,191,36,.34)', color: R.metin2,
+                }}>
+                  <b style={{ color: R.amber }}>Online tutarı nakit + POS toplamına eşit.</b> Bu genelde
+                  çift sayımdır — online ayrı bir kanal değilse <b>0</b> girilmeli. Düzeltmeyi
+                  kaydetmek bu hâliyle reddedilir.
+                </div>
+              );
+            })()}
+
+            {(() => {
+              const degisti = ciroSor.ilk && (
+                sayi(ciroSor.nakit) !== ciroSor.ilk.nakit ||
+                sayi(ciroSor.pos) !== ciroSor.ilk.pos ||
+                sayi(ciroSor.online) !== ciroSor.ilk.online);
+              if (!degisti) return null;
+              return (
+                <div style={{ fontSize: 11.5, color: R.not2, marginTop: 10, lineHeight: 1.6 }}>
+                  Şube <span style={{ fontFamily: F.mono }}>
+                    {fmt(ciroSor.ilk.nakit + ciroSor.ilk.pos + ciroSor.ilk.online)}
+                  </span> göndermişti. Onaylamadan yalnız düzeltmeyi kaydedebilirsin —
+                  taslak <b>bekliyor</b> kalır, kasaya hiçbir şey işlenmez.
+                </div>
+              );
+            })()}
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 18, flexWrap: 'wrap' }}>
               <button disabled={mesgul} onClick={() => setCiroSor(null)} style={{
                 padding: '10px 18px', borderRadius: 10, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
                 background: 'transparent', color: R.metin2, fontSize: 12.5, fontWeight: 600, fontFamily: 'inherit',
               }}>Vazgeç</button>
+              {(() => {
+                const degisti = ciroSor.ilk && (
+                  sayi(ciroSor.nakit) !== ciroSor.ilk.nakit ||
+                  sayi(ciroSor.pos) !== ciroSor.ilk.pos ||
+                  sayi(ciroSor.online) !== ciroSor.ilk.online);
+                const acik = degisti && t > 0 && !mesgul;
+                return (
+                  <button disabled={!acik} onClick={async () => {
+                    const ok = await calistir(
+                      () => api(`/ciro-taslak/${ciroSor.kayit.id}`, {
+                        method: 'PATCH',
+                        body: { nakit: sayi(ciroSor.nakit), pos: sayi(ciroSor.pos), online: sayi(ciroSor.online) },
+                      }),
+                      '💾 Düzeltme kaydedildi — taslak hâlâ onay bekliyor, kasaya işlenmedi',
+                    );
+                    if (ok) setCiroSor(null);
+                  }} style={{
+                    padding: '10px 16px', borderRadius: 10, cursor: acik ? 'pointer' : 'not-allowed',
+                    border: `1px solid ${acik ? R.cizgi3 : R.cizgi2}`, background: 'transparent',
+                    color: acik ? R.metin2 : R.not3, fontSize: 12.5, fontWeight: 600, fontFamily: 'inherit',
+                  }}>
+                    💾 Onaylamadan kaydet
+                  </button>
+                );
+              })()}
               <button disabled={mesgul || t <= 0} onClick={async () => {
                 const ok = await calistir(
                   () => api(`/ciro-taslak/${ciroSor.kayit.id}/onayla`, {

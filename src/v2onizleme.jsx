@@ -79,6 +79,7 @@ const SAHTE = {
     { id: 'ct1', sube_id: 's2', sube_adi: 'Gazze', tarih: '2026-07-28', nakit: 6100, pos: 9800, online: 1900, aciklama: 'akşam vardiyası', durum: 'bekliyor' },
     { id: 'ct2', sube_id: 's1', sube_adi: 'Köyceğiz', tarih: '2026-07-28', nakit: 7400, pos: 11200, online: 2100, aciklama: null, durum: 'bekliyor' },
   ],
+  '/api/ciro-taslak/ct1': { success: true, id: 'ct1' },   // PATCH — onaylamadan düzeltme
   '/api/is-basvurusu/ozet': { yeni: 2 },
   '/api/stok-sayim/bekleyen-onay': { toplam: 5 },
   '/api/ops/truth/gunluk-rapor': { subeler: [{ anomali_sayisi: 2 }, { anomali_sayisi: 1 }] },
