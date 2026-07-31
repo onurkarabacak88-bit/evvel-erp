@@ -79,6 +79,10 @@ const omEtiket = {
   color: R.not2, fontWeight: 700, marginBottom: 6, display: 'block',
 };
 
+/** Vadeli kaynaklı plan satırı mı? — düzenle/sil yalnız bunlarda anlamlı. */
+const vadeliMi = (o) => String(o?.kaynak_tablo || '') === 'vadeli_alimlar' && !!o?.kaynak_id;
+const vadeliBaslik = (o) => `${o?.baslik || 'Vadeli alım'}`;
+
 export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
   const [yukleniyor, setYukleniyor] = useState(true);
   const [hata, setHata] = useState('');
@@ -116,6 +120,98 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
       .then((d) => setVade(d || {}))
       .catch(() => setVade({}));
   };
+
+  // ── VADELİ ALIM KAYDI: düzenle / sil (2026-07-31) ─────────────────────────
+  // ⚠️ ÖDEME buraya EKLENMEDİ: /vadeli-alimlar/{id}/ode içeride odeme_plani
+  // satırı açan eski sarmalayıcı; kanonik yol /odeme-plani/{id}/ode ve o zaten
+  // bu ekranda. İkinci para kapısı açmamak için bilinçli dışarıda.
+  const [vaModal, setVaModal] = useState(null);   // {tip, o, form?}
+  const [vaMesgul, setVaMesgul] = useState(false);
+
+  const vaUygula = async () => {
+    const m = vaModal;
+    if (!m) return;
+    const vid = m.o?.kaynak_id;
+    if (!vid) { onToast?.('Vadeli alım kimliği bulunamadı'); return; }
+    setVaMesgul(true);
+    try {
+      if (m.tip === 'duzenle') {
+        const f = m.form || {};
+        const t = Number(String(f.tutar).replace(',', '.'));
+        if (!String(f.tedarikci || '').trim()) { onToast?.('Tedarikçi zorunlu'); setVaMesgul(false); return; }
+        if (!Number.isFinite(t) || t <= 0) { onToast?.('Geçerli bir tutar girin'); setVaMesgul(false); return; }
+        if (!f.vade_tarihi) { onToast?.('Vade tarihi zorunlu'); setVaMesgul(false); return; }
+        await api(`/vadeli-alimlar/${vid}`, { method: 'PUT', body: {
+          aciklama: String(f.aciklama || '').trim() || '—',
+          tutar: t, vade_tarihi: f.vade_tarihi,
+          tedarikci: String(f.tedarikci).trim(),
+          ...(f.force ? { force: true } : {}),
+        } });
+        onToast?.('✓ Vadeli alım güncellendi');
+      } else {
+        await api(`/vadeli-alimlar/${vid}`, { method: 'DELETE' });
+        onToast?.('✓ Vadeli alım kaydı silindi — ödeme kuyruğundan düştü');
+      }
+      setVaModal(null);
+      yukle();
+    } catch (e) {
+      onToast?.(e?.message || 'İşlem başarısız');
+    } finally { setVaMesgul(false); }
+  };
+
+  const vaModalBlok = vaModal && (() => {
+    const kapat = () => { if (!vaMesgul) setVaModal(null); };
+    const sil = vaModal.tip === 'sil';
+    const f = vaModal.form || {};
+    return (
+      <div onClick={(e) => { if (e.target === e.currentTarget) kapat(); }} style={{
+        position: 'fixed', inset: 0, zIndex: 130, background: 'rgba(10,6,2,.72)',
+        backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+      }}>
+        <div style={{ ...kartYuzey, width: 470, maxWidth: '96vw', padding: '24px 26px' }}>
+          <div style={{ fontFamily: F.baslik, fontSize: 19, fontWeight: 600, marginBottom: 6 }}>
+            {sil ? 'Vadeli alımı sil' : 'Vadeli alımı düzenle'}
+          </div>
+          <div style={{ fontSize: 12.5, color: R.metin2, marginBottom: 4 }}>
+            <b>{vadeliBaslik(vaModal.o)}</b>
+          </div>
+          <div style={{ fontSize: 12, color: R.not2, lineHeight: 1.65, marginBottom: 14 }}>
+            {sil
+              ? 'Kayıt silinir ve ödeme kuyruğundan düşer. Ödenmiş bir alımı silmek kasa izini bozmaz ama borç geçmişini eksiltir — yanlış girilen kayıt için kullan.'
+              : 'Tutar, vade veya tedarikçi düzeltilir. Ödeme burada YAPILMAZ — ödemek için satırdaki «Öde» düğmesini kullan (kasa izi oradan çıkar).'}
+          </div>
+          {!sil && (
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+              <div style={{ minWidth: 170, flex: 1 }}><label style={omEtiket}>Tedarikçi</label>
+                <input value={f.tedarikci ?? ''} autoFocus
+                  onChange={(e) => setVaModal((p) => ({ ...p, form: { ...p.form, tedarikci: e.target.value } }))} style={omAlanStil} /></div>
+              <div style={{ maxWidth: 140 }}><label style={omEtiket}>Tutar ₺</label>
+                <input inputMode="decimal" value={f.tutar ?? ''}
+                  onChange={(e) => setVaModal((p) => ({ ...p, form: { ...p.form, tutar: e.target.value } }))} style={omAlanStil} /></div>
+              <div style={{ maxWidth: 160 }}><label style={omEtiket}>Vade tarihi</label>
+                <input type="date" value={f.vade_tarihi ?? ''}
+                  onChange={(e) => setVaModal((p) => ({ ...p, form: { ...p.form, vade_tarihi: e.target.value } }))} style={omAlanStil} /></div>
+              <div style={{ minWidth: 200, flex: 1 }}><label style={omEtiket}>Açıklama</label>
+                <input value={f.aciklama ?? ''}
+                  onChange={(e) => setVaModal((p) => ({ ...p, form: { ...p.form, aciklama: e.target.value } }))} style={omAlanStil} /></div>
+            </div>
+          )}
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 16 }}>
+            <button disabled={vaMesgul} onClick={kapat} style={{
+              padding: '10px 18px', borderRadius: 10, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+              background: 'transparent', color: R.metin2, fontSize: 12.5, fontWeight: 600, fontFamily: 'inherit',
+            }}>Vazgeç</button>
+            <button disabled={vaMesgul} onClick={vaUygula} style={{
+              padding: '10px 20px', borderRadius: 10, cursor: 'pointer', fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit',
+              border: sil ? `1px solid ${R.kirmizi}55` : 'none',
+              background: sil ? `${R.kirmizi}26` : 'linear-gradient(150deg, #E0A559, #AF6C29)',
+              color: sil ? R.kirmizi : '#1C1309',
+            }}>{vaMesgul ? 'İşleniyor…' : (sil ? 'Sil' : 'Kaydet')}</button>
+          </div>
+        </div>
+      </div>
+    );
+  })();
 
   useEffect(yukle, []);
 
@@ -737,6 +833,7 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
             para çıkmadı — söz; faturası gelince kendiliğinden birleşir
           </span>
         </div>
+        {vaModalBlok}
         {satirlar.length ? (
           <Liste
             secilebilir
@@ -757,12 +854,23 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
               alt: `${o.tip}${o._tarih ? ` · vade ${kisaTarih(o._tarih)}` : ''}${o._gecikmis ? ` · ${o.gun_gecikme} gün gecikme` : ''}`,
               tutar: o.tutar_girilmedi ? (o._tahmin ? `≈ ${fmt(o._tahmin)}` : 'tutar yok') : fmt(o._tutar),
               tier: o._gecikmis ? 'kritik' : o._bugunMu ? 'uyari' : o.tutar_girilmedi ? 'uyari' : 'bilgi',
-              aksiyonlar: o.tutar_girilmedi
-                ? [{ ad: 'Tutarı gir', birincil: true, onTikla: () => odemeyiAc(o) }]
-                : [
-                  { ad: 'Öde', birincil: true, onTikla: () => odemeyiAc(o) },
-                  { ad: 'Ertele', onTikla: () => erteleyiAc(o) },
-                ],
+              aksiyonlar: [
+                ...(o.tutar_girilmedi
+                  ? [{ ad: 'Tutarı gir', birincil: true, onTikla: () => odemeyiAc(o) }]
+                  : [
+                    { ad: 'Öde', birincil: true, onTikla: () => odemeyiAc(o) },
+                    { ad: 'Ertele', onTikla: () => erteleyiAc(o) },
+                  ]),
+                // Vadeli kaynaklı satırda kaydı düzeltmek/silmek mümkün —
+                // ödeme değil, KAYIT yönetimi.
+                ...(vadeliMi(o) ? [
+                  { ad: 'Düzelt', onTikla: () => setVaModal({ tip: 'duzenle', o, form: {
+                    tedarikci: o.tedarikci || o.baslik || '', tutar: String(sayi(o._tutar) || ''),
+                    vade_tarihi: String(o._tarih || '').slice(0, 10), aciklama: o.aciklama || '',
+                  } }) },
+                  { ad: 'Kaydı sil', onTikla: () => setVaModal({ tip: 'sil', o }) },
+                ] : []),
+              ],
               _o: o,
             }))}
             onAc={(l) => onCekmece?.({

@@ -72,6 +72,10 @@ def odeme_plani_bugun(gun: int = 0, personel: int = 1):
             "baslik": baslik,
             "tip": tip,
             "kaynak_tablo": r.get("kaynak_tablo"),
+            # kaynak_id SQL'de zaten seçiliyordu ama yanıta konmuyordu; v2 Ödeme
+            # Merkezi vadeli alım kaydını düzeltmek/silmek için buna ihtiyaç duyuyor.
+            # Salt-okur ek alan — mevcut tüketicileri etkilemez.
+            "kaynak_id": (str(r["kaynak_id"]) if r.get("kaynak_id") is not None else None),
             "tutar": float(r["odenecek_tutar"]) if r["odenecek_tutar"] is not None else 0.0,
             "asgari": float(r["asgari_tutar"]) if r.get("asgari_tutar") is not None else None,
             "tarih": str(r["tarih"]),

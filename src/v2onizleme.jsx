@@ -151,10 +151,10 @@ const gunEkleISO = (n) => { const d = new Date(bugunISO + 'T00:00:00'); d.setDat
 
 const ODEME_UC = {
   '/api/odeme-plani/bugun': [
-    { id: 'p1', baslik: 'Kahve Dünyası Çekirdek', tip: 'Vadeli Alım', kaynak_tablo: 'vadeli_alimlar', tutar: 68400, asgari: null, tarih: gunEkleISO(-2), gecikmis: true, gun_gecikme: 2, tedarikci: 'Kahve Dünyası' },
-    { id: 'p2', baslik: 'Sütaş Bölge Dağıtım', tip: 'Vadeli Alım', kaynak_tablo: 'vadeli_alimlar', tutar: 41250, asgari: null, tarih: bugunISO, gecikmis: false, gun_gecikme: 0, tedarikci: 'Sütaş' },
+    { id: 'p1', baslik: 'Kahve Dünyası Çekirdek', tip: 'Vadeli Alım', kaynak_tablo: 'vadeli_alimlar', kaynak_id: 'va1', tutar: 68400, asgari: null, tarih: gunEkleISO(-2), gecikmis: true, gun_gecikme: 2, tedarikci: 'Kahve Dünyası' },
+    { id: 'p2', baslik: 'Sütaş Bölge Dağıtım', tip: 'Vadeli Alım', kaynak_tablo: 'vadeli_alimlar', kaynak_id: 'va2', tutar: 41250, asgari: null, tarih: bugunISO, gecikmis: false, gun_gecikme: 0, tedarikci: 'Sütaş' },
     { id: 'p3', baslik: 'Doğan Emlak — kira', tip: 'Sabit Gider', kaynak_tablo: 'sabit_giderler', tutar: 96000, asgari: null, tarih: gunEkleISO(2), gecikmis: false, gun_gecikme: 0 },
-    { id: 'p4', baslik: 'Paper Cup Co.', tip: 'Vadeli Alım', kaynak_tablo: 'vadeli_alimlar', tutar: 33800, asgari: null, tarih: gunEkleISO(3), gecikmis: false, gun_gecikme: 0, tedarikci: 'Paper Cup Co.' },
+    { id: 'p4', baslik: 'Paper Cup Co.', tip: 'Vadeli Alım', kaynak_tablo: 'vadeli_alimlar', kaynak_id: 'va3', tutar: 33800, asgari: null, tarih: gunEkleISO(3), gecikmis: false, gun_gecikme: 0, tedarikci: 'Paper Cup Co.' },
     { id: 'p5', baslik: 'Garanti Bonus İşletme', tip: 'Kredi Kartı', kaynak_tablo: 'kartlar', tutar: 90760, asgari: 90760, tarih: gunEkleISO(5), gecikmis: false, gun_gecikme: 0 },
     { id: 'p6', baslik: 'Enerjisa', tip: 'Sabit Gider', kaynak_tablo: 'sabit_giderler', tutar: 22640, asgari: null, tarih: gunEkleISO(9), gecikmis: false, gun_gecikme: 0 },
     { id: 'fatura_x', sabit_gider_id: 'sg9', baslik: '🧾 Su faturası — fatura tutarı girilmedi (≈2.400 ₺ tahmini)', tip: 'Fatura (tutar bekleniyor)', kaynak_tablo: 'sabit_giderler', tutar: 0, tahmini_tutar: 2400, asgari: null, tarih: null, gecikmis: true, gun_gecikme: 3, tutar_girilmedi: true },
