@@ -557,6 +557,48 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
   }
 
   // ── sipariş kartı çekmecesi (kanban + kule ortak) ─────────────────────────
+  // ── SİPARİŞ YAŞAM DÖNGÜSÜ (geri yön, 2026-07-31) ──────────────────────────
+  // İptal/geri-al/yeniden-aç GERİ ALINAMAZ ya da akışı değiştirir → hepsi
+  // ONAY MODALINDAN geçer; klasikteki window.confirm'in kadife karşılığı.
+  const [ysModal, setYsModal] = useState(null);   // {tip, talep, aciklama}
+  const [ysMesgul, setYsMesgul] = useState(false);
+
+  const ysUygula = async () => {
+    const m = ysModal;
+    if (!m) return;
+    const tid = String(m.talep?.id || m.talep?.talep_id || '').trim();
+    if (!tid) { onToast?.('Talep kimliği okunamadı'); return; }
+    setYsMesgul(true);
+    try {
+      if (m.tip === 'iptal') {
+        await api('/ops/siparis/merkez-iptal', {
+          method: 'POST',
+          body: { talep_id: tid, aciklama: (m.aciklama || '').trim() || undefined },
+        });
+        onToast?.('🚫 Sipariş merkezden iptal edildi');
+      } else if (m.tip === 'geri-al') {
+        await api(`/ops/siparis/${encodeURIComponent(tid)}/toptanci-geri-al`, { method: 'POST' });
+        onToast?.('↩ Sipariş kuyruğa geri alındı');
+      } else if (m.tip === 'yeniden-ac') {
+        await api(`/ops/siparis/gecmis/${encodeURIComponent(tid)}/yeniden-ac`, { method: 'POST' });
+        onToast?.('🔄 Sipariş tekrar kuyruğa alındı');
+      } else if (m.tip.startsWith('ozel:')) {
+        const islem = m.tip.split(':')[1];
+        await api('/ops/siparis/ozel-islem', {
+          method: 'POST',
+          body: { talep_id: tid, islem, not_aciklama: (m.aciklama || '').trim() || null },
+        });
+        onToast?.(islem === 'katalog' ? '✓ Özel talep kataloğa alındı'
+          : islem === 'tek_sefer' ? '✓ Tek seferlik siparişe çevrildi'
+          : '✓ Özel talep reddedildi');
+      }
+      setYsModal(null);
+      kuleYukle();
+    } catch (e) {
+      onToast?.(e?.message || 'İşlem başarısız');
+    } finally { setYsMesgul(false); }
+  };
+
   const siparisAc = (s) => {
     const a = ASAMA[s.asama] || ASAMA.bekliyor;
     onCekmece?.({
@@ -583,17 +625,121 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
           ? `Kabulü yapan: ${s.kabul_personel_ad}${saatKisa(s.kabul_ts) ? ` · ${saatKisa(s.kabul_ts)}` : ''}`
           : '',
       ].filter(Boolean).join(' · '),
-      ...(s.asama === 'bekliyor'
-        ? { aksiyonlar: [{ ad: '→ Yönlendir (depo / toptancı)', birincil: true, onTikla: () => yonAc(s) }] }
-        : s.asama === 'depoda'
-          ? { aksiyonAd: 'Sevkiyatı hazırla', _hedef: '__gorunum:sevkiyat' }
-          : { aksiyonAd: 'Sipariş akışında izle', _hedef: '__gorunum:akis' }),
+      // AŞAMAYA GÖRE KAPI: ileri yön + GERİ yön (yaşam döngüsü)
+      aksiyonlar: (() => {
+        const A = [];
+        const bitti = ['tamamlandi', 'iptal'].includes(s.asama);
+        if (s.asama === 'bekliyor') {
+          A.push({ ad: '→ Yönlendir (depo / toptancı)', birincil: true, onTikla: () => yonAc(s) });
+        } else if (s.asama === 'depoda') {
+          A.push({ ad: 'Sevkiyatı hazırla', birincil: true, onTikla: () => onGorunum?.('sevkiyat') });
+        }
+        if (s.asama === 'toptanci_bekliyor') {
+          A.push({ ad: '↩ Toptancıdan geri al', onTikla: () => setYsModal({ tip: 'geri-al', talep: s, aciklama: '' }) });
+        }
+        if (bitti) {
+          A.push({ ad: '🔄 Yeniden aç', birincil: true, onTikla: () => setYsModal({ tip: 'yeniden-ac', talep: s, aciklama: '' }) });
+        } else {
+          A.push({ ad: '🚫 Merkezden iptal et', onTikla: () => setYsModal({ tip: 'iptal', talep: s, aciklama: '' }) });
+        }
+        // Özel talep (katalogda olmayan istek) → 3 yollu karar
+        if (s.ozel_talep || s.ozel || s.katalog_disi) {
+          A.push({ ad: '📗 Kataloğa al', onTikla: () => setYsModal({ tip: 'ozel:katalog', talep: s, aciklama: '' }) });
+          A.push({ ad: '1️⃣ Tek seferlik', onTikla: () => setYsModal({ tip: 'ozel:tek_sefer', talep: s, aciklama: '' }) });
+          A.push({ ad: '✗ Özel talebi reddet', onTikla: () => setYsModal({ tip: 'ozel:red', talep: s, aciklama: '' }) });
+        }
+        return A;
+      })(),
     });
   };
 
   // Çekmece aksiyonu TasarimV2'de koprule(_hedef) çağırır; görünüm-içi hedefler
   // için köprüyü burada yakalayamayız → kart üstündeki butonlar görünüm değiştirir,
   // çekmece aksiyonu eski sayfaya köprüler. (__gorunum: önekini TasarimV2 çözer.)
+
+  // ── YAŞAM DÖNGÜSÜ ONAY MODALI ─────────────────────────────────────────────
+  // Klasikte window.confirm + prompt vardı. Kadifede: ne olacağını AÇIKÇA yazan
+  // onay kutusu. Geri alınamaz işlemde düğme kırmızı.
+  const ysModalBlok = ysModal && (() => {
+    const t = ysModal.tip;
+    const TANIM = {
+      'iptal': {
+        baslik: 'Siparişi merkezden iptal et',
+        anlat: 'Talep iptal edilir ve kuyruktan düşer. Şube bu siparişi göremez; gerekirse yeniden açılabilir.',
+        buton: 'Evet, iptal et', tehlike: true, notAlani: 'İptal nedeni (isteğe bağlı)',
+      },
+      'geri-al': {
+        baslik: 'Toptancıdan geri al',
+        anlat: 'Toptancıya yollanan sipariş KUYRUĞA döner; yönlendirme baştan yapılır. Toptancıya gitmiş bilgi geri alınmaz — kendisine haber vermeniz gerekebilir.',
+        buton: 'Evet, geri al', tehlike: false, notAlani: null,
+      },
+      'yeniden-ac': {
+        baslik: 'Siparişi yeniden aç',
+        anlat: 'Kapanmış sipariş tekrar kuyruğa alınır ve akışın başına döner.',
+        buton: 'Evet, yeniden aç', tehlike: false, notAlani: null,
+      },
+      'ozel:katalog': {
+        baslik: 'Özel talebi kataloğa al',
+        anlat: 'Bu ürün kalıcı katalog kalemi olur; bundan sonra şubeler doğrudan sipariş edebilir.',
+        buton: 'Kataloğa al', tehlike: false, notAlani: 'Not (isteğe bağlı)',
+      },
+      'ozel:tek_sefer': {
+        baslik: 'Tek seferlik siparişe çevir',
+        anlat: 'Talep bu sefere mahsus karşılanır; kataloğa girmez, tekrar istenirse yeniden karar verilir.',
+        buton: 'Tek seferlik yap', tehlike: false, notAlani: 'Not (isteğe bağlı)',
+      },
+      'ozel:red': {
+        baslik: 'Özel talebi reddet',
+        anlat: 'Talep karşılanmaz. Şube gerekçeyi görebilsin diye not bırakmanız önerilir.',
+        buton: 'Reddet', tehlike: true, notAlani: 'Red gerekçesi',
+      },
+    }[t] || {};
+    const kapat = () => { if (!ysMesgul) setYsModal(null); };
+    return (
+      <div onClick={(e) => { if (e.target === e.currentTarget) kapat(); }} style={{
+        position: 'fixed', inset: 0, zIndex: 120, background: 'rgba(10,6,2,.7)',
+        backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+      }}>
+        <div style={{ ...kartYuzey, width: 440, maxWidth: '96vw', padding: '24px 26px' }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 6 }}>
+            <div style={{ fontFamily: F.baslik, fontSize: 19, fontWeight: 600 }}>{TANIM.baslik}</div>
+            <button onClick={kapat} style={{
+              marginLeft: 'auto', border: 'none', background: 'transparent', color: R.not,
+              fontSize: 16, cursor: 'pointer', fontFamily: 'inherit',
+            }}>x</button>
+          </div>
+          <div style={{ fontSize: 12.5, color: R.metin2, marginBottom: 4 }}>
+            <b>{ysModal.talep?.sube_adi || 'Şube'}</b> · {tarihKisa(ysModal.talep?.tarih)}
+            {ysModal.talep?.kalem_sayisi ? ` · ${sayi(ysModal.talep.kalem_sayisi)} adet` : ''}
+          </div>
+          <div style={{ fontSize: 12, color: R.not2, lineHeight: 1.65, marginBottom: 16 }}>
+            {TANIM.anlat}
+          </div>
+          {TANIM.notAlani && (
+            <>
+              <label style={opsEtiket}>{TANIM.notAlani}</label>
+              <input value={ysModal.aciklama} autoFocus
+                onChange={(e) => setYsModal((p) => ({ ...p, aciklama: e.target.value }))}
+                style={opsAlanStil} />
+            </>
+          )}
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 6 }}>
+            <button disabled={ysMesgul} onClick={kapat} style={{
+              padding: '10px 18px', borderRadius: 10, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+              background: 'transparent', color: R.metin2, fontSize: 12.5, fontWeight: 600, fontFamily: 'inherit',
+            }}>Vazgeç</button>
+            <button disabled={ysMesgul} onClick={ysUygula} style={{
+              padding: '10px 20px', borderRadius: 10, cursor: 'pointer',
+              border: TANIM.tehlike ? `1px solid ${R.kirmizi}55` : 'none',
+              background: TANIM.tehlike ? `${R.kirmizi}26` : 'linear-gradient(150deg, #E0A559, #AF6C29)',
+              color: TANIM.tehlike ? R.kirmizi : '#1C1309',
+              fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit',
+            }}>{ysMesgul ? 'İşleniyor…' : TANIM.buton}</button>
+          </div>
+        </div>
+      </div>
+    );
+  })();
 
   // ════════════════════════ GÖRÜNÜM: SİPARİŞ AKIŞI ══════════════════════════
   // ── SEVKİYAT HIZI DUYUSU (2026-07-29) ─────────────────────────────────────
@@ -656,6 +802,7 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
 
         {/* Kontrol Kulesi birleşti (2026-07-30): hız duyusu akışın yanına geldi */}
         {hizSeridi}
+        {ysModalBlok}
 
         {/* Risk şeridi TEPEDE (desen 2) — blueprint'te olmayan gerçek aşama.
             Her uyumsuz sipariş tıklanabilir kart: çekmecede kalemler + aşama metni. */}
