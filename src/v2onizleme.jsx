@@ -783,13 +783,51 @@ const TAKIP = PERSONEL.map((p, i) => {
         yemek_ucret_birim: yemekBirim, yol_ucret: yol, yol_ucret_aylik: yolAylik,
         'net_hakediş': Math.round(gunluk * gecenGun) + Math.round(fm * saatlik) + yemek + yol,
         aylik_toplam_tahmini: taban + yemekBirim * ayGun + yolAylik };
+  // Gün gün kayıt (gorev_api.vardiya_takip → gunler[]). Tezgâhta dört dalın da
+  // sürülebilmesi için sinyaller kişiye dağıtıldı:
+  //   i=1 gecikmeli · i=2 yemek limiti aşımı · i=3 giriş yok + izinsiz hafta
+  //   i=4 part-time'a tam gün · i=0/5 temiz
+  const gunler = Array.from({ length: 21 }, (_, k) => {
+    const t = gunEkleISO(-(20 - k));
+    const planlanan = partTime ? (k % 4 === 0 ? 9.5 : 6) : 9.5;
+    const girisYok = i === 3 && (k === 5 || k === 12);
+    const yemekAsim = i === 2 && (k === 3 || k === 9 || k === 16);
+    const partTam = partTime && i === 4 && k % 4 === 0;
+    const gecikme = i === 1 && k % 7 === 2 ? 18 : (i === 3 && k === 8 ? 42 : 0);
+    return {
+      tarih: t,
+      planlanan_saat: planlanan,
+      gecikme_dk: girisYok ? 0 : gecikme,
+      fazla_mesai_saat: Math.max(0, planlanan - 9.5),
+      // Sunucu kuralı (gorev_api:2190): hak yalnız SÜREKLİ personelde ya da
+      // part-time'ın TAM günlerinde doğar; limit aşımı hakkı düşürür.
+      yemek_ucret_hakki: !girisYok && !yemekAsim && (!partTime || partTam),
+      yemek_sure_dk: girisYok ? null : (yemekAsim ? 62 : 43),
+      yemek_limit_dk: 45,
+      part_tam_uyari: partTam,
+      giris_var: !girisYok,
+      baslangic_gunu: false,
+    };
+  });
+  // Haftalık izin: i=3'te bir hafta izinsiz (7/7 çalışılmış)
+  const haftalikIzin = [0, 1, 2].map((h) => ({
+    hafta: gunEkleISO(-(20 - h * 7)),
+    calisilan_gun: i === 3 && h === 1 ? 7 : 6,
+    toplam_gun: 7,
+    izin_var: !(i === 3 && h === 1),
+  }));
   return {
     personel_id: p.id, ad_soyad: p.ad_soyad, calisma_turu: p.calisma_turu, aktif: true,
     toplam_planlanan_saat: saat,
     toplam_gecikme_dk: [0, 6, 0, 42, 0, 0][i],
     toplam_fazla_mesai_saat: fm,
     yemek_ucret_gun: yemekGun,
+    yemek_ucret_tutari: yemek,
+    part_tam_gun: gunler.filter((g) => g.part_tam_uyari).length,
     haftalik_izin_kullanilmadi: [0, 0, 0, 1, 0, 0][i],
+    haftalik_izin_detay: haftalikIzin,
+    cikis_tarihi: i === 5 ? gunEkleISO(14) : null,
+    gunler,
     ucret_detay: detay,
     'net_hakediş': detay['net_hakediş'],
   };

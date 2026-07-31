@@ -54,6 +54,59 @@ const kisaTarih = (t) => {
   return `${Number(m[3])} ${AY_KISA[Number(m[2]) - 1]}`;
 };
 
+// ── VARDİYA TAKİP · GÜN DETAYI (/gorev/vardiya-takip → personel.gunler[]) ────
+// Sunucu her planlı gün için ayrı ayrı döndürür: planlanan_saat · gecikme_dk ·
+// fazla_mesai_saat · yemek_sure_dk/limit_dk/ucret_hakki · part_tam_uyari ·
+// giris_var · baslangic_gunu. v2 bunların HİÇBİRİNİ okumuyordu (gorev_api:2197).
+//
+// Üç sinyal AYRI toplanır, biri diğerini gizlemez (ham veriyi hep topla):
+//   · giriş yok    → vardiya planlı ama yoklama kaydı yok. baslangic_gunu HARİÇ:
+//                    sistem kurulumundan (9 Haz 2025) önceki günleri sunucu
+//                    "tam ve doğru çalışıldı" sayar, giris_var'ı true damgalar.
+//   · yemek kaybı  → mola limiti AŞILDIĞI için hak doğmamış. Kişinin cebinden
+//                    çıkan para; toplam yemek gününde görünmez.
+//                    ⚠️ "hak yok" TEK BAŞINA kayıp değildir: part-time personel
+//                    kısa günde zaten hak kazanmaz (gorev_api:2190 — hak yalnız
+//                    part_tam ya da sürekli personelde doğar). Bunu kayıp saymak
+//                    part-time'ın HER gününü uyarıya çevirirdi (tezgâhta 21 gün
+//                    çıktı, 2026-08-01). Limit biliniyorsa AŞIM şart koşulur.
+//   · part-tam     → part-time personele tam gün (≥9,4 sa) yazılmış. Bordro
+//                    riski: part sayılıp tam çalıştırılıyor.
+const gunAnaliz = (t) => {
+  const g = (t?.gunler || []).filter((x) => sayi(x.planlanan_saat) > 0);
+  const isPart = String(t?.calisma_turu || '').toLocaleLowerCase('tr').includes('part');
+  return {
+    tumu: g,
+    girisYok: g.filter((x) => !x.baslangic_gunu && x.giris_var === false),
+    yemekKayip: g.filter((x) => {
+      if (x.yemek_ucret_hakki) return false;
+      if (x.yemek_sure_dk == null) return false;
+      if (x.yemek_limit_dk != null) return sayi(x.yemek_sure_dk) > sayi(x.yemek_limit_dk);
+      return !isPart;   // limit bilinmiyor → part-time'da hüküm verme
+    }),
+    partTam: g.filter((x) => x.part_tam_uyari === true),
+  };
+};
+
+/** Bir günün tek cümlelik özeti — çekmecedeki iz defteri satırı. */
+const gunCumle = (x) => {
+  const p = [];
+  p.push(`${trSayi(sayi(x.planlanan_saat))} sa planlandı`);
+  if (x.baslangic_gunu) p.push('sistem başlangıcı — tam sayıldı');
+  else if (x.giris_var === false) p.push('giriş kaydı YOK');
+  if (sayi(x.gecikme_dk) > 0) p.push(`${trSayi(sayi(x.gecikme_dk), 0)} dk geç girildi`);
+  if (sayi(x.fazla_mesai_saat) > 0) p.push(`${trSayi(sayi(x.fazla_mesai_saat))} sa fazla mesai`);
+  if (x.yemek_sure_dk != null) {
+    const sure = trSayi(sayi(x.yemek_sure_dk), 0);
+    const limit = x.yemek_limit_dk != null ? `/${sayi(x.yemek_limit_dk)}` : '';
+    p.push(x.yemek_ucret_hakki
+      ? `yemek ${sure}${limit} dk · hak kazandı`
+      : `yemek ${sure}${limit} dk · limit aşıldı, ücret hakkı YOK`);
+  } else if (x.yemek_ucret_hakki) p.push('yemek ücreti hak edildi');
+  if (x.part_tam_uyari) p.push('part-time personele TAM gün yazıldı');
+  return p.join(' · ');
+};
+
 /** başlangıç tarihinden bugüne kıdem (ay). */
 const kidemAy = (bas) => {
   if (!bas) return null;
@@ -2779,6 +2832,17 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
     // maas_service tekelinde; burası TAHMİNÎ hakediş penceresi.
     const netAl = (t) => sayi(t?.['net_hakediş'] ?? t?.ucret_detay?.['net_hakediş']);
     const toplamNet = satir.reduce((s, t) => s + netAl(t), 0);
+    // Gün detayı (2026-08-01, okuma boşluğu #3): sunucu her gün için ayrı ayrı
+    // gönderiyordu, v2 `gunler[]` dizisine hiç bakmıyordu.
+    const analizler = satir.map((t) => ({ t, a: gunAnaliz(t) }));
+    const girisYokGun = analizler.reduce((s, x) => s + x.a.girisYok.length, 0);
+    const girisYokKisi = analizler.filter((x) => x.a.girisYok.length).length;
+    const yemekKayipGun = analizler.reduce((s, x) => s + x.a.yemekKayip.length, 0);
+    const yemekKayipKisi = analizler.filter((x) => x.a.yemekKayip.length).length;
+    const partTamKisi = analizler.filter((x) => x.a.partTam.length).length;
+    // Haftalık izin: sunucu hangi HAFTA olduğunu da söylüyordu; v2 yalnız sayıyı
+    // kullanıyordu. İzinsiz hafta = yasal risk, kişisi ve haftası belli olmalı.
+    const izinsizKisi = satir.filter((t) => sayi(t.haftalik_izin_kullanilmadi) > 0).length;
     return (
       <>
         <DonemSecici
@@ -2792,21 +2856,42 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
           { etiket: 'Toplam gecikme', deger: `${trSayi(toplamGecikme, 0)} dk`, alt: gecikenler.length ? `${gecikenler.length} personel` : 'gecikme yok', renk: toplamGecikme > 0 ? R.amber : R.yesil },
           { etiket: 'Fazla mesai', deger: `${trSayi(toplamFm, 0)} sa`, alt: 'plan üstü çalışma', renk: toplamFm > 0 ? R.kirmizi : R.yesil },
           { etiket: 'Tahminî hakediş', deger: toplamNet > 0 ? fmt(toplamNet) : '—', alt: toplamNet > 0 ? `${satir.length} personel · bugüne kadar` : 'ücret verisi yok', renk: R.bakirAcik },
+          {
+            etiket: 'Giriş yok',
+            deger: `${girisYokGun} gün`,
+            alt: girisYokGun ? `${girisYokKisi} personel · vardiya planlı, yoklama yok` : 'her planlı günde giriş var',
+            renk: girisYokGun ? R.kirmizi : R.yesil,
+          },
+          {
+            etiket: 'Yemek hakkı kaybı',
+            deger: `${yemekKayipGun} gün`,
+            alt: yemekKayipGun ? `${yemekKayipKisi} personel · mola limiti aşıldı` : 'hak kaybı yok',
+            renk: yemekKayipGun ? R.amber : R.yesil,
+          },
         ]} />
         {satir.length ? (
           <Tablo
             baslik={`Vardiya takip · ${AY_KISA[ay - 1]} ${yil}`}
-            not="satıra tıkla → hakediş kırılımı (taban · fazla mesai · yemek · yol)"
+            not="satıra tıkla → hakediş kırılımı + gün gün iz defteri"
             kolonlar={[
               { ad: 'Personel' }, { ad: 'Çalışma türü' }, { ad: 'Planlanan saat', sag: true },
               { ad: 'Gecikme', sag: true }, { ad: 'Fazla mesai', sag: true },
-              { ad: 'Tahminî hakediş', sag: true }, { ad: 'Durum' },
+              { ad: 'Tahminî hakediş', sag: true }, { ad: 'Uyarılar' },
             ]}
-            satirlar={satir.map(t => {
+            satirlar={analizler.map(({ t, a }) => {
               const gec = sayi(t.toplam_gecikme_dk);
               const fm = sayi(t.toplam_fazla_mesai_saat);
+              // Uyarılar TEK rozete ezilmez — üç ayrı sinyal üç ayrı haptır
+              // (klasikte de ayrı ayrı duruyordu). En ağırından üçü gösterilir.
+              const haplar = [];
+              if (a.girisYok.length) haplar.push({ ad: `${a.girisYok.length} gün giriş yok`, renk: R.kirmizi });
+              if (sayi(t.haftalik_izin_kullanilmadi) > 0) haplar.push({ ad: `${sayi(t.haftalik_izin_kullanilmadi)} hafta izinsiz`, renk: R.kirmizi });
+              if (a.partTam.length) haplar.push({ ad: `${a.partTam.length} gün part-tam`, renk: R.amber });
+              if (a.yemekKayip.length) haplar.push({ ad: `${a.yemekKayip.length} gün yemek kaybı`, renk: R.amber });
+              if (fm > 8) haplar.push({ ad: `${trSayi(fm)} sa fazla mesai`, renk: R.kirmizi });
+              if (gec > 30) haplar.push({ ad: 'gecikme yüksek', renk: R.amber });
               return {
-                id: t.personel_id, _t: t,
+                id: t.personel_id, _t: t, _a: a,
                 hucreler: [
                   { v: t.ad_soyad, kalin: true },
                   { v: turAd(t.calisma_turu), renk: R.not },
@@ -2814,10 +2899,25 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
                   { v: gec ? `${trSayi(gec, 0)} dk` : '—', mono: true, sag: true, renk: gec > 30 ? R.kirmizi : gec > 0 ? R.amber : R.not },
                   { v: fm ? `${trSayi(fm)} sa` : '—', mono: true, sag: true, renk: fm > 8 ? R.kirmizi : R.krem },
                   { v: netAl(t) > 0 ? fmt(netAl(t)) : '—', mono: true, sag: true, kalin: true, renk: R.bakirAcik },
-                  {
-                    v: fm > 8 ? 'fazla mesai' : gec > 30 ? 'gecikme yüksek' : 'normal',
-                    rozet: fm > 8 ? R.kirmizi : gec > 30 ? R.amber : R.yesil,
-                  },
+                  haplar.length
+                    ? {
+                      sira: haplar.length,
+                      siraMetin: haplar.map((h) => h.ad).join(' '),
+                      v: (
+                        <span style={{ display: 'inline-flex', gap: 5, flexWrap: 'wrap' }}>
+                          {haplar.slice(0, 3).map((h, i) => (
+                            <span key={i} style={{
+                              padding: '3px 9px', borderRadius: 99, fontSize: 10.5, fontWeight: 700,
+                              background: `${h.renk}22`, color: h.renk, whiteSpace: 'nowrap',
+                            }}>{h.ad}</span>
+                          ))}
+                          {haplar.length > 3 && (
+                            <span style={{ fontSize: 10.5, color: R.not2, alignSelf: 'center' }}>+{haplar.length - 3}</span>
+                          )}
+                        </span>
+                      ),
+                    }
+                    : { v: 'normal', rozet: R.yesil, sira: 0 },
                 ],
               };
             })}
@@ -2853,25 +2953,75 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
                 tutar: fmt(sayi(d.yol_ucret)),
               });
               kalemler.push({ ad: 'Net hakediş', detay: 'bugüne kadar birikmiş', tutar: fmt(netAl(t)) });
+
+              // ── GÜN DETAYINDAN GELEN SİNYALLER (sunucu gönderiyordu, v2 atıyordu)
+              const a = row._a || gunAnaliz(t);
+              if (a.girisYok.length) kalemler.push({
+                ad: '⚠ Giriş kaydı olmayan gün',
+                detay: `vardiya planlıydı, yoklama yok — ${a.girisYok.slice(0, 4).map((x) => kisaTarih(x.tarih)).join(', ')}${a.girisYok.length > 4 ? '…' : ''}`,
+                tutar: `${a.girisYok.length} gün`,
+              });
+              if (a.yemekKayip.length) kalemler.push({
+                ad: '⚠ Yemek ücreti hakkı kaybı',
+                detay: `mola limiti aşıldığı için hak doğmadı — ${a.yemekKayip.slice(0, 4).map((x) => kisaTarih(x.tarih)).join(', ')}${a.yemekKayip.length > 4 ? '…' : ''}`,
+                tutar: `${a.yemekKayip.length} gün`,
+              });
+              if (a.partTam.length) kalemler.push({
+                ad: '⚠ Part-time personele tam gün',
+                detay: 'part sayılıp ≥9,4 sa çalıştırılmış — çalışma türü gözden geçirilmeli',
+                tutar: `${a.partTam.length} gün`,
+              });
               if (sayi(t.haftalik_izin_kullanilmadi) > 0) kalemler.push({
                 ad: '⚠ Kullanılmayan haftalık izin', detay: 'ücretli izin verilmeli — hakedişe dâhil değil',
                 tutar: `${sayi(t.haftalik_izin_kullanilmadi)} gün`,
               });
+              // Hangi HAFTA olduğu da sunucudan geliyordu; yalnız izinsiz haftalar
+              // yazılır (izinli haftaları listelemek gürültü olurdu).
+              (t.haftalik_izin_detay || []).filter((h) => h.izin_var === false).forEach((h) => {
+                kalemler.push({
+                  ad: `${kisaTarih(h.hafta)} haftası — izin YOK`,
+                  detay: `${sayi(h.calisilan_gun)}/${sayi(h.toplam_gun)} gün çalışıldı`,
+                  tutar: 'izin alacağı',
+                });
+              });
+
+              // İz defteri: ay içindeki her planlı gün, yenisi üstte.
+              const iz = [...a.tumu]
+                .sort((x, y) => String(y.tarih).localeCompare(String(x.tarih)))
+                .map((x) => {
+                  const girisYok = !x.baslangic_gunu && x.giris_var === false;
+                  const yemekKayip = x.yemek_sure_dk != null && !x.yemek_ucret_hakki;
+                  return {
+                    ad: `${kisaTarih(x.tarih)} · ${HAFTA[haftaGunu(x.tarih)]}`,
+                    detay: gunCumle(x),
+                    bekliyor: girisYok,
+                    renk: girisYok ? R.kirmizi
+                      : (yemekKayip || x.part_tam_uyari || sayi(x.gecikme_dk) > 30) ? R.amber
+                        : R.yesil,
+                  };
+                });
+
               onCekmece?.({
                 tip: 'HAKEDİŞ KIRILIMI',
                 baslik: t.ad_soyad,
-                alt: `${turAd(t.calisma_turu)} · ${AY_KISA[ay - 1]} ${yil}`,
+                alt: `${turAd(t.calisma_turu)} · ${AY_KISA[ay - 1]} ${yil} · ${a.tumu.length} planlı gün${
+                  t.cikis_tarihi ? ` · çıkış ${kisaTarih(t.cikis_tarihi)}` : ''}`,
                 kpi: [
                   { etiket: 'Net hakediş', deger: fmt(netAl(t)), renk: R.bakirAcik },
                   { etiket: 'Planlanan saat', deger: `${trSayi(sayi(t.toplam_planlanan_saat), 0)} sa` },
                   { etiket: 'Fazla mesai', deger: fm ? `${trSayi(fm)} sa` : '—', renk: fm > 8 ? R.kirmizi : R.krem },
-                  { etiket: 'Gecikme', deger: gec ? `${trSayi(gec, 0)} dk` : '—', renk: gec > 30 ? R.kirmizi : R.krem },
+                  {
+                    etiket: 'Giriş yok',
+                    deger: a.girisYok.length ? `${a.girisYok.length} gün` : '—',
+                    renk: a.girisYok.length ? R.kirmizi : R.krem,
+                  },
                 ],
-                listeBaslik: 'Ücret kırılımı',
+                listeBaslik: 'Ücret kırılımı + uyarılar',
                 satirlar: kalemler,
+                iz,
                 not: d.not
-                  ? `${d.not} — bu TAHMİNÎ hakediştir, bordronun kendisi Ekip ▸ Maaş & Avans'ta onaylanır.`
-                  : 'Bu TAHMİNÎ hakediş: vardiya kaydından türetilir, ay ilerledikçe artar. Ödenecek bordro Ekip ▸ Maaş & Avans\'ta onaylanır — iki sayı aynı olmak zorunda değil.',
+                  ? `${d.not} — bu TAHMİNÎ hakediştir, bordronun kendisi Ekip ▸ Maaş & Avans'ta onaylanır. Gün gün kayıt İz sekmesinde.`
+                  : 'Bu TAHMİNÎ hakediş: vardiya kaydından türetilir, ay ilerledikçe artar. Ödenecek bordro Ekip ▸ Maaş & Avans\'ta onaylanır — iki sayı aynı olmak zorunda değil. Gün gün kayıt İz sekmesinde.',
               });
             }}
           />
