@@ -191,6 +191,10 @@ const ODEME_UC = {
       { stok_yolda_id: 'sy3', sube_adi: 'Zafer', kalem_adi: 'Vanilya şurup', gonderilen_adet: 6, kabul_adet: 4 },
     ],
   },
+  '/api/vardiya/v2/izin': [
+    { id: 'iz1', personel_id: 'p1', _personel_full: 'Ali Yıldız', baslangic_tarih: '2026-08-03', bitis_tarih: '2026-08-07', tip: 'yillik', aciklama: 'yaz izni' },
+    { id: 'iz2', personel_id: 'p2', _personel_full: 'Ayşe Demir', baslangic_tarih: '2026-08-12', bitis_tarih: '2026-08-12', tip: 'mazeret', aciklama: null },
+  ],
   '/api/fatura-istek/istisnalar': { kaliplar: ['pazar esnafi', 'otopark'] },
   '/api/ciro-taslak/fark-defteri': { satirlar: [
     { id: 'f1', sube_id: 's1', sube_ad: 'Zafer', tarih: '2026-07-29', girilen: 18400, evo: 17650, fark: 750, durum: 'acik' },

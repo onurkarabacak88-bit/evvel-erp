@@ -335,6 +335,32 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
     finally { setPlMesgul(false); }
   };
 
+  // ── İZİN LİSTESİ + SİL (2026-07-31) ───────────────────────────────────────
+  // Önceki turda izin EKLEME yazıldı ama listeleme/silme yoktu: yanlış girilen
+  // izin ekranda görünmüyor ve kaldırılamıyordu. Yarım kalan iş tamamlandı.
+  const [izinler, setIzinler] = useState(null);
+  const [izSilModal, setIzSilModal] = useState(null);
+
+  const izinlerYukle = useCallback(() => {
+    api('/vardiya/v2/izin')
+      .then((d) => setIzinler(Array.isArray(d) ? d : (Array.isArray(d?.satirlar) ? d.satirlar : [])))
+      .catch(() => setIzinler([]));
+  }, []);
+
+  const izinSil = async () => {
+    const iz = izSilModal;
+    if (!iz?.id) return;
+    setPlMesgul(true);
+    try {
+      await api(`/vardiya/v2/izin/${iz.id}`, { method: 'DELETE' });
+      onToast?.('✓ İzin kaldırıldı — o günler yeniden planlanabilir');
+      setIzSilModal(null);
+      izinlerYukle(); vpYukle(vpTarih);
+    } catch (e) {
+      onToast?.(e?.message || 'İzin silinemedi');
+    } finally { setPlMesgul(false); }
+  };
+
   const izinEkle = async () => {
     const f = izForm;
     if (!f.personel_id) { onToast?.('Personel seçin'); return; }
@@ -348,7 +374,7 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
       } });
       onToast?.('✓ İzin kaydedildi — motor bu günlerde atama yapmaz');
       setIzForm({ personel_id: '', baslangic_tarih: '', bitis_tarih: '', tip: 'mazeret', aciklama: '' });
-      vpYukle(vpTarih);
+      vpYukle(vpTarih); izinlerYukle();
     } catch (e) { onToast?.(e?.message || 'İzin eklenemedi'); }
     finally { setPlMesgul(false); }
   };
@@ -1909,7 +1935,7 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
           </div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 12 }}>
             {[['slot', '🧱 Slot iskeleti'], ['kilit', '🔒 Gün kilidi'], ['motor', '⚙️ Otomatik doldur'], ['izin', '🌴 İzin'], ['serbest', '🕐 Serbest atama'], ['preset', '⏱ Preset'], ['kisit', '🚧 Kısıtlar']].map(([k, ad]) => (
-              <button key={k} onClick={() => { setPlSekme(plSekme === k ? '' : k); if (k === 'preset') presetYukle(); }} style={{
+              <button key={k} onClick={() => { setPlSekme(plSekme === k ? '' : k); if (k === 'preset') presetYukle(); if (k === 'izin') izinlerYukle(); }} style={{
                 padding: '7px 14px', borderRadius: 9, cursor: 'pointer', fontFamily: 'inherit',
                 fontSize: 12, fontWeight: 600,
                 border: `1px solid ${plSekme === k ? R.bakir : R.cizgi3}`,
@@ -2060,6 +2086,58 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
               <label style={ekEtiket}>Açıklama (isteğe bağlı)</label>
               <input value={izForm.aciklama} onChange={(e) => setIzForm((p) => ({ ...p, aciklama: e.target.value }))} style={ekAlanStil} />
               <button disabled={plMesgul} onClick={izinEkle} style={plBtn}>{plMesgul ? 'Kaydediliyor…' : 'İzni kaydet'}</button>
+              {/* Kayıtlı izinler — yanlış girileni buradan kaldır */}
+              {Array.isArray(izinler) && izinler.length > 0 && (
+                <div style={{ marginTop: 14 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: R.metin2, marginBottom: 6 }}>
+                    Kayıtlı izinler · {sayi(izinler.length)}
+                  </div>
+                  {izinler.slice(0, 40).map((z, i) => (
+                    <div key={z.id || i} style={{
+                      display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px',
+                      borderRadius: 9, background: R.girinti, marginBottom: 5, fontSize: 12, flexWrap: 'wrap',
+                    }}>
+                      <span style={{ fontWeight: 600 }}>{z._personel_full || z.personel_ad || z.personel_id}</span>
+                      <span style={{ color: R.not, fontFamily: 'ui-monospace, monospace' }}>
+                        {kisaTarih(z.baslangic_tarih)} → {kisaTarih(z.bitis_tarih)}
+                      </span>
+                      <span style={{ color: R.not2 }}>{z.tip || 'mazeret'}</span>
+                      {z.aciklama && <span style={{ color: R.not2 }}>· {z.aciklama}</span>}
+                      <button onClick={() => setIzSilModal(z)}
+                        style={{ ...plMini, marginLeft: 'auto', color: R.kirmizi, borderColor: `${R.kirmizi}44` }}>Kaldır</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {izSilModal && (
+                <div onClick={(e) => { if (e.target === e.currentTarget && !plMesgul) setIzSilModal(null); }} style={{
+                  position: 'fixed', inset: 0, zIndex: 130, background: 'rgba(10,6,2,.72)',
+                  backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+                }}>
+                  <div style={{ ...kartYuzey, width: 420, maxWidth: '96vw', padding: '24px 26px' }}>
+                    <div style={{ fontFamily: F.baslik, fontSize: 19, fontWeight: 600, marginBottom: 6 }}>İzni kaldır</div>
+                    <div style={{ fontSize: 12.5, color: R.metin2, marginBottom: 4 }}>
+                      <b>{izSilModal._personel_full || izSilModal.personel_ad || izSilModal.personel_id}</b> ·{' '}
+                      {kisaTarih(izSilModal.baslangic_tarih)} → {kisaTarih(izSilModal.bitis_tarih)}
+                    </div>
+                    <div style={{ fontSize: 12, color: R.not2, lineHeight: 1.65, marginBottom: 14 }}>
+                      İzin kaydı silinir; o günlerde bu kişi yeniden plana atanabilir ve
+                      motor onu aday sayar. Zaten yapılmış atamalar etkilenmez.
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+                      <button disabled={plMesgul} onClick={() => setIzSilModal(null)} style={{
+                        padding: '10px 18px', borderRadius: 10, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+                        background: 'transparent', color: R.metin2, fontSize: 12.5, fontWeight: 600, fontFamily: 'inherit',
+                      }}>Vazgeç</button>
+                      <button disabled={plMesgul} onClick={izinSil} style={{
+                        padding: '10px 20px', borderRadius: 10, cursor: 'pointer', fontSize: 12.5, fontWeight: 700,
+                        fontFamily: 'inherit', border: `1px solid ${R.kirmizi}55`,
+                        background: `${R.kirmizi}26`, color: R.kirmizi,
+                      }}>{plMesgul ? 'İşleniyor…' : 'Kaldır'}</button>
+                    </div>
+                  </div>
+                </div>
+              )}
               {/* Kasıtlı boş: izin değil, "bugün bilerek çalışmıyor" beyanı */}
               <div style={{ borderTop: `1px solid ${R.cizgi3}`, paddingTop: 12, marginTop: 14 }}>
                 <div style={{ fontSize: 11.5, color: R.not2, lineHeight: 1.7, marginBottom: 8 }}>
