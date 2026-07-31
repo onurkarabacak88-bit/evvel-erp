@@ -59,7 +59,9 @@
       "Bash(python -c \"import ast; ast.parse\\(open\\('sube_panel.py',encoding='utf-8'\\).read\\(\\)\\); ast.parse\\(open\\('database.py',encoding='utf-8'\\).read\\(\\)\\); print\\('OK'\\)\")",
       "mcp__Claude_in_Chrome__javascript_tool",
       "Bash(curl -s -o /dev/null -w \"sohbet klibi: %{http_code} %{size_download}B\\\\n\" \"https://evvel-erp-production.up.railway.app/tv-menu/clip/tulipi_sohbet\")",
-      "Bash(curl -s -o /dev/null -w \"enerji klibi: %{http_code} %{size_download}B\\\\n\" \"https://evvel-erp-production.up.railway.app/tv-menu/clip/tulipi_enerji\")"
+      "Bash(curl -s -o /dev/null -w \"enerji klibi: %{http_code} %{size_download}B\\\\n\" \"https://evvel-erp-production.up.railway.app/tv-menu/clip/tulipi_enerji\")",
+      "Bash(python \"C:\\\\Users\\\\SONY\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-SONY-Desktop-YAPALIM--claude-worktrees-design-connection-06385d\\\\4abff445-0752-4317-8ccf-aa2f2114a335\\\\scratchpad\\\\faz7.py\")",
+      "Bash(npx esbuild *)"
     ]
   }
 }

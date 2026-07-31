@@ -134,6 +134,17 @@ function KopruButon({ ad, onTikla, birincil }) {
   );
 }
 
+const fiMini = {
+  padding: '4px 10px', borderRadius: 7, cursor: 'pointer', fontFamily: 'inherit',
+  fontSize: 11, fontWeight: 600, border: `1px solid ${R.cizgi3}`,
+  background: 'transparent', color: R.metin2,
+};
+const fiBtn = {
+  padding: '9px 16px', borderRadius: 9, cursor: 'pointer', fontFamily: 'inherit',
+  fontSize: 12, fontWeight: 600, border: `1px solid ${R.cizgi3}`,
+  background: 'transparent', color: R.metin2,
+};
+
 export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast }) {
   const [merkez, setMerkez] = useState(null);
   const [merkezHata, setMerkezHata] = useState('');
@@ -262,6 +273,7 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast }) {
   const istekYukle = useCallback(() => {
     setIstekHata('');
     talepYukle();
+    istisnaYukle();
     api('/fatura-istek/liste')
       .then((d) => setIstek(d || {}))
       .catch((e) => setIstekHata(e?.message || ''));
@@ -283,6 +295,59 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast }) {
       .catch((e) => setCariHata(e?.message || ''));
   }, []);
 
+  // ── FATURA İSTEĞİ EYLEMLERİ (Faz 7, 2026-07-31) ───────────────────────────
+  // v2 istekleri GÖSTERİYORDU ama kapatamıyordu: gönderdiğini işaretleyemiyor,
+  // numara giremiyor, "bu tedarikçiden belge beklenmez" diyemiyordu.
+  const [fiModal, setFiModal] = useState(null);   // {tip, istek?, ...}
+  const [fiMesgul, setFiMesgul] = useState(false);
+  const [istisnalar, setIstisnalar] = useState(null);
+
+  const istisnaYukle = useCallback(() => {
+    api('/fatura-istek/istisnalar')
+      .then((d) => setIstisnalar(Array.isArray(d?.kaliplar) ? d.kaliplar
+        : (Array.isArray(d?.satirlar) ? d.satirlar : (Array.isArray(d) ? d : []))))
+      .catch(() => setIstisnalar([]));
+  }, []);
+
+  const fiUygula = async () => {
+    const m = fiModal;
+    if (!m) return;
+    setFiMesgul(true);
+    try {
+      if (m.tip === 'gonderildi') {
+        await api(`/fatura-istek/${m.istek.id}/gonderildi`, { method: 'POST' });
+        onToast?.('✓ Gönderildi olarak işaretlendi');
+      } else if (m.tip === 'telefon') {
+        const tel = String(m.telefon || '').trim();
+        if (tel.replace(/\D/g, '').length < 10) { onToast?.('Geçerli numara girin — örn. 0532 123 45 67'); setFiMesgul(false); return; }
+        await api(`/fatura-istek/${m.istek.id}/telefon`, { method: 'POST', body: { telefon: tel } });
+        onToast?.('✓ Numara kaydedildi — aynı tedarikçinin diğer açık işlerine de işlendi');
+      } else if (m.tip === 'kapat') {
+        const ac = String(m.aciklama || '').trim();
+        if (!ac) { onToast?.('Açıklama zorunlu — kayıt sessizce kapanamaz'); setFiMesgul(false); return; }
+        await api(`/fatura-istek/${m.istek.id}/kapat`, { method: 'POST', body: {
+          aciklama: ac, kalici_istisna: !!m.kalici_istisna,
+        } });
+        onToast?.(m.kalici_istisna
+          ? '✓ Kapatıldı ve kalıp öğrenildi — bu tedarikçi bir daha istenmeyecek'
+          : '✓ İstek kapatıldı');
+      } else if (m.tip === 'tara') {
+        const r = await api('/fatura-istek/tara', { method: 'POST' });
+        onToast?.(`✓ Tarama bitti${r?.yeni_aday != null ? ` — ${sayi(r.yeni_aday)} yeni aday` : ''}`);
+      } else if (m.tip === 'istisna-sil') {
+        await api('/fatura-istek/istisna-sil', { method: 'POST', body: { kalip: m.kalip } });
+        onToast?.('✓ İstisna geri alındı — sonraki taramada yeniden istenebilir');
+      } else if (m.tip === 'ocr') {
+        const r = await api('/fatura/ocr-yeniden-dene?limit=50', { method: 'POST' });
+        onToast?.(`✓ OCR yeniden denendi${r?.basarili != null ? ` — ${sayi(r.basarili)} belge okundu` : ''}`);
+      }
+      setFiModal(null);
+      istekYukle(); istisnaYukle();
+    } catch (e) {
+      onToast?.(e?.message || 'İşlem başarısız');
+    } finally { setFiMesgul(false); }
+  };
+
   useEffect(() => {
     if (['kapsama', 'arsiv', 'uyarilar', 'kdv', 'cari'].includes(gorunum) && !merkez) merkezYukle();
     if (gorunum === 'istek') istekYukle();
@@ -302,6 +367,86 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast }) {
   }, [gorunum, cariSecim, toptancilar, cariYukle]);
 
   // ════════════════════════ GÖRÜNÜM: BELGE KAPSAMA ══════════════════════════
+  // ── FAZ 7 MODALI ──────────────────────────────────────────────────────────
+  const fiModalBlok = fiModal && (() => {
+    const T = {
+      'gonderildi': { baslik: 'Gönderildi olarak işaretle', tehlike: false, buton: 'İşaretle',
+        anlat: 'Mesajı tedarikçiye ilettiğini kaydeder. Bu iz belge ritmi ölçümüne girer — kimin ne kadar sürede fatura gönderdiği buradan çıkar.' },
+      'telefon': { baslik: 'Tedarikçi numarası', tehlike: false, buton: 'Numarayı kaydet',
+        anlat: 'Numara sadece bu isteğe değil, AYNI tedarikçinin tüm açık isteklerine ve numarası boşsa tedarikçi kartına da işlenir. Bir kez girersin.' },
+      'kapat': { baslik: 'İsteği kapat', tehlike: false, buton: 'Kapat',
+        anlat: 'Açıklama zorunlu — kayıt sessizce kapanamaz. Açıklamanın ilk kelimeleri kapanış nedeni olarak saklanır.' },
+      'tara': { baslik: 'Fatura isteği taraması çalıştır', tehlike: false, buton: 'Taramayı başlat',
+        anlat: 'Gece motorunun aynısını şimdi çalıştırır: belgesiz ödemeleri tarayıp yeni fatura isteği adayları üretir. Mevcut istekleri bozmaz.' },
+      'istisna-sil': { baslik: 'İstisnayı geri al', tehlike: false, buton: 'Geri al',
+        anlat: 'Bu kalıp silinir; sonraki taramada bu tedarikçi için yeniden fatura istenebilir. Yanlış öğrenmeyi düzeltmek içindir.' },
+      'ocr': { baslik: 'OCR\'ı yeniden dene', tehlike: false, buton: 'Yeniden dene',
+        anlat: 'Yüklenmiş ama okunamamış belgeler tekrar OCR\'a sokulur (en fazla 50). Personelin yüklediği fotoların sessizce düşmesine karşı emniyet — mevcut okunmuş belgelere dokunmaz.' },
+    }[fiModal.tip] || {};
+    const kapat = () => { if (!fiMesgul) setFiModal(null); };
+    return (
+      <div onClick={(e) => { if (e.target === e.currentTarget) kapat(); }} style={{
+        position: 'fixed', inset: 0, zIndex: 120, background: 'rgba(10,6,2,.7)',
+        backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+      }}>
+        <div style={{ ...kartYuzey, width: 460, maxWidth: '96vw', padding: '24px 26px' }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 6 }}>
+            <div style={{ fontFamily: F.baslik, fontSize: 19, fontWeight: 600 }}>{T.baslik}</div>
+            <button onClick={kapat} style={{ marginLeft: 'auto', border: 'none', background: 'transparent', color: R.not, fontSize: 16, cursor: 'pointer', fontFamily: 'inherit' }}>x</button>
+          </div>
+          {fiModal.istek && (
+            <div style={{ fontSize: 12.5, color: R.metin2, marginBottom: 4 }}>
+              <b>{fiModal.istek.tedarikci_ad || 'Tedarikçi'}</b> · {tarihKisa(fiModal.istek.tarih)}
+              {fiModal.istek.tutar != null ? ` · ${fmt(sayi(fiModal.istek.tutar))} ₺` : ''}
+            </div>
+          )}
+          {fiModal.kalip && <div style={{ fontSize: 12.5, color: R.metin2, marginBottom: 4 }}><b>{fiModal.kalip}</b></div>}
+          <div style={{ fontSize: 12, color: R.not2, lineHeight: 1.65, marginBottom: 14 }}>{T.anlat}</div>
+
+          {fiModal.tip === 'telefon' && (
+            <>
+              <label style={bmEtiket}>Telefon</label>
+              <input value={fiModal.telefon || ''} autoFocus inputMode="tel" placeholder="0532 123 45 67"
+                onChange={(e) => setFiModal((p) => ({ ...p, telefon: e.target.value }))} style={bmAlanStil} />
+            </>
+          )}
+          {fiModal.tip === 'kapat' && (
+            <>
+              <label style={bmEtiket}>Kapanış açıklaması (zorunlu)</label>
+              <input value={fiModal.aciklama || ''} autoFocus placeholder="ör. faturası kâğıt geldi"
+                onChange={(e) => setFiModal((p) => ({ ...p, aciklama: e.target.value }))} style={bmAlanStil} />
+              <label style={{
+                display: 'flex', alignItems: 'flex-start', gap: 8, fontSize: 12,
+                color: R.metin2, cursor: 'pointer', lineHeight: 1.6, marginTop: 12,
+              }}>
+                <input type="checkbox" checked={!!fiModal.kalici_istisna} style={{ marginTop: 3 }}
+                  onChange={(e) => setFiModal((p) => ({ ...p, kalici_istisna: e.target.checked }))} />
+                <span>
+                  🚫 <b>Bu tedarikçiden belge beklenmez</b> — kalıp öğrenilir, bir daha
+                  aday üretilmez. Sadece gerçekten faturası olmayan yerler için işaretle
+                  (ör. pazar esnafı); yanlışlıkla işaretlersen aşağıdaki istisna
+                  listesinden geri alabilirsin.
+                </span>
+              </label>
+            </>
+          )}
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 16 }}>
+            <button disabled={fiMesgul} onClick={kapat} style={{
+              padding: '10px 18px', borderRadius: 10, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+              background: 'transparent', color: R.metin2, fontSize: 12.5, fontWeight: 600, fontFamily: 'inherit',
+            }}>Vazgeç</button>
+            <button disabled={fiMesgul} onClick={fiUygula} style={{
+              padding: '10px 20px', borderRadius: 10, cursor: 'pointer', fontSize: 12.5, fontWeight: 700,
+              fontFamily: 'inherit', border: 'none',
+              background: 'linear-gradient(150deg, #E0A559, #AF6C29)', color: '#1C1309',
+            }}>{fiMesgul ? 'İşleniyor…' : T.buton}</button>
+          </div>
+        </div>
+      </div>
+    );
+  })();
+
   if (gorunum === 'kapsama') {
     if (merkezHata) return <HataBandi mesaj={merkezHata} onTekrar={merkezYukle} />;
     if (!merkez) return <Yukleniyor />;
@@ -472,6 +617,44 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast }) {
           { etiket: 'KDV riski', deger: fmt(sayi(istek.kdv_riski)), alt: 'belgesiz kısımda tahmini' },
           { etiket: 'Oto-kapanış', deger: 'açık', alt: 'fatura gelince istek kapanır', renk: R.yesil },
         ]} />
+
+        {fiModalBlok}
+
+        {/* Faz 7: motor tetikleri — listeyi izlemek yetmiyor, besleyebilmek gerek */}
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
+          <button onClick={() => setFiModal({ tip: 'tara' })} style={fiBtn}>🔍 Şimdi tara</button>
+          <button onClick={() => setFiModal({ tip: 'ocr' })} style={fiBtn}>🔁 Okunamayan belgeleri yeniden dene</button>
+        </div>
+
+        {/* Öğrenilmiş istisnalar — "bir daha isteme" dediklerimiz burada, geri alınabilir */}
+        {!!(istisnalar || []).length && (
+          <div style={{ ...kartYuzey, padding: '14px 18px', marginBottom: 14 }}>
+            <div style={{ fontFamily: F.baslik, fontSize: 14, fontWeight: 600, marginBottom: 4 }}>
+              Belge beklenmeyenler · {sayi(istisnalar.length)}
+            </div>
+            <div style={{ fontSize: 11.5, color: R.not2, lineHeight: 1.7, marginBottom: 10 }}>
+              Bu kalıplar için fatura isteği <b>üretilmiyor</b>. Yanlış öğrenildiyse geri al —
+              sonraki taramada yeniden aday olur.
+            </div>
+            <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap' }}>
+              {istisnalar.slice(0, 40).map((k, i) => {
+                const kalip = typeof k === 'string' ? k : (k.kalip || k.ad || '');
+                return (
+                  <span key={i} style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 7, padding: '5px 10px',
+                    borderRadius: 999, background: R.girinti, fontSize: 11.5, color: R.metin2,
+                  }}>
+                    🚫 {kalip}
+                    <button onClick={() => setFiModal({ tip: 'istisna-sil', kalip })} style={{
+                      border: 'none', background: 'transparent', color: R.not, cursor: 'pointer',
+                      fontFamily: 'inherit', fontSize: 13, padding: 0, lineHeight: 1,
+                    }} title="İstisnayı geri al">x</button>
+                  </span>
+                );
+              })}
+            </div>
+          </div>
+        )}
         {gruplar.length === 0 ? (
           <BosDurum metin="Açık fatura isteği yok — teslim alınan her şeyin belgesi gelmiş." />
         ) : (
@@ -492,12 +675,24 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast }) {
                 </div>
                 {(Array.isArray(g.istekler) ? g.istekler : []).slice(0, 3).map((x, j) => (
                   <div key={j} style={{
-                    display: 'flex', gap: 10, fontSize: 12, color: R.metin2,
-                    marginTop: 8, paddingTop: 8, borderTop: `1px solid ${R.cizgi2}`,
+                    display: 'flex', gap: 10, fontSize: 12, color: R.metin2, alignItems: 'center',
+                    marginTop: 8, paddingTop: 8, borderTop: `1px solid ${R.cizgi2}`, flexWrap: 'wrap',
                   }}>
                     <span style={{ fontFamily: F.mono, color: R.not2 }}>{tarihKisa(x.tarih)}</span>
-                    <span style={{ flex: 1 }}>{kisalt(x.aciklama || x.kaynak_tip, 64)}</span>
+                    <span style={{ flex: 1, minWidth: 120 }}>{kisalt(x.aciklama || x.kaynak_tip, 64)}</span>
                     <span style={{ fontFamily: F.mono, fontWeight: 700 }}>{fmt(sayi(x.tutar))}</span>
+                    {x.id && (
+                      <span style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                        {x.durum !== 'istek_gonderildi' && (
+                          <button onClick={() => setFiModal({ tip: 'gonderildi', istek: { ...x, tedarikci_ad: g.tedarikci_ad || g.ad } })}
+                            style={fiMini}>Gönderildi</button>
+                        )}
+                        <button onClick={() => setFiModal({ tip: 'telefon', istek: { ...x, tedarikci_ad: g.tedarikci_ad || g.ad }, telefon: x.tedarikci_tel || '' })}
+                          style={fiMini}>Numara</button>
+                        <button onClick={() => setFiModal({ tip: 'kapat', istek: { ...x, tedarikci_ad: g.tedarikci_ad || g.ad }, aciklama: '', kalici_istisna: false })}
+                          style={fiMini}>Kapat</button>
+                      </span>
+                    )}
                   </div>
                 ))}
               </div>
