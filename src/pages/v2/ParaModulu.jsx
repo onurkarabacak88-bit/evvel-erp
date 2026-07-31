@@ -107,6 +107,12 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru, onToast }) {
   const [aliciForm, setAliciForm] = useState(null);  // {id?, ad, unvan, sube_id}
   const [aliciMesgul, setAliciMesgul] = useState(false);
   const [aliciPasifSor, setAliciPasifSor] = useState('');
+  // Zincirin 3. halkası: kasa → teslim → BANKA (2026-07-31)
+  const [bankaMut, setBankaMut] = useState(null);      // /banka-mutabakat
+  const [bankaListe, setBankaListe] = useState(null);  // /banka-yatirimlari
+  const [bankaModal, setBankaModal] = useState(false);
+  const [bankaForm, setBankaForm] = useState(null);    // {tarih, tutar, yatiran_ad, aciklama}
+  const [bankaMesgul, setBankaMesgul] = useState(false);
   // ── ANLIK GİDER ───────────────────────────────────────────────────────────
   const [giderler, setGiderler] = useState(null);
   const [giderOzet, setGiderOzet] = useState(null);
@@ -276,7 +282,40 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru, onToast }) {
     api('/ops/para-yolda?gun=14')
       .then((d) => setParaYolda(d || {}))
       .catch(() => setParaYolda({}));
+    bankaYukle();
   }, [subeler]);
+
+  /** Kasa → teslim → banka üçlüsü. Mutabakat GÖSTERGE; banka yatırımı kasaya DOKUNMAZ.
+   *  Fonksiyon BEYANI (const değil) — teslimYukle içinden çağrılıyor, TDZ'ye düşmesin. */
+  function bankaYukle() {
+    api('/banka-mutabakat').then((d) => setBankaMut(d || null)).catch(() => setBankaMut(null));
+    api('/banka-yatirimlari?limit=200')
+      .then((r) => setBankaListe(Array.isArray(r?.satirlar) ? r.satirlar : []))
+      .catch(() => setBankaListe([]));
+  }
+
+  const bankaKaydet = async () => {
+    const f = bankaForm || {};
+    const tutar = Number(String(f.tutar ?? '').replace(',', '.'));
+    if (!tutar || tutar <= 0) { onToast?.('Geçerli bir tutar girin'); return; }
+    const ad = (f.yatiran_ad || '').trim();
+    if (!ad) { onToast?.('Bankaya yatıran kişinin adını yazın'); return; }
+    if (!f.tarih) { onToast?.('Yatırma tarihi zorunlu'); return; }
+    setBankaMesgul(true);
+    try {
+      await api('/banka-yatirimlari', {
+        method: 'POST',
+        body: { tarih: f.tarih, tutar, yatiran_ad: ad, aciklama: (f.aciklama || '').trim() || null },
+      });
+      onToast?.(`🏦 ${fmt(tutar)} banka yatırımı kaydedildi — takip kaydı, kasadan düşülmedi`);
+      setBankaForm({ tarih: bugunISO(), tutar: '', yatiran_ad: ad, aciklama: '' });
+      bankaYukle();
+    } catch (e) {
+      onToast?.(e?.message || 'Kaydedilemedi');
+    } finally {
+      setBankaMesgul(false);
+    }
+  };
 
   const alicilariYukle = () => {
     api('/kasa-teslim-alici')
@@ -716,6 +755,70 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru, onToast }) {
             ))}
           </div>
         )}
+        {/* ── ZİNCİRİN 3. HALKASI: kasa → teslim → BANKA ──────────────────────
+            Teslim tablosu paranın şubeden çıkışını gösteriyordu; bankaya girişi
+            hiçbir yerde görünmüyordu. /banka-mutabakat ikisini karşılaştırır. */}
+        {bankaMut && (() => {
+          const teslim = sayi(bankaMut.donem_teslim);
+          const yatan = sayi(bankaMut.donem_yatan);
+          const fark = sayi(bankaMut.donem_fark);
+          const elde = sayi(bankaMut.elde_nakit);
+          const oran = teslim > 0 ? Math.min(100, Math.round((yatan / teslim) * 100)) : 0;
+          return (
+            <div style={{ ...kartYuzey, padding: '16px 18px', marginBottom: 14 }}>
+              <div style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                paddingBottom: 10, borderBottom: `1px solid ${R.cizgi2}`, marginBottom: 12, flexWrap: 'wrap', gap: 8,
+              }}>
+                <span style={{ fontFamily: F.baslik, fontSize: 14.5, fontWeight: 600 }}>
+                  🏦 Kasa → teslim → banka · {bankaMut.donem || 'bu ay'}
+                </span>
+                <button onClick={() => {
+                  setBankaModal(true);
+                  setBankaForm({ tarih: bugunISO(), tutar: '', yatiran_ad: '', aciklama: '' });
+                  if (bankaListe == null) bankaYukle();
+                }} style={{
+                  padding: '7px 14px', borderRadius: 10, cursor: 'pointer', fontFamily: 'inherit',
+                  border: `1px solid ${R.bakir}55`, background: `${R.bakir}22`,
+                  color: R.bakir, fontSize: 11.5, fontWeight: 700,
+                }}>🏦 Banka yatırımı kaydet</button>
+              </div>
+
+              <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', fontSize: 12.5, marginBottom: 11 }}>
+                <span>Şubelerden teslim alınan <b style={{ fontFamily: F.mono }}>{fmt(teslim)}</b></span>
+                <span>bankaya yatan <b style={{ fontFamily: F.mono, color: R.yesil }}>{fmt(yatan)}</b>
+                  <span style={{ color: R.not2 }}> · {sayi(bankaMut.yatan_adet)} kayıt</span></span>
+                <span>fark <b style={{ fontFamily: F.mono, color: Math.abs(fark) > 0.5 ? R.amber : R.yesil }}>{fmt(fark)}</b></span>
+              </div>
+
+              {/* Kapsama çubuğu — dönem teslimin ne kadarı bankaya ulaşmış */}
+              <div style={{ height: 7, borderRadius: 99, background: R.girinti, overflow: 'hidden', marginBottom: 11 }}>
+                <div style={{
+                  width: `${oran}%`, height: '100%',
+                  background: oran >= 90 ? R.yesil : oran >= 50 ? R.bakirAcik : R.amber,
+                }} />
+              </div>
+
+              <div style={{
+                display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap',
+                padding: '10px 13px', borderRadius: 11, background: R.girinti, border: `1px solid ${R.cizgi3}`,
+              }}>
+                <span style={{ fontSize: 12.5, color: R.metin2 }}>Elde / yolda nakit (kümülatif)</span>
+                <b style={{ fontFamily: F.mono, fontSize: 15, color: elde > 0 ? R.amber : R.yesil }}>{fmt(elde)}</b>
+                <span style={{ fontSize: 11, color: R.not2, flex: 1, minWidth: 200 }}>
+                  bugüne kadar teslim alınan − bugüne kadar bankaya yatan
+                </span>
+              </div>
+
+              <div style={{ fontSize: 10.5, color: R.not2, marginTop: 10, lineHeight: 1.6 }}>
+                Gösterge amaçlı: banka yatırımı <b>takip kaydıdır</b>, kasadan düşmez —
+                para zaten teslim alınırken kasadan çıkmıştı. Buradaki fark "teslim alınıp
+                henüz bankaya götürülmemiş nakit"tir, kasa açığı değildir.
+              </div>
+            </div>
+          );
+        })()}
+
         {/* Filtre hapları (şube + tür) — klasik ekranın filtreleri yerlileşti */}
         <div style={{ display: 'flex', gap: 6, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center' }}>
           {[['', 'Tüm şubeler'], ...(subeler || []).map((s) => [String(s.id), s.ad])].map(([id, ad]) => (
@@ -776,6 +879,105 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru, onToast }) {
         })()}
 
         {/* ── TESLİM ALICI YÖNETİMİ (kadife modal — klasik CRUD yerlileşti) ── */}
+        {bankaModal && bankaForm && (
+          <div
+            onClick={(e) => { if (e.target === e.currentTarget && !bankaMesgul) { setBankaModal(false); setBankaForm(null); } }}
+            style={{
+              position: 'fixed', inset: 0, zIndex: 90, background: 'rgba(10,6,2,.66)',
+              backdropFilter: 'blur(3px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+            }}
+          >
+            <div style={{ ...kartYuzey, width: 560, maxWidth: '96vw', maxHeight: '90vh', overflowY: 'auto', padding: '24px 26px' }}>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 6 }}>
+                <div style={{ fontFamily: F.baslik, fontSize: 21, fontWeight: 600 }}>Banka Yatırımı</div>
+                <div style={{ fontSize: 11.5, color: R.not2 }}>kim, ne zaman, ne kadar yatırdı</div>
+                <button onClick={() => { setBankaModal(false); setBankaForm(null); }} style={{
+                  marginLeft: 'auto', border: 'none', background: 'transparent', color: R.not,
+                  fontSize: 16, cursor: 'pointer', fontFamily: 'inherit',
+                }}>✕</button>
+              </div>
+              <div style={{
+                padding: '10px 13px', borderRadius: 11, marginBottom: 16, fontSize: 11.5, lineHeight: 1.6,
+                background: 'rgba(96,165,250,.08)', border: '1px solid rgba(96,165,250,.24)', color: R.metin2,
+              }}>
+                Bu kayıt <b>kasadan para düşürmez</b> — nakit zaten şubeden teslim alınırken
+                kasadan çıkmıştı. Burası o paranın bankaya ulaştığının izi; mutabakat
+                şeridindeki "elde/yolda nakit" bu kayıtlarla kapanır.
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
+                <div>
+                  <label style={alanEtiket}>Yatırma tarihi</label>
+                  <input type="date" value={bankaForm.tarih} disabled={bankaMesgul}
+                    onChange={(e) => setBankaForm((f) => ({ ...f, tarih: e.target.value }))}
+                    style={{ ...alanStil, colorScheme: 'dark' }} />
+                </div>
+                <div>
+                  <label style={alanEtiket}>Tutar (₺)</label>
+                  <input inputMode="decimal" value={bankaForm.tutar} disabled={bankaMesgul} placeholder="orn. 45000"
+                    onChange={(e) => setBankaForm((f) => ({ ...f, tutar: e.target.value }))}
+                    style={{ ...alanStil, fontFamily: F.mono }} />
+                </div>
+              </div>
+              <label style={alanEtiket}>Bankaya yatıran kişi</label>
+              <input value={bankaForm.yatiran_ad} disabled={bankaMesgul} placeholder="orn. Merve Karabacak"
+                onChange={(e) => setBankaForm((f) => ({ ...f, yatiran_ad: e.target.value }))}
+                style={alanStil} />
+              <label style={alanEtiket}>Açıklama (opsiyonel)</label>
+              <input value={bankaForm.aciklama} disabled={bankaMesgul} placeholder="orn. Zafer + Köyceğiz hafta sonu teslimleri"
+                onChange={(e) => setBankaForm((f) => ({ ...f, aciklama: e.target.value }))}
+                style={alanStil} />
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 4, marginBottom: 18 }}>
+                <button disabled={bankaMesgul} onClick={() => { setBankaModal(false); setBankaForm(null); }} style={{
+                  padding: '10px 18px', borderRadius: 10, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+                  background: 'transparent', color: R.metin2, fontSize: 12.5, fontWeight: 600, fontFamily: 'inherit',
+                }}>Kapat</button>
+                <button disabled={bankaMesgul} onClick={bankaKaydet} style={{
+                  padding: '10px 20px', borderRadius: 10, border: 'none', cursor: 'pointer',
+                  background: 'linear-gradient(150deg, #E0A559, #AF6C29)', color: '#1C1309',
+                  fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit',
+                }}>{bankaMesgul ? 'Kaydediliyor…' : '🏦 Kaydet'}</button>
+              </div>
+
+              <div style={{
+                fontFamily: F.baslik, fontSize: 14, fontWeight: 600, marginBottom: 10,
+                paddingTop: 14, borderTop: `1px solid ${R.cizgi2}`,
+              }}>Son yatırımlar</div>
+              {bankaListe == null ? (
+                <div style={{ padding: '14px 0', textAlign: 'center', color: R.not, fontSize: 12.5 }}>Yükleniyor…</div>
+              ) : bankaListe.length === 0 ? (
+                <div style={{ fontSize: 12.5, color: R.not, textAlign: 'center', padding: '12px 0', lineHeight: 1.6 }}>
+                  Henüz banka yatırımı kaydı yok — teslim alınan nakit tümüyle "elde" görünüyor.
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+                  {bankaListe.slice(0, 12).map((b) => (
+                    <div key={b.id} style={{
+                      display: 'flex', alignItems: 'center', gap: 10, padding: '9px 13px',
+                      borderRadius: 11, background: R.girinti, border: `1px solid ${R.cizgi3}`,
+                    }}>
+                      <span style={{ fontFamily: F.mono, fontSize: 11.5, color: R.not, width: 62 }}>{tarihKisa(b.tarih)}</span>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 12.5, fontWeight: 700 }}>{b.yatiran_ad || '—'}</div>
+                        {b.aciklama && (
+                          <div style={{ fontSize: 11, color: R.not2, marginTop: 2 }}>{b.aciklama}</div>
+                        )}
+                      </div>
+                      <span style={{ fontFamily: F.mono, fontSize: 13, fontWeight: 700 }}>{fmt(sayi(b.tutar))}</span>
+                    </div>
+                  ))}
+                  {bankaListe.length > 12 && (
+                    <div style={{ fontSize: 11, color: R.not2, textAlign: 'center', paddingTop: 4 }}>
+                      … ve {bankaListe.length - 12} kayıt daha
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         {aliciModal && (
           <div
             onClick={(e) => { if (e.target === e.currentTarget && !aliciMesgul) { setAliciModal(false); setAliciForm(null); } }}

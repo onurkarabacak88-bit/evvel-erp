@@ -965,6 +965,19 @@ const PARA_UC = {
     { id: 'kt2', sube_id: 's1', tarih: bugunISO, tutar: 8410, teslim_turu: 'ara', teslim_eden_ad: 'Can D.', teslim_alan_ad: 'ONUR — SAHİP' },
     { id: 'kt3', sube_id: 's2', tarih: gunEkleISO(-1), tutar: 16230, teslim_turu: 'gun_sonu', teslim_eden_ad: 'Sude Y.', teslim_alan_ad: 'ONUR — SAHİP' },
   ],
+  // Zincirin 3. halkası: kasa → teslim → banka (gösterge; kasaya dokunmaz)
+  '/api/banka-mutabakat': {
+    donem: bugunISO.slice(0, 7), donem_teslim: 214600, teslim_ara: 48200, teslim_kapanis: 166400,
+    donem_yatan: 152000, yatan_adet: 3, donem_fark: 62600, elde_nakit: 88450,
+    sube_teslim: [{ sube: 'Zafer', teslim: 84200 }, { sube: 'Alsancak', teslim: 61300 }],
+  },
+  '/api/banka-yatirimlari': {
+    satirlar: [
+      { id: 'by1', tarih: gunEkleISO(-1), tutar: 72000, yatiran_ad: 'Merve Karabacak', aciklama: 'Zafer + Köyceğiz hafta sonu teslimleri', olusturma: `${gunEkleISO(-1)}T11:20:00` },
+      { id: 'by2', tarih: gunEkleISO(-6), tutar: 50000, yatiran_ad: 'Onur Karabacak', aciklama: null, olusturma: `${gunEkleISO(-6)}T16:02:00` },
+      { id: 'by3', tarih: gunEkleISO(-13), tutar: 30000, yatiran_ad: 'Merve Karabacak', aciklama: 'Alsancak ara teslimler', olusturma: `${gunEkleISO(-13)}T10:44:00` },
+    ],
+  },
   '/api/anlik-gider': {
     satirlar: [
       { id: 'ag1', tarih: bugunISO, tutar: 1840, aciklama: 'Espresso makinesi conta tamiri', sube_adi: 'Zafer' },

@@ -270,7 +270,13 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
       setModal({ tip: 'tutar', satir: o, tutar: o._tahmin ? String(o._tahmin) : '', yontem: 'nakit', kartId: '', dosya: null });
       return;
     }
-    setModal({ tip: 'ode', satir: o, mod: 'tam', yontem: 'nakit', kartId: '', kismiTutar: '', kalanVade: isoEkle(o._tarih || bugun, 30), dosya: null });
+    setModal({
+      tip: 'ode', satir: o, mod: 'tam', yontem: 'nakit', kartId: '',
+      // tamTutar = plandaki tutar; DEĞİŞTİRİLİRSE /ode?tutar= ile gider
+      // (borç yine KAPANIR — kalan açan yol 'kismi').
+      tamTutar: String(sayi(o._tutar)), kismiTutar: '',
+      kalanVade: isoEkle(o._tarih || bugun, 30), dosya: null,
+    });
   };
 
   const erteleyiAc = (o) => {
@@ -303,11 +309,21 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
             ? `${fmt(t)} ödendi · kalan ${fmt(o._tutar - t)} sonraki ekstreye devreder${await dosyaNotu(modal.dosya)}`
             : `${fmt(t)} ödendi · kalan ${fmt(o._tutar - t)} → ${kisaTarih(modal.kalanVade)}${await dosyaNotu(modal.dosya)}`);
         } else {
-          await api(`/odeme-plani/${o.id}/ode`, {
+          // Plandaki tutar yanlışsa düzeltilebilir: sunucu ?tutar= ile ödenen_tutar'ı
+          // yazar ve planı 'odendi' kapatır (kalan AÇMAZ — o iş /kismi-ode'nin işi).
+          const planT = sayi(o._tutar);
+          const tamT = Number(String(modal.tamTutar ?? '').replace(',', '.'));
+          if (!tamT || tamT <= 0) { onToast?.('Ödenecek tutar 0\'dan büyük olmalı'); setCalisiyor(false); return; }
+          const duzeltildi = Math.abs(tamT - planT) > 0.005;
+          const q = duzeltildi ? `?tutar=${encodeURIComponent(tamT)}` : '';
+          await api(`/odeme-plani/${o.id}/ode${q}`, {
             method: 'POST',
             body: { odeme_yontemi: modal.yontem, kart_id: modal.yontem === 'kart' ? modal.kartId : null },
           });
-          onToast?.(`${o.baslik} ödendi — ${modal.yontem === 'kart' ? 'karta yazıldı' : 'kasadan düşüldü'}${await dosyaNotu(modal.dosya)}`);
+          const nereye = modal.yontem === 'kart' ? 'karta yazıldı' : 'kasadan düşüldü';
+          onToast?.(duzeltildi
+            ? `${o.baslik} ${fmt(tamT)} ödendi — plan ${fmt(planT)} idi, tutar düzeltildi ve borç kapandı${await dosyaNotu(modal.dosya)}`
+            : `${o.baslik} ödendi — ${nereye}${await dosyaNotu(modal.dosya)}`);
         }
       } else if (modal.tip === 'tutar') {
         const t = Number(String(modal.tutar).replace(',', '.'));
@@ -452,7 +468,16 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
    *  kullanılabilir limit. Veri yoksa şerit HİÇ çıkmaz (uydurma bakiye yok). */
   const kaynakDurumu = (() => {
     if (!modal) return null;
-    const tutar = modal.mod === 'kismi' ? sayi(modal.kismiTutar) : sayi(modal.satir?._tutar ?? modal.satir?.tutar);
+    // Tam modda tutar DÜZELTİLEBİLİR olduğundan plandaki değere değil, gerçekten
+    // çıkacak tutara bakılır — yoksa aynı ekranda iki farklı "sonrası kasa" çıkar.
+    const tamDuzeltilmis = modal.tip === 'ode' && modal.mod !== 'kismi'
+      ? Number(String(modal.tamTutar ?? '').replace(',', '.'))
+      : NaN;
+    const tutar = modal.mod === 'kismi'
+      ? sayi(modal.kismiTutar)
+      : (Number.isFinite(tamDuzeltilmis) && tamDuzeltilmis > 0
+          ? tamDuzeltilmis
+          : sayi(modal.satir?._tutar ?? modal.satir?.tutar));
     if (modal.yontem === 'nakit') {
       // kasa = Nakit Kokpiti'nin kanonik kasası (modülün zaten okuduğu sayı)
       if (!Number.isFinite(kasa) || kasa === 0) return null;
@@ -685,6 +710,28 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
                   }}>{ad}</div>
                 ))}
               </div>
+              {modal.mod === 'tam' && (() => {
+                const planT = sayi(o._tutar);
+                const tamT = Number(String(modal.tamTutar ?? '').replace(',', '.')) || 0;
+                const duzeltildi = tamT > 0 && Math.abs(tamT - planT) > 0.005;
+                return (
+                  <div style={{ marginTop: 12 }}>
+                    <label style={omEtiket}>Ödenen tutar (₺)</label>
+                    <input type="number" value={modal.tamTutar} onChange={(e) => guncelle('tamTutar', e.target.value)}
+                      style={{ ...omAlanStil, fontFamily: F.mono, textAlign: 'right',
+                        borderColor: duzeltildi ? R.bakir : undefined, fontWeight: duzeltildi ? 700 : undefined }} />
+                    <div style={{ fontSize: 11.5, color: duzeltildi ? R.bakirAcik : R.not2, marginTop: -4, lineHeight: 1.6 }}>
+                      {duzeltildi ? (
+                        <>Plan <b style={{ fontFamily: F.mono }}>{fmt(planT)}</b> diyordu, sen{' '}
+                          <b style={{ fontFamily: F.mono }}>{fmt(tamT)}</b> yazdın — <b>borç bu tutarla KAPANIR</b>,
+                          kalan açılmaz. Kalan borç bırakmak istiyorsan <b>Kısmi öde</b>'yi seç.</>
+                      ) : (
+                        <>Fatura plandan farklı çıktıysa buradan düzeltebilirsin; borç yine kapanır.</>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
               {modal.mod === 'kismi' && (
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 12 }}>
                   <div>
@@ -707,15 +754,25 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
               )}
               {yontemSecici}
               {ekSecici}
-              <div style={{
-                marginTop: 14, padding: '11px 15px', borderRadius: 12, background: R.girinti,
-                border: `1px solid ${R.cizgi3}`, fontSize: 12.5, color: R.metin2,
-              }}>
-                Ödeme sonrası kasa: <strong style={{ fontFamily: F.mono, color: (kasa - (modal.mod === 'kismi' ? Number(String(modal.kismiTutar).replace(',', '.')) || 0 : o._tutar)) >= 0 ? R.yesil : R.kirmizi }}>
-                  {fmt(kasa - (modal.mod === 'kismi' ? Number(String(modal.kismiTutar).replace(',', '.')) || 0 : o._tutar))}
-                </strong>
-                {modal.yontem === 'kart' ? ' — kart seçiliyken kasadan çıkmaz, kart borcuna yazılır.' : ''}
-              </div>
+              {(() => {
+                // Kasa etkisi GERÇEKTEN çıkacak tutarla hesaplanır — tam modda
+                // düzeltilmiş tutar da buraya yansır (yoksa yanlış bakiye gösterirdi).
+                const cikan = modal.mod === 'kismi'
+                  ? (Number(String(modal.kismiTutar).replace(',', '.')) || 0)
+                  : (Number(String(modal.tamTutar ?? '').replace(',', '.')) || 0);
+                const sonra = kasa - cikan;
+                return (
+                  <div style={{
+                    marginTop: 14, padding: '11px 15px', borderRadius: 12, background: R.girinti,
+                    border: `1px solid ${R.cizgi3}`, fontSize: 12.5, color: R.metin2,
+                  }}>
+                    Ödeme sonrası kasa: <strong style={{ fontFamily: F.mono, color: sonra >= 0 ? R.yesil : R.kirmizi }}>
+                      {fmt(sonra)}
+                    </strong>
+                    {modal.yontem === 'kart' ? ' — kart seçiliyken kasadan çıkmaz, kart borcuna yazılır.' : ''}
+                  </div>
+                );
+              })()}
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 18 }}>
                 {dugme('Vazgeç', false, kapat)}
                 {dugme(modal.mod === 'kismi' ? 'Kısmi öde ve kaydet' : 'Öde ve kaydet', true, modalOnayla)}
