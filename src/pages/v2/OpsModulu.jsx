@@ -54,6 +54,30 @@ const saatKisa = (ts) => {
   return m ? m[0] : '';
 };
 
+// ── BAR ÖZETİ: kalem sözlüğü (operasyon_merkez_api._BAR_KEYS ile aynı sıra) ──
+// Pasta ÇEŞİTLERİ (pasta_*) burada yok: devirde ve gün içi denetimde yalnız
+// pasta_adet TOPLAMI karşılaştırılır — çeşitler günlük taze, gürültü yapar.
+const BAR_KALEM = [
+  ['bardak_kucuk', 'Bardak küçük'], ['bardak_buyuk', 'Bardak büyük'],
+  ['bardak_plastik', 'Bardak plastik'], ['karton_bardak', 'Karton bardak'],
+  ['su_adet', 'Su'], ['sut_litre', 'Süt (L)'], ['redbull_adet', 'Red Bull'],
+  ['soda_adet', 'Soda'], ['cookie_adet', 'Cookie'], ['pasta_adet', 'Pasta (toplam)'],
+  ['surup_adet', 'Şurup'], ['kahve_paket', 'Kahve paket'], ['kapak_adet', 'Kapak'],
+  ['pecete_paket', 'Peçete'], ['diger_sarf', 'Diğer sarf'],
+];
+// Gün içi denetime giren kalemler — stok_bar_uyum.GUN_ICI_DENETIM_KEYS ile birebir.
+// Negatif "satılan" YALNIZ bu kalemlerde uyarıya döner (sunucu da öyle sayar).
+const BAR_DENETIM = new Set([
+  'bardak_kucuk', 'bardak_buyuk', 'bardak_plastik',
+  'su_adet', 'sut_litre', 'redbull_adet', 'soda_adet', 'pasta_adet',
+]);
+// Kapanış stoğu nereden alındı? "kapanis" kesin, ötekiler geçici yedek.
+const BAR_KAPANIS_KAYNAK = {
+  kapanis: { ad: 'kesin', renk: R.yesil, aciklama: 'şubenin tamamladığı kapanış sayımı' },
+  devir: { ad: 'geçici · devir', renk: R.amber, aciklama: 'kapanış yok — vardiya devir sayımı yedek alındı' },
+  ozet: { ad: 'geçici · özet', renk: R.amber, aciklama: 'kapanış yok — gün özeti yedek alındı' },
+};
+
 // ── KAPANIŞ TAKİP: ciro + nakit denklemi ─────────────────────────────────────
 // Sunucu sözleşmesi: operasyon_merkez_api.kapanis_takip (satır anahtarları
 // nakit/pos/online/ciro_tutar/online_cift_kayit/nakit_kasa_fark_tl…).
@@ -654,9 +678,24 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     api(`/ops/v2/urun-ac-akis?tarih=${t}`)
       .then((d) => setUrunAcAkis(d || {}))
       .catch(() => setUrunAcAkis({}));
-    api('/ops/bar-ozet?limit=60')
-      .then((d) => setBarOzet(Array.isArray(d?.satirlar) ? d.satirlar : []))
-      .catch(() => setBarOzet([]));
+    // ⚠️ Bar özeti GÜN ODAKLI çekilir. İki sebep (ikisi de sunucu sözleşmesi):
+    // 1) `gun` verilmezse uç evo_* alanlarını HİÇ doldurmaz (operasyon_merkez_api
+    //    :4127 — Evo karşılaştırması yalnız tek-gün sorgusunda yapılır).
+    // 2) `year_month` verilmezse sunucu İÇİNDE BULUNULAN ayı varsayar
+    //    (_coerce_year_month:758). Geçmiş bir güne bakınca ay filtresi ile gün
+    //    filtresi çelişip boş dönüyordu → ekran sessizce "kayıt yok" diyordu.
+    // O güne ait kayıt yoksa aylık listeye düşülür (eski davranış korunur).
+    api(`/ops/bar-ozet?gun=${t}&year_month=${t.slice(0, 7)}&limit=60`)
+      .then((d) => {
+        const s = Array.isArray(d?.satirlar) ? d.satirlar : [];
+        if (s.length) { setBarOzet({ ...d, satirlar: s, gunluk: true }); return null; }
+        return api('/ops/bar-ozet?limit=60').then((d2) => setBarOzet({
+          ...(d2 || {}),
+          satirlar: Array.isArray(d2?.satirlar) ? d2.satirlar : [],
+          gunluk: false,
+        }));
+      })
+      .catch(() => setBarOzet({ satirlar: [], gunluk: false }));
   }, []);
 
   const denetimYukle = useCallback((tarih) => {
@@ -3662,39 +3701,191 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
         ) : <BosDurum metin={`${tarihKisa(barTarih)} için ürün-aç kaydı yok — bara ürün verilmemiş ya da kayıt girilmemiş.`} />)}
 
         {barSekme === 'kullanilan' && (() => {
-          const satir = (barOzet || []).filter((x) => !barTarih || String(x.tarih).slice(0, 10) === barTarih);
-          const gosterilen = satir.length ? satir : (barOzet || []).slice(0, 8);
+          const hepsi = Array.isArray(barOzet?.satirlar) ? barOzet.satirlar : [];
+          const gunluk = barOzet?.gunluk === true;
+          const gosterilen = gunluk ? hepsi : hepsi.slice(0, 8);
           if (!gosterilen.length) return <BosDurum metin="Bar özeti verisi yok." />;
+          // Ürün-aç eksiği: satılan NEGATİF çıkmış = açılış+ürün-aç, kapanışı
+          // karşılamıyor. Sunucu `fark_var`/`urun_ac_eksik_var` ile söylüyordu.
+          const farkli = gosterilen.filter((x) => x.fark_var === true);
+          const devirBozuk = gosterilen.filter((x) => x.devir_uyumsuz_var === true);
+          const gecici = gosterilen.filter((x) => x.kapanis_var === false || x.kapanis_gercek === false);
           return (
             <>
-              {!satir.length && (
+              {!gunluk && (
                 <div style={{ fontSize: 11.5, color: R.amber, marginBottom: 10 }}>
-                  ⚠ {tarihKisa(barTarih)} için bar kaydı yok — son günler gösteriliyor.
+                  ⚠ {tarihKisa(barTarih)} için bar kaydı yok — son günler gösteriliyor
+                  (Evo karşılaştırması yalnız tek gün seçiliyken yapılır).
                 </div>
               )}
+
+              {/* Evo karşılaştırma durumu — sunucu tek-gün sorgusunda dolduruyor.
+                  "canlı" mı yoksa önbellekten "son çekim" mi olduğu ayrı yazılır;
+                  eski veriyi canlıymış gibi göstermek yanlış güven verir. */}
+              {gunluk && (
+                <div style={{
+                  ...kartYuzey, padding: '11px 16px', marginBottom: 12,
+                  display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+                  borderColor: barOzet?.evo_veri_geldi ? `${R.yesil}44` : `${R.amber}44`,
+                }}>
+                  <span style={rozetHap(barOzet?.evo_veri_geldi ? R.yesil : R.amber)}>
+                    {barOzet?.evo_veri_geldi ? '✓ Evo verisi geldi' : '⚠ Evo verisi yok'}
+                  </span>
+                  <span style={{ fontSize: 11.5, color: R.not }}>
+                    {barOzet?.evo_veri_geldi
+                      ? (barOzet?.evo_canli === false
+                        ? `Önbellekten okundu (son çekim${barOzet?.evo_son_cekim_ts ? ` ${String(barOzet.evo_son_cekim_ts).slice(0, 16).replace('T', ' ')}` : ''}) — canlı değil.`
+                        : 'Canlı çekildi. Satılan sayılar Evo satışıyla karşılaştırılabilir.')
+                      : (barOzet?.evo_mesaj || 'Evo satış verisi alınamadı — karşılaştırma yapılamıyor.')}
+                  </span>
+                </div>
+              )}
+
+              {/* ⚠️ BURASI UYARI KUYRUĞU DEĞİL. Aynı olaylar (URUN_AC_UYUMSUZLUK ·
+                  STOK_BAR_DEVIR_FARK · STOK_BAR_GUN_ICI_FARK) Merkez Denetim ▸
+                  Ürün uyumsuzluğu'nda ZATEN çözülebilir kayıt olarak duruyor
+                  (/ops/urun-uyumsuzluk, durum + çöz akışıyla). Aynı işi ikinci
+                  kez ilan etmeyiz: burada yalnız "kaç gün etkilendi" sayılır ve
+                  çözüm masasına köprü verilir. Bu ekranın kendi katkısı
+                  KALEM KALEM DENKLEM — o da satır çekmecesinde. */}
+              {(farkli.length || devirBozuk.length) ? (
+                <div style={{
+                  ...kartYuzey, padding: '13px 18px', marginBottom: 12,
+                  borderColor: farkli.length ? `${R.kirmizi}55` : `${R.amber}44`,
+                  display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
+                }}>
+                  <span style={rozetHap(farkli.length ? R.kirmizi : R.amber)}>
+                    {farkli.length ? '⚠ gün içi fark' : '⚠ devir farkı'}
+                  </span>
+                  <span style={{ fontSize: 12, color: R.not }}>
+                    {farkli.length ? `${farkli.length} şube-günde satılan negatif (ürün-aç kaydı eksik olabilir)` : ''}
+                    {farkli.length && devirBozuk.length ? ' · ' : ''}
+                    {devirBozuk.length ? `${devirBozuk.length} şube-günde devir zinciri kopuk` : ''}
+                    {' — '}
+                    {[...new Set([...farkli, ...devirBozuk].map((x) => x.sube_adi))].filter(Boolean).join(', ')}.
+                    {' '}Kalem kalem denklem için satıra tıkla; <b>çözme/işaretleme</b> Merkez Denetim'de.
+                  </span>
+                  <button
+                    onClick={() => { setDnSekme('uyumsuz'); onGorunum?.('denetim'); }}
+                    style={{
+                      marginLeft: 'auto', padding: '7px 14px', borderRadius: 10, cursor: 'pointer',
+                      border: `1px solid ${R.bakir}66`, background: 'rgba(217,154,78,.14)',
+                      color: R.bakirAcik, fontSize: 11.5, fontWeight: 700, fontFamily: 'inherit',
+                    }}
+                  >Ürün uyumsuzluğu kuyruğuna git →</button>
+                </div>
+              ) : null}
+
               <Tablo
-                baslik="Kullanılan ürünler · açılış + ürün-aç − kapanış"
-                not="devir-bilinçli hesap; kapanış tamamlanmadan gün geçici sayılır"
+                baslik={`Kullanılan ürünler · açılış + ürün-aç − kapanış${gunluk ? ` · ${tarihKisa(barTarih)}` : ''}`}
+                not={`${gecici.length ? `${gecici.length} gün geçici kapanışla hesaplandı · ` : ''}satıra tıkla → kalem kalem denklem`}
                 kolonlar={[
                   { ad: 'Şube' }, { ad: 'Tarih' }, { ad: 'Kapanış' },
-                  { ad: 'Bardak (K/B/P)', sag: 1 }, { ad: 'Süt (L)', sag: 1 }, { ad: 'Su', sag: 1 },
+                  { ad: 'Bardak (K/B/P)', sag: 1 }, { ad: 'Süt (L)', sag: 1 },
+                  { ad: 'Su', sag: 1 }, { ad: 'Pasta', sag: 1 }, { ad: 'Denetim' },
                 ]}
                 satirlar={gosterilen.slice(0, 40).map((x, i) => {
                   const st = x.satilan || {};
+                  const kay = BAR_KAPANIS_KAYNAK[x.kapanis_kaynak]
+                    || { ad: x.kapanis_var ? 'geçici' : 'kapanmadı', renk: x.kapanis_var ? R.amber : R.not3, aciklama: 'kapanış kaydı yok' };
+                  const haplar = [];
+                  if (x.urun_ac_eksik_var) haplar.push({ ad: 'ürün-aç eksik', renk: R.kirmizi });
+                  if (x.onceki_kapanis_yok) haplar.push({ ad: 'dün kapanış yok', renk: R.amber });
+                  else if ((x.devir_uyumsuz_kalemleri || []).length) {
+                    haplar.push({ ad: `devir ${x.devir_uyumsuz_kalemleri.length} kalem`, renk: R.amber });
+                  }
                   return {
                     id: `${x.sube_id}-${x.tarih}-${i}`,
+                    _bar: x,
                     hucreler: [
                       { v: x.sube_adi || '—', kalin: true },
                       { v: tarihKisa(x.tarih), mono: true, renk: R.not },
-                      x.kapanis_gercek
-                        ? { v: 'kesin', rozet: R.yesil }
-                        : { v: 'geçici', rozet: R.amber },
+                      { v: kay.ad, rozet: kay.renk },
                       { v: `${sayi(st.bardak_kucuk)} / ${sayi(st.bardak_buyuk)} / ${sayi(st.bardak_plastik)}`, mono: true, sag: true },
                       { v: sayi(st.sut_litre) ? String(sayi(st.sut_litre)) : '—', mono: true, sag: true },
                       { v: sayi(st.su_adet) ? String(sayi(st.su_adet)) : '—', mono: true, sag: true },
+                      { v: sayi(st.pasta_adet) ? String(sayi(st.pasta_adet)) : '—', mono: true, sag: true },
+                      haplar.length
+                        ? {
+                          sira: haplar.length,
+                          siraMetin: haplar.map((h) => h.ad).join(' '),
+                          v: (
+                            <span style={{ display: 'inline-flex', gap: 5, flexWrap: 'wrap' }}>
+                              {haplar.map((h, hi) => (
+                                <span key={hi} style={{
+                                  padding: '3px 9px', borderRadius: 99, fontSize: 10.5, fontWeight: 700,
+                                  background: `${h.renk}22`, color: h.renk, whiteSpace: 'nowrap',
+                                }}>{h.ad}</span>
+                              ))}
+                            </span>
+                          ),
+                        }
+                        : { v: 'tutuyor', rozet: R.yesil, sira: 0 },
                     ],
                   };
                 })}
+                onSatir={(row) => {
+                  const x = row._bar; if (!x) return;
+                  const ac = x.acilis || {}; const ua = x.urun_ac || {};
+                  const kp = x.kapanis || {}; const st = x.satilan || {};
+                  const evoAdet = x.evo_adet || {};
+                  const kay = BAR_KAPANIS_KAYNAK[x.kapanis_kaynak];
+                  // Kalem kalem denklem — yalnız HAREKET GÖRMÜŞ kalemler yazılır,
+                  // 15 kalemin 10'u sıfırsa liste okunmaz hâle gelir.
+                  const kalemler = BAR_KALEM
+                    .filter(([k]) => sayi(ac[k]) || sayi(ua[k]) || sayi(kp[k]) || sayi(st[k]))
+                    .map(([k, ad]) => {
+                      const s = sayi(st[k]);
+                      const negatif = s < 0 && BAR_DENETIM.has(k);
+                      const evo = sayi(evoAdet[k]);
+                      return {
+                        ad: negatif ? `⚠ ${ad}` : ad,
+                        detay: `açılış ${sayi(ac[k])} + ürün-aç ${sayi(ua[k])} − kapanış ${sayi(kp[k])}`
+                          + (evo ? ` · Evo satış ${evo}` : '')
+                          + (negatif ? ' — negatif: ürün-aç kaydı eksik olabilir' : ''),
+                        tutar: `${s}`,
+                      };
+                    });
+                  // Devir zinciri: dün kapanış + köprü ürün-aç = beklenen açılış
+                  const df = x.devir_farklari || {};
+                  const devirSatir = Object.entries(df).map(([k, d]) => {
+                    const ad = (BAR_KALEM.find(([kk]) => kk === k) || [k, k])[1];
+                    return {
+                      ad: `↪ ${ad} · devir farkı`,
+                      detay: `dün kapanış ${sayi(d.dun_kapanis)} + köprü ürün-aç ${sayi(d.kopru_urun_ac)} = beklenen ${sayi(d.beklenen)} · bugün açılış ${sayi(d.bugun_acilis)}`,
+                      tutar: `${sayi(d.fark) > 0 ? '+' : ''}${sayi(d.fark)}`,
+                    };
+                  });
+                  onCekmece?.({
+                    tip: 'BAR GÜNÜ · KALEM DENKLEMİ',
+                    baslik: x.sube_adi || 'Şube',
+                    alt: `${tarihKisa(x.tarih)}${x.acilis_ts ? ` · açılış ${saatKisa(x.acilis_ts)}` : ''} · kapanış ${kay ? kay.ad : (x.kapanis_var ? 'geçici' : 'yok')}`,
+                    kpi: [
+                      { etiket: 'Bardak (K+B+P)', deger: String(sayi(st.bardak_kucuk) + sayi(st.bardak_buyuk) + sayi(st.bardak_plastik)) },
+                      { etiket: 'Süt (L)', deger: String(sayi(st.sut_litre)) },
+                      { etiket: 'Pasta', deger: String(sayi(st.pasta_adet)) },
+                      {
+                        etiket: 'Denetim',
+                        deger: x.urun_ac_eksik_var ? 'ürün-aç eksik' : x.devir_uyumsuz_var ? 'devir farkı' : 'tutuyor',
+                        renk: x.urun_ac_eksik_var ? R.kirmizi : x.devir_uyumsuz_var ? R.amber : R.yesil,
+                      },
+                    ],
+                    listeBaslik: 'Kalem kalem: açılış + ürün-aç − kapanış = satılan',
+                    satirlar: [...kalemler, ...devirSatir],
+                    // Mesaj sırası ÖNEMLİ — en temel eksiklik önce söylenir.
+                    // (Kapanış hiç yokken "negatif satılan" anlatmak yanıltıcı:
+                    //  kapanış 0 sayıldığı için satılan ŞİŞMİŞ görünür.)
+                    not: x.kapanis_var === false
+                      ? 'Kapanış sayımı henüz YOK — kapanış 0 sayıldığı için "satılan" olduğundan yüksek görünür. Gün kapanınca sayılar yeniden hesaplanır; şu anki değerler geçicidir.'
+                      : x.onceki_kapanis_yok
+                        ? `Önceki gün (${x.onceki_kapanis_tarihi || '—'}) kapanış sayımı YOK — devir zinciri o günden kopuk, bugünkü açılış hiçbir şeyle karşılaştırılamıyor.`
+                        : kay && x.kapanis_kaynak !== 'kapanis'
+                          ? `Kapanış stoğu ${kay.aciklama}. Sayılar kesin değil; şube kapanışı tamamlayınca yeniden hesaplanır.`
+                          : x.urun_ac_eksik_var
+                            ? 'Negatif satılan = açılış + ürün-aç kapanışı karşılamıyor; bara ürün verilip ürün-aç kaydı girilmemiş olabilir. Bu ekran öneri verir, düzeltme şubedeki kayıt akışında yapılır.'
+                            : 'Gün içi denklem tutuyor. Bu ekran SALT-OKUR ve öneri verir; sayım düzeltmesi şubedeki kayıt akışında yapılır.',
+                  });
+                }}
               />
             </>
           );
