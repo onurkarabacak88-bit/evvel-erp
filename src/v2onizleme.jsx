@@ -714,12 +714,43 @@ const PERSONEL = [
   { id: 'e6', ad_soyad: 'Okan Bal', gorev: 'depo & sevk', sube_id: null, sube_adi: null, calisma_turu: 'surekli', maas: 34000, baslangic_tarihi: '2023-12-01', aktif: true },
 ];
 
-const TAKIP = PERSONEL.map((p, i) => ({
-  personel_id: p.id, ad_soyad: p.ad_soyad, calisma_turu: p.calisma_turu, aktif: true,
-  toplam_planlanan_saat: [176, 168, 184, 192, 160, 180][i],
-  toplam_gecikme_dk: [0, 6, 0, 42, 0, 0][i],
-  toplam_fazla_mesai_saat: [0, 0, 2, 14, 0, 1][i],
-}));
+// ⚠️ ucret_detay + net_hakediş GERÇEK uçta var (gorev_api:2271) — v2 uzun süre
+// bu veriyi atıyordu (sahip yakaladı). Mock'ta da bulunmalı, yoksa hakediş
+// kırılımı boş kutularla "çalışıyor" görünür.
+const TAKIP = PERSONEL.map((p, i) => {
+  const saat = [176, 168, 184, 192, 160, 180][i];
+  const fm = [0, 0, 2, 14, 0, 1][i];
+  const partTime = String(p.calisma_turu || '').toLowerCase().includes('part');
+  const taban = Number(p.maas) || 28000;
+  const gecenGun = 24, ayGun = 30;
+  const gunluk = taban / ayGun, saatlik = taban / 225;
+  const yemekGun = [22, 20, 24, 18, 21, 23][i];
+  const yemekBirim = 120, yolAylik = 1800;
+  const yemek = yemekGun * yemekBirim;
+  const yol = Math.round((yolAylik / ayGun) * gecenGun);
+  const detay = partTime
+    ? { ay_tamam: false, gecen_gun: gecenGun, ay_gun: ayGun, saatlik_ucret: 185,
+        calisma_saati: saat, normal_ucret: saat * 185, yemek_ucret: yemek,
+        yemek_ucret_birim: yemekBirim, yol_ucret: yol, yol_ucret_aylik: yolAylik,
+        'net_hakediş': saat * 185 + yemek + yol, not: 'Part-time: toplam saat × saatlik ücret' }
+    : { taban_maas: taban, ay_tamam: false, gecen_gun: gecenGun, ay_gun: ayGun,
+        kazanilan_taban: Math.round(gunluk * gecenGun), saatlik_ucret: Math.round(saatlik),
+        gunluk_ucret: Math.round(gunluk), fazla_mesai_saat: fm,
+        fazla_mesai_ucret: Math.round(fm * saatlik), yemek_ucret: yemek,
+        yemek_ucret_birim: yemekBirim, yol_ucret: yol, yol_ucret_aylik: yolAylik,
+        'net_hakediş': Math.round(gunluk * gecenGun) + Math.round(fm * saatlik) + yemek + yol,
+        aylik_toplam_tahmini: taban + yemekBirim * ayGun + yolAylik };
+  return {
+    personel_id: p.id, ad_soyad: p.ad_soyad, calisma_turu: p.calisma_turu, aktif: true,
+    toplam_planlanan_saat: saat,
+    toplam_gecikme_dk: [0, 6, 0, 42, 0, 0][i],
+    toplam_fazla_mesai_saat: fm,
+    yemek_ucret_gun: yemekGun,
+    haftalik_izin_kullanilmadi: [0, 0, 0, 1, 0, 0][i],
+    ucret_detay: detay,
+    'net_hakediş': detay['net_hakediş'],
+  };
+});
 
 const BORDRO = PERSONEL.map((p, i) => ({
   personel_id: p.id, ad_soyad: p.ad_soyad, gorev: p.gorev, maas: p.maas,

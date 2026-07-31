@@ -2772,6 +2772,13 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
     const toplamGecikme = satir.reduce((s, t) => s + sayi(t.toplam_gecikme_dk), 0);
     const toplamFm = satir.reduce((s, t) => s + sayi(t.toplam_fazla_mesai_saat), 0);
     const gecikenler = satir.filter(t => sayi(t.toplam_gecikme_dk) > 0);
+    // ⚠️ SAHİP YAKALADI (2026-07-31): klasik Vardiya Takip'te sistem hakedişi
+    // HESAPLAYIP gösteriyordu; /gorev/vardiya-takip zaten `ucret_detay` +
+    // `net_hakediş` döndürüyor ama v2 bu veriyi ATIYORDU. Geri kondu.
+    // Yeni hesap YOK — sunucunun hesabı gösteriliyor. Bordronun kendisi
+    // maas_service tekelinde; burası TAHMİNÎ hakediş penceresi.
+    const netAl = (t) => sayi(t?.['net_hakediş'] ?? t?.ucret_detay?.['net_hakediş']);
+    const toplamNet = satir.reduce((s, t) => s + netAl(t), 0);
     return (
       <>
         <DonemSecici
@@ -2784,15 +2791,16 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
           { etiket: 'Aylık toplam saat', deger: `${trSayi(toplamSaat, 0)} sa`, alt: `${satir.length} personel · ${AY_KISA[ay - 1]}` },
           { etiket: 'Toplam gecikme', deger: `${trSayi(toplamGecikme, 0)} dk`, alt: gecikenler.length ? `${gecikenler.length} personel` : 'gecikme yok', renk: toplamGecikme > 0 ? R.amber : R.yesil },
           { etiket: 'Fazla mesai', deger: `${trSayi(toplamFm, 0)} sa`, alt: 'plan üstü çalışma', renk: toplamFm > 0 ? R.kirmizi : R.yesil },
-          { etiket: 'Kişi başı ortalama', deger: satir.length ? `${trSayi(toplamSaat / satir.length, 0)} sa` : '—', alt: 'bu ay', renk: R.krem },
+          { etiket: 'Tahminî hakediş', deger: toplamNet > 0 ? fmt(toplamNet) : '—', alt: toplamNet > 0 ? `${satir.length} personel · bugüne kadar` : 'ücret verisi yok', renk: R.bakirAcik },
         ]} />
         {satir.length ? (
           <Tablo
             baslik={`Vardiya takip · ${AY_KISA[ay - 1]} ${yil}`}
-            not="satıra tıkla → personel dosyası"
+            not="satıra tıkla → hakediş kırılımı (taban · fazla mesai · yemek · yol)"
             kolonlar={[
               { ad: 'Personel' }, { ad: 'Çalışma türü' }, { ad: 'Planlanan saat', sag: true },
-              { ad: 'Gecikme', sag: true }, { ad: 'Fazla mesai', sag: true }, { ad: 'Durum' },
+              { ad: 'Gecikme', sag: true }, { ad: 'Fazla mesai', sag: true },
+              { ad: 'Tahminî hakediş', sag: true }, { ad: 'Durum' },
             ]}
             satirlar={satir.map(t => {
               const gec = sayi(t.toplam_gecikme_dk);
@@ -2805,6 +2813,7 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
                   { v: `${trSayi(t.toplam_planlanan_saat, 0)} sa`, mono: true, sag: true },
                   { v: gec ? `${trSayi(gec, 0)} dk` : '—', mono: true, sag: true, renk: gec > 30 ? R.kirmizi : gec > 0 ? R.amber : R.not },
                   { v: fm ? `${trSayi(fm)} sa` : '—', mono: true, sag: true, renk: fm > 8 ? R.kirmizi : R.krem },
+                  { v: netAl(t) > 0 ? fmt(netAl(t)) : '—', mono: true, sag: true, kalin: true, renk: R.bakirAcik },
                   {
                     v: fm > 8 ? 'fazla mesai' : gec > 30 ? 'gecikme yüksek' : 'normal',
                     rozet: fm > 8 ? R.kirmizi : gec > 30 ? R.amber : R.yesil,
@@ -2813,8 +2822,57 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
               };
             })}
             onSatir={(row) => {
-              const p = personel.find(x => String(x.id) === String(row._t.personel_id));
-              if (p) personelAc(p);
+              // Klasikteki ücret şelalesi — sunucunun ucret_detay'ı olduğu gibi
+              const t = row._t;
+              // ⚠️ fm/gec hücre map'inin kapsamındaydı; burada YENİDEN türetilir
+              const fm = sayi(t.toplam_fazla_mesai_saat);
+              const gec = sayi(t.toplam_gecikme_dk);
+              const d = t.ucret_detay || {};
+              const partTime = d.calisma_saati != null;
+              const kalemler = [];
+              if (partTime) {
+                kalemler.push({ ad: 'Çalışılan saat', detay: `saatlik ${fmt(sayi(d.saatlik_ucret))}`, tutar: `${trSayi(sayi(d.calisma_saati))} sa` });
+                kalemler.push({ ad: 'Normal ücret', detay: 'saat × saatlik ücret', tutar: fmt(sayi(d.normal_ucret)) });
+              } else {
+                kalemler.push({
+                  ad: d.ay_tamam ? 'Taban maaş (tam ay)' : `Taban maaş · ${sayi(d.gecen_gun)}/${sayi(d.ay_gun)} gün`,
+                  detay: d.ay_tamam ? 'aylık taban' : `günlük ${fmt(sayi(d.gunluk_ucret))} × ${sayi(d.gecen_gun)} gün`,
+                  tutar: fmt(sayi(d.ay_tamam ? d.taban_maas : d.kazanilan_taban)),
+                });
+                if (sayi(d.fazla_mesai_saat) > 0) kalemler.push({
+                  ad: 'Fazla mesai', detay: `${trSayi(sayi(d.fazla_mesai_saat))} sa × saatlik ${fmt(sayi(d.saatlik_ucret))}`,
+                  tutar: fmt(sayi(d.fazla_mesai_ucret)),
+                });
+              }
+              if (sayi(d.yemek_ucret) > 0 || sayi(t.yemek_ucret_gun) > 0) kalemler.push({
+                ad: 'Yemek ücreti', detay: `${sayi(t.yemek_ucret_gun)} gün hak edildi · günlük ${fmt(sayi(d.yemek_ucret_birim))}`,
+                tutar: fmt(sayi(d.yemek_ucret)),
+              });
+              if (sayi(d.yol_ucret) > 0) kalemler.push({
+                ad: 'Yol ücreti', detay: d.yol_ucret_aylik ? `aylık ${fmt(sayi(d.yol_ucret_aylik))} · gün oranıyla` : 'gün oranıyla',
+                tutar: fmt(sayi(d.yol_ucret)),
+              });
+              kalemler.push({ ad: 'Net hakediş', detay: 'bugüne kadar birikmiş', tutar: fmt(netAl(t)) });
+              if (sayi(t.haftalik_izin_kullanilmadi) > 0) kalemler.push({
+                ad: '⚠ Kullanılmayan haftalık izin', detay: 'ücretli izin verilmeli — hakedişe dâhil değil',
+                tutar: `${sayi(t.haftalik_izin_kullanilmadi)} gün`,
+              });
+              onCekmece?.({
+                tip: 'HAKEDİŞ KIRILIMI',
+                baslik: t.ad_soyad,
+                alt: `${turAd(t.calisma_turu)} · ${AY_KISA[ay - 1]} ${yil}`,
+                kpi: [
+                  { etiket: 'Net hakediş', deger: fmt(netAl(t)), renk: R.bakirAcik },
+                  { etiket: 'Planlanan saat', deger: `${trSayi(sayi(t.toplam_planlanan_saat), 0)} sa` },
+                  { etiket: 'Fazla mesai', deger: fm ? `${trSayi(fm)} sa` : '—', renk: fm > 8 ? R.kirmizi : R.krem },
+                  { etiket: 'Gecikme', deger: gec ? `${trSayi(gec, 0)} dk` : '—', renk: gec > 30 ? R.kirmizi : R.krem },
+                ],
+                listeBaslik: 'Ücret kırılımı',
+                satirlar: kalemler,
+                not: d.not
+                  ? `${d.not} — bu TAHMİNÎ hakediştir, bordronun kendisi Ekip ▸ Maaş & Avans'ta onaylanır.`
+                  : 'Bu TAHMİNÎ hakediş: vardiya kaydından türetilir, ay ilerledikçe artar. Ödenecek bordro Ekip ▸ Maaş & Avans\'ta onaylanır — iki sayı aynı olmak zorunda değil.',
+              });
             }}
           />
         ) : (
