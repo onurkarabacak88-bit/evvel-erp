@@ -1019,7 +1019,11 @@ const PARA_UC = {
     subeler: {
       // personel_satislar AYNI cevapta geliyor — v2 uzun süre yalnız cok_satilan'ı
       // okuyordu; "Kim sattı" bloğu için sahte veri de eklendi (isimsiz ID dahil).
-      Zafer: { cok_satilan: [
+      // ⚠️ ŞUBE alanları da gerçek uçta var (ciro_toplam/nakit/kart/iskonto/
+      // fatura_sayisi/gruplar) — v2 uzun süre atıyordu, mock'ta da yoktu.
+      Zafer: { ciro_toplam: 46280, nakit: 17420, kart: 28860, iskonto_toplam: 940, fatura_sayisi: 312,
+        gruplar: { 'Ice': { adet: 84, ciro: 13020 }, '14 Oz': { adet: 118, ciro: 21240 }, '8 Oz': { adet: 76, ciro: 11020 }, 'Pasta': { adet: 12, ciro: 1000 } },
+        cok_satilan: [
         { ad: 'Latte', adet: 118, ciro: 21240, grup: 'SICAK KAHVE' },
         { ad: 'Iced Americano', adet: 84, ciro: 13020, grup: 'SOGUK KAHVE' },
         { ad: 'Filtre Kahve', adet: 76, ciro: 11020, grup: 'SICAK KAHVE' },
@@ -1027,7 +1031,9 @@ const PARA_UC = {
         { personel_id: '49671', ad: 'ELİF KARA', fis_sayisi: 142, ciro: 28400 },
         { personel_id: '50218', ad: '50218', fis_sayisi: 61, ciro: 11250 },
       ]},
-      'Köyceğiz': { cok_satilan: [
+      'Köyceğiz': { ciro_toplam: 20950, nakit: 9100, kart: 11850, iskonto_toplam: 0, fatura_sayisi: 168,
+        gruplar: { '14 Oz': { adet: 64, ciro: 11520 }, 'Milkshake': { adet: 41, ciro: 9430 } },
+        cok_satilan: [
         { ad: 'Latte', adet: 64, ciro: 11520, grup: 'SICAK KAHVE' },
         { ad: 'Çikolata Milkshake', adet: 41, ciro: 9430, grup: 'MILKSHAKE' },
       ], personel_satislar: [

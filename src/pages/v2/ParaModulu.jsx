@@ -98,6 +98,11 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru, onToast }) {
   const [evoIsim, setEvoIsim] = useState(null);        // {personel_id, ad}
   const [evoMesgul, setEvoMesgul] = useState(false);
   const [evoSyncMesgul, setEvoSyncMesgul] = useState(false);
+  // ⚠️ SAHİP YAKALADI (2026-07-31): "ürün satışları bakışında şube bazlı kırılım
+  // yok, v1'de bu desen vardı." Doğruydu — aynı Evo cevabında şube başına
+  // ciro_toplam / nakit / kart / iskonto_toplam / fatura_sayisi / gruplar
+  // geliyordu, v2 hepsini atıp yalnız ürünleri birleştiriyordu.
+  const [satisSube, setSatisSube] = useState('');   // '' = tüm şubeler
   // ── KASA TESLİM ───────────────────────────────────────────────────────────
   const [teslimler, setTeslimler] = useState(null);
   const [teslimHata, setTeslimHata] = useState('');
@@ -643,10 +648,15 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru, onToast }) {
     if (satisHata) return <HataBandi mesaj={satisHata} onTekrar={() => satisYukle(satisGun)} />;
     if (satis == null) return <Yukleniyor />;
     const subeVeri = satis?.subeler || {};
+    const subeAdlari = Object.keys(subeVeri);
+    // Şube seçiliyse ürün tablosu da O ŞUBEYE daralır (klasikteki şube analizi)
+    const seciliSube = satisSube && subeVeri[satisSube] ? satisSube : '';
+    const kaynakSubeler = seciliSube ? { [seciliSube]: subeVeri[seciliSube] } : subeVeri;
+    const sd0 = seciliSube ? (subeVeri[seciliSube] || {}) : null;
     // Ürünleri şubeler arası topla
     const urunMap = {};
     let toplamAdet = 0; let toplamCiro = 0;
-    Object.entries(subeVeri).forEach(([sad, sd]) => {
+    Object.entries(kaynakSubeler).forEach(([sad, sd]) => {
       (sd?.cok_satilan || []).forEach((u) => {
         const k = String(u.ad || '').trim();
         if (!k) return;
@@ -681,18 +691,100 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru, onToast }) {
     return (
       <>
         <KpiSeridi kpiler={[
-          { etiket: 'Satılan ürün', deger: String(toplamAdet), alt: `${urunler.length} çeşit · ${Object.keys(subeVeri).length} şube` },
+          { etiket: 'Satılan ürün', deger: String(toplamAdet), alt: `${urunler.length} çeşit · ${seciliSube || `${subeAdlari.length} şube`}` },
           { etiket: 'Ürün cirosu', deger: toplamCiro > 0 ? fmt(toplamCiro) : '—', alt: 'Evo satış raporu' },
           { etiket: 'En çok satan', deger: enCok ? enCok.ad : '—', alt: enCok ? `${enCok.adet} adet` : 'kayıt yok', renk: R.yesil },
           { etiket: 'Gün', deger: tarihKisa(satisGun), alt: 'Evo gece senkronuyla dolar' },
         ]} />
         {gunSecici}
+
+        {/* ── ŞUBE KIRILIMI — klasikteki şube analizi (v1 deseni geri geldi) ── */}
+        {subeAdlari.length > 0 && (
+          <>
+            <div style={{ display: 'flex', gap: 6, marginBottom: 12, flexWrap: 'wrap' }}>
+              {[['', 'Tüm şubeler'], ...subeAdlari.map((s) => [s, s])].map(([id, ad]) => (
+                <div key={id || 'hepsi'} onClick={() => setSatisSube(id)} style={{
+                  padding: '6px 13px', borderRadius: 99, fontSize: 11.5, fontWeight: 600, cursor: 'pointer',
+                  background: seciliSube === id ? `${R.bakir}22` : R.girinti,
+                  color: seciliSube === id ? R.bakir : R.not,
+                  border: `1px solid ${seciliSube === id ? `${R.bakir}55` : R.cizgi3}`,
+                }}>{ad}</div>
+              ))}
+            </div>
+
+            {sd0 && (() => {
+              const ciro = sayi(sd0.ciro_toplam);
+              const nakit = sayi(sd0.nakit);
+              const kart = sayi(sd0.kart);
+              const isk = sayi(sd0.iskonto_toplam);
+              const fis = sayi(sd0.fatura_sayisi);
+              const gruplar = Object.entries(sd0.gruplar || {})
+                .map(([g, v]) => ({ g, adet: sayi(v?.adet), ciro: sayi(v?.ciro) }))
+                .filter((x) => x.adet > 0 || x.ciro > 0)
+                .sort((a, b) => b.ciro - a.ciro);
+              const grupToplam = gruplar.reduce((s, x) => s + x.ciro, 0);
+              return (
+                <div style={{ ...kartYuzey, padding: '16px 18px', marginBottom: 14 }}>
+                  <div style={{
+                    display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
+                    paddingBottom: 10, borderBottom: `1px solid ${R.cizgi2}`, marginBottom: 12,
+                  }}>
+                    <span style={{ fontFamily: F.baslik, fontSize: 14.5, fontWeight: 600 }}>
+                      🏪 {seciliSube} · {tarihKisa(satisGun)}
+                    </span>
+                    <span style={{ fontSize: 11, color: R.not2 }}>Evo şube raporu</span>
+                  </div>
+                  <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', fontSize: 12.5, marginBottom: gruplar.length ? 13 : 0 }}>
+                    <span>Fiş <b style={{ fontFamily: F.mono }}>{fis || '—'}</b></span>
+                    <span>Ciro <b style={{ fontFamily: F.mono }}>{ciro > 0 ? fmt(ciro) : '—'}</b></span>
+                    <span>Nakit <b style={{ fontFamily: F.mono, color: R.yesil }}>{fmt(nakit)}</b>
+                      {ciro > 0 && <span style={{ color: R.not2 }}> · %{Math.round((nakit / ciro) * 100)}</span>}</span>
+                    <span>Kart <b style={{ fontFamily: F.mono, color: R.mavi }}>{fmt(kart)}</b>
+                      {ciro > 0 && <span style={{ color: R.not2 }}> · %{Math.round((kart / ciro) * 100)}</span>}</span>
+                    <span>İskonto <b style={{ fontFamily: F.mono, color: isk > 0 ? R.amber : R.not }}>{isk > 0 ? fmt(isk) : '—'}</b>
+                      {isk > 0 && ciro > 0 && <span style={{ color: R.not2 }}> · ciroya oranı %{((isk / ciro) * 100).toFixed(1).replace('.', ',')}</span>}</span>
+                    <span style={{ color: R.not2 }}>fiş başı {fis > 0 ? fmt(ciro / fis) : '—'}</span>
+                  </div>
+
+                  {gruplar.length > 0 && (
+                    <>
+                      <div style={{ fontSize: 10.5, letterSpacing: '.7px', textTransform: 'uppercase',
+                        color: R.not2, fontWeight: 700, marginBottom: 8 }}>Grup dağılımı</div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                        {gruplar.map((x) => {
+                          const pay = grupToplam > 0 ? Math.round((x.ciro / grupToplam) * 100) : 0;
+                          return (
+                            <div key={x.g} style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 12 }}>
+                              <span style={{ minWidth: 108, fontWeight: 600 }}>{x.g}</span>
+                              <span style={{ fontFamily: F.mono, color: R.not2, minWidth: 66 }}>{x.adet} adet</span>
+                              <div style={{ flex: 1, height: 6, borderRadius: 99, background: R.girinti, overflow: 'hidden', minWidth: 60 }}>
+                                <div style={{ width: `${pay}%`, height: '100%', background: R.bakir }} />
+                              </div>
+                              <span style={{ fontFamily: F.mono, minWidth: 78, textAlign: 'right' }}>{fmt(x.ciro)}</span>
+                              <span style={{ fontFamily: F.mono, color: R.not2, minWidth: 34, textAlign: 'right' }}>%{pay}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </>
+                  )}
+                  {!gruplar.length && (
+                    <div style={{ fontSize: 11.5, color: R.not2 }}>
+                      Bu gün için grup dağılımı gelmedi — Evo raporu gece senkronuyla dolar.
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+          </>
+        )}
+
         {urunler.length === 0 ? (
           <BosDurum metin="Bu gün için Evo satış raporu henüz düşmedi — rapor gece senkronuyla gelir. Dünü seçerek tamamlanmış günü görebilirsin." />
         ) : (
           <Tablo
-            baslik={`Ürün satışları · ${tarihKisa(satisGun)}`}
-            not="satıra tıkla → şube kırılımı"
+            baslik={`Ürün satışları · ${seciliSube || 'tüm şubeler'} · ${tarihKisa(satisGun)}`}
+            not={seciliSube ? 'yalnız bu şubenin ürünleri' : 'satıra tıkla → şube kırılımı'}
             kolonlar={[
               { ad: 'Ürün' }, { ad: 'Grup' }, { ad: 'Adet', sag: 1 }, { ad: 'Ciro', sag: 1 }, { ad: 'Pay', sag: 1 },
             ]}
@@ -733,7 +825,7 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru, onToast }) {
             o eşleşmeyi burada elle kurabiliyoruz (POST /evo/personel-isim-gir). */}
         {(() => {
           const kisiMap = {};
-          Object.entries(subeVeri).forEach(([sad, sd]) => {
+          Object.entries(kaynakSubeler).forEach(([sad, sd]) => {
             (sd?.personel_satislar || []).forEach((p) => {
               const pid = String(p.personel_id ?? '').trim();
               if (!pid) return;
