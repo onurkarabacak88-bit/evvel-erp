@@ -191,6 +191,29 @@ const ODEME_UC = {
       { stok_yolda_id: 'sy3', sube_adi: 'Zafer', kalem_adi: 'Vanilya şurup', gonderilen_adet: 6, kabul_adet: 4 },
     ],
   },
+  '/api/ops/guvenlik-alarmlar': {
+    limitler: { pencere_dk: 15, pin_kilit_esik: 2, pin_hatali_esik: 8 },
+    alarm_sayisi: 1, toplam_alarm_kaydi: 2,
+    alarmlar: [
+      { sube_id: 's1', sube_adi: 'Zafer', seviye: 'kritik', mesaj: 'PIN_KILIT son 15 dk: 3 (eşik 2)', susturuldu: false,
+        detay: { pin_kilit_adet: 3, pin_hatali_adet: 11 } },
+      { sube_id: 's2', sube_adi: 'Gazze', seviye: 'uyari', mesaj: 'PIN_HATALI son 15 dk: 9 (eşik 8)', susturuldu: true,
+        detay: { pin_kilit_adet: 0, pin_hatali_adet: 9 } },
+    ],
+  },
+  '/api/ops/merkez-mesajlar': {
+    satirlar: [
+      { id: 'm1', sube_id: 's1', sube_adi: 'Zafer', mesaj: 'Yarın sabah sayım var, bardakları ayrı istifleyin.', oncelik: 'kritik', okundu: false, olusturma: '2026-07-31T08:00:00', ttl_saat: 72 },
+      { id: 'm2', sube_id: 's2', sube_adi: 'Gazze', mesaj: 'Kasa devir formunu imzalatmayı unutmayın.', oncelik: 'normal', okundu: true, okundu_ts: '2026-07-30T19:12:00', okuyan_ad: 'Ali Y.', olusturma: '2026-07-30T09:00:00', ttl_saat: 48 },
+    ], toplam: 2,
+  },
+  '/api/ops/gider-fis-bekleyen': {
+    gun_sayi: 7,
+    satirlar: [
+      { id: 'g1', tarih: '2026-07-24', kategori: 'temizlik', tutar: 840, aciklama: 'Deterjan + eldiven', sube: 's1', sube_adi: 'Zafer', personel_ad: 'Ali Yıldız', gecikme_gun: 7, oncelik: 'kritik' },
+      { id: 'g2', tarih: '2026-07-30', kategori: 'kirtasiye', tutar: 165, aciklama: 'Fiş rulosu', sube: 's2', sube_adi: 'Gazze', personel_ad: 'Ayşe D.', gecikme_gun: 1, oncelik: 'normal' },
+    ], toplam: 2, kritik_adet: 1,
+  },
   '/api/ops/siparis/katalog': {
     kategoriler: [
       { id: 'k1', kod: 'kahve', ad: 'Kahve & Çekirdek', emoji: '☕', sira: 1, urunler: [

@@ -23,7 +23,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { api, fmt } from '../../utils/api';
 import { R, F, kartYuzey } from './tema';
-import { KpiSeridi, Tablo, BosDurum, HataBandi } from './parcalar';
+import { KpiSeridi, Tablo, BosDurum, HataBandi, Liste } from './parcalar';
 
 const sayi = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 
@@ -527,6 +527,198 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     });
   }, []);
 
+  // ── MERKEZ MÜDAHALE (Faz 4, 2026-07-31) ──────────────────────────────────
+  // Merkezin ŞUBEYE dokunduğu üç işlem tek masada: güvenlik alarmı · zorunlu
+  // mesaj · kapanış mührünü açma. Üçü de klasikte ayrı sekmelerdeydi.
+  const [mdSekme, setMdSekme] = useState('alarm');
+  const [mdAlarm, setMdAlarm] = useState(null);
+  const [mdMesaj, setMdMesaj] = useState(null);
+  const [mdSubeler, setMdSubeler] = useState([]);
+  const [mdHata, setMdHata] = useState('');
+  const [mdMesgul, setMdMesgul] = useState(false);
+  const [mdModal, setMdModal] = useState(null);   // {tip, alarm|mesaj|sube, ...}
+  // Yeni mesaj formu
+  const [ymSube, setYmSube] = useState('');
+  const [ymMetin, setYmMetin] = useState('');
+  const [ymOncelik, setYmOncelik] = useState('normal');
+  const [ymTtl, setYmTtl] = useState(72);
+  // Kapanış geri alma formu — İŞLETME PIN'i zorunlu (sunucu doğrular)
+  const [kgSube, setKgSube] = useState('');
+  const [kgTarih, setKgTarih] = useState(bugunYerelISO());
+  const [kgSebep, setKgSebep] = useState('');
+  const [kgPin, setKgPin] = useState('');
+
+  const mdYukle = useCallback(() => {
+    setMdHata('');
+    api('/ops/guvenlik-alarmlar')
+      .then((d) => setMdAlarm(d || {}))
+      .catch((e) => setMdHata(e?.message || 'Güvenlik alarmları alınamadı'));
+    api('/ops/merkez-mesajlar?limit=100')
+      .then((d) => setMdMesaj(Array.isArray(d?.satirlar) ? d.satirlar : []))
+      .catch((e) => setMdHata((p) => p || e?.message || 'Mesajlar alınamadı'));
+    api('/ops/subeler/depolar')
+      .then((d) => setMdSubeler(Array.isArray(d?.subeler) ? d.subeler : []))
+      .catch(() => setMdSubeler([]));
+  }, []);
+
+  const mdUygula = async () => {
+    const m = mdModal;
+    if (!m) return;
+    setMdMesgul(true);
+    try {
+      if (m.tip === 'okundu') {
+        await api(`/ops/guvenlik-alarmlar/${m.alarm.sube_id}/okundu`, {
+          method: 'POST', body: { notu: (m.notu || '').trim() || null },
+        });
+        onToast?.(`✓ ${m.alarm.sube_adi} alarmı okundu işaretlendi`);
+      } else if (m.tip === 'sustur') {
+        const dk = Math.max(5, Math.min(1440, Number(m.dk) || 120));
+        await api(`/ops/guvenlik-alarmlar/${m.alarm.sube_id}/sustur`, {
+          method: 'POST', body: { notu: (m.notu || '').trim() || null, sustur_dk: dk },
+        });
+        onToast?.(`✓ ${m.alarm.sube_adi} alarmı ${dk} dk susturuldu`);
+      } else if (m.tip === 'mesaj-sil') {
+        await api(`/ops/merkez-mesaj/${m.mesaj.id}`, { method: 'DELETE' });
+        onToast?.('✓ Mesaj pasife alındı — şube artık göremeyecek');
+      }
+      setMdModal(null);
+      mdYukle();
+    } catch (e) {
+      onToast?.(e?.message || 'İşlem başarısız');
+    } finally { setMdMesgul(false); }
+  };
+
+  const mesajGonder = async () => {
+    const metin = ymMetin.trim();
+    if (!ymSube) { onToast?.('Şube seçin'); return; }
+    if (metin.length < 3) { onToast?.('Mesaj en az 3 karakter olmalı'); return; }
+    if (metin.length > 2000) { onToast?.('Mesaj 2000 karakteri aşamaz'); return; }
+    setMdMesgul(true);
+    try {
+      await api('/ops/merkez-mesaj-gonder', {
+        method: 'POST',
+        body: { sube_id: ymSube, mesaj: metin, oncelik: ymOncelik, ttl_saat: Math.max(1, Math.min(8760, Number(ymTtl) || 72)) },
+      });
+      onToast?.('✓ Mesaj gönderildi — şube okumadan kapanış yapamaz');
+      setYmMetin(''); setYmOncelik('normal');
+      mdYukle();
+    } catch (e) {
+      onToast?.(e?.message || 'Mesaj gönderilemedi');
+    } finally { setMdMesgul(false); }
+  };
+
+  /** Kapanış mührünü aç. Sunucu İŞLETME PIN'ini doğrular (hatalı → 403). */
+  const kapanisGeriAl = async () => {
+    if (!kgSube) { onToast?.('Şube seçin'); return; }
+    if (!/^\d{4}$/.test(kgPin.trim())) { onToast?.('İşletme onay PIN kodu 4 haneli olmalı'); return; }
+    setMdMesgul(true);
+    try {
+      const r = await api(`/api/sube/${kgSube}/kapanis-geri-al`, {
+        method: 'POST',
+        body: { onay_pin: kgPin.trim(), tarih: kgTarih, sebep: kgSebep.trim() || null },
+      });
+      onToast?.(`✓ Mühür açıldı${r?.kapanis_iptal != null ? ` — ${sayi(r.kapanis_iptal)} kapanış kaydı iptal` : ''}`);
+      setKgPin(''); setKgSebep('');
+      setMdModal(null);
+    } catch (e) {
+      onToast?.(e?.message || 'Geri alma başarısız — PIN veya tarih hatalı olabilir');
+    } finally { setMdMesgul(false); }
+  };
+
+  // ── GİDER FİŞİ KARARI (Faz 4) ────────────────────────────────────────────
+  // Klasikte liste vardı ama v2 sadece GÖSTERİYORDU. "gelmedi" kararı sunucuda
+  // personel risk sinyali doğurur (depoda hareket varsa ağırlık 10, yoksa 4).
+  const [fisModal, setFisModal] = useState(null);   // {gider, durum, notu}
+  const [fisMesgul, setFisMesgul] = useState(false);
+
+  const fisKarar = async () => {
+    const m = fisModal;
+    if (!m) return;
+    setFisMesgul(true);
+    try {
+      await api('/ops/gider-fis-kontrol', {
+        method: 'POST',
+        body: { gider_id: m.gider.id, durum: m.durum, notu: (m.notu || '').trim() || null },
+      });
+      onToast?.(m.durum === 'geldi' ? '✓ Fiş geldi olarak işaretlendi'
+        : m.durum === 'muaf' ? '✓ Fişten muaf sayıldı'
+        : '✓ Fiş gelmedi — personel risk sinyali oluşturuldu');
+      setFisModal(null);
+      denetimYukle(barTarih);
+    } catch (e) {
+      onToast?.(e?.message || 'Karar kaydedilemedi');
+    } finally { setFisMesgul(false); }
+  };
+
+
+  // Katalog modalı — tek modal, tipe göre alan gösterir
+  const ktModalBlok = ktModal && (() => {
+    const m = ktModal;
+    const T = {
+      kategori: { b: 'Yeni kategori', a: 'Şubelerin sipariş ekranında görünecek başlık.', ad: 'Kategori adı', ek: 'Emoji', btn: 'Kategoriyi oluştur' },
+      urun:     { b: 'Yeni ürün', a: 'Bu kategoriye ürün ekler. Aynı ad daha önce pasife alınmışsa yeniden aktif olur.', ad: 'Ürün adı', ek: 'Açıklama (isteğe bağlı)', btn: 'Ürünü ekle' },
+      ad:       { b: 'Ürün adını değiştir', a: 'Ad değişir; geçmiş siparişler etkilenmez.', ad: 'Yeni ad', ek: null, btn: 'Adı kaydet' },
+      fiyat:    { b: 'Birim fiyat', a: 'Maliyet hesabı bu fiyatı kullanır. Boş bırakırsan ürün fiyatsız kalır.', ad: null, ek: 'Birim fiyat (₺)', btn: 'Fiyatı kaydet' },
+      pasif:    { b: 'Ürünü pasife al', a: 'Şubeler bu ürünü artık sipariş edemez ve ürün bu listeden kaybolur. Geçmiş siparişler korunur.', ad: null, ek: null, btn: 'Evet, pasife al', tehlike: true },
+    }[m.tip];
+    const kapat = () => { if (!ktMesgul) setKtModal(null); };
+    return (
+      <div onClick={(e) => { if (e.target === e.currentTarget) kapat(); }} style={{
+        position: 'fixed', inset: 0, zIndex: 120, background: 'rgba(10,6,2,.7)',
+        backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+      }}>
+        <div style={{ ...kartYuzey, width: 430, maxWidth: '96vw', padding: '24px 26px' }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 6 }}>
+            <div style={{ fontFamily: F.baslik, fontSize: 19, fontWeight: 600 }}>{T.b}</div>
+            <button onClick={kapat} style={{
+              marginLeft: 'auto', border: 'none', background: 'transparent', color: R.not,
+              fontSize: 16, cursor: 'pointer', fontFamily: 'inherit',
+            }}>x</button>
+          </div>
+          {(m.kategori || m.urun) && (
+            <div style={{ fontSize: 12.5, color: R.metin2, marginBottom: 4 }}>
+              {m.urun ? <b>{m.urun.ad}</b> : null}
+              {m.urun && m.kategori ? ' · ' : ''}
+              {m.kategori ? `${m.kategori.emoji || ''} ${m.kategori.ad}` : ''}
+            </div>
+          )}
+          <div style={{ fontSize: 12, color: R.not2, lineHeight: 1.65, marginBottom: 16 }}>{T.a}</div>
+
+          {T.ad && (
+            <>
+              <label style={opsEtiket}>{T.ad}</label>
+              <input value={m.ad} autoFocus
+                onChange={(e) => setKtModal((p) => ({ ...p, ad: e.target.value }))}
+                style={opsAlanStil} />
+            </>
+          )}
+          {T.ek && (
+            <>
+              <label style={opsEtiket}>{T.ek}</label>
+              <input value={m.deger} inputMode={m.tip === 'fiyat' ? 'decimal' : undefined}
+                onChange={(e) => setKtModal((p) => ({ ...p, deger: e.target.value }))}
+                style={opsAlanStil} />
+            </>
+          )}
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 6 }}>
+            <button disabled={ktMesgul} onClick={kapat} style={{
+              padding: '10px 18px', borderRadius: 10, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+              background: 'transparent', color: R.metin2, fontSize: 12.5, fontWeight: 600, fontFamily: 'inherit',
+            }}>Vazgeç</button>
+            <button disabled={ktMesgul} onClick={ktUygula} style={{
+              padding: '10px 20px', borderRadius: 10, cursor: 'pointer',
+              border: T.tehlike ? `1px solid ${R.kirmizi}55` : 'none',
+              background: T.tehlike ? `${R.kirmizi}26` : 'linear-gradient(150deg, #E0A559, #AF6C29)',
+              color: T.tehlike ? R.kirmizi : '#1C1309',
+              fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit',
+            }}>{ktMesgul ? 'İşleniyor…' : T.btn}</button>
+          </div>
+        </div>
+      </div>
+    );
+  })();
+
   useEffect(() => {
     if (gorunum === 'akis' || gorunum === 'kule') kuleYukle();
     if (gorunum === 'sevkiyat') sevkYukle();
@@ -538,8 +730,9 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     if (gorunum === 'tedarik') tedarikYukle();
     if (gorunum === 'uzlastir') uzYukle();
     if (gorunum === 'katalog') ktYukle();
+    if (gorunum === 'denetim') mdYukle();   // Merkez Denetim'in müdahale sekmeleri
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gorunum, kuleYukle, sevkYukle, depoYukle, sayimYukle, hareketYukle, barYukle, denetimYukle, tedarikYukle, uzYukle, ktYukle]);
+  }, [gorunum, kuleYukle, sevkYukle, depoYukle, sayimYukle, hareketYukle, barYukle, denetimYukle, tedarikYukle, uzYukle, ktYukle, mdYukle]);
 
   // ── seçili sevkiyat talebi değişince kalem durumlarını hazırla ────────────
   const seciliTalep = useMemo(
@@ -739,74 +932,6 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
       onToast?.(e?.message || 'Eşitleme başarısız');
     } finally { setKtMesgul(false); }
   };
-
-  // Katalog modalı — tek modal, tipe göre alan gösterir
-  const ktModalBlok = ktModal && (() => {
-    const m = ktModal;
-    const T = {
-      kategori: { b: 'Yeni kategori', a: 'Şubelerin sipariş ekranında görünecek başlık.', ad: 'Kategori adı', ek: 'Emoji', btn: 'Kategoriyi oluştur' },
-      urun:     { b: 'Yeni ürün', a: 'Bu kategoriye ürün ekler. Aynı ad daha önce pasife alınmışsa yeniden aktif olur.', ad: 'Ürün adı', ek: 'Açıklama (isteğe bağlı)', btn: 'Ürünü ekle' },
-      ad:       { b: 'Ürün adını değiştir', a: 'Ad değişir; geçmiş siparişler etkilenmez.', ad: 'Yeni ad', ek: null, btn: 'Adı kaydet' },
-      fiyat:    { b: 'Birim fiyat', a: 'Maliyet hesabı bu fiyatı kullanır. Boş bırakırsan ürün fiyatsız kalır.', ad: null, ek: 'Birim fiyat (₺)', btn: 'Fiyatı kaydet' },
-      pasif:    { b: 'Ürünü pasife al', a: 'Şubeler bu ürünü artık sipariş edemez ve ürün bu listeden kaybolur. Geçmiş siparişler korunur.', ad: null, ek: null, btn: 'Evet, pasife al', tehlike: true },
-    }[m.tip];
-    const kapat = () => { if (!ktMesgul) setKtModal(null); };
-    return (
-      <div onClick={(e) => { if (e.target === e.currentTarget) kapat(); }} style={{
-        position: 'fixed', inset: 0, zIndex: 120, background: 'rgba(10,6,2,.7)',
-        backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
-      }}>
-        <div style={{ ...kartYuzey, width: 430, maxWidth: '96vw', padding: '24px 26px' }}>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 6 }}>
-            <div style={{ fontFamily: F.baslik, fontSize: 19, fontWeight: 600 }}>{T.b}</div>
-            <button onClick={kapat} style={{
-              marginLeft: 'auto', border: 'none', background: 'transparent', color: R.not,
-              fontSize: 16, cursor: 'pointer', fontFamily: 'inherit',
-            }}>x</button>
-          </div>
-          {(m.kategori || m.urun) && (
-            <div style={{ fontSize: 12.5, color: R.metin2, marginBottom: 4 }}>
-              {m.urun ? <b>{m.urun.ad}</b> : null}
-              {m.urun && m.kategori ? ' · ' : ''}
-              {m.kategori ? `${m.kategori.emoji || ''} ${m.kategori.ad}` : ''}
-            </div>
-          )}
-          <div style={{ fontSize: 12, color: R.not2, lineHeight: 1.65, marginBottom: 16 }}>{T.a}</div>
-
-          {T.ad && (
-            <>
-              <label style={opsEtiket}>{T.ad}</label>
-              <input value={m.ad} autoFocus
-                onChange={(e) => setKtModal((p) => ({ ...p, ad: e.target.value }))}
-                style={opsAlanStil} />
-            </>
-          )}
-          {T.ek && (
-            <>
-              <label style={opsEtiket}>{T.ek}</label>
-              <input value={m.deger} inputMode={m.tip === 'fiyat' ? 'decimal' : undefined}
-                onChange={(e) => setKtModal((p) => ({ ...p, deger: e.target.value }))}
-                style={opsAlanStil} />
-            </>
-          )}
-
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 6 }}>
-            <button disabled={ktMesgul} onClick={kapat} style={{
-              padding: '10px 18px', borderRadius: 10, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
-              background: 'transparent', color: R.metin2, fontSize: 12.5, fontWeight: 600, fontFamily: 'inherit',
-            }}>Vazgeç</button>
-            <button disabled={ktMesgul} onClick={ktUygula} style={{
-              padding: '10px 20px', borderRadius: 10, cursor: 'pointer',
-              border: T.tehlike ? `1px solid ${R.kirmizi}55` : 'none',
-              background: T.tehlike ? `${R.kirmizi}26` : 'linear-gradient(150deg, #E0A559, #AF6C29)',
-              color: T.tehlike ? R.kirmizi : '#1C1309',
-              fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit',
-            }}>{ktMesgul ? 'İşleniyor…' : T.btn}</button>
-          </div>
-        </div>
-      </div>
-    );
-  })();
 
   // ── YAŞAM DÖNGÜSÜ ONAY MODALI ─────────────────────────────────────────────
   // Klasikte window.confirm + prompt vardı. Kadifede: ne olacağını AÇIKÇA yazan
@@ -1382,6 +1507,101 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
       </>
     );
   }
+
+  // ── FAZ 4 MODALLARI ───────────────────────────────────────────────────────
+  const mdModalBlok = mdModal && (() => {
+    const T = {
+      'okundu': { baslik: 'Alarmı okundu işaretle', anlat: 'Alarm listede kalır ama "görüldü" damgası alır. Olaylar devam ederse alarm yeniden yükselir.', buton: 'Okundu işaretle', tehlike: false },
+      'sustur': { baslik: 'Alarmı sustur', anlat: 'Belirttiğin süre boyunca bu şubenin alarmı listede görünmez. Süre dolunca kendiliğinden geri döner — olaylar durmadıysa alarm da durmaz.', buton: 'Sustur', tehlike: false },
+      'mesaj-sil': { baslik: 'Mesajı geri çek', anlat: 'Mesaj pasife alınır; şube panelinde görünmez. Kayıt silinmez, geçmişte durur.', buton: 'Geri çek', tehlike: true },
+      'kapanis': { baslik: 'Kapanış mührünü aç', anlat: 'Gün sonu kapanışı iptal edilir, mühür açılır, gün sonu kasa teslimi silinir. KORUNUR: ciro taslağı ve vardiya/kasa devri. Kasaya dokunulmaz. Bu işlem denetim defterine yazılır.', buton: 'Mührü aç', tehlike: true },
+    }[mdModal.tip] || {};
+    const kapat = () => { if (!mdMesgul) setMdModal(null); };
+    const onayla = mdModal.tip === 'kapanis' ? kapanisGeriAl : mdUygula;
+    return (
+      <div onClick={(e) => { if (e.target === e.currentTarget) kapat(); }} style={{
+        position: 'fixed', inset: 0, zIndex: 120, background: 'rgba(10,6,2,.7)',
+        backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+      }}>
+        <div style={{ ...kartYuzey, width: 460, maxWidth: '96vw', padding: '24px 26px' }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 8 }}>
+            <div style={{ fontFamily: F.baslik, fontSize: 19, fontWeight: 600 }}>{T.baslik}</div>
+            <button onClick={kapat} style={{ marginLeft: 'auto', border: 'none', background: 'transparent', color: R.not, fontSize: 16, cursor: 'pointer', fontFamily: 'inherit' }}>x</button>
+          </div>
+          <div style={{ fontSize: 12, color: R.not2, lineHeight: 1.65, marginBottom: 14 }}>{T.anlat}</div>
+          {mdModal.tip === 'sustur' && (
+            <>
+              <label style={opsEtiket}>Susturma süresi (dakika · 5–1440)</label>
+              <input type="number" min={5} max={1440} value={mdModal.dk ?? 120} autoFocus
+                onChange={(e) => setMdModal((p) => ({ ...p, dk: e.target.value }))} style={opsAlanStil} />
+            </>
+          )}
+          {(mdModal.tip === 'okundu' || mdModal.tip === 'sustur') && (
+            <>
+              <label style={opsEtiket}>Not (isteğe bağlı · 300 karakter)</label>
+              <input value={mdModal.notu || ''} maxLength={300}
+                onChange={(e) => setMdModal((p) => ({ ...p, notu: e.target.value }))} style={opsAlanStil} />
+            </>
+          )}
+          {mdModal.tip === 'kapanis' && (
+            <div style={{ fontSize: 12, color: R.metin2, marginBottom: 12, lineHeight: 1.7 }}>
+              <b>{mdSubeler.find((x) => x.id === kgSube)?.ad || 'Şube'}</b> · {tarihKisa(kgTarih)}
+              {kgSebep ? <><br /><span style={{ color: R.not }}>Sebep: {kgSebep}</span></> : null}
+            </div>
+          )}
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 6 }}>
+            <button disabled={mdMesgul} onClick={kapat} style={{ padding: '10px 18px', borderRadius: 10, border: `1px solid ${R.cizgi3}`, cursor: 'pointer', background: 'transparent', color: R.metin2, fontSize: 12.5, fontWeight: 600, fontFamily: 'inherit' }}>Vazgeç</button>
+            <button disabled={mdMesgul} onClick={onayla} style={{
+              padding: '10px 20px', borderRadius: 10, cursor: 'pointer',
+              border: T.tehlike ? `1px solid ${R.kirmizi}55` : 'none',
+              background: T.tehlike ? `${R.kirmizi}26` : 'linear-gradient(150deg, #E0A559, #AF6C29)',
+              color: T.tehlike ? R.kirmizi : '#1C1309', fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit',
+            }}>{mdMesgul ? 'İşleniyor…' : T.buton}</button>
+          </div>
+        </div>
+      </div>
+    );
+  })();
+
+  const fisModalBlok = fisModal && (() => {
+    const T = {
+      'geldi': { baslik: 'Fiş geldi', anlat: 'Belge elimize ulaştı sayılır; gider fiş takibinden düşer.', tehlike: false, buton: 'Geldi olarak işaretle' },
+      'gelmedi': { baslik: 'Fiş gelmedi', anlat: 'Harcamayı yapan personel için RİSK SİNYALİ oluşur. Aynı gün depoda hareket varsa sinyal ağırlığı yükselir (10), yoksa düşük kalır (4). Not bırakırsan sinyale işlenir.', tehlike: true, buton: 'Gelmedi olarak işaretle' },
+      'muaf': { baslik: 'Fişten muaf', anlat: 'Bu harcama için belge beklenmez (ör. otopark, küçük ücret). Takipten düşer, risk sinyali doğmaz.', tehlike: false, buton: 'Muaf say' },
+    }[fisModal.durum] || {};
+    const kapat = () => { if (!fisMesgul) setFisModal(null); };
+    return (
+      <div onClick={(e) => { if (e.target === e.currentTarget) kapat(); }} style={{
+        position: 'fixed', inset: 0, zIndex: 120, background: 'rgba(10,6,2,.7)',
+        backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+      }}>
+        <div style={{ ...kartYuzey, width: 440, maxWidth: '96vw', padding: '24px 26px' }}>
+          <div style={{ fontFamily: F.baslik, fontSize: 19, fontWeight: 600, marginBottom: 6 }}>{T.baslik}</div>
+          <div style={{ fontSize: 12.5, color: R.metin2, marginBottom: 4 }}>
+            <b>{fisModal.gider?.aciklama || 'Gider'}</b> · {fmt(sayi(fisModal.gider?.tutar))} ₺
+          </div>
+          <div style={{ fontSize: 12, color: R.not, marginBottom: 12 }}>
+            {fisModal.gider?.sube_adi || '—'} · {tarihKisa(fisModal.gider?.tarih)}
+            {fisModal.gider?.personel_ad ? ` · ${fisModal.gider.personel_ad}` : ''}
+            {sayi(fisModal.gider?.gecikme_gun) > 0 ? ` · ${sayi(fisModal.gider.gecikme_gun)} gün geçti` : ''}
+          </div>
+          <div style={{ fontSize: 12, color: R.not2, lineHeight: 1.65, marginBottom: 14 }}>{T.anlat}</div>
+          <label style={opsEtiket}>Not (isteğe bağlı)</label>
+          <input value={fisModal.notu || ''} autoFocus
+            onChange={(e) => setFisModal((p) => ({ ...p, notu: e.target.value }))} style={opsAlanStil} />
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 6 }}>
+            <button disabled={fisMesgul} onClick={kapat} style={{ padding: '10px 18px', borderRadius: 10, border: `1px solid ${R.cizgi3}`, cursor: 'pointer', background: 'transparent', color: R.metin2, fontSize: 12.5, fontWeight: 600, fontFamily: 'inherit' }}>Vazgeç</button>
+            <button disabled={fisMesgul} onClick={fisKarar} style={{
+              padding: '10px 20px', borderRadius: 10, cursor: 'pointer',
+              border: T.tehlike ? `1px solid ${R.kirmizi}55` : 'none',
+              background: T.tehlike ? `${R.kirmizi}26` : 'linear-gradient(150deg, #E0A559, #AF6C29)',
+              color: T.tehlike ? R.kirmizi : '#1C1309', fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit',
+            }}>{fisMesgul ? 'İşleniyor…' : T.buton}</button>
+          </div>
+        </div>
+      </div>
+    );
+  })();
 
   // ════════════════════════ GÖRÜNÜM: UZLAŞTIRMA ════════════════════════════
   // Denetim bulgusu (2026-07-31): v2 uyumsuzlukları ÇÖZEMİYORDU; sevkiyat /
@@ -2313,12 +2533,18 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
       setBarTarih(y);
       denetimYukle(y);
     };
+    const alarmListe = Array.isArray(mdAlarm?.alarmlar) ? mdAlarm.alarmlar : [];
+    const mesajListe = Array.isArray(mdMesaj) ? mdMesaj : [];
+    const okunmamisMesaj = mesajListe.filter((m) => !m.okundu).length;
     const ALT = [
       ['uyumsuz', `🧪 Ürün uyumsuzluğu (${sayi(dnUyumsuz?.gun_bekleyen)})`],
       ['fire', `🔥 Fire (${fireKayit.length})`],
       ['fis', `🧾 Gider fişi (${fisListe.length})`],
       ['kontrol', '🔍 Kontrol özeti'],
       ['kayip', `📉 Stok kaybı (${kayipListe.length})`],
+      ['alarm', `🔐 Güvenlik (${sayi(mdAlarm?.alarm_sayisi)})`],
+      ['mesaj', `📢 Merkez mesajı (${okunmamisMesaj})`],
+      ['muhur', '🔓 Mühür açma'],
     ];
     return (
       <>
@@ -2389,22 +2615,148 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
           />
         ) : <BosDurum metin="Fire bildirimi yok." />)}
 
+        {fisModalBlok}
+        {mdModalBlok}
+
         {dnSekme === 'fis' && (fisListe.length ? (
           <Tablo
             baslik="Fişi bekleyen giderler · son 7 gün"
             not="kasadan çıktı ama belge yüklenmedi — KDV kanıtı eksik"
-            kolonlar={[{ ad: 'Açıklama' }, { ad: 'Tarih' }, { ad: 'Şube' }, { ad: 'Tutar', sag: 1 }]}
+            kolonlar={[{ ad: 'Açıklama' }, { ad: 'Tarih' }, { ad: 'Şube · personel' }, { ad: 'Tutar', sag: 1 }, { ad: 'Karar' }]}
             satirlar={fisListe.slice(0, 40).map((x, i) => ({
               id: x.id || `fi-${i}`,
               hucreler: [
-                { v: x.aciklama || x.baslik || '—', kalin: true },
+                { v: x.aciklama || x.baslik || '—', kalin: true,
+                  rozet: sayi(x.gecikme_gun) >= 5 ? { metin: `${sayi(x.gecikme_gun)} gün`, renk: R.kirmizi }
+                    : (sayi(x.gecikme_gun) >= 2 ? { metin: `${sayi(x.gecikme_gun)} gün`, renk: R.amber } : null) },
                 { v: tarihKisa(x.tarih), mono: true, renk: R.not },
-                { v: x.sube_adi || x.sube || '—', renk: R.not },
+                { v: `${x.sube_adi || x.sube || '—'}${x.personel_ad ? ` · ${x.personel_ad}` : ''}`, renk: R.not },
                 { v: fmt(sayi(x.tutar)), mono: true, sag: true, kalin: true, renk: R.kirmizi },
+                { v: x.id ? (
+                    <span style={{ display: 'flex', gap: 6 }}>
+                      <button onClick={() => setFisModal({ gider: x, durum: 'geldi', notu: '' })} style={ktMiniBtn}>Geldi</button>
+                      <button onClick={() => setFisModal({ gider: x, durum: 'muaf', notu: '' })} style={ktMiniBtn}>Muaf</button>
+                      <button onClick={() => setFisModal({ gider: x, durum: 'gelmedi', notu: '' })}
+                        style={{ ...ktMiniBtn, color: R.kirmizi, borderColor: `${R.kirmizi}44` }}>Gelmedi</button>
+                    </span>
+                  ) : '—' },
               ],
             }))}
           />
         ) : <BosDurum metin="Fişi bekleyen gider yok — tüm harcamaların belgesi var. ✓" />)}
+
+        {dnSekme === 'alarm' && (mdHata ? <HataBandi mesaj={mdHata} onTekrar={mdYukle} />
+          : !mdAlarm ? <Yukleniyor />
+          : alarmListe.length ? (
+          <>
+            <div style={{ fontSize: 11.5, color: R.not2, marginBottom: 10, lineHeight: 1.7 }}>
+              Şube panelinde PIN kilidi / hatalı PIN olayları eşiği aştığında alarm doğar.
+              Pencere <b>{sayi(mdAlarm?.limitler?.pencere_dk)} dk</b> · kilit eşiği{' '}
+              <b>{sayi(mdAlarm?.limitler?.pin_kilit_esik)}</b> · hatalı PIN eşiği{' '}
+              <b>{sayi(mdAlarm?.limitler?.pin_hatali_esik)}</b>.
+              Susturma süre dolunca kendiliğinden kalkar — olay sürüyorsa alarm geri gelir.
+            </div>
+            <Liste satirlar={alarmListe.map((a) => ({
+              baslik: `${a.sube_adi || a.sube_id}${a.susturuldu ? ' · susturuldu' : ''}`,
+              alt: a.mesaj || '—',
+              tutar: a.seviye === 'kritik' ? 'KRİTİK' : 'uyarı',
+              tier: a.susturuldu ? 'iyi' : (a.seviye === 'kritik' ? 'kritik' : 'uyari'),
+              aksiyonlar: [
+                { ad: 'Okundu', onTikla: () => setMdModal({ tip: 'okundu', alarm: a, notu: '' }) },
+                { ad: 'Sustur', onTikla: () => setMdModal({ tip: 'sustur', alarm: a, notu: '', dk: 120 }) },
+              ],
+            }))} />
+          </>
+        ) : <BosDurum metin="Aktif güvenlik alarmı yok — şube girişlerinde anormallik görünmüyor. ✓" tamam />)}
+
+        {dnSekme === 'mesaj' && (
+          <>
+            <div style={{ ...kartYuzey, padding: '18px 20px', marginBottom: 14 }}>
+              <div style={{ fontFamily: F.baslik, fontSize: 15, fontWeight: 600, marginBottom: 4 }}>Şubeye zorunlu mesaj gönder</div>
+              <div style={{ fontSize: 11.5, color: R.not2, marginBottom: 12, lineHeight: 1.6 }}>
+                Şube paneli bu mesajı <b>okumadan gün kapatamaz</b>. Süre dolunca listeden düşer.
+              </div>
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 10 }}>
+                <div style={{ minWidth: 160 }}>
+                  <label style={opsEtiket}>Şube</label>
+                  <select value={ymSube} onChange={(e) => setYmSube(e.target.value)} style={opsAlanStil}>
+                    <option value="">— seçin —</option>
+                    {mdSubeler.map((x) => <option key={x.id} value={x.id}>{x.ad}</option>)}
+                  </select>
+                </div>
+                <div style={{ minWidth: 120 }}>
+                  <label style={opsEtiket}>Öncelik</label>
+                  <select value={ymOncelik} onChange={(e) => setYmOncelik(e.target.value)} style={opsAlanStil}>
+                    <option value="normal">Normal</option>
+                    <option value="kritik">Kritik</option>
+                  </select>
+                </div>
+                <div style={{ minWidth: 120 }}>
+                  <label style={opsEtiket}>Görünme süresi (saat)</label>
+                  <input type="number" min={1} max={8760} value={ymTtl}
+                    onChange={(e) => setYmTtl(e.target.value)} style={opsAlanStil} />
+                </div>
+              </div>
+              <label style={opsEtiket}>Mesaj (3–2000 karakter · {ymMetin.trim().length})</label>
+              <textarea value={ymMetin} onChange={(e) => setYmMetin(e.target.value)} rows={3}
+                style={{ ...opsAlanStil, resize: 'vertical', lineHeight: 1.6 }} />
+              <button disabled={mdMesgul} onClick={mesajGonder} style={{
+                marginTop: 4, padding: '10px 20px', borderRadius: 10, border: 'none', cursor: 'pointer',
+                background: 'linear-gradient(150deg, #E0A559, #AF6C29)', color: '#1C1309',
+                fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit',
+              }}>{mdMesgul ? 'Gönderiliyor…' : 'Mesajı gönder'}</button>
+            </div>
+            {mesajListe.length ? (
+              <Liste baslik={`Gönderilen mesajlar · ${okunmamisMesaj} okunmadı`}
+                satirlar={mesajListe.slice(0, 60).map((m) => ({
+                  baslik: `${m.sube_adi || '—'}${m.oncelik === 'kritik' ? ' · KRİTİK' : ''}`,
+                  alt: `${kisalt(m.mesaj || '', 110)} — ${m.okundu ? `okundu · ${m.okuyan_ad || 'personel'} · ${tarihKisa(m.okundu_ts)}` : 'okunmadı'}`,
+                  tutar: tarihKisa(m.olusturma),
+                  tier: m.okundu ? 'iyi' : (m.oncelik === 'kritik' ? 'kritik' : 'uyari'),
+                  aksiyonlar: [{ ad: 'Geri çek', onTikla: () => setMdModal({ tip: 'mesaj-sil', mesaj: m }) }],
+                }))} />
+            ) : <BosDurum metin="Henüz merkez mesajı gönderilmemiş." tamam />}
+          </>
+        )}
+
+        {dnSekme === 'muhur' && (
+          <div style={{ ...kartYuzey, padding: '18px 20px', maxWidth: 520 }}>
+            <div style={{ fontFamily: F.baslik, fontSize: 15, fontWeight: 600, marginBottom: 4 }}>Kapanış mührünü aç</div>
+            <div style={{ fontSize: 11.5, color: R.not2, marginBottom: 14, lineHeight: 1.7 }}>
+              Yanlış kapatılmış bir günü yeniden açar. <b>Korunur:</b> ciro taslağı ve
+              vardiya/kasa devri. <b>Silinir:</b> yalnızca gün sonu kasa teslimi (yeniden
+              kapanışta tekrar üretilir). Kasaya dokunulmaz, işlem denetim defterine yazılır.
+              <br />İşletme onay PIN'i olmadan yapılamaz.
+            </div>
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 10 }}>
+              <div style={{ minWidth: 170 }}>
+                <label style={opsEtiket}>Şube</label>
+                <select value={kgSube} onChange={(e) => setKgSube(e.target.value)} style={opsAlanStil}>
+                  <option value="">— seçin —</option>
+                  {mdSubeler.map((x) => <option key={x.id} value={x.id}>{x.ad}</option>)}
+                </select>
+              </div>
+              <div style={{ minWidth: 150 }}>
+                <label style={opsEtiket}>Tarih</label>
+                <input type="date" value={kgTarih} max={bugunYerelISO()}
+                  onChange={(e) => setKgTarih(e.target.value)} style={opsAlanStil} />
+              </div>
+            </div>
+            <label style={opsEtiket}>Sebep (denetim defterine yazılır)</label>
+            <input value={kgSebep} onChange={(e) => setKgSebep(e.target.value)} style={opsAlanStil} />
+            <label style={opsEtiket}>İşletme onay PIN kodu (4 hane)</label>
+            <input type="password" inputMode="numeric" maxLength={4} value={kgPin} autoComplete="off"
+              onChange={(e) => setKgPin(e.target.value.replace(/\D/g, ''))}
+              style={{ ...opsAlanStil, letterSpacing: 6, maxWidth: 140 }} />
+            <button disabled={mdMesgul || !kgSube || kgPin.length !== 4}
+              onClick={() => setMdModal({ tip: 'kapanis' })} style={{
+                marginTop: 4, padding: '10px 20px', borderRadius: 10, cursor: 'pointer',
+                border: `1px solid ${R.kirmizi}55`, background: `${R.kirmizi}26`, color: R.kirmizi,
+                fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit',
+                opacity: (!kgSube || kgPin.length !== 4) ? 0.45 : 1,
+              }}>Mührü aç…</button>
+          </div>
+        )}
 
         {dnSekme === 'kontrol' && (kontrolSatir.length ? (
           <Tablo
