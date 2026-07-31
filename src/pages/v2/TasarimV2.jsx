@@ -1278,6 +1278,39 @@ export default function TasarimV2({ onGit }) {
                 Gün Sonu Takibi
               </button>
             )}
+            {/* ESKİ ARAYÜZ KAPISI (sahip 2026-08-01: "hemen yanına koyacaksın,
+                tıklayınca o arayüzden çalışsın"). Klasik kabuk emekli ama SİLİNMEDİ
+                — '#klasik:<sayfa>' kapısı hâlâ ayakta (App.jsx:181). Buton o kapıyı
+                kullanır ve klasik Operasyon Merkezi'ni DOĞRUDAN Kapanış Takip
+                sekmesinde açar. Sekme açma bilgisi ELLE yazılmaz: 'kapanis-takip'
+                zaten bir sayfa TAKMA ADI (utils/sayfaTakmaAd.js:26) — çözümlenirken
+                sessionStorage 'ops_merkez_ac_sekme' bayrağını kendi koyar ve
+                'ops-merkez' döner; OperasyonMerkezi.jsx:4977 bayrağı okuyup sekmeyi
+                açar. Tek kaynak korunur.
+                ⚠️ koprule() BURADA KULLANILMAZ: gerçek uygulamada onGit=App.navigate
+                ve navigate ham id'yi doğrudan resolvePageAlias'a verir — 'klasik:'
+                önekli hâli orada TANINMAZ, PAGES'te de yok, sessizce Panel'e düşerdi.
+                İki taşıyıcının sözleşmesi farklı, ikisi de ayrı besleniyor:
+                  · onGit varsa  → takma ad ('kapanis-takip')
+                  · yoksa        → hash kapısı ('#klasik:kapanis-takip')
+                Hash yolunda App'in hashchange dinleyicisi sayfayı çevirir; sayfa
+                yenilemesi gerekmez, v2'ye dönüş tarayıcı geri tuşuyla olur. */}
+            {GUN_SONU_MODULLERI.includes(mod) && (
+              <button
+                onClick={() => {
+                  if (onGit) onGit('kapanis-takip');
+                  else window.location.hash = 'klasik:kapanis-takip';
+                }}
+                title="Aynı işi ESKİ arayüzde açar — klasik Operasyon Merkezi ▸ 📊 Kapanış Takip. Geri dönmek için tarayıcı geri tuşu."
+                style={{
+                  padding: '8px 14px', borderRadius: 10, cursor: 'pointer',
+                  border: `1px solid ${R.cizgi3}`, background: R.girinti,
+                  color: R.metin2, fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit',
+                }}
+              >
+                ⧉ Eski arayüz
+              </button>
+            )}
           </div>
         </header>
 
