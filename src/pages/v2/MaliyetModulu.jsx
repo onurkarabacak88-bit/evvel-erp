@@ -277,6 +277,66 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
   }, [fiyatMap]);
 
   // ════════════════════════ GÖRÜNÜM: MARJ ÖZETİ ═════════════════════════════
+  // ── FATURA PDF → KALEM → ALIŞ FİYATI (2026-07-31) ─────────────────────────
+  // Tarama notu: /fatura/yukle-pdf (belge arşivi) v2'de ZATEN var, o başka iş.
+  // Bu akış PDF'ten KALEM çıkarıp fiyata çeviriyor — elle fiyat girmeye alternatif.
+  const [fpSatirlar, setFpSatirlar] = useState(null);   // null=hiç denenmedi
+  const [fpUyari, setFpUyari] = useState('');
+  const [fpTedarikci, setFpTedarikci] = useState('');
+  const [fpYukleniyor, setFpYukleniyor] = useState(false);
+  const [fpOnayModal, setFpOnayModal] = useState(null);
+  const [fpMesgul, setFpMesgul] = useState(false);
+
+  const faturaPdfYukle = async (dosya) => {
+    if (!dosya) return;
+    setFpYukleniyor(true); setFpUyari('');
+    try {
+      const fd = new FormData();
+      fd.append('file', dosya);
+      if (fpTedarikci.trim()) fd.append('tedarikci', fpTedarikci.trim());
+      // multipart — api() JSON gönderdiği için elden fetch
+      const res = await fetch('/api/ops/maliyet/fatura-pdf-yukle', { method: 'POST', body: fd });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(d?.detail || `Yükleme başarısız (HTTP ${res.status})`);
+      const sat = Array.isArray(d?.satirlar) ? d.satirlar : [];
+      setFpSatirlar(sat);
+      setFpUyari(d?.uyari || '');
+      onToast?.(sat.length ? `✓ ${sayi(sat.length)} kalem çıkarıldı — onayla ki fiyata dönüşsün` : 'Kalem satırı çıkarılamadı');
+    } catch (e) {
+      setFpSatirlar([]);
+      setFpUyari(e?.message || 'PDF okunamadı');
+      onToast?.(e?.message || 'PDF okunamadı');
+    } finally { setFpYukleniyor(false); }
+  };
+
+  const fpOnayla = async () => {
+    const m = fpOnayModal;
+    if (!m) return;
+    const tutar = Number(String(m.birim_maliyet_tl).replace(',', '.'));
+    if (!String(m.kalem_kodu || '').trim()) { onToast?.('Kalem kodu zorunlu'); return; }
+    if (!Number.isFinite(tutar) || tutar < 0) { onToast?.('Geçerli birim maliyet girin'); return; }
+    setFpMesgul(true);
+    try {
+      await api('/ops/maliyet/fatura-kalem-onayla', { method: 'POST', body: {
+        ham_metin: m.ham_metin || '', urun_kodu: (m.urun_kodu || '').trim() || null,
+        aciklama: (m.aciklama || '').trim() || null,
+        kalem_kodu: String(m.kalem_kodu).trim(),
+        kalem_adi: (m.kalem_adi || '').trim() || null,
+        birim: (m.birim || 'adet').trim() || 'adet',
+        birim_maliyet_tl: tutar,
+        tedarikci: (m.tedarikci || fpTedarikci || '').trim() || null,
+        gecerli_baslangic: m.gecerli_baslangic || null,
+      } });
+      onToast?.('✓ Kalem onaylandı — alış fiyatı zincirine eklendi');
+      // onaylanan satırı listeden düşür ki hangisi kaldığı belli olsun
+      setFpSatirlar((p) => (Array.isArray(p) ? p.filter((_, i) => i !== m._i) : p));
+      setFpOnayModal(null);
+      receteYukle(); kdvYukle();
+    } catch (e) {
+      onToast?.(e?.message || 'Onay başarısız');
+    } finally { setFpMesgul(false); }
+  };
+
   // ── REÇETE YÖNETİMİ + FOOD-COST (2026-07-31) ──────────────────────────────
   // Ekran reçeteyi GÖSTERİYORDU; düzeltme/silme ve food-cost tetiği yoktu.
   const [rcModal, setRcModal] = useState(null);   // {tip, recete?, kalemler?}
@@ -1172,6 +1232,122 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
         </div>
 
         {fyModalBlok}
+
+        {/* ══ FATURA PDF'TEN FİYAT (elle girmeye alternatif) ══ */}
+        <div style={{ ...kartYuzey, padding: '16px 18px', marginBottom: 16 }}>
+          <div style={{ fontFamily: F.baslik, fontSize: 15, fontWeight: 600, marginBottom: 4 }}>
+            Fatura PDF'inden fiyat al
+          </div>
+          <div style={{ fontSize: 11.5, color: R.not2, lineHeight: 1.7, marginBottom: 12 }}>
+            Tedarikçi faturasını yükle; kalemler çıkarılır ve <b>tek tek onayınla</b>
+            {' '}alış fiyatına dönüşür. Onaylamadığın hiçbir satır fiyata yazılmaz —
+            okuma hatası maliyeti sessizce bozmasın diye. Bu ekran belge arşivi değil;
+            faturanın kendisini saklamak için Belge Merkezi'ni kullan.
+          </div>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+            <div style={{ minWidth: 180 }}>
+              <label style={mlEtiket}>Tedarikçi (isteğe bağlı)</label>
+              <input value={fpTedarikci} onChange={(e) => setFpTedarikci(e.target.value)} style={mlAlanStil} />
+            </div>
+            <label style={{ ...mlBtn, display: 'inline-flex', alignItems: 'center', marginBottom: 2 }}>
+              {fpYukleniyor ? 'Okunuyor…' : '📄 PDF seç'}
+              <input type="file" accept="application/pdf" style={{ display: 'none' }}
+                onChange={(e) => { faturaPdfYukle(e.target.files?.[0]); e.target.value = ''; }} />
+            </label>
+          </div>
+          {!!fpUyari && (
+            <div style={{
+              marginTop: 12, padding: '10px 14px', borderRadius: 9, fontSize: 12,
+              background: `${R.amber}18`, border: `1px solid ${R.amber}44`, color: R.amber, lineHeight: 1.6,
+            }}>{fpUyari}</div>
+          )}
+          {Array.isArray(fpSatirlar) && fpSatirlar.length > 0 && (
+            <div style={{ marginTop: 14 }}>
+              <div style={{ fontSize: 12, color: R.metin2, marginBottom: 8 }}>
+                <b>{sayi(fpSatirlar.length)}</b> kalem onay bekliyor
+              </div>
+              {fpSatirlar.slice(0, 40).map((x, i) => (
+                <div key={i} style={{
+                  display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px',
+                  borderRadius: 9, background: R.girinti, marginBottom: 5, fontSize: 12, flexWrap: 'wrap',
+                }}>
+                  <span style={{ fontWeight: 600, flex: 1, minWidth: 140 }}>
+                    {x.kalem_adi || x.ad || x.aciklama || x.ham_metin || 'kalem'}
+                  </span>
+                  {x.miktar != null && <span style={{ color: R.not2 }}>{x.miktar} {x.birim || ''}</span>}
+                  <span style={{ fontFamily: 'ui-monospace, monospace', color: R.krem }}>
+                    {fmt(sayi(x.birim_maliyet_tl ?? x.birim_fiyat ?? x.tutar))} ₺
+                  </span>
+                  <button onClick={() => setFpOnayModal({
+                    _i: i,
+                    ham_metin: x.ham_metin || x.aciklama || x.ad || '',
+                    kalem_kodu: x.kalem_kodu || x.urun_kodu || '',
+                    kalem_adi: x.kalem_adi || x.ad || '',
+                    urun_kodu: x.urun_kodu || '',
+                    aciklama: x.aciklama || '',
+                    birim: x.birim || 'adet',
+                    birim_maliyet_tl: String(sayi(x.birim_maliyet_tl ?? x.birim_fiyat ?? x.tutar) || ''),
+                    tedarikci: x.tedarikci || fpTedarikci || '',
+                    gecerli_baslangic: '',
+                  })} style={{ ...mlMini, marginLeft: 'auto' }}>Onayla</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {fpOnayModal && (
+          <div onClick={(e) => { if (e.target === e.currentTarget && !fpMesgul) setFpOnayModal(null); }} style={{
+            position: 'fixed', inset: 0, zIndex: 128, background: 'rgba(10,6,2,.72)',
+            backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+          }}>
+            <div style={{ ...kartYuzey, width: 500, maxWidth: '96vw', padding: '24px 26px', maxHeight: '88vh', overflowY: 'auto' }}>
+              <div style={{ fontFamily: F.baslik, fontSize: 19, fontWeight: 600, marginBottom: 6 }}>Kalemi fiyata çevir</div>
+              <div style={{ fontSize: 12, color: R.not2, lineHeight: 1.65, marginBottom: 12 }}>
+                Faturadan okunan satır aşağıda. <b>Kalem kodu</b> sistemin stok kalemiyle
+                eşleştiği yerdir — yanlış kod yanlış ürünün maliyetini bozar, kontrol et.
+                Onaylanan satır alış fiyatı zincirine tarihiyle eklenir.
+              </div>
+              <div style={{
+                padding: '9px 12px', borderRadius: 9, background: R.girinti, fontSize: 11.5,
+                color: R.not, marginBottom: 10, fontFamily: 'ui-monospace, monospace', lineHeight: 1.6,
+              }}>{fpOnayModal.ham_metin || '—'}</div>
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                <div style={{ minWidth: 150, flex: 1 }}><label style={mlEtiket}>Kalem kodu</label>
+                  <input value={fpOnayModal.kalem_kodu} autoFocus
+                    onChange={(e) => setFpOnayModal((p) => ({ ...p, kalem_kodu: e.target.value }))} style={mlAlanStil} /></div>
+                <div style={{ minWidth: 150, flex: 1 }}><label style={mlEtiket}>Kalem adı</label>
+                  <input value={fpOnayModal.kalem_adi}
+                    onChange={(e) => setFpOnayModal((p) => ({ ...p, kalem_adi: e.target.value }))} style={mlAlanStil} /></div>
+              </div>
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                <div style={{ maxWidth: 140 }}><label style={mlEtiket}>Birim maliyet ₺</label>
+                  <input inputMode="decimal" value={fpOnayModal.birim_maliyet_tl}
+                    onChange={(e) => setFpOnayModal((p) => ({ ...p, birim_maliyet_tl: e.target.value }))} style={mlAlanStil} /></div>
+                <div style={{ maxWidth: 110 }}><label style={mlEtiket}>Birim</label>
+                  <input value={fpOnayModal.birim}
+                    onChange={(e) => setFpOnayModal((p) => ({ ...p, birim: e.target.value }))} style={mlAlanStil} /></div>
+                <div style={{ maxWidth: 160 }}><label style={mlEtiket}>Geçerlilik başlangıcı</label>
+                  <input type="date" value={fpOnayModal.gecerli_baslangic}
+                    onChange={(e) => setFpOnayModal((p) => ({ ...p, gecerli_baslangic: e.target.value }))} style={mlAlanStil} /></div>
+              </div>
+              <label style={mlEtiket}>Tedarikçi</label>
+              <input value={fpOnayModal.tedarikci}
+                onChange={(e) => setFpOnayModal((p) => ({ ...p, tedarikci: e.target.value }))} style={mlAlanStil} />
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 16 }}>
+                <button disabled={fpMesgul} onClick={() => setFpOnayModal(null)} style={{
+                  padding: '10px 18px', borderRadius: 10, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+                  background: 'transparent', color: R.metin2, fontSize: 12.5, fontWeight: 600, fontFamily: 'inherit',
+                }}>Vazgeç</button>
+                <button disabled={fpMesgul} onClick={fpOnayla} style={{
+                  padding: '10px 20px', borderRadius: 10, cursor: 'pointer', fontSize: 12.5, fontWeight: 700,
+                  fontFamily: 'inherit', border: 'none',
+                  background: 'linear-gradient(150deg, #E0A559, #AF6C29)', color: '#1C1309',
+                }}>{fpMesgul ? 'İşleniyor…' : 'Fiyata çevir'}</button>
+              </div>
+            </div>
+          </div>
+        )}
         {alarmlar.length === 0 ? (
           <BosDurum metin={`Son 180 günde %${esik} eşiğini aşan fiyat artışı yok — tedarik fiyatları sakin.`} />
         ) : (
