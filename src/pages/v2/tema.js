@@ -153,6 +153,7 @@ export const MODULLER = [
     { id: 'akis', ad: 'Sipariş Akışı', rozet: 'opsAcikSiparis', renk: '#D29A5B' },
     { id: 'bar', ad: 'Bar Akışı · gün', rozet: 'barAcik', renk: '#FBBF24' },
     { id: 'denetim', ad: 'Merkez Denetim', rozet: 'opsDenetim', renk: '#F87171' },
+    { id: 'uzlastir', ad: 'Uzlaştırma', rozet: 'opsUzlastir', renk: '#FBBF24' },
     { id: 'tedarik', ad: 'Tedarik & Sinyal' },
     { id: 'sevkiyat', ad: 'Sevkiyat Hazırlama', rozet: 'opsSevkiyat', renk: '#60A5FA' },
     { id: 'zincir', ad: 'Teslimat Zinciri', rozet: 'teslimatZinciri', renk: '#FBBF24' },

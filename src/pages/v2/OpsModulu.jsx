@@ -41,6 +41,7 @@ const gunEkleISO = (iso, n) => {
   d.setUTCDate(d.getUTCDate() + n);
   return d.toISOString().slice(0, 10);
 };
+const kisalt = (t, n = 60) => { const x = String(t ?? '').trim(); return x.length > n ? `${x.slice(0, n - 1)}…` : x; };
 const tarihKisa = (iso) => {
   const s = String(iso || '').slice(0, 10);
   if (!s || s.length < 10) return '—';
@@ -85,11 +86,111 @@ function Yukleniyor() {
   );
 }
 
+/** Öneri-only şeridi — Denetim modülüyle AYNI dil (motor önerir, hüküm insanın). */
+function OneriSeridi({ metin }) {
+  return (
+    <div style={{
+      ...kartYuzey, padding: '12px 18px', marginBottom: 14,
+      fontSize: 12, color: R.not, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+    }}>
+      <span style={rozetHap(R.mavi)}>ℹ öneri-only</span>
+      {metin}
+    </div>
+  );
+}
+
+/** Uzlaştırma modalı form alanları. */
+const opsAlanStil = {
+  width: '100%', boxSizing: 'border-box', padding: '9px 12px', borderRadius: 10,
+  border: `1px solid ${R.cizgi3}`, background: R.girinti, color: R.krem,
+  fontSize: 13, fontFamily: 'inherit', outline: 'none', marginBottom: 12,
+};
+const opsEtiket = {
+  fontSize: 10.5, letterSpacing: '.7px', textTransform: 'uppercase',
+  color: R.not2, fontWeight: 700, marginBottom: 6, display: 'block',
+};
+
 export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGorunum }) {
   // ── SİPARİŞ AKIŞI + KULE ortak verisi ─────────────────────────────────────
   const [kule, setKule] = useState(null);        // kontrol-kulesi cevabı
   const [kuleHata, setKuleHata] = useState('');
   const [subeOzet, setSubeOzet] = useState(null); // sevkiyat-subeler-ozet
+  // ── UZLAŞTIRMA (uyumsuzluk ÇÖZME, 2026-07-31) ─────────────────────────────
+  const [uzSevk, setUzSevk] = useState(null);      // sevkiyat uyumsuzlukları
+  const [uzKasa, setUzKasa] = useState(null);      // kasa uyumsuzlukları
+  const [uzPers, setUzPers] = useState(null);      // personel-vardiya
+  const [uzHata, setUzHata] = useState('');
+  const [uzAlt, setUzAlt] = useState('sevkiyat');
+  const [uzModal, setUzModal] = useState(null);    // {tip, kayit, adet, notu}
+  const [uzMesgul, setUzMesgul] = useState('');
+
+  const uzYukle = useCallback(() => {
+    setUzHata('');
+    Promise.all([
+      api('/ops/siparis/sevkiyat-uyumsuzluklar?gun=30&limit=300').catch(() => null),
+      api('/ops/kasa-uyumsuzluk').catch(() => null),
+      api('/ops/personel-vardiya-uyumsuzluk').catch(() => null),
+    ]).then(([sv, ks, pr]) => {
+      setUzSevk(sv || { satirlar: [] });
+      setUzKasa(ks || {});
+      setUzPers(pr || { kayitlar: [] });
+    }).catch((e) => setUzHata(e?.message || 'Uzlaştırma verisi alınamadı'));
+  }, []);
+
+  /** Uzlaştırmayı uygula — her tip KENDİ ucuna ve KENDİ gövdesine gider. */
+  const uzUygula = async () => {
+    const m = uzModal;
+    if (!m) return;
+    setUzMesgul(m.tip);
+    try {
+      if (m.tip === 'sevkiyat') {
+        await api('/ops/siparis/sevkiyat-uyumsuzluk-coz', {
+          method: 'POST',
+          body: {
+            stok_yolda_id: m.kayit.stok_yolda_id || m.kayit.id,
+            cozum_adet: sayi(m.adet),
+            notu: (m.notu || '').trim().slice(0, 500) || null,
+          },
+        });
+        onToast?.('✓ Sevkiyat satırı uzlaştırıldı');
+      } else if (m.tip === 'kasa') {
+        await api(`/ops/kasa-uyumsuzluk/${encodeURIComponent(m.kayit.id)}/coz`, {
+          method: 'POST',
+          body: {
+            notu: (m.notu || '').trim(),
+            // Boş bırakılırsa ORİJİNAL fark kabul edilir (klasik davranış)
+            duzeltilen_fark_tl: String(m.adet).trim() === '' ? null : sayi(m.adet),
+          },
+        });
+        onToast?.('✓ Kasa uyumsuzluğu çözüldü');
+      } else if (m.tip === 'personel') {
+        await api(`/ops/personel-vardiya-uyumsuzluk/${encodeURIComponent(m.kayit.id)}/coz`, {
+          method: 'POST',
+          body: { notu: (m.notu || '').trim() || null },
+        });
+        onToast?.('✓ Personel-vardiya uyumsuzluğu çözüldü');
+      }
+      setUzModal(null);
+      uzYukle();
+    } catch (e) {
+      onToast?.(e?.message || 'Uzlaştırma kaydedilemedi');
+    } finally { setUzMesgul(''); }
+  };
+
+  /** Kasa farkını CANLI veriyle tazele — kaynağı DEĞİŞTİRMEZ, bayat dökümü yeniler. */
+  const uzKasaYenidenHesapla = async (kayit) => {
+    setUzMesgul(`yh:${kayit.id}`);
+    try {
+      const r = await api(`/ops/kasa-uyumsuzluk/${encodeURIComponent(kayit.id)}/yeniden-hesapla`, { method: 'POST' });
+      onToast?.(r?.otomatik_cozuldu
+        ? '🔄 Yeniden hesaplandı — fark eşik altına düştü, çözüldü'
+        : `🔄 Yeniden hesaplandı — yeni fark ${fmt(sayi(r?.yeni_fark))}`);
+      uzYukle();
+    } catch (e) {
+      onToast?.(e?.message || 'Yeniden hesaplanamadı');
+    } finally { setUzMesgul(''); }
+  };
+
   // ── SEVKİYAT ──────────────────────────────────────────────────────────────
   const [sevkListe, setSevkListe] = useState(null);
   const [sevkHata, setSevkHata] = useState('');
@@ -367,8 +468,9 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     if (gorunum === 'bar') barYukle(barTarih);
     if (gorunum === 'denetim') denetimYukle(barTarih);
     if (gorunum === 'tedarik') tedarikYukle();
+    if (gorunum === 'uzlastir') uzYukle();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gorunum, kuleYukle, sevkYukle, depoYukle, sayimYukle, hareketYukle, barYukle, denetimYukle, tedarikYukle]);
+  }, [gorunum, kuleYukle, sevkYukle, depoYukle, sayimYukle, hareketYukle, barYukle, denetimYukle, tedarikYukle, uzYukle]);
 
   // ── seçili sevkiyat talebi değişince kalem durumlarını hazırla ────────────
   const seciliTalep = useMemo(
@@ -865,6 +967,229 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
             </div>
           </div>
         )}
+      </>
+    );
+  }
+
+  // ════════════════════════ GÖRÜNÜM: UZLAŞTIRMA ════════════════════════════
+  // Denetim bulgusu (2026-07-31): v2 uyumsuzlukları ÇÖZEMİYORDU; sevkiyat /
+  // kasa / personel-vardiya uyumsuzlukları GÖSTERİLMİYORDU bile. Dağınık
+  // bırakmak yerine TEK uzlaştırma masası — her tip kendi KURALIYLA çözülür.
+  if (gorunum === 'uzlastir') {
+    if (uzHata) return <HataBandi mesaj={uzHata} onTekrar={uzYukle} />;
+    if (!uzSevk || !uzPers) return <Yukleniyor />;
+
+    const sevkSatir = Array.isArray(uzSevk?.satirlar) ? uzSevk.satirlar : [];
+    const kasaSatir = Array.isArray(uzKasa?.uyarilar) ? uzKasa.uyarilar
+      : (Array.isArray(uzKasa?.kayitlar) ? uzKasa.kayitlar : (Array.isArray(uzKasa) ? uzKasa : []));
+    const persSatir = Array.isArray(uzPers?.kayitlar) ? uzPers.kayitlar : [];
+    const acikKasa = kasaSatir.filter((k) => !/(cozuldu|çözüldü)/i.test(String(k.durum || '')));
+    const acikPers = persSatir.filter((p) => !/(cozuldu|çözüldü)/i.test(String(p.durum || '')));
+
+    const ALT = [
+      ['sevkiyat', `🚚 Sevkiyat (${sevkSatir.length})`],
+      ['kasa', `💰 Kasa (${acikKasa.length})`],
+      ['personel', `👥 Personel-vardiya (${acikPers.length})`],
+    ];
+
+    return (
+      <>
+        <KpiSeridi kpiler={[
+          { etiket: 'Sevkiyat uyumsuzluğu', deger: String(sevkSatir.length), alt: 'son 30 gün · kabul farkı', renk: sevkSatir.length ? R.amber : R.yesil },
+          { etiket: 'Kasa uyumsuzluğu', deger: String(acikKasa.length), alt: acikKasa.length ? 'açık kayıt' : 'temiz', renk: acikKasa.length ? R.kirmizi : R.yesil },
+          { etiket: 'Personel-vardiya', deger: String(acikPers.length), alt: acikPers.length ? 'açık kayıt' : 'temiz', renk: acikPers.length ? R.amber : R.yesil },
+          { etiket: 'İlke', deger: 'uzlaştır, sil değil', alt: 'karar audit defterine yazılır', renk: R.not },
+        ]} />
+
+        <OneriSeridi metin="Uzlaştırma kaydı SİLMEZ — farkı kapatır ve kararı audit defterine yazar. Uzlaşma adedi hem talebin hem tahsisin yeni değeri olur; kalem 'tam' duruma geçer." />
+
+        <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap', marginBottom: 14 }}>
+          {ALT.map(([id, ad]) => (
+            <div key={id} onClick={() => setUzAlt(id)} style={{
+              padding: '7px 14px', borderRadius: 99, fontSize: 12, fontWeight: 600, cursor: 'pointer',
+              color: uzAlt === id ? R.bakirAcik : R.metin2,
+              background: uzAlt === id ? 'rgba(217,154,78,.14)' : R.girinti,
+              border: `1px solid ${uzAlt === id ? 'rgba(217,154,78,.38)' : R.cizgi}`,
+            }}>{ad}</div>
+          ))}
+        </div>
+
+        {uzAlt === 'sevkiyat' && (sevkSatir.length === 0 ? (
+          <BosDurum tamam baslik="Sevkiyat uyumsuzluğu yok" aciklama="Son 30 günde gönderilen ile kabul edilen adet birbirini tutuyor." />
+        ) : (
+          <Tablo
+            baslik="Sevkiyat uyumsuzlukları · gönderilen ↔ kabul edilen"
+            not="satıra tıkla → uzlaştır"
+            kolonlar={[{ ad: 'Şube' }, { ad: 'Kalem' }, { ad: 'Gönderilen', sag: true }, { ad: 'Kabul', sag: true }, { ad: 'Fark', sag: true }]}
+            satirlar={sevkSatir.slice(0, 40).map((r, i) => {
+              const gon = sayi(r.gonderilen_adet ?? r.gonderilen);
+              const kab = sayi(r.kabul_adet ?? r.kabul_edilen);
+              const fark = gon - kab;
+              return {
+                id: r.stok_yolda_id || r.id || `sv-${i}`, _r: r,
+                hucreler: [
+                  { v: r.sube_adi || r.hedef_sube_adi || '—', kalin: true },
+                  { v: kisalt(r.kalem_adi || r.urun_adi || '—', 34) },
+                  { v: String(gon), mono: true, sag: true },
+                  { v: String(kab), mono: true, sag: true },
+                  { v: (fark > 0 ? '+' : '') + String(fark), mono: true, sag: true, kalin: true, renk: fark === 0 ? R.yesil : R.amber },
+                ],
+              };
+            })}
+            onSatir={({ _r }) => setUzModal({
+              tip: 'sevkiyat', kayit: _r,
+              adet: String(sayi(_r.kabul_adet ?? _r.kabul_edilen)),
+              notu: '',
+            })}
+          />
+        ))}
+
+        {uzAlt === 'kasa' && (acikKasa.length === 0 ? (
+          <BosDurum tamam baslik="Kasa uyumsuzluğu yok" aciklama="Açık kasa farkı kaydı bulunmuyor." />
+        ) : (
+          <Tablo
+            baslik="Kasa uyumsuzlukları"
+            not="satıra tıkla → çöz · fark tazelemek için satırdaki yeniden hesapla"
+            kolonlar={[{ ad: 'Şube' }, { ad: 'Tarih' }, { ad: 'Fark', sag: true }, { ad: 'Durum' }, { ad: '' }]}
+            satirlar={acikKasa.slice(0, 40).map((k, i) => ({
+              id: k.id || `ku-${i}`, _k: k,
+              hucreler: [
+                { v: k.sube_adi || k.sube_ad || '—', kalin: true },
+                { v: tarihKisa(k.tarih || k.gun), mono: true, renk: R.not },
+                { v: fmt(sayi(k.fark_tl ?? k.fark)), mono: true, sag: true, kalin: true, renk: R.kirmizi },
+                { v: k.durum || 'açık', rozet: R.amber },
+                { v: uzMesgul === `yh:${k.id}` ? '…' : '🔄 tazele', renk: R.mavi },
+              ],
+            }))}
+            onSatir={({ _k }) => setUzModal({ tip: 'kasa', kayit: _k, adet: '', notu: '' })}
+          />
+        ))}
+
+        {uzAlt === 'personel' && (acikPers.length === 0 ? (
+          <BosDurum tamam baslik="Personel-vardiya uyumsuzluğu yok" aciklama="Vardiya kaydı ile fiili giriş-çıkış uyumlu." />
+        ) : (
+          <Tablo
+            baslik="Personel ↔ vardiya uyumsuzlukları"
+            not="satıra tıkla → çöz"
+            kolonlar={[{ ad: 'Personel' }, { ad: 'Şube' }, { ad: 'Tarih' }, { ad: 'Sebep' }]}
+            satirlar={acikPers.slice(0, 40).map((p, i) => ({
+              id: p.id || `pv-${i}`, _p: p,
+              hucreler: [
+                { v: p.personel_ad || p.ad_soyad || '—', kalin: true },
+                { v: p.sube_adi || '—', renk: R.not },
+                { v: tarihKisa(p.tarih || p.gun), mono: true, renk: R.not },
+                { v: kisalt(p.sebep || p.aciklama || p.tip || '—', 40) },
+              ],
+            }))}
+            onSatir={({ _p }) => setUzModal({ tip: 'personel', kayit: _p, adet: '', notu: '' })}
+          />
+        ))}
+
+        {/* ⚠️ PIN'li işlemler bilinçli DIŞARIDA */}
+        <div style={{
+          padding: '12px 15px', borderRadius: 12, marginTop: 4, fontSize: 11.5, lineHeight: 1.65,
+          background: 'rgba(96,165,250,.08)', border: '1px solid rgba(96,165,250,.24)', color: R.metin2,
+        }}>
+          <b>Kaynak düzeltme</b> ve <b>düzeltmeyi geri alma</b> bu ekranda yok — o iki işlem
+          mali kaydı değiştirir ve <b>işletme PIN onayı</b> ister. Kadifede PIN akışı
+          kurulana kadar bilinçli olarak dışarıda; buradaki "çöz" yalnız farkı kapatır,
+          kaynağa dokunmaz.
+        </div>
+
+        {uzModal && (() => {
+          const m = uzModal;
+          const BAS = { sevkiyat: 'Sevkiyat uzlaşması', kasa: 'Kasa uyumsuzluğunu çöz', personel: 'Personel-vardiya uzlaşması' }[m.tip];
+          const gon = sayi(m.kayit.gonderilen_adet ?? m.kayit.gonderilen);
+          const kab = sayi(m.kayit.kabul_adet ?? m.kayit.kabul_edilen);
+          return (
+            <div onClick={(e) => { if (e.target === e.currentTarget && !uzMesgul) setUzModal(null); }} style={{
+              position: 'fixed', inset: 0, zIndex: 120, background: 'rgba(10,6,2,.7)',
+              backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+            }}>
+              <div style={{ ...kartYuzey, width: 460, maxWidth: '96vw', padding: '24px 26px' }}>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 6 }}>
+                  <div style={{ fontFamily: F.baslik, fontSize: 20, fontWeight: 600 }}>{BAS}</div>
+                  <button onClick={() => !uzMesgul && setUzModal(null)} style={{
+                    marginLeft: 'auto', border: 'none', background: 'transparent', color: R.not,
+                    fontSize: 16, cursor: 'pointer', fontFamily: 'inherit',
+                  }}>x</button>
+                </div>
+
+                {m.tip === 'sevkiyat' && (
+                  <>
+                    <div style={{ fontSize: 12.5, color: R.metin2, marginBottom: 4 }}>
+                      <b>{kisalt(m.kayit.kalem_adi || m.kayit.urun_adi || 'Kalem', 42)}</b>
+                    </div>
+                    <div style={{ fontSize: 12, color: R.not2, marginBottom: 14 }}>
+                      Gönderilen <b style={{ fontFamily: F.mono }}>{gon}</b> ·
+                      Kabul <b style={{ fontFamily: F.mono }}>{kab}</b> ·
+                      Fark <b style={{ fontFamily: F.mono, color: R.amber }}>{gon - kab}</b>
+                    </div>
+                    <label style={opsEtiket}>Uzlaşma adedi</label>
+                    <input value={m.adet} inputMode="numeric" autoFocus
+                      onChange={(e) => setUzModal((p) => ({ ...p, adet: e.target.value }))}
+                      style={opsAlanStil} />
+                    <div style={{ fontSize: 11, color: R.not2, marginTop: -6, marginBottom: 12, lineHeight: 1.55 }}>
+                      Bu adet hem talebin hem tahsisin YENİ değeri olur; kalem "tam" duruma geçer
+                      ve karar audit defterine yazılır.
+                    </div>
+                  </>
+                )}
+
+                {m.tip === 'kasa' && (
+                  <>
+                    <div style={{ fontSize: 12.5, color: R.metin2, marginBottom: 4 }}>
+                      <b>{m.kayit.sube_adi || m.kayit.sube_ad || 'Şube'}</b> · {tarihKisa(m.kayit.tarih || m.kayit.gun)}
+                    </div>
+                    <div style={{ fontSize: 12, color: R.not2, marginBottom: 14 }}>
+                      Fark <b style={{ fontFamily: F.mono, color: R.kirmizi }}>{fmt(sayi(m.kayit.fark_tl ?? m.kayit.fark))}</b>
+                    </div>
+                    <label style={opsEtiket}>Düzeltilmiş fark (boş = orijinali kabul et)</label>
+                    <input value={m.adet} inputMode="decimal" placeholder="orn. -25.50"
+                      onChange={(e) => setUzModal((p) => ({ ...p, adet: e.target.value }))}
+                      style={opsAlanStil} />
+                  </>
+                )}
+
+                {m.tip === 'personel' && (
+                  <div style={{ fontSize: 12.5, color: R.metin2, marginBottom: 14 }}>
+                    <b>{m.kayit.personel_ad || m.kayit.ad_soyad || 'Personel'}</b> ·
+                    {' '}{tarihKisa(m.kayit.tarih || m.kayit.gun)}
+                    <div style={{ fontSize: 11.5, color: R.not2, marginTop: 4 }}>
+                      {kisalt(m.kayit.sebep || m.kayit.aciklama || '', 90)}
+                    </div>
+                  </div>
+                )}
+
+                <label style={opsEtiket}>Not (opsiyonel)</label>
+                <input value={m.notu} placeholder="orn. Stok yetersiz, kalan adet iptal kabul edildi."
+                  onChange={(e) => setUzModal((p) => ({ ...p, notu: e.target.value }))}
+                  style={opsAlanStil} />
+
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, marginTop: 10, flexWrap: 'wrap' }}>
+                  {m.tip === 'kasa' && (
+                    <button disabled={!!uzMesgul} onClick={() => uzKasaYenidenHesapla(m.kayit)} style={{
+                      padding: '10px 15px', borderRadius: 10, cursor: 'pointer',
+                      border: `1px solid ${R.mavi}55`, background: `${R.mavi}18`, color: R.mavi,
+                      fontSize: 12, fontWeight: 700, fontFamily: 'inherit',
+                    }}>🔄 Yeniden hesapla</button>
+                  )}
+                  <div style={{ display: 'flex', gap: 10, marginLeft: 'auto' }}>
+                    <button disabled={!!uzMesgul} onClick={() => setUzModal(null)} style={{
+                      padding: '10px 18px', borderRadius: 10, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+                      background: 'transparent', color: R.metin2, fontSize: 12.5, fontWeight: 600, fontFamily: 'inherit',
+                    }}>Vazgeç</button>
+                    <button disabled={!!uzMesgul} onClick={uzUygula} style={{
+                      padding: '10px 20px', borderRadius: 10, border: 'none', cursor: 'pointer',
+                      background: 'linear-gradient(150deg, #E0A559, #AF6C29)', color: '#1C1309',
+                      fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit',
+                    }}>{uzMesgul ? 'Uygulanıyor…' : 'Uzlaştır'}</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
       </>
     );
   }

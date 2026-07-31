@@ -183,6 +183,26 @@ const ODEME_UC = {
     ],
     acik_toplam: 114250,
   },
+  '/api/ops/siparis/sevkiyat-uyumsuzluklar': {
+    gun: 30, limit: 300,
+    satirlar: [
+      { stok_yolda_id: 'sy1', sube_adi: 'Gazze', kalem_adi: 'Yeşil çekirdek 1kg', gonderilen_adet: 12, kabul_adet: 9 },
+      { stok_yolda_id: 'sy2', sube_adi: 'Köyceğiz', kalem_adi: 'Karton bardak 12oz', gonderilen_adet: 40, kabul_adet: 40 },
+      { stok_yolda_id: 'sy3', sube_adi: 'Zafer', kalem_adi: 'Vanilya şurup', gonderilen_adet: 6, kabul_adet: 4 },
+    ],
+  },
+  '/api/ops/kasa-uyumsuzluk': {
+    uyarilar: [
+      { id: 'ku1', sube_adi: 'Zafer', tarih: gunEkleISO(-2), fark_tl: -2480, durum: 'acik' },
+      { id: 'ku2', sube_adi: 'Alsancak', tarih: gunEkleISO(-5), fark_tl: 1150, durum: 'acik' },
+    ],
+  },
+  '/api/ops/personel-vardiya-uyumsuzluk': {
+    year_month: bugunISO.slice(0, 7), toplam: 1,
+    kayitlar: [
+      { id: 'pv1', personel_ad: 'MEHMET YILMAZ', sube_adi: 'Gazze', tarih: gunEkleISO(-1), sebep: 'Vardiya kaydı var, giriş-çıkış yok', durum: 'acik' },
+    ],
+  },
   '/api/uyarilar': [
     { id: 'u1', seviye: 'KRITIK', mesaj: 'Zafer kasa açığı 3 gündür kapanmadı — 2.480 ₺', sube_ad: 'Zafer', tarih: bugunISO, tutar: 2480, kategori: 'kasa' },
     { id: 'u2', seviye: 'KRITIK', mesaj: 'KOÇ FİNANS taksiti bugün vadesinde — ödenmedi', sube_ad: null, tarih: bugunISO, tutar: 18400, kategori: 'borç' },
