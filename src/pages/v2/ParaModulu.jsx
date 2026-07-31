@@ -94,6 +94,10 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru, onToast }) {
   const [satisGun, setSatisGun] = useState(() => bugunISO());
   const [satis, setSatis] = useState(null);
   const [satisHata, setSatisHata] = useState('');
+  // Evo kasiyer kimliği: ortak hesapta isim gelmez, sayısal ID kalır (2026-07-31)
+  const [evoIsim, setEvoIsim] = useState(null);        // {personel_id, ad}
+  const [evoMesgul, setEvoMesgul] = useState(false);
+  const [evoSyncMesgul, setEvoSyncMesgul] = useState(false);
   // ── KASA TESLİM ───────────────────────────────────────────────────────────
   const [teslimler, setTeslimler] = useState(null);
   const [teslimHata, setTeslimHata] = useState('');
@@ -268,6 +272,41 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru, onToast }) {
       .then((d) => setSatis(d || {}))
       .catch((e) => setSatisHata(e?.message || ''));
   }, []);
+
+  /** Evo'da isimsiz kalan kasiyere elle isim ver (ID → ad eşleşmesi cache'e yazılır).
+   *  ⚠️ Gövde OBJE gider — api() zaten JSON.stringify ediyor; klasik ekran burada
+   *  bir kez daha stringify ettiği için sunucuya metin gönderiyordu. */
+  const evoIsimKaydet = async () => {
+    const pid = String(evoIsim?.personel_id || '').trim();
+    const ad = String(evoIsim?.ad || '').trim();
+    if (!pid) return;
+    if (!ad) { onToast?.('Personel adını yazın'); return; }
+    setEvoMesgul(true);
+    try {
+      await api('/evo/personel-isim-gir', { method: 'POST', body: { personel_id: pid, ad } });
+      onToast?.(`✓ #${pid} artık «${ad}» olarak tanınıyor`);
+      setEvoIsim(null);
+      satisYukle(satisGun);
+    } catch (e) {
+      onToast?.(e?.message || 'İsim kaydedilemedi');
+    } finally {
+      setEvoMesgul(false);
+    }
+  };
+
+  /** Son 14 günü tarayıp Evo'dan gelen isimleri tazele (elle girilenleri ezmez). */
+  const evoIsimSync = async () => {
+    setEvoSyncMesgul(true);
+    try {
+      const r = await api('/evo/personel-sync?gunler=14', { method: 'POST' });
+      onToast?.(`🔄 ${sayi(r?.cache_boyutu)} personel kaydı tazelendi (son ${sayi(r?.taranan_gun) || 14} gün)`);
+      satisYukle(satisGun);
+    } catch (e) {
+      onToast?.(e?.message || 'Evo taraması başarısız — token gerekebilir');
+    } finally {
+      setEvoSyncMesgul(false);
+    }
+  };
 
   const teslimYukle = useCallback(() => {
     setTeslimHata('');
@@ -688,6 +727,119 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru, onToast }) {
             })}
           />
         )}
+
+        {/* ── KİM SATTI — aynı Evo cevabında geliyordu, v2'de hiç kullanılmıyordu ──
+            Evo'da ortak kasa hesabı kullanılınca isim gelmez, sayısal ID kalır;
+            o eşleşmeyi burada elle kurabiliyoruz (POST /evo/personel-isim-gir). */}
+        {(() => {
+          const kisiMap = {};
+          Object.entries(subeVeri).forEach(([sad, sd]) => {
+            (sd?.personel_satislar || []).forEach((p) => {
+              const pid = String(p.personel_id ?? '').trim();
+              if (!pid) return;
+              if (!kisiMap[pid]) kisiMap[pid] = { pid, ad: String(p.ad ?? '').trim(), fis: 0, ciro: 0, subeler: new Set() };
+              kisiMap[pid].fis += sayi(p.fis_sayisi);
+              kisiMap[pid].ciro += sayi(p.ciro);
+              kisiMap[pid].subeler.add(sad);
+              if (!kisiMap[pid].ad) kisiMap[pid].ad = String(p.ad ?? '').trim();
+            });
+          });
+          const kisiler = Object.values(kisiMap).sort((a, b) => b.ciro - a.ciro);
+          if (kisiler.length === 0) return null;
+          // "Sayısal ad" = Evo isim vermemiş, elimizde yalnız ID var
+          const isimsiz = kisiler.filter((k) => /^\d+$/.test(k.ad) || !k.ad);
+          return (
+            <div style={{ ...kartYuzey, padding: '16px 18px', marginTop: 14 }}>
+              <div style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10,
+                paddingBottom: 10, borderBottom: `1px solid ${R.cizgi2}`, marginBottom: 12, flexWrap: 'wrap',
+              }}>
+                <span style={{ fontFamily: F.baslik, fontSize: 14.5, fontWeight: 600 }}>
+                  👤 Kim sattı · {tarihKisa(satisGun)}
+                </span>
+                <span style={{ fontSize: 11, color: isimsiz.length ? R.amber : R.not2 }}>
+                  {kisiler.length} kasiyer
+                  {isimsiz.length > 0 ? ` · ${isimsiz.length} tanesi isimsiz` : ' · hepsi tanımlı'}
+                </span>
+                <button disabled={evoSyncMesgul} onClick={evoIsimSync} style={{
+                  padding: '6px 13px', borderRadius: 9, cursor: evoSyncMesgul ? 'wait' : 'pointer',
+                  border: `1px solid ${R.cizgi3}`, background: R.girinti, color: R.metin2,
+                  fontSize: 11, fontWeight: 600, fontFamily: 'inherit',
+                }}>{evoSyncMesgul ? '⏳ taranıyor…' : '🔄 İsimleri Evo\'dan tazele'}</button>
+              </div>
+
+              <div style={{ display: 'flex', gap: 9, flexWrap: 'wrap' }}>
+                {kisiler.map((k) => {
+                  const bilinmiyor = /^\d+$/.test(k.ad) || !k.ad;
+                  const duzenlemede = evoIsim?.personel_id === k.pid;
+                  if (duzenlemede) {
+                    return (
+                      <div key={k.pid} style={{
+                        display: 'flex', alignItems: 'center', gap: 6, padding: '7px 10px', borderRadius: 11,
+                        background: R.girinti, border: `1px solid ${R.bakirAcik}66`,
+                      }}>
+                        <span style={{ fontFamily: F.mono, fontSize: 11, color: R.not2 }}>#{k.pid}</span>
+                        <input autoFocus value={evoIsim.ad} disabled={evoMesgul} placeholder="Personel adı…"
+                          onChange={(e) => setEvoIsim((p) => ({ ...p, ad: e.target.value }))}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') evoIsimKaydet();
+                            if (e.key === 'Escape') setEvoIsim(null);
+                          }}
+                          style={{
+                            width: 130, padding: '5px 9px', borderRadius: 8, fontSize: 12, fontFamily: 'inherit',
+                            border: `1px solid ${R.bakirAcik}`, background: R.zemin, color: R.krem, outline: 'none',
+                          }} />
+                        <button disabled={evoMesgul} onClick={evoIsimKaydet} style={{
+                          padding: '5px 10px', borderRadius: 8, border: 'none', cursor: 'pointer',
+                          background: 'linear-gradient(150deg, #E0A559, #AF6C29)', color: '#1C1309',
+                          fontSize: 11, fontWeight: 700, fontFamily: 'inherit',
+                        }}>{evoMesgul ? '…' : '✓'}</button>
+                        <button disabled={evoMesgul} onClick={() => setEvoIsim(null)} style={{
+                          padding: '5px 8px', borderRadius: 8, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+                          background: 'transparent', color: R.metin2, fontSize: 11, fontFamily: 'inherit',
+                        }}>✕</button>
+                      </div>
+                    );
+                  }
+                  return (
+                    <div key={k.pid} style={{
+                      display: 'flex', alignItems: 'center', gap: 8, padding: '7px 12px', borderRadius: 11,
+                      background: R.girinti,
+                      border: bilinmiyor ? `1px dashed ${R.amber}66` : `1px solid ${R.cizgi3}`,
+                    }}>
+                      <b style={{ fontSize: 12.5, color: bilinmiyor ? R.not : R.krem }}>
+                        {bilinmiyor ? `#${k.ad || k.pid}` : k.ad}
+                      </b>
+                      {bilinmiyor && (
+                        <button onClick={() => setEvoIsim({ personel_id: k.pid, ad: '' })} style={{
+                          padding: '3px 9px', borderRadius: 7, cursor: 'pointer', fontFamily: 'inherit',
+                          border: `1px solid ${R.amber}55`, background: `${R.amber}18`,
+                          color: R.amber, fontSize: 10.5, fontWeight: 700,
+                        }}>isim gir</button>
+                      )}
+                      <span style={{ fontSize: 11.5, color: R.not2, fontFamily: F.mono }}>
+                        {k.fis} fiş · {fmt(k.ciro)}
+                      </span>
+                      {[...k.subeler].length === 1 && (
+                        <span style={{ fontSize: 10.5, color: R.not2 }}>· {[...k.subeler][0]}</span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div style={{ fontSize: 10.5, color: R.not2, marginTop: 11, lineHeight: 1.6 }}>
+                {isimsiz.length > 0 ? (
+                  <>Evo bu kasiyerlerin adını vermiyor — genelde <b>ortak kasa hesabı</b> kullanıldığında
+                  olur. Verdiğin isim ID'ye kalıcı bağlanır; sonraki günlerde de bu adla görünür.</>
+                ) : (
+                  <>Kasiyer isimleri Evo'dan geliyor. Bu tablo satış sahipliğini gösterir;
+                  personel puan defteri ayrı bir motordur.</>
+                )}
+              </div>
+            </div>
+          );
+        })()}
       </>
     );
   }

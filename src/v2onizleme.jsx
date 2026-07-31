@@ -946,20 +946,31 @@ const BORC_UC = {
 const PARA_UC = {
   '/api/evo/sube-grup-detay': {
     subeler: {
+      // personel_satislar AYNI cevapta geliyor — v2 uzun süre yalnız cok_satilan'ı
+      // okuyordu; "Kim sattı" bloğu için sahte veri de eklendi (isimsiz ID dahil).
       Zafer: { cok_satilan: [
         { ad: 'Latte', adet: 118, ciro: 21240, grup: 'SICAK KAHVE' },
         { ad: 'Iced Americano', adet: 84, ciro: 13020, grup: 'SOGUK KAHVE' },
         { ad: 'Filtre Kahve', adet: 76, ciro: 11020, grup: 'SICAK KAHVE' },
+      ], personel_satislar: [
+        { personel_id: '49671', ad: 'ELİF KARA', fis_sayisi: 142, ciro: 28400 },
+        { personel_id: '50218', ad: '50218', fis_sayisi: 61, ciro: 11250 },
       ]},
       'Köyceğiz': { cok_satilan: [
         { ad: 'Latte', adet: 64, ciro: 11520, grup: 'SICAK KAHVE' },
         { ad: 'Çikolata Milkshake', adet: 41, ciro: 9430, grup: 'MILKSHAKE' },
+      ], personel_satislar: [
+        { personel_id: '49688', ad: 'CAN DEMİR', fis_sayisi: 88, ciro: 16900 },
       ]},
       Gazze: { cok_satilan: [
         { ad: 'Latte', adet: 36, ciro: 6480, grup: 'SICAK KAHVE' },
+      ], personel_satislar: [
+        { personel_id: '50994', ad: '50994', fis_sayisi: 34, ciro: 6480 },
       ]},
     },
   },
+  '/api/evo/personel-isim-gir': { durum: 'ok' },
+  '/api/evo/personel-sync': { durum: 'ok', taranan_gun: 14, cache_boyutu: 37 },
   '/api/kasa-teslim': [
     { id: 'kt1', sube_id: 's0', tarih: bugunISO, tutar: 31200, teslim_turu: 'gun_sonu', teslim_eden_ad: 'Elif K.', teslim_alan_ad: 'ONUR — SAHİP' },
     { id: 'kt2', sube_id: 's1', tarih: bugunISO, tutar: 8410, teslim_turu: 'ara', teslim_eden_ad: 'Can D.', teslim_alan_ad: 'ONUR — SAHİP' },
