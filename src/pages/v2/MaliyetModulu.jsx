@@ -277,6 +277,134 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
   }, [fiyatMap]);
 
   // ════════════════════════ GÖRÜNÜM: MARJ ÖZETİ ═════════════════════════════
+  // ── REÇETE YÖNETİMİ + FOOD-COST (2026-07-31) ──────────────────────────────
+  // Ekran reçeteyi GÖSTERİYORDU; düzeltme/silme ve food-cost tetiği yoktu.
+  const [rcModal, setRcModal] = useState(null);   // {tip, recete?, kalemler?}
+  const [rcMesgul, setRcMesgul] = useState(false);
+
+  const rcUygula = async () => {
+    const m = rcModal;
+    if (!m) return;
+    setRcMesgul(true);
+    try {
+      if (m.tip === 'duzenle') {
+        const kalemler = (m.kalemler || [])
+          .filter((k) => String(k.hammadde_kodu || '').trim())
+          .map((k) => ({
+            hammadde_kodu: String(k.hammadde_kodu).trim(),
+            hammadde_adi: (k.hammadde_adi || '').trim() || null,
+            miktar: Number(String(k.miktar).replace(',', '.')) || 0,
+            birim: (k.birim || 'adet').trim() || 'adet',
+          }))
+          .filter((k) => k.miktar > 0);
+        if (!kalemler.length) { onToast?.('En az bir hammadde ve miktar girin'); setRcMesgul(false); return; }
+        await api('/ops/maliyet/recete-kaydet', { method: 'POST', body: {
+          urun_id: m.recete.urun_id, urun_adi: m.recete.urun_adi || null, hammaddeler: kalemler,
+        } });
+        onToast?.('✓ Reçete kaydedildi — ürün maliyeti bundan sonra buna göre hesaplanır');
+      } else if (m.tip === 'sil') {
+        await api(`/ops/maliyet/recete-sil/${encodeURIComponent(m.recete.urun_id)}`, { method: 'DELETE' });
+        onToast?.('✓ Reçete silindi — bu ürün maliyetsiz kaldı');
+      } else if (m.tip === 'foodcost') {
+        const r = await api('/ops/maliyet/food-cost-hesapla', { method: 'POST', body: {
+          tarih: m.tarih || null, tarih_bitis: m.tarih_bitis || null, sube_id: m.sube_id || null,
+        } });
+        onToast?.(`✓ Food-cost hesaplandı${r?.gun_sayisi != null ? ` — ${sayi(r.gun_sayisi)} gün` : ''}`);
+      }
+      setRcModal(null);
+      receteYukle();
+    } catch (e) {
+      onToast?.(e?.message || 'İşlem başarısız');
+    } finally { setRcMesgul(false); }
+  };
+
+  const rcModalBlok = rcModal && (() => {
+    const kapat = () => { if (!rcMesgul) setRcModal(null); };
+    const T = {
+      'duzenle': { baslik: 'Reçeteyi düzenle', buton: 'Reçeteyi kaydet', tehlike: false,
+        anlat: 'Bir porsiyon için kullanılan hammadde miktarları. Ürün maliyeti ve tüketim kontrolü bu sayılardan çıkar — miktarı 0 yaparsan o satır reçeteden düşer. Kaydetmek ürünün TÜM reçetesini bu listeyle değiştirir.' },
+      'sil': { baslik: 'Reçeteyi sil', buton: 'Sil', tehlike: true,
+        anlat: 'Ürünün tüm reçete satırları silinir. Bu ürün maliyetsiz kalır: kâr hesabında maliyeti 0 görünür ve tüketim kontrolü onu izleyemez.' },
+      'foodcost': { baslik: 'Food-cost hesapla', buton: 'Hesapla', tehlike: false,
+        anlat: 'Seçilen gün(ler) için satış × reçete üzerinden hammadde maliyetini yeniden hesaplar. Reçeteler veya alış fiyatları değiştiyse geçmiş günü tazelemek için kullanılır. Boş bırakırsan bugün hesaplanır.' },
+    }[rcModal.tip] || {};
+    return (
+      <div onClick={(e) => { if (e.target === e.currentTarget) kapat(); }} style={{
+        position: 'fixed', inset: 0, zIndex: 125, background: 'rgba(10,6,2,.72)',
+        backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+      }}>
+        <div style={{ ...kartYuzey, width: 520, maxWidth: '96vw', padding: '24px 26px', maxHeight: '88vh', overflowY: 'auto' }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 6 }}>
+            <div style={{ fontFamily: F.baslik, fontSize: 19, fontWeight: 600 }}>{T.baslik}</div>
+            <button onClick={kapat} style={{ marginLeft: 'auto', border: 'none', background: 'transparent', color: R.not, fontSize: 16, cursor: 'pointer', fontFamily: 'inherit' }}>x</button>
+          </div>
+          {rcModal.recete && (
+            <div style={{ fontSize: 12.5, color: R.metin2, marginBottom: 4 }}>
+              <b>{rcModal.recete.urun_adi || rcModal.recete.urun_id}</b>
+            </div>
+          )}
+          <div style={{ fontSize: 12, color: R.not2, lineHeight: 1.65, marginBottom: 14 }}>{T.anlat}</div>
+
+          {rcModal.tip === 'duzenle' && (
+            <>
+              {(rcModal.kalemler || []).map((k, i) => (
+                <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'flex-end', marginBottom: 6 }}>
+                  <div style={{ flex: 1, minWidth: 120 }}>
+                    <label style={mlEtiket}>Hammadde</label>
+                    <input value={k.hammadde_adi ?? k.hammadde_kodu ?? ''}
+                      onChange={(e) => setRcModal((p) => ({ ...p, kalemler: p.kalemler.map((x, j) => j === i ? { ...x, hammadde_adi: e.target.value } : x) }))}
+                      style={mlAlanStil} />
+                  </div>
+                  <div style={{ maxWidth: 100 }}>
+                    <label style={mlEtiket}>Miktar</label>
+                    <input inputMode="decimal" value={k.miktar ?? ''}
+                      onChange={(e) => setRcModal((p) => ({ ...p, kalemler: p.kalemler.map((x, j) => j === i ? { ...x, miktar: e.target.value } : x) }))}
+                      style={mlAlanStil} />
+                  </div>
+                  <div style={{ maxWidth: 80 }}>
+                    <label style={mlEtiket}>Birim</label>
+                    <input value={k.birim ?? 'adet'}
+                      onChange={(e) => setRcModal((p) => ({ ...p, kalemler: p.kalemler.map((x, j) => j === i ? { ...x, birim: e.target.value } : x) }))}
+                      style={mlAlanStil} />
+                  </div>
+                </div>
+              ))}
+              <button onClick={() => setRcModal((p) => ({ ...p, kalemler: [...(p.kalemler || []), { hammadde_kodu: '', hammadde_adi: '', miktar: '', birim: 'adet' }] }))}
+                style={{ ...mlMini, marginTop: 6 }}>+ Hammadde satırı</button>
+              <div style={{ fontSize: 11, color: R.not2, marginTop: 8, lineHeight: 1.6 }}>
+                Yeni satırda hammadde <b>kodu</b> gerekiyor; ad yazmak yetmez — kodu
+                bilmiyorsan Stok kalemlerinden bak.
+              </div>
+            </>
+          )}
+          {rcModal.tip === 'foodcost' && (
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+              <div style={{ maxWidth: 160 }}><label style={mlEtiket}>Tarih</label>
+                <input type="date" value={rcModal.tarih ?? ''}
+                  onChange={(e) => setRcModal((p) => ({ ...p, tarih: e.target.value }))} style={mlAlanStil} /></div>
+              <div style={{ maxWidth: 160 }}><label style={mlEtiket}>Bitiş (aralık için)</label>
+                <input type="date" value={rcModal.tarih_bitis ?? ''}
+                  onChange={(e) => setRcModal((p) => ({ ...p, tarih_bitis: e.target.value }))} style={mlAlanStil} /></div>
+            </div>
+          )}
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 16 }}>
+            <button disabled={rcMesgul} onClick={kapat} style={{
+              padding: '10px 18px', borderRadius: 10, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+              background: 'transparent', color: R.metin2, fontSize: 12.5, fontWeight: 600, fontFamily: 'inherit',
+            }}>Vazgeç</button>
+            <button disabled={rcMesgul} onClick={rcUygula} style={{
+              padding: '10px 20px', borderRadius: 10, cursor: 'pointer', fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit',
+              border: T.tehlike ? `1px solid ${R.kirmizi}55` : 'none',
+              background: T.tehlike ? `${R.kirmizi}26` : 'linear-gradient(150deg, #E0A559, #AF6C29)',
+              color: T.tehlike ? R.kirmizi : '#1C1309',
+            }}>{rcMesgul ? 'İşleniyor…' : T.buton}</button>
+          </div>
+        </div>
+      </div>
+    );
+  })();
+
   // ── FAZ 6 ONAY/FORM MODALI ────────────────────────────────────────────────
   const fyModalBlok = fyModal && (() => {
     const T = {
@@ -525,6 +653,12 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
     if (receteler == null || fiyatlar == null) return <Yukleniyor />;
     return (
       <>
+        {rcModalBlok}
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
+          <button onClick={() => setRcModal({ tip: 'foodcost', tarih: '', tarih_bitis: '' })} style={mlBtn}>
+            🧮 Food-cost hesapla
+          </button>
+        </div>
         <KpiSeridi kpiler={[
           { etiket: 'Tanımlı reçete', deger: String(receteler.length), alt: 'ürün kartı' },
           { etiket: 'Aktif alış fiyatı', deger: String((fiyatlar || []).filter((f) => !f.gecerli_bitis).length), alt: 'hammadde fiyatı' },
@@ -554,7 +688,16 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
                         {(r.hammaddeler || []).length} hammadde
                       </div>
                     </div>
-                    {h.fiyatsiz > 0 && <span style={rozetHap(R.kirmizi)}>{h.fiyatsiz} fiyatsız</span>}
+                    <span style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center' }}>
+                      {h.fiyatsiz > 0 && <span style={rozetHap(R.kirmizi)}>{h.fiyatsiz} fiyatsız</span>}
+                      <button onClick={() => setRcModal({ tip: 'duzenle', recete: r,
+                        kalemler: (r.hammaddeler || []).map((x) => ({
+                          hammadde_kodu: x.hammadde_kodu, hammadde_adi: x.hammadde_adi,
+                          miktar: x.miktar, birim: x.birim || 'adet',
+                        })) })} style={mlMini}>Düzenle</button>
+                      <button onClick={() => setRcModal({ tip: 'sil', recete: r })}
+                        style={{ ...mlMini, color: R.kirmizi, borderColor: `${R.kirmizi}44` }}>Sil</button>
+                    </span>
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
                     {h.satirlar.slice(0, 8).map((s, i) => (
