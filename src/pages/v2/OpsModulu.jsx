@@ -54,6 +54,44 @@ const saatKisa = (ts) => {
   return m ? m[0] : '';
 };
 
+// ── KAPANIŞ TAKİP: ciro + nakit denklemi ─────────────────────────────────────
+// Sunucu sözleşmesi: operasyon_merkez_api.kapanis_takip (satır anahtarları
+// nakit/pos/online/ciro_tutar/online_cift_kayit/nakit_kasa_fark_tl…).
+// ÇİFT KAYIT: şube online alanına yanlışlıkla nakit+POS toplamını yazarsa gün
+// cirosu iki kez sayılır. Sunucu bunu `online_cift_kayit` ile bildirir; bayrak
+// gelmezse aynı testi burada da yaparız (emniyet ağı — klasik ekranla birebir).
+const ktCift = (r) => {
+  const n = sayi(r?.nakit); const p = sayi(r?.pos); const o = sayi(r?.online);
+  return r?.online_cift_kayit === true
+    || (o > 0 && n > 0 && p > 0 && Math.abs(o - (n + p)) < 0.5);
+};
+const ktOnlineNet = (r) => (ktCift(r) ? 0 : sayi(r?.online));
+const ktCiro = (r) => {
+  const n = sayi(r?.nakit); const p = sayi(r?.pos); const o = ktOnlineNet(r);
+  const t = sayi(r?.ciro_tutar);
+  if (t > 0) return ktCift(r) && t > n + p + 0.5 ? n + p : t;
+  return n + p + o;
+};
+
+// Nakit Δ = sabah kasa + X nakit − teslim − devir − ara teslim − nakit gider.
+// İŞARET KURALI (sunucu): + → kasa AÇIĞI, − → kasa FAZLASI.
+// TAM denkleme (açılış VE kapanış var) alarm verir. KISMİ denklemede gün hâlâ
+// sürüyor; oradaki sayı gerçek fark değil "şu an kasada olması gereken"dir —
+// kırmızı/yeşil boyanmaz, yoksa her öğleden sonra sahte kasa açığı alarmı olur.
+// ⚠️ utils/api.fmt() sonuna zaten " ₺" ekler — üstüne bir daha yazma.
+// (Tezgâhta "430 ₺ ₺ açık" olarak çıktı, 2026-08-01.)
+const tl = (v) => fmt(Math.round(sayi(v)));            // "18.500 ₺"
+const tlSade = (v) => Math.round(sayi(v)).toLocaleString('tr-TR');  // "18.500"
+const tlIsaretli = (v) => `${sayi(v) > 0 ? '+' : ''}${tl(v)}`;      // "+430 ₺"
+
+const ktDelta = (r) => {
+  const tam = r?.nakit_denkleme_tam === true || (!!r?.acildi && !!r?.kapanis_tamam);
+  const kismi = r?.nakit_denkleme_kismi === true;
+  const ham = r?.nakit_kasa_fark_tl;
+  const gecerli = (tam || kismi) && ham != null && Number.isFinite(Number(ham));
+  return { tam, kismi, gecerli, deger: gecerli ? Number(ham) : null };
+};
+
 // Gerçek yaşam döngüsü (siparis_kontrol_kulesi.py ASAMA_LABEL ile aynı sözlük)
 const ASAMA = {
   bekliyor: { ad: 'MERKEZ KUYRUĞU', renk: R.amber },
@@ -3276,9 +3314,40 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     const acilisSatir = Array.isArray(acilisTakip?.satirlar) ? acilisTakip.satirlar : [];
     const kapanisSatir = Array.isArray(kapanisTakip?.satirlar) ? kapanisTakip.satirlar : [];
     const acilanSube = acilisSatir.filter((x) => x.acilis_tamam).length;
-    const kapananSube = kapanisSatir.filter((x) => x.kapanis_tamam).length;
+    // Özet sayaçlar sunucudan gelir (kapanis_yapan_adet / ciro_onaylanan_adet /
+    // eksik_ciro_adet); uç eski bir cevap döndürürse satırdan hesaplanır.
+    const kapananSube = kapanisTakip?.kapanis_yapan_adet != null
+      ? sayi(kapanisTakip.kapanis_yapan_adet)
+      : kapanisSatir.filter((x) => x.kapanis_tamam).length;
+    const ciroOnaylanan = kapanisTakip?.ciro_onaylanan_adet != null
+      ? sayi(kapanisTakip.ciro_onaylanan_adet)
+      : kapanisSatir.filter((x) => x.ciro_onaylandi).length;
+    const eksikCiro = kapanisTakip?.eksik_ciro_adet != null
+      ? sayi(kapanisTakip.eksik_ciro_adet)
+      : kapanisSatir.filter((x) => !x.ciro_onaylandi && !x.taslak_var).length;
+    const taslakBekleyen = kapanisTakip?.taslak_bekleyen_adet != null
+      ? sayi(kapanisTakip.taslak_bekleyen_adet)
+      : kapanisSatir.filter((x) => x.taslak_var && x.taslak_durum === 'bekliyor').length;
     const farkliAcilis = acilisSatir.filter((x) => sayi(x.fark_tl) !== 0 && x.fark_tl != null);
     const teslimBekleyen = kapanisSatir.filter((x) => x.kapanis_tamam && !sayi(x.teslim_kasa_tl));
+    // Alarm YALNIZ tam denklemden: gün sürerken kısmi Δ gerçek fark değildir.
+    const kasaFarkli = kapanisSatir.filter((x) => {
+      const d = ktDelta(x);
+      return d.gecerli && d.tam && Math.abs(d.deger) > 50;
+    });
+    const kasaAcikToplam = kasaFarkli.reduce((s, x) => s + Math.max(0, ktDelta(x).deger), 0);
+    const ciftKayitli = kapanisSatir.filter(ktCift);
+    // Kapanış tablosu aciliyet sırası: kapanmadı → ciro yok → onay bekliyor → tamam
+    const kapanisOncelik = (r) => {
+      if (!r.kapanis_tamam) return 0;
+      if (!r.ciro_onaylandi && !r.taslak_var) return 1;
+      if (r.taslak_var && r.taslak_durum === 'bekliyor') return 2;
+      return 3;
+    };
+    const kapanisSirali = [...kapanisSatir].sort(
+      (a, b) => kapanisOncelik(a) - kapanisOncelik(b)
+        || String(a.sube_adi || '').localeCompare(String(b.sube_adi || ''), 'tr')
+    );
     const acAkis = Array.isArray(urunAcAkis?.kayitlar) ? urunAcAkis.kayitlar : [];
     const gunDegis = (n) => {
       const y = gunEkleISO(barTarih, n);
@@ -3299,6 +3368,22 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
           { etiket: 'Kapanan şube', deger: `${kapananSube} / ${kapanisSatir.length}`, alt: kapananSube < kapanisSatir.length ? 'kapanış bekleniyor' : 'tamamlandı', renk: kapananSube === kapanisSatir.length && kapanisSatir.length ? R.yesil : R.amber },
           { etiket: 'Açılış farkı', deger: String(farkliAcilis.length), alt: farkliAcilis.length ? 'devir ile uyuşmayan' : 'devirle uyumlu', renk: farkliAcilis.length ? R.kirmizi : R.yesil },
           { etiket: 'Teslim bekleyen', deger: String(teslimBekleyen.length), alt: 'kapandı ama kasa teslim edilmedi', renk: teslimBekleyen.length ? R.amber : R.yesil },
+          {
+            etiket: 'Ciro onayı',
+            deger: `${ciroOnaylanan} / ${kapanisSatir.length}`,
+            alt: eksikCiro
+              ? `${eksikCiro} şubede ciro hiç girilmedi`
+              : taslakBekleyen ? `${taslakBekleyen} taslak onay bekliyor` : 'tamamlandı',
+            renk: eksikCiro ? R.kirmizi : taslakBekleyen ? R.amber : R.yesil,
+          },
+          {
+            etiket: 'Nakit Δ',
+            deger: kasaFarkli.length ? String(kasaFarkli.length) : '0',
+            alt: kasaFarkli.length
+              ? (kasaAcikToplam > 0 ? `${tl(kasaAcikToplam)} kasa açığı` : 'fark var, açık yok')
+              : kapananSube ? 'denklem tutuyor' : 'kapanış bekleniyor',
+            renk: kasaFarkli.length ? R.kirmizi : R.yesil,
+          },
         ]} />
 
         {/* gün gezgini + alt sekmeler */}
@@ -3352,31 +3437,210 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
         ) : <BosDurum metin="Bu gün için açılış kaydı yok." />)}
 
         {barSekme === 'kapanis' && (kapanisSatir.length ? (
-          <Tablo
-            baslik={`Kapanış takibi · ${tarihKisa(barTarih)}`}
-            not={`kapanış son teslim saati: ${sayi(kapanisTakip?.kapanis_son_teslim_saat) || 2}:00`}
-            kolonlar={[
-              { ad: 'Şube' }, { ad: 'Kapanış' }, { ad: 'Saat' }, { ad: 'Personel' },
-              { ad: 'Kasa sayımı', sag: 1 }, { ad: 'Devir', sag: 1 }, { ad: 'Teslim', sag: 1 }, { ad: 'Ciro taslağı' },
-            ]}
-            satirlar={kapanisSatir.map((x, i) => ({
-              id: x.sube_id || `k-${i}`,
-              hucreler: [
-                { v: x.sube_adi || '—', kalin: true },
-                x.kapanis_tamam
-                  ? { v: 'kapandı', rozet: R.yesil }
-                  : { v: x.acildi ? 'açık' : 'açılmadı', rozet: x.acildi ? R.amber : R.not },
-                { v: saatKisa(x.kapanis_ts) || '—', mono: true, renk: R.not },
-                { v: x.kapanis_personel || '—', renk: R.not },
-                { v: fmt(sayi(x.kasa_sayim)), mono: true, sag: true },
-                { v: fmt(sayi(x.devir)), mono: true, sag: true, renk: R.not },
-                { v: sayi(x.teslim_kasa_tl) ? fmt(sayi(x.teslim_kasa_tl)) : '—', mono: true, sag: true, renk: sayi(x.teslim_kasa_tl) ? R.yesil : R.amber },
-                x.taslak_var
-                  ? { v: x.taslak_durum || 'gönderildi', rozet: R.mavi }
-                  : { v: '—', renk: R.not },
-              ],
-            }))}
-          />
+          <>
+            {/* İş günü ≠ takvim günü: gece 02:00'ye kadar önceki gün çalışılır.
+                Tarih kutusunda "dün" görünmesi hata değil — sunucu böyle sayar. */}
+            {kapanisTakip?.is_gunu_tr && kapanisTakip?.takvim_tr
+              && String(kapanisTakip.is_gunu_tr) !== String(kapanisTakip.takvim_tr) ? (
+              <div style={{ fontSize: 11.5, color: R.not2, marginBottom: 12 }}>
+                Takvim <span style={{ fontFamily: F.mono, color: R.metin2 }}>{kapanisTakip.takvim_tr}</span>
+                {' · '}iş günü <span style={{ fontFamily: F.mono, color: R.metin2 }}>{kapanisTakip.is_gunu_tr}</span>
+                {' — '}gece {sayi(kapanisTakip?.kapanis_son_teslim_saat) || 2}:00'ye kadar önceki gün sayılır.
+              </div>
+            ) : null}
+
+            {/* Risk şeridi: kasa açığı YALNIZ tam denklemden doğar. Çözüm masası
+                bu ekran değil — Uzlaştırma. Buradaki sayı gün fotoğrafıdır. */}
+            {kasaFarkli.length ? (
+              <div style={{
+                ...kartYuzey, padding: '13px 18px', marginBottom: 14, borderColor: `${R.kirmizi}55`,
+                display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
+              }}>
+                <span style={rozetHap(R.kirmizi)}>⚠ nakit denklemi tutmuyor</span>
+                <span style={{ fontSize: 12, color: R.not }}>
+                  {kasaFarkli.length} şubede fark var
+                  {kasaAcikToplam > 0 ? ` · toplam ${tl(kasaAcikToplam)} kasa açığı` : ''}
+                  {' — '}
+                  {kasaFarkli.map((x) => x.sube_adi).filter(Boolean).join(', ')}
+                </span>
+                <button
+                  onClick={() => onGorunum?.('uzlastir')}
+                  style={{
+                    marginLeft: 'auto', padding: '7px 14px', borderRadius: 10, cursor: 'pointer',
+                    border: `1px solid ${R.bakir}66`, background: 'rgba(217,154,78,.14)',
+                    color: R.bakirAcik, fontSize: 11.5, fontWeight: 700, fontFamily: 'inherit',
+                  }}
+                >Uzlaştırmaya git →</button>
+              </div>
+            ) : null}
+
+            {/* Çift kayıt: online alanına nakit+POS toplamı yazılmışsa gün cirosu
+                iki kez sayılırdı. Toplam sütunu düzeltilmiş değeri gösterir. */}
+            {ciftKayitli.length ? (
+              <OneriSeridi
+                metin={`${ciftKayitli.map((x) => x.sube_adi).filter(Boolean).join(', ')} — online alanına nakit+POS toplamı yazılmış görünüyor. Ciro çift sayılmasın diye online 0 kabul edildi; düzeltme ciro onayında yapılır.`}
+              />
+            ) : null}
+
+            <Tablo
+              baslik={`Kapanış takibi · ${tarihKisa(barTarih)}`}
+              not={`son teslim ${sayi(kapanisTakip?.kapanis_son_teslim_saat) || 2}:00 · satıra tıkla → nakit denklemi`}
+              kolonlar={[
+                { ad: 'Şube' }, { ad: 'Kapanış' }, { ad: 'Saat' },
+                { ad: 'Ciro', sag: 1 }, { ad: 'Kasa sayımı', sag: 1 },
+                { ad: 'Teslim', sag: 1 }, { ad: 'Devir', sag: 1 },
+                { ad: 'Nakit Δ', sag: 1 }, { ad: 'Ciro onayı' },
+              ]}
+              satirlar={kapanisSirali.map((x, i) => {
+                const d = ktDelta(x);
+                const ciroT = ktCiro(x);
+                const kismiNotr = d.kismi && !d.tam;
+                const buyuk = d.gecerli && Math.abs(d.deger) > 0.5;
+                const deltaRenk = !d.gecerli ? R.not3
+                  : kismiNotr ? R.metin2
+                    : !buyuk ? R.metin2
+                      : d.deger > 0 ? R.kirmizi : R.yesil;
+                const deltaEtiket = !d.gecerli ? null
+                  : kismiNotr ? '⏳ olması gereken'
+                    : !buyuk ? 'dengede'
+                      : d.deger > 0 ? 'kasa açığı' : 'kasa fazlası';
+                return {
+                  id: x.sube_id || `k-${i}`,
+                  _satir: x,
+                  hucreler: [
+                    {
+                      siraMetin: x.sube_adi || '',
+                      v: (
+                        <span style={{ display: 'inline-flex', flexDirection: 'column', gap: 2 }}>
+                          <span style={{ fontWeight: 700 }}>{x.sube_adi || '—'}</span>
+                          {x.kapanis_personel
+                            ? <span style={{ fontSize: 10.5, color: R.not2 }}>{x.kapanis_personel}</span>
+                            : null}
+                        </span>
+                      ),
+                    },
+                    x.kapanis_tamam
+                      ? { v: 'kapandı', rozet: R.yesil }
+                      : { v: x.acildi ? 'açık' : 'açılmadı', rozet: x.acildi ? R.amber : R.not },
+                    { v: saatKisa(x.kapanis_ts) || '—', mono: true, renk: R.not },
+                    {
+                      sira: ciroT, sag: true,
+                      v: (
+                        <span style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
+                          <span style={{ fontFamily: F.mono, fontWeight: 700 }}>
+                            {ciroT ? tl(ciroT) : '—'}
+                          </span>
+                          {ciroT ? (
+                            <span style={{ fontSize: 10, color: R.not2, fontFamily: F.mono, whiteSpace: 'nowrap' }}>
+                              N {tlSade(x.nakit)} · P {tlSade(x.pos)}
+                              {ktCift(x)
+                                ? ' · O çift'
+                                : ktOnlineNet(x) ? ` · O ${tlSade(ktOnlineNet(x))}` : ''}
+                            </span>
+                          ) : null}
+                        </span>
+                      ),
+                    },
+                    // Kapanış yoksa kasa sayımı/devir HENÜZ YOK — 0 yazmak sahte
+                    // sayıdır (şube kapanmadı, sayım yapılmadı demektir).
+                    { v: x.kapanis_tamam ? tl(x.kasa_sayim) : '—', mono: true, sag: true, renk: x.kapanis_tamam ? undefined : R.not3 },
+                    { v: sayi(x.teslim_kasa_tl) ? tl(x.teslim_kasa_tl) : '—', mono: true, sag: true, renk: sayi(x.teslim_kasa_tl) ? R.yesil : x.kapanis_tamam ? R.amber : R.not3 },
+                    { v: x.kapanis_tamam ? tl(x.devir) : '—', mono: true, sag: true, renk: R.not },
+                    d.gecerli
+                      ? {
+                        sira: d.deger, sag: true,
+                        v: (
+                          <span style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
+                            <span style={{ fontFamily: F.mono, fontWeight: buyuk && !kismiNotr ? 800 : 700, color: deltaRenk }}>
+                              {tlIsaretli(d.deger)}
+                            </span>
+                            <span style={{ fontSize: 10, fontWeight: 700, color: deltaRenk, whiteSpace: 'nowrap' }}>
+                              {deltaEtiket}
+                            </span>
+                          </span>
+                        ),
+                      }
+                      : {
+                        sag: true, renk: R.not3, siraMetin: '',
+                        v: (
+                          <span style={{ fontSize: 10.5, lineHeight: 1.35, color: R.amber }}>
+                            {!x.acildi && !x.kapanis_tamam ? 'açılış + kapanış yok'
+                              : !x.acildi ? 'açılış yapılmadı' : 'kapanış yapılmadı'}
+                          </span>
+                        ),
+                      },
+                    x.ciro_onaylandi
+                      ? { v: 'onaylandı', rozet: R.yesil }
+                      : x.taslak_var
+                        ? {
+                          siraMetin: x.taslak_durum || 'gönderildi',
+                          v: (
+                            <span style={{ display: 'inline-flex', flexDirection: 'column', gap: 3 }}>
+                              <span style={{
+                                padding: '3px 10px', borderRadius: 99, fontSize: 11, fontWeight: 700,
+                                background: `${R.mavi}22`, color: R.mavi, whiteSpace: 'nowrap', alignSelf: 'flex-start',
+                              }}>{x.taslak_durum || 'gönderildi'}</span>
+                              {x.gonderen_ad
+                                ? <span style={{ fontSize: 10.5, color: R.not2 }}>gönderen: {x.gonderen_ad}</span>
+                                : null}
+                            </span>
+                          ),
+                        }
+                        : { v: 'ciro girilmedi', rozet: R.kirmizi },
+                  ],
+                };
+              })}
+              onSatir={(s) => {
+                const x = s._satir; if (!x) return;
+                const d = ktDelta(x);
+                const ciroT = ktCiro(x);
+                const sabah = sayi(x.sabah_kasa_tl);
+                const nakitX = sayi(x.nakit);
+                const teslim = sayi(x.teslim_kasa_tl);
+                const devir = sayi(x.devir);
+                const ara = sayi(x.ara_teslim_tl);
+                const gider = sayi(x.anlik_gider_nakit_tl);
+                onCekmece?.({
+                  tip: 'KAPANIŞ · NAKİT DENKLEMİ',
+                  baslik: x.sube_adi || 'Şube',
+                  alt: `${tarihKisa(barTarih)} · ${x.kapanis_tamam ? `kapandı ${saatKisa(x.kapanis_ts) || ''}` : x.acildi ? 'kapanış bekleniyor' : 'açılış yapılmadı'}${x.kapanis_personel ? ` · ${x.kapanis_personel}` : ''}`,
+                  kpi: [
+                    { etiket: 'Gün cirosu', deger: tl(ciroT) },
+                    {
+                      etiket: 'Nakit Δ',
+                      deger: d.gecerli ? tlIsaretli(d.deger) : '—',
+                      renk: !d.gecerli || (d.kismi && !d.tam) ? R.metin2
+                        : Math.abs(d.deger) <= 0.5 ? R.yesil
+                          : d.deger > 0 ? R.kirmizi : R.amber,
+                    },
+                    { etiket: 'Teslim', deger: tl(teslim), renk: teslim ? R.yesil : R.amber },
+                    { etiket: 'Devir', deger: tl(devir) },
+                  ],
+                  listeBaslik: 'Nakit denklemi (şelale)',
+                  satirlar: [
+                    { ad: 'Sabah kasa (açılış sayımı)', detay: 'gün başı devir', tutar: tl(sabah) },
+                    { ad: 'Nakit ciro (X raporu)', detay: ktCift(x) ? 'online çift kayıt düzeltildi' : 'panelde girilen nakit', tutar: `+${tl(nakitX)}` },
+                    { ad: 'Müdüre teslim', detay: 'kapanışta çıkan nakit', tutar: `−${tl(teslim)}` },
+                    { ad: 'Ertesi güne devir', detay: 'kasada bırakılan', tutar: `−${tl(devir)}` },
+                    { ad: 'Gün içi ara teslim', detay: ara ? 'gün ortasında müdüre verilen' : 'yok', tutar: `−${tl(ara)}` },
+                    { ad: 'Nakit anlık gider', detay: gider ? 'aktif + onay bekleyen' : 'yok', tutar: `−${tl(gider)}` },
+                    {
+                      ad: d.gecerli ? (Math.abs(d.deger) <= 0.5 ? 'Sonuç: dengede' : d.deger > 0 ? 'Sonuç: kasa açığı' : 'Sonuç: kasa fazlası') : 'Sonuç: hesaplanamadı',
+                      detay: d.tam ? 'tam denklem (açılış + kapanış var)' : d.kismi ? 'kısmi — gün sürüyor, gerçek fark değil' : 'açılış/kapanış eksik',
+                      tutar: d.gecerli ? tlIsaretli(d.deger) : '—',
+                    },
+                  ],
+                  not: d.tam && Math.abs(d.deger || 0) > 50
+                    ? 'Pozitif fark = kasada olması gerekenden az nakit (açık). Düzeltme burada değil Uzlaştırma görünümünde yapılır — kaynağı düzeltmek kasa izine yazar.'
+                    : d.kismi && !d.tam
+                      ? 'Gün henüz kapanmadı. Bu sayı gerçek fark değil, şu an kasada olması gereken tutardır — kapanış girilince tam denkleme döner.'
+                      : 'POS ve online tutarlar nakit denklemine girmez; denklem yalnız kasadaki parayı izler.',
+                  aksiyonAd: 'Uzlaştırmaya git',
+                  _hedef: '__gorunum:uzlastir',
+                });
+              }}
+            />
+          </>
         ) : <BosDurum metin="Bu gün için kapanış kaydı yok." />)}
 
         {barSekme === 'urunac' && (acAkis.length ? (

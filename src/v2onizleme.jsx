@@ -475,12 +475,55 @@ const OPS_UC = {
       { sube_id: 's2', sube_adi: 'ALSANCAK', acilis_durum: 'bekliyor', acilis_tamam: false, acilis_ts: '', personel_ad: '', acilis_kasa_tl: null, beklenen_devir_tl: null, fark_tl: null },
     ],
   },
+  // Nakit denklemi: sabah_kasa + nakit − teslim − devir − ara_teslim − gider = Δ
+  // ZAFER  tam denklem, +430 kasa açığı · KÖYCEĞİZ dengede ama online ÇİFT KAYIT
+  // GAZZE  kısmi (gün sürüyor) · ALSANCAK açılmadı → Δ hesaplanamaz
   '/api/ops/kapanis-takip': {
     tarih: bugunISO, kapanis_son_teslim_saat: 2,
+    is_gunu_tr: gunEkleISO(-1), takvim_tr: bugunISO,
+    sube_sayisi: 4, kapanis_yapan_adet: 2, ciro_onaylanan_adet: 1,
+    taslak_bekleyen_adet: 1, eksik_kapanis_adet: 2, eksik_ciro_adet: 2,
     satirlar: [
-      { sube_id: 's0', sube_adi: 'ZAFER', acildi: true, kapanis_tamam: true, kapanis_ts: bugunISO + ' 23:48:00', kapanis_personel: 'Elif Kaya', kasa_sayim: 21400, devir: 3200, teslim_kasa_tl: 18200, taslak_var: true, taslak_durum: 'onay bekliyor' },
-      { sube_id: 's1', sube_adi: 'KÖYCEĞİZ', acildi: true, kapanis_tamam: true, kapanis_ts: bugunISO + ' 23:12:00', kapanis_personel: 'Mert Can', kasa_sayim: 15600, devir: 3000, teslim_kasa_tl: 0, taslak_var: false, taslak_durum: '' },
-      { sube_id: 's2', sube_adi: 'ALSANCAK', acildi: false, kapanis_tamam: false, kapanis_ts: '', kapanis_personel: '', kasa_sayim: 0, devir: 0, teslim_kasa_tl: 0, taslak_var: false, taslak_durum: '' },
+      {
+        sube_id: 's0', sube_adi: 'ZAFER', acildi: true, kapanis_tamam: true,
+        kapanis_ts: bugunISO + ' 23:48:00', kapanis_personel: 'Elif Kaya',
+        sabah_kasa_tl: 3200, kasa_sayim: 21000, devir: 3200, teslim_kasa_tl: 17800,
+        ara_teslim_tl: 0, anlik_gider_nakit_tl: 270,
+        nakit: 18500, pos: 12400, online: 0, ciro_tutar: 0, ciro_onaylandi: false,
+        online_cift_kayit: false, ciro_kaynak: 'kapanis_x',
+        nakit_denkleme_tam: true, nakit_denkleme_kismi: false, nakit_kasa_fark_tl: 430,
+        taslak_var: true, taslak_durum: 'bekliyor', gonderen_ad: 'Elif Kaya',
+      },
+      {
+        sube_id: 's1', sube_adi: 'KÖYCEĞİZ', acildi: true, kapanis_tamam: true,
+        kapanis_ts: bugunISO + ' 23:12:00', kapanis_personel: 'Mert Can',
+        sabah_kasa_tl: 3000, kasa_sayim: 15200, devir: 15200, teslim_kasa_tl: 0,
+        ara_teslim_tl: 0, anlik_gider_nakit_tl: 0,
+        nakit: 12200, pos: 8600, online: 20800, ciro_tutar: 20800, ciro_onaylandi: true,
+        online_cift_kayit: true, ciro_kaynak: 'ciro',
+        nakit_denkleme_tam: true, nakit_denkleme_kismi: false, nakit_kasa_fark_tl: 0,
+        taslak_var: true, taslak_durum: 'onaylandi', gonderen_ad: 'Mert Can',
+      },
+      {
+        sube_id: 's3', sube_adi: 'GAZZE', acildi: true, kapanis_tamam: false,
+        kapanis_ts: '', kapanis_personel: '',
+        sabah_kasa_tl: 2600, kasa_sayim: 0, devir: 0, teslim_kasa_tl: 0,
+        ara_teslim_tl: 1500, anlik_gider_nakit_tl: 300,
+        nakit: 5400, pos: 3100, online: 0, ciro_tutar: 0, ciro_onaylandi: false,
+        online_cift_kayit: false, ciro_kaynak: 'taslak',
+        nakit_denkleme_tam: false, nakit_denkleme_kismi: true, nakit_kasa_fark_tl: 6200,
+        taslak_var: false, taslak_durum: '', gonderen_ad: '',
+      },
+      {
+        sube_id: 's2', sube_adi: 'ALSANCAK', acildi: false, kapanis_tamam: false,
+        kapanis_ts: '', kapanis_personel: '',
+        sabah_kasa_tl: 0, kasa_sayim: 0, devir: 0, teslim_kasa_tl: 0,
+        ara_teslim_tl: 0, anlik_gider_nakit_tl: 0,
+        nakit: 0, pos: 0, online: 0, ciro_tutar: 0, ciro_onaylandi: false,
+        online_cift_kayit: false, ciro_kaynak: '',
+        nakit_denkleme_tam: false, nakit_denkleme_kismi: false, nakit_kasa_fark_tl: null,
+        taslak_var: false, taslak_durum: '', gonderen_ad: '',
+      },
     ],
   },
   '/api/ops/v2/urun-ac-akis': {

@@ -511,7 +511,13 @@ const SIRA_BIRIM = /^(ay|sa|s|saat|gün|gun|adet|kalem|kişi|kisi|kg|lt|ml|g|x|p
  *  Oran ifadeleri ("4 / 5") metin sayılır — yanlış sıralamaktansa dürüst
  *  metin sıralaması yapar. */
 function siralamaDegeri(h) {
-  const ham = h?.v;
+  // Hücre içeriği JSX ise String(v) "[object Object]" verir ve o sütun sessizce
+  // sıralanamaz hâle gelir. Çok satırlı hücreler kendi anahtarını bildirebilir:
+  // `sira` (sayı) ya da `siraMetin` (düz metin).
+  if (h?.sira != null && Number.isFinite(Number(h.sira))) {
+    return { s: Number(h.sira), m: String(h.sira) };
+  }
+  const ham = h?.siraMetin != null ? h.siraMetin : h?.v;
   if (ham == null) return { s: null, m: '' };
   const metin = String(ham).trim();
   if (/\d\s*\/\s*\d/.test(metin)) return { s: null, m: metin };
