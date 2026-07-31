@@ -250,5 +250,7 @@ export const MODULLER = [
     { id: 'excel', ad: 'Excel Import' },
     { id: 'teslim', ad: 'Bilgi Teslim', rozet: 'bilgiTeslim', renk: '#60A5FA' },
     { id: 'temizle', ad: 'Veri Temizle' },
+    // Emeklilik kapısı: klasik tasarım silinmedi, acil durumda buradan açılır.
+    { id: 'klasik', ad: 'Klasik Tasarım' },
   ]},
 ];

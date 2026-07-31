@@ -1561,6 +1561,63 @@ export function SistemModulu({ gorunum, onCekmece, onKopru, onToast }) {
     );
   }
 
+  // sistem.klasik — EMEKLİLİK KAPISI
+  // Klasik tasarım silinmedi, yalnız görünmez yapıldı (App.jsx: '#klasik:' öneki).
+  // Buraya kadar açık bir kapı bırakılmamıştı; sahip istedi (2026-07-31).
+  // Bilinçli olarak SESSİZ bir kapı: tek yerde durur, ne olduğunu dürüstçe yazar.
+  if (gorunum === 'klasik') {
+    return (
+      <>
+        <div style={{ ...kartYuzey, padding: '20px 22px', marginBottom: 14 }}>
+          <div style={{ fontFamily: F.baslik, fontSize: 18, fontWeight: 600, marginBottom: 10 }}>
+            Klasik tasarıma geçiş
+          </div>
+          <div style={{ fontSize: 12.5, color: R.metin2, lineHeight: 1.75 }}>
+            Eski tasarım <b>silinmedi</b> — arşivde duruyor ve çalışıyor. Bu kapı
+            bilinçli bırakıldı: kadifede bir ekran bozulursa iş durmasın diye.
+            Günlük işin tamamı kadifede yapılır; oraya yalnız <b>gerektiğinde</b> gidilir.
+          </div>
+          <div style={{ fontSize: 12, color: R.not2, lineHeight: 1.7, marginTop: 12 }}>
+            Klasik açılınca tepede <b>"Emekli tasarım"</b> şeridi ve
+            <b> "Kadife tasarıma dön"</b> düğmesi çıkar — dönüş yolu hep açık.
+            Adres çubuğuna <span style={{ fontFamily: F.mono }}>#klasik:&lt;sayfa&gt;</span> yazmak
+            da çalışmaya devam ediyor.
+          </div>
+          <button
+            onClick={() => onKopru?.('panel')}
+            style={{
+              marginTop: 16, padding: '11px 20px', borderRadius: 11, cursor: 'pointer',
+              border: `1px solid ${R.cizgi3}`, background: R.girinti, color: R.metin2,
+              fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit',
+            }}
+          >
+            ↩ Klasik tasarımı aç
+          </button>
+        </div>
+
+        <div style={{
+          padding: '14px 17px', borderRadius: 12, fontSize: 12, lineHeight: 1.7,
+          background: 'rgba(251,191,36,.08)', border: '1px solid rgba(251,191,36,.3)', color: R.metin2,
+        }}>
+          <b style={{ color: R.amber }}>Orada iş yapmadan önce bil:</b> klasik ekranların
+          bazı <b>yazma</b> düğmeleri bozuk. 2026-07-31 taramasında dördü tespit edildi —
+          gövde iki kez kodlandığı için sunucu isteği reddediyor:
+          <div style={{ marginTop: 8, fontFamily: F.mono, fontSize: 11.5, color: R.not }}>
+            Evo · personel ismi gir<br />
+            Maliyet · food-cost hesapla<br />
+            Maliyet · alış fiyatı kaydet<br />
+            Maliyet · reçete kaydet
+          </div>
+          <div style={{ marginTop: 8 }}>
+            Dördünün de <b>çalışan hâli kadifede var</b> (Gelir ▸ Ürün Satışları,
+            Kâr &amp; Maliyet). Klasik kaldırılacağı için orada düzeltilmedi —
+            okumak için gidilir, yazmak için değil.
+          </div>
+        </div>
+      </>
+    );
+  }
+
   // sistem.temizle
   const kalintiAdet = sayi(kalinti?.toplam) || (kalinti?.kayitlar || []).length;
   return (
