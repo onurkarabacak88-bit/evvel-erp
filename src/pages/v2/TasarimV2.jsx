@@ -114,6 +114,9 @@ export default function TasarimV2({ onGit }) {
   const [toast, setToast] = useState('');
   // Komut paleti (yeni handoff): ⌘K / Ctrl+K / '/' ile 40 ekrana tek yerden erişim
   const [subeOps, setSubeOps] = useState(null);   // şube × sevkiyat trafiği
+  // /ops/v2/sube-davranis + /ops/v2/sube-skor — "hangi şube DÜZGÜN çalışıyor"
+  const [subeDavranis, setSubeDavranis] = useState(null);
+  const [subeSkor, setSubeSkor] = useState(null);
   // TARİH GEZGİNİ: null = CANLI (bugün/son gün). Dolu ise geçmiş gün modu.
   const [secilenGun, setSecilenGun] = useState(null);
   const [palet, setPalet] = useState(false);
@@ -516,6 +519,18 @@ export default function TasarimV2({ onGit }) {
     api('/ops/siparis/sevkiyat-subeler-ozet')
       .then((d) => setSubeOps(Array.isArray(d?.satirlar) ? d.satirlar : (Array.isArray(d) ? d : [])))
       .catch(() => setSubeOps([]));
+    // ⚠️ `/v2/` ÖNEKLİ, yani v2 İÇİN YAZILMIŞ iki motor — ama hiç çağrılmıyordu.
+    // Karne yalnız CİRO sıralaması gösteriyordu: "hangi şube çok satıyor".
+    // Bu ikisi "hangi şube DÜZGÜN çalışıyor" sorusunu cevaplıyor:
+    //   sube-davranis → son 30 günün kural ihlalleri (kural kural, puanıyla)
+    //   sube-skor     → ayın toplam puanı + durum etiketi
+    // Çok satan şube kural ihlalinde birinci olabilir; ikisi ayrı eksen.
+    api('/ops/v2/sube-davranis?gun=30')
+      .then((d) => setSubeDavranis(Array.isArray(d?.subeler) ? d.subeler : []))
+      .catch(() => setSubeDavranis([]));
+    api('/ops/v2/sube-skor')
+      .then((d) => setSubeSkor(Array.isArray(d?.skorlar) ? d.skorlar : []))
+      .catch(() => setSubeSkor([]));
   }, [gorunum, subeOps]);
 
   // ── İSTEK HATASI BANDI (yeni handoff: "veri yok" ≠ "sistem bozuk") ────────
@@ -864,6 +879,11 @@ export default function TasarimV2({ onGit }) {
     const opsOf = (ad) => (subeOps || []).find(
       (o) => String(o.depo_sube_adi || o.sube_adi || '').toLocaleLowerCase('tr') === String(ad || '').toLocaleLowerCase('tr'),
     );
+    // Şube adı eşleşmesi — dosyanın kendi `sadeles` yardımcısı (Türkçe-I tuzağı
+    // + aksan normalizasyonu birlikte; ör. "KÖYCEĞİZ" ↔ "Köyceğiz")
+    const adEs = (a, b) => sadeles(a) === sadeles(b);
+    const davranisOf = (ad) => (subeDavranis || []).find((x) => adEs(x.sube_adi, ad));
+    const skorOf = (ad) => (subeSkor || []).find((x) => adEs(x.sube_adi, ad));
 
     const kpiler = [
       { etiket: 'En yüksek ciro', deger: enIyi.ad, alt: fmt(enIyi.toplam), renk: R.yesil },
@@ -884,6 +904,8 @@ export default function TasarimV2({ onGit }) {
             { ad: 'Zincir payı', sag: true }, { ad: 'Kayıt' },
             // ── Kontrol Kulesi birleşti: şubenin DEPO rolündeki trafiği ──
             { ad: 'Depo yükü', sag: true }, { ad: 'Yolda', sag: true },
+            // ── Davranış ekseni: ciro ≠ düzgün çalışma ──
+            { ad: 'Davranış' },
           ]}
           satirlar={d.subeAyListe.map(s => ({
             id: s.ad,
@@ -902,26 +924,75 @@ export default function TasarimV2({ onGit }) {
               { v: opsOf(s.ad) ? String(sayi(opsOf(s.ad).hazirlikta) + sayi(opsOf(s.ad).gonderildi)) : '—',
                 mono: true, sag: true,
                 renk: opsOf(s.ad) && (sayi(opsOf(s.ad).hazirlikta) + sayi(opsOf(s.ad).gonderildi)) > 0 ? R.bakir : R.not },
+              // Davranış puanı DÜŞÜKSE iyi (ihlal puanı toplanıyor). Veri
+              // gelmediyse '—' — sıfır ihlal ile ölçüm yok aynı şey değil.
+              (() => {
+                const dv = davranisOf(s.ad);
+                const sk = skorOf(s.ad);
+                if (!dv && !sk) return { v: '—', renk: R.not3, sira: -1 };
+                const puan = sayi(dv?.toplam_puan ?? sk?.toplam_puan);
+                const ihlal = (dv?.ihlaller || []).length;
+                const durum = sk?.durum || dv?.durum;
+                return {
+                  sira: puan,
+                  v: (
+                    <span style={{ display: 'inline-flex', flexDirection: 'column', gap: 2 }}>
+                      <span style={{
+                        padding: '3px 9px', borderRadius: 99, fontSize: 10.5, fontWeight: 700,
+                        alignSelf: 'flex-start', whiteSpace: 'nowrap',
+                        background: puan >= 20 ? `${R.kirmizi}22` : puan > 0 ? `${R.amber}22` : `${R.yesil}22`,
+                        color: puan >= 20 ? R.kirmizi : puan > 0 ? R.amber : R.yesil,
+                      }}>{durum || (puan > 0 ? `${puan} ceza` : 'temiz')}</span>
+                      {ihlal ? (
+                        <span style={{ fontSize: 10, color: R.not2 }}>{ihlal} kural · 30 gün</span>
+                      ) : null}
+                    </span>
+                  ),
+                };
+              })(),
             ],
           }))}
           onSatir={(row) => {
             const s = row._s;
+            const dv = davranisOf(s.ad);
+            const sk = skorOf(s.ad);
+            const ihlaller = Array.isArray(dv?.ihlaller) ? dv.ihlaller : [];
+            const cezaPuan = sayi(dv?.toplam_puan ?? sk?.toplam_puan);
             setCekmece({
               tip: 'ŞUBE DOSYASI', baslik: s.ad, alt: `${d.ayOnEk} · ${s.gunSayisi} gün kayıt`,
               kpi: [
                 { etiket: 'Ay cirosu', deger: fmt(s.toplam) },
                 { etiket: 'Zincir payı', deger: `%${trSayi(s.pay)}` },
                 { etiket: 'Günlük ort.', deger: fmt(s.toplam / (s.gunSayisi || 1)) },
-                { etiket: 'Nakit payı', deger: `%${yuzde(s.nakit, s.toplam).toFixed(0)}` },
+                // Ciro ekseninin yanına DAVRANIŞ ekseni: çok satan şube kural
+                // ihlalinde de birinci olabilir — ikisi ayrı soru.
+                (dv || sk)
+                  ? {
+                    etiket: 'Davranış',
+                    deger: sk?.durum || (cezaPuan > 0 ? `${cezaPuan} ceza` : 'temiz'),
+                    renk: cezaPuan >= 20 ? R.kirmizi : cezaPuan > 0 ? R.amber : R.yesil,
+                  }
+                  : { etiket: 'Nakit payı', deger: `%${yuzde(s.nakit, s.toplam).toFixed(0)}` },
               ],
-              listeBaslik: 'Ödeme tipine göre',
+              listeBaslik: ihlaller.length ? 'Ödeme tipi + kural ihlalleri (30 gün)' : 'Ödeme tipine göre',
               satirlar: [
                 { ad: 'Nakit', detay: `%${yuzde(s.nakit, s.toplam).toFixed(0)}`, tutar: fmt(s.nakit) },
                 { ad: 'Kart + online', detay: `%${yuzde(s.kart, s.toplam).toFixed(0)}`, tutar: fmt(s.kart) },
+                // Kural kural ihlal dökümü — hangi kural kaç kez, kaç puan
+                ...ihlaller.slice(0, 10).map((i) => ({
+                  ad: `⚠ ${i.kural || 'kural'}`,
+                  detay: `${sayi(i.ihlal_sayisi)} kez · son 30 gün`,
+                  tutar: `${sayi(i.puan)} puan`,
+                })),
               ],
-              not: s.gunSayisi < d.gunSayisi
-                ? `Bu şubede ${d.gunSayisi - s.gunSayisi} gün ciro kaydı eksik — karşılaştırma bu yüzden düşük çıkabilir.`
-                : 'Ay boyunca eksik gün yok, karne tam.',
+              not: [
+                s.gunSayisi < d.gunSayisi
+                  ? `Bu şubede ${d.gunSayisi - s.gunSayisi} gün ciro kaydı eksik — karşılaştırma bu yüzden düşük çıkabilir.`
+                  : 'Ay boyunca eksik gün yok, karne tam.',
+                ihlaller.length
+                  ? 'Davranış puanı CEZA puanıdır — yüksek olması kötüdür. Gözlem toplar, hüküm vermez.'
+                  : (dv || sk) ? 'Bu ay kural ihlali kaydedilmemiş.' : '',
+              ].filter(Boolean).join(' '),
               aksiyonAd: 'Ciro defterini aç',
               _hedef: '__modul:para:girisi',
             });

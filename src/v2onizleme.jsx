@@ -950,6 +950,30 @@ const MALIYET_UC = {
       },
     },
   },
+  // Şube DAVRANIŞ + SKOR motoru — /v2/ önekli (v2 için yazılmış) ama hiç
+  // çağrılmıyordu. Karne yalnız ciro sıralaması gösteriyordu.
+  '/api/ops/v2/sube-davranis': {
+    gun: 30, toplam_sube: 3,
+    subeler: [
+      { sube_id: 's1', sube_adi: 'Köyceğiz', toplam_puan: 24, ihlaller: [
+        { kural: 'Geç açılış', ihlal_sayisi: 6, puan: 12 },
+        { kural: 'Kasa farkı toleransı', ihlal_sayisi: 4, puan: 8 },
+        { kural: 'Sayım özensizliği', ihlal_sayisi: 2, puan: 4 },
+      ] },
+      { sube_id: 's3', sube_adi: 'Gazze', toplam_puan: 6, ihlaller: [
+        { kural: 'Geç açılış', ihlal_sayisi: 3, puan: 6 },
+      ] },
+      { sube_id: 's0', sube_adi: 'Zafer', toplam_puan: 0, ihlaller: [] },
+    ],
+  },
+  '/api/ops/v2/sube-skor': {
+    yil: Number(bugunISO.slice(0, 4)), ay: Number(bugunISO.slice(5, 7)),
+    skorlar: [
+      { sube_id: 's1', sube_adi: 'Köyceğiz', toplam_puan: 24, durum: 'riskli', detay: [] },
+      { sube_id: 's3', sube_adi: 'Gazze', toplam_puan: 6, durum: 'izlemede', detay: [] },
+      { sube_id: 's0', sube_adi: 'Zafer', toplam_puan: 0, durum: 'temiz', detay: [] },
+    ],
+  },
   // Toptancıya GİDEN yönlendirme logu — v2 bu ucu HİÇ çağırmıyordu
   // (ekran yalnız GELEN teslimi gösteriyordu).
   '/api/ops/siparis/toptanci-listesi': {

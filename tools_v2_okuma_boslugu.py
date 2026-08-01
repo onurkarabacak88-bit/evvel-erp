@@ -159,6 +159,6 @@ for adet, uc, eksik, tasinmis, kf, vf in ortak[:25]:
               + (' …' if len(tasinmis) > 10 else ''))
 
 print("\n\n--- B) v2'NİN HİÇ ÇAĞIRMADIĞI UÇLAR (klasik zengin kullanıyordu) ---")
-for uc, kf, n in sorted(hic_yok, key=lambda x: -x[2])[:20]:
+for uc, kf, n in sorted(hic_yok, key=lambda x: -x[2]):
     print(f"  {n:>3} alan  {uc:<46} ({', '.join(kf[:2])})")
 print("\n⚠️ ADAY listesidir — dosyayı AÇIP doğrulamadan ekleme yapma.")
