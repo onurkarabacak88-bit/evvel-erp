@@ -950,6 +950,25 @@ const MALIYET_UC = {
       },
     },
   },
+  // Kalem grubu kırılımı — v2 bu ucu HİÇ çağırmıyordu. Kolon kodları
+  // operasyon_merkez_api._GUN_GUN_KOLONLAR ile birebir.
+  '/api/ops/maliyet/gun-gun': {
+    gun: 30, sube_id: null,
+    kolonlar: [
+      { kod: 'sut', baslik: 'Süt' }, { kod: 'surup', baslik: 'Şurup' },
+      { kod: 'bardak_8oz', baslik: '8oz Bardak' }, { kod: 'bardak_14oz', baslik: '14oz Bardak' },
+      { kod: 'karton_bardak', baslik: 'Karton Bardak' }, { kod: 'plastik_bardak', baslik: 'Plastik Bardak' },
+      { kod: 'kapak', baslik: 'Kapak' }, { kod: 'pecete', baslik: 'Peçete' },
+      { kod: 'su', baslik: 'Su' }, { kod: 'pasta', baslik: 'Pasta/Tatlı' },
+      { kod: 'diger', baslik: 'Diğer Sarf' }, { kod: 'diger_urun_ac_tl', baslik: '☕ Diğer Ürün-Aç' },
+    ],
+    satirlar: [
+      { tarih: gunEkleISO(-1), sube_id: 's0', sube_adi: 'ZAFER', sut: 84200, surup: 12400, bardak_8oz: 21600, bardak_14oz: 18900, karton_bardak: 9400, plastik_bardak: 6200, kapak: 4100, pecete: 2600, su: 3800, pasta: 31200, diger: 5400, diger_urun_ac_tl: 96400 },
+      { tarih: gunEkleISO(-1), sube_id: 's1', sube_adi: 'KÖYCEĞİZ', sut: 52100, surup: 7800, bardak_8oz: 14200, bardak_14oz: 11600, karton_bardak: 6100, plastik_bardak: 3900, kapak: 2600, pecete: 1700, su: 2400, pasta: 18400, diger: 3200, diger_urun_ac_tl: 61200 },
+    ],
+    // Fiyatı tanımsız kalemler → maliyete HİÇ girmez, food cost düşük görünür
+    fiyat_eksik_kalemler: ['Karamel şurup', 'Cheesecake (dilim)', 'Soda', 'Cookie'],
+  },
   // Güven skoru + sapma motoru — v2 bu ucu HİÇ çağırmıyordu.
   // Sapma örnekleri gerçek olaylardan: karamel şurup fiyatı bardağa yazılmış,
   // bir şubede 70K plastik bardak görünmüş.

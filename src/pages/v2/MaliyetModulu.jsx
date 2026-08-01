@@ -74,6 +74,8 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
   // Güven skoru + sapma motoru (/ops/maliyet/guven-skoru) — SALT-OKUR, öneri-only.
   // Maliyet sayısının NE KADAR GÜVENİLİR olduğunu söyler; hata yoksa sessiz durur.
   const [guven, setGuven] = useState(null);
+  // /ops/maliyet/gun-gun → kalem grubu kırılımı + fiyatı tanımsız kalemler
+  const [gunGun, setGunGun] = useState(null);
   const [receteler, setReceteler] = useState(null);
   const [fiyatlar, setFiyatlar] = useState(null);
   const [receteHata, setReceteHata] = useState('');
@@ -102,6 +104,14 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
     api('/ops/maliyet/guven-skoru?gun=7')
       .then((d) => setGuven(d || null))
       .catch(() => setGuven(null));
+    // KALEM GRUBU KIRILIMI (/ops/maliyet/gun-gun) — v2 bu ucu HİÇ çağırmıyordu.
+    // Marj Özeti "food cost %31" diyor ama PARANIN NEREYE gittiğini söylemiyor.
+    // Bu uç ürün-aç tüketimini alış fiyatıyla çarpıp grup grup (süt · şurup ·
+    // bardak · pasta…) günlük maliyete çeviriyor. Ayrıca fiyatı tanımlı
+    // OLMAYAN kalemleri bildiriyor — o kalemler maliyete HİÇ girmiyor demektir.
+    api('/ops/maliyet/gun-gun?gun=30')
+      .then((d) => setGunGun(d || null))
+      .catch(() => setGunGun(null));
   }, []);
 
   const receteYukle = useCallback(() => {
@@ -713,6 +723,71 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
                   {sapmalar.length > 5 && (
                     <div style={{ fontSize: 11, color: R.not3 }}>+{sapmalar.length - 5} sapma daha</div>
                   )}
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
+        {/* ── PARA NEREYE GİDİYOR — kalem grubu kırılımı (/maliyet/gun-gun) ──
+            Food cost %31 diyor ama hangi grup? Süt mü, bardak mı, pasta mı?
+            Ürün-aç tüketimi × alış fiyatı, grup grup toplanır. */}
+        {gunGun && (() => {
+          const kolonlar = Array.isArray(gunGun.kolonlar) ? gunGun.kolonlar : [];
+          const satirlarG = Array.isArray(gunGun.satirlar) ? gunGun.satirlar : [];
+          const fiyatsiz = Array.isArray(gunGun.fiyat_eksik_kalemler) ? gunGun.fiyat_eksik_kalemler : [];
+          if (!kolonlar.length || !satirlarG.length) return null;
+          // Grup toplamı: tüm gün+şube satırları üzerinden
+          const gruplar = kolonlar.map((k) => ({
+            kod: k.kod,
+            baslik: k.baslik,
+            toplam: satirlarG.reduce((s, r) => s + sayi(r[k.kod]), 0),
+          })).filter((g) => g.toplam > 0).sort((a, b) => b.toplam - a.toplam);
+          const genelToplam = gruplar.reduce((s, g) => s + g.toplam, 0);
+          if (!genelToplam) return null;
+          return (
+            <div style={{ ...kartYuzey, padding: '15px 18px', marginBottom: 14 }}>
+              <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>
+                <span style={{ fontFamily: F.baslik, fontSize: 15, fontWeight: 600 }}>
+                  Para nereye gidiyor · kalem grubu · son {sayi(gunGun.gun) || 30} gün
+                </span>
+                <span style={{ fontSize: 11.5, color: R.not2 }}>
+                  ürün-aç tüketimi × alış fiyatı · toplam {fmt(genelToplam)}
+                </span>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {gruplar.slice(0, 10).map((g) => {
+                  const o = (g.toplam / genelToplam) * 100;
+                  return (
+                    <div key={g.kod} style={{ display: 'flex', alignItems: 'center', gap: 11 }}>
+                      <span style={{ fontSize: 11.5, width: 108, flexShrink: 0, color: R.metin2 }}>{g.baslik}</span>
+                      <span style={{ flex: 1, height: 8, borderRadius: 99, background: R.cizgi2, overflow: 'hidden' }}>
+                        <span style={{
+                          display: 'block', height: '100%', borderRadius: 99,
+                          width: `${Math.max(2, o)}%`,
+                          background: `linear-gradient(90deg, ${R.bakirKoyu}, ${R.bakir})`,
+                        }} />
+                      </span>
+                      <span style={{ fontSize: 11, color: R.not2, width: 42, textAlign: 'right', flexShrink: 0 }}>
+                        %{Math.round(o)}
+                      </span>
+                      <span style={{ fontFamily: F.mono, fontSize: 12, fontWeight: 700, width: 100, textAlign: 'right', flexShrink: 0 }}>
+                        {fmt(g.toplam)}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+              {/* Fiyatı tanımsız kalem = maliyete HİÇ girmiyor → food cost düşük çıkar */}
+              {fiyatsiz.length > 0 && (
+                <div style={{
+                  marginTop: 11, padding: '9px 13px', borderRadius: 10,
+                  background: `${R.kirmizi}12`, border: `1px solid ${R.kirmizi}33`,
+                  fontSize: 11.5, color: R.not, lineHeight: 1.55,
+                }}>
+                  ⚠ <b>{fiyatsiz.length} kalemin alış fiyatı tanımlı değil</b> — bu kalemler maliyete
+                  {' '}<b>hiç girmiyor</b>, food cost olduğundan düşük görünüyor:
+                  {' '}{fiyatsiz.slice(0, 8).join(' · ')}{fiyatsiz.length > 8 ? ` +${fiyatsiz.length - 8}` : ''}
                 </div>
               )}
             </div>
