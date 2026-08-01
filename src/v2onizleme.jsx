@@ -858,6 +858,41 @@ const MALIYET_UC = {
     },
     gun_satirlari: MALIYET_GUNLER,
   },
+  // Bekleyen sipariş ZENGİNLEŞTİRMESİ — v2 için yazılmış ama hiç bağlanmamıştı.
+  // id'ler kontrol-kulesi mock'undaki talep id'leriyle eşleşmeli.
+  '/api/ops/v2/bekleyen-siparisler': {
+    toplam: 2,
+    siparisler: [
+      {
+        // t1 = kule mock'undaki 'bekliyor' talebi; ürün adları BİREBİR eşleşmeli
+        id: 't1', sube_id: 's1', sube_adi: 'Köyceğiz', tarih: bugunISO,
+        personel_ad: 'Elif K.', not_aciklama: null,
+        stok_alarm_var: true, barem_risk_var: true, gereksiz_var: true,
+        merkez_kayit_eksik_var: false, uyari_var: true,
+        davranis_uyarilari: [{ tip: 'TEKRAR_TALEP', mesaj: 'aynı ürün 3 gün içinde 2. kez istendi' }],
+        kalemler: [
+          { urun_ad: 'Karton bardak 8 oz', adet: 2000, sube_depo_mevcut: 1800, sube_zaten_var: true,
+            merkez_rezerve: 400, merkez_min_stok: 1000, kaynak_kullanilabilir: 1200, kalan_gonderince: -800,
+            alarm_merkez: true, merkez_barem_risk: true, gonderim_kaynagi: 'merkez' },
+          { urun_ad: 'Süt 3.5%', adet: 40, sube_depo_mevcut: 0, sube_zaten_var: false,
+            merkez_rezerve: 0, merkez_min_stok: 20, kaynak_kullanilabilir: 180, kalan_gonderince: 140,
+            alarm_merkez: false, merkez_barem_risk: false, gonderim_kaynagi: 'merkez' },
+        ],
+      },
+      {
+        id: 't2', sube_id: 's2', sube_adi: 'Gazze', tarih: bugunISO,
+        personel_ad: 'Can D.', not_aciklama: null,
+        stok_alarm_var: false, barem_risk_var: false, gereksiz_var: false,
+        merkez_kayit_eksik_var: false, uyari_var: false,
+        davranis_uyarilari: [],
+        kalemler: [
+          { urun_ad: 'Çekirdek harman', adet: 12, sube_depo_mevcut: 2, sube_zaten_var: false,
+            merkez_rezerve: 0, merkez_min_stok: 10, kaynak_kullanilabilir: 90, kalan_gonderince: 78,
+            alarm_merkez: false, merkez_barem_risk: false, gonderim_kaynagi: 'merkez' },
+        ],
+      },
+    ],
+  },
   // Depo stoğunun TL DEĞERİ + 30 gün harcama (v2 bu ucu HİÇ çağırmıyordu;
   // /ops/depo-stok yalnız ADET veriyor). Yalnız `ozet` bloğu okunuyor.
   '/api/ops/v2/depo-ozet': {

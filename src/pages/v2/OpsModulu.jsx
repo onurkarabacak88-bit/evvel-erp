@@ -258,6 +258,8 @@ const kdKutuStil = (aktif) => ({
 export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGorunum }) {
   // ── SİPARİŞ AKIŞI + KULE ortak verisi ─────────────────────────────────────
   const [kule, setKule] = useState(null);        // kontrol-kulesi cevabı
+  // talep_id → /ops/v2/bekleyen-siparisler zenginleştirmesi (uyarı + stok kararı)
+  const [bekZengin, setBekZengin] = useState({});
   // Sipariş birleştirme (2026-07-31) — MEVCUT akış kanbanının 'bekliyor'
   // kolonunda çalışır; ayrı ekran/görünüm AÇILMADI.
   const [birlSecili, setBirlSecili] = useState({});  // talep_id → sube_id
@@ -640,6 +642,17 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     api('/ops/siparis/sevkiyat-hiz?gun=30')
       .then((d) => setHiz(d || {}))
       .catch(() => setHiz({}));
+    // BEKLEYEN SİPARİŞ ZENGİNLEŞTİRMESİ (/ops/v2/bekleyen-siparisler) — v2 için
+    // yazılmış ama hiç bağlanmamıştı. Kanban kartı "kaç kalem" diyordu; bu uç
+    // KARAR İÇİN GEREKEN üç şeyi ekliyor: şube zaten var mı (gereksiz sipariş),
+    // gönderirsek merkezde ne kalır (barem riski), davranış uyarısı var mı.
+    api('/ops/v2/bekleyen-siparisler?gun=7')
+      .then((d) => {
+        const m = {};
+        (Array.isArray(d?.siparisler) ? d.siparisler : []).forEach((s) => { m[String(s.id)] = s; });
+        setBekZengin(m);
+      })
+      .catch(() => setBekZengin({}));
   }, []);
 
   /** Kart seçimini aç/kapat. Sunucu kuralı: hepsi AYNI şubeden olmalı. */
@@ -1247,6 +1260,11 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
 
   const siparisAc = (s) => {
     const a = ASAMA[s.asama] || ASAMA.bekliyor;
+    // Bekleyen sipariş zenginleştirmesi — yalnız 'bekliyor' aşamasında dolu olur
+    const z = bekZengin[String(s.id)] || null;
+    const zKalem = z && Array.isArray(z.kalemler) ? z.kalemler : [];
+    const zKalemMap = {};
+    zKalem.forEach((k) => { zKalemMap[String(k.urun_ad || k.urun_id || '')] = k; });
     onCekmece?.({
       tip: 'SİPARİŞ',
       baslik: `${s.sube_adi || 'Şube'} · ${tarihKisa(s.tarih)}`,
@@ -1255,15 +1273,40 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
         { etiket: 'Aşama', deger: (a.ad || '').toLowerCase(), renk: a.renk },
         { etiket: 'Kalem çeşidi', deger: String((s.kalemler || []).length) },
         { etiket: 'Toplam adet', deger: String(sayi(s.kalem_sayisi)) },
-        { etiket: 'Hedef depo', deger: s.hedef_depo_sube_adi || 'atanmadı', renk: s.hedef_depo_sube_adi ? R.krem : R.amber },
+        z
+          ? {
+            etiket: 'Karar sinyali',
+            deger: z.gereksiz_var ? 'gereksiz?' : z.barem_risk_var ? 'barem riski' : z.stok_alarm_var ? 'stok alarmı' : 'temiz',
+            renk: z.gereksiz_var || z.barem_risk_var ? R.kirmizi : z.stok_alarm_var ? R.amber : R.yesil,
+          }
+          : { etiket: 'Hedef depo', deger: s.hedef_depo_sube_adi || 'atanmadı', renk: s.hedef_depo_sube_adi ? R.krem : R.amber },
       ],
-      listeBaslik: 'Talep kalemleri',
-      satirlar: (s.kalemler || []).slice(0, 14).map((k) => ({
-        ad: k?.urun_ad || '—',
-        detay: k?.birim ? String(k.birim) : '',
-        tutar: `${sayi(k?.adet)} adet`,
-      })),
+      listeBaslik: z ? 'Talep kalemleri · merkez stok durumu' : 'Talep kalemleri',
+      satirlar: (s.kalemler || []).slice(0, 14).map((k) => {
+        const zk = zKalemMap[String(k?.urun_ad || '')] || null;
+        // Karar için gereken üç sayı: şubede zaten var mı · merkezde ne kalır ·
+        // barem altına düşer mi. Sunucu hesaplıyordu, ekran hiç göstermiyordu.
+        const detay = zk
+          ? [
+            zk.sube_zaten_var ? `⚠ şubede zaten ${sayi(zk.sube_depo_mevcut)} var` : '',
+            zk.kalan_gonderince != null ? `gönderince merkezde ${sayi(zk.kalan_gonderince)} kalır` : '',
+            zk.merkez_barem_risk ? '⚠ barem altına düşer' : '',
+            zk.alarm_merkez ? '⚠ merkez alarmı' : '',
+          ].filter(Boolean).join(' · ')
+          : (k?.birim ? String(k.birim) : '');
+        return {
+          ad: k?.urun_ad || '—',
+          detay,
+          tutar: `${sayi(k?.adet)} adet`,
+        };
+      }),
       not: [
+        // Davranış uyarısı: aynı şube kısa aralıkla tekrar istiyor olabilir
+        z && Array.isArray(z.davranis_uyarilari) && z.davranis_uyarilari.length
+          ? `⚠ Davranış: ${z.davranis_uyarilari.map((u) => (typeof u === 'string' ? u : (u.mesaj || u.tip || ''))).filter(Boolean).join(' · ')}`
+          : '',
+        z?.gereksiz_var ? '⚠ Bazı kalemler şubenin kendi deposunda ZATEN VAR — sipariş gereksiz olabilir.' : '',
+        z?.merkez_kayit_eksik_var ? 'Bazı kalemlerin merkez stok kaydı yok — "gönderince ne kalır" hesaplanamadı.' : '',
         s.asama_metni,
         s.operasyon_yonlendirme_talimati ? `Talimat: ${s.operasyon_yonlendirme_talimati}` : '',
         s.asama === 'yolda' ? 'Teslim alma ŞUBEDE yapılır (görünür kabul) — masaüstünden teslim işaretlenmez.' : '',
@@ -1658,6 +1701,29 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
                         {s.hedef_depo_sube_adi ? ` · depo: ${s.hedef_depo_sube_adi}` : ''}
                         {s.asama === 'toptanci_bekliyor' ? ' · toptancıya yönlendirildi' : ''}
                       </div>
+                      {/* KARAR SİNYALİ — depoya yönlendirmeden ÖNCE görünmeli.
+                          Çekmeceyi açmadan "bu sipariş gereksiz mi / merkezi
+                          barem altına düşürür mü" sorusu cevaplanıyor. */}
+                      {(() => {
+                        const z = bekZengin[String(s.id)];
+                        if (!z || !z.uyari_var) return null;
+                        const haplar = [];
+                        if (z.gereksiz_var) haplar.push({ ad: 'şubede zaten var', renk: R.kirmizi });
+                        if (z.barem_risk_var) haplar.push({ ad: 'barem riski', renk: R.kirmizi });
+                        if (z.stok_alarm_var) haplar.push({ ad: 'merkez stok alarmı', renk: R.amber });
+                        if ((z.davranis_uyarilari || []).length) haplar.push({ ad: 'davranış uyarısı', renk: R.amber });
+                        if (!haplar.length) return null;
+                        return (
+                          <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginTop: 6 }}>
+                            {haplar.map((h, hi) => (
+                              <span key={hi} style={{
+                                padding: '2px 8px', borderRadius: 99, fontSize: 10, fontWeight: 700,
+                                background: `${h.renk}1e`, color: h.renk, whiteSpace: 'nowrap',
+                              }}>{h.ad}</span>
+                            ))}
+                          </div>
+                        );
+                      })()}
                       {kol.buton ? (
                         <button
                           onClick={(e) => {
