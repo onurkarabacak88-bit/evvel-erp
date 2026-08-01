@@ -950,6 +950,43 @@ const MALIYET_UC = {
       },
     },
   },
+  // Toptancıya GİDEN yönlendirme logu — v2 bu ucu HİÇ çağırmıyordu
+  // (ekran yalnız GELEN teslimi gösteriyordu).
+  '/api/ops/siparis/toptanci-listesi': {
+    gun: 14, donem: 'gun_14', tarih_bas: gunEkleISO(-14), tarih_bit: bugunISO,
+    filtre_etiket: 'Son 14 gün', sirala: 'en_son',
+    toplam_kayit: 3, toplam_satir: 6,
+    gonderimler: [
+      { id: 'tg1', tarih: bugunISO, saat: '10:24:00', olay_ts: `${bugunISO}T10:24`, sube_adi: 'Köyceğiz', tedarikci_ad: 'KAHVE DÜNYASI', not_aciklama: null, talep_id: 't1', kalem_sayisi: 2, toplam_adet: 2040,
+        kalemler: [{ urun_ad: 'Karton bardak 8 oz', adet: 2000 }, { urun_ad: 'Süt 3.5%', adet: 40 }], kalemler_ozet: 'Karton bardak 8 oz 2000 · Süt 3.5% 40' },
+      { id: 'tg2', tarih: gunEkleISO(-3), saat: '09:05:00', olay_ts: `${gunEkleISO(-3)}T09:05`, sube_adi: 'Gazze', tedarikci_ad: 'SÜTAŞ', not_aciklama: 'acil', talep_id: 't2', kalem_sayisi: 1, toplam_adet: 24,
+        kalemler: [{ urun_ad: 'Süt 3.5%', adet: 24 }], kalemler_ozet: 'Süt 3.5% 24' },
+      { id: 'tg3', tarih: gunEkleISO(-8), saat: '14:40:00', olay_ts: `${gunEkleISO(-8)}T14:40`, sube_adi: 'Zafer', tedarikci_ad: 'PAPER CUP CO.', not_aciklama: null, talep_id: null, kalem_sayisi: 3, toplam_adet: 160,
+        kalemler: [{ urun_ad: 'Karton bardak 12oz', adet: 100 }, { urun_ad: 'Kapak', adet: 40 }, { urun_ad: 'Peçete', adet: 20 }], kalemler_ozet: 'Karton bardak 12oz 100 · Kapak 40 · Peçete 20' },
+    ],
+    satirlar: [],
+  },
+  // Tüketim dörtgeni — v2 bu ucu HİÇ çağırmıyordu. sube_id ZORUNLU.
+  // ⚠️ null = o köşede VERİ YOK (sıfır değil) — sunucunun kendi kuralı.
+  '/api/duyu/dortgen': {
+    sube_id: 's0', sube_ad: 'ZAFER',
+    kesit: { bas: gunEkleISO(-6), bit: bugunISO, gun: 7 },
+    kalem_sayisi: 5,
+    rozetler: {
+      giren: { kaynak: 'sube_depo_stok_hareket (teslim)', kesit: `${gunEkleISO(-6)}→${bugunISO}` },
+      kullanim: { kaynak: 'operasyon_defter URUN_AC', kesit: `${gunEkleISO(-6)}→${bugunISO}` },
+      satis: { kaynak: 'Evo hs_rapor', kesit: `${gunEkleISO(-6)}→${bugunISO}` },
+      sayim: { kaynak: 'envanter_duzeltme (onaylı sayım)', kesit: `${gunEkleISO(-6)}→${bugunISO}`, kapsam: "yalnız neden='sayim_duzeltme'; kalibrasyon ayrı" },
+    },
+    kalemler: [
+      { kalem_kodu: 'sut_litre', kalem_adi: 'Süt 3.5%', giren: 400, kullanim: 372, satis: 368, sayim_delta: -12 },
+      { kalem_kodu: 'bardak_kucuk', kalem_adi: 'Bardak küçük', giren: 2000, kullanim: 1840, satis: 1795, sayim_delta: -40 },
+      { kalem_kodu: 'pasta_adet', kalem_adi: 'Pasta (toplam)', giren: 60, kullanim: 54, satis: 51, sayim_delta: null },
+      { kalem_kodu: 'surup_adet', kalem_adi: 'Şurup', giren: 12, kullanim: 9, satis: null, sayim_delta: null },
+      { kalem_kodu: 'pecete_paket', kalem_adi: 'Peçete', giren: 20, kullanim: null, satis: null, sayim_delta: 0 },
+    ],
+    not: 'DÖRT KÖŞE YAN YANA — uyumsuzluk skoru/yorum YOK.',
+  },
   // Şube operasyon kalitesi — v2 bu ucu HİÇ çağırmıyordu.
   // veri_kalite bloğu "ölçülemedi" ile "sıfır" ayrımını taşır.
   '/api/ops/metrics/sube-operasyon-kalite': {

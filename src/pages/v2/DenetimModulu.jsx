@@ -122,6 +122,13 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
   const [bulguKatman, setBulguKatman] = useState('cikarim');
   const [mutabakat, setMutabakat] = useState(null);
   const [mutHata, setMutHata] = useState('');
+  // ── TÜKETİM DÖRTGENİ (/duyu/dortgen) — şube seviyesinde çalışır.
+  // Ödeme mutabakatı İKİ köşeyi (kasa ↔ ödeme kaydı) karşılaştırır; dörtgen
+  // DÖRT köşeyi yan yana koyar: giren · kullanım · satış · sayım.
+  // Aynı iş (mutabakat), aynı görünüm — ayrı ekran açılmadı.
+  const [dortSubeler, setDortSubeler] = useState([]);
+  const [dortSube, setDortSube] = useState('');
+  const [dortgen, setDortgen] = useState(null);
   const [beyin, setBeyin] = useState(null);
   const [dilekler, setDilekler] = useState(null);
   // ── YERLİ BEYİN SOHBETİ (köprü kaldırma turu, 2026-07-30) ─────────────────
@@ -187,6 +194,12 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
 
   const mutYukle = useCallback(() => {
     setMutHata('');
+    // Şube listesi — dörtgen ŞUBE seviyesinde çalışır (sube_id zorunlu)
+    api('/subeler').then((d) => {
+      const liste = Array.isArray(d) ? d : (d?.subeler || []);
+      setDortSubeler(liste);
+      if (liste.length) setDortSube((s) => s || String(liste[0].id));
+    }).catch(() => setDortSubeler([]));
     api('/duyu/odeme-mutabakat?gun=60')
       .then((d) => setMutabakat(d || {}))
       .catch((e) => setMutHata(e?.message || ''));
@@ -301,10 +314,17 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
     // Bulgular ekranı iki katman taşır (çıkarım + ham gözlem) — ikisi de yüklenir
     if (gorunum === 'anomali' || gorunum === 'olaylar') olayYukle();
     if (gorunum === 'mutabakat') mutYukle();
+    // Dörtgen seçili şubeye göre ayrı çekilir (sube_id zorunlu uç)
+    if (gorunum === 'mutabakat' && dortSube) {
+      api(`/duyu/dortgen?sube_id=${encodeURIComponent(dortSube)}&gun=7`)
+        .then((d) => setDortgen(d || null))
+        .catch(() => setDortgen(null));
+    }
     if (gorunum === 'bag') bagYukle();
     if (gorunum === 'duyu') duyuYukle();
     if (gorunum === 'strateji') stratejiYukle();
-  }, [gorunum, truthYukle, olayYukle, mutYukle, bagYukle, duyuYukle, stratejiYukle]);
+    // dortSube bağımlılıkta: şube değişince dörtgen yeniden çekilir
+  }, [gorunum, dortSube, truthYukle, olayYukle, mutYukle, bagYukle, duyuYukle, stratejiYukle]);
 
   // ════════════════════════ GÖRÜNÜM: BUGÜNKÜ BULGULAR ═══════════════════════
   if (gorunum === 'anomali') {
@@ -581,6 +601,95 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
             ))}
           </div>
         )}
+        {/* ── TÜKETİM DÖRTGENİ — dört köşe yan yana ──
+            Ödeme mutabakatı İKİ köşeyi karşılaştırır (kasa ↔ ödeme kaydı).
+            Bu blok DÖRT köşeyi koyar: giren · kullanım · satış · sayım.
+            ⚠️ Sunucunun kendi kuralı: "—" = o köşede VERİ YOK (sıfır DEĞİL).
+            Skor/yorum ÜRETİLMEZ — köşeler yan yana, hüküm insanın. */}
+        {dortSubeler.length > 0 && (
+          <div style={{ ...kartYuzey, padding: '15px 18px', marginBottom: 16 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 11 }}>
+              <span style={{ fontFamily: F.baslik, fontSize: 15, fontWeight: 600 }}>
+                Tüketim dörtgeni · şube
+              </span>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                {dortSubeler.slice(0, 6).map((s) => {
+                  const aktif = String(dortSube) === String(s.id);
+                  return (
+                    <div key={s.id} onClick={() => setDortSube(String(s.id))} style={{
+                      padding: '5px 12px', borderRadius: 99, fontSize: 11.5, fontWeight: 600, cursor: 'pointer',
+                      background: aktif ? `${R.bakir}22` : R.girinti,
+                      color: aktif ? R.bakir : R.not,
+                      border: `1px solid ${aktif ? `${R.bakir}55` : R.cizgi3}`,
+                    }}>{s.ad || s.id}</div>
+                  );
+                })}
+              </div>
+              {dortgen?.kesit && (
+                <span style={{ fontSize: 11, color: R.not2, marginLeft: 'auto', fontFamily: F.mono }}>
+                  {dortgen.kesit.bas} → {dortgen.kesit.bit}
+                </span>
+              )}
+            </div>
+            <div style={{ fontSize: 11.5, color: R.not2, marginBottom: 10, lineHeight: 1.55 }}>
+              Dört kaynak yan yana: <b>giren</b> (teslim) · <b>kullanım</b> (ürün-aç) ·
+              {' '}<b>satış</b> (Evo) · <b>sayım</b> (onaylı düzeltme).
+              {' '}<b style={{ color: R.amber }}>“—” o köşede veri YOK demektir, sıfır değil.</b>
+              {' '}Uyumsuzluk skoru üretilmez — değerlendirme insanındır.
+            </div>
+            {!dortgen ? (
+              <div style={{ fontSize: 12, color: R.not3, padding: '10px 0' }}>Dörtgen verisi yükleniyor…</div>
+            ) : !(dortgen.kalemler || []).length ? (
+              <BosDurum metin="Bu şube ve dönem için dörtgen verisi yok." />
+            ) : (
+              <Tablo
+                baslik={`${dortgen.sube_ad || '—'} · ${sayi(dortgen.kalem_sayisi)} kalem`}
+                not="en çok köşesi dolu kalemler üstte (karşılaştırılabilir olanlar)"
+                kolonlar={[
+                  { ad: 'Kalem' }, { ad: 'Giren', sag: 1 }, { ad: 'Kullanım', sag: 1 },
+                  { ad: 'Satış', sag: 1 }, { ad: 'Sayım Δ', sag: 1 },
+                ]}
+                satirlar={(dortgen.kalemler || []).slice(0, 25).map((k, i) => {
+                  // null → "—" (veri yok). 0 gerçek sıfırdır, ayrı gösterilir.
+                  const h = (v, renk) => (v == null
+                    ? { v: '—', mono: true, sag: true, renk: R.not3, sira: -1 }
+                    : { v: String(sayi(v)), mono: true, sag: true, renk: renk || R.krem, sira: sayi(v) });
+                  return {
+                    id: k.kalem_kodu || `dg-${i}`,
+                    hucreler: [
+                      { v: k.kalem_adi || k.kalem_kodu || '—', kalin: true },
+                      h(k.giren, R.yesil),
+                      h(k.kullanim),
+                      h(k.satis, R.mavi),
+                      k.sayim_delta == null
+                        ? { v: '—', mono: true, sag: true, renk: R.not3, sira: -1 }
+                        : {
+                          v: `${sayi(k.sayim_delta) > 0 ? '+' : ''}${sayi(k.sayim_delta)}`,
+                          mono: true, sag: true, kalin: true, sira: sayi(k.sayim_delta),
+                          renk: sayi(k.sayim_delta) < 0 ? R.kirmizi : R.amber,
+                        },
+                    ],
+                  };
+                })}
+              />
+            )}
+            {dortgen?.rozetler && Object.keys(dortgen.rozetler).length > 0 && (
+              <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap', marginTop: 4 }}>
+                {Object.entries(dortgen.rozetler).map(([kose, r]) => (
+                  <span key={kose} title={r?.kapsam || r?.hata || ''} style={{
+                    padding: '4px 10px', borderRadius: 99, fontSize: 10.5,
+                    background: r?.hata ? `${R.kirmizi}18` : R.girinti,
+                    color: r?.hata ? R.kirmizi : R.not2,
+                    border: `1px solid ${r?.hata ? `${R.kirmizi}44` : R.cizgi3}`,
+                  }}>
+                    {kose}: {r?.hata ? 'veri alınamadı' : (r?.kesit || r?.kaynak || '—')}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         <KopruButon ad="🧠 Beyne sor (Duyu Ağı)" onTikla={() => onGorunum?.('duyu')} />
       </>
     );

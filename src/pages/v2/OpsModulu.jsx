@@ -619,6 +619,8 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
   // ── TEDARİK & SİNYAL (ops-merkez P3 sekmeleri, 2026-07-30) ────────────────
   // toptancıdan gelenler · şube notları · stok tahmini · KPI delta
   const [tsSekme, setTsSekme] = useState('teslim');
+  // /ops/siparis/toptanci-listesi — toptancıya GİDEN yönlendirme logu
+  const [tsGiden, setTsGiden] = useState(null);
   const [tsTeslim, setTsTeslim] = useState(null);
   const [tsNotlar, setTsNotlar] = useState(null);
   const [tsTahmin, setTsTahmin] = useState(null);
@@ -765,6 +767,12 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     api('/ops/toptanci-teslimler?gun=14')
       .then((d) => setTsTeslim(d || {}))
       .catch((e) => setTsHata(e?.message || ''));
+    // GİDEN yön (/ops/siparis/toptanci-listesi) — v2 bu ucu HİÇ çağırmıyordu.
+    // Ekran yalnız GELEN teslimi gösteriyordu; "biz ne yolladık" tarafı yoktu,
+    // dolayısıyla "yolladık ama gelmedi" sorusu bu ekranda sorulamıyordu.
+    api('/ops/siparis/toptanci-listesi?donem=gun_14&sirala=en_son&limit=200')
+      .then((d) => setTsGiden(d || null))
+      .catch(() => setTsGiden(null));
     api('/ops/sube-notlar?limit=60')
       .then((d) => setTsNotlar(Array.isArray(d?.satirlar) ? d.satirlar : []))
       .catch(() => setTsNotlar([]));
@@ -4814,7 +4822,11 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     const kpilar = Array.isArray(tsKpi?.kpilar) ? tsKpi.kpilar : [];
     const kritikTahmin = tahminler.filter((t) => sayi(t.kalan_gun) > 0 && sayi(t.kalan_gun) <= 7);
     const kotuKpi = kpilar.filter((k) => k.yon === 'kotu');
+    // Aynı ilişkinin İKİ YÖNÜ yan yana: ne gönderdik ↔ ne geldi.
+    // Eskiden yalnız "gelen" vardı; giden yönlendirme logu hiç görünmüyordu.
+    const gidenler = Array.isArray(tsGiden?.gonderimler) ? tsGiden.gonderimler : [];
     const ALT = [
+      ['giden', `🚚 Toptancıya giden (${gidenler.length})`],
       ['teslim', `📦 Toptancıdan gelen (${teslimSube.length})`],
       ['notlar', `📝 Şube notları (${notlar.length})`],
       ['tahmin', `🔮 Stok tahmini (${tahminler.length})`],
@@ -4839,6 +4851,60 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
             }}>{ad}</div>
           ))}
         </div>
+
+        {tsSekme === 'giden' && (gidenler.length ? (
+          <Tablo
+            baslik={`Toptancıya giden · ${tsGiden?.filtre_etiket || 'son 14 gün'}`}
+            not={`${sayi(tsGiden?.toplam_kayit)} gönderim · ${sayi(tsGiden?.toplam_satir)} kalem satırı — satıra tıkla → kalem dökümü`}
+            kolonlar={[
+              { ad: 'Tarih' }, { ad: 'Tedarikçi' }, { ad: 'Şube' },
+              { ad: 'Kalem', sag: 1 }, { ad: 'Toplam adet', sag: 1 }, { ad: 'Ne gönderildi' },
+            ]}
+            satirlar={gidenler.slice(0, 40).map((g, i) => ({
+              id: g.id || `tg-${i}`,
+              _g: g,
+              hucreler: [
+                {
+                  siraMetin: String(g.tarih || ''),
+                  v: (
+                    <span style={{ display: 'inline-flex', flexDirection: 'column', gap: 2 }}>
+                      <span style={{ fontFamily: F.mono }}>{tarihKisa(g.tarih)}</span>
+                      {g.saat ? <span style={{ fontSize: 10, color: R.not2, fontFamily: F.mono }}>{String(g.saat).slice(0, 5)}</span> : null}
+                    </span>
+                  ),
+                },
+                { v: g.tedarikci_ad || '—', kalin: true },
+                { v: g.sube_adi || '—', renk: R.not },
+                { v: String(sayi(g.kalem_sayisi)), mono: true, sag: true, renk: R.not },
+                { v: String(sayi(g.toplam_adet)), mono: true, sag: true, kalin: true },
+                { v: kisalt(g.kalemler_ozet || '—', 46), renk: R.not2 },
+              ],
+            }))}
+            onSatir={({ _g }) => {
+              const kl = Array.isArray(_g?.kalemler) ? _g.kalemler : [];
+              onCekmece?.({
+                tip: 'TOPTANCIYA GÖNDERİM',
+                baslik: _g?.tedarikci_ad || 'Tedarikçi',
+                alt: `${tarihKisa(_g?.tarih)}${_g?.saat ? ` ${String(_g.saat).slice(0, 5)}` : ''} · ${_g?.sube_adi || '—'} için`,
+                kpi: [
+                  { etiket: 'Kalem', deger: String(sayi(_g?.kalem_sayisi)) },
+                  { etiket: 'Toplam adet', deger: String(sayi(_g?.toplam_adet)) },
+                  { etiket: 'Talep', deger: _g?.talep_id ? `#${String(_g.talep_id).slice(-8)}` : 'bağlantısız' },
+                ],
+                listeBaslik: 'Gönderilen kalemler',
+                satirlar: kl.slice(0, 30).map((k) => ({
+                  ad: k?.urun_ad || k?.kalem_adi || '—',
+                  detay: k?.birim ? String(k.birim) : '',
+                  tutar: `${sayi(k?.adet)} adet`,
+                })),
+                not: [
+                  _g?.not_aciklama ? `Not: ${_g.not_aciklama}` : '',
+                  'Bu liste GİDEN yönlendirmedir (WhatsApp ile toptancıya iletilen). Gelen teslim ayrı sekmede — ikisi tutmuyorsa eksik/geç teslim var demektir.',
+                ].filter(Boolean).join(' · '),
+              });
+            }}
+          />
+        ) : <BosDurum metin="Son 14 günde toptancıya yönlendirilmiş sipariş yok." />)}
 
         {tsSekme === 'teslim' && (teslimSube.length ? (
           <Tablo
