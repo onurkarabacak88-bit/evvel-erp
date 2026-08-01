@@ -489,8 +489,39 @@ const OPS_UC = {
       { sube_id: 's1', sube_adi: 'KÖYCEĞİZ', tamam: 6, toplam: 8 },
     ],
   },
+  // ⚠️ Sunucu sözleşmesi (operasyon_merkez_api:4813). Eski mock `kalemler:[…]`
+  // yazıyordu — uç böyle bir anahtar DÖNDÜRMÜYOR; ekran da onu aradığı için
+  // liste hep boş kalıyor ama tezgâhta dolu görünüyordu (sahte yeşil gizlendi).
   '/api/ops/stok-kayip-analiz': {
-    kalemler: [{ id: 'k1', kalem_adi: 'Plastik bardak', sube_adi: 'ZAFER', kayip: 698, not: 'kayıtsız çıkış şüphesi' }],
+    gun_sayi: 45, sube_id: null, urun: null, is_gunu_siniri_saat: 5,
+    veri_eksik_gun_sayisi: 3,
+    veri_eksik_gun: [
+      { sube_id: 's2', sube_adi: 'ALSANCAK', tarih: gunEkleISO(-4) },
+      { sube_id: 's2', sube_adi: 'ALSANCAK', tarih: gunEkleISO(-9) },
+      { sube_id: 's3', sube_adi: 'GAZZE', tarih: gunEkleISO(-12) },
+    ],
+    gunluk_satirlar: [
+      { tarih: gunEkleISO(-1), hafta_gun: 'Cuma', sube_id: 's0', sube_adi: 'ZAFER', personel_id: 'p1', personel_ad: 'Elif Kaya', urun: 'bardak_plastik', urun_ad: 'Plastik bardak', acilis: 80, eklenen: 20, kapanis: 62, tahmini_tuketim_kayip: 38, acik: 38, fazla: 0 },
+      { tarih: gunEkleISO(-2), hafta_gun: 'Perşembe', sube_id: 's0', sube_adi: 'ZAFER', personel_id: 'p1', personel_ad: 'Elif Kaya', urun: 'bardak_plastik', urun_ad: 'Plastik bardak', acilis: 75, eklenen: 25, kapanis: 58, tahmini_tuketim_kayip: 42, acik: 42, fazla: 0 },
+      { tarih: gunEkleISO(-3), hafta_gun: 'Çarşamba', sube_id: 's1', sube_adi: 'KÖYCEĞİZ', personel_id: 'p2', personel_ad: 'Mert Can', urun: 'sut_litre', urun_ad: 'Süt (L)', acilis: 24, eklenen: 6, kapanis: 12, tahmini_tuketim_kayip: 18, acik: 18, fazla: 0 },
+      { tarih: gunEkleISO(-5), hafta_gun: 'Pazartesi', sube_id: 's3', sube_adi: 'GAZZE', personel_id: 'p3', personel_ad: 'Deniz Ay', urun: 'su_adet', urun_ad: 'Su', acilis: 30, eklenen: 0, kapanis: 36, tahmini_tuketim_kayip: -6, acik: 0, fazla: 6 },
+    ],
+    sube_ozet: [
+      { sube_id: 's0', sube_adi: 'ZAFER', toplam_acik: 80, acik_kalem: 2, acik_gun_sayisi: 2 },
+      { sube_id: 's1', sube_adi: 'KÖYCEĞİZ', toplam_acik: 18, acik_kalem: 1, acik_gun_sayisi: 1 },
+    ],
+    personel_ozet: [
+      { personel_id: 'p1', personel_ad: 'Elif Kaya', sube_id: 's0', sube_adi: 'ZAFER', toplam_acik: 80, acik_kalem: 2, acik_gun_sayisi: 2, risk_seviyesi: 'yuksek', cok_sube: false },
+      { personel_id: 'p2', personel_ad: 'Mert Can', sube_id: 's1', sube_adi: 'KÖYCEĞİZ', toplam_acik: 18, acik_kalem: 1, acik_gun_sayisi: 1, risk_seviyesi: 'orta', cok_sube: true },
+    ],
+    surekli_acik_personel: [
+      { personel_id: 'p1', personel_ad: 'Elif Kaya', sube_adi: 'ZAFER', toplam_acik: 80, acik_gun_sayisi: 2, risk_seviyesi: 'yuksek', cok_sube: false },
+      { personel_id: 'p2', personel_ad: 'Mert Can', sube_adi: 'KÖYCEĞİZ', toplam_acik: 18, acik_gun_sayisi: 1, risk_seviyesi: 'orta', cok_sube: true },
+    ],
+    haftalik_pattern: [
+      { sube_id: 's0', sube_adi: 'ZAFER', urun: 'bardak_plastik', urun_ad: 'Plastik bardak', hafta_gun: 'Cuma', toplam_acik: 114, ornek_sayisi: 3, ortalama_acik: 38 },
+      { sube_id: 's1', sube_adi: 'KÖYCEĞİZ', urun: 'sut_litre', urun_ad: 'Süt (L)', hafta_gun: 'Çarşamba', toplam_acik: 36, ornek_sayisi: 2, ortalama_acik: 18 },
+    ],
   },
   // Bar Akışı (ops-merkez P0 sekmeleri)
   // Açılış kasası — fark_seviye: ±50 normal · 50-200 uyarı · 200+ kritik.

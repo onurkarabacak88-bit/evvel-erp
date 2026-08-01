@@ -4024,8 +4024,26 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
       ? dnFire.kayitlar : (Array.isArray(dnFire?.son_kayitlar) ? dnFire.son_kayitlar : []);
     const fisListe = Array.isArray(dnFis?.kayitlar) ? dnFis.kayitlar
       : (Array.isArray(dnFis?.satirlar) ? dnFis.satirlar : (Array.isArray(dnFis) ? dnFis : []));
-    const kayipListe = Array.isArray(dnKayip?.kalemler) ? dnKayip.kalemler
-      : (Array.isArray(dnKayip?.satirlar) ? dnKayip.satirlar : []);
+    // 🐞 SAHTE YEŞİL: sunucu diziyi `gunluk_satirlar` adıyla döndürüyor
+    // (operasyon_merkez_api:4817). Eski kod `kalemler`/`satirlar` arıyordu →
+    // liste HER ZAMAN boş → KPI "0 kalem" ve ekran "hareketler dengede ✓"
+    // diyordu. Bu bir HÜKÜMDÜ, veri değil: 45 günün birikmiş açığı hiç
+    // görünmüyordu. Satır anahtarları da yanlıştı (kalem_adi/kayip/fark/adet
+    // yerine gerçeği urun_ad/acik/fazla/tahmini_tuketim_kayip).
+    const kayipHam = Array.isArray(dnKayip?.gunluk_satirlar) ? dnKayip.gunluk_satirlar
+      : (Array.isArray(dnKayip?.kalemler) ? dnKayip.kalemler
+        : (Array.isArray(dnKayip?.satirlar) ? dnKayip.satirlar : []));
+    // Yalnız AÇIK (eksik) satırlar uyarıdır; `fazla` çıkanlar ayrı okunur.
+    const kayipListe = kayipHam.filter((x) => sayi(x.acik) > 0 || sayi(x.kayip) > 0);
+    const kayipFazla = kayipHam.filter((x) => sayi(x.fazla) > 0);
+    const kayipSube = Array.isArray(dnKayip?.sube_ozet) ? dnKayip.sube_ozet : [];
+    const kayipPattern = Array.isArray(dnKayip?.haftalik_pattern) ? dnKayip.haftalik_pattern : [];
+    const kayipSurekli = Array.isArray(dnKayip?.surekli_acik_personel) ? dnKayip.surekli_acik_personel : [];
+    const kayipCokSube = kayipSurekli.filter((p) => p.cok_sube).length;
+    // ⚠️ ÖLÇÜLEMEYEN GÜN: açılış eventi olmayan kapanışlar. Bunlar "kayıp yok"
+    // DEĞİL "ölçülemedi" demektir — sıfır gibi göstermek yanlış güven verir.
+    const kayipOlculemeyen = sayi(dnKayip?.veri_eksik_gun_sayisi);
+    const kayipToplamAcik = kayipSube.reduce((s, x) => s + sayi(x.toplam_acik), 0);
     const kontrolSatir = Array.isArray(dnKontrol?.subeler) ? dnKontrol.subeler
       : (Array.isArray(dnKontrol?.satirlar) ? dnKontrol.satirlar : []);
     const gunDegis = (n) => {
@@ -4053,7 +4071,14 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
           { etiket: 'Bekleyen uyumsuzluk', deger: String(sayi(dnUyumsuz?.gun_bekleyen)), alt: `${sayi(dnUyumsuz?.gun_toplam)} kayıt · ${sayi(dnUyumsuz?.gun_cozuldu)} çözüldü`, renk: sayi(dnUyumsuz?.gun_bekleyen) ? R.kirmizi : R.yesil },
           { etiket: 'Fire bildirimi', deger: String(sayi(dnFire?.gun_toplam)), alt: `${sayi(dnFire?.toplam_adet_gun)} adet · ${tarihKisa(barTarih)}`, renk: sayi(dnFire?.gun_toplam) ? R.amber : R.yesil },
           { etiket: 'Fişsiz gider', deger: String(fisListe.length), alt: 'son 7 gün · belge bekliyor', renk: fisListe.length ? R.amber : R.yesil },
-          { etiket: 'Stok kaybı kalemi', deger: String(kayipListe.length), alt: 'son 45 gün analizi', renk: kayipListe.length ? R.amber : R.yesil },
+          {
+            etiket: 'Stok kaybı',
+            deger: kayipToplamAcik ? String(kayipToplamAcik) : String(kayipListe.length),
+            alt: kayipToplamAcik
+              ? `adet açık · ${kayipListe.length} kalem-gün · 45 gün`
+              : (kayipOlculemeyen ? `${kayipOlculemeyen} gün ÖLÇÜLEMEDİ` : 'son 45 gün analizi'),
+            renk: kayipListe.length ? R.amber : kayipOlculemeyen ? R.not : R.yesil,
+          },
         ]} />
 
         <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -4282,22 +4307,126 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
           />
         ) : <BosDurum metin="Kontrol özeti verisi yok." />)}
 
-        {dnSekme === 'kayip' && (kayipListe.length ? (
-          <Tablo
-            baslik="Stok kaybı analizi · son 45 gün"
-            not="kayıtlı hareketle açıklanmayan azalma — aday, hüküm değil"
-            kolonlar={[{ ad: 'Kalem' }, { ad: 'Şube' }, { ad: 'Kayıp', sag: 1 }, { ad: 'Not' }]}
-            satirlar={kayipListe.slice(0, 40).map((x, i) => ({
-              id: x.id || `ky-${i}`,
-              hucreler: [
-                { v: x.kalem_adi || x.urun_ad || '—', kalin: true },
-                { v: x.sube_adi || x.sube_ad || '—', renk: R.not },
-                { v: String(sayi(x.kayip ?? x.fark ?? x.adet)), mono: true, sag: true, kalin: true, renk: R.kirmizi },
-                { v: x.not || x.aciklama || '—', renk: R.not },
-              ],
-            }))}
-          />
-        ) : <BosDurum metin="Stok kaybı bulgusu yok — hareketler dengede. ✓" />)}
+        {dnSekme === 'kayip' && (
+          <>
+            {/* ÖLÇÜLEMEYEN GÜN — "kayıp yok" ile karıştırılmaz. Açılış eventi
+                olmayan kapanışta denklem kurulamaz; sıfır göstermek yanlış
+                güven verir, o yüzden ayrı ve önce söylenir. */}
+            {kayipOlculemeyen > 0 && (
+              <div style={{
+                ...kartYuzey, padding: '11px 16px', marginBottom: 12, borderColor: `${R.amber}44`,
+                display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+              }}>
+                <span style={rozetHap(R.amber)}>⚠ ölçülemeyen gün</span>
+                <span style={{ fontSize: 11.5, color: R.not }}>
+                  {kayipOlculemeyen} şube-günde açılış sayımı yok — o günler için denklem
+                  kurulamadı. Bu <b>“kayıp yok” demek değil</b>, “ölçülemedi” demektir.
+                </span>
+              </div>
+            )}
+
+            {/* ŞUBE ÖZETİ — 45 günün birikmiş açığı. Bu ekranın kendi katkısı:
+                tek günün değil KÜMÜLATİF tablo (tek gün denklemi Ürün
+                uyumsuzluğu sekmesinde, beyan edilen fire ise Fire sekmesinde). */}
+            {kayipSube.length > 0 && (
+              <Tablo
+                baslik={`Şube bazında birikmiş açık · son ${sayi(dnKayip?.gun_sayi) || 45} gün`}
+                not="açılış + eklenen − kapanış; kayıtlı hareketle açıklanmayan azalma"
+                kolonlar={[{ ad: 'Şube' }, { ad: 'Toplam açık', sag: 1 }, { ad: 'Kalem-gün', sag: 1 }, { ad: 'Açık gün', sag: 1 }]}
+                satirlar={kayipSube.slice(0, 20).map((x, i) => ({
+                  id: x.sube_id || `ks-${i}`,
+                  hucreler: [
+                    { v: x.sube_adi || '—', kalin: true },
+                    { v: String(sayi(x.toplam_acik)), mono: true, sag: true, kalin: true, renk: R.kirmizi },
+                    { v: String(sayi(x.acik_kalem)), mono: true, sag: true, renk: R.not },
+                    { v: `${sayi(x.acik_gun_sayisi)} gün`, mono: true, sag: true, renk: R.not },
+                  ],
+                }))}
+              />
+            )}
+
+            {/* PERSONEL EKSENİ — ROL AYRIMI: kişi listesi ve hükmü
+                Ekip ▸ Personel Denetimi'nde kalır (/ops/personel-davranis-analiz
+                orada zaten var). Burada YALNIZ sayı + köprü; aynı kişi listesini
+                iki ekrana basmak mükerrer yapı olurdu. */}
+            {kayipSurekli.length > 0 && (
+              <div style={{
+                ...kartYuzey, padding: '13px 18px', marginBottom: 16, borderColor: `${R.kirmizi}44`,
+                display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
+              }}>
+                <span style={rozetHap(R.kirmizi)}>⚠ sürekli açık veren personel</span>
+                <span style={{ fontSize: 12, color: R.not }}>
+                  {kayipSurekli.length} personel birden fazla günde açık veriyor
+                  {kayipCokSube ? ` · ${kayipCokSube} kişi birden fazla şubede` : ''}.
+                  {' '}Kişi kırılımı ve hüküm Ekip ▸ Personel Denetimi'nde.
+                </span>
+                <button
+                  onClick={() => onKopru?.('__modul:ekip:denetim')}
+                  style={{
+                    marginLeft: 'auto', padding: '7px 14px', borderRadius: 10, cursor: 'pointer',
+                    border: `1px solid ${R.bakir}66`, background: 'rgba(217,154,78,.14)',
+                    color: R.bakirAcik, fontSize: 11.5, fontWeight: 700, fontFamily: 'inherit',
+                  }}
+                >Personel Denetimi'ne git →</button>
+              </div>
+            )}
+
+            {/* HAFTA GÜNÜ DESENİ — "hangi gün tekrar ediyor" sorusu */}
+            {kayipPattern.length > 0 && (
+              <Tablo
+                baslik="Hafta günü deseni · tekrar eden açık"
+                not="aynı ürün + aynı gün tekrar ediyorsa desen vardır — öneri, hüküm değil"
+                kolonlar={[{ ad: 'Şube' }, { ad: 'Ürün' }, { ad: 'Gün' }, { ad: 'Ortalama açık', sag: 1 }, { ad: 'Örnek', sag: 1 }]}
+                satirlar={kayipPattern.slice(0, 12).map((x, i) => ({
+                  id: `kp-${i}`,
+                  hucreler: [
+                    { v: x.sube_adi || '—', kalin: true },
+                    { v: x.urun_ad || x.urun || '—' },
+                    // hafta_gun sunucuda ZATEN Türkçe gün adı (gun_adlari[weekday()])
+                    { v: x.hafta_gun || '—', renk: R.not },
+                    { v: trSayi(sayi(x.ortalama_acik)), mono: true, sag: true, kalin: true, renk: R.amber },
+                    { v: `${sayi(x.ornek_sayisi)}×`, mono: true, sag: true, renk: R.not },
+                  ],
+                }))}
+              />
+            )}
+
+            {kayipListe.length ? (
+              <Tablo
+                baslik={`Kalem kalem · gün gün${kayipFazla.length ? ` · ${kayipFazla.length} satırda FAZLA çıktı` : ''}`}
+                not="kayıtlı hareketle açıklanmayan azalma — aday, hüküm değil"
+                kolonlar={[
+                  { ad: 'Tarih' }, { ad: 'Şube' }, { ad: 'Ürün' }, { ad: 'Personel' },
+                  { ad: 'Açılış', sag: 1 }, { ad: 'Eklenen', sag: 1 }, { ad: 'Kapanış', sag: 1 }, { ad: 'Açık', sag: 1 },
+                ]}
+                satirlar={kayipListe.slice(0, 40).map((x, i) => ({
+                  id: `ky-${i}`,
+                  hucreler: [
+                    { v: tarihKisa(x.tarih), mono: true, renk: R.not },
+                    { v: x.sube_adi || '—', kalin: true },
+                    { v: x.urun_ad || x.urun || x.kalem_adi || '—' },
+                    { v: x.personel_ad || '—', renk: R.not2 },
+                    { v: String(sayi(x.acilis)), mono: true, sag: true, renk: R.not },
+                    { v: sayi(x.eklenen) ? String(sayi(x.eklenen)) : '—', mono: true, sag: true, renk: R.not },
+                    { v: String(sayi(x.kapanis)), mono: true, sag: true, renk: R.not },
+                    { v: String(sayi(x.acik) || sayi(x.kayip)), mono: true, sag: true, kalin: true, renk: R.kirmizi },
+                  ],
+                }))}
+              />
+            ) : (
+              <BosDurum metin={kayipOlculemeyen > 0
+                ? 'Ölçülebilen günlerde stok açığı bulunmadı — ama yukarıdaki ölçülemeyen günler hesaba katılmadı.'
+                : 'Stok kaybı bulgusu yok — hareketler dengede. ✓'} />
+            )}
+
+            {sayi(dnKayip?.is_gunu_siniri_saat) > 0 && (
+              <div style={{ fontSize: 11, color: R.not2, marginTop: -4, marginBottom: 12 }}>
+                İş günü sınırı: gece {sayi(dnKayip.is_gunu_siniri_saat)}:00'den önceki kapanış
+                bir önceki güne yazılır.
+              </div>
+            )}
+          </>
+        )}
 
         <div style={{ fontSize: 11.5, color: R.not, marginTop: 12, marginBottom: 16, lineHeight: 1.55 }}>
           ℹ Hepsi ÖNERİ-ONLY: bu ekran uyumsuzluğu GÖSTERİR, hüküm vermez.
