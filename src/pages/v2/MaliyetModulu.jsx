@@ -270,9 +270,15 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
     Promise.all([
       api('/ops/maliyet/kdv-pozisyon?gun=30').catch(() => null),
       api('/ops/maliyet/vergi-ozet?gun=30').catch(() => null),
-    ]).then(([k, v]) => {
+      // NE KADAR'ın yanına NE ZAMAN: vergi çıkışının takvimi hiçbir ekranda
+      // yoktu. /duyu/vergi-takvim KDV + muhtasar son ödeme günlerini veriyor.
+      api('/duyu/vergi-takvim').catch(() => null),
+      // Kira stopajı: brüt kira P&L gideri, stopaj vergi dairesine gider —
+      // "mülk sahibine ne kadar, devlete ne kadar" ayrımı hiç görünmüyordu.
+      api('/ops/maliyet/stopaj-ozet').catch(() => null),
+    ]).then(([k, v, t, st]) => {
       if (!k && !v) { setVergiHata('Vergi verisi alınamadı'); return; }
-      setVergi({ kdv: k, vergi: v });
+      setVergi({ kdv: k, vergi: v, takvim: t, stopaj: st });
     }).catch((e) => setVergiHata(e?.message || 'Vergi verisi alınamadı'));
   }, []);
 
@@ -1400,6 +1406,68 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
           KDV ne gelir ne giderdir — devlet adına tahsil edilir/ödenir, bu yüzden kâr tablosuna
           <b>&nbsp;girmez</b>. Vergi rakamı <b>tahminîdir</b>: yönetsel gösterge, resmî beyan değil.
         </div>
+
+        {/* ── VERGİ TAKVİMİ — "ne kadar" değil "NE ZAMAN" ──
+            Ödenecek KDV tutarı yukarıda; buradaki soru para ne gün çıkacak.
+            Sunucunun kendi uyarısı: beyanname DEĞİL, yönetim tahmini. */}
+        {Array.isArray(vergi.takvim?.takvim) && vergi.takvim.takvim.length > 0 && (
+          <div style={{ ...kartYuzey, padding: '15px 18px', marginBottom: 14 }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12, marginBottom: 11, flexWrap: 'wrap' }}>
+              <span style={{ fontFamily: F.baslik, fontSize: 15, fontWeight: 600 }}>Vergi nakit takvimi</span>
+              <span style={{ fontSize: 11.5, color: R.not2 }}>ödeme günleri pratik varsayım — muhasebeci takvimi esastır</span>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+              {vergi.takvim.takvim.map((t, i) => {
+                const tutar = sayi(t.odenecek_tl ?? t.odenecek_kdv_tl ?? t.tutar);
+                return (
+                  <div key={i} style={{
+                    display: 'flex', alignItems: 'center', gap: 11, fontSize: 12,
+                    padding: '9px 13px', borderRadius: 10, background: R.girinti,
+                    borderLeft: `3px solid ${t.hata ? R.kirmizi : R.bakir}`,
+                  }}>
+                    <span style={{ fontWeight: 700, flexShrink: 0, minWidth: 150 }}>{t.tur || '—'}</span>
+                    {t.hata ? (
+                      <span style={{ flex: 1, color: R.kirmizi }}>{t.hata}</span>
+                    ) : (
+                      <>
+                        <span style={{ flex: 1, minWidth: 0, color: R.not2 }}>
+                          {t.donem || ''}{t.rozet ? ` · ${t.rozet}` : ''}
+                        </span>
+                        {t.son_odeme && (
+                          <span style={{ fontFamily: F.mono, fontSize: 11.5, color: R.amber, flexShrink: 0 }}>
+                            son ödeme {String(t.son_odeme).slice(0, 10)}
+                          </span>
+                        )}
+                        <span style={{ fontFamily: F.mono, fontWeight: 700, flexShrink: 0, minWidth: 90, textAlign: 'right' }}>
+                          {tutar ? fmt(tutar) : '—'}
+                        </span>
+                      </>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* ── KİRA STOPAJI — brüt kira P&L'de kalır, stopaj vergi dairesine ── */}
+        {sayi(vergi.stopaj?.toplam_stopaj_tl) > 0 && (
+          <div style={{ ...kartYuzey, padding: '13px 18px', marginBottom: 14 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+              <span style={{ fontFamily: F.baslik, fontSize: 14.5, fontWeight: 600 }}>Kira stopajı</span>
+              <span style={{ fontSize: 12, color: R.not }}>
+                brüt <b style={{ fontFamily: F.mono, color: R.krem }}>{fmt(sayi(vergi.stopaj.toplam_brut_tl))}</b>
+                {' = '}mülk sahibine <b style={{ fontFamily: F.mono, color: R.yesil }}>{fmt(sayi(vergi.stopaj.toplam_net_tl))}</b>
+                {' + '}vergi dairesine <b style={{ fontFamily: F.mono, color: R.kirmizi }}>{fmt(sayi(vergi.stopaj.toplam_stopaj_tl))}</b>
+                <span style={{ color: R.not2 }}> · {sayi(vergi.stopaj.adet)} kira</span>
+              </span>
+            </div>
+            <div style={{ fontSize: 11, color: R.not2, marginTop: 7, lineHeight: 1.55 }}>
+              ⚠ Brüt kira <b>P&L gideridir ve değişmez</b>. Stopaj ayrı bir nakit çıkışı değil,
+              brütün içinden devlete giden paydır — mülk sahibine net ödenir (muhtasar).
+            </div>
+          </div>
+        )}
 
         {kdvSatir.length > 0 && (
           <Tablo

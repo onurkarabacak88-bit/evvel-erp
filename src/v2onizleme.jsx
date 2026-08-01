@@ -950,6 +950,28 @@ const MALIYET_UC = {
       },
     },
   },
+  // Vergi nakit takvimi + kira stopajı — v2 bu iki ucu HİÇ çağırmıyordu
+  // ("ne kadar" vardı, "NE ZAMAN" yoktu).
+  '/api/duyu/vergi-takvim': {
+    bugun: bugunISO,
+    takvim: [
+      { tur: 'KDV', donem: `${bugunISO.slice(0, 7)} (ay başından bugüne — KISMİ dönem)`,
+        hesaplanan_kdv_tl: 198591, indirilecek_kdv_tl: 121340, odenecek_tl: 77251,
+        son_odeme: gunEkleISO(26), rozet: 'TAHMİNİ — dönem henüz kapanmadı' },
+      { tur: 'Muhtasar (kira stopajı)', donem: bugunISO.slice(0, 7),
+        odenecek_tl: 19200, kira_adedi: 2, son_odeme: gunEkleISO(24),
+        rozet: 'Aylık sabit (brüt kira × stopaj oranı); şahıstan kiralanan şubeler' },
+    ],
+    not: 'Salt-okur farkındalık görünümü — beyanname DEĞİLDİR.',
+  },
+  '/api/ops/maliyet/stopaj-ozet': {
+    adet: 2, toplam_brut_tl: 96000, toplam_stopaj_tl: 19200, toplam_net_tl: 76800,
+    satirlar: [
+      { id: 'sg1', gider_adi: 'Zafer kira', tutar: 54000, oran: 0.2, sube_id: 's0' },
+      { id: 'sg2', gider_adi: 'Köyceğiz kira', tutar: 42000, oran: 0.2, sube_id: 's1' },
+    ],
+    not: 'Brüt kira P&L gideridir (değişmez). Stopaj = brüt × oran → vergi dairesine.',
+  },
   // Şube DAVRANIŞ + SKOR motoru — /v2/ önekli (v2 için yazılmış) ama hiç
   // çağrılmıyordu. Karne yalnız ciro sıralaması gösteriyordu.
   '/api/ops/v2/sube-davranis': {
