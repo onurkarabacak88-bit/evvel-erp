@@ -599,6 +599,8 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
   const [barSekme, setBarSekme] = useState('acilis');
   const [barTarih, setBarTarih] = useState(() => bugunYerelISO());
   const [acilisTakip, setAcilisTakip] = useState(null);
+  // /ops/gec-acilan-subeler — "saatinde mi açıldı" (kasa tuttu mu'dan AYRI soru)
+  const [gecAcilis, setGecAcilis] = useState(null);
   const [kapanisTakip, setKapanisTakip] = useState(null);
   const [urunAcAkis, setUrunAcAkis] = useState(null);
   const [barOzet, setBarOzet] = useState(null);
@@ -699,6 +701,13 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     api(`/ops/kapanis-takip?tarih=${t}`)
       .then((d) => setKapanisTakip(d || {}))
       .catch(() => setKapanisTakip({}));
+    // GEÇ AÇILAN ŞUBELER (/ops/gec-acilan-subeler) — v2 bu ucu HİÇ çağırmıyordu.
+    // /ops/acilis-kasa-takip "açıldı mı + kasa tuttu mu" der; bu uç "SAATİNDE
+    // mi açıldı" der. Üç ayrı liste: geç açılan · açılış başlamış ama
+    // TAMAMLANMAMIŞ · o gün hiç ACILIS kaydı OLUŞMAMIŞ (panel/motor çalışmamış).
+    api(`/ops/gec-acilan-subeler?tarih=${t}`)
+      .then((d) => setGecAcilis(d || null))
+      .catch(() => setGecAcilis(null));
     api(`/ops/v2/urun-ac-akis?tarih=${t}`)
       .then((d) => setUrunAcAkis(d || {}))
       .catch(() => setUrunAcAkis({}));
@@ -3694,6 +3703,83 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
                 >Uzlaştırmaya git →</button>
               </div>
             ) : null}
+
+            {/* ── SAATİNDE AÇILDI MI? (kasa tuttu mu'dan AYRI soru) ──
+                Üç durum ayrı ayrı: geç açıldı · açılış başladı ama bitmedi ·
+                o gün hiç ACILIS kaydı oluşmadı (panel/motor çalışmamış).
+                Sonuncusu en sinsisi: "sorun yok" gibi görünür, aslında ÖLÇÜM YOK. */}
+            {gecAcilis && (() => {
+              const gecler = Array.isArray(gecAcilis.kayitlar) ? gecAcilis.kayitlar : [];
+              const acilmayan = Array.isArray(gecAcilis.acilmayan_subeler) ? gecAcilis.acilmayan_subeler : [];
+              const kayitsiz = Array.isArray(gecAcilis.plan_kayitsiz_subeler) ? gecAcilis.plan_kayitsiz_subeler : [];
+              if (!gecler.length && !acilmayan.length && !kayitsiz.length) return null;
+              const esik = sayi(gecAcilis.gecikme_uyari_esik_dk) || 15;
+              const kritik = gecler.filter((g) => g.gecikme_seviye === 'kritik');
+              return (
+                <div style={{
+                  ...kartYuzey, padding: '13px 18px', marginBottom: 12,
+                  borderColor: kritik.length ? `${R.kirmizi}55` : `${R.amber}44`,
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 10 }}>
+                    <span style={rozetHap(kritik.length ? R.kirmizi : R.amber)}>⏰ açılış saati</span>
+                    <span style={{ fontSize: 12, color: R.not }}>
+                      {gecler.length ? `${gecler.length} şube geç açıldı` : 'geç açılan yok'}
+                      {kritik.length ? ` (${kritik.length} kritik)` : ''}
+                      {acilmayan.length ? ` · ${acilmayan.length} şubede açılış başladı ama tamamlanmadı` : ''}
+                      {kayitsiz.length ? ` · ${kayitsiz.length} şubede hiç açılış kaydı oluşmadı` : ''}
+                      {` — eşik ${esik} dk`}
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                    {gecler.slice(0, 6).map((g, i) => (
+                      <div key={g.event_id || `gc-${i}`} style={{
+                        display: 'flex', alignItems: 'center', gap: 10, fontSize: 11.5,
+                        padding: '7px 11px', borderRadius: 9, background: R.girinti,
+                        borderLeft: `3px solid ${g.gecikme_seviye === 'kritik' ? R.kirmizi : R.amber}`,
+                      }}>
+                        <span style={{ fontWeight: 700, flexShrink: 0, minWidth: 82 }}>{g.sube_adi || '—'}</span>
+                        <span style={{ flex: 1, minWidth: 0, color: R.not2, fontFamily: F.mono }}>
+                          plan {String(g.planlanan_saat || '').slice(0, 5) || '—'} → açılış {g.acilis_saat || '—'}
+                          {g.personel_ad ? ` · ${g.personel_ad}` : ''}
+                          {g.vardiya_planli === false ? ' · vardiya planı yok' : ''}
+                        </span>
+                        <span style={{
+                          flexShrink: 0, fontFamily: F.mono, fontWeight: 700,
+                          color: g.gecikme_seviye === 'kritik' ? R.kirmizi : R.amber,
+                        }}>+{sayi(g.gecikme_dk)} dk</span>
+                      </div>
+                    ))}
+                    {acilmayan.map((a, i) => (
+                      <div key={`ac-${i}`} style={{
+                        display: 'flex', alignItems: 'center', gap: 10, fontSize: 11.5,
+                        padding: '7px 11px', borderRadius: 9, background: R.girinti,
+                        borderLeft: `3px solid ${R.amber}`,
+                      }}>
+                        <span style={{ fontWeight: 700, flexShrink: 0, minWidth: 82 }}>{a.sube_adi || '—'}</span>
+                        <span style={{ flex: 1, minWidth: 0, color: R.not2 }}>
+                          açılış <b>tamamlanmadı</b> ({a.durum || 'bekliyor'})
+                          {a.beklenen_saat ? ` · beklenen ${a.beklenen_saat}` : ''}
+                          {a.beklened_personel ? ` · ${a.beklened_personel}` : ''}
+                        </span>
+                      </div>
+                    ))}
+                    {kayitsiz.map((p, i) => (
+                      <div key={`pk-${i}`} style={{
+                        display: 'flex', alignItems: 'center', gap: 10, fontSize: 11.5,
+                        padding: '7px 11px', borderRadius: 9, background: R.girinti,
+                        borderLeft: `3px solid ${R.not3}`,
+                      }}>
+                        <span style={{ fontWeight: 700, flexShrink: 0, minWidth: 82 }}>{p.sube_adi || '—'}</span>
+                        <span style={{ flex: 1, minWidth: 0, color: R.not2 }}>
+                          bu gün için <b>hiç açılış kaydı oluşmamış</b> — panel ya da motor çalışmamış
+                          {p.plan_acilis_saati ? ` · plan ${p.plan_acilis_saati}` : ''}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
 
             <Tablo
               baslik={`Açılış kasası · ${tarihKisa(barTarih)}`}

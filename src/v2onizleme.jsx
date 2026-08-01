@@ -858,6 +858,22 @@ const MALIYET_UC = {
     },
     gun_satirlari: MALIYET_GUNLER,
   },
+  // "Saatinde açıldı mı" — v2 bu ucu HİÇ çağırmıyordu (acilis-kasa-takip
+  // "açıldı mı + kasa tuttu mu" der, bu uç SAATİ ölçer). Üç liste ayrı.
+  '/api/ops/gec-acilan-subeler': {
+    tarih: bugunISO, toplam: 2, gecikme_uyari_esik_dk: 15,
+    kayitlar: [
+      { event_id: 'ga1', sube_id: 's1', sube_adi: 'KÖYCEĞİZ', tarih: bugunISO, planlanan_saat: '08:30', acilis_saat: '08:54', gecikme_dk: 24, gecikme_seviye: 'kritik', vardiya_planli: true, personel_id: 'p2', personel_ad: 'Mert Can', beklened_personel: 'Mert Can' },
+      { event_id: 'ga2', sube_id: 's3', sube_adi: 'GAZZE', tarih: bugunISO, planlanan_saat: '09:00', acilis_saat: '09:08', gecikme_dk: 8, gecikme_seviye: 'uyari', vardiya_planli: false, personel_id: 'p3', personel_ad: 'Deniz Ay', beklened_personel: '' },
+    ],
+    acilmayan_subeler: [
+      { sube_id: 's2', sube_adi: 'ALSANCAK', durum: 'bekliyor', beklenen_saat: '09:30', beklened_personel: 'Sude Yalın' },
+    ],
+    acilmayan_toplam: 1,
+    plan_kayitsiz_subeler: [
+      { sube_id: 's4', sube_adi: 'TEMA', plan_acilis_saati: '08:45', beklened_personel: 'Burak Er' },
+    ],
+  },
   // Kişi bazlı risk sinyali dökümü — v2 bu ucu HİÇ çağırmıyordu.
   // Tıklamayla çekilir; tezgâh sabit cevap verir (personel_id yok sayılır).
   '/api/ops/personel-risk-sinyal': {
