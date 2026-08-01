@@ -348,8 +348,24 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
             tedarikci: modal.tedarikci.trim(), tutar: t, vade_tarihi: modal.vade,
             aciklama: `🤝 Taahhüt: ${(modal.aciklama || '').trim() || 'ödeme sözü'}`,
             ...(modal.force ? { force: true } : {}),
+            ...(modal.tedarikciKarari ? { tedarikci_karari: modal.tedarikciKarari } : {}),
+            ...(modal.birlestirId ? { birlestir_vadeli_id: modal.birlestirId } : {}),
           },
         });
+        // İKİ FARKLI UYARI, İKİ FARKLI ÇÖZÜM — eskiden ikisi de aynı "Yine de
+        // kaydet" (force) düğmesine düşüyordu; force yalnız MÜKERRER-TARİH
+        // uyarısını geçer, çoklu açık borcu GEÇMEZ → akış tıkanıyordu (400).
+        // TEDARIKCI_ACIK_BAKIYE için sunucu karar bekliyor (main.py:7424):
+        //   tedarikci_karari='ayri'                → yeni satır
+        //   tedarikci_karari='ilave' + birlestir_vadeli_id → o borca ekle
+        if (r?.kod === 'TEDARIKCI_ACIK_BAKIYE') {
+          setModal((m) => ({
+            ...m,
+            acikBorclar: Array.isArray(r.mevcut_borc) ? r.mevcut_borc : [],
+            uyari: r.mesaj || 'Bu tedarikçide birden fazla açık borç var',
+          }));
+          setCalisiyor(false); return;
+        }
         if (r?.warning) { setModal((m) => ({ ...m, uyari: r.mesaj || 'Benzer kayıt olabilir' })); setCalisiyor(false); return; }
         onToast?.(`🤝 Taahhüt kaydedildi — ${kisaTarih(modal.vade)} günü bekleyenlerde görünecek`);
       } else {
@@ -823,7 +839,52 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
                   <input value={modal.aciklama || ''} onChange={(e) => guncelle('aciklama', e.target.value)} style={omAlanStil} />
                 </div>
               </div>
-              {modal.uyari && (
+              {/* ÇOKLU AÇIK BORÇ — sunucu KARAR bekliyor, "yine de kaydet" işe
+                  yaramaz (400 döner). İki gerçek seçenek sunulur. */}
+              {modal.uyari && Array.isArray(modal.acikBorclar) && modal.acikBorclar.length > 0 && (
+                <div style={{ marginTop: 12, padding: '13px 15px', borderRadius: 12, background: `${R.amber}12`, border: `1px solid ${R.amber}55` }}>
+                  <div style={{ fontSize: 12, color: R.amber, fontWeight: 700, marginBottom: 4 }}>⚠ {modal.uyari}</div>
+                  <div style={{ fontSize: 11.5, color: R.not, marginBottom: 10, lineHeight: 1.5 }}>
+                    Ya mevcut bir borcun <b>üstüne eklenir</b> (tek satır, tutar birikir)
+                    ya da <b>ayrı satır</b> açılır. Yanlış seçim cariyi ikiye böler.
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 10 }}>
+                    {modal.acikBorclar.slice(0, 6).map((b) => (
+                      <div
+                        key={b.id}
+                        onClick={() => setModal((m) => ({ ...m, birlestirId: String(b.id), tedarikciKarari: 'ilave' }))}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer',
+                          padding: '8px 11px', borderRadius: 9, fontSize: 11.5,
+                          background: R.girinti,
+                          border: `1px solid ${String(modal.birlestirId) === String(b.id) ? R.bakir : R.cizgi3}`,
+                        }}
+                      >
+                        <span style={{ fontFamily: F.mono, color: R.not, flexShrink: 0 }}>{kisaTarih(b.vade_tarihi)}</span>
+                        <span style={{
+                          flex: 1, minWidth: 0, color: R.metin2,
+                          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                        }}>{b.aciklama || b.tedarikci || 'borç'}</span>
+                        <span style={{ fontFamily: F.mono, fontWeight: 700, flexShrink: 0 }}>{fmt(sayi(b.tutar))}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    {dugme(
+                      modal.birlestirId ? 'Seçilen borca ekle' : 'Önce borç seç',
+                      !!modal.birlestirId,
+                      () => { if (modal.birlestirId) setTimeout(modalOnayla, 0); },
+                    )}
+                    {dugme('Ayrı satır olarak kaydet', false, () => {
+                      setModal((m) => ({ ...m, tedarikciKarari: 'ayri', birlestirId: '' }));
+                      setTimeout(modalOnayla, 0);
+                    })}
+                    {dugme('Vazgeç', false, () => setModal((m) => ({ ...m, uyari: '', acikBorclar: null, tedarikciKarari: '', birlestirId: '' })))}
+                  </div>
+                </div>
+              )}
+              {/* MÜKERRER TARİH uyarısı — burada force GERÇEKTEN çözer */}
+              {modal.uyari && !(Array.isArray(modal.acikBorclar) && modal.acikBorclar.length > 0) && (
                 <div style={{ marginTop: 12, padding: '11px 15px', borderRadius: 12, background: `${R.kirmizi}14`, border: `1px solid ${R.kirmizi}55` }}>
                   <div style={{ fontSize: 12, color: R.kirmizi, fontWeight: 700 }}>⚠ {modal.uyari}</div>
                   <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>

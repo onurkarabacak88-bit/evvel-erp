@@ -1038,6 +1038,22 @@ const EKIP_UC = {
     personeller: BORDRO,
     toplam_tahmini: BORDRO.reduce((s, b) => s + b.hesaplanan_net, 0),
   },
+  // POST /vadeli-alimlar — ÇOKLU AÇIK BORÇ dalı (main.py:7424).
+  // Tezgâh sabit cevap verir; bu dal seçilmezse akışın tıkandığı görülemiyordu.
+  // Sunucuda bu cevap yalnız aynı tedarikçide 2+ bekleyen borç varsa döner.
+  '/api/vadeli-alimlar': {
+    warning: true,
+    kod: 'TEDARIKCI_ACIK_BAKIYE',
+    mesaj: 'Bu tedarikçi için birden fazla bekleyen vadeli borç var. Hangi satıra ekleneceğini seçin veya ayrı satır olarak kaydedin.',
+    mevcut_borc: [
+      { id: 'va1', tedarikci: 'Kahve Dünyası', tutar: 68400, vade_tarihi: gunEkleISO(-2), aciklama: 'çekirdek alımı · Temmuz' },
+      { id: 'va9', tedarikci: 'Kahve Dünyası', tutar: 24500, vade_tarihi: gunEkleISO(11), aciklama: 'filtre kahve · Ağustos' },
+    ],
+  },
+  // Panel'in vadeli alım kartı (main.py:8965) — v2 bunu çekip HİÇ okumuyordu
+  '/api/vadeli-alimlar/ozet': {
+    toplam_odenen: 143650, toplam_bekleyen: 352790, bekleyen_adet: 4, geciken_adet: 1,
+  },
   // ⚠️ `toplam` alanı YOK (avans_service:527) — eski mock uydurmuştu
   '/api/avans/ozet': {
     bekleyen_adet: 2, bekleyen_tutar: 7500,

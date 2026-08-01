@@ -102,6 +102,8 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru }) {
   }
 
   const p = veri.panel;
+  // /vadeli-alimlar/ozet — {toplam_odenen, toplam_bekleyen, bekleyen_adet, geciken_adet}
+  const v = veri.vadeli;
   const uyarilar = Array.isArray(veri.uyarilar) ? veri.uyarilar : (veri.uyarilar?.uyarilar || []);
   const onaylar = (Array.isArray(veri.onaylar) ? veri.onaylar : [])
     .filter((o) => !String(o.islem_turu || '').toUpperCase().includes('KASA'));
@@ -166,6 +168,19 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru }) {
           { etiket: 'Gecikmiş toplam', deger: fmt(gecikmisToplam), alt: `${gK.length + gU.length + gB.length} kalem`, renk: gecikmisToplam > 0 ? R.kirmizi : R.yesil },
           { etiket: 'Bugün vadesi', deger: String(gBug.length), alt: gBug.length ? 'bugün ödenecek' : 'bugün yok', renk: gBug.length ? R.amber : R.yesil },
           { etiket: 'Kaç gün dayanır', deger: p.kac_gun_dayanir != null ? `${sayi(p.kac_gun_dayanir)} gün` : '—', alt: 'kasa / günlük yük', renk: sayi(p.kac_gun_dayanir) < 15 ? R.kirmizi : R.krem },
+          {
+            // ⚠️ /vadeli-alimlar/ozet ÇEKİLİYOR ama hiçbir yerde OKUNMUYORDU
+            // (satır 87'de state'e konup unutulmuş — ölü veri). Klasik Panel
+            // geciken_adet'i kırmızı rozet olarak kullanıyordu.
+            etiket: 'Vadeli alım',
+            deger: v ? String(sayi(v.bekleyen_adet)) : '—',
+            alt: v
+              ? (sayi(v.geciken_adet)
+                ? `⚠ ${sayi(v.geciken_adet)} gecikmiş · bekleyen ${fmt(sayi(v.toplam_bekleyen))}`
+                : `bekleyen ${fmt(sayi(v.toplam_bekleyen))} · bu ay ödenen ${fmt(sayi(v.toplam_odenen))}`)
+              : 'veri yok',
+            renk: sayi(v?.geciken_adet) ? R.kirmizi : sayi(v?.bekleyen_adet) ? R.amber : R.yesil,
+          },
         ]} />
         {/* Klasik panelin 4 katmanlı triajı — gecikme GÜNÜNE göre */}
         {bolum('KRİTİK · 15+ gün gecikmiş', gK, R.kirmizi)}
