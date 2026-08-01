@@ -591,24 +591,61 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
     const toplamMaliyet = siraliGunler.reduce((s, t) => s + gunMap[t].maliyet, 0);
     const toplamFire = siraliGunler.reduce((s, t) => s + gunMap[t].fire, 0);
     const foodCost = toplamCiro > 0 ? (toplamMaliyet / toplamCiro) * 100 : null;
-    const bench = foodCost == null ? null : foodCost <= 35 && foodCost >= 28
+    // ⚠️ EŞİK KODA GÖMÜLMEZ: sunucu benchmark bandını kendisi gönderiyor
+    // (operasyon_merkez_api:13667 → benchmark.food_cost_min_pct/max_pct).
+    // Eskiden %28–35 üç ayrı yerde sabit yazılıydı; norm sunucuda güncellenirse
+    // ekran sessizce eski bandı gösterirdi (kart limit_doluluk vakasıyla aynı
+    // sınıf tuzak: sunucunun hesabını istemcide yeniden kurma).
+    const bmin = sayi(ozet?.benchmark?.food_cost_min_pct) || 28;
+    const bmax = sayi(ozet?.benchmark?.food_cost_max_pct) || 35;
+    const bandMetni = `%${Math.round(bmin)}–${Math.round(bmax)}`;
+    const bench = foodCost == null ? null : (foodCost <= bmax && foodCost >= bmin)
       ? { ad: 'norm içinde', tip: 'iyi' }
-      : foodCost < 28 ? { ad: 'normun altında', tip: 'iyi' } : { ad: 'norm üstü', tip: 'kotu' };
+      : foodCost < bmin ? { ad: 'normun altında', tip: 'iyi' } : { ad: 'norm üstü', tip: 'kotu' };
+    // Altyapı eksikleri: sunucu ne yapılması gerektiğini CÜMLE olarak söylüyor
+    const altyapiEksik = Array.isArray(ozet?.altyapi_durum?.eksikler) ? ozet.altyapi_durum.eksikler : [];
     return (
       <>
         <KpiSeridi kpiler={[
-          { etiket: 'Food cost (30 gün)', deger: foodCost == null ? '—' : pct(foodCost), alt: 'benchmark %28–35', renk: foodCost == null ? R.not : foodCost > 35 ? R.kirmizi : R.yesil },
-          { etiket: 'Stok değeri', deger: fmt(sayi(ozet.stok_degeri_tl ?? ozet.toplam_stok_degeri_tl)), alt: 'mevcut stok × alış fiyatı' },
+          { etiket: 'Food cost (30 gün)', deger: foodCost == null ? '—' : pct(foodCost), alt: `benchmark ${bandMetni}`, renk: foodCost == null ? R.not : foodCost > bmax ? R.kirmizi : R.yesil },
+          {
+            etiket: 'Stok değeri',
+            deger: fmt(sayi(ozet.stok_degeri_tl ?? ozet.toplam_stok_degeri_tl)),
+            alt: sayi(ozet.stok_kalem_sayisi)
+              ? `${sayi(ozet.stok_kalem_sayisi)} kalem × alış fiyatı`
+              : 'mevcut stok × alış fiyatı',
+          },
           { etiket: 'Fire (30 gün)', deger: fmt(toplamFire), alt: 'shrinkage toplamı', renk: toplamFire > 0 ? R.amber : R.krem },
-          { etiket: 'Altyapı', deger: `${sayi(ozet.alis_fiyat_sayisi)} fiyat · ${sayi(ozet.recete_sayisi)} reçete`, alt: 'tanımlı kayıtlar' },
+          {
+            etiket: 'Altyapı',
+            deger: `${sayi(ozet.alis_fiyat_sayisi)} fiyat · ${sayi(ozet.recete_sayisi)} reçete`,
+            // Sunucu eksikleri madde madde söylüyordu; v2 "tanımlı kayıtlar"
+            // diye geçiştiriyordu — hesabın NEDEN eksik olabileceği kayboluyordu.
+            alt: altyapiEksik.length ? `⚠ ${altyapiEksik[0]}` : 'tanımlı kayıtlar',
+            renk: altyapiEksik.length ? R.amber : R.krem,
+          },
         ]} />
+        {/* Altyapı eksikleri — food cost hesabının GÜVENİLİRLİĞİNİ etkiler:
+            alış fiyatı ya da reçete eksikse maliyet olduğundan düşük çıkar. */}
+        {altyapiEksik.length > 0 && (
+          <div style={{
+            ...kartYuzey, padding: '12px 17px', marginBottom: 14, borderColor: `${R.amber}44`,
+            display: 'flex', alignItems: 'flex-start', gap: 10, flexWrap: 'wrap',
+          }}>
+            <span style={rozetHap(R.amber)}>⚠ altyapı eksik</span>
+            <span style={{ fontSize: 11.5, color: R.not, lineHeight: 1.55, flex: 1, minWidth: 200 }}>
+              {altyapiEksik.join(' · ')}
+              {' — '}bu eksikler giderilmeden food cost <b>olduğundan düşük</b> çıkabilir.
+            </span>
+          </div>
+        )}
         {seri.length >= 2 ? (
           <Hero
             etiket="Food cost · günlük seyir (ürün maliyeti / ciro)"
             deger={foodCost == null ? '—' : pct(foodCost)}
             delta={bench?.ad}
             deltaTip={bench?.tip || 'notr'}
-            not={`Son ${siraliGunler.length} günün toplamı: ciro ${fmt(toplamCiro)} · ürün maliyeti ${fmt(toplamMaliyet)}. Kahve zinciri normu %28–35 — çizgi bu bandın üstüne çıktığı gün maliyet yönetimi gerektirir.`}
+            not={`Son ${siraliGunler.length} günün toplamı: ciro ${fmt(toplamCiro)} · ürün maliyeti ${fmt(toplamMaliyet)}. Kahve zinciri normu ${bandMetni} — çizgi bu bandın üstüne çıktığı gün maliyet yönetimi gerektirir.`}
             seri={seri}
             seriEtiket={siraliGunler.map(tarihKisa)}
             seriAd="food cost"

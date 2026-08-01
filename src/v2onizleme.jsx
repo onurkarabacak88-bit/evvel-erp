@@ -190,7 +190,9 @@ const ODEME_UC = {
   ],
   '/api/odeme-plani/kokpit': {
     kasa: 586310, gecikmis_toplam: 68400, gecikmis_adet: 1,
-    ciro_gunluk_tahmin: 74000, en_dusuk_bakiye: 218400, en_dusuk_tarih: gunEkleISO(5), projeksiyon: [],
+    cikis_7: 341250, cikis_30: 892400,
+    // en_dusuk_bakiye NEGATİF → "kasa dibe vuruyor" şeridi sürülebilsin
+    ciro_gunluk_tahmin: 74000, en_dusuk_bakiye: -42800, en_dusuk_tarih: gunEkleISO(19), projeksiyon: [],
   },
   '/api/fatura/cari-ozet': {
     toplam_hesaplanan_acik: 364790, toplam_bekleyen_vade: 352790, toplam_beyan_bakiye: 371000,
@@ -802,7 +804,15 @@ const MALIYET_GUNLER = (() => {
 })();
 const MALIYET_UC = {
   '/api/ops/maliyet/ozet': {
-    alis_fiyat_sayisi: 41, recete_sayisi: 75, stok_degeri_tl: 284600,
+    gun: 30,
+    alis_fiyat_sayisi: 41, recete_sayisi: 75,
+    stok_degeri_tl: 284600, stok_kalem_sayisi: 128,
+    // Benchmark bandı SUNUCUDAN gelir — v2'de sabit yazılmaz
+    benchmark: { food_cost_min_pct: 28, food_cost_max_pct: 35, shrinkage_izleme_pct: 2, shrinkage_sorusturma_pct: 4 },
+    altyapi_durum: {
+      alis_fiyat_tamam: false, recete_tamam: true,
+      eksikler: ['12 üründe alış fiyatı girilmemiş', '3 reçetede ambalaj içeriği eksik'],
+    },
     gun_satirlari: MALIYET_GUNLER,
   },
   '/api/ops/maliyet/recete-listesi': {
@@ -1198,7 +1208,8 @@ const BORC_UC = {
     kpi: {
       borc_baski_endeksi: { skor: 72, durum: 'Sürdürülemez — borç çevriliyor ama kapanmıyor', renk: 'KIRMIZI' },
       tahmini_acik: { bugun: -12400, ay_sonu: -57800, aylik_yapisal: -57800 },
-      runway_ay: 4.2, runway_renk: 'TURUNCU', runway_durum: 'dar',
+      // runway_durum sunucuda TAM CÜMLE (borc_navigasyon_api:162) — kısa etiket değil
+      runway_ay: 4.2, runway_renk: 'TURUNCU', runway_durum: 'İzle — ABEK zorunlu yükü ancak karşılıyor',
       zorunlu_yuk: 244200, hedef_ciro_borc_sabit: 2560000,
     },
     abek: { deger: 186400, son_ay: 178200, son3_ort: 181000, ciro_ay: 2184500, nakit_marj_pct: 8.5 },

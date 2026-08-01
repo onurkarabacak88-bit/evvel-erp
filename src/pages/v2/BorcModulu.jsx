@@ -127,7 +127,12 @@ export default function BorcModulu({ gorunum, onCekmece, onKopru }) {
             {
               etiket: 'Runway',
               deger: runway == null ? '—' : `${trSayi(runway)} ay`,
-              alt: runway == null ? 'hesaplanamadı' : 'mevcut tempoda nakit tükenir',
+              // Sunucu durumu NÜANSLI cümleyle söylüyor (borc_navigasyon_api:162):
+              // "Sürdürülebilir (ABEK zorunlu yükü karşılıyor)" · "Güvenli" ·
+              // "İzle" · "Riskli" · "Kritik — kısa vadede nakit sıkışıklığı".
+              // v2 bunu atıp tek sabit cümle yazıyordu; renk beş kademeliyken
+              // metin iki kademeydi — renk ile yazı birbirini tutmuyordu.
+              alt: kpi.runway_durum || (runway == null ? 'hesaplanamadı' : 'mevcut tempoda nakit tükenir'),
               renk: renkCoz(kpi.runway_renk, R.amber),
             },
             {

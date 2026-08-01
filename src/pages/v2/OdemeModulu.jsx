@@ -875,7 +875,18 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
         <KpiSeridi kpiler={[
           { etiket: 'Bugün ödenecek', deger: fmt(bugunToplam), alt: `${bugunVeGecmis.length} kalem · vade bugün/geçmiş${tutarsizNot}`, renk: bugunToplam > 0 ? R.kirmizi : R.yesil },
           { etiket: 'Bu hafta', deger: fmt(haftaToplam), alt: `${haftaSatir.length} kalem`, renk: R.krem },
-          { etiket: 'Gecikmiş', deger: fmt(gecikmisToplam), alt: gecikmisSatir.length ? `${gecikmisSatir.length} kalem` : 'gecikme yok', renk: gecikmisSatir.length ? R.kirmizi : R.yesil },
+          {
+            etiket: 'Gecikmiş',
+            // ⚠️ TEK DOĞRULUK KAYNAĞI: gecikmiş toplamı kokpit ucundan gelir
+            // (odeme_plani_api:188 `gecikmis_toplam`). Eskiden bu sayı
+            // /odeme-plani/bugun kuyruğundan istemcide YENİDEN toplanıyordu —
+            // bugün örtüşüyor ama iki bağımsız kod yolu, biri değişirse
+            // (ör. ileri pencere) sessizce sapar. Kart limit_doluluk'ta tam bu
+            // olmuştu. Sunucu alanı yoksa eski hesaba düşülür.
+            deger: fmt(kokpit?.gecikmis_toplam != null ? sayi(kokpit.gecikmis_toplam) : gecikmisToplam),
+            alt: gecikmisSatir.length ? `${gecikmisSatir.length} kalem` : 'gecikme yok',
+            renk: sayi(kokpit?.gecikmis_toplam ?? gecikmisToplam) > 0 ? R.kirmizi : R.yesil,
+          },
           { etiket: 'Ödeme sonrası kasa', deger: fmt(kasa - bugunToplam), alt: 'bugünküler düşülmüş', renk: kasa - bugunToplam >= 0 ? R.yesil : R.kirmizi },
         ]} />
         <div style={{ display: 'flex', gap: 9, marginBottom: 12, flexWrap: 'wrap' }}>
@@ -1021,8 +1032,42 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
           { etiket: '14 günlük yük', deger: fmt(toplamKuyruk), alt: `${tutarli.length} kalem${tutarsizNot}` },
           { etiket: 'En yoğun gün', deger: enYogun ? kisaTarih(enYogun.iso) : '—', alt: enYogun ? `${fmt(enYogun.tutar)} · ${enYogun.adet} kalem` : 'ödeme yok', renk: R.amber },
           { etiket: 'Boş gün', deger: String(14 - doluGun.length), alt: 'ödeme yok', renk: R.krem },
-          { etiket: 'Kasa yeterliliği', deger: yedi > 0 ? `%${trSayi(Math.min(999, (kasa / yedi) * 100), 0)}` : '—', alt: '7 günlük yük', renk: yedi > 0 && kasa >= yedi ? R.yesil : R.amber },
+          {
+            // Sunucunun 31 günlük kasa-taban simülasyonu (odeme_plani_api:193):
+            // gerçek vadeler + gün-tipine göre ciro tahmini. Panel'deki "kaç gün
+            // dayanır" KABA oran (kasa / günlük yük); bu ise HANGİ GÜN dibi
+            // göreceğini söyler. İkisi ayrı iş — Panel ambient uyarı, burası
+            // tarih planlaması. Alan yoksa eski kasa yeterliliği gösterilir.
+            etiket: kokpit?.en_dusuk_tarih ? 'En düşük bakiye' : 'Kasa yeterliliği',
+            deger: kokpit?.en_dusuk_bakiye != null
+              ? fmt(sayi(kokpit.en_dusuk_bakiye))
+              : (yedi > 0 ? `%${trSayi(Math.min(999, (kasa / yedi) * 100), 0)}` : '—'),
+            alt: kokpit?.en_dusuk_tarih
+              ? `${kisaTarih(kokpit.en_dusuk_tarih)} · 31 gün projeksiyonunun dibi`
+              : '7 günlük yük',
+            renk: kokpit?.en_dusuk_bakiye != null
+              ? (sayi(kokpit.en_dusuk_bakiye) < 0 ? R.kirmizi : sayi(kokpit.en_dusuk_bakiye) < sayi(kokpit.cikis_7) ? R.amber : R.yesil)
+              : (yedi > 0 && kasa >= yedi ? R.yesil : R.amber),
+          },
         ]} />
+        {/* Projeksiyon NEGATİFE düşüyorsa bu bir tarih uyarısıdır — o güne kadar
+            nakit girmezse kasa açığa düşer. Öneri-only; ödeme Bekleyen'de. */}
+        {kokpit?.en_dusuk_bakiye != null && sayi(kokpit.en_dusuk_bakiye) < 0 && (
+          <div style={{
+            ...kartYuzey, padding: '12px 17px', marginBottom: 14, borderColor: `${R.kirmizi}55`,
+            display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+          }}>
+            <span style={{
+              padding: '3px 10px', borderRadius: 99, fontSize: 11, fontWeight: 700,
+              background: `${R.kirmizi}22`, color: R.kirmizi, whiteSpace: 'nowrap',
+            }}>⚠ kasa dibe vuruyor</span>
+            <span style={{ fontSize: 11.5, color: R.not }}>
+              Mevcut vadeler ve ciro tahminiyle <b>{kisaTarih(kokpit.en_dusuk_tarih)}</b> günü kasa
+              {' '}<b style={{ fontFamily: F.mono, color: R.kirmizi }}>{fmt(sayi(kokpit.en_dusuk_bakiye))}</b> seviyesine iniyor.
+              {' '}O güne kadar tahsilat girmezse ödemeler karşılanmaz — erteleme/öteleme Bekleyen görünümünde.
+            </span>
+          </div>
+        )}
         <Takvim
           gunler={gunler}
           onGun={(g) => onCekmece?.({
