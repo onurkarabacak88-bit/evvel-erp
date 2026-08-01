@@ -54,6 +54,15 @@ const saatKisa = (ts) => {
   return m ? m[0] : '';
 };
 
+// Açılış kasa farkı tolerans bantları — operasyon_kurallar.tolerans_seviyesi
+// ile birebir: ±50 normal · 50–200 uyarı · 200+ kritik. Sunucu `fark_seviye`
+// gönderir; renk BUNA göre verilir (5 TL fark kırmızı olmamalı).
+const SEVIYE = {
+  normal: { ad: 'tolerans içi', renk: R.metin2 },
+  uyari: { ad: 'uyarı', renk: R.amber },
+  kritik: { ad: 'kritik', renk: R.kirmizi },
+};
+
 // ── BAR ÖZETİ: kalem sözlüğü (operasyon_merkez_api._BAR_KEYS ile aynı sıra) ──
 // Pasta ÇEŞİTLERİ (pasta_*) burada yok: devirde ve gün içi denetimde yalnız
 // pasta_adet TOPLAMI karşılaştırılır — çeşitler günlük taze, gürültü yapar.
@@ -3367,7 +3376,19 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     const taslakBekleyen = kapanisTakip?.taslak_bekleyen_adet != null
       ? sayi(kapanisTakip.taslak_bekleyen_adet)
       : kapanisSatir.filter((x) => x.taslak_var && x.taslak_durum === 'bekliyor').length;
-    const farkliAcilis = acilisSatir.filter((x) => sayi(x.fark_tl) !== 0 && x.fark_tl != null);
+    // Açılış farkı sayaçları SUNUCUDAN gelir (tolerans bandını o biliyor);
+    // eski cevapta yoksa satırdan türetilir.
+    const farkUyariAdet = acilisTakip?.fark_uyari_adet != null
+      ? sayi(acilisTakip.fark_uyari_adet)
+      : acilisSatir.filter((x) => ['uyari', 'kritik'].includes(x.fark_seviye)).length;
+    const uyumsuzBekleyen = acilisTakip?.uyumsuzluk_bekleyen_adet != null
+      ? sayi(acilisTakip.uyumsuzluk_bekleyen_adet)
+      : acilisSatir.filter((x) => x.uyumsuzluk_bekliyor).length;
+    const uyumsuzCozulen = acilisSatir.filter((x) => x.uyumsuzluk_cozuldu).length;
+    // ⚠️ Eski hesap HER sıfır-olmayan farkı sayıyordu; 5 TL bile "fark" oluyordu.
+    // Artık tolerans üstü olanlar (uyari/kritik) sayılır — sunucunun ölçüsü.
+    const farkliAcilis = acilisSatir.filter((x) => x.fark_tl != null
+      && (x.fark_seviye ? ['uyari', 'kritik'].includes(x.fark_seviye) : sayi(x.fark_tl) !== 0));
     const teslimBekleyen = kapanisSatir.filter((x) => x.kapanis_tamam && !sayi(x.teslim_kasa_tl));
     // Alarm YALNIZ tam denklemden: gün sürerken kısmi Δ gerçek fark değildir.
     const kasaFarkli = kapanisSatir.filter((x) => {
@@ -3405,7 +3426,14 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
         <KpiSeridi kpiler={[
           { etiket: 'Açılan şube', deger: `${acilanSube} / ${acilisSatir.length}`, alt: barTarih === bugunYerelISO() ? 'bugün' : barTarih, renk: acilanSube === acilisSatir.length && acilisSatir.length ? R.yesil : R.amber },
           { etiket: 'Kapanan şube', deger: `${kapananSube} / ${kapanisSatir.length}`, alt: kapananSube < kapanisSatir.length ? 'kapanış bekleniyor' : 'tamamlandı', renk: kapananSube === kapanisSatir.length && kapanisSatir.length ? R.yesil : R.amber },
-          { etiket: 'Açılış farkı', deger: String(farkliAcilis.length), alt: farkliAcilis.length ? 'devir ile uyuşmayan' : 'devirle uyumlu', renk: farkliAcilis.length ? R.kirmizi : R.yesil },
+          {
+            etiket: 'Açılış farkı',
+            deger: String(farkUyariAdet),
+            alt: farkUyariAdet
+              ? `tolerans üstü${uyumsuzBekleyen ? ` · ${uyumsuzBekleyen} açık kayıt` : ''}${uyumsuzCozulen ? ` · ${uyumsuzCozulen} çözüldü` : ''}`
+              : 'devirle uyumlu (±50 tolerans)',
+            renk: farkUyariAdet ? R.kirmizi : R.yesil,
+          },
           { etiket: 'Teslim bekleyen', deger: String(teslimBekleyen.length), alt: 'kapandı ama kasa teslim edilmedi', renk: teslimBekleyen.length ? R.amber : R.yesil },
           {
             etiket: 'Ciro onayı',
@@ -3449,30 +3477,117 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
         </div>
 
         {barSekme === 'acilis' && (acilisSatir.length ? (
-          <Tablo
-            baslik={`Açılış kasası · ${tarihKisa(barTarih)}`}
-            not="dünkü kapanış devri ile sabah sayımı karşılaştırılır"
-            kolonlar={[
-              { ad: 'Şube' }, { ad: 'Durum' }, { ad: 'Açılış saati' }, { ad: 'Personel' },
-              { ad: 'Sayılan', sag: 1 }, { ad: 'Beklenen devir', sag: 1 }, { ad: 'Fark', sag: 1 },
-            ]}
-            satirlar={acilisSatir.map((x, i) => ({
-              id: x.sube_id || `a-${i}`,
-              hucreler: [
-                { v: x.sube_adi || '—', kalin: true },
-                x.acilis_tamam
-                  ? { v: 'açıldı', rozet: R.yesil }
-                  : { v: x.acilis_durum || 'bekliyor', rozet: R.amber },
-                { v: saatKisa(x.acilis_ts) || x.personel_saat || '—', mono: true, renk: R.not },
-                { v: x.personel_ad || '—', renk: R.not },
-                { v: x.acilis_kasa_tl != null ? fmt(sayi(x.acilis_kasa_tl)) : '—', mono: true, sag: true },
-                { v: x.beklenen_devir_tl != null ? fmt(sayi(x.beklenen_devir_tl)) : '—', mono: true, sag: true, renk: R.not },
-                x.fark_tl == null
-                  ? { v: '—', sag: true, renk: R.not }
-                  : { v: fmt(sayi(x.fark_tl)), mono: true, sag: true, kalin: true, renk: sayi(x.fark_tl) === 0 ? R.yesil : R.kirmizi },
-              ],
-            }))}
-          />
+          <>
+            {/* Açılış farkı da Uzlaştırma kuyruğuna düşer (/ops/kasa-uyumsuzluk).
+                Burada İKİNCİ kuyruk kurulmaz: satırın o kuyruktaki DURUMU yazılır
+                (çözüldü / bekliyor) ve çözüm masasına köprü verilir. Çözülmüş bir
+                farkı kırmızı göstermek boşuna alarm olurdu. */}
+            {uyumsuzBekleyen > 0 ? (
+              <div style={{
+                ...kartYuzey, padding: '13px 18px', marginBottom: 12, borderColor: `${R.amber}44`,
+                display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
+              }}>
+                <span style={rozetHap(R.amber)}>⚠ açık kasa uyumsuzluğu</span>
+                <span style={{ fontSize: 12, color: R.not }}>
+                  {uyumsuzBekleyen} şubede açılış farkı kayda düşmüş ve <b>henüz çözülmemiş</b>
+                  {farkUyariAdet > uyumsuzBekleyen ? ` · ${farkUyariAdet} şubede fark tolerans üstünde` : ''}.
+                  {' '}Çözme/işaretleme Uzlaştırma'da.
+                </span>
+                <button
+                  onClick={() => onGorunum?.('uzlastir')}
+                  style={{
+                    marginLeft: 'auto', padding: '7px 14px', borderRadius: 10, cursor: 'pointer',
+                    border: `1px solid ${R.bakir}66`, background: 'rgba(217,154,78,.14)',
+                    color: R.bakirAcik, fontSize: 11.5, fontWeight: 700, fontFamily: 'inherit',
+                  }}
+                >Uzlaştırmaya git →</button>
+              </div>
+            ) : null}
+
+            <Tablo
+              baslik={`Açılış kasası · ${tarihKisa(barTarih)}`}
+              not={`${acilisTakip?.dunku_kapanis_tarih ? `${tarihKisa(acilisTakip.dunku_kapanis_tarih)} kapanış devri ile karşılaştırılır` : 'dünkü kapanış devri ile sabah sayımı karşılaştırılır'} · fark eşiği ±50 normal, 200+ kritik`}
+              kolonlar={[
+                { ad: 'Şube' }, { ad: 'Durum' }, { ad: 'Açılış saati' },
+                { ad: 'Sayılan', sag: 1 }, { ad: 'Beklenen devir', sag: 1 },
+                { ad: 'Fark', sag: 1 }, { ad: 'Uyumsuzluk' },
+              ]}
+              satirlar={acilisSatir.map((x, i) => {
+                const fark = x.fark_tl == null ? null : sayi(x.fark_tl);
+                const sev = SEVIYE[x.fark_seviye] || null;
+                // Renk SEVİYEYE göre: 5 TL fark kırmızı olmamalı (sunucu ±50'yi
+                // normal sayıyor, operasyon_kurallar.tolerans_seviyesi).
+                const farkRenk = fark == null ? R.not
+                  : x.uyumsuzluk_cozuldu ? R.not2
+                    : sev ? sev.renk
+                      : fark === 0 ? R.yesil : R.kirmizi;
+                return {
+                  id: x.sube_id || `a-${i}`,
+                  hucreler: [
+                    {
+                      siraMetin: x.sube_adi || '',
+                      v: (
+                        <span style={{ display: 'inline-flex', flexDirection: 'column', gap: 2 }}>
+                          <span style={{ fontWeight: 700 }}>{x.sube_adi || '—'}</span>
+                          {x.personel_ad
+                            ? <span style={{ fontSize: 10.5, color: R.not2 }}>{x.personel_ad}</span>
+                            : null}
+                        </span>
+                      ),
+                    },
+                    x.acilis_tamam
+                      ? {
+                        // panel_acilis: kayıt şube panelinden (QR akışı) mı doğdu?
+                        // Değilse sayım merkezde/dolaylı girilmiş demektir.
+                        v: x.panel_acilis === false ? 'açıldı · panel dışı' : 'açıldı',
+                        rozet: x.panel_acilis === false ? R.amber : R.yesil,
+                      }
+                      : { v: x.acilis_durum || 'bekliyor', rozet: R.amber },
+                    { v: saatKisa(x.acilis_ts) || x.personel_saat || '—', mono: true, renk: R.not },
+                    { v: x.acilis_kasa_tl != null ? fmt(sayi(x.acilis_kasa_tl)) : '—', mono: true, sag: true },
+                    {
+                      sira: x.beklenen_devir_tl != null ? sayi(x.beklenen_devir_tl) : null,
+                      sag: true,
+                      v: (
+                        <span style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
+                          <span style={{ fontFamily: F.mono, color: R.not }}>
+                            {x.beklenen_devir_tl != null ? fmt(sayi(x.beklenen_devir_tl)) : '—'}
+                          </span>
+                          {/* Devir tutarı yoksa "kim bıraktı" tek başına anlamsız
+                              (karşılaştırılacak sayı yok) — birlikte gösterilir. */}
+                          {x.dunku_kapanis_personel && x.beklenen_devir_tl != null
+                            ? <span style={{ fontSize: 10, color: R.not2, whiteSpace: 'nowrap' }}>
+                              {x.dunku_kapanis_personel} bıraktı
+                            </span>
+                            : null}
+                        </span>
+                      ),
+                    },
+                    fark == null
+                      ? { v: '—', sag: true, renk: R.not }
+                      : {
+                        sira: fark, sag: true,
+                        v: (
+                          <span style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
+                            <span style={{ fontFamily: F.mono, fontWeight: 800, color: farkRenk }}>
+                              {fark > 0 ? '+' : ''}{fmt(fark)}
+                            </span>
+                            {sev && fark !== 0
+                              ? <span style={{ fontSize: 10, fontWeight: 700, color: farkRenk }}>{sev.ad}</span>
+                              : null}
+                          </span>
+                        ),
+                      },
+                    x.uyumsuzluk_cozuldu
+                      ? { v: 'çözüldü', rozet: R.yesil, sira: 0 }
+                      : x.uyumsuzluk_bekliyor
+                        ? { v: 'bekliyor', rozet: R.amber, sira: 2 }
+                        : { v: '—', renk: R.not3, sira: 1 },
+                  ],
+                };
+              })}
+            />
+          </>
         ) : <BosDurum metin="Bu gün için açılış kaydı yok." />)}
 
         {barSekme === 'kapanis' && (kapanisSatir.length ? (

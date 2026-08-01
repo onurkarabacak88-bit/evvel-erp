@@ -493,12 +493,20 @@ const OPS_UC = {
     kalemler: [{ id: 'k1', kalem_adi: 'Plastik bardak', sube_adi: 'ZAFER', kayip: 698, not: 'kayıtsız çıkış şüphesi' }],
   },
   // Bar Akışı (ops-merkez P0 sekmeleri)
+  // Açılış kasası — fark_seviye: ±50 normal · 50-200 uyarı · 200+ kritik.
+  // ZAFER tam uyumlu · KÖYCEĞİZ kritik + kayıt AÇIK · GAZZE tolerans içi (12 TL,
+  // kırmızı OLMAMALI) · ALSANCAK hiç açılmadı · TEMA panel dışı + çözülmüş fark
   '/api/ops/acilis-kasa-takip': {
-    tarih: bugunISO, is_gunu_tr: bugunISO,
+    tarih: bugunISO, is_gunu_tr: bugunISO, takvim_tr: bugunISO,
+    dunku_kapanis_tarih: gunEkleISO(-1), sube_sayisi: 5,
+    acilis_yapan_adet: 4, acilis_bekleyen_adet: 1,
+    fark_uyari_adet: 2, uyumsuzluk_bekleyen_adet: 1,
     satirlar: [
-      { sube_id: 's0', sube_adi: 'ZAFER', acilis_durum: 'tamam', acilis_tamam: true, acilis_ts: bugunISO + ' 08:12:00', personel_ad: 'Elif Kaya', acilis_kasa_tl: 3200, beklenen_devir_tl: 3200, fark_tl: 0 },
-      { sube_id: 's1', sube_adi: 'KÖYCEĞİZ', acilis_durum: 'tamam', acilis_tamam: true, acilis_ts: bugunISO + ' 08:41:00', personel_ad: 'Mert Can', acilis_kasa_tl: 2800, beklenen_devir_tl: 3000, fark_tl: -200 },
-      { sube_id: 's2', sube_adi: 'ALSANCAK', acilis_durum: 'bekliyor', acilis_tamam: false, acilis_ts: '', personel_ad: '', acilis_kasa_tl: null, beklenen_devir_tl: null, fark_tl: null },
+      { sube_id: 's0', sube_adi: 'ZAFER', acilis_durum: 'tamam', acilis_tamam: true, acilis_ts: bugunISO + ' 08:12:00', personel_saat: '08:00', personel_ad: 'Elif Kaya', panel_acilis: true, acilis_kasa_tl: 3200, beklenen_devir_tl: 3200, fark_tl: 0, fark_seviye: 'normal', dunku_kapanis_tarih: gunEkleISO(-1), dunku_kapanis_personel: 'Elif Kaya', uyumsuzluk_id: null, uyumsuzluk_cozuldu: false, uyumsuzluk_bekliyor: false },
+      { sube_id: 's1', sube_adi: 'KÖYCEĞİZ', acilis_durum: 'tamam', acilis_tamam: true, acilis_ts: bugunISO + ' 08:41:00', personel_saat: '08:30', personel_ad: 'Mert Can', panel_acilis: true, acilis_kasa_tl: 2800, beklenen_devir_tl: 3000, fark_tl: -200, fark_seviye: 'kritik', dunku_kapanis_tarih: gunEkleISO(-1), dunku_kapanis_personel: 'Selin Ak', uyumsuzluk_id: 'u1', uyumsuzluk_cozuldu: false, uyumsuzluk_bekliyor: true },
+      { sube_id: 's3', sube_adi: 'GAZZE', acilis_durum: 'tamam', acilis_tamam: true, acilis_ts: bugunISO + ' 09:05:00', personel_saat: '09:00', personel_ad: 'Deniz Ay', panel_acilis: true, acilis_kasa_tl: 2612, beklenen_devir_tl: 2600, fark_tl: 12, fark_seviye: 'normal', dunku_kapanis_tarih: gunEkleISO(-1), dunku_kapanis_personel: 'Deniz Ay', uyumsuzluk_id: null, uyumsuzluk_cozuldu: false, uyumsuzluk_bekliyor: false },
+      { sube_id: 's4', sube_adi: 'TEMA', acilis_durum: 'tamam', acilis_tamam: true, acilis_ts: bugunISO + ' 08:55:00', personel_saat: '08:45', personel_ad: 'Burak Er', panel_acilis: false, acilis_kasa_tl: 4100, beklenen_devir_tl: 4000, fark_tl: 100, fark_seviye: 'uyari', dunku_kapanis_tarih: gunEkleISO(-1), dunku_kapanis_personel: 'Burak Er', uyumsuzluk_id: 'u2', uyumsuzluk_cozuldu: true, uyumsuzluk_bekliyor: false },
+      { sube_id: 's2', sube_adi: 'ALSANCAK', acilis_durum: 'bekliyor', acilis_tamam: false, acilis_ts: '', personel_saat: '', personel_ad: '', panel_acilis: false, acilis_kasa_tl: null, beklenen_devir_tl: null, fark_tl: null, fark_seviye: null, dunku_kapanis_tarih: gunEkleISO(-1), dunku_kapanis_personel: 'Selin Ak', uyumsuzluk_id: null, uyumsuzluk_cozuldu: false, uyumsuzluk_bekliyor: false },
     ],
   },
   // Nakit denklemi: sabah_kasa + nakit − teslim − devir − ara_teslim − gider = Δ
