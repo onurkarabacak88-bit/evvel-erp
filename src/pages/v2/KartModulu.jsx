@@ -102,6 +102,8 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
   const [harcama, setHarcama] = useState(null);
   const [hareketler, setHareketler] = useState([]);
   const [koc, setKoc] = useState(null);
+  // /kartlar/borc-projeksiyon — çok aylık GERÇEK faiz simülasyonu (çığ/kartopu)
+  const [proj, setProj] = useState(null);
   const [strateji, setStrateji] = useState('cig');
   const [nakit, setNakit] = useState(200000);
   // ── YERLİ EKSTRE YÜKLEME (köprü kaldırma turu, 2026-07-30) ─────────────────
@@ -389,6 +391,14 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
     api(`/kartlar/borc-kocu?strateji=${strateji}&nakit=${sayi(nakit)}`)
       .then(d => { if (!iptal) setKoc(d); })
       .catch(() => { if (!iptal) setKoc(null); });
+    // ⚠️ KURTULUŞ SÜRESİ SUNUCUDAN — v2 bunu `toplamBorc / netAylik` diye
+    // KENDİ TAHMİN EDİYORDU. O kaba oran faizin BİLEŞİKLENMESİNİ ve stratejiyi
+    // (çığ/kartopu) yok sayar; sunucu ay ay gerçek simülasyon koşuyor ve
+    // ayrıca "sadece asgari ödersen" senaryosuyla karşılaştırıyor.
+    // Kart limit_doluluk vakasıyla aynı sınıf tuzak.
+    api(`/kartlar/borc-projeksiyon?aylik=${sayi(nakit)}&strateji=${strateji}`)
+      .then(d => { if (!iptal) setProj(d || null); })
+      .catch(() => { if (!iptal) setProj(null); });
     return () => { iptal = true; };
   }, [strateji, nakit]);
 
@@ -1081,17 +1091,89 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
     const toplamBorc = sayi(koc?.toplam_borc) || kartSatir.reduce((s, k) => s + k.toplam, 0);
     const aylikFaiz = sayi(koc?.toplam_aylik_faiz);
     const oncelik = koc?.oncelik;
-    // Kaç ayda biter: aylık ödeme faizi aşıyorsa anapara erir.
+    // Kurtuluş süresi: SUNUCUNUN ay ay simülasyonu esas (bileşik faiz +
+    // strateji sırası dahil). Uç yoksa eski kaba orana düşülür — ama o oran
+    // faizi bileşiklemediği için GERÇEKTEN OLDUĞUNDAN KISA gösterir.
     const netAylik = sayi(nakit) - aylikFaiz;
-    const kurtulusAy = netAylik > 0 ? Math.ceil(toplamBorc / netAylik) : null;
+    const kabaAy = netAylik > 0 ? Math.ceil(toplamBorc / netAylik) : null;
+    const projAy = proj?.verilen?.ay ?? null;
+    const kurtulusAy = projAy != null ? projAy : kabaAy;
+    const projBitmedi = proj?.verilen?.bitmedi === true;
+    const asgariAy = proj?.asgari_only?.ay ?? null;
+    const tasarruf = sayi(proj?.tasarruf_faiz);
+    const erkenAy = sayi(proj?.erken_ay);
     return (
       <>
         <KpiSeridi kpiler={[
           { etiket: 'Toplam borç', deger: fmt(toplamBorc), alt: `${kartSatir.length} kart`, renk: R.kirmizi },
           { etiket: 'Aylık faiz kaybı', deger: fmt(aylikFaiz), alt: 'hiçbir şey yapmazsan bankaya', renk: R.amber },
           { etiket: 'Toplam asgari', deger: fmt(toplamAsgari), alt: 'bu ay minimum', renk: R.krem },
-          { etiket: 'Kurtuluş', deger: kurtulusAy ? `${kurtulusAy} ay` : '—', alt: kurtulusAy ? `aylık ${fmt(sayi(nakit))} ödemeyle` : 'ödeme faizi karşılamıyor', renk: kurtulusAy ? R.yesil : R.kirmizi },
+          {
+            etiket: 'Kurtuluş',
+            deger: projBitmedi ? 'bitmiyor' : kurtulusAy ? `${kurtulusAy} ay` : '—',
+            alt: projBitmedi
+              ? 'bu tempoda borç kapanmıyor'
+              : kurtulusAy
+                ? `aylık ${fmt(sayi(nakit))} ödemeyle${proj?.verilen?.bitis_tarihi ? ` · ${kisaTarih(proj.verilen.bitis_tarihi)}` : ''}${projAy == null ? ' · kaba tahmin' : ''}`
+                : 'ödeme faizi karşılamıyor',
+            renk: projBitmedi ? R.kirmizi : kurtulusAy ? R.yesil : R.kirmizi,
+          },
         ]} />
+
+        {/* ── ÇOK AYLIK PROJEKSİYON (/kartlar/borc-projeksiyon) ──
+            Borç Koçu tek dönemi dağıtır: "bu ay hangi karta ne kadar".
+            Bu blok BÜTÜN YOLU gösterir: kaç ayda biter, toplam ne kadar faiz
+            ödersin ve SADECE ASGARİ ödersen ne kaybedersin. */}
+        {proj && (
+          <div style={{ ...kartYuzey, padding: '15px 18px', marginBottom: 14 }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap', marginBottom: 11 }}>
+              <span style={{ fontFamily: F.baslik, fontSize: 15, fontWeight: 600 }}>
+                Kurtuluş projeksiyonu · {proj.strateji === 'kartopu' ? 'kartopu' : 'çığ'}
+              </span>
+              <span style={{ fontSize: 11.5, color: R.not2 }}>
+                gerçek faiz simülasyonu — standart çerçeve, kişiye özel mali tavsiye değildir
+              </span>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(200px,1fr))', gap: 10 }}>
+              <div style={{ padding: '11px 14px', borderRadius: 11, background: R.girinti, border: `1px solid ${R.yesil}33` }}>
+                <div style={{ fontSize: 10.5, color: R.not2, fontWeight: 700, letterSpacing: '.5px' }}>
+                  AYLIK {fmt(sayi(proj.aylik))} ÖDERSEN
+                </div>
+                <div style={{ fontFamily: F.mono, fontSize: 18, fontWeight: 700, color: projBitmedi ? R.kirmizi : R.yesil, marginTop: 4 }}>
+                  {projBitmedi ? 'bitmiyor' : `${projAy} ay`}
+                </div>
+                <div style={{ fontSize: 11, color: R.not2, marginTop: 2 }}>
+                  toplam faiz {fmt(sayi(proj.verilen?.toplam_faiz))}
+                  {proj.verilen?.bitis_tarihi ? ` · ${kisaTarih(proj.verilen.bitis_tarihi)}` : ''}
+                </div>
+              </div>
+              <div style={{ padding: '11px 14px', borderRadius: 11, background: R.girinti, border: `1px solid ${R.kirmizi}33` }}>
+                <div style={{ fontSize: 10.5, color: R.not2, fontWeight: 700, letterSpacing: '.5px' }}>
+                  SADECE ASGARİ ÖDERSEN
+                </div>
+                <div style={{ fontFamily: F.mono, fontSize: 18, fontWeight: 700, color: R.kirmizi, marginTop: 4 }}>
+                  {proj.asgari_only?.bitmedi ? 'bitmiyor' : asgariAy ? `${asgariAy} ay` : '—'}
+                </div>
+                <div style={{ fontSize: 11, color: R.not2, marginTop: 2 }}>
+                  toplam faiz {fmt(sayi(proj.asgari_only?.toplam_faiz))}
+                </div>
+              </div>
+              {(tasarruf > 0 || erkenAy > 0) && (
+                <div style={{ padding: '11px 14px', borderRadius: 11, background: `${R.bakir}14`, border: `1px solid ${R.bakir}44` }}>
+                  <div style={{ fontSize: 10.5, color: R.bakirAcik, fontWeight: 700, letterSpacing: '.5px' }}>
+                    FARK — CEBİNDE KALAN
+                  </div>
+                  <div style={{ fontFamily: F.mono, fontSize: 18, fontWeight: 700, color: R.bakirAcik, marginTop: 4 }}>
+                    {fmt(tasarruf)}
+                  </div>
+                  <div style={{ fontSize: 11, color: R.not2, marginTop: 2 }}>
+                    {erkenAy > 0 ? `${erkenAy} ay erken biter` : 'daha az faiz'}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
         <BorcKocu
           strateji={strateji}
           onStrateji={setStrateji}

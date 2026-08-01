@@ -858,6 +858,16 @@ const MALIYET_UC = {
     },
     gun_satirlari: MALIYET_GUNLER,
   },
+  // Çok aylık kurtuluş projeksiyonu — v2 bu ucu HİÇ çağırmıyordu; kurtuluş
+  // süresini `toplamBorc / netAylik` diye KENDİ tahmin ediyordu (bileşik faizi
+  // ve stratejiyi yok sayan kaba oran → olduğundan KISA gösterir).
+  '/api/kartlar/borc-projeksiyon': {
+    aylik: 120000, strateji: 'cig',
+    toplam_borc: 443500, toplam_asgari: 163990,
+    verilen: { ay: 5, toplam_faiz: 84210, bitmedi: false, bitis_tarihi: gunEkleISO(150) },
+    asgari_only: { ay: 34, toplam_faiz: 512400, bitmedi: false, bitis_tarihi: gunEkleISO(1020) },
+    tasarruf_faiz: 428190, erken_ay: 29,
+  },
   // "Saatinde açıldı mı" — v2 bu ucu HİÇ çağırmıyordu (acilis-kasa-takip
   // "açıldı mı + kasa tuttu mu" der, bu uç SAATİ ölçer). Üç liste ayrı.
   '/api/ops/gec-acilan-subeler': {
