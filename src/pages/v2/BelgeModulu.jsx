@@ -29,9 +29,22 @@ const buAyISO = () => {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 };
+// Tarih aritmetiği YEREL kalır — toISOString UTC'ye çevirip TR'de günü geri kaydırır.
+const bugunYerelISO = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
 const kisalt = (s, n = 90) => {
   const t = String(s || '').trim();
   return t.length > n ? t.slice(0, n) + '…' : t;
+};
+
+// Cari ekstre hareket tipleri — sunucu `tip` alanıyla gönderir
+// (fatura_api.cari_ekstre: fatura | odeme | devir).
+const CARI_HAREKET = {
+  fatura: { ad: 'Fatura', borc: true },
+  odeme: { ad: 'Ödeme', borc: false },
+  devir: { ad: 'Açılış devri', borc: true },
 };
 
 // Yerli form stilleri (köprü kaldırma turu)
@@ -1107,6 +1120,17 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast }) {
     if (merkezHata) return <HataBandi mesaj={merkezHata} onTekrar={merkezYukle} />;
     if (!merkez) return <Yukleniyor />;
     const faturalar = Array.isArray(cari?.faturalar) ? cari.faturalar : [];
+    // ⚠️ v2 bu ucun cevabını TAM tutuyordu ama yalnız KPI + fatura listesi
+    // çiziyordu. Klasik CariEkstrePanel.jsx'in başında yazan ilke:
+    //   "tek kaynak, iki ekran; ekstre iki yerde iki farklı kalitede yaşamaz"
+    // ve kanonik sıra: GÜNCEL DURUM → DEFTER → mutabakat → kaynak belgeler.
+    // v2 DEFTER'i ve mutabakatı hiç kurmamıştı; eksik derinlik kapatıldı.
+    const hareketler = Array.isArray(cari?.hareketler) ? cari.hareketler : [];
+    const aylik = Array.isArray(cari?.aylik) ? cari.aylik : [];
+    const vadeler = Array.isArray(cari?.bekleyen_vadeler) ? cari.bekleyen_vadeler : [];
+    const adaylar = Array.isArray(cari?.odeme_adaylari) ? cari.odeme_adaylari : [];
+    const bugunISO = bugunYerelISO();
+    const gecikmisVade = vadeler.filter((v) => String(v.vade || '') < bugunISO);
     return (
       <>
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 14 }}>
@@ -1136,11 +1160,115 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast }) {
               { etiket: 'Açılış devri', deger: fmt(sayi(cari.devir)), alt: kisalt(cari.devir_not, 30) || 'sistem öncesi beyan' },
               { etiket: '6 ay hacim', deger: fmt(sayi(cari.fatura_toplam_6ay)), alt: `${sayi(cari.fatura_adet)} fatura · ödeme izi ${fmt(sayi(cari.odeme_izi_toplam_6ay))}` },
             ]} />
+            {/* ── BEKLEYEN VADELER (varsa önce, çünkü aksiyon gerektirir) ── */}
+            {vadeler.length > 0 && (
+              <div style={{
+                ...kartYuzey, padding: '13px 18px', marginBottom: 14,
+                borderColor: gecikmisVade.length ? `${R.kirmizi}55` : `${R.amber}44`,
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: vadeler.length ? 10 : 0 }}>
+                  <span style={rozetHap(gecikmisVade.length ? R.kirmizi : R.amber)}>
+                    {gecikmisVade.length ? `⚠ ${gecikmisVade.length} vadesi geçmiş` : '⏳ bekleyen vade'}
+                  </span>
+                  <span style={{ fontSize: 12, color: R.not }}>
+                    {vadeler.length} açık söz · toplam <b style={{ fontFamily: F.mono }}>{fmt(sayi(cari.bekleyen_vade_toplam))}</b>
+                    {' — '}ödeme <b>Ödeme Merkezi</b>'nden yapılır, bu ekran salt-okur.
+                  </span>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                  {vadeler.slice(0, 6).map((v, i) => {
+                    const gec = String(v.vade || '') < bugunISO;
+                    return (
+                      <div key={i} style={{
+                        display: 'flex', alignItems: 'center', gap: 10, fontSize: 11.5,
+                        padding: '7px 11px', borderRadius: 9, background: R.girinti,
+                      }}>
+                        <span style={{ fontFamily: F.mono, color: gec ? R.kirmizi : R.not, flexShrink: 0, width: 54 }}>
+                          {tarihKisa(v.vade)}
+                        </span>
+                        <span style={{ flex: 1, minWidth: 0, color: R.metin2 }}>{kisalt(v.aciklama, 60)}</span>
+                        {gec && <span style={{ fontSize: 10, fontWeight: 700, color: R.kirmizi, flexShrink: 0 }}>gecikti</span>}
+                        <span style={{ fontFamily: F.mono, fontWeight: 700, flexShrink: 0 }}>{fmt(sayi(v.tutar))}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* ── DEFTER — kanonik sıranın kalbi: borç / alacak / yürüyen bakiye.
+                Ekstre DEVİRLE başlar (açılış fişi); ödeme alacak sütununa yazılır
+                ve bakiyeyi düşürür. Sunucu bakiyeyi kendisi yürütüyor — burada
+                YENİDEN HESAPLANMAZ. */}
+            {hareketler.length > 0 && (
+              <Tablo
+                baslik={`Cari defter — ${kisalt(cariSecim, 40)}`}
+                not={`yürüyen bakiye ${fmt(sayi(cari.yuruyen_bakiye))} · ${hareketler.length} hareket`}
+                kolonlar={[
+                  { ad: 'Tarih' }, { ad: 'Hareket' }, { ad: 'Açıklama' },
+                  { ad: 'Borç', sag: 1 }, { ad: 'Alacak', sag: 1 }, { ad: 'Bakiye', sag: 1 },
+                ]}
+                satirlar={hareketler.slice(-40).reverse().map((h, i) => {
+                  const tip = CARI_HAREKET[h.tip] || { ad: h.tip || '—', borc: true };
+                  const t = sayi(h.tutar);
+                  return {
+                    id: `hr-${i}`,
+                    hucreler: [
+                      { v: tarihKisa(h.tarih), mono: true, renk: R.not },
+                      {
+                        v: tip.ad,
+                        rozet: h.tip === 'odeme' ? R.yesil : h.tip === 'devir' ? R.mavi : R.bakir,
+                      },
+                      { v: kisalt(h.aciklama, 54) || '—', renk: R.metin2 },
+                      { v: tip.borc ? fmt(t) : '—', mono: true, sag: true, renk: tip.borc ? R.krem : R.not3 },
+                      { v: tip.borc ? '—' : fmt(t), mono: true, sag: true, renk: tip.borc ? R.not3 : R.yesil },
+                      { v: fmt(sayi(h.bakiye)), mono: true, sag: true, kalin: true, renk: sayi(h.bakiye) > 0 ? R.kirmizi : R.yesil },
+                    ],
+                  };
+                })}
+              />
+            )}
+
+            {/* ── AY AY MUTABAKAT (ikincil — katlanır) ── */}
+            {aylik.length > 0 && (
+              <details style={{ ...kartYuzey, padding: '13px 18px', marginBottom: 14 }}>
+                <summary style={{ cursor: 'pointer', fontSize: 12.5, fontWeight: 700, color: R.metin2 }}>
+                  📅 Ay ay mutabakat · {aylik.length} ay
+                  {adaylar.length ? ` · ${adaylar.length} ödeme adayı eşleşti` : ''}
+                </summary>
+                <div style={{ marginTop: 11, display: 'flex', flexDirection: 'column', gap: 5 }}>
+                  <div style={{ fontSize: 10.5, color: R.not2, marginBottom: 3 }}>
+                    Ödeme adayları METİN EŞLEŞMESİDİR — kesin mutabakat değil (öneri-only).
+                  </div>
+                  {[...aylik].sort((a, b) => String(b.ay).localeCompare(String(a.ay))).slice(0, 12).map((a, i) => {
+                    const fark = sayi(a.fark);
+                    return (
+                      <div key={a.ay || i} style={{
+                        display: 'flex', alignItems: 'center', gap: 10, fontSize: 11.5,
+                        padding: '7px 11px', borderRadius: 9, background: R.girinti,
+                      }}>
+                        <span style={{ fontFamily: F.mono, color: R.metin2, flexShrink: 0, width: 58 }}>{a.ay}</span>
+                        <span style={{ flex: 1, minWidth: 0, color: R.not2 }}>
+                          {sayi(a.fatura_adet)} fatura {fmt(sayi(a.fatura_toplam))} · {sayi(a.odeme_adet)} ödeme {fmt(sayi(a.odeme_toplam))}
+                        </span>
+                        <span style={{
+                          fontFamily: F.mono, fontWeight: 700, flexShrink: 0,
+                          color: Math.abs(fark) < 0.5 ? R.yesil : fark > 0 ? R.kirmizi : R.mavi,
+                        }}>
+                          {fark > 0 ? '+' : ''}{fmt(fark)}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </details>
+            )}
+
             {faturalar.length === 0 ? (
               <BosDurum metin="Bu tedarikçi için arşivde fatura yok." />
             ) : (
               <Tablo
-                baslik={`Cari ekstre — ${kisalt(cariSecim, 44)}`}
+                baslik={`Kaynak belgeler — ${kisalt(cariSecim, 40)}`}
                 not="satıra tıkla → belge görüntüle"
                 kolonlar={[
                   { ad: 'Tarih' }, { ad: 'Belge no' }, { ad: 'Tutar', sag: 1 }, { ad: 'Bakiye (dahil)', sag: 1 },

@@ -1483,7 +1483,30 @@ const BELGE_UC = {
     ],
     beyan_bakiye: 129800, devir: 64200, devir_not: 'sistem öncesi beyan',
     fatura_toplam_6ay: 1620000, odeme_izi_toplam_6ay: 1490200, hesaplanan_acik: 129800,
-    aylik: [],
+    // DEFTER — devirle başlar, ödeme alacak yazılır, bakiye sunucuda yürütülür
+    hareketler: [
+      { tip: 'devir', tarih: '2026-06-01', tutar: 64200, aciklama: '📜 sistem öncesi devir (sahip beyanı: açılış)', bakiye: 64200 },
+      { tip: 'fatura', tarih: gunEkleISO(-21), tutar: 61400, aciklama: 'KD2026-4402', bakiye: 125600 },
+      { tip: 'odeme', tarih: gunEkleISO(-14), tutar: 60000, aciklama: 'havale: KAHVE DÜNYASI ara ödeme', bakiye: 65600 },
+      { tip: 'fatura', tarih: bugunISO, tutar: 68400, aciklama: 'KD2026-4471', bakiye: 134000 },
+      { tip: 'odeme', tarih: bugunISO, tutar: 4200, aciklama: 'kasa: iade mahsubu', bakiye: 129800 },
+    ],
+    yuruyen_bakiye: 129800,
+    aylik: [
+      { ay: '2026-06', fatura_adet: 2, fatura_toplam: 118600, odeme_adet: 2, odeme_toplam: 118600, fark: 0 },
+      { ay: '2026-07', fatura_adet: 1, fatura_toplam: 61400, odeme_adet: 1, odeme_toplam: 60000, fark: 1400 },
+      { ay: '2026-08', fatura_adet: 1, fatura_toplam: 68400, odeme_adet: 1, odeme_toplam: 4200, fark: 64200 },
+    ],
+    // biri VADESİ GEÇMİŞ, biri gelecek — iki dal da sürülebilsin
+    bekleyen_vadeler: [
+      { tutar: 68400, vade: gunEkleISO(-3), aciklama: 'KAHVE DÜNYASI · çekirdek alımı' },
+      { tutar: 41250, vade: gunEkleISO(9), aciklama: 'KAHVE DÜNYASI · filtre kahve' },
+    ],
+    bekleyen_vade_toplam: 109650,
+    odeme_adaylari: [
+      { kanal: 'havale', tarih: gunEkleISO(-14), tutar: 60000, aciklama: 'KAHVE DÜNYASI ara ödeme' },
+      { kanal: 'kasa', tarih: bugunISO, tutar: 4200, aciklama: 'iade mahsubu' },
+    ],
   },
   '/api/fatura/ara': [
     { id: 'ar1', tedarikci_ad: 'SÜTAŞ BÖLGE DAĞITIM', tarih: gunEkleISO(-1), tutar: 41250, durum: 'ocr_tamam' },
