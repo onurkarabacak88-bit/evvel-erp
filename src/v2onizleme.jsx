@@ -457,7 +457,12 @@ const OPS_UC = {
       },
     ],
   },
-  '/api/vardiya/v2/atama/check': { cakisma_var: false, override_gerekir: false, uyarilar: [] },
+  // Uyarı + GÜN SAAT BÜTÇESİ dalı (main.py:10931) — personel_gun hiç okunmuyordu
+  '/api/vardiya/v2/atama/check': {
+    cakisma_var: false, override_gerekir: true, kritik_var: false,
+    uyarilar: [{ tip: 'gunluk_saat', seviye: 'uyari', mesaj: 'Günlük 9 saat sınırına yaklaşıyor' }],
+    personel_gun: { durum: 'dolu', kalan_saat: 1.5, toplam_saat: 7.5, max_gunluk_saat: 9, atama_sayisi: 2 },
+  },
   '/api/vardiya/v2/assign': { ok: true },
   '/api/vardiya/v2/gun-kopyala': { ok: true },
   '/api/vardiya/v2/gun-temizle': { ok: true },

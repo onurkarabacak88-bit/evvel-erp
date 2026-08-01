@@ -831,7 +831,21 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
         }
         if (c?.override_gerekir === true || uyarilar.length) {
           const metin = uyarilar.map((u) => (typeof u === 'string' ? u : (u.mesaj || u.aciklama || ''))).filter(Boolean).join(' · ');
-          setVpAtaModal((f) => ({ ...f, uyari: metin || 'Bu atama için uyarı var.', override: true }));
+          // personel_gun: sunucu o günün SAAT BÜTÇESİNİ de gönderiyor
+          // (main.py:10936). v2 yalnız uyarı metnini gösteriyordu; "kaç saat
+          // kaldı" bilgisi olmadan yönetici override kararını körlemesine
+          // veriyordu. Sayıyı uyarının yanına koyuyoruz — hüküm yine insanın.
+          const g = c?.personel_gun || null;
+          const butce = g && g.kalan_saat != null
+            ? `Bugün ${trSayi(sayi(g.toplam_saat))} sa atanmış (${sayi(g.atama_sayisi)} slot) · günlük sınır ${trSayi(sayi(g.max_gunluk_saat))} sa · kalan ${trSayi(sayi(g.kalan_saat))} sa`
+            : '';
+          setVpAtaModal((f) => ({
+            ...f,
+            uyari: metin || 'Bu atama için uyarı var.',
+            butce,
+            kritikVar: c?.kritik_var === true,
+            override: true,
+          }));
           setVpMesgul('');
           return;
         }
@@ -2029,9 +2043,18 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
                   border: `1px solid ${vpAtaModal.override ? `${R.amber}66` : `${R.kirmizi}55`}`,
                 }}>
                   <div style={{ fontSize: 12, fontWeight: 700, color: vpAtaModal.override ? R.amber : R.kirmizi }}>
-                    {vpAtaModal.override ? '⚠ Uyarı var' : '⛔ Çakışma — atanamaz'}
+                    {vpAtaModal.override
+                      ? (vpAtaModal.kritikVar ? '⚠ KRİTİK uyarı' : '⚠ Uyarı var')
+                      : '⛔ Çakışma — atanamaz'}
                   </div>
                   <div style={{ fontSize: 12, color: R.metin2, marginTop: 5, lineHeight: 1.5 }}>{vpAtaModal.uyari}</div>
+                  {/* Gün saat bütçesi — "yine de ata" kararı buna bakılarak verilir */}
+                  {vpAtaModal.butce && (
+                    <div style={{
+                      fontSize: 11.5, color: R.not, marginTop: 8, padding: '7px 11px',
+                      borderRadius: 9, background: R.girinti, fontFamily: F.mono,
+                    }}>{vpAtaModal.butce}</div>
+                  )}
                   {vpAtaModal.override && (
                     <button disabled={vpMesgul === 'ata'} onClick={() => vpAta(true)} style={{
                       marginTop: 10, padding: '7px 14px', borderRadius: 9, border: 'none', cursor: 'pointer',
