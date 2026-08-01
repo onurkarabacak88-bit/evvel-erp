@@ -202,7 +202,16 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
   const [vpAtaModal, setVpAtaModal] = useState(null);   // {slot, subeAd, personelId, uyari, override}
   const [vpKopyaModal, setVpKopyaModal] = useState(null);
   const [hafta, setHafta] = useState(null);
-  const [bordro, setBordro] = useState([]);
+  // 🐞 /personel-aylik NESNE döndürür: {yil, ay, personeller[], toplam_tahmini}
+  // (main.py:5676). Eski kod iki çağrı yerinde de `Array.isArray(b) ? b : []`
+  // yazıyordu → HER ZAMAN boş dizi → Maaş & Avans bordro tablosu CANLIDA
+  // TAMAMEN BOŞTU. Tezgâh gizliyordu: mock (BORDRO) düz dizi.
+  // Tek okuyucu burada; iki çağrı yeri de bunu kullanır.
+  const bordroCoz = (b) => (Array.isArray(b) ? { personeller: b, toplam_tahmini: null }
+    : { personeller: Array.isArray(b?.personeller) ? b.personeller : [], toplam_tahmini: b?.toplam_tahmini ?? null });
+  const [bordroVeri, setBordroVeri] = useState({ personeller: [], toplam_tahmini: null });
+  const bordro = bordroVeri.personeller;
+  const setBordro = (b) => setBordroVeri(bordroCoz(b));
   const [avans, setAvans] = useState(null);
   const [gorevOzet, setGorevOzet] = useState([]);
   const [takip, setTakip] = useState([]);
@@ -259,7 +268,7 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
       setVardiyaDisi(Array.isArray(vd) ? vd : (vd?.kayitlar || []));
       setPersonel(Array.isArray(p) ? p : []);
       setHafta(h);
-      setBordro(Array.isArray(b) ? b : []);
+      setBordro(b);
       setAvans(av);
       setGorevOzet(Array.isArray(go) ? go : []);
       setTakip(Array.isArray(vt) ? vt : (vt?.personeller || []));
@@ -1015,7 +1024,7 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
         api(`/personel-aylik?yil=${y}&ay=${a}`).catch(() => []),
         api(`/gorev/vardiya-takip?yil=${y}&ay=${a}`).catch(() => null),
       ]).then(([b, vt]) => {
-        setBordro(Array.isArray(b) ? b : []);
+        setBordro(b);
         setTakip(Array.isArray(vt) ? vt : (vt?.personeller || []));
         setDonemYukleniyor(false);
       });
@@ -1446,6 +1455,10 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
       return <div style={{ ...kartYuzey, padding: '40px 30px', textAlign: 'center', color: R.not, fontSize: 13 }}>Personel denetimi yükleniyor…</div>;
     }
     const davranis = Array.isArray(pdDavranis?.personel_ozet) ? pdDavranis.personel_ozet : [];
+    // Sunucu ayrıca "sürekli riskli" kısa listesi gönderiyor (risk skoruna göre
+    // sıralı) — v2 bunu hiç okumuyordu. Kritik rozetinin kaynağı budur.
+    const surekliRiskli = Array.isArray(pdDavranis?.surekli_riskli_personel) ? pdDavranis.surekli_riskli_personel : [];
+    const riskliIdler = new Set(surekliRiskli.map((p) => String(p.personel_id)));
     const puanlar = Array.isArray(pdPuan?.personeller) ? pdPuan.personeller : [];
     const gecSatir = Array.isArray(pdGec?.satirlar) ? pdGec.satirlar : [];
     const kasaSatir = Array.isArray(pdKasa?.personeller) ? pdKasa.personeller
@@ -1482,24 +1495,59 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
           <Tablo
             baslik="Davranış analizi · son 45 gün"
             not="gözlem toplamı — hüküm değil; puan maaşa bağlanmaz"
+            // 🐞 ŞEKİL TUZAĞI (düzeltildi): eski kolonlar `vardiya_sayisi`,
+            // `gecikme_dk`, `kasa_fark` okuyordu — bu adlar BAŞKA uçlardan
+            // (puan/geç/kasa) kopyalanmış, /ops/personel-davranis-analiz
+            // cevabında YOK. Tablo hep "—"/0 gösteriyordu; sunucunun zengin
+            // verisi (risk skoru, bardak düşüğü, vardiya eksiği) hiç çıkmıyordu.
+            // Gerçek şema: operasyon_merkez_api:5010 personel_ozet[].
             kolonlar={[
-              { ad: 'Personel' }, { ad: 'Şube' }, { ad: 'Vardiya', sag: true },
-              { ad: 'Gecikme', sag: true }, { ad: 'Kasa farkı', sag: true }, { ad: 'Durum' },
+              { ad: 'Personel' }, { ad: 'Şube' }, { ad: 'Açılış', sag: true },
+              { ad: 'Kasa farkı', sag: true }, { ad: 'Bardak düşüğü', sag: true },
+              { ad: 'Vardiya eksiği', sag: true }, { ad: 'Risk skoru', sag: true }, { ad: 'Durum' },
             ]}
             satirlar={davranis.slice(0, 40).map((x, i) => {
-              const gec = sayi(x.gecikme_dk ?? x.toplam_gecikme_dk);
-              const fark = sayi(x.kasa_fark ?? x.toplam_kasa_fark);
+              const farkAdet = sayi(x.acilis_kasa_fark_adet);
+              const farkTutar = sayi(x.acilis_kasa_fark_toplam);
+              const bardakAdet = sayi(x.bardak_dusuk_adet);
+              const vardiyaEksik = sayi(x.vardiya_eksik_adet);
+              const risk = sayi(x.davranis_risk_skoru);
+              const riskli = riskliIdler.has(String(x.personel_id));
               return {
                 id: x.personel_id || `d-${i}`,
                 hucreler: [
-                  { v: x.personel_ad || x.ad_soyad || '—', kalin: true },
-                  { v: x.sube_adi || x.sube_ad || '—', renk: R.not },
-                  { v: String(sayi(x.vardiya_sayisi ?? x.vardiya)), mono: true, sag: true },
-                  { v: gec ? `${trSayi(gec, 0)} dk` : '—', mono: true, sag: true, renk: gec > 30 ? R.amber : R.not },
-                  { v: fark ? fmt(fark) : '—', mono: true, sag: true, renk: fark ? R.kirmizi : R.not },
-                  (gec > 30 || fark)
-                    ? { v: 'izlemede', rozet: R.amber }
-                    : { v: 'normal', rozet: R.yesil },
+                  { v: x.personel_ad || '—', kalin: true },
+                  { v: x.sube_adi || '—', renk: R.not },
+                  { v: String(sayi(x.acilis_sayisi)), mono: true, sag: true, renk: R.not },
+                  farkAdet
+                    ? {
+                      sira: farkTutar, sag: true,
+                      v: (
+                        <span style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
+                          <span style={{ fontFamily: F.mono, fontWeight: 700, color: R.kirmizi }}>{fmt(farkTutar)}</span>
+                          <span style={{ fontSize: 10, color: R.not2 }}>{farkAdet} açılışta</span>
+                        </span>
+                      ),
+                    }
+                    : { v: '—', sag: true, renk: R.not3, sira: 0 },
+                  bardakAdet
+                    ? {
+                      sira: sayi(x.bardak_dusuk_toplam), sag: true,
+                      v: (
+                        <span style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
+                          <span style={{ fontFamily: F.mono, fontWeight: 700, color: R.amber }}>{sayi(x.bardak_dusuk_toplam)}</span>
+                          <span style={{ fontSize: 10, color: R.not2 }}>{bardakAdet} günde</span>
+                        </span>
+                      ),
+                    }
+                    : { v: '—', sag: true, renk: R.not3, sira: 0 },
+                  { v: vardiyaEksik ? String(vardiyaEksik) : '—', mono: true, sag: true, renk: vardiyaEksik ? R.amber : R.not3 },
+                  { v: risk ? trSayi(risk) : '—', mono: true, sag: true, kalin: true, renk: riskli ? R.kirmizi : risk ? R.amber : R.not3, sira: risk },
+                  riskli
+                    ? { v: 'sürekli riskli', rozet: R.kirmizi, sira: 2 }
+                    : (farkAdet || bardakAdet || vardiyaEksik)
+                      ? { v: 'izlemede', rozet: R.amber, sira: 1 }
+                      : { v: 'normal', rozet: R.yesil, sira: 0 },
                 ],
               };
             })}
@@ -1546,26 +1594,67 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
           <Tablo
             baslik={`Geç kalma · ${AY_KISA[ay - 1]} ${yil}`}
             not={`grace ${sayi(pdGec?.gecikme_dk)} dk · kritik eşik ${sayi(pdGec?.kritik_dk)} dk`}
+            // ⚠️ ŞUBE üst seviyede YOK — sunucu kişi başına toplar, şube ancak
+            // `detaylar[]` içindeki her olayda bulunur (bir kişi birden fazla
+            // şubede geç kalmış olabilir). Boş "Şube" sütunu yerine olayların
+            // şubeleri özetlenir; olay dökümü satır çekmecesinde.
             kolonlar={[
-              { ad: 'Personel' }, { ad: 'Şube' }, { ad: 'Gecikme adedi', sag: true },
-              { ad: 'Toplam dk', sag: true }, { ad: 'Durum' },
+              { ad: 'Personel' }, { ad: 'Şube(ler)' }, { ad: 'Gecikme adedi', sag: true },
+              { ad: 'Toplam dk', sag: true }, { ad: 'Ortalama', sag: true },
+              { ad: 'En kötü', sag: true }, { ad: 'Skor', sag: true }, { ad: 'Durum' },
             ]}
             satirlar={gecSatir.slice(0, 40).map((x, i) => {
-              const dk = sayi(x.toplam_gecikme_dk ?? x.gecikme_dk);
-              const adet = sayi(x.gecikme_adet ?? x.adet);
+              const dk = sayi(x.toplam_gecikme_dk);
+              const adet = sayi(x.gecikme_adet);
+              const det = Array.isArray(x.detaylar) ? x.detaylar : [];
+              const subeler = [...new Set(det.map((d) => d.sube_adi).filter(Boolean))];
               return {
                 id: x.personel_id || `g-${i}`,
+                _g: x,
                 hucreler: [
-                  { v: x.ad_soyad || x.personel_ad || '—', kalin: true },
-                  { v: x.sube_adi || x.sube_ad || '—', renk: R.not },
+                  { v: x.personel_ad || x.ad_soyad || '—', kalin: true },
+                  {
+                    siraMetin: subeler.join(', '),
+                    v: subeler.length > 1
+                      ? `${subeler[0]} +${subeler.length - 1}`
+                      : (subeler[0] || '—'),
+                    renk: R.not,
+                  },
                   { v: String(adet), mono: true, sag: true },
                   { v: dk ? `${trSayi(dk, 0)} dk` : '—', mono: true, sag: true, renk: dk > 60 ? R.kirmizi : R.amber },
+                  { v: sayi(x.ortalama_gecikme_dk) ? `${trSayi(x.ortalama_gecikme_dk, 0)} dk` : '—', mono: true, sag: true, renk: R.not },
+                  {
+                    v: sayi(x.max_gecikme_dk) ? `${trSayi(x.max_gecikme_dk, 0)} dk` : '—',
+                    mono: true, sag: true, renk: sayi(x.max_gecikme_dk) > sayi(pdGec?.kritik_dk) ? R.kirmizi : R.not,
+                  },
+                  { v: sayi(x.skor) ? trSayi(x.skor) : '—', mono: true, sag: true, kalin: true, renk: x.kritik ? R.kirmizi : R.amber, sira: sayi(x.skor) },
                   x.kritik
-                    ? { v: 'kritik', rozet: R.kirmizi }
-                    : { v: 'izlemede', rozet: R.amber },
+                    ? { v: `kritik${sayi(x.kritik_gecikme_adet) ? ` · ${sayi(x.kritik_gecikme_adet)}×` : ''}`, rozet: R.kirmizi, sira: 1 }
+                    : { v: 'izlemede', rozet: R.amber, sira: 0 },
                 ],
               };
             })}
+            onSatir={({ _g }) => {
+              const det = Array.isArray(_g?.detaylar) ? _g.detaylar : [];
+              onCekmece?.({
+                tip: 'GEÇ KALMA · OLAY DÖKÜMÜ',
+                baslik: _g?.personel_ad || _g?.ad_soyad || 'Personel',
+                alt: `${AY_KISA[ay - 1]} ${yil} · ${sayi(_g?.gecikme_adet)} gecikme · grace ${sayi(pdGec?.gecikme_dk)} dk`,
+                kpi: [
+                  { etiket: 'Toplam', deger: `${trSayi(sayi(_g?.toplam_gecikme_dk), 0)} dk`, renk: R.amber },
+                  { etiket: 'Ortalama', deger: `${trSayi(sayi(_g?.ortalama_gecikme_dk), 0)} dk` },
+                  { etiket: 'En kötü', deger: `${trSayi(sayi(_g?.max_gecikme_dk), 0)} dk`, renk: R.kirmizi },
+                  { etiket: 'Skor', deger: sayi(_g?.skor) ? trSayi(_g.skor) : '—', renk: _g?.kritik ? R.kirmizi : R.krem },
+                ],
+                listeBaslik: 'Gecikme olayları · gün gün',
+                satirlar: det.slice(0, 40).map((d) => ({
+                  ad: `${kisaTarih(d.tarih)} · ${d.sube_adi || '—'}`,
+                  detay: `planlanan ${String(d.planlanan_saat || '').slice(0, 5)} · giriş ${String(d.acilis_saat || '').slice(0, 5)}`,
+                  tutar: `${trSayi(sayi(d.gecikme_dk), 0)} dk`,
+                })),
+                not: `Kritik eşik ${sayi(pdGec?.kritik_dk)} dk. Bu ekran AYLIK açılış gecikmesini sıralar; günlük vardiya kaydı ve ücret etkisi Vardiya Takip görünümündedir — iki sayı aynı olmak zorunda değil.`,
+              });
+            }}
           />
         ) : (
           <div style={{ ...kartYuzey, padding: '34px 30px', textAlign: 'center' }}>
@@ -2538,7 +2627,12 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
 
   // ── 3) Maaş & Avans ────────────────────────────────────────────────────────
   if (gorunum === 'maas') {
-    const toplamNet = bordro.reduce((s, b) => s + sayi(b.hesaplanan_net), 0);
+    // Sunucu kendi toplamını gönderiyor (`toplam_tahmini`) — istemcide yeniden
+    // toplamak sunucunun kırpma/yuvarlama kurallarını ıskalayabilir (kart
+    // limitinde tam bu tuzağa düşülmüştü). Sunucununki esas, yoksa hesapla.
+    const toplamNet = bordroVeri?.toplam_tahmini != null
+      ? sayi(bordroVeri.toplam_tahmini)
+      : bordro.reduce((s, b) => s + sayi(b.hesaplanan_net), 0);
     const bekleyen = bordro.filter(b => b.durum && !['odendi', 'onayli'].includes(b.durum));
     const toplamAvans = avans?.toplam != null ? sayi(avans.toplam) : bordro.reduce((s, b) => s + sayi(b.avans_mahsup), 0);
     const toplamFm = bordro.reduce((s, b) => s + sayi(b.fazla_mesai_saat), 0);
@@ -2603,6 +2697,27 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
                   { ad: 'Mahsup devri', detay: 'sonraki aya taşan', tutar: fmt(sayi(b.mahsup_devir)) },
                   { ad: 'Eksik gün', detay: 'devamsızlık', tutar: b.eksik_gun ? `${trSayi(b.eksik_gun, 0)} gün` : '—' },
                   { ad: 'Manuel düzeltme', detay: b.not_aciklama || 'not yok', tutar: fmt(sayi(b.manuel_duzeltme)) },
+                  // Ödeme planının KENDİ durumu — kayıt `durum`undan ayrı kavram
+                  // (bordro onaylı olabilir ama para henüz çıkmamış olabilir).
+                  ...(b.odeme_durumu ? [{
+                    ad: 'Ödeme durumu',
+                    detay: b.odeme_tarihi ? `${kisaTarih(b.odeme_tarihi)} tarihli plan` : 'plan tarihi yok',
+                    tutar: String(b.odeme_durumu),
+                  }] : []),
+                  // Vardiya kaynağı: kanonik saat sunucudan gelir. `calisma_saati`
+                  // ile ayrışıyorsa bordroda elle düzeltme yapılmış demektir.
+                  ...(b.vardiya_ay_toplam_saat != null ? [{
+                    ad: 'Vardiya kaynağı (ay)',
+                    detay: sayi(b.vardiya_ay_toplam_saat) !== sayi(b.calisma_saati)
+                      ? `⚠ bordrodaki ${trSayi(sayi(b.calisma_saati), 0)} sa ile ayrışıyor — elle düzeltilmiş olabilir`
+                      : 'bordrodaki saatle birebir',
+                    tutar: `${trSayi(sayi(b.vardiya_ay_toplam_saat), 0)} sa`,
+                  }] : []),
+                  ...(sayi(b.vardiya_ek_mesai_saat) > 0 ? [{
+                    ad: 'Haftalık limit üstü',
+                    detay: `haftalık limit ${trSayi(sayi(b.vardiya_haftalik_limit), 0)} sa`,
+                    tutar: `${trSayi(sayi(b.vardiya_ek_mesai_saat))} sa`,
+                  }] : []),
                 ],
                 not: 'Hesap maaş çekirdeğinin (maas_service) tekelindedir — buradaki düğmeler o çekirdeğin açtığı kapılardır, yeni bir para yolu değil. Ödeme kasa izine yazılır.',
                 aksiyonlar: bordroAksiyonlari(b),

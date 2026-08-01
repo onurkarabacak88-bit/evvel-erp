@@ -434,12 +434,21 @@ const OPS_UC = {
   '/api/vardiya/v2/gun-kopyala': { ok: true },
   '/api/vardiya/v2/gun-temizle': { ok: true },
   // Personel Denetimi (ops-merkez P2 sekmeleri)
+  // ⚠️ Sunucu sözleşmesi (operasyon_merkez_api:5010). Eski mock uydurma alan
+  // adları yazıyordu (vardiya_sayisi/gecikme_dk/kasa_fark) — bu adlar CEVAPTA
+  // YOK; ekran da onları okuduğu için tablo canlıda hep "—" gösteriyordu ama
+  // tezgâhta dolu görünüyordu (hata gizlendi).
   '/api/ops/personel-davranis-analiz': {
-    gun_sayi: 45,
+    gun_sayi: 45, sube_id: null,
     personel_ozet: [
-      { personel_id: 'pd1', personel_ad: 'Elif Kaya', sube_adi: 'ZAFER', vardiya_sayisi: 22, gecikme_dk: 18, kasa_fark: 0 },
-      { personel_id: 'pd2', personel_ad: 'Mert Can', sube_adi: 'KÖYCEĞİZ', vardiya_sayisi: 19, gecikme_dk: 62, kasa_fark: -340 },
+      { personel_id: 'pd1', personel_ad: 'Elif Kaya', sube_id: 's0', sube_adi: 'ZAFER', acilis_sayisi: 22, acilis_kasa_fark_adet: 0, acilis_kasa_fark_toplam: 0, bardak_dusuk_adet: 0, bardak_dusuk_toplam: 0, vardiya_eksik_adet: 0, davranis_risk_skoru: 0 },
+      { personel_id: 'pd2', personel_ad: 'Mert Can', sube_id: 's1', sube_adi: 'KÖYCEĞİZ', acilis_sayisi: 19, acilis_kasa_fark_adet: 4, acilis_kasa_fark_toplam: 340, bardak_dusuk_adet: 3, bardak_dusuk_toplam: 62, vardiya_eksik_adet: 2, davranis_risk_skoru: 7.4 },
+      { personel_id: 'pd3', personel_ad: 'Deniz Ay', sube_id: 's3', sube_adi: 'GAZZE', acilis_sayisi: 17, acilis_kasa_fark_adet: 1, acilis_kasa_fark_toplam: 45, bardak_dusuk_adet: 0, bardak_dusuk_toplam: 0, vardiya_eksik_adet: 0, davranis_risk_skoru: 1.2 },
     ],
+    surekli_riskli_personel: [
+      { personel_id: 'pd2', personel_ad: 'Mert Can', sube_adi: 'KÖYCEĞİZ', acilis_kasa_fark_toplam: 340, davranis_risk_skoru: 7.4 },
+    ],
+    gunluk_satirlar: [],
   },
   '/api/ops/sube-personel-puan': {
     personeller: [
@@ -450,9 +459,25 @@ const OPS_UC = {
   '/api/ops/gec-kalan-personel': {
     year_month: bugunISO.slice(0, 7), gecikme_dk: 5, kritik_dk: 15,
     toplam_personel: 6, gecikme_toplam_adet: 23, kritik_personel_sayisi: 2,
+    // ŞUBE üst seviyede YOK — sunucu kişi başına toplar, şube `detaylar[]`
+    // içindeki her olayda bulunur (bir kişi birden fazla şubede geç kalabilir).
     satirlar: [
-      { personel_id: 'g1', ad_soyad: 'Mert Can', sube_adi: 'KÖYCEĞİZ', gecikme_adet: 6, toplam_gecikme_dk: 62, kritik: true },
-      { personel_id: 'g2', ad_soyad: 'Elif Kaya', sube_adi: 'ZAFER', gecikme_adet: 3, toplam_gecikme_dk: 18, kritik: false },
+      {
+        personel_id: 'g1', personel_ad: 'Mert Can', gecikme_adet: 6, toplam_gecikme_dk: 62,
+        ortalama_gecikme_dk: 10.3, max_gecikme_dk: 24, kritik: true, kritik_gecikme_adet: 2, skor: 7.8,
+        detaylar: [
+          { event_id: 'e1', tarih: gunEkleISO(-2), sube_id: 's1', sube_adi: 'KÖYCEĞİZ', planlanan_saat: '08:30', acilis_saat: '08:54', gecikme_dk: 24 },
+          { event_id: 'e2', tarih: gunEkleISO(-6), sube_id: 's3', sube_adi: 'GAZZE', planlanan_saat: '09:00', acilis_saat: '09:18', gecikme_dk: 18 },
+          { event_id: 'e3', tarih: gunEkleISO(-11), sube_id: 's1', sube_adi: 'KÖYCEĞİZ', planlanan_saat: '08:30', acilis_saat: '08:38', gecikme_dk: 8 },
+        ],
+      },
+      {
+        personel_id: 'g2', personel_ad: 'Elif Kaya', gecikme_adet: 3, toplam_gecikme_dk: 18,
+        ortalama_gecikme_dk: 6, max_gecikme_dk: 9, kritik: false, kritik_gecikme_adet: 0, skor: 2.1,
+        detaylar: [
+          { event_id: 'e4', tarih: gunEkleISO(-4), sube_id: 's0', sube_adi: 'ZAFER', planlanan_saat: '08:00', acilis_saat: '08:09', gecikme_dk: 9 },
+        ],
+      },
     ],
   },
   '/api/ops/kasa-acik-analiz': {
@@ -954,6 +979,14 @@ const BORDRO = PERSONEL.map((p, i) => ({
   mahsup_devir: 0, eksik_gun: 0, manuel_duzeltme: 0, not_aciklama: null,
   hesaplanan_net: [26480, 25640, 33100, 28940, 22800, 29180][i],
   durum: ['onayli', 'onayli', 'taslak', 'taslak', 'taslak', 'odendi'][i],
+  // Ödeme planının KENDİ durumu — kayıt `durum`undan ayrı kavram
+  odeme_durumu: ['bekliyor', 'bekliyor', null, null, null, 'odendi'][i],
+  odeme_tarihi: [gunEkleISO(4), gunEkleISO(4), null, null, null, gunEkleISO(-26)][i],
+  // Kanonik vardiya kaynağı; i=3'te bordro saatiyle AYRIŞIYOR (elle düzeltme ipucu)
+  vardiya_ay_toplam_saat: [176, 168, 184, 171, 160, 180][i],
+  vardiya_ek_mesai_saat: [0, 0, 2, 14, 0, 1][i],
+  vardiya_haftalik_limit: 45,
+  aktif: true, cikis_tarihi: null,
 }));
 
 const HAFTA_PZT = (() => {
@@ -979,7 +1012,14 @@ const EKIP_UC = {
     ],
   },
   '/api/gorev/yoklama': [],
-  '/api/personel-aylik': BORDRO,
+  // ⚠️ NESNE döner (main.py:5676) — düz dizi DEĞİL. Eski mock dizi yazdığı için
+  // v2'nin `Array.isArray(b) ? b : []` hatası tezgâhta hiç görünmüyordu:
+  // canlıda bordro tablosu TAMAMEN BOŞTU.
+  '/api/personel-aylik': {
+    yil: Number(bugunISO.slice(0, 4)), ay: Number(bugunISO.slice(5, 7)),
+    personeller: BORDRO,
+    toplam_tahmini: BORDRO.reduce((s, b) => s + b.hesaplanan_net, 0),
+  },
   '/api/avans/ozet': { toplam: 4000, adet: 1 },
   // Son köprü turu (2026-07-30): QR + konum artık v2-yerlisi
   '/api/gorev/qr-liste': SUBELER.map((ad, i) => ({
