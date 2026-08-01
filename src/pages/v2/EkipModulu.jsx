@@ -72,6 +72,22 @@ const kisaTarih = (t) => {
 //                    çıktı, 2026-08-01). Limit biliniyorsa AŞIM şart koşulur.
 //   · part-tam     → part-time personele tam gün (≥9,4 sa) yazılmış. Bordro
 //                    riski: part sayılıp tam çalıştırılıyor.
+// Personel risk sinyali türleri (personel_risk_sinyal.sinyal_turu) — sunucu ham
+// kod gönderir, ekranda insan diline çevrilir.
+const RISK_SINYAL = {
+  ACILIS_KASA_FARK: { ad: 'Açılış kasa farkı', renk: '#FBBF24' },
+  KAPANIS_KASA_FARK: { ad: 'Kapanış kasa farkı', renk: '#FBBF24' },
+  KASA_GERCEK_ACIK: { ad: 'Gerçek kasa açığı', renk: '#F87171' },
+  SAYIM_OZENSIZLIK: { ad: 'Sayım özensizliği', renk: '#FBBF24' },
+  GENEL: { ad: 'Genel', renk: '#8B7B67' },
+};
+// personel_takip.takip_seviyesi (database.py:2155)
+const TAKIP_SEVIYE = {
+  izlemede: { ad: 'izlemede', renk: '#60A5FA' },
+  uyari: { ad: 'uyarı', renk: '#FBBF24' },
+  kritik: { ad: 'KRİTİK', renk: '#F87171' },
+};
+
 const gunAnaliz = (t) => {
   const g = (t?.gunler || []).filter((x) => sayi(x.planlanan_saat) > 0);
   const isPart = String(t?.calisma_turu || '').toLocaleLowerCase('tr').includes('part');
@@ -907,6 +923,59 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gorunum]);
 
+  /**
+   * Kişi bazlı RİSK SİNYALİ dökümü (/ops/personel-risk-sinyal) — v2 bu ucu HİÇ
+   * çağırmıyordu. Davranış tablosu AGREGAT gösteriyor ("4 açılışta 340₺ fark");
+   * bu uç o toplamın ARKASINDAKİ olayları ve varsa TAKİP kaydını getirir.
+   * Tıklama anında çekilir (liste yüklenirken 200 kişi için çekmek anlamsız).
+   */
+  const riskSinyalAc = async (p) => {
+    if (!p?.personel_id) { onToast?.('Bu satırda personel kimliği yok.'); return; }
+    let d = null;
+    try {
+      d = await api(`/ops/personel-risk-sinyal?personel_id=${encodeURIComponent(p.personel_id)}&gun=45`);
+    } catch (e) {
+      onToast?.(e?.message || 'Risk sinyali okunamadı');
+      return;
+    }
+    const satirlar = Array.isArray(d?.satirlar) ? d.satirlar : [];
+    const takip = d?.takip || null;
+    const sev = takip ? (TAKIP_SEVIYE[takip.takip_seviyesi] || TAKIP_SEVIYE.izlemede) : null;
+    const agirlikToplam = satirlar.reduce((s, x) => s + sayi(x.agirlik), 0);
+    onCekmece?.({
+      tip: 'RİSK SİNYALİ · OLAY DÖKÜMÜ',
+      baslik: p.personel_ad || 'Personel',
+      alt: `${p.sube_adi || '—'} · son ${sayi(d?.gun_sayi) || 45} gün · ${satirlar.length} sinyal`,
+      kpi: [
+        { etiket: 'Sinyal', deger: String(satirlar.length), renk: satirlar.length ? R.amber : R.yesil },
+        { etiket: 'Ağırlık toplamı', deger: String(agirlikToplam), renk: agirlikToplam > 10 ? R.kirmizi : R.krem },
+        { etiket: 'Davranış skoru', deger: sayi(p.davranis_risk_skoru) ? trSayi(sayi(p.davranis_risk_skoru)) : '—', renk: R.amber },
+        {
+          etiket: 'Takip',
+          deger: sev ? sev.ad : 'yok',
+          renk: sev ? sev.renk : R.yesil,
+        },
+      ],
+      listeBaslik: 'Sinyaller · yeniden eskiye',
+      satirlar: satirlar.slice(0, 40).map((s) => {
+        const t = RISK_SINYAL[s.sinyal_turu] || { ad: s.sinyal_turu || 'sinyal' };
+        return {
+          ad: `${kisaTarih(s.tarih)} · ${t.ad}`,
+          detay: s.aciklama || '—',
+          tutar: `ağırlık ${sayi(s.agirlik)}`,
+        };
+      }),
+      not: takip
+        ? `⚠ TAKİP KAYDI VAR — ${sev?.ad || takip.takip_seviyesi} · ${kisaTarih(takip.takip_baslangic)} tarihinden beri.`
+          + (takip.tetikleyen_sinyal ? ` Tetikleyen: ${takip.tetikleyen_sinyal}.` : '')
+          + (takip.notlar ? ` Not: ${takip.notlar}` : '')
+          + ' Bu ekran GÖZLEM toplar; disiplin kararı sahibindir.'
+        : (satirlar.length
+          ? 'Bu personel için açılmış bir takip kaydı YOK — sinyaller gözlem olarak duruyor. Puan/risk maaşa ya da avansa bağlanmaz.'
+          : 'Son 45 günde risk sinyali üretilmemiş.'),
+    });
+  };
+
   const pdYukle = () => {
     setPdHata('');
     const ym = `${donem.yil}-${String(donem.ay).padStart(2, '0')}`;
@@ -1508,7 +1577,7 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
         {pdSekme === 'davranis' && (davranis.length ? (
           <Tablo
             baslik="Davranış analizi · son 45 gün"
-            not="gözlem toplamı — hüküm değil; puan maaşa bağlanmaz"
+            not="gözlem toplamı — hüküm değil; puan maaşa bağlanmaz · satıra tıkla → olay dökümü"
             // 🐞 ŞEKİL TUZAĞI (düzeltildi): eski kolonlar `vardiya_sayisi`,
             // `gecikme_dk`, `kasa_fark` okuyordu — bu adlar BAŞKA uçlardan
             // (puan/geç/kasa) kopyalanmış, /ops/personel-davranis-analiz
@@ -1563,8 +1632,10 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
                       ? { v: 'izlemede', rozet: R.amber, sira: 1 }
                       : { v: 'normal', rozet: R.yesil, sira: 0 },
                 ],
+                _p: x,
               };
             })}
+            onSatir={({ _p }) => riskSinyalAc(_p)}
           />
         ) : (
           <div style={{ ...kartYuzey, padding: '34px 30px', textAlign: 'center' }}>

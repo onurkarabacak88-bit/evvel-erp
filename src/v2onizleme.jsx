@@ -858,6 +858,22 @@ const MALIYET_UC = {
     },
     gun_satirlari: MALIYET_GUNLER,
   },
+  // Kişi bazlı risk sinyali dökümü — v2 bu ucu HİÇ çağırmıyordu.
+  // Tıklamayla çekilir; tezgâh sabit cevap verir (personel_id yok sayılır).
+  '/api/ops/personel-risk-sinyal': {
+    personel_id: 'pd2', gun_sayi: 45,
+    takip: {
+      personel_id: 'pd2', takip_baslangic: gunEkleISO(-22), takip_seviyesi: 'uyari',
+      tetikleyen_sinyal: 'KAPANIS_KASA_FARK', notlar: 'Üç kapanışta üst üste fark — vardiya eşleşmesi incelenecek',
+      guncelleme: `${bugunISO} 06:10`,
+    },
+    satirlar: [
+      { id: 'rs1', personel_id: 'pd2', sube_id: 's1', tarih: gunEkleISO(-2), sinyal_turu: 'KAPANIS_KASA_FARK', agirlik: 3, aciklama: 'Kapanışta 340 ₺ eksik — tolerans üstü', referans_id: 'ku1' },
+      { id: 'rs2', personel_id: 'pd2', sube_id: 's1', tarih: gunEkleISO(-9), sinyal_turu: 'SAYIM_OZENSIZLIK', agirlik: 2, aciklama: 'Bardak sayımı 3 gün üst üste yuvarlak sayı girilmiş', referans_id: null },
+      { id: 'rs3', personel_id: 'pd2', sube_id: 's3', tarih: gunEkleISO(-15), sinyal_turu: 'ACILIS_KASA_FARK', agirlik: 2, aciklama: 'Açılış devri ile sayım 200 ₺ uyuşmadı', referans_id: 'ku7' },
+      { id: 'rs4', personel_id: 'pd2', sube_id: 's1', tarih: gunEkleISO(-28), sinyal_turu: 'KASA_GERCEK_ACIK', agirlik: 5, aciklama: 'Kaynak düzeltmesi sonrası gerçek açık kabul edildi', referans_id: 'ku9' },
+    ],
+  },
   // Bekleyen sipariş ZENGİNLEŞTİRMESİ — v2 için yazılmış ama hiç bağlanmamıştı.
   // id'ler kontrol-kulesi mock'undaki talep id'leriyle eşleşmeli.
   '/api/ops/v2/bekleyen-siparisler': {
