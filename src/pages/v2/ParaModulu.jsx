@@ -1029,11 +1029,36 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru, onToast }) {
               </div>
 
               <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', fontSize: 12.5, marginBottom: 11 }}>
-                <span>Şubelerden teslim alınan <b style={{ fontFamily: F.mono }}>{fmt(teslim)}</b></span>
+                <span>
+                  Şubelerden teslim alınan <b style={{ fontFamily: F.mono }}>{fmt(teslim)}</b>
+                  {/* Sunucu ARA ve KAPANIŞ teslimini ayrı gönderiyordu; ikisi
+                      farklı iş: ara teslim gün içinde, kapanış gün sonunda. */}
+                  {(sayi(bankaMut.teslim_ara) > 0 || sayi(bankaMut.teslim_kapanis) > 0) && (
+                    <span style={{ color: R.not2 }}>
+                      {' '}(kapanış {fmt(sayi(bankaMut.teslim_kapanis))} · ara {fmt(sayi(bankaMut.teslim_ara))})
+                    </span>
+                  )}
+                </span>
                 <span>bankaya yatan <b style={{ fontFamily: F.mono, color: R.yesil }}>{fmt(yatan)}</b>
                   <span style={{ color: R.not2 }}> · {sayi(bankaMut.yatan_adet)} kayıt</span></span>
                 <span>fark <b style={{ fontFamily: F.mono, color: Math.abs(fark) > 0.5 ? R.amber : R.yesil }}>{fmt(fark)}</b></span>
               </div>
+
+              {/* ŞUBE KIRILIMI — hangi şube ne kadar teslim etti. Sunucu
+                  gönderiyordu, ekran yalnız toplamı gösteriyordu; fark çıkınca
+                  "hangi şubeden" sorusu cevapsız kalıyordu. */}
+              {Array.isArray(bankaMut.sube_teslim) && bankaMut.sube_teslim.length > 0 && (
+                <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap', marginBottom: 11 }}>
+                  {bankaMut.sube_teslim.map((s, i) => (
+                    <span key={s.sube || i} style={{
+                      padding: '5px 11px', borderRadius: 99, fontSize: 11.5,
+                      background: R.girinti, border: `1px solid ${R.cizgi3}`, color: R.metin2,
+                    }}>
+                      {s.sube} <b style={{ fontFamily: F.mono, color: R.krem }}>{fmt(sayi(s.teslim))}</b>
+                    </span>
+                  ))}
+                </div>
+              )}
 
               {/* Kapsama çubuğu — dönem teslimin ne kadarı bankaya ulaşmış */}
               <div style={{ height: 7, borderRadius: 99, background: R.girinti, overflow: 'hidden', marginBottom: 11 }}>

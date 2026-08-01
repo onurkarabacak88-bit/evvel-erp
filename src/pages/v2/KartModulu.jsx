@@ -1355,11 +1355,34 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
         const donemler = kartlarArsiv.flatMap((k) => (k.donemler || []).map((d) => ({ ...d, kartId: k.kart_id, kartAd: k.kart_adi, banka: k.banka })));
         if (!donemler.length) return null;
         return (
-          <Tablo
+          <>
+            {/* KART BAZLI ÖZET — sunucu kart kart donem_adet/son_donem/
+                toplam_faiz gönderiyordu, v2 hepsini düzleştirip atıyordu.
+                "Hangi kartın ekstresi eksik/eski" sorusu cevapsız kalıyordu. */}
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
+              {kartlarArsiv.map((k) => (
+                <div key={k.kart_id} style={{ ...kartYuzey, padding: '10px 14px', borderRadius: 12, minWidth: 168 }}>
+                  <div style={{ fontSize: 11.5, fontWeight: 700, marginBottom: 3 }}>
+                    {kisalt(k.kart_adi || k.banka || 'Kart', 24)}
+                    {k.son_dort_hane ? <span style={{ color: R.not2, fontWeight: 400 }}> ·{k.son_dort_hane}</span> : null}
+                  </div>
+                  <div style={{ fontSize: 11, color: R.not2 }}>
+                    <span style={{ fontFamily: F.mono }}>{sayi(k.donem_adet)}</span> dönem
+                    {k.son_donem ? ` · son ${kisaTarih(k.son_donem)}` : ' · ekstre yok'}
+                  </div>
+                  {sayi(k.toplam_faiz) > 0 && (
+                    <div style={{ fontSize: 11, color: R.kirmizi, fontFamily: F.mono, marginTop: 2 }}>
+                      faiz {fmt(sayi(k.toplam_faiz))}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+            <Tablo
             baslik="Ekstre arşivi · yüklenmiş dönemler"
             not="satıra tıkla → yanlış yüklenen dönemi sil ve yeniden yükle"
             kolonlar={[
-              { ad: 'Kart' }, { ad: 'Dönem' }, { ad: 'Dönem borcu', sag: true },
+              { ad: 'Kart' }, { ad: 'Dönem' }, { ad: 'Kaynak' }, { ad: 'Dönem borcu', sag: true },
               { ad: 'Harcama', sag: true }, { ad: 'Ödeme', sag: true }, { ad: 'Faiz', sag: true }, { ad: '' },
             ]}
             satirlar={donemler
@@ -1371,6 +1394,12 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
                 hucreler: [
                   { v: kisalt(d.kartAd || d.banka || '—', 26), kalin: true },
                   { v: kisaTarih(d.donem), mono: true, renk: R.not },
+                  // kaynak: PDF'ten mi okundu, elle mi girildi — güvenilirlik farkı
+                  /manuel|elle/i.test(String(d.kaynak || ''))
+                    ? { v: 'manuel', rozet: R.amber, sira: 0 }
+                    : d.kaynak
+                      ? { v: String(d.kaynak).toLowerCase(), rozet: R.yesil, sira: 1 }
+                      : { v: '—', renk: R.not3, sira: 0 },
                   { v: fmt(sayi(d.donem_borcu)), mono: true, sag: true, kalin: true },
                   { v: fmt(sayi(d.donem_harcama)), mono: true, sag: true, renk: R.amber },
                   { v: fmt(sayi(d.donem_odeme)), mono: true, sag: true, renk: R.yesil },
@@ -1382,7 +1411,8 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
               if (!_d?.kartId) { onToast?.('Bu satırda kart kimliği yok — silme yapılamaz'); return; }
               setDonemSil({ kartId: _d.kartId, kartAd: _d.kartAd || _d.banka || 'Kart', donem: _d.donem });
             }}
-          />
+            />
+          </>
         );
       })()}
 

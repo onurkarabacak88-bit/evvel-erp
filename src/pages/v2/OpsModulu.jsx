@@ -872,7 +872,12 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
   const hareketYukle = useCallback(() => {
     setHareketHata('');
     api('/ops/stok-hareketleri?gun=3&limit=150')
-      .then((d) => setHareket(Array.isArray(d?.satirlar) ? d.satirlar : (Array.isArray(d) ? d : [])))
+      // ⚠️ Sunucu satırların yanında HAZIR ÖZET de gönderiyor
+      // (operasyon_merkez_api:17358 → tur_ozet, sube_ozet). Eskiden yalnız
+      // `.satirlar` alınıp gerisi atılıyordu; v2 aynı giriş/çıkış toplamlarını
+      // istemcide yeniden hesaplıyordu. Tam cevap saklanır.
+      .then((d) => setHareket(Array.isArray(d) ? { satirlar: d, tur_ozet: [], sube_ozet: [] }
+        : { ...(d || {}), satirlar: Array.isArray(d?.satirlar) ? d.satirlar : [] }))
       .catch((e) => setHareketHata(e?.message || ''));
   }, []);
 
@@ -3343,8 +3348,13 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
       if (u.includes('SEVK') || u.includes('CIKIS') || u.includes('SATIS') || u.includes('URUN_AC')) return { ad: 'çıkış', renk: R.bakir };
       return { ad: (t || '—').toLowerCase(), renk: R.mavi };
     };
-    const bugunku = hareket.filter((h) => String(h.zaman || '').slice(0, 10) === bugun);
-    const say = (f) => hareket.filter(f).length;
+    const hrSatir = Array.isArray(hareket?.satirlar) ? hareket.satirlar : [];
+    const bugunku = hrSatir.filter((h) => String(h.zaman || '').slice(0, 10) === bugun);
+    const say = (f) => hrSatir.filter(f).length;
+    // Sunucunun hazır kırılımları (tur_ozet / sube_ozet) — istemcide yeniden
+    // hesaplanmaz; miktar toplamları (giriş/çıkış adet) yalnız burada var.
+    const hrSube = Array.isArray(hareket?.sube_ozet) ? hareket.sube_ozet : [];
+    const hrTur = Array.isArray(hareket?.tur_ozet) ? hareket.tur_ozet : [];
     return (
       <>
         <KpiSeridi kpiler={[
@@ -3353,7 +3363,46 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
           { etiket: 'Çıkış (3 gün)', deger: String(say((h) => turCoz(h.hareket_turu).ad === 'çıkış')), alt: 'sevk + ürün aç' },
           { etiket: 'Fire + sayım (3 gün)', deger: String(say((h) => ['fire', 'sayım'].includes(turCoz(h.hareket_turu).ad))), alt: 'düzeltme dahil', renk: say((h) => turCoz(h.hareket_turu).ad === 'fire') > 0 ? R.kirmizi : R.krem },
         ]} />
-        {hareket.length === 0 ? (
+
+        {/* ŞUBE KIRILIMI — sunucu hareket adedinin yanında MİKTAR toplamlarını
+            da veriyor (giriş/çıkış adedi). Satır listesinden bu türetilemezdi;
+            ekran yalnız kayıt sayısını gösteriyordu. */}
+        {hrSube.length > 0 && (
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
+            {hrSube.map((s, i) => (
+              <div key={s.sube_id || i} style={{
+                ...kartYuzey, padding: '10px 14px', borderRadius: 12, minWidth: 150,
+              }}>
+                <div style={{ fontSize: 11.5, fontWeight: 700, marginBottom: 3 }}>{s.sube_ad || s.sube_id}</div>
+                <div style={{ fontSize: 11, color: R.not2, fontFamily: F.mono }}>
+                  <span style={{ color: R.yesil }}>+{sayi(s.toplam_giris)}</span>
+                  {' / '}
+                  <span style={{ color: R.bakir }}>−{sayi(s.toplam_cikis)}</span>
+                  <span style={{ color: R.not3 }}> · {sayi(s.hareket_adet)} kayıt</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* TÜR DAĞILIMI — hangi hareket tipi kaç kez (sunucu sıralı gönderiyor) */}
+        {hrTur.length > 0 && (
+          <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap', marginBottom: 14 }}>
+            {hrTur.slice(0, 8).map((t, i) => {
+              const tc = turCoz(t.hareket_turu);
+              return (
+                <span key={i} style={{
+                  padding: '5px 11px', borderRadius: 99, fontSize: 11,
+                  background: `${tc.renk}18`, color: tc.renk, fontWeight: 600, whiteSpace: 'nowrap',
+                }}>
+                  {t.hareket_turu} <b style={{ fontFamily: F.mono }}>{sayi(t.adet)}</b>
+                </span>
+              );
+            })}
+          </div>
+        )}
+
+        {hrSatir.length === 0 ? (
           <BosDurum metin="Son 3 günde stok hareketi kaydı yok." />
         ) : (
           <Tablo
@@ -3363,7 +3412,7 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
               { ad: 'Zaman' }, { ad: 'Tür' }, { ad: 'Kalem' }, { ad: 'Şube' },
               { ad: 'Miktar', sag: 1 }, { ad: 'Önce → sonra', sag: 1 }, { ad: 'Kaynak' },
             ]}
-            satirlar={hareket.slice(0, 60).map((h, i) => {
+            satirlar={hrSatir.slice(0, 60).map((h, i) => {
               const tur = turCoz(h.hareket_turu);
               const m = sayi(h.miktar);
               return {
@@ -4510,16 +4559,57 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
         {tsSekme === 'teslim' && (teslimSube.length ? (
           <Tablo
             baslik={`Toptancıdan gelenler · son ${sayi(tsTeslim?.gun) || 14} gün`}
-            not="şube panelinden girilen teslim alımları"
-            kolonlar={[{ ad: 'Şube' }, { ad: 'Teslim adedi', sag: true }, { ad: 'Son teslim' }]}
-            satirlar={teslimSube.map((x, i) => ({
-              id: x.sube_id || `t-${i}`,
-              hucreler: [
-                { v: x.sube_adi || '—', kalin: true },
-                { v: String(sayi(x.toplam)), mono: true, sag: true, kalin: true },
-                { v: tarihKisa(x.son_tarih), mono: true, renk: R.not },
-              ],
-            }))}
+            not="şube panelinden girilen teslim alımları · satıra tıkla → kalem dökümü"
+            kolonlar={[
+              { ad: 'Şube' }, { ad: 'Teslim adedi', sag: true },
+              { ad: 'Son teslim' }, { ad: 'Eksik/kısmi', sag: true },
+            ]}
+            satirlar={teslimSube.map((x, i) => {
+              // Sunucu her şube için son 5 teslimi KALEM KALEM gönderiyordu
+              // (tedarikci · kalemler[] · teslim_durumu · olay_ts); v2 yalnız
+              // şube toplamını basıyordu → kısmi/eksik teslim görünmüyordu.
+              const det = Array.isArray(x.teslimler) ? x.teslimler : [];
+              const eksik = det.filter((t) => t.teslim_durumu && t.teslim_durumu !== 'tam_geldi');
+              return {
+                id: x.sube_id || `t-${i}`,
+                _t: x,
+                hucreler: [
+                  { v: x.sube_adi || '—', kalin: true },
+                  { v: String(sayi(x.toplam)), mono: true, sag: true, kalin: true },
+                  { v: tarihKisa(x.son_tarih), mono: true, renk: R.not },
+                  eksik.length
+                    ? { v: `${eksik.length} teslim`, rozet: R.amber, sira: eksik.length }
+                    : { v: det.length ? 'tam' : '—', rozet: det.length ? R.yesil : undefined, renk: det.length ? undefined : R.not3, sira: 0 },
+                ],
+              };
+            })}
+            onSatir={({ _t }) => {
+              const det = Array.isArray(_t?.teslimler) ? _t.teslimler : [];
+              if (!det.length) { onToast?.('Bu şube için kalem dökümü gelmedi.'); return; }
+              onCekmece?.({
+                tip: 'TOPTANCI TESLİMLERİ',
+                baslik: _t.sube_adi || 'Şube',
+                alt: `son ${sayi(tsTeslim?.gun) || 14} gün · ${sayi(_t.toplam)} teslim · en yeni ${det.length} tanesi`,
+                kpi: [
+                  { etiket: 'Teslim', deger: String(sayi(_t.toplam)) },
+                  {
+                    etiket: 'Kısmi/eksik',
+                    deger: String(det.filter((t) => t.teslim_durumu && t.teslim_durumu !== 'tam_geldi').length),
+                    renk: det.some((t) => t.teslim_durumu && t.teslim_durumu !== 'tam_geldi') ? R.amber : R.yesil,
+                  },
+                  { etiket: 'Son teslim', deger: tarihKisa(_t.son_tarih) },
+                ],
+                listeBaslik: 'Teslim kalemleri',
+                satirlar: det.map((t) => ({
+                  ad: `${t.tedarikci || '—'}${t.teslim_durumu && t.teslim_durumu !== 'tam_geldi' ? ` · ⚠ ${t.teslim_durumu}` : ''}`,
+                  detay: (Array.isArray(t.kalemler) && t.kalemler.length)
+                    ? t.kalemler.map((k) => `${k.ad} ${sayi(k.adet)}`).join(' · ')
+                    : 'kalem girilmemiş',
+                  tutar: String(t.olay_ts || t.tarih || '').slice(0, 16),
+                })),
+                not: 'Teslim kaydı ŞUBEDE girilir (görünür kabul modeli). Buradaki liste salt-okurdur; eksik/kısmi teslimin çözümü sipariş akışında yapılır.',
+              });
+            }}
           />
         ) : <BosDurum metin="Son 14 günde toptancıdan teslim alımı kaydı yok." />)}
 

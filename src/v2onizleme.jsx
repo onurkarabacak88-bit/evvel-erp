@@ -156,10 +156,12 @@ const KART_UC = {
   },
   '/api/kartlar/ekstre-arsiv': {
     kartlar: [{
-      kart_id: 'k1', kart_adi: 'Axess 6616', banka: 'Axess',
+      // Kart bazlı özet alanları (main.py:3312) — v2 hepsini düzleştirip atıyordu
+      kart_id: 'k1', kart_adi: 'Axess 6616', banka: 'Axess', sahip: 'İşletme',
+      son_dort_hane: '6616', donem_adet: 2, son_donem: '2026-07-01', toplam_faiz: 2806,
       donemler: [
-        { donem: '2026-07-01', kesim_tarihi: '2026-07-06', son_odeme_tarihi: '2026-07-16', donem_borcu: 38883, donem_harcama: 9124, donem_odeme: 10098, donem_faizi: 1496 },
-        { donem: '2026-06-01', kesim_tarihi: '2026-06-06', son_odeme_tarihi: '2026-06-16', donem_borcu: 38361, donem_harcama: 12400, donem_odeme: 8200, donem_faizi: 1310 },
+        { donem: '2026-07-01', kesim_tarihi: '2026-07-06', son_odeme_tarihi: '2026-07-16', donem_borcu: 38883, donem_harcama: 9124, donem_odeme: 10098, donem_faizi: 1496, kaynak: 'pdf' },
+        { donem: '2026-06-01', kesim_tarihi: '2026-06-06', son_odeme_tarihi: '2026-06-16', donem_borcu: 38361, donem_harcama: 12400, donem_odeme: 8200, donem_faizi: 1310, kaynak: 'manuel' },
       ],
     }],
   },
@@ -392,9 +394,25 @@ const OPS_UC = {
   // Tedarik & Sinyal (ops-merkez P3 sekmeleri)
   '/api/ops/toptanci-teslimler': {
     gun: 14, toplam_sube: 2,
+    // teslimler[] = son 5 teslimin KALEM DÖKÜMÜ (operasyon_merkez_api:11165);
+    // v2 yalnız şube toplamını basıyordu, kısmi/eksik teslim görünmüyordu.
     subeler: [
-      { sube_id: 's0', sube_adi: 'ZAFER', toplam: 4, son_tarih: bugunISO },
-      { sube_id: 's1', sube_adi: 'KÖYCEĞİZ', toplam: 2, son_tarih: bugunISO },
+      {
+        sube_id: 's0', sube_adi: 'ZAFER', toplam: 4, son_tarih: bugunISO,
+        teslimler: [
+          { id: 't1', tarih: bugunISO, olay_ts: `${bugunISO} 09:14`, tedarikci: 'KAHVE DÜNYASI', teslim_durumu: 'tam_geldi',
+            kalemler: [{ ad: 'Yeşil çekirdek', adet: 12 }, { ad: 'Filtre kahve', adet: 6 }] },
+          { id: 't2', tarih: gunEkleISO(-2), olay_ts: `${gunEkleISO(-2)} 08:40`, tedarikci: 'SÜTAŞ', teslim_durumu: 'eksik_geldi',
+            kalemler: [{ ad: 'Süt 3.5%', adet: 24 }] },
+        ],
+      },
+      {
+        sube_id: 's1', sube_adi: 'KÖYCEĞİZ', toplam: 2, son_tarih: bugunISO,
+        teslimler: [
+          { id: 't3', tarih: bugunISO, olay_ts: `${bugunISO} 10:02`, tedarikci: 'PAPER CUP CO.', teslim_durumu: 'tam_geldi',
+            kalemler: [{ ad: 'Karton bardak 12oz', adet: 40 }] },
+        ],
+      },
     ],
   },
   '/api/ops/sube-notlar': {
@@ -788,6 +806,18 @@ const OPS_UC = {
     ],
   },
   '/api/ops/stok-hareketleri': {
+    gun: 3, toplam: 5,
+    // Sunucu MİKTAR toplamlarını da veriyor — satır listesinden türetilemez
+    tur_ozet: [
+      { hareket_turu: 'GIRIS', adet: 2 },
+      { hareket_turu: 'SEVK_CIKIS', adet: 1 },
+      { hareket_turu: 'FIRE', adet: 1 },
+      { hareket_turu: 'SAYIM_DUZELTME', adet: 1 },
+    ],
+    sube_ozet: [
+      { sube_id: 's0', sube_ad: 'Zafer', hareket_adet: 4, toplam_giris: 520, toplam_cikis: 120 },
+      { sube_id: 's1', sube_ad: 'Köyceğiz', hareket_adet: 1, toplam_giris: 0, toplam_cikis: 6 },
+    ],
     satirlar: [
       { id: 'h1', zaman: `${bugunISO} 08:40:00`, sube_ad: 'Zafer', kalem_adi: 'Yeşil çekirdek (harman)', hareket_turu: 'GIRIS', miktar: 120, onceki_miktar: 12, sonraki_miktar: 132, kaynak_tip: 'toptanci_kabul', personel_ad: 'Okan B.' },
       { id: 'h2', zaman: `${bugunISO} 08:15:00`, sube_ad: 'Zafer', kalem_adi: 'Süt 3.5%', hareket_turu: 'GIRIS', miktar: 400, onceki_miktar: 180, sonraki_miktar: 580, kaynak_tip: 'toptanci_kabul', personel_ad: 'Okan B.' },
