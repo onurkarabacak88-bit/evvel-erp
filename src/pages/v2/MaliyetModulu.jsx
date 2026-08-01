@@ -68,6 +68,9 @@ const mlMini = {
 export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) {
   const [ozet, setOzet] = useState(null);
   const [ozetHata, setOzetHata] = useState('');
+  // Vergi & KDV (P&L DIŞI, izole) — /ops/maliyet/kdv-pozisyon + /vergi-ozet
+  const [vergi, setVergi] = useState(null);
+  const [vergiHata, setVergiHata] = useState('');
   const [receteler, setReceteler] = useState(null);
   const [fiyatlar, setFiyatlar] = useState(null);
   const [receteHata, setReceteHata] = useState('');
@@ -244,12 +247,24 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
     } finally { setFyMesgul(false); }
   };
 
+  const vergiYukle = useCallback(() => {
+    setVergiHata('');
+    Promise.all([
+      api('/ops/maliyet/kdv-pozisyon?gun=30').catch(() => null),
+      api('/ops/maliyet/vergi-ozet?gun=30').catch(() => null),
+    ]).then(([k, v]) => {
+      if (!k && !v) { setVergiHata('Vergi verisi alınamadı'); return; }
+      setVergi({ kdv: k, vergi: v });
+    }).catch((e) => setVergiHata(e?.message || 'Vergi verisi alınamadı'));
+  }, []);
+
   useEffect(() => {
     if (gorunum === 'ozet') ozetYukle();
     if (gorunum === 'urun' || gorunum === 'recete') receteYukle();
     if (gorunum === 'fiyat') alarmYukle();
     if (gorunum === 'tuketim') kontrolYukle();
-  }, [gorunum, ozetYukle, receteYukle, alarmYukle, kontrolYukle]);
+    if (gorunum === 'vergi') vergiYukle();
+  }, [gorunum, ozetYukle, receteYukle, alarmYukle, kontrolYukle, vergiYukle]);
 
   // Aktif alış fiyatı haritası: kalem_kodu → {maliyet, birim} (en güncel geçerli)
   const fiyatMap = useMemo(() => {
@@ -1186,6 +1201,106 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
           </button>
         </div>
         {eslestirmeModali}
+      </>
+    );
+  }
+
+  // ════════════════════════ GÖRÜNÜM: VERGİ & KDV ════════════════════════════
+  // ⚠️ P&L DIŞI — sunucunun kendi tanımı. KDV ne gelir ne giderdir; devlet
+  // adına tahsil edilir/ödenir. Bu yüzden Marj Özeti'ne KARIŞTIRILMADI.
+  // Vergi tarafı da burada: şubeler KARMA (şahıs/şirket) — düz oran YANLIŞ
+  // olurdu, uç şube şube vergi_tipi + yöntem + efektif oran gönderiyor.
+  if (gorunum === 'vergi') {
+    if (vergiHata) return <HataBandi mesaj={vergiHata} onTekrar={vergiYukle} />;
+    if (!vergi) return <Yukleniyor />;
+    const kdv = vergi.kdv || {};
+    const vrg = vergi.vergi || {};
+    const kdvSatir = Array.isArray(kdv.satirlar) ? kdv.satirlar : [];
+    const vrgSatir = Array.isArray(vrg.satirlar) ? vrg.satirlar : [];
+    const odenecek = sayi(kdv.toplam_odenecek_tl);
+    const kdvOran = sayi(kdv.kdv_oran);
+    return (
+      <>
+        <KpiSeridi kpiler={[
+          {
+            etiket: 'Ödenecek KDV',
+            deger: fmt(odenecek),
+            alt: `hesaplanan ${fmt(sayi(kdv.toplam_hesaplanan_tl))} − indirilecek ${fmt(sayi(kdv.toplam_indirilecek_tl))}`,
+            renk: odenecek > 0 ? R.kirmizi : R.yesil,
+          },
+          { etiket: 'Hesaplanan KDV', deger: fmt(sayi(kdv.toplam_hesaplanan_tl)), alt: 'satıştan · ciro KDV dahil girilir', renk: R.krem },
+          { etiket: 'İndirilecek KDV', deger: fmt(sayi(kdv.toplam_indirilecek_tl)), alt: 'alış + gider · kalem bazlı oran', renk: R.yesil },
+          {
+            etiket: 'Tahminî vergi',
+            deger: fmt(sayi(vrg.toplam_vergi_tl)),
+            alt: `vergi öncesi kâr ${fmt(sayi(vrg.toplam_vergi_oncesi_kar_tl))}`,
+            renk: R.amber,
+          },
+        ]} />
+
+        <div style={{
+          ...kartYuzey, padding: '12px 18px', marginBottom: 14,
+          fontSize: 12, color: R.not, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+        }}>
+          <span style={rozetHap(R.mavi)}>ℹ P&L dışı</span>
+          KDV ne gelir ne giderdir — devlet adına tahsil edilir/ödenir, bu yüzden kâr tablosuna
+          <b>&nbsp;girmez</b>. Vergi rakamı <b>tahminîdir</b>: yönetsel gösterge, resmî beyan değil.
+        </div>
+
+        {kdvSatir.length > 0 && (
+          <Tablo
+            baslik={`KDV pozisyonu · son ${sayi(kdv.gun) || 30} gün`}
+            not={`KDV oranı %${Math.round(kdvOran * 100)} · hesaplanan KDV cirodan KESİN, indirilecek TAHMİNÎ`}
+            kolonlar={[
+              { ad: 'Şube' }, { ad: 'Hesaplanan', sag: 1 }, { ad: 'İndirilecek', sag: 1 },
+              { ad: 'Ödenecek', sag: 1 },
+            ]}
+            satirlar={kdvSatir.map((x, i) => ({
+              id: x.sube_id || `kd-${i}`,
+              hucreler: [
+                { v: x.sube_adi || '—', kalin: true },
+                { v: fmt(sayi(x.hesaplanan_kdv_tl)), mono: true, sag: true },
+                { v: fmt(sayi(x.indirilecek_kdv_tl)), mono: true, sag: true, renk: R.yesil },
+                {
+                  v: fmt(sayi(x.odenecek_kdv_tl)), mono: true, sag: true, kalin: true,
+                  renk: sayi(x.odenecek_kdv_tl) > 0 ? R.kirmizi : R.yesil,
+                },
+              ],
+            }))}
+          />
+        )}
+
+        {vrgSatir.length > 0 && (
+          <Tablo
+            baslik={`Tahminî vergi · son ${sayi(vrg.gun) || 30} gün`}
+            not="şubeler KARMA: şahıs şubede artan dilim (efektif oran), şirkette kurumlar vergisi"
+            kolonlar={[
+              { ad: 'Şube' }, { ad: 'Vergi tipi' }, { ad: 'Vergi öncesi kâr', sag: 1 },
+              { ad: 'Efektif oran', sag: 1 }, { ad: 'Tahminî vergi', sag: 1 }, { ad: 'Vergi sonrası', sag: 1 },
+            ]}
+            satirlar={vrgSatir.map((x, i) => ({
+              id: x.sube_id || `vg-${i}`,
+              hucreler: [
+                { v: x.sube_adi || '—', kalin: true },
+                {
+                  v: /sahis|şahıs/i.test(String(x.vergi_tipi || '')) ? 'şahıs' : 'şirket',
+                  rozet: /sahis|şahıs/i.test(String(x.vergi_tipi || '')) ? R.mavi : R.bakir,
+                },
+                { v: fmt(sayi(x.vergi_oncesi_kar_tl)), mono: true, sag: true },
+                { v: pct(sayi(x.efektif_oran_pct)), mono: true, sag: true, renk: R.amber },
+                { v: fmt(sayi(x.tahmini_vergi_tl)), mono: true, sag: true, kalin: true, renk: R.kirmizi },
+                { v: fmt(sayi(x.vergi_sonrasi_kar_tl)), mono: true, sag: true, renk: R.yesil },
+              ],
+            }))}
+          />
+        )}
+
+        {(kdv.not || vrg.not) && (
+          <div style={{ fontSize: 11, color: R.not2, lineHeight: 1.6, marginBottom: 16 }}>
+            {kdv.not && <div>ℹ {kdv.not}</div>}
+            {vrg.not && <div style={{ marginTop: 6 }}>ℹ {vrg.not}</div>}
+          </div>
+        )}
       </>
     );
   }

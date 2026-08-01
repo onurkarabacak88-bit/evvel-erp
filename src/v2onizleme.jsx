@@ -858,6 +858,31 @@ const MALIYET_UC = {
     },
     gun_satirlari: MALIYET_GUNLER,
   },
+  // Vergi & KDV (P&L DIŞI) — v2 bu iki ucu HİÇ çağırmıyordu.
+  // Şubeler KARMA: Zafer/Köyceğiz şahıs (artan dilim), Gazze/Alsancak şirket.
+  '/api/ops/maliyet/kdv-pozisyon': {
+    gun: 30, sube_id: null, kdv_oran: 0.10,
+    toplam_hesaplanan_tl: 198591, toplam_indirilecek_tl: 121340,
+    toplam_indirilecek_fatura_tl: 108200, toplam_odenecek_tl: 77251,
+    satirlar: [
+      { sube_id: 's0', sube_adi: 'ZAFER', hesaplanan_kdv_tl: 76572, indirilecek_kdv_tl: 41280, indirilecek_kdv_fatura_tl: 37100, odenecek_kdv_tl: 35292 },
+      { sube_id: 's1', sube_adi: 'KÖYCEĞİZ', hesaplanan_kdv_tl: 54068, indirilecek_kdv_tl: 33940, indirilecek_kdv_fatura_tl: 30600, odenecek_kdv_tl: 20128 },
+      { sube_id: 's3', sube_adi: 'GAZZE', hesaplanan_kdv_tl: 40718, indirilecek_kdv_tl: 27620, indirilecek_kdv_fatura_tl: 24900, odenecek_kdv_tl: 13098 },
+      { sube_id: 's2', sube_adi: 'ALSANCAK', hesaplanan_kdv_tl: 27233, indirilecek_kdv_tl: 18500, indirilecek_kdv_fatura_tl: 15600, odenecek_kdv_tl: 8733 },
+    ],
+    not: 'Hesaplanan KDV ciro\'dan kesin. İndirilecek KDV TÜM KDV\'li girdilerden (kalem-bazlı %1/%10/%20).',
+  },
+  '/api/ops/maliyet/vergi-ozet': {
+    gun: 30, sube_id: null,
+    toplam_vergi_tl: 96420, toplam_vergi_oncesi_kar_tl: 412800,
+    satirlar: [
+      { sube_id: 's0', sube_adi: 'ZAFER', vergi_tipi: 'sahis', yontem: 'artan_dilim', vergi_oncesi_kar_tl: 168400, tahmini_vergi_tl: 45468, efektif_oran_pct: 27, vergi_sonrasi_kar_tl: 122932 },
+      { sube_id: 's1', sube_adi: 'KÖYCEĞİZ', vergi_tipi: 'sahis', yontem: 'artan_dilim', vergi_oncesi_kar_tl: 96200, tahmini_vergi_tl: 20202, efektif_oran_pct: 21, vergi_sonrasi_kar_tl: 75998 },
+      { sube_id: 's3', sube_adi: 'GAZZE', vergi_tipi: 'sirket', yontem: 'kurumlar', vergi_oncesi_kar_tl: 88600, tahmini_vergi_tl: 22150, efektif_oran_pct: 25, vergi_sonrasi_kar_tl: 66450 },
+      { sube_id: 's2', sube_adi: 'ALSANCAK', vergi_tipi: 'sirket', yontem: 'kurumlar', vergi_oncesi_kar_tl: 59600, tahmini_vergi_tl: 14900, efektif_oran_pct: 25, vergi_sonrasi_kar_tl: 44700 },
+    ],
+    not: '⚠️ TAHMİNİ — yönetsel gösterge, resmî beyan değil. Geçici vergi/mahsup/istisna hariç.',
+  },
   '/api/ops/maliyet/recete-listesi': {
     receteler: [
       { urun_id: 'latte', urun_adi: 'Latte', hammaddeler: [

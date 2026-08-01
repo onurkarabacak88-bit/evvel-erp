@@ -199,6 +199,12 @@ export const MODULLER = [
     // fazla kullanım saptama tasarıma geldi (recete_api.kontrol motoru, öneri-only)
     { id: 'tuketim', ad: 'Tüketim Kontrolü', rozet: 'tuketimFark', renk: '#F87171' },
     { id: 'fiyat', ad: 'Fiyat Zinciri', rozet: 'fiyatZinciri', renk: '#FBBF24' },
+    // ⚠️ AYRI GÖRÜNÜM — Marj Özeti'ne KARIŞTIRILMADI. Sunucunun kendi tanımı:
+    // "İZOLE KDV Pozisyonu (P&L DIŞI)". KDV ne gelir ne giderdir, devlet adına
+    // tahsil/ödemedir; P&L tablosuna katmak modeli bozar. Vergi de aynı yerde:
+    // şubeler KARMA (şahıs/şirket) olduğu için düz oran YANLIŞ — uç şube şube
+    // vergi_tipi + yöntem + efektif oran döndürüyor.
+    { id: 'vergi', ad: 'Vergi & KDV' },
   ]},
   // ✅ v2'ye yazıldı — köprü yok, görünümler yerli (KartModulu.jsx)
   { id: 'kart', blok: 'Finans', ad: 'Borç & Kredi', kisa: 'Borç', alt: 'Kart · kredi · faiz', ikon: IK.kart, gorunumler: [
