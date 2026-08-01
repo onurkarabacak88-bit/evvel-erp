@@ -289,12 +289,20 @@ const ODEME_UC = {
   '/api/ops/siparis/talep-tahsis-uyumsuzluk-coz': {
     success: true, kalem_adi: 'Karton bardak 12oz', onceki_talep_adet: 40, onceki_tahsis_adet: 25, cozum_adet: 25,
   },
+  // ⚠️ Sunucu diziyi `liste` adıyla döndürür (operasyon_merkez_api:6937).
+  // Eski mock `uyarilar` yazıyordu — v2 de onu arıyordu; ikisi de uydurmaydı,
+  // bu yüzden tezgâhta dolu görünüp CANLIDA boş kalıyordu.
   '/api/ops/kasa-uyumsuzluk': {
-    uyarilar: [
+    tarih: bugunISO, sadece_bekleyen: false, sadece_cozuldu: false, min_fark: 50,
+    toplam: 3, gun_toplam: 3, gun_bekleyen: 3, gun_cozuldu: 0,
+    tolerans: { normal_tl: 50, uyari_tl: 200 },
+    liste: [
       { id: 'ku1', tip: 'KAPANIS_KASA_FARK', sube_adi: 'Zafer', tarih: gunEkleISO(-2), fark_tl: -2480, durum: 'acik',
-        detay_json: { acilis_kasa: 1500, z_nakit: 8400, teslim: 6000, devir: 1420 } },
+        detay_json: { acilis_kasa: 1500, z_nakit: 8400, teslim: 6000, devir: 1420 },
+        personel_patern: { son_30g_adet: 5, acik_adet: 5, fazla_adet: 0, hep_acik: true, kronik: true } },
       { id: 'ku2', tip: 'ACILIS_KASA_FARK', sube_adi: 'Alsancak', tarih: gunEkleISO(-5), fark_tl: 1150, durum: 'acik',
-        detay_json: { acilis_kasa: 2570, teslim: 4800, devir: 1420 } },
+        detay_json: { acilis_kasa: 2570, teslim: 4800, devir: 1420 },
+        personel_patern: { son_30g_adet: 2, acik_adet: 1, fazla_adet: 1, hep_acik: false, kronik: false } },
       { id: 'ku3', tip: 'KAPANIS_KASA_FARK', sube_adi: 'Gazze', tarih: gunEkleISO(-1), fark_tl: 3200, durum: 'acik',
         detay_json: { acilis_kasa: 1200, z_nakit: 0, teslim: 0, devir: 1200 } },
     ],
@@ -1030,7 +1038,12 @@ const EKIP_UC = {
     personeller: BORDRO,
     toplam_tahmini: BORDRO.reduce((s, b) => s + b.hesaplanan_net, 0),
   },
-  '/api/avans/ozet': { toplam: 4000, adet: 1 },
+  // ⚠️ `toplam` alanı YOK (avans_service:527) — eski mock uydurmuştu
+  '/api/avans/ozet': {
+    bekleyen_adet: 2, bekleyen_tutar: 7500,
+    teslim_bekleyen_adet: 1, teslim_bekleyen_tutar: 4000,
+    bu_ay_adet: 3, bu_ay_odenen: 11500,
+  },
   // Son köprü turu (2026-07-30): QR + konum artık v2-yerlisi
   '/api/gorev/qr-liste': SUBELER.map((ad, i) => ({
     sube_id: `s${i}`, sube_ad: ad,
@@ -1393,16 +1406,18 @@ const DENETIM_UC = {
     ],
     tipler: ['kasa', 'stok', 'ciro', 'belge'],
   },
+  // ⚠️ İKİ DALIN ŞEKLİ FARKLI (duyu_gorunumler:624) — eski mock ikisini de
+  // aynı uydurma şekilde (aciklama/tarih/tutar) yazıyordu; `kesit` de NESNE.
   '/api/duyu/odeme-mutabakat': {
-    kesit: 60,
+    kesit: { bas: gunEkleISO(-60), gun: 60 },
     eslesen: 47,
     dusus_var_odeme_kaydi_yok: [
-      { tarih: gunEkleISO(-3), aciklama: 'BORC_TAKSIT — açıklamasız düşüş', tutar: 20491 },
+      { tedarikci_ad: 'FEZ KAHVE GIDA', pencere_bas: gunEkleISO(-9), pencere_bit: gunEkleISO(-3), dusus_tutar: 20491 },
     ],
     odeme_var_dusus_gorulmedi: [
-      { tarih: gunEkleISO(-6), aciklama: 'ESHİM ödeme kaydı', tutar: 40800 },
+      { tedarikci_ad: 'ESHİM', tarih: gunEkleISO(-6), tutar: 40800, kaynak: 'kart', kayit_guveni: 0.6 },
     ],
-    not: 'çapa bağımsız',
+    not: 'ADAY eşleştirme — kesin mutabakat DEĞİL.',
   },
   '/api/beyin/gunluk': {
     toplam: 2,
@@ -1418,11 +1433,14 @@ const DENETIM_UC = {
   },
   '/api/duyu/kural-karnesi': {
     ogrenme_aktif: true, n_esigi: 5,
+    // ⚠️ Gerçek şema (duyu_yavru:497): kural_id/tur/bag_n/etiketli_n/dogru_n/
+    // yanlis_n/posterior_ort/wilson_alt/n_esigi_rozet/agirlik_uygulaniyor
     karne: [
-      { kural: 'Geç kalma (grace bantlı)', durum: 'sağlıklı', gozlem: 118, not: 'nötr fark günü çapraz-gün' },
-      { kural: 'Temiz hafta', durum: 'sağlıklı', gozlem: 12, not: '' },
-      { kural: 'Cuma kasa kesişimi', durum: 'izlemede', gozlem: 3, not: 'B51 bulgusuna bağlı' },
+      { kural_id: 'gec_kalma_grace', tur: 'personel', bag_n: 118, etiketli_n: 34, dogru_n: 31, yanlis_n: 3, posterior_ort: 0.89, wilson_alt: 0.76, n_esigi_rozet: 'aktif_olabilir', agirlik_uygulaniyor: true },
+      { kural_id: 'temiz_hafta', tur: 'personel', bag_n: 12, etiketli_n: 8, dogru_n: 6, yanlis_n: 2, posterior_ort: 0.72, wilson_alt: 0.41, n_esigi_rozet: 'zayif', agirlik_uygulaniyor: false },
+      { kural_id: 'cuma_kasa_kesisimi', tur: 'kasa', bag_n: 3, etiketli_n: 0, dogru_n: 0, yanlis_n: 0, posterior_ort: null, wilson_alt: null, n_esigi_rozet: 'veri_yetersiz', agirlik_uygulaniyor: false },
     ],
+    not: 'Kurallar VERİ\'dir — ağırlık yalnız eşiği geçince uygulanır.',
   },
   '/api/duyu/sinapsler': { kesit: 14, sinaps_olaylari: 6, kase_canli: true, zincir_canli: true },
   '/api/strateji': {

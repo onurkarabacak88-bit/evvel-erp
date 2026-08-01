@@ -2149,8 +2149,14 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     if (!uzSevk || !uzPers) return <Yukleniyor />;
 
     const sevkSatir = Array.isArray(uzSevk?.satirlar) ? uzSevk.satirlar : [];
-    const kasaSatir = Array.isArray(uzKasa?.uyarilar) ? uzKasa.uyarilar
-      : (Array.isArray(uzKasa?.kayitlar) ? uzKasa.kayitlar : (Array.isArray(uzKasa) ? uzKasa : []));
+    // 🐞 SAHTE YEŞİL: sunucu diziyi `liste` adıyla döndürüyor
+    // (operasyon_merkez_api:6937). Eski kod `uyarilar`/`kayitlar` arıyordu —
+    // ikisi de cevapta YOK → kasaSatir HER ZAMAN boş → "Kasa uyumsuzluğu"
+    // KPI'ı ve Uzlaştırma'nın Kasa sekmesi gerçek veriye rağmen "0 / temiz"
+    // gösteriyordu. Çözüm masasının kendisi kördü.
+    const kasaSatir = Array.isArray(uzKasa?.liste) ? uzKasa.liste
+      : (Array.isArray(uzKasa?.uyarilar) ? uzKasa.uyarilar
+        : (Array.isArray(uzKasa?.kayitlar) ? uzKasa.kayitlar : (Array.isArray(uzKasa) ? uzKasa : [])));
     const persSatir = Array.isArray(uzPers?.kayitlar) ? uzPers.kayitlar : [];
     const acikKasa = kasaSatir.filter((k) => !/(cozuldu|çözüldü)/i.test(String(k.durum || '')));
     const acikPers = persSatir.filter((p) => !/(cozuldu|çözüldü)/i.test(String(p.durum || '')));
@@ -2264,17 +2270,45 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
           <Tablo
             baslik="Kasa uyumsuzlukları"
             not="satıra tıkla → çöz · fark tazelemek için satırdaki yeniden hesapla"
-            kolonlar={[{ ad: 'Şube' }, { ad: 'Tarih' }, { ad: 'Fark', sag: true }, { ad: 'Durum' }, { ad: '' }]}
-            satirlar={acikKasa.slice(0, 40).map((k, i) => ({
-              id: k.id || `ku-${i}`, _k: k,
-              hucreler: [
-                { v: k.sube_adi || k.sube_ad || '—', kalin: true },
-                { v: tarihKisa(k.tarih || k.gun), mono: true, renk: R.not },
-                { v: fmt(sayi(k.fark_tl ?? k.fark)), mono: true, sag: true, kalin: true, renk: R.kirmizi },
-                { v: k.durum || 'açık', rozet: R.amber },
-                { v: uzMesgul === `yh:${k.id}` ? '…' : '🔄 tazele', renk: R.mavi },
-              ],
-            }))}
+            kolonlar={[
+              { ad: 'Şube' }, { ad: 'Tarih' }, { ad: 'Fark', sag: true },
+              { ad: 'Kişi deseni' }, { ad: 'Durum' }, { ad: '' },
+            ]}
+            satirlar={acikKasa.slice(0, 40).map((k, i) => {
+              // personel_patern: AYNI KİŞİDE tekrar eden fark (son 30 gün).
+              // Tek seferlik fark ile kronik desen aynı şey değil — sunucu
+              // ayrımı yapıyordu, ekran hiç göstermiyordu.
+              const pat = k.personel_patern || null;
+              return {
+                id: k.id || `ku-${i}`, _k: k,
+                hucreler: [
+                  { v: k.sube_adi || k.sube_ad || '—', kalin: true },
+                  { v: tarihKisa(k.tarih || k.gun), mono: true, renk: R.not },
+                  { v: fmt(sayi(k.fark_tl ?? k.fark)), mono: true, sag: true, kalin: true, renk: R.kirmizi },
+                  pat
+                    ? (pat.kronik
+                      ? {
+                        sira: 2,
+                        siraMetin: 'kronik',
+                        v: (
+                          <span style={{ display: 'inline-flex', flexDirection: 'column', gap: 2 }}>
+                            <span style={{
+                              padding: '3px 9px', borderRadius: 99, fontSize: 10.5, fontWeight: 700,
+                              background: `${R.kirmizi}22`, color: R.kirmizi, alignSelf: 'flex-start',
+                            }}>{pat.hep_acik ? 'hep açık' : 'kronik'}</span>
+                            <span style={{ fontSize: 10, color: R.not2, whiteSpace: 'nowrap' }}>
+                              30g: {sayi(pat.son_30g_adet)} fark · {sayi(pat.acik_adet)} açık
+                            </span>
+                          </span>
+                        ),
+                      }
+                      : { v: `${sayi(pat.son_30g_adet)}× / 30g`, mono: true, renk: R.not2, sira: 1 })
+                    : { v: '—', renk: R.not3, sira: 0 },
+                  { v: k.durum || 'açık', rozet: R.amber },
+                  { v: uzMesgul === `yh:${k.id}` ? '…' : '🔄 tazele', renk: R.mavi },
+                ],
+              };
+            })}
             onSatir={({ _k }) => setUzModal({ tip: 'kasa', kayit: _k, adet: '', notu: '' })}
           />
         ))}

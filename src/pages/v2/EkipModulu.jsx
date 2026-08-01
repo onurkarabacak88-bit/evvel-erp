@@ -2634,7 +2634,15 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
       ? sayi(bordroVeri.toplam_tahmini)
       : bordro.reduce((s, b) => s + sayi(b.hesaplanan_net), 0);
     const bekleyen = bordro.filter(b => b.durum && !['odendi', 'onayli'].includes(b.durum));
-    const toplamAvans = avans?.toplam != null ? sayi(avans.toplam) : bordro.reduce((s, b) => s + sayi(b.avans_mahsup), 0);
+    // ⚠️ `avans.toplam` diye bir alan YOK (avans_service:527) — eski kod onu
+    // arayıp her seferinde bordro vekiline düşüyordu. İki kavram FARKLI:
+    //   avans_mahsup  = maaştan düşülecek MUHASEBE kalemi (bordro bilir)
+    //   bekleyen/teslim_bekleyen = QR talep → onay → teslim akışının CANLI
+    //   kuyruğu (bordro bunu göremez; para henüz çıkmamış olabilir)
+    // Mahsup toplamı doğru amaçla kalıyor, canlı kuyruk AYRI kartlara geldi.
+    const toplamAvans = bordro.reduce((s, b) => s + sayi(b.avans_mahsup), 0);
+    const avansBekleyen = sayi(avans?.bekleyen_adet);
+    const avansTeslimBekleyen = sayi(avans?.teslim_bekleyen_adet);
     const toplamFm = bordro.reduce((s, b) => s + sayi(b.fazla_mesai_saat), 0);
     return (
       <>
@@ -2657,7 +2665,21 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
         <KpiSeridi kpiler={[
           { etiket: `${AY_KISA[ay - 1]} bordro`, deger: fmt(toplamNet), alt: `${bordro.length} kişi · hesaplanan net` },
           { etiket: 'Onay bekleyen', deger: String(bekleyen.length), alt: bekleyen.length ? 'taslak bordro' : 'hepsi onaylı', renk: bekleyen.length ? R.amber : R.yesil },
-          { etiket: 'Avans', deger: fmt(toplamAvans), alt: 'maaştan mahsup edilecek', renk: R.krem },
+          { etiket: 'Avans mahsubu', deger: fmt(toplamAvans), alt: 'bu ay maaştan düşülecek', renk: R.krem },
+          {
+            etiket: 'Onay bekleyen avans',
+            deger: avansBekleyen ? String(avansBekleyen) : '—',
+            alt: avansBekleyen ? `${fmt(sayi(avans?.bekleyen_tutar))} · QR talebi` : 'bekleyen talep yok',
+            renk: avansBekleyen ? R.amber : R.yesil,
+          },
+          {
+            etiket: 'Teslim bekleyen',
+            deger: avansTeslimBekleyen ? String(avansTeslimBekleyen) : '—',
+            alt: avansTeslimBekleyen
+              ? `${fmt(sayi(avans?.teslim_bekleyen_tutar))} · onaylandı, para verilmedi`
+              : (sayi(avans?.bu_ay_odenen) ? `bu ay ${fmt(sayi(avans.bu_ay_odenen))} ödendi` : 'teslim bekleyen yok'),
+            renk: avansTeslimBekleyen ? R.kirmizi : R.yesil,
+          },
           { etiket: 'Fazla mesai', deger: `${trSayi(toplamFm, 0)} sa`, alt: 'bu ay toplam', renk: toplamFm > 0 ? R.kirmizi : R.krem },
         ]} />
         {bordro.length ? (

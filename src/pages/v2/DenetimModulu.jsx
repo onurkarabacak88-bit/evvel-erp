@@ -512,15 +512,31 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
     const kayitsiz = Array.isArray(mutabakat.odeme_var_dusus_gorulmedi) ? mutabakat.odeme_var_dusus_gorulmedi : [];
     const eslesen = sayi(mutabakat.eslesen) || (Array.isArray(mutabakat.eslesen) ? mutabakat.eslesen.length : 0);
     const acikFark = dusumsuz.length + kayitsiz.length;
-    const satirYap = (r, yon) => ({
-      ad: kisalt(r.aciklama || r.kurum || r.tedarikci || r.kaynak || 'kayıt', 44),
-      detay: `${tarihKisa(r.tarih || r.gun)} · ${yon}`,
+    // 🐞 ŞEKİL TUZAĞI (düzeltildi): tek bir satır çevirici iki dala da
+    // uygulanıyordu ve `aciklama/kurum/tedarikci/kaynak/tarih/tutar` arıyordu.
+    // İki dalın şekli FARKLI (duyu_gorunumler:624):
+    //   düşüş var  → {tedarikci_ad, pencere_bas, pencere_bit, dusus_tutar}
+    //   kayıt var  → {tedarikci_ad, tutar, tarih, kaynak, kayit_guveni}
+    // Eskiden "düşüş var" tarafı tarihsiz/tutarsız "kayıt" diye görünüyordu;
+    // "kayıt var" tarafında ise ad yerine ÖDEME KANALI (kart/nakit) yazıyordu.
+    const satirDusus = (r) => ({
+      ad: kisalt(r.tedarikci_ad || 'tedarikçi', 44),
+      detay: `${tarihKisa(r.pencere_bas)} – ${tarihKisa(r.pencere_bit)} · kasada iz var`,
+      tutar: r.dusus_tutar != null ? fmt(sayi(r.dusus_tutar)) : '',
+    });
+    const satirKayit = (r) => ({
+      ad: kisalt(r.tedarikci_ad || 'tedarikçi', 44),
+      // kayit_guveni < 1 → fuzzy eşleşmiş ADAY; kesin değil, ekranda söylenir
+      detay: `${tarihKisa(r.tarih)} · ${r.kaynak || 'kayıt'}`
+        + (sayi(r.kayit_guveni) && sayi(r.kayit_guveni) < 1 ? ' · aday eşleşme' : ''),
       tutar: r.tutar != null ? fmt(sayi(r.tutar)) : '',
     });
     return (
       <>
         <KpiSeridi kpiler={[
-          { etiket: 'Eşleşen', deger: String(eslesen), alt: `son ${sayi(mutabakat.kesit) || 60} gün`, renk: R.yesil },
+          // `kesit` NESNE: {bas, gun} — sayi(obje)=0 olduğu için hep "60 gün"
+          // yazıyordu; sunucu farklı pencere kullansa ekran yanlış söylerdi.
+          { etiket: 'Eşleşen', deger: String(eslesen), alt: `son ${sayi(mutabakat.kesit?.gun) || 60} gün`, renk: R.yesil },
           { etiket: 'Açık fark', deger: String(acikFark), alt: 'iki yönlü uyumsuzluk', renk: acikFark > 0 ? R.amber : R.yesil },
           { etiket: 'Düşüş var · kayıt yok', deger: String(dusumsuz.length), alt: 'kasadan çıktı, ödeme kaydı yok', renk: dusumsuz.length > 0 ? R.kirmizi : R.krem },
           { etiket: 'Kayıt var · düşüş yok', deger: String(kayitsiz.length), alt: 'ödeme kaydı var, kasada iz yok', renk: kayitsiz.length > 0 ? R.amber : R.krem },
@@ -530,8 +546,8 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
           <BosDurum metin="İki yön de mutabık — ödeme kayıtları ile kasa düşüşleri örtüşüyor." />
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 12, marginBottom: 16 }}>
-            {[{ ad: 'Düşüş var · ödeme kaydı yok', rows: dusumsuz, renk: R.kirmizi, yon: 'kasada iz var' },
-              { ad: 'Ödeme kaydı var · düşüş görülmedi', rows: kayitsiz, renk: R.amber, yon: 'kayıt var' }].map((grup) => (
+            {[{ ad: 'Düşüş var · ödeme kaydı yok', rows: dusumsuz, renk: R.kirmizi, cevir: satirDusus },
+              { ad: 'Ödeme kaydı var · düşüş görülmedi', rows: kayitsiz, renk: R.amber, cevir: satirKayit }].map((grup) => (
               <div key={grup.ad} style={{ ...kartYuzey, padding: '16px 18px', border: grup.rows.length ? `1px solid ${grup.renk}44` : kartYuzey.border }}>
                 <div style={{
                   display: 'flex', alignItems: 'center', justifyContent: 'space-between',
@@ -545,7 +561,7 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
                 ) : (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                     {grup.rows.slice(0, 8).map((r, i) => {
-                      const s = satirYap(r, grup.yon);
+                      const s = grup.cevir(r);
                       return (
                         <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 12.5 }}>
                           <div style={{ flex: 1, minWidth: 0 }}>
@@ -650,22 +666,55 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
           <Tablo
             baslik="Kural karnesi · öğrenme defteri"
             not="kurallar VERİ'dir — davranışları gece motoru ölçer"
+            // 🐞 ŞEKİL TUZAĞI (düzeltildi): eski satırlar `k.ad/k.kural/k.durum/
+            // k.gozlem/k.not` okuyordu — bunların HİÇBİRİ cevapta yok. Her satır
+            // "kural 1, kural 2…" jenerik adıyla, hep yeşil "sağlıklı" rozetiyle
+            // ve hep 0 gözlemle görünüyordu. Gerçek şema: duyu_yavru:497
+            // {kural_id, tur, bag_n, etiketli_n, dogru_n, yanlis_n,
+            //  posterior_ort, wilson_alt, n_esigi_rozet, agirlik_uygulaniyor}
             kolonlar={[
-              { ad: 'Kural' }, { ad: 'Durum' }, { ad: 'Gözlem', sag: 1 }, { ad: 'Not' },
+              { ad: 'Kural' }, { ad: 'Tür' }, { ad: 'Olgunluk' },
+              { ad: 'Doğru / Yanlış', sag: 1 }, { ad: 'Güven alt sınırı', sag: 1 }, { ad: 'Ağırlık' },
             ]}
-            satirlar={kurallar.slice(0, 20).map((k, i) => ({
-              id: k.id || k.kural || `k-${i}`,
-              hucreler: [
-                { v: kisalt(k.ad || k.kural || k.etiket || `kural ${i + 1}`, 40), kalin: true },
-                /alarm|kritik/i.test(String(k.durum || ''))
-                  ? { v: k.durum, rozet: R.kirmizi }
-                  : /izle|uyari/i.test(String(k.durum || ''))
-                    ? { v: k.durum || 'izlemede', rozet: R.amber }
-                    : { v: k.durum || 'sağlıklı', rozet: R.yesil },
-                { v: String(sayi(k.gozlem ?? k.n ?? k.sayi)), mono: true, sag: true },
-                { v: kisalt(k.not || k.aciklama || '', 60), renk: R.not },
-              ],
-            }))}
+            satirlar={kurallar.slice(0, 20).map((k, i) => {
+              const rozet = String(k.n_esigi_rozet || '');
+              const dogru = sayi(k.dogru_n);
+              const yanlis = sayi(k.yanlis_n);
+              const etiketli = sayi(k.etiketli_n);
+              return {
+                id: k.kural_id || `k-${i}`,
+                hucreler: [
+                  { v: kisalt(k.kural_id || `kural ${i + 1}`, 42), kalin: true },
+                  { v: k.tur || '—', renk: R.not },
+                  // n_esigi_rozet: veri_yetersiz | zayif | aktif_olabilir
+                  /aktif/i.test(rozet)
+                    ? { v: 'aktif olabilir', rozet: R.yesil, sira: 2 }
+                    : /zayif/i.test(rozet)
+                      ? { v: 'zayıf', rozet: R.amber, sira: 1 }
+                      : { v: 'veri yetersiz', rozet: R.not3, sira: 0 },
+                  {
+                    sira: etiketli, sag: true,
+                    v: etiketli
+                      ? (
+                        <span style={{ fontFamily: F.mono, whiteSpace: 'nowrap' }}>
+                          <span style={{ color: R.yesil, fontWeight: 700 }}>{dogru}</span>
+                          <span style={{ color: R.not3 }}> / </span>
+                          <span style={{ color: yanlis ? R.kirmizi : R.not2, fontWeight: 700 }}>{yanlis}</span>
+                          <span style={{ color: R.not2, fontSize: 10 }}> · {sayi(k.bag_n)} bağ</span>
+                        </span>
+                      )
+                      : '—',
+                  },
+                  {
+                    v: k.wilson_alt != null ? `%${Math.round(sayi(k.wilson_alt) * 100)}` : '—',
+                    mono: true, sag: true, renk: sayi(k.wilson_alt) >= 0.7 ? R.yesil : R.not,
+                  },
+                  k.agirlik_uygulaniyor
+                    ? { v: 'uygulanıyor', rozet: R.mavi, sira: 1 }
+                    : { v: 'öğreniyor', renk: R.not3, sira: 0 },
+                ],
+              };
+            })}
           />
         )}
 
