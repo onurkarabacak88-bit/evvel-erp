@@ -1352,7 +1352,12 @@ const DENETIM_UC = {
 const BELGE_UC = {
   '/api/fatura/belge-merkezi': {
     ay: bugunISO.slice(0, 7),
-    kapsama: { isletme_kart_harcamasi: 522435, faturali_eslesen: 168153, kurumsal_otomatik: 30776, faturasiz: 323486, oran_yuzde: 38.1 },
+    // Harcama DÖRDE ayrılır; toplam = eslesen + kurumsal + beklenmez + faturasiz
+    kapsama: {
+      isletme_kart_harcamasi: 522435, faturali_eslesen: 168153,
+      kurumsal_otomatik: 30776, belge_beklenmez: 18420, faturasiz: 305066,
+      oran_yuzde: 38.1,
+    },
     toptancilar: [
       { toptanci: 'KAHVE DÜNYASI ÇEKİRDEK A.Ş.', adet: 4, toplam: 258000, son_fatura: gunEkleISO(-1) },
       { toptanci: 'SÜTAŞ BÖLGE DAĞITIM', adet: 6, toplam: 187400, son_fatura: bugunISO },
@@ -1367,7 +1372,33 @@ const BELGE_UC = {
       { id: 'fa2', tedarikci_ad: 'SÜTAŞ BÖLGE DAĞITIM', tarih: gunEkleISO(-1), tutar: 41250, durum: 'ocr_tamam', goruntule: '' },
       { id: 'fa3', tedarikci_ad: 'FEZ KAHVE GIDA', tarih: gunEkleISO(-2), tutar: 35148, durum: 'ocr_hata', goruntule: '' },
     ],
-    islenemeyen_foto: [{ id: 'if1' }],
+    kurumsal_harcamalar: [
+      { tarih: gunEkleISO(-1), kart: 'Garanti 7015', tutar: 18400, aciklama: 'Turkcell · kurumsal hat', tip: 'kurumsal' },
+      { tarih: gunEkleISO(-3), kart: 'Garanti 7015', tutar: 12376, aciklama: 'Enerjisa · elektrik', tip: 'kurumsal' },
+    ],
+    belgesiz_harcamalar: [
+      { tarih: gunEkleISO(-2), kart: 'Garanti 7015', tutar: 12800, aciklama: 'Banka · havale masrafı', tip: 'beklenmez' },
+      { tarih: gunEkleISO(-6), kart: 'Akbank Axess', tutar: 5620, aciklama: 'Vergi · damga', tip: 'beklenmez' },
+    ],
+    // Gün gün kırılım — sahibin ilk isteği; en yeni gün başta gelir (sunucu reverse sıralı)
+    gun_gun: [
+      { gun: bugunISO, adet: 3, tutar: 109650 },
+      { gun: gunEkleISO(-1), adet: 5, tutar: 187400 },
+      { gun: gunEkleISO(-2), adet: 2, tutar: 35148 },
+      { gun: gunEkleISO(-4), adet: 4, tutar: 56800 },
+      { gun: gunEkleISO(-6), adet: 1, tutar: 12400 },
+    ],
+    // ⚠️ NESNE (dizi DEĞİL) — sunucu sözleşmesi: {adet, son_hata, fotolar}
+    arsiv_depo: { dosyali_adet: 214, toplam_mb: 612.4, not: '≈500 MB üstünde obje depoya taşıma (BM-0b) gündeme alınmalı' },
+    islenemeyen_foto: {
+      adet: 3,
+      son_hata: 'LLM kota doldu (429) — gece yeniden denenecek',
+      fotolar: [
+        { id: 'if1', tarih: gunEkleISO(-1), tedarikci_ad: 'FEZ KAHVE GIDA', hata: 'kota (429)' },
+        { id: 'if2', tarih: gunEkleISO(-2), dosya_adi: 'fis_0412.jpg', hata: 'kota (429)' },
+        { id: 'if3', tarih: gunEkleISO(-5), dosya_adi: 'fatura_scan.png', hata: 'görüntü bulanık' },
+      ],
+    },
     kdv_kanit: {
       ay: bugunISO.slice(0, 7),
       indirime_aday: { adet: 21, toplam: 486400 },

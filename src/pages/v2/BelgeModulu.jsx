@@ -18,6 +18,7 @@ import { R, F, kartYuzey } from './tema';
 import { KpiSeridi, Liste, Tablo, BosDurum, HataBandi } from './parcalar';
 
 const sayi = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+const trSayi = (n, b = 1) => (Number(n) || 0).toFixed(b).replace('.', ',');
 const AYLAR = ['Oca', 'Şub', 'Mar', 'Nis', 'May', 'Haz', 'Tem', 'Ağu', 'Eyl', 'Eki', 'Kas', 'Ara'];
 const tarihKisa = (iso) => {
   const s = String(iso || '').slice(0, 10);
@@ -169,6 +170,8 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast }) {
   const [cariHata, setCariHata] = useState('');
   const [arama, setArama] = useState('');
   const [aramaSonuc, setAramaSonuc] = useState(null);
+  // Kapsama ekranındaki harcama listesi seçimi (faturasiz | kurumsal | beklenmez)
+  const [kapsamaListe, setKapsamaListe] = useState('faturasiz');
   const [araniyor, setAraniyor] = useState(false);
 
   const merkezYukle = useCallback(() => {
@@ -452,9 +455,29 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast }) {
     if (!merkez) return <Yukleniyor />;
     const k = merkez.kapsama || {};
     const oran = sayi(k.oran_yuzde);
-    const faturali = sayi(k.faturali_eslesen) + sayi(k.kurumsal_otomatik);
+    // Sunucu harcamayı DÖRDE ayırır (fatura_api.belge_merkezi_ozet):
+    //   faturali_eslesen · kurumsal_otomatik · belge_beklenmez · faturasiz
+    // v2 ilk ikisini birleştirip son ikisini tek kırmızıya eziyordu; üstelik
+    // yeşil çubuk `oran_yuzde` (= yalnız eslesen/toplam) ile çiziliyordu —
+    // yani efsane "Faturalı = eşleşen + kurumsal" derken çubuk kurumsalı
+    // KIRMIZI tarafta gösteriyordu. Dört dilim ayrı ayrı çizilir.
+    const eslesen = sayi(k.faturali_eslesen);
+    const kurumsal = sayi(k.kurumsal_otomatik);
+    const beklenmez = sayi(k.belge_beklenmez);
     const faturasiz = sayi(k.faturasiz);
+    const toplamHarcama = sayi(k.isletme_kart_harcamasi);
+    const faturali = eslesen + kurumsal;
+    const yuzde = (v) => (toplamHarcama > 0 ? (v / toplamHarcama) * 100 : 0);
     const fh = Array.isArray(merkez.faturasiz_harcamalar) ? merkez.faturasiz_harcamalar : [];
+    const kh = Array.isArray(merkez.kurumsal_harcamalar) ? merkez.kurumsal_harcamalar : [];
+    const bh = Array.isArray(merkez.belgesiz_harcamalar) ? merkez.belgesiz_harcamalar : [];
+    // Üç liste aynı ekranda ama karışmaz: hangisine bakıldığı seçilir.
+    const listeler = [
+      ['faturasiz', `🔴 Faturasız (${fh.length})`, fh, 'Belge isteme adayı — faturası bulunamadı.'],
+      ['kurumsal', `🔵 Kurumsal otomatik (${kh.length})`, kh, 'E-fatura kendiliğinden geliyor; ayrıca belge istenmez.'],
+      ['beklenmez', `⚪ Belge beklenmez (${bh.length})`, bh, 'Banka masrafı, vergi, harç gibi kalemler — faturası olmaz.'],
+    ].filter(([, , liste]) => liste.length);
+    const aktifListe = listeler.find(([id]) => id === kapsamaListe) || listeler[0];
     return (
       <>
         <KpiSeridi kpiler={[
@@ -488,31 +511,61 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast }) {
             </span>
             <span style={{ fontSize: 11.5, color: R.not2 }}>faturasız kısım = KDV indirimi + gider kanıtı kaybı riski</span>
           </div>
+          {/* DÖRT DİLİM: eşleşen · kurumsal otomatik · belge beklenmez · faturasız.
+              Sadece gerçekten faturasız kısım kırmızıdır; "belge beklenmez"i
+              kırmızı göstermek olmayan bir borcu suç gibi gösterirdi. */}
           <div style={{ display: 'flex', height: 16, borderRadius: 99, overflow: 'hidden', background: R.cizgi2 }}>
-            <span style={{ width: `${Math.max(2, Math.min(98, oran))}%`, background: `linear-gradient(90deg, ${R.yesil}, #22C55E)` }} />
-            <span style={{ flex: 1, background: `linear-gradient(90deg, ${R.kirmizi}, #EF4444)` }} />
+            {eslesen > 0 && <span title={`Faturası eşleşen ${fmt(eslesen)}`} style={{ width: `${yuzde(eslesen)}%`, background: `linear-gradient(90deg, ${R.yesil}, #22C55E)` }} />}
+            {kurumsal > 0 && <span title={`Kurumsal otomatik ${fmt(kurumsal)}`} style={{ width: `${yuzde(kurumsal)}%`, background: `linear-gradient(90deg, ${R.mavi}, #3B82F6)` }} />}
+            {beklenmez > 0 && <span title={`Belge beklenmez ${fmt(beklenmez)}`} style={{ width: `${yuzde(beklenmez)}%`, background: R.cizgi3 }} />}
+            {faturasiz > 0 && <span title={`Faturasız ${fmt(faturasiz)}`} style={{ flex: 1, background: `linear-gradient(90deg, ${R.kirmizi}, #EF4444)` }} />}
           </div>
-          <div style={{ display: 'flex', gap: 22, flexWrap: 'wrap', marginTop: 10, fontSize: 12.5 }}>
-            <span style={{ color: R.yesil }}>Faturalı <b style={{ fontFamily: F.mono, whiteSpace: 'nowrap' }}>{fmt(faturali)}</b> · %{Math.round(oran)}</span>
+          <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', marginTop: 10, fontSize: 12.5 }}>
+            <span style={{ color: R.yesil }}>Eşleşen <b style={{ fontFamily: F.mono, whiteSpace: 'nowrap' }}>{fmt(eslesen)}</b> · %{Math.round(oran)}</span>
+            {kurumsal > 0 && <span style={{ color: R.mavi }}>Kurumsal otomatik <b style={{ fontFamily: F.mono, whiteSpace: 'nowrap' }}>{fmt(kurumsal)}</b></span>}
+            {beklenmez > 0 && <span style={{ color: R.not2 }}>Belge beklenmez <b style={{ fontFamily: F.mono, whiteSpace: 'nowrap' }}>{fmt(beklenmez)}</b></span>}
             <span style={{ color: R.kirmizi }}>Faturasız <b style={{ fontFamily: F.mono, whiteSpace: 'nowrap' }}>{fmt(faturasiz)}</b></span>
             <span style={{ color: R.not2, marginLeft: 'auto' }}>hedef %85</span>
           </div>
         </div>
 
-        {fh.length === 0 ? (
+        {/* Üç harcama listesi — sunucu üçünü ayrı döndürüyordu, v2 yalnız
+            faturasız olanı gösteriyordu. Kurumsal ve belge-beklenmez kalemleri
+            görünmeyince "neden faturası yok?" sorusu cevapsız kalıyordu. */}
+        {listeler.length > 1 && (
+          <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
+            {listeler.map(([id, ad]) => (
+              <div key={id} onClick={() => setKapsamaListe(id)} style={{
+                padding: '6px 13px', borderRadius: 99, fontSize: 11.5, fontWeight: 700, cursor: 'pointer',
+                border: `1px solid ${aktifListe?.[0] === id ? R.bakir : R.cizgi3}`,
+                color: aktifListe?.[0] === id ? R.bakir : R.metin2,
+                background: aktifListe?.[0] === id ? 'rgba(217,154,78,.14)' : R.girinti,
+              }}>{ad}</div>
+            ))}
+          </div>
+        )}
+
+        {!aktifListe ? (
           <BosDurum metin="Faturasız işletme harcaması yok — kapsama tam." />
         ) : (
-          <Liste
-            satirlar={fh.slice(0, 12).map((h, i) => ({
-              id: `fh-${i}`,
-              baslik: kisalt(h.aciklama || 'Kart harcaması', 70),
-              alt: `${tarihKisa(h.tarih)} · ${kisalt(h.kart, 34)}${h.tip ? ` · ${h.tip}` : ''}`,
-              tutar: fmt(sayi(h.tutar)),
-              tier: sayi(h.tutar) >= 10000 ? 'kritik' : 'uyari',
-              aksiyon: '',
-            }))}
-            onAc={() => onToast?.('Bu harcamanın faturasını yukarıdaki 📎 Belge yükle ile arşive ekleyin.')}
-          />
+          <>
+            <div style={{ fontSize: 11.5, color: R.not2, marginBottom: 9 }}>{aktifListe[3]}</div>
+            <Liste
+              satirlar={aktifListe[2].slice(0, 12).map((h, i) => ({
+                id: `${aktifListe[0]}-${i}`,
+                baslik: kisalt(h.aciklama || 'Kart harcaması', 70),
+                alt: `${tarihKisa(h.tarih)} · ${kisalt(h.kart, 34)}${h.tip ? ` · ${h.tip}` : ''}`,
+                tutar: fmt(sayi(h.tutar)),
+                tier: aktifListe[0] !== 'faturasiz' ? 'bilgi' : sayi(h.tutar) >= 10000 ? 'kritik' : 'uyari',
+                aksiyon: '',
+              }))}
+              onAc={() => onToast?.(aktifListe[0] === 'faturasiz'
+                ? 'Bu harcamanın faturasını yukarıdaki 📎 Belge yükle ile arşive ekleyin.'
+                : aktifListe[0] === 'kurumsal'
+                  ? 'Kurumsal harcama: e-fatura kendiliğinden geliyor, ayrıca belge istenmez.'
+                  : 'Bu kalemin faturası olmaz (banka masrafı, vergi, harç…) — kapsama oranını düşürmez.')}
+            />
+          </>
         )}
       </>
     );
@@ -524,6 +577,14 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast }) {
     if (!merkez) return <Yukleniyor />;
     const arsiv = Array.isArray(merkez.fatura_arsivi) ? merkez.fatura_arsivi : [];
     const gosterilen = aramaSonuc != null ? aramaSonuc : arsiv;
+    // GÜN GÜN kırılım — sahibin ilk isteğiydi ("toptancı toptancı, ay ay, GÜN GÜN
+    // görebildiğim"), sunucu gönderiyordu, v2 hiç okumuyordu.
+    const gunGun = Array.isArray(merkez.gun_gun) ? merkez.gun_gun : [];
+    const enBuyukGun = gunGun.reduce((m, g) => Math.max(m, sayi(g.tutar)), 0);
+    // Arşiv deposu (BM-0b): dosya sayısı + toplam boyut. Sunucu ≈500 MB üstünde
+    // obje depoya taşıma uyarısını kendi metninde söylüyor.
+    const depo = merkez.arsiv_depo || null;
+    const depoMb = sayi(depo?.toplam_mb);
     const ara = async () => {
       const q = arama.trim();
       if (!q) { setAramaSonuc(null); return; }
@@ -541,7 +602,12 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast }) {
           { etiket: 'Bu ay belge', deger: String(arsiv.length), alt: merkez.ay || buAyISO() },
           { etiket: 'Toptancı', deger: String(toptancilar.length), alt: 'arşivde temsil edilen' },
           { etiket: 'Arşiv toplamı', deger: fmt(toptancilar.reduce((t, x) => t + sayi(x.toplam), 0)), alt: 'toptancı faturaları' },
-          { etiket: 'Arama', deger: 'FTS', alt: 'belge metninde tam arama' },
+          {
+            etiket: 'Arşiv deposu',
+            deger: depo ? `${trSayi(depoMb, depoMb >= 100 ? 0 : 1)} MB` : '—',
+            alt: depo ? `${sayi(depo.dosyali_adet)} dosyalı belge` : 'boyut bilgisi yok',
+            renk: depoMb >= 500 ? R.amber : R.krem,
+          },
         ]} />
         {/* FTS arama — blueprint'in arama kutusu, /fatura/ara gerçek ucu */}
         <div style={{
@@ -574,6 +640,66 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast }) {
             {araniyor ? '…' : 'Ara'}
           </button>
         </div>
+        {/* ── GÜN GÜN (sahip isteği: "ay ay, gün gün görebildiğim") ──
+            Arama açıkken gizlenir: arama ay dışına çıkabilir, gün şeridi o ayın
+            fotoğrafıdır — ikisini yan yana göstermek yanlış okutur. */}
+        {aramaSonuc == null && gunGun.length > 0 && (
+          <div style={{ ...kartYuzey, padding: '16px 20px', marginBottom: 14 }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12, marginBottom: 12 }}>
+              <span style={{ fontFamily: F.baslik, fontSize: 15.5, fontWeight: 600 }}>
+                Gün gün · {merkez.ay || buAyISO()}
+              </span>
+              <span style={{ fontSize: 11.5, color: R.not2 }}>
+                {gunGun.length} günde belge geldi · en yoğun {fmt(enBuyukGun)}
+              </span>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {gunGun.slice(0, 14).map((g, i) => {
+                const t = sayi(g.tutar);
+                const oranG = enBuyukGun > 0 ? (t / enBuyukGun) * 100 : 0;
+                return (
+                  <div key={g.gun || i} style={{ display: 'flex', alignItems: 'center', gap: 11 }}>
+                    <span style={{ fontFamily: F.mono, fontSize: 11.5, color: R.not, width: 52, flexShrink: 0 }}>
+                      {tarihKisa(g.gun)}
+                    </span>
+                    <span style={{ flex: 1, height: 8, borderRadius: 99, background: R.cizgi2, overflow: 'hidden' }}>
+                      <span style={{
+                        display: 'block', height: '100%', borderRadius: 99,
+                        width: `${Math.max(2, oranG)}%`,
+                        background: `linear-gradient(90deg, ${R.bakirKoyu}, ${R.bakir})`,
+                      }} />
+                    </span>
+                    <span style={{ fontSize: 11, color: R.not2, width: 62, flexShrink: 0, textAlign: 'right' }}>
+                      {sayi(g.adet)} belge
+                    </span>
+                    <span style={{ fontFamily: F.mono, fontSize: 12, fontWeight: 700, width: 96, flexShrink: 0, textAlign: 'right' }}>
+                      {fmt(t)}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+            {gunGun.length > 14 && (
+              <div style={{ fontSize: 11, color: R.not2, marginTop: 9 }}>
+                En yeni 14 gün gösteriliyor · ayın tamamı {gunGun.length} gün.
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Depo eşiği — sunucu ≈500 MB üstünde obje depoya taşımayı öneriyor (BM-0b) */}
+        {depoMb >= 500 && (
+          <div style={{
+            ...kartYuzey, padding: '11px 16px', marginBottom: 14, borderColor: `${R.amber}44`,
+            display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+          }}>
+            <span style={rozetHap(R.amber)}>⚠ arşiv büyüdü</span>
+            <span style={{ fontSize: 11.5, color: R.not }}>
+              {depo?.not || 'Obje depoya taşıma gündeme alınmalı.'}
+            </span>
+          </div>
+        )}
+
         {gosterilen.length === 0 ? (
           <BosDurum metin={aramaSonuc != null ? 'Arama sonucu yok.' : 'Bu ay arşivlenmiş fatura yok.'} />
         ) : (
@@ -878,7 +1004,17 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast }) {
     const kk = merkez.kdv_kanit || {};
     const supheli = kk.supheli || {};
     const inceleme = kk.inceleme || {};
-    const islenemeyen = Array.isArray(merkez.islenemeyen_foto) ? merkez.islenemeyen_foto : [];
+    // 🐞 `islenemeyen_foto` sunucuda NESNE: {adet, son_hata, fotolar}
+    // (fatura_api.belge_merkezi_ozet). Eski kod `Array.isArray` ile bakıyordu →
+    // her zaman false → KPI KALICI OLARAK 0 gösteriyordu ve boş-durum kontrolü
+    // kuyruğu "temiz" sayıyordu. Gerçek işlenemeyen fotoğraflar görünmüyordu.
+    const ifoto = merkez.islenemeyen_foto || {};
+    const islenemeyen = Array.isArray(ifoto.fotolar) ? ifoto.fotolar
+      : (Array.isArray(ifoto) ? ifoto : []);          // eski dizi biçimine tolerans
+    const islenemeyenAdet = ifoto.adet != null ? sayi(ifoto.adet) : islenemeyen.length;
+    // son_hata = kök neden (ör. LLM kota doldu). Ekran şimdiye kadar
+    // "fotoğraf okunamadı" diye TAHMİN yürütüyordu; sunucu sebebi söylüyor.
+    const sonHata = (ifoto.son_hata || '').trim();
     const arsiv = Array.isArray(merkez.fatura_arsivi) ? merkez.fatura_arsivi : [];
     const hatali = arsiv.filter((b) => /hata/i.test(String(b.durum || '')));
     return (
@@ -886,7 +1022,7 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast }) {
         <KpiSeridi kpiler={[
           { etiket: 'Şüpheli belge', deger: String(sayi(supheli.adet)), alt: 'GİB damgası / mükerrer şüphesi', renk: sayi(supheli.adet) > 0 ? R.kirmizi : R.yesil },
           { etiket: 'İnceleme kuyruğu', deger: String(sayi(inceleme.adet)), alt: `no/VKN eksik · ${fmt(sayi(inceleme.toplam))}`, renk: sayi(inceleme.adet) > 0 ? R.amber : R.yesil },
-          { etiket: 'İşlenemeyen foto', deger: String(islenemeyen.length), alt: 'OCR okuyamadı', renk: islenemeyen.length > 0 ? R.amber : R.krem },
+          { etiket: 'İşlenemeyen foto', deger: String(islenemeyenAdet), alt: sonHata ? kisalt(sonHata, 40) : 'OCR okuyamadı', renk: islenemeyenAdet > 0 ? R.amber : R.krem },
           { etiket: 'Mükerrer freni', deger: '4 katman', alt: 'aynı belge iki kanaldan giremez', renk: R.yesil },
         ]} />
         <div style={{
@@ -897,10 +1033,44 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast }) {
           Parmak izi (PDF hash) + belge no + tutar+gün + GİB damgası — dört katman girişte otomatik çalışır;
           bu ekran KALANLARI (inceleme + şüpheli) gösterir.
         </div>
-        {hatali.length === 0 && islenemeyen.length === 0 && sayi(inceleme.adet) === 0 ? (
+        {hatali.length === 0 && islenemeyenAdet === 0 && sayi(inceleme.adet) === 0 ? (
           <BosDurum metin="Uyarı kuyruğu temiz — mükerrer şüphesi veya işlenemeyen belge yok." />
         ) : (
           <>
+            {/* İŞLENEMEYEN FOTOĞRAFLAR — kök nedeniyle birlikte. Sebep sunucudan
+                gelir; "daha net çek" tavsiyesi her hatada doğru değil (kota
+                dolduysa fotoğrafın netliğiyle ilgisi yok). */}
+            {islenemeyenAdet > 0 && (
+              <div style={{ ...kartYuzey, padding: '15px 18px', marginBottom: 14, border: `1px solid ${R.amber}44` }}>
+                <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 5 }}>
+                  İşlenemeyen fotoğraf · {islenemeyenAdet} belge
+                </div>
+                <div style={{ fontSize: 12, color: R.metin2, lineHeight: 1.55 }}>
+                  {sonHata
+                    ? <>Son hata: <b style={{ color: R.amber }}>{sonHata}</b> — kök neden buysa yeniden yüklemek çözmez, önce bu giderilmeli.</>
+                    : 'OCR okuyamadı. Daha net bir kopya yükleyin.'}
+                </div>
+                {islenemeyen.length > 0 && (
+                  <div style={{ marginTop: 11, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {islenemeyen.slice(0, 6).map((f, i) => (
+                      <div key={f.id || `if-${i}`} style={{
+                        display: 'flex', alignItems: 'center', gap: 10, fontSize: 11.5,
+                        padding: '7px 11px', borderRadius: 9, background: R.girinti,
+                      }}>
+                        <span style={{ fontFamily: F.mono, color: R.not, flexShrink: 0 }}>{tarihKisa(f.tarih)}</span>
+                        <span style={{ flex: 1, minWidth: 0, color: R.metin2 }}>
+                          {kisalt(f.tedarikci_ad || f.dosya_adi || f.aciklama || 'Fotoğraf', 52)}
+                        </span>
+                        {f.hata && <span style={{ color: R.not2, flexShrink: 0 }}>{kisalt(f.hata, 34)}</span>}
+                      </div>
+                    ))}
+                    {islenemeyen.length > 6 && (
+                      <div style={{ fontSize: 11, color: R.not2 }}>+{islenemeyen.length - 6} kayıt daha</div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
             {hatali.length > 0 && (
               <Liste
                 satirlar={hatali.slice(0, 8).map((b, i) => ({
@@ -911,7 +1081,9 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast }) {
                   tier: 'kritik',
                   aksiyon: '',
                 }))}
-                onAc={() => onToast?.('İşlenemeyen belge: fotoğraf okunamadı — 📎 Belge yükle ile daha net bir kopya yükleyin.')}
+                onAc={() => onToast?.(sonHata
+                  ? `İşlenemeyen belge — son hata: ${sonHata}`
+                  : 'İşlenemeyen belge: fotoğraf okunamadı — 📎 Belge yükle ile daha net bir kopya yükleyin.')}
               />
             )}
             {sayi(inceleme.adet) > 0 && (
