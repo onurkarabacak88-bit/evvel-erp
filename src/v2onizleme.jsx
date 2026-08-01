@@ -858,6 +858,28 @@ const MALIYET_UC = {
     },
     gun_satirlari: MALIYET_GUNLER,
   },
+  // Güven skoru + sapma motoru — v2 bu ucu HİÇ çağırmıyordu.
+  // Sapma örnekleri gerçek olaylardan: karamel şurup fiyatı bardağa yazılmış,
+  // bir şubede 70K plastik bardak görünmüş.
+  '/api/ops/maliyet/guven-skoru': {
+    gun: 7, sube_id: null, genel_skor: 62, genel_skor_ham: 70,
+    sapma_sayisi: 2, kritik_sapma: 1,
+    ozet: '62/100 — 2 şüpheli değer (sapma motoru)',
+    kovalar: [
+      { kova: 'ciro', baslik: 'Ciro', skor: 95, durum: 'iyi', mesaj: 'Ciro kayıtları tam' },
+      { kova: 'cogs', baslik: 'Ürün-Aç (COGS)', skor: 58, durum: 'zayif', mesaj: '12 üründe alış fiyatı yok — COGS eksik hesaplanıyor' },
+      { kova: 'kira', baslik: 'Kira', skor: 100, durum: 'iyi', mesaj: 'Tüm şubelerde kira tanımlı' },
+      { kova: 'faturalar', baslik: 'Faturalar', skor: 72, durum: 'orta', mesaj: '3 fatura kalemsiz' },
+      { kova: 'komisyon', baslik: 'Komisyon', skor: 88, durum: 'iyi', mesaj: 'POS komisyon oranları güncel' },
+      { kova: 'fire', baslik: 'Fire', skor: 64, durum: 'orta', mesaj: 'Fire bildirimleri düzensiz' },
+    ],
+    sapmalar: [
+      { tip: 'FIYAT_OUTLIER', kalem_kodu: 'bardak_plastik', kalem_adi: 'Plastik bardak', deger: 148.5, beklenen: 4.2, kat: 35, siddet: 'kritik',
+        mesaj: 'Plastik bardak: son alış 148,50₺ = geçmiş medyanın (4,20₺) 35× üstü — yanlış fatura eşleştirmesi olabilir' },
+      { tip: 'ADET_OUTLIER', kalem_kodu: 'karton_bardak', kalem_adi: 'Karton bardak 12oz', deger: 70583, beklenen: 4200, kat: 17, siddet: 'orta',
+        mesaj: 'Karton bardak 12oz: KÖYCEĞİZ stoğu 70.583 = diğer şubelerin medyanının (4.200) 17× üstü' },
+    ],
+  },
   // Vergi & KDV (P&L DIŞI) — v2 bu iki ucu HİÇ çağırmıyordu.
   // Şubeler KARMA: Zafer/Köyceğiz şahıs (artan dilim), Gazze/Alsancak şirket.
   '/api/ops/maliyet/kdv-pozisyon': {

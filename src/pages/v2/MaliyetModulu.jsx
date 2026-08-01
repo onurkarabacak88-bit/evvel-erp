@@ -71,6 +71,9 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
   // Vergi & KDV (P&L DIŞI, izole) — /ops/maliyet/kdv-pozisyon + /vergi-ozet
   const [vergi, setVergi] = useState(null);
   const [vergiHata, setVergiHata] = useState('');
+  // Güven skoru + sapma motoru (/ops/maliyet/guven-skoru) — SALT-OKUR, öneri-only.
+  // Maliyet sayısının NE KADAR GÜVENİLİR olduğunu söyler; hata yoksa sessiz durur.
+  const [guven, setGuven] = useState(null);
   const [receteler, setReceteler] = useState(null);
   const [fiyatlar, setFiyatlar] = useState(null);
   const [receteHata, setReceteHata] = useState('');
@@ -94,6 +97,11 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
     api('/ops/maliyet/ozet?gun=30')
       .then((d) => setOzet(d || {}))
       .catch((e) => setOzetHata(e?.message || ''));
+    // Güven skoru aynı ekranda yüklenir: food cost sayısını GÖSTERMEDEN önce
+    // "bu sayı ne kadar güvenilir" sorusunun cevabı hazır olsun.
+    api('/ops/maliyet/guven-skoru?gun=7')
+      .then((d) => setGuven(d || null))
+      .catch(() => setGuven(null));
   }, []);
 
   const receteYukle = useCallback(() => {
@@ -640,6 +648,77 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
             renk: altyapiEksik.length ? R.amber : R.krem,
           },
         ]} />
+        {/* ── GÜVEN SKORU + SAPMA MOTORU (öneri-only, SALT-OKUR) ──
+            Food cost sayısının kendisi kadar önemli: o sayı ne kadar
+            güvenilir? Sapma motoru "48M ciro / 70K bardak" tipi veri-kalitesi
+            kazalarını ÖNCEDEN yakalar. Hiçbir veriyi değiştirmez. */}
+        {guven && (() => {
+          const skor = sayi(guven.genel_skor);
+          const sapmalar = Array.isArray(guven.sapmalar) ? guven.sapmalar : [];
+          const kovalar = Array.isArray(guven.kovalar) ? guven.kovalar : [];
+          const zayif = kovalar.filter((k) => k.durum === 'zayif');
+          const skorRenk = skor >= 85 ? R.yesil : skor >= 60 ? R.amber : R.kirmizi;
+          return (
+            <div style={{
+              ...kartYuzey, padding: '15px 18px', marginBottom: 14,
+              borderColor: sayi(guven.kritik_sapma) ? `${R.kirmizi}55` : `${skorRenk}33`,
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: sapmalar.length ? 11 : 0 }}>
+                <span style={{ fontFamily: F.mono, fontSize: 22, fontWeight: 700, color: skorRenk }}>
+                  {skor}<span style={{ fontSize: 13, color: R.not2 }}>/100</span>
+                </span>
+                <span style={{ fontSize: 12.5, color: R.metin2 }}>
+                  <b>Maliyet güven skoru</b>
+                  {zayif.length
+                    ? ` — zayıf halka: ${zayif.map((k) => k.baslik).join(', ')}`
+                    : ' — veri kalitesi iyi'}
+                </span>
+                {/* Kova kova skor: hangi girdi maliyeti güvenilmez yapıyor */}
+                <span style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginLeft: 'auto' }}>
+                  {kovalar.map((k) => (
+                    <span key={k.kova} title={k.mesaj || ''} style={{
+                      padding: '4px 10px', borderRadius: 99, fontSize: 10.5, fontWeight: 700,
+                      whiteSpace: 'nowrap',
+                      background: k.durum === 'zayif' ? `${R.kirmizi}1e` : k.durum === 'orta' ? `${R.amber}1e` : `${R.yesil}18`,
+                      color: k.durum === 'zayif' ? R.kirmizi : k.durum === 'orta' ? R.amber : R.yesil,
+                    }}>{k.baslik} {sayi(k.skor)}</span>
+                  ))}
+                </span>
+              </div>
+
+              {sapmalar.length > 0 && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <div style={{ fontSize: 11, color: R.not2 }}>
+                    ⚠ {sapmalar.length} şüpheli değer — <b>öneri-only</b>, hiçbir veri değiştirilmedi.
+                    {sayi(guven.kritik_sapma) > 0 && ' Kritik sapma genel skoru düşürür.'}
+                  </div>
+                  {sapmalar.slice(0, 5).map((s, i) => (
+                    <div key={i} style={{
+                      display: 'flex', alignItems: 'center', gap: 10, fontSize: 11.5,
+                      padding: '8px 11px', borderRadius: 9, background: R.girinti,
+                      borderLeft: `3px solid ${s.siddet === 'kritik' ? R.kirmizi : R.amber}`,
+                    }}>
+                      <span style={{
+                        flexShrink: 0, fontSize: 10, fontWeight: 700,
+                        color: s.siddet === 'kritik' ? R.kirmizi : R.amber,
+                      }}>{s.tip === 'FIYAT_OUTLIER' ? 'FİYAT' : 'ADET'}</span>
+                      <span style={{ flex: 1, minWidth: 0, color: R.metin2 }}>{s.mesaj}</span>
+                      {s.kat != null && (
+                        <span style={{ flexShrink: 0, fontFamily: F.mono, fontWeight: 700, color: R.kirmizi }}>
+                          {sayi(s.kat)}×
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                  {sapmalar.length > 5 && (
+                    <div style={{ fontSize: 11, color: R.not3 }}>+{sapmalar.length - 5} sapma daha</div>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
         {/* Altyapı eksikleri — food cost hesabının GÜVENİLİRLİĞİNİ etkiler:
             alış fiyatı ya da reçete eksikse maliyet olduğundan düşük çıkar. */}
         {altyapiEksik.length > 0 && (
