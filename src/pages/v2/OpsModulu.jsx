@@ -579,6 +579,8 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
   const [busy, setBusy] = useState(false);
   // ── DEPO ──────────────────────────────────────────────────────────────────
   const [depo, setDepo] = useState(null);
+  // /ops/v2/depo-ozet → ozet bloğu: stok TL değeri + 30 gün harcama + şube başı
+  const [depoDeger, setDepoDeger] = useState(null);
   const [depoHata, setDepoHata] = useState('');
   const [depoSube, setDepoSube] = useState('');   // '' = tüm şubeler
   // ── YERLİ DEPO YÖNLENDİRME (köprü kaldırma turu, 2026-07-29) ──────────────
@@ -857,6 +859,12 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     api('/ops/depo-stok')
       .then((d) => setDepo(d || {}))
       .catch((e) => setDepoHata(e?.message || ''));
+    // Depo stoğunun TL DEĞERİ + son 30 gün harcaması — /ops/depo-stok yalnız
+    // ADET veriyor. Bu uç (v2 için yazılmış, hiç bağlanmamıştı) parayı ve
+    // tüketim hızını ekler: "kaç adet var" ile "kaç lira bağlı" ayrı sorular.
+    api('/ops/v2/depo-ozet?gun=30')
+      .then((d) => setDepoDeger(d?.ozet || null))
+      .catch(() => setDepoDeger(null));
   }, []);
 
   const sayimYukle = useCallback(() => {
@@ -3072,8 +3080,42 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
           { etiket: 'Kritik kalem', deger: String(kritik.length), alt: 'minimumun altında', renk: kritik.length > 0 ? R.kirmizi : R.yesil },
           { etiket: 'Düşük kalem', deger: String(dusuk.length), alt: 'eşiğe yaklaşıyor', renk: dusuk.length > 0 ? R.amber : R.krem },
           { etiket: 'Toplam kalem', deger: String(kalemler.length), alt: 'stok kartı' },
+          // Adet ≠ para: 10.000 bardak ile 20 kg çekirdek aynı "kalem" ama
+          // farklı sermaye. Sunucu değeri hesaplıyordu, ekran hiç göstermiyordu.
+          {
+            etiket: 'Depodaki para',
+            deger: depoDeger ? fmt(sayi(depoDeger.toplam_stok_deger)) : '—',
+            alt: depoDeger
+              ? `30 günde harcanan ${fmt(sayi(depoDeger.toplam_harcama_deger))}`
+              : 'alış fiyatı × mevcut',
+            renk: R.bakirAcik,
+          },
           { etiket: 'Kapsam', deger: depoSube ? (subeler.find((s) => s.id === depoSube)?.ad || 'şube') : 'Tüm şubeler', alt: 'aşağıdan değiştir' },
         ]} />
+
+        {/* ŞUBE BAŞI STOK DEĞERİ — hangi şubede ne kadar sermaye bağlı.
+            Kritik kalem sayısıyla birlikte okunur: az kalem + çok para = pahalı
+            kalemlerde birikme, çok kalem + az para = ucuz sarf yığılması. */}
+        {depoDeger?.sube_basi && Object.keys(depoDeger.sube_basi).length > 0 && (
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
+            {subeler.map((s) => {
+              const sb = depoDeger.sube_basi[s.id];
+              if (!sb) return null;
+              return (
+                <div key={s.id} style={{ ...kartYuzey, padding: '10px 14px', borderRadius: 12, minWidth: 158 }}>
+                  <div style={{ fontSize: 11.5, fontWeight: 700, marginBottom: 3 }}>{s.ad}</div>
+                  <div style={{ fontFamily: F.mono, fontSize: 13, fontWeight: 700, color: R.bakirAcik }}>
+                    {fmt(sayi(sb.stok_deger))}
+                  </div>
+                  <div style={{ fontSize: 10.5, color: R.not2 }}>
+                    {sayi(sb.kritik) ? `⚠ ${sayi(sb.kritik)} kritik · ` : ''}
+                    30g harcama {fmt(sayi(sb.harcama_deger))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
 
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 14 }}>
           {[{ id: '', ad: 'Tümü' }, ...subeler].map((s) => {

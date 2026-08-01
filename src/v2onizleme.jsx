@@ -858,6 +858,21 @@ const MALIYET_UC = {
     },
     gun_satirlari: MALIYET_GUNLER,
   },
+  // Depo stoğunun TL DEĞERİ + 30 gün harcama (v2 bu ucu HİÇ çağırmıyordu;
+  // /ops/depo-stok yalnız ADET veriyor). Yalnız `ozet` bloğu okunuyor.
+  '/api/ops/v2/depo-ozet': {
+    gun: 30, subeler: [], urunler: [], urunler_katalog_aktif: [],
+    ozet: {
+      toplam_stok_deger: 284600, toplam_harcama_deger: 196400,
+      kritik_kalem_sayisi: 5, sifir_kalem_sayisi: 2, urun_sayisi: 128,
+      sube_basi: {
+        s0: { stok_deger: 118400, harcama_deger: 84200, kritik: 2, sifir: 0 },
+        s1: { stok_deger: 72300, harcama_deger: 51600, kritik: 1, sifir: 1 },
+        s2: { stok_deger: 46900, harcama_deger: 31400, kritik: 0, sifir: 0 },
+        s3: { stok_deger: 47000, harcama_deger: 29200, kritik: 2, sifir: 1 },
+      },
+    },
+  },
   // Güven skoru + sapma motoru — v2 bu ucu HİÇ çağırmıyordu.
   // Sapma örnekleri gerçek olaylardan: karamel şurup fiyatı bardağa yazılmış,
   // bir şubede 70K plastik bardak görünmüş.
