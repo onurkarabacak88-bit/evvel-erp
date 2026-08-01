@@ -612,6 +612,8 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
   const [dnFire, setDnFire] = useState(null);
   const [dnFis, setDnFis] = useState(null);
   const [dnKontrol, setDnKontrol] = useState(null);
+  // /ops/metrics/sube-operasyon-kalite — vardiya devri eksik tik oranı + trend
+  const [opKalite, setOpKalite] = useState(null);
   const [dnKayip, setDnKayip] = useState(null);
   const [dnHata, setDnHata] = useState('');
   // ── TEDARİK & SİNYAL (ops-merkez P3 sekmeleri, 2026-07-30) ────────────────
@@ -743,6 +745,13 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     api('/ops/gider-fis-bekleyen?gun=7')
       .then((d) => setDnFis(d || {}))
       .catch(() => setDnFis({}));
+    // ŞUBE OPERASYON KALİTESİ (/ops/metrics/sube-operasyon-kalite) — v2 bu ucu
+    // HİÇ çağırmıyordu. Kontrol özeti "kontroller yapıldı mı" der; bu uç
+    // VARDİYA DEVRİNİN ne kadar eksik tiklendiğini ölçer — ayrı bir kalite
+    // boyutu. Sunucu ayrıca "veri yetersiz" durumunu açıkça bildiriyor.
+    api('/ops/metrics/sube-operasyon-kalite?gun=30')
+      .then((d) => setOpKalite(d || null))
+      .catch(() => setOpKalite(null));
     api('/ops/kontrol-ozet')
       .then((d) => setDnKontrol(d || {}))
       .catch(() => setDnKontrol({}));
@@ -4560,6 +4569,87 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
               }}>Mührü aç…</button>
           </div>
         )}
+
+        {/* ── ŞUBE OPERASYON KALİTESİ — kontrol özetinden AYRI boyut ──
+            Kontrol özeti "kontroller yapıldı mı" der; bu blok VARDİYA DEVRİNİN
+            ne kadar eksik tiklendiğini + not gönderme sıklığını + sipariş
+            çevrim süresini ölçer. Sunucu "veri yetersiz" durumunu ayrıca
+            bildiriyor — sıfır ile ölçülemedi karıştırılmasın. */}
+        {dnSekme === 'kontrol' && opKalite && (() => {
+          const vk = opKalite.veri_kalite || {};
+          const vardiyaOran = opKalite.vardiya_eksik_oran;
+          const dongu = opKalite.siparis_dongusu?.ozet || {};
+          const trend = opKalite.kontrol_gecikmesi_trend || {};
+          const subeOran = Array.isArray(opKalite.vardiya_devri_eksik_tik_orani)
+            ? opKalite.vardiya_devri_eksik_tik_orani : [];
+          const yetersiz = (k) => vk[k]?.durum === 'yetersiz_veri' || vk[k]?.seviye === 'yetersiz_veri';
+          const deger = (v, ek, k) => (yetersiz(k) ? 'ölçülemedi' : (v == null ? '—' : `${trSayi(sayi(v))}${ek}`));
+          return (
+            <div style={{ ...kartYuzey, padding: '15px 18px', marginBottom: 14 }}>
+              <div style={{ fontFamily: F.baslik, fontSize: 15, fontWeight: 600, marginBottom: 11 }}>
+                Operasyon kalitesi · son {sayi(opKalite.gun_sayi) || 30} gün
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(178px,1fr))', gap: 10, marginBottom: subeOran.length ? 12 : 0 }}>
+                <div style={{ padding: '11px 14px', borderRadius: 11, background: R.girinti }}>
+                  <div style={{ fontSize: 10.5, color: R.not2, fontWeight: 700, letterSpacing: '.5px' }}>VARDİYA DEVRİ EKSİK TİK</div>
+                  <div style={{
+                    fontFamily: F.mono, fontSize: 18, fontWeight: 700, marginTop: 4,
+                    color: yetersiz('vardiya_eksik_oran') ? R.not3
+                      : sayi(vardiyaOran) > 20 ? R.kirmizi : sayi(vardiyaOran) > 5 ? R.amber : R.yesil,
+                  }}>{deger(vardiyaOran, '%', 'vardiya_eksik_oran')}</div>
+                  <div style={{ fontSize: 10.5, color: R.not2, marginTop: 2 }}>devir adımları tamamlanmadan kapanmış</div>
+                </div>
+                <div style={{ padding: '11px 14px', borderRadius: 11, background: R.girinti }}>
+                  <div style={{ fontSize: 10.5, color: R.not2, fontWeight: 700, letterSpacing: '.5px' }}>NOT GÖNDERME</div>
+                  <div style={{ fontFamily: F.mono, fontSize: 18, fontWeight: 700, marginTop: 4, color: yetersiz('not_gonderim_gunluk_ort') ? R.not3 : R.krem }}>
+                    {deger(opKalite.not_gonderim_gunluk_ort, '', 'not_gonderim_gunluk_ort')}
+                  </div>
+                  <div style={{ fontSize: 10.5, color: R.not2, marginTop: 2 }}>şube başına günlük not</div>
+                </div>
+                <div style={{ padding: '11px 14px', borderRadius: 11, background: R.girinti }}>
+                  <div style={{ fontSize: 10.5, color: R.not2, fontWeight: 700, letterSpacing: '.5px' }}>SİPARİŞ ÇEVRİMİ</div>
+                  <div style={{ fontFamily: F.mono, fontSize: 18, fontWeight: 700, marginTop: 4, color: yetersiz('siparis_cevrim_sure_gun') ? R.not3 : R.krem }}>
+                    {deger(opKalite.siparis_cevrim_sure_gun, ' gün', 'siparis_cevrim_sure_gun')}
+                  </div>
+                  <div style={{ fontSize: 10.5, color: R.not2, marginTop: 2 }}>
+                    talep → teslim · {sayi(dongu.teslim_bekleyen)} bekliyor
+                  </div>
+                </div>
+                <div style={{ padding: '11px 14px', borderRadius: 11, background: R.girinti }}>
+                  <div style={{ fontSize: 10.5, color: R.not2, fontWeight: 700, letterSpacing: '.5px' }}>KONTROL GECİKMESİ</div>
+                  <div style={{
+                    fontFamily: F.mono, fontSize: 18, fontWeight: 700, marginTop: 4,
+                    color: trend.yon === 'kotulesme' ? R.kirmizi : trend.yon === 'iyilesme' ? R.yesil : R.krem,
+                  }}>
+                    {trend.son_hafta_ort_dk != null ? `${trSayi(sayi(trend.son_hafta_ort_dk), 0)} dk` : '—'}
+                  </div>
+                  <div style={{ fontSize: 10.5, color: R.not2, marginTop: 2 }}>
+                    {trend.yon === 'kotulesme' ? '↑ kötüleşiyor' : trend.yon === 'iyilesme' ? '↓ iyileşiyor'
+                      : trend.yon === 'yetersiz_veri' ? 'trend için veri az' : 'sabit'}
+                    {trend.onceki_hafta_ort_dk != null ? ` · önceki hafta ${trSayi(sayi(trend.onceki_hafta_ort_dk), 0)} dk` : ''}
+                  </div>
+                </div>
+              </div>
+              {subeOran.length > 0 && (
+                <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap' }}>
+                  {subeOran.map((s, i) => (
+                    <span key={s.sube_id || i} style={{
+                      padding: '5px 11px', borderRadius: 99, fontSize: 11,
+                      background: R.girinti, border: `1px solid ${R.cizgi3}`, color: R.metin2,
+                    }}>
+                      {s.sube_adi || '—'}{' '}
+                      <b style={{
+                        fontFamily: F.mono,
+                        color: sayi(s.eksik_tik_orani_pct) > 20 ? R.kirmizi : sayi(s.eksik_tik_orani_pct) > 5 ? R.amber : R.yesil,
+                      }}>%{trSayi(sayi(s.eksik_tik_orani_pct), 0)}</b>
+                      <span style={{ color: R.not3 }}> · {sayi(s.toplam_devri)} devir</span>
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })()}
 
         {dnSekme === 'kontrol' && (kontrolSatir.length ? (
           <Tablo

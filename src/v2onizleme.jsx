@@ -950,6 +950,28 @@ const MALIYET_UC = {
       },
     },
   },
+  // Şube operasyon kalitesi — v2 bu ucu HİÇ çağırmıyordu.
+  // veri_kalite bloğu "ölçülemedi" ile "sıfır" ayrımını taşır.
+  '/api/ops/metrics/sube-operasyon-kalite': {
+    gun_sayi: 30, sube_id: null,
+    vardiya_eksik_oran: 18.4, not_gonderim_gunluk_ort: 0.42, siparis_cevrim_sure_gun: 1.8,
+    veri_kalite: {
+      vardiya_eksik_oran: { durum: 'tamam', mesaj: 'Vardiya devir verisi mevcut.' },
+      not_gonderim_gunluk_ort: { durum: 'tamam', mesaj: 'Şube not verisi mevcut.' },
+      siparis_cevrim_sure_gun: { durum: 'tamam', mesaj: 'Sipariş talep->teslim çevrimi hesaplandı.' },
+    },
+    vardiya_devri_eksik_tik_orani: [
+      { sube_id: 's0', sube_adi: 'ZAFER', toplam_devri: 58, tam_tik: 52, eksik_tik: 6, eksik_tik_orani_pct: 10.3 },
+      { sube_id: 's1', sube_adi: 'KÖYCEĞİZ', toplam_devri: 46, tam_tik: 32, eksik_tik: 14, eksik_tik_orani_pct: 30.4 },
+      { sube_id: 's3', sube_adi: 'GAZZE', toplam_devri: 41, tam_tik: 40, eksik_tik: 1, eksik_tik_orani_pct: 2.4 },
+    ],
+    not_gonderme_sikligi: [
+      { sube_id: 's0', sube_adi: 'ZAFER', not_adet: 18, gunluk_ortalama_not: 0.6 },
+      { sube_id: 's1', sube_adi: 'KÖYCEĞİZ', not_adet: 7, gunluk_ortalama_not: 0.23 },
+    ],
+    siparis_dongusu: { satirlar: [], ozet: { toplam_talep: 34, teslim_edilen: 29, teslim_bekleyen: 5, ortalama_talep_teslim_gun: 1.8 } },
+    kontrol_gecikmesi_trend: { haftalik: [], yon: 'kotulesme', onceki_hafta_ort_dk: 12.4, son_hafta_ort_dk: 19.8 },
+  },
   // Kalem grubu kırılımı — v2 bu ucu HİÇ çağırmıyordu. Kolon kodları
   // operasyon_merkez_api._GUN_GUN_KOLONLAR ile birebir.
   '/api/ops/maliyet/gun-gun': {
