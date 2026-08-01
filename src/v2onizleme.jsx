@@ -88,12 +88,38 @@ const SAHTE = {
 const CIRO = ciroUret();
 
 // ── Kartlar & Borç modülü sahte verisi ──────────────────────────────────────
+// Kart mock'u — sunucunun /api/kartlar sözleşmesiyle aynı alanlar (main.py:2640).
+// k1: vadesi geçmiş + bekleyen ödeme (blink) + devreden anapara/faiz
+// k2+k4: ORTAK LİMİT HAVUZU "worldpuan" — kalan limit/doluluk GRUP seviyesinde
+// k3: ekstre yok (kalan limit tahminî) · k5: temiz, önceki dönem tam ödendi
 const K = [
-  { id: 'k1', kart_adi: 'Garanti Bonus İşletme', banka: 'Garanti', sahip: 'İşletme', limit_tutar: 250000, guncel_borc: 184300, faiz_orani: 52, kesim_gunu: 12, gun_kaldi: -2, asgari_odeme: 90760, asgari_karsilandi: false, ekstre_gercek: true, gelecek_taksit_anapara: 42600, toplam_borc_taksitli: 226900, son_odeme_tarihi: '2026-07-22', aktif_son_odeme: '2026-07-22' },
-  { id: 'k2', kart_adi: 'Yapı Kredi World', banka: 'Yapı Kredi', sahip: 'Onur K.', limit_tutar: 150000, guncel_borc: 96800, faiz_orani: 58, kesim_gunu: 8, gun_kaldi: 0, asgari_odeme: 43680, asgari_karsilandi: false, ekstre_gercek: true, gelecek_taksit_anapara: 12400, toplam_borc_taksitli: 109200, son_odeme_tarihi: '2026-07-28', aktif_son_odeme: '2026-07-28' },
-  { id: 'k3', kart_adi: 'İş Bankası Maximum', banka: 'İş Bankası', sahip: 'Onur K.', limit_tutar: 120000, guncel_borc: 54200, faiz_orani: 49, kesim_gunu: 26, gun_kaldi: 9, asgari_odeme: 16260, asgari_karsilandi: false, ekstre_gercek: false, gelecek_taksit_anapara: 0, toplam_borc_taksitli: 54200, son_odeme_tarihi: '2026-08-06', aktif_son_odeme: '2026-08-06' },
-  { id: 'k4', kart_adi: 'Akbank Axess', banka: 'Akbank', sahip: 'İşletme', limit_tutar: 90000, guncel_borc: 31900, faiz_orani: 45, kesim_gunu: 2, gun_kaldi: 14, asgari_odeme: 9570, asgari_karsilandi: true, ekstre_gercek: true, gelecek_taksit_anapara: 8900, toplam_borc_taksitli: 40800, son_odeme_tarihi: '2026-08-11', aktif_son_odeme: '2026-08-11' },
-  { id: 'k5', kart_adi: 'Ziraat Bankkart', banka: 'Ziraat', sahip: 'Onur K.', limit_tutar: 50000, guncel_borc: 12400, faiz_orani: 0, kesim_gunu: 18, gun_kaldi: 21, asgari_odeme: 3720, asgari_karsilandi: false, ekstre_gercek: true, gelecek_taksit_anapara: 0, toplam_borc_taksitli: 12400, son_odeme_tarihi: '2026-08-18', aktif_son_odeme: '2026-08-18' },
+  { id: 'k1', kart_adi: 'Garanti Bonus İşletme', banka: 'Garanti', sahip: 'İşletme', limit_tutar: 250000, guncel_borc: 184300, anlik_borc: 186900, faiz_orani: 52, kesim_gunu: 12, gun_kaldi: -2, asgari_odeme: 90760, asgari_karsilandi: false, bu_donem_odenen: 20000, ekstre_gercek: true, gelecek_taksit_anapara: 42600, toplam_borc_taksitli: 226900, son_odeme_tarihi: '2026-07-22', aktif_son_odeme: '2026-07-22',
+    kalan_limit: 20500, limit_doluluk: 0.918, kullanilabilir_limit: 22400, blink: true,
+    bu_ekstre: 226900, gelecek_ekstre: 61300, tek_cekim: 18700, aylik_taksit: 42600,
+    devreden_anapara: 38200, devreden_faiz: 9840, onceki_durum: 'asgari_odendi',
+    onceki_ekstre: 198000, onceki_odenen: 92000, aktif_donem: '2026-07', aktif_kesim: '2026-07-12', ortak_limit_grup: '' },
+  { id: 'k2', kart_adi: 'Yapı Kredi World', banka: 'Yapı Kredi', sahip: 'Onur K.', limit_tutar: 150000, guncel_borc: 96800, anlik_borc: 96800, faiz_orani: 58, kesim_gunu: 8, gun_kaldi: 0, asgari_odeme: 43680, asgari_karsilandi: false, bu_donem_odenen: 0, ekstre_gercek: true, gelecek_taksit_anapara: 12400, toplam_borc_taksitli: 109200, son_odeme_tarihi: '2026-07-28', aktif_son_odeme: '2026-07-28',
+    kalan_limit: 900, limit_doluluk: 0.994, kullanilabilir_limit: null, blink: false,
+    bu_ekstre: 109200, gelecek_ekstre: 21800, tek_cekim: 9400, aylik_taksit: 12400,
+    devreden_anapara: 0, devreden_faiz: 0, onceki_durum: 'tam',
+    onceki_ekstre: 88000, onceki_odenen: 88000, aktif_donem: '2026-07', aktif_kesim: '2026-07-08',
+    ortak_limit_grup: 'worldpuan', ortak_grup_limit: 150000, ortak_grup_borc: 149100, ortak_grup_uye: 2 },
+  { id: 'k3', kart_adi: 'İş Bankası Maximum', banka: 'İş Bankası', sahip: 'Onur K.', limit_tutar: 120000, guncel_borc: 54200, anlik_borc: 54200, faiz_orani: 49, kesim_gunu: 26, gun_kaldi: 9, asgari_odeme: 16260, asgari_karsilandi: false, bu_donem_odenen: 0, ekstre_gercek: false, gelecek_taksit_anapara: 0, toplam_borc_taksitli: 54200, son_odeme_tarihi: '2026-08-06', aktif_son_odeme: '2026-08-06',
+    kalan_limit: 65800, limit_doluluk: 0.452, kullanilabilir_limit: null, blink: false,
+    bu_ekstre: 54200, gelecek_ekstre: 0, tek_cekim: 0, aylik_taksit: 0,
+    devreden_anapara: 0, devreden_faiz: 0, onceki_durum: 'yok',
+    onceki_ekstre: 0, onceki_odenen: 0, aktif_donem: null, aktif_kesim: null, ortak_limit_grup: '' },
+  { id: 'k4', kart_adi: 'Akbank Axess', banka: 'Akbank', sahip: 'İşletme', limit_tutar: 90000, guncel_borc: 31900, anlik_borc: 31900, faiz_orani: 45, kesim_gunu: 2, gun_kaldi: 14, asgari_odeme: 9570, asgari_karsilandi: true, bu_donem_odenen: 12000, ekstre_gercek: true, gelecek_taksit_anapara: 8900, toplam_borc_taksitli: 40800, son_odeme_tarihi: '2026-08-11', aktif_son_odeme: '2026-08-11',
+    kalan_limit: 900, limit_doluluk: 0.994, kullanilabilir_limit: null, blink: false,
+    bu_ekstre: 40800, gelecek_ekstre: 12600, tek_cekim: 3700, aylik_taksit: 8900,
+    devreden_anapara: 0, devreden_faiz: 0, onceki_durum: 'tam',
+    onceki_ekstre: 29000, onceki_odenen: 29000, aktif_donem: '2026-07', aktif_kesim: '2026-08-02',
+    ortak_limit_grup: 'worldpuan', ortak_grup_limit: 150000, ortak_grup_borc: 149100, ortak_grup_uye: 2 },
+  { id: 'k5', kart_adi: 'Ziraat Bankkart', banka: 'Ziraat', sahip: 'Onur K.', limit_tutar: 50000, guncel_borc: 12400, anlik_borc: 12400, faiz_orani: 0, kesim_gunu: 18, gun_kaldi: 21, asgari_odeme: 3720, asgari_karsilandi: false, bu_donem_odenen: 0, ekstre_gercek: true, gelecek_taksit_anapara: 0, toplam_borc_taksitli: 12400, son_odeme_tarihi: '2026-08-18', aktif_son_odeme: '2026-08-18',
+    kalan_limit: 37600, limit_doluluk: 0.248, kullanilabilir_limit: 37600, blink: false,
+    bu_ekstre: 12400, gelecek_ekstre: 0, tek_cekim: 0, aylik_taksit: 0,
+    devreden_anapara: 0, devreden_faiz: 0, onceki_durum: 'tam',
+    onceki_ekstre: 9800, onceki_odenen: 9800, aktif_donem: '2026-07', aktif_kesim: '2026-07-18', ortak_limit_grup: '' },
 ];
 
 const KART_UC = {

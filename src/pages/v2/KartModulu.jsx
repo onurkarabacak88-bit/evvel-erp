@@ -52,6 +52,15 @@ const DONGU = {
   yuklendi: { ad: 'Yüklendi', renk: R.yesil },
 };
 
+// Önceki dönemin kapanış hâli (finans_core.kart_aktif_donem:1287).
+// "asgari_odendi" tam ödeme DEĞİLDİR: kalan anapara devreder ve faiz işler.
+const ONCEKI_DURUM = {
+  tam: { ad: 'tam ödendi', aciklama: 'geçen dönem tamamı kapandı — devreden yük yok', renk: R.yesil },
+  asgari_odendi: { ad: 'asgari ödendi', aciklama: 'asgari karşılandı ama tamamı değil — kalan anapara devretti, faiz işledi', renk: R.amber },
+  asgari_odenmedi: { ad: 'asgari ÖDENMEDİ', aciklama: 'asgari bile karşılanmadı — gecikme faizi + kart kapatma riski', renk: R.kirmizi },
+  yok: { ad: 'yok', aciklama: 'önceki dönem verisi yok (yeni kart ya da ilk ekstre)', renk: R.not },
+};
+
 /**
  * Bir kartın döngü durumunu belirler. Sıra önemli: gecikme her şeyin önünde,
  * ekstre eksikliği ödeme beklemenin önünde (borç tahminî olur).
@@ -404,7 +413,43 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
       toplam: sayi(o.toplam_borc_taksitli ?? k.toplam_borc_taksitli ?? borc),
       odenenFaiz: sayi(o.toplam_odenen_faiz),
       limit,
-      kullanim: limit ? Math.min(100, (borc / limit) * 100) : 0,
+      // ⚠️ KULLANIM/KALAN LİMİT SUNUCUDAN GELİR — burada HESAPLANMAZ.
+      // Eski kod `guncel_borc / limit_tutar` yapıyordu; sunucunun limit_doluluk'u
+      // (main.py:2721) bambaşka bir hesap: anlık borç (kesim sonrası ödeme dahil)
+      // + gelecek TAKSİT yükü, üstelik ORTAK LİMİT HAVUZU'nda grup seviyesinde
+      // yeniden hesaplanıyor. Yani taksitli kartta kullanımı DÜŞÜK, limit
+      // paylaşan kartlarda ise çift sayıp YANLIŞ gösteriyordu. Sunucu alanı
+      // yoksa (eski cevap) eski hesaba düşülür.
+      kalanLimit: k.kalan_limit != null ? sayi(k.kalan_limit) : null,
+      kullanim: k.limit_doluluk != null
+        ? Math.max(0, Math.min(100, sayi(k.limit_doluluk) * 100))
+        : (limit ? Math.min(100, (borc / limit) * 100) : 0),
+      kullanimKaynak: k.limit_doluluk != null ? 'sunucu' : 'tahmin',
+      // Anlık borç = ekstre dönem borcu + kesim sonrası hareketler (gerçek zamanlı)
+      anlikBorc: k.anlik_borc != null ? sayi(k.anlik_borc) : borc,
+      bankaLimit: k.kullanilabilir_limit != null ? sayi(k.kullanilabilir_limit) : null,
+      // Ortak limit havuzu: kart formunda tanımlanabiliyordu ama SONUCU hiç
+      // gösterilmiyordu — paylaşılan limitte kalan tek havuzdan hesaplanır.
+      ortakGrup: (k.ortak_limit_grup || '').trim() || null,
+      ortakGrupLimit: k.ortak_grup_limit != null ? sayi(k.ortak_grup_limit) : null,
+      ortakGrupBorc: k.ortak_grup_borc != null ? sayi(k.ortak_grup_borc) : null,
+      ortakGrupUye: sayi(k.ortak_grup_uye),
+      // Devreden = geçen dönem tam ödenmediği için bu ekstreye taşınan yük.
+      // devreden_faiz gerçekten ÖDENEN paradır; anapara sadece ertelenmiştir.
+      devredenAnapara: sayi(k.devreden_anapara),
+      devredenFaiz: sayi(k.devreden_faiz),
+      buEkstre: sayi(k.bu_ekstre),
+      gelecekEkstre: sayi(k.gelecek_ekstre),
+      tekCekim: sayi(k.tek_cekim),
+      aylikTaksit: sayi(k.aylik_taksit),
+      buDonemOdenen: sayi(k.bu_donem_odenen),
+      oncekiDurum: k.onceki_durum || 'yok',
+      oncekiEkstre: sayi(k.onceki_ekstre),
+      oncekiOdenen: sayi(k.onceki_odenen),
+      aktifDonem: k.aktif_donem || null,
+      aktifKesim: k.aktif_kesim || null,
+      // blink: son ödeme günü geçmiş VE bekleyen ödeme planı var = acil
+      blink: k.blink === true,
       faizYillik: sayi(k.faiz_orani),
       kesim: k.kesim_gunu,
       sonOdeme: k.aktif_son_odeme || k.son_odeme_tarihi,
@@ -425,20 +470,70 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
     alt: `${k.sahip} · ${trKucuk(DONGU[k.durum].ad)}`,
     kpi: [
       { etiket: 'Toplam borç', deger: fmt(k.toplam), renk: R.kirmizi },
-      { etiket: 'Dönem borcu', deger: fmt(k.donem) },
+      {
+        etiket: 'Kalan limit',
+        deger: k.kalanLimit != null ? fmt(k.kalanLimit) : '—',
+        renk: k.kalanLimit == null ? R.not
+          : k.kalanLimit <= 0 ? R.kirmizi : k.kullanim >= 80 ? R.amber : R.yesil,
+      },
       { etiket: 'Asgari', deger: fmt(k.asgari), renk: k.asgariKarsilandi ? R.yesil : R.amber },
       { etiket: 'Ödenen faiz', deger: fmt(k.odenenFaiz), renk: R.amber },
     ],
     listeBaslik: 'Limit ve döngü',
     satirlar: [
-      { ad: 'Limit', detay: `kullanım %${trSayi(k.kullanim, 0)}`, tutar: fmt(k.limit) },
+      { ad: 'Limit', detay: `kullanım %${trSayi(k.kullanim, 0)}${k.kullanimKaynak === 'tahmin' ? ' · tahmini' : ' · anlık borç + gelecek taksit'}`, tutar: fmt(k.limit) },
+      ...(k.kalanLimit != null ? [{
+        ad: 'Kalan limit',
+        detay: k.ortakGrup ? 'ortak havuzdan — bu kart tek başına değil' : 'limit − anlık borç − gelecek taksit yükü',
+        tutar: fmt(k.kalanLimit),
+      }] : []),
+      ...(k.ortakGrup ? [{
+        ad: `Ortak limit havuzu · ${k.ortakGrup}`,
+        detay: `${k.ortakGrupUye || 2} kart aynı limiti paylaşıyor · havuz borcu ${fmt(k.ortakGrupBorc)}`,
+        tutar: k.ortakGrupLimit != null ? fmt(k.ortakGrupLimit) : fmt(k.limit),
+      }] : []),
+      ...(k.bankaLimit != null ? [{
+        ad: 'Bankanın yazdığı kullanılabilir limit',
+        detay: 'ekstre PDF\'inden okundu — bizim hesabımızla karşılaştır',
+        tutar: fmt(k.bankaLimit),
+      }] : []),
+      {
+        ad: 'Anlık borç',
+        detay: k.ekstreVar ? 'ekstre dönem borcu + kesim sonrası ödeme/harcama' : 'defter borcu (ekstre yok)',
+        tutar: fmt(k.anlikBorc),
+      },
+      { ad: 'Bu ekstre', detay: k.aktifKesim ? `kesim ${kisaTarih(k.aktifKesim)}` : 'aktif dönem', tutar: fmt(k.buEkstre) },
+      ...(k.buDonemOdenen > 0 ? [{
+        ad: 'Bu dönem ödenen',
+        detay: k.asgariKarsilandi ? 'asgari karşılandı' : `asgari ${fmt(k.asgari)} · henüz karşılanmadı`,
+        tutar: fmt(k.buDonemOdenen),
+      }] : []),
+      { ad: 'Gelecek ekstre', detay: `tek çekim ${fmt(k.tekCekim)} + aylık taksit ${fmt(k.aylikTaksit)}`, tutar: fmt(k.gelecekEkstre) },
       { ad: 'Gelecek taksit anaparası', detay: 'sonraki dönemlere yayılı', tutar: fmt(k.taksit) },
+      // DEVREDEN: geçen dönem tam ödenmediği için taşınan yük. Faiz GERÇEKTEN
+      // ödenen paradır (kart borcuna yazılır), anapara yalnızca ertelenmiştir.
+      ...(k.devredenAnapara > 0 || k.devredenFaiz > 0 ? [{
+        ad: 'Devreden anapara',
+        detay: 'geçen dönem ödenmeyip bu ekstreye taşınan tutar',
+        tutar: fmt(k.devredenAnapara),
+      }, {
+        ad: '⚠ Devreden faiz',
+        detay: 'tam ödenmediği için işleyen faiz (KKDF/BSMV dâhil) — yanan para',
+        tutar: fmt(k.devredenFaiz),
+      }] : []),
+      {
+        ad: 'Önceki dönem',
+        detay: ONCEKI_DURUM[k.oncekiDurum]?.aciklama || 'önceki dönem verisi yok',
+        tutar: ONCEKI_DURUM[k.oncekiDurum]?.ad || 'yok',
+      },
       { ad: 'Yıllık faiz', detay: k.faizYillik > 0 ? 'sözleşme oranı' : 'girilmemiş', tutar: k.faizYillik > 0 ? `%${trSayi(k.faizYillik)}` : '—' },
       { ad: 'Kesim günü', detay: `ayın ${k.kesim}`, tutar: gunMetni(k.gunKaldi) },
     ],
-    not: k.ekstreVar
-      ? 'Bu dönem ekstresi yüklü — rakamlar ekstreyle doğrulandı. Düzenleme Kart Dosyaları satır butonlarından.'
-      : 'Bu dönem ekstresi YÜKLENMEDİ — Ekstre Durumu görünümünden PDF yükleyin.',
+    not: k.blink
+      ? 'ACİL — son ödeme günü geçti ve bu kart için bekleyen bir ödeme planı var. Ödeme Merkezi\'nden kapatın; gecikme faizi her gün işler.'
+      : k.ekstreVar
+        ? 'Bu dönem ekstresi yüklü — rakamlar ekstreyle doğrulandı. Düzenleme Kart Dosyaları satır butonlarından.'
+        : 'Bu dönem ekstresi YÜKLENMEDİ — Ekstre Durumu görünümünden PDF yükleyin. Ekstre yokken kalan limit ve devreden faiz tahminîdir.',
     ...(k.ekstreVar ? {} : { aksiyonAd: 'Ekstre durumuna git', _hedef: '__gorunum:ekstre' }),
   });
 
@@ -781,8 +876,26 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
 
   // ── 2) Kart Dosyaları ──────────────────────────────────────────────────────
   if (gorunum === 'kartlar') {
-    const toplamLimit = kartSatir.reduce((s, k) => s + k.limit, 0);
-    const toplamBorc = kartSatir.reduce((s, k) => s + k.toplam, 0);
+    // ⚠️ ORTAK LİMİT HAVUZU: limit paylaşan kartlarda sunucu HER ÜYEYE aynı
+    // havuz limitini ve aynı kalan limiti yazar (main.py:2700). Kart kart
+    // toplarsan havuzu üye sayısı kadar ÇİFT SAYARSIN. Önce havuza indirge.
+    const havuzlar = new Map();
+    kartSatir.forEach((k) => {
+      const anahtar = k.ortakGrup || `__tek:${k.id}`;
+      if (havuzlar.has(anahtar)) return;   // havuzun ilk üyesi havuzu temsil eder
+      havuzlar.set(anahtar, {
+        limit: k.ortakGrup && k.ortakGrupLimit != null ? k.ortakGrupLimit : k.limit,
+        kalan: k.kalanLimit,
+        borc: k.ortakGrup && k.ortakGrupBorc != null ? k.ortakGrupBorc : k.toplam,
+      });
+    });
+    const havuzListe = [...havuzlar.values()];
+    const toplamLimit = havuzListe.reduce((s, h) => s + sayi(h.limit), 0);
+    const toplamBorc = havuzListe.reduce((s, h) => s + sayi(h.borc), 0);
+    const kalanBilinen = havuzListe.filter((h) => h.kalan != null);
+    const toplamKalan = kalanBilinen.reduce((s, h) => s + sayi(h.kalan), 0);
+    const havuzluKart = kartSatir.filter((k) => k.ortakGrup).length;
+    const acilKart = kartSatir.filter((k) => k.blink);
     const faizli = kartSatir.filter(k => k.faizYillik > 0);
     const enPahali = faizli.length ? faizli.reduce((a, b) => (a.faizYillik > b.faizYillik ? a : b)) : null;
     const yakin = [...kartSatir].filter(k => k.gunKaldi >= 0).sort((a, b) => a.gunKaldi - b.gunKaldi)[0];
@@ -790,10 +903,25 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
     return (
       <>
         <KpiSeridi kpiler={[
-          { etiket: 'Aktif kart', deger: String(kartSatir.length), alt: `${kartSatir.length - sirket} kişisel · ${sirket} işletme` },
-          { etiket: 'Toplam limit', deger: fmt(toplamLimit), alt: `kullanım %${trSayi(toplamLimit ? (toplamBorc / toplamLimit) * 100 : 0, 0)}`, renk: R.krem },
+          { etiket: 'Aktif kart', deger: String(kartSatir.length), alt: `${kartSatir.length - sirket} kişisel · ${sirket} işletme${havuzluKart ? ` · ${havuzluKart} kart ortak limitte` : ''}` },
+          { etiket: 'Toplam limit', deger: fmt(toplamLimit), alt: `kullanım %${trSayi(toplamLimit ? (toplamBorc / toplamLimit) * 100 : 0, 0)}${havuzluKart ? ' · ortak havuz tek sayıldı' : ''}`, renk: R.krem },
+          {
+            etiket: 'Kalan limit',
+            deger: kalanBilinen.length ? fmt(toplamKalan) : '—',
+            alt: kalanBilinen.length
+              ? (kalanBilinen.length < havuzListe.length ? `${kalanBilinen.length}/${havuzListe.length} havuzdan` : 'harcanabilir')
+              : 'ekstre yüklenince hesaplanır',
+            renk: !kalanBilinen.length ? R.not : toplamKalan <= 0 ? R.kirmizi : R.yesil,
+          },
           { etiket: 'En pahalı faiz', deger: enPahali ? `%${trSayi(enPahali.faizYillik)}/yıl` : '—', alt: enPahali ? enPahali.ad : 'faiz oranı girilmemiş', renk: enPahali ? R.kirmizi : R.not },
-          { etiket: 'En yakın son ödeme', deger: yakin ? gunMetni(yakin.gunKaldi) : '—', alt: yakin ? yakin.ad : 'vadesi gelen yok', renk: R.amber },
+          {
+            etiket: 'En yakın son ödeme',
+            deger: acilKart.length ? `${acilKart.length} acil` : yakin ? gunMetni(yakin.gunKaldi) : '—',
+            alt: acilKart.length
+              ? `vadesi geçti, ödeme bekliyor — ${acilKart.map((k) => k.ad).join(', ')}`
+              : yakin ? yakin.ad : 'vadesi gelen yok',
+            renk: acilKart.length ? R.kirmizi : R.amber,
+          },
         ]} />
         <div style={{ display: 'flex', gap: 9, marginBottom: 12 }}>
           <button onClick={() => kartFormAc(null)} style={{
@@ -808,11 +936,16 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
           satirlar={kartSatir.map(k => ({
             id: k.id, _k: k,
             baslik: k.ad,
-            alt: `limit ${fmt(k.limit)} · kullanım %${trSayi(k.kullanim, 0)}${k.faizYillik > 0 ? ` · faiz %${trSayi(k.faizYillik)}/yıl` : ''} · kesim ayın ${k.kesim || '—'} · son ödeme ${kisaTarih(k.sonOdeme)}`,
+            alt: `${k.kalanLimit != null ? `kalan limit ${fmt(k.kalanLimit)}` : `limit ${fmt(k.limit)}`}`
+              + ` · kullanım %${trSayi(k.kullanim, 0)}`
+              + `${k.ortakGrup ? ` · ortak havuz «${k.ortakGrup}»` : ''}`
+              + `${k.devredenFaiz > 0 ? ` · devreden faiz ${fmt(k.devredenFaiz)}` : ''}`
+              + `${k.faizYillik > 0 ? ` · faiz %${trSayi(k.faizYillik)}/yıl` : ''}`
+              + ` · son ödeme ${kisaTarih(k.sonOdeme)}`,
             tutar: fmt(k.toplam),
-            tier: k.durum === 'gecikti' ? 'kritik' : k.durum === 'ekstre_bekleniyor' ? 'uyari' : k.durum === 'odendi' ? 'olumlu' : 'bilgi',
-            rozet: trKucuk(DONGU[k.durum].ad),
-            rozetRenk: DONGU[k.durum].renk,
+            tier: (k.blink || k.durum === 'gecikti') ? 'kritik' : k.durum === 'ekstre_bekleniyor' ? 'uyari' : k.durum === 'odendi' ? 'olumlu' : 'bilgi',
+            rozet: k.blink ? 'acil · vadesi geçti' : trKucuk(DONGU[k.durum].ad),
+            rozetRenk: k.blink ? R.kirmizi : DONGU[k.durum].renk,
             aksiyonlar: kartPasifSor === String(k.id) ? [
               { ad: kartMesgul ? '…' : 'Eminim — pasife al', birincil: true, onTikla: () => !kartMesgul && kartPasife(k.id) },
               { ad: 'Vazgeç', onTikla: () => setKartPasifSor('') },
