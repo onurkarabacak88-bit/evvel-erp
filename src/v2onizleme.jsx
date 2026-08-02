@@ -1554,6 +1554,8 @@ const HAFTA_GUNLER = Array.from({ length: 7 }, (_, i) => {
 const EKIP_UC = {
   '/api/personel': PERSONEL,
   '/api/gorev/vardiya-takip': TAKIP,
+  // POST — gecikme → eksik gün (katmalı; sunucu kanonik neti yeniden hesaplar)
+  '/api/gorev/gecikme-eksik-gun': { ok: true, yeni_eksik_gun: 0.5, yeni_net: 41200 },
   '/api/gorev/izin-alacagi': {
     baslangic: gunEkleISO(-60), bitis: bugunISO,
     personeller: [
@@ -2002,9 +2004,17 @@ const DENETIM_UC = {
       { kural_id: 'R6_gec_acilis_fark', surum: 1, gecerli_bas: '2026-07-07', tur: 'T1', yasam_dongusu: 'duragan_bag', pencere_gun: 0, pencere_capasi: 'occurred_at', ebeveyn: 'operasyon_ritmi/operasyon.ritim.dilim_kesiti(ACILIS,gecikme>30)', cocuk: 'sube_operasyon_uyari/ACILIS_KASA_FARK', eslesme: 'sube_gun', aciklama: 'Açılış 30+ dk gecikti → açılış kasa farkı ona eşlik ediyor', aktif: true },
       { kural_id: 'R10_kabul_stok', surum: 1, gecerli_bas: '2026-07-07', tur: 'T2', yasam_dongusu: 'beklenti_acik_kapali', pencere_gun: 1, pencere_capasi: 'payload:kabul_ts', ebeveyn: 'stok_yolda/kabul (kabul_ts+kabul_adet>0)', cocuk: 'sube_depo_stok_hareket/miktar>0 (TESLIM_GIRIS ailesi)', eslesme: 'sube_kalem', aciklama: 'Mal kabulü onaylandı → stok hareket defterinde GİRİŞ doğmalı; doğmadıysa kabul onaylı ama stok artmıyor vakası', aktif: true },
     ],
-    son_baglar: [],
+    // Yazma-ucu turu: son_baglar artık Bağ Defteri'nde listelenir + ✓/✗ etiketlenir.
+    // Biri işaretli, biri cocuk_gelmedi (T2 beklenti boşluğu, sarı), ikisi işaretsiz.
+    son_baglar: [
+      { event_id: 'bg1', duyu: 'sinaps_sarmal', olay_tipi: 'bag_kuruldu', signal_name: 'kapanis_sonrasi_ciro → gec_kapanis', entity_id: 's1', occurred_at: gunEkleISO(-1) + ' 03:20:00', confidence: 0.8, payload_json: { kural_id: 'R2_gec_kapanis' }, insan_karari: null },
+      { event_id: 'bg2', duyu: 'yavru_beklenti', olay_tipi: 'cocuk_gelmedi', signal_name: 'kabul onaylı ama stok GİRİŞ izi yok', entity_id: 's3', occurred_at: gunEkleISO(-2) + ' 03:18:00', confidence: 0.9, payload_json: { kural_id: 'R10_kabul_stok' }, insan_karari: null },
+      { event_id: 'bg3', duyu: 'sinaps_sarmal', olay_tipi: 'bag_kuruldu', signal_name: 'ACILIS_KASA_FARK → gec_acilis', entity_id: 's1', occurred_at: gunEkleISO(-3) + ' 03:15:00', confidence: 0.7, payload_json: { kural_id: 'R6_gec_acilis_fark' }, insan_karari: 'dogru_bag' },
+    ],
     not: 'T1 bağı sinyali KAPATMAZ; kural ekleme yalnız insan onayıyla.',
   },
+  // POST — insan işareti (upsert; bağı kapatmaz, karneye yazılır)
+  '/api/duyu/yavru-etiket': { ok: true, event_id: 'bg1', karar: 'dogru_bag', kural_id: 'R2_gec_kapanis' },
   '/api/duyu/sinapsler': { kesit: 14, sinaps_olaylari: 6, kase_canli: true, zincir_canli: true },
   '/api/strateji': {
     kasa: 586310, kullanilabilir_nakit: 218400, zorunlu_giderler: 367910, toplam_oneri_tutari: 109650,

@@ -210,6 +210,11 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
   // kasa_farki_frekansi ALINMADI: davranış tablosundaki kasa farkıyla mükerrer.
   const [pdVerim, setPdVerim] = useState(null);
   const [pdHata, setPdHata] = useState('');
+  // Yazma-ucu turu (2026-08-03): POST /gorev/gecikme-eksik-gun — yönetici
+  // kararıyla gecikme eksik güne çevrilir (klasik EksikGunModal karşılığı).
+  // Sunucu KATMALI yazar (mevcut+yeni) ve kanonik neti yeniden hesaplar;
+  // onaylı bordro kilitliyse 400 döner. Bordrodaki mutlak alanın yerini almaz.
+  const [eksikGunModal, setEksikGunModal] = useState(null); // {t, gun, not, mesgul}
   // ── YERLİ VARDİYA PLANLAYICI (köprü kaldırma turu, 2026-07-30) ────────────
   // Klasik VardiyaPlanlamaV2 (5338 satır) çekirdeği: gün planı + atama/sil +
   // çakışma kontrolü. Sürükle-bırak yerine TIKLA-ATA (dokunmatikte de çalışır).
@@ -3317,6 +3322,12 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
                 listeBaslik: 'Ücret kırılımı + uyarılar',
                 satirlar: kalemler,
                 iz,
+                // Gecikme varsa yönetici aksiyonu: eksik güne çevirme (soru yok,
+                // modal açılır — ½/1 gün + not orada seçilir).
+                aksiyonlar: gec > 0 ? [{
+                  ad: `⏱ Gecikmeyi eksik güne çevir (${trSayi(gec, 0)} dk)`,
+                  onTikla: () => setEksikGunModal({ t, gun: 0.5, not: '', mesgul: false }),
+                }] : undefined,
                 not: d.not
                   ? `${d.not} — bu TAHMİNÎ hakediştir, bordronun kendisi Ekip ▸ Maaş & Avans'ta onaylanır. Gün gün kayıt İz sekmesinde.`
                   : 'Bu TAHMİNÎ hakediş: vardiya kaydından türetilir, ay ilerledikçe artar. Ödenecek bordro Ekip ▸ Maaş & Avans\'ta onaylanır — iki sayı aynı olmak zorunda değil. Gün gün kayıt İz sekmesinde.',
@@ -3328,6 +3339,81 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
             {AY_KISA[ay - 1]} {yil} için vardiya takip kaydı yok.
           </div>
         )}
+
+        {/* ── EKSİK GÜN MODALI (yazma-ucu turu) — klasik EksikGunModal karşılığı.
+            Sunucu katmalı yazar: burada girilen ½/1 mevcut eksik güne EKLENİR. */}
+        {eksikGunModal && (() => {
+          const m = eksikGunModal;
+          const kaydet = async () => {
+            setEksikGunModal({ ...m, mesgul: true });
+            try {
+              await api('/gorev/gecikme-eksik-gun', {
+                method: 'POST',
+                body: {
+                  personel_id: m.t.personel_id, yil, ay,
+                  eksik_gun: m.gun, not_aciklama: m.not || null,
+                },
+              });
+              onToast?.(`${m.t.ad_soyad}: ${m.gun === 0.5 ? '½' : '1'} eksik gün işlendi — net yeniden hesaplandı`);
+              setEksikGunModal(null);
+              api(`/gorev/vardiya-takip?yil=${yil}&ay=${ay}`)
+                .then((vt) => setTakip(Array.isArray(vt) ? vt : (vt?.personeller || [])))
+                .catch(() => {});
+            } catch (e) {
+              onToast?.(e?.message || 'İşlenemedi');
+              setEksikGunModal({ ...m, mesgul: false });
+            }
+          };
+          return (
+            <div style={{
+              position: 'fixed', inset: 0, zIndex: 130, background: 'rgba(10,6,2,.72)',
+              backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+            }}>
+              <div style={{ ...kartYuzey, width: 460, maxWidth: '96vw', padding: '24px 26px' }}>
+                <div style={{ fontFamily: F.baslik, fontSize: 19, fontWeight: 600, marginBottom: 4 }}>
+                  Gecikmeyi eksik güne çevir
+                </div>
+                <div style={{ fontSize: 12, color: R.not2, lineHeight: 1.7, marginBottom: 14 }}>
+                  <b>{m.t.ad_soyad}</b> · {AY_KISA[ay - 1]} {yil} · toplam gecikme{' '}
+                  <b style={{ color: R.amber }}>{trSayi(sayi(m.t.toplam_gecikme_dk), 0)} dk</b>.
+                  Bu bir <b>yönetici kararıdır</b>: seçilen gün mevcut eksik güne <b>eklenir</b>,
+                  net maaş kanonik motorla yeniden hesaplanır. Onaylı bordro kilitliyse sunucu reddeder.
+                </div>
+                <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+                  {[0.5, 1].map((g) => (
+                    <button key={g} onClick={() => setEksikGunModal({ ...m, gun: g })} style={{
+                      flex: 1, padding: '11px', borderRadius: 10, cursor: 'pointer', fontFamily: 'inherit',
+                      border: `1px solid ${m.gun === g ? R.bakir : R.cizgi3}`,
+                      background: m.gun === g ? 'rgba(217,154,78,.16)' : R.girinti,
+                      color: m.gun === g ? R.bakirAcik : R.metin2, fontWeight: 700, fontSize: 13.5,
+                    }}>{g === 0.5 ? '½ gün' : '1 tam gün'}</button>
+                  ))}
+                </div>
+                <input
+                  value={m.not}
+                  onChange={(e) => setEksikGunModal({ ...m, not: e.target.value })}
+                  placeholder="Not (isteğe bağlı) — neden eksik gün sayıldı?"
+                  style={{
+                    width: '100%', boxSizing: 'border-box', padding: '10px 13px', borderRadius: 10,
+                    border: `1px solid ${R.cizgi3}`, background: R.girinti, color: R.krem,
+                    fontSize: 12.5, fontFamily: 'inherit', marginBottom: 16,
+                  }}
+                />
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+                  <button onClick={() => !m.mesgul && setEksikGunModal(null)} style={{
+                    padding: '9px 16px', borderRadius: 10, border: `1px solid ${R.cizgi3}`,
+                    background: 'transparent', color: R.not, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit',
+                  }}>Vazgeç</button>
+                  <button onClick={kaydet} disabled={m.mesgul} style={{
+                    padding: '9px 18px', borderRadius: 10, border: 'none', cursor: 'pointer',
+                    background: R.bakir, color: '#1d1207', fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit',
+                    opacity: m.mesgul ? 0.6 : 1,
+                  }}>{m.mesgul ? 'İşleniyor…' : 'Eksik gün olarak işle'}</button>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
         {/* ── İZİN ALACAĞI (yerli — klasik derin takip bloğu) ── */}
         {(() => {
           const kisiler = Array.isArray(izin?.personeller) ? izin.personeller : [];

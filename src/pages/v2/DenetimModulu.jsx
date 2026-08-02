@@ -133,6 +133,11 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
   const [dortgen, setDortgen] = useState(null);
   const [beyin, setBeyin] = useState(null);
   const [dilekler, setDilekler] = useState(null);
+  // Yazma-ucu turu (2026-08-03): /duyu/yavru-kurallari son_baglar + POST
+  // /duyu/yavru-etiket — Y4'ün ÖĞRETMEN kanalı. v2'de bağlar hiç listelenmiyordu;
+  // ✓/✗ işareti olmadan kural ağırlıkları n eşiğine hiç ulaşamaz (öğrenme kör).
+  const [bagOlaylar, setBagOlaylar] = useState(null);
+  const [etiketMesgul, setEtiketMesgul] = useState('');
   // ── YERLİ BEYİN SOHBETİ (köprü kaldırma turu, 2026-07-30) ─────────────────
   // Klasik DuyuPaneli'nin en değerli parçası: hafızalı sohbet (/beyin/sor) +
   // cevap etiketleme (/beyin/cevap-etiket). Beyin karar vermez, kayda işaret eder.
@@ -231,7 +236,32 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
     api('/beyin/bag-dilekleri?sadece_acik=1')
       .then((d) => setDilekler(Array.isArray(d?.dilekler) ? d.dilekler : []))
       .catch(() => setDilekler([]));
+    // Son bağ olayları + insan kararları (öğretmen kanalı)
+    api('/duyu/yavru-kurallari?gun=7')
+      .then((d) => setBagOlaylar(Array.isArray(d?.son_baglar) ? d.son_baglar : []))
+      .catch(() => setBagOlaylar([]));
   }, []);
+
+  /**
+   * Bağa insan işareti: ✓ doğru bağ / ✗ yanlış bağ (POST /duyu/yavru-etiket).
+   * Sunucu sözü: etiket bağı KAPATMAZ, yalnız kuralın isabet karnesine yazılır;
+   * karar upsert'tir — fikir değiştirme hakkı öğretmen defterinde de geçerli.
+   */
+  const bagEtiketle = async (b, karar) => {
+    if (!b?.event_id || etiketMesgul) return;
+    setEtiketMesgul(String(b.event_id));
+    try {
+      const r = await api('/duyu/yavru-etiket', { method: 'POST', body: { event_id: b.event_id, karar } });
+      if (r?.ok === false) { onToast?.(r?.hata || 'İşaret kaydedilemedi'); return; }
+      setBagOlaylar((liste) => (liste || []).map((x) =>
+        String(x.event_id) === String(b.event_id) ? { ...x, insan_karari: karar } : x));
+      onToast?.(karar === 'dogru_bag' ? '✓ doğru bağ işaretlendi' : '✗ yanlış bağ işaretlendi');
+    } catch (e) {
+      onToast?.(e?.message || 'İşaret kaydedilemedi');
+    } finally {
+      setEtiketMesgul('');
+    }
+  };
 
   // Kural kütüphanesi tanımları (soru 8/9) — tıklamada bir kez çekilir, ref'te tutulur
   const kuralTanimRef = useRef(null);
@@ -918,6 +948,78 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
                   <span style={{ color: R.not3, fontSize: 11 }}> · ref {String(d.ref || '').slice(0, 8)}</span>
                 </div>
               ))}
+            </div>
+          </div>
+        )}
+
+        {/* ── SON BAĞLAR + ÖĞRETMEN İŞARETİ (yazma-ucu turu, 2026-08-03) ──
+            Gece motoru bağ örer; insan ✓/✗ ile Y4 kural ağırlıklarını EĞİTİR.
+            T2 "cocuk_gelmedi" satırı sarı: beklenti boşa çıktı, yokluk sinyaldir. */}
+        {Array.isArray(bagOlaylar) && bagOlaylar.length > 0 && (
+          <div style={{ ...kartYuzey, padding: '16px 18px', marginBottom: 14 }}>
+            <div style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              paddingBottom: 10, borderBottom: `1px solid ${R.cizgi2}`, marginBottom: 10,
+            }}>
+              <span style={{ fontFamily: F.baslik, fontSize: 14.5, fontWeight: 600 }}>
+                Son bağlar · öğretmen defteri
+              </span>
+              <span style={{ fontSize: 11, color: R.not2 }}>
+                ✓/✗ işaretin kural ağırlıklarını eğitir — bağı kapatmaz
+              </span>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+              {bagOlaylar.slice(0, 12).map((b, i) => {
+                const gelmedi = String(b.olay_tipi || '').includes('cocuk_gelmedi');
+                const kuralId = b?.payload_json?.kural_id || b.duyu || '—';
+                return (
+                  <div key={b.event_id || `bg-${i}`} style={{
+                    display: 'flex', alignItems: 'center', gap: 10, fontSize: 11.5,
+                    padding: '8px 12px', borderRadius: 9, background: R.girinti,
+                    borderLeft: `3px solid ${gelmedi ? R.amber : R.cizgi3}`,
+                  }}>
+                    <span style={{ flexShrink: 0, fontFamily: F.mono, color: R.not2 }}>
+                      {String(b.occurred_at || '').slice(5, 10) || '—'}
+                    </span>
+                    <span style={{ flex: 1, minWidth: 0, color: gelmedi ? R.amber : R.metin2 }}>
+                      {gelmedi ? '⚠️ ' : '🔗 '}<b>{kuralId}</b>
+                      <span style={{ color: R.not2 }}> · {kisalt(b.signal_name || b.olay_tipi || '—', 70)}</span>
+                    </span>
+                    {b.insan_karari ? (
+                      <span style={{
+                        flexShrink: 0, fontSize: 10.5, fontWeight: 700,
+                        color: b.insan_karari === 'dogru_bag' ? R.yesil : R.kirmizi,
+                      }}>{b.insan_karari === 'dogru_bag' ? '✓ doğru' : '✗ yanlış'}</span>
+                    ) : (
+                      <span style={{ flexShrink: 0, display: 'inline-flex', gap: 5 }}>
+                        <button
+                          title="doğru bağ" disabled={!!etiketMesgul}
+                          onClick={() => bagEtiketle(b, 'dogru_bag')}
+                          style={{
+                            padding: '3px 9px', borderRadius: 7, cursor: 'pointer', fontFamily: 'inherit',
+                            border: `1px solid ${R.yesil}55`, background: 'transparent',
+                            color: R.yesil, fontSize: 11, fontWeight: 700,
+                            opacity: etiketMesgul ? 0.5 : 1,
+                          }}
+                        >✓</button>
+                        <button
+                          title="yanlış bağ" disabled={!!etiketMesgul}
+                          onClick={() => bagEtiketle(b, 'yanlis_bag')}
+                          style={{
+                            padding: '3px 9px', borderRadius: 7, cursor: 'pointer', fontFamily: 'inherit',
+                            border: `1px solid ${R.kirmizi}55`, background: 'transparent',
+                            color: R.kirmizi, fontSize: 11, fontWeight: 700,
+                            opacity: etiketMesgul ? 0.5 : 1,
+                          }}
+                        >✗</button>
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{ fontSize: 10.5, color: R.not3, marginTop: 9, fontStyle: 'italic' }}>
+              T1 bağı sinyali KAPATMAZ; T2 "çocuk gelmedi" beklenti boşluğudur. Karar sonradan değiştirilebilir (upsert).
             </div>
           </div>
         )}
