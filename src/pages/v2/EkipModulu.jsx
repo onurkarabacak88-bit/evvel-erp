@@ -1587,8 +1587,21 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
     const riskliIdler = new Set(surekliRiskli.map((p) => String(p.personel_id)));
     const puanlar = Array.isArray(pdPuan?.personeller) ? pdPuan.personeller : [];
     const gecSatir = Array.isArray(pdGec?.satirlar) ? pdGec.satirlar : [];
-    const kasaSatir = Array.isArray(pdKasa?.personeller) ? pdKasa.personeller
-      : (Array.isArray(pdKasa?.satirlar) ? pdKasa.satirlar : []);
+    // 🐞 ŞEKİL TUZAĞI (düzeltildi, A-2. tur): v2 `personeller`/`satirlar`
+    // okuyordu — sunucu cevabında İKİSİ DE YOK (operasyon_merkez_api:8328).
+    // Gerçek şema: takip_listesi (izleme/aksiyona_gec/kritik personel) +
+    // acik_listesi (son 30 günün >20₺ tüm olayları) + esikler. Tablo canlıda
+    // hep boştu, KPI sahte yeşil "0" diyordu; mock da uydurma `personeller`
+    // yazdığı için tezgâh gizliyordu.
+    const kasaSatir = Array.isArray(pdKasa?.takip_listesi) ? pdKasa.takip_listesi
+      : (Array.isArray(pdKasa?.personeller) ? pdKasa.personeller : []);
+    const kasaOlaylar = Array.isArray(pdKasa?.acik_listesi) ? pdKasa.acik_listesi : [];
+    const kasaEsik = pdKasa?.esikler || {};
+    const KASA_DURUM = {
+      izleme: { ad: 'izleme', renk: R.amber, sira: 0 },
+      aksiyona_gec: { ad: 'aksiyona geç', renk: R.kirmizi, sira: 1 },
+      kritik: { ad: 'KRİTİK', renk: R.kirmizi, sira: 2 },
+    };
     const karne = Array.isArray(pdKarne) ? pdKarne : [];
     const ALT = [
       ['davranis', `👤 Davranış (${davranis.length})`],
@@ -1824,34 +1837,104 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
           <>
             {kasaSatir.length ? (
               <Tablo
-                baslik="Kasa açığı analizi · son 30 gün"
-                not="kasa farkı olan vardiyalar — özensizlik ≠ açık (şüphe skoru ayrı)"
+                baslik="Kasa açığı takibi · son 30 gün"
+                not={`NRF/QSR eşikleri: izleme = ${sayi(kasaEsik.izleme_adet) || 2}+ kez >${sayi(kasaEsik.izleme_tek) || 50}₺ · kritik = 4+ kez ya da tek olay >${sayi(kasaEsik.kritik_tek) || 200}₺ — gözlem, hüküm değil`}
                 kolonlar={[
-                  { ad: 'Personel' }, { ad: 'Şube' }, { ad: 'Vardiya', sag: true },
-                  { ad: 'Toplam fark', sag: true }, { ad: 'Durum' },
+                  { ad: 'Personel' }, { ad: 'Şube' }, { ad: 'Durum' },
+                  { ad: '50₺+ olay', sag: true }, { ad: 'Toplam |fark|', sag: true },
+                  { ad: 'En büyük tek fark', sag: true }, { ad: 'Son olay' },
                 ]}
                 satirlar={kasaSatir.slice(0, 30).map((x, i) => {
-                  const fark = sayi(x.toplam_fark ?? x.fark);
+                  const durum = KASA_DURUM[x.durum] || KASA_DURUM.izleme;
                   return {
                     id: x.personel_id || `k-${i}`,
                     hucreler: [
-                      { v: x.ad_soyad || x.personel_ad || '—', kalin: true },
+                      {
+                        siraMetin: x.personel_ad || x.ad_soyad || '',
+                        v: (
+                          <span style={{ display: 'inline-flex', flexDirection: 'column', gap: 2 }}>
+                            <span style={{ fontWeight: 700 }}>{x.personel_ad || x.ad_soyad || '—'}</span>
+                            {/* roller: aynı uyarıda iki sorumlu olabilir (kapanışçı
+                                + sabahçı) — kim hangi uçtaydı, tek satırda */}
+                            {x.roller
+                              ? <span style={{ fontSize: 10, color: R.not2 }}>{String(x.roller).replace('kapanis_dun', 'dünkü kapanış').replace('kapanis', 'kapanış').replace('acilis', 'açılış')}</span>
+                              : null}
+                          </span>
+                        ),
+                      },
                       { v: x.sube_adi || x.sube_ad || '—', renk: R.not },
-                      { v: String(sayi(x.vardiya_sayisi ?? x.adet)), mono: true, sag: true },
-                      { v: fmt(fark), mono: true, sag: true, kalin: true, renk: fark < 0 ? R.kirmizi : R.yesil },
-                      Math.abs(fark) > 500
-                        ? { v: 'incele', rozet: R.kirmizi }
-                        : { v: 'küçük fark', rozet: R.amber },
+                      { v: durum.ad, rozet: durum.renk, sira: durum.sira },
+                      { v: String(sayi(x.elli_ustu_adet)), mono: true, sag: true, kalin: true, renk: sayi(x.elli_ustu_adet) >= 3 ? R.kirmizi : R.amber },
+                      { v: fmt(sayi(x.toplam_abs_fark)), mono: true, sag: true, sira: sayi(x.toplam_abs_fark) },
+                      { v: fmt(sayi(x.max_tek_fark)), mono: true, sag: true, renk: sayi(x.max_tek_fark) > (sayi(kasaEsik.kritik_tek) || 200) ? R.kirmizi : R.krem },
+                      { v: x.son_tarih ? kisaTarih(x.son_tarih) : '—', renk: R.not },
                     ],
                   };
                 })}
               />
             ) : (
           <div style={{ ...kartYuzey, padding: '34px 30px', textAlign: 'center' }}>
-            <div style={{ fontFamily: F.baslik, fontSize: 17, fontWeight: 600, color: R.yesil }}>Kasa açığı yok</div>
-            <div style={{ fontSize: 12.5, color: R.not, marginTop: 7 }}>Son 30 günde kasa farkı olan personel kaydı bulunmuyor.</div>
+            <div style={{ fontFamily: F.baslik, fontSize: 17, fontWeight: 600, color: R.yesil }}>Takip eşiğini aşan yok</div>
+            <div style={{ fontSize: 12.5, color: R.not, marginTop: 7 }}>
+              Son 30 günde {sayi(kasaEsik.izleme_adet) || 2}+ kez {sayi(kasaEsik.izleme_tek) || 50}₺ üstü fark yapan personel bulunmuyor.
+            </div>
           </div>
         )}
+
+            {/* Son olaylar — takip eşiğine takılmayanlar dâhil (>20₺ hepsi).
+                "Takip listesi boş" ≠ "hiç fark yok"; ham olaylar burada. */}
+            {kasaOlaylar.length > 0 && (
+              <div style={{ marginTop: 14 }}>
+                <Tablo
+                  baslik={`Son kasa fark olayları · ${kasaOlaylar.length} kayıt`}
+                  not={`son ${sayi(pdKasa?.gun_sayi) || 30} günün >${sayi(kasaEsik.tek_olay_liste) || 20}₺ tüm farkları — açılış/kapanışta iki sorumlu birden görünür`}
+                  kolonlar={[
+                    { ad: 'Tarih' }, { ad: 'Tip' }, { ad: 'Şube' },
+                    { ad: 'Sorumlu' }, { ad: 'Fark', sag: true }, { ad: 'Çözüm' },
+                  ]}
+                  satirlar={kasaOlaylar.slice(0, 25).map((o, i) => {
+                    const fark = sayi(o.fark_tl);
+                    return {
+                      id: o.id || `ko-${i}`,
+                      hucreler: [
+                        { v: kisaTarih(o.tarih), mono: true, renk: R.not },
+                        o.tip === 'ACILIS_KASA_FARK'
+                          ? { v: 'açılış', rozet: R.mavi, sira: 0 }
+                          : { v: 'kapanış', rozet: R.bakir, sira: 1 },
+                        { v: o.sube_adi || '—', renk: R.not },
+                        {
+                          siraMetin: o.personel_ad || '',
+                          v: (
+                            <span style={{ display: 'inline-flex', flexDirection: 'column', gap: 2 }}>
+                              <span style={{ fontWeight: 700 }}>{o.personel_ad || '—'}</span>
+                              <span style={{ fontSize: 10, color: R.not2 }}>
+                                aç {o.acilis_personel_ad || '—'} · kap {o.kapanis_personel_ad || '—'}
+                              </span>
+                            </span>
+                          ),
+                        },
+                        {
+                          sira: Math.abs(fark), sag: true,
+                          v: (
+                            <span style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
+                              <span style={{ fontFamily: F.mono, fontWeight: 800, color: fark < 0 ? R.kirmizi : R.amber }}>
+                                {fark > 0 ? '+' : ''}{fmt(fark)}
+                              </span>
+                              {o.beklenen_tl != null && o.gercek_tl != null
+                                ? <span style={{ fontSize: 10, color: R.not2 }}>beklenen {fmt(sayi(o.beklenen_tl))} · sayılan {fmt(sayi(o.gercek_tl))}</span>
+                                : null}
+                            </span>
+                          ),
+                        },
+                        o.okundu
+                          ? { v: 'çözüldü', rozet: R.yesil, sira: 0 }
+                          : { v: 'açık', rozet: R.amber, sira: 1 },
+                      ],
+                    };
+                  })}
+                />
+              </div>
+            )}
             {karne.length > 0 && (
               <div style={{ marginTop: 14 }}>
                 <Tablo

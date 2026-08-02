@@ -961,6 +961,39 @@ export default function TasarimV2({ onGit }) {
                 );
               })}
             </div>
+            {/* A-2. tur: finans-ozet'in ZİNCİR oranları — kart faiz yükü, POS
+                kesintisi, toplam kart maliyeti (cironun yüzdesi). Sunucu
+                hesaplıyordu, hiçbir ekran okumuyordu. null = "—" (ölçülemedi). */}
+            {subeFinans && (() => {
+              const oranlar = [
+                ['Kart faiz yükü', subeFinans.kart_faiz_yuku_orani, 0.01, 0.02],
+                ['POS kesintisi', subeFinans.pos_yanan_para_orani, 0.02, 0.03],
+                ['Toplam kart maliyeti', subeFinans.toplam_kart_maliyeti_orani, 0.03, 0.045],
+              ].filter(([, v]) => v != null);
+              const cgo = subeFinans.ciro_gider_orani_ozet;
+              if (!oranlar.length && cgo == null) return null;
+              return (
+                <div style={{
+                  display: 'flex', gap: 14, flexWrap: 'wrap', marginTop: 10,
+                  paddingTop: 9, borderTop: `1px solid ${R.cizgi3}`, fontSize: 11,
+                }}>
+                  <span style={{ color: R.not2, fontWeight: 700 }}>Zincir · son {sayi(subeFinans.gun_sayi) || 30} gün</span>
+                  {cgo != null && (
+                    <span style={{ color: R.metin2 }}>
+                      1₺ gider → <b style={{ fontFamily: F.mono, color: sayi(cgo) >= 10 ? R.yesil : sayi(cgo) >= 5 ? R.amber : R.kirmizi }}>{sayi(cgo).toFixed(1)}₺</b> ciro
+                    </span>
+                  )}
+                  {oranlar.map(([ad, v, iyi, kotu]) => (
+                    <span key={ad} style={{ color: R.metin2 }}>
+                      {ad}{' '}
+                      <b style={{ fontFamily: F.mono, color: sayi(v) >= kotu ? R.kirmizi : sayi(v) >= iyi ? R.amber : R.yesil }}>
+                        %{(sayi(v) * 100).toFixed(1)}
+                      </b>
+                    </span>
+                  ))}
+                </div>
+              );
+            })()}
           </div>
         )}
 

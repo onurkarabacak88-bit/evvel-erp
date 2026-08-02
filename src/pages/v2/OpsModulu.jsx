@@ -1003,8 +1003,10 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     // Depo stoğunun TL DEĞERİ + son 30 gün harcaması — /ops/depo-stok yalnız
     // ADET veriyor. Bu uç (v2 için yazılmış, hiç bağlanmamıştı) parayı ve
     // tüketim hızını ekler: "kaç adet var" ile "kaç lira bağlı" ayrı sorular.
+    // A-2. tur: yalnız `ozet` saklanıyordu, `urunler[]` (kalem başına TL +
+    // şube kırılımı değeri) çöpe gidiyordu. Artık tamamı saklanır.
     api('/ops/v2/depo-ozet?gun=30')
-      .then((d) => setDepoDeger(d?.ozet || null))
+      .then((d) => setDepoDeger(d || null))
       .catch(() => setDepoDeger(null));
   }, []);
 
@@ -1415,10 +1417,20 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
         const zk = zKalemMap[String(k?.urun_ad || '')] || null;
         // Karar için gereken üç sayı: şubede zaten var mı · merkezde ne kalır ·
         // barem altına düşer mi. Sunucu hesaplıyordu, ekran hiç göstermiyordu.
+        // A-2. tur: sonuç cümlesinin ("X kalır") ARKASINDAKİ ham sayılar da
+        // yazılır — merkezde kaç var / kaç rezerve / min kaç. -1 = kayıt yok
+        // ("0 var" değil "bilinmiyor"). Hedef depo atanmışsa hesap ORADAN
+        // yapılır; onun sayıları da gösterilir.
         const detay = zk
           ? [
             zk.sube_zaten_var ? `⚠ şubede zaten ${sayi(zk.sube_depo_mevcut)} var` : '',
-            zk.kalan_gonderince != null ? `gönderince merkezde ${sayi(zk.kalan_gonderince)} kalır` : '',
+            zk.merkez_mevcut != null && sayi(zk.merkez_mevcut) >= 0
+              ? `merkezde ${sayi(zk.merkez_mevcut)}${sayi(zk.merkez_rezerve) ? ` (${sayi(zk.merkez_rezerve)} rezerve)` : ''}${sayi(zk.merkez_min_stok) ? ` · min ${sayi(zk.merkez_min_stok)}` : ''}`
+              : (zk.merkez_mevcut != null && sayi(zk.merkez_mevcut) < 0 ? 'merkez kaydı yok' : ''),
+            zk.hedef_depo_mevcut != null
+              ? `hedef depoda ${sayi(zk.hedef_depo_mevcut)}${sayi(zk.hedef_depo_rezerve) ? ` (${sayi(zk.hedef_depo_rezerve)} rezerve)` : ''}${sayi(zk.hedef_depo_min_stok) ? ` · min ${sayi(zk.hedef_depo_min_stok)}` : ''}`
+              : '',
+            zk.kalan_gonderince != null ? `gönderince ${sayi(zk.kalan_gonderince)} kalır` : '',
             zk.merkez_barem_risk ? '⚠ barem altına düşer' : '',
             zk.alarm_merkez ? '⚠ merkez alarmı' : '',
           ].filter(Boolean).join(' · ')
@@ -1436,6 +1448,12 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
           : '',
         z?.gereksiz_var ? '⚠ Bazı kalemler şubenin kendi deposunda ZATEN VAR — sipariş gereksiz olabilir.' : '',
         z?.merkez_kayit_eksik_var ? 'Bazı kalemlerin merkez stok kaydı yok — "gönderince ne kalır" hesaplanamadı.' : '',
+        // stok_hesap_kaynagi: yukarıdaki sayılar HANGİ depodan hesaplandı —
+        // merkez mi, atanmış hedef depo mu. Yanlış depoya bakarak karar
+        // verilmesin diye adıyla yazılır.
+        z?.stok_hesap_kaynagi
+          ? `Stok hesabı kaynağı: ${z.stok_hesap_kaynagi === 'hedef_depo' ? 'atanmış HEDEF DEPO' : z.stok_hesap_kaynagi === 'merkez' ? 'merkez depo' : z.stok_hesap_kaynagi}.`
+          : '',
         s.asama_metni,
         s.operasyon_yonlendirme_talimati ? `Talimat: ${s.operasyon_yonlendirme_talimati}` : '',
         s.asama === 'yolda' ? 'Teslim alma ŞUBEDE yapılır (görünür kabul) — masaüstünden teslim işaretlenmez.' : '',
@@ -3324,19 +3342,44 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
       const a = adetAl(k); const m = sayi(k.min_stok);
       return m > 0 && a >= m && a < m * 1.5;
     });
+    // A-2. tur: değer motoru artık TAM saklanıyor — ozet + kalem başına TL.
+    const dOzet = depoDeger?.ozet || null;
+    const degerMap = {};
+    (Array.isArray(depoDeger?.urunler) ? depoDeger.urunler : []).forEach((u) => {
+      if (u?.kalem_kodu) degerMap[String(u.kalem_kodu)] = u;
+    });
+    // Şube seçiliyse o şubenin değeri, değilse zincir toplamı. null = fiyat
+    // yok → "—" (0 ₺ "değersiz" demek olurdu, fiyatsız kalem ölçülemez).
+    const kalemDeger = (k) => {
+      const u = degerMap[String(k.kalem_kodu || '')];
+      if (!u) return null;
+      if (depoSube) {
+        const sd = (u.subeler || {})[depoSube];
+        return sd ? sayi(sd.deger) : null;
+      }
+      return sayi(u.toplam_deger);
+    };
     return (
       <>
         <KpiSeridi kpiler={[
           { etiket: 'Kritik kalem', deger: String(kritik.length), alt: 'minimumun altında', renk: kritik.length > 0 ? R.kirmizi : R.yesil },
           { etiket: 'Düşük kalem', deger: String(dusuk.length), alt: 'eşiğe yaklaşıyor', renk: dusuk.length > 0 ? R.amber : R.krem },
-          { etiket: 'Toplam kalem', deger: String(kalemler.length), alt: 'stok kartı' },
+          {
+            etiket: 'Toplam kalem',
+            deger: String(kalemler.length),
+            // sifir_kalem_sayisi: değer motorunun saydığı şube-kalem sıfırları
+            // ("hiç yok" ≠ "az var" — sipariş kataloğunda olup stokta olmayan)
+            alt: dOzet && sayi(dOzet.sifir_kalem_sayisi)
+              ? `stok kartı · ${sayi(dOzet.sifir_kalem_sayisi)} şube-kalem sıfırda`
+              : 'stok kartı',
+          },
           // Adet ≠ para: 10.000 bardak ile 20 kg çekirdek aynı "kalem" ama
           // farklı sermaye. Sunucu değeri hesaplıyordu, ekran hiç göstermiyordu.
           {
             etiket: 'Depodaki para',
-            deger: depoDeger ? fmt(sayi(depoDeger.toplam_stok_deger)) : '—',
-            alt: depoDeger
-              ? `30 günde harcanan ${fmt(sayi(depoDeger.toplam_harcama_deger))}`
+            deger: dOzet ? fmt(sayi(dOzet.toplam_stok_deger)) : '—',
+            alt: dOzet
+              ? `30 günde harcanan ${fmt(sayi(dOzet.toplam_harcama_deger))}`
               : 'alış fiyatı × mevcut',
             renk: R.bakirAcik,
           },
@@ -3346,10 +3389,10 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
         {/* ŞUBE BAŞI STOK DEĞERİ — hangi şubede ne kadar sermaye bağlı.
             Kritik kalem sayısıyla birlikte okunur: az kalem + çok para = pahalı
             kalemlerde birikme, çok kalem + az para = ucuz sarf yığılması. */}
-        {depoDeger?.sube_basi && Object.keys(depoDeger.sube_basi).length > 0 && (
+        {dOzet?.sube_basi && Object.keys(dOzet.sube_basi).length > 0 && (
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
             {subeler.map((s) => {
-              const sb = depoDeger.sube_basi[s.id];
+              const sb = dOzet.sube_basi[s.id];
               if (!sb) return null;
               return (
                 <div key={s.id} style={{ ...kartYuzey, padding: '10px 14px', borderRadius: 12, minWidth: 158 }}>
@@ -3359,6 +3402,7 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
                   </div>
                   <div style={{ fontSize: 10.5, color: R.not2 }}>
                     {sayi(sb.kritik) ? `⚠ ${sayi(sb.kritik)} kritik · ` : ''}
+                    {sayi(sb.sifir) ? `${sayi(sb.sifir)} sıfır · ` : ''}
                     30g harcama {fmt(sayi(sb.harcama_deger))}
                   </div>
                 </div>
@@ -3395,6 +3439,7 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
             not="satıra tıkla → şube kırılımı"
             kolonlar={[
               { ad: 'Kalem' }, { ad: 'Kategori' }, { ad: 'Mevcut', sag: 1 },
+              { ad: 'Bağlı para', sag: 1 },
               { ad: 'Kritik seviye', sag: 1 }, { ad: 'Min\'e oran', sag: 1 }, { ad: 'Durum' },
             ]}
             satirlar={[...kalemler]
@@ -3407,6 +3452,7 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
               .map((k) => {
                 const a = adetAl(k); const m = sayi(k.min_stok); const d = durumAl(k);
                 const oran = m > 0 ? a / m : null;
+                const deger = kalemDeger(k);
                 return {
                   id: k.kalem_kodu,
                   _kalem: k,
@@ -3414,6 +3460,11 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
                     { v: k.kalem_adi, kalin: true },
                     { v: k.kategori || 'Diğer', renk: R.not },
                     { v: String(a), mono: true, sag: true, renk: d.renk, kalin: d.ad === 'kritik' },
+                    // null = fiyat tanımsız → "—". Fiyatsız kalem maliyet
+                    // motoruna da girmiyor (guven-skoru sapma listesiyle aynı dert).
+                    deger == null
+                      ? { v: '—', sag: true, renk: R.not3, sira: -1 }
+                      : { v: fmt(deger), mono: true, sag: true, renk: R.bakirAcik, sira: deger },
                     { v: m > 0 ? String(m) : '—', mono: true, sag: true, renk: R.not },
                     oran == null
                       ? { v: '—', sag: true, renk: R.not3 }
@@ -3435,11 +3486,15 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
                   { etiket: 'Durum', deger: d.ad, renk: d.renk },
                 ],
                 listeBaslik: 'Şube kırılımı',
-                satirlar: subeler.map((sb) => ({
-                  ad: sb.ad,
-                  detay: '',
-                  tutar: `${sayi((k.adetler || {})[sb.id])} adet`,
-                })),
+                satirlar: subeler.map((sb) => {
+                  const u = degerMap[String(k.kalem_kodu || '')];
+                  const sd = u ? (u.subeler || {})[sb.id] : null;
+                  return {
+                    ad: sb.ad,
+                    detay: sd && sayi(sd.harcanan) ? `30g harcanan ${sayi(sd.harcanan)} adet` : '',
+                    tutar: `${sayi((k.adetler || {})[sb.id])} adet${sd && sd.deger != null ? ` · ${fmt(sayi(sd.deger))}` : ''}`,
+                  };
+                }),
                 not: m > 0 && adetAl(k) < m
                   ? 'Minimumun altında — sipariş için Sipariş Akışı, geçmiş için Stok Hareketi görünümü.'
                   : 'Hareket geçmişi Stok Hareketi görünümünde.',

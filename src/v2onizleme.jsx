@@ -542,8 +542,20 @@ const OPS_UC = {
       },
     ],
   },
+  // ⚠️ Gerçek şema (operasyon_merkez_api:8328): takip_listesi + acik_listesi +
+  // esikler. Eski mock uydurma `personeller` yazdığı için ŞEKİL TUZAĞINI gizledi.
   '/api/ops/kasa-acik-analiz': {
-    personeller: [{ personel_id: 'ka1', ad_soyad: 'Mert Can', sube_adi: 'KÖYCEĞİZ', vardiya_sayisi: 19, toplam_fark: -340 }],
+    gun_sayi: 30,
+    esikler: { tek_olay_liste: 20, izleme_tek: 50, izleme_adet: 2, aksiyon_adet: 3, kritik_tek: 200 },
+    takip_listesi: [
+      { personel_id: 'pd2', personel_ad: 'Mert Can', sube_adi: 'KÖYCEĞİZ', sube_id: 's1', toplam_adet: 5, elli_ustu_adet: 3, toplam_abs_fark: 740, max_tek_fark: 340, son_tarih: gunEkleISO(-1), roller: 'acilis,kapanis', durum: 'aksiyona_gec' },
+      { personel_id: 'pd5', personel_ad: 'Selin Ak', sube_adi: 'KÖYCEĞİZ', sube_id: 's1', toplam_adet: 2, elli_ustu_adet: 2, toplam_abs_fark: 180, max_tek_fark: 110, son_tarih: gunEkleISO(-4), roller: 'kapanis_dun', durum: 'izleme' },
+    ],
+    acik_listesi: [
+      { id: 'ka1', tarih: gunEkleISO(-1), tip: 'KAPANIS_KASA_FARK', sube_adi: 'KÖYCEĞİZ', acilis_personel_ad: 'Mert Can', kapanis_personel_ad: 'Mert Can', personel_ad: 'Mert Can', fark_tl: -340, beklenen_tl: 3140, gercek_tl: 2800, seviye: 'kritik', okundu: false },
+      { id: 'ka2', tarih: gunEkleISO(-4), tip: 'ACILIS_KASA_FARK', sube_adi: 'KÖYCEĞİZ', acilis_personel_ad: 'Mert Can', kapanis_personel_ad: 'Selin Ak', personel_ad: 'Mert Can', fark_tl: -110, beklenen_tl: 3000, gercek_tl: 2890, seviye: 'uyari', okundu: true },
+      { id: 'ka3', tarih: gunEkleISO(-7), tip: 'KAPANIS_KASA_FARK', sube_adi: 'ZAFER', acilis_personel_ad: 'Elif Kaya', kapanis_personel_ad: 'Elif Kaya', personel_ad: 'Elif Kaya', fark_tl: 28, beklenen_tl: 4172, gercek_tl: 4200, seviye: 'bilgi', okundu: true },
+    ],
   },
   '/api/ops/kasiyer-karne': {
     karne: [
@@ -968,13 +980,17 @@ const MALIYET_UC = {
         stok_alarm_var: true, barem_risk_var: true, gereksiz_var: true,
         merkez_kayit_eksik_var: false, uyari_var: true,
         davranis_uyarilari: [{ tip: 'TEKRAR_TALEP', mesaj: 'aynı ürün 3 gün içinde 2. kez istendi' }],
+        // A-2. tur: ham sayılar da eklendi (merkez_mevcut -1 = kayıt yok).
+        stok_hesap_kaynagi: 'merkez',
         kalemler: [
-          { urun_ad: 'Karton bardak 8 oz', adet: 2000, sube_depo_mevcut: 1800, sube_zaten_var: true,
-            merkez_rezerve: 400, merkez_min_stok: 1000, kaynak_kullanilabilir: 1200, kalan_gonderince: -800,
-            alarm_merkez: true, merkez_barem_risk: true, gonderim_kaynagi: 'merkez' },
-          { urun_ad: 'Süt 3.5%', adet: 40, sube_depo_mevcut: 0, sube_zaten_var: false,
-            merkez_rezerve: 0, merkez_min_stok: 20, kaynak_kullanilabilir: 180, kalan_gonderince: 140,
-            alarm_merkez: false, merkez_barem_risk: false, gonderim_kaynagi: 'merkez' },
+          { urun_ad: 'Karton bardak 8 oz', adet: 2000, istenen_adet: 2000, sube_depo_mevcut: 1800, sube_zaten_var: true,
+            merkez_mevcut: 1600, merkez_rezerve: 400, merkez_min_stok: 1000, kaynak_kullanilabilir: 1200, kalan_gonderince: -800,
+            alarm_merkez: true, merkez_barem_risk: true, gonderim_kaynagi: 'merkez',
+            hedef_depo_mevcut: null, hedef_depo_rezerve: null, hedef_depo_min_stok: null },
+          { urun_ad: 'Süt 3.5%', adet: 40, istenen_adet: 40, sube_depo_mevcut: 0, sube_zaten_var: false,
+            merkez_mevcut: 180, merkez_rezerve: 0, merkez_min_stok: 20, kaynak_kullanilabilir: 180, kalan_gonderince: 140,
+            alarm_merkez: false, merkez_barem_risk: false, gonderim_kaynagi: 'merkez',
+            hedef_depo_mevcut: null, hedef_depo_rezerve: null, hedef_depo_min_stok: null },
         ],
       },
       {
@@ -983,10 +999,13 @@ const MALIYET_UC = {
         stok_alarm_var: false, barem_risk_var: false, gereksiz_var: false,
         merkez_kayit_eksik_var: false, uyari_var: false,
         davranis_uyarilari: [],
+        // Hedef depo ATANMIŞ vaka — hesap merkez değil hedef depodan yapılır
+        stok_hesap_kaynagi: 'hedef_depo',
         kalemler: [
-          { urun_ad: 'Çekirdek harman', adet: 12, sube_depo_mevcut: 2, sube_zaten_var: false,
-            merkez_rezerve: 0, merkez_min_stok: 10, kaynak_kullanilabilir: 90, kalan_gonderince: 78,
-            alarm_merkez: false, merkez_barem_risk: false, gonderim_kaynagi: 'merkez' },
+          { urun_ad: 'Çekirdek harman', adet: 12, istenen_adet: 12, sube_depo_mevcut: 2, sube_zaten_var: false,
+            merkez_mevcut: -1, merkez_rezerve: 0, merkez_min_stok: 10, kaynak_kullanilabilir: 90, kalan_gonderince: 78,
+            alarm_merkez: false, merkez_barem_risk: false, gonderim_kaynagi: 'hedef_depo',
+            hedef_depo_mevcut: 90, hedef_depo_rezerve: 0, hedef_depo_min_stok: 12 },
         ],
       },
     ],
@@ -994,7 +1013,20 @@ const MALIYET_UC = {
   // Depo stoğunun TL DEĞERİ + 30 gün harcama (v2 bu ucu HİÇ çağırmıyordu;
   // /ops/depo-stok yalnız ADET veriyor). Yalnız `ozet` bloğu okunuyor.
   '/api/ops/v2/depo-ozet': {
-    gun: 30, subeler: [], urunler: [], urunler_katalog_aktif: [],
+    gun: 30, subeler: [],
+    // A-2. tur: urunler[] artık okunuyor — kalem_kodu depo-stok mock'uyla eş.
+    // k5 (Peçete) bilerek YOK: fiyatsız kalem → tabloda "—" (ölçülemedi).
+    urunler: [
+      { kalem_kodu: 'k1', kalem_adi: 'Yeşil çekirdek (harman)', kategori_ad: 'Kahve', toplam_adet: 12, toplam_deger: 74400, toplam_harcanan: 46, toplam_harcanan_deger: 285200,
+        subeler: { s0: { mevcut: 8, deger: 49600, harcanan: 22, harcanan_deger: 136400 }, s1: { mevcut: 2, deger: 12400, harcanan: 12, harcanan_deger: 74400 }, s2: { mevcut: 1, deger: 6200, harcanan: 6, harcanan_deger: 37200 }, s3: { mevcut: 1, deger: 6200, harcanan: 6, harcanan_deger: 37200 } } },
+      { kalem_kodu: 'k2', kalem_adi: 'Karton bardak 8 oz', kategori_ad: 'Ambalaj', toplam_adet: 6400, toplam_deger: 19200, toplam_harcanan: 14200, toplam_harcanan_deger: 42600,
+        subeler: { s0: { mevcut: 4000, deger: 12000, harcanan: 6800, harcanan_deger: 20400 }, s1: { mevcut: 1200, deger: 3600, harcanan: 3400, harcanan_deger: 10200 }, s2: { mevcut: 800, deger: 2400, harcanan: 2200, harcanan_deger: 6600 }, s3: { mevcut: 400, deger: 1200, harcanan: 1800, harcanan_deger: 5400 } } },
+      { kalem_kodu: 'k3', kalem_adi: 'Süt 3.5%', kategori_ad: 'Süt & Krema', toplam_adet: 320, toplam_deger: 11840, toplam_harcanan: 940, toplam_harcanan_deger: 34780,
+        subeler: { s0: { mevcut: 180, deger: 6660, harcanan: 420, harcanan_deger: 15540 }, s1: { mevcut: 60, deger: 2220, harcanan: 260, harcanan_deger: 9620 }, s2: { mevcut: 50, deger: 1850, harcanan: 160, harcanan_deger: 5920 }, s3: { mevcut: 30, deger: 1110, harcanan: 100, harcanan_deger: 3700 } } },
+      { kalem_kodu: 'k4', kalem_adi: 'Vanilya şurup', kategori_ad: 'Şurup', toplam_adet: 14, toplam_deger: 6160, toplam_harcanan: 9, toplam_harcanan_deger: 3960,
+        subeler: { s0: { mevcut: 8, deger: 3520, harcanan: 4, harcanan_deger: 1760 }, s1: { mevcut: 3, deger: 1320, harcanan: 3, harcanan_deger: 1320 }, s2: { mevcut: 2, deger: 880, harcanan: 1, harcanan_deger: 440 }, s3: { mevcut: 1, deger: 440, harcanan: 1, harcanan_deger: 440 } } },
+    ],
+    urunler_katalog_aktif: [],
     ozet: {
       toplam_stok_deger: 284600, toplam_harcama_deger: 196400,
       kritik_kalem_sayisi: 5, sifir_kalem_sayisi: 2, urun_sayisi: 128,
@@ -1107,9 +1139,11 @@ const MALIYET_UC = {
   },
   '/api/ops/maliyet/stopaj-ozet': {
     adet: 2, toplam_brut_tl: 96000, toplam_stopaj_tl: 19200, toplam_net_tl: 76800,
+    // ⚠️ Gerçek satır şeması (operasyon_merkez_api:14969): brut_tl/stopaj_yuzde/
+    // stopaj_tl/net_odenecek_tl — eski mock `tutar/oran` yazıyordu (uydurmaydı).
     satirlar: [
-      { id: 'sg1', gider_adi: 'Zafer kira', tutar: 54000, oran: 0.2, sube_id: 's0' },
-      { id: 'sg2', gider_adi: 'Köyceğiz kira', tutar: 42000, oran: 0.2, sube_id: 's1' },
+      { id: 'sg1', gider_adi: 'Zafer kira', sube_id: 's0', brut_tl: 54000, stopaj_oran: 0.2, stopaj_yuzde: 20, stopaj_tl: 10800, net_odenecek_tl: 43200 },
+      { id: 'sg2', gider_adi: 'Köyceğiz kira', sube_id: 's1', brut_tl: 42000, stopaj_oran: 0.2, stopaj_yuzde: 20, stopaj_tl: 8400, net_odenecek_tl: 33600 },
     ],
     not: 'Brüt kira P&L gideridir (değişmez). Stopaj = brüt × oran → vergi dairesine.',
   },

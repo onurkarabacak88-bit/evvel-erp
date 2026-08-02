@@ -663,7 +663,23 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
               ? `${sayi(ozet.stok_kalem_sayisi)} kalem × alış fiyatı`
               : 'mevcut stok × alış fiyatı',
           },
-          { etiket: 'Fire (30 gün)', deger: fmt(toplamFire), alt: 'shrinkage toplamı', renk: toplamFire > 0 ? R.amber : R.krem },
+          // A-2. tur: fire EŞİĞİ de sunucudan (shrinkage_izleme_pct %2 /
+          // sorusturma_pct %5) — food-cost bandıyla aynı kural: eşik koda gömülmez.
+          (() => {
+            const fireOran = toplamCiro > 0 ? (toplamFire / toplamCiro) * 100 : null;
+            const sIzleme = sayi(ozet?.benchmark?.shrinkage_izleme_pct) || 2;
+            const sSorus = sayi(ozet?.benchmark?.shrinkage_sorusturma_pct) || 5;
+            return {
+              etiket: 'Fire (30 gün)',
+              deger: fmt(toplamFire),
+              alt: fireOran == null
+                ? 'shrinkage toplamı · oran için ciro gerekli'
+                : `cironun %${fireOran.toFixed(1)}'i · izleme %${sIzleme} / soruşturma %${sSorus}`,
+              renk: fireOran == null ? R.krem
+                : fireOran >= sSorus ? R.kirmizi
+                  : fireOran >= sIzleme ? R.amber : R.yesil,
+            };
+          })(),
           {
             etiket: 'Altyapı',
             deger: `${sayi(ozet.alis_fiyat_sayisi)} fiyat · ${sayi(ozet.recete_sayisi)} reçete`,
@@ -1530,6 +1546,26 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
                 <span style={{ color: R.not2 }}> · {sayi(vergi.stopaj.adet)} kira</span>
               </span>
             </div>
+            {/* A-2. tur: kira kira döküm — toplam vardı ama HANGİ kiranın ne
+                kadar stopajı olduğu görünmüyordu (satirlar[] okunmuyordu). */}
+            {(Array.isArray(vergi.stopaj?.satirlar) ? vergi.stopaj.satirlar : []).length > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 10 }}>
+                {vergi.stopaj.satirlar.slice(0, 6).map((s, i) => (
+                  <div key={s.id || i} style={{
+                    display: 'flex', alignItems: 'center', gap: 10, fontSize: 11.5,
+                    padding: '6px 11px', borderRadius: 8, background: R.girinti,
+                  }}>
+                    <span style={{ flex: 1, minWidth: 0, fontWeight: 700 }}>{s.gider_adi || '—'}</span>
+                    <span style={{ flexShrink: 0, color: R.not2 }}>%{sayi(s.stopaj_yuzde)}</span>
+                    <span style={{ flexShrink: 0, fontFamily: F.mono, color: R.krem }}>{fmt(sayi(s.brut_tl))}</span>
+                    <span style={{ flexShrink: 0, color: R.not3 }}>=</span>
+                    <span style={{ flexShrink: 0, fontFamily: F.mono, color: R.yesil }}>{fmt(sayi(s.net_odenecek_tl))}</span>
+                    <span style={{ flexShrink: 0, color: R.not3 }}>+</span>
+                    <span style={{ flexShrink: 0, fontFamily: F.mono, color: R.kirmizi }}>{fmt(sayi(s.stopaj_tl))}</span>
+                  </div>
+                ))}
+              </div>
+            )}
             <div style={{ fontSize: 11, color: R.not2, marginTop: 7, lineHeight: 1.55 }}>
               ⚠ Brüt kira <b>P&L gideridir ve değişmez</b>. Stopaj ayrı bir nakit çıkışı değil,
               brütün içinden devlete giden paydır — mülk sahibine net ödenir (muhtasar).
