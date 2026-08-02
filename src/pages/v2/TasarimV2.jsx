@@ -117,6 +117,9 @@ export default function TasarimV2({ onGit }) {
   // /ops/v2/sube-davranis + /ops/v2/sube-skor — "hangi şube DÜZGÜN çalışıyor"
   const [subeDavranis, setSubeDavranis] = useState(null);
   const [subeSkor, setSubeSkor] = useState(null);
+  // Haftalık kıyas (/ops/haftalik-karsilastirma) + şube gider (/metrics/finans-ozet)
+  const [subeHafta, setSubeHafta] = useState(null);
+  const [subeFinans, setSubeFinans] = useState(null);
   // TARİH GEZGİNİ: null = CANLI (bugün/son gün). Dolu ise geçmiş gün modu.
   const [secilenGun, setSecilenGun] = useState(null);
   const [palet, setPalet] = useState(false);
@@ -531,6 +534,18 @@ export default function TasarimV2({ onGit }) {
     api('/ops/v2/sube-skor')
       .then((d) => setSubeSkor(Array.isArray(d?.skorlar) ? d.skorlar : []))
       .catch(() => setSubeSkor([]));
+    // Sahip kararı (soru 4/9): HAFTALIK kıyas şeridi. Günlük ekran tek günü,
+    // aylık karne bütün ayı gösterir — "hangi şube BU HAFTA düşüşte" sorusu
+    // ikisinin arasında cevapsızdı.
+    api('/ops/haftalik-karsilastirma')
+      .then((d) => setSubeHafta(d || null))
+      .catch(() => setSubeHafta(null));
+    // Sahip kararı (soru 5/9): şube başına GİDER + ciro/gider oranı.
+    // Ciro bir ekranda, anlık gider başka ekrandaydı; "hangi şube pahalı
+    // çalışıyor" sorusu hiçbir yerde cevaplanmıyordu.
+    api('/ops/metrics/finans-ozet?gun=30')
+      .then((d) => setSubeFinans(d || null))
+      .catch(() => setSubeFinans(null));
   }, [gorunum, subeOps]);
 
   // ── İSTEK HATASI BANDI (yeni handoff: "veri yok" ≠ "sistem bozuk") ────────
@@ -884,6 +899,22 @@ export default function TasarimV2({ onGit }) {
     const adEs = (a, b) => sadeles(a) === sadeles(b);
     const davranisOf = (ad) => (subeDavranis || []).find((x) => adEs(x.sube_adi, ad));
     const skorOf = (ad) => (subeSkor || []).find((x) => adEs(x.sube_adi, ad));
+    const haftaOf = (ad) => (subeHafta?.subeler || []).find((x) => adEs(x.sube_adi, ad));
+    // finans-ozet satırlarında sube_adi YOK — id üzerinden şube adına eşlenir.
+    const finansMap = (() => {
+      const idToAd = {};
+      (subeler || []).forEach((s) => { idToAd[String(s.id)] = s.ad; });
+      const agg = {};
+      (subeFinans?.ciro_gider_orani || []).forEach((r) => {
+        const ad = idToAd[String(r.sube_id)] || String(r.sube_id);
+        const k = sadeles(ad);
+        if (!agg[k]) agg[k] = { ad, ciro: 0, gider: 0 };
+        agg[k].ciro += sayi(r.ciro);
+        agg[k].gider += sayi(r.gider);
+      });
+      return agg;
+    })();
+    const finansOf = (ad) => finansMap[sadeles(ad)] || null;
 
     const kpiler = [
       { etiket: 'En yüksek ciro', deger: enIyi.ad, alt: fmt(enIyi.toplam), renk: R.yesil },
@@ -895,6 +926,44 @@ export default function TasarimV2({ onGit }) {
     return (
       <>
         <KpiSeridi kpiler={kpiler} />
+
+        {/* ── HAFTALIK KIYAS ŞERİDİ (soru 4/9) — gün çok kısa, ay çok geç;
+            "hangi şube BU HAFTA düşüşte" bu ritimde yakalanır. ── */}
+        {Array.isArray(subeHafta?.subeler) && subeHafta.subeler.length > 0 && (
+          <div style={{ ...kartYuzey, padding: '13px 18px', marginBottom: 14 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 9 }}>
+              <span style={{ fontFamily: F.baslik, fontSize: 14, fontWeight: 600 }}>Bu hafta ↔ önceki hafta</span>
+              <span style={{ fontSize: 11.5, color: R.not2 }}>
+                zincir {fmt(sayi(subeHafta.toplam_bu_hafta))} ↔ {fmt(sayi(subeHafta.toplam_gecen_hafta))}
+                {subeHafta.genel_degisim_pct != null && (
+                  <b style={{ marginLeft: 6, color: sayi(subeHafta.genel_degisim_pct) >= 0 ? R.yesil : R.kirmizi }}>
+                    {sayi(subeHafta.genel_degisim_pct) > 0 ? '+' : ''}{subeHafta.genel_degisim_pct}%
+                  </b>
+                )}
+              </span>
+            </div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              {subeHafta.subeler.map((h) => {
+                const p = h.degisim_pct;
+                const renk = p == null ? R.not : p >= 0 ? R.yesil : R.kirmizi;
+                return (
+                  <span key={h.sube_id || h.sube_adi} style={{
+                    padding: '6px 12px', borderRadius: 99, fontSize: 11.5,
+                    background: R.girinti, border: `1px solid ${p != null && p < -5 ? `${R.kirmizi}55` : R.cizgi3}`,
+                    color: R.metin2,
+                  }}>
+                    {h.sube_adi}{' '}
+                    <b style={{ fontFamily: F.mono, color: R.krem }}>{fmt(sayi(h.bu_hafta))}</b>{' '}
+                    <b style={{ fontFamily: F.mono, color: renk }}>
+                      {p == null ? '—' : `${p > 0 ? '+' : ''}${p}%`}
+                    </b>
+                  </span>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         <Tablo
           baslik={`Şube karnesi · ${d.ayOnEk}`}
           not="satıra tıkla → şube dosyası · son iki kolon depo rolündeki sevkiyat trafiği"
@@ -902,6 +971,8 @@ export default function TasarimV2({ onGit }) {
             { ad: 'Şube' }, { ad: 'Ciro', sag: true }, { ad: 'Nakit', sag: true },
             { ad: 'Kart + online', sag: true }, { ad: 'Günlük ort.', sag: true },
             { ad: 'Zincir payı', sag: true }, { ad: 'Kayıt' },
+            // ── Gider ekseni (soru 5/9): yalnız ANLIK gider — sabit+maaş hariç ──
+            { ad: 'Gider (30g)', sag: true },
             // ── Kontrol Kulesi birleşti: şubenin DEPO rolündeki trafiği ──
             { ad: 'Depo yükü', sag: true }, { ad: 'Yolda', sag: true },
             // ── Davranış ekseni: ciro ≠ düzgün çalışma ──
@@ -918,6 +989,28 @@ export default function TasarimV2({ onGit }) {
               { v: fmt(s.toplam / (s.gunSayisi || 1)), mono: true, sag: true },
               { v: `%${trSayi(s.pay)}`, bar: (s.pay / enBuyukPay) * 100, sag: true, renk: s.pay >= enBuyukPay * 0.8 ? R.yesil : s.pay >= enBuyukPay * 0.5 ? R.amber : R.kirmizi },
               { v: `${s.gunSayisi} gün`, rozet: s.gunSayisi >= d.gunSayisi ? R.yesil : R.amber },
+              // Gider (soru 5/9): iki satırlı hücre — üstte 30 günlük ANLIK
+              // gider, altta ciro/gider oranı. Oran YÜKSEK = iyi (1₺ gidere
+              // kaç ₺ ciro). Veri yoksa '—' (sıfır ≠ ölçülemedi).
+              (() => {
+                const f = finansOf(s.ad);
+                if (!f || (!f.gider && !f.ciro)) return { v: '—', sag: true, renk: R.not3, sira: -1 };
+                const oran = f.gider > 0 ? f.ciro / f.gider : null;
+                return {
+                  sira: f.gider, sag: true,
+                  v: (
+                    <span style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
+                      <span style={{ fontFamily: F.mono, fontWeight: 700 }}>{fmt(f.gider)}</span>
+                      <span style={{
+                        fontSize: 10, fontWeight: 700, whiteSpace: 'nowrap',
+                        color: oran == null ? R.not3 : oran >= 10 ? R.yesil : oran >= 5 ? R.amber : R.kirmizi,
+                      }}>
+                        {oran == null ? 'gider yok' : `1₺ → ${oran.toFixed(1)}₺ ciro`}
+                      </span>
+                    </span>
+                  ),
+                };
+              })(),
               // Operasyonel: veri gelmediyse '—' (uydurma sayı yok)
               { v: opsOf(s.ad) ? String(sayi(opsOf(s.ad).toplam)) : '—', mono: true, sag: true,
                 renk: opsOf(s.ad) && sayi(opsOf(s.ad).toplam) > 0 ? R.krem : R.not },
@@ -984,6 +1077,21 @@ export default function TasarimV2({ onGit }) {
                   detay: `${sayi(i.ihlal_sayisi)} kez · son 30 gün`,
                   tutar: `${sayi(i.puan)} puan`,
                 })),
+                // Anlık gider kategori trendi (soru 5/9) — uç sube filtresiz
+                // çağrıldığı için ZİNCİR GENELİ; etiketle dürüstçe söylenir.
+                ...(() => {
+                  const kt = subeFinans?.anlik_gider_kategori_trend || [];
+                  if (!kt.length) return [];
+                  const sonHafta = kt.reduce((m, r) => (String(r.hafta) > m ? String(r.hafta) : m), '');
+                  return kt
+                    .filter((r) => String(r.hafta) === sonHafta)
+                    .slice(0, 4)
+                    .map((r) => ({
+                      ad: `💸 ${r.kategori || 'kategori'} · zincir geneli`,
+                      detay: `bu hafta ${sayi(r.kayit_adet)} kayıt`,
+                      tutar: fmt(sayi(r.toplam_tutar)),
+                    }));
+                })(),
               ],
               not: [
                 s.gunSayisi < d.gunSayisi

@@ -2015,6 +2015,10 @@ export function TanimModulu({ gorunum, onCekmece, onKopru, onToast }) {
     ['/tedarikciler', []],
     ['/ops/tedarik-dosyasi?gun=60&limit=150', null],
     ['/tv-menu/liste', []],
+    // Sahip kararı (soru 2/9): zincir 3 halkadan 5 halkaya çıkar. BM-2 backend
+    // + beyin + bağ defteri zaten çalışıyordu — yalnız v2 ekranı yoktu.
+    // sipariş → teslim → BELGE → fatura → ÖDEME İZİ (para ucu artık kapanıyor).
+    ['/fatura/mutabakat-zinciri', null],
   ]);
   // v2-YERLİ tedarikçi CRUD (köprü kaldırma turu) — klasik uçlar aynen
   const [tedForm, setTedForm] = useState(null);   // {duzenleId?, ad, kategori, telefon, aciklama}
@@ -2111,10 +2115,13 @@ export function TanimModulu({ gorunum, onCekmece, onKopru, onToast }) {
     }
   };
 
-  const [tedHam, dosyaHam, tvHam] = veri;
+  const [tedHam, dosyaHam, tvHam, zincirHam] = veri;
   const tedarikciler = (Array.isArray(tedHam) ? tedHam : []).filter(t => t.aktif !== false);
   const dosyalar = dosyaHam?.dosyalar || [];
   const tv = Array.isArray(tvHam) ? tvHam : [];
+  // BM-2 zinciri: sayac {tam, teslim_yok, belge_acik, fatura_yok, odeme_izi_yok}
+  // + eksik_zincirler[{tedarikci_ad, siparis_tarihi, halkalar{...}, eksik}]
+  const bm2 = zincirHam || null;
 
   if (gorunum === 'tedarikciler') {
     const kategoriler = [...new Set(tedarikciler.map(t => t.kategori).filter(Boolean))];
@@ -2232,9 +2239,129 @@ export function TanimModulu({ gorunum, onCekmece, onKopru, onToast }) {
     );
   }
 
+  // ════════════════ TESLİMAT ZİNCİRİ — BM-2, 5 HALKA (sahip kararı 2/9) ═════
+  // Eski görünüm 3 halkaydı (sipariş→kabul→fatura) ve /tedarik-dosyasi'ndan
+  // türetiliyordu. BM-2 motoru 5 halka izler ve İKİ yeni halka ekler:
+  //   BELGE  — faturayı istedik mi, PDF geldi mi (belge_talep)
+  //   ÖDEME İZİ — faturanın parası çıktı mı (tutar+tarih aday eşleşmesi)
+  // Motor beyin + bağ defterinde ZATEN çalışıyordu; yalnız ekranı yoktu.
+  if (gorunum === 'zincir' && bm2) {
+    const sayac = bm2.sayac || {};
+    const eksikler = Array.isArray(bm2.eksik_zincirler) ? bm2.eksik_zincirler : [];
+    const HALKA_AD = [
+      ['siparis', 'Sipariş'], ['teslim', 'Teslim'], ['belge', 'Belge'],
+      ['fatura', 'Fatura'], ['odeme_izi', 'Ödeme izi'],
+    ];
+    const EKSIK_AD = {
+      teslim_yok: { ad: 'teslim yok', renk: R.kirmizi },
+      belge_acik: { ad: 'belge açık', renk: R.amber },
+      fatura_yok: { ad: 'fatura yok', renk: R.kirmizi },
+      odeme_izi_yok: { ad: 'ödeme izi yok', renk: R.amber },
+    };
+    return (
+      <>
+        <KpiSeridi kpiler={[
+          {
+            etiket: 'Tam zincir',
+            deger: `${sayi(sayac.tam)} / ${sayi(bm2.siparis_adet)}`,
+            alt: `son ${sayi(bm2.pencere_gun) || 60} gün · 5 halka kapandı`,
+            renk: sayi(sayac.tam) === sayi(bm2.siparis_adet) && sayi(bm2.siparis_adet) ? R.yesil : R.krem,
+          },
+          { etiket: 'Teslim yok', deger: String(sayi(sayac.teslim_yok)), alt: 'sipariş verildi, teslim izi yok', renk: sayi(sayac.teslim_yok) ? R.kirmizi : R.yesil },
+          {
+            etiket: 'Belge / fatura eksik',
+            deger: String(sayi(sayac.belge_acik) + sayi(sayac.fatura_yok)),
+            alt: `belge açık ${sayi(sayac.belge_acik)} · fatura yok ${sayi(sayac.fatura_yok)}`,
+            renk: (sayi(sayac.belge_acik) + sayi(sayac.fatura_yok)) ? R.amber : R.yesil,
+          },
+          {
+            etiket: 'Ödeme izi yok',
+            deger: String(sayi(sayac.odeme_izi_yok)),
+            alt: 'fatura var, para çıkışı eşleşmedi',
+            renk: sayi(sayac.odeme_izi_yok) ? R.amber : R.yesil,
+          },
+        ]} />
+
+        {eksikler.length ? (
+          <Tablo
+            baslik="Eksik zincirler · sipariş → teslim → belge → fatura → ödeme izi"
+            not={`yalnız ${String(bm2.baslangic || '15.07.2026')} sonrası siparişler denetlenir (sahip kararı) · ödeme izi ADAY eşleşmedir`}
+            kolonlar={[
+              { ad: 'Tedarikçi' }, { ad: 'Sipariş tarihi' }, { ad: 'Zincir' }, { ad: 'Kopuk halka' },
+            ]}
+            satirlar={eksikler.slice(0, 40).map((z, i) => {
+              const h = z.halkalar || {};
+              const ek = EKSIK_AD[z.eksik] || { ad: z.eksik || '—', renk: R.not };
+              return {
+                id: z.id || `z-${i}`, _z: z,
+                hucreler: [
+                  { v: z.tedarikci_ad || '—', kalin: true },
+                  { v: kisaTarih(z.siparis_tarihi), mono: true, renk: R.not },
+                  {
+                    siraMetin: z.eksik || '',
+                    v: (
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                        {HALKA_AD.map(([k, ad], hi) => {
+                          const v = h[k];
+                          // odeme_izi null = fatura yok, ölçülemedi (✗ değil "—")
+                          const durum = v === true ? 'tam' : v === false ? 'kopuk' : 'yok';
+                          return (
+                            <span key={k} title={`${ad}: ${durum === 'tam' ? '✓' : durum === 'kopuk' ? '✗ kopuk' : '— ölçülemedi'}`}
+                              style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                              <span style={{
+                                width: 11, height: 11, borderRadius: 99,
+                                background: durum === 'tam' ? R.yesil : durum === 'kopuk' ? R.kirmizi : 'transparent',
+                                border: durum === 'yok' ? `1.5px solid ${R.not3}` : 'none',
+                              }} />
+                              {hi < HALKA_AD.length - 1 && <span style={{ width: 8, height: 1, background: R.cizgi3 }} />}
+                            </span>
+                          );
+                        })}
+                      </span>
+                    ),
+                  },
+                  { v: ek.ad, rozet: ek.renk },
+                ],
+              };
+            })}
+            onSatir={({ _z }) => {
+              const h = _z.halkalar || {};
+              onCekmece?.({
+                tip: 'MUTABAKAT ZİNCİRİ',
+                baslik: _z.tedarikci_ad || 'Tedarikçi',
+                alt: `sipariş ${kisaTarih(_z.siparis_tarihi)} · kopuk halka: ${(EKSIK_AD[_z.eksik] || {}).ad || _z.eksik}`,
+                kpi: [
+                  { etiket: 'Kopuk halka', deger: (EKSIK_AD[_z.eksik] || {}).ad || '—', renk: (EKSIK_AD[_z.eksik] || {}).renk },
+                ],
+                listeBaslik: 'Beş halka',
+                satirlar: HALKA_AD.map(([k, ad]) => ({
+                  ad,
+                  detay: k === 'belge' ? 'fatura isteği açıldı mı, PDF geldi mi'
+                    : k === 'odeme_izi' ? 'tutar+tarih aday eşleşmesi — kesin mutabakat değil'
+                      : '',
+                  tutar: h[k] === true ? '✓' : h[k] === false ? '✗ kopuk' : '— ölçülemedi',
+                })),
+                not: _z.eksik === 'odeme_izi_yok'
+                  ? 'Fatura var ama kayıtlarımızda eşleşen para çıkışı bulunamadı. Kısmi ödeme / tek ödemeyle çok fatura izi düşürebilir — hüküm değil, bakılacak yer önerisidir.'
+                  : _z.eksik === 'belge_acik'
+                    ? 'Fatura isteği açık — tedarikçiden PDF bekleniyor. Kovalanacaksa Belge ▸ Fatura İstek ekranı.'
+                    : 'Zincirin kopuk halkası ilgili akışta tamamlanınca bu satır kendiliğinden düşer.',
+              });
+            }}
+          />
+        ) : (
+          <BosDurum tamam baslik="Tüm zincirler kapalı" aciklama={`Son ${sayi(bm2.pencere_gun) || 60} günde beş halkası da tamamlanmamış sipariş yok.`} />
+        )}
+        {bm2.not && (
+          <div style={{ fontSize: 11, color: R.not2, lineHeight: 1.6, marginBottom: 16 }}>ℹ {bm2.not}</div>
+        )}
+      </>
+    );
+  }
+
   if (gorunum === 'zincir' || gorunum === 'dosya') {
-    // Aynı kaynak iki görünüme bakar: `zincir` sipariş→kabul→fatura akışının
-    // AÇIK olanlarına, `dosya` tüm dosya arşivine.
+    // Aynı kaynak iki görünüme bakar: `zincir` (BM-2 gelmediyse YEDEK 3-halka
+    // görünümü) sipariş→kabul→fatura akışının AÇIK olanlarına, `dosya` arşive.
     const acik = dosyalar.filter(d => sayi(d.fatura_say) === 0 || slugAd(d.kabul_durum).includes('uyum'));
     const liste = gorunum === 'zincir' ? acik : dosyalar;
     const tamEslesen = dosyalar.filter(d => sayi(d.fatura_say) > 0 && !slugAd(d.kabul_durum).includes('uyum'));

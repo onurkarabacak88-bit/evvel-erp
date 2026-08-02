@@ -12,7 +12,7 @@
 //   KOPYALANMADI — ölçülmeyen metrik gösterilmez (sahte sayı yasağı). Yanlış
 //   alarm oranı ve "ölçülen etki" sistemde takip edilmiyor; eklenirse gelir.
 // ─────────────────────────────────────────────────────────────────────────────
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api, fmt } from '../../utils/api';
 import { R, F, kartYuzey } from './tema';
 import { KpiSeridi, Liste, Tablo, BosDurum, HataBandi } from './parcalar';
@@ -233,6 +233,9 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
       .catch(() => setDilekler([]));
   }, []);
 
+  // Kural kütüphanesi tanımları (soru 8/9) — tıklamada bir kez çekilir, ref'te tutulur
+  const kuralTanimRef = useRef(null);
+
   const duyuYukle = useCallback(() => {
     setDuyuHata('');
     api('/duyu/kural-karnesi')
@@ -240,6 +243,57 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
       .catch((e) => setDuyuHata(e?.message || ''));
     api('/duyu/sinapsler?gun=14').then((d) => setSinaps(d || {})).catch(() => setSinaps({}));
   }, []);
+
+  /**
+   * KURAL TANIMI çekmecesi (soru 8/9) — /duyu/yavru-kurallari.
+   * Karne satırı "R6 doğru 4 / yanlış 1" der ama R6'nın NE olduğunu söylemez;
+   * bu uç kural kütüphanesinin tanımını verir (ebeveyn→çocuk, pencere, tür).
+   * Sahip kararı: YALNIZ `kurallar` tanımları okunur — `son_baglar` ALINMAZ
+   * (bağ akışı zaten Bağ Defteri'nde; ikinci kopya kurulmaz).
+   */
+  const kuralTanimAc = async (k) => {
+    let tanimlar = kuralTanimRef.current;
+    if (!tanimlar) {
+      try {
+        const d = await api('/duyu/yavru-kurallari?gun=7');
+        tanimlar = Array.isArray(d?.kurallar) ? d.kurallar : [];
+        kuralTanimRef.current = tanimlar;
+      } catch (e) {
+        onToast?.(e?.message || 'Kural kütüphanesi okunamadı');
+        return;
+      }
+    }
+    const t = tanimlar.find((x) => String(x.kural_id) === String(k.kural_id)) || null;
+    if (!t) {
+      onToast?.(`${k.kural_id || 'Kural'} için kütüphane tanımı bulunamadı.`);
+      return;
+    }
+    const TUR_AD = {
+      T1: 'T1 · durağan bağ — "çocuk olay ebeveynden ötürü olabilir" der, sinyali KAPATMAZ',
+      T2: 'T2 · beklenti — "ebeveyn olduysa çocuk DOĞMALI" der; yokluk sinyaldir',
+    };
+    onCekmece?.({
+      tip: 'KURAL TANIMI · KÜTÜPHANE',
+      baslik: t.kural_id,
+      alt: `sürüm ${sayi(t.surum) || 1} · ${t.gecerli_bas || '—'} tarihinden beri · ${t.aktif ? 'aktif' : 'kapalı'}`,
+      kpi: [
+        { etiket: 'Tür', deger: t.tur || '—', renk: t.tur === 'T2' ? R.mavi : R.krem },
+        { etiket: 'Pencere', deger: `${sayi(t.pencere_gun)} gün`, renk: R.krem },
+        { etiket: 'Eşleşme', deger: t.eslesme || '—', renk: R.krem },
+        { etiket: 'Durum', deger: t.aktif ? 'aktif' : 'kapalı', renk: t.aktif ? R.yesil : R.not3 },
+      ],
+      listeBaslik: 'Kuralın cümlesi',
+      satirlar: [
+        { ad: '📖 Açıklama', detay: t.aciklama || '—', tutar: '' },
+        { ad: '⬆ Ebeveyn olay', detay: t.ebeveyn || '—', tutar: '' },
+        { ad: '⬇ Çocuk olay', detay: t.cocuk || '—', tutar: '' },
+        { ad: '🧬 Yaşam döngüsü', detay: t.yasam_dongusu || '—', tutar: '' },
+        { ad: '⏱ Pencere çapası', detay: t.pencere_capasi || '—', tutar: '' },
+      ],
+      not: (TUR_AD[t.tur] || 'Kural türü bilinmiyor.')
+        + ' Kural ekleme yalnız insan onayıyla (kod commit\'i) olur; karne bu kuralın davranışını ölçer, bağ akışı Bağ Defteri\'ndedir.',
+    });
+  };
 
   // ── beyin sohbeti (klasik DuyuPaneli sözleşmesi aynen) ────────────────────
   const sor = async () => {
@@ -911,7 +965,7 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
         ) : (
           <Tablo
             baslik="Kural karnesi · öğrenme defteri"
-            not="kurallar VERİ'dir — davranışları gece motoru ölçer"
+            not="kurallar VERİ'dir — davranışları gece motoru ölçer · satıra tıkla → kural tanımı"
             // 🐞 ŞEKİL TUZAĞI (düzeltildi): eski satırlar `k.ad/k.kural/k.durum/
             // k.gozlem/k.not` okuyordu — bunların HİÇBİRİ cevapta yok. Her satır
             // "kural 1, kural 2…" jenerik adıyla, hep yeşil "sağlıklı" rozetiyle
@@ -959,8 +1013,10 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
                     ? { v: 'uygulanıyor', rozet: R.mavi, sira: 1 }
                     : { v: 'öğreniyor', renk: R.not3, sira: 0 },
                 ],
+                _k: k,
               };
             })}
+            onSatir={({ _k }) => kuralTanimAc(_k)}
           />
         )}
 

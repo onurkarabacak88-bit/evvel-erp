@@ -614,6 +614,11 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
   const [urunAcAkis, setUrunAcAkis] = useState(null);
   const [barOzet, setBarOzet] = useState(null);
   const [barHata, setBarHata] = useState('');
+  // Sahip kararı (2026-08-03, soru 7/9): /ops/sayimlar — açılış satırına
+  // tıklayınca HAM sabah sayımı çekmecesi (kim, saat kaçta, kalem kalem ne
+  // saydı). Tablo TL özetini gösterir; bu uç arkasındaki fiziki sayımdır.
+  // Tıklama anında çekilir, tarih başına önbelleğe alınır.
+  const [barSayimCache, setBarSayimCache] = useState({});   // tarih → satirlar[]
   // ── MERKEZ DENETİM (ops-merkez P1 sekmeleri, 2026-07-30) ──────────────────
   // urun-uyumsuzluk · fire-bildirim · gider fişi · kontrol özeti · stok kaybı
   const [dnSekme, setDnSekme] = useState('uyumsuz');
@@ -623,6 +628,10 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
   const [dnKontrol, setDnKontrol] = useState(null);
   // /ops/metrics/sube-operasyon-kalite — vardiya devri eksik tik oranı + trend
   const [opKalite, setOpKalite] = useState(null);
+  // Sahip kararı (2026-08-03, soru 6/9): /ops/personel-metrik-sube — personel
+  // verimlilik ikizinin ŞUBE kırılımı (açılış sapması + kontrol cevabı şube
+  // bazında). Kişi kırılımı EKİP ▸ Personel Denetimi'nde; burada şube boyutu.
+  const [opPersonelSube, setOpPersonelSube] = useState(null);
   const [dnKayip, setDnKayip] = useState(null);
   const [dnHata, setDnHata] = useState('');
   // ── TEDARİK & SİNYAL (ops-merkez P3 sekmeleri, 2026-07-30) ────────────────
@@ -643,6 +652,18 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
   const [sayimDetay, setSayimDetay] = useState({});   // gorev_id → detay (kalem farkları)
   // ── HAREKET ───────────────────────────────────────────────────────────────
   const [hareket, setHareket] = useState(null);
+  // ── SİPARİŞ ARŞİVİ (sahip kararı: ayrı görünüm) ───────────────────────────
+  // /ops/siparis/gecmis (tüm durumlar, 730 güne dek) + /ops/siparis/
+  // depo-sevkiyat-raporlari (rapor metni tarihçesi). Kanban 14 günlük AÇIK işi
+  // gösterir; kapanan sipariş pencereden çıkınca kayboluyordu.
+  const [arsivVeri, setArsivVeri] = useState(null);
+  const [arsivRapor, setArsivRapor] = useState(null);
+  const [arsivHata, setArsivHata] = useState('');
+  const [arsivGun, setArsivGun] = useState(90);
+  const [arsivDurum, setArsivDurum] = useState('');
+  const [arsivArama, setArsivArama] = useState('');
+  const [arsivSekme, setArsivSekme] = useState('siparis');
+  const [arsivMesgul, setArsivMesgul] = useState('');
   const [hareketHata, setHareketHata] = useState('');
 
   const [hiz, setHiz] = useState(null);   // sevkiyat hızı duyusu (salt-okur)
@@ -744,6 +765,61 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
       .catch(() => setBarOzet({ satirlar: [], gunluk: false }));
   }, []);
 
+  /**
+   * HAM SABAH SAYIMI çekmecesi (soru 7/9) — /ops/sayimlar.
+   * Açılış tablosu TL özetini gösterir ("sayılan 4.200 ₺"); bu uç o TL'nin
+   * ARKASINDAKİ fiziki sayımı verir: kim saydı, saat kaçta, kalem kalem adet.
+   * Sıfır kalemler gizlenir — sayım formunda boş bırakılan alan "0 saydı"
+   * demek değildir, o yüzden yalnız girilenler listelenir.
+   */
+  const barSayimAc = async (x) => {
+    const t = barTarih;
+    let liste = barSayimCache[t];
+    if (!liste) {
+      try {
+        const d = await api(`/ops/sayimlar?gun=${t}&year_month=${t.slice(0, 7)}&limit=60`);
+        liste = Array.isArray(d?.satirlar) ? d.satirlar : [];
+        setBarSayimCache((c) => ({ ...c, [t]: liste }));
+      } catch (e) {
+        onToast?.(e?.message || 'Sayım kaydı okunamadı');
+        return;
+      }
+    }
+    const kayit = liste.find((s) => String(s.sube_id) === String(x.sube_id))
+      || liste.find((s) => (s.sube_adi || '').toLocaleLowerCase('tr') === (x.sube_adi || '').toLocaleLowerCase('tr'))
+      || null;
+    if (!kayit) {
+      onToast?.(`${x.sube_adi || 'Şube'} için ${tarihKisa(t)} günü ham sayım kaydı yok.`);
+      return;
+    }
+    const stok = kayit.stok_sayim || {};
+    const kalemler = BAR_KALEM
+      .map(([k, ad]) => [ad, sayi(stok[k])])
+      .filter(([, v]) => v > 0);
+    // BAR_KALEM dışındaki anahtarlar (ör. pasta çeşitleri) de gelebilir — atlanmaz.
+    const bilinen = new Set(BAR_KALEM.map(([k]) => k));
+    const ekstra = Object.entries(stok)
+      .filter(([k, v]) => !bilinen.has(k) && sayi(v) > 0)
+      .map(([k, v]) => [k.replace(/_/g, ' '), sayi(v)]);
+    const tumu = [...kalemler, ...ekstra];
+    onCekmece?.({
+      tip: 'HAM SABAH SAYIMI',
+      baslik: x.sube_adi || 'Şube',
+      alt: `${tarihKisa(t)} · ${kayit.personel_ad || 'personel bilinmiyor'}${kayit.bildirim_saati ? ` · ${String(kayit.bildirim_saati).slice(0, 5)}` : ''}`,
+      kpi: [
+        { etiket: 'Sayan', deger: kayit.personel_ad || '—', renk: kayit.personel_ad ? R.krem : R.not3 },
+        { etiket: 'Saat', deger: saatKisa(kayit.cevap_ts) || (kayit.bildirim_saati ? String(kayit.bildirim_saati).slice(0, 5) : '—'), renk: R.krem },
+        { etiket: 'Girilen kalem', deger: String(tumu.length), renk: tumu.length ? R.yesil : R.amber },
+      ],
+      listeBaslik: 'Kalem kalem sabah sayımı',
+      satirlar: tumu.length
+        ? tumu.map(([ad, v]) => ({ ad, detay: '', tutar: String(v) }))
+        : [{ ad: 'Sayım kaydı var ama kalem girilmemiş', detay: 'form boş gönderilmiş olabilir', tutar: '—' }],
+      not: 'Bu çekmece fiziki sayımın HAM halidir — tablodaki TL özeti bu sayımdan türetilir. '
+        + 'Sıfır görünen kalem listelenmez: boş bırakılan alan "0 saydı" demek değildir.',
+    });
+  };
+
   const denetimYukle = useCallback((tarih) => {
     setDnHata('');
     const t = tarih || bugunYerelISO();
@@ -763,12 +839,29 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     api('/ops/metrics/sube-operasyon-kalite?gun=30')
       .then((d) => setOpKalite(d || null))
       .catch(() => setOpKalite(null));
+    // Personel metriklerinin şube kırılımı (soru 6/9)
+    api('/ops/personel-metrik-sube?gun=30')
+      .then((d) => setOpPersonelSube(d || null))
+      .catch(() => setOpPersonelSube(null));
     api('/ops/kontrol-ozet')
       .then((d) => setDnKontrol(d || {}))
       .catch(() => setDnKontrol({}));
     api('/ops/stok-kayip-analiz?gun=45')
       .then((d) => setDnKayip(d || {}))
       .catch(() => setDnKayip({}));
+  }, []);
+
+  const arsivYukle = useCallback((gun, durum, arama) => {
+    setArsivHata('');
+    const q = [`gun=${gun || 90}`];
+    if (durum) q.push(`durum=${encodeURIComponent(durum)}`);
+    if ((arama || '').trim()) q.push(`sube_arama=${encodeURIComponent(arama.trim())}`);
+    api(`/ops/siparis/gecmis?${q.join('&')}&limit=300`)
+      .then((d) => setArsivVeri(d || null))
+      .catch((e) => { setArsivVeri(null); setArsivHata(e?.message || 'Arşiv alınamadı'); });
+    api(`/ops/siparis/depo-sevkiyat-raporlari?gun=${Math.min(365, gun || 90)}&limit=60`)
+      .then((d) => setArsivRapor(Array.isArray(d?.raporlar) ? d.raporlar : []))
+      .catch(() => setArsivRapor([]));
   }, []);
 
   const tedarikYukle = useCallback(() => {
@@ -1149,6 +1242,7 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     if (gorunum === 'depo') depoYukle();
     if (gorunum === 'sayim') sayimYukle();
     if (gorunum === 'hareket') hareketYukle();
+    if (gorunum === 'siparisarsiv') arsivYukle(arsivGun, arsivDurum, arsivArama);
     if (gorunum === 'bar') barYukle(barTarih);
     if (gorunum === 'denetim') denetimYukle(barTarih);
     if (gorunum === 'tedarik') tedarikYukle();
@@ -1156,7 +1250,7 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     if (gorunum === 'katalog') ktYukle();
     if (gorunum === 'denetim') mdYukle();   // Merkez Denetim'in müdahale sekmeleri
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gorunum, kuleYukle, sevkYukle, depoYukle, sayimYukle, hareketYukle, barYukle, denetimYukle, tedarikYukle, uzYukle, ktYukle, mdYukle]);
+  }, [gorunum, kuleYukle, sevkYukle, depoYukle, sayimYukle, hareketYukle, barYukle, denetimYukle, tedarikYukle, uzYukle, ktYukle, mdYukle, arsivYukle]);
 
   // ── seçili sevkiyat talebi değişince kalem durumlarını hazırla ────────────
   const seciliTalep = useMemo(
@@ -3632,6 +3726,186 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     );
   }
 
+  // ════════════════════════ GÖRÜNÜM: SİPARİŞ ARŞİVİ ═════════════════════════
+  // Sahip kararı (soru 1/9, 2026-08-03): AYRI görünüm. Kanban 14 günlük AÇIK
+  // işi gösterir; bu ekran KAPANMIŞ dahil tüm geçmişi. "Geçen ay Köyceğiz'e ne
+  // gönderdik?" sorusunun cevabı. Sevkiyat rapor tarihçesi ikinci sekmede.
+  if (gorunum === 'siparisarsiv') {
+    if (arsivHata) return <HataBandi mesaj={arsivHata} onTekrar={() => arsivYukle(arsivGun, arsivDurum, arsivArama)} />;
+    if (!arsivVeri) return <Yukleniyor />;
+    const arSatir = Array.isArray(arsivVeri.satirlar) ? arsivVeri.satirlar : [];
+    const arOzet = arsivVeri.ozet || {};
+    const raporlar = Array.isArray(arsivRapor) ? arsivRapor : [];
+    // Durum sözlüğü — /ops/siparis/gecmis valid_durumlar ile birebir
+    const AR_DURUM = {
+      bekliyor: { ad: 'bekliyor', renk: R.amber },
+      hazirlaniyor: { ad: 'hazırlanıyor', renk: R.mavi },
+      gonderildi: { ad: 'gönderildi', renk: R.bakir },
+      teslim_edildi: { ad: 'teslim edildi', renk: R.yesil },
+      iptal: { ad: 'iptal', renk: R.not3 },
+      gonderilmedi: { ad: 'GÖNDERİLMEDİ', renk: R.kirmizi },
+    };
+    const filtrele = (g, d, a) => { arsivYukle(g, d, a); };
+    const yenidenAc = async (talep) => {
+      setArsivMesgul(String(talep.id));
+      try {
+        await api(`/ops/siparis/gecmis/${encodeURIComponent(talep.id)}/yeniden-ac`, { method: 'POST' });
+        onToast?.('✓ Sipariş kuyruğa döndü — Sipariş Akışı ▸ bekliyor kolonunda');
+        arsivYukle(arsivGun, arsivDurum, arsivArama);
+      } catch (e) {
+        onToast?.(e?.message || 'Yeniden açılamadı');
+      } finally { setArsivMesgul(''); }
+    };
+    return (
+      <>
+        <KpiSeridi kpiler={[
+          { etiket: 'Kayıt', deger: String(sayi(arsivVeri.toplam)), alt: `son ${sayi(arsivVeri.gun) || arsivGun} gün${arsivVeri.sube_arama ? ` · "${arsivVeri.sube_arama}"` : ''}` },
+          { etiket: 'Teslim edildi', deger: String(sayi(arOzet.teslim_edildi)), alt: 'zincir kapandı', renk: R.yesil },
+          {
+            etiket: 'Gönderilmedi',
+            deger: String(sayi(arOzet.gonderilmedi)),
+            alt: sayi(arOzet.gonderilmedi) ? 'kuyruğa geri alınabilir' : 'takılan yok',
+            renk: sayi(arOzet.gonderilmedi) ? R.kirmizi : R.yesil,
+          },
+          { etiket: 'İptal', deger: String(sayi(arOzet.iptal)), alt: `bekleyen ${sayi(arOzet.bekliyor)}`, renk: R.not },
+        ]} />
+
+        {/* filtre çubuğu: gün · durum · şube arama */}
+        <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap', alignItems: 'center' }}>
+          {[30, 90, 180, 365].map((g) => (
+            <div key={g} onClick={() => { setArsivGun(g); filtrele(g, arsivDurum, arsivArama); }} style={{
+              padding: '6px 13px', borderRadius: 99, fontSize: 11.5, fontWeight: 700, cursor: 'pointer',
+              border: `1px solid ${arsivGun === g ? R.bakir : R.cizgi3}`,
+              color: arsivGun === g ? R.bakir : R.metin2,
+              background: arsivGun === g ? 'rgba(217,154,78,.14)' : R.girinti,
+            }}>{g} gün</div>
+          ))}
+          <span style={{ width: 1, height: 20, background: R.cizgi3 }} />
+          {[['', 'tümü'], ...Object.entries(AR_DURUM).map(([k, v]) => [k, v.ad])].map(([k, ad]) => (
+            <div key={k || 'tum'} onClick={() => { setArsivDurum(k); filtrele(arsivGun, k, arsivArama); }} style={{
+              padding: '6px 12px', borderRadius: 99, fontSize: 11, fontWeight: 600, cursor: 'pointer',
+              border: `1px solid ${arsivDurum === k ? R.bakir : R.cizgi3}`,
+              color: arsivDurum === k ? R.bakir : R.not,
+              background: arsivDurum === k ? 'rgba(217,154,78,.14)' : 'transparent',
+            }}>{ad}</div>
+          ))}
+          <input
+            value={arsivArama}
+            onChange={(e) => setArsivArama(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && filtrele(arsivGun, arsivDurum, arsivArama)}
+            placeholder="Şube ara… (Enter)"
+            style={{
+              marginLeft: 'auto', padding: '7px 12px', borderRadius: 10, width: 150,
+              border: `1px solid ${R.cizgi3}`, background: R.girinti, color: R.krem,
+              fontSize: 12, fontFamily: 'inherit', outline: 'none',
+            }}
+          />
+        </div>
+
+        {/* alt sekmeler: sipariş arşivi · sevkiyat raporları */}
+        <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap' }}>
+          {[['siparis', `📦 Siparişler (${arSatir.length})`], ['rapor', `📝 Sevkiyat raporları (${raporlar.length})`]].map(([id, ad]) => (
+            <div key={id} onClick={() => setArsivSekme(id)} style={{
+              padding: '6px 13px', borderRadius: 99, fontSize: 11.5, fontWeight: 700, cursor: 'pointer',
+              border: `1px solid ${arsivSekme === id ? R.bakir : R.cizgi3}`,
+              color: arsivSekme === id ? R.bakir : R.metin2,
+              background: arsivSekme === id ? 'rgba(217,154,78,.14)' : R.girinti,
+            }}>{ad}</div>
+          ))}
+        </div>
+
+        {arsivSekme === 'siparis' && (arSatir.length ? (
+          <Tablo
+            baslik={`Sipariş arşivi · son ${sayi(arsivVeri.gun) || arsivGun} gün`}
+            not="tüm durumlar dahil · satıra tıkla → kalem dökümü"
+            kolonlar={[
+              { ad: 'Tarih' }, { ad: 'Şube' }, { ad: 'Durum' },
+              { ad: 'Kalem', sag: 1 }, { ad: 'Toplam adet', sag: 1 }, { ad: '' },
+            ]}
+            satirlar={arSatir.slice(0, 120).map((t, i) => {
+              const dr = AR_DURUM[t.durum] || { ad: t.durum || '—', renk: R.not };
+              return {
+                id: t.id || `ar-${i}`, _t: t,
+                hucreler: [
+                  { v: tarihKisa(t.tarih), mono: true, renk: R.not },
+                  { v: t.sube_adi || '—', kalin: true },
+                  { v: dr.ad, rozet: dr.renk },
+                  { v: String((t.kalemler || []).length), mono: true, sag: true, renk: R.not },
+                  { v: String(sayi(t.kalem_adet_toplam)), mono: true, sag: true, kalin: true },
+                  t.durum === 'gonderilmedi'
+                    ? { v: arsivMesgul === String(t.id) ? '…' : '↩ kuyruğa al', renk: R.bakirAcik }
+                    : { v: '', renk: R.not3 },
+                ],
+              };
+            })}
+            onSatir={({ _t }) => {
+              const dr = AR_DURUM[_t.durum] || { ad: _t.durum || '—', renk: R.not };
+              onCekmece?.({
+                tip: 'ARŞİV · SİPARİŞ',
+                baslik: `${_t.sube_adi || 'Şube'} · ${tarihKisa(_t.tarih)}`,
+                alt: `${dr.ad}${_t.sevkiyat_ts ? ` · sevk ${String(_t.sevkiyat_ts).slice(0, 16).replace('T', ' ')}` : ''}`,
+                kpi: [
+                  { etiket: 'Durum', deger: dr.ad, renk: dr.renk },
+                  { etiket: 'Kalem', deger: String((_t.kalemler || []).length) },
+                  { etiket: 'Toplam adet', deger: String(sayi(_t.kalem_adet_toplam)) },
+                ],
+                listeBaslik: 'Kalemler',
+                satirlar: (_t.kalemler || []).slice(0, 30).map((k) => ({
+                  ad: k?.urun_ad || k?.kalem_adi || '—',
+                  detay: k?.birim ? String(k.birim) : '',
+                  tutar: `${sayi(k?.adet)} adet`,
+                })),
+                not: _t.durum === 'gonderilmedi'
+                  ? 'Bu sipariş GÖNDERİLMEDİ olarak kapanmış. "Kuyruğa al" onu Sipariş Akışı\'nın bekliyor kolonuna geri döndürür — yeni kayıt açmaz.'
+                  : 'Arşiv salt-okurdur. Açık işler Sipariş Akışı kanbanında yönetilir.',
+                ...(_t.durum === 'gonderilmedi' ? {
+                  aksiyonlar: [{ ad: '↩ Kuyruğa geri al', birincil: true, onTikla: () => yenidenAc(_t) }],
+                } : {}),
+              });
+            }}
+          />
+        ) : <BosDurum metin="Bu filtreyle arşivde sipariş yok." />)}
+
+        {arsivSekme === 'rapor' && (raporlar.length ? (
+          <Tablo
+            baslik="Depo sevkiyat raporları · tarihçe"
+            not="sevkiyat hazırlanırken yazılan rapor metinleri · satıra tıkla → tam metin"
+            kolonlar={[
+              { ad: 'Rapor tarihi' }, { ad: 'Depo' }, { ad: 'Talep eden şube' },
+              { ad: 'Personel' }, { ad: 'Durum' },
+            ]}
+            satirlar={raporlar.slice(0, 60).map((r, i) => ({
+              id: r.id || `rp-${i}`, _r: r,
+              hucreler: [
+                { v: String(r.depo_sevkiyat_rapor_ts || r.tarih || '').slice(0, 16).replace('T', ' '), mono: true, renk: R.not },
+                { v: r.hedef_depo_adi || '—', kalin: true },
+                { v: r.talep_sube_adi || '—', renk: R.not },
+                { v: r.depo_personel_ad || '—', renk: R.not2 },
+                r.depo_sevkiyat_rapor_uyari
+                  ? { v: 'uyarılı', rozet: R.amber }
+                  : { v: r.sevkiyat_durumu || r.durum || '—', renk: R.not },
+              ],
+            }))}
+            onSatir={({ _r }) => onCekmece?.({
+              tip: 'SEVKİYAT RAPORU',
+              baslik: `${_r.hedef_depo_adi || 'Depo'} → ${_r.talep_sube_adi || 'şube'}`,
+              alt: `${String(_r.depo_sevkiyat_rapor_ts || '').slice(0, 16).replace('T', ' ')}${_r.depo_personel_ad ? ` · ${_r.depo_personel_ad}` : ''}`,
+              kpi: [
+                { etiket: 'Durum', deger: _r.sevkiyat_durumu || _r.durum || '—' },
+                { etiket: 'Uyarı', deger: _r.depo_sevkiyat_rapor_uyari ? 'var' : 'yok', renk: _r.depo_sevkiyat_rapor_uyari ? R.amber : R.yesil },
+              ],
+              listeBaslik: 'Rapor metni',
+              satirlar: [{ ad: _r.depo_sevkiyat_rapor_metni || '—', detay: '', tutar: '' }],
+              not: _r.depo_sevkiyat_rapor_uyari
+                ? `⚠ ${_r.depo_sevkiyat_rapor_uyari}`
+                : 'Depo personelinin sevkiyatı hazırlarken bıraktığı not — salt-okur tarihçe.',
+            })}
+          />
+        ) : <BosDurum metin="Bu dönemde yazılmış sevkiyat raporu yok." />)}
+      </>
+    );
+  }
+
   // ════════════════════════ GÖRÜNÜM: KONTROL KULESİ ═════════════════════════
   // ════════════════════════ GÖRÜNÜM: BAR AKIŞI ══════════════════════════════
   // Operasyon Merkezi'nin 5 P0 sekmesi tek yerde (sahip hedefi: eski sürüm kalkacak):
@@ -3864,7 +4138,7 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
 
             <Tablo
               baslik={`Açılış kasası · ${tarihKisa(barTarih)}`}
-              not={`${acilisTakip?.dunku_kapanis_tarih ? `${tarihKisa(acilisTakip.dunku_kapanis_tarih)} kapanış devri ile karşılaştırılır` : 'dünkü kapanış devri ile sabah sayımı karşılaştırılır'} · fark eşiği ±50 normal, 200+ kritik`}
+              not={`${acilisTakip?.dunku_kapanis_tarih ? `${tarihKisa(acilisTakip.dunku_kapanis_tarih)} kapanış devri ile karşılaştırılır` : 'dünkü kapanış devri ile sabah sayımı karşılaştırılır'} · fark eşiği ±50 normal, 200+ kritik · satıra tıkla → ham sabah sayımı`}
               kolonlar={[
                 { ad: 'Şube' }, { ad: 'Durum' }, { ad: 'Açılış saati' },
                 { ad: 'Sayılan', sag: 1 }, { ad: 'Beklenen devir', sag: 1 },
@@ -3942,8 +4216,10 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
                         ? { v: 'bekliyor', rozet: R.amber, sira: 2 }
                         : { v: '—', renk: R.not3, sira: 1 },
                   ],
+                  _x: x,
                 };
               })}
+              onSatir={({ _x }) => barSayimAc(_x)}
             />
           </>
         ) : <BosDurum metin="Bu gün için açılış kaydı yok." />)}
@@ -4717,6 +4993,40 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
                       <span style={{ color: R.not3 }}> · {sayi(s.toplam_devri)} devir</span>
                     </span>
                   ))}
+                </div>
+              )}
+              {/* Personel metriği ŞUBE kırılımı (soru 6/9) — hangi şubede açılış
+                  geç, kontrol yavaş. Kişi kırılımı Ekip ▸ Personel Denetimi'nde;
+                  null = "ölçülemedi", 0 dk sanılmasın diye "—" basılır. */}
+              {(opPersonelSube?.subeler || []).some((s) => s.acilis_ornek || s.kontrol_ornek) && (
+                <div style={{ marginTop: 12, paddingTop: 11, borderTop: `1px solid ${R.cizgi3}` }}>
+                  <div style={{ fontSize: 10.5, color: R.not2, fontWeight: 700, letterSpacing: '.5px', marginBottom: 8 }}>
+                    AÇILIŞ SAPMASI + KONTROL CEVABI · ŞUBE KIRILIMI
+                    <span style={{ fontWeight: 400, letterSpacing: 0, textTransform: 'none' }}> — kişi kırılımı Ekip ▸ Personel Denetimi'nde</span>
+                  </div>
+                  <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap' }}>
+                    {(opPersonelSube.subeler || []).map((s, i) => {
+                      const ac = s.acilis_sapma_ort_dk;
+                      const ko = s.kontrol_cevap_ort_dk;
+                      return (
+                        <span key={s.sube_id || i} style={{
+                          padding: '5px 11px', borderRadius: 99, fontSize: 11,
+                          background: R.girinti, border: `1px solid ${R.cizgi3}`, color: R.metin2,
+                        }}>
+                          {s.sube_adi || '—'}{' '}
+                          <span style={{ color: R.not3 }}>açılış </span>
+                          <b style={{ fontFamily: F.mono, color: ac == null ? R.not3 : sayi(ac) > 15 ? R.kirmizi : sayi(ac) > 5 ? R.amber : R.yesil }}>
+                            {ac == null ? '—' : `${sayi(ac) > 0 ? '+' : ''}${trSayi(sayi(ac), 0)} dk`}
+                          </b>
+                          <span style={{ color: R.not3 }}> · kontrol </span>
+                          <b style={{ fontFamily: F.mono, color: ko == null ? R.not3 : sayi(ko) > 30 ? R.kirmizi : sayi(ko) > 15 ? R.amber : R.yesil }}>
+                            {ko == null ? '—' : `${trSayi(sayi(ko), 0)} dk`}
+                          </b>
+                          <span style={{ color: R.not3 }}> · {sayi(s.aktif_personel_adet)} kişi</span>
+                        </span>
+                      );
+                    })}
+                  </div>
                 </div>
               )}
             </div>

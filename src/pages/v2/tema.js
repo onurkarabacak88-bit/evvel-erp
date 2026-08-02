@@ -161,6 +161,10 @@ export const MODULLER = [
     { id: 'depo', ad: 'Depo Stok', rozet: 'opsDepoKritik', renk: '#F87171' },
     { id: 'sayim', ad: 'Bardak & Ürün Sayımı', rozet: 'stokSayim', renk: '#FBBF24' },
     { id: 'hareket', ad: 'Stok Hareketi' },
+    // Sahip kararı (2026-08-03, soru 1/9): kapanmış siparişler kanban penceresinden
+    // çıkınca kayboluyordu — "geçen ay ne gönderdik" sorusu cevapsızdı.
+    // AYRI görünüm istendi (sekme değil). Sevkiyat rapor tarihçesi de burada.
+    { id: 'siparisarsiv', ad: 'Sipariş Arşivi' },
   ]},
   // Para Hareketleri: v2-YERLİ (ParaModulu.jsx). Ciro Girişi artık YERLİ kadife
   // form (2026-07-29, köprü kaldırma turu) — aynı guard'lı uca yazar (POST /ciro:

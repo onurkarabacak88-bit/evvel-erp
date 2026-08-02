@@ -483,6 +483,35 @@ const OPS_UC = {
     ],
     gunluk_satirlar: [],
   },
+  // Kişi verimlilik ikizleri (soru 6/9) — personel_id'ler davranış mock'uyla eş
+  '/api/ops/metrics/personel-verimlilik': {
+    gun_sayi: 45, sube_id: null,
+    acilis_sapma_ort_dk: 6.4, kontrol_cevap_ort_dk: 14.2, kasa_fark_frekans: 1.8,
+    veri_kalite: {},
+    acilis_saati_sapmasi: [
+      { personel_id: 'pd2', personel_ad: 'Mert Can', ornek_sayi: 19, ort_sapma_dk: 18.6, std_sapma_dk: 9.1 },
+      { personel_id: 'pd1', personel_ad: 'Elif Kaya', ornek_sayi: 22, ort_sapma_dk: 2.1, std_sapma_dk: 3.4 },
+      { personel_id: 'pd3', personel_ad: 'Deniz Ay', ornek_sayi: 17, ort_sapma_dk: -1.2, std_sapma_dk: 2.8 },
+    ],
+    kontrol_cevap_hizi: [
+      { personel_id: 'pd2', personel_ad: 'Mert Can', ornek_sayi: 31, ort_cevap_dk: 26.4, std_cevap_dk: 12.2 },
+      { personel_id: 'pd1', personel_ad: 'Elif Kaya', ornek_sayi: 40, ort_cevap_dk: 8.7, std_cevap_dk: 4.1 },
+    ],
+    kasa_farki_frekansi: [],
+    pin_hata_saat_dagilimi: [
+      { dilim: 'aksam', adet: 9 }, { dilim: 'sabah', adet: 3 }, { dilim: 'gece', adet: 1 },
+    ],
+  },
+  // Personel metriği ŞUBE kırılımı (soru 6/9) — null = ölçülemedi ("—")
+  '/api/ops/personel-metrik-sube': {
+    gun: 30,
+    subeler: [
+      { sube_id: 's0', sube_adi: 'Zafer', acilis_sapma_ort_dk: 2.4, kontrol_cevap_ort_dk: 9.1, acilis_ornek: 28, kontrol_ornek: 41, aktif_personel_adet: 5 },
+      { sube_id: 's1', sube_adi: 'Köyceğiz', acilis_sapma_ort_dk: 17.8, kontrol_cevap_ort_dk: 31.5, acilis_ornek: 24, kontrol_ornek: 30, aktif_personel_adet: 4 },
+      { sube_id: 's3', sube_adi: 'Gazze', acilis_sapma_ort_dk: -0.8, kontrol_cevap_ort_dk: 12.3, acilis_ornek: 21, kontrol_ornek: 26, aktif_personel_adet: 3 },
+      { sube_id: 's2', sube_adi: 'Alsancak', acilis_sapma_ort_dk: null, kontrol_cevap_ort_dk: null, acilis_ornek: 0, kontrol_ornek: 0, aktif_personel_adet: 0 },
+    ],
+  },
   '/api/ops/sube-personel-puan': {
     personeller: [
       { personel_id: 'pp1', ad_soyad: 'DENİZ KÜÇÜKKIRLI', puan: 100, tamam: 34, gecikti: 0 },
@@ -596,6 +625,33 @@ const OPS_UC = {
       { sube_id: 's3', sube_adi: 'GAZZE', acilis_durum: 'tamam', acilis_tamam: true, acilis_ts: bugunISO + ' 09:05:00', personel_saat: '09:00', personel_ad: 'Deniz Ay', panel_acilis: true, acilis_kasa_tl: 2612, beklenen_devir_tl: 2600, fark_tl: 12, fark_seviye: 'normal', dunku_kapanis_tarih: gunEkleISO(-1), dunku_kapanis_personel: 'Deniz Ay', uyumsuzluk_id: null, uyumsuzluk_cozuldu: false, uyumsuzluk_bekliyor: false },
       { sube_id: 's4', sube_adi: 'TEMA', acilis_durum: 'tamam', acilis_tamam: true, acilis_ts: bugunISO + ' 08:55:00', personel_saat: '08:45', personel_ad: 'Burak Er', panel_acilis: false, acilis_kasa_tl: 4100, beklenen_devir_tl: 4000, fark_tl: 100, fark_seviye: 'uyari', dunku_kapanis_tarih: gunEkleISO(-1), dunku_kapanis_personel: 'Burak Er', uyumsuzluk_id: 'u2', uyumsuzluk_cozuldu: true, uyumsuzluk_bekliyor: false },
       { sube_id: 's2', sube_adi: 'ALSANCAK', acilis_durum: 'bekliyor', acilis_tamam: false, acilis_ts: '', personel_saat: '', personel_ad: '', panel_acilis: false, acilis_kasa_tl: null, beklenen_devir_tl: null, fark_tl: null, fark_seviye: null, dunku_kapanis_tarih: gunEkleISO(-1), dunku_kapanis_personel: 'Selin Ak', uyumsuzluk_id: null, uyumsuzluk_cozuldu: false, uyumsuzluk_bekliyor: false },
+    ],
+  },
+  // HAM sabah sayımı (soru 7/9) — açılış satırı tıklanınca çekilir.
+  // sube_id'ler acilis-kasa-takip ile eş; ALSANCAK kaydı YOK (bekliyor).
+  '/api/ops/sayimlar': {
+    limit: 60, year_month: bugunISO.slice(0, 7), gun: bugunISO,
+    satirlar: [
+      {
+        event_id: 'sy1', sube_id: 's0', sube_adi: 'ZAFER', tarih: bugunISO,
+        cevap_ts: bugunISO + ' 08:12:00', personel_id: 'pd1', personel_ad: 'Elif Kaya', bildirim_saati: '08:10',
+        stok_sayim: { bardak_kucuk: 140, bardak_buyuk: 95, bardak_plastik: 60, karton_bardak: 200, su_adet: 48, sut_litre: 22, redbull_adet: 12, soda_adet: 18, cookie_adet: 9, pasta_adet: 14, surup_adet: 6, kahve_paket: 4, kapak_adet: 180, pecete_paket: 11, diger_sarf: 0, pasta_limonlu: 5, pasta_cikolatali: 9 },
+      },
+      {
+        event_id: 'sy2', sube_id: 's1', sube_adi: 'KÖYCEĞİZ', tarih: bugunISO,
+        cevap_ts: bugunISO + ' 08:41:00', personel_id: 'pd2', personel_ad: 'Mert Can', bildirim_saati: '08:40',
+        stok_sayim: { bardak_kucuk: 80, bardak_buyuk: 55, su_adet: 30, sut_litre: 14, pasta_adet: 8, kapak_adet: 96 },
+      },
+      {
+        event_id: 'sy3', sube_id: 's3', sube_adi: 'GAZZE', tarih: bugunISO,
+        cevap_ts: bugunISO + ' 09:05:00', personel_id: 'pd3', personel_ad: 'Deniz Ay', bildirim_saati: '09:02',
+        stok_sayim: {},
+      },
+      {
+        event_id: 'sy4', sube_id: 's4', sube_adi: 'TEMA', tarih: bugunISO,
+        cevap_ts: bugunISO + ' 08:55:00', personel_id: 'pd4', personel_ad: 'Burak Er', bildirim_saati: '08:50',
+        stok_sayim: { bardak_kucuk: 110, su_adet: 40, sut_litre: 18, redbull_adet: 6, pasta_adet: 11 },
+      },
     ],
   },
   // Nakit denklemi: sabah_kasa + nakit − teslim − devir − ara_teslim − gider = Δ
@@ -1079,6 +1135,99 @@ const MALIYET_UC = {
       { sube_id: 's1', sube_adi: 'Köyceğiz', toplam_puan: 24, durum: 'riskli', detay: [] },
       { sube_id: 's3', sube_adi: 'Gazze', toplam_puan: 6, durum: 'izlemede', detay: [] },
       { sube_id: 's0', sube_adi: 'Zafer', toplam_puan: 0, durum: 'temiz', detay: [] },
+    ],
+  },
+  // Haftalık şube kıyası (soru 4/9)
+  '/api/ops/haftalik-karsilastirma': {
+    toplam_bu_hafta: 578400, toplam_gecen_hafta: 601200, genel_degisim_pct: -3.8,
+    genel_trend: [],
+    subeler: [
+      { sube_id: 's0', sube_adi: 'Zafer', bu_hafta: 224100, gecen_hafta: 205800, degisim_pct: 8.9, sira: 1, trend: [] },
+      { sube_id: 's1', sube_adi: 'Köyceğiz', bu_hafta: 158200, gecen_hafta: 189400, degisim_pct: -16.5, sira: 2, trend: [] },
+      { sube_id: 's3', sube_adi: 'Gazze', bu_hafta: 112800, gecen_hafta: 118600, degisim_pct: -4.9, sira: 3, trend: [] },
+      { sube_id: 's2', sube_adi: 'Alsancak', bu_hafta: 83300, gecen_hafta: 87400, degisim_pct: -4.7, sira: 4, trend: [] },
+    ],
+  },
+  // Şube gider kıyası (soru 5/9) — satırlarda sube_adi YOK, id'den eşlenir
+  '/api/ops/metrics/finans-ozet': {
+    gun_sayi: 30, sube_id: null,
+    ciro_gider_orani_ozet: 8.4, kart_faiz_yuku_orani: 0.012, pos_yanan_para_orani: 0.0187,
+    toplam_kart_maliyeti_orani: 0.031,
+    veri_kalite: {},
+    ciro_gider_orani: [
+      { tarih: gunEkleISO(-1), sube_id: 's0', ciro: 64801, gider: 5200, ciro_gider_orani: 12.46 },
+      { tarih: gunEkleISO(-2), sube_id: 's0', ciro: 61200, gider: 4800, ciro_gider_orani: 12.75 },
+      { tarih: gunEkleISO(-1), sube_id: 's1', ciro: 50545, gider: 9400, ciro_gider_orani: 5.38 },
+      { tarih: gunEkleISO(-2), sube_id: 's1', ciro: 48200, gider: 11200, ciro_gider_orani: 4.3 },
+      { tarih: gunEkleISO(-1), sube_id: 's3', ciro: 40177, gider: 3100, ciro_gider_orani: 12.96 },
+      { tarih: gunEkleISO(-1), sube_id: 's2', ciro: 28514, gider: 2400, ciro_gider_orani: 11.88 },
+    ],
+    anlik_gider_kategori_trend: [
+      { hafta: gunEkleISO(-6), kategori: 'Gıda/Malzeme', kayit_adet: 14, toplam_tutar: 18400 },
+      { hafta: gunEkleISO(-6), kategori: 'Nakliye', kayit_adet: 5, toplam_tutar: 6200 },
+      { hafta: gunEkleISO(-6), kategori: 'Temizlik', kayit_adet: 4, toplam_tutar: 3100 },
+      { hafta: gunEkleISO(-13), kategori: 'Gıda/Malzeme', kayit_adet: 11, toplam_tutar: 14100 },
+    ],
+    kart_faiz_yuku: [],
+    nakit_akis_tahmin_dogrulugu: null,
+  },
+  // Tedarikçi ödemeleri NAKİT+KART birleşik (soru 3/9) — kartla ödeme kasa
+  // defterinde YOKTUR, yalnız burada görünür.
+  '/api/vadeli-alimlar/gecmis': {
+    satirlar: [
+      { tarih: gunEkleISO(-1), tutar: 39800, odeme_yontemi: 'nakit', aciklama: 'SÜTAŞ vadeli ödeme', vadeli_id: 'va2', vadeli_aciklama: 'süt · Temmuz faturası', tedarikci: 'SÜTAŞ' },
+      { tarih: gunEkleISO(-2), tutar: 28400, odeme_yontemi: 'kart', aciklama: 'SÜTAŞ kalan bakiye', vadeli_id: 'va2', vadeli_aciklama: 'süt · Temmuz faturası', tedarikci: 'SÜTAŞ' },
+      { tarih: gunEkleISO(-6), tutar: 64200, odeme_yontemi: 'nakit', aciklama: 'KAHVE DÜNYASI çekirdek', vadeli_id: 'va1', vadeli_aciklama: 'çekirdek alımı', tedarikci: 'KAHVE DÜNYASI' },
+      { tarih: gunEkleISO(-9), tutar: 12600, odeme_yontemi: 'kart', aciklama: 'PAPER CUP bardak', vadeli_id: 'va3', vadeli_aciklama: 'karton bardak', tedarikci: 'PAPER CUP CO.' },
+    ],
+    ozet: { adet: 4, toplam: 145000 },
+  },
+  // BM-2 MUTABAKAT ZİNCİRİ (sahip kararı 2/9: zincir 5 halkaya çıktı).
+  // odeme_izi: true=eşleşti, false=eşleşmedi, null=fatura yok (ölçülemedi)
+  '/api/fatura/mutabakat-zinciri': {
+    pencere_gun: 60, baslangic: '2026-07-15', siparis_adet: 9,
+    sayac: { tam: 5, teslim_yok: 1, belge_acik: 1, fatura_yok: 1, odeme_izi_yok: 1 },
+    eksik_zincirler: [
+      { id: 'mz1', tedarikci_ad: 'SÜTAŞ', siparis_tarihi: gunEkleISO(-4), eksik: 'odeme_izi_yok',
+        halkalar: { siparis: true, teslim: true, belge: true, fatura: true, odeme_izi: false } },
+      { id: 'mz2', tedarikci_ad: 'FEZ KAHVE GIDA', siparis_tarihi: gunEkleISO(-7), eksik: 'belge_acik',
+        halkalar: { siparis: true, teslim: true, belge: false, fatura: false, odeme_izi: null } },
+      { id: 'mz3', tedarikci_ad: 'PAPER CUP CO.', siparis_tarihi: gunEkleISO(-2), eksik: 'teslim_yok',
+        halkalar: { siparis: true, teslim: false, belge: false, fatura: false, odeme_izi: null } },
+      { id: 'mz4', tedarikci_ad: 'ATALAY KAHVE', siparis_tarihi: gunEkleISO(-12), eksik: 'fatura_yok',
+        halkalar: { siparis: true, teslim: true, belge: true, fatura: false, odeme_izi: null } },
+    ],
+    not: 'Belge-SEVİYESİ zincir (v1). Ödeme izi = tutar/tarih aday eşleşmesi (kesin mutabakat değil).',
+  },
+  // SİPARİŞ ARŞİVİ (sahip kararı: ayrı görünüm) — tüm durumlar + yeniden-aç
+  '/api/ops/siparis/gecmis': {
+    gun: 90, sube_arama: null, durum_filtre: null, toplam: 5,
+    ozet: { teslim_edildi: 2, iptal: 1, gonderilmedi: 1, bekliyor: 1 },
+    satirlar: [
+      { id: 'ag1', sube_id: 's1', sube_adi: 'Köyceğiz', tarih: gunEkleISO(-2), olusturma: `${gunEkleISO(-2)}T09:10`, durum: 'teslim_edildi', sevkiyat_ts: `${gunEkleISO(-1)}T14:20`,
+        kalemler: [{ urun_ad: 'Süt 3.5%', adet: 40 }, { urun_ad: 'Karton bardak 8 oz', adet: 2000 }], kalem_adet_toplam: 2040 },
+      { id: 'ag2', sube_id: 's3', sube_adi: 'Gazze', tarih: gunEkleISO(-9), olusturma: `${gunEkleISO(-9)}T11:05`, durum: 'gonderilmedi', gonderilmedi_ts: `${gunEkleISO(-8)}T08:00`,
+        kalemler: [{ urun_ad: 'Çekirdek harman', adet: 12 }], kalem_adet_toplam: 12 },
+      { id: 'ag3', sube_id: 's0', sube_adi: 'Zafer', tarih: gunEkleISO(-15), olusturma: `${gunEkleISO(-15)}T10:00`, durum: 'iptal',
+        kalemler: [{ urun_ad: 'Peçete (paket)', adet: 30 }], kalem_adet_toplam: 30 },
+      { id: 'ag4', sube_id: 's2', sube_adi: 'Alsancak', tarih: gunEkleISO(-24), olusturma: `${gunEkleISO(-24)}T13:30`, durum: 'teslim_edildi', sevkiyat_ts: `${gunEkleISO(-23)}T16:00`,
+        kalemler: [{ urun_ad: 'Vanilya şurup', adet: 6 }, { urun_ad: 'Süt 3.5%', adet: 80 }], kalem_adet_toplam: 86 },
+      { id: 'ag5', sube_id: 's1', sube_adi: 'Köyceğiz', tarih: bugunISO, olusturma: `${bugunISO}T08:40`, durum: 'bekliyor',
+        kalemler: [{ urun_ad: 'Süt 3.5%', adet: 20 }], kalem_adet_toplam: 20 },
+    ],
+  },
+  '/api/ops/siparis/gecmis/ag2/yeniden-ac': { ok: true },
+  '/api/ops/siparis/depo-sevkiyat-raporlari': {
+    gun: 90, limit: 60, hedef_depo_sube_id: null,
+    raporlar: [
+      { id: 'ag1', sube_id: 's1', talep_sube_adi: 'Köyceğiz', tarih: gunEkleISO(-1), durum: 'teslim_edildi', sevkiyat_durumu: 'teslim_edildi',
+        hedef_depo_sube_id: 's0', hedef_depo_adi: 'Zafer (Merkez Depo)',
+        depo_sevkiyat_rapor_metni: 'Süt 40 tam verildi. Karton bardak 2000 istendi, depoda 1800 vardı — 1800 gönderildi, 200 eksik not düşüldü.',
+        depo_sevkiyat_rapor_ts: `${gunEkleISO(-1)}T14:18`, depo_sevkiyat_rapor_uyari: 'kısmi gönderim: karton bardak −200', depo_personel_ad: 'Okan B.' },
+      { id: 'ag4', sube_id: 's2', talep_sube_adi: 'Alsancak', tarih: gunEkleISO(-23), durum: 'teslim_edildi', sevkiyat_durumu: 'teslim_edildi',
+        hedef_depo_sube_id: 's0', hedef_depo_adi: 'Zafer (Merkez Depo)',
+        depo_sevkiyat_rapor_metni: 'Tüm kalemler eksiksiz hazırlandı, aynı gün araca verildi.',
+        depo_sevkiyat_rapor_ts: `${gunEkleISO(-23)}T15:55`, depo_sevkiyat_rapor_uyari: null, depo_personel_ad: 'Okan B.' },
     ],
   },
   // Toptancıya GİDEN yönlendirme logu — v2 bu ucu HİÇ çağırmıyordu
@@ -1834,12 +1983,27 @@ const DENETIM_UC = {
     ogrenme_aktif: true, n_esigi: 5,
     // ⚠️ Gerçek şema (duyu_yavru:497): kural_id/tur/bag_n/etiketli_n/dogru_n/
     // yanlis_n/posterior_ort/wilson_alt/n_esigi_rozet/agirlik_uygulaniyor
+    // ⚠️ Mock sadakati: gerçek karne KURAL_KUTUPHANESI'nden üretilir (duyu_yavru
+    // :482) → kural_id = R1..R10, tur = T1/T2. Eski mock 'gec_kalma_grace' gibi
+    // PUAN kurallarının adlarını taşıyordu — o başka defterin sözlüğü.
     karne: [
-      { kural_id: 'gec_kalma_grace', tur: 'personel', bag_n: 118, etiketli_n: 34, dogru_n: 31, yanlis_n: 3, posterior_ort: 0.89, wilson_alt: 0.76, n_esigi_rozet: 'aktif_olabilir', agirlik_uygulaniyor: true },
-      { kural_id: 'temiz_hafta', tur: 'personel', bag_n: 12, etiketli_n: 8, dogru_n: 6, yanlis_n: 2, posterior_ort: 0.72, wilson_alt: 0.41, n_esigi_rozet: 'zayif', agirlik_uygulaniyor: false },
-      { kural_id: 'cuma_kasa_kesisimi', tur: 'kasa', bag_n: 3, etiketli_n: 0, dogru_n: 0, yanlis_n: 0, posterior_ort: null, wilson_alt: null, n_esigi_rozet: 'veri_yetersiz', agirlik_uygulaniyor: false },
+      { kural_id: 'R2_gec_kapanis', tur: 'T1', bag_n: 118, etiketli_n: 34, dogru_n: 31, yanlis_n: 3, posterior_ort: 0.89, wilson_alt: 0.76, n_esigi_rozet: 'aktif_olabilir', agirlik_uygulaniyor: true },
+      { kural_id: 'R6_gec_acilis_fark', tur: 'T1', bag_n: 12, etiketli_n: 8, dogru_n: 6, yanlis_n: 2, posterior_ort: 0.72, wilson_alt: 0.41, n_esigi_rozet: 'zayif', agirlik_uygulaniyor: false },
+      { kural_id: 'R10_kabul_stok', tur: 'T2', bag_n: 3, etiketli_n: 0, dogru_n: 0, yanlis_n: 0, posterior_ort: null, wilson_alt: null, n_esigi_rozet: 'veri_yetersiz', agirlik_uygulaniyor: false },
     ],
     not: 'Kurallar VERİ\'dir — ağırlık yalnız eşiği geçince uygulanır.',
+  },
+  // Kural kütüphanesi tanımları (soru 8/9) — karne satırı tıklanınca çekilir.
+  // YALNIZ `kurallar` okunur; son_baglar bilinçli boş (Bağ Defteri'nin işi).
+  '/api/duyu/yavru-kurallari': {
+    kural_n: 3,
+    kurallar: [
+      { kural_id: 'R2_gec_kapanis', surum: 1, gecerli_bas: '2026-07-06', tur: 'T1', yasam_dongusu: 'duragan_bag', pencere_gun: 0, pencere_capasi: 'occurred_at', ebeveyn: 'operasyon_ritmi/operasyon.ritim.dilim_kesiti(KAPANIS,gecikme>30)', cocuk: 'kapanis_sonrasi/operasyon.kayit.kapanis_sonrasi_ciro', eslesme: 'sube_gun', aciklama: 'Kapanış 30+ dk gecikti → kapanış-sonrası kayıt ondandır', aktif: true },
+      { kural_id: 'R6_gec_acilis_fark', surum: 1, gecerli_bas: '2026-07-07', tur: 'T1', yasam_dongusu: 'duragan_bag', pencere_gun: 0, pencere_capasi: 'occurred_at', ebeveyn: 'operasyon_ritmi/operasyon.ritim.dilim_kesiti(ACILIS,gecikme>30)', cocuk: 'sube_operasyon_uyari/ACILIS_KASA_FARK', eslesme: 'sube_gun', aciklama: 'Açılış 30+ dk gecikti → açılış kasa farkı ona eşlik ediyor', aktif: true },
+      { kural_id: 'R10_kabul_stok', surum: 1, gecerli_bas: '2026-07-07', tur: 'T2', yasam_dongusu: 'beklenti_acik_kapali', pencere_gun: 1, pencere_capasi: 'payload:kabul_ts', ebeveyn: 'stok_yolda/kabul (kabul_ts+kabul_adet>0)', cocuk: 'sube_depo_stok_hareket/miktar>0 (TESLIM_GIRIS ailesi)', eslesme: 'sube_kalem', aciklama: 'Mal kabulü onaylandı → stok hareket defterinde GİRİŞ doğmalı; doğmadıysa kabul onaylı ama stok artmıyor vakası', aktif: true },
+    ],
+    son_baglar: [],
+    not: 'T1 bağı sinyali KAPATMAZ; kural ekleme yalnız insan onayıyla.',
   },
   '/api/duyu/sinapsler': { kesit: 14, sinaps_olaylari: 6, kase_canli: true, zincir_canli: true },
   '/api/strateji': {

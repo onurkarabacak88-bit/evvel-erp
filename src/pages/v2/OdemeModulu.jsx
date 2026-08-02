@@ -90,6 +90,13 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
   const [kokpit, setKokpit] = useState(null);
   const [cari, setCari] = useState(null);
   const [gecmis, setGecmis] = useState([]);
+  // Sahip kararı (soru 3/9): tedarikçi ödemeleri NAKİT+KART birleşik.
+  // Kasa defteri kartla yapılan tedarikçi ödemesini GÖREMEZ (kasadan para
+  // çıkmaz, kart hareketine yazılır) — /vadeli-alimlar/gecmis iki kanalı
+  // tedarikçi bağıyla birleştirir. Üstteki liste ile ÇİFT SAYIM olmasın diye
+  // ayrı blok: nakit satırlar iki kaynakta da var, birleştirilmez.
+  const [tedOdeme, setTedOdeme] = useState(null);
+  const [tedKanal, setTedKanal] = useState('');
   const [vade, setVade] = useState(null);   // duyu 5/6: vade disiplini (salt-okur)
   const [modal, setModal] = useState(null);
   const [calisiyor, setCalisiyor] = useState(false);
@@ -104,7 +111,9 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
       api('/odeme-plani/kokpit?personel=1').catch(() => null),
       api('/fatura/cari-ozet').catch(() => null),
       api(`/ledger?limit=400&ay=${ay}`).catch(() => null),
-    ]).then(([k, ko, c, l]) => {
+      api('/vadeli-alimlar/gecmis?limit=200').catch(() => null),
+    ]).then(([k, ko, c, l, tg]) => {
+      setTedOdeme(Array.isArray(tg?.satirlar) ? tg.satirlar : (Array.isArray(tg) ? tg : []));
       setKuyruk(Array.isArray(k) ? k : []);
       setKokpit(ko);
       setCari(c);
@@ -1289,6 +1298,73 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
           ))}
         </div>
       )}
+      {/* ── TEDARİKÇİ ÖDEMELERİ · NAKİT + KART BİRLEŞİK (soru 3/9) ──
+          Alttaki liste KASA defterinden gelir; kartla yapılan tedarikçi
+          ödemesini GÖREMEZ (kasadan para çıkmaz). Bu blok iki kanalı
+          tedarikçi bağıyla birleştirir. Nakit satırlar ALTTAKİ listede de
+          görünür — o yüzden ayrı blok, toplamlar toplanMAZ. */}
+      {Array.isArray(tedOdeme) && tedOdeme.length > 0 && (() => {
+        const ayli = tedOdeme.filter((r) => String(r.tarih || '').startsWith(ay));
+        const kaynak = ayli.length ? ayli : tedOdeme.slice(0, 30);
+        const suzulmus = tedKanal ? kaynak.filter((r) => r.odeme_yontemi === tedKanal) : kaynak;
+        const tNakit = kaynak.filter((r) => r.odeme_yontemi === 'nakit').reduce((s, r) => s + sayi(r.tutar), 0);
+        const tKart = kaynak.filter((r) => r.odeme_yontemi === 'kart').reduce((s, r) => s + sayi(r.tutar), 0);
+        return (
+          <div style={{ ...kartYuzey, padding: '16px 18px', marginBottom: 14 }}>
+            <div style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              paddingBottom: 10, borderBottom: `1px solid ${R.cizgi2}`, marginBottom: 11, flexWrap: 'wrap', gap: 8,
+            }}>
+              <span style={{ fontFamily: F.baslik, fontSize: 14.5, fontWeight: 600 }}>
+                🤝 Tedarikçi ödemeleri · nakit + kart{ayli.length ? ` · ${ayAdi}` : ' · son kayıtlar'}
+              </span>
+              <span style={{ fontSize: 12, color: R.not }}>
+                nakit <b style={{ fontFamily: F.mono, color: R.yesil }}>{fmt(tNakit)}</b>
+                {' · '}kart <b style={{ fontFamily: F.mono, color: R.amber }}>{fmt(tKart)}</b>
+              </span>
+            </div>
+            <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
+              {[['', 'tümü'], ['nakit', 'nakit'], ['kart', 'kart']].map(([k, adx]) => (
+                <div key={k || 'tum'} onClick={() => setTedKanal(k)} style={{
+                  padding: '5px 12px', borderRadius: 99, fontSize: 11, fontWeight: 700, cursor: 'pointer',
+                  border: `1px solid ${tedKanal === k ? R.bakir : R.cizgi3}`,
+                  color: tedKanal === k ? R.bakir : R.not,
+                  background: tedKanal === k ? 'rgba(217,154,78,.14)' : 'transparent',
+                }}>{adx}</div>
+              ))}
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+              {suzulmus.slice(0, 14).map((r, i) => (
+                <div key={`${r.vadeli_id || ''}-${i}`} style={{
+                  display: 'flex', alignItems: 'center', gap: 10, fontSize: 11.5,
+                  padding: '7px 11px', borderRadius: 9, background: R.girinti,
+                }}>
+                  <span style={{ fontFamily: F.mono, color: R.not, flexShrink: 0, width: 52 }}>{kisaTarih(r.tarih)}</span>
+                  <span style={{
+                    flexShrink: 0, padding: '2px 9px', borderRadius: 99, fontSize: 10, fontWeight: 700,
+                    background: r.odeme_yontemi === 'kart' ? `${R.amber}1e` : `${R.yesil}1e`,
+                    color: r.odeme_yontemi === 'kart' ? R.amber : R.yesil,
+                  }}>{r.odeme_yontemi}</span>
+                  <span style={{ fontWeight: 700, flexShrink: 0, minWidth: 100 }}>{r.tedarikci || '—'}</span>
+                  <span style={{
+                    flex: 1, minWidth: 0, color: R.not2,
+                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                  }}>{r.vadeli_aciklama || r.aciklama || ''}</span>
+                  <span style={{ fontFamily: F.mono, fontWeight: 700, flexShrink: 0 }}>{fmt(sayi(r.tutar))}</span>
+                </div>
+              ))}
+              {!suzulmus.length && (
+                <div style={{ fontSize: 12, color: R.not3, padding: '6px 0' }}>Bu kanalda kayıt yok.</div>
+              )}
+            </div>
+            <div style={{ fontSize: 10.5, color: R.not2, marginTop: 8 }}>
+              ℹ Nakit satırlar alttaki kasa listesinde de görünür — iki blok toplanmaz.
+              Kart satırları yalnız burada (kasadan para çıkmadığı için kasa defterinde yoktur).
+            </div>
+          </div>
+        );
+      })()}
+
       {gecmis.length ? (
         <Tablo
           baslik={`Ödeme geçmişi · ${ayAdi}`}

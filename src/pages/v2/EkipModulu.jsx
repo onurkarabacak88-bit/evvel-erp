@@ -205,6 +205,10 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
   const [pdGec, setPdGec] = useState(null);
   const [pdKasa, setPdKasa] = useState(null);
   const [pdKarne, setPdKarne] = useState(null);
+  // Sahip kararı (2026-08-03, soru 6/9): /ops/metrics/personel-verimlilik'in
+  // KİŞİ ikizleri buraya dağıtıldı — tepki hızı çekmecede, PIN dağılımı blokta.
+  // kasa_farki_frekansi ALINMADI: davranış tablosundaki kasa farkıyla mükerrer.
+  const [pdVerim, setPdVerim] = useState(null);
   const [pdHata, setPdHata] = useState('');
   // ── YERLİ VARDİYA PLANLAYICI (köprü kaldırma turu, 2026-07-30) ────────────
   // Klasik VardiyaPlanlamaV2 (5338 satır) çekirdeği: gün planı + atama/sil +
@@ -942,6 +946,35 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
     const takip = d?.takip || null;
     const sev = takip ? (TAKIP_SEVIYE[takip.takip_seviyesi] || TAKIP_SEVIYE.izlemede) : null;
     const agirlikToplam = satirlar.reduce((s, x) => s + sayi(x.agirlik), 0);
+    // Kişi tepki ikizleri (soru 6/9): /ops/metrics/personel-verimlilik'ten bu
+    // personelin kontrol cevap hızı + açılış sapması — zincir ortalamasıyla
+    // kıyaslı. Veri yoksa KPI hiç eklenmez ("0 dk" sahte güven vermesin).
+    const pid = String(p.personel_id);
+    const vKontrol = (pdVerim?.kontrol_cevap_hizi || []).find((x) => String(x.personel_id) === pid) || null;
+    const vAcilis = (pdVerim?.acilis_saati_sapmasi || []).find((x) => String(x.personel_id) === pid) || null;
+    const zincirKontrol = pdVerim?.kontrol_cevap_ort_dk;
+    const zincirAcilis = pdVerim?.acilis_sapma_ort_dk;
+    const verimKpi = [];
+    if (vKontrol && vKontrol.ort_cevap_dk != null) {
+      const v = sayi(vKontrol.ort_cevap_dk);
+      const z = zincirKontrol != null ? sayi(zincirKontrol) : null;
+      verimKpi.push({
+        etiket: 'Kontrol tepkisi',
+        deger: `${trSayi(v)} dk`,
+        alt: z != null ? `zincir ort. ${trSayi(z)} dk · ${sayi(vKontrol.ornek_sayi)} örnek` : `${sayi(vKontrol.ornek_sayi)} örnek`,
+        renk: z != null && v > z * 1.5 ? R.kirmizi : z != null && v > z ? R.amber : R.yesil,
+      });
+    }
+    if (vAcilis && vAcilis.ort_sapma_dk != null) {
+      const v = sayi(vAcilis.ort_sapma_dk);
+      const z = zincirAcilis != null ? sayi(zincirAcilis) : null;
+      verimKpi.push({
+        etiket: 'Açılış sapması',
+        deger: `${v > 0 ? '+' : ''}${trSayi(v)} dk`,
+        alt: z != null ? `zincir ort. ${z > 0 ? '+' : ''}${trSayi(z)} dk · ${sayi(vAcilis.ornek_sayi)} örnek` : `${sayi(vAcilis.ornek_sayi)} örnek`,
+        renk: v > 15 ? R.kirmizi : v > 5 ? R.amber : R.yesil,
+      });
+    }
     onCekmece?.({
       tip: 'RİSK SİNYALİ · OLAY DÖKÜMÜ',
       baslik: p.personel_ad || 'Personel',
@@ -955,6 +988,7 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
           deger: sev ? sev.ad : 'yok',
           renk: sev ? sev.renk : R.yesil,
         },
+        ...verimKpi,
       ],
       listeBaslik: 'Sinyaller · yeniden eskiye',
       satirlar: satirlar.slice(0, 40).map((s) => {
@@ -994,6 +1028,10 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
     api('/ops/kasiyer-karne?gun=30')
       .then((d) => setPdKarne(Array.isArray(d?.karne) ? d.karne : []))
       .catch(() => setPdKarne([]));
+    // Kişi verimlilik ikizleri (soru 6/9) — davranış tablosuyla aynı 45 gün
+    api('/ops/metrics/personel-verimlilik?gun=45')
+      .then((d) => setPdVerim(d || null))
+      .catch(() => setPdVerim(null));
   };
 
   useEffect(() => {
@@ -1573,6 +1611,35 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
             }}>{ad}</div>
           ))}
         </div>
+
+        {/* PIN hatası saat dağılımı (soru 6/9) — sunucu bunu KİŞİYE değil saat
+            dilimine bağlar (kim olduğu bilinmez, o yüzden davranış tablosuna
+            sütun olarak GİRMEZ). Hangi dilimde yoğunlaşıyor: gözlem verisi. */}
+        {pdSekme === 'davranis' && (pdVerim?.pin_hata_saat_dagilimi || []).length > 0 && (() => {
+          const dilimler = pdVerim.pin_hata_saat_dagilimi;
+          const DILIM_AD = { sabah: '🌅 Sabah (05-10)', ogle: '☀️ Öğle (11-16)', aksam: '🌆 Akşam (17-22)', gece: '🌙 Gece (23-04)' };
+          const toplam = dilimler.reduce((s, x) => s + sayi(x.adet), 0);
+          return (
+            <div style={{
+              ...kartYuzey, padding: '11px 16px', marginBottom: 12,
+              display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+            }}>
+              <span style={{
+                padding: '3px 10px', borderRadius: 99, fontSize: 10.5, fontWeight: 700,
+                background: 'rgba(217,154,78,.14)', color: R.amber, border: `1px solid ${R.amber}44`,
+              }}>🔐 PIN hatası · {toplam}</span>
+              {dilimler.map((x, i) => (
+                <span key={x.dilim || i} style={{ fontSize: 11.5, color: R.metin2 }}>
+                  {DILIM_AD[x.dilim] || x.dilim}{' '}
+                  <b style={{ fontFamily: F.mono, color: sayi(x.adet) >= toplam / 2 ? R.kirmizi : R.krem }}>{sayi(x.adet)}</b>
+                </span>
+              ))}
+              <span style={{ fontSize: 10.5, color: R.not3 }}>
+                son 45 gün · kişiye bağlanamaz, saat dilimi gözlemi
+              </span>
+            </div>
+          );
+        })()}
 
         {pdSekme === 'davranis' && (davranis.length ? (
           <Tablo
