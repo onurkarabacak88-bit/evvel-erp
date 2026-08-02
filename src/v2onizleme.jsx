@@ -950,6 +950,70 @@ const MALIYET_UC = {
       },
     },
   },
+  // Dört duyu ucu — hepsi v2'de HİÇ çağrılmıyordu, tek "duyu kesiti" bloğunda
+  '/api/duyu/uyanis-hazirlik': {
+    durum: '3/5 kriter geçti',
+    motor: 'UYUYOR — tüm kriterler geçene VE insan onayına kadar uyanmaz',
+    olgunluk_bekcisi_gun: 60,
+    kriterler: [
+      { kriter: 'olgun_veri_yasi', hedef: '>=60 gün', durum: '71 gün', gecti: true },
+      { kriter: 'etiket_cesitliligi', hedef: '>=50 etiket + onay&red + >=3 işlem türü', durum: '34 etiket, 2 kaynak, 4 tür', gecti: false },
+      { kriter: 'sube_dilim_kapsama', hedef: '>=30 kesit', durum: '48 kesit', gecti: true },
+      { kriter: 'bagimsiz_kanit', hedef: '>=2 aile', durum: '1 aile', gecti: false },
+      { kriter: 'arindirma_haritasi', hedef: '>=10 eşleme', durum: '14 eşleme', gecti: true },
+    ],
+    not: 'Bu bir takvim değil termometre.',
+  },
+  '/api/duyu/mudahale-izi': {
+    kesit: { bas: gunEkleISO(-29), gun: 30 }, toplam: 23,
+    islem_turleri: [
+      { islem: 'GERI_AL', tablo: 'kasa_hareketleri', adet: 9, ilk: gunEkleISO(-24), son: gunEkleISO(-2) },
+      { islem: 'DUZELT', tablo: 'ciro', adet: 8, ilk: gunEkleISO(-27), son: gunEkleISO(-5) },
+      { islem: 'IPTAL', tablo: 'odeme_plani', adet: 6, ilk: gunEkleISO(-21), son: gunEkleISO(-9) },
+    ],
+    gunluk_yogunluk: [],
+    not: 'SAHİP DÂHİL tüm düzeltme/iptal/geri-alma işlemlerinin izi — hüküm yok, görünürlük var.',
+  },
+  '/api/duyu/kayit-disiplini': {
+    kesit: { bas: gunEkleISO(-13), gun: 14 },
+    aciklama_yogunlugu: { oran_pct: 34, adet: 62 },
+    odeme_karmasi: { nakit_pct: 38, kart_pct: 62 },
+    kapanis_sonrasi_dun: { adet: 3 },
+    geriye_tarihli_bugun: { adet: 2 },
+    not: 'Sv0 ham veri — alarm değil.',
+  },
+  '/api/duyu/kapanis-fark-profil': {
+    kesit: { bas: gunEkleISO(-29), gun: 30 },
+    subeler: [
+      { sube_id: 's1', sube_adi: 'KÖYCEĞİZ', adet: 11, toplam_fark_tl: -2480 },
+      { sube_id: 's0', sube_adi: 'ZAFER', adet: 4, toplam_fark_tl: 310 },
+      { sube_id: 's3', sube_adi: 'GAZZE', adet: 2, toplam_fark_tl: -120 },
+    ],
+    not: 'İSİMSİZ, yorumsuz profil.',
+  },
+  // Çok-şube tedarikçi paterni — v2 bu ucu HİÇ çağırmıyordu
+  '/api/ops/tedarikci-guvenilirlik': {
+    gun: 60,
+    tedarikciler: [
+      { tedarikci: 'SÜTAŞ', olay_sayisi: 7, sube_sayisi: 3, subeler: ['Alsancak', 'Gazze', 'Köyceğiz'], eksik_toplam: 46, fazla_toplam: 0, sonuc: 'tedarikci_paterni' },
+      { tedarikci: 'PAPER CUP CO.', olay_sayisi: 3, sube_sayisi: 2, subeler: ['Köyceğiz', 'Zafer'], eksik_toplam: 120, fazla_toplam: 20, sonuc: 'tedarikci_paterni' },
+      { tedarikci: 'KAHVE DÜNYASI', olay_sayisi: 2, sube_sayisi: 1, subeler: ['Zafer'], eksik_toplam: 4, fazla_toplam: 0, sonuc: 'tek_sube' },
+    ],
+  },
+  // Kira artışı / sözleşme bitişi uyarıları — v2 bu ucu HİÇ çağırmıyordu.
+  // `durduruldu: true` → sunucu o gider için ödeme planı ÜRETMİYOR.
+  '/api/sabit-giderler/uyarilar': [
+    { id: 'sg1', tip: 'KIRA_ARTIS', seviye: 'KRITIK', durduruldu: true, renk: 'red',
+      gider_adi: 'Zafer kira',
+      mesaj: '⛔ Zafer kira — kira artış tarihi 9 gün önce geçti! Yeni tutar girilene kadar ödeme planı üretilmiyor.',
+      alt_mesaj: 'Mevcut tutar: 54.000 ₺ · Yeni tutarı ve artış tarihini güncelleyin',
+      aksiyon: 'TUTAR_GUNCELLE', gun_kalan: -9, tarih: gunEkleISO(-9), tutar: 54000 },
+    { id: 'sg2', tip: 'SOZLESME_BITIS', seviye: 'UYARI', durduruldu: false, renk: 'yellow',
+      gider_adi: 'Köyceğiz kira',
+      mesaj: '⚠️ Köyceğiz kira — sözleşme 22 gün sonra bitiyor.',
+      alt_mesaj: 'Yenileme için yeni süre ve başlangıç tarihini hazırlayın',
+      aksiyon: 'SOZLESME_UZAT', gun_kalan: 22, tarih: gunEkleISO(22), tutar: 42000 },
+  ],
   // Vergi nakit takvimi + kira stopajı — v2 bu iki ucu HİÇ çağırmıyordu
   // ("ne kadar" vardı, "NE ZAMAN" yoktu).
   '/api/duyu/vergi-takvim': {

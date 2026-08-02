@@ -270,6 +270,8 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
   // ── UZLAŞTIRMA (uyumsuzluk ÇÖZME, 2026-07-31) ─────────────────────────────
   const [uzSevk, setUzSevk] = useState(null);      // sevkiyat uyumsuzlukları
   const [uzKasa, setUzKasa] = useState(null);      // kasa uyumsuzlukları
+  // /ops/tedarikci-guvenilirlik — çok-şube tedarikçi paterni (ham olay ≠ patern)
+  const [uzTedarikci, setUzTedarikci] = useState([]);
   const [uzPers, setUzPers] = useState(null);      // personel-vardiya
   const [uzHata, setUzHata] = useState('');
   const [uzAlt, setUzAlt] = useState('sevkiyat');
@@ -318,12 +320,19 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     Promise.all([
       api('/ops/siparis/sevkiyat-uyumsuzluklar?gun=30&limit=300').catch(() => null),
       api('/ops/kasa-uyumsuzluk').catch(() => null),
+      // ÇOK-ŞUBE TEDARİKÇİ PATERNİ — v2 bu ucu HİÇ çağırmıyordu. Sevkiyat
+      // uyumsuzluğu listesi HAM olayları gösteriyor; bu uç aynı tedarikçinin
+      // FARKLI ŞUBELERDE tekrar edip etmediğini söylüyor. Ayrım kritik:
+      // ≥2 şube → tedarikçi paterni (şube masum) · tek şube → belirsiz.
+      api('/ops/tedarikci-guvenilirlik?gun=60').catch(() => null),
       api('/ops/personel-vardiya-uyumsuzluk').catch(() => null),
       api('/ciro-taslak/fark-defteri?gun=45').catch(() => null),
       api('/ops/v2/siparis-akis?limit=200').catch(() => null),
-    ]).then(([sv, ks, pr, fd, ak]) => {
+    // ⚠️ Sıra Promise.all ile BİREBİR — tedarikçi paterni 3. sıraya eklendi
+    ]).then(([sv, ks, tg, pr, fd, ak]) => {
       setUzSevk(sv || { satirlar: [] });
       setUzKasa(ks || {});
+      setUzTedarikci(Array.isArray(tg?.tedarikciler) ? tg.tedarikciler : []);
       setUzPers(pr || { kayitlar: [] });
       setUzFark(Array.isArray(fd?.satirlar) ? fd.satirlar : (Array.isArray(fd?.kayitlar) ? fd.kayitlar : (Array.isArray(fd) ? fd : [])));
       // Talebi düzleştir: her kalem ayrı satır; yalnız talep≠tahsis ve HENÜZ
@@ -2298,6 +2307,61 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
             }}>{ad}</div>
           ))}
         </div>
+
+        {/* ── ÇOK-ŞUBE TEDARİKÇİ PATERNİ ──
+            Aşağıdaki liste HAM olayları gösteriyor: "şu şubede şu kalem eksik".
+            Bu blok aynı olayları TEDARİKÇİ bazında toplayıp asıl soruyu soruyor:
+            fark tek şubede mi, yoksa aynı tedarikçi FARKLI ŞUBELERDE de mi
+            eksik gönderiyor? ≥2 şube → tedarikçi paterni, şube masum.
+            Tek şube → belirsiz (şube/sayım da olabilir) — suçlama YOK. */}
+        {uzAlt === 'sevkiyat' && uzTedarikci.length > 0 && (
+          <div style={{ ...kartYuzey, padding: '14px 18px', marginBottom: 12 }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12, marginBottom: 10, flexWrap: 'wrap' }}>
+              <span style={{ fontFamily: F.baslik, fontSize: 14.5, fontWeight: 600 }}>
+                Tedarikçi paterni · son 60 gün
+              </span>
+              <span style={{ fontSize: 11, color: R.not2 }}>
+                tek olaydan suçlama yok — çok şube = ikna edici sinyal
+              </span>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {uzTedarikci.slice(0, 8).map((t, i) => {
+                const patern = t.sonuc === 'tedarikci_paterni';
+                return (
+                  <div key={t.tedarikci || i} style={{
+                    display: 'flex', alignItems: 'center', gap: 10, fontSize: 11.5,
+                    padding: '8px 12px', borderRadius: 9, background: R.girinti,
+                    borderLeft: `3px solid ${patern ? R.kirmizi : R.not3}`,
+                  }}>
+                    <span style={{ fontWeight: 700, flexShrink: 0, minWidth: 128 }}>{t.tedarikci || '—'}</span>
+                    <span style={{
+                      flexShrink: 0, padding: '2px 9px', borderRadius: 99, fontSize: 10,
+                      fontWeight: 700, whiteSpace: 'nowrap',
+                      background: patern ? `${R.kirmizi}1e` : `${R.not3}22`,
+                      color: patern ? R.kirmizi : R.not2,
+                    }}>{patern ? `${sayi(t.sube_sayisi)} şubede patern` : 'tek şube · belirsiz'}</span>
+                    <span style={{ flex: 1, minWidth: 0, color: R.not2 }}>
+                      {(t.subeler || []).join(', ')}
+                    </span>
+                    <span style={{ flexShrink: 0, fontFamily: F.mono, color: R.not }}>
+                      {sayi(t.olay_sayisi)} olay
+                    </span>
+                    {sayi(t.eksik_toplam) > 0 && (
+                      <span style={{ flexShrink: 0, fontFamily: F.mono, fontWeight: 700, color: R.kirmizi }}>
+                        −{sayi(t.eksik_toplam)}
+                      </span>
+                    )}
+                    {sayi(t.fazla_toplam) > 0 && (
+                      <span style={{ flexShrink: 0, fontFamily: F.mono, color: R.yesil }}>
+                        +{sayi(t.fazla_toplam)}
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {uzAlt === 'sevkiyat' && (sevkSatir.length === 0 ? (
           <BosDurum tamam baslik="Sevkiyat uyumsuzluğu yok" aciklama="Son 30 günde gönderilen ile kabul edilen adet birbirini tutuyor." />

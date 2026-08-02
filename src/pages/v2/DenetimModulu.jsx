@@ -126,6 +126,8 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
   // Ödeme mutabakatı İKİ köşeyi (kasa ↔ ödeme kaydı) karşılaştırır; dörtgen
   // DÖRT köşeyi yan yana koyar: giren · kullanım · satış · sayım.
   // Aynı iş (mutabakat), aynı görünüm — ayrı ekran açılmadı.
+  // Dört duyu ucu tek blokta — uyanış · müdahale izi · kayıt disiplini · fark profili
+  const [duyuKesit, setDuyuKesit] = useState(null);
   const [dortSubeler, setDortSubeler] = useState([]);
   const [dortSube, setDortSube] = useState('');
   const [dortgen, setDortgen] = useState(null);
@@ -200,6 +202,19 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
       setDortSubeler(liste);
       if (liste.length) setDortSube((s) => s || String(liste[0].id));
     }).catch(() => setDortSubeler([]));
+    // ── DÖRT DUYU UCU DAHA — hepsi v2'de HİÇ çağrılmıyordu. Ayrı ayrı ekran
+    // açmak yerine TEK "duyu kesiti" bölümünde toplandı (ajan kararı):
+    //   uyanis-hazirlik    → motor uyanmaya hazır mı (termometre, takvim değil)
+    //   mudahale-izi       → geçmişe dokunan işlemlerin izi (insider kör noktası)
+    //   kayit-disiplini    → açıklama yoğunluğu · ödeme karması · kapanış sonrası
+    //   kapanis-fark-profil→ şube bazında kasa farkı profili (İSİMSİZ)
+    Promise.all([
+      api('/duyu/uyanis-hazirlik').catch(() => null),
+      api('/duyu/mudahale-izi?gun=30').catch(() => null),
+      api('/duyu/kayit-disiplini?gun=14').catch(() => null),
+      api('/duyu/kapanis-fark-profil?gun=30').catch(() => null),
+    ]).then(([uh, mi, kd, kfp]) => setDuyuKesit({ uyanis: uh, mudahale: mi, disiplin: kd, farkProfil: kfp }))
+      .catch(() => setDuyuKesit(null));
     api('/duyu/odeme-mutabakat?gun=60')
       .then((d) => setMutabakat(d || {}))
       .catch((e) => setMutHata(e?.message || ''));
@@ -601,6 +616,109 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
             ))}
           </div>
         )}
+        {/* ── DUYU KESİTİ — dört ham gözlem tek yerde ──
+            Hepsi Sv0: ALARM DEĞİL, ham veri. Her birinin sunucu notu "hüküm
+            yok" diyor. Ayrı ekran açmak yerine tek bölüm — dördü de aynı işi
+            yapıyor: bakılacak yeri işaret etmek. */}
+        {duyuKesit && (() => {
+          const uh = duyuKesit.uyanis;
+          const mi = duyuKesit.mudahale;
+          const kd = duyuKesit.disiplin;
+          const fp = duyuKesit.farkProfil;
+          if (!uh && !mi && !kd && !fp) return null;
+          const kriterler = Array.isArray(uh?.kriterler) ? uh.kriterler : [];
+          const gecen = kriterler.filter((k) => k.gecti).length;
+          const miTurler = Array.isArray(mi?.islem_turleri) ? mi.islem_turleri : [];
+          return (
+            <div style={{ ...kartYuzey, padding: '15px 18px', marginBottom: 16 }}>
+              <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>
+                <span style={{ fontFamily: F.baslik, fontSize: 15, fontWeight: 600 }}>Duyu kesiti · ham gözlem</span>
+                <span style={{ fontSize: 11.5, color: R.not2 }}>Sv0 — alarm değil; bakılacak yeri işaret eder</span>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(210px,1fr))', gap: 10 }}>
+                {/* Motor uyanış termometresi */}
+                {uh && (
+                  <div style={{ padding: '11px 14px', borderRadius: 11, background: R.girinti }}>
+                    <div style={{ fontSize: 10.5, color: R.not2, fontWeight: 700, letterSpacing: '.5px' }}>MOTOR UYANIŞI</div>
+                    <div style={{ fontFamily: F.mono, fontSize: 17, fontWeight: 700, marginTop: 4, color: gecen === kriterler.length && kriterler.length ? R.yesil : R.amber }}>
+                      {uh.durum || `${gecen}/${kriterler.length}`}
+                    </div>
+                    <div style={{ fontSize: 10.5, color: R.not2, marginTop: 3, lineHeight: 1.45 }}>
+                      {uh.motor || 'kriterler geçene kadar uyur'}
+                    </div>
+                    {kriterler.length > 0 && (
+                      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 7 }}>
+                        {kriterler.slice(0, 6).map((k, i) => (
+                          <span key={i} title={`${k.kriter}: ${k.durum} (hedef ${k.hedef})`} style={{
+                            width: 9, height: 9, borderRadius: 99,
+                            background: k.gecti ? R.yesil : R.cizgi3,
+                            border: k.gecti ? 'none' : `1px solid ${R.not3}`,
+                          }} />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Müdahale izi — insider kör noktası */}
+                {mi && (
+                  <div style={{ padding: '11px 14px', borderRadius: 11, background: R.girinti }}>
+                    <div style={{ fontSize: 10.5, color: R.not2, fontWeight: 700, letterSpacing: '.5px' }}>MÜDAHALE İZİ · 30 GÜN</div>
+                    <div style={{ fontFamily: F.mono, fontSize: 17, fontWeight: 700, marginTop: 4, color: sayi(mi.toplam) > 0 ? R.amber : R.krem }}>
+                      {sayi(mi.toplam)}
+                    </div>
+                    <div style={{ fontSize: 10.5, color: R.not2, marginTop: 3, lineHeight: 1.45 }}>
+                      geçmişe dokunan işlem · <b>sahip dâhil</b>
+                    </div>
+                    {miTurler.length > 0 && (
+                      <div style={{ fontSize: 10.5, color: R.not, marginTop: 5, fontFamily: F.mono }}>
+                        {miTurler.slice(0, 3).map((t) => `${t.islem} ${sayi(t.adet)}`).join(' · ')}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Kayıt disiplini */}
+                {kd && (
+                  <div style={{ padding: '11px 14px', borderRadius: 11, background: R.girinti }}>
+                    <div style={{ fontSize: 10.5, color: R.not2, fontWeight: 700, letterSpacing: '.5px' }}>KAYIT DİSİPLİNİ · 14 GÜN</div>
+                    <div style={{ fontSize: 11.5, color: R.metin2, marginTop: 5, lineHeight: 1.6 }}>
+                      {kd.geriye_tarihli_bugun != null && (
+                        <div>Bugün geçmiş tarihli yazılan: <b style={{ fontFamily: F.mono }}>{sayi(kd.geriye_tarihli_bugun?.adet ?? kd.geriye_tarihli_bugun)}</b></div>
+                      )}
+                      {kd.kapanis_sonrasi_dun != null && (
+                        <div>Dün kapanış sonrası kayıt: <b style={{ fontFamily: F.mono }}>{sayi(kd.kapanis_sonrasi_dun?.adet ?? kd.kapanis_sonrasi_dun)}</b></div>
+                      )}
+                    </div>
+                    <div style={{ fontSize: 10, color: R.not3, marginTop: 5 }}>
+                      açıklama yazmak · geç girmek meşru olabilir — hüküm yok
+                    </div>
+                  </div>
+                )}
+
+                {/* Şube kasa farkı profili — İSİMSİZ */}
+                {Array.isArray(fp?.subeler) && fp.subeler.length > 0 && (
+                  <div style={{ padding: '11px 14px', borderRadius: 11, background: R.girinti }}>
+                    <div style={{ fontSize: 10.5, color: R.not2, fontWeight: 700, letterSpacing: '.5px' }}>KASA FARKI PROFİLİ · 30 GÜN</div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 3, marginTop: 5 }}>
+                      {fp.subeler.slice(0, 4).map((s, i) => (
+                        <div key={i} style={{ fontSize: 11, color: R.metin2, display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                          <span>{s.sube_adi || '—'}</span>
+                          <span style={{ fontFamily: F.mono, color: R.not }}>
+                            {sayi(s.adet ?? s.olay_sayisi)} olay
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                    <div style={{ fontSize: 10, color: R.not3, marginTop: 5 }}>isimsiz · yorumsuz</div>
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })()}
+
         {/* ── TÜKETİM DÖRTGENİ — dört köşe yan yana ──
             Ödeme mutabakatı İKİ köşeyi karşılaştırır (kasa ↔ ödeme kaydı).
             Bu blok DÖRT köşeyi koyar: giren · kullanım · satış · sayım.

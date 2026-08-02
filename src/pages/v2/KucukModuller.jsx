@@ -590,6 +590,10 @@ export function YukModulu({ gorunum, onCekmece, onKopru, onToast }) {
     ['/sabit-giderler', []],
     ['/sabit-giderler/odemeler', null],
     ['/subeler', []],
+    // ⚠️ v2 bu ucu HİÇ çağırmıyordu. Kira artış tarihi geçince ya da sözleşme
+    // bitince sunucu ÖDEME PLANI ÜRETMEYİ DURDURUYOR (`durduruldu: true`) —
+    // ekranda hiçbir iz yoktu: gider sessizce planlardan düşüyordu.
+    ['/sabit-giderler/uyarilar', []],
   ]);
   // v2-YERLİ sabit gider CRUD (köprü kaldırma turu) — klasik guard'lar korunur
   const [sgForm, setSgForm] = useState(null);      // {duzenleId?, gider_adi, tip, kategori, ...}
@@ -673,7 +677,12 @@ export function YukModulu({ gorunum, onCekmece, onKopru, onToast }) {
     }
   };
 
-  const [krediHam, sabitHam, odemeler, sgSubeler] = veri;
+  const [krediHam, sabitHam, odemeler, sgSubeler, sgUyariHam] = veri;
+  // KIRA_ARTIS / SOZLESME_BITIS uyarıları — `durduruldu: true` olanlar KRİTİK:
+  // o gider için ödeme planı ÜRETİLMİYOR (sessizce plandan düşmüş demektir).
+  const sgUyarilar = Array.isArray(sgUyariHam) ? sgUyariHam
+    : (Array.isArray(sgUyariHam?.uyarilar) ? sgUyariHam.uyarilar : []);
+  const sgDurduran = sgUyarilar.filter((u) => u.durduruldu === true);
   const krediler = (Array.isArray(krediHam) ? krediHam : []).filter(k => k.aktif !== false);
   const sabitler = (Array.isArray(sabitHam) ? sabitHam : []).filter(g => g.aktif !== false);
 
@@ -907,7 +916,45 @@ export function YukModulu({ gorunum, onCekmece, onKopru, onToast }) {
         { etiket: 'Kira payı', deger: fmt(kira.reduce((s, g) => s + sayi(g.tutar), 0)), alt: toplamSabit ? `%${trSayi((kira.reduce((s, g) => s + sayi(g.tutar), 0) / toplamSabit) * 100, 0)}` : '—', renk: R.krem },
         { etiket: 'Bu ay ödenen', deger: String(odendi.length), alt: fmt(odendi.reduce((s, g) => s + sayi(g.tutar), 0)), renk: R.yesil },
         { etiket: 'Bu ay bekleyen', deger: String(bekleyen.length), alt: fmt(bekleyen.reduce((s, g) => s + sayi(g.tutar), 0)), renk: bekleyen.length ? R.amber : R.yesil },
+        ...(sgUyarilar.length ? [{
+          etiket: 'Plan durduran',
+          deger: String(sgDurduran.length),
+          alt: sgDurduran.length
+            ? 'kira artışı/sözleşme bitti — plan üretilmiyor'
+            : `${sgUyarilar.length} yaklaşan uyarı`,
+          renk: sgDurduran.length ? R.kirmizi : R.amber,
+        }] : []),
       ]} />
+
+      {/* ── KİRA ARTIŞI / SÖZLEŞME BİTİŞİ UYARILARI ──
+          KRİTİK olanlarda sunucu ödeme planı üretmeyi DURDURUR — gider
+          sessizce planlardan düşer, kimse fark etmez. Uyarı burada. */}
+      {sgUyarilar.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 7, marginBottom: 14 }}>
+          {sgUyarilar.slice(0, 8).map((u, i) => {
+            const kritik = u.seviye === 'KRITIK' || u.durduruldu === true;
+            return (
+              <div key={u.id || `sgu-${i}`} style={{
+                ...kartYuzey, padding: '11px 15px',
+                borderColor: kritik ? `${R.kirmizi}55` : `${R.amber}44`,
+                borderLeft: `3px solid ${kritik ? R.kirmizi : R.amber}`,
+              }}>
+                <div style={{ fontSize: 12.5, fontWeight: 700, color: kritik ? R.kirmizi : R.amber }}>
+                  {u.mesaj || u.gider_adi || 'Uyarı'}
+                </div>
+                {u.alt_mesaj && (
+                  <div style={{ fontSize: 11.5, color: R.not, marginTop: 3, lineHeight: 1.5 }}>{u.alt_mesaj}</div>
+                )}
+                <div style={{ fontSize: 10.5, color: R.not2, marginTop: 4 }}>
+                  {u.tip === 'KIRA_ARTIS' ? 'kira artışı' : 'sözleşme bitişi'}
+                  {u.tarih ? ` · ${String(u.tarih).slice(0, 10)}` : ''}
+                  {u.durduruldu ? ' · ⛔ ödeme planı DURDU' : ''}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
       <div style={{ display: 'flex', gap: 9, marginBottom: 12 }}>
         <button onClick={() => sgAc(null)} style={{
           padding: '9px 17px', borderRadius: 10, border: 'none', cursor: 'pointer',
