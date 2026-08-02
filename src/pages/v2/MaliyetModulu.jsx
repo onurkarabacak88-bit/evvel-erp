@@ -76,6 +76,8 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
   const [guven, setGuven] = useState(null);
   // /ops/maliyet/gun-gun → kalem grubu kırılımı + fiyatı tanımsız kalemler
   const [gunGun, setGunGun] = useState(null);
+  // /recete/degirmen-kiyas → makine sayacı gerçeği (bildirimden bağımsız katman)
+  const [degirmen, setDegirmen] = useState(null);
   const [receteler, setReceteler] = useState(null);
   const [fiyatlar, setFiyatlar] = useState(null);
   const [receteHata, setReceteHata] = useState('');
@@ -140,6 +142,13 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
     api('/recete/kontrol?gun=7')
       .then((d) => setKontrol(d || {}))
       .catch((e) => setKontrolHata(e?.message || ''));
+    // ÜÇÜNCÜ KATMAN — v2 bu ucu HİÇ çağırmıyordu.
+    // Reçete kontrolü: satış×reçete (BEKLENEN) ↔ ürün-aç (BİLDİRİLEN).
+    // Değirmen kıyası: makine sayacı × gramaj (MAKİNE GERÇEĞİ) ↔ beklenen.
+    // Üçüncüsü bildirimden bağımsız — kimse girmese de makine sayıyor.
+    api('/recete/degirmen-kiyas?gun=7')
+      .then((d) => setDegirmen(d || null))
+      .catch(() => setDegirmen(null));
   }, []);
 
   // ── eşleştirme ekranı (klasik ReceteEslestirme sözleşmesi) ────────────────
@@ -1335,6 +1344,65 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
                 </div>
               </div>
             ))}
+          </div>
+        )}
+
+        {/* ── DEĞİRMEN KIYASI — üçüncü katman (makine gerçeği) ──
+            Reçete kontrolü iki katmanı kıyaslar: satış×reçete (beklenen) ↔
+            ürün-aç (BİLDİRİLEN). İkisi de insan girdisine bağlı.
+            Değirmen sayacı bildirimden BAĞIMSIZ: kimse bir şey girmese de
+            makine çekimi sayar. Fark ±kalibrasyon/ikram payı taşır — gözlemdir. */}
+        {Array.isArray(degirmen?.gun_kiyasi) && degirmen.gun_kiyasi.length > 0 && (
+          <div style={{ ...kartYuzey, padding: '15px 18px', marginBottom: 14 }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12, marginBottom: 11, flexWrap: 'wrap' }}>
+              <span style={{ fontFamily: F.baslik, fontSize: 15, fontWeight: 600 }}>
+                Değirmen kıyası · makine gerçeği ↔ beklenen
+              </span>
+              <span style={{ fontSize: 11.5, color: R.not2 }}>
+                doz {sayi(degirmen.doz_gramaj?.cift)}g çift · son {sayi(degirmen.kesit_gun) || 7} gün
+              </span>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {degirmen.gun_kiyasi.slice(0, 7).map((g, i) => {
+                const bek = g.beklenen_gram;
+                const fark = sayi(g.fark_gram);
+                const yuzde = sayi(g.fark_yuzde);
+                const eksikSube = sayi(g.sube_sayisi) < 4;
+                return (
+                  <div key={g.tarih || i} style={{
+                    display: 'flex', alignItems: 'center', gap: 11, fontSize: 11.5,
+                    padding: '8px 12px', borderRadius: 9, background: R.girinti,
+                  }}>
+                    <span style={{ fontFamily: F.mono, color: R.not, flexShrink: 0, width: 54 }}>{tarihKisa(g.tarih)}</span>
+                    <span style={{ flex: 1, minWidth: 0, color: R.metin2, fontFamily: F.mono }}>
+                      makine {sayi(g.makine_gram)}g
+                      {bek != null ? ` ↔ beklenen ${sayi(bek)}g` : ' · beklenen hesaplanamadı'}
+                    </span>
+                    {eksikSube && (
+                      <span style={{ flexShrink: 0, fontSize: 10, color: R.amber }}>
+                        {sayi(g.sube_sayisi)}/4 şube — kıyas eksik
+                      </span>
+                    )}
+                    {bek != null && (
+                      <>
+                        <span style={{
+                          flexShrink: 0, fontFamily: F.mono, fontWeight: 700,
+                          color: Math.abs(yuzde) > 15 ? R.kirmizi : Math.abs(yuzde) > 7 ? R.amber : R.yesil,
+                        }}>{fark > 0 ? '+' : ''}{fark}g</span>
+                        <span style={{ flexShrink: 0, fontSize: 10.5, color: R.not2, width: 74, textAlign: 'right' }}>
+                          %{yuzde} · {sayi(g.fark_cekim)} çekim
+                        </span>
+                      </>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{ fontSize: 11, color: R.not2, marginTop: 9, lineHeight: 1.55 }}>
+              ℹ Sayaç israfı DA sayar (tek 8oz'da ikinci shot çöpe gidebilir) — bu farkın
+              doğal parçasıdır ve <b>görünür olması istenir</b>. Sayaç sıfırlanan gün hesaplanmaz.
+              Fark ± kalibrasyon/ikram payı taşır; <b>yorum insanın</b>.
+            </div>
           </div>
         )}
 

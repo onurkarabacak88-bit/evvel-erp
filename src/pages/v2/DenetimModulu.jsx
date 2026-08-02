@@ -213,7 +213,10 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
       api('/duyu/mudahale-izi?gun=30').catch(() => null),
       api('/duyu/kayit-disiplini?gun=14').catch(() => null),
       api('/duyu/kapanis-fark-profil?gun=30').catch(() => null),
-    ]).then(([uh, mi, kd, kfp]) => setDuyuKesit({ uyanis: uh, mudahale: mi, disiplin: kd, farkProfil: kfp }))
+      // satis-butunluk: zımni fiyat (ciro/adet) menü fiyatına kıyaslanır.
+      // Sapma HÜKÜM DEĞİL — kampanya/ikram/yeni fiyat aynı izi bırakır.
+      api('/duyu/satis-butunluk?gun=14').catch(() => null),
+    ]).then(([uh, mi, kd, kfp, sb]) => setDuyuKesit({ uyanis: uh, mudahale: mi, disiplin: kd, farkProfil: kfp, satis: sb }))
       .catch(() => setDuyuKesit(null));
     api('/duyu/odeme-mutabakat?gun=60')
       .then((d) => setMutabakat(d || {}))
@@ -712,6 +715,22 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
                       ))}
                     </div>
                     <div style={{ fontSize: 10, color: R.not3, marginTop: 5 }}>isimsiz · yorumsuz</div>
+                  </div>
+                )}
+
+                {/* Satış bütünlüğü — zımni fiyat (ciro/adet) menüye kıyas */}
+                {duyuKesit.satis && (Array.isArray(duyuKesit.satis.zimni_fiyat) || duyuKesit.satis.iade_fire) && (
+                  <div style={{ padding: '11px 14px', borderRadius: 11, background: R.girinti }}>
+                    <div style={{ fontSize: 10.5, color: R.not2, fontWeight: 700, letterSpacing: '.5px' }}>SATIŞ BÜTÜNLÜĞÜ</div>
+                    <div style={{ fontFamily: F.mono, fontSize: 17, fontWeight: 700, marginTop: 4, color: (duyuKesit.satis.zimni_fiyat || []).length ? R.amber : R.krem }}>
+                      {(duyuKesit.satis.zimni_fiyat || []).length}
+                    </div>
+                    <div style={{ fontSize: 10.5, color: R.not2, marginTop: 3, lineHeight: 1.45 }}>
+                      üründe zımni fiyat (ciro/adet) menüden sapıyor
+                    </div>
+                    <div style={{ fontSize: 10, color: R.not3, marginTop: 5 }}>
+                      kampanya · ikram · yeni fiyat aynı izi bırakır — aday
+                    </div>
                   </div>
                 )}
               </div>

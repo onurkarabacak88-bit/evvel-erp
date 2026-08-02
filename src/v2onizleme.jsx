@@ -991,6 +991,27 @@ const MALIYET_UC = {
     ],
     not: 'İSİMSİZ, yorumsuz profil.',
   },
+  '/api/duyu/satis-butunluk': {
+    kesit: { zimni_gun: gunEkleISO(-1), iade_bas: gunEkleISO(-13) },
+    zimni_fiyat: [
+      { sube_adi: 'ZAFER', urun_ornek: [{ ad: 'Latte', zimni: 82.4, menu: 95 }], sapma_pct: -13.3 },
+      { sube_adi: 'KÖYCEĞİZ', urun_ornek: [{ ad: 'Americano', zimni: 71.0, menu: 75 }], sapma_pct: -5.3 },
+    ],
+    iade_fire: { iade_adet: 4, fire_adet: 11 },
+    not: 'Zımni fiyat = ciro/adet — sapma hüküm değildir.',
+  },
+  // Değirmen kıyası — üçüncü katman (makine sayacı, bildirimden bağımsız)
+  '/api/recete/degirmen-kiyas': {
+    kesit_gun: 7, doz_gramaj: { tek: 8.75, cift: 17.5, uc: 26.25 },
+    sube_gunluk: [],
+    gun_kiyasi: [
+      { tarih: gunEkleISO(-1), makine_gram: 4620, sube_sayisi: 4, beklenen_gram: 4180, fark_gram: 440, fark_cekim: 25.1, fark_yuzde: 10.5 },
+      { tarih: gunEkleISO(-2), makine_gram: 4210, sube_sayisi: 4, beklenen_gram: 4160, fark_gram: 50, fark_cekim: 2.9, fark_yuzde: 1.2 },
+      { tarih: gunEkleISO(-3), makine_gram: 3980, sube_sayisi: 3, beklenen_gram: 3320, fark_gram: 660, fark_cekim: 37.7, fark_yuzde: 19.9 },
+      { tarih: gunEkleISO(-4), makine_gram: 4055, sube_sayisi: 4, beklenen_gram: null },
+    ],
+    not: 'MAKİNE GERÇEĞİ — sayaç israfı da sayar; görünür olması İSTENİR.',
+  },
   // Çok-şube tedarikçi paterni — v2 bu ucu HİÇ çağırmıyordu
   '/api/ops/tedarikci-guvenilirlik': {
     gun: 60,
