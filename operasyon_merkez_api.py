@@ -17503,16 +17503,20 @@ def ops_v2_depo_ozet(gun: int = Query(30, ge=1, le=365)):
         """, ("%[BİTTİ]%", bas, bugun, sube_ids))
 
         # harcama[sid][kod] = adet — kod her zaman UUID veya havuz kodu (normalize edilmiş)
+        # 🐞 FIX-2 (2026-08-03, aynı vaka): bitince-modu payload'ı kalemleri
+        # `urun_id`/`urun_ad` anahtarıyla yazar (sube_panel:4028), `kalem_kodu`
+        # YOK — parse yalnız kalem_kodu aradığı için satırlar atlanıyordu.
+        # Ayrıca not-eki JSON'un hemen ardına eklenebiliyor → json.loads yerine
+        # raw_decode (recete_api deseniyle aynı).
+        _dec = json.JSONDecoder()
         harcama: Dict[str, Dict[str, int]] = {sid: {} for sid in sube_ids}
         for row in cur.fetchall():
             ack = row.get("aciklama") or ""
-            if not ack.startswith("URUN_AC_JSON:"):
+            i = ack.find("URUN_AC_JSON:")
+            if i < 0:
                 continue
-            body = ack[len("URUN_AC_JSON:"):]
-            if " | " in body:
-                body = body.split(" | ", 1)[0]
             try:
-                j = json.loads(body.strip())
+                j, _ = _dec.raw_decode(ack[i + len("URUN_AC_JSON:"):].strip())
             except Exception:
                 continue
             kalemler = j.get("kalemler") if isinstance(j, dict) else None
@@ -17522,7 +17526,14 @@ def ops_v2_depo_ozet(gun: int = Query(30, ge=1, le=365)):
             for k in kalemler:
                 if not isinstance(k, dict):
                     continue
-                kod = str(k.get("kalem_kodu") or "").strip()
+                kod = str(k.get("kalem_kodu") or k.get("urun_id") or "").strip()
+                if not kod:
+                    # son çare: ürün adından norm eşleşmesi (eski kayıtlar)
+                    ad_n = re.sub(r'[^a-z0-9]+', '_',
+                        str(k.get("urun_ad") or "").lower()
+                        .replace('ğ','g').replace('ü','u').replace('ş','s')
+                        .replace('ı','i').replace('ö','o').replace('ç','c')).strip('_')
+                    kod = norm_to_uuid.get(ad_n, "")
                 if not kod:
                     continue
                 # norm_ad olarak geldiyse UUID'ye çevir (eski kayıtlar uyumluluğu)
