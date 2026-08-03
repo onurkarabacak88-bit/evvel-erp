@@ -4313,13 +4313,17 @@ def kart_ekstre_import(body: EkstreImportBody):
                 else:
                     htip = "isletme"
             if not _zorla and not is_taksit:
+                # 🐞 PENCERE ±5 → ±10 (2026-08-03, FEZ vakası): banka valörü
+                # 25.06, sistemdeki kısmi-vadeli kaydı 03.07 = 8 gün — fren
+                # kaçırdı, aynı ödeme kart borcuna İKİ kez yazıldı (80K+20K).
+                # Ekstre valör kaymaları 5 günü rahat aşıyor.
                 cur.execute(
                     """SELECT id, tarih::text AS t, tutar::float AS tu
                        FROM kart_hareketleri
                        WHERE kart_id=%s AND durum='aktif' AND islem_turu=%s
                          AND COALESCE(kaynak_tablo,'') <> 'ekstre_import'
                          AND ABS(tutar - %s) <= 1.0
-                         AND tarih BETWEEN %s::date - 5 AND %s::date + 5
+                         AND tarih BETWEEN %s::date - 10 AND %s::date + 10
                        ORDER BY ABS(tarih - %s::date), id""",
                     (body.kart_id, tip, tutar, tarih, tarih, tarih))
                 _es = next((dict(r) for r in (cur.fetchall() or [])

@@ -660,10 +660,16 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
           // yazıyordu; sunucu farklı pencere kullansa ekran yanlış söylerdi.
           { etiket: 'Eşleşen', deger: String(eslesen), alt: `son ${sayi(mutabakat.kesit?.gun) || 60} gün`, renk: R.yesil },
           { etiket: 'Açık fark', deger: String(acikFark), alt: 'iki yönlü uyumsuzluk', renk: acikFark > 0 ? R.amber : R.yesil },
-          { etiket: 'Düşüş var · kayıt yok', deger: String(dusumsuz.length), alt: 'kasadan çıktı, ödeme kaydı yok', renk: dusumsuz.length > 0 ? R.kirmizi : R.krem },
-          { etiket: 'Kayıt var · düşüş yok', deger: String(kayitsiz.length), alt: 'ödeme kaydı var, kasada iz yok', renk: kayitsiz.length > 0 ? R.amber : R.krem },
+          // 🐞 DİL DÜZELTMESİ (2026-08-03): eski alt yazılar "kasadan çıktı /
+          // kasada iz yok" diyordu — bu uç KASA mutabakatı DEĞİL; sol taraf
+          // TEDARİKÇİNİN fatura-üstü bakiye zinciri, sağ taraf bizim ödeme
+          // olaylarımız. "Kasada iz yok" okuyan sahip kasa açığı sanıyordu;
+          // gerçek anlam "tedarikçinin sonraki faturasında düşüş görünmüyor
+          // (zincir eksik olabilir — bilgi)".
+          { etiket: 'Düşüş var · kayıt yok', deger: String(dusumsuz.length), alt: 'tedarikçi bakiyesi erimiş, bizde ödeme kaydı yok', renk: dusumsuz.length > 0 ? R.kirmizi : R.krem },
+          { etiket: 'Kayıt var · düşüş yok', deger: String(kayitsiz.length), alt: 'ödememiz var, tedarikçi zincirinde erime görünmüyor (bilgi)', renk: kayitsiz.length > 0 ? R.amber : R.krem },
         ]} />
-        <OneriSeridi metin="Mutabakat çapa-bağımsızdır: kasa izi tek gerçek — fark bulunursa elle işaretleme değil, kaynağında düzeltme önerilir." />
+        <OneriSeridi metin="Bu ekran tedarikçi fatura-zinciri ↔ ödeme olayları ADAY eşleşmesidir (kasa mutabakatı değil). Bakiye düşüşü muhasebe sinyalidir — iade/iskonto da düşürür; hüküm yok." />
         {acikFark === 0 ? (
           <BosDurum metin="İki yön de mutabık — ödeme kayıtları ile kasa düşüşleri örtüşüyor." />
         ) : (

@@ -2251,7 +2251,10 @@ def cari_ozet() -> dict:
                  UNION ALL
                  SELECT tarih, tutar, COALESCE(aciklama,'')
                  FROM kart_hareketleri
-                 WHERE islem_turu='HARCAMA' AND durum='aktif' AND kaynak_id IS NULL
+                 WHERE islem_turu='HARCAMA' AND durum='aktif'
+                   -- ekstre_import istisnası — cari_ekstre kanal-3 ile AYNI
+                   -- (FEZ vakası 2026-08-03; iki uç aynı eşleşme evreni kuralı)
+                   AND (kaynak_id IS NULL OR COALESCE(kaynak_tablo,'') = 'ekstre_import')
                    AND COALESCE(harcama_tipi,'belirsiz') <> 'sahsi'
                    AND tarih >= %s::date) x""",
             (kesit_6ay, kesit_6ay, kesit_6ay))
@@ -2690,7 +2693,13 @@ def cari_ekstre(tedarikci: str = ""):
                  SELECT 'kart', h.tarih::text, h.tutar::float, LEFT(COALESCE(h.aciklama,''),80)
                  FROM kart_hareketleri h
                  WHERE h.islem_turu='HARCAMA' AND h.durum='aktif'
-                   AND h.kaynak_id IS NULL
+                   -- 🐞 FIX (2026-08-03, FEZ vakası): banka-ekstresi importu
+                   -- kaynak_id DOLU yazar (id=eks_*) — IS NULL şartı TÜM banka
+                   -- ödemelerini cariden gizliyordu (FEZ 25.06 100K, DYK 76.700
+                   -- görünmüyordu). ekstre_import istisnası eklendi; eşlenik
+                   -- agk_ anlık gideri kanal-2'de zaten elendiği için çift
+                   -- düşmez (tek kanal: kart satırı).
+                   AND (h.kaynak_id IS NULL OR COALESCE(h.kaynak_tablo,'') = 'ekstre_import')
                    AND COALESCE(h.harcama_tipi,'belirsiz') <> 'sahsi'
                    AND h.tarih >= %s::date) x
                ORDER BY tarih""",
