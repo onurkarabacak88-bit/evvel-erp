@@ -13615,6 +13615,21 @@ def _ensure_maliyet_tablolari(cur: Any) -> None:
         CREATE INDEX IF NOT EXISTS idx_food_cost_sube_tarih
         ON sube_food_cost_gun(sube_id, tarih DESC)
     """)
+    # KANONİK MODEL v2 kolonları (2026-08-03) — L1/L2/L3 + tanım sürümü.
+    # İdempotent; ozet motor koşmadan çağrılsa da kolonlar garanti.
+    for _ddl in (
+        "ALTER TABLE sube_food_cost_gun ADD COLUMN IF NOT EXISTS diger_urun_ac_tl NUMERIC(12,2)",
+        "ALTER TABLE sube_food_cost_gun ADD COLUMN IF NOT EXISTS actual_open_cogs_tl NUMERIC(12,2)",
+        "ALTER TABLE sube_food_cost_gun ADD COLUMN IF NOT EXISTS theoretical_recipe_cogs_tl NUMERIC(12,2)",
+        "ALTER TABLE sube_food_cost_gun ADD COLUMN IF NOT EXISTS teorik_kapsama_pct NUMERIC(6,2)",
+        "ALTER TABLE sube_food_cost_gun ADD COLUMN IF NOT EXISTS teorik_alt_sinir BOOLEAN",
+        "ALTER TABLE sube_food_cost_gun ADD COLUMN IF NOT EXISTS variance_tl NUMERIC(12,2)",
+        "ALTER TABLE sube_food_cost_gun ADD COLUMN IF NOT EXISTS definition_version INT",
+    ):
+        try:
+            cur.execute(_ddl)
+        except Exception:
+            pass
 
     # Fatura kalemi -> stok kalem_kodu eşleştirme hafızası
     # (kart_satici_kural ile aynı mantık: PDF'den okunan satır metni normalize
@@ -13731,7 +13746,13 @@ def ops_maliyet_ozet(
                 fcg.shrinkage_tl,
                 fcg.shrinkage_pct,
                 fcg.stok_degeri_tl,
-                fcg.hesaplama_ts
+                fcg.hesaplama_ts,
+                fcg.actual_open_cogs_tl,
+                fcg.theoretical_recipe_cogs_tl,
+                fcg.teorik_kapsama_pct,
+                fcg.teorik_alt_sinir,
+                fcg.variance_tl,
+                fcg.definition_version
             FROM sube_food_cost_gun fcg
             LEFT JOIN subeler s ON s.id = fcg.sube_id
             WHERE fcg.tarih >= CURRENT_DATE - (%s || ' days')::interval
@@ -17062,9 +17083,10 @@ def _food_cost_hesapla_gun(
     for r in cur.fetchall():
         sid = str(r["sube_id"])
         acilis_rows[sid] = _bar_stok_from_meta(r.get("acilis_meta"), "acilis_stok_sayim")
-
-    if not acilis_rows:
-        return []  # O gün açılış kaydı yok
+    # ⚠️ KANONİK MODEL (2026-08-03): açılış sayımı artık ÖN KOŞUL DEĞİL —
+    # para sürücüsü ürün-aç olduğu için gün, ürün-aç/ciro olan her şubede
+    # hesaplanır (şube kümesi aşağıda birleştirilir). Sayımlar yalnız
+    # stok-değeri BİLGİSİ üretir.
 
     # ── 4. KAPANIS stok sayımları ──
     kapanis_rows: Dict[str, Dict[str, int]] = {}
@@ -17240,64 +17262,117 @@ def _food_cost_hesapla_gun(
     cur.execute("SELECT id::text, ad FROM subeler")
     sube_adlari: Dict[str, str] = {str(r["id"]): str(r["ad"] or "") for r in cur.fetchall()}
 
-    # ── 8. Her şube için hesapla ve yaz ──
+    # ── 7b. L2 BEKLENEN maliyet (satış × fiyatlı reçete) — recete_api tek kaynak ──
+    teorik_l2: Dict[str, Dict[str, Any]] = {}
+    try:
+        from recete_api import teorik_maliyet_gun
+        t2 = teorik_maliyet_gun(cur, str(hedef), alis_fiyat)
+        # Evo şube ADI → şube id eşlemesi (büyük/küçük duyarsız)
+        ad_to_id = {str(v or "").strip().upper(): k for k, v in sube_adlari.items()}
+        for s_ad, blok in (t2.get("subeler") or {}).items():
+            sid2 = ad_to_id.get(str(s_ad).strip().upper())
+            if sid2:
+                teorik_l2[sid2] = blok
+    except Exception as e:  # noqa: BLE001 — L2 süs; L1'i düşüremez
+        logger.warning("teorik maliyet (L2) hatasi (yutuldu): %s", str(e)[:120])
+
+    # ── 8. Her şube için hesapla ve yaz ──────────────────────────────────────
+    # ⭐ KANONİK MODEL v2 (Codex danışmalı, 2026-08-03 — sahip doktrini):
+    #   L1 GERÇEK maliyet  = ÜRÜN-AÇ × fiyat (her kalemde; sayım PARA SÜRMEZ).
+    #     Ürün-aç "gerçek maliyet TETİKLEYİCİSİ"dir — fiziksel tüketim ölçümü
+    #     değil; bar sayım denklemi operasyon sinyali olarak ayrı ekranda kalır.
+    #   L2 BEKLENEN        = satış × reçete (ölçekleme YOK, kapsama % ile).
+    #   L3 SAPMA           = L1 − L2 (fire/porsiyon/kayıt sinyali, öneri-only).
+    # Eski hibrit (BAR'da açılış+aç−kapanış) definition_version=1 idi; v2 ile
+    # SERİ TAMAMEN YENİDEN ÜRETİLİR (aynı kolonda karışık tanım bırakılmaz).
+    try:
+        for ddl in (
+            "ALTER TABLE sube_food_cost_gun ADD COLUMN IF NOT EXISTS diger_urun_ac_tl NUMERIC(12,2)",
+            "ALTER TABLE sube_food_cost_gun ADD COLUMN IF NOT EXISTS actual_open_cogs_tl NUMERIC(12,2)",
+            "ALTER TABLE sube_food_cost_gun ADD COLUMN IF NOT EXISTS theoretical_recipe_cogs_tl NUMERIC(12,2)",
+            "ALTER TABLE sube_food_cost_gun ADD COLUMN IF NOT EXISTS teorik_kapsama_pct NUMERIC(6,2)",
+            "ALTER TABLE sube_food_cost_gun ADD COLUMN IF NOT EXISTS teorik_alt_sinir BOOLEAN",
+            "ALTER TABLE sube_food_cost_gun ADD COLUMN IF NOT EXISTS variance_tl NUMERIC(12,2)",
+            "ALTER TABLE sube_food_cost_gun ADD COLUMN IF NOT EXISTS definition_version INT",
+        ):
+            cur.execute(ddl)
+    except Exception:
+        pass
+
+    # Şube kümesi: ürün-aç OLAN ∪ ciro OLAN ∪ açılış sayımı OLAN
+    tum_subeler = set(acilis_rows) | set(urun_ac_map) | set(diger_ac_map) | set(ciro_map)
+    if sube_id_filtre:
+        tum_subeler &= {str(sube_id_filtre)}
+
     sonuclar: List[Dict[str, Any]] = []
-    for sid in acilis_rows:
-        acilis  = acilis_rows[sid]
+    for sid in sorted(tum_subeler):
+        acilis  = acilis_rows.get(sid, {})
         kapanis = kapanis_rows.get(sid, {})
         urun_ac = urun_ac_map.get(sid, {k: 0 for k in _BAR_KEYS})
         ciro_tl = ciro_map.get(sid, 0.0)
 
-        teorik_maliyet = 0.0
-        stok_degeri_tl  = 0.0
-        kapanis_var = bool(kapanis)
-
+        # L1 — BAR kalemleri: yalnız ÜRÜN-AÇ (delta) × fiyat
+        bar_ac_tl = 0.0
+        stok_degeri_tl = 0.0
         for k in _BAR_KEYS:
             fp = fiyat.get(k, 0.0)
             if fp <= 0:
                 continue
-            a  = acilis.get(k, 0)
-            u  = urun_ac.get(k, 0)
-            kp = kapanis.get(k, 0)
-            kullanim = max(0, a + u - kp)
-            teorik_maliyet += kullanim * fp
-            stok_degeri_tl  += kp * fp
+            bar_ac_tl += max(0, urun_ac.get(k, 0)) * fp
+            stok_degeri_tl += kapanis.get(k, 0) * fp   # bilgi — para sürmez
 
-        # TAM-COGS: BAR-dışı ürün-aç kovası (fiyat: alış → siparis_urun fallback)
+        # L1 — BAR-dışı kova (fiyat: alış → siparis_urun fallback)
         diger_urun_ac_tl = 0.0
         for kod, adet in (diger_ac_map.get(sid) or {}).items():
             fp = alis_fiyat.get(kod) or su_fiyat.get(kod, 0.0)
             if fp > 0:
                 diger_urun_ac_tl += adet * fp
-        teorik_maliyet += diger_urun_ac_tl
 
-        food_cost_pct = round(teorik_maliyet / ciro_tl, 6) if ciro_tl > 0 else None
+        actual_cogs = bar_ac_tl + diger_urun_ac_tl
+        l2 = teorik_l2.get(sid) or {}
+        teorik_tl = l2.get("teorik_tl")
+        variance = (round(actual_cogs - float(teorik_tl), 2)
+                    if teorik_tl is not None else None)
+        food_cost_pct = round(actual_cogs / ciro_tl, 6) if ciro_tl > 0 else None
 
-        # UPSERT → sube_food_cost_gun (diger_urun_ac_tl kolonu idempotent DDL ile)
-        try:
-            cur.execute("ALTER TABLE sube_food_cost_gun ADD COLUMN IF NOT EXISTS diger_urun_ac_tl NUMERIC(12,2)")
-        except Exception:
-            pass
         cur.execute(
             """
             INSERT INTO sube_food_cost_gun
-                (sube_id, tarih, ciro_tl, teorik_maliyet_tl, food_cost_pct,
-                 stok_degeri_tl, diger_urun_ac_tl, hesaplama_ts)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, NOW())
+                (sube_id, tarih, ciro_tl, teorik_maliyet_tl, gercek_maliyet_tl,
+                 food_cost_pct, stok_degeri_tl, diger_urun_ac_tl,
+                 actual_open_cogs_tl, theoretical_recipe_cogs_tl,
+                 teorik_kapsama_pct, teorik_alt_sinir, variance_tl,
+                 definition_version, hesaplama_ts)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 2, NOW())
             ON CONFLICT (sube_id, tarih) DO UPDATE
-                SET ciro_tl           = EXCLUDED.ciro_tl,
-                    teorik_maliyet_tl = EXCLUDED.teorik_maliyet_tl,
-                    food_cost_pct     = EXCLUDED.food_cost_pct,
-                    stok_degeri_tl    = EXCLUDED.stok_degeri_tl,
-                    diger_urun_ac_tl  = EXCLUDED.diger_urun_ac_tl,
-                    hesaplama_ts      = NOW()
+                SET ciro_tl            = EXCLUDED.ciro_tl,
+                    teorik_maliyet_tl  = EXCLUDED.teorik_maliyet_tl,
+                    gercek_maliyet_tl  = EXCLUDED.gercek_maliyet_tl,
+                    food_cost_pct      = EXCLUDED.food_cost_pct,
+                    stok_degeri_tl     = EXCLUDED.stok_degeri_tl,
+                    diger_urun_ac_tl   = EXCLUDED.diger_urun_ac_tl,
+                    actual_open_cogs_tl = EXCLUDED.actual_open_cogs_tl,
+                    theoretical_recipe_cogs_tl = EXCLUDED.theoretical_recipe_cogs_tl,
+                    teorik_kapsama_pct = EXCLUDED.teorik_kapsama_pct,
+                    teorik_alt_sinir   = EXCLUDED.teorik_alt_sinir,
+                    variance_tl        = EXCLUDED.variance_tl,
+                    definition_version = 2,
+                    hesaplama_ts       = NOW()
             """,
             (sid, hedef,
              round(ciro_tl, 2),
-             round(teorik_maliyet, 2),
+             # legacy kolonlar: teorik_maliyet_tl YANLIŞ ADLI eski para kolonu —
+             # eski okuyucular kırılmasın diye L1 yazılır; gercek_maliyet_tl
+             # (doğru adlı, bugüne dek hiç doldurulmamıştı) da L1'dir.
+             round(actual_cogs, 2), round(actual_cogs, 2),
              food_cost_pct,
              round(stok_degeri_tl, 2),
-             round(diger_urun_ac_tl, 2)),
+             round(diger_urun_ac_tl, 2),
+             round(actual_cogs, 2),
+             (round(float(teorik_tl), 2) if teorik_tl is not None else None),
+             l2.get("kapsama_pct"),
+             l2.get("alt_sinir"),
+             variance),
         )
 
         sonuclar.append({
@@ -17305,11 +17380,17 @@ def _food_cost_hesapla_gun(
             "sube_adi":         sube_adlari.get(sid, sid),
             "tarih":            str(hedef),
             "ciro_tl":          round(ciro_tl, 2),
-            "teorik_maliyet_tl": round(teorik_maliyet, 2),
+            "actual_open_cogs_tl": round(actual_cogs, 2),
+            "teorik_maliyet_tl": round(actual_cogs, 2),   # geriye uyum
             "diger_urun_ac_tl": round(diger_urun_ac_tl, 2),
+            "theoretical_recipe_cogs_tl": (round(float(teorik_tl), 2) if teorik_tl is not None else None),
+            "teorik_kapsama_pct": l2.get("kapsama_pct"),
+            "teorik_alt_sinir": l2.get("alt_sinir"),
+            "variance_tl":      variance,
             "food_cost_pct":    round(food_cost_pct * 100, 2) if food_cost_pct else None,
             "stok_degeri_tl":   round(stok_degeri_tl, 2),
-            "kapanis_var":      kapanis_var,
+            "kapanis_var":      bool(kapanis),
+            "definition_version": 2,
             "fiyatli_kalem_sayisi": sum(1 for k in _BAR_KEYS if fiyat.get(k, 0) > 0),
         })
 

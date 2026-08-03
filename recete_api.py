@@ -1333,3 +1333,93 @@ def maliyet_projeksiyonu(cur, fiyat_haritasi: Optional[Dict[str, float]] = None)
                 "varsayım damgaları toplamı bloklamaz, dürüstçe taşınır. Kısmi "
                 "fiyatlanan ürün '0 TL' DEĞİL 'partial' durumuyla sunulur."),
     }
+
+
+def teorik_maliyet_gun(cur, hedef_tarih: str, fiyat_haritasi: Optional[Dict[str, float]] = None) -> Dict[str, Any]:
+    """L2 — BEKLENEN (teorik) günlük maliyet: Evo satış × fiyatlı reçete.
+
+    Kanonik maliyet modeli (Codex danışmalı, 2026-08-03, sahip doktrini):
+      L1 gerçek  = ürün-aç × fiyat (para tetikleyicisi — food-cost motoru yazar)
+      L2 beklenen = satış × reçete maliyeti (BU fonksiyon — benchmark)
+      L3 sapma    = L1 − L2 (fire/porsiyon/kayıt sinyali, öneri-only)
+
+    DÜRÜSTLÜK: asla ölçekleme (scale-up) yok — kapsanmayan satışın marj yapısı
+    bilinmez. Çıktı 'kapsanan satışların beklenen maliyeti' + kapsama oranlarıdır;
+    partial reçetelerde ALT SINIR etiketi taşınır.
+    Şube kırılımı Evo cache'in kendi şube ayrımından gelir.
+    """
+    _ensure(cur)
+    proj = maliyet_projeksiyonu(cur, fiyat_haritasi)
+    # Reçete adı (norm) → ürün maliyeti. Aynı norm'da birden çok boyut varsa
+    # EN İYİ durumlu + en çok fiyatlı satırlı reçete seçilir (deterministik) —
+    # kontrol motoru miktarda hepsini toplar; PARA tarafında tek reçete seçmek
+    # çift saymamanın tek dürüst yolu, 'boyut_karisik' damgası taşınır.
+    _durum_sira = {"exact": 0, "approx": 1, "partial": 2, "unpriced": 3}
+    maliyet_map: Dict[str, Dict[str, Any]] = {}
+    for r in proj.get("receteler") or []:
+        n = _norm(str(r.get("urun_adi") or ""))
+        if not n:
+            continue
+        eski = maliyet_map.get(n)
+        aday = {"maliyet": r.get("toplam_maliyet_tl"), "durum": r.get("durum"),
+                "fiyatlanan_n": r.get("fiyatlanan_n"), "toplam_n": r.get("toplam_n"),
+                "boyut_karisik": bool(eski)}
+        if eski is None:
+            maliyet_map[n] = aday
+        else:
+            eski["boyut_karisik"] = True
+            if (_durum_sira.get(str(aday["durum"]), 9), -(aday["fiyatlanan_n"] or 0)) < \
+               (_durum_sira.get(str(eski["durum"]), 9), -(eski["fiyatlanan_n"] or 0)):
+                aday["boyut_karisik"] = True
+                maliyet_map[n] = aday
+    # Ürün eşleşmeleri: Evo satış adı → reçete norm'u
+    cur.execute("""SELECT kaynak_ad, hedef_ad FROM recete_eslestirme
+                   WHERE tip='urun' AND durum='onayli'""")
+    evo_to_recete: Dict[str, str] = {}
+    for r in (dict(x) for x in cur.fetchall() or []):
+        evo_to_recete[_norm(str(r["hedef_ad"]))] = _norm(str(r["kaynak_ad"]))
+    # O günün Evo satışları (şube kırılımlı cache)
+    cur.execute("""SELECT veri_json FROM evo_rapor_cache
+                   WHERE anahtar='sube-grup-detay' AND bastar=bittar AND bastar=%s
+                   ORDER BY olusturma DESC LIMIT 1""", (str(hedef_tarih)[:10],))
+    row = cur.fetchone()
+    subeler_out: Dict[str, Dict[str, Any]] = {}
+    if not row:
+        return {"tarih": str(hedef_tarih)[:10], "subeler": {}, "veri": False,
+                "not": "O gün için Evo satış cache'i yok — beklenen maliyet hesaplanamadı."}
+    vj = dict(row).get("veri_json") or {}
+    for sube_ad, sd in (vj.get("subeler") or {}).items():
+        t_tl, alt_sinir = 0.0, False
+        kapsanan, eslesmeyen, fiyatsiz = 0, 0, 0
+        for u in sd.get("cok_satilan") or []:
+            try:
+                adet = int(float(u.get("adet") or 0))
+            except (TypeError, ValueError):
+                adet = 0
+            if adet <= 0:
+                continue
+            rn = evo_to_recete.get(_norm(str(u.get("ad") or "")))
+            m = maliyet_map.get(rn) if rn else None
+            if not m:
+                eslesmeyen += adet
+                continue
+            if m.get("maliyet") is None:
+                fiyatsiz += adet
+                continue
+            t_tl += adet * float(m["maliyet"])
+            kapsanan += adet
+            if m.get("durum") != "exact" or m.get("boyut_karisik"):
+                alt_sinir = True
+        toplam_adet = kapsanan + eslesmeyen + fiyatsiz
+        subeler_out[str(sube_ad)] = {
+            "teorik_tl": round(t_tl, 2),
+            "kapsanan_adet": kapsanan,
+            "eslesmeyen_adet": eslesmeyen,
+            "fiyatlanamayan_adet": fiyatsiz,
+            "kapsama_pct": round(kapsanan * 100.0 / toplam_adet, 1) if toplam_adet else None,
+            "alt_sinir": alt_sinir,
+        }
+    return {"tarih": str(hedef_tarih)[:10], "subeler": subeler_out, "veri": True,
+            "not": ("Beklenen = kapsanan satış × reçete maliyeti. ÖLÇEKLEME YOK — "
+                    "kapsama % düşükse sayı ALT SINIRDIR. alt_sinir=true: varsayımlı/"
+                    "kısmi reçete ya da boyut belirsizliği var.")}

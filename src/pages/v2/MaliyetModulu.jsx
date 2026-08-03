@@ -705,6 +705,47 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
             renk: altyapiEksik.length ? R.amber : R.krem,
           },
         ]} />
+        {/* ── KANONİK MALİYET: L1 gerçek (ürün-aç) ↔ L2 beklenen (reçete) ↔ L3 sapma ──
+            Sahip doktrini + Codex (2026-08-03): para ÜRÜN-AÇ'tan sürülür, reçete
+            KONTROL eder. Beklenen ASLA ölçeklenmez — kapsama % ile alt sınırdır. */}
+        {(() => {
+          const l1 = gunler.reduce((s, g) => s + sayi(g.actual_open_cogs_tl ?? g.gercek_maliyet_tl ?? g.teorik_maliyet_tl), 0);
+          const l2li = gunler.filter((g) => g.theoretical_recipe_cogs_tl != null);
+          if (!l2li.length) return null;
+          const l2 = l2li.reduce((s, g) => s + sayi(g.theoretical_recipe_cogs_tl), 0);
+          const sapma = l1 - l2;
+          const kapsamalar = l2li.map((g) => sayi(g.teorik_kapsama_pct)).filter((x) => x > 0);
+          const ortKapsama = kapsamalar.length ? kapsamalar.reduce((a, b) => a + b, 0) / kapsamalar.length : null;
+          const altSinir = l2li.some((g) => g.teorik_alt_sinir);
+          return (
+            <div style={{ ...kartYuzey, padding: '13px 18px', marginBottom: 14 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+                <span style={{ fontFamily: F.baslik, fontSize: 14, fontWeight: 600 }}>Gerçek ↔ Beklenen</span>
+                <span style={{ fontSize: 12, color: R.metin2 }}>
+                  gerçek (ürün-aç) <b style={{ fontFamily: F.mono, color: R.krem }}>{fmt(l1)}</b>
+                </span>
+                <span style={{ fontSize: 12, color: R.metin2 }}>
+                  beklenen (satış×reçete) <b style={{ fontFamily: F.mono, color: R.mavi }}>{fmt(l2)}</b>
+                  {altSinir ? <span style={{ color: R.amber }}> ≥ alt sınır</span> : null}
+                </span>
+                <span style={{ fontSize: 12, color: R.metin2 }}>
+                  sapma <b style={{ fontFamily: F.mono, color: sapma > 0 ? R.kirmizi : R.yesil }}>
+                    {sapma > 0 ? '+' : ''}{fmt(sapma)}
+                  </b>
+                </span>
+                {ortKapsama != null && (
+                  <span style={{ fontSize: 11, color: R.not2 }}>satış kapsaması ~%{ortKapsama.toFixed(0)}</span>
+                )}
+              </div>
+              <div style={{ fontSize: 10.5, color: R.not3, marginTop: 7, lineHeight: 1.55 }}>
+                Sapma + ise açılan mal, satışın gerektirdiğinden fazla (fire/porsiyon/kayıt) —
+                gözlem, hüküm değil. Beklenen yalnız eşleşmiş+fiyatlı satışları kapsar,
+                ölçekleme yapılmaz; kapsama düşükken sapma yorumu temkinli okunur.
+              </div>
+            </div>
+          );
+        })()}
+
         {/* ── GÜVEN SKORU + SAPMA MOTORU (öneri-only, SALT-OKUR) ──
             Food cost sayısının kendisi kadar önemli: o sayı ne kadar
             güvenilir? Sapma motoru "48M ciro / 70K bardak" tipi veri-kalitesi

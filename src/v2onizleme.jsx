@@ -909,7 +909,15 @@ const MALIYET_GUNLER = (() => {
     const t = d.toISOString().slice(0, 10);
     const ciro = 82000 + Math.sin(g / 3) * 9000;
     const fc = 0.30 + (g < 8 ? 0.04 : 0) + Math.sin(g / 5) * 0.015; // son hafta norm üstü
-    out.push({ tarih: t, sube_adi: 'Zafer', sube_id: 's0', ciro_tl: Math.round(ciro), teorik_maliyet_tl: Math.round(ciro * fc * 0.96), gercek_maliyet_tl: Math.round(ciro * fc), food_cost_pct: Math.round(fc * 1000) / 10, shrinkage_tl: g % 6 === 0 ? 1400 : 0 });
+    // KANONİK v2 (2026-08-03): actual=ürün-aç L1; theoretical=satış×reçete L2;
+    // variance=L1−L2. Legacy teorik_maliyet_tl artık L1 ile aynı yazılır.
+    const l1 = Math.round(ciro * fc);
+    const l2 = Math.round(l1 * 0.88);   // beklenen biraz altta → +sapma (fire) görünür
+    out.push({ tarih: t, sube_adi: 'Zafer', sube_id: 's0', ciro_tl: Math.round(ciro),
+      teorik_maliyet_tl: l1, gercek_maliyet_tl: l1, actual_open_cogs_tl: l1,
+      theoretical_recipe_cogs_tl: l2, variance_tl: l1 - l2,
+      teorik_kapsama_pct: 74, teorik_alt_sinir: true, definition_version: 2,
+      food_cost_pct: Math.round(fc * 1000) / 10, shrinkage_tl: g % 6 === 0 ? 1400 : 0 });
   }
   return out;
 })();
