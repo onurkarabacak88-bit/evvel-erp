@@ -1711,6 +1711,12 @@ const KUCUK_UC = {
   ],
   '/api/rapor/aylik': {
     donem: bugunISO.slice(0, 7),
+    // Ay-başı freni kanıtı: gunluk 2 satır (<7) + mühürsüz → şerit çıkmalı
+    gunluk: [
+      { tarih: gunEkleISO(-1), giris: 37605, cikis: 300, net: 37305, kasa: 2699876 },
+      { tarih: bugunISO, giris: 20449, cikis: 0, net: 20449, kasa: 2720324 },
+    ],
+    muhur: { muhurlu: false },
     // ⚠️ 15 bölümün 13'ü v2'de kullanılmıyordu (okuma boşluğu denetimi) — mock'ta
     // da yoktu. Gerçek uç hepsini döndürüyor (main.py:10003).
     donem_label: 'Temmuz 2026',
