@@ -17277,12 +17277,19 @@ def _food_cost_hesapla_gun(
         cur.execute("SAVEPOINT sp_fc_l2")
         from recete_api import teorik_maliyet_gun
         t2 = teorik_maliyet_gun(cur, str(hedef), alis_fiyat)
-        # Evo şube ADI → şube id eşlemesi (büyük/küçük duyarsız)
-        ad_to_id = {str(v or "").strip().upper(): k for k, v in sube_adlari.items()}
-        for s_ad, blok in (t2.get("subeler") or {}).items():
-            sid2 = ad_to_id.get(str(s_ad).strip().upper())
-            if sid2:
-                teorik_l2[sid2] = blok
+        # 🐞 EŞLEME FIX (2026-08-03): Evo cache anahtarı "Zafer Şubesi" gibi
+        # EVO adlarıdır; kaba upper eşleşmesi hiçbirini tutmadı (L2 hep None).
+        # Kanonik eşleştirici kullanılır — TEMA=Gazze alias'ı da orada.
+        from evo_sync import evvel_sube_evo_id_eslestir, EVO_SUBE_ID_MAP
+        t2subeler = t2.get("subeler") or {}
+        for sid2, ad2 in sube_adlari.items():
+            try:
+                eid = evvel_sube_evo_id_eslestir(str(ad2 or ""))
+            except Exception:  # noqa: BLE001
+                eid = None
+            e_ad = EVO_SUBE_ID_MAP.get(str(eid)) if eid is not None else None
+            if e_ad and e_ad in t2subeler:
+                teorik_l2[sid2] = t2subeler[e_ad]
         cur.execute("RELEASE SAVEPOINT sp_fc_l2")
     except Exception as e:  # noqa: BLE001 — L2 süs; L1'i düşüremez
         try:
