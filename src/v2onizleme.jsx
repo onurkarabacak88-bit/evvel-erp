@@ -1346,9 +1346,23 @@ const MALIYET_UC = {
       { kod: 'su', baslik: 'Su' }, { kod: 'pasta', baslik: 'Pasta/Tatlı' },
       { kod: 'diger', baslik: 'Diğer Sarf' }, { kod: 'diger_urun_ac_tl', baslik: '☕ Diğer Ürün-Aç' },
     ],
+    // Günlük P&L alanları (sahip isteği 2026-08-03) — gerçek uç şeması:
+    // net_kar_net_tl (KDV-hariç model) + vergi + KDV üçlüsü + kâr basamakları
     satirlar: [
-      { tarih: gunEkleISO(-1), sube_id: 's0', sube_adi: 'ZAFER', sut: 84200, surup: 12400, bardak_8oz: 21600, bardak_14oz: 18900, karton_bardak: 9400, plastik_bardak: 6200, kapak: 4100, pecete: 2600, su: 3800, pasta: 31200, diger: 5400, diger_urun_ac_tl: 96400 },
-      { tarih: gunEkleISO(-1), sube_id: 's1', sube_adi: 'KÖYCEĞİZ', sut: 52100, surup: 7800, bardak_8oz: 14200, bardak_14oz: 11600, karton_bardak: 6100, plastik_bardak: 3900, kapak: 2600, pecete: 1700, su: 2400, pasta: 18400, diger: 3200, diger_urun_ac_tl: 61200 },
+      { tarih: gunEkleISO(-1), sube_id: 's0', sube_adi: 'ZAFER', sut: 84200, surup: 12400, bardak_8oz: 21600, bardak_14oz: 18900, karton_bardak: 9400, plastik_bardak: 6200, kapak: 4100, pecete: 2600, su: 3800, pasta: 31200, diger: 5400, diger_urun_ac_tl: 96400,
+        ciro_tl: 93373, net_satis_tl: 84885, net_cogs_tl: 24960, brut_kar_tl: 59925,
+        personel_maliyet_tl: 14200, sgk_isveren_tl: 3100, kira_maliyet_tl: 4728, fatura_maliyet_tl: 2410,
+        abonelik_maliyet_tl: 480, pos_komisyon_tl: 1120, platform_komisyon_tl: 640, fire_maliyet_tl: 940,
+        iade_maliyet_tl: 0, sube_anlik_gider_tl: 1830, favok_tl: 33205, faaliyet_kari_tl: 30477,
+        net_toplam_maliyet_tl: 54408, net_kar_tl: 30477, net_kar_net_tl: 21945, net_marj_net_pct: 25.9,
+        tahmini_vergi_net_tl: 8532, vergi_efektif_oran_pct: 28, hesaplanan_kdv_tl: 8488, indirilecek_kdv_tl: 3120, odenecek_kdv_tl: 5368 },
+      { tarih: gunEkleISO(-1), sube_id: 's1', sube_adi: 'KÖYCEĞİZ', sut: 52100, surup: 7800, bardak_8oz: 14200, bardak_14oz: 11600, karton_bardak: 6100, plastik_bardak: 3900, kapak: 2600, pecete: 1700, su: 2400, pasta: 18400, diger: 3200, diger_urun_ac_tl: 61200,
+        ciro_tl: 0, ciro_kaynak: 'yok', net_cogs_tl: 15840, brut_kar_tl: -15840,
+        personel_maliyet_tl: 9800, sgk_isveren_tl: 2100, kira_maliyet_tl: 3625, fatura_maliyet_tl: 1240,
+        abonelik_maliyet_tl: 0, pos_komisyon_tl: 0, platform_komisyon_tl: 0, fire_maliyet_tl: 0,
+        iade_maliyet_tl: 0, sube_anlik_gider_tl: 640, favok_tl: -29620, faaliyet_kari_tl: -33245,
+        net_toplam_maliyet_tl: 33245, net_kar_tl: -33245, net_kar_net_tl: -33245, net_marj_net_pct: null,
+        tahmini_vergi_net_tl: 0, vergi_efektif_oran_pct: 27, hesaplanan_kdv_tl: 0, indirilecek_kdv_tl: 0, odenecek_kdv_tl: 0 },
     ],
     // Fiyatı tanımsız kalemler → maliyete HİÇ girmez, food cost düşük görünür
     fiyat_eksik_kalemler: ['Karamel şurup', 'Cheesecake (dilim)', 'Soda', 'Cookie'],

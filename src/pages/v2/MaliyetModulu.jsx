@@ -705,6 +705,126 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
             renk: altyapiEksik.length ? R.amber : R.krem,
           },
         ]} />
+        {/* ── GÜNLÜK KÂR & VERGİ (sahip isteği 2026-08-03: "eski alandaki gibi
+            günlük net kâr + vergiyi Maliyet'te göreyim") — klasik Kâr&Maliyet
+            ekranının P&L alt satırı. Sunucu HER alanı zaten gönderiyordu
+            (net_kar_net_tl, tahmini_vergi, KDV üçlüsü, kova kırılımları) —
+            v2 yalnız grup kırılımını gösteriyordu. KDV TAM-MODEL dili:
+            net = KDV-HARİÇ (ödenecek KDV P&L DIŞI, ayrı satırda). */}
+        {gunGun && (() => {
+          const satirlarP = (Array.isArray(gunGun.satirlar) ? gunGun.satirlar : [])
+            .slice().sort((a, b) => String(b.tarih).localeCompare(String(a.tarih)));
+          if (!satirlarP.length) return null;
+          // KPI kuralı (klasik f946935 dersi): toplamlar YALNIZ cirolu günlerden —
+          // cirosu girilmemiş gün birikmiş maliyetiyle sahte zarar göstermesin.
+          const cirolu = satirlarP.filter((g) => sayi(g.ciro_tl) > 0);
+          const t30net = cirolu.reduce((s, g) => s + sayi(g.net_kar_net_tl ?? g.net_kar_tl), 0);
+          const t30vergi = cirolu.reduce((s, g) => s + sayi(g.tahmini_vergi_net_tl ?? g.tahmini_vergi_tl), 0);
+          const t30kdv = cirolu.reduce((s, g) => s + sayi(g.odenecek_kdv_tl), 0);
+          const sonGun = cirolu[0] || null;
+          const KOVALAR = [
+            ['net_cogs_tl', 'Malzeme (COGS)'], ['personel_maliyet_tl', 'Personel'],
+            ['sgk_isveren_tl', 'SGK işveren'], ['kira_maliyet_tl', 'Kira'],
+            ['fatura_maliyet_tl', 'Faturalar'], ['abonelik_maliyet_tl', 'Abonelik'],
+            ['pos_komisyon_tl', 'POS komisyonu'], ['platform_komisyon_tl', 'Platform komisyonu'],
+            ['fire_maliyet_tl', 'Fire'], ['iade_maliyet_tl', 'İade'],
+            ['sube_anlik_gider_tl', 'Anlık gider'],
+          ];
+          return (
+            <>
+              <div style={{ ...kartYuzey, padding: '15px 18px', marginBottom: 14 }}>
+                <div style={{ fontFamily: F.baslik, fontSize: 15, fontWeight: 600, marginBottom: 11 }}>
+                  💰 Günlük kâr & vergi · son {sayi(gunGun.gun) || 30} gün
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(170px,1fr))', gap: 10, marginBottom: 4 }}>
+                  <div style={{ padding: '11px 14px', borderRadius: 11, background: R.girinti }}>
+                    <div style={{ fontSize: 10.5, color: R.not2, fontWeight: 700, letterSpacing: '.5px' }}>SON CİROLU GÜN NET</div>
+                    <div style={{ fontFamily: F.mono, fontSize: 18, fontWeight: 700, marginTop: 4, color: sonGun && sayi(sonGun.net_kar_net_tl ?? sonGun.net_kar_tl) >= 0 ? R.yesil : R.kirmizi }}>
+                      {sonGun ? fmt(sayi(sonGun.net_kar_net_tl ?? sonGun.net_kar_tl)) : '—'}
+                    </div>
+                    <div style={{ fontSize: 10.5, color: R.not2, marginTop: 2 }}>
+                      {sonGun ? `${tarihKisa(sonGun.tarih)} · ${sonGun.sube_adi || ''} · KDV-hariç` : 'cirolu gün yok'}
+                    </div>
+                  </div>
+                  <div style={{ padding: '11px 14px', borderRadius: 11, background: R.girinti }}>
+                    <div style={{ fontSize: 10.5, color: R.not2, fontWeight: 700, letterSpacing: '.5px' }}>NET KÂR (CİROLU GÜNLER)</div>
+                    <div style={{ fontFamily: F.mono, fontSize: 18, fontWeight: 700, marginTop: 4, color: t30net >= 0 ? R.yesil : R.kirmizi }}>{fmt(t30net)}</div>
+                    <div style={{ fontSize: 10.5, color: R.not2, marginTop: 2 }}>{cirolu.length} şube-gün · KDV-hariç model</div>
+                  </div>
+                  <div style={{ padding: '11px 14px', borderRadius: 11, background: R.girinti }}>
+                    <div style={{ fontSize: 10.5, color: R.not2, fontWeight: 700, letterSpacing: '.5px' }}>TAHMİNÎ VERGİ</div>
+                    <div style={{ fontFamily: F.mono, fontSize: 18, fontWeight: 700, marginTop: 4, color: R.amber }}>{fmt(t30vergi)}</div>
+                    <div style={{ fontSize: 10.5, color: R.not2, marginTop: 2 }}>şube tipine göre efektif oran · detay Vergi & KDV</div>
+                  </div>
+                  <div style={{ padding: '11px 14px', borderRadius: 11, background: R.girinti }}>
+                    <div style={{ fontSize: 10.5, color: R.not2, fontWeight: 700, letterSpacing: '.5px' }}>ÖDENECEK KDV</div>
+                    <div style={{ fontFamily: F.mono, fontSize: 18, fontWeight: 700, marginTop: 4, color: R.krem }}>{fmt(t30kdv)}</div>
+                    <div style={{ fontSize: 10.5, color: R.not2, marginTop: 2 }}>P&L DIŞI — kasadan çıkacak ayrı yük</div>
+                  </div>
+                </div>
+              </div>
+
+              <Tablo
+                baslik="Gün gün kâr"
+                not="satıra tıkla → gider kovaları + kâr basamakları · cirosuz gün marjsız gösterilir"
+                kolonlar={[
+                  { ad: 'Tarih' }, { ad: 'Şube' }, { ad: 'Ciro', sag: true },
+                  { ad: 'Toplam gider', sag: true }, { ad: 'Net kâr', sag: true },
+                  { ad: 'Net marj', sag: true }, { ad: 'Vergi', sag: true },
+                ]}
+                satirlar={satirlarP.slice(0, 21).map((g, i) => {
+                  const ciroG = sayi(g.ciro_tl);
+                  const net = sayi(g.net_kar_net_tl ?? g.net_kar_tl);
+                  const marj = g.net_marj_net_pct ?? g.net_marj_pct;
+                  return {
+                    id: `${g.tarih}-${g.sube_id || i}`,
+                    _g: g,
+                    hucreler: [
+                      { v: tarihKisa(g.tarih), mono: true },
+                      { v: g.sube_adi || '—', renk: R.not },
+                      ciroG > 0
+                        ? { v: fmt(ciroG), mono: true, sag: true, sira: ciroG }
+                        : { v: 'girilmedi', sag: true, renk: R.amber, sira: -1 },
+                      { v: fmt(sayi(g.net_toplam_maliyet_tl)), mono: true, sag: true, sira: sayi(g.net_toplam_maliyet_tl) },
+                      { v: fmt(net), mono: true, sag: true, kalin: true, renk: net >= 0 ? R.yesil : R.kirmizi, sira: net },
+                      marj != null && ciroG > 0
+                        ? { v: `%${sayi(marj).toFixed(1)}`, mono: true, sag: true, renk: sayi(marj) >= 0 ? R.yesil : R.kirmizi, sira: sayi(marj) }
+                        : { v: '—', sag: true, renk: R.not3, sira: -999 },
+                      { v: fmt(sayi(g.tahmini_vergi_net_tl ?? g.tahmini_vergi_tl)), mono: true, sag: true, renk: R.amber },
+                    ],
+                  };
+                })}
+                onSatir={({ _g }) => {
+                  const g = _g;
+                  const kovalar = KOVALAR
+                    .map(([k, ad]) => ({ ad, tutar: sayi(g[k]) }))
+                    .filter((x) => x.tutar > 0);
+                  onCekmece?.({
+                    tip: 'GÜNLÜK KÂR KIRILIMI',
+                    baslik: `${g.sube_adi || 'Şube'} · ${tarihKisa(g.tarih)}`,
+                    alt: sayi(g.ciro_tl) > 0 ? `ciro ${fmt(sayi(g.ciro_tl))}` : 'ciro girilmedi — marj hesaplanamaz',
+                    kpi: [
+                      { etiket: 'Brüt kâr', deger: fmt(sayi(g.brut_kar_tl)), renk: sayi(g.brut_kar_tl) >= 0 ? R.yesil : R.kirmizi },
+                      { etiket: 'FAVÖK', deger: fmt(sayi(g.favok_tl)), renk: sayi(g.favok_tl) >= 0 ? R.yesil : R.kirmizi },
+                      { etiket: 'Net kâr (KDV-hariç)', deger: fmt(sayi(g.net_kar_net_tl ?? g.net_kar_tl)), renk: sayi(g.net_kar_net_tl ?? g.net_kar_tl) >= 0 ? R.yesil : R.kirmizi },
+                      { etiket: 'Vergi (efektif)', deger: `%${Math.round(sayi(g.vergi_efektif_oran_pct))}`, renk: R.amber },
+                    ],
+                    listeBaslik: 'Gider kovaları (KDV-hariç)',
+                    satirlar: [
+                      ...kovalar.map((x) => ({ ad: x.ad, detay: '', tutar: fmt(x.tutar) })),
+                      { ad: 'Tahminî vergi', detay: 'şube tipine göre', tutar: fmt(sayi(g.tahmini_vergi_net_tl ?? g.tahmini_vergi_tl)) },
+                      { ad: 'Ödenecek KDV', detay: 'P&L DIŞI — ayrı nakit yükü', tutar: fmt(sayi(g.odenecek_kdv_tl)) },
+                    ],
+                    not: 'Kâr basamakları: brüt = ciro − COGS · FAVÖK = brüt − işletme giderleri · '
+                      + 'net = faaliyet − tahminî vergi. Tüm gider satırları KDV-HARİÇ modeldedir; '
+                      + 'ödenecek KDV kârı etkilemez, kasadan ayrıca çıkar.',
+                  });
+                }}
+              />
+            </>
+          );
+        })()}
+
         {/* ── KANONİK MALİYET: L1 gerçek (ürün-aç) ↔ L2 beklenen (reçete) ↔ L3 sapma ──
             Sahip doktrini + Codex (2026-08-03): para ÜRÜN-AÇ'tan sürülür, reçete
             KONTROL eder. Beklenen ASLA ölçeklenmez — kapsama % ile alt sınırdır. */}
