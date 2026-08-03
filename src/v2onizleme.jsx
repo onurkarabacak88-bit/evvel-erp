@@ -919,6 +919,9 @@ const MALIYET_UC = {
     alis_fiyat_sayisi: 41, recete_sayisi: 75,
     stok_degeri_tl: 284600, stok_kalem_sayisi: 128,
     // Benchmark bandı SUNUCUDAN gelir — v2'de sabit yazılmaz
+    // Sözleşme düzeltmesi (2026-08-03): recete_sayisi artık CEVAPTA (docstring
+    // vaat edip göndermiyordu — ekran 0 okuyordu)
+    recete_sayisi: 3, recete_durum_dagilimi: { exact: 1, approx: 1, partial: 1, unpriced: 0 },
     benchmark: { food_cost_min_pct: 28, food_cost_max_pct: 35, shrinkage_izleme_pct: 2, shrinkage_sorusturma_pct: 4 },
     altyapi_durum: {
       alis_fiyat_tamam: false, recete_tamam: true,
@@ -1389,22 +1392,32 @@ const MALIYET_UC = {
     ],
     not: '⚠️ TAHMİNİ — yönetsel gösterge, resmî beyan değil. Geçici vergi/mahsup/istisna hariç.',
   },
+  // ⚠️ REÇETE PROJEKSİYONU şeması (2026-08-03, Codex danışmalı birleşme):
+  // kaynak='recete_projeksiyon' → CRUD gizli; durum 4 kademe; satir_maliyet_tl
+  // sunucudan (istemci çarpımı yalnız legacy yedeği).
   '/api/ops/maliyet/recete-listesi': {
+    kaynak: 'recete_projeksiyon',
+    durum_dagilimi: { exact: 1, approx: 1, partial: 1, unpriced: 0 },
     receteler: [
-      { urun_id: 'latte', urun_adi: 'Latte', hammaddeler: [
-        { hammadde_kodu: 'k3', hammadde_adi: 'Süt 3.5%', miktar: 0.25, birim: 'L' },
-        { hammadde_kodu: 'k1', hammadde_adi: 'Espresso çekirdek', miktar: 0.018, birim: 'kg' },
-        { hammadde_kodu: 'k2', hammadde_adi: 'Karton bardak 8 oz', miktar: 1, birim: 'adet' },
-      ]},
-      { urun_id: 'filtre', urun_adi: 'Filtre Kahve', hammaddeler: [
-        { hammadde_kodu: 'k1', hammadde_adi: 'Espresso çekirdek', miktar: 0.02, birim: 'kg' },
-        { hammadde_kodu: 'k2', hammadde_adi: 'Karton bardak 8 oz', miktar: 1, birim: 'adet' },
-      ]},
-      { urun_id: 'vanilya-latte', urun_adi: 'Vanilya Latte', hammaddeler: [
-        { hammadde_kodu: 'k3', hammadde_adi: 'Süt 3.5%', miktar: 0.25, birim: 'L' },
-        { hammadde_kodu: 'k1', hammadde_adi: 'Espresso çekirdek', miktar: 0.018, birim: 'kg' },
-        { hammadde_kodu: 'k9', hammadde_adi: 'Vanilya şurup', miktar: 0.03, birim: 'L' },
-      ]},
+      { urun_id: 'r1', urun_adi: 'Latte 14oz', durum: 'approx', toplam_maliyet_tl: 18.42, fiyatlanan_n: 3, toplam_n: 3,
+        fiyatlanamayan_nedenler: {},
+        hammaddeler: [
+          { hammadde_kodu: 'k3', hammadde_adi: 'süt', miktar: 250, birim: 'ml', ambalaj_adet: 0.25, satir_maliyet_tl: 9.25, fiyatlanabilir: true, damgalar: ['parametre_varsayim'], nedenler: [] },
+          { hammadde_kodu: 'k1', hammadde_adi: 'espresso', miktar: 18, birim: 'g', ambalaj_adet: 0.018, satir_maliyet_tl: 6.17, fiyatlanabilir: true, damgalar: [], nedenler: [] },
+          { hammadde_kodu: 'k2', hammadde_adi: 'karton bardak', miktar: 1, birim: 'adet', ambalaj_adet: 1, satir_maliyet_tl: 3.0, fiyatlanabilir: true, damgalar: [], nedenler: [] },
+        ]},
+      { urun_id: 'r2', urun_adi: 'Filtre Kahve', durum: 'exact', toplam_maliyet_tl: 9.86, fiyatlanan_n: 2, toplam_n: 2,
+        fiyatlanamayan_nedenler: {},
+        hammaddeler: [
+          { hammadde_kodu: 'k1', hammadde_adi: 'filtre çekirdek', miktar: 20, birim: 'g', ambalaj_adet: 0.02, satir_maliyet_tl: 6.86, fiyatlanabilir: true, damgalar: [], nedenler: [] },
+          { hammadde_kodu: 'k2', hammadde_adi: 'karton bardak', miktar: 1, birim: 'adet', ambalaj_adet: 1, satir_maliyet_tl: 3.0, fiyatlanabilir: true, damgalar: [], nedenler: [] },
+        ]},
+      { urun_id: 'r3', urun_adi: 'Ice Karamel 14oz', durum: 'partial', toplam_maliyet_tl: 4.1, fiyatlanan_n: 1, toplam_n: 2,
+        fiyatlanamayan_nedenler: { eslesme_bekliyor: 1 },
+        hammaddeler: [
+          { hammadde_kodu: null, hammadde_adi: 'karamel şurup', miktar: 15, birim: 'ml', ambalaj_adet: null, satir_maliyet_tl: null, fiyatlanabilir: false, damgalar: [], nedenler: ['eslesme_bekliyor'] },
+          { hammadde_kodu: 'k2', hammadde_adi: 'karton bardak', miktar: 1, birim: 'adet', ambalaj_adet: 1, satir_maliyet_tl: 4.1, fiyatlanabilir: true, damgalar: [], nedenler: [] },
+        ]},
     ],
     toplam: 3,
   },

@@ -23,7 +23,7 @@ import logging
 import re
 import uuid
 from datetime import date, timedelta
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -1175,4 +1175,161 @@ def unutulan_urun_ac(gun: int = 7):
                "ürünler kapsam dışı → beklenen alt sınırdır, gerçek açık daha "
                "büyük olabilir). sinyal=guclu: aynı gün depo zincir kopuğu da var. "
                "İSİM YOK; kapanış/vardiya kaydı kimi söyler. HÜKÜM YOK.",
+    }
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# MALİYET PROJEKSİYONU — A-evreninden tek okuma-modeli (Codex danışmalı, 2026-08-03)
+# ─────────────────────────────────────────────────────────────────────────────
+# İKİ REÇETE EVRENİ vakasının çözümü: maliyet motorunun boş `urun_recete`
+# tablosu OTORİTE olmaktan çıkar; bu fonksiyon 91 reçetelik kanonik evreni
+# (recete + kalem + parametre + ambalaj + eşleştirme) DÜZ maliyet satırlarına
+# çevirir. Çeviri kuralları recete_kontrol ile AYNI (tek dönüşüm evreni —
+# ikinci kez yazılırsa çatallanır, Codex uyarısı).
+#
+# Dürüstlük sözleşmesi: kesinlik/varsayım toplamı BLOKLAMAZ, damga olarak
+# taşınır. Ürün durumu 4 kademe:
+#   exact    → tüm satırlar fiyatlandı, hiç varsayım yok
+#   approx   → tümü fiyatlandı ama en az bir varsayım/yaklaşıklık var
+#   partial  → bir kısmı fiyatlanamadı (nedenleriyle listelenir)
+#   unpriced → hiçbir satır fiyatlanamadı
+# Çoklu onaylı malzeme eşleşmesinde politika: fiyatı TANIMLI kodlardan ad
+# sırasına göre ilki seçilir + 'coklu_eslesme' damgası (sessiz seçim yok).
+# ═════════════════════════════════════════════════════════════════════════════
+
+def maliyet_projeksiyonu(cur, fiyat_haritasi: Optional[Dict[str, float]] = None) -> Dict[str, Any]:
+    """Kanonik reçete evreninden maliyet READ-MODEL'i. SALT-OKUR.
+
+    fiyat_haritasi: {kalem_kodu: birim_maliyet_tl} (ambalaj/adet başına) —
+    çağıran verir (operasyon_merkez_api._alis_fiyat_haritasi); dairesel import
+    olmasın diye parametredir. Verilmezse fiyatlama yapılmaz (durum=unpriced).
+    """
+    fiyat = fiyat_haritasi or {}
+    _ensure(cur)
+    cur.execute("SELECT ad, deger, varsayim FROM recete_parametre")
+    prm, prm_varsayim = {}, {}
+    for r in (dict(x) for x in cur.fetchall() or []):
+        prm[r["ad"]] = float(r["deger"])
+        prm_varsayim[r["ad"]] = bool(r.get("varsayim"))
+    cur.execute("""SELECT kaynak_ad, hedef_kod FROM recete_eslestirme
+                   WHERE tip='malzeme' AND durum='onayli' AND COALESCE(hedef_kod,'')<>''""")
+    malzeme_es: Dict[str, list] = {}
+    for r in (dict(x) for x in cur.fetchall() or []):
+        malzeme_es.setdefault(_norm(r["kaynak_ad"]), []).append(str(r["hedef_kod"]))
+    cur.execute("SELECT kalem_kodu, icerik, birim, varsayim FROM recete_ambalaj")
+    ambalaj = {str(dict(r)["kalem_kodu"]): dict(r) for r in cur.fetchall() or []}
+    cur.execute("""
+        SELECT r.id, r.urun_ad, r.boyut, k.malzeme_ad, k.miktar, k.birim, k.kesinlik
+        FROM recete r JOIN recete_kalem k ON k.recete_id = r.id
+        WHERE r.aktif=TRUE
+        ORDER BY r.urun_ad, r.boyut""")
+    urunler: Dict[str, Dict[str, Any]] = {}
+    for row in (dict(x) for x in cur.fetchall() or []):
+        rid = str(row["id"])
+        u = urunler.setdefault(rid, {
+            "urun_id": rid,
+            "urun_adi": (str(row["urun_ad"]) + (f" {row['boyut']}" if row.get("boyut") else "")).strip(),
+            "hammaddeler": [],
+        })
+        damgalar: list = []
+        nedenler: list = []
+        mik = float(row["miktar"]) if row.get("miktar") is not None else None
+        b = row.get("birim")
+        # ── ÇEVİRİ (recete_kontrol ile aynı kurallar) ──
+        if mik is not None and b:
+            cevrimler = {
+                "pump": ("pump_ml", 5, "ml"), "shot": ("shot_gram", 9, "g"),
+                "kasik": ("silme_kasik_g", 10, "g"), "fincan": ("fincan_ml", 70, "ml"),
+            }
+            if b in cevrimler:
+                p_ad, p_vars, hedef = cevrimler[b]
+                mik, b = mik * prm.get(p_ad, p_vars), hedef
+                if prm_varsayim.get(p_ad, True):
+                    damgalar.append("parametre_varsayim")
+            elif b == "yuzde_bardak":
+                mik, b = mik / 100.0 * prm.get("bardak_14oz_ml", 414), "ml"
+                if prm_varsayim.get("bardak_14oz_ml", True):
+                    damgalar.append("parametre_varsayim")
+            elif b == "yuzde_bardak8":
+                mik, b = mik / 100.0 * prm.get("bardak_8oz_ml", 237), "ml"
+                if prm_varsayim.get("bardak_8oz_ml", True):
+                    damgalar.append("parametre_varsayim")
+        else:
+            nedenler.append("miktar_tanimsiz")
+        kesinlik = str(row.get("kesinlik") or "belirsiz")
+        if kesinlik != "kesin":
+            damgalar.append(f"kesinlik_{kesinlik}")
+        # ── FİYATLAMA ──
+        kodlar = malzeme_es.get(_norm(str(row["malzeme_ad"])), [])
+        kod, satir_tl, ambalaj_adet = None, None, None
+        if not kodlar:
+            nedenler.append("eslesme_bekliyor")
+        else:
+            fiyatli = sorted([k for k in kodlar if fiyat.get(k)])
+            if len(kodlar) > 1:
+                damgalar.append("coklu_eslesme")
+            kod = fiyatli[0] if fiyatli else sorted(kodlar)[0]
+            if not fiyatli:
+                nedenler.append("fiyat_yok")
+            elif mik is None:
+                pass  # miktar_tanimsiz zaten yazıldı
+            elif b in ("ml", "g"):
+                amb = ambalaj.get(kod)
+                if not amb:
+                    nedenler.append("ambalaj_eksik")
+                elif str(amb.get("birim")) != b:
+                    nedenler.append("birim_uyumsuz")
+                elif float(amb.get("icerik") or 0) <= 0:
+                    nedenler.append("ambalaj_eksik")
+                else:
+                    ambalaj_adet = mik / float(amb["icerik"])
+                    satir_tl = round(ambalaj_adet * float(fiyat[kod]), 4)
+                    if amb.get("varsayim"):
+                        damgalar.append("ambalaj_varsayim")
+            else:  # adet vb. — depo sayım birimiyle birebir
+                ambalaj_adet = mik
+                satir_tl = round(mik * float(fiyat[kod]), 4)
+        u["hammaddeler"].append({
+            "hammadde_kodu": kod,
+            "hammadde_adi": str(row["malzeme_ad"]),
+            "miktar": (round(mik, 2) if mik is not None else None),
+            "birim": b or "adet",
+            "ambalaj_adet": (round(ambalaj_adet, 4) if ambalaj_adet is not None else None),
+            "satir_maliyet_tl": satir_tl,
+            "fiyatlanabilir": satir_tl is not None,
+            "damgalar": damgalar,
+            "nedenler": nedenler,
+        })
+    receteler = []
+    durum_sayac = {"exact": 0, "approx": 0, "partial": 0, "unpriced": 0}
+    for u in urunler.values():
+        hs = u["hammaddeler"]
+        fiyatlanan = [h for h in hs if h["fiyatlanabilir"]]
+        varsayimli = any(h["damgalar"] for h in fiyatlanan)
+        if hs and len(fiyatlanan) == len(hs):
+            durum = "approx" if varsayimli else "exact"
+        elif fiyatlanan:
+            durum = "partial"
+        else:
+            durum = "unpriced"
+        durum_sayac[durum] += 1
+        u["durum"] = durum
+        u["toplam_maliyet_tl"] = (
+            round(sum(h["satir_maliyet_tl"] for h in fiyatlanan), 2) if fiyatlanan else None)
+        u["fiyatlanan_n"] = len(fiyatlanan)
+        u["toplam_n"] = len(hs)
+        n_toplu: Dict[str, int] = {}
+        for h in hs:
+            for n in h["nedenler"]:
+                n_toplu[n] = n_toplu.get(n, 0) + 1
+        u["fiyatlanamayan_nedenler"] = n_toplu
+        receteler.append(u)
+    return {
+        "receteler": receteler,
+        "toplam": len(receteler),
+        "durum_dagilimi": durum_sayac,
+        "kaynak": "recete_projeksiyon",
+        "not": ("Kanonik reçete evreninden türetilmiş maliyet görünümü — kesinlik/"
+                "varsayım damgaları toplamı bloklamaz, dürüstçe taşınır. Kısmi "
+                "fiyatlanan ürün '0 TL' DEĞİL 'partial' durumuyla sunulur."),
     }

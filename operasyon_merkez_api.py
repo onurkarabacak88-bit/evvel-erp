@@ -13749,6 +13749,19 @@ def ops_maliyet_ozet(
                 d["hesaplama_ts"] = d["hesaplama_ts"].isoformat()
             gun_satirlari.append(d)
 
+        # REÇETE SAYISI — SÖZLEŞME DÜZELTMESİ (Codex bulgusu, 2026-08-03):
+        # docstring `recete_sayisi` vaat ediyordu ama cevapta ALAN YOKTU —
+        # UI sayi(undefined)=0 okuyup "0 reçete" yazıyordu. Sayı artık kanonik
+        # reçete evreninden (projeksiyon durum dağılımıyla birlikte) gelir.
+        recete_sayisi, recete_durum = 0, {}
+        try:
+            from recete_api import maliyet_projeksiyonu
+            proj = maliyet_projeksiyonu(cur, _alis_fiyat_haritasi(cur))
+            recete_sayisi = int(proj.get("toplam") or 0)
+            recete_durum = proj.get("durum_dagilimi") or {}
+        except Exception as e:  # noqa: BLE001
+            logger.warning("ozet recete projeksiyonu hatasi (yutuldu): %s", str(e)[:120])
+
         # Altyapı durum raporu
         altyapi_durum = {
             "tablolar_hazir": True,
@@ -13758,11 +13771,17 @@ def ops_maliyet_ozet(
         }
         if not altyapi_durum["alis_fiyat_girildi"]:
             altyapi_durum["eksikler"].append("Alış fiyatları girilmeli (Fiyat Listesi sekmesi)")
+        if recete_sayisi and recete_durum.get("unpriced", 0) + recete_durum.get("partial", 0) > 0:
+            altyapi_durum["eksikler"].append(
+                f"{recete_durum.get('partial', 0) + recete_durum.get('unpriced', 0)} reçete tam "
+                "fiyatlanamıyor (malzeme eşleşmesi/ambalaj içeriği bekliyor — Reçeteler sekmesi)")
 
     return {
         "gun": gun,
         "altyapi_durum": altyapi_durum,
         "alis_fiyat_sayisi": alis_fiyat_sayisi,
+        "recete_sayisi": recete_sayisi,
+        "recete_durum_dagilimi": recete_durum,
         "stok_degeri_tl": float(stok_row.get("toplam_stok_degeri_tl") or 0),
         "stok_kalem_sayisi": int(stok_row.get("kalem_sayisi") or 0),
         "gun_satirlari": gun_satirlari,
@@ -16593,9 +16612,24 @@ def ops_maliyet_fatura_kalem_onayla(body: FaturaKalemOnaylaBody):
 
 @router.get("/maliyet/recete-listesi")
 def ops_maliyet_recete_listesi():
-    """Reçete tanımlarını listeler."""
+    """Reçete listesi — KANONİK reçete evreninden türetilmiş maliyet projeksiyonu.
+
+    İKİ EVREN BİRLEŞTİRMESİ (Codex danışmalı, 2026-08-03): sahibin 91 reçetesi
+    recete_api evreninde yaşarken bu uç boş `urun_recete` tablosunu okuyor,
+    ekran "0 reçete" diyordu. Artık tek kaynak recete_api.maliyet_projeksiyonu
+    (Python import — gelecek-ay-yuk deseni); fiyat haritası buradan enjekte
+    edilir (dairesel import yok). `urun_recete` OTORİTE DEĞİL — projeksiyon
+    boş dönerse eski tabloya düşülür (emniyet ağı, veri kaybı yok)."""
     with db() as (conn, cur):
         _ensure_maliyet_tablolari(cur)
+        try:
+            from recete_api import maliyet_projeksiyonu
+            fiyat = _alis_fiyat_haritasi(cur)
+            proj = maliyet_projeksiyonu(cur, fiyat)
+            if proj.get("toplam"):
+                return proj
+        except Exception as e:  # noqa: BLE001 — emniyet ağı: eski yol
+            logger.warning("recete projeksiyonu hatasi (eski yola dusuldu): %s", str(e)[:150])
         cur.execute("""
             SELECT urun_id, urun_adi,
                    json_agg(json_build_object(
@@ -16609,7 +16643,7 @@ def ops_maliyet_recete_listesi():
             ORDER BY urun_adi
         """)
         rows = [dict(r) for r in cur.fetchall()]
-    return {"receteler": rows, "toplam": len(rows)}
+    return {"receteler": rows, "toplam": len(rows), "kaynak": "urun_recete_legacy"}
 
 
 class ReceteHammadde(BaseModel):

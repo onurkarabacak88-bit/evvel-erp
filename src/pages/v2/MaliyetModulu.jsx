@@ -79,6 +79,7 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
   // /recete/degirmen-kiyas → makine sayacı gerçeği (bildirimden bağımsız katman)
   const [degirmen, setDegirmen] = useState(null);
   const [receteler, setReceteler] = useState(null);
+  const [receteKaynak, setReceteKaynak] = useState('');   // 'recete_projeksiyon' = kanonik evren
   const [fiyatlar, setFiyatlar] = useState(null);
   const [receteHata, setReceteHata] = useState('');
   const [alarmlar, setAlarmlar] = useState(null);
@@ -119,7 +120,13 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
   const receteYukle = useCallback(() => {
     setReceteHata('');
     api('/ops/maliyet/recete-listesi')
-      .then((d) => setReceteler(Array.isArray(d?.receteler) ? d.receteler : []))
+      .then((d) => {
+        setReceteler(Array.isArray(d?.receteler) ? d.receteler : []);
+        // Reçete evreni birleşti (2026-08-03): kaynak 'recete_projeksiyon' ise
+        // satırlar KANONİK reçete evreninden türetilmiştir — düzenleme oradan
+        // (Reçete Eşleştirme) yapılır, buradaki CRUD yanlış evrene yazardı.
+        setReceteKaynak(d?.kaynak || '');
+      })
       .catch((e) => setReceteHata(e?.message || ''));
     api('/ops/maliyet/alis-fiyatlari')
       .then((d) => setFiyatlar(Array.isArray(d?.satirlar) ? d.satirlar : []))
@@ -312,11 +319,20 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
 
   // Reçete → maliyet hesabı (fiyatsız hammadde sayısıyla birlikte)
   const receteMaliyet = useCallback((r) => {
+    // SUNUCUNUN HESABI ESAS (reçete birleşmesi 2026-08-03): projeksiyon
+    // satırında satir_maliyet_tl varsa o kullanılır — çeviri (shot→gram→
+    // ambalaj payı) sunucuda tek yerde yaşar. İstemci çarpımı yalnız eski
+    // (legacy) satırlar için yedektir.
     let toplam = 0;
     let fiyatsiz = 0;
     const satirlar = (r.hammaddeler || []).map((h) => {
-      const f = fiyatMap[String(h.hammadde_kodu)];
-      const tutar = f ? sayi(h.miktar) * f.maliyet : null;
+      let tutar;
+      if (h.satir_maliyet_tl != null) tutar = sayi(h.satir_maliyet_tl);
+      else if (h.fiyatlanabilir === false) tutar = null;
+      else {
+        const f = fiyatMap[String(h.hammadde_kodu)];
+        tutar = f ? sayi(h.miktar) * f.maliyet : null;
+      }
       if (tutar == null) fiyatsiz += 1;
       else toplam += tutar;
       return { ...h, tutar };
@@ -959,7 +975,16 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
         <KpiSeridi kpiler={[
           { etiket: 'Tanımlı reçete', deger: String(receteler.length), alt: 'ürün kartı' },
           { etiket: 'Aktif alış fiyatı', deger: String((fiyatlar || []).filter((f) => !f.gecerli_bitis).length), alt: 'hammadde fiyatı' },
-          { etiket: 'Eksiksiz reçete', deger: String(receteler.filter((r) => receteMaliyet(r).fiyatsiz === 0).length), alt: 'tüm fiyatlar tanımlı', renk: R.yesil },
+          {
+            etiket: 'Eksiksiz reçete',
+            // durum sunucudan geliyorsa onu say (exact+approx = tamamı fiyatlı);
+            // legacy satırda eski istemci hesabı yedek kalır
+            deger: String(receteler.filter((r) => (r.durum
+              ? (r.durum === 'exact' || r.durum === 'approx')
+              : receteMaliyet(r).fiyatsiz === 0)).length),
+            alt: 'tüm kalemleri fiyatlandı',
+            renk: R.yesil,
+          },
           { etiket: 'Düzenleme', deger: 'Reçete Eşleştirme', alt: 'ekleme/değiştirme orada' },
         ]} />
         {receteler.length === 0 ? (
@@ -982,18 +1007,34 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
                         {r.urun_adi || r.urun_id}
                       </div>
                       <div style={{ fontSize: 11, color: R.not2, marginTop: 3 }}>
-                        {(r.hammaddeler || []).length} hammadde
+                        {/* Codex sözleşmesi: kısmi fiyatlanan ürün "0 TL" ya da
+                            "tam maliyet" DEĞİL — "5 kalemin 3'ü fiyatlandı" dili */}
+                        {r.toplam_n != null
+                          ? `${r.toplam_n} kalemin ${sayi(r.fiyatlanan_n)}'i fiyatlandı`
+                          : `${(r.hammaddeler || []).length} hammadde`}
                       </div>
                     </div>
                     <span style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center' }}>
-                      {h.fiyatsiz > 0 && <span style={rozetHap(R.kirmizi)}>{h.fiyatsiz} fiyatsız</span>}
-                      <button onClick={() => setRcModal({ tip: 'duzenle', recete: r,
-                        kalemler: (r.hammaddeler || []).map((x) => ({
-                          hammadde_kodu: x.hammadde_kodu, hammadde_adi: x.hammadde_adi,
-                          miktar: x.miktar, birim: x.birim || 'adet',
-                        })) })} style={mlMini}>Düzenle</button>
-                      <button onClick={() => setRcModal({ tip: 'sil', recete: r })}
-                        style={{ ...mlMini, color: R.kirmizi, borderColor: `${R.kirmizi}44` }}>Sil</button>
+                      {/* 4 kademeli dürüstlük damgası (exact/approx/partial/unpriced) */}
+                      {r.durum === 'exact' && <span style={rozetHap(R.yesil)}>kesin</span>}
+                      {r.durum === 'approx' && <span style={rozetHap(R.amber)}>≈ varsayımlı</span>}
+                      {r.durum === 'partial' && <span style={rozetHap(R.kirmizi)}>kısmi</span>}
+                      {r.durum === 'unpriced' && <span style={rozetHap(R.not3)}>fiyatlanamadı</span>}
+                      {!r.durum && h.fiyatsiz > 0 && <span style={rozetHap(R.kirmizi)}>{h.fiyatsiz} fiyatsız</span>}
+                      {/* Kanonik evrenden türetilen satırda CRUD kapalı — buradaki
+                          form boş urun_recete tablosuna (yanlış evrene) yazardı.
+                          Düzenleme yeri: Reçete Eşleştirme. */}
+                      {receteKaynak !== 'recete_projeksiyon' && (
+                        <>
+                          <button onClick={() => setRcModal({ tip: 'duzenle', recete: r,
+                            kalemler: (r.hammaddeler || []).map((x) => ({
+                              hammadde_kodu: x.hammadde_kodu, hammadde_adi: x.hammadde_adi,
+                              miktar: x.miktar, birim: x.birim || 'adet',
+                            })) })} style={mlMini}>Düzenle</button>
+                          <button onClick={() => setRcModal({ tip: 'sil', recete: r })}
+                            style={{ ...mlMini, color: R.kirmizi, borderColor: `${R.kirmizi}44` }}>Sil</button>
+                        </>
+                      )}
                     </span>
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
