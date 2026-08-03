@@ -2258,6 +2258,29 @@ def cari_ozet() -> dict:
         odeme_izleri = [dict(r) for r in cur.fetchall() or []]
         devirler = _cari_devirler(cur)  # 📜 sistem-öncesi açılış beyanları
 
+    # 🔗 EŞDEĞER AD KÜMESİ (AP temizlik turu 2026-08-03): vade/ödeme/devir
+    # eşleşmesi HAM fatura ünvanıyla yapılıyordu; kanonik harita yalnız en
+    # sondaki satır-birleştirmede devreye giriyordu. Sonuç: ekstre ile cari_ozet
+    # AYNI tedarikçiye FARKLI sayı söylüyordu —
+    #   ATALAY: 100.000 ödeme izi "ATALAY KAHVE ..." metniyle; grup adı
+    #   "MEHMET ATALAY" olduğu için iz atanmıyordu (açık 100K şişik).
+    #   ESHİM: 40.800 söz ted="hüseyin makina"; grup ünvanı eşleşmeyince
+    #   kuyruk 0 görünüyordu (ap-mutabakat sahte kuyruk_eksik).
+    # Çözüm ekstredeki _es_adlar deseninin aynısı: grubun adı + haritadaki
+    # kisa'sı + o kisa'ya bağlı tüm resmi adlar tek eşleşme evreni olur.
+    _harita_es = tedarikci_eslestirme_haritasi()
+
+    def _es_adlari(ad: str) -> list:
+        adlar = [ad]
+        kisa = (_harita_es.get((ad or "").strip().upper()) or {}).get("kisa")
+        if kisa:
+            if kisa.upper() != (ad or "").strip().upper():
+                adlar.append(kisa)
+            for hk, hv in _harita_es.items():
+                if hv.get("kisa") == kisa and hk not in {a.upper() for a in adlar}:
+                    adlar.append(hk)
+        return adlar
+
     gruplar: dict = {}
     for s in satirlar:
         k = _cari_kanonik(s.get("tedarikci_vkn"), s.get("tedarikci_ad"))
@@ -2312,13 +2335,14 @@ def cari_ozet() -> dict:
         # VADE SÖZÜ eşleşmesi (ATALAY vakası 2026-07-14: 'ATALAY KAHVE' sözü
         # 'MEHMET ATALAY' cari satırına bağlanmıyordu) — marka-token eşleşmesi;
         # her vade TEK gruba atanır (çift sayım yok, ilk eşleşen alır).
+        g_adlar = _es_adlari(g["tedarikci"])
         v_top, v_yakin = 0.0, None
         for v in vadeler:
             if v.get("_atandi"):
                 continue
             vt_metin = f"{v['tedarikci']} {v.get('aciklama') or ''}"
-            if _odeme_eslesir(g["tedarikci"], vt_metin) or \
-               _odeme_eslesir(v["tedarikci"], g["tedarikci"]):
+            if any(_odeme_eslesir(a, vt_metin) for a in g_adlar) or \
+               any(_odeme_eslesir(v["tedarikci"], a) for a in g_adlar):
                 v["_atandi"] = True
                 v_top = round(v_top + v["tutar"], 2)
                 v_yakin = v_yakin or v["vade"]
@@ -2331,7 +2355,7 @@ def cari_ozet() -> dict:
         for o in odeme_izleri:
             if o.get("_atandi"):
                 continue
-            if _odeme_eslesir(g["tedarikci"], o.get("metin")):
+            if any(_odeme_eslesir(a, o.get("metin")) for a in g_adlar):
                 o["_atandi"] = True
                 odeme_top = round(odeme_top + float(o["tutar"] or 0), 2)
         fat_top = round(sum(f["tutar"] for f in son6), 2)
@@ -2341,8 +2365,8 @@ def cari_ozet() -> dict:
         for dv in devirler:
             if dv.get("_atandi"):
                 continue
-            if _odeme_eslesir(g["tedarikci"], dv["tedarikci"]) or \
-               _odeme_eslesir(dv["tedarikci"], g["tedarikci"]):
+            if any(_odeme_eslesir(a, dv["tedarikci"]) for a in g_adlar) or \
+               any(_odeme_eslesir(dv["tedarikci"], a) for a in g_adlar):
                 dv["_atandi"] = True
                 devir_top = round(devir_top + float(dv["tutar"] or 0), 2)
         hesaplanan_acik = round(devir_top + fat_top - odeme_top, 2)
