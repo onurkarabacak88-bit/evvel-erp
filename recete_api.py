@@ -1425,3 +1425,17 @@ def teorik_maliyet_gun(cur, hedef_tarih: str, fiyat_haritasi: Optional[Dict[str,
             "not": ("Beklenen = kapsanan satış × reçete maliyeti. ÖLÇEKLEME YOK — "
                     "kapsama % düşükse sayı ALT SINIRDIR. alt_sinir=true: varsayımlı/"
                     "kısmi reçete ya da boyut belirsizliği var.")}
+
+
+@router.get("/teorik-maliyet")
+def teorik_maliyet_uc(tarih: str = ""):
+    """L2 salt-okur uç: bir günün beklenen (satış×reçete) maliyeti — şube şube.
+    Marj'daki 'Gerçek ↔ Beklenen' şeridinin günlük detayı + teşhis kapısı."""
+    t = (tarih or str(date.today() - timedelta(days=1)))[:10]
+    with db() as (_, cur):
+        try:
+            from operasyon_merkez_api import _alis_fiyat_haritasi
+            fiyat = _alis_fiyat_haritasi(cur)
+        except Exception:  # noqa: BLE001
+            fiyat = None
+        return teorik_maliyet_gun(cur, t, fiyat)
