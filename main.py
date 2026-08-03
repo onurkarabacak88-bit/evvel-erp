@@ -7540,6 +7540,80 @@ def vadeli_sil(vid: str):
         audit(cur, 'vadeli_alimlar', vid, 'IPTAL', eski=eski)
     return {"success": True}
 
+
+class VadeliGeriAlModel(BaseModel):
+    # 'bekliyor' → ödeme YANLIŞ işaretlendi, borç geri açılır (plan da geri açılır)
+    # 'iptal'    → kaydın kendisi hatalı/mükerrerdi, tamamen kapanır (SÜTAŞ çift-kayıt vakası)
+    mod: str = 'bekliyor'
+    aciklama: Optional[str] = None
+
+
+@app.post("/api/vadeli-alimlar/{vid}/odeme-geri-al")
+def vadeli_odeme_geri_al(vid: str, body: VadeliGeriAlModel):
+    """ÖDENMİŞ vadeli alımı geri alır — çift kayıt / yanlış ödeme işareti düzeltmesi.
+
+    vadeli_sil yalnız 'bekliyor' kaydı iptal eder; ödenmiş kayıtta üç iz birden
+    açık kalır (kart HARCAMA satırı · kasa VADELI_ODEME satırı · odeme_plani
+    'odendi'). Bu uç üçünü de kaynağından (kaynak_id=vid) bulup geri alır:
+      - kart izi  → durum='iptal' (kart borcu düşer, plan yeniden üretilir)
+      - kasa izi  → ters kayıt (iptal_kasa_hareketi — defter silinmez)
+      - plan      → mod'a göre 'iptal' ya da 'bekliyor' (odeme alanları sıfırlanır)
+      - vadeli    → mod
+    Cari ekstre ödeme izini vadeli_alimlar.durum='odendi'den okuduğu için
+    yalnız kart iznini iptal etmek EKSTREYİ DÜZELTMEZ — bu yüzden tek kapı.
+    Her adım audit'li; hiçbir satır silinmez.
+    """
+    mod = (body.mod or '').strip().lower()
+    if mod not in ('bekliyor', 'iptal'):
+        raise HTTPException(400, "mod: bekliyor | iptal")
+    with db() as (conn, cur):
+        cur.execute("SELECT * FROM vadeli_alimlar WHERE id=%s AND durum='odendi' FOR UPDATE", (vid,))
+        v = cur.fetchone()
+        if not v:
+            raise HTTPException(404, "Ödenmiş vadeli alım bulunamadı (yalnız durum='odendi' geri alınabilir)")
+
+        # 1) KART izleri — vadeli_ode kart yolunda kaynak_id=vid ile yazılır
+        cur.execute("""
+            SELECT id FROM kart_hareketleri
+            WHERE kaynak_tablo='vadeli_alimlar' AND kaynak_id=%s
+              AND islem_turu='HARCAMA' AND durum='aktif'
+        """, (vid,))
+        kart_izleri = [r['id'] for r in cur.fetchall() or []]
+        for hid in kart_izleri:
+            cur.execute("UPDATE kart_hareketleri SET durum='iptal' WHERE id=%s", (hid,))
+            audit(cur, 'kart_hareketleri', hid, 'VADELI_ODEME_GERI_AL')
+
+        # 2) KASA izi — ters kayıt (defter append-only kalır)
+        cur.execute("""
+            SELECT id FROM kasa_hareketleri
+            WHERE kaynak_id=%s AND islem_turu='VADELI_ODEME' AND durum='aktif'
+        """, (vid,))
+        kasa_izi_var = bool(cur.fetchone())
+        if kasa_izi_var:
+            iptal_kasa_hareketi(cur, vid, 'vadeli_alimlar', 'VADELI_ODEME',
+                                'VADELI_ODEME_GERI_AL', 'Vadeli ödeme geri alındı')
+
+        # 3) PLAN — ödeme alanları sıfırlanır; mod'a göre kapanır ya da geri açılır
+        plan_durum = 'iptal' if mod == 'iptal' else 'bekliyor'
+        cur.execute("""
+            UPDATE odeme_plani SET durum=%s, odeme_tarihi=NULL, odenen_tutar=NULL
+            WHERE kaynak_tablo='vadeli_alimlar' AND kaynak_id=%s AND durum='odendi'
+        """, (plan_durum, vid))
+
+        # 4) VADELİ kaydın kendisi
+        cur.execute("UPDATE vadeli_alimlar SET durum=%s WHERE id=%s", (mod, vid))
+        audit(cur, 'vadeli_alimlar', vid, 'ODEME_GERI_AL',
+              eski=v, yeni={'mod': mod, 'aciklama': (body.aciklama or '').strip() or None})
+
+        if kart_izleri:
+            kart_plan_guncelle_tx(cur)
+        uyari_cache_clear()
+    return {
+        "success": True, "mod": mod,
+        "kart_izi_iptal": len(kart_izleri), "kasa_izi_ters_kayit": kasa_izi_var,
+        "plan_durum": plan_durum,
+    }
+
 @app.get("/api/vadeli-alimlar/{vid}/kart-oneri")
 def vadeli_kart_oneri(vid: str):
     """Vadeli alım ödemesi için kart önerisi — kanonik tek kaynaktan
