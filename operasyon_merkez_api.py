@@ -17486,14 +17486,21 @@ def ops_v2_depo_ozet(gun: int = Query(30, ge=1, le=365)):
                 global_fiyat[depo_kod] = float(r["f"] or 0)
                 urun_meta[depo_kod] = meta_entry
 
-        # Son N gün URUN_AC olayları — kalem_kodu bazında topla
+        # Son N gün ürün-aç olayları — kalem_kodu bazında topla.
+        # 🐞 FIX (2026-08-03, canlı denetim "30g harcanan 0₺" vakası): sorgu yalnız
+        # URUN_AC okuyordu; FIX C1'den (2026-07-06) beri bitince-modu ürünler
+        # URUN_KULLANIMA_AL etiketiyle yazılıyor → depo harcaması HEP 0 görünüyordu.
+        # gun-gun COGS okumasıyla AYNI desen: iki etiket + '[BİTTİ]' çift-sayım
+        # dışlaması + prefix normalize (REPLACE).
         cur.execute("""
-            SELECT sube_id, aciklama
+            SELECT sube_id,
+                   REPLACE(aciklama, 'URUN_KULLANIMA_AL_JSON:', 'URUN_AC_JSON:') AS aciklama
             FROM operasyon_defter
-            WHERE etiket='URUN_AC'
+            WHERE etiket IN ('URUN_AC', 'URUN_KULLANIMA_AL')
+              AND NOT (etiket = 'URUN_AC' AND aciklama LIKE %s)
               AND tarih BETWEEN %s AND %s
               AND sube_id = ANY(%s)
-        """, (bas, bugun, sube_ids))
+        """, ("%[BİTTİ]%", bas, bugun, sube_ids))
 
         # harcama[sid][kod] = adet — kod her zaman UUID veya havuz kodu (normalize edilmiş)
         harcama: Dict[str, Dict[str, int]] = {sid: {} for sid in sube_ids}

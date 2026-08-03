@@ -639,6 +639,22 @@ def _gece_yarisi_scheduler():
             except Exception as e:
                 logger.warning(f"⏰ Scheduler rapor cache hatası: {e}")
 
+            # ── GÜNLÜK FOOD COST (sube_food_cost_gun) — gece hesabı ──
+            # 🐞 FIX (2026-08-03, canlı denetim "Food cost —" + "Fire 0" vakası):
+            # _food_cost_hesapla_gun YALNIZ manuel butondan çağrılıyordu — gece
+            # koşusu yoktu, tablo hep boş kalıyordu → Marj Özeti food cost "—",
+            # fire 0 gösteriyordu. Dünün tamamlanmış günü her gece hesaplanır
+            # (idempotent: UNIQUE(sube_id,tarih) upsert). Hata-yutar.
+            try:
+                from operasyon_merkez_api import _food_cost_hesapla_gun
+                dun_fc = bugun - timedelta(days=1)
+                with db() as (conn, cur):
+                    fc_satir = _food_cost_hesapla_gun(cur, str(dun_fc), None)
+                    conn.commit()
+                logger.info(f"⏰ Günlük food cost: {str(dun_fc)} — {len(fc_satir or [])} şube")
+            except Exception as e:
+                logger.warning(f"⏰ Scheduler günlük food cost hatası: {e}")
+
             # ── AKILLI DENETİM MOTORU — gece 00:30, WhatsApp özetinden ÖNCE ──
             # Şubeler kapanışı 00:00–00:30 arası tamamlar, o yüzden 30 dk bekle.
             # Motor, dünün ACILIS/KAPANIS + Evo verisini üçgenleyip
