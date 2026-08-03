@@ -1279,7 +1279,15 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
         <KpiSeridi kpiler={[
           { etiket: 'Açık öneri', deger: String(oneriler.length), alt: 'motor üretimi', renk: oneriler.length > 0 ? R.amber : R.yesil },
           { etiket: 'Uygulanan (30g)', deger: String(sayi(iziOzet?.uygulanan)), alt: 'işaret defterinden', renk: sayi(iziOzet?.uygulanan) > 0 ? R.yesil : R.krem },
-          { etiket: 'Kullanılabilir nakit', deger: fmt(sayi(strateji.kullanilabilir_nakit)), alt: 'zorunlu yük sonrası', renk: sayi(strateji.kullanilabilir_nakit) >= 0 ? R.yesil : R.kirmizi },
+          // "Kasa 2,7M ama kullanılabilir 344K" çelişik görünüyordu (canlı
+          // denetim 2026-08-03) — formül alt metne yazıldı: kasadan bu ayın
+          // zorunlu yükü (kart asgari + kredi taksiti + sabit) düşülmüş hâli.
+          {
+            etiket: 'Kullanılabilir nakit',
+            deger: fmt(sayi(strateji.kullanilabilir_nakit)),
+            alt: 'kasa − bu ayın zorunlu yükü (asgari+taksit+sabit)',
+            renk: sayi(strateji.kullanilabilir_nakit) >= 0 ? R.yesil : R.kirmizi,
+          },
           { etiket: 'Öneri toplamı', deger: fmt(sayi(strateji.toplam_oneri_tutari)), alt: 'önerilen hareket tutarı' },
         ]} />
         {/* DUYU 4/6 — öneri akıbeti: "Uyguladım" işareti append-only deftere yazılır.

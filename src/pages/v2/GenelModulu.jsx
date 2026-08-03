@@ -114,9 +114,13 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru }) {
   const gU = odemeler.filter((u) => sayi(u.gun_farki) >= -14 && sayi(u.gun_farki) <= -8);
   const gB = odemeler.filter((u) => sayi(u.gun_farki) >= -7 && sayi(u.gun_farki) < 0);
   const gBug = odemeler.filter((u) => sayi(u.gun_farki) >= 0);
+  // 🐞 CANLI DENETİM (2026-08-03): toplam `asgari_kalan` ile, satırlar `tutar`
+  // ile sayıyordu — değişken giderde (asgari_kalan yok) KPI "8 kalem" deyip
+  // 7 kalemin toplamını gösteriyordu. Aynı erişimci → sayı ve toplam aynı evren.
+  const gecikmisTutar = (u) => sayi(u.tutar ?? u.asgari_kalan ?? u.asgari);
   const gecikmisToplam = odemeler
     .filter((u) => sayi(u.gun_farki) < 0)
-    .reduce((s, u) => s + sayi(u.asgari_kalan ?? u.asgari ?? u.tutar), 0);
+    .reduce((s, u) => s + gecikmisTutar(u), 0);
 
   const odemeSatiri = (u, i) => ({
     id: u.id || `o-${i}`, _u: u,
@@ -133,14 +137,28 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru }) {
     tip: 'ÖDEME KAYDI',
     baslik: kisalt(_u.ad || _u.aciklama || 'Ödeme', 60),
     alt: sayi(_u.gun_farki) < 0 ? `${Math.abs(sayi(_u.gun_farki))} gün gecikti` : 'bugün vadesi',
+    // Sahip düzeltmesi (2026-08-03): boş alanı GİZLEMEK yerine DOLDUR.
+    // Satırda `tip`/`ad` yok ama kaynak_tablo + tarih + seviye VAR — tür
+    // kaynaktan türetilir, vade tarihi ve seviye de çekmeceye girer.
     kpi: [
       { etiket: 'Tutar', deger: fmt(sayi(_u.tutar ?? _u.asgari_kalan)), renk: R.kirmizi },
       { etiket: 'Gecikme', deger: sayi(_u.gun_farki) < 0 ? `${Math.abs(sayi(_u.gun_farki))} gün` : 'yok', renk: sayi(_u.gun_farki) < 0 ? R.kirmizi : R.yesil },
-      { etiket: 'Tür', deger: _u.tip || '—' },
+      {
+        etiket: 'Tür',
+        deger: _u.tip ? String(_u.tip)
+          : ({ vadeli_alimlar: 'Vadeli alım', sabit_giderler: 'Sabit gider', kartlar: 'Kart ekstresi',
+               borc_envanteri: 'Kredi taksiti', cari_odeme: 'Cari ödeme', degisken: 'Değişken gider' }[_u.kaynak_tablo]
+             || (_u.kart_id ? 'Kart ekstresi' : 'Ödeme planı')),
+      },
+      ...(_u.seviye ? [{
+        etiket: 'Seviye', deger: String(_u.seviye),
+        renk: String(_u.seviye).toUpperCase() === 'KRITIK' ? R.kirmizi : R.amber,
+      }] : []),
     ],
     listeBaslik: 'Kayıt',
     satirlar: [
-      { ad: 'Kalem', detay: 'ödeme adı', tutar: kisalt(_u.ad || '—', 34) },
+      { ad: 'Ödeme adı', detay: _u.kaynak_tablo ? `kaynak: ${_u.kaynak_tablo}` : '', tutar: kisalt(_u.ad || _u.aciklama || '—', 34) },
+      ...(_u.tarih ? [{ ad: 'Vade tarihi', detay: 'planlanan ödeme günü', tutar: String(_u.tarih).slice(0, 10) }] : []),
       { ad: 'Asgari kalan', detay: 'ödenmesi gereken', tutar: fmt(sayi(_u.asgari_kalan ?? _u.asgari ?? _u.tutar)) },
     ],
     not: 'Bu kart SALT-OKURDUR. Ödeme Ödeme Merkezi\'nde yapılır — para yazma yolu burada açılmaz.',
@@ -174,9 +192,11 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru }) {
             // geciken_adet'i kırmızı rozet olarak kullanıyordu.
             etiket: 'Vadeli alım',
             deger: v ? String(sayi(v.bekleyen_adet)) : '—',
+            // Etiket "gecikmiş" üstteki plan-gecikmişiyle karışıyordu — bu sayı
+            // YALNIZ vadeli alım sözlerini sayar, ayrı evren olduğu yazılır.
             alt: v
               ? (sayi(v.geciken_adet)
-                ? `⚠ ${sayi(v.geciken_adet)} gecikmiş · bekleyen ${fmt(sayi(v.toplam_bekleyen))}`
+                ? `⚠ ${sayi(v.geciken_adet)} sözün vadesi geçti · bekleyen ${fmt(sayi(v.toplam_bekleyen))}`
                 : `bekleyen ${fmt(sayi(v.toplam_bekleyen))} · bu ay ödenen ${fmt(sayi(v.toplam_odenen))}`)
               : 'veri yok',
             renk: sayi(v?.geciken_adet) ? R.kirmizi : sayi(v?.bekleyen_adet) ? R.amber : R.yesil,

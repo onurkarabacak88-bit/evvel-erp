@@ -1153,7 +1153,20 @@ export default function TasarimV2({ onGit }) {
     const kpiler = [
       { etiket: 'Kritik', deger: String(kritik.length), alt: 'bugün karar gerekiyor', renk: kritik.length ? R.kirmizi : R.yesil },
       { etiket: 'Uyarı', deger: String(uyari.length), alt: 'bu hafta içinde', renk: uyari.length ? R.amber : R.yesil },
-      { etiket: 'Onay kuyruğu', deger: String(onaylar.length), alt: 'bekleyen işlem', renk: onaylar.length ? R.amber : R.yesil },
+      // 🐞 CANLI DENETİM (2026-08-03): 124 "bekleyen işlem" görünüyordu ama
+      // Onay ekranı aynı kuyruğu 0 gösteriyordu — kuyruktaki KASA türü kayıtlar
+      // onay değil kasa uyumsuzluğudur (Onay ekranındaki frontend filtreyle
+      // AYNI ayrım). Gerçek onay + kasa hatası ayrı ayrı yazılır.
+      (() => {
+        const kasaAdet = onaylar.filter((o) => String(o.islem_turu || '').toUpperCase().includes('KASA')).length;
+        const gercekOnay = onaylar.length - kasaAdet;
+        return {
+          etiket: 'Onay kuyruğu',
+          deger: String(gercekOnay),
+          alt: kasaAdet ? `bekleyen onay · kasa hatası ${kasaAdet} ayrı sayılır` : 'bekleyen işlem',
+          renk: gercekOnay ? R.amber : R.yesil,
+        };
+      })(),
       { etiket: 'Ciro eksik gün', deger: String(eksikGunler.length), alt: 'kayıt girilmemiş', renk: eksikGunler.length ? R.kirmizi : R.yesil },
     ];
 

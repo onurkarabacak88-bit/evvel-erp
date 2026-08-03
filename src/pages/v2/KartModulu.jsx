@@ -796,7 +796,16 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
         <KpiSeridi kpiler={[
           { etiket: 'Toplam kart borcu', deger: fmt(sayi(ozet?.toplam_borc_taksitli) || donem + taksit), alt: `dönem ${fmt(donem).replace(' ₺','')} + taksit ${fmt(taksit)}`, renk: R.kirmizi },
           { etiket: 'Bankaya ödenen faiz', deger: fmt(sayi(ozet?.toplam_odenen_faiz)), alt: 'ekstrelerden birikimli', renk: R.amber },
-          { etiket: 'Bu ay eksik ekstre', deger: `${eksik.length} kart`, alt: eksik.length ? eksik.map(k => k.ad).join(', ') : 'hepsi yüklendi', renk: eksik.length ? R.amber : R.yesil },
+          // Alt metin TÜM kart adlarını diziyordu — 7 kartta KPI bantlaşıyordu
+          // (canlı denetim 2026-08-03). İlk 2 ad + sayı; tamamı alttaki tabloda.
+          {
+            etiket: 'Bu ay eksik ekstre',
+            deger: `${eksik.length} kart`,
+            alt: eksik.length
+              ? `${eksik.slice(0, 2).map(k => k.ad).join(', ')}${eksik.length > 2 ? ` +${eksik.length - 2} kart` : ''} · tamamı tabloda`
+              : 'hepsi yüklendi',
+            renk: eksik.length ? R.amber : R.yesil,
+          },
           { etiket: 'Toplam asgari', deger: fmt(toplamAsgari), alt: 'bu ay en az ödenmeli', renk: R.krem },
         ]} />
         <Tablo

@@ -1332,6 +1332,12 @@ export function RaporModulu({ gorunum, onCekmece, onKopru, onToast }) {
     const TIP_RENK = { iyi: R.yesil, uyari: R.amber, kotu: R.kirmizi, risk: R.kirmizi, notr: R.not };
     const yuzde = (v) => (v == null ? '—' : `%${trSayi(sayi(v))}`);
 
+    // 🐞 CANLI DENETİM (2026-08-03): ayın 2. gününde motor "net kâr %99,5" ve
+    // "~27.203 gün dayanır" cümleleri kurdu — giderler henüz işlenmediği için.
+    // Ay-içi az kayıtta cümleler SAKLANMAZ ama başlarına fren şeridi konur.
+    const kayitGun = sayi(ozetR.kayit_gun ?? ozetR.gun_sayisi ?? rapor?.kayit_gun);
+    const aySuruyor = !rapor?.muhurlu && kayitGun > 0 && kayitGun < 7;
+
     const raporBolumleri = (
       <>
         {yonetici.length > 0 && (
@@ -1339,6 +1345,17 @@ export function RaporModulu({ gorunum, onCekmece, onKopru, onToast }) {
             <div style={{ fontFamily: F.baslik, fontSize: 15, fontWeight: 600, marginBottom: 11 }}>
               🧭 Yönetici özeti · {rapor?.donem_label || ''}
             </div>
+            {aySuruyor && (
+              <div style={{
+                padding: '9px 13px', borderRadius: 10, marginBottom: 11,
+                background: 'rgba(217,154,78,.10)', border: `1px solid ${R.amber}44`,
+                fontSize: 11.5, color: R.not, lineHeight: 1.6,
+              }}>
+                ⚠ Ay başı ({kayitGun} gün kayıt): giderlerin çoğu (maaş, sabit, alım)
+                henüz işlenmedi — marj ve “kaç gün dayanır” cümleleri bu yüzden
+                gerçek dışı iyimser çıkabilir. Ay ilerledikçe otururlar.
+              </div>
+            )}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {yonetici.map((y, i) => {
                 const renk = TIP_RENK[String(y?.tip || 'notr')] || R.not;
@@ -2116,7 +2133,12 @@ export function TanimModulu({ gorunum, onCekmece, onKopru, onToast }) {
   };
 
   const [tedHam, dosyaHam, tvHam, zincirHam] = veri;
-  const tedarikciler = (Array.isArray(tedHam) ? tedHam : []).filter(t => t.aktif !== false);
+  // 🐞 ŞEKİL TUZAĞI (canlı denetim 2026-08-03): /tedarikciler NESNE döner
+  // {tedarikciler:[...]} — dizi bekleyince ekran "0 tedarikçi / tanımlı yok"
+  // gösteriyordu, sunucuda liste doluyken. Bordro vakasıyla aynı sınıf.
+  const tedListe = Array.isArray(tedHam) ? tedHam
+    : (Array.isArray(tedHam?.tedarikciler) ? tedHam.tedarikciler : []);
+  const tedarikciler = tedListe.filter(t => t.aktif !== false);
   const dosyalar = dosyaHam?.dosyalar || [];
   const tv = Array.isArray(tvHam) ? tvHam : [];
   // BM-2 zinciri: sayac {tam, teslim_yok, belge_acik, fatura_yok, odeme_izi_yok}
