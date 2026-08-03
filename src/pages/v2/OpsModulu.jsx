@@ -1504,7 +1504,10 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     setKtMesgul(true);
     try {
       const r = await api('/ops/siparis/sync-urun-adlari', { method: 'POST' });
-      onToast?.(`✓ Adlar eşitlendi${r?.guncellenen != null ? ` — ${sayi(r.guncellenen)} kayıt` : ''}`);
+      // 🐞 Toast olmayan `guncellenen` alanını okuyordu — sunucu
+      // urun_guncellenen_adet + talep_guncellenen_adet döner.
+      const u = sayi(r?.urun_guncellenen_adet); const t2 = sayi(r?.talep_guncellenen_adet);
+      onToast?.(`✓ Adlar eşitlendi — ${u} ürün + ${t2} geçmiş talep güncellendi`);
       setKtSyncOnay('');
       ktYukle();
     } catch (e) {
@@ -5091,7 +5094,12 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
         {dnSekme === 'kontrol' && (kontrolSatir.length ? (
           <Tablo
             baslik="Kontrol özeti · şube bazlı"
-            not="günlük kontrol adımlarının tamamlanma durumu"
+            // Sunucunun hazır sayaçları (kritik_toplam/uyari_toplam) hiç
+            // okunmuyordu — A-2 minör; tablo yalnız tamam/toplam gösteriyordu.
+            not={`günlük kontrol adımlarının tamamlanma durumu${
+              sayi(dnKontrol?.kritik_toplam) || sayi(dnKontrol?.uyari_toplam)
+                ? ` · açık uyarı: ${sayi(dnKontrol?.kritik_toplam)} kritik + ${sayi(dnKontrol?.uyari_toplam)} uyarı`
+                : ''}`}
             kolonlar={[{ ad: 'Şube' }, { ad: 'Tamamlanan', sag: 1 }, { ad: 'Toplam', sag: 1 }, { ad: 'Durum' }]}
             satirlar={kontrolSatir.slice(0, 20).map((x, i) => {
               const tamam = sayi(x.tamam ?? x.tamamlanan);

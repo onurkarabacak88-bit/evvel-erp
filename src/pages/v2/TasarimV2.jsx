@@ -826,13 +826,25 @@ export default function TasarimV2({ onGit }) {
     const ayPos = sayi(panel?.bu_ay_pos);
     const ayOnline = sayi(panel?.bu_ay_online);
     const kesinti = sayi(panel?.bu_ay_online_kesinti);
-    const gunOrt = d.gunSayisi ? d.ayToplam / d.gunSayisi : 0;
+    // 🐞 K7 (canlı denetim): ortalama İSTEMCİ toplamından (d.ayToplam),
+    // "Ay cirosu" SUNUCUDAN (bu_ay_sadece_ciro) geliyordu — iki kaynak
+    // 694₺ ayrışıyordu (58.054/2=29.027 ↔ 29.372). Tek kaynak: aynı ayCiro.
+    const gunOrt = d.gunSayisi ? ayCiro / d.gunSayisi : 0;
+    // Onay sayacı: Riskler'deki KASA ayrımının aynısı (124 kasa hatası
+    // burada da "onay bekleyen" diye görünüyordu).
+    const kasaHatasiAdet = onaylar.filter((o) => String(o.islem_turu || '').toUpperCase().includes('KASA')).length;
+    const gercekOnay = onaylar.length - kasaHatasiAdet;
 
     const kpiler = [
       { etiket: 'Ay cirosu', deger: fmt(ayCiro), alt: `${d.gunSayisi} gün kayıt · ${d.ayOnEk}` },
       { etiket: 'Günlük ortalama', deger: fmt(gunOrt), alt: 'kayıtlı günler üzerinden', renk: R.krem },
       { etiket: 'Kasa + banka', deger: fmt(kasaBanka), alt: 'anlık toplam', renk: kasaBanka > 0 ? R.yesil : R.kirmizi },
-      { etiket: 'Onay bekleyen', deger: String(onaylar.length), alt: 'kuyrukta', renk: onaylar.length ? R.amber : R.yesil },
+      {
+        etiket: 'Onay bekleyen',
+        deger: String(gercekOnay),
+        alt: kasaHatasiAdet ? `kuyrukta · kasa hatası ${kasaHatasiAdet} ayrı` : 'kuyrukta',
+        renk: gercekOnay ? R.amber : R.yesil,
+      },
     ];
 
     const dagilim = [

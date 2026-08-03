@@ -1677,6 +1677,15 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
                     <div style={{ padding: '11px 15px', borderRadius: 12, background: `${R.yesil}12`, border: `1px solid ${R.yesil}55`, fontSize: 12.5, color: R.metin2, marginBottom: 12, lineHeight: 1.6 }}>
                       ✓ {sayi(eksImpSonuc.yazilan)} işlem aktarıldı
                       {sayi(eksImpSonuc.atlanan_veya_mevcut) ? ` · ${sayi(eksImpSonuc.atlanan_veya_mevcut)} zaten kayıtlıydı` : ''}
+                      {/* Mükerrer freni + gider eşleniği sayaçları (A-2 minör):
+                          fren kaç işlemi elle-girilmiş kaydın kopyası sayıp
+                          atladı (FEZ 100K vakasının panzehiri) + kaç satır
+                          anlık gidere yansıdı — görünmezse fren çalıştı mı
+                          bilinmezdi. */}
+                      {sayi(eksImpSonuc.atlanan_mevcut_adet)
+                        ? ` · 🛡 ${sayi(eksImpSonuc.atlanan_mevcut_adet)} işlem elle-kayıt kopyası sayılıp atlandı`
+                        : ''}
+                      {sayi(eksImpSonuc.anlik_gider_yazilan) ? ` · ${sayi(eksImpSonuc.anlik_gider_yazilan)} satır gidere yansıdı` : ''}
                       {eksImpSonuc.devir ? ` · devir düzeltmesi ${fmt(Math.abs(sayi(eksImpSonuc.devir_duzeltme)))}` : ''}
                       {' — yeni sistem borcu '}<b style={{ fontFamily: F.mono }}>{fmt(sayi(eksImpSonuc.yeni_sistem_borc))}</b>
                     </div>

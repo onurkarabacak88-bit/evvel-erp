@@ -355,7 +355,11 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast }) {
         onToast?.('✓ İstisna geri alındı — sonraki taramada yeniden istenebilir');
       } else if (m.tip === 'ocr') {
         const r = await api('/fatura/ocr-yeniden-dene?limit=50', { method: 'POST' });
-        onToast?.(`✓ OCR yeniden denendi${r?.basarili != null ? ` — ${sayi(r.basarili)} belge okundu` : ''}`);
+        // 🐞 Toast olmayan `basarili` alanını okuyordu — sunucu `kuyruga_alinan`
+        // + `son_hatalar` döner (OCR asenkron; kök neden hatalarda). Gerçek alanlar:
+        const hata0 = Array.isArray(r?.son_hatalar) && r.son_hatalar[0]
+          ? ` · son hata: ${String(r.son_hatalar[0]).slice(0, 60)}` : '';
+        onToast?.(`✓ ${sayi(r?.kuyruga_alinan)} belge OCR kuyruğuna alındı — 1-2 dk sonra yenile${hata0}`);
       }
       setFiModal(null);
       istekYukle(); istisnaYukle();
