@@ -13616,7 +13616,8 @@ def _ensure_maliyet_tablolari(cur: Any) -> None:
         ON sube_food_cost_gun(sube_id, tarih DESC)
     """)
     # KANONİK MODEL v2 kolonları (2026-08-03) — L1/L2/L3 + tanım sürümü.
-    # İdempotent; ozet motor koşmadan çağrılsa da kolonlar garanti.
+    # İdempotent; her DDL kendi SAVEPOINT'inde (hata yutulursa transaction
+    # aborted kalmasın — canlı 500 dersi).
     for _ddl in (
         "ALTER TABLE sube_food_cost_gun ADD COLUMN IF NOT EXISTS diger_urun_ac_tl NUMERIC(12,2)",
         "ALTER TABLE sube_food_cost_gun ADD COLUMN IF NOT EXISTS actual_open_cogs_tl NUMERIC(12,2)",
@@ -13627,9 +13628,14 @@ def _ensure_maliyet_tablolari(cur: Any) -> None:
         "ALTER TABLE sube_food_cost_gun ADD COLUMN IF NOT EXISTS definition_version INT",
     ):
         try:
+            cur.execute("SAVEPOINT sp_fc_ddl")
             cur.execute(_ddl)
+            cur.execute("RELEASE SAVEPOINT sp_fc_ddl")
         except Exception:
-            pass
+            try:
+                cur.execute("ROLLBACK TO SAVEPOINT sp_fc_ddl")
+            except Exception:
+                pass
 
     # Fatura kalemi -> stok kalem_kodu eşleştirme hafızası
     # (kart_satici_kural ile aynı mantık: PDF'den okunan satır metni normalize
@@ -17264,7 +17270,11 @@ def _food_cost_hesapla_gun(
 
     # ── 7b. L2 BEKLENEN maliyet (satış × fiyatlı reçete) — recete_api tek kaynak ──
     teorik_l2: Dict[str, Dict[str, Any]] = {}
+    # ⚠️ SAVEPOINT ŞART (2026-08-03 canlı 500 dersi): try/except SQL hatasını
+    # yutar ama Postgres transaction'ı ABORTED bırakır — sonraki INSERT
+    # "InFailedSqlTransaction" ile patlar. Hata yutulacaksa savepoint'e sarılır.
     try:
+        cur.execute("SAVEPOINT sp_fc_l2")
         from recete_api import teorik_maliyet_gun
         t2 = teorik_maliyet_gun(cur, str(hedef), alis_fiyat)
         # Evo şube ADI → şube id eşlemesi (büyük/küçük duyarsız)
@@ -17273,7 +17283,12 @@ def _food_cost_hesapla_gun(
             sid2 = ad_to_id.get(str(s_ad).strip().upper())
             if sid2:
                 teorik_l2[sid2] = blok
+        cur.execute("RELEASE SAVEPOINT sp_fc_l2")
     except Exception as e:  # noqa: BLE001 — L2 süs; L1'i düşüremez
+        try:
+            cur.execute("ROLLBACK TO SAVEPOINT sp_fc_l2")
+        except Exception:
+            pass
         logger.warning("teorik maliyet (L2) hatasi (yutuldu): %s", str(e)[:120])
 
     # ── 8. Her şube için hesapla ve yaz ──────────────────────────────────────
@@ -17285,19 +17300,7 @@ def _food_cost_hesapla_gun(
     #   L3 SAPMA           = L1 − L2 (fire/porsiyon/kayıt sinyali, öneri-only).
     # Eski hibrit (BAR'da açılış+aç−kapanış) definition_version=1 idi; v2 ile
     # SERİ TAMAMEN YENİDEN ÜRETİLİR (aynı kolonda karışık tanım bırakılmaz).
-    try:
-        for ddl in (
-            "ALTER TABLE sube_food_cost_gun ADD COLUMN IF NOT EXISTS diger_urun_ac_tl NUMERIC(12,2)",
-            "ALTER TABLE sube_food_cost_gun ADD COLUMN IF NOT EXISTS actual_open_cogs_tl NUMERIC(12,2)",
-            "ALTER TABLE sube_food_cost_gun ADD COLUMN IF NOT EXISTS theoretical_recipe_cogs_tl NUMERIC(12,2)",
-            "ALTER TABLE sube_food_cost_gun ADD COLUMN IF NOT EXISTS teorik_kapsama_pct NUMERIC(6,2)",
-            "ALTER TABLE sube_food_cost_gun ADD COLUMN IF NOT EXISTS teorik_alt_sinir BOOLEAN",
-            "ALTER TABLE sube_food_cost_gun ADD COLUMN IF NOT EXISTS variance_tl NUMERIC(12,2)",
-            "ALTER TABLE sube_food_cost_gun ADD COLUMN IF NOT EXISTS definition_version INT",
-        ):
-            cur.execute(ddl)
-    except Exception:
-        pass
+    # Kolon DDL'leri _ensure_maliyet_tablolari'da (savepoint'li) — burada tekrar yok.
 
     # Şube kümesi: ürün-aç OLAN ∪ ciro OLAN ∪ açılış sayımı OLAN
     tum_subeler = set(acilis_rows) | set(urun_ac_map) | set(diger_ac_map) | set(ciro_map)

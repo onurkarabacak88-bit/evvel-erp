@@ -1379,9 +1379,11 @@ def teorik_maliyet_gun(cur, hedef_tarih: str, fiyat_haritasi: Optional[Dict[str,
     for r in (dict(x) for x in cur.fetchall() or []):
         evo_to_recete[_norm(str(r["hedef_ad"]))] = _norm(str(r["kaynak_ad"]))
     # O günün Evo satışları (şube kırılımlı cache)
+    # ORDER BY olusturma KULLANILMAZ — kolon her kurulumda garanti değil;
+    # (anahtar,bastar,bittar) zaten günün tek cache satırını verir.
     cur.execute("""SELECT veri_json FROM evo_rapor_cache
                    WHERE anahtar='sube-grup-detay' AND bastar=bittar AND bastar=%s
-                   ORDER BY olusturma DESC LIMIT 1""", (str(hedef_tarih)[:10],))
+                   LIMIT 1""", (str(hedef_tarih)[:10],))
     row = cur.fetchone()
     subeler_out: Dict[str, Dict[str, Any]] = {}
     if not row:
