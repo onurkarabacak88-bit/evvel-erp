@@ -1587,6 +1587,22 @@ const HAFTA_GUNLER = Array.from({ length: 7 }, (_, i) => {
 
 const EKIP_UC = {
   '/api/personel': PERSONEL,
+  // Canlı-test turu: DELETE /personel/{id} (main.py:5469 — guard'sız, audit'li)
+  '/api/personel/e2': { success: true },
+  // Sipariş iptal uçları (aşama kuralı sunucuda: merkez-iptal yalnız
+  // bekliyor/onaylandi, akisi-iptal depoda/yolda — yanlış aşamada 409)
+  '/api/ops/siparis/merkez-iptal': { ok: true, durum: 'iptal', iade_edilen_rezerv: 2 },
+  '/api/ops/siparis/akisi-iptal': { ok: true, durum: 'iptal', depoya_iade_adet: 30 },
+  // Cari FIFO ödeme — gerçek cevap şeması (fatura_api:3664)
+  '/api/fatura/cari-ode': {
+    ok: true, odeme_id: 'co1', plan_id: 'cp1', tedarikci: 'SÜTAŞ BÖLGE DAĞITIM', tutar: 50000,
+    kapatilan_faturalar: [
+      { fatura_no: 'ST-2026-1180', tarih: gunEkleISO(-38), kapatilan: 41250, tam_kapandi: true },
+      { fatura_no: 'ST-2026-1204', tarih: gunEkleISO(-21), kapatilan: 8750, tam_kapandi: false },
+    ],
+    avans_kalan: 0, belgesiz: false,
+    mesaj: '✓ SÜTAŞ BÖLGE DAĞITIM — 50.000 ₺ ödendi, 2 fatura kapatıldı',
+  },
   '/api/gorev/vardiya-takip': TAKIP,
   // POST — gecikme → eksik gün (katmalı; sunucu kanonik neti yeniden hesaplar)
   '/api/gorev/gecikme-eksik-gun': { ok: true, yeni_eksik_gun: 0.5, yeni_net: 41200 },
