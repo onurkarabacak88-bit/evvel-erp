@@ -1335,8 +1335,10 @@ export function RaporModulu({ gorunum, onCekmece, onKopru, onToast }) {
     // 🐞 CANLI DENETİM (2026-08-03): ayın 2. gününde motor "net kâr %99,5" ve
     // "~27.203 gün dayanır" cümleleri kurdu — giderler henüz işlenmediği için.
     // Ay-içi az kayıtta cümleler SAKLANMAZ ama başlarına fren şeridi konur.
-    const kayitGun = sayi(ozetR.kayit_gun ?? ozetR.gun_sayisi ?? rapor?.kayit_gun);
-    const aySuruyor = !rapor?.muhurlu && kayitGun > 0 && kayitGun < 7;
+    // Gün sayısının kaynağı `gunluk[]` (sunucuda ayrı kayit_gun alanı yok);
+    // mühür bayrağı muhur.muhurlu içinde — ikisi de canlı cevaptan doğrulandı.
+    const kayitGun = Array.isArray(rapor?.gunluk) ? rapor.gunluk.length : 0;
+    const aySuruyor = !(rapor?.muhur?.muhurlu) && kayitGun > 0 && kayitGun < 7;
 
     const raporBolumleri = (
       <>
