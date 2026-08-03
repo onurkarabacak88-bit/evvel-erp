@@ -17117,24 +17117,90 @@ def _food_cost_hesapla_gun(
         except Exception:
             cur.execute("ROLLBACK TO SAVEPOINT sp_fc_ozet_kapanis")
 
-    # ── 5. URUN_AC toplamları ──
+    # ── 5. URUN_AC toplamları — BAR kalemleri + TAM-COGS "diğer" kovası ──
+    # 🐞 FIX (2026-08-03, sahip talebi "fc %5,7 gerçek COGS değil"):
+    # (a) ürün-aç okuyucu ÜÇ KURALI buraya da geldi: iki etiket +
+    #     '[BİTTİ]' çift-sayım dışlaması + prefix normalize (REPLACE).
+    #     Eski hali yalnız URUN_AC okuyordu → bitince-modunda BAR ürün-açları
+    #     da kaçıyordu.
+    # (b) Faz-1 sınırı kalktı: BAR-DIŞI ürün-aç kalemleri (espresso, sos,
+    #     meyve... UUID/depo kodlu) artık teorik maliyete GİRER — gun-gun
+    #     COGS'un "☕ Diğer Ürün-Aç" kovasıyla aynı evren. Fiyat: alış fiyatı
+    #     haritası → siparis_urun.birim_fiyat_tl fallback.
+    #     Anahtar çözümü kalem_kodu → urun_id → urun_ad(norm) sırasıyla;
+    #     urun_ad BAR sayım kalemine eşleniyorsa (bardak vb.) diğer kovasına
+    #     GİRMEZ (delta yolu zaten sayar — çift sayım freni).
     urun_ac_map: Dict[str, Dict[str, int]] = {}
+    diger_ac_map: Dict[str, Dict[str, int]] = {}   # sid → {kod: adet}
+    cur.execute("""
+        SELECT id::text, COALESCE(norm_ad,'') AS norm_ad,
+               COALESCE(birim_fiyat_tl, 0) AS f,
+               COALESCE(depo_stok_kalem_kodu,'') AS depo_kod
+        FROM siparis_urun
+    """)
+    su_fiyat: Dict[str, float] = {}
+    su_norm_to_id: Dict[str, str] = {}
+    for r in cur.fetchall():
+        kid = str(r["id"])
+        su_fiyat[kid] = float(r["f"] or 0)
+        dk = str(r["depo_kod"] or "").strip()
+        if dk and dk not in su_fiyat:
+            su_fiyat[dk] = float(r["f"] or 0)
+        na = str(r["norm_ad"] or "").strip()
+        if na:
+            su_norm_to_id[na] = kid
+    _fc_dec = json.JSONDecoder()
     cur.execute(
         f"""
-        SELECT sube_id::text, aciklama
+        SELECT sube_id::text,
+               REPLACE(aciklama, 'URUN_KULLANIMA_AL_JSON:', 'URUN_AC_JSON:') AS aciklama
         FROM operasyon_defter
-        WHERE etiket = 'URUN_AC'
+        WHERE etiket IN ('URUN_AC', 'URUN_KULLANIMA_AL')
+          AND NOT (etiket = 'URUN_AC' AND aciklama LIKE %s)
           AND tarih = %s
           {'AND sube_id = %s' if sube_id_filtre else ''}
         """,
-        [hedef, *sube_params],
+        ["%[BİTTİ]%", hedef, *sube_params],
     )
     for r in cur.fetchall():
         sid = str(r["sube_id"])
-        delta = _urun_ac_delta_parse(r["aciklama"] or "")
+        ack = r["aciklama"] or ""
+        delta = _urun_ac_delta_parse(ack)
         entry = urun_ac_map.setdefault(sid, {k: 0 for k in _BAR_KEYS})
         for k, v in delta.items():
             entry[k] = entry.get(k, 0) + v
+        # BAR-dışı kalemler — kod bazında topla
+        i = ack.find("URUN_AC_JSON:")
+        if i < 0:
+            continue
+        try:
+            j, _ = _fc_dec.raw_decode(ack[i + len("URUN_AC_JSON:"):].strip())
+        except Exception:
+            continue
+        kalemler = j.get("kalemler") if isinstance(j, dict) else None
+        if not isinstance(kalemler, list):
+            continue
+        for k in kalemler:
+            if not isinstance(k, dict):
+                continue
+            uad = str(k.get("urun_ad") or "").strip()
+            if uad and _stok_key_from_urun_ad(uad) in _BAR_KEYS:
+                continue  # BAR evreninde — delta yolu sayar
+            kod = str(k.get("kalem_kodu") or k.get("urun_id") or "").strip()
+            if not kod and uad:
+                ad_n = re.sub(r'[^a-z0-9]+', '_',
+                    uad.lower().replace('ğ','g').replace('ü','u').replace('ş','s')
+                    .replace('ı','i').replace('ö','o').replace('ç','c')).strip('_')
+                kod = su_norm_to_id.get(ad_n, "")
+            if not kod or kod in _BAR_KEYS:
+                continue
+            try:
+                adet = max(0, int(k.get("adet") or 0))
+            except (TypeError, ValueError):
+                adet = 0
+            if adet > 0:
+                diger_ac_map.setdefault(sid, {})
+                diger_ac_map[sid][kod] = diger_ac_map[sid].get(kod, 0) + adet
 
     # ── 6. Ciro ──
     cur.execute(
@@ -17197,27 +17263,41 @@ def _food_cost_hesapla_gun(
             teorik_maliyet += kullanim * fp
             stok_degeri_tl  += kp * fp
 
+        # TAM-COGS: BAR-dışı ürün-aç kovası (fiyat: alış → siparis_urun fallback)
+        diger_urun_ac_tl = 0.0
+        for kod, adet in (diger_ac_map.get(sid) or {}).items():
+            fp = alis_fiyat.get(kod) or su_fiyat.get(kod, 0.0)
+            if fp > 0:
+                diger_urun_ac_tl += adet * fp
+        teorik_maliyet += diger_urun_ac_tl
+
         food_cost_pct = round(teorik_maliyet / ciro_tl, 6) if ciro_tl > 0 else None
 
-        # UPSERT → sube_food_cost_gun
+        # UPSERT → sube_food_cost_gun (diger_urun_ac_tl kolonu idempotent DDL ile)
+        try:
+            cur.execute("ALTER TABLE sube_food_cost_gun ADD COLUMN IF NOT EXISTS diger_urun_ac_tl NUMERIC(12,2)")
+        except Exception:
+            pass
         cur.execute(
             """
             INSERT INTO sube_food_cost_gun
                 (sube_id, tarih, ciro_tl, teorik_maliyet_tl, food_cost_pct,
-                 stok_degeri_tl, hesaplama_ts)
-            VALUES (%s, %s, %s, %s, %s, %s, NOW())
+                 stok_degeri_tl, diger_urun_ac_tl, hesaplama_ts)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, NOW())
             ON CONFLICT (sube_id, tarih) DO UPDATE
                 SET ciro_tl           = EXCLUDED.ciro_tl,
                     teorik_maliyet_tl = EXCLUDED.teorik_maliyet_tl,
                     food_cost_pct     = EXCLUDED.food_cost_pct,
                     stok_degeri_tl    = EXCLUDED.stok_degeri_tl,
+                    diger_urun_ac_tl  = EXCLUDED.diger_urun_ac_tl,
                     hesaplama_ts      = NOW()
             """,
             (sid, hedef,
              round(ciro_tl, 2),
              round(teorik_maliyet, 2),
              food_cost_pct,
-             round(stok_degeri_tl, 2)),
+             round(stok_degeri_tl, 2),
+             round(diger_urun_ac_tl, 2)),
         )
 
         sonuclar.append({
@@ -17226,6 +17306,7 @@ def _food_cost_hesapla_gun(
             "tarih":            str(hedef),
             "ciro_tl":          round(ciro_tl, 2),
             "teorik_maliyet_tl": round(teorik_maliyet, 2),
+            "diger_urun_ac_tl": round(diger_urun_ac_tl, 2),
             "food_cost_pct":    round(food_cost_pct * 100, 2) if food_cost_pct else None,
             "stok_degeri_tl":   round(stok_degeri_tl, 2),
             "kapanis_var":      kapanis_var,
