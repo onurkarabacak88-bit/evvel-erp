@@ -18207,6 +18207,7 @@ def ops_v2_depo_ozet(gun: int = Query(30, ge=1, le=365)):
         # norm_ad → uuid ve uuid → norm_ad çift yönlü harita (tüketim eşleştirmesi için)
         norm_to_uuid: Dict[str, str] = {}
         uuid_to_norm: Dict[str, str] = {}
+        uuid_to_depo: Dict[str, str] = {}   # UUID → fiziksel havuz kodu (bardak_buyuk…)
         for r in cur.fetchall():
             kid = str(r["id"])
             meta_entry = {
@@ -18236,6 +18237,17 @@ def ops_v2_depo_ozet(gun: int = Query(30, ge=1, le=365)):
             if depo_kod and depo_kod not in urun_meta:
                 global_fiyat[depo_kod] = float(r["f"] or 0)
                 urun_meta[depo_kod] = meta_entry
+            # 🔗 UUID → FİZİKSEL HAVUZ KODU (2026-08-08, sahip: "14oz açılımı 0
+            # olması neredeyse imkânsız"). Stok hareketleri kanonik çözücüden
+            # (operasyon_stok_motor.depo_kalem_kodu_resolve) geçip SABİT koda
+            # yazılıyor; bu okuma ise JSON'daki `urun_id`yi (UUID) doğrudan
+            # anahtar yapıyordu → aynı ürün İKİ KARTA bölünüyordu:
+            #   bardak_buyuk : stok 33.754 · harcanan 0   (sahte "200 günlük stok")
+            #   <uuid>       : stok 0      · harcanan 303 (sahte "hiç stok yok")
+            # 7 kalemde bu bölünme vardı (14oz/8oz/Plastik Bardak, Su, Redbull,
+            # Cookie, Z Peçete) ve sipariş önerisini de yanlış besliyordu.
+            if depo_kod:
+                uuid_to_depo[kid] = depo_kod
 
         # Son N gün ürün-aç olayları — kalem_kodu bazında topla.
         # 🐞 FIX (2026-08-03, canlı denetim "30g harcanan 0₺" vakası): sorgu yalnız
@@ -18290,6 +18302,11 @@ def ops_v2_depo_ozet(gun: int = Query(30, ge=1, le=365)):
                 # norm_ad olarak geldiyse UUID'ye çevir (eski kayıtlar uyumluluğu)
                 if kod in norm_to_uuid:
                     kod = norm_to_uuid[kod]
+                # 🔗 UUID → fiziksel havuz kodu: stok hangi kartta duruyorsa
+                # tüketim de ORAYA yazılmalı. Eşleme tanımlı değilse UUID kalır
+                # (ürün gerçekten ayrı bir kalemdir ya da eşleme sahibi bekliyor).
+                if kod in uuid_to_depo:
+                    kod = uuid_to_depo[kod]
                 try:
                     adet = int(k.get("adet") or 0)
                 except (TypeError, ValueError):
