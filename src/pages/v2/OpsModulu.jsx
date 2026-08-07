@@ -2104,11 +2104,17 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     if (ktHata) return <HataBandi mesaj={ktHata} onTekrar={ktYukle} />;
     if (!ktKatalog) return <Yukleniyor />;
 
-    const toplamUrun = ktKatalog.reduce((a, k) => a + (k.urunler || []).length, 0);
+    // ⚠️ ŞEKİL TUZAĞI (2026-08-07 denetimi): sunucu kategori altındaki ürünleri
+    // `items` alanında gönderir (operasyon_merkez_api:8890), ekran `urunler`
+    // okuyordu → 11 kategori DOLUYKEN 'Ürün 0 · Bu kategoride ürün yok' yazıyordu.
+    // Şubelerin sipariş edebildiği katalog var sanılmıyordu; oysa Espresso/Filtre/
+    // Granül... hepsi kayıtlı. Fiyatsız + depo-eşleşmesiz sayaçları da 0 çıkıyordu.
+    const kItems = (k) => (k.items || k.urunler || []);
+    const toplamUrun = ktKatalog.reduce((a, k) => a + kItems(k).length, 0);
     const fiyatsiz = ktKatalog.reduce((a, k) =>
-      a + (k.urunler || []).filter((u) => u.birim_fiyat_tl == null).length, 0);
+      a + kItems(k).filter((u) => u.birim_fiyat_tl == null).length, 0);
     const eslesmemis = ktKatalog.reduce((a, k) =>
-      a + (k.urunler || []).filter((u) => !u.depo_stok_kalem_kodu).length, 0);
+      a + kItems(k).filter((u) => !u.depo_stok_kalem_kodu).length, 0);
 
     return (
       <>
@@ -2147,7 +2153,7 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
               <span style={{ fontSize: 17 }}>{k.emoji || '📦'}</span>
               <span style={{ fontFamily: F.baslik, fontSize: 15.5, fontWeight: 600 }}>{k.ad}</span>
               <span style={{ fontFamily: F.mono, fontSize: 11, color: R.not2 }}>
-                {(k.urunler || []).length} ürün
+                {kItems(k).length} ürün
               </span>
               <button onClick={() => setKtModal({ tip: 'urun', kategori: k, ad: '', deger: '' })} style={{
                 marginLeft: 'auto', padding: '6px 13px', borderRadius: 9, cursor: 'pointer',
@@ -2156,9 +2162,9 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
               }}>+ Ürün</button>
             </div>
 
-            {(k.urunler || []).length === 0 ? (
+            {kItems(k).length === 0 ? (
               <div style={{ fontSize: 12, color: R.not2 }}>Bu kategoride ürün yok.</div>
-            ) : (k.urunler || []).map((u) => (
+            ) : kItems(k).map((u) => (
               <div key={u.id} style={{
                 display: 'flex', alignItems: 'center', gap: 10, padding: '9px 0',
                 borderBottom: `1px solid ${R.cizgi2}`, fontSize: 12.5, flexWrap: 'wrap',
@@ -3365,16 +3371,25 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     return (
       <>
         <KpiSeridi kpiler={[
-          { etiket: 'Kritik kalem', deger: String(kritik.length), alt: 'minimumun altında', renk: kritik.length > 0 ? R.kirmizi : R.yesil },
-          { etiket: 'Düşük kalem', deger: String(dusuk.length), alt: 'eşiğe yaklaşıyor', renk: dusuk.length > 0 ? R.amber : R.krem },
+          // ⚠️ SAHTE YEŞİL (2026-08-07 denetimi): "Kritik 0 · Düşük 0" ikisi de
+          // YEŞİL yanarken alt satırda "337 şube-kalem sıfırda" yazıyordu.
+          // Sunucu kuralı (_depo_stok_satir_alarm_mu + sayaç): mevcut<=0 olan
+          // kalem "sıfır" kovasına gider, `elif` yüzünden "kritik" sayılmaz;
+          // bardak dışı kalemlerde alarm eşiği zaten mevcut<=0'dır → o kova hep
+          // BOŞ kalır. Yani "kritik 0" ölçüm sonucu değil, TANIM GEREĞİ sıfırdı.
+          // Stokta OLMAYAN kalem, azalan kalemden daha acildir; öne alındı.
+          {
+            etiket: 'Stokta yok',
+            deger: dOzet ? String(sayi(dOzet.sifir_kalem_sayisi)) : '—',
+            alt: 'şube-kalem · mevcut sıfır',
+            renk: sayi(dOzet?.sifir_kalem_sayisi) > 0 ? R.kirmizi : R.yesil,
+          },
+          { etiket: 'Kritik kalem', deger: String(kritik.length), alt: 'bardak eşiği altında', renk: kritik.length > 0 ? R.kirmizi : R.not },
+          { etiket: 'Düşük kalem', deger: String(dusuk.length), alt: 'eşiğe yaklaşıyor', renk: dusuk.length > 0 ? R.amber : R.not },
           {
             etiket: 'Toplam kalem',
             deger: String(kalemler.length),
-            // sifir_kalem_sayisi: değer motorunun saydığı şube-kalem sıfırları
-            // ("hiç yok" ≠ "az var" — sipariş kataloğunda olup stokta olmayan)
-            alt: dOzet && sayi(dOzet.sifir_kalem_sayisi)
-              ? `stok kartı · ${sayi(dOzet.sifir_kalem_sayisi)} şube-kalem sıfırda`
-              : 'stok kartı',
+            alt: 'stok kartı',
           },
           // Adet ≠ para: 10.000 bardak ile 20 kg çekirdek aynı "kalem" ama
           // farklı sermaye. Sunucu değeri hesaplıyordu, ekran hiç göstermiyordu.
