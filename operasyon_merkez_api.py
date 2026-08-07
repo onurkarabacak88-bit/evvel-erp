@@ -14697,6 +14697,93 @@ def ops_siparis_oneri(
         except Exception:  # noqa: BLE001
             kapali = set()
 
+    # TREND — mevcut /ops/stok-tahmin motorundan (yeniden hesaplamıyoruz; o motor
+    # gözlem-günü ağırlıklı çalışır, buradaki 30g ortalamayla ÇAKIŞMASIN diye
+    # yalnız ETİKET olarak taşınır: miktarı değiştirmez, kararı zenginleştirir.
+    trend_map: Dict[str, str] = {}
+    try:
+        _t = ops_stok_tahmin(gun=gun, sube_id=sube_id)
+        for _x in ((_t or {}).get("tahminler") or []):
+            _ad = str(_x.get("urun_ad") or "").strip().lower()
+            if _ad:
+                trend_map[_ad] = str(_x.get("trend") or "")
+    except Exception:  # noqa: BLE001
+        trend_map = {}
+
+    # ── AÇILIM RİTMİ (sahip 2026-08-08: "şube kaç günde bir ananas suyu açıyor?")
+    # Seyrek kalemlerde GÜNLÜK ORTALAMA yanıltıcıdır: 30 günde 6 kez açılan ürün
+    # "0,2 adet/gün" der ve hep "stok yeter" görünür. Doğru soru ARALIKTIR:
+    # "kaç günde bir açılıyor + en son ne zaman açıldı". Ürün-aç defterinden
+    # tarih boyutuyla çıkarılır (depo-ozet aynı defteri okur ama tarih tutmaz).
+    ritim: Dict[str, Dict[str, Any]] = {}   # f"{sid}|{kod}" → {gunler:set, son:date, adet:int}
+    with db() as (_c2, cur2):
+        try:
+            cur2.execute(
+                """SELECT sube_id, tarih,
+                          REPLACE(aciklama,'URUN_KULLANIMA_AL_JSON:','URUN_AC_JSON:') AS aciklama
+                   FROM operasyon_defter
+                   WHERE etiket IN ('URUN_AC','URUN_KULLANIMA_AL')
+                     AND NOT (etiket='URUN_AC' AND aciklama LIKE %s)
+                     AND tarih >= CURRENT_DATE - (%s * INTERVAL '1 day')""",
+                ('%[BİTTİ]%', gun),
+            )
+            _rows = cur2.fetchall() or []
+            # UUID → havuz kodu (stokla aynı karta düşsün — 2026-08-08 düzeltmesi)
+            cur2.execute(
+                "SELECT id::text AS id, depo_stok_kalem_kodu FROM siparis_urun "
+                "WHERE depo_stok_kalem_kodu IS NOT NULL AND depo_stok_kalem_kodu <> ''"
+            )
+            _u2d = {str(r["id"]): str(r["depo_stok_kalem_kodu"]).strip() for r in (cur2.fetchall() or [])}
+            _dec2 = json.JSONDecoder()
+            for r in _rows:
+                ack = r.get("aciklama") or ""
+                i = ack.find("URUN_AC_JSON:")
+                if i < 0:
+                    continue
+                try:
+                    j, _ = _dec2.raw_decode(ack[i + len("URUN_AC_JSON:"):].strip())
+                except Exception:
+                    continue
+                kalemler = j.get("kalemler") if isinstance(j, dict) else None
+                if not isinstance(kalemler, list):
+                    continue
+                sid_r = str(r["sube_id"])
+                t = r.get("tarih")
+                for k in kalemler:
+                    if not isinstance(k, dict):
+                        continue
+                    kod = str(k.get("kalem_kodu") or k.get("urun_id") or "").strip()
+                    if not kod:
+                        continue
+                    kod = _u2d.get(kod, kod)
+                    try:
+                        adet_k = int(k.get("adet") or 0)
+                    except (TypeError, ValueError):
+                        adet_k = 0
+                    if adet_k <= 0:
+                        continue
+                    e = ritim.setdefault(f"{sid_r}|{kod}", {"gunler": set(), "son": None, "adet": 0})
+                    if t:
+                        e["gunler"].add(str(t)[:10])
+                        if e["son"] is None or str(t)[:10] > e["son"]:
+                            e["son"] = str(t)[:10]
+                    e["adet"] += adet_k
+        except Exception as _e_r:  # noqa: BLE001
+            log.warning("siparis oneri ritim okunamadi: %s", _e_r)
+
+    def _ritim(sid: str, kod: str) -> Dict[str, Any]:
+        e = ritim.get(f"{sid}|{kod}")
+        if not e or not e["gunler"]:
+            return {}
+        n = len(e["gunler"])
+        return {
+            "acilim_gun_sayisi": n,
+            "ortalama_aralik_gun": round(gun / n, 1) if n else None,
+            "son_acilim": e["son"],
+            "gun_gecti": (date.today() - date.fromisoformat(e["son"])).days if e["son"] else None,
+            "acilim_basina_adet": round(e["adet"] / n, 1) if n else None,
+        }
+
     hedef_sube = [sube_id] if sube_id else [s for s in subeler if s not in kapali]
     acil, yakin, fazla = [], [], []
     toplam_tutar = 0.0
@@ -14745,9 +14832,31 @@ def ops_siparis_oneri(
             elif oneri > 0:
                 satir["oneri_adet"] = round(oneri, 1)
                 satir["tahmini_tutar_tl"] = round(oneri * fiyat, 2)
+                satir["trend"] = trend_map.get(str(u.get("kalem_adi") or "").strip().lower(), "")
+                rt = _ritim(sid, str(u.get("kalem_kodu") or ""))
+                satir.update(rt)
                 toplam_tutar += satir["tahmini_tutar_tl"]
-                if kalan_gun <= tedarik_gun:
+                # ACİLİYET — iki ölçü birlikte okunur:
+                #  · sürekli akan kalem  → kalan_gun (mevcut ÷ günlük tüketim)
+                #  · SEYREK açılan kalem → ritim (kaç günde bir açılıyor + kaç
+                #    gün geçti). Seyrek kalemde günlük ortalama küçük çıkar ve
+                #    kalan_gun şişer; "her 5 günde bir açılıyor, 6 gündür yok"
+                #    diyen ritim daha doğru sinyaldir.
+                _aralik = rt.get("ortalama_aralik_gun")
+                _gecti = rt.get("gun_gecti")
+                _ritim_acil = (
+                    _aralik is not None and _gecti is not None
+                    and _aralik >= 2                      # seyrek kalem
+                    and _gecti >= _aralik                 # sırası gelmiş/geçmiş
+                    and mevcut <= (rt.get("acilim_basina_adet") or 0)
+                )
+                if kalan_gun <= tedarik_gun or _ritim_acil:
                     satir["aciliyet"] = "acil"
+                    if _ritim_acil and kalan_gun > tedarik_gun:
+                        satir["acil_nedeni"] = (
+                            f"{_aralik} günde bir açılıyor · {_gecti} gündür açılmadı · "
+                            f"elde {round(mevcut, 1)} adet"
+                        )
                     acil.append(satir)
                 else:
                     satir["aciliyet"] = "yakin"
