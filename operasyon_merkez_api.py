@@ -11581,13 +11581,31 @@ def ops_para_yolda(gun: int = 14):
     eslesen = 0
     from datetime import datetime, timezone
     simdi = datetime.now(timezone.utc)
+
+    # ⚠️ TZ TUZAĞI (2026-08-07 denetimi) — SESSİZ SIFIR EŞLEŞME:
+    # `cevap_ts` (sube_operasyon_event) saat dilimi BİLGİSİZ (naive) gelebiliyor,
+    # `kasa_teslim.olusturma` ise timestamptz (aware). Python'da naive ile aware
+    # datetime karşılaştırması TypeError atar; alttaki `except TypeError: continue`
+    # bunu YUTUYORDU → hiçbir teslim hiçbir kapanışa bağlanamıyordu.
+    # CANLI SONUÇ: 25 kapanış · 129 teslim kaydı (766.214 ₺) varken "0 eşleşen,
+    # 25 gecikmiş, 92.650 ₺ yolda" yazıyordu — para teslim edilmiş olduğu hâlde
+    # ekran "teslim edilmedi" diyordu. Sahte alarmın en pahalı türü.
+    # ÇÖZÜM: karşılaştırmadan ÖNCE iki tarafı da aware'a çek (tek yardımcı).
+    def _aware(d):
+        if d is None:
+            return None
+        try:
+            return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+        except AttributeError:
+            return None
+
     for k in kapanislar:
-        kts = k.get("cevap_ts")
+        kts = _aware(k.get("cevap_ts"))
         es = None
         for i, t in enumerate(teslimler):
             if i in kullanildi or t["sube_id"] != k["sube_id"]:
                 continue
-            tts = t.get("olusturma")
+            tts = _aware(t.get("olusturma"))
             try:
                 if tts and kts and tts >= kts and (tts - kts).total_seconds() <= 3 * 86400:
                     es = (i, t)
@@ -11598,7 +11616,7 @@ def ops_para_yolda(gun: int = 14):
             kullanildi.add(es[0])
             eslesen += 1
             try:
-                saat = (es[1]["olusturma"] - kts).total_seconds() / 3600.0
+                saat = (_aware(es[1]["olusturma"]) - kts).total_seconds() / 3600.0
                 if 0 <= saat <= 72:
                     sureler.append(round(saat, 1))
             except TypeError:
