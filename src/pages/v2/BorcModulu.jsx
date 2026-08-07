@@ -47,6 +47,7 @@ export default function BorcModulu({ gorunum, onCekmece, onKopru }) {
   // 5. görünüm (köprü kaldırma turu, 2026-07-30): klasik BorcNavigasyon'daki
   // 12 aylık projeksiyon v2'de karşılıksızdı — köprü yerine yerli görünüm.
   const [proj, setProj] = useState(undefined);
+  const [hedefCiro, setHedefCiro] = useState(undefined);   // /ops/metrics/hedef-ciro
 
   /** Uç henüz yoldayken gösterilen kart — "veri yok" demez, durumu söyler. */
   const Bekleniyor = ({ ad }) => (
@@ -80,6 +81,9 @@ export default function BorcModulu({ gorunum, onCekmece, onKopru }) {
     cek('/borc-nav/olcek-plani', setOlcek);
     cek('/borc-nav/sube-katki?gun=30', setKatki);
     cek('/borc-nav/projeksiyon?ay=12', setProj);
+    // MEVCUT YAPIDA HEDEF CİRO (sahip 2026-08-08): "bütün ödemelerimi rahatlıkla
+    // yapabileceğim aylık ciro" — üç eşik + geçen ay / yıllık ortalama referansı.
+    cek('/ops/metrics/hedef-ciro?erit_ay=6', setHedefCiro);
   };
 
   useEffect(yukle, []);
@@ -329,8 +333,99 @@ export default function BorcModulu({ gorunum, onCekmece, onKopru }) {
       );
     }
     const mevcutCiro = sayi(par.mevcut_ciro);
+    // ── MEVCUT YAPIDA HEDEF (sahip 2026-08-08) ──────────────────────────────
+    // Aşağıdaki ölçek planı BÜYÜME senaryosudur (kaç şube açmalı). Sahibin
+    // sorduğu ise "bugünkü yapımla bütün ödemelerimi rahat yapacağım ciro":
+    // üç eşik (ayakta kal / borcu çevir / rahatla) + üç referans (geçen ay,
+    // yıllık ortalama, bu ay projeksiyonu). Bu blok ÖNCE gelir.
+    const hedefBlok = hedefCiro?.hedefler ? (() => {
+      const h = hedefCiro.hedefler;
+      const r = hedefCiro.referanslar || {};
+      const sev = hedefCiro.seviye;
+      const sevRenk = sev === 'rahat' ? R.yesil : sev === 'borcu_ceviriyor' ? R.yesil
+        : sev === 'ayakta' ? R.amber : R.kirmizi;
+      const sevAd = sev === 'rahat' ? 'Rahat — gecikmişi de eritiyor'
+        : sev === 'borcu_ceviriyor' ? 'Borcu çeviriyor'
+          : sev === 'ayakta' ? 'Ayakta — ama borç ödemesi tam çıkmıyor'
+            : 'Eşiğin altında';
+      const proj = sayi(r.bu_ay?.projeksiyon_tl);
+      const KADEME = [
+        ['ayakta_kal', '1 · Ayakta kal', R.yesil],
+        ['borcu_cevir', '2 · Borcu çevir', R.amber],
+        ['rahatla', '3 · Rahatla', R.bakirAcik],
+      ];
+      return (
+        <div style={{ ...kartYuzey, padding: '16px 19px', marginBottom: 16, borderLeft: `3px solid ${sevRenk}` }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap', marginBottom: 4 }}>
+            <span style={{ fontFamily: F.baslik, fontSize: 16, fontWeight: 600 }}>🎯 Bugünkü yapımla hedef ciro</span>
+            <span style={{ fontSize: 12.5, fontWeight: 700, color: sevRenk }}>{sevAd}</span>
+          </div>
+          <div style={{ fontSize: 11.5, color: R.not2, marginBottom: 13 }}>
+            Şube açmadan, mevcut kadro ve gider yapısıyla — "bütün ödemelerimi rahatlıkla
+            yapabileceğim aylık ciro" sorusunun cevabı.
+          </div>
+
+          {/* Üç referans */}
+          <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', marginBottom: 14, fontSize: 12.5 }}>
+            {r.gecen_ay && (
+              <span style={{ color: R.metin2 }}>
+                Geçen ay <b style={{ fontFamily: F.mono, color: R.krem }}>{fmt(sayi(r.gecen_ay.ciro_tl))}</b>
+                <span style={{ color: R.not3 }}> · {r.gecen_ay.ay}</span>
+              </span>
+            )}
+            {r.yil_ortalama_tl != null && (
+              <span style={{ color: R.metin2 }}>
+                Yıllık ortalama <b style={{ fontFamily: F.mono, color: R.krem }}>{fmt(sayi(r.yil_ortalama_tl))}</b>
+                <span style={{ color: R.not3 }}> · {sayi(r.yil_ortalama_ay_sayisi)} kapanmış ay</span>
+              </span>
+            )}
+            <span style={{ color: R.metin2 }}>
+              Bu ay projeksiyon <b style={{ fontFamily: F.mono, color: sevRenk }}>{fmt(proj)}</b>
+              <span style={{ color: R.not3 }}> · {sayi(r.bu_ay?.cirolu_gun)} cirolu gün</span>
+            </span>
+          </div>
+
+          {/* Üç eşik — her biri kendi çubuğuyla */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 11 }}>
+            {KADEME.map(([k, ad, renk]) => {
+              const x = h[k]; if (!x?.hedef_aylik_tl) return null;
+              const kar = sayi(x.karsilama_pct);
+              const dolu = Math.max(0, Math.min(100, kar));
+              const yeter = kar >= 100;
+              return (
+                <div key={k}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, fontSize: 12, marginBottom: 4, flexWrap: 'wrap' }}>
+                    <span style={{ color: R.metin2 }}>
+                      <b style={{ color: R.krem }}>{ad}</b>
+                      <span style={{ color: R.not2 }}> · {x.aciklama}</span>
+                    </span>
+                    <span style={{ fontFamily: F.mono, color: yeter ? R.yesil : R.kirmizi, fontWeight: 700 }}>
+                      {fmt(sayi(x.hedef_aylik_tl))}/ay · {fmt(sayi(x.hedef_gunluk_tl))}/gün
+                    </span>
+                  </div>
+                  <div style={{ height: 8, borderRadius: 99, background: R.girinti, overflow: 'hidden' }}>
+                    <div style={{ width: `${dolu}%`, height: '100%', background: yeter ? R.yesil : renk, opacity: 0.8 }} />
+                  </div>
+                  <div style={{ fontSize: 10.5, color: R.not2, marginTop: 3 }}>
+                    karşılama %{trSayi(kar, 1)}
+                    {!yeter && x.projeksiyon_farki_tl != null
+                      ? ` · ayda ${fmt(Math.abs(sayi(x.projeksiyon_farki_tl)))} eksik (günde ${fmt(Math.abs(sayi(x.projeksiyon_farki_tl)) / 30)})`
+                      : ' · eşik aşıldı'}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <div style={{ fontSize: 11, color: R.not2, marginTop: 12, lineHeight: 1.6 }}>
+            3. kademe gecikmiş <b>{fmt(sayi(hedefCiro.gecikmis_odeme_tl))}</b> borcu
+            {' '}{sayi(hedefCiro.erit_ay)} ayda eritme payını içerir. Eşikler başabaş motorundan gelir.
+          </div>
+        </div>
+      );
+    })() : null;
     return (
       <>
+        {hedefBlok}
         <KpiSeridi kpiler={[
           { etiket: 'Şu anki ciro', deger: fmt(mevcutCiro), alt: `aylık · ${sayi(par.mevcut_sube)} şube` },
           { etiket: 'Borç sabit kalsın', deger: sen.borc_sabit ? fmt(sen.borc_sabit.hedef_ciro) : '—', alt: sen.borc_sabit ? `${trSayi(sayi(sen.borc_sabit.carpan_mevcut), 2)}× · günlük ${fmt(sayi(sen.borc_sabit.hedef_ciro) / 30)}` : '—', renk: R.krem },
