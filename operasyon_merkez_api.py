@@ -14655,6 +14655,198 @@ def _gelir_vergisi_yillik(yillik_kar: float) -> float:
     return vergi
 
 
+@router.get("/maliyet/basabas")
+def ops_maliyet_basabas(gun: int = Query(30, ge=7, le=90)):
+    """BAŞABAŞ NOKTASI — "günde kaç ₺ satarsam zarar etmem?"
+
+    Denetim bulgusu (2026-08-07): sistemde ciro, sabit gider, bordro, food cost
+    ve POS kesintisi AYRI AYRI vardı ama hiçbir ekran bunları tek soruda
+    birleştirmiyordu. CFO'nun ilk sorusu cevapsızdı.
+
+    İKİ eşik döner (karıştırmak yaygın hatadır):
+      · İŞLETME başabaşı = sabit gider + personel            (dükkân dönüyor mu?)
+      · NAKİT başabaşı   = + borç anapara/taksit yükü        (kasa erimiyor mu?)
+    Borç ANAPARASI gider değildir (bilanço kalemi) — bu yüzden ayrı eşik.
+
+    ⚠️ PERİYOT TUZAĞI: sabit_giderler.tutar periyot bazlıdır. Canlı vaka: TEMA
+    kirası 390.000 ₺ ama '6aylik' → aylık 65.000 ₺. Ham toplam alınsa başabaş
+    2 KATINA çıkardı. Kanonik _PERIYOT_GUN bölücüsü kullanılır.
+
+    Hüküm YOK — öneri-only; varsayımlar cevapta yazılıdır.
+    """
+    _PERIYOT_GUN = {
+        "gunluk": 1.0, "haftalik": 7.0, "aylik": 30.0,
+        "3aylik": 90.0, "6aylik": 180.0, "yillik": 365.0, "1yil": 365.0,
+    }
+    bugun = date.today()
+    bas = bugun - timedelta(days=gun - 1)
+    varsayimlar: List[str] = []
+    uyarilar: List[str] = []
+
+    with db() as (_c, cur):
+        # ── 1) SABİT YÜK: periyot normalize, günlük paya çevrilip aylığa vurulur
+        kova = {"kira": 0.0, "fatura": 0.0, "abonelik": 0.0, "diger": 0.0}
+        finansman_haric = 0.0
+        try:
+            cur.execute(
+                """SELECT LOWER(COALESCE(kategori,'')) AS kat, LOWER(COALESCE(gider_adi,'')) AS ad,
+                          COALESCE(tutar,0)::float AS tutar, LOWER(COALESCE(periyot,'aylik')) AS periyot
+                   FROM sabit_giderler WHERE aktif = TRUE"""
+            )
+            for r in (cur.fetchall() or []):
+                d = dict(r)
+                aylik = float(d["tutar"]) / _PERIYOT_GUN.get(d["periyot"], 30.0) * 30.0
+                txt = f"{d['kat']} {d['ad']}"
+                if any(x in txt for x in ("faiz", "finansman", "kredi kart", "kredi taksit", "banka kredisi")):
+                    finansman_haric += aylik      # finansman yükü NAKİT eşiğinde ayrıca sayılır
+                elif "kira" in txt:
+                    kova["kira"] += aylik
+                elif any(x in txt for x in ("abonelik", "abonman", "abone")):
+                    kova["abonelik"] += aylik
+                elif "fatura" in txt or "elektrik" in txt or "su" in txt or "dogalgaz" in txt or "internet" in txt:
+                    kova["fatura"] += aylik
+                else:
+                    kova["diger"] += aylik
+        except Exception as e:  # noqa: BLE001
+            uyarilar.append(f"Sabit gider okunamadı: {str(e)[:80]}")
+
+        # ── 2) PERSONEL: aktif kadronun aylık brüt yükü (bordro tahakkuku)
+        personel_aylik = 0.0
+        try:
+            cur.execute(
+                """SELECT COALESCE(SUM(COALESCE(maas,0) + COALESCE(yemek_ucreti,0)
+                          + COALESCE(yol_ucreti,0)),0)::float AS t
+                   FROM personel WHERE aktif = TRUE"""
+            )
+            personel_aylik = float((cur.fetchone() or {}).get("t") or 0)
+        except Exception as e:  # noqa: BLE001
+            uyarilar.append(f"Personel yükü okunamadı: {str(e)[:80]}")
+
+        # ── 3) CİRO: yalnız CİROLU günlerden ortalama (kapalı gün ortalamayı bozmasın)
+        gunluk_ciro = 0.0
+        cirolu_gun = 0
+        try:
+            cur.execute(
+                """SELECT COUNT(DISTINCT tarih)::int AS g, COALESCE(SUM(
+                       COALESCE(nakit,0)+COALESCE(pos,0)+COALESCE(online,0)),0)::float AS t
+                   FROM ciro WHERE tarih BETWEEN %s AND %s""",
+                (bas, bugun),
+            )
+            r = dict(cur.fetchone() or {})
+            cirolu_gun = int(r.get("g") or 0)
+            if cirolu_gun:
+                gunluk_ciro = float(r.get("t") or 0) / cirolu_gun
+        except Exception as e:  # noqa: BLE001
+            uyarilar.append(f"Ciro okunamadı: {str(e)[:80]}")
+
+        # ── 4) DEĞİŞKEN ORAN: food cost (motor) + POS kesintisi
+        fc_pct = None
+        fc_kapsama = None
+        try:
+            cur.execute(
+                """SELECT COALESCE(SUM(gercek_maliyet_tl),0)::float AS m,
+                          COALESCE(SUM(ciro_tl),0)::float AS c,
+                          AVG(NULLIF(teorik_kapsama_pct,0))::float AS kap
+                   FROM sube_food_cost_gun
+                   WHERE tarih BETWEEN %s AND %s AND COALESCE(ciro_tl,0) > 0""",
+                (bas, bugun),
+            )
+            r = dict(cur.fetchone() or {})
+            if float(r.get("c") or 0) > 0:
+                fc_pct = float(r["m"]) / float(r["c"]) * 100.0
+                fc_kapsama = r.get("kap")
+        except Exception as e:  # noqa: BLE001
+            uyarilar.append(f"Food cost okunamadı: {str(e)[:80]}")
+
+        pos_pct = 0.0
+        try:
+            cur.execute(
+                """SELECT COALESCE(SUM(pos),0)::float AS pos,
+                          COALESCE(SUM(COALESCE(nakit,0)+COALESCE(pos,0)+COALESCE(online,0)),0)::float AS top
+                   FROM ciro WHERE tarih BETWEEN %s AND %s""",
+                (bas, bugun),
+            )
+            r = dict(cur.fetchone() or {})
+            if float(r.get("top") or 0) > 0:
+                cur.execute("SELECT COALESCE(AVG(NULLIF(pos_oran,0)),0)::float AS o FROM subeler WHERE aktif=TRUE")
+                oran = float((cur.fetchone() or {}).get("o") or 0)
+                pos_pct = (float(r["pos"]) / float(r["top"])) * oran * 100.0
+        except Exception:  # noqa: BLE001
+            pos_pct = 0.0
+
+    # ── 5) HESAP ────────────────────────────────────────────────────────────
+    isletme_sabit = sum(kova.values()) + personel_aylik
+    nakit_sabit = isletme_sabit + finansman_haric
+
+    # Food cost yoksa/kapsamı düşükse NRF alt bandı (%28) TEMKİNLİ taban olarak
+    # kullanılır — düşük ölçüm başabaşı olduğundan iyimser gösterir.
+    fc_kullanilan = fc_pct
+    if fc_pct is None:
+        fc_kullanilan = 28.0
+        varsayimlar.append("Food cost ölçülemedi → NRF alt bandı %28 varsayıldı (temkinli).")
+    elif fc_kapsama is not None and float(fc_kapsama) < 60:
+        varsayimlar.append(
+            f"Food cost ölçüldü (%{fc_pct:.1f}) ama reçete kapsaması düşük (%{float(fc_kapsama):.0f}) — "
+            f"gerçek maliyet daha yüksek olabilir; ikinci eşik %28 ile de gösterildi."
+        )
+    varsayimlar.append("Borç ANAPARASI gider değildir; yalnız NAKİT eşiğine katılır.")
+    varsayimlar.append("Sabit giderler periyot bazlı normalize edildi (6 aylık kira ÷6).")
+
+    def _esik(sabit_tl: float, degisken_pct: float):
+        kat = 1.0 - (degisken_pct / 100.0)
+        if kat <= 0:
+            return None
+        aylik = sabit_tl / kat
+        return {"aylik_tl": round(aylik, 2), "gunluk_tl": round(aylik / 30.0, 2)}
+
+    degisken_pct = float(fc_kullanilan) + pos_pct
+    degisken_temkinli = 28.0 + pos_pct
+
+    isletme = _esik(isletme_sabit, degisken_pct)
+    nakit = _esik(nakit_sabit, degisken_pct)
+    nakit_temkinli = _esik(nakit_sabit, degisken_temkinli)
+
+    aylik_ciro_proj = gunluk_ciro * 30.0
+    durum = "veri_yok"
+    if nakit and gunluk_ciro > 0:
+        oran = gunluk_ciro / nakit["gunluk_tl"]
+        durum = "ustunde" if oran >= 1.1 else ("sinirda" if oran >= 0.95 else "altinda")
+
+    return {
+        "gun": gun,
+        "uretildi": str(bugun),
+        "sabit_yuk_aylik": {
+            **{k: round(v, 2) for k, v in kova.items()},
+            "personel": round(personel_aylik, 2),
+            "isletme_toplam": round(isletme_sabit, 2),
+            "finansman": round(finansman_haric, 2),
+            "nakit_toplam": round(nakit_sabit, 2),
+        },
+        "degisken_oran_pct": {
+            "food_cost": round(float(fc_kullanilan), 2),
+            "food_cost_olculen": round(fc_pct, 2) if fc_pct is not None else None,
+            "food_cost_kapsama_pct": round(float(fc_kapsama), 1) if fc_kapsama is not None else None,
+            "pos_kesinti": round(pos_pct, 3),
+            "toplam": round(degisken_pct, 2),
+        },
+        "basabas": {
+            "isletme": isletme,
+            "nakit": nakit,
+            "nakit_temkinli_fc28": nakit_temkinli,
+        },
+        "mevcut": {
+            "gunluk_ciro_ort_tl": round(gunluk_ciro, 2),
+            "cirolu_gun": cirolu_gun,
+            "aylik_projeksiyon_tl": round(aylik_ciro_proj, 2),
+        },
+        "durum": durum,
+        "varsayimlar": varsayimlar,
+        "uyarilar": uyarilar,
+        "not": "Öneri-only yönetim tahmini. Başabaş = sabit yük ÷ (1 − değişken oran). "
+               "İşletme eşiği dükkânın döndüğünü, NAKİT eşiği kasanın erimediğini söyler.",
+    }
+
+
 @router.get("/maliyet/vergi-ozet")
 def ops_maliyet_vergi_ozet(
     gun: int = Query(7, ge=1, le=31),
