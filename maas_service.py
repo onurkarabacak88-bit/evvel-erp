@@ -121,7 +121,12 @@ def sabit_mesai_saati(cur, p: dict, yil: int, ay: int) -> Tuple[float, str]:
     # her gece senkronda bir gün daha eklenir. İlk sürüm ay sonunu taban alıyordu:
     # 8 Ağustos'ta part-time'a 31 günlük (29.155 ₺) hakediş çıkarıyordu; oysa
     # 23 gün henüz çalışılmamıştı. Geçmiş ayda tam ay doğrudur (dönem kapandı).
-    _bugun = date.today()
+    # ⚠️ TZ TUZAĞI: sunucu UTC'de koşar, Türkiye UTC+3. `date.today()` gece
+    # yarısından sonraki 3 saatte BİR GÜN GERİ gösterir — canlıda tam bu oldu:
+    # 8 Ağustos'ta 7 günlük hakediş yazdı (66,5 sa). Takvim günü kararı hep
+    # İstanbul saatinden alınır (kanonik: tr_saat.bugun_tr).
+    from tr_saat import bugun_tr as _bugun_tr
+    _bugun = _bugun_tr()
     if _bugun < d2:
         eff2 = min(eff2, _bugun)
     if eff1 > eff2:
