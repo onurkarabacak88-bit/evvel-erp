@@ -14655,6 +14655,151 @@ def _gelir_vergisi_yillik(yillik_kar: float) -> float:
     return vergi
 
 
+@router.get("/siparis/oneri")
+def ops_siparis_oneri(
+    sube_id: Optional[str] = None,
+    hedef_gun: int = Query(21, ge=7, le=60),
+    tedarik_gun: int = Query(3, ge=1, le=21),
+    gun: int = Query(30, ge=14, le=90),
+):
+    """SİPARİŞ ÖNERİSİ — "hangi üründen ne kadar alayım ki param rafta yatmasın?"
+
+    Sahip isteği (2026-08-08): "toptancılara sipariş verirken ürün bazında öneri
+    kurgusu + ürün azaldığında lazım olan ürün sipariş mantığı."
+
+    Klasik yeniden-sipariş noktası (ROP) modeli, nakit disipliniyle:
+      günlük_tüketim = dönem tüketimi ÷ gün
+      kalan_gun      = mevcut ÷ günlük_tüketim          ("kaç günüm var")
+      rop            = günlük_tüketim × (tedarik_gun + emniyet)
+      öneri_adet     = (hedef_gun × günlük_tüketim) − mevcut   [negatifse 0]
+
+    ÜÇ KOVA döner:
+      · acil   → kalan_gun ≤ tedarik süresi (sipariş bugün geçilmezse biter)
+      · yakin  → kalan_gun ≤ hedef_gun (planlı alım penceresi)
+      · fazla  → kalan_gun ≥ hedef_gun × 2 (SİPARİŞ VERME — para rafta yatıyor)
+
+    NEDEN "fazla" kovası da var: denetimde zincir stoğu 90 gün, TEMA 200 gün
+    çıktı (sağlıklı bant 15-30). Sipariş önerisi yalnız "ne alayım" demez,
+    "neyi ALMA" da der — nakit sıkışıkken en ucuz para budur.
+
+    Tüketimi olmayan (sezon kapalı) şube için öneri ÜRETİLMEZ; hüküm yok.
+    """
+    ozet = ops_v2_depo_ozet(gun=gun)
+    urunler = (ozet or {}).get("urunler") or []
+    subeler = {str(s["id"]): s["ad"] for s in ((ozet or {}).get("subeler") or [])}
+
+    # Sezon kapalı şubeler öneri dışı (tüketim yok → sahte "acil" üretir)
+    kapali: set = set()
+    with db() as (_c, cur):
+        try:
+            cur.execute("SELECT id::text AS id FROM subeler WHERE COALESCE(sezon_kapali,FALSE)=TRUE")
+            kapali = {str(r["id"]) for r in (cur.fetchall() or [])}
+        except Exception:  # noqa: BLE001
+            kapali = set()
+
+    hedef_sube = [sube_id] if sube_id else [s for s in subeler if s not in kapali]
+    acil, yakin, fazla = [], [], []
+    toplam_tutar = 0.0
+    bagli_fazla = 0.0
+
+    for u in urunler:
+        fiyat = float(u.get("birim_fiyat") or 0)
+        for sid in hedef_sube:
+            sd = (u.get("subeler") or {}).get(sid)
+            if not sd:
+                continue
+            mevcut = float(sd.get("mevcut") or 0)
+            harcanan = float(sd.get("harcanan") or 0)
+            gunluk = harcanan / gun if gun else 0.0
+            if gunluk <= 0:
+                # Tüketim yok: yalnız PARA BAĞLI ise bildir (alma önerisi değil)
+                if mevcut > 0 and fiyat > 0 and (mevcut * fiyat) >= 1000:
+                    fazla.append({
+                        "kalem_kodu": u.get("kalem_kodu"), "kalem_adi": u.get("kalem_adi"),
+                        "kategori": u.get("kategori_ad"), "sube_id": sid,
+                        "sube_adi": subeler.get(sid, sid),
+                        "mevcut": round(mevcut, 1), "gunluk_tuketim": 0.0,
+                        "kalan_gun": None, "bagli_para_tl": round(mevcut * fiyat, 2),
+                        "neden": "dönemde hiç tüketilmemiş — hareketsiz stok",
+                    })
+                    bagli_fazla += mevcut * fiyat
+                continue
+
+            kalan_gun = mevcut / gunluk
+            oneri = (hedef_gun * gunluk) - mevcut
+            satir = {
+                "kalem_kodu": u.get("kalem_kodu"), "kalem_adi": u.get("kalem_adi"),
+                "kategori": u.get("kategori_ad"), "sube_id": sid,
+                "sube_adi": subeler.get(sid, sid),
+                "mevcut": round(mevcut, 1),
+                "gunluk_tuketim": round(gunluk, 2),
+                "kalan_gun": round(kalan_gun, 1),
+                "rop": round(gunluk * (tedarik_gun + 2), 1),
+                "birim_fiyat_tl": fiyat,
+            }
+            if kalan_gun >= hedef_gun * 2:
+                satir["bagli_para_tl"] = round(max(0.0, mevcut - hedef_gun * gunluk) * fiyat, 2)
+                satir["neden"] = f"{round(kalan_gun)} günlük stok — hedef {hedef_gun} gün"
+                fazla.append(satir)
+                bagli_fazla += satir["bagli_para_tl"]
+            elif oneri > 0:
+                satir["oneri_adet"] = round(oneri, 1)
+                satir["tahmini_tutar_tl"] = round(oneri * fiyat, 2)
+                toplam_tutar += satir["tahmini_tutar_tl"]
+                if kalan_gun <= tedarik_gun:
+                    satir["aciliyet"] = "acil"
+                    acil.append(satir)
+                else:
+                    satir["aciliyet"] = "yakin"
+                    yakin.append(satir)
+
+    acil.sort(key=lambda x: x["kalan_gun"])
+    yakin.sort(key=lambda x: x["kalan_gun"])
+    fazla.sort(key=lambda x: -(x.get("bagli_para_tl") or 0))
+
+    # Nakit bağlamı — öneri tutarı kasayı zorluyor mu?
+    kasa = None
+    gecikmis = None
+    try:
+        from odeme_plani_api import odeme_plani_kokpit as _kokpit
+        k = _kokpit(personel=1)
+        kasa = float((k or {}).get("kasa") or 0)
+        gecikmis = float((k or {}).get("gecikmis_toplam") or 0)
+    except Exception:  # noqa: BLE001
+        pass
+
+    # Kategori özeti — toptancı seçimi kategori bazlı yapılır
+    kat: Dict[str, Dict[str, Any]] = {}
+    for s in acil + yakin:
+        k = s.get("kategori") or "Diğer"
+        g = kat.setdefault(k, {"kategori": k, "kalem": 0, "tutar": 0.0, "acil": 0})
+        g["kalem"] += 1
+        g["tutar"] = round(g["tutar"] + (s.get("tahmini_tutar_tl") or 0), 2)
+        if s.get("aciliyet") == "acil":
+            g["acil"] += 1
+
+    return {
+        "uretildi": str(date.today()),
+        "parametreler": {"hedef_gun": hedef_gun, "tedarik_gun": tedarik_gun,
+                         "olcum_gun": gun, "sube_id": sube_id},
+        "ozet": {
+            "acil_kalem": len(acil), "yakin_kalem": len(yakin), "fazla_kalem": len(fazla),
+            "onerilen_tutar_tl": round(toplam_tutar, 2),
+            "acil_tutar_tl": round(sum(s.get("tahmini_tutar_tl") or 0 for s in acil), 2),
+            "fazla_bagli_para_tl": round(bagli_fazla, 2),
+            "kasa_tl": kasa, "gecikmis_odeme_tl": gecikmis,
+            "kasa_yeterli": (kasa - (gecikmis or 0) - toplam_tutar) > 0 if kasa is not None else None,
+        },
+        "acil": acil[:60],
+        "yakin": yakin[:80],
+        "fazla": fazla[:60],
+        "kategoriler": sorted(kat.values(), key=lambda x: -x["tutar"]),
+        "not": "ÖNERİ-ONLY. Öneri = (hedef gün × günlük tüketim) − mevcut. 'Fazla' kovası "
+               "ALMA demek içindir: nakit sıkışıkken en ucuz para, rafta yatan paradır. "
+               "Sezon kapalı şubeler hesap dışıdır; tüketimi olmayan kalem 'hareketsiz stok' sayılır.",
+    }
+
+
 @router.get("/metrics/stok-devir")
 def ops_metrics_stok_devir(gun: int = Query(30, ge=7, le=90)):
     """STOK DEVİR HIZI — "param kaç gün depoda bekliyor?"
