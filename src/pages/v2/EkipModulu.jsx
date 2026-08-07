@@ -2968,7 +2968,8 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
             }}>
               <b style={{ color: R.amber }}>⚠ {varsayimli.length} kişide hakediş varsayımla hesaplandı</b>
               <span style={{ color: R.metin2 }}>
-                {' '}— vardiya ataması yok, sabit mesai tanımı da yok. Taban <b>9,5 sa/gün</b>
+                {' '}— vardiya ataması yok, sabit mesai tanımı da yok. Taban <b>haftada 6 gün × 9,5 sa</b>
+                {' '}(7. gün haftalık izin)
                 {varsayimli.some((b) => String(b.saat_kaynagi || '').includes('varsayilan_ucret'))
                   ? <>, saatlik ücreti tanımsız olanlarda <b>99 ₺/sa</b></> : null}
                 {' '}alındı ve <b>gün gün birikiyor</b> ({varsayimli.map((b) => b.ad_soyad).join(' · ')}).
@@ -3019,7 +3020,7 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
                       const k = String(b.saat_kaynagi || '');
                       const ucretNot = k.includes('varsayilan_ucret') ? ' · ücret 99 ₺/sa varsayıldı' : '';
                       if (k.startsWith('sabit_tanim_haftalik')) return `sabit tanımdan${ucretNot}`;
-                      if (k.startsWith('varsayilan_gunluk')) return `⚠ varsayım (9,5 sa/gün)${ucretNot}`;
+                      if (k.startsWith('varsayilan_gunluk')) return `⚠ varsayım (haftada 6 gün × 9,5 sa)${ucretNot}`;
                       return b.calisma_saati ? 'vardiya atamasından' : undefined;
                     })(),
                     renk: String(b.saat_kaynagi || '').includes('varsayilan') ? R.amber : undefined,

@@ -31,6 +31,12 @@ GUNLUK_SAAT = 9.5
 AYLIK_GUN = 30                      # İş Kanunu standardı: izin günleri dahil 30 gün
 AYLIK_SAAT = GUNLUK_SAAT * AYLIK_GUN  # 285
 
+# Haftalık çalışma günü — atama YOKKEN kurulacak varsayımın iskeleti
+# (sahip kararı 2026-08-08: "6 gün 9,5 saatten hesapla"). 7. gün haftalık
+# izindir (İş Kanunu md.46); ilk sürüm her günü çalışma sayıyordu ve haftada
+# bir günlük fazla hakediş üretiyordu.
+HAFTALIK_CALISMA_GUN = 6
+
 # Saatlik ücreti TANIMSIZ part-time personel için varsayılan (sahip kararı
 # 2026-08-08: "girilmemişse de saatlik 99 TL olarak hesapla"). Kadrodaki mevcut
 # part-time ücretleri 98,55–99,30 ₺ bandında; 99 ₺ bu bandın ortasıdır.
@@ -169,9 +175,13 @@ def sabit_mesai_saati(cur, p: dict, yil: int, ay: int) -> Tuple[float, str]:
 
     if haftalik and haftalik > 0:
         return round(calisilan_gun * (haftalik / 7.0), 2), "sabit_tanim_haftalik"
-    # Tanım yoksa: günlük standart mesai. VARSAYIM olduğu için etiketi ayrı —
-    # ekran bunu "sabit mesai tanımlı değil" uyarısıyla gösterir.
-    return round(calisilan_gun * GUNLUK_SAAT, 2), "varsayilan_gunluk"
+    # Tanım yoksa: HAFTADA 6 GÜN × 9,5 saat (7. gün haftalık izin — İş Kanunu md.46).
+    # Takvim günü sayısı 6/7 ile ölçeklenir; ilk sürüm her takvim gününü çalışma
+    # sayıyordu ve haftada bir günlük FAZLA hakediş üretiyordu (8 günde 76 sa
+    # yerine doğrusu ~65 sa). VARSAYIM olduğu için etiketi ayrı — ekran bunu
+    # "sabit mesai tanımlı değil" uyarısıyla gösterir.
+    _calisma_gun = calisilan_gun * (HAFTALIK_CALISMA_GUN / 7.0)
+    return round(_calisma_gun * GUNLUK_SAAT, 2), "varsayilan_gunluk"
 
 
 def kanonik_net(p: dict, vt: dict, kayit: dict) -> float:
