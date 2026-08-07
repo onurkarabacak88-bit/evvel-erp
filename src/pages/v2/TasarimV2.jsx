@@ -173,8 +173,15 @@ export default function TasarimV2({ onGit }) {
       if (iptal || v == null || v === 0 || v === '') return;
       setRozetler(r => ({ ...r, [k]: String(v) }));
     };
+    // ⚠️ ROZET ≠ EKRAN tutarsızlığı (2026-08-07 denetimi): burada ham kuyruk
+    // uzunluğu sayılıyordu → menüde "132" kırmızı, ekranda "Kuyruk temiz · 0".
+    // Onay Kuyruğu ekranı (KucukModuller:178) islem_turu'nde KASA geçen kayıtları
+    // onay saymaz — onlar kasa uyumsuzluğudur, ayrı iş. Rozet AYNI filtreyi
+    // uygulamazsa her gün boşuna açılan bir kırmızı üretir (alarm körlüğü).
     api('/onay-kuyrugu?durum=bekliyor&limit=400')
-      .then(d => koy('onay', Array.isArray(d) ? d.length : 0)).catch(() => {});
+      .then(d => koy('onay', Array.isArray(d)
+        ? d.filter(o => !String(o.islem_turu || '').toUpperCase().includes('KASA')).length
+        : 0)).catch(() => {});
     api('/ciro-taslak?durum=bekliyor')
       .then(d => koy('ciroOnay', Array.isArray(d) ? d.length : 0)).catch(() => {});
     api('/is-basvurusu/ozet')

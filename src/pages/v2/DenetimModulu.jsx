@@ -576,7 +576,7 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
     const subeler = Array.isArray(durum.subeler) ? durum.subeler : [];
     const raporMap = {};
     (rapor.subeler || []).forEach((s) => { raporMap[String(s.sube_id)] = s; });
-    const aktifSayi = subeler.filter((s) => s.motor_aktif).length;
+    const aktifSayi = subeler.filter((s) => s.aktif).length;
     return (
       <>
         <KpiSeridi kpiler={[
@@ -602,8 +602,14 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
                 _s: { ...s, ...r },
                 hucreler: [
                   { v: s.sube_ad || r.sube_ad || '—', kalin: true },
-                  s.motor_aktif ? { v: 'aktif', rozet: R.yesil } : { v: 'kapalı', rozet: R.amber },
-                  { v: s.motor_mod || '—', renk: R.not },
+                  // ⚠️ ŞEKİL TUZAĞI (2026-08-07 denetimi): burada `s.motor_aktif` /
+                  // `s.motor_mod` okunuyordu — /ops/truth/durum BÖYLE ALAN DÖNMÜYOR
+                  // (sözleşme: sube_id, aktif, mod, son_calisma, notu, sube_ad).
+                  // undefined → falsy → 5/5 şube "kapalı" göründü ve "Aktif şube
+                  // motoru 0/5" yazdı. Gerçekte 3 şubede motor AÇIKTI. Bu, denetim
+                  // ekranının kendisini kör gösteren bir okuma hatasıydı.
+                  s.aktif ? { v: 'aktif', rozet: R.yesil } : { v: 'kapalı', rozet: R.amber },
+                  { v: s.mod || '—', renk: R.not },
                   { v: String(bulgu), mono: true, sag: true, kalin: bulgu > 0, renk: bulgu > 1 ? R.kirmizi : bulgu === 1 ? R.amber : R.not },
                   { v: String(s.son_calisma || r.son_calisma || '—').slice(0, 16), mono: true, renk: R.not },
                   r.alarm && r.alarm !== 'normal'
