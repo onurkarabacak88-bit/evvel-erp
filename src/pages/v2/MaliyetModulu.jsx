@@ -74,6 +74,7 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
   // Güven skoru + sapma motoru (/ops/maliyet/guven-skoru) — SALT-OKUR, öneri-only.
   // Maliyet sayısının NE KADAR GÜVENİLİR olduğunu söyler; hata yoksa sessiz durur.
   const [guven, setGuven] = useState(null);
+  const [basabas, setBasabas] = useState(null);   // /ops/maliyet/basabas
   // /ops/maliyet/gun-gun → kalem grubu kırılımı + fiyatı tanımsız kalemler
   const [gunGun, setGunGun] = useState(null);
   // /recete/degirmen-kiyas → makine sayacı gerçeği (bildirimden bağımsız katman)
@@ -102,6 +103,12 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
     api('/ops/maliyet/ozet?gun=30')
       .then((d) => setOzet(d || {}))
       .catch((e) => setOzetHata(e?.message || ''));
+    // BAŞABAŞ (2026-08-07 denetimi): "günde kaç ₺ satarsam zarar etmem" sorusu
+    // sistemde cevapsızdı — parçalar (ciro, sabit gider, bordro, food cost, POS)
+    // vardı, birleştiren yoktu. Hata-yutar: uç düşerse blok görünmez, ekran çalışır.
+    api('/ops/maliyet/basabas?gun=30')
+      .then((d) => setBasabas(d || null))
+      .catch(() => setBasabas(null));
     // Güven skoru aynı ekranda yüklenir: food cost sayısını GÖSTERMEDEN önce
     // "bu sayı ne kadar güvenilir" sorusunun cevabı hazır olsun.
     api('/ops/maliyet/guven-skoru?gun=7')
@@ -705,6 +712,88 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
             renk: altyapiEksik.length ? R.amber : R.krem,
           },
         ]} />
+
+        {/* ── BAŞABAŞ NOKTASI (2026-08-07 denetimi) ──────────────────────────
+            "Günde kaç ₺ satarsam zarar etmem?" — parçalar sistemde vardı,
+            birleştiren ekran yoktu. İKİ eşik ayrı gösterilir: işletme (dükkân
+            dönüyor mu) ve nakit (borç dahil, kasa eriyor mu). */}
+        {basabas?.basabas?.nakit && (() => {
+          const b = basabas.basabas;
+          const m = basabas.mevcut || {};
+          const s = basabas.sabit_yuk_aylik || {};
+          const d = basabas.degisken_oran_pct || {};
+          const gunluk = sayi(m.gunluk_ciro_ort_tl);
+          const isl = sayi(b.isletme?.gunluk_tl);
+          const nak = sayi(b.nakit?.gunluk_tl);
+          const fark = gunluk - nak;
+          const durumRenk = basabas.durum === 'ustunde' ? R.yesil
+            : basabas.durum === 'sinirda' ? R.amber : R.kirmizi;
+          const dolu = nak > 0 ? Math.min(100, (gunluk / nak) * 100) : 0;
+          const islNokta = nak > 0 ? Math.min(100, (isl / nak) * 100) : 0;
+          return (
+            <div
+              onClick={() => onCekmece?.({
+                tip: 'BAŞABAŞ NOKTASI',
+                baslik: 'Günde kaç ₺ satmalıyım?',
+                alt: `${sayi(m.cirolu_gun)} cirolu günün ortalaması · öneri-only`,
+                kpi: [
+                  { etiket: 'İşletme eşiği', deger: `${fmt(isl)}/gün`, renk: gunluk >= isl ? R.yesil : R.kirmizi },
+                  { etiket: 'Nakit eşiği', deger: `${fmt(nak)}/gün`, renk: gunluk >= nak ? R.yesil : R.kirmizi },
+                  { etiket: 'Bugünkü ortalama', deger: `${fmt(gunluk)}/gün`, renk: durumRenk },
+                ],
+                listeBaslik: 'Aylık sabit yük (periyot normalize)',
+                satirlar: [
+                  { ad: 'Kira', detay: '6 aylık kira ÷6 yapıldı', tutar: fmt(sayi(s.kira)) },
+                  { ad: 'Faturalar', detay: 'elektrik · su · internet', tutar: fmt(sayi(s.fatura)) },
+                  { ad: 'Personel', detay: 'aktif kadro · maaş + yemek + yol', tutar: fmt(sayi(s.personel)) },
+                  { ad: 'Diğer sabit', detay: '', tutar: fmt(sayi(s.diger)) },
+                  { ad: '= İşletme sabit yükü', detay: 'dükkânın döndüğü taban', tutar: fmt(sayi(s.isletme_toplam)) },
+                  { ad: 'Finansman (kart + kredi)', detay: 'ödeme planı · 30 gün', tutar: fmt(sayi(s.finansman)) },
+                  { ad: '= Nakit sabit yükü', detay: 'kasanın erimediği taban', tutar: fmt(sayi(s.nakit_toplam)) },
+                  { ad: 'Değişken oran', detay: `food cost %${sayi(d.food_cost).toFixed(1)} + POS %${sayi(d.pos_kesinti).toFixed(2)}`, tutar: `%${sayi(d.toplam).toFixed(1)}` },
+                  ...(b.nakit_temkinli_fc28 ? [{
+                    ad: 'Temkinli eşik (food cost %28)',
+                    detay: 'reçete kapsaması düşükken güvenli taban',
+                    tutar: `${fmt(sayi(b.nakit_temkinli_fc28.gunluk_tl))}/gün`,
+                  }] : []),
+                ],
+                not: (basabas.varsayimlar || []).join(' · ') || basabas.not,
+              })}
+              style={{
+                ...kartYuzey, padding: '15px 18px', marginBottom: 14, cursor: 'pointer',
+                borderLeft: `3px solid ${durumRenk}`,
+              }}
+            >
+              <div style={{ display: 'flex', gap: 16, alignItems: 'baseline', flexWrap: 'wrap', marginBottom: 10 }}>
+                <span style={{ fontFamily: F.baslik, fontSize: 15, fontWeight: 600 }}>⚖️ Başabaş noktası</span>
+                <span style={{ fontSize: 12.5, color: R.metin2 }}>
+                  Bugünkü ortalama <b style={{ fontFamily: F.mono, color: durumRenk }}>{fmt(gunluk)}/gün</b>
+                  {' · '}nakit eşiği <b style={{ fontFamily: F.mono }}>{fmt(nak)}/gün</b>
+                </span>
+                <span style={{
+                  marginLeft: 'auto', fontSize: 11.5, fontWeight: 700, color: durumRenk,
+                }}>
+                  {basabas.durum === 'ustunde' ? '✓ eşiğin üstünde'
+                    : basabas.durum === 'sinirda' ? '≈ sınırda'
+                      : `↓ günde ${fmt(Math.abs(fark))} eksik`}
+                </span>
+              </div>
+              {/* Tek çubuk: nereye kadar geldik + işletme eşiği işareti */}
+              <div style={{ position: 'relative', height: 9, borderRadius: 99, background: R.girinti, overflow: 'hidden' }}>
+                <div style={{ width: `${dolu}%`, height: '100%', background: durumRenk, opacity: 0.75 }} />
+                <div style={{
+                  position: 'absolute', left: `${islNokta}%`, top: -3, width: 2, height: 15,
+                  background: R.bakirAcik,
+                }} />
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10.5, color: R.not2, marginTop: 5 }}>
+                <span>işletme eşiği {fmt(isl)}/gün — dükkân döner</span>
+                <span>nakit eşiği {fmt(nak)}/gün — borç dahil · dokun, döküm</span>
+              </div>
+            </div>
+          );
+        })()}
+
         {/* ── GÜNLÜK KÂR & VERGİ (sahip isteği 2026-08-03: "eski alandaki gibi
             günlük net kâr + vergiyi Maliyet'te göreyim") — klasik Kâr&Maliyet
             ekranının P&L alt satırı. Sunucu HER alanı zaten gönderiyordu
