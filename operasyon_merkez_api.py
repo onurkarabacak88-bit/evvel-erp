@@ -14655,6 +14655,73 @@ def _gelir_vergisi_yillik(yillik_kar: float) -> float:
     return vergi
 
 
+@router.get("/metrics/stok-devir")
+def ops_metrics_stok_devir(gun: int = Query(30, ge=7, le=90)):
+    """STOK DEVİR HIZI — "param kaç gün depoda bekliyor?"
+
+    Denetim bulgusu: depo değeri (bağlı para) ve dönem harcaması AYRI AYRI
+    hesaplanıyordu; ikisini bölen "kaç günlük stok tutuyorum" sorusu yoktu.
+    Kahve/QSR'de sağlıklı bant 15-30 gündür; üstü nakdin rafta beklemesidir.
+
+    devir_katsayisi = dönem harcaması / ortalama stok değeri
+    stok_gun        = stok değeri / günlük harcama
+    Harcama 0 ise (sezon kapalı şube) gün sayısı HESAPLANMAZ — sonsuz göstermek
+    yerine `harcama_yok: true` döner; kapalı şube "200 günlük stok" diye alarm
+    üretmemeli, ama bağlı parası GÖRÜNMELİ.
+
+    Kaynak: /ops/v2/depo-ozet ile AYNI motor (ikinci hesap yolu yok).
+    """
+    ozet = ops_v2_depo_ozet(gun=gun)  # aynı sürecin içinden — tek doğruluk
+    o = (ozet or {}).get("ozet") or {}
+    subeler = {str(s["id"]): s["ad"] for s in ((ozet or {}).get("subeler") or [])}
+    stok = float(o.get("toplam_stok_deger") or 0)
+    harcama = float(o.get("toplam_harcama_deger") or 0)
+    gunluk = (harcama / gun) if gun else 0.0
+
+    def _satir(stok_tl: float, harcama_tl: float, ad: str, sid: str = ""):
+        g = (harcama_tl / gun) if gun else 0.0
+        return {
+            "sube_id": sid,
+            "sube_adi": ad,
+            "stok_deger_tl": round(stok_tl, 2),
+            "donem_harcama_tl": round(harcama_tl, 2),
+            "gunluk_harcama_tl": round(g, 2),
+            "stok_gun": round(stok_tl / g, 1) if g > 0 else None,
+            "devir_katsayisi": round(harcama_tl / stok_tl, 3) if stok_tl > 0 else None,
+            "harcama_yok": g <= 0,
+        }
+
+    sube_satir = []
+    for sid, sd in ((o.get("sube_basi") or {}).items()):
+        sube_satir.append(_satir(
+            float((sd or {}).get("stok_deger") or 0),
+            float((sd or {}).get("harcama_deger") or 0),
+            subeler.get(str(sid), str(sid)), str(sid),
+        ))
+    sube_satir.sort(key=lambda x: -(x["stok_deger_tl"] or 0))
+
+    stok_gun = round(stok / gunluk, 1) if gunluk > 0 else None
+    # Bant değerlendirmesi — hüküm değil, yönelim (öneri-only).
+    durum = "veri_yok"
+    if stok_gun is not None:
+        durum = "saglikli" if stok_gun <= 30 else ("yuksek" if stok_gun <= 60 else "cok_yuksek")
+    return {
+        "gun": gun,
+        "uretildi": str(date.today()),
+        "stok_deger_tl": round(stok, 2),
+        "donem_harcama_tl": round(harcama, 2),
+        "gunluk_harcama_tl": round(gunluk, 2),
+        "stok_gun": stok_gun,
+        "devir_katsayisi": round(harcama / stok, 3) if stok > 0 else None,
+        "durum": durum,
+        "saglikli_bant_gun": [15, 30],
+        "subeler": sube_satir,
+        "not": "Stok gün = depodaki para ÷ günlük tüketim. Kahve/QSR sağlıklı bandı "
+               "15-30 gün; üstü rafta bekleyen nakittir. Harcaması olmayan (sezon "
+               "kapalı) şubede gün sayısı hesaplanmaz — bağlı para yine görünür.",
+    }
+
+
 @router.get("/metrics/isgucu")
 def ops_metrics_isgucu(gun: int = Query(30, ge=7, le=90)):
     """İŞGÜCÜ VERİMLİLİĞİ — "bir adam-saat kaç ₺ ciro üretiyor?"
