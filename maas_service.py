@@ -116,6 +116,14 @@ def sabit_mesai_saati(cur, p: dict, yil: int, ay: int) -> Tuple[float, str]:
     b, c = p.get("baslangic_tarihi"), p.get("cikis_tarihi")
     eff1 = max(d1, b) if b else d1
     eff2 = min(d2, c) if c else d2
+    # ⚠️ GÜN GÜN BİRİKİR (sahip düzeltmesi 2026-08-07): dönem SÜRÜYORSA hakediş
+    # ayın tamamı üzerinden PEŞİN yazılmaz — bugüne kadar geçen gün sayılır ve
+    # her gece senkronda bir gün daha eklenir. İlk sürüm ay sonunu taban alıyordu:
+    # 8 Ağustos'ta part-time'a 31 günlük (29.155 ₺) hakediş çıkarıyordu; oysa
+    # 23 gün henüz çalışılmamıştı. Geçmiş ayda tam ay doğrudur (dönem kapandı).
+    _bugun = date.today()
+    if _bugun < d2:
+        eff2 = min(eff2, _bugun)
     if eff1 > eff2:
         return 0.0, "donem_disi"
     donem_gun = (eff2 - eff1).days + 1
