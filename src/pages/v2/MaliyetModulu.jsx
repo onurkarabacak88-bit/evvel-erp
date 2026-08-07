@@ -75,6 +75,7 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
   // Maliyet sayısının NE KADAR GÜVENİLİR olduğunu söyler; hata yoksa sessiz durur.
   const [guven, setGuven] = useState(null);
   const [basabas, setBasabas] = useState(null);   // /ops/maliyet/basabas
+  const [pnl, setPnl] = useState(null);           // /ops/maliyet/pnl-merdiven
   // /ops/maliyet/gun-gun → kalem grubu kırılımı + fiyatı tanımsız kalemler
   const [gunGun, setGunGun] = useState(null);
   // /recete/degirmen-kiyas → makine sayacı gerçeği (bildirimden bağımsız katman)
@@ -109,6 +110,11 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
     api('/ops/maliyet/basabas?gun=30')
       .then((d) => setBasabas(d || null))
       .catch(() => setBasabas(null));
+    // P&L MERDİVENİ (2026-08-08): ciro→brüt→FAVÖK→net tek zincir. Parçalar
+    // ayrı ekranlardaydı; "kâr nerede eriyor" sorusu cevapsızdı.
+    api('/ops/maliyet/pnl-merdiven?gun=30')
+      .then((d) => setPnl(d || null))
+      .catch(() => setPnl(null));
     // Güven skoru aynı ekranda yüklenir: food cost sayısını GÖSTERMEDEN önce
     // "bu sayı ne kadar güvenilir" sorusunun cevabı hazır olsun.
     api('/ops/maliyet/guven-skoru?gun=7')
@@ -723,6 +729,82 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
             renk: altyapiEksik.length ? R.amber : R.krem,
           },
         ]} />
+
+        {/* ── P&L MERDİVENİ — mali okumanın omurgası ────────────────────────
+            Sonuç önce gelir: ciro → brüt → FAVÖK → net. Altındaki başabaş
+            "ne olmalı"yı, bu blok "ne oldu"yu anlatır. */}
+        {Array.isArray(pnl?.basamaklar) && pnl.basamaklar.length > 0 && (() => {
+          const bas = pnl.basamaklar;
+          const ciroTl = Math.abs(sayi(bas[0]?.tutar_tl)) || 1;
+          const netB = bas[bas.length - 1];
+          const netPoz = sayi(netB?.tutar_tl) >= 0;
+          const kars = sayi(pnl.favok_finansman_karsilama_pct);
+          return (
+            <div style={{
+              ...kartYuzey, padding: '16px 19px', marginBottom: 14,
+              borderLeft: `3px solid ${netPoz ? R.yesil : R.kirmizi}`,
+            }}>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
+                <span style={{ fontFamily: F.baslik, fontSize: 16, fontWeight: 600 }}>
+                  📊 Kâr merdiveni · son {sayi(pnl.gun)} gün
+                </span>
+                <span style={{ fontSize: 11.5, color: R.not2 }}>tahakkuk — nakit takvimi Ödeme Merkezi'nde</span>
+                {kars ? (
+                  <span style={{ marginLeft: 'auto', fontSize: 12, fontWeight: 700, color: kars >= 100 ? R.yesil : R.kirmizi }}>
+                    FAVÖK, finansmanın %{trSayi(kars, 0)}'ini karşılıyor
+                  </span>
+                ) : null}
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                {bas.map((b, i) => {
+                  const tut = sayi(b.tutar_tl);
+                  const oran = Math.min(100, (Math.abs(tut) / ciroTl) * 100);
+                  const araToplam = b.tur === 'ara_toplam' || b.tur === 'sonuc';
+                  const renk = b.tur === 'gider' ? R.kirmizi
+                    : b.tur === 'sonuc' ? (tut >= 0 ? R.yesil : R.kirmizi)
+                      : b.tur === 'ara_toplam' ? R.bakirAcik : R.krem;
+                  return (
+                    <div key={i} style={{
+                      display: 'flex', alignItems: 'center', gap: 11,
+                      paddingTop: araToplam ? 6 : 0,
+                      borderTop: araToplam ? `1px solid ${R.cizgi3}` : 'none',
+                    }}>
+                      <span style={{
+                        fontSize: araToplam ? 13 : 12.5, width: 168, flexShrink: 0,
+                        color: araToplam ? R.krem : R.metin2, fontWeight: araToplam ? 700 : 400,
+                      }}>{b.ad}</span>
+                      <div style={{ flex: 1, height: araToplam ? 9 : 7, borderRadius: 99, background: R.girinti, overflow: 'hidden' }}>
+                        <div style={{ width: `${oran}%`, height: '100%', background: renk, opacity: araToplam ? 0.85 : 0.6 }} />
+                      </div>
+                      <span style={{
+                        fontSize: araToplam ? 13.5 : 12.5, fontFamily: F.mono, width: 128, textAlign: 'right',
+                        color: renk, fontWeight: araToplam ? 700 : 400,
+                      }}>{fmt(tut)}</span>
+                      <span style={{ fontSize: 11, fontFamily: F.mono, width: 52, textAlign: 'right', color: R.not2 }}>
+                        {b.ciro_pay_pct != null ? `%${trSayi(sayi(b.ciro_pay_pct), 1)}` : '—'}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {pnl.teshis && (
+                <div style={{
+                  marginTop: 13, padding: '10px 13px', borderRadius: 9, fontSize: 12.5, lineHeight: 1.6,
+                  background: netPoz ? 'rgba(74,222,128,.08)' : 'rgba(248,113,113,.08)',
+                  border: `1px solid ${netPoz ? R.yesil : R.kirmizi}33`,
+                  color: netPoz ? R.metin2 : R.krem,
+                }}>
+                  {netPoz ? '✓ ' : '⚠ '}{pnl.teshis}
+                </div>
+              )}
+              <div style={{ fontSize: 10.5, color: R.not3, marginTop: 8, lineHeight: 1.55 }}>
+                {pnl.not}
+              </div>
+            </div>
+          );
+        })()}
 
         {/* ── BAŞABAŞ NOKTASI (2026-08-07 denetimi) ──────────────────────────
             "Günde kaç ₺ satarsam zarar etmem?" — parçalar sistemde vardı,

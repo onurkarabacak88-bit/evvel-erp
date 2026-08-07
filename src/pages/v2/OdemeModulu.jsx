@@ -1012,6 +1012,38 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
             para çıkmadı — söz; faturası gelince kendiliğinden birleşir
           </span>
         </div>
+        {/* ── NAKİT DİP NOKTASI (mali akış kurgusu 2026-08-08) ───────────────
+            Kokpit `en_dusuk_bakiye` + `en_dusuk_tarih` hesaplıyordu ama HİÇBİR
+            ekran göstermiyordu. "Bugün ödenecek" tek başına yeterli değil:
+            asıl soru "önümüzdeki 30 günde kasa en dip hangi gün, ne kadar?"
+            Ödeme sıralaması bu tarihe göre kurulur. */}
+        {kokpit?.en_dusuk_tarih && (() => {
+          const dip = sayi(kokpit.en_dusuk_bakiye);
+          const c7 = sayi(kokpit.cikis_7);
+          const c30 = sayi(kokpit.cikis_30);
+          const renk = dip < 0 ? R.kirmizi : dip < c7 ? R.amber : R.yesil;
+          return (
+            <div style={{
+              ...kartYuzey, padding: '12px 16px', marginBottom: 12,
+              borderLeft: `3px solid ${renk}`, display: 'flex', gap: 16, alignItems: 'baseline', flexWrap: 'wrap',
+            }}>
+              <span style={{ fontSize: 12.5, fontWeight: 700, color: renk }}>📉 Nakit dip noktası</span>
+              <span style={{ fontSize: 12.5, color: R.metin2 }}>
+                <b style={{ fontFamily: F.mono, color: renk }}>{kisaTarih(kokpit.en_dusuk_tarih)}</b>
+                {' '}günü kasa <b style={{ fontFamily: F.mono, color: renk }}>{fmt(dip)}</b>'ye iner
+              </span>
+              <span style={{ fontSize: 11.5, color: R.not2 }}>
+                7 gün çıkış {fmt(c7)} · 30 gün {fmt(c30)}
+              </span>
+              <span style={{ fontSize: 11, color: R.not, marginLeft: 'auto' }}>
+                {dip < 0 ? '⚠ eksiye düşüyor — erteleme/yapılandırma şart'
+                  : dip < c7 ? 'dip, bir haftalık çıkışın altında — tampon ince'
+                    : 'tampon yeterli'}
+              </span>
+            </div>
+          );
+        })()}
+
         {/* VERGİ YÜKÜ — planda borç değil ama yaklaşan gerçek çıkış */}
         {(() => {
           const satirlar = Array.isArray(vergi?.takvim) ? vergi.takvim : [];
