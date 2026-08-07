@@ -14745,13 +14745,20 @@ def ops_metrics_isgucu(gun: int = Query(30, ge=7, le=90)):
                 "saat_kaynagi": kaynak,
             })
 
-        # Personel maliyeti (dönem bordrosu — tahakkuk)
+        # ⚠️ PENCERE HİZASI: bordro AYLIK biriktir, ciro ise `gun` penceresinde
+        # ölçülür. İkisini ham karşılaştırmak ELMA-ARMUT'tur: ilk sürümde ayın
+        # 8'inde 8 günlük bordro (89.291 ₺) 30 günlük ciroya (1.120.076 ₺)
+        # bölününce personel oranı %8 çıktı — kahve zincirinde gerçekçi bant
+        # %25-35'tir. Bordro günlük orana çevrilip pencereye ölçeklenir.
         cur.execute(
             """SELECT COALESCE(SUM(hesaplanan_net),0)::float AS t
                FROM personel_aylik WHERE yil=%s AND ay=%s""",
             (bugun.year, bugun.month),
         )
-        personel_maliyet = float((cur.fetchone() or {}).get("t") or 0)
+        _ay_bordro = float((cur.fetchone() or {}).get("t") or 0)
+        _gecen_gun = max(1, bugun.day)
+        personel_maliyet = (_ay_bordro / _gecen_gun) * gun
+        personel_maliyet_ham = _ay_bordro
 
     ciro_saat = (ciro / toplam_saat) if toplam_saat > 0 else None
     return {
@@ -14763,6 +14770,10 @@ def ops_metrics_isgucu(gun: int = Query(30, ge=7, le=90)):
         "kisi_sayisi": len(kisi_satir),
         "ciro_per_adam_saat": round(ciro_saat, 2) if ciro_saat is not None else None,
         "personel_maliyet_tl": round(personel_maliyet, 2),
+        "personel_maliyet_kaynak": (
+            f"bu ay tahakkuk {personel_maliyet_ham:,.0f} ₺ ({_gecen_gun} gün) "
+            f"→ {gun} güne ölçeklendi"
+        ).replace(",", "."),
         "personel_ciro_orani_pct": round(personel_maliyet / ciro * 100, 1) if ciro > 0 else None,
         "varsayim_pct": round(varsayimli_saat / toplam_saat * 100, 1) if toplam_saat > 0 else None,
         "kisiler": sorted(kisi_satir, key=lambda x: -x["saat"]),
