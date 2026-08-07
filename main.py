@@ -10083,7 +10083,18 @@ def aylik_rapor(yil: int = None, ay: int = None):
             yonetici_ozeti.append({"tip": "notr", "metin": f"Bu ay ciro: {_tl(ciro_t)}."})
         yonetici_ozeti.append({
             "tip": "iyi" if net_t >= 0 else "uyari",
-            "metin": f"Net {'kâr' if net_t >= 0 else 'zarar'}: {_tl(abs(net_t))} (gelir {_tl(gelir_t)} − gider {_tl(gider_t)}).",
+            # ⚠️ DİL DÜZELTMESİ (2026-08-07 denetimi): bu rakam KÂR DEĞİL, kasa
+            # değişimidir (net_kar_zarar = toplam_gelir − toplam_gider ve
+            # net_kasa_degisim ile birebir aynı). İçinde dış kaynak geliri
+            # (sahibin koyduğu para = sermaye) GELİR sayılır, borç anaparası
+            # GİDER sayılır, tahakkuk etmiş ama ödenmemiş maaş HİÇ sayılmaz —
+            # canlı Ağustos: maas_toplam 0 iken bordro 68.344 ₺ tahakkuk etmişti.
+            # Gerçek P&L kârı Maliyet modülünde ayrı hesaplanır (vergi öncesi kâr).
+            # Klasik Rapor.jsx zaten "Net Nakit Akışı (kasa) — kâr değil" diyordu;
+            # yönetici özeti cümlesi ise "Net kâr" diyerek iki farklı gerçek üretiyordu.
+            "metin": (f"Kasa {'arttı' if net_t >= 0 else 'azaldı'}: {_tl(abs(net_t))} "
+                      f"(giren {_tl(gelir_t)} − çıkan {_tl(gider_t)}). "
+                      f"Bu KÂR DEĞİL, nakit hareketi — gerçek kâr için Maliyet ekranı."),
         })
         if en_karli:
             yonetici_ozeti.append({

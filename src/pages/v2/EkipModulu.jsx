@@ -2916,7 +2916,25 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
           }}>🔄 Vardiya verisini maaşa aktar</button>
         </div>
         <KpiSeridi kpiler={[
-          { etiket: `${AY_KISA[ay - 1]} bordro`, deger: fmt(toplamNet), alt: `${bordro.length} kişi · hesaplanan net` },
+          // ⚠️ "KAÇ KİŞİ?" TUTARSIZLIĞI GİBİ GÖRÜNEN ŞEY (2026-08-07 denetimi):
+          // Kadro 6 kişi derken bordro 8 kişi diyordu — sahip haklı olarak "hangisi
+          // doğru" diye sorar. İkisi de doğru: sunucu kuralı "dönem hakedişi
+          // aktiflikten BAĞIMSIZDIR" (main.py personel_aylik_listele) — bu ay
+          // ayrılan personel son hakedişi için bordroda KALIR. Canlı: 6 aktif +
+          // 2 çıkışlı (çıkış 6 Ağu). Sayı değişmedi, artık NEDENİ yazıyor.
+          (() => {
+            const cikisli = bordro.filter((b) => {
+              const p = personel.find((x) => String(x.id) === String(b.personel_id));
+              return !p;   // aktif kadroda yoksa → dönem içi ayrılmış
+            }).length;
+            return {
+              etiket: `${AY_KISA[ay - 1]} bordro`,
+              deger: fmt(toplamNet),
+              alt: cikisli
+                ? `${bordro.length} kişi = ${bordro.length - cikisli} aktif + ${cikisli} bu ay ayrılan (son hakediş)`
+                : `${bordro.length} kişi · hesaplanan net`,
+            };
+          })(),
           { etiket: 'Onay bekleyen', deger: String(bekleyen.length), alt: bekleyen.length ? 'taslak bordro' : 'hepsi onaylı', renk: bekleyen.length ? R.amber : R.yesil },
           { etiket: 'Avans mahsubu', deger: fmt(toplamAvans), alt: 'bu ay maaştan düşülecek', renk: R.krem },
           {

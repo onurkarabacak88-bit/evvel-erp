@@ -37,31 +37,49 @@ const renkCoz = (ad, varsayilan = R.amber) => RENK_AD[String(ad || '').toUpperCa
 export default function BorcModulu({ gorunum, onCekmece, onKopru }) {
   const [yukleniyor, setYukleniyor] = useState(true);
   const [hata, setHata] = useState('');
-  const [ozet, setOzet] = useState(null);
-  const [takvim, setTakvim] = useState(null);
-  const [olcek, setOlcek] = useState(null);
-  const [katki, setKatki] = useState(null);
+  // undefined = HENÜZ GELMEDİ (uç yolda) · null = alınamadı · nesne = geldi.
+  // Bu ayrım şart: paralel yüklemede "veri yok" mesajı basmak YALAN olur —
+  // uç 5 saniye sonra dolu cevap verecekken ekran "üretilemedi" diyordu.
+  const [ozet, setOzet] = useState(undefined);
+  const [takvim, setTakvim] = useState(undefined);
+  const [olcek, setOlcek] = useState(undefined);
+  const [katki, setKatki] = useState(undefined);
   // 5. görünüm (köprü kaldırma turu, 2026-07-30): klasik BorcNavigasyon'daki
   // 12 aylık projeksiyon v2'de karşılıksızdı — köprü yerine yerli görünüm.
-  const [proj, setProj] = useState(null);
+  const [proj, setProj] = useState(undefined);
 
+  /** Uç henüz yoldayken gösterilen kart — "veri yok" demez, durumu söyler. */
+  const Bekleniyor = ({ ad }) => (
+    <div style={{ ...kartYuzey, padding: '38px 30px', textAlign: 'center', color: R.not }}>
+      {ad} hazırlanıyor…
+      <div style={{ fontSize: 11.5, color: R.not3, marginTop: 6 }}>
+        Bu hesap birkaç saniye sürebilir — ana karar ekranı beklemez.
+      </div>
+    </div>
+  );
+
+  // ⚠️ BEKLEME TUZAĞI (2026-08-07 denetimi): eskiden Promise.all BEŞ ucu birden
+  // bekliyordu ve ekran o süre boyunca "Borç verileri yükleniyor…" gösteriyordu.
+  // Ölçüldü: ozet 3,3sn · projeksiyon 4,1sn · takvim 5,4sn → ana karar ekranı
+  // ("Bu Ay Batıyor Muyum?") 5,4 SANİYE boş bekliyordu, oysa yalnız `ozet`e
+  // ihtiyacı var. Şimdi her uç KENDİ hızında düşer; ekran ilk gelen veriyle
+  // açılır, geç kalan görünüm kendi bekleme metnini gösterir (yanlış "veri yok"
+  // demez — sahip kuralı: boş alan gizlenmez, DURUMU söylenir).
   const yukle = () => {
     setYukleniyor(true);
     setHata('');
-    Promise.all([
-      api('/borc-nav/ozet').catch(() => null),
-      api('/borc-nav/takvim?ay=36').catch(() => null),
-      api('/borc-nav/olcek-plani').catch(() => null),
-      api('/borc-nav/sube-katki?gun=30').catch(() => null),
-      api('/borc-nav/projeksiyon?ay=12').catch(() => null),
-    ]).then(([o, t, ol, k, p]) => {
-      setOzet(o); setTakvim(t); setOlcek(ol); setKatki(k); setProj(p);
-      if (!o && !t) setHata('Borç navigasyon verileri alınamadı.');
+    const cek = (yol, koy) => api(yol).then(koy).catch(() => koy(null));
+    // Ana karar verisi: gelir gelmez perde kalkar.
+    cek('/borc-nav/ozet', (o) => {
+      setOzet(o);
       setYukleniyor(false);
-    }).catch((e) => {
-      setHata(e?.message || 'Beklenmeyen bir hata oluştu.');
-      setYukleniyor(false);
+      if (!o) setHata('Borç özeti alınamadı.');
     });
+    // Yardımcı görünümler arkadan akar — ana ekranı bekletmez.
+    cek('/borc-nav/takvim?ay=36', setTakvim);
+    cek('/borc-nav/olcek-plani', setOlcek);
+    cek('/borc-nav/sube-katki?gun=30', setKatki);
+    cek('/borc-nav/projeksiyon?ay=12', setProj);
   };
 
   useEffect(yukle, []);
@@ -201,6 +219,7 @@ export default function BorcModulu({ gorunum, onCekmece, onKopru }) {
 
   // ── 2) Borç Takvimi · 36 ay (eğri) ─────────────────────────────────────────
   if (gorunum === 'takvim') {
+    if (takvim === undefined) return <Bekleniyor ad="36 aylık borç takvimi" />;
     const grid = takvim?.takvim || [];
     if (!grid.length) {
       return (
@@ -288,6 +307,7 @@ export default function BorcModulu({ gorunum, onCekmece, onKopru }) {
 
   // ── 3) Hedef Ciro & Ölçek ──────────────────────────────────────────────────
   if (gorunum === 'hedef') {
+    if (olcek === undefined) return <Bekleniyor ad="Hedef ciro & ölçek planı" />;
     const sen = olcek?.senaryolar || {};
     const par = olcek?.parametreler || {};
     const kap = olcek?.kapasite_gerceklik || {};
@@ -374,6 +394,7 @@ export default function BorcModulu({ gorunum, onCekmece, onKopru }) {
 
   // ── 5) Nakit Projeksiyonu (12 ay) — klasik köprü yerine yerli görünüm ──────
   if (gorunum === 'projeksiyon') {
+    if (proj === undefined) return <Bekleniyor ad="12 aylık nakit projeksiyonu" />;
     const seri = proj?.seri || [];
     if (!seri.length) {
       return (
@@ -460,6 +481,7 @@ export default function BorcModulu({ gorunum, onCekmece, onKopru }) {
   }
 
   // ── 4) Şube Katkısı ────────────────────────────────────────────────────────
+  if (katki === undefined) return <Bekleniyor ad="Şube katkı analizi" />;
   const subeler = katki?.subeler || [];
   if (!subeler.length) {
     return (

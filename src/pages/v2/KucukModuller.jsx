@@ -1377,7 +1377,10 @@ export function RaporModulu({ gorunum, onCekmece, onKopru, onToast }) {
 
         {(kpiR.net_kar_marji != null || kpiR.runway_gun != null) && (
           <KpiSeridi kpiler={[
-            { etiket: 'Net kâr marjı', deger: yuzde(kpiR.net_kar_marji), alt: rapor?.donem_label || 'bu ay', renk: sayi(kpiR.net_kar_marji) >= 15 ? R.yesil : sayi(kpiR.net_kar_marji) >= 8 ? R.amber : R.kirmizi },
+            // ⚠️ "Net kâr marjı" DEĞİL: paydaki net_kar_zarar = kasa değişimi
+            // (dış kaynak geliri dahil, ödenmemiş maaş hariç, borç anaparası gider).
+            // Kâr marjı sanılıp menüye/fiyata karar verilirse yanlış olur.
+            { etiket: 'Nakit marjı (kasa)', deger: yuzde(kpiR.net_kar_marji), alt: 'kâr değil — gerçek kâr: Maliyet', renk: sayi(kpiR.net_kar_marji) >= 15 ? R.yesil : sayi(kpiR.net_kar_marji) >= 8 ? R.amber : R.kirmizi },
             { etiket: 'Gider / ciro', deger: yuzde(kpiR.gider_ciro_orani), alt: 'ne kadarı gidere gitti', renk: sayi(kpiR.gider_ciro_orani) > 85 ? R.kirmizi : R.krem },
             { etiket: 'POS kesintisi', deger: yuzde(kpiR.pos_yanan_orani), alt: sayi(kpiR.pos_kesinti_toplam) ? `${fmt(sayi(kpiR.pos_kesinti_toplam))} yandı` : 'bankaya giden pay', renk: R.amber },
             { etiket: 'Kasa kaç gün dayanır', deger: kpiR.runway_gun != null ? `${sayi(kpiR.runway_gun)} gün` : '—', alt: `ay sonu kasa ${fmt(sayi(kpiR.bitis_kasa))}`, renk: sayi(kpiR.runway_gun) < 30 ? R.kirmizi : R.yesil },
