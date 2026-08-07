@@ -18,7 +18,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { api, fmt } from '../../utils/api';
 import { R, F, kartYuzey } from './tema';
-import { KpiSeridi, Tablo, Liste, Takvim, SecimCubugu, OnayModali } from './parcalar';
+import { KpiSeridi, Tablo, Liste, Takvim, SecimCubugu, OnayModali, Serit } from './parcalar';
 
 const sayi = (v) => Number(v) || 0;
 const trSayi = (n, b = 1) => (Number(n) || 0).toFixed(b).replace('.', ',');
@@ -250,6 +250,40 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
   const gecikmisToplam = gecikmisSatir.reduce((s, o) => s + o._tutar, 0);
   const toplamKuyruk = tutarli.reduce((s, o) => s + o._tutar, 0);
   const tutarsizNot = tutarsiz.length ? ` · ${tutarsiz.length} kalem tutarsız` : '';
+
+  // ── TÜR KIRILIMI (2026-08-07, denetim bulgusu) ─────────────────────────────
+  // ÖNCE: kuyruk tek düz listeydi. 36 kalemin içinde 10 MAAŞ kalemi (215 K ₺,
+  // hepsi vadesi geçmiş) "Vadeli Alım" satırlarının arasında kayboluyordu —
+  // sahip "personel ödemesini nereden yapacağım, plana yansımıyor" diye sordu.
+  // Kalem PLANDA VARDI, görünmüyordu. Şimdi tür şeridi hangi yükün ne kadar
+  // olduğunu tek bakışta verir ve tıklayınca o türe süzer.
+  // Sayılar mevcut `tutarli` kümesinden türetilir — ikinci bir hesap yolu YOK.
+  const [turFiltre, setTurFiltre] = useState('');
+  const turOzet = useMemo(() => {
+    const m = new Map();
+    tutarli.forEach((o) => {
+      const k = o.tip || 'Diğer';
+      if (!m.has(k)) m.set(k, { ad: k, adet: 0, tutar: 0, gecikmis: 0, gecikmisTutar: 0 });
+      const g = m.get(k);
+      g.adet += 1; g.tutar += o._tutar;
+      if (o._gecikmis) { g.gecikmis += 1; g.gecikmisTutar += o._tutar; }
+    });
+    // Tutarı girilmemiş kalemler ayrı bir tür gibi görünür (borç sayılmaz, ama gizlenmez)
+    if (tutarsiz.length) {
+      m.set('__tutarsiz__', {
+        ad: 'Tutarı girilmemiş', adet: tutarsiz.length,
+        tutar: tutarsiz.reduce((s, o) => s + o._tahmin, 0), gecikmis: 0, gecikmisTutar: 0, tahminMi: true,
+      });
+    }
+    return [...m.values()].sort((a, b) => (b.gecikmisTutar - a.gecikmisTutar) || (b.tutar - a.tutar));
+  }, [tutarli, tutarsiz]);
+
+  // Süzgeç listeye uygulanır; KPI toplamları DEĞİŞMEZ (tüm kuyruğun gerçeği).
+  const gorunenSatirlar = useMemo(() => {
+    if (!turFiltre) return satirlar;
+    if (turFiltre === '__tutarsiz__') return satirlar.filter((o) => o.tutar_girilmedi);
+    return satirlar.filter((o) => (o.tip || 'Diğer') === turFiltre && !o.tutar_girilmedi);
+  }, [satirlar, turFiltre]);
 
   // ── ÖDEME KOŞUSU v2-YERLİ (köprü kaldırma turu, 2026-07-30) ────────────────
   // Klasik ÖM sihirbazının çekirdeği: tam/kısmi + nakit/kart + fatura eki +
@@ -971,8 +1005,32 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
             para çıkmadı — söz; faturası gelince kendiliğinden birleşir
           </span>
         </div>
+        {/* Tür kırılımı — maaş/kira/kart yükü tek bakışta; tıkla → süz */}
+        {turOzet.length > 1 && (
+          <>
+            <Serit
+              rozetler={[
+                ...(turFiltre ? [{ ad: '↩ Tümü', durum: `${tutarli.length} kalem`, renk: R.krem }] : []),
+                ...turOzet.map((t) => ({
+                  ad: t.ad === '__tutarsiz__' ? 'Tutarı girilmemiş' : t.ad,
+                  durum: `${t.adet} kalem · ${t.tahminMi ? '≈' : ''}${fmt(t.tutar)}`,
+                  ek: t.gecikmis ? `· ${t.gecikmis} gecikmiş` : '',
+                  renk: t.gecikmis ? R.kirmizi : t.tahminMi ? R.amber : R.bakir,
+                  _tur: t.ad,
+                })),
+              ]}
+              onAc={(s) => setTurFiltre(s.ad === '↩ Tümü' ? '' : (s._tur === turFiltre ? '' : s._tur))}
+            />
+            {turFiltre && (
+              <div style={{ fontSize: 11.5, color: R.not, marginTop: -8, marginBottom: 12 }}>
+                «{turFiltre === '__tutarsiz__' ? 'Tutarı girilmemiş' : turFiltre}» süzgeci açık —
+                {' '}{gorunenSatirlar.length} kalem gösteriliyor. Üstteki toplamlar TÜM kuyruğu anlatır.
+              </div>
+            )}
+          </>
+        )}
         {vaModalBlok}
-        {satirlar.length ? (
+        {gorunenSatirlar.length ? (
           <Liste
             secilebilir
             secili={topluSecim}
@@ -982,9 +1040,9 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
               return y;
             })}
             onHepsi={(hepsiMi) => setTopluSecim(hepsiMi
-              ? Object.fromEntries(satirlar.filter((x) => !x.tutar_girilmedi).map((x) => [x.id, true]))
+              ? Object.fromEntries(gorunenSatirlar.filter((x) => !x.tutar_girilmedi).map((x) => [x.id, true]))
               : {})}
-            satirlar={satirlar.map(o => ({
+            satirlar={gorunenSatirlar.map(o => ({
               id: o.id,
               // Tutarı girilmemiş kalem toplu koşuya GİREMEZ — ne ödeneceği belli değil
               secilemez: !!o.tutar_girilmedi,
@@ -1031,8 +1089,14 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
           />
         ) : (
           <div style={{ ...kartYuzey, padding: '38px 30px', textAlign: 'center' }}>
-            <div style={{ fontFamily: F.baslik, fontSize: 18, fontWeight: 600, color: R.yesil }}>Bekleyen ödeme yok</div>
-            <div style={{ fontSize: 13, color: R.not, marginTop: 8 }}>Önümüzdeki 14 günde vadesi gelen kalem bulunmuyor.</div>
+            <div style={{ fontFamily: F.baslik, fontSize: 18, fontWeight: 600, color: turFiltre ? R.bakir : R.yesil }}>
+              {turFiltre ? 'Bu türde kalem yok' : 'Bekleyen ödeme yok'}
+            </div>
+            <div style={{ fontSize: 13, color: R.not, marginTop: 8 }}>
+              {turFiltre
+                ? 'Süzgeci kaldırmak için yukarıdaki «↩ Tümü» rozetine dokun.'
+                : 'Önümüzdeki 14 günde vadesi gelen kalem bulunmuyor.'}
+            </div>
           </div>
         )}
         {(() => {

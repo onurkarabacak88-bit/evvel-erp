@@ -404,6 +404,47 @@ def _gece_yarisi_scheduler():
             except Exception as e:
                 logger.warning(f"⏰ Scheduler stok davranış / skor hatası: {e}")
 
+            # ── BORDRO GECE SENKRONU (2026-08-07, denetim bulgusu) ──────────────
+            # ÖNCE: bordro yalnız ELLE tetikleniyordu ("Vardiya verisini maaşa aktar").
+            # Kimse basmazsa personel_aylik taslağı doğmuyor, ödeme planına maaş
+            # kalemi düşmüyor → 215 K ₺ maaş görünmeden vadesi geçiyordu (canlı vaka:
+            # Temmuz dönemi 10 kalem, vade 1 Ağu, 7 Ağu'da hâlâ plan dışıydı).
+            # ŞİMDİ: her gece kanonik yol (maas_service.aylik_vardiya_senkronize)
+            # koşar. ONAYLI kaydı EZMEZ (servis kendi frenini uygular: durum='onaylandi'
+            # ise yalnız planı tazeler). Dönem dışı personele kayıt açmaz.
+            # İki dönem koşulur: içinde bulunulan ay + ödeme günü geçmemiş önceki ay
+            # (ay başında önceki dönemin bordrosu hâlâ ödenmeyi bekler).
+            try:
+                _bugun_b = bugun_tr()
+                _donemler = [(_bugun_b.year, _bugun_b.month)]
+                if _bugun_b.day <= 15:
+                    _onc = _bugun_b.replace(day=1) - timedelta(days=1)
+                    _donemler.append((_onc.year, _onc.month))
+                _bordro_log = []
+                for _yb, _ab in _donemler:
+                    with db() as (conn, cur):
+                        cur.execute(
+                            """SELECT * FROM personel
+                               WHERE aktif=TRUE
+                                  OR (cikis_tarihi IS NOT NULL AND cikis_tarihi >= MAKE_DATE(%s,%s,1))
+                               ORDER BY ad_soyad""",
+                            (_yb, _ab),
+                        )
+                        _kisiler = cur.fetchall()
+                        _yazilan = 0
+                        for _p in _kisiler:
+                            try:
+                                _r = _personel_aylik_vardiya_senkronize(cur, dict(_p), _yb, _ab)
+                                if not (_r or {}).get("atlandi"):
+                                    _yazilan += 1
+                            except Exception as _e_p:
+                                logger.warning(f"⏰ Bordro senkron ({_p.get('ad_soyad')}): {_e_p}")
+                        conn.commit()
+                    _bordro_log.append(f"{_yb}-{_ab:02d}: {_yazilan}/{len(_kisiler)}")
+                logger.info(f"⏰ Scheduler: bordro senkronu — {' · '.join(_bordro_log)}")
+            except Exception as e:
+                logger.warning(f"⏰ Scheduler bordro senkron hatası: {e}")
+
             # Her gece — tedarikçi ödeme olay katmanını besle (DUYU duysun, alarm YOK).
             # İdempotent; yeni kart/nakit ödemeleri supplier_payment_event'e akar.
             try:
