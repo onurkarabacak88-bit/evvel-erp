@@ -14916,6 +14916,119 @@ def ops_siparis_oneri(
     }
 
 
+@router.get("/metrics/hedef-ciro")
+def ops_metrics_hedef_ciro(erit_ay: int = Query(6, ge=1, le=24)):
+    """HEDEF CİRO — "bütün ödemelerimi rahatlıkla yapabileceğim aylık ciro nedir?"
+
+    Sahip isteği (2026-08-08): "hedef ekranı bir önceki ayın, daha sonra da yıllık
+    ortalamanın olmalı… borçlanmada ödemede zorluk var; bütün ödemelerimi rahatlıkla
+    yapabileceğim süreç aylık ciroyla karşılaşmalı."
+
+    Mevcut `/borc-nav/olcek-plani` BÜYÜME senaryosu üretir (kaç şube açmalı).
+    Bu uç ise MEVCUT YAPIDA gereken ciroyu söyler — üç eşik, üç referans:
+
+      EŞİKLER                                  REFERANSLAR
+      1. Ayakta kal  = işletme başabaşı        · geçen ay gerçekleşen
+      2. Borcu çevir = nakit başabaşı          · son 12 ay ortalaması
+      3. Rahatla     = + gecikmişi erit_ay'da  · bu ay gerçekleşen + projeksiyon
+
+    Eşikler `/ops/maliyet/basabas` motorundan gelir (ikinci hesap yolu yok).
+    Öneri-only; hüküm yok.
+    """
+    bugun = date.today()
+    esik = ops_maliyet_basabas(gun=30)
+    bb = (esik or {}).get("basabas") or {}
+    isletme_ay = float(((bb.get("isletme") or {}).get("aylik_tl")) or 0)
+    nakit_ay = float(((bb.get("nakit") or {}).get("aylik_tl")) or 0)
+
+    gecikmis = float(((esik or {}).get("ozet") or {}).get("gecikmis_odeme_tl") or 0)
+    if not gecikmis:
+        try:
+            from odeme_plani_api import odeme_plani_kokpit as _kokpit
+            gecikmis = float((_kokpit(personel=1) or {}).get("gecikmis_toplam") or 0)
+        except Exception:  # noqa: BLE001
+            gecikmis = 0.0
+    rahat_ay = nakit_ay + (gecikmis / erit_ay if erit_ay else 0.0)
+
+    with db() as (_c, cur):
+        # Aylık ciro serisi — son 13 ay (bu ay dahil)
+        cur.execute(
+            """SELECT to_char(tarih,'YYYY-MM') AS ay,
+                      COALESCE(SUM(COALESCE(nakit,0)+COALESCE(pos,0)+COALESCE(online,0)),0)::float AS t,
+                      COUNT(DISTINCT tarih)::int AS gun
+               FROM ciro
+               WHERE tarih >= (DATE_TRUNC('month', %s::date) - INTERVAL '12 month')
+               GROUP BY 1 ORDER BY 1""",
+            (bugun,),
+        )
+        seri = [dict(r) for r in (cur.fetchall() or [])]
+
+    bu_ay_kod = f"{bugun.year}-{bugun.month:02d}"
+    bu_ay = next((s for s in seri if s["ay"] == bu_ay_kod), None)
+    onceki = [s for s in seri if s["ay"] < bu_ay_kod]
+    gecen_ay = onceki[-1] if onceki else None
+    # Yıllık ortalama: KAPANMIŞ aylar (devam eden ay ortalamayı aşağı çeker)
+    kapali_aylar = [s for s in onceki if float(s["t"]) > 0]
+    yil_ort = (sum(float(s["t"]) for s in kapali_aylar) / len(kapali_aylar)) if kapali_aylar else None
+
+    # Bu ayın projeksiyonu: cirolu gün ortalaması × ayın gün sayısı
+    import calendar as _cal
+    ay_gun = _cal.monthrange(bugun.year, bugun.month)[1]
+    bu_ay_tl = float(bu_ay["t"]) if bu_ay else 0.0
+    bu_ay_gun = int(bu_ay["gun"]) if bu_ay else 0
+    projeksiyon = (bu_ay_tl / bu_ay_gun * ay_gun) if bu_ay_gun else 0.0
+
+    def _fark(hedef: float):
+        if not hedef:
+            return None
+        return {
+            "hedef_aylik_tl": round(hedef, 2),
+            "hedef_gunluk_tl": round(hedef / 30.0, 2),
+            "projeksiyon_farki_tl": round(projeksiyon - hedef, 2),
+            "karsilama_pct": round(projeksiyon / hedef * 100, 1) if hedef else None,
+            "gecen_ay_farki_tl": round(float(gecen_ay["t"]) - hedef, 2) if gecen_ay else None,
+            "yil_ort_farki_tl": round(yil_ort - hedef, 2) if yil_ort else None,
+        }
+
+    hedefler = {
+        "ayakta_kal": {**(_fark(isletme_ay) or {}),
+                       "aciklama": "İşletme başabaşı — kira, personel, malzeme çıkar; borç HARİÇ."},
+        "borcu_cevir": {**(_fark(nakit_ay) or {}),
+                        "aciklama": "Nakit başabaşı — kart/kredi ödemeleri DAHİL; kasa erimez."},
+        "rahatla": {**(_fark(rahat_ay) or {}),
+                    "aciklama": f"Nakit başabaşı + gecikmiş {gecikmis:,.0f} ₺'yi {erit_ay} ayda eritme payı."
+                                .replace(",", ".")},
+    }
+    # Hangi eşiktesin?
+    seviye = "esik_alti"
+    if projeksiyon >= rahat_ay:
+        seviye = "rahat"
+    elif projeksiyon >= nakit_ay:
+        seviye = "borcu_ceviriyor"
+    elif projeksiyon >= isletme_ay:
+        seviye = "ayakta"
+
+    return {
+        "uretildi": str(bugun),
+        "seviye": seviye,
+        "gecikmis_odeme_tl": round(gecikmis, 2),
+        "erit_ay": erit_ay,
+        "hedefler": hedefler,
+        "referanslar": {
+            "gecen_ay": {"ay": gecen_ay["ay"], "ciro_tl": round(float(gecen_ay["t"]), 2),
+                         "cirolu_gun": int(gecen_ay["gun"])} if gecen_ay else None,
+            "yil_ortalama_tl": round(yil_ort, 2) if yil_ort else None,
+            "yil_ortalama_ay_sayisi": len(kapali_aylar),
+            "bu_ay": {"ay": bu_ay_kod, "ciro_tl": round(bu_ay_tl, 2), "cirolu_gun": bu_ay_gun,
+                      "projeksiyon_tl": round(projeksiyon, 2), "ay_gun": ay_gun},
+        },
+        "seri": [{"ay": s["ay"], "ciro_tl": round(float(s["t"]), 2), "cirolu_gun": int(s["gun"])} for s in seri],
+        "not": "Eşikler /ops/maliyet/basabas motorundan gelir (tek hesap yolu). Bu ayın "
+               "projeksiyonu cirolu gün ortalamasıyla kurulur; ay başında sapma yüksektir. "
+               "Yıllık ortalama yalnız KAPANMIŞ aylardan alınır. Öneri-only.",
+    }
+
+
 @router.get("/metrics/stok-devir")
 def ops_metrics_stok_devir(gun: int = Query(30, ge=7, le=90)):
     """STOK DEVİR HIZI — "param kaç gün depoda bekliyor?"
