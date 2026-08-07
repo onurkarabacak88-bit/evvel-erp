@@ -196,6 +196,7 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
   // Klasik PersonelVardiyaTakip'in iki bloğu: izin alacağı (borçlu hafta ↔
   // verilen izin) ve o gün vardiya dışı görünen girişler.
   const [izin, setIzin] = useState(null);
+  const [isgucu, setIsgucu] = useState(null);   // /ops/metrics/isgucu — ₺/adam-saat
   const [vardiyaDisi, setVardiyaDisi] = useState(null);
   // ── PERSONEL DENETİMİ (ops-merkez P2 sekmeleri, 2026-07-30) ───────────────
   // davranış analizi · puan defteri · geç kalma · kasa açık analizi + kasiyer karne
@@ -291,7 +292,12 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
       // Şube meta (sezon_kapali) — ESKİDEN yalnız personel formu açılınca yükleniyordu;
       // görev/vardiya görünümleri sezon bilgisini göremiyordu (etiket sessizce kaybolur).
       api('/subeler').catch(() => []),
-    ]).then(([p, h, b, av, go, vt, bs, bo, pin, iz, vd, sl]) => {
+      // İŞGÜCÜ VERİMLİLİĞİ — ciro ile adam-saat sistemde ayrı ayrı vardı,
+      // birleştiren ölçü yoktu. Adam-saat kaynağı maaş zinciriyle aynı sırayı
+      // izler (vardiya ataması → sabit tanım → varsayım).
+      api('/ops/metrics/isgucu?gun=30').catch(() => null),
+    ]).then(([p, h, b, av, go, vt, bs, bo, pin, iz, vd, sl, ig]) => {
+      setIsgucu(ig);
       if (Array.isArray(sl) && sl.length) setSubeListe(sl);
       setIzin(iz);
       setVardiyaDisi(Array.isArray(vd) ? vd : (vd?.kayitlar || []));
@@ -1999,8 +2005,69 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
           { etiket: 'Toplam personel', deger: String(personel.length), alt: `${subeSayisi} şube${subesiz ? ` + ${subesiz} merkez` : ''}` },
           { etiket: 'Bu ay işe giren', deger: String(yeni), alt: yeni ? 'ilk ayında' : 'yeni giriş yok', renk: yeni ? R.yesil : R.krem },
           { etiket: 'Fazla mesai riski', deger: String(satir.filter(x => x.fm > 8).length), alt: 'bu ay 8 saatten fazla', renk: satir.some(x => x.fm > 8) ? R.kirmizi : R.yesil },
-          { etiket: 'Ortalama kıdem', deger: ortKidem == null ? '—' : `${trSayi(ortKidem, 0)} ay`, alt: 'zincir geneli', renk: R.krem },
+          // ⚠️ "Ortalama kıdem" yerini İŞGÜCÜ VERİMLİLİĞİNE bıraktı (2026-08-08):
+          // kıdem bilgisi zaten tabloda kişi kişi var; asıl eksik olan "bir
+          // adam-saat kaç ₺ ciro üretiyor" sorusuydu — ciro ile çalışma saati
+          // sistemde ayrı ayrı duruyor, hiç çarpışmıyordu.
+          ...(isgucu?.ciro_per_adam_saat != null ? [{
+            etiket: '₺ / adam-saat',
+            deger: fmt(sayi(isgucu.ciro_per_adam_saat)),
+            alt: `${trSayi(sayi(isgucu.toplam_adam_saat), 0)} sa · ${sayi(isgucu.kisi_sayisi)} kişi · ${sayi(isgucu.gun)} gün`,
+            renk: R.bakirAcik,
+          }] : [{ etiket: 'Ortalama kıdem', deger: ortKidem == null ? '—' : `${trSayi(ortKidem, 0)} ay`, alt: 'zincir geneli', renk: R.krem }]),
         ]} />
+
+        {/* PERSONEL / CİRO ORANI — CFO'nun asıl sayısı. Sektör bandı %25-35;
+            üstü "ciroya göre fazla kadro", altı "eksik kadro / fazla mesai riski". */}
+        {isgucu?.personel_ciro_orani_pct != null && (() => {
+          const o = sayi(isgucu.personel_ciro_orani_pct);
+          const renk = o > 35 ? R.kirmizi : o >= 25 ? R.amber : R.yesil;
+          const vp = sayi(isgucu.varsayim_pct);
+          return (
+            <div
+              onClick={() => onCekmece?.({
+                tip: 'İŞGÜCÜ VERİMLİLİĞİ',
+                baslik: 'Bir adam-saat kaç ₺ üretiyor?',
+                alt: `son ${sayi(isgucu.gun)} gün · ${sayi(isgucu.cirolu_gun)} cirolu gün`,
+                kpi: [
+                  { etiket: '₺ / adam-saat', deger: fmt(sayi(isgucu.ciro_per_adam_saat)), renk: R.bakirAcik },
+                  { etiket: 'Personel / ciro', deger: `%${trSayi(o, 1)}`, renk },
+                  { etiket: 'Adam-saat', deger: `${trSayi(sayi(isgucu.toplam_adam_saat), 0)} sa` },
+                ],
+                listeBaslik: 'Kişi kırılımı — saat kaynağıyla',
+                satirlar: (isgucu.kisiler || []).slice(0, 20).map((k) => ({
+                  ad: k.ad_soyad,
+                  detay: `${k.calisma_turu === 'surekli' ? 'tam zamanlı' : 'part-time'} · ${
+                    k.saat_kaynagi === 'vardiya_atama' ? 'vardiya atamasından'
+                      : k.saat_kaynagi === 'part_standart' ? 'part standardı'
+                        : k.saat_kaynagi === 'sabit_tanim_haftalik' ? 'sabit tanımdan'
+                          : '⚠ varsayım'}`,
+                  tutar: `${trSayi(sayi(k.saat), 1)} sa`,
+                })),
+                not: `${isgucu.not}${isgucu.personel_maliyet_kaynak ? ` · Personel maliyeti: ${isgucu.personel_maliyet_kaynak}.` : ''}`,
+              })}
+              style={{
+                ...kartYuzey, padding: '12px 16px', marginBottom: 14, cursor: 'pointer',
+                borderLeft: `3px solid ${renk}`, display: 'flex', gap: 14, alignItems: 'baseline', flexWrap: 'wrap',
+              }}
+            >
+              <span style={{ fontFamily: F.baslik, fontSize: 14.5, fontWeight: 600 }}>👥 Personel yükü</span>
+              <span style={{ fontSize: 13, color: R.metin2 }}>
+                Cironun <b style={{ fontFamily: F.mono, color: renk, fontSize: 15 }}>%{trSayi(o, 1)}</b>'i
+                {' '}personele gidiyor · sektör bandı %25-35
+              </span>
+              <span style={{ fontSize: 11.5, color: R.not2 }}>
+                {fmt(sayi(isgucu.personel_maliyet_tl))} / {fmt(sayi(isgucu.ciro_tl))}
+              </span>
+              {vp > 0 && (
+                <span style={{ fontSize: 11, color: R.amber }}>
+                  saatlerin %{trSayi(vp, 1)}'i varsayım
+                </span>
+              )}
+              <span style={{ fontSize: 11, color: R.not, marginLeft: 'auto' }}>dokun → kişi kırılımı</span>
+            </div>
+          );
+        })()}
         <Tablo
           baslik="Kadro"
           not="satıra tıkla → personel dosyası"
