@@ -14684,6 +14684,8 @@ def ops_siparis_oneri(
 
     Tüketimi olmayan (sezon kapalı) şube için öneri ÜRETİLMEZ; hüküm yok.
     """
+    bugun = date.today()
+    bas = bugun - timedelta(days=gun - 1)
     ozet = ops_v2_depo_ozet(gun=gun)
     urunler = (ozet or {}).get("urunler") or []
     subeler = {str(s["id"]): s["ad"] for s in ((ozet or {}).get("subeler") or [])}
@@ -14718,14 +14720,19 @@ def ops_siparis_oneri(
     ritim: Dict[str, Dict[str, Any]] = {}   # f"{sid}|{kod}" → {gunler:set, son:date, adet:int}
     with db() as (_c2, cur2):
         try:
+            # ⚠️ Tarih filtresi ÇALIŞAN desenle birebir (operasyon_merkez_api:18371):
+            # `BETWEEN %s AND %s` + Python date parametreleri. İlk sürümde SQL içinde
+            # `CURRENT_DATE - (%s * INTERVAL '1 day')` yazmıştım — sorgu satır
+            # döndürmedi, ritim haritası boş kaldı ve tüm satırlar "ritim yok" çıktı.
+            # Ders (bugün üçüncü kez): kanonik sorguyu KOPYALA, kendi SQL'ini icat etme.
             cur2.execute(
                 """SELECT sube_id, tarih,
                           REPLACE(aciklama,'URUN_KULLANIMA_AL_JSON:','URUN_AC_JSON:') AS aciklama
                    FROM operasyon_defter
                    WHERE etiket IN ('URUN_AC','URUN_KULLANIMA_AL')
                      AND NOT (etiket='URUN_AC' AND aciklama LIKE %s)
-                     AND tarih >= CURRENT_DATE - (%s * INTERVAL '1 day')""",
-                ('%[BİTTİ]%', gun),
+                     AND tarih BETWEEN %s AND %s""",
+                ('%[BİTTİ]%', bas, bugun),
             )
             _rows = cur2.fetchall() or []
             # UUID → havuz kodu (stokla aynı karta düşsün — 2026-08-08 düzeltmesi)
