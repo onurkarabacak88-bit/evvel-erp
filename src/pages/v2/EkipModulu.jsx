@@ -288,7 +288,11 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
       api('/sube-panel/merkez/personel-panel-pin').catch(() => []),
       api('/gorev/izin-alacagi').catch(() => null),
       api(`/gorev/yoklama?tarih=${bugun}&sadece_vardiya_disi=true`).catch(() => []),
-    ]).then(([p, h, b, av, go, vt, bs, bo, pin, iz, vd]) => {
+      // Şube meta (sezon_kapali) — ESKİDEN yalnız personel formu açılınca yükleniyordu;
+      // görev/vardiya görünümleri sezon bilgisini göremiyordu (etiket sessizce kaybolur).
+      api('/subeler').catch(() => []),
+    ]).then(([p, h, b, av, go, vt, bs, bo, pin, iz, vd, sl]) => {
+      if (Array.isArray(sl) && sl.length) setSubeListe(sl);
       setIzin(iz);
       setVardiyaDisi(Array.isArray(vd) ? vd : (vd?.kayitlar || []));
       setPersonel(Array.isArray(p) ? p : []);
@@ -3137,7 +3141,22 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
       subeGrup[k].tamam += sayi(g.tamamlanan);
       subeGrup[k].bloklar.push({ tip: g.vardiya_tip, toplam: sayi(g.toplam), tamam: sayi(g.tamamlanan) });
     });
-    const subeler = Object.values(subeGrup).sort((a, b) => a.ad.localeCompare(b.ad, 'tr'));
+    // ⚠️ SEZON KAPALI ŞUBE (2026-08-07 denetimi): görev üretimi vardiya bloklarından
+    // doğar ve `sezon_kapali` bayrağına BAKMAZ → kapalı ALSANCAK + KÖYCEĞİZ'e her gün
+    // 31'er görev açılıyor, hiçbiri işaretlenmiyor, tablo "%0 · geride" KIRMIZI yakıyor
+    // ve menüdeki "açık görev" rozetinin yarısı hayalet oluyordu.
+    // Ekran gerçeği söyler: kapalı şube ayrı etiketlenir, KPI'lar açık şubelerden
+    // hesaplanır. (Üretimi kaynakta durdurmak ayrı iş — sahip kararı; kayıt silinmez.)
+    const kapaliAd = new Set((subeListe || []).filter((s) => s.sezon_kapali).map((s) => String(s.ad || '').toLocaleUpperCase('tr')));
+    const sezonKapaliMi = (ad) => kapaliAd.has(String(ad || '').toLocaleUpperCase('tr'));
+    const subeler = Object.values(subeGrup)
+      .map((s) => ({ ...s, kapali: sezonKapaliMi(s.ad) }))
+      .sort((a, b) => (a.kapali - b.kapali) || a.ad.localeCompare(b.ad, 'tr'));
+    const acikSb = subeler.filter((s) => !s.kapali);
+    const kapaliSb = subeler.filter((s) => s.kapali);
+    const aToplam = acikSb.reduce((t, s) => t + s.toplam, 0);
+    const aTamam = acikSb.reduce((t, s) => t + s.tamam, 0);
+    const kapaliGorev = kapaliSb.reduce((t, s) => t + s.toplam, 0);
     const gorevGunEtiket = `${Number(gorevTarih.slice(8, 10))} ${AY_KISA[Number(gorevTarih.slice(5, 7)) - 1]}`;
     return (
       <>
@@ -3148,9 +3167,15 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
           ileriKapali={gorevTarih === bugun}
         />
         <KpiSeridi kpiler={[
-          { etiket: gorevTarih === bugun ? 'Bugünkü görev' : `${gorevGunEtiket} görevi`, deger: String(toplam), alt: `${subeler.length} şube · vardiya blokları` },
-          { etiket: 'Tamamlanan', deger: String(tamam), alt: toplam ? `%${trSayi((tamam / toplam) * 100, 0)}` : '—', renk: R.yesil },
-          { etiket: 'Açık', deger: String(acik), alt: acik ? 'henüz işaretlenmedi' : 'hepsi kapandı', renk: acik ? R.amber : R.yesil },
+          {
+            etiket: gorevTarih === bugun ? 'Bugünkü görev' : `${gorevGunEtiket} görevi`,
+            deger: String(aToplam),
+            alt: kapaliSb.length
+              ? `${acikSb.length} açık şube · ${kapaliGorev} görev sezon kapalı şubede`
+              : `${subeler.length} şube · vardiya blokları`,
+          },
+          { etiket: 'Tamamlanan', deger: String(aTamam), alt: aToplam ? `%${trSayi((aTamam / aToplam) * 100, 0)}` : '—', renk: R.yesil },
+          { etiket: 'Açık', deger: String(aToplam - aTamam), alt: (aToplam - aTamam) ? 'henüz işaretlenmedi' : 'hepsi kapandı', renk: (aToplam - aTamam) ? R.amber : R.yesil },
           { etiket: 'Aktif kadro', deger: String(personel.length), alt: 'görev atanabilir personel', renk: R.krem },
         ]} />
         {subeler.length ? (
@@ -3166,12 +3191,17 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
               return {
                 id: s.ad, _s: s,
                 hucreler: [
-                  { v: s.ad, kalin: true },
-                  { v: String(s.toplam), mono: true, sag: true },
-                  { v: String(s.tamam), mono: true, sag: true, renk: R.yesil },
-                  { v: String(s.toplam - s.tamam), mono: true, sag: true, renk: s.toplam - s.tamam ? R.amber : R.not },
-                  { v: `%${trSayi(oran, 0)}`, bar: oran, sag: true, renk: oran >= 90 ? R.yesil : oran >= 60 ? R.amber : R.kirmizi },
-                  { v: oran >= 90 ? 'temiz' : oran >= 60 ? 'eksik var' : 'geride', rozet: oran >= 90 ? R.yesil : oran >= 60 ? R.amber : R.kirmizi },
+                  { v: s.kapali ? `${s.ad} · sezon kapalı` : s.ad, kalin: true, renk: s.kapali ? R.not : undefined },
+                  { v: String(s.toplam), mono: true, sag: true, renk: s.kapali ? R.not : undefined },
+                  { v: String(s.tamam), mono: true, sag: true, renk: s.kapali ? R.not : R.yesil },
+                  { v: String(s.toplam - s.tamam), mono: true, sag: true, renk: s.kapali ? R.not : (s.toplam - s.tamam ? R.amber : R.not) },
+                  // Kapalı şubede tamamlanma oranı ANLAMSIZ — kırmızı bar yerine çizgi
+                  s.kapali
+                    ? { v: '—', sag: true, renk: R.not }
+                    : { v: `%${trSayi(oran, 0)}`, bar: oran, sag: true, renk: oran >= 90 ? R.yesil : oran >= 60 ? R.amber : R.kirmizi },
+                  s.kapali
+                    ? { v: 'sezon kapalı', rozet: R.not3 }
+                    : { v: oran >= 90 ? 'temiz' : oran >= 60 ? 'eksik var' : 'geride', rozet: oran >= 90 ? R.yesil : oran >= 60 ? R.amber : R.kirmizi },
                 ],
               };
             })}

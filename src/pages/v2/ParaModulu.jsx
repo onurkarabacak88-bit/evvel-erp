@@ -443,11 +443,27 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru, onToast }) {
     const dunku = gunKayit(dun);
     const toplam = (rows) => rows.reduce((t, c) => t + (sayi(c.toplam) || sayi(c.nakit) + sayi(c.pos) + sayi(c.online)), 0);
     const girilenSubeler = new Set(bugunku.map((c) => String(c.sube_id)));
-    const magazalar = (subeler || []).filter((s) => s.aktif !== false);
+    // ⚠️ SEZON KAPALI ŞUBE (2026-08-07 denetimi): `sezon_kapali` bayrağı veritabanında
+    // VAR ve sahip Cep'ten kapatıyor (ALSANCAK + KÖYCEĞİZ true), ama v2 hiç okumuyordu.
+    // Sonuç: kapalı şubeler her gün "bugünün cirosu girilmedi · bekliyor" diye amber
+    // yanıyor, "0/4 şube · eksik şube var" yazıyordu — kapalı dükkândan ciro bekleniyor.
+    // Beklenti yalnız AÇIK şubelerden kurulur; kapalılar listede KALIR (gizlemek yerine
+    // "sezon kapalı" olarak etiketlenir — sahip kuralı: boş alanı doldur, gizleme).
+    const acikSubeler = (subeler || []).filter((s) => s.aktif !== false && !s.sezon_kapali);
+    const kapaliSubeler = (subeler || []).filter((s) => s.aktif !== false && s.sezon_kapali);
+    const magazalar = [...acikSubeler, ...kapaliSubeler];
+    const girilenAcik = acikSubeler.filter((s) => girilenSubeler.has(String(s.id))).length;
     return (
       <>
         <KpiSeridi kpiler={[
-          { etiket: 'Bugün girilen', deger: `${girilenSubeler.size} / ${magazalar.length} şube`, alt: girilenSubeler.size < magazalar.length ? 'eksik şube var' : 'tamamlandı', renk: girilenSubeler.size < magazalar.length ? R.amber : R.yesil },
+          {
+            etiket: 'Bugün girilen',
+            deger: `${girilenAcik} / ${acikSubeler.length} şube`,
+            alt: kapaliSubeler.length
+              ? `${girilenAcik < acikSubeler.length ? 'eksik şube var' : 'tamamlandı'} · ${kapaliSubeler.length} şube sezon kapalı`
+              : (girilenAcik < acikSubeler.length ? 'eksik şube var' : 'tamamlandı'),
+            renk: girilenAcik < acikSubeler.length ? R.amber : R.yesil,
+          },
           { etiket: 'Bugünkü toplam', deger: fmt(toplam(bugunku)), alt: 'onaylı ciro kayıtları' },
           { etiket: 'Dün', deger: fmt(toplam(dunku)), alt: `${dunku.length} şube kaydı` },
           { etiket: 'Onay bekleyen taslak', deger: String(taslaklar.length), alt: 'ciro onayında', renk: taslaklar.length > 0 ? R.amber : R.krem },
@@ -458,13 +474,25 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru, onToast }) {
             return (
               <div key={s.id} style={{
                 ...kartYuzey, padding: '13px 18px', display: 'flex', alignItems: 'center',
-                gap: 14, flexWrap: 'wrap',
-                border: kayit ? kartYuzey.border : `1px solid ${R.amber}44`,
+                gap: 14, flexWrap: 'wrap', opacity: s.sezon_kapali && !kayit ? 0.6 : 1,
+                border: kayit || s.sezon_kapali ? kartYuzey.border : `1px solid ${R.amber}44`,
               }}>
                 <div style={{ flex: 1, minWidth: 150 }}>
-                  <div style={{ fontSize: 13.5, fontWeight: 700 }}>{s.ad}</div>
+                  <div style={{ fontSize: 13.5, fontWeight: 700 }}>
+                    {s.ad}
+                    {s.sezon_kapali && (
+                      <span style={{
+                        marginLeft: 8, padding: '2px 8px', borderRadius: 5, fontSize: 10, fontWeight: 700,
+                        background: `${R.not3}33`, color: R.not, border: `1px solid ${R.not3}55`,
+                      }}>SEZON KAPALI</span>
+                    )}
+                  </div>
                   <div style={{ fontSize: 11, color: R.not2, marginTop: 2 }}>
-                    {kayit ? `bugün girildi · ${tarihKisa(kayit.tarih)}` : 'bugünün cirosu henüz girilmedi'}
+                    {kayit
+                      ? `bugün girildi · ${tarihKisa(kayit.tarih)}`
+                      : s.sezon_kapali
+                        ? 'sezon kapalı — ciro beklenmiyor (Cep’ten açılır)'
+                        : 'bugünün cirosu henüz girilmedi'}
                   </div>
                 </div>
                 {kayit ? (
