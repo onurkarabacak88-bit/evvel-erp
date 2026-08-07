@@ -5683,10 +5683,27 @@ def personel_aylik_listele(yil: int = None, ay: int = None):
             # KANONİK: vardiya alanları ve kayıtsız tahmin = Vardiya Takip kurgusu (tek merkez)
             # PERF N+1 FIX: kişi-başı ayrı hesap yerine toplu map (aynı kanonik fonksiyon)
             vt = _vt_map.get(str(p['id']))
+            _saat_kaynagi = 'vardiya_atama'
             if vt is not None:
                 vk = {'toplam_ay_saat': float(vt.get('toplam_planlanan_saat') or 0),
                       'ek_mesai_haftalik_toplam': float(vt.get('toplam_fazla_mesai_saat') or 0),
                       'haftalik_limit': 0}
+                # SABİT MESAİ FALLBACK (sahip doktrini 2026-08-07): vardiya ataması
+                # TEYİT katmanıdır — yoksa sabit tanımlı mesaiden aktarılır. Part-time
+                # hakedişi saat×ücret olduğu için atama yokken 0 ₺ çıkıyordu.
+                # aylik_vardiya_senkronize ile AYNI kanonik fonksiyon kullanılır.
+                if p['calisma_turu'] != 'surekli' and vk['toplam_ay_saat'] <= 0:
+                    try:
+                        _s, _k = _maas_svc.sabit_mesai_saati(cur, dict(p), yil, ay)
+                        if _s > 0:
+                            vk['toplam_ay_saat'] = _s
+                            _saat_kaynagi = _k
+                            vt = dict(vt)
+                            vt['toplam_planlanan_saat'] = _s
+                            vt['net_hakediş'] = round(_s * float(p['saatlik_ucret'] or 0), 2) \
+                                + float(p['yol_ucreti'] or 0)
+                    except Exception as _e_sm:
+                        logging.getLogger(__name__).warning("sabit mesai fallback: %s", _e_sm)
             else:
                 vk = _vv2.personel_ay_vardiya_maas_kaynagi(cur, p['id'], yil, ay)
             if not kayit:
@@ -5711,6 +5728,10 @@ def personel_aylik_listele(yil: int = None, ay: int = None):
                 'yol_ucreti': float(p['yol_ucreti'] or 0),
                 'sube_id': p['sube_id'],
                 'kayit_id': kayit.get('id'),
+                # Saatin NEREDEN geldiği: 'vardiya_atama' (gerçek plan) ·
+                # 'sabit_tanim_haftalik' (personelin haftalık tanımı) ·
+                # 'varsayilan_gunluk' (tanım da yok → 9,5 sa/gün varsayıldı, UYARI).
+                'saat_kaynagi': _saat_kaynagi,
                 'calisma_saati': float(kayit.get('calisma_saati') or 0),
                 'fazla_mesai_saat': float(kayit.get('fazla_mesai_saat') or 0),
                 'bayram_mesai_saat': float(kayit.get('bayram_mesai_saat') or 0),

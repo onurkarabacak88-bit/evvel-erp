@@ -2953,6 +2953,26 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
           },
           { etiket: 'Fazla mesai', deger: `${trSayi(toplamFm, 0)} sa`, alt: 'bu ay toplam', renk: toplamFm > 0 ? R.kirmizi : R.krem },
         ]} />
+        {/* SABİT MESAİ TANIMI EKSİK — hakediş varsayımla hesaplanmış olabilir.
+            Sahip doktrini: atama varsa oradan, yoksa sabit tanımdan; ikisi de
+            yoksa varsayım devreye girer ve BU GİZLENMEZ. */}
+        {(() => {
+          const varsayimli = bordro.filter((b) => b.saat_kaynagi === 'varsayilan_gunluk');
+          if (!varsayimli.length) return null;
+          return (
+            <div style={{
+              ...kartYuzey, padding: '11px 15px', marginBottom: 12,
+              borderLeft: `3px solid ${R.amber}`, fontSize: 12, lineHeight: 1.6,
+            }}>
+              <b style={{ color: R.amber }}>⚠ {varsayimli.length} kişide sabit mesai tanımı yok</b>
+              <span style={{ color: R.metin2 }}>
+                {' '}— vardiya ataması da yapılmamış. Hakediş <b>9,5 sa/gün varsayımıyla</b> hesaplandı
+                ({varsayimli.map((b) => b.ad_soyad).join(' · ')}). Kesinleştirmek için ya vardiya ataması
+                yapın ya da personel kartında haftalık mesai saatini tanımlayın.
+              </span>
+            </div>
+          );
+        })()}
         {bordro.length ? (
           <Tablo
             baslik={`Maaş & avans · ${AY_KISA[ay - 1]} ${yil}`}
@@ -2964,7 +2984,10 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
             satirlar={bordro.map(b => ({
               id: b.personel_id, _b: b,
               hucreler: [
-                { v: b.ad_soyad, kalin: true },
+                {
+                  v: b.saat_kaynagi === 'varsayilan_gunluk' ? `${b.ad_soyad} ⚠` : b.ad_soyad,
+                  kalin: true,
+                },
                 { v: ucretMetni(b), mono: true, sag: true },
                 { v: b.fazla_mesai_saat ? `${trSayi(b.fazla_mesai_saat)} sa` : '—', mono: true, sag: true, renk: sayi(b.fazla_mesai_saat) > 8 ? R.kirmizi : R.krem },
                 { v: b.avans_mahsup ? fmt(b.avans_mahsup) : '—', mono: true, sag: true, renk: sayi(b.avans_mahsup) ? R.amber : R.not },
@@ -2981,7 +3004,17 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
                 kpi: [
                   { etiket: 'Hesaplanan net', deger: fmt(sayi(b.hesaplanan_net)), renk: R.yesil },
                   { etiket: 'Ücret', deger: ucretMetni(b) },
-                  { etiket: 'Çalışma saati', deger: b.calisma_saati ? `${trSayi(b.calisma_saati, 0)} sa` : '—' },
+                  // ⚠️ Saatin KAYNAĞI (sahip doktrini 2026-08-07): vardiya ataması
+                  // TEYİT katmanıdır — yoksa sabit tanımdan aktarılır. Hangisi
+                  // kullanıldığı gizlenmez, çünkü "varsayilan_gunluk" TAHMİNDİR.
+                  {
+                    etiket: 'Çalışma saati',
+                    deger: b.calisma_saati ? `${trSayi(b.calisma_saati, 0)} sa` : '—',
+                    alt: b.saat_kaynagi === 'sabit_tanim_haftalik' ? 'sabit tanımdan'
+                      : b.saat_kaynagi === 'varsayilan_gunluk' ? '⚠ varsayım (9,5 sa/gün)'
+                        : b.calisma_saati ? 'vardiya atamasından' : undefined,
+                    renk: b.saat_kaynagi === 'varsayilan_gunluk' ? R.amber : undefined,
+                  },
                   { etiket: 'Fazla mesai', deger: b.fazla_mesai_saat ? `${trSayi(b.fazla_mesai_saat)} sa` : '—', renk: sayi(b.fazla_mesai_saat) > 8 ? R.kirmizi : R.krem },
                 ],
                 listeBaslik: 'Kırılım',

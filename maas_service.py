@@ -20,7 +20,7 @@ import calendar
 import logging
 import uuid
 from datetime import date
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 import vardiya_v2 as _vv2
 
@@ -91,6 +91,67 @@ def vardiya_takip_hesap(pid, yil: int, ay: int) -> Optional[dict]:
     except Exception as e:
         logger.warning("vardiya takip hesap hatasi (%s %s-%s): %s", pid, yil, ay, e)
         return None
+
+
+def sabit_mesai_saati(cur, p: dict, yil: int, ay: int) -> Tuple[float, str]:
+    """SABİT TANIMLI MESAİ — vardiya ataması YOKKEN kullanılacak taban saat.
+
+    SAHİP DOKTRİNİ (2026-08-07): "vardiya ataması da aynı, sadece TEYİT mantığında.
+    İzinli gün girildiğinde, vardiya ataması yapılmışsa ilk oradan alınsın;
+    yapılmamışsa SABİTTE TANIMLI MESAİ mantığıyla aktarım yapsın."
+
+    Yani öncelik: (1) gerçek atama → (2) sabit tanım → (3) uyarı.
+    Bu fonksiyon 2. basamaktır. İzinli günler HER İKİ yolda da düşülür.
+
+    Neden gerekliydi: canlıda vardiya planı BOŞ (0 atama) ve part-time personelin
+    `vardiya_max_weekly_hours` alanı NULL → planlanan saat 0 → part-time hakedişi
+    (saat × saatlik ücret) **0 ₺** çıkıyordu. Aktif kadroda 2 part-time vardı ve
+    ikisinin de bordrosu sıfırdı; kimse fark etmemişti çünkü sürekli personel
+    maaş bazlı hesaplandığı için ekranda toplam makul görünüyordu.
+
+    Döner: (saat, kaynak_etiketi)
+    """
+    sgun = calendar.monthrange(yil, ay)[1]
+    d1, d2 = date(yil, ay, 1), date(yil, ay, sgun)
+    b, c = p.get("baslangic_tarihi"), p.get("cikis_tarihi")
+    eff1 = max(d1, b) if b else d1
+    eff2 = min(d2, c) if c else d2
+    if eff1 > eff2:
+        return 0.0, "donem_disi"
+    donem_gun = (eff2 - eff1).days + 1
+
+    # İzinli günler düşülür (gun_kesri: yarım gün izin 0.5)
+    izin_gun = 0.0
+    try:
+        cur.execute(
+            """SELECT COALESCE(SUM(
+                   (LEAST(COALESCE(bitis_tarih, baslangic_tarih), %s)
+                    - GREATEST(baslangic_tarih, %s) + 1) * COALESCE(gun_kesri, 1.0)
+               ), 0)::float AS g
+               FROM personel_izin
+               WHERE personel_id = %s
+                 AND baslangic_tarih <= %s
+                 AND COALESCE(bitis_tarih, baslangic_tarih) >= %s""",
+            (eff2, eff1, p["id"], eff2, eff1),
+        )
+        izin_gun = max(0.0, float((cur.fetchone() or {}).get("g") or 0))
+    except Exception as e:  # noqa: BLE001
+        logger.warning("sabit mesai izin okunamadi (%s): %s", p.get("ad_soyad"), e)
+
+    calisilan_gun = max(0.0, donem_gun - izin_gun)
+
+    # Haftalık tanım varsa onu kullan; yoksa tam gün standardına düş (damgalı).
+    haftalik = p.get("vardiya_max_weekly_hours")
+    try:
+        haftalik = float(haftalik) if haftalik is not None else None
+    except (TypeError, ValueError):
+        haftalik = None
+
+    if haftalik and haftalik > 0:
+        return round(calisilan_gun * (haftalik / 7.0), 2), "sabit_tanim_haftalik"
+    # Tanım yoksa: günlük standart mesai. VARSAYIM olduğu için etiketi ayrı —
+    # ekran bunu "sabit mesai tanımlı değil" uyarısıyla gösterir.
+    return round(calisilan_gun * GUNLUK_SAAT, 2), "varsayilan_gunluk"
 
 
 def kanonik_net(p: dict, vt: dict, kayit: dict) -> float:
@@ -324,6 +385,26 @@ def aylik_vardiya_senkronize(cur, p: dict, yil: int, ay: int) -> dict:
     # KANONİK HESAP = Vardiya Takip kurgusu (kullanıcı kararı 2026-07-04); manuel alanlar korunur
     vt = vardiya_takip_hesap(p["id"], yil, ay)
     mev = dict(mevcut or {})
+    # ── SABİT MESAİ FALLBACK (sahip doktrini 2026-08-07) ───────────────────────
+    # Vardiya ataması TEYİT katmanıdır: varsa gerçek plan oradan okunur; YOKSA
+    # sabit tanımlı mesaiden aktarılır. Yalnız PART-TIME için devreye girer —
+    # sürekli personelin tabanı zaten maaş bazlıdır (maaş/30 × geçen gün), atama
+    # olmasa da doğru hesaplanır. Part-time'da ise hakediş = saat × saatlik ücret
+    # olduğu için atama yokken sonuç 0 ₺ çıkıyordu (canlı: 2 aktif part-time).
+    _sabit_kaynak = None
+    if vt is not None:
+        _is_part = (p.get("calisma_turu") or "surekli") != "surekli"
+        _planlanan = float(vt.get("toplam_planlanan_saat") or 0)
+        if _is_part and _planlanan <= 0:
+            _saat, _sabit_kaynak = sabit_mesai_saati(cur, dict(p), yil, ay)
+            if _saat > 0:
+                _saatlik = float(p.get("saatlik_ucret") or 0)
+                vt = dict(vt)
+                vt["toplam_planlanan_saat"] = _saat
+                # Part-time hakedişi: saat × saatlik + yol payı (yemek/fazla mesai YOK —
+                # vardiya_takip kurgusuyla aynı; bkz. vardiya_takip_hesap açıklaması).
+                vt["net_hakediş"] = round(_saat * _saatlik, 2) + float(vt.get("yol_ucreti") or 0)
+                vt["hesap_kaynagi"] = _sabit_kaynak
     if vt is not None:
         kayit = {
             "calisma_saati": float(vt.get("toplam_planlanan_saat") or 0),
@@ -336,7 +417,9 @@ def aylik_vardiya_senkronize(cur, p: dict, yil: int, ay: int) -> dict:
             "not_aciklama": mev.get("not_aciklama"),
         }
         net = kanonik_net(dict(p), vt, kayit)
-        vk = {"kaynak": "vardiya_takip",
+        # Kaynak damgası: saat gerçek atamadan mı, sabit tanımdan mı geldi?
+        # Ekran bunu göstermeli — "bu rakam nereden çıktı" cevapsız kalmasın.
+        vk = {"kaynak": _sabit_kaynak or "vardiya_takip",
               "toplam_planlanan_saat": kayit["calisma_saati"],
               "fazla_mesai_saat": kayit["fazla_mesai_saat"]}
     else:
