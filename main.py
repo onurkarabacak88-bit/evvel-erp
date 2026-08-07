@@ -5696,12 +5696,17 @@ def personel_aylik_listele(yil: int = None, ay: int = None):
                     try:
                         _s, _k = _maas_svc.sabit_mesai_saati(cur, dict(p), yil, ay)
                         if _s > 0:
+                            # Saatlik ücret de tanımsızsa sahip kararı: 99 ₺/saat
+                            # (tek kaynak: maas_service.VARSAYILAN_SAATLIK_UCRET).
+                            _su = float(p['saatlik_ucret'] or 0)
+                            if _su <= 0:
+                                _su = _maas_svc.VARSAYILAN_SAATLIK_UCRET
+                                _k = f"{_k}+varsayilan_ucret"
                             vk['toplam_ay_saat'] = _s
                             _saat_kaynagi = _k
                             vt = dict(vt)
                             vt['toplam_planlanan_saat'] = _s
-                            vt['net_hakediş'] = round(_s * float(p['saatlik_ucret'] or 0), 2) \
-                                + float(p['yol_ucreti'] or 0)
+                            vt['net_hakediş'] = round(_s * _su, 2) + float(p['yol_ucreti'] or 0)
                     except Exception as _e_sm:
                         logging.getLogger(__name__).warning("sabit mesai fallback: %s", _e_sm)
             else:

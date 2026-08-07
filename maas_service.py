@@ -31,6 +31,13 @@ GUNLUK_SAAT = 9.5
 AYLIK_GUN = 30                      # İş Kanunu standardı: izin günleri dahil 30 gün
 AYLIK_SAAT = GUNLUK_SAAT * AYLIK_GUN  # 285
 
+# Saatlik ücreti TANIMSIZ part-time personel için varsayılan (sahip kararı
+# 2026-08-08: "girilmemişse de saatlik 99 TL olarak hesapla"). Kadrodaki mevcut
+# part-time ücretleri 98,55–99,30 ₺ bandında; 99 ₺ bu bandın ortasıdır.
+# Hakediş bu değerle hesaplandığında kayıt DAMGALANIR (ucret_varsayildi) ve
+# ekran "varsayılan ücret" uyarısı gösterir — sessiz sayı üretilmez.
+VARSAYILAN_SAATLIK_UCRET = 99.0
+
 TR_AYLAR = ["", "Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran",
             "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"]
 
@@ -412,6 +419,10 @@ def aylik_vardiya_senkronize(cur, p: dict, yil: int, ay: int) -> dict:
             _saat, _sabit_kaynak = sabit_mesai_saati(cur, dict(p), yil, ay)
             if _saat > 0:
                 _saatlik = float(p.get("saatlik_ucret") or 0)
+                if _saatlik <= 0:
+                    # Ücret de tanımsız → sahip kararı: 99 ₺/saat varsay, DAMGALA.
+                    _saatlik = VARSAYILAN_SAATLIK_UCRET
+                    _sabit_kaynak = f"{_sabit_kaynak}+varsayilan_ucret"
                 vt = dict(vt)
                 vt["toplam_planlanan_saat"] = _saat
                 # Part-time hakedişi: saat × saatlik + yol payı (yemek/fazla mesai YOK —

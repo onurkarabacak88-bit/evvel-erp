@@ -2957,18 +2957,23 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
             Sahip doktrini: atama varsa oradan, yoksa sabit tanımdan; ikisi de
             yoksa varsayım devreye girer ve BU GİZLENMEZ. */}
         {(() => {
-          const varsayimli = bordro.filter((b) => b.saat_kaynagi === 'varsayilan_gunluk');
+          // ⚠️ Kaynak etiketi BİLEŞİK olabilir ('varsayilan_gunluk+varsayilan_ucret')
+          // — tam eşleşme (===) kullanılırsa uyarı sessizce kaybolur.
+          const varsayimli = bordro.filter((b) => String(b.saat_kaynagi || '').includes('varsayilan'));
           if (!varsayimli.length) return null;
           return (
             <div style={{
               ...kartYuzey, padding: '11px 15px', marginBottom: 12,
               borderLeft: `3px solid ${R.amber}`, fontSize: 12, lineHeight: 1.6,
             }}>
-              <b style={{ color: R.amber }}>⚠ {varsayimli.length} kişide sabit mesai tanımı yok</b>
+              <b style={{ color: R.amber }}>⚠ {varsayimli.length} kişide hakediş varsayımla hesaplandı</b>
               <span style={{ color: R.metin2 }}>
-                {' '}— vardiya ataması da yapılmamış. Hakediş <b>9,5 sa/gün varsayımıyla</b> hesaplandı
-                ({varsayimli.map((b) => b.ad_soyad).join(' · ')}). Kesinleştirmek için ya vardiya ataması
-                yapın ya da personel kartında haftalık mesai saatini tanımlayın.
+                {' '}— vardiya ataması yok, sabit mesai tanımı da yok. Taban <b>9,5 sa/gün</b>
+                {varsayimli.some((b) => String(b.saat_kaynagi || '').includes('varsayilan_ucret'))
+                  ? <>, saatlik ücreti tanımsız olanlarda <b>99 ₺/sa</b></> : null}
+                {' '}alındı ve <b>gün gün birikiyor</b> ({varsayimli.map((b) => b.ad_soyad).join(' · ')}).
+                Kesinleştirmek için ya vardiya ataması yapın ya da personel kartında haftalık mesai
+                saatini / saatlik ücreti tanımlayın.
               </span>
             </div>
           );
@@ -2985,7 +2990,7 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
               id: b.personel_id, _b: b,
               hucreler: [
                 {
-                  v: b.saat_kaynagi === 'varsayilan_gunluk' ? `${b.ad_soyad} ⚠` : b.ad_soyad,
+                  v: String(b.saat_kaynagi || '').includes('varsayilan') ? `${b.ad_soyad} ⚠` : b.ad_soyad,
                   kalin: true,
                 },
                 { v: ucretMetni(b), mono: true, sag: true },
@@ -3010,10 +3015,14 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
                   {
                     etiket: 'Çalışma saati',
                     deger: b.calisma_saati ? `${trSayi(b.calisma_saati, 0)} sa` : '—',
-                    alt: b.saat_kaynagi === 'sabit_tanim_haftalik' ? 'sabit tanımdan'
-                      : b.saat_kaynagi === 'varsayilan_gunluk' ? '⚠ varsayım (9,5 sa/gün)'
-                        : b.calisma_saati ? 'vardiya atamasından' : undefined,
-                    renk: b.saat_kaynagi === 'varsayilan_gunluk' ? R.amber : undefined,
+                    alt: (() => {
+                      const k = String(b.saat_kaynagi || '');
+                      const ucretNot = k.includes('varsayilan_ucret') ? ' · ücret 99 ₺/sa varsayıldı' : '';
+                      if (k.startsWith('sabit_tanim_haftalik')) return `sabit tanımdan${ucretNot}`;
+                      if (k.startsWith('varsayilan_gunluk')) return `⚠ varsayım (9,5 sa/gün)${ucretNot}`;
+                      return b.calisma_saati ? 'vardiya atamasından' : undefined;
+                    })(),
+                    renk: String(b.saat_kaynagi || '').includes('varsayilan') ? R.amber : undefined,
                   },
                   { etiket: 'Fazla mesai', deger: b.fazla_mesai_saat ? `${trSayi(b.fazla_mesai_saat)} sa` : '—', renk: sayi(b.fazla_mesai_saat) > 8 ? R.kirmizi : R.krem },
                 ],
