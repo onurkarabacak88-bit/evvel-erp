@@ -2968,13 +2968,18 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
             }}>
               <b style={{ color: R.amber }}>⚠ {varsayimli.length} kişide hakediş varsayımla hesaplandı</b>
               <span style={{ color: R.metin2 }}>
-                {' '}— vardiya ataması yok, sabit mesai tanımı da yok. Taban <b>haftada 6 gün × 9,5 sa</b>
-                {' '}(7. gün haftalık izin)
+                {varsayimli.some((b) => String(b.saat_kaynagi || '').startsWith('varsayilan_gunluk'))
+                  ? <>{' '}— vardiya ataması ve sabit mesai tanımı yok; taban <b>haftada 6 gün × 9,5 sa</b> (7. gün haftalık izin).</>
+                  : null}
                 {varsayimli.some((b) => String(b.saat_kaynagi || '').includes('varsayilan_ucret'))
-                  ? <>, saatlik ücreti tanımsız olanlarda <b>99 ₺/sa</b></> : null}
-                {' '}alındı ve <b>gün gün birikiyor</b> ({varsayimli.map((b) => b.ad_soyad).join(' · ')}).
+                  ? <>{' '}Saatlik ücreti tanımsız olanlarda <b>99 ₺/sa</b> varsayıldı.</> : null}
+                {' '}Hakediş <b>gün gün birikiyor</b> ({varsayimli.map((b) => b.ad_soyad).join(' · ')}).
                 Kesinleştirmek için ya vardiya ataması yapın ya da personel kartında haftalık mesai
                 saatini / saatlik ücreti tanımlayın.
+                <br />
+                <span style={{ color: R.not2, fontSize: 11 }}>
+                  Not: part-time personelin <b>6 gün × 5,5 sa</b> hesabı işletme standardıdır — uyarı sayılmaz.
+                </span>
               </span>
             </div>
           );
@@ -3020,6 +3025,8 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
                       const k = String(b.saat_kaynagi || '');
                       const ucretNot = k.includes('varsayilan_ucret') ? ' · ücret 99 ₺/sa varsayıldı' : '';
                       if (k.startsWith('sabit_tanim_haftalik')) return `sabit tanımdan${ucretNot}`;
+                      // Part standardı UYARI DEĞİL: 5,5 sa/gün işletme kuralıdır.
+                      if (k.startsWith('part_standart')) return `part standardı (6 gün × 5,5 sa)${ucretNot}`;
                       if (k.startsWith('varsayilan_gunluk')) return `⚠ varsayım (haftada 6 gün × 9,5 sa)${ucretNot}`;
                       return b.calisma_saati ? 'vardiya atamasından' : undefined;
                     })(),

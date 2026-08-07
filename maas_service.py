@@ -37,6 +37,12 @@ AYLIK_SAAT = GUNLUK_SAAT * AYLIK_GUN  # 285
 # bir günlük fazla hakediş üretiyordu.
 HAFTALIK_CALISMA_GUN = 6
 
+# Part-time günlük mesai — sahip kararı (2026-08-08): "partlar en fazla 5,5 saat
+# çalışıyor; damgalama, part ise bu mantığı çalıştır." Yani part-time için bu bir
+# VARSAYIM değil İŞLETME STANDARDIdır → kaynak etiketi 'part_standart' olur ve
+# ekranda uyarı rozeti çıkmaz. (Tam zamanlı taban GUNLUK_SAAT = 9,5 olarak kalır.)
+PART_GUNLUK_SAAT = 5.5
+
 # Saatlik ücreti TANIMSIZ part-time personel için varsayılan (sahip kararı
 # 2026-08-08: "girilmemişse de saatlik 99 TL olarak hesapla"). Kadrodaki mevcut
 # part-time ücretleri 98,55–99,30 ₺ bandında; 99 ₺ bu bandın ortasıdır.
@@ -181,6 +187,11 @@ def sabit_mesai_saati(cur, p: dict, yil: int, ay: int) -> Tuple[float, str]:
     # yerine doğrusu ~65 sa). VARSAYIM olduğu için etiketi ayrı — ekran bunu
     # "sabit mesai tanımlı değil" uyarısıyla gösterir.
     _calisma_gun = calisilan_gun * (HAFTALIK_CALISMA_GUN / 7.0)
+    # Part-time'ın günlük mesaisi işletme standardıdır (5,5 sa) — tahmin değil,
+    # bu yüzden UYARI DAMGASI BASILMAZ. Tam zamanlıda taban 9,5 sa ve o hâlâ
+    # varsayımdır (atama da tanım da yokken kurulmuş bir iskelet).
+    if (p.get("calisma_turu") or "surekli") != "surekli":
+        return round(_calisma_gun * PART_GUNLUK_SAAT, 2), "part_standart"
     return round(_calisma_gun * GUNLUK_SAAT, 2), "varsayilan_gunluk"
 
 
