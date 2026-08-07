@@ -14916,6 +14916,91 @@ def ops_siparis_oneri(
     }
 
 
+@router.get("/maliyet/pnl-merdiven")
+def ops_maliyet_pnl_merdiven(gun: int = Query(30, ge=7, le=90)):
+    """P&L MERDİVENİ — cirodan net kâra tek zincir (mali uzman görünümü).
+
+    Sahip (2026-08-08): "hem bu şirketin mali uzmanısın… maliyet ve ödeme
+    merkezinin akışını kurgulamalısın."
+
+    Sistemde parçalar vardı ama MERDİVEN yoktu: ciro bir ekranda, COGS başka
+    ekranda, sabit gider başabaş ucunda, finansman ödeme planında. "Kâr nasıl
+    oluşuyor / nerede eriyor" tek bakışta görülemiyordu.
+
+    Basamaklar (tahakkuk esaslı — nakit çıkışı DEĞİL):
+        Ciro − COGS = BRÜT KÂR − Sabit gider = FAVÖK − Finansman = NET
+    COGS = ürün-aç gerçek maliyeti (sahip doktrini: reçete teyit katmanı).
+    Sabit ve finansman /ops/maliyet/basabas motorundan gelir (tek hesap yolu).
+
+    KRİTİK ORAN `favok_finansman_karsilama_pct`: 100'ün altı, işletmenin ürettiği
+    nakdin borç servisini karşılamadığı anlamına gelir — "işletme kâr ediyor ama
+    borç yapısı batırıyor" durumu. Öneri-only.
+    """
+    esik = ops_maliyet_basabas(gun=gun)
+    s = (esik or {}).get("sabit_yuk_aylik") or {}
+    sabit_ay = float(s.get("isletme_toplam") or 0)
+    finansman_ay = float(s.get("finansman") or 0)
+    # Aylık yükleri pencereye ölçekle (30 günlük taban → gun)
+    olcek = gun / 30.0
+    sabit = sabit_ay * olcek
+    finansman = finansman_ay * olcek
+
+    bugun = date.today()
+    bas = bugun - timedelta(days=gun - 1)
+    with db() as (_c, cur):
+        cur.execute(
+            """SELECT COALESCE(SUM(ciro_tl),0)::float AS ciro,
+                      COALESCE(SUM(gercek_maliyet_tl),0)::float AS cogs
+               FROM sube_food_cost_gun
+               WHERE tarih BETWEEN %s AND %s""",
+            (bas, bugun),
+        )
+        r = dict(cur.fetchone() or {})
+    ciro = float(r.get("ciro") or 0)
+    cogs = float(r.get("cogs") or 0)
+    brut = ciro - cogs
+    favok = brut - sabit
+    net = favok - finansman
+
+    def _p(v: float):
+        return round(v / ciro * 100, 1) if ciro > 0 else None
+
+    basamaklar = [
+        {"ad": "Ciro", "tur": "gelir", "tutar_tl": round(ciro, 2), "ciro_pay_pct": 100.0 if ciro else None,
+         "aciklama": "kasa girişi (fiziki ciro esas)"},
+        {"ad": "Ürün maliyeti (COGS)", "tur": "gider", "tutar_tl": round(-cogs, 2), "ciro_pay_pct": _p(cogs),
+         "aciklama": "ürün-aç defteri × alış fiyatı — reçete teyit katmanıdır"},
+        {"ad": "BRÜT KÂR", "tur": "ara_toplam", "tutar_tl": round(brut, 2), "ciro_pay_pct": _p(brut),
+         "aciklama": "malzemeden sonra elde kalan"},
+        {"ad": "Sabit gider", "tur": "gider", "tutar_tl": round(-sabit, 2), "ciro_pay_pct": _p(sabit),
+         "aciklama": "kira + fatura + personel (periyot normalize)"},
+        {"ad": "FAVÖK", "tur": "ara_toplam", "tutar_tl": round(favok, 2), "ciro_pay_pct": _p(favok),
+         "aciklama": "işletmenin kendi ürettiği nakit"},
+        {"ad": "Finansman", "tur": "gider", "tutar_tl": round(-finansman, 2), "ciro_pay_pct": _p(finansman),
+         "aciklama": "kart + kredi ödemeleri (anapara dahil)"},
+        {"ad": "NET", "tur": "sonuc", "tutar_tl": round(net, 2), "ciro_pay_pct": _p(net),
+         "aciklama": "finansman sonrası kalan"},
+    ]
+    karsilama = round(favok / finansman * 100, 1) if finansman > 0 else None
+    if net >= 0:
+        teshis = "İşletme borç servisini karşılıyor — net pozitif."
+    elif favok > 0:
+        teshis = ("İŞLETME KÂR EDİYOR, BORÇ YAPISI BATIRIYOR: FAVÖK "
+                  f"{favok:,.0f} ₺ iken finansman {finansman:,.0f} ₺. "
+                  "Çözüm operasyonda değil, borç yapılandırmasında.").replace(",", ".")
+    else:
+        teshis = "İşletme kendi giderini çıkaramıyor — önce operasyonel marj."
+    return {
+        "gun": gun, "uretildi": str(bugun),
+        "basamaklar": basamaklar,
+        "favok_finansman_karsilama_pct": karsilama,
+        "teshis": teshis,
+        "not": "TAHAKKUK esaslıdır — nakit çıkış takvimi Ödeme Merkezi'ndedir. Sabit ve "
+               "finansman yükü başabaş motorundan gelir (tek hesap yolu); aylık tabandan "
+               "pencereye ölçeklenir. KDV P&L dışıdır (devlet adına tahsilat). Öneri-only.",
+    }
+
+
 @router.get("/metrics/hedef-ciro")
 def ops_metrics_hedef_ciro(erit_ay: int = Query(6, ge=1, le=24)):
     """HEDEF CİRO — "bütün ödemelerimi rahatlıkla yapabileceğim aylık ciro nedir?"
