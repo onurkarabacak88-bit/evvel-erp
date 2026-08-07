@@ -14770,9 +14770,38 @@ def ops_maliyet_basabas(gun: int = Query(30, ge=7, le=90)):
             if float(r.get("top") or 0) > 0:
                 cur.execute("SELECT COALESCE(AVG(NULLIF(pos_oran,0)),0)::float AS o FROM subeler WHERE aktif=TRUE")
                 oran = float((cur.fetchone() or {}).get("o") or 0)
-                pos_pct = (float(r["pos"]) / float(r["top"])) * oran * 100.0
+                # ⚠️ pos_oran YÜZDE olarak saklanır (kanonik kullanım: main.py:1898
+                # `pos * pos_oran / 100.0`). İlk sürümde ayrıca ×100 yapılmıştı →
+                # POS kesintisi %116 çıkıp değişken oranı 1'in üstüne taşıdı ve
+                # başabaş hesaplanamaz oldu ("veri_yok"). Pay/payda oranı zaten
+                # kesirdir; yüzdeye çevirmek için yalnız oranın kendisi çarpılır.
+                pos_pct = (float(r["pos"]) / float(r["top"])) * oran
         except Exception:  # noqa: BLE001
             pos_pct = 0.0
+
+        # ── 4b) FİNANSMAN YÜKÜ: borç taksitleri + kart asgarileri (aylık)
+        # İlk sürümde yalnız sabit_giderler içindeki finansman satırları aranıyordu;
+        # oysa krediler `borc_envanteri`, kartlar `kartlar` tablosunda durur →
+        # finansman 0 çıkıp NAKİT eşiği İŞLETME eşiğiyle aynı olmuştu (anlamsız).
+        # TEK KAYNAK: ödeme planı. Kredi taksiti (borc_envanteri) ve kart asgarisi
+        # (kartlar) ayrı şemalarda tutulur — kolonları elle toplamak iki ayrı
+        # hesap yolu üretir ve sapar. Plan zaten ikisini de kalem olarak taşır.
+        try:
+            cur.execute(
+                """SELECT COALESCE(SUM(COALESCE(odenecek_tutar, asgari_tutar, 0)),0)::float AS t
+                   FROM odeme_plani
+                   WHERE durum = 'bekliyor'
+                     AND kaynak_tablo IN ('kartlar','borc_envanteri')
+                     AND tarih <= CURRENT_DATE + INTERVAL '30 day'"""
+            )
+            _fin = float((cur.fetchone() or {}).get("t") or 0)
+            finansman_haric += _fin
+            if _fin > 0:
+                varsayimlar.append(
+                    "Finansman yükü = ödeme planındaki kart + kredi kalemleri (önümüzdeki 30 gün)."
+                )
+        except Exception as e:  # noqa: BLE001
+            uyarilar.append(f"Finansman yükü okunamadı: {str(e)[:70]}")
 
     # ── 5) HESAP ────────────────────────────────────────────────────────────
     isletme_sabit = sum(kova.values()) + personel_aylik
