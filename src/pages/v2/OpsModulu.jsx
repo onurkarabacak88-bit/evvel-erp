@@ -644,6 +644,8 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
   const [tsNotlar, setTsNotlar] = useState(null);
   const [tsTahmin, setTsTahmin] = useState(null);
   const [tsKpi, setTsKpi] = useState(null);
+  const [siparisOneri, setSiparisOneri] = useState(null);   // /ops/siparis/oneri
+  const [oneriKova, setOneriKova] = useState('acil');       // acil | yakin | fazla
   const [tsHata, setTsHata] = useState('');
   // ── SAYIM ─────────────────────────────────────────────────────────────────
   const [sayim, setSayim] = useState(null);
@@ -885,6 +887,11 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     api('/ops/kpi-delta?donem=ay')
       .then((d) => setTsKpi(d || {}))
       .catch(() => setTsKpi({}));
+    // 🛒 SİPARİŞ ÖNERİSİ (2026-08-08, sahip isteği): ürün bazında ne alınmalı,
+    // neyi ALMAMALI — ürün-aç tüketimi + açılım ritmi + nakit bağlamı.
+    api('/ops/siparis/oneri?hedef_gun=21')
+      .then((d) => setSiparisOneri(d || null))
+      .catch(() => setSiparisOneri(null));
   }, []);
 
   const yonAc = (sip) => {
@@ -5333,7 +5340,11 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     // Aynı ilişkinin İKİ YÖNÜ yan yana: ne gönderdik ↔ ne geldi.
     // Eskiden yalnız "gelen" vardı; giden yönlendirme logu hiç görünmüyordu.
     const gidenler = Array.isArray(tsGiden?.gonderimler) ? tsGiden.gonderimler : [];
+    // 🛒 SİPARİŞ ÖNERİSİ en başta: bu ekranın diğer sekmeleri "ne oldu"yu anlatır,
+    // öneri ise "ne yapmalı"yı söyler — aksiyon önce gelir.
+    const oneriOzet = siparisOneri?.ozet || null;
     const ALT = [
+      ...(oneriOzet ? [['oneri', `🛒 Sipariş önerisi (${sayi(oneriOzet.acil_kalem)} acil)`]] : []),
       ['giden', `🚚 Toptancıya giden (${gidenler.length})`],
       ['teslim', `📦 Toptancıdan gelen (${teslimSube.length})`],
       ['notlar', `📝 Şube notları (${notlar.length})`],
@@ -5360,6 +5371,125 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
           ))}
         </div>
 
+        {tsSekme === 'oneri' && oneriOzet && (() => {
+          const kovalar = [
+            ['acil', `🔴 Acil (${sayi(oneriOzet.acil_kalem)})`, siparisOneri.acil || [], 'tedarik süresinde biter — bugün sipariş geç'],
+            ['yakin', `🟡 Yakın (${sayi(oneriOzet.yakin_kalem)})`, siparisOneri.yakin || [], 'planlı alım penceresinde'],
+            ['fazla', `⛔ ALMA (${sayi(oneriOzet.fazla_kalem)})`, siparisOneri.fazla || [], 'hedefin çok üstünde — para rafta yatıyor'],
+          ];
+          const [, , liste, kovaNot] = kovalar.find(([k]) => k === oneriKova) || kovalar[0];
+          const kasaYeter = oneriOzet.kasa_yeterli;
+          return (
+            <>
+              <KpiSeridi kpiler={[
+                { etiket: 'Acil sipariş', deger: fmt(sayi(oneriOzet.acil_tutar_tl)), alt: `${sayi(oneriOzet.acil_kalem)} kalem · hemen`, renk: sayi(oneriOzet.acil_kalem) ? R.kirmizi : R.yesil },
+                { etiket: 'Önerilen toplam', deger: fmt(sayi(oneriOzet.onerilen_tutar_tl)), alt: `21 günlük hedefe göre`, renk: R.bakirAcik },
+                { etiket: 'Rafta bekleyen', deger: fmt(sayi(oneriOzet.fazla_bagli_para_tl)), alt: `${sayi(oneriOzet.fazla_kalem)} kalem · ALMA`, renk: R.amber },
+                {
+                  etiket: 'Kasa yeterli mi',
+                  deger: kasaYeter == null ? '—' : (kasaYeter ? 'evet' : 'HAYIR'),
+                  alt: oneriOzet.kasa_tl != null
+                    ? `kasa ${fmt(sayi(oneriOzet.kasa_tl))} · gecikmiş ${fmt(sayi(oneriOzet.gecikmis_odeme_tl))}`
+                    : 'kasa bilgisi yok',
+                  renk: kasaYeter == null ? R.not : (kasaYeter ? R.yesil : R.kirmizi),
+                },
+              ]} />
+
+              {/* Kategori özeti — toptancı seçimi kategori bazlı yapılır */}
+              {(siparisOneri.kategoriler || []).length > 0 && (
+                <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap', marginBottom: 12 }}>
+                  {siparisOneri.kategoriler.slice(0, 8).map((k) => (
+                    <span key={k.kategori} style={{
+                      padding: '5px 12px', borderRadius: 99, fontSize: 11.5, fontWeight: 700,
+                      background: k.acil ? `${R.kirmizi}1F` : R.girinti,
+                      color: k.acil ? R.kirmizi : R.metin2,
+                      border: `1px solid ${k.acil ? `${R.kirmizi}44` : R.cizgi3}`,
+                    }}>
+                      {k.kategori} · {k.kalem} kalem · {fmt(k.tutar)}{k.acil ? ` · ${k.acil} acil` : ''}
+                    </span>
+                  ))}
+                </div>
+              )}
+
+              <div style={{ display: 'flex', gap: 7, marginBottom: 10, flexWrap: 'wrap' }}>
+                {kovalar.map(([id, ad]) => (
+                  <div key={id} onClick={() => setOneriKova(id)} style={{
+                    padding: '6px 13px', borderRadius: 99, fontSize: 11.5, fontWeight: 700, cursor: 'pointer',
+                    border: `1px solid ${oneriKova === id ? R.bakir : R.cizgi3}`,
+                    color: oneriKova === id ? R.bakir : R.metin2,
+                    background: oneriKova === id ? 'rgba(217,154,78,.14)' : R.girinti,
+                  }}>{ad}</div>
+                ))}
+                <span style={{ fontSize: 11, color: R.not2, alignSelf: 'center' }}>{kovaNot}</span>
+              </div>
+
+              {liste.length ? (
+                <Tablo
+                  baslik={oneriKova === 'fazla' ? 'Bu kalemleri ALMA — rafta bekleyen para' : 'Sipariş önerisi · ürün bazında'}
+                  not={oneriKova === 'fazla'
+                    ? 'hedefin çok üstünde stok · sipariş vermek nakdi rafa bağlar'
+                    : 'öneri = (21 gün × günlük tüketim) − mevcut · kaynak: ürün-aç defteri'}
+                  kolonlar={oneriKova === 'fazla'
+                    ? [{ ad: 'Kalem' }, { ad: 'Şube' }, { ad: 'Elde', sag: true }, { ad: 'Bağlı para', sag: true }, { ad: 'Neden' }]
+                    : [{ ad: 'Kalem' }, { ad: 'Şube' }, { ad: 'Elde', sag: true }, { ad: 'Ritim' }, { ad: 'Öneri', sag: true }, { ad: 'Tutar', sag: true }]}
+                  satirlar={liste.slice(0, 60).map((s, i) => ({
+                    id: `${s.kalem_kodu}-${s.sube_id}-${i}`, _s: s,
+                    hucreler: oneriKova === 'fazla'
+                      ? [
+                        { v: s.kalem_adi, kalin: true },
+                        { v: s.sube_adi, renk: R.not },
+                        { v: String(s.mevcut), mono: true, sag: true },
+                        { v: fmt(sayi(s.bagli_para_tl)), mono: true, sag: true, renk: R.amber, kalin: true },
+                        { v: s.neden || '—', renk: R.not2 },
+                      ]
+                      : [
+                        { v: s.kalem_adi, kalin: true },
+                        { v: s.sube_adi, renk: R.not },
+                        { v: String(s.mevcut), mono: true, sag: true, renk: sayi(s.mevcut) <= 0 ? R.kirmizi : R.krem },
+                        {
+                          // Ritim: seyrek kalemde asıl sinyal budur
+                          v: s.ortalama_aralik_gun
+                            ? `${trSayi(sayi(s.ortalama_aralik_gun), 0)} günde bir${s.gun_gecti != null ? ` · ${s.gun_gecti}g önce` : ''}`
+                            : (s.kalan_gun != null ? `${trSayi(sayi(s.kalan_gun), 1)} gün kaldı` : '—'),
+                          renk: R.not2,
+                        },
+                        { v: `${trSayi(sayi(s.oneri_adet), 1)}`, mono: true, sag: true, kalin: true },
+                        { v: fmt(sayi(s.tahmini_tutar_tl)), mono: true, sag: true },
+                      ],
+                  }))}
+                  onSatir={(row) => {
+                    const s = row._s;
+                    onCekmece?.({
+                      tip: oneriKova === 'fazla' ? 'FAZLA STOK' : 'SİPARİŞ ÖNERİSİ',
+                      baslik: s.kalem_adi,
+                      alt: `${s.sube_adi} · ${s.kategori || 'kategori yok'}`,
+                      kpi: [
+                        { etiket: 'Elde', deger: String(s.mevcut) },
+                        { etiket: 'Günlük tüketim', deger: `${trSayi(sayi(s.gunluk_tuketim), 2)}` },
+                        ...(s.oneri_adet != null
+                          ? [{ etiket: 'Öneri', deger: `${trSayi(sayi(s.oneri_adet), 1)} adet`, renk: R.bakirAcik }]
+                          : [{ etiket: 'Bağlı para', deger: fmt(sayi(s.bagli_para_tl)), renk: R.amber }]),
+                      ],
+                      listeBaslik: 'Ölçüler',
+                      satirlar: [
+                        { ad: 'Kalan gün', detay: 'mevcut ÷ günlük tüketim', tutar: s.kalan_gun != null ? `${trSayi(sayi(s.kalan_gun), 1)} gün` : '—' },
+                        { ad: 'Açılım ritmi', detay: 'kaç günde bir açılıyor', tutar: s.ortalama_aralik_gun ? `${trSayi(sayi(s.ortalama_aralik_gun), 1)} gün` : '—' },
+                        { ad: 'Son açılım', detay: s.son_acilim || 'kayıt yok', tutar: s.gun_gecti != null ? `${s.gun_gecti} gün önce` : '—' },
+                        { ad: 'Açılım başına', detay: 'her açılışta düşen', tutar: s.acilim_basina_adet != null ? `${trSayi(sayi(s.acilim_basina_adet), 1)} adet` : '—' },
+                        { ad: 'Yeniden sipariş noktası', detay: `tedarik ${sayi(siparisOneri?.parametreler?.tedarik_gun) || 3} gün + emniyet`, tutar: s.rop != null ? `${trSayi(sayi(s.rop), 1)} adet` : '—' },
+                        ...(s.trend ? [{ ad: 'Tüketim trendi', detay: 'stok tahmin motorundan', tutar: s.trend }] : []),
+                        ...(s.acil_nedeni ? [{ ad: '⚠ Acil nedeni', detay: s.acil_nedeni, tutar: '' }] : []),
+                      ],
+                      not: siparisOneri?.not,
+                    });
+                  }}
+                />
+              ) : (
+                <BosDurum metin={oneriKova === 'fazla' ? 'Hedefin üstünde stok yok — depo dengeli.' : 'Bu kovada kalem yok.'} />
+              )}
+            </>
+          );
+        })()}
         {tsSekme === 'giden' && (gidenler.length ? (
           <Tablo
             baslik={`Toptancıya giden · ${tsGiden?.filtre_etiket || 'son 14 gün'}`}
