@@ -592,6 +592,7 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
   const [depo, setDepo] = useState(null);
   // /ops/v2/depo-ozet → ozet bloğu: stok TL değeri + 30 gün harcama + şube başı
   const [depoDeger, setDepoDeger] = useState(null);
+  const [stokDevir, setStokDevir] = useState(null);   // /ops/metrics/stok-devir
   const [depoHata, setDepoHata] = useState('');
   const [depoSube, setDepoSube] = useState('');   // '' = tüm şubeler
   // ── YERLİ DEPO YÖNLENDİRME (köprü kaldırma turu, 2026-07-29) ──────────────
@@ -1008,6 +1009,11 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     api('/ops/v2/depo-ozet?gun=30')
       .then((d) => setDepoDeger(d || null))
       .catch(() => setDepoDeger(null));
+    // STOK DEVİR HIZI (2026-08-08 denetimi): "param kaç gün depoda bekliyor".
+    // Depo değeri ve tüketim ayrı ayrı hesaplanıyordu, bölen soru yoktu.
+    api('/ops/metrics/stok-devir?gun=30')
+      .then((d) => setStokDevir(d || null))
+      .catch(() => setStokDevir(null));
   }, []);
 
   const sayimYukle = useCallback(() => {
@@ -3403,6 +3409,56 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
           },
           { etiket: 'Kapsam', deger: depoSube ? (subeler.find((s) => s.id === depoSube)?.ad || 'şube') : 'Tüm şubeler', alt: 'aşağıdan değiştir' },
         ]} />
+
+        {/* ── STOK DEVİR HIZI: "param kaç gün depoda bekliyor" ────────────── */}
+        {stokDevir?.stok_gun != null && (() => {
+          const sg = sayi(stokDevir.stok_gun);
+          const renk = stokDevir.durum === 'saglikli' ? R.yesil
+            : stokDevir.durum === 'yuksek' ? R.amber : R.kirmizi;
+          const [bMin, bMax] = stokDevir.saglikli_bant_gun || [15, 30];
+          // Bandın üstünde kalan pay ≈ rafta fazladan bekleyen nakit
+          const fazla = sg > bMax && sayi(stokDevir.gunluk_harcama_tl) > 0
+            ? (sg - bMax) * sayi(stokDevir.gunluk_harcama_tl) : 0;
+          return (
+            <div
+              onClick={() => onCekmece?.({
+                tip: 'STOK DEVİR HIZI',
+                baslik: 'Param kaç gün depoda bekliyor?',
+                alt: `son ${sayi(stokDevir.gun)} gün · sağlıklı bant ${bMin}-${bMax} gün`,
+                kpi: [
+                  { etiket: 'Stok günü', deger: `${trSayi(sg, 1)} gün`, renk },
+                  { etiket: 'Depodaki para', deger: fmt(sayi(stokDevir.stok_deger_tl)), renk: R.bakirAcik },
+                  { etiket: 'Günlük tüketim', deger: fmt(sayi(stokDevir.gunluk_harcama_tl)) },
+                ],
+                listeBaslik: 'Şube kırılımı — bağlı paraya göre',
+                satirlar: (stokDevir.subeler || []).map((s) => ({
+                  ad: s.sube_adi,
+                  detay: s.harcama_yok
+                    ? 'tüketim yok (sezon kapalı) — para bağlı duruyor'
+                    : `${trSayi(sayi(s.stok_gun), 1)} gün · günlük ${fmt(sayi(s.gunluk_harcama_tl))}`,
+                  tutar: fmt(sayi(s.stok_deger_tl)),
+                })),
+                not: `${stokDevir.not}${fazla > 0 ? ` · Bandın üstünde kalan ≈ ${fmt(fazla)} rafta bekliyor.` : ''}`,
+              })}
+              style={{
+                ...kartYuzey, padding: '13px 17px', marginBottom: 14, cursor: 'pointer',
+                borderLeft: `3px solid ${renk}`, display: 'flex', gap: 14, alignItems: 'baseline', flexWrap: 'wrap',
+              }}
+            >
+              <span style={{ fontFamily: F.baslik, fontSize: 14.5, fontWeight: 600 }}>📦 Stok devir hızı</span>
+              <span style={{ fontSize: 13, color: R.metin2 }}>
+                <b style={{ fontFamily: F.mono, color: renk, fontSize: 15 }}>{trSayi(sg, 1)} gün</b>
+                {' '}stok tutuluyor · sağlıklı bant {bMin}-{bMax} gün
+              </span>
+              {fazla > 0 && (
+                <span style={{ fontSize: 12, color: R.bakirAcik }}>
+                  ≈ <b>{fmt(fazla)}</b> bandın üstünde rafta bekliyor
+                </span>
+              )}
+              <span style={{ fontSize: 11, color: R.not, marginLeft: 'auto' }}>dokun → şube kırılımı</span>
+            </div>
+          );
+        })()}
 
         {/* ŞUBE BAŞI STOK DEĞERİ — hangi şubede ne kadar sermaye bağlı.
             Kritik kalem sayısıyla birlikte okunur: az kalem + çok para = pahalı
