@@ -498,7 +498,26 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast }) {
     return (
       <>
         <KpiSeridi kpiler={[
-          { etiket: 'Belge kapsama', deger: `%${Math.round(oran)}`, alt: 'işletme kart harcamasının faturalısı', renk: oran >= 70 ? R.yesil : oran >= 50 ? R.amber : R.kirmizi },
+          // ⚠️ TABAN DÜZELTMESİ (2026-08-07 denetimi): kapsama oranı TÜM harcamayı
+          // payda alıyordu. Belgesi zaten beklenmeyen kalemler (kurumsal otomatik
+          // talimat + belge_beklenmez) de paydadaydı → canlı vaka: Ağustos'ta
+          // 3.903 ₺'nin TAMAMI otomatik internet faturası, faturasız riskli kalem
+          // 0 ₺ iken ekran "%0 kapsama" KIRMIZISI basıyordu. Panik yaratan yalan.
+          // Artık sunucunun riskli tabanı (belge_bekleyen_taban) esas; taban 0 ise
+          // oran YOK — "belge bekleyen harcama yok" denir, %0 denmez.
+          (sayi(k.belge_bekleyen_taban) > 0 || k.belge_bekleyen_taban == null
+            ? {
+              etiket: 'Belge kapsama',
+              deger: `%${Math.round(sayi(k.oran_riskli_yuzde ?? oran))}`,
+              alt: 'belge beklenen harcamanın faturalısı',
+              renk: sayi(k.oran_riskli_yuzde ?? oran) >= 70 ? R.yesil : sayi(k.oran_riskli_yuzde ?? oran) >= 50 ? R.amber : R.kirmizi,
+            }
+            : {
+              etiket: 'Belge kapsama',
+              deger: 'temiz',
+              alt: 'belge bekleyen harcama yok',
+              renk: R.yesil,
+            }),
           { etiket: 'Faturalı', deger: fmt(faturali), alt: 'eşleşen + kurumsal otomatik', renk: R.yesil },
           { etiket: 'Faturasız', deger: fmt(faturasiz), alt: 'belge isteme adayı', renk: faturasiz > 0 ? R.kirmizi : R.yesil },
           { etiket: 'Kart harcaması', deger: fmt(sayi(k.isletme_kart_harcamasi)), alt: `${merkez.ay || buAyISO()} · işletme` },

@@ -89,6 +89,7 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
   const [kuyruk, setKuyruk] = useState([]);      // 14 günlük pencere
   const [kokpit, setKokpit] = useState(null);
   const [cari, setCari] = useState(null);
+  const [vergi, setVergi] = useState(null);   // /duyu/vergi-takvim — yaklaşan vergi yükü
   const [gecmis, setGecmis] = useState([]);
   // Sahip kararı (soru 3/9): tedarikçi ödemeleri NAKİT+KART birleşik.
   // Kasa defteri kartla yapılan tedarikçi ödemesini GÖREMEZ (kasadan para
@@ -112,7 +113,13 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
       api('/fatura/cari-ozet').catch(() => null),
       api(`/ledger?limit=400&ay=${ay}`).catch(() => null),
       api('/vadeli-alimlar/gecmis?limit=200').catch(() => null),
-    ]).then(([k, ko, c, l, tg]) => {
+      // VERGİ YÜKÜ (2026-08-07 denetimi): ödenecek KDV + kira stopajı hesaplanıyor
+      // ama ödeme planında görünmüyordu — "bu ay ne ödeyeceğim" listesinde vergi
+      // yoktu, ay sonu sürpriz oluyordu. Plana BORÇ olarak YAZILMAZ (tahminî
+      // rakam borç sayılmaz — kasa izi tek gerçek); yaklaşan yük olarak GÖSTERİLİR.
+      api('/duyu/vergi-takvim').catch(() => null),
+    ]).then(([k, ko, c, l, tg, vt]) => {
+      setVergi(vt);
       setTedOdeme(Array.isArray(tg?.satirlar) ? tg.satirlar : (Array.isArray(tg) ? tg : []));
       setKuyruk(Array.isArray(k) ? k : []);
       setKokpit(ko);
@@ -1005,6 +1012,50 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
             para çıkmadı — söz; faturası gelince kendiliğinden birleşir
           </span>
         </div>
+        {/* VERGİ YÜKÜ — planda borç değil ama yaklaşan gerçek çıkış */}
+        {(() => {
+          const satirlar = Array.isArray(vergi?.takvim) ? vergi.takvim : [];
+          const kdv = satirlar.find((s) => s.tur === 'KDV') || {};
+          const stopaj = satirlar.find((s) => String(s.tur || '').startsWith('Muhtasar')) || {};
+          const kdvTl = sayi(kdv.odenecek_kdv_tl);
+          const stTl = sayi(stopaj.odenecek_tl);
+          if (kdvTl <= 0 && stTl <= 0) return null;
+          return (
+            <div
+              onClick={() => onCekmece?.({
+                tip: 'VERGİ YÜKÜ',
+                baslik: 'Yaklaşan vergi çıkışı',
+                alt: 'ödeme planında borç olarak DURMAZ — tahminî, dönem kapanınca kesinleşir',
+                kpi: [
+                  { etiket: 'Ödenecek KDV', deger: fmt(kdvTl), renk: R.amber },
+                  { etiket: 'Kira stopajı', deger: fmt(stTl), renk: R.amber },
+                  { etiket: 'Toplam', deger: fmt(kdvTl + stTl), renk: R.kirmizi },
+                ],
+                listeBaslik: 'Kalemler',
+                satirlar: [
+                  { ad: 'Ödenecek KDV', detay: `${kdv.donem || '—'} · son ödeme ${kdv.son_odeme || '—'}`, tutar: fmt(kdvTl) },
+                  { ad: 'Hesaplanan KDV', detay: 'satıştan · ciro KDV dahil girilir', tutar: fmt(sayi(kdv.hesaplanan_kdv_tl)) },
+                  { ad: 'İndirilecek KDV', detay: 'alış + gider · kalem bazlı oran', tutar: fmt(sayi(kdv.indirilecek_kdv_tl)) },
+                  { ad: 'Muhtasar (kira stopajı)', detay: `${stopaj.kira_adedi || 0} kira · son ödeme ${stopaj.son_odeme || '—'}`, tutar: fmt(stTl) },
+                ],
+                not: vergi?.not || 'Salt-okur farkındalık görünümü — beyanname değildir; muhasebeci takvimi esastır.',
+              })}
+              style={{
+                ...kartYuzey, padding: '11px 15px', marginBottom: 12, cursor: 'pointer',
+                borderLeft: `3px solid ${R.amber}`, display: 'flex', gap: 14, alignItems: 'center', flexWrap: 'wrap',
+              }}
+            >
+              <span style={{ fontSize: 12.5, fontWeight: 700, color: R.amber }}>🧾 Yaklaşan vergi yükü</span>
+              <span style={{ fontSize: 12.5, color: R.metin2 }}>
+                KDV <b>{fmt(kdvTl)}</b>{kdv.son_odeme ? ` · son ödeme ${kisaTarih(kdv.son_odeme)}` : ''}
+                {stTl > 0 ? ` · stopaj ${fmt(stTl)}` : ''}
+              </span>
+              <span style={{ fontSize: 11, color: R.not, marginLeft: 'auto' }}>
+                kuyrukta borç olarak DURMAZ · tahminî — dokun, ayrıntı
+              </span>
+            </div>
+          );
+        })()}
         {/* Tür kırılımı — maaş/kira/kart yükü tek bakışta; tıkla → süz */}
         {turOzet.length > 1 && (
           <>

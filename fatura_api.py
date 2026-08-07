@@ -1731,6 +1731,20 @@ def belge_merkezi_ozet(ay: str = ""):
                                - belgesiz_tutar, 2),
             "oran_yuzde": (round(eslesen_tutar / toplam_harcama * 100, 1)
                            if toplam_harcama > 0 else None),
+            # ── DOĞRU TABAN (2026-08-07 denetimi) ────────────────────────────
+            # oran_yuzde PAYDAYA TÜM harcamayı koyar; içinde belgesi zaten
+            # beklenmeyen kalemler de vardır (kurumsal otomatik talimat = fatura
+            # kurumda hazır; belge_beklenmez = personel/elden istisnası).
+            # Canlı vaka: Ağustos'ta 3.903 ₺ harcamanın TAMAMI otomatik talimat
+            # (4 şubenin internet faturası), faturasız riskli kalem 0 ₺ — ama
+            # ekran "kapsama %0" kırmızısı basıyordu. Panik yaratan yanlış sinyal.
+            # Aşağıdaki alan yalnız BELGE BEKLENEN tabana bakar; taban 0 ise
+            # oran YOK'tur (None) — "%0" demek yanlış olur.
+            "belge_bekleyen_taban": round(toplam_harcama - kurumsal_tutar - belgesiz_tutar, 2),
+            "oran_riskli_yuzde": (
+                round(eslesen_tutar / (toplam_harcama - kurumsal_tutar - belgesiz_tutar) * 100, 1)
+                if (toplam_harcama - kurumsal_tutar - belgesiz_tutar) > 0 else None
+            ),
         },
         "toptancilar": toptancilar,
         "gun_gun": sorted(gunler.values(), key=lambda x: x["gun"], reverse=True),
