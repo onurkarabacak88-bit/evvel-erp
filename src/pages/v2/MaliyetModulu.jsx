@@ -124,6 +124,16 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
       .catch(() => setGunGun(null));
   }, []);
 
+  /** GERÇEK maliyet verisi (ürün-aç × alış fiyatı). Sahip doktrini: maliyetin
+   *  GERÇEĞİ personelin şube panelinden açtığı üründen gelir; reçete yalnız
+   *  TEYİT basamağıdır. Ürün Maliyeti ekranı bu veriyi de yükler. */
+  const gercekYukle = useCallback(() => {
+    if (gunGun) return;
+    api('/ops/maliyet/gun-gun?gun=30')
+      .then((d) => setGunGun(d || null))
+      .catch(() => setGunGun(null));
+  }, [gunGun]);
+
   const receteYukle = useCallback(() => {
     setReceteHata('');
     api('/ops/maliyet/recete-listesi')
@@ -308,10 +318,11 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
   useEffect(() => {
     if (gorunum === 'ozet') ozetYukle();
     if (gorunum === 'urun' || gorunum === 'recete') receteYukle();
+    if (gorunum === 'urun') gercekYukle();   // GERÇEK maliyet (ürün-aç) — reçeteden ÖNCE gelir
     if (gorunum === 'fiyat') alarmYukle();
     if (gorunum === 'tuketim') kontrolYukle();
     if (gorunum === 'vergi') vergiYukle();
-  }, [gorunum, ozetYukle, receteYukle, alarmYukle, kontrolYukle, vergiYukle]);
+  }, [gorunum, ozetYukle, receteYukle, alarmYukle, kontrolYukle, vergiYukle, gercekYukle]);
 
   // Aktif alış fiyatı haritası: kalem_kodu → {maliyet, birim} (en güncel geçerli)
   const fiyatMap = useMemo(() => {
@@ -1136,14 +1147,78 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
     if (receteler == null || fiyatlar == null) return <Yukleniyor />;
     const hesapli = receteler.map((r) => ({ r, h: receteMaliyet(r) }));
     const eksikli = hesapli.filter((x) => x.h.fiyatsiz > 0);
+    // ── GERÇEK MALİYET (sahip doktrini, 2026-08-07) ─────────────────────────
+    // "Maliyet reçeteden değil, personelin şube panelinden açtığı ÜRÜN-AÇ'tan
+    // hesaplanmalı; reçete yalnız TEYİT basamağı." Bu ekran reçeteyi GERÇEK gibi
+    // sunuyordu (başlık: 'reçete × güncel alış fiyatı'). Artık gerçek ölçüm
+    // ÖNCE gelir, reçete altında ve 'beklenen/teyit' etiketiyle durur.
+    // Not: ürün-aç KALEM bazlıdır ("süt açtım"), ürün bazlı değil ("Latte için
+    // açtım") — bu yüzden gerçek maliyet KALEM GRUBU kırılımıyla verilir; ürün
+    // başına dağıtım ancak reçeteyle olur ve o zaten teyit katmanıdır.
+    const gercekGruplar = (() => {
+      const kol = Array.isArray(gunGun?.kolonlar) ? gunGun.kolonlar : [];
+      const sat = Array.isArray(gunGun?.satirlar) ? gunGun.satirlar : [];
+      if (!kol.length || !sat.length) return null;
+      const g = kol.map((k) => ({
+        kod: k.kod, baslik: k.baslik,
+        toplam: sat.reduce((s, r) => s + sayi(r[k.kod]), 0),
+      })).filter((x) => x.toplam > 0).sort((a, b) => b.toplam - a.toplam);
+      const top = g.reduce((s, x) => s + x.toplam, 0);
+      return top > 0 ? { gruplar: g, toplam: top, gun: sayi(gunGun.gun) || 30 } : null;
+    })();
     return (
       <>
         <KpiSeridi kpiler={[
-          { etiket: 'Reçeteli ürün', deger: String(receteler.length), alt: 'maliyet hesaplanabilir' },
-          { etiket: 'Fiyatsız hammaddeli', deger: String(eksikli.length), alt: 'maliyeti EKSİK hesaplanır', renk: eksikli.length > 0 ? R.kirmizi : R.yesil },
+          {
+            etiket: 'GERÇEK maliyet',
+            deger: gercekGruplar ? fmt(gercekGruplar.toplam) : '—',
+            alt: gercekGruplar ? `ürün-aç defteri · son ${gercekGruplar.gun} gün` : 'ürün-aç verisi yok',
+            renk: gercekGruplar ? R.bakirAcik : R.not,
+          },
+          { etiket: 'Reçeteli ürün', deger: String(receteler.length), alt: 'teyit için tanımlı' },
+          { etiket: 'Fiyatsız hammaddeli', deger: String(eksikli.length), alt: 'teyit EKSİK kalır', renk: eksikli.length > 0 ? R.amber : R.yesil },
           { etiket: 'Tanımlı alış fiyatı', deger: String((fiyatlar || []).filter((f) => !f.gecerli_bitis).length), alt: 'aktif kayıt' },
-          { etiket: 'En pahalı reçete', deger: hesapli.length ? fmt(Math.max(...hesapli.map((x) => x.h.toplam))) : '—', alt: 'malzeme maliyeti' },
         ]} />
+
+        {/* ── 1) GERÇEK — personelin açtığı üründen ─────────────────────────── */}
+        {gercekGruplar ? (
+          <div style={{ ...kartYuzey, padding: '15px 18px', marginBottom: 14, borderLeft: `3px solid ${R.bakir}` }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12, marginBottom: 4, flexWrap: 'wrap' }}>
+              <span style={{ fontFamily: F.baslik, fontSize: 15, fontWeight: 600 }}>
+                ☕ Gerçek maliyet · ürün-aç defteri
+              </span>
+              <span style={{ fontSize: 11.5, color: R.not2 }}>
+                son {gercekGruplar.gun} gün · toplam <b style={{ fontFamily: F.mono, color: R.bakirAcik }}>{fmt(gercekGruplar.toplam)}</b>
+              </span>
+            </div>
+            <div style={{ fontSize: 11, color: R.not2, marginBottom: 12, lineHeight: 1.55 }}>
+              Personel şube panelinden ürün açtıkça düşen <b style={{ color: R.metin2 }}>gerçek tüketim</b> × alış fiyatı.
+              Maliyetin kaynağı budur — aşağıdaki reçete tablosu bunu <b style={{ color: R.metin2 }}>teyit eder</b>, yerine geçmez.
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {gercekGruplar.gruplar.slice(0, 10).map((g) => {
+                const o = (g.toplam / gercekGruplar.toplam) * 100;
+                return (
+                  <div key={g.kod} style={{ display: 'flex', alignItems: 'center', gap: 11 }}>
+                    <span style={{ fontSize: 11.5, width: 112, flexShrink: 0, color: R.metin2 }}>{g.baslik}</span>
+                    <div style={{ flex: 1, height: 7, borderRadius: 99, background: R.girinti, overflow: 'hidden' }}>
+                      <div style={{ width: `${o}%`, height: '100%', background: R.bakir, opacity: 0.8 }} />
+                    </div>
+                    <span style={{ fontSize: 11.5, fontFamily: F.mono, width: 92, textAlign: 'right', color: R.krem }}>{fmt(g.toplam)}</span>
+                    <span style={{ fontSize: 10.5, fontFamily: F.mono, width: 42, textAlign: 'right', color: R.not2 }}>%{o.toFixed(1)}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ) : (
+          <div style={{ ...kartYuzey, padding: '15px 18px', marginBottom: 14, borderLeft: `3px solid ${R.not3}` }}>
+            <div style={{ fontSize: 12.5, color: R.metin2 }}>
+              ☕ <b>Gerçek maliyet</b> (ürün-aç defteri) henüz hazırlanıyor — aşağıdaki reçete tablosu
+              beklenen maliyeti gösterir, gerçeğin yerine geçmez.
+            </div>
+          </div>
+        )}
 
         {/* Sistemde satış fiyatı yok — marj bilerek gösterilmiyor (sahte sayı yasağı).
             Bu şerit o kısıtı GÖRÜNÜR yapar (desen 8). */}
@@ -1152,7 +1227,9 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
           fontSize: 12, color: R.not, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
         }}>
           <span style={rozetHap(R.mavi)}>ℹ kapsam</span>
-          Bu tablo <b style={{ color: R.metin2 }}>malzeme maliyetini</b> gösterir. Satış fiyatı sisteme bağlı değil —
+          Bu tablo <b style={{ color: R.metin2 }}>BEKLENEN</b> malzeme maliyetidir (reçete × alış fiyatı) —
+          gerçek maliyet yukarıdaki ürün-aç defterinden gelir; burası <b style={{ color: R.metin2 }}>teyit</b> katmanıdır.
+          Satış fiyatı sisteme bağlı değil —
           marj yüzdesi hesaplanamaz; fiyatsız hammadde satırları maliyeti eksik bırakır (kırmızı rozet).
         </div>
 
@@ -1160,7 +1237,7 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
           <BosDurum metin="Henüz reçete tanımlı değil — Reçete Eşleştirme ekranından tanımlanır." />
         ) : (
           <Tablo
-            baslik="Ürün maliyeti · reçete × güncel alış fiyatı"
+            baslik="Beklenen ürün maliyeti · reçete × alış fiyatı (teyit katmanı)"
             not="satıra tıkla → reçete kırılımı"
             kolonlar={[
               { ad: 'Ürün' }, { ad: 'Hammadde', sag: 1 }, { ad: 'Fiyatsız', sag: 1 },
