@@ -14655,6 +14655,123 @@ def _gelir_vergisi_yillik(yillik_kar: float) -> float:
     return vergi
 
 
+@router.get("/metrics/isgucu")
+def ops_metrics_isgucu(gun: int = Query(30, ge=7, le=90)):
+    """İŞGÜCÜ VERİMLİLİĞİ — "bir adam-saat kaç ₺ ciro üretiyor?"
+
+    Denetim bulgusu: `/ops/metrics/personel-verimlilik` ADI verimlilik ama içeriği
+    DAVRANIŞ metriği (açılış sapması, kontrol cevap hızı, kasa fark frekansı).
+    Ciro ile çalışma saati sistemde AYRI AYRI vardı, hiç çarpışmıyorlardı.
+
+    Adam-saat kaynağı, maaş zinciriyle AYNI kanonik sırayı izler
+    (maas_service.sabit_mesai_saati): vardiya ataması → sabit tanım → 9,5 sa/gün.
+    Sürekli personelin bordrosu maaş bazlı olduğu için saati kayda geçmez; burada
+    işgücü ölçüsü gerektiğinden onlar için de aynı taban kullanılır (izin düşülür).
+    Varsayım payı `varsayim_pct` ile açıkça bildirilir — hüküm yok.
+    """
+    bugun = date.today()
+    bas = bugun - timedelta(days=gun - 1)
+    with db() as (_c, cur):
+        # Ciro — yalnız cirolu günler
+        cur.execute(
+            """SELECT COUNT(DISTINCT tarih)::int AS g,
+                      COALESCE(SUM(COALESCE(nakit,0)+COALESCE(pos,0)+COALESCE(online,0)),0)::float AS t
+               FROM ciro WHERE tarih BETWEEN %s AND %s""",
+            (bas, bugun),
+        )
+        r = dict(cur.fetchone() or {})
+        cirolu_gun = int(r.get("g") or 0)
+        ciro = float(r.get("t") or 0)
+
+        # Aktif kadro + dönemle kesişen ayrılmışlar
+        cur.execute(
+            """SELECT id, ad_soyad, calisma_turu, maas, saatlik_ucret,
+                      yemek_ucreti, yol_ucreti, baslangic_tarihi, cikis_tarihi,
+                      vardiya_max_weekly_hours
+               FROM personel
+               WHERE aktif = TRUE OR (cikis_tarihi IS NOT NULL AND cikis_tarihi >= %s)""",
+            (bas,),
+        )
+        kisiler = [dict(x) for x in (cur.fetchall() or [])]
+
+        toplam_saat = 0.0
+        varsayimli_saat = 0.0
+        kisi_satir = []
+        try:
+            import maas_service as _ms
+        except Exception:  # noqa: BLE001
+            _ms = None
+
+        for p in kisiler:
+            saat, kaynak = 0.0, "yok"
+            # Gerçek atama önce: dönemdeki planlanan saat
+            try:
+                # ⚠️ ŞEMA: saatler vardiya_ATAMA'da tutulur (slot'ta değil) ve gece
+                # vardiyasında bitiş <= başlangıç olur → +24 saat düzeltmesi şart.
+                # Kanonik desen gorev_api:313-317'den birebir alındı; kendi SQL'imi
+                # yazsaydım gece vardiyalarını EKSİ saat sayacaktı.
+                cur.execute(
+                    """SELECT COALESCE(SUM(EXTRACT(EPOCH FROM (
+                              CASE WHEN va.bitis_saat <= va.baslangic_saat
+                                   THEN (va.bitis_saat::time + INTERVAL '24h') - va.baslangic_saat::time
+                                   ELSE va.bitis_saat::time - va.baslangic_saat::time END
+                          ))/3600.0), 0)::float AS s
+                       FROM vardiya_atama va
+                       WHERE va.personel_id = %s AND va.tarih BETWEEN %s AND %s
+                         AND va.durum IN ('planli','onayli')""",
+                    (p["id"], bas, bugun),
+                )
+                saat = float((cur.fetchone() or {}).get("s") or 0)
+                if saat > 0:
+                    kaynak = "vardiya_atama"
+            except Exception:  # noqa: BLE001
+                saat = 0.0
+            # Atama yoksa maaş zinciriyle aynı fallback (dönem = bu pencere)
+            if saat <= 0 and _ms is not None:
+                try:
+                    _s, _k = _ms.sabit_mesai_saati(cur, dict(p), bugun.year, bugun.month)
+                    saat, kaynak = _s, _k
+                except Exception:  # noqa: BLE001
+                    saat, kaynak = 0.0, "hesaplanamadi"
+            if saat <= 0:
+                continue
+            toplam_saat += saat
+            if "varsayilan" in str(kaynak):
+                varsayimli_saat += saat
+            kisi_satir.append({
+                "ad_soyad": p["ad_soyad"],
+                "calisma_turu": p["calisma_turu"],
+                "saat": round(saat, 1),
+                "saat_kaynagi": kaynak,
+            })
+
+        # Personel maliyeti (dönem bordrosu — tahakkuk)
+        cur.execute(
+            """SELECT COALESCE(SUM(hesaplanan_net),0)::float AS t
+               FROM personel_aylik WHERE yil=%s AND ay=%s""",
+            (bugun.year, bugun.month),
+        )
+        personel_maliyet = float((cur.fetchone() or {}).get("t") or 0)
+
+    ciro_saat = (ciro / toplam_saat) if toplam_saat > 0 else None
+    return {
+        "gun": gun,
+        "uretildi": str(bugun),
+        "ciro_tl": round(ciro, 2),
+        "cirolu_gun": cirolu_gun,
+        "toplam_adam_saat": round(toplam_saat, 1),
+        "kisi_sayisi": len(kisi_satir),
+        "ciro_per_adam_saat": round(ciro_saat, 2) if ciro_saat is not None else None,
+        "personel_maliyet_tl": round(personel_maliyet, 2),
+        "personel_ciro_orani_pct": round(personel_maliyet / ciro * 100, 1) if ciro > 0 else None,
+        "varsayim_pct": round(varsayimli_saat / toplam_saat * 100, 1) if toplam_saat > 0 else None,
+        "kisiler": sorted(kisi_satir, key=lambda x: -x["saat"]),
+        "not": "Adam-saat kaynağı maaş zinciriyle aynı sırayı izler: vardiya ataması → "
+               "sabit tanım → 9,5 sa/gün varsayımı. Varsayım payı yüksekse sayı yönelim "
+               "gösterir, kesin ölçüm değildir (öneri-only).",
+    }
+
+
 @router.get("/maliyet/basabas")
 def ops_maliyet_basabas(gun: int = Query(30, ge=7, le=90)):
     """BAŞABAŞ NOKTASI — "günde kaç ₺ satarsam zarar etmem?"
