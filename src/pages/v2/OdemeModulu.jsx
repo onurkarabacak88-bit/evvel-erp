@@ -1044,6 +1044,69 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
           );
         })()}
 
+        {/* 🗂 TEK ALAN — "maaştan kredi kartına hepsini tek alanda topla" (sahip
+            2026-08-08). Kokpitin grup kırılımı: her kalem tam olarak BİR gruba
+            düşer, grupların toplamı 30 günlük çıkışa EŞİTTİR (kayıp kalem olmaz).
+            Bloklar tıklanabilir — aşağıdaki kuyruğu o türe süzer. */}
+        {Array.isArray(kokpit?.gruplar) && kokpit.gruplar.length > 0 && (() => {
+          // Grup kodu → kuyruktaki `tip` etiketi (süzgeç bu alan üzerinden çalışır)
+          const GRUP_TIP = {
+            maas: 'Personel Ödemesi', tedarikci: 'Vadeli Alım',
+            sabit: 'Sabit Gider', kredi: 'Borç Taksiti', kart: 'Kredi Kartı',
+          };
+          const toplam = kokpit.gruplar.reduce((a, g) => a + sayi(g.tutar), 0);
+          return (
+            <div style={{ ...kartYuzey, padding: '12px 16px', marginBottom: 12 }}>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 10 }}>
+                <span style={{ fontSize: 12.5, fontWeight: 700, color: R.krem }}>
+                  🗂 30 günlük çıkış — tek alanda
+                </span>
+                <span style={{ fontFamily: F.mono, fontSize: 15, fontWeight: 700, color: R.bakir }}>
+                  {fmt(toplam)}
+                </span>
+                <span style={{ fontSize: 11, color: R.not2 }}>
+                  maaş dahil · kısmi ödenenler kalanıyla sayılır
+                </span>
+              </div>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {kokpit.gruplar.map((g) => {
+                  const tip = GRUP_TIP[g.kod];
+                  const secili = tip && turFiltre === tip;
+                  const gecTl = sayi(g.gecikmis_tutar);
+                  return (
+                    <div
+                      key={g.kod}
+                      onClick={() => tip && setTurFiltre(secili ? '' : tip)}
+                      title={tip ? (secili ? 'Süzgeci kaldır' : `Yalnız ${tip} göster`) : undefined}
+                      style={{
+                        flex: '1 1 160px', minWidth: 150, padding: '9px 11px', borderRadius: 10,
+                        cursor: tip ? 'pointer' : 'default',
+                        background: secili ? 'rgba(210,154,91,.16)' : R.girinti,
+                        border: `1px solid ${secili ? R.bakir : (gecTl > 0 ? R.kirmizi : R.cizgi)}`,
+                        borderLeftWidth: 3,
+                      }}
+                    >
+                      <div style={{ fontSize: 11.5, color: R.metin2, marginBottom: 3 }}>{g.ad}</div>
+                      <div style={{ fontFamily: F.mono, fontSize: 15, fontWeight: 700, color: R.krem }}>
+                        {fmt(sayi(g.tutar))}
+                      </div>
+                      <div style={{ fontSize: 10.5, color: R.not2, marginTop: 2 }}>
+                        {g.adet} kalem · %{trSayi(g.pay_yuzde)}
+                        {g.kismi_odenmis > 0 && ` · ${g.kismi_odenmis} kısmi`}
+                      </div>
+                      {gecTl > 0 && (
+                        <div style={{ fontSize: 10.5, color: R.kirmizi, marginTop: 3, fontWeight: 600 }}>
+                          ⚠ {g.gecikmis_adet} gecikmiş · {fmt(gecTl)}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })()}
+
         {/* VERGİ YÜKÜ — planda borç değil ama yaklaşan gerçek çıkış */}
         {(() => {
           const satirlar = Array.isArray(vergi?.takvim) ? vergi.takvim : [];
