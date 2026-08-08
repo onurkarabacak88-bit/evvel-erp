@@ -18,8 +18,10 @@ Kaldırmak: main.py'den router'ı çıkar + urun-sevk'teki tek tetik satırını
 from __future__ import annotations
 
 import logging
+import re
 import threading
 import uuid
+from datetime import date, timedelta
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
@@ -467,6 +469,180 @@ def belge_talep_tutar_tazele(sadece_bos: int = 1):
         conn.commit()
     return {"guncellenen": guncellenen, "kalemsiz_atlanan": atlanan, "hata": hata,
             "toplam_bakilan": len(satirlar), "sadece_bos": bool(sadece_bos)}
+
+
+def _ad_norm(s: Optional[str]) -> str:
+    """Tedarikçi adı normalizasyonu — Türkçe katlama + gürültü kelime atma."""
+    t = (s or "").lower()
+    for a, b in (("ı", "i"), ("ğ", "g"), ("ü", "u"), ("ş", "s"), ("ö", "o"), ("ç", "c"), ("â", "a")):
+        t = t.replace(a, b)
+    t = re.sub(r"[^a-z0-9 ]+", " ", t)
+    # Unvan/gürültü kelimeleri: eşleşmeyi bozar ("ATALAY KAHVE" ↔ "MEHMET ATALAY")
+    cop = {"ltd", "sti", "as", "anonim", "sirketi", "sirket", "ticaret", "tic", "sanayi",
+           "san", "ve", "gida", "kahve", "limited", "sirketi", "enerji", "yatirim", "market"}
+    return " ".join(w for w in t.split() if w and w not in cop and len(w) > 2)
+
+
+@router.get("/gecmis-eslestir")
+def belge_talep_gecmis_eslestir(gun: int = 120):
+    """GEÇMİŞE DÖNÜK FATURA ↔ TESLİMAT TARAMASI.
+
+    Sahip (2026-08-08): "geçmişe yönelik de bir tarama ile arama yapması lazım."
+
+    Fatura sisteme girmiş olabilir ama hangi teslimata ait olduğu yazılmamıştır
+    (şube fotoğrafı ayrı kanaldan, merkez PDF'i ayrı kanaldan geldi). Canlı örnek:
+    açık teslimat "ATALAY KAHVE 25.07" dururken arşivde "MEHMET ATALAY 01.08
+    8.261,80 ₺" faturası bağsız bekliyordu.
+
+    İKİ SEVİYE:
+      · KESİN  — fatura.siparis_talep_id = belge_talep.talep_id (aynı siparişten
+                 doğmuş; başka kanıt gerekmez)
+      · ADAY   — tedarikçi adı normalize eşleşmesi + tarih yakınlığı (±30 gün)
+                 (+ beklenen tutar varsa yakınlık puanı)
+
+    HÜKÜM YOK: hiçbir bağ otomatik kurulmaz. Liste döner, sahip onaylar
+    (POST /belge-talep/{id}/fatura-bagla).
+    """
+    bugun = date.today()
+    with db() as (_c, cur):
+        _ensure(cur)
+        cur.execute(
+            """SELECT id, ts_id, talep_id, tedarikci_ad, sube_adi,
+                      teslim_tarihi::text AS tarih,
+                      beklenen_tutar_tl::float AS beklenen,
+                      GREATEST(0,(CURRENT_DATE - COALESCE(teslim_tarihi, olusturma::date)))::int AS yas
+               FROM belge_talep
+               WHERE durum = 'bekliyor' AND fatura_id IS NULL
+               ORDER BY teslim_tarihi DESC NULLS LAST"""
+        )
+        teslimatlar = [dict(r) for r in (cur.fetchall() or [])]
+
+        # Henüz bir teslimata bağlanmamış faturalar
+        cur.execute(
+            """SELECT tf.id, tf.tedarikci_ad, tf.fatura_tarih::text AS tarih,
+                      COALESCE(tf.toplam_tutar,0)::float AS tutar,
+                      tf.siparis_talep_id, tf.durum
+               FROM tedarikci_fatura tf
+               WHERE COALESCE(tf.fatura_tarih, tf.olusturma::date) >= %s
+                 AND NOT EXISTS (SELECT 1 FROM belge_talep b WHERE b.fatura_id = tf.id)
+               ORDER BY tf.fatura_tarih DESC NULLS LAST""",
+            (bugun - timedelta(days=gun),),
+        )
+        faturalar = [dict(r) for r in (cur.fetchall() or [])]
+
+    kesin, aday = [], []
+    for t in teslimatlar:
+        t_norm = _ad_norm(t.get("tedarikci_ad"))
+        t_kel = set(t_norm.split())
+        t_tar = t.get("tarih")
+        for f in faturalar:
+            # 1) KESİN: aynı sipariş talebinden doğmuş
+            if t.get("talep_id") and f.get("siparis_talep_id") and \
+               str(t["talep_id"]) == str(f["siparis_talep_id"]):
+                kesin.append({
+                    "belge_talep_id": t["id"], "fatura_id": f["id"],
+                    "tedarikci_teslimat": t.get("tedarikci_ad"), "tedarikci_fatura": f.get("tedarikci_ad"),
+                    "teslim_tarihi": t_tar, "fatura_tarihi": f.get("tarih"),
+                    "beklenen_tl": t.get("beklenen"), "fatura_tl": f.get("tutar"),
+                    "gerekce": "Aynı sipariş talebinden doğmuş (siparis_talep_id eşleşiyor)",
+                    "ne_yapmali": "Bağla — başka kanıt gerekmez",
+                })
+                continue
+            # 2) ADAY: ad + tarih (+ tutar)
+            f_kel = set(_ad_norm(f.get("tedarikci_ad")).split())
+            ortak = t_kel & f_kel
+            if not ortak:
+                continue
+            gun_fark = None
+            if t_tar and f.get("tarih"):
+                try:
+                    gun_fark = abs((date.fromisoformat(f["tarih"][:10]) - date.fromisoformat(t_tar[:10])).days)
+                except Exception:  # noqa: BLE001
+                    gun_fark = None
+            if gun_fark is not None and gun_fark > 30:
+                continue
+            bek, ftl = float(t.get("beklenen") or 0), float(f.get("tutar") or 0)
+            tutar_fark = round(ftl - bek, 2) if (bek and ftl) else None
+            # Güven: ortak kelime + tarih yakınlığı + tutar yakınlığı
+            puan = len(ortak) * 2
+            if gun_fark is not None and gun_fark <= 7:
+                puan += 2
+            if tutar_fark is not None and bek and abs(tutar_fark) <= bek * 0.05:
+                puan += 3
+            aday.append({
+                "belge_talep_id": t["id"], "fatura_id": f["id"],
+                "tedarikci_teslimat": t.get("tedarikci_ad"), "tedarikci_fatura": f.get("tedarikci_ad"),
+                "sube_adi": t.get("sube_adi"), "teslim_yas_gun": t.get("yas"),
+                "teslim_tarihi": t_tar, "fatura_tarihi": f.get("tarih"),
+                "beklenen_tl": t.get("beklenen"), "fatura_tl": f.get("tutar"),
+                "tutar_fark_tl": tutar_fark, "gun_fark": gun_fark,
+                "ortak_kelime": sorted(ortak), "puan": puan,
+                "guven": "yüksek" if puan >= 6 else ("orta" if puan >= 4 else "düşük"),
+                "gerekce": f"Ad ortak: {', '.join(sorted(ortak))}"
+                           + (f" · {gun_fark} gün fark" if gun_fark is not None else "")
+                           + (f" · tutar farkı {tutar_fark:+.2f} ₺" if tutar_fark is not None else ""),
+                "ne_yapmali": "Aynı belge mi? Öyleyse bağla; değilse yok say",
+            })
+    aday.sort(key=lambda x: (-x["puan"], x.get("gun_fark") or 99))
+    return {
+        "uretildi": str(bugun), "pencere_gun": gun,
+        "acik_teslimat_adet": len(teslimatlar),
+        "bagsiz_fatura_adet": len(faturalar),
+        "kesin_eslesme": kesin,
+        "aday_eslesme": aday[:60],
+        "not": "Hiçbir bağ OTOMATİK kurulmaz. Kesin eşleşme aynı sipariş talebinden "
+               "doğmuş olmaya dayanır; aday eşleşme ad+tarih(+tutar) benzerliğidir. "
+               "Onay: POST /belge-talep/{id}/fatura-bagla?fatura_id=…",
+    }
+
+
+class FaturaBaglaBody(BaseModel):
+    fatura_id: str
+
+
+@router.post("/{talep_id}/fatura-bagla")
+def belge_talep_fatura_bagla(talep_id: str, body: FaturaBaglaBody):
+    """Var olan bir faturayı açık teslimata BAĞLAR (dosya yüklemeden).
+
+    Geçmişe dönük taramanın onay adımı. Yükleme akışıyla AYNI sonucu üretir:
+    fatura_id damgası + durum 'pdf_geldi' + gerçek tutar + beklenen'e göre fark.
+    Yeni fatura kaydı OLUŞTURMAZ — yalnız bağ kurar (mükerrer fatura riski yok).
+    """
+    tid = (talep_id or "").strip()
+    fid = (body.fatura_id or "").strip()
+    if not tid or not fid:
+        raise HTTPException(400, "talep_id ve fatura_id zorunlu")
+    with db() as (conn, cur):
+        _ensure(cur)
+        cur.execute("SELECT id, fatura_id, beklenen_tutar_tl FROM belge_talep WHERE id=%s", (tid,))
+        bt = cur.fetchone()
+        if not bt:
+            raise HTTPException(404, "Belge talep bulunamadı")
+        bt = dict(bt)
+        if bt.get("fatura_id"):
+            raise HTTPException(409, "Bu teslimatın belgesi zaten bağlı.")
+        cur.execute("SELECT id, COALESCE(toplam_tutar,0)::float AS tutar FROM tedarikci_fatura WHERE id=%s", (fid,))
+        f = cur.fetchone()
+        if not f:
+            raise HTTPException(404, "Fatura bulunamadı")
+        f = dict(f)
+        cur.execute("SELECT 1 FROM belge_talep WHERE fatura_id=%s", (fid,))
+        if cur.fetchone():
+            raise HTTPException(409, "Bu fatura başka bir teslimata bağlı.")
+        ftl = float(f.get("tutar") or 0) or None
+        cur.execute(
+            """UPDATE belge_talep
+               SET durum='pdf_geldi', kapanma_ts=NOW(), fatura_id=%s, kapanis_tipi='fatura',
+                   fatura_tutar_tl = COALESCE(%s, fatura_tutar_tl),
+                   tutar_fark_tl = CASE WHEN %s IS NOT NULL AND beklenen_tutar_tl IS NOT NULL
+                                        THEN %s - beklenen_tutar_tl ELSE tutar_fark_tl END
+               WHERE id=%s""",
+            (fid, ftl, ftl, ftl, tid),
+        )
+        conn.commit()
+    return {"ok": True, "belge_talep_id": tid, "fatura_id": fid,
+            "fatura_tutar_tl": ftl,
+            "beklenen_tutar_tl": float(bt.get("beklenen_tutar_tl") or 0) or None}
 
 
 @router.get("/acik-teslimat")
