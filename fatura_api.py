@@ -3248,16 +3248,24 @@ def temizlik_mukerrer_plan(kuru: int = 1):
             idler = list(g["idler"] or [])
             asil, fazlalar = idler[0], idler[1:]
             for fid in fazlalar:
-                # PARA İZİ: bu plan satırına bağlı kasa veya kart hareketi var mı?
+                # PARA İZİ — ÜÇ ANAHTARDAN (2026-08-08 ders: tek anahtara bakınca
+                # "0 riskli" çıkıyordu, oysa ödeme kaydı üç farklı yere düşebiliyor):
+                #   · kasa_hareketleri.kaynak_id = plan_id  (normal nakit ödeme)
+                #   · kasa_hareketleri.ref_id    = plan_id  (vadeli ödeme — kaynak
+                #     vadeli_alimlar'a bağlanır, plan_id ref_id'ye yazılır)
+                #   · kart_hareketleri.id = 'odm_<plan_id>' (kart ODEME kaydı)
                 cur.execute(
                     """SELECT COUNT(*)::int AS n FROM (
                          SELECT 1 FROM kasa_hareketleri
-                         WHERE kaynak_tablo='odeme_plani' AND kaynak_id=%s
-                           AND COALESCE(durum,'aktif')='aktif'
+                         WHERE COALESCE(durum,'aktif')='aktif'
+                           AND ((kaynak_tablo='odeme_plani' AND kaynak_id=%s)
+                                OR ref_id=%s)
                          UNION ALL
                          SELECT 1 FROM kart_hareketleri
-                         WHERE kaynak_tablo='odeme_plani' AND kaynak_id=%s
-                           AND COALESCE(durum,'aktif')='aktif') x""", (fid, fid))
+                         WHERE COALESCE(durum,'aktif')='aktif'
+                           AND ((kaynak_tablo='odeme_plani' AND kaynak_id=%s)
+                                OR id=%s)) x""",
+                    (fid, fid, fid, f"odm_{fid}"))
                 iz = int((cur.fetchone() or {}).get("n") or 0)
                 kayit = {"plan_id": fid, "asil_kalan": asil, "tarih": g["tarih"],
                          "tutar": g["tutar"], "aciklama": (g["aciklama"] or "")[:60],
@@ -3305,15 +3313,17 @@ def temizlik_odenen_tutar(kuru: int = 1):
         )
         for r in (cur.fetchall() or []):
             p = dict(r)
+            # İz araması üç anahtardan (kasa.kaynak_id · kasa.ref_id · kart 'odm_')
             cur.execute(
                 """SELECT COALESCE(SUM(ABS(tutar)),0)::float AS t FROM (
                      SELECT tutar FROM kasa_hareketleri
-                     WHERE kaynak_tablo='odeme_plani' AND kaynak_id=%s
-                       AND COALESCE(durum,'aktif')='aktif'
+                     WHERE COALESCE(durum,'aktif')='aktif'
+                       AND ((kaynak_tablo='odeme_plani' AND kaynak_id=%s) OR ref_id=%s)
                      UNION ALL
                      SELECT tutar FROM kart_hareketleri
-                     WHERE kaynak_tablo='odeme_plani' AND kaynak_id=%s
-                       AND COALESCE(durum,'aktif')='aktif') x""", (p["id"], p["id"]))
+                     WHERE COALESCE(durum,'aktif')='aktif'
+                       AND ((kaynak_tablo='odeme_plani' AND kaynak_id=%s) OR id=%s)) x""",
+                (p["id"], p["id"], p["id"], f"odm_{p['id']}"))
             iz_tutar = round(float((cur.fetchone() or {}).get("t") or 0), 2)
             if iz_tutar > 0.01:
                 yazilacak.append({**p, "kasa_izi": iz_tutar})
