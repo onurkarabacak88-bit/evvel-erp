@@ -147,8 +147,30 @@ def odeme_plani_bugun(gun: int = 0, personel: int = 1):
     return out
 
 
+# ── 🗂 TÜR GRUPLARI — "maaştan kredi kartına hepsi tek alanda" (sahip 2026-08-08).
+# Ödeme kuyruğundaki her satır tam olarak BİR gruba düşer; gruplar toplamı
+# kuyruk toplamına eşittir (kayıp kalem olmaz).
+GRUP_AD = {
+    "personel": ("👤 Maaş & Personel", "maas"),
+    "vadeli_alimlar": ("🚚 Tedarikçi", "tedarikci"),
+    "sabit_giderler": ("🏠 Sabit Gider", "sabit"),
+    "borc_envanteri": ("🏦 Kredi Taksiti", "kredi"),
+    "kartlar": ("💳 Kredi Kartı", "kart"),
+}
+
+
+def _grup_coz(kaynak_tablo, kart_id):
+    """Satırın grubu: kaynak tablosu → grup; kaynağı yoksa kartlıysa kart."""
+    kt = (kaynak_tablo or "").strip()
+    if kt in GRUP_AD:
+        return GRUP_AD[kt]
+    if kart_id:
+        return GRUP_AD["kartlar"]
+    return ("📄 Diğer", "diger")
+
+
 @router.get("/api/odeme-plani/kokpit")
-def odeme_plani_kokpit(personel: int = 0):
+def odeme_plani_kokpit(personel: int = 1):
     """💸 NAKİT KOKPİTİ (2026-07-19, sahip 'adam akıllı ele alalım'; Codex çaprazlı).
     SALT-OKUR karar bağlamı: kasa bakiyesi + gecikmiş + 7/30 gün zorunlu çıkış +
     gün gün 'en düşük beklenen bakiye' (≈ projected floor — ciro tahminli, kesinlik
@@ -160,8 +182,15 @@ def odeme_plani_kokpit(personel: int = 0):
     bugun = bugun_tr()
     with db() as (conn, cur):
         kasa = float(kasa_bakiyesi(cur) or 0)
+        # 💰 KALAN borç = ödenecek − ödenen (kısmi ödeme desteği, 2026-08-08).
+        # Eskiden odenecek_tutar okunuyordu; kısmi ödenmiş satır tam tutarıyla
+        # sayılıp nakit projeksiyonunu olduğundan kötü gösteriyordu.
         cur.execute(
-            """SELECT tarih, COALESCE(odenecek_tutar,0)::float AS tutar, kaynak_tablo
+            """SELECT tarih,
+                      GREATEST(0, COALESCE(odenecek_tutar,0) - COALESCE(odenen_tutar,0))::float
+                          AS tutar,
+                      COALESCE(odenen_tutar,0)::float AS odenen,
+                      kaynak_tablo, kart_id
                FROM odeme_plani
                WHERE durum = 'bekliyor' AND tarih <= %s""",
             (bugun + timedelta(days=30),))
@@ -190,12 +219,33 @@ def odeme_plani_kokpit(personel: int = 0):
         seri.append({"tarih": str(t), "bakiye": round(bakiye, 2)})
         if bakiye < en_dusuk:
             en_dusuk, en_dusuk_gun = bakiye, t
+    # ── 🗂 TEK ALANDA KIRILIM: maaştan kredi kartına her tür, tek tabloda.
+    # Gruplar toplamı cikis_30'a eşittir — hiçbir kalem kaybolmaz.
+    gruplar: dict = {}
+    for r in rows:
+        ad, kod = _grup_coz(r.get("kaynak_tablo"), r.get("kart_id"))
+        g = gruplar.setdefault(kod, {"kod": kod, "ad": ad, "adet": 0, "tutar": 0.0,
+                                     "gecikmis_adet": 0, "gecikmis_tutar": 0.0,
+                                     "kismi_odenmis": 0})
+        g["adet"] += 1
+        g["tutar"] = round(g["tutar"] + r["tutar"], 2)
+        if float(r.get("odenen") or 0) > 0.01:
+            g["kismi_odenmis"] += 1
+        if r["tarih"] < bugun:
+            g["gecikmis_adet"] += 1
+            g["gecikmis_tutar"] = round(g["gecikmis_tutar"] + r["tutar"], 2)
+    grup_listesi = sorted(gruplar.values(), key=lambda x: -x["tutar"])
+    for g in grup_listesi:
+        g["pay_yuzde"] = (round(g["tutar"] / cikis_30 * 100, 1) if cikis_30 > 0 else 0.0)
+
     return {
         "kasa": round(kasa, 2),
         "gecikmis_toplam": gecikmis_t,
         "gecikmis_adet": len(gecikmis),
         "cikis_7": cikis_7,
         "cikis_30": cikis_30,
+        "gruplar": grup_listesi,
+        "maas_dahil": bool(personel),
         "ciro_gunluk_tahmin": round(tahmin, 2),
         "en_dusuk_bakiye": round(en_dusuk, 2),
         "en_dusuk_tarih": str(en_dusuk_gun),
