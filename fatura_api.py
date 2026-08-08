@@ -3449,6 +3449,64 @@ def kasa_izi_genis_arama():
     }
 
 
+@router.post("/temizlik/eski-fatura-arsivle")
+def temizlik_eski_fatura_arsivle(esik: str = "2026-07-01", kuru: int = 1):
+    """📜 Eşikten ÖNCEKİ faturaları arşive alır — sistem borç olarak GÖRMESİN.
+
+    Sahip (2026-08-08): "faturalar temmuzdan önceyse izini kaybet, sistem
+    görmesin!"
+
+    'İZİNİ KAYBET' = ARŞİV DAMGASI, silme DEĞİL. Belge VUK 5 yıl / TTK 10 yıl
+    saklanmak zorunda; kayıt yerinde durur, 'gör' dendiğinde açılır. Damga
+    yalnız şunu söyler: bu fatura borç kuyruğuna GİRMEZ, ödeme planı ÜRETMEZ,
+    "neden borç listemde yok?" listesinde belirsiz olarak DURMAZ.
+
+    Bu faturaların borcu zaten AÇILIŞ DEVRİNDE sayılıdır (sahip beyanı) —
+    kuyruğa da alınsalardı aynı borç İKİ KEZ görünürdü.
+
+    ⚠️ Cari ekstre penceresi ayrı bir eşiktir (EVVEL_SISTEM_BASLANGIC); bu uç
+    ONA DOKUNMAZ. Yani fatura cari hareket defterinde görünmeye devam edebilir;
+    değişen şey borç kuyruğudur.
+    """
+    try:
+        _e = date.fromisoformat(esik[:10])
+    except Exception:  # noqa: BLE001
+        raise HTTPException(400, "esik formatı YYYY-AA-GG olmalı")
+    with db() as (conn, cur):
+        _ensure_tablolar(cur)
+        cur.execute(
+            """SELECT id, tedarikci_ad, fatura_no, fatura_tarih::text AS ftarih,
+                      COALESCE(toplam_tutar,0)::float AS tutar,
+                      COALESCE(kuyruk_vadeli_id,'') AS kv
+               FROM tedarikci_fatura
+               WHERE COALESCE(durum,'') <> 'kopya'
+                 AND COALESCE(fatura_tarih, olusturma::date) < %s
+               ORDER BY fatura_tarih DESC NULLS LAST""", (_e,))
+        tum = [dict(r) for r in (cur.fetchall() or [])]
+        # Zaten arşivli / kuyruğa bağlı olanlara dokunma
+        hedef = [f for f in tum if f["kv"] == ""]
+        bagli = [f for f in tum if f["kv"] not in ("", "(arsiv)")]
+        if not kuru and hedef:
+            cur.execute(
+                "UPDATE tedarikci_fatura SET kuyruk_vadeli_id='(arsiv)' WHERE id = ANY(%s)",
+                ([f["id"] for f in hedef],))
+            conn.commit()
+    return {
+        "kuru_calistirma": bool(kuru), "esik": str(_e),
+        "esik_oncesi_fatura": len(tum),
+        "arsivlenecek": len(hedef),
+        "arsivlenecek_tutar": round(sum(f["tutar"] for f in hedef), 2),
+        "zaten_kuyrukta_dokunulmaz": len(bagli),
+        "kuyruktaki_tutar": round(sum(f["tutar"] for f in bagli), 2),
+        "ornekler": [{"tedarikci": f.get("tedarikci_ad"), "tarih": f.get("ftarih"),
+                      "tutar": f["tutar"], "fatura_no": f.get("fatura_no")}
+                     for f in hedef[:25]],
+        "not": "Damga = borç kuyruğundan çıkarma. Belge SİLİNMEZ, arşivde durur "
+               "(VUK 5 yıl / TTK 10 yıl). Borcu açılış devrinde zaten sayılı. "
+               "Kuyruğa bağlı faturalara DOKUNULMAZ. Uygulamak için ?kuru=0",
+    }
+
+
 @router.post("/temizlik/kuyruk-retro-tarama")
 def temizlik_kuyruk_retro(kuru: int = 1, limit: int = 300):
     """🔄 Motorun HİÇ dokunmadığı faturaları kuyruk motorundan geçirir.
