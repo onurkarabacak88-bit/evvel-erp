@@ -1384,6 +1384,11 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
       sonFatura: t.son_fatura,
       enYakinVade: t.en_yakin_vade,
       izVar: !!t.odeme_izi_var,
+      // 📦 GRNI — teslim alındı, fatura gelmedi (bakiyeye dahil DEĞİL)
+      grniTl: sayi(t.faturasiz_teslimat_tl),
+      grniAdet: sayi(t.faturasiz_teslimat_adet),
+      gercek: Math.max(0, sayi(t.gercek_borc)),
+      yalnizTeslimat: !!t.yalniz_teslimat,
       _ham: t,
     }));
     const kritik = ted.filter(t => t.enYakinVade && String(t.enYakinVade).slice(0, 10) <= isoEkle(bugun, 3));
@@ -1393,6 +1398,13 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
         <KpiSeridi kpiler={[
           { etiket: 'Aktif tedarikçi', deger: String(ted.length), alt: `${kritik.length} kritik (3 gün içinde)` },
           { etiket: 'Toplam açık bakiye', deger: fmt(sayi(cari?.toplam_hesaplanan_acik)), alt: 'hesaplanan · ödeme izi düşülmüş', renk: R.kirmizi },
+          {
+            etiket: 'Faturasız teslimat',
+            deger: fmt(sayi(cari?.toplam_faturasiz_teslimat)),
+            alt: `${sayi(cari?.faturasiz_teslimat_adet)} teslimat · mal alındı, fatura yok`,
+            renk: sayi(cari?.toplam_faturasiz_teslimat) > 0 ? R.amber : R.not,
+          },
+          { etiket: 'GERÇEK BORÇ', deger: fmt(sayi(cari?.toplam_gercek_borc)), alt: 'açık bakiye + faturasız teslimat', renk: R.bakir },
           { etiket: 'Bekleyen vade sözü', deger: fmt(sayi(cari?.toplam_bekleyen_vade)), alt: 'ödeme kuyruğunda', renk: R.amber },
           { etiket: 'En büyük hacim', deger: enBuyuk ? enBuyuk.ad : '—', alt: enBuyuk ? `6 ay ${fmt(enBuyuk.hacim)}` : '—', renk: R.krem },
         ]} />
@@ -1401,7 +1413,9 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
             baslik="Tedarikçi bakiyesi"
             not="satıra tıkla → dosya + borç öde"
             kolonlar={[
-              { ad: 'Tedarikçi' }, { ad: 'Açık bakiye', sag: true }, { ad: 'Beyan', sag: true },
+              { ad: 'Tedarikçi' }, { ad: 'Açık bakiye', sag: true },
+              { ad: '📦 Faturasız', sag: true }, { ad: 'GERÇEK BORÇ', sag: true },
+              { ad: 'Beyan', sag: true },
               { ad: 'Fark', sag: true }, { ad: 'Kuyrukta', sag: true }, { ad: '6 ay hacim', sag: true }, { ad: 'Durum' },
             ]}
             satirlar={ted.map(t => {
@@ -1411,13 +1425,26 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
                 hucreler: [
                   { v: t.ad, kalin: true },
                   { v: fmt(t.acik), mono: true, sag: true, kalin: true, renk: t.acik > 0 ? R.kirmizi : R.not },
+                  // 📦 Teslim alındı ama faturası gelmedi — bakiyede YOK, borç GERÇEK
+                  {
+                    v: t.grniTl > 0 ? fmt(t.grniTl) : '—', mono: true, sag: true,
+                    renk: t.grniTl > 0 ? R.amber : R.not,
+                  },
+                  {
+                    v: fmt(t.gercek), mono: true, sag: true, kalin: true,
+                    renk: t.grniTl > 0 ? R.bakir : (t.gercek > 0 ? R.kirmizi : R.not),
+                  },
                   { v: t.beyan == null ? '—' : fmt(t.beyan), mono: true, sag: true },
                   { v: t.fark == null ? '—' : fmt(t.fark), mono: true, sag: true, renk: uyumsuz ? R.amber : R.not },
                   { v: fmt(t.kuyruk), mono: true, sag: true },
                   { v: fmt(t.hacim), mono: true, sag: true },
                   {
-                    v: uyumsuz ? 'mutabakat farkı' : !t.izVar && t.acik > 0 ? 'ödeme izi yok' : 'normal',
-                    rozet: uyumsuz ? R.amber : !t.izVar && t.acik > 0 ? R.kirmizi : R.yesil,
+                    v: t.yalnizTeslimat ? '📦 faturası hiç gelmedi'
+                      : uyumsuz ? 'mutabakat farkı'
+                        : t.grniTl > 0 ? '📦 faturasız teslimat var'
+                          : !t.izVar && t.acik > 0 ? 'ödeme izi yok' : 'normal',
+                    rozet: t.yalnizTeslimat || t.grniTl > 0 ? R.amber
+                      : uyumsuz ? R.amber : !t.izVar && t.acik > 0 ? R.kirmizi : R.yesil,
                   },
                 ],
               };
