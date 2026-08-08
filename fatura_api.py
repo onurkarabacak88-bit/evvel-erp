@@ -622,15 +622,17 @@ def _fatura_kuyruk_uret(fatura_id: str) -> str:
             tut = float(f["tutar"])
             cur.execute(
                 """SELECT * FROM (
-                     SELECT vade_tarihi AS t, tutar,
+                     SELECT 'vadeli_alimlar' AS kanal, id::text AS iz_id,
+                            vade_tarihi AS t, tutar,
                             COALESCE(aciklama,'') || ' ' || COALESCE(tedarikci,'') AS metin
                      FROM vadeli_alimlar WHERE durum='odendi'
                      UNION ALL
-                     SELECT tarih, tutar,
+                     SELECT 'anlik_giderler', id::text, tarih, tutar,
                             COALESCE(aciklama,'') || ' ' || COALESCE(tedarikci,'')
                      FROM anlik_giderler WHERE durum='aktif' AND kaynak_id IS NULL
                      UNION ALL
-                     SELECT tarih, tutar, COALESCE(aciklama,'')
+                     SELECT 'kart_hareketleri', id::text, tarih, tutar,
+                            COALESCE(aciklama,'')
                      FROM kart_hareketleri
                      WHERE islem_turu='HARCAMA' AND durum='aktif'
                        AND kaynak_id IS NULL
@@ -643,8 +645,20 @@ def _fatura_kuyruk_uret(fatura_id: str) -> str:
             _eslesen = next((i for i in _izler
                              if _odeme_eslesir(ted, i.get("metin") or "")), None)
             if _eslesen:
-                cur.execute("UPDATE tedarikci_fatura SET kuyruk_vadeli_id='(odenmis)' "
-                            "WHERE id=%s", (fatura_id,))
+                # 🔗 BAĞI KAYDET (2026-08-08): eskiden yalnız '(odenmis)' damgası
+                # basılıyordu, HANGİ ödemeyle eşleştiği yazılmıyordu. Sonuç: fatura
+                # ile ödeme arasındaki zincir kopuyor, vergi tarafında "belgesiz"
+                # görünüyordu (DYK'nın 147.176 ₺ bardak alımı böyleydi).
+                cur.execute(
+                    "ALTER TABLE tedarikci_fatura ADD COLUMN IF NOT EXISTS odeme_iz_tablo TEXT")
+                cur.execute(
+                    "ALTER TABLE tedarikci_fatura ADD COLUMN IF NOT EXISTS odeme_iz_id TEXT")
+                cur.execute(
+                    """UPDATE tedarikci_fatura
+                         SET kuyruk_vadeli_id='(odenmis)',
+                             odeme_iz_tablo=%s, odeme_iz_id=%s
+                       WHERE id=%s""",
+                    (_eslesen.get("kanal"), str(_eslesen.get("iz_id") or ""), fatura_id))
                 return "zaten_odenmis"
             # VADE ÖNCELİĞİ: PDF'teki Vade Tarihi > fatura tarihi+7g > bugün+7g
             vade = _fatura_vade_regex(f.get("kaynak_metin") or "")
@@ -2342,6 +2356,84 @@ _KDV_KATEGORI = {
 _KDV_VARSAYILAN = 0.20
 
 
+@router.post("/odeme-iz-bagi-tazele")
+def odeme_iz_bagi_tazele(kuru: int = 1):
+    """🔗 '(odenmis)' damgalı faturaların HANGİ ödemeyle eşleştiğini geriye dönük yazar.
+
+    Eski motor damgayı basıyor ama bağı kaydetmiyordu; zincir kopuk kaldığı için
+    vergi tarafında bu harcamalar "belgesiz" görünüyordu. Bu uç aynı eşleştirmeyi
+    (tedarikçi adı + tutar ±%2 + tarih −10/+90) tekrar kurar ve bağı yazar.
+
+    kuru=1 → ne bulunacağını gösterir, yazmaz.
+    """
+    yazilacak, bulunamayan = [], []
+    with db() as (conn, cur):
+        cur.execute("ALTER TABLE tedarikci_fatura ADD COLUMN IF NOT EXISTS odeme_iz_tablo TEXT")
+        cur.execute("ALTER TABLE tedarikci_fatura ADD COLUMN IF NOT EXISTS odeme_iz_id TEXT")
+        conn.commit()
+        cur.execute(
+            """SELECT id, tedarikci_ad, fatura_no, fatura_tarih::text AS ftarih,
+                      COALESCE(toplam_tutar,0)::float AS tutar
+               FROM tedarikci_fatura
+               WHERE kuyruk_vadeli_id='(odenmis)'
+                 AND (odeme_iz_id IS NULL OR odeme_iz_id='')
+                 AND COALESCE(durum,'') <> 'kopya'"""
+        )
+        hedef = [dict(r) for r in (cur.fetchall() or [])]
+        for f in hedef:
+            tut = float(f.get("tutar") or 0)
+            ftarih = (f.get("ftarih") or "")[:10] or date.today().isoformat()
+            ted = (f.get("tedarikci_ad") or "").strip()
+            cur.execute(
+                """SELECT * FROM (
+                     SELECT 'vadeli_alimlar' AS kanal, id::text AS iz_id, vade_tarihi AS t,
+                            tutar, COALESCE(aciklama,'')||' '||COALESCE(tedarikci,'') AS metin
+                     FROM vadeli_alimlar WHERE durum='odendi'
+                     UNION ALL
+                     SELECT 'anlik_giderler', id::text, tarih, tutar,
+                            COALESCE(aciklama,'')||' '||COALESCE(tedarikci,'')
+                     FROM anlik_giderler WHERE durum='aktif'
+                     UNION ALL
+                     SELECT 'kart_hareketleri', id::text, tarih, tutar, COALESCE(aciklama,'')
+                     FROM kart_hareketleri
+                     WHERE islem_turu='HARCAMA' AND durum='aktif'
+                       AND COALESCE(harcama_tipi,'belirsiz') <> 'sahsi') x
+                   WHERE ABS(x.tutar - %s) <= GREATEST(5, %s * 0.02)
+                     AND x.t BETWEEN %s::date - 10 AND %s::date + 90
+                   ORDER BY x.t LIMIT 20""",
+                (tut, tut, ftarih, ftarih))
+            izler = [dict(x) for x in (cur.fetchall() or [])]
+            es = next((i for i in izler if _odeme_eslesir(ted, i.get("metin") or "")), None)
+            if not es:
+                bulunamayan.append({"fatura_id": f["id"], "tedarikci": ted,
+                                    "tutar": tut, "tarih": f.get("ftarih"),
+                                    "neden": "Tedarikçiyle eşleşen ödeme izi bulunamadı — "
+                                             "damga şüpheli (odenmis-sayilan-denetimi'ne bak)"})
+                continue
+            kayit = {"fatura_id": f["id"], "tedarikci": ted, "tutar": tut,
+                     "fatura_no": f.get("fatura_no"),
+                     "iz_kanal": es["kanal"], "iz_id": str(es["iz_id"]),
+                     "iz_tarih": str(es["t"]), "iz_tutar": float(es["tutar"] or 0),
+                     "iz_metin": (es.get("metin") or "")[:70]}
+            yazilacak.append(kayit)
+            if not kuru:
+                cur.execute(
+                    "UPDATE tedarikci_fatura SET odeme_iz_tablo=%s, odeme_iz_id=%s WHERE id=%s",
+                    (es["kanal"], str(es["iz_id"]), f["id"]))
+        if not kuru:
+            conn.commit()
+    return {
+        "kuru_calistirma": bool(kuru),
+        "bagsiz_damgali_fatura": len(hedef),
+        "bag_kurulabilir": len(yazilacak),
+        "iz_bulunamayan": len(bulunamayan),
+        "baglanacak_tutar": round(sum(y["tutar"] for y in yazilacak), 2),
+        "baglar": yazilacak[:40], "bulunamayanlar": bulunamayan[:20],
+        "not": "Bu bağ vergi tarafında 'belgeli' saymanın EN GÜÇLÜ kanıtıdır: "
+               "harcamanın faturası kayıtlı demektir. Uygulamak için ?kuru=0.",
+    }
+
+
 @router.get("/kart-vergi-etkisi")
 def kart_vergi_etkisi(gun: int = 365, kurumlar_orani: float = 0.25):
     """🧾 İşletme kart harcamalarının VERGİ etkisi — faturası var mı, yok mu?
@@ -2407,6 +2499,19 @@ def kart_vergi_etkisi(gun: int = 365, kurumlar_orani: float = 0.25):
             fisli = {str(r["id"]) for r in (cur.fetchall() or [])}
         except Exception:  # noqa: BLE001
             pass
+        # 4) DOĞRUDAN BAĞ: fatura hangi ödeme iziyle eşleşti (odeme_iz_tablo/id).
+        # En güçlü kanıt — "bu harcamanın faturası şu" demek. Diğer kanallar
+        # dolaylıydı; bu bağ kurulunca zincir kopukluğu kalmaz.
+        iz_bagi: Dict[str, set] = {"kart_hareketleri": set(), "vadeli_alimlar": set(),
+                                   "anlik_giderler": set()}
+        try:
+            cur.execute(
+                """SELECT odeme_iz_tablo, odeme_iz_id FROM tedarikci_fatura
+                   WHERE odeme_iz_id IS NOT NULL AND odeme_iz_id <> ''""")
+            for r in (cur.fetchall() or []):
+                iz_bagi.setdefault(r["odeme_iz_tablo"], set()).add(str(r["odeme_iz_id"]))
+        except Exception as e:  # noqa: BLE001 — kolon henüz yoksa sessiz geç
+            logger.info("odeme_iz bagi okunamadi (kolon yeni olabilir): %s", str(e)[:90])
 
     kova = {k: {"adet": 0, "tutar": 0.0, "kdv": 0.0, "matrah": 0.0}
             for k in ("belgeli", "belgesiz", "belirsiz", "sahsi")}
@@ -2420,7 +2525,11 @@ def kart_vergi_etkisi(gun: int = 365, kurumlar_orani: float = 0.25):
         b = belge.get(str(h["id"]))
         kt, ki = h.get("kaynak_tablo") or "", str(h.get("kaynak_id") or "")
         dayanak = None
-        if b and (b.get("durum") in ("fatura_geldi", "kapandi") or b.get("eslesen_fatura_id")):
+        if str(h["id"]) in iz_bagi.get("kart_hareketleri", set()):
+            dayanak = "doğrudan bağ: bu kart çekiminin faturası kayıtlı"
+        elif kt and ki and ki in iz_bagi.get(kt, set()):
+            dayanak = f"doğrudan bağ: {kt} kaydının faturası kayıtlı"
+        elif b and (b.get("durum") in ("fatura_geldi", "kapandi") or b.get("eslesen_fatura_id")):
             dayanak = "fatura_istek kuyruğu kapandı"
         elif kt == "vadeli_alimlar" and ki in vadeli_faturali:
             dayanak = "zincir: kart → vadeli alım → fatura"
