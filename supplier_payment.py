@@ -68,10 +68,164 @@ def _norm(s: Optional[str]) -> str:
     return "".join(c for c in s if not unicodedata.combining(c)).strip()
 
 
+def supplier_payment_sync_v2(cur) -> Dict[str, Any]:
+    """🎯 KANONİK ÖDEME KATMANI v2 — cari hesabın TAM AYNI süzgeçleriyle (2026-08-08).
+
+    NEDEN v2: v1 ile cari hesap arasında canlıda 656.760 ₺ fark ölçüldü (kanonik
+    katman 1.108.106 ₺, cari 451.345 ₺; 0 tedarikçide eşitlik). Sebepleri:
+      1. Aynı ödemeyi İKİ KEZ alıyordu (hem kart hem eşlenik anlık gider satırı)
+      2. Sistem başlangıcı çizgisini tanımıyordu (devirde sayılı ödemeler tekrar)
+      3. Basit substring araması — marka tokeni / kişi adı kuralı / jenerik eleme yok
+      4. vadeli_alimlar kanalını HİÇ okumuyordu
+    Bu katman cari hesabın yerine geçecekse ONUNLA AYNI GERÇEĞİ üretmelidir;
+    yoksa iki ayrı doğruluk olur. v2 dört kusuru da kapatır.
+
+    ÜÇ KANAL — cari_ekstre ile birebir aynı süzgeçler:
+      · vadeli_alimlar  : durum='odendi'
+      · anlik_giderler  : durum='aktif' AND kaynak_id IS NULL
+      · kart_hareketleri: HARCAMA + aktif + (kaynak_id IS NULL OR
+                          kaynak_tablo='ekstre_import') + harcama_tipi<>'sahsi'
+    Hepsinde tarih >= EVVEL_SISTEM_BASLANGIC.
+
+    DAMGA ÖNCELİĞİ: kart satırında cari_tedarikci damgası varsa ad eşleşmesi
+    ARANMAZ (sahibin kararı konuşur); '(ilgisiz)' damgası satırı tümden eler.
+
+    İDEMPOTENT: UNIQUE(kaynak_tablo, kaynak_id) + ON CONFLICT DO NOTHING.
+    """
+    _ensure_tablo(cur)
+    try:
+        cur.execute("ALTER TABLE supplier_payment_event ADD COLUMN IF NOT EXISTS surum INT DEFAULT 1")
+        cur.execute("ALTER TABLE supplier_payment_event ADD COLUMN IF NOT EXISTS gecersiz BOOLEAN DEFAULT FALSE")
+    except Exception:  # noqa: BLE001
+        pass
+    from fatura_api import (_odeme_eslesir, _cari_katla, EVVEL_SISTEM_BASLANGIC,
+                            tedarikci_eslestirme_haritasi)
+
+    # ── TEDARİKÇİ EVRENİ: cari hesabın gördüğü adlar (fatura + kanonik harita)
+    adlar: List[str] = []
+    try:
+        cur.execute("""SELECT DISTINCT tedarikci_ad FROM tedarikci_fatura
+                       WHERE COALESCE(tedarikci_ad,'') <> ''
+                         AND COALESCE(durum,'') <> 'kopya'""")
+        adlar = [r["tedarikci_ad"] for r in (cur.fetchall() or [])]
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        for _k, _v in (tedarikci_eslestirme_haritasi() or {}).items():
+            kisa = (_v or {}).get("kisa")
+            if kisa and kisa not in adlar:
+                adlar.append(kisa)
+    except Exception:  # noqa: BLE001
+        pass
+    # Kanonik kısa ada indir (aynı tedarikçinin iki yazımı tek olay üretmesin)
+    _harita = {}
+    try:
+        _harita = tedarikci_eslestirme_haritasi() or {}
+    except Exception:  # noqa: BLE001
+        pass
+
+    def _kanonik_ad(ad: str) -> str:
+        return ((_harita.get((ad or "").strip().upper()) or {}).get("kisa") or ad).strip()
+
+    def _eslestir(metin: Optional[str]) -> Optional[str]:
+        for a in adlar:
+            if _odeme_eslesir(a, metin or ""):
+                return _kanonik_ad(a)
+        return None
+
+    def _ekle(ted_ad, tutar, tarih, kaynak, ktablo, kid, aciklama, yontem, guven) -> int:
+        cur.execute(
+            """INSERT INTO supplier_payment_event
+                 (tedarikci_id, tedarikci_ad, tutar, tarih, kaynak, kaynak_tablo,
+                  kaynak_id, confidence, eslesme_yontemi, aciklama, surum, gecersiz)
+               VALUES (NULL,%s,%s,%s,%s,%s,%s,%s,%s,%s,2,FALSE)
+               ON CONFLICT (kaynak_tablo, kaynak_id) DO NOTHING""",
+            (ted_ad, tutar, tarih, kaynak, ktablo, kid, guven, yontem, aciklama))
+        return cur.rowcount or 0
+
+    eklenen, taranan = 0, {"vadeli": 0, "nakit": 0, "kart": 0}
+    B = EVVEL_SISTEM_BASLANGIC
+
+    # ── 1) VADELİ ALIM (ödenmiş sözler) — v1'de HİÇ YOKTU
+    try:
+        cur.execute("SAVEPOINT sp_v")
+        cur.execute(
+            """SELECT id, vade_tarihi AS tarih, tutar,
+                      COALESCE(tedarikci,'') || ' ' || COALESCE(aciklama,'') AS metin
+               FROM vadeli_alimlar
+               WHERE durum='odendi' AND vade_tarihi >= %s::date""", (B,))
+        for r in [dict(x) for x in (cur.fetchall() or [])]:
+            taranan["vadeli"] += 1
+            ted = _eslestir(r["metin"])
+            if ted:
+                eklenen += _ekle(ted, r["tutar"], r["tarih"], "vadeli",
+                                 "vadeli_alimlar", r["id"], r["metin"][:200],
+                                 "marka_token", 0.7)
+        cur.execute("RELEASE SAVEPOINT sp_v")
+    except Exception as e:  # noqa: BLE001
+        cur.execute("ROLLBACK TO SAVEPOINT sp_v"); cur.execute("RELEASE SAVEPOINT sp_v")
+        logger.warning("spe v2 vadeli hata: %s", str(e)[:140])
+
+    # ── 2) NAKİT (anlık gider) — kaynak_id IS NULL şartı v1'de YOKTU
+    try:
+        cur.execute("SAVEPOINT sp_n")
+        cur.execute(
+            """SELECT id, tarih, tutar,
+                      COALESCE(tedarikci,'') || ' ' || COALESCE(aciklama,'') AS metin
+               FROM anlik_giderler
+               WHERE COALESCE(durum,'aktif')='aktif' AND kaynak_id IS NULL
+                 AND tarih >= %s::date""", (B,))
+        for r in [dict(x) for x in (cur.fetchall() or [])]:
+            taranan["nakit"] += 1
+            ted = _eslestir(r["metin"])
+            if ted:
+                eklenen += _ekle(ted, r["tutar"], r["tarih"], "nakit",
+                                 "anlik_giderler", r["id"], r["metin"][:200],
+                                 "marka_token", 0.6)
+        cur.execute("RELEASE SAVEPOINT sp_n")
+    except Exception as e:  # noqa: BLE001
+        cur.execute("ROLLBACK TO SAVEPOINT sp_n"); cur.execute("RELEASE SAVEPOINT sp_n")
+        logger.warning("spe v2 nakit hata: %s", str(e)[:140])
+
+    # ── 3) KART — sistem üretimi satırlar ELENİR, damga önceliklidir
+    try:
+        cur.execute("SAVEPOINT sp_k")
+        cur.execute(
+            """SELECT id, tarih, tutar, COALESCE(aciklama,'') AS metin, cari_tedarikci
+               FROM kart_hareketleri
+               WHERE islem_turu='HARCAMA' AND COALESCE(durum,'aktif')='aktif'
+                 AND (kaynak_id IS NULL OR COALESCE(kaynak_tablo,'')='ekstre_import')
+                 AND COALESCE(harcama_tipi,'belirsiz') <> 'sahsi'
+                 AND tarih >= %s::date""", (B,))
+        for r in [dict(x) for x in (cur.fetchall() or [])]:
+            taranan["kart"] += 1
+            damga = (r.get("cari_tedarikci") or "").strip()
+            if damga == "(ilgisiz)":
+                continue                      # sahip "bizim ödememiz değil" dedi
+            if damga:
+                ted, yontem, guven = _kanonik_ad(damga), "sahip_damgasi", 1.0
+            else:
+                ted, yontem, guven = _eslestir(r["metin"]), "marka_token", 0.6
+            if ted:
+                eklenen += _ekle(ted, r["tutar"], r["tarih"], "kart",
+                                 "kart_hareketleri", r["id"], r["metin"][:200],
+                                 yontem, guven)
+        cur.execute("RELEASE SAVEPOINT sp_k")
+    except Exception as e:  # noqa: BLE001
+        cur.execute("ROLLBACK TO SAVEPOINT sp_k"); cur.execute("RELEASE SAVEPOINT sp_k")
+        logger.warning("spe v2 kart hata: %s", str(e)[:140])
+
+    return {"surum": 2, "eklenen": eklenen, "taranan": taranan,
+            "tedarikci_evreni": len(adlar)}
+
+
 def supplier_payment_sync(cur) -> Dict[str, Any]:
-    """Kart (HARCAMA) + nakit (anlik_gider) ödemelerini tedarikçi adıyla eşleştirip
-    supplier_payment_event'e yazar. İDEMPOTENT (re-run güvenli). ALARM YOK.
-    Eşleşmeyen ödeme atlanır (tedarikçiye ödeme olduğu belli değil)."""
+    """v1 — ESKİ MANTIK, ARTIK ÇAĞRILMIYOR (2026-08-08).
+
+    Cari hesapla 656.760 ₺ fark ürettiği ölçüldüğü için devre dışı; yerine
+    supplier_payment_sync_v2 geçti. Kod silinmedi (karşılaştırma/geri dönüş
+    için durur) ama gece zinciri v2'yi çağırır.
+    """
     _ensure_tablo(cur)
 
     # Tedarikçi adları (≥3 harf normalize — kısa/gürültülü eşleşme engellenir)
@@ -153,11 +307,55 @@ def supplier_payment_sync(cur) -> Dict[str, Any]:
 
 @router.post("/sync")
 def sp_sync():
-    """Geçmiş + yeni kart/nakit ödemelerini olay katmanına akıt (idempotent, alarmsız)."""
+    """Ödemeleri olay katmanına akıt — v2 mantığı (idempotent, alarmsız)."""
     with db() as (conn, cur):
-        out = supplier_payment_sync(cur)
+        out = supplier_payment_sync_v2(cur)
         conn.commit()
     return out
+
+
+@router.post("/yeniden-kur")
+def sp_yeniden_kur(kuru: int = 1):
+    """♻️ Katmanı v2 mantığıyla YENİDEN İNŞA eder — v1 satırları geçersiz kılınır.
+
+    v1 ile cari hesap arasında 656.760 ₺ fark ölçüldü (aynı ödemeyi iki kez
+    sayma, devir çizgisi tanımama, ilkel metin araması, vadeli kanalı eksik).
+    Bu uç v1 satırlarını SİLMEZ — `gecersiz=TRUE` damgalar (doktrin: hiçbir
+    kayıt silinmez) ve v2 mantığıyla yeniden doldurur.
+
+    kuru=1 → yalnız sayar. kuru=0 → uygular.
+    """
+    with db() as (conn, cur):
+        _ensure_tablo(cur)
+        try:
+            cur.execute("ALTER TABLE supplier_payment_event ADD COLUMN IF NOT EXISTS surum INT DEFAULT 1")
+            cur.execute("ALTER TABLE supplier_payment_event ADD COLUMN IF NOT EXISTS gecersiz BOOLEAN DEFAULT FALSE")
+            conn.commit()
+        except Exception:  # noqa: BLE001
+            pass
+        cur.execute("""SELECT COUNT(*)::int AS n, COALESCE(SUM(tutar),0)::float AS t
+                       FROM supplier_payment_event
+                       WHERE COALESCE(surum,1)=1 AND NOT COALESCE(gecersiz,FALSE)""")
+        v1 = dict(cur.fetchone() or {})
+        if kuru:
+            return {"kuru_calistirma": True, "gecersiz_kilinacak_v1": v1,
+                    "not": "v1 satırları SİLİNMEZ, gecersiz=TRUE damgalanır. "
+                           "Uygulamak için ?kuru=0"}
+        # v1'i geçersiz kıl — UNIQUE(kaynak_tablo,kaynak_id) çakışmasın diye
+        # kaynak anahtarını da nötrle (aynı kaynak v2'de yeniden akabilsin)
+        cur.execute("""UPDATE supplier_payment_event
+                          SET gecersiz=TRUE,
+                              kaynak_tablo = kaynak_tablo || '#v1',
+                              aciklama = COALESCE(aciklama,'') || ' [v1 — geçersiz kılındı]'
+                        WHERE COALESCE(surum,1)=1 AND NOT COALESCE(gecersiz,FALSE)""")
+        gecersiz = cur.rowcount
+        conn.commit()
+        yeni = supplier_payment_sync_v2(cur)
+        conn.commit()
+    return {"kuru_calistirma": False, "gecersiz_kilinan_v1": gecersiz,
+            "v1_ozet": v1, "v2_sonuc": yeni,
+            "not": "v1 kayıtları arşivde duruyor (gecersiz=TRUE, kaynak_tablo'ya "
+                   "'#v1' eklendi). Kıyas için: GET /api/fatura/odeme-katmani-kiyas"}
 
 
 @router.get("/durum")

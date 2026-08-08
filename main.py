@@ -448,7 +448,7 @@ def _gece_yarisi_scheduler():
             # Her gece — tedarikçi ödeme olay katmanını besle (DUYU duysun, alarm YOK).
             # İdempotent; yeni kart/nakit ödemeleri supplier_payment_event'e akar.
             try:
-                from supplier_payment import supplier_payment_sync
+                from supplier_payment import supplier_payment_sync_v2 as supplier_payment_sync
                 with db() as (conn, cur):
                     _sp = supplier_payment_sync(cur)
                     conn.commit()

@@ -4294,8 +4294,10 @@ def odeme_katmani_kiyas():
                                   COUNT(DISTINCT tedarikci_ad)::int AS tedarikci,
                                   MIN(tarih)::text AS ilk, MAX(tarih)::text AS son,
                                   COUNT(*) FILTER (WHERE kaynak='kart')::int AS kart,
-                                  COUNT(*) FILTER (WHERE kaynak='nakit')::int AS nakit
-                           FROM supplier_payment_event""")
+                                  COUNT(*) FILTER (WHERE kaynak='nakit')::int AS nakit,
+                                  COUNT(*) FILTER (WHERE kaynak='vadeli')::int AS vadeli
+                           FROM supplier_payment_event
+                           WHERE NOT COALESCE(gecersiz,FALSE)""")
             katman = dict(cur.fetchone() or {})
         except Exception as e:  # noqa: BLE001
             return {"hata": "supplier_payment_event okunamadı (tablo hiç doldurulmamış olabilir)",
@@ -4303,12 +4305,14 @@ def odeme_katmani_kiyas():
         # Tedarikçi bazlı kanonik toplam
         cur.execute("""SELECT tedarikci_ad, COALESCE(SUM(tutar),0)::float AS toplam,
                               COUNT(*)::int AS adet
-                       FROM supplier_payment_event GROUP BY 1""")
+                       FROM supplier_payment_event
+                       WHERE NOT COALESCE(gecersiz,FALSE) GROUP BY 1""")
         kanonik = {(_cari_katla(r["tedarikci_ad"] or "")): dict(r)
                    for r in (cur.fetchall() or [])}
         # Kanonik katmanda sistem üretimi satır var mı? (çift sayım riski)
         cur.execute("""SELECT COUNT(*)::int AS n FROM supplier_payment_event e
-                       WHERE e.kaynak_tablo='kart_hareketleri' AND EXISTS (
+                       WHERE NOT COALESCE(e.gecersiz,FALSE)
+                         AND e.kaynak_tablo='kart_hareketleri' AND EXISTS (
                          SELECT 1 FROM kart_hareketleri h
                          WHERE h.id=e.kaynak_id AND h.kaynak_id IS NOT NULL
                            AND COALESCE(h.kaynak_tablo,'') <> 'ekstre_import')""")
