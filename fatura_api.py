@@ -3310,6 +3310,101 @@ def temizlik_mukerrer_plan(kuru: int = 1):
     }
 
 
+@router.get("/kasa-izi-genis-arama")
+def kasa_izi_genis_arama():
+    """🔎 'Ödendi' damgalı ama izsiz görünen satırların izini HER ANAHTARLA arar.
+
+    Sahip (2026-08-08): "kasa izi bulamıyor olman — kira ödemelerinde kasa izi
+    bırakıp bırakmadıklarını kontrol et!"
+
+    Dar arama (kaynak_tablo='odeme_plani') iz bulamadı. Ama ödeme kasaya BAŞKA
+    anahtarla da yazılmış olabilir. Bu uç 5 yolu ayrı ayrı dener ve HANGİ yolun
+    tuttuğunu söyler — hüküm yok, sadece gerçek.
+
+    Yollar:
+      A) kasa.kaynak_tablo='odeme_plani' AND kaynak_id=plan_id
+      B) kasa.ref_id = plan_id
+      C) kasa.kaynak_tablo=plan.kaynak_tablo AND kaynak_id=plan.kaynak_id
+         (sabit_giderler + gider_id — 2026-07-05 FIX O1 deseni)
+      D) kart.kaynak/'odm_' anahtarları
+      E) SERBEST: aynı ay + aynı tutar (±5 ₺) herhangi bir kasa çıkışı
+    """
+    sonuc, ozet = [], {"A": 0, "B": 0, "C": 0, "D": 0, "E": 0, "HIC": 0}
+    with db() as (_c, cur):
+        cur.execute(
+            """SELECT id, LEFT(COALESCE(aciklama,''),56) AS aciklama, tarih::text AS tarih,
+                      odenecek_tutar::float AS borc, COALESCE(kaynak_tablo,'') AS kt,
+                      kaynak_id AS ki
+               FROM odeme_plani
+               WHERE durum='odendi' AND COALESCE(odenen_tutar,0) <= 0.01
+                 AND COALESCE(aciklama,'') NOT ILIKE '%%kart%%'
+               ORDER BY odenecek_tutar DESC"""
+        )
+        for r in (cur.fetchall() or []):
+            p = dict(r)
+            pid, borc = str(p["id"]), float(p["borc"] or 0)
+            bulgu = {"yol": None, "tutar": 0.0, "detay": None}
+
+            def _tek(sql, params, yol, aciklama):
+                if bulgu["yol"]:
+                    return
+                cur.execute(sql, params)
+                row = cur.fetchone()
+                if row and float(row.get("t") or 0) > 0.01:
+                    bulgu.update({"yol": yol, "tutar": round(float(row["t"]), 2),
+                                  "detay": aciklama})
+
+            _tek("""SELECT COALESCE(SUM(ABS(tutar)),0)::float AS t FROM kasa_hareketleri
+                    WHERE kaynak_tablo='odeme_plani' AND kaynak_id=%s
+                      AND COALESCE(durum,'aktif')='aktif'""",
+                 (pid,), "A", "kasa: kaynak_tablo=odeme_plani")
+            _tek("""SELECT COALESCE(SUM(ABS(tutar)),0)::float AS t FROM kasa_hareketleri
+                    WHERE ref_id=%s AND COALESCE(durum,'aktif')='aktif'""",
+                 (pid,), "B", "kasa: ref_id=plan_id")
+            if p["kt"] and p["ki"]:
+                _tek("""SELECT COALESCE(SUM(ABS(tutar)),0)::float AS t FROM kasa_hareketleri
+                        WHERE kaynak_tablo=%s AND kaynak_id=%s
+                          AND COALESCE(durum,'aktif')='aktif'
+                          AND DATE_TRUNC('month',tarih)=DATE_TRUNC('month',%s::date)""",
+                     (p["kt"], str(p["ki"]), p["tarih"]), "C",
+                     f"kasa: kaynak_tablo={p['kt']} (aynı ay)")
+            _tek("""SELECT COALESCE(SUM(ABS(tutar)),0)::float AS t FROM kart_hareketleri
+                    WHERE COALESCE(durum,'aktif')='aktif'
+                      AND ((kaynak_tablo='odeme_plani' AND kaynak_id=%s) OR id=%s)""",
+                 (pid, f"odm_{pid}"), "D", "kart hareketi")
+            _tek("""SELECT COALESCE(SUM(ABS(tutar)),0)::float AS t FROM kasa_hareketleri
+                    WHERE COALESCE(durum,'aktif')='aktif' AND kasa_etkisi=TRUE
+                      AND ABS(ABS(tutar) - %s) <= GREATEST(5, %s*0.01)
+                      AND DATE_TRUNC('month',tarih)=DATE_TRUNC('month',%s::date)""",
+                 (borc, borc, p["tarih"]), "E",
+                 "SERBEST: aynı ay + aynı tutar kasa çıkışı (kesin değil)")
+
+            yol = bulgu["yol"] or "HIC"
+            ozet[yol] = ozet.get(yol, 0) + 1
+            sonuc.append({
+                "plan_id": pid, "aciklama": p["aciklama"], "tarih": p["tarih"],
+                "borc": round(borc, 2), "kaynak_tablo": p["kt"],
+                "bulundu_yol": yol, "bulunan_tutar": bulgu["tutar"],
+                "detay": bulgu["detay"] or "Hiçbir anahtarla kasa/kart izi bulunamadı",
+            })
+    kesin = [s for s in sonuc if s["bulundu_yol"] in ("A", "B", "C", "D")]
+    serbest = [s for s in sonuc if s["bulundu_yol"] == "E"]
+    hic = [s for s in sonuc if s["bulundu_yol"] == "HIC"]
+    return {
+        "incelenen": len(sonuc), "yol_dagilimi": ozet,
+        "kesin_iz_bulundu": {"adet": len(kesin),
+                             "tutar": round(sum(s["borc"] for s in kesin), 2)},
+        "serbest_eslesme": {"adet": len(serbest),
+                            "tutar": round(sum(s["borc"] for s in serbest), 2),
+                            "uyari": "Aynı ay + aynı tutar — KESİN DEĞİL, sahip doğrulamalı"},
+        "hic_iz_yok": {"adet": len(hic), "tutar": round(sum(s["borc"] for s in hic), 2),
+                       "ne_demek": "Bu satırlar için ödeme yapıldığına dair HİÇBİR kayıt yok"},
+        "satirlar": sonuc,
+        "not": "Hüküm YOK. 'C' yolu tutarsa ödeme kasaya kaynak tablosuyla yazılmış "
+               "demektir (FIX O1 deseni) — dar arama onu kaçırıyordu.",
+    }
+
+
 @router.post("/temizlik/odenen-tutar-tamamla")
 def temizlik_odenen_tutar(kuru: int = 1):
     """'odendi' damgalı ama odenen_tutar boş satırlarda tutarı KASA İZİNDEN tamamlar.
