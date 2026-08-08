@@ -3238,7 +3238,7 @@ def para_zinciri_rontgen():
         FROM odeme_plani
         WHERE COALESCE(durum,'') <> 'iptal'
         GROUP BY 1,2 HAVING COUNT(*) > 1
-        ORDER BY odenecek_tutar * COUNT(*) DESC LIMIT 20""", tekil=False)
+        ORDER BY MAX(odenecek_tutar) * COUNT(*) DESC LIMIT 20""", tekil=False)
     _sor("kayip_borc_dokumu", """
         SELECT LEFT(COALESCE(aciklama,'?'),52) AS aciklama, tarih::text AS tarih,
                odenecek_tutar::float AS borc,
