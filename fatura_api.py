@@ -2276,6 +2276,92 @@ def belge_sinifi_ozet():
     }
 
 
+@router.get("/para-zinciri-rontgen")
+def para_zinciri_rontgen():
+    """🩻 FATURA → BORÇ → ÖDEME → CARİ zinciri canlıda GERÇEKTE ne yapıyor?
+
+    Sahip sorusu (2026-08-08): "bu faturalar vadeli borçlarda birikiyor mu,
+    ödeme yapılınca düşüyor mu, kartla ödenmişse kapatabiliyor mu, bazen borcun
+    bir kısmını bırakırız — bunlar nasıl kurulacak?"
+
+    Bu uç HÜKÜM VERMEZ, ham veri toplar (duyu ilkesi). Her ölçüm bağımsız
+    try içinde — biri patlarsa diğerleri yaşar.
+    """
+    r: Dict[str, Any] = {"olculdu": date.today().isoformat()}
+
+    def _sor(ad, sql, tekil=True):
+        try:
+            with db() as (_c, cur):
+                _ensure_cari_odeme_tablolar(cur)
+                cur.execute(sql)
+                v = cur.fetchall() or []
+                r[ad] = (dict(v[0]) if v else {}) if tekil else [dict(x) for x in v]
+        except Exception as e:  # noqa: BLE001
+            r[ad] = {"hata": str(e)[:160]}
+
+    # 1) FIFO cari ödeme motoru HİÇ kullanıldı mı?
+    _sor("cari_odeme_kullanimi", """
+        SELECT COUNT(*)::int AS odeme_adet,
+               COALESCE(SUM(tutar),0)::float AS odeme_toplam,
+               COUNT(*) FILTER (WHERE belgesiz)::int AS belgesiz_adet,
+               MIN(tarih)::text AS ilk, MAX(tarih)::text AS son
+        FROM cari_odeme""")
+    _sor("tahsis_defteri", """
+        SELECT COUNT(*)::int AS satir,
+               COUNT(DISTINCT odeme_id)::int AS odeme,
+               COUNT(DISTINCT fatura_id)::int AS kapatilan_fatura,
+               COALESCE(SUM(kapatilan),0)::float AS kapatilan_toplam,
+               COUNT(*) FILTER (WHERE NOT otomatik)::int AS elle_dagitim
+        FROM cari_odeme_tahsis""")
+
+    # 2) Vadeli alım kuyruğu — KISMİ ödeme kolonu YOK, sadece durum var
+    _sor("vadeli_alimlar", """
+        SELECT durum, COUNT(*)::int AS adet, COALESCE(SUM(tutar),0)::float AS toplam
+        FROM vadeli_alimlar GROUP BY durum ORDER BY 3 DESC""", tekil=False)
+
+    # 3) Ödeme planı — kısmi ödeme GERÇEKTEN kullanılıyor mu?
+    _sor("odeme_plani_kismi", """
+        SELECT COUNT(*)::int AS toplam_satir,
+               COUNT(*) FILTER (WHERE durum='odendi')::int AS odendi,
+               COUNT(*) FILTER (WHERE durum='odendi'
+                    AND COALESCE(odenen_tutar,0) < odenecek_tutar - 0.01)::int AS eksik_odenmis,
+               COUNT(*) FILTER (WHERE durum='bekliyor'
+                    AND COALESCE(odenen_tutar,0) > 0.01)::int AS kismi_odenmis_bekliyor,
+               COALESCE(SUM(odenecek_tutar) FILTER (WHERE durum='bekliyor'),0)::float AS bekleyen_tutar,
+               COALESCE(SUM(COALESCE(odenen_tutar,0)) FILTER (WHERE durum='bekliyor'),0)::float AS bekleyende_odenmis
+        FROM odeme_plani""")
+
+    # 4) Fatura ↔ borç kuyruğu bağı: kaç fatura borca dönüşmüş?
+    _sor("fatura_kuyruk_bagi", """
+        SELECT COUNT(*)::int AS fatura,
+               COUNT(*) FILTER (WHERE kuyruk_vadeli_id IS NOT NULL
+                                AND kuyruk_vadeli_id <> '(arsiv)')::int AS borca_donmus,
+               COUNT(*) FILTER (WHERE kuyruk_vadeli_id = '(arsiv)')::int AS arsiv,
+               COUNT(*) FILTER (WHERE kuyruk_vadeli_id IS NULL)::int AS kuyruga_hic_girmemis,
+               COALESCE(SUM(toplam_tutar) FILTER (WHERE kuyruk_vadeli_id IS NULL),0)::float
+                   AS kuyruksuz_tutar
+        FROM tedarikci_fatura WHERE COALESCE(durum,'') <> 'kopya'""")
+
+    # 5) Kart hareketlerinde tedarikçiye giden ödemeler (ekstre dahil)
+    _sor("kart_odeme_izi", """
+        SELECT COUNT(*)::int AS harcama_adet,
+               COALESCE(SUM(ABS(tutar)),0)::float AS harcama_toplam,
+               COUNT(*) FILTER (WHERE COALESCE(kaynak_tablo,'')='ekstre_import')::int AS ekstreden,
+               MIN(tarih)::text AS ilk, MAX(tarih)::text AS son
+        FROM kart_hareketleri WHERE islem_turu='HARCAMA'""")
+
+    r["okuma"] = {
+        "soru_1_birikiyor_mu": "vadeli_alimlar + fatura_kuyruk_bagi bloklarına bak",
+        "soru_2_odeyince_dusuyor_mu": "cari_odeme_kullanimi.odeme_adet=0 ise FIFO motoru hiç "
+                                      "çalışmamış; borç 'ödeme izi ARAMASI' ile tahminen düşüyor",
+        "soru_3_kismi_odeme": "vadeli_alimlar'da kısmi kolon YOK (bekliyor|odendi). "
+                              "odeme_plani.odenen_tutar var — kismi_odenmis_bekliyor bunu ölçer",
+        "soru_4_kart_kapatma": "kart_odeme_izi harcamaları görüyor ama tahsis_defteri boşsa "
+                               "hiçbir faturaya BAĞLANMAMIŞ demektir",
+    }
+    return r
+
+
 @router.get("/hizmet-fatura-cift-sayim")
 def hizmet_fatura_cift_sayim():
     """⚠️ ÇİFT SAYIM RİSKİ: aynı gider hem sabit gider planında hem borç kuyruğunda.
