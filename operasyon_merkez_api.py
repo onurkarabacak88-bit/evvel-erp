@@ -15289,7 +15289,14 @@ def ops_mutabakat_merkezi(gun: int = Query(60, ge=7, le=180)):
                    JOIN kart_hareketleri kh
                      ON kh.islem_turu = 'HARCAMA'
                     AND kh.durum = 'aktif'
-                    AND kh.kaynak_id IS NULL
+                    -- ⚠️ İlk sürümde `kh.kaynak_id IS NULL` yazmıştım → 0 eşleşme.
+                    -- Ölçüldü: 326 harcamanın 326'sında kaynak_id DOLU; 298'i
+                    -- `ekstre_import` kaynaklı. Ekstreden gelen harcama bir BORCA
+                    -- bağlı değildir — sadece "kartta şu tutar geçmiş" der. Aday
+                    -- olması gerekenler tam bunlar. Zaten bir borca bağlanmış
+                    -- olanlar (vadeli_alimlar/sabit_giderler/fatura_giderleri)
+                    -- kapsam dışı: onların eşleşmesi zaten yapılmış.
+                    AND COALESCE(kh.kaynak_tablo,'') IN ('ekstre_import','')
                     AND ABS(ABS(COALESCE(kh.tutar,0)) - COALESCE(op.odenecek_tutar,0))
                         <= GREATEST(5.0, COALESCE(op.odenecek_tutar,0) * 0.02)
                     AND kh.tarih BETWEEN op.tarih - 45 AND op.tarih + 45
