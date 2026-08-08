@@ -3449,6 +3449,95 @@ def kasa_izi_genis_arama():
     }
 
 
+@router.post("/temizlik/kart-donem-tekillestir")
+def temizlik_kart_donem(kuru: int = 1):
+    """💳 Aynı kart + aynı DÖNEM için tek plan satırı bırakır (kök neden kapatma).
+
+    Sahip (2026-08-08): "kök nedeni kapat". Kod tarafında tek yazıcı kuruldu,
+    DB emniyet ağı (partial unique index) hazır — ama GEÇMİŞTEKİ ihlaller
+    temizlenmeden index kurulamıyor.
+
+    Bir kart ekstresi dönemi (kart_id + referans_ay) için tek plan olmalıdır.
+    HANGİSİ KALIR:
+      1. 'odendi' satır varsa O kalır — para çıkmış, bilgisi kaybolmamalı
+      2. Hepsi bekliyorsa EN YENİSİ kalır — güncel ekstre odur
+    Diğerleri 'iptal' + açıklamaya denetim notu. Hiçbir satır SİLİNMEZ.
+    Uygulama sonrası tekillik indeksi kurulmayı dener.
+    """
+    islem, korunan_ozet = [], []
+    with db() as (conn, cur):
+        cur.execute(
+            """SELECT kart_id, referans_ay::text AS donem,
+                      ARRAY_AGG(id::text ORDER BY
+                          CASE WHEN durum='odendi' THEN 0 ELSE 1 END, olusturma DESC) AS idler,
+                      ARRAY_AGG(durum ORDER BY
+                          CASE WHEN durum='odendi' THEN 0 ELSE 1 END, olusturma DESC) AS durumlar,
+                      ARRAY_AGG(COALESCE(odenecek_tutar,0)::float ORDER BY
+                          CASE WHEN durum='odendi' THEN 0 ELSE 1 END, olusturma DESC) AS tutarlar,
+                      ARRAY_AGG(LEFT(COALESCE(aciklama,''),44) ORDER BY
+                          CASE WHEN durum='odendi' THEN 0 ELSE 1 END, olusturma DESC) AS aciklamalar
+               FROM odeme_plani
+               WHERE kart_id IS NOT NULL AND referans_ay IS NOT NULL
+                 AND COALESCE(durum,'') <> 'iptal'
+               GROUP BY 1,2 HAVING COUNT(*) > 1
+               ORDER BY 2"""
+        )
+        for r in (cur.fetchall() or []):
+            g = dict(r)
+            idler = list(g["idler"] or [])
+            durumlar = list(g["durumlar"] or [])
+            tutarlar = list(g["tutarlar"] or [])
+            aciklamalar = list(g["aciklamalar"] or [])
+            # Sıralama zaten 'odendi' önce, sonra en yeni → ilk eleman ASIL
+            asil = idler[0]
+            gerekce = ("'odendi' satır korundu (para çıkmış)" if durumlar[0] == "odendi"
+                       else "hepsi bekliyor — en yeni (güncel ekstre) korundu")
+            korunan_ozet.append({"kart_id": str(g["kart_id"]), "donem": g["donem"],
+                                 "korunan": asil, "durum": durumlar[0],
+                                 "tutar": tutarlar[0], "aciklama": aciklamalar[0],
+                                 "gerekce": gerekce, "grup_satir": len(idler)})
+            for i, fid in enumerate(idler[1:], start=1):
+                islem.append({"plan_id": fid, "kart_id": str(g["kart_id"]),
+                              "donem": g["donem"], "durum": durumlar[i],
+                              "tutar": tutarlar[i], "aciklama": aciklamalar[i],
+                              "asil_kalan": asil})
+                if not kuru:
+                    cur.execute(
+                        """UPDATE odeme_plani
+                             SET durum='iptal',
+                                 aciklama = LEFT(COALESCE(aciklama,'') ||
+                                     ' [DÖNEM MÜKERRERİ — asıl: ' || %s || ']', 400)
+                           WHERE id=%s""", (asil, fid))
+        index_sonuc = None
+        if not kuru:
+            conn.commit()
+            try:
+                cur.execute("SAVEPOINT sp_uniq_kur")
+                cur.execute("""
+                    CREATE UNIQUE INDEX IF NOT EXISTS ux_odeme_plani_kart_donem
+                    ON odeme_plani (kart_id, referans_ay)
+                    WHERE kart_id IS NOT NULL AND referans_ay IS NOT NULL
+                      AND durum <> 'iptal'""")
+                cur.execute("RELEASE SAVEPOINT sp_uniq_kur")
+                conn.commit()
+                index_sonuc = "✅ Tekillik indeksi kuruldu — bundan sonra mükerrer dönem AÇILAMAZ"
+            except Exception as e:  # noqa: BLE001
+                cur.execute("ROLLBACK TO SAVEPOINT sp_uniq_kur")
+                index_sonuc = f"⚠️ İndeks kurulamadı: {str(e)[:140]}"
+    return {
+        "kuru_calistirma": bool(kuru),
+        "ihlal_grubu": len(korunan_ozet),
+        "iptal_edilecek": len(islem),
+        "iptal_tutari": round(sum(x["tutar"] for x in islem), 2),
+        "korunanlar": korunan_ozet[:30],
+        "iptal_edilecekler": islem[:40],
+        "index_sonuc": index_sonuc,
+        "not": "Dönem kimliği = (kart_id, referans_ay). 'odendi' satır her zaman "
+               "korunur; hepsi bekliyorsa en yeni ekstre kalır. Satır SİLİNMEZ, "
+               "'iptal' + denetim notu. Uygulamak için ?kuru=0",
+    }
+
+
 @router.post("/temizlik/odenen-tutar-tamamla")
 def temizlik_odenen_tutar(kuru: int = 1):
     """'odendi' damgalı ama odenen_tutar boş satırlarda tutarı KASA İZİNDEN tamamlar.
