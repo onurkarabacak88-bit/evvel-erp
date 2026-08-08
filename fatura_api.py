@@ -4307,8 +4307,18 @@ def odeme_katmani_kiyas():
                               COUNT(*)::int AS adet
                        FROM supplier_payment_event
                        WHERE NOT COALESCE(gecersiz,FALSE) GROUP BY 1""")
-        kanonik = {(_cari_katla(r["tedarikci_ad"] or "")): dict(r)
-                   for r in (cur.fetchall() or [])}
+        # ⚠️ MARKA TOKENİ ile eşleştir, TAM AD ile değil (2026-08-08 ölçüm dersi):
+        # katman "FEZ KAHVE GIDA İTHALAT İHRACAT..." yazarken cari özet "FEZ"
+        # kullanıyor. Tam ad kıyaslaması ikisini AYRI sanıp "kanonik EKSİK"
+        # diyordu — katman doğru veriyi topluyordu, ölçüm aracı yanılıyordu.
+        kanonik: Dict[str, Any] = {}
+        for r in (cur.fetchall() or []):
+            _tok = _marka_token(r["tedarikci_ad"] or "") or _cari_katla(r["tedarikci_ad"] or "")
+            g = kanonik.setdefault(_tok, {"toplam": 0.0, "adet": 0, "adlar": []})
+            g["toplam"] = round(g["toplam"] + float(r["toplam"] or 0), 2)
+            g["adet"] += int(r["adet"] or 0)
+            if r["tedarikci_ad"] not in g["adlar"]:
+                g["adlar"].append(r["tedarikci_ad"])
         # Kanonik katmanda sistem üretimi satır var mı? (çift sayım riski)
         cur.execute("""SELECT COUNT(*)::int AS n FROM supplier_payment_event e
                        WHERE NOT COALESCE(e.gecersiz,FALSE)
@@ -4321,7 +4331,7 @@ def odeme_katmani_kiyas():
     for t in (ozet.get("tedarikciler") or []):
         ad = t.get("tedarikci") or ""
         mevcut = round(float(t.get("odeme_izi_toplam_6ay") or 0), 2)
-        k = kanonik.get(_cari_katla(ad)) or {}
+        k = kanonik.get(_marka_token(ad) or _cari_katla(ad)) or {}
         kan = round(float(k.get("toplam") or 0), 2)
         fark = round(kan - mevcut, 2)
         if abs(fark) > 0.5 or mevcut > 0 or kan > 0:
@@ -4329,6 +4339,7 @@ def odeme_katmani_kiyas():
                 "tedarikci": ad, "mevcut_odeme_izi": mevcut,
                 "kanonik_katman": kan, "fark": fark,
                 "kanonik_adet": int(k.get("adet") or 0),
+                "kanonik_adlar": k.get("adlar") or [],
                 "durum": ("eşit" if abs(fark) <= 0.5
                           else "kanonik FAZLA" if fark > 0 else "kanonik EKSİK"),
             })
