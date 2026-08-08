@@ -2492,6 +2492,63 @@ def belge_sinifi_ozet():
     }
 
 
+def _ensure_eslesme_karar_defteri(cur) -> None:
+    """📒 EŞLEŞME KARAR DEFTERİ — append-only (2026-08-08, Codex denetimi).
+
+    Kart izi onayı KALICI MUHASEBE ETKİSİ yaratıyor (o çekim artık şu tedarikçinin
+    borcundan düşüyor) ama kim/ne zaman/neyi/neden bağladığının kaydı yoktu ve
+    damga serbestçe üzerine yazılabiliyordu. Yasal iz açısından zayıftı.
+
+    KURAL: bu tabloya YALNIZ EKLENİR. Düzeltme yeni satırla yapılır (supersedes
+    ile önceki karara işaret eder); hiçbir satır UPDATE/DELETE edilmez.
+    kart_hareketleri.cari_tedarikci artık SON ETKİN KARARIN ÖNBELLEĞİDİR —
+    gerçek burada durur.
+    """
+    try:
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS cari_eslesme_karar (
+                id            TEXT PRIMARY KEY,
+                hareket_id    TEXT NOT NULL,
+                onceki_deger  TEXT,
+                yeni_deger    TEXT NOT NULL,
+                karar         TEXT NOT NULL,      -- bagla | reddet | geri_al
+                guven         NUMERIC(5,4),
+                dayanak       TEXT,
+                aktor         TEXT NOT NULL DEFAULT 'sahip',
+                supersedes    TEXT,
+                tutar         NUMERIC(14,2),
+                hareket_tarih DATE,
+                ts            TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )""")
+        cur.execute("CREATE INDEX IF NOT EXISTS ix_eslesme_karar_hareket "
+                    "ON cari_eslesme_karar (hareket_id, ts DESC)")
+        cur.execute("CREATE INDEX IF NOT EXISTS ix_eslesme_karar_ted "
+                    "ON cari_eslesme_karar (yeni_deger, ts DESC)")
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _karar_yaz(cur, hareket_id, onceki, yeni, karar, aktor="sahip",
+               guven=None, dayanak=None, tutar=None, hareket_tarih=None) -> str:
+    """Deftere BİR satır ekler (asla güncellemez). Dönüş: karar id'si."""
+    kid = str(uuid.uuid4())
+    try:
+        # Aynı harekete ait son karar → supersedes zinciri kurulur
+        cur.execute("""SELECT id FROM cari_eslesme_karar
+                       WHERE hareket_id=%s ORDER BY ts DESC LIMIT 1""", (hareket_id,))
+        r = cur.fetchone()
+        cur.execute(
+            """INSERT INTO cari_eslesme_karar
+                 (id, hareket_id, onceki_deger, yeni_deger, karar, guven,
+                  dayanak, aktor, supersedes, tutar, hareket_tarih)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+            (kid, str(hareket_id), onceki, yeni, karar, guven, dayanak, aktor,
+             (r["id"] if r else None), tutar, hareket_tarih))
+    except Exception as e:  # noqa: BLE001 — defter yazılamazsa işlem sürsün, ama LOGLA
+        logger.warning("eşleşme karar defteri yazılamadı (%s): %s", hareket_id, str(e)[:140])
+    return kid
+
+
 def _ensure_kart_izi_tablolar(cur) -> None:
     """Kart hareketine CARİ DAMGASI — 'bu çekim şu tedarikçinin borcuna sayılır'.
 
@@ -2942,6 +2999,8 @@ def kart_borc_izi(gun: int = 365, min_bakiye: float = 100.0):
 class KartIziOnayModel(BaseModel):
     tedarikci: str               # '(ilgisiz)' → bu çekim hiçbir cariye ait değil
     hareket_idler: list          # damgalanacak kart hareketi id'leri
+    aktor: Optional[str] = "sahip"    # kim karar verdi (sahip | sistem | gece)
+    dayanak: Optional[str] = None     # neden bağlandı (deftere yazılır)
 
 
 @router.post("/kart-izi-onayla")
@@ -2965,15 +3024,38 @@ def kart_izi_onayla(body: KartIziOnayModel):
 
     with db() as (conn, cur):
         _ensure_kart_izi_tablolar(cur)
+        _ensure_eslesme_karar_defteri(cur)
+        # 🔒 KONTRAT SIKILDI (Codex denetimi): uç TÜM harcama satırlarına açıktı.
+        # Cari okuması yalnız ham/ekstre satırlarını sayıyor; sistem üretimi bir
+        # satırı (vadeli alım, anlık gider) damgalamak sessizce etkisiz kalır ya
+        # da ileride çift sayım üretir. Artık yalnız HAM satır damgalanabilir.
+        cur.execute(
+            """SELECT id, COALESCE(cari_tedarikci,'') AS onceki,
+                      tarih::text AS tarih, ABS(COALESCE(tutar,0))::float AS tutar,
+                      LEFT(COALESCE(aciklama,''),70) AS aciklama
+               FROM kart_hareketleri
+               WHERE id = ANY(%s) AND islem_turu='HARCAMA'
+                 AND (kaynak_id IS NULL OR COALESCE(kaynak_tablo,'')='ekstre_import')""",
+            (idler,))
+        uygun = [dict(r) for r in (cur.fetchall() or [])]
+        uygun_idler = [u["id"] for u in uygun]
+        reddedilen = [i for i in idler if i not in {str(x) for x in uygun_idler}]
         cur.execute(
             """UPDATE kart_hareketleri
                  SET cari_tedarikci=%s, cari_onay_ts=NOW()
-               WHERE id = ANY(%s) AND islem_turu='HARCAMA'
+               WHERE id = ANY(%s)
                RETURNING id, tarih::text AS tarih,
                          ABS(COALESCE(tutar,0))::float AS tutar,
                          LEFT(COALESCE(aciklama,''),70) AS aciklama""",
-            (ted, idler))
+            (ted, uygun_idler))
         damgalanan = [dict(r) for r in (cur.fetchall() or [])]
+        # 📒 Her damga deftere ayrı satır olarak yazılır (append-only)
+        for u in uygun:
+            _karar_yaz(cur, u["id"], (u.get("onceki") or None), ted,
+                       ("reddet" if ted == "(ilgisiz)" else "bagla"),
+                       aktor=(body.aktor or "sahip"),
+                       dayanak=(body.dayanak or None),
+                       tutar=u.get("tutar"), hareket_tarih=u.get("tarih"))
         conn.commit()
 
     toplam = round(sum(float(d["tutar"] or 0) for d in damgalanan), 2)
@@ -3012,10 +3094,94 @@ def kart_izi_onayla(body: KartIziOnayModel):
         "satirlar": damgalanan,
         "kapatilan_fatura": tahsisler,
         "artan": round(kalan, 2),
+        "uygun_olmayan": len(reddedilen),
+        "uygun_olmayan_not": ("Sistem üretimi satırlar (vadeli alım / anlık gider) "
+                              "damgalanamaz — cari onları zaten kendi kanalından "
+                              "sayıyor" if reddedilen else None),
         "not": ("Para YAZILMADI — zaten kart ekstresinde çıkmıştı; damga onu borçla "
                 "ilişkilendirir. Artan tutar cari bakiyede alacak olarak kalır "
                 "(sonraki faturalara mahsup edilir)."),
     }
+
+
+@router.get("/eslesme-karar-defteri")
+def eslesme_karar_defteri(hareket_id: str = "", tedarikci: str = "", limit: int = 100):
+    """📒 Kim, ne zaman, hangi çekimi hangi tedarikçiye bağladı — append-only iz.
+
+    Codex denetimi (2026-08-08): kart izi onayı kalıcı muhasebe etkisi yaratıyor
+    ama denetim kaydı yoktu. Artık her karar deftere yazılıyor ve buradan
+    okunabiliyor. Satırlar ASLA güncellenmez; düzeltme yeni satırdır (supersedes).
+    """
+    kos, par = ["1=1"], []
+    if hareket_id.strip():
+        kos.append("k.hareket_id=%s"); par.append(hareket_id.strip())
+    if tedarikci.strip():
+        kos.append("(k.yeni_deger ILIKE %s OR k.onceki_deger ILIKE %s)")
+        par += [f"%{tedarikci.strip()}%"] * 2
+    par.append(max(1, min(limit, 500)))
+    with db() as (_c, cur):
+        _ensure_eslesme_karar_defteri(cur)
+        cur.execute(
+            f"""SELECT k.id, k.hareket_id, k.onceki_deger, k.yeni_deger, k.karar,
+                       k.guven, k.dayanak, k.aktor, k.supersedes,
+                       k.tutar::float AS tutar, k.hareket_tarih::text AS hareket_tarih,
+                       k.ts::text AS ts,
+                       LEFT(COALESCE(h.aciklama,''),60) AS hareket_aciklama
+                FROM cari_eslesme_karar k
+                LEFT JOIN kart_hareketleri h ON h.id = k.hareket_id
+                WHERE {' AND '.join(kos)}
+                ORDER BY k.ts DESC LIMIT %s""",  # noqa: S608 — kos sabit parça
+            tuple(par))
+        satirlar = [dict(r) for r in (cur.fetchall() or [])]
+        cur.execute("""SELECT COUNT(*)::int AS toplam,
+                              COUNT(DISTINCT hareket_id)::int AS hareket,
+                              COUNT(*) FILTER (WHERE karar='bagla')::int AS bagla,
+                              COUNT(*) FILTER (WHERE karar='reddet')::int AS reddet,
+                              COUNT(*) FILTER (WHERE karar='geri_al')::int AS geri_al
+                       FROM cari_eslesme_karar""")
+        ozet = dict(cur.fetchone() or {})
+    return {"ozet": ozet, "kayitlar": satirlar,
+            "not": "Append-only defter — satır güncellenmez/silinmez. Bir hareketin "
+                   "güncel durumu en son ts'li satırdır; 'supersedes' zinciri "
+                   "geçmişi gösterir."}
+
+
+@router.post("/kart-izi-geri-al")
+def kart_izi_geri_al(body: KartIziOnayModel):
+    """Bir eşleşme kararını GERİ ALIR — damgayı kaldırır, deftere iz bırakır.
+
+    Karar silinmez: deftere 'geri_al' kararı YENİ SATIR olarak eklenir ve önceki
+    kararı supersedes eder. Damga (kart_hareketleri.cari_tedarikci) temizlenir;
+    satır yeniden aday havuzuna döner.
+    """
+    idler = [str(x) for x in (body.hareket_idler or []) if str(x).strip()]
+    if not idler:
+        raise HTTPException(400, "en az bir hareket_id gerekli")
+    with db() as (conn, cur):
+        _ensure_kart_izi_tablolar(cur)
+        _ensure_eslesme_karar_defteri(cur)
+        cur.execute(
+            """SELECT id, COALESCE(cari_tedarikci,'') AS onceki,
+                      tarih::text AS tarih, ABS(COALESCE(tutar,0))::float AS tutar
+               FROM kart_hareketleri
+               WHERE id = ANY(%s) AND cari_tedarikci IS NOT NULL""", (idler,))
+        hedef = [dict(r) for r in (cur.fetchall() or [])]
+        if not hedef:
+            raise HTTPException(404, "Damgalı hareket bulunamadı")
+        cur.execute(
+            """UPDATE kart_hareketleri
+                 SET cari_tedarikci=NULL, cari_onay_ts=NULL
+               WHERE id = ANY(%s)""", ([h["id"] for h in hedef],))
+        for h in hedef:
+            _karar_yaz(cur, h["id"], h.get("onceki"), "(geri alındı)", "geri_al",
+                       aktor=(body.aktor or "sahip"),
+                       dayanak=(body.dayanak or "sahip kararı geri aldı"),
+                       tutar=h.get("tutar"), hareket_tarih=h.get("tarih"))
+        conn.commit()
+    return {"ok": True, "geri_alinan": len(hedef),
+            "tutar": round(sum(h["tutar"] for h in hedef), 2),
+            "not": "Damga kaldırıldı, satırlar yeniden aday havuzunda. Karar "
+                   "SİLİNMEDİ — deftere 'geri_al' satırı eklendi."}
 
 
 @router.get("/mukerrer-fatura-denetimi")
