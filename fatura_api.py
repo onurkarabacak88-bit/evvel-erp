@@ -4900,10 +4900,17 @@ def cari_ozet() -> dict:
                 devir_top = round(devir_top + float(dv["tutar"] or 0), 2)
         hesaplanan_acik = round(devir_top + fat_top - odeme_top, 2)
         # 📦 GRNI — teslim alındı, fatura gelmedi (bakiyeye DAHİL DEĞİL)
+        # ⚠️ TEKİLLEŞTİRME (2026-08-08 canlı ders): 'MEHMET ATALAY' ve 'Napolés'
+        # AYRI grup olarak işlenip aynı teslimatı İKİŞER kez sayıyordu
+        # (adet=2 görünüyordu, gerçekte 1 teslimat). Her teslimat YALNIZ BİR
+        # gruba yazılır — ilk eşleşen alır, '_alindi' bayrağı tekrarı keser.
         _grni_adet, _grni_tl = 0, 0.0
         for _bt in _grni_tum:
+            if _bt.get("_alindi"):
+                continue
             _bad = _bt.get("tedarikci_ad") or ""
             if any(_odeme_eslesir(a, _bad) for a in g_adlar) or                any(_odeme_eslesir(_bad, a) for a in g_adlar):
+                _bt["_alindi"] = True
                 _grni_adet += 1
                 _grni_tl = round(_grni_tl + float(_bt.get("tutar") or 0), 2)
         ozet.append({
@@ -4964,10 +4971,18 @@ def cari_ozet() -> dict:
             birlesik[kisa] = x
             yeni_ozet.append(x)
             continue
+        # ⚠️ YENİ ALAN EKLERKEN BU LİSTEYİ GÜNCELLE (2026-08-08 dersi):
+        # faturasiz_teslimat_* eklendiğinde liste güncellenmemişti → 'MEHMET
+        # ATALAY' + 'Napolés' birleşince hesaplanan_acik toplanıyor ama
+        # gercek_borc ilk kaydın değerinde kalıyordu (1.515 ₺ tutarsızlık).
         for alan in ("devir", "fatura_adet_6ay", "fatura_toplam_6ay",
                      "odeme_izi_toplam_6ay", "hesaplanan_acik",
-                     "bekleyen_vade_toplam", "zincir_hareket_adet"):
+                     "bekleyen_vade_toplam", "zincir_hareket_adet",
+                     "faturasiz_teslimat_adet", "faturasiz_teslimat_tl"):
             hedef[alan] = round((hedef.get(alan) or 0) + (x.get(alan) or 0), 2)
+        # gercek_borc TOPLANMAZ — birleşmiş değerlerden YENİDEN türetilir
+        hedef["gercek_borc"] = round((hedef.get("hesaplanan_acik") or 0)
+                                     + (hedef.get("faturasiz_teslimat_tl") or 0), 2)
         hedef["resmi_adlar"].append(x["tedarikci"])
         hedef["odeme_izi_var"] = bool(hedef.get("odeme_izi_var") or x.get("odeme_izi_var"))
         if x.get("son_fatura") and (not hedef.get("son_fatura") or str(x["son_fatura"]) > str(hedef["son_fatura"])):
