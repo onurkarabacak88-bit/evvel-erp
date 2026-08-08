@@ -2329,6 +2329,122 @@ def _ensure_kart_izi_tablolar(cur) -> None:
         pass
 
 
+# ── 🧾 KDV ORANLARI (2026): kategori bazlı tahmin. Fatura geldiğinde gerçek
+# oran kalemden okunur; buradaki oran YALNIZ faturasız/eşleşmemiş harcamanın
+# vergi etkisini KABACA ölçmek içindir (sahip: "ödenecek vergiyi daha net
+# belirlemiş oluruz").
+_KDV_KATEGORI = {
+    "Market": 0.10, "Yemek & Restoran": 0.10, "Gıda": 0.10,
+    "Faturalar": 0.20, "Yakıt & EV Şarj": 0.20, "Online Alışveriş": 0.20,
+    "Streaming": 0.20, "Ev & Dekorasyon": 0.20, "Vergi & SGK": 0.0,
+    "Ödeme": 0.0,
+}
+_KDV_VARSAYILAN = 0.20
+
+
+@router.get("/kart-vergi-etkisi")
+def kart_vergi_etkisi(gun: int = 365, kurumlar_orani: float = 0.25):
+    """🧾 İşletme kart harcamalarının VERGİ etkisi — faturası var mı, yok mu?
+
+    Sahip (2026-08-08): "kart harcamalarında işletme mi şahsi mi diye
+    ayrıştırıyoruz; işletme için olanların faturaları var mı yok mu diye
+    sorulmalı. Fatura varsa vergiden düşümde gider olarak sayılmalı ki ödenecek
+    vergiyi daha net belirlemiş oluruz — hem KDV hem gelir vergisinden düşüm."
+
+    ÜÇ KOVA:
+      · belgeli    → KDV indirilebilir + matrahtan düşer (çifte tasarruf)
+      · belgesiz   → hiçbiri; para çıkmış ama vergi avantajı KAYIP
+      · belirsiz   → işletme mi şahsi mi ayrılmamış; önce o karar verilmeli
+
+    Tasarruf = KDV indirimi + (KDV hariç tutar × kurumlar/gelir vergisi oranı).
+    Oranlar TAHMİNDİR (kategori bazlı); kesin rakam faturanın kendi KDV'sidir.
+    """
+    bugun = date.today()
+    with db() as (_c, cur):
+        _ensure_tablolar(cur)
+        cur.execute(
+            """SELECT h.id, h.tarih::text AS tarih,
+                      ABS(COALESCE(h.tutar,0))::float AS tutar,
+                      COALESCE(h.aciklama,'') AS aciklama,
+                      COALESCE(h.harcama_tipi,'belirsiz') AS tip,
+                      COALESCE(h.kategori,'') AS kategori
+               FROM kart_hareketleri h
+               WHERE h.islem_turu='HARCAMA' AND COALESCE(h.durum,'aktif')='aktif'
+                 AND h.tarih >= %s
+               ORDER BY h.tarih DESC""",
+            (bugun - timedelta(days=gun),))
+        hareketler = [dict(r) for r in (cur.fetchall() or [])]
+        # Belge durumu: fatura_istek kaydı (kaynak_tip='kart') tek gerçek kaynak
+        belge = {}
+        try:
+            cur.execute(
+                """SELECT kaynak_id, durum, eslesen_fatura_id, tur
+                   FROM fatura_istek WHERE kaynak_tip='kart'""")
+            belge = {str(r["kaynak_id"]): dict(r) for r in (cur.fetchall() or [])}
+        except Exception as e:  # noqa: BLE001
+            logger.warning("fatura_istek okunamadi: %s", str(e)[:120])
+
+    kova = {k: {"adet": 0, "tutar": 0.0, "kdv": 0.0, "matrah": 0.0}
+            for k in ("belgeli", "belgesiz", "belirsiz", "sahsi")}
+    belgesiz_liste, belirsiz_liste = [], []
+    for h in hareketler:
+        tut = round(float(h["tutar"] or 0), 2)
+        tip = h["tip"]
+        oran = _KDV_KATEGORI.get(h.get("kategori") or "", _KDV_VARSAYILAN)
+        matrah = round(tut / (1 + oran), 2) if oran else tut
+        kdv = round(tut - matrah, 2)
+        b = belge.get(str(h["id"]))
+        belgeli = bool(b and (b.get("durum") in ("fatura_geldi", "kapandi")
+                              or b.get("eslesen_fatura_id")))
+        if tip == "sahsi":
+            k = "sahsi"
+        elif tip == "belirsiz":
+            k = "belirsiz"
+        else:
+            k = "belgeli" if belgeli else "belgesiz"
+        kova[k]["adet"] += 1
+        kova[k]["tutar"] = round(kova[k]["tutar"] + tut, 2)
+        kova[k]["kdv"] = round(kova[k]["kdv"] + kdv, 2)
+        kova[k]["matrah"] = round(kova[k]["matrah"] + matrah, 2)
+        kalem = {"hareket_id": str(h["id"]), "tarih": h["tarih"], "tutar": tut,
+                 "aciklama": (h.get("aciklama") or "")[:70],
+                 "kategori": h.get("kategori") or "-",
+                 "kdv_tahmini": kdv, "istek_durumu": (b or {}).get("durum", "istek yok")}
+        if k == "belgesiz":
+            belgesiz_liste.append(kalem)
+        elif k == "belirsiz":
+            belirsiz_liste.append(kalem)
+
+    def _tasarruf(k):
+        return round(kova[k]["kdv"] + kova[k]["matrah"] * kurumlar_orani, 2)
+
+    kayip = _tasarruf("belgesiz")
+    return {
+        "pencere_gun": gun, "kurumlar_orani": kurumlar_orani,
+        "kovalar": {
+            "belgeli": {**kova["belgeli"], "vergi_tasarrufu": _tasarruf("belgeli"),
+                        "ne_demek": "KDV indirilebilir + matrahtan düşülebilir"},
+            "belgesiz": {**kova["belgesiz"], "kayip_tasarruf": kayip,
+                         "ne_demek": "Para çıktı ama belge yok — vergi avantajı KAYIP"},
+            "belirsiz": {**kova["belirsiz"],
+                         "ne_demek": "İşletme mi şahsi mi ayrılmamış — önce bu karar"},
+            "sahsi": {**kova["sahsi"], "ne_demek": "Şahsi — vergiye konu değil"},
+        },
+        "ozet_cumle": (
+            f"İşletme harcamalarının {kova['belgeli']['tutar']:,.2f} ₺'si belgeli, "
+            f"{kova['belgesiz']['tutar']:,.2f} ₺'si belgesiz. Belgesizler yüzünden "
+            f"yaklaşık {kayip:,.2f} ₺ vergi avantajı kullanılamıyor "
+            f"({kova['belgesiz']['kdv']:,.2f} ₺ KDV indirimi + "
+            f"{round(kova['belgesiz']['matrah'] * kurumlar_orani, 2):,.2f} ₺ gider yazımı)."
+        ).replace(",", "@").replace(".", ",").replace("@", "."),
+        "belgesiz_harcamalar": sorted(belgesiz_liste, key=lambda x: -x["tutar"])[:50],
+        "belirsiz_harcamalar": sorted(belirsiz_liste, key=lambda x: -x["tutar"])[:30],
+        "not": "KDV oranları KATEGORİ TAHMİNİDİR (Market/Yemek %10, diğer %20); kesin "
+               "rakam faturanın kendi KDV'sidir. Belge durumu fatura_istek kuyruğundan "
+               "okunur — belge gelince kova kendiliğinden 'belgeli'ye geçer.",
+    }
+
+
 @router.get("/kart-borc-izi")
 def kart_borc_izi(gun: int = 365, min_bakiye: float = 100.0):
     """💳 Bekleyen borçların KART EKSTRESİNDEKİ izlerini arar — KISMİ ödeme mantığı.
