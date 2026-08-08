@@ -2367,22 +2367,46 @@ def kart_vergi_etkisi(gun: int = 365, kurumlar_orani: float = 0.25):
                       ABS(COALESCE(h.tutar,0))::float AS tutar,
                       COALESCE(h.aciklama,'') AS aciklama,
                       COALESCE(h.harcama_tipi,'belirsiz') AS tip,
-                      COALESCE(h.kategori,'') AS kategori
+                      COALESCE(h.kategori,'') AS kategori,
+                      COALESCE(h.kaynak_tablo,'') AS kaynak_tablo, h.kaynak_id
                FROM kart_hareketleri h
                WHERE h.islem_turu='HARCAMA' AND COALESCE(h.durum,'aktif')='aktif'
                  AND h.tarih >= %s
                ORDER BY h.tarih DESC""",
             (bugun - timedelta(days=gun),))
         hareketler = [dict(r) for r in (cur.fetchall() or [])]
-        # Belge durumu: fatura_istek kaydı (kaynak_tip='kart') tek gerçek kaynak
+        # ── BELGE TESPİTİ ÜÇ KANALDAN (2026-08-08 ders: tek kanala bakınca
+        # "belgeli=0" çıkıyordu — oysa DYK'nın 147.176 ₺'lik bardak alımının
+        # faturası sistemde vardı. Kart satırı faturaya DOĞRUDAN bağlı değil;
+        # zincir kart → vadeli_alim → tedarikci_fatura.kuyruk_vadeli_id).
         belge = {}
-        try:
+        try:  # 1) fatura istek kuyruğu — belge kovalama sonucu
             cur.execute(
                 """SELECT kaynak_id, durum, eslesen_fatura_id, tur
                    FROM fatura_istek WHERE kaynak_tip='kart'""")
-            belge = {str(r["kaynak_id"]): dict(r) for r in (cur.fetchall() or [])}
+            belge = {str(r["kaynak_id"]): {**dict(r), "kanal": "fatura_istek"}
+                     for r in (cur.fetchall() or [])}
         except Exception as e:  # noqa: BLE001
             logger.warning("fatura_istek okunamadi: %s", str(e)[:120])
+        # 2) ZİNCİR: kart → vadeli_alim → fatura
+        vadeli_faturali = set()
+        try:
+            cur.execute(
+                """SELECT DISTINCT kuyruk_vadeli_id FROM tedarikci_fatura
+                   WHERE kuyruk_vadeli_id IS NOT NULL
+                     AND kuyruk_vadeli_id NOT IN ('(arsiv)','(odenmis)')""")
+            vadeli_faturali = {str(r["kuyruk_vadeli_id"]) for r in (cur.fetchall() or [])}
+        except Exception:  # noqa: BLE001
+            pass
+        # 3) Anlık giderde fiş kaydı (şube fişi gönderilmiş mi)
+        fisli = set()
+        try:
+            cur.execute(
+                """SELECT id FROM anlik_giderler
+                   WHERE COALESCE(fis_gonderildi,FALSE) = TRUE""")
+            fisli = {str(r["id"]) for r in (cur.fetchall() or [])}
+        except Exception:  # noqa: BLE001
+            pass
 
     kova = {k: {"adet": 0, "tutar": 0.0, "kdv": 0.0, "matrah": 0.0}
             for k in ("belgeli", "belgesiz", "belirsiz", "sahsi")}
@@ -2394,8 +2418,15 @@ def kart_vergi_etkisi(gun: int = 365, kurumlar_orani: float = 0.25):
         matrah = round(tut / (1 + oran), 2) if oran else tut
         kdv = round(tut - matrah, 2)
         b = belge.get(str(h["id"]))
-        belgeli = bool(b and (b.get("durum") in ("fatura_geldi", "kapandi")
-                              or b.get("eslesen_fatura_id")))
+        kt, ki = h.get("kaynak_tablo") or "", str(h.get("kaynak_id") or "")
+        dayanak = None
+        if b and (b.get("durum") in ("fatura_geldi", "kapandi") or b.get("eslesen_fatura_id")):
+            dayanak = "fatura_istek kuyruğu kapandı"
+        elif kt == "vadeli_alimlar" and ki in vadeli_faturali:
+            dayanak = "zincir: kart → vadeli alım → fatura"
+        elif kt == "anlik_giderler" and ki in fisli:
+            dayanak = "anlık giderin fişi gönderilmiş"
+        belgeli = dayanak is not None
         if tip == "sahsi":
             k = "sahsi"
         elif tip == "belirsiz":
@@ -2409,7 +2440,8 @@ def kart_vergi_etkisi(gun: int = 365, kurumlar_orani: float = 0.25):
         kalem = {"hareket_id": str(h["id"]), "tarih": h["tarih"], "tutar": tut,
                  "aciklama": (h.get("aciklama") or "")[:70],
                  "kategori": h.get("kategori") or "-",
-                 "kdv_tahmini": kdv, "istek_durumu": (b or {}).get("durum", "istek yok")}
+                 "kdv_tahmini": kdv, "istek_durumu": (b or {}).get("durum", "istek yok"),
+                 "belge_dayanagi": dayanak, "kaynak": kt or "elle/ekstre"}
         if k == "belgesiz":
             belgesiz_liste.append(kalem)
         elif k == "belirsiz":
