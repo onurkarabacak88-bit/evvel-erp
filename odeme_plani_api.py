@@ -38,6 +38,7 @@ def odeme_plani_bugun(gun: int = 0, personel: int = 1):
     with db() as (conn, cur):
         cur.execute(
             """SELECT op.id, op.tarih, op.odenecek_tutar, op.asgari_tutar,
+                      COALESCE(op.odenen_tutar,0)::float AS odenen_tutar,
                       op.aciklama, op.kaynak_tablo, op.kaynak_id, k.banka, k.kart_adi,
                       va.tedarikci AS vadeli_tedarikci,
                       (CURRENT_DATE - op.tarih) AS gun_gecikme
@@ -76,7 +77,13 @@ def odeme_plani_bugun(gun: int = 0, personel: int = 1):
             # Merkezi vadeli alım kaydını düzeltmek/silmek için buna ihtiyaç duyuyor.
             # Salt-okur ek alan — mevcut tüketicileri etkilemez.
             "kaynak_id": (str(r["kaynak_id"]) if r.get("kaynak_id") is not None else None),
-            "tutar": float(r["odenecek_tutar"]) if r["odenecek_tutar"] is not None else 0.0,
+            # 💰 KISMİ ÖDEME (2026-08-08): "tutar" artık KALAN borçtur, tam tutar
+            # değil. Sahip borcun bir kısmını ödeyince satır 'bekliyor' kalır ve
+            # burada kalanı görmelidir — yoksa ödediği para ekranda hiç görünmez.
+            "tutar": round(float(r["odenecek_tutar"] or 0) - float(r.get("odenen_tutar") or 0), 2),
+            "tam_tutar": float(r["odenecek_tutar"]) if r["odenecek_tutar"] is not None else 0.0,
+            "odenen": float(r.get("odenen_tutar") or 0),
+            "kismi_odenmis": float(r.get("odenen_tutar") or 0) > 0.01,
             "asgari": float(r["asgari_tutar"]) if r.get("asgari_tutar") is not None else None,
             "tarih": str(r["tarih"]),
             "gecikmis": gun_g > 0,

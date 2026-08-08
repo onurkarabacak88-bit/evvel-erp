@@ -4750,22 +4750,54 @@ def odeme_yap(oid: str, tutar: Optional[float] = None, body: VadeliOdeModel = Va
             """, (hid, body.kart_id, bugun, odeme_tutari, f"Vadeli alım: {plan['aciklama']}",
                    plan.get('kaynak_id')))
             audit(cur, 'kart_hareketleri', hid, 'VADELI_KART')
-            # Plan kapat
-            cur.execute("UPDATE odeme_plani SET durum='odendi', odeme_tarihi=%s, odenen_tutar=%s WHERE id=%s",
-                (bugun, odeme_tutari, oid))
+            # Plan kapat — KISMİ ÖDEME destekli (2026-08-08): kartla borcun bir
+            # kısmı ödenebilir; kalan varsa satır 'bekliyor' kalır ve söz açık
+            # kalır. Eskiden tutar ne olursa olsun 'odendi' yazılıp vadeli alım
+            # kapatılıyordu → kalan borç kayboluyordu.
+            _kart_onceki = float(plan.get('odenen_tutar') or 0)
+            _kart_toplam = round(_kart_onceki + odeme_tutari, 2)
+            _kart_kalan = round(float(plan['odenecek_tutar']) - _kart_toplam, 2)
+            _kart_tam = _kart_kalan <= 0.01
+            cur.execute(
+                """UPDATE odeme_plani
+                     SET durum=%s, odeme_tarihi=%s, odenen_tutar=%s
+                   WHERE id=%s""",
+                ('odendi' if _kart_tam else 'bekliyor',
+                 (bugun if _kart_tam else plan.get('odeme_tarihi')), _kart_toplam, oid))
             cur.execute("""UPDATE onay_kuyrugu SET durum='onaylandi', onay_tarihi=NOW()
                 WHERE kaynak_id=%s AND durum NOT IN ('onaylandi','reddedildi')""", (oid,))
-            if plan.get('kaynak_id'):
+            if _kart_tam and plan.get('kaynak_id'):
                 vadeli_alim_kapat(cur, plan['kaynak_id'], bugun)
-            audit(cur, 'odeme_plani', oid, 'ODENDI_KART')
+            audit(cur, 'odeme_plani', oid, 'ODENDI_KART' if _kart_tam else 'KISMI_ODEME_KART')
             # Uyarı önbelleğini temizle — panelde uyarı hemen kalksın
             uyari_cache_clear()
-            return {"success": True, "odeme_yontemi": "kart"}
+            return {"success": True, "odeme_yontemi": "kart",
+                    "tam_kapandi": _kart_tam,
+                    "odenen_toplam": _kart_toplam,
+                    "kalan_borc": max(0.0, _kart_kalan),
+                    "mesaj": ("Borç tamamen kapandı" if _kart_tam
+                              else f"Kısmi ödeme — kalan {max(0.0, _kart_kalan):,.2f} TL devrediyor")}
 
         bugun = str(bugun_tr())
         odenen = tutar or float(plan['odenecek_tutar'])
-        cur.execute("UPDATE odeme_plani SET durum='odendi', odeme_tarihi=%s, odenen_tutar=%s WHERE id=%s",
-            (bugun, odenen, oid))
+        # ── KISMİ ÖDEME (2026-08-08, sahip: "bazen içerdeki borç tutarının bir
+        # kısmını bırakırız, üstüne yeni borçlar eklenir; ödeme illa fatura
+        # tutarı kadar olmaz"). Eski davranış: tutar ne olursa olsun durum
+        # 'odendi' yazılıyor, vadeli alım kapatılıyordu → KALAN BORÇ KAYBOLUYORDU
+        # (canlı: 73 plan satırı 'ödendi' damgalı ama ödenen < ödenecek).
+        # Yeni: ödenen BİRİKİR; kalan varsa satır 'bekliyor' kalır ve tekrar
+        # ödenebilir. Borç ancak tamamı kapanınca 'odendi' olur.
+        _onceki = float(plan.get('odenen_tutar') or 0)
+        _toplam_odenen = round(_onceki + odenen, 2)
+        _kalan = round(float(plan['odenecek_tutar']) - _toplam_odenen, 2)
+        _tam_kapandi = _kalan <= 0.01
+        cur.execute(
+            """UPDATE odeme_plani
+                 SET durum=%s, odeme_tarihi=%s, odenen_tutar=%s
+               WHERE id=%s""",
+            ('odendi' if _tam_kapandi else 'bekliyor',
+             (bugun if _tam_kapandi else plan.get('odeme_tarihi')),
+             _toplam_odenen, oid))
 
         ana_para_kismi = kasa_ve_faiz_odeme_plani_tam_odeme(cur, dict(plan), oid, odenen, bugun)
 
@@ -4779,7 +4811,9 @@ def odeme_yap(oid: str, tutar: Optional[float] = None, body: VadeliOdeModel = Va
         audit(cur, 'odeme_plani', oid, 'ODEME', eski=plan)
 
         # Kaynak vadeli_alimlar ise tüm bağlı kayıtları atomik kapat — çift düşme engeli
-        if plan.get('kaynak_tablo') == 'vadeli_alimlar' and plan.get('kaynak_id'):
+        # ⚠️ YALNIZ TAM ÖDEMEDE: kısmi ödemede söz açık kalmalı, yoksa kalan borç
+        # kuyruktan silinir (2026-08-08 kısmi ödeme düzeltmesi).
+        if _tam_kapandi and plan.get('kaynak_tablo') == 'vadeli_alimlar' and plan.get('kaynak_id'):
             vadeli_alim_kapat(cur, plan['kaynak_id'], bugun)
 
         guncelle_borc_envanteri_odeme_plani_sonrasi(cur, plan, ana_para_kismi)
@@ -4789,7 +4823,12 @@ def odeme_yap(oid: str, tutar: Optional[float] = None, body: VadeliOdeModel = Va
         # Uyarı önbelleğini temizle — panelde uyarı hemen kalksın
         uyari_cache_clear()
 
-    return {"success": True}
+    return {"success": True,
+            "tam_kapandi": _tam_kapandi,
+            "odenen_toplam": _toplam_odenen,
+            "kalan_borc": max(0.0, _kalan),
+            "mesaj": ("Borç tamamen kapandı" if _tam_kapandi
+                      else f"Kısmi ödeme — kalan {max(0.0, _kalan):,.2f} TL devrediyor")}
 
 @app.delete("/api/odeme-plani/{oid}")
 def odeme_plani_sil(oid: str):
