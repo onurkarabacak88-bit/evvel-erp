@@ -4265,6 +4265,91 @@ def temizlik_odenen_tutar(kuru: int = 1):
                    "bırakılır. Uygulamak için ?kuru=0"}
 
 
+@router.get("/odeme-katmani-kiyas")
+def odeme_katmani_kiyas():
+    """🔬 KANONİK KATMAN ↔ MEVCUT HESAP kıyası — kesmeden önce ölçüm (salt-okur).
+
+    Codex bulgusu: `supplier_payment_event` (olay katmanı) var ama AP çekirdeği
+    onu kullanmıyor; cari_ekstre hâlâ ham 3 tablodan (vadeli/anlık/kart) okuyor.
+    İki ayrı gerçeklik. Geçiş yapmadan ÖNCE farkın büyüklüğünü ve KAYNAĞINI
+    bilmek gerekir — bu uç hiçbir şey değiştirmez, yalnız yan yana koyar.
+
+    Bilinen yapısal farklar (kod okumasından):
+      · Kanonik katman `vadeli_alimlar`'ı HİÇ okumuyor (cari okuyor)
+      · Kanonik katman sistem üretimi satırları da alıyor → aynı ödeme hem kart
+        hem anlık gider olarak iki kez akabilir (cari bunları eliyor)
+      · Eşleşme mantığı farklı: basit substring vs marka tokeni + kişi-adı kuralı
+      · Kaynak ad tablosu farklı: `tedarikciler` vs `tedarikci_eslestirme` haritası
+    """
+    sonuc, uyari = [], []
+    try:
+        ozet = cari_ozet()
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(500, f"cari_ozet okunamadı: {str(e)[:120]}")
+    with db() as (_c, cur):
+        # Kanonik katman durumu
+        try:
+            cur.execute("""SELECT COUNT(*)::int AS satir,
+                                  COALESCE(SUM(tutar),0)::float AS toplam,
+                                  COUNT(DISTINCT tedarikci_ad)::int AS tedarikci,
+                                  MIN(tarih)::text AS ilk, MAX(tarih)::text AS son,
+                                  COUNT(*) FILTER (WHERE kaynak='kart')::int AS kart,
+                                  COUNT(*) FILTER (WHERE kaynak='nakit')::int AS nakit
+                           FROM supplier_payment_event""")
+            katman = dict(cur.fetchone() or {})
+        except Exception as e:  # noqa: BLE001
+            return {"hata": "supplier_payment_event okunamadı (tablo hiç doldurulmamış olabilir)",
+                    "detay": str(e)[:160]}
+        # Tedarikçi bazlı kanonik toplam
+        cur.execute("""SELECT tedarikci_ad, COALESCE(SUM(tutar),0)::float AS toplam,
+                              COUNT(*)::int AS adet
+                       FROM supplier_payment_event GROUP BY 1""")
+        kanonik = {(_cari_katla(r["tedarikci_ad"] or "")): dict(r)
+                   for r in (cur.fetchall() or [])}
+        # Kanonik katmanda sistem üretimi satır var mı? (çift sayım riski)
+        cur.execute("""SELECT COUNT(*)::int AS n FROM supplier_payment_event e
+                       WHERE e.kaynak_tablo='kart_hareketleri' AND EXISTS (
+                         SELECT 1 FROM kart_hareketleri h
+                         WHERE h.id=e.kaynak_id AND h.kaynak_id IS NOT NULL
+                           AND COALESCE(h.kaynak_tablo,'') <> 'ekstre_import')""")
+        sistem_uretimi = int((cur.fetchone() or {}).get("n") or 0)
+
+    for t in (ozet.get("tedarikciler") or []):
+        ad = t.get("tedarikci") or ""
+        mevcut = round(float(t.get("odeme_izi_toplam_6ay") or 0), 2)
+        k = kanonik.get(_cari_katla(ad)) or {}
+        kan = round(float(k.get("toplam") or 0), 2)
+        fark = round(kan - mevcut, 2)
+        if abs(fark) > 0.5 or mevcut > 0 or kan > 0:
+            sonuc.append({
+                "tedarikci": ad, "mevcut_odeme_izi": mevcut,
+                "kanonik_katman": kan, "fark": fark,
+                "kanonik_adet": int(k.get("adet") or 0),
+                "durum": ("eşit" if abs(fark) <= 0.5
+                          else "kanonik FAZLA" if fark > 0 else "kanonik EKSİK"),
+            })
+    sonuc.sort(key=lambda x: -abs(x["fark"]))
+    if sistem_uretimi:
+        uyari.append(f"Kanonik katmanda {sistem_uretimi} satır sistem üretimi kart "
+                     f"hareketinden gelmiş — aynı ödeme ikinci kez akmış olabilir "
+                     f"(cari bunları eliyor).")
+    if int(katman.get("satir") or 0) == 0:
+        uyari.append("Kanonik katman BOŞ — /api/supplier-payment/sync hiç çalıştırılmamış. "
+                     "Kıyas anlamlı değil; önce senkron çalıştırılmalı.")
+    return {
+        "kanonik_katman": katman,
+        "sistem_uretimi_satir": sistem_uretimi,
+        "kiyas": sonuc,
+        "toplam_mevcut": round(sum(s["mevcut_odeme_izi"] for s in sonuc), 2),
+        "toplam_kanonik": round(sum(s["kanonik_katman"] for s in sonuc), 2),
+        "esit_tedarikci": sum(1 for s in sonuc if s["durum"] == "eşit"),
+        "farkli_tedarikci": sum(1 for s in sonuc if s["durum"] != "eşit"),
+        "uyarilar": uyari,
+        "not": "SALT-OKUR — hiçbir şey değiştirilmedi. Geçiş ancak fark SIFIRA "
+               "yaklaştığında ve kaynağı açıklandığında güvenlidir.",
+    }
+
+
 @router.get("/para-zinciri-rontgen")
 def para_zinciri_rontgen():
     """🩻 FATURA → BORÇ → ÖDEME → CARİ zinciri canlıda GERÇEKTE ne yapıyor?
