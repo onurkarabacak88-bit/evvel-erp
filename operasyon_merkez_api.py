@@ -15001,6 +15001,135 @@ def ops_maliyet_pnl_merdiven(gun: int = Query(30, ge=7, le=90)):
     }
 
 
+@router.get("/metrics/nakit-konum")
+def ops_metrics_nakit_konum(gun: int = Query(60, ge=7, le=365)):
+    """NAKİT KONUM PANOSU — "param şu an NEREDE?"
+
+    Sahip doktrini + Codex mimari görüşü (2026-08-08). Codex `money_event`
+    omurgası önerdi (şube_kasa → yoldaki_nakit → banka hesapları arası transfer).
+    O refactor ALINMADI çünkü `kasa_hareketleri` şemasında `sube_id` YOK — kasa
+    TEK HAVUZ. Teslim bu modelde iç transferdir; kayıt üretmek bakiyeyi
+    değiştirmez ama ÇİFT SAYIM riski yaratır.
+
+    Eksik olan kayıt değil GÖRÜNÜRLÜK: para hangi durakta bekliyor? Bu uç kayıt
+    ÜRETMEZ, mevcut defterlerden konumu hesaplar (salt-okur):
+
+        şube kasaları (kapanış sayımı) → yolda (teslim alınmış, bankaya girmemiş)
+        → bankada (yatırımlar) → kasa defteri bakiyesi ile karşılaştır
+
+    `mutabakatsiz_tl` = Codex'in "Unreconciled Cash" metriği: defterin söylediği
+    ile durakların toplamı arasındaki fark. Sıfırdan uzaklaştıkça nakit kontrolü
+    zayıflıyor demektir. Hüküm yok — ölçü ve gerekçe.
+    """
+    bugun = date.today()
+    bas = bugun - timedelta(days=gun - 1)
+    with db() as (_c, cur):
+        # 1) KASA DEFTERİ BAKİYESİ — kanonik tek gerçek (tüm zaman, kasa_etkisi'li)
+        cur.execute(
+            """SELECT COALESCE(SUM(tutar),0)::float AS bakiye
+               FROM kasa_hareketleri
+               WHERE durum='aktif' AND kasa_etkisi=TRUE"""
+        )
+        defter = float((dict(cur.fetchone() or {})).get("bakiye") or 0)
+
+        # 2) TESLİM ALINAN (şubeden merkeze geçen) — dönem ve tüm zaman
+        cur.execute(
+            """SELECT COALESCE(SUM(tutar),0)::float AS d,
+                      COUNT(*)::int AS adet
+               FROM kasa_teslim WHERE tarih >= %s""", (bas,))
+        r = dict(cur.fetchone() or {})
+        teslim_donem, teslim_adet = float(r.get("d") or 0), int(r.get("adet") or 0)
+        cur.execute("SELECT COALESCE(SUM(tutar),0)::float AS t FROM kasa_teslim")
+        teslim_tum = float((dict(cur.fetchone() or {})).get("t") or 0)
+
+        # 3) BANKAYA YATAN
+        cur.execute(
+            """SELECT COALESCE(SUM(tutar),0)::float AS d, COUNT(*)::int AS adet
+               FROM banka_yatirimlari WHERE tarih >= %s""", (bas,))
+        r = dict(cur.fetchone() or {})
+        banka_donem, banka_adet = float(r.get("d") or 0), int(r.get("adet") or 0)
+        cur.execute("SELECT COALESCE(SUM(tutar),0)::float AS t FROM banka_yatirimlari")
+        banka_tum = float((dict(cur.fetchone() or {})).get("t") or 0)
+
+        # 4) ŞUBE KASALARINDA duran — son kapanış sayımları (şube başına EN SON gün)
+        sube_kasa, sube_detay = 0.0, []
+        try:
+            cur.execute(
+                """SELECT DISTINCT ON (e.sube_id)
+                          e.sube_id::text AS sid, s.ad AS sube_adi,
+                          e.tarih::text AS tarih,
+                          COALESCE(e.kasa_sayim,0)::float AS sayim,
+                          COALESCE(e.devir,0)::float AS devir
+                   FROM sube_operasyon_event e
+                   LEFT JOIN subeler s ON s.id = e.sube_id
+                   WHERE e.tip='KAPANIS' AND e.durum='tamamlandi'
+                     AND e.tarih >= %s
+                   ORDER BY e.sube_id, e.tarih DESC""",
+                (bas,),
+            )
+            for x in (cur.fetchall() or []):
+                d = dict(x)
+                # Kasada kalan = sayım (devir zaten sayımın içinde; teslim edilen çıkmış)
+                kalan = float(d.get("sayim") or 0)
+                sube_kasa += kalan
+                sube_detay.append({
+                    "sube_adi": d.get("sube_adi") or d.get("sid"),
+                    "son_kapanis": d.get("tarih"),
+                    "kasada_tl": round(kalan, 2),
+                    "devir_tl": round(float(d.get("devir") or 0), 2),
+                })
+        except Exception as e:  # noqa: BLE001
+            log.warning("nakit-konum sube kasa blogu atlandi: %s", str(e)[:120])
+
+    yolda = max(0.0, teslim_tum - banka_tum)   # teslim alınmış, bankaya girmemiş
+    duraklar = sube_kasa + yolda + banka_tum
+    mutabakatsiz = defter - duraklar
+
+    # Sağlık okuması — Codex deseni: bakiye + gecikme bazlı, işlem bazlı değil
+    hafta_ciro = None
+    try:
+        with db() as (_c2, cur2):
+            cur2.execute(
+                """SELECT COALESCE(SUM(COALESCE(nakit,0)+COALESCE(pos,0)+COALESCE(online,0)),0)::float AS t
+                   FROM ciro WHERE tarih >= %s""", (bugun - timedelta(days=7),))
+            hafta_ciro = float((dict(cur2.fetchone() or {})).get("t") or 0)
+    except Exception:  # noqa: BLE001
+        pass
+    esik_pct = round(yolda / hafta_ciro * 100, 1) if hafta_ciro else None
+    durum = "veri_yok"
+    if hafta_ciro:
+        durum = "kirmizi" if esik_pct and esik_pct > 20 else ("sari" if esik_pct and esik_pct > 10 else "yesil")
+
+    return {
+        "uretildi": str(bugun), "pencere_gun": gun,
+        "duraklar": {
+            "sube_kasalarinda_tl": round(sube_kasa, 2),
+            "yolda_tl": round(yolda, 2),
+            "bankada_tl": round(banka_tum, 2),
+            "duraklar_toplami_tl": round(duraklar, 2),
+        },
+        "defter_bakiyesi_tl": round(defter, 2),
+        "mutabakatsiz_tl": round(mutabakatsiz, 2),
+        "akis": {
+            "teslim_alinan_donem_tl": round(teslim_donem, 2), "teslim_adet": teslim_adet,
+            "bankaya_yatan_donem_tl": round(banka_donem, 2), "banka_adet": banka_adet,
+            "teslim_alinan_tum_tl": round(teslim_tum, 2),
+            "bankaya_yatan_tum_tl": round(banka_tum, 2),
+        },
+        "saglik": {
+            "yolda_haftalik_ciro_pct": esik_pct,
+            "durum": durum,
+            "esik": "kırmızı >%20 · sarı >%10 (yoldaki nakit / haftalık ciro)",
+        },
+        "sube_kasalari": sorted(sube_detay, key=lambda x: -x["kasada_tl"]),
+        "not": "Kayıt ÜRETMEZ — mevcut defterlerden konum hesaplar. `kasa_hareketleri` "
+               "şemasında sube_id YOK (kasa tek havuz), bu yüzden teslim iç transferdir "
+               "ve ayrı kasa kaydı yazmak çift sayım riski taşır. `mutabakatsiz_tl` "
+               "defterin söylediği ile durakların toplamı arasındaki farktır; sıfırdan "
+               "uzaklaştıkça nakit kontrolü zayıflar. Öneri-only.",
+    }
+
+
 @router.get("/mutabakat-merkezi")
 def ops_mutabakat_merkezi(gun: int = Query(60, ge=7, le=180)):
     """MUTABAKAT MERKEZİ — "aradım, bulamadım: ne yapmalı?"
