@@ -3717,6 +3717,18 @@ def para_zinciri_rontgen():
         WHERE COALESCE(durum,'') <> 'iptal'
         GROUP BY 1,2,3 HAVING COUNT(*) > 1
         ORDER BY MAX(odenecek_tutar) * (COUNT(*) - 1) DESC LIMIT 25""", tekil=False)
+    # 🔁 Mükerrer SABİT GİDER TANIMI: aynı ad+tutar birden çok kayıt olarak
+    # tanımlıysa motor her biri için ayrı plan üretir (kaynak_id farklı olduğu
+    # için koruma devreye girmez) — POS DONANIM 4 plan satırının sebebi bu olabilir.
+    _sor("mukerrer_sabit_gider", """
+        SELECT gider_adi, tutar::float AS tutar, COUNT(*)::int AS adet,
+               COUNT(*) FILTER (WHERE aktif)::int AS aktif_adet,
+               ARRAY_AGG(id::text) AS idler,
+               ARRAY_AGG(COALESCE(odeme_yontemi,'-')) AS yontemler
+        FROM sabit_giderler
+        GROUP BY 1,2 HAVING COUNT(*) > 1
+        ORDER BY MAX(tutar) * COUNT(*) DESC LIMIT 20""", tekil=False)
+
     # 💳 Kart planı tekillik freni kuruldu mu? (2026-08-08 kök neden kapatma)
     _sor("kart_plan_tekillik_freni", """
         SELECT
