@@ -2363,17 +2363,24 @@ _VERGI_SGK_KALIP = ("VERGI DAIRE", "VERGİ DAİRE", "VERGI DAIRESI", "MALIYE",
                     "MALİYE", "SGK", "SOSYAL GUVENLIK", "SOSYAL GÜVENLİK",
                     "GIB ", "GİB ", "MUHTASAR", "DAMGA VERGI", "STOPAJ")
 # 🌐 YURTDIŞI HİZMET — KDV sorumlu sıfatıyla (KDV-2) beyan edilir; normal
-# indirim gibi işlenemez. Kart ekstresinde ülke kodu son ekten anlaşılır.
-_YURTDISI_KALIP = ("CAUS", " US", " SE", " NL", " IE", " GB", " DE", " LU",
-                   "STOCKHOLM", "DUBLIN", "AMSTERDAM", "SAN FRANCISCO")
+# indirim gibi işlenemez. Kart ekstresinde ülke kodu satırın SONUNDADIR.
+# ⚠️ Ülke kodu metin İÇİNDE aranmaz: ilk sürümde " SE" kalıbı "AGİT SEFA"
+# içinde eşleşip cari borç ödemesini yurtdışı hizmet saymıştı (canlı ders).
+_YURTDISI_ULKE_SONEK = (" US", " SE", " NL", " IE", " GB", " DE", " LU",
+                        " FR", " IT", " ES", " CH", " SG", " CAUS")
+# Bunlar metin içinde aranabilir — şehir/marka adı yanlış eşleşme üretmez
+_YURTDISI_ICERIK = ("RAILWAY.COM", "STOCKHOLM", "DUBLIN", "AMSTERDAM",
+                    "SAN FRANCISCO", "LUXEMBOURG", "SINGAPORE")
 
 
 def _harcama_vergi_sinifi(aciklama: str, kategori: str) -> Optional[str]:
     """'vergi_sgk' | 'yurtdisi' | None (normal işletme gideri)."""
-    u = (aciklama or "").upper()
+    u = (aciklama or "").upper().strip()
     if any(k in u for k in _VERGI_SGK_KALIP) or (kategori or "") == "Vergi & SGK":
         return "vergi_sgk"
-    if any(u.endswith(k) or k in u for k in _YURTDISI_KALIP):
+    if any(u.endswith(k) for k in _YURTDISI_ULKE_SONEK):
+        return "yurtdisi"
+    if any(k in u for k in _YURTDISI_ICERIK):
         return "yurtdisi"
     return None
 
@@ -2593,9 +2600,15 @@ def kart_vergi_etkisi(gun: int = 365, kurumlar_orani: float = 0.25):
             # gider, sabit gider) tanım gereği İŞLETME harcamasıdır — o kayıt
             # zaten işletme defterinde. Sahip tek tıkla onaylayabilsin diye
             # öneriyi burada üretiyoruz (hüküm yok, öneri-only).
-            kalem["oneri"] = ("isletme" if kt else None)
-            kalem["oneri_gerekce"] = (f"{kt} kaydından doğmuş — işletme defterinde zaten var"
-                                      if kt else "Ham ekstre satırı — sahip karar vermeli")
+            # ⚠️ 'ekstre_import' bir SİSTEM KAYDI DEĞİL — bankadan inen ham
+            # satırdır. İlk sürümde onu da işletme sayıp LCWAIKIKI'ye "işletme"
+            # önerisi çıkarıyordu (canlı ders). Yalnız işletme defterinde
+            # karşılığı olan kaynaklar öneri üretir.
+            _sistem_kaynagi = kt in ("vadeli_alimlar", "anlik_giderler", "sabit_giderler")
+            kalem["oneri"] = "isletme" if _sistem_kaynagi else None
+            kalem["oneri_gerekce"] = (
+                f"{kt} kaydından doğmuş — işletme defterinde zaten var"
+                if _sistem_kaynagi else "Ham banka satırı — sahip karar vermeli")
             belirsiz_liste.append(kalem)
 
     def _tasarruf(k):
