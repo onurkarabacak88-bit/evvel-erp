@@ -10717,6 +10717,73 @@ var UrunTeslimAl = (function () {
     return h;
   }
 
+  // ── FATURA ADIMI (2026-08-08) ──────────────────────────────────────────────
+  // Sahip doktrini: "şube kabul eder VE ürünün faturasını verir; personel ürün
+  // faturasını yükler." Teslim kaydı tamamlandıktan SONRA açılır. Fatura ZORUNLU
+  // DEĞİL — "Sonra" seçilebilir; teslim hiçbir koşulda geri alınmaz. Yüklenen
+  // foto mevcut boru hattına gider (/api/fatura/yukle → OCR → borç kuyruğu).
+  var _svFaturaCtx = null;
+  function svFaturaSor(talepId, tedarikciAd, personelId) {
+    _svFaturaCtx = { talepId: talepId, tedarikci: tedarikciAd || '', personelId: personelId || null };
+    var eski = document.getElementById('svFaturaOverlay');
+    if (eski) eski.remove();
+    var ov = document.createElement('div');
+    ov.id = 'svFaturaOverlay';
+    ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.62);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px';
+    ov.innerHTML =
+      '<div style="background:var(--bg2);border:2px solid #f59e0b;border-radius:16px;max-width:460px;width:100%;padding:20px">' +
+        '<div style="font-size:19px;font-weight:800;margin-bottom:6px">🧾 Faturayı yükleyelim mi?</div>' +
+        '<div style="font-size:15px;color:var(--muted);line-height:1.5;margin-bottom:16px">' +
+          'Teslim kaydedildi' + (tedarikciAd ? ' (<b>' + escHtml(tedarikciAd) + '</b>)' : '') + '. ' +
+          'Fatura fotoğrafını şimdi çekersen borç kaydı kendiliğinden oluşur. ' +
+          'Sonra da yükleyebilirsin — teslim kaydın kaybolmaz.' +
+        '</div>' +
+        '<input type="file" id="svFaturaDosya" accept="image/*,application/pdf" capture="environment" style="display:none">' +
+        '<div style="display:flex;flex-direction:column;gap:10px">' +
+          '<button type="button" id="svFaturaCek" class="btn btn-primary" style="min-height:72px;font-size:17px;font-weight:800">📷 Fatura fotoğrafını çek / seç</button>' +
+          '<button type="button" id="svFaturaSonra" class="btn btn-secondary" style="min-height:56px;font-size:15px">Sonra yüklerim</button>' +
+        '</div>' +
+        '<div id="svFaturaMsg" style="margin-top:12px;font-size:14px"></div>' +
+      '</div>';
+    document.body.appendChild(ov);
+    var kapat = function () { var o = document.getElementById('svFaturaOverlay'); if (o) o.remove(); };
+    document.getElementById('svFaturaSonra').onclick = kapat;
+    document.getElementById('svFaturaCek').onclick = function () {
+      document.getElementById('svFaturaDosya').click();
+    };
+    document.getElementById('svFaturaDosya').onchange = async function (ev) {
+      var f = ev.target && ev.target.files && ev.target.files[0];
+      if (!f) return;
+      var msg = document.getElementById('svFaturaMsg');
+      var btn = document.getElementById('svFaturaCek');
+      if (btn) { btn.disabled = true; btn.textContent = '⏳ Yükleniyor…'; }
+      if (msg) { msg.style.color = 'var(--muted)'; msg.textContent = 'Fatura yükleniyor, okunuyor…'; }
+      try {
+        var fd = new FormData();
+        fd.append('foto', f);
+        fd.append('sube_id', SUBE_ID);
+        if (_svFaturaCtx.talepId) fd.append('siparis_talep_id', _svFaturaCtx.talepId);
+        if (_svFaturaCtx.personelId) fd.append('personel_id', _svFaturaCtx.personelId);
+        var r = await fetch('/api/fatura/yukle', { method: 'POST', body: fd });
+        var j = null;
+        try { j = await r.json(); } catch (_) { j = null; }
+        if (!r.ok) throw new Error((j && (j.detail || j.mesaj)) || ('Yükleme başarısız (' + r.status + ')'));
+        if (msg) {
+          msg.style.color = 'var(--green, #16a34a)';
+          // Tutar okunduysa söyle; okunamadıysa GİZLEME — merkez tamamlayacak
+          var okundu = j && (j.toplam_tutar || (j.fatura && j.fatura.toplam_tutar));
+          msg.innerHTML = okundu
+            ? '✅ Fatura alındı ve okundu. Borç kaydı oluşacak.'
+            : '✅ Fatura alındı. Tutar okunamadıysa merkez tamamlayacak — yüklediğin belge kayboldu sanma.';
+        }
+        setTimeout(kapat, 2600);
+      } catch (e) {
+        if (msg) { msg.style.color = 'var(--red, #dc2626)'; msg.textContent = '⚠ ' + (e.message || 'Yükleme hatası') + ' — teslim kaydın duruyor, sonra tekrar deneyebilirsin.'; }
+        if (btn) { btn.disabled = false; btn.textContent = '📷 Tekrar dene'; }
+      }
+    };
+  }
+
   // ── Bekleyen toptancı siparişleri ───────────────────────────────────────
   async function svBeklenenYukle() {
     try {
@@ -11116,6 +11183,20 @@ var UrunTeslimAl = (function () {
       });
       var okMsg = (apiResp && apiResp.mesaj) ? apiResp.mesaj : '✅ Tedarikçi teslimi kaydedildi.';
       setMsg('svMsg', okMsg, 'msg-ok');
+      // ── FATURA ADIMI (2026-08-08, sahip doktrini) ────────────────────────
+      // "Şube kabul eder VE ürünün faturasını verir; personel ürün faturasını
+      // yükler." Backend hazırdı (/api/fatura/yukle) ama şube panelinde ÇAĞRI
+      // YOKTU — mal teslim alınıyor, fatura hiç istenmiyordu. Sonuç: sistemde
+      // 2 fatura, 4 açık teslimat (en eskisi 18 gün), belgesiz duran borç.
+      // Teslim kaydı BAŞARILI olduktan SONRA sorulur; iptal edilse bile teslim
+      // bozulmaz (fatura zorunlu değil — "sonra" seçeneği var).
+      try {
+        svFaturaSor(
+          (apiResp && (apiResp.talep_id || apiResp.siparis_talep_id)) || (_svBeklenenSiparis && _svBeklenenSiparis.talep_id) || null,
+          (_svBeklenenSiparis && _svBeklenenSiparis.tedarikci_ad) || '',
+          body.personel_id || null
+        );
+      } catch (_e) { /* fatura adımı teslimi ASLA bozmaz */ }
       resetAfterSuccess();
       updateSecimUI();
     } catch (e) {
