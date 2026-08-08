@@ -271,7 +271,8 @@ def kart_plani_upsert(cur, kart_id: str, son_odeme_tarihi, odenecek: float,
     sot = str(son_odeme_tarihi)[:10]
     cur.execute(
         """SELECT id, durum FROM odeme_plani
-           WHERE kart_id = %s AND COALESCE(durum,'') <> 'iptal'
+           WHERE kart_id = %s AND kaynak_tablo IS NULL
+             AND COALESCE(durum,'') <> 'iptal'
              AND (referans_ay = DATE_TRUNC('month', %s::date)
                   OR DATE_TRUNC('month', tarih) = DATE_TRUNC('month', %s::date))
            ORDER BY CASE WHEN durum='odendi' THEN 0 ELSE 1 END, olusturma

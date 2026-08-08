@@ -1528,7 +1528,7 @@ def init_db():
                 CREATE UNIQUE INDEX IF NOT EXISTS ux_odeme_plani_kart_donem
                 ON odeme_plani (kart_id, referans_ay)
                 WHERE kart_id IS NOT NULL AND referans_ay IS NOT NULL
-                  AND durum <> 'iptal'
+                  AND kaynak_tablo IS NULL AND durum <> 'iptal'
             """)
             cur.execute("RELEASE SAVEPOINT sp_kart_plan_uniq")
         except Exception as _e_uniq:  # noqa: BLE001

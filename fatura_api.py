@@ -3478,6 +3478,7 @@ def temizlik_kart_donem(kuru: int = 1):
                           CASE WHEN durum='odendi' THEN 0 ELSE 1 END, olusturma DESC) AS aciklamalar
                FROM odeme_plani
                WHERE kart_id IS NOT NULL AND referans_ay IS NOT NULL
+                 AND kaynak_tablo IS NULL          -- YALNIZ kart EKSTRESİ planları
                  AND COALESCE(durum,'') <> 'iptal'
                GROUP BY 1,2 HAVING COUNT(*) > 1
                ORDER BY 2"""
@@ -3517,7 +3518,7 @@ def temizlik_kart_donem(kuru: int = 1):
                     CREATE UNIQUE INDEX IF NOT EXISTS ux_odeme_plani_kart_donem
                     ON odeme_plani (kart_id, referans_ay)
                     WHERE kart_id IS NOT NULL AND referans_ay IS NOT NULL
-                      AND durum <> 'iptal'""")
+                      AND kaynak_tablo IS NULL AND durum <> 'iptal'""")
                 cur.execute("RELEASE SAVEPOINT sp_uniq_kur")
                 conn.commit()
                 index_sonuc = "✅ Tekillik indeksi kuruldu — bundan sonra mükerrer dönem AÇILAMAZ"
@@ -3724,7 +3725,7 @@ def para_zinciri_rontgen():
           (SELECT COUNT(*)::int FROM (
              SELECT kart_id, referans_ay FROM odeme_plani
              WHERE kart_id IS NOT NULL AND referans_ay IS NOT NULL
-               AND COALESCE(durum,'') <> 'iptal'
+               AND kaynak_tablo IS NULL AND COALESCE(durum,'') <> 'iptal'
              GROUP BY 1,2 HAVING COUNT(*) > 1) x) AS ihlal_grubu,
           (SELECT COUNT(*)::int FROM odeme_plani
            WHERE kart_id IS NOT NULL AND referans_ay IS NULL) AS referanssiz_kart_plani""")
