@@ -110,6 +110,9 @@ function hamOlayCekmecesi(n) {
 }
 
 export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, onGorunum }) {
+  const [mm, setMm] = useState(null);                // /ops/mutabakat-merkezi
+  const [mmYukleniyor, setMmYukleniyor] = useState(false);
+  const [mmKova, setMmKova] = useState(null);        // açık kova kodu
   const [rapor, setRapor] = useState(null);          // truth gunluk-rapor
   const [durum, setDurum] = useState(null);          // truth durum
   const [truthHata, setTruthHata] = useState('');
@@ -416,6 +419,14 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
     // Bulgular ekranı iki katman taşır (çıkarım + ham gözlem) — ikisi de yüklenir
     if (gorunum === 'anomali' || gorunum === 'olaylar') olayYukle();
     if (gorunum === 'mutabakat') mutYukle();
+    // MUTABAKAT MERKEZİ — 6 kova tek uçtan (aradım/bulamadım/ne yapmalı)
+    if (gorunum === 'mutabakatmerkezi' && !mm) {
+      setMmYukleniyor(true);
+      api('/ops/mutabakat-merkezi?gun=60')
+        .then((d) => setMm(d || null))
+        .catch(() => setMm(null))
+        .finally(() => setMmYukleniyor(false));
+    }
     // Dörtgen seçili şubeye göre ayrı çekilir (sube_id zorunlu uç)
     if (gorunum === 'mutabakat' && dortSube) {
       api(`/duyu/dortgen?sube_id=${encodeURIComponent(dortSube)}&gun=7`)
@@ -429,6 +440,152 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
   }, [gorunum, dortSube, truthYukle, olayYukle, mutYukle, bagYukle, duyuYukle, stratejiYukle]);
 
   // ════════════════════════ GÖRÜNÜM: BUGÜNKÜ BULGULAR ═══════════════════════
+  // ── MUTABAKAT MERKEZİ ────────────────────────────────────────────────────
+  // "Aradım, bulamadım: ne yapmalı?" Altı kova tek kapıda; her satır dört
+  // soruya cevap verir. Hüküm yok — aksiyon sahibin.
+  if (gorunum === 'mutabakatmerkezi') {
+    if (mmYukleniyor && !mm) return <Yukleniyor />;
+    if (!mm) {
+      return (
+        <BosDurum
+          baslik="Mutabakat verisi alınamadı"
+          aciklama="Uç yanıt vermedi. Yenile'yi deneyin; sorun sürerse kayıtlar birikmeye devam eder, kayıp olmaz."
+        />
+      );
+    }
+    const o = mm.ozet || {};
+    const kovalar = Array.isArray(mm.kovalar) ? mm.kovalar : [];
+    const acikKova = kovalar.find((k) => k.kod === mmKova) || null;
+    // Aksiyon → hangi ekrana köprü (yazma o ekranların guard'lı akışında kalır)
+    const AKSIYON_HEDEF = {
+      fatura_iste: { ad: '📩 Fatura İstek ekranı', hedef: '__modul:belge:istek' },
+      tutar_gir: { ad: '🧾 Fatura Arşivi', hedef: '__modul:belge:arsiv' },
+      belge_bagla: { ad: '📄 Belge Kapsama', hedef: '__modul:belge:kapsama' },
+      kasa_izi_uret: { ad: '💰 Kasa Teslim', hedef: '__modul:para:kasa' },
+      banka_kaydet: { ad: '🏦 Ödeme Merkezi', hedef: '__modul:odeme:gecmis' },
+    };
+    return (
+      <>
+        <KpiSeridi kpiler={[
+          { etiket: 'Açık kalem', deger: String(sayi(o.acik_kalem)), alt: `${sayi(o.kova_sayisi)} kovada · son ${sayi(mm.pencere_gun)} gün`, renk: sayi(o.acik_kalem) ? R.kirmizi : R.yesil },
+          { etiket: 'Toplam tutar', deger: fmt(sayi(o.toplam_tutar_tl)), alt: 'izi/belgesi eksik para', renk: R.bakirAcik },
+          { etiket: 'Kritik kova', deger: String((o.kritik_kovalar || []).length), alt: (o.kritik_kovalar || []).length ? 'acil bakılmalı' : 'kritik yok', renk: (o.kritik_kovalar || []).length ? R.kirmizi : R.yesil },
+          { etiket: 'İlke', deger: 'öneri-only', alt: 'sistem hüküm vermez', renk: R.not },
+        ]} />
+
+        <div style={{
+          padding: '11px 15px', borderRadius: 12, marginBottom: 14, fontSize: 11.5, lineHeight: 1.65,
+          background: 'rgba(96,165,250,.08)', border: '1px solid rgba(96,165,250,.24)', color: R.metin2,
+        }}>
+          Bu ekran <b>aradığı ve bulamadığı</b> kayıtları listeler. Her satır dört soruya cevap verir:
+          ne aradım · nerede aradım · neden bulamadım · <b style={{ color: R.krem }}>ne yapmalı</b>.
+          Hiçbir kayıt silinmez, otomatik düzeltilmez — karar sizin.
+        </div>
+
+        {/* Kova kartları */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(268px, 1fr))', gap: 10, marginBottom: 14 }}>
+          {kovalar.map((k) => {
+            const acik = k.kod === mmKova;
+            const renk = k.kritik ? R.kirmizi : k.adet ? R.amber : R.yesil;
+            return (
+              <div
+                key={k.kod}
+                onClick={() => setMmKova(acik ? null : k.kod)}
+                className="v2-hover-kalk"
+                style={{
+                  ...kartYuzey, padding: '13px 15px', cursor: 'pointer',
+                  borderLeft: `3px solid ${renk}`,
+                  outline: acik ? `1px solid ${R.bakir}66` : 'none',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 5 }}>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: R.krem, flex: 1 }}>{k.ad}</span>
+                  <span style={{ fontFamily: F.mono, fontSize: 17, fontWeight: 700, color: renk }}>{sayi(k.adet)}</span>
+                </div>
+                <div style={{ fontSize: 11, color: R.not2, lineHeight: 1.5, minHeight: 30 }}>{k.aciklama}</div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginTop: 8 }}>
+                  <span style={{ fontFamily: F.mono, fontSize: 12.5, color: sayi(k.tutar_tl) ? R.bakirAcik : R.not3 }}>
+                    {sayi(k.tutar_tl) ? fmt(sayi(k.tutar_tl)) : 'tutar bilinmiyor'}
+                  </span>
+                  <span style={{ fontSize: 10.5, color: R.not }}>{acik ? 'kapat ▲' : 'aç ▼'}</span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Açık kovanın satırları */}
+        {acikKova && (acikKova.satirlar || []).length > 0 && (
+          <>
+            {AKSIYON_HEDEF[acikKova.aksiyon] && (
+              <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 10, flexWrap: 'wrap' }}>
+                <button
+                  onClick={() => onKopru?.(AKSIYON_HEDEF[acikKova.aksiyon].hedef)}
+                  style={{
+                    padding: '9px 17px', borderRadius: 10, border: 'none', cursor: 'pointer',
+                    background: 'linear-gradient(150deg, #E0A559, #AF6C29)', color: '#1C1309',
+                    fontSize: 12, fontWeight: 700, fontFamily: 'inherit',
+                  }}
+                >
+                  {AKSIYON_HEDEF[acikKova.aksiyon].ad} →
+                </button>
+                <span style={{ fontSize: 11.5, color: R.not2 }}>
+                  Yükleme/düzeltme o ekranın guard'lı akışında yapılır — buradan yalnız yönlendirilir.
+                </span>
+              </div>
+            )}
+            <Tablo
+              baslik={`${acikKova.ad} · ${acikKova.adet} kalem`}
+              not={acikKova.aciklama}
+              kolonlar={[{ ad: 'Kayıt' }, { ad: 'Nerede' }, { ad: 'Tarih' }, { ad: 'Tutar', sag: true }, { ad: 'Ne yapmalı' }]}
+              satirlar={(acikKova.satirlar || []).map((s, i) => {
+                // Kova şemaları farklı — ortak dile çevir (uydurma alan okuma yok)
+                const kayit = s.tedarikci_ad || s.tedarikci || s.aciklama || s.donem || '—';
+                const nerede = s.sube_adi || s.sube_id || s.islem_turu || s.durum || '—';
+                const tarih = s.tarih || s.vade || s.teslim_tarihi || '—';
+                const tutar = sayi(s.tutar ?? s.elde_kalan_tl);
+                const yas = s.yas != null ? ` · ${s.yas} gün` : '';
+                return {
+                  id: s.id || `mm-${i}`, _s: s,
+                  hucreler: [
+                    { v: kisalt(String(kayit), 42), kalin: true },
+                    { v: String(nerede), renk: R.not },
+                    { v: `${String(tarih).slice(0, 10)}${yas}`, mono: true, renk: R.not2 },
+                    { v: tutar ? fmt(tutar) : '—', mono: true, sag: true, kalin: !!tutar },
+                    { v: kisalt(String(s.ne_yapmali || '—'), 46), renk: R.metin2 },
+                  ],
+                };
+              })}
+              onSatir={(row) => {
+                const s = row._s;
+                onCekmece?.({
+                  tip: 'MUTABAKAT KALEMİ',
+                  baslik: String(s.tedarikci_ad || s.tedarikci || s.aciklama || acikKova.ad),
+                  alt: acikKova.ad,
+                  kpi: [
+                    { etiket: 'Tutar', deger: sayi(s.tutar ?? s.elde_kalan_tl) ? fmt(sayi(s.tutar ?? s.elde_kalan_tl)) : 'bilinmiyor', renk: R.bakirAcik },
+                    ...(s.yas != null ? [{ etiket: 'Yaş', deger: `${s.yas} gün`, renk: s.yas >= 15 ? R.kirmizi : R.amber }] : []),
+                    { etiket: 'Aksiyon', deger: acikKova.aksiyon, renk: R.not },
+                  ],
+                  listeBaslik: 'Kayıt ayrıntısı',
+                  // Ham alanları göster — hangi veriye bakıldığı gizlenmez
+                  satirlar: Object.entries(s)
+                    .filter(([k]) => k !== 'ne_yapmali')
+                    .slice(0, 12)
+                    .map(([k, v]) => ({ ad: k, detay: '', tutar: kisalt(String(v ?? '—'), 40) })),
+                  not: `NE YAPMALI: ${s.ne_yapmali || acikKova.aksiyon}. ${mm.not || ''}`,
+                });
+              }}
+            />
+          </>
+        )}
+        {acikKova && !(acikKova.satirlar || []).length && (
+          <BosDurum baslik={acikKova.ad} aciklama="Bu kovada açık kalem yok — temiz." tamam />
+        )}
+      </>
+    );
+  }
+
   if (gorunum === 'anomali') {
     if (truthHata) return <HataBandi mesaj={truthHata} onTekrar={truthYukle} />;
     if (!rapor) return <Yukleniyor />;

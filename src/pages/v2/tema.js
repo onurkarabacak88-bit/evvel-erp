@@ -138,6 +138,13 @@ export const MODULLER = [
   { id: 'denetim', blok: 'Karar', ad: 'Denetim & Zekâ', kisa: 'Zekâ', alt: '13 tanı motoru · duyu', ikon: IK.islemci, gorunumler: [
     { id: 'anomali', ad: 'Bugünkü Bulgular', rozet: 'anomali', renk: '#F87171' },
     { id: 'motorlar', ad: 'Tanı Motorları · 13' },
+    // ⭐ MUTABAKAT MERKEZİ (2026-08-08, sahip: "aradığın ve bulamadıklarının
+    // listesi + yükleme yapılıp yapılmayacağını soracağın sistem"). Aynı soru
+    // bugüne dek DÖRT ekrana dağılmıştı (Belge Merkezi · Duyu Mutabakatı ·
+    // Teslimat Zinciri · Belge Talebi) ve hiçbiri "ne yapmalı" demiyordu.
+    // Aşağıdaki 'Duyu Mutabakatı' DAR kapsamdır (tedarikçi bakiye ↔ ödeme aday
+    // eşleşmesi) — silinmedi, bu geniş kapının altında kaldı.
+    { id: 'mutabakatmerkezi', ad: 'Mutabakat Merkezi', rozet: 'mutabakatAcik', renk: '#F87171' },
     { id: 'mutabakat', ad: 'Duyu Mutabakatı', rozet: 'duyuMutabakat', renk: '#FBBF24' },
     { id: 'bag', ad: 'Bağ Defteri' },
     { id: 'duyu', ad: 'Sinyal İzleme' },
