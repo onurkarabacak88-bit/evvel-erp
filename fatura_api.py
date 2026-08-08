@@ -2276,6 +2276,101 @@ def belge_sinifi_ozet():
     }
 
 
+@router.get("/odenmis-sayilan-denetimi")
+def odenmis_sayilan_denetimi():
+    """🔍 'Ödenmiş' sayılıp borç listesinden düşen faturaların izi DOĞRU MU?
+
+    Sahip sorusu (2026-08-08): "ödeme yapılınca düşüyor mu, kapatabiliyor mu?"
+    Motor bir faturayı kuyruğa almazken '(odenmis)' damgası basıyor. O fren
+    yalnız TUTAR + TARİH bakıyor — TEDARİKÇİYE BAKMIYOR. Sonuç:
+      · Aynı tutarlı 3 fatura (AGİT SEFA 1.101 ₺ ×3) tek ödemeyle kapanabilir
+      · Başka bir tedarikçiye yapılan ödeme bu faturayı kapatabilir
+    Bu uç her damgayı yeniden sınar ve izin tedarikçiyle uyuşup uyuşmadığını
+    söyler. HÜKÜM YOK — damgayı kaldırmaz, listeler.
+    """
+    sonuc, ozet = [], {"iz_uyusuyor": 0, "iz_baska_tedarikci": 0,
+                       "iz_bulunamadi": 0, "iz_paylasimli": 0}
+    with db() as (_c, cur):
+        _ensure_tablolar(cur)
+        cur.execute(
+            """SELECT id, tedarikci_ad, fatura_no, fatura_tarih::text AS ftarih,
+                      COALESCE(toplam_tutar,0)::float AS tutar
+               FROM tedarikci_fatura
+               WHERE kuyruk_vadeli_id = '(odenmis)' AND COALESCE(durum,'') <> 'kopya'
+               ORDER BY fatura_tarih DESC NULLS LAST"""
+        )
+        faturalar = [dict(r) for r in (cur.fetchall() or [])]
+
+        # Aynı tutar+tarih üçlüsü kaç faturada tekrar ediyor? (iz paylaşımı riski)
+        imza_sayac: Dict[str, int] = {}
+        for f in faturalar:
+            imza = f"{round(float(f['tutar'] or 0), 2)}|{(f.get('ftarih') or '')[:10]}"
+            imza_sayac[imza] = imza_sayac.get(imza, 0) + 1
+
+        for f in faturalar:
+            tut = float(f.get("tutar") or 0)
+            ftarih = (f.get("ftarih") or "")[:10] or date.today().isoformat()
+            ted = (f.get("tedarikci_ad") or "").strip()
+            # Motorun bulduğu izlerin AYNISI — ama bu kez açıklamasıyla
+            cur.execute(
+                """SELECT * FROM (
+                     SELECT 'vadeli' AS kanal, vade_tarihi AS t, tutar,
+                            COALESCE(aciklama,'') || ' ' || COALESCE(tedarikci,'') AS metin
+                     FROM vadeli_alimlar WHERE durum='odendi'
+                     UNION ALL
+                     SELECT 'anlik_gider', tarih, tutar,
+                            COALESCE(aciklama,'') || ' ' || COALESCE(tedarikci,'')
+                     FROM anlik_giderler WHERE durum='aktif' AND kaynak_id IS NULL
+                     UNION ALL
+                     SELECT 'kart', tarih, tutar, COALESCE(aciklama,'')
+                     FROM kart_hareketleri
+                     WHERE islem_turu='HARCAMA' AND durum='aktif' AND kaynak_id IS NULL
+                       AND COALESCE(harcama_tipi,'belirsiz') <> 'sahsi') x
+                   WHERE ABS(x.tutar - %s) <= GREATEST(5, %s * 0.02)
+                     AND x.t BETWEEN %s::date - 10 AND %s::date + 90
+                   ORDER BY x.t LIMIT 5""",
+                (tut, tut, ftarih, ftarih),
+            )
+            izler = [dict(r) for r in (cur.fetchall() or [])]
+            uyusan = [i for i in izler if ted and _odeme_eslesir(ted, i.get("metin") or "")]
+            imza = f"{round(tut, 2)}|{ftarih}"
+            paylasimli = imza_sayac.get(imza, 1) > 1
+
+            if not izler:
+                hal, ne = "iz_bulunamadi", "Damga var ama iz yok — borç listesine GERİ ALINMALI"
+            elif uyusan:
+                hal = "iz_uyusuyor"
+                ne = "İz bu tedarikçiye ait görünüyor — damga makul"
+            else:
+                hal = "iz_baska_tedarikci"
+                ne = ("İz BAŞKA bir ödemeye ait olabilir (tedarikçi adı eşleşmiyor) — "
+                      "borç yanlışlıkla kapanmış olabilir")
+            if paylasimli and hal != "iz_bulunamadi":
+                hal = "iz_paylasimli"
+                ne = (f"⚠️ Aynı tutar+tarihte {imza_sayac[imza]} fatura var — TEK ödeme "
+                      f"hepsini birden kapatmış olabilir (mükerrer kayıt mı, ayrı fatura mı?)")
+            ozet[hal] = ozet.get(hal, 0) + 1
+            sonuc.append({
+                "fatura_id": f["id"], "tedarikci": ted, "fatura_no": f.get("fatura_no"),
+                "tarih": f.get("ftarih"), "tutar": round(tut, 2),
+                "hal": hal, "ne_demek": ne,
+                "ayni_imzali_fatura": imza_sayac.get(imza, 1),
+                "bulunan_iz": [{"kanal": i["kanal"], "tarih": str(i["t"]),
+                                "tutar": float(i["tutar"] or 0),
+                                "metin": (i.get("metin") or "")[:70]} for i in izler[:3]],
+            })
+    riskli = round(sum(s["tutar"] for s in sonuc
+                       if s["hal"] in ("iz_baska_tedarikci", "iz_bulunamadi", "iz_paylasimli")), 2)
+    return {
+        "damgali_fatura": len(sonuc), "ozet": ozet,
+        "riskli_tutar": riskli,
+        "satirlar": sonuc,
+        "not": "Hüküm YOK — damga kaldırılmadı. 'iz_baska_tedarikci' ve 'iz_paylasimli' "
+               "satırlar borç listesine geri alınmayı hak edebilir; kararı sahip verir. "
+               "Kalıcı çözüm: ödeme izi freni TEDARİKÇİ adını da şart koşmalı.",
+    }
+
+
 @router.get("/kuyruk-bosluk-teshisi")
 def kuyruk_bosluk_teshisi():
     """🕳 'Bu fatura neden borç listemde yok?' — fatura fatura sebep.
