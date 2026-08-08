@@ -3273,6 +3273,11 @@ def kart_izi_onayla(body: KartIziOnayModel):
     except Exception as e:  # noqa: BLE001 — tahsis YORUM; başarısızlığı bakiyeyi bozmaz
         logger.warning("kart izi tahsis atlandi (%s): %s", ted, str(e)[:120])
 
+    try:
+        from supplier_payment import spe_tetikle
+        spe_tetikle("kart_izi_onay")
+    except Exception:  # noqa: BLE001
+        pass
     return {
         "ok": True, "tedarikci": ted,
         "damgalanan": len(damgalanan), "toplam_dusen": toplam,
@@ -4836,6 +4841,17 @@ def cari_ozet() -> dict:
         gruplar[hedef]["faturalar"].sort(key=lambda f: (str(f["tarih"])))
         del gruplar[kaynak]
 
+    # 📦 GRNI havuzu — TEK sorgu (tedarikçi döngüsü içinde sorgulamak N+1 olurdu)
+    _grni_tum = []
+    try:
+        with db() as (_c2, cur2):
+            cur2.execute(
+                """SELECT tedarikci_ad, COALESCE(beklenen_tutar_tl,0)::float AS tutar
+                   FROM belge_talep WHERE durum='bekliyor' AND fatura_id IS NULL""")
+            _grni_tum = [dict(r) for r in (cur2.fetchall() or [])]
+    except Exception as e:  # noqa: BLE001
+        logger.warning("GRNI havuzu okunamadı: %s", str(e)[:120])
+
     ozet = []
     for g in gruplar.values():
         fl = _cari_zincir(g["faturalar"])
@@ -4883,6 +4899,13 @@ def cari_ozet() -> dict:
                 dv["_atandi"] = True
                 devir_top = round(devir_top + float(dv["tutar"] or 0), 2)
         hesaplanan_acik = round(devir_top + fat_top - odeme_top, 2)
+        # 📦 GRNI — teslim alındı, fatura gelmedi (bakiyeye DAHİL DEĞİL)
+        _grni_adet, _grni_tl = 0, 0.0
+        for _bt in _grni_tum:
+            _bad = _bt.get("tedarikci_ad") or ""
+            if any(_odeme_eslesir(a, _bad) for a in g_adlar) or                any(_odeme_eslesir(_bad, a) for a in g_adlar):
+                _grni_adet += 1
+                _grni_tl = round(_grni_tl + float(_bt.get("tutar") or 0), 2)
         ozet.append({
             "tedarikci": g["tedarikci"], "vkn": g["vkn"],
             "devir": devir_top,
@@ -4890,6 +4913,11 @@ def cari_ozet() -> dict:
             "fatura_toplam_6ay": fat_top,
             "odeme_izi_toplam_6ay": odeme_top,
             "hesaplanan_acik": hesaplanan_acik,
+            # 📦 Faturasız teslimat: yükümlülük var, borç satırı YOK.
+            # gercek_borc = kayıtlı açık + bekleyen belge → sahibin toplam yükü.
+            "faturasiz_teslimat_adet": _grni_adet,
+            "faturasiz_teslimat_tl": _grni_tl,
+            "gercek_borc": round(hesaplanan_acik + _grni_tl, 2),
             "odeme_izi_var": odeme_top > 0,
             "son_fatura": fl[-1]["tarih"] if fl else None,
             "beyan_bakiye": beyan, "beyan_tarihi": beyan_tarih,
@@ -4958,6 +4986,10 @@ def cari_ozet() -> dict:
         "toplam_hesaplanan_acik": round(sum(max(0.0, x["hesaplanan_acik"])
                                             for x in ozet), 2),
         "toplam_bekleyen_vade": round(sum(x["bekleyen_vade_toplam"] for x in ozet), 2),
+        # 📦 GRNI toplamı — kayıtlı borcun ÜSTÜNDE duran, henüz belgesiz yükümlülük
+        "toplam_faturasiz_teslimat": round(sum(x["faturasiz_teslimat_tl"] for x in ozet), 2),
+        "faturasiz_teslimat_adet": sum(x["faturasiz_teslimat_adet"] for x in ozet),
+        "toplam_gercek_borc": round(sum(max(0.0, x["gercek_borc"]) for x in ozet), 2),
         "pencere_baslangic": kesit_6ay,
         "not": ("İKİ GÖZ: beyan_bakiye = TEDARİKÇİNİN fatura üstü beyanı (≈); "
                 "hesaplanan_acik = BİZİM taraf ≈ açılış devri + pencere içi fatura "
@@ -5179,6 +5211,49 @@ def cari_devir_iptaller():
         return {"iptaller": [dict(r) for r in (cur.fetchall() or [])]}
 
 
+def _faturasiz_teslimat_ozet(es_adlar) -> Dict[str, Any]:
+    """📦 GRNI: teslim alınmış ama faturası gelmemiş mal (tedarikçi bazlı).
+
+    `belge_talep` teslim anında doğar (şube ürünü kabul edince). Fatura gelince
+    fatura_id dolar ve borç gerçek tutarıyla kuyruğa girer. ARADA KALAN SÜREDE
+    yükümlülük vardır ama hiçbir borç satırı yoktur — sahibin gördüğü boşluk bu.
+
+    Beklenen tutar = teslim kalemleri × (gerçek alış fiyatı, yoksa katalog).
+    Fatura gelince gerçek tutarla değişir; fark denetim sinyalidir.
+    """
+    try:
+        with db() as (_c, cur):
+            cur.execute(
+                """SELECT id, tedarikci_ad, sube_adi, teslim_tarihi::text AS tarih,
+                          COALESCE(beklenen_tutar_tl,0)::float AS tutar,
+                          COALESCE(kalem_sayisi,0)::int AS kalem,
+                          COALESCE(fiyatsiz_kalem,0)::int AS fiyatsiz,
+                          GREATEST(0,(CURRENT_DATE - COALESCE(teslim_tarihi,
+                                      olusturma::date)))::int AS yas
+                   FROM belge_talep
+                   WHERE durum='bekliyor' AND fatura_id IS NULL
+                   ORDER BY teslim_tarihi DESC NULLS LAST""")
+            tum = [dict(r) for r in (cur.fetchall() or [])]
+    except Exception as e:  # noqa: BLE001
+        return {"adet": 0, "toplam_tl": 0.0, "hata": str(e)[:120]}
+    ait = [t for t in tum
+           if any(_odeme_eslesir(a, t.get("tedarikci_ad") or "") for a in (es_adlar or []))
+           or any(_odeme_eslesir(t.get("tedarikci_ad") or "", a) for a in (es_adlar or []))]
+    return {
+        "adet": len(ait),
+        "toplam_tl": round(sum(t["tutar"] for t in ait), 2),
+        "tutari_bilinmeyen": sum(1 for t in ait if t["tutar"] <= 0),
+        "en_eski_gun": max([t["yas"] for t in ait], default=0),
+        "satirlar": [{"teslim_tarihi": t["tarih"], "sube": t.get("sube_adi"),
+                      "tutar": t["tutar"], "kalem": t["kalem"],
+                      "fiyatsiz_kalem": t["fiyatsiz"], "bekleme_gun": t["yas"],
+                      "tedarikci_kaydi": t.get("tedarikci_ad")} for t in ait[:20]],
+        "ne_demek": ("Mal teslim alındı, fatura HENÜZ GELMEDİ — yükümlülük var ama "
+                     "borç satırı yok. Bakiyeye DAHİL DEĞİL (fatura gelince çift "
+                     "sayılırdı); 'gercek_borc' alanı ikisini toplar."),
+    }
+
+
 @router.get("/cari-ekstre")
 def cari_ekstre(tedarikci: str = ""):
     """Tek tedarikçinin ekstresi: fatura zinciri + zincir farkları + bekleyen
@@ -5385,6 +5460,14 @@ def cari_ekstre(tedarikci: str = ""):
         "aylik": aylik_liste,
         "hareketler": hareketler[-80:],
         "yuruyen_bakiye": (hareketler[-1]["bakiye"] if hareketler else 0.0),
+        # 📦 GRNI — MAL ALINDI, FATURA GELMEDİ (2026-08-08, sahip: "toptancılara
+        # sipariş geçilmiş, ürün teslim olmuş ama faturası gelmemiş ürünler borç
+        # satırına girmiyor; bu eksikliği toptancı carilerinde görebilmeliyim").
+        # Muhasebede bu "Goods Received Not Invoiced" tahakkukudur: yükümlülük
+        # doğmuştur ama belge yoktur.
+        # ⚠️ BAKİYEYE DAHİL EDİLMEZ — fatura gelince aynı borç ikinci kez sayılırdı.
+        # Ayrı alanda durur; 'gercek_borc' ikisinin toplamıdır.
+        "faturasiz_teslimat": _faturasiz_teslimat_ozet(_es_adlar),
         "bekleyen_vadeler": bekleyen_vadeler,
         "bekleyen_vade_toplam": round(sum(v["tutar"] for v in bekleyen_vadeler), 2),
         "odeme_adaylari": odeme_adaylari,

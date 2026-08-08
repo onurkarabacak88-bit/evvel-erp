@@ -305,6 +305,32 @@ def supplier_payment_sync(cur) -> Dict[str, Any]:
     return {"eklenen": eklenen, "taranan": taranan, "tedarikci_sayisi": len(teds)}
 
 
+def spe_tetikle(neden: str = "-") -> Dict[str, Any]:
+    """⚡ ÖDEME SONRASI ANLIK TAZELEME (2026-08-08, sahip: "her yazma işleminde
+    anlık güncellensin").
+
+    Kanonik katman gece + ekstre importuyla doluyordu; aradaki ödemeler senkrona
+    kadar katmanda GÖRÜNMÜYORDU. Cari hesap canlı tablolardan okuduğu için ikisi
+    ayrışıyordu. Bu yardımcı her para yazımından sonra çağrılır ve katmanı aynı
+    saniyede hizalar.
+
+    HATA-YUTAR: tazeleme patlarsa ödeme İŞLEMİ BOZULMAZ — para zaten yazıldı,
+    katman en geç gece tekrar hizalanır. Kendi bağlantısını açar (çağıranın
+    transaction'ına karışmaz).
+    """
+    try:
+        with db() as (conn, cur):
+            out = supplier_payment_sync_v2(cur)
+            conn.commit()
+        if out.get("eklenen"):
+            logger.info("kanonik ödeme katmanı tazelendi (%s): +%s olay",
+                        neden, out.get("eklenen"))
+        return out
+    except Exception as e:  # noqa: BLE001
+        logger.warning("spe tetikleme atlandı (%s): %s", neden, str(e)[:140])
+        return {"ok": False, "neden": neden}
+
+
 @router.post("/sync")
 def sp_sync():
     """Ödemeleri olay katmanına akıt — v2 mantığı (idempotent, alarmsız)."""

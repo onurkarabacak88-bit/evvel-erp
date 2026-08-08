@@ -4792,6 +4792,11 @@ def odeme_yap(oid: str, tutar: Optional[float] = None, body: VadeliOdeModel = Va
             audit(cur, 'odeme_plani', oid, 'ODENDI_KART' if _kart_tam else 'KISMI_ODEME_KART')
             # Uyarı önbelleğini temizle — panelde uyarı hemen kalksın
             uyari_cache_clear()
+            try:
+                from supplier_payment import spe_tetikle as _spe
+                _spe("odeme_yap_kart")
+            except Exception:  # noqa: BLE001
+                pass
             return {"success": True, "odeme_yontemi": "kart",
                     "tam_kapandi": _kart_tam,
                     "odenen_toplam": _kart_toplam,
@@ -4844,6 +4849,12 @@ def odeme_yap(oid: str, tutar: Optional[float] = None, body: VadeliOdeModel = Va
         # Uyarı önbelleğini temizle — panelde uyarı hemen kalksın
         uyari_cache_clear()
 
+    # ⚡ Kanonik ödeme katmanını ANINDA hizala (2026-08-08)
+    try:
+        from supplier_payment import spe_tetikle
+        spe_tetikle("odeme_yap")
+    except Exception:  # noqa: BLE001
+        pass
     return {"success": True,
             "tam_kapandi": _tam_kapandi,
             "odenen_toplam": _toplam_odenen,
