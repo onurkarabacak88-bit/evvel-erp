@@ -3236,9 +3236,15 @@ def temizlik_mukerrer_plan(kuru: int = 1):
     """
     guvenli, riskli = [], []
     with db() as (conn, cur):
+        # ÖNCE ÖDENMEMİŞLER: aynı gruptaki satırlardan 'odendi' olan ASIL kabul
+        # edilir (para o satırdan çıkmış olabilir), fazlalar bekleyenlerden seçilir.
         cur.execute(
             """SELECT aciklama, odenecek_tutar::float AS tutar, tarih::text AS tarih,
-                      ARRAY_AGG(id::text ORDER BY olusturma) AS idler, COUNT(*)::int AS adet
+                      ARRAY_AGG(id::text ORDER BY
+                                CASE WHEN durum='odendi' THEN 0 ELSE 1 END, olusturma) AS idler,
+                      ARRAY_AGG(durum ORDER BY
+                                CASE WHEN durum='odendi' THEN 0 ELSE 1 END, olusturma) AS durumlar,
+                      COUNT(*)::int AS adet
                FROM odeme_plani
                WHERE COALESCE(durum,'') <> 'iptal'
                GROUP BY 1,2,3 HAVING COUNT(*) > 1"""
@@ -3246,7 +3252,10 @@ def temizlik_mukerrer_plan(kuru: int = 1):
         gruplar = [dict(r) for r in (cur.fetchall() or [])]
         for g in gruplar:
             idler = list(g["idler"] or [])
+            durumlar = list(g["durumlar"] or [])
+            g["durum_dagilimi"] = {d: durumlar.count(d) for d in set(durumlar)}
             asil, fazlalar = idler[0], idler[1:]
+            _fazla_durum = dict(zip(idler[1:], durumlar[1:]))
             for fid in fazlalar:
                 # PARA İZİ — ÜÇ ANAHTARDAN (2026-08-08 ders: tek anahtara bakınca
                 # "0 riskli" çıkıyordu, oysa ödeme kaydı üç farklı yere düşebiliyor):
@@ -3267,12 +3276,20 @@ def temizlik_mukerrer_plan(kuru: int = 1):
                                 OR id=%s)) x""",
                     (fid, fid, fid, f"odm_{fid}"))
                 iz = int((cur.fetchone() or {}).get("n") or 0)
+                _durum = _fazla_durum.get(fid, "?")
                 kayit = {"plan_id": fid, "asil_kalan": asil, "tarih": g["tarih"],
                          "tutar": g["tutar"], "aciklama": (g["aciklama"] or "")[:60],
-                         "para_izi": iz}
+                         "para_izi": iz, "durum": _durum,
+                         "grup_durumlari": g.get("durum_dagilimi")}
                 if iz > 0:
                     kayit["neden"] = ("Bu satırın kasa/kart hareketi VAR — gerçekten ayrı bir "
                                       "ödeme olabilir; dokunulmadı")
+                    riskli.append(kayit)
+                elif _durum == "odendi":
+                    # Para izi yok AMA 'ödendi' damgalı — iptal edilirse "ödenmiş"
+                    # bilgisi kaybolur. Sahip incelemesi gerekir.
+                    kayit["neden"] = ("'ödendi' damgalı ama kasa/kart izi YOK — iptal etmek "
+                                      "yerine önce 'gerçekten ödendi mi' sorusu cevaplanmalı")
                     riskli.append(kayit)
                 else:
                     guvenli.append(kayit)
