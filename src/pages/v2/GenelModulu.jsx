@@ -85,9 +85,12 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru }) {
       api('/kasa-kontrol').catch(() => null),
       api('/sabit-giderler/odenenler').catch(() => null),
       api('/vadeli-alimlar/ozet').catch(() => null),
-    ]).then(([panel, uyarilar, onaylar, kasa, odenen, vadeli]) => {
+      // NAKİT KONUM (2026-08-08): "param şu an nerede?" — şube kasası / yolda /
+      // banka duraklarının toplamı ile kasa defteri bakiyesini karşılaştırır.
+      api('/ops/metrics/nakit-konum?gun=60').catch(() => null),
+    ]).then(([panel, uyarilar, onaylar, kasa, odenen, vadeli, nakit]) => {
       if (!panel) setHata('Panel verisi alınamadı');
-      setVeri({ panel: panel || {}, uyarilar, onaylar, kasa, odenen, vadeli });
+      setVeri({ panel: panel || {}, uyarilar, onaylar, kasa, odenen, vadeli, nakit });
     }).catch((e) => setHata(e?.message || 'Veri alınamadı'));
   };
   useEffect(yukle, []);
@@ -216,8 +219,89 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru }) {
     const giris = sayi(p.bu_ay_nakit_giris);
     const cikis = sayi(p.bu_ay_nakit_cikis);
     const net = p.bu_ay_net != null ? sayi(p.bu_ay_net) : giris - cikis;
+    // ── NAKİT KONUM: "param şu an nerede?" ───────────────────────────────────
+    // Kasa bakiyesi tek sayıdır ama para tek yerde durmaz: şube kasasında,
+    // yolda (teslim alınmış/bankaya girmemiş) ve bankada bekler. Durakların
+    // toplamı ile defter bakiyesi arasındaki fark = mutabakatsız nakit.
+    const nk = veri.nakit;
+    const nakitBlok = nk?.duraklar ? (() => {
+      const du = nk.duraklar;
+      const sag = nk.saglik || {};
+      const mut = sayi(nk.mutabakatsiz_tl);
+      const renk = sag.durum === 'yesil' ? R.yesil : sag.durum === 'sari' ? R.amber : R.kirmizi;
+      const duraklar = [
+        ['Şube kasalarında', sayi(du.sube_kasalarinda_tl), R.krem, 'son kapanış sayımı'],
+        ['Yolda', sayi(du.yolda_tl), renk, 'teslim alınmış · bankaya girmemiş'],
+        ['Bankada', sayi(du.bankada_tl), R.mavi, 'yatırım kayıtları'],
+      ];
+      const enBuyuk = Math.max(1, ...duraklar.map(([, v]) => Math.abs(v)));
+      return (
+        <div
+          onClick={() => onCekmece?.({
+            tip: 'NAKİT KONUM',
+            baslik: 'Param şu an nerede?',
+            alt: `son ${sayi(nk.pencere_gun)} gün · kayıt üretmez, konumu hesaplar`,
+            kpi: [
+              { etiket: 'Durakların toplamı', deger: fmt(sayi(du.duraklar_toplami_tl)), renk: R.bakirAcik },
+              { etiket: 'Kasa defteri', deger: fmt(sayi(nk.defter_bakiyesi_tl)) },
+              { etiket: 'Mutabakatsız', deger: fmt(mut), renk: Math.abs(mut) > 1 ? R.kirmizi : R.yesil },
+            ],
+            listeBaslik: 'Duraklar ve akış',
+            satirlar: [
+              ...duraklar.map(([ad, v, , alt]) => ({ ad, detay: alt, tutar: fmt(v) })),
+              { ad: '= Durakların toplamı', detay: 'konumu doğrulanmış nakit', tutar: fmt(sayi(du.duraklar_toplami_tl)) },
+              { ad: 'Kasa defteri bakiyesi', detay: 'kanonik kayıt', tutar: fmt(sayi(nk.defter_bakiyesi_tl)) },
+              { ad: '⚠ Mutabakatsız', detay: 'hangi durakta olduğu bilinmeyen', tutar: fmt(mut) },
+              { ad: 'Teslim alınan (toplam)', detay: `${sayi(nk.akis?.teslim_adet)} işlem`, tutar: fmt(sayi(nk.akis?.teslim_alinan_tum_tl)) },
+              { ad: 'Bankaya yatan (toplam)', detay: `${sayi(nk.akis?.banka_adet)} işlem`, tutar: fmt(sayi(nk.akis?.bankaya_yatan_tum_tl)) },
+              ...(nk.sube_kasalari || []).map((s) => ({
+                ad: `${s.sube_adi} kasası`, detay: `son kapanış ${s.son_kapanis}`, tutar: fmt(sayi(s.kasada_tl)),
+              })),
+            ],
+            not: `${sag.esik || ''} · ${nk.not || ''}`,
+          })}
+          style={{ ...kartYuzey, padding: '15px 18px', marginBottom: 14, cursor: 'pointer', borderLeft: `3px solid ${renk}` }}
+        >
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap', marginBottom: 11 }}>
+            <span style={{ fontFamily: F.baslik, fontSize: 15, fontWeight: 600 }}>💵 Param şu an nerede?</span>
+            {sag.yolda_haftalik_ciro_pct != null && (
+              <span style={{ fontSize: 11.5, color: renk, fontWeight: 700 }}>
+                {/* ⚠️ trSayi bu dosyada TANIMLI DEĞİL (bugün 8. helper tuzağı) —
+                    Math.round ile yazıldı. Kural: helper kullanmadan önce O DOSYADA grep. */}
+                yoldaki nakit = haftalık cironun %{Math.round(sayi(sag.yolda_haftalik_ciro_pct))}'i
+              </span>
+            )}
+            <span style={{ fontSize: 11, color: R.not2, marginLeft: 'auto' }}>dokun → tam döküm</span>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+            {duraklar.map(([ad, v, c, alt]) => (
+              <div key={ad} style={{ display: 'flex', alignItems: 'center', gap: 11 }}>
+                <span style={{ fontSize: 12, width: 132, flexShrink: 0, color: R.metin2 }}>{ad}</span>
+                <div style={{ flex: 1, height: 8, borderRadius: 99, background: R.girinti, overflow: 'hidden' }}>
+                  <div style={{ width: `${Math.min(100, (Math.abs(v) / enBuyuk) * 100)}%`, height: '100%', background: c, opacity: 0.75 }} />
+                </div>
+                <span style={{ fontSize: 12.5, fontFamily: F.mono, width: 104, textAlign: 'right', color: c }}>{fmt(v)}</span>
+                <span style={{ fontSize: 10.5, color: R.not3, width: 168 }}>{alt}</span>
+              </div>
+            ))}
+          </div>
+          {Math.abs(mut) > 1 && (
+            <div style={{
+              marginTop: 11, padding: '9px 12px', borderRadius: 9, fontSize: 12, lineHeight: 1.55,
+              background: 'rgba(248,113,113,.08)', border: `1px solid ${R.kirmizi}33`, color: R.metin2,
+            }}>
+              ⚠ Kasa defteri <b style={{ fontFamily: F.mono, color: R.krem }}>{fmt(sayi(nk.defter_bakiyesi_tl))}</b> diyor,
+              durakların toplamı <b style={{ fontFamily: F.mono, color: R.krem }}>{fmt(sayi(du.duraklar_toplami_tl))}</b> —
+              aradaki <b style={{ fontFamily: F.mono, color: R.kirmizi }}>{fmt(mut)}</b> hangi durakta olduğu
+              doğrulanmamış nakit. Şube kasası rakamları son kapanış sayımından gelir; sayım eskiyse fark büyür.
+            </div>
+          )}
+        </div>
+      );
+    })() : null;
     return (
       <>
+        {nakitBlok}
         <KpiSeridi kpiler={[
           { etiket: 'Bu ay ciro', deger: fmt(sayi(p.bu_ay_sadece_ciro ?? p.bu_ay_ciro)), alt: 'sadece ciro', renk: R.krem },
           { etiket: 'Nakit giriş', deger: giris ? fmt(giris) : '—', alt: 'bu ay', renk: giris ? R.yesil : R.not },
