@@ -3418,14 +3418,19 @@ def temizlik_odenen_tutar(kuru: int = 1):
     with db() as (conn, cur):
         cur.execute(
             """SELECT id, LEFT(COALESCE(aciklama,''),60) AS aciklama, tarih::text AS tarih,
-                      odenecek_tutar::float AS borc
+                      odenecek_tutar::float AS borc, COALESCE(kaynak_tablo,'') AS kt,
+                      kaynak_id AS ki
                FROM odeme_plani
                WHERE durum='odendi' AND COALESCE(odenen_tutar,0) <= 0.01
                  AND COALESCE(aciklama,'') NOT ILIKE '%%kart%%'"""
         )
         for r in (cur.fetchall() or []):
             p = dict(r)
-            # İz araması üç anahtardan (kasa.kaynak_id · kasa.ref_id · kart 'odm_')
+            # ── İZ ARAMASI DÖRT ANAHTARDAN (2026-08-08, sahip uyarısı: "kasa izi
+            # bulamıyor olman — kira ödemelerinde kasa izi bırakıp bırakmadıklarını
+            # kontrol et!"). Dar arama 14 satırı (225.284 ₺) kaçırıyordu: ödeme
+            # kasaya KAYNAK TABLOSUYLA yazılıyor (sabit_giderler + gider_id,
+            # 2026-07-05 FIX O1 deseni), 'odeme_plani' ile değil.
             cur.execute(
                 """SELECT COALESCE(SUM(ABS(tutar)),0)::float AS t FROM (
                      SELECT tutar FROM kasa_hareketleri
@@ -3437,11 +3442,26 @@ def temizlik_odenen_tutar(kuru: int = 1):
                        AND ((kaynak_tablo='odeme_plani' AND kaynak_id=%s) OR id=%s)) x""",
                 (p["id"], p["id"], p["id"], f"odm_{p['id']}"))
             iz_tutar = round(float((cur.fetchone() or {}).get("t") or 0), 2)
+            kaynak_yolu = "plan anahtarı"
+            if iz_tutar <= 0.01 and p["kt"] and p["ki"]:
+                cur.execute(
+                    """SELECT COALESCE(SUM(ABS(tutar)),0)::float AS t FROM kasa_hareketleri
+                       WHERE kaynak_tablo=%s AND kaynak_id=%s
+                         AND COALESCE(durum,'aktif')='aktif'
+                         AND DATE_TRUNC('month',tarih)=DATE_TRUNC('month',%s::date)""",
+                    (p["kt"], str(p["ki"]), p["tarih"]))
+                iz_tutar = round(float((cur.fetchone() or {}).get("t") or 0), 2)
+                kaynak_yolu = f"kaynak tablosu ({p['kt']}, aynı ay)"
             if iz_tutar > 0.01:
-                yazilacak.append({**p, "kasa_izi": iz_tutar})
+                # ⚠️ TAVAN: aynı ay içinde aynı kaynağa birden çok ödeme olabilir
+                # (POS DONANIM aynı ay 2 kez). Borçtan fazlasını YAZMA.
+                yazilacak_tutar = round(min(iz_tutar, float(p["borc"] or 0)), 2)
+                yazilacak.append({**p, "kasa_izi": iz_tutar,
+                                  "yazilan": yazilacak_tutar, "yol": kaynak_yolu,
+                                  "tavana_takildi": iz_tutar > float(p["borc"] or 0) + 0.01})
                 if not kuru:
                     cur.execute("UPDATE odeme_plani SET odenen_tutar=%s WHERE id=%s",
-                                (iz_tutar, p["id"]))
+                                (yazilacak_tutar, p["id"]))
             else:
                 izsiz.append({**p, "soru": "Ödendi damgalı ama ne kasa ne kart izi var — "
                                            "gerçekten ödendi mi?"})
@@ -3449,12 +3469,15 @@ def temizlik_odenen_tutar(kuru: int = 1):
             conn.commit()
     return {"kuru_calistirma": bool(kuru),
             "tutar_yazilacak": len(yazilacak),
-            "yazilacak_toplam": round(sum(y["kasa_izi"] for y in yazilacak), 2),
+            "yazilacak_toplam": round(sum(y["yazilan"] for y in yazilacak), 2),
+            "tavana_takilan": sum(1 for y in yazilacak if y.get("tavana_takildi")),
             "iz_bulunamayan": len(izsiz),
             "izsiz_tutar": round(sum(i["borc"] for i in izsiz), 2),
             "yazilacaklar": yazilacak[:30], "izsizler": izsiz[:30],
-            "not": "Tutar UYDURULMAZ — yalnız gerçek kasa/kart izinden yazılır. "
-                   "İzi olmayan satırlar sahip incelemesine bırakılır. Uygulamak için ?kuru=0"}
+            "not": "Tutar UYDURULMAZ — yalnız gerçek kasa/kart izinden yazılır ve "
+                   "borç tutarını AŞAMAZ. İz araması 4 anahtardan yapılır (plan "
+                   "anahtarı + kaynak tablosu). İzi olmayanlar sahip incelemesine "
+                   "bırakılır. Uygulamak için ?kuru=0"}
 
 
 @router.get("/para-zinciri-rontgen")
