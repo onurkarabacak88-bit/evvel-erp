@@ -239,8 +239,38 @@ def _json_govde_coz(metin: str) -> Dict[str, Any]:
         a = s.find("{"); b = s.rfind("}")
         if a != -1 and b != -1 and b > a:
             s = s[a:b + 1]
-    j = json.loads(s)
+    try:
+        j = json.loads(s)
+    except json.JSONDecodeError:
+        # 🔧 JSON ONARIMI (2026-08-08, sahip: "ileride de yaşamamak için önlem al").
+        # Canlı hata: "Expecting property name enclosed in double quotes: line 11".
+        # LLM'ler JSON üretirken üç yaygın kusur yapar; hepsi ONARILABİLİR:
+        #   1. trailing comma  → {"a":1,}  /  [1,2,]
+        #   2. tek tırnaklı anahtar/değer → {'a': 'b'}
+        #   3. kaçmamış kontrol karakteri (satır sonu) metin içinde
+        # Onarım BAŞARISIZ olursa özgün hata yükselir — sessizce boş dönmeyiz.
+        d = re.sub(r",\s*([}\]])", r"\1", s)                    # 1
+        d = re.sub(r"'([^'\"\n]{1,60})'\s*:", r'"\1":', d)      # 2a anahtar
+        d = re.sub(r":\s*'([^'\n]{0,300})'", r': "\1"', d)      # 2b değer
+        d = "".join(ch for ch in d if ch >= " " or ch in "\n\t")  # 3
+        j = json.loads(d)                                        # patlarsa yükselir
+        logger.info("fatura JSON onarımıyla ayrıştırıldı (LLM bozuk JSON döndürmüştü)")
     return j if isinstance(j, dict) else {}
+
+
+# ── ⏳ GEÇİCİ vs KALICI HATA (2026-08-08): kota/ağ hatası GEÇİCİDİR — fatura
+# "okunamadı" diye rafa kalkmamalı, gece yeniden denenmelidir. Görsel bozuksa
+# tekrar denemek boşuna; o KALICIDIR.
+_GECICI_HATA_IZLERI = (
+    "429", "quota", "rate limit", "rate_limit", "timeout", "timed out",
+    "temporarily", "unavailable", "503", "502", "504", "connection",
+    "overloaded", "try again",
+)
+
+
+def hata_gecici_mi(mesaj: str) -> bool:
+    m = (mesaj or "").lower()
+    return any(k in m for k in _GECICI_HATA_IZLERI)
 
 
 _OCR_PROMPT_PDF = (
@@ -277,7 +307,10 @@ def _text_ocr(metin: str) -> Dict[str, Any]:
                     base_url=(os.getenv("LLM_BASE_URL") or "").strip() or None)
     govde = (metin or "").strip()[:12000]  # uzun faturada bağlamı sınırla
     son_hata: Optional[Exception] = None
-    for _deneme in range(2):
+    # ⏳ 3 deneme + ARTAN BEKLEME (2026-08-08): eski sürüm 2 denemeyi ART ARDA
+    # yapıyordu; kota (429) hatasında beklemeden tekrar denemek aynı hatayı
+    # alır — canlıda bir fatura tam da bu yüzden "okunamadı" kalmıştı.
+    for _deneme in range(3):
         try:
             resp = client.chat.completions.create(
                 model=os.getenv("OPENAI_FATURA_MODEL", "gpt-4o"),
@@ -286,8 +319,14 @@ def _text_ocr(metin: str) -> Dict[str, Any]:
                 max_tokens=1500,
             )
             return _json_govde_coz(resp.choices[0].message.content or "")
-        except Exception as e:  # JSON/ağ hatası → tek tekrar
+        except Exception as e:  # JSON/ağ/kota hatası
             son_hata = e
+            if _deneme < 2 and hata_gecici_mi(str(e)):
+                import time as _t
+                _t.sleep(2 * (_deneme + 1))   # 2sn, 4sn — kota penceresi açılsın
+                continue
+            if _deneme < 2:
+                continue                       # kalıcı görünüyor ama bir şans daha
     raise RuntimeError(f"Fatura metni JSON'a çevrilemedi: {son_hata}")
 
 
@@ -736,6 +775,67 @@ def gece_fatura_kuyruk_tara() -> dict:
         return {"ok": False}
 
 
+@router.post("/ocr-takilanlari-dene")
+def ocr_takilanlari_dene(limit: int = 20) -> dict:
+    """🔄 OCR'ı geçici hatayla takılmış faturaları YENİDEN dener.
+
+    Sahip (2026-08-08): "bunun için ileride de yaşamamak için önlemlerini al."
+    Kota (429) / ağ hatası faturanın okunamaz olduğunu göstermez. Yükleme anında
+    geçici hata alan fatura artık 'ocr_bekliyor' durumunda kuyrukta kalır; bu iş
+    onu gece yeniden dener. 5 denemeden sonra kalıcı 'ocr_hata' olur ve insana
+    kalır — sonsuz döngü yok.
+
+    Foto/PDF'i olmayan kayda dokunmaz (denenecek bir şey yok).
+    """
+    denenen, atlanan = [], 0
+    try:
+        with db() as (conn, cur):
+            cur.execute("ALTER TABLE tedarikci_fatura ADD COLUMN IF NOT EXISTS "
+                        "ocr_deneme INT DEFAULT 0")
+            conn.commit()
+            cur.execute(
+                """SELECT id, COALESCE(ocr_deneme,0) AS n
+                   FROM tedarikci_fatura
+                   WHERE durum IN ('ocr_bekliyor','ocr_hata')
+                     AND COALESCE(ocr_deneme,0) < 5
+                     AND (foto IS NOT NULL OR COALESCE(kaynak_metin,'') <> '')
+                     AND COALESCE(durum,'') <> 'kopya'
+                   ORDER BY olusturma DESC LIMIT %s""", (limit,))
+            hedef = [dict(r) for r in (cur.fetchall() or [])]
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "hata": str(e)[:150]}
+    for f in hedef:
+        try:
+            _ocr_calistir_icerik(f["id"])      # kendi hata yönetimi + sayaç içinde
+            denenen.append(f["id"])
+        except Exception:  # noqa: BLE001
+            atlanan += 1
+    # Sonuç: kaç tanesi gerçekten okundu?
+    okunan = 0
+    try:
+        with db() as (_c, cur):
+            if denenen:
+                cur.execute("""SELECT COUNT(*)::int AS n FROM tedarikci_fatura
+                               WHERE id = ANY(%s) AND durum IN ('ocr_tamam','okundu')""",
+                            (denenen,))
+                okunan = int((cur.fetchone() or {}).get("n") or 0)
+    except Exception:  # noqa: BLE001
+        pass
+    return {"ok": True, "denenen": len(denenen), "okunan": okunan,
+            "atlanan": atlanan,
+            "not": "Geçici hatalı faturalar yeniden denendi. 5 denemeyi aşan "
+                   "kayıtlar kalıcı 'ocr_hata' olarak insana bırakılır."}
+
+
+def gece_ocr_takilanlari() -> dict:
+    """Gece zinciri halkası — hata-yutar."""
+    try:
+        return ocr_takilanlari_dene(limit=20)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("gece ocr retry hatasi (yutuldu): %s", str(e)[:150])
+        return {"ok": False}
+
+
 # ── 💊 AP SELF-HEAL — hayalet söz kapama (2026-07-19, APS/Redbull dersi;
 # emsal: main.borc_plan_mutabakat 5c59c77). KASA İZİ = TEK GERÇEK: tedarikçinin
 # carisi kapanmış (fatura−ödeme≈0) ama kuyrukta 'bekliyor' söz duruyorsa VE söz
@@ -1087,11 +1187,29 @@ def _ocr_calistir_icerik(fatura_id: str) -> None:
             logger.warning("regex yedek de olmadi %s: %s", fatura_id, e2)
         try:
             with db() as (conn, cur):
+                # ⏳ GEÇİCİ HATA RAFA KALDIRILMAZ (2026-08-08, sahip: "ileride de
+                # yaşamamak için önlem al"). Kota/ağ hatası faturanın okunamaz
+                # olduğunu göstermez — sistem sonra tekrar denemelidir. Canlıda
+                # bir fatura "429 quota" ile 'ocr_hata' damgalanıp rafa kalkmıştı.
+                # Deneme sayacı sonsuz döngüyü keser: 5 denemeden sonra kalıcı.
+                cur.execute("ALTER TABLE tedarikci_fatura ADD COLUMN IF NOT EXISTS "
+                            "ocr_deneme INT DEFAULT 0")
+                cur.execute("SELECT COALESCE(ocr_deneme,0) AS n FROM tedarikci_fatura "
+                            "WHERE id=%s", (fatura_id,))
+                _n = int((cur.fetchone() or {}).get("n") or 0) + 1
+                _gecici = hata_gecici_mi(str(e)) and _n < 5
                 cur.execute(
-                    "UPDATE tedarikci_fatura SET durum='ocr_hata', ocr_hata=%s WHERE id=%s",
-                    (str(e)[:500], fatura_id),
+                    """UPDATE tedarikci_fatura
+                         SET durum=%s, ocr_hata=%s, ocr_deneme=%s
+                       WHERE id=%s""",
+                    ("ocr_bekliyor" if _gecici else "ocr_hata",
+                     (f"[geçici, deneme {_n}/5] " if _gecici else "") + str(e)[:480],
+                     _n, fatura_id),
                 )
                 conn.commit()
+                if _gecici:
+                    logger.info("fatura %s geçici hata (%d/5) — kuyrukta kalıyor, "
+                                "gece yeniden denenecek", fatura_id, _n)
         except Exception:
             pass
 

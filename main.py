@@ -597,6 +597,11 @@ def _gece_yarisi_scheduler():
             _halka("degirmen", lambda: __import__("recete_api").gece_degirmen_izleme())
             _halka("kart_dongu", lambda: __import__("duyu_gorunumler").gece_kart_dongu_izleme())
             _halka("belge_kimlik", lambda: __import__("fatura_api").gece_belge_kimlik())
+            # OCR RETRY (2026-08-08, sahip: "ileride de yaşamamak için önlem al"):
+            # kota/ağ hatasıyla takılan faturaları yeniden dener. Belge kimliğinden
+            # SONRA, kuyruk taramasından ÖNCE koşar — okunan fatura aynı gece
+            # borç kuyruğuna girebilsin.
+            _halka("ocr_retry", lambda: __import__("fatura_api").gece_ocr_takilanlari())
             _halka("fatura_istek", lambda: __import__("fatura_istek_api").gece_fatura_istek_tara())
             # FAZ A (2026-07-18): okunmuş ama kuyruğa bağlanmamış faturalar
             _halka("fatura_kuyruk", lambda: __import__("fatura_api").gece_fatura_kuyruk_tara())
