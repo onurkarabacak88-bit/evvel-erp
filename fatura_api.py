@@ -3230,15 +3230,28 @@ def para_zinciri_rontgen():
           FROM odeme_plani
           WHERE durum='odendi' AND COALESCE(odenen_tutar,0) < odenecek_tutar - 0.01
         ) x""")
-    # Mükerrer plan satırı: aynı açıklama + aynı tutar birden çok kez
+    # Mükerrer plan satırı: aynı açıklama + aynı tutar + AYNI GÜN.
+    # ⚠️ Tarih şartı kritik: "KOC FINANS ARAC" 28.06/01.07/01.08 tekrarı aylık
+    # TAKSİTTİR, mükerrer değil. Aynı gün tekrar ise gerçek mükerrerlik
+    # (canlıda "EN PARA" aynı gün 6 kez — ekstre birden çok kez işlenmiş).
     _sor("mukerrer_plan_satiri", """
         SELECT LEFT(COALESCE(aciklama,'?'),46) AS aciklama,
-               odenecek_tutar::float AS tutar, COUNT(*)::int AS adet,
-               MIN(tarih)::text AS ilk, MAX(tarih)::text AS son
+               odenecek_tutar::float AS tutar, tarih::text AS tarih,
+               COUNT(*)::int AS adet,
+               (odenecek_tutar * (COUNT(*) - 1))::float AS fazla_sayilan
         FROM odeme_plani
         WHERE COALESCE(durum,'') <> 'iptal'
-        GROUP BY 1,2 HAVING COUNT(*) > 1
-        ORDER BY MAX(odenecek_tutar) * COUNT(*) DESC LIMIT 20""", tekil=False)
+        GROUP BY 1,2,3 HAVING COUNT(*) > 1
+        ORDER BY MAX(odenecek_tutar) * (COUNT(*) - 1) DESC LIMIT 25""", tekil=False)
+    _sor("mukerrer_plan_ozet", """
+        SELECT COUNT(*)::int AS grup,
+               COALESCE(SUM(fazla),0)::float AS fazla_sayilan_toplam,
+               COALESCE(SUM(adet - 1),0)::int AS silinebilir_satir
+        FROM (
+          SELECT odenecek_tutar * (COUNT(*) - 1) AS fazla, COUNT(*) AS adet
+          FROM odeme_plani WHERE COALESCE(durum,'') <> 'iptal'
+          GROUP BY aciklama, odenecek_tutar, tarih HAVING COUNT(*) > 1
+        ) x""")
     _sor("kayip_borc_dokumu", """
         SELECT LEFT(COALESCE(aciklama,'?'),52) AS aciklama, tarih::text AS tarih,
                odenecek_tutar::float AS borc,
