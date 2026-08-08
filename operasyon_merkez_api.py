@@ -15266,6 +15266,56 @@ def ops_mutabakat_merkezi(gun: int = Query(60, ge=7, le=180)):
         except Exception as e:  # noqa: BLE001
             log.warning("mutabakat kova5: %s", str(e)[:100])
 
+        # ── 7) BORÇ AÇIK AMA KARTTAN ÖDENMİŞ OLABİLİR ──────────────────────────
+        # Sahip (2026-08-08): "vadeli alımın ödemesi karttan yapılmış olabilir,
+        # kapanmamış gözükebilir... ya da elektrik faturası ödemesi."
+        # ÖLÇÜLDÜ: 326 kart harcamasının 270'i 7 günden GEÇ girilmiş (427.654 ₺),
+        # ortalama gecikme 17 gün, en uç örnek 54 gün. Harcama karttan yapılıp
+        # sisteme geç girildiğinde borç o süre boyunca "bekliyor" görünür ve
+        # ödeme planında iki kez sayılır.
+        # ADAY eşleşme: tutar yakın + tarih penceresi + kart harcaması henüz
+        # hiçbir kayda bağlanmamış (kaynak_id NULL). HÜKÜM YOK — sahip onaylar.
+        try:
+            cur.execute(
+                """SELECT op.id AS plan_id, op.kaynak_tablo, op.aciklama AS borc_ad,
+                          COALESCE(op.odenecek_tutar,0)::float AS borc_tutar,
+                          op.tarih::text AS vade,
+                          kh.id AS kart_hareket_id, kh.tarih::text AS kart_tarih,
+                          ABS(COALESCE(kh.tutar,0))::float AS kart_tutar,
+                          kh.aciklama AS kart_ad,
+                          ABS(ABS(COALESCE(kh.tutar,0)) - COALESCE(op.odenecek_tutar,0))::float AS fark,
+                          ABS(kh.tarih - op.tarih)::int AS gun_mesafe
+                   FROM odeme_plani op
+                   JOIN kart_hareketleri kh
+                     ON kh.islem_turu = 'HARCAMA'
+                    AND kh.durum = 'aktif'
+                    AND kh.kaynak_id IS NULL
+                    AND ABS(ABS(COALESCE(kh.tutar,0)) - COALESCE(op.odenecek_tutar,0))
+                        <= GREATEST(5.0, COALESCE(op.odenecek_tutar,0) * 0.02)
+                    AND kh.tarih BETWEEN op.tarih - 45 AND op.tarih + 45
+                   WHERE op.durum = 'bekliyor'
+                     AND COALESCE(op.odenecek_tutar,0) > 0
+                     AND op.tarih >= %s
+                   ORDER BY fark ASC, gun_mesafe ASC
+                   LIMIT 60""",
+                (bas - timedelta(days=60),),
+            )
+            r = [dict(x) for x in (cur.fetchall() or [])]
+            for x in r:
+                _f, _g = float(x.get("fark") or 0), int(x.get("gun_mesafe") or 0)
+                x["guven"] = "yüksek" if (_f <= 0.51 and _g <= 15) else ("orta" if _f <= 5 or _g <= 30 else "düşük")
+                x["ne_yapmali"] = (
+                    f"Aynı ödeme mi? Öyleyse borcu kapat ve kart hareketine bağla "
+                    f"(fark {_f:.2f} ₺ · {_g} gün mesafe)"
+                )
+            _kova("borc_kart_adayi", "Borç açık ama karttan ödenmiş olabilir",
+                  "Kart harcamaları sisteme ortalama 17 gün geç giriliyor; bu sürede borç "
+                  "açık görünür ve ödeme planında İKİ KEZ sayılabilir. Aday eşleşme — hüküm yok.",
+                  r, "borc_kart_esle",
+                  sum(float(x.get("borc_tutar") or 0) for x in r), kritik=False)
+        except Exception as e:  # noqa: BLE001
+            log.warning("mutabakat kova7: %s", str(e)[:100])
+
         # ── 6) ÖDEME YAPILDI, BELGESİ YOK ──────────────────────────────────────
         try:
             cur.execute(
@@ -15288,6 +15338,36 @@ def ops_mutabakat_merkezi(gun: int = Query(60, ge=7, le=180)):
         except Exception as e:  # noqa: BLE001
             log.warning("mutabakat kova6: %s", str(e)[:100])
 
+    # ── KÖK SEBEP ÖLÇÜSÜ: kart harcaması ne kadar geç giriliyor? ──────────────
+    # Yukarıdaki 7. kovanın SEBEBİ budur. Gecikme küçüldükçe "borç açık mı,
+    # ödenmiş mi" belirsizliği kendiliğinden kapanır.
+    kart_gecikme: Dict[str, Any] = {}
+    try:
+        with db() as (_c3, cur3):
+            cur3.execute(
+                """SELECT COUNT(*)::int AS adet,
+                          AVG(GREATEST(0, (olusturma::date - tarih)))::float AS ort_gun,
+                          COUNT(*) FILTER (WHERE (olusturma::date - tarih) > 7)::int AS gec_adet,
+                          COALESCE(SUM(ABS(tutar)) FILTER (WHERE (olusturma::date - tarih) > 7),0)::float AS gec_tutar,
+                          MAX(GREATEST(0, (olusturma::date - tarih)))::int AS en_gec_gun
+                   FROM kart_hareketleri
+                   WHERE islem_turu='HARCAMA' AND durum='aktif' AND tarih >= %s""",
+                (bas,),
+            )
+            g = dict(cur3.fetchone() or {})
+            kart_gecikme = {
+                "harcama_adet": int(g.get("adet") or 0),
+                "ortalama_gecikme_gun": round(float(g.get("ort_gun") or 0), 1),
+                "gec_girilen_adet": int(g.get("gec_adet") or 0),
+                "gec_girilen_tutar_tl": round(float(g.get("gec_tutar") or 0), 2),
+                "en_gec_gun": int(g.get("en_gec_gun") or 0),
+                "not": "Harcama tarihi ile sisteme giriş tarihi farkı. Gecikme büyüdükçe "
+                       "borç 'açık' görünür, ödeme planı şişer, nakit planı yanılır. "
+                       "Kart ekstresi içe aktarılırsa gecikme kendiliğinden kapanır.",
+            }
+    except Exception as e:  # noqa: BLE001
+        log.warning("mutabakat kart gecikme blogu: %s", str(e)[:100])
+
     acik_toplam = sum(k["adet"] for k in kovalar)
     tutar_toplam = sum(k["tutar_tl"] for k in kovalar)
     kritik = [k["kod"] for k in kovalar if k.get("kritik")]
@@ -15300,6 +15380,7 @@ def ops_mutabakat_merkezi(gun: int = Query(60, ge=7, le=180)):
             "kritik_kovalar": kritik,
         },
         "kovalar": kovalar,
+        "kart_giris_gecikmesi": kart_gecikme,
         "not": "Her satır dört soruya cevap verir: ne aradım · nerede aradım · neden "
                "bulamadım · ne yapmalı. Hüküm yok, otomatik düzeltme yok — görünürlük "
                "ve aksiyon önerisi. Tutarı bilinmeyen kalem sıfır sayılmaz, ayrı bildirilir.",
