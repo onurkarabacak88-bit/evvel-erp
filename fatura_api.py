@@ -213,10 +213,41 @@ def _vision_ocr(foto: bytes, mime: str) -> Dict[str, Any]:
                 {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
             ],
         }],
-        max_tokens=1500,
+        max_tokens=int(os.getenv('OCR_MAX_TOKENS', '4000')),
     )
     metin = (resp.choices[0].message.content or "").strip()
     return _json_govde_coz(metin)
+
+
+def _kesik_json_kurtar(s: str):
+    """Yarıda kesilmiş JSON'dan son TAM yapıyı kurtarır (None = kurtarılamadı).
+
+    LLM token sınırına takılınca cevap ortada biter ('Unterminated string').
+    Açık string kapatılır, son tam kalemden sonrası atılır, açık kalan
+    dizi/nesneler kapatılır. Tedarikçi + tutar genelde başta olduğu için
+    kurtulur; eksik kalemler gece yeniden okumada tamamlanır.
+    """
+    if not s or "{" not in s:
+        return None
+    govde = s
+    if govde.count('"') % 2 == 1:          # açık string → son tırnağa kadar geri sar
+        govde = govde[:govde.rfind('"')]
+    for kes in (govde.rfind("},"), govde.rfind("}"), govde.rfind("]")):
+        if kes <= 0:
+            continue
+        aday = govde[:kes + 1]
+        acik_kume = aday.count("{") - aday.count("}")
+        acik_dizi = aday.count("[") - aday.count("]")
+        if acik_kume < 0 or acik_dizi < 0:
+            continue
+        kapali = aday.rstrip().rstrip(",") + ("]" * acik_dizi) + ("}" * acik_kume)
+        try:
+            j = json.loads(kapali)
+            if isinstance(j, dict):
+                return j
+        except json.JSONDecodeError:
+            continue
+    return None
 
 
 def _json_govde_coz(metin: str) -> Dict[str, Any]:
@@ -253,7 +284,20 @@ def _json_govde_coz(metin: str) -> Dict[str, Any]:
         d = re.sub(r"'([^'\"\n]{1,60})'\s*:", r'"\1":', d)      # 2a anahtar
         d = re.sub(r":\s*'([^'\n]{0,300})'", r': "\1"', d)      # 2b değer
         d = "".join(ch for ch in d if ch >= " " or ch in "\n\t")  # 3
-        j = json.loads(d)                                        # patlarsa yükselir
+        try:
+            j = json.loads(d)
+        except json.JSONDecodeError:
+            # 4. KESİK CEVAP (canlı: "Unterminated string at line 3") — model
+            # token sınırına takılıp yarıda kesilmiş. Son TAM yapıya kadar
+            # kurtarırız: tedarikçi/tutar başta olduğu için kurtulur, eksik
+            # kalemler gece yeniden okumada tamamlanır.
+            j = _kesik_json_kurtar(d)
+            if j is None:
+                raise
+            logger.warning("fatura JSON KESİK geldi — son tam yapıya kadar kurtarıldı "
+                           "(token sınırı; eksik kalemler gece tamamlanacak)")
+            j["_kismi_okuma"] = True
+            return j
         logger.info("fatura JSON onarımıyla ayrıştırıldı (LLM bozuk JSON döndürmüştü)")
     return j if isinstance(j, dict) else {}
 
@@ -316,7 +360,7 @@ def _text_ocr(metin: str) -> Dict[str, Any]:
                 model=os.getenv("OPENAI_FATURA_MODEL", "gpt-4o"),
                 messages=[{"role": "user", "content": f"{_OCR_PROMPT_PDF}\n\n--- FATURA METNİ ---\n{govde}"}],
                 temperature=0,
-                max_tokens=1500,
+                max_tokens=int(os.getenv('OCR_MAX_TOKENS', '4000')),
             )
             return _json_govde_coz(resp.choices[0].message.content or "")
         except Exception as e:  # JSON/ağ/kota hatası
