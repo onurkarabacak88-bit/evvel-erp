@@ -3468,6 +3468,17 @@ def temizlik_odenen_tutar(kuru: int = 1):
                     (p["kt"], str(p["ki"]), p["tarih"]))
                 iz_tutar = round(float((cur.fetchone() or {}).get("t") or 0), 2)
                 kaynak_yolu = f"kaynak tablosu ({p['kt']}, aynı ay)"
+            if iz_tutar <= 0.01 and p["ki"]:
+                # KART yolu — tablo adı şart değil, gider KİMLİĞİ şart
+                # (sabit_giderler ↔ fatura_giderleri etiket ikiliği, 2026-08-08)
+                cur.execute(
+                    """SELECT COALESCE(SUM(ABS(tutar)),0)::float AS t FROM kart_hareketleri
+                       WHERE kaynak_id=%s AND islem_turu='HARCAMA'
+                         AND COALESCE(durum,'aktif')='aktif'
+                         AND DATE_TRUNC('month',tarih)=DATE_TRUNC('month',%s::date)""",
+                    (str(p["ki"]), p["tarih"]))
+                iz_tutar = round(float((cur.fetchone() or {}).get("t") or 0), 2)
+                kaynak_yolu = "kart (aynı gider kimliği, aynı ay)"
             if iz_tutar > 0.01:
                 # ⚠️ TAVAN: aynı ay içinde aynı kaynağa birden çok ödeme olabilir
                 # (POS DONANIM aynı ay 2 kez). Borçtan fazlasını YAZMA.
