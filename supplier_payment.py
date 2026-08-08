@@ -372,7 +372,21 @@ def sp_durum():
         ozet = dict(cur.fetchone() or {})
         cur.execute(
             """SELECT tedarikci_ad, COUNT(*) AS adet, COALESCE(SUM(tutar),0)::float8 AS toplam
-               FROM supplier_payment_event GROUP BY tedarikci_ad ORDER BY adet DESC LIMIT 25"""
+               FROM supplier_payment_event
+               WHERE NOT COALESCE(gecersiz,FALSE)
+               GROUP BY tedarikci_ad ORDER BY adet DESC LIMIT 25"""
         )
         ozet["tedarikci_dagilim"] = [dict(r) for r in (cur.fetchall() or [])]
+        cur.execute(
+            """SELECT kaynak, COUNT(*) AS adet, COALESCE(SUM(tutar),0)::float8 AS toplam
+               FROM supplier_payment_event WHERE NOT COALESCE(gecersiz,FALSE)
+               GROUP BY kaynak ORDER BY 2 DESC"""
+        )
+        ozet["kanal_dagilim"] = [dict(r) for r in (cur.fetchall() or [])]
+        cur.execute(
+            """SELECT COUNT(*) FILTER (WHERE COALESCE(gecersiz,FALSE)) AS gecersiz_v1,
+                      COUNT(*) FILTER (WHERE NOT COALESCE(gecersiz,FALSE)) AS aktif_v2
+               FROM supplier_payment_event"""
+        )
+        ozet["surum_durumu"] = dict(cur.fetchone() or {})
     return ozet
