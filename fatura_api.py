@@ -2293,6 +2293,215 @@ def belge_sinifi_ozet():
     }
 
 
+def _ensure_kart_izi_tablolar(cur) -> None:
+    """Kart hareketine CARİ DAMGASI — 'bu çekim şu tedarikçinin borcuna sayılır'.
+
+    TASARIM KARARI (2026-08-08): onay ayrı bir ödeme kaydı YARATMAZ, mevcut kart
+    hareketini damgalar. Sebep: cari_ekstre kart kanalını zaten tarıyor; ikinci
+    bir kayıt açsaydık aynı para hem kart satırından hem ödeme kaydından
+    düşülürdü (çift sayım). Tek satır, tek gerçek.
+      · cari_tedarikci NULL  → ad eşleşmesiyle bulunan ADAY (bakiyeden tahminen düşer)
+      · cari_tedarikci dolu  → sahip ONAYLADI (kesin), ad eşleşmesi aranmaz
+      · cari_tedarikci='(ilgisiz)' → sahip REDDETTİ, bir daha aday gösterilmez
+    """
+    try:
+        cur.execute("ALTER TABLE kart_hareketleri ADD COLUMN IF NOT EXISTS cari_tedarikci TEXT")
+        cur.execute("ALTER TABLE kart_hareketleri ADD COLUMN IF NOT EXISTS cari_onay_ts TIMESTAMPTZ")
+        cur.execute("""CREATE INDEX IF NOT EXISTS ix_kh_cari_ted
+                       ON kart_hareketleri (cari_tedarikci)
+                       WHERE cari_tedarikci IS NOT NULL""")
+    except Exception:  # noqa: BLE001
+        pass
+
+
+@router.get("/kart-borc-izi")
+def kart_borc_izi(gun: int = 365, min_bakiye: float = 100.0):
+    """💳 Bekleyen borçların KART EKSTRESİNDEKİ izlerini arar — KISMİ ödeme mantığı.
+
+    Sahip (2026-08-08): "kart ekstrelerinde bekleyen borçların izleri ara, illa
+    aynı tutar kartta ödenmeyebilir — 50.000 kart çekilmiş olabilir; kısmi ödeme
+    mantığı: borcu biriktirecek, ödemeyi bulup borçtan düşecek."
+
+    ESKİ MANTIKTAN FARKI: tutar eşleşmesi ARAMAZ. Tedarikçiye giden her kart
+    çekimi, tutarı ne olursa olsun, o tedarikçinin cari bakiyesinden düşme
+    ADAYIDIR. 120.000 ₺ borca 50.000 ₺ kart çekimi → 70.000 ₺ devreder.
+
+    ÇİFT SAYIM FRENİ: sistem üretimi satırlar (kaynak_id dolu — "Anlık gider:",
+    "Vadeli alım:") HARİÇ; onlar zaten kendi kanallarından cari ekstrede
+    sayılıyor. Yalnız HAM ekstre satırları (banka POS metni) aday olur.
+
+    HÜKÜM YOK: hiçbir borç kendiliğinden düşmez — POST /kart-izi-onayla ile
+    sahip onaylar (sahip kararı 2026-08-08: "öner, ben onaylayayım").
+    """
+    ozet = cari_ozet()
+    borclular = [t for t in (ozet.get("tedarikciler") or [])
+                 if float(t.get("hesaplanan_acik") or 0) >= min_bakiye]
+    bugun = date.today()
+    sonuc = []
+    with db() as (_c, cur):
+        _ensure_kart_izi_tablolar(cur)
+        # cari_ekstre'nin kart kanalıyla AYNI süzgeç (2026-08-03 FEZ dersi:
+        # banka ekstresi importu kaynak_id'yi DOLU yazar — IS NULL şartı tüm
+        # banka ödemelerini gizliyordu). Aynı satır kümesi taranmazsa bu ekran
+        # ile cari bakiye birbirini tutmaz.
+        cur.execute(
+            """SELECT h.id, h.tarih::text AS tarih, ABS(COALESCE(h.tutar,0))::float AS tutar,
+                      COALESCE(h.aciklama,'') AS aciklama, h.kart_id,
+                      h.cari_tedarikci, COALESCE(h.kaynak_tablo,'') AS kaynak_tablo,
+                      COALESCE(k.banka,'') AS banka, COALESCE(k.kart_adi,'') AS kart_adi
+               FROM kart_hareketleri h
+               LEFT JOIN kartlar k ON k.id = h.kart_id
+               WHERE h.islem_turu='HARCAMA' AND COALESCE(h.durum,'aktif')='aktif'
+                 AND (h.kaynak_id IS NULL OR COALESCE(h.kaynak_tablo,'') = 'ekstre_import')
+                 AND COALESCE(h.harcama_tipi,'belirsiz') <> 'sahsi'
+                 AND h.tarih >= %s
+               ORDER BY h.tarih DESC""",
+            (bugun - timedelta(days=gun),),
+        )
+        hareketler = [dict(r) for r in (cur.fetchall() or [])]
+
+    izsiz = []
+    for t in borclular:
+        ted = t.get("tedarikci") or ""
+        acik = round(float(t.get("hesaplanan_acik") or 0), 2)
+        aday, onayli = [], []
+        for h in hareketler:
+            damga = (h.get("cari_tedarikci") or "").strip()
+            if damga == "(ilgisiz)":
+                continue                                    # sahip reddetti
+            if damga:
+                if _cari_katla(damga) == _cari_katla(ted):  # sahip onayladı
+                    onayli.append(h)
+                continue                                    # başka tedarikçiye damgalı
+            if _odeme_eslesir(ted, h.get("aciklama") or ""):
+                aday.append(h)
+
+        def _kalem(h, kesin):
+            return {"hareket_id": str(h["id"]), "tarih": h["tarih"],
+                    "tutar": round(float(h["tutar"] or 0), 2),
+                    "aciklama": (h.get("aciklama") or "")[:80],
+                    "kart": f"{h.get('banka','')} {h.get('kart_adi','')}".strip(),
+                    "kaynak": h.get("kaynak_tablo") or "elle",
+                    "durum": "onaylı" if kesin else "aday"}
+
+        if not aday and not onayli:
+            izsiz.append({"tedarikci": ted, "acik_bakiye": acik,
+                          "ne_demek": "Borç var ama kartta hiçbir iz yok — nakitten "
+                                      "ödenmiş, henüz ödenmemiş ya da kart açıklaması "
+                                      "tedarikçi adını taşımıyor olabilir"})
+            continue
+        aday_tl = round(sum(float(h["tutar"] or 0) for h in aday), 2)
+        onay_tl = round(sum(float(h["tutar"] or 0) for h in onayli), 2)
+        sonuc.append({
+            "tedarikci": ted,
+            "acik_bakiye": acik,
+            "onayli_iz_adet": len(onayli), "onayli_iz_toplam": onay_tl,
+            "aday_iz_adet": len(aday), "aday_iz_toplam": aday_tl,
+            "kart_izi_toplam": round(onay_tl + aday_tl, 2),
+            "kalan_olur": round(acik - aday_tl, 2),
+            "izler": ([_kalem(h, True) for h in onayli]
+                      + [_kalem(h, False) for h in aday])[:25],
+            "ne_demek": (f"Kartta {aday_tl:,.2f} ₺ aday iz var; onaylanırsa borç "
+                         f"{acik:,.2f} → {round(acik - aday_tl, 2):,.2f} ₺ olur. "
+                         f"Kısmi ödeme normaldir — kalan devreder."
+                         ).replace(",", "@").replace(".", ",").replace("@", "."),
+        })
+    sonuc.sort(key=lambda x: -x["kart_izi_toplam"])
+    return {
+        "pencere_gun": gun,
+        "borclu_tedarikci": len(borclular),
+        "iz_bulunan": len(sonuc),
+        "iz_bulunamayan": izsiz,
+        "toplam_aday_iz": round(sum(s["aday_iz_toplam"] for s in sonuc), 2),
+        "toplam_onayli_iz": round(sum(s["onayli_iz_toplam"] for s in sonuc), 2),
+        "taranan_kart_hareketi": len(hareketler),
+        "satirlar": sonuc,
+        "not": "TUTAR EŞLEŞMESİ ARANMAZ — 50.000 ₺ kart çekimi 120.000 ₺ borcun bir "
+               "kısmını kapatır, kalanı devreder (kısmi ödeme doğaldır). Onay kart "
+               "hareketini DAMGALAR, yeni ödeme kaydı açmaz — çift sayım imkânsız. "
+               "Onay: POST /api/fatura/kart-izi-onayla · Ret: sinif='(ilgisiz)'",
+    }
+
+
+class KartIziOnayModel(BaseModel):
+    tedarikci: str               # '(ilgisiz)' → bu çekim hiçbir cariye ait değil
+    hareket_idler: list          # damgalanacak kart hareketi id'leri
+
+
+@router.post("/kart-izi-onayla")
+def kart_izi_onayla(body: KartIziOnayModel):
+    """Kart çekimini tedarikçiye DAMGALAR — para yazmaz, yeni kayıt açmaz.
+
+    Para zaten kart ekstresinde çıkmış. Bu işlem yalnız "bu çekim şu tedarikçinin
+    borcuna sayılır" bilgisini kalıcılaştırır. Cari bakiye bu satırı zaten
+    okuyordu (ad eşleşmesiyle, tahminen) — damga onu KESİN yapar ve ad eşleşmesi
+    tutmayan çekimleri de bağlamaya izin verir.
+
+    tedarikci='(ilgisiz)' → sahip "bu bizim toptancı ödememiz değil" dedi;
+    satır bir daha aday gösterilmez ve cari bakiyeden düşmez.
+    """
+    ted = (body.tedarikci or "").strip()
+    idler = [str(x) for x in (body.hareket_idler or []) if str(x).strip()]
+    if len(ted) < 3:
+        raise HTTPException(400, "tedarikci en az 3 karakter")
+    if not idler:
+        raise HTTPException(400, "en az bir hareket_id gerekli")
+
+    with db() as (conn, cur):
+        _ensure_kart_izi_tablolar(cur)
+        cur.execute(
+            """UPDATE kart_hareketleri
+                 SET cari_tedarikci=%s, cari_onay_ts=NOW()
+               WHERE id = ANY(%s) AND islem_turu='HARCAMA'
+               RETURNING id, tarih::text AS tarih,
+                         ABS(COALESCE(tutar,0))::float AS tutar,
+                         LEFT(COALESCE(aciklama,''),70) AS aciklama""",
+            (ted, idler))
+        damgalanan = [dict(r) for r in (cur.fetchall() or [])]
+        conn.commit()
+
+    toplam = round(sum(float(d["tutar"] or 0) for d in damgalanan), 2)
+    if ted == "(ilgisiz)":
+        return {"ok": True, "islem": "reddedildi", "damgalanan": len(damgalanan),
+                "tutar": toplam, "satirlar": damgalanan,
+                "not": "Bu çekimler artık hiçbir tedarikçiye aday gösterilmez."}
+
+    # FIFO tahsis — YORUM katmanı: bu para hangi faturaları kapattı?
+    # Bakiye zaten doğru; tahsis yalnız yaşlandırma/raporlama içindir.
+    tahsisler, kalan = [], toplam
+    try:
+        acik = cari_odenecekler(tedarikci=ted)["acik_faturalar"]
+        with db() as (conn, cur):
+            _ensure_cari_odeme_tablolar(cur)
+            for a in acik:
+                if kalan <= 0.01:
+                    break
+                pay = round(min(float(a["kalan"]), kalan), 2)
+                cur.execute(
+                    """INSERT INTO cari_odeme_tahsis
+                         (id, odeme_id, fatura_id, fatura_no, fatura_tarih, kapatilan, otomatik)
+                       VALUES (%s,%s,%s,%s,%s,%s,TRUE)""",
+                    (str(uuid.uuid4()), (damgalanan[0]["id"] if damgalanan else None),
+                     a["fatura_id"], a.get("fatura_no"), a.get("tarih"), pay))
+                tahsisler.append({"fatura_no": a.get("fatura_no"), "tarih": a.get("tarih"),
+                                  "kapatilan": pay})
+                kalan = round(kalan - pay, 2)
+            conn.commit()
+    except Exception as e:  # noqa: BLE001 — tahsis YORUM; başarısızlığı bakiyeyi bozmaz
+        logger.warning("kart izi tahsis atlandi (%s): %s", ted, str(e)[:120])
+
+    return {
+        "ok": True, "tedarikci": ted,
+        "damgalanan": len(damgalanan), "toplam_dusen": toplam,
+        "satirlar": damgalanan,
+        "kapatilan_fatura": tahsisler,
+        "artan": round(kalan, 2),
+        "not": ("Para YAZILMADI — zaten kart ekstresinde çıkmıştı; damga onu borçla "
+                "ilişkilendirir. Artan tutar cari bakiyede alacak olarak kalır "
+                "(sonraki faturalara mahsup edilir)."),
+    }
+
+
 @router.get("/mukerrer-fatura-denetimi")
 def mukerrer_fatura_denetimi():
     """🔁 Aynı belge birden çok kez mi yüklenmiş? Ayrım FATURA NUMARASIYLA.
@@ -3333,20 +3542,24 @@ def cari_ekstre(tedarikci: str = ""):
             for r in (dict(x) for x in cur.fetchall() or [])
             if _es_es(f"{r['ted']} {r['aciklama'] or ''}")
             or any(_odeme_eslesir(r["ted"], a) for a in _es_adlar)]  # ters yön: 'ATALAY KAHVE' sözü ↔ 'MEHMET ATALAY'
+        _ensure_kart_izi_tablolar(cur)   # cari_tedarikci damga kolonu garanti
         cur.execute(
-            """SELECT kanal, tarih, tutar, aciklama FROM (
+            """SELECT kanal, tarih, tutar, aciklama, damga FROM (
                  SELECT 'vadeli_alim' AS kanal, vade_tarihi::text AS tarih,
                         tutar::float AS tutar,
-                        LEFT(COALESCE(tedarikci,'') || ' ' || COALESCE(aciklama,''),80) AS aciklama
+                        LEFT(COALESCE(tedarikci,'') || ' ' || COALESCE(aciklama,''),80) AS aciklama,
+                        NULL::text AS damga
                  FROM vadeli_alimlar
                  WHERE durum='odendi' AND vade_tarihi >= %s::date
                  UNION ALL
                  SELECT 'anlik_gider', tarih::text, tutar::float,
-                        LEFT(COALESCE(tedarikci,'') || ' ' || COALESCE(aciklama,''),80)
+                        LEFT(COALESCE(tedarikci,'') || ' ' || COALESCE(aciklama,''),80),
+                        NULL::text
                  FROM anlik_giderler
                  WHERE durum='aktif' AND kaynak_id IS NULL AND tarih >= %s::date
                  UNION ALL
-                 SELECT 'kart', h.tarih::text, h.tutar::float, LEFT(COALESCE(h.aciklama,''),80)
+                 SELECT 'kart', h.tarih::text, h.tutar::float, LEFT(COALESCE(h.aciklama,''),80),
+                        h.cari_tedarikci
                  FROM kart_hareketleri h
                  WHERE h.islem_turu='HARCAMA' AND h.durum='aktif'
                    -- 🐞 FIX (2026-08-03, FEZ vakası): banka-ekstresi importu
@@ -3360,8 +3573,20 @@ def cari_ekstre(tedarikci: str = ""):
                    AND h.tarih >= %s::date) x
                ORDER BY tarih""",
             (EVVEL_SISTEM_BASLANGIC, EVVEL_SISTEM_BASLANGIC, EVVEL_SISTEM_BASLANGIC))
+        # DAMGA ÖNCELİĞİ (2026-08-08): sahip bir kart çekimini bir tedarikçiye
+        # bağladıysa ad eşleşmesi ARANMAZ — damga konuşur. '(ilgisiz)' damgası
+        # satırı tümden eler (sahip "bu bizim toptancı ödememiz değil" dedi).
+        # Damgasız satırlar eski davranışla, ad eşleşmesiyle aday kalır.
+        def _odeme_dahil(r) -> bool:
+            d = (r.get("damga") or "").strip()
+            if d == "(ilgisiz)":
+                return False
+            if d:
+                return _cari_katla(d) in {_cari_katla(a) for a in _es_adlar}
+            return _es_es(r.get("aciklama"))
+
         odeme_adaylari = [r for r in (dict(x) for x in cur.fetchall() or [])
-                          if _es_es(r.get("aciklama"))]
+                          if _odeme_dahil(r)]
         _devirler = _cari_devirler(cur)
     # 📜 açılış devri — bu tedarikçiye eşleşen sahip beyanı (çift yön eşleşme)
     devir, devir_not = 0.0, None
