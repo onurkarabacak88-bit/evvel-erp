@@ -503,7 +503,13 @@ def belge_talep_gecmis_eslestir(gun: int = 120):
     HÜKÜM YOK: hiçbir bağ otomatik kurulmaz. Liste döner, sahip onaylar
     (POST /belge-talep/{id}/fatura-bagla).
     """
-    bugun = date.today()
+    # Kanonik TR takvim günü — sunucu UTC'de olduğu için date.today() gece
+    # yarısından sonra bir gün geride kalıyor (tz tuzağı dersi, 2026-08-07).
+    try:
+        from tr_saat import bugun_tr
+        bugun = bugun_tr()
+    except Exception:  # noqa: BLE001
+        bugun = date.today()
     with db() as (_c, cur):
         _ensure(cur)
         cur.execute(
@@ -517,18 +523,42 @@ def belge_talep_gecmis_eslestir(gun: int = 120):
         )
         teslimatlar = [dict(r) for r in (cur.fetchall() or [])]
 
-        # Henüz bir teslimata bağlanmamış faturalar
+        # Henüz bir teslimata bağlanmamış faturalar.
+        # 'kopya' durumundakiler HARİÇ — aynı belgenin ikinci kaydı aday olmamalı.
         cur.execute(
             """SELECT tf.id, tf.tedarikci_ad, tf.fatura_tarih::text AS tarih,
                       COALESCE(tf.toplam_tutar,0)::float AS tutar,
-                      tf.siparis_talep_id, tf.durum
+                      tf.siparis_talep_id, tf.durum, tf.belge_sinifi
                FROM tedarikci_fatura tf
                WHERE COALESCE(tf.fatura_tarih, tf.olusturma::date) >= %s
+                 AND COALESCE(tf.durum,'') <> 'kopya'
                  AND NOT EXISTS (SELECT 1 FROM belge_talep b WHERE b.fatura_id = tf.id)
                ORDER BY tf.fatura_tarih DESC NULLS LAST""",
             (bugun - timedelta(days=gun),),
         )
-        faturalar = [dict(r) for r in (cur.fetchall() or [])]
+        ham_faturalar = [dict(r) for r in (cur.fetchall() or [])]
+
+    # ── 🏷 SINIF FRENİ (2026-08-08, sahip: "ürüne gelen faturayla elektrik
+    # faturası arasında fark var — sistem bunun farkında mı?").
+    # belge_talep kuyruğu SADECE mal teslimatıdır (toptanci_siparis'ten doğar).
+    # Bir elektrik/su/telekom faturası buraya aday OLAMAZ — adı tesadüfen
+    # tedarikçiye benzese bile. Damga yoksa ad heuristiğine düşülür (emniyet ağı).
+    try:
+        from fatura_api import tedarikci_sinif  # tek kaynak
+    except Exception:  # noqa: BLE001
+        tedarikci_sinif = lambda _a: "mal"  # noqa: E731 — fren çalışmazsa eski davranış
+    faturalar, elenen_hizmet = [], []
+    for f in ham_faturalar:
+        s = f.get("belge_sinifi") or tedarikci_sinif(f.get("tedarikci_ad"))
+        f["belge_sinifi"] = s
+        if s == "hizmet":
+            elenen_hizmet.append({
+                "fatura_id": f["id"], "tedarikci": f.get("tedarikci_ad"),
+                "tarih": f.get("tarih"), "tutar": f.get("tutar"),
+                "neden": "Gider/abonelik faturası — mal teslimatına bağlanamaz",
+            })
+            continue
+        faturalar.append(f)
 
     # ── PUANLAMA (0-100, deterministik ve açıklanabilir) ──────────────────────
     # İlk sürüm kartezyen çarpım üretiyordu (5 teslimat × 44 fatura) ve aynı
@@ -660,6 +690,9 @@ def belge_talep_gecmis_eslestir(gun: int = 120):
         "uretildi": str(bugun), "pencere_gun": gun,
         "acik_teslimat_adet": len(teslimatlar),
         "bagsiz_fatura_adet": len(faturalar),
+        "taranan_fatura_adet": len(ham_faturalar),
+        "elenen_hizmet_adet": len(elenen_hizmet),
+        "elenen_hizmet": elenen_hizmet[:25],
         "kesin_eslesme": kesin,
         "onerilen_adet": len(onerilen),
         "aday_eslesme": havuz[:60],

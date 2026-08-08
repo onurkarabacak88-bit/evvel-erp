@@ -128,6 +128,15 @@ def _ensure_tablolar(cur) -> None:
     # dosya içeriği sha256'sı — birebir aynı dosya ikinci kanaldan gelirse ANINDA yakalanır
     cur.execute("ALTER TABLE tedarikci_fatura ADD COLUMN IF NOT EXISTS dosya_hash TEXT")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_tf_dosya_hash ON tedarikci_fatura (dosya_hash)")
+    # BELGE SINIFI (2026-08-08, sahip: "ürüne gelen faturayla elektrik faturası
+    # arasında fark var — sistem bunun farkında mı?"). Farkı vardı ama sadece
+    # EKRANDA: tedarikci_sinif() her okumada yeniden hesaplanıyor, hiçbir yere
+    # yazılmıyordu. Kimlik artık KAYNAKTA damgalanır; heuristik emniyet ağı olur.
+    #   'mal'    → stoka giren ürün faturası (teslimatla eşleşir, COGS'a yazılır)
+    #   'hizmet' → abonelik/gider faturası (elektrik, su, telekom — stok YOK)
+    cur.execute("ALTER TABLE tedarikci_fatura ADD COLUMN IF NOT EXISTS belge_sinifi TEXT")
+    cur.execute("ALTER TABLE tedarikci_fatura ADD COLUMN IF NOT EXISTS sinif_kaynak TEXT")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_tf_belge_sinifi ON tedarikci_fatura (belge_sinifi)")
     # BM-8: tam metin arama (simple config — Türkçe ekleri ILIKE yedeğiyle telafi)
     cur.execute("""CREATE INDEX IF NOT EXISTS idx_tf_fts ON tedarikci_fatura
                    USING GIN (to_tsvector('simple',
@@ -307,6 +316,13 @@ def _fatura_json_db_yaz(cur, fatura_id: str, j: Dict[str, Any]) -> int:
             fatura_id,
         ),
     )
+    # 🏷 BELGE SINIFI — kimlik KAYNAKTA damgalanır (2026-08-08, sahip: "ürüne
+    # gelen faturayla elektrik faturası arasında fark var"). Tedarikçi adı ancak
+    # BURADA belli olur (yükleme anında NULL), o yüzden damga tam bu noktada.
+    # Foto ve PDF ortak yol → tek damga noktası.
+    _ted = (str(j.get("tedarikci") or "").strip() or None)
+    if _ted:
+        belge_sinifi_coz(cur, fatura_id, _ted)
     # 📑 KOPYA KAPANIŞI (sahip 2026-07-18: "personel foto çekiyor, okunamayınca
     # toptancıdan PDF istiyoruz, PDF gelince aynı fatura İKİ kayıt oluyor").
     # Foto sonradan okununca aynı fatura_no başka satırda zaten varsa BU satır
@@ -2148,11 +2164,127 @@ _MAL_KANITI = ("GIDA", "GİDA", "MARKET", "GROSMARKET", "AMBALAJ", "KAHVE",
 
 
 def tedarikci_sinif(ad: str) -> str:
-    """'hizmet' (fatura sağlayıcı — Giderler alanı) | 'mal' (ürün tedarikçisi)."""
+    """'hizmet' (fatura sağlayıcı — Giderler alanı) | 'mal' (ürün tedarikçisi).
+
+    İKİ LİSTE BİRLEŞTİ (2026-08-08): _HIZMET_KELIMELERI (Ödeme Merkezi sekmesi)
+    ve _KURUMSAL_KALIPLAR (fatura istek kanalı) ayrı ayrı bakılıyordu; MEPAŞ/
+    AYDEM/İSKİ ilkinde yoktu, ikincisinde vardı. Artık tek karar noktası.
+    MAL kanıtı ikisini de ezer.
+    """
     u = (ad or "").upper()
     if any(k in u for k in _MAL_KANITI):
         return "mal"
-    return "hizmet" if any(k in u for k in _HIZMET_KELIMELERI) else "mal"
+    if any(k in u for k in _HIZMET_KELIMELERI):
+        return "hizmet"
+    try:
+        return "hizmet" if kurumsal_fatura_mu(ad) else "mal"
+    except Exception:  # noqa: BLE001
+        return "mal"
+
+
+def belge_sinifi_coz(cur, fatura_id: str, tedarikci_ad: str) -> str:
+    """Faturanın sınıfını KAYNAKTA damgalar ve döndürür.
+
+    Sahip sorusu (2026-08-08): "ürüne gelen faturayla elektrik faturası arasında
+    fark var — sistem bunun farkında mı?" Farkı vardı ama sadece EKRANDA:
+    tedarikci_sinif() her okumada yeniden hesaplanıyor, hiçbir yere yazılmıyordu.
+    Sonuç: elektrik faturası mal faturasıyla aynı yola giriyor, teslimat
+    eşleştirmesine aday olabiliyordu.
+
+    Elle düzeltilmiş sınıf (sinif_kaynak='elle') KORUNUR — heuristik onu ezmez.
+    """
+    try:
+        cur.execute("SELECT belge_sinifi, sinif_kaynak FROM tedarikci_fatura WHERE id=%s", (fatura_id,))
+        r = cur.fetchone()
+        if r and (r.get("sinif_kaynak") or "") == "elle" and r.get("belge_sinifi"):
+            return r["belge_sinifi"]
+        s = tedarikci_sinif(tedarikci_ad)
+        cur.execute(
+            "UPDATE tedarikci_fatura SET belge_sinifi=%s, sinif_kaynak='ad_heuristik' WHERE id=%s",
+            (s, fatura_id),
+        )
+        return s
+    except Exception as e:  # noqa: BLE001 — damga başarısız olsa da fatura kaydı yaşar
+        logger.warning("belge_sinifi_coz atlandı (%s): %s", fatura_id, e)
+        return tedarikci_sinif(tedarikci_ad)
+
+
+@router.get("/belge-sinifi-ozet")
+def belge_sinifi_ozet():
+    """Mal faturası ≠ gider faturası — kaç belge hangi sınıfta, kaçı damgasız."""
+    with db() as (_c, cur):
+        _ensure_tablolar(cur)
+        cur.execute(
+            """SELECT COALESCE(belge_sinifi,'damgasiz') AS sinif,
+                      COALESCE(sinif_kaynak,'-')       AS kaynak,
+                      COUNT(*)::int                    AS adet,
+                      COALESCE(SUM(toplam_tutar),0)::float AS tutar
+               FROM tedarikci_fatura
+               WHERE COALESCE(durum,'') <> 'kopya'
+               GROUP BY 1,2 ORDER BY 3 DESC"""
+        )
+        satir = [dict(r) for r in (cur.fetchall() or [])]
+        cur.execute(
+            """SELECT tedarikci_ad, COUNT(*)::int AS adet,
+                      COALESCE(SUM(toplam_tutar),0)::float AS tutar
+               FROM tedarikci_fatura
+               WHERE belge_sinifi='hizmet' AND COALESCE(durum,'') <> 'kopya'
+               GROUP BY 1 ORDER BY 3 DESC LIMIT 25"""
+        )
+        hizmetciler = [dict(r) for r in (cur.fetchall() or [])]
+    return {
+        "kirilim": satir, "hizmet_saglayicilar": hizmetciler,
+        "not": "'damgasiz' = sınıf henüz çözülmemiş (eski kayıt). "
+               "POST /api/fatura/belge-sinifi-tazele ile doldurulur. "
+               "Elle düzeltme: POST /api/fatura/{id}/belge-sinifi?sinif=hizmet",
+    }
+
+
+@router.post("/belge-sinifi-tazele")
+def belge_sinifi_tazele(sadece_bos: int = 1, limit: int = 2000):
+    """Geçmiş faturaları sınıflandırır. sadece_bos=0 ise elle olmayanları da tazeler."""
+    kos = "belge_sinifi IS NULL" if sadece_bos else "COALESCE(sinif_kaynak,'') <> 'elle'"
+    guncel, degisen = 0, []
+    with db() as (conn, cur):
+        _ensure_tablolar(cur)
+        cur.execute(
+            f"""SELECT id, tedarikci_ad, belge_sinifi FROM tedarikci_fatura
+                WHERE {kos} AND COALESCE(tedarikci_ad,'') <> '' LIMIT %s""",  # noqa: S608
+            (limit,),
+        )
+        for r in (cur.fetchall() or []):
+            yeni = tedarikci_sinif(r["tedarikci_ad"])
+            if yeni != (r.get("belge_sinifi") or None):
+                degisen.append({"id": r["id"], "tedarikci": r["tedarikci_ad"],
+                                "eski": r.get("belge_sinifi"), "yeni": yeni})
+            cur.execute(
+                "UPDATE tedarikci_fatura SET belge_sinifi=%s, sinif_kaynak='ad_heuristik' WHERE id=%s",
+                (yeni, r["id"]),
+            )
+            guncel += 1
+        conn.commit()
+    return {"islenen": guncel, "degisen_adet": len(degisen), "degisen": degisen[:50],
+            "not": "Elle düzeltilmiş kayıtlar (sinif_kaynak='elle') korunur."}
+
+
+@router.post("/{fatura_id}/belge-sinifi")
+def belge_sinifi_elle(fatura_id: str, sinif: str):
+    """Sahip düzeltmesi — heuristik yanıldıysa. Bu damga bir daha ezilmez."""
+    s = (sinif or "").strip().lower()
+    if s not in ("mal", "hizmet"):
+        raise HTTPException(400, "sinif 'mal' veya 'hizmet' olmalı")
+    with db() as (conn, cur):
+        _ensure_tablolar(cur)
+        cur.execute(
+            "UPDATE tedarikci_fatura SET belge_sinifi=%s, sinif_kaynak='elle' WHERE id=%s RETURNING tedarikci_ad",
+            (s, fatura_id),
+        )
+        r = cur.fetchone()
+        if not r:
+            raise HTTPException(404, "fatura bulunamadı")
+        conn.commit()
+    return {"ok": True, "fatura_id": fatura_id, "sinif": s, "tedarikci": r["tedarikci_ad"],
+            "not": "Elle damga — heuristik bir daha ezmez."}
 
 
 # ── 🔗 TEDARİKÇİ EŞLEŞTİRME — KANONİK KAYIT (2026-07-19, sahip onaylı tur:
