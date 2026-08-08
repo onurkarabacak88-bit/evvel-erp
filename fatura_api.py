@@ -2117,6 +2117,21 @@ _JENERIK = {"gida", "kahve", "market", "grup", "ltd", "sti", "san", "tic",
             "sanayi", "ticaret", "urunleri", "sut", "ith", "ihr", "ithalat",
             "ihracat", "a.s", "ve", "limited", "sirketi", "anonim",
             "hizmetleri", "hizmet"}
+# 🌍 COĞRAFİ GÜRÜLTÜ (2026-08-08, canlı ders): kart ekstresi satırları şehir
+# adıyla biter — "TOTAL ALTANLAR AKY KONYA TR", "EVA MUTFAK KONYA TR". Tedarikçi
+# adı da şehirle başlıyorsa ("KONYA SUKİ ENERJİ...") marka tokeni "konya" olur ve
+# ekstredeki HER satıra yapışır: 39 alakasız iz / 198.490 ₺ sahte eşleşme.
+# Şehir adı kimlik değil, adres bilgisidir — marka tokeni olamaz.
+_COGRAFI = {
+    "konya", "istanbul", "ankara", "izmir", "antalya", "bursa", "adana",
+    "mersin", "kayseri", "gaziantep", "denizli", "eskisehir", "samsun",
+    "trabzon", "malatya", "erzurum", "diyarbakir", "sakarya", "kocaeli",
+    "manisa", "aydin", "mugla", "balikesir", "tekirdag", "hatay", "sivas",
+    "afyon", "corum", "isparta", "elazig", "tokat", "kutahya", "kirikkale",
+    "karaman", "aksaray", "nigde", "nevsehir", "usak", "yozgat", "amasya",
+    "turkiye", "turkey", "merkez", "sube", "cadde", "mahalle",
+}
+_JENERIK = _JENERIK | _COGRAFI
 
 
 def _marka_token(ad: str) -> str:
@@ -2358,7 +2373,13 @@ def kart_borc_izi(gun: int = 365, min_bakiye: float = 100.0):
                ORDER BY h.tarih DESC""",
             (bugun - timedelta(days=gun),),
         )
-        hareketler = [dict(r) for r in (cur.fetchall() or [])]
+        _ham = [dict(r) for r in (cur.fetchall() or [])]
+    # ⛔ DEVİR ÇİZGİSİ (2026-08-08 canlı ders): sistem başlangıcından ÖNCEKİ kart
+    # çekimleri açılış devrine ZATEN dahildir (devir = sahip beyanı, o günkü
+    # bakiye). Aday göstermek çift düşme olur: FEZ'in 16.05 tarihli 50.000 ₺
+    # çekimi 82.341,59 ₺'lik devrin içinde eriyip gitmiş durumda.
+    hareketler = [h for h in _ham if (h.get("tarih") or "") >= EVVEL_SISTEM_BASLANGIC]
+    devir_oncesi = [h for h in _ham if (h.get("tarih") or "") < EVVEL_SISTEM_BASLANGIC]
 
     izsiz = []
     for t in borclular:
@@ -2415,6 +2436,12 @@ def kart_borc_izi(gun: int = 365, min_bakiye: float = 100.0):
         "toplam_aday_iz": round(sum(s["aday_iz_toplam"] for s in sonuc), 2),
         "toplam_onayli_iz": round(sum(s["onayli_iz_toplam"] for s in sonuc), 2),
         "taranan_kart_hareketi": len(hareketler),
+        "devir_oncesi_haric": {
+            "adet": len(devir_oncesi),
+            "tutar": round(sum(float(h["tutar"] or 0) for h in devir_oncesi), 2),
+            "neden": f"{EVVEL_SISTEM_BASLANGIC} öncesi çekimler açılış devrine zaten "
+                     f"dahil — aday gösterilirse borç ikinci kez düşerdi",
+        },
         "satirlar": sonuc,
         "not": "TUTAR EŞLEŞMESİ ARANMAZ — 50.000 ₺ kart çekimi 120.000 ₺ borcun bir "
                "kısmını kapatır, kalanı devreder (kısmi ödeme doğaldır). Onay kart "
