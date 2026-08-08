@@ -2293,6 +2293,68 @@ def belge_sinifi_ozet():
     }
 
 
+@router.get("/mukerrer-fatura-denetimi")
+def mukerrer_fatura_denetimi():
+    """🔁 Aynı belge birden çok kez mi yüklenmiş? Ayrım FATURA NUMARASIYLA.
+
+    Sahip (2026-08-08): "eshim 2 fatura ama diğeri aynı fatura — fatura
+    numaralarını da kodlarsan ayrıştırsın."
+
+    Aynı tutar + aynı tarih MÜKERRER DEMEK DEĞİLDİR: AGİT SEFA'nın 6916/6917/
+    6918 numaralı üç faturası aynı gün aynı tutarda ama üç ayrı belge (üç
+    şubeye kesilmiş). Mükerrerlik ancak NUMARA aynıysa vardır.
+
+    İki liste döner:
+      · mukerrer   — numara aynı, birden çok kayıt (borç fazladan sayılıyor)
+      · kardes     — tutar+tarih aynı ama numara farklı (mükerrer DEĞİL, bilgi)
+    """
+    with db() as (_c, cur):
+        _ensure_tablolar(cur)
+        # Numara aynı → gerçek mükerrer ('kopya' zaten işaretliyse ayrı gösterilir
+        cur.execute(
+            """SELECT UPPER(REGEXP_REPLACE(COALESCE(fatura_no,''),'[^A-Za-z0-9]','','g')) AS n,
+                      COUNT(*)::int AS adet,
+                      COUNT(*) FILTER (WHERE COALESCE(durum,'')='kopya')::int AS kopya_isaretli,
+                      MIN(tedarikci_ad) AS tedarikci,
+                      MAX(COALESCE(toplam_tutar,0))::float AS tutar,
+                      MIN(fatura_tarih)::text AS tarih,
+                      ARRAY_AGG(id::text) AS idler
+               FROM tedarikci_fatura
+               WHERE LENGTH(REGEXP_REPLACE(COALESCE(fatura_no,''),'[^A-Za-z0-9]','','g')) >= 8
+               GROUP BY 1 HAVING COUNT(*) > 1
+               ORDER BY MAX(COALESCE(toplam_tutar,0)) DESC"""
+        )
+        mukerrer = [dict(r) for r in (cur.fetchall() or [])]
+        # Tutar+tarih aynı, numara FARKLI → kardeş faturalar (mükerrer değil)
+        cur.execute(
+            """SELECT tedarikci_ad, fatura_tarih::text AS tarih,
+                      COALESCE(toplam_tutar,0)::float AS tutar,
+                      COUNT(*)::int AS adet,
+                      COUNT(DISTINCT UPPER(REGEXP_REPLACE(COALESCE(fatura_no,''),
+                            '[^A-Za-z0-9]','','g')))::int AS farkli_no,
+                      ARRAY_AGG(fatura_no) AS nolar
+               FROM tedarikci_fatura
+               WHERE COALESCE(durum,'') <> 'kopya' AND COALESCE(toplam_tutar,0) > 0
+               GROUP BY 1,2,3 HAVING COUNT(*) > 1
+               ORDER BY COALESCE(toplam_tutar,0) * COUNT(*) DESC LIMIT 40"""
+        )
+        kardes = [dict(r) for r in (cur.fetchall() or [])]
+    gercek_mukerrer = [m for m in mukerrer if m["adet"] - m["kopya_isaretli"] > 1]
+    return {
+        "mukerrer_numara_grubu": len(mukerrer),
+        "isaretlenmemis_mukerrer": len(gercek_mukerrer),
+        "fazla_sayilan_tutar": round(sum(m["tutar"] * (m["adet"] - m["kopya_isaretli"] - 1)
+                                         for m in gercek_mukerrer), 2),
+        "mukerrer": mukerrer[:40],
+        "kardes_faturalar": [{**k, "yorum": ("✅ Ayrı faturalar — numaraları farklı"
+                                             if k["farkli_no"] == k["adet"]
+                                             else "⚠️ Bazı numaralar aynı — incelenmeli")}
+                             for k in kardes],
+        "not": "Mükerrerlik ölçüsü NUMARADIR. 'kardes_faturalar' aynı tutar+tarihli ama "
+               "numaraları farklı belgelerdir — bunlar ayrı borçtur, birleştirilmez.",
+    }
+
+
 @router.post("/odenmis-damga-temizle")
 def odenmis_damga_temizle(kuru: int = 1):
     """Yanlış '(odenmis)' damgalarını kaldırır ve faturayı borç kuyruğuna alır.
@@ -2307,7 +2369,7 @@ def odenmis_damga_temizle(kuru: int = 1):
     """
     denetim = odenmis_sayilan_denetimi()
     hedef = [s for s in denetim["satirlar"]
-             if s["hal"] in ("iz_baska_tedarikci", "iz_paylasimli", "iz_bulunamadi")]
+             if s["hal"] in ("iz_baska_tedarikci", "iz_tekil_degil", "iz_bulunamadi")]
     if kuru:
         return {
             "kuru_calistirma": True, "etkilenecek": len(hedef),
@@ -2349,7 +2411,7 @@ def odenmis_sayilan_denetimi():
     söyler. HÜKÜM YOK — damgayı kaldırmaz, listeler.
     """
     sonuc, ozet = [], {"iz_uyusuyor": 0, "iz_baska_tedarikci": 0,
-                       "iz_bulunamadi": 0, "iz_paylasimli": 0}
+                       "iz_bulunamadi": 0, "iz_tekil_degil": 0, "mukerrer_kayit": 0}
     with db() as (_c, cur):
         _ensure_tablolar(cur)
         cur.execute(
@@ -2361,11 +2423,25 @@ def odenmis_sayilan_denetimi():
         )
         faturalar = [dict(r) for r in (cur.fetchall() or [])]
 
-        # Aynı tutar+tarih üçlüsü kaç faturada tekrar ediyor? (iz paylaşımı riski)
-        imza_sayac: Dict[str, int] = {}
+        # ── AYRIŞTIRMA: FATURA NUMARASI (sahip 2026-08-08: "eshim 2 fatura ama
+        # diğeri aynı fatura — fatura numaralarını da kodlarsan ayrıştırsın").
+        # Aynı tutar+tarih MÜKERRER DEMEK DEĞİL. Kanıt numaradadır:
+        #   · Numaralar FARKLI  → ayrı faturalar (AGİT 6916/6917/6918 ardışık,
+        #     aynı gün üç şubeye kesilmiş) → her biri ayrı borç
+        #   · Numara AYNI       → mükerrer kayıt → borç bir kez sayılır
+        # Not: tek bir ödeme izi bu ayrı faturaların HEPSİNİ birden kapatamaz —
+        # o ayrı bir kusur ("iz_tekil_degil"), mükerrerlik değil.
+        def _no_norm(s):
+            return re.sub(r"[^A-Za-z0-9]", "", str(s or "")).upper()
+
+        imza_sayac: Dict[str, int] = {}      # tutar+tarih (iz paylaşımı ölçüsü)
+        no_sayac: Dict[str, int] = {}        # normalize fatura no (mükerrerlik ölçüsü)
         for f in faturalar:
             imza = f"{round(float(f['tutar'] or 0), 2)}|{(f.get('ftarih') or '')[:10]}"
             imza_sayac[imza] = imza_sayac.get(imza, 0) + 1
+            n = _no_norm(f.get("fatura_no"))
+            if len(n) >= 8:
+                no_sayac[n] = no_sayac.get(n, 0) + 1
 
         for f in faturalar:
             tut = float(f.get("tutar") or 0)
@@ -2394,7 +2470,9 @@ def odenmis_sayilan_denetimi():
             izler = [dict(r) for r in (cur.fetchall() or [])]
             uyusan = [i for i in izler if ted and _odeme_eslesir(ted, i.get("metin") or "")]
             imza = f"{round(tut, 2)}|{ftarih}"
-            paylasimli = imza_sayac.get(imza, 1) > 1
+            _no = _no_norm(f.get("fatura_no"))
+            kardes = imza_sayac.get(imza, 1)          # aynı tutar+tarihli fatura sayısı
+            mukerrer = no_sayac.get(_no, 0) if len(_no) >= 8 else 0
 
             if not izler:
                 hal, ne = "iz_bulunamadi", "Damga var ama iz yok — borç listesine GERİ ALINMALI"
@@ -2405,29 +2483,42 @@ def odenmis_sayilan_denetimi():
                 hal = "iz_baska_tedarikci"
                 ne = ("İz BAŞKA bir ödemeye ait olabilir (tedarikçi adı eşleşmiyor) — "
                       "borç yanlışlıkla kapanmış olabilir")
-            if paylasimli and hal != "iz_bulunamadi":
-                hal = "iz_paylasimli"
-                ne = (f"⚠️ Aynı tutar+tarihte {imza_sayac[imza]} fatura var — TEK ödeme "
-                      f"hepsini birden kapatmış olabilir (mükerrer kayıt mı, ayrı fatura mı?)")
+            # Numara AYNI ise gerçek mükerrerlik (borç bir kez sayılmalı)
+            if mukerrer > 1:
+                hal = "mukerrer_kayit"
+                ne = (f"🔁 Aynı fatura numarası ({f.get('fatura_no')}) {mukerrer} kayıtta — "
+                      f"aynı belge birden çok yüklenmiş; fazlası 'kopya' işaretlenmeli")
+            # Numaralar FARKLI ama tek iz hepsini kapatmış → mükerrerlik DEĞİL,
+            # izin tekil tüketilmemesi kusuru
+            elif kardes > 1 and hal != "iz_bulunamadi":
+                hal = "iz_tekil_degil"
+                ne = (f"⚠️ Aynı tutar+tarihte {kardes} AYRI fatura var (numaraları farklı) — "
+                      f"tek ödeme izi hepsini birden kapatamaz; en fazla birini kapatır")
             ozet[hal] = ozet.get(hal, 0) + 1
             sonuc.append({
                 "fatura_id": f["id"], "tedarikci": ted, "fatura_no": f.get("fatura_no"),
                 "tarih": f.get("ftarih"), "tutar": round(tut, 2),
                 "hal": hal, "ne_demek": ne,
-                "ayni_imzali_fatura": imza_sayac.get(imza, 1),
+                "ayni_imzali_fatura": kardes,        # aynı tutar+tarih (ayrı olabilir)
+                "ayni_numarali_kayit": mukerrer,     # aynı fatura no (gerçek mükerrer)
                 "bulunan_iz": [{"kanal": i["kanal"], "tarih": str(i["t"]),
                                 "tutar": float(i["tutar"] or 0),
                                 "metin": (i.get("metin") or "")[:70]} for i in izler[:3]],
             })
     riskli = round(sum(s["tutar"] for s in sonuc
-                       if s["hal"] in ("iz_baska_tedarikci", "iz_bulunamadi", "iz_paylasimli")), 2)
+                       if s["hal"] in ("iz_baska_tedarikci", "iz_bulunamadi",
+                                       "iz_tekil_degil")), 2)
     return {
         "damgali_fatura": len(sonuc), "ozet": ozet,
         "riskli_tutar": riskli,
+        "mukerrer_tutar": round(sum(s["tutar"] for s in sonuc
+                                    if s["hal"] == "mukerrer_kayit"), 2),
         "satirlar": sonuc,
-        "not": "Hüküm YOK — damga kaldırılmadı. 'iz_baska_tedarikci' ve 'iz_paylasimli' "
-               "satırlar borç listesine geri alınmayı hak edebilir; kararı sahip verir. "
-               "Kalıcı çözüm: ödeme izi freni TEDARİKÇİ adını da şart koşmalı.",
+        "not": "Hüküm YOK — damga kaldırılmadı. AYRIM FATURA NUMARASIYLA yapılır: "
+               "aynı tutar+tarih mükerrer demek değil (ardışık numaralı ayrı faturalar "
+               "aynı gün kesilebilir); mükerrerlik ancak NUMARA aynıysa vardır. "
+               "'iz_tekil_degil' = tek ödeme birden çok ayrı faturayı kapatmış. "
+               "'mukerrer_kayit' = aynı belge birden çok yüklenmiş.",
     }
 
 
