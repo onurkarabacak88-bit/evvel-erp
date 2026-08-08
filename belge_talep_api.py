@@ -444,18 +444,9 @@ def belge_talep_tutar_tazele(sadece_bos: int = 1):
                 WHERE bt.durum <> 'kapandi' {kosul}"""
         )
         satirlar = [dict(r) for r in (cur.fetchall() or [])]
-        # TEŞHİS: kalem bulunamıyorsa körlemesine düzeltme yapmayalım — ham şekli gör.
-        teshis = []
         for s in satirlar:
-            k = s.get("kalemler")
-            if len(teshis) < 3:
-                teshis.append({
-                    "tip": type(k).__name__,
-                    "uzunluk": (len(k) if isinstance(k, (list, str)) else None),
-                    "ornek": (str(k)[:160] if k is not None else None),
-                })
             try:
-                pd = _teslim_parasal_deger(cur, k)
+                pd = _teslim_parasal_deger(cur, s.get("kalemler"))
             except Exception:  # noqa: BLE001
                 hata += 1
                 continue
@@ -475,8 +466,7 @@ def belge_talep_tutar_tazele(sadece_bos: int = 1):
             guncellenen += 1
         conn.commit()
     return {"guncellenen": guncellenen, "kalemsiz_atlanan": atlanan, "hata": hata,
-            "toplam_bakilan": len(satirlar), "sadece_bos": bool(sadece_bos),
-            "teshis_ilk3": teshis}
+            "toplam_bakilan": len(satirlar), "sadece_bos": bool(sadece_bos)}
 
 
 @router.get("/acik-teslimat")
@@ -496,6 +486,13 @@ def acik_teslimat_ozet():
             """
             SELECT id, ts_id, sube_adi, tedarikci_id, tedarikci_ad, tedarikci_tel,
                    teslim_tarihi::text AS teslim_tarihi, mesaj_sayisi,
+                   -- PARASAL BOYUT (2026-08-08): "bu teslimat ne kadarlık borç?"
+                   -- Belgesiz teslimat artık yalnız yaşıyla değil, TUTARIYLA da
+                   -- görünür; CFO/vergi tarafı "18 gündür belgesiz 12.400 ₺" der.
+                   beklenen_tutar_tl::float AS beklenen_tutar_tl,
+                   kalem_sayisi, fiyatsiz_kalem, tutar_kaynagi,
+                   fatura_tutar_tl::float AS fatura_tutar_tl,
+                   tutar_fark_tl::float AS tutar_fark_tl,
                    GREATEST(0, (CURRENT_DATE - COALESCE(teslim_tarihi, olusturma::date)))::int AS yas_gun
             FROM belge_talep
             WHERE durum = 'bekliyor'
@@ -543,8 +540,24 @@ def acik_teslimat_ozet():
         except Exception as e:  # noqa: BLE001 — şema farkıysa blok boş kalır, duyu çökmez
             logger.warning("acik-teslimat ic_sevkiyat blogu atlandi: %s", str(e)[:120])
 
+    # PARASAL ÖZET (2026-08-08): "kaç teslimat açık" yetmez — CFO/vergi tarafı
+    # "NE KADARLIK borç belgesiz" diye sorar. Tutarı hesaplanamayan teslimat
+    # ayrıca sayılır; sıfır göstermek, bilmemekten daha yanlıştır.
+    _tutarli = [a for a in acik if a.get("beklenen_tutar_tl")]
+    _tutarsiz = [a for a in acik if not a.get("beklenen_tutar_tl")]
+    _fiyatsiz_kalemli = [a for a in acik if (a.get("fiyatsiz_kalem") or 0) > 0]
+    parasal = {
+        "beklenen_borc_tl": round(sum(float(a.get("beklenen_tutar_tl") or 0) for a in acik), 2),
+        "tutari_hesaplanan_adet": len(_tutarli),
+        "tutari_bilinmeyen_adet": len(_tutarsiz),
+        "fiyatsiz_kalemli_adet": len(_fiyatsiz_kalemli),
+        "en_eski_tutarli": (max((a.get("yas_gun") or 0) for a in _tutarli) if _tutarli else None),
+        "not": "Beklenen borç = teslim kalemleri × (gerçek alış fiyatı, yoksa katalog). "
+               "Fatura gelince gerçek tutarla değişir; fark denetim sinyalidir.",
+    }
     return {
         "acik_toplam": len(acik),
+        "parasal": parasal,
         "yas_kovalari": kovalar,
         "acik_teslimatlar": acik,
         "tedarikci_ritim": ritim,
