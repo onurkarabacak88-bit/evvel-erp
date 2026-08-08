@@ -24,6 +24,13 @@ from finans_core import (
     kasa_detay_breakdown,
 )
 
+def _sube_eki(g) -> str:
+    """Plan açıklamasına ' (ŞUBE)' eki — aynı gider birden çok şubede tanımlıysa
+    ekranda ayırt edilebilsin (2026-08-08: POS DONANIM 4 şubede ayrı ayrı)."""
+    ad = (g.get("_sube_adi") or "").strip()
+    return f" ({ad})" if ad else ""
+
+
 def fmt(n):
     if n is None:
         return "---"
@@ -428,7 +435,14 @@ def aylik_odeme_plani_uret(yil=None, ay=None):
     with db() as (conn, cur):
 
         # 1. SABİT GİDERLER
-        cur.execute("SELECT * FROM sabit_giderler WHERE aktif=TRUE")
+        # 🏪 ŞUBE ADI (2026-08-08, sahip: "her şubenin farklı olduğu"): POS
+        # DONANIM ÜCRETİ dört şubede ayrı ayrı tanımlı ve dördü de meşru. Plan
+        # açıklamasında şube yazmayınca ekranda dört özdeş satır görünüyor ve
+        # mükerrer sanılıyordu. Ad artık şubeyle birlikte yazılır.
+        cur.execute("""SELECT sg.*, s.ad AS _sube_adi
+                       FROM sabit_giderler sg
+                       LEFT JOIN subeler s ON s.id = sg.sube_id
+                       WHERE sg.aktif=TRUE""")
         for g in cur.fetchall():
             odeme_gun = g['odeme_gunu'] or 1
             try:
@@ -548,7 +562,7 @@ def aylik_odeme_plani_uret(yil=None, ay=None):
                             (id, kart_id, tarih, referans_ay, odenecek_tutar, asgari_tutar, aciklama, durum, kaynak_tablo, kaynak_id)
                         VALUES (%s, NULL, %s, DATE_TRUNC('month', %s::date), %s, %s, %s, 'bekliyor', 'sabit_giderler', %s)
                     """, (pid, odeme_tarihi, str(odeme_tarihi), tutar, tutar,
-                          f"⚠️ LİMİT YETERSİZ — Manuel Öde: {g['gider_adi']}", g['id']))
+                          f"⚠️ LİMİT YETERSİZ — Manuel Öde: {g['gider_adi']}{_sube_eki(g)}", g['id']))
                     continue
 
                 # Karta HARCAMA yaz — kaynak_id ile sabit_giderler'e bağla
@@ -568,7 +582,7 @@ def aylik_odeme_plani_uret(yil=None, ay=None):
                     VALUES (%s, %s, %s, DATE_TRUNC('month', %s::date), %s, %s, %s, %s, %s, 'odendi', 'sabit_giderler', %s)
                 """, (pid, g['kart_id'], odeme_tarihi, str(odeme_tarihi),
                       tutar, tutar, tutar, odeme_tarihi,
-                      f"Sabit Gider (Kart Talimat): {g['gider_adi']}", g['id']))
+                      f"Sabit Gider (Kart Talimat): {g['gider_adi']}{_sube_eki(g)}", g['id']))
 
                 if doluluk_pct >= 80:
                     uretilen.append(
@@ -593,7 +607,7 @@ def aylik_odeme_plani_uret(yil=None, ay=None):
                     AND durum != 'iptal'
                 )
             """, (pid, odeme_tarihi, str(odeme_tarihi), float(g['tutar']), float(g['tutar']),
-                  f"Sabit Gider: {g['gider_adi']}", g['id'], g['id'], str(odeme_tarihi)))
+                  f"Sabit Gider: {g['gider_adi']}{_sube_eki(g)}", g['id'], g['id'], str(odeme_tarihi)))
             if cur.rowcount > 0:
                 uretilen.append(f"Sabit gider: {g['gider_adi']} — {odeme_tarihi}")
 

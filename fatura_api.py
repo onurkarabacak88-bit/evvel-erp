@@ -3711,22 +3711,25 @@ def para_zinciri_rontgen():
     _sor("mukerrer_plan_satiri", """
         SELECT LEFT(COALESCE(aciklama,'?'),46) AS aciklama,
                odenecek_tutar::float AS tutar, tarih::text AS tarih,
+               COALESCE(kaynak_id::text,'-') AS kaynak_id,
                COUNT(*)::int AS adet,
                (MAX(odenecek_tutar) * (COUNT(*) - 1))::float AS fazla_sayilan
         FROM odeme_plani
         WHERE COALESCE(durum,'') <> 'iptal'
-        GROUP BY 1,2,3 HAVING COUNT(*) > 1
+        GROUP BY 1,2,3,4 HAVING COUNT(*) > 1
         ORDER BY MAX(odenecek_tutar) * (COUNT(*) - 1) DESC LIMIT 25""", tekil=False)
     # 🔁 Mükerrer SABİT GİDER TANIMI: aynı ad+tutar birden çok kayıt olarak
     # tanımlıysa motor her biri için ayrı plan üretir (kaynak_id farklı olduğu
     # için koruma devreye girmez) — POS DONANIM 4 plan satırının sebebi bu olabilir.
     _sor("mukerrer_sabit_gider", """
-        SELECT gider_adi, tutar::float AS tutar, COUNT(*)::int AS adet,
+        SELECT gider_adi, tutar::float AS tutar,
+               COALESCE(sube_id::text,'(şubesiz)') AS sube_id,
+               COUNT(*)::int AS adet,
                COUNT(*) FILTER (WHERE aktif)::int AS aktif_adet,
                ARRAY_AGG(id::text) AS idler,
                ARRAY_AGG(COALESCE(odeme_yontemi,'-')) AS yontemler
         FROM sabit_giderler
-        GROUP BY 1,2 HAVING COUNT(*) > 1
+        GROUP BY 1,2,3 HAVING COUNT(*) > 1
         ORDER BY MAX(tutar) * COUNT(*) DESC LIMIT 20""", tekil=False)
 
     # 💳 Kart planı tekillik freni kuruldu mu? (2026-08-08 kök neden kapatma)
@@ -3746,9 +3749,9 @@ def para_zinciri_rontgen():
                COALESCE(SUM(fazla),0)::float AS fazla_sayilan_toplam,
                COALESCE(SUM(adet - 1),0)::int AS silinebilir_satir
         FROM (
-          SELECT odenecek_tutar * (COUNT(*) - 1) AS fazla, COUNT(*) AS adet
+          SELECT MAX(odenecek_tutar) * (COUNT(*) - 1) AS fazla, COUNT(*) AS adet
           FROM odeme_plani WHERE COALESCE(durum,'') <> 'iptal'
-          GROUP BY aciklama, odenecek_tutar, tarih HAVING COUNT(*) > 1
+          GROUP BY aciklama, odenecek_tutar, tarih, kaynak_id HAVING COUNT(*) > 1
         ) x""")
     _sor("kayip_borc_dokumu", """
         SELECT LEFT(COALESCE(aciklama,'?'),52) AS aciklama, tarih::text AS tarih,
