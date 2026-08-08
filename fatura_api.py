@@ -3376,13 +3376,18 @@ def kasa_izi_genis_arama():
             # "⚠️ LİMİT YETERSİZ — Manuel Öde" planı açılıyor ama aynı gider aynı ay
             # karttan çekilebiliyor (limit açılınca / otomatik talimat) → plan satırı
             # boşta kalıyor. Bu yol olmayınca 5 satır "hiç ödenmemiş" görünüyordu.
-            if p["kt"] and p["ki"]:
+            if p["ki"]:
+                # ⚠️ TABLO ADI ŞART DEĞİL, KİMLİK ŞART (2026-08-08 canlı ders):
+                # aynı sabit gider kart tarafında bazen 'sabit_giderler', bazen
+                # 'fatura_giderleri' etiketiyle yazılıyor — kaynak_id ise AYNI.
+                # Tablo adını şart koşan sorgu 4 internet + 1 elektrik faturasını
+                # "hiç ödenmemiş" gösteriyordu; hepsi karttan çekilmişti.
                 _tek("""SELECT COALESCE(SUM(ABS(tutar)),0)::float AS t FROM kart_hareketleri
-                        WHERE kaynak_tablo=%s AND kaynak_id=%s
+                        WHERE kaynak_id=%s
                           AND islem_turu='HARCAMA' AND COALESCE(durum,'aktif')='aktif'
                           AND DATE_TRUNC('month',tarih)=DATE_TRUNC('month',%s::date)""",
-                     (p["kt"], str(p["ki"]), p["tarih"]), "D2",
-                     f"kart: {p['kt']} kaynağından çekilmiş (aynı ay)")
+                     (str(p["ki"]), p["tarih"]), "D2",
+                     "kart: aynı gider kimliğinden çekilmiş (aynı ay, tablo adı farklı olabilir)")
             _tek("""SELECT COALESCE(SUM(ABS(tutar)),0)::float AS t FROM kasa_hareketleri
                     WHERE COALESCE(durum,'aktif')='aktif' AND kasa_etkisi=TRUE
                       AND ABS(ABS(tutar) - %s) <= GREATEST(5, %s*0.01)
