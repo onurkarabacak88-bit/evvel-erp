@@ -20,7 +20,7 @@ from __future__ import annotations
 import logging
 import threading
 import uuid
-from typing import Optional
+from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel
@@ -63,6 +63,131 @@ def _ensure(cur) -> None:
     cur.execute("ALTER TABLE belge_talep ADD COLUMN IF NOT EXISTS kapanis_aciklama TEXT")
     # ELLE kayıt notu (2026-07-26, ATALAY vakası): sistem-dışı gelen mal için sahip notu
     cur.execute("ALTER TABLE belge_talep ADD COLUMN IF NOT EXISTS elle_not TEXT")
+    # ── PARASAL BOYUT (2026-08-08, sahip doktrini: "ürün artık para olmuştur ve
+    # borca yazılır") ────────────────────────────────────────────────────────────
+    # Teslimat kaydı bugüne dek YALNIZ "kim / hangi şube / ne zaman" tutuyordu;
+    # "NE KADAR" yoktu. Sonuç: canlıda 4 açık teslimat (en eskisi 18 günlük) ve
+    # 13 vadeli alım kaydının HİÇBİRİNDE fatura bağı yok — mal gelmiş, borç
+    # görünmüyor. Üç kimliğin de kör kaldığı nokta:
+    #   · vergi: belgesiz mal → KDV indirilemez, gider ispatsız
+    #   · maliyet: tahakkuk etmemiş borç → P&L eksik
+    #   · nakit: bilinmeyen tutar → ödeme planında yok
+    # BEKLENEN tutar teslim anında hesaplanır (kalem × fiyat), fatura gelince
+    # GERÇEK tutarla karşılaştırılır; fark denetim sinyalidir (fatura ≠ sipariş).
+    cur.execute("ALTER TABLE belge_talep ADD COLUMN IF NOT EXISTS beklenen_tutar_tl NUMERIC(14,2)")
+    cur.execute("ALTER TABLE belge_talep ADD COLUMN IF NOT EXISTS kalem_sayisi INT")
+    cur.execute("ALTER TABLE belge_talep ADD COLUMN IF NOT EXISTS fiyatsiz_kalem INT")
+    # 'alis' = gerçek alış fiyatı · 'katalog' = sipariş kataloğu · 'kismi' = ikisi karışık
+    cur.execute("ALTER TABLE belge_talep ADD COLUMN IF NOT EXISTS tutar_kaynagi TEXT")
+    cur.execute("ALTER TABLE belge_talep ADD COLUMN IF NOT EXISTS fatura_tutar_tl NUMERIC(14,2)")
+    cur.execute("ALTER TABLE belge_talep ADD COLUMN IF NOT EXISTS tutar_fark_tl NUMERIC(14,2)")
+
+
+def _teslim_parasal_deger(cur, kalemler: Any) -> Dict[str, Any]:
+    """"ÜRÜN ARTIK PARA OLMUŞTUR" — teslim kalemlerini paraya çevirir.
+
+    Sahip doktrini (2026-08-08): şube sipariş verir → toptancıya gider → şube
+    teslim alır → "ürün artık para olmuştur ve borca yazılır". Bu fonksiyon o
+    dönüşümün hesabıdır; borcun BEKLENEN tutarını verir (fatura gelene kadar).
+
+    FİYAT ÖNCELİĞİ (maliyeci kuralı — en gerçeğe yakın olan kazanır):
+      1. `alis_fiyatlari` — bu kalemin fiilen ödenen son alış fiyatı
+      2. `siparis_urun.birim_fiyat_tl` — katalog fiyatı (sözleşme/liste)
+      3. yoksa → kalem fiyatsız sayılır, tutara GİRMEZ ve ayrıca bildirilir
+         (uydurma fiyatla borç yazmak, yanlış P&L'den daha kötüdür)
+
+    Kalem eşleşmesi ürün-aç zinciriyle AYNI anahtar sırasını izler:
+    kalem_kodu → urun_id → depo_stok_kalem_kodu → normalize ad.
+    """
+    sonuc = {"tutar": 0.0, "kalem": 0, "fiyatsiz": 0, "kaynak": None}
+    if not isinstance(kalemler, list) or not kalemler:
+        return sonuc
+
+    # Kalem anahtarlarını topla
+    kodlar, adlar = set(), set()
+    for k in kalemler:
+        if not isinstance(k, dict):
+            continue
+        for alan in ("kalem_kodu", "urun_id", "depo_stok_kalem_kodu"):
+            v = str(k.get(alan) or "").strip()
+            if v:
+                kodlar.add(v)
+        ad = str(k.get("urun_ad") or k.get("kalem_adi") or "").strip()
+        if ad:
+            adlar.add(ad.lower())
+
+    alis_map: Dict[str, float] = {}
+    katalog_map: Dict[str, float] = {}
+    katalog_ad_map: Dict[str, float] = {}
+    try:
+        if kodlar:
+            # 1) Gerçek alış fiyatı — yalnız yürürlükteki kayıt (gecerli_bitis boş)
+            cur.execute(
+                """SELECT kalem_kodu, birim_maliyet_tl
+                   FROM alis_fiyatlari
+                   WHERE kalem_kodu = ANY(%s) AND gecerli_bitis IS NULL""",
+                (list(kodlar),),
+            )
+            for r in (cur.fetchall() or []):
+                d = dict(r)
+                alis_map[str(d["kalem_kodu"])] = float(d["birim_maliyet_tl"] or 0)
+        # 2) Katalog fiyatı — id VE depo kodu üzerinden, ayrıca ad haritası
+        cur.execute(
+            """SELECT id::text AS id, ad, depo_stok_kalem_kodu,
+                      COALESCE(birim_fiyat_tl,0)::float AS f
+               FROM siparis_urun WHERE COALESCE(birim_fiyat_tl,0) > 0"""
+        )
+        for r in (cur.fetchall() or []):
+            d = dict(r)
+            katalog_map[str(d["id"])] = d["f"]
+            dk = str(d.get("depo_stok_kalem_kodu") or "").strip()
+            if dk:
+                katalog_map.setdefault(dk, d["f"])
+            ad = str(d.get("ad") or "").strip().lower()
+            if ad:
+                katalog_ad_map.setdefault(ad, d["f"])
+    except Exception as e:  # noqa: BLE001
+        logger.warning("teslim parasal deger fiyat okunamadi: %s", str(e)[:150])
+        return sonuc
+
+    kaynaklar = set()
+    for k in kalemler:
+        if not isinstance(k, dict):
+            continue
+        try:
+            adet = float(k.get("adet") or k.get("miktar") or 0)
+        except (TypeError, ValueError):
+            adet = 0.0
+        if adet <= 0:
+            continue
+        sonuc["kalem"] += 1
+        fiyat, kaynak = 0.0, None
+        for alan in ("kalem_kodu", "urun_id", "depo_stok_kalem_kodu"):
+            v = str(k.get(alan) or "").strip()
+            if not v:
+                continue
+            if v in alis_map and alis_map[v] > 0:
+                fiyat, kaynak = alis_map[v], "alis"
+                break
+            if v in katalog_map and katalog_map[v] > 0:
+                fiyat, kaynak = katalog_map[v], "katalog"
+                break
+        if fiyat <= 0:
+            ad = str(k.get("urun_ad") or k.get("kalem_adi") or "").strip().lower()
+            if ad and katalog_ad_map.get(ad, 0) > 0:
+                fiyat, kaynak = katalog_ad_map[ad], "katalog"
+        if fiyat > 0:
+            sonuc["tutar"] += adet * fiyat
+            kaynaklar.add(kaynak)
+        else:
+            sonuc["fiyatsiz"] += 1
+
+    sonuc["tutar"] = round(sonuc["tutar"], 2)
+    if len(kaynaklar) == 1:
+        sonuc["kaynak"] = kaynaklar.pop()
+    elif len(kaynaklar) > 1:
+        sonuc["kaynak"] = "kismi"
+    return sonuc
 
 
 def belge_talep_olustur_izole(ts_id: str) -> None:
@@ -80,7 +205,7 @@ def belge_talep_olustur_izole(ts_id: str) -> None:
             cur.execute(
                 """
                 SELECT ts.id, ts.talep_id, ts.sube_id, ts.tedarikci_id,
-                       ts.tedarikci_ad, ts.tedarikci_tel, s.ad AS sube_adi
+                       ts.tedarikci_ad, ts.tedarikci_tel, ts.kalemler, s.ad AS sube_adi
                 FROM toptanci_siparis ts LEFT JOIN subeler s ON s.id = ts.sube_id
                 WHERE ts.id=%s
                 """,
@@ -90,17 +215,27 @@ def belge_talep_olustur_izole(ts_id: str) -> None:
             if not r:
                 return
             t = dict(r)
+            # "ÜRÜN ARTIK PARA OLMUŞTUR" — teslimatın beklenen borç değeri.
+            # Hata-yutar: fiyat okunamazsa kayıt yine açılır, yalnız tutar boş kalır
+            # (teslim-al akışı hiçbir koşulda bozulmaz — bu fonksiyonun ana sözü).
+            pd = {"tutar": None, "kalem": None, "fiyatsiz": None, "kaynak": None}
+            try:
+                pd = _teslim_parasal_deger(cur, t.get("kalemler"))
+            except Exception as _e_pd:  # noqa: BLE001
+                logger.warning("teslim parasal deger hesaplanamadi: %s", str(_e_pd)[:150])
             # Telefonu olmayan tedarikçi için yine kayıt aç (cep'te "tel yok" gösterilir)
             cur.execute(
                 """
                 INSERT INTO belge_talep
                     (ts_id, talep_id, sube_id, sube_adi, tedarikci_id, tedarikci_ad,
-                     tedarikci_tel, teslim_tarihi)
-                VALUES (%s,%s,%s,%s,%s,%s,%s, CURRENT_DATE)
+                     tedarikci_tel, teslim_tarihi,
+                     beklenen_tutar_tl, kalem_sayisi, fiyatsiz_kalem, tutar_kaynagi)
+                VALUES (%s,%s,%s,%s,%s,%s,%s, CURRENT_DATE, %s,%s,%s,%s)
                 ON CONFLICT (ts_id) DO NOTHING
                 """,
                 (tsid, t.get("talep_id"), t.get("sube_id"), t.get("sube_adi"),
-                 t.get("tedarikci_id"), t.get("tedarikci_ad"), t.get("tedarikci_tel")),
+                 t.get("tedarikci_id"), t.get("tedarikci_ad"), t.get("tedarikci_tel"),
+                 (pd.get("tutar") or None), pd.get("kalem"), pd.get("fiyatsiz"), pd.get("kaynak")),
             )
     except Exception as e:  # noqa: BLE001 — bilerek yutuluyor (teslim-al bozulmasın)
         logger.warning("belge_talep olusturulamadi (yutuldu, teslim-al etkilenmedi): %s", str(e)[:200])
@@ -276,6 +411,55 @@ def belge_talep_bekleyen():
             rows.append(d)
         _gelen_fatura_ipucu(cur, rows)
     return {"toplam": len(rows), "talepler": rows}
+
+
+@router.post("/tutar-tazele")
+def belge_talep_tutar_tazele(sadece_bos: int = 1):
+    """Açık teslimatların BEKLENEN BORÇ değerini (yeniden) hesaplar.
+
+    Neden gerekli: parasal boyut 2026-08-08'de eklendi; o tarihten ÖNCE doğmuş
+    teslimatların tutarı boştur (canlıda 4 açık teslimat, en eskisi 18 günlük).
+    Ayrıca alış fiyatı sonradan girilen kalemlerde tutar netleşir.
+
+    `sadece_bos=1` (varsayılan): yalnız tutarı boş kayıtları doldurur — mevcut
+    hesapları EZMEZ. `sadece_bos=0`: hepsini yeniden hesaplar (fiyat düzeltmesi
+    sonrası). Faturası gelmiş (fatura_tutar_tl dolu) kayıtların BEKLENEN değeri
+    yine güncellenir ama fark alanı korunur; gerçek tutar fatura tarafındadır.
+    """
+    guncellenen, atlanan, hata = 0, 0, 0
+    with db() as (conn, cur):
+        _ensure(cur)
+        kosul = "AND bt.beklenen_tutar_tl IS NULL" if sadece_bos else ""
+        cur.execute(
+            f"""SELECT bt.id, ts.kalemler
+                FROM belge_talep bt
+                JOIN toptanci_siparis ts ON ts.id = bt.ts_id
+                WHERE bt.durum <> 'kapandi' {kosul}"""
+        )
+        satirlar = [dict(r) for r in (cur.fetchall() or [])]
+        for s in satirlar:
+            try:
+                pd = _teslim_parasal_deger(cur, s.get("kalemler"))
+            except Exception:  # noqa: BLE001
+                hata += 1
+                continue
+            if not pd.get("kalem"):
+                atlanan += 1
+                continue
+            cur.execute(
+                """UPDATE belge_talep
+                   SET beklenen_tutar_tl=%s, kalem_sayisi=%s,
+                       fiyatsiz_kalem=%s, tutar_kaynagi=%s,
+                       tutar_fark_tl = CASE WHEN fatura_tutar_tl IS NOT NULL
+                                            THEN fatura_tutar_tl - %s ELSE tutar_fark_tl END
+                   WHERE id=%s""",
+                ((pd.get("tutar") or None), pd.get("kalem"), pd.get("fiyatsiz"),
+                 pd.get("kaynak"), (pd.get("tutar") or 0), s["id"]),
+            )
+            guncellenen += 1
+        conn.commit()
+    return {"guncellenen": guncellenen, "kalemsiz_atlanan": atlanan, "hata": hata,
+            "toplam_bakilan": len(satirlar), "sadece_bos": bool(sadece_bos)}
 
 
 @router.get("/acik-teslimat")
