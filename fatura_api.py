@@ -2276,6 +2276,80 @@ def belge_sinifi_ozet():
     }
 
 
+@router.get("/kuyruk-bosluk-teshisi")
+def kuyruk_bosluk_teshisi():
+    """🕳 'Bu fatura neden borç listemde yok?' — fatura fatura sebep.
+
+    Röntgen 26 faturanın (718.623 ₺) kuyruğa hiç girmediğini gösterdi. Motor
+    atlarken bazı hallerde kolonu damgalamıyor (okunmamış/kimliksiz/sıfır) —
+    o yüzden 'neden' kayıtta yok. Bu uç sebebi KURU ÇALIŞTIRMA ile üretir:
+    hiçbir şey yazmaz, sadece motorun aynı frenlerini sırayla dener.
+    """
+    sebep_sayac: Dict[str, Dict[str, Any]] = {}
+    satirlar = []
+    with db() as (_c, cur):
+        _ensure_tablolar(cur)
+        cur.execute(
+            """SELECT id, tedarikci_ad, fatura_no, fatura_tarih::text AS ftarih,
+                      COALESCE(toplam_tutar,0)::float AS tutar, durum,
+                      kuyruk_vadeli_id, belge_sinifi
+               FROM tedarikci_fatura
+               WHERE COALESCE(durum,'') <> 'kopya'
+               ORDER BY COALESCE(fatura_tarih, olusturma::date) DESC"""
+        )
+        for r in (cur.fetchall() or []):
+            f = dict(r)
+            kv = f.get("kuyruk_vadeli_id")
+            # Motorun fren sırası — aynısı, ama hüküm yazmadan
+            if kv == "(arsiv)":
+                sebep = "arsiv_sistem_oncesi"
+            elif kv == "(odenmis)":
+                sebep = "zaten_odenmis_sayildi"
+            elif kv:
+                sebep = "borca_donmus"
+            elif (f.get("durum") or "") not in ("ocr_tamam", "okundu"):
+                sebep = "okunmamis"           # OCR bitmemiş / hata almış
+            elif (f.get("tutar") or 0) <= 0:
+                sebep = "tutar_sifir_veya_negatif"
+            elif len((f.get("tedarikci_ad") or "").strip()) < 3:
+                sebep = "tedarikci_kimliksiz"
+            elif (f.get("ftarih") or "")[:10] and (f["ftarih"] or "")[:10] < EVVEL_SISTEM_BASLANGIC:
+                sebep = "arsiv_damgalanmamis"  # tarih eski ama damga basılmamış
+            else:
+                sebep = "motor_hic_calismamis"  # tüm frenleri geçiyor ama kuyrukta yok
+            b = sebep_sayac.setdefault(sebep, {"adet": 0, "tutar": 0.0})
+            b["adet"] += 1
+            b["tutar"] = round(b["tutar"] + float(f.get("tutar") or 0), 2)
+            if sebep not in ("borca_donmus", "arsiv_sistem_oncesi"):
+                satirlar.append({
+                    "fatura_id": f["id"], "tedarikci": f.get("tedarikci_ad"),
+                    "fatura_no": f.get("fatura_no"), "tarih": f.get("ftarih"),
+                    "tutar": f.get("tutar"), "durum": f.get("durum"),
+                    "sebep": sebep,
+                })
+    aciklama = {
+        "borca_donmus": "✅ Kuyrukta — borç listesinde görünüyor",
+        "arsiv_sistem_oncesi": "📜 Sistem başlangıcı öncesi — açılış devrine dahil",
+        "arsiv_damgalanmamis": "📜 Tarihi eski ama damgası yok — devre dahil mi belirsiz",
+        "zaten_odenmis_sayildi": "💸 Ödeme izi bulundu, kuyruğa alınmadı — İZ DOĞRU MU?",
+        "okunmamis": "⏳ OCR bitmemiş/hata — tutar bilinmediği için borç yazılamadı",
+        "tutar_sifir_veya_negatif": "0️⃣ Tutar okunamamış ya da alacak dekontu",
+        "tedarikci_kimliksiz": "❓ Tedarikçi adı çıkmamış — kime borç belli değil",
+        "motor_hic_calismamis": "⚠️ Tüm frenleri geçiyor ama kuyrukta yok — motor bu "
+                                "faturaya hiç çalışmamış (retro tarama gerekir)",
+    }
+    return {
+        "kirilim": [{"sebep": k, "adet": v["adet"], "tutar": v["tutar"],
+                     "aciklama": aciklama.get(k, k)}
+                    for k, v in sorted(sebep_sayac.items(), key=lambda x: -x[1]["tutar"])],
+        "borc_disi_toplam": round(sum(v["tutar"] for k, v in sebep_sayac.items()
+                                      if k not in ("borca_donmus", "arsiv_sistem_oncesi")), 2),
+        "satirlar": satirlar[:80],
+        "not": "Kuru çalıştırma — hiçbir şey yazılmadı. 'motor_hic_calismamis' "
+               "satırları POST /api/fatura/kuyruk-retro-tarama ile kuyruğa alınabilir.",
+    }
+
+
 @router.get("/para-zinciri-rontgen")
 def para_zinciri_rontgen():
     """🩻 FATURA → BORÇ → ÖDEME → CARİ zinciri canlıda GERÇEKTE ne yapıyor?
