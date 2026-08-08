@@ -5229,9 +5229,16 @@ def cari_ekstre(tedarikci: str = ""):
     hareketler = []
     for f in faturalar:
         if str(f["tarih"]) >= EVVEL_SISTEM_BASLANGIC:
-            hareketler.append({"tip": "fatura", "tarih": str(f["tarih"]),
-                               "tutar": round(float(f["tutar"] or 0), 2),
-                               "aciklama": f.get("fatura_no") or "fatura",
+            # ↩️ İADE / ALACAK DEKONTU AYRI TİP (2026-08-08, Codex denetimi):
+            # negatif tutarlı belge bakiyeyi düşürür ama ÖDEME DEĞİLDİR — mal
+            # geri gitmiştir, para çıkmamıştır. İkisi aynı sepete düşerse
+            # "bu tedarikçiye şu kadar ödedim" cümlesi yalan olur (ödeme izi
+            # raporları şişer). Bakiye etkisi aynı, ANLAMI farklı.
+            _tut = round(float(f["tutar"] or 0), 2)
+            hareketler.append({"tip": ("iade" if _tut < 0 else "fatura"),
+                               "tarih": str(f["tarih"]), "tutar": _tut,
+                               "aciklama": ((f.get("fatura_no") or "belge") +
+                                            (" ↩ iade/alacak dekontu" if _tut < 0 else "")),
                                "goruntule": f.get("goruntule")})
     for o in odeme_adaylari:
         if str(o["tarih"]) >= EVVEL_SISTEM_BASLANGIC:
@@ -5267,6 +5274,12 @@ def cari_ekstre(tedarikci: str = ""):
         "beyan_bakiye": (round(float(beyan), 2) if beyan is not None else None),
         "devir": devir, "devir_not": devir_not,
         "fatura_toplam_6ay": fatura_toplam,
+        # ↩️ İade ayrı raporlanır: bakiyeyi düşürür ama ÖDEME DEĞİLDİR.
+        # fatura_toplam_6ay negatifleri zaten içerir (net); bu alan yalnız
+        # "ne kadarı iade" sorusunu cevaplar — ödeme izi rakamını şişirmez.
+        "iade_toplam_6ay": round(sum(f["tutar"] for f in faturalar
+                                     if str(f["tarih"]) >= _kesit
+                                     and float(f["tutar"] or 0) < 0), 2),
         "odeme_izi_toplam_6ay": odeme_toplam,
         "hesaplanan_acik": round(devir + fatura_toplam - odeme_toplam, 2),
         "aylik": aylik_liste,
