@@ -3238,7 +3238,7 @@ def para_zinciri_rontgen():
         SELECT LEFT(COALESCE(aciklama,'?'),46) AS aciklama,
                odenecek_tutar::float AS tutar, tarih::text AS tarih,
                COUNT(*)::int AS adet,
-               (odenecek_tutar * (COUNT(*) - 1))::float AS fazla_sayilan
+               (MAX(odenecek_tutar) * (COUNT(*) - 1))::float AS fazla_sayilan
         FROM odeme_plani
         WHERE COALESCE(durum,'') <> 'iptal'
         GROUP BY 1,2,3 HAVING COUNT(*) > 1
