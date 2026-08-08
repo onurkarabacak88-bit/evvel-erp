@@ -245,6 +245,57 @@ def onay_ekle(cur, islem_turu, kaynak_tablo, kaynak_id, aciklama, tutar, tarih):
     )
 
 
+def kart_plani_upsert(cur, kart_id: str, son_odeme_tarihi, odenecek: float,
+                      asgari: float, aciklama: str) -> bool:
+    """💳 KART ÖDEME PLANI — TEK YAZICI (2026-08-08, sahip: 'kök nedeni kapat').
+
+    MÜKERRER PLAN KÖK NEDENİ: kart planını üç ayrı yer yazıyordu ve korumaları
+    FARKLI anahtarlara bakıyordu, birbirini görmüyorlardı:
+      · kasa_service  "Kart ekstre:"           → kart_id + tarih ayı + dönem ayıracı
+      · manuel giriş  "Kart ekstresi (manuel):" → kart_id + tarih ayı + odendi/kesim
+      · motors        "Kart:"                   → kendi koşulu
+    Sonuç: aynı ekstre 2-6 kez plana yazıldı (canlı: 22 fazla satır / 2.326.814 ₺,
+    "EN PARA" aynı gün 6 kayıt). Dönem ayıracı da boşluk bırakıyordu: 'odendi'
+    satır kesim-öncesi ödemeliyse yeni planı BLOKE ETMİYORDU.
+
+    YENİ KURAL — dönem kimliği REFERANS AY'dır:
+      · Aynı (kart_id, referans_ay) için EN FAZLA BİR aktif satır olur
+      · Satır varsa: bekliyor/onay_bekliyor → tutar güncellenir; 'odendi' →
+        DOKUNULMAZ (o dönem kapanmış, yeni satır AÇILMAZ)
+      · Yoksa yeni satır açılır ve referans_ay MUTLAKA doldurulur
+    Eski satırlarda referans_ay NULL olabildiği için arama iki yönlü:
+    referans_ay eşleşmesi VEYA tarih'in ayı eşleşmesi.
+
+    Dönüş: True = yeni satır açıldı, False = mevcut satır güncellendi/korundu.
+    """
+    sot = str(son_odeme_tarihi)[:10]
+    cur.execute(
+        """SELECT id, durum FROM odeme_plani
+           WHERE kart_id = %s AND COALESCE(durum,'') <> 'iptal'
+             AND (referans_ay = DATE_TRUNC('month', %s::date)
+                  OR DATE_TRUNC('month', tarih) = DATE_TRUNC('month', %s::date))
+           ORDER BY CASE WHEN durum='odendi' THEN 0 ELSE 1 END, olusturma
+           LIMIT 1""",
+        (kart_id, sot, sot))
+    mevcut = cur.fetchone()
+    if mevcut:
+        if (mevcut.get("durum") or "") == "odendi":
+            return False          # dönem kapanmış — yeni satır AÇMA
+        cur.execute(
+            """UPDATE odeme_plani
+                 SET odenecek_tutar=%s, asgari_tutar=%s, tarih=%s::date,
+                     aciklama=%s, referans_ay=DATE_TRUNC('month', %s::date)
+               WHERE id=%s""",
+            (odenecek, asgari, sot, aciklama, sot, mevcut["id"]))
+        return False
+    cur.execute(
+        """INSERT INTO odeme_plani
+             (id, kart_id, tarih, referans_ay, odenecek_tutar, asgari_tutar, aciklama, durum)
+           VALUES (%s, %s, %s::date, DATE_TRUNC('month', %s::date), %s, %s, %s, 'bekliyor')""",
+        (str(uuid.uuid4()), kart_id, sot, sot, odenecek, asgari, aciklama))
+    return True
+
+
 def kart_kesim_plani_yaz_tx(cur, k: dict, yil: int, ay: int) -> dict:
     """TEK-OTORİTE kart plan yazıcı — kart planı tutarı SADECE kesim ekstresinden türer.
 
@@ -355,28 +406,11 @@ def kart_kesim_plani_yaz_tx(cur, k: dict, yil: int, ay: int) -> dict:
           AND DATE_TRUNC('month', tarih) < DATE_TRUNC('month', %s::date)
     """, (str(bu_ay_kesim), k["id"], str(son_odeme_tarihi)))
 
-    # Aktif plan yaz (yoksa) veya güncelle (varsa)
-    pid = str(uuid.uuid4())
-    cur.execute("""
-        INSERT INTO odeme_plani (id, kart_id, tarih, odenecek_tutar, asgari_tutar, aciklama, durum)
-        SELECT %s, %s, %s, %s, %s, %s, 'bekliyor'
-        WHERE NOT EXISTS (SELECT 1 FROM odeme_plani WHERE kart_id=%s
-            AND DATE_TRUNC('month', tarih)=DATE_TRUNC('month', %s::date)
-            AND (durum IN ('bekliyor','onay_bekliyor')
-                 -- DÖNEM AYIRACI (2026-07-10): 'odendi' satır yalnız YENİ KESİMDEN
-                 -- SONRAKİ ödemeyle kapandıysa bu dönemi temsil eder; kesim-öncesi
-                 -- ödemeli 'odendi' ESKİ dönemin kapanışıdır, yeni planı BLOKE ETMEZ.
-                 OR (durum='odendi' AND COALESCE(odeme_tarihi, tarih) >= %s::date)))
-    """, (pid, k["id"], son_odeme_tarihi, odenecek, asgari,
-          f"Kart ekstre: {k['kart_adi']} — {k.get('banka','')} (kesim {bu_ay_kesim})",
-          k["id"], str(son_odeme_tarihi), str(bu_ay_kesim)))
-    yeni = cur.rowcount > 0
-    if not yeni:
-        cur.execute("""
-            UPDATE odeme_plani SET odenecek_tutar=%s, asgari_tutar=%s
-            WHERE kart_id=%s AND DATE_TRUNC('month', tarih)=DATE_TRUNC('month', %s::date)
-              AND durum IN ('bekliyor','onay_bekliyor')
-        """, (odenecek, asgari, k["id"], str(son_odeme_tarihi)))
+    # Aktif plan yaz/güncelle — TEK YAZICI (2026-08-08 mükerrer plan düzeltmesi)
+    yeni = kart_plani_upsert(
+        cur, k["id"], son_odeme_tarihi, odenecek, asgari,
+        f"Kart ekstre: {k['kart_adi']} — {k.get('banka','')} (kesim {bu_ay_kesim})",
+    )
 
     # onay_kuyrugu tutar senkronu (bekleyen ODEME_PLANI varsa kesim tutarına çek — çift kasa engeli)
     cur.execute("""

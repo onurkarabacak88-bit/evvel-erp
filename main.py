@@ -3947,25 +3947,12 @@ def kart_manuel_ekstre(kid: str, body: ManuelEkstreBody):
         # 3) CFO ödeme planı — sistem başlangıcı 2026-06-01: Haziran öncesi son ödemeli
         #    ekstreden plan üretilmez (eski ekstre tekrar girilse de hayalet vadesi geçmiş olmasın)
         if (asg or borc) and str(sot)[:10] >= '2026-06-01':
-            acik = f"Kart ekstresi (manuel): {kart_adi} — asgari {asg}"
-            cur.execute(
-                """UPDATE odeme_plani SET tarih=%s::date, odenecek_tutar=%s, asgari_tutar=%s,
-                    aciklama=%s, referans_ay=DATE_TRUNC('month',%s::date)
-                   WHERE kart_id=%s AND durum IN ('bekliyor','onay_bekliyor')
-                     AND DATE_TRUNC('month',tarih)=DATE_TRUNC('month',%s::date)""",
-                (sot, (borc or asg), asg, acik, sot, kid, sot),
-            )
-            if cur.rowcount == 0:
-                # R1b korumasi: ayni ay zaten ODENDIyse yeni bekleyen ekleme
-                cur.execute(
-                    """INSERT INTO odeme_plani (id,kart_id,tarih,referans_ay,odenecek_tutar,asgari_tutar,aciklama,durum)
-                       SELECT %s,%s,%s::date,DATE_TRUNC('month',%s::date),%s,%s,%s,'bekliyor'
-                       WHERE NOT EXISTS (SELECT 1 FROM odeme_plani
-                           WHERE kart_id=%s AND durum='odendi'
-                             AND DATE_TRUNC('month',tarih)=DATE_TRUNC('month',%s::date)
-                             AND COALESCE(odeme_tarihi, tarih) >= %s::date)""",
-                    (str(uuid.uuid4()), kid, sot, sot, (borc or asg), asg, acik, kid, sot, kesim),
-                )
+            # TEK YAZICI (2026-08-08): kart planını üç ayrı yer yazıyordu ve
+            # korumaları farklı anahtarlara bakıyordu → aynı ekstre 2-6 kez
+            # plana düşüyordu. Artık dönem kimliği REFERANS AY ve tek kapı var.
+            from kasa_service import kart_plani_upsert
+            kart_plani_upsert(cur, kid, sot, (borc or asg), asg,
+                              f"Kart ekstresi (manuel): {kart_adi} — asgari {asg}")
         # 4) faiz oranı
         if body.faiz_orani is not None and body.faiz_orani > 0:
             cur.execute("UPDATE kartlar SET faiz_orani=%s, gecikme_faiz_orani=COALESCE(%s,gecikme_faiz_orani) WHERE id=%s",

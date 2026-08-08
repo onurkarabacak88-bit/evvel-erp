@@ -1506,6 +1506,36 @@ def init_db():
             ON odeme_plani (durum, tarih)
         """)
         cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_odeme_plani_kart_donem_yardim
+            ON odeme_plani (kart_id, referans_ay) WHERE kart_id IS NOT NULL
+        """)
+        # ── 💳 MÜKERRER KART PLANI FRENİ (2026-08-08, sahip: "kök nedeni kapat")
+        # Kart planını birçok yer yazıyor ve korumaları farklı anahtarlara
+        # bakıyordu → aynı ekstre 2-6 kez plana düştü (22 fazla satır /
+        # 2.326.814 ₺; "EN PARA" aynı gün 6 kayıt). Kod tarafında tek yazıcı
+        # kuruldu (kasa_service.kart_plani_upsert); bu blok DB EMNİYET AĞIDIR:
+        # hangi üreticiden gelirse gelsin aynı (kart_id, referans_ay) için
+        # ikinci aktif satır AÇILAMAZ.
+        # SAVEPOINT ile sarılı — ihlal varsa index kurulmaz ama migration ölmez
+        # (yutulan SQL hatası dersi: hata sessizce yutulmaz, log'a yazılır).
+        cur.execute("""
+            UPDATE odeme_plani SET referans_ay = DATE_TRUNC('month', tarih)
+            WHERE kart_id IS NOT NULL AND referans_ay IS NULL
+        """)
+        try:
+            cur.execute("SAVEPOINT sp_kart_plan_uniq")
+            cur.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS ux_odeme_plani_kart_donem
+                ON odeme_plani (kart_id, referans_ay)
+                WHERE kart_id IS NOT NULL AND referans_ay IS NOT NULL
+                  AND durum <> 'iptal'
+            """)
+            cur.execute("RELEASE SAVEPOINT sp_kart_plan_uniq")
+        except Exception as _e_uniq:  # noqa: BLE001
+            cur.execute("ROLLBACK TO SAVEPOINT sp_kart_plan_uniq")
+            print(f"[MIGRATION WARN] kart plani tekillik indeksi kurulamadi "
+                  f"(mevcut mukerrer kayit var): {str(_e_uniq)[:160]}")
+        cur.execute("""
             CREATE INDEX IF NOT EXISTS idx_odeme_plani_kaynak
             ON odeme_plani (kaynak_tablo, kaynak_id, durum)
         """)

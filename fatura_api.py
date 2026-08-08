@@ -3627,6 +3627,18 @@ def para_zinciri_rontgen():
         WHERE COALESCE(durum,'') <> 'iptal'
         GROUP BY 1,2,3 HAVING COUNT(*) > 1
         ORDER BY MAX(odenecek_tutar) * (COUNT(*) - 1) DESC LIMIT 25""", tekil=False)
+    # 💳 Kart planı tekillik freni kuruldu mu? (2026-08-08 kök neden kapatma)
+    _sor("kart_plan_tekillik_freni", """
+        SELECT
+          EXISTS (SELECT 1 FROM pg_indexes
+                  WHERE indexname='ux_odeme_plani_kart_donem') AS index_kurulu,
+          (SELECT COUNT(*)::int FROM (
+             SELECT kart_id, referans_ay FROM odeme_plani
+             WHERE kart_id IS NOT NULL AND referans_ay IS NOT NULL
+               AND COALESCE(durum,'') <> 'iptal'
+             GROUP BY 1,2 HAVING COUNT(*) > 1) x) AS ihlal_grubu,
+          (SELECT COUNT(*)::int FROM odeme_plani
+           WHERE kart_id IS NOT NULL AND referans_ay IS NULL) AS referanssiz_kart_plani""")
     _sor("mukerrer_plan_ozet", """
         SELECT COUNT(*)::int AS grup,
                COALESCE(SUM(fazla),0)::float AS fazla_sayilan_toplam,
