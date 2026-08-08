@@ -3151,6 +3151,190 @@ def kuyruk_bosluk_teshisi():
     }
 
 
+@router.post("/temizlik/mukerrer-fatura")
+def temizlik_mukerrer_fatura(kuru: int = 1):
+    """Aynı fatura numarasından birden çok AKTİF kayıt varsa fazlasını 'kopya' yapar.
+
+    En eski kayıt (ilk yüklenen) ASIL sayılır; sonrakiler kopya işaretlenir.
+    Kopya kaydı SİLİNMEZ — yasal arşiv olarak durur, sadece cari/kapsama/borç
+    hesaplarına girmez (mevcut 'kopya' davranışı).
+    """
+    islem = []
+    with db() as (conn, cur):
+        _ensure_tablolar(cur)
+        cur.execute(
+            """SELECT UPPER(REGEXP_REPLACE(COALESCE(fatura_no,''),'[^A-Za-z0-9]','','g')) AS n,
+                      ARRAY_AGG(id::text ORDER BY olusturma) AS idler,
+                      ARRAY_AGG(COALESCE(tedarikci_ad,'') ORDER BY olusturma) AS adlar,
+                      MAX(COALESCE(toplam_tutar,0))::float AS tutar,
+                      COUNT(*)::int AS adet
+               FROM tedarikci_fatura
+               WHERE LENGTH(REGEXP_REPLACE(COALESCE(fatura_no,''),'[^A-Za-z0-9]','','g')) >= 8
+                 AND COALESCE(durum,'') <> 'kopya'
+               GROUP BY 1 HAVING COUNT(*) > 1"""
+        )
+        for r in (cur.fetchall() or []):
+            idler = list(r["idler"] or [])
+            asil, fazlalar = idler[0], idler[1:]
+            islem.append({"fatura_no": r["n"], "tedarikci": (r["adlar"] or [""])[0],
+                          "tutar": r["tutar"], "toplam_kayit": r["adet"],
+                          "asil_kalan": asil, "kopya_yapilacak": fazlalar,
+                          "fazla_sayilan": round(float(r["tutar"] or 0) * len(fazlalar), 2)})
+            if not kuru and fazlalar:
+                cur.execute(
+                    "UPDATE tedarikci_fatura SET durum='kopya' WHERE id = ANY(%s)", (fazlalar,))
+        if not kuru:
+            conn.commit()
+    return {"kuru_calistirma": bool(kuru), "grup": len(islem),
+            "kopya_yapilacak_satir": sum(len(i["kopya_yapilacak"]) for i in islem),
+            "fazla_sayilan_toplam": round(sum(i["fazla_sayilan"] for i in islem), 2),
+            "islemler": islem,
+            "not": "En eski kayıt asıl kalır. Kopya SİLİNMEZ — arşivde durur, "
+                   "hesaplara girmez. Uygulamak için ?kuru=0"}
+
+
+@router.post("/temizlik/belirsiz-harcama")
+def temizlik_belirsiz_harcama(kuru: int = 1):
+    """Sistem kaydından doğmuş 'belirsiz' kart harcamalarını 'isletme' damgalar.
+
+    Bir kart satırı vadeli alım / anlık gider / sabit gider kaydından doğmuşsa
+    tanım gereği İŞLETME harcamasıdır — o kayıt zaten işletme defterinde.
+    Ham banka satırlarına (ekstre_import) DOKUNULMAZ; onlar sahip kararıdır.
+    """
+    hedef = []
+    with db() as (conn, cur):
+        cur.execute(
+            """SELECT id, tarih::text AS tarih, ABS(COALESCE(tutar,0))::float AS tutar,
+                      LEFT(COALESCE(aciklama,''),70) AS aciklama, kaynak_tablo
+               FROM kart_hareketleri
+               WHERE islem_turu='HARCAMA' AND COALESCE(durum,'aktif')='aktif'
+                 AND COALESCE(harcama_tipi,'belirsiz')='belirsiz'
+                 AND COALESCE(kaynak_tablo,'') IN
+                     ('vadeli_alimlar','anlik_giderler','sabit_giderler')
+               ORDER BY ABS(COALESCE(tutar,0)) DESC"""
+        )
+        hedef = [dict(r) for r in (cur.fetchall() or [])]
+        if not kuru and hedef:
+            cur.execute("UPDATE kart_hareketleri SET harcama_tipi='isletme' WHERE id = ANY(%s)",
+                        ([h["id"] for h in hedef],))
+            conn.commit()
+    return {"kuru_calistirma": bool(kuru), "damgalanacak": len(hedef),
+            "tutar": round(sum(h["tutar"] for h in hedef), 2),
+            "satirlar": hedef[:40],
+            "not": "Yalnız sistem kaydından doğmuş satırlar. Ham banka satırları "
+                   "(ekstre_import) sahip kararına bırakıldı. Uygulamak için ?kuru=0"}
+
+
+@router.post("/temizlik/mukerrer-plan")
+def temizlik_mukerrer_plan(kuru: int = 1):
+    """Aynı gün + aynı tutar + aynı açıklamalı FAZLA ödeme planı satırlarını iptal eder.
+
+    ⚠️ EN RİSKLİ TEMİZLİK — bu yüzden önce PARA İZİ kontrol edilir: fazla satırın
+    kasa/kart hareketi varsa DOKUNULMAZ (gerçekten iki ayrı ödeme olabilir),
+    yalnız para izi OLMAYAN fazlalar iptal edilir. İptal = durum='iptal';
+    satır silinmez, denetim izi korunur.
+    """
+    guvenli, riskli = [], []
+    with db() as (conn, cur):
+        cur.execute(
+            """SELECT aciklama, odenecek_tutar::float AS tutar, tarih::text AS tarih,
+                      ARRAY_AGG(id::text ORDER BY olusturma) AS idler, COUNT(*)::int AS adet
+               FROM odeme_plani
+               WHERE COALESCE(durum,'') <> 'iptal'
+               GROUP BY 1,2,3 HAVING COUNT(*) > 1"""
+        )
+        gruplar = [dict(r) for r in (cur.fetchall() or [])]
+        for g in gruplar:
+            idler = list(g["idler"] or [])
+            asil, fazlalar = idler[0], idler[1:]
+            for fid in fazlalar:
+                # PARA İZİ: bu plan satırına bağlı kasa veya kart hareketi var mı?
+                cur.execute(
+                    """SELECT COUNT(*)::int AS n FROM (
+                         SELECT 1 FROM kasa_hareketleri
+                         WHERE kaynak_tablo='odeme_plani' AND kaynak_id=%s
+                           AND COALESCE(durum,'aktif')='aktif'
+                         UNION ALL
+                         SELECT 1 FROM kart_hareketleri
+                         WHERE kaynak_tablo='odeme_plani' AND kaynak_id=%s
+                           AND COALESCE(durum,'aktif')='aktif') x""", (fid, fid))
+                iz = int((cur.fetchone() or {}).get("n") or 0)
+                kayit = {"plan_id": fid, "asil_kalan": asil, "tarih": g["tarih"],
+                         "tutar": g["tutar"], "aciklama": (g["aciklama"] or "")[:60],
+                         "para_izi": iz}
+                if iz > 0:
+                    kayit["neden"] = ("Bu satırın kasa/kart hareketi VAR — gerçekten ayrı bir "
+                                      "ödeme olabilir; dokunulmadı")
+                    riskli.append(kayit)
+                else:
+                    guvenli.append(kayit)
+        if not kuru and guvenli:
+            cur.execute("UPDATE odeme_plani SET durum='iptal' WHERE id = ANY(%s)",
+                        ([g["plan_id"] for g in guvenli],))
+            conn.commit()
+    return {
+        "kuru_calistirma": bool(kuru),
+        "grup": len(gruplar),
+        "iptal_edilecek": len(guvenli),
+        "iptal_tutari": round(sum(g["tutar"] for g in guvenli), 2),
+        "dokunulmayan_riskli": len(riskli),
+        "riskli_tutar": round(sum(r["tutar"] for r in riskli), 2),
+        "guvenli": guvenli[:40], "riskli": riskli[:40],
+        "not": "Para izi OLAN fazla satırlara dokunulmaz — iki gerçek ödeme olabilir. "
+               "İptal edilen satır silinmez, durum='iptal' olur. Uygulamak için ?kuru=0",
+    }
+
+
+@router.post("/temizlik/odenen-tutar-tamamla")
+def temizlik_odenen_tutar(kuru: int = 1):
+    """'odendi' damgalı ama odenen_tutar boş satırlarda tutarı KASA İZİNDEN tamamlar.
+
+    Kira/fatura gibi satırlarda ödeme yapılmış ama odenen_tutar yazılmamış
+    (eski akış). Tutarı UYDURMAZ: yalnız gerçek kasa/kart hareketi bulunan
+    satırlarda, o hareketin tutarını yazar. İz yoksa DOKUNMAZ — o satır
+    "ödendi mi gerçekten?" sorusuyla listede kalır.
+    """
+    yazilacak, izsiz = [], []
+    with db() as (conn, cur):
+        cur.execute(
+            """SELECT id, LEFT(COALESCE(aciklama,''),60) AS aciklama, tarih::text AS tarih,
+                      odenecek_tutar::float AS borc
+               FROM odeme_plani
+               WHERE durum='odendi' AND COALESCE(odenen_tutar,0) <= 0.01
+                 AND COALESCE(aciklama,'') NOT ILIKE '%%kart%%'"""
+        )
+        for r in (cur.fetchall() or []):
+            p = dict(r)
+            cur.execute(
+                """SELECT COALESCE(SUM(ABS(tutar)),0)::float AS t FROM (
+                     SELECT tutar FROM kasa_hareketleri
+                     WHERE kaynak_tablo='odeme_plani' AND kaynak_id=%s
+                       AND COALESCE(durum,'aktif')='aktif'
+                     UNION ALL
+                     SELECT tutar FROM kart_hareketleri
+                     WHERE kaynak_tablo='odeme_plani' AND kaynak_id=%s
+                       AND COALESCE(durum,'aktif')='aktif') x""", (p["id"], p["id"]))
+            iz_tutar = round(float((cur.fetchone() or {}).get("t") or 0), 2)
+            if iz_tutar > 0.01:
+                yazilacak.append({**p, "kasa_izi": iz_tutar})
+                if not kuru:
+                    cur.execute("UPDATE odeme_plani SET odenen_tutar=%s WHERE id=%s",
+                                (iz_tutar, p["id"]))
+            else:
+                izsiz.append({**p, "soru": "Ödendi damgalı ama ne kasa ne kart izi var — "
+                                           "gerçekten ödendi mi?"})
+        if not kuru:
+            conn.commit()
+    return {"kuru_calistirma": bool(kuru),
+            "tutar_yazilacak": len(yazilacak),
+            "yazilacak_toplam": round(sum(y["kasa_izi"] for y in yazilacak), 2),
+            "iz_bulunamayan": len(izsiz),
+            "izsiz_tutar": round(sum(i["borc"] for i in izsiz), 2),
+            "yazilacaklar": yazilacak[:30], "izsizler": izsiz[:30],
+            "not": "Tutar UYDURULMAZ — yalnız gerçek kasa/kart izinden yazılır. "
+                   "İzi olmayan satırlar sahip incelemesine bırakılır. Uygulamak için ?kuru=0"}
+
+
 @router.get("/para-zinciri-rontgen")
 def para_zinciri_rontgen():
     """🩻 FATURA → BORÇ → ÖDEME → CARİ zinciri canlıda GERÇEKTE ne yapıyor?
