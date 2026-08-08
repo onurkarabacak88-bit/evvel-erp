@@ -3234,6 +3234,15 @@ def temizlik_mukerrer_plan(kuru: int = 1):
     yalnız para izi OLMAYAN fazlalar iptal edilir. İptal = durum='iptal';
     satır silinmez, denetim izi korunur.
     """
+    # ── ASIL SEÇİMİ: "gerçekten ödenmiş olan" satır korunur ────────────────────
+    # Bir plan satırı odeme_yap'tan geçtiyse arkasında ÖDEME İZİ bırakır:
+    #   · kart_hareketleri.id = 'odm_<plan_id>'  (kart ODEME kaydı)
+    #   · kasa_hareketleri.kaynak_id / ref_id = plan_id  (nakit)
+    # İzi OLAN satır asıldır — dokunulmaz. İzi olmayan fazlalar, ekstre birden
+    # çok kez işlendiği için doğmuş kayıt kirliliğidir (üç ayrı üretici var:
+    # kasa_service "Kart ekstre:", manuel giriş "Kart ekstresi (manuel):",
+    # otomatik "Kart:"). Grupta HİÇ izli satır yoksa en eskisi korunur —
+    # "ödendi" bilgisi tümden kaybolmasın.
     guvenli, riskli = [], []
     with db() as (conn, cur):
         # ÖNCE ÖDENMEMİŞLER: aynı gruptaki satırlardan 'odendi' olan ASIL kabul
@@ -3250,52 +3259,71 @@ def temizlik_mukerrer_plan(kuru: int = 1):
                GROUP BY 1,2,3 HAVING COUNT(*) > 1"""
         )
         gruplar = [dict(r) for r in (cur.fetchall() or [])]
+        def _plan_izi(pid_):
+            """Bu plan satırının ARKASINDA gerçek para hareketi var mı? (plan-spesifik)
+            kasa.kaynak_id · kasa.ref_id · kart 'odm_<plan_id>' — üçü de plan
+            kimliğine bağlıdır, grup içindeki satırları birbirinden AYIRT EDER."""
+            cur.execute(
+                """SELECT COUNT(*)::int AS n FROM (
+                     SELECT 1 FROM kasa_hareketleri
+                     WHERE COALESCE(durum,'aktif')='aktif'
+                       AND ((kaynak_tablo='odeme_plani' AND kaynak_id=%s) OR ref_id=%s)
+                     UNION ALL
+                     SELECT 1 FROM kart_hareketleri
+                     WHERE COALESCE(durum,'aktif')='aktif'
+                       AND ((kaynak_tablo='odeme_plani' AND kaynak_id=%s) OR id=%s)) x""",
+                (pid_, pid_, pid_, f"odm_{pid_}"))
+            return int((cur.fetchone() or {}).get("n") or 0)
+
         for g in gruplar:
             idler = list(g["idler"] or [])
             durumlar = list(g["durumlar"] or [])
             g["durum_dagilimi"] = {d: durumlar.count(d) for d in set(durumlar)}
-            asil, fazlalar = idler[0], idler[1:]
-            _fazla_durum = dict(zip(idler[1:], durumlar[1:]))
-            for fid in fazlalar:
-                # PARA İZİ — ÜÇ ANAHTARDAN (2026-08-08 ders: tek anahtara bakınca
-                # "0 riskli" çıkıyordu, oysa ödeme kaydı üç farklı yere düşebiliyor):
-                #   · kasa_hareketleri.kaynak_id = plan_id  (normal nakit ödeme)
-                #   · kasa_hareketleri.ref_id    = plan_id  (vadeli ödeme — kaynak
-                #     vadeli_alimlar'a bağlanır, plan_id ref_id'ye yazılır)
-                #   · kart_hareketleri.id = 'odm_<plan_id>' (kart ODEME kaydı)
-                cur.execute(
-                    """SELECT COUNT(*)::int AS n FROM (
-                         SELECT 1 FROM kasa_hareketleri
-                         WHERE COALESCE(durum,'aktif')='aktif'
-                           AND ((kaynak_tablo='odeme_plani' AND kaynak_id=%s)
-                                OR ref_id=%s)
-                         UNION ALL
-                         SELECT 1 FROM kart_hareketleri
-                         WHERE COALESCE(durum,'aktif')='aktif'
-                           AND ((kaynak_tablo='odeme_plani' AND kaynak_id=%s)
-                                OR id=%s)) x""",
-                    (fid, fid, fid, f"odm_{fid}"))
-                iz = int((cur.fetchone() or {}).get("n") or 0)
-                _durum = _fazla_durum.get(fid, "?")
-                kayit = {"plan_id": fid, "asil_kalan": asil, "tarih": g["tarih"],
-                         "tutar": g["tutar"], "aciklama": (g["aciklama"] or "")[:60],
-                         "para_izi": iz, "durum": _durum,
-                         "grup_durumlari": g.get("durum_dagilimi")}
-                if iz > 0:
-                    kayit["neden"] = ("Bu satırın kasa/kart hareketi VAR — gerçekten ayrı bir "
-                                      "ödeme olabilir; dokunulmadı")
-                    riskli.append(kayit)
-                elif _durum == "odendi":
-                    # Para izi yok AMA 'ödendi' damgalı — iptal edilirse "ödenmiş"
-                    # bilgisi kaybolur. Sahip incelemesi gerekir.
-                    kayit["neden"] = ("'ödendi' damgalı ama kasa/kart izi YOK — iptal etmek "
-                                      "yerine önce 'gerçekten ödendi mi' sorusu cevaplanmalı")
-                    riskli.append(kayit)
-                else:
-                    guvenli.append(kayit)
+            _durum_h = dict(zip(idler, durumlar))
+            # HER satırda iz ara — sadece "fazlalarda" değil. İzi olan satır
+            # gerçekten ödenmiştir ve ASILDIR; izsizler ekstre birden çok kez
+            # işlendiği için doğmuş kayıt kirliliğidir.
+            izli = [i for i in idler if _plan_izi(i) > 0]
+            izsiz = [i for i in idler if i not in izli]
+            if izli:
+                korunan, adaylar = izli, izsiz
+                gerekce = f"{len(izli)} satırın para izi var — onlar asıl, izsizler mükerrer"
+            else:
+                # Grupta hiç izli satır yok: en eski korunur ki "ödendi" bilgisi
+                # tümden kaybolmasın; gerisi kayıt kirliliği sayılır.
+                korunan, adaylar = idler[:1], idler[1:]
+                gerekce = "Hiçbirinin izi yok — en eski satır korunur, fazlalar temizlenir"
+            g["korunan"] = korunan
+            for fid in adaylar:
+                guvenli.append({
+                    "plan_id": fid, "asil_kalan": korunan[0] if korunan else None,
+                    "tarih": g["tarih"], "tutar": g["tutar"],
+                    "aciklama": (g["aciklama"] or "")[:60],
+                    "para_izi": 0, "durum": _durum_h.get(fid, "?"),
+                    "grup_durumlari": g.get("durum_dagilimi"),
+                    "grup_toplam_satir": len(idler), "korunan_satir": len(korunan),
+                    "gerekce": gerekce,
+                })
+            for fid in korunan:
+                riskli.append({
+                    "plan_id": fid, "tarih": g["tarih"], "tutar": g["tutar"],
+                    "aciklama": (g["aciklama"] or "")[:60],
+                    "para_izi": 1 if fid in izli else 0,
+                    "durum": _durum_h.get(fid, "?"),
+                    "neden": ("Para izi VAR — gerçek ödeme, korunur" if fid in izli
+                              else "İz yok ama grubun en eskisi — 'ödendi' bilgisi korunsun diye tutuldu"),
+                })
         if not kuru and guvenli:
-            cur.execute("UPDATE odeme_plani SET durum='iptal' WHERE id = ANY(%s)",
-                        ([g["plan_id"] for g in guvenli],))
+            # İPTAL + DENETİM NOTU: satır silinmez, hangi kayda mükerrer olduğu
+            # açıklamaya yazılır — geri dönüp bakılabilsin.
+            for x in guvenli:
+                cur.execute(
+                    """UPDATE odeme_plani
+                         SET durum='iptal',
+                             aciklama = LEFT(COALESCE(aciklama,'') ||
+                                        ' [MÜKERRER — asıl: ' || COALESCE(%s,'?') || ']', 400)
+                       WHERE id=%s""",
+                    (x.get("asil_kalan"), x["plan_id"]))
             conn.commit()
     return {
         "kuru_calistirma": bool(kuru),
