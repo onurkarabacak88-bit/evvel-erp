@@ -3329,7 +3329,7 @@ def kasa_izi_genis_arama():
       D) kart.kaynak/'odm_' anahtarları
       E) SERBEST: aynı ay + aynı tutar (±5 ₺) herhangi bir kasa çıkışı
     """
-    sonuc, ozet = [], {"A": 0, "B": 0, "C": 0, "D": 0, "E": 0, "HIC": 0}
+    sonuc, ozet = [], {"A": 0, "B": 0, "C": 0, "D": 0, "D2": 0, "E": 0, "HIC": 0}
     with db() as (_c, cur):
         cur.execute(
             """SELECT id, LEFT(COALESCE(aciklama,''),56) AS aciklama, tarih::text AS tarih,
@@ -3371,7 +3371,18 @@ def kasa_izi_genis_arama():
             _tek("""SELECT COALESCE(SUM(ABS(tutar)),0)::float AS t FROM kart_hareketleri
                     WHERE COALESCE(durum,'aktif')='aktif'
                       AND ((kaynak_tablo='odeme_plani' AND kaynak_id=%s) OR id=%s)""",
-                 (pid, f"odm_{pid}"), "D", "kart hareketi")
+                 (pid, f"odm_{pid}"), "D", "kart hareketi (plan anahtarı)")
+            # D2 — C yolunun KART karşılığı: sabit gider kartla çekilmiş olabilir.
+            # "⚠️ LİMİT YETERSİZ — Manuel Öde" planı açılıyor ama aynı gider aynı ay
+            # karttan çekilebiliyor (limit açılınca / otomatik talimat) → plan satırı
+            # boşta kalıyor. Bu yol olmayınca 5 satır "hiç ödenmemiş" görünüyordu.
+            if p["kt"] and p["ki"]:
+                _tek("""SELECT COALESCE(SUM(ABS(tutar)),0)::float AS t FROM kart_hareketleri
+                        WHERE kaynak_tablo=%s AND kaynak_id=%s
+                          AND islem_turu='HARCAMA' AND COALESCE(durum,'aktif')='aktif'
+                          AND DATE_TRUNC('month',tarih)=DATE_TRUNC('month',%s::date)""",
+                     (p["kt"], str(p["ki"]), p["tarih"]), "D2",
+                     f"kart: {p['kt']} kaynağından çekilmiş (aynı ay)")
             _tek("""SELECT COALESCE(SUM(ABS(tutar)),0)::float AS t FROM kasa_hareketleri
                     WHERE COALESCE(durum,'aktif')='aktif' AND kasa_etkisi=TRUE
                       AND ABS(ABS(tutar) - %s) <= GREATEST(5, %s*0.01)
@@ -3387,7 +3398,7 @@ def kasa_izi_genis_arama():
                 "bulundu_yol": yol, "bulunan_tutar": bulgu["tutar"],
                 "detay": bulgu["detay"] or "Hiçbir anahtarla kasa/kart izi bulunamadı",
             })
-    kesin = [s for s in sonuc if s["bulundu_yol"] in ("A", "B", "C", "D")]
+    kesin = [s for s in sonuc if s["bulundu_yol"] in ("A", "B", "C", "D", "D2")]
     serbest = [s for s in sonuc if s["bulundu_yol"] == "E"]
     hic = [s for s in sonuc if s["bulundu_yol"] == "HIC"]
     return {
