@@ -2273,9 +2273,17 @@ def _cari_devirler(cur) -> list:
                            tutar NUMERIC(14,2) NOT NULL,
                            aciklama TEXT,
                            olusturma TIMESTAMPTZ NOT NULL DEFAULT NOW())""")
+        # 📜 AÇILIŞ DEVRİ SİLİNMEZ (2026-08-08, Codex denetimi): devir bir
+        # BİLANÇO GERÇEĞİDİR (sahip beyanı) — fiziksel DELETE hem sahip
+        # doktrinine ("hiçbir kayıt silinmez") hem muhasebe ilkesine aykırıydı.
+        # Artık iptal damgası: kayıt yerinde durur, hesaba girmez, geri alınabilir.
+        cur.execute("ALTER TABLE cari_devir ADD COLUMN IF NOT EXISTS aktif BOOLEAN DEFAULT TRUE")
+        cur.execute("ALTER TABLE cari_devir ADD COLUMN IF NOT EXISTS iptal_ts TIMESTAMPTZ")
+        cur.execute("ALTER TABLE cari_devir ADD COLUMN IF NOT EXISTS iptal_neden TEXT")
         cur.execute("""SELECT id, tedarikci, tutar::float AS tutar,
                               COALESCE(aciklama,'') AS aciklama
-                       FROM cari_devir""")
+                       FROM cari_devir
+                       WHERE COALESCE(aktif, TRUE)""")
         return [dict(r) for r in cur.fetchall() or []]
     except Exception:  # noqa: BLE001
         return []
@@ -4644,24 +4652,80 @@ def cari_devir_kaydet(body: CariDevirBody):
     with db() as (conn, cur):
         _cari_devirler(cur)  # tablo garanti
         cur.execute(
+            # ⚠️ aktif=TRUE ŞART (2026-08-08): iptal edilmiş bir devir varken aynı
+            # tedarikçiye yeni devir girilirse ON CONFLICT satırı günceller ama
+            # aktif=FALSE kalırdı → sahip devri girer, ekranda GÖRÜNMEZ. Soft-delete
+            # eklerken doğan tuzak; yeniden beyan devri diriltir.
             """INSERT INTO cari_devir (tedarikci, tutar, aciklama)
                VALUES (%s,%s,%s)
                ON CONFLICT (tedarikci)
-               DO UPDATE SET tutar=EXCLUDED.tutar, aciklama=EXCLUDED.aciklama""",
+               DO UPDATE SET tutar=EXCLUDED.tutar, aciklama=EXCLUDED.aciklama,
+                             aktif=TRUE, iptal_ts=NULL, iptal_neden=NULL""",
             (ad, round(body.tutar, 2), (body.aciklama or "").strip() or None))
         conn.commit()
     return {"ok": True, "tedarikci": ad, "tutar": round(body.tutar, 2)}
 
 
 @router.delete("/cari-devir/{devir_id}")
-def cari_devir_sil(devir_id: str):
+def cari_devir_sil(devir_id: str, neden: str = ""):
+    """📜 Açılış devrini İPTAL eder — SİLMEZ (2026-08-08, Codex denetimi).
+
+    Devir bir BİLANÇO GERÇEĞİDİR: sahip "bu tedarikçiye şu kadar borcum vardı"
+    diye beyan etmiştir ve cari bakiye bunun üstüne kurulur. Fiziksel DELETE
+    hem sahip doktrinine ("hiçbir kayıt silinmez") hem muhasebe ilkesine
+    aykırıydı — beyanın izi kaybolur, bakiye sessizce değişir, denetimde
+    "bu rakam neden değişti?" sorusu cevapsız kalırdı.
+
+    Artık: kayıt yerinde durur, aktif=FALSE olur, hesaba girmez.
+    Geri almak için POST /cari-devir/{id}/geri-al.
+    """
+    with db() as (conn, cur):
+        _cari_devirler(cur)          # kolonları garanti eder
+        cur.execute(
+            """UPDATE cari_devir
+                 SET aktif=FALSE, iptal_ts=NOW(),
+                     iptal_neden=NULLIF(%s,'')
+               WHERE (id=%s OR tedarikci=%s) AND COALESCE(aktif,TRUE)
+               RETURNING id, tedarikci, tutar::float AS tutar""",
+            ((neden or "").strip()[:200], devir_id, devir_id))
+        iptal = [dict(r) for r in (cur.fetchall() or [])]
+        conn.commit()
+    return {"ok": True, "iptal_edilen": len(iptal), "kayitlar": iptal,
+            "not": "Kayıt SİLİNMEDİ — iptal damgası kondu, cari hesaba girmiyor. "
+                   "Geri almak için POST /api/fatura/cari-devir/{id}/geri-al"}
+
+
+@router.post("/cari-devir/{devir_id}/geri-al")
+def cari_devir_geri_al(devir_id: str):
+    """İptal edilmiş açılış devrini yeniden yürürlüğe alır."""
     with db() as (conn, cur):
         _cari_devirler(cur)
-        cur.execute("DELETE FROM cari_devir WHERE id=%s OR tedarikci=%s",
-                    (devir_id, devir_id))
-        silinen = cur.rowcount
+        cur.execute(
+            """UPDATE cari_devir
+                 SET aktif=TRUE, iptal_ts=NULL, iptal_neden=NULL
+               WHERE (id=%s OR tedarikci=%s) AND COALESCE(aktif,TRUE)=FALSE
+               RETURNING id, tedarikci, tutar::float AS tutar""",
+            (devir_id, devir_id))
+        geri = [dict(r) for r in (cur.fetchall() or [])]
         conn.commit()
-    return {"ok": True, "silinen": silinen}
+    if not geri:
+        raise HTTPException(404, "İptal edilmiş devir bulunamadı")
+    return {"ok": True, "geri_alinan": geri}
+
+
+@router.get("/cari-devir-iptaller")
+def cari_devir_iptaller():
+    """İptal edilmiş açılış devirleri — kayıt silinmediği için görülebilir."""
+    with db() as (_c, cur):
+        _cari_devirler(cur)
+        cur.execute(
+            """SELECT id, tedarikci, tutar::float AS tutar,
+                      COALESCE(aciklama,'') AS aciklama,
+                      iptal_ts::text AS iptal_ts,
+                      COALESCE(iptal_neden,'-') AS iptal_neden
+               FROM cari_devir WHERE COALESCE(aktif,TRUE)=FALSE
+               ORDER BY iptal_ts DESC""")
+        return {"iptaller": [dict(r) for r in (cur.fetchall() or [])]}
 
 
 @router.get("/cari-ekstre")
