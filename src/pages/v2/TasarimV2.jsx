@@ -188,6 +188,11 @@ export default function TasarimV2({ onGit }) {
       .then(d => koy('basvuru', Number(d?.yeni) || 0)).catch(() => {});
     api('/stok-sayim/bekleyen-onay')
       .then(d => koy('stokSayim', Number(d?.toplam) || 0)).catch(() => {});
+    // MUTABAKAT MERKEZİ (2026-08-08): "aradım bulamadım" açık kalem sayısı.
+    // Rozeti tema.js'de tanımlayıp beslememek yarım iş olurdu — bugün denetimde
+    // tam bu kalıptan 6 ölü rozet çıktı (tanımlı ama hiçbir yerde beslenmiyor).
+    api('/ops/mutabakat-merkezi?gun=60')
+      .then(d => koy('mutabakatAcik', Number(d?.ozet?.acik_kalem) || 0)).catch(() => {});
     api(`/ops/truth/gunluk-rapor?tarih=${bugunISO()}`)
       .then(d => koy('anomali', (d?.subeler || []).reduce((t, r) => t + (Number(r.anomali_sayisi) || 0), 0)))
       .catch(() => {});

@@ -122,7 +122,10 @@ export const MODULLER = [
   // klasik CFO panelindeki 13 bölüm / 20+ ucun kartları burada olsun."
   // Panel modülüne DOKUNULMADI — eski hâlinde kaldı.
   { id: 'genel', blok: 'Karar', ad: 'Genel Bakış', kisa: 'Bakış', alt: 'Klasik CFO kartları', ikon: IK.gosterge, gorunumler: [
-    { id: 'karar', ad: 'Karar Alanı', rozet: 'genelGecikmis', renk: '#F87171' },
+    // ⚠️ ROZET ADI UYUŞMAZLIĞI (2026-08-08 denetimi): burada 'genelGecikmis'
+    // yazıyordu ama TasarimV2 'genelAcik' besliyor (kritik kalem sayısı) →
+    // rozet HİÇ görünmüyordu. Tanım koda uyduruldu (kod tek gerçek).
+    { id: 'karar', ad: 'Karar Alanı', rozet: 'genelAcik', renk: '#F87171' },
     { id: 'akis', ad: 'Para Akışı & Kasa' },
     { id: 'bildirim', ad: 'Motor & Bildirimler', rozet: 'genelBildirim', renk: '#FBBF24' },
   ]},
