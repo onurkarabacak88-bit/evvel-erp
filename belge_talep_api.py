@@ -121,10 +121,14 @@ def _teslim_parasal_deger(cur, kalemler: Any) -> Dict[str, Any]:
     katalog_ad_map: Dict[str, float] = {}
     try:
         if kodlar:
-            # 1) Gerçek alış fiyatı — yalnız yürürlükteki kayıt (gecerli_bitis boş)
+            # 1) Gerçek alış fiyatı — yalnız yürürlükteki kayıt (gecerli_bitis boş).
+            # ⚠️ Tablo adı `urun_alis_fiyat` (tekil); ilk sürümde `alis_fiyatlari`
+            # yazmıştım → sorgu hata verip except bloğunda SESSİZCE erken dönüyordu,
+            # 10 teslimatın 10'u "kalemsiz" görünüyordu. Şema adını varsayma dersi
+            # bugün dördüncü kez çıktı; teşhis çıktısı olmasa körlemesine aranırdı.
             cur.execute(
                 """SELECT kalem_kodu, birim_maliyet_tl
-                   FROM alis_fiyatlari
+                   FROM urun_alis_fiyat
                    WHERE kalem_kodu = ANY(%s) AND gecerli_bitis IS NULL""",
                 (list(kodlar),),
             )
@@ -147,8 +151,11 @@ def _teslim_parasal_deger(cur, kalemler: Any) -> Dict[str, Any]:
             if ad:
                 katalog_ad_map.setdefault(ad, d["f"])
     except Exception as e:  # noqa: BLE001
-        logger.warning("teslim parasal deger fiyat okunamadi: %s", str(e)[:150])
-        return sonuc
+        # Fiyat okunamasa bile ERKEN DÖNME: kalem sayımı ve "fiyatsız" bilgisi
+        # yine üretilsin. İlk sürüm burada return ediyordu ve tek bir şema hatası
+        # tüm teslimatları "kalemsiz" gösteriyordu — hata gizlenmiş oluyordu.
+        logger.warning("teslim parasal deger fiyat okunamadi (kalem sayimi surer): %s", str(e)[:150])
+        alis_map, katalog_map, katalog_ad_map = {}, {}, {}
 
     kaynaklar = set()
     for k in kalemler:
