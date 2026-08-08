@@ -3449,6 +3449,67 @@ def kasa_izi_genis_arama():
     }
 
 
+@router.post("/temizlik/kuyruk-retro-tarama")
+def temizlik_kuyruk_retro(kuru: int = 1, limit: int = 300):
+    """🔄 Motorun HİÇ dokunmadığı faturaları kuyruk motorundan geçirir.
+
+    `_fatura_kuyruk_uret` yalnız YENİ fatura yüklendiğinde çağrılıyor. Sisteme
+    eski tarihli girilmiş / OCR'ı sonradan tamamlanmış faturalara motor hiç
+    çalışmamış: canlıda 16 fatura (592.907 ₺) "tarihi eski ama damgası yok"
+    durumunda kalmıştı — devre dahil mi belirsiz.
+
+    Motor kendi frenlerini uygular: sistem-öncesi tarihli olanlar '(arsiv)'
+    damgalanır (borç ÜRETMEZ, açılış devrinde zaten sayılı), pencere içindekiler
+    borç kuyruğuna girer, okunmamış/kimliksiz olanlar dokunulmadan kalır.
+
+    kuru=1 → ne olacağını gösterir, hiçbir şey yazmaz.
+    """
+    hedef, sonuc = [], {}
+    with db() as (_c, cur):
+        _ensure_tablolar(cur)
+        cur.execute(
+            """SELECT id, tedarikci_ad, fatura_tarih::text AS ftarih,
+                      COALESCE(toplam_tutar,0)::float AS tutar, durum
+               FROM tedarikci_fatura
+               WHERE kuyruk_vadeli_id IS NULL
+                 AND COALESCE(durum,'') <> 'kopya'
+               ORDER BY COALESCE(fatura_tarih, olusturma::date) DESC
+               LIMIT %s""", (limit,))
+        hedef = [dict(r) for r in (cur.fetchall() or [])]
+    if kuru:
+        # Kuru çalıştırmada motoru ÇAĞIRMA — sadece ne olacağını tahmin et
+        for f in hedef:
+            ft = (f.get("ftarih") or "")[:10]
+            if (f.get("durum") or "") not in ("ocr_tamam", "okundu"):
+                b = "dokunulmaz_okunmamis"
+            elif (f.get("tutar") or 0) <= 0:
+                b = "dokunulmaz_tutarsiz"
+            elif len((f.get("tedarikci_ad") or "").strip()) < 3:
+                b = "dokunulmaz_kimliksiz"
+            elif ft and ft < EVVEL_SISTEM_BASLANGIC:
+                b = "arsiv_damgalanacak"
+            else:
+                b = "kuyruga_girecek"
+            sonuc[b] = sonuc.get(b, {"adet": 0, "tutar": 0.0})
+            sonuc[b]["adet"] += 1
+            sonuc[b]["tutar"] = round(sonuc[b]["tutar"] + float(f.get("tutar") or 0), 2)
+        return {"kuru_calistirma": True, "incelenen": len(hedef), "tahmin": sonuc,
+                "not": "Motor ÇAĞRILMADI. 'arsiv_damgalanacak' borç ÜRETMEZ — "
+                       "yalnız damga basılır (açılış devrinde zaten sayılı). "
+                       "Uygulamak için ?kuru=0"}
+    for f in hedef:
+        try:
+            d = _fatura_kuyruk_uret(f["id"])
+        except Exception as e:  # noqa: BLE001 — biri patlarsa diğerleri sürsün
+            d = f"hata: {str(e)[:70]}"
+        s = sonuc.setdefault(d, {"adet": 0, "tutar": 0.0})
+        s["adet"] += 1
+        s["tutar"] = round(s["tutar"] + float(f.get("tutar") or 0), 2)
+    return {"kuru_calistirma": False, "islenen": len(hedef), "sonuc": sonuc,
+            "not": "Motor kendi frenleriyle çalıştı. 'atlandi_arsiv' = damga basıldı, "
+                   "borç üretilmedi; 'uretildi' = borç kuyruğuna girdi."}
+
+
 @router.post("/temizlik/kart-donem-tekillestir")
 def temizlik_kart_donem(kuru: int = 1):
     """💳 Aynı kart + aynı DÖNEM için tek plan satırı bırakır (kök neden kapatma).
