@@ -2355,6 +2355,28 @@ _KDV_KATEGORI = {
 }
 _KDV_VARSAYILAN = 0.20
 
+# ⚖️ VERGİ/SGK ÖDEMELERİ — gider DEĞİL, KDV'si YOK (2026-08-08 canlı ders:
+# "42252-MEVLANA VERGİ DAİRESİ" 2×23.473 ₺ "Ev & Dekorasyon" kategorisinde
+# duruyordu ve %20 KDV hesaplanıyordu — ikisi de yanlış). Verginin kendisi
+# matrahtan düşülmez; SGK primi düşülür ama KDV'si yoktur.
+_VERGI_SGK_KALIP = ("VERGI DAIRE", "VERGİ DAİRE", "VERGI DAIRESI", "MALIYE",
+                    "MALİYE", "SGK", "SOSYAL GUVENLIK", "SOSYAL GÜVENLİK",
+                    "GIB ", "GİB ", "MUHTASAR", "DAMGA VERGI", "STOPAJ")
+# 🌐 YURTDIŞI HİZMET — KDV sorumlu sıfatıyla (KDV-2) beyan edilir; normal
+# indirim gibi işlenemez. Kart ekstresinde ülke kodu son ekten anlaşılır.
+_YURTDISI_KALIP = ("CAUS", " US", " SE", " NL", " IE", " GB", " DE", " LU",
+                   "STOCKHOLM", "DUBLIN", "AMSTERDAM", "SAN FRANCISCO")
+
+
+def _harcama_vergi_sinifi(aciklama: str, kategori: str) -> Optional[str]:
+    """'vergi_sgk' | 'yurtdisi' | None (normal işletme gideri)."""
+    u = (aciklama or "").upper()
+    if any(k in u for k in _VERGI_SGK_KALIP) or (kategori or "") == "Vergi & SGK":
+        return "vergi_sgk"
+    if any(u.endswith(k) or k in u for k in _YURTDISI_KALIP):
+        return "yurtdisi"
+    return None
+
 
 @router.post("/odeme-iz-bagi-tazele")
 def odeme_iz_bagi_tazele(kuru: int = 1):
@@ -2514,11 +2536,24 @@ def kart_vergi_etkisi(gun: int = 365, kurumlar_orani: float = 0.25):
             logger.info("odeme_iz bagi okunamadi (kolon yeni olabilir): %s", str(e)[:90])
 
     kova = {k: {"adet": 0, "tutar": 0.0, "kdv": 0.0, "matrah": 0.0}
-            for k in ("belgeli", "belgesiz", "belirsiz", "sahsi")}
-    belgesiz_liste, belirsiz_liste = [], []
+            for k in ("belgeli", "belgesiz", "belirsiz", "sahsi",
+                      "vergi_sgk", "yurtdisi")}
+    belgesiz_liste, belirsiz_liste, ozel_liste = [], [], []
     for h in hareketler:
         tut = round(float(h["tutar"] or 0), 2)
         tip = h["tip"]
+        # ÖZEL SINIFLAR önce: vergi ödemesi gider değil, yurtdışı KDV-2
+        ozel = _harcama_vergi_sinifi(h.get("aciklama") or "", h.get("kategori") or "")
+        if ozel and tip != "sahsi":
+            kova[ozel]["adet"] += 1
+            kova[ozel]["tutar"] = round(kova[ozel]["tutar"] + tut, 2)
+            ozel_liste.append({
+                "hareket_id": str(h["id"]), "tarih": h["tarih"], "tutar": tut,
+                "aciklama": (h.get("aciklama") or "")[:70], "sinif": ozel,
+                "ne_demek": ("Verginin kendisi — matrahtan düşülmez, KDV'si yok"
+                             if ozel == "vergi_sgk"
+                             else "Yurtdışı hizmet — KDV sorumlu sıfatıyla (KDV-2) beyan edilir")})
+            continue
         oran = _KDV_KATEGORI.get(h.get("kategori") or "", _KDV_VARSAYILAN)
         matrah = round(tut / (1 + oran), 2) if oran else tut
         kdv = round(tut - matrah, 2)
@@ -2554,6 +2589,13 @@ def kart_vergi_etkisi(gun: int = 365, kurumlar_orani: float = 0.25):
         if k == "belgesiz":
             belgesiz_liste.append(kalem)
         elif k == "belirsiz":
+            # ÖNERİ: sistem kaydından doğmuş bir kart satırı (vadeli alım, anlık
+            # gider, sabit gider) tanım gereği İŞLETME harcamasıdır — o kayıt
+            # zaten işletme defterinde. Sahip tek tıkla onaylayabilsin diye
+            # öneriyi burada üretiyoruz (hüküm yok, öneri-only).
+            kalem["oneri"] = ("isletme" if kt else None)
+            kalem["oneri_gerekce"] = (f"{kt} kaydından doğmuş — işletme defterinde zaten var"
+                                      if kt else "Ham ekstre satırı — sahip karar vermeli")
             belirsiz_liste.append(kalem)
 
     def _tasarruf(k):
@@ -2570,7 +2612,14 @@ def kart_vergi_etkisi(gun: int = 365, kurumlar_orani: float = 0.25):
             "belirsiz": {**kova["belirsiz"],
                          "ne_demek": "İşletme mi şahsi mi ayrılmamış — önce bu karar"},
             "sahsi": {**kova["sahsi"], "ne_demek": "Şahsi — vergiye konu değil"},
+            "vergi_sgk": {**kova["vergi_sgk"],
+                          "ne_demek": "Vergi/SGK ödemesi — verginin kendisi matrahtan "
+                                      "düşülmez, KDV'si yoktur (gider listesine girmemeli)"},
+            "yurtdisi": {**kova["yurtdisi"],
+                         "ne_demek": "Yurtdışı hizmet — KDV-2 sorumlu sıfatıyla beyan; "
+                                     "normal indirim gibi işlenemez"},
         },
+        "ozel_sinif_harcamalari": sorted(ozel_liste, key=lambda x: -x["tutar"])[:30],
         "ozet_cumle": (
             f"İşletme harcamalarının {kova['belgeli']['tutar']:,.2f} ₺'si belgeli, "
             f"{kova['belgesiz']['tutar']:,.2f} ₺'si belgesiz. Belgesizler yüzünden "
