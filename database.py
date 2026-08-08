@@ -1539,6 +1539,24 @@ def init_db():
             CREATE INDEX IF NOT EXISTS idx_odeme_plani_kaynak
             ON odeme_plani (kaynak_tablo, kaynak_id, durum)
         """)
+        # 🏪 GERİYE DÖNÜK ŞUBE EKİ (2026-08-08, sahip: "her şubenin farklı olduğu")
+        # POS DONANIM ÜCRETİ dört şubede ayrı ayrı tanımlı; plan açıklamasında
+        # şube yazmayınca ekranda dört ÖZDEŞ satır görünüyor ve mükerrer
+        # sanılıyordu. Yeni planlar şube adıyla üretiliyor (motors._sube_eki);
+        # bu blok ESKİ satırları da düzeltir. NOT LIKE koşulu idempotent yapar.
+        cur.execute("""
+            UPDATE odeme_plani op
+               SET aciklama = op.aciklama || ' (' || s.ad || ')'
+              FROM sabit_giderler sg
+              JOIN subeler s ON s.id = sg.sube_id
+             WHERE op.kaynak_tablo = 'sabit_giderler'
+               AND op.kaynak_id = sg.id
+               AND COALESCE(op.durum,'') <> 'iptal'
+               AND COALESCE(op.aciklama,'') <> ''
+               AND op.aciklama NOT LIKE '%(' || s.ad || ')%'
+               AND EXISTS (SELECT 1 FROM sabit_giderler x
+                           WHERE x.gider_adi = sg.gider_adi AND x.id <> sg.id)
+        """)
         # Migration: production DB'de eski constraint varsa düşür, yenisini ekle
         cur.execute("""
             DO $$
