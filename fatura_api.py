@@ -3209,13 +3209,36 @@ def para_zinciri_rontgen():
     # 3b) KAYIP BORÇ: 'odendi' damgalı ama ödenen < ödenecek olan satırlar.
     # Eski odeme_yap kısmi ödemeyi tam ödeme sayıp planı kapatıyordu (2026-08-08
     # düzeltildi). Bu satırlardaki fark, kuyruktan sessizce düşmüş borçtur.
+    # ⚠️ KART EKSTRESİ AYRI TUTULUR: kart ekstresinde ASGARİ ödeme yapmak
+    # normaldir — kalan borç kaybolmaz, KARTA DEVREDER ve faiz işler (kart borcu
+    # kendi mekanizmasında takip edilir). Bunları "kayıp" saymak yanlış alarm
+    # üretir (ilk ölçümde 7,6 M ₺ çıkmıştı, çoğu asgari ödemeydi).
     _sor("kayip_borc_eski_kismi", """
-        SELECT COUNT(*)::int AS satir,
-               COALESCE(SUM(odenecek_tutar - COALESCE(odenen_tutar,0)),0)::float AS kayip_tutar,
-               COALESCE(SUM(odenecek_tutar),0)::float AS toplam_borc,
-               COALESCE(SUM(COALESCE(odenen_tutar,0)),0)::float AS toplam_odenen
+        SELECT
+          COUNT(*) FILTER (WHERE NOT kart)::int AS satir,
+          COALESCE(SUM(fark) FILTER (WHERE NOT kart),0)::float AS kayip_tutar,
+          COALESCE(SUM(borc) FILTER (WHERE NOT kart),0)::float AS toplam_borc,
+          COALESCE(SUM(odenen) FILTER (WHERE NOT kart),0)::float AS toplam_odenen,
+          COUNT(*) FILTER (WHERE kart)::int AS kart_satir,
+          COALESCE(SUM(fark) FILTER (WHERE kart),0)::float AS kart_devreden
+        FROM (
+          SELECT odenecek_tutar::float AS borc,
+                 COALESCE(odenen_tutar,0)::float AS odenen,
+                 (odenecek_tutar - COALESCE(odenen_tutar,0))::float AS fark,
+                 (COALESCE(aciklama,'') ILIKE '%%kart%%'
+                  OR COALESCE(kaynak_tablo,'') IN ('kartlar','kart_hareketleri')) AS kart
+          FROM odeme_plani
+          WHERE durum='odendi' AND COALESCE(odenen_tutar,0) < odenecek_tutar - 0.01
+        ) x""")
+    # Mükerrer plan satırı: aynı açıklama + aynı tutar birden çok kez
+    _sor("mukerrer_plan_satiri", """
+        SELECT LEFT(COALESCE(aciklama,'?'),46) AS aciklama,
+               odenecek_tutar::float AS tutar, COUNT(*)::int AS adet,
+               MIN(tarih)::text AS ilk, MAX(tarih)::text AS son
         FROM odeme_plani
-        WHERE durum='odendi' AND COALESCE(odenen_tutar,0) < odenecek_tutar - 0.01""")
+        WHERE COALESCE(durum,'') <> 'iptal'
+        GROUP BY 1,2 HAVING COUNT(*) > 1
+        ORDER BY odenecek_tutar * COUNT(*) DESC LIMIT 20""", tekil=False)
     _sor("kayip_borc_dokumu", """
         SELECT LEFT(COALESCE(aciklama,'?'),52) AS aciklama, tarih::text AS tarih,
                odenecek_tutar::float AS borc,
@@ -3224,6 +3247,8 @@ def para_zinciri_rontgen():
                COALESCE(kaynak_tablo,'-') AS kaynak
         FROM odeme_plani
         WHERE durum='odendi' AND COALESCE(odenen_tutar,0) < odenecek_tutar - 0.01
+          AND COALESCE(aciklama,'') NOT ILIKE '%%kart%%'
+          AND COALESCE(kaynak_tablo,'') NOT IN ('kartlar','kart_hareketleri')
         ORDER BY (odenecek_tutar - COALESCE(odenen_tutar,0)) DESC LIMIT 25""", tekil=False)
 
     # 4) Fatura ↔ borç kuyruğu bağı: kaç fatura borca dönüşmüş?
