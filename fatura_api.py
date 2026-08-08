@@ -2875,6 +2875,72 @@ def kart_vergi_etkisi(gun: int = 365, kurumlar_orani: float = 0.25):
     }
 
 
+# ── 🎯 EŞLEŞME GÜVEN SKORU (2026-08-08, Codex önerisi + sahip onayı)
+# Otomatik bağlama ancak ÖLÇÜLEBİLİR bir güvenle yapılabilir. Skor 0..1 ve her
+# bileşenin katkısı cevapta yazılır — "neden %92?" sorusu cevapsız kalmaz.
+#   ≥ 0.95  → sistem kendi bağlar (aktör='sistem', geri alınabilir, deftere yazılır)
+#   0.70–0.95 → aday listesi, SAHİP onaylar
+#   < 0.70  → dokunma
+GUVEN_OTOMATIK = 0.95
+GUVEN_ADAY = 0.70
+
+
+def _eslesme_guven(cur, tedarikci: str, hareket: dict, acik_bakiye: float,
+                   aday_tedarikci_sayisi: int) -> dict:
+    """Bir (tedarikçi, kart satırı) çiftinin eşleşme güveni + dökümü."""
+    p = {}
+    ted_kel = [w for w in _cari_katla(tedarikci).split()
+               if len(w) > 2 and w not in _JENERIK]
+    metin = _cari_katla(hareket.get("aciklama") or "")
+
+    # 1) AD KALİTESİ (0–0.40): marka tokeni geçiyor mu, kaç kelime örtüşüyor
+    ortak = [w for w in ted_kel if w in metin]
+    p["ad"] = round(min(0.40, 0.22 * len(ortak)), 4) if ortak else 0.0
+
+    # 2) ÖĞRENME (0–0.30): karar defterinde AYNI açıklama kalıbı daha önce bu
+    #    tedarikçiye onaylandı mı? Sahibin geçmiş kararı en güçlü sinyaldir.
+    p["ogrenme"] = 0.0
+    try:
+        _kalip = " ".join(metin.split()[:3])
+        if len(_kalip) >= 5:
+            cur.execute(
+                """SELECT COUNT(*)::int AS n FROM cari_eslesme_karar k
+                   JOIN kart_hareketleri h ON h.id = k.hareket_id
+                   WHERE k.karar='bagla' AND k.aktor <> 'sistem'
+                     AND LOWER(k.yeni_deger)=LOWER(%s)
+                     AND LOWER(COALESCE(h.aciklama,'')) LIKE %s""",
+                (tedarikci, f"%{_kalip}%"))
+            if int((cur.fetchone() or {}).get("n") or 0) > 0:
+                p["ogrenme"] = 0.30
+    except Exception:  # noqa: BLE001
+        pass
+
+    # 3) KANAL SAFLIĞI (0–0.10): ham ekstre satırı + şahsi değil
+    p["kanal"] = 0.10 if (hareket.get("kaynak") in ("ekstre_import", "elle")) else 0.0
+
+    # 4) BAKİYE MANTIĞI (0–0.10): ödeme açık bakiyenin makul bir parçası mı?
+    tut = float(hareket.get("tutar") or 0)
+    if acik_bakiye > 0 and 0 < tut <= acik_bakiye * 1.05:
+        p["bakiye"] = 0.10
+    elif acik_bakiye > 0 and tut <= acik_bakiye * 1.5:
+        p["bakiye"] = 0.05
+    else:
+        p["bakiye"] = 0.0
+
+    # 5) TEKİLLİK (0–0.10): bu satır tek bir tedarikçiye mi aday?
+    p["tekillik"] = 0.10 if aday_tedarikci_sayisi <= 1 else 0.0
+
+    skor = round(min(1.0, sum(p.values())), 4)
+    return {
+        "guven": skor, "dokum": p,
+        "karar": ("otomatik" if skor >= GUVEN_OTOMATIK
+                  else "aday" if skor >= GUVEN_ADAY else "yok"),
+        "gerekce": (f"ad:{len(ortak)} ortak · "
+                    f"{'geçmişte onaylanmış kalıp · ' if p['ogrenme'] > 0 else ''}"
+                    f"{'tek aday' if p['tekillik'] > 0 else 'çok aday'}"),
+    }
+
+
 @router.get("/kart-borc-izi")
 def kart_borc_izi(gun: int = 365, min_bakiye: float = 100.0):
     """💳 Bekleyen borçların KART EKSTRESİNDEKİ izlerini arar — KISMİ ödeme mantığı.
@@ -2994,6 +3060,112 @@ def kart_borc_izi(gun: int = 365, min_bakiye: float = 100.0):
                "hareketini DAMGALAR, yeni ödeme kaydı açmaz — çift sayım imkânsız. "
                "Onay: POST /api/fatura/kart-izi-onayla · Ret: sinif='(ilgisiz)'",
     }
+
+
+@router.post("/kart-izi-otomatik-tara")
+def kart_izi_otomatik_tara(gun: int = 400, uygula: int = 0) -> dict:
+    """🔄 Açık borçları kart ekstresindeki izlerle EŞLEŞTİRİR — güven skorlu.
+
+    Sahip (2026-08-08): "kart ekstresi yüklendiğinde tekrar ödeme izlerini
+    araştırıp sistemde var mı kontrol etmesi, yoksa ödenmiş borç kabul edip
+    cariden düşmesi lazım."
+
+    KRİTİK AYRIM (Codex): otomatik "KAPATMA" değil, otomatik "BAĞLAMA".
+    Sistem yeni ödeme kaydı AÇMAZ; yalnız "bu çekim şu tedarikçiye ait" der.
+    Borçtan düşme zaten cari okumasıyla kendiliğinden olur. Bu yüzden yanlış
+    bağ para yaratmaz/yok etmez — geri alınabilir bir yorum düzeltmesidir.
+
+    uygula=0 → yalnız rapor (ne olurdu). uygula=1 → ≥%95 güvenler bağlanır,
+    %70–95 arası sahip onayına bırakılır, altı hiç dokunulmaz.
+    """
+    ozet = cari_ozet()
+    borclular = [t for t in (ozet.get("tedarikciler") or [])
+                 if float(t.get("hesaplanan_acik") or 0) >= 100]
+    bugun = date.today()
+    otomatik, aday, atlanan = [], [], 0
+    with db() as (conn, cur):
+        _ensure_kart_izi_tablolar(cur)
+        _ensure_eslesme_karar_defteri(cur)
+        cur.execute(
+            """SELECT h.id, h.tarih::text AS tarih,
+                      ABS(COALESCE(h.tutar,0))::float AS tutar,
+                      COALESCE(h.aciklama,'') AS aciklama,
+                      COALESCE(h.kaynak_tablo,'elle') AS kaynak, h.cari_tedarikci
+               FROM kart_hareketleri h
+               WHERE h.islem_turu='HARCAMA' AND COALESCE(h.durum,'aktif')='aktif'
+                 AND (h.kaynak_id IS NULL OR COALESCE(h.kaynak_tablo,'')='ekstre_import')
+                 AND COALESCE(h.harcama_tipi,'belirsiz') <> 'sahsi'
+                 AND h.cari_tedarikci IS NULL
+                 AND h.tarih >= %s AND h.tarih >= %s::date
+               ORDER BY h.tarih DESC""",
+            (bugun - timedelta(days=gun), EVVEL_SISTEM_BASLANGIC))
+        hareketler = [dict(r) for r in (cur.fetchall() or [])]
+
+        # Önce her satırın KAÇ tedarikçiye aday olduğunu say (tekillik bileşeni)
+        aday_sayac: Dict[str, int] = {}
+        for h in hareketler:
+            for t in borclular:
+                if _odeme_eslesir(t.get("tedarikci") or "", h["aciklama"]):
+                    aday_sayac[h["id"]] = aday_sayac.get(h["id"], 0) + 1
+
+        for h in hareketler:
+            if h["id"] not in aday_sayac:
+                continue
+            en_iyi = None
+            for t in borclular:
+                ted = t.get("tedarikci") or ""
+                if not _odeme_eslesir(ted, h["aciklama"]):
+                    continue
+                g = _eslesme_guven(cur, ted, h, float(t.get("hesaplanan_acik") or 0),
+                                   aday_sayac.get(h["id"], 1))
+                if not en_iyi or g["guven"] > en_iyi["g"]["guven"]:
+                    en_iyi = {"ted": ted, "g": g, "acik": float(t.get("hesaplanan_acik") or 0)}
+            if not en_iyi:
+                continue
+            kayit = {"hareket_id": h["id"], "tarih": h["tarih"], "tutar": h["tutar"],
+                     "aciklama": h["aciklama"][:70], "tedarikci": en_iyi["ted"],
+                     "acik_bakiye": en_iyi["acik"], **en_iyi["g"]}
+            if en_iyi["g"]["karar"] == "otomatik":
+                otomatik.append(kayit)
+                if uygula:
+                    cur.execute(
+                        """UPDATE kart_hareketleri
+                             SET cari_tedarikci=%s, cari_onay_ts=NOW() WHERE id=%s""",
+                        (en_iyi["ted"], h["id"]))
+                    _karar_yaz(cur, h["id"], None, en_iyi["ted"], "bagla",
+                               aktor="sistem", guven=en_iyi["g"]["guven"],
+                               dayanak=f"otomatik eşleşme — {en_iyi['g']['gerekce']}",
+                               tutar=h["tutar"], hareket_tarih=h["tarih"])
+            elif en_iyi["g"]["karar"] == "aday":
+                aday.append(kayit)
+            else:
+                atlanan += 1
+        if uygula:
+            conn.commit()
+    return {
+        "uygulandi": bool(uygula), "pencere_gun": gun,
+        "taranan_hareket": len(hareketler), "borclu_tedarikci": len(borclular),
+        "otomatik_baglanan": len(otomatik),
+        "otomatik_tutar": round(sum(x["tutar"] for x in otomatik), 2),
+        "sahip_onayi_bekleyen": len(aday),
+        "aday_tutar": round(sum(x["tutar"] for x in aday), 2),
+        "guven_altinda_atlanan": atlanan,
+        "otomatik": otomatik[:40], "adaylar": sorted(aday, key=lambda x: -x["guven"])[:40],
+        "esikler": {"otomatik": GUVEN_OTOMATIK, "aday": GUVEN_ADAY},
+        "not": ("Otomatik BAĞLAMA yapılır, KAPATMA değil — yeni ödeme kaydı açılmaz, "
+                "borçtan düşme cari okumasıyla olur. Her bağ deftere yazılır "
+                "(aktör='sistem') ve POST /kart-izi-geri-al ile geri alınabilir."),
+    }
+
+
+def gece_kart_izi_tara() -> dict:
+    """Gece zinciri halkası — hata-yutar. Yalnız RAPOR üretir (uygula=0):
+    otomatik bağlama sahip tetiklemesiyle ya da ekstre importu sonrası olur."""
+    try:
+        return kart_izi_otomatik_tara(gun=400, uygula=0)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("gece kart izi tarama hatasi (yutuldu): %s", str(e)[:150])
+        return {"ok": False}
 
 
 class KartIziOnayModel(BaseModel):

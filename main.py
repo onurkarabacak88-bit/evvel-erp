@@ -602,6 +602,10 @@ def _gece_yarisi_scheduler():
             # SONRA, kuyruk taramasından ÖNCE koşar — okunan fatura aynı gece
             # borç kuyruğuna girebilsin.
             _halka("ocr_retry", lambda: __import__("fatura_api").gece_ocr_takilanlari())
+            # AP KART İZİ (2026-08-08): açık borçlar × kart ekstresi eşleştirmesi.
+            # Gece YALNIZ RAPOR üretir (uygula=0) — otomatik bağlama ekstre importu
+            # anında ya da sahip tetiklemesiyle olur, uykuda sessizce değil.
+            _halka("kart_izi", lambda: __import__("fatura_api").gece_kart_izi_tara())
             _halka("fatura_istek", lambda: __import__("fatura_istek_api").gece_fatura_istek_tara())
             # FAZ A (2026-07-18): okunmuş ama kuyruğa bağlanmamış faturalar
             _halka("fatura_kuyruk", lambda: __import__("fatura_api").gece_fatura_kuyruk_tara())
@@ -4454,6 +4458,24 @@ def kart_ekstre_import(body: EkstreImportBody):
             except Exception:
                 pass
         yeni_borc = kart_borc(cur, body.kart_id)
+
+    # ── 🔄 AP YENİDEN EŞLEŞTİRME (2026-08-08, sahip: "kart ekstresi yüklendiğinde
+    # tekrar ödeme izlerini araştırıp sistemde var mı kontrol etmesi lazım").
+    # Codex denetiminin işaret ettiği boşluk buydu: import yalnız kart borcunu
+    # yazıyor, açık tedarikçi borçlarını yeniden değerlendirmiyordu.
+    # Otomatik BAĞLAMA yapılır (KAPATMA değil): yeni ödeme kaydı açılmaz, sadece
+    # "bu çekim şu tedarikçiye ait" damgası konur; borçtan düşme cari okumasıyla
+    # olur. Yalnız ≥%95 güvenliler bağlanır, gerisi sahip onayına düşer.
+    # HATA-YUTAR: eşleştirme patlarsa ekstre importu BOZULMAZ (para yazımı bitti).
+    rematch = None
+    if yazilan:
+        try:
+            from fatura_api import kart_izi_otomatik_tara
+            rematch = kart_izi_otomatik_tara(gun=400, uygula=1)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("ekstre sonrası AP rematch atlandı (yutuldu): %s", str(e)[:150])
+            rematch = {"ok": False, "hata": str(e)[:120]}
+
     return {
         "yazilan": yazilan,
         "atlanan_veya_mevcut": atlanan,
@@ -4462,6 +4484,13 @@ def kart_ekstre_import(body: EkstreImportBody):
         "motor_tahmini_faiz_iptal": motor_faizi_iptal,
         "anlik_gider_yazilan": anlik_gider_yazilan,
         "yeni_sistem_borc": round(yeni_borc, 2),
+        "ap_rematch": ({
+            "otomatik_baglanan": rematch.get("otomatik_baglanan"),
+            "otomatik_tutar": rematch.get("otomatik_tutar"),
+            "sahip_onayi_bekleyen": rematch.get("sahip_onayi_bekleyen"),
+            "aday_tutar": rematch.get("aday_tutar"),
+        } if isinstance(rematch, dict) and rematch.get("otomatik_baglanan") is not None
+            else rematch),
     }
 
 
