@@ -113,6 +113,7 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
   const [mm, setMm] = useState(null);                // /ops/mutabakat-merkezi
   const [mmYukleniyor, setMmYukleniyor] = useState(false);
   const [mmKova, setMmKova] = useState(null);        // açık kova kodu
+  const [mmYuklenen, setMmYuklenen] = useState('');  // PDF yüklenen satır id
   const [rapor, setRapor] = useState(null);          // truth gunluk-rapor
   const [durum, setDurum] = useState(null);          // truth durum
   const [truthHata, setTruthHata] = useState('');
@@ -456,6 +457,29 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
     const o = mm.ozet || {};
     const kovalar = Array.isArray(mm.kovalar) ? mm.kovalar : [];
     const acikKova = kovalar.find((k) => k.kod === mmKova) || null;
+    // ── MERKEZ PDF KANALI (2026-08-08, sahip deseni) ────────────────────────
+    // İKİ KANAL vardır: şube personeli teslim anında FOTOĞRAF yükler (OCR yolu);
+    // fatura o an gelmediyse merkez sonradan PDF yükler. PDF kanalı bugüne dek
+    // yalnız CEP'te vardı — masaüstünde "mal geldi, faturası yok" satırı
+    // görülüyor ama oradan yüklenemiyordu. Aynı guard'lı uca bağlanır
+    // (/belge-talep/{id}/fatura-yukle); tek yazıcı ilkesi korunur.
+    const teslimatPdfYukle = async (satirId, dosya) => {
+      if (!dosya || !satirId) return;
+      setMmYuklenen(satirId);
+      try {
+        const fd = new FormData();
+        fd.append('dosya', dosya, dosya.name || 'fatura.pdf');
+        const res = await fetch(`/api/belge-talep/${satirId}/fatura-yukle`, { method: 'POST', body: fd });
+        const j = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error((j && (j.detail || j.mesaj)) || 'Yükleme başarısız');
+        onToast?.('✓ Fatura yüklendi — teslimat kapandı, borç kuyruğuna düşecek');
+        setMm(null);   // listeyi tazele (yeniden çekilir)
+      } catch (e) {
+        onToast?.(`⚠ ${e?.message || 'Yükleme başarısız'}`);
+      } finally {
+        setMmYuklenen('');
+      }
+    };
     // Aksiyon → hangi ekrana köprü (yazma o ekranların guard'lı akışında kalır)
     const AKSIYON_HEDEF = {
       fatura_iste: { ad: '📩 Fatura İstek ekranı', hedef: '__modul:belge:istek' },
@@ -517,6 +541,60 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
         {/* Açık kovanın satırları */}
         {acikKova && (acikKova.satirlar || []).length > 0 && (
           <>
+            {/* MERKEZ PDF KANALI — yalnız "mal geldi, faturası yok" kovasında.
+                Şube fotoğrafı teslim anında yükler; fatura sonradan geldiyse
+                merkez buradan PDF olarak bağlar. Satır satır, teslimata damgalı. */}
+            {acikKova.kod === 'teslim_faturasiz' && (
+              <div style={{
+                ...kartYuzey, padding: '12px 15px', marginBottom: 10,
+                borderLeft: `3px solid ${R.mavi}`,
+              }}>
+                <div style={{ fontSize: 12.5, color: R.metin2, marginBottom: 9, lineHeight: 1.55 }}>
+                  📎 <b style={{ color: R.krem }}>Fatura sonradan geldiyse buradan yükleyin.</b>{' '}
+                  Şube teslim anında fotoğraf yükler (OCR); merkez, tedarikçiden gelen PDF'i
+                  ilgili teslimata bağlar. Yüklenen belge o teslimata damgalanır ve borç kuyruğuna düşer.
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+                  {(acikKova.satirlar || []).slice(0, 12).map((s) => (
+                    <div key={`yuk-${s.id}`} style={{
+                      display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+                      padding: '7px 10px', borderRadius: 8, background: R.girinti,
+                    }}>
+                      <span style={{ fontSize: 12.5, color: R.krem, fontWeight: 600, minWidth: 120 }}>
+                        {kisalt(String(s.tedarikci_ad || '—'), 22)}
+                      </span>
+                      <span style={{ fontSize: 11.5, color: R.not2 }}>
+                        {s.sube_adi || '—'} · {String(s.tarih || '').slice(0, 10)}
+                        {s.yas != null ? ` · ${s.yas} gün` : ''}
+                      </span>
+                      <span style={{ fontFamily: F.mono, fontSize: 12, color: R.bakirAcik }}>
+                        {sayi(s.tutar) ? fmt(sayi(s.tutar)) : 'tutar bilinmiyor'}
+                      </span>
+                      <label style={{
+                        marginLeft: 'auto', padding: '6px 13px', borderRadius: 8, cursor: 'pointer',
+                        fontSize: 11.5, fontWeight: 700,
+                        background: mmYuklenen === s.id ? R.cizgi3 : `${R.mavi}22`,
+                        color: mmYuklenen === s.id ? R.not : R.mavi,
+                        border: `1px solid ${R.mavi}44`,
+                      }}>
+                        {mmYuklenen === s.id ? '⏳ yükleniyor…' : '📎 PDF yükle'}
+                        <input
+                          type="file"
+                          accept="application/pdf,image/*"
+                          style={{ display: 'none' }}
+                          disabled={mmYuklenen === s.id}
+                          onChange={(e) => {
+                            const f = e.target.files?.[0];
+                            e.target.value = '';
+                            teslimatPdfYukle(s.id, f);
+                          }}
+                        />
+                      </label>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
             {AKSIYON_HEDEF[acikKova.aksiyon] && (
               <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 10, flexWrap: 'wrap' }}>
                 <button
