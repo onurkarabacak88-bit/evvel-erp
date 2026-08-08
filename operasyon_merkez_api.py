@@ -15001,6 +15001,182 @@ def ops_maliyet_pnl_merdiven(gun: int = Query(30, ge=7, le=90)):
     }
 
 
+@router.get("/mutabakat-merkezi")
+def ops_mutabakat_merkezi(gun: int = Query(60, ge=7, le=180)):
+    """MUTABAKAT MERKEZİ — "aradım, bulamadım: ne yapmalı?"
+
+    Sahip isteği (2026-08-08): "aradığın ve bulamadıklarının listesi ve yükleme
+    yapılıp yapılmayacağını soracağın kendi başına çalışan bir sistem."
+
+    Sistem aynı soruyu bugüne dek DÖRT ayrı ekranda soruyordu (Belge Merkezi,
+    Duyu Mutabakatı, Teslimat Zinciri, Belge Talebi) ve hiçbiri "ne yapmalı"yı
+    söylemiyordu. Bu uç hepsini TEK KAPIDA toplar; her satır dört soruya cevap
+    verir: NE aradım · NEREDE aradım · NEDEN bulamadım · NE yapmalı.
+
+    Hüküm yok, silme yok, otomatik düzeltme yok — yalnız görünürlük + aksiyon
+    önerisi (öneri-only ilkesi).
+    """
+    bugun = date.today()
+    bas = bugun - timedelta(days=gun - 1)
+    kovalar: List[Dict[str, Any]] = []
+
+    def _kova(kod, ad, aciklama, satirlar, aksiyon, tutar=0.0, kritik=False):
+        kovalar.append({
+            "kod": kod, "ad": ad, "aciklama": aciklama,
+            "adet": len(satirlar), "tutar_tl": round(tutar, 2),
+            "aksiyon": aksiyon, "kritik": kritik,
+            "satirlar": satirlar[:40],
+        })
+
+    with db() as (_c, cur):
+        # ── 1) TESLİMAT VAR, FATURA YOK ────────────────────────────────────────
+        try:
+            cur.execute(
+                """SELECT id, tedarikci_ad, sube_adi, teslim_tarihi::text AS tarih,
+                          COALESCE(beklenen_tutar_tl,0)::float AS tutar,
+                          GREATEST(0,(CURRENT_DATE - COALESCE(teslim_tarihi, olusturma::date)))::int AS yas
+                   FROM belge_talep
+                   WHERE durum = 'bekliyor'
+                   ORDER BY yas DESC LIMIT 60"""
+            )
+            r = [dict(x) for x in (cur.fetchall() or [])]
+            _kova("teslim_faturasiz", "Mal geldi, faturası yok",
+                  "Şube teslim aldı; tedarikçiden belge gelmedi. KDV indirilemez, gider ispatsız.",
+                  [{**x, "ne_yapmali": "Tedarikçiden iste (wa.me) veya elle yükle"} for x in r],
+                  "fatura_iste", sum(x["tutar"] for x in r), kritik=any(x["yas"] >= 15 for x in r))
+        except Exception as e:  # noqa: BLE001
+            log.warning("mutabakat kova1: %s", str(e)[:100])
+
+        # ── 2) FATURA VAR, TUTARI OKUNAMADI ────────────────────────────────────
+        # Tutarsız fatura borç üretemez: kuyruk motoru 0 TL'lik borç yazmaz.
+        try:
+            cur.execute(
+                """SELECT id, tedarikci_ad, fatura_tarih::text AS tarih, durum,
+                          COALESCE(toplam_tutar,0)::float AS tutar
+                   FROM tedarikci_fatura
+                   WHERE COALESCE(toplam_tutar,0) <= 0
+                     AND COALESCE(fatura_tarih, olusturma::date) >= %s
+                   ORDER BY olusturma DESC LIMIT 60""",
+                (bas,),
+            )
+            r = [dict(x) for x in (cur.fetchall() or [])]
+            _kova("fatura_tutarsiz", "Fatura var, tutarı okunamadı",
+                  "OCR tutarı çıkaramadı. Tutarsız fatura BORÇ ÜRETMEZ — zincir burada durur.",
+                  [{**x, "ne_yapmali": "Tutarı elle gir veya PDF'i yeniden yükle"} for x in r],
+                  "tutar_gir", 0.0, kritik=len(r) > 0)
+        except Exception as e:  # noqa: BLE001
+            log.warning("mutabakat kova2: %s", str(e)[:100])
+
+        # ── 3) BORÇ VAR, FATURASI YOK ──────────────────────────────────────────
+        try:
+            cur.execute("ALTER TABLE tedarikci_fatura ADD COLUMN IF NOT EXISTS kuyruk_vadeli_id TEXT")
+            cur.execute(
+                """SELECT va.id, va.tedarikci, va.aciklama,
+                          COALESCE(va.tutar,0)::float AS tutar,
+                          va.vade_tarihi::text AS vade
+                   FROM vadeli_alimlar va
+                   WHERE va.durum = 'bekliyor'
+                     AND NOT EXISTS (SELECT 1 FROM tedarikci_fatura tf
+                                     WHERE tf.kuyruk_vadeli_id = va.id)
+                   ORDER BY va.vade_tarihi ASC LIMIT 60"""
+            )
+            r = [dict(x) for x in (cur.fetchall() or [])]
+            _kova("borc_belgesiz", "Borç var, belgesi bağlı değil",
+                  "Ödeme kuyruğunda duran borcun dayanağı yok. Vergi denetiminde ispatsız kalem.",
+                  [{**x, "ne_yapmali": "Faturasını yükle veya elle kayıt notunu gir"} for x in r],
+                  "belge_bagla", sum(x["tutar"] for x in r), kritik=False)
+        except Exception as e:  # noqa: BLE001
+            log.warning("mutabakat kova3: %s", str(e)[:100])
+
+        # ── 4) TESLİM EDİLDİ, KASA İZİ YOK ─────────────────────────────────────
+        # Şube→merkez nakit akışı kasa defterine yazılmıyor (131 kayıt / 775 K ₺).
+        try:
+            cur.execute(
+                """SELECT kt.id, kt.sube_id, kt.tarih::text AS tarih,
+                          COALESCE(kt.tutar,0)::float AS tutar,
+                          kt.teslim_alan_ad, kt.teslim_turu
+                   FROM kasa_teslim kt
+                   WHERE kt.tarih >= %s
+                     AND NOT EXISTS (
+                         SELECT 1 FROM kasa_hareketleri kh
+                         WHERE kh.kaynak_tablo = 'kasa_teslim' AND kh.kaynak_id = kt.id::text)
+                   ORDER BY kt.tarih DESC LIMIT 60""",
+                (bas,),
+            )
+            r = [dict(x) for x in (cur.fetchall() or [])]
+            _kova("teslim_kasa_izsiz", "Kasa teslimi var, defterde izi yok",
+                  "Şubeden merkeze para geçti ama kasa defterine yazılmadı — para iki defterde ayrı.",
+                  [{**x, "ne_yapmali": "Kasa defteri kaydı üret (teslim → yoldaki nakit)"} for x in r],
+                  "kasa_izi_uret", sum(x["tutar"] for x in r), kritik=len(r) > 10)
+        except Exception as e:  # noqa: BLE001
+            log.warning("mutabakat kova4: %s", str(e)[:100])
+
+        # ── 5) TESLİM ALINDI, BANKAYA YATMADI ──────────────────────────────────
+        try:
+            cur.execute(
+                """SELECT COALESCE(SUM(tutar),0)::float AS teslim
+                   FROM kasa_teslim WHERE tarih >= %s""", (bas,))
+            _teslim = float((dict(cur.fetchone() or {})).get("teslim") or 0)
+            cur.execute(
+                """SELECT COALESCE(SUM(tutar),0)::float AS yatan, COUNT(*)::int AS adet
+                   FROM banka_yatirimlari WHERE tarih >= %s""", (bas,))
+            _b = dict(cur.fetchone() or {})
+            _yatan, _yadet = float(_b.get("yatan") or 0), int(_b.get("adet") or 0)
+            _fark = _teslim - _yatan
+            satir = [{
+                "donem": f"{bas} → {bugun}",
+                "teslim_alinan_tl": round(_teslim, 2),
+                "bankaya_yatan_tl": round(_yatan, 2),
+                "yatirim_adedi": _yadet,
+                "elde_kalan_tl": round(_fark, 2),
+                "ne_yapmali": "Banka yatırımını kaydet veya nakdin nerede olduğunu işaretle",
+            }] if _fark > 0 else []
+            _kova("nakit_bankasiz", "Teslim alınan nakit bankaya yatmamış",
+                  "Şubelerden toplanan para bankaya girmemiş görünüyor. Nakit kontrol açığı.",
+                  satir, "banka_kaydet", max(0.0, _fark), kritik=_fark > 100000)
+        except Exception as e:  # noqa: BLE001
+            log.warning("mutabakat kova5: %s", str(e)[:100])
+
+        # ── 6) ÖDEME YAPILDI, BELGESİ YOK ──────────────────────────────────────
+        try:
+            cur.execute(
+                """SELECT kh.id, kh.tarih::text AS tarih, kh.aciklama,
+                          ABS(COALESCE(kh.tutar,0))::float AS tutar, kh.islem_turu
+                   FROM kasa_hareketleri kh
+                   WHERE kh.tutar < 0 AND kh.durum = 'aktif' AND kh.tarih >= %s
+                     AND kh.islem_turu IN ('ANLIK_GIDER','FATURA_ODEMESI','VADELI_ODEME')
+                     AND NOT EXISTS (
+                         SELECT 1 FROM tedarikci_fatura tf
+                         WHERE tf.id = kh.kaynak_id OR tf.kuyruk_vadeli_id = kh.kaynak_id)
+                   ORDER BY ABS(kh.tutar) DESC LIMIT 60""",
+                (bas,),
+            )
+            r = [dict(x) for x in (cur.fetchall() or [])]
+            _kova("odeme_belgesiz", "Para çıktı, belgesi bağlı değil",
+                  "Kasadan ödeme yapıldı ama hangi faturaya ait olduğu yazılı değil.",
+                  [{**x, "ne_yapmali": "Faturasını yükle veya 'belge beklenmez' işaretle"} for x in r],
+                  "belge_bagla", sum(x["tutar"] for x in r), kritik=False)
+        except Exception as e:  # noqa: BLE001
+            log.warning("mutabakat kova6: %s", str(e)[:100])
+
+    acik_toplam = sum(k["adet"] for k in kovalar)
+    tutar_toplam = sum(k["tutar_tl"] for k in kovalar)
+    kritik = [k["kod"] for k in kovalar if k.get("kritik")]
+    return {
+        "uretildi": str(bugun), "pencere_gun": gun,
+        "ozet": {
+            "acik_kalem": acik_toplam,
+            "toplam_tutar_tl": round(tutar_toplam, 2),
+            "kova_sayisi": len(kovalar),
+            "kritik_kovalar": kritik,
+        },
+        "kovalar": kovalar,
+        "not": "Her satır dört soruya cevap verir: ne aradım · nerede aradım · neden "
+               "bulamadım · ne yapmalı. Hüküm yok, otomatik düzeltme yok — görünürlük "
+               "ve aksiyon önerisi. Tutarı bilinmeyen kalem sıfır sayılmaz, ayrı bildirilir.",
+    }
+
+
 @router.get("/metrics/hedef-ciro")
 def ops_metrics_hedef_ciro(erit_ay: int = Query(6, ge=1, le=24)):
     """HEDEF CİRO — "bütün ödemelerimi rahatlıkla yapabileceğim aylık ciro nedir?"
