@@ -437,9 +437,18 @@ def belge_talep_tutar_tazele(sadece_bos: int = 1):
                 WHERE bt.durum <> 'kapandi' {kosul}"""
         )
         satirlar = [dict(r) for r in (cur.fetchall() or [])]
+        # TEŞHİS: kalem bulunamıyorsa körlemesine düzeltme yapmayalım — ham şekli gör.
+        teshis = []
         for s in satirlar:
+            k = s.get("kalemler")
+            if len(teshis) < 3:
+                teshis.append({
+                    "tip": type(k).__name__,
+                    "uzunluk": (len(k) if isinstance(k, (list, str)) else None),
+                    "ornek": (str(k)[:160] if k is not None else None),
+                })
             try:
-                pd = _teslim_parasal_deger(cur, s.get("kalemler"))
+                pd = _teslim_parasal_deger(cur, k)
             except Exception:  # noqa: BLE001
                 hata += 1
                 continue
@@ -459,7 +468,8 @@ def belge_talep_tutar_tazele(sadece_bos: int = 1):
             guncellenen += 1
         conn.commit()
     return {"guncellenen": guncellenen, "kalemsiz_atlanan": atlanan, "hata": hata,
-            "toplam_bakilan": len(satirlar), "sadece_bos": bool(sadece_bos)}
+            "toplam_bakilan": len(satirlar), "sadece_bos": bool(sadece_bos),
+            "teshis_ilk3": teshis}
 
 
 @router.get("/acik-teslimat")
