@@ -530,69 +530,150 @@ def belge_talep_gecmis_eslestir(gun: int = 120):
         )
         faturalar = [dict(r) for r in (cur.fetchall() or [])]
 
-    kesin, aday = [], []
+    # ── PUANLAMA (0-100, deterministik ve açıklanabilir) ──────────────────────
+    # İlk sürüm kartezyen çarpım üretiyordu (5 teslimat × 44 fatura) ve aynı
+    # fatura defalarca listeleniyordu; "hangisi doğru" belli olmuyordu.
+    # Yeni kurgu üç ilkeye dayanır:
+    #   1. Her (teslimat, fatura) çifti TEK KEZ puanlanır.
+    #   2. Puan üç bileşenin toplamıdır; her bileşenin katkısı cevapta YAZILIR.
+    #   3. Bir çift ancak KARŞILIKLI EN İYİ ise "önerilen" sayılır — teslimat bu
+    #      faturayı, fatura da bu teslimatı en iyi eşi olarak görüyorsa.
+    AD_PUAN, TARIH_PUAN, TUTAR_PUAN = 40.0, 30.0, 30.0
+    ESIK = 35.0          # altı gürültü sayılır, listeye girmez
+    TARIH_TAVAN = 30     # gün
+    TUTAR_TAVAN = 0.25   # %25 üstü fark eşleşmeyi öldürür
+
+    def _puanla(t, f):
+        t_kel = set(_ad_norm(t.get("tedarikci_ad")).split())
+        f_kel = set(_ad_norm(f.get("tedarikci_ad")).split())
+        ortak = t_kel & f_kel
+        if not ortak:
+            return None
+        # 1) AD — Jaccard: ortak / birleşim (tek kelime tesadüfi eşleşmeyi şişirmesin)
+        birlesim = t_kel | f_kel
+        ad_oran = len(ortak) / len(birlesim) if birlesim else 0.0
+        ad_p = ad_oran * AD_PUAN
+
+        # 2) TARİH — yakınlık eğrisi; tavanı aşan çift elenir
+        gun_fark = None
+        if t.get("tarih") and f.get("tarih"):
+            try:
+                gun_fark = abs((date.fromisoformat(f["tarih"][:10])
+                                - date.fromisoformat(t["tarih"][:10])).days)
+            except Exception:  # noqa: BLE001
+                gun_fark = None
+        if gun_fark is not None and gun_fark > TARIH_TAVAN:
+            return None
+        tarih_p = (max(0.0, 1 - (gun_fark / TARIH_TAVAN)) * TARIH_PUAN) if gun_fark is not None else TARIH_PUAN * 0.5
+
+        # 3) TUTAR — beklenen yoksa NÖTR yarım puan (bilinmiyor ≠ uyuşmuyor)
+        bek, ftl = float(t.get("beklenen") or 0), float(f.get("tutar") or 0)
+        tutar_fark = round(ftl - bek, 2) if (bek and ftl) else None
+        if tutar_fark is not None and bek:
+            oran = abs(tutar_fark) / bek
+            if oran > TUTAR_TAVAN:
+                return None
+            tutar_p = max(0.0, 1 - (oran / TUTAR_TAVAN)) * TUTAR_PUAN
+        else:
+            tutar_p = TUTAR_PUAN * 0.5
+
+        puan = round(ad_p + tarih_p + tutar_p, 1)
+        if puan < ESIK:
+            return None
+        return {
+            "belge_talep_id": t["id"], "fatura_id": f["id"],
+            "tedarikci_teslimat": t.get("tedarikci_ad"), "tedarikci_fatura": f.get("tedarikci_ad"),
+            "sube_adi": t.get("sube_adi"), "teslim_yas_gun": t.get("yas"),
+            "teslim_tarihi": t.get("tarih"), "fatura_tarihi": f.get("tarih"),
+            "beklenen_tl": t.get("beklenen"), "fatura_tl": f.get("tutar"),
+            "tutar_fark_tl": tutar_fark, "gun_fark": gun_fark,
+            "ortak_kelime": sorted(ortak),
+            "puan": puan,
+            "puan_dokumu": {
+                "ad": round(ad_p, 1), "tarih": round(tarih_p, 1), "tutar": round(tutar_p, 1),
+                "ad_orani_pct": round(ad_oran * 100, 1),
+            },
+            "gerekce": (f"Ad ortak: {', '.join(sorted(ortak))} (%{ad_oran*100:.0f} örtüşme)"
+                        + (f" · {gun_fark} gün fark" if gun_fark is not None else " · tarih bilinmiyor")
+                        + (f" · tutar farkı {tutar_fark:+,.2f} ₺" if tutar_fark is not None
+                           else " · tutar karşılaştırılamadı")).replace(",", "."),
+        }
+
+    # ── KESİN eşleşmeler (aynı sipariş talebi) — puanlamadan bağımsız ─────────
+    kesin, kesin_talep, kesin_fatura = [], set(), set()
     for t in teslimatlar:
-        t_norm = _ad_norm(t.get("tedarikci_ad"))
-        t_kel = set(t_norm.split())
-        t_tar = t.get("tarih")
         for f in faturalar:
-            # 1) KESİN: aynı sipariş talebinden doğmuş
             if t.get("talep_id") and f.get("siparis_talep_id") and \
                str(t["talep_id"]) == str(f["siparis_talep_id"]):
                 kesin.append({
                     "belge_talep_id": t["id"], "fatura_id": f["id"],
                     "tedarikci_teslimat": t.get("tedarikci_ad"), "tedarikci_fatura": f.get("tedarikci_ad"),
-                    "teslim_tarihi": t_tar, "fatura_tarihi": f.get("tarih"),
+                    "teslim_tarihi": t.get("tarih"), "fatura_tarihi": f.get("tarih"),
                     "beklenen_tl": t.get("beklenen"), "fatura_tl": f.get("tutar"),
                     "gerekce": "Aynı sipariş talebinden doğmuş (siparis_talep_id eşleşiyor)",
                     "ne_yapmali": "Bağla — başka kanıt gerekmez",
                 })
+                kesin_talep.add(t["id"]); kesin_fatura.add(f["id"])
+
+    # ── ADAY havuzu: her çift TEK KEZ, kesinler hariç ─────────────────────────
+    havuz = []
+    for t in teslimatlar:
+        if t["id"] in kesin_talep:
+            continue
+        for f in faturalar:
+            if f["id"] in kesin_fatura:
                 continue
-            # 2) ADAY: ad + tarih (+ tutar)
-            f_kel = set(_ad_norm(f.get("tedarikci_ad")).split())
-            ortak = t_kel & f_kel
-            if not ortak:
-                continue
-            gun_fark = None
-            if t_tar and f.get("tarih"):
-                try:
-                    gun_fark = abs((date.fromisoformat(f["tarih"][:10]) - date.fromisoformat(t_tar[:10])).days)
-                except Exception:  # noqa: BLE001
-                    gun_fark = None
-            if gun_fark is not None and gun_fark > 30:
-                continue
-            bek, ftl = float(t.get("beklenen") or 0), float(f.get("tutar") or 0)
-            tutar_fark = round(ftl - bek, 2) if (bek and ftl) else None
-            # Güven: ortak kelime + tarih yakınlığı + tutar yakınlığı
-            puan = len(ortak) * 2
-            if gun_fark is not None and gun_fark <= 7:
-                puan += 2
-            if tutar_fark is not None and bek and abs(tutar_fark) <= bek * 0.05:
-                puan += 3
-            aday.append({
-                "belge_talep_id": t["id"], "fatura_id": f["id"],
-                "tedarikci_teslimat": t.get("tedarikci_ad"), "tedarikci_fatura": f.get("tedarikci_ad"),
-                "sube_adi": t.get("sube_adi"), "teslim_yas_gun": t.get("yas"),
-                "teslim_tarihi": t_tar, "fatura_tarihi": f.get("tarih"),
-                "beklenen_tl": t.get("beklenen"), "fatura_tl": f.get("tutar"),
-                "tutar_fark_tl": tutar_fark, "gun_fark": gun_fark,
-                "ortak_kelime": sorted(ortak), "puan": puan,
-                "guven": "yüksek" if puan >= 6 else ("orta" if puan >= 4 else "düşük"),
-                "gerekce": f"Ad ortak: {', '.join(sorted(ortak))}"
-                           + (f" · {gun_fark} gün fark" if gun_fark is not None else "")
-                           + (f" · tutar farkı {tutar_fark:+.2f} ₺" if tutar_fark is not None else ""),
-                "ne_yapmali": "Aynı belge mi? Öyleyse bağla; değilse yok say",
-            })
-    aday.sort(key=lambda x: (-x["puan"], x.get("gun_fark") or 99))
+            p = _puanla(t, f)
+            if p:
+                havuz.append(p)
+
+    # ── KARŞILIKLI EN İYİ: iki taraf da birbirini en iyi görüyorsa "önerilen" ──
+    en_iyi_t, en_iyi_f = {}, {}
+    for c in havuz:
+        a, b = c["belge_talep_id"], c["fatura_id"]
+        if a not in en_iyi_t or c["puan"] > en_iyi_t[a]["puan"]:
+            en_iyi_t[a] = c
+        if b not in en_iyi_f or c["puan"] > en_iyi_f[b]["puan"]:
+            en_iyi_f[b] = c
+    # Bir fatura kaç teslimata aday? (çakışma uyarısı)
+    fatura_aday_sayisi: Dict[str, int] = {}
+    for c in havuz:
+        fatura_aday_sayisi[c["fatura_id"]] = fatura_aday_sayisi.get(c["fatura_id"], 0) + 1
+
+    for c in havuz:
+        karsilikli = (en_iyi_t.get(c["belge_talep_id"], {}).get("fatura_id") == c["fatura_id"]
+                      and en_iyi_f.get(c["fatura_id"], {}).get("belge_talep_id") == c["belge_talep_id"])
+        c["onerilen"] = bool(karsilikli)
+        c["cakisma"] = fatura_aday_sayisi.get(c["fatura_id"], 0) > 1
+        c["guven"] = ("yüksek" if (karsilikli and c["puan"] >= 70)
+                      else "orta" if c["puan"] >= 55 else "düşük")
+        c["ne_yapmali"] = (
+            "Önerilen eşleşme — kontrol edip bağla" if karsilikli
+            else "Alternatif aday; önce önerilen satıra bak"
+        )
+        if c["cakisma"]:
+            c["ne_yapmali"] += " (bu fatura birden çok teslimata aday — tek birine bağlanabilir)"
+
+    havuz.sort(key=lambda x: (not x["onerilen"], -x["puan"]))
+    onerilen = [c for c in havuz if c["onerilen"]]
     return {
         "uretildi": str(bugun), "pencere_gun": gun,
         "acik_teslimat_adet": len(teslimatlar),
         "bagsiz_fatura_adet": len(faturalar),
         "kesin_eslesme": kesin,
-        "aday_eslesme": aday[:60],
-        "not": "Hiçbir bağ OTOMATİK kurulmaz. Kesin eşleşme aynı sipariş talebinden "
-               "doğmuş olmaya dayanır; aday eşleşme ad+tarih(+tutar) benzerliğidir. "
-               "Onay: POST /belge-talep/{id}/fatura-bagla?fatura_id=…",
+        "onerilen_adet": len(onerilen),
+        "aday_eslesme": havuz[:60],
+        "puanlama": {
+            "ad_max": AD_PUAN, "tarih_max": TARIH_PUAN, "tutar_max": TUTAR_PUAN,
+            "esik": ESIK, "tarih_tavan_gun": TARIH_TAVAN, "tutar_tavan_pct": TUTAR_TAVAN * 100,
+            "aciklama": "Ad = ortak kelime / birleşim (Jaccard). Tarih = yakınlık eğrisi, "
+                        "tavanı aşan çift elenir. Tutar = yüzde fark eğrisi; beklenen tutar "
+                        "yoksa NÖTR yarım puan (bilinmiyor ≠ uyuşmuyor). Eşik altı listeye girmez.",
+        },
+        "not": "Hiçbir bağ OTOMATİK kurulmaz. 'onerilen' = karşılıklı en iyi eşleşme "
+               "(teslimat bu faturayı, fatura da bu teslimatı en iyi eşi görüyor). "
+               "'cakisma' = fatura birden çok teslimata aday. "
+               "Onay: POST /belge-talep/{id}/fatura-bagla",
     }
 
 
