@@ -555,9 +555,45 @@ def acik_teslimat_ozet():
         "not": "Beklenen borç = teslim kalemleri × (gerçek alış fiyatı, yoksa katalog). "
                "Fatura gelince gerçek tutarla değişir; fark denetim sinyalidir.",
     }
+
+    # ── FATURA SAPMA DENETİMİ (kapanmış teslimatlarda beklenen ↔ gerçek) ───────
+    # Vergi/maliyet gözü: fatura siparişten pahalı geldiyse SEBEBİ sorulmalı
+    # (zam · fazla kalem · yanlış eşleşme). Ucuz geldiyse eksik teslim ya da
+    # iskonto. Bu blok hüküm vermez, farkı GÖRÜNÜR yapar.
+    # ⚠️ Bu blok yukarıdaki `with db()` kapsamının DIŞINDA — kendi bağlantısını
+    # açar. İlk yazımda dışarıdaki `cur`'u kullanıyordu; kapalı cursor'la çalışma
+    # anında patlardı (girinti kontrolüyle yakalandı, canlıya çıkmadan).
+    sapma: Dict[str, Any] = {"kayit": 0}
+    try:
+        with db() as (_c2, cur2):
+            cur2.execute(
+                """SELECT id, tedarikci_ad, sube_adi, teslim_tarihi::text AS teslim_tarihi,
+                          beklenen_tutar_tl::float AS beklenen, fatura_tutar_tl::float AS fatura,
+                          tutar_fark_tl::float AS fark
+                   FROM belge_talep
+                   WHERE fatura_tutar_tl IS NOT NULL AND beklenen_tutar_tl IS NOT NULL
+                     AND ABS(COALESCE(tutar_fark_tl,0)) > 0.01
+                   ORDER BY ABS(COALESCE(tutar_fark_tl,0)) DESC
+                   LIMIT 30"""
+            )
+            _sap = [dict(r) for r in (cur2.fetchall() or [])]
+        for s in _sap:
+            b = float(s.get("beklenen") or 0)
+            s["sapma_pct"] = round((float(s.get("fark") or 0) / b) * 100, 1) if b else None
+            s["yon"] = "fatura pahalı" if float(s.get("fark") or 0) > 0 else "fatura ucuz"
+        sapma = {
+            "kayit": len(_sap),
+            "toplam_fark_tl": round(sum(float(s.get("fark") or 0) for s in _sap), 2),
+            "satirlar": _sap,
+            "not": "Fark = fatura tutarı − beklenen tutar. Pahalı: zam/fazla kalem/yanlış "
+                   "eşleşme olabilir. Ucuz: eksik teslim ya da iskonto. Hüküm yok.",
+        }
+    except Exception as e:  # noqa: BLE001
+        logger.warning("fatura sapma blogu atlandi: %s", str(e)[:120])
     return {
         "acik_toplam": len(acik),
         "parasal": parasal,
+        "fatura_sapma": sapma,
         "yas_kovalari": kovalar,
         "acik_teslimatlar": acik,
         "tedarikci_ritim": ritim,
@@ -757,12 +793,37 @@ async def belge_talep_fatura_yukle(talep_id: str, dosya: UploadFile = File(...))
         if dh and fatura_idler:
             cur.execute("UPDATE tedarikci_fatura SET dosya_hash=%s WHERE id = ANY(%s)",
                         (dh, fatura_idler))
-        # 'fatura geldi' sinyali — belge talebini kapat + damga (kapanış kanıtı = fatura)
+        # ── BEKLENEN ↔ GERÇEK (2026-08-08, sahip doktrini: fatura gelince borç
+        # kesinleşir) ───────────────────────────────────────────────────────────
+        # Teslim anında BEKLENEN tutar hesaplanmıştı (kalem × alış/katalog fiyatı).
+        # Fatura geldiğinde GERÇEK tutar yazılır ve fark denetim sinyali olur:
+        #   fark > 0 → fatura siparişten pahalı (zam? fazla kalem? yanlış eşleşme?)
+        #   fark < 0 → eksik teslimat ya da iskonto
+        # Vergi/maliyet açısından kritik: borç artık TAHMİN değil BELGELİ tutardır.
+        # Çoklu fatura (PDF birden çok fatura içeriyorsa) hepsinin toplamı alınır.
+        _fatura_tutar = None
+        try:
+            if fatura_idler:
+                cur.execute(
+                    """SELECT COALESCE(SUM(COALESCE(toplam_tutar,0)),0)::float AS t
+                       FROM tedarikci_fatura WHERE id = ANY(%s)""",
+                    (fatura_idler,),
+                )
+                _ft = float((dict(cur.fetchone() or {}) or {}).get("t") or 0)
+                _fatura_tutar = _ft if _ft > 0 else None
+        except Exception as _e_ft:  # noqa: BLE001
+            logger.warning("fatura tutari okunamadi (kapanis surer): %s", str(_e_ft)[:120])
+
         cur.execute(
             """UPDATE belge_talep
-               SET durum='pdf_geldi', kapanma_ts=NOW(), fatura_id=%s, kapanis_tipi='fatura'
+               SET durum='pdf_geldi', kapanma_ts=NOW(), fatura_id=%s, kapanis_tipi='fatura',
+                   fatura_tutar_tl = COALESCE(%s, fatura_tutar_tl),
+                   tutar_fark_tl = CASE
+                       WHEN %s IS NOT NULL AND beklenen_tutar_tl IS NOT NULL
+                       THEN %s - beklenen_tutar_tl ELSE tutar_fark_tl END
                WHERE id=%s""",
-            (fatura_idler[0] if fatura_idler else None, tid),
+            (fatura_idler[0] if fatura_idler else None,
+             _fatura_tutar, _fatura_tutar, _fatura_tutar, tid),
         )
         conn.commit()
 
