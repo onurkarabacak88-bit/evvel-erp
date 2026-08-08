@@ -2240,6 +2240,64 @@ def belge_sinifi_ozet():
     }
 
 
+@router.get("/hizmet-fatura-cift-sayim")
+def hizmet_fatura_cift_sayim():
+    """⚠️ ÇİFT SAYIM RİSKİ: aynı gider hem sabit gider planında hem borç kuyruğunda.
+
+    Elektrik/su/telekom zaten `sabit_giderler`'de aylık plan olarak duruyor.
+    Aynı faturanın PDF'i yüklenince `vadeli_alimlar`+`odeme_plani` kuyruğuna da
+    düşüyordu — aynı borç İKİ KEZ. Bu uç hüküm vermez, ÇAKIŞANI listeler.
+    """
+    with db() as (_c, cur):
+        _ensure_tablolar(cur)
+        cur.execute(
+            """SELECT id, tedarikci_ad, fatura_tarih::text AS tarih,
+                      COALESCE(toplam_tutar,0)::float AS tutar,
+                      kuyruk_vadeli_id, belge_sinifi
+               FROM tedarikci_fatura
+               WHERE belge_sinifi='hizmet' AND COALESCE(durum,'') <> 'kopya'
+               ORDER BY fatura_tarih DESC NULLS LAST"""
+        )
+        hizmet = [dict(r) for r in (cur.fetchall() or [])]
+        cur.execute(
+            """SELECT id, gider_adi, kategori, tutar::float AS tutar, periyot, aktif
+               FROM sabit_giderler WHERE aktif = TRUE"""
+        )
+        sabitler = [dict(r) for r in (cur.fetchall() or [])]
+
+    def _kel(s):
+        return set(w for w in _cari_katla(s or "").split() if len(w) > 2)
+
+    cakisan = []
+    for f in hizmet:
+        kuyrukta = bool(f.get("kuyruk_vadeli_id")) and f["kuyruk_vadeli_id"] != "(arsiv)"
+        if not kuyrukta:
+            continue  # kuyruğa girmemiş → çift sayım yok
+        fk = _kel(f.get("tedarikci_ad"))
+        for s in sabitler:
+            ortak = fk & (_kel(s.get("gider_adi")) | _kel(s.get("kategori")))
+            if ortak:
+                cakisan.append({
+                    "fatura_id": f["id"], "tedarikci": f.get("tedarikci_ad"),
+                    "fatura_tarih": f.get("tarih"), "fatura_tl": f.get("tutar"),
+                    "sabit_gider_id": s["id"], "sabit_gider_adi": s.get("gider_adi"),
+                    "sabit_tutar": s.get("tutar"), "periyot": s.get("periyot"),
+                    "ortak_kelime": sorted(ortak),
+                    "risk": "Aynı gider hem aylık sabit planda hem borç kuyruğunda olabilir",
+                    "ne_yapmali": "Doğruysa birini kapat — fatura kuyruk kaydını iptal et "
+                                  "VEYA sabit gider satırını o ay için pasifle",
+                })
+    return {
+        "hizmet_fatura_adet": len(hizmet),
+        "kuyruga_dusen": sum(1 for f in hizmet
+                             if f.get("kuyruk_vadeli_id") and f["kuyruk_vadeli_id"] != "(arsiv)"),
+        "aktif_sabit_gider": len(sabitler),
+        "cakisan_adet": len(cakisan), "cakisan": cakisan,
+        "not": "Hüküm YOK — liste sahibin kararı içindir. Çakışma yoksa gider "
+               "faturaları tek kanaldan sayılıyor demektir.",
+    }
+
+
 @router.post("/belge-sinifi-tazele")
 def belge_sinifi_tazele(sadece_bos: int = 1, limit: int = 2000):
     """Geçmiş faturaları sınıflandırır. sadece_bos=0 ise elle olmayanları da tazeler."""
