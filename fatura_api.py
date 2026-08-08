@@ -4947,8 +4947,36 @@ def cari_ozet() -> dict:
             "odeme_izi_var": False, "son_fatura": None,
             "beyan_bakiye": None, "beyan_tarihi": None,
             "beyan_hesap_farki": None,
+            "faturasiz_teslimat_adet": 0, "faturasiz_teslimat_tl": 0.0,
+            "gercek_borc": round(float(dv["tutar"]), 2),
             "bekleyen_vade_toplam": 0.0, "en_yakin_vade": None,
             "zincir_hareket_adet": 0, "son_zincir_fark": None,
+        })
+    # 📦 HİÇ FATURASI OLMAYAN TEDARİKÇİNİN TESLİMATI DA SATIR OLUR
+    # (2026-08-08 canlı ders: 'fethi'ye 9.643,97 ₺'lik iki teslimat vardı ama
+    # o tedarikçinin sistemde HİÇ faturası olmadığı için cari listesinde grubu
+    # yoktu → mal alınmış, borç doğmuş, hiçbir yerde GÖRÜNMÜYORDU.)
+    _grni_artan: Dict[str, Dict[str, Any]] = {}
+    for _bt in _grni_tum:
+        if _bt.get("_alindi"):
+            continue
+        _ad = (_bt.get("tedarikci_ad") or "").strip() or "(tedarikçi belirsiz)"
+        g0 = _grni_artan.setdefault(_ad, {"adet": 0, "tl": 0.0})
+        g0["adet"] += 1
+        g0["tl"] = round(g0["tl"] + float(_bt.get("tutar") or 0), 2)
+    for _ad, _g in _grni_artan.items():
+        ozet.append({
+            "tedarikci": _ad, "vkn": None, "devir": 0.0,
+            "fatura_adet_6ay": 0, "fatura_toplam_6ay": 0.0,
+            "odeme_izi_toplam_6ay": 0.0, "hesaplanan_acik": 0.0,
+            "faturasiz_teslimat_adet": _g["adet"],
+            "faturasiz_teslimat_tl": _g["tl"],
+            "gercek_borc": _g["tl"],
+            "odeme_izi_var": False, "son_fatura": None,
+            "beyan_bakiye": None, "beyan_tarihi": None, "beyan_hesap_farki": None,
+            "bekleyen_vade_toplam": 0.0, "en_yakin_vade": None,
+            "zincir_hareket_adet": 0, "son_zincir_fark": None,
+            "yalniz_teslimat": True,   # hiç faturası yok, yalnız mal girişi var
         })
     # 🔗 KANONİK BİRLEŞTİRME: aynı kayıtlı ada bağlı fatura ünvanları TEK cari
     # satırında toplanır (ATALAY KAHVE = MEHMET ATALAY + Napolés). Sınıf:
