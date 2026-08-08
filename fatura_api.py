@@ -320,9 +320,13 @@ def _fatura_json_db_yaz(cur, fatura_id: str, j: Dict[str, Any]) -> int:
     # gelen faturayla elektrik faturası arasında fark var"). Tedarikçi adı ancak
     # BURADA belli olur (yükleme anında NULL), o yüzden damga tam bu noktada.
     # Foto ve PDF ortak yol → tek damga noktası.
+    # Kalem adları JSON'dan okunur — DB'ye henüz yazılmamış olabilir (aynı
+    # fonksiyonda aşağıda yazılıyor), ama içerik kanıtı elimizde hazır.
     _ted = (str(j.get("tedarikci") or "").strip() or None)
     if _ted:
-        belge_sinifi_coz(cur, fatura_id, _ted)
+        _kalem_adlari = [k.get("ad") or k.get("urun_ad") or k.get("aciklama")
+                         for k in kalemler if isinstance(k, dict)]
+        belge_sinifi_coz(cur, fatura_id, _ted, _kalem_adlari)
     # 📑 KOPYA KAPANIŞI (sahip 2026-07-18: "personel foto çekiyor, okunamayınca
     # toptancıdan PDF istiyoruz, PDF gelince aynı fatura İKİ kayıt oluyor").
     # Foto sonradan okununca aynı fatura_no başka satırda zaten varsa BU satır
@@ -2182,7 +2186,37 @@ def tedarikci_sinif(ad: str) -> str:
         return "mal"
 
 
-def belge_sinifi_coz(cur, fatura_id: str, tedarikci_ad: str) -> str:
+# ── 🔬 KALEM KANITI — İÇERİK, ADI EZER (2026-08-08).
+# Canlı ders: "KONYA SUKİ ENERJİ YATIRIM SANAYİ VE TİCARET A.Ş." adına bakıp
+# elektrik şirketi sandık; faturanın kalemleri "0,5 L PET SU (12 ADET/KOLİ)"
+# çıktı — bu bir SU TEDARİKÇİSİ, mal satıyor. Ad bir TAHMİN, kalem bir KANIT.
+# Gider faturasının kalemi tüketim/abonelik dilinde konuşur; mal faturasınınki
+# ürün adı + adet + birim fiyat.
+_HIZMET_KALEM_KANITI = (
+    "KWH", "KW/H", "TÜKETİM BEDEL", "TUKETIM BEDEL", "ABONE", "SAYAÇ", "SAYAC",
+    "ENDEKS", "DAĞITIM BEDEL", "DAGITIM BEDEL", "ENERJİ BEDEL", "ENERJI BEDEL",
+    "GÜÇ BEDEL", "GUC BEDEL", "İLETİM BEDEL", "ILETIM BEDEL", "KAYIP KAÇAK",
+    "M3 SU", "ATIK SU", "SABİT ÜCRET", "SABIT UCRET", "PAKET ÜCRET",
+    "ABONELİK", "ABONELIK", "TRT PAY", "ELEKTRİK TÜKETİM", "DOĞALGAZ TÜKETİM",
+)
+
+
+def kalem_sinif_kaniti(kalem_adlari) -> Optional[str]:
+    """Kalemlerden sınıf kanıtı: 'hizmet' | 'mal' | None (kanıt yok).
+
+    Kanıt varsa ad heuristiğini EZER — içerik tahminden güçlüdür.
+    """
+    adlar = [str(a or "").upper() for a in (kalem_adlari or []) if str(a or "").strip()]
+    if not adlar:
+        return None
+    birlesik = " | ".join(adlar)
+    if any(k in birlesik for k in _HIZMET_KALEM_KANITI):
+        return "hizmet"
+    # Ürün satırı var, tüketim dili yok → mal faturası
+    return "mal"
+
+
+def belge_sinifi_coz(cur, fatura_id: str, tedarikci_ad: str, kalem_adlari=None) -> str:
     """Faturanın sınıfını KAYNAKTA damgalar ve döndürür.
 
     Sahip sorusu (2026-08-08): "ürüne gelen faturayla elektrik faturası arasında
@@ -2198,10 +2232,12 @@ def belge_sinifi_coz(cur, fatura_id: str, tedarikci_ad: str) -> str:
         r = cur.fetchone()
         if r and (r.get("sinif_kaynak") or "") == "elle" and r.get("belge_sinifi"):
             return r["belge_sinifi"]
-        s = tedarikci_sinif(tedarikci_ad)
+        kanit = kalem_sinif_kaniti(kalem_adlari)
+        s = kanit or tedarikci_sinif(tedarikci_ad)
+        kaynak = "kalem_kaniti" if kanit else "ad_heuristik"
         cur.execute(
-            "UPDATE tedarikci_fatura SET belge_sinifi=%s, sinif_kaynak='ad_heuristik' WHERE id=%s",
-            (s, fatura_id),
+            "UPDATE tedarikci_fatura SET belge_sinifi=%s, sinif_kaynak=%s WHERE id=%s",
+            (s, kaynak, fatura_id),
         )
         return s
     except Exception as e:  # noqa: BLE001 — damga başarısız olsa da fatura kaydı yaşar
@@ -2311,13 +2347,23 @@ def belge_sinifi_tazele(sadece_bos: int = 1, limit: int = 2000):
             (limit,),
         )
         for r in (cur.fetchall() or []):
-            yeni = tedarikci_sinif(r["tedarikci_ad"])
+            # İÇERİK ADI EZER: kalemler varsa kanıt onlardan gelir (KONYA SUK dersi)
+            cur.execute(
+                "SELECT ocr_ad FROM tedarikci_fatura_kalem WHERE fatura_id=%s LIMIT 50",
+                (r["id"],),
+            )
+            adlar = [k["ocr_ad"] for k in (cur.fetchall() or [])]
+            kanit = kalem_sinif_kaniti(adlar)
+            yeni = kanit or tedarikci_sinif(r["tedarikci_ad"])
+            kaynak = "kalem_kaniti" if kanit else "ad_heuristik"
             if yeni != (r.get("belge_sinifi") or None):
                 degisen.append({"id": r["id"], "tedarikci": r["tedarikci_ad"],
-                                "eski": r.get("belge_sinifi"), "yeni": yeni})
+                                "eski": r.get("belge_sinifi"), "yeni": yeni,
+                                "dayanak": kaynak,
+                                "ornek_kalem": (adlar[0] if adlar else None)})
             cur.execute(
-                "UPDATE tedarikci_fatura SET belge_sinifi=%s, sinif_kaynak='ad_heuristik' WHERE id=%s",
-                (yeni, r["id"]),
+                "UPDATE tedarikci_fatura SET belge_sinifi=%s, sinif_kaynak=%s WHERE id=%s",
+                (yeni, kaynak, r["id"]),
             )
             guncel += 1
         conn.commit()
