@@ -2882,7 +2882,12 @@ def kart_vergi_etkisi(gun: int = 365, kurumlar_orani: float = 0.25):
 #   0.70–0.95 → aday listesi, SAHİP onaylar
 #   < 0.70  → dokunma
 GUVEN_OTOMATIK = 0.95
-GUVEN_ADAY = 0.70
+# ⚠️ ADAY EŞİĞİ 0.55 (2026-08-08 kalibrasyon dersi): 0.70 iken ÖĞRENME
+# KİLİTLENMESİ vardı — ilk kez görülen kalıp %60 alıyor, aday eşiği %70 →
+# sahip hiç aday görmez → hiç onaylamaz → sistem hiç öğrenemez → hiçbir şey
+# otomatikleşemez. Eşik düşünce döngü kapanıyor: sahip ilk seferinde onaylar,
+# sistem öğrenir, sonrakini kendi bağlar.
+GUVEN_ADAY = 0.55
 
 
 def _eslesme_guven(cur, tedarikci: str, hareket: dict, acik_bakiye: float,
@@ -2893,12 +2898,20 @@ def _eslesme_guven(cur, tedarikci: str, hareket: dict, acik_bakiye: float,
                if len(w) > 2 and w not in _JENERIK]
     metin = _cari_katla(hareket.get("aciklama") or "")
 
-    # 1) AD KALİTESİ (0–0.40): marka tokeni geçiyor mu, kaç kelime örtüşüyor
+    # 1) AD KALİTESİ (0–0.35): marka tokeni geçiyor mu?
+    # ⚠️ KALİBRASYON (2026-08-08): ilk sürüm kelime SAYISIYLA puanlıyordu
+    # (0.22 × ortak). Türk tedarikçi markaları genelde TEK kelimedir (FEZ,
+    # ATALAY, SÜTAŞ) → "FEZ KAHWE" ↔ "FEZ KAHVE GIDA ITHALAT KONYA TR" gibi
+    # neredeyse birebir eşleşme %82'de kalıp asla otomatiğe ulaşamıyordu.
+    # Artık marka tokeni geçiyorsa tabandan yüksek puan, ek kelimeler bonus.
     ortak = [w for w in ted_kel if w in metin]
-    p["ad"] = round(min(0.40, 0.22 * len(ortak)), 4) if ortak else 0.0
+    p["ad"] = round(min(0.35, 0.30 + 0.05 * (len(ortak) - 1)), 4) if ortak else 0.0
 
-    # 2) ÖĞRENME (0–0.30): karar defterinde AYNI açıklama kalıbı daha önce bu
-    #    tedarikçiye onaylandı mı? Sahibin geçmiş kararı en güçlü sinyaldir.
+    # 2) ÖĞRENME (0–0.35): karar defterinde AYNI açıklama kalıbı daha önce bu
+    #    tedarikçiye onaylandı mı? Sahibin geçmiş kararı EN GÜÇLÜ sinyaldir.
+    #    Bu bileşen olmadan tavan %65'tir → sistem İLK KEZ gördüğü bir kalıbı
+    #    ASLA otomatik bağlamaz; önce sahip onaylar, sistem öğrenir, sonrakini
+    #    kendi bağlar. Otomasyon sahibin kararından türer, tahminden değil.
     p["ogrenme"] = 0.0
     try:
         _kalip = " ".join(metin.split()[:3])
@@ -2911,7 +2924,7 @@ def _eslesme_guven(cur, tedarikci: str, hareket: dict, acik_bakiye: float,
                      AND LOWER(COALESCE(h.aciklama,'')) LIKE %s""",
                 (tedarikci, f"%{_kalip}%"))
             if int((cur.fetchone() or {}).get("n") or 0) > 0:
-                p["ogrenme"] = 0.30
+                p["ogrenme"] = 0.35
     except Exception:  # noqa: BLE001
         pass
 
