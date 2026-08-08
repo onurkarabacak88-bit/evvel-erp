@@ -608,24 +608,41 @@ def _fatura_kuyruk_uret(fatura_id: str) -> str:
                 return "atlandi_arsiv"
             # ÖDEME İZİ FRENİ: zaten ödenmişse kuyruğa GİRMEZ (3 kanal,
             # tutar ±max(5,%2), tarih fatura −10g..+90g)
+            #
+            # ⚠️ 2026-08-08 DÜZELTMESİ (sahip: "ödeme yapılınca düşüyor mu,
+            # kapatabiliyor mu?"). Fren eskiden YALNIZ tutar+tarih bakıyordu —
+            # kime ödendiğine bakmıyordu. Canlı sonuçları:
+            #   · "3 aylık halkbank kredi ödemesi" 34.850 → FEZ 35.148 faturasını
+            #   · "halı yıkama" 1.100 → AGİT SEFA'nın ÜÇ faturasını birden
+            #   · "talha avans" 1.500 → Napolés 1.515 faturasını
+            #   · "etliekmek ve malzemeleri" 500 → DORUK AJANS 498 faturasını
+            # kapatmış sayıyordu. Toplam 81.264 ₺ borç görünmez olmuştu.
+            # Artık TEDARİKÇİ ADI da şart: iz metni tedarikçiyle eşleşmezse
+            # fatura kuyruğa GİRER (borç görünür kalır — güvenli taraf).
             tut = float(f["tutar"])
             cur.execute(
-                """SELECT 1 FROM (
-                     SELECT vade_tarihi AS t, tutar FROM vadeli_alimlar
-                     WHERE durum='odendi'
+                """SELECT * FROM (
+                     SELECT vade_tarihi AS t, tutar,
+                            COALESCE(aciklama,'') || ' ' || COALESCE(tedarikci,'') AS metin
+                     FROM vadeli_alimlar WHERE durum='odendi'
                      UNION ALL
-                     SELECT tarih, tutar FROM anlik_giderler
-                     WHERE durum='aktif' AND kaynak_id IS NULL
+                     SELECT tarih, tutar,
+                            COALESCE(aciklama,'') || ' ' || COALESCE(tedarikci,'')
+                     FROM anlik_giderler WHERE durum='aktif' AND kaynak_id IS NULL
                      UNION ALL
-                     SELECT tarih, tutar FROM kart_hareketleri
+                     SELECT tarih, tutar, COALESCE(aciklama,'')
+                     FROM kart_hareketleri
                      WHERE islem_turu='HARCAMA' AND durum='aktif'
                        AND kaynak_id IS NULL
                        AND COALESCE(harcama_tipi,'belirsiz') <> 'sahsi') x
                    WHERE ABS(x.tutar - %s) <= GREATEST(5, %s * 0.02)
                      AND x.t BETWEEN %s::date - 10 AND %s::date + 90
-                   LIMIT 1""",
+                   LIMIT 20""",
                 (tut, tut, ftarih or str(_d.today()), ftarih or str(_d.today())))
-            if cur.fetchone():
+            _izler = [dict(x) for x in (cur.fetchall() or [])]
+            _eslesen = next((i for i in _izler
+                             if _odeme_eslesir(ted, i.get("metin") or "")), None)
+            if _eslesen:
                 cur.execute("UPDATE tedarikci_fatura SET kuyruk_vadeli_id='(odenmis)' "
                             "WHERE id=%s", (fatura_id,))
                 return "zaten_odenmis"
@@ -2273,6 +2290,49 @@ def belge_sinifi_ozet():
         "not": "'damgasiz' = sınıf henüz çözülmemiş (eski kayıt). "
                "POST /api/fatura/belge-sinifi-tazele ile doldurulur. "
                "Elle düzeltme: POST /api/fatura/{id}/belge-sinifi?sinif=hizmet",
+    }
+
+
+@router.post("/odenmis-damga-temizle")
+def odenmis_damga_temizle(kuru: int = 1):
+    """Yanlış '(odenmis)' damgalarını kaldırır ve faturayı borç kuyruğuna alır.
+
+    kuru=1 (varsayılan) → hiçbir şey yazmaz, ne olacağını gösterir.
+    kuru=0              → damgayı siler ve motoru YENİDEN çalıştırır (düzeltilmiş
+                          fren artık tedarikçi adını da şart koşar, yani gerçekten
+                          ödenmişse yeniden aynı damgayı basar).
+
+    Yalnız denetimin riskli bulduğu satırlara dokunur (iz_baska_tedarikci /
+    iz_paylasimli / iz_bulunamadi). 'iz_uyusuyor' olanlara DOKUNMAZ.
+    """
+    denetim = odenmis_sayilan_denetimi()
+    hedef = [s for s in denetim["satirlar"]
+             if s["hal"] in ("iz_baska_tedarikci", "iz_paylasimli", "iz_bulunamadi")]
+    if kuru:
+        return {
+            "kuru_calistirma": True, "etkilenecek": len(hedef),
+            "borca_donecek_tutar": round(sum(s["tutar"] for s in hedef), 2),
+            "satirlar": [{"tedarikci": s["tedarikci"], "tarih": s["tarih"],
+                          "tutar": s["tutar"], "hal": s["hal"]} for s in hedef],
+            "not": "Hiçbir şey yazılmadı. Uygulamak için ?kuru=0 ile çağır.",
+        }
+    sonuclar = []
+    for s in hedef:
+        try:
+            with db() as (conn, cur):
+                cur.execute("UPDATE tedarikci_fatura SET kuyruk_vadeli_id=NULL WHERE id=%s",
+                            (s["fatura_id"],))
+                conn.commit()
+            durum = _fatura_kuyruk_uret(s["fatura_id"])
+        except Exception as e:  # noqa: BLE001
+            durum = f"hata: {str(e)[:80]}"
+        sonuclar.append({"tedarikci": s["tedarikci"], "tutar": s["tutar"],
+                         "onceki_hal": s["hal"], "yeni_durum": durum})
+    return {
+        "kuru_calistirma": False, "islenen": len(sonuclar),
+        "sonuclar": sonuclar,
+        "not": "Damga silindi, motor düzeltilmiş frenle yeniden çalıştı. "
+               "'zaten_odenmis' dönenlerde iz gerçekten tedarikçiyle eşleşmiş demektir.",
     }
 
 
