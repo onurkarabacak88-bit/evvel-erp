@@ -55,6 +55,7 @@ def odeme_plani_cari_uyumsuzluk():
     ⚠️ ÖNERİ-ONLY: bu uç hiçbir plan kapatmaz. Hangi kalemin kapanması
     gerektiğini FIFO ile HESAPLAR ve sahibin önüne koyar.
     """
+    import re as _re2
     with db() as (conn, cur):
         # Plan tarafı: bekleyen kalemler, tedarikçiye göre
         cur.execute("""
@@ -96,12 +97,14 @@ def odeme_plani_cari_uyumsuzluk():
         if not adn:
             continue
         # Bu tedarikçiye ait bekleyen plan kalemleri.
-        # Eşleşme sırası: (1) vadeli_alimlar.tedarikci ALANI — kanonik bağ,
-        # (2) açıklamada geçmesi — yalnız ad ≥5 harfse (kısa ad çok eşleşir).
-        # 'fethi' gibi kısa/kişi adları yalnız ALAN üzerinden eşleşir.
+        # (1) vadeli_alimlar.tedarikci ALANI — kanonik bağ, her zaman geçerli
+        # (2) açıklamada KELİME SINIRIYLA geçmesi
+        # ⚠️ Önce "ad ≥5 harf" şartı koymuştum; 'FEZ' (3 harf) elendi ve
+        # kuyruğu 86.577 yerine 47.490 gösterdi. Kısa adı elemek yerine
+        # KELİME SINIRI kullanılır: 'FEZ' eşleşir, 'FEZA'nın içinde eşleşmez.
+        _kalip = _re2.compile(r"(?<![A-Z0-9])" + _re2.escape(adn) + r"(?![A-Z0-9])")
         kendi = [p for p in planlar
-                 if _norm(p["ted"]) == adn
-                 or (len(adn) >= 5 and adn in _norm(p["aciklama"]))]
+                 if _norm(p["ted"]) == adn or _kalip.search(_norm(p["aciklama"]))]
         if not kendi:
             continue
         plan_top = round(sum(float(p["tutar"] or 0) - float(p["odenen"] or 0)
