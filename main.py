@@ -2251,12 +2251,15 @@ def kasa_sube_atama_denetimi(kuru: int = 1):
                       FROM (
                         SELECT kh2.id AS hid, MIN(p.sube_id) AS sube_id
                           FROM kasa_hareketleri kh2
+                          -- ⚠️ Kolon adı `ad` DEĞİL `ad_soyad` (personel tablosu).
+                          -- Yanlış kolonla yazılan ilk sürüm hiç eşleşme
+                          -- bulamıyordu ve sessizce 0 satır güncelliyordu.
                           JOIN personel p
-                            ON UPPER(kh2.aciklama) LIKE '%%' || UPPER(TRIM(p.ad)) || '%%'
+                            ON UPPER(kh2.aciklama) LIKE '%%' || UPPER(TRIM(p.ad_soyad)) || '%%'
                          WHERE kh2.islem_turu = %s
                            AND kh2.sube_id IS NULL
                            AND COALESCE(p.sube_id,'') <> ''
-                           AND LENGTH(TRIM(p.ad)) >= 5
+                           AND LENGTH(TRIM(p.ad_soyad)) >= 5
                          GROUP BY kh2.id
                         HAVING COUNT(DISTINCT p.sube_id) = 1
                       ) e
