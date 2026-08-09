@@ -2157,6 +2157,98 @@ def kasa_durumu():
         return {"guncel_bakiye": kasa, "hareketler": [dict(r) for r in cur.fetchall()]}
 
 
+@app.post("/api/kasa/sube-atama-denetimi")
+def kasa_sube_atama_denetimi(kuru: int = 1):
+    """🏪 ŞUBESİ ATANMAMIŞ KASA HAREKETLERİ — hangisi gerçekten merkezî?
+
+    Kasa şube kırılımında 137 hareket / 1,58 M ₺ "Merkez / atanmamış" kovasında
+    duruyor. İkiye ayrılır:
+      · GERÇEKTEN MERKEZÎ  — kart borcu ödemesi, kredi taksiti, açılış devri,
+        dış kaynak: bunların şubesi YOKTUR, kova doğrudur.
+      · ATANABİLİR         — kaynak kaydında şube bilgisi var ama kasa satırına
+        taşınmamış (personel maaşı → personelin şubesi, sabit gider → gider
+        şubesi, anlık gider → gider şubesi …). Bunlar şube kârlılığını bozar.
+
+    kuru=1 ölçer; kuru=0 atanabilir olanları kaynak kayıttan türetip yazar.
+    """
+    # kaynak_tablo → (şube kolonu, tablo) eşlemesi. Buradaki her satır
+    # "kasa hareketinin şubesi ASLINDA şu kayıtta yazılı" demektir.
+    _TUREME = [
+        ("anlik_giderler", "anlik_giderler", "COALESCE(NULLIF(TRIM(t.sube_id),''), NULLIF(TRIM(t.sube),''))"),
+        ("sabit_giderler", "sabit_giderler", "t.sube_id"),
+        ("ciro", "ciro", "t.sube_id"),
+        ("personel_aylik", "personel_aylik", "(SELECT p.sube_id FROM personel p WHERE p.id::text = t.personel_id::text)"),
+        ("kasa_teslim", "kasa_teslim", "t.sube_id"),
+    ]
+    # Şubesi OLMAYAN, merkezde kalması DOĞRU olan işlem türleri
+    _MERKEZI = ("KART_ODEME", "KART_ODEME_IPTAL", "BORC_TAKSIT", "ACILIS_DEVRI",
+                "DIS_KAYNAK", "DIS_KAYNAK_IPTAL", "VADELI_ODEME", "ODEME_IPTAL")
+    with db() as (conn, cur):
+        cur.execute("""
+            SELECT COALESCE(islem_turu,'(yok)') AS islem_turu,
+                   COALESCE(kaynak_tablo,'(yok)') AS kaynak_tablo,
+                   COUNT(*) AS adet, COALESCE(SUM(tutar),0)::float AS tutar
+              FROM kasa_hareketleri
+             WHERE sube_id IS NULL
+               AND COALESCE(durum,'aktif')='aktif'
+               AND COALESCE(kasa_etkisi,TRUE)=TRUE
+             GROUP BY 1,2 ORDER BY ABS(SUM(tutar)) DESC
+        """)
+        gruplar = []
+        for r in (cur.fetchall() or []):
+            d = dict(r)
+            _tur = d["islem_turu"]
+            _kt = d["kaynak_tablo"]
+            _turetilebilir = any(k == _kt for k, _, _ in _TUREME)
+            d["sinif"] = ("merkezi" if _tur in _MERKEZI and not _turetilebilir
+                          else "atanabilir" if _turetilebilir else "belirsiz")
+            d["tutar"] = round(float(d["tutar"] or 0), 2)
+            gruplar.append(d)
+        atanan = 0
+        if not kuru:
+            for kt, tablo, kol in _TUREME:
+                try:
+                    cur.execute("SAVEPOINT sp_sa")
+                    cur.execute(f"""
+                        UPDATE kasa_hareketleri kh
+                           SET sube_id = s.id
+                          FROM {tablo} t
+                          JOIN subeler s ON s.id::text = ({kol})::text
+                         WHERE kh.kaynak_tablo = %s
+                           AND kh.kaynak_id::text = t.id::text
+                           AND kh.sube_id IS NULL
+                    """, (kt,))
+                    atanan += cur.rowcount or 0
+                    cur.execute("RELEASE SAVEPOINT sp_sa")
+                except Exception as e:  # noqa: BLE001
+                    try:
+                        cur.execute("ROLLBACK TO SAVEPOINT sp_sa"); cur.execute("RELEASE SAVEPOINT sp_sa")
+                    except Exception:  # noqa: BLE001
+                        pass
+                    logging.getLogger(__name__).warning(
+                        "sube atama atlandi (%s): %s", kt, str(e)[:110])
+            conn.commit()
+    _t = lambda s: round(sum(g["tutar"] for g in gruplar if g["sinif"] == s), 2)  # noqa: E731
+    _a = lambda s: sum(g["adet"] for g in gruplar if g["sinif"] == s)  # noqa: E731
+    return {
+        "kuru": bool(kuru), "atanan_satir": atanan,
+        "ozet": {
+            "merkezi": {"adet": _a("merkezi"), "tutar": _t("merkezi"),
+                        "ne_demek": "şubesi YOKTUR — kart borcu, kredi taksiti, "
+                                    "açılış devri, dış kaynak. Kova doğru."},
+            "atanabilir": {"adet": _a("atanabilir"), "tutar": _t("atanabilir"),
+                           "ne_demek": "kaynak kayıtta şube var, kasa satırına "
+                                       "taşınmamış — şube kârlılığını bozar."},
+            "belirsiz": {"adet": _a("belirsiz"), "tutar": _t("belirsiz"),
+                         "ne_demek": "kaynağı bilinmiyor ya da eşleme kuralı yok — "
+                                     "sahip bakmalı."},
+        },
+        "gruplar": gruplar,
+        "not": "kuru=1 ölçer, kuru=0 'atanabilir' olanları kaynak kayıttan türetir. "
+               "'merkezi' sınıfa DOKUNULMAZ — onların şubesi gerçekten yoktur.",
+    }
+
+
 @app.post("/api/sube-kimlik-denetimi")
 def sube_kimlik_denetimi(kuru: int = 1):
     """🏪 ŞUBE KİMLİĞİ TEK STANDARDA — 'sube' mi 'sube_id' mi, ad mı kimlik mi?
