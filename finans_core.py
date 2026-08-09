@@ -26,16 +26,24 @@ from tr_saat import bugun_tr
 # KASA
 # ══════════════════════════════════════════════════════════════
 
+# 🔒 TEK SÜZGEÇ (2026-08-09): kasaya bakan HER sorgu bunu kullanır.
+# Sebep: kasa_bakiyesi `durum='aktif'` süzüyordu, kasa_detay_breakdown
+# SÜZMÜYORDU — iki uç aynı kasayı 11.293,81 ₺ farkla gösteriyordu. Aynı
+# gerçeği iki yerde ayrı ayrı yazmak, bu sistemdeki hataların en sık kalıbı.
+# Yeni bir kasa sorgusu yazan buraya bakar; WHERE'i elle KOPYALAMAZ.
+KASA_SUZGEC = "kasa_etkisi = TRUE AND COALESCE(durum,'aktif') = 'aktif'"
+
+
 def kasa_bakiyesi(cur) -> float:
     """
     Anlık kasa bakiyesi.
-    Tek gerçek kaynak: kasa_hareketleri WHERE kasa_etkisi=true.
+    Tek gerçek kaynak: kasa_hareketleri + KASA_SUZGEC.
     DEVIR dahil değil (kasa_etkisi=false).
     """
-    cur.execute("""
+    cur.execute(f"""
         SELECT COALESCE(SUM(tutar), 0) AS bakiye
         FROM kasa_hareketleri
-        WHERE kasa_etkisi = true AND durum = 'aktif'
+        WHERE {KASA_SUZGEC}
     """)
     return float(cur.fetchone()['bakiye'])
 
@@ -56,21 +64,37 @@ def kasa_bakiyesi_tarihte(cur, tarih: date) -> float:
 def kasa_detay_breakdown(cur) -> dict:
     """
     Kasa'yı işlem türü bazında döker — audit ve debug için.
+
+    ⚠️ 2026-08-09: burada `durum='aktif'` süzgeci YOKTU; iptal edilmiş
+    hareketler de sayılıyordu. Sonuç: bu uç 2.855.537,97 ₺, /api/kasa
+    2.866.831,78 ₺ diyordu — 11.293,81 ₺ fark. Artık ikisi de KASA_SUZGEC
+    kullanıyor; `dogrulama` alanı ikisinin tuttuğunu her çağrıda ispatlar.
     """
-    cur.execute("""
+    cur.execute(f"""
         SELECT islem_turu,
                COUNT(*) AS adet,
                SUM(tutar) AS toplam,
                SUM(CASE WHEN tutar > 0 THEN tutar ELSE 0 END) AS giris,
                SUM(CASE WHEN tutar < 0 THEN ABS(tutar) ELSE 0 END) AS cikis
         FROM kasa_hareketleri
-        WHERE kasa_etkisi = true
+        WHERE {KASA_SUZGEC}
         GROUP BY islem_turu
         ORDER BY toplam DESC
     """)
     satirlar = [dict(r) for r in cur.fetchall()]
-    net = sum(float(r['toplam']) for r in satirlar)
-    return {"net_kasa": net, "detay": satirlar}
+    net = round(sum(float(r['toplam']) for r in satirlar), 2)
+    # TIE-OUT: kırılımın toplamı kasa bakiyesini TUTMALI. Tutmuyorsa sessiz
+    # geçme — farkı göster ki bir daha 11.293 ₺ fark aylarca fark edilmesin.
+    bakiye = round(kasa_bakiyesi(cur), 2)
+    return {
+        "net_kasa": net, "detay": satirlar,
+        "dogrulama": {
+            "kasa_bakiyesi": bakiye,
+            "kirilim_toplami": net,
+            "fark": round(bakiye - net, 2),
+            "tutuyor": abs(bakiye - net) < 0.01,
+        },
+    }
 
 
 # ══════════════════════════════════════════════════════════════

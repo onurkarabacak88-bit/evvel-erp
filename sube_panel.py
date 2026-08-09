@@ -3936,15 +3936,27 @@ def sube_urun_ac(sube_id: str, body: SubeUrunAcBody):
         from operasyon_stok_motor import pasta_kalem_kodu_seti as _pks, pasta_kalemi_mi as _pkm
         _pasta_set = _pks(cur)
         _islendi_kalemler: set = set()  # Aynı kalem_kodu'nun tek request'te iki kez düşmesini önler
+        # 🔇 SESSİZ ATLAMA BİTTİ (2026-08-09): çözülemeyen kalemler sessizce
+        # `continue` ediliyordu ve yanıt yine `success:true` dönüyordu —
+        # "2 espresso açtım" denip depodan hiçbir şey düşmüyordu. Artık
+        # atlananlar TOPLANIR ve yanıtta bildirilir. Sistem yapamadığını SÖYLER.
+        _atlananlar: List[Dict[str, Any]] = []
         for k in acilinca_kalemler:
             uid = str(k.get("urun_id") or "").strip()
             uad = str(k.get("urun_ad") or "").strip()
             if uid:
                 kk = depo_kalem_kodu_resolve(cur, uid, uad)
             else:
-                # urun_id eksik — isme göre çözme artık YOK (migration v5 sonrası her ürün UUID'li)
+                # urun_id eksik — isme göre çözme YOK (migration v5: her ürün UUID'li)
+                _atlananlar.append({
+                    "urun_ad": uad or "(adsız)", "adet": int(k.get("adet") or 0),
+                    "neden": "urun_id yok — kalem kanonik kimliğe çözülemedi "
+                             "(panelden ürün seçilerek gönderilmeli)"})
                 continue
             if not kk:
+                _atlananlar.append({
+                    "urun_ad": uad or "(adsız)", "adet": int(k.get("adet") or 0),
+                    "neden": f"depo kalemi bulunamadı (urun_id={uid[:8]}…)"})
                 continue
             # Aynı kalem_kodu bu request'te zaten işlendiyse atla
             if kk in _islendi_kalemler:
@@ -4045,13 +4057,23 @@ def sube_urun_ac(sube_id: str, body: SubeUrunAcBody):
         # eski kalemler yüklenir (istemci programatik sıfırlamada input/change tetiklenmeyebilir).
         cur.execute("DELETE FROM urun_ac_taslak WHERE sube_id = %s", (sube_id,))
 
+    _atl = locals().get("_atlananlar") or []
+    _atl_adet = sum(int(x.get("adet") or 0) for x in _atl)
     return {
-        "success": True,
+        # ⚠️ Hiçbir kalem işlenemediyse success=FALSE. "Başardım" diyen bir
+        # yanıt gerçekten iş yapmış olmalı (2026-08-09 sessiz atlama dersi).
+        "success": bool(not _atl or _atl_adet < sum(
+            max(0, int(k.get("adet") or 0)) for k in acilinca_kalemler)),
         "defter_id": rid,
         "delta": {},
         "kalemler": kalemler,
         "acilinca_adet": sum(max(0, int(k.get("adet") or 0)) for k in acilinca_kalemler),
         "bitince_adet": sum(max(0, int(k.get("adet") or 0)) for k in bitince_kalemler),
+        # 🔇 İŞLENEMEYEN KALEMLER — gizlenmez, sayılır ve sebebi söylenir
+        "atlanan": _atl,
+        "atlanan_adet": _atl_adet,
+        "uyari": (f"{len(_atl)} kalem işlenemedi ({_atl_adet} adet) — depodan "
+                  "DÜŞMEDİ. Sebepler 'atlanan' listesinde." if _atl else None),
         "tip": "URUN_AC",
     }
 

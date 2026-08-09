@@ -591,9 +591,26 @@ def ops_merkez_siparis_olustur(body: dict = None):
         if not tr:
             raise HTTPException(404, "Tedarikçi bulunamadı veya pasif")
         ted = dict(tr)
-        cur.execute("SELECT ad FROM subeler WHERE id=%s", (sube_id,))
+        # 🚧 GUARD SİMETRİSİ (2026-08-09): teslim ucu sezon/kasa kilidi arıyordu
+        # ama SİPARİŞ ucu aramıyordu. Sonuç: sezon kapalı Köyceğiz'e sipariş
+        # açılabiliyor, sonra teslimde 403 alınıyordu — yolun yarısında kalan
+        # hayalet kayıt. Aynı kural zincirin her halkasında geçerli olmalı.
+        cur.execute("SELECT ad, COALESCE(aktif,TRUE) AS aktif, "
+                    "COALESCE(sezon_kapali,FALSE) AS sezon_kapali "
+                    "FROM subeler WHERE id=%s", (sube_id,))
         sr = cur.fetchone()
-        sube_adi = (dict(sr).get("ad") if sr else None) or sube_id
+        if not sr:
+            raise HTTPException(404, "Şube bulunamadı")
+        _s = dict(sr)
+        if not _s.get("aktif"):
+            raise HTTPException(409, f"'{_s.get('ad')}' şubesi pasif — sipariş açılamaz.")
+        if _s.get("sezon_kapali"):
+            raise HTTPException(
+                409,
+                f"'{_s.get('ad')}' şubesi SEZON KAPALI. Sipariş açılırsa teslim "
+                "alınamaz (teslim adımı kasa kilidi ister) ve yarım kayıt kalır. "
+                "Önce şubeyi sezona açın.")
+        sube_adi = _s.get("ad") or sube_id
         # V2: kanonik urun_id damgala (kaynakta çöz)
         for k in kalemler:
             k["urun_id"] = _kanonik_urun_id(cur, k.get("kalem_kodu"), k.get("urun_ad"))
@@ -13395,17 +13412,27 @@ def ops_v2_sube_depo_guncelle(body: SubeDepoGuncelle):
                 (id, sube_id, kalem_kodu, kalem_adi, mevcut_adet, min_stok, alis_fiyati_tl)
             VALUES (%s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (sube_id, kalem_kodu) DO UPDATE
-            SET kalem_adi   = EXCLUDED.kalem_adi,
+            -- ⚠️ 2026-08-09: `kalem_adi = EXCLUDED.kalem_adi` idi ve çağrıda ad
+            -- boş gelince yerine UUID yazılıyordu → kalem ekranda ADINI
+            -- KAYBEDİYOR, aramada bulunamıyordu ("ESPRESSO kayboldu" vakası).
+            -- Ad göndermek İSTEĞE BAĞLI: boşsa mevcut ad korunur.
+            SET kalem_adi   = COALESCE(NULLIF(EXCLUDED.kalem_adi, ''),
+                                       sube_depo_stok.kalem_adi),
                 mevcut_adet = EXCLUDED.mevcut_adet,
                 min_stok    = EXCLUDED.min_stok,
-                alis_fiyati_tl = EXCLUDED.alis_fiyati_tl,
+                -- fiyat 0 gönderilirse mevcut fiyatı SIFIRLAMA (aynı tuzak)
+                alis_fiyati_tl = CASE WHEN COALESCE(EXCLUDED.alis_fiyati_tl,0) > 0
+                                      THEN EXCLUDED.alis_fiyati_tl
+                                      ELSE sube_depo_stok.alis_fiyati_tl END,
                 guncelleme  = NOW()
             """,
             (
                 str(uuid.uuid4()),
                 sube_id,
                 kalem_kodu,
-                body.kalem_adi or kalem_kodu,
+                # INSERT yolunda ad zorunlu; UPDATE yolunda boş geçilirse
+                # yukarıdaki COALESCE mevcut adı korur.
+                (body.kalem_adi or "").strip() or kalem_kodu,
                 yeni_adet,
                 int(body.min_stok or 0),
                 round(alis_fiyat, 2),
