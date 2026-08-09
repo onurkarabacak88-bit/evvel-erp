@@ -296,12 +296,32 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
     return [...m.values()].sort((a, b) => (b.gecikmisTutar - a.gecikmisTutar) || (b.tutar - a.tutar));
   }, [tutarli, tutarsiz]);
 
+  // ── ⏳ VADESİ GELEN / YAKLAŞAN AYRIMI (2026-08-09) ─────────────────────────
+  // Sahip: "Ağustos'un BÜTÜN ödemeleri gözüküyor, hata da burada başlıyor —
+  // gün gelene kadar olanlar görünmeli, gün geçtikçe artmalı."
+  // Kuyruk 14 günlük pencere getiriyordu; 15 Ağustos'taki 390.000 ₺ kira ile
+  // 9 Ağustos'ta ödenmesi gereken maaş aynı listede yan yana duruyordu. Liste
+  // "şimdi ne yapmalıyım" sorusunu cevaplamalı; ileri tarihli kalem bugünün
+  // işi değildir. Varsayılan: YALNIZ VADESİ GELMİŞ. Yaklaşanlar ayrı blokta
+  // durur, sayısı ve toplamı görünür — gizlenmez, sadece karışmaz.
+  const [ileriGoster, setIleriGoster] = useState(false);
+  const vadesiGelen = useMemo(
+    () => satirlar.filter((o) => !o._tarih || o._gecikmis || o._bugunMu),
+    [satirlar]);
+  const yaklasanlar = useMemo(
+    () => satirlar.filter((o) => o._tarih && !o._gecikmis && !o._bugunMu),
+    [satirlar]);
+  const yaklasanToplam = yaklasanlar
+    .filter((o) => !o.tutar_girilmedi)
+    .reduce((s, o) => s + o._tutar, 0);
+
   // Süzgeç listeye uygulanır; KPI toplamları DEĞİŞMEZ (tüm kuyruğun gerçeği).
   const gorunenSatirlar = useMemo(() => {
-    if (!turFiltre) return satirlar;
-    if (turFiltre === '__tutarsiz__') return satirlar.filter((o) => o.tutar_girilmedi);
-    return satirlar.filter((o) => (o.tip || 'Diğer') === turFiltre && !o.tutar_girilmedi);
-  }, [satirlar, turFiltre]);
+    const taban = ileriGoster ? satirlar : vadesiGelen;
+    if (!turFiltre) return taban;
+    if (turFiltre === '__tutarsiz__') return taban.filter((o) => o.tutar_girilmedi);
+    return taban.filter((o) => (o.tip || 'Diğer') === turFiltre && !o.tutar_girilmedi);
+  }, [satirlar, vadesiGelen, ileriGoster, turFiltre]);
 
   // ── ÖDEME KOŞUSU v2-YERLİ (köprü kaldırma turu, 2026-07-30) ────────────────
   // Klasik ÖM sihirbazının çekirdeği: tam/kısmi + nakit/kart + fatura eki +
@@ -1310,6 +1330,38 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
               </div>
             )}
           </>
+        )}
+
+        {/* ⏳ VADESİ GELMEMİŞLER — listeye karışmaz, gizlenmez de.
+            Sahip 2026-08-09: "gün gelene kadar olanlar görünmeli, gün geçtikçe
+            artmalı." Liste 'şimdi ne yapmalıyım'ı cevaplar; 15 Ağustos'taki
+            kira 9 Ağustos'un işi değildir. Her gün bir kalem buradan yukarı
+            kayar — kuyruk kendiliğinden büyür. */}
+        {yaklasanlar.length > 0 && (
+          <div style={{
+            ...kartYuzey, padding: '10px 15px', marginBottom: 12,
+            display: 'flex', gap: 14, alignItems: 'baseline', flexWrap: 'wrap',
+          }}>
+            <span style={{ fontSize: 12.5, color: R.metin2 }}>
+              ⏳ <b style={{ color: R.krem }}>{yaklasanlar.length} kalem</b> henüz vadesi gelmedi
+              {' '}(<b style={{ fontFamily: F.mono, color: R.krem }}>{fmt(yaklasanToplam)}</b>)
+            </span>
+            <span style={{ fontSize: 11, color: R.not2 }}>
+              en yakını {kisaTarih(yaklasanlar.reduce(
+                (m, o) => (!m || o._tarih < m ? o._tarih : m), null))}
+            </span>
+            <button
+              onClick={() => setIleriGoster((v) => !v)}
+              style={{
+                marginLeft: 'auto', padding: '5px 12px', borderRadius: 9, cursor: 'pointer',
+                border: `1px solid ${ileriGoster ? R.bakir : R.cizgi3}`,
+                background: ileriGoster ? 'rgba(217,154,78,.14)' : 'transparent',
+                color: ileriGoster ? R.bakir : R.metin2,
+                fontSize: 11.5, fontWeight: 700, fontFamily: 'inherit',
+              }}>
+              {ileriGoster ? '↩ Yalnız vadesi gelenler' : 'Yaklaşanları da göster'}
+            </button>
+          </div>
         )}
         {vaModalBlok}
         {gorunenSatirlar.length ? (
