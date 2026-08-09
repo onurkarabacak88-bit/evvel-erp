@@ -101,14 +101,23 @@ def audit(cur, tablo, kayit_id, islem, eski=None, yeni=None):
          safe_json(eski), safe_json(yeni)))
 
 
+# ⚠️ ÇİFT SAYIM DÜZELTMESİ (2026-08-09, canlı ölçümle yakalandı)
+# iptal_kasa_hareketi() aşağıda orijinal hareketleri KOŞULSUZ `durum='iptal'`
+# yapıyor — yani tutar kasa toplamından zaten çıkıyor. Ters kaydın DA kasaya
+# etki etmesi aynı düzeltmeyi İKİ KEZ uygulamaktır.
+#   Ölçüm: 2.250 ₺ gider silindi → kasa 2.864.581,78 yerine 2.866.831,78 oldu
+#          (+2.250 ₺ fazla). Gider iptali kasayı ŞİŞİRİYORDU.
+# CIRO_IPTAL/CIRO_DUZELTME için bu daha önce fark edilip False yapılmış ama
+# diğer türlere uygulanmamıştı. Ters kayıt HER TÜRDE yalnız AUDIT izidir:
+# ne olduğu defterde görünür, kasa toplamına girmez.
 KASA_IPTAL_MAP = {
-    "ANLIK_GIDER_IPTAL": True,
-    "CIRO_IPTAL": False,       # Orijinal zaten 'iptal' yapılıyor — CIRO_IPTAL sadece audit kaydı
-    "CIRO_DUZELTME": False,    # Orijinal zaten 'iptal' yapılıyor — CIRO_DUZELTME sadece audit kaydı
-    "DIS_KAYNAK_IPTAL": True,
-    "KART_ODEME_IPTAL": True,
-    "VADELI_IPTAL": True,
-    "ODEME_IPTAL": True,
+    "ANLIK_GIDER_IPTAL": False,
+    "CIRO_IPTAL": False,
+    "CIRO_DUZELTME": False,
+    "DIS_KAYNAK_IPTAL": False,
+    "KART_ODEME_IPTAL": False,
+    "VADELI_IPTAL": False,
+    "ODEME_IPTAL": False,
 }
 
 

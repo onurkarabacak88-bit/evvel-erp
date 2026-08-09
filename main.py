@@ -2157,6 +2157,64 @@ def kasa_durumu():
         return {"guncel_bakiye": kasa, "hareketler": [dict(r) for r in cur.fetchall()]}
 
 
+@app.post("/api/kasa/iptal-cift-sayim-duzelt")
+def kasa_iptal_cift_sayim_duzelt(kuru: int = 1):
+    """🔧 İPTAL TERS KAYITLARININ ÇİFT SAYIMINI ÖLÇ/DÜZELT (2026-08-09).
+
+    `iptal_kasa_hareketi()` orijinal hareketi `durum='iptal'` yapar — tutar
+    kasa toplamından zaten çıkar. Ters kaydın DA `kasa_etkisi=TRUE` olması
+    aynı düzeltmeyi iki kez uygular. CIRO_IPTAL için bu daha önce fark edilip
+    kapatılmış, diğer türlerde açık kalmıştı.
+
+    Kanıt (canlı ölçüm): 2.250 ₺'lik gider silindi → kasa +2.250 ₺ ARTTI.
+
+    Bu uç, orijinali gerçekten iptal edilmiş ters kayıtları `kasa_etkisi=FALSE`
+    yapar (SİLMEZ — audit izi kalır). kuru=1 yalnız ölçer.
+    """
+    _TURLER = ("ANLIK_GIDER_IPTAL", "CIRO_IPTAL", "CIRO_DUZELTME",
+               "DIS_KAYNAK_IPTAL", "KART_ODEME_IPTAL", "VADELI_IPTAL", "ODEME_IPTAL")
+    with db() as (conn, cur):
+        # Ters kayıt "haksız" sayılır: kasa_etkisi hâlâ TRUE ve aynı kaynağın
+        # orijinal hareketi zaten iptal edilmiş.
+        cur.execute("""
+            SELECT t.id, t.islem_turu, t.tutar::float AS tutar, t.tarih::text AS tarih,
+                   COALESCE(t.aciklama,'') AS aciklama, t.kaynak_tablo, t.kaynak_id
+              FROM kasa_hareketleri t
+             WHERE t.islem_turu = ANY(%s)
+               AND COALESCE(t.kasa_etkisi, TRUE) = TRUE
+               AND COALESCE(t.durum,'aktif') = 'aktif'
+               AND EXISTS (
+                   SELECT 1 FROM kasa_hareketleri o
+                    WHERE o.kaynak_id = t.kaynak_id
+                      AND COALESCE(o.kaynak_tablo,'') = COALESCE(t.kaynak_tablo,'')
+                      AND o.id <> t.id
+                      AND COALESCE(o.durum,'') = 'iptal')
+             ORDER BY t.tarih DESC
+        """, (list(_TURLER),))
+        satirlar = [dict(r) for r in (cur.fetchall() or [])]
+        etki = round(sum(float(x["tutar"] or 0) for x in satirlar), 2)
+        uygulandi = 0
+        if not kuru and satirlar:
+            cur.execute(
+                "UPDATE kasa_hareketleri SET kasa_etkisi=FALSE WHERE id = ANY(%s)",
+                ([x["id"] for x in satirlar],))
+            uygulandi = cur.rowcount or 0
+            conn.commit()
+        kasa_yeni = guncel_kasa()
+    return {
+        "kuru": bool(kuru), "aday_satir": len(satirlar),
+        "kasa_etkisi_tl": etki,
+        "aciklama": ("Bu ters kayıtlar kasa toplamına HAKSIZ giriyor: orijinalleri "
+                     "zaten iptal edilmiş. Pozitif toplam kasayı ŞİŞİRİR, negatif "
+                     "toplam kasayı EKSİK gösterir."),
+        "duzeltme_sonrasi_kasa": round(float(kasa_yeni or 0) - (etki if kuru else 0), 2),
+        "uygulanan": uygulandi,
+        "satirlar": satirlar[:50],
+        "not": "kuru=1 ölçer, kuru=0 uygular. Kayıt SİLİNMEZ — yalnız kasa_etkisi "
+               "FALSE olur, defterde iz kalır.",
+    }
+
+
 @app.get("/api/kasa/sube-bazli")
 def kasa_sube_bazli():
     """🏪 ŞUBE KASALARI — merkez kasa, şube kasalarının TOPLAMIDIR.
