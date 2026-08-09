@@ -9494,6 +9494,63 @@ def ciro_kontrol(tarih: str, tutar: float, sube_id: str = None):
         benzer = [dict(r) for r in cur.fetchall()]
         return {"benzer": benzer, "var": len(benzer) > 0}
 
+@app.get("/api/ciro/eksik-gunler")
+def ciro_eksik_gunler(gun: int = 14):
+    """📅 HANGİ ŞUBE HANGİ GÜN CİRO GİRMEMİŞ?
+
+    Sahip (2026-08-09): "Panel bir şubenin cirosunu 8 Ağustos için gösteriyor,
+    neden?" Cevap: en son girilen ciro oydu — 8 Ağustos'ta yalnız ZAFER
+    girmiş, TEMA girmemişti. Panel doğruydu, EKSİK OLAN VERİYDİ.
+
+    Sistem bu eksikliği hiçbir yerde SÖYLEMİYORDU: ciro girilmeyince kayıt
+    yok, kayıt yoksa alarm da yok — "yokluğun alarmı" kurulmamıştı. Bu uç
+    tam da onu ölçer: şube açıksa ve sezon kapalı değilse, o gün ciro
+    BEKLENİR; yoksa eksiktir.
+
+    ⚠️ Sezon kapalı ve pasif şubeler sayılmaz (hayalet eksik üretmesin).
+    ⚠️ BUGÜN ayrı raporlanır — gün bitmediği için "eksik" demek erken.
+    """
+    bugun = bugun_tr()
+    bas = bugun - timedelta(days=max(1, min(gun, 90)))
+    with db() as (conn, cur):
+        cur.execute("""SELECT id::text AS id, ad FROM subeler
+                        WHERE COALESCE(aktif,TRUE)=TRUE
+                          AND COALESCE(sezon_kapali,FALSE)=FALSE
+                          AND id <> 'sube-merkez'
+                        ORDER BY ad""")
+        subeler = [dict(r) for r in (cur.fetchall() or [])]
+        cur.execute("""SELECT sube_id::text AS sid, tarih::text AS tarih
+                         FROM ciro
+                        WHERE COALESCE(durum,'aktif')='aktif' AND tarih >= %s""",
+                    (bas,))
+        var = {(r["sid"], r["tarih"]) for r in (cur.fetchall() or [])}
+    eksikler, bugun_bekleyen = [], []
+    for i in range((bugun - bas).days + 1):
+        t = bas + timedelta(days=i)
+        ts = t.isoformat()
+        for s in subeler:
+            if (s["id"], ts) in var:
+                continue
+            kayit = {"tarih": ts, "sube_id": s["id"], "sube_adi": s["ad"],
+                     "gun_once": (bugun - t).days}
+            (bugun_bekleyen if t == bugun else eksikler).append(kayit)
+    eksikler.sort(key=lambda x: (x["tarih"], x["sube_adi"]), reverse=True)
+    _sube_ozet: Dict[str, int] = {}
+    for e in eksikler:
+        _sube_ozet[e["sube_adi"]] = _sube_ozet.get(e["sube_adi"], 0) + 1
+    return {
+        "pencere_gun": gun, "bugun": bugun.isoformat(),
+        "aktif_sube": [s["ad"] for s in subeler],
+        "eksik_adet": len(eksikler),
+        "eksik_sube_ozet": _sube_ozet,
+        "eksikler": eksikler[:60],
+        # Bugün henüz bitmedi — eksik DEĞİL, "bekleniyor"
+        "bugun_bekleyen": bugun_bekleyen,
+        "not": "Sezon kapalı ve pasif şubeler sayılmaz. Bugün 'eksik' değil "
+               "'bekleniyor' sayılır — gün kapanmadan ciro beklenmez.",
+    }
+
+
 @app.get("/api/anlik-gider/kontrol")
 def anlik_gider_kontrol(tarih: str, tutar: float, kategori: str = None):
     with db() as (conn, cur):
