@@ -2241,6 +2241,10 @@ def kasa_sube_atama_denetimi(kuru: int = 1):
             # atanmamış kalsın.
             try:
                 cur.execute("SAVEPOINT sp_maas")
+                # ⚠️ psycopg2: PARAMETRESİZ execute'ta '%%' escape EDİLMEZ —
+                # literal '%%' olarak gider ve LIKE deseni bozulur (ilk denemede
+                # atanan=0 dönmesinin sebebi buydu). Parametreli çağırıyoruz;
+                # böylece %s dolu, %% doğru şekilde tek %'e iner.
                 cur.execute("""
                     UPDATE kasa_hareketleri kh
                        SET sube_id = e.sube_id
@@ -2249,7 +2253,7 @@ def kasa_sube_atama_denetimi(kuru: int = 1):
                           FROM kasa_hareketleri kh2
                           JOIN personel p
                             ON UPPER(kh2.aciklama) LIKE '%%' || UPPER(TRIM(p.ad)) || '%%'
-                         WHERE kh2.islem_turu = 'PERSONEL_MAAS'
+                         WHERE kh2.islem_turu = %s
                            AND kh2.sube_id IS NULL
                            AND COALESCE(p.sube_id,'') <> ''
                            AND LENGTH(TRIM(p.ad)) >= 5
@@ -2257,7 +2261,7 @@ def kasa_sube_atama_denetimi(kuru: int = 1):
                         HAVING COUNT(DISTINCT p.sube_id) = 1
                       ) e
                      WHERE kh.id = e.hid AND kh.sube_id IS NULL
-                """)
+                """, ("PERSONEL_MAAS",))
                 atanan += cur.rowcount or 0
                 cur.execute("RELEASE SAVEPOINT sp_maas")
             except Exception as e:  # noqa: BLE001
