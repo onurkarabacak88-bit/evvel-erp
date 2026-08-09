@@ -280,6 +280,15 @@ export default function TasarimV2({ onGit }) {
     api('/fatura-istek/liste')
       .then(d => koy('faturaIstek', Number(d?.acik_adet) || 0))
       .catch(() => {});
+    // 🔗 Kart izi eşleşme rozeti — onay bekleyen aday sayısı (2026-08-08).
+    // Bu rozet öğrenme döngüsünün kapısıdır: sahip onaylamazsa sistem öğrenmez.
+    api('/fatura/kart-izi-otomatik-tara?uygula=0', { method: 'POST' })
+      .then(d => koy('eslesmeAday', Number(d?.sahip_onayi_bekleyen) || 0))
+      .catch(() => {});
+    // 🧾 Vergi kaybı rozeti — belgesiz işletme harcaması adedi
+    api('/fatura/kart-vergi-etkisi?gun=365')
+      .then(d => koy('vergiKayip', Number(d?.kovalar?.belgesiz?.adet) || 0))
+      .catch(() => {});
     // kasaTeslim rozeti (duyu 2/6) — teslim edilmemiş gün sonu kapanışı sayısı
     api('/ops/para-yolda?gun=14')
       .then(d => koy('kasaTeslim', Number(d?.bekleyen_adet) || 0))
