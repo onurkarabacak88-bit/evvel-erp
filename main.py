@@ -2179,6 +2179,16 @@ def kasa_sube_atama_denetimi(kuru: int = 1):
         ("ciro", "ciro", "t.sube_id"),
         ("personel_aylik", "personel_aylik", "(SELECT p.sube_id FROM personel p WHERE p.id::text = t.personel_id::text)"),
         ("kasa_teslim", "kasa_teslim", "t.sube_id"),
+        # 🔗 İKİ ADIMLI ZİNCİR (2026-08-09): maaş kasaya `odeme_plani` kaynağıyla
+        # yazılıyor; planın kendi kaynağı `personel_aylik`, onun da personeli
+        # bir şubede çalışıyor. Tek adımlı eşleme bunu göremediği için
+        # 250.486,97 ₺ maaş "atanmamış" kovasında duruyordu — şube kârlılığı
+        # personel maliyeti olmadan hesaplanıyordu.
+        ("odeme_plani", "odeme_plani",
+         "(SELECT p.sube_id FROM personel_aylik pa "
+         "   JOIN personel p ON p.id::text = pa.personel_id::text "
+         "  WHERE t.kaynak_tablo = 'personel_aylik' "
+         "    AND pa.id::text = t.kaynak_id::text)"),
     ]
     # Şubesi OLMAYAN, merkezde kalması DOĞRU olan işlem türleri
     _MERKEZI = ("KART_ODEME", "KART_ODEME_IPTAL", "BORC_TAKSIT", "ACILIS_DEVRI",
