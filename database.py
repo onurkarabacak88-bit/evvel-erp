@@ -53,9 +53,14 @@ def _get_pool():
             if _pool is None:
                 dsn = _resolve_database_url()
                 _pg_ct = int(os.environ.get("PG_CONNECT_TIMEOUT", "15") or "15")
+                # 🔌 HAVUZ BOYUTU (2026-08-08, canlı: "sayfa açıldığında veriler
+                # hemen gelmiyor, tekrar dene deyince geliyor" → PoolError).
+                # v2 paneli açılışta ~13 uç çağırıyor; buna gece işleri, şube
+                # panelleri ve QR ekranları eklenince maxconn=15 yetmiyordu.
+                # Çevre değişkeniyle ayarlanabilir (PG_MAX_CONN).
                 _pool = psycopg2.pool.ThreadedConnectionPool(
                     minconn=2,
-                    maxconn=15,
+                    maxconn=int(os.environ.get("PG_MAX_CONN", "24") or "24"),
                     dsn=dsn,
                     cursor_factory=psycopg2.extras.RealDictCursor,
                     connect_timeout=max(3, min(_pg_ct, 120)),

@@ -4811,6 +4811,17 @@ def cari_ozet() -> dict:
             (kesit_6ay, kesit_6ay, kesit_6ay))
         odeme_izleri = [dict(r) for r in cur.fetchall() or []]
         devirler = _cari_devirler(cur)  # 📜 sistem-öncesi açılış beyanları
+        # 📦 GRNI havuzu — AYNI bağlantıda (2026-08-08 havuz dersi: ayrı
+        # `with db()` açmak bu ucun iki bağlantı tutmasına yol açıyordu;
+        # panel açılışta ~13 uç çağırıyor, maxconn=15 → havuz tükeniyordu).
+        _grni_tum = []
+        try:
+            cur.execute(
+                """SELECT tedarikci_ad, COALESCE(beklenen_tutar_tl,0)::float AS tutar
+                   FROM belge_talep WHERE durum='bekliyor' AND fatura_id IS NULL""")
+            _grni_tum = [dict(r) for r in (cur.fetchall() or [])]
+        except Exception as e:  # noqa: BLE001
+            logger.warning("GRNI havuzu okunamadı: %s", str(e)[:120])
 
     # 🔗 EŞDEĞER AD KÜMESİ (AP temizlik turu 2026-08-03): vade/ödeme/devir
     # eşleşmesi HAM fatura ünvanıyla yapılıyordu; kanonik harita yalnız en
@@ -4876,17 +4887,6 @@ def cari_ozet() -> dict:
         gruplar[hedef]["faturalar"].extend(gruplar[kaynak]["faturalar"])
         gruplar[hedef]["faturalar"].sort(key=lambda f: (str(f["tarih"])))
         del gruplar[kaynak]
-
-    # 📦 GRNI havuzu — TEK sorgu (tedarikçi döngüsü içinde sorgulamak N+1 olurdu)
-    _grni_tum = []
-    try:
-        with db() as (_c2, cur2):
-            cur2.execute(
-                """SELECT tedarikci_ad, COALESCE(beklenen_tutar_tl,0)::float AS tutar
-                   FROM belge_talep WHERE durum='bekliyor' AND fatura_id IS NULL""")
-            _grni_tum = [dict(r) for r in (cur2.fetchall() or [])]
-    except Exception as e:  # noqa: BLE001
-        logger.warning("GRNI havuzu okunamadı: %s", str(e)[:120])
 
     ozet = []
     for g in gruplar.values():
@@ -5290,7 +5290,7 @@ def cari_devir_iptaller():
         return {"iptaller": [dict(r) for r in (cur.fetchall() or [])]}
 
 
-def _faturasiz_teslimat_ozet(es_adlar) -> Dict[str, Any]:
+def _faturasiz_teslimat_ozet(cur, es_adlar) -> Dict[str, Any]:
     """📦 GRNI: teslim alınmış ama faturası gelmemiş mal (tedarikçi bazlı).
 
     `belge_talep` teslim anında doğar (şube ürünü kabul edince). Fatura gelince
@@ -5300,19 +5300,20 @@ def _faturasiz_teslimat_ozet(es_adlar) -> Dict[str, Any]:
     Beklenen tutar = teslim kalemleri × (gerçek alış fiyatı, yoksa katalog).
     Fatura gelince gerçek tutarla değişir; fark denetim sinyalidir.
     """
+    # ⚡ Çağıranın cursor'ını kullanır — kendi bağlantısını AÇMAZ (2026-08-08
+    # havuz dersi: ayrı `with db()` bu ucun iki bağlantı tutmasına yol açıyordu).
     try:
-        with db() as (_c, cur):
-            cur.execute(
-                """SELECT id, tedarikci_ad, sube_adi, teslim_tarihi::text AS tarih,
-                          COALESCE(beklenen_tutar_tl,0)::float AS tutar,
-                          COALESCE(kalem_sayisi,0)::int AS kalem,
-                          COALESCE(fiyatsiz_kalem,0)::int AS fiyatsiz,
-                          GREATEST(0,(CURRENT_DATE - COALESCE(teslim_tarihi,
-                                      olusturma::date)))::int AS yas
-                   FROM belge_talep
-                   WHERE durum='bekliyor' AND fatura_id IS NULL
-                   ORDER BY teslim_tarihi DESC NULLS LAST""")
-            tum = [dict(r) for r in (cur.fetchall() or [])]
+        cur.execute(
+            """SELECT id, tedarikci_ad, sube_adi, teslim_tarihi::text AS tarih,
+                      COALESCE(beklenen_tutar_tl,0)::float AS tutar,
+                      COALESCE(kalem_sayisi,0)::int AS kalem,
+                      COALESCE(fiyatsiz_kalem,0)::int AS fiyatsiz,
+                      GREATEST(0,(CURRENT_DATE - COALESCE(teslim_tarihi,
+                                  olusturma::date)))::int AS yas
+               FROM belge_talep
+               WHERE durum='bekliyor' AND fatura_id IS NULL
+               ORDER BY teslim_tarihi DESC NULLS LAST""")
+        tum = [dict(r) for r in (cur.fetchall() or [])]
     except Exception as e:  # noqa: BLE001
         return {"adet": 0, "toplam_tl": 0.0, "hata": str(e)[:120]}
     ait = [t for t in tum
@@ -5443,6 +5444,8 @@ def cari_ekstre(tedarikci: str = ""):
         odeme_adaylari = [r for r in (dict(x) for x in cur.fetchall() or [])
                           if _odeme_dahil(r)]
         _devirler = _cari_devirler(cur)
+        # 📦 GRNI özeti AYNI bağlantıda hesaplanır (havuz dersi 2026-08-08)
+        _grni_ozet = _faturasiz_teslimat_ozet(cur, _es_adlar)
     # 📜 açılış devri — bu tedarikçiye eşleşen sahip beyanı (çift yön eşleşme)
     devir, devir_not = 0.0, None
     for dv in _devirler:
@@ -5546,7 +5549,7 @@ def cari_ekstre(tedarikci: str = ""):
         # doğmuştur ama belge yoktur.
         # ⚠️ BAKİYEYE DAHİL EDİLMEZ — fatura gelince aynı borç ikinci kez sayılırdı.
         # Ayrı alanda durur; 'gercek_borc' ikisinin toplamıdır.
-        "faturasiz_teslimat": _faturasiz_teslimat_ozet(_es_adlar),
+        "faturasiz_teslimat": _grni_ozet,
         "bekleyen_vadeler": bekleyen_vadeler,
         "bekleyen_vade_toplam": round(sum(v["tutar"] for v in bekleyen_vadeler), 2),
         "odeme_adaylari": odeme_adaylari,
