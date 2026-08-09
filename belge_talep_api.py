@@ -296,6 +296,11 @@ class ElleTalepBody(BaseModel):
     tedarikci_ad: str
     teslim_tarihi: Optional[str] = None   # YYYY-MM-DD; boşsa bugün
     not_metin: Optional[str] = None       # "kahve geldi, irsaliye yok" vb.
+    # 💰 2026-08-10 (KONYA SU vakası): borç TUTARI biliniyor ama fatura henüz
+    # gelmemiş olabilir. Tutarsız açılan talep "gerçek borç" hesabına giremiyor,
+    # sahip 11.200 ₺'lik eksiği hiçbir yerde göremiyordu. Tutar İSTEĞE BAĞLI:
+    # biliniyorsa yazılır, bilinmiyorsa boş kalır (uydurma yapılmaz).
+    beklenen_tutar_tl: Optional[float] = None
 
 
 @router.post("/elle")
@@ -327,10 +332,12 @@ def belge_talep_elle(body: ElleTalepBody):
         cur.execute(
             """INSERT INTO belge_talep
                    (ts_id, sube_adi, tedarikci_id, tedarikci_ad, tedarikci_tel,
-                    teslim_tarihi, elle_not)
-               VALUES (%s, '(elle kayıt)', %s, %s, %s, COALESCE(%s::date, CURRENT_DATE), %s)
+                    teslim_tarihi, elle_not, beklenen_tutar_tl)
+               VALUES (%s, '(elle kayıt)', %s, %s, %s, COALESCE(%s::date, CURRENT_DATE), %s, %s)
                RETURNING id""",
-            (tid, ted_id, ad, tel, tarih, (body.not_metin or "").strip() or None),
+            (tid, ted_id, ad, tel, tarih, (body.not_metin or "").strip() or None,
+             (float(body.beklenen_tutar_tl)
+              if body.beklenen_tutar_tl and float(body.beklenen_tutar_tl) > 0 else None)),
         )
         yeni_id = dict(cur.fetchone())["id"]
     try:
