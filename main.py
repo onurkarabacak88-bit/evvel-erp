@@ -2204,9 +2204,19 @@ def sube_kimlik_denetimi(kuru: int = 1):
                 except Exception:  # noqa: BLE001
                     pass
                 rapor.append({"tablo": tablo, "kolon": kol, "hata": str(e)[:90]})
+        # ⚠️ YALNIZ KİMLİK KOLONLARI düzeltilir. `anlik_giderler.sube` bilinçli
+        # olarak AD tutar (ekranlarda "MERKEZ" yazar); onu id'ye çevirmek UI'da
+        # UUID gösterirdi. Ayrım net olsun: `sube` = görünen ad, `sube_id` = JOIN
+        # anahtarı. Canlı ölçüm: 412 satırın 344'ü her iki kolonda da ADLA
+        # yazılmış — `sube_id` üzerinden id ile JOIN yapan sorgular o satırları
+        # sessizce kaçırıyordu.
+        _DUZELTILEBILIR = {"sube_id"}
         if not kuru:
             for x in rapor:
                 if x.get("hata") or not x.get("adla_yazilmis"):
+                    continue
+                if x.get("kolon") not in _DUZELTILEBILIR:
+                    x["atlandi"] = "ad kolonu — bilinçli olarak ad tutar, dokunulmadı"
                     continue
                 try:
                     cur.execute("SAVEPOINT sp_sd")
@@ -2632,10 +2642,15 @@ def anlik_gider_ekle(g: AnlikGider):
         # V4 (Ödeme Merkezi): opsiyonel tedarikçi kolonu — lazy migration
         cur.execute("ALTER TABLE anlik_giderler ADD COLUMN IF NOT EXISTS tedarikci TEXT")
         _ted = (g.tedarikci or "").strip() or None
+        # 🏪 KİMLİK/AD AYRIMI (2026-08-09): `sube` GÖRÜNEN AD, `sube_id` JOIN
+        # ANAHTARI. Eskiden bir migration `sube_id = sube` diye kopyalıyordu;
+        # canlıda 412 satırın 344'ünde sube_id de ad tutuyordu ve id ile JOIN
+        # yapan sorgular o satırları sessizce kaçırıyordu. Artık kaynakta çözülür.
+        _sid = _sube_kanonik(cur, g.sube)
         cur.execute("""INSERT INTO anlik_giderler
-            (id,tarih,kategori,tutar,aciklama,sube,odeme_yontemi,kart_id,kaynak_id,kaynak_tablo,tedarikci)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-            (gid, g.tarih, g.kategori, g.tutar, g.aciklama, g.sube,
+            (id,tarih,kategori,tutar,aciklama,sube,sube_id,odeme_yontemi,kart_id,kaynak_id,kaynak_tablo,tedarikci)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+            (gid, g.tarih, g.kategori, g.tutar, g.aciklama, g.sube, _sid,
              g.odeme_yontemi, g.kart_id, g.kaynak_id, g.kaynak_tablo, _ted))
 
         if g.odeme_yontemi == 'kart':
