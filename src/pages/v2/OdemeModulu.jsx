@@ -91,6 +91,7 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
   const [nakitAkis, setNakitAkis] = useState(null);
   const [cari, setCari] = useState(null);
   const [vergi, setVergi] = useState(null);   // /duyu/vergi-takvim — yaklaşan vergi yükü
+  const [izTarama, setIzTarama] = useState(null);  // /odeme-plani/gecikmis-iz-tarama
   const [gecmis, setGecmis] = useState([]);
   // Sahip kararı (soru 3/9): tedarikçi ödemeleri NAKİT+KART birleşik.
   // Kasa defteri kartla yapılan tedarikçi ödemesini GÖREMEZ (kasadan para
@@ -122,9 +123,14 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
       // 💰 NAKİT AKIŞ (2026-08-09): kokpit yalnız ÇIKIŞI bilir; bu uç geliri de
       // tahmin ediyordu (geçmiş ciro örüntüsü + doğruluk payı) ama ekranda yoktu.
       api('/nakit-akis-projeksiyon').catch(() => null),
-    ]).then(([k, ko, c, l, tg, vt, na]) => {
+      // 🔍 GECİKMİŞ ÖDEMENİN İZİ (2026-08-09, sahip: "bu sistemde ödeme izleri
+      // var mı? ki bence olmalı!!!"). Gecikmiş görünen kalem GERÇEKTEN ödenmiş
+      // olabilir — para çıkmış, plan satırı 'bekliyor' kalmıştır. Öneri-only.
+      api('/odeme-plani/gecikmis-iz-tarama').catch(() => null),
+    ]).then(([k, ko, c, l, tg, vt, na, iz]) => {
       setVergi(vt);
       setNakitAkis(na);
+      setIzTarama(iz);
       setTedOdeme(Array.isArray(tg?.satirlar) ? tg.satirlar : (Array.isArray(tg) ? tg : []));
       setKuyruk(Array.isArray(k) ? k : []);
       setKokpit(ko);
@@ -1045,6 +1051,86 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
                   : dip < c7 ? 'dip, bir haftalık çıkışın altında — tampon ince'
                     : 'tampon yeterli'}
               </span>
+            </div>
+          );
+        })()}
+
+        {/* ── 🔍 GECİKMİŞ AMA İZİ VAR MI? (2026-08-09) ────────────────────
+            Sahip: "bu sistemde ödeme izleri var mı? ki bence olmalı!!!"
+            Gecikmiş görünen bir kalem gerçekte ödenmiş olabilir: para kasadan
+            ya da karttan çıkmış ama plan satırı 'bekliyor' kalmıştır. O zaman
+            gecikme SAHTEDİR ve gereksiz baskı yaratır. Tarama tutar + tarih
+            penceresi + KANIT (tedarikçi adı / fatura no) ile eşleştirir.
+            ÖNERİ-ONLY: hiçbir plan kendiliğinden kapanmaz. */}
+        {izTarama && sayi(izTarama.gecikmis_kalem) > 0 && (() => {
+          const bulundu = (izTarama.satirlar || []).filter(s => s.hal === 'iz_bulundu');
+          const supheli = (izTarama.satirlar || []).filter(s => s.hal === 'yalniz_tutar_eslesmesi');
+          return (
+            <div style={{ ...kartYuzey, padding: '12px 16px', marginBottom: 12 }}>
+              <div style={{ display: 'flex', gap: 16, alignItems: 'baseline', flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 12.5, fontWeight: 700, color: R.krem }}>
+                  🔍 Gecikmiş ödemelerin izi
+                </span>
+                <span style={{ fontSize: 12, color: R.metin2 }}>
+                  <b style={{ color: R.yesil }}>{sayi(izTarama.iz_bulunan)}</b> kalemde iz var
+                  {' '}({fmt(sayi(izTarama.iz_bulunan_tutar))}) ·
+                  {' '}<b style={{ color: R.kirmizi }}>{sayi(izTarama.iz_bulunamayan)}</b> kalemde yok
+                  {' '}({fmt(sayi(izTarama.iz_yok_tutar))})
+                </span>
+                <span style={{ fontSize: 11, color: R.not, marginLeft: 'auto' }}>
+                  {sayi(izTarama.gecikmis_kalem)} gecikmiş kalem tarandı
+                </span>
+              </div>
+
+              {bulundu.length > 0 && (
+                <div style={{ marginTop: 10 }}>
+                  <div style={{ fontSize: 11.5, color: R.yesil, fontWeight: 600, marginBottom: 5 }}>
+                    ✅ Ödenmiş olabilir — plan açık kalmış
+                  </div>
+                  {bulundu.slice(0, 6).map((s) => (
+                    <div key={s.plan_id} style={{
+                      padding: '7px 11px', borderRadius: 9, marginBottom: 5,
+                      background: R.girinti, borderLeft: `3px solid ${R.yesil}`,
+                      fontSize: 11.5, color: R.metin2, lineHeight: 1.55,
+                    }}>
+                      <b style={{ color: R.krem }}>{fmt(sayi(s.kalan))}</b> · {s.aciklama}
+                      <br />
+                      <span style={{ color: R.not2 }}>
+                        vade {kisaTarih(s.vade)} ({sayi(s.gun_gecikme)} gün) →
+                        {(s.adaylar || []).slice(0, 1).map((a) => (
+                          <span key={a.tarih}>
+                            {' '}{a.kanal} · {kisaTarih(a.tarih)} · {fmt(sayi(a.tutar))}
+                            {' '}<b style={{ color: R.yesil }}>kanıt: {(a.kanit || []).join(', ')}</b>
+                          </span>
+                        ))}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {supheli.length > 0 && (
+                <div style={{ marginTop: 8 }}>
+                  <div style={{ fontSize: 11.5, color: R.amber, fontWeight: 600, marginBottom: 5 }}>
+                    🟡 Yalnız tutar tuttu — isim tutmadı, tesadüf olabilir ({supheli.length})
+                  </div>
+                  {supheli.slice(0, 4).map((s) => (
+                    <div key={s.plan_id} style={{ fontSize: 11, color: R.not2, padding: '2px 0' }}>
+                      {fmt(sayi(s.kalan))} · {String(s.aciklama).slice(0, 40)} →
+                      {(s.adaylar || []).slice(0, 1).map((a) => (
+                        <span key={a.tarih}> {kisaTarih(a.tarih)} {fmt(sayi(a.tutar))} “{String(a.metin).slice(0, 26)}”</span>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div style={{ fontSize: 10.5, color: R.not2, marginTop: 9, lineHeight: 1.6 }}>
+                Sistem hiçbir planı kendiliğinden kapatmaz — bu bir <b>öneridir</b>.
+                Doğruysa ödemeyi kaydedin, kalem kuyruktan düşsün. “Kanıt” tedarikçi
+                adı ya da fatura numarasının eşleşmesidir; yalnız tutar tutması
+                kanıt sayılmaz.
+              </div>
             </div>
           );
         })()}
