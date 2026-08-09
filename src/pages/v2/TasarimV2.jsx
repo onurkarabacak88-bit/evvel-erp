@@ -16,6 +16,9 @@ import { Ikon, KpiSeridi, Hero, Liste, Tablo, Cekmece, Toast, KopruDurumu, HataB
 import GenelModulu from './GenelModulu';
 import KartModulu from './KartModulu';
 import OdemeModulu from './OdemeModulu';
+import EslesmeModulu from './EslesmeModulu';
+import VergiModulu from './VergiModulu';
+import TeshisModulu from './TeshisModulu';
 import OpsModulu from './OpsModulu';
 import MaliyetModulu from './MaliyetModulu';
 import EkipModulu from './EkipModulu';
@@ -663,6 +666,17 @@ export default function TasarimV2({ onGit }) {
     }
     if (mod === 'kart') {
       return <KartModulu gorunum={gorunum} onCekmece={setCekmece} onKopru={koprule} onToast={setToast} />;
+    }
+    // 🔗 Kart izi eşleştirme + karar defteri (2026-08-08) — ayrı modül dosyası
+    if (mod === 'odeme' && (gorunum === 'eslesme' || gorunum === 'eslesmedefter')) {
+      return <EslesmeModulu gorunum={gorunum === 'eslesmedefter' ? 'defter' : 'eslesme'}
+                            onCekmece={setCekmece} onToast={setToast} />;
+    }
+    if (mod === 'belge' && gorunum === 'vergi') {
+      return <VergiModulu onCekmece={setCekmece} />;
+    }
+    if (mod === 'denetim' && gorunum === 'parazinciri') {
+      return <TeshisModulu onCekmece={setCekmece} />;
     }
     if (mod === 'odeme') {
       return <OdemeModulu gorunum={gorunum} onCekmece={setCekmece} onKopru={koprule} onToast={setToast} />;

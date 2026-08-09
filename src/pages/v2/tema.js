@@ -150,6 +150,9 @@ export const MODULLER = [
     { id: 'mutabakatmerkezi', ad: 'Mutabakat Merkezi', rozet: 'mutabakatAcik', renk: '#F87171' },
     { id: 'mutabakat', ad: 'Duyu Mutabakatı', rozet: 'duyuMutabakat', renk: '#FBBF24' },
     { id: 'bag', ad: 'Bağ Defteri' },
+    // 🩺 PARA ZİNCİRİ TEŞHİSİ (2026-08-08): fatura→borç→ödeme→cari sağlığını
+    // ölçen yedi uç vardı, hiçbiri ekranda değildi.
+    { id: 'parazinciri', ad: 'Para Zinciri Teşhisi' },
     { id: 'duyu', ad: 'Sinyal İzleme' },
   ]},
   { id: 'rapor', blok: 'Karar', ad: 'Rapor & Defter', kisa: 'Rapor', alt: 'Aylık · işlem izi', ikon: IK.grafik, gorunumler: [
@@ -195,6 +198,11 @@ export const MODULLER = [
     { id: 'sabit', ad: 'Sabit Giderler', rozet: 'sabitGider', renk: '#D29A5B' },
     { id: 'gider', ad: 'Anlık Gider' },
     { id: 'tedarikci', ad: 'Tedarikçi Bakiyesi' },
+    // 🔗 KART İZİ EŞLEŞTİRME (2026-08-08): otomatik eşleştirme motoru güven
+    // skoruna göre "sahip onaylasın" diyordu ama onaylayacak EKRAN YOKTU —
+    // öğrenme döngüsü kapalı kalıyordu. Bu görünüm döngüyü açar.
+    { id: 'eslesme', ad: 'Kart İzi Eşleştirme', rozet: 'eslesmeAday', renk: '#D29A5B' },
+    { id: 'eslesmedefter', ad: 'Eşleşme Karar Defteri' },
     { id: 'gecmis', ad: 'Ödeme Geçmişi' },
   ]},
   { id: 'onaylar', blok: 'Günlük iş', ad: 'Onay Kuyruğu', kisa: 'Onay', alt: 'Bekleyen kararlar', ikon: IK.onay, gorunumler: [
@@ -260,6 +268,9 @@ export const MODULLER = [
     { id: 'cari', ad: 'Cari Ekstre' },
     { id: 'fiyat', ad: 'Alış Fiyat Bandı' },
     { id: 'kdv', ad: 'KDV Kanıt Paketi' },
+    // 🧾 VERGİ ETKİSİ (2026-08-08, sahip: "fatura varsa vergiden düşümde gider
+    // olarak sayılmalı ki ödenecek vergiyi daha net belirlemiş oluruz")
+    { id: 'vergi', ad: 'Vergi Etkisi · belgeli/belgesiz', rozet: 'vergiKayip', renk: '#F87171' },
   ]},
   { id: 'tanim', blok: 'Kayıt & kurulum', ad: 'Tanımlar', kisa: 'Tanım', alt: 'Tedarikçi · TV menü', ikon: IK.klasor, gorunumler: [
     { id: 'tedarikciler', ad: 'Tedarikçiler' },
