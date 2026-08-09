@@ -133,6 +133,7 @@ export default function TasarimV2({ onGit }) {
   const [hata, setHata] = useState('');
 
   const [panel, setPanel] = useState(null);
+  const [eksikCiro, setEksikCiro] = useState(null);   // /ciro/eksik-gunler
   const [cirolar, setCirolar] = useState([]);
   const [subeler, setSubeler] = useState([]);
   const [onaylar, setOnaylar] = useState([]);
@@ -150,8 +151,13 @@ export default function TasarimV2({ onGit }) {
       api('/ciro?limit=600').catch(() => []),
       api('/subeler').catch(() => []),
       api('/onay-kuyrugu?durum=bekliyor&limit=400').catch(() => []),
-    ]).then(([p, u, c, s, o]) => {
+      // 📅 EKSİK CİRO (2026-08-09 sahip: "panel bir şubenin cirosunu 8 Ağustos
+      // için gösteriyor, neden?"). Ciro girilmeyince kayıt yok, kayıt yoksa
+      // alarm da yok — "yokluğun alarmı" hiç kurulmamıştı.
+      api('/ciro/eksik-gunler?gun=14').catch(() => null),
+    ]).then(([p, u, c, s, o, ec]) => {
       if (!p && !Array.isArray(c)) setHata('Veriler alınamadı — bağlantıyı kontrol edin.');
+      setEksikCiro(ec);
       setPanel(p);
       setUyarilar(Array.isArray(u) ? u : (u?.uyarilar || []));
       setCirolar(Array.isArray(c) ? c : []);
@@ -815,6 +821,62 @@ export default function TasarimV2({ onGit }) {
 
     return (
       <>
+        {/* ── 📅 EKSİK CİRO ŞERİDİ — para rakamlarından ÖNCE ──────────────
+            Sahip 2026-08-09: "panel bir şubenin cirosunu 8 Ağustos için
+            gösteriyor, neden?" Panel doğruydu; TEMA o gün ciro girmemişti.
+            Sistemde var olanı denetleyen çok şey vardı ama OLMAYANI arayan
+            yoktu. Eksik ciro tüm kâr/ciro rakamlarını sessizce bozar — bu
+            yüzden şerit en üstte: altındaki sayılara güvenmeden önce görülsün. */}
+        {eksikCiro && sayi(eksikCiro.eksik_adet) > 0 && (() => {
+          const ek = eksikCiro.eksikler || [];
+          const enEski = ek.length ? Math.max(...ek.map((e) => sayi(e.gun_once))) : 0;
+          const renk = enEski >= 3 ? R.kirmizi : R.amber;
+          return (
+            <div style={{
+              ...kartYuzey, padding: '12px 16px', marginBottom: 12,
+              borderLeft: `3px solid ${renk}`,
+            }}>
+              <div style={{ display: 'flex', gap: 14, alignItems: 'baseline', flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 12.5, fontWeight: 700, color: renk }}>
+                  📅 Girilmemiş ciro — {sayi(eksikCiro.eksik_adet)} gün
+                </span>
+                <span style={{ fontSize: 12, color: R.metin2 }}>
+                  {Object.entries(eksikCiro.eksik_sube_ozet || {})
+                    .map(([ad, n]) => `${ad}: ${n} gün`).join(' · ')}
+                </span>
+                <span style={{ fontSize: 11, color: R.not, marginLeft: 'auto' }}>
+                  son 14 gün
+                </span>
+              </div>
+              <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap', marginTop: 9 }}>
+                {ek.slice(0, 8).map((e) => (
+                  <span key={`${e.sube_id}${e.tarih}`} style={{
+                    padding: '4px 10px', borderRadius: 99, fontSize: 11.5,
+                    background: R.girinti, border: `1px solid ${R.cizgi3}`, color: R.metin2,
+                  }}>
+                    <b style={{ color: R.krem }}>{e.sube_adi}</b> · {kisaGun(e.tarih)}
+                    <span style={{ color: R.not2 }}> ({e.gun_once} gün önce)</span>
+                  </span>
+                ))}
+                {ek.length > 8 && (
+                  <span style={{ fontSize: 11, color: R.not2, alignSelf: 'center' }}>
+                    +{ek.length - 8} gün daha
+                  </span>
+                )}
+              </div>
+              <div style={{ fontSize: 10.5, color: R.not2, marginTop: 9, lineHeight: 1.6 }}>
+                Ciro girilmeyen gün <b>sıfır sayılır</b>: aşağıdaki kâr, ciro ve
+                şube karşılaştırmaları o kadar eksik çıkar. Şube panelinden
+                girilince kendiliğinden düzelir.
+                {(eksikCiro.bugun_bekleyen || []).length > 0 && (
+                  <> Bugün için {(eksikCiro.bugun_bekleyen || []).map((b) => b.sube_adi).join(', ')}
+                    {' '}henüz girmedi — gün kapanmadığı için eksik sayılmadı.</>
+                )}
+              </div>
+            </div>
+          );
+        })()}
+
         <KpiSeridi kpiler={kpiler} />
         {cfoKpiler.length > 0 && <KpiSeridi kpiler={cfoKpiler} />}
         <Hero
