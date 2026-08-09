@@ -81,7 +81,12 @@ def chrome_baslat():
     for path in chrome_yollari:
         if not os.path.exists(path):
             continue
+        # ⚠️ Chrome 111+ (2026-08-09 canlı hata): WebSocket bağlantısı origin
+        # kontrolünden geçiyor; bayrak yoksa CDP el sıkışması
+        # "403 Forbidden — Rejected an incoming WebSocket connection" ile
+        # reddediliyor. Script eski Chrome'a göre yazılmıştı, bu bayrak yoktu.
         args = [path, f"--remote-debugging-port={CDP_PORT}",
+                "--remote-allow-origins=*",
                 "--no-first-run", "--no-default-browser-check"]
         if _acik:
             # Normal profil kilitli → ayrı profil (oturum bozulmaz)
