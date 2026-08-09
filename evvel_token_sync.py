@@ -48,26 +48,52 @@ def port_ac_mi(port=CDP_PORT) -> bool:
         s.close()
         return False
 
+def chrome_calisiyor_mu() -> bool:
+    """Windows'ta chrome.exe süreci var mı?"""
+    try:
+        r = subprocess.run(
+            ["tasklist", "/FI", "IMAGENAME eq chrome.exe", "/NH"],
+            capture_output=True, text=True, timeout=10,
+            creationflags=subprocess.CREATE_NO_WINDOW)
+        return "chrome.exe" in (r.stdout or "").lower()
+    except Exception:
+        return False
+
+
 def chrome_baslat():
-    """Chrome'u debug portla başlatır (mevcut profil — oturumu korur)."""
+    """Chrome'u debug portla başlatır.
+
+    ⚠️ WINDOWS GERÇEĞİ (2026-08-09, canlıda 3 gün veri kaybettirdi):
+    Chrome ZATEN AÇIKSA `--remote-debugging-port` ile yeni bir instance
+    başlatılamaz — yeni çağrı mevcut pencereye sekme açar ve debug portu
+    AÇILMAZ (port yalnız ilk başlatmada belirlenir). Eski kod normal profille
+    deniyor, Chrome açık olduğu için 24 sn bekleyip "başlamadı" diyordu.
+
+    Çözüm: Chrome açıksa AYRI PROFİL kullan. Ayrı profil normal oturuma
+    dokunmaz; Evo'ya bir kez giriş yapılır, sonra kalıcı olarak çalışır.
+    """
     chrome_yollari = [
         r"C:\Program Files\Google\Chrome\Application\chrome.exe",
         r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
         os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"),
     ]
+    _acik = chrome_calisiyor_mu()
     for path in chrome_yollari:
-        if os.path.exists(path):
-            # NOT: --user-data-dir YOK → normal profil kullanılır (evobulut oturumu bozulmaz)
-            args = [
-                path,
-                f"--remote-debugging-port={CDP_PORT}",
-                "--no-first-run",
-                "--no-default-browser-check",
-                EVO_URL,
-            ]
-            subprocess.Popen(args, creationflags=subprocess.CREATE_NO_WINDOW)
-            log("Chrome başlatıldı (debug portlu, normal profil)")
-            return True
+        if not os.path.exists(path):
+            continue
+        args = [path, f"--remote-debugging-port={CDP_PORT}",
+                "--no-first-run", "--no-default-browser-check"]
+        if _acik:
+            # Normal profil kilitli → ayrı profil (oturum bozulmaz)
+            os.makedirs(CHROME_PROFILE, exist_ok=True)
+            args.append(f"--user-data-dir={CHROME_PROFILE}")
+            log(f"Chrome zaten açık → AYRI PROFİL kullanılıyor ({CHROME_PROFILE})")
+            log("   ⓘ Bu profilde Evo oturumu yoksa bir kez giriş yapmanız gerekir.")
+        else:
+            log("Chrome kapalı → normal profille debug portlu başlatılıyor")
+        args.append(EVO_URL)
+        subprocess.Popen(args, creationflags=subprocess.CREATE_NO_WINDOW)
+        return True
     log("HATA: Chrome bulunamadı!")
     return False
 
