@@ -7258,21 +7258,13 @@ def odeme_plani_cari_odemesiyle_kapat(oid: str, gerekce: str = "", kuru: int = 1
                         WHERE id=%s AND durum='bekliyor'""",
                     (bugun_tr(), float(p["tutar"]), _damga, oid))
         _n = cur.rowcount or 0
-        # Kaynak vadeli alım da kapanmalı — yoksa cari/kuyruk yine ayrışır
-        if _n and p.get("kaynak_tablo") == "vadeli_alimlar" and p.get("kaynak_id"):
-            try:
-                cur.execute("SAVEPOINT sp_va")
-                cur.execute("""UPDATE vadeli_alimlar
-                                  SET durum='odendi', odeme_tarihi=%s
-                                WHERE id::text=%s AND durum='bekliyor'""",
-                            (bugun_tr(), str(p["kaynak_id"])))
-                cur.execute("RELEASE SAVEPOINT sp_va")
-            except Exception as e:  # noqa: BLE001
-                try:
-                    cur.execute("ROLLBACK TO SAVEPOINT sp_va"); cur.execute("RELEASE SAVEPOINT sp_va")
-                except Exception:  # noqa: BLE001
-                    pass
-                logging.getLogger(__name__).warning("vadeli kapatma: %s", str(e)[:110])
+        # ⛔ VADELİ ALIMA DOKUNULMAZ (2026-08-10, canlıda yaşandı ve geri alındı)
+        # İlk sürüm kaynak `vadeli_alimlar` kaydını da 'odendi' yapıyordu.
+        # Ama cari ekstre `vadeli_alimlar durum='odendi'` satırlarını ÖDEME İZİ
+        # sayar — yani aynı 70.000 ₺'lik ödeme İKİNCİ KEZ düşüyor:
+        #     FEZ cari açık 51.428,59 → 16.280,59  (35.148 ₺ fazladan)
+        # Bu uç yalnız KUYRUĞU düzeltir; cari hesap zaten doğrudur ve ona
+        # dokunmak çift sayım yaratır. Cari ESAS, kuyruk YORUMDUR.
         audit(cur, 'odeme_plani', oid, 'CARI_ODEMESIYLE_KAPAT',
               eski={"durum": "bekliyor", "kalan": kalan},
               yeni={"durum": "odendi", "gerekce": gerekce[:200]})
