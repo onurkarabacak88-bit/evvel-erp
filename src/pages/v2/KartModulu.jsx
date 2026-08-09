@@ -138,6 +138,9 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
   // dağılımı (/kartlar/analiz) ve dönem arşivi (/kartlar/ekstre-arsiv).
   const [analiz, setAnaliz] = useState(null);
   const [arsiv, setArsiv] = useState(null);
+  const [sahsiRapor, setSahsiRapor] = useState(null);
+  const [faturaEslesme, setFaturaEslesme] = useState(null);
+  const [taksitYuku, setTaksitYuku] = useState(null);
 
   /**
    * Ekstre faizini hesapla-yaz. Gece motoru bunu zaten koşar; buradaki düğme
@@ -196,9 +199,19 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
       api('/kart-hareketleri?limit=200').catch(() => []),
       api('/kartlar/analiz').catch(() => null),
       api('/kartlar/ekstre-arsiv').catch(() => null),
-    ]).then(([k, o, h, hr, an, ar]) => {
+      // 🔭 2026-08-09 sahip denetimi: bu üç uç hesaplanıyordu ama HİÇBİR
+      // ekranda görünmüyordu. Şahsi çekim kart borcunu ve faizi büyütür;
+      // faturasız işletme harcaması vergi avantajını yakar; taksit yükü
+      // gelecek ayların nakit çıkışını bugünden belli eder.
+      api('/kartlar/sahsi-cekim-raporu').catch(() => null),
+      api('/kartlar/fatura-eslesme').catch(() => null),
+      api('/kartlar/taksit-yuku').catch(() => null),
+    ]).then(([k, o, h, hr, an, ar, sc, fe, ty]) => {
       setAnaliz(an);
       setArsiv(ar);
+      setSahsiRapor(sc);
+      setFaturaEslesme(fe);
+      setTaksitYuku(ty);
       setKartlar(Array.isArray(k) ? k : []);
       setOzet(o);
       setHarcama(h);
@@ -808,6 +821,87 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
           },
           { etiket: 'Toplam asgari', deger: fmt(toplamAsgari), alt: 'bu ay en az ödenmeli', renk: R.krem },
         ]} />
+
+        {/* ── 🔭 KARTIN GÖRÜNMEYEN YÜKÜ (2026-08-09 sahip denetimi) ──
+            Üç uç hesaplanıyordu, hiçbir ekranda yoktu. Üçü de aynı soruyu
+            farklı yönden yanıtlıyor: kart borcu NEDEN bu kadar büyük? */}
+        {(sahsiRapor || faturaEslesme || taksitYuku) && (
+          <div style={{ ...kartYuzey, padding: '13px 16px', marginBottom: 14 }}>
+            <div style={{ fontSize: 12.5, fontWeight: 700, color: R.krem, marginBottom: 4 }}>
+              🔭 Kartın görünmeyen yükü
+            </div>
+            <div style={{ fontSize: 11, color: R.not2, marginBottom: 10, lineHeight: 1.55 }}>
+              Bu üç rakam kâr tablosunda yoktur ama kart borcunu ve faizi büyütür.
+            </div>
+            <div style={{ display: 'flex', gap: 9, flexWrap: 'wrap' }}>
+              {sahsiRapor && (
+                <div style={{
+                  flex: '1 1 210px', minWidth: 200, padding: '10px 12px', borderRadius: 10,
+                  background: R.girinti, border: `1px solid ${R.cizgi}`,
+                  borderLeft: `3px solid ${R.mor || '#A78BFA'}`,
+                }}>
+                  <div style={{ fontSize: 11.5, color: R.metin2 }}>👤 Şahsi çekim</div>
+                  <div style={{ fontFamily: F.mono, fontSize: 17, fontWeight: 700, color: R.krem, marginTop: 2 }}>
+                    {fmt(sayi(sahsiRapor.genel_toplam))}
+                  </div>
+                  <div style={{ fontSize: 10.5, color: R.not2, marginTop: 4, lineHeight: 1.45 }}>
+                    P&L'e girmez ama <b>kart borcunu ve faizi büyütür</b> — işletme
+                    finanse ediyor
+                  </div>
+                </div>
+              )}
+              {faturaEslesme && (
+                <div style={{
+                  flex: '1 1 210px', minWidth: 200, padding: '10px 12px', borderRadius: 10,
+                  background: R.girinti, border: `1px solid ${R.cizgi}`,
+                  borderLeft: `3px solid ${R.kirmizi}`,
+                }}>
+                  <div style={{ fontSize: 11.5, color: R.metin2 }}>🧾 Faturasız işletme harcaması</div>
+                  <div style={{ fontFamily: F.mono, fontSize: 17, fontWeight: 700, color: R.krem, marginTop: 2 }}>
+                    {fmt(sayi(faturaEslesme.faturasiz_toplam))}
+                  </div>
+                  <div style={{ fontSize: 10.5, color: R.not2, marginTop: 4, lineHeight: 1.45 }}>
+                    belgesi olan yalnız {fmt(sayi(faturaEslesme.eslesen_toplam))} — gerisi
+                    KDV indirimi + gider yazımı <b>kaybı</b>
+                  </div>
+                </div>
+              )}
+              {taksitYuku && (() => {
+                const aylar = {};
+                Object.values(taksitYuku || {}).forEach((liste) => {
+                  (Array.isArray(liste) ? liste : []).forEach((x) => {
+                    aylar[x.ay] = (aylar[x.ay] || 0) + sayi(x.taksit_yuku);
+                  });
+                });
+                const sirali = Object.entries(aylar).sort((a, b) => a[0].localeCompare(b[0]))
+                  .filter(([, v]) => v > 0).slice(0, 6);
+                const top = sirali.reduce((s, [, v]) => s + v, 0);
+                if (!top) return null;
+                return (
+                  <div style={{
+                    flex: '1 1 250px', minWidth: 230, padding: '10px 12px', borderRadius: 10,
+                    background: R.girinti, border: `1px solid ${R.cizgi}`,
+                    borderLeft: `3px solid ${R.amber}`,
+                  }}>
+                    <div style={{ fontSize: 11.5, color: R.metin2 }}>🏦 Önümüzdeki taksit yükü</div>
+                    <div style={{ fontFamily: F.mono, fontSize: 17, fontWeight: 700, color: R.krem, marginTop: 2 }}>
+                      {fmt(top)}
+                    </div>
+                    <div style={{ fontSize: 10.5, color: R.not2, marginTop: 4, lineHeight: 1.6 }}>
+                      {sirali.map(([ay, v]) => (
+                        <div key={ay} style={{ display: 'flex', justifyContent: 'space-between' }}>
+                          <span>{ay}</span>
+                          <span style={{ fontFamily: F.mono, color: R.krem }}>{fmt(v)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+          </div>
+        )}
+
         <Tablo
           baslik="Kart bazlı borç & faiz"
           not="satıra tıkla → kart dosyası"

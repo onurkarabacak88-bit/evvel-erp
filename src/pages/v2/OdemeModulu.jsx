@@ -88,6 +88,7 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
   const [hata, setHata] = useState('');
   const [kuyruk, setKuyruk] = useState([]);      // 14 günlük pencere
   const [kokpit, setKokpit] = useState(null);
+  const [nakitAkis, setNakitAkis] = useState(null);
   const [cari, setCari] = useState(null);
   const [vergi, setVergi] = useState(null);   // /duyu/vergi-takvim — yaklaşan vergi yükü
   const [gecmis, setGecmis] = useState([]);
@@ -118,8 +119,12 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
       // yoktu, ay sonu sürpriz oluyordu. Plana BORÇ olarak YAZILMAZ (tahminî
       // rakam borç sayılmaz — kasa izi tek gerçek); yaklaşan yük olarak GÖSTERİLİR.
       api('/duyu/vergi-takvim').catch(() => null),
-    ]).then(([k, ko, c, l, tg, vt]) => {
+      // 💰 NAKİT AKIŞ (2026-08-09): kokpit yalnız ÇIKIŞI bilir; bu uç geliri de
+      // tahmin ediyordu (geçmiş ciro örüntüsü + doğruluk payı) ama ekranda yoktu.
+      api('/nakit-akis-projeksiyon').catch(() => null),
+    ]).then(([k, ko, c, l, tg, vt, na]) => {
       setVergi(vt);
+      setNakitAkis(na);
       setTedOdeme(Array.isArray(tg?.satirlar) ? tg.satirlar : (Array.isArray(tg) ? tg : []));
       setKuyruk(Array.isArray(k) ? k : []);
       setKokpit(ko);
@@ -1040,6 +1045,51 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
                   : dip < c7 ? 'dip, bir haftalık çıkışın altında — tampon ince'
                     : 'tampon yeterli'}
               </span>
+            </div>
+          );
+        })()}
+
+        {/* ── 💰 30 GÜNLÜK NAKİT DENGESİ (2026-08-09 sahip denetimi) ──
+            Dip noktası kokpitten geliyor ve YALNIZ ÇIKIŞI bilir. /nakit-akis-
+            projeksiyon geliri de tahmin ediyordu (geçmiş ciro örüntüsü, doğruluk
+            payıyla) ama hiçbir ekranda yoktu. "Ne kadar çıkacak" tek başına
+            yarım soru; asıl soru "girenle çıkan arasında fark ne?" */}
+        {nakitAkis?.ozet && (() => {
+          const o = nakitAkis.ozet;
+          const gelir = sayi(o.toplam_tahmini_gelir);
+          const gider = sayi(o.toplam_planlanan_gider);
+          const denge = gelir - gider;
+          const renk = denge < 0 ? R.kirmizi : R.yesil;
+          return (
+            <div style={{ ...kartYuzey, padding: '12px 16px', marginBottom: 12 }}>
+              <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', alignItems: 'baseline' }}>
+                <span style={{ fontSize: 12.5, fontWeight: 700, color: R.krem }}>
+                  💰 30 günlük nakit dengesi
+                </span>
+                <span style={{ fontSize: 12, color: R.metin2 }}>
+                  girecek <b style={{ fontFamily: F.mono, color: R.yesil }}>{fmt(gelir)}</b>
+                  {' '}− çıkacak <b style={{ fontFamily: F.mono, color: R.kirmizi }}>{fmt(gider)}</b>
+                  {' '}= <b style={{ fontFamily: F.mono, color: renk }}>{fmt(denge)}</b>
+                </span>
+                <span style={{ fontSize: 11, color: R.not, marginLeft: 'auto' }}>
+                  tahmin doğruluğu %{sayi(o.tahmin_dogruluk_pct).toFixed(0)}
+                </span>
+              </div>
+              <div style={{ fontSize: 11.5, color: R.not2, marginTop: 7, lineHeight: 1.6 }}>
+                Kasa <b style={{ fontFamily: F.mono }}>{fmt(sayi(o.baslangic_kasa))}</b>'den
+                {' '}<b style={{ fontFamily: F.mono, color: renk }}>{fmt(sayi(o.tahmini_gun_sonu_kasa))}</b>'ye
+                {' '}iner · en dip <b style={{ fontFamily: F.mono }}>{fmt(sayi(o.en_dusuk_kasa))}</b>
+                {sayi(o.gecikmus_odeme_yuklendi) > 0 && (
+                  <> · gecikmiş {fmt(sayi(o.gecikmus_odeme_yuklendi))} ilk güne yüklendi</>
+                )}
+                {denge < 0 && (
+                  <><br /><span style={{ color: R.amber }}>
+                    ⚠ Çıkan girenden {fmt(Math.abs(denge))} fazla — aradaki farkı kasa
+                    tamponu karşılıyor. Tampon kalıcı değil; ya tahsilat hızlanmalı ya
+                    ödeme takvimi yayılmalı.
+                  </span></>
+                )}
+              </div>
             </div>
           );
         })()}

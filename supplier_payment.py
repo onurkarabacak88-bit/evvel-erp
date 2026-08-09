@@ -237,6 +237,14 @@ def supplier_payment_sync_v2(cur) -> Dict[str, Any]:
                 if _cift is not None:
                     _tuketilen.add(_cift)      # aynı para sistem kaydında sayılı
                     taranan["cift_kanal_elenen"] = taranan.get("cift_kanal_elenen", 0) + 1
+                    # ⚠️ ON CONFLICT DO NOTHING geçmişte eklenmiş satırı SİLMEZ —
+                    # yalnız 'continue' demek eski çift kaydı tabloda bırakırdı
+                    # (redbull 21.482 ₺ kanonik katmanda kalıp cari ile farkı
+                    # kapatmıyordu). Silmiyoruz, GEÇERSİZ damgalıyoruz.
+                    cur.execute(
+                        """UPDATE supplier_payment_event SET gecersiz=TRUE
+                           WHERE kaynak_tablo='kart_hareketleri' AND kaynak_id=%s
+                             AND COALESCE(gecersiz,FALSE)=FALSE""", (str(r["id"]),))
                     continue
                 eklenen += _ekle(ted, r["tutar"], r["tarih"], "kart",
                                  "kart_hareketleri", r["id"], r["metin"][:200],
