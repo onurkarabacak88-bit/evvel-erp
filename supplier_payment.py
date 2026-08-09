@@ -20,6 +20,7 @@ from __future__ import annotations
 import logging
 import re
 import unicodedata
+from datetime import date as _dt_date
 from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter
@@ -145,6 +146,27 @@ def supplier_payment_sync_v2(cur) -> Dict[str, Any]:
 
     eklenen, taranan = 0, {"vadeli": 0, "nakit": 0, "kart": 0}
     B = EVVEL_SISTEM_BASLANGIC
+    # 🪢 ÇİFT KANAL (2026-08-09): vadeli alım/anlık gider KARTLA ödendiğinde iki
+    # iz doğar — sistem kaydı + banka ekstresinin ham satırı. Kanal 1-2'de
+    # eklenenler burada birikir; kanal 3 aynı parayı ikinci kez EKLEMEZ.
+    # cari_ekstre/cari_ozet ile aynı kural — iki katman aynı gerçeği üretmeli.
+    _sistem_izleri: List[Dict[str, Any]] = []
+    _tuketilen: set = set()
+
+    def _cift_kanal_mi(ted_ad: str, tutar, tarih) -> Optional[int]:
+        try:
+            t = float(tutar or 0)
+            d1 = tarih if isinstance(tarih, _dt_date) else _dt_date.fromisoformat(str(tarih)[:10])
+        except Exception:  # noqa: BLE001
+            return None
+        for i, s in enumerate(_sistem_izleri):
+            if i in _tuketilen or s["ted"] != ted_ad:
+                continue
+            if not t or abs(t - s["tutar"]) > max(3.0, t * 0.02):
+                continue
+            if abs((d1 - s["tarih"]).days) <= 3:
+                return i
+        return None
 
     # ── 1) VADELİ ALIM (ödenmiş sözler) — v1'de HİÇ YOKTU
     try:
@@ -161,6 +183,8 @@ def supplier_payment_sync_v2(cur) -> Dict[str, Any]:
                 eklenen += _ekle(ted, r["tutar"], r["tarih"], "vadeli",
                                  "vadeli_alimlar", r["id"], r["metin"][:200],
                                  "marka_token", 0.7)
+                _sistem_izleri.append({"ted": ted, "tutar": float(r["tutar"] or 0),
+                                       "tarih": r["tarih"], "metin": r["metin"][:80]})
         cur.execute("RELEASE SAVEPOINT sp_v")
     except Exception as e:  # noqa: BLE001
         cur.execute("ROLLBACK TO SAVEPOINT sp_v"); cur.execute("RELEASE SAVEPOINT sp_v")
@@ -182,6 +206,8 @@ def supplier_payment_sync_v2(cur) -> Dict[str, Any]:
                 eklenen += _ekle(ted, r["tutar"], r["tarih"], "nakit",
                                  "anlik_giderler", r["id"], r["metin"][:200],
                                  "marka_token", 0.6)
+                _sistem_izleri.append({"ted": ted, "tutar": float(r["tutar"] or 0),
+                                       "tarih": r["tarih"], "metin": r["metin"][:80]})
         cur.execute("RELEASE SAVEPOINT sp_n")
     except Exception as e:  # noqa: BLE001
         cur.execute("ROLLBACK TO SAVEPOINT sp_n"); cur.execute("RELEASE SAVEPOINT sp_n")
@@ -207,6 +233,11 @@ def supplier_payment_sync_v2(cur) -> Dict[str, Any]:
             else:
                 ted, yontem, guven = _eslestir(r["metin"]), "marka_token", 0.6
             if ted:
+                _cift = _cift_kanal_mi(ted, r["tutar"], r["tarih"])
+                if _cift is not None:
+                    _tuketilen.add(_cift)      # aynı para sistem kaydında sayılı
+                    taranan["cift_kanal_elenen"] = taranan.get("cift_kanal_elenen", 0) + 1
+                    continue
                 eklenen += _ekle(ted, r["tutar"], r["tarih"], "kart",
                                  "kart_hareketleri", r["id"], r["metin"][:200],
                                  yontem, guven)

@@ -1389,6 +1389,9 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
       grniAdet: sayi(t.faturasiz_teslimat_adet),
       gercek: Math.max(0, sayi(t.gercek_borc)),
       yalnizTeslimat: !!t.yalniz_teslimat,
+      // 🪢 aynı ödemenin iki kanaldan sayılıp tekilleştirilmesi — gizlenmez
+      ciftElenen: sayi(t.cift_kanal_elenen_tl),
+      ciftElenenAdet: sayi(t.cift_kanal_elenen_adet),
       _ham: t,
     }));
     const kritik = ted.filter(t => t.enYakinVade && String(t.enYakinVade).slice(0, 10) <= isoEkle(bugun, 3));
@@ -1447,9 +1450,12 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
                     v: t.yalnizTeslimat ? '📦 faturası hiç gelmedi'
                       : uyumsuz ? 'mutabakat farkı'
                         : t.grniTl > 0 ? '📦 faturasız teslimat var'
-                          : !t.izVar && t.acik > 0 ? 'ödeme izi yok' : 'normal',
+                          : t.ciftElenenAdet > 0 ? `🪢 ${fmt(t.ciftElenen)} çift kanal ayıklandı`
+                            : !t.izVar && t.acik > 0 ? 'ödeme izi yok' : 'normal',
                     rozet: t.yalnizTeslimat || t.grniTl > 0 ? R.amber
-                      : uyumsuz ? R.amber : !t.izVar && t.acik > 0 ? R.kirmizi : R.yesil,
+                      : uyumsuz ? R.amber
+                        : t.ciftElenenAdet > 0 ? R.bakir
+                          : !t.izVar && t.acik > 0 ? R.kirmizi : R.yesil,
                   },
                 ],
               };

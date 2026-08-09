@@ -23,7 +23,7 @@ import re
 import threading
 import uuid
 from datetime import date, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import io
 
@@ -2255,6 +2255,63 @@ def belge_beklenmez_mi(metin: str, ogrenilen: list = None) -> bool:
 # öncesi fatura/ödemeyi dahil EDEMEZSİN". Cari penceresi sistem başlangıcından
 # önceye TAŞMAZ; öncesi borçlar yalnız tedarikçi BEYANINDA görünür.
 EVVEL_SISTEM_BASLANGIC = "2026-06-01"  # gorev_api.SISTEM_BASLANGIC ile aynı kural
+
+
+def _cift_kanal_tekille(odemeler: List[dict], gun_tol: int = 3,
+                        oran_tol: float = 0.02) -> Tuple[List[dict], List[dict]]:
+    """🪢 AYNI ödemenin iki kanaldan sayılmasını önler.
+
+    Sahip (2026-08-09): "redbull fatura var ödeme yok anladığım kadarıyla."
+    Sezgi doğruydu — sistem redbull'a 0 ₺ borç gösteriyordu çünkü tek bir
+    21.487 ₺'lik ödeme İKİ KEZ sayılmıştı:
+
+        06-17  kart: APS GIDA KONYA TR      21.482  ← bankanın ham ekstre satırı
+        06-17  vadeli_alim: APS REDBULL     21.487  ← sistemin kendi kaydı
+
+    Vadeli alım/anlık gider KARTLA ödendiğinde iki iz doğar. Sistemin kendi
+    yazdığı kart satırı (kaynak_tablo='vadeli_alimlar') SQL'de zaten eleniyordu
+    — ama ekstre indiğinde AYNI çekim 'ekstre_import' olarak tekrar geliyor ve
+    o eleme dışında kalıyor. Sonuç: borç olduğundan fazla kapanmış görünür.
+
+    HAM SATIR elenir, sistem kaydı kalır: sistem kaydı hangi tedarikçiye ait
+    olduğunu KESİN bilir, ham satırda yalnız banka açıklaması vardır.
+    Her sistem kaydı EN FAZLA bir ham satırı eler (birebir).
+
+    Döner: (kalan, elenen) — elenen GİZLENMEZ, çağıran ekranda gösterir.
+    """
+    _sistem = [r for r in odemeler if (r.get("kanal") or "") in ("vadeli_alim", "anlik_gider")]
+    if not _sistem:
+        return odemeler, []
+    _kullanildi, kalan, elenen = set(), [], []
+    for r in odemeler:
+        if (r.get("kanal") or "") != "kart":
+            kalan.append(r)
+            continue
+        tr = float(r.get("tutar") or 0)
+        _es = None
+        for i, s in enumerate(_sistem):
+            if i in _kullanildi:
+                continue
+            ts = float(s.get("tutar") or 0)
+            if not tr or abs(tr - ts) > max(3.0, tr * oran_tol):
+                continue
+            try:
+                d1 = date.fromisoformat(str(r.get("tarih"))[:10])
+                d2 = date.fromisoformat(str(s.get("tarih"))[:10])
+            except Exception:  # noqa: BLE001 — tarih okunamıyorsa eşleştirme yapma
+                continue
+            if abs((d1 - d2).days) <= gun_tol:
+                _es = i
+                break
+        if _es is None:
+            kalan.append(r)
+        else:
+            _kullanildi.add(_es)
+            elenen.append({**r, "eslesen": (_sistem[_es].get("aciklama") or "")[:70],
+                           "eslesen_tutar": float(_sistem[_es].get("tutar") or 0),
+                           "neden": "aynı ödeme sistem kaydında zaten sayılı — "
+                                    "banka ekstresinin ham satırı ikinci kez saymaz"})
+    return kalan, elenen
 
 
 def _cari_pencere_kesiti(gun: int = 180) -> str:
@@ -4854,18 +4911,19 @@ def cari_ozet() -> dict:
         # felsefesi: iz varsa borçtan düşer, iz yoksa borç BİRİKİR (cari artar).
         # Pencere = fatura penceresiyle AYNI kesit (sistem başlangıcı korumalı).
         cur.execute(
-            """SELECT tarih::text AS tarih, tutar::float AS tutar, metin FROM (
+            """SELECT tarih::text AS tarih, tutar::float AS tutar, metin, kanal FROM (
                  SELECT vade_tarihi AS tarih, tutar,
-                        COALESCE(tedarikci,'') || ' ' || COALESCE(aciklama,'') AS metin
+                        COALESCE(tedarikci,'') || ' ' || COALESCE(aciklama,'') AS metin,
+                        'vadeli_alim' AS kanal
                  FROM vadeli_alimlar
                  WHERE durum='odendi' AND vade_tarihi >= %s::date
                  UNION ALL
                  SELECT tarih, tutar,
-                        COALESCE(tedarikci,'') || ' ' || COALESCE(aciklama,'')
+                        COALESCE(tedarikci,'') || ' ' || COALESCE(aciklama,''), 'anlik_gider'
                  FROM anlik_giderler
                  WHERE durum='aktif' AND kaynak_id IS NULL AND tarih >= %s::date
                  UNION ALL
-                 SELECT tarih, tutar, COALESCE(aciklama,'')
+                 SELECT tarih, tutar, COALESCE(aciklama,''), 'kart'
                  FROM kart_hareketleri
                  WHERE islem_turu='HARCAMA' AND durum='aktif'
                    -- ekstre_import istisnası — cari_ekstre kanal-3 ile AYNI
@@ -4981,13 +5039,19 @@ def cari_ozet() -> dict:
         # ödeme metninde geçen kayıtlar (aday eşleşme). İz YOKSA açık BÜYÜR.
         # Denetim P2-5: her ödeme izi TEK gruba düşer (vadelerdeki _atandi
         # deseni) — 'MEHMET ATALAY KAHVE' metni iki gruba birden düşmesin.
-        odeme_top = 0.0
+        _grup_izler = []
         for o in odeme_izleri:
             if o.get("_atandi"):
                 continue
             if any(_odeme_eslesir(a, o.get("metin")) for a in g_adlar):
                 o["_atandi"] = True
-                odeme_top = round(odeme_top + float(o["tutar"] or 0), 2)
+                _grup_izler.append({**o, "aciklama": o.get("metin")})
+        # 🪢 ÇİFT KANAL: vadeli alım kartla ödenince hem sistem kaydı hem banka
+        # ekstresinin ham satırı iz sayılıyordu → borç olduğundan fazla kapanmış
+        # görünüyordu (redbull 21.482 ₺, sahip yakaladı). Grup İÇİNDE tekilleştir
+        # — global yapmak farklı tedarikçilerin denk ödemelerini birbirine karıştırır.
+        _grup_izler, _cift_elenen_g = _cift_kanal_tekille(_grup_izler)
+        odeme_top = round(sum(float(o["tutar"] or 0) for o in _grup_izler), 2)
         fat_top = round(sum(f["tutar"] for f in son6), 2)
         # 📜 AÇILIŞ DEVRİ (tek-atama): sahip beyanı pencere-öncesi gerçeği taşır;
         # açık = devir + pencere içi fatura − ödeme izi. Devir yalnız TEK gruba.
@@ -5027,6 +5091,11 @@ def cari_ozet() -> dict:
             "faturasiz_teslimat_tl": _grni_tl,
             "gercek_borc": round(hesaplanan_acik + _grni_tl, 2),
             "odeme_izi_var": odeme_top > 0,
+            # 🪢 Şeffaflık: kaç ödeme iki kanaldan gelip tekilleştirildi. Gizlenmez —
+            # sahip "ödemem neden sayılmadı?" diye sorduğunda cevabı burada.
+            "cift_kanal_elenen_adet": len(_cift_elenen_g),
+            "cift_kanal_elenen_tl": round(
+                sum(float(x.get("tutar") or 0) for x in _cift_elenen_g), 2),
             "son_fatura": fl[-1]["tarih"] if fl else None,
             "beyan_bakiye": beyan, "beyan_tarihi": beyan_tarih,
             "beyan_hesap_farki": (round(beyan - hesaplanan_acik, 2)
@@ -5107,7 +5176,8 @@ def cari_ozet() -> dict:
         for alan in ("devir", "fatura_adet_6ay", "fatura_toplam_6ay",
                      "odeme_izi_toplam_6ay", "hesaplanan_acik",
                      "bekleyen_vade_toplam", "zincir_hareket_adet",
-                     "faturasiz_teslimat_adet", "faturasiz_teslimat_tl"):
+                     "faturasiz_teslimat_adet", "faturasiz_teslimat_tl",
+                     "cift_kanal_elenen_adet", "cift_kanal_elenen_tl"):
             hedef[alan] = round((hedef.get(alan) or 0) + (x.get(alan) or 0), 2)
         # gercek_borc TOPLANMAZ — birleşmiş değerlerden YENİDEN türetilir
         hedef["gercek_borc"] = round((hedef.get("hesaplanan_acik") or 0)
@@ -5508,6 +5578,7 @@ def cari_ekstre(tedarikci: str = ""):
 
         odeme_adaylari = [r for r in (dict(x) for x in cur.fetchall() or [])
                           if _odeme_dahil(r)]
+        odeme_adaylari, _cift_elenen = _cift_kanal_tekille(odeme_adaylari)
         _devirler = _cari_devirler(cur)
         # 📦 GRNI özeti AYNI bağlantıda hesaplanır (havuz dersi 2026-08-08)
         _grni_ozet = _faturasiz_teslimat_ozet(cur, _es_adlar)
@@ -5615,6 +5686,12 @@ def cari_ekstre(tedarikci: str = ""):
         # ⚠️ BAKİYEYE DAHİL EDİLMEZ — fatura gelince aynı borç ikinci kez sayılırdı.
         # Ayrı alanda durur; 'gercek_borc' ikisinin toplamıdır.
         "faturasiz_teslimat": _grni_ozet,
+        # 🪢 İKİ KANALDAN GELİP TEKİLLEŞTİRİLEN ödemeler — GİZLENMEZ. Sahip
+        # "şu ödemem neden görünmüyor?" dediğinde cevabı burada: aynı para
+        # sistem kaydında zaten sayılı, banka satırı ikinci kez saymaz.
+        "mukerrer_elenen": _cift_elenen,
+        "mukerrer_elenen_tl": round(
+            sum(float(x.get("tutar") or 0) for x in _cift_elenen), 2),
         "bekleyen_vadeler": bekleyen_vadeler,
         "bekleyen_vade_toplam": round(sum(v["tutar"] for v in bekleyen_vadeler), 2),
         "odeme_adaylari": odeme_adaylari,
