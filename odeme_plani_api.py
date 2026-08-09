@@ -37,6 +37,107 @@ _JENERIK = {
 }
 
 
+@router.get("/api/odeme-plani/cari-uyumsuzluk")
+def odeme_plani_cari_uyumsuzluk():
+    """⚖️ CARİ AÇIK ≠ ÖDEME PLANI — "ödedim ama kuyrukta duruyor".
+
+    Sahip (2026-08-09): "FEZ'e yapılmış ödeme var, fazla tutar olsa da;
+    kapanmış, kalan borcun vadesi diğer aya gitmesi lazımdı."
+
+    Canlı vaka: FEZ cari açığı 51.428,59 ₺ ama ödeme planında 86.576,59 ₺
+    duruyor (3.939 + 35.148 + 47.490). Aradaki 35.148 ₺ fazlalığın sebebi:
+    70.000 ₺'lik ödeme CARİ HESABA yapıldı ("Cari borç ödemesi — FEZ"), plan
+    kalemleriyle eşleştirilmedi. Cari doğru, kuyruk şişkin.
+
+    Doğru davranış FIFO: ödeme en eski kalemden başlayarak kapatır; yetmediği
+    kalem KISMİ kalır ve kalanı ileri vadeye taşınır.
+
+    ⚠️ ÖNERİ-ONLY: bu uç hiçbir plan kapatmaz. Hangi kalemin kapanması
+    gerektiğini FIFO ile HESAPLAR ve sahibin önüne koyar.
+    """
+    with db() as (conn, cur):
+        # Plan tarafı: bekleyen kalemler, tedarikçiye göre
+        cur.execute("""
+            SELECT p.id, p.tarih::text AS vade, COALESCE(p.aciklama,'') AS aciklama,
+                   COALESCE(p.odenecek_tutar,0)::float AS tutar,
+                   COALESCE(p.odenen_tutar,0)::float AS odenen,
+                   p.kaynak_tablo, p.kaynak_id,
+                   COALESCE(v.tedarikci,'') AS ted
+              FROM odeme_plani p
+              LEFT JOIN vadeli_alimlar v
+                     ON p.kaynak_tablo='vadeli_alimlar' AND v.id::text = p.kaynak_id::text
+             WHERE p.durum='bekliyor'
+             ORDER BY p.tarih
+        """)
+        planlar = [dict(r) for r in (cur.fetchall() or [])]
+    # Cari açıkları fatura_api'den al (tek gerçek kaynak — yeniden hesaplamıyoruz)
+    try:
+        from fatura_api import cari_ozet as _cari_ozet
+        _oz = _cari_ozet()
+        cariler = _oz.get("tedarikciler") or _oz.get("ozet") or []
+    except Exception as e:  # noqa: BLE001
+        return {"hata": f"cari özet okunamadı: {str(e)[:120]}", "satirlar": []}
+
+    def _norm(s):
+        s = (s or "").translate(str.maketrans("çğıöşüÇĞİıÖŞÜ", "cgiosuCGIIOSU"))
+        return s.upper().strip()
+
+    sonuc = []
+    for c in cariler:
+        ad = c.get("tedarikci") or ""
+        acik = round(float(c.get("hesaplanan_acik") or 0), 2)
+        adn = _norm(ad)
+        if not adn:
+            continue
+        # Bu tedarikçiye ait bekleyen plan kalemleri (tedarikçi alanı ya da açıklama)
+        kendi = [p for p in planlar
+                 if _norm(p["ted"]) == adn or adn in _norm(p["aciklama"])]
+        if not kendi:
+            continue
+        plan_top = round(sum(float(p["tutar"] or 0) - float(p["odenen"] or 0)
+                             for p in kendi), 2)
+        fark = round(plan_top - acik, 2)
+        if abs(fark) < 1:
+            continue
+        # FIFO: cari açık kadarı ayakta kalmalı; fazlası en ESKİ kalemlerden kapanır
+        kalan_acik = acik
+        oneri = []
+        for p in sorted(kendi, key=lambda x: str(x["vade"])):
+            p_kalan = round(float(p["tutar"] or 0) - float(p["odenen"] or 0), 2)
+            if kalan_acik <= 0.01:
+                oneri.append({**{k: p[k] for k in ("id", "vade", "aciklama")},
+                              "kalan": p_kalan, "karar": "KAPANMALI",
+                              "neden": "cari açık bu kalemden önce tükendi"})
+            elif p_kalan <= kalan_acik + 0.01:
+                kalan_acik = round(kalan_acik - p_kalan, 2)
+                oneri.append({**{k: p[k] for k in ("id", "vade", "aciklama")},
+                              "kalan": p_kalan, "karar": "durur"})
+            else:
+                oneri.append({**{k: p[k] for k in ("id", "vade", "aciklama")},
+                              "kalan": p_kalan, "karar": "KISMİ",
+                              "kalmasi_gereken": kalan_acik,
+                              "kapanmasi_gereken": round(p_kalan - kalan_acik, 2),
+                              "neden": "cari açığın kalanı bu kalemin bir kısmını karşılıyor"})
+                kalan_acik = 0.0
+        sonuc.append({
+            "tedarikci": ad, "cari_acik": acik, "plan_toplam": plan_top,
+            "fark": fark,
+            "yon": "plan FAZLA — ödenmiş ama kuyrukta duruyor" if fark > 0
+                   else "plan EKSİK — cari borç var ama kuyrukta yok",
+            "kalem_adet": len(kendi), "oneri": oneri,
+        })
+    sonuc.sort(key=lambda x: -abs(x["fark"]))
+    return {
+        "uyumsuz_tedarikci": len(sonuc),
+        "toplam_fark": round(sum(x["fark"] for x in sonuc), 2),
+        "satirlar": sonuc,
+        "not": "ÖNERİ-ONLY: hiçbir plan kapatılmadı. 'plan FAZLA' = ödeme cari "
+               "hesaba yapılmış ama kuyruk kalemi kapanmamış; FIFO ile hangi "
+               "kalemin kapanması, hangisinin kısmi kalması gerektiği hesaplandı. "
+               "Cari hesap ESAS, kuyruk YORUMDUR.",
+    }
+
+
 @router.get("/api/odeme-plani/gecikmis-iz-tarama")
 def odeme_plani_gecikmis_iz_tarama(gun_tol: int = 45, oran_tol: float = 0.02):
     """🔍 GECİKMİŞ ÖDEMELERİN İZİ VAR MI? — "ödedim ama sistem görmüyor" ihtimali.
