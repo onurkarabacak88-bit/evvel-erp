@@ -2586,7 +2586,12 @@ def init_db():
                                 ("anlik_giderler", "anlik_giderler", "sube"),
                                 ("sabit_giderler", "sabit_giderler", "sube_id"),
                                 ("borc_envanteri", "borc_envanteri", "sube")):
+            # ⚠️ SAVEPOINT ŞART: PostgreSQL'de bir hata transaction'ı ABORT eder;
+            # try/except hatayı yutar ama transaction bozuk kalır ve SONRAKİ
+            # bütün migration adımları patlar (uygulama hiç açılmaz). Bu ders
+            # daha önce de alınmıştı — savepoint'siz "hata-yutar" bir yalandır.
             try:
+                cur.execute("SAVEPOINT sp_kasa_sube")
                 cur.execute(f"""
                     UPDATE kasa_hareketleri kh
                        SET sube_id = s.id
@@ -2598,30 +2603,43 @@ def init_db():
                        AND kh.kaynak_id::text = t.id::text
                        AND kh.sube_id IS NULL
                 """, (_kt,))
-                if cur.rowcount:
+                _n = cur.rowcount
+                cur.execute("RELEASE SAVEPOINT sp_kasa_sube")
+                if _n:
                     logging.getLogger(__name__).info(
-                        "kasa_hareketleri.sube_id dolduruldu (%s): %s satir",
-                        _kt, cur.rowcount)
+                        "kasa_hareketleri.sube_id dolduruldu (%s): %s satir", _kt, _n)
             except Exception as _e:  # noqa: BLE001 — bir kaynak patlarsa ötekiler sürsün
+                try:
+                    cur.execute("ROLLBACK TO SAVEPOINT sp_kasa_sube")
+                    cur.execute("RELEASE SAVEPOINT sp_kasa_sube")
+                except Exception:  # noqa: BLE001
+                    pass
                 logging.getLogger(__name__).warning(
                     "kasa sube_id dolgusu atlandi (%s): %s", _kt, str(_e)[:110])
 
         cur.execute("ALTER TABLE vadeli_alimlar ADD COLUMN IF NOT EXISTS odeme_tarihi DATE")
         try:
+            cur.execute("SAVEPOINT sp_vadeli_ot")   # bkz. yukarıdaki SAVEPOINT notu
             cur.execute("""
                 UPDATE vadeli_alimlar v SET odeme_tarihi = p.odeme_tarihi
                   FROM odeme_plani p
                  WHERE p.kaynak_tablo = 'vadeli_alimlar'
-                   AND p.kaynak_id = v.id
+                   AND p.kaynak_id::text = v.id::text
                    AND p.odeme_tarihi IS NOT NULL
                    AND v.durum = 'odendi'
                    AND v.odeme_tarihi IS NULL
             """)
-            if cur.rowcount:
+            _n = cur.rowcount
+            cur.execute("RELEASE SAVEPOINT sp_vadeli_ot")
+            if _n:
                 logging.getLogger(__name__).info(
-                    "vadeli_alimlar.odeme_tarihi geriye donuk dolduruldu: %s satir",
-                    cur.rowcount)
+                    "vadeli_alimlar.odeme_tarihi geriye donuk dolduruldu: %s satir", _n)
         except Exception as _e:  # noqa: BLE001 — dolgu başarısızsa şema yine kurulur
+            try:
+                cur.execute("ROLLBACK TO SAVEPOINT sp_vadeli_ot")
+                cur.execute("RELEASE SAVEPOINT sp_vadeli_ot")
+            except Exception:  # noqa: BLE001
+                pass
             logging.getLogger(__name__).warning(
                 "vadeli odeme_tarihi dolgusu atlandi: %s", str(_e)[:120])
         cur.execute("""
