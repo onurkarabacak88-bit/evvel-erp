@@ -7215,6 +7215,72 @@ def sabit_gider_odenmis_plan_esitle(uygula: bool = False):
         return {"onizleme": False, "esitlenen_adet": esit, "kayitlar": liste}
 
 
+@app.post("/api/odeme-plani/{oid}/cari-odemesiyle-kapat")
+def odeme_plani_cari_odemesiyle_kapat(oid: str, gerekce: str = "", kuru: int = 1):
+    """💳 CARİ ÖDEMESİYLE KAPAT — para zaten çıkmış, yalnız kuyruk kapanır.
+
+    Sahip (2026-08-09): "FEZ'e yapılmış ödeme var, fazla tutar olsa da;
+    kapanmış, kalan borcun vadesi diğer aya gitmesi lazımdı."
+
+    Canlı vaka: FEZ'e 27.07'de 70.000 ₺ ödendi ama ödeme CARİ HESABA yapıldı
+    ("Cari borç ödemesi — FEZ", kaynak anlik_giderler). Plan kalemi ise
+    vadeli_alimlar kaynaklı; ikisi arasında bağ yok, bu yüzden
+    /odenmis-plan-esitle bunu yakalayamıyor. Sonuç: 35.148 ₺'lik fatura
+    ödendiği hâlde kuyrukta duruyor ve gecikmiş görünüyor.
+
+    ⚠️ KASA HAREKETİ YARATMAZ. Para zaten bir kez çıktı; ikinci kayıt açmak
+    çift sayım olurdu. Bu uç yalnızca kuyruk satırını kapatır ve NEDEN
+    kapatıldığını açıklamaya damgalar — denetim izi kalır, geri alınabilir.
+    """
+    with db() as (conn, cur):
+        cur.execute("""SELECT id, tarih::text AS vade, aciklama, durum,
+                              COALESCE(odenecek_tutar,0)::float AS tutar,
+                              COALESCE(odenen_tutar,0)::float AS odenen,
+                              kaynak_tablo, kaynak_id
+                         FROM odeme_plani WHERE id=%s FOR UPDATE""", (oid,))
+        p = cur.fetchone()
+        if not p:
+            raise HTTPException(404, "Plan kalemi bulunamadı")
+        p = dict(p)
+        if p["durum"] != "bekliyor":
+            raise HTTPException(409, f"Kalem '{p['durum']}' durumunda — yalnız 'bekliyor' kapatılabilir")
+        kalan = round(float(p["tutar"]) - float(p["odenen"]), 2)
+        _damga = (f"{p['aciklama'] or ''} · [cari ödemesiyle kapatıldı "
+                  f"{bugun_tr().isoformat()}{': ' + gerekce.strip() if gerekce.strip() else ''}]")[:500]
+        if kuru:
+            return {"kuru": True, "plan_id": oid, "vade": p["vade"],
+                    "kapanacak_tutar": kalan, "aciklama": p["aciklama"],
+                    "yeni_aciklama": _damga,
+                    "not": "kuru=0 ile uygulanır. Kasa hareketi YARATILMAZ."}
+        cur.execute("""UPDATE odeme_plani
+                          SET durum='odendi', odeme_tarihi=%s,
+                              odenen_tutar=%s, aciklama=%s
+                        WHERE id=%s AND durum='bekliyor'""",
+                    (bugun_tr(), float(p["tutar"]), _damga, oid))
+        _n = cur.rowcount or 0
+        # Kaynak vadeli alım da kapanmalı — yoksa cari/kuyruk yine ayrışır
+        if _n and p.get("kaynak_tablo") == "vadeli_alimlar" and p.get("kaynak_id"):
+            try:
+                cur.execute("SAVEPOINT sp_va")
+                cur.execute("""UPDATE vadeli_alimlar
+                                  SET durum='odendi', odeme_tarihi=%s
+                                WHERE id::text=%s AND durum='bekliyor'""",
+                            (bugun_tr(), str(p["kaynak_id"])))
+                cur.execute("RELEASE SAVEPOINT sp_va")
+            except Exception as e:  # noqa: BLE001
+                try:
+                    cur.execute("ROLLBACK TO SAVEPOINT sp_va"); cur.execute("RELEASE SAVEPOINT sp_va")
+                except Exception:  # noqa: BLE001
+                    pass
+                logging.getLogger(__name__).warning("vadeli kapatma: %s", str(e)[:110])
+        audit(cur, 'odeme_plani', oid, 'CARI_ODEMESIYLE_KAPAT',
+              eski={"durum": "bekliyor", "kalan": kalan},
+              yeni={"durum": "odendi", "gerekce": gerekce[:200]})
+    return {"success": bool(_n), "plan_id": oid, "kapatilan_tutar": kalan,
+            "kasa_hareketi": "YARATILMADI — para daha önce çıkmıştı",
+            "geri_alma": "Ödeme Merkezi'nden kalemi yeniden açabilirsiniz"}
+
+
 @app.post("/api/odeme-plani/odenmis-plan-esitle")
 def odeme_plani_odenmis_esitle(uygula: bool = False):
     """Geri-doldurma (TÜM kaynaklar): kasada ÖDENMİŞ kasa hareketi olduğu hâlde bağlı
