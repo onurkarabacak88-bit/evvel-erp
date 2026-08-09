@@ -2590,8 +2590,15 @@ def anlik_gider_listele(durum: str = "aktif", include_pending: bool = False, inc
                     COALESCE(COUNT(*), 0)::int AS adet,
                     COALESCE(SUM(tutar), 0) AS toplam
                 FROM anlik_giderler
+                -- 🏪 2026-08-09: eskiden `UPPER(sube) NOT IN ('','MERKEZ')` idi —
+                -- yani ŞUBE ADIYLA karşılaştırıyordu. sube/sube_id kimliğe
+                -- normalize edilince ('sube-merkez') bu karşılaştırma sessizce
+                -- bozulur ve merkez giderleri "şube bekleyen" sayılırdı.
+                -- Artık KİMLİKLE karşılaştırılıyor; ad değişse bile tutar.
                 WHERE durum='onay_bekliyor'
-                  AND COALESCE(TRIM(UPPER(sube)), '') NOT IN ('', 'MERKEZ')
+                  AND COALESCE(NULLIF(TRIM(sube_id),''), NULLIF(TRIM(sube),'')) IS NOT NULL
+                  AND COALESCE(NULLIF(TRIM(sube_id),''), NULLIF(TRIM(sube),''))
+                      NOT IN ('sube-merkez', 'MERKEZ')
                 """
             )
             rw = cur.fetchone() or {}

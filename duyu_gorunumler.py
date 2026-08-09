@@ -794,14 +794,22 @@ def sube_gelir_gider():
                 (ofset, ofset),
             )
             cirolar = {r["sube_id"]: float(r["ciro"]) for r in cur.fetchall() or []}
-            # anlik_giderler.sube METİN şube adıdır (sube_id DEĞİL — bilinen tuzak)
+            # 🏪 2026-08-09: `sube` artık AD DEĞİL KİMLİK tutuyor (kimlik/ad
+            # ayrımı normalize edildi, 344 satır çevrildi). Ad doğrudan
+            # okunamaz — `subeler` ile çözülür; eşleşmezse ham değer kalır
+            # ki satır kaybolmasın (uydurma ad üretilmez).
             cur.execute(
-                """SELECT COALESCE(NULLIF(TRIM(UPPER(sube)),''),'MERKEZ') AS sube_ad,
-                          ROUND(SUM(COALESCE(tutar,0))::numeric, 2) AS gider
-                   FROM anlik_giderler
-                   WHERE durum = 'aktif'
-                     AND tarih >= date_trunc('month', CURRENT_DATE) - (%s * INTERVAL '1 month')
-                     AND tarih <  date_trunc('month', CURRENT_DATE) - ((%s - 1) * INTERVAL '1 month')
+                """SELECT COALESCE(UPPER(s.ad),
+                                   NULLIF(TRIM(UPPER(a.sube)),''),
+                                   'MERKEZ') AS sube_ad,
+                          ROUND(SUM(COALESCE(a.tutar,0))::numeric, 2) AS gider
+                   FROM anlik_giderler a
+                   LEFT JOIN subeler s
+                          ON s.id::text = COALESCE(NULLIF(TRIM(a.sube_id),''),
+                                                   NULLIF(TRIM(a.sube),''))
+                   WHERE a.durum = 'aktif'
+                     AND a.tarih >= date_trunc('month', CURRENT_DATE) - (%s * INTERVAL '1 month')
+                     AND a.tarih <  date_trunc('month', CURRENT_DATE) - ((%s - 1) * INTERVAL '1 month')
                    GROUP BY 1""",
                 (ofset, ofset),
             )
