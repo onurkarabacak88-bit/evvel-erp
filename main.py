@@ -2178,6 +2178,90 @@ def kasa_durumu():
         return {"guncel_bakiye": kasa, "hareketler": [dict(r) for r in cur.fetchall()]}
 
 
+@app.post("/api/personel/sube-turet")
+def personel_sube_turet(kuru: int = 1):
+    """👤 ŞUBESİ TANIMSIZ PERSONELİN ŞUBESİNİ İZİNDEN TÜRET.
+
+    4 personelin `sube_id`'si boş; maaşları kasada hep "atanmamış" kovasına
+    düşüyor ve şube kârlılığından eksik kalıyor. Şube elle girilmemişse bile
+    personelin İZİ var: yoklamada asıl şubesi, görev tamamlamada çalıştığı
+    şube. Bu uç izleri sayar ve TEK şube baskınsa önerir/atar.
+
+    Kanıt gücü sırası:
+      1. gorev_yoklama.asil_sube_id — personelin kayıtlı asıl şubesi (en güçlü)
+      2. gorev_yoklama.sube_id      — fiilen çalıştığı şube (misafir olabilir)
+      3. gorev_tamamlama.sube_id    — görev yaptığı şube
+
+    ⚠️ Birden çok şube çıkarsa ve baskın olan yoksa ATAMA YAPILMAZ — yanlış
+    şubeye maaş yazmaktansa boş kalsın (öneri-only ilkesi).
+    """
+    _KAYNAKLAR = [
+        ("gorev_yoklama", "asil_sube_id", 3, "yoklamada asıl şube"),
+        ("gorev_yoklama", "sube_id", 2, "yoklamada çalıştığı şube"),
+        ("gorev_tamamlama", "sube_id", 1, "görev tamamlama"),
+    ]
+    sonuc, atanan = [], 0
+    with db() as (conn, cur):
+        cur.execute("""SELECT id::text AS id, ad_soyad, aktif
+                         FROM personel
+                        WHERE COALESCE(TRIM(sube_id),'') = ''""")
+        hedefler = [dict(r) for r in (cur.fetchall() or [])]
+        cur.execute("SELECT id::text AS id, ad FROM subeler")
+        ad_map = {r["id"]: r["ad"] for r in (cur.fetchall() or [])}
+        for p in hedefler:
+            skor: Dict[str, float] = {}
+            kanit = []
+            for tablo, kol, agirlik, etiket in _KAYNAKLAR:
+                try:
+                    cur.execute("SAVEPOINT sp_pt")
+                    cur.execute(f"""
+                        SELECT {kol}::text AS sid, COUNT(*) AS adet
+                          FROM {tablo}
+                         WHERE personel_id::text = %s
+                           AND COALESCE(TRIM({kol}::text),'') <> ''
+                         GROUP BY 1 ORDER BY 2 DESC
+                    """, (p["id"],))
+                    for r in (cur.fetchall() or []):
+                        d = dict(r)
+                        skor[d["sid"]] = skor.get(d["sid"], 0) + agirlik * int(d["adet"] or 0)
+                        kanit.append({"kaynak": etiket, "sube": ad_map.get(d["sid"], d["sid"]),
+                                      "adet": int(d["adet"] or 0)})
+                    cur.execute("RELEASE SAVEPOINT sp_pt")
+                except Exception:  # noqa: BLE001 — tablo/kolon yoksa atla
+                    try:
+                        cur.execute("ROLLBACK TO SAVEPOINT sp_pt"); cur.execute("RELEASE SAVEPOINT sp_pt")
+                    except Exception:  # noqa: BLE001
+                        pass
+            sirali = sorted(skor.items(), key=lambda kv: -kv[1])
+            oneri, gerekce = None, "iz bulunamadı"
+            if sirali:
+                _en, _puan = sirali[0]
+                _ikinci = sirali[1][1] if len(sirali) > 1 else 0
+                # Baskınlık şartı: en yüksek skor, ikincinin en az 2 katı olmalı
+                if _puan >= 2 * max(1, _ikinci):
+                    oneri, gerekce = _en, f"baskın iz (skor {_puan} / {_ikinci})"
+                else:
+                    gerekce = f"iki şube yakın (skor {_puan} / {_ikinci}) — sahip karar vermeli"
+            if oneri and not kuru:
+                cur.execute("UPDATE personel SET sube_id=%s WHERE id::text=%s AND COALESCE(TRIM(sube_id),'')=''",
+                            (oneri, p["id"]))
+                atanan += cur.rowcount or 0
+            sonuc.append({
+                "personel_id": p["id"], "ad_soyad": p["ad_soyad"], "aktif": p["aktif"],
+                "onerilen_sube": ad_map.get(oneri) if oneri else None,
+                "onerilen_sube_id": oneri, "gerekce": gerekce,
+                "kanitlar": kanit[:6],
+            })
+        if not kuru:
+            conn.commit()
+    return {
+        "kuru": bool(kuru), "hedef_personel": len(hedefler), "atanan": atanan,
+        "sonuc": sonuc,
+        "not": "Şube İZDEN türetilir: yoklamadaki asıl şube en güçlü kanıt. İki "
+               "şube yakın çıkarsa atama YAPILMAZ — sahip karar verir.",
+    }
+
+
 @app.post("/api/kasa/sube-atama-denetimi")
 def kasa_sube_atama_denetimi(kuru: int = 1):
     """🏪 ŞUBESİ ATANMAMIŞ KASA HAREKETLERİ — hangisi gerçekten merkezî?
