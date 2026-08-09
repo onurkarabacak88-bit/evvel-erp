@@ -2805,7 +2805,7 @@ def kart_vergi_etkisi(gun: int = 365, kurumlar_orani: float = 0.25):
                              else "Yurtdışı hizmet — KDV sorumlu sıfatıyla (KDV-2) beyan edilir")})
             continue
         # Belge beklenmeyen ödeme mi? (maaş/kira/banka — fatura üretmez)
-        if tip != "sahsi" and _belgesiz_kalip_mi(h.get("aciklama") or "",
+        if tip != "sahsi" and belge_beklenmez_mi(h.get("aciklama") or "",
                                                  _ogrenilen_istisna):
             kova["belge_beklenmez"]["adet"] += 1
             kova["belge_beklenmez"]["tutar"] = round(
