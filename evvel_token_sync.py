@@ -169,15 +169,36 @@ def token_gonder(token: str) -> bool:
         return False
 
 def railway_token_kontrol() -> bool:
-    """Railway'deki token hâlâ geçerli mi?"""
+    """Railway'deki WEB token'ı hâlâ çalışıyor mu?
+
+    ⚠️ SAHTE YEŞİL (2026-08-09, canlıda 3 gün veri kaybettirdi):
+    Eski kontrol `bool(d.get("urunler") is not None)` idi. Sunucu web token
+    ölünce REST fallback'e düşüp BOŞ SÖZLÜK döndürüyor ({}), o da "None
+    değil" olduğu için kontrol her seferinde GEÇERLİ diyordu. Log dolusu
+    "Mevcut token geçerli ✓" satırı vardı ama Evo verisi 06.08'de donmuştu.
+
+    Yeni kontrol sunucunun açık cevabına bakar: web_token_gecerli.
+    Eski sürüm sunucuyla uyum için kaynak alanına da düşer.
+    """
     try:
-        url = f"{RAILWAY_URL}/api/evo/hs-rapor?tarih1=01.01.2024&tarih2=01.01.2024&_kontrol=1"
+        # Dünün raporu — bugün henüz satış olmamış olabilir, yanıltmasın.
+        import datetime as _dt
+        _dun = (_dt.date.today() - _dt.timedelta(days=1)).strftime("%d.%m.%Y")
+        url = (f"{RAILWAY_URL}/api/evo/hs-rapor"
+               f"?tarih1={_dun}&tarih2={_dun}&_kontrol=1")
         req = urllib.request.Request(url, headers={"User-Agent": "EvvelSync/1.0"})
-        resp = urllib.request.urlopen(req, timeout=10)
+        resp = urllib.request.urlopen(req, timeout=15)
         d = json.loads(resp.read())
-        # Eğer veri geliyorsa token geçerli
-        return bool(d.get("urunler") is not None)
-    except Exception:
+        if "web_token_gecerli" in d:
+            gecerli = bool(d.get("web_token_gecerli"))
+        else:
+            # eski sunucu: kaynak alanı hs_rapor ise web token çalışmış demektir
+            gecerli = (str(d.get("kaynak") or "") == "hs_rapor")
+        if not gecerli:
+            log(f"Token ÖLÜ — kaynak={d.get('kaynak')} urun={d.get('urun_sayisi')}")
+        return gecerli
+    except Exception as e:
+        log(f"Token kontrolü yapılamadı ({str(e)[:80]}) — yenilemeye gidiliyor")
         return False  # hata = token gerekli, yenile
 
 def main():

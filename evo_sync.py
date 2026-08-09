@@ -1166,6 +1166,16 @@ def evo_hs_rapor(
         "urun_sayisi": len(sonuc),
         "kaynak": kaynak,
         "urunler": dict(sorted(sonuc.items(), key=lambda x: -x[1])),
+        # 🚦 SAHTE YEŞİL KAPATILDI (2026-08-09): token sync scripti
+        # `urunler is not None` diye kontrol ediyordu; fallback BOŞ SÖZLÜK
+        # döndürünce ({}), bu da "None değil" olduğu için token 3 gündür ölü
+        # olmasına rağmen her seferinde "geçerli ✓" deniyordu. Artık cevap
+        # açıkça söylüyor: web token çalıştı mı, veri geldi mi.
+        "web_token_gecerli": (kaynak == "hs_rapor"),
+        "veri_var": bool(sonuc),
+        "saglik": ("ok" if (kaynak == "hs_rapor" and sonuc)
+                   else "token_gecersiz" if kaynak == "rest_api_fallback"
+                   else "veri_yok"),
     }
     if sonuc:
         _evo_cache_yaz("hs-rapor", bastar, bittar, sonuc_dict)
@@ -1415,14 +1425,36 @@ def evo_sube_urunler(
 
 @router.get("/token-test")
 def evo_token_test():
-    """evobulut REST API bağlantısını test eder."""
+    """🔌 Evo bağlantı SAĞLIK testi — 'var mı' değil, 'çalışıyor mu'.
+
+    ⚠️ 2026-08-09: bu uç yalnız `token_var: true` diyordu — token'ın VARLIĞINI
+    test ediyor, GEÇERLİLİĞİNİ değil. Token 3 gün ölü kaldı, uç yine yeşil
+    gösterdi ve kimse fark etmedi. Artık gerçek bir sorgu atıp cevabı ölçer.
+    """
+    _sonuc: Dict[str, Any] = {"durum": "ok"}
     try:
-        token = _token_al()
-        return {"durum": "ok", "token_var": bool(token)}
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(502, str(e))
+        _sonuc["rest_token_var"] = bool(_token_al())
+    except Exception as e:  # noqa: BLE001
+        _sonuc["rest_token_var"] = False
+        _sonuc["rest_hata"] = str(e)[:120]
+    # GERÇEK TEST: dünün hızlı satış raporunu iste; hangi kaynaktan geldi?
+    try:
+        _dun = bugun_tr() - timedelta(days=1)
+        _ds = _dun.strftime("%d.%m.%Y")
+        _r = evo_hs_rapor(tarih1=_ds, tarih2=_ds)
+        _sonuc["web_token_gecerli"] = bool(_r.get("web_token_gecerli"))
+        _sonuc["kaynak"] = _r.get("kaynak")
+        _sonuc["dun_urun_sayisi"] = _r.get("urun_sayisi")
+        _sonuc["saglik"] = _r.get("saglik")
+    except Exception as e:  # noqa: BLE001
+        _sonuc["web_token_gecerli"] = False
+        _sonuc["saglik"] = "hata"
+        _sonuc["hata"] = str(e)[:140]
+    _sonuc["ne_yapmali"] = (
+        None if _sonuc.get("saglik") == "ok"
+        else "Evo web token'ı yenilenmeli: bilgisayarda evvel_token_sync.py "
+             "çalıştırın ya da Chrome'da evobulut oturumunu açık bırakın.")
+    return _sonuc
 
 
 @router.get("/web-login-test")
