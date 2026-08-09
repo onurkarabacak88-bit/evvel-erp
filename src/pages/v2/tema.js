@@ -201,7 +201,7 @@ export const MODULLER = [
     // 🔗 KART İZİ EŞLEŞTİRME (2026-08-08): otomatik eşleştirme motoru güven
     // skoruna göre "sahip onaylasın" diyordu ama onaylayacak EKRAN YOKTU —
     // öğrenme döngüsü kapalı kalıyordu. Bu görünüm döngüyü açar.
-    { id: 'eslesme', ad: 'Kart İzi Eşleştirme', rozet: 'eslesmeAday', renk: '#D29A5B' },
+    { id: 'eslesme', ad: 'Kart İzi Eşleştirme' },
     { id: 'eslesmedefter', ad: 'Eşleşme Karar Defteri' },
     { id: 'gecmis', ad: 'Ödeme Geçmişi' },
   ]},
@@ -270,7 +270,7 @@ export const MODULLER = [
     { id: 'kdv', ad: 'KDV Kanıt Paketi' },
     // 🧾 VERGİ ETKİSİ (2026-08-08, sahip: "fatura varsa vergiden düşümde gider
     // olarak sayılmalı ki ödenecek vergiyi daha net belirlemiş oluruz")
-    { id: 'vergi', ad: 'Vergi Etkisi · belgeli/belgesiz', rozet: 'vergiKayip', renk: '#F87171' },
+    { id: 'vergi', ad: 'Vergi Etkisi · belgeli/belgesiz' },
   ]},
   { id: 'tanim', blok: 'Kayıt & kurulum', ad: 'Tanımlar', kisa: 'Tanım', alt: 'Tedarikçi · TV menü', ikon: IK.klasor, gorunumler: [
     { id: 'tedarikciler', ad: 'Tedarikçiler' },
