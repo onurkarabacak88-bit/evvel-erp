@@ -15969,11 +15969,51 @@ def ops_maliyet_vergi_ozet(
         })
         toplam_vergi += max(0.0, donem_vergi)
         toplam_kar += favok
+    # 🏛️ MÜKELLEF BAZLI — ZARAR MAHSUBU (2026-08-09, sahip denetimi)
+    # Şube başına vergi hesaplamak, zarar eden şubenin zararını YOK SAYAR:
+    # Zafer +380.291 / Köyceğiz −59.214 ikisi de ŞAHIS. Beyanname mükellef
+    # bazında verilir; aynı mükellefin şubeleri tek matrahta toplanır, zarar
+    # kârdan DÜŞÜLÜR. Şube toplamı vergiyi olduğundan yüksek gösteriyordu.
+    # Şube satırları "hangi şube ne üretti" sorusu için DURUR — bu blok
+    # "gerçekte ne ödenecek" sorusunu yanıtlar.
+    _mk: Dict[str, Dict[str, Any]] = {}
+    for x in satirlar:
+        m = _mk.setdefault(x["vergi_tipi"], {"kar": 0.0, "subeler": []})
+        m["kar"] += x["vergi_oncesi_kar_tl"]
+        m["subeler"].append(x["sube_adi"])
+    mukellefler = []
+    mk_toplam = 0.0
+    for vt, m in _mk.items():
+        _yillik = m["kar"] * (365.0 / gun) if gun > 0 else m["kar"]
+        if vt == "sahis":
+            _yv = _gelir_vergisi_yillik(_yillik)
+            _yon = "Gelir Vergisi (artan dilim)"
+        else:
+            _yv = max(0.0, _yillik) * _KURUMLAR_VERGI_ORAN
+            _yon = f"Kurumlar Vergisi %{int(_KURUMLAR_VERGI_ORAN*100)}"
+        _dv = max(0.0, _yv * (gun / 365.0) if gun > 0 else _yv)
+        mk_toplam += _dv
+        mukellefler.append({
+            "mukellef": vt,
+            "mukellef_adi": "Şahıs işletmesi" if vt == "sahis" else "Şirket (Ltd/A.Ş.)",
+            "subeler": m["subeler"], "yontem": _yon,
+            "vergi_oncesi_kar_tl": round(m["kar"], 2),
+            "tahmini_vergi_tl": round(_dv, 2),
+            "vergi_sonrasi_kar_tl": round(m["kar"] - _dv, 2),
+        })
+    mukellefler.sort(key=lambda x: -x["tahmini_vergi_tl"])
     return {
         "gun": gun, "sube_id": sube_id,
         "satirlar": sorted(satirlar, key=lambda x: -x["tahmini_vergi_tl"]),
         "toplam_vergi_tl": round(toplam_vergi, 2),
         "toplam_vergi_oncesi_kar_tl": round(toplam_kar, 2),
+        "mukellefler": mukellefler,
+        "mukellef_toplam_vergi_tl": round(mk_toplam, 2),
+        "zarar_mahsubu_kazanci_tl": round(toplam_vergi - mk_toplam, 2),
+        "mahsup_notu": "Şube bazlı toplam zarar eden şubeyi yok sayar. Beyanname "
+                       "MÜKELLEF bazında verilir; aynı mükellefin zarar eden şubesi "
+                       "kâr eden şubesinin matrahını düşürür. Aradaki fark "
+                       "'zarar_mahsubu_kazanci_tl'dir.",
         "not": "⚠️ TAHMİNİ — yönetsel gösterge, resmî beyan değil. Geçici vergi/mahsup/istisna hariç. "
                "Şahıs şubelerde dönem kârı yıllığa oranlanıp artan dilim uygulanır (efektif oran).",
         "dilimler_2025": [{"ust": (None if u == float('inf') else u), "oran_pct": int(o*100)} for u, o in _GELIR_VERGISI_DILIMLERI],
@@ -16012,24 +16052,42 @@ def ops_maliyet_kdv_pozisyon(
             p2,
         )
         fatura_map = {r["sid"]: float(r["alis"] or 0) for r in cur.fetchall()}
-        cur.execute("SELECT id::text AS id, ad FROM subeler WHERE COALESCE(aktif,TRUE)=TRUE")
-        ad_map = {r["id"]: r["ad"] for r in cur.fetchall()}
+        cur.execute("SELECT id::text AS id, ad, COALESCE(vergi_tipi,'sirket') AS vt "
+                    "FROM subeler WHERE COALESCE(aktif,TRUE)=TRUE")
+        _sr = [dict(r) for r in cur.fetchall()]
+        ad_map = {r["id"]: r["ad"] for r in _sr}
+        vt_map = {r["id"]: r["vt"] for r in _sr}
 
     # İNDİRİLECEK KDV — ÜRÜN-AÇ BAZLI (kullanıcı kararı 2026-07-05): her tüketilen kalemin
     # net maliyeti × kendi KDV oranı (%1/%10/%20). Eskiden fatura toplamı × düz %10 (kaba +
     # stok birikimini de sayıyordu). gun-gun COGS motoru şube-gün satırlarında indirilecek_kdv_tl
     # üretiyor; şube bazında topla. Fatura yöntemi "karşılaştırma" olarak da döndürülür.
+    # ⚠️ ŞUBE KIRILIMI TUZAĞI (2026-08-09, sahip denetimi): ops_maliyet_gun_gun
+    # sube_id=None ile çağrılınca ŞUBE KIRILIMI YAPMAZ — tek "Tüm Şubeler"
+    # satırı üretir (sube_id=null). Sonuç: hesaplanan KDV şubelere dağılırken
+    # indirilecek KDV'nin TAMAMI "(şubesiz)" kovasına düşüyordu. Ekranda ZAFER
+    # 63.088 ₺ ödeyecek görünüyor, gerçekte 48.791 ₺ (14.297 ₺ indirimi var).
+    # Toplam doğruydu, KIRILIM yanlıştı — şube bazlı karar bu yüzden yanlış
+    # sinyal alıyordu. Çözüm: her şube için AYRI çağrı (~0,7 sn/şube).
     ind_urunac_map: Dict[str, float] = {}
     ind_urunac_toplam = 0.0
     try:
-        _gg = ops_maliyet_gun_gun(gun=gun, sube_id=sube_id, bas=None, bit=None)
-        for _r in _gg.get("satirlar", []):
-            _s = str(_r.get("sube_id") or "")
-            _k = float(_r.get("indirilecek_kdv_tl") or 0)
-            ind_urunac_map[_s] = ind_urunac_map.get(_s, 0.0) + _k
-            ind_urunac_toplam += _k
-    except Exception:
-        pass
+        if sube_id:
+            _hedefler = [sube_id]
+        else:
+            with db() as (_c9, _cur9):
+                _cur9.execute("SELECT id::text AS id FROM subeler "
+                              "WHERE COALESCE(aktif,TRUE)=TRUE AND id <> 'sube-merkez'")
+                _hedefler = [r["id"] for r in _cur9.fetchall()]
+        for _sid in _hedefler:
+            _gg = ops_maliyet_gun_gun(gun=gun, sube_id=_sid, bas=None, bit=None)
+            for _r in _gg.get("satirlar", []):
+                _s = str(_r.get("sube_id") or _sid or "")
+                _k = float(_r.get("indirilecek_kdv_tl") or 0)
+                ind_urunac_map[_s] = ind_urunac_map.get(_s, 0.0) + _k
+                ind_urunac_toplam += _k
+    except Exception as _e:  # noqa: BLE001
+        logger.warning("kdv sube kirilimi hata: %s", str(_e)[:120])
 
     sids = set(ciro_map) | set(fatura_map) | set(ind_urunac_map)
     if sube_id:
@@ -16051,9 +16109,42 @@ def ops_maliyet_kdv_pozisyon(
         })
         t_ind_fatura += ind_fatura
         t_hes += hes; t_ind += ind
+    # 🏛️ MÜKELLEF BAZLI KIRILIM (2026-08-09): KDV beyannamesi ŞUBEYE değil
+    # MÜKELLEFE verilir. Bir şubenin devreden KDV'si (Köyceğiz −3.143 ₺) ancak
+    # AYNI mükellefin başka şubesinin borcundan düşülebilir; farklı mükellefe
+    # geçemez. Zafer+Köyceğiz şahıs, Gazze(TEMA)+Alsancak şirket olduğu için
+    # havuz toplamı tesadüfen doğru çıkıyordu — ama mahsubun NEREDE mümkün
+    # olduğu görünmüyordu. Ödenecek KDV mükellef içinde netleşir, dışında HAYIR.
+    _muk: Dict[str, Dict[str, float]] = {}
+    for x in satirlar:
+        vt = vt_map.get(x["sube_id"]) or ("sirket" if x["sube_id"] else "?")
+        m = _muk.setdefault(vt, {"hesaplanan": 0.0, "indirilecek": 0.0, "subeler": []})
+        m["hesaplanan"] += x["hesaplanan_kdv_tl"]
+        m["indirilecek"] += x["indirilecek_kdv_tl"]
+        m["subeler"].append(x["sube_adi"])
+    mukellefler = []
+    for vt, m in _muk.items():
+        net = round(m["hesaplanan"] - m["indirilecek"], 2)
+        mukellefler.append({
+            "mukellef": vt,
+            "mukellef_adi": "Şahıs işletmesi" if vt == "sahis" else
+                            "Şirket (Ltd/A.Ş.)" if vt == "sirket" else "Şubesiz/atanmamış",
+            "subeler": m["subeler"],
+            "hesaplanan_kdv_tl": round(m["hesaplanan"], 2),
+            "indirilecek_kdv_tl": round(m["indirilecek"], 2),
+            "net_tl": net,
+            "durum": "ödenecek" if net > 0 else "devreden (sonraki aya)",
+        })
+    mukellefler.sort(key=lambda x: -x["net_tl"])
     return {
         "gun": gun, "sube_id": sube_id, "kdv_oran": _KDV,
         "satirlar": sorted(satirlar, key=lambda x: -x["odenecek_kdv_tl"]),
+        # Beyan bu kırılımda verilir — ödenecek toplam mükellef içinde netleşir
+        "mukellefler": mukellefler,
+        "mukellef_odenecek_tl": round(
+            sum(m["net_tl"] for m in mukellefler if m["net_tl"] > 0), 2),
+        "mukellef_devreden_tl": round(
+            -sum(m["net_tl"] for m in mukellefler if m["net_tl"] < 0), 2),
         "toplam_hesaplanan_tl": round(t_hes, 2),
         "toplam_indirilecek_tl": round(t_ind, 2),
         "toplam_indirilecek_fatura_tl": round(t_ind_fatura, 2),

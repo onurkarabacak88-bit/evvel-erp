@@ -1941,6 +1941,79 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
           <b>&nbsp;girmez</b>. Vergi rakamı <b>tahminîdir</b>: yönetsel gösterge, resmî beyan değil.
         </div>
 
+        {/* ── 🏛️ MÜKELLEF BAZLI — beyan ŞUBEYE değil MÜKELLEFE verilir ──
+            2026-08-09 sahip denetimi: şube bazlı toplam iki şeyi yanlış gösteriyordu.
+            (1) Bir şubenin devreden KDV'si ancak AYNI mükellefin başka şubesinin
+                borcundan düşülebilir — şube satırı bunu söylemiyordu.
+            (2) Vergi şube başına hesaplanınca zarar eden şube YOK SAYILIYORDU;
+                oysa aynı mükellefin zararı kârdan düşer. */}
+        {(Array.isArray(kdv.mukellefler) || Array.isArray(vrg.mukellefler)) && (
+          <div style={{ ...kartYuzey, padding: '13px 16px', marginBottom: 14 }}>
+            <div style={{ fontSize: 12.5, fontWeight: 700, color: R.krem, marginBottom: 4 }}>
+              🏛️ Mükellef bazlı — beyan bu kırılımda verilir
+            </div>
+            <div style={{ fontSize: 11, color: R.not2, marginBottom: 10, lineHeight: 1.55 }}>
+              Beyanname şubeye değil mükellefe verilir. Bir şubenin devreden KDV'si ya da
+              zararı yalnız <b>aynı mükellefin</b> diğer şubesiyle mahsuplaşır — başka
+              mükellefe geçemez.
+            </div>
+            <div style={{ display: 'flex', gap: 9, flexWrap: 'wrap' }}>
+              {(kdv.mukellefler || []).map((m) => (
+                <div key={`k${m.mukellef}`} style={{
+                  flex: '1 1 230px', minWidth: 220, padding: '10px 12px', borderRadius: 10,
+                  background: R.girinti, border: `1px solid ${R.cizgi}`,
+                  borderLeft: `3px solid ${sayi(m.net_tl) > 0 ? R.kirmizi : R.yesil}`,
+                }}>
+                  <div style={{ fontSize: 11.5, color: R.metin2 }}>
+                    KDV · {m.mukellef_adi}
+                  </div>
+                  <div style={{ fontFamily: F.mono, fontSize: 17, fontWeight: 700, color: R.krem, marginTop: 2 }}>
+                    {fmt(Math.abs(sayi(m.net_tl)))}
+                  </div>
+                  <div style={{ fontSize: 10.5, color: sayi(m.net_tl) > 0 ? R.kirmizi : R.yesil, marginTop: 2 }}>
+                    {m.durum}
+                  </div>
+                  <div style={{ fontSize: 10.5, color: R.not2, marginTop: 4, lineHeight: 1.45 }}>
+                    hesaplanan {fmt(sayi(m.hesaplanan_kdv_tl))} − indirilecek {fmt(sayi(m.indirilecek_kdv_tl))}
+                    <br />{(m.subeler || []).join(' · ')}
+                  </div>
+                </div>
+              ))}
+              {(vrg.mukellefler || []).map((m) => (
+                <div key={`v${m.mukellef}`} style={{
+                  flex: '1 1 230px', minWidth: 220, padding: '10px 12px', borderRadius: 10,
+                  background: R.girinti, border: `1px solid ${R.cizgi}`,
+                  borderLeft: `3px solid ${R.amber}`,
+                }}>
+                  <div style={{ fontSize: 11.5, color: R.metin2 }}>
+                    Gelir/Kurumlar · {m.mukellef_adi}
+                  </div>
+                  <div style={{ fontFamily: F.mono, fontSize: 17, fontWeight: 700, color: R.krem, marginTop: 2 }}>
+                    {fmt(sayi(m.tahmini_vergi_tl))}
+                  </div>
+                  <div style={{ fontSize: 10.5, color: R.not2, marginTop: 2 }}>{m.yontem}</div>
+                  <div style={{ fontSize: 10.5, color: R.not2, marginTop: 4, lineHeight: 1.45 }}>
+                    matrah {fmt(sayi(m.vergi_oncesi_kar_tl))} (zarar mahsuplu)
+                    <br />{(m.subeler || []).join(' · ')}
+                  </div>
+                </div>
+              ))}
+            </div>
+            {sayi(vrg.zarar_mahsubu_kazanci_tl) > 0 && (
+              <div style={{
+                marginTop: 10, padding: '9px 12px', borderRadius: 9,
+                background: R.girinti, borderLeft: `3px solid ${R.yesil}`,
+                fontSize: 11.5, color: R.metin2, lineHeight: 1.6,
+              }}>
+                💡 Zarar mahsubu kazancı: <b style={{ color: R.yesil }}>
+                  {fmt(sayi(vrg.zarar_mahsubu_kazanci_tl))}</b> — şube şube toplansaydı
+                bu kadar fazla vergi hesaplanırdı. Zarar eden şube, aynı mükellefin kâr eden
+                şubesinin matrahını düşürür.
+              </div>
+            )}
+          </div>
+        )}
+
         {/* ── VERGİ TAKVİMİ — "ne kadar" değil "NE ZAMAN" ──
             Ödenecek KDV tutarı yukarıda; buradaki soru para ne gün çıkacak.
             Sunucunun kendi uyarısı: beyanname DEĞİL, yönetim tahmini. */}
