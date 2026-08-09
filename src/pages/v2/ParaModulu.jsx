@@ -1230,11 +1230,13 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru, onToast }) {
                   background: R.girinti, borderLeft: `3px solid ${R.amber}`,
                   fontSize: 11.5, color: R.metin2, lineHeight: 1.6,
                 }}>
-                  Elde nakit bir <b>aralıktır</b>: en fazla{' '}
-                  <b style={{ fontFamily: F.mono, color: R.krem }}>{fmt(elde)}</b>, belirsizlerin
-                  tamamı elden ödendiyse en az{' '}
-                  <b style={{ fontFamily: F.mono, color: R.krem }}>{fmt(sayi(bankaMut.elde_nakit_alt))}</b>.
-                  Yeni giderlerde <b>elden / havale</b> seçildikçe aralık daralır.
+                  Ödeme yöntemi sınıflaması <b>%{sayi(bankaMut.siniflama_pct).toFixed(0)}</b> —
+                  {' '}<b>{sayi(bankaMut.belirsiz_adet)}</b> kayıtta elden mi havale mi seçilmemiş.
+                  {' '}Bu yüzden elde nakit <b>kesin değil</b>: yukarıdaki{' '}
+                  <b style={{ fontFamily: F.mono, color: R.krem }}>{fmt(elde)}</b> bir
+                  {' '}<b>üst sınırdır</b> — belirsizlerin bir kısmı elden ödendiyse gerçek
+                  rakam daha düşüktür. Yeni giderlerde <b>elden / havale</b> seçildikçe
+                  bu sayı kesinleşir.
                 </div>
               )}
 

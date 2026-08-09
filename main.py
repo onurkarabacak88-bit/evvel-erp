@@ -10455,10 +10455,19 @@ def banka_mutabakat(yil: int = None, ay: int = None):
         havale_odenen, havale_adet = _cikis(("havale", "eft"))
         belirsiz_nakit, belirsiz_adet = _cikis(("nakit",))
         _havuz = round((kum_ara + kum_kap) - kum_yatan, 2)
-        # ÜST SINIR: hiçbir çıkış elden değilse elde bu kadar nakit vardır
+        # ÜST SINIR: elden ödendiği KESİN olanlar düşülür
         elde_nakit = round(_havuz - elden_odenen, 2)
-        # ALT SINIR: belirsizlerin TAMAMI elden ödendiyse elde bu kadar kalır
-        elde_nakit_alt = round(_havuz - elden_odenen - belirsiz_nakit, 2)
+        # ALT SINIR: belirsizlerin tamamı elden ödenmiş varsayımı. Bu bir ÜST
+        # KORKU senaryosudur, gerçekçi değildir — belirsiz kovada kart borcu
+        # ödemesi/havale de var (canlıda 210 kayıt · 6,26 M ₺ hepsi 'nakit'
+        # varsayılanıyla duruyor). Eldeki nakit NEGATİF olamaz; 0'da kırpılır,
+        # yoksa ekranda −4,8 M ₺ gibi anlamsız bir korku rakamı çıkıyordu.
+        elde_nakit_alt = round(max(0.0, _havuz - elden_odenen - belirsiz_nakit), 2)
+        # Sınıflama olgunluğu: belirsizlerin payı düştükçe aralık daralır
+        _siniflanan = elden_odenen + havale_odenen
+        siniflama_pct = round(
+            100.0 * _siniflanan / (_siniflanan + belirsiz_nakit), 1
+        ) if (_siniflanan + belirsiz_nakit) > 0 else 100.0
         # Şube bazlı dönem teslim
         cur.execute("""
             SELECT COALESCE(s.ad,'?') AS sube,
@@ -10481,11 +10490,13 @@ def banka_mutabakat(yil: int = None, ay: int = None):
         "elden_odenen": elden_odenen, "elden_adet": elden_adet,
         "havale_odenen": havale_odenen, "havale_adet": havale_adet,
         "belirsiz_nakit": belirsiz_nakit, "belirsiz_adet": belirsiz_adet,
+        "siniflama_pct": siniflama_pct,
         "elde_nakit_not": (
             "Elde nakit = teslim alınan − bankaya yatan − ELDEN ödenen. Havale "
             "banka hesabından çıkar, elde nakiti etkilemez. Ödeme yöntemi "
-            "seçilmemiş kayıtlar 'belirsiz'dir: hepsi elden ödenmişse elde nakit "
-            "alt sınıra iner. Aralık daraldıkça mutabakat kesinleşir."),
+            "seçilmemiş kayıtlar 'belirsiz'dir; alt sınır 'hepsi elden ödendi' "
+            "korku senaryosudur ve gerçekçi değildir (belirsiz kovada kart borcu "
+            "ödemesi de var). Yeni giderlerde elden/havale seçildikçe aralık daralır."),
         "sube_teslim": sube_teslim,
     }
 
