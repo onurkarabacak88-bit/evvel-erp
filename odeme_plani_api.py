@@ -66,7 +66,13 @@ def odeme_plani_cari_uyumsuzluk():
               FROM odeme_plani p
               LEFT JOIN vadeli_alimlar v
                      ON p.kaynak_tablo='vadeli_alimlar' AND v.id::text = p.kaynak_id::text
+             -- ⚠️ YALNIZ TEDARİKÇİ ALIMI (2026-08-09 canlı ders): ilk sürüm
+             -- tüm bekleyen planları tarıyordu ve "fethi" tedarikçisi, kart
+             -- sahibi "Fethi Karabacak" ile eşleşip 177.906 ₺'lik kredi
+             -- taksiti + kart ekstresini cari borç sanıyordu. Kredi/kart/maaş
+             -- kalemleri cari hesaba AİT DEĞİLDİR; yalnız vadeli alım sayılır.
              WHERE p.durum='bekliyor'
+               AND COALESCE(p.kaynak_tablo,'') = 'vadeli_alimlar'
              ORDER BY p.tarih
         """)
         planlar = [dict(r) for r in (cur.fetchall() or [])]
@@ -89,9 +95,13 @@ def odeme_plani_cari_uyumsuzluk():
         adn = _norm(ad)
         if not adn:
             continue
-        # Bu tedarikçiye ait bekleyen plan kalemleri (tedarikçi alanı ya da açıklama)
+        # Bu tedarikçiye ait bekleyen plan kalemleri.
+        # Eşleşme sırası: (1) vadeli_alimlar.tedarikci ALANI — kanonik bağ,
+        # (2) açıklamada geçmesi — yalnız ad ≥5 harfse (kısa ad çok eşleşir).
+        # 'fethi' gibi kısa/kişi adları yalnız ALAN üzerinden eşleşir.
         kendi = [p for p in planlar
-                 if _norm(p["ted"]) == adn or adn in _norm(p["aciklama"])]
+                 if _norm(p["ted"]) == adn
+                 or (len(adn) >= 5 and adn in _norm(p["aciklama"]))]
         if not kendi:
             continue
         plan_top = round(sum(float(p["tutar"] or 0) - float(p["odenen"] or 0)

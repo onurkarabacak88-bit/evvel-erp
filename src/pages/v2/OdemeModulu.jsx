@@ -92,6 +92,7 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
   const [cari, setCari] = useState(null);
   const [vergi, setVergi] = useState(null);   // /duyu/vergi-takvim — yaklaşan vergi yükü
   const [izTarama, setIzTarama] = useState(null);  // /odeme-plani/gecikmis-iz-tarama
+  const [cariUyum, setCariUyum] = useState(null);  // /odeme-plani/cari-uyumsuzluk
   const [gecmis, setGecmis] = useState([]);
   // Sahip kararı (soru 3/9): tedarikçi ödemeleri NAKİT+KART birleşik.
   // Kasa defteri kartla yapılan tedarikçi ödemesini GÖREMEZ (kasadan para
@@ -127,10 +128,16 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
       // var mı? ki bence olmalı!!!"). Gecikmiş görünen kalem GERÇEKTEN ödenmiş
       // olabilir — para çıkmış, plan satırı 'bekliyor' kalmıştır. Öneri-only.
       api('/odeme-plani/gecikmis-iz-tarama').catch(() => null),
-    ]).then(([k, ko, c, l, tg, vt, na, iz]) => {
+      // ⚖️ CARİ ≠ KUYRUK (2026-08-09, sahip: "FEZ'e yapılmış ödeme var, kalan
+      // borcun vadesi diğer aya gitmeliydi"). Cari hesaba yapılan ödeme kuyruk
+      // kalemini kapatmıyordu; sahip ödediği faturayı kuyrukta görmeye devam
+      // ediyordu. Cari ESAS, kuyruk YORUM.
+      api('/odeme-plani/cari-uyumsuzluk').catch(() => null),
+    ]).then(([k, ko, c, l, tg, vt, na, iz, cu]) => {
       setVergi(vt);
       setNakitAkis(na);
       setIzTarama(iz);
+      setCariUyum(cu);
       setTedOdeme(Array.isArray(tg?.satirlar) ? tg.satirlar : (Array.isArray(tg) ? tg : []));
       setKuyruk(Array.isArray(k) ? k : []);
       setKokpit(ko);
@@ -1154,6 +1161,65 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
             </div>
           );
         })()}
+
+        {/* ── ⚖️ CARİ HESAP ≠ KUYRUK (2026-08-09) ─────────────────────────
+            Sahip: "FEZ'e yapılmış ödeme var, fazla tutar olsa da; kapanmış,
+            kalan borcun vadesi diğer aya gitmesi lazımdı."
+            Cari hesaba yapılan ödeme ("Cari borç ödemesi — FEZ") kuyruk
+            kalemini kapatmıyor; sahip ödediği faturayı kuyrukta görmeye devam
+            ediyor. Cari ESAS, kuyruk YORUMDUR — fark buradan okunur. */}
+        {cariUyum && sayi(cariUyum.uyumsuz_tedarikci) > 0 && (
+          <div style={{ ...kartYuzey, padding: '12px 16px', marginBottom: 12 }}>
+            <div style={{ display: 'flex', gap: 16, alignItems: 'baseline', flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 12.5, fontWeight: 700, color: R.krem }}>
+                ⚖️ Cari hesap ile kuyruk tutmuyor
+              </span>
+              <span style={{ fontSize: 12, color: R.metin2 }}>
+                {sayi(cariUyum.uyumsuz_tedarikci)} tedarikçi · toplam sapma
+                {' '}<b style={{ fontFamily: F.mono, color: R.amber }}>
+                  {fmt(Math.abs(sayi(cariUyum.toplam_fark)))}</b>
+              </span>
+            </div>
+
+            {(cariUyum.satirlar || []).slice(0, 5).map((s) => {
+              const fazla = sayi(s.fark) > 0;
+              return (
+                <div key={s.tedarikci} style={{
+                  marginTop: 9, padding: '8px 12px', borderRadius: 9,
+                  background: R.girinti,
+                  borderLeft: `3px solid ${fazla ? R.amber : R.kirmizi}`,
+                }}>
+                  <div style={{ fontSize: 12, color: R.krem, fontWeight: 600 }}>
+                    {s.tedarikci}
+                    <span style={{ fontWeight: 400, color: R.not2, fontSize: 11.5 }}>
+                      {' '}· cari {fmt(sayi(s.cari_acik))} · kuyruk {fmt(sayi(s.plan_toplam))} ·
+                      {' '}<b style={{ color: fazla ? R.amber : R.kirmizi }}>
+                        {fazla ? 'kuyruk fazla' : 'kuyruk eksik'} {fmt(Math.abs(sayi(s.fark)))}</b>
+                    </span>
+                  </div>
+                  {(s.oneri || []).filter((o) => o.karar !== 'durur').map((o) => (
+                    <div key={o.id} style={{ fontSize: 11, color: R.not2, marginTop: 3 }}>
+                      {o.karar === 'KAPANMALI' ? '🔴 kapanmalı' : '🟡 kısmi kalmalı'}
+                      {' '}· {kisaTarih(o.vade)} · {fmt(sayi(o.kalan))}
+                      {o.karar === 'KISMİ' && (
+                        <> → <b style={{ color: R.krem }}>{fmt(sayi(o.kalmasi_gereken))}</b> kalsın,
+                          {' '}{fmt(sayi(o.kapanmasi_gereken))} kapansın</>
+                      )}
+                      <span style={{ color: R.not }}> — {String(o.aciklama).slice(0, 34)}</span>
+                    </div>
+                  ))}
+                </div>
+              );
+            })}
+
+            <div style={{ fontSize: 10.5, color: R.not2, marginTop: 9, lineHeight: 1.6 }}>
+              <b>Kuyruk fazla</b> = ödeme cari hesaba yapıldı ama kalem kapanmadı
+              (ödediğiniz fatura hâlâ listede). <b>Kuyruk eksik</b> = cari borç var
+              ama kuyrukta karşılığı yok. Sistem hiçbir şeyi kendiliğinden
+              kapatmaz — FIFO ile ne olması gerektiğini gösterir, kararı siz verirsiniz.
+            </div>
+          </div>
+        )}
 
         {/* ── 💰 30 GÜNLÜK NAKİT DENGESİ (2026-08-09 sahip denetimi) ──
             Dip noktası kokpitten geliyor ve YALNIZ ÇIKIŞI bilir. /nakit-akis-
