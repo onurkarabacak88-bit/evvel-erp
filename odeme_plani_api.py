@@ -56,6 +56,13 @@ def odeme_plani_cari_uyumsuzluk():
     gerektiğini FIFO ile HESAPLAR ve sahibin önüne koyar.
     """
     import re as _re2
+    # Takma ad haritası (ESHİM = 'hüseyin makina' gibi). Hata-yutar: harita
+    # okunamazsa eşleştirme kısa ad + resmî ünvanlarla sürer.
+    try:
+        from fatura_api import tedarikci_eslestirme_haritasi as _teh
+        _harita = _teh() or {}
+    except Exception:  # noqa: BLE001
+        _harita = {}
     with db() as (conn, cur):
         # Plan tarafı: bekleyen kalemler, tedarikçiye göre
         cur.execute("""
@@ -113,6 +120,17 @@ def odeme_plani_cari_uyumsuzluk():
             _n2 = _norm(_ra)
             if len(_n2) >= 3:
                 _adaylar.add(_n2)
+        # 🔗 TAKMA ADLAR (2026-08-10, ESHİM vakası): eşleştirme tablosunda aynı
+        # tedarikçiye bağlanmış BAŞKA yazımlar da var ('hüseyin makina' = ESHİM).
+        # `resmi_adlar` yalnız faturada geçen ünvanları taşır; söz/vadeli alım
+        # kayıtları takma adla girilmiş olabilir. Onları görmezsek kuyruk EKSİK
+        # ölçülür — ESHİM'de 40.800 ₺'lik kalem kaçtı, sahibe yanlış soru sordum
+        # ve fazladan kalem eklenmesine yol açtı (geri alındı).
+        for _resmi, _bilgi in (_harita or {}).items():
+            if _norm((_bilgi or {}).get("kisa") or "") == adn:
+                _n3 = _norm(_resmi)
+                if len(_n3) >= 3:
+                    _adaylar.add(_n3)
         _kaliplar = [_re2.compile(r"(?<![A-Z0-9])" + _re2.escape(a) + r"(?![A-Z0-9])")
                      for a in _adaylar]
         kendi = [p for p in planlar
