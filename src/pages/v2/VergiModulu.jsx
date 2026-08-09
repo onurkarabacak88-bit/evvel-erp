@@ -30,6 +30,10 @@ const KOVA_ANLAM = {
   belge_beklenmez: { ad: '📋 Belge beklenmez', renk: '#60A5FA',
     not: 'maaş · kira · kredi/kart — bordro/dekont belgedir, gider yazılır' },
   belirsiz: { ad: '❓ Belirsiz', renk: '#FBBF24', not: 'işletme mi şahsi mi ayrılmamış' },
+  // 🔁 2026-08-09: "Cari borç ödemesi — ATALAY KAHVE" satırı gider değil ÖDEMEdir.
+  // Malın gideri kendi faturasında sayıldı; burada saymak çift sayım olurdu.
+  borc_kapatma: { ad: '🔁 Borç kapatma', renk: '#94A3B8',
+    not: 'tedarikçiye ödeme — gider değil, mal kendi faturasında sayıldı' },
   sahsi: { ad: '👤 Şahsi', renk: '#8B7B67', not: 'vergiye konu değil' },
   vergi_sgk: { ad: '⚖️ Vergi/SGK', renk: '#60A5FA', not: 'verginin kendisi — gider değil' },
   yurtdisi: { ad: '🌐 Yurtdışı', renk: '#A78BFA', not: 'KDV-2 sorumlu sıfatıyla' },
@@ -197,8 +201,13 @@ export default function VergiModulu({ onCekmece }) {
             }}>
               <span style={{
                 fontSize: 10.5, padding: '2px 7px', borderRadius: 6,
-                background: R.girinti, color: x.sinif === 'vergi_sgk' ? '#60A5FA' : '#A78BFA',
-              }}>{x.sinif === 'vergi_sgk' ? 'vergi/SGK' : 'yurtdışı'}</span>
+                background: R.girinti,
+                color: x.sinif === 'vergi_sgk' ? '#60A5FA'
+                  : x.sinif === 'borc_kapatma' ? '#94A3B8'
+                    : x.sinif === 'belge_beklenmez' ? '#60A5FA' : '#A78BFA',
+              }}>{x.sinif === 'vergi_sgk' ? 'vergi/SGK'
+                : x.sinif === 'borc_kapatma' ? 'borç kapatma'
+                  : x.sinif === 'belge_beklenmez' ? 'belge beklenmez' : 'yurtdışı'}</span>
               <span style={{ fontFamily: F.mono, color: R.krem, minWidth: 96, textAlign: 'right' }}>
                 {fmt(sayi(x.tutar))}
               </span>

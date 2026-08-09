@@ -1427,8 +1427,13 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
                   { v: fmt(t.acik), mono: true, sag: true, kalin: true, renk: t.acik > 0 ? R.kirmizi : R.not },
                   // 📦 Teslim alındı ama faturası gelmedi — bakiyede YOK, borç GERÇEK
                   {
-                    v: t.grniTl > 0 ? fmt(t.grniTl) : '—', mono: true, sag: true,
-                    renk: t.grniTl > 0 ? R.amber : R.not,
+                    // 2026-08-09: BEYSU "📦 faturası hiç gelmedi" diyor ama tutar
+                    // sütunu "—" idi — rozet ile sayı çelişiyordu. Tutarı girilmemiş
+                    // teslimat GİZLENMEZ; adediyle söylenir (aksiyon: fiyat gir).
+                    v: t.grniTl > 0 ? fmt(t.grniTl)
+                      : t.grniAdet > 0 ? `${t.grniAdet} teslimat · tutar yok` : '—',
+                    mono: t.grniTl > 0, sag: true,
+                    renk: t.grniTl > 0 ? R.amber : t.grniAdet > 0 ? R.not2 : R.not,
                   },
                   {
                     v: fmt(t.gercek), mono: true, sag: true, kalin: true,

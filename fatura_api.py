@@ -2605,9 +2605,30 @@ _YURTDISI_ICERIK = ("RAILWAY.COM", "STOCKHOLM", "DUBLIN", "AMSTERDAM",
                     "SAN FRANCISCO", "LUXEMBOURG", "SINGAPORE")
 
 
+# 🔁 BORÇ KAPATMA — gider DEĞİL, ödeme (2026-08-09, ekran gezisinde yakalandı).
+# "Cari borç ödemesi — ATALAY KAHVE" satırı karttan para çıkışıdır; malın kendisi
+# zaten faturasında/vadeli alımında gider olarak sayılmıştır. Bunu ayrıca "belgesiz
+# harcama" saymak aynı gideri İKİ KEZ saymak + olmayan bir vergi kaybı uydurmaktır.
+# Vergi matrahı ALIMDA doğar, ödemede değil.
+_BORC_KAPATMA_KALIP = ("CARI BORC ODEMESI", "BORC KAPATMA", "CARIYE ODEME")
+# Türkçe-I tuzağı: "ödemesi".upper() → "ÖDEMESI" (İ değil). Karşılaştırmayı
+# aksansız tabanda yapıyoruz ki büyük harf kuralı hiç devreye girmesin.
+_TR_SADE = str.maketrans("çğıöşüÇĞİıÖŞÜâîû", "cgiosuCGIIOSUaiu")
+
+
+def _sadele(s: str) -> str:
+    return (s or "").translate(_TR_SADE).upper().strip()
+
+
+def _borc_kapatma_mi(aciklama: str) -> bool:
+    return any(k in _sadele(aciklama) for k in _BORC_KAPATMA_KALIP)
+
+
 def _harcama_vergi_sinifi(aciklama: str, kategori: str) -> Optional[str]:
-    """'vergi_sgk' | 'yurtdisi' | None (normal işletme gideri)."""
+    """'vergi_sgk' | 'yurtdisi' | 'borc_kapatma' | None (normal işletme gideri)."""
     u = (aciklama or "").upper().strip()
+    if _borc_kapatma_mi(aciklama):
+        return "borc_kapatma"
     if any(k in u for k in _VERGI_SGK_KALIP) or (kategori or "") == "Vergi & SGK":
         return "vergi_sgk"
     if any(u.endswith(k) for k in _YURTDISI_ULKE_SONEK):
@@ -2776,7 +2797,7 @@ def kart_vergi_etkisi(gun: int = 365, kurumlar_orani: float = 0.25):
 
     kova = {k: {"adet": 0, "tutar": 0.0, "kdv": 0.0, "matrah": 0.0}
             for k in ("belgeli", "belgesiz", "belge_beklenmez", "belirsiz",
-                      "sahsi", "vergi_sgk", "yurtdisi")}
+                      "sahsi", "vergi_sgk", "yurtdisi", "borc_kapatma")}
     # 📋 BELGE BEKLENMEYEN ÖDEMELER (2026-08-08, sahip: "her ödemenin faturası
     # olmaz — maaş, bazı kiralar"). Bunlar KAYIP DEĞİLDİR:
     #   · maaş/avans/prim → bordro belgedir, gider YAZILIR, KDV zaten yoktur
@@ -2802,6 +2823,9 @@ def kart_vergi_etkisi(gun: int = 365, kurumlar_orani: float = 0.25):
                 "aciklama": (h.get("aciklama") or "")[:70], "sinif": ozel,
                 "ne_demek": ("Verginin kendisi — matrahtan düşülmez, KDV'si yok"
                              if ozel == "vergi_sgk"
+                             else "Tedarikçi borcunun kapatılması — para çıkışı; malın gideri "
+                                  "kendi faturasında sayılır, burada İKİNCİ KEZ sayılmaz"
+                             if ozel == "borc_kapatma"
                              else "Yurtdışı hizmet — KDV sorumlu sıfatıyla (KDV-2) beyan edilir")})
             continue
         # Belge beklenmeyen ödeme mi? (maaş/kira/banka — fatura üretmez)
@@ -2834,6 +2858,14 @@ def kart_vergi_etkisi(gun: int = 365, kurumlar_orani: float = 0.25):
             dayanak = "zincir: kart → vadeli alım → fatura"
         elif kt == "anlik_giderler" and ki in fisli:
             dayanak = "anlık giderin fişi gönderilmiş"
+        # 🧾 SABİT GİDER FATURASI (2026-08-09, ekran gezisinde yakalandı):
+        # "Fatura: GAZZE ELEKTRİK (01638544)" satırı bir FATURA ödemesidir —
+        # belge numarası açıklamada bile duruyor. Bu kaynak hiç tanınmadığı için
+        # belgesiz sayılıyor, olmayan bir vergi kaybı üretiyordu.
+        elif kt == "fatura_giderleri":
+            dayanak = "sabit gider faturası — belge kaydı üzerinden ödendi"
+        elif not kt and _sadele(h.get("aciklama") or "").startswith("FATURA:"):
+            dayanak = "fatura kaydından doğan ödeme"
         belgeli = dayanak is not None
         if tip == "sahsi":
             k = "sahsi"
@@ -2894,6 +2926,11 @@ def kart_vergi_etkisi(gun: int = 365, kurumlar_orani: float = 0.25):
             "yurtdisi": {**kova["yurtdisi"],
                          "ne_demek": "Yurtdışı hizmet — KDV-2 sorumlu sıfatıyla beyan; "
                                      "normal indirim gibi işlenemez"},
+            "borc_kapatma": {
+                **kova["borc_kapatma"],
+                "ne_demek": "Tedarikçi borcunun kapatılması — para çıkışı, gider DEĞİL. "
+                            "Malın gideri kendi faturasında/vadeli alımında zaten "
+                            "sayıldı; burada ikinci kez saymak çift sayım olurdu."},
         },
         "ozel_sinif_harcamalari": sorted(ozel_liste, key=lambda x: -x["tutar"])[:30],
         "ozet_cumle": (
