@@ -2364,7 +2364,11 @@ def kasa_sube_atama_denetimi(kuru: int = 1):
                          WHERE kh2.islem_turu = %s
                            AND kh2.sube_id IS NULL
                            AND COALESCE(p.sube_id,'') <> ''
-                           AND LENGTH(TRIM(p.ad_soyad)) >= 5
+                           -- Eşik 5 idi; canlıda "irem" (4 harf) gerçek bir
+                           -- personel ve 18.998,25 ₺ maaşı eşleşmiyordu.
+                           -- 4'e indirildi; yanlış eşleşmeye karşı asıl koruma
+                           -- zaten aşağıdaki TEKİLLİK şartı (tek şube).
+                           AND LENGTH(TRIM(p.ad_soyad)) >= 4
                          GROUP BY kh2.id
                         HAVING COUNT(DISTINCT p.sube_id) = 1
                       ) e
