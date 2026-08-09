@@ -60,7 +60,7 @@ def _get_pool():
                 # Çevre değişkeniyle ayarlanabilir (PG_MAX_CONN).
                 _pool = psycopg2.pool.ThreadedConnectionPool(
                     minconn=2,
-                    maxconn=int(os.environ.get("PG_MAX_CONN", "24") or "24"),
+                    maxconn=int(os.environ.get("PG_MAX_CONN", "32") or "32"),
                     dsn=dsn,
                     cursor_factory=psycopg2.extras.RealDictCursor,
                     connect_timeout=max(3, min(_pg_ct, 120)),

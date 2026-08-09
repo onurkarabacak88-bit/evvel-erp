@@ -170,12 +170,24 @@ export default function TasarimV2({ onGit }) {
   // Tasarımda her görünümün yanında bekleyen iş sayısı var (27 görünüm). Oradaki
   // rakamlar demo; burada GERÇEK uçlardan sayılır. Hepsi hata-yutar: bir uç
   // düşerse o rozet görünmez, kabuk çalışmaya devam eder.
+  // ⏳ ROZETLER GECİKMELİ YÜKLENİR (2026-08-08, sahip: "veriler sayfa açıldığında
+  // hemen gelmiyor, tekrar dene deyince geliyor").
+  // Panel açılışta ~30 uç çağırıyordu; hepsi AYNI ANDA gidince DB bağlantı
+  // havuzu (24) tükeniyor, geride kalan istekler hata alıyordu. Rozetler menü
+  // süsüdür — ilk boyamayı bekletmemeli. 1,2 sn gecikmeyle ikinci dalgada
+  // yüklenirler: ekran verisi önce gelir, havuz rahatlar, rozet sonra düşer.
   useEffect(() => {
     let iptal = false;
+    let zamanlayici = null;
     const koy = (k, v) => {
       if (iptal || v == null || v === 0 || v === '') return;
       setRozetler(r => ({ ...r, [k]: String(v) }));
     };
+    zamanlayici = setTimeout(() => {
+      if (iptal) return;
+      rozetleriYukle();
+    }, 1200);
+    function rozetleriYukle() {
     // ⚠️ ROZET ≠ EKRAN tutarsızlığı (2026-08-07 denetimi): burada ham kuyruk
     // uzunluğu sayılıyordu → menüde "132" kırmızı, ekranda "Kuyruk temiz · 0".
     // Onay Kuyruğu ekranı (KucukModuller:178) islem_turu'nde KASA geçen kayıtları
@@ -309,7 +321,8 @@ export default function TasarimV2({ onGit }) {
           return y != null && y >= 15;
         }).length))
       .catch(() => {});
-    return () => { iptal = true; };
+    }
+    return () => { iptal = true; if (zamanlayici) clearTimeout(zamanlayici); };
   }, []);
 
   useEffect(() => {
