@@ -102,9 +102,22 @@ def odeme_plani_cari_uyumsuzluk():
         # ⚠️ Önce "ad ≥5 harf" şartı koymuştum; 'FEZ' (3 harf) elendi ve
         # kuyruğu 86.577 yerine 47.490 gösterdi. Kısa adı elemek yerine
         # KELİME SINIRI kullanılır: 'FEZ' eşleşir, 'FEZA'nın içinde eşleşmez.
-        _kalip = _re2.compile(r"(?<![A-Z0-9])" + _re2.escape(adn) + r"(?![A-Z0-9])")
+        #
+        # 🔗 KANONİK ÜNVANLAR (2026-08-10): cari kaydın adı kısa ad ("ATALAY
+        # KAHVE") ama faturalar resmî ünvanla gelir ("MEHMET ATALAY",
+        # "Napolés"). Yalnız kısa adı aramak ATALAY'ın 54.186,50 ₺'lik
+        # kalemini kaçırdı ve 54.187 ₺'lik SAHTE bir eksik üretti. cari_ozet
+        # zaten `resmi_adlar` listesini veriyor — hepsi denenir.
+        _adaylar = {adn}
+        for _ra in (c.get("resmi_adlar") or []):
+            _n2 = _norm(_ra)
+            if len(_n2) >= 3:
+                _adaylar.add(_n2)
+        _kaliplar = [_re2.compile(r"(?<![A-Z0-9])" + _re2.escape(a) + r"(?![A-Z0-9])")
+                     for a in _adaylar]
         kendi = [p for p in planlar
-                 if _norm(p["ted"]) == adn or _kalip.search(_norm(p["aciklama"]))]
+                 if _norm(p["ted"]) in _adaylar
+                 or any(k.search(_norm(p["aciklama"])) for k in _kaliplar)]
         if not kendi:
             continue
         plan_top = round(sum(float(p["tutar"] or 0) - float(p["odenen"] or 0)
