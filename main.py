@@ -2157,6 +2157,82 @@ def kasa_durumu():
         return {"guncel_bakiye": kasa, "hareketler": [dict(r) for r in cur.fetchall()]}
 
 
+@app.post("/api/sube-kimlik-denetimi")
+def sube_kimlik_denetimi(kuru: int = 1):
+    """🏪 ŞUBE KİMLİĞİ TEK STANDARDA — 'sube' mi 'sube_id' mi, ad mı kimlik mi?
+
+    Sistemde 50+ tablo `sube_id` kullanıyor ama `anlik_giderler` ayrıca `sube`
+    taşıyor ve bir migration `sube_id = sube` diye KOPYALAMIŞ. Eğer `sube`
+    şube ADI tutuyorsa `sube_id` de ad tutuyor demektir — yani "kimlik" alanı
+    kimlik değil. Bugün KDV şube kırılımının ve kasa şube dolgusunun eksik
+    kalmasının kökü bu.
+
+    Bu uç ÖLÇER: her tabloda kaç satır kimlikle, kaç satır ADLA, kaçı hiç
+    çözülemiyor. kuru=0 ile ad tutan satırları kanonik kimliğe çevirir.
+    """
+    _HEDEF = [("anlik_giderler", "sube"), ("anlik_giderler", "sube_id"),
+              ("kasa_hareketleri", "sube_id"), ("sabit_giderler", "sube_id"),
+              ("ciro", "sube_id"), ("siparis_talep", "sube_id")]
+    rapor, duzeltilen = [], 0
+    with db() as (conn, cur):
+        cur.execute("SELECT id::text AS id, ad FROM subeler")
+        _subeler = [dict(r) for r in (cur.fetchall() or [])]
+        _ad2id = {(s["ad"] or "").strip().upper(): s["id"] for s in _subeler}
+        for tablo, kol in _HEDEF:
+            try:
+                cur.execute("SAVEPOINT sp_sk")
+                cur.execute(f"""
+                    SELECT COUNT(*) FILTER (WHERE {kol} IS NULL OR TRIM({kol}::text)='') AS bos,
+                           COUNT(*) FILTER (WHERE {kol}::text IN (SELECT id::text FROM subeler)) AS kimlikli,
+                           COUNT(*) FILTER (WHERE UPPER(TRIM({kol}::text)) IN
+                                            (SELECT UPPER(ad) FROM subeler)) AS adli,
+                           COUNT(*) AS toplam
+                      FROM {tablo}
+                """)
+                r = dict(cur.fetchone())
+                cur.execute("RELEASE SAVEPOINT sp_sk")
+                _coz = int(r["kimlikli"] or 0) + int(r["adli"] or 0) + int(r["bos"] or 0)
+                rapor.append({
+                    "tablo": tablo, "kolon": kol, "toplam": int(r["toplam"] or 0),
+                    "kimlikli": int(r["kimlikli"] or 0), "adla_yazilmis": int(r["adli"] or 0),
+                    "bos": int(r["bos"] or 0),
+                    "cozulemeyen": max(0, int(r["toplam"] or 0) - _coz),
+                })
+            except Exception as e:  # noqa: BLE001 — kolon/tablo yoksa atla
+                try:
+                    cur.execute("ROLLBACK TO SAVEPOINT sp_sk"); cur.execute("RELEASE SAVEPOINT sp_sk")
+                except Exception:  # noqa: BLE001
+                    pass
+                rapor.append({"tablo": tablo, "kolon": kol, "hata": str(e)[:90]})
+        if not kuru:
+            for x in rapor:
+                if x.get("hata") or not x.get("adla_yazilmis"):
+                    continue
+                try:
+                    cur.execute("SAVEPOINT sp_sd")
+                    cur.execute(f"""
+                        UPDATE {x['tablo']} t SET {x['kolon']} = s.id
+                          FROM subeler s
+                         WHERE UPPER(TRIM(t.{x['kolon']}::text)) = UPPER(s.ad)
+                    """)
+                    duzeltilen += cur.rowcount or 0
+                    cur.execute("RELEASE SAVEPOINT sp_sd")
+                except Exception as e:  # noqa: BLE001
+                    try:
+                        cur.execute("ROLLBACK TO SAVEPOINT sp_sd"); cur.execute("RELEASE SAVEPOINT sp_sd")
+                    except Exception:  # noqa: BLE001
+                        pass
+                    x["duzeltme_hatasi"] = str(e)[:90]
+            conn.commit()
+    return {
+        "kuru": bool(kuru), "subeler": [s["ad"] for s in _subeler],
+        "rapor": rapor, "duzeltilen_satir": duzeltilen,
+        "not": "'adla_yazilmis' > 0 ise o kolon KİMLİK değil AD tutuyor demektir; "
+               "id ile yapılan JOIN'ler o satırları sessizce kaçırır. kuru=0 "
+               "bunları kanonik id'ye çevirir (ad kolonu ayrıca durur).",
+    }
+
+
 @app.post("/api/kasa/iptal-cift-sayim-duzelt")
 def kasa_iptal_cift_sayim_duzelt(kuru: int = 1):
     """🔧 İPTAL TERS KAYITLARININ ÇİFT SAYIMINI ÖLÇ/DÜZELT (2026-08-09).
