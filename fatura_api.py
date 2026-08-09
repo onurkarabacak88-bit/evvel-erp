@@ -2593,7 +2593,12 @@ _KDV_VARSAYILAN = 0.20
 # matrahtan düşülmez; SGK primi düşülür ama KDV'si yoktur.
 _VERGI_SGK_KALIP = ("VERGI DAIRE", "VERGİ DAİRE", "VERGI DAIRESI", "MALIYE",
                     "MALİYE", "SGK", "SOSYAL GUVENLIK", "SOSYAL GÜVENLİK",
-                    "GIB ", "GİB ", "MUHTASAR", "DAMGA VERGI", "STOPAJ")
+                    "GIB ", "GİB ", "MUHTASAR", "DAMGA VERGI", "STOPAJ",
+                    # KKEG — kanunen kabul edilmeyen gider: cezanın belgesi olsa
+                    # bile matrahtan düşülmez. "Belgesiz kayıp" saymak yanlıştı
+                    # (canlıda 6.000 ₺ trafik cezası kayıp görünüyordu).
+                    "TRAFIK CEZA", "TRAFİK CEZA", "IDARI PARA CEZA", "İDARİ PARA CEZA",
+                    "VERGI-", "VERGİ-", "MTV", "MOTORLU TASIT")
 # 🌐 YURTDIŞI HİZMET — KDV sorumlu sıfatıyla (KDV-2) beyan edilir; normal
 # indirim gibi işlenemez. Kart ekstresinde ülke kodu satırın SONUNDADIR.
 # ⚠️ Ülke kodu metin İÇİNDE aranmaz: ilk sürümde " SE" kalıbı "AGİT SEFA"
@@ -2797,7 +2802,8 @@ def kart_vergi_etkisi(gun: int = 365, kurumlar_orani: float = 0.25):
 
     kova = {k: {"adet": 0, "tutar": 0.0, "kdv": 0.0, "matrah": 0.0}
             for k in ("belgeli", "belgesiz", "belge_beklenmez", "belirsiz",
-                      "sahsi", "vergi_sgk", "yurtdisi", "borc_kapatma")}
+                      "sahsi", "vergi_sgk", "yurtdisi", "borc_kapatma",
+                      "sistem_oncesi")}
     # 📋 BELGE BEKLENMEYEN ÖDEMELER (2026-08-08, sahip: "her ödemenin faturası
     # olmaz — maaş, bazı kiralar"). Bunlar KAYIP DEĞİLDİR:
     #   · maaş/avans/prim → bordro belgedir, gider YAZILIR, KDV zaten yoktur
@@ -2813,6 +2819,22 @@ def kart_vergi_etkisi(gun: int = 365, kurumlar_orani: float = 0.25):
     for h in hareketler:
         tut = round(float(h["tutar"] or 0), 2)
         tip = h["tip"]
+        # 📜 GEÇMİŞ BARİYERİ (2026-08-09, sahip: "DYK faturası daha önceydi —
+        # geçmiş bariyeri var mı?"). Sistemin her yerinde EVVEL_SISTEM_BASLANGIC
+        # bariyeri vardı, YALNIZ bu ekranda yoktu: 365 gün geriye bakıp 2025
+        # Eylül'ün kart çekimlerini bile "belgesiz kayıp" sayıyordu. O dönemin
+        # borcu AÇILIŞ DEVRİNE dahildir; belgesi de o defterdedir.
+        _thr = (h.get("tarih") or "")[:10]
+        if tip != "sahsi" and _thr and _thr < EVVEL_SISTEM_BASLANGIC:
+            kova["sistem_oncesi"]["adet"] += 1
+            kova["sistem_oncesi"]["tutar"] = round(
+                kova["sistem_oncesi"]["tutar"] + tut, 2)
+            ozel_liste.append({
+                "hareket_id": str(h["id"]), "tarih": h["tarih"], "tutar": tut,
+                "aciklama": (h.get("aciklama") or "")[:70], "sinif": "sistem_oncesi",
+                "ne_demek": f"{EVVEL_SISTEM_BASLANGIC} öncesi — açılış devrine dahil; "
+                            "belgesi eski defterde, buradan vergi kaybı sayılmaz"})
+            continue
         # ÖZEL SINIFLAR önce: vergi ödemesi gider değil, yurtdışı KDV-2
         ozel = _harcama_vergi_sinifi(h.get("aciklama") or "", h.get("kategori") or "")
         if ozel and tip != "sahsi":
@@ -2931,6 +2953,12 @@ def kart_vergi_etkisi(gun: int = 365, kurumlar_orani: float = 0.25):
                 "ne_demek": "Tedarikçi borcunun kapatılması — para çıkışı, gider DEĞİL. "
                             "Malın gideri kendi faturasında/vadeli alımında zaten "
                             "sayıldı; burada ikinci kez saymak çift sayım olurdu."},
+            "sistem_oncesi": {
+                **kova["sistem_oncesi"],
+                "baslangic": EVVEL_SISTEM_BASLANGIC,
+                "ne_demek": f"{EVVEL_SISTEM_BASLANGIC} öncesi harcama — AÇILIŞ DEVRİNE "
+                            "dahil. O dönemin borcu da belgesi de eski defterde; "
+                            "buradan vergi kaybı sayılmaz."},
         },
         "ozel_sinif_harcamalari": sorted(ozel_liste, key=lambda x: -x["tutar"])[:30],
         "ozet_cumle": (

@@ -34,6 +34,9 @@ const KOVA_ANLAM = {
   // Malın gideri kendi faturasında sayıldı; burada saymak çift sayım olurdu.
   borc_kapatma: { ad: '🔁 Borç kapatma', renk: '#94A3B8',
     not: 'tedarikçiye ödeme — gider değil, mal kendi faturasında sayıldı' },
+  // 📜 2026-08-09 (sahip: "DYK faturası daha önceydi, geçmiş bariyeri var mı?")
+  sistem_oncesi: { ad: '📜 Sistem öncesi', renk: '#8B7B67',
+    not: '1 Haz 2026 öncesi — açılış devrinde; belgesi eski defterde' },
   sahsi: { ad: '👤 Şahsi', renk: '#8B7B67', not: 'vergiye konu değil' },
   vergi_sgk: { ad: '⚖️ Vergi/SGK', renk: '#60A5FA', not: 'verginin kendisi — gider değil' },
   yurtdisi: { ad: '🌐 Yurtdışı', renk: '#A78BFA', not: 'KDV-2 sorumlu sıfatıyla' },
@@ -68,6 +71,17 @@ export default function VergiModulu({ onCekmece }) {
   const belgesiz = k.belgesiz || {};
   const belgeli = k.belgeli || {};
   const kayip = sayi(belgesiz.kayip_tasarruf);
+
+  // "Hesaba girmeyenler" listesi tutara göre sıralı geliyordu; 📜 sistem öncesi
+  // kalemler eklenince ilk 10'u doldurup vergi/SGK + yurtdışını ekrandan
+  // siliyordu. Her sınıftan en büyük 5'i alınır — hiçbir sınıf kaybolmaz.
+  const ozelGrup = {};
+  (d?.ozel_sinif_harcamalari || []).forEach((x) => {
+    (ozelGrup[x.sinif] = ozelGrup[x.sinif] || []).push(x);
+  });
+  const ozelGosterilecek = Object.values(ozelGrup)
+    .flatMap((g) => g.slice(0, 5))
+    .sort((a, b) => sayi(b.tutar) - sayi(a.tutar));
 
   return (
     <>
@@ -193,21 +207,27 @@ export default function VergiModulu({ onCekmece }) {
         <div style={{ ...kartYuzey, padding: '12px 16px', marginTop: 12 }}>
           <div style={{ fontSize: 12.5, fontWeight: 700, color: R.krem, marginBottom: 8 }}>
             Gider/KDV hesabına GİRMEYENLER
+            <span style={{ fontWeight: 400, color: R.not2, fontSize: 11, marginLeft: 8 }}>
+              her sınıftan en büyük 5 kalem
+            </span>
           </div>
-          {(d.ozel_sinif_harcamalari || []).slice(0, 10).map((x, i) => (
+          {ozelGosterilecek.map((x, i) => (
             <div key={i} style={{
               display: 'flex', gap: 10, alignItems: 'baseline', padding: '5px 0',
-              borderBottom: i < 9 ? `1px solid ${R.cizgi}` : 'none', fontSize: 12,
+              borderBottom: i < ozelGosterilecek.length - 1 ? `1px solid ${R.cizgi}` : 'none',
+              fontSize: 12,
             }}>
               <span style={{
                 fontSize: 10.5, padding: '2px 7px', borderRadius: 6,
                 background: R.girinti,
                 color: x.sinif === 'vergi_sgk' ? '#60A5FA'
                   : x.sinif === 'borc_kapatma' ? '#94A3B8'
-                    : x.sinif === 'belge_beklenmez' ? '#60A5FA' : '#A78BFA',
+                    : x.sinif === 'sistem_oncesi' ? '#8B7B67'
+                      : x.sinif === 'belge_beklenmez' ? '#60A5FA' : '#A78BFA',
               }}>{x.sinif === 'vergi_sgk' ? 'vergi/SGK'
                 : x.sinif === 'borc_kapatma' ? 'borç kapatma'
-                  : x.sinif === 'belge_beklenmez' ? 'belge beklenmez' : 'yurtdışı'}</span>
+                  : x.sinif === 'sistem_oncesi' ? '📜 sistem öncesi'
+                    : x.sinif === 'belge_beklenmez' ? 'belge beklenmez' : 'yurtdışı'}</span>
               <span style={{ fontFamily: F.mono, color: R.krem, minWidth: 96, textAlign: 'right' }}>
                 {fmt(sayi(x.tutar))}
               </span>
