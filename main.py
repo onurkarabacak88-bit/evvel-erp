@@ -2179,18 +2179,10 @@ def kasa_sube_atama_denetimi(kuru: int = 1):
         ("ciro", "ciro", "t.sube_id"),
         ("personel_aylik", "personel_aylik", "(SELECT p.sube_id FROM personel p WHERE p.id::text = t.personel_id::text)"),
         ("kasa_teslim", "kasa_teslim", "t.sube_id"),
-        # 🔗 İKİ ADIMLI ZİNCİR (2026-08-09): maaş kasaya `odeme_plani` kaynağıyla
-        # yazılıyor; planın kendi kaynağı `personel_aylik`, onun da personeli
-        # bir şubede çalışıyor. Tek adımlı eşleme bunu göremediği için
-        # 250.486,97 ₺ maaş "atanmamış" kovasında duruyordu — şube kârlılığı
-        # personel maliyeti olmadan hesaplanıyordu.
-        ("odeme_plani", "odeme_plani",
-         "(SELECT p.sube_id FROM personel_aylik pa "
-         "   JOIN personel p ON p.id::text = pa.personel_id::text "
-         "  WHERE t.kaynak_tablo = 'personel_aylik' "
-         "    AND pa.id::text = t.kaynak_id::text)"),
     ]
-    # Şubesi OLMAYAN, merkezde kalması DOĞRU olan işlem türleri
+    # Şubesi OLMAYAN, merkezde kalması DOĞRU olan işlem türleri.
+    # ⚠️ Bu kontrol türetilebilirlikten ÖNCE gelir: kart borcu ödemesi
+    # `odeme_plani` kaynaklı olsa bile şubesi yoktur.
     _MERKEZI = ("KART_ODEME", "KART_ODEME_IPTAL", "BORC_TAKSIT", "ACILIS_DEVRI",
                 "DIS_KAYNAK", "DIS_KAYNAK_IPTAL", "VADELI_ODEME", "ODEME_IPTAL")
     with db() as (conn, cur):
@@ -2210,8 +2202,11 @@ def kasa_sube_atama_denetimi(kuru: int = 1):
             _tur = d["islem_turu"]
             _kt = d["kaynak_tablo"]
             _turetilebilir = any(k == _kt for k, _, _ in _TUREME)
-            d["sinif"] = ("merkezi" if _tur in _MERKEZI and not _turetilebilir
-                          else "atanabilir" if _turetilebilir else "belirsiz")
+            # MERKEZÎ önce: kart borcu `odeme_plani` kaynaklı olsa da şubesi yok.
+            # PERSONEL_MAAS ayrı yoldan (açıklamadaki personel adı) atanır.
+            d["sinif"] = ("merkezi" if _tur in _MERKEZI
+                          else "atanabilir" if (_turetilebilir or _tur == "PERSONEL_MAAS")
+                          else "belirsiz")
             d["tutar"] = round(float(d["tutar"] or 0), 2)
             gruplar.append(d)
         atanan = 0
@@ -2237,6 +2232,41 @@ def kasa_sube_atama_denetimi(kuru: int = 1):
                         pass
                     logging.getLogger(__name__).warning(
                         "sube atama atlandi (%s): %s", kt, str(e)[:110])
+            # 👤 MAAŞ — açıklamadaki personel adından türet.
+            # Kasa kaydı `odeme_plani` kaynaklı ama planın kendi kaynağı BOŞ
+            # (54/58 kayıtta NULL) — zincir kopuk. Tek sağlam iz açıklamadaki
+            # ad: "Personel Maaş: MERVE KARABACAK — Haziran 2026 dönemi".
+            # ⚠️ TEKİLLİK ŞART: ad birden çok personele uyuyorsa (MERVE /
+            # MERVE AKTAŞ) atama YAPILMAZ — yanlış şubeye maaş yazmaktansa
+            # atanmamış kalsın.
+            try:
+                cur.execute("SAVEPOINT sp_maas")
+                cur.execute("""
+                    UPDATE kasa_hareketleri kh
+                       SET sube_id = e.sube_id
+                      FROM (
+                        SELECT kh2.id AS hid, MIN(p.sube_id) AS sube_id
+                          FROM kasa_hareketleri kh2
+                          JOIN personel p
+                            ON UPPER(kh2.aciklama) LIKE '%%' || UPPER(TRIM(p.ad)) || '%%'
+                         WHERE kh2.islem_turu = 'PERSONEL_MAAS'
+                           AND kh2.sube_id IS NULL
+                           AND COALESCE(p.sube_id,'') <> ''
+                           AND LENGTH(TRIM(p.ad)) >= 5
+                         GROUP BY kh2.id
+                        HAVING COUNT(DISTINCT p.sube_id) = 1
+                      ) e
+                     WHERE kh.id = e.hid AND kh.sube_id IS NULL
+                """)
+                atanan += cur.rowcount or 0
+                cur.execute("RELEASE SAVEPOINT sp_maas")
+            except Exception as e:  # noqa: BLE001
+                try:
+                    cur.execute("ROLLBACK TO SAVEPOINT sp_maas")
+                    cur.execute("RELEASE SAVEPOINT sp_maas")
+                except Exception:  # noqa: BLE001
+                    pass
+                logging.getLogger(__name__).warning("maas sube atama: %s", str(e)[:110])
             conn.commit()
     _t = lambda s: round(sum(g["tutar"] for g in gruplar if g["sinif"] == s), 2)  # noqa: E731
     _a = lambda s: sum(g["adet"] for g in gruplar if g["sinif"] == s)  # noqa: E731
