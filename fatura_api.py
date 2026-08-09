@@ -2218,6 +2218,11 @@ _BELGESIZ_KALIPLAR = (
     "banka", "hesap faizi", "eksi hesap", "faiz", "kredi karti", "kart odeme",
     "kart borcu", "ekstre", "asgari odeme", "altin alimi", "altın alımı",
     "hisse senedi", "doviz alimi", "döviz alımı",  # yatırım — fatura üretmez
+    # 2026-08-08 (sahip: "her ödemenin faturası olmaz, mesela maaş, mesela bazı
+    # kiralar"): şahıstan kiralamada fatura YOKTUR — belge stopajlı kira
+    # dekontudur/sözleşmedir. Şirketten kiralamada fatura gelir; o zaman zaten
+    # 'belgeli' kovasına düşer, bu kalıp onu engellemez.
+    "kira", "kirasi", "kirası",
 )
 
 
@@ -2770,8 +2775,19 @@ def kart_vergi_etkisi(gun: int = 365, kurumlar_orani: float = 0.25):
             logger.info("odeme_iz bagi okunamadi (kolon yeni olabilir): %s", str(e)[:90])
 
     kova = {k: {"adet": 0, "tutar": 0.0, "kdv": 0.0, "matrah": 0.0}
-            for k in ("belgeli", "belgesiz", "belirsiz", "sahsi",
-                      "vergi_sgk", "yurtdisi")}
+            for k in ("belgeli", "belgesiz", "belge_beklenmez", "belirsiz",
+                      "sahsi", "vergi_sgk", "yurtdisi")}
+    # 📋 BELGE BEKLENMEYEN ÖDEMELER (2026-08-08, sahip: "her ödemenin faturası
+    # olmaz — maaş, bazı kiralar"). Bunlar KAYIP DEĞİLDİR:
+    #   · maaş/avans/prim → bordro belgedir, gider YAZILIR, KDV zaten yoktur
+    #   · şahıstan kira   → stopajlı dekont belgedir, gider YAZILIR
+    #   · banka/faiz/kart → dekont belgedir
+    # "Belgesiz kayıp" saymak KDV+gider avantajını iki kez yok saymak olurdu.
+    try:
+        with db() as (_c3, cur3):
+            _ogrenilen_istisna = _belge_istisna_kaliplari(cur3)
+    except Exception:  # noqa: BLE001
+        _ogrenilen_istisna = []
     belgesiz_liste, belirsiz_liste, ozel_liste = [], [], []
     for h in hareketler:
         tut = round(float(h["tutar"] or 0), 2)
@@ -2787,6 +2803,20 @@ def kart_vergi_etkisi(gun: int = 365, kurumlar_orani: float = 0.25):
                 "ne_demek": ("Verginin kendisi — matrahtan düşülmez, KDV'si yok"
                              if ozel == "vergi_sgk"
                              else "Yurtdışı hizmet — KDV sorumlu sıfatıyla (KDV-2) beyan edilir")})
+            continue
+        # Belge beklenmeyen ödeme mi? (maaş/kira/banka — fatura üretmez)
+        if tip != "sahsi" and _belgesiz_kalip_mi(h.get("aciklama") or "",
+                                                 _ogrenilen_istisna):
+            kova["belge_beklenmez"]["adet"] += 1
+            kova["belge_beklenmez"]["tutar"] = round(
+                kova["belge_beklenmez"]["tutar"] + tut, 2)
+            kova["belge_beklenmez"]["matrah"] = round(
+                kova["belge_beklenmez"]["matrah"] + tut, 2)   # gider YAZILIR
+            ozel_liste.append({
+                "hareket_id": str(h["id"]), "tarih": h["tarih"], "tutar": tut,
+                "aciklama": (h.get("aciklama") or "")[:70], "sinif": "belge_beklenmez",
+                "ne_demek": "Fatura beklenmez (maaş/kira/banka) — bordro/dekont belgedir, "
+                            "gider yazılır; KDV zaten yoktur, KAYIP DEĞİL"})
             continue
         oran = _KDV_KATEGORI.get(h.get("kategori") or "", _KDV_VARSAYILAN)
         matrah = round(tut / (1 + oran), 2) if oran else tut
@@ -2852,6 +2882,12 @@ def kart_vergi_etkisi(gun: int = 365, kurumlar_orani: float = 0.25):
             "belirsiz": {**kova["belirsiz"],
                          "ne_demek": "İşletme mi şahsi mi ayrılmamış — önce bu karar"},
             "sahsi": {**kova["sahsi"], "ne_demek": "Şahsi — vergiye konu değil"},
+            "belge_beklenmez": {
+                **kova["belge_beklenmez"],
+                "gider_yazilir": kova["belge_beklenmez"]["matrah"],
+                "ne_demek": "Fatura BEKLENMEZ (maaş · kira · banka/faiz/kart · avans) — "
+                            "bordro/dekont belgedir. Gider YAZILIR, KDV zaten yoktur. "
+                            "KAYIP DEĞİLDİR."},
             "vergi_sgk": {**kova["vergi_sgk"],
                           "ne_demek": "Vergi/SGK ödemesi — verginin kendisi matrahtan "
                                       "düşülmez, KDV'si yoktur (gider listesine girmemeli)"},
