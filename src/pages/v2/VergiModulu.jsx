@@ -25,6 +25,10 @@ const kisaTarih = (s) => (s ? String(s).slice(0, 10).split('-').reverse().slice(
 const KOVA_ANLAM = {
   belgeli: { ad: '✅ Belgeli', renk: '#4ADE80', not: 'KDV indirilebilir + matrahtan düşer' },
   belgesiz: { ad: '⚠️ Belgesiz', renk: '#F87171', not: 'para çıktı, belge yok — avantaj KAYIP' },
+  // 📋 Sahip (2026-08-08): "her ödemenin faturası olmaz — maaş, bazı kiralar,
+  // kredi ödemeleri". Bunlar KAYIP DEĞİL: gider yazılır, KDV zaten yoktur.
+  belge_beklenmez: { ad: '📋 Belge beklenmez', renk: '#60A5FA',
+    not: 'maaş · kira · kredi/kart — bordro/dekont belgedir, gider yazılır' },
   belirsiz: { ad: '❓ Belirsiz', renk: '#FBBF24', not: 'işletme mi şahsi mi ayrılmamış' },
   sahsi: { ad: '👤 Şahsi', renk: '#8B7B67', not: 'vergiye konu değil' },
   vergi_sgk: { ad: '⚖️ Vergi/SGK', renk: '#60A5FA', not: 'verginin kendisi — gider değil' },
@@ -66,7 +70,7 @@ export default function VergiModulu({ onCekmece }) {
       <KpiSeridi kpiler={[
         {
           etiket: 'KAYIP vergi avantajı', deger: fmt(kayip),
-          alt: 'belgesiz harcamalar yüzünden', renk: R.kirmizi,
+          alt: 'faturası olması gerekip gelmeyenler', renk: R.kirmizi,
         },
         {
           etiket: 'Kullanılabilir', deger: fmt(sayi(belgeli.vergi_tasarrufu)),
