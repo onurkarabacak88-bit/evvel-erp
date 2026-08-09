@@ -12,6 +12,138 @@ from database import db
 router = APIRouter(tags=["odeme-plani"])
 
 
+@router.get("/api/odeme-plani/gecikmis-iz-tarama")
+def odeme_plani_gecikmis_iz_tarama(gun_tol: int = 45, oran_tol: float = 0.02):
+    """🔍 GECİKMİŞ ÖDEMELERİN İZİ VAR MI? — "ödedim ama sistem görmüyor" ihtimali.
+
+    Sahip (2026-08-09): "bu sistemde ödeme izleri var mı? ki bence olmalı!!!"
+    Panelde 28 kalem / 952.313 ₺ gecikmiş görünüyor, en eskisi iki aylık.
+    Bir kısmı GERÇEKTEN ödenmiş olabilir — para kasadan/karttan çıkmış ama
+    plan satırı 'bekliyor' kalmıştır. O zaman gecikme sahtedir.
+
+    Bu uç her gecikmiş kalem için kasa ve kart hareketlerinde iz arar:
+      · tutar   → ±%2 (kısmi/yuvarlama payı)
+      · tarih   → vadeden 15 gün ÖNCE ile gun_tol gün SONRA arası
+      · metin   → tedarikçi adı ya da fatura numarası geçiyor mu (KANIT)
+
+    ⚠️ ÖNERİ-ONLY: hiçbir plan KAPATILMAZ. Bulunan iz "aday"dır; sahip
+    bakar, doğruysa ödemeyi kaydeder. Bu sistemde otomatik kapatma yok —
+    yanlış eşleşme parayı yok eder, geri alması zordur.
+    """
+    import re as _re
+    with db() as (conn, cur):
+        cur.execute("""
+            SELECT p.id, p.tarih::text AS vade, p.aciklama,
+                   COALESCE(p.odenecek_tutar,0)::float AS tutar,
+                   COALESCE(p.odenen_tutar,0)::float AS odenen,
+                   p.kaynak_tablo, p.kaynak_id,
+                   (CURRENT_DATE - p.tarih) AS gun_gecikme
+              FROM odeme_plani p
+             WHERE p.durum = 'bekliyor' AND p.tarih < CURRENT_DATE
+             ORDER BY p.tarih
+        """)
+        kalemler = [dict(r) for r in (cur.fetchall() or [])]
+        # Aday iz havuzu: kasa çıkışları + kart harcamaları (tek sorgu)
+        cur.execute("""
+            SELECT 'kasa' AS kanal, tarih::text AS tarih,
+                   ABS(COALESCE(tutar,0))::float AS tutar,
+                   COALESCE(aciklama,'') AS metin
+              FROM kasa_hareketleri
+             WHERE tutar < 0 AND COALESCE(durum,'aktif')='aktif'
+            UNION ALL
+            SELECT 'kart', tarih::text, ABS(COALESCE(tutar,0))::float,
+                   COALESCE(aciklama,'')
+              FROM kart_hareketleri
+             WHERE islem_turu='HARCAMA' AND COALESCE(durum,'aktif')='aktif'
+        """)
+        izler = [dict(r) for r in (cur.fetchall() or [])]
+
+    def _sadele(s: str) -> str:
+        s = (s or "").translate(str.maketrans("çğıöşüÇĞİıÖŞÜ", "cgiosuCGIIOSU"))
+        return s.upper()
+
+    def _anahtarlar(aciklama: str):
+        """Plan açıklamasından KANIT anahtarları: fatura no + tedarikçi adı."""
+        a = _sadele(aciklama)
+        cikti = set()
+        # 'Fatura FEZ2026000001455 (FEZ ...)' → fatura no ve parantez içi
+        for m in _re.findall(r"\b([A-Z0-9]{6,})\b", a):
+            if any(ch.isdigit() for ch in m):
+                cikti.add(m)
+        m2 = _re.search(r"\(([^)]{3,})\)", a)
+        if m2:
+            for kelime in m2.group(1).split():
+                if len(kelime) >= 4:
+                    cikti.add(kelime)
+        # 'Vadeli Alım: makine mühendisi' gibi serbest metinler
+        for kelime in a.replace(":", " ").split():
+            if len(kelime) >= 5 and not kelime.startswith("VADELI"):
+                cikti.add(kelime)
+        return {k for k in cikti if k not in ("FATURA", "VADELI", "ALIM", "ODEME")}
+
+    from datetime import date as _d
+    sonuc, izli, izsiz = [], 0, 0
+    for k in kalemler:
+        kalan = round(float(k["tutar"] or 0) - float(k["odenen"] or 0), 2)
+        if kalan <= 0.01:
+            continue
+        anah = _anahtarlar(k["aciklama"] or "")
+        try:
+            vade = _d.fromisoformat(str(k["vade"])[:10])
+        except Exception:  # noqa: BLE001
+            continue
+        adaylar = []
+        for iz in izler:
+            t = float(iz["tutar"] or 0)
+            if not t or abs(t - kalan) > max(2.0, kalan * oran_tol):
+                continue
+            try:
+                it = _d.fromisoformat(str(iz["tarih"])[:10])
+            except Exception:  # noqa: BLE001
+                continue
+            fark = (it - vade).days
+            if fark < -15 or fark > gun_tol:
+                continue
+            metin = _sadele(iz["metin"])
+            kanit = sorted([a for a in anah if a and a in metin])
+            adaylar.append({
+                "kanal": iz["kanal"], "tarih": iz["tarih"], "tutar": t,
+                "metin": iz["metin"][:70], "gun_farki": fark,
+                "kanit": kanit,
+                # Ad/fatura-no eşleşmesi yoksa bu YALNIZ tutar tesadüfüdür
+                "guclu": bool(kanit),
+            })
+        adaylar.sort(key=lambda x: (not x["guclu"], abs(x["gun_farki"])))
+        guclu = [a for a in adaylar if a["guclu"]]
+        if guclu:
+            izli += 1
+        else:
+            izsiz += 1
+        sonuc.append({
+            "plan_id": k["id"], "vade": k["vade"], "gun_gecikme": k["gun_gecikme"],
+            "aciklama": (k["aciklama"] or "")[:80], "kalan": kalan,
+            "guclu_iz_adet": len(guclu),
+            "zayif_iz_adet": len(adaylar) - len(guclu),
+            "adaylar": adaylar[:4],
+            "hal": ("iz_bulundu" if guclu
+                    else "yalniz_tutar_eslesmesi" if adaylar else "iz_yok"),
+        })
+    sonuc.sort(key=lambda x: (x["hal"] != "iz_bulundu", -x["kalan"]))
+    return {
+        "gecikmis_kalem": len(sonuc),
+        "iz_bulunan": izli, "iz_bulunamayan": izsiz,
+        "iz_bulunan_tutar": round(
+            sum(x["kalan"] for x in sonuc if x["hal"] == "iz_bulundu"), 2),
+        "iz_yok_tutar": round(
+            sum(x["kalan"] for x in sonuc if x["hal"] != "iz_bulundu"), 2),
+        "satirlar": sonuc[:60],
+        "not": "ÖNERİ-ONLY: hiçbir plan kapatılmadı. 'iz_bulundu' = tutar VE "
+               "tedarikçi/fatura-no eşleşti (güçlü kanıt). "
+               "'yalniz_tutar_eslesmesi' = sadece rakam tuttu, ad tutmadı — "
+               "tesadüf olabilir, sahip bakmalı.",
+    }
+
+
 @router.get("/api/odeme-plani/{oid}/kaynak")
 def odeme_plani_kaynak(oid: str):
     """Panel'in vadeli alım kart önerisi için kaynak_tablo ve kaynak_id döner."""
