@@ -457,6 +457,22 @@ export default function TasarimV2({ onGit }) {
   }, [panel, uyarilar]);
 
   const bugunOdemeToplam = bugunOdemeler.reduce((s, o) => s + sayi(o.tutar ?? o.kalan ?? o.tahmini_tutar), 0);
+  // 📅 GECİKMİŞ / BUGÜN AYRIMI (2026-08-09, sahip: "bugün ödenecekler neden bu
+  // kadar yüksek?"). Sebep: liste "vadesi bugün VE GEÇMİŞ" olanları birlikte
+  // veriyor; canlıda bugüne ait TEK KURUŞ yok, 946.018 ₺'nin tamamı gecikmiş
+  // (en eskisi 09.06 — iki ay). "Bugün ödenecek" etiketi bunu söylemiyordu.
+  const _bugunISO = new Date().toISOString().slice(0, 10);
+  const _vadeAl = (o) => String(o.tarih ?? o.vade ?? o.vade_tarihi ?? '').slice(0, 10);
+  const gecikmisOdemeler = bugunOdemeler.filter((o) => {
+    const v = _vadeAl(o);
+    return o.gecikmis === true || (v && v < _bugunISO);
+  });
+  const gercekBugunOdemeler = bugunOdemeler.filter((o) => !gecikmisOdemeler.includes(o));
+  const _top = (l) => l.reduce((s, o) => s + sayi(o.tutar ?? o.kalan ?? o.tahmini_tutar), 0);
+  const gecikmisToplam = _top(gecikmisOdemeler);
+  const gercekBugunToplam = _top(gercekBugunOdemeler);
+  const enEskiGecikme = gecikmisOdemeler.reduce(
+    (m, o) => Math.max(m, sayi(o.gun_gecikme)), 0);
   // KASA = kanonik alan panel.kasa (motors.guncel_kasa — kasa izi tek gerçek).
   // Sahip yakaladı (2026-07-29): genel_nakit_toplam+genel_kart_toplam FARKLI bir
   // çift toplamdı (1.842.161) ve gerçek kasadan (2.533.389) sapıyordu — klasik
@@ -782,7 +798,21 @@ export default function TasarimV2({ onGit }) {
       { etiket: gunEtiketi('ciro'), deger: fmt(d.gunToplam), alt: `${d.subeGunListe.length} şube · ${kisaGun(d.odakGun)}`, seri: d.seri },
       { etiket: 'Nakit', deger: fmt(d.gunNakit), alt: `payı %${yuzde(d.gunNakit, d.gunToplam).toFixed(0)}`, renk: R.krem },
       { etiket: 'Kart + online', deger: fmt(d.gunKart), alt: `payı %${yuzde(d.gunKart, d.gunToplam).toFixed(0)}`, renk: R.krem },
-      { etiket: 'Bugün ödenecek', deger: fmt(bugunOdemeToplam), alt: `${bugunOdemeler.length} kalem · vadesi bugün/geçmiş`, renk: bugunOdemeToplam > 0 ? R.kirmizi : R.yesil },
+      // Etiket artık YALAN SÖYLEMİYOR: gecikmiş ile bugün ayrı. Canlıda
+      // "Bugün ödenecek 946.018 ₺" deniyordu ama bugüne ait hiç kalem yoktu.
+      gecikmisToplam > 0
+        ? {
+          etiket: 'Gecikmiş ödeme',
+          deger: fmt(gecikmisToplam),
+          alt: `${gecikmisOdemeler.length} kalem · en eskisi ${enEskiGecikme || '?'} gün`,
+          renk: R.kirmizi,
+        }
+        : {
+          etiket: 'Bugün ödenecek',
+          deger: fmt(gercekBugunToplam),
+          alt: `${gercekBugunOdemeler.length} kalem · vadesi bugün`,
+          renk: gercekBugunToplam > 0 ? R.amber : R.yesil,
+        },
     ];
     // CFO HIZLI BAKIŞ (sahip 2026-07-29): klasik CFO panelin "tek bakışta" özeti —
     // kasa/serbest nakit/dayanma/yük/ay cirosu — v2 Bugün'e taşındı. Kaynak
@@ -792,6 +822,16 @@ export default function TasarimV2({ onGit }) {
       { etiket: 'Kasa', deger: fmt(sayi(panel.kasa)), alt: 'kanonik · kasa izi', renk: R.yesil },
       { etiket: 'Serbest nakit', deger: fmt(sayi(panel.serbest_nakit)), alt: 'zorunlu yük sonrası', renk: sayi(panel.serbest_nakit) >= 0 ? R.krem : R.kirmizi },
       { etiket: 'Kaç gün dayanır', deger: gunDayanir ? `${trSayi(gunDayanir, 0)} gün` : '—', alt: 'ciro dursa bile', renk: gunDayanir >= 30 ? R.yesil : gunDayanir >= 10 ? R.amber : R.kirmizi },
+      // Gecikmiş ayrı KPI olduğunda bugünkü de görünsün — ikisi farklı iş:
+      // gecikmiş "neden ödenmedi", bugünkü "bugün öde".
+      ...(gecikmisToplam > 0 ? [{
+        etiket: 'Bugün vadesi gelen',
+        deger: fmt(gercekBugunToplam),
+        alt: gercekBugunOdemeler.length
+          ? `${gercekBugunOdemeler.length} kalem`
+          : 'bugüne ait kalem yok',
+        renk: gercekBugunToplam > 0 ? R.amber : R.yesil,
+      }] : []),
       { etiket: '7 gün yükü', deger: fmt(sayi(panel.yuk_7)), alt: 'vadesi gelen ödemeler' },
       { etiket: '30 gün yükü', deger: fmt(sayi(panel.yuk_30)), alt: 'aylık zorunlu çıkış' },
       { etiket: 'Bu ay ciro', deger: fmt(sayi(panel.bu_ay_sadece_ciro)), alt: `nakit ${fmt(sayi(panel.bu_ay_nakit)).replace(' ₺', '')} · pos ${fmt(sayi(panel.bu_ay_pos)).replace(' ₺', '')} · online ${fmt(sayi(panel.bu_ay_online)).replace(' ₺', '')}` },
