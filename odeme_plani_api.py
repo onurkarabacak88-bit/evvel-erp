@@ -11,6 +11,31 @@ from database import db
 
 router = APIRouter(tags=["odeme-plani"])
 
+# 🚫 KANIT SAYILMAYAN KELİMELER (2026-08-09 canlı ders)
+# İlk taramada "kanıt" olarak PERSONEL · DÖNEMİ · GIDA gibi kelimeler kabul
+# edildi ve TALHA TUYGUN'un maaşı MERVE KARABACAK'ın ödemesiyle, AKALIN'ın
+# 684 ₺'lik faturası "GÖZDE KUNDURA GIDA" ile eşleşti. Kimlik kanıtı MARKA/
+# KİŞİ ADI ya da FATURA NUMARASI olmalı; herkeste geçen kelime kanıt değildir.
+# (Aynı ders fatura eşleştirmede de alınmıştı: şehir adı gürültüsü.)
+_JENERIK = {
+    # işlem/belge sözlüğü
+    "FATURA", "VADELI", "VADELİ", "ALIM", "ODEME", "ÖDEME", "ODEMESI",
+    "PERSONEL", "MAAS", "MAAŞ", "DONEMI", "DÖNEMİ", "DONEM", "GIDER",
+    "ANLIK", "SABIT", "KREDI", "KREDİ", "TAKSIT", "TAKSİT", "BORC", "BORÇ",
+    "EKSTRE", "KART", "NAKIT", "HAVALE", "TUTAR", "TOPLAM", "KISMI",
+    # sektör/jenerik ticaret
+    "GIDA", "GİDA", "TICARET", "TİCARET", "SANAYI", "SANAYİ", "LIMITED",
+    "SIRKETI", "ŞİRKETİ", "ANONIM", "ANONİM", "HIZMET", "HİZMET", "GRUP",
+    "MARKET", "MAGAZA", "MAĞAZA", "SUBE", "ŞUBE", "MERKEZ",
+    # aylar
+    "OCAK", "SUBAT", "ŞUBAT", "MART", "NISAN", "NİSAN", "MAYIS", "HAZIRAN",
+    "HAZİRAN", "TEMMUZ", "AGUSTOS", "AĞUSTOS", "EYLUL", "EYLÜL", "EKIM",
+    "EKİM", "KASIM", "ARALIK",
+    # şehir/coğrafya
+    "KONYA", "ISTANBUL", "İSTANBUL", "ANKARA", "IZMIR", "İZMİR", "KARAMAN",
+    "ALSANCAK", "ZAFER", "KOYCEGIZ", "KÖYCEĞİZ", "GAZZE", "TEMA",
+}
+
 
 @router.get("/api/odeme-plani/gecikmis-iz-tarama")
 def odeme_plani_gecikmis_iz_tarama(gun_tol: int = 45, oran_tol: float = 0.02):
@@ -77,9 +102,9 @@ def odeme_plani_gecikmis_iz_tarama(gun_tol: int = 45, oran_tol: float = 0.02):
                     cikti.add(kelime)
         # 'Vadeli Alım: makine mühendisi' gibi serbest metinler
         for kelime in a.replace(":", " ").split():
-            if len(kelime) >= 5 and not kelime.startswith("VADELI"):
+            if len(kelime) >= 5:
                 cikti.add(kelime)
-        return {k for k in cikti if k not in ("FATURA", "VADELI", "ALIM", "ODEME")}
+        return {k for k in cikti if k not in _JENERIK}
 
     from datetime import date as _d
     sonuc, izli, izsiz = [], 0, 0
