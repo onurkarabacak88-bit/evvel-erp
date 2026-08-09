@@ -4828,6 +4828,11 @@ _ESLESTIRME_SEED = [
     ("DYK GRUP AMBALAJ HİZMETLERİ SAN. VE TİC. LİMİTED ŞİRKETİ", "DYK GRUP", None),
     ("DYN GRUP AMBALAJ HİZMETLERİ SANAYİ VE TİCARET LİMİTED ŞİRKETİ", "DYK GRUP", None),  # sahip: 'aynı firma' (OCR yazım farkı)
     ("METRO GROSMARKET B.KÖY ALIS.HIZ.TIC.LTD.STI.", "METRO", None),
+    # 🔗 2026-08-10 (sahip denetimi): aynı firma faturada UZUN yazımla geliyordu
+    # ('BAKIRKÖY ALIŞVERİŞ HİZMETLERİ' vs kısaltmalı 'B.KÖY ALIS.HIZ.'), bu
+    # yüzden METRO cari'de İKİ satır oluşmuştu: biri −30 ₺ (yalnız kart ödemesi),
+    # öteki +15.068,72 ₺ (yalnız fatura). Kuyruk 15.069 ₺ fazla görünüyordu.
+    ("METRO GROSMARKET BAKIRKÖY ALIŞVERİŞ HİZMETLERİ TİCARET LİMİTED ŞİRKETİ", "METRO", None),
     ("HASAN ERKAN", "PASTA", None),                                # sahip: 'hasan erkan pasta'
     ("APS GIDA ENERJİ KİMYA TARIM SAN. VE TİC. A.Ş.", "redbull", None),  # sahip: 'redbull doğru'
     # sahip onayı 2026-07-19 'EVET': 'hüseyin makina' = ESHİM (makine tamircisi
