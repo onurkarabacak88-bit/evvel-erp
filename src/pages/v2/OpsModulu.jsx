@@ -1402,6 +1402,81 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     } finally { setYsMesgul(false); }
   };
 
+  /** 📂 Tek siparişin TÜM zinciri — talep → gönderim → kabul farkı → fatura.
+   *  Uç (/ops/tedarik-dosyasi) uzun süredir vardı ama hiçbir ekrana bağlı
+   *  değildi: "şu siparişe ne oldu" sorusunun cevabı yalnız API'de yaşıyordu. */
+  const dosyaAc = async (s) => {
+    onToast?.('Tedarik dosyası açılıyor…');
+    let d = null;
+    try { d = await api(`/ops/tedarik-dosyasi/${s.id}`); }
+    catch (e) { onToast?.(e?.message || 'Tedarik dosyası okunamadı', 'red'); return; }
+    const gonderim = d?.toptanci_siparisler || d?.gonderimler || [];
+    const faturalar = d?.faturalar || [];
+    const kabul = d?.kabul_farklari || d?.kabul || [];
+    const satirlar = [];
+    satirlar.push({
+      id: 'n1', hucreler: [
+        { v: '① Talep' },
+        { v: tarihKisa(d?.talep?.tarih || s.tarih), mono: true },
+        { v: `${(d?.talep?.kalemler || s.kalemler || []).length} kalem çeşidi` },
+        { v: d?.talep?.durum || s.asama || '—', rozet: R.bakir },
+      ],
+    });
+    gonderim.forEach((g, i) => satirlar.push({
+      id: `n2${i}`, hucreler: [
+        { v: '② Toptancıya gönderim' },
+        { v: tarihKisa(g.olusturma || g.tarih), mono: true },
+        { v: g.tedarikci_ad || '—' },
+        {
+          v: g.durum === 'teslim_alindi' ? 'teslim alındı' : (g.durum || '—'),
+          rozet: g.durum === 'teslim_alindi' ? R.yesil : g.durum === 'iptal' ? R.not : R.amber,
+        },
+      ],
+    }));
+    kabul.forEach((k, i) => satirlar.push({
+      id: `n3${i}`, hucreler: [
+        { v: '③ Kabul farkı' },
+        { v: '—' },
+        { v: `${k.urun_ad || k.kalem_adi || '—'}: sevk ${sayi(k.sevk_adet)} / kabul ${sayi(k.kabul_adet)}` },
+        { v: `fark ${sayi(k.fark_adet)}`, rozet: R.kirmizi },
+      ],
+    }));
+    faturalar.forEach((f, i) => satirlar.push({
+      id: `n4${i}`, hucreler: [
+        { v: '④ Fatura' },
+        { v: tarihKisa(f.fatura_tarih || f.tarih), mono: true },
+        { v: `${f.fatura_no || '(no yok)'} · ${fmt(sayi(f.toplam_tutar || f.tutar))}` },
+        { v: f.durum || 'kayıtlı', rozet: R.yesil },
+      ],
+    }));
+    if (!faturalar.length) {
+      satirlar.push({
+        id: 'n4x', hucreler: [
+          { v: '④ Fatura' }, { v: '—' },
+          { v: 'henüz gelmedi — bu teslimat faturasız teslimat (GRNI) sayılır' },
+          { v: 'bekliyor', rozet: R.amber },
+        ],
+      });
+    }
+    onCekmece?.({
+      tip: 'TEDARİK DOSYASI',
+      baslik: `${s.sube_adi || 'Şube'} · ${tarihKisa(s.tarih)}`,
+      alt: 'siparişin tam zinciri — talep, gönderim, kabul, fatura',
+      kpi: [
+        { etiket: 'Gönderim', deger: String(gonderim.length) },
+        { etiket: 'Fatura', deger: String(faturalar.length), renk: faturalar.length ? R.yesil : R.amber },
+        { etiket: 'Kabul farkı', deger: String(kabul.length), renk: kabul.length ? R.kirmizi : R.yesil },
+      ],
+      listeBaslik: 'Zincir — basamak basamak',
+      satirlar,
+      not: faturalar.length
+        ? 'Zincir tamam: mal geldi, faturası kayıtlı — borç satırı cariye işlendi.'
+        : 'Fatura gelmedi. Bu teslimat borç SATIRI değil; Tedarikçi Bakiyesi\'nde '
+          + '"📦 faturasız teslimat" olarak GERÇEK BORÇ sütununa eklenir. Fatura '
+          + 'gelince açık bakiyeye geçer, toplam değişmez.',
+    });
+  };
+
   const siparisAc = (s) => {
     const a = ASAMA[s.asama] || ASAMA.bekliyor;
     // Bekleyen sipariş zenginleştirmesi — yalnız 'bekliyor' aşamasında dolu olur
@@ -1477,6 +1552,14 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
       // AŞAMAYA GÖRE KAPI: ileri yön + GERİ yön (yaşam döngüsü)
       aksiyonlar: (() => {
         const A = [];
+        // 📂 TEDARİK DOSYASI (2026-08-09): /ops/tedarik-dosyasi/{id} tek
+        // siparişin TÜM zincirini veriyordu (talep → toptancı gönderimleri →
+        // kabul farkı → fatura + OCR fiyat) ama hiçbir ekranda yoktu. Bir
+        // siparişin hikâyesini görmek için 5 modül gezmek gerekiyordu.
+        A.push({
+          ad: '📂 Tam zincir (tedarik dosyası)',
+          onTikla: () => dosyaAc(s),
+        });
         const bitti = ['tamamlandi', 'iptal'].includes(s.asama);
         if (s.asama === 'bekliyor') {
           A.push({ ad: '→ Yönlendir (depo / toptancı)', birincil: true, onTikla: () => yonAc(s) });
