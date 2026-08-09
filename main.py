@@ -7251,7 +7251,12 @@ def odeme_plani_cari_odemesiyle_kapat(oid: str, gerekce: str = "", kuru: int = 1
             return {"kuru": True, "plan_id": oid, "vade": p["vade"],
                     "kapanacak_tutar": kalan, "aciklama": p["aciklama"],
                     "yeni_aciklama": _damga,
-                    "not": "kuru=0 ile uygulanır. Kasa hareketi YARATILMAZ."}
+                    # Sürüm işareti: v2 = vadeli_alimlar'a DOKUNMAYAN sürüm.
+                    # Deploy yayılmadan uygulamamak için çağıran bunu kontrol eder
+                    # (v1 canlıda cari hesabı 35.148 ₺ fazla düşürmüştü).
+                    "surum": "v2-vadeli-dokunmaz",
+                    "not": "kuru=0 ile uygulanır. Kasa hareketi YARATILMAZ, "
+                           "vadeli_alimlar kaydına DOKUNULMAZ (cari hesap korunur)."}
         cur.execute("""UPDATE odeme_plani
                           SET durum='odendi', odeme_tarihi=%s,
                               odenen_tutar=%s, aciklama=%s
