@@ -172,10 +172,14 @@ def supplier_payment_sync_v2(cur) -> Dict[str, Any]:
     try:
         cur.execute("SAVEPOINT sp_v")
         cur.execute(
-            """SELECT id, vade_tarihi AS tarih, tutar,
+            # 💸 ödeme tarihi ≠ vade tarihi; gelecek tarihli "ödendi" para çıkışı
+            # DEĞİLDİR — cari_ekstre ile AYNI kural (2026-08-09 mali denetim)
+            """SELECT id, COALESCE(odeme_tarihi, vade_tarihi) AS tarih, tutar,
                       COALESCE(tedarikci,'') || ' ' || COALESCE(aciklama,'') AS metin
                FROM vadeli_alimlar
-               WHERE durum='odendi' AND vade_tarihi >= %s::date""", (B,))
+               WHERE durum='odendi'
+                 AND COALESCE(odeme_tarihi, vade_tarihi) >= %s::date
+                 AND COALESCE(odeme_tarihi, vade_tarihi) <= CURRENT_DATE""", (B,))
         for r in [dict(x) for x in (cur.fetchall() or [])]:
             taranan["vadeli"] += 1
             ted = _eslestir(r["metin"])

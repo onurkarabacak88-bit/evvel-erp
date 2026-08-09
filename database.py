@@ -2560,6 +2560,34 @@ def init_db():
         # İZOLE: Merkez (patron/cep) kaynaklı sipariş ayrımı — 'sube' | 'merkez'.
         # Şube panelinde "Merkez Siparişi" rozeti için. Kaldırmak istersek zararsız.
         cur.execute("ALTER TABLE toptanci_siparis ADD COLUMN IF NOT EXISTS kaynak TEXT NOT NULL DEFAULT 'sube'")
+
+        # ── 💸 VADELİ ALIM: ÖDEME TARİHİ (2026-08-09, mali denetim) ──────────
+        # Tabloda yalnız `vade_tarihi` vardı; ödendiğinde durum='odendi' oluyor
+        # ama NE ZAMAN ödendiği hiçbir yere yazılmıyordu. Cari ekstre bu yüzden
+        # vade tarihini ÖDEME tarihi sanıyordu:
+        #   · erken ödenen → olduğundan geç görünür
+        #   · GELECEK vadeli "ödendi" → ödeme İLERİ TARİHTE görünür ve borçtan
+        #     bugünden düşülür (redbull 21.315,57 ₺ · vade 10.08 · para çıkmamış)
+        # Geriye dönük dolgu odeme_plani'nden gelir — orada gerçek ödeme tarihi
+        # zaten tutuluyordu; iki tablo aynı gerçeği söylemeliydi.
+        cur.execute("ALTER TABLE vadeli_alimlar ADD COLUMN IF NOT EXISTS odeme_tarihi DATE")
+        try:
+            cur.execute("""
+                UPDATE vadeli_alimlar v SET odeme_tarihi = p.odeme_tarihi
+                  FROM odeme_plani p
+                 WHERE p.kaynak_tablo = 'vadeli_alimlar'
+                   AND p.kaynak_id = v.id
+                   AND p.odeme_tarihi IS NOT NULL
+                   AND v.durum = 'odendi'
+                   AND v.odeme_tarihi IS NULL
+            """)
+            if cur.rowcount:
+                logging.getLogger(__name__).info(
+                    "vadeli_alimlar.odeme_tarihi geriye donuk dolduruldu: %s satir",
+                    cur.rowcount)
+        except Exception as _e:  # noqa: BLE001 — dolgu başarısızsa şema yine kurulur
+            logging.getLogger(__name__).warning(
+                "vadeli odeme_tarihi dolgusu atlandi: %s", str(_e)[:120])
         cur.execute("""
             CREATE INDEX IF NOT EXISTS idx_toptanci_siparis_talep
             ON toptanci_siparis (talep_id)

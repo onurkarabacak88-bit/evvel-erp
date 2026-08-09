@@ -4912,11 +4912,16 @@ def cari_ozet() -> dict:
         # Pencere = fatura penceresiyle AYNI kesit (sistem başlangıcı korumalı).
         cur.execute(
             """SELECT tarih::text AS tarih, tutar::float AS tutar, metin, kanal FROM (
-                 SELECT vade_tarihi AS tarih, tutar,
+                 -- 💸 Ödeme izinin tarihi VADE değil ÖDEME tarihidir (2026-08-09).
+                 -- Ve tarihi GELECEKTE olan bir kayıt ödeme izi sayılmaz: para
+                 -- henüz çıkmamıştır (redbull 21.315,57 ₺ vade 10.08 "ödendi"
+                 -- damgalıydı ve borçtan bugünden düşülüyordu).
+                 SELECT COALESCE(odeme_tarihi, vade_tarihi) AS tarih, tutar,
                         COALESCE(tedarikci,'') || ' ' || COALESCE(aciklama,'') AS metin,
                         'vadeli_alim' AS kanal
                  FROM vadeli_alimlar
-                 WHERE durum='odendi' AND vade_tarihi >= %s::date
+                 WHERE durum='odendi' AND COALESCE(odeme_tarihi, vade_tarihi) >= %s::date
+                   AND COALESCE(odeme_tarihi, vade_tarihi) <= CURRENT_DATE
                  UNION ALL
                  SELECT tarih, tutar,
                         COALESCE(tedarikci,'') || ' ' || COALESCE(aciklama,''), 'anlik_gider'
@@ -5536,12 +5541,16 @@ def cari_ekstre(tedarikci: str = ""):
         _ensure_kart_izi_tablolar(cur)   # cari_tedarikci damga kolonu garanti
         cur.execute(
             """SELECT kanal, tarih, tutar, aciklama, damga FROM (
-                 SELECT 'vadeli_alim' AS kanal, vade_tarihi::text AS tarih,
+                 -- 💸 ödeme tarihi ≠ vade tarihi; gelecek tarihli "ödendi" para
+                 -- çıkışı DEĞİLDİR (2026-08-09 mali denetim)
+                 SELECT 'vadeli_alim' AS kanal,
+                        COALESCE(odeme_tarihi, vade_tarihi)::text AS tarih,
                         tutar::float AS tutar,
                         LEFT(COALESCE(tedarikci,'') || ' ' || COALESCE(aciklama,''),80) AS aciklama,
                         NULL::text AS damga
                  FROM vadeli_alimlar
-                 WHERE durum='odendi' AND vade_tarihi >= %s::date
+                 WHERE durum='odendi' AND COALESCE(odeme_tarihi, vade_tarihi) >= %s::date
+                   AND COALESCE(odeme_tarihi, vade_tarihi) <= CURRENT_DATE
                  UNION ALL
                  SELECT 'anlik_gider', tarih::text, tutar::float,
                         LEFT(COALESCE(tedarikci,'') || ' ' || COALESCE(aciklama,''),80),
@@ -5740,8 +5749,12 @@ def mutabakat_zinciri() -> dict:
         # Ödeme izi penceresi (3 kanal, türetilmişler hariç) — tek sorgu
         cur.execute(
             """SELECT tarih::text AS tarih, tutar::float AS tutar FROM (
-                 SELECT vade_tarihi AS tarih, tutar FROM vadeli_alimlar
-                 WHERE durum='odendi' AND vade_tarihi >= CURRENT_DATE - 75
+                 -- ödeme tarihi ≠ vade tarihi; gelecek tarihli "ödendi" sayılmaz
+                 SELECT COALESCE(odeme_tarihi, vade_tarihi) AS tarih, tutar
+                 FROM vadeli_alimlar
+                 WHERE durum='odendi'
+                   AND COALESCE(odeme_tarihi, vade_tarihi) >= CURRENT_DATE - 75
+                   AND COALESCE(odeme_tarihi, vade_tarihi) <= CURRENT_DATE
                  UNION ALL
                  SELECT tarih, tutar FROM anlik_giderler
                  WHERE durum='aktif' AND kaynak_id IS NULL

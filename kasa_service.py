@@ -193,9 +193,12 @@ def vadeli_alim_kapat(cur, vadeli_id: str, tarih: str):
     Vadeli alım kapatma — 3 tabloyu atomik kapatır (çağıran transaction içinde çalışır).
     Zaten 'odendi' ise idempotent (UPDATE 0 row).
     """
+    # odeme_tarihi (2026-08-09): "ne zaman ödendi" bilgisi hiçbir yere
+    # yazılmıyordu; cari ekstre vade tarihini ödeme tarihi sanıyordu.
     cur.execute(
-        "UPDATE vadeli_alimlar SET durum='odendi' WHERE id=%s AND durum='bekliyor'",
-        (vadeli_id,),
+        "UPDATE vadeli_alimlar SET durum='odendi', odeme_tarihi=%s "
+        "WHERE id=%s AND durum='bekliyor'",
+        (tarih, vadeli_id),
     )
     cur.execute(
         """
