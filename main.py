@@ -2156,6 +2156,76 @@ def kasa_durumu():
             ORDER BY tarih DESC, olusturma DESC LIMIT 100""")
         return {"guncel_bakiye": kasa, "hareketler": [dict(r) for r in cur.fetchall()]}
 
+
+@app.get("/api/kasa/sube-bazli")
+def kasa_sube_bazli():
+    """🏪 ŞUBE KASALARI — merkez kasa, şube kasalarının TOPLAMIDIR.
+
+    Sahip (2026-08-09): "her şubenin kasası var banka hesabı var, bu ayrım var;
+    ödeme çıkışları hangi şubenin kasasından çıktığı belli olsun, sonunda da
+    merkez kasada bu kasaların toplamı olsun."
+
+    Eskiden kasa TEK havuzdu: 2,86 M ₺ görünüyordu ama hangi şubenin ne kadarı
+    olduğu hiçbir yerde yoktu. Artık her hareket şubesini taşıyor (kaynak
+    tablodan türetildi); şubesi çözülemeyen hareketler MERKEZ kovasında durur —
+    gizlenmez, çünkü toplamın tutması için hepsi sayılmalı.
+
+    ⚠️ Bu uç kasa bakiyesini DEĞİŞTİRMEZ, yalnız kırılımını gösterir:
+       Σ şube kasaları + merkez (atanmamış) = guncel_bakiye
+    """
+    with db() as (conn, cur):
+        toplam = guncel_kasa()
+        cur.execute("""
+            SELECT COALESCE(kh.sube_id,'(merkez)') AS sid,
+                   COALESCE(s.ad,'Merkez / atanmamış') AS sube_adi,
+                   COALESCE(SUM(CASE WHEN kh.tutar > 0 THEN kh.tutar END),0)::float AS giris,
+                   COALESCE(SUM(CASE WHEN kh.tutar < 0 THEN ABS(kh.tutar) END),0)::float AS cikis,
+                   COALESCE(SUM(kh.tutar),0)::float AS bakiye,
+                   COUNT(*) AS hareket
+              FROM kasa_hareketleri kh
+              LEFT JOIN subeler s ON s.id::text = kh.sube_id::text
+             WHERE COALESCE(kh.durum,'aktif')='aktif'
+               AND COALESCE(kh.kasa_etkisi, TRUE) = TRUE
+             GROUP BY 1,2
+             ORDER BY bakiye DESC
+        """)
+        satirlar = [dict(r) for r in (cur.fetchall() or [])]
+        # Ödeme yöntemi kırılımı — elden/havale ayrımı şube bazında da anlamlı
+        try:
+            cur.execute("""
+                SELECT COALESCE(sube_id,'(merkez)') AS sid,
+                       COALESCE(odeme_yontemi,'nakit') AS yontem,
+                       COALESCE(SUM(ABS(tutar)),0)::float AS tutar
+                  FROM kasa_hareketleri
+                 WHERE tutar < 0 AND COALESCE(durum,'aktif')='aktif'
+                 GROUP BY 1,2
+            """)
+            _y: Dict[str, Dict[str, float]] = {}
+            for r in (cur.fetchall() or []):
+                _y.setdefault(r["sid"], {})[r["yontem"]] = float(r["tutar"] or 0)
+            for x in satirlar:
+                x["cikis_yontem"] = _y.get(x["sid"], {})
+        except Exception:  # noqa: BLE001 — kolon yoksa sessiz geç
+            pass
+    _sube_top = round(sum(x["bakiye"] for x in satirlar
+                          if x["sid"] != "(merkez)"), 2)
+    _merkez = round(sum(x["bakiye"] for x in satirlar
+                        if x["sid"] == "(merkez)"), 2)
+    _kirilim = round(_sube_top + _merkez, 2)
+    return {
+        "guncel_bakiye": round(float(toplam or 0), 2),
+        "sube_toplami": _sube_top,
+        "merkez_atanmamis": _merkez,
+        "kirilim_toplami": _kirilim,
+        # Tie-out: kırılım guncel_bakiye'yi TUTMALI. Tutmuyorsa kasa_etkisi=FALSE
+        # ya da iptal edilmiş hareketler farkı yapıyordur — sessiz geçme, göster.
+        "fark": round(float(toplam or 0) - _kirilim, 2),
+        "satirlar": satirlar,
+        "not": "Merkez kasa = şube kasalarının toplamı. Şubesi çözülemeyen "
+               "hareketler 'Merkez / atanmamış' kovasında durur — gizlenmez, "
+               "toplamın tutması için hepsi sayılır. Kırılım bakiyeyi değiştirmez.",
+    }
+
 # ── DIŞ KAYNAK GELİRİ (aile, kredi, ortak, vb.) ───────────────
 class DisKaynakGelir(BaseModel):
     tarih: date
@@ -2216,12 +2286,39 @@ class AnlikGider(BaseModel):
     tutar: float
     aciklama: Optional[str] = None
     sube: Optional[str] = "MERKEZ"
-    odeme_yontemi: str = 'nakit'   # 'nakit' veya 'kart'
+    # 💵 2026-08-09 (sahip): "elden ve havale diye ayrıştıralım; bazı ödemeler
+    # nakit olsa bile elden ödenme ihtimali var, bu mutabakat doğru çalışmaz"
+    #   elden  → kasadaki nakitten elden verildi → ELDE NAKİTİ AZALTIR
+    #   havale → banka hesabından EFT            → elde nakiti etkilemez
+    #   kart   → kredi kartı                     → kart borcunu büyütür
+    #   nakit  → ESKİ/BELİRSİZ (elden mi havale mi seçilmemiş)
+    odeme_yontemi: str = 'nakit'
     kart_id: Optional[str] = None
     kaynak_id: Optional[str] = None       # Değişken gider kaynağı (sabit_giderler.id)
     kaynak_tablo: Optional[str] = None    # 'sabit_giderler'
     tedarikci: Optional[str] = None       # V4: opsiyonel — dolarsa supplier_payment_event conf 1.0
     force: bool = False
+
+def _sube_kanonik(cur, deger) -> Optional[str]:
+    """🏪 Şube ADI ya da ID → kanonik sube_id (2026-08-09).
+
+    Tablolar tutarsız: anlik_giderler'de kolon `sube`, sabit giderlerde
+    `sube_id`; ikisi de bazen ad bazen id tutuyor (memory: 'sube ≠ sube_id'
+    tuzağı). Kasa hareketine şube damgalarken tek kanonik kimliğe indiriyoruz.
+    Çözülemezse None → 'Merkez / atanmamış' kovası; UYDURMA yapmaz.
+    """
+    v = str(deger or "").strip()
+    if not v or v.upper() in ("MERKEZ", "NONE", "NULL", "-"):
+        return None
+    try:
+        cur.execute(
+            "SELECT id::text AS id FROM subeler "
+            "WHERE id::text=%s OR UPPER(ad)=UPPER(%s) LIMIT 1", (v, v))
+        r = cur.fetchone()
+        return r["id"] if r else None
+    except Exception:  # noqa: BLE001 — şube çözümü asla akışı kilitlemez
+        return None
+
 
 def _kanonik_kalan_limit(kart_id, yedek: float) -> float:
     """Ödeme guard'ları için KANONİK kalan limit (kartlar_listele — ekstre gerçeği
@@ -2419,9 +2516,12 @@ def anlik_gider_ekle(g: AnlikGider):
             """, (hid, g.kart_id, g.tarih, g.tutar,
                   f"Anlık gider: {g.aciklama or g.kategori}", gid))
         else:
-            # NAKİT — kasaya yaz
+            # NAKİT — kasaya yaz. Şube + ödeme yöntemi TAŞINIR (2026-08-09):
+            # hangi şubenin kasasından çıktı ve elden mi havale mi.
             insert_kasa_hareketi(cur, g.tarih, 'ANLIK_GIDER', -abs(g.tutar),
-                f"Anlık gider: {g.aciklama or g.kategori}", 'anlik_giderler', gid)
+                f"Anlık gider: {g.aciklama or g.kategori}", 'anlik_giderler', gid,
+                sube_id=_sube_kanonik(cur, getattr(g, 'sube', None)),
+                odeme_yontemi=getattr(g, 'odeme_yontemi', None))
 
         audit(cur, 'anlik_giderler', gid, 'INSERT')
         if g.odeme_yontemi == 'kart':
@@ -6132,7 +6232,13 @@ class SabitGider(BaseModel):
     kira_artis_periyot: Optional[str] = None
     kira_artis_tarihi: Optional[date] = None
     sozlesme_bitis_tarihi: Optional[date] = None
-    odeme_yontemi: str = 'nakit'   # 'nakit' veya 'kart'
+    # 💵 2026-08-09 (sahip): "elden ve havale diye ayrıştıralım; bazı ödemeler
+    # nakit olsa bile elden ödenme ihtimali var, bu mutabakat doğru çalışmaz"
+    #   elden  → kasadaki nakitten elden verildi → ELDE NAKİTİ AZALTIR
+    #   havale → banka hesabından EFT            → elde nakiti etkilemez
+    #   kart   → kredi kartı                     → kart borcunu büyütür
+    #   nakit  → ESKİ/BELİRSİZ (elden mi havale mi seçilmemiş)
+    odeme_yontemi: str = 'nakit'
     kart_id: Optional[str] = None  # Kart talimatı için
     stopaj_oran: float = 0         # kira stopajı: şahıstan işyeri kirasında 0.20; 0=stopajsız
 
@@ -10325,7 +10431,34 @@ def banka_mutabakat(yil: int = None, ay: int = None):
         kum_kap = float(cur.fetchone()["v"])
         cur.execute("SELECT COALESCE(SUM(tutar),0) AS v FROM banka_yatirimlari WHERE tarih <= %s", (ay_son,))
         kum_yatan = float(cur.fetchone()["v"])
-        elde_nakit = round((kum_ara + kum_kap) - kum_yatan, 2)
+        # ── 💵 ELDEN vs HAVALE (2026-08-09, sahip: "bazı ödemeler nakit olsa bile
+        # elden ödenme ihtimali var ve bu mutabakat doğru çalışmaz")
+        # Eski formül: elde = teslim − bankaya yatan. ELDEN ödenen para hiç
+        # düşülmüyordu; kasadan çıkıp tedarikçiye gitmiş nakit hâlâ "elde duruyor"
+        # sayılıyordu. Havale ise banka hesabından çıkar — elde nakiti etkilemez.
+        # Kova kova ayırıyoruz; sınıflanmamış 'nakit' kayıtları BELİRSİZ'dir ve
+        # elde nakiti bir ARALIK olarak verir (alt sınır ↔ üst sınır).
+        def _cikis(yontemler) -> tuple:
+            try:
+                cur.execute(
+                    """SELECT COALESCE(SUM(ABS(tutar)),0) AS v, COUNT(*) AS c
+                       FROM kasa_hareketleri
+                       WHERE tutar < 0 AND COALESCE(durum,'aktif')='aktif'
+                         AND tarih <= %s
+                         AND COALESCE(odeme_yontemi,'nakit') = ANY(%s)""",
+                    (ay_son, list(yontemler)))
+                r = dict(cur.fetchone())
+                return round(float(r["v"] or 0), 2), int(r["c"] or 0)
+            except Exception:  # noqa: BLE001 — kolon yoksa sessiz geç
+                return 0.0, 0
+        elden_odenen, elden_adet = _cikis(("elden",))
+        havale_odenen, havale_adet = _cikis(("havale", "eft"))
+        belirsiz_nakit, belirsiz_adet = _cikis(("nakit",))
+        _havuz = round((kum_ara + kum_kap) - kum_yatan, 2)
+        # ÜST SINIR: hiçbir çıkış elden değilse elde bu kadar nakit vardır
+        elde_nakit = round(_havuz - elden_odenen, 2)
+        # ALT SINIR: belirsizlerin TAMAMI elden ödendiyse elde bu kadar kalır
+        elde_nakit_alt = round(_havuz - elden_odenen - belirsiz_nakit, 2)
         # Şube bazlı dönem teslim
         cur.execute("""
             SELECT COALESCE(s.ad,'?') AS sube,
@@ -10343,6 +10476,16 @@ def banka_mutabakat(yil: int = None, ay: int = None):
         "yatan_adet": yatan_adet,
         "donem_fark": round(donem_teslim - donem_yatan, 2),
         "elde_nakit": elde_nakit,
+        # 💵 ELDEN / HAVALE AYRIMI — sahip 2026-08-09
+        "elde_nakit_alt": elde_nakit_alt,
+        "elden_odenen": elden_odenen, "elden_adet": elden_adet,
+        "havale_odenen": havale_odenen, "havale_adet": havale_adet,
+        "belirsiz_nakit": belirsiz_nakit, "belirsiz_adet": belirsiz_adet,
+        "elde_nakit_not": (
+            "Elde nakit = teslim alınan − bankaya yatan − ELDEN ödenen. Havale "
+            "banka hesabından çıkar, elde nakiti etkilemez. Ödeme yöntemi "
+            "seçilmemiş kayıtlar 'belirsiz'dir: hepsi elden ödenmişse elde nakit "
+            "alt sınıra iner. Aralık daraldıkça mutabakat kesinleşir."),
         "sube_teslim": sube_teslim,
     }
 

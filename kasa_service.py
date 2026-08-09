@@ -35,13 +35,22 @@ KASA_ETKISI_MAP = {
 
 
 def insert_kasa_hareketi(cur, tarih, islem_turu, tutar, aciklama,
-                        kaynak_tablo=None, kaynak_id=None, ref_id=None, ref_type=None, idempotency_key=None):
+                        kaynak_tablo=None, kaynak_id=None, ref_id=None, ref_type=None,
+                        idempotency_key=None, sube_id=None, odeme_yontemi=None):
     """
     Merkezi kasa yazma fonksiyonu.
     - kaynak_id = business ID (gider_id, ciro_id vb.) — değişmez
     - ref_id    = ledger event ID — her yazımda benzersiz
     - kasa_etkisi = KASA_ETKISI_MAP'ten — DEVIR hariç hepsi true
     - idempotency_key: verilmezse geriye uyumlu deterministic anahtar üretilir.
+    - sube_id: hangi şubenin kasasından (2026-08-09). None = merkez/atanmamış.
+      Merkez kasa şube kasalarının TOPLAMIDIR; şube taşımayan hareket toplamı
+      bozmaz ama "hangi şubeden çıktı" sorusunu cevapsız bırakır.
+    - odeme_yontemi: 'elden' | 'havale' | 'kart' | 'nakit'(belirsiz). Elden
+      ödenen nakit elde nakiti azaltır, havale banka hesabından çıkar —
+      ayrım olmadan banka mutabakatı doğru çalışmaz (sahip 2026-08-09).
+    ⚠️ İdempotency anahtarına GİRMEZLER: aynı iş için sonradan şube/yöntem
+      düzeltilebilsin, mükerrer kayıt doğmasın.
     """
     def _norm(v):
         return str(v).strip() if v is not None else ""
@@ -64,11 +73,13 @@ def insert_kasa_hareketi(cur, tarih, islem_turu, tutar, aciklama,
 
     cur.execute("""
         INSERT INTO kasa_hareketleri
-            (id, tarih, islem_turu, tutar, aciklama, kaynak_tablo, kaynak_id, ref_id, ref_type, kasa_etkisi, idempotency_key)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            (id, tarih, islem_turu, tutar, aciklama, kaynak_tablo, kaynak_id, ref_id,
+             ref_type, kasa_etkisi, idempotency_key, sube_id, odeme_yontemi)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, COALESCE(%s,'nakit'))
         ON CONFLICT (idempotency_key) DO NOTHING
     """, (str(uuid.uuid4()), str(tarih), islem_turu, tutar, aciklama,
-          kaynak_tablo, kaynak_id, _event_id, _ref_type, _kasa_etkisi, _idem))
+          kaynak_tablo, kaynak_id, _event_id, _ref_type, _kasa_etkisi, _idem,
+          sube_id, odeme_yontemi))
 
     if cur.rowcount == 0:
         # Aynı anahtarla daha önce yazıldıysa idempotent başarı kabul edilir.

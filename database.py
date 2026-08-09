@@ -2570,6 +2570,42 @@ def init_db():
         #     bugünden düşülür (redbull 21.315,57 ₺ · vade 10.08 · para çıkmamış)
         # Geriye dönük dolgu odeme_plani'nden gelir — orada gerçek ödeme tarihi
         # zaten tutuluyordu; iki tablo aynı gerçeği söylemeliydi.
+        # ── 🏪 ŞUBE KASASI (2026-08-09, sahip: "her şubenin kasası var banka
+        # hesabı var; ödeme çıkışları hangi şubenin kasasından çıktığı belli
+        # olsun, merkez kasa bu kasaların toplamı olsun")
+        # kasa_hareketleri TEK merkez kasaydı — çıkışın hangi şubeden olduğu
+        # hiçbir yerde yoktu. sube_id ekleniyor; NULL = merkez/atanmamış.
+        # Geriye dönük dolgu kaynak tablodan gelir (kaynak_tablo + kaynak_id
+        # zaten kanonik bağ). ⚠️ anlik_giderler'de kolon adı `sube`, sabit
+        # giderlerde `sube_id` — ikisi de ID ya da AD tutabiliyor, o yüzden
+        # eşleştirme çift yönlü (id = değer OR ad = değer).
+        cur.execute("ALTER TABLE kasa_hareketleri ADD COLUMN IF NOT EXISTS sube_id TEXT")
+        cur.execute("""CREATE INDEX IF NOT EXISTS idx_kasa_hareket_sube
+                       ON kasa_hareketleri (sube_id, tarih)""")
+        for _kt, _tbl, _kol in (("ciro", "ciro", "sube_id"),
+                                ("anlik_giderler", "anlik_giderler", "sube"),
+                                ("sabit_giderler", "sabit_giderler", "sube_id"),
+                                ("borc_envanteri", "borc_envanteri", "sube")):
+            try:
+                cur.execute(f"""
+                    UPDATE kasa_hareketleri kh
+                       SET sube_id = s.id
+                      FROM {_tbl} t
+                      JOIN subeler s
+                        ON s.id::text = t.{_kol}::text
+                        OR UPPER(s.ad) = UPPER(t.{_kol}::text)
+                     WHERE kh.kaynak_tablo = %s
+                       AND kh.kaynak_id::text = t.id::text
+                       AND kh.sube_id IS NULL
+                """, (_kt,))
+                if cur.rowcount:
+                    logging.getLogger(__name__).info(
+                        "kasa_hareketleri.sube_id dolduruldu (%s): %s satir",
+                        _kt, cur.rowcount)
+            except Exception as _e:  # noqa: BLE001 — bir kaynak patlarsa ötekiler sürsün
+                logging.getLogger(__name__).warning(
+                    "kasa sube_id dolgusu atlandi (%s): %s", _kt, str(_e)[:110])
+
         cur.execute("ALTER TABLE vadeli_alimlar ADD COLUMN IF NOT EXISTS odeme_tarihi DATE")
         try:
             cur.execute("""

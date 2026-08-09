@@ -118,6 +118,7 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru, onToast }) {
   const [aliciPasifSor, setAliciPasifSor] = useState('');
   // Zincirin 3. halkası: kasa → teslim → BANKA (2026-07-31)
   const [bankaMut, setBankaMut] = useState(null);      // /banka-mutabakat
+  const [subeKasa, setSubeKasa] = useState(null);      // /kasa/sube-bazli
   const [bankaListe, setBankaListe] = useState(null);  // /banka-yatirimlari
   const [bankaModal, setBankaModal] = useState(false);
   const [bankaForm, setBankaForm] = useState(null);    // {tarih, tutar, yatiran_ad, aciklama}
@@ -191,7 +192,9 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru, onToast }) {
     setKartOneri(null);
     setGiderForm({
       tarih: bugunISO(), kategori: 'Diğer', tutar: '', aciklama: '',
-      sube: 'MERKEZ', odeme_yontemi: 'nakit', kart_id: '', tedarikci: '',
+      // Varsayılan 'elden': nakit ödemelerin çoğu elden yapılıyor. Belirsiz
+      // 'nakit' artık YENİ kayıtta üretilmiyor — eski kayıtlarda kalır.
+      sube: 'MERKEZ', odeme_yontemi: 'elden', kart_id: '', tedarikci: '',
     });
     if (!kartlar.length) api('/kartlar').then((d) => setKartlar(Array.isArray(d) ? d : [])).catch(() => {});
   };
@@ -203,12 +206,14 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru, onToast }) {
     setGiderDup('');
     try {
       const body = { ...giderForm, force };
-      if (body.odeme_yontemi === 'nakit') delete body.kart_id;
+      if (body.odeme_yontemi !== 'kart') delete body.kart_id;
       const res = await api('/anlik-gider', { method: 'POST', body });
       if (res?.warning) { setGiderDup(res.mesaj || 'Benzer kayıt var.'); return; }
       onToast?.(giderForm.odeme_yontemi === 'kart'
         ? '✓ Gider kaydedildi — kart borcuna eklendi'
-        : '✓ Gider kaydedildi — kasadan düşüldü');
+        : giderForm.odeme_yontemi === 'havale'
+          ? '✓ Gider kaydedildi — banka hesabından (elde nakit değişmez)'
+          : '✓ Gider kaydedildi — kasadaki nakitten elden');
       setGiderForm(null);
       giderYukle();
     } catch (e) {
@@ -333,6 +338,8 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru, onToast }) {
    *  Fonksiyon BEYANI (const değil) — teslimYukle içinden çağrılıyor, TDZ'ye düşmesin. */
   function bankaYukle() {
     api('/banka-mutabakat').then((d) => setBankaMut(d || null)).catch(() => setBankaMut(null));
+    // 🏪 Şube kasaları — merkez kasa bunların toplamıdır (sahip 2026-08-09)
+    api('/kasa/sube-bazli').then((d) => setSubeKasa(d || null)).catch(() => setSubeKasa(null));
     api('/banka-yatirimlari?limit=200')
       .then((r) => setBankaListe(Array.isArray(r?.satirlar) ? r.satirlar : []))
       .catch(() => setBankaListe([]));
@@ -1027,6 +1034,84 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru, onToast }) {
             ))}
           </div>
         )}
+        {/* ── 🏪 ŞUBE KASALARI — merkez kasa bunların TOPLAMI (2026-08-09) ──
+            Sahip: "her şubenin kasası var banka hesabı var; ödeme çıkışları
+            hangi şubenin kasasından çıktığı belli olsun, sonunda da merkez
+            kasada bu kasaların toplamı olsun." Kasa tek havuzdu — 2,86 M ₺
+            görünüyordu ama hangi şubenin ne kadarı olduğu hiçbir yerde yoktu. */}
+        {subeKasa?.satirlar?.length > 0 && (
+          <div style={{ ...kartYuzey, padding: '16px 18px', marginBottom: 14 }}>
+            <div style={{
+              display: 'flex', alignItems: 'baseline', justifyContent: 'space-between',
+              paddingBottom: 10, borderBottom: `1px solid ${R.cizgi2}`, marginBottom: 12,
+              flexWrap: 'wrap', gap: 8,
+            }}>
+              <span style={{ fontFamily: F.baslik, fontSize: 14.5, fontWeight: 600 }}>
+                🏪 Şube kasaları · merkez = toplam
+              </span>
+              <span style={{ fontSize: 12, color: R.not2 }}>
+                şubeler <b style={{ fontFamily: F.mono, color: R.krem }}>{fmt(sayi(subeKasa.sube_toplami))}</b>
+                {' '}+ merkez <b style={{ fontFamily: F.mono, color: R.krem }}>{fmt(sayi(subeKasa.merkez_atanmamis))}</b>
+                {' '}= <b style={{ fontFamily: F.mono, color: R.bakir }}>{fmt(sayi(subeKasa.guncel_bakiye))}</b>
+              </span>
+            </div>
+
+            <div style={{ display: 'flex', gap: 9, flexWrap: 'wrap' }}>
+              {subeKasa.satirlar.map((x) => {
+                const merkez = x.sid === '(merkez)';
+                const yon = x.cikis_yontem || {};
+                const belirsiz = sayi(yon.nakit);
+                return (
+                  <div key={x.sid} style={{
+                    flex: '1 1 200px', minWidth: 190, padding: '11px 13px', borderRadius: 10,
+                    background: R.girinti, border: `1px solid ${R.cizgi3}`,
+                    borderLeft: `3px solid ${merkez ? R.not : R.bakir}`,
+                  }}>
+                    <div style={{ fontSize: 11.5, color: R.metin2 }}>
+                      {merkez ? '🏛️' : '🏪'} {x.sube_adi}
+                    </div>
+                    <div style={{
+                      fontFamily: F.mono, fontSize: 17, fontWeight: 700, marginTop: 2,
+                      color: sayi(x.bakiye) < 0 ? R.kirmizi : R.krem,
+                    }}>
+                      {fmt(sayi(x.bakiye))}
+                    </div>
+                    <div style={{ fontSize: 10.5, color: R.not2, marginTop: 4, lineHeight: 1.5 }}>
+                      giren {fmt(sayi(x.giris))} · çıkan {fmt(sayi(x.cikis))}
+                      <br />{sayi(x.hareket)} hareket
+                      {(sayi(yon.elden) > 0 || sayi(yon.havale) > 0 || belirsiz > 0) && (
+                        <><br />
+                          {sayi(yon.elden) > 0 && <>💵 elden {fmt(sayi(yon.elden))} </>}
+                          {sayi(yon.havale) > 0 && <>🏦 havale {fmt(sayi(yon.havale))} </>}
+                          {belirsiz > 0 && (
+                            <span style={{ color: R.amber }}>❓ belirsiz {fmt(belirsiz)}</span>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {Math.abs(sayi(subeKasa.fark)) > 0.5 && (
+              <div style={{
+                marginTop: 10, padding: '8px 12px', borderRadius: 9,
+                background: R.girinti, borderLeft: `3px solid ${R.amber}`,
+                fontSize: 11.5, color: R.amber,
+              }}>
+                ⚠ Kırılım toplamı kasa bakiyesini {fmt(Math.abs(sayi(subeKasa.fark)))} tutmuyor —
+                kasa etkisi kapalı ya da iptal edilmiş hareketler olabilir.
+              </div>
+            )}
+            <div style={{ fontSize: 10.5, color: R.not2, marginTop: 10, lineHeight: 1.6 }}>
+              Şubesi çözülemeyen hareketler <b>Merkez / atanmamış</b> kovasında durur —
+              gizlenmez, toplamın tutması için hepsi sayılır. Yeni giderlerde şube ve
+              ödeme yöntemi (elden / havale / kart) seçildikçe kırılım netleşir.
+            </div>
+          </div>
+        )}
+
         {/* ── ZİNCİRİN 3. HALKASI: kasa → teslim → BANKA ──────────────────────
             Teslim tablosu paranın şubeden çıkışını gösteriyordu; bankaya girişi
             hiçbir yerde görünmüyordu. /banka-mutabakat ikisini karşılaştırır. */}
@@ -1103,9 +1188,55 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru, onToast }) {
                 <span style={{ fontSize: 12.5, color: R.metin2 }}>Elde / yolda nakit (kümülatif)</span>
                 <b style={{ fontFamily: F.mono, fontSize: 15, color: elde > 0 ? R.amber : R.yesil }}>{fmt(elde)}</b>
                 <span style={{ fontSize: 11, color: R.not2, flex: 1, minWidth: 200 }}>
-                  bugüne kadar teslim alınan − bugüne kadar bankaya yatan
+                  teslim alınan − bankaya yatan − <b>elden ödenen</b>
                 </span>
               </div>
+
+              {/* 💵 ELDEN / HAVALE — sahip 2026-08-09: "bazı ödemeler nakit olsa
+                  bile elden ödenme ihtimali var ve bu mutabakat doğru çalışmaz".
+                  Belirsiz kayıtlar elde nakiti bir ARALIK yapar; ayrım netleştikçe
+                  aralık daralır ve mutabakat kesinleşir. */}
+              {(sayi(bankaMut.elden_odenen) > 0 || sayi(bankaMut.belirsiz_nakit) > 0
+                || sayi(bankaMut.havale_odenen) > 0) && (
+                <div style={{ marginTop: 10, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  {[
+                    ['💵 Elden ödenen', bankaMut.elden_odenen, bankaMut.elden_adet, R.bakir,
+                      'kasadaki nakitten çıktı — elde nakiti azaltır'],
+                    ['🏦 Havale/EFT', bankaMut.havale_odenen, bankaMut.havale_adet, R.yesil,
+                      'banka hesabından — elde nakiti etkilemez'],
+                    ['❓ Yöntemi belirsiz', bankaMut.belirsiz_nakit, bankaMut.belirsiz_adet, R.amber,
+                      'elden mi havale mi seçilmemiş — eski kayıtlar'],
+                  ].filter(([, v]) => sayi(v) > 0).map(([ad, v, adet, renk, aciklama]) => (
+                    <div key={ad} style={{
+                      flex: '1 1 190px', minWidth: 180, padding: '9px 12px', borderRadius: 10,
+                      background: R.girinti, border: `1px solid ${R.cizgi3}`,
+                      borderLeft: `3px solid ${renk}`,
+                    }}>
+                      <div style={{ fontSize: 11.5, color: R.metin2 }}>{ad}</div>
+                      <div style={{ fontFamily: F.mono, fontSize: 15, fontWeight: 700, color: R.krem }}>
+                        {fmt(sayi(v))}
+                      </div>
+                      <div style={{ fontSize: 10.5, color: R.not2, marginTop: 3, lineHeight: 1.45 }}>
+                        {sayi(adet)} kayıt · {aciklama}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {sayi(bankaMut.belirsiz_nakit) > 0 && (
+                <div style={{
+                  marginTop: 9, padding: '9px 12px', borderRadius: 9,
+                  background: R.girinti, borderLeft: `3px solid ${R.amber}`,
+                  fontSize: 11.5, color: R.metin2, lineHeight: 1.6,
+                }}>
+                  Elde nakit bir <b>aralıktır</b>: en fazla{' '}
+                  <b style={{ fontFamily: F.mono, color: R.krem }}>{fmt(elde)}</b>, belirsizlerin
+                  tamamı elden ödendiyse en az{' '}
+                  <b style={{ fontFamily: F.mono, color: R.krem }}>{fmt(sayi(bankaMut.elde_nakit_alt))}</b>.
+                  Yeni giderlerde <b>elden / havale</b> seçildikçe aralık daralır.
+                </div>
+              )}
 
               <div style={{ fontSize: 10.5, color: R.not2, marginTop: 10, lineHeight: 1.6 }}>
                 Gösterge amaçlı: banka yatırımı <b>takip kaydıdır</b>, kasadan düşmez —
@@ -1489,9 +1620,14 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru, onToast }) {
                   </div>
                 </div>
 
-                {/* Ödeme yöntemi */}
+                {/* Ödeme yöntemi — 2026-08-09 sahip: "elden ve havale diye
+                    ayrıştıralım; bazı ödemeler nakit olsa bile elden ödenme
+                    ihtimali var ve bu mutabakat doğru çalışmaz". Elden ödenen
+                    para elde nakiti azaltır, havale banka hesabından çıkar. */}
                 <div style={{ display: 'flex', gap: 8, marginTop: 16, alignItems: 'center', flexWrap: 'wrap' }}>
-                  {[['nakit', '💵 Nakit — kasadan'], ['kart', '💳 Kart — borca yaz']].map(([y, ad]) => (
+                  {[['elden', '💵 Elden — kasadaki nakitten'],
+                    ['havale', '🏦 Havale/EFT — banka hesabından'],
+                    ['kart', '💳 Kart — borca yaz']].map(([y, ad]) => (
                     <div key={y} onClick={() => {
                       alan('odeme_yontemi', y);
                       if (y === 'kart') kartOneriGetir(giderForm.tutar);
