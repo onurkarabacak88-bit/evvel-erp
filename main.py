@@ -1182,6 +1182,26 @@ def kasa_ve_faiz_odeme_plani_tam_odeme(
         aciklama_ana = anapara_aciklama if anapara_aciklama is not None else plan['aciklama']
         kaynak = plan.get('kaynak_tablo') or ''
         islem_t = KAYNAK_KASA_ISLEM_TURU.get(kaynak, 'KART_ODEME')
+        # 🏪 ŞUBE DAMGASI KAYNAKTA (2026-08-09): maaş/sabit gider ödemesi kasaya
+        # şubesiz yazılıyordu; şube kârlılığı personel maliyeti OLMADAN
+        # hesaplanıyordu (250.487 ₺ "atanmamış" kovasında birikmişti). Geçmiş
+        # açıklamadaki addan türetildi ama bu kırılgan bir yol — kaynağı
+        # damgalamak kalıcı çözüm. Çözülemezse None kalır, uydurma yapılmaz.
+        _plan_sube = None
+        try:
+            if kaynak == 'personel' and plan.get('kaynak_id'):
+                cur.execute("SELECT sube_id FROM personel WHERE id::text=%s",
+                            (str(plan['kaynak_id']),))
+                _pr = cur.fetchone()
+                _plan_sube = (dict(_pr).get('sube_id') if _pr else None) or None
+            elif kaynak == 'sabit_giderler' and plan.get('kaynak_id'):
+                cur.execute("SELECT sube_id FROM sabit_giderler WHERE id::text=%s",
+                            (str(plan['kaynak_id']),))
+                _sr = cur.fetchone()
+                _plan_sube = (dict(_sr).get('sube_id') if _sr else None) or None
+        except Exception as _e:  # noqa: BLE001 — şube çözümü ödemeyi ASLA kilitlemez
+            logging.getLogger(__name__).warning(
+                "plan sube damgasi cozulemedi: %s", str(_e)[:110])
         if kaynak == 'vadeli_alimlar':
             # vadeli: kasa kaydı kaynağı vadeli_alimlar'a bağlanır (onay guard ile aynı anahtar)
             vk = plan.get('kaynak_id')
@@ -1189,11 +1209,12 @@ def kasa_ve_faiz_odeme_plani_tam_odeme(
             kasa_kid = vk or plan_id
             insert_kasa_hareketi(
                 cur, tarih, islem_t, -abs(ana_para_kismi), aciklama_ana,
-                kasa_kt, kasa_kid, plan_id, 'ODEME_PLANI',
+                kasa_kt, kasa_kid, plan_id, 'ODEME_PLANI', sube_id=_plan_sube,
             )
         else:
             insert_kasa_hareketi(cur, tarih, islem_t, -abs(ana_para_kismi),
-                aciklama_ana, 'odeme_plani', plan_id, plan_id, 'ODEME_PLANI')
+                aciklama_ana, 'odeme_plani', plan_id, plan_id, 'ODEME_PLANI',
+                sube_id=_plan_sube)
 
     # kart_borc() ODEME türündeki kart_hareketleri kaydına bakarak borcu düşürür.
     # Nakit ödeme kasaya gider ama kart borcu bu kayıt olmadan hiç azalmaz.
