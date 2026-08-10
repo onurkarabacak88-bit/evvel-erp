@@ -7425,7 +7425,7 @@ def sabit_gider_odenmis_plan_esitle(uygula: bool = False):
 
 
 @app.get("/api/kartlar/odeme-eslestir")
-def kart_odeme_eslestir(gun: int = 120, oran_tol: float = 0.02, tutar_tol: float = 25.0):
+def kart_odeme_eslestir(gun: int = 120, oran_tol: float = 0.005, tutar_tol: float = 1.0):
     """💳 EKSTRE = ÖDEME KANITI — kartla ödenmiş faturayı kuyrukta açık bırakma.
 
     Sahip (2026-08-10): "faturalar şu anda karttan ödendiği için otomatik talimat
@@ -7456,7 +7456,7 @@ def kart_odeme_eslestir(gun: int = 120, oran_tol: float = 0.02, tutar_tol: float
                         ON op.kaynak_tablo='vadeli_alimlar' AND va.id = op.kaynak_id
                 WHERE op.durum='bekliyor'
                   AND op.kart_id IS NULL
-                  AND COALESCE(op.kaynak_tablo,'') <> 'personel'
+                  AND COALESCE(op.kaynak_tablo,'') NOT IN ('personel', 'borc_envanteri')
                   AND op.tarih >= CURRENT_DATE - %s""",
             (int(gun),),
         )
@@ -7488,9 +7488,12 @@ def kart_odeme_eslestir(gun: int = 120, oran_tol: float = 0.02, tutar_tol: float
         s = _re.sub(r"[^A-Z0-9 ]", " ", s)
         # Jenerik kelimeler kanıt sayılmaz (fatura/ödeme/ay adları vb.) — aksi
         # halde "FATURA" kelimesi her şeyi her şeye eşler.
-        atil = {"FATURA", "ODEME", "ODEMESI", "TAKSIT", "TR", "LTD", "STI", "SAN",
-                "TIC", "AS", "ANONIM", "SIRKETI", "LIMITED", "VE", "ILE", "KONYA",
-                "ISTANBUL", "IZMIR", "ANKARA", "MERKEZ", "SUBE", "CARI", "BORC"}
+        atil = {"FATURA", "ODEME", "ODEMESI", "TAKSIT", "TAKSITI", "TR", "LTD", "STI",
+                "SAN", "TIC", "ANONIM", "SIRKETI", "LIMITED", "SIRKET", "TICARET",
+                "SANAYI", "VE", "ILE", "KONYA", "ISTANBUL", "IZMIR", "ANKARA",
+                "KARAMAN", "MERKEZ", "SUBE", "CARI", "BORC", "KREDI", "GIDER",
+                "GIDERI", "SABIT", "VADELI", "ALIM", "ALIMI", "KISMI", "AIDAT",
+                "HIZMETLERI", "HIZMET", "URUN", "GENEL", "DIGER", "TUTAR"}
         return {w for w in s.split() if len(w) >= 4 and w not in atil}
 
     def _gun(a, b):
@@ -7520,12 +7523,18 @@ def kart_odeme_eslestir(gun: int = 120, oran_tol: float = 0.02, tutar_tol: float
             if g > 45:
                 continue
             ortak = p_kel & _kelimeler(h["aciklama"])
+            # ⚠️ AD ÖRTÜŞMESİ ZORUNLU (2026-08-10 öz-denetim): ilk sürüm yalnız
+            # tutar+tarihe bakıyordu ve canlıda ürettiği 9 önerinin HEPSİ yanlıştı
+            # ("AKALIN 684 ₺ ↔ OVOLT ŞARJ 659 ₺", "banka kredi taksiti ↔ EVA
+            # MUTFAK"). Sıfır öneri, dokuz yanlış öneriden iyidir — yanlış öneri
+            # sahip onaylarsa gerçek bir borcu sahte kapatır.
+            if not ortak:
+                continue
             # GÜVEN: tutar tek başına kanıt değil (aynı tutarlı iki fatura olur).
-            # Ad örtüşmesi + tarih yakınlığı skoru yükseltir.
             skor = 0
             skor += 40 if fark <= 0.01 else (25 if fark <= max(1.0, kalan * 0.005) else 10)
             skor += 30 if g <= 7 else (20 if g <= 20 else 10)
-            skor += 30 if ortak else 0
+            skor += 15 * min(2, len(ortak))
             adaylar.append({"hareket": h, "skor": skor, "gun_fark": g,
                             "tutar_fark": round(fark, 2), "ortak_kelime": sorted(ortak)})
         if not adaylar:
