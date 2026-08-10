@@ -249,6 +249,12 @@ def abonelik_odeme_eslestir(gun: int = 120):
                   AND NOT EXISTS (SELECT 1 FROM kart_odeme_baglanti b
                                    WHERE b.kart_hareket_id = h.id)""", (int(gun),))
         hareketler = [dict(r) for r in (cur.fetchall() or [])]
+        # ⚠️ TARİHSİZ/TUTARSIZ HATIRLATMALAR DA TARANIR (2026-08-10, sahip sorusu):
+        # Değişken fatura kurgusunda sistem her ay "🧾 GAZZE ELEKTRİK (01638544) —
+        # fatura tutarı girilmedi" satırı üretir; tutarı 0, VADESİ NULL'dur (tutar
+        # bilinmeden vade konmaz). Önceki sorgu `op.tarih >= CURRENT_DATE - %s`
+        # filtresiyle bu satırların TAMAMINI eliyordu → ekstrede aynı abone
+        # numarası dursa bile eşleşme hiç denenmiyordu. Zincirin kopuk halkası buydu.
         cur.execute(
             """SELECT op.id, op.tarih::text AS vade, op.aciklama, op.kaynak_tablo,
                       op.kaynak_id::text AS kaynak_id,
@@ -260,7 +266,7 @@ def abonelik_odeme_eslestir(gun: int = 120):
                         ON op.kaynak_tablo='sabit_giderler' AND sg.id = op.kaynak_id
                 WHERE op.durum='bekliyor'
                   AND COALESCE(op.kaynak_tablo,'') NOT IN ('personel','borc_envanteri')
-                  AND op.tarih >= CURRENT_DATE - %s
+                  AND (op.tarih IS NULL OR op.tarih >= CURRENT_DATE - %s)
                   AND NOT EXISTS (SELECT 1 FROM kart_odeme_baglanti b
                                    WHERE b.hedef_tablo='odeme_plani' AND b.hedef_id = op.id)""",
             (int(gun) + 60,))
@@ -384,6 +390,13 @@ def abonelik_odeme_eslestir(gun: int = 120):
             if abo.get("sabit_gider_id") and str(p.get("sabit_id") or "") == str(abo["sabit_gider_id"]):
                 adaylar.append((p, "sabit_gider_bagi"))
                 continue
+            # ⭐ ABONE NUMARASI PLANIN ADINDA: sabit gider tanımları numarayı
+            # başlıkta taşıyor ("GAZZE ELEKTRİK (01638544)"). Kimlik eşleşmesinin
+            # en güçlü hâli — sağlayıcı adına hiç bakmaya gerek kalmaz.
+            _plan_metin = f"{p.get('aciklama') or ''} {p.get('gider_adi') or ''}"
+            if abo.get("abone_no") and str(abo["abone_no"]).strip() in _plan_metin:
+                adaylar.append((p, "abone_no_plan"))
+                continue
             metin = _sade(f"{p.get('aciklama') or ''} {p.get('gider_adi') or ''}")
             if _sade(abo["saglayici"]) and _sade(abo["saglayici"]) in metin:
                 adaylar.append((p, "saglayici_adi"))
@@ -400,6 +413,8 @@ def abonelik_odeme_eslestir(gun: int = 120):
                           "abone numarası yok — hangisi olduğunu sistem seçemez."),
             })
             continue
+        # Kimlik eşleşmesi (abone_no) varsa onu tercih et — ad eşleşmesinden güçlü.
+        adaylar.sort(key=lambda x: 0 if x[1] in ("sabit_gider_bagi", "abone_no_plan") else 1)
         p, hedef_temel = adaylar[0]
         kullanilan.add(p["id"])
         kalan = round(p["tutar"] - p["odenen"], 2)
@@ -724,25 +739,40 @@ def odeme_kaniti_bagla(body: BaglaBody):
         bagli = cur.rowcount > 0
         kapatildi = False
         if body.plani_kapat and plan and plan["durum"] == "bekliyor":
+            _tutar_notu = ("" if float(plan["tutar"] or 0) > 0
+                           else " · tutar ekstreden yazıldı")
             _damga = (f"{plan['aciklama'] or ''} · [karttan ödendi — "
-                      f"{kh['kart_adi']} · {kh['tarih']} · {kh['tutar']:,.2f} ₺]"
-                      .replace(",", "."))[:500]
+                      f"{kh['kart_adi']} · {kh['tarih']} · {kh['tutar']:,.2f} ₺"
+                      f"{_tutar_notu}]".replace(",", "."))[:500]
             # ⭐ ÖDEME TÜRÜ = KART (sahip: "ödeme türüne kart olarak işlemesi lazım")
             # Plan "ödendi" olurken NASIL ödendiği de yazılır. Kartla kapanan borç
             # nakitle kapanandan ayrılmalı: nakit kasadan çıkar, kart borcu SONRA
             # ödenir. Ayrım olmadan kasa mutabakatı bu borcu "kasa izi yok" diye
             # şüpheli sayardı. Kanıt kart hareketi de kaydedilir (geri izlenebilir).
+            # ⭐ TUTARI EKSTREDEN YAZ (sahip: "ekstre yüklenince faturanın da
+            # sistemde düzenlemesini yapıp sonra ödendi olarak mı işaretliyor?").
+            # Değişken fatura hatırlatması tutarsız doğar ("fatura tutarı
+            # girilmedi", odenecek_tutar=0, tarih=NULL). Gerçek tutar ekstrede
+            # belli olur; plan hem TUTARINI hem VADESİNİ oradan alır ve kapanır.
+            # Plan zaten tutarlıysa (kira gibi) kendi tutarı korunur.
+            _gercek = plan["tutar"] if float(plan["tutar"] or 0) > 0 else kh["tutar"]
+            _vade = plan["vade"] or kh["tarih"]
             cur.execute(
-                """UPDATE odeme_plani SET durum='odendi', odenen_tutar=%s,
-                          odeme_tarihi=CURRENT_DATE, aciklama=%s,
+                """UPDATE odeme_plani
+                      SET durum='odendi',
+                          odenecek_tutar=%s, odenen_tutar=%s,
+                          tarih=COALESCE(tarih, %s::date),
+                          referans_ay=COALESCE(referans_ay, DATE_TRUNC('month', %s::date)),
+                          odeme_tarihi=%s::date, aciklama=%s,
                           odeme_yontemi='kart', odeme_kart_id=%s,
                           odeme_kart_hareket_id=%s
                     WHERE id=%s AND durum='bekliyor'""",
-                (plan["tutar"], _damga, kh.get("kart_id"), body.kart_hareket_id,
-                 body.hedef_id))
+                (_gercek, _gercek, _vade, _vade, kh["tarih"], _damga,
+                 kh.get("kart_id"), body.kart_hareket_id, body.hedef_id))
             kapatildi = cur.rowcount > 0
     return {"success": True, "baglandi": bagli, "plan_kapatildi": kapatildi,
             "odeme_yontemi": ("kart" if kapatildi else None),
+            "yazilan_tutar": (kh["tutar"] if kapatildi and plan and float(plan["tutar"] or 0) <= 0 else None),
             "kasa_etkisi": False,
             "mesaj": ("Ödeme kanıtı bağlandı."
                       + (" Plan 'karttan ödendi' olarak kapatıldı." if kapatildi else "")
