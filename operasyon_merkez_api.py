@@ -5519,6 +5519,11 @@ def ops_metrics_finans_ozet(
                 COALESCE(c.tarih, g.tarih) AS tarih,
                 COALESCE(c.sube_id, g.sube_id) AS sube_id,
                 s.ad AS sube_adi,
+                -- SEZON KAPALI BAYRAĞI (2026-08-10): kapalı şubenin cirosu 0'dır
+                -- ama kirası/elektriği sürer. Bayrak olmadan ekran "bu şube zarar
+                -- ediyor" gibi okunuyordu; canlıda ALSANCAK ve KÖYCEĞİZ tam bu
+                -- durumdaydı (19 Haziran'dan beri ciro yok — çünkü KAPALI).
+                COALESCE(s.sezon_kapali, FALSE) AS sezon_kapali,
                 COALESCE(c.ciro, 0)::numeric AS ciro,
                 COALESCE(g.gider, 0)::numeric AS gider
             FROM c
@@ -5538,6 +5543,11 @@ def ops_metrics_finans_ozet(
             d["tarih"] = str(d.get("tarih")) if d.get("tarih") is not None else None
             d["ciro"] = ciro_v
             d["gider"] = gider_v
+            d["sezon_kapali"] = bool(d.get("sezon_kapali"))
+            # Kapalı şubede oran anlamsızdır (ciro 0, gider sürer) — ekran
+            # "zarar" diye okumasın diye ayrı not taşınır.
+            d["not"] = ("sezon kapalı — ciro beklenmez, sabit giderler sürer"
+                        if d["sezon_kapali"] and ciro_v == 0 else None)
             d["ciro_gider_orani"] = round(ciro_v / gider_v, 4) if gider_v > 0 else None
             ciro_gider.append(d)
 
