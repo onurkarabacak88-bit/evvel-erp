@@ -7424,6 +7424,195 @@ def sabit_gider_odenmis_plan_esitle(uygula: bool = False):
         return {"onizleme": False, "esitlenen_adet": esit, "kayitlar": liste}
 
 
+@app.get("/api/kartlar/odeme-eslestir")
+def kart_odeme_eslestir(gun: int = 120, oran_tol: float = 0.02, tutar_tol: float = 25.0):
+    """💳 EKSTRE = ÖDEME KANITI — kartla ödenmiş faturayı kuyrukta açık bırakma.
+
+    Sahip (2026-08-10): "faturalar şu anda karttan ödendiği için otomatik talimat
+    kart ekstresi gelene kadar açık kalabilir; ama ekstre yüklendiğinde ekstreler
+    bir öncenin fatura ödemesini yapar — burada TARİH önemli, eşleşmeyi yapmalı ve
+    'karttan ödendi' olarak düzenlemeli."
+
+    İŞLEYİŞ: elektrik/su/internet gibi otomatik talimatlı faturalar karttan çeker.
+    Fatura sisteme girildiğinde ödeme planına düşer ve ödenmiş görünmez; para
+    aslında ÇIKMIŞTIR ama izi kart ekstresindedir. Ekstre gelince o iz belirir.
+    Bu uç iki tarafı buluşturur.
+
+    MUHASEBE (çift sayım yok): fatura kartla ödendiyse fatura borcu kapanır,
+    kart borcu zaten kart_hareketleri'nde durur, KASA'ya DOKUNULMAZ — kasa çıkışı
+    kart ekstresi ödendiğinde olur. Aynı para iki kez çıkmış görünmez.
+
+    ⚠️ BAĞLAMA ≠ KAPATMA: bu uç yalnız ÖNERİ üretir (salt-okur). Kapatma
+    /api/odeme-plani/{oid}/karttan-odendi ile ve sahip onayıyla yapılır.
+    """
+    with db() as (conn, cur):
+        cur.execute(
+            """SELECT op.id, op.tarih::text AS vade, op.aciklama, op.kaynak_tablo,
+                      COALESCE(op.odenecek_tutar,0)::float AS tutar,
+                      COALESCE(op.odenen_tutar,0)::float   AS odenen,
+                      va.tedarikci AS ted
+                 FROM odeme_plani op
+                 LEFT JOIN vadeli_alimlar va
+                        ON op.kaynak_tablo='vadeli_alimlar' AND va.id = op.kaynak_id
+                WHERE op.durum='bekliyor'
+                  AND op.kart_id IS NULL
+                  AND COALESCE(op.kaynak_tablo,'') <> 'personel'
+                  AND op.tarih >= CURRENT_DATE - %s""",
+            (int(gun),),
+        )
+        planlar = [dict(r) for r in (cur.fetchall() or [])]
+        cur.execute(
+            """SELECT h.id, h.tarih::text AS tarih, h.aciklama, ABS(h.tutar)::float AS tutar,
+                      k.kart_adi
+                 FROM kart_hareketleri h
+                 JOIN kartlar k ON k.id = h.kart_id
+                WHERE h.islem_turu='HARCAMA' AND COALESCE(h.durum,'aktif')='aktif'
+                  AND COALESCE(h.harcama_tipi,'belirsiz') <> 'sahsi'
+                  AND h.tarih >= CURRENT_DATE - %s""",
+            (int(gun) + 60,),
+        )
+        hareketler = [dict(r) for r in (cur.fetchall() or [])]
+
+    import re as _re
+    from datetime import date as _d
+    # Türkçe sadeleştirme tek merkezden (fatura_api._sadele) — ayrı bir kopya
+    # yazmak "ÖDEMESİ"/"ODEMESI" gibi Türkçe-I sapmalarını geri getirirdi.
+    try:
+        from fatura_api import _sadele as _sad
+    except Exception:  # noqa: BLE001
+        def _sad(x):  # emniyet ağı: sadeleştirme olmasa da eşleştirme çalışsın
+            return str(x or "")
+
+    def _kelimeler(s):
+        s = _sad(str(s or "")).upper()
+        s = _re.sub(r"[^A-Z0-9 ]", " ", s)
+        # Jenerik kelimeler kanıt sayılmaz (fatura/ödeme/ay adları vb.) — aksi
+        # halde "FATURA" kelimesi her şeyi her şeye eşler.
+        atil = {"FATURA", "ODEME", "ODEMESI", "TAKSIT", "TR", "LTD", "STI", "SAN",
+                "TIC", "AS", "ANONIM", "SIRKETI", "LIMITED", "VE", "ILE", "KONYA",
+                "ISTANBUL", "IZMIR", "ANKARA", "MERKEZ", "SUBE", "CARI", "BORC"}
+        return {w for w in s.split() if len(w) >= 4 and w not in atil}
+
+    def _gun(a, b):
+        try:
+            return abs((_d.fromisoformat(a[:10]) - _d.fromisoformat(b[:10])).days)
+        except Exception:
+            return 999
+
+    kullanilan = set()
+    oneriler = []
+    for p in planlar:
+        kalan = round(p["tutar"] - p["odenen"], 2)
+        if kalan <= 0:
+            continue
+        p_kel = _kelimeler(p["aciklama"]) | _kelimeler(p.get("ted"))
+        adaylar = []
+        for h in hareketler:
+            if h["id"] in kullanilan:
+                continue
+            fark = abs(h["tutar"] - kalan)
+            if fark > max(tutar_tol, kalan * oran_tol):
+                continue
+            # TARİH KURALI (sahibin vurgusu): ekstre satırı, vadesi GELMİŞ bir
+            # faturanın ödemesidir. Kart çekimi vadeden biraz önce de olabilir
+            # (otomatik talimat erken çeker), çok sonra da (gecikmiş talimat).
+            g = _gun(h["tarih"], p["vade"])
+            if g > 45:
+                continue
+            ortak = p_kel & _kelimeler(h["aciklama"])
+            # GÜVEN: tutar tek başına kanıt değil (aynı tutarlı iki fatura olur).
+            # Ad örtüşmesi + tarih yakınlığı skoru yükseltir.
+            skor = 0
+            skor += 40 if fark <= 0.01 else (25 if fark <= max(1.0, kalan * 0.005) else 10)
+            skor += 30 if g <= 7 else (20 if g <= 20 else 10)
+            skor += 30 if ortak else 0
+            adaylar.append({"hareket": h, "skor": skor, "gun_fark": g,
+                            "tutar_fark": round(fark, 2), "ortak_kelime": sorted(ortak)})
+        if not adaylar:
+            continue
+        adaylar.sort(key=lambda x: -x["skor"])
+        en = adaylar[0]
+        kullanilan.add(en["hareket"]["id"])
+        oneriler.append({
+            "plan_id": p["id"], "plan_aciklama": p["aciklama"], "tedarikci": p.get("ted"),
+            "vade": p["vade"], "kalan_tutar": kalan, "kaynak_tablo": p["kaynak_tablo"],
+            "kart_hareket_id": en["hareket"]["id"], "kart_adi": en["hareket"]["kart_adi"],
+            "kart_aciklama": en["hareket"]["aciklama"], "kart_tarih": en["hareket"]["tarih"],
+            "kart_tutar": en["hareket"]["tutar"],
+            "skor": en["skor"], "gun_fark": en["gun_fark"], "tutar_fark": en["tutar_fark"],
+            "ortak_kelime": en["ortak_kelime"],
+            "guven": ("yuksek" if en["skor"] >= 85 else "orta" if en["skor"] >= 60 else "dusuk"),
+            "diger_aday": len(adaylar) - 1,
+        })
+    oneriler.sort(key=lambda x: (-x["skor"], -x["kalan_tutar"]))
+    _y = [o for o in oneriler if o["guven"] == "yuksek"]
+    return {
+        "gun": int(gun), "oneri_adet": len(oneriler),
+        "oneri_tutar": round(sum(o["kalan_tutar"] for o in oneriler), 2),
+        "yuksek_guven_adet": len(_y),
+        "yuksek_guven_tutar": round(sum(o["kalan_tutar"] for o in _y), 2),
+        "taranan_plan": len(planlar), "taranan_kart_hareketi": len(hareketler),
+        "oneriler": oneriler,
+        "not": ("Salt-okur öneri. Kapatma sahibin onayıyla /api/odeme-plani/{id}/"
+                "karttan-odendi ucundan yapılır; kasaya dokunulmaz çünkü para "
+                "kart ekstresi ödenirken çıkar."),
+    }
+
+
+@app.post("/api/odeme-plani/{oid}/karttan-odendi")
+def odeme_plani_karttan_odendi(oid: str, kart_hareket_id: str = "", gerekce: str = "", kuru: int = 1):
+    """Kuyruk kalemini 'karttan ödendi' olarak kapatır — KASA HAREKETİ YARATMAZ.
+
+    Para kart ekstresi ödendiğinde çıkacak; burada ikinci bir kasa kaydı açmak
+    çift sayım olurdu. Hangi kart hareketinin kanıt olduğu açıklamaya damgalanır,
+    denetim izi kalır ve karar geri alınabilir.
+    """
+    with db() as (conn, cur):
+        cur.execute("""SELECT id, tarih::text AS vade, aciklama, durum,
+                              COALESCE(odenecek_tutar,0)::float AS tutar,
+                              COALESCE(odenen_tutar,0)::float AS odenen
+                         FROM odeme_plani WHERE id=%s FOR UPDATE""", (oid,))
+        p = cur.fetchone()
+        if not p:
+            raise HTTPException(404, "Plan kalemi bulunamadı")
+        p = dict(p)
+        if p["durum"] != "bekliyor":
+            raise HTTPException(409, f"Kalem '{p['durum']}' durumunda — yalnız 'bekliyor' kapatılabilir")
+        kalan = round(float(p["tutar"]) - float(p["odenen"]), 2)
+        kanit = ""
+        if kart_hareket_id:
+            cur.execute("""SELECT h.tarih::text AS tarih, ABS(h.tutar)::float AS tutar,
+                                  h.aciklama, k.kart_adi
+                             FROM kart_hareketleri h JOIN kartlar k ON k.id=h.kart_id
+                            WHERE h.id=%s""", (kart_hareket_id,))
+            kh = cur.fetchone()
+            if not kh:
+                raise HTTPException(404, "Kart hareketi bulunamadı")
+            kh = dict(kh)
+            kanit = f"{kh['kart_adi']} · {kh['tarih']} · {kh['tutar']:,.2f} ₺".replace(",", ".")
+        _damga = (f"{p['aciklama'] or ''} · [karttan ödendi {bugun_tr().isoformat()}"
+                  f"{' — ' + kanit if kanit else ''}"
+                  f"{': ' + gerekce.strip() if gerekce.strip() else ''}]")[:500]
+        if kuru:
+            return {"kuru": True, "plan_id": oid, "vade": p["vade"], "kapanacak_tutar": kalan,
+                    "kanit": kanit or None, "yeni_aciklama": _damga, "kasa_etkisi": False,
+                    "mesaj": "PROVA — hiçbir kayıt değişmedi. Uygulamak için kuru=0 gönderin."}
+        cur.execute(
+            """UPDATE odeme_plani
+                  SET durum='odendi', odenen_tutar=%s, odeme_tarihi=CURRENT_DATE, aciklama=%s
+                WHERE id=%s AND durum='bekliyor'""",
+            (p["tutar"], _damga, oid),
+        )
+        if cur.rowcount == 0:
+            raise HTTPException(409, "Kalem bu sırada değişti — tekrar deneyin")
+        audit(cur, 'odeme_plani', oid, 'KARTTAN_ODENDI',
+              yeni={'tutar': kalan, 'kanit': kanit, 'kasa_etkisi': False})
+    return {"success": True, "plan_id": oid, "kapanan_tutar": kalan, "kanit": kanit or None,
+            "kasa_etkisi": False,
+            "mesaj": ("Kalem 'karttan ödendi' olarak kapatıldı. Kasa hareketi oluşmadı — "
+                      "para kart ekstresi ödendiğinde çıkacak.")}
+
+
 @app.post("/api/odeme-plani/{oid}/cari-odemesiyle-kapat")
 def odeme_plani_cari_odemesiyle_kapat(oid: str, gerekce: str = "", kuru: int = 1):
     """💳 CARİ ÖDEMESİYLE KAPAT — para zaten çıkmış, yalnız kuyruk kapanır.
