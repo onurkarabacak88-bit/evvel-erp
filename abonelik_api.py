@@ -513,6 +513,76 @@ def gider_gecis_karsilastir(gun: int = 365):
     }
 
 
+@router.post("/api/abonelik/gecmis-gider-arsivle")
+def gecmis_gider_arsivle(kuru: bool = True, geri_al: bool = False):
+    """GEÇMİŞ TEMİZLİĞİ — ekstre içe aktarmanın ürettiği eski gider satırlarını arşivler.
+
+    Sahip (2026-08-10): "bunu geçmişle ilişkili alanları da temizlemek zorundasın!"
+
+    NEDEN GEREKLİ: yeni prensipte kart harcaması P&L'e kart defterinden girer ve
+    `gider_kanonik` bu satırları zaten dışarıda bırakır. AMA sistemde
+    `anlik_giderler`'i DOĞRUDAN okuyan 67 sorgu var; bunların 47'si
+    `durum='aktif'` filtreliyor. Kayıtlar 'aktif' kaldıkça o 47 sorgu eski
+    modeli okumaya devam eder → aynı anda İKİ FARKLI GERÇEK üretilir.
+
+    NE YAPAR: `kaynak_tablo='ekstre_import'` satırlarını `durum='arsiv'` yapar.
+    SİLMEZ — 'arsiv' hem `durum='aktif'` filtrelerinden düşer hem de kaydın
+    hatalı olmadığını söyler (kayıt doğruydu, model değişti). Geri alınabilir.
+
+    ⚠️ KART HAREKETLERİNE DOKUNMAZ. Borç kaynağı odur; oraya dokunmak kart
+    borcunu bozardı. Bu uç yalnız GİDER tarafını temizler.
+    """
+    hedef_durum = "aktif" if geri_al else "arsiv"
+    kaynak_durum = "arsiv" if geri_al else "aktif"
+    with db() as (conn, cur):
+        cur.execute(
+            """SELECT COUNT(*)::int AS adet, COALESCE(SUM(tutar),0)::float AS tutar,
+                      MIN(tarih)::text AS ilk, MAX(tarih)::text AS son
+                 FROM anlik_giderler
+                WHERE kaynak_tablo='ekstre_import' AND COALESCE(durum,'aktif')=%s""",
+            (kaynak_durum,))
+        kapsam = dict(cur.fetchone() or {})
+        # Etki: 'aktif' okuyan sorguların göreceği gider toplamı nasıl değişir?
+        cur.execute(
+            """SELECT COALESCE(SUM(tutar),0)::float AS t, COUNT(*)::int AS a
+                 FROM anlik_giderler WHERE COALESCE(durum,'aktif')='aktif'""")
+        once = dict(cur.fetchone() or {})
+        if kuru:
+            _d = float(kapsam.get("tutar") or 0)
+            _sonra = round(float(once.get("t") or 0) + (_d if geri_al else -_d), 2)
+            return {
+                "kuru": True, "geri_al": geri_al,
+                "etkilenecek": {"adet": int(kapsam.get("adet") or 0),
+                                "tutar": round(_d, 2),
+                                "ilk_tarih": kapsam.get("ilk"), "son_tarih": kapsam.get("son")},
+                "anlik_gider_aktif_toplam": {"once": round(float(once.get("t") or 0), 2),
+                                             "sonra": _sonra},
+                "kart_hareketleri": "DOKUNULMAZ — kart borcu değişmez",
+                "mesaj": ("PROVA — hiçbir kayıt değişmedi. Uygulamak için kuru=false gönderin."
+                          if not geri_al else
+                          "PROVA — geri alma önizlemesi. Uygulamak için kuru=false gönderin."),
+            }
+        cur.execute(
+            """UPDATE anlik_giderler SET durum=%s
+                WHERE kaynak_tablo='ekstre_import' AND COALESCE(durum,'aktif')=%s""",
+            (hedef_durum, kaynak_durum))
+        yazilan = cur.rowcount
+        cur.execute(
+            """SELECT COALESCE(SUM(tutar),0)::float AS t, COUNT(*)::int AS a
+                 FROM anlik_giderler WHERE COALESCE(durum,'aktif')='aktif'""")
+        sonra = dict(cur.fetchone() or {})
+    return {
+        "success": True, "kuru": False, "geri_al": geri_al,
+        "guncellenen": yazilan, "yeni_durum": hedef_durum,
+        "anlik_gider_aktif_toplam": {"once": round(float(once.get("t") or 0), 2),
+                                     "sonra": round(float(sonra.get("t") or 0), 2)},
+        "kart_hareketleri": "dokunulmadı",
+        "mesaj": (f"{yazilan} eski ekstre gider satırı '{hedef_durum}' durumuna alındı. "
+                  "Kayıtlar silinmedi; kart borcu değişmedi. P&L artık kanonik "
+                  "katmandan okuyor, diğer uçlar da bu satırları görmeyecek."),
+    }
+
+
 class BaglaBody(BaseModel):
     kart_hareket_id: str
     hedef_tablo: str = "odeme_plani"
