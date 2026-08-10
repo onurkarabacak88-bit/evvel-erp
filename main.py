@@ -3665,17 +3665,24 @@ def kart_hareket_tip_belirle(hid: str, tip: str):
             raise HTTPException(404, "Hareket bulunamadı")
         row = dict(row)
 
-        # Ekstre import'tan gelen HARCAMA satırı için eşlenik anlık gideri senkronize et:
-        # şahsi → anlık gideri iptal et; işletme/belirsiz → yoksa (yeniden) oluştur.
+        # ⛔ ESKİ KOPYA MODELİ DİRİLTİLMEZ (2026-08-10, Codex denetimi #5).
+        # Eskiden burada şahsi→iptal, işletme→(yeniden) OLUŞTUR yapılıyordu.
+        # Kanonik modelde kart harcaması P&L'e kart defterinden girer; ikinci bir
+        # gider kaydı çift sayımdır. Sınıflandırma değişince artık YALNIZ eski
+        # kopyalar kapatılır — yenisi asla üretilmez.
         if row.get('kaynak_tablo') == 'ekstre_import' and row['islem_turu'] == 'HARCAMA':
             agid = "agk_" + hid
+            cur.execute(
+                "UPDATE anlik_giderler SET durum='arsiv' WHERE id=%s AND durum='aktif'",
+                (agid,))
+        if False:  # eski yol — bilinçli olarak ölü bırakıldı (geçmiş okunabilsin)
+            agid = "agk_" + hid
             if t == 'sahsi':
-                cur.execute("UPDATE anlik_giderler SET durum='iptal' WHERE id=%s AND durum='aktif'", (agid,))
+                pass
             else:
-                cur.execute("SELECT id FROM anlik_giderler WHERE id=%s", (agid,))
-                mevcut = cur.fetchone()
+                mevcut = None
                 if mevcut:
-                    cur.execute("UPDATE anlik_giderler SET durum='aktif' WHERE id=%s", (agid,))
+                    pass
                 else:
                     cur.execute(
                         """INSERT INTO anlik_giderler
@@ -5245,9 +5252,20 @@ def kart_cift_kayit_temizle(body: dict):
 
 @app.post("/api/kartlar/ekstre-import-anlik-gider-backfill")
 def kart_ekstre_import_anlik_gider_backfill(kart_id: Optional[str] = None):
-    """Tek seferlik bakım: ekstre-import güncellemesinden ÖNCE içe aktarılmış
-    kart_hareketleri (kaynak_tablo='ekstre_import', HARCAMA, şahsi olmayan) için
-    eksik anlik_giderler eşleniklerini geriye dönük oluşturur. İdempotent."""
+    """⛔ EMEKLİ (2026-08-10, Codex denetimi). Bu uç ESKİ MODELİ DİRİLTİYOR.
+
+    Kanonik gider modelinde kart harcaması P&L'e KART DEFTERİNDEN girer; ekstre
+    satırı için ayrıca anlik_giderler kaydı üretmek çift sayım demektir. Bu uç
+    tam olarak onu yapıyordu — biri çağırırsa arşivlediğimiz 166 kaydın benzerini
+    yeniden üretir ve gideri sessizce şişirirdi.
+
+    Silinmedi (geçmiş çağrılar 404 yerine açıklama görsün) ama ARTIK YAZMIYOR.
+    """
+    raise HTTPException(
+        410,
+        "Bu uç emekli edildi (2026-08-10). Kanonik gider modelinde kart harcaması "
+        "P&L'e kart defterinden girer; ekstre satırı için ayrı gider kaydı "
+        "üretmek çift sayımdır. Ölçüm için: GET /api/abonelik/maliyet-cift-sayim")
     with db() as (conn, cur):
         params: list = []
         kart_filter = ""

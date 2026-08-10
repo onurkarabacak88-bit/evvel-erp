@@ -440,8 +440,10 @@ def odeme_plani_bugun(gun: int = 0, personel: int = 1):
                     AND COALESCE(kx.durum,'aktif') = 'aktif'
                     AND DATE_TRUNC('month', kx.tarih) = DATE_TRUNC('month', CURRENT_DATE)
                     AND substring(sg.gider_adi from '([0-9]{5,})') IS NOT NULL
-                    AND position(substring(sg.gider_adi from '([0-9]{5,})')
-                                 in COALESCE(kx.aciklama,'')) > 0)
+                    -- Rakam sınırı: kısa numara uzun numaranın içinde eşleşmesin
+                    -- (Codex denetimi 2026-08-10) — yanlış "ödendi" üretirdi.
+                    AND COALESCE(kx.aciklama,'') ~
+                        ('(^|[^0-9])' || substring(sg.gider_adi from '([0-9]{5,})') || '([^0-9]|$)'))
             ORDER BY gun_gecikme DESC
         """, (gun,))
         for g in (cur.fetchall() or []):

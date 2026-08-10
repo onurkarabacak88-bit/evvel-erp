@@ -705,10 +705,12 @@ def odeme_kaniti_bagla(body: BaglaBody):
     if body.hedef_tablo not in ("odeme_plani", "tedarikci_fatura", "sabit_giderler"):
         raise HTTPException(400, "hedef_tablo geçersiz")
     with db() as (conn, cur):
+        # ⚠️ KİLİT (Codex denetimi): iki eşzamanlı istek aynı hareketi iki borca
+        # bağlayabilirdi. Hareketi kilitleyip mevcut bağı kontrol ediyoruz.
         cur.execute("""SELECT h.id, h.tarih::text AS tarih, ABS(h.tutar)::float AS tutar,
                               h.aciklama, h.kart_id::text AS kart_id, k.kart_adi
                          FROM kart_hareketleri h JOIN kartlar k ON k.id=h.kart_id
-                        WHERE h.id=%s""", (body.kart_hareket_id,))
+                        WHERE h.id=%s FOR UPDATE OF h""", (body.kart_hareket_id,))
         kh = cur.fetchone()
         if not kh:
             raise HTTPException(404, "Kart hareketi bulunamadı")
@@ -723,6 +725,24 @@ def odeme_kaniti_bagla(body: BaglaBody):
             if not plan:
                 raise HTTPException(404, "Plan kalemi bulunamadı")
             plan = dict(plan)
+        # Bu hareket zaten bir borca bağlı mı? (bir para çıkışı = bir borç)
+        cur.execute("""SELECT hedef_tablo, hedef_id FROM kart_odeme_baglanti
+                        WHERE kart_hareket_id=%s""", (body.kart_hareket_id,))
+        _mevcut = cur.fetchone()
+        if _mevcut and not (str(_mevcut["hedef_tablo"]) == body.hedef_tablo
+                            and str(_mevcut["hedef_id"]) == str(body.hedef_id)):
+            raise HTTPException(409, (
+                "Bu kart harcaması zaten başka bir borca ödeme kanıtı olarak bağlı "
+                f"({_mevcut['hedef_tablo']}). Bir para çıkışı en fazla BİR borcu kapatır."))
+        # Bu borç başka bir ödemeyle kapatılmış mı?
+        cur.execute("""SELECT kart_hareket_id FROM kart_odeme_baglanti
+                        WHERE hedef_tablo=%s AND hedef_id=%s""",
+                    (body.hedef_tablo, body.hedef_id))
+        _hedef_bagli = cur.fetchone()
+        if _hedef_bagli and str(_hedef_bagli["kart_hareket_id"]) != body.kart_hareket_id:
+            raise HTTPException(409, (
+                "Bu borç zaten başka bir kart harcamasıyla kapatılmış. "
+                "Önce eski bağı kaldırın."))
         if body.kuru:
             return {"kuru": True, "kart_hareket": kh, "plan": plan,
                     "plani_kapat": body.plani_kapat, "kasa_etkisi": False,

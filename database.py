@@ -439,10 +439,21 @@ def ensure_abonelik(cur) -> None:
             olusturma        TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
     """)
-    # Bir kart hareketi bir hedefi EN FAZLA bir kez kapatır (çift bağ = çift kapama)
+    # ⚠️ ÇİFT KAPATMA FRENİ (Codex denetimi 2026-08-10 — gerçek açık):
+    # İlk sürüm tekilliği (kart_hareket_id, hedef_tablo, hedef_id) üzerine
+    # kurmuştu. Bu, AYNI ekstre satırının İKİ FARKLI borca bağlanmasını
+    # engellemiyordu — bir otomatik ödeme satırı iki ayrı ayın hatırlatmasını
+    # kapatabilirdi (sessiz veri bozulması). Bir para çıkışı EN FAZLA BİR borcu
+    # kapatır: tekillik artık kart_hareket_id üzerinde.
+    cur.execute("DROP INDEX IF EXISTS uq_kart_odeme_baglanti")
     cur.execute("""
-        CREATE UNIQUE INDEX IF NOT EXISTS uq_kart_odeme_baglanti
-        ON kart_odeme_baglanti (kart_hareket_id, hedef_tablo, hedef_id)
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_kart_odeme_baglanti_hareket
+        ON kart_odeme_baglanti (kart_hareket_id)
+    """)
+    # Bir borç da iki ayrı ödemeyle "kapandı" sayılmamalı.
+    cur.execute("""
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_kart_odeme_baglanti_hedef
+        ON kart_odeme_baglanti (hedef_tablo, hedef_id)
     """)
     cur.execute("""
         CREATE INDEX IF NOT EXISTS idx_kart_odeme_baglanti_hedef
@@ -517,8 +528,17 @@ def ensure_gider_kanonik(cur) -> None:
         --    değil (finans_core._TAKSIT_BORC_PAYI ile aynı doktrin).
         SELECT
             'kart'::text,
-            h.id::text,
-            h.tarih::date,
+            -- Taksitli alımda her taksit AYRI satırdır; id'ye taksit sırası eklenir
+            -- (aynı id birden çok satır üretemez, tekillik korunur).
+            CASE WHEN COALESCE(h.taksit_sayisi,1) > 1
+                 THEN h.id::text || '#' || (tk.i + 1)::text
+                 ELSE h.id::text END,
+            -- ⚠️ TAKSİT PERİYODİZASYONU (Codex denetimi 2026-08-10 — GERÇEK HATA):
+            -- İlk sürüm taksidi aylara YAYMIYORDU; alım gününde tek satır yazıp
+            -- tutar/taksit koyuyordu. 12 taksitli 120.000 ₺'lik alımın P&L'de
+            -- yalnız 10.000 ₺'si görünüyor, kalan 110.000 ₺ HİÇ görünmüyordu.
+            -- Artık her taksit kendi ayına düşer (alım ayı + i).
+            (COALESCE(h.baslangic_tarihi, h.tarih) + (tk.i || ' month')::interval)::date,
             CASE
                 WHEN COALESCE(h.taksit_sayisi,1) > 1
                     THEN ABS(h.tutar) / h.taksit_sayisi
@@ -550,6 +570,9 @@ def ensure_gider_kanonik(cur) -> None:
             EXISTS (SELECT 1 FROM kart_odeme_baglanti b WHERE b.kart_hareket_id = h.id),
             'kart_hareketleri'::text
         FROM kart_hareketleri h
+        -- Taksit sayısı kadar satır üret (tek çekimde 1 satır). Gelecek taksitler
+        -- HENÜZ GİDER DEĞİLDİR — ekstreye girmemişlerdir; aşağıdaki WHERE onları eler.
+        CROSS JOIN LATERAL generate_series(0, GREATEST(COALESCE(h.taksit_sayisi,1),1) - 1) AS tk(i)
         -- Abone numarası ekstre metninde geçiyorsa aboneliği (ve şubesini) bul.
         -- En uzun numara önce: kısa bir numara başka bir numaranın içinde
         -- geçebilir, uzun eşleşme daha spesifiktir.
@@ -558,7 +581,11 @@ def ensure_gider_kanonik(cur) -> None:
             FROM abonelik a
             WHERE a.aktif
               AND COALESCE(a.abone_no,'') <> ''
-              AND position(a.abone_no in COALESCE(h.aciklama,'')) > 0
+              -- ⚠️ RAKAM SINIRI (Codex denetimi 2026-08-10): ham `position()`
+              -- kısa bir abone numarasını daha uzun bir numaranın İÇİNDE
+              -- eşleştiriyordu (01026495 ⊂ 010264953...). Numaranın iki yanında
+              -- rakam OLMAMALI — aksi halde yanlış şube/kategori damgalanır.
+              AND COALESCE(h.aciklama,'') ~ ('(^|[^0-9])' || a.abone_no || '([^0-9]|$)')
             ORDER BY length(a.abone_no) DESC
             LIMIT 1
         ) ab ON TRUE
@@ -577,6 +604,10 @@ def ensure_gider_kanonik(cur) -> None:
                         'ÇĞıİÖŞÜÂÎÛ', 'CGIIOSUAIU') NOT LIKE '%BORC KAPATMA%'
           AND translate(upper(COALESCE(h.aciklama,'')),
                         'ÇĞıİÖŞÜÂÎÛ', 'CGIIOSUAIU') NOT LIKE '%CARIYE ODEME%'
+          -- Gelecek taksit gider değildir (henüz ekstreye girmedi) —
+          -- finans_core._TAKSIT_BORC_PAYI ile aynı doktrin.
+          AND (COALESCE(h.baslangic_tarihi, h.tarih) + (tk.i || ' month')::interval)::date
+              <= CURRENT_DATE
     """)
 
 

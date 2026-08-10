@@ -2692,8 +2692,21 @@ def _abonelik_nolar_getir(cur) -> list:
 
 
 def _abonelik_no_eslesti(aciklama: str, nolar: list) -> bool:
+    """Abone numarası metinde RAKAM SINIRIYLA geçiyor mu?
+
+    ⚠️ Codex denetimi (2026-08-10): ham `n in a` kontrolü kısa bir numarayı daha
+    uzun bir numaranın İÇİNDE eşleştiriyordu (01026495 ⊂ 010264953...). Yanlış
+    eşleşme burada KDV indirimi üretir — yani vergi beyanını etkiler. Numaranın
+    iki yanında rakam olmamalı.
+    """
+    import re as _re3
     a = str(aciklama or "")
-    return any(n and n in a for n in nolar)
+    for n in nolar:
+        if not n:
+            continue
+        if _re3.search(r"(?<![0-9])" + _re3.escape(str(n)) + r"(?![0-9])", a):
+            return True
+    return False
 
 
 def _borc_kapatma_mi(aciklama: str) -> bool:
