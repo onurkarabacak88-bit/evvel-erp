@@ -2682,6 +2682,20 @@ def _sadele(s: str) -> str:
     return (s or "").translate(_TR_SADE).upper().strip()
 
 
+def _abonelik_nolar_getir(cur) -> list:
+    """Aktif aboneliklerin abone/tesisat numaraları. Boşsa istisna hiç çalışmaz."""
+    try:
+        cur.execute("SELECT abone_no FROM abonelik WHERE aktif AND COALESCE(abone_no,'') <> ''")
+        return [str(r["abone_no"]).strip() for r in (cur.fetchall() or [])]
+    except Exception:  # noqa: BLE001 — abonelik tablosu yoksa istisna kapalı kalsın
+        return []
+
+
+def _abonelik_no_eslesti(aciklama: str, nolar: list) -> bool:
+    a = str(aciklama or "")
+    return any(n and n in a for n in nolar)
+
+
 def _borc_kapatma_mi(aciklama: str) -> bool:
     return any(k in _sadele(aciklama) for k in _BORC_KAPATMA_KALIP)
 
@@ -2873,6 +2887,12 @@ def kart_vergi_etkisi(gun: int = 365, kurumlar_orani: float = 0.25):
     except Exception:  # noqa: BLE001
         _ogrenilen_istisna = []
     belgesiz_liste, belirsiz_liste, ozel_liste = [], [], []
+    # Abonelik istisnası için abone numaraları (sahip kararı 2026-08-10).
+    # Boş liste = istisna hiç çalışmaz; tanım yoksa eski davranış aynen sürer.
+    with db() as (_c4, cur4):
+        _abonelik_nolar = _abonelik_nolar_getir(cur4)
+    abonelik_istisna_adet = 0
+    abonelik_istisna_kdv = 0.0
     for h in hareketler:
         tut = round(float(h["tutar"] or 0), 2)
         tip = h["tip"]
@@ -2945,6 +2965,20 @@ def kart_vergi_etkisi(gun: int = 365, kurumlar_orani: float = 0.25):
             dayanak = "sabit gider faturası — belge kaydı üzerinden ödendi"
         elif not kt and _sadele(h.get("aciklama") or "").startswith("FATURA:"):
             dayanak = "fatura kaydından doğan ödeme"
+        # ⭐ ABONELİK İSTİSNASI (sahip kararı 2026-08-10: "faturalar için istisna
+        # yapalım, onda belge takibi olmasa da direk KDV düşümünü sağla").
+        # Elektrik/su/doğalgaz/internet otomatik talimatla ödenir; faturası
+        # ABONELİK SÖZLEŞMESİ gereği kesin düzenlenir ve e-arşivde/mükellef
+        # nezdinde durur — bu sisteme yüklenmemiş olması belgenin YOK olduğu
+        # anlamına gelmez. Ekstre satırındaki abone/tesisat numarası aboneliğe
+        # birebir eşleşiyorsa belge VAR sayılır ve KDV indirimi uygulanır.
+        # ⚠️ Bu bir VARSAYIMDIR ve damgalanır: 'belge sistemde yok'. Fiilî belge
+        # yükümlülüğü ortadan kalkmaz, yalnız sahte "vergi kaybı" alarmı susar.
+        elif _abonelik_no_eslesti(h.get("aciklama") or "", _abonelik_nolar):
+            dayanak = ("abonelik faturası (otomatik talimat) — belge sistemde yok, "
+                       "sahip istisnası uygulandı")
+            abonelik_istisna_adet += 1
+            abonelik_istisna_kdv = round(abonelik_istisna_kdv + kdv, 2)
         belgeli = dayanak is not None
         if tip == "sahsi":
             k = "sahsi"
@@ -2985,6 +3019,17 @@ def kart_vergi_etkisi(gun: int = 365, kurumlar_orani: float = 0.25):
     kayip = _tasarruf("belgesiz")
     return {
         "pencere_gun": gun, "kurumlar_orani": kurumlar_orani,
+        # ⭐ ABONELİK İSTİSNASI ÖZETİ — şeffaflık: bu KDV'ler belge GÖRÜLMEDEN
+        # indirilebilir sayıldı. Rakam görünür dursun ki sahip neyi varsaydığını bilsin.
+        "abonelik_istisnasi": {
+            "adet": abonelik_istisna_adet,
+            "kdv": abonelik_istisna_kdv,
+            "tanimli_abonelik": len(_abonelik_nolar),
+            "ne_demek": ("Otomatik talimatlı abonelik faturası (elektrik/su/doğalgaz/"
+                         "internet). Belge bu sisteme yüklenmemiş ama abonelik sözleşmesi "
+                         "gereği düzenlenmiştir; KDV indirimi uygulandı. Fiilî belge "
+                         "yükümlülüğü ortadan kalkmaz — muhasebe nezdinde bulunmalıdır."),
+        },
         "kovalar": {
             "belgeli": {**kova["belgeli"], "vergi_tasarrufu": _tasarruf("belgeli"),
                         "ne_demek": "KDV indirilebilir + matrahtan düşülebilir"},
