@@ -582,7 +582,12 @@ def bordro_anomali_kurallari(p: dict, kayit: dict, onceki_net: Optional[float],
     _bu_oran = personel_donem_orani(p, yil, ay)
     _ony, _ona = (yil - 1, 12) if ay == 1 else (yil, ay - 1)
     _onceki_oran = personel_donem_orani(p, _ony, _ona)
-    _kiyas_saglam = (_bu_oran == 1.0) and (_onceki_oran == 1.0)
+    #    Ayrıca dönem HENÜZ BİTMEDİYSE kıyas anlamsızdır: 10 Ağustos'ta Ağustos
+    #    hakedişi doğal olarak Temmuz'un üçte biridir. Canlıda 3 kişi bu yüzden
+    #    "%72 azaldı" diye incelemeye düşüyordu — ay kapanmadan sapma ölçülmez.
+    _son_gun = calendar.monthrange(yil, ay)[1]
+    _donem_kapandi = date(yil, ay, _son_gun) < date.today()
+    _kiyas_saglam = (_bu_oran == 1.0) and (_onceki_oran == 1.0) and _donem_kapandi
     if onceki_net and onceki_net > 0 and net > 0 and _kiyas_saglam:
         oran = abs(net - onceki_net) / onceki_net
         if oran > SAPMA_BANDI:
