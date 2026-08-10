@@ -4619,16 +4619,43 @@ def kart_fatura_eslesme(ay_sayisi: int = 2, esik: float = 1000.0):
                  AND COALESCE(toplam_tutar,0) > 0""", (n - 1,))
         faturalar = [dict(r) for r in cur.fetchall() or []]
     from datetime import date as _d
+    import re as _re2
+
+    # ⚠️ AD ÖRTÜŞMESİ ZORUNLU (2026-08-10 denetimi). Bu uç yalnız tutar+tarihe
+    # bakıyordu ve canlıda ürettiği 3 "eşleşme"nin ÜÇÜ DE yanlıştı:
+    #   GAZZE ELEKTRİK 20.977 ↔ APS GIDA (Red Bull tedarikçisi)
+    #   ENERYA doğalgaz 1.410 ↔ Gelişim UYDU Sistemleri
+    #   KÖYCEĞİZ İNTERNET 1.090 ↔ AGİT SEFA YÜCEAY (şahıs)
+    # Ekran bunları "faturası sistemde VAR" diye gösteriyordu — sahip belge
+    # istemeyi bırakır, KDV indirimi sessizce kaybolurdu. Tutar tek başına kanıt
+    # değildir; hele değişken faturada hiç değildir.
+    _ATIL = {"FATURA", "ODEME", "ODEMESI", "OTOMATIK", "TALIMAT", "SAN", "TIC",
+             "LTD", "STI", "ANONIM", "SIRKETI", "LIMITED", "TICARET", "SANAYI",
+             "KONYA", "ISTANBUL", "IZMIR", "ANKARA", "KARAMAN", "TR", "VE", "ILE",
+             "GIDA", "ENERJI", "HIZMET", "HIZMETLERI", "URUN", "DIGER", "GENEL"}
+
+    def _kelime_seti(x):
+        t = str(x or "")
+        for a, b in zip("çğıöşüÇĞİıÖŞÜâîû", "cgiosuCGIIOSUaiu"):
+            t = t.replace(a, b)
+        t = _re2.sub(r"[^A-Z0-9 ]", " ", t.upper())
+        return {w for w in t.split() if len(w) >= 4 and w not in _ATIL and not w.isdigit()}
+
     kullanildi: set = set()
     eslesen, faturasiz_buyuk = [], []
     kdv_ayrisabilir = 0.0
     for h in harcamalar:
         tut = float(h["tutar"])
         aday = None
+        h_kel = _kelime_seti(h["aciklama"])
         for f in faturalar:
             if f["id"] in kullanildi:
                 continue
             if abs(f["tutar"] - tut) > max(5.0, tut * 0.02):
+                continue
+            # Ad örtüşmesi olmadan eşleştirme YOK — yanlış "faturası var" hükmü
+            # gerçek bir belge takibini öldürür.
+            if not (h_kel & _kelime_seti(f.get("tedarikci_ad"))):
                 continue
             try:
                 gunfark = abs((_d.fromisoformat(h["tarih"][:10])
