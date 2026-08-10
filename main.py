@@ -6170,6 +6170,7 @@ from maas_service import (
     vardiya_takip_hesap as _vardiya_takip_hesap,
     kanonik_net as _kanonik_net,
     aylik_vardiya_senkronize as _personel_aylik_vardiya_senkronize,
+    bordro_anomali_tara as _bordro_anomali_tara,
 )
 
 
@@ -6365,6 +6366,106 @@ def personel_aylik_vardiya_sync(yil: int = None, ay: int = None):
         "adet": len(sonuc),
         "toplam_net": sum(float(r.get("hesaplanan_net") or 0) for r in sonuc),
         "personeller": sonuc,
+    }
+
+
+@app.get("/api/personel-aylik/onay-kuyrugu")
+def personel_aylik_onay_kuyrugu(yil: int = None, ay: int = None):
+    """BORDRO ONAY KUYRUĞU — "istisnaya göre onay" (approval by exception).
+
+    Dönemin taslak kayıtlarını tarayıp ikiye ayırır:
+      • TEMİZ   → hiçbir anomali yok, toplu onaya uygun
+      • İNCELE  → gözle teyit isteyen kayıt (sıfır net, sapma, elle düzeltme, kısmi dönem...)
+
+    Salt-okur. Hiçbir kaydı onaylamaz — sahip kararını hazırlar, yerine geçmez.
+    Kural motoru: maas_service.bordro_anomali_tara (tek çekirdek).
+    """
+    bugun = bugun_tr()
+    yil = yil or bugun.year
+    ay  = ay  or bugun.month
+    with db() as (conn, cur):
+        sonuc = _bordro_anomali_tara(cur, yil, ay)
+    # Gecikme ölçüsü: ödeme günü geçtiyse bekleyen bordro artık sessiz değil.
+    _od = date.fromisoformat(sonuc["odeme_tarihi"])
+    _gecikme = (bugun - _od).days
+    sonuc["gecikme_gun"] = _gecikme if _gecikme > 0 else 0
+    sonuc["odeme_gunu_gecti"] = _gecikme > 0 and sonuc["ozet"]["bekleyen_adet"] > 0
+    return sonuc
+
+
+class TopluOnayModel(BaseModel):
+    yil: int = None
+    ay: int = None
+    kapsam: str = "temiz"          # temiz | secili
+    personel_idler: list = None    # kapsam='secili' ise zorunlu
+    kuru: bool = True             # varsayılan PROVA — yazmadan önce ne olacağını gösterir
+
+
+@app.post("/api/personel-aylik/toplu-onayla")
+def personel_aylik_toplu_onayla(body: TopluOnayModel):
+    """Dönemin bordro kayıtlarını TOPLU onaylar. Ödeme YAPMAZ, kasa hareketi üretmez.
+
+    kapsam='temiz'  → yalnız anomalisiz kayıtlar (varsayılan; şüpheli olan elde kalır)
+    kapsam='secili' → personel_idler listesindekiler (anomalili olsa da sahip bilerek onaylar)
+
+    kuru=True (varsayılan) hiçbir şey yazmaz; ne olacağını döner. Yazmak için kuru=False.
+    Onay = hesabın KİLİDİ. Ödeme ayrı adımdır ve kendi guard'ından geçer.
+    """
+    bugun = bugun_tr()
+    yil = body.yil or bugun.year
+    ay  = body.ay  or bugun.month
+    kapsam = (body.kapsam or "temiz").lower()
+    if kapsam not in ("temiz", "secili"):
+        raise HTTPException(400, "kapsam 'temiz' veya 'secili' olmalı")
+    with db() as (conn, cur):
+        tarama = _bordro_anomali_tara(cur, yil, ay)
+        if kapsam == "temiz":
+            hedefler = tarama["temiz"]
+            neden = "anomali taramasından temiz geçti"
+        else:
+            istenen = set(str(x) for x in (body.personel_idler or []))
+            if not istenen:
+                raise HTTPException(400, "kapsam='secili' için personel_idler gerekli")
+            hedefler = [k for k in (tarama["temiz"] + tarama["incele"])
+                        if str(k["personel_id"]) in istenen]
+            neden = "sahip elle seçti"
+        # Kimlik üzerinden karşılaştır (dict eşitliği kırılgan olur)
+        _hedef_id = {str(k["personel_id"]) for k in hedefler}
+        _kalan = [k for k in tarama["incele"] if str(k["personel_id"]) not in _hedef_id]
+        if body.kuru:
+            return {
+                "kuru": True, "yil": yil, "ay": ay, "donem": tarama["donem"],
+                "onaylanacak_adet": len(hedefler),
+                "onaylanacak_tutar": round(sum(k["hesaplanan_net"] for k in hedefler), 2),
+                "neden": neden,
+                "kayitlar": [{"personel_id": k["personel_id"], "ad_soyad": k["ad_soyad"],
+                              "net": k["hesaplanan_net"],
+                              "anomali_adet": len(k["anomaliler"])} for k in hedefler],
+                "dokunulmayan": {
+                    "incele_adet": len(_kalan),
+                    "incele_tutar": round(sum(k["hesaplanan_net"] for k in _kalan), 2),
+                },
+                "mesaj": "PROVA — hiçbir kayıt değişmedi. Uygulamak için kuru=false gönderin.",
+            }
+        onaylanan, atlanan = [], []
+        for k in hedefler:
+            cur.execute(
+                """UPDATE personel_aylik SET durum='onaylandi'
+                    WHERE personel_id=%s AND yil=%s AND ay=%s AND durum='taslak'""",
+                (k["personel_id"], yil, ay),
+            )
+            (onaylanan if cur.rowcount else atlanan).append(k)
+        audit(cur, 'personel_aylik', f"{yil}-{ay:02d}", 'TOPLU_ONAY',
+              yeni={'kapsam': kapsam, 'adet': len(onaylanan),
+                    'tutar': round(sum(k["hesaplanan_net"] for k in onaylanan), 2)})
+    return {
+        "success": True, "kuru": False, "yil": yil, "ay": ay, "donem": tarama["donem"],
+        "onaylanan_adet": len(onaylanan),
+        "onaylanan_tutar": round(sum(k["hesaplanan_net"] for k in onaylanan), 2),
+        "atlanan_adet": len(atlanan),
+        "kasa_etkisi": False,
+        "mesaj": (f"{len(onaylanan)} bordro kaydı onaylandı ({neden}). "
+                  "Ödeme, Ödeme Merkezi'nden ayrıca yapılır — bu adım para hareketi üretmedi."),
     }
 
 

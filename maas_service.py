@@ -519,3 +519,148 @@ def aylik_vardiya_senkronize(cur, p: dict, yil: int, ay: int) -> dict:
     plan = odeme_plani_esitle(cur, p, yil, ay, net)
     return {"atlandi": False, "hesaplanan_net": net, "vardiya": vk,
             "plan_id": (plan or {}).get("id")}
+
+
+# ── ANOMALİ TARAMASI — "istisnaya göre onay" (approval by exception) ──────────
+#
+# NEDEN: bordro akışı taslak → onaylandi → ödeme. Onay İNSAN kararıdır ve
+# ödeme guard'ı onaysız kaydı geçirmez. Ama onay TEK TEK yapılıyordu; canlıda
+# Temmuz 2026'da 11 kayıttan 10'u taslakta kaldı ve 228.622,82 ₺ maaş 9 gün
+# ödenemedi. Kimse hata yapmadı — süreç insanı 11 ayrı tıklamaya zorluyordu.
+#
+# DÜNYA PRATİĞİ (Codex ikinci görüşü, 2026-08-10): büyük bordro sistemleri her
+# kaydı insana sormaz; kaydı ÖNCE tarar, yalnızca ANOMALİLİ olanı önüne koyar
+# ("approval by exception"), gerisini toplu onaya açar. Sahip kararı elinden
+# alınmaz — sahip TEMİZ yığını tek tuşla onaylar, şüpheliyi tek tek görür.
+#
+# BURADA: hesabı DEĞİŞTİRMİYORUZ. kanonik_net tek gerçek olarak kalır. Bu katman
+# yalnızca "bu rakam gözle kontrol ister mi?" sorusunu yanıtlar → ÖNERİ-ONLY.
+
+# Geçen döneme göre kabul edilen sapma bandı. Üstü "neden değişti?" sorusudur.
+SAPMA_BANDI = 0.25
+
+
+def bordro_anomali_kurallari(p: dict, kayit: dict, onceki_net: Optional[float],
+                             yil: int, ay: int) -> list:
+    """Tek kaydın anomali listesi. Boş liste = TEMİZ (toplu onaya uygun).
+
+    Seviye 'kritik' → rakamın kendisi şüpheli (ödeme yanlış çıkabilir).
+    Seviye 'incele' → rakam makul ama gözle teyit ister (elle müdahale, sapma).
+    """
+    bulgular = []
+    net = float(kayit.get("hesaplanan_net") or 0)
+    saat = float(kayit.get("calisma_saati") or 0)
+    part = (p.get("calisma_turu") or "surekli") != "surekli"
+
+    # 1) Sıfır/negatif net — bordroda bu bir HESAP SONUCU değil, veri alarmıdır.
+    if net <= 0:
+        bulgular.append({"kod": "net_sifir", "seviye": "kritik",
+                         "mesaj": "Net hakediş 0 ₺ — hesabın dayanağı eksik"})
+
+    # 2) Part-time'da saat yoksa hakedişin temeli yok (sürekli personelin tabanı
+    #    maaş bazlıdır, atama olmasa da doğru hesaplanır — onu kritik saymayız).
+    if part and saat <= 0:
+        bulgular.append({"kod": "saat_yok", "seviye": "kritik",
+                         "mesaj": "Part-time personelde çalışma saati 0 — vardiya/sabit mesai tanımı yok"})
+
+    # 3) Sürekli personelde maaş tanımsızsa hesap havada kalır.
+    if not part and float(p.get("maas") or 0) <= 0:
+        bulgular.append({"kod": "maas_tanimsiz", "seviye": "kritik",
+                         "mesaj": "Sürekli personelin aylık maaşı tanımsız"})
+
+    # 4) Varsayılan saatlik ücret damgası (99 ₺) — sessiz sayı üretilmesin.
+    if part and float(p.get("saatlik_ucret") or 0) <= 0:
+        bulgular.append({"kod": "ucret_varsayildi", "seviye": "incele",
+                         "mesaj": f"Saatlik ücret tanımsız — {VARSAYILAN_SAATLIK_UCRET:.0f} ₺ varsayıldı"})
+
+    # 5) Geçen döneme göre sapma — "neden bu ay farklı?" sorusu.
+    if onceki_net and onceki_net > 0 and net > 0:
+        oran = abs(net - onceki_net) / onceki_net
+        if oran > SAPMA_BANDI:
+            yon = "arttı" if net > onceki_net else "azaldı"
+            bulgular.append({"kod": "sapma", "seviye": "incele",
+                             "mesaj": f"Geçen döneme göre %{oran*100:.0f} {yon} "
+                                      f"({onceki_net:,.0f} ₺ → {net:,.0f} ₺)".replace(",", ".")})
+
+    # 6) Elle müdahale — insan dokunduysa insan teyit etsin.
+    if abs(float(kayit.get("manuel_duzeltme") or 0)) > 0:
+        bulgular.append({"kod": "elle_duzeltme", "seviye": "incele",
+                         "mesaj": f"Manuel düzeltme uygulanmış: {float(kayit['manuel_duzeltme']):,.2f} ₺".replace(",", ".")})
+    if float(kayit.get("eksik_gun") or 0) > 0:
+        bulgular.append({"kod": "eksik_gun", "seviye": "incele",
+                         "mesaj": f"{float(kayit['eksik_gun']):g} gün eksik gün kesintisi var"})
+
+    # 7) Dönem-dışı / kısmi dönem (işe giriş veya çıkış bu aya denk geldi).
+    oran = personel_donem_orani(p, yil, ay)
+    if oran is not None and oran < 1.0:
+        bulgular.append({"kod": "kismi_donem", "seviye": "incele",
+                         "mesaj": f"Kısmi dönem — ayın %{oran*100:.0f}'i çalışıldı (giriş/çıkış)"})
+
+    return bulgular
+
+
+def bordro_anomali_tara(cur, yil: int, ay: int) -> dict:
+    """(yil, ay) döneminin bordro kayıtlarını tarar, TEMİZ / İNCELE ayrımını üretir.
+
+    Salt-okur: hiçbir kaydı değiştirmez, onaylamaz. Yalnızca sınıflandırır.
+    """
+    oy, oa = (yil - 1, 12) if ay == 1 else (yil, ay - 1)
+    cur.execute(
+        """
+        SELECT pa.*, p.ad_soyad, p.calisma_turu, p.maas, p.saatlik_ucret,
+               p.baslangic_tarihi, p.cikis_tarihi, p.sube_id,
+               (SELECT o.hesaplanan_net FROM personel_aylik o
+                 WHERE o.personel_id = pa.personel_id AND o.yil=%s AND o.ay=%s) AS onceki_net
+          FROM personel_aylik pa
+          JOIN personel p ON p.id = pa.personel_id
+         WHERE pa.yil=%s AND pa.ay=%s
+         ORDER BY p.ad_soyad
+        """,
+        (oy, oa, yil, ay),
+    )
+    satirlar = cur.fetchall() or []
+
+    temiz, incele, onayli = [], [], []
+    for r in satirlar:
+        k = dict(r)
+        net = float(k.get("hesaplanan_net") or 0)
+        kayit = {
+            "personel_id": k["personel_id"],
+            "ad_soyad": k.get("ad_soyad"),
+            "sube_id": k.get("sube_id"),
+            "calisma_turu": k.get("calisma_turu"),
+            "hesaplanan_net": net,
+            "calisma_saati": float(k.get("calisma_saati") or 0),
+            "manuel_duzeltme": float(k.get("manuel_duzeltme") or 0),
+            "eksik_gun": float(k.get("eksik_gun") or 0),
+            "avans_mahsup": float(k.get("avans_mahsup") or 0),
+            "durum": k.get("durum") or "taslak",
+        }
+        if kayit["durum"] == "onaylandi":
+            kayit["anomaliler"] = []
+            kayit["sinif"] = "onayli"
+            onayli.append(kayit)
+            continue
+        bulgular = bordro_anomali_kurallari(
+            k, kayit, float(k["onceki_net"]) if k.get("onceki_net") is not None else None, yil, ay
+        )
+        kayit["anomaliler"] = bulgular
+        kayit["sinif"] = "temiz" if not bulgular else "incele"
+        (temiz if not bulgular else incele).append(kayit)
+
+    def _top(lst):
+        return round(sum(x["hesaplanan_net"] for x in lst), 2)
+
+    return {
+        "yil": yil, "ay": ay, "donem": f"{TR_AYLAR[ay]} {yil}",
+        "odeme_tarihi": maas_odeme_tarihi(yil, ay).isoformat(),
+        "temiz": temiz, "incele": incele, "onayli": onayli,
+        "ozet": {
+            "toplam_kayit": len(satirlar),
+            "temiz_adet": len(temiz), "temiz_tutar": _top(temiz),
+            "incele_adet": len(incele), "incele_tutar": _top(incele),
+            "onayli_adet": len(onayli), "onayli_tutar": _top(onayli),
+            "bekleyen_adet": len(temiz) + len(incele),
+            "bekleyen_tutar": round(_top(temiz) + _top(incele), 2),
+        },
+    }
