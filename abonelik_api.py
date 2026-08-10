@@ -304,7 +304,15 @@ def abonelik_odeme_eslestir(gun: int = 120):
                      "SANAYI", "KONYA", "ISTANBUL", "IZMIR", "ANKARA", "KARAMAN",
                      "MERKEZ", "SUBE", "CARI", "BORC", "KREDI", "GIDER", "SABIT",
                      "VADELI", "ALIM", "ALIMI", "KISMI", "GIDA", "ENERJI", "HIZMET",
-                     "HIZMETLERI", "URUN", "GENEL", "DIGER", "TUTAR", "TAAHHUT"}
+                     "HIZMETLERI", "URUN", "GENEL", "DIGER", "TUTAR", "TAAHHUT",
+                     # Ay adları kanıt değildir — "fez HAZİRAN ayı ürün alımı"
+                     # ile Haziran tarihli her harcamayı eşler.
+                     "OCAK", "SUBAT", "MART", "NISAN", "MAYIS", "HAZIRAN",
+                     "TEMMUZ", "AGUSTOS", "EYLUL", "EKIM", "KASIM", "ARALIK",
+                     # Sektör kelimeleri: "YENİYOL MARKET" ile "D-MARKET"i eşler.
+                     "MARKET", "MARKETI", "MAGAZA", "MAGAZACILIK", "GROSMARKET",
+                     "TICARETI", "DAGITIM", "LOJISTIK", "NAKLIYAT", "INSAAT",
+                     "OTOMOTIV", "TEKSTIL", "ELEKTRIK", "SU", "DOGALGAZ"}
 
             def _kel(x):
                 t = _sade(x)
@@ -327,6 +335,13 @@ def abonelik_odeme_eslestir(gun: int = 120):
                 except Exception:  # noqa: BLE001
                     continue
                 if g > 45:
+                    continue
+                # TUTAR MAKULİYETİ: tutar kanıt değildir ama SAĞDUYU sınırıdır.
+                # 30 ₺'lik bir çekim 15.068 ₺'lik borcun ödemesi olamaz. Kısmi
+                # ödeme meşrudur, o yüzden eşitlik aranmaz; ama borcun dörtte
+                # birinden azı ya da iki katından fazlası eşleştirilmez.
+                _kalan_p = round(p["tutar"] - p["odenen"], 2)
+                if _kalan_p > 0 and not (_kalan_p * 0.25 <= h["tutar"] <= _kalan_p * 2):
                     continue
                 ad_adaylari.append((p, sorted(ortak), g))
             if not ad_adaylari:
