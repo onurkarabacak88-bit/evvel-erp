@@ -9,7 +9,7 @@ from fastapi import Request
 from pydantic import BaseModel, Field
 from typing import Optional, List, Any, Dict
 from datetime import date, datetime, timedelta
-import uuid, os, json, pathlib, calendar, threading, hashlib
+import uuid, os, json, pathlib, calendar, threading, hashlib, hmac
 from collections import defaultdict
 from database import db, init_db, ensure_stok_yolda_columns, ensure_dusum_modu, ensure_operasyon_event_durum_latent, ensure_rapor_kapanis, ensure_kart_kategori_columns, ensure_kart_ekstre_donem, ensure_kart_satici_kural, ensure_kart_devir_islem_turu
 from operasyon_stok_motor import eksik_kullanim_kontrol, tum_subeler_skor_guncelle
@@ -297,11 +297,55 @@ class _AdminGirisBody(BaseModel):
     sifre: str
 
 
+# ── OTURUM JETONU ────────────────────────────────────────────────────────────
+# Sorun (sahip, 2026-08-10): "her sayfa yenilemede şifre soruyor". Kapı yalnız
+# istemcide bir bayraktı (localStorage bilinçli kullanılmıyordu) → F5 = yeniden giriş.
+#
+# Çözüm: sunucunun İMZALADIĞI süreli jeton. İstemci saklar, açılışta doğrulatır.
+#   jeton = "<bitiş_zamanı>.<HMAC(ADMIN_SIFRE, bitiş_zamanı)>"
+# Gizli anahtar ADMIN_SIFRE'nin kendisi olduğu için ŞİFRE DEĞİŞİNCE tüm eski
+# oturumlar kendiliğinden geçersizleşir — ayrıca bir iptal listesi tutmak gerekmez.
+# Sunucu yeniden başlarsa jeton yaşar (anahtar ENV'den gelir, bellekte üretilmez).
+#
+# ⚠️ DÜRÜST SINIR: bu kapı KAZARA açılmaya karşı bir perdedir, API'lerin kendisi
+# hâlâ açıktır (bkz. güvenlik backlog'u). Jeton o durumu ne iyileştirir ne kötüleştirir.
+ADMIN_OTURUM_GUN = 30
+
+
+def _admin_jeton_uret(gun: int = ADMIN_OTURUM_GUN) -> str:
+    bitis = int(time.time()) + gun * 86400
+    imza = hmac.new(ADMIN_SIFRE.encode("utf-8"), str(bitis).encode("ascii"),
+                    hashlib.sha256).hexdigest()[:32]
+    return f"{bitis}.{imza}"
+
+
+def _admin_jeton_gecerli(jeton: str):
+    """(gecerli_mi, kalan_saniye) — biçim/imza/süre üçünü de doğrular."""
+    try:
+        bitis_s, imza = (jeton or "").split(".", 1)
+        bitis = int(bitis_s)
+    except Exception:
+        return False, 0
+    beklenen = hmac.new(ADMIN_SIFRE.encode("utf-8"), str(bitis).encode("ascii"),
+                        hashlib.sha256).hexdigest()[:32]
+    if not hmac.compare_digest(imza, beklenen):
+        return False, 0
+    kalan = bitis - int(time.time())
+    return (kalan > 0), max(0, kalan)
+
+
 @app.post("/api/admin-giris")
 def admin_giris(body: _AdminGirisBody):
     if (body.sifre or "").strip() != ADMIN_SIFRE:
         raise HTTPException(401, "Şifre yanlış")
-    return {"ok": True}
+    return {"ok": True, "jeton": _admin_jeton_uret(), "gecerlilik_gun": ADMIN_OTURUM_GUN}
+
+
+@app.get("/api/admin-oturum")
+def admin_oturum(jeton: str = ""):
+    """Saklanan jeton hâlâ geçerli mi? Şifre değiştiyse burada düşer."""
+    gecerli, kalan = _admin_jeton_gecerli(jeton)
+    return {"gecerli": gecerli, "kalan_gun": round(kalan / 86400, 1) if gecerli else 0}
 
 @app.middleware("http")
 async def log_requests(request: Request, call_next):

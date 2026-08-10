@@ -208,6 +208,10 @@ function syncHashForPage(pageId) {
 }
 
 // ── Admin Şifre Kapısı ───────────────────────────────────────────────────────
+// Oturum, sunucunun imzaladığı süreli jetonla taşınır (main.py /api/admin-giris).
+// Şifre değişirse imza tutmaz ve saklanan jeton kendiliğinden düşer.
+const OTURUM_ANAHTAR = 'evvel_oturum';
+
 function AdminGirisKapisi({ onBasarili }) {
   const [sifre, setSifre] = useState('');
   const [hata, setHata] = useState('');
@@ -220,6 +224,8 @@ function AdminGirisKapisi({ onBasarili }) {
     try {
       const res = await api('/admin-giris', { method: 'POST', body: { sifre } });
       if (res?.ok) {
+        // Sunucunun imzaladığı süreli jeton — F5'te yeniden şifre sorulmasın.
+        if (res.jeton) { try { localStorage.setItem(OTURUM_ANAHTAR, res.jeton); } catch (_) {} }
         onBasarili();
       }
     } catch (e2) {
@@ -321,9 +327,24 @@ export default function App() {
   const [bugunAnomali, setBugunAnomali] = useState(0);
   const [yeniBasvuru, setYeniBasvuru] = useState(0);
   const [stokSayimBekleyen, setStokSayimBekleyen] = useState(0);
-  // Sayfa her açıldığında (yenileme/yeniden giriş) şifre yeniden istensin —
-  // kalıcı oturum tutulmuyor (localStorage kullanılmıyor).
+  // OTURUM (2026-08-10, sahip: "her sayfa yenilemede şifre soruyor").
+  // Eskiden kalıcı oturum YOKTU → her F5 yeniden giriş demekti. Artık sunucunun
+  // imzaladığı jeton saklanır ve açılışta DOĞRULATILIR (körlemesine güvenilmez).
   const [girisYapildi, setGirisYapildi] = useState(false);
+  const [oturumSoruluyor, setOturumSoruluyor] = useState(true);
+
+  useEffect(() => {
+    let jeton = null;
+    try { jeton = localStorage.getItem(OTURUM_ANAHTAR); } catch (_) {}
+    if (!jeton) { setOturumSoruluyor(false); return; }
+    api(`/admin-oturum?jeton=${encodeURIComponent(jeton)}`)
+      .then((d) => {
+        if (d?.gecerli) setGirisYapildi(true);
+        else { try { localStorage.removeItem(OTURUM_ANAHTAR); } catch (_) {} }
+      })
+      .catch(() => { /* ağ hatasında kapıyı aç bırakma — şifre sorulur */ })
+      .finally(() => setOturumSoruluyor(false));
+  }, []);
 
   useEffect(() => {
     if (!girisYapildi) return;
@@ -378,6 +399,18 @@ export default function App() {
     window.addEventListener('hashchange', onHash);
     return () => window.removeEventListener('hashchange', onHash);
   }, []);
+
+  if (oturumSoruluyor) {
+    // Saklanan jeton doğrulanırken şifre ekranını GÖSTERME — aksi halde her
+    // açılışta bir an "şifre girin" parlar ve oturum kopmuş gibi görünür.
+    return (
+      <div style={{
+        minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
+        background: 'var(--bg)', color: 'var(--text3)', fontSize: 13,
+        fontFamily: "'Instrument Sans', sans-serif",
+      }}>EVVEL<span style={{ color: 'var(--accent)' }}>.</span></div>
+    );
+  }
 
   if (!girisYapildi) {
     return <AdminGirisKapisi onBasarili={() => setGirisYapildi(true)} />;
@@ -472,7 +505,12 @@ export default function App() {
         <div className="sidebar-footer" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
           <span>EVVEL v2.4 · 27.03.2026</span>
           <button
-            onClick={() => setGirisYapildi(false)}
+            onClick={() => {
+              // Saklanan jeton da silinmeli — yoksa "Çıkış"tan sonra sayfa
+              // yenilenince oturum geri gelir ve düğme yalan söylemiş olur.
+              try { localStorage.removeItem(OTURUM_ANAHTAR); } catch (_) {}
+              setGirisYapildi(false);
+            }}
             title="Çıkış"
             style={{
               background: 'none', border: '1px solid var(--border)', borderRadius: 6,
