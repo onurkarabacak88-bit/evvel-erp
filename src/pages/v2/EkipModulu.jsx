@@ -197,6 +197,9 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
   // verilen izin) ve o gün vardiya dışı görünen girişler.
   const [izin, setIzin] = useState(null);
   const [isgucu, setIsgucu] = useState(null);   // /ops/metrics/isgucu — ₺/adam-saat
+  const [onayKuyrugu, setOnayKuyrugu] = useState(null);  // bordro temiz/incele ayrımı
+  const [topluOnayMesgul, setTopluOnayMesgul] = useState(false);
+  const [topluOnaySoru, setTopluOnaySoru] = useState(false);
   const [vardiyaDisi, setVardiyaDisi] = useState(null);
   // ── PERSONEL DENETİMİ (ops-merkez P2 sekmeleri, 2026-07-30) ───────────────
   // davranış analizi · puan defteri · geç kalma · kasa açık analizi + kasiyer karne
@@ -296,7 +299,12 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
       // birleştiren ölçü yoktu. Adam-saat kaynağı maaş zinciriyle aynı sırayı
       // izler (vardiya ataması → sabit tanım → varsayım).
       api('/ops/metrics/isgucu?gun=30').catch(() => null),
-    ]).then(([p, h, b, av, go, vt, bs, bo, pin, iz, vd, sl, ig]) => {
+      // BORDRO ONAY KUYRUĞU — dönemin taslak kayıtları anomaliye göre ikiye ayrılır.
+      // Onay tek tek yapılıyordu; canlıda Temmuz'da 10 kayıt taslakta kalıp
+      // 194.470 ₺ maaşı 9 gün bekletti. Artık temiz yığın tek tuşla onaylanır.
+      api(`/personel-aylik/onay-kuyrugu?yil=${donem.yil}&ay=${donem.ay}`).catch(() => null),
+    ]).then(([p, h, b, av, go, vt, bs, bo, pin, iz, vd, sl, ig, ok]) => {
+      setOnayKuyrugu(ok);
       setIsgucu(ig);
       if (Array.isArray(sl) && sl.length) setSubeListe(sl);
       setIzin(iz);
@@ -2945,6 +2953,28 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
     );
   }
 
+  /** TOPLU ONAY — yalnız anomalisiz ("temiz") bordroları kilitler.
+   *  Ödeme YAPMAZ, kasa hareketi üretmez: guard'lar ödeme adımında çalışmaya devam eder.
+   *  Sunucu kuru=true'yu varsayar; burada bilerek kuru=false gönderilir (sahip onayladı). */
+  const topluOnayla = async () => {
+    const o = onayKuyrugu?.ozet;
+    if (!o?.temiz_adet) return;
+    setTopluOnaySoru(false);
+    setTopluOnayMesgul(true);
+    try {
+      const r = await api('/personel-aylik/toplu-onayla', {
+        method: 'POST',
+        body: { yil: donem.yil, ay: donem.ay, kapsam: 'temiz', kuru: false },
+      });
+      onToast?.(`✓ ${r.onaylanan_adet} bordro onaylandı · ${fmt(sayi(r.onaylanan_tutar))} — ödeme Ödeme Merkezi'nden yapılır`);
+      yukle();
+    } catch (e) {
+      onToast?.(e?.message || 'Toplu onay yapılamadı');
+    } finally {
+      setTopluOnayMesgul(false);
+    }
+  };
+
   // ── 3) Maaş & Avans ────────────────────────────────────────────────────────
   if (gorunum === 'maas') {
     // Sunucu kendi toplamını gönderiyor (`toplam_tahmini`) — istemcide yeniden
@@ -3020,6 +3050,105 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
           },
           { etiket: 'Fazla mesai', deger: `${trSayi(toplamFm, 0)} sa`, alt: 'bu ay toplam', renk: toplamFm > 0 ? R.kirmizi : R.krem },
         ]} />
+        {/* BORDRO ONAY KUYRUĞU — "istisnaya göre onay".
+            Onay tek tek yapılıyordu: canlıda Temmuz'da 10 kayıt taslakta kaldı ve
+            194.470 ₺ maaş 9 gün ödenemedi (ödeme guard'ı onaysız kaydı geçirmez).
+            Sunucu kayıtları tarar; ANOMALİSİZ olanlar tek tuşla, şüpheliler tek tek
+            onaylanır. Karar sahibindedir — sistem yalnız yığını ayırır. */}
+        {(() => {
+          const o = onayKuyrugu?.ozet;
+          if (!o || !o.bekleyen_adet) return null;
+          const gecikti = !!onayKuyrugu.odeme_gunu_gecti;
+          const vurgu = gecikti ? R.kirmizi : R.amber;
+          return (
+            <div style={{
+              ...kartYuzey, padding: '13px 16px', marginBottom: 12,
+              borderLeft: `3px solid ${vurgu}`, fontSize: 12.5, lineHeight: 1.65,
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 8 }}>
+                <b style={{ color: vurgu, fontSize: 13 }}>
+                  {gecikti ? '⛔' : '⏳'} {o.bekleyen_adet} bordro onay bekliyor · {fmt(o.bekleyen_tutar)}
+                </b>
+                <span style={{ color: R.metin2 }}>
+                  {gecikti
+                    ? `ödeme günü ${onayKuyrugu.gecikme_gun} gün geçti — onaysız bordro ödenemez`
+                    : `ödeme günü ${onayKuyrugu.odeme_tarihi?.split('-').reverse().join('.')}`}
+                </span>
+              </div>
+              <div style={{ color: R.metin2, marginBottom: o.incele_adet ? 8 : 10 }}>
+                <b style={{ color: R.yesil }}>{o.temiz_adet} kayıt temiz</b> ({fmt(o.temiz_tutar)}) — hesabı
+                sorgulatacak bulgu yok.
+                {o.incele_adet
+                  ? <> <b style={{ color: R.amber }}>{o.incele_adet} kayıt</b> ({fmt(o.incele_tutar)}) gözle
+                      teyit istiyor; onlar aşağıdaki tablodan tek tek onaylanır.</>
+                  : null}
+              </div>
+              {o.incele_adet ? (
+                <ul style={{ margin: '0 0 10px', paddingLeft: 18, color: R.metin2, fontSize: 12 }}>
+                  {onayKuyrugu.incele.map((k) => (
+                    <li key={k.personel_id} style={{ marginBottom: 3 }}>
+                      <b style={{ color: R.krem }}>{k.ad_soyad}</b> · {fmt(k.hesaplanan_net)} —{' '}
+                      {k.anomaliler.filter((a) => a.seviye !== 'bilgi').map((a) => a.mesaj).join(' · ')}
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+              {o.temiz_adet ? (
+                <button
+                  disabled={topluOnayMesgul}
+                  onClick={() => setTopluOnaySoru(true)}
+                  style={{
+                    padding: '9px 16px', borderRadius: 9, border: 'none', fontFamily: 'inherit',
+                    cursor: topluOnayMesgul ? 'default' : 'pointer', fontSize: 12.5, fontWeight: 700,
+                    background: 'linear-gradient(150deg, #E0A559, #AF6C29)', color: '#1C1309',
+                  }}
+                >
+                  {topluOnayMesgul ? 'Onaylanıyor…' : `✓ ${o.temiz_adet} temiz bordroyu onayla`}
+                </button>
+              ) : null}
+              <div style={{ color: R.not2, fontSize: 11.5, marginTop: 8 }}>
+                Onay tutarı <b>kilitler</b>; para hareketi oluşturmaz. Ödeme, Ödeme Merkezi'nden ayrıca yapılır.
+              </div>
+            </div>
+          );
+        })()}
+        {topluOnaySoru && onayKuyrugu?.ozet ? (
+          <div onClick={() => setTopluOnaySoru(false)} style={{
+            position: 'fixed', inset: 0, zIndex: 130, background: 'rgba(10,6,2,.72)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+          }}>
+            <div onClick={(e) => e.stopPropagation()} style={{
+              ...kartYuzey, maxWidth: 460, width: '100%', padding: 22, fontSize: 13, lineHeight: 1.7,
+            }}>
+              <h3 style={{ fontFamily: F.baslik, fontSize: 19, fontWeight: 600, margin: '0 0 10px' }}>
+                {onayKuyrugu.ozet.temiz_adet} bordro onaylansın mı?
+              </h3>
+              <p style={{ color: R.metin2, margin: '0 0 6px' }}>
+                Toplam <b style={{ color: R.krem }}>{fmt(onayKuyrugu.ozet.temiz_tutar)}</b> tutarındaki{' '}
+                {onayKuyrugu.donem} bordrosu <b>kilitlenir</b>. Kilitten sonra düzeltme ancak kilidi açarak yapılır.
+              </p>
+              <p style={{ color: R.metin2, margin: '0 0 6px' }}>
+                Bu adım <b>para hareketi oluşturmaz</b> — ödeme Ödeme Merkezi'nden ayrıca yapılır.
+              </p>
+              {onayKuyrugu.ozet.incele_adet ? (
+                <p style={{ color: R.amber, margin: '0 0 6px' }}>
+                  Gözle teyit isteyen {onayKuyrugu.ozet.incele_adet} kayda <b>dokunulmaz</b>.
+                </p>
+              ) : null}
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 16 }}>
+                <button onClick={() => setTopluOnaySoru(false)} style={{
+                  padding: '10px 18px', borderRadius: 10, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+                  background: 'transparent', color: R.metin2, fontSize: 12.5, fontWeight: 600, fontFamily: 'inherit',
+                }}>Vazgeç</button>
+                <button disabled={topluOnayMesgul} onClick={topluOnayla} style={{
+                  padding: '10px 20px', borderRadius: 10, border: 'none', cursor: 'pointer',
+                  background: 'linear-gradient(150deg, #E0A559, #AF6C29)', color: '#1C1309',
+                  fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit',
+                }}>{topluOnayMesgul ? 'İşleniyor…' : 'Onayla ve kilitle'}</button>
+              </div>
+            </div>
+          </div>
+        ) : null}
         {/* SABİT MESAİ TANIMI EKSİK — hakediş varsayımla hesaplanmış olabilir.
             Sahip doktrini: atama varsa oradan, yoksa sabit tanımdan; ikisi de
             yoksa varsayım devreye girer ve BU GİZLENMEZ. */}
