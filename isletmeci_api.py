@@ -406,7 +406,17 @@ def harcama_baglam(hareket_id: str = "", satici: str = "", gun_pencere: int = 7)
             if not r:
                 raise HTTPException(404, "Kart hareketi bulunamadı")
             h = dict(r)
-            satici = satici or (_satici_anahtar(h["aciklama"]) or "")
+            # ⚠️ BAĞLAMDA TEK KELİME YETMEZ (2026-08-10, sahip sorusu üzerine
+            # yakalandı): _satici_anahtar ilk anlamlı kelimeyi verir ("MUSTAFA"),
+            # oysa bu bir ÖN ADDIR. Canlıda "MUSTAFA KORKMAZ 36.000" için
+            # "5 harcama var, tekrar eden ilişki" ipucu ürettim — meğer üç ayrı
+            # kişiymiş (KORKMAZ / SERKAN TOPATAN / BETEK-DOĞAN). Yanlış ipucu,
+            # yanlış sınıflandırmaya götürür. Bağlamda İKİ anlamlı kelime kullanılır.
+            if not satici:
+                _kel = [w for w in _sade(h["aciklama"]).split()
+                        if len(w) >= 3 and not w.isdigit()]
+                satici = " ".join(_kel[:2]) if len(_kel) >= 2 else (
+                    _satici_anahtar(h["aciklama"]) or "")
         if not satici:
             raise HTTPException(400, "hareket_id veya satici gerekli")
 
@@ -414,7 +424,7 @@ def harcama_baglam(hareket_id: str = "", satici: str = "", gun_pencere: int = 7)
         # 1) Aynı satıcıdan tüm geçmiş — tekrar deseni kimlik verir
         cur.execute(
             """SELECT h.tarih::text AS tarih, ABS(h.tutar)::float AS tutar,
-                      h.aciklama, h.harcama_tipi, k.kart_adi
+                      h.aciklama, h.harcama_tipi, h.taksit_sayisi, k.kart_adi
                  FROM kart_hareketleri h LEFT JOIN kartlar k ON k.id=h.kart_id
                 WHERE h.islem_turu='HARCAMA' AND COALESCE(h.durum,'aktif')='aktif'
                 ORDER BY h.tarih DESC""")
@@ -468,7 +478,10 @@ def harcama_baglam(hareket_id: str = "", satici: str = "", gun_pencere: int = 7)
 
     tutarlar = [x["tutar"] for x in gecmis]
     ipuclari = []
-    if len(gecmis) >= 3:
+    # Tek kelimelik anahtar (ör. yalnız bir ön ad) farklı kişileri birleştirebilir;
+    # bu durumda "tekrar eden ilişki" ipucu üretilmez.
+    _guvenilir_ad = len(str(satici).split()) >= 2
+    if len(gecmis) >= 3 and _guvenilir_ad:
         ipuclari.append(f"Bu satıcıdan {len(gecmis)} harcama var — tekrar eden bir ilişki, "
                         "tek seferlik şahsi alışverişe benzemiyor.")
     if len(set(round(t) for t in tutarlar)) == 1 and len(tutarlar) > 1:
@@ -481,6 +494,16 @@ def harcama_baglam(hareket_id: str = "", satici: str = "", gun_pencere: int = 7)
     if ciro_var and ciro_var["adet"]:
         ipuclari.append(f"O gün {ciro_var['adet']} şube ciro yapmış "
                         f"({ciro_var['toplam']:,.0f} ₺) — işletme açıktı.".replace(",", "."))
+    if len(gecmis) >= 3 and not _guvenilir_ad:
+        ipuclari.append(f"'{satici}' tek kelimelik bir eşleşme — FARKLI kişi/firmaları "
+                        "birleştirmiş olabilir, tekrar sayısına güvenmeyin.")
+    if len(gecmis) == 1:
+        ipuclari.append("Bu satıcıdan TEK harcama var — mükerrer kayıt yok.")
+    _taksitli = [x for x in gecmis if (x.get("taksit_sayisi") or 1) > 1]
+    if _taksitli:
+        ipuclari.append(f"{len(_taksitli)} kayıt TAKSİTLİ — aynı alımın parçaları olabilir.")
+    elif gecmis:
+        ipuclari.append("Kayıtlar taksitsiz (tek çekim).")
     if not ipuclari:
         ipuclari.append("Sistemde bu harcamayı açıklayan başka bir iz yok — "
                         "tek seferlik bir ödeme gibi görünüyor.")
@@ -494,7 +517,14 @@ def harcama_baglam(hareket_id: str = "", satici: str = "", gun_pencere: int = 7)
             "en_yuksek": round(max(tutarlar), 2) if tutarlar else 0,
             "kayitlar": [{"tarih": x["tarih"], "tutar": x["tutar"],
                           "tip": x["harcama_tipi"], "kart": x["kart_adi"],
+                          "taksit": x.get("taksit_sayisi"),
                           "aciklama": x["aciklama"][:60]} for x in gecmis[:12]],
+            "mukerrer_suphesi": [
+                {"tarih": t, "tutar": tu, "adet": n} for (t, tu), n in
+                {(x["tarih"], round(x["tutar"], 2)): sum(
+                    1 for y in gecmis
+                    if y["tarih"] == x["tarih"] and round(y["tutar"], 2) == round(x["tutar"], 2))
+                 for x in gecmis}.items() if n > 1],
         },
         "pencere_gun": gun_pencere,
         "yakin_faturalar": fatura,
