@@ -414,7 +414,15 @@ def abonelik_odeme_eslestir(gun: int = 120):
             })
             continue
         # Kimlik eşleşmesi (abone_no) varsa onu tercih et — ad eşleşmesinden güçlü.
-        adaylar.sort(key=lambda x: 0 if x[1] in ("sabit_gider_bagi", "abone_no_plan") else 1)
+        # ⚠️ ÇOKLU AÇIK BORÇ (Codex denetimi 2026-08-10): abone numarası KİMLİĞİ
+        # kanıtlar, HANGİ AYI kapatacağını değil. Aynı aboneliğin iki açık borcu
+        # varsa yanlış ay kapanabilir. Muhasebe kuralı FIFO'dur: en eski açık borç
+        # önce kapanır. Vadesi olmayan (tutar bekleyen) hatırlatma en sona düşer.
+        adaylar.sort(key=lambda x: (
+            0 if x[1] in ("sabit_gider_bagi", "abone_no_plan") else 1,
+            x[0]["vade"] or "9999-12-31",
+        ))
+        _kimlik_aday = [a for a in adaylar if a[1] in ("sabit_gider_bagi", "abone_no_plan")]
         p, hedef_temel = adaylar[0]
         kullanilan.add(p["id"])
         kalan = round(p["tutar"] - p["odenen"], 2)
@@ -431,6 +439,20 @@ def abonelik_odeme_eslestir(gun: int = 120):
             "vade": p["vade"], "kalan_tutar": kalan,
             "eslesme_temeli": temel, "hedef_temeli": hedef_temel,
             "guven": guven, "karar": "oneri",
+            # ⭐ OTOMATİK KAPATILABİLİR: kimlik kanıtı (abone no) VAR ve o
+            # aboneliğin TEK açık borcu var. İkisi birden sağlanmazsa sahip onaylar.
+            "otomatik_kapatilabilir": bool(
+                hedef_temel in ("sabit_gider_bagi", "abone_no_plan")
+                and len(_kimlik_aday) == 1),
+            "otomatik_notu": (
+                "Abone numarası birebir eşleşti ve bu aboneliğin tek açık borcu — "
+                "kimlik kanıtı, tahmin değil."
+                if (hedef_temel in ("sabit_gider_bagi", "abone_no_plan")
+                    and len(_kimlik_aday) == 1)
+                else ("Aynı aboneliğin birden çok açık borcu var — FIFO ile en eskisi "
+                      "önerildi, onayı sahip verir."
+                      if len(_kimlik_aday) > 1 else
+                      "Kimlik kanıtı yok (ad/sağlayıcı eşleşmesi) — onay şart.")),
             # Tutar KANIT DEĞİL — yalnız bilgi. Değişken faturada fark normaldir.
             "tutar_farki": fark,
             "tutar_notu": ("tutar birebir" if fark <= 0.01 else
@@ -679,6 +701,60 @@ def gecmis_gider_arsivle(kuru: bool = True, geri_al: bool = False):
                   "Kayıtlar silinmedi; kart borcu değişmedi. P&L artık kanonik "
                   "katmandan okuyor, diğer uçlar da bu satırları görmeyecek."),
     }
+
+
+@router.post("/api/abonelik/otomatik-kapat")
+def otomatik_kapat(kuru: bool = True, gun: int = 180):
+    """KİMLİK KANITLI otomatik kapatma (sahip onayı 2026-08-10).
+
+    YALNIZ şu iki koşul BİRDEN sağlanınca kapatır:
+      1. Abone/tesisat numarası ekstre satırında BİREBİR geçiyor (rakam sınırlı) —
+         kimlik kanıtı, tutar/ad tahmini değil.
+      2. O aboneliğin AÇIK BORCU TEK — hangi ayı kapattığı belirsiz değil.
+
+    ⚠️ Codex denetimi (2026-08-10): "exact subscriber-number match tek başına
+    güvenli değil; kimliği kanıtlar, ayı/borcu/tekilliği kanıtlamaz." Bu yüzden
+    (2) koşulu ve `kart_odeme_baglanti` tekillik kısıtları olmadan bu uç
+    ÇALIŞTIRILMAMALIYDI — ikisi de kurulu.
+
+    Kasaya DOKUNMAZ. Geri alınabilir: bağ kaydı ve açıklama damgası kalır.
+    """
+    esl = abonelik_odeme_eslestir(gun=gun)
+    hedef = [o for o in (esl.get("oneriler") or [])
+             if o.get("karar") == "oneri" and o.get("otomatik_kapatilabilir")]
+    if kuru:
+        return {
+            "kuru": True, "aday_adet": len(hedef),
+            "aday_tutar": round(sum(float(o["kart_tutar"]) for o in hedef), 2),
+            "adaylar": [{"saglayici": o["saglayici"], "kart_tutar": o["kart_tutar"],
+                         "kart_tarih": o["kart_tarih"], "plan": o["plan_aciklama"],
+                         "vade": o["vade"], "guven": o["guven"]} for o in hedef],
+            "atlanan": len([o for o in (esl.get("oneriler") or [])
+                            if o.get("karar") == "oneri" and not o.get("otomatik_kapatilabilir")]),
+            "mesaj": ("PROVA — hiçbir kayıt değişmedi. Uygulamak için kuru=false. "
+                      "Yalnız kimlik kanıtlı ve tek açık borcu olanlar kapanır."),
+        }
+    kapanan, hata = [], []
+    for o in hedef:
+        try:
+            r = odeme_kaniti_bagla(BaglaBody(
+                kart_hareket_id=o["kart_hareket_id"], hedef_tablo="odeme_plani",
+                hedef_id=o["plan_id"], abonelik_id=o.get("abonelik_id"),
+                eslesme_temeli=o.get("hedef_temeli") or "abone_no",
+                guven=int(o.get("guven") or 90), onaylayan="otomatik-kimlik",
+                not_aciklama="abone no birebir + tek açık borç",
+                plani_kapat=True, kuru=False))
+            if r.get("plan_kapatildi"):
+                kapanan.append({"saglayici": o["saglayici"], "tutar": r.get("yazilan_tutar") or o["kart_tutar"]})
+        except HTTPException as e:  # noqa: PERF203 — her kalem bağımsız
+            hata.append({"saglayici": o["saglayici"], "hata": str(e.detail)[:90]})
+        except Exception as e:  # noqa: BLE001
+            hata.append({"saglayici": o["saglayici"], "hata": str(e)[:90]})
+    return {"success": True, "kuru": False, "kapanan_adet": len(kapanan),
+            "kapanan": kapanan, "hata_adet": len(hata), "hatalar": hata,
+            "kasa_etkisi": False,
+            "mesaj": (f"{len(kapanan)} borç kimlik kanıtıyla 'karttan ödendi' olarak "
+                      "kapatıldı. Kasa hareketi oluşmadı.")}
 
 
 class BaglaBody(BaseModel):
