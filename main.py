@@ -5039,45 +5039,22 @@ def kart_ekstre_import(body: EkstreImportBody):
             )
             if cur.rowcount > 0:
                 yazilan += 1
-                # Şahsi olmayan (işletme/belirsiz) HARCAMA → anlık gidere de yansıt.
-                # Kart borcu zaten kart_hareketleri'ne yazıldı (yukarıda); burada SADECE
-                # anlik_giderler kaydı eklenir (kart_hareketleri TEKRAR yazılmaz —
-                # /api/anlik-gider'deki gibi çift kart hareketi oluşmasın).
-                if tip == "HARCAMA" and htip != "sahsi":
-                    # GİDER FRENİ (2026-07-10): elle girilmiş kartlı Anlık Gider eşi
-                    # varsa gider TEKRAR yazılmaz (kart borcu yukarıda zaten doğru;
-                    # P&L/kategori çift şişmesin). Tutar ±1, tarih ±7 gün.
-                    if not _zorla:
-                        try:
-                            cur.execute(
-                                """SELECT 1 FROM anlik_giderler
-                                   WHERE COALESCE(kaynak_tablo,'') <> 'ekstre_import'
-                                     AND odeme_yontemi = 'kart'
-                                     AND (kart_id = %s OR kart_id IS NULL)
-                                     AND ABS(tutar - %s) <= 1.0
-                                     AND tarih::date BETWEEN %s::date - 7 AND %s::date + 7
-                                   LIMIT 1""",
-                                (body.kart_id, tutar, tarih, tarih))
-                            if cur.fetchone():
-                                atlanan_mevcut.append(
-                                    {"tarih": tarih, "tutar": tutar, "tip": "GIDER",
-                                     "aciklama": (isl.aciklama or "")[:60],
-                                     "not": "kart borcu yazıldı; elle gider zaten var — "
-                                            "gider TEKRAR yazılmadı"})
-                                continue
-                        except Exception:
-                            pass  # tarih formatı vb. — fren çökerse eski davranış
-                    agid = "agk_" + hid
-                    cur.execute(
-                        """INSERT INTO anlik_giderler
-                           (id, tarih, kategori, tutar, aciklama, sube, odeme_yontemi, kart_id, kaynak_id, kaynak_tablo)
-                           VALUES (%s,%s,%s,%s,%s,'MERKEZ','kart',%s,%s,'ekstre_import')
-                           ON CONFLICT (id) DO NOTHING""",
-                        (agid, tarih, (isl.kategori or "Diğer"), tutar,
-                         (isl.aciklama or "Ekstre içe aktarım")[:200], body.kart_id, hid),
-                    )
-                    if cur.rowcount > 0:
-                        anlik_gider_yazilan += 1
+                # ⛔ ESKİ PRENSİP KALDIRILDI (2026-08-10, sahip kararı + Codex):
+                # Burada eskiden anlik_giderler'e de bir GİDER satırı yazılıyordu
+                # ("şahsi olmayan harcamayı P&L'de görünür kıl"). Bu yanlıştı:
+                # ödeme kanıtını maliyet kaydına çeviriyordu ve aynı para hem kart
+                # defterinde hem gider defterinde durabiliyordu. Canlıda 166 kayıt /
+                # 590.229,50 ₺ bu şekilde birikmişti.
+                #
+                # YENİ İLKE — GİDER = PARA ÇIKIŞI, TEK YERDEN:
+                #   nakit çıkışı → anlik_giderler
+                #   kart  çıkışı → kart_hareketleri  ← bu satır zaten yazıldı
+                # P&L artık `gider_kanonik` görünümünden okuyor; kart harcaması
+                # oradan sayılıyor. İkinci bir gider kaydı ÜRETİLMEZ.
+                #
+                # Geçmiş ekstre_import gider satırları SİLİNMEDİ; kanonik görünüm
+                # onları zaten dışarıda bırakıyor (odeme_yontemi='kart'), arşiv
+                # olarak denetlenebilir kalıyorlar.
             else:
                 atlanan += 1  # zaten var (idempotent)
 
@@ -5133,7 +5110,13 @@ def kart_ekstre_import(body: EkstreImportBody):
         "atlanan_mevcut_adet": len(atlanan_mevcut),
         "atlanan_mevcut": atlanan_mevcut[:20],
         "motor_tahmini_faiz_iptal": motor_faizi_iptal,
+        # Geriye-uyum: ekran bu alanı okuyor. Artık HER ZAMAN 0 — içe aktarma
+        # gider satırı üretmiyor (bkz. yukarıdaki "ESKİ PRENSİP KALDIRILDI").
         "anlik_gider_yazilan": anlik_gider_yazilan,
+        "gider_modeli": "kanonik",
+        "gider_notu": ("Gider satırı üretilmedi — kart harcaması P&L'e kart "
+                       "defterinden (gider_kanonik) girer. Çift sayım yapısal "
+                       "olarak imkânsız."),
         "yeni_sistem_borc": round(yeni_borc, 2),
         "ap_rematch": ({
             "otomatik_baglanan": rematch.get("otomatik_baglanan"),
