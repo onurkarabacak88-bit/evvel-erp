@@ -511,7 +511,12 @@ def ensure_gider_kanonik(cur) -> None:
             ABS(g.tutar)::numeric                AS tutar,
             COALESCE(g.kategori,'Diğer')::text   AS kategori,
             COALESCE(g.aciklama,'')::text        AS aciklama,
-            g.sube::text                         AS sube_id,
+            -- ⚠️ KİMLİK NORMALİZASYONU (2026-08-10): ekstre içe aktarma eski
+            -- kayıtlara sube='MERKEZ' (AD) yazmıştı, oysa subeler.id='sube-merkez'.
+            -- Ham hâlde LEFT JOIN subeler tutmuyor ve gider "?" şubesinde
+            -- toplanıyordu (canlıda 161.260 ₺). Ad→kimlik burada çevrilir.
+            CASE WHEN upper(btrim(COALESCE(g.sube,''))) = 'MERKEZ'
+                 THEN 'sube-merkez' ELSE g.sube END::text AS sube_id,
             COALESCE(g.odeme_yontemi,'nakit')::text AS odeme_yontemi,
             NULL::text                           AS kart_id,
             (g.kaynak_tablo IS NOT NULL)         AS belge_bagli,
@@ -585,7 +590,7 @@ def ensure_gider_kanonik(cur) -> None:
             -- 20.977 ₺" merkeze değil TEMA şubesine yazılır — şube kârlılığı
             -- gerçeğe yaklaşır. Eşleşme yoksa eski davranış (MERKEZ) korunur;
             -- NULL bırakmak şubeli raporlarda gideri sessizce yok ederdi.
-            COALESCE(ab.sube_id, 'MERKEZ')::text,
+            COALESCE(ab.sube_id, 'sube-merkez')::text,
             'kart'::text,
             h.kart_id::text,
             EXISTS (SELECT 1 FROM kart_odeme_baglanti b WHERE b.kart_hareket_id = h.id),
@@ -664,7 +669,7 @@ def ensure_gider_kanonik(cur) -> None:
                 ELSE 'Diğer'
             END::text,
             COALESCE(kh2.aciklama,'')::text,
-            COALESCE(kh2.sube_id, 'MERKEZ')::text,
+            COALESCE(kh2.sube_id, 'sube-merkez')::text,
             'nakit'::text,
             NULL::text,
             TRUE,
