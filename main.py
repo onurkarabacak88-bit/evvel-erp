@@ -4124,7 +4124,14 @@ def _ekstre_txn_map(t: dict) -> dict:
 @app.post("/api/kartlar/ekstre-yukle")
 def kart_ekstre_yukle(dosya: UploadFile = File(...)):
     """Faz E0: Banka kredi kartı ekstresi (PDF) yükle → ayrıştır → mutabakat ÖNİZLEME.
-    DB'ye HİÇBİR ŞEY yazmaz — sadece okuyup gösterir. Worldcard + Enpara desteklenir.
+
+    ⚠️ "Hiçbir şey yazmaz" DEĞİL (docstring 2026-08-10'a kadar öyle diyordu, yanıltıcıydı):
+    İŞLEM SATIRLARI yazılmaz — onlar sahibin şahsi/işletme sınıflandırmasından sonra
+    /api/kartlar/ekstre-import ile gider. Ama kart son 4 haneden EŞLEŞİRSE ekstre
+    ÖZETİ yazılır (_ekstre_eslesme_mutabakat): dönem borcu · asgari · faiz · taksit
+    yükü snapshot'ı ve son ödeme planı güncellenir. Kart eşleşmezse hiçbir yazma olmaz.
+
+    Worldcard + Enpara + Axess + Garanti + Ziraat desteklenir.
     Sync def: FastAPI threadpool'da çalışır, pdfplumber event-loop'u bloklamaz."""
     import io
     try:
