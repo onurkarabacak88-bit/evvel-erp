@@ -2690,10 +2690,29 @@ def _sadele(s: str) -> str:
 
 
 def _abonelik_nolar_getir(cur) -> list:
-    """Aktif aboneliklerin abone/tesisat numaraları. Boşsa istisna hiç çalışmaz."""
+    """Aktif aboneliklerin KİMLİK İZLERİ: abone/tesisat numarası VE ekstre kalıbı.
+
+    ⚠️ Numara tek kimlik değil (2026-08-11): bazı sağlayıcılar ekstreye numara
+    YAZMAZ. Canlı vaka — MEPAŞ (elektrik tedarikçisi) satırı yalnız "MEPAŞ"
+    yazıyor; 8 ödeme / 38.354 ₺ bu yüzden "belgesiz" sayılıp 6.392 ₺ KDV
+    kaybı gibi görünüyordu. Oysa tutarları sabit gider tanımlarıyla BİREBİR
+    eşleşiyor (9.840 → KÖYCEĞİZ, 14.308 → GAZZE): gerçek elektrik faturası.
+
+    Numara varsa numara döner (güçlü kimlik), yoksa sahibin bilinçli tanımladığı
+    ekstre kalıbı döner (zayıf ama BEYAN edilmiş kimlik).
+    """
     try:
-        cur.execute("SELECT abone_no FROM abonelik WHERE aktif AND COALESCE(abone_no,'') <> ''")
-        return [str(r["abone_no"]).strip() for r in (cur.fetchall() or [])]
+        cur.execute("SELECT abone_no, ekstre_kalip FROM abonelik WHERE aktif")
+        cikti = []
+        for r in (cur.fetchall() or []):
+            d = dict(r)
+            no = str(d.get("abone_no") or "").strip()
+            kal = str(d.get("ekstre_kalip") or "").strip()
+            if no:
+                cikti.append(no)
+            elif len(kal) >= 4:      # 3 harfli kalıp fazla geniş olur
+                cikti.append(kal)
+        return cikti
     except Exception:  # noqa: BLE001 — abonelik tablosu yoksa istisna kapalı kalsın
         return []
 
@@ -2708,11 +2727,21 @@ def _abonelik_no_eslesti(aciklama: str, nolar: list) -> bool:
     """
     import re as _re3
     a = str(aciklama or "")
+    a_sade = _sadele(a)
     for n in nolar:
         if not n:
             continue
-        if _re3.search(r"(?<![0-9])" + _re3.escape(str(n)) + r"(?![0-9])", a):
-            return True
+        n = str(n)
+        if n.isdigit():
+            # NUMARA: rakam sınırı şart (01026495 ⊄ 010264953…)
+            if _re3.search(r"(?<![0-9])" + _re3.escape(n) + r"(?![0-9])", a):
+                return True
+        else:
+            # METİN KALIBI: kelime sınırıyla ara (Türkçe-duyarsız tabanda).
+            # "MEPAŞ" → "MEPAS"; "MEPASGIDA" gibi bitişik yazımlara takılmasın.
+            k = _sadele(n)
+            if k and _re3.search(r"(?<![A-Z0-9])" + _re3.escape(k) + r"(?![A-Z0-9])", a_sade):
+                return True
     return False
 
 
