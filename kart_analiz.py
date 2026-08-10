@@ -205,53 +205,113 @@ def _parse_garanti(pages_text: List[str], kart_no: str, kart_sahibi: str) -> Lis
     return txns
 
 # ─── YAPI KREDİ parser ───────────────────────────────────────────────────────
+#
+# ⚠️ 2026-08-10 — TAM YENİDEN YAZILDI. Eski sürüm satırın SON token'ını tutar
+# sayıyordu; Worldcard satırının sonunda ise PUAN veya "kalan / taksit sayısı"
+# durur. Canlı ekstrede (FETHİ KARABACAK, kesim 09.08.2026) ürettiği rakamlar:
+#     TRENDYOL 719,99 → 14,00 (puan)     ENES SAAT 1.950,00 → 7.800,00 (puan)
+#     KARABULUT METAL 20.000,00 → 4,00 (taksit sayısı)
+#     BEYMEN 1.644,20 → 5,00 (taksit sayısı)
+# Ayrıca sayfa 2'deki WORLDPUAN DETAYI tablosundan iki sahte "harcama" üretiyordu
+# ("GIYIM KOZMETIK KAMPANYASI 2.026,00" — aslında 20.000 puan / 100 TL karşılığı).
+# Bu rakamlar ekstre-import ile kart borcuna yazılsaydı borç tamamen bozulurdu.
+#
+# GERÇEK SATIR YAPISI (Worldcard):
+#     <tarih> <açıklama> <tutar> [<kalan> / <kalan taksit>] [<puan>]
+#     (bir sonraki satır) "<toplam> TL'lik işlemin <n> / <m> taksidi"
+# Tutar TEK parasal alandır: "1.234,56" — kuruş ZORUNLU. Puan hep tam sayıdır
+# ("1.820"), taksit sayısı "/" sonrası tam sayıdır. Ayrım buradan kurulur.
+
+# Bölüm kapıları: işlem tablosu "Tutar(TL)" başlığıyla açılır, "TOPLAM" ile kapanır.
+# Puan tablosunun başlığı "Worldpuan" içerir → ASLA açılmaz (sahte işlem kaynağı).
+_YK_BASLIK = re.compile(r'İşlem\s*Tarihi', re.I)
+_YK_TUTAR_SUTUNU = re.compile(r'Tutar\s*\(\s*TL\s*\)', re.I)
+_YK_PUAN_SUTUNU = re.compile(r'Worldpuan|Puan\s*Özeti', re.I)
+
+_YK_SATIR = re.compile(
+    r'^(?P<tarih>\d{1,2}\s+\S+\s+\d{4})\s+'          # 09 Temmuz 2026
+    r'(?P<aciklama>.+?)\s+'                           # açıklama (aç gözlü değil)
+    r'(?P<tutar>[+-]?(?:\d{1,3}(?:\.\d{3})*|\d+),\d{2})'   # 1.644,20 / +112.354,13
+    r'(?:\s+(?:\d{1,3}(?:\.\d{3})*|\d+),\d{2}\s*/\s*\d+)?'  # kalan / kalan taksit
+    r'(?:\s+\d{1,3}(?:\.\d{3})*|\s+\d+)?'             # puan (tam sayı)
+    r'\s*$'
+)
+# "3.640,20 TL'lik işlemin 1 / 2 taksidi"
+_YK_TAKSIT = re.compile(
+    r"^(?P<toplam>(?:\d{1,3}(?:\.\d{3})*|\d+),\d{2})\s*TL'lik\s+i[şs]lemin\s+"
+    r"(?P<no>\d+)\s*/\s*(?P<adet>\d+)\s+taksidi", re.I)
+
+
 def _parse_yapikrdi(pages_text: List[str], kart_no: str, kart_sahibi: str) -> List[Dict]:
-    txns = []
-    skip_next = False
+    """Worldcard ekstresi → işlem listesi. İki geçişli:
+    1) Bölüm kapılı (kesin): yalnız "Tutar(TL)" başlıklı tablolar okunur.
+    2) Hiç satır çıkmazsa kapısız geçiş — başlık biçimi değişmiş bir ekstrede
+       SESSİZCE BOŞ dönmemek için. Puan tablosu o geçişte de dışarıda tutulur;
+       satır deseni zaten kuruşlu tutar aradığı için puan satırı eşleşmez."""
+    txns = _yk_gecis(pages_text, kart_no, kart_sahibi, kapili=True)
+    if not txns:
+        txns = _yk_gecis(pages_text, kart_no, kart_sahibi, kapili=False)
+    return txns
+
+
+def _yk_gecis(pages_text: List[str], kart_no: str, kart_sahibi: str, kapili: bool) -> List[Dict]:
+    txns: List[Dict] = []
     for text in pages_text:
         lines = text.split('\n')
-        for i, line in enumerate(lines):
-            line = line.strip()
-            if skip_next:
-                skip_next = False
+        icinde = not kapili
+        for i, ham in enumerate(lines):
+            line = ham.strip()
+            if not line:
                 continue
-            if not line: continue
-            parts = line.split()
-            if len(parts) < 3: continue
-            # Date starts with digit + Turkish month
-            if not (parts[0].isdigit() and _is_tr_month(parts[1] if len(parts) > 1 else '')): continue
-            tarih = _parse_tarih_tr(' '.join(parts[:3]))
-            if not tarih: continue
-            rest_parts = parts[3:]
-            if not rest_parts: continue
-            # Payment line: "ÖDEME-İNTERNET +99.500,00"
-            is_pay = rest_parts[0].startswith('+') or (len(rest_parts) > 0 and rest_parts[-1].startswith('+'))
-            # Amount: last numeric token
-            amt_str = rest_parts[-1].lstrip('+')
-            if re.match(r'^[\d.,]+$', amt_str):
-                tutar, _ = _parse_tutar(amt_str)
-            else:
+            # ── Bölüm kapıları ────────────────────────────────────────────
+            if _YK_BASLIK.search(line):
+                # Aynı başlıkta hem "Tutar(TL)" hem "Worldpuan" olamaz; puan
+                # tablosuna girmemek KRİTİK (sahte harcama üretiyordu).
+                icinde = bool(_YK_TUTAR_SUTUNU.search(line)) and not _YK_PUAN_SUTUNU.search(line)
                 continue
-            if tutar <= 0: continue
-            # Description: everything except last (amount) and maybe puan (last digit token)
-            desc_parts = rest_parts[:-1]
-            # Remove puan (single integer at end)
-            if desc_parts and re.match(r'^\d+$', desc_parts[-1]):
-                desc_parts = desc_parts[:-1]
-            # Remove "Kalan/Taksit" pattern "X.XXX,XX / Y"
-            desc_parts = [p for p in desc_parts
-                          if not re.match(r'^[\d.,]+$', p) and p != '/' and not re.match(r'^\d+$', p)]
-            aciklama = ' '.join(desc_parts).strip()
-            # Next line might be taksit info — skip
-            if i + 1 < len(lines) and re.search(r"TL'lik i[şs]lemin", lines[i+1]):
-                skip_next = True
-            is_fee = bool(re.search(r'faiz|bsmv|kkdf|ücret', aciklama, re.I))
-            txns.append({
+            if _YK_PUAN_SUTUNU.search(line):
+                icinde = False
+                continue
+            if line.upper().startswith('TOPLAM'):
+                icinde = False
+                continue
+            if not icinde:
+                continue
+
+            m = _YK_SATIR.match(line)
+            if not m:
+                continue
+            tarih = _parse_tarih_tr(m.group('tarih'))
+            if not tarih:
+                continue
+            ham_tutar = m.group('tutar')
+            tutar, _ = _parse_tutar(ham_tutar.lstrip('+'))
+            if tutar <= 0:
+                continue
+            aciklama = re.sub(r'\s{2,}', ' ', m.group('aciklama')).strip()
+            if not aciklama:
+                continue
+
+            # Ödeme satırı: tutar '+' ile gelir (banka tahsilatı değil, borç azaltan).
+            is_pay = ham_tutar.startswith('+') or bool(re.search(r'^ÖDEME\b|ÖDEME-', aciklama, re.I))
+            is_fee = bool(re.search(r'faiz|bsmv|kkdf|ücret|ucret', aciklama, re.I))
+
+            kayit = {
                 'tarih': tarih, 'aciklama': aciklama, 'tutar': tutar,
                 'banka': 'Yapı Kredi', 'kart_no': kart_no, 'kart_sahibi': kart_sahibi,
                 'odeme_mi': is_pay and not is_fee,
                 'kategori': _enrich(aciklama, 'Ödeme' if is_pay else ''),
-            })
+            }
+            # Taksit bilgisi BİR SONRAKİ satırdadır; tutar bu dönemin taksidi,
+            # toplam ise alımın tamamıdır — ikisini karıştırmak borcu şişirir.
+            if i + 1 < len(lines):
+                tm = _YK_TAKSIT.match(lines[i + 1].strip())
+                if tm:
+                    toplam, _ = _parse_tutar(tm.group('toplam'))
+                    kayit['taksit'] = f"{tm.group('no')}/{tm.group('adet')}"
+                    kayit['taksit_sayisi'] = int(tm.group('adet'))
+                    kayit['taksit_anapara'] = toplam
+            txns.append(kayit)
     return txns
 
 # ─── ZİRAAT parser ───────────────────────────────────────────────────────────

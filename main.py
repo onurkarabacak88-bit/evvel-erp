@@ -4222,6 +4222,45 @@ def _ekstre_eslesme_mutabakat(sonuc):
     Hem normal (Worldcard/Enpara) hem Axess akışının ortak son adımı."""
     sonuc["eslesen_kart"] = None
     sonuc["mutabakat"] = None
+
+    # ── OKUMA DENETİMİ (tie-out) — 2026-08-10 ─────────────────────────────────
+    # Sessiz yanlış ayrıştırma en tehlikeli hatadır: ekran dolu görünür, rakam
+    # yanlıştır. Canlı vaka: Worldcard ayrıştırıcısı PUAN sütununu tutar sanıyordu
+    # (TRENDYOL 719,99 → 14,00; KARABULUT 20.000 → 4,00) ve puan tablosundan iki
+    # sahte harcama üretiyordu. Kimse fark etmeden kart borcuna yazılabilirdi.
+    #
+    # Ekstre kendi doğrulamasını taşır: başlıktaki "Dönem İçi Harcamalar" =
+    # okunan harcama + faiz olmalı. Fark ölçülür ve YANITTA TAŞINIR — ekran
+    # tutmuyorsa uyarır, tutuyorsa "okuma doğrulandı" der. Sayı uydurulmaz.
+    try:
+        _oku_h = sum(abs(float(i.get("tutar") or 0)) for i in (sonuc.get("islemler") or [])
+                     if (i.get("tip") or "").upper() in ("HARCAMA", "FAIZ"))
+        _oku_o = sum(abs(float(i.get("tutar") or 0)) for i in (sonuc.get("islemler") or [])
+                     if (i.get("tip") or "").upper() == "ODEME")
+        _bek_h = sonuc.get("donem_harcama")
+        _bek_o = sonuc.get("donem_odeme")
+        _dn = {"okunan_harcama": round(_oku_h, 2), "okunan_odeme": round(_oku_o, 2),
+               "islem_adet": len(sonuc.get("islemler") or [])}
+        if _bek_h is not None:
+            _fark = round(_oku_h - float(_bek_h), 2)
+            _dn.update({"beklenen_harcama": round(float(_bek_h), 2), "harcama_farki": _fark,
+                        "harcama_tutuyor": abs(_fark) <= 1.0})
+        if _bek_o is not None:
+            _farko = round(_oku_o - float(_bek_o), 2)
+            _dn.update({"beklenen_odeme": round(float(_bek_o), 2), "odeme_farki": _farko,
+                        "odeme_tutuyor": abs(_farko) <= 1.0})
+        _hepsi = [v for k, v in _dn.items() if k.endswith("_tutuyor")]
+        _dn["saglam"] = bool(_hepsi) and all(_hepsi)
+        _dn["mesaj"] = ("Okuma doğrulandı — ekstrenin kendi toplamıyla birebir."
+                        if _dn["saglam"] else
+                        ("Ekstrenin kendi toplamı ile okunan satırlar TUTMUYOR — "
+                         "içe aktarmadan önce satırları gözden geçirin."
+                         if _hepsi else
+                         "Ekstre başlığında kıyas toplamı yok — okuma doğrulanamadı."))
+        sonuc["okuma_denetimi"] = _dn
+    except Exception as _e:
+        sonuc["okuma_denetimi"] = {"saglam": None, "mesaj": f"Okuma denetimi çalışmadı: {_e}"}
+
     son4 = sonuc.get("son_dort")
     with db() as (conn, cur):
         # SATICI HAFIZASI: her işleme öneri tipi (hepsi 'belirsiz' başlar, hafıza öğrendikçe önerir)
