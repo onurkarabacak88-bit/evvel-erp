@@ -524,7 +524,19 @@ def ensure_gider_kanonik(cur) -> None:
                     THEN ABS(h.tutar) / h.taksit_sayisi
                 ELSE ABS(h.tutar)
             END::numeric,
-            COALESCE(h.kategori,'Diğer')::text,
+            -- KATEGORİ: abonelik eşleşiyorsa HİZMET TÜRÜ kategoridir. Canlıda
+            -- 63.791,50 ₺'lik elektrik/su/doğalgaz/internet gideri kategorisiz
+            -- ("Diğer") birikiyordu → "elektriğe ne ödüyorum?" sorusu cevapsızdı.
+            COALESCE(
+                CASE ab.hizmet_turu
+                    WHEN 'elektrik' THEN 'ELEKTRİK'
+                    WHEN 'su'       THEN 'SU'
+                    WHEN 'dogalgaz' THEN 'DOĞALGAZ'
+                    WHEN 'internet' THEN 'İNTERNET'
+                    WHEN 'telefon'  THEN 'TELEFON'
+                END,
+                NULLIF(h.kategori,''),
+                'Diğer')::text,
             COALESCE(h.aciklama,'')::text,
             -- ŞUBE: kart hareketinde şube alanı yok (kartlar merkezî). AMA otomatik
             -- talimatlı fatura ekstrede ABONE NUMARASINI taşır ve abonelik kaydı o
@@ -542,7 +554,7 @@ def ensure_gider_kanonik(cur) -> None:
         -- En uzun numara önce: kısa bir numara başka bir numaranın içinde
         -- geçebilir, uzun eşleşme daha spesifiktir.
         LEFT JOIN LATERAL (
-            SELECT a.sube_id
+            SELECT a.sube_id, a.hizmet_turu
             FROM abonelik a
             WHERE a.aktif
               AND COALESCE(a.abone_no,'') <> ''
