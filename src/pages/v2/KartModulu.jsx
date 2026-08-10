@@ -189,6 +189,27 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
     }
   };
 
+  const [isletmeciler, setIsletmeciler] = useState([]);
+  const [sahsiKirilim, setSahsiKirilim] = useState(null);
+  const [sahsiBekleyen, setSahsiBekleyen] = useState(null);
+  const [sahsiMesgul, setSahsiMesgul] = useState(false);
+  const [sahsiSecim, setSahsiSecim] = useState({});   // satici -> isletmeci_id
+
+  /** Bir satıcının bekleyen şahsi harcamalarını seçilen kişiye bağlar (+öğrenir). */
+  const saticiAta = async (grup, kisiId, hareketIdler) => {
+    if (!kisiId) { onToast?.('Önce kişi seçin'); return; }
+    setSahsiMesgul(true);
+    try {
+      const r = await api('/isletmeci/satici-ata', { method: 'POST', body: {
+        satici: grup.satici, isletmeci_id: kisiId, ogren: true,
+        hareket_idler: hareketIdler || undefined,
+      } });
+      onToast?.(r?.mesaj || '✓ Atandı');
+      yukle();
+    } catch (e) { onToast?.(e?.message || 'Atanamadı'); }
+    finally { setSahsiMesgul(false); }
+  };
+
   const [abonelikler, setAbonelikler] = useState([]);
   const [abKesif, setAbKesif] = useState(null);
   const [abEslesme, setAbEslesme] = useState(null);
@@ -249,7 +270,15 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
       api('/abonelik').catch(() => null),
       api('/abonelik/kesif?gun=180').catch(() => null),
       api('/abonelik/odeme-eslestir?gun=120').catch(() => null),
-    ]).then(([k, o, h, hr, an, ar, sc, fe, ty, ab, abk, abe]) => {
+      // 👤 ŞAHSİ HARCAMA KİŞİ DAĞILIMI (sahip 2026-08-10): 'şahsi' tek kovaydı,
+      // KİMİN olduğu yazmıyordu — ortaklar arası hesaplaşma yapılamıyordu.
+      api('/isletmeci').catch(() => null),
+      api('/isletmeci/sahsi-kirilim?gun=365').catch(() => null),
+      api('/isletmeci/sahsi-bekleyen?limit=400').catch(() => null),
+    ]).then(([k, o, h, hr, an, ar, sc, fe, ty, ab, abk, abe, ism, skir, sbek]) => {
+      setIsletmeciler(ism?.isletmeciler || []);
+      setSahsiKirilim(skir);
+      setSahsiBekleyen(sbek);
       setAbonelikler(ab?.abonelikler || []);
       setAbKesif(abk);
       setAbEslesme(abe);
@@ -1370,6 +1399,131 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
           { etiket: 'Sınıflandırılmayan', deger: `${belirsizAdet} hareket`, alt: `${fmt(sayi(g.belirsiz))} · karar bekliyor`, renk: belirsizAdet ? R.amber : R.yesil },
         ]} />
         {khModalBlok}
+
+        {/* ── 👤 ŞAHSİ HARCAMA — KİM NE HARCADI ────────────────────────────────
+            Sahip: "şahsi harcama ekranı yap ve burada direkt seçebileyim
+            şahsileri ve kırılımları görebileyim!"
+            'Şahsi' tek kovaydı: 275 kayıt / 549.628 ₺ ayrılmış ama KİMİN olduğu
+            hiçbir yerde yazmıyordu → ortaklar arası hesaplaşma yapılamıyordu.
+            ⚠️ Kart sahibi atama sebebi DEĞİLDİR (sahip kararı): aynı kartı üç
+            kişi de kullanabilir. Bu yüzden atama SATICI bazlı ve elle seçilir;
+            sistem yalnız gruplar ve öğrendiğini önerir. */}
+        {(sahsiKirilim || sahsiBekleyen) && (() => {
+          const kisiler = sahsiKirilim?.kisiler || [];
+          const atanmamis = sahsiKirilim?.atanmamis || { adet: 0, tutar: 0 };
+          const gruplar = sahsiBekleyen?.gruplar || [];
+          const toplam = sayi(sahsiKirilim?.toplam_sahsi_tutar);
+          const kapsama = sayi(sahsiKirilim?.kapsama_orani);
+          return (
+            <div style={{ ...kartYuzey, padding: '13px 16px', marginBottom: 12, fontSize: 12.5, lineHeight: 1.6 }}>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 9 }}>
+                <b style={{ color: R.krem, fontSize: 13 }}>👤 Şahsi harcama — kim ne harcadı</b>
+                <span style={{ color: R.not2, fontSize: 11.5 }}>
+                  toplam <b style={{ fontFamily: F.mono }}>{fmt(toplam)}</b> · dağıtılan %{trSayi(kapsama, 0)}
+                </span>
+              </div>
+
+              {/* KİŞİ KIRILIMI */}
+              {kisiler.length > 0 && (
+                <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 10 }}>
+                  {kisiler.map((k) => (
+                    <div key={k.kisi_id} style={{
+                      flex: '1 1 190px', padding: '10px 12px', borderRadius: 10,
+                      background: R.kart2, border: `1px solid ${R.cizgi2}`,
+                    }}>
+                      <div style={{ color: R.krem, fontWeight: 700 }}>{k.kisi}</div>
+                      <div style={{ fontFamily: F.mono, fontSize: 16, color: R.mavi, marginTop: 3 }}>
+                        {fmt(k.tutar)}
+                      </div>
+                      <div style={{ fontSize: 11, color: R.not2, marginTop: 2 }}>
+                        {k.adet} harcama · {(k.kartlar || []).length} kart
+                      </div>
+                    </div>
+                  ))}
+                  {atanmamis.adet > 0 && (
+                    <div style={{
+                      flex: '1 1 190px', padding: '10px 12px', borderRadius: 10,
+                      background: `${R.amber}12`, border: `1px solid ${R.amber}55`,
+                    }}>
+                      <div style={{ color: R.amber, fontWeight: 700 }}>Sahibi belirsiz</div>
+                      <div style={{ fontFamily: F.mono, fontSize: 16, color: R.amber, marginTop: 3 }}>
+                        {fmt(atanmamis.tutar)}
+                      </div>
+                      <div style={{ fontSize: 11, color: R.not2, marginTop: 2 }}>
+                        {atanmamis.adet} harcama · aşağıdan dağıt
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* ATAMA — SATICI BAZLI */}
+              {gruplar.length > 0 && (
+                <>
+                  <div style={{ color: R.metin2, marginBottom: 7 }}>
+                    <b style={{ color: R.amber }}>Dağıtılmayı bekleyen</b> — satıcıya göre gruplandı.
+                    Kişiyi seç, o satıcının tüm harcamaları o kişiye yazılır ve sistem
+                    <b> bir dahaki sefere aynı kişiyi önerir</b>.
+                  </div>
+                  {gruplar.slice(0, 14).map((grp) => (
+                    <div key={grp.satici} style={{
+                      display: 'flex', alignItems: 'center', gap: 9, flexWrap: 'wrap',
+                      padding: '8px 0', borderTop: `1px solid ${R.cizgi2}`,
+                    }}>
+                      <span style={{ flex: '1 1 240px', color: R.metin2 }}>
+                        <b style={{ color: R.krem }}>{grp.satici}</b> · {grp.adet} harcama ·{' '}
+                        <b style={{ fontFamily: F.mono }}>{fmt(grp.tutar)}</b>
+                        {grp.oneri && (
+                          <><br /><span style={{ fontSize: 11, color: R.yesil }}>
+                            öneri: {grp.oneri.kisi} ({grp.oneri_notu})
+                          </span></>
+                        )}
+                        {grp.cok_kartli && (
+                          <><br /><span style={{ fontSize: 11, color: R.amber }}>
+                            ⚠ {grp.kartlar.length} farklı karttan — toptan atama yanlış olabilir
+                          </span></>
+                        )}
+                      </span>
+                      <select
+                        value={sahsiSecim[grp.satici] || grp.oneri?.isletmeci_id || ''}
+                        onChange={(e) => setSahsiSecim((o) => ({ ...o, [grp.satici]: e.target.value }))}
+                        style={{
+                          padding: '7px 10px', borderRadius: 8, border: `1px solid ${R.cizgi3}`,
+                          background: R.kart1, color: R.krem, fontSize: 12, fontFamily: 'inherit',
+                        }}
+                      >
+                        <option value="">kişi seç…</option>
+                        {isletmeciler.map((k) => (
+                          <option key={k.id} value={k.id}>{k.ad}</option>
+                        ))}
+                      </select>
+                      <button
+                        disabled={sahsiMesgul}
+                        onClick={() => saticiAta(grp, sahsiSecim[grp.satici] || grp.oneri?.isletmeci_id, grp.hareket_idler)}
+                        style={{
+                          padding: '7px 13px', borderRadius: 8, border: 'none', fontFamily: 'inherit',
+                          cursor: sahsiMesgul ? 'default' : 'pointer', fontSize: 12, fontWeight: 700,
+                          background: 'linear-gradient(150deg, #E0A559, #AF6C29)', color: '#1C1309',
+                        }}
+                      >Ata</button>
+                    </div>
+                  ))}
+                  {gruplar.length > 14 && (
+                    <div style={{ fontSize: 11.5, color: R.not2, marginTop: 7 }}>
+                      … {gruplar.length - 14} satıcı daha var; en büyük 14'ü gösteriliyor.
+                    </div>
+                  )}
+                </>
+              )}
+
+              <div style={{ color: R.not2, fontSize: 11, marginTop: 9 }}>
+                Şahsi harcama işletme giderine ve vergi matrahına <b>girmez</b>. Buradaki
+                dağıtım yalnız <b>kim ne harcadı</b> sorusunu yanıtlar — ortak hesaplaşması içindir.
+              </div>
+            </div>
+          );
+        })()}
+
         <Tablo
           baslik="Kart hareketleri · işletme / şahsi"
           not="satıra tıkla → sınıflandır"
