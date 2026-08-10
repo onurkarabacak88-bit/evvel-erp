@@ -437,6 +437,82 @@ def maliyet_cift_sayim(gun: int = 365):
     }
 
 
+@router.get("/api/abonelik/gider-gecis-karsilastir")
+def gider_gecis_karsilastir(gun: int = 365):
+    """ESKİ ÖLÇÜ vs YENİ ÖLÇÜ — geçişi körlemesine yapmamak için.
+
+    ESKİ: P&L `anlik_giderler` (durum='aktif') toplamı. Kartla yapılan gider hem
+    burada hem kart defterinde duruyordu; ekstre içe aktarma da ayrıca satır
+    üretiyordu → aynı para birden çok kez sayılabiliyordu.
+
+    YENİ: `gider_kanonik` — nakit çıkışı anlık giderden, kart çıkışı kart
+    defterinden. Her para çıkışı TEK kanaldan sayılır.
+
+    Fark BEKLENEN bir şeydir; sıfır çıkması gerekmez. Önemli olan farkın
+    NEREDEN geldiğinin görünmesi: kart kopyaları düşer, kart defterinde olup
+    anlık gidere hiç yazılmamış harcamalar eklenir.
+    """
+    with db() as (conn, cur):
+        cur.execute(
+            """SELECT COALESCE(SUM(tutar),0)::float AS t, COUNT(*)::int AS a
+                 FROM anlik_giderler
+                WHERE COALESCE(durum,'aktif')='aktif' AND tarih >= CURRENT_DATE - %s""",
+            (int(gun),))
+        eski = dict(cur.fetchone() or {})
+        cur.execute(
+            """SELECT kanal, COALESCE(SUM(tutar),0)::float AS t, COUNT(*)::int AS a
+                 FROM gider_kanonik WHERE tarih >= CURRENT_DATE - %s
+                GROUP BY kanal ORDER BY 2 DESC""", (int(gun),))
+        yeni_kanal = [dict(r) for r in (cur.fetchall() or [])]
+        # Ne düştü: kartla girilmiş anlık giderler (artık kart defteri sayıyor)
+        cur.execute(
+            """SELECT COALESCE(kaynak_tablo,'(elle)') AS kanal,
+                      COALESCE(SUM(tutar),0)::float AS t, COUNT(*)::int AS a
+                 FROM anlik_giderler
+                WHERE COALESCE(durum,'aktif')='aktif'
+                  AND COALESCE(odeme_yontemi,'nakit')='kart'
+                  AND tarih >= CURRENT_DATE - %s
+                GROUP BY 1 ORDER BY 2 DESC""", (int(gun),))
+        dusen = [dict(r) for r in (cur.fetchall() or [])]
+        # Ne eklendi: kart defterinde olup anlık gidere hiç yazılmamış harcama
+        cur.execute(
+            """SELECT COALESCE(SUM(
+                        CASE WHEN COALESCE(h.taksit_sayisi,1) > 1
+                             THEN ABS(h.tutar)/h.taksit_sayisi ELSE ABS(h.tutar) END),0)::float AS t,
+                      COUNT(*)::int AS a
+                 FROM kart_hareketleri h
+                WHERE h.islem_turu='HARCAMA' AND COALESCE(h.durum,'aktif')='aktif'
+                  AND COALESCE(h.harcama_tipi,'belirsiz') <> 'sahsi'
+                  AND h.tarih >= CURRENT_DATE - %s
+                  AND NOT EXISTS (SELECT 1 FROM anlik_giderler g
+                                   WHERE g.kaynak_id = h.id::text
+                                      OR (g.odeme_yontemi='kart' AND g.kart_id = h.kart_id
+                                          AND ABS(g.tutar - ABS(h.tutar)) <= 1.0
+                                          AND g.tarih::date BETWEEN h.tarih - 3 AND h.tarih + 3))""",
+            (int(gun),))
+        eklenen = dict(cur.fetchone() or {})
+
+    yeni_t = round(sum(k["t"] for k in yeni_kanal), 2)
+    eski_t = round(float(eski.get("t") or 0), 2)
+    return {
+        "gun": int(gun),
+        "eski_olcu": {"tutar": eski_t, "adet": int(eski.get("a") or 0),
+                      "kaynak": "anlik_giderler (durum=aktif)"},
+        "yeni_olcu": {"tutar": yeni_t,
+                      "adet": sum(k["a"] for k in yeni_kanal),
+                      "kanallar": yeni_kanal, "kaynak": "gider_kanonik"},
+        "fark": round(yeni_t - eski_t, 2),
+        "dusen_kartli_anlik_gider": {"toplam": round(sum(d["t"] for d in dusen), 2),
+                                     "kirilim": dusen},
+        "eklenen_kart_harcamasi": {"tutar": round(float(eklenen.get("t") or 0), 2),
+                                   "adet": int(eklenen.get("a") or 0)},
+        "not": ("Fark BEKLENEN bir şeydir. Düşenler = kartla girilmiş anlık gider "
+                "kopyaları (kart defteri zaten sayıyor). Eklenenler = kart defterinde "
+                "olup gidere hiç yazılmamış harcamalar. Yeni ölçüde her para çıkışı "
+                "TEK kanaldan sayılır."),
+    }
+
+
 class BaglaBody(BaseModel):
     kart_hareket_id: str
     hedef_tablo: str = "odeme_plani"

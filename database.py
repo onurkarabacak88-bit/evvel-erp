@@ -450,6 +450,80 @@ def ensure_abonelik(cur) -> None:
     """)
 
 
+def ensure_gider_kanonik(cur) -> None:
+    """KANONİK GİDER KATMANI — P&L'in TEK otoritesi (sahip kararı 2026-08-10).
+
+    Sahip: "Codex önerisinin uygulanmasını istiyorum ve diğer çalışma prensibi
+    tamamen ortadan kalksın, ama diğer uçlara gönderdiği verileri yeni oluşturacak
+    sistemden beslensin."
+
+    Codex hükmü: "Aynı harcama için tek 'maliyet satırı' olacak. Diğerleri onun
+    etrafındaki durum tabloları olacak. Bugünkü ekstre_import -> anlik_giderler
+    davranışı yanlış; ödeme kanıtını maliyet kaydına çeviriyor."
+
+    ⭐ YENİ İLKE — GİDER = PARA ÇIKIŞI, TEK YERDEN:
+        NAKİT çıkışı → anlik_giderler
+        KART  çıkışı → kart_hareketleri
+    Bir harcama ikisinden yalnız BİRİNDE sayılır. Kartla yapılan anlık gider
+    kaydı zaten kart_hareketleri'ne de yazılıyordu; artık kart tarafı otoritedir
+    ve anlık gider kopyası sayılmaz. Ekstre içe aktarmanın ürettiği
+    (kaynak_tablo='ekstre_import') gider satırları da böylece KENDİLİĞİNDEN
+    düşer — kart hareketi o parayı zaten sayıyor.
+
+    ÇİFT SAYIM ARTIK YAPISAL OLARAK İMKÂNSIZ: bir kaydın hangi kanaldan
+    sayılacağını ödeme yöntemi belirler, eşleştirme tahminine gerek kalmaz.
+
+    VERİ KAYBI YOK: hiçbir satır silinmez. Bu bir GÖRÜNÜM (view); ham tablolar
+    olduğu gibi durur, geçmiş denetlenebilir kalır.
+    """
+    cur.execute("""
+        CREATE OR REPLACE VIEW gider_kanonik AS
+        -- A) NAKİT (ve kart olmayan) giderler → anlık gider defterinden
+        SELECT
+            'nakit'::text                        AS kanal,
+            g.id::text                           AS id,
+            g.tarih::date                        AS tarih,
+            ABS(g.tutar)::numeric                AS tutar,
+            COALESCE(g.kategori,'Diğer')::text   AS kategori,
+            COALESCE(g.aciklama,'')::text        AS aciklama,
+            g.sube::text                         AS sube_id,
+            COALESCE(g.odeme_yontemi,'nakit')::text AS odeme_yontemi,
+            NULL::text                           AS kart_id,
+            (g.kaynak_tablo IS NOT NULL)         AS belge_bagli,
+            COALESCE(g.kaynak_tablo,'')::text    AS kaynak_tablo
+        FROM anlik_giderler g
+        WHERE COALESCE(g.durum,'aktif') = 'aktif'
+          AND COALESCE(g.odeme_yontemi,'nakit') <> 'kart'
+
+        UNION ALL
+
+        -- B) KART giderleri → kart defterinden (tek otorite).
+        --    Şahsi harcama gider DEĞİLDİR (işletme matrahına girmez).
+        --    Taksitli alımda bugünün gideri o ayın taksididir; alımın tamamı
+        --    değil (finans_core._TAKSIT_BORC_PAYI ile aynı doktrin).
+        SELECT
+            'kart'::text,
+            h.id::text,
+            h.tarih::date,
+            CASE
+                WHEN COALESCE(h.taksit_sayisi,1) > 1
+                    THEN ABS(h.tutar) / h.taksit_sayisi
+                ELSE ABS(h.tutar)
+            END::numeric,
+            COALESCE(h.kategori,'Diğer')::text,
+            COALESCE(h.aciklama,'')::text,
+            NULL::text,
+            'kart'::text,
+            h.kart_id::text,
+            EXISTS (SELECT 1 FROM kart_odeme_baglanti b WHERE b.kart_hareket_id = h.id),
+            'kart_hareketleri'::text
+        FROM kart_hareketleri h
+        WHERE h.islem_turu = 'HARCAMA'
+          AND COALESCE(h.durum,'aktif') = 'aktif'
+          AND COALESCE(h.harcama_tipi,'belirsiz') <> 'sahsi'
+    """)
+
+
 def ensure_kart_satici_kural(cur) -> None:
     """Şahsi/dükkan SATICI HAFIZASI: bir harcamayı sınıflandırınca o satıcı (örn.
     METRO) hatırlanır → sonraki aynı satıcı otomatik aynı tip önerilir. Bağımsız migration."""
