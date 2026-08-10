@@ -206,7 +206,11 @@ def abonelik_kesif(gun: int = 180, min_tekrar: int = 2):
             # Otomatik talimat imzası: düzenli tekrar + DEĞİŞKEN tutar + numara
             "abonelik_olabilir": bool(degisken and g["adet"] >= max(2, min_tekrar)),
         })
-    aday.sort(key=lambda x: (-x["adet"], x["satici"]))
+    # SIRALAMA: abone numarası taşıyan satır en güçlü abonelik adayıdır — otomatik
+    # talimatlı fatura ekstrede numarasını yazar, e-ticaret sitesi yazmaz. Ham
+    # "tekrar sayısı" sıralaması HEPSİBURADA'yı (34 kez, abonelik DEĞİL) en üste
+    # koyup ENERYA/MEPAŞ'ı ekranın altında bırakıyordu.
+    aday.sort(key=lambda x: (0 if x["numara_adaylari"] else 1, -x["adet"], x["satici"]))
     _y = [a for a in aday if a["abonelik_olabilir"] and not a["zaten_tanimli"]]
     return {"gun": int(gun), "aday_adet": len(aday), "abonelik_onerisi": len(_y),
             "adaylar": aday,
