@@ -574,7 +574,16 @@ def bordro_anomali_kurallari(p: dict, kayit: dict, onceki_net: Optional[float],
                          "mesaj": f"Saatlik ücret tanımsız — {VARSAYILAN_SAATLIK_UCRET:.0f} ₺ varsayıldı"})
 
     # 5) Geçen döneme göre sapma — "neden bu ay farklı?" sorusu.
-    if onceki_net and onceki_net > 0 and net > 0:
+    #    AMA: iki dönemden biri KISMİ ise (işe giriş/çıkış ayı) sapmanın sebebi
+    #    zaten bellidir; bunu anomali saymak gürültüdür. Canlı kalibrasyon
+    #    (2026-08-10): sistem yeni olduğu için kadronun çoğu Temmuz'da başlamış;
+    #    ham kural 8 kişiden 7'sini incelemeye düşürüyordu → sahip 10 tıklamadan
+    #    8 tıklamaya inerdi, kazanç yok. Kıyas ancak iki taraf da TAM dönemse anlamlı.
+    _bu_oran = personel_donem_orani(p, yil, ay)
+    _ony, _ona = (yil - 1, 12) if ay == 1 else (yil, ay - 1)
+    _onceki_oran = personel_donem_orani(p, _ony, _ona)
+    _kiyas_saglam = (_bu_oran == 1.0) and (_onceki_oran == 1.0)
+    if onceki_net and onceki_net > 0 and net > 0 and _kiyas_saglam:
         oran = abs(net - onceki_net) / onceki_net
         if oran > SAPMA_BANDI:
             yon = "arttı" if net > onceki_net else "azaldı"
@@ -590,13 +599,19 @@ def bordro_anomali_kurallari(p: dict, kayit: dict, onceki_net: Optional[float],
         bulgular.append({"kod": "eksik_gun", "seviye": "incele",
                          "mesaj": f"{float(kayit['eksik_gun']):g} gün eksik gün kesintisi var"})
 
-    # 7) Dönem-dışı / kısmi dönem (işe giriş veya çıkış bu aya denk geldi).
-    oran = personel_donem_orani(p, yil, ay)
-    if oran is not None and oran < 1.0:
-        bulgular.append({"kod": "kismi_donem", "seviye": "incele",
-                         "mesaj": f"Kısmi dönem — ayın %{oran*100:.0f}'i çalışıldı (giriş/çıkış)"})
+    # 7) Kısmi dönem (işe giriş/çıkış bu aya denk geldi) — BİLGİ, anomali DEĞİL.
+    #    Pro-rata zaten hesaba giriyor; tutar doğru. Sahip rakamı okurken "neden
+    #    düşük?" sorusunun cevabı ekranda dursun diye taşınır ama onayı bekletmez.
+    if _bu_oran is not None and _bu_oran < 1.0:
+        bulgular.append({"kod": "kismi_donem", "seviye": "bilgi",
+                         "mesaj": f"Kısmi dönem — ayın %{_bu_oran*100:.0f}'i çalışıldı (giriş/çıkış)"})
 
     return bulgular
+
+
+def _onay_bekletir(bulgular: list) -> bool:
+    """Onayı bekleten bulgu var mı? 'bilgi' seviyesi bekletmez (yalnız açıklar)."""
+    return any(b.get("seviye") in ("kritik", "incele") for b in bulgular)
 
 
 def bordro_anomali_tara(cur, yil: int, ay: int) -> dict:
@@ -645,8 +660,9 @@ def bordro_anomali_tara(cur, yil: int, ay: int) -> dict:
             k, kayit, float(k["onceki_net"]) if k.get("onceki_net") is not None else None, yil, ay
         )
         kayit["anomaliler"] = bulgular
-        kayit["sinif"] = "temiz" if not bulgular else "incele"
-        (temiz if not bulgular else incele).append(kayit)
+        bekletir = _onay_bekletir(bulgular)
+        kayit["sinif"] = "incele" if bekletir else "temiz"
+        (incele if bekletir else temiz).append(kayit)
 
     def _top(lst):
         return round(sum(x["hesaplanan_net"] for x in lst), 2)
