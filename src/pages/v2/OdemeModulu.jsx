@@ -93,6 +93,7 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
   const [vergi, setVergi] = useState(null);   // /duyu/vergi-takvim — yaklaşan vergi yükü
   const [izTarama, setIzTarama] = useState(null);  // /odeme-plani/gecikmis-iz-tarama
   const [cariUyum, setCariUyum] = useState(null);  // /odeme-plani/cari-uyumsuzluk
+  const [bordroOnay, setBordroOnay] = useState(null);  // maaş ödemesini bekleten onay engeli
   const [gecmis, setGecmis] = useState([]);
   // Sahip kararı (soru 3/9): tedarikçi ödemeleri NAKİT+KART birleşik.
   // Kasa defteri kartla yapılan tedarikçi ödemesini GÖREMEZ (kasadan para
@@ -133,7 +134,16 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
       // kalemini kapatmıyordu; sahip ödediği faturayı kuyrukta görmeye devam
       // ediyordu. Cari ESAS, kuyruk YORUM.
       api('/odeme-plani/cari-uyumsuzluk').catch(() => null),
-    ]).then(([k, ko, c, l, tg, vt, na, iz, cu]) => {
+      // 👤 BORDRO ONAY TIKANMASI (2026-08-10): maaş kalemleri kuyrukta görünür ama
+      // dönemin bordrosu 'onaylandi' değilse ödeme guard'ı reddeder — sahip sebebi
+      // ancak ödemeyi DENEYİNCE öğreniyordu. Canlıda Temmuz'da 10 kayıt taslakta
+      // kalıp 194.470 ₺'yi 9 gün bekletti. Engel, ödemeye BASMADAN görünsün.
+      // ⚠️ ARREARS: bugün ödenen bordro BİR ÖNCEKİ ayın dönemidir (1 Ağustos'ta
+      // Temmuz maaşı). Parametresiz çağrı cari ayı getirir ve tıkanmayı ISKALAR.
+      (() => { const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - 1);
+        return api(`/personel-aylik/onay-kuyrugu?yil=${d.getFullYear()}&ay=${d.getMonth() + 1}`).catch(() => null); })(),
+    ]).then(([k, ko, c, l, tg, vt, na, iz, cu, bok]) => {
+      setBordroOnay(bok);
       setVergi(vt);
       setNakitAkis(na);
       setIzTarama(iz);
@@ -1021,6 +1031,34 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
   if (gorunum === 'bekleyen') {
     return (
       <>
+        {/* BORDRO ONAYI BEKLİYOR — maaş kuyrukta duruyor ama ödenemez.
+            Burada ÖLÇÜM YAPILMAZ, ONAY DA VERİLMEZ: tek gerçek Ekip ▸ Maaş &
+            Avans'taki onay kuyruğudur; bu yalnız engeli görünür kılıp oraya köprüler. */}
+        {(() => {
+          const o = bordroOnay?.ozet;
+          if (!o || !o.bekleyen_adet) return null;
+          const gecikti = !!bordroOnay.odeme_gunu_gecti;
+          return (
+            <div style={{
+              ...kartYuzey, padding: '12px 16px', marginBottom: 12,
+              borderLeft: `3px solid ${gecikti ? R.kirmizi : R.amber}`, fontSize: 12.5, lineHeight: 1.6,
+            }}>
+              <b style={{ color: gecikti ? R.kirmizi : R.amber }}>
+                {gecikti ? '⛔' : '⏳'} {fmt(o.bekleyen_tutar)} maaş ödenemiyor — bordro onayı bekliyor
+              </b>
+              <div style={{ color: R.metin2, marginTop: 4 }}>
+                {bordroOnay.donem} dönemi · {o.bekleyen_adet} kişi
+                {gecikti ? ` · ödeme günü ${bordroOnay.gecikme_gun} gün geçti` : ''}.
+                Onaysız bordro ödeme adımından geçmez; {o.temiz_adet} kayıt tek tuşla onaylanabilir.
+              </div>
+              <button onClick={() => onKopru?.('__modul:ekip:maas')} style={{
+                marginTop: 9, padding: '8px 15px', borderRadius: 9, border: `1px solid ${R.cizgi3}`,
+                background: 'transparent', color: R.krem, cursor: 'pointer',
+                fontSize: 12, fontWeight: 600, fontFamily: 'inherit',
+              }}>👤 Bordro onay kuyruğunu aç</button>
+            </div>
+          );
+        })()}
         <KpiSeridi kpiler={[
           { etiket: 'Bugün ödenecek', deger: fmt(bugunToplam), alt: `${bugunVeGecmis.length} kalem · vade bugün/geçmiş${tutarsizNot}`, renk: bugunToplam > 0 ? R.kirmizi : R.yesil },
           { etiket: 'Bu hafta', deger: fmt(haftaToplam), alt: `${haftaSatir.length} kalem`, renk: R.krem },
