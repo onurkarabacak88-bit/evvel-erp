@@ -4173,8 +4173,14 @@ def kart_ekstre_yukle(dosya: UploadFile = File(...)):
         # için satır kayması yapıyordu — canlıda KONYA KENTPLAZA'ya "1/2" (gerçeği 3/3,
         # son taksit) ve taksitsiz SOYTÜRKLER'e komşusunun "1/5"ini yazmıştı.
         # Yanlış taksit no'su = bitmiş taksidin yeniden borç yazılması demek.
+        # YETKİ SINIRI: kart_analiz parser'ı bu ekstrede taksit ÜRETEBİLİYORSA
+        # (en az bir satırda taksit var) o parser taksit-yetkilidir; yedeğe HİÇ
+        # düşülmez. Aksi halde yedek, taksitsiz bir alıma komşusunun taksidini
+        # yapıştırıyordu — canlıda tek çekim SOYTÜRKLER 50.000 ₺'ye KARABULUT'un
+        # "1/5 · toplam 100.000" bilgisi bağlanmıştı (alım iki katına çıkardı).
+        _ka_taksit_yetkili = any(i.get("taksit") for i in sonuc["islemler"])
         for _isl in sonuc["islemler"]:
-            if _isl.get("tip") == "HARCAMA" and not _isl.get("taksit"):
+            if _isl.get("tip") == "HARCAMA" and not _isl.get("taksit") and not _ka_taksit_yetkili:
                 _info = _taksit_lk.get((_isl.get("tarih"), round(float(_isl.get("tutar") or 0), 2)))
                 if _info:
                     _isl["taksit"] = _info[0]
