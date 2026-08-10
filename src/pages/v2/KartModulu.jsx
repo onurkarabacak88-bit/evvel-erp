@@ -755,7 +755,12 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
     try {
       const islemler = (eksSonuc.islemler || []).filter((x) => x && x.durum === 'yeni')
         .map((x) => ({ tarih: x.tarih, tutar: x.tutar, tip: x.tip, aciklama: x.aciklama,
-                       kategori: x.kategori, harcama_tipi: x.oneri_tipi || undefined,
+                       kategori: x.kategori,
+                       // ⚠️ ÖNERİ OTOMATİK UYGULANMAZ (sahip kararı 2026-08-11:
+                       // "her zaman sorsun, bazen işletme için de alınmış olabilir").
+                       // Eskiden oneri_tipi doğrudan harcama_tipi olarak gönderiliyordu;
+                       // satır sınıflandırılmış doğuyor ve sahip hiç görmüyordu.
+                       // Artık satır 'belirsiz' doğar, öneri ekranda rozet olarak durur.
                        taksit_sayisi: x.taksit_sayisi || undefined,
                        taksit_anapara: x.taksit_anapara || undefined }));
       let yeniBorc = eksSonuc?.mutabakat?.sistem_borc;

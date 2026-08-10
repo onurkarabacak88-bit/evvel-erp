@@ -5030,14 +5030,16 @@ def kart_ekstre_import(body: EkstreImportBody):
             htip = (isl.harcama_tipi or "").strip().lower()
             if htip not in ("isletme", "sahsi", "belirsiz"):
                 if tip == "HARCAMA":
-                    htip = None
-                    _ak = _satici_anahtar(isl.aciklama)
-                    if _ak:
-                        cur.execute("SELECT harcama_tipi FROM kart_satici_kural WHERE anahtar=%s", (_ak,))
-                        _r = cur.fetchone()
-                        if _r:
-                            htip = dict(_r)["harcama_tipi"]
-                    htip = htip or "belirsiz"
+                    # ⚠️ SATICI HAFIZASI ARTIK OTOMATİK YAZMAZ — YALNIZ ÖNERİR
+                    # (sahip kararı 2026-08-11: "her zaman sorsun, aslında bazen
+                    # işletme için de alınmış olabilir!").
+                    # Eskiden kural bulununca harcama_tipi DOĞRUDAN yazılıyordu.
+                    # Ama aynı satıcıdan bazen işletme bazen şahsi alım olur:
+                    # A101'den ev alışverişi de yapılır, dükkâna peçete de alınır.
+                    # Geçmişe bakıp bugünü hükme bağlamak sessiz yanlış üretir.
+                    # Kural artık `oneri_tipi` olarak EKRANA taşınır; satır
+                    # 'belirsiz' doğar ve sahip karar verir.
+                    htip = "belirsiz"
                 else:
                     htip = "isletme"
             if not _zorla and not is_taksit:
