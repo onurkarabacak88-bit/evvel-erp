@@ -512,7 +512,11 @@ def ensure_gider_kanonik(cur) -> None:
             END::numeric,
             COALESCE(h.kategori,'Diğer')::text,
             COALESCE(h.aciklama,'')::text,
-            NULL::text,
+            -- Kart hareketinde şube yok (kartlar merkezî). Ekstre içe aktarma da
+            -- zaten sube='MERKEZ' yazıyordu; şube bazlı raporlar eski davranışla
+            -- aynı kalsın diye burada da MERKEZ damgalanır — NULL bırakmak
+            -- şubeli raporlarda gideri sessizce yok ederdi.
+            'MERKEZ'::text,
             'kart'::text,
             h.kart_id::text,
             EXISTS (SELECT 1 FROM kart_odeme_baglanti b WHERE b.kart_hareket_id = h.id),

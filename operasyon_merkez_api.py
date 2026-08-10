@@ -5506,11 +5506,14 @@ def ops_metrics_finans_ozet(
                 GROUP BY tarih, sube_id
             ),
             g AS (
-                SELECT tarih, sube AS sube_id, SUM(tutar)::numeric AS gider
-                FROM anlik_giderler
-                WHERE durum='aktif'
-                  AND tarih >= (CURRENT_DATE - (%s * INTERVAL '1 day'))
-                GROUP BY tarih, sube
+                -- KANONİK GİDER (2026-08-10, sahip kararı): nakit çıkışı anlık
+                -- giderden, kart çıkışı kart defterinden — her para çıkışı TEK
+                -- kanaldan. Eskiden burası anlik_giderler'i okuyordu ve ekstre
+                -- içe aktarmanın ürettiği kopya satırlar gideri şişiriyordu.
+                SELECT tarih, sube_id, SUM(tutar)::numeric AS gider
+                FROM gider_kanonik
+                WHERE tarih >= (CURRENT_DATE - (%s * INTERVAL '1 day'))
+                GROUP BY tarih, sube_id
             )
             SELECT
                 COALESCE(c.tarih, g.tarih) AS tarih,
@@ -5545,12 +5548,11 @@ def ops_metrics_finans_ozet(
                 kategori,
                 COUNT(*)::int AS kayit_adet,
                 ROUND(SUM(tutar)::numeric, 2) AS toplam_tutar
-            FROM anlik_giderler
-            WHERE durum='aktif'
-              AND tarih >= (CURRENT_DATE - (%s * INTERVAL '1 day'))
+            FROM gider_kanonik
+            WHERE tarih >= (CURRENT_DATE - (%s * INTERVAL '1 day'))
         """
         if sid:
-            q2 += " AND sube=%s"
+            q2 += " AND sube_id=%s"
             qp2.append(sid)
         q2 += " GROUP BY hafta, kategori ORDER BY hafta DESC, toplam_tutar DESC"
         cur.execute(q2, tuple(qp2))
