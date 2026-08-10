@@ -219,6 +219,60 @@ def ensure_kart_kategori_columns(cur) -> None:
     )
 
 
+def ensure_isletmeci(cur) -> None:
+    """İŞLETMECİ TANIMI (sahip, 2026-08-10: "şahsi harcamalar Onur/Fethi/Fatma olarak
+    ayrışmalı ama isim isim EKLEME — işletmeci tanımlarını kurmalıyız, kasa teslimdeki
+    desen gibi").
+
+    DESEN = kasa_teslim_alici: tanım tablosu + CRUD + harekette hem id hem AD taşınır.
+    Ad'ın da taşınması bilinçlidir ("kar tanesi"): kişi kaydı sonradan düzeltilse/pasife
+    çekilse bile geçmiş hareket kimin olduğunu söylemeye devam eder.
+
+    İSİMLER KODA GÖMÜLMEZ — tohum mevcut kartların `sahip` alanından türer, sonrası
+    ekrandan yönetilir. 'İşletme' bir kişi değildir, tohuma alınmaz.
+    """
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS isletmeci (
+            id        TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+            ad        TEXT NOT NULL,
+            unvan     TEXT,
+            aktif     BOOLEAN NOT NULL DEFAULT TRUE,
+            olusturma TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    """)
+    # Aynı kişi iki kez tanımlanmasın (Türkçe büyük/küçük tuzağına düşmeden: lower())
+    cur.execute("""
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_isletmeci_ad
+        ON isletmeci (lower(ad))
+    """)
+    # Kart → sahibi olan kişi (metin `sahip` alanı KORUNUR; bu onun kanonik karşılığı)
+    cur.execute("ALTER TABLE kartlar ADD COLUMN IF NOT EXISTS sahip_isletmeci_id TEXT REFERENCES isletmeci(id)")
+    # Şahsi harcama → KİMİN şahsi harcaması
+    cur.execute("ALTER TABLE kart_hareketleri ADD COLUMN IF NOT EXISTS sahsi_isletmeci_id TEXT REFERENCES isletmeci(id)")
+    cur.execute("ALTER TABLE kart_hareketleri ADD COLUMN IF NOT EXISTS sahsi_isletmeci_ad TEXT")
+    cur.execute("""
+        CREATE INDEX IF NOT EXISTS idx_kart_hareketleri_sahsi_kisi
+        ON kart_hareketleri (sahsi_isletmeci_id, harcama_tipi)
+    """)
+
+    # ── TOHUM: mevcut kart sahiplerinden kişi üret ────────────────────────────
+    # Yalnız BİR KEZ anlamlıdır; UNIQUE index tekrarları yutar. 'İşletme' hariç.
+    cur.execute("""
+        INSERT INTO isletmeci (ad, unvan)
+        SELECT DISTINCT btrim(sahip), 'ortak'
+          FROM kartlar
+         WHERE COALESCE(btrim(sahip),'') NOT IN ('', 'İşletme', 'Isletme', 'işletme')
+        ON CONFLICT (lower(ad)) DO NOTHING
+    """)
+    # Kartları kanonik kişiye bağla (ad eşleşmesi üzerinden, bir kez)
+    cur.execute("""
+        UPDATE kartlar k SET sahip_isletmeci_id = i.id
+          FROM isletmeci i
+         WHERE k.sahip_isletmeci_id IS NULL
+           AND lower(btrim(k.sahip)) = lower(i.ad)
+    """)
+
+
 def ensure_kart_satici_kural(cur) -> None:
     """Şahsi/dükkan SATICI HAFIZASI: bir harcamayı sınıflandırınca o satıcı (örn.
     METRO) hatırlanır → sonraki aynı satıcı otomatik aynı tip önerilir. Bağımsız migration."""
