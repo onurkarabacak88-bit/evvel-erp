@@ -233,17 +233,90 @@ def ensure_isletmeci(cur) -> None:
     """
     cur.execute("""
         CREATE TABLE IF NOT EXISTS isletmeci (
-            id        TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
-            ad        TEXT NOT NULL,
-            unvan     TEXT,
-            aktif     BOOLEAN NOT NULL DEFAULT TRUE,
-            olusturma TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            id         TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+            ad         TEXT NOT NULL,
+            ad_anahtar TEXT,
+            unvan      TEXT,
+            aktif      BOOLEAN NOT NULL DEFAULT TRUE,
+            olusturma  TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
     """)
-    # Aynı kişi iki kez tanımlanmasın (Türkçe büyük/küçük tuzağına düşmeden: lower())
+    cur.execute("ALTER TABLE isletmeci ADD COLUMN IF NOT EXISTS ad_anahtar TEXT")
+
+    # ⚠️ TÜRKÇE-İ TUZAĞI (canlıda yakalandı, 2026-08-10): ilk sürüm UNIQUE'i
+    # lower(ad) üzerine kurmuştu ve tohum İKİ "Fethi Karabacak" üretti. Sebep
+    # GÖRÜNMEZ: Garanti kartının adında 'i' + U+0307 (COMBINING DOT ABOVE) var,
+    # yani "Fethi̇" ≠ "Fethi" — ekranda aynı görünür, lower() eşitlemez.
+    # Kimlik artık NORMALİZE anahtar üzerinden kurulur: NFKD → kombine işaretleri
+    # at → TR harfleri sadeleştir → küçült → boşlukları tekille.
+    # Sıra ÖNEMLİ: önce Türkçe harfler ASCII'ye çevrilir (yoksa 'ı' son adımda
+    # tamamen silinirdi), sonra NFKD ayrıştırıp ASCII-DIŞI her şeyi atarız —
+    # görünmez kombine noktalar (U+0307) böyle temizlenir.
     cur.execute("""
-        CREATE UNIQUE INDEX IF NOT EXISTS uq_isletmeci_ad
-        ON isletmeci (lower(ad))
+        CREATE OR REPLACE FUNCTION isletmeci_ad_anahtar(p TEXT) RETURNS TEXT AS $$
+          SELECT btrim(regexp_replace(
+                   lower(regexp_replace(
+                     normalize(
+                       translate(COALESCE(p,''), 'çğıöşüÇĞİıÖŞÜâîûÂÎÛ',
+                                                 'cgiosuCGIIOSUaiuAIU'),
+                       NFKD),
+                     '[^[:ascii:]]', '', 'g')),
+                   '[[:space:]]+', ' ', 'g'))
+        $$ LANGUAGE SQL IMMUTABLE
+    """)
+    cur.execute("UPDATE isletmeci SET ad_anahtar = isletmeci_ad_anahtar(ad) WHERE ad_anahtar IS NULL OR ad_anahtar = ''")
+
+    # ── MÜKERRER BİRLEŞTİRME: aynı normalize ad = aynı kişi ───────────────────
+    # En eski kayıt kanonik; diğerlerinin kartları/hareketleri ona taşınır ve
+    # kendileri pasife alınır (silinmez — geçmiş kaybolmaz).
+    cur.execute("""
+        WITH kanonik AS (
+            SELECT ad_anahtar, MIN(olusturma) AS ilk
+              FROM isletmeci WHERE aktif=TRUE GROUP BY ad_anahtar HAVING COUNT(*) > 1
+        ), esle AS (
+            SELECT y.id AS yedek_id,
+                   (SELECT x.id FROM isletmeci x
+                     WHERE x.ad_anahtar = y.ad_anahtar AND x.aktif=TRUE
+                     ORDER BY x.olusturma LIMIT 1) AS ana_id
+              FROM isletmeci y JOIN kanonik k ON k.ad_anahtar = y.ad_anahtar
+             WHERE y.aktif=TRUE AND y.olusturma > k.ilk
+        )
+        UPDATE kartlar c SET sahip_isletmeci_id = e.ana_id
+          FROM esle e WHERE c.sahip_isletmeci_id = e.yedek_id
+    """)
+    cur.execute("""
+        WITH kanonik AS (
+            SELECT ad_anahtar, MIN(olusturma) AS ilk
+              FROM isletmeci WHERE aktif=TRUE GROUP BY ad_anahtar HAVING COUNT(*) > 1
+        ), esle AS (
+            SELECT y.id AS yedek_id,
+                   (SELECT x.id FROM isletmeci x
+                     WHERE x.ad_anahtar = y.ad_anahtar AND x.aktif=TRUE
+                     ORDER BY x.olusturma LIMIT 1) AS ana_id
+              FROM isletmeci y JOIN kanonik k ON k.ad_anahtar = y.ad_anahtar
+             WHERE y.aktif=TRUE AND y.olusturma > k.ilk
+        )
+        UPDATE kart_hareketleri h SET sahsi_isletmeci_id = e.ana_id
+          FROM esle e WHERE h.sahsi_isletmeci_id = e.yedek_id
+    """)
+    cur.execute("""
+        WITH kanonik AS (
+            SELECT ad_anahtar, MIN(olusturma) AS ilk
+              FROM isletmeci WHERE aktif=TRUE GROUP BY ad_anahtar HAVING COUNT(*) > 1
+        )
+        UPDATE isletmeci y SET aktif=FALSE
+          FROM kanonik k
+         WHERE y.ad_anahtar = k.ad_anahtar AND y.aktif=TRUE AND y.olusturma > k.ilk
+    """)
+
+    # MASKELİ ad kişi değildir — ilk tohum Ziraat kartının "F**** K********"
+    # sahip alanından sahte bir kişi üretmişti. Pasife çekilir (silinmez).
+    cur.execute("UPDATE isletmeci SET aktif=FALSE WHERE ad LIKE '%*%' AND aktif=TRUE")
+
+    cur.execute("DROP INDEX IF EXISTS uq_isletmeci_ad")
+    cur.execute("""
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_isletmeci_ad_anahtar
+        ON isletmeci (ad_anahtar) WHERE aktif = TRUE
     """)
     # Kart → sahibi olan kişi (metin `sahip` alanı KORUNUR; bu onun kanonik karşılığı)
     cur.execute("ALTER TABLE kartlar ADD COLUMN IF NOT EXISTS sahip_isletmeci_id TEXT REFERENCES isletmeci(id)")
@@ -257,19 +330,28 @@ def ensure_isletmeci(cur) -> None:
 
     # ── TOHUM: mevcut kart sahiplerinden kişi üret ────────────────────────────
     # Yalnız BİR KEZ anlamlıdır; UNIQUE index tekrarları yutar. 'İşletme' hariç.
+    # MASKELİ ad tohuma ALINMAZ: Ziraat kartının sahip alanı "F**** K********"
+    # şeklinde maskeli geliyordu ve sahte bir kişi üretmişti. '*' içeren ad kişi
+    # değildir — o kartın sahibini sahip ekrandan seçer.
     cur.execute("""
-        INSERT INTO isletmeci (ad, unvan)
-        SELECT DISTINCT btrim(sahip), 'ortak'
+        INSERT INTO isletmeci (ad, ad_anahtar, unvan)
+        SELECT DISTINCT ON (isletmeci_ad_anahtar(sahip))
+               btrim(sahip), isletmeci_ad_anahtar(sahip), 'ortak'
           FROM kartlar
          WHERE COALESCE(btrim(sahip),'') NOT IN ('', 'İşletme', 'Isletme', 'işletme')
-        ON CONFLICT (lower(ad)) DO NOTHING
+           AND sahip NOT LIKE '%*%'
+           AND isletmeci_ad_anahtar(sahip) <> ''
+        ON CONFLICT (ad_anahtar) WHERE aktif = TRUE DO NOTHING
     """)
-    # Kartları kanonik kişiye bağla (ad eşleşmesi üzerinden, bir kez)
+    # Kartları kanonik kişiye bağla — NORMALİZE anahtar üzerinden (ad'ın kendisiyle
+    # değil: "Fethi̇" ≠ "Fethi" tuzağı burada da vururdu).
     cur.execute("""
         UPDATE kartlar k SET sahip_isletmeci_id = i.id
           FROM isletmeci i
          WHERE k.sahip_isletmeci_id IS NULL
-           AND lower(btrim(k.sahip)) = lower(i.ad)
+           AND i.aktif = TRUE
+           AND isletmeci_ad_anahtar(k.sahip) = i.ad_anahtar
+           AND COALESCE(btrim(k.sahip),'') <> ''
     """)
 
 

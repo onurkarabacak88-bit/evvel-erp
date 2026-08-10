@@ -90,10 +90,11 @@ def isletmeci_ekle(body: IsletmeciBody):
     if len(ad) < 2:
         raise HTTPException(400, "Ad en az 2 karakter olmalı")
     with db() as (conn, cur):
-        # Aynı kişi iki kez girilmesin. Türkçe-I tuzağı: lower() PostgreSQL'de
-        # 'İ' → 'i̇' üretir; karşılaştırma iki tarafta da aynı işlevle yapıldığı
-        # için tutarlıdır (UNIQUE index de lower(ad) üzerinde).
-        cur.execute("SELECT id, aktif FROM isletmeci WHERE lower(ad)=lower(%s)", (ad,))
+        # ⚠️ Kimlik NORMALİZE anahtar üzerinden kurulur, ad'ın kendisiyle DEĞİL.
+        # lower(ad) yetmiyordu: "Fethi̇" (i + U+0307 kombine nokta) ile "Fethi"
+        # ekranda aynı görünür ama lower() eşitlemez — canlıda iki ayrı
+        # "Fethi Karabacak" kaydı doğmuştu. isletmeci_ad_anahtar() tek kapıdır.
+        cur.execute("SELECT id, aktif FROM isletmeci WHERE ad_anahtar=isletmeci_ad_anahtar(%s)", (ad,))
         var = cur.fetchone()
         if var:
             if not var["aktif"]:
@@ -103,8 +104,10 @@ def isletmeci_ekle(body: IsletmeciBody):
                 return {"success": True, "id": var["id"], "yeniden_aktif": True}
             raise HTTPException(400, f"'{ad}' zaten tanımlı")
         kid = str(uuid.uuid4())
-        cur.execute("INSERT INTO isletmeci (id, ad, unvan) VALUES (%s,%s,%s)",
-                    (kid, ad, (body.unvan or "").strip() or None))
+        cur.execute(
+            "INSERT INTO isletmeci (id, ad, ad_anahtar, unvan) "
+            "VALUES (%s,%s,isletmeci_ad_anahtar(%s),%s)",
+            (kid, ad, ad, (body.unvan or "").strip() or None))
     return {"success": True, "id": kid}
 
 
@@ -114,11 +117,12 @@ def isletmeci_guncelle(kid: str, body: IsletmeciBody):
     if len(ad) < 2:
         raise HTTPException(400, "Ad en az 2 karakter olmalı")
     with db() as (conn, cur):
-        cur.execute("SELECT id FROM isletmeci WHERE lower(ad)=lower(%s) AND id<>%s", (ad, kid))
+        cur.execute("SELECT id FROM isletmeci WHERE ad_anahtar=isletmeci_ad_anahtar(%s) "
+                    "AND id<>%s AND aktif=TRUE", (ad, kid))
         if cur.fetchone():
             raise HTTPException(400, f"'{ad}' başka bir kayıtta zaten tanımlı")
-        cur.execute("UPDATE isletmeci SET ad=%s, unvan=%s WHERE id=%s",
-                    (ad, (body.unvan or "").strip() or None, kid))
+        cur.execute("UPDATE isletmeci SET ad=%s, ad_anahtar=isletmeci_ad_anahtar(%s), unvan=%s "
+                    "WHERE id=%s", (ad, ad, (body.unvan or "").strip() or None, kid))
         if cur.rowcount == 0:
             raise HTTPException(404, "Kayıt bulunamadı")
         # Geçmiş hareketlerdeki AD kopyası da tazelenir — isim düzeltmesi
