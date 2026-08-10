@@ -252,15 +252,20 @@ def ensure_isletmeci(cur) -> None:
     # Sıra ÖNEMLİ: önce Türkçe harfler ASCII'ye çevrilir (yoksa 'ı' son adımda
     # tamamen silinirdi), sonra NFKD ayrıştırıp ASCII-DIŞI her şeyi atarız —
     # görünmez kombine noktalar (U+0307) böyle temizlenir.
+    # ⚠️ normalize(... NFKD) ve [[:ascii:]] PostgreSQL SÜRÜMÜNE bağlıdır; canlıda
+    # migration bu yüzden SESSİZCE düştü (startup try/except hatayı yutuyor, kolon
+    # hiç eklenmedi). Sürümden bağımsız yol: translate ile hem Türkçe harfleri
+    # ASCII'ye çevir hem de görünmez birleşen (combining) işaretleri sil.
     cur.execute("""
         CREATE OR REPLACE FUNCTION isletmeci_ad_anahtar(p TEXT) RETURNS TEXT AS $$
           SELECT btrim(regexp_replace(
-                   lower(regexp_replace(
-                     normalize(
-                       translate(COALESCE(p,''), 'çğıöşüÇĞİıÖŞÜâîûÂÎÛ',
-                                                 'cgiosuCGIIOSUaiuAIU'),
-                       NFKD),
-                     '[^[:ascii:]]', '', 'g')),
+                   lower(translate(
+                     translate(COALESCE(p,''),
+                               'çğıöşüÇĞİıÖŞÜâîûÂÎÛ',
+                               'cgiosuCGIIOSUaiuAIU'),
+                     chr(768)||chr(769)||chr(770)||chr(771)||chr(772)||chr(774)||
+                     chr(775)||chr(776)||chr(779)||chr(780)||chr(807)||chr(808),
+                     '')),
                    '[[:space:]]+', ' ', 'g'))
         $$ LANGUAGE SQL IMMUTABLE
     """)
@@ -271,42 +276,43 @@ def ensure_isletmeci(cur) -> None:
     # kendileri pasife alınır (silinmez — geçmiş kaybolmaz).
     cur.execute("""
         WITH kanonik AS (
-            SELECT ad_anahtar, MIN(olusturma) AS ilk
+            SELECT ad_anahtar, MIN((olusturma, id)::text) AS ilk
               FROM isletmeci WHERE aktif=TRUE GROUP BY ad_anahtar HAVING COUNT(*) > 1
         ), esle AS (
             SELECT y.id AS yedek_id,
                    (SELECT x.id FROM isletmeci x
                      WHERE x.ad_anahtar = y.ad_anahtar AND x.aktif=TRUE
-                     ORDER BY x.olusturma LIMIT 1) AS ana_id
+                     ORDER BY x.olusturma, x.id LIMIT 1) AS ana_id
               FROM isletmeci y JOIN kanonik k ON k.ad_anahtar = y.ad_anahtar
-             WHERE y.aktif=TRUE AND y.olusturma > k.ilk
+             WHERE y.aktif=TRUE AND (y.olusturma, y.id)::text > k.ilk
         )
         UPDATE kartlar c SET sahip_isletmeci_id = e.ana_id
           FROM esle e WHERE c.sahip_isletmeci_id = e.yedek_id
     """)
     cur.execute("""
         WITH kanonik AS (
-            SELECT ad_anahtar, MIN(olusturma) AS ilk
+            SELECT ad_anahtar, MIN((olusturma, id)::text) AS ilk
               FROM isletmeci WHERE aktif=TRUE GROUP BY ad_anahtar HAVING COUNT(*) > 1
         ), esle AS (
             SELECT y.id AS yedek_id,
                    (SELECT x.id FROM isletmeci x
                      WHERE x.ad_anahtar = y.ad_anahtar AND x.aktif=TRUE
-                     ORDER BY x.olusturma LIMIT 1) AS ana_id
+                     ORDER BY x.olusturma, x.id LIMIT 1) AS ana_id
               FROM isletmeci y JOIN kanonik k ON k.ad_anahtar = y.ad_anahtar
-             WHERE y.aktif=TRUE AND y.olusturma > k.ilk
+             WHERE y.aktif=TRUE AND (y.olusturma, y.id)::text > k.ilk
         )
         UPDATE kart_hareketleri h SET sahsi_isletmeci_id = e.ana_id
           FROM esle e WHERE h.sahsi_isletmeci_id = e.yedek_id
     """)
     cur.execute("""
         WITH kanonik AS (
-            SELECT ad_anahtar, MIN(olusturma) AS ilk
+            SELECT ad_anahtar, MIN((olusturma, id)::text) AS ilk
               FROM isletmeci WHERE aktif=TRUE GROUP BY ad_anahtar HAVING COUNT(*) > 1
         )
         UPDATE isletmeci y SET aktif=FALSE
           FROM kanonik k
-         WHERE y.ad_anahtar = k.ad_anahtar AND y.aktif=TRUE AND y.olusturma > k.ilk
+         WHERE y.ad_anahtar = k.ad_anahtar AND y.aktif=TRUE
+           AND (y.olusturma, y.id)::text > k.ilk
     """)
 
     # MASKELİ ad kişi değildir — ilk tohum Ziraat kartının "F**** K********"

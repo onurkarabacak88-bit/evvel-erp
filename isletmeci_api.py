@@ -51,6 +51,16 @@ def isletmeci_liste(aktif: bool = True, harcama: bool = True):
     """İşletmeci listesi. harcama=True ise her kişinin şahsi harcama yükü de gelir
     (kayıt sayısı + tutar) — ekran ayrı bir uca gitmeden kırılımı gösterebilsin."""
     with db() as (conn, cur):
+        # ŞEMA DENETİMİ — migration startup'ta try/except içinde çağrılıyor; bir
+        # SQL sürüm farkı yüzünden düşerse hata YUTULUYOR ve ekran hiçbir şey
+        # olmamış gibi liste basıyordu (canlıda tam bu oldu: ad_anahtar kolonu
+        # hiç eklenmedi, mükerrer "Fethi Karabacak" kayıtları birleşmedi).
+        # Eksiklik artık yanıtta GÖRÜNÜR — sessiz bozukluk kalmaz.
+        cur.execute(
+            "SELECT COUNT(*) AS var FROM information_schema.columns "
+            "WHERE table_name='isletmeci' AND column_name='ad_anahtar'")
+        _sema_tam = int((cur.fetchone() or {}).get("var") or 0) > 0
+
         cur.execute("SELECT * FROM isletmeci WHERE (%s IS FALSE OR aktif=TRUE) ORDER BY ad", (aktif,))
         kisiler = [_satir(r) for r in (cur.fetchall() or [])]
         if harcama and kisiler:
@@ -81,7 +91,11 @@ def isletmeci_liste(aktif: bool = True, harcama: bool = True):
         kart_adet = {str(r["kid"]): int(r["adet"]) for r in (cur.fetchall() or [])}
         for k in kisiler:
             k["kart_adet"] = kart_adet.get(str(k["id"]), 0)
-    return {"isletmeciler": kisiler, "adet": len(kisiler)}
+    return {"isletmeciler": kisiler, "adet": len(kisiler),
+            "sema_tam": _sema_tam,
+            "sema_notu": (None if _sema_tam else
+                          "Kimlik normalleştirme kolonu (ad_anahtar) yok — migration "
+                          "çalışmamış. Aynı kişi birden çok kez görünebilir.")}
 
 
 @router.post("/api/isletmeci")
