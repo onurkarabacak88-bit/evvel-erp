@@ -424,6 +424,24 @@ def odeme_plani_bugun(gun: int = 0, personel: int = 1):
                   WHERE op2.kaynak_tablo = 'sabit_giderler' AND op2.kaynak_id = sg.id
                     AND op2.durum != 'iptal'
                     AND op2.referans_ay = DATE_TRUNC('month', CURRENT_DATE))
+              -- ⭐ 4. KONTROL — EKSTREDEN ÖDENMİŞ Mİ? (sahip, 2026-08-10:
+              -- "ekstre yüklendiğinde buradan faturaları yakalayıp ayına göre
+              -- ödendi olarak mı tanımlıyor?")
+              -- Yukarıdaki üç kontrol kasa izini, fatura_giderleri kaynaklı kart
+              -- hareketini ve ödeme planını arıyordu. Ama otomatik talimatlı
+              -- fatura ekstreden `kaynak_tablo='ekstre_import'` olarak iniyor —
+              -- hiçbiri onu görmüyordu. Sonuç: fatura karttan ödenmiş olmasına
+              -- rağmen "tutar girilmedi" hatırlatması ay boyunca duruyordu.
+              -- Kimlik = gider adındaki ABONE NUMARASI ("GAZZE ELEKTRİK (01638544)").
+              -- Numara yoksa bu kontrol devreye girmez (eski davranış korunur).
+              AND NOT EXISTS (
+                  SELECT 1 FROM kart_hareketleri kx
+                  WHERE kx.islem_turu = 'HARCAMA'
+                    AND COALESCE(kx.durum,'aktif') = 'aktif'
+                    AND DATE_TRUNC('month', kx.tarih) = DATE_TRUNC('month', CURRENT_DATE)
+                    AND substring(sg.gider_adi from '([0-9]{5,})') IS NOT NULL
+                    AND position(substring(sg.gider_adi from '([0-9]{5,})')
+                                 in COALESCE(kx.aciklama,'')) > 0)
             ORDER BY gun_gecikme DESC
         """, (gun,))
         for g in (cur.fetchall() or []):
