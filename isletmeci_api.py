@@ -253,19 +253,31 @@ def sahsi_bekleyen(limit: int = 400):
     for s in satirlar:
         ak = _satici_anahtar(s.get("aciklama")) or "(?)"
         g = gruplar.setdefault(ak, {"satici": ak, "adet": 0, "tutar": 0.0,
-                                    "kartlar": set(), "hareket_idler": [], "ornek": None})
+                                    "kartlar": set(), "hareket_idler": [],
+                                    "ornek": None, "_kart": {}})
         g["adet"] += 1
         g["tutar"] = round(g["tutar"] + float(s["tutar"] or 0), 2)
-        if s.get("kart_adi"):
-            g["kartlar"].add(s["kart_adi"])
+        kad = s.get("kart_adi") or "(kartsız)"
+        g["kartlar"].add(kad)
         g["hareket_idler"].append(str(s["id"]))
+        # KART ALT KIRILIMI: aynı satıcı birden çok karttan kullanılmış olabilir
+        # (canlıda 13 satıcı böyle — TRENDYOL hem Fethi hem Onur kartından).
+        # Satıcıyı tek kişiye toptan yazmak o durumda YANLIŞ olur; ekran alt
+        # kırılımı gösterip "bu karttakiler" ayrımını yapabilsin.
+        a = g["_kart"].setdefault(kad, {"kart": kad, "adet": 0, "tutar": 0.0, "hareket_idler": []})
+        a["adet"] += 1
+        a["tutar"] = round(a["tutar"] + float(s["tutar"] or 0), 2)
+        a["hareket_idler"].append(str(s["id"]))
         if not g["ornek"]:
             g["ornek"] = {"tarih": str(s.get("tarih") or ""), "aciklama": s.get("aciklama")}
 
     liste = []
     for ak, g in gruplar.items():
         oneri = kural.get(ak)
+        kart_kirilim = sorted(g.pop("_kart").values(), key=lambda x: -x["tutar"])
         liste.append({**g, "kartlar": sorted(g["kartlar"]),
+                      "kart_kirilim": kart_kirilim,
+                      "cok_kartli": len(kart_kirilim) > 1,
                       "oneri": oneri,
                       "oneri_notu": (f"Daha önce {oneri['kez']} kez {oneri['kisi']} olarak "
                                      "işaretlendi" if oneri else None)})
@@ -276,8 +288,11 @@ def sahsi_bekleyen(limit: int = 400):
         "toplam_adet": sum(g["adet"] for g in liste),
         "toplam_tutar": round(sum(g["tutar"] for g in liste), 2),
         "onerili_adet": sum(g["adet"] for g in liste if g["oneri"]),
+        "cok_kartli_grup": sum(1 for g in liste if g["cok_kartli"]),
         "not": ("Kart sahibi atama sebebi DEĞİLDİR — aynı kart birden çok kişi "
                 "tarafından kullanılabilir. Kart adı yalnız ipucu olarak gösterilir."),
+        "uyari": ("Bir satıcı birden çok karttan kullanılmışsa (cok_kartli) toptan "
+                  "atama yanlış olabilir — kart kırılımından seçerek atayın."),
     }
 
 
