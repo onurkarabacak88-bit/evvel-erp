@@ -3904,7 +3904,12 @@ def gider_kategori_anomalisi(cur, gun: int = 30,
                    COUNT(*) FILTER (WHERE fis_kontrol_durumu='bekliyor'
                                     AND olusturma < NOW() - INTERVAL '7 days') AS gec_fis
             FROM anlik_giderler
-            WHERE tarih >= CURRENT_DATE - (%s || ' days')::interval
+            -- ARŞİV FİLTRESİ (2026-08-10): ekstre içe aktarmanın ürettiği eski
+            -- gider satırları durum='arsiv' oldu. Bu motor personel bazlı anomali
+            -- arıyor; arşiv satırlarının personeli yok (MERKEZ) ve NULL grubunda
+            -- birikip sahte "tekrar eden gider" alarmı üretirdi.
+            WHERE COALESCE(durum,'aktif') = 'aktif'
+              AND tarih >= CURRENT_DATE - (%s || ' days')::interval
               {where_sube}
             GROUP BY personel_id, kategori
             HAVING COUNT(*) >= 3
@@ -3935,7 +3940,8 @@ def gider_kategori_anomalisi(cur, gun: int = 30,
             cur.execute(
                 """
                 SELECT tutar FROM anlik_giderler
-                WHERE personel_id=%s AND kategori=%s
+                WHERE COALESCE(durum,'aktif') = 'aktif'
+                  AND personel_id=%s AND kategori=%s
                   AND tarih >= CURRENT_DATE - INTERVAL '30 days'
                 """,
                 (pid, kategori),
