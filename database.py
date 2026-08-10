@@ -608,6 +608,43 @@ def ensure_gider_kanonik(cur) -> None:
           -- finans_core._TAKSIT_BORC_PAYI ile aynı doktrin.
           AND (COALESCE(h.baslangic_tarihi, h.tarih) + (tk.i || ' month')::interval)::date
               <= CURRENT_DATE
+
+        UNION ALL
+
+        -- C) KASADAN ÇIKAN DİĞER GİDERLER (2026-08-10 kapsam denetimi).
+        -- Ölçüm: maaş 409.822 ₺ ve kira/sabit gider 251.783 ₺ kasadan çıkıyordu
+        -- ama kanonik katman yalnız anlik_giderler + kart_hareketleri okuduğu için
+        -- P&L'de HİÇ GÖRÜNMÜYORDU — 661.605 ₺'lik gider kayıptı.
+        -- Alınanlar: maaş, sabit gider (kira/aidat), fatura ödemesi, vadeli alım.
+        -- ALINMAYANLAR ve nedenleri:
+        --   ANLIK_GIDER    → (A) kanalında zaten var, çift olur
+        --   KART_ODEME     → kart borcunun kapatılması; harcama (B)'de sayıldı
+        --   BORC_TAKSIT    → kredi taksidi; anapara gider değil, faiz ayrı ele alınır
+        --   ACILIS_DEVRI   → açılış bakiyesi, gider değil
+        --   CIRO / DIS_KAYNAK / KASA_* → giriş veya düzeltme
+        SELECT
+            'kasa'::text,
+            kh2.id::text,
+            kh2.tarih::date,
+            ABS(kh2.tutar)::numeric,
+            CASE kh2.islem_turu
+                WHEN 'PERSONEL_MAAS'  THEN 'PERSONEL'
+                WHEN 'SABIT_GIDER'    THEN 'SABİT GİDER'
+                WHEN 'FATURA_ODEMESI' THEN 'FATURA'
+                WHEN 'VADELI_ODEME'   THEN 'TEDARİKÇİ'
+                ELSE 'Diğer'
+            END::text,
+            COALESCE(kh2.aciklama,'')::text,
+            COALESCE(kh2.sube_id, 'MERKEZ')::text,
+            'nakit'::text,
+            NULL::text,
+            TRUE,
+            'kasa_hareketleri'::text
+        FROM kasa_hareketleri kh2
+        WHERE kh2.islem_turu IN ('PERSONEL_MAAS','SABIT_GIDER','FATURA_ODEMESI','VADELI_ODEME')
+          AND COALESCE(kh2.durum,'aktif') = 'aktif'
+          AND COALESCE(kh2.kasa_etkisi, TRUE) = TRUE
+          AND kh2.tutar < 0
     """)
 
 
