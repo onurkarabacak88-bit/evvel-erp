@@ -101,21 +101,51 @@ def kasa_detay_breakdown(cur) -> dict:
 # KART BORCU
 # ══════════════════════════════════════════════════════════════
 
+# ── TAKSİTLİ ALIMIN BORÇ PAYI (2026-08-10, sahip bulgusu) ────────────────────
+# Sahip: "kartın ekstresi atılınca ... aynı borç kartta da var, üstüne bir de
+# kart borcu biniyor?!"
+#
+# KUSUR: taksitli alım deftere TOPLAM tutarla yazılır (ekstre-import
+# `tutar = taksit_anapara`), ama borç formülü o toplamın TAMAMINI bugünün borcu
+# sayıyordu. Oysa bankanın dönem borcu yalnız O AYA DÜŞEN taksidi içerir; kalan
+# taksitler henüz ekstreye girmemiştir. Üstüne kart kaydı ekstreden gelen
+# "Kalan Toplam Taksit"i de AYRICA taşıyor (gelecek_taksit_anapara) → aynı
+# gelecek yük iki kez görünüyordu.
+#
+# CANLI KANIT (HEPSİ BURADA WORLD): defterdeki 3 aktif taksitli alımın kalanı
+# 39.865,00 ₺; ekstre snapshot'ının "kalan taksit"i 42.459,39 ₺. Aynı borcun iki
+# ölçümü, üstelik 2.594,39 ₺ tutarsız.
+#
+# DÜZELTME: borç = ekstreye GİRMİŞ taksitler (geçen taksit × aylık pay).
+# Geçen taksit hesabı `kart_taksitler` ile birebir aynı (tek doğruluk kaynağı):
+# ilk ay 1 sayılır, taksit sayısını aşamaz.
+_TAKSIT_BORC_PAYI = """
+    CASE
+        WHEN islem_turu = 'HARCAMA' AND COALESCE(taksit_sayisi, 1) > 1 THEN
+            tutar / taksit_sayisi * LEAST(
+                taksit_sayisi,
+                GREATEST(1,
+                    (EXTRACT(YEAR  FROM CURRENT_DATE) - EXTRACT(YEAR  FROM COALESCE(baslangic_tarihi, tarih))) * 12
+                  + (EXTRACT(MONTH FROM CURRENT_DATE) - EXTRACT(MONTH FROM COALESCE(baslangic_tarihi, tarih))) + 1
+                )
+            )
+        WHEN islem_turu IN ('HARCAMA', 'FAIZ', 'DEVIR') THEN tutar
+        WHEN islem_turu = 'ODEME'                       THEN -tutar
+        ELSE 0
+    END
+"""
+
+
 def kart_borc(cur, kart_id: str) -> float:
     """
     Tek bir kartın guncel borcu.
     HARCAMA + FAIZ + DEVIR borcu artırır, ODEME düşürür.
     DEVIR = açılış/devreden borç (gider DEĞİL, kasaya dokunmaz; sadece borç).
+    TAKSİTLİ alımda yalnız ekstreye girmiş taksitler borçtur (bkz. _TAKSIT_BORC_PAYI).
     Bu formül sistemin tek kart borç kaynağıdır.
     """
-    cur.execute("""
-        SELECT COALESCE(SUM(
-            CASE
-                WHEN islem_turu IN ('HARCAMA', 'FAIZ', 'DEVIR') THEN tutar
-                WHEN islem_turu = 'ODEME'              THEN -tutar
-                ELSE 0
-            END
-        ), 0) AS borc
+    cur.execute(f"""
+        SELECT COALESCE(SUM({_TAKSIT_BORC_PAYI}), 0) AS borc
         FROM kart_hareketleri
         WHERE kart_id = %s AND durum = 'aktif'
     """, (kart_id,))
@@ -126,16 +156,11 @@ def tum_kart_borclari(cur) -> dict:
     """
     Tüm aktif kartların {kart_id: borc} map'i.
     Tek sorgu — N+1 problemi yok.
+    ⚠️ kart_borc ile AYNI ifadeyi kullanır (_TAKSIT_BORC_PAYI) — iki formül
+    ayrışırsa aynı kartın borcu iki ekranda farklı çıkar.
     """
-    cur.execute("""
-        SELECT kart_id,
-               COALESCE(SUM(
-                   CASE
-                       WHEN islem_turu IN ('HARCAMA', 'FAIZ', 'DEVIR') THEN tutar
-                       WHEN islem_turu = 'ODEME'              THEN -tutar
-                       ELSE 0
-                   END
-               ), 0) AS borc
+    cur.execute(f"""
+        SELECT kart_id, COALESCE(SUM({_TAKSIT_BORC_PAYI}), 0) AS borc
         FROM kart_hareketleri
         WHERE durum = 'aktif'
         GROUP BY kart_id
