@@ -519,6 +519,21 @@ def ensure_gider_kanonik(cur) -> None:
         FROM anlik_giderler g
         WHERE COALESCE(g.durum,'aktif') = 'aktif'
           AND COALESCE(g.odeme_yontemi,'nakit') <> 'kart'
+          -- ⚠️ ÖDEME ≠ GİDER, NAKİT TARAFINDA DA (2026-08-10 ölçümü).
+          -- Kart kanalında bu filtre vardı, nakit kanalında YOKTU. Canlıda tek
+          -- günde (26.07) 641.476 ₺ "EKSİ HESAP" kapatma gider sayılıyordu:
+          -- "fethi garanti eksi hesap" 238.976 · "fethi yapı kredi eksi hesap"
+          -- 207.500 · "yapı kredi onur eksi hesap" 126.000 · +69.000.
+          -- "Eksi hesap" = kredili mevduat (KMH) borcunun kapatılması → bilanço
+          -- hareketi, gider DEĞİL. Aynı mantık cari borç ödemesi için de geçerli.
+          AND translate(upper(COALESCE(g.aciklama,'')),
+                        'ÇĞıİÖŞÜÂÎÛ', 'CGIIOSUAIU') NOT LIKE '%CARI BORC ODEMESI%'
+          AND translate(upper(COALESCE(g.aciklama,'')),
+                        'ÇĞıİÖŞÜÂÎÛ', 'CGIIOSUAIU') NOT LIKE '%BORC KAPATMA%'
+          AND translate(upper(COALESCE(g.aciklama,'')),
+                        'ÇĞıİÖŞÜÂÎÛ', 'CGIIOSUAIU') NOT LIKE '%CARIYE ODEME%'
+          AND translate(upper(COALESCE(g.aciklama,'')),
+                        'ÇĞıİÖŞÜÂÎÛ', 'CGIIOSUAIU') NOT LIKE '%EKSI HESAP%'
 
         UNION ALL
 
@@ -604,6 +619,8 @@ def ensure_gider_kanonik(cur) -> None:
                         'ÇĞıİÖŞÜÂÎÛ', 'CGIIOSUAIU') NOT LIKE '%BORC KAPATMA%'
           AND translate(upper(COALESCE(h.aciklama,'')),
                         'ÇĞıİÖŞÜÂÎÛ', 'CGIIOSUAIU') NOT LIKE '%CARIYE ODEME%'
+          AND translate(upper(COALESCE(h.aciklama,'')),
+                        'ÇĞıİÖŞÜÂÎÛ', 'CGIIOSUAIU') NOT LIKE '%EKSI HESAP%'
           -- Gelecek taksit gider değildir (henüz ekstreye girmedi) —
           -- finans_core._TAKSIT_BORC_PAYI ile aynı doktrin.
           AND (COALESCE(h.baslangic_tarihi, h.tarih) + (tk.i || ' month')::interval)::date

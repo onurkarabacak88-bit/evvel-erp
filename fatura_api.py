@@ -2672,7 +2672,10 @@ _YURTDISI_ICERIK = ("RAILWAY.COM", "STOCKHOLM", "DUBLIN", "AMSTERDAM",
 # zaten faturasında/vadeli alımında gider olarak sayılmıştır. Bunu ayrıca "belgesiz
 # harcama" saymak aynı gideri İKİ KEZ saymak + olmayan bir vergi kaybı uydurmaktır.
 # Vergi matrahı ALIMDA doğar, ödemede değil.
-_BORC_KAPATMA_KALIP = ("CARI BORC ODEMESI", "BORC KAPATMA", "CARIYE ODEME")
+# "EKSI HESAP" = kredili mevduat (KMH) borcunun kapatılması — bilanço hareketi,
+# gider DEĞİL. Canlıda tek günde 641.476 ₺ bu şekilde gider sayılıyordu (2026-08-10).
+_BORC_KAPATMA_KALIP = ("CARI BORC ODEMESI", "BORC KAPATMA", "CARIYE ODEME",
+                       "EKSI HESAP")
 # Türkçe-I tuzağı: "ödemesi".upper() → "ÖDEMESI" (İ değil). Karşılaştırmayı
 # aksansız tabanda yapıyoruz ki büyük harf kuralı hiç devreye girmesin.
 _TR_SADE = str.maketrans("çğıöşüÇĞİıÖŞÜâîû", "cgiosuCGIIOSUaiu")
