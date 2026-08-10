@@ -2674,8 +2674,12 @@ _YURTDISI_ICERIK = ("RAILWAY.COM", "STOCKHOLM", "DUBLIN", "AMSTERDAM",
 # Vergi matrahı ALIMDA doğar, ödemede değil.
 # "EKSI HESAP" = kredili mevduat (KMH) borcunun kapatılması — bilanço hareketi,
 # gider DEĞİL. Canlıda tek günde 641.476 ₺ bu şekilde gider sayılıyordu (2026-08-10).
+# KREDİ ana parası da gider değildir: taksit/kapatma bilanço hareketidir, yalnız
+# FAİZ giderdir ve o `borc_envanteri`/BORC_TAKSIT hattında ayrıca yönetilir.
+# Canlıda elle anlık gider olarak girilmiş 215.350 ₺ kredi ödemesi gider sayılıyordu.
 _BORC_KAPATMA_KALIP = ("CARI BORC ODEMESI", "BORC KAPATMA", "CARIYE ODEME",
-                       "EKSI HESAP")
+                       "EKSI HESAP", "KREDI KAPATMA", "KREDI ODEMESI",
+                       "KREDI ODEME")
 # Türkçe-I tuzağı: "ödemesi".upper() → "ÖDEMESI" (İ değil). Karşılaştırmayı
 # aksansız tabanda yapıyoruz ki büyük harf kuralı hiç devreye girmesin.
 _TR_SADE = str.maketrans("çğıöşüÇĞİıÖŞÜâîû", "cgiosuCGIIOSUaiu")

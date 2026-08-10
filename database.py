@@ -534,6 +534,12 @@ def ensure_gider_kanonik(cur) -> None:
                         'ÇĞıİÖŞÜÂÎÛ', 'CGIIOSUAIU') NOT LIKE '%CARIYE ODEME%'
           AND translate(upper(COALESCE(g.aciklama,'')),
                         'ÇĞıİÖŞÜÂÎÛ', 'CGIIOSUAIU') NOT LIKE '%EKSI HESAP%'
+          -- Kredi anaparası gider değildir (taksit/kapatma = bilanço hareketi).
+          -- Yalnız FAİZ giderdir; o borc_envanteri/BORC_TAKSIT hattında yönetilir.
+          AND translate(upper(COALESCE(g.aciklama,'')),
+                        'ÇĞıİÖŞÜÂÎÛ', 'CGIIOSUAIU') NOT LIKE '%KREDI KAPATMA%'
+          AND translate(upper(COALESCE(g.aciklama,'')),
+                        'ÇĞıİÖŞÜÂÎÛ', 'CGIIOSUAIU') NOT LIKE '%KREDI ODEME%'
 
         UNION ALL
 
@@ -621,6 +627,12 @@ def ensure_gider_kanonik(cur) -> None:
                         'ÇĞıİÖŞÜÂÎÛ', 'CGIIOSUAIU') NOT LIKE '%CARIYE ODEME%'
           AND translate(upper(COALESCE(h.aciklama,'')),
                         'ÇĞıİÖŞÜÂÎÛ', 'CGIIOSUAIU') NOT LIKE '%EKSI HESAP%'
+          -- Kredi anaparası gider değildir (taksit/kapatma = bilanço hareketi).
+          -- Yalnız FAİZ giderdir; o borc_envanteri/BORC_TAKSIT hattında yönetilir.
+          AND translate(upper(COALESCE(h.aciklama,'')),
+                        'ÇĞıİÖŞÜÂÎÛ', 'CGIIOSUAIU') NOT LIKE '%KREDI KAPATMA%'
+          AND translate(upper(COALESCE(h.aciklama,'')),
+                        'ÇĞıİÖŞÜÂÎÛ', 'CGIIOSUAIU') NOT LIKE '%KREDI ODEME%'
           -- Gelecek taksit gider değildir (henüz ekstreye girmedi) —
           -- finans_core._TAKSIT_BORC_PAYI ile aynı doktrin.
           AND (COALESCE(h.baslangic_tarihi, h.tarih) + (tk.i || ' month')::interval)::date
