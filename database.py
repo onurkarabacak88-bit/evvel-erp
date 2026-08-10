@@ -512,16 +512,30 @@ def ensure_gider_kanonik(cur) -> None:
             END::numeric,
             COALESCE(h.kategori,'Diğer')::text,
             COALESCE(h.aciklama,'')::text,
-            -- Kart hareketinde şube yok (kartlar merkezî). Ekstre içe aktarma da
-            -- zaten sube='MERKEZ' yazıyordu; şube bazlı raporlar eski davranışla
-            -- aynı kalsın diye burada da MERKEZ damgalanır — NULL bırakmak
-            -- şubeli raporlarda gideri sessizce yok ederdi.
-            'MERKEZ'::text,
+            -- ŞUBE: kart hareketinde şube alanı yok (kartlar merkezî). AMA otomatik
+            -- talimatlı fatura ekstrede ABONE NUMARASINI taşır ve abonelik kaydı o
+            -- numaranın hangi şubeye ait olduğunu bilir. Böylece "GAZZE ELEKTRİK
+            -- 20.977 ₺" merkeze değil TEMA şubesine yazılır — şube kârlılığı
+            -- gerçeğe yaklaşır. Eşleşme yoksa eski davranış (MERKEZ) korunur;
+            -- NULL bırakmak şubeli raporlarda gideri sessizce yok ederdi.
+            COALESCE(ab.sube_id, 'MERKEZ')::text,
             'kart'::text,
             h.kart_id::text,
             EXISTS (SELECT 1 FROM kart_odeme_baglanti b WHERE b.kart_hareket_id = h.id),
             'kart_hareketleri'::text
         FROM kart_hareketleri h
+        -- Abone numarası ekstre metninde geçiyorsa aboneliği (ve şubesini) bul.
+        -- En uzun numara önce: kısa bir numara başka bir numaranın içinde
+        -- geçebilir, uzun eşleşme daha spesifiktir.
+        LEFT JOIN LATERAL (
+            SELECT a.sube_id
+            FROM abonelik a
+            WHERE a.aktif
+              AND COALESCE(a.abone_no,'') <> ''
+              AND position(a.abone_no in COALESCE(h.aciklama,'')) > 0
+            ORDER BY length(a.abone_no) DESC
+            LIMIT 1
+        ) ab ON TRUE
         WHERE h.islem_turu = 'HARCAMA'
           AND COALESCE(h.durum,'aktif') = 'aktif'
           AND COALESCE(h.harcama_tipi,'belirsiz') <> 'sahsi'
