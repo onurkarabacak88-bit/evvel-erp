@@ -442,7 +442,16 @@ def odeme_plani_bugun(gun: int = 0, personel: int = 1):
                 "tahmini_tutar": tahmini,
                 "asgari": None,
                 "tarih": None,
-                "gecikmis": gun_g > 0,
+                # ⚠️ GECİKMİŞ DEĞİL (2026-08-10, sahip: "gecikmiş borçta Ağustos'un
+                # bütün borçları da gözüküyor galiba"). Bu satırların TUTARI YOK
+                # ve VADESİ YOK — henüz borç değiller, fatura bekleniyor. Eskiden
+                # `gecikmis: gun_g > 0` diyordu; tutarları 0 olduğu için toplamı
+                # bozmuyordu ama gecikmiş KALEM SAYISINI şişiriyordu (31 görünüyor,
+                # gerçekte 28). "Vadesi geçti" demek için önce bir vade gerekir.
+                "gecikmis": False,
+                # Bilgi kaybolmasın: ödeme günü geçmişse ayrı bayrakla söylenir —
+                # ekran isterse "fatura gecikti" uyarısı verebilir.
+                "odeme_gunu_gecti": gun_g > 0,
                 "gun_gecikme": gun_g,
                 "tutar_girilmedi": True,
             })
