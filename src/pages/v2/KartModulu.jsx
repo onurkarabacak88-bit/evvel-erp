@@ -189,6 +189,43 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
     }
   };
 
+  const [abonelikler, setAbonelikler] = useState([]);
+  const [abKesif, setAbKesif] = useState(null);
+  const [abEslesme, setAbEslesme] = useState(null);
+  const [abMesgul, setAbMesgul] = useState(false);
+
+  /** Keşif adayından abonelik tanımı kurar (sahip onayıyla). */
+  const abonelikKur = async (aday, ek = {}) => {
+    setAbMesgul(true);
+    try {
+      await api('/abonelik', { method: 'POST', body: {
+        saglayici: aday.satici,
+        hizmet_turu: ek.hizmet_turu || 'diger',
+        abone_no: ek.abone_no || (aday.numara_adaylari || [])[0] || null,
+        ekstre_kalip: aday.satici,
+      } });
+      onToast?.(`🔗 ${aday.satici} aboneliği tanımlandı`);
+      yukle();
+    } catch (e) { onToast?.(e?.message || 'Abonelik kurulamadı'); }
+    finally { setAbMesgul(false); }
+  };
+
+  /** Eşleştirme önerisini onaylar: ödeme kanıtı bağlanır + plan kapanır. */
+  const eslesmeOnayla = async (o) => {
+    setAbMesgul(true);
+    try {
+      const r = await api('/abonelik/bagla', { method: 'POST', body: {
+        kart_hareket_id: o.kart_hareket_id, hedef_tablo: 'odeme_plani',
+        hedef_id: o.plan_id, abonelik_id: o.abonelik_id,
+        eslesme_temeli: o.eslesme_temeli, guven: o.guven,
+        plani_kapat: true, kuru: false,
+      } });
+      onToast?.(r?.mesaj || '✓ Karttan ödendi olarak işaretlendi');
+      yukle();
+    } catch (e) { onToast?.(e?.message || 'Bağlanamadı'); }
+    finally { setAbMesgul(false); }
+  };
+
   const yukle = () => {
     setYukleniyor(true);
     setHata('');
@@ -206,7 +243,16 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
       api('/kartlar/sahsi-cekim-raporu').catch(() => null),
       api('/kartlar/fatura-eslesme').catch(() => null),
       api('/kartlar/taksit-yuku').catch(() => null),
-    ]).then(([k, o, h, hr, an, ar, sc, fe, ty]) => {
+      // 🔗 ABONELİK KİMLİĞİ (2026-08-10): otomatik talimatlı faturanın ekstredeki
+      // kimliği. Tutar eşleştirmesi değişken faturada çalışmıyor (canlıda 9/9
+      // yanlış öneri); kimlik = abone/tesisat no.
+      api('/abonelik').catch(() => null),
+      api('/abonelik/kesif?gun=180').catch(() => null),
+      api('/abonelik/odeme-eslestir?gun=120').catch(() => null),
+    ]).then(([k, o, h, hr, an, ar, sc, fe, ty, ab, abk, abe]) => {
+      setAbonelikler(ab?.abonelikler || []);
+      setAbKesif(abk);
+      setAbEslesme(abe);
       setAnaliz(an);
       setArsiv(ar);
       setSahsiRapor(sc);
@@ -1393,6 +1439,110 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
         { etiket: 'Gecikmiş kart', deger: String(gecikmis.length), alt: gecikmis.length ? gecikmis.map(k => k.ad).join(', ') : 'yok', renk: gecikmis.length ? R.kirmizi : R.yesil },
         { etiket: 'Sonraki son ödeme', deger: yakinlar[0] ? gunMetni(yakinlar[0].gunKaldi) : '—', alt: yakinlar[0] ? yakinlar[0].ad : 'vadesi gelen yok', renk: R.krem },
       ]} />
+      {/* ── 🔗 ABONELİK KİMLİĞİ & KARTTAN ÖDENDİ EŞLEŞTİRMESİ ─────────────────
+          Sahip: "faturalar karttan ödendiği için otomatik talimat, ekstre gelene
+          kadar açık kalıyor; ekstre yüklenince eşleşmeli ve 'karttan ödendi'
+          olmalı. Değişkenlerin tutarı her ay farklı — fatura numarasından bul."
+          Codex: tutar kanıt değildir, bağlanacak şey satıcı değil ABONELİK.
+          Canlı kanıt: tutar+ad eşleştirmesi 9 öneri üretti, 9'u da yanlıştı. */}
+      {(() => {
+        const kesifAday = (abKesif?.adaylar || []).filter(a => a.abonelik_olabilir && !a.zaten_tanimli);
+        const oneri = (abEslesme?.oneriler || []).filter(o => o.karar === 'oneri');
+        const belirsiz = (abEslesme?.oneriler || []).filter(o => o.karar === 'belirsiz');
+        if (!abonelikler.length && !kesifAday.length && !oneri.length) return null;
+        return (
+          <div style={{ ...kartYuzey, padding: '13px 16px', marginBottom: 12, fontSize: 12.5, lineHeight: 1.65 }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 8 }}>
+              <b style={{ color: R.krem, fontSize: 13 }}>🔗 Abonelik kimliği & karttan ödendi</b>
+              <span style={{ color: R.not2, fontSize: 11.5 }}>
+                {abonelikler.length} tanımlı · {kesifAday.length} aday · {oneri.length} eşleşme önerisi
+              </span>
+            </div>
+
+            {oneri.length > 0 && (
+              <div style={{ marginBottom: 10 }}>
+                <div style={{ color: R.metin2, marginBottom: 6 }}>
+                  Bu kart harcamaları açık bir borcun ödemesi görünüyor — onaylarsan borç
+                  <b> "karttan ödendi"</b> olarak kapanır. <b style={{ color: R.yesil }}>Kasadan para çıkmaz</b>;
+                  para kart ekstresi ödendiğinde çıkar.
+                </div>
+                {oneri.slice(0, 8).map((o) => (
+                  <div key={o.kart_hareket_id} style={{
+                    display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+                    padding: '8px 0', borderTop: `1px solid ${R.cizgi2}`,
+                  }}>
+                    <span style={{ flex: '1 1 260px', color: R.metin2 }}>
+                      <b style={{ color: R.krem }}>{o.saglayici}</b> · {o.plan_aciklama || '—'}
+                      <br />
+                      <span style={{ fontSize: 11.5 }}>
+                        kart: {o.kart_aciklama} · {o.kart_tarih} · <b style={{ fontFamily: F.mono }}>{fmt(o.kart_tutar)}</b>
+                        {' '}→ borç vadesi {o.vade} · <b style={{ fontFamily: F.mono }}>{fmt(o.kalan_tutar)}</b>
+                      </span>
+                      <br />
+                      <span style={{ fontSize: 11, color: R.not }}>
+                        eşleşme: {o.eslesme_temeli} · güven %{o.guven} · {o.tutar_notu}
+                      </span>
+                    </span>
+                    <button disabled={abMesgul} onClick={() => eslesmeOnayla(o)} style={{
+                      padding: '7px 14px', borderRadius: 9, border: 'none', fontFamily: 'inherit',
+                      cursor: abMesgul ? 'default' : 'pointer', fontSize: 12, fontWeight: 700,
+                      background: 'linear-gradient(150deg, #E0A559, #AF6C29)', color: '#1C1309',
+                    }}>✓ Karttan ödendi</button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {belirsiz.length > 0 && (
+              <div style={{ color: R.amber, fontSize: 11.5, marginBottom: 8 }}>
+                ⚠ {belirsiz.length} harcamada sistem seçim yapmadı — aynı sağlayıcının birden çok
+                açık borcu var ve ekstrede abone numarası yok. Abonelik tanımına abone/tesisat
+                numarasını girersen bunlar da otomatik eşleşir.
+              </div>
+            )}
+
+            {kesifAday.length > 0 && (
+              <>
+                <div style={{ color: R.metin2, marginTop: 4, marginBottom: 6 }}>
+                  <b style={{ color: R.amber }}>Abonelik adayları</b> — her ay tekrar eden ve
+                  <b> tutarı değişen</b> ödemeler (otomatik talimat imzası). Tanımlarsan sonraki
+                  ekstreler kendiliğinden eşleşir.
+                </div>
+                {kesifAday.slice(0, 6).map((a) => (
+                  <div key={a.satici} style={{
+                    display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+                    padding: '7px 0', borderTop: `1px solid ${R.cizgi2}`,
+                  }}>
+                    <span style={{ flex: '1 1 260px', color: R.metin2 }}>
+                      <b style={{ color: R.krem }}>{a.satici}</b> · {a.adet} kez ·{' '}
+                      <span style={{ fontFamily: F.mono }}>{fmt(a.en_dusuk)} – {fmt(a.en_yuksek)}</span>
+                      {a.numara_adaylari?.length ? (
+                        <><br /><span style={{ fontSize: 11, color: R.not }}>
+                          abone no adayı: {a.numara_adaylari.slice(0, 3).join(' · ')}
+                        </span></>
+                      ) : (
+                        <><br /><span style={{ fontSize: 11, color: R.not }}>
+                          ekstrede numara yok — eşleşme sağlayıcı adıyla kurulur
+                        </span></>
+                      )}
+                    </span>
+                    <button disabled={abMesgul} onClick={() => abonelikKur(a)} style={{
+                      padding: '7px 14px', borderRadius: 9, border: `1px solid ${R.cizgi3}`,
+                      background: 'transparent', color: R.krem, cursor: abMesgul ? 'default' : 'pointer',
+                      fontSize: 12, fontWeight: 600, fontFamily: 'inherit',
+                    }}>+ Abonelik tanımla</button>
+                  </div>
+                ))}
+              </>
+            )}
+
+            <div style={{ color: R.not2, fontSize: 11, marginTop: 9 }}>
+              Eşleştirme <b>abonelik kimliğinden</b> kurulur; tutar kanıt değildir (değişken
+              faturada her ay farklıdır). Sistem bağlar ve gösterir — kapatma kararı sizindir.
+            </div>
+          </div>
+        );
+      })()}
       <Liste
         satirlar={kartSatir
           .slice()
