@@ -4107,16 +4107,36 @@ def kart_gelecek_ay_yuk():
     }
 
 
+# Şehir/jenerik kelimeler satıcı KİMLİĞİ değildir — anahtar olarak seçilirse
+# hafıza alakasız harcamalara yayılır. Canlı vaka (2026-08-10): "KONYA SU"
+# sınıflandırılınca anahtar "KONYA" öğrenildi ve "KONYA SELÇUKLU",
+# "KONYA KENTPLAZA" gibi bambaşka harcamalara işletme önerisi çıkardı.
+_SATICI_ATIL = {
+    "KONYA", "ISTANBUL", "İSTANBUL", "IZMIR", "İZMİR", "ANKARA", "KARAMAN",
+    "BURSA", "ANTALYA", "ADANA", "MERSIN", "MERSİN", "TR", "TUR", "TURKIYE",
+    "FATURA", "ODEME", "ÖDEME", "OTOMATIK", "OTOMATİK", "TALIMAT", "TALİMAT",
+    "SAN", "TIC", "TİC", "LTD", "STI", "ŞTI", "AS", "A.S", "ANONIM", "ANONİM",
+    "SIRKETI", "ŞİRKETİ", "LIMITED", "LİMİTED", "MERKEZ", "SUBE", "ŞUBE",
+}
+
+
 def _satici_anahtar(aciklama: Optional[str]) -> Optional[str]:
-    """Açıklamadan satıcı anahtarı (ilk anlamlı kelime) — hafıza eşleşmesi için.
-    'METRO METRO GROSMARKET KOKONYA TR' → 'METRO'."""
+    """Açıklamadan satıcı anahtarı (ilk ANLAMLI kelime) — hafıza eşleşmesi için.
+    'METRO METRO GROSMARKET KOKONYA TR' → 'METRO'.
+    Şehir/jenerik kelimeler atlanır; hepsi atılırsa ilk kelimeye düşülür
+    (hiç anahtar üretmemektense zayıf anahtar üretmek yeğdir)."""
     import re as _re
     s = (aciklama or "").upper().strip()
     s = _re.sub(r"[^A-ZÇĞİÖŞÜ0-9 ]", " ", s)
+    ilk = None
     for tok in s.split():
-        if len(tok) >= 3 and not tok.isdigit():
+        if len(tok) < 3 or tok.isdigit():
+            continue
+        if ilk is None:
+            ilk = tok
+        if tok not in _SATICI_ATIL:
             return tok
-    return None
+    return ilk
 
 
 def _ekstre_txn_map(t: dict) -> dict:
@@ -4315,7 +4335,15 @@ def _ekstre_eslesme_mutabakat(sonuc):
         # SATICI HAFIZASI: her işleme öneri tipi (hepsi 'belirsiz' başlar, hafıza öğrendikçe önerir)
         try:
             cur.execute("SELECT anahtar, harcama_tipi FROM kart_satici_kural")
-            _kurallar = {r["anahtar"]: r["harcama_tipi"] for r in (cur.fetchall() or [])}
+            # ⚠️ ŞEHİR/JENERİK ANAHTAR KULLANILMAZ (2026-08-10): geçmişte
+            # "KONYA SU" sınıflandırılırken anahtar "KONYA" öğrenilmişti ve
+            # "KONYA SELÇUKLU", "KONYA KENTPLAZA" gibi bambaşka harcamalara
+            # öneri yayıyordu. Yazma tarafı düzeltildi; okuma tarafında da
+            # eski kirli kayıtlar SESSİZCE göz ardı edilir (veri temizliği
+            # beklemeden koruma sağlar).
+            _kurallar = {r["anahtar"]: r["harcama_tipi"]
+                         for r in (cur.fetchall() or [])
+                         if str(r["anahtar"]).upper() not in _SATICI_ATIL}
         except Exception:
             _kurallar = {}
         for _isl in sonuc.get("islemler", []):
