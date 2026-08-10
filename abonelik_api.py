@@ -354,6 +354,85 @@ def abonelik_odeme_eslestir(gun: int = 120):
     }
 
 
+@router.get("/api/abonelik/maliyet-cift-sayim")
+def maliyet_cift_sayim(gun: int = 365):
+    """MALİYET ÇİFT SAYIMI RÖNTGENİ — hiçbir şeye dokunmaz.
+
+    Sahip (2026-08-10): "sistemde zaten karttan ödenmiş olacağı için bunu maliyet
+    hesaplarında doğru kullanma derdindeyim."
+
+    P&L/maliyet raporları `anlik_giderler` (durum='aktif') üzerinden çalışıyor
+    (operasyon_merkez_api ciro-gider ve kategori trendi). Aynı harcama birden çok
+    kanaldan buraya düşerse maliyet SESSİZCE şişer. Bu uç kanalları ayrıştırır ve
+    kanallar arası şüpheli örtüşmeyi ölçer.
+
+    ÖLÇÜM, HÜKÜM DEĞİL: örtüşme "aynı tutar ±1 ₺ + ±7 gün + farklı kaynak" demektir;
+    meşru olabilir (aynı gün iki eşit fatura). Sayı, temizlik emri değil sinyaldir.
+    """
+    with db() as (conn, cur):
+        cur.execute(
+            """SELECT COALESCE(kaynak_tablo,'(elle)') AS kanal,
+                      COUNT(*)::int AS adet,
+                      COALESCE(SUM(tutar),0)::float AS tutar,
+                      MIN(tarih)::text AS ilk, MAX(tarih)::text AS son
+                 FROM anlik_giderler
+                WHERE COALESCE(durum,'aktif')='aktif'
+                  AND tarih >= CURRENT_DATE - %s
+                GROUP BY 1 ORDER BY 3 DESC""", (int(gun),))
+        kanallar = [dict(r) for r in (cur.fetchall() or [])]
+        # Kanallar arası örtüşme: farklı kaynaktan gelen eş tutar/tarih çiftleri
+        cur.execute(
+            """SELECT a.id AS a_id, COALESCE(a.kaynak_tablo,'(elle)') AS a_kanal,
+                      a.tarih::text AS a_tarih, a.tutar::float AS a_tutar,
+                      LEFT(COALESCE(a.aciklama,''),50) AS a_aciklama,
+                      b.id AS b_id, COALESCE(b.kaynak_tablo,'(elle)') AS b_kanal,
+                      b.tarih::text AS b_tarih, b.tutar::float AS b_tutar,
+                      LEFT(COALESCE(b.aciklama,''),50) AS b_aciklama
+                 FROM anlik_giderler a
+                 JOIN anlik_giderler b
+                   ON b.id > a.id
+                  AND ABS(b.tutar - a.tutar) <= 1.0
+                  AND b.tarih::date BETWEEN a.tarih::date - 7 AND a.tarih::date + 7
+                  AND COALESCE(b.kaynak_tablo,'(elle)') <> COALESCE(a.kaynak_tablo,'(elle)')
+                WHERE COALESCE(a.durum,'aktif')='aktif' AND COALESCE(b.durum,'aktif')='aktif'
+                  AND a.tarih >= CURRENT_DATE - %s
+                  AND a.tutar > 0
+                ORDER BY a.tutar DESC
+                LIMIT 200""", (int(gun),))
+        ortusme = [dict(r) for r in (cur.fetchall() or [])]
+        # Ekstre kaynaklı giderlerin bir ödeme kanıtı bağı var mı?
+        cur.execute(
+            """SELECT COUNT(*)::int AS adet, COALESCE(SUM(g.tutar),0)::float AS tutar
+                 FROM anlik_giderler g
+                WHERE COALESCE(g.durum,'aktif')='aktif'
+                  AND g.kaynak_tablo='ekstre_import'
+                  AND g.tarih >= CURRENT_DATE - %s
+                  AND NOT EXISTS (SELECT 1 FROM kart_odeme_baglanti b
+                                   WHERE b.kart_hareket_id = g.kaynak_id)""", (int(gun),))
+        _b = dict(cur.fetchone() or {})
+
+    toplam = round(sum(k["tutar"] for k in kanallar), 2)
+    ort_tutar = round(sum(o["a_tutar"] for o in ortusme), 2)
+    return {
+        "gun": int(gun),
+        "maliyete_giren_toplam": toplam,
+        "kanallar": kanallar,
+        "kanal_adet": len(kanallar),
+        "ortusme_adet": len(ortusme),
+        "ortusme_tutar": ort_tutar,
+        "ortusme_orani_pct": round(ort_tutar / toplam * 100, 2) if toplam else 0.0,
+        "ortusmeler": ortusme[:60],
+        "belgesiz_ekstre_gideri": {"adet": int(_b.get("adet") or 0),
+                                   "tutar": round(float(_b.get("tutar") or 0), 2)},
+        "not": ("Örtüşme = aynı tutar ±1 ₺ + ±7 gün + FARKLI kaynak kanalı. Meşru "
+                "olabilir (aynı gün iki eşit fatura); bu bir sinyal, temizlik emri değil."),
+        "yorum": ("P&L `anlik_giderler` üzerinden okunuyor. 'ekstre_import' kanalı "
+                  "ödeme kanıtından gider üretir; belge kanalı da aynı gideri yazarsa "
+                  "maliyet iki kez sayılır. Ödeme kanıtı bağı olmayan ekstre gideri, "
+                  "belgesi hiç eşleşmemiş harcamadır."),
+    }
+
+
 class BaglaBody(BaseModel):
     kart_hareket_id: str
     hedef_tablo: str = "odeme_plani"
