@@ -27,6 +27,7 @@ BU MODÜLÜN KURALLARI
 
 import re
 import uuid
+from datetime import date as _date
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException
@@ -291,6 +292,73 @@ def abonelik_odeme_eslestir(gun: int = 120):
                     abo, temel = a, "saglayici_adi"
                     break
         if not abo:
+            # ── AD EŞLEŞMESİ (sahip, 2026-08-10: "açıkta duran faturalar, şirket
+            # faturaları vs gibi ödemelerle İSİMLER TUTARSA bunları ödeme alanı
+            # yazarak kart ödemesi mantığına alacak mı?")
+            # Abonelik tanımı olmayan tedarikçi/şirket faturaları için: kart
+            # harcamasının metniyle açık borcun adı ANLAMLI kelimede örtüşüyorsa
+            # aday çıkar. ⚠️ TUTAR KANIT DEĞİL, jenerik kelime kanıt değil —
+            # önceki sürüm tutar+tarihle 9 öneri üretmiş, 9'u da yanlış çıkmıştı.
+            _ATIL = {"FATURA", "ODEME", "ODEMESI", "OTOMATIK", "TALIMAT", "SAN",
+                     "TIC", "LTD", "STI", "ANONIM", "SIRKETI", "LIMITED", "TICARET",
+                     "SANAYI", "KONYA", "ISTANBUL", "IZMIR", "ANKARA", "KARAMAN",
+                     "MERKEZ", "SUBE", "CARI", "BORC", "KREDI", "GIDER", "SABIT",
+                     "VADELI", "ALIM", "ALIMI", "KISMI", "GIDA", "ENERJI", "HIZMET",
+                     "HIZMETLERI", "URUN", "GENEL", "DIGER", "TUTAR", "TAAHHUT"}
+
+            def _kel(x):
+                t = _sade(x)
+                return {w for w in t.split() if len(w) >= 4 and w not in _ATIL and not w.isdigit()}
+
+            h_kel = _kel(h["aciklama"])
+            if not h_kel:
+                continue
+            ad_adaylari = []
+            for p in planlar:
+                if p["id"] in kullanilan:
+                    continue
+                p_kel = _kel(f"{p.get('aciklama') or ''} {p.get('gider_adi') or ''}")
+                ortak = h_kel & p_kel
+                if not ortak:
+                    continue
+                try:
+                    g = abs((_date.fromisoformat(h["tarih"][:10])
+                             - _date.fromisoformat(p["vade"][:10])).days)
+                except Exception:  # noqa: BLE001
+                    continue
+                if g > 45:
+                    continue
+                ad_adaylari.append((p, sorted(ortak), g))
+            if not ad_adaylari:
+                continue
+            if len(ad_adaylari) > 1:
+                oneriler.append({
+                    "kart_hareket_id": h["id"], "kart_aciklama": h["aciklama"],
+                    "kart_tarih": h["tarih"], "kart_tutar": h["tutar"], "kart_adi": h["kart_adi"],
+                    "abonelik_id": None, "saglayici": ", ".join(sorted(h_kel)[:2]),
+                    "karar": "belirsiz", "aday_adet": len(ad_adaylari),
+                    "neden": (f"Adı örtüşen {len(ad_adaylari)} açık borç var — hangisi "
+                              "olduğunu sistem seçemez."),
+                })
+                continue
+            p, ortak, g = ad_adaylari[0]
+            kullanilan.add(p["id"])
+            kalan = round(p["tutar"] - p["odenen"], 2)
+            fark = round(abs(h["tutar"] - kalan), 2)
+            oneriler.append({
+                "kart_hareket_id": h["id"], "kart_aciklama": h["aciklama"],
+                "kart_tarih": h["tarih"], "kart_tutar": h["tutar"], "kart_adi": h["kart_adi"],
+                "abonelik_id": None, "saglayici": (p.get("ted") or "").strip() or ", ".join(ortak[:2]),
+                "plan_id": p["id"], "plan_aciklama": p["aciklama"] or p.get("gider_adi"),
+                "vade": p["vade"], "kalan_tutar": kalan,
+                "eslesme_temeli": "ad_ortusmesi", "hedef_temeli": "ad",
+                "ortak_kelime": ortak, "gun_fark": g,
+                # Ad eşleşmesi kimlik kadar güçlü değil: onay şart.
+                "guven": 55 + (10 if len(ortak) > 1 else 0) + (10 if fark <= 1 else 0),
+                "karar": "oneri", "tutar_farki": fark,
+                "tutar_notu": ("tutar birebir" if fark <= 0.01 else
+                               f"tutar farkı {fark:,.2f} ₺".replace(",", ".")),
+            })
             continue
 
         # 2) Bu aboneliğin açık borcu hangisi?
@@ -608,7 +676,7 @@ def odeme_kaniti_bagla(body: BaglaBody):
         raise HTTPException(400, "hedef_tablo geçersiz")
     with db() as (conn, cur):
         cur.execute("""SELECT h.id, h.tarih::text AS tarih, ABS(h.tutar)::float AS tutar,
-                              h.aciklama, k.kart_adi
+                              h.aciklama, h.kart_id::text AS kart_id, k.kart_adi
                          FROM kart_hareketleri h JOIN kartlar k ON k.id=h.kart_id
                         WHERE h.id=%s""", (body.kart_hareket_id,))
         kh = cur.fetchone()
@@ -644,13 +712,22 @@ def odeme_kaniti_bagla(body: BaglaBody):
             _damga = (f"{plan['aciklama'] or ''} · [karttan ödendi — "
                       f"{kh['kart_adi']} · {kh['tarih']} · {kh['tutar']:,.2f} ₺]"
                       .replace(",", "."))[:500]
+            # ⭐ ÖDEME TÜRÜ = KART (sahip: "ödeme türüne kart olarak işlemesi lazım")
+            # Plan "ödendi" olurken NASIL ödendiği de yazılır. Kartla kapanan borç
+            # nakitle kapanandan ayrılmalı: nakit kasadan çıkar, kart borcu SONRA
+            # ödenir. Ayrım olmadan kasa mutabakatı bu borcu "kasa izi yok" diye
+            # şüpheli sayardı. Kanıt kart hareketi de kaydedilir (geri izlenebilir).
             cur.execute(
                 """UPDATE odeme_plani SET durum='odendi', odenen_tutar=%s,
-                          odeme_tarihi=CURRENT_DATE, aciklama=%s
+                          odeme_tarihi=CURRENT_DATE, aciklama=%s,
+                          odeme_yontemi='kart', odeme_kart_id=%s,
+                          odeme_kart_hareket_id=%s
                     WHERE id=%s AND durum='bekliyor'""",
-                (plan["tutar"], _damga, body.hedef_id))
+                (plan["tutar"], _damga, kh.get("kart_id"), body.kart_hareket_id,
+                 body.hedef_id))
             kapatildi = cur.rowcount > 0
     return {"success": True, "baglandi": bagli, "plan_kapatildi": kapatildi,
+            "odeme_yontemi": ("kart" if kapatildi else None),
             "kasa_etkisi": False,
             "mesaj": ("Ödeme kanıtı bağlandı."
                       + (" Plan 'karttan ödendi' olarak kapatıldı." if kapatildi else "")

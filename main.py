@@ -11,7 +11,7 @@ from typing import Optional, List, Any, Dict
 from datetime import date, datetime, timedelta
 import uuid, os, json, pathlib, calendar, threading, hashlib, hmac
 from collections import defaultdict
-from database import db, init_db, ensure_stok_yolda_columns, ensure_dusum_modu, ensure_operasyon_event_durum_latent, ensure_rapor_kapanis, ensure_kart_kategori_columns, ensure_kart_ekstre_donem, ensure_kart_satici_kural, ensure_kart_devir_islem_turu, ensure_isletmeci, ensure_abonelik, ensure_gider_kanonik
+from database import db, init_db, ensure_stok_yolda_columns, ensure_dusum_modu, ensure_operasyon_event_durum_latent, ensure_rapor_kapanis, ensure_kart_kategori_columns, ensure_kart_ekstre_donem, ensure_kart_satici_kural, ensure_kart_devir_islem_turu, ensure_isletmeci, ensure_abonelik, ensure_gider_kanonik, ensure_odeme_plani_odeme_yontemi
 from operasyon_stok_motor import eksik_kullanim_kontrol, tum_subeler_skor_guncelle
 from tr_saat import bugun_tr, dt_now_tr_naive
 from kasa_service import (
@@ -1068,6 +1068,11 @@ def startup():
             ensure_abonelik(cur)
     except Exception as e:
         logger.warning("abonelik migrasyonu (startup): %s", e)
+    try:
+        with db() as (conn, cur):
+            ensure_odeme_plani_odeme_yontemi(cur)
+    except Exception as e:
+        logger.warning("odeme_plani odeme_yontemi migrasyonu (startup): %s", e)
     try:
         with db() as (conn, cur):
             ensure_gider_kanonik(cur)

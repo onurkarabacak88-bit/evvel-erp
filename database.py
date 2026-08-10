@@ -450,6 +450,20 @@ def ensure_abonelik(cur) -> None:
     """)
 
 
+def ensure_odeme_plani_odeme_yontemi(cur) -> None:
+    """Ödeme planına ÖDEME YÖNTEMİ (sahip, 2026-08-10: "ödeme türüne KART olarak
+    işlemesi lazım").
+
+    Plan kapanınca "ödendi" yazıyordu ama NASIL ödendiği kayıtlı değildi. Kart
+    ekstresinden kapanan bir borcun nakitle kapanandan ayrılması şart: nakit
+    kasadan çıkar, kart borcu ise sonra ödenir. Ayrım olmadan kasa mutabakatı
+    kartla kapanan borcu "kasa izi yok" diye şüpheli sayar.
+    """
+    cur.execute("ALTER TABLE odeme_plani ADD COLUMN IF NOT EXISTS odeme_yontemi TEXT")
+    cur.execute("ALTER TABLE odeme_plani ADD COLUMN IF NOT EXISTS odeme_kart_id TEXT")
+    cur.execute("ALTER TABLE odeme_plani ADD COLUMN IF NOT EXISTS odeme_kart_hareket_id TEXT")
+
+
 def ensure_gider_kanonik(cur) -> None:
     """KANONİK GİDER KATMANI — P&L'in TEK otoritesi (sahip kararı 2026-08-10).
 
