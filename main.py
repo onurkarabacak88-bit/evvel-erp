@@ -11,7 +11,7 @@ from typing import Optional, List, Any, Dict
 from datetime import date, datetime, timedelta
 import uuid, os, json, pathlib, calendar, threading, hashlib, hmac
 from collections import defaultdict
-from database import db, init_db, ensure_stok_yolda_columns, ensure_dusum_modu, ensure_operasyon_event_durum_latent, ensure_rapor_kapanis, ensure_kart_kategori_columns, ensure_kart_ekstre_donem, ensure_kart_satici_kural, ensure_kart_devir_islem_turu, ensure_isletmeci
+from database import db, init_db, ensure_stok_yolda_columns, ensure_dusum_modu, ensure_operasyon_event_durum_latent, ensure_rapor_kapanis, ensure_kart_kategori_columns, ensure_kart_ekstre_donem, ensure_kart_satici_kural, ensure_kart_devir_islem_turu, ensure_isletmeci, ensure_abonelik
 from operasyon_stok_motor import eksik_kullanim_kontrol, tum_subeler_skor_guncelle
 from tr_saat import bugun_tr, dt_now_tr_naive
 from kasa_service import (
@@ -32,6 +32,7 @@ from sube_personel_api import router as sube_personel_router
 from banka_yatirim_api import router as banka_yatirim_router
 from kasa_teslim_api import router as kasa_teslim_router
 from isletmeci_api import router as isletmeci_router
+from abonelik_api import router as abonelik_router
 from tedarikci_api import router as tedarikci_router
 from odeme_plani_motor_api import router as odeme_plani_motor_router
 from odeme_plani_api import router as odeme_plani_read_router
@@ -87,6 +88,7 @@ app.include_router(sube_personel_router)
 app.include_router(banka_yatirim_router)
 app.include_router(kasa_teslim_router)
 app.include_router(isletmeci_router)
+app.include_router(abonelik_router)
 app.include_router(tedarikci_router)
 app.include_router(odeme_plani_motor_router)
 app.include_router(odeme_plani_read_router)
@@ -1061,6 +1063,11 @@ def startup():
             ensure_isletmeci(cur)
     except Exception as e:
         logger.warning("isletmeci migrasyonu (startup): %s", e)
+    try:
+        with db() as (conn, cur):
+            ensure_abonelik(cur)
+    except Exception as e:
+        logger.warning("abonelik migrasyonu (startup): %s", e)
     try:
         with db() as (conn, cur):
             ensure_operasyon_event_durum_latent(cur)

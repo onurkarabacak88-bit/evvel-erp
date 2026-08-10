@@ -376,6 +376,80 @@ def ensure_isletmeci(cur) -> None:
     """)
 
 
+def ensure_abonelik(cur) -> None:
+    """ABONELİK KİMLİĞİ — otomatik talimatlı faturanın eşleştirme anahtarı.
+
+    Sahip (2026-08-10): "faturaların tutarları özellikle DEĞİŞKENLERİN her zaman
+    farklı oluyor; burada fatura numaralarından ve tarihten sistemdeki borç olup
+    olmadığını bulacaksın."
+
+    Codex hükmü (2026-08-10): "bu işi daha iyi fuzzy matching ile çözemezsin, veri
+    modeli yanlış. Bağlayacağın şey satıcı değil, ABONELİK/TESİSAT. Aynı ENERYA
+    altında birden fazla abonelik olabilir; merchant adı bunu ayırmaz."
+
+    Kanıtı canlıdan: tutar+ad eşleştirmesi 9 öneri üretti, 9'u da yanlıştı
+    (AKALIN 684,00 ↔ OVOLT ŞARJ 659,07). Değişken faturada tutar kimlik değildir.
+
+    Bu tablo bir HİZMET SÖZLEŞMESİ kaydıdır: hangi sağlayıcının, hangi tesisatı,
+    hangi şubede, hangi kartla ödeniyor ve kart ekstresinde hangi metinle görünüyor.
+    Eşleştirme buradan kurulur; tutar yalnız destekleyici kanıttır.
+    """
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS abonelik (
+            id            TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+            saglayici     TEXT NOT NULL,              -- ENERYA, MEPAŞ, KONYA SU...
+            hizmet_turu   TEXT NOT NULL DEFAULT 'diger',  -- elektrik|su|dogalgaz|internet|telefon|diger
+            abone_no      TEXT,                        -- abone / tesisat / sözleşme no
+            vkn           TEXT,
+            sube_id       TEXT REFERENCES subeler(id),
+            kart_id       TEXT,                        -- otomatik talimatın bağlı olduğu kart
+            sabit_gider_id TEXT,                       -- karşılık gelen sabit gider tanımı
+            ekstre_kalip  TEXT,                        -- ekstrede görünen metin parçası (opsiyonel)
+            aktif         BOOLEAN NOT NULL DEFAULT TRUE,
+            olusturma     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_abonelik_kart ON abonelik (kart_id, aktif)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_abonelik_sube ON abonelik (sube_id, aktif)")
+    # Aynı sağlayıcıda aynı abone no iki kez tanımlanmasın (abone_no boşsa serbest)
+    cur.execute("""
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_abonelik_abone_no
+        ON abonelik (lower(saglayici), abone_no) WHERE abone_no IS NOT NULL AND aktif
+    """)
+
+    # ── ÖDEME KANITI LİNK TABLOSU ─────────────────────────────────────────────
+    # Codex: "ayrı bir link tablosu tut: kart_hareket_id -> belge/plan/fatura id,
+    # match_basis, confidence, approved_by. Mevcut tabloları kırmadan geçersin."
+    #
+    # NEDEN AYRI TABLO: kart hareketi bir ÖDEME KANITIDIR, borcun kendisi değil.
+    # Bağı hareketin veya planın içine yazmak iki tarafı da kirletir; ayrı katman
+    # hem geri alınabilir hem denetlenebilir kılar (BAĞLAMA ≠ KAPATMA).
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS kart_odeme_baglanti (
+            id               TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+            kart_hareket_id  TEXT NOT NULL,
+            hedef_tablo      TEXT NOT NULL,       -- odeme_plani | tedarikci_fatura | sabit_giderler
+            hedef_id         TEXT NOT NULL,
+            abonelik_id      TEXT REFERENCES abonelik(id),
+            eslesme_temeli   TEXT NOT NULL,       -- abone_no | fatura_no | tek_aday | elle
+            guven            INT NOT NULL DEFAULT 0,
+            onaylayan        TEXT,                -- NULL = yalnız öneri, henüz onaylanmadı
+            onay_ts          TIMESTAMPTZ,
+            not_aciklama     TEXT,
+            olusturma        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    """)
+    # Bir kart hareketi bir hedefi EN FAZLA bir kez kapatır (çift bağ = çift kapama)
+    cur.execute("""
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_kart_odeme_baglanti
+        ON kart_odeme_baglanti (kart_hareket_id, hedef_tablo, hedef_id)
+    """)
+    cur.execute("""
+        CREATE INDEX IF NOT EXISTS idx_kart_odeme_baglanti_hedef
+        ON kart_odeme_baglanti (hedef_tablo, hedef_id)
+    """)
+
+
 def ensure_kart_satici_kural(cur) -> None:
     """Şahsi/dükkan SATICI HAFIZASI: bir harcamayı sınıflandırınca o satıcı (örn.
     METRO) hatırlanır → sonraki aynı satıcı otomatik aynı tip önerilir. Bağımsız migration."""
