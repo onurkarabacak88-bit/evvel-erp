@@ -319,6 +319,21 @@ def ensure_isletmeci(cur) -> None:
     # sahip alanından sahte bir kişi üretmişti. Pasife çekilir (silinmez).
     cur.execute("UPDATE isletmeci SET aktif=FALSE WHERE ad LIKE '%*%' AND aktif=TRUE")
 
+    # ── ŞAHSİ HARCAMA → KİŞİ HAFIZASI ────────────────────────────────────────
+    # Sahip (2026-08-10): "kartların direkt atama mantığında kurgulama — aynı kartı
+    # bazen 3 kişinin şahsi harcamasına uygulanabilir."
+    # DOĞRU: kart hamili ≠ harcamayı yapan. Kişi, SATICI örüntüsünden öğrenilir
+    # (kart_satici_kural deseninin ikizi): sahip bir kez "TRENDYOL → Fatma" derse
+    # sonraki TRENDYOL satırları ÖNERİLİR — otomatik yazılmaz, öneri kalır.
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS sahsi_kisi_kural (
+            anahtar      TEXT PRIMARY KEY,
+            isletmeci_id TEXT NOT NULL REFERENCES isletmeci(id),
+            adet         INT NOT NULL DEFAULT 1,
+            guncelleme   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    """)
+
     cur.execute("DROP INDEX IF EXISTS uq_isletmeci_ad")
     cur.execute("""
         CREATE UNIQUE INDEX IF NOT EXISTS uq_isletmeci_ad_anahtar

@@ -202,71 +202,154 @@ def sahsi_harcama_ata(body: SahsiAtaBody):
                          if len(idler) - yazilan else ""))}
 
 
-@router.post("/api/isletmeci/kart-sahibinden-doldur")
-def kart_sahibinden_doldur(kuru: bool = True):
-    """Sahipsiz şahsi harcamaları KARTIN SAHİBİNE bağlar (öneri-only toplu işlem).
+def _satici_anahtar(aciklama):
+    """Açıklamadan satıcı anahtarı — main._satici_anahtar ile AYNI kural
+    ('METRO METRO GROSMARKET KOKONYA TR' → 'METRO'). Kopya bilinçli: bu modül
+    main'e bağımlı olmasın (import döngüsü riski)."""
+    import re as _re
+    s = (aciklama or "").upper().strip()
+    s = _re.sub(r"[^A-ZÇĞİÖŞÜ0-9 ]", " ", s)
+    for tok in s.split():
+        if len(tok) >= 3 and not tok.isdigit():
+            return tok
+    return None
 
-    Gerekçe: bir kişinin kendi kartından yaptığı şahsi harcama, aksi söylenmedikçe
-    o kişinindir. Aksi durum (birinin başkasının kartını kullanması) satır bazında
-    düzeltilir — bu yüzden kuru=True VARSAYILAN, önce ne olacağı gösterilir.
+
+@router.get("/api/isletmeci/sahsi-bekleyen")
+def sahsi_bekleyen(limit: int = 400):
+    """Sahibi atanmamış şahsi harcamalar — SATICIYA göre gruplanmış + öneri.
+
+    ⚠️ KART SAHİBİNDEN OTOMATİK ATAMA YOK (sahip kararı 2026-08-10: "kartların
+    direkt atama mantığında kurgulama — aynı kartı bazen 3 kişinin şahsi
+    harcamasına uygulanabilir"). Kart hamili ≠ harcamayı yapan kişi.
+    Kart adı yalnız İPUCU olarak taşınır, atama sebebi değildir.
+
+    Öneri kaynağı satıcı hafızasıdır (sahsi_kisi_kural): sahip bir kez
+    "TRENDYOL → Fatma" dediyse sonraki TRENDYOL satırları önerilir — yazılmaz.
     """
     with db() as (conn, cur):
         cur.execute(
             """
-            SELECT k.sahip_isletmeci_id AS kid, i.ad AS kisi, COUNT(*) AS adet,
-                   COALESCE(SUM(ABS(h.tutar)),0) AS tutar
+            SELECT h.id, h.tarih, h.aciklama, ABS(h.tutar) AS tutar, k.kart_adi
               FROM kart_hareketleri h
-              JOIN kartlar k   ON k.id = h.kart_id
-              JOIN isletmeci i ON i.id = k.sahip_isletmeci_id
+              LEFT JOIN kartlar k ON k.id = h.kart_id
              WHERE COALESCE(h.harcama_tipi,'belirsiz')='sahsi'
                AND h.sahsi_isletmeci_id IS NULL
                AND COALESCE(h.durum,'aktif')='aktif'
-             GROUP BY k.sahip_isletmeci_id, i.ad
-             ORDER BY 4 DESC
-            """
+             ORDER BY h.tarih DESC
+             LIMIT %s
+            """,
+            (int(limit),),
         )
-        plan = [{"isletmeci_id": str(r["kid"]), "kisi": r["kisi"],
-                 "adet": int(r["adet"]), "tutar": round(float(r["tutar"]), 2)}
-                for r in (cur.fetchall() or [])]
-        # Kartı bir kişiye bağlı OLMAYAN şahsi harcamalar — elle karar ister
+        satirlar = [dict(r) for r in (cur.fetchall() or [])]
         cur.execute(
-            """
-            SELECT COUNT(*) AS adet, COALESCE(SUM(ABS(h.tutar)),0) AS tutar
-              FROM kart_hareketleri h
-              JOIN kartlar k ON k.id = h.kart_id
-             WHERE COALESCE(h.harcama_tipi,'belirsiz')='sahsi'
-               AND h.sahsi_isletmeci_id IS NULL
-               AND k.sahip_isletmeci_id IS NULL
-               AND COALESCE(h.durum,'aktif')='aktif'
-            """
+            "SELECT r.anahtar, r.isletmeci_id, r.adet, i.ad "
+            "FROM sahsi_kisi_kural r JOIN isletmeci i ON i.id=r.isletmeci_id WHERE i.aktif=TRUE"
         )
-        _k = cur.fetchone() or {}
-        kalan = {"adet": int(_k.get("adet") or 0), "tutar": round(float(_k.get("tutar") or 0), 2)}
-        if kuru:
-            return {"kuru": True, "plan": plan,
-                    "toplam_adet": sum(p["adet"] for p in plan),
-                    "toplam_tutar": round(sum(p["tutar"] for p in plan), 2),
-                    "kart_sahibi_tanimsiz": kalan,
-                    "mesaj": ("PROVA — hiçbir kayıt değişmedi. Uygulamak için kuru=false gönderin."
-                              + (f" {kalan['adet']} harcama kartın sahibi tanımsız olduğu için "
-                                 "eşleşmedi; o kartlara önce sahip atayın." if kalan["adet"] else ""))}
-        cur.execute(
-            """
-            UPDATE kart_hareketleri h
-               SET sahsi_isletmeci_id = k.sahip_isletmeci_id,
-                   sahsi_isletmeci_ad = i.ad
-              FROM kartlar k
-              JOIN isletmeci i ON i.id = k.sahip_isletmeci_id
-             WHERE h.kart_id = k.id
-               AND COALESCE(h.harcama_tipi,'belirsiz')='sahsi'
-               AND h.sahsi_isletmeci_id IS NULL
-               AND COALESCE(h.durum,'aktif')='aktif'
-            """
-        )
+        kural = {r["anahtar"]: {"isletmeci_id": str(r["isletmeci_id"]), "kisi": r["ad"],
+                                "kez": int(r["adet"])} for r in (cur.fetchall() or [])}
+
+    gruplar: dict = {}
+    for s in satirlar:
+        ak = _satici_anahtar(s.get("aciklama")) or "(?)"
+        g = gruplar.setdefault(ak, {"satici": ak, "adet": 0, "tutar": 0.0,
+                                    "kartlar": set(), "hareket_idler": [], "ornek": None})
+        g["adet"] += 1
+        g["tutar"] = round(g["tutar"] + float(s["tutar"] or 0), 2)
+        if s.get("kart_adi"):
+            g["kartlar"].add(s["kart_adi"])
+        g["hareket_idler"].append(str(s["id"]))
+        if not g["ornek"]:
+            g["ornek"] = {"tarih": str(s.get("tarih") or ""), "aciklama": s.get("aciklama")}
+
+    liste = []
+    for ak, g in gruplar.items():
+        oneri = kural.get(ak)
+        liste.append({**g, "kartlar": sorted(g["kartlar"]),
+                      "oneri": oneri,
+                      "oneri_notu": (f"Daha önce {oneri['kez']} kez {oneri['kisi']} olarak "
+                                     "işaretlendi" if oneri else None)})
+    liste.sort(key=lambda x: -x["tutar"])
+    return {
+        "gruplar": liste,
+        "grup_adet": len(liste),
+        "toplam_adet": sum(g["adet"] for g in liste),
+        "toplam_tutar": round(sum(g["tutar"] for g in liste), 2),
+        "onerili_adet": sum(g["adet"] for g in liste if g["oneri"]),
+        "not": ("Kart sahibi atama sebebi DEĞİLDİR — aynı kart birden çok kişi "
+                "tarafından kullanılabilir. Kart adı yalnız ipucu olarak gösterilir."),
+    }
+
+
+class SaticiAtaBody(BaseModel):
+    satici: str
+    isletmeci_id: str
+    ogren: bool = True          # bir dahaki sefere önerilsin mi
+    hareket_idler: Optional[list] = None   # verilmezse o satıcının TÜM bekleyenleri
+
+
+@router.post("/api/isletmeci/satici-ata")
+def satici_ata(body: SaticiAtaBody):
+    """Bir satıcının bekleyen şahsi harcamalarını tek seferde bir kişiye bağlar.
+
+    275 kaydı tek tek tıklamak insanlık dışı; satıcı grubu doğal toplu birimdir
+    ("TRENDYOL YEMEK'in 12 kaydı Fatma'nın"). ogren=True ise kural yazılır ve
+    sonraki aynı satıcı satırlarında ÖNERİ olarak çıkar — otomatik yazılmaz.
+    """
+    ak = (body.satici or "").strip().upper()
+    if not ak:
+        raise HTTPException(400, "satici gerekli")
+    with db() as (conn, cur):
+        cur.execute("SELECT ad FROM isletmeci WHERE id=%s AND aktif=TRUE", (body.isletmeci_id,))
+        r = cur.fetchone()
+        if not r:
+            raise HTTPException(404, "İşletmeci bulunamadı")
+        ad = r["ad"]
+        if body.hareket_idler:
+            cur.execute(
+                """UPDATE kart_hareketleri
+                      SET sahsi_isletmeci_id=%s, sahsi_isletmeci_ad=%s
+                    WHERE id = ANY(%s)
+                      AND COALESCE(harcama_tipi,'belirsiz')='sahsi'""",
+                (body.isletmeci_id, ad, [str(x) for x in body.hareket_idler]),
+            )
+        else:
+            # Satıcı anahtarı ilk anlamlı kelimedir; SQL'de aynı kuralı kurmak
+            # yerine adayları çekip Python'da eşleştiriyoruz (tek doğruluk kaynağı
+            # _satici_anahtar kalsın — iki farklı eşleştirme mantığı sapma üretir).
+            cur.execute(
+                """SELECT id, aciklama FROM kart_hareketleri
+                    WHERE COALESCE(harcama_tipi,'belirsiz')='sahsi'
+                      AND sahsi_isletmeci_id IS NULL
+                      AND COALESCE(durum,'aktif')='aktif'"""
+            )
+            hedef = [str(x["id"]) for x in (cur.fetchall() or [])
+                     if (_satici_anahtar(x["aciklama"]) or "") == ak]
+            if not hedef:
+                return {"success": True, "guncellenen": 0,
+                        "mesaj": f"'{ak}' için bekleyen şahsi harcama kalmadı."}
+            cur.execute(
+                """UPDATE kart_hareketleri
+                      SET sahsi_isletmeci_id=%s, sahsi_isletmeci_ad=%s
+                    WHERE id = ANY(%s)""",
+                (body.isletmeci_id, ad, hedef),
+            )
         yazilan = cur.rowcount
-    return {"success": True, "kuru": False, "guncellenen": yazilan, "plan": plan,
-            "kart_sahibi_tanimsiz": kalan,
-            "mesaj": f"{yazilan} şahsi harcama kart sahibine bağlandı."}
+        if body.ogren:
+            cur.execute(
+                """INSERT INTO sahsi_kisi_kural (anahtar, isletmeci_id, adet)
+                   VALUES (%s,%s,%s)
+                   ON CONFLICT (anahtar) DO UPDATE
+                     SET isletmeci_id=EXCLUDED.isletmeci_id,
+                         adet=sahsi_kisi_kural.adet + EXCLUDED.adet,
+                         guncelleme=NOW()""",
+                (ak, body.isletmeci_id, max(1, yazilan)),
+            )
+    return {"success": True, "satici": ak, "kisi": ad, "guncellenen": yazilan,
+            "ogrenildi": bool(body.ogren),
+            "mesaj": (f"'{ak}' satıcısının {yazilan} şahsi harcaması {ad} kaydına bağlandı."
+                      + (" Bir dahaki sefere bu satıcı için aynı kişi önerilecek."
+                         if body.ogren else ""))}
 
 
 @router.get("/api/isletmeci/sahsi-kirilim")
