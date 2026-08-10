@@ -521,6 +521,18 @@ def ensure_gider_kanonik(cur) -> None:
         WHERE h.islem_turu = 'HARCAMA'
           AND COALESCE(h.durum,'aktif') = 'aktif'
           AND COALESCE(h.harcama_tipi,'belirsiz') <> 'sahsi'
+          -- ⚠️ ÖDEME ≠ GİDER: tedarikçiye yapılan cari borç ödemesi para çıkışıdır
+          -- ama gider DEĞİLDİR (gider malın alındığı anda doğdu). Bu satırlar
+          -- anlık gider tarafında zaten 'borc_kapatma' kovasına ayrılıyordu
+          -- (fatura_api._BORC_KAPATMA_KALIP); kart tarafında da aynı kural
+          -- uygulanmazsa 173.303 ₺ geri sızar. Türkçe-I tuzağına düşmemek için
+          -- karşılaştırma aksansız tabanda ("ÖDEMESİ".upper() = "ÖDEMESI").
+          AND translate(upper(COALESCE(h.aciklama,'')),
+                        'ÇĞıİÖŞÜÂÎÛ', 'CGIIOSUAIU') NOT LIKE '%CARI BORC ODEMESI%'
+          AND translate(upper(COALESCE(h.aciklama,'')),
+                        'ÇĞıİÖŞÜÂÎÛ', 'CGIIOSUAIU') NOT LIKE '%BORC KAPATMA%'
+          AND translate(upper(COALESCE(h.aciklama,'')),
+                        'ÇĞıİÖŞÜÂÎÛ', 'CGIIOSUAIU') NOT LIKE '%CARIYE ODEME%'
     """)
 
 
