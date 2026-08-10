@@ -4167,9 +4167,14 @@ def kart_ekstre_yukle(dosya: UploadFile = File(...)):
         txns = None
     if txns:
         sonuc["islemler"] = [_ekstre_txn_map(t) for t in txns]
-        # kart_analiz (kategori) + ekstre_parser (taksit) BİRLEŞTİR
+        # kart_analiz (kategori+taksit) + ekstre_parser (yedek taksit) BİRLEŞTİR.
+        # ⚠️ ÖNCELİK kart_analiz'dedir (2026-08-10): taksit satırını İŞLEMİN HEMEN
+        # ALTINDAKİ satırdan okur. ekstre_parser (tarih,tutar) anahtarıyla eşleştirdiği
+        # için satır kayması yapıyordu — canlıda KONYA KENTPLAZA'ya "1/2" (gerçeği 3/3,
+        # son taksit) ve taksitsiz SOYTÜRKLER'e komşusunun "1/5"ini yazmıştı.
+        # Yanlış taksit no'su = bitmiş taksidin yeniden borç yazılması demek.
         for _isl in sonuc["islemler"]:
-            if _isl.get("tip") == "HARCAMA":
+            if _isl.get("tip") == "HARCAMA" and not _isl.get("taksit"):
                 _info = _taksit_lk.get((_isl.get("tarih"), round(float(_isl.get("tutar") or 0), 2)))
                 if _info:
                     _isl["taksit"] = _info[0]
