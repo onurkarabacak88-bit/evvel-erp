@@ -5514,13 +5514,19 @@ def odeme_yap(oid: str, tutar: Optional[float] = None, body: VadeliOdeModel = Va
 
         ana_para_kismi = kasa_ve_faiz_odeme_plani_tam_odeme(cur, dict(plan), oid, odenen, bugun)
 
-        # Onay kuyruğunu kapat — tüm açık durumlar hedeflenir
-        cur.execute("""UPDATE onay_kuyrugu SET durum='onaylandi', onay_tarihi=NOW()
-            WHERE durum NOT IN ('onaylandi','reddedildi')
-            AND (
-                kaynak_id = %s
-                OR kaynak_id = (SELECT kaynak_id FROM odeme_plani WHERE id=%s LIMIT 1)
-            )""", (oid, oid))
+        # Onay kuyruğunu kapat — PROD-PANEL-002 FIX: SADECE kaynak_id ile eşleşme tablo-arası
+        # id çakışmasında yanlış onayları kapatabiliyordu. kaynak_tablo ile skopla + durum='bekliyor'
+        # (NOT IN(...) 'iptal'/'iptal_revize' gibi kapalı durumları da yanlış süpürüyordu).
+        if plan.get('kaynak_tablo') and plan.get('kaynak_id'):
+            cur.execute("""UPDATE onay_kuyrugu SET durum='onaylandi', onay_tarihi=NOW()
+                WHERE durum='bekliyor'
+                  AND ( (kaynak_tablo='odeme_plani' AND kaynak_id=%s)
+                     OR (kaynak_tablo=%s AND kaynak_id=%s) )""",
+                (oid, plan['kaynak_tablo'], plan['kaynak_id']))
+        else:
+            cur.execute("""UPDATE onay_kuyrugu SET durum='onaylandi', onay_tarihi=NOW()
+                WHERE durum='bekliyor' AND kaynak_tablo='odeme_plani' AND kaynak_id=%s""",
+                (oid,))
         audit(cur, 'odeme_plani', oid, 'ODEME', eski=plan)
 
         # Kaynak vadeli_alimlar ise tüm bağlı kayıtları atomik kapat — çift düşme engeli
@@ -10840,13 +10846,18 @@ def toplu_odeme(payload: dict):
             if plan.get('kaynak_tablo') == 'vadeli_alimlar' and plan.get('kaynak_id'):
                 vadeli_alim_kapat(cur, plan['kaynak_id'], bugun)
             guncelle_borc_envanteri_odeme_plani_sonrasi(cur, plan_d, ana_t)
-            # Onay kuyruğunu kapat — tüm açık durumlar hedeflenir
-            cur.execute("""UPDATE onay_kuyrugu SET durum='onaylandi', onay_tarihi=NOW()
-                WHERE durum NOT IN ('onaylandi','reddedildi')
-                AND (
-                    kaynak_id = %s
-                    OR kaynak_id = (SELECT kaynak_id FROM odeme_plani WHERE id=%s LIMIT 1)
-                )""", (oid, oid))
+            # Onay kuyruğunu kapat — PROD-PANEL-002 FIX (toplu): kaynak_tablo ile skopla (tablo-arası
+            # id çakışması yanlış onay kapatmasın) + durum='bekliyor' (iptal/revize süpürülmesin).
+            if plan.get('kaynak_tablo') and plan.get('kaynak_id'):
+                cur.execute("""UPDATE onay_kuyrugu SET durum='onaylandi', onay_tarihi=NOW()
+                    WHERE durum='bekliyor'
+                      AND ( (kaynak_tablo='odeme_plani' AND kaynak_id=%s)
+                         OR (kaynak_tablo=%s AND kaynak_id=%s) )""",
+                    (oid, plan['kaynak_tablo'], plan['kaynak_id']))
+            else:
+                cur.execute("""UPDATE onay_kuyrugu SET durum='onaylandi', onay_tarihi=NOW()
+                    WHERE durum='bekliyor' AND kaynak_tablo='odeme_plani' AND kaynak_id=%s""",
+                    (oid,))
             audit(cur, 'odeme_plani', oid, 'TOPLU_ODEME', eski=plan)
             basarili.append(oid)
         # Hepsi başarılıysa commit (with db() otomatik commit eder)
