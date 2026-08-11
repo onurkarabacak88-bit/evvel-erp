@@ -1430,7 +1430,9 @@ export default function Panel({ onNavigate }) {
                 ? fark !== 0 ? `Gerçek · ${fark > 0 ? '+' : ''}${parseInt(fark).toLocaleString('tr-TR')}₺ fark` : 'Gerçekleşen ✓'
                 : 'Tahmini · kayıt girilmedi';
             return {
-              label: '👤 Personel Maaşları',
+              // PROD-PANEL-005: kart artık SÜREKLİ personel bordrosu (tahmini vs gerçek variance
+              // ancak aynı popülasyonda anlamlı). Part-time saatlik/değişken → ayrı "Toplam Bordro" işi.
+              label: '👤 Personel Maaşı (sürekli)',
               value: fmt(gosterilen),
               sub: subText,
               renk: bekleyen_kayit > 0 ? 'var(--yellow)' : gercek > 0 ? 'var(--clr-personel)' : 'var(--text3)',

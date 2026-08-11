@@ -2065,17 +2065,24 @@ def panel():
             ozet['vadeli_kart']  = float(_kt['vadeli_kart'])
 
             # 7) PERSONEL — tahmini + gerçekleşen + kayıt bekleyen tek round-trip (eski 3 sorgu)
+            # PROD-PANEL-005 FIX: bordro variance POPÜLASYONU HİZALANDI. Eskiden gercek TÜM
+            # personel_aylik'i (surekli+part-time) topluyordu ama tahmini SADECE surekli'ydi →
+            # part-time gercek'i şişirip "fark"ı yanıltıcı yapıyordu (elma-armut). Üçü de artık
+            # SÜREKLİ popülasyon: part-time saatlik/değişken (sabit "tahmini" yok), variance kartına
+            # girmez. NOT: ay-içi giriş/çıkış pro-rata + toplam bordro ayrı iş (PROD-PANEL-005b).
             cur.execute("""
                 SELECT
                     (SELECT COALESCE(SUM(p.maas + p.yemek_ucreti + p.yol_ucreti), 0)
-                     FROM personel p WHERE p.aktif=TRUE AND p.calisma_turu='surekli') AS tahmini,
+                     FROM personel p WHERE p.aktif=TRUE AND COALESCE(p.calisma_turu,'surekli')='surekli') AS tahmini,
                     (SELECT COALESCE(SUM(pa.hesaplanan_net), 0)
                      FROM personel_aylik pa
+                     JOIN personel p2 ON p2.id = pa.personel_id
+                        AND COALESCE(p2.calisma_turu,'surekli')='surekli'
                      WHERE pa.yil = EXTRACT(YEAR FROM CURRENT_DATE)
                        AND pa.ay  = EXTRACT(MONTH FROM CURRENT_DATE)) AS gercek,
                     (SELECT COUNT(*)
                      FROM personel p
-                     WHERE p.aktif=TRUE
+                     WHERE p.aktif=TRUE AND COALESCE(p.calisma_turu,'surekli')='surekli'
                        AND NOT EXISTS (
                            SELECT 1 FROM personel_aylik pa
                            WHERE pa.personel_id = p.id
