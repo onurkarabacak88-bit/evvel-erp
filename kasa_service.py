@@ -242,7 +242,8 @@ def vadeli_alim_kapat(cur, vadeli_id: str, tarih: str):
         """
         UPDATE onay_kuyrugu
         SET durum='onaylandi', onay_tarihi=NOW()
-        WHERE kaynak_id IN (
+        WHERE kaynak_tablo='odeme_plani'
+          AND kaynak_id IN (
             SELECT id FROM odeme_plani
             WHERE kaynak_tablo='vadeli_alimlar' AND kaynak_id=%s
         )

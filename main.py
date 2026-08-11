@@ -10361,12 +10361,20 @@ def odeme_ertele(oid: str, yeni_tarih: Optional[date] = None):
             raise HTTPException(400, "Tarih değişmedi — mevcut vade zaten bu")
         # Ödeme planı tarihini güncelle
         cur.execute("UPDATE odeme_plani SET tarih=%s WHERE id=%s", (yeni, oid))
-        # Onay kuyruğundaki tarihi de güncelle — yeni kayıt açma
-        cur.execute("""
-            UPDATE onay_kuyrugu SET tarih=%s
-            WHERE durum='bekliyor'
-            AND (kaynak_id=%s OR kaynak_id=(SELECT kaynak_id FROM odeme_plani WHERE id=%s LIMIT 1))
-        """, (yeni, oid, oid))
+        # Onay kuyruğundaki tarihi de güncelle — PROD-PANEL-002 ailesi: kaynak_tablo ile skopla
+        # (SADECE kaynak_id eşleşmesi tablo-arası id çakışmasında yanlış onayın tarihini kaydırıyordu)
+        if o.get('kaynak_tablo') and o.get('kaynak_id'):
+            cur.execute("""
+                UPDATE onay_kuyrugu SET tarih=%s
+                WHERE durum='bekliyor'
+                  AND ( (kaynak_tablo='odeme_plani' AND kaynak_id=%s)
+                     OR (kaynak_tablo=%s AND kaynak_id=%s) )
+            """, (yeni, oid, o['kaynak_tablo'], o['kaynak_id']))
+        else:
+            cur.execute("""
+                UPDATE onay_kuyrugu SET tarih=%s
+                WHERE durum='bekliyor' AND kaynak_tablo='odeme_plani' AND kaynak_id=%s
+            """, (yeni, oid))
         audit(cur, 'odeme_plani', oid, 'ERTELE')
         # Uyarı önbelleğini temizle — erteleme sonrası uyarı gizlensin
         uyari_cache_clear()
