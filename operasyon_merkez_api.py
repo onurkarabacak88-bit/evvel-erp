@@ -5606,6 +5606,23 @@ def ops_metrics_finans_ozet(
             r["ciro_toplam"] = ciro_v
             r["finansman_maliyeti_orani"] = round((faiz_v / ciro_v), 6) if ciro_v > 0 else None
 
+        # 🔴 P1 (2026-08-12, TasarimV2 denetimi): manşet "Kart faiz yükü" oranı
+        # 12 AYLIK faiz toplamını (faiz_yuku serisi) 30 GÜNLÜK ciroya bölüyordu →
+        # ~12× şişik. Payı da paydayla AYNI gun_sayi penceresine hizala. Aylık
+        # faiz_yuku serisine (finansman_maliyeti_orani) DOKUNULMADI — o ay-içi
+        # doğru. kart_hareketleri'nde sube_id YOK → faiz zincir geneli; ekran
+        # "Zincir · son N gün" gösterir (sid=None), paydadaki toplam_ciro da öyle.
+        cur.execute(
+            """
+            SELECT COALESCE(SUM(ABS(tutar)), 0)::numeric AS faiz_son_donem
+            FROM kart_hareketleri
+            WHERE durum='aktif' AND islem_turu='FAIZ'
+              AND tarih >= (CURRENT_DATE - (%s * INTERVAL '1 day'))
+            """,
+            (gun_sayi,),
+        )
+        faiz_son_donem = _safe_float(dict(cur.fetchone() or {}).get("faiz_son_donem"))
+
         qp3: List[Any] = [gun_sayi]
         q3 = """
             SELECT
@@ -5635,14 +5652,16 @@ def ops_metrics_finans_ozet(
     toplam_gider = sum(_safe_float(x.get("gider")) for x in ciro_gider)
     ciro_gider_orani_ozet = round(toplam_ciro / toplam_gider, 6) if toplam_gider > 0 else None
 
+    # faiz_son_donem = payla AYNI 30g pencere (yukarıda hesaplandı). toplam_faiz
+    # (12 ay) sadece aylık seri toplamı olarak raporlanır; ORAN'da KULLANILMAZ.
     toplam_faiz = sum(_safe_float(x.get("faiz_toplam")) for x in faiz_yuku)
-    kart_faiz_yuku_orani = round(toplam_faiz / toplam_ciro, 6) if toplam_ciro > 0 else None
+    kart_faiz_yuku_orani = round(faiz_son_donem / toplam_ciro, 6) if toplam_ciro > 0 else None
 
     pos_kesinti = _safe_float(komisyon_ozet.get("pos_kesinti"))
     online_kesinti = _safe_float(komisyon_ozet.get("online_kesinti"))
     yanan_para_toplam = pos_kesinti + online_kesinti
     pos_yanan_para_orani = round(yanan_para_toplam / toplam_ciro, 6) if toplam_ciro > 0 else None
-    toplam_kart_maliyeti_orani = round((toplam_faiz + yanan_para_toplam) / toplam_ciro, 6) if toplam_ciro > 0 else None
+    toplam_kart_maliyeti_orani = round((faiz_son_donem + yanan_para_toplam) / toplam_ciro, 6) if toplam_ciro > 0 else None
 
     veri_kalite = {
         "ciro_gider_orani_ozet": _quality(
@@ -5668,6 +5687,7 @@ def ops_metrics_finans_ozet(
         "sube_id": sid,
         "ciro_gider_orani_ozet": ciro_gider_orani_ozet,
         "kart_faiz_yuku_orani": kart_faiz_yuku_orani,
+        "faiz_son_donem": faiz_son_donem,      # 30g tahakkuk eden faiz (oranın payı)
         "pos_yanan_para_orani": pos_yanan_para_orani,
         "toplam_kart_maliyeti_orani": toplam_kart_maliyeti_orani,
         "veri_kalite": veri_kalite,

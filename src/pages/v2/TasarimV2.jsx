@@ -461,7 +461,10 @@ export default function TasarimV2({ onGit }) {
   // kadar yüksek?"). Sebep: liste "vadesi bugün VE GEÇMİŞ" olanları birlikte
   // veriyor; canlıda bugüne ait TEK KURUŞ yok, 946.018 ₺'nin tamamı gecikmiş
   // (en eskisi 09.06 — iki ay). "Bugün ödenecek" etiketi bunu söylemiyordu.
-  const _bugunISO = new Date().toISOString().slice(0, 10);
+  // 🔴 P1 (2026-08-12): önce new Date().toISOString() = UTC idi; TR (UTC+3) gece
+  // 00:00-02:59 arası düne kayıp vadesi bugün olanı "gecikmiş" sayıyordu. Dosyanın
+  // kanonik TR-yerel yardımcısı bugunISO() ile hizalandı.
+  const _bugunISO = bugunISO();
   const _vadeAl = (o) => String(o.tarih ?? o.vade ?? o.vade_tarihi ?? '').slice(0, 10);
   const gecikmisOdemeler = bugunOdemeler.filter((o) => {
     const v = _vadeAl(o);
@@ -821,7 +824,9 @@ export default function TasarimV2({ onGit }) {
     const cfoKpiler = panel ? [
       { etiket: 'Kasa', deger: fmt(sayi(panel.kasa)), alt: 'kanonik · kasa izi', renk: R.yesil },
       { etiket: 'Serbest nakit', deger: fmt(sayi(panel.serbest_nakit)), alt: 'zorunlu yük sonrası', renk: sayi(panel.serbest_nakit) >= 0 ? R.krem : R.kirmizi },
-      { etiket: 'Kaç gün dayanır', deger: gunDayanir ? `${trSayi(gunDayanir, 0)} gün` : '—', alt: 'ciro dursa bile', renk: gunDayanir >= 30 ? R.yesil : gunDayanir >= 10 ? R.amber : R.kirmizi },
+      // 🟡 (2026-08-12): gerçek "0 gün" (nakit bitti — en kritik alarm) truthy
+      // kontrolde '—' oluyordu. null/undefined = ölçülemedi, 0 = gerçek alarm.
+      { etiket: 'Kaç gün dayanır', deger: panel?.kac_gun_dayanir != null ? `${trSayi(gunDayanir, 0)} gün` : '—', alt: 'ciro dursa bile', renk: gunDayanir >= 30 ? R.yesil : gunDayanir >= 10 ? R.amber : R.kirmizi },
       // Gecikmiş ayrı KPI olduğunda bugünkü de görünsün — ikisi farklı iş:
       // gecikmiş "neden ödenmedi", bugünkü "bugün öde".
       ...(gecikmisToplam > 0 ? [{
@@ -1082,6 +1087,20 @@ export default function TasarimV2({ onGit }) {
     })();
     const finansOf = (ad) => finansMap[sadeles(ad)] || null;
 
+    // 🔴 P1 (2026-08-12): Şube Karnesi tablosu YALNIZ ciro feed'inden (subeAyListe)
+    // kuruluyordu → 0 ciro ama gideri süren KAPALI şube (canlıda Alsancak/Köyceğiz)
+    // hiç satır almıyor, 30g gideri görünmez kalıyordu. subeAyListe'yi MUTASYONA
+    // UĞRATMADAN (onu 'Aktif şube' + 'En düşük ciro' KPI'ları paylaşıyor) tablo için
+    // AYRI liste: finans kovasında olup ciroda olmayan giderli şubeleri 0-ciro satır
+    // olarak ekle — en altta kalır (toplam 0).
+    const subeKarne = (() => {
+      const eldeki = new Set(d.subeAyListe.map((s) => sadeles(s.ad)));
+      const eksik = Object.values(finansMap)
+        .filter((f) => !eldeki.has(sadeles(f.ad)) && sayi(f.gider) > 0)
+        .map((f) => ({ ad: f.ad, toplam: 0, nakit: 0, kart: 0, gunSayisi: 0, pay: 0, _ciroYok: true }));
+      return [...d.subeAyListe, ...eksik];
+    })();
+
     const kpiler = [
       { etiket: 'En yüksek ciro', deger: enIyi.ad, alt: fmt(enIyi.toplam), renk: R.yesil },
       { etiket: 'En düşük ciro', deger: enZayif.ad, alt: fmt(enZayif.toplam), renk: R.kirmizi },
@@ -1170,27 +1189,29 @@ export default function TasarimV2({ onGit }) {
             { ad: 'Şube' }, { ad: 'Ciro', sag: true }, { ad: 'Nakit', sag: true },
             { ad: 'Kart + online', sag: true }, { ad: 'Günlük ort.', sag: true },
             { ad: 'Zincir payı', sag: true }, { ad: 'Kayıt' },
-            // ── Gider ekseni (soru 5/9): yalnız ANLIK gider — sabit+maaş hariç ──
+            // ── Gider ekseni (soru 5/9): KANONİK gider (2026-08-10) — nakit çıkışı
+            //    anlık giderden, kart çıkışı kart defterinden; her para çıkışı tek
+            //    kanal. (Sabit/maaş bu kanonik kovada değil.) ──
             { ad: 'Gider (30g)', sag: true },
             // ── Kontrol Kulesi birleşti: şubenin DEPO rolündeki trafiği ──
             { ad: 'Depo yükü', sag: true }, { ad: 'Yolda', sag: true },
             // ── Davranış ekseni: ciro ≠ düzgün çalışma ──
             { ad: 'Davranış' },
           ]}
-          satirlar={d.subeAyListe.map(s => ({
+          satirlar={subeKarne.map(s => ({
             id: s.ad,
             _s: s,
             hucreler: [
-              { v: s.ad, kalin: true },
+              { v: s._ciroYok ? `${s.ad} · ciro yok` : s.ad, kalin: true, renk: s._ciroYok ? R.not2 : undefined },
               { v: fmt(s.toplam), mono: true, sag: true },
               { v: fmt(s.nakit), mono: true, sag: true },
               { v: fmt(s.kart), mono: true, sag: true },
               { v: fmt(s.toplam / (s.gunSayisi || 1)), mono: true, sag: true },
               { v: `%${trSayi(s.pay)}`, bar: (s.pay / enBuyukPay) * 100, sag: true, renk: s.pay >= enBuyukPay * 0.8 ? R.yesil : s.pay >= enBuyukPay * 0.5 ? R.amber : R.kirmizi },
               { v: `${s.gunSayisi} gün`, rozet: s.gunSayisi >= d.gunSayisi ? R.yesil : R.amber },
-              // Gider (soru 5/9): iki satırlı hücre — üstte 30 günlük ANLIK
-              // gider, altta ciro/gider oranı. Oran YÜKSEK = iyi (1₺ gidere
-              // kaç ₺ ciro). Veri yoksa '—' (sıfır ≠ ölçülemedi).
+              // Gider (soru 5/9): iki satırlı hücre — üstte 30 günlük KANONİK
+              // gider (nakit anlık + kart çıkışı), altta ciro/gider oranı. Oran
+              // YÜKSEK = iyi (1₺ gidere kaç ₺ ciro). Veri yoksa '—' (sıfır ≠ ölçülemedi).
               (() => {
                 const f = finansOf(s.ad);
                 if (!f || (!f.gider && !f.ciro)) return { v: '—', sag: true, renk: R.not3, sira: -1 };
