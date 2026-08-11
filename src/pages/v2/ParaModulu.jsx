@@ -157,6 +157,14 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru, onToast }) {
 
   const ciroKaydet = async (force = false) => {
     if (!ciroForm?.sube_id) { onToast?.('Şube seçmeden ciro kaydedilmez'); return; }
+    // P1 guard (2026-08-12): negatif alan / sıfır toplam reddedilir (asıl koruma
+    // sunucuda). 0 satış = kayıt YOK; "girilmemiş ciro" alarmı yokluğu yakalar.
+    if (sayi(ciroForm?.nakit) < 0 || sayi(ciroForm?.pos) < 0 || sayi(ciroForm?.online) < 0) {
+      onToast?.('Ciro alanları negatif olamaz'); return;
+    }
+    if ((sayi(ciroForm?.nakit) + sayi(ciroForm?.pos) + sayi(ciroForm?.online)) <= 0) {
+      onToast?.('Ciro toplamı pozitif olmalı'); return;
+    }
     setCiroMesgul(true);
     setCiroDup('');
     try {
@@ -200,7 +208,9 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru, onToast }) {
   };
 
   const giderKaydet = async (force = false) => {
-    if (!sayi(giderForm?.tutar)) { onToast?.('Tutar girmeden gider kaydedilmez'); return; }
+    // P0 guard (2026-08-12): negatif/sıfır tutar reddedilir (asıl koruma sunucuda;
+    // bu UX). Negatif gider = kart borcunu düşürme sömürüsüydü.
+    if (sayi(giderForm?.tutar) <= 0) { onToast?.('Tutar pozitif olmalı'); return; }
     if (giderForm.odeme_yontemi === 'kart' && !giderForm.kart_id) { onToast?.('Kart seçimi zorunlu'); return; }
     setFormMesgul(true);
     setGiderDup('');

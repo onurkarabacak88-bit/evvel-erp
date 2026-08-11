@@ -2947,6 +2947,17 @@ def anlik_gider_listele(durum: str = "aktif", include_pending: bool = False, inc
 
 @app.post("/api/anlik-gider")
 def anlik_gider_ekle(g: AnlikGider):
+    # 🔴 P0 (2026-08-12, Para modülü denetimi): negatif tutar reddedilmiyordu.
+    # Kart modunda negatif tutar limit kontrolünü geçip kart_hareketleri'ne
+    # NEGATİF HARCAMA yazıp kart borcunu DÜŞÜRÜYORDU = uydurma kredi/limit açma.
+    # Düzeltmeler DELETE/ters-kayıtla yapılır; negatif tutara meşru ihtiyaç yok.
+    # Kaynakta normalize + pozitiflik zorunlu (API doğrudan da çağrılabilir).
+    try:
+        g.tutar = round(float(g.tutar), 2)
+    except (TypeError, ValueError):
+        raise HTTPException(400, "Tutar sayı olmalı")
+    if g.tutar <= 0:
+        raise HTTPException(400, "Tutar pozitif olmalı")
     sv = (g.sube or "").strip()
     if sv and sv.upper() != "MERKEZ":
         raise HTTPException(
@@ -6022,6 +6033,13 @@ def ciro_ekle(c: CiroModel):
     pos   = float(c.pos or 0)
     online = float(c.online or 0)
     toplam = nakit + pos + online
+    # 🔴 P1 (2026-08-12, Para modülü denetimi): negatif/sıfır ciro engeli yoktu →
+    # negatif net_tutar kasaya girebilir ya da anlamsız 0 ciro yazılabilirdi.
+    # (0 satış = KAYIT YOK; "girilmemiş ciro" alarmı yokluğu yakalar.)
+    if nakit < 0 or pos < 0 or online < 0:
+        raise HTTPException(400, "Ciro alanları negatif olamaz")
+    if toplam <= 0:
+        raise HTTPException(400, "Ciro toplamı pozitif olmalı")
     with db() as (conn, cur):
         # Aynı şube+tarih için ciro yazımlarını transaction bazında seri hale getir.
         lock_key = f"ciro:{c.sube_id}:{c.tarih}"
@@ -6097,6 +6115,11 @@ def ciro_guncelle(cid: str, c: CiroModel):
     nakit  = float(c.nakit  or 0)
     pos    = float(c.pos    or 0)
     online = float(c.online or 0)
+    # 🔴 P1 (2026-08-12): POST ile aynı negatif/sıfır koruması PUT'ta da olmalı.
+    if nakit < 0 or pos < 0 or online < 0:
+        raise HTTPException(400, "Ciro alanları negatif olamaz")
+    if (nakit + pos + online) <= 0:
+        raise HTTPException(400, "Ciro toplamı pozitif olmalı")
 
     with db() as (conn, cur):
         cur.execute("SELECT * FROM ciro WHERE id=%s AND durum='aktif'", (cid,))
@@ -6106,6 +6129,18 @@ def ciro_guncelle(cid: str, c: CiroModel):
 
         # Şube oranlarını çek — güncel oranla hesapla
         sube_id = c.sube_id or eski['sube_id']
+        # 🔴 P1 (2026-08-12, Codex): PUT şube değiştirince hedef şube+tarihte zaten
+        # aktif ciro varsa İKİ aktif ciro + çift ledger oluşuyordu (POST'taki sert
+        # 409 koruması PUT'ta yoktu). Aynı korumayı buraya taşı: tarih SABİT kalır
+        # (kasa eski['tarih']'e yazılıyor), çakışma anahtarı = (hedef sube_id, tarih).
+        _tarih = eski['tarih']
+        cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"ciro:{sube_id}:{_tarih}",))
+        cur.execute(
+            "SELECT id FROM ciro WHERE durum='aktif' AND tarih=%s AND sube_id=%s AND id<>%s FOR UPDATE",
+            (str(_tarih), sube_id, cid),
+        )
+        if cur.fetchone():
+            raise HTTPException(409, f"Hedef şube için {_tarih} tarihinde aktif ciro zaten var.")
         cur.execute("SELECT COALESCE(pos_oran,0) as pos_oran, COALESCE(online_oran,0) as online_oran FROM subeler WHERE id=%s", (sube_id,))
         oran = cur.fetchone()
         pos_oran    = float(oran['pos_oran'])    if oran else 0.0

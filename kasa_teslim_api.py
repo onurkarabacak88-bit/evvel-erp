@@ -62,13 +62,18 @@ def kasa_teslim_alici_ekle(body: KasaTeslimAliciBody):
 
 @router.put("/api/kasa-teslim-alici/{tid}")
 def kasa_teslim_alici_guncelle(tid: str, body: KasaTeslimAliciBody):
+    # 🟡 P2 (2026-08-12): create'te ad>=2 kontrolü vardı, update'te YOKTU → mevcut
+    # alıcı boş/tek-karakter ada ezilip teslim kayıtlarının okunurluğu bozulabiliyordu.
+    ad = (body.ad or "").strip()
+    if len(ad) < 2:
+        raise HTTPException(400, "Ad en az 2 karakter olmalı")
     with db() as (conn, cur):
         cur.execute(
             """UPDATE kasa_teslim_alici
                SET ad=%s, unvan=%s, sube_id=%s
                WHERE id=%s""",
             (
-                (body.ad or "").strip(),
+                ad,
                 (body.unvan or "").strip() or None,
                 (body.sube_id or "").strip() or None,
                 tid,

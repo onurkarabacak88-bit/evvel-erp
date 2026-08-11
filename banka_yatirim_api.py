@@ -58,6 +58,25 @@ def banka_yatirim_ekle(body: BankaYatirimOlustur):
     bid = str(uuid.uuid4())
     acik = (body.aciklama or "").strip() or None
     with db() as (conn, cur):
+        # 🟡 P2 (2026-08-12, Para modülü denetimi): idempotency yoktu → ağ retry /
+        # çift-tık aynı yatırımı iki kez yazıp mutabakatta kum_yatan'ı şişiriyor,
+        # elde_nakit'i yanlış düşürüyordu. GEÇİCİ mitigasyon: son 10 sn içinde
+        # birebir aynı (tarih+tutar+ad+açıklama) kayıt varsa yenisini yazma, mevcudu
+        # dön. ASIL ÇÖZÜM: istemci Idempotency-Key + UNIQUE kısıt (takip: BM-idem).
+        cur.execute(
+            """
+            SELECT id FROM banka_yatirimlari
+            WHERE tarih=%s AND tutar=%s AND yatiran_ad=%s
+              AND COALESCE(aciklama,'')=COALESCE(%s,'')
+              AND olusturma >= NOW() - INTERVAL '10 seconds'
+            ORDER BY olusturma DESC LIMIT 1
+            """,
+            (str(body.tarih), tutar, ad, acik),
+        )
+        _dup = cur.fetchone()
+        if _dup:
+            return {"success": True, "id": _dup["id"], "duplicate": True,
+                    "mesaj": "Aynı yatırım son 10 saniyede zaten kaydedildi."}
         cur.execute(
             """
             INSERT INTO banka_yatirimlari (id, tarih, tutar, yatiran_ad, aciklama)
