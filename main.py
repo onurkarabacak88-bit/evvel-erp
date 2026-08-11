@@ -5693,17 +5693,31 @@ def _onayla_tx(cur, oid: str):
         plan_dict = dict(plan_row)
         kaynak_tablo = plan_dict.get('kaynak_tablo')
         odenen_onay = float(onay['tutar'])
+        # 🔴 P1 (2026-08-12, Ödeme modülü denetimi): onay yolu planı KOŞULSUZ
+        # 'odendi' yazıp odenen_tutar'ı EZİYORDU (önceki kısmi ödemeyi biriktirmeden,
+        # _kalan kontrolü olmadan) → kalan borç KAYBOLUYORDU. Bu, /ode'de 2026-08-08'de
+        # düzeltilen "kısmi ödeme kalanı korur" invariant'ının onay-yolundaki ikiziydi.
+        # Artık /ode ile AYNI partial-aware mantık: biriktir + _kalan; borç ancak
+        # tamamı kapanınca 'odendi' olur, kalan varsa 'bekliyor' kalır.
+        _onceki_od = float(plan_dict.get('odenen_tutar') or 0)
+        _toplam_od = round(_onceki_od + odenen_onay, 2)
+        _kalan_od = round(float(plan_dict['odenecek_tutar']) - _toplam_od, 2)
+        _tam_kapandi_onay = _kalan_od <= 0.01
         cur.execute("""
-            UPDATE odeme_plani SET durum='odendi', odeme_tarihi=%s, odenen_tutar=%s
+            UPDATE odeme_plani SET durum=%s, odeme_tarihi=%s, odenen_tutar=%s
             WHERE id=%s AND durum IN ('bekliyor','onay_bekliyor')
-        """, (tarih, odenen_onay, onay['kaynak_id']))
-        plan_odendi = cur.rowcount > 0
-        if plan_odendi:
+        """, ('odendi' if _tam_kapandi_onay else 'bekliyor',
+              tarih if _tam_kapandi_onay else plan_dict.get('odeme_tarihi'),
+              _toplam_od, onay['kaynak_id']))
+        plan_guncellendi = cur.rowcount > 0
+        if plan_guncellendi:
+            # Kasa BU ödeme kadar yazılır (para gerçekten çıktı — tam/kısmi fark etmez,
+            # /ode ile aynı). vadeli kapatma + borç envanteri YALNIZ tam kapanışta.
             ana_onay = kasa_ve_faiz_odeme_plani_tam_odeme(
                 cur, plan_dict, onay['kaynak_id'], odenen_onay, tarih,
                 anapara_aciklama=f"Onaylandı: {onay['aciklama']}",
             )
-            if kaynak_tablo == 'vadeli_alimlar' and plan_dict.get('kaynak_id'):
+            if _tam_kapandi_onay and kaynak_tablo == 'vadeli_alimlar' and plan_dict.get('kaynak_id'):
                 vadeli_alim_kapat(cur, plan_dict['kaynak_id'], tarih)
             guncelle_borc_envanteri_odeme_plani_sonrasi(cur, plan_dict, ana_onay)
     elif islem_turu == 'VADELI_ODEME':

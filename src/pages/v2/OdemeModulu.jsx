@@ -414,14 +414,22 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
           if (!tamT || tamT <= 0) { onToast?.('Ödenecek tutar 0\'dan büyük olmalı'); setCalisiyor(false); return; }
           const duzeltildi = Math.abs(tamT - planT) > 0.005;
           const q = duzeltildi ? `?tutar=${encodeURIComponent(tamT)}` : '';
-          await api(`/odeme-plani/${o.id}/ode${q}`, {
+          const r = await api(`/odeme-plani/${o.id}/ode${q}`, {
             method: 'POST',
             body: { odeme_yontemi: modal.yontem, kart_id: modal.yontem === 'kart' ? modal.kartId : null },
           });
           const nereye = modal.yontem === 'kart' ? 'karta yazıldı' : 'kasadan düşüldü';
-          onToast?.(duzeltildi
-            ? `${o.baslik} ${fmt(tamT)} ödendi — plan ${fmt(planT)} idi, tutar düzeltildi ve borç kapandı${await dosyaNotu(modal.dosya)}`
-            : `${o.baslik} ödendi — ${nereye}${await dosyaNotu(modal.dosya)}`);
+          const ek = await dosyaNotu(modal.dosya);
+          // 🔴 P0 (2026-08-12): backend /ode kısmi tutarda planı 'bekliyor' BIRAKIR
+          // (kalan<=0.01 değilse KAPANMAZ). Mesajı SERVER TRUTH'undan türet — eskiden
+          // sabit "borç kapandı" derdi, kalan açıkken YALAN oluyordu.
+          if (r?.tam_kapandi === false) {
+            onToast?.(`${o.baslik} ${fmt(tamT)} ödendi — KALAN ${fmt(sayi(r.kalan_borc))} açık kaldı (kısmi)${ek}`);
+          } else if (duzeltildi) {
+            onToast?.(`${o.baslik} ${fmt(tamT)} ödendi — plan ${fmt(planT)} idi, düzeltildi ve borç kapandı${ek}`);
+          } else {
+            onToast?.(`${o.baslik} ödendi — ${nereye}${ek}`);
+          }
         }
       } else if (modal.tip === 'tutar') {
         const t = Number(String(modal.tutar).replace(',', '.'));
@@ -500,7 +508,9 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
 
   /** Borç Öde akışını aç: tedarikçinin AÇIK faturalarını FIFO sırayla getir. */
   const borcOdeAc = async (tedAd, onerilenTutar) => {
-    setBorcModal({ ted: tedAd, tutar: onerilenTutar ? String(Math.round(onerilenTutar)) : '', yontem: 'nakit', kartId: '', elle: false, secim: {} });
+    // 🟡 P2 (2026-08-12): Math.round kuruşu kullanıcı dokunmadan atıyordu → cent açık
+    // bakiye / fazla ödeme. AP kuruş hassasiyetinde; 2 haneyi koru.
+    setBorcModal({ ted: tedAd, tutar: onerilenTutar ? String(Number(sayi(onerilenTutar).toFixed(2))) : '', yontem: 'nakit', kartId: '', elle: false, secim: {} });
     setBorcAcik(null);
     try {
       const d = await api(`/fatura/cari-odenecekler?tedarikci=${encodeURIComponent(tedAd)}`);
@@ -567,7 +577,12 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
         method: 'POST',
         body: { odemeler: secililer.map((o) => ({ odeme_id: o._id, tutar: sayi(o._tutar) })) },
       });
-      onToast?.(`✓ ${sayi(r?.uygulanan) || secililer.length}/${secililer.length} ödeme uygulandı`);
+      // 🔴 P1 (2026-08-12): `0 || N` tuzağı — backend uygulanan=0 dönse bile (satırlar
+      // başkası tarafından kapanmış) "N/N uygulandı" YALANI basıyordu. Gerçek sayıyı kullan.
+      const _uyg = Number.isFinite(Number(r?.uygulanan)) ? Number(r.uygulanan) : secililer.length;
+      onToast?.(_uyg === 0
+        ? 'Hiçbir ödeme uygulanmadı — satırlar zaten kapanmış olabilir'
+        : `✓ ${_uyg}/${secililer.length} ödeme uygulandı`);
       setTopluSecim({}); setTopluSor(false);
       yukle();
     } catch (e) {
@@ -835,7 +850,14 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
                       style={{ ...omAlanStil, fontFamily: F.mono, textAlign: 'right',
                         borderColor: duzeltildi ? R.bakir : undefined, fontWeight: duzeltildi ? 700 : undefined }} />
                     <div style={{ fontSize: 11.5, color: duzeltildi ? R.bakirAcik : R.not2, marginTop: -4, lineHeight: 1.6 }}>
-                      {duzeltildi ? (
+                      {duzeltildi && tamT < planT - 0.005 ? (
+                        // 🔴 P0 (2026-08-12): tamT < plan ise backend planı KAPATMAZ
+                        // ('bekliyor' kalır) — eskiden "KAPANIR" yalanı basılıyordu.
+                        <>Plan <b style={{ fontFamily: F.mono }}>{fmt(planT)}</b> diyordu, sen{' '}
+                          <b style={{ fontFamily: F.mono }}>{fmt(tamT)}</b> yazdın — bu plandan AZ, <b>borç KAPANMAZ</b>;{' '}
+                          kalan <b style={{ fontFamily: F.mono }}>{fmt(planT - tamT)}</b> açık kalır (kısmi sonuç).
+                          Kalanı düzgün yönetmek için <b>Kısmi öde</b>'yi seç.</>
+                      ) : duzeltildi ? (
                         <>Plan <b style={{ fontFamily: F.mono }}>{fmt(planT)}</b> diyordu, sen{' '}
                           <b style={{ fontFamily: F.mono }}>{fmt(tamT)}</b> yazdın — <b>borç bu tutarla KAPANIR</b>,
                           kalan açılmaz. Kalan borç bırakmak istiyorsan <b>Kısmi öde</b>'yi seç.</>
