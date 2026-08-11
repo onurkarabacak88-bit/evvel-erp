@@ -834,7 +834,10 @@ export default function TasarimV2({ onGit }) {
       }] : []),
       { etiket: '7 gün yükü', deger: fmt(sayi(panel.yuk_7)), alt: 'vadesi gelen ödemeler' },
       { etiket: '30 gün yükü', deger: fmt(sayi(panel.yuk_30)), alt: 'aylık zorunlu çıkış' },
-      { etiket: 'Bu ay ciro', deger: fmt(sayi(panel.bu_ay_sadece_ciro)), alt: `nakit ${fmt(sayi(panel.bu_ay_nakit)).replace(' ₺', '')} · pos ${fmt(sayi(panel.bu_ay_pos)).replace(' ₺', '')} · online ${fmt(sayi(panel.bu_ay_online)).replace(' ₺', '')}` },
+      // PROD-V2-CIRO-001 FIX: toplam BRÜT bu_ay_ciro (ciro tablosu) — kırılım (nakit/pos/online)
+      // BRÜT olduğundan toplam=parça olsun. Önce NET bu_ay_sadece_ciro kullanılıyordu → 377K net
+      // toplam vs 382K brüt kırılım (toplam≠parça). PROD-PANEL-004 + Panel.jsx manşetiyle tutarlı.
+      { etiket: 'Bu ay ciro', deger: fmt(sayi(panel.bu_ay_ciro)), alt: `nakit ${fmt(sayi(panel.bu_ay_nakit)).replace(' ₺', '')} · pos ${fmt(sayi(panel.bu_ay_pos)).replace(' ₺', '')} · online ${fmt(sayi(panel.bu_ay_online)).replace(' ₺', '')}` },
     ] : [];
 
     const enIyi = d.subeGunListe[0]?.[1] || 0;
@@ -969,14 +972,15 @@ export default function TasarimV2({ onGit }) {
 
   function PanelAy() {
     const d = veri;
-    const ayCiro = sayi(panel?.bu_ay_sadece_ciro) || d.ayToplam;
+    // PROD-V2-CIRO-001 FIX: ayCiro BRÜT bu_ay_ciro (ciro tablosu) — aşağıdaki dağılım nakit/pos/online
+    // BRÜT olduğundan toplam=parça olsun (önce NET bu_ay_sadece_ciro → toplam≠parça). d.ayToplam
+    // fallback zaten BRÜT (nakit+pos+online). Ortalama da aynı brüt kaynaktan → K7 tek-kaynak korunur.
+    const ayCiro = sayi(panel?.bu_ay_ciro) || d.ayToplam;
     const ayNakit = sayi(panel?.bu_ay_nakit);
     const ayPos = sayi(panel?.bu_ay_pos);
     const ayOnline = sayi(panel?.bu_ay_online);
-    const kesinti = sayi(panel?.bu_ay_online_kesinti);
-    // 🐞 K7 (canlı denetim): ortalama İSTEMCİ toplamından (d.ayToplam),
-    // "Ay cirosu" SUNUCUDAN (bu_ay_sadece_ciro) geliyordu — iki kaynak
-    // 694₺ ayrışıyordu (58.054/2=29.027 ↔ 29.372). Tek kaynak: aynı ayCiro.
+    // 🐞 K7 (canlı denetim): ortalama + "Ay cirosu" TEK KAYNAK (artık brüt bu_ay_ciro || d.ayToplam,
+    // ikisi de brüt). Eskiden ortalama istemci d.ayToplam, ciro sunucu bu_ay_sadece_ciro'ydu → 694₺ drift.
     const gunOrt = d.gunSayisi ? ayCiro / d.gunSayisi : 0;
     // Onay sayacı: Riskler'deki KASA ayrımının aynısı (124 kasa hatası
     // burada da "onay bekleyen" diye görünüyordu).
@@ -995,11 +999,13 @@ export default function TasarimV2({ onGit }) {
       },
     ];
 
+    // PROD-V2-CIRO-001 FIX: dağılım GROSS-ONLY (Nakit/POS/Online) → toplam (brüt bu_ay_ciro) = parça.
+    // Önceki "Online kesinti" satırı YALNIZ online komisyonu düşüyordu (POS kesinti eksikti) → yarım
+    // waterfall, toplamla tutmuyordu. Komisyonlar finansman-maliyeti kartında ayrıca gösterilir.
     const dagilim = [
       { ad: 'Nakit', tutar: ayNakit || d.aySatir.reduce((s, r) => s + r.nakit, 0), renk: R.yesil },
       { ad: 'POS', tutar: ayPos, renk: R.bakir },
       { ad: 'Online', tutar: ayOnline, renk: R.mavi },
-      { ad: 'Online kesinti', tutar: -kesinti, renk: R.kirmizi },
     ].filter(x => x.tutar !== 0);
     const enBuyuk = Math.max(...dagilim.map(x => Math.abs(x.tutar)), 1);
 
