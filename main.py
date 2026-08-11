@@ -2093,9 +2093,18 @@ def panel():
             ozet['borc_taksit_bekleyen'] = float(_op['borc_bekleyen'])
             ozet['borc_taksit_bekleyen_adet'] = int(_op['borc_bekleyen_adet'])
 
-            # GENEL TOPLAM
-            ozet['genel_nakit_toplam'] = ozet['anlik_nakit'] + ozet['sabit_nakit'] + ozet['vadeli_nakit']
-            ozet['genel_kart_toplam']  = ozet['anlik_kart']  + ozet['sabit_kart']  + ozet['vadeli_kart']
+            # GENEL TOPLAM (Bu Ay Gider Ödeme Yöntemi özeti — Panel.jsx:1574)
+            # PROD-PANEL-003 FIX: özet yalnız anlik+sabit+vadeli'yi topluyordu; panel FATURA ve
+            # BORÇ TAKSİT kartlarını da gösterdiğinden "genel" nakit/kart yüzdesi görünen kartlarla
+            # TUTMUYORDU. Ödeme-yöntemi ayrıştırılabilir GERÇEK ödemeler dahil edildi (Codex onaylı):
+            #  - fatura_nakit/fatura_kart (FATURA_ODEMESI / fatura_giderleri kart)
+            #  - borc_taksit_odenen (BORC_TAKSIT = nakit-only kasa çıkışı; kart yolu yok)
+            # PERSONEL HARİÇ: personel_gercek = personel_aylik tahakkuku (arrears), nakit/kart kırılımı
+            # yok → dahil etmek sahte method-split üretir (ayrı ürün kararı gerektirir).
+            ozet['genel_nakit_toplam'] = (ozet['anlik_nakit'] + ozet['sabit_nakit'] + ozet['vadeli_nakit']
+                                          + ozet['fatura_nakit'] + ozet['borc_taksit_odenen'])
+            ozet['genel_kart_toplam']  = (ozet['anlik_kart'] + ozet['sabit_kart'] + ozet['vadeli_kart']
+                                          + ozet['fatura_kart'])
 
             # BU AY TOPLAM KASA GİRİŞ/ÇIKIŞ — 1) numaralı birleşik sorgudan
             # (CIRO_DUZELTME/CIRO_IPTAL/ACILIS_DEVRI teknik ters kayıtları hariç — filtre aynı)
