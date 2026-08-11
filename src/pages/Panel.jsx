@@ -1561,9 +1561,14 @@ export default function Panel({ onNavigate }) {
               </div>
             ) : null)}
             <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
-              {panel.bu_ay_sadece_ciro > 0 && (
+              {/* PROD-PANEL-004 FIX: finansman-% paydası BRÜT ciro (bu_ay_ciro = ciro tablosu, tek
+                  kaynak). Önce kasa-türevi NET bu_ay_sadece_ciro kullanılıyordu → (a) net payda,
+                  numeratördeki komisyonla aynı tutarı tabandan düşürdüğü için oranı yapay kötü
+                  gösteriyordu; (b) iki farklı ciro kaynağı (ciro tablosu vs kasa_hareketleri) tek
+                  KPI'da kırılgan drift üretiyordu. Manşet "Bu Ay Ciro" kartı zaten bu_ay_ciro kullanıyor. */}
+              {panel.bu_ay_ciro > 0 && (
                 <span style={{ fontSize: 10, color: 'var(--yellow)', fontWeight: 600 }}>
-                  %{((panel.bu_ay_finansman_maliyeti / panel.bu_ay_sadece_ciro) * 100).toFixed(1)} ciro
+                  %{((panel.bu_ay_finansman_maliyeti / panel.bu_ay_ciro) * 100).toFixed(1)} ciro
                 </span>
               )}
               <span style={{ fontSize: 13, fontWeight: 800, fontFamily: 'var(--font-mono)', color: 'var(--red)' }}>{fmt(panel.bu_ay_finansman_maliyeti)}</span>
