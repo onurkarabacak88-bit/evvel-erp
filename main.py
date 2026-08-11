@@ -10788,9 +10788,23 @@ def toplu_odeme(payload: dict):
         # düşürebiliyordu. Global advisory lock (transaction sonunda otomatik düşer)
         # kasadan-çıkaran toplu işlemleri serileştirir; plan FOR UPDATE tekli /ode ile yarışı keser.
         cur.execute("SELECT pg_advisory_xact_lock(hashtext('kasa-toplu-cikis'))")
+        # PROD-PANEL-001 FIX: Kasa yeterlilik kontrolü, client'ın gönderdiği `tutar`a değil,
+        # SERVER'ın hesapladığı KALAN borca (odenecek − odenen) göre yapılır. Aksi halde tutar
+        # boş gelen satırlar toplamdan düşüyor ve yetersiz kasada işlem başlayabiliyordu.
+        _oids = [i.get('odeme_id') for i in odemeler if i.get('odeme_id')]
+        _kalan_map: dict = {}
+        if _oids:
+            cur.execute(
+                """SELECT id::text AS id,
+                          (COALESCE(odenecek_tutar,0) - COALESCE(odenen_tutar,0)) AS kalan
+                   FROM odeme_plani WHERE id = ANY(%s) AND durum <> 'odendi'""",
+                (_oids,),
+            )
+            for r in cur.fetchall():
+                _kalan_map[str(r['id'])] = float(r['kalan'] or 0)
         # Backend kasa kontrolü — core'dan
         kasa = kasa_bakiyesi(cur)
-        toplam = sum(float(i.get('tutar', 0)) for i in odemeler if i.get('tutar'))
+        toplam = sum(v for v in _kalan_map.values() if v > 0)
         if toplam > 0 and kasa - toplam < -1:
             raise HTTPException(400, f"Kasa yetersiz. Kasa: {kasa:,.0f}₺ · Toplam ödeme: {toplam:,.0f}₺")
 
@@ -10806,7 +10820,16 @@ def toplu_odeme(payload: dict):
                 raise HTTPException(404, f"Ödeme bulunamadı: {oid}")
             if plan['durum'] == 'odendi':
                 continue  # Zaten ödendi, atla
-            odenen = tutar or float(plan['odenecek_tutar'])
+            # PROD-PANEL-001 FIX: toplu-öde = TAM KAPATMA. Booking her zaman server'ın hesapladığı
+            # KALAN borç kadar (odenecek − odenen); client `tutar` yalnızca DOĞRULAMA için. Kısmi/
+            # negatif/fazla tutar plan'ı 'odendi' yapıp eksik-hatalı kasa hareketi yazamaz → defter
+            # bozulmasın. Kısmi ödeme için /api/odeme-plani/{oid}/kismi-ode kullanılır (kuruş-int kıyas).
+            kalan_krs = int(round((float(plan['odenecek_tutar'] or 0) - float(plan.get('odenen_tutar') or 0)) * 100))
+            if kalan_krs <= 0:
+                continue  # ödenecek kalan yok
+            if tutar is not None and int(round(float(tutar) * 100)) != kalan_krs:
+                raise HTTPException(400, f"Toplu ödeme tam kapatma yapar (kalan {kalan_krs/100:.2f}₺); kısmi/farklı tutar için kısmi-öde kullanın: {oid}")
+            odenen = kalan_krs / 100.0
             bugun = str(bugun_tr())
             cur.execute("UPDATE odeme_plani SET durum='odendi', odeme_tarihi=%s, odenen_tutar=%s WHERE id=%s", (bugun, odenen, oid))
             plan_d = dict(plan)
