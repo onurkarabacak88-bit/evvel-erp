@@ -17259,8 +17259,10 @@ def ops_maliyet_alis_fiyat_kaydet(body: AlisFiyatBody):
     kalem = str(body.kalem_kodu or "").strip()
     if not kalem:
         raise HTTPException(400, "kalem_kodu zorunlu")
-    if body.birim_maliyet_tl < 0:
-        raise HTTPException(400, "birim_maliyet_tl negatif olamaz")
+    # 🔴 P1 (2026-08-12, Maliyet denetimi): eskiden yalnız `< 0` reddediyordu → 0 TL
+    # (boş/bozuk giriş) geçip maliyeti SIFIRLIYORDU (food-cost/marj/P&L sistematik düşük).
+    if not (body.birim_maliyet_tl > 0):
+        raise HTTPException(400, "birim_maliyet_tl 0'dan büyük olmalı (0/negatif maliyeti sıfırlar)")
     bas = body.gecerli_baslangic or str(date.today())
     with db() as (conn, cur):
         # Manuel giriş = kullanıcı AÇILIŞ birimi fiyatı yazar → katsayı UYGULANMAZ
@@ -17643,14 +17645,15 @@ def ops_maliyet_kalem_temizle(kalem_kodu: str, stok_fiyat_sifirla: bool = False)
         esleme_silinen = cur.rowcount
         stok_fiyat_sifirlanan = 0
         if stok_fiyat_sifirla:
-            try:
-                cur.execute(
-                    "UPDATE sube_depo_stok SET alis_fiyati_tl = NULL WHERE kalem_kodu = %s AND alis_fiyati_tl IS NOT NULL",
-                    (kalem_kodu,),
-                )
-                stok_fiyat_sifirlanan = cur.rowcount
-            except Exception:
-                pass
+            # 🔴 P1 (2026-08-12, Maliyet denetimi): stok-fiyat sıfırlama hatası ESKİDEN
+            # yutuluyordu (except: pass) → fiyat geçmişi+eşleşme SİLİNMİŞ ama stok fiyatı
+            # kalmış = kısmi temizlik, maliyet izi tutarsız. Hata artık propagate → tüm
+            # temizlik tek transaction'da geri alınır (atomik; hepsi ya da hiçbiri).
+            cur.execute(
+                "UPDATE sube_depo_stok SET alis_fiyati_tl = NULL WHERE kalem_kodu = %s AND alis_fiyati_tl IS NOT NULL",
+                (kalem_kodu,),
+            )
+            stok_fiyat_sifirlanan = cur.rowcount
     return {"success": True, "fiyat_silinen": fiyat_silinen, "esleme_silinen": esleme_silinen,
             "stok_fiyat_sifirlanan": stok_fiyat_sifirlanan}
 
@@ -18067,8 +18070,9 @@ def ops_maliyet_fatura_kalem_onayla(body: FaturaKalemOnaylaBody):
     kalem = str(body.kalem_kodu or "").strip()
     if not kalem:
         raise HTTPException(400, "kalem_kodu zorunlu")
-    if body.birim_maliyet_tl < 0:
-        raise HTTPException(400, "birim_maliyet_tl negatif olamaz")
+    # 🔴 P1 (2026-08-12, Maliyet denetimi): 0 TL onayı maliyeti sıfırlar → 0'dan büyük şart.
+    if not (body.birim_maliyet_tl > 0):
+        raise HTTPException(400, "birim_maliyet_tl 0'dan büyük olmalı")
     bas = body.gecerli_baslangic or str(date.today())
     anahtar = _fatura_anahtar({"urun_kodu": body.urun_kodu, "aciklama": body.aciklama or body.ham_metin})
     with db() as (conn, cur):
@@ -18150,9 +18154,12 @@ def ops_maliyet_recete_kaydet(body: ReceteBody):
     urun = str(body.urun_id or "").strip()
     if not urun:
         raise HTTPException(400, "urun_id zorunlu")
-    hammaddeler = [h for h in (body.hammaddeler or []) if str(h.hammadde_kodu or "").strip()]
+    # 🔴 P1 (2026-08-12, Maliyet denetimi): miktar pozitiflik kontrolü yoktu → 0/negatif
+    # miktar BOM maliyetini bozar/tersine çevirir. Kod VE miktar>0 olan satırlar geçerli.
+    hammaddeler = [h for h in (body.hammaddeler or [])
+                   if str(h.hammadde_kodu or "").strip() and _safe_float(h.miktar) > 0]
     if not hammaddeler:
-        raise HTTPException(400, "En az 1 geçerli hammadde satırı gerekli")
+        raise HTTPException(400, "En az 1 geçerli hammadde satırı gerekli (kod + miktar>0)")
     with db() as (conn, cur):
         _ensure_maliyet_tablolari(cur)
         # Mevcut reçeteyi temizle, yeniden yaz

@@ -264,13 +264,15 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
   const fyUygula = async () => {
     const m = fyModal;
     if (!m) return;
+    if (fyMesgul) return;   // 🔁 (2026-08-12) çift-tık: mükerrer fiyat/KDV/silme yazımını önle
     setFyMesgul(true);
     try {
       if (m.tip === 'fiyat') {
         const kod = String(m.kalem_kodu || '').trim();
         const tutar = Number(String(m.birim_maliyet_tl).replace(',', '.'));
         if (!kod) { onToast?.('Kalem kodu zorunlu'); setFyMesgul(false); return; }
-        if (!Number.isFinite(tutar) || tutar < 0) { onToast?.('Geçerli bir fiyat girin (negatif olamaz)'); setFyMesgul(false); return; }
+        // 🔴 P1 (2026-08-12): 0 TL de reddedilir (backend'le hizalı) — 0 maliyeti sıfırlar.
+        if (!Number.isFinite(tutar) || tutar <= 0) { onToast?.('Fiyat 0\'dan büyük olmalı (0/negatif maliyeti sıfırlar)'); setFyMesgul(false); return; }
         await api('/ops/maliyet/alis-fiyat-kaydet', { method: 'POST', body: {
           kalem_kodu: kod, kalem_adi: (m.kalem_adi || '').trim() || null,
           birim: (m.birim || 'adet').trim() || 'adet', birim_maliyet_tl: tutar,
@@ -667,7 +669,10 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
       const t = String(g.tarih || '').slice(0, 10);
       if (!gunMap[t]) gunMap[t] = { ciro: 0, maliyet: 0, fire: 0 };
       gunMap[t].ciro += sayi(g.ciro_tl);
-      gunMap[t].maliyet += sayi(g.gercek_maliyet_tl || g.teorik_maliyet_tl);
+      // 🔵 P1 (2026-08-12, Maliyet denetimi): trend grafiği maliyeti `gercek || teorik`
+      // ile hesaplıyordu → kanonik L1 (actual_open_cogs_tl, ürün-aç×fiyat) ATLANIYOR +
+      // `||` gerçek 0'ı teoriğe düşürüyordu. L1 kartıyla (aşağıda) AYNI kanonik zincir.
+      gunMap[t].maliyet += sayi(g.actual_open_cogs_tl ?? g.gercek_maliyet_tl ?? g.teorik_maliyet_tl);
       gunMap[t].fire += sayi(g.shrinkage_tl);
     });
     const siraliGunler = Object.keys(gunMap).sort();
