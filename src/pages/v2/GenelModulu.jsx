@@ -315,7 +315,10 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru }) {
           { etiket: 'Net akış', deger: net ? fmt(net) : '—', alt: net >= 0 ? 'pozitif' : 'negatif', renk: net >= 0 ? R.yesil : R.kirmizi },
         ]} />
 
-        <Bolum baslik="💼 Bu ayın para akışı" not="tahsilat kanalları" cocuk={
+        {/* 🔵 (2026-08-12): başlık "para akışı" idi ama satırlar TAHSİLAT KANALLARI (ciro
+            kırılımı: nakit/pos/online/dış/devir) — üstteki nakit-akışı KPI'ıyla (giriş/çıkış/
+            net) karıştırılmasın diye başlık nota (tahsilat) hizalandı. Farklı metrikler. */}
+        <Bolum baslik="💼 Bu ayın tahsilat kanalları" not="ciro kırılımı — üstteki nakit-akışı KPI'sından farklı" cocuk={
           <>
             <Satir ad="Nakit" deger={fmt(sayi(p.bu_ay_nakit))} />
             <Satir ad="POS / kart" deger={fmt(sayi(p.bu_ay_pos))} alt={sayi(p.bu_ay_pos_kesinti) ? `kesinti ${fmt(sayi(p.bu_ay_pos_kesinti))}` : null} />
