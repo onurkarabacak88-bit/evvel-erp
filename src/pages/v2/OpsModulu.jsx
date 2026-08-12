@@ -332,6 +332,15 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
       api('/ops/v2/siparis-akis?limit=200').catch(() => null),
     // ⚠️ Sıra Promise.all ile BİREBİR — tedarikçi paterni 3. sıraya eklendi
     ]).then(([sv, ks, tg, pr, fd, ak]) => {
+      // 🔵 (2026-08-12, Ops denetimi) FAKE-GREEN: KRİTİK mutabakat okumaları (kasa
+      // uyumsuzluk / ciro fark) DÜŞERSE boş={}→"temiz/0" render edip çözülmemiş
+      // uyumsuzlukları GİZLİYORDU. Kritik null → açık hata banner'ı (yenile), sahte
+      // sakinlik yok. Yardımcı okumalar (sevkiyat paterni/tedarikçi) null tolere edilir.
+      if (ks == null || fd == null) {
+        setUzHata('Mutabakat verisi yüklenemedi (kasa uyumsuzluk / ciro fark defteri) — '
+                  + '"temiz" görünüm EKSİK olabilir, çözülmemiş uyumsuzluk gizlenmiş olabilir. Yenileyin.');
+        return;
+      }
       setUzSevk(sv || { satirlar: [] });
       setUzKasa(ks || {});
       setUzTedarikci(Array.isArray(tg?.tedarikciler) ? tg.tedarikciler : []);
@@ -746,7 +755,9 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
       .catch((e) => setBarHata(e?.message || ''));
     api(`/ops/kapanis-takip?tarih=${t}`)
       .then((d) => setKapanisTakip(d || {}))
-      .catch(() => setKapanisTakip({}));
+      // 🔵 (2026-08-12) FAKE-GREEN: kapanış takip (kasa kapanış = para) DÜŞÜNCE {}'e
+      // yutulup "denklem tutuyor/0" gibi render ediliyordu. Hata banner'ına yüzeye çıkar.
+      .catch((e) => setBarHata(e?.message || 'Kapanış takip verisi yüklenemedi — yenileyin.'));
     // GEÇ AÇILAN ŞUBELER (/ops/gec-acilan-subeler) — v2 bu ucu HİÇ çağırmıyordu.
     // /ops/acilis-kasa-takip "açıldı mı + kasa tuttu mu" der; bu uç "SAATİNDE
     // mi açıldı" der. Üç ayrı liste: geç açılan · açılış başlamış ama
@@ -1318,7 +1329,12 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
   // ── sevkiyat kaydet — MEVCUT sözleşme, MEVCUT kaynak kurallar ─────────────
   async function sevkKaydet(gonderildi) {
     if (!seciliTalep || busy) return;
-    const payload = Object.values(kd);
+    // 🔵 (2026-08-12, Ops denetimi): client kalem adedi yalnız >0 kapısındaydı; işaret/
+    // tamsayı sınırı yoktu → negatif/ondalık adet stok-hareket yazısına sızabiliyordu.
+    // Kaynakta non-negatif tamsayıya clamp (backend de doğrular ama savunma).
+    const payload = Object.values(kd).map((x) => ({
+      ...x, gonderilen_adet: Math.max(0, Math.round(sayi(x.gonderilen_adet))),
+    }));
     if (!payload.length) { onToast?.('En az bir kalem durumu seçin'); return; }
     const sevkVar = payload.some((x) => {
       const d = String(x.durum || '').toLowerCase();
@@ -2728,11 +2744,15 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
                 if (!kararli) {
                   eylemler.push({ ad: 'Kasa doğru', onTikla: () => setFdModal({ tip: 'karar', karar: 'girilen_dogru', kayit: f, aciklama: '' }) });
                   eylemler.push({ ad: 'Evo doğru', onTikla: () => setFdModal({ tip: 'karar', karar: 'evo_dogru', kayit: f, aciklama: '' }) });
+                  // 🔵 (2026-08-12, Ops denetimi): para-yazma YALNIZ AÇIK farkta. Eskiden
+                  // sadece `!yazildi` bakıyordu → 'kasa doğru/Evo doğru' (fark=veri hatası)
+                  // denmiş satır sekmede KAPALI sayılırken listede "Gelire/Gidere yaz"
+                  // sunuyordu (çelişki: kasa doğruysa fark gerçek para değildir).
+                  if (fark > 0) eylemler.push({ ad: 'Gelire yaz', onTikla: () => setFdModal({ tip: 'gelire', kayit: f }) });
+                  if (fark < 0) eylemler.push({ ad: 'Gidere yaz', onTikla: () => setFdModal({ tip: 'gidere', kayit: f }) });
                 } else {
                   eylemler.push({ ad: 'Kararı geri al', onTikla: () => setFdModal({ tip: 'karar', karar: 'acik', kayit: f, aciklama: '' }) });
                 }
-                if (fark > 0) eylemler.push({ ad: 'Gelire yaz', onTikla: () => setFdModal({ tip: 'gelire', kayit: f }) });
-                if (fark < 0) eylemler.push({ ad: 'Gidere yaz', onTikla: () => setFdModal({ tip: 'gidere', kayit: f }) });
               }
               return {
                 baslik: `${f.sube_ad || f.sube_id || '—'} · ${tarihKisa(f.tarih)}`,
@@ -4515,7 +4535,10 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
                 const d = ktDelta(x);
                 const ciroT = ktCiro(x);
                 const kismiNotr = d.kismi && !d.tam;
-                const buyuk = d.gecerli && Math.abs(d.deger) > 0.5;
+                // 🔵 (2026-08-12, Ops denetimi): satır eşiği 0.5 idi ama üst KPI/alarm
+                // 50 kullanıyor (sunucu tolerans bandı) → başlık "denklem tutuyor" derken
+                // satır 5₺ farkı "kasa açığı/fazlası" kırmızısıyla gösteriyordu. Eşikler hizalandı.
+                const buyuk = d.gecerli && Math.abs(d.deger) > 50;
                 const deltaRenk = !d.gecerli ? R.not3
                   : kismiNotr ? R.metin2
                     : !buyuk ? R.metin2
@@ -4645,7 +4668,7 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
                     { ad: 'Gün içi ara teslim', detay: ara ? 'gün ortasında müdüre verilen' : 'yok', tutar: `−${tl(ara)}` },
                     { ad: 'Nakit anlık gider', detay: gider ? 'aktif + onay bekleyen' : 'yok', tutar: `−${tl(gider)}` },
                     {
-                      ad: d.gecerli ? (Math.abs(d.deger) <= 0.5 ? 'Sonuç: dengede' : d.deger > 0 ? 'Sonuç: kasa açığı' : 'Sonuç: kasa fazlası') : 'Sonuç: hesaplanamadı',
+                      ad: d.gecerli ? (Math.abs(d.deger) <= 50 ? 'Sonuç: dengede' : d.deger > 0 ? 'Sonuç: kasa açığı' : 'Sonuç: kasa fazlası') : 'Sonuç: hesaplanamadı',
                       detay: d.tam ? 'tam denklem (açılış + kapanış var)' : d.kismi ? 'kısmi — gün sürüyor, gerçek fark değil' : 'açılış/kapanış eksik',
                       tutar: d.gecerli ? tlIsaretli(d.deger) : '—',
                     },
@@ -4910,6 +4933,10 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     // DEĞİL "ölçülemedi" demektir — sıfır gibi göstermek yanlış güven verir.
     const kayipOlculemeyen = sayi(dnKayip?.veri_eksik_gun_sayisi);
     const kayipToplamAcik = kayipSube.reduce((s, x) => s + sayi(x.toplam_acik), 0);
+    // 🔵 (2026-08-12, Ops denetimi): KPI değeri kayipToplamAcik'ten, rengi/boş-durumu
+    // kayipListe.length'ten geliyordu (iki kaynak) → özet açık varken (kayipToplamAcik>0)
+    // detay listesi boşsa kart YEŞİL + "kayıp yok ✓" gösteriyordu. Tek "kayıp var" kaynağı.
+    const kayipVar = kayipListe.length > 0 || kayipToplamAcik > 0.01;
     const kontrolSatir = Array.isArray(dnKontrol?.subeler) ? dnKontrol.subeler
       : (Array.isArray(dnKontrol?.satirlar) ? dnKontrol.satirlar : []);
     const gunDegis = (n) => {
@@ -4943,7 +4970,7 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
             alt: kayipToplamAcik
               ? `adet açık · ${kayipListe.length} kalem-gün · 45 gün`
               : (kayipOlculemeyen ? `${kayipOlculemeyen} gün ÖLÇÜLEMEDİ` : 'son 45 gün analizi'),
-            renk: kayipListe.length ? R.amber : kayipOlculemeyen ? R.not : R.yesil,
+            renk: kayipVar ? R.amber : kayipOlculemeyen ? R.not : R.yesil,
           },
         ]} />
 
@@ -5277,16 +5304,20 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
             kolonlar={[{ ad: 'Şube' }, { ad: 'Tamamlanan', sag: 1 }, { ad: 'Toplam', sag: 1 }, { ad: 'Durum' }]}
             satirlar={kontrolSatir.slice(0, 20).map((x, i) => {
               const tamam = sayi(x.tamam ?? x.tamamlanan);
-              const toplam = sayi(x.toplam) || 1;
+              // 🔵 (2026-08-12): `sayi(x.toplam) || 1` toplam 0/null iken UYDURMA 1 üretip
+              // "1 eksik" yalanı basıyordu (kontrol yokken). Gerçek toplamı kullan; 0 = veri yok.
+              const toplam = sayi(x.toplam);
               return {
                 id: x.sube_id || `kn-${i}`,
                 hucreler: [
                   { v: x.sube_adi || x.sube_ad || '—', kalin: true },
                   { v: String(tamam), mono: true, sag: true },
-                  { v: String(toplam), mono: true, sag: true, renk: R.not },
-                  tamam >= toplam
-                    ? { v: 'tamam', rozet: R.yesil }
-                    : { v: `${toplam - tamam} eksik`, rozet: R.amber },
+                  { v: toplam > 0 ? String(toplam) : '—', mono: true, sag: true, renk: R.not },
+                  toplam <= 0
+                    ? { v: 'veri yok', rozet: R.not }
+                    : tamam >= toplam
+                      ? { v: 'tamam', rozet: R.yesil }
+                      : { v: `${toplam - tamam} eksik`, rozet: R.amber },
                 ],
               };
             })}
@@ -5400,9 +5431,11 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
                 }))}
               />
             ) : (
-              <BosDurum metin={kayipOlculemeyen > 0
-                ? 'Ölçülebilen günlerde stok açığı bulunmadı — ama yukarıdaki ölçülemeyen günler hesaba katılmadı.'
-                : 'Stok kaybı bulgusu yok — hareketler dengede. ✓'} />
+              <BosDurum metin={kayipToplamAcik > 0.01
+                ? `Şube özetinde ${kayipToplamAcik} adet açık görünüyor ama kalem-gün kırılımı gelmedi — veri eksik, "kayıp yok" DEĞİL.`
+                : kayipOlculemeyen > 0
+                  ? 'Ölçülebilen günlerde stok açığı bulunmadı — ama yukarıdaki ölçülemeyen günler hesaba katılmadı.'
+                  : 'Stok kaybı bulgusu yok — hareketler dengede. ✓'} />
             )}
 
             {sayi(dnKayip?.is_gunu_siniri_saat) > 0 && (
