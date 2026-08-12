@@ -1186,7 +1186,10 @@ export function RaporModulu({ gorunum, onCekmece, onKopru, onToast }) {
     setMuhurVeri({ yukleniyor: true, muhur: null });
     api(`/rapor/aylik?yil=${Number(y)}&ay=${Number(m)}`)
       .then((r) => setMuhurVeri({ yukleniyor: false, muhur: r?.muhur || null }))
-      .catch(() => setMuhurVeri({ yukleniyor: false, muhur: null }));
+      // 🔵 P2 (2026-08-12, Sistem denetimi): okuma DÜŞERSE muhur:null oluyordu →
+      // muhurlu=false → "mühürle" butonu görünüp BİLİNMEYEN durumda mühürleme (geri
+      // alınamaz) teklif ediyordu. hata bayrağı: read-fail'de mühürle KAPALI.
+      .catch(() => setMuhurVeri({ yukleniyor: false, muhur: null, hata: true }));
   }, []);
 
   useEffect(() => {
@@ -1264,6 +1267,10 @@ export function RaporModulu({ gorunum, onCekmece, onKopru, onToast }) {
               {muhurVeri.muhur.muhurleyen_ad || 'CFO'} ·{' '}
               {String(muhurVeri.muhur.muhur_ts || '').slice(0, 16).replace('T', ' ')}
             </span>
+          ) : muhurVeri?.hata ? (
+            <span style={{ fontSize: 11.5, color: R.kirmizi, fontWeight: 700 }}>
+              ⚠ mühür durumu okunamadı — yenileyin (bilinmeyen durumda mühürleme kapalı)
+            </span>
           ) : !muhurOnay ? (
             <button onClick={() => setMuhurOnay({ ad: 'CFO' })} style={{
               marginLeft: 'auto', padding: '7px 14px', borderRadius: 10, cursor: 'pointer',
@@ -1273,7 +1280,7 @@ export function RaporModulu({ gorunum, onCekmece, onKopru, onToast }) {
           ) : null}
         </div>
 
-        {!muhurVeri?.yukleniyor && !muhurlu && !muhurOnay && (
+        {!muhurVeri?.yukleniyor && !muhurlu && !muhurOnay && !muhurVeri?.hata && (
           <div style={{ fontSize: 11, color: R.not2, marginTop: 9, lineHeight: 1.6 }}>
             Mühürlenmemiş dönem her açılışta <b>yeniden hesaplanır</b> — geçmişe dönük bir
             düzeltme rakamı değiştirebilir. Mühür o ayı dondurur.
@@ -2554,6 +2561,9 @@ export function TanimModulu({ gorunum, onCekmece, onKopru, onToast }) {
                   sira: u.sira ?? 0, aktif: u.aktif !== false, yeni: u.yeni === true,
                 }) },
                 { ad: (u.aktif !== false && u.gorunur !== false) ? 'Menüden kaldır' : 'Menüye al', onTikla: async () => {
+                  if (tvMesgul) return;   // 🔁 (2026-08-12) çift-tık: mükerrer yayın toggle önle
+                  // NOT: `gorunur` kolonu tv_menu'de YOK (hep undefined→!==false hep true) →
+                  // "yayında" fiilen yalnız `aktif`'ten türer; toggle `aktif`i tersler = doğru.
                   setTvMesgul(true);
                   try {
                     const sayiVeyaNull = (v) => (v === '' || v == null ? null : Number(v));
