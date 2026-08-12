@@ -82,19 +82,20 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru }) {
       api('/panel').catch(() => null),
       api('/uyarilar').catch(() => []),
       api('/onay-kuyrugu?durum=bekliyor&limit=400').catch(() => []),
-      api('/kasa-kontrol').catch(() => null),
+      // 🟡 EVV-GENEL-N5 (2026-08-12): /kasa-kontrol çekiliyor ama HİÇ kullanılmıyordu
+      // (KPI'lar p.kasa=/panel kullanır) → ölü-okuma kaldırıldı (boşa API çağrısı).
       api('/sabit-giderler/odenenler').catch(() => null),
       api('/vadeli-alimlar/ozet').catch(() => null),
       // NAKİT KONUM (2026-08-08): "param şu an nerede?" — şube kasası / yolda /
       // banka duraklarının toplamı ile kasa defteri bakiyesini karşılaştırır.
       api('/ops/metrics/nakit-konum?gun=60').catch(() => null),
-    ]).then(([panel, uyarilar, onaylar, kasa, odenen, vadeli, nakit]) => {
+    ]).then(([panel, uyarilar, onaylar, odenen, vadeli, nakit]) => {
       // 🔴 P1 (2026-08-12, Genel denetimi) FAKE-GREEN: /panel DÜŞSE de setHata VE setVeri
       // ikisi de çalışıyordu → `hata && !veri` (98) veri dolu olduğu için banner GÖSTERMEZ,
       // panel={} ile "0/boş/yeşil" dashboard render ediyordu (kasa 0 yeşil vb). Panel
       // yoksa veri KURMA → HataBandi görünsün (kısmi money-read hatası gizlenmesin).
       if (!panel) { setHata('Panel verisi alınamadı — "0/boş" görünüm yanıltıcı olur, yenileyin.'); return; }
-      setVeri({ panel, uyarilar, onaylar, kasa, odenen, vadeli, nakit });
+      setVeri({ panel, uyarilar, onaylar, odenen, vadeli, nakit });
     }).catch((e) => setHata(e?.message || 'Veri alınamadı'));
   };
   useEffect(yukle, []);
@@ -120,11 +121,18 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru }) {
   const gK = odemeler.filter((u) => sayi(u.gun_farki) <= -15);
   const gU = odemeler.filter((u) => sayi(u.gun_farki) >= -14 && sayi(u.gun_farki) <= -8);
   const gB = odemeler.filter((u) => sayi(u.gun_farki) >= -7 && sayi(u.gun_farki) < 0);
-  const gBug = odemeler.filter((u) => sayi(u.gun_farki) >= 0);
+  // 🔴 EVV-GENEL-N3 (2026-08-12 satır-satır denetim): "Bugün vadesi" YALNIZ gun_farki===0.
+  // gun_farki = vade − bugün → gelecek ödeme POZİTİF (motors 981/986 "N gün kaldı/sonra");
+  // eskiden gBug = gun_farki>=0 gelecekteki vadeleri de "bugün" sayıp bugünkü yükü şişiriyordu.
+  const gBug = odemeler.filter((u) => sayi(u.gun_farki) === 0);
+  const gYak = odemeler.filter((u) => sayi(u.gun_farki) > 0);
   // 🐞 CANLI DENETİM (2026-08-03): toplam `asgari_kalan` ile, satırlar `tutar`
   // ile sayıyordu — değişken giderde (asgari_kalan yok) KPI "8 kalem" deyip
   // 7 kalemin toplamını gösteriyordu. Aynı erişimci → sayı ve toplam aynı evren.
-  const gecikmisTutar = (u) => sayi(u.tutar ?? u.asgari_kalan ?? u.asgari);
+  // 🔴 EVV-GENEL-N1: TEK erişimci — satır (139) ve çekmece (151) AYNI fallback zincirini
+  // kullansın (eskiden çekmece `?? asgari`'yi atlıyordu → satırda para, çekmecede 0).
+  const odemeTutar = (u) => sayi(u.tutar ?? u.asgari_kalan ?? u.asgari);
+  const gecikmisTutar = odemeTutar;
   const gecikmisToplam = odemeler
     .filter((u) => sayi(u.gun_farki) < 0)
     .reduce((s, u) => s + gecikmisTutar(u), 0);
@@ -134,21 +142,24 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru }) {
     baslik: kisalt(u.ad || u.aciklama || u.tedarikci || 'Ödeme', 60),
     alt: [
       u.tip ? String(u.tip) : null,
-      sayi(u.gun_farki) < 0 ? `${Math.abs(sayi(u.gun_farki))} gün gecikti` : 'bugün vadesi',
+      // 🔴 EVV-GENEL-N3: 3-yönlü — geçmiş (gecikti) · bugün · gelecek (N gün sonra).
+      sayi(u.gun_farki) < 0 ? `${Math.abs(sayi(u.gun_farki))} gün gecikti`
+        : sayi(u.gun_farki) === 0 ? 'bugün vadesi' : `${sayi(u.gun_farki)} gün sonra`,
     ].filter(Boolean).join(' · '),
-    tutar: fmt(sayi(u.tutar ?? u.asgari_kalan ?? u.asgari)),
+    tutar: fmt(odemeTutar(u)),
     tier: sayi(u.gun_farki) <= -15 ? 'kritik' : sayi(u.gun_farki) <= -8 ? 'uyari' : sayi(u.gun_farki) < 0 ? 'bilgi' : 'iyi',
   });
 
   const odemeCekmece = ({ _u }) => onCekmece?.({
     tip: 'ÖDEME KAYDI',
     baslik: kisalt(_u.ad || _u.aciklama || 'Ödeme', 60),
-    alt: sayi(_u.gun_farki) < 0 ? `${Math.abs(sayi(_u.gun_farki))} gün gecikti` : 'bugün vadesi',
+    alt: sayi(_u.gun_farki) < 0 ? `${Math.abs(sayi(_u.gun_farki))} gün gecikti`
+      : sayi(_u.gun_farki) === 0 ? 'bugün vadesi' : `${sayi(_u.gun_farki)} gün sonra`,
     // Sahip düzeltmesi (2026-08-03): boş alanı GİZLEMEK yerine DOLDUR.
     // Satırda `tip`/`ad` yok ama kaynak_tablo + tarih + seviye VAR — tür
     // kaynaktan türetilir, vade tarihi ve seviye de çekmeceye girer.
     kpi: [
-      { etiket: 'Tutar', deger: fmt(sayi(_u.tutar ?? _u.asgari_kalan)), renk: R.kirmizi },
+      { etiket: 'Tutar', deger: fmt(odemeTutar(_u)), renk: R.kirmizi },
       { etiket: 'Gecikme', deger: sayi(_u.gun_farki) < 0 ? `${Math.abs(sayi(_u.gun_farki))} gün` : 'yok', renk: sayi(_u.gun_farki) < 0 ? R.kirmizi : R.yesil },
       {
         etiket: 'Tür',
@@ -192,7 +203,7 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru }) {
           { etiket: 'Kasa', deger: fmt(sayi(p.kasa)), alt: 'kanonik bakiye', renk: sayi(p.kasa) >= 0 ? R.yesil : R.kirmizi },
           { etiket: 'Gecikmiş toplam', deger: fmt(gecikmisToplam), alt: `${gK.length + gU.length + gB.length} kalem`, renk: gecikmisToplam > 0 ? R.kirmizi : R.yesil },
           { etiket: 'Bugün vadesi', deger: String(gBug.length), alt: gBug.length ? 'bugün ödenecek' : 'bugün yok', renk: gBug.length ? R.amber : R.yesil },
-          { etiket: 'Kaç gün dayanır', deger: p.kac_gun_dayanir != null ? `${sayi(p.kac_gun_dayanir)} gün` : '—', alt: 'kasa / günlük yük', renk: sayi(p.kac_gun_dayanir) < 15 ? R.kirmizi : R.krem },
+          { etiket: 'Kaç gün dayanır', deger: p.kac_gun_dayanir != null ? `${sayi(p.kac_gun_dayanir)} gün` : '—', alt: 'kasa / günlük yük', renk: p.kac_gun_dayanir == null ? R.not3 : sayi(p.kac_gun_dayanir) < 15 ? R.kirmizi : R.krem },
           {
             // ⚠️ /vadeli-alimlar/ozet ÇEKİLİYOR ama hiçbir yerde OKUNMUYORDU
             // (satır 87'de state'e konup unutulmuş — ölü veri). Klasik Panel
@@ -214,6 +225,9 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru }) {
         {bolum('UYARI · 8–14 gün', gU, R.amber)}
         {bolum('BİLGİ · 0–7 gün', gB, R.mavi)}
         {bolum('BUGÜN vadesi gelen', gBug, R.bakir)}
+        {/* 🔴 EVV-GENEL-N3: gelecek (gun_farki>0) vadeler artık "bugün"e karışmıyor,
+            ayrı YAKLAŞAN kovasında görünür. */}
+        {gYak.length > 0 && bolum('YAKLAŞAN · gelecek günler', gYak, R.krem)}
       </>
     );
   }
@@ -228,6 +242,14 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru }) {
     // yolda (teslim alınmış/bankaya girmemiş) ve bankada bekler. Durakların
     // toplamı ile defter bakiyesi arasındaki fark = mutabakatsız nakit.
     const nk = veri.nakit;
+    // 🔴 EVV-GENEL-N2 (2026-08-12 satır-satır denetim) FAKE-GREEN: /nakit-konum okuması
+    // DÜŞERSE (nk===null) kart sessizce kayboluyordu → mutabakat tam sorun anında görünmez.
+    // Okuma-hatasını (null) veri-yokluğundan (duraklar absent) ayır: null → açık uyarı.
+    const nakitHataBlok = nk === null ? (
+      <div style={{ ...kartYuzey, padding: '13px 18px', marginBottom: 14, borderLeft: `3px solid ${R.kirmizi}`, fontSize: 12.5, color: R.metin2 }}>
+        ⚠ Nakit konum verisi gelmedi — "param nerede?" mutabakatı gizlenmiş olabilir. Yenileyin.
+      </div>
+    ) : null;
     const nakitBlok = nk?.duraklar ? (() => {
       const du = nk.duraklar;
       const sag = nk.saglik || {};
@@ -305,6 +327,7 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru }) {
     })() : null;
     return (
       <>
+        {nakitHataBlok}
         {nakitBlok}
         <KpiSeridi kpiler={[
           { /* PROD-V2-CIRO-001 FIX: BRÜT bu_ay_ciro (ciro tablosu) — "Bu ay ciro" etiketi brüt olmalı;
@@ -437,7 +460,12 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru }) {
         (uyarilar.length + mesajlar.length) === 0
           ? <div style={{ fontSize: 12, color: R.not2 }}>Bildirim yok.</div>
           : <Liste
-              satirlar={[...uyarilar, ...mesajlar].slice(0, 12).map((u, i) => ({
+              /* 🟡 EVV-GENEL-N6 (2026-08-12): eskiden sırasız birleştirilip slice(0,12)
+                 ediliyordu → bir feed ilk 12'yi doldurursa diğerinin daha YENİ/kritik
+                 kaydı görünmeden düşüyordu. Önce tarih'e göre (yeni→eski) sırala. */
+              satirlar={[...uyarilar, ...mesajlar]
+                .sort((a, b) => String(b.tarih || '').localeCompare(String(a.tarih || '')))
+                .slice(0, 12).map((u, i) => ({
                 id: u.id || `u-${i}`,
                 baslik: kisalt(u.mesaj || u.baslik || u.metin || 'Bildirim', 88),
                 alt: [u.sube_ad || u.sube_adi, u.tarih ? kisaGun(u.tarih) : null].filter(Boolean).join(' · ') || 'genel',
