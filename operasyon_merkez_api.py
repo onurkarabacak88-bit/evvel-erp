@@ -17276,8 +17276,14 @@ def ops_maliyet_alis_fiyat_kaydet(body: AlisFiyatBody):
 def ops_maliyet_alis_fiyat_sil(fiyat_id: str):
     """Tek bir urun_alis_fiyat satırını siler (yanlış/test kaydı düzeltmek için)."""
     with db() as (conn, cur):
+        # 🟡 P2 (2026-08-12, Maliyet denetimi): fiyat geçmişi geri dönülmez siliniyordu,
+        # audit/iz yoktu. Silinen kaydı audit'e yaz (P&L/KDV incelemesinde kaynak kanıtı).
+        cur.execute("SELECT kalem_kodu, birim_maliyet_tl, gecerli_baslangic FROM urun_alis_fiyat WHERE id = %s", (fiyat_id,))
+        _eski = cur.fetchone()
         cur.execute("DELETE FROM urun_alis_fiyat WHERE id = %s", (fiyat_id,))
         silindi = cur.rowcount
+        if silindi and _eski:
+            audit(cur, "urun_alis_fiyat", fiyat_id, "FIYAT_SIL", eski=dict(_eski))
     if not silindi:
         raise HTTPException(404, "Kayıt bulunamadı")
     return {"success": True, "silinen": silindi}
@@ -18087,7 +18093,11 @@ def ops_maliyet_fatura_kalem_onayla(body: FaturaKalemOnaylaBody):
                 ON CONFLICT (anahtar) DO UPDATE
                     SET kalem_kodu = EXCLUDED.kalem_kodu,
                         kalem_adi  = EXCLUDED.kalem_adi,
-                        adet       = fatura_kalem_eslestirme.adet + 1,
+                        -- 🔴 P1 (2026-08-12, Maliyet denetimi): re-onay/çift-tık her seferinde
+                        -- adet'i şişiriyordu (sahte güven sinyali). Adet YALNIZ eşleşme HEDEFİ
+                        -- (kalem_kodu) DEĞİŞİRSE artar — aynı eşleşmeyi tekrar onaylamak inflate etmez.
+                        adet       = fatura_kalem_eslestirme.adet
+                                     + (CASE WHEN fatura_kalem_eslestirme.kalem_kodu = EXCLUDED.kalem_kodu THEN 0 ELSE 1 END),
                         guncelleme = NOW()
                 """,
                 (anahtar, kalem, body.kalem_adi or kalem),
@@ -18191,7 +18201,11 @@ def ops_maliyet_recete_sil(urun_id: str):
     with db() as (conn, cur):
         _ensure_maliyet_tablolari(cur)
         cur.execute("DELETE FROM urun_recete WHERE urun_id = %s", (urun,))
-    return {"success": True, "urun_id": urun}
+        _n = cur.rowcount
+        # 🟡 P2 (2026-08-12, Maliyet denetimi): BOM silme izsizdi — food-cost değişiminin
+        # ne zaman/neden olduğu izlenemiyordu. Audit ile iz bırak.
+        audit(cur, "urun_recete", urun, "RECETE_SIL", yeni={"silinen_satir": _n})
+    return {"success": True, "urun_id": urun, "silinen_satir": _n}
 
 
 # ─── Geçici Kasa Teşhis Endpoint ────────────────────────────────────────────

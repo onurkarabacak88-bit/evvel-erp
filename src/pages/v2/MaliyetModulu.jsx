@@ -1725,13 +1725,17 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
       return { ...g, olculen, fazla, ort, kalici };
     }).sort((a, b) => b.fazla.length - a.fazla.length || Math.abs(b.ort) - Math.abs(a.ort));
     const toplamFazla = grupListe.reduce((t, g) => t + g.fazla.length, 0);
-    const enSert = kiyas.reduce((m, s) => Math.max(m, netYuzde(s) ?? -Infinity), -Infinity);
+    // 🔵 P1 (2026-08-12, Maliyet denetimi): eskiden Math.max yalnız EN BÜYÜK POZİTİF
+    // sapmayı alıyordu → güçlü NEGATİF sapma (az kullanım/kayıp) gizleniyordu. En sert =
+    // en büyük MUTLAK sapma (işaret korunur), display gerçek işareti gösterir.
+    const _sapmalar = kiyas.map((s) => netYuzde(s)).filter((v) => v != null);
+    const enSert = _sapmalar.reduce((m, v) => (Math.abs(v) > Math.abs(m) ? v : m), 0);
     return (
       <>
         <KpiSeridi kpiler={[
           { etiket: 'İzlenen malzeme', deger: String(grupListe.length), alt: `son ${sayi(kontrol.kesit_gun)} gün · onaylı eşleşme` },
           { etiket: 'Fazla kullanım', deger: String(toplamFazla), alt: 'beklenenden %15+ fazla (gün×malzeme)', renk: toplamFazla > 0 ? R.kirmizi : R.yesil },
-          { etiket: 'En sert sapma', deger: Number.isFinite(enSert) ? `+${pct(enSert).slice(1)}` : '—', alt: 'tek günde', renk: Number.isFinite(enSert) && enSert >= 15 ? R.kirmizi : R.krem },
+          { etiket: 'En sert sapma', deger: _sapmalar.length ? pct(enSert) : '—', alt: 'tek günde (±)', renk: _sapmalar.length && Math.abs(enSert) >= 15 ? R.kirmizi : R.krem },
           { etiket: 'Eşleşme', deger: `${sayi(kontrol.onayli_urun_es)} ürün · ${sayi(kontrol.onayli_malzeme_es)} malzeme`, alt: 'onaylı köprüler' },
         ]} />
 
@@ -1912,6 +1916,12 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
   if (gorunum === 'vergi') {
     if (vergiHata) return <HataBandi mesaj={vergiHata} onTekrar={vergiYukle} />;
     if (!vergi) return <Yukleniyor />;
+    // 🔵 P1 (2026-08-12, Maliyet denetimi) FAKE-GREEN: kdv-pozisyon okuması DÜŞERSE
+    // (vergi.kdv=null, yalnız vergi-özet yüklenmiş) `|| {}` ile 0 KDV "temiz" render
+    // ediliyordu. null (okuma düştü) ≠ {} (gerçekten KDV yok). null → açık banner.
+    if (vergi.kdv == null) {
+      return <HataBandi mesaj="KDV pozisyon verisi gelmedi — '0 KDV' yanıltıcı olabilir, yenileyin." onTekrar={vergiYukle} />;
+    }
     const kdv = vergi.kdv || {};
     const vrg = vergi.vergi || {};
     const kdvSatir = Array.isArray(kdv.satirlar) ? kdv.satirlar : [];
@@ -2282,7 +2292,9 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
                   </span>
                   {x.miktar != null && <span style={{ color: R.not2 }}>{x.miktar} {x.birim || ''}</span>}
                   <span style={{ fontFamily: 'ui-monospace, monospace', color: R.krem }}>
-                    {fmt(sayi(x.birim_maliyet_tl ?? x.birim_fiyat ?? x.tutar))} ₺
+                    {/* 🔵 P1 (2026-08-12): x.tutar SATIR TOPLAMI olabilir; miktar>1'de birim
+                        maliyet diye yazılırsa maliyet KATLANIR → toplamı birime böl. */}
+                    {fmt(sayi(x.birim_maliyet_tl ?? x.birim_fiyat ?? (sayi(x.miktar) > 0 && sayi(x.miktar) !== 1 ? sayi(x.tutar) / sayi(x.miktar) : x.tutar)))} ₺
                   </span>
                   <button onClick={() => setFpOnayModal({
                     _i: i,
@@ -2292,7 +2304,7 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
                     urun_kodu: x.urun_kodu || '',
                     aciklama: x.aciklama || '',
                     birim: x.birim || 'adet',
-                    birim_maliyet_tl: String(sayi(x.birim_maliyet_tl ?? x.birim_fiyat ?? x.tutar) || ''),
+                    birim_maliyet_tl: String(sayi(x.birim_maliyet_tl ?? x.birim_fiyat ?? (sayi(x.miktar) > 0 && sayi(x.miktar) !== 1 ? sayi(x.tutar) / sayi(x.miktar) : x.tutar)) || ''),
                     tedarikci: x.tedarikci || fpTedarikci || '',
                     gecerli_baslangic: '',
                   })} style={{ ...mlMini, marginLeft: 'auto' }}>Onayla</button>
