@@ -463,7 +463,10 @@ export function OnayModulu({ gorunum, onCekmece, onKopru, onToast }) {
                   sayi(ciroSor.nakit) !== ciroSor.ilk.nakit ||
                   sayi(ciroSor.pos) !== ciroSor.ilk.pos ||
                   sayi(ciroSor.online) !== ciroSor.ilk.online);
-                const acik = degisti && t > 0 && !mesgul;
+                // 🔴 P1 (2026-08-12): net>0 iken kanal NEGATİF olabiliyordu (ParaModulu
+                // ciro deseni). Negatif kanal düzeltmeyi de engelle.
+                const negatifKanal = sayi(ciroSor.nakit) < 0 || sayi(ciroSor.pos) < 0 || sayi(ciroSor.online) < 0;
+                const acik = degisti && t > 0 && !negatifKanal && !mesgul;
                 return (
                   <button disabled={!acik} onClick={async () => {
                     const ok = await calistir(
@@ -483,7 +486,7 @@ export function OnayModulu({ gorunum, onCekmece, onKopru, onToast }) {
                   </button>
                 );
               })()}
-              <button disabled={mesgul || t <= 0} onClick={async () => {
+              <button disabled={mesgul || t <= 0 || sayi(ciroSor.nakit) < 0 || sayi(ciroSor.pos) < 0 || sayi(ciroSor.online) < 0} onClick={async () => {
                 const ok = await calistir(
                   () => api(`/ciro-taslak/${ciroSor.kayit.id}/onayla`, {
                     method: 'POST',
@@ -662,6 +665,7 @@ export function YukModulu({ gorunum, onCekmece, onKopru, onToast }) {
   };
 
   const sgKapat = async (id) => {
+    if (sgMesgul) return;   // 🔁 (2026-08-12) çift-tık: mükerrer sabit gider silme önle
     setSgMesgul(true);
     try {
       const r = await api(`/sabit-giderler/${id}`, { method: 'DELETE' });
@@ -694,6 +698,7 @@ export function YukModulu({ gorunum, onCekmece, onKopru, onToast }) {
   const brUygula = async () => {
     const m = brModal;
     if (!m) return;
+    if (brMesgul) return;   // 🔁 (2026-08-12) çift-tık: mükerrer kredi ekle/öde önle
     setBrMesgul(true);
     try {
       if (m.tip === 'ekle' || m.tip === 'duzenle') {
@@ -721,6 +726,9 @@ export function YukModulu({ gorunum, onCekmece, onKopru, onToast }) {
         await api(`/borclar/${m.borc.id}`, { method: 'DELETE' });
         onToast?.('✓ Kredi kaydı silindi');
       } else if (m.tip === 'ode') {
+        // 🔴 P1 (2026-08-12, Yük denetimi): borç ödeme (kasadan çıkış) tutar>0 doğrulaması
+        // yoktu → 0/negatif ödeme kasaya ters/boş hareket yazabiliyordu.
+        if (!(brSayi(m.tutar) > 0)) { onToast?.('Ödeme tutarı 0\'dan büyük olmalı'); setBrMesgul(false); return; }
         await api(`/borclar/${m.borc.id}/ode`, { method: 'POST', body: {
           tutar: brSayi(m.tutar), tarih: m.tarih || null,
           aciklama: (m.aciklama || '').trim() || null,
@@ -1668,6 +1676,11 @@ export function SistemModulu({ gorunum, onCekmece, onKopru, onToast }) {
   const temizlikYap = async () => {
     const f = tmzForm;
     if ((f?.onay || '').trim() !== TMZ_ONAY) { onToast?.(`Onay kutusuna tam olarak «${TMZ_ONAY}» yazın`); return; }
+    // 🔴 P0 (2026-08-12, Sistem denetimi): eskiden `if(tip==='depo'){...} else { SİSTEM-SIFIRLA }`
+    // → 'depo' DIŞINDA HER tip (undefined/typo/gelecek yeni tip) FAIL-OPEN olarak TAM WIPE'a
+    // düşüyordu. En yıkıcı işlem açık niyet ister: yalnız tip==='sifirla' sıfırlar; başka
+    // tip → reddet. + çift-tık guard.
+    if (tmzMesgul) return;
     setTmzMesgul(true);
     setTmzSonuc('');
     try {
@@ -1676,10 +1689,14 @@ export function SistemModulu({ gorunum, onCekmece, onKopru, onToast }) {
         const n = sayi(r?.silinen) || sayi(r?.temizlenen) || 0;
         setTmzSonuc(`✓ Depo akışı kalıntısı temizlendi${n ? ` — ${n} kayıt` : ''}`);
         onToast?.('✓ Depo akışı kalıntısı temizlendi');
-      } else {
+      } else if (f.tip === 'sifirla') {
         const r = await api('/sistem-sifirla', { method: 'POST', body: { onay: TMZ_ONAY, tablolar: [] } });
         setTmzSonuc(`✓ Sıfırlama tamam${r?.silinen_tablo ? ` — ${r.silinen_tablo} tablo` : ''}`);
         onToast?.('✓ Sistem sıfırlandı');
+      } else {
+        onToast?.('Bilinmeyen temizlik türü — hiçbir işlem yapılmadı (güvenlik).');
+        setTmzMesgul(false);
+        return;
       }
       setTmzForm(null);
       yukle();
@@ -2055,6 +2072,16 @@ export function TanimModulu({ gorunum, onCekmece, onKopru, onToast }) {
   const tvKaydet = async () => {
     const f = tvForm;
     if (!(f?.ad || '').trim()) { onToast?.('Ürün adı zorunlu'); return; }
+    // 🔴 P1 (2026-08-12, Tanım denetimi): TV fiyatı 0/negatif/NaN yazılabiliyordu
+    // (okuma yalnız >0'ı gerçek sayıyordu → bozuk fiyat "girilmemiş" diye maskeleniyordu).
+    const _fiyatBozuk = [f.f8, f.f14, f.fice].some((x) => {
+      const s = String(x ?? '').trim();
+      if (s === '') return false;          // boş bırakmak serbest
+      const v = Number(s.replace(',', '.'));
+      return !Number.isFinite(v) || v < 0; // malformed metin ya da negatif → red
+    });
+    if (_fiyatBozuk) { onToast?.('Fiyat geçersiz — boş bırakın ya da 0+ sayı girin'); return; }
+    if (tvMesgul) return;   // 🔁 çift-tık guard
     setTvMesgul(true);
     try {
       const sayiVeyaNull = (v) => (v === '' || v == null ? null : Number(String(v).replace(',', '.')));
@@ -2077,6 +2104,7 @@ export function TanimModulu({ gorunum, onCekmece, onKopru, onToast }) {
   };
 
   const tvSil = async (u) => {
+    if (tvMesgul) return;   // 🔁 (2026-08-12) çift-tık: mükerrer TV ürün silme önle
     setTvMesgul(true);
     try {
       await api(`/tv-menu/urun/${u.id}`, { method: 'DELETE' });
@@ -2108,6 +2136,7 @@ export function TanimModulu({ gorunum, onCekmece, onKopru, onToast }) {
 
   const tedKaydet = async () => {
     if (!(tedForm?.ad || '').trim()) { onToast?.('Tedarikçi adı zorunlu'); return; }
+    if (tedMesgul) return;   // 🔁 (2026-08-12) çift-tık: mükerrer tedarikçi kaydı önle
     setTedMesgul(true);
     try {
       const body = { ad: tedForm.ad, kategori: tedForm.kategori || '', telefon: tedForm.telefon || '', aciklama: tedForm.aciklama || '' };
