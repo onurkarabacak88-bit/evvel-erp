@@ -294,6 +294,8 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
   const fdUygula = async () => {
     const m = fdModal;
     if (!m) return;
+    if (fdMesgul) return;   // 🔁 (2026-08-12) çift-tık erken-çıkış: buton-disable React
+    // commit etmeden 2. tık ateşlenmesin (backend fark-defteri atomik claim'li ama UX+savunma).
     setFdMesgul(true);
     try {
       if (m.tip === 'karar') {
@@ -434,6 +436,13 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
   const uzUygula = async () => {
     const m = uzModal;
     if (!m) return;
+    if (uzMesgul) return;   // 🔁 (2026-08-12) çift-tık erken-çıkış guard
+    // 💵 (2026-08-12) client-trust: girilen tutar/adet BOŞ değilse ama geçersizse
+    // sayi() sessizce 0'a düşürüp yanlış (0 TL/0 adet) uzlaştırma yazıyordu. Doğrula.
+    const _adetHam = String(m.adet ?? '').trim();
+    if (_adetHam !== '' && !(sayi(_adetHam) > 0) && (m.tip === 'kasa' || m.tip === 'sevkiyat' || m.tip === 'tahsis')) {
+      onToast?.('Girilen tutar/adet geçersiz — sayı girin (ondalık için nokta)'); return;
+    }
     setUzMesgul(m.tip);
     try {
       if (m.tip === 'sevkiyat') {
@@ -922,6 +931,7 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     const hamKalemler = Array.isArray(f.sip?.kalemler) ? f.sip.kalemler : [];
     const kalemler = hamKalemler.filter((_, i) => f.secili.includes(i));
     if (!kalemler.length) { onToast?.('En az bir kalem seçin'); return; }
+    if (yonMesgul) return;   // 🔁 (2026-08-12) çift-tık: mükerrer tedarikçi siparişi/WhatsApp önle
     setYonMesgul(true);
     try {
       const r = await api('/ops/siparis/toptanciya-yolla', {
@@ -1363,6 +1373,7 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     if (!m) return;
     const tid = String(m.talep?.id || m.talep?.talep_id || '').trim();
     if (!tid) { onToast?.('Talep kimliği okunamadı'); return; }
+    if (ysMesgul) return;   // 🔁 (2026-08-12) çift-tık: mükerrer iptal/geri-al/restok önle
     setYsMesgul(true);
     try {
       if (m.tip === 'iptal') {
@@ -1597,6 +1608,7 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
   /** TEK SEFERLİK toplu migration — geçmiş sipariş kayıtlarını da değiştirir. */
   const ktSyncYap = async () => {
     if (ktSyncOnay.trim() !== 'EVET_ESITLE') { onToast?.('Onay kutusuna tam olarak «EVET_ESITLE» yazın'); return; }
+    if (ktMesgul) return;   // 🔁 (2026-08-12) çift-tık: toplu ad/geçmiş yeniden-yazımını iki kez ateşleme
     setKtMesgul(true);
     try {
       const r = await api('/ops/siparis/sync-urun-adlari', { method: 'POST' });
@@ -3966,6 +3978,7 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     };
     const filtrele = (g, d, a) => { arsivYukle(g, d, a); };
     const yenidenAc = async (talep) => {
+      if (arsivMesgul) return;   // 🔁 (2026-08-12) çift-tık: aynı siparişi iki kez yeniden-açma
       setArsivMesgul(String(talep.id));
       try {
         await api(`/ops/siparis/gecmis/${encodeURIComponent(talep.id)}/yeniden-ac`, { method: 'POST' });
