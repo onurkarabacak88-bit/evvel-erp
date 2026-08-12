@@ -203,6 +203,7 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast }) {
   const talepEkle = async () => {
     const ad = (talepForm?.ad || '').trim();
     if (ad.length < 2) { onToast?.('Tedarikçi adı gerekli'); return; }
+    if (talepMesgul) return;   // 🔁 (2026-08-12) çift-tık: mükerrer talep açma önle
     setTalepMesgul(true);
     try {
       await api('/belge-talep/elle', {
@@ -223,6 +224,7 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast }) {
     const { t, tip, aciklama } = kapatForm || {};
     if (!t?.id) return;
     if (tip === 'manuel' && !(aciklama || '').trim()) { onToast?.('Manuel kapanışta açıklama zorunlu'); return; }
+    if (talepMesgul) return;   // 🔁 (2026-08-12) çift-tık: mükerrer kapatma önle
     setTalepMesgul(true);
     try {
       const body = tip === 'fatura' ? { durum: 'pdf_geldi', kapanis_tipi: 'fatura' }
@@ -328,6 +330,7 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast }) {
   const fiUygula = async () => {
     const m = fiModal;
     if (!m) return;
+    if (fiMesgul) return;   // 🔁 (2026-08-12) çift-tık: gonderildi/kapat/tara/istisna-sil/ocr mükerrer POST'unu önle
     setFiMesgul(true);
     try {
       if (m.tip === 'gonderildi') {
@@ -470,6 +473,12 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast }) {
   if (gorunum === 'kapsama') {
     if (merkezHata) return <HataBandi mesaj={merkezHata} onTekrar={merkezYukle} />;
     if (!merkez) return <Yukleniyor />;
+    // 🔵 P1 (2026-08-12, Belge denetimi) FAKE-GREEN: okuma 200 dönse de payload BOŞ
+    // gelirse (setMerkez({})) `kapsama||{}`→%0→"Faturasız yok, kapsama tam" render edilip
+    // EKSİK FATURALARI GİZLİYORDU (uyum riski). kapsama==null (eksik) ≠ present (gerçek 0).
+    if (merkez.kapsama == null) {
+      return <HataBandi mesaj="Belge kapsama verisi gelmedi — 'kapsama tam / eksik yok' yanıltıcı olabilir, yenileyin." onTekrar={merkezYukle} />;
+    }
     const k = merkez.kapsama || {};
     const oran = sayi(k.oran_yuzde);
     // Sunucu harcamayı DÖRDE ayırır (fatura_api.belge_merkezi_ozet):
@@ -1069,7 +1078,10 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast }) {
           Parmak izi (PDF hash) + belge no + tutar+gün + GİB damgası — dört katman girişte otomatik çalışır;
           bu ekran KALANLARI (inceleme + şüpheli) gösterir.
         </div>
-        {hatali.length === 0 && islenemeyenAdet === 0 && sayi(inceleme.adet) === 0 ? (
+        {/* 🔵 P1 (2026-08-12, Belge denetimi) FAKE-GREEN: boş-durum `supheli.adet`i (GİB
+            damgası/mükerrer şüphesi KPI'ı) göz ardı ediyordu → şüpheli belge varken
+            "kuyruk temiz" diyordu. Şüpheli>0 ise 'temiz' gösterme. */}
+        {hatali.length === 0 && islenemeyenAdet === 0 && sayi(inceleme.adet) === 0 && sayi(supheli.adet) === 0 ? (
           <BosDurum metin="Uyarı kuyruğu temiz — mükerrer şüphesi veya işlenemeyen belge yok." />
         ) : (
           <>
