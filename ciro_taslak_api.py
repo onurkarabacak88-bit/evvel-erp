@@ -361,12 +361,22 @@ def ciro_fark_karar(fid: str, body: FarkKararBody):
         raise HTTPException(400, "karar: girilen_dogru | evo_dogru | acik")
     with db() as (conn, cur):
         _fark_defteri_ensure(cur)
+        # 🔴 P0 (2026-08-12, Ops denetimi): karar eskiden durum'u KOŞULSUZ eziyordu →
+        # 'gidere_yazildi'/'gelire_yazildi' (parası kasaya yazılmış) bir farkı 'acik'a
+        # çevirip parayı GERİ ALMADAN tekrar-yazıma açıyordu (çift para). Para yazılmış
+        # fark karar'la değişemez; geri almak için ilgili gider/geliri iptal/ters-kayıt akışı.
         cur.execute("""UPDATE ciro_fark_defteri
                        SET durum=%s, karar_aciklama=%s, karar_ts=NOW()
-                       WHERE id=%s RETURNING id""",
+                       WHERE id=%s AND durum NOT IN ('gidere_yazildi','gelire_yazildi')
+                       RETURNING id""",
                     (body.karar, (body.aciklama or "").strip() or None, fid))
         if not cur.fetchone():
-            raise HTTPException(404, "fark kaydı bulunamadı")
+            cur.execute("SELECT durum FROM ciro_fark_defteri WHERE id=%s", (fid,))
+            _row = cur.fetchone()
+            if not _row:
+                raise HTTPException(404, "fark kaydı bulunamadı")
+            raise HTTPException(400, "Bu fark gider/gelire yazılmış — karar değiştirilemez. "
+                                     "Geri almak için ilgili gider/geliri iptal edin (kasa izini de düzeltir).")
     return {"ok": True, "karar": body.karar}
 
 
@@ -378,23 +388,36 @@ def ciro_fark_gidere_yaz(fid: str):
     yazarı üzerinden gider (kasa düşümü + izler orada — tek-yazıcı ilkesi).
     P&L o günün cirosunu Evo'dan almaya devam eder (satış gerçeği), eksik
     para da gider olarak düşer — defter tutarlı kapanır."""
-    with db() as (_, cur):
-        _fark_defteri_ensure(cur)
-        cur.execute("""SELECT id, sube_id, sube_ad, tarih::text AS tarih,
-                              girilen::float AS girilen, evo::float AS evo,
-                              fark::float AS fark, durum
-                       FROM ciro_fark_defteri WHERE id=%s""", (fid,))
-        r = cur.fetchone()
-    if not r:
-        raise HTTPException(404, "fark kaydı bulunamadı")
-    r = dict(r)
-    if r["durum"] == "gidere_yazildi":
-        raise HTTPException(400, "bu fark zaten gidere yazılmış")
-    fark = float(r.get("fark") or 0)
-    if fark >= 0:
-        raise HTTPException(400, "yalnız EKSİK (kasa açığı) günler gidere yazılır")
     from main import anlik_gider_ekle, AnlikGider  # istek anında — döngüsel import yok
     from datetime import date as _d2
+    # 🔴 P0/P1 (2026-08-12, Ops denetimi): eskiden SELECT→anlik_gider_ekle→UPDATE ÜÇ AYRI
+    # tx'ti, satır kilidi/koşullu güncelleme yoktu → eşzamanlı/çift-tık aynı farkı İKİ kez
+    # gidere yazabiliyordu (çift kasa çıkışı). ATOMİK CLAIM: durumu tek statement'ta
+    # 'gidere_yazildi' yap (yalnız yazılmamış + EKSİK yön), veriyi RETURNING ile al.
+    with db() as (_, cur):
+        _fark_defteri_ensure(cur)
+        cur.execute("""UPDATE ciro_fark_defteri
+                       SET durum='gidere_yazildi',
+                           karar_aciklama='kasa açığı anlık gidere yazıldı', karar_ts=NOW()
+                       WHERE id=%s AND fark < 0
+                         AND durum NOT IN ('gidere_yazildi','gelire_yazildi')
+                       RETURNING sube_ad, tarih::text AS tarih,
+                                 girilen::float AS girilen, evo::float AS evo, fark::float AS fark""",
+                    (fid,))
+        r = cur.fetchone()
+    if not r:
+        # claim başarısız: yok / zaten yazılmış / yanlış yön — ayırt et
+        with db() as (_, cur):
+            cur.execute("SELECT durum, fark::float AS fark FROM ciro_fark_defteri WHERE id=%s", (fid,))
+            _e = cur.fetchone()
+        if not _e:
+            raise HTTPException(404, "fark kaydı bulunamadı")
+        _e = dict(_e)
+        if _e["durum"] in ("gidere_yazildi", "gelire_yazildi"):
+            raise HTTPException(400, "bu fark zaten kayda geçmiş")
+        raise HTTPException(400, "yalnız EKSİK (kasa açığı) günler gidere yazılır")
+    r = dict(r)
+    fark = float(r.get("fark") or 0)
     g = AnlikGider(
         tarih=_d2.fromisoformat(r["tarih"][:10]),
         kategori="Kasa Açığı (Evo farkı)",
@@ -403,13 +426,13 @@ def ciro_fark_gidere_yaz(fid: str):
                   f"Evo {r['evo']:.0f} − kasa {r['girilen']:.0f} (tek tık sahip onayı)"),
         sube=(r.get("sube_ad") or "MERKEZ"),
         odeme_yontemi="nakit")
-    sonuc = anlik_gider_ekle(g)
-    with db() as (_, cur):
-        cur.execute("""UPDATE ciro_fark_defteri
-                       SET durum='gidere_yazildi',
-                           karar_aciklama='kasa açığı anlık gidere yazıldı',
-                           karar_ts=NOW()
-                       WHERE id=%s""", (fid,))
+    try:
+        sonuc = anlik_gider_ekle(g)
+    except Exception:
+        # yazım başarısız → claim'i GERİ AL (marked-but-unwritten kalmasın)
+        with db() as (_, cur):
+            cur.execute("UPDATE ciro_fark_defteri SET durum='acik', karar_aciklama=NULL, karar_ts=NULL WHERE id=%s", (fid,))
+        raise
     return {"ok": True, "gider": sonuc, "tutar": round(abs(fark), 2)}
 
 
@@ -419,36 +442,45 @@ def ciro_fark_gelire_yaz(fid: str):
     fazlası tek tıkla DIŞ KAYNAK GELİRİ olur — kasa defterine gelir olarak
     işlenir (main.dis_kaynak_ekle kanonik yazarı; kasa girişi + izler orada).
     P&L cirosu Evo'da kalır (satış gerçeği); fazla para satış-dışı gelir."""
-    with db() as (_, cur):
-        _fark_defteri_ensure(cur)
-        cur.execute("""SELECT id, sube_id, sube_ad, tarih::text AS tarih,
-                              girilen::float AS girilen, evo::float AS evo,
-                              fark::float AS fark, durum
-                       FROM ciro_fark_defteri WHERE id=%s""", (fid,))
-        r = cur.fetchone()
-    if not r:
-        raise HTTPException(404, "fark kaydı bulunamadı")
-    r = dict(r)
-    if r["durum"] in ("gelire_yazildi", "gidere_yazildi"):
-        raise HTTPException(400, "bu fark zaten kayda geçmiş")
-    fark = float(r.get("fark") or 0)
-    if fark <= 0:
-        raise HTTPException(400, "yalnız FAZLA (kasa > Evo) günler gelire yazılır")
     from main import dis_kaynak_ekle, DisKaynakGelir  # istek anında — döngüsel import yok
     from datetime import date as _d2
+    # 🔴 P0/P1 (2026-08-12, Ops denetimi): gidere-yaz ile aynı — ATOMİK CLAIM (yalnız
+    # yazılmamış + FAZLA yön) → eşzamanlı/çift-tık çift gelir kaydını önler.
+    with db() as (_, cur):
+        _fark_defteri_ensure(cur)
+        cur.execute("""UPDATE ciro_fark_defteri
+                       SET durum='gelire_yazildi',
+                           karar_aciklama='kasa fazlası dış kaynak gelirine yazıldı', karar_ts=NOW()
+                       WHERE id=%s AND fark > 0
+                         AND durum NOT IN ('gidere_yazildi','gelire_yazildi')
+                       RETURNING sube_ad, tarih::text AS tarih,
+                                 girilen::float AS girilen, evo::float AS evo, fark::float AS fark""",
+                    (fid,))
+        r = cur.fetchone()
+    if not r:
+        with db() as (_, cur):
+            cur.execute("SELECT durum, fark::float AS fark FROM ciro_fark_defteri WHERE id=%s", (fid,))
+            _e = cur.fetchone()
+        if not _e:
+            raise HTTPException(404, "fark kaydı bulunamadı")
+        _e = dict(_e)
+        if _e["durum"] in ("gidere_yazildi", "gelire_yazildi"):
+            raise HTTPException(400, "bu fark zaten kayda geçmiş")
+        raise HTTPException(400, "yalnız FAZLA (kasa > Evo) günler gelire yazılır")
+    r = dict(r)
+    fark = float(r.get("fark") or 0)
     g = DisKaynakGelir(
         tarih=_d2.fromisoformat(r["tarih"][:10]),
         kategori="Kasa Fazlası (Evo farkı)",
         tutar=round(fark, 2),
         aciklama=(f"⚖️ Ciro fark defteri {r['tarih']} {r.get('sube_ad') or ''}: "
                   f"kasa {r['girilen']:.0f} − Evo {r['evo']:.0f} (tek tık sahip onayı)"))
-    sonuc = dis_kaynak_ekle(g)
-    with db() as (_, cur):
-        cur.execute("""UPDATE ciro_fark_defteri
-                       SET durum='gelire_yazildi',
-                           karar_aciklama='kasa fazlası dış kaynak gelirine yazıldı',
-                           karar_ts=NOW()
-                       WHERE id=%s""", (fid,))
+    try:
+        sonuc = dis_kaynak_ekle(g)
+    except Exception:
+        with db() as (_, cur):
+            cur.execute("UPDATE ciro_fark_defteri SET durum='acik', karar_aciklama=NULL, karar_ts=NULL WHERE id=%s", (fid,))
+        raise
     return {"ok": True, "gelir": sonuc, "tutar": round(fark, 2)}
 
 
