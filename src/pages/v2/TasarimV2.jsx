@@ -156,7 +156,11 @@ export default function TasarimV2({ onGit }) {
       // alarm da yok — "yokluğun alarmı" hiç kurulmamıştı.
       api('/ciro/eksik-gunler?gun=14').catch(() => null),
     ]).then(([p, u, c, s, o, ec]) => {
-      if (!p && !Array.isArray(c)) setHata('Veriler alınamadı — bağlantıyı kontrol edin.');
+      // 🔴 EVV-PANEL-N1 (2026-08-13 satır-satır denetim) FAKE-GREEN: /ciro catch `[]`
+      // döndürdüğü için `!Array.isArray(c)` HİÇ true olmuyordu → `!p && false` = /panel
+      // düşse de hata SET EDİLMİYOR, dashboard 0/boş render ediyordu. /panel kanonik
+      // kaynak; düşerse açık hata (kart/KPI 0/yeşil yalanı gizlensin).
+      if (!p) setHata('Panel verisi alınamadı — "0/boş" görünüm yanıltıcı olur, yenileyin.');
       setEksikCiro(ec);
       setPanel(p);
       setUyarilar(Array.isArray(u) ? u : (u?.uyarilar || []));
@@ -437,6 +441,10 @@ export default function TasarimV2({ onGit }) {
       odakGun, odakBugunMu, gunToplam, gunNakit, gunKart, delta, seri, seriEtiket,
       subeGunListe, subeAyListe, ayToplam, ayOnEk, aySatir,
       gunSayisi: new Set(aySatir.map(r => r.tarih)).size,
+      // 🔴 EVV-PANEL-N4 (2026-08-13): /ciro?limit=600 SESSİZ KIRPMA — 600'e ulaşınca
+      // ayToplam/subeAyListe/seri eksik sayabilir (has_more kontrolü yok). Bayrak:
+      // Ay/Şube görünümü "veri kırpılmış olabilir" uyarısı gösterir.
+      ciroKirpildi: cirolar.length >= 600,
     };
   }, [cirolar, secilenGun]);
 
@@ -935,7 +943,10 @@ export default function TasarimV2({ onGit }) {
           not={
             d.delta == null
               ? 'Geçen haftanın aynı günü için karşılaştırma verisi yok.'
-              : `Geçen haftanın aynı günü ${fmt(veri.seri[6] || 0)}. Kasa + banka toplamı ${fmt(kasaBanka)}; bugün ödenmesi gereken ${fmt(bugunOdemeToplam)}.`
+              // 🔴 EVV-PANEL-N2 (2026-08-13): KPI'lar gecikmiş/bugün'ü AYIRIYOR ama Hero
+              // notu hâlâ ham `bugunOdemeToplam` (gecikmiş DAHİL, şişik) basıyordu. Bugün
+              // vadesi olanı (gercekBugunToplam) göster + gecikmişi ayrı belirt.
+              : `Geçen haftanın aynı günü ${fmt(veri.seri[6] || 0)}. Kasa + banka toplamı ${fmt(kasaBanka)}; bugün vadesi gelen ${fmt(gercekBugunToplam)}${gecikmisToplam > 0 ? ` (ayrıca ${fmt(gecikmisToplam)} gecikmiş)` : ''}.`
           }
           seri={d.seri}
           seriEtiket={d.seriEtiket}
@@ -1016,6 +1027,13 @@ export default function TasarimV2({ onGit }) {
 
     return (
       <>
+        {/* 🔴 EVV-PANEL-N4: /ciro 600 satır tavanına ulaştıysa ay toplamı/şube kırılımı
+            eksik sayabilir — sessiz undercount yerine açık uyarı. */}
+        {d.ciroKirpildi && (
+          <div style={{ ...kartYuzey, padding: '10px 16px', marginBottom: 12, borderLeft: `3px solid ${R.amber}`, fontSize: 12, color: R.metin2 }}>
+            ⚠ Ciro kaydı 600 satır tavanına ulaştı — bu aydaki bazı günler toplama girmemiş olabilir. Aylık rakam kanonik değil, kırılım eksik olabilir.
+          </div>
+        )}
         <KpiSeridi kpiler={kpiler} />
         <div style={{ ...kartYuzey, padding: '20px 22px', marginBottom: 16 }}>
           <div style={{
@@ -1062,8 +1080,11 @@ export default function TasarimV2({ onGit }) {
     const enZayif = d.subeAyListe[d.subeAyListe.length - 1];
     const enBuyukPay = enIyi.pay || 1;
     /** Şube adına göre sevkiyat trafiği satırı (Kontrol Kulesi'nden gelen kolonlar). */
+    // 🔵 EVV-PANEL-N3 (2026-08-13): opsOf `toLocaleLowerCase('tr')` kullanıyordu ama
+    // diğer feed'ler (finans/davranış) `sadeles()` (Türkçe-İ + aksan normalizasyonu) →
+    // aksanlı şubede (KÖYCEĞİZ) eşleşme kaçıp depo yükü/yolda "—" görünüyordu. Hizalandı.
     const opsOf = (ad) => (subeOps || []).find(
-      (o) => String(o.depo_sube_adi || o.sube_adi || '').toLocaleLowerCase('tr') === String(ad || '').toLocaleLowerCase('tr'),
+      (o) => sadeles(o.depo_sube_adi || o.sube_adi || '') === sadeles(ad || ''),
     );
     // Şube adı eşleşmesi — dosyanın kendi `sadeles` yardımcısı (Türkçe-I tuzağı
     // + aksan normalizasyonu birlikte; ör. "KÖYCEĞİZ" ↔ "Köyceğiz")
