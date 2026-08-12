@@ -89,8 +89,12 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru }) {
       // banka duraklarının toplamı ile kasa defteri bakiyesini karşılaştırır.
       api('/ops/metrics/nakit-konum?gun=60').catch(() => null),
     ]).then(([panel, uyarilar, onaylar, kasa, odenen, vadeli, nakit]) => {
-      if (!panel) setHata('Panel verisi alınamadı');
-      setVeri({ panel: panel || {}, uyarilar, onaylar, kasa, odenen, vadeli, nakit });
+      // 🔴 P1 (2026-08-12, Genel denetimi) FAKE-GREEN: /panel DÜŞSE de setHata VE setVeri
+      // ikisi de çalışıyordu → `hata && !veri` (98) veri dolu olduğu için banner GÖSTERMEZ,
+      // panel={} ile "0/boş/yeşil" dashboard render ediyordu (kasa 0 yeşil vb). Panel
+      // yoksa veri KURMA → HataBandi görünsün (kısmi money-read hatası gizlenmesin).
+      if (!panel) { setHata('Panel verisi alınamadı — "0/boş" görünüm yanıltıcı olur, yenileyin.'); return; }
+      setVeri({ panel, uyarilar, onaylar, kasa, odenen, vadeli, nakit });
     }).catch((e) => setHata(e?.message || 'Veri alınamadı'));
   };
   useEffect(yukle, []);

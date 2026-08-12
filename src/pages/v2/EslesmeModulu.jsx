@@ -43,6 +43,10 @@ export default function EslesmeModulu({ gorunum, onCekmece, onToast }) {
       api('/fatura/kart-borc-izi?gun=400').catch(() => null),
       api('/fatura/eslesme-karar-defteri?limit=60').catch(() => null),
     ]).then(([t, i, d]) => {
+      // 🔴 P1 (2026-08-12, Eşleşme denetimi) FAKE-GREEN: tara (kart-izi aday taraması)
+      // DÜŞSE null olup "onay bekleyen eşleşme yok / izsizler temiz" render ediyordu →
+      // para-bağlama adayları GİZLENİYORDU. Kritik okuma null → hata banner (yenile).
+      if (t == null) { setHata('Eşleşme taraması okunamadı — "eşleşme yok" yanıltıcı olur, yenileyin.'); return; }
       setTara(t); setIzler(i); setDefter(d);
     }).catch((e) => setHata(String(e?.message || e)))
       .finally(() => setYukleniyor(false));
@@ -77,6 +81,7 @@ export default function EslesmeModulu({ gorunum, onCekmece, onToast }) {
 
   const uygula = async (tedarikci, idler, geriAl = false) => {
     if (!idler.length) return;
+    if (mesgul) return;   // 🔁 (2026-08-12) çift-tık: kart-izi çift-bağlama/geri-alma önle
     setMesgul(true);
     try {
       const yol = geriAl ? '/fatura/kart-izi-geri-al' : '/fatura/kart-izi-onayla';
