@@ -7719,7 +7719,16 @@ def ops_kasa_kaynak_duzelt(uyari_id: str, body: KasaKaynakDuzeltmeBody):
             # görünür (uyari okundu=TRUE ama fark_tl korunur). Ek olarak: sorumlu personele
             # risk sinyali yazılır → personel karnesine/​raporlarına yansır.
             _acik_tl = abs(eski_fark)
-            if eski_fark < 0 and _acik_tl > 0.01 and pid:
+            # 🔴 P1 (2026-08-12, Ops denetimi): gercek_acik re-resolve/çift-tık engellenmiyordu
+            # (diğer sebepler okundu-guard'lı) → her çağrıda YENİ personel_risk_sinyal eklenip
+            # personele MÜKERRER risk yükleniyordu. referans_id (uyari_id) ile dedup: bir uyarı
+            # için tek KASA_GERCEK_ACIK sinyali.
+            cur.execute(
+                "SELECT 1 FROM personel_risk_sinyal WHERE referans_id=%s AND sinyal_turu='KASA_GERCEK_ACIK' LIMIT 1",
+                (uyari_id,),
+            )
+            _sinyal_var = cur.fetchone()
+            if eski_fark < 0 and _acik_tl > 0.01 and pid and not _sinyal_var:
                 try:
                     cur.execute(
                         """
@@ -8070,11 +8079,17 @@ def ops_kasa_duzeltme_geri_al(audit_id: str, body: KasaGeriAlBody = KasaGeriAlBo
             if eski_deger is None or not eski_deger:
                 if hedef_id:
                     # KASA DEFTERİ: yeni eklenmiş ciroydu → önce kasa hareketini iptal et, sonra sil
+                    # 🔴 P1 (2026-08-12, Ops denetimi): ters-kayıt hatası ESKİDEN yutuluyordu
+                    # (except: pass) ve ciro YİNE siliniyordu → kasa hareketi durur ama kayıt
+                    # gider = para kalır, defter bozulur. Artık YALNIZ "iptal edilecek kasa
+                    # kaydı YOK" (kasa etkisiz) durumu geçilir; GERÇEK hata propagate → tüm
+                    # rollback transaction abort, DELETE de geri alınır (atomik tutarlılık).
                     try:
                         iptal_kasa_hareketi(cur, hedef_id, 'ciro', 'CIRO', 'CIRO_IPTAL',
                                             'Kasa fark düzeltme geri alındı — ciro kasa hareketi iptal')
-                    except Exception:
-                        pass
+                    except Exception as _e_iptal:
+                        if "bulunamad" not in str(_e_iptal):
+                            raise
                     cur.execute("DELETE FROM ciro WHERE id=%s", (hedef_id,))
                     restore_aciklama = f"ciro satırı silindi (id={hedef_id[:8]}…)"
             else:
@@ -8131,11 +8146,14 @@ def ops_kasa_duzeltme_geri_al(audit_id: str, body: KasaGeriAlBody = KasaGeriAlBo
         elif hedef_tablo == "anlik_giderler":
             # gider_eksik INSERT'iydi → önce kasa hareketini iptal et, sonra gideri sil
             if hedef_id:
+                # 🔴 P1 (2026-08-12): ters-kayıt hatası yutulup gider silinmesin (kasa
+                # kalır, kayıt gider = defter bozulur). Yalnız "kasa kaydı yok" geçilir.
                 try:
                     iptal_kasa_hareketi(cur, hedef_id, 'anlik_giderler', 'ANLIK_GIDER', 'ANLIK_GIDER_IPTAL',
                                         'Kasa fark düzeltme geri alındı — eksik gider kasa hareketi iptal')
-                except Exception:
-                    pass
+                except Exception as _e_iptal:
+                    if "bulunamad" not in str(_e_iptal):
+                        raise
                 cur.execute("DELETE FROM anlik_giderler WHERE id=%s", (hedef_id,))
                 restore_aciklama = f"anlık gider silindi + kasa hareketi iptal (id={hedef_id[:8]}…)"
         elif not hedef_tablo:
