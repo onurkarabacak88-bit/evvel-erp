@@ -204,7 +204,11 @@ def kanonik_net(p: dict, vt: dict, kayit: dict) -> float:
         gunluk = maas / AYLIK_GUN
     else:
         saatlik = float(p.get("saatlik_ucret") or 0)
-        gunluk = saatlik * GUNLUK_SAAT
+        # 🔴 P1 (2026-08-12, Ekip denetimi): part-time devamsızlık kesintisi TAM ZAMANLI
+        # standardı (GUNLUK_SAAT=9.5) ile hesaplanıyordu → part-time bir gün devamsızlıkta
+        # 9.5h kesiliyor, oysa sahip kararı part-time günü 5.5h (PART_GUNLUK_SAAT, satır 44;
+        # yedek yol 194 zaten doğru kullanıyor). Fazla kesinti = part-time eksik maaş.
+        gunluk = saatlik * PART_GUNLUK_SAAT
     net = float(vt.get("net_hakediş") or 0)
     net += float(kayit.get("bayram_mesai_saat") or 0) * saatlik * 2
     kesinti_gun = float(kayit.get("eksik_gun") or 0) + (
@@ -355,17 +359,21 @@ def odeme_plani_esitle(cur, p: dict, yil: int, ay: int, net: float,
     aciklama = plan_aciklama(p, yil, ay)
 
     if guncelle:
+        # 🔴 P1 (2026-08-12, Ekip denetimi/Codex): resync eskiden `tarih`i de EZİYORDU →
+        # maaş planı /odeme-plani/{id}/ertele ile manuel ertelenmişse resync onu kanonik
+        # maaş gününe geri çekiyordu (manuel erteleme sessizce kaybolur). Plan maaştan
+        # TÜRER → tutar/asgari/açıklama mirrorlanır (doğru), ama `tarih` KORUNUR.
+        # referans_ay zaten WHERE ile eşleşiyor (dönem sabit) — SET'te no-op'tu, kaldırıldı.
         cur.execute(
             """
             UPDATE odeme_plani
-            SET tarih=%s, referans_ay=DATE_TRUNC('month', %s::date),
-                odenecek_tutar=%s, asgari_tutar=%s, aciklama=%s
+            SET odenecek_tutar=%s, asgari_tutar=%s, aciklama=%s
             WHERE kaynak_tablo='personel' AND kaynak_id=%s
               AND durum IN ('bekliyor','onay_bekliyor')
               AND referans_ay = DATE_TRUNC('month', %s::date)
             RETURNING id
             """,
-            (odeme_tarihi, str(odeme_tarihi), net, net, aciklama, p["id"], str(odeme_tarihi)),
+            (net, net, aciklama, p["id"], str(odeme_tarihi)),
         )
         row = cur.fetchone()
         if row:
