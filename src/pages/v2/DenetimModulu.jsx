@@ -172,7 +172,10 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
       .catch((e) => setTruthHata(e?.message || ''));
     api('/ops/truth/durum')
       .then((d) => setDurum(d || {}))
-      .catch(() => setDurum({}));
+      // 🔴 EVV-DEN-N4 (2026-08-13) FAKE-GREEN: durum okuması DÜŞÜNCE {} olup motorlar
+      // "KAPALI" gösteriyordu → DENETİM ekranı kendini kör/kapalı sanıyor (okuma
+      // hatası ≠ motor kapalı). truthHata'ya bağla (view'ler 672/813 gate'ler).
+      .catch((e) => setTruthHata(e?.message || 'Motor durumu okunamadı — yenileyin'));
     api('/ops/bulgu-izi/ozet?gun=30')
       .then((d) => {
         setIziOzet(d || {});
@@ -354,7 +357,9 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
   const cevapEtiketle = (gunlukId, karar) => {
     api('/beyin/cevap-etiket', { method: 'POST', body: { gunluk_id: gunlukId, karar } })
       .then(() => setMesajlar((ms) => ms.map((x) => (x.gunlukId === gunlukId ? { ...x, puan: karar } : x))))
-      .catch(() => {});
+      // 🔵 EVV-DEN-N2 (2026-08-13): etiket yazımı düşerse sessiz yutuluyordu → kullanıcı
+      // işaretlendi sanıyordu (puan set edilmese de geri bildirim yoktu). Toast ile görünür.
+      .catch(() => onToast?.('Etiket kaydedilemedi — tekrar deneyin'));
   };
 
   const notAc = () => {
@@ -364,6 +369,7 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
 
   const notKaydet = async () => {
     if (!(notForm?.baslik || '').trim()) { onToast?.('Not başlığı gerekli'); return; }
+    if (notMesgul) return;   // 🔵 EVV-DEN-N5 (2026-08-13) çift-tık: mükerrer günlük notu önle
     setNotMesgul(true);
     try {
       await api('/duyu/gunluk-not', {
@@ -384,6 +390,7 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
     const uygulanabilir = (strateji?.oneriler || []).filter(
       (o) => o.oneri_turu !== 'ERTELE' && o.odeme_id && sayi(o.tavsiye_tutar) > 0);
     if (!uygulanabilir.length) { onToast?.('Uygulanabilir öneri yok'); setTopluSor(false); return; }
+    if (topluMesgul) return;   // 🔵 EVV-DEN-N6 (2026-08-13) çift-tık: toplu ödeme (advisory→kasa) mükerrer önle
     setTopluMesgul(true);
     try {
       const r = await api('/toplu-odeme', {
@@ -464,7 +471,9 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
     // görülüyor ama oradan yüklenemiyordu. Aynı guard'lı uca bağlanır
     // (/belge-talep/{id}/fatura-yukle); tek yazıcı ilkesi korunur.
     const teslimatPdfYukle = async (satirId, dosya) => {
-      if (!dosya || !satirId) return;
+      // 🔵 EVV-DEN-N3 (2026-08-13): mmYuklenen tek global marker; guard yoktu →
+      // bir yükleme sürerken başka satır 2. yüklemeyi başlatabiliyordu. Erken-çıkış.
+      if (!dosya || !satirId || mmYuklenen) return;
       setMmYuklenen(satirId);
       try {
         const fd = new FormData();
@@ -831,6 +840,10 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
             ]}
             satirlar={subeler.map((s, i) => {
               const r = raporMap[String(s.sube_id)] || {};
+              // 🔴 EVV-DEN-N1 (2026-08-13 satır-satır): rapor OLMAYAN şube (raporMap'te
+              // yok) r={} → bulgu 0 → "temiz" yeşil görünüyordu. Analiz-edilmedi ≠ temiz;
+              // denetim ekranında sessiz-başarısızlık. raporVar ile "rapor yok" ayrımı.
+              const raporVar = !!raporMap[String(s.sube_id)];
               const bulgu = sayi(r.anomali_sayisi);
               return {
                 id: s.sube_id || `m-${i}`,
@@ -845,11 +858,13 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
                   // ekranının kendisini kör gösteren bir okuma hatasıydı.
                   s.aktif ? { v: 'aktif', rozet: R.yesil } : { v: 'kapalı', rozet: R.amber },
                   { v: s.mod || '—', renk: R.not },
-                  { v: String(bulgu), mono: true, sag: true, kalin: bulgu > 0, renk: bulgu > 1 ? R.kirmizi : bulgu === 1 ? R.amber : R.not },
+                  { v: raporVar ? String(bulgu) : '—', mono: true, sag: true, kalin: bulgu > 0, renk: !raporVar ? R.not3 : bulgu > 1 ? R.kirmizi : bulgu === 1 ? R.amber : R.not },
                   { v: String(s.son_calisma || r.son_calisma || '—').slice(0, 16), mono: true, renk: R.not },
-                  r.alarm && r.alarm !== 'normal'
-                    ? { v: 'alarm', rozet: R.kirmizi }
-                    : bulgu > 0 ? { v: 'izlemede', rozet: R.amber } : { v: 'temiz', rozet: R.yesil },
+                  !raporVar
+                    ? { v: 'rapor yok', rozet: R.not3 }
+                    : r.alarm && r.alarm !== 'normal'
+                      ? { v: 'alarm', rozet: R.kirmizi }
+                      : bulgu > 0 ? { v: 'izlemede', rozet: R.amber } : { v: 'temiz', rozet: R.yesil },
                 ],
               };
             })}
