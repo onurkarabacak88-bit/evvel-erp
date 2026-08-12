@@ -3437,8 +3437,18 @@ def kart_sil(kid: str):
         cur.execute("SELECT * FROM kartlar WHERE id=%s", (kid,))
         eski = cur.fetchone()
         if not eski: raise HTTPException(404)
+        # K2 (2026-08-12, Kart denetimi): pasif kart aktif=TRUE özetlerden düşer →
+        # borçlu kart pasife alınınca borcu SESSİZCE kaybolur. 'Pasife Al' bilinçli
+        # akış olduğu için BLOKLAMIYORUZ ama borcu audit'e yaz + uyarı dön (görünsün).
+        try:
+            _borc = round(float(kart_borc(cur, kid) or 0), 2)
+        except Exception:
+            _borc = 0.0
         cur.execute("UPDATE kartlar SET aktif=FALSE WHERE id=%s", (kid,))
-        audit(cur, 'kartlar', kid, 'PASIF', eski=eski)
+        audit(cur, 'kartlar', kid, 'PASIF', eski=eski, yeni={'pasifken_borc': _borc})
+    if _borc > 0.01:
+        return {"success": True,
+                "uyari": f"Bu kartın {_borc:,.2f} ₺ aktif borcu vardı — pasif kart borcu özetlerde görünmez. Borç kapanmadıysa önce çözün."}
     return {"success": True}
 
 class KartKaliciSilBody(BaseModel):
@@ -4658,6 +4668,12 @@ def kart_manuel_ekstre(kid: str, body: ManuelEkstreBody):
             cur.execute("UPDATE kartlar SET faiz_orani=%s, gecikme_faiz_orani=COALESCE(%s,gecikme_faiz_orani) WHERE id=%s",
                         (body.faiz_orani, body.gecikme_faiz_orani, kid))
         yeni_borc = kart_borc(cur, kid)
+        # K3 (2026-08-12, Kart denetimi): manuel-ekstre kart borcunu istemci girdisinden
+        # (donem_borcu) yeniden yazıyor ama HİÇ audit yoktu. Koşulsuz (adj==0 dahil) iz bırak.
+        audit(cur, 'kart_hareketleri', 'devir_' + kid, 'MANUEL_EKSTRE',
+              yeni={'kart': kart_adi, 'donem': kesim, 'son_odeme': sot,
+                    'donem_borcu': borc, 'asgari': asg, 'adj': adj,
+                    'yeni_borc': round(yeni_borc, 2)})
     return {"success": True, "yeni_borc": round(yeni_borc, 2)}
 
 
@@ -4835,6 +4851,18 @@ def kart_ekstre_donem_sil(kid: str, donem: str):
         k = cur.fetchone()
         if not k:
             raise HTTPException(404, "Kart bulunamadı")
+        # K1 (2026-08-12, Kart denetimi): ekstre-import'tan açılmış EŞLENİK anlık
+        # giderleri de kapat — tek-satır silmedeki 'agk_' mantığı (3675). Yoksa dönem
+        # silinince o giderler ÖKSÜZ kalıp P&L'de asılı duruyordu. Silmeden ÖNCE iptal.
+        cur.execute(
+            """UPDATE anlik_giderler SET durum='iptal'
+               WHERE durum='aktif' AND id IN (
+                 SELECT 'agk_' || id FROM kart_hareketleri
+                 WHERE kart_id=%s AND islem_turu IN ('HARCAMA','FAIZ')
+                   AND DATE_TRUNC('month', tarih) = DATE_TRUNC('month', %s::date))""",
+            (kid, donem),
+        )
+        iptal_anlik = cur.rowcount
         cur.execute(
             """DELETE FROM kart_hareketleri
                WHERE kart_id=%s AND islem_turu IN ('HARCAMA','FAIZ')
@@ -4847,11 +4875,16 @@ def kart_ekstre_donem_sil(kid: str, donem: str):
             (kid, donem),
         )
         silinen_donem = cur.rowcount
+        # K1: hard-delete artık izli — ne silindiği audit'e yazılır (forensik iz yoktu).
+        audit(cur, 'kart_hareketleri', kid, 'EKSTRE_DONEM_SIL',
+              yeni={'donem': donem, 'silinen_hareket': silinen_hareket,
+                    'silinen_donem': silinen_donem, 'iptal_anlik_gider': iptal_anlik})
     return {
         "success": True,
         "kart_adi": dict(k)["kart_adi"],
         "silinen_hareket": silinen_hareket,
         "silinen_donem": silinen_donem,
+        "iptal_anlik_gider": iptal_anlik,
     }
 
 
@@ -4869,7 +4902,12 @@ def kart_ledger_sifirla(kid: str, body: KartLedgerSifirlaBody):
     from operasyon_merkez_api import _isletme_onay_dogrula
     with db() as (conn, cur):
         onayci = _isletme_onay_dogrula(cur, body.onay_pin)  # PIN hatalı → 403
-        tum = body.hepsi or kid == "__hepsi__"
+        # K4 (2026-08-12, Kart denetimi): eskiden `body.hepsi or kid=='__hepsi__'` →
+        # tek-kart rotasına {"hepsi":true} POST'lamak TÜM kartları sıfırlıyordu (PIN
+        # yine şart ama footgun). Toplu sıfırlama YALNIZ açık __hepsi__ rotasından.
+        if body.hepsi and kid != "__hepsi__":
+            logger.warning(f"ledger-sifirla: tek-kart rotasına hepsi=true geldi (kid={kid}) — yok sayıldı")
+        tum = kid == "__hepsi__"
         if tum:
             cur.execute("SELECT id::text FROM kartlar WHERE aktif=TRUE")
             kart_ids = [dict(r)["id"] for r in (cur.fetchall() or [])]
