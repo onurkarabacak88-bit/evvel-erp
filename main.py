@@ -5892,7 +5892,9 @@ def toplu_onayla(body: dict):
 
     sonuclar = []
     with db() as (conn, cur):
-        for i, oid in enumerate(ids):
+        # R5 (2026-08-12): id'leri KANONİK sırada işle — iki eşzamanlı toplu onay aynı
+        # id'leri farklı sırada kilitleyip deadlock'a girmesin. (Sonuç yine per-item.)
+        for i, oid in enumerate(sorted(ids)):
             sp = f"sp_toplu_onay_{i}"
             cur.execute(f"SAVEPOINT {sp}")
             try:
@@ -5931,14 +5933,25 @@ def reddet(oid: str, body: ReddetModel = ReddetModel()):
         # sessizce iptal edilirse plan iptal olur ama kasa izi kalır → ters kayıt zinciri delinir
         # (dokunulmaz #5). Reddet yalnız bekleyen onaylar içindir; onaylanmışı geri almak için
         # ilgili kaydın iptal/ters-kayıt akışı kullanılmalı (o akış kasadan da düşer).
-        cur.execute("SELECT durum FROM onay_kuyrugu WHERE id=%s", (oid,))
-        _mevcut = cur.fetchone()
-        if _mevcut and (_mevcut.get("durum") if isinstance(_mevcut, dict) else _mevcut["durum"]) == "onaylandi":
+        # R2 (2026-08-12, Onay denetimi): satırı FOR UPDATE KİLİTLE — eşzamanlı _onayla_tx
+        # parayı taşırken reddet'in planı iptal edip sessizce success dönmesini engelle;
+        # rowcount doğrula (yarış/çift-ret false-success'i kapat).
+        cur.execute("SELECT * FROM onay_kuyrugu WHERE id=%s FOR UPDATE", (oid,))
+        _kilit = cur.fetchone()
+        if not _kilit:
+            raise HTTPException(404, "Onay bulunamadı")
+        _durum = _kilit.get("durum") if isinstance(_kilit, dict) else _kilit["durum"]
+        if _durum == "onaylandi":
             raise HTTPException(400, "Bu onay zaten onaylanmış (kasaya işlenmiş olabilir). Reddetmek yerine ilgili kaydı iptal/ters-kayıt akışından geri alın — o akış kasa izini de düzeltir.")
-        cur.execute("UPDATE onay_kuyrugu SET durum='reddedildi', onay_tarihi=NOW() WHERE id=%s AND durum <> 'onaylandi'", (oid,))
+        if _durum != "bekliyor":
+            raise HTTPException(409, f"Onay '{_durum}' durumunda — reddedilemez (eşzamanlı değişim olabilir).")
+        cur.execute("UPDATE onay_kuyrugu SET durum='reddedildi', onay_tarihi=NOW() WHERE id=%s AND durum='bekliyor'", (oid,))
+        if cur.rowcount == 0:
+            raise HTTPException(409, "Eş zamanlı onay/ret çakışması — durum değişti.")
+        # R3 (2026-08-12): reddet artık audit'lenir (onay'da vardı, reddet'te yoktu).
+        audit(cur, 'onay_kuyrugu', oid, 'REDDEDILDI', eski=_kilit)
 
-        cur.execute("SELECT * FROM onay_kuyrugu WHERE id=%s", (oid,))
-        onay = cur.fetchone()
+        onay = _kilit
         if onay:
             kt  = onay.get("kaynak_tablo") or ""
             kid = onay.get("kaynak_id") or ""
@@ -5948,18 +5961,30 @@ def reddet(oid: str, body: ReddetModel = ReddetModel()):
                     "UPDATE anlik_giderler SET durum='reddedildi' WHERE id=%s AND durum='onay_bekliyor'",
                     (kid,),
                 )
-            cur.execute("""
-                UPDATE odeme_plani SET durum='iptal'
-                WHERE (id=%s OR kaynak_id=%s) AND durum IN ('bekliyor','onay_bekliyor')
-            """, (kid, kid))
-
+            # R1 (2026-08-12, Onay denetimi): eskiden `WHERE id=%s OR kaynak_id=%s`
+            # SKOPSUZDU → kaynak_id paylaşan TÜM kardeş planları (ör. bir borcun tüm
+            # taksitleri) iptal ediyordu. _onayla_tx TEK (en eski) planı işler → reddet
+            # de simetrik olmalı:
+            #   • neden='surec_bitti' → kaynak tamamen kapanıyor: TÜM açık plan iptal + kaynak pasif
+            #   • neden='hata'        → yalnız BU onaya karşılık gelen TEK plan
+            #                           (kid bir plan id ise o, değilse (kt,kid) için en eski)
             if body.neden == 'surec_bitti' and kt and kid:
+                cur.execute("""UPDATE odeme_plani SET durum='iptal'
+                    WHERE kaynak_tablo=%s AND kaynak_id=%s AND durum IN ('bekliyor','onay_bekliyor')""",
+                    (kt, kid))
                 if kt == 'sabit_giderler':
                     cur.execute("UPDATE sabit_giderler SET aktif=FALSE WHERE id=%s", (kid,))
                 elif kt == 'personel':
                     cur.execute("UPDATE personel SET aktif=FALSE WHERE id=%s", (kid,))
                 elif kt == 'borc_envanteri':
                     cur.execute("UPDATE borc_envanteri SET aktif=FALSE WHERE id=%s", (kid,))
+            elif kid:
+                cur.execute("""UPDATE odeme_plani SET durum='iptal'
+                    WHERE id = COALESCE(
+                        (SELECT id FROM odeme_plani WHERE id=%s AND durum IN ('bekliyor','onay_bekliyor')),
+                        (SELECT id FROM odeme_plani WHERE kaynak_tablo=%s AND kaynak_id=%s
+                           AND durum IN ('bekliyor','onay_bekliyor') ORDER BY tarih ASC LIMIT 1))""",
+                    (kid, kt, kid))
 
             # ── Şube bildirimi ─────────────────────────────────
             # Kaynak tablodan sube_id'yi bul
