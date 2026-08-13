@@ -138,6 +138,9 @@ def ciro_taslak_duzenle(taslak_id: str, body: CiroTaslakTutarBody):
     nakit = float(body.nakit or 0)
     pos = float(body.pos or 0)
     online = float(body.online or 0)
+    # 🔴 P1 (2026-08-13, EVV-ONAY): negatif kanal guard'ı (onayla ile simetri)
+    if nakit < 0 or pos < 0 or online < 0:
+        raise HTTPException(400, "Ciro kanalları negatif olamaz")
     if online > 0.001 and nakit > 0.001 and pos > 0.001 and abs(online - (nakit + pos)) < 0.01:
         raise HTTPException(
             400,
@@ -215,6 +218,12 @@ def ciro_taslak_onayla(taslak_id: str, body: CiroTaslakOnayTutarlari = CiroTasla
         nakit = float(body.nakit) if body.nakit is not None else float(t["nakit"])
         pos = float(body.pos) if body.pos is not None else float(t["pos"])
         online = float(body.online) if body.online is not None else float(t["online"])
+        # 🔴 P1 (2026-08-13, EVV-ONAY): tek tek kanal negatifliği denetlenmiyordu —
+        # nakit=-100, pos=200 toplam 100 ile geçip NEGATİF kanallı ciro yazılırdı
+        # (POST /ciro'da aynı aile 2026-08-12'de kapatılmıştı; FE butonu engelliyor
+        # ama API doğrudan çağrılabilir — koruma kaynakta olmalı).
+        if nakit < 0 or pos < 0 or online < 0:
+            raise HTTPException(400, "Ciro kanalları negatif olamaz")
         if online > 0.001 and nakit > 0.001 and pos > 0.001 and abs(online - (nakit + pos)) < 0.01:
             raise HTTPException(
                 400,

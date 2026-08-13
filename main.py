@@ -5751,6 +5751,15 @@ def _onayla_tx(cur, oid: str):
         signed_tutar = tutar
         logger.warning(f"Bilinmeyen işlem türü onaylandı: {islem_turu}, tutar={tutar}")
 
+    # 🔒 SAVUNMA (2026-08-13, EVV-YUK): kaynağı PASİFE alınmış SABIT_GIDER onayı
+    # kasadan para çıkarmasın — sil-yolu artık bekleyen onayı iptal ediyor ama
+    # eski/yarış kalıntısı kayıtlar için ikinci kemer.
+    if islem_turu == 'SABIT_GIDER' and (onay.get('kaynak_tablo') or '') == 'sabit_giderler' and onay.get('kaynak_id'):
+        cur.execute("SELECT aktif FROM sabit_giderler WHERE id=%s", (onay['kaynak_id'],))
+        _sg = cur.fetchone()
+        if _sg is not None and _sg.get('aktif') is False:
+            raise HTTPException(400, "Bu gider kapatılmış — onaylanamaz (kayıt iptal edildi sayın, listeyi yenileyin)")
+
     # ODEME_PLANI onaylandığında kasa_etkisi True olmalı
     # Plan oluşumu = niyet (False), onay = gerçekleşme (True)
     # islem_turu değişmez — anlam korunur, sadece davranış eklenir
@@ -7235,6 +7244,24 @@ def sabit_gider_guncelle(gid: str, g: SabitGider):
                 (gider_adi, kategori, g.tutar, tip_guncelle, periyot, odeme_gunu,
                  g.baslangic_tarihi, sube_id, odeme_yontemi, kart_id or None,
                  max(0.0, min(1.0, float(g.stopaj_oran or 0))), gid))
+            # 🔴 P1 (2026-08-13, EVV-YUK / Codex): tutar yerinde güncellenince
+            # BEKLEYEN onay satırının tutarı eski kalıyordu — 1.000₺ açılıp 1.500₺'ye
+            # düzeltilen gider onaylanınca kasa 1.000 düşüyor, kayıt 1.500 görünüyordu.
+            # Diff-review eki: tür DEĞİŞTİYSE (değişken ya da kart talimatı — artık
+            # nakit onay gerektirmeyen hâller) bekleyen onay senkron değil İPTAL edilir;
+            # yoksa stale kayıt pasif tür için kasadan nakit düşürürdü.
+            if tip_guncelle == 'sabit' and odeme_yontemi != 'kart':
+                cur.execute(
+                    """UPDATE onay_kuyrugu SET tutar=%s, aciklama=%s
+                       WHERE kaynak_tablo='sabit_giderler' AND kaynak_id=%s
+                         AND islem_turu='SABIT_GIDER' AND durum='bekliyor'""",
+                    (g.tutar, f"Sabit gider güncellendi: {gider_adi}", gid))
+            else:
+                cur.execute(
+                    """UPDATE onay_kuyrugu SET durum='iptal'
+                       WHERE kaynak_tablo='sabit_giderler' AND kaynak_id=%s
+                         AND islem_turu='SABIT_GIDER' AND durum='bekliyor'""",
+                    (gid,))
             audit(cur, 'sabit_giderler', gid, 'UPDATE', eski=eski)
         return {"success": True}
 
@@ -7265,6 +7292,16 @@ def sabit_gider_sil(gid: str):
                     SELECT id FROM odeme_plani
                     WHERE kaynak_tablo='sabit_giderler' AND kaynak_id=%s
                   )
+                """,
+                (gid,),
+            )
+            # 🔴 P1 (2026-08-13, EVV-YUK / Codex): gider EKLENİRKEN açılan DOĞRUDAN
+            # SABIT_GIDER onayı (kaynak_tablo='sabit_giderler') iptal EDİLMİYORDU —
+            # kapatılan gidere bekleyen onay verilirse kasa çıkışı yazılırdı.
+            cur.execute(
+                """
+                UPDATE onay_kuyrugu SET durum='iptal'
+                WHERE kaynak_tablo='sabit_giderler' AND kaynak_id=%s AND durum='bekliyor'
                 """,
                 (gid,),
             )
@@ -7479,7 +7516,11 @@ def sabit_gider_odemeler(ay: str = None):
             JOIN kartlar k ON k.id = kh.kart_id
             LEFT JOIN sabit_giderler sg ON sg.id = kh.kaynak_id
             WHERE kh.islem_turu = 'HARCAMA' AND kh.durum = 'aktif'
-            AND kh.kaynak_tablo = 'sabit_giderler'
+            -- 🟡 P2 (2026-08-13, Codex): fiili kart talimatı yazımı 'fatura_giderleri'
+            -- kaynak_tablo'suyla da oluyor (bu_ay_odendi kontrolü onu arıyor);
+            -- burada yalnız 'sabit_giderler' sayılınca kartla ödenen gider bu
+            -- listede kayboluyordu. İki kaynak da sayılır.
+            AND kh.kaynak_tablo IN ('sabit_giderler', 'fatura_giderleri')
             ORDER BY kh.tarih DESC
             LIMIT 200
         """)

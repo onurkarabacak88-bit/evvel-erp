@@ -81,13 +81,32 @@ const Bos = ({ baslik, aciklama, aksiyon, onAksiyon, renk = R.not }) => (
   </div>
 );
 
-/** Ortak yükleyici: uç listesi → state. Hepsi hata-yutar. */
+/** Ortak yükleyici: uç listesi → state.
+ *  🔴 P1 (2026-08-13, EVV-ONAY / Codex): eskiden HER hata yutulup varsayılana
+ *  düşüyordu — onay kuyruğu ucu 500 dönse ekran "Kuyruk temiz" diyordu (para
+ *  bekleyen kayıtlar görünmeden kalıyordu). Üçüncü eleman kritik=true olan
+ *  uçlar düşerse artık hata bandı çıkar; yan (salt-okur süs) uçlar yutulmaya
+ *  devam eder. */
 function useVeri(istekler, bagimlilik = []) {
   const [durum, setDurum] = useState({ yukleniyor: true, hata: '', veri: [] });
   const yukle = () => {
     setDurum(d => ({ ...d, yukleniyor: true, hata: '' }));
-    Promise.all(istekler.map(([yol, varsayilan]) => api(yol).catch(() => varsayilan)))
-      .then(v => setDurum({ yukleniyor: false, hata: '', veri: v }))
+    Promise.all(istekler.map(([yol, varsayilan, kritik]) =>
+      (yol == null
+        ? Promise.resolve(varsayilan)   // kaldırılan uç — dizilim bozulmasın
+        : api(yol).catch(() => (kritik ? '__KRITIK_HATA__' : varsayilan)))))
+      .then(v => {
+        const dusen = v.findIndex(x => x === '__KRITIK_HATA__');
+        if (dusen >= 0) {
+          setDurum({
+            yukleniyor: false,
+            hata: `Veri okunamadı (${istekler[dusen][0]}) — "temiz/boş" görüntüsü yanıltıcı olur, yenileyin.`,
+            veri: [],
+          });
+          return;
+        }
+        setDurum({ yukleniyor: false, hata: '', veri: v });
+      })
       .catch(e => setDurum({ yukleniyor: false, hata: e?.message || 'Veriler alınamadı.', veri: [] }));
   };
   useEffect(yukle, bagimlilik);
@@ -137,8 +156,10 @@ const modalAlanStil = {
 // ═════════════════════════════════════════════════════════════════════════════
 export function OnayModulu({ gorunum, onCekmece, onKopru, onToast }) {
   const { yukleniyor, hata, veri, yukle } = useVeri([
-    ['/onay-kuyrugu?durum=bekliyor&limit=400', []],
-    ['/ciro-taslak?durum=bekliyor', []],
+    // kritik=true: bu iki uç düşerse "kuyruk temiz" YALANI yerine hata bandı
+    // limit 500 > render 400: kesme notu gerçekten tetiklenebilsin (uç tavanı 1000)
+    ['/onay-kuyrugu?durum=bekliyor&limit=500', [], true],
+    ['/ciro-taslak?durum=bekliyor', [], true],
     ['/subeler', []],
   ]);
   const [mesgul, setMesgul] = useState(false);
@@ -202,10 +223,13 @@ export function OnayModulu({ gorunum, onCekmece, onKopru, onToast }) {
               if (y[id]) delete y[id]; else y[id] = true;
               return y;
             })}
+            // 🔴 P1 (2026-08-13, Codex): 60-satır kesiği 61+. kayıtları v2'den
+            // İŞLENEMEZ kılıyordu (KPI 95 der, 61-95 onaylanamazdı). 400'e kadar
+            // render edilir (uç limiti); aşan varsa aşağıda not düşer.
             onHepsi={(hepsiMi) => setSecili(hepsiMi
-              ? Object.fromEntries(satir.slice(0, 60).map(o => [o.id, true]))
+              ? Object.fromEntries(satir.slice(0, 400).map(o => [o.id, true]))
               : {})}
-            satirlar={satir.slice(0, 60).map(o => ({
+            satirlar={satir.slice(0, 400).map(o => ({
               id: o.id, _o: o,
               baslik: o.aciklama || slugAd(o.islem_turu) || 'Onay kaydı',
               alt: `${slugAd(o.islem_turu)} · ${kisaTarih(o.tarih)}${o.kaynak_tablo ? ` · ${o.kaynak_tablo}` : ''}`,
@@ -238,6 +262,11 @@ export function OnayModulu({ gorunum, onCekmece, onKopru, onToast }) {
         ) : (
           <BosDurum tamam baslik="Kuyruk temiz" aciklama="Onay bekleyen kayıt yok — gider, avans, fire ve tanım değişiklikleri onaylanmış." />
         )}
+        {satir.length > 400 && (
+          <div style={{ fontSize: 11, color: R.not2, textAlign: 'center', marginTop: 8 }}>
+            ilk 400 kayıt gösteriliyor · kuyrukta {satir.length} kayıt — onayladıkça kalanlar listeye girer
+          </div>
+        )}
 
         {/* Seçim çubuğu — hangi kayıtların onaylanacağını kullanıcı seçer */}
         <SecimCubugu
@@ -264,14 +293,21 @@ export function OnayModulu({ gorunum, onCekmece, onKopru, onToast }) {
           calisiyor={mesgul}
           tehlike
           onOnayla={async () => {
+            // 🟡 P2 (2026-08-13): mesgul kilidi yoktu — çift tık iki paralel döngü
+            // koşturuyordu (para korunuyordu ama toast yarışıp "0/N" diyebiliyordu).
+            if (mesgul) return;
+            setMesgul(true);
             let basarili = 0;
-            for (const o of seciliListe) {
-              try {
-                await api(`/onay-kuyrugu/${o.id}/reddet`, { method: 'POST', body: { neden: 'hata' } });
-                basarili += 1;
-              } catch { /* tek kayıt düşse akış durmasın */ }
-            }
-            onToast?.(`${basarili}/${seciliListe.length} kayıt reddedildi`);
+            const hatalar = [];
+            try {
+              for (const o of seciliListe) {
+                try {
+                  await api(`/onay-kuyrugu/${o.id}/reddet`, { method: 'POST', body: { neden: 'hata' } });
+                  basarili += 1;
+                } catch (e) { hatalar.push(e?.message || 'hata'); }
+              }
+            } finally { setMesgul(false); }
+            onToast?.(`${basarili}/${seciliListe.length} kayıt reddedildi${hatalar.length ? ` · ${hatalar.length} kayıt reddedilemedi (${hatalar[0]})` : ''}`);
             setTopluRed(false);
             setSecili({});
             yukle();
@@ -420,8 +456,10 @@ export function OnayModulu({ gorunum, onCekmece, onKopru, onToast }) {
               Toplam <strong style={{ fontFamily: F.mono, color: R.krem }}>{fmt(t)}</strong> — onaylanınca ciro defterine ve kasaya işlenir.
             </div>
 
-            {/* Sunucunun PATCH tarafındaki çift-sayım freni burada ÖNCEDEN söylenir
-                (onayla ucunda bu kontrol yok — sessizce iki kez sayılabilirdi). */}
+            {/* Çift-sayım freni SUNUCUDA HEM PATCH HEM ONAYLA ucunda var
+                (ciro_taslak_api 141+218 — 2026-08-13 doğrulandı; eski yorum
+                "onaylada yok" diyordu, bayattı). Burada önceden söylenir ve
+                Onayla düğmesi de kilitlenir — kullanıcı generik 400 yemesin. */}
             {(() => {
               const n = sayi(ciroSor.nakit), p = sayi(ciroSor.pos), o = sayi(ciroSor.online);
               if (!(o > 0.001 && n > 0.001 && p > 0.001 && Math.abs(o - (n + p)) < 0.01)) return null;
@@ -431,8 +469,8 @@ export function OnayModulu({ gorunum, onCekmece, onKopru, onToast }) {
                   background: 'rgba(251,191,36,.09)', border: '1px solid rgba(251,191,36,.34)', color: R.metin2,
                 }}>
                   <b style={{ color: R.amber }}>Online tutarı nakit + POS toplamına eşit.</b> Bu genelde
-                  çift sayımdır — online ayrı bir kanal değilse <b>0</b> girilmeli. Düzeltmeyi
-                  kaydetmek bu hâliyle reddedilir.
+                  çift sayımdır — online ayrı bir kanal değilse <b>0</b> girilmeli. Bu hâliyle
+                  <b> ne kaydedilir ne onaylanır</b> (sunucu ikisini de reddeder).
                 </div>
               );
             })()}
@@ -486,7 +524,11 @@ export function OnayModulu({ gorunum, onCekmece, onKopru, onToast }) {
                   </button>
                 );
               })()}
-              <button disabled={mesgul || t <= 0 || sayi(ciroSor.nakit) < 0 || sayi(ciroSor.pos) < 0 || sayi(ciroSor.online) < 0} onClick={async () => {
+              <button disabled={(() => {
+                const n = sayi(ciroSor.nakit), p = sayi(ciroSor.pos), o = sayi(ciroSor.online);
+                const ciftSayim = o > 0.001 && n > 0.001 && p > 0.001 && Math.abs(o - (n + p)) < 0.01;
+                return mesgul || t <= 0 || n < 0 || p < 0 || o < 0 || ciftSayim;
+              })()} onClick={async () => {
                 const ok = await calistir(
                   () => api(`/ciro-taslak/${ciroSor.kayit.id}/onayla`, {
                     method: 'POST',
@@ -589,9 +631,13 @@ const BORC_ALAN = [
 // ═════════════════════════════════════════════════════════════════════════════
 export function YukModulu({ gorunum, onCekmece, onKopru, onToast }) {
   const { yukleniyor, hata, veri, yukle } = useVeri([
-    ['/borclar', []],
-    ['/sabit-giderler', []],
-    ['/sabit-giderler/odemeler', null],
+    // kritik=true: kredi/sabit listesi düşerse "kayıt yok" yalanı yerine hata bandı
+    ['/borclar', [], true],
+    ['/sabit-giderler', [], true],
+    // 🟡 P3 (2026-08-13): /sabit-giderler/odemeler çekiliyordu ama HİÇ
+    // kullanılmıyordu (ölü istek) — kaldırıldı; yapı bozulmasın diye yerine
+    // sabit null kaydırıldı.
+    [null, null],
     ['/subeler', []],
     // ⚠️ v2 bu ucu HİÇ çağırmıyordu. Kira artış tarihi geçince ya da sözleşme
     // bitince sunucu ÖDEME PLANI ÜRETMEYİ DURDURUYOR (`durduruldu: true`) —
@@ -705,7 +751,9 @@ export function YukModulu({ gorunum, onCekmece, onKopru, onToast }) {
         const f = m.form || {};
         if (!String(f.kurum || '').trim()) { onToast?.('Kurum/alacaklı adı zorunlu'); setBrMesgul(false); return; }
         const taksit = brSayi(f.aylik_taksit);
-        if (taksit == null || taksit < 0) { onToast?.('Aylık taksit geçersiz'); setBrMesgul(false); return; }
+        // Sunucu taksit>0 zorunlu kılar (MN8) — 0 burada da reddedilir ki kullanıcı
+        // 400 yerine anlaşılır mesaj görsün. Ödemesiz dönem 'Ödemesiz dönem (ay)' ile girilir.
+        if (taksit == null || !(taksit > 0)) { onToast?.('Aylık taksit 0\'dan büyük olmalı — ödemesiz dönem için "Ödemesiz dönem (ay)" alanını kullan'); setBrMesgul(false); return; }
         const gun = Number(f.odeme_gunu) || 0;
         if (gun < 1 || gun > 31) { onToast?.('Ödeme günü 1–31 arası olmalı'); setBrMesgul(false); return; }
         const govde = {
@@ -726,11 +774,14 @@ export function YukModulu({ gorunum, onCekmece, onKopru, onToast }) {
         await api(`/borclar/${m.borc.id}`, { method: 'DELETE' });
         onToast?.('✓ Kredi kaydı silindi');
       } else if (m.tip === 'ode') {
-        // 🔴 P1 (2026-08-12, Yük denetimi): borç ödeme (kasadan çıkış) tutar>0 doğrulaması
-        // yoktu → 0/negatif ödeme kasaya ters/boş hareket yazabiliyordu.
-        if (!(brSayi(m.tutar) > 0)) { onToast?.('Ödeme tutarı 0\'dan büyük olmalı'); setBrMesgul(false); return; }
+        // 🔴 P1 (2026-08-12) + DÜZELTME (2026-08-13, EVV-YUK): pozitiflik guard'ı
+        // "boş = taksit" özelliğini de kırmıştı (etiket vaat ediyor, sunucu
+        // destekliyor: boş → aylik_taksit). BOŞ serbest; yalnız AÇIKÇA girilen
+        // 0/negatif reddedilir (sunucu da tutar<=0'ı 400'ler — çifte emniyet).
+        const _odemeT = brSayi(m.tutar);
+        if (_odemeT != null && !(_odemeT > 0)) { onToast?.('Ödeme tutarı 0\'dan büyük olmalı — taksit tutarı için boş bırak'); setBrMesgul(false); return; }
         await api(`/borclar/${m.borc.id}/ode`, { method: 'POST', body: {
-          tutar: brSayi(m.tutar), tarih: m.tarih || null,
+          tutar: _odemeT, tarih: m.tarih || null,
           aciklama: (m.aciklama || '').trim() || null,
           beklenen_taksit_no: m.borc.siradaki_taksit_no ?? null,
         } });
