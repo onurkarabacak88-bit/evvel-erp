@@ -404,6 +404,7 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
   const ktUygula = async () => {
     const m = ktModal;
     if (!m) return;
+    if (ktMesgul) return;   // 🔵 EVV-OPS3-F (2026-08-13) çift-tık: mükerrer katalog yazma önle
     setKtMesgul(true);
     try {
       if (m.tip === 'kategori') {
@@ -714,7 +715,10 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     // yazılmış ama hiç bağlanmamıştı. Kanban kartı "kaç kalem" diyordu; bu uç
     // KARAR İÇİN GEREKEN üç şeyi ekliyor: şube zaten var mı (gereksiz sipariş),
     // gönderirsek merkezde ne kalır (barem riski), davranış uyarısı var mı.
-    api('/ops/v2/bekleyen-siparisler?gun=7')
+    // 🔵 EVV-OPS3-F (2026-08-13): kanban kontrol-kulesi gun=14 yükleniyor ama bekleyen
+    // zenginleştirme gun=7'ydi → 8-14 gün yaşındaki açık siparişler board'da görünüp
+    // stok/davranış/risk bağlamını kaybediyordu. 14'e hizalandı.
+    api('/ops/v2/bekleyen-siparisler?gun=14')
       .then((d) => {
         const m = {};
         (Array.isArray(d?.siparisler) ? d.siparisler : []).forEach((s) => { m[String(s.id)] = s; });
@@ -893,7 +897,10 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     api(`/ops/siparis/gecmis?${q.join('&')}&limit=300`)
       .then((d) => setArsivVeri(d || null))
       .catch((e) => { setArsivVeri(null); setArsivHata(e?.message || 'Arşiv alınamadı'); });
-    api(`/ops/siparis/depo-sevkiyat-raporlari?gun=${Math.min(365, gun || 90)}&limit=60`)
+    // 🔵 EVV-OPS3-F: arşiv görünümü 730 güne dek gidiyor (yorum 688) ama rapor fetch'i
+    // 365'e kırpıyordu → 366-730 gün arası siparişler eşleşen depo/sevkiyat raporu olmadan
+    // görünüyordu (arşiv toplamı/drill uzlaşmıyordu). 730'a çıkarıldı.
+    api(`/ops/siparis/depo-sevkiyat-raporlari?gun=${Math.min(730, gun || 90)}&limit=60`)
       .then((d) => setArsivRapor(Array.isArray(d?.raporlar) ? d.raporlar : []))
       .catch(() => setArsivRapor([]));
   }, []);
@@ -1128,6 +1135,7 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
   const mdUygula = async () => {
     const m = mdModal;
     if (!m) return;
+    if (mdMesgul) return;   // 🔵 EVV-OPS3-F (2026-08-13) çift-tık: mükerrer merkez-müdahale önle
     setMdMesgul(true);
     try {
       if (m.tip === 'okundu') {
@@ -2258,8 +2266,10 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     // Granül... hepsi kayıtlı. Fiyatsız + depo-eşleşmesiz sayaçları da 0 çıkıyordu.
     const kItems = (k) => (k.items || k.urunler || []);
     const toplamUrun = ktKatalog.reduce((a, k) => a + kItems(k).length, 0);
+    // 🔵 EVV-OPS3-F: eskiden yalnız `== null` fiyatsız sayılıyordu → 0/''/bozuk değer
+    // "fiyatlı ₺0" görünüp maliyet hesabına 0 basıyordu. Pozitif olmayan = fiyatsız.
     const fiyatsiz = ktKatalog.reduce((a, k) =>
-      a + kItems(k).filter((u) => u.birim_fiyat_tl == null).length, 0);
+      a + kItems(k).filter((u) => !(sayi(u.birim_fiyat_tl) > 0)).length, 0);
     const eslesmemis = ktKatalog.reduce((a, k) =>
       a + kItems(k).filter((u) => !u.depo_stok_kalem_kodu).length, 0);
 
@@ -2324,12 +2334,12 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
                 </span>
                 <span style={{
                   fontFamily: F.mono, fontSize: 12, minWidth: 78, textAlign: 'right',
-                  color: u.birim_fiyat_tl == null ? R.not3 : R.krem,
+                  color: !(sayi(u.birim_fiyat_tl) > 0) ? R.not3 : R.krem,   // Codex: tek predicate (>0) — count/text/renk/prefill tutarlı
                 }}>
-                  {u.birim_fiyat_tl == null ? 'fiyatsız' : fmt(sayi(u.birim_fiyat_tl))}
+                  {!(sayi(u.birim_fiyat_tl) > 0) ? 'fiyatsız' : fmt(sayi(u.birim_fiyat_tl))}
                 </span>
                 <button onClick={() => setKtModal({ tip: 'ad', kategori: k, urun: u, ad: u.ad, deger: '' })} style={ktMiniBtn}>ad</button>
-                <button onClick={() => setKtModal({ tip: 'fiyat', kategori: k, urun: u, ad: '', deger: u.birim_fiyat_tl == null ? '' : String(u.birim_fiyat_tl) })} style={ktMiniBtn}>fiyat</button>
+                <button onClick={() => setKtModal({ tip: 'fiyat', kategori: k, urun: u, ad: '', deger: !(sayi(u.birim_fiyat_tl) > 0) ? '' : String(u.birim_fiyat_tl) })} style={ktMiniBtn}>fiyat</button>
                 <button onClick={() => setKtModal({ tip: 'pasif', kategori: k, urun: u, ad: '', deger: '' })} style={{ ...ktMiniBtn, color: R.kirmizi, borderColor: `${R.kirmizi}44` }}>pasife al</button>
               </div>
             ))}
@@ -2674,7 +2684,7 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
               "tam" duruma geçirir.
             </div>
             <Tablo
-              baslik="Talep ↔ tahsis uyumsuzlukları · son 200 sipariş"
+              baslik={`Talep ↔ tahsis uyumsuzlukları · ${uzTahsis.length > 60 ? `${uzTahsis.length} kayıttan ilk 60` : `${uzTahsis.length} kayıt`}`}
               not="satıra tıkla → uzlaştır"
               kolonlar={[{ ad: 'Şube' }, { ad: 'Tarih' }, { ad: 'Kalem' }, { ad: 'Talep', sag: true }, { ad: 'Tahsis', sag: true }, { ad: 'Fark', sag: true }]}
               satirlar={uzTahsis.slice(0, 60).map((t, i) => {
