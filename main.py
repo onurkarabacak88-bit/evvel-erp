@@ -5525,10 +5525,19 @@ def odeme_yap(oid: str, tutar: Optional[float] = None, body: VadeliOdeModel = Va
             if cur.fetchone():
                 raise HTTPException(400, "Bu gider bu ay zaten manuel ödenmiş — plan tekrar ödenemez")
 
+        # 🔴 P0 (2026-08-13, EVV-ODE denetimi): ?tutar gelmezse varsayılan
+        # ORİJİNAL odenecek_tutar idi — kısmi ödenmiş planda (odenen>0) "tamamını
+        # öde" KALAN yerine TAM tutarı İKİNCİ kez ödetiyordu (300 ödenmiş 1000'lik
+        # planda 1000 daha çıkar, toplam 1300). Varsayılan artık KALAN borçtur.
+        _kalan_varsayilan = round(
+            float(plan['odenecek_tutar'] or 0) - float(plan.get('odenen_tutar') or 0), 2)
+        if _kalan_varsayilan <= 0:
+            raise HTTPException(400, "Bu planın kalan borcu yok — zaten ödenmiş görünüyor")
+
         # KART seçildiyse ve kaynak vadeli_alimlar ise kart akışına yönlendir
         if body.odeme_yontemi == 'kart' and body.kart_id and plan.get('kaynak_tablo') == 'vadeli_alimlar':
             bugun = str(bugun_tr())
-            odeme_tutari = tutar or float(plan['odenecek_tutar'])
+            odeme_tutari = tutar or _kalan_varsayilan
             # Kart validasyon — FOR UPDATE: eş zamanlı limit aşımını önler
             cur.execute("SELECT * FROM kartlar WHERE id=%s AND aktif=TRUE FOR UPDATE", (body.kart_id,))
             kart = cur.fetchone()
@@ -5580,7 +5589,7 @@ def odeme_yap(oid: str, tutar: Optional[float] = None, body: VadeliOdeModel = Va
                               else f"Kısmi ödeme — kalan {max(0.0, _kart_kalan):,.2f} TL devrediyor")}
 
         bugun = str(bugun_tr())
-        odenen = tutar or float(plan['odenecek_tutar'])
+        odenen = tutar or _kalan_varsayilan   # P0 fix: varsayılan = KALAN, orijinal değil
         # ── KISMİ ÖDEME (2026-08-08, sahip: "bazen içerdeki borç tutarının bir
         # kısmını bırakırız, üstüne yeni borçlar eklenir; ödeme illa fatura
         # tutarı kadar olmaz"). Eski davranış: tutar ne olursa olsun durum
@@ -8716,8 +8725,18 @@ def vadeli_listele(durum: str = "bekliyor", gun: int = 30):
 
 
 @app.get("/api/vadeli-alimlar/gecmis")
-def vadeli_gecmis(limit: int = 120):
+def vadeli_gecmis(limit: int = 120, ay: str = None):
     lim = max(1, min(int(limit or 120), 500))
+    # 🟡 P1 (2026-08-13, EVV-ODE): ay filtresi istemcideydi ama pencere "son N
+    # kayıt" olduğu için eski bir ay pencere dışında kalınca ekran sessizce
+    # başka ayın kayıtlarına düşüyordu. Ay artık sunucuda süzülür.
+    import re as _re_ay
+    ay_v = (ay or "").strip()
+    ay_cond = ""
+    ay_params: list = []
+    if ay_v and _re_ay.match(r"^\d{4}-\d{2}$", ay_v):
+        ay_cond = " WHERE to_char(q.tarih, 'YYYY-MM') = %s"
+        ay_params = [ay_v]
     with db() as (conn, cur):
         cur.execute(
             """
@@ -8754,10 +8773,11 @@ def vadeli_gecmis(limit: int = 120):
                   AND kht.islem_turu='HARCAMA'
                   AND kht.durum='aktif'
             ) q
+            """ + ay_cond + """
             ORDER BY q.tarih DESC
             LIMIT %s
             """,
-            (lim,),
+            ay_params + [lim],
         )
         satirlar = [dict(r) for r in cur.fetchall()]
         toplam = sum(float(r.get("tutar") or 0) for r in satirlar)
@@ -10555,9 +10575,16 @@ def kismi_odeme_yap(oid: str, body: KismiOdeModel):
         # FAZ 0 #3: personel maaşı onaysız (kısmi de olsa) ödenemez
         _personel_maas_odeme_guard(cur, dict(plan))
 
-        toplam = float(plan['odenecek_tutar'])
+        # 🔴 P0 (2026-08-13, EVV-ODE denetimi): "toplam" ORİJİNAL odenecek_tutar
+        # idi — birikmiş odenen_tutar düşülmüyordu. Kısmi ödenmiş planda (300/1000)
+        # ikinci kısmi 600 ödenince kalan 1000−600=400 hesaplanıyor, önceki 300
+        # defterden düşüyordu (gerçek kalan 100). Referans artık KALAN borçtur.
+        _mevcut_odenen = float(plan.get('odenen_tutar') or 0)
+        toplam = round(float(plan['odenecek_tutar'] or 0) - _mevcut_odenen, 2)
         odenen = body.odenen_tutar
         kaynak = plan.get('kaynak_tablo') or ''
+        if toplam <= 0:
+            raise HTTPException(400, "Bu planın kalan borcu yok — zaten ödenmiş görünüyor")
 
         if odenen <= 0:
             raise HTTPException(400, "Ödenen tutar sıfırdan büyük olmalı")
@@ -10566,6 +10593,25 @@ def kismi_odeme_yap(oid: str, body: KismiOdeModel):
                 raise HTTPException(400, "Odenen tutar kalan borctan buyuk olamaz")
             raise HTTPException(400, "Tam ödeme için normal ödeme ekranını kullanın")
         bugun = str(bugun_tr())
+
+        # 🔴 P1 (2026-08-13, EVV-ODE denetimi): /ode kart yolunda FOR UPDATE +
+        # limit kontrolü var, kismi-ode kart yolunda YOKTU — limiti aşan kısmi
+        # ödeme sessizce kart borcuna yazılıyordu. Simetri kuruldu.
+        if getattr(body, 'odeme_yontemi', 'nakit') == 'kart' and getattr(body, 'kart_id', None):
+            cur.execute("SELECT * FROM kartlar WHERE id=%s AND aktif=TRUE FOR UPDATE", (body.kart_id,))
+            _kk = cur.fetchone()
+            if not _kk:
+                raise HTTPException(404, "Kart bulunamadı")
+            _kb = kart_borc(cur, body.kart_id)
+            _klim = _kanonik_kalan_limit(body.kart_id, float(_kk['limit_tutar']) - _kb)
+            if _klim < odenen:
+                raise HTTPException(400, f"Kart limiti yetersiz. Kalan: {_klim:,.0f} ₺")
+            # Kart yazımı yalnız vadeli_alimlar kaynağında var; diğer kaynaklarda
+            # eski kod "kart" seçilse bile parayı SESSİZCE kasadan çıkarıyordu.
+            if kaynak != 'vadeli_alimlar':
+                raise HTTPException(400,
+                    "Kısmi KART ödemesi yalnız vadeli alım kalemlerinde desteklenir — "
+                    "bu kalemde nakit/havale kullanın ya da tam ödeme yapın")
 
         if odenen >= toplam:
             if kaynak == 'vadeli_alimlar' and plan.get('kaynak_id'):
@@ -10603,7 +10649,7 @@ def kismi_odeme_yap(oid: str, body: KismiOdeModel):
 
                 cur.execute(
                     "UPDATE odeme_plani SET durum='odendi', odeme_tarihi=%s, odenen_tutar=%s WHERE id=%s",
-                    (bugun, toplam, oid),
+                    (bugun, round(_mevcut_odenen + toplam, 2), oid),  # P0 fix: birikimli
                 )
                 cur.execute("""
                     UPDATE onay_kuyrugu SET durum='onaylandi', onay_tarihi=NOW()
@@ -10650,8 +10696,9 @@ def kismi_odeme_yap(oid: str, body: KismiOdeModel):
         else:
             # Diğer kaynaklar (sabit_gider, personel, vadeli, borc_envanteri) — eski davranış:
             # Eski planı odendi yap, kalan için ayrı plan oluşturulur.
+            # P0 fix: odenen_tutar BİRİKİMLİ yazılır (önceki kısmi ödemeler kaybolmasın).
             cur.execute("UPDATE odeme_plani SET durum='odendi', odeme_tarihi=%s, odenen_tutar=%s WHERE id=%s",
-                (bugun, odenen, oid))
+                (bugun, round(_mevcut_odenen + odenen, 2), oid))
 
         # FIX K1 (2026-07-06): ödeme-olayı sıra kimliği — plan + kümülatif kuruş, deterministik.
         # Kart kesim planı birden çok kısmi ödemeye açık kalır; eskiden kart ODEME satırı sabit
@@ -11001,7 +11048,11 @@ def toplu_odeme(payload: dict):
                 raise HTTPException(400, f"Toplu ödeme tam kapatma yapar (kalan {kalan_krs/100:.2f}₺); kısmi/farklı tutar için kısmi-öde kullanın: {oid}")
             odenen = kalan_krs / 100.0
             bugun = str(bugun_tr())
-            cur.execute("UPDATE odeme_plani SET durum='odendi', odeme_tarihi=%s, odenen_tutar=%s WHERE id=%s", (bugun, odenen, oid))
+            # P1 (Codex diff-review 2026-08-13): tam kapatmada odenen_tutar
+            # BİRİKİMLİ olmalı (önceki kısmi ödemeler + bu kalan) — kalan ile
+            # overwrite edilirse /ode-/kismi-ode'de kurulan tutarlılık bozulur.
+            cur.execute("UPDATE odeme_plani SET durum='odendi', odeme_tarihi=%s, odenen_tutar=%s WHERE id=%s",
+                        (bugun, float(plan['odenecek_tutar'] or 0), oid))
             plan_d = dict(plan)
             ana_t = kasa_ve_faiz_odeme_plani_tam_odeme(
                 cur, plan_d, oid, odenen, bugun,

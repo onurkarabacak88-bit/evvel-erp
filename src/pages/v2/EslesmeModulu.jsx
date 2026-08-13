@@ -61,6 +61,19 @@ export default function EslesmeModulu({ gorunum, onCekmece, onToast }) {
       gerekce: x.gerekce, dokum: x.dokum, acik: sayi(x.acik_bakiye),
       kaynak: 'skor',
     }));
+    // 🔴 P1 (2026-08-13, Codex): uygula=0 modunda `otomatik` listesi yalnızca
+    // "sistem BAĞLAYABİLİR" önerisidir — damga vurulmamıştır. Eskiden bu satırlar
+    // ne KPI dışında ne tabloda doğru yerdeydi (KPI "bağladı" diyordu, tablo
+    // göstermiyordu). Damgalanmamışlarsa onlar da ONAY BEKLEYEN adaydır.
+    if (tara?.uygulandi === false) {
+      (tara?.otomatik || []).forEach((x) => {
+        a.push({
+          hareketId: x.hareket_id, tedarikci: x.tedarikci, tutar: sayi(x.tutar),
+          tarih: x.tarih, aciklama: x.aciklama, guven: sayi(x.guven),
+          gerekce: x.gerekce, acik: sayi(x.acik_bakiye), kaynak: 'oto',
+        });
+      });
+    }
     const varOlan = new Set(a.map((x) => x.hareketId));
     (izler?.satirlar || []).forEach((s) => {
       (s.izler || []).forEach((i) => {
@@ -89,9 +102,17 @@ export default function EslesmeModulu({ gorunum, onCekmece, onToast }) {
         method: 'POST',
         body: { tedarikci, hareket_idler: idler, aktor: 'sahip', dayanak: 'ekrandan onay' },
       });
-      onToast?.(geriAl
-        ? `↩ ${r?.geri_alinan || idler.length} bağ geri alındı`
-        : `✓ ${r?.damgalanan || idler.length} çekim ${tedarikci} borcuna bağlandı`);
+      // "0 || N" tuzağı (Codex diff-review): optimistic-lock sonrası damgalanan=0
+      // dönebilir (hepsi çakıştı) — 0'ı seçili adetle DEĞİŞTİRME, gerçeği söyle.
+      const _n = geriAl
+        ? (Number.isFinite(Number(r?.geri_alinan)) ? Number(r.geri_alinan) : idler.length)
+        : (Number.isFinite(Number(r?.damgalanan)) ? Number(r.damgalanan) : idler.length);
+      const _cak = Number(r?.cakisan) || 0;
+      onToast?.(_n === 0
+        ? `⚠ Hiçbir çekim ${geriAl ? 'geri alınamadı' : 'bağlanamadı'}${_cak ? ` — ${_cak} satır bu arada başka karar aldı, liste yenilendi` : ''}`
+        : geriAl
+          ? `↩ ${_n} bağ geri alındı`
+          : `✓ ${_n} çekim ${tedarikci} borcuna bağlandı${_cak ? ` · ${_cak} satır çakıştı (başkası bağlamış)` : ''}`);
       setSecim({}); setModal(null); yukle();
     } catch (e) {
       onToast?.(`✕ ${String(e?.message || e)}`);
@@ -112,6 +133,18 @@ export default function EslesmeModulu({ gorunum, onCekmece, onToast }) {
 
   // ── KARAR DEFTERİ görünümü ────────────────────────────────────────────────
   if (gorunum === 'defter') {
+    // 🟡 P2 (2026-08-13): defter ucu düşünce "Henüz karar yok" görünüyordu —
+    // sahte-boş. Okunamadıysa açıkça söylenir.
+    if (defter == null) {
+      return (
+        <div style={{ ...kartYuzey, padding: 20, borderLeft: `3px solid ${R.kirmizi}` }}>
+          <div style={{ color: R.kirmizi, fontWeight: 700, marginBottom: 6 }}>Karar defteri okunamadı</div>
+          <div style={{ color: R.not2, fontSize: 12.5 }}>
+            "Henüz karar yok" görüntüsü yanıltıcı olur — sayfayı yenileyin.
+          </div>
+        </div>
+      );
+    }
     const k = defter?.kayitlar || [];
     return (
       <>
@@ -124,13 +157,24 @@ export default function EslesmeModulu({ gorunum, onCekmece, onToast }) {
         {k.length ? (
           <Tablo
             baslik="Eşleşme karar defteri"
-            not="append-only — hiçbir satır silinmez, düzeltme yeni satırdır"
+            not="append-only — silinmez, düzeltme yeni satırdır · «bağladı» satırına dokun → geri al"
             kolonlar={[
               { ad: 'Zaman' }, { ad: 'Karar' }, { ad: 'Önceki' }, { ad: 'Yeni' },
               { ad: 'Tutar', sag: true }, { ad: 'Kim' }, { ad: 'Dayanak' },
             ]}
+            onSatir={(row) => {
+              const x = row._x;
+              // ↩ GERİ AL (2026-08-13, EVV-ODE): API ve "tek tıkla geri alınır"
+              // vaadi vardı ama hiçbir ekran çağırmıyordu — yanlış bağ ekrandan
+              // düzeltilemiyordu. Yalnız 'bagla' kararları geri alınabilir.
+              if (x?.karar !== 'bagla' || !x?.hareket_id) return;
+              setModal({
+                tip: 'geri', idler: [x.hareket_id],
+                tedarikci: x.yeni_deger, tutar: sayi(x.tutar),
+              });
+            }}
             satirlar={k.map((x) => ({
-              id: x.id,
+              id: x.id, _x: x,
               hucreler: [
                 { v: String(x.ts || '').slice(0, 16).replace('T', ' '), mono: true },
                 {
@@ -153,13 +197,41 @@ export default function EslesmeModulu({ gorunum, onCekmece, onToast }) {
             </div>
           </div>
         )}
+        {modal?.tip === 'geri' && (
+          <OnayModali
+            acik
+            baslik="Bağı geri al"
+            altBaslik={`Bu çekim "${modal.tedarikci}" borcundan ÇÖZÜLECEK ve yeniden aday havuzuna dönecek. Karar silinmez — deftere 'geri aldı' satırı eklenir.`}
+            tutar={fmt(modal.tutar)}
+            not="Para yaratmaz/yok etmez — yalnız bağ kalkar; cari bakiye yeniden ad eşleşmesiyle okunur."
+            onaylaAd="↩ Geri al"
+            calisiyor={mesgul}
+            onKapat={() => setModal(null)}
+            onOnayla={() => uygula(modal.tedarikci, modal.idler, true)}
+          />
+        )}
       </>
     );
   }
 
   // ── EŞLEŞME görünümü (varsayılan) ─────────────────────────────────────────
   const otoAdet = sayi(tara?.otomatik_baglanan);
+  // 🔴 P1 (2026-08-13, Codex): uygula=0 raporu "Sistem bağladı" diye sunuluyordu
+  // — o satırlar fiilen DAMGALANMAMIŞTI (operatör işi bitti sanırdı). Etiket
+  // artık gerçeği söyler; yüksek güvenliler tek tuşla gerçekten bağlanabilir.
+  const otoOneri = tara?.uygulandi === false && otoAdet > 0;
   const izsizler = izler?.iz_bulunamayan || [];
+  const yuksekGuvenBagla = async () => {
+    if (mesgul) return;
+    setMesgul(true);
+    try {
+      const r = await api('/fatura/kart-izi-otomatik-tara?uygula=1', { method: 'POST' });
+      onToast?.(`🤖 ${sayi(r?.otomatik_baglanan)} çekim yüksek güvenle bağlandı (deftere yazıldı)`);
+      yukle();
+    } catch (e) {
+      onToast?.(`✕ ${String(e?.message || e)}`);
+    } finally { setMesgul(false); }
+  };
   return (
     <>
       <KpiSeridi kpiler={[
@@ -168,11 +240,17 @@ export default function EslesmeModulu({ gorunum, onCekmece, onToast }) {
           alt: adaylar.length ? `${fmt(adaylar.reduce((t, a) => t + a.tutar, 0))} tutarında` : 'temiz',
           renk: adaylar.length ? R.amber : R.yesil,
         },
-        {
-          etiket: 'Sistem bağladı', deger: String(otoAdet),
-          alt: otoAdet ? `${fmt(sayi(tara?.otomatik_tutar))} · %95+ güven` : 'öğrenme bekliyor',
-          renk: R.yesil,
-        },
+        otoOneri
+          ? {
+            etiket: 'Sistem bağlayabilir', deger: String(otoAdet),
+            alt: `${fmt(sayi(tara?.otomatik_tutar))} · %95+ güven — HENÜZ bağlanmadı`,
+            renk: R.amber,
+          }
+          : {
+            etiket: 'Sistem bağladı', deger: String(otoAdet),
+            alt: otoAdet ? `${fmt(sayi(tara?.otomatik_tutar))} · %95+ güven` : 'öğrenme bekliyor',
+            renk: R.yesil,
+          },
         {
           etiket: 'Borcu var, izi yok', deger: String(izsizler.length),
           alt: 'kartta karşılığı bulunamadı', renk: izsizler.length ? R.not : R.yesil,
@@ -191,10 +269,19 @@ export default function EslesmeModulu({ gorunum, onCekmece, onToast }) {
         <div style={{ fontSize: 12, color: R.metin2, lineHeight: 1.65 }}>
           Kart ekstresindeki bir çekimin hangi tedarikçinin borcuna ait olduğunu işaretlersin.
           Sistem <b>yeni ödeme kaydı açmaz</b> — sadece bağ kurar, borç cari hesaptan düşer.
-          Yanlış bağ para yaratmaz/yok etmez, tek tıkla geri alınır.
+          Yanlış bağ para yaratmaz/yok etmez — <b>Karar Defteri</b>'nde satıra dokunup geri alırsın.
           <b style={{ color: R.bakir }}> Onayladığın her kalıbı sistem öğrenir</b>; aynısı bir daha
           gelirse kendi bağlar.
         </div>
+        {otoOneri && (
+          <button disabled={mesgul} onClick={yuksekGuvenBagla} style={{
+            marginTop: 10, padding: '8px 15px', borderRadius: 9, border: 'none',
+            cursor: mesgul ? 'wait' : 'pointer', background: R.bakir, color: '#1A1209',
+            fontWeight: 700, fontSize: 12.5, fontFamily: 'inherit',
+          }}>
+            {mesgul ? 'Bağlanıyor…' : `🤖 Yüksek güvenlileri bağla (${otoAdet} çekim · ${fmt(sayi(tara?.otomatik_tutar))})`}
+          </button>
+        )}
       </div>
 
       {secili.length > 0 && (

@@ -112,11 +112,17 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
     setYukleniyor(true);
     setHata('');
     Promise.all([
-      api('/odeme-plani/bugun?gun=14&personel=1').catch(() => []),
+      // 🟡 P1 (2026-08-13, Codex): kuyruk ucu düşünce [] yutuluyordu — kokpit
+      // sağlamsa ekran "bekleyen ödeme yok" diyordu (sahte-yeşil). Sentinel ile
+      // ayırt edilir; kuyruk okunamadıysa hata bandı çıkar.
+      api('/odeme-plani/bugun?gun=14&personel=1').catch(() => '__KUYRUK_HATA__'),
       api('/odeme-plani/kokpit?personel=1').catch(() => null),
       api('/fatura/cari-ozet').catch(() => null),
       api(`/ledger?limit=400&ay=${ay}`).catch(() => null),
-      api('/vadeli-alimlar/gecmis?limit=200').catch(() => null),
+      // 🟡 P1 (2026-08-13, Codex): ay süzgeci artık SUNUCUDA — eskiden "son 200
+      // kayıt" penceresi istemcide süzülüyordu; eski ay pencere dışında kalınca
+      // blok sessizce başka ayın kayıtlarına düşüyordu.
+      api(`/vadeli-alimlar/gecmis?limit=200&ay=${ay}`).catch(() => null),
       // VERGİ YÜKÜ (2026-08-07 denetimi): ödenecek KDV + kira stopajı hesaplanıyor
       // ama ödeme planında görünmüyordu — "bu ay ne ödeyeceğim" listesinde vergi
       // yoktu, ay sonu sürpriz oluyordu. Plana BORÇ olarak YAZILMAZ (tahminî
@@ -153,8 +159,17 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
       setKokpit(ko);
       setCari(c);
       const satir = Array.isArray(l) ? l : (l?.rows || []);
-      setGecmis(satir.filter(r => sayi(r.tutar) < 0));
-      if (!Array.isArray(k) && !ko) setHata('Ödeme verileri alınamadı.');
+      // 🟡 P2 (2026-08-13, EVV-ODE): "Ödeme geçmişi" tutar<0 HER kaydı ödeme
+      // sayıyordu — CIRO_IPTAL gibi ters kayıtlar ve kasa_etkisi=false satırlar
+      // (abonelik simülasyonu) ödeme DEĞİLDİR; KPI'yı şişiriyordu. İptaller
+      // listede GÖSTERİLİR (gizleme yok) ama _duzeltme işaretiyle; toplamlara
+      // girmez. kasa_etkisi=false satırlar tamamen dışarıda (kasadan çıkmadı).
+      setGecmis(satir
+        .filter(r => sayi(r.tutar) < 0 && r.kasa_etkisi !== false)
+        .map(r => ({ ...r, _duzeltme: /IPTAL|DUZELTME/i.test(String(r.islem_turu || '')) })));
+      if (k === '__KUYRUK_HATA__') {
+        setHata('Ödeme kuyruğu okunamadı — "bekleyen ödeme yok" görüntüsü yanıltıcı olur. Yenileyin.');
+      } else if (!Array.isArray(k) && !ko) setHata('Ödeme verileri alınamadı.');
       setYukleniyor(false);
     }).catch((e) => {
       setHata(e?.message || 'Beklenmeyen bir hata oluştu.');
@@ -413,7 +428,12 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
           const tamT = Number(String(modal.tamTutar ?? '').replace(',', '.'));
           if (!tamT || tamT <= 0) { onToast?.('Ödenecek tutar 0\'dan büyük olmalı'); setCalisiyor(false); return; }
           const duzeltildi = Math.abs(tamT - planT) > 0.005;
-          const q = duzeltildi ? `?tutar=${encodeURIComponent(tamT)}` : '';
+          // 🔴 P0 emniyeti (2026-08-13, EVV-ODE): tutar HER ZAMAN gönderilir.
+          // Eskiden düzeltilmemişse ?tutar atlanıyordu; sunucu varsayılanı
+          // ORİJİNAL odenecek_tutar'dı → kısmi ödenmiş planda kalan yerine tam
+          // tutar İKİNCİ kez ödeniyordu. Sunucu varsayılanı da kalana çekildi;
+          // burada açık göndermek çifte emniyet.
+          const q = `?tutar=${encodeURIComponent(tamT)}`;
           const r = await api(`/odeme-plani/${o.id}/ode${q}`, {
             method: 'POST',
             body: { odeme_yontemi: modal.yontem, kart_id: modal.yontem === 'kart' ? modal.kartId : null },
@@ -526,11 +546,21 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
     const t = sayi(borcModal?.tutar);
     if (!t || !liste.length) return { satirlar: [], avans: t || 0 };
     if (borcModal?.elle) {
-      const sat = liste
-        .filter((f) => sayi(borcModal.secim[f.fatura_id]) > 0)
-        .map((f) => ({ ...f, kapanan: Math.min(sayi(borcModal.secim[f.fatura_id]), f.kalan) }));
-      const toplam = sat.reduce((a, b) => a + b.kapanan, 0);
-      return { satirlar: sat, avans: Math.max(0, t - toplam) };
+      // 🟡 P1 (2026-08-13, Codex): önizleme toplam seçimi girilen TUTARLA
+      // sınırlamıyordu; sunucu her satırı kalan parayla kırpar (fatura_api
+      // cari_ode: pay=min(pay, kalan, kalan_para)). Aynı kural burada da —
+      // yoksa ekran "80+80 kapanır" der, sunucu "80+20" uygular.
+      let kalanPara = t;
+      const sat = [];
+      for (const f of liste) {
+        const istek = sayi(borcModal.secim[f.fatura_id]);
+        if (istek <= 0) continue;
+        const kapanan = Math.min(istek, f.kalan, kalanPara);
+        if (kapanan <= 0) continue;
+        sat.push({ ...f, kapanan });
+        kalanPara = Math.round((kalanPara - kapanan) * 100) / 100;
+      }
+      return { satirlar: sat, avans: Math.max(0, kalanPara) };
     }
     let kalan = t; const sat = [];
     for (const f of liste) {
@@ -546,6 +576,17 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
     const t = sayi(borcModal?.tutar);
     if (t <= 0) { onToast?.('Ödeme tutarı girin'); return; }
     if (borcModal.yontem === 'kart' && !borcModal.kartId) { onToast?.('Kart seçin'); return; }
+    // 🟡 P2 (2026-08-13, Codex): açık faturalar OKUNAMADIYSA modal "fatura yok,
+    // belgesiz olur" anlatısına düşüyordu; sunucu ise POST'ta faturaları yeniden
+    // okuyup FIFO kapatır — ekranın anlattığıyla fiili kayıt ayrışırdı.
+    if (borcAcik?._hata) { onToast?.('Açık faturalar okunamadı — modalı kapatıp tekrar açın'); return; }
+    // 🔴 P1 (2026-08-13, Codex): "ben seçeyim" açıkken seçim boşsa tahsis []
+    // gidiyor; sunucu boş listeyi FIFO sayar — ekran "avans kalır" derken
+    // sunucu en eski faturaları kapatırdı. Seçimsiz elle gönderim engellenir.
+    if (borcModal.elle) {
+      const seciliVar = (borcAcik?.acik_faturalar || []).some((f) => sayi(borcModal.secim[f.fatura_id]) > 0);
+      if (!seciliVar) { onToast?.('«Ben seçeyim» açık — en az bir faturaya tutar gir ya da seçimi kapat'); return; }
+    }
     setBorcMesgul(true);
     try {
       const govde = {
@@ -573,9 +614,12 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
     if (!secililer.length) return;
     setTopluMesgul(true);
     try {
+      // 🔴 P1 (2026-08-13, EVV-ODE): `o._id` diye bir alan YOK (uç `id` döner) —
+      // sunucu `if not odeme_id: continue` ile HER kalemi atlıyor, toplu ödeme
+      // sessiz no-op oluyordu ("Hiçbir ödeme uygulanmadı"nın gerçek sebebi).
       const r = await api('/toplu-odeme', {
         method: 'POST',
-        body: { odemeler: secililer.map((o) => ({ odeme_id: o._id, tutar: sayi(o._tutar) })) },
+        body: { odemeler: secililer.map((o) => ({ odeme_id: o.id, tutar: sayi(o._tutar) })) },
       });
       // 🔴 P1 (2026-08-12): `0 || N` tuzağı — backend uygulanan=0 dönse bile (satırlar
       // başkası tarafından kapanmış) "N/N uygulandı" YALANI basıyordu. Gerçek sayıyı kullan.
@@ -622,12 +666,17 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
     const k = kartListe.find((x) => String(x.id) === String(modal.kartId));
     if (!k) return null;
     const limit = sayi(k.limit_tutar);
-    const borc = sayi(k.guncel_borc);
     if (!limit) return null;
-    const kalan = limit - borc - tutar;
+    // 🟡 P1 (2026-08-13, Codex): FE limit−guncel_borc diye KENDİ hesaplıyordu;
+    // sunucu kanonik `kalan_limit` (taksit yükü dahil) ve varsa bankanın yazdığı
+    // `kullanilabilir_limit`i zaten döndürüyor. Kanonik alan esas, eski hesap yedek.
+    const kullanilabilir = k.kullanilabilir_limit != null ? sayi(k.kullanilabilir_limit)
+      : k.kalan_limit != null ? sayi(k.kalan_limit)
+        : limit - sayi(k.anlik_borc != null ? k.anlik_borc : k.guncel_borc);
+    const kalan = kullanilabilir - tutar;
     return (
       <div style={{ width: '100%', fontSize: 11.5, color: R.not, marginTop: 4 }}>
-        {k.kart_adi || k.banka} · kullanılabilir {fmt(limit - borc)} → harcama sonrası{' '}
+        {k.kart_adi || k.banka} · kullanılabilir {fmt(kullanilabilir)} → harcama sonrası{' '}
         <b style={{ fontFamily: F.mono, color: kalan < 0 ? R.kirmizi : R.yesil }}>{fmt(kalan)}</b>
         {kalan < 0 && <span style={{ color: R.kirmizi }}> · limit aşılır</span>}
       </div>
@@ -725,7 +774,9 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
                   ben seceyim
                 </label>
               </div>
-              {(borcAcik.acik_faturalar || []).slice(0, 12).map((f) => {
+              {/* elle modda TÜM faturalar listelenir (Codex: 13. faturaya tahsis
+                  yapılamıyordu); otomatikte ilk 12 + sayaç notu */}
+              {(borcModal.elle ? (borcAcik.acik_faturalar || []) : (borcAcik.acik_faturalar || []).slice(0, 12)).map((f) => {
                 const o = onizleme.find((x) => x.fatura_id === f.fatura_id);
                 const kapanan = o ? o.kapanan : 0;
                 const tam = kapanan >= f.kalan - 0.01;
@@ -752,6 +803,12 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
                   </div>
                 );
               })}
+              {!borcModal.elle && (borcAcik.acik_faturalar || []).length > 12 && (
+                <div style={{ fontSize: 11, color: R.not2, marginTop: 7 }}>
+                  ilk 12 fatura gösteriliyor · toplam {(borcAcik.acik_faturalar || []).length} —
+                  hepsini görmek için «ben seçeyim»i aç
+                </div>
+              )}
               {avans > 0.01 && (
                 <div style={{ fontSize: 11.5, color: R.amber, marginTop: 9 }}>
                   {fmt(avans)} borcu asiyor - avans olarak kalir.
@@ -759,8 +816,17 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
               )}
             </div>
           )}
+          {borcAcik?._hata && (
+            <div style={{
+              padding: '11px 14px', borderRadius: 12, marginBottom: 14, fontSize: 12, lineHeight: 1.6,
+              background: `${R.kirmizi}12`, border: `1px solid ${R.kirmizi}55`, color: R.kirmizi,
+            }}>
+              ⚠ Açık faturalar okunamadı ({borcAcik._hata}) — "fatura yok" görüntüsü yanıltıcı
+              olabilir. Ödeme bu ekrandan gönderilmez; modalı kapatıp tekrar deneyin.
+            </div>
+          )}
 
-          {borcAcik && (borcAcik.acik_faturalar || []).length === 0 && (
+          {borcAcik && !borcAcik._hata && (borcAcik.acik_faturalar || []).length === 0 && (
             <div style={{
               padding: '12px 14px', borderRadius: 12, marginBottom: 14, fontSize: 12, lineHeight: 1.6,
               background: 'rgba(96,165,250,.09)', border: '1px solid rgba(96,165,250,.26)', color: R.metin2,
@@ -882,7 +948,7 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
                   ) : (
                     <div>
                       <label style={omEtiket}>Kalan borcun yeni vadesi *</label>
-                      <input type="date" value={modal.kalanVade} onChange={(e) => guncelle('kalanVade', e.target.value)}
+                      <input type="date" value={modal.kalanVade} min={bugun} onChange={(e) => guncelle('kalanVade', e.target.value)}
                         style={{ ...omAlanStil, colorScheme: 'dark' }} />
                     </div>
                   )}
@@ -1031,7 +1097,8 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
                 </div>
                 <div>
                   <label style={omEtiket}>Yeni vade *</label>
-                  <input type="date" value={modal.yeniTarih} onChange={(e) => guncelle('yeniTarih', e.target.value)}
+                  {/* min=bugün: geçmişe erteleme anlamsız (sunucu da reddeder) */}
+                  <input type="date" value={modal.yeniTarih} min={bugun} onChange={(e) => guncelle('yeniTarih', e.target.value)}
                     style={{ ...omAlanStil, colorScheme: 'dark' }} />
                 </div>
               </div>
@@ -1689,7 +1756,10 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
   if (gorunum === 'tedarikci') {
     const ted = (cari?.tedarikciler || []).map(t => ({
       ad: t.tedarikci || '—',
-      acik: Math.max(0, sayi(t.hesaplanan_acik)),
+      // 🔴 P1 (2026-08-13, Codex): Math.max(0,·) negatif açığı (fazla/peşin
+      // ödeme = ALACAK) sıfıra kırpıyordu — sahip mevcut krediyi görmeden
+      // yeniden ödeme çıkarabilirdi. Negatif değer korunur, "alacak" yazılır.
+      acik: sayi(t.hesaplanan_acik),
       beyan: t.beyan_bakiye == null ? null : sayi(t.beyan_bakiye),
       fark: t.beyan_hesap_farki == null ? null : sayi(t.beyan_hesap_farki),
       kuyruk: sayi(t.bekleyen_vade_toplam),
@@ -1701,7 +1771,7 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
       // 📦 GRNI — teslim alındı, fatura gelmedi (bakiyeye dahil DEĞİL)
       grniTl: sayi(t.faturasiz_teslimat_tl),
       grniAdet: sayi(t.faturasiz_teslimat_adet),
-      gercek: Math.max(0, sayi(t.gercek_borc)),
+      gercek: sayi(t.gercek_borc),
       yalnizTeslimat: !!t.yalniz_teslimat,
       // 🪢 aynı ödemenin iki kanaldan sayılıp tekilleştirilmesi — gizlenmez
       ciftElenen: sayi(t.cift_kanal_elenen_tl),
@@ -1713,7 +1783,12 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
     return (
       <>
         <KpiSeridi kpiler={[
-          { etiket: 'Aktif tedarikçi', deger: String(ted.length), alt: `${kritik.length} kritik (3 gün içinde)` },
+          {
+            etiket: 'Aktif tedarikçi',
+            // Sunucu artık toplam sayıyı da söylüyor; tablo ilk 50 ile sınırlı.
+            deger: String(sayi(cari?.toplam_tedarikci) || ted.length),
+            alt: `${kritik.length} kritik (3 gün içinde)${sayi(cari?.toplam_tedarikci) > ted.length ? ` · tabloda ilk ${ted.length}` : ''}`,
+          },
           { etiket: 'Toplam açık bakiye', deger: fmt(sayi(cari?.toplam_hesaplanan_acik)), alt: 'hesaplanan · ödeme izi düşülmüş', renk: R.kirmizi },
           {
             etiket: 'Faturasız teslimat',
@@ -1741,7 +1816,11 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
                 id: t.ad, _t: t,
                 hucreler: [
                   { v: t.ad, kalin: true },
-                  { v: fmt(t.acik), mono: true, sag: true, kalin: true, renk: t.acik > 0 ? R.kirmizi : R.not },
+                  {
+                    v: t.acik < -0.5 ? `${fmt(Math.abs(t.acik))} alacak` : fmt(t.acik),
+                    mono: true, sag: true, kalin: true,
+                    renk: t.acik > 0 ? R.kirmizi : t.acik < -0.5 ? R.yesil : R.not,
+                  },
                   // 📦 Teslim alındı ama faturası gelmedi — bakiyede YOK, borç GERÇEK
                   {
                     // 2026-08-09: BEYSU "📦 faturası hiç gelmedi" diyor ama tutar
@@ -1753,8 +1832,9 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
                     renk: t.grniTl > 0 ? R.amber : t.grniAdet > 0 ? R.not2 : R.not,
                   },
                   {
-                    v: fmt(t.gercek), mono: true, sag: true, kalin: true,
-                    renk: t.grniTl > 0 ? R.bakir : (t.gercek > 0 ? R.kirmizi : R.not),
+                    v: t.gercek < -0.5 ? `${fmt(Math.abs(t.gercek))} alacak` : fmt(t.gercek),
+                    mono: true, sag: true, kalin: true,
+                    renk: t.grniTl > 0 ? R.bakir : (t.gercek > 0 ? R.kirmizi : t.gercek < -0.5 ? R.yesil : R.not),
                   },
                   { v: t.beyan == null ? '—' : fmt(t.beyan), mono: true, sag: true },
                   { v: t.fark == null ? '—' : fmt(t.fark), mono: true, sag: true, renk: uyumsuz ? R.amber : R.not },
@@ -1796,7 +1876,7 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
                   : 'Beyan ile hesap uyumlu görünüyor.',
                 aksiyonlar: [
                   { ad: `💸 Borç öde${t.acik > 0 ? ` · ${fmt(t.acik)}` : ''}`, birincil: true,
-                    onTikla: () => borcOdeAc(t.ad, t.acik) },
+                    onTikla: () => borcOdeAc(t.ad, Math.max(0, t.acik)) },
                   { ad: 'Cari ekstreyi aç', onTikla: () => onKopru?.('__modul:belge:cari') },
                 ],
               });
@@ -1814,13 +1894,17 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
   }
 
   // ── 4) Ödeme Geçmişi ───────────────────────────────────────────────────────
-  const toplamOdenen = gecmis.reduce((s, r) => s + Math.abs(sayi(r.tutar)), 0);
-  const kartla = gecmis.filter(r => r.islem_turu === 'KART_ODEME');
+  // İptal/düzeltme ters kayıtları toplamlara GİRMEZ (ödeme değildir) — listede
+  // rozetle görünür. EVV-ODE (2026-08-13).
+  const gercekOdemeler = gecmis.filter((r) => !r._duzeltme);
+  const duzeltmeler = gecmis.filter((r) => r._duzeltme);
+  const toplamOdenen = gercekOdemeler.reduce((s, r) => s + Math.abs(sayi(r.tutar)), 0);
+  const kartla = gercekOdemeler.filter(r => r.islem_turu === 'KART_ODEME');
   const ayAdi = `${AY_KISA[Number(ay.slice(5, 7)) - 1]} ${ay.slice(0, 4)}`;
   return (
     <>
       <KpiSeridi kpiler={[
-        { etiket: `${ayAdi} ödemesi`, deger: fmt(toplamOdenen), alt: `${gecmis.length} kayıt` },
+        { etiket: `${ayAdi} ödemesi`, deger: fmt(toplamOdenen), alt: `${gercekOdemeler.length} kayıt${duzeltmeler.length ? ` · ${duzeltmeler.length} iptal/düzeltme hariç` : ''}` },
         { etiket: 'Kartla ödenen', deger: fmt(kartla.reduce((s, r) => s + Math.abs(sayi(r.tutar)), 0)), alt: `${kartla.length} kayıt`, renk: R.amber },
         { etiket: 'Gecikmiş kalan', deger: fmt(gecikmisToplam), alt: gecikmisSatir.length ? `${gecikmisSatir.length} kalem` : 'gecikme yok', renk: gecikmisSatir.length ? R.kirmizi : R.yesil },
         { etiket: 'Kasa', deger: fmt(kasa), alt: 'anlık bakiye', renk: kasa >= 0 ? R.yesil : R.kirmizi },
@@ -1930,7 +2014,7 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
       {gecmis.length ? (
         <Tablo
           baslik={`Ödeme geçmişi · ${ayAdi}`}
-          not="satıra tıkla → kayıt ayrıntısı"
+          not={`satıra tıkla → kayıt ayrıntısı${gecmis.length > 120 ? ` · ilk 120 / ${gecmis.length} kayıt` : ''}${gecmis.length >= 380 ? ' · sunucu penceresi 400 kayıt' : ''}`}
           kolonlar={[
             { ad: 'Tarih' }, { ad: 'Açıklama' }, { ad: 'Yöntem' }, { ad: 'Tutar', sag: true }, { ad: 'Kaynak' },
           ]}
@@ -1939,8 +2023,10 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
             hucreler: [
               { v: kisaTarih(r.tarih), mono: true },
               { v: r.aciklama || YONTEM[r.islem_turu] || 'Ödeme', kalin: true },
-              { v: YONTEM[r.islem_turu] || slugAd(r.islem_turu), rozet: r.islem_turu === 'KART_ODEME' ? R.amber : R.yesil },
-              { v: fmt(Math.abs(sayi(r.tutar))), mono: true, sag: true },
+              r._duzeltme
+                ? { v: '↩ iptal/düzeltme', rozet: R.not }
+                : { v: YONTEM[r.islem_turu] || slugAd(r.islem_turu), rozet: r.islem_turu === 'KART_ODEME' ? R.amber : R.yesil },
+              { v: fmt(Math.abs(sayi(r.tutar))), mono: true, sag: true, renk: r._duzeltme ? R.not : undefined },
               { v: r.kaynak_tablo || '—', renk: R.not },
             ],
           }))}

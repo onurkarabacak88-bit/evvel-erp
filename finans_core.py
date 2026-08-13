@@ -833,13 +833,21 @@ def nakit_akis_sim(cur, gun_sayisi: int = 15) -> list:
     katsayi_map = ciro_veri.get("gunluk_katsayi") or {}
 
     # Planlanan ödemeleri tarihe göre map'e al (bugün dahil ileri tarihler)
+    # 🔴 P1 (2026-08-13, EVV-ODE denetimi): iki düzeltme —
+    #  1) SUM(odenecek_tutar) kısmi ödenmiş planların ödenen kısmını da yeniden
+    #     sayıyordu; kokpit kalanı doğru kullanırken projeksiyon şişik gider
+    #     yazıyordu. Artık KALAN (odenecek − odenen) toplanır.
+    #  2) Pencere off-by-one: SQL bugun..bugun+30 (dahil) çekiyor ama döngü
+    #     0..29 işliyordu — tam 30 gün sonraki vade haritaya girip hiç
+    #     uygulanmıyordu. Pencere döngüyle hizalandı (gun_sayisi-1).
     cur.execute("""
-        SELECT tarih::TEXT, SUM(odenecek_tutar) AS toplam
+        SELECT tarih::TEXT,
+               SUM(GREATEST(0, COALESCE(odenecek_tutar,0) - COALESCE(odenen_tutar,0))) AS toplam
         FROM odeme_plani
         WHERE durum IN ('bekliyor', 'onay_bekliyor')
         AND tarih BETWEEN %s AND %s
         GROUP BY tarih
-    """, (bugun, bugun + timedelta(days=gun_sayisi)))
+    """, (bugun, bugun + timedelta(days=gun_sayisi - 1)))
     odeme_map = {r['tarih']: float(r['toplam']) for r in cur.fetchall()}
 
     # Gecikmiş ödemeler — vadesi geçmiş ama ödenmemiş yükümlülükleri gün 0'a yükle.
@@ -847,11 +855,11 @@ def nakit_akis_sim(cur, gun_sayisi: int = 15) -> list:
     # projeksiyon bunu görmezden gelirse kasanın gerçekte ne kadar baskı altında
     # olduğu anlaşılamaz.
     cur.execute("""
-        SELECT COALESCE(SUM(odenecek_tutar), 0) AS toplam
+        SELECT COALESCE(SUM(GREATEST(0, COALESCE(odenecek_tutar,0) - COALESCE(odenen_tutar,0))), 0) AS toplam
         FROM odeme_plani
         WHERE durum IN ('bekliyor', 'onay_bekliyor')
         AND tarih < %s
-        AND tarih >= DATE '2026-06-01'   -- sistem başlangıcı: Haziran öncesi overdue sayılmaz
+        AND tarih >= DATE '2026-06-01'   -- sistem başlangıcı: Haziran öncesi overdue sayılmaz (BİLİNÇLİ sınır)
     """, (bugun,))
     gecikmus_toplam = float(cur.fetchone()['toplam'] or 0)
     if gecikmus_toplam > 0:

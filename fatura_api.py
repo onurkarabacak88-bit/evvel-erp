@@ -3475,30 +3475,40 @@ def kart_izi_onayla(body: KartIziOnayModel):
                  AND (kaynak_id IS NULL OR COALESCE(kaynak_tablo,'')='ekstre_import')""",
             (idler,))
         uygun = [dict(r) for r in (cur.fetchall() or [])]
-        uygun_idler = [u["id"] for u in uygun]
-        reddedilen = [i for i in idler if i not in {str(x) for x in uygun_idler}]
-        cur.execute(
-            """UPDATE kart_hareketleri
-                 SET cari_tedarikci=%s, cari_onay_ts=NOW()
-               WHERE id = ANY(%s)
-               RETURNING id, tarih::text AS tarih,
-                         ABS(COALESCE(tutar,0))::float AS tutar,
-                         LEFT(COALESCE(aciklama,''),70) AS aciklama""",
-            (ted, uygun_idler))
-        damgalanan = [dict(r) for r in (cur.fetchall() or [])]
-        # 📒 Her damga deftere ayrı satır olarak yazılır (append-only)
+        reddedilen = [i for i in idler if i not in {str(x["id"]) for x in uygun}]
+        # 🔒 P1 (2026-08-13, EVV-ODE / Codex): eski UPDATE "hâlâ boşta mı" diye
+        # bakmıyordu — bayat ekran ya da eşzamanlı ikinci kullanıcı MEVCUT bağı
+        # sessizce ezebiliyordu (A, B'nin bağladığını üzerine yazar; iki cari
+        # bakiye birden kayar). Optimistic kilit: satır ancak SELECT'te görülen
+        # önceki değeriyle hâlâ aynıysa damgalanır; değişmişse ÇAKIŞMA raporlanır.
+        damgalanan, cakisan = [], []
         for u in uygun:
-            _karar_yaz(cur, u["id"], (u.get("onceki") or None), ted,
-                       ("reddet" if ted == "(ilgisiz)" else "bagla"),
-                       aktor=(body.aktor or "sahip"),
-                       dayanak=(body.dayanak or None),
-                       tutar=u.get("tutar"), hareket_tarih=u.get("tarih"))
+            cur.execute(
+                """UPDATE kart_hareketleri
+                     SET cari_tedarikci=%s, cari_onay_ts=NOW()
+                   WHERE id=%s AND COALESCE(cari_tedarikci,'')=%s
+                   RETURNING id, tarih::text AS tarih,
+                             ABS(COALESCE(tutar,0))::float AS tutar,
+                             LEFT(COALESCE(aciklama,''),70) AS aciklama""",
+                (ted, u["id"], u.get("onceki") or ""))
+            r = cur.fetchone()
+            if r:
+                damgalanan.append(dict(r))
+                # 📒 Her damga deftere ayrı satır olarak yazılır (append-only)
+                _karar_yaz(cur, u["id"], (u.get("onceki") or None), ted,
+                           ("reddet" if ted == "(ilgisiz)" else "bagla"),
+                           aktor=(body.aktor or "sahip"),
+                           dayanak=(body.dayanak or None),
+                           tutar=u.get("tutar"), hareket_tarih=u.get("tarih"))
+            else:
+                cakisan.append(u["id"])
         conn.commit()
 
     toplam = round(sum(float(d["tutar"] or 0) for d in damgalanan), 2)
     if ted == "(ilgisiz)":
         return {"ok": True, "islem": "reddedildi", "damgalanan": len(damgalanan),
                 "tutar": toplam, "satirlar": damgalanan,
+                "cakisan": len(cakisan),
                 "not": "Bu çekimler artık hiçbir tedarikçiye aday gösterilmez."}
 
     # FIFO tahsis — YORUM katmanı: bu para hangi faturaları kapattı?
@@ -3536,6 +3546,9 @@ def kart_izi_onayla(body: KartIziOnayModel):
         "satirlar": damgalanan,
         "kapatilan_fatura": tahsisler,
         "artan": round(kalan, 2),
+        # ⚠ ÇAKIŞMA: satır bu ekrana yüklendikten sonra başka biri bağlamış —
+        # üzerine YAZILMADI; ekran yenilenip tekrar bakılmalı.
+        "cakisan": len(cakisan),
         "uygun_olmayan": len(reddedilen),
         "uygun_olmayan_not": ("Sistem üretimi satırlar (vadeli alım / anlık gider) "
                               "damgalanamaz — cari onları zaten kendi kanalından "
@@ -3602,11 +3615,17 @@ def kart_izi_geri_al(body: KartIziOnayModel):
     with db() as (conn, cur):
         _ensure_kart_izi_tablolar(cur)
         _ensure_eslesme_karar_defteri(cur)
+        # 🔒 P2 (2026-08-13, EVV-ODE / Codex): onay ucu yalnız HAM/ekstre satırını
+        # kabul ediyor; geri-al aynı guard'ı taşımıyordu — sistem üretimi bir
+        # satırın damgası bu yoldan bozulabilirdi. Simetri kuruldu.
         cur.execute(
             """SELECT id, COALESCE(cari_tedarikci,'') AS onceki,
                       tarih::text AS tarih, ABS(COALESCE(tutar,0))::float AS tutar
                FROM kart_hareketleri
-               WHERE id = ANY(%s) AND cari_tedarikci IS NOT NULL""", (idler,))
+               WHERE id = ANY(%s) AND cari_tedarikci IS NOT NULL
+                 AND islem_turu='HARCAMA'
+                 AND (kaynak_id IS NULL OR COALESCE(kaynak_tablo,'')='ekstre_import')""",
+            (idler,))
         hedef = [dict(r) for r in (cur.fetchall() or [])]
         if not hedef:
             raise HTTPException(404, "Damgalı hareket bulunamadı")
@@ -5299,7 +5318,12 @@ def cari_ozet() -> dict:
     ozet.sort(key=lambda x: -(max(abs(x["beyan_bakiye"] or 0),
                                   abs(x["hesaplanan_acik"])) + x["bekleyen_vade_toplam"]))
     return {
-        "tedarikciler": ozet[:20],
+        # 🟡 P1 (2026-08-13, EVV-ODE): [:20] kesiği KPI/tabloyu sessizce ilk 20
+        # tedarikçiye indiriyordu (43 aktifken "20" görünür; vadesi bugün olan
+        # küçük tedarikçi hiç listelenmez). Kesik 50'ye çıktı + toplam sayı
+        # AYRICA döner ki ekran evreni dürüst söylesin.
+        "tedarikciler": ozet[:50],
+        "toplam_tedarikci": len(ozet),
         "toplam_beyan_bakiye": round(sum(x["beyan_bakiye"] or 0 for x in ozet), 2),
         "toplam_hesaplanan_acik": round(sum(max(0.0, x["hesaplanan_acik"])
                                             for x in ozet), 2),
