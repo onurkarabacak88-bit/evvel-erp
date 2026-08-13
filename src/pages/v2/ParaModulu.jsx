@@ -170,6 +170,15 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru, onToast }) {
     try {
       const res = await api('/ciro', { method: 'POST', body: { ...ciroForm, force } });
       if (res?.warning) { setCiroDup(res.mesaj || 'Benzer kayıt var.'); return; }
+      // EVV-PARA-N7 (2026-08-13): sunucu 5 sn içindeki birebir tekrarı 200 +
+      // {success:false, duplicate:true} ile döndürür — eskiden bu da "✓ kaydedildi"
+      // toast'ı basıyordu. Başarı mesajı yalnız gerçek başarıda.
+      if (res?.duplicate || res?.success === false) {
+        onToast?.(res?.mesaj || 'Bu kayıt zaten az önce gönderilmişti');
+        setCiroForm(null);
+        ciroYukle();
+        return;
+      }
       onToast?.('✓ Ciro kaydedildi — merkez kasaya eklendi');
       setCiroForm(null);
       ciroYukle();
@@ -202,6 +211,8 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru, onToast }) {
       tarih: bugunISO(), kategori: 'Diğer', tutar: '', aciklama: '',
       // Varsayılan 'elden': nakit ödemelerin çoğu elden yapılıyor. Belirsiz
       // 'nakit' artık YENİ kayıtta üretilmiyor — eski kayıtlarda kalır.
+      // EVV-PARA-N4: şube SABİT MERKEZ — sunucu MERKEZ dışını 400 ile reddeder
+      // (şube gideri şube personel panelinden girilir, onay kuyruğuna düşer).
       sube: 'MERKEZ', odeme_yontemi: 'elden', kart_id: '', tedarikci: '',
     });
     if (!kartlar.length) api('/kartlar').then((d) => setKartlar(Array.isArray(d) ? d : [])).catch(() => {});
@@ -255,15 +266,22 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru, onToast }) {
   };
 
   const dkKaydet = async (force = false) => {
-    if (!sayi(dkForm?.tutar)) { onToast?.('Tutar girmeden gelir kaydedilmez'); return; }
+    // EVV-PARA-N3 (2026-08-13): negatif tutar geçiyordu; sunucu abs() ile
+    // sessizce +'ya çeviriyordu → "-1000 girip düzelteyim" kasaya +1000 ekliyordu.
+    if (sayi(dkForm?.tutar) <= 0) { onToast?.('Tutar pozitif olmalı'); return; }
     setFormMesgul(true);
     setDkDup('');
     try {
       const res = await api('/dis-kaynak', { method: 'POST', body: { ...dkForm, force } });
       if (res?.warning) { setDkDup(res.mesaj || 'Benzer kayıt var.'); return; }
       onToast?.('✓ Gelir kaydedildi — kasaya eklendi');
+      // EVV-PARA-N8 (2026-08-13, Codex): "Geçen ay" görünümünde eklenen kayıt
+      // bugüne yazılır ama liste geçen ayı yenilerdi → kayıt görünmez, kullanıcı
+      // ikinci kez girerdi. Kaydın gerçekten düştüğü aya geçilir.
+      const kayitAy = String(dkForm?.tarih || '').slice(0, 7) || dkAy;
       setDkForm(null);
-      dkYukle(dkAy);
+      setDkAy(kayitAy);
+      dkYukle(kayitAy);
     } catch (e) {
       onToast?.(e?.message || 'Gelir kaydedilemedi');
     } finally {
@@ -544,8 +562,14 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru, onToast }) {
                   </>
                 ) : (
                   <>
-                    <span style={rozetHap(R.amber)}>bekliyor</span>
-                    <KopruButon birincil ad="Ciro gir" onTikla={() => {
+                    {/* EVV-PARA-N11 (2026-08-13, Codex): kapalı şubede "bekliyor"
+                        rozeti aynı karttaki "ciro beklenmiyor" metniyle çelişiyordu.
+                        Rozet duruma uyar; istisna giriş butonu bilinçli KALIR
+                        (sahip kapalı günde istisnai satış girebilir). */}
+                    <span style={rozetHap(s.sezon_kapali ? R.not3 : R.amber)}>
+                      {s.sezon_kapali ? 'kapalı' : 'bekliyor'}
+                    </span>
+                    <KopruButon birincil={!s.sezon_kapali} ad="Ciro gir" onTikla={() => {
                       setCiroDup('');
                       setCiroForm({ tarih: bugun, sube_id: String(s.id), nakit: '', pos: '', online: '', aciklama: '' });
                     }} />
@@ -591,7 +615,8 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru, onToast }) {
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
                   <div>
                     <label style={alanEtiket}>Tarih</label>
-                    <input type="date" value={ciroForm.tarih} onChange={(e) => alan('tarih', e.target.value)}
+                    {/* EVV-PARA-N15: gelecek tarihli ciro anlamsız (sunucu da reddeder) */}
+                    <input type="date" value={ciroForm.tarih} max={bugunISO()} onChange={(e) => alan('tarih', e.target.value)}
                       style={{ ...alanStil, colorScheme: 'dark' }} />
                   </div>
                   <div>
@@ -715,6 +740,16 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru, onToast }) {
     });
     const urunler = Object.values(urunMap).sort((a, b) => b.adet - a.adet);
     const enCok = urunler[0];
+    // EVV-PARA-N6 (2026-08-13): cok_satilan sunucuda şube başı İLK 50 ile
+    // kesilir (evo_sync cok[:50]) — ürün toplamları gün toplamı DEĞİLDİR.
+    // Gerçek gün cirosu şube raporunun ciro_toplam'ından gelir; KPI onu gösterir,
+    // ürün sayıları "en çok satanlar" olarak dürüst etiketlenir.
+    const gunCiro = Object.values(kaynakSubeler).reduce((s, sd) => s + sayi(sd?.ciro_toplam), 0);
+    // EVV-PARA-N10 (2026-08-13, Codex): Evo'ya ulaşılamayınca sunucu son
+    // başarılı çekimi canli=false + son_cekim_ts ile döndürür; ekran bunu
+    // söylemezse bayat veri taze sanılır.
+    const bayat = satis?.canli === false;
+    const sonCekim = String(satis?.son_cekim_ts || '').slice(11, 16);
     const gunSecici = (
       <div style={{ display: 'flex', gap: 6, marginBottom: 14 }}>
         {[[bugunISO(), 'Bugün'], [gunEkle(bugunISO(), -1), 'Dün'], [gunEkle(bugunISO(), -2), tarihKisa(gunEkle(bugunISO(), -2))]].map(([g, ad]) => (
@@ -736,10 +771,12 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru, onToast }) {
     return (
       <>
         <KpiSeridi kpiler={[
-          { etiket: 'Satılan ürün', deger: String(toplamAdet), alt: `${urunler.length} çeşit · ${seciliSube || `${subeAdlari.length} şube`}` },
-          { etiket: 'Ürün cirosu', deger: toplamCiro > 0 ? fmt(toplamCiro) : '—', alt: 'Evo satış raporu' },
+          { etiket: 'Gün cirosu', deger: gunCiro > 0 ? fmt(gunCiro) : '—', alt: `Evo şube raporu · ${seciliSube || `${subeAdlari.length} şube`}` },
+          { etiket: 'Satılan ürün', deger: String(toplamAdet), alt: `${urunler.length} çeşit · en çok satanlar (şube başı ilk 50)` },
           { etiket: 'En çok satan', deger: enCok ? enCok.ad : '—', alt: enCok ? `${enCok.adet} adet` : 'kayıt yok', renk: R.yesil },
-          { etiket: 'Gün', deger: tarihKisa(satisGun), alt: 'Evo gece senkronuyla dolar' },
+          bayat
+            ? { etiket: 'Gün', deger: tarihKisa(satisGun), alt: `⚠ canlı değil — son çekim ${sonCekim || '—'}`, renk: R.amber }
+            : { etiket: 'Gün', deger: tarihKisa(satisGun), alt: 'Evo gece senkronuyla dolar' },
         ]} />
         {gunSecici}
 
@@ -829,7 +866,7 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru, onToast }) {
         ) : (
           <Tablo
             baslik={`Ürün satışları · ${seciliSube || 'tüm şubeler'} · ${tarihKisa(satisGun)}`}
-            not={seciliSube ? 'yalnız bu şubenin ürünleri' : 'satıra tıkla → şube kırılımı'}
+            not={`${seciliSube ? 'yalnız bu şubenin ürünleri' : 'satıra tıkla → şube kırılımı'} · Evo şube başı ilk 50 ürünü verir`}
             kolonlar={[
               { ad: 'Ürün' }, { ad: 'Grup' }, { ad: 'Adet', sag: 1 }, { ad: 'Ciro', sag: 1 }, { ad: 'Pay', sag: 1 },
             ]}
@@ -874,11 +911,18 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru, onToast }) {
             (sd?.personel_satislar || []).forEach((p) => {
               const pid = String(p.personel_id ?? '').trim();
               if (!pid) return;
-              if (!kisiMap[pid]) kisiMap[pid] = { pid, ad: String(p.ad ?? '').trim(), fis: 0, ciro: 0, subeler: new Set() };
-              kisiMap[pid].fis += sayi(p.fis_sayisi);
-              kisiMap[pid].ciro += sayi(p.ciro);
-              kisiMap[pid].subeler.add(sad);
-              if (!kisiMap[pid].ad) kisiMap[pid].ad = String(p.ad ?? '').trim();
+              // EVV-PARA-N5 (2026-08-13, Codex): Hızlı Satış'ta Evo herkese
+              // personel_id=0 verir ama İSİM ayrıdır — sunucu isim bazında ayrı
+              // satır döndürür. Yalnız pid ile gruplanınca Ayşe+Mehmet tek "#0"
+              // kartında birleşip ciro ilk görülen isme yazılıyordu. Anahtar:
+              // pid≠0 ise pid, pid=0 ise isim.
+              const ad0 = String(p.ad ?? '').trim();
+              const k = pid !== '0' ? pid : (ad0 ? `isim:${ad0}` : '0');
+              if (!kisiMap[k]) kisiMap[k] = { anahtar: k, pid, ad: ad0, fis: 0, ciro: 0, subeler: new Set() };
+              kisiMap[k].fis += sayi(p.fis_sayisi);
+              kisiMap[k].ciro += sayi(p.ciro);
+              kisiMap[k].subeler.add(sad);
+              if (!kisiMap[k].ad) kisiMap[k].ad = ad0;
             });
           });
           const kisiler = Object.values(kisiMap).sort((a, b) => b.ciro - a.ciro);
@@ -908,10 +952,12 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru, onToast }) {
               <div style={{ display: 'flex', gap: 9, flexWrap: 'wrap' }}>
                 {kisiler.map((k) => {
                   const bilinmiyor = /^\d+$/.test(k.ad) || !k.ad;
-                  const duzenlemede = evoIsim?.personel_id === k.pid;
+                  // Düzenleme eşleşmesi ANAHTAR ile — pid=0 kartları çoğalınca
+                  // hepsinin birden edit moda girmemesi için (Codex diff-review).
+                  const duzenlemede = evoIsim?.anahtar === k.anahtar;
                   if (duzenlemede) {
                     return (
-                      <div key={k.pid} style={{
+                      <div key={k.anahtar} style={{
                         display: 'flex', alignItems: 'center', gap: 6, padding: '7px 10px', borderRadius: 11,
                         background: R.girinti, border: `1px solid ${R.bakirAcik}66`,
                       }}>
@@ -939,7 +985,7 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru, onToast }) {
                     );
                   }
                   return (
-                    <div key={k.pid} style={{
+                    <div key={k.anahtar} style={{
                       display: 'flex', alignItems: 'center', gap: 8, padding: '7px 12px', borderRadius: 11,
                       background: R.girinti,
                       border: bilinmiyor ? `1px dashed ${R.amber}66` : `1px solid ${R.cizgi3}`,
@@ -948,7 +994,7 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru, onToast }) {
                         {bilinmiyor ? `#${k.ad || k.pid}` : k.ad}
                       </b>
                       {bilinmiyor && (
-                        <button onClick={() => setEvoIsim({ personel_id: k.pid, ad: '' })} style={{
+                        <button onClick={() => setEvoIsim({ personel_id: k.pid, anahtar: k.anahtar, ad: '' })} style={{
                           padding: '3px 9px', borderRadius: 7, cursor: 'pointer', fontFamily: 'inherit',
                           border: `1px solid ${R.amber}55`, background: `${R.amber}18`,
                           color: R.amber, fontSize: 10.5, fontWeight: 700,
@@ -1196,7 +1242,18 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru, onToast }) {
                 padding: '10px 13px', borderRadius: 11, background: R.girinti, border: `1px solid ${R.cizgi3}`,
               }}>
                 <span style={{ fontSize: 12.5, color: R.metin2 }}>Elde / yolda nakit (kümülatif)</span>
-                <b style={{ fontFamily: F.mono, fontSize: 15, color: elde > 0 ? R.amber : R.yesil }}>{fmt(elde)}</b>
+                {/* EVV-PARA-N12 (2026-08-13, Codex): negatif elde nakit imkânsız/
+                    bozuk veridir — eskiden yeşil boyanıp "iyi" görünüyordu. */}
+                <b style={{ fontFamily: F.mono, fontSize: 15, color: elde > 0 ? R.amber : elde < 0 ? R.kirmizi : R.yesil }}>{fmt(elde)}</b>
+                {elde < 0 && (
+                  <span style={{ ...rozetHap(R.kirmizi), fontSize: 10 }}>veri sorunu — negatif olamaz</span>
+                )}
+                {/* Tasarım "aralık" der: alt sınır da gösterilir (üst ↔ alt) */}
+                {sayi(bankaMut.belirsiz_nakit) > 0 && bankaMut.elde_nakit_alt != null && (
+                  <span style={{ fontSize: 11, color: R.not2 }}>
+                    alt sınır <b style={{ fontFamily: F.mono }}>{fmt(sayi(bankaMut.elde_nakit_alt))}</b>
+                  </span>
+                )}
                 <span style={{ fontSize: 11, color: R.not2, flex: 1, minWidth: 200 }}>
                   teslim alınan − bankaya yatan − <b>elden ödenen</b>
                 </span>
@@ -1295,7 +1352,7 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru, onToast }) {
           ) : (
             <Tablo
               baslik="Kasa teslimleri · bu ay"
-              not="teslim eden → alan; kayıt kasa iziyle doğar (yazma QR/şube akışında)"
+              not={`teslim eden → alan; kayıt kasa iziyle doğar (yazma QR/şube akışında)${suzulmus.length > 40 ? ` · ilk 40 / ${suzulmus.length} kayıt` : ''}`}
               kolonlar={[
                 { ad: 'Tarih' }, { ad: 'Şube' }, { ad: 'Tür' }, { ad: 'Teslim eden → alan' }, { ad: 'Tutar', sag: 1 },
               ]}
@@ -1545,11 +1602,16 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru, onToast }) {
     const enBuyuk = [...giderler].sort((a, b) => sayi(b.tutar) - sayi(a.tutar))[0];
     return (
       <>
+        {/* EVV-PARA-N9 (2026-08-13): "Bu ay toplam" eskiden ozet.toplam bekliyordu
+            ama sunucu özeti yalnız sube_bekleyen taşıyordu → KPI sessizce LIMIT'li
+            listeden toplanıyordu. Sunucu artık gerçek dönem toplam/adet gönderiyor. */}
         <KpiSeridi kpiler={[
           { etiket: 'Bugünkü anlık gider', deger: fmt(toplam(bugunku)), alt: `${bugunku.length} kayıt`, renk: bugunku.length > 0 ? R.amber : R.krem },
           { etiket: 'Bu ay toplam', deger: fmt(sayi(giderOzet?.toplam) || toplam(giderler)), alt: 'plan dışı harcama' },
-          { etiket: 'Kayıt sayısı', deger: String(giderler.length), alt: 'bu ay' },
-          { etiket: 'En büyük kalem', deger: enBuyuk ? fmt(sayi(enBuyuk.tutar)) : '—', alt: enBuyuk ? String(enBuyuk.aciklama || '').slice(0, 26) : 'kayıt yok' },
+          { etiket: 'Kayıt sayısı', deger: String(sayi(giderOzet?.adet) || giderler.length), alt: 'bu ay' },
+          sayi(giderOzet?.sube_bekleyen?.adet) > 0
+            ? { etiket: 'Şube onay bekleyen', deger: String(sayi(giderOzet.sube_bekleyen.adet)), alt: `${fmt(sayi(giderOzet.sube_bekleyen.toplam))} · onay kuyruğunda`, renk: R.amber }
+            : { etiket: 'En büyük kalem', deger: enBuyuk ? fmt(sayi(enBuyuk.tutar)) : '—', alt: enBuyuk ? String(enBuyuk.aciklama || '').slice(0, 26) : 'kayıt yok' },
         ]} />
         <div style={{ display: 'flex', gap: 9, marginBottom: 14 }}>
           <KopruButon birincil ad="+ Anlık gider gir" onTikla={giderFormAc} />
@@ -1575,6 +1637,11 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru, onToast }) {
                 ],
               }))}
           />
+        )}
+        {giderler.length > 40 && (
+          <div style={{ fontSize: 11, color: R.not2, textAlign: 'center', marginTop: 8 }}>
+            ilk 40 kayıt gösteriliyor · bu ay toplam {sayi(giderOzet?.adet) || giderler.length} kayıt (KPI toplamı hepsini sayar)
+          </div>
         )}
 
         {/* ── YERLİ GİDER FORMU (kadife modal) ── */}
@@ -1616,10 +1683,15 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru, onToast }) {
                       style={{ ...alanStil, fontFamily: F.mono, textAlign: 'right' }} />
                   </div>
                   <div>
+                    {/* EVV-PARA-N4 (2026-08-13, Codex): eskiden 5 şube seçeneği
+                        sunuluyordu ama sunucu MERKEZ dışını 400 ile REDDEDİYOR
+                        (main.py: "şube gideri şube panelinden girilir, onay
+                        kuyruğuna düşer"). Seçilemeyecek seçenek sunulmaz. */}
                     <label style={alanEtiket}>Şube</label>
-                    <select value={giderForm.sube} onChange={(e) => alan('sube', e.target.value)} style={alanStil}>
-                      {['MERKEZ', 'TEMA', 'ZAFER', 'ALSANCAK', 'KOYCEGIZ'].map((s) => <option key={s}>{s}</option>)}
-                    </select>
+                    <input value="MERKEZ" disabled style={{ ...alanStil, opacity: 0.7 }} />
+                    <div style={{ fontSize: 10, color: R.not2, marginTop: 4, lineHeight: 1.5 }}>
+                      Şube gideri şube personel panelinden girilir — onaya düşer.
+                    </div>
                   </div>
                   <div>
                     <label style={alanEtiket}>Açıklama</label>
@@ -1754,10 +1826,18 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru, onToast }) {
             satirlar={[...diskaynak]
               .sort((a, b) => String(b.tarih).localeCompare(String(a.tarih)))
               .slice(0, 40)
-              .map((r, i) => ({
+              .map((r, i) => {
+                // EVV-PARA-N13 (2026-08-13, Codex): sunucu ham kasa_hareketleri
+                // satırı döner — 'kategori' kolonu YOK; POST kategoriyi
+                // "Kategori: açıklama" biçiminde aciklama'ya gömer. Ayrıştırılır.
+                const ham = String(r.aciklama || '');
+                const iki = ham.indexOf(':');
+                const kat = r.kategori || (iki > 0 ? ham.slice(0, iki).trim() : '');
+                const acik = iki > 0 ? ham.slice(iki + 1).trim() : ham;
+                return ({
                 id: r.id || `d-${i}`, _r: r,
-                baslik: r.aciklama || r.kategori || 'Gelir',
-                alt: `${tarihKisa(r.tarih)} · ${r.kategori || '—'} · ${r.durum === 'aktif' ? 'işlendi' : (r.durum || '—')}`,
+                baslik: acik || kat || 'Gelir',
+                alt: `${tarihKisa(r.tarih)} · ${kat || '—'} · ${r.durum === 'aktif' ? 'işlendi' : (r.durum || '—')}`,
                 tutar: fmt(sayi(r.tutar)),
                 tier: 'olumlu',
                 aksiyonlar: dkIptalSor === String(r.id) ? [
@@ -1766,8 +1846,14 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru, onToast }) {
                 ] : [
                   { ad: 'İptal', onTikla: () => setDkIptalSor(String(r.id)) },
                 ],
-              }))}
+              }); })}
           />
+        )}
+        {diskaynak.length > 40 && (
+          <div style={{ fontSize: 11, color: R.not2, textAlign: 'center', marginTop: 8 }}>
+            ilk 40 kayıt gösteriliyor · listede {diskaynak.length} kayıt
+            {diskaynak.length >= 200 ? ' (sunucu 200 kayıtla sınırlar — KPI toplamı da bu 200 üzerinden)' : ''}
+          </div>
         )}
 
         {/* ── YERLİ DIŞ KAYNAK FORMU ── */}

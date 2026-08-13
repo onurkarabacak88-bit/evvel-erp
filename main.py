@@ -2674,6 +2674,7 @@ def kasa_sube_bazli():
                        COALESCE(SUM(ABS(tutar)),0)::float AS tutar
                   FROM kasa_hareketleri
                  WHERE tutar < 0 AND COALESCE(durum,'aktif')='aktif'
+                   AND COALESCE(kasa_etkisi, TRUE) = TRUE
                  GROUP BY 1,2
             """)
             _y: Dict[str, Dict[str, float]] = {}
@@ -2726,6 +2727,16 @@ def dis_kaynak_listele(ay: str = None):
 
 @app.post("/api/dis-kaynak")
 def dis_kaynak_ekle(g: DisKaynakGelir):
+    # 🔴 P2 (2026-08-13, EVV-PARA-N3): negatif/sıfır tutar reddedilmiyordu;
+    # aşağıdaki abs() işareti SESSİZCE pozitife çeviriyordu → "-1000 girip geliri
+    # geri alayım" diyen kullanıcı kasaya +1000 EKLİYORDU (2000 ₺ sapma).
+    # Düzeltme DELETE ile yapılır; negatif gelire meşru ihtiyaç yok.
+    try:
+        g.tutar = round(float(g.tutar), 2)
+    except (TypeError, ValueError):
+        raise HTTPException(400, "Tutar sayı olmalı")
+    if g.tutar <= 0:
+        raise HTTPException(400, "Tutar pozitif olmalı")
     with db() as (conn, cur):
         if not g.force:
             cur.execute("""
@@ -2934,9 +2945,21 @@ def anlik_gider_listele(durum: str = "aktif", include_pending: bool = False, inc
                 """
             )
             rw = cur.fetchone() or {}
+            # 🟡 P2 (2026-08-13, EVV-PARA-N9): frontend "Bu ay toplam" KPI'sı
+            # ozet.toplam bekliyordu ama özet yalnız sube_bekleyen taşıyordu →
+            # KPI sessizce LIMIT'li listeden toplanıyordu (ay 200 kaydı aşarsa
+            # eksik). Gerçek dönem toplamı LIMIT'siz burada hesaplanır.
+            cur.execute(f"""
+                SELECT COALESCE(COUNT(*),0)::int AS adet, COALESCE(SUM(ag.tutar),0) AS toplam
+                FROM anlik_giderler ag
+                WHERE {durum_cond}{ay_cond}
+            """, ay_params)
+            _dt = cur.fetchone() or {}
             return {
                 "satirlar": satirlar,
                 "ozet": {
+                    "toplam": float(_dt.get("toplam") or 0),
+                    "adet": int(_dt.get("adet") or 0),
                     "sube_bekleyen": {
                         "adet": int(rw.get("adet") or 0),
                         "toplam": float(rw.get("toplam") or 0),
@@ -6117,6 +6140,11 @@ def ciro_ekle(c: CiroModel):
         raise HTTPException(400, "Ciro alanları negatif olamaz")
     if toplam <= 0:
         raise HTTPException(400, "Ciro toplamı pozitif olmalı")
+    # 🟡 P3 (2026-08-13, EVV-PARA-N15): gelecek tarihli ciro anlamsız — henüz
+    # yaşanmamış günün satışı kasaya girip tüm gün bazlı mutabakatları bozar.
+    # Geçmiş gün düzeltmesi meşru ve serbest kalır.
+    if c.tarih > bugun_tr():
+        raise HTTPException(400, "Gelecek tarihli ciro girilemez")
     with db() as (conn, cur):
         # Aynı şube+tarih için ciro yazımlarını transaction bazında seri hale getir.
         lock_key = f"ciro:{c.sube_id}:{c.tarih}"
@@ -11589,21 +11617,46 @@ def banka_mutabakat(yil: int = None, ay: int = None):
     ay = ay or bugun.month
     ay_basi = date(yil, ay, 1)
     ay_son = date(yil, ay, cal.monthrange(yil, ay)[1])
+    # 🔴 P1 (2026-08-13, EVV-PARA-N1 — ÇİFT SAYIM): eski kod kasa_teslim'i TÜR
+    # FİLTRESİZ topluyor (ara + gun_sonu) ve üstüne KAPANIS event'inin teslim'ini
+    # AYRICA ekliyordu. Oysa kapanış akışı (sube_operasyon.py) gün-sonu teslimi
+    # HEM event.teslim'e HEM kasa_teslim'e (teslim_turu='gun_sonu') yazar → aynı
+    # para iki kez sayılıyordu. CANLI KANIT: 2026-08 gerçek teslim 92.000 ₺ iken
+    # donem_teslim 184.000 ₺, kümülatif elde_nakit 1,53 M ₺ şişkindi.
+    # DOĞRU MODEL: ara = kasa_teslim(teslim_turu='ara'); gün-sonu = şube+gün
+    # bazında kasa_teslim.gun_sonu ile event.teslim'den YALNIZ BİRİ (kasa_teslim
+    # izi öncelikli — düzeltme akışları onu günceller; event-only eski günler
+    # kaybolmasın diye FULL OUTER JOIN + COALESCE).
+    _GUNSONU_DEDUPE = """
+        SELECT COALESCE(SUM(COALESCE(kt.t, ev.t)), 0) AS v
+        FROM (
+            SELECT sube_id::text AS sube_id, tarih, SUM(tutar) AS t
+            FROM kasa_teslim
+            WHERE teslim_turu='gun_sonu' AND tarih {op} %s {op2}
+            GROUP BY 1, 2
+        ) kt
+        FULL OUTER JOIN (
+            SELECT sube_id::text AS sube_id, tarih, SUM(teslim) AS t
+            FROM sube_operasyon_event
+            WHERE tip='KAPANIS' AND durum='tamamlandi' AND teslim IS NOT NULL
+              AND tarih {op} %s {op2}
+            GROUP BY 1, 2
+        ) ev USING (sube_id, tarih)
+    """
     with db() as (conn, cur):
-        cur.execute("SELECT COALESCE(SUM(tutar),0) AS v FROM kasa_teslim WHERE tarih BETWEEN %s AND %s", (ay_basi, ay_son))
+        cur.execute("SELECT COALESCE(SUM(tutar),0) AS v FROM kasa_teslim WHERE teslim_turu='ara' AND tarih BETWEEN %s AND %s", (ay_basi, ay_son))
         teslim_ara = float(cur.fetchone()["v"])
-        cur.execute("""SELECT COALESCE(SUM(teslim),0) AS v FROM sube_operasyon_event
-                       WHERE tip='KAPANIS' AND durum='tamamlandi' AND tarih BETWEEN %s AND %s""", (ay_basi, ay_son))
+        cur.execute(_GUNSONU_DEDUPE.format(op="BETWEEN", op2="AND %s"),
+                    (ay_basi, ay_son, ay_basi, ay_son))
         teslim_kap = float(cur.fetchone()["v"])
         donem_teslim = round(teslim_ara + teslim_kap, 2)
         cur.execute("SELECT COALESCE(SUM(tutar),0) AS v, COUNT(*) AS c FROM banka_yatirimlari WHERE tarih BETWEEN %s AND %s", (ay_basi, ay_son))
         _y = dict(cur.fetchone())
         donem_yatan = float(_y["v"]); yatan_adet = int(_y["c"])
-        # Kümülatif elde nakit (tüm zaman teslim − tüm zaman yatan)
-        cur.execute("SELECT COALESCE(SUM(tutar),0) AS v FROM kasa_teslim WHERE tarih <= %s", (ay_son,))
+        # Kümülatif elde nakit (tüm zaman teslim − tüm zaman yatan) — aynı dedupe
+        cur.execute("SELECT COALESCE(SUM(tutar),0) AS v FROM kasa_teslim WHERE teslim_turu='ara' AND tarih <= %s", (ay_son,))
         kum_ara = float(cur.fetchone()["v"])
-        cur.execute("""SELECT COALESCE(SUM(teslim),0) AS v FROM sube_operasyon_event
-                       WHERE tip='KAPANIS' AND durum='tamamlandi' AND tarih <= %s""", (ay_son,))
+        cur.execute(_GUNSONU_DEDUPE.format(op="<=", op2=""), (ay_son, ay_son))
         kum_kap = float(cur.fetchone()["v"])
         cur.execute("SELECT COALESCE(SUM(tutar),0) AS v FROM banka_yatirimlari WHERE tarih <= %s", (ay_son,))
         kum_yatan = float(cur.fetchone()["v"])
@@ -11620,6 +11673,7 @@ def banka_mutabakat(yil: int = None, ay: int = None):
                     """SELECT COALESCE(SUM(ABS(tutar)),0) AS v, COUNT(*) AS c
                        FROM kasa_hareketleri
                        WHERE tutar < 0 AND COALESCE(durum,'aktif')='aktif'
+                         AND COALESCE(kasa_etkisi, TRUE) = TRUE
                          AND tarih <= %s
                          AND COALESCE(odeme_yontemi,'nakit') = ANY(%s)""",
                     (ay_son, list(yontemler)))
@@ -11644,13 +11698,25 @@ def banka_mutabakat(yil: int = None, ay: int = None):
         siniflama_pct = round(
             100.0 * _siniflanan / (_siniflanan + belirsiz_nakit), 1
         ) if (_siniflanan + belirsiz_nakit) > 0 else 100.0
-        # Şube bazlı dönem teslim
+        # Şube bazlı dönem teslim — aynı gün-sonu dedupe (EVV-PARA-N1):
+        # ara teslim + şube+gün bazında COALESCE(kasa_teslim.gun_sonu, event.teslim)
         cur.execute("""
             SELECT COALESCE(s.ad,'?') AS sube,
-              COALESCE((SELECT SUM(kt.tutar) FROM kasa_teslim kt WHERE kt.sube_id=s.id AND kt.tarih BETWEEN %s AND %s),0)
-            + COALESCE((SELECT SUM(e.teslim) FROM sube_operasyon_event e WHERE e.sube_id=s.id AND e.tip='KAPANIS' AND e.durum='tamamlandi' AND e.tarih BETWEEN %s AND %s),0) AS teslim
+              COALESCE((SELECT SUM(kt.tutar) FROM kasa_teslim kt
+                        WHERE kt.sube_id=s.id AND kt.teslim_turu='ara'
+                          AND kt.tarih BETWEEN %s AND %s),0)
+            + COALESCE((SELECT SUM(COALESCE(kt2.t, ev2.t)) FROM (
+                  SELECT tarih, SUM(tutar) AS t FROM kasa_teslim
+                  WHERE sube_id=s.id AND teslim_turu='gun_sonu'
+                    AND tarih BETWEEN %s AND %s GROUP BY tarih
+               ) kt2
+               FULL OUTER JOIN (
+                  SELECT tarih, SUM(teslim) AS t FROM sube_operasyon_event
+                  WHERE sube_id=s.id AND tip='KAPANIS' AND durum='tamamlandi'
+                    AND teslim IS NOT NULL AND tarih BETWEEN %s AND %s GROUP BY tarih
+               ) ev2 USING (tarih)),0) AS teslim
             FROM subeler s ORDER BY teslim DESC
-        """, (ay_basi, ay_son, ay_basi, ay_son))
+        """, (ay_basi, ay_son, ay_basi, ay_son, ay_basi, ay_son))
         sube_teslim = [{"sube": r["sube"], "teslim": float(r["teslim"] or 0)} for r in cur.fetchall() if float(r["teslim"] or 0) > 0]
     return {
         "donem": f"{yil}-{ay:02d}",
