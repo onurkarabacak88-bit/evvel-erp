@@ -191,6 +191,11 @@ function kdDogrula(sebep, payload, uyariTip) {
     if (p.yeni_nakit == null && p.yeni_pos == null && p.yeni_online == null) {
       return 'En az bir ciro alanı girin (nakit, POS veya online).';
     }
+    // 🔵 EVV-OPS2-N4 (2026-08-13): source-of-truth money rewrite — girilen alanlar
+    // sayısal + negatif-değil olmalıydı (eskiden yalnız "alan var mı" bakılıyordu).
+    for (const [ad, v] of [['nakit', p.yeni_nakit], ['POS', p.yeni_pos], ['online', p.yeni_online]]) {
+      if (v != null && (!Number.isFinite(Number(v)) || Number(v) < 0)) return `${ad} değeri geçersiz — 0 veya pozitif sayı girin.`;
+    }
   }
   if (sebep === 'acilis_yanlis') {
     if (p.yeni_acilis_kasa == null || !Number.isFinite(Number(p.yeni_acilis_kasa)) || Number(p.yeni_acilis_kasa) < 0) {
@@ -199,6 +204,10 @@ function kdDogrula(sebep, payload, uyariTip) {
   }
   if (sebep === 'devir_yanlis') {
     if (p.yeni_teslim == null && p.yeni_devir == null) return 'Teslim veya devir alanından en az birini girin.';
+    // 🔵 EVV-OPS2-N4: sayısal + negatif-değil (money-rewrite).
+    for (const [ad, v] of [['teslim', p.yeni_teslim], ['devir', p.yeni_devir]]) {
+      if (v != null && (!Number.isFinite(Number(v)) || Number(v) < 0)) return `${ad} değeri geçersiz — 0 veya pozitif sayı girin.`;
+    }
   }
   if (sebep === 'gider_eksik') {
     if (uyariTip === 'ACILIS_KASA_FARK') return 'Devir uyumsuzluğu için gider eklenemez.';
@@ -420,7 +429,9 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
         onToast?.('✓ Ürün adı güncellendi');
       } else if (m.tip === 'fiyat') {
         const f = String(m.deger).trim().replace(',', '.');
-        if (f !== '' && !Number.isFinite(Number(f))) { onToast?.('Geçerli bir fiyat girin'); setKtMesgul(false); return; }
+        // 🔵 EVV-OPS2-N1 (2026-08-13): eskiden yalnız non-finite reddediliyordu → NEGATİF
+        // birim fiyat geçip stok-değeri/marj KPI'larını ters çeviriyordu. Negatifi de reddet.
+        if (f !== '' && (!Number.isFinite(Number(f)) || Number(f) < 0)) { onToast?.('Geçerli bir fiyat girin (negatif olamaz)'); setKtMesgul(false); return; }
         await api('/ops/siparis/urun-fiyat', {
           method: 'POST',
           body: { kategori_kod: m.kategori.kod, urun_id: m.urun.id, birim_fiyat_tl: f === '' ? null : Number(f) },
@@ -1108,7 +1119,9 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
       .then((d) => setMdMesaj(Array.isArray(d?.satirlar) ? d.satirlar : []))
       .catch((e) => setMdHata((p) => p || e?.message || 'Mesajlar alınamadı'));
     api('/ops/subeler/depolar')
-      .then((d) => setMdSubeler(Array.isArray(d?.subeler) ? d.subeler : []))
+      // 🔵 EVV-OPS2-N2 (2026-08-13): uç `{satirlar: rows}` döndürüyor (backend 11391) ama
+      // burada `.subeler` okunuyordu → merkez-müdahale şube listesi HEP BOŞ. Sözleşmeye hizala.
+      .then((d) => setMdSubeler(Array.isArray(d?.satirlar) ? d.satirlar : []))
       .catch(() => setMdSubeler([]));
   }, []);
 
@@ -4366,7 +4379,8 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
                         <span style={{ flex: 1, minWidth: 0, color: R.not2 }}>
                           açılış <b>tamamlanmadı</b> ({a.durum || 'bekliyor'})
                           {a.beklenen_saat ? ` · beklenen ${a.beklenen_saat}` : ''}
-                          {a.beklened_personel ? ` · ${a.beklened_personel}` : ''}
+                          {/* 🔵 EVV-OPS2-N3 (2026-08-13): `beklened_personel` typo → beklenen personel adı hiç görünmüyordu */}
+                          {a.beklenen_personel ? ` · ${a.beklenen_personel}` : ''}
                         </span>
                       </div>
                     ))}
