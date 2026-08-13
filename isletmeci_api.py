@@ -211,17 +211,36 @@ def _sade(s) -> str:
     return re.sub(r"[^A-Z0-9]+", " ", x.upper()).strip()
 
 
+# main._SATICI_ATIL'ın birebir kopyası (kopya bilinçli — import döngüsü riski).
+# 🔴 P1 (2026-08-14, EVV-KART / Codex): eski kopya bu listeyi TAŞIMIYORDU —
+# "KONYA SU" ile "KONYA KENTPLAZA" aynı 'KONYA' grubuna düşüyor, birine yapılan
+# kişi ataması öğrenilip alakasız Konya satıcılarına öneriliyordu (para-eşleştirme
+# dersi: şehir adı gürültüsü). İki modülün kuralı DEĞİŞİRSE BİRLİKTE değişmeli.
+_SATICI_ATIL = {
+    "KONYA", "ISTANBUL", "İSTANBUL", "IZMIR", "İZMİR", "ANKARA", "KARAMAN",
+    "BURSA", "ANTALYA", "ADANA", "MERSIN", "MERSİN", "TR", "TUR", "TURKIYE",
+    "FATURA", "ODEME", "ÖDEME", "OTOMATIK", "OTOMATİK", "TALIMAT", "TALİMAT",
+    "SAN", "TIC", "TİC", "LTD", "STI", "ŞTI", "AS", "A.S", "ANONIM", "ANONİM",
+    "SIRKETI", "ŞİRKETİ", "LIMITED", "LİMİTED", "MERKEZ", "SUBE", "ŞUBE",
+}
+
+
 def _satici_anahtar(aciklama):
     """Açıklamadan satıcı anahtarı — main._satici_anahtar ile AYNI kural
-    ('METRO METRO GROSMARKET KOKONYA TR' → 'METRO'). Kopya bilinçli: bu modül
-    main'e bağımlı olmasın (import döngüsü riski)."""
+    ('METRO METRO GROSMARKET KOKONYA TR' → 'METRO'). Şehir/jenerik kelimeler
+    atlanır; hepsi atılırsa ilk kelimeye düşülür."""
     import re as _re
     s = (aciklama or "").upper().strip()
     s = _re.sub(r"[^A-ZÇĞİÖŞÜ0-9 ]", " ", s)
+    ilk = None
     for tok in s.split():
-        if len(tok) >= 3 and not tok.isdigit():
+        if len(tok) < 3 or tok.isdigit():
+            continue
+        if ilk is None:
+            ilk = tok
+        if tok not in _SATICI_ATIL:
             return tok
-    return None
+    return ilk
 
 
 @router.get("/api/isletmeci/sahsi-bekleyen")

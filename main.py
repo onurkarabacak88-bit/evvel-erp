@@ -3491,14 +3491,19 @@ def kart_kalici_sil(kid: str, body: KartKaliciSilBody):
             raise HTTPException(404, "Kart bulunamadı")
         kart_adi = dict(k)["kart_adi"]
         onayci = _isletme_onay_dogrula(cur, body.onay_pin)  # PIN hatalı → 403
+        # 🔴 P1 (2026-08-14, EVV-KART / Codex): guard yalnız AKTİF hareket sayıyordu —
+        # 'ledger-sifirla' tüm hareketleri iptal'e çekince fiilen KULLANILMIŞ kart
+        # "aktif hareket yok" diye kalıcı silmeden geçiyordu (sıfırla→sil zinciri
+        # tüm izi yok ediyordu; docstring'deki "yalnız işlemsiz kart" kuralı deliniyordu).
+        # Artık HERHANGİ bir hareket izi (iptal dahil) kalıcı silmeyi engeller.
         cur.execute(
-            "SELECT COUNT(*) AS n FROM kart_hareketleri WHERE kart_id=%s AND durum='aktif'", (kid,)
+            "SELECT COUNT(*) AS n FROM kart_hareketleri WHERE kart_id=%s", (kid,)
         )
         if int(dict(cur.fetchone())["n"]) > 0:
             raise HTTPException(
                 409,
-                "Bu kartın aktif hareketleri var → kalıcı silinemez. Önce hareketleri "
-                "temizleyin ya da 'Pasife Al' kullanın (defter korunur).",
+                "Bu kartın hareket İZİ var (iptal edilmişler dahil) → kalıcı silinemez; "
+                "defter izi korunur. Kartı kullanımdan kaldırmak için 'Pasife Al' kullanın.",
             )
         # İşlemsiz kart → bağlı (iptal) kayıtları + snapshot + plan temizle, sonra kartı sil
         cur.execute("DELETE FROM kart_hareketleri WHERE kart_id=%s", (kid,))
@@ -3787,6 +3792,9 @@ def kart_harcama_ozet():
         """)
         kartlar = {}
         gen = {'isletme': 0.0, 'sahsi': 0.0, 'belirsiz': 0.0}
+        # 🟡 P2 (2026-08-14, EVV-KART): tip başına ADET yoktu — FE "sınıflandırılmayan
+        # kaç hareket" sayısını 200-kesikli listeden sayıyordu (201+ harekette eksik).
+        gen_adet = {'isletme': 0, 'sahsi': 0, 'belirsiz': 0}
         for r in (cur.fetchall() or []):
             r = dict(r)
             kid = r['kart_id']
@@ -3797,8 +3805,12 @@ def kart_harcama_ozet():
             })
             k[tip] += float(r['toplam']); k['adet'] += int(r['adet'])
             gen[tip] += float(r['toplam'])
+            gen_adet[tip] += int(r['adet'])
         return {
-            "genel": {**gen, "toplam": round(sum(gen.values()), 2)},
+            "genel": {**gen, "toplam": round(sum(gen.values()), 2),
+                      "isletme_adet": gen_adet['isletme'], "sahsi_adet": gen_adet['sahsi'],
+                      "belirsiz_adet": gen_adet['belirsiz'],
+                      "toplam_adet": sum(gen_adet.values())},
             "kartlar": sorted(kartlar.values(), key=lambda x: -(x['isletme'] + x['sahsi'] + x['belirsiz'])),
         }
 
@@ -3902,12 +3914,18 @@ def kart_borc_projeksiyon(aylik: float, strateji: str = "cig"):
             cur.execute("SELECT asgari_tutar FROM kart_ekstre_donem WHERE kart_id=%s ORDER BY donem DESC LIMIT 1", (k["id"],))
             sr = cur.fetchone()
             asg = float((dict(sr).get("asgari_tutar") if sr else 0) or 0) or round(b * float(k.get("asgari_oran") or 40) / 100, 2)
-            kartlar.append({"borc": b, "oran": float(k.get("faiz_orani") or 0) / 100 / 12, "asgari": asg})
+            kartlar.append({"borc": b, "oran": float(k.get("faiz_orani") or 0) / 100 / 12,
+                            "asgari": asg,
+                            "asgari_oran": float(k.get("asgari_oran") or 40) / 100})
 
     toplam_borc = round(sum(c["borc"] for c in kartlar), 2)
     toplam_asgari = round(sum(c["asgari"] for c in kartlar), 2)
 
-    def simule(butce):
+    def simule(butce, asgari_dinamik=False):
+        # 🟡 P2 (2026-08-14, Codex): "sadece asgari" senaryosu İLK ayın asgarisini
+        # sabit bütçe olarak kullanıyordu — gerçek minimum-only'de asgari borçla
+        # birlikte HER AY AZALIR, süre uzar ve faiz büyür. asgari_dinamik=True
+        # her ay asgariyi güncel borçtan yeniden hesaplar (kart asgari_oran'ı).
         cs = [dict(c) for c in kartlar]
         cs.sort(key=(lambda x: x["borc"]) if strateji == "kartopu" else (lambda x: -x["oran"]))
         ay = 0; tfaiz = 0.0; onceki = sum(c["borc"] for c in cs)
@@ -3915,6 +3933,10 @@ def kart_borc_projeksiyon(aylik: float, strateji: str = "cig"):
             ay += 1
             for c in cs:
                 f = c["borc"] * c["oran"]; c["borc"] += f; tfaiz += f
+            if asgari_dinamik:
+                for c in cs:
+                    c["asgari"] = round(c["borc"] * c["asgari_oran"], 2)
+                butce = sum(c["asgari"] for c in cs)
             kalan = butce
             for c in cs:
                 if kalan <= 0:
@@ -3937,7 +3959,7 @@ def kart_borc_projeksiyon(aylik: float, strateji: str = "cig"):
         return str(_d(bugun.year + m // 12, m % 12 + 1, 1))
 
     verilen = simule(float(aylik or 0))
-    asgari_only = simule(toplam_asgari)
+    asgari_only = simule(toplam_asgari, asgari_dinamik=True)
     tasarruf = None
     erken_ay = None
     if verilen.get("ay") and asgari_only.get("ay"):
@@ -4568,9 +4590,12 @@ def _ekstre_eslesme_mutabakat(sonuc):
                         INSERT INTO kart_ekstre_donem
                             (kart_id, donem, kesim_tarihi, son_odeme_tarihi, donem_borcu,
                              asgari_tutar, onceki_borc, donem_harcama, donem_odeme, donem_faizi,
-                             kalan_taksit, kullanilabilir_limit, kalan_taksit_tutari)
-                        VALUES (%s, DATE_TRUNC('month', %s::date), %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                             kalan_taksit, kullanilabilir_limit, kalan_taksit_tutari, kaynak)
+                        VALUES (%s, DATE_TRUNC('month', %s::date), %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pdf')
                         ON CONFLICT (kart_id, donem) DO UPDATE SET
+                            -- 🟡 P2 (2026-08-14, Codex): kaynak PDF yolunda hiç yazılmıyordu;
+                            -- manuel dönem PDF'le düzeltilince rozet 'manuel' kalıyordu.
+                            kaynak='pdf',
                             kesim_tarihi=EXCLUDED.kesim_tarihi, son_odeme_tarihi=EXCLUDED.son_odeme_tarihi,
                             donem_borcu=EXCLUDED.donem_borcu, asgari_tutar=EXCLUDED.asgari_tutar,
                             onceki_borc=EXCLUDED.onceki_borc, donem_harcama=EXCLUDED.donem_harcama,
@@ -4870,27 +4895,71 @@ def kart_ekstre_donem_sil(kid: str, donem: str):
     Hatalı yüklenen ekstreyi silip 'Ekstre Yükle' ile yeniden yüklemek için kullanılır.
     ÖDEME/DEVIR hareketlerine (manuel girilen kasa hareketleri) dokunmaz."""
     with db() as (conn, cur):
-        cur.execute("SELECT kart_adi FROM kartlar WHERE id=%s", (kid,))
+        cur.execute("SELECT kart_adi, kesim_gunu FROM kartlar WHERE id=%s", (kid,))
         k = cur.fetchone()
         if not k:
             raise HTTPException(404, "Kart bulunamadı")
-        # K1 (2026-08-12, Kart denetimi): ekstre-import'tan açılmış EŞLENİK anlık
-        # giderleri de kapat — tek-satır silmedeki 'agk_' mantığı (3675). Yoksa dönem
-        # silinince o giderler ÖKSÜZ kalıp P&L'de asılı duruyordu. Silmeden ÖNCE iptal.
+        # 🔴 P1 (2026-08-14, EVV-KART / Codex): silme penceresi TAKVİM AYI idi —
+        # ekstre kesim DÖNGÜSÜ ise (önceki kesim, bu kesim]. 25 Temmuz kesimli
+        # ekstrede 26-30 Haziran satırları doğaldır; takvim-ayı silme onları
+        # BIRAKIYORDU (yanlış ekstrenin kalıntısı defterde kalıyordu). Pencere
+        # artık kesim döngüsü: bu kesim = dönem ayında kesim günü; başlangıç =
+        # bir önceki kesim. Kesim günü tanımsızsa eski takvim-ayı davranışı.
+        # Pencere kaynağı ÖNCELİĞİ (Codex diff-review 2026-08-14): dönemin
+        # SNAPSHOT'ındaki gerçek kesim_tarihi > kartın bugünkü kesim_gunu —
+        # kesim günü sonradan değiştirilmişse yanlış pencere silerdi. Tarih
+        # aritmetiği Python'da (SQL jimnastiği yerine).
+        import calendar as _takvim
+        from datetime import date as _tarih
+        def _ay_gunu(y, m, g):
+            return _tarih(y, m, min(int(g), _takvim.monthrange(y, m)[1]))
+        _dm = None
+        try:
+            _dy, _dmo = int(str(donem)[:4]), int(str(donem)[5:7])
+            _dm = (_dy, _dmo)
+        except (ValueError, IndexError):
+            pass
+        _bit = None
+        if _dm:
+            cur.execute(
+                "SELECT kesim_tarihi FROM kart_ekstre_donem "
+                "WHERE kart_id=%s AND donem=DATE_TRUNC('month', %s::date)", (kid, donem))
+            _snap = cur.fetchone()
+            if _snap and dict(_snap).get("kesim_tarihi"):
+                _bit = dict(_snap)["kesim_tarihi"]
+            else:
+                _kg = int(dict(k).get("kesim_gunu") or 0)
+                if _kg >= 1:
+                    _bit = _ay_gunu(_dm[0], _dm[1], _kg)
+        if _bit is not None and _dm:
+            _oy, _om = (_dm[0] - 1, 12) if _dm[1] == 1 else (_dm[0], _dm[1] - 1)
+            cur.execute(
+                "SELECT kesim_tarihi FROM kart_ekstre_donem "
+                "WHERE kart_id=%s AND donem=make_date(%s,%s,1)", (kid, _oy, _om))
+            _psnap = cur.fetchone()
+            if _psnap and dict(_psnap).get("kesim_tarihi"):
+                _bas = dict(_psnap)["kesim_tarihi"]
+            else:
+                _bas = _ay_gunu(_oy, _om, _bit.day)
+            _pencere = " AND tarih > %s AND tarih <= %s"
+            _pp = [_bas, _bit]
+        else:
+            _pencere = " AND DATE_TRUNC('month', tarih) = DATE_TRUNC('month', %s::date)"
+            _pp = [donem]
+        # K1 (2026-08-12): ekstre-import'tan açılmış EŞLENİK anlık giderleri de
+        # kapat — yoksa dönem silinince o giderler ÖKSÜZ kalıp P&L'de asılı duruyordu.
         cur.execute(
-            """UPDATE anlik_giderler SET durum='iptal'
+            f"""UPDATE anlik_giderler SET durum='iptal'
                WHERE durum='aktif' AND id IN (
                  SELECT 'agk_' || id FROM kart_hareketleri
-                 WHERE kart_id=%s AND islem_turu IN ('HARCAMA','FAIZ')
-                   AND DATE_TRUNC('month', tarih) = DATE_TRUNC('month', %s::date))""",
-            (kid, donem),
+                 WHERE kart_id=%s AND islem_turu IN ('HARCAMA','FAIZ'){_pencere})""",
+            [kid] + _pp,
         )
         iptal_anlik = cur.rowcount
         cur.execute(
-            """DELETE FROM kart_hareketleri
-               WHERE kart_id=%s AND islem_turu IN ('HARCAMA','FAIZ')
-                 AND DATE_TRUNC('month', tarih) = DATE_TRUNC('month', %s::date)""",
-            (kid, donem),
+            f"""DELETE FROM kart_hareketleri
+               WHERE kart_id=%s AND islem_turu IN ('HARCAMA','FAIZ'){_pencere}""",
+            [kid] + _pp,
         )
         silinen_hareket = cur.rowcount
         cur.execute(

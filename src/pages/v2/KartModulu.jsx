@@ -195,9 +195,23 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
   const [sahsiMesgul, setSahsiMesgul] = useState(false);
   const [sahsiSecim, setSahsiSecim] = useState({});   // satici -> isletmeci_id
 
+  const [cokKartOnay, setCokKartOnay] = useState('');   // çok-kartlı grupta 2. tık onayı
   /** Bir satıcının bekleyen şahsi harcamalarını seçilen kişiye bağlar (+öğrenir). */
   const saticiAta = async (grup, kisiId, hareketIdler) => {
     if (!kisiId) { onToast?.('Önce kişi seçin'); return; }
+    // 🔴 P1 (2026-08-14, Codex): çok-kartlı grupta uyarı vardı ama ENGEL yoktu —
+    // tek "Ata" iki farklı kartın (muhtemelen iki farklı ortağın) harcamalarını
+    // toptan tek kişiye yazıyordu; ortak hesaplaşması sessizce kayardı. Çok
+    // kartlı grupta İKİNCİ tık onayı istenir.
+    // onay anahtarı satıcı+KİŞİ — kişi değişince onay sıfırlanır (diff-review:
+    // ilk uyarıdan sonra başka kişi seçilip basılırsa onaysız geçiyordu)
+    const _onayAnahtar = `${grup.satici}|${kisiId}`;
+    if (grup.cok_kartli && cokKartOnay !== _onayAnahtar) {
+      setCokKartOnay(_onayAnahtar);
+      onToast?.(`⚠ ${grup.satici} ${grup.kartlar?.length || 2} farklı karttan — hepsi aynı kişininse tekrar "Ata"ya bas`);
+      return;
+    }
+    setCokKartOnay('');
     setSahsiMesgul(true);
     try {
       const r = await api('/isletmeci/satici-ata', { method: 'POST', body: {
@@ -251,7 +265,9 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
     setYukleniyor(true);
     setHata('');
     Promise.all([
-      api('/kartlar').catch(() => []),
+      // 🟡 P2 (2026-08-14, Codex): /kartlar düşüp ozet sağ kalınca ekran boş
+      // liste + "Kayıtlı kart yok" diyordu (sahte-boş). Sentinel ile ayrılır.
+      api('/kartlar').catch(() => '__KART_HATA__'),
       api('/kartlar/borc-faiz-ozet').catch(() => null),
       api('/kartlar/harcama-ozet').catch(() => null),
       api('/kart-hareketleri?limit=200').catch(() => []),
@@ -291,7 +307,9 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
       setOzet(o);
       setHarcama(h);
       setHareketler(Array.isArray(hr) ? hr : []);
-      if (!o && !(Array.isArray(k) && k.length)) setHata('Kart verileri alınamadı.');
+      if (k === '__KART_HATA__') {
+        setHata('Kart listesi okunamadı — "kayıtlı kart yok" görüntüsü yanıltıcı olur, yenileyin.');
+      } else if (!o && !(Array.isArray(k) && k.length)) setHata('Kart verileri alınamadı.');
       setYukleniyor(false);
     }).catch((e) => {
       setHata(e?.message || 'Beklenmeyen bir hata oluştu.');
@@ -499,7 +517,12 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
 
   const kartSatir = useMemo(() => kartlar.map(k => {
     const o = ozetMap[String(k.id)] || {};
-    const ekstreVar = o.bu_ay_ekstre_var != null ? !!o.bu_ay_ekstre_var : !!k.ekstre_gercek;
+    // 🟡 P2 (2026-08-14, Codex): iki uç iki FARKLI "ekstre var" anlamı taşıyor —
+    // ozet.bu_ay_ekstre_var TAKVİM AYINA bakar (13 Ağustos'ta 25 Temmuz kesimli
+    // ekstre 'yok' sayılır → sahte amber); /kartlar.ekstre_gercek AKTİF DÖNGÜYE
+    // bakar (kanonik). Kanonik alan ÖNCELİKLİ; yalnız o yoksa takvim-ayına düş.
+    const ekstreVar = k.ekstre_gercek != null ? !!k.ekstre_gercek
+      : (o.bu_ay_ekstre_var != null ? !!o.bu_ay_ekstre_var : false);
     const limit = sayi(k.limit_tutar);
     const borc = sayi(k.guncel_borc);
     return {
@@ -651,13 +674,18 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
   };
 
   const kartKaydet = async () => {
+    if (kartMesgul) return;   // çift-tık koruması
     if (!(kartForm?.kart_adi || '').trim()) { onToast?.('Kart adı zorunlu'); return; }
     setKartMesgul(true);
     try {
       const { duzenleId, ...body } = kartForm;
-      if (duzenleId) await api(`/kartlar/${duzenleId}`, { method: 'PUT', body });
-      else await api('/kartlar', { method: 'POST', body });
-      onToast?.(duzenleId ? '✓ Kart güncellendi' : '✓ Kart eklendi');
+      let r = null;
+      if (duzenleId) r = await api(`/kartlar/${duzenleId}`, { method: 'PUT', body });
+      else r = await api('/kartlar', { method: 'POST', body });
+      // İdempotent cevap: aynı son-4-hane → sunucu YENİ kart açmaz, mevcuda eşler.
+      // Eskiden yine "Kart eklendi" deniyordu (sahte-yeşil).
+      onToast?.(r?.mevcut ? `ℹ ${r.mesaj || 'Bu kart zaten kayıtlı — mevcuda eşleştirildi'}`
+        : duzenleId ? '✓ Kart güncellendi' : '✓ Kart eklendi');
       setKartForm(null);
       yukle();
     } catch (e) {
@@ -668,10 +696,14 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
   };
 
   const kartPasife = async (id) => {
+    if (kartMesgul) return;   // çift-tık koruması
     setKartMesgul(true);
     try {
-      await api(`/kartlar/${id}`, { method: 'DELETE' });
-      onToast?.('Kart pasife alındı');
+      const r = await api(`/kartlar/${id}`, { method: 'DELETE' });
+      // 🟡 P2 (2026-08-14, Codex): sunucu borçlu kartta ÖZEL uyarı dönüyordu
+      // ("pasif kart borcu özetlerde görünmez") — FE yutuyordu, 120K'lık borç
+      // sessizce görünmezliğe düşüyordu.
+      onToast?.(r?.uyari ? `⚠ ${r.uyari}` : 'Kart pasife alındı');
       setKartPasifSor('');
       yukle();
     } catch (e) {
@@ -777,9 +809,14 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
       const ekstreBorc = eksSonuc?.mutabakat?.ekstre_borc ?? eksSonuc?.donem_borcu ?? 0;
       const fark = Math.round((ekstreBorc - (yeniBorc ?? 0)) * 100) / 100;
       const esik = Math.max(5000, Math.abs(ekstreBorc) * 0.05);
-      if (Math.abs(fark) > 1 && Math.abs(fark) > esik) {
-        // Eşik üstü — kadife onay kutusu (klasikte window.confirm idi)
-        setEksOnaySor({ fark, ekstreBorc, yeniBorc, impOzet });
+      // 🔴 P1 (2026-08-14, Codex): okuma denetimi SAĞLAM DEĞİLSE (parser satır
+      // toplamını tutturamadı) eşik-altı fark bile otomatik devirle kapanıyordu —
+      // eksik okunmuş ekstre "mutabakat tamam" yeşiline düşüyordu. Sağlamsızsa
+      // HER fark onaya düşer.
+      const okumaSaglam = eksSonuc?.okuma_denetimi?.saglam;
+      if (Math.abs(fark) > 1 && (Math.abs(fark) > esik || okumaSaglam === false)) {
+        // Eşik üstü / okuma şüpheli — kadife onay kutusu
+        setEksOnaySor({ fark, ekstreBorc, yeniBorc, impOzet, okumaSupheli: okumaSaglam === false });
         return;
       }
       await eksDevirVeBitir(impOzet, yeniBorc, Math.abs(fark) > 1);
@@ -810,8 +847,11 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
           sahip: eksSonuc.kart_sahibi || 'İşletme',
         }),
       });
-      if (!r.ok) { const d = await r.json(); throw new Error(d.detail || 'Kart eklenemedi'); }
-      onToast?.('✓ Kart eklendi — ekstre yeniden eşleştiriliyor');
+      const d0 = await r.json().catch(() => ({}));
+      if (!r.ok) { throw new Error(d0.detail || 'Kart eklenemedi'); }
+      onToast?.(d0?.mevcut
+        ? `ℹ ${d0.mesaj || 'Bu kart zaten kayıtlıydı — mevcuda eşleştirildi'}`
+        : '✓ Kart eklendi — ekstre yeniden eşleştiriliyor');
       if (eksLastFile) await eksDosyaYukle(eksLastFile);
     } catch (e) {
       setEksHata(e?.message || 'Kart eklenemedi');
@@ -821,8 +861,10 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
   };
 
   const eksManuelKaydet = async () => {
-    if (!manForm?.kart_id || !manForm?.donem || !manForm?.donem_borcu) {
-      setEksHata('Kart, kesim tarihi ve dönem borcu zorunlu.'); return;
+    // 🟡 P2 (2026-08-14, Codex): falsy kontrol 0'ı da reddediyordu — sunucu
+    // donem_borcu=0'ı kabul eder (borcu sıfırlanmış dönemin temiz kapanışı).
+    if (!manForm?.kart_id || !manForm?.donem || String(manForm?.donem_borcu ?? '').trim() === '') {
+      setEksHata('Kart, kesim tarihi ve dönem borcu zorunlu (0 girilebilir).'); return;
     }
     setManBusy(true); setEksHata('');
     try {
@@ -1368,7 +1410,10 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
               ? `Yıllık %${trSayi(sayi(oncelik.faiz_yillik))} faizle en pahalı borç bu. Aylık ${fmt(sayi(oncelik.aylik_faiz))} sadece faize gidiyor.`
               : `En küçük bakiye bu (${fmt(sayi(oncelik.borc))}). Kapanınca listeden bir kart eksilir, motivasyon artar.`
           ) : ''}
-          ozetNot={koc?.asgari_karsilaniyor === false
+          ozetNot={(koc?.asgari_karsilaniyor === false
+            // 🟡 P2 (Codex): nakit=0'da sunucu None döner, ===false tutmaz —
+            // en kötü durumda kırmızı uyarı hiç çıkmıyordu.
+            || (koc && sayi(nakit) < toplamAsgari && toplamAsgari > 0))
             ? `⚠ Girdiğin nakit tüm asgarileri karşılamıyor — en az ${fmt(toplamAsgari)} gerekiyor.`
             : sayi(koc?.artan_nakit) > 0
               ? `✓ Tüm asgariler + öncelik kapanır, ${fmt(sayi(koc.artan_nakit))} nakit artar — sıradaki karta yatır.`
@@ -1393,12 +1438,18 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
   if (gorunum === 'hareket') {
     const g = harcama?.genel || {};
     const toplam = sayi(g.toplam);
-    const belirsizAdet = hareketler.filter(h => (h.harcama_tipi || 'belirsiz') === 'belirsiz' && h.islem_turu === 'HARCAMA').length;
+    // 🟡 P2 (2026-08-14): belirsiz ADET sunucudan (tüm evren) — eskiden 200-kesikli
+    // listeden sayılıyordu; 201+ harekette eksik çıkardı. Sunucu alanı yoksa yedek.
+    const belirsizAdet = g.belirsiz_adet != null
+      ? sayi(g.belirsiz_adet)
+      : hareketler.filter(h => (h.harcama_tipi || 'belirsiz') === 'belirsiz' && h.islem_turu === 'HARCAMA').length;
     const pay = (v) => (toplam ? `%${trSayi((sayi(v) / toplam) * 100, 0)}` : '—');
     return (
       <>
         <KpiSeridi kpiler={[
-          { etiket: 'Toplam harcama', deger: fmt(toplam), alt: `${hareketler.length} hareket` },
+          // Tutar yalnız HARCAMA evreninden; listede ödeme/faiz de var — etiket
+          // iki evreni karıştırmasın (Codex: "62 hareket" 50 harcamayı temsil ediyordu).
+          { etiket: 'Toplam harcama', deger: fmt(toplam), alt: g.toplam_adet != null ? `${sayi(g.toplam_adet)} harcama · listede son ${hareketler.length} hareket (ödeme/faiz dahil)` : `listede son ${hareketler.length} hareket` },
           { etiket: 'İşletme', deger: pay(g.isletme), alt: fmt(sayi(g.isletme)), renk: R.yesil },
           { etiket: 'Şahsi', deger: pay(g.sahsi), alt: fmt(sayi(g.sahsi)), renk: R.mavi },
           { etiket: 'Sınıflandırılmayan', deger: `${belirsizAdet} hareket`, alt: `${fmt(sayi(g.belirsiz))} · karar bekliyor`, renk: belirsizAdet ? R.amber : R.yesil },
@@ -1531,7 +1582,7 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
 
         <Tablo
           baslik="Kart hareketleri · işletme / şahsi"
-          not="satıra tıkla → sınıflandır"
+          not={`satıra tıkla → sınıflandır${hareketler.length > 120 ? ` · ilk 120 / ${hareketler.length}` : ''}${hareketler.length >= 200 ? ' · sunucu penceresi son 200' : ''}`}
           kolonlar={[
             { ad: 'Tarih' }, { ad: 'Kart' }, { ad: 'Açıklama' },
             { ad: 'Tutar', sag: true }, { ad: 'Tür' }, { ad: 'Sınıf' }, { ad: 'İşlem' },
@@ -1874,7 +1925,7 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
             </div>
             <Tablo
             baslik="Ekstre arşivi · yüklenmiş dönemler"
-            not="satıra tıkla → yanlış yüklenen dönemi sil ve yeniden yükle"
+            not={`satıra tıkla → yanlış yüklenen dönemi sil ve yeniden yükle${donemler.length > 40 ? ` · ilk 40 / ${donemler.length} dönem` : ''}`}
             kolonlar={[
               { ad: 'Kart' }, { ad: 'Dönem' }, { ad: 'Kaynak' }, { ad: 'Dönem borcu', sag: true },
               { ad: 'Harcama', sag: true }, { ad: 'Ödeme', sag: true }, { ad: 'Faiz', sag: true }, { ad: '' },
@@ -1937,7 +1988,8 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
             }}>
               <b style={{ color: '#FCA5A5' }}>Bu işlemin geri alması yok.</b> Kayıtlar gerçekten silinir.
               <div style={{ marginTop: 9 }}>
-                <b>Silinecek:</b> bu aya ait <b>harcama</b> ve <b>faiz</b> hareketleri + dönem özeti<br />
+                <b>Silinecek:</b> bu döneme (kesim döngüsüne) ait <b>harcama</b> ve <b>faiz</b> hareketleri + dönem özeti
+                {' '}+ bu harcamalardan doğmuş <b>anlık gider</b> kayıtları (P&L'den de düşerler)<br />
                 <b>Korunacak:</b> <b>ödeme</b> ve <b>devir</b> kayıtları — onlar kasa tarafının izi, dokunulmaz
               </div>
               <div style={{ marginTop: 9, color: R.not2 }}>
@@ -1974,7 +2026,11 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
             <div style={{ ...kartYuzey, width: 620, maxWidth: '96vw', maxHeight: '92vh', overflowY: 'auto', padding: '24px 26px' }}>
               <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 6 }}>
                 <div style={{ fontFamily: F.baslik, fontSize: 21, fontWeight: 600 }}>📄 Ekstre Yükle</div>
-                <div style={{ fontSize: 11.5, color: R.not2 }}>önizleme — kayıt yazılmaz</div>
+                {/* 🔴 metin düzeltmesi (2026-08-14, Codex): "kayıt yazılmaz" YANLIŞTI —
+                    eşleşen kartta dönem özeti + faiz oranı + ödeme planı yükleme
+                    ANINDA güncellenir (bilinçli: borç anında düzelsin diye).
+                    Yazılmayan yalnız HAREKETLERDİR (tek-tık import'a kadar). */}
+                <div style={{ fontSize: 11.5, color: R.not2 }}>işlemler yazılmaz — dönem özeti/plan anında güncellenir</div>
                 <button onClick={() => setEksModal(false)} style={{
                   marginLeft: 'auto', border: 'none', background: 'transparent', color: R.not,
                   fontSize: 16, cursor: 'pointer', fontFamily: 'inherit',
@@ -2025,6 +2081,23 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
                     </button>
                   )}
 
+                  {/* 🔴 (2026-08-14, Codex): sunucunun İKİ kritik uyarısı hiç
+                      gösterilmiyordu — okuma denetimi (satır toplamı tutuyor mu)
+                      ve "bu dönem zaten yüklüydü" (upsert üzerine yazar). */}
+                  {eksSonuc.okuma_denetimi && eksSonuc.okuma_denetimi.saglam === false && (
+                    <div style={{ padding: '10px 14px', borderRadius: 11, background: `${R.kirmizi}14`, border: `1px solid ${R.kirmizi}55`, fontSize: 12, color: R.kirmizi, marginBottom: 10, lineHeight: 1.55 }}>
+                      ⚠ <b>Okuma denetimi TUTMUYOR</b> — {eksSonuc.okuma_denetimi.mesaj || 'satır toplamı ekstre borcuyla uyuşmuyor'}.
+                      PDF eksik/yanlış okunmuş olabilir; mutabakatı onaylamadan rakamları karşılaştır.
+                    </div>
+                  )}
+                  {eksSonuc.donem_zaten_yuklendi && (
+                    <div style={{ padding: '10px 14px', borderRadius: 11, background: `${R.amber}12`, border: `1px solid ${R.amber}55`, fontSize: 12, color: R.metin2, marginBottom: 10, lineHeight: 1.55 }}>
+                      ℹ <b>{eksSonuc.donem_zaten_yuklendi.donem}</b> dönemi zaten yüklüydü
+                      (önceki borç {fmt(sayi(eksSonuc.donem_zaten_yuklendi.onceki_borc))}
+                      {eksSonuc.donem_zaten_yuklendi.kaynak ? ` · kaynak ${eksSonuc.donem_zaten_yuklendi.kaynak}` : ''}) —
+                      bu yükleme dönem özetinin <b>üzerine yazdı</b>. İşlemler yine mükerrer yazılmaz.
+                    </div>
+                  )}
                   {m && (
                     <div style={{
                       display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 10,
@@ -2049,7 +2122,9 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
                   {eksOnaySor && (
                     <div style={{ padding: '13px 16px', borderRadius: 12, background: `${R.amber}12`, border: `1px solid ${R.amber}66`, marginBottom: 12 }}>
                       <div style={{ fontSize: 12.5, fontWeight: 700, color: R.amber }}>
-                        ⚠ Fark güvenlik eşiğinin üstünde: {fmt(Math.abs(eksOnaySor.fark))}
+                        ⚠ {eksOnaySor.okumaSupheli
+                          ? `Okuma denetimi ŞÜPHELİ + fark var: ${fmt(Math.abs(eksOnaySor.fark))}`
+                          : `Fark güvenlik eşiğinin üstünde: ${fmt(Math.abs(eksOnaySor.fark))}`}
                       </div>
                       <div style={{ fontSize: 12, color: R.metin2, marginTop: 6, lineHeight: 1.55 }}>
                         Bu genelde İLK mutabakatta eski devir tabanından kaynaklanır ve güvenlidir
