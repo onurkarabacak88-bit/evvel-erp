@@ -1345,9 +1345,15 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     // 🔵 (2026-08-12, Ops denetimi): client kalem adedi yalnız >0 kapısındaydı; işaret/
     // tamsayı sınırı yoktu → negatif/ondalık adet stok-hareket yazısına sızabiliyordu.
     // Kaynakta non-negatif tamsayıya clamp (backend de doğrular ama savunma).
-    const payload = Object.values(kd).map((x) => ({
-      ...x, gonderilen_adet: Math.max(0, Math.round(sayi(x.gonderilen_adet))),
-    }));
+    // 🔵 EVV-OPS3-E (2026-08-13): adet clamp + durum-adet TUTARLILIĞI — durum 'yok'/'not'
+    // iken pozitif gonderilen_adet taşınması stok-çıkışı ile niyeti çeliştiriyordu (aynı kalem
+    // hem "yok" hem sevk-adetli). Yalnız var/kısmi'de adet gider, aksi 0.
+    const payload = Object.values(kd).map((x) => {
+      const adet = Math.max(0, Math.round(sayi(x.gonderilen_adet)));
+      const durum = String(x.durum || '').toLowerCase();   // Codex: case-guard
+      const gonderilir = durum === 'var' || durum === 'kismi';
+      return { ...x, gonderilen_adet: gonderilir ? adet : 0 };
+    });
     if (!payload.length) { onToast?.('En az bir kalem durumu seçin'); return; }
     const sevkVar = payload.some((x) => {
       const d = String(x.durum || '').toLowerCase();
@@ -2972,7 +2978,8 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
                       </div>
 
                       {/* Z nakit 0 ise asıl sebep büyük ihtimalle onaylanmamış ciro */}
-                      {!devir && (dj.z_nakit ?? -1) === 0 && Math.abs(fark) > 50 && (
+                      {/* 🔵 EVV-OPS3-D: z_nakit "0"/"0.00" string gelirse `=== 0` susuyordu (uyarı çıkmaz). sayi() ile coerce. */}
+                      {!devir && dj.z_nakit != null && sayi(dj.z_nakit) === 0 && Math.abs(fark) > 50 && (
                         <div style={{
                           padding: '11px 14px', borderRadius: 11, marginBottom: 14, fontSize: 11.5, lineHeight: 1.6,
                           background: 'rgba(251,191,36,.09)', border: '1px solid rgba(251,191,36,.34)', color: R.metin2,
@@ -3526,8 +3533,9 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
           {
             etiket: 'Stokta yok',
             deger: dOzet ? String(sayi(dOzet.sifir_kalem_sayisi)) : '—',
+            // 🔵 EVV-OPS3-C: dOzet yokken deger '—' ama renk yeşildi (bilinmeyen=temiz). Nötr.
             alt: 'şube-kalem · mevcut sıfır',
-            renk: sayi(dOzet?.sifir_kalem_sayisi) > 0 ? R.kirmizi : R.yesil,
+            renk: !dOzet ? R.not3 : sayi(dOzet.sifir_kalem_sayisi) > 0 ? R.kirmizi : R.yesil,
           },
           { etiket: 'Kritik kalem', deger: String(kritik.length), alt: 'bardak eşiği altında', renk: kritik.length > 0 ? R.kirmizi : R.not },
           { etiket: 'Düşük kalem', deger: String(dusuk.length), alt: 'eşiğe yaklaşıyor', renk: dusuk.length > 0 ? R.amber : R.not },
@@ -4213,7 +4221,9 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     // Artık tolerans üstü olanlar (uyari/kritik) sayılır — sunucunun ölçüsü.
     const farkliAcilis = acilisSatir.filter((x) => x.fark_tl != null
       && (x.fark_seviye ? ['uyari', 'kritik'].includes(x.fark_seviye) : sayi(x.fark_tl) !== 0));
-    const teslimBekleyen = kapanisSatir.filter((x) => x.kapanis_tamam && !sayi(x.teslim_kasa_tl));
+    // 🔵 EVV-OPS3-B: "teslim bekleyen" = kapandı AMA teslim kaydı YOK (teslim_var false).
+    // Eskiden `!sayi(teslim_kasa_tl)` idi → gerçek 0 TL teslim (kart-günü) de "bekleyen" sayılıyordu.
+    const teslimBekleyen = kapanisSatir.filter((x) => x.kapanis_tamam && !x.teslim_var);
     // Alarm YALNIZ tam denklemden: gün sürerken kısmi Δ gerçek fark değildir.
     const kasaFarkli = kapanisSatir.filter((x) => {
       const d = ktDelta(x);
@@ -4589,7 +4599,9 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
                       v: (
                         <span style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
                           <span style={{ fontFamily: F.mono, fontWeight: 700 }}>
-                            {ciroT ? tl(ciroT) : '—'}
+                            {/* 🔵 EVV-OPS3-B: kapanmış günde 0 ciro GERÇEK (0 satış) → '0 ₺' göster,
+                                '—' (veri yok) DEĞİL. Kapanmamışsa ve 0 ise '—'. */}
+                            {(x.kapanis_tamam || ciroT) ? tl(ciroT) : '—'}
                           </span>
                           {ciroT ? (
                             <span style={{ fontSize: 10, color: R.not2, fontFamily: F.mono, whiteSpace: 'nowrap' }}>
@@ -4605,7 +4617,7 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
                     // Kapanış yoksa kasa sayımı/devir HENÜZ YOK — 0 yazmak sahte
                     // sayıdır (şube kapanmadı, sayım yapılmadı demektir).
                     { v: x.kapanis_tamam ? tl(x.kasa_sayim) : '—', mono: true, sag: true, renk: x.kapanis_tamam ? undefined : R.not3 },
-                    { v: sayi(x.teslim_kasa_tl) ? tl(x.teslim_kasa_tl) : '—', mono: true, sag: true, renk: sayi(x.teslim_kasa_tl) ? R.yesil : x.kapanis_tamam ? R.amber : R.not3 },
+                    { v: x.teslim_var ? tl(sayi(x.teslim_kasa_tl)) : '—', mono: true, sag: true, renk: x.teslim_var ? R.yesil : x.kapanis_tamam ? R.amber : R.not3 },
                     { v: x.kapanis_tamam ? tl(x.devir) : '—', mono: true, sag: true, renk: R.not },
                     d.gecerli
                       ? {
@@ -5485,7 +5497,10 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     const notlar = Array.isArray(tsNotlar) ? tsNotlar : [];
     const tahminler = Array.isArray(tsTahmin?.tahminler) ? tsTahmin.tahminler : [];
     const kpilar = Array.isArray(tsKpi?.kpilar) ? tsKpi.kpilar : [];
-    const kritikTahmin = tahminler.filter((t) => sayi(t.kalan_gun) > 0 && sayi(t.kalan_gun) <= 7);
+    // 🔴 EVV-OPS3-A (2026-08-13 satır-satır, tedarik lensi): eskiden `kalan_gun > 0`
+    // ZATEN TÜKENMİŞ (0/negatif) kalemleri riskten düşürüyordu → sipariş ekranında EN acil
+    // (bugün sipariş et) olanlar KPI'dan kaçıyordu. null=forecast yok (hariç); tükenmiş DAHİL.
+    const kritikTahmin = tahminler.filter((t) => t.kalan_gun != null && sayi(t.kalan_gun) <= 7);
     const kotuKpi = kpilar.filter((k) => k.yon === 'kotu');
     // Aynı ilişkinin İKİ YÖNÜ yan yana: ne gönderdik ↔ ne geldi.
     // Eskiden yalnız "gelen" vardı; giden yönlendirme logu hiç görünmüyordu.
@@ -5506,7 +5521,7 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
         <KpiSeridi kpiler={[
           { etiket: 'Teslim alan şube', deger: `${teslimSube.length} şube`, alt: `son ${sayi(tsTeslim?.gun) || 14} gün`, renk: R.krem },
           { etiket: 'Şube notu', deger: String(notlar.length), alt: 'merkeze düşen kayıt', renk: notlar.length ? R.mavi : R.yesil },
-          { etiket: 'Tükenme riski', deger: String(kritikTahmin.length), alt: kritikTahmin.length ? '7 günden az kalan kalem' : 'kritik kalem yok', renk: kritikTahmin.length ? R.kirmizi : R.yesil },
+          { etiket: 'Tükenme riski', deger: String(kritikTahmin.length), alt: kritikTahmin.length ? '≤7 gün kalan · tükenmiş dahil' : 'kritik kalem yok', renk: kritikTahmin.length ? R.kirmizi : R.yesil },
           { etiket: 'Kötüleşen KPI', deger: String(kotuKpi.length), alt: kotuKpi.length ? kotuKpi.map((k) => k.etiket).slice(0, 2).join(', ') : 'tümü iyi/nötr', renk: kotuKpi.length ? R.amber : R.yesil },
         ]} />
 

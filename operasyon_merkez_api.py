@@ -2154,6 +2154,10 @@ def kapanis_takip(tarih: Optional[str] = None):
             "kasa_sayim":      float(kap.get("kasa_sayim") or 0),
             "devir":           devir_kalan,
             "teslim_kasa_tl":  teslim_kasa,
+            # 🔵 EVV-OPS3-B (2026-08-13): teslim_kasa 0'ı hem "gerçek 0 teslim" hem "teslim
+            # kaydı YOK" için üretiyordu → ekran 0 TL'yi "bekliyor/—" gösteriyordu. Bu bayrak
+            # teslim'in AÇIKÇA girildiğini söyler: 0 gerçekse frontend '0 ₺' (temiz) gösterir.
+            "teslim_var":      (kap.get("teslim") is not None) if kap else False,
             "ara_teslim_tl":   ara_teslim,
             "kapanis_personel": str(kap.get("personel_ad") or ""),
             # Ciro taslak
