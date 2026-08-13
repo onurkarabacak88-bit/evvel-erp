@@ -1452,6 +1452,10 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     catch (e) { onToast?.(e?.message || 'Tedarik dosyası okunamadı', 'red'); return; }
     const gonderim = d?.toptanci_siparisler || d?.gonderimler || [];
     const faturalar = d?.faturalar || [];
+    // 🔵 EVV-OPS2-N5 (2026-08-13): GRNI/"zincir tamam" kararı faturalar.length'ten
+    // türüyordu ama iptal/taslak fatura da sayılıyordu → geçersiz fatura zinciri
+    // "tamam/borç işlendi" gösterebiliyordu. Yalnız GEÇERLİ (iptal/taslak değil) say.
+    const gecerliFatura = faturalar.filter((f) => !/(iptal|taslak|reddedild)/i.test(String(f.durum || '')));
     const kabul = d?.kabul_farklari || d?.kabul || [];
     const satirlar = [];
     satirlar.push({
@@ -1489,7 +1493,7 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
         { v: f.durum || 'kayıtlı', rozet: R.yesil },
       ],
     }));
-    if (!faturalar.length) {
+    if (!gecerliFatura.length) {
       satirlar.push({
         id: 'n4x', hucreler: [
           { v: '④ Fatura' }, { v: '—' },
@@ -1504,12 +1508,12 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
       alt: 'siparişin tam zinciri — talep, gönderim, kabul, fatura',
       kpi: [
         { etiket: 'Gönderim', deger: String(gonderim.length) },
-        { etiket: 'Fatura', deger: String(faturalar.length), renk: faturalar.length ? R.yesil : R.amber },
+        { etiket: 'Fatura', deger: String(gecerliFatura.length), renk: gecerliFatura.length ? R.yesil : R.amber },
         { etiket: 'Kabul farkı', deger: String(kabul.length), renk: kabul.length ? R.kirmizi : R.yesil },
       ],
       listeBaslik: 'Zincir — basamak basamak',
       satirlar,
-      not: faturalar.length
+      not: gecerliFatura.length
         ? 'Zincir tamam: mal geldi, faturası kayıtlı — borç satırı cariye işlendi.'
         : 'Fatura gelmedi. Bu teslimat borç SATIRI değil; Tedarikçi Bakiyesi\'nde '
           + '"📦 faturasız teslimat" olarak GERÇEK BORÇ sütununa eklenir. Fatura '
@@ -4967,7 +4971,10 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
       ['fire', `🔥 Fire (${fireKayit.length})`],
       ['fis', `🧾 Gider fişi (${fisListe.length})`],
       ['kontrol', '🔍 Kontrol özeti'],
-      ['kayip', `📉 Stok kaybı (${kayipListe.length})`],
+      // 🔵 EVV-OPS2-N6 (2026-08-13): tab badge yalnız kayipListe.length'ti → özet açık
+      // (kayipToplamAcik>0) ama detay listesi boşsa "Stok kaybı (0)" gösteriyordu (KPI/body
+      // açık kayıp derken). kayipVar ise en az '!' göster.
+      ['kayip', `📉 Stok kaybı (${kayipListe.length || (kayipVar ? '!' : '0')})`],
       ['alarm', `🔐 Güvenlik (${sayi(mdAlarm?.alarm_sayisi)})`],
       ['mesaj', `📢 Merkez mesajı (${okunmamisMesaj})`],
       ['muhur', '🔓 Mühür açma'],
