@@ -22,6 +22,11 @@ import { R, F, kartYuzey } from './tema';
 import { KpiSeridi, Hero, Tablo, BosDurum, HataBandi } from './parcalar';
 
 const sayi = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+// 🔴 CANLI HOTFIX (2026-08-14): trSayi bu dosyada TANIMSIZDI (7. trSayi tuzağı —
+// helper-existence kuralı). P&L merdiveni kars=0 iken render edilmeyince hata
+// gizli kalıyordu; %0-rozet düzeltmesi yolu açınca ReferenceError ile TÜM modül
+// çöküyordu (siyah ekran). Diğer v2 dosyalarındaki tanımın birebir aynısı.
+const trSayi = (n, b = 1) => (Number(n) || 0).toFixed(b).replace('.', ',');
 const AYLAR = ['Oca', 'Şub', 'Mar', 'Nis', 'May', 'Haz', 'Tem', 'Ağu', 'Eyl', 'Eki', 'Kas', 'Ara'];
 const tarihKisa = (iso) => {
   const s = String(iso || '').slice(0, 10);
