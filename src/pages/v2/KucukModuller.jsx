@@ -1180,6 +1180,9 @@ export function RaporModulu({ gorunum, onCekmece, onKopru, onToast }) {
   const [muhurVeri, setMuhurVeri] = useState(null);   // {yukleniyor, muhur|null}
   const [muhurOnay, setMuhurOnay] = useState(null);   // {ad} — iki adımlı onay
   const [muhurMesgul, setMuhurMesgul] = useState(false);
+  // 🔵 EVV-RAP-N1 (Codex): geri-alınamaz mühür için state-guard yarış-açık (rerender'dan
+  // önce 2. tık eski closure'ı görür) → SENKRON ref-latch ile sağlamlaştır.
+  const muhurKilitRef = useRef(false);
 
   const muhurDurumYukle = useCallback((donem) => {
     const [y, m] = String(donem).split('-');
@@ -1197,6 +1200,8 @@ export function RaporModulu({ gorunum, onCekmece, onKopru, onToast }) {
   }, [gorunum, muhurAy, muhurDurumYukle]);
 
   const muhurle = async () => {
+    if (muhurKilitRef.current) return;   // 🔵 EVV-RAP-N1: senkron ref-latch (irreversible seal)
+    muhurKilitRef.current = true;
     const [y, m] = String(muhurAy).split('-');
     setMuhurMesgul(true);
     try {
@@ -1212,6 +1217,7 @@ export function RaporModulu({ gorunum, onCekmece, onKopru, onToast }) {
       onToast?.(e?.message || 'Mühürlenemedi');
       muhurDurumYukle(muhurAy);
     } finally {
+      muhurKilitRef.current = false;
       setMuhurMesgul(false);
     }
   };
@@ -1235,6 +1241,9 @@ export function RaporModulu({ gorunum, onCekmece, onKopru, onToast }) {
     const son = trend[trend.length - 1];
     const toplamCiro = trend.reduce((s, t) => s + sayi(t.ciro), 0);
     const toplamNet = trend.reduce((s, t) => s + sayi(t.net), 0);
+    // 🔵 EVV-RAP-N2 (2026-08-13): satır marj'ı net/GELİR iken özet "ortalama marj"
+    // net/CİRO kullanıyordu (gelir≠ciro ise KPI satırlarla uzlaşmıyordu). Aynı payda.
+    const toplamGelir = trend.reduce((s, t) => s + sayi(t.gelir), 0);
     const marj = (t) => (sayi(t.gelir) ? (sayi(t.net) / sayi(t.gelir)) * 100 : 0);
     const enIyi = trend.reduce((a, b) => (marj(a) >= marj(b) ? a : b));
     const enZayif = trend.reduce((a, b) => (marj(a) <= marj(b) ? a : b));
@@ -1506,7 +1515,7 @@ export function RaporModulu({ gorunum, onCekmece, onKopru, onToast }) {
         {raporBolumleri}
         <KpiSeridi kpiler={[
           { etiket: `${trend.length} ay ciro`, deger: fmt(toplamCiro), alt: `${trend[0].ay_kisa} – ${son.ay_kisa}` },
-          { etiket: `${trend.length} ay net`, deger: fmt(toplamNet), alt: toplamCiro ? `ortalama marj %${trSayi((toplamNet / toplamCiro) * 100)}` : '—', renk: toplamNet >= 0 ? R.yesil : R.kirmizi },
+          { etiket: `${trend.length} ay net`, deger: fmt(toplamNet), alt: toplamGelir ? `ortalama marj %${trSayi((toplamNet / toplamGelir) * 100)}` : '—', renk: toplamNet >= 0 ? R.yesil : R.kirmizi },
           { etiket: 'En iyi ay', deger: enIyi.ay_kisa, alt: `marj %${trSayi(marj(enIyi))}`, renk: R.yesil },
           { etiket: 'En zayıf ay', deger: enZayif.ay_kisa, alt: `marj %${trSayi(marj(enZayif))}`, renk: R.kirmizi },
         ]} />
@@ -1567,6 +1576,14 @@ export function RaporModulu({ gorunum, onCekmece, onKopru, onToast }) {
         { etiket: 'Çıkan', deger: fmt(gider), alt: 'kasa çıkışı', renk: R.kirmizi },
         { etiket: 'Net', deger: fmt(gelir - gider), alt: 'bu ay', renk: gelir - gider >= 0 ? R.yesil : R.kirmizi },
       ]} />
+      {/* 🔵 EVV-RAP-N3 (2026-08-13): /ledger limit=300 + tablo 150'ye kırpıyordu →
+          denetim/mutabakat KISMİ defter üzerinde yapılıyordu. Tabloda 300'ü göster;
+          fetch 300 tavanına ulaştıysa "defter eksik olabilir" uyar. */}
+      {satir.length >= 300 && (
+        <div style={{ ...kartYuzey, padding: '10px 16px', marginBottom: 12, borderLeft: `3px solid ${R.amber}`, fontSize: 12, color: R.metin2 }}>
+          ⚠ Bu ay 300 kayıt tavanına ulaştı — işlem defteri EKSİK olabilir. Kayıt sayısı ve toplamlar bu ayın tamamını yansıtmayabilir.
+        </div>
+      )}
       {satir.length ? (
         <Tablo
           baslik={`İşlem defteri · ${AY_KISA[Number(ay.slice(5, 7)) - 1]} ${ay.slice(0, 4)}`}
@@ -1574,7 +1591,7 @@ export function RaporModulu({ gorunum, onCekmece, onKopru, onToast }) {
           kolonlar={[
             { ad: 'Tarih' }, { ad: 'İşlem' }, { ad: 'Açıklama' }, { ad: 'Tutar', sag: true }, { ad: 'Kaynak' },
           ]}
-          satirlar={satir.slice(0, 150).map(r => ({
+          satirlar={satir.slice(0, 300).map(r => ({
             id: r.id, _r: r,
             hucreler: [
               { v: kisaTarih(r.tarih), mono: true },
