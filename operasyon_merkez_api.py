@@ -16024,13 +16024,20 @@ def ops_maliyet_vergi_ozet(
     satirlar = []
     toplam_vergi = 0.0
     toplam_kar = 0.0
+    eksik_subeler = []   # 🔴 P1 (2026-08-13, Codex): sessiz-0 yerine açık işaret
     for s in subeler:
+        _veri_eksik = False
         try:
             # bas/bit AÇIKÇA None — yoksa Query() varsayılan nesnesi truthy olup tarih filtresini kırar
             gg = ops_maliyet_gun_gun(gun=gun, sube_id=s["id"], bas=None, bit=None)
             favok = sum(float(r.get("favok_tl") or 0) for r in gg.get("satirlar", []))
         except Exception:
+            # Eskiden hata YUTULUP favok=0 yazılıyordu — şubenin vergisi sessizce
+            # 0 görünüyor, toplam/mükellef kartı eksik çıkıyordu. 0 yine yazılır
+            # (hesap durmasın) ama satır + cevap İŞARETLENİR; ekran bandı basar.
             favok = 0.0
+            _veri_eksik = True
+            eksik_subeler.append(s["ad"])
         yillik = favok * (365.0 / gun) if gun > 0 else favok
         if s["vergi_tipi"] == "sahis":
             yillik_vergi = _gelir_vergisi_yillik(yillik)
@@ -16047,6 +16054,7 @@ def ops_maliyet_vergi_ozet(
             "tahmini_vergi_tl": round(max(0.0, donem_vergi), 2),
             "efektif_oran_pct": round(efektif, 1),
             "vergi_sonrasi_kar_tl": round(favok - max(0.0, donem_vergi), 2),
+            **({"veri_eksik": True} if _veri_eksik else {}),
         })
         toplam_vergi += max(0.0, donem_vergi)
         toplam_kar += favok
@@ -16085,6 +16093,9 @@ def ops_maliyet_vergi_ozet(
     mukellefler.sort(key=lambda x: -x["tahmini_vergi_tl"])
     return {
         "gun": gun, "sube_id": sube_id,
+        # 🔴 P1 (2026-08-13, Codex): şube motoru düşünce hata yutulup 0 yazılıyordu
+        # — ekran bandı basabilsin diye açık liste.
+        "eksik_subeler": eksik_subeler,
         "satirlar": sorted(satirlar, key=lambda x: -x["tahmini_vergi_tl"]),
         "toplam_vergi_tl": round(toplam_vergi, 2),
         "toplam_vergi_oncesi_kar_tl": round(toplam_kar, 2),
@@ -16152,6 +16163,10 @@ def ops_maliyet_kdv_pozisyon(
     # sinyal alıyordu. Çözüm: her şube için AYRI çağrı (~0,7 sn/şube).
     ind_urunac_map: Dict[str, float] = {}
     ind_urunac_toplam = 0.0
+    # 🔴 P1 (2026-08-13, Codex): tek büyük try TÜM şubeleri sessizce sıfırlıyordu;
+    # bir şubenin motoru düşünce diğerleri de kayboluyor, indirilecek 0 kalıp
+    # ödenecek KDV ŞİŞİYORDU. Şube başına try + açık eksik listesi.
+    ind_eksik_subeler: list = []
     try:
         if sube_id:
             _hedefler = [sube_id]
@@ -16160,15 +16175,21 @@ def ops_maliyet_kdv_pozisyon(
                 _cur9.execute("SELECT id::text AS id FROM subeler "
                               "WHERE COALESCE(aktif,TRUE)=TRUE AND id <> 'sube-merkez'")
                 _hedefler = [r["id"] for r in _cur9.fetchall()]
-        for _sid in _hedefler:
+    except Exception as _e:  # noqa: BLE001
+        logger.warning("kdv hedef listesi hata: %s", str(_e)[:120])
+        _hedefler = [sube_id] if sube_id else []
+        ind_eksik_subeler.append("(hedef listesi okunamadı)")
+    for _sid in _hedefler:
+        try:
             _gg = ops_maliyet_gun_gun(gun=gun, sube_id=_sid, bas=None, bit=None)
             for _r in _gg.get("satirlar", []):
                 _s = str(_r.get("sube_id") or _sid or "")
                 _k = float(_r.get("indirilecek_kdv_tl") or 0)
                 ind_urunac_map[_s] = ind_urunac_map.get(_s, 0.0) + _k
                 ind_urunac_toplam += _k
-    except Exception as _e:  # noqa: BLE001
-        logger.warning("kdv sube kirilimi hata: %s", str(_e)[:120])
+        except Exception as _e:  # noqa: BLE001
+            logger.warning("kdv sube kirilimi hata (%s): %s", _sid, str(_e)[:120])
+            ind_eksik_subeler.append(ad_map.get(_sid) or _sid)
 
     sids = set(ciro_map) | set(fatura_map) | set(ind_urunac_map)
     if sube_id:
@@ -16219,6 +16240,8 @@ def ops_maliyet_kdv_pozisyon(
     mukellefler.sort(key=lambda x: -x["net_tl"])
     return {
         "gun": gun, "sube_id": sube_id, "kdv_oran": _KDV,
+        # İndirilecek hesabı düşen şubeler — ekran "KDV şişkin olabilir" bandı basar
+        "indirilecek_eksik_subeler": ind_eksik_subeler,
         "satirlar": sorted(satirlar, key=lambda x: -x["odenecek_kdv_tl"]),
         # Beyan bu kırılımda verilir — ödenecek toplam mükellef içinde netleşir
         "mukellefler": mukellefler,
@@ -17049,8 +17072,11 @@ def ops_fiyat_zam_alarmlari(gun: int = 90, sadece_yeni: bool = False, limit: int
                     "goruldu": bool(d.get("goruldu")),
                     "olusturma": str(d.get("olusturma") or "")[:16].replace("T", " "),
                 })
-        except Exception:
-            out = []
+        except Exception as _e:
+            # 🔴 P1 (2026-08-13, Codex): gerçek sorgu/DB hatası []'e çevriliyordu —
+            # ekran "fiyat artışı yok, tedarik sakin" diyordu (sahte-sakin). Tablo
+            # yokluğu YUKARIDA meşru boş; kalan her hata açık 500 (FE bandı var).
+            raise HTTPException(500, f"Fiyat alarm listesi okunamadı: {str(_e)[:120]}")
     return {"alarmlar": out, "toplam": len(out), "esik_yuzde": FIYAT_ZAM_ESIK_YUZDE}
 
 
@@ -17064,10 +17090,12 @@ def ops_fiyat_zam_gorduldu(body: FiyatZamGorulduBody):
     if not aid:
         raise HTTPException(400, "id zorunlu")
     with db() as (conn, cur):
-        try:
-            cur.execute("UPDATE fiyat_zam_alarmi SET goruldu=TRUE WHERE id=%s", (aid,))
-        except Exception:
-            pass
+        # 🔴 P1 (2026-08-13, Codex): hem SQL hatası hem 0-satır güncelleme "ok"
+        # dönüyordu — kullanıcı "İncelendi" toast'ı alıyor, kayıt işaretlenmemiş
+        # kalıyordu. Hata açık; bulunamayan id 404.
+        cur.execute("UPDATE fiyat_zam_alarmi SET goruldu=TRUE WHERE id=%s", (aid,))
+        if cur.rowcount == 0:
+            raise HTTPException(404, "Alarm kaydı bulunamadı — listeyi yenileyin")
     return {"ok": True}
 
 
@@ -17457,9 +17485,15 @@ def ops_maliyet_guven_skoru(
         cogs_skor = 0.0; cogs_msg = "ürün-aç verisi yok"
         try:
             p = [gun - 1] + ([sid] if sid else [])
+            # 🔴 P1 (2026-08-13, EVV-MAL / Codex): ürün-aç defterini okuyan HER sorgu
+            # İKİ ETİKETİ de saymalı (defter dersi: URUN_AC + URUN_KULLANIMA_AL —
+            # bitince-modu FIX C1'den beri ikinci etiketle yazıyor). Bu okuyucu tek
+            # etiketi sayıyordu → bitince-modu şubede maliyet DOĞRUYKEN güven skoru
+            # "ciro var ürün-aç yok" diye haksız düşüyordu.
             cur.execute(
                 f"""SELECT sube_id::text AS sid, tarih::text AS t FROM operasyon_defter
-                    WHERE etiket='URUN_AC' AND tarih >= CURRENT_DATE - (%s || ' days')::interval {sube_filt}""",
+                    WHERE etiket IN ('URUN_AC','URUN_KULLANIMA_AL')
+                      AND tarih >= CURRENT_DATE - (%s || ' days')::interval {sube_filt}""",
                 p,
             )
             urunac_set = {(r["sid"], r["t"]) for r in cur.fetchall()}

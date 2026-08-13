@@ -196,7 +196,10 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
     if (!adaylar) {
       api('/recete/eslestirme-adaylar')
         .then((d) => setAdaylar(d || {}))
-        .catch(() => setAdaylar({}));
+        // 🟡 P2 (2026-08-13, Codex): hata {} yapınca truthy kalıyor, bir daha HİÇ
+        // denenmiyordu — elle eşleştirme listeleri oturum boyu boş kalıyordu.
+        // null bırak → sonraki modal açılışında yeniden dener.
+        .catch(() => setAdaylar(null));
     }
   };
 
@@ -332,13 +335,27 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
     if (gorunum === 'vergi') vergiYukle();
   }, [gorunum, ozetYukle, receteYukle, alarmYukle, kontrolYukle, vergiYukle, gercekYukle]);
 
-  // Aktif alış fiyatı haritası: kalem_kodu → {maliyet, birim} (en güncel geçerli)
+  // Aktif alış fiyatı haritası: kalem_kodu → {maliyet, birim} (BUGÜN geçerli olan)
+  // 🟡 P2 (2026-08-13, Codex): eski filtre yalnız gecerli_bitis'e bakıyordu —
+  // GELECEK tarihli fiyat (bitis=null) bugünden seçiliyor, bugün geçerli satır
+  // (bitis=gelecek) atlanıyordu. Doğru kural: baslangic ≤ bugün < bitis; en
+  // güncel başlangıç kazanır. (Yalnız legacy/yedek hesap — projeksiyon satır
+  // maliyeti sunucudan gelir.)
   const fiyatMap = useMemo(() => {
+    // "bugün" YEREL parçalardan (Codex diff-review: toISOString UTC'dir —
+    // TR 00:00-02:59 arasında günü geri kaydırıp yanlış fiyat seçerdi)
+    const _d = new Date();
+    const _p = (n) => String(n).padStart(2, '0');
+    const bugun = `${_d.getFullYear()}-${_p(_d.getMonth() + 1)}-${_p(_d.getDate())}`;
     const m = {};
     (fiyatlar || []).forEach((f) => {
-      if (f.gecerli_bitis) return; // kapanmış fiyat
+      const bas = String(f.gecerli_baslangic || '').slice(0, 10);
+      const bit = String(f.gecerli_bitis || '').slice(0, 10);
+      if (bas && bas > bugun) return;        // henüz başlamamış (gelecek fiyat)
+      if (bit && bit <= bugun) return;       // kapanmış fiyat
       const k = String(f.kalem_kodu);
-      if (!m[k]) m[k] = { maliyet: sayi(f.birim_maliyet_tl), birim: f.birim || 'adet' };
+      const once = m[k];
+      if (!once || bas > once._bas) m[k] = { maliyet: sayi(f.birim_maliyet_tl), birim: f.birim || 'adet', _bas: bas };
     });
     return m;
   }, [fiyatlar]);
@@ -404,7 +421,8 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
     if (!m) return;
     const tutar = Number(String(m.birim_maliyet_tl).replace(',', '.'));
     if (!String(m.kalem_kodu || '').trim()) { onToast?.('Kalem kodu zorunlu'); return; }
-    if (!Number.isFinite(tutar) || tutar < 0) { onToast?.('Geçerli birim maliyet girin'); return; }
+    // P2 fix (Codex): sunucu 0'ı da reddediyor (0 maliyeti sıfırlar) — FE hizalandı
+    if (!Number.isFinite(tutar) || tutar <= 0) { onToast?.('Birim maliyet 0\'dan büyük olmalı (0 maliyeti sıfırlar)'); return; }
     setFpMesgul(true);
     try {
       await api('/ops/maliyet/fatura-kalem-onayla', { method: 'POST', body: {
@@ -435,9 +453,23 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
   const rcUygula = async () => {
     const m = rcModal;
     if (!m) return;
+    // 🟡 SAVUNMA (2026-08-13, Codex): kanonik projeksiyon kaynağında CRUD butonları
+    // zaten gizli; yine de yanlış-evren yazımına ikinci kemer.
+    if ((m.tip === 'duzenle' || m.tip === 'sil') && receteKaynak === 'recete_projeksiyon') {
+      onToast?.('Bu reçete kanonik evrenden geliyor — düzenleme Reçete Eşleştirme ekranından yapılır');
+      return;
+    }
     setRcMesgul(true);
     try {
       if (m.tip === 'duzenle') {
+        // 🔴 P1 (2026-08-13, Codex): kodu boş satırlar SESSİZCE düşüyordu — kullanıcı
+        // yeni hammadde ekleyip başarı toast'ı alıyor, satır hiç yazılmıyordu.
+        const kodsuz = (m.kalemler || []).filter((k) => !String(k.hammadde_kodu || '').trim()
+          && (String(k.hammadde_adi || '').trim() || String(k.miktar || '').trim()));
+        if (kodsuz.length) {
+          onToast?.(`${kodsuz.length} satırın hammadde KODU boş — kod girilmeden kaydedilmez (satır sessizce düşerdi)`);
+          setRcMesgul(false); return;
+        }
         const kalemler = (m.kalemler || [])
           .filter((k) => String(k.hammadde_kodu || '').trim())
           .map((k) => ({
@@ -459,7 +491,8 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
         const r = await api('/ops/maliyet/food-cost-hesapla', { method: 'POST', body: {
           tarih: m.tarih || null, tarih_bitis: m.tarih_bitis || null, sube_id: m.sube_id || null,
         } });
-        onToast?.(`✓ Food-cost hesaplandı${r?.gun_sayisi != null ? ` — ${sayi(r.gun_sayisi)} gün` : ''}`);
+        // alan adı: sunucu hesaplanan_gun döner (gun_sayisi eski beklentiydi)
+        onToast?.(`✓ Food-cost hesaplandı${(r?.hesaplanan_gun ?? r?.gun_sayisi) != null ? ` — ${sayi(r?.hesaplanan_gun ?? r?.gun_sayisi)} gün` : ''}`);
       }
       setRcModal(null);
       receteYukle();
@@ -504,6 +537,13 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
                     <input value={k.hammadde_adi ?? k.hammadde_kodu ?? ''}
                       onChange={(e) => setRcModal((p) => ({ ...p, kalemler: p.kalemler.map((x, j) => j === i ? { ...x, hammadde_adi: e.target.value } : x) }))}
                       style={mlAlanStil} />
+                  </div>
+                  {/* P1 fix: yeni satırın KOD alanı yoktu — kodsuz satır kayda giremiyordu */}
+                  <div style={{ maxWidth: 130 }}>
+                    <label style={mlEtiket}>Kod *</label>
+                    <input value={k.hammadde_kodu ?? ''} placeholder="stok kodu"
+                      onChange={(e) => setRcModal((p) => ({ ...p, kalemler: p.kalemler.map((x, j) => j === i ? { ...x, hammadde_kodu: e.target.value } : x) }))}
+                      style={{ ...mlAlanStil, fontFamily: F.mono, fontSize: 11.5 }} />
                   </div>
                   <div style={{ maxWidth: 100 }}>
                     <label style={mlEtiket}>Miktar</label>
@@ -675,10 +715,15 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
       gunMap[t].maliyet += sayi(g.actual_open_cogs_tl ?? g.gercek_maliyet_tl ?? g.teorik_maliyet_tl);
       gunMap[t].fire += sayi(g.shrinkage_tl);
     });
-    const siraliGunler = Object.keys(gunMap).sort();
+    // 🔴 P1 (2026-08-13, EVV-MAL): f946935 dersi bu ekrana taşınmamıştı — KPI ve
+    // seri TÜM günlerden toplanıyordu. Cirosuz günün (kapanmamış bugün / eksik
+    // giriş) birikmiş maliyeti food cost'u ve fire oranını ŞİŞİRİYOR, grafikte
+    // %0 noktalar sahte düşüş çiziyordu. Toplamlar/seri YALNIZ CİROLU günlerden.
+    const siraliGunler = Object.keys(gunMap).sort().filter((t) => gunMap[t].ciro > 0);
+    const cirosuzGun = Object.keys(gunMap).length - siraliGunler.length;
     const seri = siraliGunler.map((t) => {
       const g = gunMap[t];
-      return g.ciro > 0 ? (g.maliyet / g.ciro) * 100 : 0;
+      return (g.maliyet / g.ciro) * 100;
     });
     const toplamCiro = siraliGunler.reduce((s, t) => s + gunMap[t].ciro, 0);
     const toplamMaliyet = siraliGunler.reduce((s, t) => s + gunMap[t].maliyet, 0);
@@ -700,7 +745,7 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
     return (
       <>
         <KpiSeridi kpiler={[
-          { etiket: 'Food cost (30 gün)', deger: foodCost == null ? '—' : pct(foodCost), alt: `benchmark ${bandMetni}`, renk: foodCost == null ? R.not : foodCost > bmax ? R.kirmizi : R.yesil },
+          { etiket: 'Food cost (30 gün)', deger: foodCost == null ? '—' : pct(foodCost), alt: `benchmark ${bandMetni}${cirosuzGun > 0 ? ` · ${cirosuzGun} cirosuz gün hariç` : ''}`, renk: foodCost == null ? R.not : foodCost > bmax ? R.kirmizi : R.yesil },
           {
             etiket: 'Stok değeri',
             deger: fmt(sayi(ozet.stok_degeri_tl ?? ozet.toplam_stok_degeri_tl)),
@@ -754,7 +799,9 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
                   📊 Kâr merdiveni · son {sayi(pnl.gun)} gün
                 </span>
                 <span style={{ fontSize: 11.5, color: R.not2 }}>tahakkuk — nakit takvimi Ödeme Merkezi'nde</span>
-                {kars ? (
+                {/* 🟡 P2 (Codex): %0 karşılama EN kritik durumdu ama truthy kontrol
+                    yüzünden rozet kayboluyordu — null/undefined'dan ayrıştırıldı. */}
+                {pnl.favok_finansman_karsilama_pct != null ? (
                   <span style={{ marginLeft: 'auto', fontSize: 12, fontWeight: 700, color: kars >= 100 ? R.yesil : R.kirmizi }}>
                     FAVÖK, finansmanın %{trSayi(kars, 0)}'ini karşılıyor
                   </span>
@@ -892,6 +939,20 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
           );
         })()}
 
+        {/* 🟡 P2 (2026-08-13, Codex): eşik hesaplanamayınca (değişken oran ≥%100)
+            kart SESSİZCE kayboluyordu — API "hesaplanamaz" bilgisini uyarılarla
+            birlikte taşıyor; ekran açıkça söyler. */}
+        {basabas && !basabas?.basabas?.nakit && (
+          <div style={{
+            ...kartYuzey, padding: '12px 17px', marginBottom: 14,
+            borderLeft: `3px solid ${R.amber}`, fontSize: 12, color: R.metin2, lineHeight: 1.6,
+          }}>
+            ⚖️ <b>Başabaş hesaplanamıyor</b> — {(basabas.uyarilar || basabas.varsayimlar || [])
+              .slice(0, 2).join(' · ') || 'değişken oranlar eşiği tanımsız bırakıyor (food cost + kesinti ≥ %100 olabilir)'}.
+            Bu bir veri/oran sorunudur, "başabaş yok" demek değildir.
+          </div>
+        )}
+
         {/* ── GÜNLÜK KÂR & VERGİ (sahip isteği 2026-08-03: "eski alandaki gibi
             günlük net kâr + vergiyi Maliyet'te göreyim") — klasik Kâr&Maliyet
             ekranının P&L alt satırı. Sunucu HER alanı zaten gönderiyordu
@@ -1016,9 +1077,12 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
             Sahip doktrini + Codex (2026-08-03): para ÜRÜN-AÇ'tan sürülür, reçete
             KONTROL eder. Beklenen ASLA ölçeklenmez — kapsama % ile alt sınırdır. */}
         {(() => {
-          const l1 = gunler.reduce((s, g) => s + sayi(g.actual_open_cogs_tl ?? g.gercek_maliyet_tl ?? g.teorik_maliyet_tl), 0);
           const l2li = gunler.filter((g) => g.theoretical_recipe_cogs_tl != null);
           if (!l2li.length) return null;
+          // 🔴 P1 (2026-08-13, Codex): L1 TÜM günlerden, L2 yalnız L2'li günlerden
+          // toplanıyordu — pencereler farklı olunca sapma sahte büyüyordu (10 günlük
+          // gerçekten 4 günlük beklenen çıkarılıyordu). İkisi de AYNI gün kümesinden.
+          const l1 = l2li.reduce((s, g) => s + sayi(g.actual_open_cogs_tl ?? g.gercek_maliyet_tl ?? g.teorik_maliyet_tl), 0);
           const l2 = l2li.reduce((s, g) => s + sayi(g.theoretical_recipe_cogs_tl), 0);
           const sapma = l1 - l2;
           const kapsamalar = l2li.map((g) => sayi(g.teorik_kapsama_pct)).filter((x) => x > 0);
@@ -1030,6 +1094,7 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
                 <span style={{ fontFamily: F.baslik, fontSize: 14, fontWeight: 600 }}>Gerçek ↔ Beklenen</span>
                 <span style={{ fontSize: 12, color: R.metin2 }}>
                   gerçek (ürün-aç) <b style={{ fontFamily: F.mono, color: R.krem }}>{fmt(l1)}</b>
+                  <span style={{ color: R.not2, fontSize: 10.5 }}> · {l2li.length} kıyas günü</span>
                 </span>
                 <span style={{ fontSize: 12, color: R.metin2 }}>
                   beklenen (satış×reçete) <b style={{ fontFamily: F.mono, color: R.mavi }}>{fmt(l2)}</b>
@@ -1074,9 +1139,16 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
                 </span>
                 <span style={{ fontSize: 12.5, color: R.metin2 }}>
                   <b>Maliyet güven skoru</b>
-                  {zayif.length
-                    ? ` — zayıf halka: ${zayif.map((k) => k.baslik).join(', ')}`
-                    : ' — veri kalitesi iyi'}
+                  {/* 🟡 P2 (2026-08-13, Codex): zayıf yokken "veri kalitesi iyi"
+                      basılıyordu — tüm kovalar ORTA ya da kritik sapma varken bile.
+                      Metin gerçek duruma göre kademeli. */}
+                  {(() => {
+                    const orta = kovalar.filter((k) => k.durum === 'orta');
+                    if (zayif.length) return ` — zayıf halka: ${zayif.map((k) => k.baslik).join(', ')}`;
+                    if (sayi(guven.kritik_sapma) > 0) return ' — kritik sapma var, aşağıya bak';
+                    if (orta.length) return ` — orta güven: ${orta.map((k) => k.baslik).join(', ')}`;
+                    return ' — veri kalitesi iyi';
+                  })()}
                 </span>
                 {/* Kova kova skor: hangi girdi maliyeti güvenilmez yapıyor */}
                 <span style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginLeft: 'auto' }}>
@@ -1131,15 +1203,32 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
           const kolonlar = Array.isArray(gunGun.kolonlar) ? gunGun.kolonlar : [];
           const satirlarG = Array.isArray(gunGun.satirlar) ? gunGun.satirlar : [];
           const fiyatsiz = Array.isArray(gunGun.fiyat_eksik_kalemler) ? gunGun.fiyat_eksik_kalemler : [];
-          if (!kolonlar.length || !satirlarG.length) return null;
-          // Grup toplamı: tüm gün+şube satırları üzerinden
+          // 🔴 P1 (2026-08-13, Codex): genelToplam=0 iken blok tamamen null dönüyordu
+          // — ama fiyatsız-kalem uyarısı da onun İÇİNDEYDİ. Tüm açılan kalemler
+          // fiyatsızsa (toplam 0) tam da uyarının EN GEREKLİ olduğu anda kayboluyor,
+          // food cost sahte-temiz kalıyordu. Uyarı artık toplamdan bağımsız.
           const gruplar = kolonlar.map((k) => ({
             kod: k.kod,
             baslik: k.baslik,
             toplam: satirlarG.reduce((s, r) => s + sayi(r[k.kod]), 0),
           })).filter((g) => g.toplam > 0).sort((a, b) => b.toplam - a.toplam);
           const genelToplam = gruplar.reduce((s, g) => s + g.toplam, 0);
-          if (!genelToplam) return null;
+          const fiyatsizBlok = fiyatsiz.length > 0 && (
+            <div style={{
+              marginTop: 11, padding: '9px 13px', borderRadius: 10,
+              background: `${R.kirmizi}12`, border: `1px solid ${R.kirmizi}33`,
+              fontSize: 11.5, color: R.not, lineHeight: 1.55,
+            }}>
+              ⚠ <b>{fiyatsiz.length} kalemin alış fiyatı tanımlı değil</b> — bu kalemler maliyete
+              {' '}<b>hiç girmiyor</b>, food cost olduğundan düşük görünüyor:
+              {' '}{fiyatsiz.slice(0, 8).join(' · ')}{fiyatsiz.length > 8 ? ` +${fiyatsiz.length - 8}` : ''}
+            </div>
+          );
+          if (!genelToplam) {
+            return fiyatsizBlok
+              ? <div style={{ ...kartYuzey, padding: '13px 18px', marginBottom: 14 }}>{fiyatsizBlok}</div>
+              : null;
+          }
           return (
             <div style={{ ...kartYuzey, padding: '15px 18px', marginBottom: 14 }}>
               <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>
@@ -1174,17 +1263,7 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
                 })}
               </div>
               {/* Fiyatı tanımsız kalem = maliyete HİÇ girmiyor → food cost düşük çıkar */}
-              {fiyatsiz.length > 0 && (
-                <div style={{
-                  marginTop: 11, padding: '9px 13px', borderRadius: 10,
-                  background: `${R.kirmizi}12`, border: `1px solid ${R.kirmizi}33`,
-                  fontSize: 11.5, color: R.not, lineHeight: 1.55,
-                }}>
-                  ⚠ <b>{fiyatsiz.length} kalemin alış fiyatı tanımlı değil</b> — bu kalemler maliyete
-                  {' '}<b>hiç girmiyor</b>, food cost olduğundan düşük görünüyor:
-                  {' '}{fiyatsiz.slice(0, 8).join(' · ')}{fiyatsiz.length > 8 ? ` +${fiyatsiz.length - 8}` : ''}
-                </div>
-              )}
+              {fiyatsizBlok}
             </div>
           );
         })()}
@@ -1209,7 +1288,7 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
             deger={foodCost == null ? '—' : pct(foodCost)}
             delta={bench?.ad}
             deltaTip={bench?.tip || 'notr'}
-            not={`Son ${siraliGunler.length} günün toplamı: ciro ${fmt(toplamCiro)} · ürün maliyeti ${fmt(toplamMaliyet)}. Kahve zinciri normu ${bandMetni} — çizgi bu bandın üstüne çıktığı gün maliyet yönetimi gerektirir.`}
+            not={`Son ${siraliGunler.length} CİROLU günün toplamı: ciro ${fmt(toplamCiro)} · ürün maliyeti ${fmt(toplamMaliyet)}${cirosuzGun > 0 ? ` (${cirosuzGun} cirosuz gün orana katılmaz)` : ''}. Kahve zinciri normu ${bandMetni} — çizgi bu bandın üstüne çıktığı gün maliyet yönetimi gerektirir.`}
             seri={seri}
             seriEtiket={siraliGunler.map(tarihKisa)}
             seriAd="food cost"
@@ -1325,7 +1404,7 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
         ) : (
           <Tablo
             baslik="Beklenen ürün maliyeti · reçete × alış fiyatı (teyit katmanı)"
-            not="satıra tıkla → reçete kırılımı"
+            not={`satıra tıkla → reçete kırılımı${hesapli.length > 80 ? ` · ilk 80 / ${hesapli.length} ürün` : ''}`}
             kolonlar={[
               { ad: 'Ürün' }, { ad: 'Hammadde', sag: 1 }, { ad: 'Fiyatsız', sag: 1 },
               { ad: 'Malzeme maliyeti', sag: 1 }, { ad: 'Durum' },
@@ -1544,7 +1623,7 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
           ) : (
             <>
               <div style={{ fontSize: 11, letterSpacing: '.7px', textTransform: 'uppercase', color: R.not2, fontWeight: 700, marginBottom: 8 }}>
-                Onay bekleyen ({oneriler.length})
+                Onay bekleyen ({oneriler.length}){oneriler.length > 40 ? ' · ilk 40 gösteriliyor — onayladıkça kalanlar gelir' : ''}
               </div>
               {oneriler.length === 0 ? (
                 <div style={{ fontSize: 12.5, color: R.not, padding: '10px 0 16px' }}>
@@ -1638,7 +1717,7 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
               )}
 
               <div style={{ fontSize: 11, letterSpacing: '.7px', textTransform: 'uppercase', color: R.not2, fontWeight: 700, marginBottom: 8 }}>
-                Onaylı eşleşmeler ({onaylilar.length})
+                Onaylı eşleşmeler ({onaylilar.length}){onaylilar.length > 60 ? ' · ilk 60 gösteriliyor' : ''}
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 5, maxHeight: 200, overflowY: 'auto' }}>
                 {onaylilar.length === 0 ? (
@@ -1704,6 +1783,13 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
     }
 
     const kiyas = Array.isArray(kontrol.kiyas) ? kontrol.kiyas : [];
+    // 🟡 (2026-08-13, Codex): eşikler artık SUNUCUDAN (kontrol.esikler) — %15
+    // burada hard-code'du; motor eşiği değişirse ekran sessizce eski eşikle
+    // boyardı (benchmark bandı kuralının aynısı). Yedek değerler eski davranış.
+    const E = kontrol.esikler || {};
+    const fazlaE = sayi(E.fazla_pct) || 15;
+    const kaliciOrtE = sayi(E.kalici_ort_pct) || 10;
+    const kaliciGunE = sayi(E.kalici_min_gun) || 3;
     // Malzeme bazında grupla
     const gruplar = {};
     kiyas.forEach((s) => {
@@ -1714,14 +1800,13 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
     const netYuzde = (s) => s.fark_yuzde_fire_sonrasi ?? s.fark_yuzde;
     const grupListe = Object.values(gruplar).map((g) => {
       const olculen = g.gunler.filter((s) => netFark(s) != null);
-      const fazla = olculen.filter((s) => (netYuzde(s) ?? 0) >= 15);
-      // KALICI TEK YÖNLÜ fark = insanın bakacağı yer (motorun kendi notu):
-      // ölçülen ≥3 gün ve hepsi aynı yönde ve ortalama %10'u aşıyor
+      const fazla = olculen.filter((s) => (netYuzde(s) ?? 0) >= fazlaE);
+      // KALICI TEK YÖNLÜ fark = insanın bakacağı yer (motorun kendi notu)
       const ort = olculen.length
         ? olculen.reduce((t, s) => t + (netYuzde(s) ?? 0), 0) / olculen.length : 0;
-      const kalici = olculen.length >= 3
+      const kalici = olculen.length >= kaliciGunE
         && (olculen.every((s) => netFark(s) > 0) || olculen.every((s) => netFark(s) < 0))
-        && Math.abs(ort) >= 10;
+        && Math.abs(ort) >= kaliciOrtE;
       return { ...g, olculen, fazla, ort, kalici };
     }).sort((a, b) => b.fazla.length - a.fazla.length || Math.abs(b.ort) - Math.abs(a.ort));
     const toplamFazla = grupListe.reduce((t, g) => t + g.fazla.length, 0);
@@ -1733,9 +1818,9 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
     return (
       <>
         <KpiSeridi kpiler={[
-          { etiket: 'İzlenen malzeme', deger: String(grupListe.length), alt: `son ${sayi(kontrol.kesit_gun)} gün · onaylı eşleşme` },
-          { etiket: 'Fazla kullanım', deger: String(toplamFazla), alt: 'beklenenden %15+ fazla (gün×malzeme)', renk: toplamFazla > 0 ? R.kirmizi : R.yesil },
-          { etiket: 'En sert sapma', deger: _sapmalar.length ? pct(enSert) : '—', alt: 'tek günde (±)', renk: _sapmalar.length && Math.abs(enSert) >= 15 ? R.kirmizi : R.krem },
+          { etiket: 'İzlenen malzeme', deger: String(grupListe.length), alt: `son ${sayi(kontrol.kesit_gun)} gün · onaylı eşleşme${sayi(kontrol.kesilen_satir) > 0 ? ` · ⚠ ${sayi(kontrol.kesilen_satir)} satır kesildi` : ''}` },
+          { etiket: 'Fazla kullanım', deger: String(toplamFazla), alt: `beklenenden %${fazlaE}+ fazla (gün×malzeme)`, renk: toplamFazla > 0 ? R.kirmizi : R.yesil },
+          { etiket: 'En sert sapma', deger: _sapmalar.length ? pct(enSert) : '—', alt: 'tek günde (±)', renk: _sapmalar.length && Math.abs(enSert) >= fazlaE ? R.kirmizi : R.krem },
           { etiket: 'Eşleşme', deger: `${sayi(kontrol.onayli_urun_es)} ürün · ${sayi(kontrol.onayli_malzeme_es)} malzeme`, alt: 'onaylı köprüler' },
         ]} />
 
@@ -1802,7 +1887,7 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
                             <span style={{ color: R.metin2 }}>gerçek <b style={{ fontFamily: F.mono }}>{s.gercek_miktar}</b></span>
                             <span style={{
                               fontFamily: F.mono, fontSize: 11.5, fontWeight: 700, minWidth: 58, textAlign: 'right',
-                              color: (y ?? 0) >= 15 ? R.kirmizi : (y ?? 0) <= -15 ? R.amber : R.yesil,
+                              color: (y ?? 0) >= fazlaE ? R.kirmizi : (y ?? 0) <= -fazlaE ? R.amber : R.yesil,
                             }}>
                               {f > 0 ? '+' : ''}{f}{y != null ? ` (%${Math.round(y)})` : ''}
                             </span>
@@ -1922,8 +2007,16 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
     if (vergi.kdv == null) {
       return <HataBandi mesaj="KDV pozisyon verisi gelmedi — '0 KDV' yanıltıcı olabilir, yenileyin." onTekrar={vergiYukle} />;
     }
+    // 🟡 P2 (2026-08-13): KDV için banner vardı, VERGİ için yoktu (asimetri) —
+    // vergi-özet düşünce "Tahminî vergi 0₺" temiz görünüyordu.
+    if (vergi.vergi == null) {
+      return <HataBandi mesaj="Vergi özeti gelmedi — 'vergi 0' yanıltıcı olabilir, yenileyin." onTekrar={vergiYukle} />;
+    }
     const kdv = vergi.kdv || {};
     const vrg = vergi.vergi || {};
+    // Sunucunun yeni işaretleri: şube motoru düşmüşse rakamlar EKSİK demektir
+    const eksikVergi = Array.isArray(vrg.eksik_subeler) ? vrg.eksik_subeler : [];
+    const eksikKdv = Array.isArray(kdv.indirilecek_eksik_subeler) ? kdv.indirilecek_eksik_subeler : [];
     const kdvSatir = Array.isArray(kdv.satirlar) ? kdv.satirlar : [];
     const vrgSatir = Array.isArray(vrg.satirlar) ? vrg.satirlar : [];
     const odenecek = sayi(kdv.toplam_odenecek_tl);
@@ -1955,6 +2048,19 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
           KDV ne gelir ne giderdir — devlet adına tahsil edilir/ödenir, bu yüzden kâr tablosuna
           <b>&nbsp;girmez</b>. Vergi rakamı <b>tahminîdir</b>: yönetsel gösterge, resmî beyan değil.
         </div>
+
+        {/* Şube motoru düşen hesaplar — sessiz-0 yerine açık uyarı (2026-08-13) */}
+        {(eksikVergi.length > 0 || eksikKdv.length > 0) && (
+          <div style={{
+            ...kartYuzey, padding: '11px 16px', marginBottom: 14,
+            borderLeft: `3px solid ${R.kirmizi}`, fontSize: 12, color: R.metin2, lineHeight: 1.6,
+          }}>
+            ⚠ <b>Bazı şubelerin hesabı okunamadı</b> — rakamlar EKSİK:
+            {eksikVergi.length > 0 && <> vergi tarafında {eksikVergi.join(', ')} (kâr 0 sayıldı);</>}
+            {eksikKdv.length > 0 && <> KDV tarafında {eksikKdv.join(', ')} (indirilecek 0 kaldı → ödenecek KDV şişkin görünebilir).</>}
+            {' '}Yenileyin; sürerse sistem yöneticisine bildirin.
+          </div>
+        )}
 
         {/* ── 🏛️ MÜKELLEF BAZLI — beyan ŞUBEYE değil MÜKELLEFE verilir ──
             2026-08-09 sahip denetimi: şube bazlı toplam iki şeyi yanlış gösteriyordu.
@@ -2208,6 +2314,11 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
           {/* Fiyatı olan kalemler — düzelt / sil / KDV ata */}
           {!!(fiyatlar || []).length && (
             <div style={{ marginTop: 14, maxHeight: 340, overflowY: 'auto' }}>
+              {(fiyatlar || []).length > 60 && (
+                <div style={{ fontSize: 10.5, color: R.not2, marginBottom: 6 }}>
+                  ilk 60 kalem gösteriliyor · toplam {(fiyatlar || []).length} — aradığın yoksa "+ Alış fiyatı gir" ile kod yazarak ekle
+                </div>
+              )}
               {(fiyatlar || []).slice(0, 60).map((f, i) => {
                 const kdv = (kdvOranlar || []).find((k) => String(k.kalem_kodu) === String(f.kalem_kodu));
                 return (
@@ -2281,6 +2392,7 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
             <div style={{ marginTop: 14 }}>
               <div style={{ fontSize: 12, color: R.metin2, marginBottom: 8 }}>
                 <b>{sayi(fpSatirlar.length)}</b> kalem onay bekliyor
+                {fpSatirlar.length > 40 ? ` · ilk 40 gösteriliyor — onayladıkça kalanlar listeye girer` : ''}
               </div>
               {fpSatirlar.slice(0, 40).map((x, i) => (
                 <div key={i} style={{
@@ -2377,6 +2489,11 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
               <span style={{ fontFamily: F.baslik, fontSize: 15.5, fontWeight: 600 }}>Fiyat zinciri</span>
               <span style={{ fontSize: 11, color: R.not2 }}>her değişiklik kim/ne zaman/etki ile kayıtlı</span>
             </div>
+            {alarmlar.length > 25 && (
+              <div style={{ fontSize: 10.5, color: R.not2, marginBottom: 8 }}>
+                ilk 25 alarm gösteriliyor · toplam {alarmlar.length}
+              </div>
+            )}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
               {alarmlar.slice(0, 25).map((a) => {
                 const artis = sayi(a.artis_yuzde);

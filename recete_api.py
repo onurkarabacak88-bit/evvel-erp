@@ -453,7 +453,15 @@ def recete_kontrol(gun: int = 7, taze: int = 0):
         cur.execute("""SELECT tip, kaynak_ad, hedef_ad, hedef_kod
                        FROM recete_eslestirme WHERE durum='onayli'""")
         onayli = [dict(r) for r in cur.fetchall() or []]
-        urun_es = {r["kaynak_ad"]: r["hedef_ad"] for r in onayli if r["tip"] == "urun"}
+        # 🔴 P1 (2026-08-13, EVV-MAL / Codex): tek-değerli dict ÇOKLU onaylı ürün
+        # eşleşmesinde son-yazan-kazanır ("latte"→"Latte Ice" VE →"Latte 14 Oz"
+        # kuralın kendisi!) → kaybolan hedefin satışları beklenen'e HİÇ girmiyordu,
+        # beklenen eksilip sapma şişiyordu. Kaynak → HEDEF LİSTESİ (malzeme tarafı
+        # zaten böyleydi); satışlar tüm eşleşen adlardan TOPLANIR.
+        urun_es: Dict[str, list] = {}
+        for r in onayli:
+            if r["tip"] == "urun":
+                urun_es.setdefault(r["kaynak_ad"], []).append(r["hedef_ad"])
         # malzeme → KOD LİSTESİ: depoda kopya kalemler var (örn. 'Plastik bardak' ×2)
         # — aynı malzemenin tüm onaylı kodlarının açılışları TOPLANIR (çift kod kıyası bozmasın)
         malzeme_es: Dict[str, list] = {}
@@ -507,8 +515,9 @@ def recete_kontrol(gun: int = 7, taze: int = 0):
             for _s, sd in (dict(row)["veri_json"].get("subeler") or {}).items():
                 for u in sd.get("cok_satilan") or []:
                     ad_n = None
-                    for rn, ea in urun_es.items():
-                        if _norm(str(u.get("ad") or "")) == _norm(ea):
+                    _sat_n = _norm(str(u.get("ad") or ""))
+                    for rn, ea_list in urun_es.items():
+                        if any(_sat_n == _norm(ea) for ea in ea_list):
                             ad_n = rn
                             break
                     if not ad_n or ad_n not in recete_map:
@@ -704,7 +713,13 @@ def recete_kontrol(gun: int = 7, taze: int = 0):
     return {
         "kesit_gun": g,
         "onayli_urun_es": len(urun_es), "onayli_malzeme_es": len(malzeme_es),
-        "kiyas": sonuc[:100],
+        # 🟡 P2 (2026-08-13, Codex): [:100] sessiz kesikti — 18 malzeme × 7 gün =
+        # 126 satırda son 26 düşüyor, KPI'lar eksik veriyle kuruluyordu. Cap 400 +
+        # kesilirse açıkça söylenir. Eşikler de artık TEK KAYNAK burada (FE %15'i
+        # hard-code ediyordu).
+        "kiyas": sonuc[:400],
+        "kesilen_satir": max(0, len(sonuc) - 400),
+        "esikler": {"fazla_pct": 15, "kalici_min_gun": 3, "kalici_ort_pct": 10},
         "not": "GÖZLEMDİR, hüküm değil: beklenen=Evo satış × reçete (çevrimler "
                "/parametreler'de, varsayım olabilir); gerçek=ürün-aç defteri × ambalaj "
                "içeriği (/ambalajlar). Fark ± fire/işçilik payı normaldir; KALICI ve "
@@ -1064,8 +1079,10 @@ def unutulan_urun_ac(gun: int = 7):
         # onaylı eşleşmeler + reçete bardak kalemleri (recete_kontrol ile aynı mantık)
         cur.execute("""SELECT kaynak_ad, hedef_ad FROM recete_eslestirme
                        WHERE durum='onayli' AND tip='urun'""")
-        urun_es = {r["kaynak_ad"]: r["hedef_ad"] for r in
-                   (dict(x) for x in cur.fetchall() or [])}
+        # P1 fix (2026-08-13): satır satır kur — kaynak→tek-hedef dict'i çoklu
+        # onaylı eşleşmede (8oz/14oz) erken hedefi düşürüyordu.
+        _es_rows = [dict(x) for x in cur.fetchall() or []]
+        urun_es = {r["kaynak_ad"]: r["hedef_ad"] for r in _es_rows}
         cur.execute("""
             SELECT r.urun_ad_norm, k.malzeme_ad
             FROM recete r JOIN recete_kalem k ON k.recete_id = r.id
@@ -1076,7 +1093,7 @@ def unutulan_urun_ac(gun: int = 7):
             bk = (_RECETE_BAR_ES.get(m) or (None,))[0]
             if bk in hedef_keys:
                 urun_bardak[row["urun_ad_norm"]] = bk
-        evo_ad_to_norm = { _norm(ea): rn for rn, ea in urun_es.items() }
+        evo_ad_to_norm = { _norm(r["hedef_ad"]): r["kaynak_ad"] for r in _es_rows }
         # Evo günlük ürün satışları (cache) → şube-gün-bar_key beklenen bardak adedi
         cur.execute("""SELECT bastar::text AS gun, veri_json FROM evo_rapor_cache
                        WHERE anahtar='sube-grup-detay' AND bastar=bittar
