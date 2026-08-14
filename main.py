@@ -513,6 +513,17 @@ def _gece_yarisi_scheduler():
             except Exception as e:
                 logger.warning(f"⏰ Scheduler K1 mutabakat hatası: {e}")
 
+            # FİNANSAL DUYU taraması (2026-08-14) — gecikmiş ödeme +
+            # FIN_KART_ODEME_GIRILMEMIS ("ödedim ama deftere girmedim", OPET vakası).
+            # Uç yalnız POST-tetikliydi; kimse çağırmazsa duyu hiç duymuyordu.
+            # Salt-okur + hata-yutar; gözlem yazımı zaten idempotent (referans_id).
+            try:
+                from finansal_duyu_api import tarama as _fin_tarama
+                _ft = _fin_tarama()
+                logger.info(f"⏰ Scheduler: finansal duyu tarandı ({_ft.get('yazilan')})")
+            except Exception as e:
+                logger.warning(f"⏰ Scheduler finansal duyu hatası: {e}")
+
             # FAZ 1c+ (2026-07-06) — ayın 1'i: geçen ayın KDV pozisyonu dönem olayı (idempotent,
             # TAHMİNİ rozetli — beyanname değil). source_ref=YYYY-MM → ayda tek olay.
             if bugun.day == 1:
@@ -2981,6 +2992,13 @@ def anlik_gider_ekle(g: AnlikGider):
         raise HTTPException(400, "Tutar sayı olmalı")
     if g.tutar <= 0:
         raise HTTPException(400, "Tutar pozitif olmalı")
+    # 🔴 SAHİP TALİMATI (2026-08-14): "para çıkışlarında açıklama zorunlu hale getir!"
+    # Canlı vaka: 26 Tem 42.000 ₺ anlık gider AÇIKLAMASIZ girilmiş — aylar sonra
+    # neye gittiği kimse bilmiyor, belge de bağlanamıyor. Elle girilen serbest
+    # metinli çıkışta ad zorunludur; sistem-üretimli akışlar (plan/vadeli/borç
+    # ödemesi) kendi açıklamasını taşır, onlara dokunulmadı.
+    if len((g.aciklama or "").strip()) < 3:
+        raise HTTPException(400, "Açıklama zorunlu — para çıkışı adsız olamaz (neye ödendiğini yazın)")
     sv = (g.sube or "").strip()
     if sv and sv.upper() != "MERKEZ":
         raise HTTPException(
@@ -3015,15 +3033,11 @@ def anlik_gider_ekle(g: AnlikGider):
         # V4 (Ödeme Merkezi): opsiyonel tedarikçi kolonu — lazy migration
         cur.execute("ALTER TABLE anlik_giderler ADD COLUMN IF NOT EXISTS tedarikci TEXT")
         _ted = (g.tedarikci or "").strip() or None
-        # 🏪 KİMLİK/AD AYRIMI (2026-08-09): `sube` GÖRÜNEN AD, `sube_id` JOIN
-        # ANAHTARI. Eskiden bir migration `sube_id = sube` diye kopyalıyordu;
-        # canlıda 412 satırın 344'ünde sube_id de ad tutuyordu ve id ile JOIN
-        # yapan sorgular o satırları sessizce kaçırıyordu. Artık kaynakta çözülür.
-        _sid = _sube_kanonik(cur, g.sube)
+        # sube_id GENERATED (2026-08); yazılmaz, sube'den türer.
         cur.execute("""INSERT INTO anlik_giderler
-            (id,tarih,kategori,tutar,aciklama,sube,sube_id,odeme_yontemi,kart_id,kaynak_id,kaynak_tablo,tedarikci)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-            (gid, g.tarih, g.kategori, g.tutar, g.aciklama, g.sube, _sid,
+            (id,tarih,kategori,tutar,aciklama,sube,odeme_yontemi,kart_id,kaynak_id,kaynak_tablo,tedarikci)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+            (gid, g.tarih, g.kategori, g.tutar, g.aciklama, g.sube,
              g.odeme_yontemi, g.kart_id, g.kaynak_id, g.kaynak_tablo, _ted))
 
         if g.odeme_yontemi == 'kart':
@@ -3676,6 +3690,12 @@ def kart_hareketleri(kart_id: Optional[str] = None, limit: int = 200):
 
 @app.post("/api/kart-hareketleri")
 def kart_hareket_ekle(h: KartHareket):
+    # 🔴 SAHİP TALİMATI (2026-08-14): kart harcaması/ödemesi de PARA ÇIKIŞIDIR —
+    # adsız olamaz. Bu uç yalnız ELLE girişin kapısıdır: ekstre importu, k1 tanısı,
+    # vadeli-kart yolu ve kart analizi tabloya DOĞRUDAN yazar (grep ile doğrulandı),
+    # bu guard'dan geçmez → otomatik akışlar etkilenmez.
+    if h.islem_turu in ('HARCAMA', 'ODEME') and len((h.aciklama or '').strip()) < 3:
+        raise HTTPException(400, "Açıklama zorunlu — para çıkışı adsız olamaz (neye ödendiğini yazın)")
     with db() as (conn, cur):
         hid = str(uuid.uuid4())
         faiz = abs(h.faiz_tutari) if h.faiz_tutari else 0
@@ -5614,7 +5634,44 @@ def odeme_yap(oid: str, tutar: Optional[float] = None, body: VadeliOdeModel = Va
             borc = kart_borc(cur, body.kart_id)
             kalan_limit = _kanonik_kalan_limit(body.kart_id, float(kart['limit_tutar']) - borc)
             if kalan_limit < odeme_tutari:
-                raise HTTPException(400, f"Kart limiti yetersiz. Kalan: {kalan_limit:,.0f} ₺")
+                # OPET vakası (2026-08-14): limit "yetersiz" görünmesinin en sık
+                # sebebi gerçekten dolu olması değil, ÖDENMİŞ ekstrenin deftere
+                # girilmemiş olması — borç düşmeyince limit de açılmıyor. Sahibe
+                # ne yapacağını söyle (kör "yetersiz" mesajı yol göstermiyordu).
+                _ipucu = ""
+                try:
+                    # ⚠️ PENCERE TANIMI: [kesim, sonraki_kesim) — finansal_duyu_api
+                    # FIN_KART_ODEME_GIRILMEMIS (D1) ve kasa_service kart planı
+                    # yazıcısıyla BİREBİR AYNI. Önceki hâli `tarih >= kesim` idi:
+                    # SONRAKİ dönemlere yapılmış bir ödeme, son ekstre penceresi
+                    # bomboş olsa bile ipucunu susturuyordu (Codex H1).
+                    cur.execute("""
+                        SELECT kesim_tarihi FROM kart_ekstre_donem
+                         WHERE kart_id=%s AND kesim_tarihi IS NOT NULL
+                         ORDER BY donem DESC LIMIT 1
+                    """, (body.kart_id,))
+                    _ked = cur.fetchone()
+                    _kt = _ked and _ked['kesim_tarihi']
+                    if _kt:
+                        _sy, _sa = ((_kt.year + 1, 1) if _kt.month == 12
+                                    else (_kt.year, _kt.month + 1))
+                        _sonraki = kesim_tarihi_hesapla(_sy, _sa, int(kart['kesim_gunu'] or 1))
+                        cur.execute("""
+                            SELECT 1 FROM kart_hareketleri
+                             WHERE kart_id=%s AND islem_turu='ODEME'
+                               AND COALESCE(durum,'aktif')='aktif'
+                               AND tarih >= %s::date AND tarih < %s::date
+                             LIMIT 1
+                        """, (body.kart_id, _kt, _sonraki))
+                        _odeme_var = cur.fetchone() is not None
+                    else:
+                        _odeme_var = True     # ekstre yoksa hüküm verme (ipucu susar)
+                    if not _odeme_var:
+                        _ipucu = (" — Not: bu kartın son ekstre ödemesi kayıtlı görünmüyor; "
+                                  "gerçekte ödediyseniz önce karta ödemeyi girin, limit açılır.")
+                except Exception:  # noqa: BLE001 — ipucu asla asıl hatayı gölgelemesin
+                    _ipucu = ""
+                raise HTTPException(400, f"Kart limiti yetersiz. Kalan: {kalan_limit:,.0f} ₺{_ipucu}")
             # Kart harcaması ekle — kasaya yazma
             hid = str(uuid.uuid4())
             cur.execute("""

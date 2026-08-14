@@ -3276,8 +3276,14 @@ function HizliAksiyonModal({ tip, onKapat, onKaydet }) {
     } else if (tip === 'gider') {
       const tutar = parseFloat(form.tutar);
       if (!tutar || tutar <= 0) { setHata('Geçerli bir tutar girin.'); return; }
-      if (!form.aciklama?.trim() && form.kategori === 'Genel') { setHata('Açıklama veya kategori girin.'); return; }
-      onKaydet('gider', { tarih: form.tarih, tutar, aciklama: form.aciklama || form.kategori, kategori: form.kategori });
+      // Açıklama zorunlu (sahip 2026-08-14) — diğer 6 giriş formuyla aynı eşik.
+      // Eski hâlde guard yalnız kategori 'Genel' iken tetikleniyordu ve açıklama
+      // boşsa KATEGORİ açıklama yerine geçiyordu → kasada "Bakım 42.000 ₺" gibi
+      // adsız çıkış. Sessiz ikame kaldırıldı: ham açıklama neyse o gider.
+      if (!form.aciklama?.trim() || form.aciklama.trim().length < 3) {
+        setHata('Açıklama zorunlu — neye ödendiğini yazın (en az 3 karakter).'); return;
+      }
+      onKaydet('gider', { tarih: form.tarih, tutar, aciklama: form.aciklama.trim(), kategori: form.kategori });
     }
   }
 
@@ -3323,9 +3329,12 @@ function HizliAksiyonModal({ tip, onKapat, onKaydet }) {
               </div>
             </>
           )}
+          {/* Alan ciro ve gider sekmelerinde ORTAK: ciroda opsiyonel (boşsa
+              "Ciro N ₺" fallback'i var), GİDERDE zorunlu — para çıkışı adsız olamaz. */}
           <div className="form-group">
-            <label>Açıklama</label>
-            <input value={form.aciklama} onChange={e => set('aciklama', e.target.value)} placeholder="İsteğe bağlı" />
+            <label>{tip === 'gider' ? 'Açıklama *' : 'Açıklama'}</label>
+            <input value={form.aciklama} onChange={e => set('aciklama', e.target.value)}
+              placeholder={tip === 'gider' ? 'Neye ödendi? (zorunlu)' : 'İsteğe bağlı'} />
           </div>
         </div>
         {hata && (

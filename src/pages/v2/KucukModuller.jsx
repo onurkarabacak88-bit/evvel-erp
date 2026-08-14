@@ -1218,9 +1218,13 @@ export function YukModulu({ gorunum, onCekmece, onKopru, onToast }) {
 // 3) RAPOR & DEFTER — rapor.aylik / rapor.defter
 // ═════════════════════════════════════════════════════════════════════════════
 export function RaporModulu({ gorunum, onCekmece, onKopru, onToast }) {
-  const ay = isoBugun().slice(0, 7);
   // ⚠️ TÜM useState'ler koşullu return'lerin ÜSTÜNDE — aşağıda erken return var,
   // hook sırası bozulursa ekran beyaza düşer (v2 boyunca tekrarlayan tuzak).
+  // 🔴 (2026-08-14, sahip: "raporda sadece Ağustos'u görebiliyorum, ay ay bakamıyorum")
+  // `ay` MOUNT-ANI SABİTİYDİ (tuzak #8): `const ay = isoBugun().slice(0,7)` →
+  // defter hep içinde bulunulan ayı çekiyordu, geçmiş aya bakmanın yolu yoktu.
+  // Backend /ledger `ay` parametresini zaten alıyordu; eksik olan yalnız seçiciydi.
+  const [ay, setAy] = useState(() => isoBugun().slice(0, 7));
   const [muhurAy, setMuhurAy] = useState(() => {
     // Varsayılan: GEÇEN ay — mühürlenen şey biten dönemdir, süren ay değil.
     const d = new Date();
@@ -1273,10 +1277,13 @@ export function RaporModulu({ gorunum, onCekmece, onKopru, onToast }) {
     }
   };
 
+  // ⚠️ Bağımlılık [ay]: useVeri (bu dosya, 90-114) bağımlılık dizisini doğrudan
+  // useEffect'e veriyor → `ay` değişince defter YENİDEN çekilir. Dizi verilmezse
+  // varsayılan [] olur ve seçici çalışsa bile veri hep ilk aya takılı kalırdı.
   const { yukleniyor, hata, veri, yukle } = useVeri([
     ['/rapor/aylik', null],
     [`/ledger?limit=300&ay=${ay}`, null],
-  ]);
+  ], [ay]);
 
   if (yukleniyor) return <Yukleniyor ad="Rapor" />;
   if (hata) return <Hata mesaj={hata} onTekrar={yukle} />;
@@ -1617,22 +1624,65 @@ export function RaporModulu({ gorunum, onCekmece, onKopru, onToast }) {
   // rapor.defter
   const satir = Array.isArray(ledgerHam) ? ledgerHam : (ledgerHam?.rows || []);
   const ozet = ledgerHam?.ozet || {};
+  // ── DÖNEM GEZGİNİ (2026-08-14) ────────────────────────────────────────────
+  // Ay etiketi tek yerden türer; "bu ay" diyen metinler SEÇİLİ ayı yansıtsın.
+  const ayEtiket = `${AY_KISA[Number(ay.slice(5, 7)) - 1]} ${ay.slice(0, 4)}`;
+  const buAy = isoBugun().slice(0, 7);
+  const ayKaydir = (adim) => {
+    const [y, m] = ay.split('-').map(Number);
+    const d = new Date(y, (m - 1) + adim, 1);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  };
+  // İleri gidiş BUGÜNÜN ayında durur — gelecek ayın defteri yok, boş ekran
+  // "kayıt yok mu, sistem mi bozuk?" sorusunu doğurur. Geriye SERT KİLİT YOK:
+  // sistem başlangıcından öncesi dürüstçe boş görünür (uydurma sınır koymuyoruz).
+  const ileriVar = ay < buAy;
+  const gezginDugme = (ad, hedef, aktif) => (
+    <button
+      onClick={() => aktif && setAy(hedef)}
+      disabled={!aktif}
+      style={{
+        padding: '6px 12px', borderRadius: 9, fontFamily: 'inherit', fontSize: 12, fontWeight: 700,
+        border: `1px solid ${aktif ? R.cizgi3 : 'transparent'}`,
+        background: aktif ? R.girinti : 'transparent',
+        color: aktif ? R.krem : R.not3, cursor: aktif ? 'pointer' : 'default',
+      }}
+    >{ad}</button>
+  );
+  const donemGezgini = (
+    <div style={{ ...kartYuzey, padding: '11px 16px', marginBottom: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <span style={{ fontFamily: F.baslik, fontSize: 14.5, fontWeight: 600 }}>📒 Dönem</span>
+        {gezginDugme('‹ önceki', ayKaydir(-1), true)}
+        <span style={{ fontFamily: F.mono, fontSize: 13.5, fontWeight: 700, minWidth: 92, textAlign: 'center' }}>
+          {ayEtiket}
+        </span>
+        {gezginDugme('sonraki ›', ayKaydir(1), ileriVar)}
+        {ay !== buAy && gezginDugme('bugüne dön', buAy, true)}
+        <span style={{ fontSize: 11, color: R.not2, marginLeft: 'auto' }}>
+          {ay === buAy ? 'içinde bulunulan ay' : 'geçmiş dönem'}
+        </span>
+      </div>
+    </div>
+  );
   const gelir = sayi(ozet.toplam_gelir) || satir.filter(r => sayi(r.tutar) > 0).reduce((s, r) => s + sayi(r.tutar), 0);
   const gider = sayi(ozet.toplam_gider) || satir.filter(r => sayi(r.tutar) < 0).reduce((s, r) => s + Math.abs(sayi(r.tutar)), 0);
   return (
     <>
+      {donemGezgini}
       <KpiSeridi kpiler={[
-        { etiket: 'Kayıt', deger: String(satir.length), alt: `${AY_KISA[Number(ay.slice(5, 7)) - 1]} ${ay.slice(0, 4)}` },
+        { etiket: 'Kayıt', deger: String(satir.length), alt: ayEtiket },
         { etiket: 'Giren', deger: fmt(gelir), alt: 'kasa girişi', renk: R.yesil },
         { etiket: 'Çıkan', deger: fmt(gider), alt: 'kasa çıkışı', renk: R.kirmizi },
-        { etiket: 'Net', deger: fmt(gelir - gider), alt: 'bu ay', renk: gelir - gider >= 0 ? R.yesil : R.kirmizi },
+        { etiket: 'Net', deger: fmt(gelir - gider), alt: ayEtiket, renk: gelir - gider >= 0 ? R.yesil : R.kirmizi },
       ]} />
       {/* 🔵 EVV-RAP-N3 (2026-08-13): /ledger limit=300 + tablo 150'ye kırpıyordu →
           denetim/mutabakat KISMİ defter üzerinde yapılıyordu. Tabloda 300'ü göster;
-          fetch 300 tavanına ulaştıysa "defter eksik olabilir" uyar. */}
+          fetch 300 tavanına ulaştıysa "defter eksik olabilir" uyar.
+          (2026-08-14) Uyarı artık SEÇİLİ ayı söylüyor — "bu ay" gezgin varken belirsizdi. */}
       {satir.length >= 300 && (
         <div style={{ ...kartYuzey, padding: '10px 16px', marginBottom: 12, borderLeft: `3px solid ${R.amber}`, fontSize: 12, color: R.metin2 }}>
-          ⚠ Bu ay 300 kayıt tavanına ulaştı — işlem defteri EKSİK olabilir. Kayıt sayısı ve toplamlar bu ayın tamamını yansıtmayabilir.
+          ⚠ {ayEtiket} ayında 300 kayıt tavanına ulaşıldı — işlem defteri EKSİK olabilir. Kayıt sayısı ve toplamlar o ayın tamamını yansıtmayabilir.
         </div>
       )}
       {satir.length ? (
@@ -1685,7 +1735,16 @@ export function RaporModulu({ gorunum, onCekmece, onKopru, onToast }) {
           }}
         />
       ) : (
-        <Bos baslik="Bu ay defter kaydı yok" aciklama="Kasa hareketi oluştukça işlem defteri dolar." aksiyon="İşlem defterini aç" onAksiyon={() => onKopru?.('__modul:rapor:defter')} />
+        /* Boş durum SEÇİLİ ayı söyler; aksiyon "defteri aç" değil (zaten açık) —
+           gezginle başka aya geçmeyi önerir. Geçmiş ayda boş olmak normaldir. */
+        <Bos
+          baslik={`${ayEtiket} ayında defter kaydı yok`}
+          aciklama={ay === buAy
+            ? 'Kasa hareketi oluştukça işlem defteri dolar.'
+            : 'Bu dönemde kasa hareketi kaydedilmemiş. Yukarıdaki ‹ › ile başka bir aya bakabilirsiniz.'}
+          aksiyon={ay === buAy ? undefined : 'Bugüne dön'}
+          onAksiyon={ay === buAy ? undefined : () => setAy(buAy)}
+        />
       )}
     </>
   );

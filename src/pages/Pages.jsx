@@ -2113,6 +2113,10 @@ export function KartHareketleri() {
   );
 
   async function kaydet(){
+    // Açıklama zorunlu (sahip 2026-08-14): kart harcaması/ödemesi de para çıkışı.
+    if(['HARCAMA','ODEME'].includes(form.islem_turu) && (form.aciklama||'').trim().length<3){
+      toast('Açıklama zorunlu — neye ödendiğini yazın','red'); return;
+    }
     try{
       await api('/kart-hareketleri',{method:'POST',body:form});
       publishGlobalDataRefresh('kart-hareketleri');
@@ -2246,7 +2250,7 @@ export function KartHareketleri() {
                 <div className="form-group"><label>Tarih</label><input type="date" value={form.tarih} onChange={e=>setForm({...form,tarih:e.target.value})}/></div>
                 {form.islem_turu==='HARCAMA'&&<div className="form-group"><label>Taksit Sayısı</label><input type="number" min={1} value={form.taksit_sayisi} onChange={e=>setForm({...form,taksit_sayisi:e.target.value})}/></div>}
                 {form.islem_turu==='HARCAMA'&&<div className="form-group"><label>Harcama Türü</label><select value={form.harcama_tipi} onChange={e=>setForm({...form,harcama_tipi:e.target.value})}><option value="isletme">🏢 İşletme</option><option value="sahsi">👤 Şahsi</option><option value="belirsiz">❓ Belirsiz</option></select></div>}
-                <div className="form-group" style={{gridColumn:'1/-1'}}><label>Açıklama</label><input value={form.aciklama} onChange={e=>setForm({...form,aciklama:e.target.value})}/></div>
+                <div className="form-group" style={{gridColumn:'1/-1'}}><label>Açıklama *</label><input value={form.aciklama} placeholder="Neye ödendi? (zorunlu)" onChange={e=>setForm({...form,aciklama:e.target.value})}/></div>
               </div>
             </div>
             <div className="modal-footer">

@@ -265,6 +265,10 @@ export default function OdemeMerkezi() {
     const t = Number(String(sf.tutar).replace(',', '.'));
     if (!t || t <= 0) { toast('Geçerli tutar girin', 'red'); return; }
     if (sf.odeme_yontemi === 'kart' && !sf.kart_id) { toast('Kart seçin', 'red'); return; }
+    // Açıklama zorunlu (sahip 2026-08-14). HAM girdiye bakılır: aşağıda dosya
+    // yoksa açıklamaya '[faturasız alım]' ekleniyor — boş açıklama o etikete
+    // dönüşüp sunucu kontrolünü geçerdi, ama kayıt yine ADSIZ olurdu.
+    if ((sf.aciklama || '').trim().length < 3) { toast('Açıklama zorunlu — neye ödendiğini yazın', 'red'); return; }
     setMesgul(true);
     try {
       const body = { ...sf, tutar: t, tarih: bugunISO() };
@@ -1067,7 +1071,7 @@ export default function OdemeMerkezi() {
                     </select>
                   </div>
                   <input type="number" placeholder="Tutar ₺" value={sf.tutar} onChange={e => setSf({ ...sf, tutar: e.target.value })} />
-                  <input placeholder="Açıklama (ne için ödendi?)" value={sf.aciklama} onChange={e => setSf({ ...sf, aciklama: e.target.value })} />
+                  <input placeholder="Açıklama * (ne için ödendi? — zorunlu)" value={sf.aciklama} onChange={e => setSf({ ...sf, aciklama: e.target.value })} />
                   <input list="omTedarikciler" placeholder="🏪 Tedarikçi (opsiyonel — tedarikçiye ödemeyse seç)"
                     value={sf.tedarikci} onChange={e => setSf({ ...sf, tedarikci: e.target.value })} />
                   <div style={{ display: 'flex', gap: 8 }}>

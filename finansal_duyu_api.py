@@ -20,6 +20,8 @@ FELSEFE (bkz. memory feedback_duyu_ham_veri_once + feedback_duyu_mimari_disiplin
 DUYULAR (namespace'li hipotez_turu — god-object'i önler; her biri AYRI fenomen):
   FIN_KASA_MUTABAKAT  defter(as-of) ↔ çapa farkı  → girilmemiş ödeme/gelir sinyali
   FIN_GECIKMIS_ODEME  vade geçti, plan hâlâ bekliyor
+  FIN_KART_ODEME_GIRILMEMIS  ekstre son ödeme geçti + kayıtlı ödeme yok + kart hâlâ
+                             kullanılıyor → ödeme yapılmış ama deftere girilmemiş
   (sonraki: FIN_PLAN_DESYNC, FIN_PLANSIZ_CIKIS, FIN_MUKERRER_PLAN — aynı omurgaya eklenir)
 
 ŞİDDET (kritik: veri kaybolmasın): ham_tutar + ham_oran + yas_gun AYRI saklanır;
@@ -37,7 +39,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from database import db
-from finans_core import kasa_bakiyesi_tarihte
+from finans_core import kasa_bakiyesi_tarihte, kesim_tarihi_hesapla
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/finansal-duyu", tags=["finansal-duyu"])
@@ -140,7 +142,8 @@ def _gozlem_yaz(cur, *, hipotez_turu: str, tarih: str, kosul_var: bool,
         try:
             from duyu_omurga import duyu_olay_yaz
             _tip_map = {"FIN_KASA_MUTABAKAT": "finans.kasa.mutabakat_gozlemi",
-                        "FIN_GECIKMIS_ODEME": "finans.odeme.gecikme"}
+                        "FIN_GECIKMIS_ODEME": "finans.odeme.gecikme",
+                        "FIN_KART_ODEME_GIRILMEMIS": "finans.kart.odeme_girilmemis"}
             duyu_olay_yaz(
                 "finansal_duyu", _tip_map.get(hipotez_turu, f"finans.genel.{hipotez_turu.lower()}"),
                 referans_id, entity_scope="sube" if sube_id else "genel", entity_id=sube_id,
@@ -259,13 +262,111 @@ def mutabakat_durum():
         }
 
 
+def _kart_odeme_girilmemis_tara(cur, bugun: date) -> int:
+    """🔴 FIN_KART_ODEME_GIRILMEMIS — "ödedim ama deftere girmedim" duyusu.
+
+    OPET 114.846 ₺ VAKASI (2026-08-14): kartın ekstresi kesildi, son ödeme tarihi
+    geçti, sistemde ödeme kaydı YOK — ama kart kesimden sonra harcanmaya devam
+    ediyor. Banka bloke etmediğine göre ödeme gerçekte YAPILMIŞ, yalnız deftere
+    girilmemiş. Sonuç: sahte gecikme, şişik borç, boşuna limit hatası.
+
+    ÜÇ SİNYALİN KESİŞİMİ (üçü birden olmadan hüküm yok):
+      (a) son ödeme tarihi geçmiş,
+      (b) [kesim, sonraki kesim) penceresinde ODEME kaydı yok,
+      (c) kesimden SONRA en az 1 aktif harcama var (kart yaşıyor).
+    (c) olmadan şüphe zayıftır: kart terk edilmiş ya da banka bloke etmiş olabilir.
+
+    ⚠️ Pencere tanımı kasa_service kart planı yazıcısıyla AYNI: [kesim, sonraki_kesim).
+    İki yer farklı pencere kullanırsa biri "ödendi" derken diğeri "ödenmedi" der.
+    ÖNERİ-ONLY + SALT-OKUR: hiçbir kayıt değiştirilmez, yalnız gözlem yazılır.
+    """
+    yazilan = 0
+    cur.execute("SELECT id, kart_adi, banka, kesim_gunu FROM kartlar WHERE aktif=TRUE")
+    for k in (cur.fetchall() or []):
+        kart = dict(k)
+        try:
+            # Son KESİLMİŞ ekstre dönemi. Satır yoksa kart ATLANIR — ekstre
+            # görülmeden "ödenmedi" demek hüküm uydurmaktır (dürüstlük kuralı).
+            cur.execute("""
+                SELECT donem::text AS donem, kesim_tarihi, son_odeme_tarihi,
+                       COALESCE(donem_borcu,0)::float  AS donem_borcu,
+                       COALESCE(asgari_tutar,0)::float AS asgari_tutar
+                  FROM kart_ekstre_donem
+                 WHERE kart_id=%s AND kesim_tarihi IS NOT NULL
+                   AND son_odeme_tarihi IS NOT NULL
+                 ORDER BY donem DESC LIMIT 1
+            """, (kart["id"],))
+            ek = cur.fetchone()
+            if not ek:
+                continue
+            ek = dict(ek)
+            kt, sot = ek["kesim_tarihi"], ek["son_odeme_tarihi"]
+            if not isinstance(kt, date) or not isinstance(sot, date):
+                continue
+            # (a) son ödeme tarihi geçti mi?
+            if bugun <= sot:
+                continue
+            # Pencere üst sınırı: bir sonraki kesim (kasa_service ile aynı tanım)
+            _sy, _sa = (kt.year + 1, 1) if kt.month == 12 else (kt.year, kt.month + 1)
+            sonraki_kesim = kesim_tarihi_hesapla(_sy, _sa, int(kart["kesim_gunu"] or 1))
+            # (b) pencerede ödeme var mı?
+            cur.execute("""
+                SELECT 1 FROM kart_hareketleri
+                 WHERE kart_id=%s AND islem_turu='ODEME' AND COALESCE(durum,'aktif')='aktif'
+                   AND tarih >= %s::date AND tarih < %s::date
+                 LIMIT 1
+            """, (kart["id"], kt, sonraki_kesim))
+            if cur.fetchone():
+                continue
+            # (c) kesimden sonra kart kullanılmaya devam ediyor mu?
+            cur.execute("""
+                SELECT COUNT(*) AS adet FROM kart_hareketleri
+                 WHERE kart_id=%s AND islem_turu='HARCAMA' AND COALESCE(durum,'aktif')='aktif'
+                   AND tarih > %s::date
+            """, (kart["id"], kt))
+            harcama_adet = int((cur.fetchone() or {}).get("adet") or 0)
+            if harcama_adet < 1:
+                continue
+
+            ad = kart.get("kart_adi") or kart.get("banka") or "Kart"
+            donem_kisa = str(ek["donem"])[:7]
+            mesaj = (
+                f"{ad} kartının {donem_kisa} dönemi son ödeme tarihi ({sot}) geçti, "
+                f"kayıtlı ödeme yok ama kart kullanılmaya devam ediyor "
+                f"({harcama_adet} harcama). Ödeme yapılmış olup deftere girilmemiş "
+                f"olabilir. Öneri: karta ödemeyi kaydedin."
+            )
+            if _gozlem_yaz(
+                cur, hipotez_turu="FIN_KART_ODEME_GIRILMEMIS",
+                hedef=f"kartlar:{kart['id']}",
+                tarih=str(sot), kosul_var=True,
+                referans_id=f"fin:kartodeme:{kart['id']}:{donem_kisa}",
+                ham_tutar=ek["donem_borcu"],
+                yas_gun=(bugun - sot).days,
+                detay={
+                    "kart_adi": ad, "banka": kart.get("banka"), "donem": donem_kisa,
+                    "kesim_tarihi": str(kt), "son_odeme_tarihi": str(sot),
+                    "pencere_sonu": str(sonraki_kesim),
+                    "donem_borcu": ek["donem_borcu"], "asgari_tutar": ek["asgari_tutar"],
+                    "kesim_sonrasi_harcama_adet": harcama_adet,
+                    "mesaj": mesaj,
+                },
+            ):
+                yazilan += 1
+        except Exception as e:  # noqa: BLE001 — tek kart bütün taramayı düşürmesin
+            logger.warning("FIN_KART_ODEME_GIRILMEMIS kart=%s atlandı: %s", kart.get("id"), e)
+            continue
+    return yazilan
+
+
 # ── Tarama: gecikmiş ödeme duyusu (FIN_GECIKMIS_ODEME) ──────────────────────
 @router.post("/tarama")
 def tarama():
     """Mevcut durumu tara, ham gözlemleri yaz. Kaynak tablolardan SADECE OKUR.
-    Faz 1: FIN_GECIKMIS_ODEME (vade geçmiş, hâlâ bekleyen plan). Alarm YOK."""
+    Faz 1: FIN_GECIKMIS_ODEME (vade geçmiş, hâlâ bekleyen plan). Alarm YOK.
+    Faz 1b: FIN_KART_ODEME_GIRILMEMIS (ekstre ödendi ama girilmedi şüphesi)."""
     bugun = _bugun()
-    yazilan = {"FIN_GECIKMIS_ODEME": 0}
+    yazilan = {"FIN_GECIKMIS_ODEME": 0, "FIN_KART_ODEME_GIRILMEMIS": 0}
     with db() as (conn, cur):
         _ensure_tablolar(cur)
         cur.execute("""
@@ -287,6 +388,7 @@ def tarama():
                 detay={"aciklama": op.get("aciklama"), "plan_id": op["id"]},
             ):
                 yazilan["FIN_GECIKMIS_ODEME"] += 1
+        yazilan["FIN_KART_ODEME_GIRILMEMIS"] = _kart_odeme_girilmemis_tara(cur, bugun)
     return {"yazilan": yazilan}
 
 

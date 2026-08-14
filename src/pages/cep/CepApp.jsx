@@ -1491,6 +1491,10 @@ function CepAnlikGider({ onGeri }) {
     const tutarN = Number(String(f.tutar).replace(',', '.'));
     if (!tutarN || tutarN <= 0) { setHata('Geçerli tutar girin'); return; }
     if (f.odeme_yontemi === 'kart' && !f.kart_id) { setHata('Kart seçin'); return; }
+    // Açıklama zorunlu (sahip 2026-08-14). HAM girdiye bakılır: aşağıda dosya
+    // yoksa açıklamaya '[faturasız alım]' ekleniyor — boş açıklama o etikete
+    // dönüşüp sunucu kontrolünü geçerdi, ama kayıt yine ADSIZ olurdu.
+    if ((f.aciklama || '').trim().length < 3) { setHata('Açıklama zorunlu — neye ödendiğini yazın'); return; }
     setMesgul(true); setHata(''); setBilgi('');
     try {
       const body = { ...f, tutar: tutarN };
@@ -1575,7 +1579,7 @@ function CepAnlikGider({ onGeri }) {
               ))}
             </div>
 
-            <input placeholder="Açıklama (opsiyonel)" value={f.aciklama}
+            <input placeholder="Açıklama * (neye ödendi? — zorunlu)" value={f.aciklama}
               onChange={e => set('aciklama', e.target.value)} style={{ ...inp, marginBottom: 12 }} />
 
             {/* V4: tedarikçiye ödemeyse SEÇ — cari/mutabakat kesin eşleşir */}

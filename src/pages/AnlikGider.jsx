@@ -70,6 +70,10 @@ export default function AnlikGider({ onNavigate }) {
     if (form.odeme_yontemi === 'kart' && !form.kart_id) {
       toast('Kart seçimi zorunlu', 'red'); return;
     }
+    // Açıklama zorunlu (sahip 2026-08-14) — asıl kapı sunucuda, bu UX katmanı.
+    if ((form.aciklama || '').trim().length < 3) {
+      toast('Açıklama zorunlu — neye ödendiğini yazın', 'red'); return;
+    }
     try {
       const body = { ...form, force };
       if (form.odeme_yontemi === 'nakit') { delete body.kart_id; }
@@ -327,7 +331,7 @@ export default function AnlikGider({ onNavigate }) {
                   </div>
                 )}
 
-                <div className="form-group" style={{gridColumn:'1/-1'}}><label>Açıklama</label><input value={form.aciklama} onChange={e=>setForm({...form,aciklama:e.target.value})} placeholder="Ne için ödendi?"/></div>
+                <div className="form-group" style={{gridColumn:'1/-1'}}><label>Açıklama *</label><input value={form.aciklama} onChange={e=>setForm({...form,aciklama:e.target.value})} placeholder="Ne için ödendi? (zorunlu)"/></div>
                 <div className="form-group" style={{gridColumn:'1/-1'}}>
                   <label>🏪 Tedarikçi <span style={{fontSize:11,color:'var(--text3)'}}>— tedarikçiye ödemeyse seç (cari kesin eşleşir)</span></label>
                   <input list="agTedarikciler" value={form.tedarikci} onChange={e=>setForm({...form,tedarikci:e.target.value})} placeholder="opsiyonel"/>

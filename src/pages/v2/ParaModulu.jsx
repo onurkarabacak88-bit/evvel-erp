@@ -223,6 +223,10 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru, onToast }) {
     // bu UX). Negatif gider = kart borcunu düşürme sömürüsüydü.
     if (sayi(giderForm?.tutar) <= 0) { onToast?.('Tutar pozitif olmalı'); return; }
     if (giderForm.odeme_yontemi === 'kart' && !giderForm.kart_id) { onToast?.('Kart seçimi zorunlu'); return; }
+    // Açıklama zorunlu (sahip 2026-08-14) — asıl kapı sunucuda, bu UX katmanı.
+    if (String(giderForm.aciklama || '').trim().length < 3) {
+      onToast?.('Açıklama zorunlu — neye ödendiğini yazın'); return;
+    }
     setFormMesgul(true);
     setGiderDup('');
     try {
@@ -1694,8 +1698,9 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru, onToast }) {
                     </div>
                   </div>
                   <div>
-                    <label style={alanEtiket}>Açıklama</label>
-                    <input value={giderForm.aciklama} onChange={(e) => alan('aciklama', e.target.value)} style={alanStil} />
+                    <label style={alanEtiket}>Açıklama *</label>
+                    <input value={giderForm.aciklama} onChange={(e) => alan('aciklama', e.target.value)}
+                      placeholder="Neye ödendi? (zorunlu)" style={alanStil} />
                   </div>
                   <div>
                     <label style={alanEtiket}>Tedarikçi (varsa)</label>

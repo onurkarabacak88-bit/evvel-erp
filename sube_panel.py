@@ -2524,6 +2524,12 @@ def sube_ara_kasa_teslim(sube_id: str, body: AraTeslimModel):
 def sube_anlik_gider_gir(sube_id: str, body: SubeAnlikGiderModel):
     if body.tutar <= 0:
         raise HTTPException(400, "Tutar sıfırdan büyük olmalı")
+    # 🔴 SAHİP TALİMATI (2026-08-14): para çıkışı adsız olamaz. Burada açıklama
+    # boşsa KATEGORİYE düşüyordu (aşağıda `or body.kategori`) → kasada "Diğer"
+    # diye 42.000 ₺ görünüyor, neye gittiği kimse bilmiyor. Şube tarafı da
+    # merkezle aynı kurala tabi: CFO ucu (main.py) ile birebir aynı eşik.
+    if len((body.aciklama or "").strip()) < 3:
+        raise HTTPException(400, "Açıklama zorunlu — para çıkışı adsız olamaz (neye ödendiğini yazın)")
 
     pid_in = (body.personel_id or "").strip()
     pin = (body.pin or "").replace(" ", "")
