@@ -683,7 +683,20 @@ def aylik_odeme_plani_uret(yil=None, ay=None):
         # 3. KREDİ / BORÇ TAKSİTLERİ
         cur.execute("SELECT * FROM borc_envanteri WHERE aktif=TRUE AND aylik_taksit > 0")
         for b in cur.fetchall():
-            odeme_gun = b['odeme_gunu'] or 1
+            # 🔴 KOÇ FİNANS VAKASI (2026-08-14): plan günü `odeme_gunu` alanından
+            # üretiliyordu; KOÇ kaydında elle 1 girilmişti ama kredinin gerçek
+            # takvimi ilk_taksit_tarihi=2025-12-29 (her ayın 29'u) → plan 1 Ağustos'a
+            # yazıldı ve borç sahte biçimde "13 gün gecikti" göründü. Taramada
+            # 9 borcun 2'sinde bu çelişki vardı. Kredi SÖZLEŞMESİNİN takvimi tek
+            # gerçektir: ilk_taksit_tarihi varsa onun günü ESAS, odeme_gunu ile
+            # çelişirse ilk_taksit kazanır.
+            _ilk = b.get('ilk_taksit_tarihi')
+            if isinstance(_ilk, str):          # sürücü/görünüm str döndürebilir
+                try:
+                    _ilk = date.fromisoformat(_ilk[:10])
+                except ValueError:
+                    _ilk = None
+            odeme_gun = _ilk.day if isinstance(_ilk, date) else (b['odeme_gunu'] or 1)
             import calendar
             son_gun = calendar.monthrange(yil, ay)[1]
             odeme_gun = min(odeme_gun, son_gun)
