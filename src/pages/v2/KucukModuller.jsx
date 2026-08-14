@@ -1735,7 +1735,9 @@ export function SistemModulu({ gorunum, onCekmece, onKopru, onToast }) {
   const [tmzMesgul, setTmzMesgul] = useState(false);
   const [tmzSonuc, setTmzSonuc] = useState('');
   const { yukleniyor, hata, veri, yukle } = useVeri([
-    ['/teslim-bildirim/liste?gun=7', null],
+    // hepsi=1 (Codex M15): varsayılan yalnız GÖRÜLMEMİŞLERİ döndürüyordu —
+    // "Son 7 gün teslim" KPI'sı ile "Görülmemiş" aynı kuyruğu iki adla satıyordu.
+    ['/teslim-bildirim/liste?gun=7&hepsi=1', null],
     ['/ops/siparis/depo-akisi-kalinti', null],
     ['/import-izi?limit=30', null],  // DUYU 6/6: import iz defteri
     ['/bilgi-teslim-kayitlari?gun=30&limit=500', null],  // köprü kalktı: şube→merkez not defteri
@@ -1789,10 +1791,11 @@ export function SistemModulu({ gorunum, onCekmece, onKopru, onToast }) {
     return (
       <>
         <KpiSeridi kpiler={[
-          { etiket: 'Kayıtlı yükleme', deger: String(izler.length), alt: 'iz defteri (append-only)' },
+          // Pencere dürüstlüğü (Codex M15): sayılar SON 30 izin toplamı — defterin tamamı değil.
+          { etiket: 'Kayıtlı yükleme', deger: String(izler.length), alt: 'son 30 iz penceresi · append-only' },
           { etiket: 'Son yükleme', deger: izler[0] ? String(izler[0].olusturma).slice(5, 16) : '—', alt: izler[0] ? `${izler[0].toplam_eklenen ?? 0} satır eklendi` : 'henüz iz yok' },
-          { etiket: 'Toplam eklenen', deger: String(izler.reduce((s, r) => s + (Number(r.toplam_eklenen) || 0), 0)), alt: 'izlenen yüklemelerde', renk: R.yesil },
-          { etiket: 'Hatalı satır', deger: String(izler.reduce((s, r) => s + (Number(r.hata_sayisi) || 0), 0)), alt: 'atlanan kayıtlar', renk: izler.some(r => Number(r.hata_sayisi) > 0) ? R.amber : R.yesil },
+          { etiket: 'Toplam eklenen', deger: String(izler.reduce((s, r) => s + (Number(r.toplam_eklenen) || 0), 0)), alt: 'son 30 yüklemede', renk: R.yesil },
+          { etiket: 'Hatalı satır', deger: String(izler.reduce((s, r) => s + (Number(r.hata_sayisi) || 0), 0)), alt: 'son 30 yüklemede atlanan', renk: izler.some(r => Number(r.hata_sayisi) > 0) ? R.amber : R.yesil },
         ]} />
         {/* ── YÜKLEME — iz defteri vardı ama dosya yükleme yoktu (ölü döngü:
             "Excel Import'u aç" düğmesi kendi görünümüne dönüyordu) ── */}
@@ -1815,8 +1818,12 @@ export function SistemModulu({ gorunum, onCekmece, onKopru, onToast }) {
             kart_hareketleri · borclar · personel · sabit_giderler · vadeli_alimlar</span>
             <br />
             Her satır <b>kendi kapsülünde</b> işlenir: hatalı satır kalanları bozmaz,
-            atlanır ve aşağıda sayılır. Aynı kayıt ikinci kez gelirse <b>eklenmez</b>
-            (çakışma sessizce geçilir) — dosyayı yeniden yüklemek mükerrer kayıt üretmez.
+            atlanır ve aşağıda sayılır.
+            <br />
+            <b style={{ color: R.amber }}>⚠ Mükerrer uyarısı:</b> yalnız <span style={{ fontFamily: F.mono }}>kartlar</span> sekmesi
+            aynı kartı ikinci kez eklemez. <b>Diğer TÜM sekmelerde</b> (<span style={{ fontFamily: F.mono }}>ciro</span> dahil —
+            çift ciro + çift kasa hareketi doğurur) aynı dosyayı
+            <b> ikinci kez yüklemek ÇİFT KAYIT üretir</b> — emin değilsen önce iz defterine bak.
           </div>
         </div>
 
@@ -1888,7 +1895,9 @@ export function SistemModulu({ gorunum, onCekmece, onKopru, onToast }) {
   }
 
   if (gorunum === 'teslim') {
-    const gorulmemis = olaylar.filter(o => !o.gorulme_zamani && !o.gorildi);
+    // Sunucu sözleşmesi: goruldu alanı (teslim_bildirim_api:66) — eski kod
+    // olmayan gorulme_zamani/gorildi alanlarını okuyordu.
+    const gorulmemis = olaylar.filter(o => !o.goruldu);
     const bkSube = new Set(bilgiKayitlari.map(r => r.sube_adi || r.sube_id).filter(Boolean)).size;
     return (
       <>
@@ -1896,36 +1905,48 @@ export function SistemModulu({ gorunum, onCekmece, onKopru, onToast }) {
           { etiket: 'Son 7 gün teslim', deger: String(olaylar.length), alt: 'şube depo teslimleri' },
           { etiket: 'Görülmemiş', deger: String(gorulmemis.length), alt: gorulmemis.length ? 'bildirim bekliyor' : 'hepsi görüldü', renk: gorulmemis.length ? R.mavi : R.yesil },
           { etiket: 'Bilgi teslimi', deger: String(bilgiKayitlari.length), alt: `son 30 gün · ${bkSube} şube`, renk: R.krem },
-          { etiket: 'Kalıcı onay', deger: '"Tamam" sunucuda', alt: 'bir daha çıkmaz', renk: R.not },
+          { etiket: 'Kalıcı onay', deger: '«Görüldü» sunucuda', alt: 'işaretlenen bir daha bildirilmez', renk: R.not },
         ]} />
         {olaylar.length ? (
           <Liste
-            baslik="Depo teslim bildirimleri · son 7 gün"
+            baslik={`Depo teslim bildirimleri · son 7 gün${olaylar.length > 40 ? ` · ilk 40 / ${olaylar.length}` : ''}`}
             satirlar={olaylar.slice(0, 40).map((o, i) => ({
               id: o.anahtar || i, _o: o,
-              baslik: `${o.sube_adi || 'Şube'} · ${o.baslik || 'teslim işlendi'}`,
+              baslik: `${o.sube_adi || 'Şube'} · ${o.baslik || o.tur || 'teslim işlendi'}`,
               alt: [o.zaman ? kisaTarih(o.zaman) : null, o.detay].filter(Boolean).join(' · ') || 'ayrıntı yok',
               tutar: sayi(o.tutar) ? fmt(o.tutar) : '',
-              tier: (!o.gorulme_zamani && !o.gorildi) ? 'bilgi' : 'iyi',
+              tier: !o.goruldu ? 'bilgi' : 'iyi',
               aksiyon: 'Bildirimi aç',
             }))}
             onAc={({ _o }) => onCekmece?.({
               tip: 'TESLİM BİLDİRİMİ',
-              baslik: `${_o.sube_adi || 'Şube'} · ${_o.baslik || 'teslim işlendi'}`,
+              baslik: `${_o.sube_adi || 'Şube'} · ${_o.baslik || _o.tur || 'teslim işlendi'}`,
               alt: _o.zaman ? kisaTarih(_o.zaman) : 'zaman yok',
               kpi: [
                 { etiket: 'Şube', deger: _o.sube_adi || '—' },
                 { etiket: 'Zaman', deger: _o.zaman ? kisaTarih(_o.zaman) : '—' },
                 { etiket: 'Tutar', deger: sayi(_o.tutar) ? fmt(_o.tutar) : '—', renk: sayi(_o.tutar) ? R.yesil : R.not },
-                { etiket: 'Durum', deger: (!_o.gorulme_zamani && !_o.gorildi) ? 'görülmedi' : 'görüldü', renk: (!_o.gorulme_zamani && !_o.gorildi) ? R.mavi : R.yesil },
+                { etiket: 'Durum', deger: !_o.goruldu ? 'görülmedi' : 'görüldü', renk: !_o.goruldu ? R.mavi : R.yesil },
               ],
               listeBaslik: 'Bildirim',
               satirlar: [
                 { ad: 'Ayrıntı', detay: 'bildirim metni', tutar: _o.detay || '—' },
                 { ad: 'Anahtar', detay: 'kalıcı onay kimliği', tutar: String(_o.anahtar || '—').slice(0, 24) },
-                { ad: 'Görülme', detay: 'sunucuda saklanır', tutar: _o.gorulme_zamani ? kisaTarih(_o.gorulme_zamani) : 'henüz yok' },
               ],
-              not: '"Tamam" dediğinde onay sunucuya yazılır — bildirim bir daha çıkmaz. Bu kayıt teslimin kendisi değil, teslimin haberidir.',
+              not: 'Bu kayıt teslimin kendisi değil, teslimin haberidir. «Görüldü» onayı sunucuya yazılır — bildirim bir daha görülmemiş sayılmaz.',
+              // 🔴 M15: metin "Tamam sunucuya yazılır" VAAT EDİYORDU ama düğme YOKTU
+              // (/teslim-bildirim/gordum ucu v2'den hiç çağrılmıyordu) — kapı açıldı.
+              aksiyonlar: !_o.goruldu ? [{
+                ad: '✓ Görüldü işaretle',
+                birincil: true,
+                onTikla: async () => {
+                  try {
+                    await api('/teslim-bildirim/gordum', { method: 'POST', body: { anahtar: _o.anahtar } });
+                    onToast?.('✓ Görüldü — sunucuya yazıldı, bir daha bildirilmez');
+                    yukle();
+                  } catch (e) { onToast?.(e?.message || 'İşaretlenemedi'); }
+                },
+              }] : undefined,
             })}
           />
         ) : (
@@ -1936,7 +1957,7 @@ export function SistemModulu({ gorunum, onCekmece, onKopru, onToast }) {
         {bilgiKayitlari.length > 0 && (
           <Tablo
             baslik="Bilgi teslim kayıtları · son 30 gün"
-            not="şubelerin merkeze ilettiği not defteri · satıra tıkla → kaydın tamamı"
+            not={`şubelerin merkeze ilettiği not defteri · satıra tıkla → kaydın tamamı${bilgiKayitlari.length > 60 ? ` · ilk 60 / ${bilgiKayitlari.length}` : ''}`}
             kolonlar={[{ ad: 'Zaman' }, { ad: 'Şube' }, { ad: 'Personel' }, { ad: 'Kayıt' }]}
             satirlar={bilgiKayitlari.slice(0, 60).map((r, i) => ({
               id: r.id || `bk-${i}`, _r: r,
@@ -2027,11 +2048,15 @@ export function SistemModulu({ gorunum, onCekmece, onKopru, onToast }) {
   const kalintiAdet = sayi(kalinti?.toplam) || (kalinti?.kayitlar || []).length;
   return (
     <>
+      {/* 🔴 SAHTE GÜVEN DÜZELTMESİ (M15, Codex+kendi kanıt): eski KPI'lar "Yedek:
+          otomatik" ve "Yetki: mutasyon anahtarı" diyordu — backend'te İKİSİ DE YOK
+          (sistem-sifirla düz TRUNCATE CASCADE, yedeksiz, anahtarsız). En yıkıcı
+          ekranda yanlış güven verilemez; gerçek neyse o yazılır. */}
       <KpiSeridi kpiler={[
         { etiket: 'Depo akışı kalıntısı', deger: String(kalintiAdet), alt: kalintiAdet ? 'temizlenebilir kayıt' : 'temiz', renk: kalintiAdet ? R.amber : R.yesil },
-        { etiket: 'Yedek', deger: 'otomatik', alt: 'silmeden önce alınır', renk: R.yesil },
-        { etiket: 'Geri alma', deger: 'ters kayıt', alt: 'defter append-only', renk: R.not },
-        { etiket: 'Yetki', deger: 'sahip', alt: 'mutasyon anahtarı gerekir', renk: R.not },
+        { etiket: 'Yedek', deger: 'ALINMAZ', alt: 'silinen geri gelmez', renk: R.kirmizi },
+        { etiket: 'Geri alma', deger: 'YOK', alt: 'kalıcı silme (TRUNCATE)', renk: R.kirmizi },
+        { etiket: 'Yetki', deger: 'yazılı onay', alt: `«${TMZ_ONAY}» yazmadan buton açılmaz`, renk: R.amber },
       ]} />
       <Liste
         satirlar={[

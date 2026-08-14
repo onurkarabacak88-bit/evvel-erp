@@ -10178,6 +10178,11 @@ async def excel_import(dosya: UploadFile = File(...)):
                             cur.execute("SELECT id FROM kartlar WHERE UPPER(kart_adi)=%s", (kart_adi,))
                             k = cur.fetchone()
                             if not k:
+                                # EVV-SIS (Codex): eskiden SESSİZ continue — satır ne
+                                # hata ne atlanan sayacına giriyordu (görünmez kayıp).
+                                # hata sayacı da artar (toast/KPI/iz defteri buna bakar).
+                                atlanan.append({"satir": satir_no, "sebep": f"kart bulunamadı: {kart_adi[:40]}", "veri": kart_adi[:40]})
+                                hata += 1
                                 cur.execute("RELEASE SAVEPOINT sp_xls_row")
                                 continue
                             islem = str(d.get('islem_turu','HARCAMA')).upper()
@@ -12305,7 +12310,17 @@ def sistem_sifirla(body: dict = {}):
         'audit_log':            'audit_log',
     }
 
-    istenen = body.get('tablolar', list(IZINLI.keys()))  # boşsa hepsi
+    # EVV-SIS (2026-08-15, Codex + diff-review 2 katman): v2 `tablolar: []`
+    # gönderince 400 dönüyordu ("Sıfırla" fiilen ölüydü). FAIL-CLOSED sıkı hali:
+    # yalnız AÇIK boş liste [] = hepsi; liste-dışı her tip (None/""/0) → 400;
+    # bilinmeyen tablo anahtarı sessizce filtrelenmez, İSTEK REDDEDİLİR.
+    _istenen_ham = body.get('tablolar', [])
+    if not isinstance(_istenen_ham, list):
+        raise HTTPException(400, "tablolar bir liste olmalı (boş liste = tüm izinli tablolar)")
+    _bilinmeyen = [k for k in _istenen_ham if k not in IZINLI]
+    if _bilinmeyen:
+        raise HTTPException(400, f"Bilinmeyen tablo anahtarı: {', '.join(str(b)[:30] for b in _bilinmeyen[:5])}")
+    istenen = _istenen_ham if _istenen_ham else list(IZINLI.keys())
     silincekler = [IZINLI[k] for k in istenen if k in IZINLI]
 
     if not silincekler:
