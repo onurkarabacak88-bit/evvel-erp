@@ -20,6 +20,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api, fmt } from '../../utils/api';
 import { R, F, kartYuzey } from './tema';
 import { KpiSeridi, Tablo, Liste, OnayModali, SecimCubugu, BosDurum } from './parcalar';
+import { kayitDosyasiYukle, belgeYukleyiciUret } from './kayitDosyasi';
 
 const sayi = (v) => Number(v) || 0;
 const trSayi = (n, b = 1) => (Number(n) || 0).toFixed(b).replace('.', ',');
@@ -932,8 +933,19 @@ export function YukModulu({ gorunum, onCekmece, onKopru, onToast }) {
             onSatir={(row) => {
               const k = row._k;
               const odenen = sayi(k.toplam_vade) - sayi(k.kalan_vade);
+              // 📂 İZ & BELGE (Dalga 3): taksit ödemeleri (KAYNAK_BAGI) iz sekmesine
+              // düşer; belge tarafı borc_envanteri için "dürüst boş" döner ama sahip
+              // kredi SÖZLEŞMESİNİ buradan iliştirebilir (yüklenen belgeler aynı
+              // kaynak ikilisinden okunur, refetch'te görünür).
+              const bagBilgi = {
+                onCekmece, tip: 'KREDİ DOSYASI',
+                kaynakTablo: 'borc_envanteri', kaynakId: k.id,
+                kayitId: k.id, renkler: { kirmizi: R.kirmizi },
+              };
               onCekmece?.({
                 tip: 'KREDİ DOSYASI',
+                _kayitId: k.id,
+                belgeYukle: belgeYukleyiciUret(bagBilgi),
                 baslik: k.kurum,
                 alt: `${slugAd(k.borc_turu) || 'kredi'} · ${sayi(k.toplam_vade)} taksit`,
                 kpi: [
@@ -954,6 +966,7 @@ export function YukModulu({ gorunum, onCekmece, onKopru, onToast }) {
                 aksiyonAd: 'Borç envanterini aç',
                 _hedef: '__modul:kart:krediler',
               });
+              kayitDosyasiYukle(bagBilgi);
             }}
           />
         ) : (
@@ -1043,8 +1056,18 @@ export function YukModulu({ gorunum, onCekmece, onKopru, onToast }) {
           }))}
           onAc={(l) => {
             const g = l._g;
+            // 📂 İZ & BELGE (Dalga 3): sabit gider ödemeleri iki etiketle yazılıyor
+            // ('sabit_giderler' / 'fatura_giderleri') — backend adaptörü ikisini de
+            // okuyor; fatura belgesi de aynı ikiliden bağlanır.
+            const bagBilgi = {
+              onCekmece, tip: 'SABİT GİDER',
+              kaynakTablo: 'sabit_giderler', kaynakId: g.id,
+              kayitId: g.id, renkler: { kirmizi: R.kirmizi },
+            };
             onCekmece?.({
               tip: 'SABİT GİDER',
+              _kayitId: g.id,
+              belgeYukle: belgeYukleyiciUret(bagBilgi),
               baslik: g.gider_adi,
               alt: `${g.kategori || 'gider'} · ${g.sube_adi || 'genel'}`,
               kpi: [
@@ -1062,6 +1085,7 @@ export function YukModulu({ gorunum, onCekmece, onKopru, onToast }) {
                 ? 'Sabit tutarlı gider — ödeme kuyruğuna otomatik düşer. Düzenleme/kapatma satır butonlarından.'
                 : 'Değişken tutarlı: her ay fatura tutarı sorulur; ödemesi hatırlatma akışından girilir.',
             });
+            kayitDosyasiYukle(bagBilgi);
           }}
         />
       ) : (
