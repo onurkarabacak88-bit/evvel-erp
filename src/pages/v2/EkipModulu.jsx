@@ -18,7 +18,7 @@
 //   /is-basvurusu + /is-basvurusu/ozet  → başvurular
 //   /sube-panel/merkez/personel-panel-pin → panel PIN durumu (PERSONEL bazlı)
 // ─────────────────────────────────────────────────────────────────────────────
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api, fmt } from '../../utils/api';
 import { R, F, kartYuzey } from './tema';
 import { KpiSeridi, Tablo, Liste, VardiyaIzgara } from './parcalar';
@@ -132,11 +132,22 @@ const kidemAy = (bas) => {
   return Math.max(0, (n.getUTCFullYear() - b.getUTCFullYear()) * 12 + (n.getUTCMonth() - b.getUTCMonth()));
 };
 
-/** Bordro aşaması → rozet rengi (tasarımdaki onaylı/taslak/ödendi dili). */
-const ASAMA_RENK = { odendi: R.mavi, onayli: R.yesil, onay_bekliyor: R.amber, taslak: R.amber };
-// DB slug'ı ekranda ham gösterilmez (düz-dil kuralı): 'onayli' → 'onaylı'.
-const ASAMA_AD = { odendi: 'ödendi', onayli: 'onaylı', onay_bekliyor: 'onay bekliyor', taslak: 'taslak' };
+/** Bordro aşaması → rozet rengi (tasarımdaki onaylı/taslak/ödendi dili).
+ *  🔴 EVV-EKIP SÖZLEŞME (canlı kanıt 2026-08-15): sunucu 'onaylandi' gönderir
+ *  ('onayli' DEĞİL — personel_aylik.durum, maas_service). Eski sözlük yalnız
+ *  'onayli' bildiği için onaylanmış bordro TASLAK sayılıyordu: Öde/Kilit
+ *  düğmeleri hiç görünmüyor, yerine tekrar Onayla+Sil sunuluyordu ve "Onay
+ *  bekleyen" KPI'sı onaylıları da sayıyordu. 'tahmini' de (kayıtsız ay) sözlükte. */
+const ASAMA_RENK = { odendi: R.mavi, onayli: R.yesil, onaylandi: R.yesil, onay_bekliyor: R.amber, taslak: R.amber, tahmini: R.amber };
+// DB slug'ı ekranda ham gösterilmez (düz-dil kuralı): 'onaylandi' → 'onaylı'.
+const ASAMA_AD = { odendi: 'ödendi', onayli: 'onaylı', onaylandi: 'onaylı', onay_bekliyor: 'onay bekliyor', taslak: 'taslak', tahmini: 'tahminî' };
 const asamaAd = (d) => ASAMA_AD[d] || trKucuk(d) || 'taslak';
+/** Durum normalizasyonu — kapı mantığı tek yerden. */
+const asamaNorm = (d) => {
+  const s = String(d || 'taslak');
+  if (s === 'onaylandi') return 'onayli';
+  return s;
+};
 
 /** Çalışma türü slug'ı da ham gösterilmez: 'surekli' → 'sürekli'. */
 const TUR_AD = { surekli: 'sürekli', part: 'part-time', gunluk: 'günlük', stajyer: 'stajyer' };
@@ -281,7 +292,8 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
     setYukleniyor(true);
     setHata('');
     Promise.all([
-      api('/personel?aktif=true').catch(() => []),
+      // HATA≠BOŞ: personel ucu düşerse null (sentinel) — boş liste hata sayılmaz.
+      api('/personel?aktif=true').catch(() => null),
       api(`/vardiya/v2/hafta-sube-tablo?pazartesi=${pazartesi}`).catch(() => null),
       api(`/personel-aylik?yil=${donem.yil}&ay=${donem.ay}`).catch(() => []),
       api('/avans/ozet').catch(() => null),
@@ -306,7 +318,8 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
     ]).then(([p, h, b, av, go, vt, bs, bo, pin, iz, vd, sl, ig, ok]) => {
       setOnayKuyrugu(ok);
       setIsgucu(ig);
-      if (Array.isArray(sl) && sl.length) setSubeListe(sl);
+      // Meşru boş liste de state'i tazeler — bayat şube seçeneği kalmasın (Codex P3).
+      if (Array.isArray(sl)) setSubeListe(sl);
       setIzin(iz);
       setVardiyaDisi(Array.isArray(vd) ? vd : (vd?.kayitlar || []));
       setPersonel(Array.isArray(p) ? p : []);
@@ -318,7 +331,10 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
       setBasvurular(Array.isArray(bs) ? bs : (bs?.basvurular || []));
       setBasvuruOzet(bo);
       setPinler(Array.isArray(pin) ? pin : []);
-      if (!(Array.isArray(p) && p.length)) setHata('Personel verileri alınamadı.');
+      // HATA≠BOŞ (Codex+kendi bulgu): eskiden BOŞ personel listesi de "alınamadı"
+      // hatasına çevriliyordu — yeni kurulumda tüm modül hata ekranına kilitlenirdi.
+      // Hata yalnız uç GERÇEKTEN düştüyse (null sentinel).
+      if (p === null) setHata('Personel verileri alınamadı — sunucuya ulaşılamadı.');
       setYukleniyor(false);
     }).catch((e) => {
       setHata(e?.message || 'Beklenmeyen bir hata oluştu.');
@@ -343,6 +359,8 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
   const [slotForm, setSlotForm] = useState(BOS_SLOT);
   // İzin formu
   const [izForm, setIzForm] = useState({ personel_id: '', baslangic_tarih: '', bitis_tarih: '', tip: 'mazeret', aciklama: '' });
+  // "Bilerek boş" seçimi izin formundan AYRI (Codex: paylaşılan state yanlış kişiyi işaretletebiliyordu)
+  const [kbPersonel, setKbPersonel] = useState('');
 
   const plKilitYukle = useCallback((t) => {
     api(`/vardiya/v2/gun-kilit?tarih=${t}`)
@@ -426,12 +444,15 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
     finally { setPlMesgul(false); }
   };
 
-  /** Hafta doldurma motoru. ÖNCE dry_run — veritabanı geri alınır, sonuç gösterilir. */
+  /** Hafta doldurma motoru. ÖNCE dry_run — veritabanı geri alınır, sonuç gösterilir.
+   *  🔴 Codex (2026-08-15): eskiden SABİT `pazartesi` (bugünün haftası) gidiyordu —
+   *  kullanıcı gün planlayıcıda BAŞKA haftadayken motor yanlış haftayı dolduruyordu.
+   *  Artık bakılan günün haftası gönderilir. */
   const motorCalistir = async (gercek) => {
     setPlMesgul(true);
     try {
       const r = await api('/vardiya/v2/motor/hafta-doldur', { method: 'POST', body: {
-        pazartesi, max_rounds: 120, tasima_izni: true, dry_run: !gercek,
+        pazartesi: pazartesiBul(vpTarih), max_rounds: 120, tasima_izni: true, dry_run: !gercek,
       } });
       setPlMotor({ ...r, gercek });
       onToast?.(gercek ? '✓ Hafta dolduruldu' : 'Önizleme hazır — veritabanı değişmedi');
@@ -660,9 +681,11 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
   const bAc = (tip, b) => {
     if (tip === 'gecmis') {
       setBGecmis({ ad: b.ad_soyad, satirlar: null });
+      // Yarış koruması (Codex): iki kişinin geçmişi hızlı açılırsa geç dönen eski
+      // cevap yeni kişinin modalını ezmesin — modal hâlâ o kişideyse yaz.
       api(`/personel-aylik/${b.personel_id}/gecmis`)
-        .then((d) => setBGecmis({ ad: b.ad_soyad, satirlar: Array.isArray(d) ? d : [] }))
-        .catch(() => setBGecmis({ ad: b.ad_soyad, satirlar: [] }));
+        .then((d) => setBGecmis((m) => (m && m.ad === b.ad_soyad ? { ad: b.ad_soyad, satirlar: Array.isArray(d) ? d : [] } : m)))
+        .catch(() => setBGecmis((m) => (m && m.ad === b.ad_soyad ? { ad: b.ad_soyad, satirlar: [] } : m)));
       return;
     }
     setBModal({
@@ -683,6 +706,7 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
   const bYap = async () => {
     const { tip, b, form } = bModal || {};
     if (!tip) return;
+    if (bMesgul) return;   // çift-tık: aynı onayla/öde/sil iki kez ateşlenmesin
     const pid = b.personel_id;
     const q = `yil=${yil}&ay=${ay}`;
     setBMesgul(true);
@@ -730,7 +754,7 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
 
   /** Bordronun AŞAMASINA göre açık kapılar — kapalı olan düğme hiç görünmez. */
   const bordroAksiyonlari = (b) => {
-    const d = String(b.durum || 'taslak');
+    const d = asamaNorm(b.durum);
     const A = [];
     if (d === 'odendi') {
       A.push({ ad: '🕘 Geçmiş aylar', onTikla: () => bAc('gecmis', b) });
@@ -839,12 +863,20 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
     } finally { setQrMesgul(false); }
   };
 
+  // Yarış koruması (Codex): hızlı gün gezmede eski cevap yeni günün verisini ezmesin.
+  const vpIstekRef = useRef(0);
   const vpYukle = (tarih) => {
     setVpHata('');
     const t = tarih || vpTarih;
+    const istek = ++vpIstekRef.current;
     api(`/vardiya/v2/gun?tarih=${t}`)
-      .then((d) => setVpGun(d || {}))
-      .catch((e) => setVpHata(e?.message || ''));
+      .then((d) => { if (istek === vpIstekRef.current) setVpGun(d || {}); })
+      .catch((e) => {
+        if (istek !== vpIstekRef.current) return;
+        // Hata anında eski günün planı ekranda kalmasın — yanlış güne ait sanılır.
+        setVpGun(null);
+        setVpHata(e?.message || 'Gün planı alınamadı');
+      });
   };
 
   const vpGunDegis = (n) => {
@@ -858,6 +890,7 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
   const vpAta = async (zorla = false) => {
     const m = vpAtaModal;
     if (!m?.personelId) { onToast?.('Personel seçin'); return; }
+    if (vpMesgul) return;   // çift-tık: check/assign yarışa girmesin
     setVpMesgul('ata');
     try {
       const body = {
@@ -1039,15 +1072,16 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
     api('/ops/personel-davranis-analiz?gun=45')
       .then((d) => setPdDavranis(d || {}))
       .catch((e) => setPdHata(e?.message || ''));
+    // HATA≠BOŞ: uç düşerse null (sentinel) — sekme "veri yok" yalanı basmasın.
     api('/ops/sube-personel-puan')
       .then((d) => setPdPuan(d || {}))
-      .catch(() => setPdPuan({}));
+      .catch(() => setPdPuan(null));
     api(`/ops/gec-kalan-personel?year_month=${ym}`)
       .then((d) => setPdGec(d || {}))
-      .catch(() => setPdGec({}));
+      .catch(() => setPdGec(null));
     api('/ops/kasa-acik-analiz?gun_sayi=30')
       .then((d) => setPdKasa(d || {}))
-      .catch(() => setPdKasa({}));
+      .catch(() => setPdKasa(null));
     api('/ops/kasiyer-karne?gun=30')
       .then((d) => setPdKarne(Array.isArray(d?.karne) ? d.karne : []))
       .catch(() => setPdKarne([]));
@@ -1157,6 +1191,8 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
   };
 
   // Dönem/gün değişince yalnız İLGİLİ uçlar tazelenir — tam ekran yükleme yok.
+  // Yarış koruması (Codex): hızlı ‹› tıklamalarında eski ayın cevabı yeni ayı ezmesin.
+  const donemIstekRef = useRef(0);
   const ayDegistir = (d) => {
     setDonem(({ yil: y0, ay: a0 }) => {
       let a = a0 + d; let y = y0;
@@ -1164,10 +1200,12 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
       if (a > 12) { a = 1; y += 1; }
       if (y > buYil || (y === buYil && a > buAy)) return { yil: y0, ay: a0 }; // geleceğe gitme
       setDonemYukleniyor(true);
+      const istek = ++donemIstekRef.current;
       Promise.all([
         api(`/personel-aylik?yil=${y}&ay=${a}`).catch(() => []),
         api(`/gorev/vardiya-takip?yil=${y}&ay=${a}`).catch(() => null),
       ]).then(([b, vt]) => {
+        if (istek !== donemIstekRef.current) return;
         setBordro(b);
         setTakip(Array.isArray(vt) ? vt : (vt?.personeller || []));
         setDonemYukleniyor(false);
@@ -1634,7 +1672,13 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
           { etiket: 'İzlenen personel', deger: String(davranis.length), alt: 'son 45 gün davranış', renk: R.krem },
           { etiket: 'Kritik geç kalma', deger: String(sayi(pdGec?.kritik_personel_sayisi)), alt: `${sayi(pdGec?.gecikme_toplam_adet)} gecikme · eşik ${sayi(pdGec?.kritik_dk)} dk`, renk: sayi(pdGec?.kritik_personel_sayisi) ? R.amber : R.yesil },
           { etiket: 'En düşük puan', deger: enDusukPuan ? String(sayi(enDusukPuan.puan)) : '—', alt: enDusukPuan ? enDusukPuan.ad_soyad : 'veri yok', renk: enDusukPuan && sayi(enDusukPuan.puan) < 70 ? R.kirmizi : R.krem },
-          { etiket: 'Kasa açığı olan', deger: String(kasaSatir.length), alt: 'son 30 gün', renk: kasaSatir.length ? R.kirmizi : R.yesil },
+          // Takip listesi 0 iken ham olaylar VARSA yeşil "0" yalan olur (Codex):
+          // alt metin ham olay sayısını da söyler, renk ona göre yumuşar.
+          {
+            etiket: 'Kasa açığı olan', deger: String(kasaSatir.length),
+            alt: kasaOlaylar.length ? `takip eşiği üstü · ${kasaOlaylar.length} ham olay var` : 'son 30 gün',
+            renk: kasaSatir.length ? R.kirmizi : kasaOlaylar.length ? R.amber : R.yesil,
+          },
         ]} />
 
         <div style={{ display: 'flex', gap: 7, marginBottom: 14, flexWrap: 'wrap' }}>
@@ -1773,8 +1817,12 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
           />
         ) : (
           <div style={{ ...kartYuzey, padding: '34px 30px', textAlign: 'center' }}>
-            <div style={{ fontFamily: F.baslik, fontSize: 17, fontWeight: 600, color: R.not }}>Puan verisi yok</div>
-            <div style={{ fontSize: 12.5, color: R.not, marginTop: 7 }}>Görev tamamlama kayıtları biriktikçe puan oluşur.</div>
+            <div style={{ fontFamily: F.baslik, fontSize: 17, fontWeight: 600, color: pdPuan === null ? R.kirmizi : R.not }}>
+              {pdPuan === null ? 'Puan verisi alınamadı' : 'Puan verisi yok'}
+            </div>
+            <div style={{ fontSize: 12.5, color: R.not, marginTop: 7 }}>
+              {pdPuan === null ? 'Uç sorunu — veri eksikliği değil. Yenile ile tekrar dene.' : 'Görev tamamlama kayıtları biriktikçe puan oluşur.'}
+            </div>
           </div>
         ))}
 
@@ -1846,8 +1894,12 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
           />
         ) : (
           <div style={{ ...kartYuzey, padding: '34px 30px', textAlign: 'center' }}>
-            <div style={{ fontFamily: F.baslik, fontSize: 17, fontWeight: 600, color: R.yesil }}>Geç kalma kaydı yok</div>
-            <div style={{ fontSize: 12.5, color: R.not, marginTop: 7 }}>Bu dönemde grace süresini aşan giriş yok.</div>
+            <div style={{ fontFamily: F.baslik, fontSize: 17, fontWeight: 600, color: pdGec === null ? R.kirmizi : R.yesil }}>
+              {pdGec === null ? 'Geç kalma verisi alınamadı' : 'Geç kalma kaydı yok'}
+            </div>
+            <div style={{ fontSize: 12.5, color: R.not, marginTop: 7 }}>
+              {pdGec === null ? 'Uç sorunu — veri eksikliği değil. Yenile ile tekrar dene.' : 'Bu dönemde grace süresini aşan giriş yok.'}
+            </div>
           </div>
         ))}
 
@@ -1859,7 +1911,8 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
                 not={`NRF/QSR eşikleri: izleme = ${sayi(kasaEsik.izleme_adet) || 2}+ kez >${sayi(kasaEsik.izleme_tek) || 50}₺ · kritik = 4+ kez ya da tek olay >${sayi(kasaEsik.kritik_tek) || 200}₺ — gözlem, hüküm değil`}
                 kolonlar={[
                   { ad: 'Personel' }, { ad: 'Şube' }, { ad: 'Durum' },
-                  { ad: '50₺+ olay', sag: true }, { ad: 'Toplam |fark|', sag: true },
+                  // Kolon başlığı eşikten türer — eşik değişirse başlık yalan söylemesin (Codex)
+                  { ad: `${sayi(kasaEsik.izleme_tek) || 50}₺+ olay`, sag: true }, { ad: 'Toplam |fark|', sag: true },
                   { ad: 'En büyük tek fark', sag: true }, { ad: 'Son olay' },
                 ]}
                 satirlar={kasaSatir.slice(0, 30).map((x, i) => {
@@ -1892,9 +1945,13 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
               />
             ) : (
           <div style={{ ...kartYuzey, padding: '34px 30px', textAlign: 'center' }}>
-            <div style={{ fontFamily: F.baslik, fontSize: 17, fontWeight: 600, color: R.yesil }}>Takip eşiğini aşan yok</div>
+            <div style={{ fontFamily: F.baslik, fontSize: 17, fontWeight: 600, color: pdKasa === null ? R.kirmizi : R.yesil }}>
+              {pdKasa === null ? 'Kasa açığı verisi alınamadı' : 'Takip eşiğini aşan yok'}
+            </div>
             <div style={{ fontSize: 12.5, color: R.not, marginTop: 7 }}>
-              Son 30 günde {sayi(kasaEsik.izleme_adet) || 2}+ kez {sayi(kasaEsik.izleme_tek) || 50}₺ üstü fark yapan personel bulunmuyor.
+              {pdKasa === null
+                ? 'Uç sorunu — veri eksikliği değil. Yenile ile tekrar dene.'
+                : `Son 30 günde ${sayi(kasaEsik.izleme_adet) || 2}+ kez ${sayi(kasaEsik.izleme_tek) || 50}₺ üstü fark yapan personel bulunmuyor.`}
             </div>
           </div>
         )}
@@ -1960,7 +2017,8 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
                   not="işlem hacmi ve doğruluk oranı"
                   kolonlar={[{ ad: 'Kasiyer' }, { ad: 'Vardiya', sag: true }, { ad: 'Temiz gün', sag: true }, { ad: 'Oran', sag: true }]}
                   satirlar={karne.slice(0, 20).map((x, i) => {
-                    const vard = sayi(x.vardiya ?? x.vardiya_sayisi) || 1;
+                    // Vardiya 0/eksikse oran SAHTE yüzdeye çevrilmez — '—' basılır (Codex).
+                    const vard = sayi(x.vardiya ?? x.vardiya_sayisi);
                     const temiz = sayi(x.temiz ?? x.temiz_gun);
                     return {
                       id: x.personel_id || `kr-${i}`,
@@ -1968,7 +2026,9 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
                         { v: x.ad_soyad || x.personel_ad || '—', kalin: true },
                         { v: String(vard), mono: true, sag: true },
                         { v: String(temiz), mono: true, sag: true, renk: R.yesil },
-                        { v: `%${trSayi((temiz / vard) * 100, 0)}`, mono: true, sag: true, renk: (temiz / vard) >= 0.9 ? R.yesil : R.amber },
+                        vard > 0
+                          ? { v: `%${trSayi((temiz / vard) * 100, 0)}`, mono: true, sag: true, renk: (temiz / vard) >= 0.9 ? R.yesil : R.amber }
+                          : { v: '—', sag: true, renk: R.not3 },
                       ],
                     };
                   })}
@@ -2011,7 +2071,8 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
       <>
         <KpiSeridi kpiler={[
           { etiket: 'Toplam personel', deger: String(personel.length), alt: `${subeSayisi} şube${subesiz ? ` + ${subesiz} merkez` : ''}` },
-          { etiket: 'Bu ay işe giren', deger: String(yeni), alt: yeni ? 'ilk ayında' : 'yeni giriş yok', renk: yeni ? R.yesil : R.krem },
+          // Etiket dürüstlüğü (Codex): kd<1 takvim ayı değil "son ~30 gün" demek.
+          { etiket: 'Yeni işe giren', deger: String(yeni), alt: yeni ? 'ilk ayında (son ~30 gün)' : 'yeni giriş yok', renk: yeni ? R.yesil : R.krem },
           { etiket: 'Fazla mesai riski', deger: String(satir.filter(x => x.fm > 8).length), alt: 'bu ay 8 saatten fazla', renk: satir.some(x => x.fm > 8) ? R.kirmizi : R.yesil },
           // ⚠️ "Ortalama kıdem" yerini İŞGÜCÜ VERİMLİLİĞİNE bıraktı (2026-08-08):
           // kıdem bilgisi zaten tabloda kişi kişi var; asıl eksik olan "bir
@@ -2029,7 +2090,10 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
             üstü "ciroya göre fazla kadro", altı "eksik kadro / fazla mesai riski". */}
         {isgucu?.personel_ciro_orani_pct != null && (() => {
           const o = sayi(isgucu.personel_ciro_orani_pct);
-          const renk = o > 35 ? R.kirmizi : o >= 25 ? R.amber : R.yesil;
+          // 🔴 RENK MANTIĞI TERSTİ (Codex): sektör bandı %25-35 = SAĞLIKLI (yeşil);
+          // üstü fazla kadro (kırmızı), ALTI eksik kadro/fazla mesai riski (amber).
+          // Eski kod bant içini amber, bandın altını yeşil yapıyordu.
+          const renk = o > 35 ? R.kirmizi : o >= 25 ? R.yesil : R.amber;
           const vp = sayi(isgucu.varsayim_pct);
           return (
             <div
@@ -2043,7 +2107,7 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
                   { etiket: 'Adam-saat', deger: `${trSayi(sayi(isgucu.toplam_adam_saat), 0)} sa` },
                 ],
                 listeBaslik: 'Kişi kırılımı — saat kaynağıyla',
-                satirlar: (isgucu.kisiler || []).slice(0, 20).map((k) => ({
+                satirlar: (Array.isArray(isgucu.kisiler) ? isgucu.kisiler : []).slice(0, 20).map((k) => ({
                   ad: k.ad_soyad,
                   detay: `${k.calisma_turu === 'surekli' ? 'tam zamanlı' : 'part-time'} · ${
                     k.saat_kaynagi === 'vardiya_atama' ? 'vardiya atamasından'
@@ -2277,12 +2341,14 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
                                       {a.kapanis ? ' · kapanış' : ''}
                                     </span>
                                     <button
-                                      disabled={vpMesgul === a.id}
+                                      disabled={vpMesgul === a.id || !!plKilit?.kilitli}
+                                      title={plKilit?.kilitli ? 'Gün kilitli — plan değiştirilemez' : undefined}
                                       onClick={() => vpAtamaSil(a.id, a.ad_soyad || a.ad)}
                                       style={{
-                                        padding: '3px 9px', borderRadius: 7, cursor: 'pointer', fontFamily: 'inherit',
+                                        padding: '3px 9px', borderRadius: 7, fontFamily: 'inherit',
+                                        cursor: plKilit?.kilitli ? 'not-allowed' : 'pointer',
                                         border: `1px solid ${R.cizgi3}`, background: 'transparent',
-                                        color: R.not, fontSize: 10.5,
+                                        color: R.not, fontSize: 10.5, opacity: plKilit?.kilitli ? 0.4 : 1,
                                       }}
                                     >
                                       {vpMesgul === a.id ? '…' : 'kaldır'}
@@ -2292,14 +2358,17 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
                               </div>
                             )}
                             <button
+                              disabled={!!plKilit?.kilitli}
+                              title={plKilit?.kilitli ? 'Gün kilitli — önce kilidi aç' : undefined}
                               onClick={() => setVpAtaModal({ slot, subeAd: sb.sube_ad, personelId: '', uyari: '', override: false })}
                               style={{
                                 width: '100%', marginTop: 9, padding: '6px 0', borderRadius: 8,
                                 border: `1px solid ${R.bakir}55`, background: `${R.bakir}1a`,
-                                color: R.bakir, fontSize: 11.5, fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer',
+                                color: R.bakir, fontSize: 11.5, fontWeight: 700, fontFamily: 'inherit',
+                                cursor: plKilit?.kilitli ? 'not-allowed' : 'pointer', opacity: plKilit?.kilitli ? 0.4 : 1,
                               }}
                             >
-                              + Personel ata
+                              {plKilit?.kilitli ? '🔒 Gün kilitli' : '+ Personel ata'}
                             </button>
                           </div>
                         );
@@ -2375,7 +2444,10 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
                   background: 'transparent', color: R.metin2, fontSize: 12.5, fontWeight: 600, fontFamily: 'inherit',
                 }}>Vazgeç</button>
                 <button
-                  disabled={!!vpMesgul || !vpAtaModal.personelId || (!!vpAtaModal.uyari && !vpAtaModal.override)}
+                  // Uyarı çıktıysa ana Ata kapanır (Codex: eski hali vpAta(false)'i
+                  // yeniden koşturup aynı uyarıyı döngüye sokuyordu) — karar
+                  // yalnız "Yine de ata" ile verilir.
+                  disabled={!!vpMesgul || !vpAtaModal.personelId || !!vpAtaModal.uyari}
                   onClick={() => vpAta(false)}
                   style={{
                     padding: '10px 20px', borderRadius: 10, border: 'none',
@@ -2507,7 +2579,7 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
           {plSekme === 'motor' && (
             <div style={{ marginTop: 14, maxWidth: 620 }}>
               <div style={{ fontSize: 11.5, color: R.not2, lineHeight: 1.7, marginBottom: 12 }}>
-                Motor haftanın <b>eksik slotlarını</b> uygun personelle doldurmaya çalışır;
+                Motor <b>{kisaTarih(pazartesiBul(vpTarih))} haftasının</b> eksik slotlarını uygun personelle doldurmaya çalışır;
                 kısıtları (günlük/haftalık saat, izin, şube yasağı) çiğnemez.
                 Önce <b>önizleme</b> çalıştır — veritabanı geri alınır, sadece ne olacağını görürsün.
               </div>
@@ -2620,14 +2692,14 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
                 </div>
                 <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end' }}>
                   <div style={{ minWidth: 180 }}><label style={ekEtiket}>Personel</label>
-                    <select value={izForm.personel_id} onChange={(e) => setIzForm((p) => ({ ...p, personel_id: e.target.value }))} style={ekAlanStil}>
+                    <select value={kbPersonel} onChange={(e) => setKbPersonel(e.target.value)} style={ekAlanStil}>
                       <option value="">— seçin —</option>
                       {personel.map((p) => <option key={p.id} value={p.id}>{p.ad_soyad || p.ad}</option>)}
                     </select></div>
-                  <button disabled={plMesgul || !izForm.personel_id} onClick={() => kasitliBos(izForm.personel_id, true)}
-                    style={{ ...plBtn, marginBottom: 2, opacity: izForm.personel_id ? 1 : 0.45 }}>Bilerek boş işaretle</button>
-                  <button disabled={plMesgul || !izForm.personel_id} onClick={() => kasitliBos(izForm.personel_id, false)}
-                    style={{ ...plBtn, marginBottom: 2, opacity: izForm.personel_id ? 1 : 0.45 }}>İşareti kaldır</button>
+                  <button disabled={plMesgul || !kbPersonel} onClick={() => kasitliBos(kbPersonel, true)}
+                    style={{ ...plBtn, marginBottom: 2, opacity: kbPersonel ? 1 : 0.45 }}>Bilerek boş işaretle</button>
+                  <button disabled={plMesgul || !kbPersonel} onClick={() => kasitliBos(kbPersonel, false)}
+                    style={{ ...plBtn, marginBottom: 2, opacity: kbPersonel ? 1 : 0.45 }}>İşareti kaldır</button>
                 </div>
               </div>
             </div>
@@ -2983,7 +3055,7 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
     const toplamNet = bordroVeri?.toplam_tahmini != null
       ? sayi(bordroVeri.toplam_tahmini)
       : bordro.reduce((s, b) => s + sayi(b.hesaplanan_net), 0);
-    const bekleyen = bordro.filter(b => b.durum && !['odendi', 'onayli'].includes(b.durum));
+    const bekleyen = bordro.filter(b => b.durum && !['odendi', 'onayli'].includes(asamaNorm(b.durum)));
     // ⚠️ `avans.toplam` diye bir alan YOK (avans_service:527) — eski kod onu
     // arayıp her seferinde bordro vekiline düşüyordu. İki kavram FARKLI:
     //   avans_mahsup  = maaştan düşülecek MUHASEBE kalemi (bordro bilir)
@@ -3199,7 +3271,7 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
                 { v: b.fazla_mesai_saat ? `${trSayi(b.fazla_mesai_saat)} sa` : '—', mono: true, sag: true, renk: sayi(b.fazla_mesai_saat) > 8 ? R.kirmizi : R.krem },
                 { v: b.avans_mahsup ? fmt(b.avans_mahsup) : '—', mono: true, sag: true, renk: sayi(b.avans_mahsup) ? R.amber : R.not },
                 { v: fmt(sayi(b.hesaplanan_net)), mono: true, sag: true, kalin: true },
-                { v: asamaAd(b.durum), rozet: ASAMA_RENK[b.durum] || R.amber },
+                { v: asamaAd(b.durum), rozet: ASAMA_RENK[b.durum] || ASAMA_RENK[asamaNorm(b.durum)] || R.amber },
               ],
             }))}
             onSatir={(row) => {
@@ -3444,7 +3516,7 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
         ]} />
         {subeler.length ? (
           <Tablo
-            baslik={`Görev takibi · ${kisaTarih(bugun)}`}
+            baslik={`Görev takibi · ${kisaTarih(gorevTarih)}`}
             not="satıra tıkla → şubenin vardiya blokları"
             kolonlar={[
               { ad: 'Şube' }, { ad: 'Toplam görev', sag: true }, { ad: 'Tamamlanan', sag: true },
@@ -3474,7 +3546,7 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
               onCekmece?.({
                 tip: 'ŞUBE GÖREVLERİ',
                 baslik: s.ad,
-                alt: `${kisaTarih(bugun)} · ${s.tamam}/${s.toplam} tamamlandı`,
+                alt: `${kisaTarih(gorevTarih)} · ${s.tamam}/${s.toplam} tamamlandı`,
                 kpi: [
                   { etiket: 'Toplam', deger: String(s.toplam) },
                   { etiket: 'Açık', deger: String(s.toplam - s.tamam), renk: s.toplam - s.tamam ? R.amber : R.yesil },
@@ -3491,7 +3563,7 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
           />
         ) : (
           <div style={{ ...kartYuzey, padding: '38px 30px', textAlign: 'center', color: R.not }}>
-            Bugün için görev şablonu bulunamadı.
+            {gorevTarih === bugun ? 'Bugün' : kisaTarih(gorevTarih)} için görev şablonu bulunamadı.
           </div>
         )}
       </>
@@ -3500,7 +3572,11 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
 
   // ── 5) Vardiya Takip (giriş-çıkış) ─────────────────────────────────────────
   if (gorunum === 'takip') {
-    const satir = (takip || []).filter(t => t.aktif !== false);
+    // Çıkışlı personel GİZLENMEZ eğer bu dönemde planlı saati varsa (kendi bulgu,
+    // canlı kanıt: Ağustos'ta bordroda olan 3 çıkışlının hakedişi takipte görünmüyordu
+    // — "Tahminî hakediş" toplamı bordrodan sessizce küçük kalıyordu). Eski/saatsiz
+    // çıkışlılar yine gürültü olmasın diye dışarıda.
+    const satir = (takip || []).filter(t => t.aktif !== false || sayi(t.toplam_planlanan_saat) > 0);
     const toplamSaat = satir.reduce((s, t) => s + sayi(t.toplam_planlanan_saat), 0);
     const toplamGecikme = satir.reduce((s, t) => s + sayi(t.toplam_gecikme_dk), 0);
     const toplamFm = satir.reduce((s, t) => s + sayi(t.toplam_fazla_mesai_saat), 0);
@@ -3564,6 +3640,7 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
               // Uyarılar TEK rozete ezilmez — üç ayrı sinyal üç ayrı haptır
               // (klasikte de ayrı ayrı duruyordu). En ağırından üçü gösterilir.
               const haplar = [];
+              if (t.aktif === false) haplar.push({ ad: t.cikis_tarihi ? `çıkış ${kisaTarih(t.cikis_tarihi)}` : 'çıkış yaptı', renk: R.mavi });
               if (a.girisYok.length) haplar.push({ ad: `${a.girisYok.length} gün giriş yok`, renk: R.kirmizi });
               if (sayi(t.haftalik_izin_kullanilmadi) > 0) haplar.push({ ad: `${sayi(t.haftalik_izin_kullanilmadi)} hafta izinsiz`, renk: R.kirmizi });
               if (a.partTam.length) haplar.push({ ad: `${a.partTam.length} gün part-tam`, renk: R.amber });
@@ -3652,8 +3729,9 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
                 tutar: `${a.partTam.length} gün`,
               });
               if (sayi(t.haftalik_izin_kullanilmadi) > 0) kalemler.push({
+                // Birim düzeltmesi (Codex): alan HAFTA sayar, 'gün' yazmak alacağı küçültüyordu.
                 ad: '⚠ Kullanılmayan haftalık izin', detay: 'ücretli izin verilmeli — hakedişe dâhil değil',
-                tutar: `${sayi(t.haftalik_izin_kullanilmadi)} gün`,
+                tutar: `${sayi(t.haftalik_izin_kullanilmadi)} hafta`,
               });
               // Hangi HAFTA olduğu da sunucudan geliyordu; yalnız izinsiz haftalar
               // yazılır (izinli haftaları listelemek gürültü olurdu).
@@ -3928,7 +4006,18 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
               secilebilir
               secili={bvSecim}
               onSec={(id) => setBvSecim((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]))}
-              onHepsi={() => setBvSecim((p) => (p.length === bs.length ? [] : bs.map((b) => b.id)))}
+              // "Hepsini seç" yalnız GÖRÜNEN 40 kaydı seçer (Codex: canlıda 96 kayıt
+              // var — görünmeyen 56 başvuru sessizce toplu arşive gidebiliyordu).
+              onHepsi={() => {
+                const gorunen = bs.slice(0, 40).map((b) => b.id);
+                setBvSecim((p) => {
+                  // Karar görünür-kesişimden verilir (diff-review): görünmeyen/bayat
+                  // id seçimde kalmışsa da doğru davranır — hepsi seçiliyken TAMAMEN
+                  // temizler (artıklar dahil), değilse seçim = yalnız görünenler.
+                  const gorunenSecili = gorunen.filter((id) => p.includes(id));
+                  return gorunenSecili.length === gorunen.length ? [] : gorunen;
+                });
+              }}
               satirlar={bs.slice(0, 40).map(b => {
                 const d = trKucuk(b.durum) || 'yeni';
                 const onc = sayi(b.oncelik);
@@ -4051,7 +4140,7 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
             </div>
             <div style={{ flex: '0 0 130px' }}>
               <label style={ekEtiket}>Yönetici PIN</label>
-              <input value={pinOnay.pin} placeholder="••••" inputMode="numeric" maxLength={4}
+              <input type="password" autoComplete="off" value={pinOnay.pin} placeholder="••••" inputMode="numeric" maxLength={4}
                 onChange={(e) => setPinOnay((o) => ({ ...o, pin: e.target.value.replace(/\D/g, '').slice(0, 4) }))}
                 style={{ ...ekAlanStil, letterSpacing: '0.28em' }} />
             </div>
@@ -4214,7 +4303,7 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
               <b>{pinModal.ad}</b> — bu PIN tüm şubelerdeki panel işlemlerinde kullanılır.
             </div>
             <label style={ekEtiket}>4 haneli PIN</label>
-            <input value={pinModal.pin} placeholder="••••" inputMode="numeric" maxLength={4} autoFocus
+            <input type="password" autoComplete="off" value={pinModal.pin} placeholder="••••" inputMode="numeric" maxLength={4} autoFocus
               onChange={(e) => setPinModal((m) => ({ ...m, pin: e.target.value.replace(/\D/g, '').slice(0, 4) }))}
               style={{ ...ekAlanStil, letterSpacing: '0.3em', fontSize: 18, textAlign: 'center' }} />
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 16 }}>
