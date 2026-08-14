@@ -494,6 +494,16 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
         }
         if (r?.warning) { setModal((m) => ({ ...m, uyari: r.mesaj || 'Benzer kayıt olabilir' })); setCalisiyor(false); return; }
         onToast?.(`🤝 Taahhüt kaydedildi — ${kisaTarih(modal.vade)} günü bekleyenlerde görünecek`);
+      } else if (modal.tip === 'izKapat') {
+        // ✅ İZ MUTABAKATI: para zaten çıkmış, yalnız plan satırı kapanır.
+        // Sunucu KASA HAREKETİ ÜRETMEZ — mükerrer düşüş olmaz.
+        const gerekce = String(modal.aciklama || '').trim();
+        if (!gerekce) { onToast?.('Kapatma gerekçesi zorunlu — hangi ize dayandığı yazılmalı'); setCalisiyor(false); return; }
+        const r = await api(`/odeme-plani/${modal.planId}/iz-ile-kapat`, {
+          method: 'POST',
+          body: { aciklama: gerekce, iz_ozet: modal.izOzet || '', iz_tarih: modal.izTarih || null },
+        });
+        onToast?.(`✓ Plan kapatıldı — ${fmt(sayi(r?.kapatilan_tutar))} · kasa hareketi üretilmedi (para zaten çıkmıştı)`);
       } else {
         await api(`/odeme-plani/${o.id}/ertele?yeni_tarih=${encodeURIComponent(modal.yeniTarih)}`, { method: 'POST' });
         onToast?.(`${o.baslik} ${kisaTarih(modal.yeniTarih)} tarihine ertelendi`);
@@ -525,6 +535,34 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
 
   // ── zengin ödeme modalı (tam/kısmi + yöntem + ek + tutarsız + ertele + taahhüt) ──
   const guncelle = (k, v) => setModal((m) => ({ ...m, [k]: v }));
+
+  /** 🔍 İz ile kapatma modalını aç — gerekçe metni izden ÖN DOLDURULUR.
+   *  Sahip metni düzeltebilir; deftere ne yazıldığını görmeden onaylamasın. */
+  const izKapatAc = (s) => {
+    const a = (s.adaylar || [])[0];
+    if (!a) { onToast?.('Bu kalemde gösterilecek iz yok'); return; }
+    const parcalar = a.cok_parcali
+      ? (a.parcalar || [])
+      : [{ tarih: a.tarih, tutar: a.tutar, metin: a.metin }];
+    const ozet = a.cok_parcali
+      ? `${a.kanal} · ${parcalar.length} parça toplamı ${fmt(sayi(a.toplam))} (${parcalar.map((p) => kisaTarih(p.tarih)).join(' + ')})`
+      : `${a.kanal} · ${kisaTarih(a.tarih)} · ${fmt(sayi(a.tutar))}`;
+    const kanit = (a.kanit || []).join(', ');
+    setModal({
+      tip: 'izKapat',
+      planId: s.plan_id,
+      kalan: sayi(s.kalan),
+      planAciklama: s.aciklama,
+      vade: s.vade,
+      parcalar,
+      kanitMetin: kanit,
+      izOzet: ozet,
+      // Paranın GERÇEKTE çıktığı gün: çok parçalıda borcun kapandığı SON parça.
+      // Gönderilmezse sunucu bugünü yazar ve ödeme yanlış tarihe düşer.
+      izTarih: String(parcalar[parcalar.length - 1]?.tarih || '').slice(0, 10),
+      aciklama: `İz doğrulandı: ${ozet}${kanit ? ` · kanıt: ${kanit}` : ''}`,
+    });
+  };
 
   /** Borç Öde akışını aç: tedarikçinin AÇIK faturalarını FIFO sırayla getir. */
   const borcOdeAc = async (tedAd, onerilenTutar) => {
@@ -880,6 +918,7 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
               {modal.tip === 'ode' ? 'Ödemeyi Onayla'
                 : modal.tip === 'tutar' ? '⚡ Fatura Tutarı'
                 : modal.tip === 'taahhut' ? '🤝 Yeni Taahhüt'
+                : modal.tip === 'izKapat' ? '✓ İz ile Kapat'
                 : 'Ödemeyi Ertele'}
             </div>
             <button onClick={kapat} style={{
@@ -1088,6 +1127,69 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
             </>
           )}
 
+          {modal.tip === 'izKapat' && (
+            <>
+              <div style={{ fontSize: 12.5, color: R.metin2, marginBottom: 12, lineHeight: 1.55 }}>
+                <b style={{ color: R.krem }}>{fmt(sayi(modal.kalan))}</b> · {modal.planAciklama}
+                <br />
+                <span style={{ color: R.not2 }}>vade {kisaTarih(modal.vade)}</span>
+              </div>
+
+              {/* Kanıt dökümü — sahip NEYE dayanarak kapattığını görmeden onaylamasın */}
+              <div style={{ padding: '11px 14px', borderRadius: 11, background: R.girinti, border: `1px solid ${R.cizgi3}` }}>
+                <div style={{ fontSize: 11.5, color: R.yesil, fontWeight: 700, marginBottom: 7 }}>
+                  Bulunan iz {(modal.parcalar || []).length > 1 ? `· ${modal.parcalar.length} parça` : ''}
+                </div>
+                {(modal.parcalar || []).map((p, i) => (
+                  <div key={`${p.tarih}-${i}`} style={{ display: 'flex', gap: 10, fontSize: 11.5, color: R.metin2, padding: '3px 0' }}>
+                    <span style={{ fontFamily: F.mono, color: R.not, flexShrink: 0 }}>{kisaTarih(p.tarih)}</span>
+                    <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {p.metin || '—'}
+                    </span>
+                    <span style={{ fontFamily: F.mono, fontWeight: 700, flexShrink: 0, color: R.krem }}>{fmt(sayi(p.tutar))}</span>
+                  </div>
+                ))}
+                {(modal.parcalar || []).length > 1 && (
+                  <div style={{ display: 'flex', gap: 10, fontSize: 11.5, marginTop: 6, paddingTop: 6, borderTop: `1px solid ${R.cizgi3}` }}>
+                    <span style={{ flex: 1, color: R.not2 }}>toplam</span>
+                    <span style={{ fontFamily: F.mono, fontWeight: 700, color: R.yesil }}>
+                      {fmt((modal.parcalar || []).reduce((t, p) => t + sayi(p.tutar), 0))}
+                    </span>
+                  </div>
+                )}
+                {modal.kanitMetin && (
+                  <div style={{ fontSize: 11, color: R.not2, marginTop: 7 }}>kanıt: {modal.kanitMetin}</div>
+                )}
+              </div>
+
+              <div style={{ marginTop: 14 }}>
+                <label style={omEtiket}>Kapatma gerekçesi * (deftere yazılır)</label>
+                <textarea
+                  value={modal.aciklama || ''}
+                  onChange={(e) => guncelle('aciklama', e.target.value)}
+                  rows={3}
+                  style={{ ...omAlanStil, resize: 'vertical', lineHeight: 1.5 }}
+                />
+              </div>
+
+              <div style={{
+                marginTop: 12, padding: '11px 14px', borderRadius: 11,
+                background: `${R.amber}12`, border: `1px solid ${R.amber}44`,
+                fontSize: 11.5, color: R.metin2, lineHeight: 1.6,
+              }}>
+                ⚠ <b style={{ color: R.amber }}>Kasa hareketi ÜRETİLMEZ.</b> Bu işlem "para çıktı"
+                demez; "para zaten çıkmıştı, plan satırı açık kalmış" der. İz defterde
+                duruyor — bir de kasa kaydı açmak parayı iki kez düşürür.
+                {' '}İz yanlışsa kapatma: kalem kuyruktan düşer, gecikmiş listesinde görünmez.
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 18 }}>
+                {dugme('Vazgeç', false, kapat)}
+                {dugme('İz doğru — planı kapat', true, modalOnayla, !String(modal.aciklama || '').trim())}
+              </div>
+            </>
+          )}
+
           {modal.tip === 'ertele' && (
             <>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
@@ -1217,8 +1319,12 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
             penceresi + KANIT (tedarikçi adı / fatura no) ile eşleştirir.
             ÖNERİ-ONLY: hiçbir plan kendiliğinden kapanmaz. */}
         {izTarama && sayi(izTarama.gecikmis_kalem) > 0 && (() => {
-          const bulundu = (izTarama.satirlar || []).filter(s => s.hal === 'iz_bulundu');
+          // 🔵 (2026-08-14) 'cok_parcali_iz' yeni hal: tek hareket yok ama ardışık
+          // parçaların TOPLAMI kalanı karşılıyor (taksitli/bölünmüş ödeme).
+          // Güçlü kanıt sayılır → aynı yeşil kovada listelenir.
+          const bulundu = (izTarama.satirlar || []).filter(s => s.hal === 'iz_bulundu' || s.hal === 'cok_parcali_iz');
           const supheli = (izTarama.satirlar || []).filter(s => s.hal === 'yalniz_tutar_eslesmesi');
+          const parcaliAdet = sayi(izTarama.cok_parcali_bulunan);
           return (
             <div style={{ ...kartYuzey, padding: '12px 16px', marginBottom: 12 }}>
               <div style={{ display: 'flex', gap: 16, alignItems: 'baseline', flexWrap: 'wrap' }}>
@@ -1240,26 +1346,61 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
                 <div style={{ marginTop: 10 }}>
                   <div style={{ fontSize: 11.5, color: R.yesil, fontWeight: 600, marginBottom: 5 }}>
                     ✅ Ödenmiş olabilir — plan açık kalmış
-                  </div>
-                  {bulundu.slice(0, 6).map((s) => (
-                    <div key={s.plan_id} style={{
-                      padding: '7px 11px', borderRadius: 9, marginBottom: 5,
-                      background: R.girinti, borderLeft: `3px solid ${R.yesil}`,
-                      fontSize: 11.5, color: R.metin2, lineHeight: 1.55,
-                    }}>
-                      <b style={{ color: R.krem }}>{fmt(sayi(s.kalan))}</b> · {s.aciklama}
-                      <br />
-                      <span style={{ color: R.not2 }}>
-                        vade {kisaTarih(s.vade)} ({sayi(s.gun_gecikme)} gün) →
-                        {(s.adaylar || []).slice(0, 1).map((a) => (
-                          <span key={a.tarih}>
-                            {' '}{a.kanal} · {kisaTarih(a.tarih)} · {fmt(sayi(a.tutar))}
-                            {' '}<b style={{ color: R.yesil }}>kanıt: {(a.kanit || []).join(', ')}</b>
-                          </span>
-                        ))}
+                    {parcaliAdet > 0 && (
+                      <span style={{ color: R.not2, fontWeight: 400 }}>
+                        {' '}· {parcaliAdet} tanesi parça toplamıyla eşleşti
                       </span>
+                    )}
+                  </div>
+                  {bulundu.slice(0, 6).map((s) => {
+                    const a = (s.adaylar || [])[0];
+                    return (
+                      <div key={s.plan_id} style={{
+                        padding: '7px 11px', borderRadius: 9, marginBottom: 5,
+                        background: R.girinti, borderLeft: `3px solid ${R.yesil}`,
+                        fontSize: 11.5, color: R.metin2, lineHeight: 1.55,
+                      }}>
+                        <b style={{ color: R.krem }}>{fmt(sayi(s.kalan))}</b> · {s.aciklama}
+                        <br />
+                        <span style={{ color: R.not2 }}>
+                          vade {kisaTarih(s.vade)} ({sayi(s.gun_gecikme)} gün) →
+                          {a && (a.cok_parcali ? (
+                            /* Çok parçalı: tek satırda toplam + parça tarihleri */
+                            <span>
+                              {' '}{a.kanal} · <b style={{ color: R.krem }}>{(a.parcalar || []).length} parça toplamı {fmt(sayi(a.toplam))}</b>
+                              {' '}({(a.parcalar || []).map((p) => `${kisaTarih(p.tarih)} ${fmt(sayi(p.tutar))}`).join(' + ')})
+                              {' '}<b style={{ color: R.yesil }}>kanıt: {(a.kanit || []).join(', ') || 'aynı kart'}</b>
+                            </span>
+                          ) : (
+                            <span>
+                              {' '}{a.kanal} · {kisaTarih(a.tarih)} · {fmt(sayi(a.tutar))}
+                              {' '}<b style={{ color: R.yesil }}>kanıt: {(a.kanit || []).join(', ')}</b>
+                            </span>
+                          ))}
+                        </span>
+                        {a && (
+                          <div style={{ marginTop: 6 }}>
+                            <button
+                              onClick={() => izKapatAc(s)}
+                              disabled={calisiyor}
+                              style={{
+                                padding: '5px 12px', borderRadius: 8, cursor: calisiyor ? 'default' : 'pointer',
+                                border: `1px solid ${R.yesil}66`, background: `${R.yesil}18`,
+                                color: R.yesil, fontSize: 11, fontWeight: 700, fontFamily: 'inherit',
+                              }}
+                            >
+                              ✓ İz doğru — planı kapat
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                  {bulundu.length > 6 && (
+                    <div style={{ fontSize: 10.5, color: R.not2, padding: '2px 0 0' }}>
+                      ilk 6 / {bulundu.length} kalem gösteriliyor
                     </div>
-                  ))}
+                  )}
                 </div>
               )}
 
@@ -1281,9 +1422,10 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
 
               <div style={{ fontSize: 10.5, color: R.not2, marginTop: 9, lineHeight: 1.6 }}>
                 Sistem hiçbir planı kendiliğinden kapatmaz — bu bir <b>öneridir</b>.
-                Doğruysa ödemeyi kaydedin, kalem kuyruktan düşsün. “Kanıt” tedarikçi
-                adı ya da fatura numarasının eşleşmesidir; yalnız tutar tutması
-                kanıt sayılmaz.
+                İz doğruysa “planı kapat” deyin: kalem kuyruktan düşer, <b>kasa hareketi
+                üretilmez</b> (para zaten çıkmıştı, ikinci kayıt onu iki kez düşürürdü).
+                “Kanıt” tedarikçi adı, fatura numarası ya da <b>aynı kart</b> eşleşmesidir;
+                yalnız tutar tutması kanıt sayılmaz.
               </div>
             </div>
           );

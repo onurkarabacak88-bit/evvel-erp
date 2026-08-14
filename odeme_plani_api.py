@@ -6,6 +6,7 @@ ortak iş mantığı (odeme_yap vb.) ile sıkı bağlı oldukları için aşamal
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
 from database import db
 
@@ -206,25 +207,38 @@ def odeme_plani_gecikmis_iz_tarama(gun_tol: int = 45, oran_tol: float = 0.02):
             SELECT p.id, p.tarih::text AS vade, p.aciklama,
                    COALESCE(p.odenecek_tutar,0)::float AS tutar,
                    COALESCE(p.odenen_tutar,0)::float AS odenen,
-                   p.kaynak_tablo, p.kaynak_id,
+                   p.kaynak_tablo, p.kaynak_id, p.kart_id::text AS kart_id,
                    (CURRENT_DATE - p.tarih) AS gun_gecikme
               FROM odeme_plani p
              WHERE p.durum = 'bekliyor' AND p.tarih < CURRENT_DATE
              ORDER BY p.tarih
         """)
         kalemler = [dict(r) for r in (cur.fetchall() or [])]
-        # Aday iz havuzu: kasa çıkışları + kart harcamaları (tek sorgu)
+        # ── ADAY İZ HAVUZU ────────────────────────────────────────────────
+        # 🔴 (2026-08-14) KART BORCU ÖDEMELERİ HAVUZDA YOKTU: kart kanalında
+        # yalnız islem_turu='HARCAMA' okunuyordu. Ama bir KART EKSTRESİ planını
+        # kapatan para hareketi harcama değil ÖDEME'dir (kart borcunun kapatılması).
+        # Canlı vaka: Ziraat 268.443 ₺ ekstre planı 'bekliyor' dururken kartta
+        # 20 Tem 182.275 + 28 Tem 86.168 ODEME kaydı vardı — dedektif havuzunda
+        # bu satırlar hiç bulunmadığı için "iz yok" diyordu. kart_id de alınır:
+        # kart planlarında EN GÜÇLÜ kanıt metin değil, aynı kart olmasıdır.
         cur.execute("""
             SELECT 'kasa' AS kanal, tarih::text AS tarih,
                    ABS(COALESCE(tutar,0))::float AS tutar,
-                   COALESCE(aciklama,'') AS metin
+                   COALESCE(aciklama,'') AS metin,
+                   NULL::text AS kart_id
               FROM kasa_hareketleri
              WHERE tutar < 0 AND COALESCE(durum,'aktif')='aktif'
             UNION ALL
             SELECT 'kart', tarih::text, ABS(COALESCE(tutar,0))::float,
-                   COALESCE(aciklama,'')
+                   COALESCE(aciklama,''), NULL::text
               FROM kart_hareketleri
              WHERE islem_turu='HARCAMA' AND COALESCE(durum,'aktif')='aktif'
+            UNION ALL
+            SELECT 'kart-odeme', tarih::text, ABS(COALESCE(tutar,0))::float,
+                   COALESCE(aciklama,''), kart_id::text
+              FROM kart_hareketleri
+             WHERE islem_turu='ODEME' AND COALESCE(durum,'aktif')='aktif'
         """)
         izler = [dict(r) for r in (cur.fetchall() or [])]
 
@@ -252,40 +266,132 @@ def odeme_plani_gecikmis_iz_tarama(gun_tol: int = 45, oran_tol: float = 0.02):
         return {k for k in cikti if k not in _JENERIK}
 
     from datetime import date as _d
-    sonuc, izli, izsiz = [], 0, 0
+
+    # İz başına tarih ve sadeleştirilmiş metni BİR KEZ hesapla (eskiden her
+    # kalem × her iz için yeniden yapılıyordu). Tarihi bozuk satır havuzdan düşer.
+    havuz = []
+    for iz in izler:
+        try:
+            iz_t = _d.fromisoformat(str(iz["tarih"])[:10])
+        except Exception:  # noqa: BLE001
+            continue
+        havuz.append({**iz, "_d": iz_t, "_sade": _sadele(iz["metin"])})
+
+    def _iz_anahtar(z):
+        """İzin kimliği — rezervasyon defterinin anahtarı."""
+        return (z["kanal"], z["tarih"], float(z["tutar"] or 0), z["kart_id"])
+
+    # 🔒 REZERVASYON DEFTERİ: çok-parçalı eşleşmede KULLANILMIŞ izler.
+    # Aynı iz grubu (ör. Ziraat'e yapılan iki ödeme) birden çok gecikmiş kaleme
+    # birden "bunlar seni kapatıyor" diyebiliyordu → sahip aynı parayı birkaç
+    # kalemde görüp hepsini kapatmaya kalkarsa borç sahte biçimde erir.
+    # Bir para bir kez harcanır: kesin eşleşmede parçalar rezerve edilir.
+    # ⚠️ TEK-İZ adayları rezerve EDİLMEZ — onlar "aday"dır, kesin hüküm değil;
+    # sahip hangisinin doğru olduğuna bakar (mevcut davranış korunur).
+    rezerve = set()
+
+    def _cok_parcali_ara(kalan, vade, plan_kart, anah):
+        """Tek iz oturmadıysa: PARÇA TOPLAMI kalanı karşılıyor mu?
+
+        Canlı vaka (Ziraat 268.443 ₺): ekstre tek kalem ama ödeme iki taksitte
+        yapılmış (182.275 + 86.168). Tek-iz eşleşmesi bunu göremez.
+
+        İki grup denenir: (a) aynı karta yapılmış kart-ödeme izleri — kart
+        planlarında en güvenilir bağ, (b) aynı güçlü metin-kanıtını taşıyan izler.
+        Grup tarihe sıralanır, PREFIX (ardışık) toplamı alınır.
+
+        ⚠️ Kombinatorik alt-küme ARANMAZ: n izde 2^n kombinasyon denemek hem
+        pahalı hem de YANLIŞ POZİTİF üretir (alakasız üç kalemin toplamı tesadüfen
+        tutabilir ve sahibe "ödenmiş" der). Ardışıklık şartı bu riski keser;
+        canlı vaka zaten prefix ile oturuyor. En fazla 5 parça.
+
+        Rezerve edilmiş (başka kaleme sayılmış) izler bu aramaya girmez.
+        """
+        tol = max(2.0, kalan * oran_tol)
+        # Kalemler vade sırasına göre işleniyor → en eski gecikmiş kalem izi
+        # önce kapar. Bu kasıtlı: en uzun süredir açık duran kalem önceliklidir.
+        serbest = [z for z in havuz if _iz_anahtar(z) not in rezerve]
+        gruplar = []
+        if plan_kart:
+            gruplar.append(("ayni_kart", [
+                z for z in serbest
+                if z["kanal"] == "kart-odeme" and z["kart_id"]
+                and str(z["kart_id"]) == str(plan_kart)
+            ]))
+        if anah:
+            gruplar.append(("ayni_kanit", [
+                z for z in serbest
+                if any(a in z["_sade"] for a in anah)
+            ]))
+        for grup_ad, grup in gruplar:
+            pencere = sorted(
+                (z for z in grup if -15 <= (z["_d"] - vade).days <= gun_tol),
+                key=lambda z: z["_d"],
+            )
+            toplam, parcalar = 0.0, []
+            for z in pencere[:5]:
+                toplam = round(toplam + float(z["tutar"] or 0), 2)
+                parcalar.append(z)
+                # Tek parça zaten tek-iz eşleşmesidir — burada 2+ aranır.
+                if len(parcalar) >= 2 and abs(toplam - kalan) <= tol:
+                    # Kesin eşleşme: bu izler artık başka kaleme sayılmaz.
+                    for _z in parcalar:
+                        rezerve.add(_iz_anahtar(_z))
+                    return {
+                        "cok_parcali": True,
+                        "dayanak": grup_ad,
+                        "kanal": parcalar[0]["kanal"],
+                        "toplam": toplam,
+                        "fark": round(toplam - kalan, 2),
+                        "parcalar": [{
+                            "tarih": z["tarih"], "tutar": float(z["tutar"] or 0),
+                            "metin": (z["metin"] or "")[:70],
+                        } for z in parcalar],
+                        "kanit": (["AYNI_KART"] if grup_ad == "ayni_kart"
+                                  else sorted({a for a in anah
+                                               for z in parcalar if a in z["_sade"]})),
+                        "guclu": True,
+                    }
+        return None
+
+    sonuc, izli, izsiz, parcali_adet = [], 0, 0, 0
     for k in kalemler:
         kalan = round(float(k["tutar"] or 0) - float(k["odenen"] or 0), 2)
         if kalan <= 0.01:
             continue
         anah = _anahtarlar(k["aciklama"] or "")
+        plan_kart = k.get("kart_id")
         try:
             vade = _d.fromisoformat(str(k["vade"])[:10])
         except Exception:  # noqa: BLE001
             continue
         adaylar = []
-        for iz in izler:
+        for iz in havuz:
             t = float(iz["tutar"] or 0)
             if not t or abs(t - kalan) > max(2.0, kalan * oran_tol):
                 continue
-            try:
-                it = _d.fromisoformat(str(iz["tarih"])[:10])
-            except Exception:  # noqa: BLE001
-                continue
-            fark = (it - vade).days
+            fark = (iz["_d"] - vade).days
             if fark < -15 or fark > gun_tol:
                 continue
-            metin = _sadele(iz["metin"])
-            kanit = sorted([a for a in anah if a and a in metin])
+            kanit = sorted([a for a in anah if a and a in iz["_sade"]])
+            # 🔑 KANIT HİYERARŞİSİ: kart planında AYNI KART, metin eşleşmesinden
+            # daha güçlü bir bağdır — açıklama serbest metin, kart_id ise kimliktir.
+            if plan_kart and iz["kart_id"] and str(iz["kart_id"]) == str(plan_kart):
+                kanit = ["AYNI_KART"] + kanit
             adaylar.append({
                 "kanal": iz["kanal"], "tarih": iz["tarih"], "tutar": t,
-                "metin": iz["metin"][:70], "gun_farki": fark,
+                "metin": (iz["metin"] or "")[:70], "gun_farki": fark,
                 "kanit": kanit,
-                # Ad/fatura-no eşleşmesi yoksa bu YALNIZ tutar tesadüfüdür
+                # Ad/fatura-no/kart eşleşmesi yoksa bu YALNIZ tutar tesadüfüdür
                 "guclu": bool(kanit),
             })
         adaylar.sort(key=lambda x: (not x["guclu"], abs(x["gun_farki"])))
         guclu = [a for a in adaylar if a["guclu"]]
-        if guclu:
+        # Tek iz oturmadıysa parça toplamını dene (kısmi/taksitli ödeme).
+        parcali = None if guclu else _cok_parcali_ara(kalan, vade, plan_kart, anah)
+        if parcali:
+            parcali_adet += 1
+        if guclu or parcali:
             izli += 1
         else:
             izsiz += 1
@@ -294,23 +400,119 @@ def odeme_plani_gecikmis_iz_tarama(gun_tol: int = 45, oran_tol: float = 0.02):
             "aciklama": (k["aciklama"] or "")[:80], "kalan": kalan,
             "guclu_iz_adet": len(guclu),
             "zayif_iz_adet": len(adaylar) - len(guclu),
-            "adaylar": adaylar[:4],
+            "adaylar": ([parcali] if parcali else []) + adaylar[:4],
             "hal": ("iz_bulundu" if guclu
+                    else "cok_parcali_iz" if parcali
                     else "yalniz_tutar_eslesmesi" if adaylar else "iz_yok"),
         })
-    sonuc.sort(key=lambda x: (x["hal"] != "iz_bulundu", -x["kalan"]))
+    # Sıra: tek güçlü iz → çok parçalı iz → gerisi; her kovada büyük para önce.
+    _SIRA = {"iz_bulundu": 0, "cok_parcali_iz": 1}
+    sonuc.sort(key=lambda x: (_SIRA.get(x["hal"], 2), -x["kalan"]))
+    _IZLI = {"iz_bulundu", "cok_parcali_iz"}
+    kesildi = max(0, len(sonuc) - 60)
     return {
         "gecikmis_kalem": len(sonuc),
         "iz_bulunan": izli, "iz_bulunamayan": izsiz,
+        "cok_parcali_bulunan": parcali_adet,
         "iz_bulunan_tutar": round(
-            sum(x["kalan"] for x in sonuc if x["hal"] == "iz_bulundu"), 2),
+            sum(x["kalan"] for x in sonuc if x["hal"] in _IZLI), 2),
         "iz_yok_tutar": round(
-            sum(x["kalan"] for x in sonuc if x["hal"] != "iz_bulundu"), 2),
+            sum(x["kalan"] for x in sonuc if x["hal"] not in _IZLI), 2),
         "satirlar": sonuc[:60],
-        "not": "ÖNERİ-ONLY: hiçbir plan kapatılmadı. 'iz_bulundu' = tutar VE "
-               "tedarikçi/fatura-no eşleşti (güçlü kanıt). "
+        # Kesme notu: liste sessizce kırpılmasın (özet sayılar TAM evreni sayar,
+        # satırlar ilk 60 — ikisi tutmayınca "eksik veri mi?" şüphesi doğuyordu).
+        "kesilen_satir": kesildi,
+        "not": "ÖNERİ-ONLY: hiçbir plan kendiliğinden kapatılmadı. "
+               "'iz_bulundu' = tutar VE tedarikçi/fatura-no/aynı-kart eşleşti "
+               "(güçlü kanıt). 'cok_parcali_iz' = tek hareket değil ama ardışık "
+               "parçaların TOPLAMI kalanı karşılıyor (taksitli/bölünmüş ödeme). "
                "'yalniz_tutar_eslesmesi' = sadece rakam tuttu, ad tutmadı — "
-               "tesadüf olabilir, sahip bakmalı.",
+               "tesadüf olabilir, sahip bakmalı. Kapatma yalnız sahip onayıyla, "
+               "/iz-ile-kapat ucundan yapılır.",
+    }
+
+
+class IzIleKapatIstek(BaseModel):
+    """İz mutabakatıyla plan kapatma — sahip gerekçesi ZORUNLU."""
+    aciklama: str
+    iz_ozet: str = ""
+    # Paranın GERÇEKTE çıktığı gün (izin tarihi). Gönderilmezse bugün yazılır;
+    # o zaman "ödendi" der ama tarihi yanlış olur — FE izin tarihini gönderir.
+    iz_tarih: str | None = None
+
+
+@router.post("/api/odeme-plani/{pid}/iz-ile-kapat")
+def odeme_plani_iz_ile_kapat(pid: str, istek: IzIleKapatIstek):
+    """✅ SAHİP ONAYLI KAPATMA — "iz doğru, planı kapat" kapısı.
+
+    Dedektif (gecikmis-iz-tarama) yalnız ÖNERİR; kapatma insan tıklamasıyla
+    buradan olur. Sistem hiçbir planı kendiliğinden kapatmaz.
+
+    ⚠️ KASA HAREKETİ ÜRETİLMEZ — kasıtlı. Bu uç "para çıktı" demiyor, "para
+    ZATEN çıkmıştı, plan satırı açık kalmış" diyor. İzin kendisi (kasa çıkışı ya
+    da kart ödemesi) defterde duruyor; bir de kasa kaydı yazmak parayı İKİ KEZ
+    düşürür ve kasa bakiyesini bozar. Kapanan tek şey plan satırıdır.
+
+    Karar izi: açıklamanın BAŞINA '[İZ-MUTABAKAT] ...' damgası eklenir, eski
+    metin korunur (ezilmez) — sonradan "bu neden kapandı?" sorusu cevaplanabilsin.
+
+    🔀 ROL AYRIMI — /api/odeme-plani/{oid}/cari-odemesiyle-kapat ile karıştırma:
+      · cari-odemesiyle-kapat → para TEDARİKÇİ CARİ HESABINA ödenmiş, kuyruk
+        kalemiyle bağı yok; dayanak cari ekstredir.
+      · iz-ile-kapat (bu uç)  → para KASADAN ya da KARTTAN çıkmış, dedektif
+        hareketi bulmuş; dayanak kasa/kart hareket izidir.
+    İkisi de kasa hareketi üretmez ama gerekçeleri ve damgaları ayrıdır; hangi
+    kanıtla kapandığı defterde okunabilsin diye ayrı uçlar olarak durur.
+    """
+    gerekce = (istek.aciklama or "").strip()
+    if not gerekce:
+        raise HTTPException(400, "Kapatma gerekçesi zorunlu — hangi ize dayanarak kapatıldığı yazılmalı.")
+    from datetime import date as _d
+    odeme_gunu = None
+    if istek.iz_tarih:
+        try:
+            odeme_gunu = _d.fromisoformat(str(istek.iz_tarih)[:10])
+        except Exception:  # noqa: BLE001
+            odeme_gunu = None
+    with db() as (conn, cur):
+        # FOR UPDATE: satırı kilitle — kardeş uç (cari-odemesiyle-kapat) de aynı
+        # deseni kullanıyor; iki kapatma yarışırsa ikincisi kilidi bekler.
+        cur.execute(
+            "SELECT id, durum, COALESCE(aciklama,'') AS aciklama,"
+            "       COALESCE(odenecek_tutar,0)::float AS odenecek"
+            "  FROM odeme_plani WHERE id=%s FOR UPDATE", (pid,))
+        plan = cur.fetchone()
+        if not plan:
+            raise HTTPException(404, "Ödeme planı bulunamadı.")
+        if plan["durum"] != "bekliyor":
+            raise HTTPException(
+                400, f"Bu plan zaten '{plan['durum']}' durumunda — yalnız bekleyen plan kapatılabilir.")
+        damga = f"[İZ-MUTABAKAT] {gerekce}"
+        if (istek.iz_ozet or "").strip():
+            damga += f" · iz: {istek.iz_ozet.strip()}"
+        # 500 karakter sınırı: damga eski metnin önüne eklendiği için gerekçe
+        # uzarsa satır şişer; kardeş uçtaki sınırla hizalı.
+        yeni_aciklama = f"{damga} | {plan['aciklama']}".strip(" |")[:500]
+        # WHERE'de durum tekrar süzülür: iki sekme aynı anda kapatmaya çalışırsa
+        # ikincisi 0 satır günceller (409) — sessizce üstüne yazmaz.
+        cur.execute(
+            """UPDATE odeme_plani
+                  SET durum='odendi',
+                      odenen_tutar=odenecek_tutar,
+                      odeme_tarihi=COALESCE(%s, CURRENT_DATE),
+                      odeme_yontemi='iz_mutabakat',
+                      aciklama=%s
+                WHERE id=%s AND durum='bekliyor'""",
+            (odeme_gunu, yeni_aciklama, pid))
+        if cur.rowcount == 0:
+            raise HTTPException(409, "Plan bu sırada başka bir yerden değişti — sayfayı yenileyip tekrar bakın.")
+        conn.commit()
+    return {
+        "ok": True, "plan_id": pid,
+        "kapatilan_tutar": plan["odenecek"],
+        "odeme_tarihi": str(odeme_gunu) if odeme_gunu else None,
+        "not": "Plan kapatıldı. Kasa hareketi ÜRETİLMEDİ — para zaten çıkmıştı, "
+               "mükerrer düşüş olmaması için yalnız plan satırı kapandı.",
     }
 
 
