@@ -222,21 +222,27 @@ def odeme_plani_gecikmis_iz_tarama(gun_tol: int = 45, oran_tol: float = 0.02):
         # 20 Tem 182.275 + 28 Tem 86.168 ODEME kaydı vardı — dedektif havuzunda
         # bu satırlar hiç bulunmadığı için "iz yok" diyordu. kart_id de alınır:
         # kart planlarında EN GÜÇLÜ kanıt metin değil, aynı kart olmasıdır.
+        # kaynak_tablo/kaynak_id de alınır: bir hareket ZATEN bir ödeme planına
+        # bağlıysa, o para başka planın izi olamaz (A1 — bağlı-iz elemesi).
         cur.execute("""
             SELECT 'kasa' AS kanal, tarih::text AS tarih,
                    ABS(COALESCE(tutar,0))::float AS tutar,
                    COALESCE(aciklama,'') AS metin,
-                   NULL::text AS kart_id
+                   NULL::text AS kart_id,
+                   COALESCE(kaynak_tablo,'') AS kaynak_tablo,
+                   COALESCE(kaynak_id,'')    AS kaynak_id
               FROM kasa_hareketleri
              WHERE tutar < 0 AND COALESCE(durum,'aktif')='aktif'
             UNION ALL
             SELECT 'kart', tarih::text, ABS(COALESCE(tutar,0))::float,
-                   COALESCE(aciklama,''), NULL::text
+                   COALESCE(aciklama,''), NULL::text,
+                   COALESCE(kaynak_tablo,''), COALESCE(kaynak_id,'')
               FROM kart_hareketleri
              WHERE islem_turu='HARCAMA' AND COALESCE(durum,'aktif')='aktif'
             UNION ALL
             SELECT 'kart-odeme', tarih::text, ABS(COALESCE(tutar,0))::float,
-                   COALESCE(aciklama,''), kart_id::text
+                   COALESCE(aciklama,''), kart_id::text,
+                   COALESCE(kaynak_tablo,''), COALESCE(kaynak_id,'')
               FROM kart_hareketleri
              WHERE islem_turu='ODEME' AND COALESCE(durum,'aktif')='aktif'
         """)
@@ -281,6 +287,59 @@ def odeme_plani_gecikmis_iz_tarama(gun_tol: int = 45, oran_tol: float = 0.02):
         """İzin kimliği — rezervasyon defterinin anahtarı."""
         return (z["kanal"], z["tarih"], float(z["tutar"] or 0), z["kart_id"])
 
+    def _bagli_durum(z, plan_id):
+        """🔴 A1 — BAĞLI-İZ ELEMESİ (2026-08-14, canlıda kapatma son anda durduruldu)
+
+        Vaka: MERVE KARABACAK Temmuz-2026 maaşı (32.000, bekliyor) için dedektif
+        28 Tem kasa çıkışını "güçlü iz" gösterdi. Ama o çıkış HAZİRAN maaşının
+        KENDİ ödemesiydi (kaynak_tablo='odeme_plani', kaynak_id=Haziran planı).
+        Maaş/kira gibi SABİT TUTARLI TEKRARLAYAN ödemelerde tutar + isim + tarih
+        penceresi üçlüsü her ay birbirini tutar → dedektif her ay sahte iz üretir.
+
+        Bir para bir borcu kapatır: hareket zaten bir plana bağlıysa
+          · başka planın id'si → bu iz O PLANIN parası, aday olamaz ('yabanci')
+          · taranan planın id'si → tersine, en kesin kanıt ('kendi')
+        """
+        if str(z.get("kaynak_tablo") or "") != "odeme_plani":
+            return "serbest"
+        kid = str(z.get("kaynak_id") or "")
+        if not kid:
+            return "serbest"
+        return "kendi" if kid == str(plan_id) else "yabanci"
+
+    # ── A2: DÖNEM ÇELİŞKİSİ ────────────────────────────────────────────────
+    # Bağ kurulmamış (kaynak_id'siz) tekrarlayan ödemelerde ikinci emniyet:
+    # "Temmuz 2026" planı "Haziran 2026" izini kanıt sayamaz.
+    # ⚠️ _sadele() Türkçe harfleri düzleyip BÜYÜTÜR → desenler ASCII büyük harf.
+    _AY_NO = {"OCAK": 1, "SUBAT": 2, "MART": 3, "NISAN": 4, "MAYIS": 5,
+              "HAZIRAN": 6, "TEMMUZ": 7, "AGUSTOS": 8, "EYLUL": 9,
+              "EKIM": 10, "KASIM": 11, "ARALIK": 12}
+    _AY_RE = _re.compile(r"\b(" + "|".join(_AY_NO) + r")\b")
+    _YM_RE = _re.compile(r"\b(20\d{2})-(0[1-9]|1[0-2])\b")
+    _YIL_RE = _re.compile(r"\b(20\d{2})\b")
+
+    def _donem(sade):
+        """Metinden dönem etiketi: {'yil','ay','etiket'} — bulunamazsa None."""
+        m = _YM_RE.search(sade)
+        if m:
+            return {"yil": int(m.group(1)), "ay": int(m.group(2)),
+                    "etiket": f"{m.group(1)}-{m.group(2)}"}
+        ma = _AY_RE.search(sade)
+        if ma:
+            my = _YIL_RE.search(sade)
+            yil = int(my.group(1)) if my else None
+            return {"yil": yil, "ay": _AY_NO[ma.group(1)],
+                    "etiket": f"{ma.group(1)}{' ' + str(yil) if yil else ''}"}
+        return None
+
+    def _donem_catisir(d_iz, d_plan):
+        """İki dönem etiketi çelişiyor mu? Biri yoksa hüküm verilmez (False)."""
+        if not d_iz or not d_plan:
+            return False
+        if d_iz["ay"] != d_plan["ay"]:
+            return True
+        return bool(d_iz["yil"] and d_plan["yil"] and d_iz["yil"] != d_plan["yil"])
+
     # 🔒 REZERVASYON DEFTERİ: çok-parçalı eşleşmede KULLANILMIŞ izler.
     # Aynı iz grubu (ör. Ziraat'e yapılan iki ödeme) birden çok gecikmiş kaleme
     # birden "bunlar seni kapatıyor" diyebiliyordu → sahip aynı parayı birkaç
@@ -290,7 +349,7 @@ def odeme_plani_gecikmis_iz_tarama(gun_tol: int = 45, oran_tol: float = 0.02):
     # sahip hangisinin doğru olduğuna bakar (mevcut davranış korunur).
     rezerve = set()
 
-    def _cok_parcali_ara(kalan, vade, plan_kart, anah):
+    def _cok_parcali_ara(kalan, vade, plan_kart, anah, plan_id, plan_donem):
         """Tek iz oturmadıysa: PARÇA TOPLAMI kalanı karşılıyor mu?
 
         Canlı vaka (Ziraat 268.443 ₺): ekstre tek kalem ama ödeme iki taksitte
@@ -306,11 +365,24 @@ def odeme_plani_gecikmis_iz_tarama(gun_tol: int = 45, oran_tol: float = 0.02):
         canlı vaka zaten prefix ile oturuyor. En fazla 5 parça.
 
         Rezerve edilmiş (başka kaleme sayılmış) izler bu aramaya girmez.
+        Başka plana BAĞLI izler ve DÖNEMİ ÇELİŞEN izler de havuza alınmaz —
+        yoksa parça toplamı "güçlü" çıkıp yeşil kovaya ve kapat düğmesine düşer.
+        Tek istisna: kaynak bağı BU planı gösteren iz (kaynak bağı metin ay adını ezer).
         """
         tol = max(2.0, kalan * oran_tol)
         # Kalemler vade sırasına göre işleniyor → en eski gecikmiş kalem izi
         # önce kapar. Bu kasıtlı: en uzun süredir açık duran kalem önceliklidir.
-        serbest = [z for z in havuz if _iz_anahtar(z) not in rezerve]
+        serbest = []
+        for z in havuz:
+            if _iz_anahtar(z) in rezerve:
+                continue
+            _bagli = _bagli_durum(z, plan_id)
+            if _bagli == "yabanci":
+                continue
+            # kaynak bağı metin ay adını ezer
+            if _bagli != "kendi" and _donem_catisir(_donem(z["_sade"]), plan_donem):
+                continue
+            serbest.append(z)
         gruplar = []
         if plan_kart:
             gruplar.append(("ayni_kart", [
@@ -354,13 +426,14 @@ def odeme_plani_gecikmis_iz_tarama(gun_tol: int = 45, oran_tol: float = 0.02):
                     }
         return None
 
-    sonuc, izli, izsiz, parcali_adet = [], 0, 0, 0
+    sonuc, izli, izsiz, parcali_adet, elenen_bagli = [], 0, 0, 0, 0
     for k in kalemler:
         kalan = round(float(k["tutar"] or 0) - float(k["odenen"] or 0), 2)
         if kalan <= 0.01:
             continue
         anah = _anahtarlar(k["aciklama"] or "")
         plan_kart = k.get("kart_id")
+        plan_donem = _donem(_sadele(k["aciklama"] or ""))
         try:
             vade = _d.fromisoformat(str(k["vade"])[:10])
         except Exception:  # noqa: BLE001
@@ -373,22 +446,43 @@ def odeme_plani_gecikmis_iz_tarama(gun_tol: int = 45, oran_tol: float = 0.02):
             fark = (iz["_d"] - vade).days
             if fark < -15 or fark > gun_tol:
                 continue
+            # A1: tutar+tarih tutmuş olsa bile, para BAŞKA planın parasıysa
+            # bu bir iz değil — listeye hiç girmez (yanlış pozitifin kökü).
+            bagli = _bagli_durum(iz, k["id"])
+            if bagli == "yabanci":
+                elenen_bagli += 1
+                continue
             kanit = sorted([a for a in anah if a and a in iz["_sade"]])
-            # 🔑 KANIT HİYERARŞİSİ: kart planında AYNI KART, metin eşleşmesinden
-            # daha güçlü bir bağdır — açıklama serbest metin, kart_id ise kimliktir.
+            # 🔑 KANIT HİYERARŞİSİ (güçlüden zayıfa):
+            #   PLANA_BAGLI (kaynak_id bu planı gösteriyor)  → kimliğin ta kendisi
+            #   AYNI_KART   (kart planında aynı kart)        → kimlik bağı
+            #   metin       (tedarikçi adı / fatura no)      → serbest metin
             if plan_kart and iz["kart_id"] and str(iz["kart_id"]) == str(plan_kart):
                 kanit = ["AYNI_KART"] + kanit
+            if bagli == "kendi":
+                kanit = ["PLANA_BAGLI"] + kanit
+            # A2: dönem çelişkisi — "Temmuz 2026" planı "Haziran 2026" izini
+            # kanıt sayamaz. Aday SİLİNMEZ (bilgi kalsın) ama GÜÇLÜ olamaz:
+            # yeşil kovaya ve "planı kapat" düğmesine düşmesin.
+            # MUAFİYET: kaynak bağı metin ay adını ezer — kaynak_id bu planı
+            # gösteriyorsa kimlik kesindir, açıklamadaki ay adı onu düşüremez.
+            iz_donem = _donem(iz["_sade"])
+            catisma = (bagli != "kendi") and _donem_catisir(iz_donem, plan_donem)
+            if catisma:
+                kanit = [f"DONEM_CELISKISI:{iz_donem['etiket']}≠{plan_donem['etiket']}"] + kanit
             adaylar.append({
                 "kanal": iz["kanal"], "tarih": iz["tarih"], "tutar": t,
                 "metin": (iz["metin"] or "")[:70], "gun_farki": fark,
                 "kanit": kanit,
-                # Ad/fatura-no/kart eşleşmesi yoksa bu YALNIZ tutar tesadüfüdür
-                "guclu": bool(kanit),
+                # Ad/fatura-no/kart eşleşmesi yoksa bu YALNIZ tutar tesadüfüdür.
+                # Dönem çelişkisi varsa hiçbir kanıt onu güçlü yapmaz.
+                "guclu": bool(kanit) and not catisma,
             })
         adaylar.sort(key=lambda x: (not x["guclu"], abs(x["gun_farki"])))
         guclu = [a for a in adaylar if a["guclu"]]
         # Tek iz oturmadıysa parça toplamını dene (kısmi/taksitli ödeme).
-        parcali = None if guclu else _cok_parcali_ara(kalan, vade, plan_kart, anah)
+        parcali = (None if guclu
+                   else _cok_parcali_ara(kalan, vade, plan_kart, anah, k["id"], plan_donem))
         if parcali:
             parcali_adet += 1
         if guclu or parcali:
@@ -414,6 +508,9 @@ def odeme_plani_gecikmis_iz_tarama(gun_tol: int = 45, oran_tol: float = 0.02):
         "gecikmis_kalem": len(sonuc),
         "iz_bulunan": izli, "iz_bulunamayan": izsiz,
         "cok_parcali_bulunan": parcali_adet,
+        # Şeffaflık: tutar+tarih tutmuş ama BAŞKA planın parası olduğu için
+        # elenen iz sayısı. Yüksekse dedektif eskiden o kadar sahte iz üretiyordu.
+        "elenen_bagli_iz": elenen_bagli,
         "iz_bulunan_tutar": round(
             sum(x["kalan"] for x in sonuc if x["hal"] in _IZLI), 2),
         "iz_yok_tutar": round(
@@ -428,7 +525,11 @@ def odeme_plani_gecikmis_iz_tarama(gun_tol: int = 45, oran_tol: float = 0.02):
                "parçaların TOPLAMI kalanı karşılıyor (taksitli/bölünmüş ödeme). "
                "'yalniz_tutar_eslesmesi' = sadece rakam tuttu, ad tutmadı — "
                "tesadüf olabilir, sahip bakmalı. Kapatma yalnız sahip onayıyla, "
-               "/iz-ile-kapat ucundan yapılır.",
+               "/iz-ile-kapat ucundan yapılır. "
+               "Zaten BAŞKA bir ödeme planına bağlı hareketler (o planın kendi "
+               "ödemesi) aday sayılmaz; dönemi çelişen izler (Temmuz planına "
+               "Haziran ödemesi) güçlü kanıt sayılmaz — sabit tutarlı tekrarlayan "
+               "ödemelerde (maaş/kira) sahte iz bu iki filtreyle kesilir.",
     }
 
 

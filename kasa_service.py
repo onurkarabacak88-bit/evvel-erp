@@ -7,6 +7,7 @@ from __future__ import annotations
 import calendar
 import hashlib
 import json
+import re
 import uuid
 from datetime import date
 from typing import List
@@ -369,12 +370,33 @@ def kart_kesim_plani_yaz_tx(cur, k: dict, yil: int, ay: int) -> dict:
         asgari   = round(bu_ekstre * kart_asgari_orani(k), 2)
         odenecek = round(bu_ekstre, 2)
 
-    # Bu kesim (kesim → son_odeme] arası ödemeler
+    # ── BU DÖNEMİN ÖDEME PENCERESİ: [kesim, sonraki_kesim) ───────────────────
+    # 🔴 KÖK NEDEN (2026-08-14, Ziraat vakası — kanıtlı):
+    # Pencere eskiden (kesim, son_odeme] idi ve İKİ UCU DA yanlıştı:
+    #
+    #  F1 — BAŞLANGIÇ STRICT'Tİ (`tarih > kesim`): Ziraat'in 182.275 ₺'lik
+    #       ödemesi TAM KESİM GÜNÜNDE (2026-07-20) yapılmıştı → pencere DIŞI
+    #       kaldı. Geriye 86.168 ₺ sayıldı, asgari 107.377 ₺'nin altında kaldı,
+    #       plan ne "tam ödendi" ne "asgari ödendi" yoluna girdi — 268.443 ₺
+    #       ekstre planı hiç kapanmadı ve aylarca gecikmiş göründü.
+    #       Muhasebe gerçeği: ekstre kesim günü KESİLİR, ödeme kesildikten
+    #       SONRA yapılır → kesim günü ödemesi YENİ döneme aittir.
+    #
+    #  ÇİFT SAYIM YOK: önceki dönemin penceresi de aynı kuralla
+    #       [önceki_kesim, bu_kesim) olduğundan bu kesim günü oraya GİRMEZ
+    #       (üst sınır strict). Her ödeme tam olarak bir döneme sayılır.
+    #
+    #  F2 — SON `son_odeme_tarihi` İDİ: son ödeme gününden SONRA yapılan GEÇ
+    #       ödemeler hiçbir döneme sayılmıyordu (para çıkmış, plan açık kalmış).
+    #       Üst sınır bir sonraki kesime çekildi: geç de olsa bu ekstreye
+    #       yapılan ödeme bu planı kapatır.
+    _sonraki_yil, _sonraki_ay = (yil + 1, 1) if ay == 12 else (yil, ay + 1)
+    sonraki_kesim = kesim_tarihi_hesapla(_sonraki_yil, _sonraki_ay, kesim_gunu)
     cur.execute("""
         SELECT COALESCE(SUM(tutar), 0) AS odenen FROM kart_hareketleri
         WHERE kart_id=%s AND durum='aktif' AND islem_turu='ODEME'
-          AND tarih > %s::date AND tarih <= %s::date
-    """, (k["id"], bu_ay_kesim, son_odeme_tarihi))
+          AND tarih >= %s::date AND tarih < %s::date
+    """, (k["id"], bu_ay_kesim, sonraki_kesim))
     odenen_kesim = float(cur.fetchone()["odenen"])
 
     def _onay_reddet():
@@ -460,8 +482,100 @@ def kart_plan_guncelle_tx(cur) -> List[str]:
     yil, ay = bugun.year, bugun.month
     guncellenen: List[str] = []
     cur.execute("SELECT * FROM kartlar WHERE aktif=TRUE FOR UPDATE")
-    for k in cur.fetchall():
-        r = kart_kesim_plani_yaz_tx(cur, dict(k), yil, ay)
+    kartlar = [dict(k) for k in cur.fetchall()]
+    for k in kartlar:
+        r = kart_kesim_plani_yaz_tx(cur, k, yil, ay)
         if r.get("durum") in ("uretildi", "guncellendi"):
             guncellenen.append(f"{k['kart_adi']}: {r['odenecek']:,.0f}₺")
+
+    # ── F3: ÖKSÜZ PLAN ZİYARETİ (2026-08-14) ─────────────────────────────────
+    # İkincil kök neden: bu fonksiyon yalnız BUGÜNÜN (yıl, ay) dönemini işliyordu.
+    # Geçmiş bir dönemin planı bir kez açık kaldıysa (Ziraat'te olduğu gibi, hatalı
+    # pencere yüzünden) bir daha HİÇ ziyaret edilmiyordu — pencere düzelse bile
+    # eski satır sonsuza dek 'bekliyor' kalırdı. Artık geçmiş açık planlar kendi
+    # DÖNEMLERİYLE yeniden değerlendirilir; düzeltilmiş pencere onları da kapatır.
+    #
+    # Sonsuz döngü/ağırlık freni: yalnız son 6 ay, dönem başına TEK çağrı.
+    # ⚠️ ov_borc snapshot'ı zaten dönem eşleşmesine (DATE_TRUNC month) bakıyor →
+    # geçmiş dönem çağrısında o dönemin snapshot'ı kullanılır, dokunulmadı.
+    for k in kartlar:
+        kesim_gunu_k = int(k["kesim_gunu"])
+        son_odeme_gunu_k = int(k["son_odeme_gunu"] or 25)
+        # Plan satırının `tarih`i SON ÖDEME tarihinin ta kendisidir (kart_plani_upsert
+        # onu `sot` ile yazar) → ay değil TAM TARİH üzerinden eşleştiriyoruz.
+        # aciklama da alınır: içindeki "(kesim YYYY-AA-GG)" damgası, çözülen
+        # dönemin çapraz doğrulaması için kullanılır (aşağıya bkz.).
+        cur.execute("""
+            SELECT tarih, COALESCE(aciklama,'') AS aciklama
+              FROM odeme_plani
+             WHERE kart_id=%s AND durum IN ('bekliyor','onay_bekliyor')
+               AND DATE_TRUNC('month', tarih) < DATE_TRUNC('month', CURRENT_DATE)
+               AND tarih >= CURRENT_DATE - INTERVAL '6 months'
+             ORDER BY tarih DESC
+        """, (k["id"],))
+        # Aynı tarihte birden çok satır olabilir → tarih başına TÜM açıklamalar
+        # toplanır (hepsinin damgası kontrol edilir). En yeni 6 tarih yeter.
+        _damga_map: dict = {}
+        for _r in (cur.fetchall() or []):
+            _damga_map.setdefault(_r["tarih"], []).append(_r["aciklama"])
+        oksuzler = list(_damga_map.keys())[:6]
+        for donem in oksuzler:
+            # Plan satırının tarihi SON ÖDEME tarihidir, kesim tarihi değil —
+            # kart_kesim_plani_yaz_tx ise KESİM dönemini (yil, ay) bekler. İkisi
+            # çoğu kartta FARKLI aylardadır (kesim 20 Tem → son ödeme 10 Ağu).
+            # Dönemi TAHMİN ETMEK yerine çözüyoruz: aday iki ayın (aynı ay ve bir
+            # önceki ay) gerçek son-ödeme tarihini hesaplayıp planın ayına düşeni
+            # seçiyoruz. Kaba kural (kesim_gunu > son_odeme_gunu) iş günü kayması
+            # kesimin gününü değiştirdiğinde yanlış aya gidebiliyordu.
+            # Aday dönemler: planın ayı ve ondan önceki İKİ ay. Neden iki?
+            # son_odeme_gunu < kesim_gunu olan kartlarda son ödeme zaten sonraki
+            # aya taşar; üstüne hafta sonu kayması onu ayın 1'ine atarsa kesim
+            # dönemi plan ayından İKİ ay geride kalabiliyor (kesim 28 / son 27,
+            # Şub 2027 vakası). Dar pencere o durumda yanlış döneme kilitleniyordu.
+            adaylar = []
+            _y, _m = donem.year, donem.month
+            for _ in range(3):
+                adaylar.append((_y, _m))
+                _y, _m = (_y - 1, 12) if _m == 1 else (_y, _m - 1)
+            uyan = []
+            for _cy, _cm in adaylar:
+                _kt = kesim_tarihi_hesapla(_cy, _cm, kesim_gunu_k)
+                if son_odeme_tarihi_hesapla(_kt, son_odeme_gunu_k) == donem:
+                    uyan.append((_cy, _cm))
+            # TAM OLARAK BİR dönem uymalı. Sıfır uyarsa çözülemedi (kart ayarı
+            # plan yazıldıktan sonra değişmiş olabilir); İKİSİ birden uyarsa kart
+            # ayarı belirsizdir (kesim ile son ödeme günü bitişik olduğunda iki
+            # ardışık ekstre aynı son-ödeme gününe düşebiliyor). Bu iki dönemin
+            # ödeme PENCERESİ farklıdır — yanlışını seçmek planı hatalı kapatır.
+            # Tahmin etmek yerine bu öksüz atlanır: onarım turunun zarar verme
+            # hakkı yok, plan açık kalır ve sahip görmeye devam eder.
+            if len(uyan) != 1:
+                continue
+            p_yil, p_ay = uyan[0]
+
+            # ── KESİM DAMGASI ÇAPRAZ DOĞRULAMASI (Codex P1) ──────────────────
+            # Yukarıdaki çözüm kartın BUGÜNKÜ kesim/son-ödeme ayarlarını kullanır.
+            # Ayar plan yazıldıktan SONRA değiştiyse exact-date eşleşmesi tesadüfen
+            # YANLIŞ-AMA-TEK bir döneme kilitlenebilir → plan yanlış pencereyle
+            # hatalı kapanır. Plan yazıcısı açıklamaya "(kesim YYYY-AA-GG)" damgası
+            # bastığı için gerçek kesim tarihi satırın kendisinde duruyor: damga
+            # varsa çözülen dönemle karşılaştırılır, tutmuyorsa öksüz ATLANIR.
+            # Damga yoksa (eski/elle yazılmış plan) mevcut davranış korunur.
+            _beklenen_kesim = kesim_tarihi_hesapla(p_yil, p_ay, kesim_gunu_k)
+            _damga_catisti = False
+            for _ac in _damga_map.get(donem, []):
+                _m = re.search(r"\(kesim (\d{4}-\d{2}-\d{2})\)", _ac or "")
+                if _m and _m.group(1) != _beklenen_kesim.isoformat():
+                    _damga_catisti = True
+                    break
+            if _damga_catisti:
+                continue
+
+            try:
+                s = kart_kesim_plani_yaz_tx(cur, k, p_yil, p_ay)
+            except Exception:  # noqa: BLE001
+                continue      # tek kartın geçmişi bugünkü koşuyu düşürmesin
+            if s.get("neden") in ("tam_odendi", "asgari_odendi"):
+                guncellenen.append(
+                    f"{k['kart_adi']}: {p_yil}-{p_ay:02d} öksüz planı kapandı ({s['neden']})")
     return guncellenen
