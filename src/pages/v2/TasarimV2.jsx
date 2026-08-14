@@ -1350,7 +1350,11 @@ export default function TasarimV2({ onGit }) {
         || (GRUP[a.enAgir.grup] - GRUP[b.enAgir.grup])
         || (a.enAgir.sira - b.enAgir.sira)
       ));
-      return kayitlar.slice(0, 3);
+      // TAVAN 4 (2026-08-14, canlı ders): 3'ken iki "ciro yok" kaydı üst üste yer
+      // tutup TEMA'nın %15,7 haftalık düşüşünü — asıl operasyonel sinyali — dışarı
+      // itti; oysa dışarıda kalanın yerini tutan 2.174₺'lik gider önemsizdi.
+      // 4 sinyal tipi var, 5 şubeli zincirde her tipe bir satır makul.
+      return kayitlar.slice(0, 4);
     })();
 
     return (
