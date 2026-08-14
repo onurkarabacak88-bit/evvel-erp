@@ -207,8 +207,31 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru }) {
     };
   };
 
-  const odemeCekmece = ({ _u }) => onCekmece?.({
+  /** Ödeme satırının BENZERSİZ kimliği (görüntü metni değil, kayıt kimliği).
+   *  ⚠️ Sunucu bu satırlarda `id` GÖNDERMİYOR — alan adı `odeme_id` (motors.py:1259).
+   *  Değişken gider satırlarında ise `odeme_id` bilerek NULL (motors.py:1388); orada
+   *  kimlik kaynak_tablo+kaynak_id ikilisinde. Bu yüzden zincir: odeme_id → bileşik.
+   *  Bileşik anahtar aynı render'daki iki farklı kaydı ayırmaya yeter (kaynak_id
+   *  gider başına tekil; vade ve tutar da ayırıcı). */
+  const kayitAnahtari = (u) => String(
+    u.odeme_id
+    || u.id
+    || [u.kaynak_tablo || '?', u.kaynak_id || '?', u.kart_id || '?',
+        u.tarih || '?', sayi(u.tutar)].join('|'),
+  );
+
+  /** Çekmece gövdesi — `ek` ile iz/belgeler sonradan eklenebilsin diye fonksiyon.
+   *  tip + baslik SABİT kalır: Cekmece sekme sıfırlaması [acik,tip,baslik]'e bağlı
+   *  (parcalar.jsx:1319) → aynı değerlerle yeniden çağırınca sahip hangi sekmedeyse
+   *  orada kalır, veri altına dolar. */
+  const odemeCekmeceVeri = (_u, ek = {}) => ({
     tip: 'ÖDEME KAYDI',
+    // Geç gelen iz/belge yanıtının hangi kayda ait olduğunu ayırt eden KİMLİK.
+    // Başlık kimlik DEĞİLDİR: 60 karakterde kesilmiş görüntü metni, aynı bankanın
+    // iki kartı gibi vakalarda birebir aynı çıkabilir → A'nın yanıtı B'ye basardı.
+    // (TasarimV2 çekmece alanlarını tek tek okuyor, spread yok → bu alan ekrana
+    // sızmaz; `_hedef` de aynı desende taşınıyor.)
+    _kayitId: kayitAnahtari(_u),
     baslik: kisalt(sadeOdemeAdi(_u.ad || _u.aciklama || 'Ödeme').baslik || 'Ödeme', 60),
     alt: sayi(_u.gun_farki) < 0 ? `${Math.abs(sayi(_u.gun_farki))} gün gecikti`
       : sayi(_u.gun_farki) === 0 ? 'bugün vadesi' : `${sayi(_u.gun_farki)} gün sonra`,
@@ -232,16 +255,116 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru }) {
     ],
     listeBaslik: 'Kayıt',
     satirlar: [
-      // Başlık sadeleştirildi (firma öne alındı) — bilgi kaybı olmasın diye
-      // kaydın HAM adı (fatura no dahil) burada tam hâliyle durur.
-      { ad: 'Ödeme adı', detay: _u.kaynak_tablo ? `kaynak: ${_u.kaynak_tablo}` : 'kaydın tam adı', tutar: kisalt(_u.ad || _u.aciklama || '—', 70) },
+      // 🔴 TAŞMA DÜZELTMESİ (2026-08-14, canlı ölçüm: içerik 448px panelde 569px):
+      // ham ad `tutar` alanına basılıyordu, o alan mono + nowrap → 70 karakter tek
+      // satırda 525px sürüyordu. Ham ad artık `detay`da: 11px, sarabilen alan.
+      // Bilgi kaybı yok — tam hâliyle duruyor, sadece doğru sütunda.
+      {
+        ad: 'Kaydın tam adı',
+        detay: kisalt(_u.ad || _u.aciklama || '—', 110),
+        tutar: '',
+      },
+      ...(_u.kaynak_tablo ? [{ ad: 'Kaynak', detay: 'kaydı üreten defter', tutar: String(_u.kaynak_tablo) }] : []),
       ...(_u.tarih ? [{ ad: 'Vade tarihi', detay: 'planlanan ödeme günü', tutar: String(_u.tarih).slice(0, 10) }] : []),
       { ad: 'Asgari kalan', detay: 'ödenmesi gereken', tutar: fmt(sayi(_u.asgari_kalan ?? _u.asgari ?? _u.tutar)) },
     ],
-    not: 'Bu kart SALT-OKURDUR. Ödeme Ödeme Merkezi\'nde yapılır — para yazma yolu burada açılmaz.',
+    not: '🔒 Salt-okunur — ödeme Ödeme Merkezi\'nden yapılır.',
     aksiyonAd: 'Ödeme Merkezi\'nde aç',
     _hedef: '__modul:odeme:bekleyen',
+    ...ek,
   });
+
+  /** 💳 KART KAYDI ZENGİNLEŞTİRME (sahip 2026-08-14: "o karta yapılmış ödemeler
+   *  görünebilir", "bu ayın ekstresi direkt görülebilir").
+   *  Çekmecenin İz ve Belgeler sekmeleri tasarımda vardı ama Bakış veri geçmiyordu
+   *  → sekmeler hep boş açılıyordu. Çekmece ÖNCE açılır (bekleme yok), veri arkadan
+   *  gelir ve aynı tip+baslik ile tazelenir. */
+  const kartIziYukle = (_u) => {
+    const kartId = _u.kart_id || (_u.kaynak_tablo === 'kartlar' ? _u.kaynak_id : null);
+    if (!kartId) return;
+    // Yanıt döndüğünde çekmece KAPANMIŞ ya da BAŞKA kayda geçmiş olabilir. Hangi
+    // çekmeceyi beklediğimizi şimdi kaydediyoruz; aşağıda fonksiyonel güncelleme
+    // ile "hâlâ o mu?" diye state'in KENDİSİNE soruyoruz.
+    const beklenenKayitId = kayitAnahtari(_u);
+    Promise.all([
+      // '__HATA__' sentinel: HATA ≠ BOŞ. Okuma düşerse "ödeme kaydı yok" demek
+      // sahte bilgidir — sahip ödediği kartı "hiç ödenmemiş" sanır.
+      api(`/kart-hareketleri?kart_id=${encodeURIComponent(kartId)}&limit=120`).catch(() => '__HATA__'),
+      api('/kartlar/ekstre-arsiv').catch(() => null),
+    ]).then(([hareketler, arsiv]) => {
+      // ── İZ: bu karta yapılmış ödemeler ──────────────────────────────────
+      let iz;
+      if (hareketler === '__HATA__') {
+        iz = [{
+          ad: 'İz alınamadı', bekliyor: true, renk: R.kirmizi,
+          detay: 'sunucuya ulaşılamadı — çekmeceyi kapatıp tekrar açın',
+        }];
+      } else {
+        const odemeler2 = (Array.isArray(hareketler) ? hareketler : [])
+          .filter((h) => String(h.islem_turu || '').toUpperCase() === 'ODEME')
+          .sort((a, b) => String(b.tarih || '').localeCompare(String(a.tarih || '')))
+          .slice(0, 6);
+        iz = odemeler2.length
+          ? [
+            {
+              ad: `Kalan ${fmt(sayi(_u.asgari_kalan ?? _u.asgari ?? _u.tutar))}`,
+              detay: 'bu ekstreden ödenmesi bekleniyor', bekliyor: true,
+            },
+            ...odemeler2.map((h) => ({
+              ad: `${fmt(sayi(h.tutar))} ödendi`,
+              detay: kisalt(h.aciklama || '', 60) || 'kart ödemesi',
+              zaman: String(h.tarih || '').slice(0, 10),
+            })),
+          ]
+          : [{
+            ad: 'Bu karta henüz ödeme kaydı yok', bekliyor: true,
+            detay: 'ödeme yapıldığında burada listelenir',
+          }];
+      }
+
+      // ── BELGELER: dönem ekstresi ────────────────────────────────────────
+      // Plan açıklamasındaki "(kesim YYYY-AA-GG)" damgası hangi dönemin ekstresi
+      // olduğunu söyler → damga varsa O dönem, yoksa en yeni dönem (donemler DESC).
+      const kartArsiv = (arsiv?.kartlar || []).find((x) => String(x.kart_id) === String(kartId));
+      const donemler = kartArsiv?.donemler || [];
+      const damga = String(_u.ad || _u.aciklama || '').match(/\(kesim (\d{4}-\d{2}-\d{2})\)/);
+      const d = (damga && donemler.find((x) => String(x.kesim_tarihi).slice(0, 10) === damga[1]))
+        || donemler[0];
+      const belgeler = d ? [{
+        tur: 'EKSTRE',
+        ad: `${String(d.donem).slice(0, 7)} dönemi ekstresi`,
+        detay: `kesim ${String(d.kesim_tarihi).slice(0, 10)} · borç ${fmt(sayi(d.donem_borcu))} · asgari ${fmt(sayi(d.asgari_tutar))}`,
+        rozet: d.kaynak === 'import' ? 'BANKA' : 'HESAP',
+        rozetRenk: d.kaynak === 'import' ? R.yesil : R.mavi,
+        // Hedef doğrulandı: tema.js MODULLER → {id:'kart'} altında {id:'ekstre'}
+        // ("Ekstre Durumu"); koprule '__modul:' önekini çözüp gorunum'u eşliyor.
+        onTikla: () => onKopru?.('__modul:kart:ekstre'),
+      }] : [];
+
+      // 🔴 GEÇ YANIT KORUMASI (Codex B1+B2, 2026-08-14) — FONKSİYONEL GÜNCELLEME:
+      // onCekmece = setCekmece (useState setter'ı, TasarimV2.jsx:764 — sarmalayıcı
+      // YOK, doğrulandı) → güncellemeyi prev'e bakarak yapabiliyoruz. Bu üç deliği
+      // birden kapatır:
+      //   · prev null (sahip çekmeceyi KAPATMIŞ) → null döner, çekmece kendi
+      //     kendine yeniden AÇILMAZ (nesne geçseydik açılırdı),
+      //   · prev başka kayda ait → dokunulmaz (yanlış kartın izi basılmaz),
+      //   · aynı kaydın eski isteği geç gelse bile MERGE eder, ezmez.
+      // Nesne kimliği (ref) yerine state'in kendisine soruyoruz — kaynak tek.
+      // Karşılaştırma KİMLİK üzerinden: başlık kesilmiş görüntü metnidir, aynı
+      // bankanın iki kartında birebir aynı olabilir.
+      onCekmece?.((prev) => (
+        prev && prev.tip === 'ÖDEME KAYDI'
+        && prev._kayitId != null && prev._kayitId === beklenenKayitId
+          ? { ...prev, iz, ...(belgeler.length ? { belgeler } : {}) }
+          : prev
+      ));
+    }).catch(() => { /* zincir hatası çekmeceyi bozmasın — özet zaten açık */ });
+  };
+
+  const odemeCekmece = ({ _u }) => {
+    onCekmece?.(odemeCekmeceVeri(_u));
+    kartIziYukle(_u);
+  };
 
   // ════════════════════════ GÖRÜNÜM: KARAR ALANI ════════════════════════════
   if (gorunum === 'karar') {

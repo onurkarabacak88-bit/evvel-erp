@@ -1361,15 +1361,25 @@ export function Cekmece({
             belgeler?.length ? (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
                 {belgeler.map((b, i) => (
+                  // Belge her zaman indirilebilir bir DOSYA değil: kart ekstresi gibi
+                  // kayıtlar sistemin kendi ekranında durur → url yoksa ama onTikla
+                  // varsa öğe düğme gibi davranır (klavyeyle de açılır).
                   <a
                     key={i}
                     href={b.url || undefined}
                     target={b.url ? '_blank' : undefined}
                     rel="noreferrer"
+                    onClick={b.onTikla && !b.url ? (e) => { e.preventDefault(); b.onTikla(); } : undefined}
+                    role={b.onTikla && !b.url ? 'button' : undefined}
+                    tabIndex={b.onTikla && !b.url ? 0 : undefined}
+                    onKeyDown={b.onTikla && !b.url ? (e) => {
+                      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); b.onTikla(); }
+                    } : undefined}
                     style={{
                       display: 'flex', alignItems: 'center', gap: 12, padding: '11px 13px',
                       borderRadius: 12, background: R.kart1, border: '1px solid rgba(243,233,220,.08)',
-                      textDecoration: 'none', color: 'inherit', cursor: b.url ? 'pointer' : 'default',
+                      textDecoration: 'none', color: 'inherit',
+                      cursor: (b.url || b.onTikla) ? 'pointer' : 'default',
                     }}
                   >
                     <span style={{
@@ -1490,25 +1500,43 @@ export function Cekmece({
                 {listeBaslik}
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
-                {satirlar.map((s, i) => (
-                  <div key={i} style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
-                    <div style={{ minWidth: 0 }}>
-                      <div style={{ fontSize: 12.5, fontWeight: 600, lineHeight: 1.35 }}>{s.ad}</div>
-                      <div style={{ fontSize: 11, color: R.not2, marginTop: 2 }}>{s.detay}</div>
+                {satirlar.map((s, i) => {
+                  // 🔴 EMNİYET KEMERİ (2026-08-14, canlı ölçüm): çekmece 448px ama
+                  // içerik 569px'e taşıyordu — `tutar` span'ı koşulsuz `nowrap`ti ve
+                  // Bakış oraya 70 karakterlik ham ödeme adını basıyordu (525px tek
+                  // satır). Kaynak düzeltildi; burası ikinci katman: PARA gibi kısa
+                  // değerler nowrap kalır, uzun metin gelirse sarar. Böylece ileride
+                  // başka modül uzun metin bassa da çekmece bir daha taşamaz.
+                  const uzunTutar = String(s.tutar || '').length > 24;
+                  return (
+                    <div key={i} style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
+                      {/* Hem ad hem detay sarabilir: boşluksuz uzun metin (fatura no,
+                          referans, kesintisiz ad) hiçbir sütunda taşma üretemesin. */}
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontSize: 12.5, fontWeight: 600, lineHeight: 1.35, overflowWrap: 'anywhere' }}>{s.ad}</div>
+                        <div style={{ fontSize: 11, color: R.not2, marginTop: 2, overflowWrap: 'anywhere' }}>{s.detay}</div>
+                      </div>
+                      <span style={{
+                        whiteSpace: uzunTutar ? 'normal' : 'nowrap',
+                        overflowWrap: 'anywhere', textAlign: 'right', maxWidth: '55%',
+                        fontFamily: F.mono, fontSize: 12.5, fontWeight: 700, flexShrink: 0, color: R.metin2,
+                      }}>
+                        {s.tutar}
+                      </span>
                     </div>
-                    <span style={{ whiteSpace: 'nowrap', fontFamily: F.mono, fontSize: 12.5, fontWeight: 700, flexShrink: 0, color: R.metin2 }}>
-                      {s.tutar}
-                    </span>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}
 
           {sekme === 'ozet' && not && (
+            // Bilgi notu VURGU ÇALMASIN (sahip şikâyeti 2026-08-14): amber kutu
+            // çekmecenin en dikkat çeken öğesiyken içeriği yalnız bir hatırlatma.
+            // Küçültüldü — tüm modüllerin notları bundan etkilenir, kasıtlı.
             <div style={{
-              padding: '13px 15px', borderRadius: 13, background: 'rgba(217,154,78,.09)',
-              border: '1px solid rgba(217,154,78,.28)', fontSize: 12.5, color: '#E7DCCB', lineHeight: 1.6,
+              padding: '9px 12px', borderRadius: 11, background: 'rgba(217,154,78,.09)',
+              border: '1px solid rgba(217,154,78,.28)', fontSize: 11.5, color: '#E7DCCB', lineHeight: 1.55,
             }}>
               {not}
             </div>
