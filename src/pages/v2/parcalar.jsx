@@ -600,6 +600,13 @@ export function Tablo({ baslik, not, kolonlar, satirlar, onSatir }) {
                 key={s.id || si}
                 onClick={() => onSatir?.(s)}
                 className="v2-satir"
+                // Klavye erişimi (ui-ux-pro-max denetimi 2026-08-14): satır fareyle
+                // açılıyordu ama Tab ile gelinemiyordu — tıklanabilir satır artık
+                // odaklanabilir, Enter/Space açar, focus-visible halkası index.css'te.
+                tabIndex={onSatir ? 0 : undefined}
+                onKeyDown={onSatir ? (e) => {
+                  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSatir(s); }
+                } : undefined}
                 style={{ cursor: onSatir ? 'pointer' : 'default' }}
               >
                 {s.hucreler.map((h, hi) => (

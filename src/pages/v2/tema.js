@@ -27,7 +27,11 @@ export const R = {
   metin2: '#C4B5A2',
   not: '#9B8A75',
   not2: '#8B7B67',
-  not3: '#6E6052',
+  // ui-ux-pro-max kontrast denetimi (2026-08-14): #6E6052 kart yüzeyinde 2,53:1
+  // idi (WCAG 4,5:1 altı — küçük punto yardımcı metin okunmuyordu). Aynı ton
+  // ailesinde bir kademe açıldı: kartta 3,4:1 / zeminde 4,2:1. Hiyerarşi korunur
+  // (not2'den hâlâ soluk). Tam AA istenirse punto büyütme sahiple konuşulmalı.
+  not3: '#847460',
   // marka + durum
   bakir: '#D29A5B',
   bakirAcik: '#E5B27A',

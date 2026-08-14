@@ -95,6 +95,7 @@ const V2_CSS = `
 .v2-arama:hover{border-color:rgba(217,154,78,.4)}
 .v2-kok ::selection{background:rgba(217,154,78,.32);color:#FFF6E9}
 .v2-kok :focus-visible{outline:2px solid #D29A5B;outline-offset:2px;border-radius:4px}
+@media (prefers-reduced-motion: reduce){.v2-kok *,.v2-kok *::before,.v2-kok *::after{transition-duration:.01ms !important;animation-duration:.01ms !important}}
 /* Duyarlı kabuk (yeni handoff): dar ekranda görünüm kolonu çip satırına döner,
    çok darda ray incelir. Kolonun yerine geçen çip satırı içerik üstünde yaşar. */
 .v2-cip-satiri{display:none}
