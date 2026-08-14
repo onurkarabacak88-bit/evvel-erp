@@ -1288,37 +1288,68 @@ export default function TasarimV2({ onGit }) {
     // Sinyal yoksa kart HİÇ çizilmez (boş "sorun yok" kutusu gürültüdür).
     const dikkatListesi = (() => {
       const ONEM = { kirmizi: 0, amber: 1 };
+      // Sinyal grupları arası öncelik (ciro yok > hafta düşüşü > ceza > verim).
+      const GRUP = { ciroYok: 0, hafta: 1, ceza: 2, verim: 3 };
+      // 🔴 (2026-08-14) 3-TAVAN YANLIŞ ADAYI KESİYORDU: liste yalnız ton'a göre
+      // sıralanıyordu, JS sort KARARLI olduğu için aynı tondaki adaylar arasında
+      // sıra tabloya giriş sırasıyla belirleniyordu. Canlıda ALSANCAK (30g gider
+      // 2.174₺) listeye girdi, KÖYCEĞİZ (45.539₺ — 20 katı) tavana takılıp
+      // dışarıda kaldı. Artık her sinyalin kendi ÖNEM METRİĞİ var (`sira`,
+      // küçükten büyüğe): grup içinde büyük para / sert düşüş önce gelir,
+      // 3-tavan ondan SONRA uygulanır.
       const kayitlar = subeKarne.map((s) => {
         const sinyaller = [];
         const f = finansOf(s.ad);
         // (a) Ciro yok ama gider sürüyor — en ağır sinyal: kapalı görünen şube para yakıyor.
+        //     Önem = yakılan para (gider DESC).
         if (s._ciroYok) {
-          sinyaller.push({ ton: 'kirmizi', metin: `ciro yok, 30g gider ${fmt(sayi(f?.gider))}` });
+          const gider = sayi(f?.gider);
+          sinyaller.push({
+            ton: 'kirmizi', grup: 'ciroYok', sira: -gider,
+            metin: `ciro yok, 30g gider ${fmt(gider)}`,
+          });
         }
         // (b) Haftalık düşüş — ay bitmeden yakalanması gereken ritim kaybı.
+        //     Önem = düşüşün sertliği (yüzde ASC; -22 önce, -6 sonra).
         const h = haftaOf(s.ad);
         const p = h?.degisim_pct;
         if (p != null && sayi(p) <= -5) {
           sinyaller.push({
             ton: sayi(p) <= -15 ? 'kirmizi' : 'amber',
+            grup: 'hafta', sira: sayi(p),
             metin: `bu hafta %${Math.abs(sayi(p))} düşüş (${fmt(sayi(h.bu_hafta))})`,
           });
         }
         // (c) Davranış ceza puanı — ciro iyi olsa da çalışma düzeni bozuk olabilir.
+        //     Önem = ceza puanı (DESC).
         const dv = davranisOf(s.ad);
         const sk = skorOf(s.ad);
         const ceza = sayi(dv?.toplam_puan ?? sk?.toplam_puan);
-        if (ceza >= 20) sinyaller.push({ ton: 'amber', metin: `davranış: ${ceza} ceza puanı` });
+        if (ceza >= 20) {
+          sinyaller.push({ ton: 'amber', grup: 'ceza', sira: -ceza, metin: `davranış: ${ceza} ceza puanı` });
+        }
         // (d) Gider verimi — 1₺ gidere düşen ciro 5₺'nin altındaysa verim zayıf.
+        //     Önem = oran (ASC; 1,2₺ önce, 4,8₺ sonra).
         if (f && sayi(f.gider) > 0) {
           const oran = sayi(f.ciro) / sayi(f.gider);
-          if (oran < 5) sinyaller.push({ ton: 'amber', metin: `1₺ gidere yalnız ${oran.toFixed(1)}₺ ciro` });
+          if (oran < 5) {
+            sinyaller.push({
+              ton: 'amber', grup: 'verim', sira: oran,
+              metin: `1₺ gidere yalnız ${oran.toFixed(1)}₺ ciro`,
+            });
+          }
         }
         if (!sinyaller.length) return null;
-        sinyaller.sort((x, y) => ONEM[x.ton] - ONEM[y.ton]);
+        // Şubenin kendi sinyalleri içinde en ağırı manşete çıkar.
+        sinyaller.sort((x, y) => (ONEM[x.ton] - ONEM[y.ton]) || (GRUP[x.grup] - GRUP[y.grup]) || (x.sira - y.sira));
         return { s, enAgir: sinyaller[0], ekSayi: sinyaller.length - 1 };
       }).filter(Boolean);
-      kayitlar.sort((a, b) => ONEM[a.enAgir.ton] - ONEM[b.enAgir.ton]);
+      // Şubeler arası: ton → grup → grup-içi önem metriği. Tavan EN SONDA.
+      kayitlar.sort((a, b) => (
+        (ONEM[a.enAgir.ton] - ONEM[b.enAgir.ton])
+        || (GRUP[a.enAgir.grup] - GRUP[b.enAgir.grup])
+        || (a.enAgir.sira - b.enAgir.sira)
+      ));
       return kayitlar.slice(0, 3);
     })();
 
