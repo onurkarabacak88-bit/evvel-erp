@@ -39,13 +39,42 @@ const kisaGun = (iso) => {
  *     bindiği görüldü), 2) sondaki parantez içi FİRMA başlığa çıkar, kalan kısım
  *     (fatura no) alt satıra iner, 3) parantez yoksa soyulmuş ham metin kalır.
  *  Bilgi kaybı yok: ham metin ödeme çekmecesinin "Ödeme adı" satırında durur. */
+/** Sunucu gün adını İngilizce gönderiyor ("Friday") — ekranda Türkçe durur. */
+const GUN_TR = {
+  Monday: 'Pazartesi', Tuesday: 'Salı', Wednesday: 'Çarşamba', Thursday: 'Perşembe',
+  Friday: 'Cuma', Saturday: 'Cumartesi', Sunday: 'Pazar',
+};
+const gunTr = (g) => {
+  const s = String(g || '').trim();
+  return GUN_TR[s] || s || '—';
+};
+
+const HARF_RE = /[A-Za-zĞÜŞİÖÇÂÎÛğüşıiöçâîû]/g;
+/** Parantez içi metin gerçekten FİRMA ADI mı? (canlı yanlış-pozitif filtresi)
+ *  Kart/kredi/abone kayıtlarında da son parantez var ama içi firma değil:
+ *  "(kesim 2026-07-20)" · "(21346598)" · "(01564752)" — bunlar başlığa çıkınca
+ *  sahip kimin ödemesi olduğunu göremiyordu. İki kapı: kesim tarihi metni
+ *  reddedilir; rakam/no ağırlıklı içerik (harf < uzunluğun yarısı) reddedilir. */
+const firmaMi = (icerik) => {
+  const s = String(icerik || '').trim();
+  if (!s || /kesim/i.test(s)) return false;
+  return (s.match(HARF_RE) || []).length >= s.length / 2;
+};
 const sadeOdemeAdi = (ham) => {
   const t = String(ham ?? '').trim().replace(/^(Vadeli Alım:\s*)+/i, '').trim();
-  const m = t.match(/\(([^()]+)\)\s*$/);
+  // SON parantez grubu — kuyruğa rağmen. Eskiden `\)\s*$` şartı vardı, bu yüzden
+  // "… (ESHİM TEKNİK SERVİS) — sahip onayı…" gibi parantezden SONRA metin süren
+  // kayıtlarda firma hiç yakalanmıyordu. `(?=[^()]*$)` = bundan sonra başka
+  // parantez yok, yani bu sondaki grup.
+  const m = t.match(/\(([^()]{3,})\)(?=[^()]*$)/);
   if (m) {
     const firma = m[1].trim();
-    const kalan = t.slice(0, m.index).trim().replace(/[·\-–—,:;]+$/, '').trim();
-    if (firma) return { baslik: firma, ek: kalan || null };
+    if (firmaMi(firma)) {
+      const onces = t.slice(0, m.index).trim().replace(/[·\-–—,:;]+$/, '').trim();
+      const kuyruk = t.slice(m.index + m[0].length).trim().replace(/^[·\-–—,:;]+/, '').trim();
+      const ek = [onces, kuyruk].filter(Boolean).join(' · ');
+      return { baslik: firma, ek: ek || null };
+    }
   }
   return { baslik: t, ek: null };
 };
@@ -791,8 +820,9 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru }) {
               satirlar={ciroEksik.slice(0, 15).map((g, i) => ({
                 id: `ce-${i}`,
                 hucreler: [
-                  { v: g.gun_adi || '—', kalin: true },
-                  { v: `${kisaGun(g.tarih)} · ${sayi(g.days_ago)} gün önce`, mono: true, renk: R.not },
+                  { v: gunTr(g.gun_adi), kalin: true },
+                  // "0 gün önce" saçma okunuyordu → bugünse "bugün" yazılır.
+                  { v: `${kisaGun(g.tarih)} · ${sayi(g.days_ago) === 0 ? 'bugün' : `${sayi(g.days_ago)} gün önce`}`, mono: true, renk: R.not },
                   { v: g.kritik ? 'kritik' : 'eksik', rozet: g.kritik ? R.kirmizi : R.amber },
                 ],
               }))}
