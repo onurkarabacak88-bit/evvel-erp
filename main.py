@@ -92,6 +92,13 @@ app.include_router(abonelik_router)
 app.include_router(tedarikci_router)
 app.include_router(odeme_plani_motor_router)
 app.include_router(odeme_plani_read_router)
+# 📂 KAYIT DOSYASI (İz & Belge doktrini, 2026-08-15) — izole, salt-okur.
+# try/except: modül patlasa bile uygulama ayakta kalır (duyu modülleriyle aynı disiplin).
+try:
+    from kayit_dosyasi_api import router as kayit_dosyasi_router
+    app.include_router(kayit_dosyasi_router)
+except Exception as _e:  # noqa: BLE001
+    logger.warning("kayit_dosyasi_api yüklenemedi: %s", _e)
 app.include_router(evo_sync_router)
 app.include_router(kart_analiz_router)
 app.include_router(gorev_router)

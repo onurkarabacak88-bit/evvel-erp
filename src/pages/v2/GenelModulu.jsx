@@ -279,91 +279,120 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru }) {
    *  Çekmecenin İz ve Belgeler sekmeleri tasarımda vardı ama Bakış veri geçmiyordu
    *  → sekmeler hep boş açılıyordu. Çekmece ÖNCE açılır (bekleme yok), veri arkadan
    *  gelir ve aynı tip+baslik ile tazelenir. */
-  const kartIziYukle = (_u) => {
-    const kartId = _u.kart_id || (_u.kaynak_tablo === 'kartlar' ? _u.kaynak_id : null);
-    if (!kartId) return;
-    // Yanıt döndüğünde çekmece KAPANMIŞ ya da BAŞKA kayda geçmiş olabilir. Hangi
-    // çekmeceyi beklediğimizi şimdi kaydediyoruz; aşağıda fonksiyonel güncelleme
-    // ile "hâlâ o mu?" diye state'in KENDİSİNE soruyoruz.
+  /** 📂 KAYIT DOSYASI (İz & Belge doktrini, 2026-08-15)
+   *  Eskiden burada KARTA ÖZEL bir FE çözümleyici vardı: /kart-hareketleri +
+   *  /kartlar/ekstre-arsiv çekip kesim penceresini ve dönem eşleşmesini
+   *  İSTEMCİDE hesaplıyordu. İki sakıncası vardı: (1) yalnız kart kayıtları iz
+   *  görüyordu, diğer 5 tip hep boş sekme açıyordu; (2) pencere mantığı backend
+   *  (kasa_service / finansal_duyu) ile ayrı yerde durup ayrışabiliyordu.
+   *  Artık tek uç: /api/kayit-dosyasi — pencere ve kesin-bağ kuralları backend'de,
+   *  tek tanım. FE yalnız gösterir. */
+  const kayitDosyasiYukle = (_u) => {
+    // (kaynak_tablo, kaynak_id) İKİLİSİ zorunlu — tek id ile çözme yok.
+    // Kart planlarında kaynak_id boş olabilir; kimlik kart_id'dir.
+    const tablo = _u.kaynak_tablo || (_u.kart_id ? 'kartlar' : null);
+    const kid = (tablo === 'kartlar') ? (_u.kart_id || _u.kaynak_id) : _u.kaynak_id;
+    if (!tablo || !kid) return;
+    // Yanıt döndüğünde çekmece KAPANMIŞ ya da BAŞKA kayda geçmiş olabilir.
     const beklenenKayitId = kayitAnahtari(_u);
-    Promise.all([
-      // '__HATA__' sentinel: HATA ≠ BOŞ. Okuma düşerse "ödeme kaydı yok" demek
-      // sahte bilgidir — sahip ödediği kartı "hiç ödenmemiş" sanır.
-      api(`/kart-hareketleri?kart_id=${encodeURIComponent(kartId)}&limit=120`).catch(() => '__HATA__'),
-      api('/kartlar/ekstre-arsiv').catch(() => null),
-    ]).then(([hareketler, arsiv]) => {
-      // ── İZ: bu karta yapılmış ödemeler ──────────────────────────────────
-      let iz;
-      if (hareketler === '__HATA__') {
-        iz = [{
-          ad: 'İz alınamadı', bekliyor: true, renk: R.kirmizi,
-          detay: 'sunucuya ulaşılamadı — çekmeceyi kapatıp tekrar açın',
-        }];
-      } else {
-        const odemeler2 = (Array.isArray(hareketler) ? hareketler : [])
-          .filter((h) => String(h.islem_turu || '').toUpperCase() === 'ODEME')
-          .sort((a, b) => String(b.tarih || '').localeCompare(String(a.tarih || '')))
-          .slice(0, 6);
-        iz = odemeler2.length
-          ? [
-            {
-              ad: `Kalan ${fmt(sayi(_u.asgari_kalan ?? _u.asgari ?? _u.tutar))}`,
-              detay: 'bu ekstreden ödenmesi bekleniyor', bekliyor: true,
-            },
-            ...odemeler2.map((h) => ({
-              ad: `${fmt(sayi(h.tutar))} ödendi`,
-              detay: kisalt(h.aciklama || '', 60) || 'kart ödemesi',
-              zaman: String(h.tarih || '').slice(0, 10),
-            })),
-          ]
-          : [{
-            ad: 'Bu karta henüz ödeme kaydı yok', bekliyor: true,
-            detay: 'ödeme yapıldığında burada listelenir',
+    // '__HATA__' sentinel: HATA ≠ BOŞ. Okuma düşerse "iz yok" demek sahte bilgidir.
+    api(`/kayit-dosyasi?kaynak_tablo=${encodeURIComponent(tablo)}&kaynak_id=${encodeURIComponent(kid)}`)
+      .catch(() => '__HATA__')
+      .then((d) => {
+        let iz;
+        let belgeler = [];
+        if (d === '__HATA__') {
+          iz = [{
+            ad: 'İz alınamadı', bekliyor: true, renk: R.kirmizi,
+            detay: 'sunucuya ulaşılamadı — çekmeceyi kapatıp tekrar açın',
           }];
+        } else {
+          const ham = Array.isArray(d?.iz) ? d.iz : [];
+          belgeler = Array.isArray(d?.belgeler) ? d.belgeler : [];
+          if (d?.iz_hata) {
+            iz = [{
+              ad: 'İz okunamadı', bekliyor: true, renk: R.kirmizi,
+              detay: 'kayıt defteri sorgusu hata verdi — "iz yok" DEĞİL, bilinmiyor',
+            }];
+          } else if (ham.length) {
+            // Kalan varsa en başa bekleyen düğüm (kısmi ödeme gerçeği görünsün).
+            iz = [
+              ...(sayi(d.kalan) > 0 ? [{
+                ad: `Kalan ${fmt(sayi(d.kalan))}`,
+                detay: 'bu kayıttan ödenmesi bekleniyor', bekliyor: true,
+              }] : []),
+              ...ham,
+            ];
+          } else {
+            // Kesin bağ yok. Dedektif ÖNERİ üretebilir ama o ayrı iş — burada
+            // uydurma iz göstermek yerine durumu dürüstçe söylüyoruz.
+            iz = [{
+              ad: d?.aday_var_olabilir
+                ? 'Kesin iz yok — bu kayıt gerçekten ödenmemiş görünüyor'
+                : 'Bu kayda bağlı ödeme kaydı yok',
+              detay: d?.aday_var_olabilir
+                ? 'kimlik bağı taşıyan hareket bulunamadı; dedektif taraması öneri üretebilir'
+                : 'ödeme yapıldığında burada listelenir',
+              bekliyor: true,
+            }];
+          }
+          if (d?.belge_hata) {
+            belgeler = [{ tur: 'HATA', ad: 'Belgeler okunamadı',
+              detay: 'sorgu hata verdi — "belge yok" değil, bilinmiyor', rozet: 'HATA' }];
+          }
+        }
+        // 🔴 GEÇ YANIT KORUMASI — FONKSİYONEL GÜNCELLEME (Codex B1+B2, korunuyor):
+        // onCekmece = setCekmece (TasarimV2.jsx:764, sarmalayıcı yok) → prev'e
+        // bakarak güncelliyoruz: prev null (çekmece KAPALI) → kendi kendine
+        // açılmaz; prev başka kayıt → dokunulmaz; aynı kayıt → merge.
+        // Karşılaştırma KİMLİK üzerinden (başlık kesilmiş görüntü metnidir).
+        onCekmece?.((prev) => (
+          prev && prev.tip === 'ÖDEME KAYDI'
+          && prev._kayitId != null && prev._kayitId === beklenenKayitId
+            // 🔵 Codex K5: `belgeler` eskiden YALNIZ doluysa yazılıyordu → yükleme
+            // sonrası geçerli BOŞ liste eski belgeleri ekranda bırakıyordu (hayalet).
+            // İkisi de her durumda yazılır; [] de meşru bir cevaptır.
+            ? { ...prev, iz, belgeler }
+            : prev
+        ));
+      })
+      .catch(() => { /* zincir hatası çekmeceyi bozmasın — özet zaten açık */ });
+  };
+
+  /** 📎 Bu kayda belge iliştir — mevcut fatura yükleme ucu kaynak bağıyla
+   *  genişletildi (yeni belge deposu açılmadı). Yükleme sonrası kayıt dosyası
+   *  yeniden çekilir ki belge listede HEMEN görünsün. */
+  const belgeYukleyici = (_u) => {
+    const tablo = _u.kaynak_tablo || (_u.kart_id ? 'kartlar' : null);
+    const kid = (tablo === 'kartlar') ? (_u.kart_id || _u.kaynak_id) : _u.kaynak_id;
+    if (!tablo || !kid) return null;      // bağ kurulamıyorsa düğme HİÇ çıkmasın
+    return async (dosya) => {
+      // 🔵 PDF ≠ FOTO (Codex K1): iki AYRI boru hattı var. PDF /yukle-pdf'te
+      // sayfalara bölünüp metinden okunur (vision yok); foto /yukle'de OCR'a
+      // girer. Her dosyayı 'foto' alanıyla göndermek PDF'i yanlış hatta sokup
+      // "taranmış PDF" hatasına düşürüyordu. Uzantı VE MIME birlikte bakılır.
+      const ad = String(dosya?.name || '').toLowerCase();
+      const pdfMi = ad.endsWith('.pdf') || (dosya?.type || '').toLowerCase() === 'application/pdf';
+      const fd = new FormData();
+      fd.append(pdfMi ? 'pdf' : 'foto', dosya);
+      fd.append('kaynak_tablo', tablo);
+      fd.append('kaynak_id', String(kid));
+      const r = await fetch(pdfMi ? '/api/fatura/yukle-pdf' : '/api/fatura/yukle',
+        { method: 'POST', body: fd });
+      if (!r.ok) {
+        // Hata metnini sunucudan al — "yüklenemedi" demek yetmez, NEDEN önemli
+        // (mükerrer belge freni 409 ile anlamlı bir cümle döndürüyor).
+        let mesaj = `Yükleme başarısız (${r.status})`;
+        try { const j = await r.json(); mesaj = j?.detail || j?.mesaj || mesaj; } catch { /* metin değil */ }
+        throw new Error(mesaj);
       }
-
-      // ── BELGELER: dönem ekstresi ────────────────────────────────────────
-      // Plan açıklamasındaki "(kesim YYYY-AA-GG)" damgası hangi dönemin ekstresi
-      // olduğunu söyler → damga varsa O dönem, yoksa en yeni dönem (donemler DESC).
-      const kartArsiv = (arsiv?.kartlar || []).find((x) => String(x.kart_id) === String(kartId));
-      const donemler = kartArsiv?.donemler || [];
-      const damga = String(_u.ad || _u.aciklama || '').match(/\(kesim (\d{4}-\d{2}-\d{2})\)/);
-      const d = (damga && donemler.find((x) => String(x.kesim_tarihi).slice(0, 10) === damga[1]))
-        || donemler[0];
-      const belgeler = d ? [{
-        tur: 'EKSTRE',
-        ad: `${String(d.donem).slice(0, 7)} dönemi ekstresi`,
-        detay: `kesim ${String(d.kesim_tarihi).slice(0, 10)} · borç ${fmt(sayi(d.donem_borcu))} · asgari ${fmt(sayi(d.asgari_tutar))}`,
-        rozet: d.kaynak === 'import' ? 'BANKA' : 'HESAP',
-        rozetRenk: d.kaynak === 'import' ? R.yesil : R.mavi,
-        // Hedef doğrulandı: tema.js MODULLER → {id:'kart'} altında {id:'ekstre'}
-        // ("Ekstre Durumu"); koprule '__modul:' önekini çözüp gorunum'u eşliyor.
-        onTikla: () => onKopru?.('__modul:kart:ekstre'),
-      }] : [];
-
-      // 🔴 GEÇ YANIT KORUMASI (Codex B1+B2, 2026-08-14) — FONKSİYONEL GÜNCELLEME:
-      // onCekmece = setCekmece (useState setter'ı, TasarimV2.jsx:764 — sarmalayıcı
-      // YOK, doğrulandı) → güncellemeyi prev'e bakarak yapabiliyoruz. Bu üç deliği
-      // birden kapatır:
-      //   · prev null (sahip çekmeceyi KAPATMIŞ) → null döner, çekmece kendi
-      //     kendine yeniden AÇILMAZ (nesne geçseydik açılırdı),
-      //   · prev başka kayda ait → dokunulmaz (yanlış kartın izi basılmaz),
-      //   · aynı kaydın eski isteği geç gelse bile MERGE eder, ezmez.
-      // Nesne kimliği (ref) yerine state'in kendisine soruyoruz — kaynak tek.
-      // Karşılaştırma KİMLİK üzerinden: başlık kesilmiş görüntü metnidir, aynı
-      // bankanın iki kartında birebir aynı olabilir.
-      onCekmece?.((prev) => (
-        prev && prev.tip === 'ÖDEME KAYDI'
-        && prev._kayitId != null && prev._kayitId === beklenenKayitId
-          ? { ...prev, iz, ...(belgeler.length ? { belgeler } : {}) }
-          : prev
-      ));
-    }).catch(() => { /* zincir hatası çekmeceyi bozmasın — özet zaten açık */ });
+      kayitDosyasiYukle(_u);              // belge listesi tazelensin
+    };
   };
 
   const odemeCekmece = ({ _u }) => {
-    onCekmece?.(odemeCekmeceVeri(_u));
-    kartIziYukle(_u);
+    onCekmece?.(odemeCekmeceVeri(_u, { belgeYukle: belgeYukleyici(_u) }));
+    kayitDosyasiYukle(_u);
   };
 
   // ════════════════════════ GÖRÜNÜM: KARAR ALANI ════════════════════════════

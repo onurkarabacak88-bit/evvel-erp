@@ -1313,8 +1313,14 @@ export function Cekmece({
   acik, tip, baslik, alt, kpi, listeBaslik, satirlar, not,
   aksiyonAd, onAksiyon, aksiyonlar, onKapat,
   belgeler, iz, dosyaBilgi,
+  // 📎 BELGE YÜKLEME (sahip 2026-08-15: "belge alanına yükleme deseni de koy")
+  // Modül bir fonksiyon geçerse Belgeler sekmesinin altında yükleme düğmesi çıkar.
+  // Geçmezse hiç görünmez — yükleme yeri olmayan kayıtta boş düğme durmasın.
+  belgeYukle,
 }) {
   const [sekme, setSekme] = React.useState('ozet');
+  const [yukleDurum, setYukleDurum] = React.useState('');   // '' | 'yukleniyor' | hata metni
+  const dosyaRef = React.useRef(null);
   // Her açılışta Özet'e döner (blueprint kuralı)
   React.useEffect(() => { setSekme('ozet'); }, [acik, tip, baslik]);
   if (!acik) return null;
@@ -1357,8 +1363,8 @@ export function Cekmece({
         <CekmeceSekme aktif={sekme} onSec={setSekme} />
 
         <div style={{ flex: 1, overflowY: 'auto', padding: '18px 22px 22px', display: 'flex', flexDirection: 'column', gap: 18 }}>
-          {sekme === 'belge' && (
-            belgeler?.length ? (
+          {sekme === 'belge' && (<>
+            {belgeler?.length ? (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
                 {belgeler.map((b, i) => (
                   // Belge her zaman indirilebilir bir DOSYA değil: kart ekstresi gibi
@@ -1409,8 +1415,48 @@ export function Cekmece({
                 baslik="Bağlı belge yok"
                 aciklama="Bu kayda iliştirilmiş fatura/fiş bulunmuyor. Belgeler tedarikçi faturası yüklendiğinde ya da fatura isteği kapandığında burada görünür."
               />
-            )
-          )}
+            )}
+            {belgeYukle && (
+              <div style={{ marginTop: 4 }}>
+                <input
+                  ref={dosyaRef} type="file" accept="image/*,.pdf" style={{ display: 'none' }}
+                  onChange={async (e) => {
+                    const f = e.target.files?.[0];
+                    e.target.value = '';            // aynı dosya tekrar seçilebilsin
+                    if (!f) return;
+                    setYukleDurum('yukleniyor');
+                    try {
+                      await belgeYukle(f);
+                      setYukleDurum('');
+                    } catch (err) {
+                      // Sessiz yutma YASAK: yükleme başarısızsa sahip görsün,
+                      // yoksa "belge eklendi" sanıp belgesiz devam eder.
+                      setYukleDurum(err?.message || 'Belge yüklenemedi');
+                    }
+                  }}
+                />
+                <button
+                  onClick={() => dosyaRef.current?.click()}
+                  disabled={yukleDurum === 'yukleniyor'}
+                  style={{
+                    width: '100%', padding: '11px 13px', borderRadius: 12,
+                    border: `1px dashed ${R.cizgi3}`, background: 'transparent',
+                    color: yukleDurum === 'yukleniyor' ? R.not : R.metin2,
+                    fontSize: 12.5, fontWeight: 600, fontFamily: 'inherit',
+                    cursor: yukleDurum === 'yukleniyor' ? 'default' : 'pointer',
+                  }}
+                >
+                  {yukleDurum === 'yukleniyor' ? 'Yükleniyor…' : '➕ Belge yükle (fotoğraf/PDF)'}
+                </button>
+                {yukleDurum && yukleDurum !== 'yukleniyor' && (
+                  <div style={{
+                    marginTop: 8, padding: '9px 12px', borderRadius: 10, fontSize: 11.5,
+                    background: `${R.kirmizi}14`, border: `1px solid ${R.kirmizi}44`, color: R.kirmizi,
+                  }}>⚠ {yukleDurum}</div>
+                )}
+              </div>
+            )}
+          </>)}
 
           {sekme === 'iz' && (
             <>

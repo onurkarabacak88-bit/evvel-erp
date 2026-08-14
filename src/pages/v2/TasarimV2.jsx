@@ -2077,6 +2077,8 @@ export default function TasarimV2({ onGit }) {
           // geçmezse sekme NEDEN boş olduğunu söyler — uydurma belge/iz yok.
           belgeler={cekmece?.belgeler}
           iz={cekmece?.iz}
+          // 📎 Belge yükleme: modül geçerse Belgeler sekmesinde düğme çıkar.
+          belgeYukle={cekmece?.belgeYukle}
           dosyaBilgi={cekmece?.dosyaBilgi}
           aksiyonAd={cekmece?.aksiyonAd}
           onAksiyon={() => koprule(cekmece?._hedef)}

@@ -73,6 +73,13 @@ def _ensure_tablolar(cur) -> None:
     # PDF e-fatura kaynağı: foto yerine doğrudan metin (vision OCR'sız). Maliyet'ten
     # toplu PDF yüklemede her fatura sayfasının metni burada tutulur; arka plan işçisi
     # bunu LLM'e verir (foto varsa vision, metin varsa text yolu — aynı JSON şeması).
+    # 📂 KAYIT BAĞI (2026-08-15, İz & Belge doktrini): belge doğrudan bir kayda
+    # iliştirilebilsin. Burada (tek yerde) tanımlı → hem /yukle hem /yukle-pdf
+    # yolları güvence altında; kayit_dosyasi_api bu ikiliyle okur.
+    cur.execute("ALTER TABLE tedarikci_fatura ADD COLUMN IF NOT EXISTS kaynak_tablo TEXT")
+    cur.execute("ALTER TABLE tedarikci_fatura ADD COLUMN IF NOT EXISTS kaynak_id TEXT")
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_tf_kaynak ON tedarikci_fatura (kaynak_tablo, kaynak_id)")
     cur.execute("ALTER TABLE tedarikci_fatura ADD COLUMN IF NOT EXISTS kaynak_metin TEXT")
     cur.execute("ALTER TABLE tedarikci_fatura ADD COLUMN IF NOT EXISTS kaynak_tip TEXT")  # 'foto' | 'pdf'
     cur.execute("ALTER TABLE tedarikci_fatura ADD COLUMN IF NOT EXISTS fatura_no TEXT")    # e-fatura no (PDF'te tekil)
@@ -1343,9 +1350,15 @@ def _son_alis_fiyat(cur, kalem_kodu: str, ref_tarih: Optional[str] = None) -> Op
 @router.post("/yukle")
 async def fatura_yukle(
     foto: UploadFile = File(...),
-    sube_id: str = Form(...),
+    sube_id: Optional[str] = Form(None),
     siparis_talep_id: Optional[str] = Form(None),
     personel_id: Optional[str] = Form(None),
+    # 📂 KAYIT BAĞI (2026-08-15, İz & Belge doktrini): belge doğrudan bir kayda
+    # iliştirilebilsin (çekmecenin Belgeler sekmesindeki yükleme deseni).
+    # Yeni belge deposu AÇILMADI — mevcut tedarikci_fatura tablosu kullanılır.
+    # sube_id artık opsiyonel: merkezden bir kayda belge eklerken şube yoktur.
+    kaynak_tablo: Optional[str] = Form(None),
+    kaynak_id: Optional[str] = Form(None),
 ):
     """Fatura fotoğrafı yükle. ANINDA döner (durum=ocr_bekliyor); OCR arka planda.
     Şube bu çağrıyı beklemez — kabul akışı kesintisiz devam eder."""
@@ -1389,10 +1402,13 @@ async def fatura_yukle(
         cur.execute(
             """
             INSERT INTO tedarikci_fatura
-                (id, sube_id, siparis_talep_id, foto, foto_mime, durum, yukleyen_personel_id, dosya_hash)
-            VALUES (%s, %s, %s, %s, %s, 'ocr_bekliyor', %s, %s)
+                (id, sube_id, siparis_talep_id, foto, foto_mime, durum, yukleyen_personel_id,
+                 dosya_hash, kaynak_tablo, kaynak_id)
+            VALUES (%s, %s, %s, %s, %s, 'ocr_bekliyor', %s, %s, %s, %s)
             """,
-            (fid, sube_id.strip(), (siparis_talep_id or None), raw, mime, (personel_id or None), dh),
+            (fid, (sube_id or "").strip() or None, (siparis_talep_id or None), raw, mime,
+             (personel_id or None), dh,
+             (kaynak_tablo or None), (kaynak_id or None)),
         )
         conn.commit()
     # Asenkron OCR — şubeyi bekletmeden
@@ -1405,6 +1421,10 @@ async def fatura_yukle_pdf(
     pdf: UploadFile = File(...),
     sube_id: Optional[str] = Form(None),
     personel_id: Optional[str] = Form(None),
+    # 📂 KAYIT BAĞI (2026-08-15) — /yukle ile AYNI desen: PDF de bir kayda
+    # iliştirilebilsin (çekmecedeki yükleme düğmesi PDF'i buraya yollar).
+    kaynak_tablo: Optional[str] = Form(None),
+    kaynak_id: Optional[str] = Form(None),
 ):
     """Maliyet ekranından TOPLU e-fatura PDF'i yükle. Çok-sayfalı PDF AYRI faturalara
     bölünür; her fatura metni arka planda LLM ile JSON'a çevrilir (vision YOK → 'Expecting
@@ -1471,13 +1491,13 @@ async def fatura_yukle_pdf(
                 INSERT INTO tedarikci_fatura
                     (id, sube_id, fatura_no, fatura_tarih, onceki_bakiye, bakiye_dahil,
                      kaynak_metin, kaynak_tip, durum, yukleyen_personel_id,
-                     foto, foto_mime)
+                     foto, foto_mime, kaynak_tablo, kaynak_id)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, 'pdf', 'ocr_bekliyor', %s,
-                        %s, 'application/pdf')
+                        %s, 'application/pdf', %s, %s)
                 """,
                 (fid, (sube_id or None), fno, ftarih,
                  f.get("onceki_bakiye"), f.get("bakiye_dahil"), metin, (personel_id or None),
-                 raw),
+                 raw, (kaynak_tablo or None), (kaynak_id or None)),
             )
             cur.execute("UPDATE tedarikci_fatura SET dosya_hash=%s WHERE id=%s", (dh, fid))
             yeni_idler.append(fid)
