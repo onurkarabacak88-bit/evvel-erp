@@ -484,17 +484,27 @@ def odeme_plani_iz_ile_kapat(pid: str, istek: IzIleKapatIstek):
         plan = cur.fetchone()
         if not plan:
             raise HTTPException(404, "Ödeme planı bulunamadı.")
+        # Tek kapı: satır kilitli olduğu için durum burada kesindir. İkinci sekme
+        # kilidi bekler, sırası gelince durumu 'odendi' görür ve buradan döner —
+        # UPDATE'te ikinci bir durum süzgeci (ve erişilemez 409 dalı) gereksizdi.
         if plan["durum"] != "bekliyor":
             raise HTTPException(
-                400, f"Bu plan zaten '{plan['durum']}' durumunda — yalnız bekleyen plan kapatılabilir.")
+                400, f"Plan zaten kapalı/iptal (durum: {plan['durum']}) — yalnız bekleyen plan kapatılabilir.")
         damga = f"[İZ-MUTABAKAT] {gerekce}"
         if (istek.iz_ozet or "").strip():
             damga += f" · iz: {istek.iz_ozet.strip()}"
-        # 500 karakter sınırı: damga eski metnin önüne eklendiği için gerekçe
-        # uzarsa satır şişer; kardeş uçtaki sınırla hizalı.
-        yeni_aciklama = f"{damga} | {plan['aciklama']}".strip(" |")[:500]
-        # WHERE'de durum tekrar süzülür: iki sekme aynı anda kapatmaya çalışırsa
-        # ikincisi 0 satır günceller (409) — sessizce üstüne yazmaz.
+        # Damga ASLA kırpılmaz (karar izi eksiksiz kalmalı); yer sıkışırsa MEVCUT
+        # metin kırpılır ve '…' ile kırpıldığı görünür. Eskiden toplam sağdan
+        # kesiliyordu → uzun açıklamada damganın kuyruğu sessizce uçabiliyordu,
+        # üstelik docstring "ezilmez" diyordu. 600 mutlak tavan (gerekçe çok
+        # uzunsa damganın kendisi de bir yerde durmalı).
+        eski = plan["aciklama"] or ""
+        yer = 500 - len(damga)
+        if yer <= 0:
+            yeni_aciklama = damga[:600]
+        else:
+            kirpik = eski if len(eski) <= yer else f"{eski[:max(0, yer - 1)]}…"
+            yeni_aciklama = f"{damga} | {kirpik}".strip(" |")[:600]
         cur.execute(
             """UPDATE odeme_plani
                   SET durum='odendi',
@@ -502,10 +512,8 @@ def odeme_plani_iz_ile_kapat(pid: str, istek: IzIleKapatIstek):
                       odeme_tarihi=COALESCE(%s, CURRENT_DATE),
                       odeme_yontemi='iz_mutabakat',
                       aciklama=%s
-                WHERE id=%s AND durum='bekliyor'""",
+                WHERE id=%s""",
             (odeme_gunu, yeni_aciklama, pid))
-        if cur.rowcount == 0:
-            raise HTTPException(409, "Plan bu sırada başka bir yerden değişti — sayfayı yenileyip tekrar bakın.")
         conn.commit()
     return {
         "ok": True, "plan_id": pid,
