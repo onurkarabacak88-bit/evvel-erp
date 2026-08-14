@@ -32,6 +32,24 @@ const kisaGun = (iso) => {
   return m ? `${Number(m[3])} ${AY_KISA[Number(m[2]) - 1]}` : String(iso || '—');
 };
 
+/** Ödeme adını sadeleştirir — ekranda TEKNİK metin durmasın diye.
+ *  Sunucu adı "Vadeli Alım: Fatura NAZ2026000000236 (DORUK AJANS MATBAACILIK)"
+ *  gibi geliyor: sahip önce KİME ödeneceğini görmeli, fatura numarası detaydır.
+ *  1) baştaki tekrarlı "Vadeli Alım: " önekleri soyulur (kayıtlarda 2 kez üst üste
+ *     bindiği görüldü), 2) sondaki parantez içi FİRMA başlığa çıkar, kalan kısım
+ *     (fatura no) alt satıra iner, 3) parantez yoksa soyulmuş ham metin kalır.
+ *  Bilgi kaybı yok: ham metin ödeme çekmecesinin "Ödeme adı" satırında durur. */
+const sadeOdemeAdi = (ham) => {
+  const t = String(ham ?? '').trim().replace(/^(Vadeli Alım:\s*)+/i, '').trim();
+  const m = t.match(/\(([^()]+)\)\s*$/);
+  if (m) {
+    const firma = m[1].trim();
+    const kalan = t.slice(0, m.index).trim().replace(/[·\-–—,:;]+$/, '').trim();
+    if (firma) return { baslik: firma, ek: kalan || null };
+  }
+  return { baslik: t, ek: null };
+};
+
 /** Klasik panelin bölüm başlığı — kadife karşılığı. */
 function Bolum({ baslik, not, renk, sayac, cocuk }) {
   return (
@@ -115,6 +133,9 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru }) {
   const uyarilar = Array.isArray(veri.uyarilar) ? veri.uyarilar : (veri.uyarilar?.uyarilar || []);
   const onaylar = (Array.isArray(veri.onaylar) ? veri.onaylar : [])
     .filter((o) => !String(o.islem_turu || '').toUpperCase().includes('KASA'));
+  // ⬆️ (2026-08-14) `oneriler` bildirim görünümünün içinde tanımlıydı; Karar
+  // alanındaki "Bugün ilk 3 iş" bandı da okuyor → tek yere, yukarı alındı.
+  const oneriler = Array.isArray(p.oneriler) ? p.oneriler : [];
 
   // ── TRİAJ: gecikme GÜNÜNE göre (klasik panelin kaynak kuralı) ──────────────
   const odemeler = Array.isArray(p.bugun_odemeler) ? p.bugun_odemeler : [];
@@ -137,22 +158,29 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru }) {
     .filter((u) => sayi(u.gun_farki) < 0)
     .reduce((s, u) => s + gecikmisTutar(u), 0);
 
-  const odemeSatiri = (u, i) => ({
-    id: u.id || `o-${i}`, _u: u,
-    baslik: kisalt(u.ad || u.aciklama || u.tedarikci || 'Ödeme', 60),
-    alt: [
-      u.tip ? String(u.tip) : null,
-      // 🔴 EVV-GENEL-N3: 3-yönlü — geçmiş (gecikti) · bugün · gelecek (N gün sonra).
-      sayi(u.gun_farki) < 0 ? `${Math.abs(sayi(u.gun_farki))} gün gecikti`
-        : sayi(u.gun_farki) === 0 ? 'bugün vadesi' : `${sayi(u.gun_farki)} gün sonra`,
-    ].filter(Boolean).join(' · '),
-    tutar: fmt(odemeTutar(u)),
-    tier: sayi(u.gun_farki) <= -15 ? 'kritik' : sayi(u.gun_farki) <= -8 ? 'uyari' : sayi(u.gun_farki) < 0 ? 'bilgi' : 'iyi',
-  });
+  // 🔵 (2026-08-14): satır başlığı ham sunucu metniydi ("Vadeli Alım: Fatura
+  // NAZ2026… (DORUK AJANS MATBAACIL…") → 60 karakterde kesilince FİRMA ADI hiç
+  // görünmüyordu. Artık firma başlıkta, fatura no alt satırda.
+  const odemeSatiri = (u, i) => {
+    const sadeAd = sadeOdemeAdi(u.ad || u.aciklama || u.tedarikci || 'Ödeme');
+    return {
+      id: u.id || `o-${i}`, _u: u,
+      baslik: kisalt(sadeAd.baslik || 'Ödeme', 60),
+      alt: [
+        u.tip ? String(u.tip) : null,
+        sadeAd.ek ? kisalt(sadeAd.ek, 46) : null,
+        // 🔴 EVV-GENEL-N3: 3-yönlü — geçmiş (gecikti) · bugün · gelecek (N gün sonra).
+        sayi(u.gun_farki) < 0 ? `${Math.abs(sayi(u.gun_farki))} gün gecikti`
+          : sayi(u.gun_farki) === 0 ? 'bugün vadesi' : `${sayi(u.gun_farki)} gün sonra`,
+      ].filter(Boolean).join(' · '),
+      tutar: fmt(odemeTutar(u)),
+      tier: sayi(u.gun_farki) <= -15 ? 'kritik' : sayi(u.gun_farki) <= -8 ? 'uyari' : sayi(u.gun_farki) < 0 ? 'bilgi' : 'iyi',
+    };
+  };
 
   const odemeCekmece = ({ _u }) => onCekmece?.({
     tip: 'ÖDEME KAYDI',
-    baslik: kisalt(_u.ad || _u.aciklama || 'Ödeme', 60),
+    baslik: kisalt(sadeOdemeAdi(_u.ad || _u.aciklama || 'Ödeme').baslik || 'Ödeme', 60),
     alt: sayi(_u.gun_farki) < 0 ? `${Math.abs(sayi(_u.gun_farki))} gün gecikti`
       : sayi(_u.gun_farki) === 0 ? 'bugün vadesi' : `${sayi(_u.gun_farki)} gün sonra`,
     // Sahip düzeltmesi (2026-08-03): boş alanı GİZLEMEK yerine DOLDUR.
@@ -175,7 +203,9 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru }) {
     ],
     listeBaslik: 'Kayıt',
     satirlar: [
-      { ad: 'Ödeme adı', detay: _u.kaynak_tablo ? `kaynak: ${_u.kaynak_tablo}` : '', tutar: kisalt(_u.ad || _u.aciklama || '—', 34) },
+      // Başlık sadeleştirildi (firma öne alındı) — bilgi kaybı olmasın diye
+      // kaydın HAM adı (fatura no dahil) burada tam hâliyle durur.
+      { ad: 'Ödeme adı', detay: _u.kaynak_tablo ? `kaynak: ${_u.kaynak_tablo}` : 'kaydın tam adı', tutar: kisalt(_u.ad || _u.aciklama || '—', 70) },
       ...(_u.tarih ? [{ ad: 'Vade tarihi', detay: 'planlanan ödeme günü', tutar: String(_u.tarih).slice(0, 10) }] : []),
       { ad: 'Asgari kalan', detay: 'ödenmesi gereken', tutar: fmt(sayi(_u.asgari_kalan ?? _u.asgari ?? _u.tutar)) },
     ],
@@ -186,23 +216,102 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru }) {
 
   // ════════════════════════ GÖRÜNÜM: KARAR ALANI ════════════════════════════
   if (gorunum === 'karar') {
-    const bolum = (baslik, kayitlar, renk) => (
-      <Bolum
-        baslik={baslik}
-        renk={renk}
-        sayac={kayitlar.length}
-        not="satıra tıkla → ödeme dosyası"
-        cocuk={kayitlar.length === 0
-          ? <div style={{ fontSize: 12, color: R.not2 }}>Bu katmanda kayıt yok.</div>
-          : <Liste satirlar={kayitlar.map(odemeSatiri)} onAc={odemeCekmece} />}
-      />
-    );
+    // 🔵 (2026-08-14) İKİ DÜZELTME:
+    //  · Başlıkta yalnız ADET vardı → "3 kalem" ne kadar para bilinmiyordu; sayacın
+    //    yanına katmanın TUTAR TOPLAMI kondu (kaç kalem değil, ne kadar para).
+    //  · "satıra tıkla" notu 5 bölümde 5 kez tekrar ediyordu → yalnız ilkinde.
+    // Sıralama: kova içinde TUTAR büyükten küçüğe (gecikme günü zaten satırda yazılı,
+    // aynı kovadaki kalemler zaten aynı gecikme aralığında → ayıran şey paradır).
+    const bolum = (baslik, kayitlar, renk, notGoster = false) => {
+      const toplam = kayitlar.reduce((s, u) => s + odemeTutar(u), 0);
+      const sirali = [...kayitlar].sort((a, b) => odemeTutar(b) - odemeTutar(a));
+      return (
+        <Bolum
+          baslik={baslik}
+          renk={renk}
+          sayac={`${kayitlar.length} kalem · ${fmt(toplam)}`}
+          not={notGoster ? 'satıra tıkla → ödeme dosyası' : null}
+          cocuk={kayitlar.length === 0
+            ? <div style={{ fontSize: 12, color: R.not2 }}>Bu katmanda kayıt yok.</div>
+            : <Liste satirlar={sirali.map(odemeSatiri)} onAc={odemeCekmece} />}
+        />
+      );
+    };
+
+    // "48 saatlik yük": bugün (0) + yarın (1) vadesi olan kalemlerin toplamı.
+    // Bugün kasadan çıkacak parayı planlarken yarını da görmek gerekir.
+    const gYarin = odemeler.filter((u) => sayi(u.gun_farki) === 0 || sayi(u.gun_farki) === 1);
+    const t48 = gYarin.reduce((s, u) => s + odemeTutar(u), 0);
+    const gBugToplam = gBug.reduce((s, u) => s + odemeTutar(u), 0);
+    // Ödeme baskısı hiç yoksa 4 boş katman yerine tek net cümle gösterilir.
+    const baskiYok = (gK.length + gU.length + gB.length + gBug.length) === 0;
+
+    // ── ☀️ BUGÜN İLK 3 İŞ ────────────────────────────────────────────────────
+    // Sahip ekranı açtığında "önce neye bakayım?" sorusunun cevabı. Uydurma yok:
+    // üç madde de aynı veriden türer; madde üretecek veri yoksa bant hiç çizilmez.
+    const ilkUcIs = (() => {
+      const isler = [];
+      const gecikmisSirali = odemeler
+        .filter((u) => sayi(u.gun_farki) < 0)
+        .sort((a, b) => odemeTutar(b) - odemeTutar(a));
+      const enBuyuk = gecikmisSirali[0];
+      if (enBuyuk) {
+        const ad = sadeOdemeAdi(enBuyuk.ad || enBuyuk.aciklama || 'Ödeme');
+        isler.push({
+          k: 'gecikmis', ikon: '🔴', renk: R.kirmizi,
+          metin: `${kisalt(ad.baslik, 38)} — ${fmt(odemeTutar(enBuyuk))}`,
+          alt: `${Math.abs(sayi(enBuyuk.gun_farki))} gün gecikti · en büyük gecikmiş kalem`,
+          onTikla: () => odemeCekmece({ _u: enBuyuk }),
+        });
+      }
+      if (t48 > 0) {
+        isler.push({
+          k: 'yuk48', ikon: '📅', renk: R.amber,
+          metin: `Bugün/yarın çıkacak: ${fmt(t48)}`,
+          alt: `${gYarin.length} kalem · 48 saatlik nakit yükü`,
+        });
+      } else if (gYak.length) {
+        const enYakin = [...gYak].sort((a, b) => sayi(a.gun_farki) - sayi(b.gun_farki))[0];
+        const ad2 = sadeOdemeAdi(enYakin.ad || enYakin.aciklama || 'Ödeme');
+        isler.push({
+          k: 'yuk48', ikon: '📅', renk: R.mavi,
+          metin: `En yakın vade: ${kisalt(ad2.baslik, 32)} — ${fmt(odemeTutar(enYakin))}`,
+          alt: `${sayi(enYakin.gun_farki)} gün sonra · bugün/yarın ödeme yok`,
+          onTikla: () => odemeCekmece({ _u: enYakin }),
+        });
+      }
+      if (onaylar.length > 0) {
+        isler.push({
+          k: 'onay', ikon: '🔔', renk: R.amber,
+          metin: `${onaylar.length} onay bekliyor`,
+          alt: 'karar verilmedikçe kayıt işlenmez → Onay Kuyruğu',
+          onTikla: () => onKopru?.('__modul:onaylar:kuyruk'),
+        });
+      } else if (oneriler.length > 0) {
+        isler.push({
+          k: 'oneri', ikon: '🧠', renk: R.bakir,
+          metin: `Karar motorunda ${oneriler.length} öneri`,
+          alt: 'öneri-only · hüküm insanın → Motor & Bildirimler',
+          onTikla: () => onKopru?.('__gorunum:bildirim'),
+        });
+      }
+      return isler;
+    })();
+
     return (
       <>
         <KpiSeridi kpiler={[
           { etiket: 'Kasa', deger: fmt(sayi(p.kasa)), alt: 'kanonik bakiye', renk: sayi(p.kasa) >= 0 ? R.yesil : R.kirmizi },
           { etiket: 'Gecikmiş toplam', deger: fmt(gecikmisToplam), alt: `${gK.length + gU.length + gB.length} kalem`, renk: gecikmisToplam > 0 ? R.kirmizi : R.yesil },
-          { etiket: 'Bugün vadesi', deger: String(gBug.length), alt: gBug.length ? 'bugün ödenecek' : 'bugün yok', renk: gBug.length ? R.amber : R.yesil },
+          {
+            // 🔵 (2026-08-14): "Bugün vadesi" ADET sayıyordu ("3") — yanındaki tüm
+            // KPI'lar para gösterirken bu tek başına sayıydı, üstelik "3 kalem" bugün
+            // kasadan ne çıkacağını söylemiyordu. Değer = TUTAR, adet alta indi.
+            etiket: 'Bugün vadesi',
+            deger: fmt(gBugToplam),
+            alt: `${gBug.length} kalem · 48 saat ${fmt(t48)}`,
+            renk: gBugToplam > 0 ? R.amber : t48 > 0 ? R.mavi : R.yesil,
+          },
           { etiket: 'Kaç gün dayanır', deger: p.kac_gun_dayanir != null ? `${sayi(p.kac_gun_dayanir)} gün` : '—', alt: 'kasa / günlük yük', renk: p.kac_gun_dayanir == null ? R.not3 : sayi(p.kac_gun_dayanir) < 15 ? R.kirmizi : R.krem },
           {
             // ⚠️ /vadeli-alimlar/ozet ÇEKİLİYOR ama hiçbir yerde OKUNMUYORDU
@@ -220,14 +329,66 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru }) {
             renk: sayi(v?.geciken_adet) ? R.kirmizi : sayi(v?.bekleyen_adet) ? R.amber : R.yesil,
           },
         ]} />
-        {/* Klasik panelin 4 katmanlı triajı — gecikme GÜNÜNE göre */}
-        {bolum('KRİTİK · 15+ gün gecikmiş', gK, R.kirmizi)}
-        {bolum('UYARI · 8–14 gün', gU, R.amber)}
-        {bolum('BİLGİ · 0–7 gün', gB, R.mavi)}
-        {bolum('BUGÜN vadesi gelen', gBug, R.bakir)}
+
+        {/* ☀️ Günün ilk üç işi — KPI şeridinin hemen altında, tek bakışta sıra */}
+        {ilkUcIs.length > 0 && (
+          <div style={{ ...kartYuzey, padding: '14px 18px', marginBottom: 14, borderLeft: `3px solid ${R.bakir}` }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 10 }}>
+              <span style={{ fontFamily: F.baslik, fontSize: 15, fontWeight: 600 }}>☀️ Bugün ilk 3 iş</span>
+              <span style={{ fontSize: 11, color: R.not2, marginLeft: 'auto' }}>önem sırasına dizili</span>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {ilkUcIs.map((is, i) => (
+                <div
+                  key={is.k}
+                  onClick={is.onTikla}
+                  tabIndex={is.onTikla ? 0 : undefined}
+                  role={is.onTikla ? 'button' : undefined}
+                  onKeyDown={is.onTikla ? (e) => {
+                    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); is.onTikla(); }
+                  } : undefined}
+                  style={{
+                    display: 'flex', alignItems: 'flex-start', gap: 10, padding: '9px 12px',
+                    borderRadius: 10, background: R.girinti, border: `1px solid ${R.cizgi2}`,
+                    cursor: is.onTikla ? 'pointer' : 'default',
+                  }}
+                >
+                  <span style={{ fontFamily: F.mono, fontSize: 11.5, fontWeight: 700, color: R.not2, width: 14, flexShrink: 0 }}>{i + 1}</span>
+                  <span style={{ fontSize: 13, flexShrink: 0 }}>{is.ikon}</span>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: is.renk }}>{is.metin}</div>
+                    <div style={{ fontSize: 11, color: R.not2, marginTop: 2 }}>{is.alt}</div>
+                  </div>
+                  {is.onTikla && <span style={{ marginLeft: 'auto', fontSize: 10.5, color: R.not3, whiteSpace: 'nowrap' }}>dokun →</span>}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Klasik panelin 4 katmanlı triajı — gecikme GÜNÜNE göre.
+            🟢 (2026-08-14) TEMİZ GÜN: dört katman da boşken üst üste 4 "kayıt yok"
+            kutusu çiziliyordu — sahip 4 boş kutuyu tarayıp "sorun yok mu?" diye
+            düşünüyordu. Baskı yoksa tek cümle söylenir. */}
+        {baskiYok ? (
+          <div style={{
+            ...kartYuzey, padding: '16px 20px', marginBottom: 14,
+            borderLeft: `3px solid ${R.yesil}`, fontSize: 13, lineHeight: 1.6, color: R.metin2,
+          }}>
+            <b style={{ color: R.yesil }}>✓ Bugün ödeme baskısı yok</b> — gecikmiş, bugün vadesi ve
+            7 gün içi kalem bulunmuyor.
+          </div>
+        ) : (
+          <>
+            {bolum('KRİTİK · 15+ gün gecikmiş', gK, R.kirmizi, true)}
+            {bolum('UYARI · 8–14 gün', gU, R.amber)}
+            {bolum('BİLGİ · 0–7 gün', gB, R.mavi)}
+            {bolum('BUGÜN vadesi gelen', gBug, R.bakir)}
+          </>
+        )}
         {/* 🔴 EVV-GENEL-N3: gelecek (gun_farki>0) vadeler artık "bugün"e karışmıyor,
-            ayrı YAKLAŞAN kovasında görünür. */}
-        {gYak.length > 0 && bolum('YAKLAŞAN · gelecek günler', gYak, R.krem)}
+            ayrı YAKLAŞAN kovasında görünür. Temiz günde de listelenir. */}
+        {gYak.length > 0 && bolum('YAKLAŞAN · gelecek günler', gYak, R.krem, baskiYok)}
       </>
     );
   }
@@ -325,10 +486,27 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru }) {
         </div>
       );
     })() : null;
+    // 🔵 (2026-08-14) BLOK SIRASI DEĞİŞTİ (yalnız yerleşim — veri/mantık aynı):
+    // sabah ilk sorulan soru operasyoneldir. Sıra artık
+    //   1) param nerede → 2) ödeme baskısı → 3) aylık KPI → 4) tahsilat kanalları
+    //   → 5) kasa özeti → 6) bu ay ödenen sabit giderler.
+    // Eskiden aylık özet (geçmişe bakan rakamlar) 2. sıradaydı, "bu ay neyi
+    // ödemem gerek" ise en alttaydı → sahip her sabah aşağı kaydırıyordu.
     return (
       <>
         {nakitHataBlok}
         {nakitBlok}
+
+        <Bolum baslik="⚡ Ödeme baskısı" not="finansman yükü" cocuk={
+          <>
+            <Satir ad="Bekleyen borç taksiti" deger={fmt(sayi(p.borc_taksit_bekleyen))} alt={sayi(p.borc_taksit_bekleyen_adet) ? `${sayi(p.borc_taksit_bekleyen_adet)} taksit` : null} renk={sayi(p.borc_taksit_bekleyen) ? R.kirmizi : R.krem} />
+            <Satir ad="Ödenen borç taksiti" deger={fmt(sayi(p.borc_taksit_odenen))} renk={R.yesil} />
+            <Satir ad="Bu ay kart faizi" deger={fmt(sayi(p.bu_ay_kart_faizi))} renk={sayi(p.bu_ay_kart_faizi) ? R.kirmizi : R.krem} />
+            <Satir ad="Finansman maliyeti" deger={fmt(sayi(p.bu_ay_finansman_maliyeti))} renk={sayi(p.bu_ay_finansman_maliyeti) ? R.kirmizi : R.krem} />
+            <Satir ad="Bekleyen gider sayısı" deger={String(sayi(p.bekleyen_gider_sayisi))} renk={R.metin2} />
+          </>
+        } />
+
         <KpiSeridi kpiler={[
           { /* PROD-V2-CIRO-001 FIX: BRÜT bu_ay_ciro (ciro tablosu) — "Bu ay ciro" etiketi brüt olmalı;
                önce NET bu_ay_sadece_ciro tercih ediliyordu, aşağıdaki tahsilat kanalları brütken tutarsızdı. */
@@ -347,13 +525,17 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru }) {
             <Satir ad="POS / kart" deger={fmt(sayi(p.bu_ay_pos))} alt={sayi(p.bu_ay_pos_kesinti) ? `kesinti ${fmt(sayi(p.bu_ay_pos_kesinti))}` : null} />
             <Satir ad="Online" deger={fmt(sayi(p.bu_ay_online))} alt={sayi(p.bu_ay_online_kesinti) ? `kesinti ${fmt(sayi(p.bu_ay_online_kesinti))}` : null} />
             <Satir ad="Dış kaynak geliri" deger={fmt(sayi(p.bu_ay_dis_kaynak))} renk={R.metin2} />
-            <Satir ad="Devir" deger={fmt(sayi(p.bu_ay_devir))} renk={R.metin2} />
+            {/* Devir geçmiş aydan taşınan bakiyedir — bu ayın tahsilatı sanılıp
+                kanal toplamlarına eklenmesin diye açıkça yazılır. */}
+            <Satir ad="Devir" deger={fmt(sayi(p.bu_ay_devir))} renk={R.metin2} alt="geçmiş aydan devreden — bu ayın tahsilatı değil" />
           </>
         } />
 
         <Bolum baslik="🔍 Kasa özeti" not="anlık dağılım" cocuk={
           <>
-            <Satir ad="Kanonik kasa" deger={fmt(sayi(p.kasa))} renk={R.yesil} alt="motors.guncel_kasa" />
+            {/* Alt yazı kod adıydı ("motors.guncel_kasa") — ekranda dosya/fonksiyon
+                adı durmaz; sahibin dilinde nereden geldiği yazılır. */}
+            <Satir ad="Kanonik kasa" deger={fmt(sayi(p.kasa))} renk={R.yesil} alt="kasa izi defteri · kanonik" />
             <Satir ad="Anlık nakit" deger={fmt(sayi(p.anlik_nakit))} />
             <Satir ad="Anlık kart" deger={fmt(sayi(p.anlik_kart))} />
             <Satir ad="Genel nakit toplamı" deger={fmt(sayi(p.genel_nakit_toplam))} renk={R.metin2} />
@@ -361,30 +543,33 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru }) {
           </>
         } />
 
-        <Bolum baslik="⚡ Ödeme baskısı" not="finansman yükü" cocuk={
-          <>
-            <Satir ad="Bekleyen borç taksiti" deger={fmt(sayi(p.borc_taksit_bekleyen))} alt={sayi(p.borc_taksit_bekleyen_adet) ? `${sayi(p.borc_taksit_bekleyen_adet)} taksit` : null} renk={sayi(p.borc_taksit_bekleyen) ? R.kirmizi : R.krem} />
-            <Satir ad="Ödenen borç taksiti" deger={fmt(sayi(p.borc_taksit_odenen))} renk={R.yesil} />
-            <Satir ad="Bu ay kart faizi" deger={fmt(sayi(p.bu_ay_kart_faizi))} renk={sayi(p.bu_ay_kart_faizi) ? R.kirmizi : R.krem} />
-            <Satir ad="Finansman maliyeti" deger={fmt(sayi(p.bu_ay_finansman_maliyeti))} renk={sayi(p.bu_ay_finansman_maliyeti) ? R.kirmizi : R.krem} />
-            <Satir ad="Bekleyen gider sayısı" deger={String(sayi(p.bekleyen_gider_sayisi))} renk={R.metin2} />
-          </>
-        } />
-
         <Bolum baslik="✅ Bu ay ödenen sabit giderler" not="salt-okur" cocuk={
           (() => {
             const liste = Array.isArray(veri.odenen) ? veri.odenen : (veri.odenen?.odemeler || veri.odenen?.satirlar || []);
-            if (!liste.length) return <div style={{ fontSize: 12, color: R.not2 }}>Bu ay ödenmiş sabit gider kaydı yok.</div>;
+            // 🔴 (2026-08-14) CANLIDA HEP 0 ₺: tablo `o.tutar` okuyordu ama uç bu adı
+            // HİÇ göndermiyor — alanlar {aciklama, gider_adi, odenen_tutar,
+            // odenecek_tutar, odeme_tarihi, plan_tarihi, kategori}. Ad da `o.ad`
+            // aranıyordu, o da yok → her satır "— · 0 ₺" idi.
+            // Ayrıca uç TÜM AYLARI ve tutarı 0/eksi olan "LİMİT YETERSİZ" plan
+            // kayıtlarını da döndürüyor; başlık "Bu ay ÖDENEN" diyor → içinde
+            // bulunulan ay + gerçekten ödenmiş (odenen_tutar>0) kayıtlar süzülür.
+            const simdi = new Date();
+            const buAy = `${simdi.getFullYear()}-${String(simdi.getMonth() + 1).padStart(2, '0')}`;
+            const buAyLis = liste.filter((o) => (
+              String(o.odeme_tarihi || '').slice(0, 7) === buAy && sayi(o.odenen_tutar) > 0
+            ));
+            if (!buAyLis.length) return <div style={{ fontSize: 12, color: R.not2 }}>Bu ay ödenmiş sabit gider kaydı yok.</div>;
             return (
               <Tablo
                 baslik=""
+                not={buAyLis.length > 15 ? `ilk 15 / ${buAyLis.length} kayıt` : null}
                 kolonlar={[{ ad: 'Gider' }, { ad: 'Tarih' }, { ad: 'Tutar', sag: true }]}
-                satirlar={liste.slice(0, 15).map((o, i) => ({
+                satirlar={buAyLis.slice(0, 15).map((o, i) => ({
                   id: o.id || `sg-${i}`,
                   hucreler: [
-                    { v: kisalt(o.ad || o.aciklama || o.gider_adi || '—', 44), kalin: true },
-                    { v: kisaGun(o.odeme_tarihi || o.tarih), mono: true, renk: R.not },
-                    { v: fmt(sayi(o.tutar)), mono: true, sag: true, kalin: true, renk: R.yesil },
+                    { v: kisalt(o.aciklama || o.gider_adi || o.ad || '—', 44), kalin: true },
+                    { v: kisaGun(o.odeme_tarihi || o.plan_tarihi || o.tarih), mono: true, renk: R.not },
+                    { v: fmt(sayi(o.odenen_tutar ?? o.odenecek_tutar ?? o.tutar)), mono: true, sag: true, kalin: true, renk: R.yesil },
                   ],
                 }))}
               />
@@ -396,13 +581,77 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru }) {
   }
 
   // ════════════════════════ GÖRÜNÜM: BİLDİRİMLER ════════════════════════════
-  const oneriler = Array.isArray(p.oneriler) ? p.oneriler : [];
   const ciroEksik = Array.isArray(p.ciro_eksik_gunler) ? p.ciro_eksik_gunler : [];
   const mesajlar = Array.isArray(p.merkez_mesajlar) ? p.merkez_mesajlar : [];
   const oneriRenk = (o) => {
     const r = String(o.renk || '').toUpperCase();
     return r === 'KIRMIZI' ? R.kirmizi : r === 'TURUNCU' ? R.amber : r === 'SARI' ? R.amber : R.mavi;
   };
+
+  // ── MOTOR ÖNERİLERİ: KRİTİK NAKİT GRUBU ───────────────────────────────────
+  // Motor, serbest nakde sığmayan HER kart için ayrı bir "NAKİT YETERSİZ" satırı
+  // üretiyor → aynı tek sebep (para yetmiyor) listede 5-6 kez tekrar edip diğer
+  // önerileri aşağı itiyordu. 2+ ise tek satırda birleştirilir, kartlar çekmecede.
+  const kritikNakit = oneriler.filter((o) => String(o.oneri_turu || '') === 'KRITIK_NAKIT');
+  const digerOneriler = oneriler.filter((o) => String(o.oneri_turu || '') !== 'KRITIK_NAKIT');
+  const oneriSatiri = (o, i) => ({
+    id: o.odeme_id || `on-${i}`, _o: o,
+    baslik: kisalt(o.baslik || o.oneri || 'Öneri', 80),
+    alt: kisalt(o.aciklama || o.detay || '', 100) || 'gerekçe yok',
+    tutar: sayi(o.tavsiye_tutar) ? fmt(sayi(o.tavsiye_tutar)) : '',
+    tier: oneriRenk(o) === R.kirmizi ? 'kritik' : oneriRenk(o) === R.amber ? 'uyari' : 'bilgi',
+  });
+  const kritikNakitKartlari = kritikNakit
+    .map((o) => o.kart_adi || o.banka)
+    .filter(Boolean);
+  const oneriSatirlari = [
+    ...(kritikNakit.length >= 2
+      ? [{
+          id: 'oneri-kritik-nakit-grubu', _grup: kritikNakit,
+          baslik: `⛔ NAKİT YETERSİZ — ${kritikNakit.length} kart`,
+          // ⚠️ Tutar YAZILMAZ: uç bu önerilerde tavsiye_tutar=0 gönderiyor, istenen
+          // tutar yalnız açıklama metninin içinde geçiyor — metinden para PARSE
+          // ETMEK yasak (biçim değişince sessizce yanlış rakam basar).
+          alt: kisalt(
+            `serbest nakit bu ödemelere yetmiyor${kritikNakitKartlari.length ? ` · kartlar: ${kritikNakitKartlari.join(', ')}` : ''}`,
+            110,
+          ),
+          tutar: '',
+          tier: 'kritik',
+        }]
+      : kritikNakit.map(oneriSatiri)),
+    ...digerOneriler.map(oneriSatiri),
+  ];
+
+  // ── 🔶 BUGÜN SENDEN KARAR BEKLEYENLER ─────────────────────────────────────
+  // Altta üç ayrı kutu var (motor / onay / bildirim); sahip günü görmek için
+  // üçünü de taramak zorundaydı. Bu şerit en fazla 3 maddede özetler; kutular
+  // olduğu gibi kalır (şerit özet, kutular kaynak).
+  const kritikBildirimler = [...uyarilar, ...mesajlar]
+    .filter((u) => String(u.seviye || '').toUpperCase() === 'KRITIK')
+    .sort((a, b) => String(b.tarih || '').localeCompare(String(a.tarih || '')));
+  const kararBekleyen = [];
+  if (onaylar.length > 0) {
+    kararBekleyen.push({
+      k: 'onay', ikon: '🔔', renk: R.amber,
+      metin: `${onaylar.length} onay kararın bekliyor`,
+      onTikla: () => onKopru?.('__modul:onaylar:kuyruk'),
+    });
+  }
+  if (kritikBildirimler.length > 0) {
+    const en = kritikBildirimler[0];
+    kararBekleyen.push({
+      k: 'bildirim', ikon: '⛔', renk: R.kirmizi,
+      metin: kisalt(en.aciklama || en.mesaj || en.baslik || 'Kritik bildirim', 60),
+    });
+  }
+  if (kritikNakit.length > 0) {
+    kararBekleyen.push({
+      k: 'motor', ikon: '🧠', renk: R.bakir,
+      metin: `Motor: ${kritikNakit.length} kritik öneri`,
+    });
+  }
+
   return (
     <>
       <KpiSeridi kpiler={[
@@ -412,18 +661,60 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru }) {
         { etiket: 'Ciro eksiği', deger: String(ciroEksik.length), alt: ciroEksik.length ? 'gün girilmemiş' : 'eksik yok', renk: ciroEksik.length ? R.kirmizi : R.yesil },
       ]} />
 
-      <Bolum baslik="🧠 Karar motoru" sayac={oneriler.length} renk={R.bakir} not="öneri-only · hüküm insanın" cocuk={
+      {kararBekleyen.length > 0 && (
+        <div style={{ ...kartYuzey, padding: '13px 18px', marginBottom: 14, borderLeft: `3px solid ${R.amber}` }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 9 }}>
+            <span style={{ fontFamily: F.baslik, fontSize: 14.5, fontWeight: 600 }}>Bugün senden karar bekleyenler</span>
+            <span style={{ fontSize: 11, color: R.not2, marginLeft: 'auto' }}>aşağıdaki kutuların özeti</span>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {kararBekleyen.map((k) => (
+              <div
+                key={k.k}
+                onClick={k.onTikla}
+                tabIndex={k.onTikla ? 0 : undefined}
+                role={k.onTikla ? 'button' : undefined}
+                onKeyDown={k.onTikla ? (e) => {
+                  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); k.onTikla(); }
+                } : undefined}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px',
+                  borderRadius: 10, background: R.girinti, border: `1px solid ${R.cizgi2}`,
+                  cursor: k.onTikla ? 'pointer' : 'default',
+                }}
+              >
+                <span style={{ fontSize: 13, flexShrink: 0 }}>{k.ikon}</span>
+                <span style={{ fontSize: 12.5, fontWeight: 600, color: k.renk, minWidth: 0 }}>{k.metin}</span>
+                {k.onTikla && <span style={{ marginLeft: 'auto', fontSize: 10.5, color: R.not3, whiteSpace: 'nowrap' }}>dokun →</span>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <Bolum baslik="🧠 Karar motoru" sayac={oneriSatirlari.length} renk={R.bakir} not="öneri-only · hüküm insanın" cocuk={
         oneriler.length === 0
           ? <div style={{ fontSize: 12, color: R.not2 }}>Motor bugün öneri üretmedi.</div>
           : <Liste
-              satirlar={oneriler.map((o, i) => ({
-                id: o.odeme_id || `on-${i}`, _o: o,
-                baslik: kisalt(o.baslik || o.oneri || 'Öneri', 80),
-                alt: kisalt(o.aciklama || o.detay || '', 100) || 'gerekçe yok',
-                tutar: sayi(o.tavsiye_tutar) ? fmt(sayi(o.tavsiye_tutar)) : '',
-                tier: oneriRenk(o) === R.kirmizi ? 'kritik' : oneriRenk(o) === R.amber ? 'uyari' : 'bilgi',
-              }))}
-              onAc={({ _o }) => onCekmece?.({
+              satirlar={oneriSatirlari}
+              onAc={({ _o, _grup }) => (_grup ? onCekmece?.({
+                tip: 'MOTOR ÖNERİSİ',
+                baslik: `⛔ Nakit yetersiz — ${_grup.length} kart`,
+                alt: 'aynı sebep, birden çok kart',
+                kpi: [
+                  { etiket: 'Etkilenen kart', deger: String(_grup.length), renk: R.kirmizi },
+                  { etiket: 'Öncelik', deger: 'kırmızı', renk: R.kirmizi },
+                ],
+                listeBaslik: 'Nakit yetmeyen kartlar',
+                satirlar: _grup.map((o, i) => ({
+                  ad: o.kart_adi || o.banka || `Kart ${i + 1}`,
+                  detay: o.banka || 'banka bilgisi yok',
+                  tutar: o.tarih ? String(o.tarih).slice(0, 10) : '—',
+                })),
+                not: 'Motor yalnız ÖNERİR — hüküm insanındır. Serbest nakit (zorunlu yükler ayrıldıktan sonra) bu ödemelere yetmiyor; hangisinin öne alınacağı sahip kararıdır.',
+                aksiyonAd: 'Strateji Önerileri\'ni aç',
+                _hedef: '__modul:panel:strateji',
+              }) : onCekmece?.({
                 tip: 'MOTOR ÖNERİSİ',
                 baslik: kisalt(_o.baslik || 'Öneri', 70),
                 alt: String(_o.renk || 'bilgi').toLowerCase(),
@@ -436,7 +727,7 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru }) {
                 not: 'Motor yalnız ÖNERİR — hüküm insanındır. Uygulama Strateji Önerileri ekranında işaretlenir.',
                 aksiyonAd: 'Strateji Önerileri\'ni aç',
                 _hedef: '__modul:panel:strateji',
-              })}
+              }))}
             />
       } />
 
@@ -467,8 +758,18 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru }) {
                 .sort((a, b) => String(b.tarih || '').localeCompare(String(a.tarih || '')))
                 .slice(0, 12).map((u, i) => ({
                 id: u.id || `u-${i}`,
-                baslik: kisalt(u.mesaj || u.baslik || u.metin || 'Bildirim', 88),
-                alt: [u.sube_ad || u.sube_adi, u.tarih ? kisaGun(u.tarih) : null].filter(Boolean).join(' · ') || 'genel',
+                // 🔴 (2026-08-14) BİLDİRİMLER İSİMSİZDİ: başlık `mesaj` okuyordu ama
+                // `mesaj` jenerik durum cümlesi ("4 gün sonra ödeme var.") — KİMİN
+                // ödemesi olduğu `aciklama`da ("Vadeli Alım: Fatura X (FİRMA)").
+                // Liste "4 gün sonra ödeme var" × 6 satır hâline geliyordu.
+                // Artık alacaklı başlıkta, durum cümlesi alt satırda.
+                baslik: kisalt(u.aciklama || u.mesaj || u.baslik || u.metin || 'Bildirim', 88),
+                alt: [
+                  // `aciklama` yoksa mesaj zaten başlığa çıktı → alt satırda tekrarlanmaz.
+                  u.aciklama ? u.mesaj : null,
+                  u.sube_ad || u.sube_adi,
+                  u.tarih ? kisaGun(u.tarih) : null,
+                ].filter(Boolean).join(' · ') || 'genel',
                 tutar: sayi(u.tutar) ? fmt(sayi(u.tutar)) : '',
                 tier: String(u.seviye || '').toUpperCase() === 'KRITIK' ? 'kritik'
                   : String(u.seviye || '').toUpperCase() === 'UYARI' ? 'uyari' : 'bilgi',
@@ -479,14 +780,19 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru }) {
       <Bolum baslik="📉 Ciro eksikleri" sayac={ciroEksik.length} renk={ciroEksik.length ? R.kirmizi : R.yesil} not="ciro girilmemiş günler" cocuk={
         ciroEksik.length === 0
           ? <BosDurum tamam baslik="Ciro eksiği yok" aciklama="Tüm günlerin cirosu girilmiş." />
+          /* 🔴 (2026-08-14) 'Şube' kolonu CANLIDA HEP "—" idi: uç gün bazında çalışıyor,
+             alanları {tarih, gun_adi, days_ago, kritik} — ŞUBE KIRILIMI YOK. Var
+             olmayan alanı kolon yapmak yerine ucun gerçekten verdiği bilgi gösterilir:
+             hangi gün, ne kadar zaman önce. */
           : <Tablo
               baslik=""
-              kolonlar={[{ ad: 'Şube' }, { ad: 'Tarih' }, { ad: 'Durum' }]}
+              not={ciroEksik.length > 15 ? `ilk 15 / ${ciroEksik.length} gün` : null}
+              kolonlar={[{ ad: 'Gün' }, { ad: 'Tarih' }, { ad: 'Durum' }]}
               satirlar={ciroEksik.slice(0, 15).map((g, i) => ({
                 id: `ce-${i}`,
                 hucreler: [
-                  { v: g.sube_adi || g.sube_ad || '—', kalin: true },
-                  { v: kisaGun(g.tarih), mono: true, renk: R.not },
+                  { v: g.gun_adi || '—', kalin: true },
+                  { v: `${kisaGun(g.tarih)} · ${sayi(g.days_ago)} gün önce`, mono: true, renk: R.not },
                   { v: g.kritik ? 'kritik' : 'eksik', rozet: g.kritik ? R.kirmizi : R.amber },
                 ],
               }))}

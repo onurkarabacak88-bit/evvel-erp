@@ -1185,7 +1185,7 @@ def finans_ozet_motoru():
                 'oneri_turu': 'KRITIK_NAKIT',
                 'renk': 'KIRMIZI',
                 'baslik': f"⛔ {oneri.get('banka','')} — NAKİT YETERSİZ",
-                'aciklama': f"Strateji {tavsiye:,.0f}₺ öneriyor ama kasada yeterli nakit yok.",
+                'aciklama': f"Strateji {tavsiye:,.0f}₺ öneriyor; serbest nakit (zorunlu yükler ayrıldıktan sonra) şu an {kullanilabilir:,.0f}₺ — kasa bakiyesi dolu görünse de bu tutar ayrılamaz.",
                 'tavsiye_tutar': 0,
                 'blink': True
             }
