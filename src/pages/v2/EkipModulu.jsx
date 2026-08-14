@@ -150,7 +150,7 @@ const asamaNorm = (d) => {
 };
 
 /** Çalışma türü slug'ı da ham gösterilmez: 'surekli' → 'sürekli'. */
-const TUR_AD = { surekli: 'sürekli', part: 'part-time', gunluk: 'günlük', stajyer: 'stajyer' };
+const TUR_AD = { surekli: 'sürekli', part: 'part-time', part_time: 'part-time', gunluk: 'günlük', stajyer: 'stajyer' };
 const turAd = (t) => TUR_AD[t] || trKucuk(t) || '—';
 
 /** Sürekli personelde aylık ücret, part-time'da saatlik ücret gösterilir. */
