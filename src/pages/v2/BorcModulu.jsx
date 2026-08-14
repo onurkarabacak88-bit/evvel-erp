@@ -283,7 +283,9 @@ export default function BorcModulu({ gorunum, onCekmece, onKopru }) {
             .filter((v, i, a) => a.indexOf(v) === i)
             .map(i => kisaAy(grid[i]?.ay))}
           rozetler={(takvim.kredi_biten_takvim || []).slice(0, 8).map(b =>
-            typeof b === 'string' ? b : `${b.ad || b.kurum || 'Kredi'} · ${kisaAy(b.ay || b.bitis)}`)}
+            // EVV-SAG-N16 (görsel turda yakalandı): backend alanı `kredi` — FE
+            // `ad/kurum` okuyup her rozeti anonim "Kredi" bırakıyordu (o._id ailesi).
+            typeof b === 'string' ? b : `${b.kredi || b.ad || b.kurum || 'Kredi'} · ${kisaAy(b.ay || b.bitis)}`)}
         />
 
         <Tablo
