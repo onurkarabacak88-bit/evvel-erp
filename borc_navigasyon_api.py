@@ -193,7 +193,8 @@ def borc_nav_ozet():
     else:
         s2 = _skor_0_100(zorunlu / abek, 2.0)                    # zorunlu / ABEK (2x = 100)
     s3 = _skor_0_100((kart_toplam / ciro_ay) if ciro_ay > 0 else 5.0, 3.0)  # kart borcu / aylık ciro
-    s4 = max(0.0, 100.0 * (1.0 - (serbest / zorunlu))) if zorunlu > 0 else 0.0  # nakit tamponu (az→kötü)
+    # EVV-SAG-N6: serbest nakit NEGATİFKEN skor 100'ü aşıyordu (0-100 ölçeği bozuluyordu) — cap.
+    s4 = min(100.0, max(0.0, 100.0 * (1.0 - (serbest / zorunlu)))) if zorunlu > 0 else 0.0  # nakit tamponu (az→kötü)
     # S5 trend: son ay ABEK, 3-ay ortalamasından kötüyse ceza
     if abek_son3_ort != 0:
         trend = (abek_son_ay - abek_son3_ort) / abs(abek_son3_ort)
@@ -428,7 +429,8 @@ def borc_takvim(ay: int = 36):
                           COALESCE(aylik_taksit,0)::float AS taksit,
                           COALESCE(kalan_vade,0)::int AS kvade,
                           faiz_orani, COALESCE(odemesiz_ay,0)::int AS odemesiz,
-                          ilk_taksit_tarihi::text AS ilk_taksit
+                          ilk_taksit_tarihi::text AS ilk_taksit,
+                          baslangic_tarihi::text AS baslangic
                    FROM borc_envanteri
                    WHERE aktif = TRUE AND (kalan_vade IS NULL OR kalan_vade > 0)"""
             )
@@ -452,13 +454,34 @@ def borc_takvim(ay: int = 36):
     except Exception:
         abek = 0.0
 
-    # Kredi başına amortisman durumu
+    # Kredi başına amortisman durumu.
+    # 🔴 EVV-SAG-N1 (2026-08-14, canlı kanıt): toplam_borc=0 girilen belgesiz kredi
+    # ("katılım evim", taksit 163.786 × 14 ay) bal=0 kaldığı için takvimden TAMAMEN
+    # düşüyordu — zorunlu yük 163.786₺/ay eksik, ilk ay 469K görünürken /ozet 633K
+    # diyordu. Fallback: bal = taksit × kalan_vade, r=0 (taksit tamamen anapara
+    # sayılır; faiz zaten taksitin içinde gömülü — çift sayım olmaz).
     st = []
     for L in loans:
+        _bal = _f(L["anapara"])
+        _tk = _f(L["taksit"])
+        _kv = int(L["kvade"] or 0)
+        _r = _f(L["faiz_orani"]) / 100.0   # AYLIK % (v2 formu 'Aylık faiz %')
+        if _bal <= 0.5 and _tk > 0 and _kv > 0:
+            _bal = _tk * _kv
+            _r = 0.0
         st.append({
-            "name": L["kurum"], "r": _f(L["faiz_orani"]) / 100.0, "bal": _f(L["anapara"]),
-            "taksit": _f(L["taksit"]), "kvade": int(L["kvade"] or 0), "paid": 0,
+            "name": L["kurum"], "r": _r, "bal": _bal,
+            "taksit": _tk, "kvade": _kv, "paid": 0,
             "it": (str(L["ilk_taksit"])[:7] if L.get("ilk_taksit") else None),
+            # EVV-SAG-N4: ilk_taksit boşsa ödemesiz dönem başlangıç+odemesiz aydan türer
+            "grace_son": None if L.get("ilk_taksit") else (
+                (lambda b, o: (f"{(b[0] * 12 + b[1] - 1 + o) // 12:04d}-"
+                               f"{(b[0] * 12 + b[1] - 1 + o) % 12 + 1:02d}")
+                 if o > 0 and b else None)(
+                    (int(str(L["baslangic"])[:4]), int(str(L["baslangic"])[5:7]))
+                    if L.get("baslangic") else None,
+                    int(L["odemesiz"] or 0))
+            ),
         })
 
     grid: List[Dict[str, Any]] = []
@@ -469,18 +492,26 @@ def borc_takvim(ay: int = 36):
         kredi_t = 0.0
         bal_sum = 0.0
         for s in st:
-            grace = bool(s["it"] and s["it"] > ym)
+            grace = bool(s["it"] and s["it"] > ym) or bool(s.get("grace_son") and s["grace_son"] >= ym)
             paying = (not grace) and (s["paid"] < s["kvade"]) and (s["bal"] > 0.5)
             if paying:
                 faiz = s["bal"] * s["r"]
                 anapara = s["taksit"] - faiz
+                # EVV-SAG-N2: taksit faizi karşılamıyorsa anapara NEGATİF olup
+                # bakiyeyi büyütüyordu (fiziksel imkânsız takvim) — 0'a kilitle.
+                if anapara < 0:
+                    anapara = 0.0
                 if anapara > s["bal"]:
                     anapara = s["bal"]
                 pay = min(s["taksit"], s["bal"] + faiz)
                 s["bal"] -= anapara
                 s["paid"] += 1
                 kredi_t += pay
-                if s["paid"] == s["kvade"] or s["bal"] <= 0.5:
+                # Diff-review (2026-08-14): "bitti" HÜKMÜ yalnız bakiye gerçekten
+                # sıfırlanınca — vade dolup bakiye kalırsa (taksit faizi karşılamıyor)
+                # kredi "bitti" diye İLAN EDİLMEZ; kalan anapara sütununda görünmeye
+                # devam eder (taksit akışı sözleşme vadesiyle durur, o gerçek).
+                if s["bal"] <= 0.5:
                     if not any(b["kredi"] == s["name"] for b in biten):
                         biten.append({"kredi": s["name"], "ay": ym})
             bal_sum += max(0.0, s["bal"])
@@ -496,7 +527,12 @@ def borc_takvim(ay: int = 36):
         })
 
     peak = max(grid, key=lambda x: x["zorunlu_yuk"]) if grid else None
-    finansal_borc = sum(_f(L["anapara"]) or (_f(L["taksit"]) * int(L["kvade"] or 0)) for L in loans) + kart_borc
+    # Fallback eşiği amortisman durumuyla AYNI (0.5) — kuruş tozu bakiye iki
+    # hesabı ayrıştırmasın (diff-review hizası).
+    finansal_borc = sum(
+        (_f(L["anapara"]) if _f(L["anapara"]) > 0.5 else _f(L["taksit"]) * int(L["kvade"] or 0))
+        for L in loans
+    ) + kart_borc
     toplam_gelecek = sum(_f(L["taksit"]) * int(L["kvade"] or 0) for L in loans) + kart_borc
     return {
         "uretildi": bugun.isoformat(),
@@ -507,6 +543,8 @@ def borc_takvim(ay: int = 36):
         "kredi_biten_takvim": biten,                    # her kredi hangi ay bitiyor
         "takvim": grid,
         "not": "Kredi tarafı kesin (amortisman). Kart tarafı yaklaşık (asgari sabit). "
+               "ABEK tüm aylar için bugünkü değeriyle sabit varsayılır. Belgesiz kredide "
+               "(anapara girilmemiş) kalan = taksit × vade yaklaşımıdır. "
                "Ödemesiz kredi ilk taksit tarihinde devreye girer; zorunlu yük o ay artar.",
     }
 
@@ -532,9 +570,34 @@ def borc_projeksiyon(ay: int = 12):
     kredi = _f(oz.get("borc", {}).get("kredi_kalan"))
     abek = _f(oz.get("abek", {}).get("deger"))
 
-    # Efektif aylık faiz: kart ~%3.5/ay (≈%51 yıllık), kredi ~%2.8/ay varsayım (amortizan).
+    # Efektif aylık faiz — EVV-SAG-N3 (2026-08-14): sabit varsayım (%3.5 kart /
+    # %2.8 kredi) yerine CANLI oranlar: kredi = borc_envanteri bakiye-ağırlıklı
+    # AYLIK faiz; kart = kartlar tablosu YILLIK akdi faiz ortalaması / 12.
+    # Veri yoksa eski sabitlere düşer (varsayim alanında hangisi kullanıldığı görünür).
     KART_AY_FAIZ = 0.035
     KREDI_AY_FAIZ = 0.028
+    faiz_kaynak = "varsayilan"
+    try:
+        with db() as (conn, cur):
+            cur.execute(
+                """SELECT COALESCE(SUM(NULLIF(toplam_borc,0) * faiz_orani), 0)::float AS agirlikli,
+                          COALESCE(SUM(NULLIF(toplam_borc,0)) FILTER (WHERE faiz_orani IS NOT NULL), 0)::float AS taban
+                   FROM borc_envanteri
+                   WHERE aktif = TRUE AND (kalan_vade IS NULL OR kalan_vade > 0)"""
+            )
+            kr = dict(cur.fetchone() or {})
+            if _f(kr.get("taban")) > 0:
+                KREDI_AY_FAIZ = _f(kr.get("agirlikli")) / _f(kr.get("taban")) / 100.0
+                faiz_kaynak = "canli"
+            cur.execute(
+                "SELECT COALESCE(AVG(NULLIF(faiz_orani,0)), 0)::float AS o "
+                "FROM kartlar WHERE aktif = TRUE"
+            )
+            ko = _f((dict(cur.fetchone() or {})).get("o"))
+            if ko > 0:
+                KART_AY_FAIZ = ko / 100.0 / 12.0   # yıllık akdi → aylık
+    except Exception as e:
+        logger.warning("projeksiyon canlı faiz okunamadı, varsayılana düşüldü: %s", e)
     ef = ((kart * KART_AY_FAIZ + kredi * KREDI_AY_FAIZ) / toplam) if toplam > 0 else 0.0
     aylik_faiz_tl = toplam * ef
 
@@ -572,8 +635,9 @@ def borc_projeksiyon(ay: int = 12):
         "uretildi": date.today().isoformat(),
         "varsayim": {
             "efektif_aylik_faiz_pct": round(ef * 100, 2),
-            "kart_aylik_faiz_pct": KART_AY_FAIZ * 100,
-            "kredi_aylik_faiz_pct": KREDI_AY_FAIZ * 100,
+            "kart_aylik_faiz_pct": round(KART_AY_FAIZ * 100, 2),
+            "kredi_aylik_faiz_pct": round(KREDI_AY_FAIZ * 100, 2),
+            "faiz_kaynak": faiz_kaynak,
             "abek_aylik": round(abek, 2),
             "baslangic_borc": round(toplam, 2),
         },
@@ -628,7 +692,10 @@ def sube_katki(gun: int = 30):
                 for r in rows:
                     c = _f(r.get("ciro_tl"))
                     ciro += c
-                    net += _f(r.get("net_kar_tl"))
+                    # EVV-SAG-N5: /ozet ABEK'i net_kar_net_tl (şube-bazlı vergi + KDV
+                    # ayrıştırılmış) tercih ediyor — katkı da aynı bazdan okusun ki
+                    # iki uç aynı operasyonel neti farklı raporlamasın.
+                    net += _f(r.get("net_kar_net_tl") if r.get("net_kar_net_tl") is not None else r.get("net_kar_tl"))
                     cogs += _f(r.get("toplam"))
                     kira += _f(r.get("kira_maliyet_tl"))
                     t = str(r.get("tarih") or "")[:10]

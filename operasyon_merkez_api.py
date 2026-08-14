@@ -15517,15 +15517,20 @@ def ops_metrics_hedef_ciro(erit_ay: int = Query(6, ge=1, le=24)):
                       COUNT(DISTINCT tarih)::int AS gun
                FROM ciro
                WHERE tarih >= (DATE_TRUNC('month', %s::date) - INTERVAL '12 month')
+                 AND tarih <= %s
                GROUP BY 1 ORDER BY 1""",
-            (bugun,),
+            (bugun, bugun),
         )
         seri = [dict(r) for r in (cur.fetchall() or [])]
 
     bu_ay_kod = f"{bugun.year}-{bugun.month:02d}"
     bu_ay = next((s for s in seri if s["ay"] == bu_ay_kod), None)
     onceki = [s for s in seri if s["ay"] < bu_ay_kod]
-    gecen_ay = onceki[-1] if onceki else None
+    # "Geçen ay" = gerçek önceki TAKVİM ayı; o ayda hiç ciro yoksa daha eski bir
+    # ay "geçen ay" kılığına girmesin (None → FE alanı koşullu zaten).
+    _gy, _gm = (bugun.year - 1, 12) if bugun.month == 1 else (bugun.year, bugun.month - 1)
+    _gecen_kod = f"{_gy}-{_gm:02d}"
+    gecen_ay = next((s for s in onceki if s["ay"] == _gecen_kod), None)
     # Yıllık ortalama: KAPANMIŞ aylar (devam eden ay ortalamayı aşağı çeker)
     kapali_aylar = [s for s in onceki if float(s["t"]) > 0]
     yil_ort = (sum(float(s["t"]) for s in kapali_aylar) / len(kapali_aylar)) if kapali_aylar else None
@@ -15558,14 +15563,18 @@ def ops_metrics_hedef_ciro(erit_ay: int = Query(6, ge=1, le=24)):
                     "aciklama": f"Nakit başabaşı + gecikmiş {gecikmis:,.0f} ₺'yi {erit_ay} ayda eritme payı."
                                 .replace(",", ".")},
     }
-    # Hangi eşiktesin?
-    seviye = "esik_alti"
-    if projeksiyon >= rahat_ay:
-        seviye = "rahat"
-    elif projeksiyon >= nakit_ay:
-        seviye = "borcu_ceviriyor"
-    elif projeksiyon >= isletme_ay:
-        seviye = "ayakta"
+    # Hangi eşiktesin? Eşikler hesaplanamadıysa (başabaş motoru boş/0 döndü)
+    # "rahat" YALANI yerine açıkça hesaplanamadı de (0 ≥ 0 tuzağı).
+    if nakit_ay <= 0 or isletme_ay <= 0:
+        seviye = "hesaplanamadi"
+    else:
+        seviye = "esik_alti"
+        if projeksiyon >= rahat_ay:
+            seviye = "rahat"
+        elif projeksiyon >= nakit_ay:
+            seviye = "borcu_ceviriyor"
+        elif projeksiyon >= isletme_ay:
+            seviye = "ayakta"
 
     return {
         "uretildi": str(bugun),

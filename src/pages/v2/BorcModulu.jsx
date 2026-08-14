@@ -59,6 +59,25 @@ export default function BorcModulu({ gorunum, onCekmece, onKopru }) {
     </div>
   );
 
+  // EVV-SAG-N12: HATA ≠ VERİ YOK. Uç düşünce (null) eskiden "kayıt girildiğinde
+  // oluşur" gibi veri-yokluğu mesajı basılıyordu — API arızası iş gerçeği kılığına
+  // giriyordu. Alınamayan veri açıkça söylenir + tekrar dene sunulur.
+  const Alinamadi = ({ ad }) => (
+    <div style={{ ...kartYuzey, padding: '38px 30px', textAlign: 'center', border: `1px solid ${R.kirmizi}55` }}>
+      <div style={{ fontFamily: F.baslik, fontSize: 16, fontWeight: 600, color: R.kirmizi }}>
+        {ad} alınamadı
+      </div>
+      <div style={{ fontSize: 12, color: R.not2, marginTop: 6 }}>
+        Sunucuya ulaşılamadı — bu bir veri eksikliği değil, bağlantı/uç sorunu.
+      </div>
+      <button onClick={yukle} style={{
+        marginTop: 14, padding: '9px 18px', borderRadius: 10, border: 'none',
+        background: 'linear-gradient(150deg, #E0A559, #AF6C29)', color: '#1C1309',
+        fontSize: 12, fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer',
+      }}>Tekrar dene</button>
+    </div>
+  );
+
   // ⚠️ BEKLEME TUZAĞI (2026-08-07 denetimi): eskiden Promise.all BEŞ ucu birden
   // bekliyordu ve ekran o süre boyunca "Borç verileri yükleniyor…" gösteriyordu.
   // Ölçüldü: ozet 3,3sn · projeksiyon 4,1sn · takvim 5,4sn → ana karar ekranı
@@ -88,10 +107,13 @@ export default function BorcModulu({ gorunum, onCekmece, onKopru }) {
 
   useEffect(yukle, []);
 
-  if (yukleniyor) {
+  // EVV-SAG-N11 (Codex): global yükleme/hata perdesi TÜM görünümleri kilitliyordu —
+  // /ozet geç kalınca kendi verisi gelmiş takvim/projeksiyon bile bekliyordu.
+  // Perde yalnız ozet'e muhtaç DURUM görünümünde; diğerleri kendi hızında.
+  if (yukleniyor && gorunum === 'durum') {
     return <div style={{ ...kartYuzey, padding: '46px 30px', textAlign: 'center', color: R.not }}>Borç verileri yükleniyor…</div>;
   }
-  if (hata) {
+  if (hata && gorunum === 'durum') {
     return (
       <div style={{ ...kartYuzey, padding: '38px 30px', textAlign: 'center', border: `1px solid ${R.kirmizi}55` }}>
         <div style={{ fontFamily: F.baslik, fontSize: 18, fontWeight: 600, color: R.kirmizi }}>{hata}</div>
@@ -224,6 +246,7 @@ export default function BorcModulu({ gorunum, onCekmece, onKopru }) {
   // ── 2) Borç Takvimi · 36 ay (eğri) ─────────────────────────────────────────
   if (gorunum === 'takvim') {
     if (takvim === undefined) return <Bekleniyor ad="36 aylık borç takvimi" />;
+    if (takvim === null) return <Alinamadi ad="36 aylık borç takvimi" />;
     const grid = takvim?.takvim || [];
     if (!grid.length) {
       return (
@@ -240,7 +263,7 @@ export default function BorcModulu({ gorunum, onCekmece, onKopru }) {
       <>
         <KpiSeridi kpiler={[
           { etiket: 'Finansal borç', deger: fmt(sayi(takvim.finansal_borc)), alt: 'bugün gerçekte borçlu olunan', renk: R.kirmizi },
-          { etiket: 'Toplam gelecek ödeme', deger: fmt(sayi(takvim.toplam_gelecek_odeme)), alt: 'faiz dahil cepten çıkacak', renk: R.amber },
+          { etiket: 'Toplam gelecek ödeme', deger: fmt(sayi(takvim.toplam_gelecek_odeme)), alt: 'kredi faiz dahil + kart bugünkü borç', renk: R.amber },
           { etiket: 'En zor ay', deger: peak ? kisaAy(peak.ay) : '—', alt: peak ? `zorunlu yük ${fmt(sayi(peak.zorunlu_yuk))}` : '—', renk: R.kirmizi },
           { etiket: 'Açık veren ay', deger: `${acikAylar.length} / ${grid.length}`, alt: acikAylar.length ? 'ABEK yetmiyor' : 'hepsi karşılanıyor', renk: acikAylar.length ? R.amber : R.yesil },
         ]} />
@@ -311,7 +334,6 @@ export default function BorcModulu({ gorunum, onCekmece, onKopru }) {
 
   // ── 3) Hedef Ciro & Ölçek ──────────────────────────────────────────────────
   if (gorunum === 'hedef') {
-    if (olcek === undefined) return <Bekleniyor ad="Hedef ciro & ölçek planı" />;
     const sen = olcek?.senaryolar || {};
     const par = olcek?.parametreler || {};
     const kap = olcek?.kapasite_gerceklik || {};
@@ -321,18 +343,18 @@ export default function BorcModulu({ gorunum, onCekmece, onKopru }) {
       ['ay24_bitir', 'Borç 24 ayda bitsin', R.kirmizi],
     ];
     const satir = SIRA.map(([k, ad, renk]) => ({ k, ad, renk, s: sen[k] })).filter(x => x.s);
-    if (!satir.length) {
-      return (
-        <div style={{ ...kartYuzey, padding: '38px 30px', textAlign: 'center' }}>
-          <div style={{ fontFamily: F.baslik, fontSize: 18, fontWeight: 600, color: R.kirmizi }}>Ölçek planı hesaplanamıyor</div>
-          <div style={{ fontSize: 13, color: R.not, marginTop: 8, lineHeight: 1.6, maxWidth: 500, margin: '8px auto 0' }}>
-            Nakit marj sıfır veya negatif olduğunda "ne kadar ciro gerekir" sorusunun matematiksel cevabı yok —
-            önce marjın pozitife dönmesi gerekiyor.
-          </div>
-        </div>
-      );
-    }
     const mevcutCiro = sayi(par.mevcut_ciro);
+    // EVV-SAG-N14: sahibin istediği hedef-ciro bloğu uç yoldayken/düşmüşken
+    // SESSİZCE kaybolmasın — durumu küçük bantla söylenir.
+    const hedefDurum = hedefCiro === undefined ? (
+      <div style={{ ...kartYuzey, padding: '11px 16px', marginBottom: 12, fontSize: 12, color: R.not2 }}>
+        🎯 "Bugünkü yapımla hedef ciro" hazırlanıyor…
+      </div>
+    ) : hedefCiro === null ? (
+      <div style={{ ...kartYuzey, padding: '11px 16px', marginBottom: 12, fontSize: 12, color: R.kirmizi, border: `1px solid ${R.kirmizi}44` }}>
+        🎯 "Bugünkü yapımla hedef ciro" alınamadı — Yenile ile tekrar dene (veri eksikliği değil, uç sorunu).
+      </div>
+    ) : null;
     // ── MEVCUT YAPIDA HEDEF (sahip 2026-08-08) ──────────────────────────────
     // Aşağıdaki ölçek planı BÜYÜME senaryosudur (kaç şube açmalı). Sahibin
     // sorduğu ise "bugünkü yapımla bütün ödemelerimi rahat yapacağım ciro":
@@ -342,12 +364,14 @@ export default function BorcModulu({ gorunum, onCekmece, onKopru }) {
       const h = hedefCiro.hedefler;
       const r = hedefCiro.referanslar || {};
       const sev = hedefCiro.seviye;
-      const sevRenk = sev === 'rahat' ? R.yesil : sev === 'borcu_ceviriyor' ? R.yesil
-        : sev === 'ayakta' ? R.amber : R.kirmizi;
-      const sevAd = sev === 'rahat' ? 'Rahat — gecikmişi de eritiyor'
-        : sev === 'borcu_ceviriyor' ? 'Borcu çeviriyor'
-          : sev === 'ayakta' ? 'Ayakta — ama borç ödemesi tam çıkmıyor'
-            : 'Eşiğin altında';
+      const sevRenk = sev === 'hesaplanamadi' ? R.amber
+        : sev === 'rahat' ? R.yesil : sev === 'borcu_ceviriyor' ? R.yesil
+          : sev === 'ayakta' ? R.amber : R.kirmizi;
+      const sevAd = sev === 'hesaplanamadi' ? 'Eşikler hesaplanamadı — başabaş verisi eksik'
+        : sev === 'rahat' ? 'Rahat — gecikmişi de eritiyor'
+          : sev === 'borcu_ceviriyor' ? 'Borcu çeviriyor'
+            : sev === 'ayakta' ? 'Ayakta — ama borç ödemesi tam çıkmıyor'
+              : 'Eşiğin altında';
       const proj = sayi(r.bu_ay?.projeksiyon_tl);
       const KADEME = [
         ['ayakta_kal', '1 · Ayakta kal', R.yesil],
@@ -423,8 +447,35 @@ export default function BorcModulu({ gorunum, onCekmece, onKopru }) {
         </div>
       );
     })() : null;
+    // 🔴 EVV-SAG-N10 (2026-08-14, CANLI durum): erken return hedefBlok'tan ÖNCE
+    // duruyordu — nakit marj negatifken (bugünkü gerçek!) sahibin 2026-08-08'de
+    // özellikle istediği "Bugünkü yapımla hedef ciro" bloğu HİÇ görünmüyordu.
+    // Ölçek planı hesaplanamasa da hedef ciro bloğu bağımsızdır (başabaş motoru).
+    // Diff-review katmanı: olcek YOLDAYKEN/DÜŞMÜŞKEN de aynı bağımsızlık geçerli.
+    if (olcek === undefined) {
+      return <>{hedefDurum}{hedefBlok}<Bekleniyor ad="Ölçek planı" /></>;
+    }
+    if (olcek === null) {
+      return <>{hedefDurum}{hedefBlok}<Alinamadi ad="Ölçek planı" /></>;
+    }
+    if (!satir.length) {
+      return (
+        <>
+          {hedefDurum}
+          {hedefBlok}
+          <div style={{ ...kartYuzey, padding: '38px 30px', textAlign: 'center' }}>
+            <div style={{ fontFamily: F.baslik, fontSize: 18, fontWeight: 600, color: R.kirmizi }}>Ölçek planı hesaplanamıyor</div>
+            <div style={{ fontSize: 13, color: R.not, marginTop: 8, lineHeight: 1.6, maxWidth: 500, margin: '8px auto 0' }}>
+              Nakit marj sıfır veya negatif olduğunda "ne kadar ciro gerekir" sorusunun matematiksel cevabı yok —
+              önce marjın pozitife dönmesi gerekiyor. (Üstteki hedef ciro bloğu bundan bağımsızdır.)
+            </div>
+          </div>
+        </>
+      );
+    }
     return (
       <>
+        {hedefDurum}
         {hedefBlok}
         <KpiSeridi kpiler={[
           { etiket: 'Şu anki ciro', deger: fmt(mevcutCiro), alt: `aylık · ${sayi(par.mevcut_sube)} şube` },
@@ -490,6 +541,7 @@ export default function BorcModulu({ gorunum, onCekmece, onKopru }) {
   // ── 5) Nakit Projeksiyonu (12 ay) — klasik köprü yerine yerli görünüm ──────
   if (gorunum === 'projeksiyon') {
     if (proj === undefined) return <Bekleniyor ad="12 aylık nakit projeksiyonu" />;
+    if (proj === null) return <Alinamadi ad="12 aylık nakit projeksiyonu" />;
     const seri = proj?.seri || [];
     if (!seri.length) {
       return (
@@ -509,13 +561,16 @@ export default function BorcModulu({ gorunum, onCekmece, onKopru }) {
     const alan = `${xk(0)},${yk(enK)} ${cizgi} ${xk(n - 1)},${yk(enK)}`;
     const sarmal = !!proj.spiral;
     const renk = sarmal ? R.kirmizi : R.yesil;
+    // EVV-SAG-N13 (Codex): ABEK negatifken "ABEK kadarı ödeniyor" metni mekanizmayı
+    // yanlış sadeleştiriyordu — ödeme yok, operasyonel açık DA borca ekleniyor.
+    const abekNeg = sayi(proj.varsayim?.abek_aylik) < 0;
     return (
       <>
         <KpiSeridi kpiler={[
           { etiket: 'Bugünkü borç', deger: fmt(bas), alt: 'başlangıç tabanı', renk: R.krem },
           { etiket: '12 ay sonu', deger: fmt(sayi(proj.ay_sonu_borc)), alt: `${sayi(proj.artis_pct) > 0 ? '+' : ''}${sayi(proj.artis_pct)}% değişim`, renk },
           { etiket: 'Aylık faiz', deger: fmt(sayi(proj.aylik_faiz_tl)), alt: `efektif %${sayi(proj.varsayim?.efektif_aylik_faiz_pct)}/ay`, renk: R.kirmizi },
-          { etiket: 'ABEK (ödeme gücü)', deger: fmt(sayi(proj.varsayim?.abek_aylik)), alt: sarmal ? 'faizi karşılamıyor' : 'faizi karşılıyor', renk: sarmal ? R.kirmizi : R.yesil },
+          { etiket: 'ABEK (ödeme gücü)', deger: fmt(sayi(proj.varsayim?.abek_aylik)), alt: abekNeg ? 'NEGATİF — açık da borca ekleniyor' : sarmal ? 'faizi karşılamıyor' : 'faizi karşılıyor', renk: sarmal ? R.kirmizi : R.yesil },
         ]} />
 
         {sarmal && (
@@ -525,7 +580,9 @@ export default function BorcModulu({ gorunum, onCekmece, onKopru }) {
           }}>
             <div style={{ fontSize: 13, fontWeight: 700, color: R.kirmizi }}>🌀 Sarmal uyarısı</div>
             <div style={{ fontSize: 12.5, color: R.metin2, marginTop: 6, lineHeight: 1.6 }}>
-              Aylık ödeme kapasitesi (ABEK) faizi bile karşılamıyor — faize karşı açık{' '}
+              {abekNeg
+                ? 'Aylık kapasite (ABEK) NEGATİF: borç ödemek şöyle dursun, operasyonel açık da faizin üstüne borca ekleniyor — toplam aylık büyüme'
+                : 'Aylık ödeme kapasitesi (ABEK) faizi bile karşılamıyor — faize karşı açık'}{' '}
               <b style={{ fontFamily: F.mono, color: R.kirmizi }}>{fmt(sayi(proj.abek_aciligi_faize_karsi))}/ay</b>.
               {proj.ikiye_katlanma_ay
                 ? <> Bu gidişatla borç <b>~{sayi(proj.ikiye_katlanma_ay)} ayda ikiye katlanır</b>.</>
@@ -541,7 +598,9 @@ export default function BorcModulu({ gorunum, onCekmece, onKopru }) {
           }}>
             <span style={{ fontFamily: F.baslik, fontSize: 15, fontWeight: 600 }}>🔮 Borç eğrisi · 12 ay</span>
             <span style={{ fontSize: 11, color: R.not2 }}>
-              her ay faiz geliyor, ABEK kadarı ödeniyor → fark borca ekleniyor
+              {abekNeg
+                ? 'her ay faiz + operasyonel açık borca ekleniyor (ABEK negatif — ödeme yok)'
+                : 'her ay faiz geliyor, ABEK kadarı ödeniyor → fark borca ekleniyor'}
             </span>
           </div>
           <svg viewBox={`0 0 ${G} ${Y}`} style={{ width: '100%', display: 'block' }}>
@@ -568,7 +627,8 @@ export default function BorcModulu({ gorunum, onCekmece, onKopru }) {
             <b style={{ fontFamily: F.mono, color: R.bakir }}>{fmt(sayi(proj.borc_sabit_icin_gereken_aylik_odeme))}</b>
           </span>
           <span style={{ color: R.not }}>
-            Şu anki kapasite {fmt(sayi(proj.varsayim?.abek_aylik))} → aradaki fark her ay borca ekleniyor.
+            Şu anki kapasite {fmt(sayi(proj.varsayim?.abek_aylik))}
+            {abekNeg ? ' (negatif: operasyonel açık da borca ekleniyor)' : ''} → aradaki fark her ay borca ekleniyor.
           </span>
         </div>
       </>
@@ -577,6 +637,7 @@ export default function BorcModulu({ gorunum, onCekmece, onKopru }) {
 
   // ── 4) Şube Katkısı ────────────────────────────────────────────────────────
   if (katki === undefined) return <Bekleniyor ad="Şube katkı analizi" />;
+  if (katki === null) return <Alinamadi ad="Şube katkı analizi" />;
   const subeler = katki?.subeler || [];
   if (!subeler.length) {
     return (
@@ -585,7 +646,9 @@ export default function BorcModulu({ gorunum, onCekmece, onKopru }) {
       </div>
     );
   }
-  const besleyen = subeler.filter(s => sayi(s.ileri_aylik_katki) >= 0);
+  // EVV-SAG-N15: besleyen sayacı >=0 idi — 0 katkılı NÖTR şube "besleyen" sayılıp
+  // adedi şişiriyordu (backend toplamı zaten >0 ile alıyor; sayaç da aynı hizada).
+  const besleyen = subeler.filter(s => sayi(s.ileri_aylik_katki) > 0);
   const bosaltan = subeler.filter(s => sayi(s.ileri_aylik_katki) < 0);
   return (
     <>

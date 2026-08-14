@@ -9568,8 +9568,11 @@ def _borc_validate(b: BorcModel):
         raise HTTPException(400, "Kalan vade, toplam vadeden büyük olamaz")
     # FIX MN8 (2026-07-06): faiz/ödemesiz ay validasyonu yoktu — negatif/aşırı faiz girilip
     # Borç Koçu motoruna kirli veri akabiliyordu (kartlardaki 0-500 deseniyle aynı).
+    # EVV-SAG-N8 (2026-08-14): mesaj "yıllık %" diyordu ama sözleşme AYLIK —
+    # v2 kredi formu "Aylık faiz %" ister, canlı değerler 2,99-4,375 bandında ve
+    # borç navigasyon motoru bu alanı AYLIK oran olarak kullanır.
     if b.faiz_orani is not None and not (0 <= float(b.faiz_orani) <= 500):
-        raise HTTPException(400, "Faiz oranı 0–500 arası olmalı (yıllık %)")
+        raise HTTPException(400, "Faiz oranı 0–500 arası olmalı (aylık %)")
     if b.odemesiz_ay is not None and int(b.odemesiz_ay) < 0:
         raise HTTPException(400, "Ödemesiz ay negatif olamaz")
 
