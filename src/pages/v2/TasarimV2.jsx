@@ -70,6 +70,39 @@ const TR_HARF = { ç: 'c', ğ: 'g', ı: 'i', ö: 'o', ş: 's', ü: 'u', â: 'a',
 const sadeles = (s) => String(s ?? '').toLocaleLowerCase('tr').replace(/[çğıöşüâîû]/g, (c) => TR_HARF[c]);
 /** TR ondalık: 6.8 → "6,8" */
 const trSayi = (n, basamak = 1) => n.toFixed(basamak).replace('.', ',');
+/** Sunucu gün adını İngilizce gönderiyor ("Friday") — ekranda Türkçe durur.
+ *  Eşleşmeyen değer ham geçer (yeni/beklenmedik ad sessizce "—" olmasın). */
+const GUN_TR = {
+  Monday: 'Pazartesi', Tuesday: 'Salı', Wednesday: 'Çarşamba', Thursday: 'Perşembe',
+  Friday: 'Cuma', Saturday: 'Cumartesi', Sunday: 'Pazar',
+};
+const gunTr = (g) => {
+  const s = String(g || '').trim();
+  return GUN_TR[s] || s;
+};
+
+/** KRİTİK NAKİT GRUPLAMA — Genel Bakış'taki kuralın aynısı (iki ekran ayrışmasın).
+ *  Motor, serbest nakde sığmayan HER kart için ayrı bir "NAKİT YETERSİZ" önerisi
+ *  üretiyor → aynı TEK sebep (para yetmiyor) listede 5-6 kez tekrarlayıp diğer
+ *  önerileri aşağı itiyordu. 2+ ise tek satırda birleşir, kartlar alt bilgide.
+ *  ⚠️ Tutar YAZILMAZ: bu önerilerde sunucu tavsiye_tutar=0 gönderir, istenen
+ *  tutar yalnız açıklama metninin içinde geçer — metinden para PARSE ETMEK yasak
+ *  (biçim değişince sessizce yanlış rakam basar). */
+const kritikNakitAyir = (oneriler) => {
+  const hepsi = oneriler || [];
+  const grup = hepsi.filter((o) => String(o.oneri_turu || '') === 'KRITIK_NAKIT');
+  if (grup.length < 2) return { grupSatiri: null, kalan: hepsi };
+  const kartlar = grup.map((o) => o.kart_adi || o.banka).filter(Boolean);
+  return {
+    grupSatiri: {
+      id: 'oneri-kritik-nakit-grubu',
+      baslik: `⛔ NAKİT YETERSİZ — ${grup.length} kart`,
+      alt: `serbest nakit bu ödemelere yetmiyor${kartlar.length ? ` · kartlar: ${kartlar.join(', ')}` : ''}`,
+      tutar: '', tier: 'kritik', aksiyon: '', _hedef: '',
+    },
+    kalan: hepsi.filter((o) => String(o.oneri_turu || '') !== 'KRITIK_NAKIT'),
+  };
+};
 
 /** Animasyon + hover kuralları — v2 kabuğuna özel, global CSS'e sızmaz. */
 const V2_CSS = `
@@ -244,9 +277,18 @@ export default function TasarimV2({ onGit }) {
             t + gunler.filter(x => !((s.gunler || {})[x] || []).length).length, 0);
           koy('vardiyaAcik', bos);
         }).catch(() => {});
+      // 🔴 (2026-08-14) ROZET HİÇ ÇALIŞMIYORDU — iki ayrı kusur üst üste:
+      //  (a) /personel-aylik NESNE döner {personeller:[...]}; kod Array.isArray(d)
+      //      ile diziye zorluyordu → her zaman [] → rozet hep 0.
+      //  (b) Sunucudaki onay durumu 'onaylandi', kod 'onayli' arıyordu → o değer
+      //      hiç eşleşmiyordu (dizi düzelseydi bile onaylanmışlar bekleyen sayılırdı).
+      // Kalan durumlar: 'taslak' + 'onay_bekliyor' = gerçekten bekleyen bordro.
       api(`/personel-aylik?yil=${Number(b.slice(0, 4))}&ay=${Number(b.slice(5, 7))}`)
-        .then(d => koy('maasBekleyen', (Array.isArray(d) ? d : [])
-          .filter(x => x.durum && !['odendi', 'onayli'].includes(x.durum)).length))
+        .then(d => {
+          const ps = Array.isArray(d) ? d : (Array.isArray(d?.personeller) ? d.personeller : []);
+          const norm = (x) => (x === 'onaylandi' ? 'onayli' : String(x || 'taslak'));
+          koy('maasBekleyen', ps.filter(x => x.durum && !['odendi', 'onayli'].includes(norm(x.durum))).length);
+        })
         .catch(() => {});
       api(`/gorev/ozet?tarih=${b}`)
         .then(d => koy('gorevAcik', (Array.isArray(d) ? d : [])
@@ -264,9 +306,12 @@ export default function TasarimV2({ onGit }) {
         koy('teslimatZinciri', ds.filter(x => (Number(x.fatura_say) || 0) === 0).length);
         koy('tedarikDosyasi', ds.filter(x => String(x.kabul_durum || '').toLocaleLowerCase('tr').includes('uyum')).length);
       }).catch(() => {});
+    // 🔴 (2026-08-14) Filtre OLMAYAN alanları okuyordu: `gorulme_zamani` ve
+    // `gorildi` (yazım hatası) — gerçek alan `goruldu`. İkisi de undefined
+    // olduğu için koşul HER olay için doğru çıkıyor, rozet görülmüş olayları da
+    // sayıyordu. Uç zaten hazır sayaç gönderiyor (`gorulmemis`) → filtre kalktı.
     api('/teslim-bildirim/liste?gun=7')
-      .then(d => koy('bilgiTeslim', ((d?.olaylar) || (Array.isArray(d) ? d : []))
-        .filter(o => !o.gorulme_zamani && !o.gorildi).length)).catch(() => {});
+      .then(d => koy('bilgiTeslim', Number(d?.gorulmemis) || 0)).catch(() => {});
     api('/kart-hareketleri?limit=200')
       .then(d => koy('hareketBelirsiz', (Array.isArray(d) ? d : [])
         .filter(h => h.islem_turu === 'HARCAMA' && (h.harcama_tipi || 'belirsiz') === 'belirsiz').length))
@@ -848,10 +893,10 @@ export default function TasarimV2({ onGit }) {
       }] : []),
       { etiket: '7 gün yükü', deger: fmt(sayi(panel.yuk_7)), alt: 'vadesi gelen ödemeler' },
       { etiket: '30 gün yükü', deger: fmt(sayi(panel.yuk_30)), alt: 'aylık zorunlu çıkış' },
-      // PROD-V2-CIRO-001 FIX: toplam BRÜT bu_ay_ciro (ciro tablosu) — kırılım (nakit/pos/online)
-      // BRÜT olduğundan toplam=parça olsun. Önce NET bu_ay_sadece_ciro kullanılıyordu → 377K net
-      // toplam vs 382K brüt kırılım (toplam≠parça). PROD-PANEL-004 + Panel.jsx manşetiyle tutarlı.
-      { etiket: 'Bu ay ciro', deger: fmt(sayi(panel.bu_ay_ciro)), alt: `nakit ${fmt(sayi(panel.bu_ay_nakit)).replace(' ₺', '')} · pos ${fmt(sayi(panel.bu_ay_pos)).replace(' ₺', '')} · online ${fmt(sayi(panel.bu_ay_online)).replace(' ₺', '')}` },
+      // 🔵 (2026-08-14) 'Bu ay ciro' kartı KALDIRILDI: Bugün görünümü zaten 2 KPI
+      // şeridi + Hero taşıyor, en yoğun ekran burası. Aylık ciro Ay Özeti'nde
+      // dağılım grafiği ve günlük ortalamayla birlikte daha zengin duruyor —
+      // aynı sayıyı iki yerde göstermek yoğunluğu boşuna artırıyordu.
     ] : [];
 
     const enIyi = d.subeGunListe[0]?.[1] || 0;
@@ -865,16 +910,24 @@ export default function TasarimV2({ onGit }) {
       _ad: ad, _tutar: tutar,
     }));
 
-    const oneriListe = (panel?.oneriler || []).slice(0, 6).map((o, i) => ({
-      id: `oneri-${i}`,
-      baslik: o.baslik,
-      alt: o.aciklama,
-      tutar: sayi(o.tavsiye_tutar) > 0 ? fmt(o.tavsiye_tutar) : '',
-      tier: o.renk === 'KIRMIZI' ? 'kritik' : o.renk === 'TURUNCU' ? 'uyari' : 'bilgi',
-      // Ödeme kuyruğuna bağlı öneride butonu göster; bağlı değilse yönlendirme yapma.
-      aksiyon: o.odeme_id ? 'Ödemeye git' : '',
-      _hedef: o.odeme_id ? 'odeme-merkezi' : '',
-    }));
+    // K5 tutarlılık: aynı sebepten doğan "NAKİT YETERSİZ" önerileri tek satırda.
+    const { grupSatiri, kalan } = kritikNakitAyir(panel?.oneriler || []);
+    const tumOneriler = [
+      ...(grupSatiri ? [grupSatiri] : []),
+      ...kalan.map((o, i) => ({
+        id: `oneri-${i}`,
+        baslik: o.baslik,
+        alt: o.aciklama,
+        tutar: sayi(o.tavsiye_tutar) > 0 ? fmt(o.tavsiye_tutar) : '',
+        tier: o.renk === 'KIRMIZI' ? 'kritik' : o.renk === 'TURUNCU' ? 'uyari' : 'bilgi',
+        // Ödeme kuyruğuna bağlı öneride butonu göster; bağlı değilse yönlendirme yapma.
+        aksiyon: o.odeme_id ? 'Ödemeye git' : '',
+        // 🔵 (2026-08-14) Düğme KLASİĞE kaçıyordu ('odeme-merkezi') — sahip v2'den
+        // çıkıp eski sayfaya düşüyordu. v2'nin kendi Ödeme Merkezi'ne köprülenir.
+        _hedef: o.odeme_id ? '__modul:odeme:bekleyen' : '',
+      })),
+    ];
+    const oneriListe = tumOneriler.slice(0, 6);
 
     return (
       <>
@@ -977,7 +1030,15 @@ export default function TasarimV2({ onGit }) {
           })}
         />
         {oneriListe.length > 0 ? (
-          <Liste satirlar={oneriListe} onAc={(l) => koprule(l._hedef)} />
+          <>
+            <Liste satirlar={oneriListe} onAc={(l) => koprule(l._hedef)} />
+            {/* Kesme notu: liste sessizce kırpılmasın — kalanın nerede olduğu yazılır. */}
+            {tumOneriler.length > 6 && (
+              <div style={{ fontSize: 11, color: R.not2, padding: '8px 4px 0' }}>
+                ilk 6 / {tumOneriler.length} öneri · tamamı Riskler görünümünde
+              </div>
+            )}
+          </>
         ) : (
           <div style={{ ...kartYuzey, padding: '28px 24px', textAlign: 'center', color: R.not, fontSize: 13 }}>
             Bugün için açık öneri yok — kasa akışı temiz görünüyor.
@@ -1014,6 +1075,18 @@ export default function TasarimV2({ onGit }) {
         alt: kasaHatasiAdet ? `kuyrukta · kasa hatası ${kasaHatasiAdet} ayrı` : 'kuyrukta',
         renk: gercekOnay ? R.amber : R.yesil,
       },
+      // 🔵 (2026-08-14) HAFTALIK TEMPO: ay toplamı ayın sonunda anlaşılır, gün
+      // gürültülüdür — "gidişat iyi mi?" sorusunun ritmi haftadır. Sunucu bu
+      // kıyası zaten hesaplıyordu, Ay görünümü okumuyordu.
+      ...(subeHafta?.genel_degisim_pct != null ? [(() => {
+        const p = sayi(subeHafta.genel_degisim_pct);
+        return {
+          etiket: 'Haftalık tempo',
+          deger: `${p > 0 ? '+' : ''}${subeHafta.genel_degisim_pct}%`,
+          alt: `bu hafta ${fmt(sayi(subeHafta.toplam_bu_hafta))} ↔ ${fmt(sayi(subeHafta.toplam_gecen_hafta))}`,
+          renk: p >= 0 ? R.yesil : R.kirmizi,
+        };
+      })()] : []),
     ];
 
     // PROD-V2-CIRO-001 FIX: dağılım GROSS-ONLY (Nakit/POS/Online) → toplam (brüt bu_ay_ciro) = parça.
@@ -1033,6 +1106,14 @@ export default function TasarimV2({ onGit }) {
         {d.ciroKirpildi && (
           <div style={{ ...kartYuzey, padding: '10px 16px', marginBottom: 12, borderLeft: `3px solid ${R.amber}`, fontSize: 12, color: R.metin2 }}>
             ⚠ Ciro kaydı 600 satır tavanına ulaştı — bu aydaki bazı günler toplama girmemiş olabilir. Aylık rakam kanonik değil, kırılım eksik olabilir.
+          </div>
+        )}
+        {/* 🔵 (2026-08-14) Ay toplamının en büyük sessiz yanılgısı: girilmemiş gün
+            SIFIR sayılır → ay toplamı o kadar eksik çıkar. Bugün görünümünde şerit
+            vardı, Ay'da yoktu — oysa yanılgının vurduğu rakam tam burada. */}
+        {eksikCiro && sayi(eksikCiro.eksik_adet) > 0 && (
+          <div style={{ ...kartYuzey, padding: '10px 16px', marginBottom: 12, borderLeft: `3px solid ${R.amber}`, fontSize: 12, color: R.metin2 }}>
+            📅 Bu ay <b style={{ color: R.krem }}>{sayi(eksikCiro.eksik_adet)} gün</b> ciro girilmemiş — ay toplamı o kadar eksik.
           </div>
         )}
         <KpiSeridi kpiler={kpiler} />
@@ -1063,6 +1144,14 @@ export default function TasarimV2({ onGit }) {
               </div>
             ))}
           </div>
+          {/* Grafik payları gösteriyor ama okumayı sahibe bırakıyordu — tek cümlelik
+              yargı satırı ekli (ayCiro 0 ise bölme yapılmaz, satır çizilmez). */}
+          {ayCiro > 0 && (
+            <div style={{ fontSize: 11.5, color: R.not2, marginTop: 13, paddingTop: 11, borderTop: `1px solid ${R.cizgi2}` }}>
+              Nakit payı <b style={{ fontFamily: F.mono, color: R.krem }}>%{yuzde(ayNakit, ayCiro).toFixed(0)}</b>
+              {' · '}kart + online <b style={{ fontFamily: F.mono, color: R.krem }}>%{yuzde(ayPos + ayOnline, ayCiro).toFixed(0)}</b>
+            </div>
+          )}
         </div>
       </>
     );
@@ -1130,9 +1219,149 @@ export default function TasarimV2({ onGit }) {
       { etiket: 'Ay toplamı', deger: fmt(d.ayToplam), alt: `${d.gunSayisi} gün`, renk: R.krem },
     ];
 
+    // Şube dosyası çekmecesi — tablo satırı ve dikkat-şeridi AYNI kapıdan açsın
+    // (eskiden yalnız tablonun onSatir gövdesindeydi; iki yerde iki kopya olmasın).
+    const subeDosyasiAc = (s) => {
+      if (!s) return;
+      const dv = davranisOf(s.ad);
+      const sk = skorOf(s.ad);
+      const ihlaller = Array.isArray(dv?.ihlaller) ? dv.ihlaller : [];
+      const cezaPuan = sayi(dv?.toplam_puan ?? sk?.toplam_puan);
+      setCekmece({
+        tip: 'ŞUBE DOSYASI', baslik: s.ad, alt: `${d.ayOnEk} · ${s.gunSayisi} gün kayıt`,
+        kpi: [
+          { etiket: 'Ay cirosu', deger: fmt(s.toplam) },
+          { etiket: 'Zincir payı', deger: `%${trSayi(s.pay)}` },
+          { etiket: 'Günlük ort.', deger: fmt(s.toplam / (s.gunSayisi || 1)) },
+          // Ciro ekseninin yanına DAVRANIŞ ekseni: çok satan şube kural
+          // ihlalinde de birinci olabilir — ikisi ayrı soru.
+          (dv || sk)
+            ? {
+              etiket: 'Davranış',
+              deger: sk?.durum || (cezaPuan > 0 ? `${cezaPuan} ceza` : 'temiz'),
+              renk: cezaPuan >= 20 ? R.kirmizi : cezaPuan > 0 ? R.amber : R.yesil,
+            }
+            : { etiket: 'Nakit payı', deger: `%${yuzde(s.nakit, s.toplam).toFixed(0)}` },
+        ],
+        listeBaslik: ihlaller.length ? 'Ödeme tipi + kural ihlalleri (30 gün)' : 'Ödeme tipine göre',
+        satirlar: [
+          { ad: 'Nakit', detay: `%${yuzde(s.nakit, s.toplam).toFixed(0)}`, tutar: fmt(s.nakit) },
+          { ad: 'Kart + online', detay: `%${yuzde(s.kart, s.toplam).toFixed(0)}`, tutar: fmt(s.kart) },
+          // Kural kural ihlal dökümü — hangi kural kaç kez, kaç puan
+          ...ihlaller.slice(0, 10).map((i) => ({
+            ad: `⚠ ${i.kural || 'kural'}`,
+            detay: `${sayi(i.ihlal_sayisi)} kez · son 30 gün`,
+            tutar: `${sayi(i.puan)} puan`,
+          })),
+          // Anlık gider kategori trendi (soru 5/9) — uç sube filtresiz
+          // çağrıldığı için ZİNCİR GENELİ; etiketle dürüstçe söylenir.
+          ...(() => {
+            const kt = subeFinans?.anlik_gider_kategori_trend || [];
+            if (!kt.length) return [];
+            const sonHafta = kt.reduce((m, r) => (String(r.hafta) > m ? String(r.hafta) : m), '');
+            return kt
+              .filter((r) => String(r.hafta) === sonHafta)
+              .slice(0, 4)
+              .map((r) => ({
+                ad: `💸 ${r.kategori || 'kategori'} · zincir geneli`,
+                detay: `bu hafta ${sayi(r.kayit_adet)} kayıt`,
+                tutar: fmt(sayi(r.toplam_tutar)),
+              }));
+          })(),
+        ],
+        not: [
+          s.gunSayisi < d.gunSayisi
+            ? `Bu şubede ${d.gunSayisi - s.gunSayisi} gün ciro kaydı eksik — karşılaştırma bu yüzden düşük çıkabilir.`
+            : 'Ay boyunca eksik gün yok, karne tam.',
+          ihlaller.length
+            ? 'Davranış puanı CEZA puanıdır — yüksek olması kötüdür. Gözlem toplar, hüküm vermez.'
+            : (dv || sk) ? 'Bu ay kural ihlali kaydedilmemiş.' : '',
+        ].filter(Boolean).join(' '),
+        aksiyonAd: 'Ciro defterini aç',
+        _hedef: '__modul:para:girisi',
+      });
+    };
+
+    // ── ⚠ DİKKAT İSTEYEN ŞUBELER ────────────────────────────────────────────
+    // Karne tablosu 11 kolon × N şube — doğru ama "hangisine bakayım?" sorusunu
+    // sahibin gözüne bırakıyordu. Şerit dört sinyali tarar, en ağırını yazar.
+    // Sinyal yoksa kart HİÇ çizilmez (boş "sorun yok" kutusu gürültüdür).
+    const dikkatListesi = (() => {
+      const ONEM = { kirmizi: 0, amber: 1 };
+      const kayitlar = subeKarne.map((s) => {
+        const sinyaller = [];
+        const f = finansOf(s.ad);
+        // (a) Ciro yok ama gider sürüyor — en ağır sinyal: kapalı görünen şube para yakıyor.
+        if (s._ciroYok) {
+          sinyaller.push({ ton: 'kirmizi', metin: `ciro yok, 30g gider ${fmt(sayi(f?.gider))}` });
+        }
+        // (b) Haftalık düşüş — ay bitmeden yakalanması gereken ritim kaybı.
+        const h = haftaOf(s.ad);
+        const p = h?.degisim_pct;
+        if (p != null && sayi(p) <= -5) {
+          sinyaller.push({
+            ton: sayi(p) <= -15 ? 'kirmizi' : 'amber',
+            metin: `bu hafta %${Math.abs(sayi(p))} düşüş (${fmt(sayi(h.bu_hafta))})`,
+          });
+        }
+        // (c) Davranış ceza puanı — ciro iyi olsa da çalışma düzeni bozuk olabilir.
+        const dv = davranisOf(s.ad);
+        const sk = skorOf(s.ad);
+        const ceza = sayi(dv?.toplam_puan ?? sk?.toplam_puan);
+        if (ceza >= 20) sinyaller.push({ ton: 'amber', metin: `davranış: ${ceza} ceza puanı` });
+        // (d) Gider verimi — 1₺ gidere düşen ciro 5₺'nin altındaysa verim zayıf.
+        if (f && sayi(f.gider) > 0) {
+          const oran = sayi(f.ciro) / sayi(f.gider);
+          if (oran < 5) sinyaller.push({ ton: 'amber', metin: `1₺ gidere yalnız ${oran.toFixed(1)}₺ ciro` });
+        }
+        if (!sinyaller.length) return null;
+        sinyaller.sort((x, y) => ONEM[x.ton] - ONEM[y.ton]);
+        return { s, enAgir: sinyaller[0], ekSayi: sinyaller.length - 1 };
+      }).filter(Boolean);
+      kayitlar.sort((a, b) => ONEM[a.enAgir.ton] - ONEM[b.enAgir.ton]);
+      return kayitlar.slice(0, 3);
+    })();
+
     return (
       <>
         <KpiSeridi kpiler={kpiler} />
+
+        {dikkatListesi.length > 0 && (
+          <div style={{ ...kartYuzey, padding: '13px 18px', marginBottom: 14, borderLeft: `3px solid ${R.amber}` }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 9 }}>
+              <span style={{ fontFamily: F.baslik, fontSize: 14, fontWeight: 600 }}>⚠ Dikkat isteyen şubeler</span>
+              <span style={{ fontSize: 11, color: R.not2, marginLeft: 'auto' }}>
+                sinyal önceliğiyle · dokun → şube dosyası
+              </span>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {dikkatListesi.map(({ s, enAgir, ekSayi }) => {
+                const renk = enAgir.ton === 'kirmizi' ? R.kirmizi : R.amber;
+                return (
+                  <div
+                    key={s.ad}
+                    onClick={() => subeDosyasiAc(s)}
+                    tabIndex={0}
+                    role="button"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); subeDosyasiAc(s); }
+                    }}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px',
+                      borderRadius: 10, background: R.girinti, border: `1px solid ${R.cizgi3}`,
+                      cursor: 'pointer', fontSize: 12.5,
+                    }}
+                  >
+                    <span style={{ width: 6, height: 6, borderRadius: 99, background: renk, flexShrink: 0 }} />
+                    <b style={{ color: R.krem }}>{s.ad}</b>
+                    <span style={{ color: renk }}>— {enAgir.metin}</span>
+                    {ekSayi > 0 && <span style={{ color: R.not2, fontSize: 11 }}>· +{ekSayi} sinyal</span>}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* ── HAFTALIK KIYAS ŞERİDİ (soru 4/9) — gün çok kısa, ay çok geç;
             "hangi şube BU HAFTA düşüşte" bu ritimde yakalanır. ── */}
@@ -1287,66 +1516,7 @@ export default function TasarimV2({ onGit }) {
               })(),
             ],
           }))}
-          onSatir={(row) => {
-            const s = row._s;
-            const dv = davranisOf(s.ad);
-            const sk = skorOf(s.ad);
-            const ihlaller = Array.isArray(dv?.ihlaller) ? dv.ihlaller : [];
-            const cezaPuan = sayi(dv?.toplam_puan ?? sk?.toplam_puan);
-            setCekmece({
-              tip: 'ŞUBE DOSYASI', baslik: s.ad, alt: `${d.ayOnEk} · ${s.gunSayisi} gün kayıt`,
-              kpi: [
-                { etiket: 'Ay cirosu', deger: fmt(s.toplam) },
-                { etiket: 'Zincir payı', deger: `%${trSayi(s.pay)}` },
-                { etiket: 'Günlük ort.', deger: fmt(s.toplam / (s.gunSayisi || 1)) },
-                // Ciro ekseninin yanına DAVRANIŞ ekseni: çok satan şube kural
-                // ihlalinde de birinci olabilir — ikisi ayrı soru.
-                (dv || sk)
-                  ? {
-                    etiket: 'Davranış',
-                    deger: sk?.durum || (cezaPuan > 0 ? `${cezaPuan} ceza` : 'temiz'),
-                    renk: cezaPuan >= 20 ? R.kirmizi : cezaPuan > 0 ? R.amber : R.yesil,
-                  }
-                  : { etiket: 'Nakit payı', deger: `%${yuzde(s.nakit, s.toplam).toFixed(0)}` },
-              ],
-              listeBaslik: ihlaller.length ? 'Ödeme tipi + kural ihlalleri (30 gün)' : 'Ödeme tipine göre',
-              satirlar: [
-                { ad: 'Nakit', detay: `%${yuzde(s.nakit, s.toplam).toFixed(0)}`, tutar: fmt(s.nakit) },
-                { ad: 'Kart + online', detay: `%${yuzde(s.kart, s.toplam).toFixed(0)}`, tutar: fmt(s.kart) },
-                // Kural kural ihlal dökümü — hangi kural kaç kez, kaç puan
-                ...ihlaller.slice(0, 10).map((i) => ({
-                  ad: `⚠ ${i.kural || 'kural'}`,
-                  detay: `${sayi(i.ihlal_sayisi)} kez · son 30 gün`,
-                  tutar: `${sayi(i.puan)} puan`,
-                })),
-                // Anlık gider kategori trendi (soru 5/9) — uç sube filtresiz
-                // çağrıldığı için ZİNCİR GENELİ; etiketle dürüstçe söylenir.
-                ...(() => {
-                  const kt = subeFinans?.anlik_gider_kategori_trend || [];
-                  if (!kt.length) return [];
-                  const sonHafta = kt.reduce((m, r) => (String(r.hafta) > m ? String(r.hafta) : m), '');
-                  return kt
-                    .filter((r) => String(r.hafta) === sonHafta)
-                    .slice(0, 4)
-                    .map((r) => ({
-                      ad: `💸 ${r.kategori || 'kategori'} · zincir geneli`,
-                      detay: `bu hafta ${sayi(r.kayit_adet)} kayıt`,
-                      tutar: fmt(sayi(r.toplam_tutar)),
-                    }));
-                })(),
-              ],
-              not: [
-                s.gunSayisi < d.gunSayisi
-                  ? `Bu şubede ${d.gunSayisi - s.gunSayisi} gün ciro kaydı eksik — karşılaştırma bu yüzden düşük çıkabilir.`
-                  : 'Ay boyunca eksik gün yok, karne tam.',
-                ihlaller.length
-                  ? 'Davranış puanı CEZA puanıdır — yüksek olması kötüdür. Gözlem toplar, hüküm vermez.'
-                  : (dv || sk) ? 'Bu ay kural ihlali kaydedilmemiş.' : '',
-              ].filter(Boolean).join(' '),
-              aksiyonAd: 'Ciro defterini aç',
-              _hedef: '__modul:para:girisi',
-            });
-          }}
+          onSatir={(row) => subeDosyasiAc(row._s)}
         />
       </>
     );
@@ -1377,20 +1547,38 @@ export default function TasarimV2({ onGit }) {
         };
       })(),
       { etiket: 'Ciro eksik gün', deger: String(eksikGunler.length), alt: 'kayıt girilmemiş', renk: eksikGunler.length ? R.kirmizi : R.yesil },
+      // 🔵 (2026-08-14) Riskler görünümü "kaç adet" sayıyordu ama PARANIN büyüklüğü
+      // hiç görünmüyordu — 2 kalem 900 K ₺ ile 9 kalem 4 K ₺ aynı ağırlıkta duruyordu.
+      ...(gecikmisToplam > 0 ? [{
+        etiket: 'Gecikmiş yük',
+        deger: fmt(gecikmisToplam),
+        alt: `${gecikmisOdemeler.length} kalem · en eskisi ${enEskiGecikme || '?'} gün`,
+        renk: R.kirmizi,
+      }] : []),
     ];
 
+    // K5 tutarlılık: "NAKİT YETERSİZ" önerileri Bugün görünümüyle aynı kuralla gruplanır.
+    const { grupSatiri, kalan } = kritikNakitAyir(oneriler);
     const satirlar = [
-      ...oneriler.map((o, i) => ({
+      ...(grupSatiri ? [grupSatiri] : []),
+      ...kalan.map((o, i) => ({
         id: `o-${i}`, baslik: o.baslik, alt: o.aciklama,
         tutar: sayi(o.tavsiye_tutar) > 0 ? fmt(o.tavsiye_tutar) : '',
         tier: o.renk === 'KIRMIZI' ? 'kritik' : o.renk === 'TURUNCU' ? 'uyari' : 'bilgi',
-        aksiyon: o.odeme_id ? 'Ödemeye git' : '', _hedef: o.odeme_id ? 'odeme-merkezi' : '',
+        // v2 köprüsü — eskiden klasik 'odeme-merkezi' sayfasına düşüyordu.
+        aksiyon: o.odeme_id ? 'Ödemeye git' : '', _hedef: o.odeme_id ? '__modul:odeme:bekleyen' : '',
       })),
+      // 🔴 (2026-08-14) Satır "Şube · tarih cirosu girilmemiş" diyordu ama uç ŞUBE
+      // GÖNDERMİYOR (alanlar: tarih, gun_adi, days_ago, kritik) → her satırda jenerik
+      // "Şube" yazıyordu. Var olmayan alan yerine ucun verdiği bilgi gösterilir.
       ...eksikGunler.slice(0, 6).map((g, i) => ({
         id: `e-${i}`,
-        baslik: `${g.sube_adi || g.sube || 'Şube'} · ${String(g.tarih || g).slice(0, 10)} cirosu girilmemiş`,
-        alt: 'kâr ve kasa rakamları bu gün için eksik hesaplanır',
-        tutar: '', tier: 'uyari', aksiyon: 'Ciro gir', _hedef: '__modul:para:girisi',
+        baslik: `${gunTr(g.gun_adi) || 'Gün'} · ${String(g.tarih || g).slice(0, 10)} cirosu girilmemiş`,
+        alt: [
+          'kâr ve kasa rakamları bu gün için eksik hesaplanır',
+          sayi(g.days_ago) === 0 ? 'bugün' : `${sayi(g.days_ago)} gün önce`,
+        ].join(' · '),
+        tutar: '', tier: g.kritik ? 'kritik' : 'uyari', aksiyon: 'Ciro gir', _hedef: '__modul:para:girisi',
       })),
     ];
 
