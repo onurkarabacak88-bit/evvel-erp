@@ -1470,6 +1470,15 @@ export default function TasarimV2({ onGit }) {
               onClick={() => modSec(m.id)}
               title={m.ad}
               className="v2-mod"
+              // Klavye erişimi (ui-ux-pro-max sistematik tarama 2026-08-15):
+              // ana gezinme yalnız fareyle çalışıyordu — Tab + Enter/Space eklendi.
+              tabIndex={0}
+              role="button"
+              aria-label={m.ad}
+              aria-current={aktif ? 'page' : undefined}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); modSec(m.id); }
+              }}
               style={{
                 position: 'relative', flexShrink: 0, width: 52, padding: '9px 0 7px', borderRadius: 12,
                 display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5, cursor: 'pointer',
@@ -1521,6 +1530,12 @@ export default function TasarimV2({ onGit }) {
                 key={g.id}
                 onClick={() => { setGorunum(g.id); setCekmece(null); }}
                 className="v2-gorunum"
+                tabIndex={0}
+                role="button"
+                aria-current={aktif ? 'page' : undefined}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setGorunum(g.id); setCekmece(null); }
+                }}
                 style={{
                   display: 'flex', alignItems: 'center', gap: 9, padding: '9px 11px', borderRadius: 9,
                   cursor: 'pointer', fontSize: 12.5,

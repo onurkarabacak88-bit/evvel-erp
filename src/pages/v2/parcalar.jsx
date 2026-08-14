@@ -207,6 +207,12 @@ export function Hero({
             key={i}
             onClick={() => onIkincil?.(h)}
             className="v2-hover-kalk"
+            // Klavye erişimi (ui-ux-pro-max sistematik tarama 2026-08-15)
+            tabIndex={onIkincil ? 0 : undefined}
+            role={onIkincil ? 'button' : undefined}
+            onKeyDown={onIkincil ? (e) => {
+              if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onIkincil(h); }
+            } : undefined}
             style={{
               flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
               ...kartYuzey, borderRadius: 15, padding: '13px 16px', cursor: onIkincil ? 'pointer' : 'default',
@@ -290,6 +296,13 @@ export function Liste({ satirlar, baslik, onAc, secilebilir, secili, onSec, onHe
             key={l.id || i}
             onClick={() => onAc?.(l)}
             className="v2-hover-kalk"
+            // Klavye erişimi (ui-ux-pro-max sistematik tarama 2026-08-15): Liste
+            // satırları da Tablo satırları gibi Tab+Enter ile açılır.
+            tabIndex={onAc ? 0 : undefined}
+            role={onAc ? 'button' : undefined}
+            onKeyDown={onAc ? (e) => {
+              if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onAc(l); }
+            } : undefined}
             style={{
               position: 'relative', display: 'flex', alignItems: 'center', gap: 14,
               padding: '13px 16px 13px 18px', borderRadius: 14, overflow: 'hidden',

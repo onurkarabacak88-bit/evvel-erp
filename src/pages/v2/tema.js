@@ -26,7 +26,9 @@ export const R = {
   krem: '#F3EADC',
   metin2: '#C4B5A2',
   not: '#9B8A75',
-  not2: '#8B7B67',
+  // not2 de sistematik taramada bir kademe açıldı: kart yüzeyinde 3,75→4,17:1
+  // (hiyerarşi: not'tan soluk, not3'ten koyu kalır).
+  not2: '#93836E',
   // ui-ux-pro-max kontrast denetimi (2026-08-14): #6E6052 kart yüzeyinde 2,53:1
   // idi (WCAG 4,5:1 altı — küçük punto yardımcı metin okunmuyordu). Aynı ton
   // ailesinde bir kademe açıldı: kartta 3,4:1 / zeminde 4,2:1. Hiyerarşi korunur
