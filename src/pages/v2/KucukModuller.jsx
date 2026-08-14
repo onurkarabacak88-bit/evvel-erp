@@ -2153,9 +2153,11 @@ export function TanimModulu({ gorunum, onCekmece, onKopru, onToast }) {
       const s = String(x ?? '').trim();
       if (s === '') return false;          // boş bırakmak serbest
       const v = Number(s.replace(',', '.'));
-      return !Number.isFinite(v) || v < 0; // malformed metin ya da negatif → red
+      // 0 da red (Codex M14): okuma tarafı yalnız >0'ı fiyat sayar — kaydedilen 0
+      // ekranda "fiyatı girilmemiş/—" maskesine dönüyordu. Fiyatsız = BOŞ bırak.
+      return !Number.isFinite(v) || v <= 0;
     });
-    if (_fiyatBozuk) { onToast?.('Fiyat geçersiz — boş bırakın ya da 0+ sayı girin'); return; }
+    if (_fiyatBozuk) { onToast?.('Fiyat geçersiz — boş bırakın (fiyatsız) ya da 0\'dan büyük sayı girin'); return; }
     if (tvMesgul) return;   // 🔁 çift-tık guard
     setTvMesgul(true);
     try {
@@ -2193,7 +2195,12 @@ export function TanimModulu({ gorunum, onCekmece, onKopru, onToast }) {
     }
   };
 
+  // 🔴 Evo fiyat uygulama TOPLU yazımdır — onay modalı şart (tek tık tüm menüyü
+  // eziyordu) + fonksiyon başı çift-tık guard'ı (Codex + kendi bulgu, M14).
+  const [tvEvoSor, setTvEvoSor] = useState(false);
   const tvEvoFiyat = async () => {
+    if (tvMesgul) return;
+    setTvEvoSor(false);
     setTvMesgul(true);
     try {
       const r = await api('/tv-menu/evo-fiyat-uygula?gun=30', { method: 'POST' });
@@ -2211,6 +2218,16 @@ export function TanimModulu({ gorunum, onCekmece, onKopru, onToast }) {
 
   const tedKaydet = async () => {
     if (!(tedForm?.ad || '').trim()) { onToast?.('Tedarikçi adı zorunlu'); return; }
+    // Telefon doğrulaması (Codex M14): biçimsiz metin "telefonu kayıtlı/WhatsApp
+    // ulaşılabilir" yeşiline dönüyordu ama wa.me araması boşa giderdi.
+    const _tel = String(tedForm.telefon || '').trim();
+    // Geriye uyum (diff-review): eski bozuk telefon AYNEN duruyorsa diğer alanlar
+    // güncellenebilsin — doğrulama yalnız YENİ/DEĞİŞMİŞ telefona uygulanır.
+    const _telDegisti = _tel !== String(tedForm._orijTel || '').trim();
+    if (_tel && _telDegisti && _tel.replace(/\D/g, '').length < 10) {
+      onToast?.('Telefon geçersiz — en az 10 hane girin (örn. 0532 123 45 67) ya da boş bırakın');
+      return;
+    }
     if (tedMesgul) return;   // 🔁 (2026-08-12) çift-tık: mükerrer tedarikçi kaydı önle
     setTedMesgul(true);
     try {
@@ -2228,6 +2245,7 @@ export function TanimModulu({ gorunum, onCekmece, onKopru, onToast }) {
   };
 
   const tedPasife = async (id) => {
+    if (tedMesgul) return;   // çift-tık: mükerrer DELETE önle
     setTedMesgul(true);
     try {
       await api(`/tedarikciler/${id}`, { method: 'DELETE' });
@@ -2292,6 +2310,7 @@ export function TanimModulu({ gorunum, onCekmece, onKopru, onToast }) {
               ] : [
                 { ad: '✎ Düzenle', birincil: true, onTikla: () => setTedForm({
                   duzenleId: t.id, ad: t.ad || '', kategori: t.kategori || '', telefon: t.telefon || '', aciklama: t.aciklama || '',
+                  _orijTel: t.telefon || '',
                 }) },
                 { ad: 'Pasife al', onTikla: () => setTedPasifSor(String(t.id)) },
               ],
@@ -2376,7 +2395,12 @@ export function TanimModulu({ gorunum, onCekmece, onKopru, onToast }) {
   //   BELGE  — faturayı istedik mi, PDF geldi mi (belge_talep)
   //   ÖDEME İZİ — faturanın parası çıktı mı (tutar+tarih aday eşleşmesi)
   // Motor beyin + bağ defterinde ZATEN çalışıyordu; yalnız ekranı yoktu.
-  if (gorunum === 'zincir' && bm2) {
+  // BM-2 verisi ŞEKİLCE sağlamsa kullanılır (Codex M14: boş/bozuk truthy nesne
+  // sahte "Tüm zincirler kapalı" üretebilirdi) — değilse 3-halka yedeğe düşülür.
+  // Gerçek sözleşmeye bağlı (diff-review 2. katman): sayac + siparis_adet birlikte
+  // şart — kısmi truthy payload ({sayac:{}} gibi) BM-2 kolunu açamaz.
+  const bm2Saglam = !!bm2 && bm2.sayac != null && bm2.siparis_adet != null;
+  if (gorunum === 'zincir' && bm2Saglam) {
     const sayac = bm2.sayac || {};
     const eksikler = Array.isArray(bm2.eksik_zincirler) ? bm2.eksik_zincirler : [];
     const HALKA_AD = [
@@ -2416,7 +2440,7 @@ export function TanimModulu({ gorunum, onCekmece, onKopru, onToast }) {
         {eksikler.length ? (
           <Tablo
             baslik="Eksik zincirler · sipariş → teslim → belge → fatura → ödeme izi"
-            not={`yalnız ${String(bm2.baslangic || '15.07.2026')} sonrası siparişler denetlenir (sahip kararı) · ödeme izi ADAY eşleşmedir`}
+            not={`yalnız ${String(bm2.baslangic || '15.07.2026')} sonrası siparişler denetlenir (sahip kararı) · ödeme izi ADAY eşleşmedir${eksikler.length > 40 ? ` · ilk 40 / ${eksikler.length}` : ''}`}
             kolonlar={[
               { ad: 'Tedarikçi' }, { ad: 'Sipariş tarihi' }, { ad: 'Zincir' }, { ad: 'Kopuk halka' },
             ]}
@@ -2512,7 +2536,7 @@ export function TanimModulu({ gorunum, onCekmece, onKopru, onToast }) {
         {liste.length ? (
           <Tablo
             baslik={gorunum === 'zincir' ? 'Sipariş → kabul → fatura zinciri' : 'Tedarik dosyası · son 60 gün'}
-            not="satıra tıkla → zincir dosyası"
+            not={`satıra tıkla → zincir dosyası${liste.length > 120 ? ` · ilk 120 / ${liste.length}` : ''}`}
             kolonlar={[
               { ad: 'Sipariş' }, { ad: 'Şube' }, { ad: 'Tarih' },
               { ad: 'Toptancı' }, { ad: 'Fatura', sag: true }, { ad: 'Durum' },
@@ -2590,7 +2614,7 @@ export function TanimModulu({ gorunum, onCekmece, onKopru, onToast }) {
       {tv.length ? (
         <Tablo
           baslik="TV menü içeriği"
-          not="satıra tıkla → ürün ayrıntısı · fiyat düzenleme TV Menü ekranında"
+          not={`satıra tıkla → ürün ayrıntısı ve düzenleme (çekmecede)${tv.length > 150 ? ` · ilk 150 / ${tv.length}` : ''}`}
           kolonlar={[{ ad: 'Ürün' }, { ad: 'Kategori' }, { ad: 'Fiyat', sag: true }, { ad: 'Sıra', sag: true }, { ad: 'Yayın' }]}
           satirlar={tv.slice(0, 150).map(u => ({
             id: u.id, _u: u,
@@ -2657,7 +2681,7 @@ export function TanimModulu({ gorunum, onCekmece, onKopru, onToast }) {
       )}
 
       <div style={{ display: 'flex', gap: 9, marginTop: 12, marginBottom: 16, flexWrap: 'wrap' }}>
-        <button disabled={tvMesgul} onClick={tvEvoFiyat} style={{
+        <button disabled={tvMesgul} onClick={() => setTvEvoSor(true)} style={{
           padding: '9px 16px', borderRadius: 10, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
           background: R.girinti, color: R.metin2, fontSize: 12, fontWeight: 600, fontFamily: 'inherit',
         }}>
@@ -2667,6 +2691,31 @@ export function TanimModulu({ gorunum, onCekmece, onKopru, onToast }) {
           fiyat düzenleme ve yayın durumu satıra tıklayınca çekmecede
         </span>
       </div>
+
+      {/* Evo fiyat TOPLU yazım onayı — tek tık tüm menüyü ezmesin */}
+      {tvEvoSor && (
+        <KucukModal
+          baslik="Evo fiyatlarını uygula"
+          alt="toplu fiyat yazımı — geri alınmaz"
+          onKapat={() => !tvMesgul && setTvEvoSor(false)}
+        >
+          <div style={{ fontSize: 12.5, color: R.metin2, lineHeight: 1.7, marginBottom: 14 }}>
+            Son 30 günün Evo satış fiyatları TV menüsündeki <b>tüm eşleşen ürünlere</b> yazılır —
+            elle girdiğin fiyatlar <b>ezilir</b>. TV ~1 dk içinde güncellenir.
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+            <button disabled={tvMesgul} onClick={() => setTvEvoSor(false)} style={{
+              padding: '10px 18px', borderRadius: 10, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+              background: 'transparent', color: R.metin2, fontSize: 12.5, fontWeight: 600, fontFamily: 'inherit',
+            }}>Vazgeç</button>
+            <button disabled={tvMesgul} onClick={tvEvoFiyat} style={{
+              padding: '10px 20px', borderRadius: 10, border: 'none', cursor: 'pointer',
+              background: 'linear-gradient(150deg, #E0A559, #AF6C29)', color: '#1C1309',
+              fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit',
+            }}>{tvMesgul ? 'Uygulanıyor…' : 'Evet, uygula'}</button>
+          </div>
+        </KucukModal>
+      )}
 
       {/* ── YERLİ TV ÜRÜN FORMU ── */}
       {tvForm && (
