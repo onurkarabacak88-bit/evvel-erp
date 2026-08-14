@@ -19,6 +19,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { api, fmt } from '../../utils/api';
 import { R, F, kartYuzey } from './tema';
 import { KpiSeridi, Tablo, Liste, Takvim, SecimCubugu, OnayModali, Serit } from './parcalar';
+import { kayitDosyasiYukle, belgeYukleyiciUret } from './kayitDosyasi';
 
 const sayi = (v) => Number(v) || 0;
 const trSayi = (n, b = 1) => (Number(n) || 0).toFixed(b).replace('.', ',');
@@ -2174,8 +2175,20 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
           }))}
           onSatir={(row) => {
             const r = row._r;
+            // 📂 İZ & BELGE (Dalga 2): bu satır bir KASA İZİ; kaynak ikilisi
+            // (/ledger `SELECT *` ile kaynak_tablo+kaynak_id'yi zaten getiriyor)
+            // destekli bir tipse kaydın TÜM izleri ve belgeleri çekmeceye düşer —
+            // sahip "bu ödeme hangi kaydı kapattı, kardeş taksitleri neler" görür.
+            // Desteklenmeyen kaynak (null / ekstre_import) → fetch YOK, çekmece aynen.
+            const bagBilgi = {
+              onCekmece, tip: 'ÖDEME KAYDI',
+              kaynakTablo: r.kaynak_tablo, kaynakId: r.kaynak_id,
+              kayitId: r.id, renkler: { kirmizi: R.kirmizi },
+            };
             onCekmece?.({
               tip: 'ÖDEME KAYDI',
+              _kayitId: r.id,          // merge kimliği (başlık kimlik DEĞİLDİR)
+              belgeYukle: belgeYukleyiciUret(bagBilgi),
               baslik: r.aciklama || 'Ödeme',
               alt: `${kisaTarih(r.tarih)} · ${YONTEM[r.islem_turu] || slugAd(r.islem_turu)}`,
               kpi: [
@@ -2191,6 +2204,7 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
               aksiyonAd: 'İşlem defterini aç',
               _hedef: '__modul:rapor:defter',
             });
+            kayitDosyasiYukle(bagBilgi);
           }}
         />
       ) : (

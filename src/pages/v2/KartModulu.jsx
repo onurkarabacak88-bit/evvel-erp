@@ -19,6 +19,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { api, fmt } from '../../utils/api';
 import { R, F, kartYuzey } from './tema';
 import { KpiSeridi, Tablo, Liste, Serit, BorcKocu } from './parcalar';
+import { kayitDosyasiYukle, belgeYukleyiciUret } from './kayitDosyasi';
 
 const sayi = (v) => Number(v) || 0;
 const trSayi = (n, b = 1) => (Number(n) || 0).toFixed(b).replace('.', ',');
@@ -585,8 +586,21 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
   const toplamAsgari = koc ? sayi(koc.toplam_asgari) : kartSatir.reduce((s, k) => s + k.asgari, 0);
 
   // ── ortak: kart dosyası çekmecesi ──────────────────────────────────────────
-  const kartAc = (k) => onCekmece?.({
+  // 📂 İZ & BELGE (Dalga 2): kart dosyası çekmecesine [kesim, sonraki_kesim)
+  // penceresindeki ödemeler + dönem ekstreleri düşer. ⚠️ Pencere/ekstre hesabı
+  // FE'de YENİDEN KURULMAZ — backend (kayit_dosyasi_api) tek tanım; aynı mantık
+  // kasa_service ve finansal_duyu ile hizalı. Ana liste fetch'lerine (264-287)
+  // DOKUNULMADI: onlar ekran omurgası, bu yalnız çekmece zenginleştirmesi.
+  const kartAc = (k) => {
+    const bagBilgi = {
+      onCekmece, tip: 'KART DOSYASI',
+      kaynakTablo: 'kartlar', kaynakId: k.id,
+      kayitId: k.id, renkler: { kirmizi: R.kirmizi },
+    };
+    onCekmece?.({
     tip: 'KART DOSYASI',
+    _kayitId: k.id,
+    belgeYukle: belgeYukleyiciUret(bagBilgi),
     baslik: k.ad,
     alt: `${k.sahip} · ${trKucuk(DONGU[k.durum].ad)}`,
     kpi: [
@@ -656,7 +670,9 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
         ? 'Bu dönem ekstresi yüklü — rakamlar ekstreyle doğrulandı. Düzenleme Kart Dosyaları satır butonlarından.'
         : 'Bu dönem ekstresi YÜKLENMEDİ — Ekstre Durumu görünümünden PDF yükleyin. Ekstre yokken kalan limit ve devreden faiz tahminîdir.',
     ...(k.ekstreVar ? {} : { aksiyonAd: 'Ekstre durumuna git', _hedef: '__gorunum:ekstre' }),
-  });
+    });
+    kayitDosyasiYukle(bagBilgi);
+  };
 
   const kartFormAc = (k) => {
     const ham = k ? kartlar.find((x) => String(x.id) === String(k.id)) : null;
