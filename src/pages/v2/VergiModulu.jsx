@@ -20,7 +20,13 @@ import { R, F, kartYuzey } from './tema';
 import { KpiSeridi, Tablo } from './parcalar';
 
 const sayi = (v) => Number(v) || 0;
-const kisaTarih = (s) => (s ? String(s).slice(0, 10).split('-').reverse().slice(0, 2).join('.') : '—');
+// 365 günlük pencerede YIL şart (Codex): geçen yılın kaydı bu yılla karışmasın.
+const kisaTarih = (s) => {
+  if (!s) return '—';
+  const p = String(s).slice(0, 10).split('-');
+  if (p.length !== 3 || !p[2]) return '—';   // bozuk format guard (diff-review)
+  return `${p[2]}.${p[1]}.${String(p[0]).slice(2)}`;
+};
 
 const KOVA_ANLAM = {
   belgeli: { ad: '✅ Belgeli', renk: '#4ADE80', not: 'KDV indirilebilir + matrahtan düşer' },
@@ -156,7 +162,7 @@ export default function VergiModulu({ onCekmece }) {
       {(d?.belgesiz_harcamalar || []).length > 0 && (
         <Tablo
           baslik="Belgesiz işletme harcamaları"
-          not="belge gelirse KDV indirimi + gider yazımı kazanılır"
+          not={`belge gelirse KDV indirimi + gider yazımı kazanılır${(d.belgesiz_harcamalar || []).length > 30 ? ` · en büyük 30 / ${d.belgesiz_harcamalar.length}` : ''}`}
           kolonlar={[
             { ad: 'Tarih' }, { ad: 'Harcama' }, { ad: 'Kategori' },
             { ad: 'Tutar', sag: true }, { ad: 'KDV (tahmini)', sag: true }, { ad: 'Belge durumu' },
@@ -217,17 +223,13 @@ export default function VergiModulu({ onCekmece }) {
               borderBottom: i < ozelGosterilecek.length - 1 ? `1px solid ${R.cizgi}` : 'none',
               fontSize: 12,
             }}>
+              {/* Etiket/renk TEK sözlükten (Codex: else-dalı her bilinmeyen sınıfı
+                  "yurtdışı" diye giydiriyordu — ör. sahsi yanlış kovada görünürdü). */}
               <span style={{
                 fontSize: 10.5, padding: '2px 7px', borderRadius: 6,
                 background: R.girinti,
-                color: x.sinif === 'vergi_sgk' ? '#60A5FA'
-                  : x.sinif === 'borc_kapatma' ? '#94A3B8'
-                    : x.sinif === 'sistem_oncesi' ? '#8B7B67'
-                      : x.sinif === 'belge_beklenmez' ? '#60A5FA' : '#A78BFA',
-              }}>{x.sinif === 'vergi_sgk' ? 'vergi/SGK'
-                : x.sinif === 'borc_kapatma' ? 'borç kapatma'
-                  : x.sinif === 'sistem_oncesi' ? '📜 sistem öncesi'
-                    : x.sinif === 'belge_beklenmez' ? 'belge beklenmez' : 'yurtdışı'}</span>
+                color: (KOVA_ANLAM[x.sinif] || {}).renk || R.not,
+              }}>{(KOVA_ANLAM[x.sinif] || {}).ad || x.sinif || '—'}</span>
               <span style={{ fontFamily: F.mono, color: R.krem, minWidth: 96, textAlign: 'right' }}>
                 {fmt(sayi(x.tutar))}
               </span>

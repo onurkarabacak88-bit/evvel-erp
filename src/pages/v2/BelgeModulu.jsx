@@ -167,7 +167,9 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast }) {
   // ── YERLİ BELGE TALEP YÖNETİMİ (köprü kaldırma turu, 2026-07-30) ──────────
   // Klasik BelgeMerkezi'nin "Açık Teslimat" akışı: elle talep aç · WhatsApp ile
   // fatura iste (wa.me + mesaj-gönderildi izi) · kanıtla kapat. Uçlar aynen.
-  const [talep, setTalep] = useState(null);
+  // undefined = henüz yüklenmedi · null = uç düştü · nesne = geldi (M11 deseni —
+  // diff-review: tek null iki anlam taşıyınca ilk açılışta sahte alarm basılıyordu).
+  const [talep, setTalep] = useState(undefined);
   const [talepForm, setTalepForm] = useState(null);     // {ad, tarih, not}
   const [kapatForm, setKapatForm] = useState(null);     // {t, tip, aciklama}
   const [talepMesgul, setTalepMesgul] = useState(false);
@@ -195,9 +197,10 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast }) {
   }, []);
 
   const talepYukle = useCallback(() => {
+    // HATA≠BOŞ (Codex): uç düşünce {} sahte-boş "talep yok ✓" gösteriyordu → null sentinel.
     api('/belge-talep/bekleyen')
       .then((d) => setTalep(d || {}))
-      .catch(() => setTalep({}));
+      .catch(() => setTalep(null));
   }, []);
 
   const talepEkle = async () => {
@@ -375,6 +378,9 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast }) {
     if (['kapsama', 'arsiv', 'uyarilar', 'kdv', 'cari'].includes(gorunum) && !merkez) merkezYukle();
     if (gorunum === 'istek') istekYukle();
     if (gorunum === 'fiyat') bantYukle();
+    // Görünüm değişince açık modal state'i temizlenir (Codex: sekme değiştirip
+    // dönünce eski isteğe ait modal açık kalıyordu — yanlış kayda işlem tuzağı).
+    setFiModal(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gorunum]);
 
@@ -518,7 +524,9 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast }) {
             ? {
               etiket: 'Belge kapsama',
               deger: `%${Math.round(sayi(k.oran_riskli_yuzde ?? oran))}`,
-              alt: 'belge beklenen harcamanın faturalısı',
+              // Fallback dürüstlüğü (Codex): riskli taban alanı gelmediyse genel
+              // orana düşülür — bunu alt metin SÖYLER, sessizce farklı payda satılmaz.
+              alt: k.oran_riskli_yuzde != null ? 'belge beklenen harcamanın faturalısı' : '⚠ genel oran — riskli taban alınamadı',
               renk: sayi(k.oran_riskli_yuzde ?? oran) >= 70 ? R.yesil : sayi(k.oran_riskli_yuzde ?? oran) >= 50 ? R.amber : R.kirmizi,
             }
             : {
@@ -594,7 +602,10 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast }) {
           <BosDurum metin="Faturasız işletme harcaması yok — kapsama tam." />
         ) : (
           <>
-            <div style={{ fontSize: 11.5, color: R.not2, marginBottom: 9 }}>{aktifListe[3]}</div>
+            <div style={{ fontSize: 11.5, color: R.not2, marginBottom: 9 }}>
+              {aktifListe[3]}
+              {aktifListe[2].length > 12 ? ` · en büyük 12 / ${aktifListe[2].length} kalem gösteriliyor` : ''}
+            </div>
             <Liste
               satirlar={aktifListe[2].slice(0, 12).map((h, i) => ({
                 id: `${aktifListe[0]}-${i}`,
@@ -750,7 +761,7 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast }) {
         ) : (
           <Tablo
             baslik={aramaSonuc != null ? `Arama sonucu · ${gosterilen.length} belge` : `Fatura arşivi · ${merkez.ay || buAyISO()}`}
-            not="satıra tıkla → belge görüntüle"
+            not={`satıra tıkla → belge görüntüle${gosterilen.length > 40 ? ` · ilk 40 / ${gosterilen.length}` : ''}`}
             kolonlar={[
               { ad: 'Tarih' }, { ad: 'Toptancı' }, { ad: 'Durum' }, { ad: 'Tutar', sag: 1 },
             ]}
@@ -830,6 +841,9 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast }) {
           <BosDurum metin="Açık fatura isteği yok — teslim alınan her şeyin belgesi gelmiş." />
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 14 }}>
+            {gruplar.length > 10 && (
+              <div style={{ fontSize: 11, color: R.not2 }}>en büyük 10 / {gruplar.length} tedarikçi grubu gösteriliyor</div>
+            )}
             {gruplar.slice(0, 10).map((g, i) => (
               <div key={i} style={{ ...kartYuzey, padding: '15px 18px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
@@ -844,6 +858,9 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast }) {
                   </span>
                   {g.kurumsal && <span style={rozetHap(R.mavi)}>kurumsal</span>}
                 </div>
+                {(Array.isArray(g.istekler) ? g.istekler : []).length > 3 && (
+                  <div style={{ fontSize: 10.5, color: R.not2, marginTop: 6 }}>ilk 3 / {g.istekler.length} istek</div>
+                )}
                 {(Array.isArray(g.istekler) ? g.istekler : []).slice(0, 3).map((x, j) => (
                   <div key={j} style={{
                     display: 'flex', gap: 10, fontSize: 12, color: R.metin2, alignItems: 'center',
@@ -872,6 +889,7 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast }) {
         )}
         {/* ── AÇIK TESLİMAT / BELGE TALEBİ (yerli — klasik akış kadifede) ── */}
         {(() => {
+          const talepAlinamadi = talep === null;
           const talepler = Array.isArray(talep?.talepler) ? talep.talepler : (Array.isArray(talep) ? talep : []);
           return (
             <div style={{ ...kartYuzey, padding: '16px 18px', marginBottom: 16 }}>
@@ -893,7 +911,14 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast }) {
                   + Elle talep aç
                 </button>
               </div>
-              {talepler.length === 0 ? (
+              {talep === undefined ? (
+                <div style={{ fontSize: 12.5, color: R.not, textAlign: 'center', padding: '14px 0' }}>Talepler yükleniyor…</div>
+              ) : talepAlinamadi ? (
+                <div style={{ fontSize: 12.5, color: R.kirmizi, textAlign: 'center', padding: '14px 0' }}>
+                  Talep listesi alınamadı — uç sorunu, veri eksikliği değil.{' '}
+                  <button onClick={talepYukle} style={{ ...fiMini, color: R.kirmizi, borderColor: `${R.kirmizi}44` }}>Tekrar dene</button>
+                </div>
+              ) : talepler.length === 0 ? (
                 <div style={{ fontSize: 12.5, color: R.not, textAlign: 'center', padding: '14px 0' }}>
                   Bekleyen belge talebi yok — teslim alınan her şeyin belgesi gelmiş. ✓
                 </div>
@@ -1165,10 +1190,17 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast }) {
     const vadeler = Array.isArray(cari?.bekleyen_vadeler) ? cari.bekleyen_vadeler : [];
     const adaylar = Array.isArray(cari?.odeme_adaylari) ? cari.odeme_adaylari : [];
     const bugunISO = bugunYerelISO();
-    const gecikmisVade = vadeler.filter((v) => String(v.vade || '') < bugunISO);
+    // Boş vade GEÇMİŞ sayılmaz (Codex: '' < '2026-…' true döndüğünden tarihi
+    // olmayan söz "gecikti" kırmızısı yiyordu).
+    const gecikmisVade = vadeler.filter((v) => v.vade && String(v.vade) < bugunISO);
     return (
       <>
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 14 }}>
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 14, alignItems: 'center' }}>
+          {toptancilar.length > 8 && (
+            <span style={{ fontSize: 10.5, color: R.not2, order: 99 }}>
+              +{toptancilar.length - 8} toptancı daha — en büyük 8 gösteriliyor
+            </span>
+          )}
           {toptancilar.slice(0, 8).map((t) => {
             const aktif = cariSecim === t.toptanci;
             return (
@@ -1212,7 +1244,7 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast }) {
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
                   {vadeler.slice(0, 6).map((v, i) => {
-                    const gec = String(v.vade || '') < bugunISO;
+                    const gec = !!v.vade && String(v.vade) < bugunISO;
                     return (
                       <div key={i} style={{
                         display: 'flex', alignItems: 'center', gap: 10, fontSize: 11.5,
@@ -1227,6 +1259,9 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast }) {
                       </div>
                     );
                   })}
+                  {vadeler.length > 6 && (
+                    <div style={{ fontSize: 11, color: R.not2, textAlign: 'center' }}>+{vadeler.length - 6} vade daha</div>
+                  )}
                 </div>
               </div>
             )}
@@ -1238,7 +1273,9 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast }) {
             {hareketler.length > 0 && (
               <Tablo
                 baslik={`Cari defter — ${kisalt(cariSecim, 40)}`}
-                not={`yürüyen bakiye ${fmt(sayi(cari.yuruyen_bakiye))} · ${hareketler.length} hareket`}
+                // Kronoloji dürüstlüğü (Codex): defter EN YENİ ÜSTTE gösterilir —
+                // "devirle başlar" anlatısıyla çelişmesin diye açıkça yazılır.
+                not={`en yeni üstte · son ${Math.min(40, hareketler.length)} / ${hareketler.length} hareket · yürüyen bakiye ${fmt(sayi(cari.yuruyen_bakiye))}`}
                 kolonlar={[
                   { ad: 'Tarih' }, { ad: 'Hareket' }, { ad: 'Açıklama' },
                   { ad: 'Borç', sag: 1 }, { ad: 'Alacak', sag: 1 }, { ad: 'Bakiye', sag: 1 },
@@ -1395,10 +1432,25 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast }) {
     const disi = Array.isArray(bant.band_disi) ? bant.band_disi : [];
     return (
       <>
+        {/* 🔴 EVV-BELGE (2026-08-15, canlı kanıt): band_disi kuralı |medyan sapması|
+            VEYA |maliyet-kartı sapması| ≥%10 (fatura_api:6050) — FE yalnız medyan
+            anlatıyor ve sapmayı KENDİSİ yeniden hesaplıyordu (medyan 0'da payda 1'e
+            düşüp devasa yüzde; kart-sapmalı kalemde "+%0 bant dışı" çelişkisi;
+            negatif sapma hep + işaretli). Sunucu alanları esas: sapma_yuzde /
+            kart_sapma_yuzde; mutlakça büyüğü gösterilir, kaynağı yazılır. */}
         <KpiSeridi kpiler={[
           { etiket: 'İzlenen kalem', deger: String(sayi(bant.urun_adet)), alt: 'fatura fiyat geçmişi' },
-          { etiket: 'Bant dışı', deger: String(sayi(bant.band_disi_adet)), alt: 'son alış aralık üstünde', renk: sayi(bant.band_disi_adet) > 0 ? R.kirmizi : R.yesil },
-          { etiket: 'En sert sapma', deger: disi.length ? `${Math.round(Math.max(...disi.map((x) => (sayi(x.son_fiyat) / (sayi(x.medyan) || 1) - 1) * 100)))}%` : '—', alt: 'medyana göre', renk: R.kirmizi },
+          { etiket: 'Bant dışı', deger: String(sayi(bant.band_disi_adet)), alt: 'medyana ya da maliyet kartına göre ≥%10', renk: sayi(bant.band_disi_adet) > 0 ? R.kirmizi : R.yesil },
+          {
+            etiket: 'En sert sapma',
+            deger: disi.length
+              ? (() => {
+                const enSert = Math.max(...disi.map((x) => Math.max(Math.abs(sayi(x.sapma_yuzde)), Math.abs(sayi(x.kart_sapma_yuzde)))));
+                return `%${Math.round(enSert)}`;
+              })()
+              : '—',
+            alt: 'medyan/kart — mutlakça en büyük', renk: disi.length ? R.kirmizi : R.krem,
+          },
           { etiket: 'Kaynak', deger: 'onaylı fatura', alt: 'OCR değil — öneri-only' },
         ]} />
         {disi.length === 0 ? (
@@ -1411,7 +1463,13 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast }) {
               { ad: 'Kalem' }, { ad: 'Son tedarikçi' }, { ad: 'Bant', sag: 1 }, { ad: 'Son alış', sag: 1 }, { ad: 'Sapma', sag: 1 }, { ad: 'Durum' },
             ]}
             satirlar={disi.slice(0, 25).map((x, i) => {
-              const sapma = sayi(x.medyan) > 0 ? Math.round((sayi(x.son_fiyat) / sayi(x.medyan) - 1) * 100) : null;
+              // Sunucu hesabı ESAS (yeniden hesap yok): medyan ve kart sapmasından
+              // mutlakça büyüğü + kaynağı. Negatif sapma (ucuzlama) eksiyle basılır.
+              const ms = x.sapma_yuzde != null ? sayi(x.sapma_yuzde) : null;
+              const ks = x.kart_sapma_yuzde != null ? sayi(x.kart_sapma_yuzde) : null;
+              const kartBaskin = ks != null && (ms == null || Math.abs(ks) > Math.abs(ms));
+              const sapma = kartBaskin ? ks : ms;
+              const kaynakAd = kartBaskin ? 'karta göre' : 'medyana göre';
               return {
                 id: x.kod || `x-${i}`,
                 hucreler: [
@@ -1419,8 +1477,18 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast }) {
                   { v: kisalt(x.son_tedarikci || x.tedarikci || '—', 24), renk: R.not },
                   { v: Array.isArray(x.aralik) ? `${x.aralik[0]} – ${x.aralik[1]}` : '—', mono: true, sag: true, renk: R.not },
                   { v: String(sayi(x.son_fiyat)), mono: true, sag: true, kalin: true, renk: R.kirmizi },
-                  { v: sapma != null ? `+%${sapma}` : '—', mono: true, sag: true, renk: R.kirmizi },
-                  { v: 'bant dışı', rozet: R.kirmizi },
+                  {
+                    sira: sapma != null ? Math.abs(sapma) : 0, sag: true,
+                    v: sapma != null ? (
+                      <span style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
+                        <span style={{ fontFamily: F.mono, fontWeight: 700, color: sapma > 0 ? R.kirmizi : R.mavi }}>
+                          {sapma > 0 ? '+' : ''}%{Math.round(sapma)}
+                        </span>
+                        <span style={{ fontSize: 10, color: R.not2 }}>{kaynakAd}</span>
+                      </span>
+                    ) : '—',
+                  },
+                  { v: sapma != null && sapma < 0 ? 'ucuzlama' : 'bant dışı', rozet: sapma != null && sapma < 0 ? R.mavi : R.kirmizi },
                 ],
               };
             })}
