@@ -226,7 +226,16 @@ export const MODULLER = [
     // Sahip isteği (2026-07-28): satış×reçete beklenen vs ürün-aç gerçek —
     // fazla kullanım saptama tasarıma geldi (recete_api.kontrol motoru, öneri-only)
     { id: 'tuketim', ad: 'Tüketim Kontrolü', rozet: 'tuketimFark', renk: '#F87171' },
-    { id: 'fiyat', ad: 'Fiyat Zinciri', rozet: 'fiyatZinciri', renk: '#FBBF24' },
+    { id: 'fiyat', ad: 'Fiyat Zinciri' },
+    // 📈 ZAM TAKİBİ (2026-08-15, sahip: "bu artışlar ayrı bir sekme gibi düşün" —
+    // canlıda 9 alarm doğdu: FEZ püre %26,8, ATALAY espresso %16,7).
+    // Alarm listesi 'Fiyat Zinciri'nden BURAYA TAŞINDI, KOPYALANMADI: orada
+    // yerine tek satır köprü kaldı, iki ekran aynı listeyi göstermiyor.
+    // 🔔 ROZET DE İÇERİKLE BİRLİKTE TAŞINDI: 'fiyatZinciri' sayacı
+    // (TasarimV2.jsx:337 besler) artık listenin DURDUĞU satırda yanar — rozetin
+    // bir sekmede, içeriğin başka sekmede olması sahibi yanlış yere götürürdü.
+    // Anahtar adı korundu (besleyici tarafta değişiklik gerekmesin).
+    { id: 'zam', ad: 'Zam Takibi', rozet: 'fiyatZinciri', renk: '#FBBF24' },
     // ⚠️ AYRI GÖRÜNÜM — Marj Özeti'ne KARIŞTIRILMADI. Sunucunun kendi tanımı:
     // "İZOLE KDV Pozisyonu (P&L DIŞI)". KDV ne gelir ne giderdir, devlet adına
     // tahsil/ödemedir; P&L tablosuna katmak modeli bozar. Vergi de aynı yerde:
