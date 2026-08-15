@@ -526,16 +526,16 @@ def _ad_norm(s: Optional[str]) -> str:
 # yarım okunmuş, farklı adla yazılmış olabilir) — bir adayı "kalemi tutmadı"
 # diye ELEMEK sahte-kesinliktir. Eşleşmeme yalnız puanı/güveni düşürür.
 #
-# 💰 FİYAT SİNYALİ NEDEN `fiyat_zam_alarmi` TABLOSUNA YAZILMIYOR (bilinçli sapma,
-# 2026-08-15): o tablonun tek yazıcısı `operasyon_merkez_api._fiyat_zam_alarmi_yaz`
-# ve kendi doktrini nettir — "onaylı fiyattan tetiklenir, OCR'DAN DEĞİL
-# (öneri-only ilkesi korunur)". Buradaki fiyat farkı ise (a) HENÜZ ONAYLANMAMIŞ
-# bir aday faturadan, (b) doğruluğu kanıtlanmamış bir eşleşmeden çıkar. Yanlış
-# adaya bakıp alarm yazmak, sahibin "gerçek zam" listesini gürültüyle doldurur ve
-# geri alınamaz (tablo append-only). Ayrıca /gecmis-eslestir SALT-OKUR bir GET
-# ucudur; okuma ucundan yan-etki yazmak "kasa izi = tek gerçek" disiplinini bozar.
-# Fiyat farkı bu yüzden YALNIZ yanıt alanı olarak döner (`fiyat_degisimi`); bağ
-# ONAYLANDIĞINDA fiyat zaten mevcut fatura-onay hattından alarm motoruna düşer.
+# 💰 FİYAT SİNYALİ BURADA (ADAY AŞAMASINDA) ALARM TABLOSUNA YAZILMAZ — ama
+# BAĞ KURULUNCA YAZILIR. İki aşamanın ayrımı bilinçlidir (2026-08-15):
+#   · BURASI = ADAY listesi. Hangi faturanın hangi teslimata ait olduğu HENÜZ
+#     BİLİNMİYOR. Yanlış adaya bakıp alarm yazmak sahibin "gerçek zam" listesini
+#     gürültüyle doldurur ve geri alınamaz (tablo append-only). Ayrıca
+#     /gecmis-eslestir SALT-OKUR bir GET ucudur; okuma ucundan yan-etki yazmak
+#     "kasa izi = tek gerçek" disiplinini bozar. → yalnız `fiyat_degisimi` alanı.
+#   · BAĞ ANI = `fatura_bagla_uygula` → `_bag_zam_alarmi_yaz` (Z1, aşağıda).
+#     Orada fatura ARTIK o teslimatındır (insan onayı taşır) ve alarm YAZILIR.
+# Yani soru "OCR'a güvenilir mi" değil, "bağ onaylandı mı"dır.
 _KALEM_COP = {
     "kg", "gr", "gram", "lt", "ltr", "litre", "ml", "cl", "adet", "ad", "paket",
     "pkt", "koli", "kutu", "cuval", "torba", "kavanoz", "sise", "kasa", "top",
@@ -737,6 +737,12 @@ def _kalem_ortusmesi(sip: list, fat: list) -> Dict[str, Any]:
                     "eski": round(eski_f, 4), "yeni": round(yeni_f, 4),
                     "pct": round((yeni_f - eski_f) / eski_f * 100.0, 1),
                     "eski_kaynak": s.get("fiyat_kaynagi"),
+                    # ⬇ Z1 (2026-08-15): alarm kaydının KİMLİĞİ. Sipariş kodu
+                    # birincil (katalog kimliği), fatura kodu yedek, normalize ad
+                    # son çare — dedupe anahtarı bu olduğu için KARARLI olmalı.
+                    "kod": (s.get("kod") or en_f.get("kod")
+                            or (s.get("norm") or en_f.get("norm") or "")[:60] or None),
+                    "siparis_urun": s.get("ad"),
                 })
     oran = min(1.0, puan / len(sip)) if sip else 0.0
     return {
@@ -911,7 +917,8 @@ def belge_talep_gecmis_eslestir(gun: int = 120):
                "(teslimat bu faturayı, fatura da bu teslimatı en iyi eşi görüyor). "
                "'cakisma' = fatura birden çok teslimata aday. "
                "'kalem_ortusme' = hangi ürünler tuttu; 'fiyat_degisimi' = eşleşen kalemin "
-               "birim fiyat sapması (ÖNERİ — alarm tablosuna yazılmaz, bkz. fonksiyon notu). "
+               "birim fiyat sapması. Aday aşamasında bu YALNIZ bir alandır; bağ "
+               "kurulduğunda (sahip onayı) fiyat zam alarmı otomatik yazılır. "
                "Onay: POST /belge-talep/{id}/fatura-bagla",
     }
 
@@ -1372,9 +1379,199 @@ def fatura_bagla_uygula(cur, talep_id: str, fatura_id: str, onay_kaynagi: str,
                     **({"gerekce": zorla_gerekce} if damga else {})})
     except Exception as e:  # noqa: BLE001 — audit düşse de bağ kurulmuş kalır
         logger.warning("fatura bag audit atlandi: %s", str(e)[:120])
+    # 💰 Z1 — SAHİP ONAYLI BAĞ = ONAYLI FİYAT KAYNAĞI (2026-08-15)
+    zam = _bag_zam_alarmi_yaz(cur, tid, fid, bt.get("tedarikci_ad"), f.get("fno"))
     return {"ok": True, "belge_talep_id": tid, "fatura_id": fid,
             "fatura_tutar_tl": ftl,
-            "beklenen_tutar_tl": float(bt.get("beklenen_tutar_tl") or 0) or None}
+            "beklenen_tutar_tl": float(bt.get("beklenen_tutar_tl") or 0) or None,
+            "zam_alarmi": zam}
+
+
+# ═══════════ Z1 · BAĞDAN DOĞAN FİYAT ZAM ALARMI (2026-08-15) ═════════════════
+# SAHİP: "ben bu zamları GÖRMEM lazım — ürün bazlı artışı görmem gerekiyor!"
+#
+# 🔓 F4'TEKİ DOKTRİN KARARI BURADA GEÇERLİ DEĞİL — ve bu bir çelişki değildir:
+#   · /gecmis-eslestir bir ADAY listesidir: hangi faturanın hangi teslimata ait
+#     olduğu HENÜZ BİLİNMİYOR. Oradan alarm yazmak, yanlış faturanın fiyatını
+#     gerçek zam sanmaktı — o yüzden yalnız yanıt alanı olarak döndürüldü.
+#   · BURASI ise BAĞIN KURULDUĞU andır. Bağı kuran her yol İNSAN ONAYI taşır
+#     (sahip-ui = sahibin tıkı · oneri-onayi = onay kuyruğunda "evet" · override
+#     = sahibin gerekçeli zorlaması). Yani fatura ARTIK o teslimatın faturasıdır.
+#
+# DOKTRİN CÜMLESİ (tek satır — sonradan grep'lenecek çapa):
+# OCR tahmini DEĞİL — sahip onaylı bağdan gelen gerçek fatura fiyatı; alarm tetiklenmesi meşru.
+#
+# ÖNERİ-ONLY korunur: alarm bir SİNYALDİR, fiyat GÜNCELLEMESİ değildir. Katalog/
+# alış fiyatına DOKUNULMAZ; sahip "gördüm" der ya da fiyatı kendi onaylar.
+def _zam_kaynak_etiketi(tedarikci_ad, fatura_no, fatura_id) -> str:
+    """Alarmın KAYNAK açıklaması. Tabloda serbest metin kolonu yok; provenance
+    `tedarikci` alanının sonuna eklenir — ekranda zaten ikincil meta satırında
+    (`{olusturma} · {tedarikci}`, MaliyetModulu.jsx:2524) gösterildiği için doğru
+    yer orası. TABLO ŞEKLİ DEĞİŞMEZ (yeni kolon açmak mevcut yazıcıyla şekil
+    ayrışması doğururdu)."""
+    fno = (str(fatura_no or "").strip() or str(fatura_id or "")[:8]) or "—"
+    ted = (str(tedarikci_ad or "").strip() or "—")
+    return f"{ted} · teslimat-fatura bağı (sahip onaylı) — Fatura {fno}"[:200]
+
+
+def _bag_zam_alarmi_yaz(cur, talep_id: str, fatura_id: str,
+                        tedarikci_ad=None, fatura_no=None) -> Dict[str, Any]:
+    """Bağlanan faturanın kalemlerini siparişle karşılaştırır → fiyat zam alarmı.
+
+    Karşılaştırma F4 altyapısının AYNISIDIR (`_siparis_kalem_detay`,
+    `_fatura_kalem_detay_toplu`, `_kalem_ortusmesi`) — kopya mantık YOK.
+    Yazım `operasyon_merkez_api._fiyat_zam_alarmi_yaz` ile, yani eşik (%15
+    varsayılan) ve tablo şekli mevcut yazıcıyla BİREBİR.
+
+    ⚠️ SAVEPOINT ZORUNLU: bu fonksiyon ÇAĞIRANIN transaction'ında çalışır ve o
+    transaction bir ONAY olabilir. psycopg2'de hatalı sorgu işlemi ABORT eder;
+    dahası `_fiyat_zam_alarmi_yaz` istisnayı KENDİ İÇİNDE YUTUYOR (`except: pass`)
+    — yutulan hata bile tx'i abort bırakır ve sonraki her sorgu patlar. Bu yüzden
+    her kalem kendi SAVEPOINT'inde yazılır ve yazımdan SONRA satır gerçekten
+    düştü mü diye BAKILIR (sahte-yeşil önlemi).
+
+    ⚠️ ALARM DÜŞERSE BAĞ YAŞAR: hiçbir istisna dışarı sızmaz.
+    """
+    ozet = {"bakilan": 0, "yazilan": 0, "mukerrer": 0, "esik_alti": 0, "hata": None}
+    try:
+        cur.execute("SAVEPOINT sp_zam_hazirlik")
+        try:
+            cur.execute(
+                """SELECT bt.ts_id, ts.kalemler
+                     FROM belge_talep bt
+                     LEFT JOIN toptanci_siparis ts ON ts.id = bt.ts_id
+                    WHERE bt.id=%s""", (str(talep_id),))
+            r = cur.fetchone()
+            kalemler = (dict(r).get("kalemler") if r else None) or []
+            if isinstance(kalemler, str):
+                import json as _j
+                try:
+                    kalemler = _j.loads(kalemler)
+                except Exception:  # noqa: BLE001
+                    kalemler = []
+            sip = _siparis_kalem_detay(cur, kalemler)
+            fat = (_fatura_kalem_detay_toplu(cur, [str(fatura_id)]) or {}).get(str(fatura_id)) or []
+            cur.execute("RELEASE SAVEPOINT sp_zam_hazirlik")
+        except Exception:
+            try:
+                cur.execute("ROLLBACK TO SAVEPOINT sp_zam_hazirlik")
+                cur.execute("RELEASE SAVEPOINT sp_zam_hazirlik")
+            except Exception:  # noqa: BLE001
+                pass
+            raise
+        if not sip or not fat:
+            ozet["hata"] = "kalem okunamadı (sipariş veya fatura kalemsiz)"
+            return ozet
+
+        ko = _kalem_ortusmesi(sip, fat)
+        degisim = [d for d in (ko.get("fiyat_degisimi") or []) if float(d.get("pct") or 0) > 0]
+        ozet["bakilan"] = len(degisim)
+        if not degisim:
+            return ozet
+
+        from operasyon_merkez_api import _fiyat_zam_alarmi_yaz   # tek yazıcı
+        etiket = _zam_kaynak_etiketi(tedarikci_ad, fatura_no, fatura_id)
+        for d in degisim:
+            kod = str(d.get("kod") or "").strip()
+            if not kod:
+                continue
+            cur.execute("SAVEPOINT sp_zam_k")
+            try:
+                # MÜKERRER: aynı (ürün, fatura) ikinci kez yazılmaz. Tablo henüz
+                # yoksa mükerrer de olamaz (ilk yazım onu yaratacak).
+                cur.execute("SELECT to_regclass('public.fiyat_zam_alarmi') AS t")
+                if (cur.fetchone() or {}).get("t"):
+                    cur.execute(
+                        """SELECT 1 FROM fiyat_zam_alarmi
+                            WHERE fatura_id=%s AND kalem_kodu=%s LIMIT 1""",
+                        (str(fatura_id), kod))
+                    if cur.fetchone():
+                        ozet["mukerrer"] += 1
+                        cur.execute("RELEASE SAVEPOINT sp_zam_k")
+                        continue
+                _fiyat_zam_alarmi_yaz(
+                    cur, kod, (d.get("siparis_urun") or d.get("urun")),
+                    d.get("eski"), d.get("yeni"), etiket, str(fatura_id))
+                # 🔴 SAHTE-YEŞİL ÖNLEMİ: yazıcı istisnayı yutuyor → "yazdım" demeden
+                # ÖNCE satırın gerçekten düştüğünü doğrula. Düşmediyse iki meşru
+                # sebep var: eşik altı artış (%15) ya da yazım hatası — ikisi de
+                # "yazıldı" sayılmamalı.
+                cur.execute(
+                    """SELECT 1 FROM fiyat_zam_alarmi
+                        WHERE fatura_id=%s AND kalem_kodu=%s LIMIT 1""",
+                    (str(fatura_id), kod))
+                if cur.fetchone():
+                    ozet["yazilan"] += 1
+                else:
+                    ozet["esik_alti"] += 1
+                cur.execute("RELEASE SAVEPOINT sp_zam_k")
+            except Exception as e:  # noqa: BLE001
+                try:
+                    cur.execute("ROLLBACK TO SAVEPOINT sp_zam_k")
+                    cur.execute("RELEASE SAVEPOINT sp_zam_k")
+                except Exception:  # noqa: BLE001
+                    pass
+                logger.warning("zam alarmi kalem atlandi (%s/%s): %s",
+                               fatura_id, kod, str(e)[:120])
+    except Exception as e:  # noqa: BLE001 — ALARM DÜŞSE DE BAĞ YAŞAR
+        ozet["hata"] = str(e)[:200]
+        logger.warning("bag zam alarmi atlandi (talep %s / fatura %s): %s",
+                       talep_id, fatura_id, str(e)[:200])
+    return ozet
+
+
+@router.post("/zam-tara")
+def belge_talep_zam_tara(gun: int = 30):
+    """🔧 Z2 — GERİYE DÖNÜK ONARIM: son `gun` günde kurulmuş bağlardan eksik
+    kalan fiyat zam alarmlarını üretir.
+
+    Neden gerekli: Z1 bugün açıldı; ondan ÖNCE kurulmuş bağlar (ATALAY espresso
+    750→875, FEZ kalemleri) alarm doğurmadan geçti — sahip onayladı ama zammı
+    göremedi. Bu uç o boşluğu kapatır.
+
+    · SALT YAZIM, ÖNERİ-ONLY: bağa/faturaya/fiyata DOKUNMAZ, yalnız alarm düşer.
+    · İDEMPOTENT: Z1 ile AYNI mükerrer engeli (ürün+fatura) — defalarca
+      çağrılabilir, ikinci koşuda hiçbir şey yazmaz.
+    · Bağ başına izole: bir teslimatın kalemleri okunamazsa diğerleri sürer.
+    """
+    g = max(1, min(365, int(gun or 30)))
+    sonuc = {"pencere_gun": g, "taranan_bag": 0, "yazilan": 0,
+             "mukerrer": 0, "esik_alti": 0, "kalemsiz": 0, "bag": []}
+    with db() as (conn, cur):
+        _ensure(cur)
+        cur.execute(
+            """SELECT bt.id, bt.fatura_id, bt.tedarikci_ad,
+                      COALESCE(tf.fatura_no,'') AS fno,
+                      bt.kapanma_ts::text AS kapanma
+                 FROM belge_talep bt
+                 LEFT JOIN tedarikci_fatura tf ON tf.id = bt.fatura_id
+                WHERE bt.fatura_id IS NOT NULL
+                  AND COALESCE(bt.kapanma_ts, bt.olusturma) >= NOW() - (%s * INTERVAL '1 day')
+                ORDER BY bt.kapanma_ts DESC NULLS LAST""", (g,))
+        baglar = [dict(r) for r in (cur.fetchall() or [])]
+        for b in baglar:
+            sonuc["taranan_bag"] += 1
+            z = _bag_zam_alarmi_yaz(cur, b["id"], b["fatura_id"],
+                                    b.get("tedarikci_ad"), b.get("fno"))
+            sonuc["yazilan"] += z["yazilan"]
+            sonuc["mukerrer"] += z["mukerrer"]
+            sonuc["esik_alti"] += z["esik_alti"]
+            if z.get("hata"):
+                sonuc["kalemsiz"] += 1
+            if z["yazilan"] or z["mukerrer"] or z["esik_alti"]:
+                sonuc["bag"].append({
+                    "belge_talep_id": b["id"], "fatura_no": b.get("fno"),
+                    "tedarikci": b.get("tedarikci_ad"), "kapanma": b.get("kapanma"),
+                    **{k: z[k] for k in ("bakilan", "yazilan", "mukerrer", "esik_alti")},
+                })
+        conn.commit()
+    sonuc["not"] = (
+        "Öneri-only: yalnız ALARM yazıldı — fiyat/katalog/bağ değişmedi. "
+        "Alarmlar Maliyet ekranı → 'Fiyat zinciri' bölümünde ürün bazlı listelenir "
+        "(/api/ops/fiyat-zam-alarmlari). Eşik altı artışlar (%15) alarm doğurmaz. "
+        "İdempotent: tekrar çağırmak mükerrer üretmez."
+    )
+    return sonuc
 
 
 # ═══════════ F5 · YÜKSEK GÜVENLİ ÖNERİ → ONAY KUYRUĞU (2026-08-15) ═══════════
