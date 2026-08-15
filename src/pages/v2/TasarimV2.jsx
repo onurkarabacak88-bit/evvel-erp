@@ -2007,9 +2007,37 @@ export default function TasarimV2({ onGit }) {
           </div>
         </header>
 
+        {/* ═══ İÇERİK ALANI — MODAL KONUMLANDIRMASININ KÖKÜ (2026-08-15) ═══
+            Sahip: "modallar sayfanın ALT kısmında açılıyor, görmek için aşağı
+            inmek zorundayız."
+
+            KÖK: bu sarmalayıcı `animation: v2yuksel … both` taşıyordu ve o
+            keyframes TRANSFORM içeriyor (translateY(12px) → none). CSS kuralı:
+            transform UYGULANAN eleman, `position:fixed` torunları için İÇEREN
+            BLOK olur. `fill-mode: both` FORWARDS fill de içerdiği için animasyon
+            bittikten SONRA da transform'u "etkilemeye" devam ediyor → içeren
+            blok KALICI oluyordu. Sonuç: modüllerin `inset:0` modalları viewport'a
+            değil, bu UZUN içerik kutusuna göre ortalanıyor, yani ekranın altına
+            düşüyordu (sayfa uzadıkça daha aşağı).
+
+            ÇÖZÜM — `both` → `backwards`:
+              · `backwards` = yalnız GECİKME öncesi ilk kare uygulanır.
+              · Bitişte FORWARDS fill YOK → transform artık animasyonla
+                sürülmüyor → eleman içeren blok OLMAKTAN ÇIKIYOR.
+              · GÖRSEL FARK YOK: `to` karesi zaten `opacity:1; transform:none`,
+                yani elemanın doğal hâli. Giriş "yükseliş" hissi aynen duruyor.
+
+            ⚠️ NEDEN "animasyonu iç bir elemana taşımak" ÇÖZMEZ: modallar
+            renderModul() içinde, yani o iç elemanın DA torunu olurdu — tuzak
+            yer değiştirir, kaybolmazdı. Mesele sarmalayıcının YERİ değil,
+            transform'un KALICI kalmasıydı.
+
+            📌 Bu tek satır 9 modüldeki ~27 modalı birden viewport'a çözer.
+            (Çekmece ve kabuk bildirimi zaten bu sarmalayıcının DIŞINDA — o
+            yüzden onlar hep doğru çalışıyordu; teşhisin kanıtı da buydu.) */}
         <div style={{
           padding: '22px 30px 60px', maxWidth: 1420, margin: '0 auto',
-          animation: 'v2yuksel .28s cubic-bezier(.22,1,.36,1) both',
+          animation: 'v2yuksel .28s cubic-bezier(.22,1,.36,1) backwards',
         }}>
           {hataDefteri.length > 0 && (
             <HataBandi

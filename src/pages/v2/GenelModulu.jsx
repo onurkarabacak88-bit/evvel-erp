@@ -221,6 +221,42 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru }) {
         u.tarih || '?', sayi(u.tutar)].join('|'),
   );
 
+  /** 💰 ÖDEME KÖPRÜSÜ — TEK ÜRETİCİ (2026-08-15 canlı hata düzeltmesi).
+   *
+   * CANLI VAKA: "Sabit Gider: alsancak kira" çekmecesinden '💰 Ödeme yap' →
+   * doğru ekrana inildi ama modal AÇILMADI, toast da ÇIKMADI (sessiz düşme).
+   *
+   * KÖK: kimlik TEK ANAHTARA (plan id) bağlanmıştı. Panelin ödeme satırları
+   * TEK BİR ad uzayı kullanmıyor:
+   *   · plan satırları      → `odeme_id` = odeme_plani.id            (motors.py:1272)
+   *   · sabit/değişken gider→ `odeme_id` **NULL**, kimlik kaynak ikilisinde
+   *                            (motors.py:1401 — planı olmayan gider)
+   * `odeme_id` boş olunca köprü PARAMETRESİZ kuruluyor, hedef ekran hedefsiz
+   * açılıyor ve akış hiçbir iz bırakmadan bitiyordu — aranan kalem listede
+   * gözükse bile. (Aynı ders: "tek anahtar 'iz yok' yalanı".)
+   *
+   * ÇÖZÜM: kimlik BİLEŞİK taşınır. Plan id varsa o; yoksa kaynak ikilisi
+   * `k~<tablo>~<id>` olarak gider ve hedef ekran her iki ad uzayında da arar.
+   * '~' ayracı bilerek: köprü çözücüsü ':' ile parçalıyor, ayrac çakışmasın.
+   *
+   * ⚠️ VAAT-GERÇEK: hiçbir kimlik çıkmıyorsa AD DA değişmez ("Ödeme Merkezi'nde
+   * aç") — "Ödeme yap" deyip genel listeye düşürmek sahibi kandırmaktır.
+   */
+  const odemeHedefi = (_u) => {
+    const planId = String(_u.odeme_id || _u.id || '').trim();
+    if (planId) {
+      return { aksiyonAd: '💰 Ödeme yap',
+        _hedef: `__modul:odeme:bekleyen:${encodeURIComponent(planId)}` };
+    }
+    const tablo = String(_u.kaynak_tablo || '').trim();
+    const kid = String(_u.kaynak_id || '').trim();
+    if (tablo && kid) {
+      return { aksiyonAd: '💰 Ödeme yap',
+        _hedef: `__modul:odeme:bekleyen:${encodeURIComponent(`k~${tablo}~${kid}`)}` };
+    }
+    return { aksiyonAd: 'Ödeme Merkezi\'nde aç', _hedef: '__modul:odeme:bekleyen' };
+  };
+
   /** Çekmece gövdesi — `ek` ile iz/belgeler sonradan eklenebilsin diye fonksiyon.
    *  tip + baslik SABİT kalır: Cekmece sekme sıfırlaması [acik,tip,baslik]'e bağlı
    *  (parcalar.jsx:1319) → aynı değerlerle yeniden çağırınca sahip hangi sekmedeyse
@@ -270,32 +306,23 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru }) {
       { ad: 'Asgari kalan', detay: 'ödenmesi gereken', tutar: fmt(sayi(_u.asgari_kalan ?? _u.asgari ?? _u.tutar)) },
     ],
     not: '🔒 Salt-okunur — ödeme Ödeme Merkezi\'nden yapılır.',
-    // 💰 DOĞRUDAN ÖDEME KÖPRÜSÜ (2026-08-15, sahip canlı gezinme): düğme genel
-    // "bekleyen" listesine atıyordu, sahip kalemi bir daha elle arıyordu.
-    // Artık plan kimliği köprüye PARAMETRE olarak gider ve hedef ekran o kalemin
-    // ödeme modalını açar (ödeme YAPMAZ — ÖM tek kapı, onay modalı yerinde).
-    //
-    // ⚠️ VAAT EDEN METİN GERÇEĞİ YANSITMALI: kimlik yoksa (odeme_id ve id boş —
-    // değişken gider satırlarında odeme_id bilerek NULL, motors.py:1388) doğrudan
-    // iniş YAPILAMAZ; o vakada hem hedef hem AD eskisi gibi kalır. "Ödeme yap"
-    // deyip genel listeye düşürmek sahibi kandırmaktır.
-    ...((() => {
-      // kayitAnahtari'nın öncelik zinciriyle TUTARLI: odeme_id → id.
-      // Bileşik anahtar (3. basamak) burada KULLANILMAZ: o ekran-içi ayırt etme
-      // içindir, sunucudaki plan kimliği değildir — köprüde çözülemez.
-      const planId = String(_u.odeme_id || _u.id || '').trim();
-      return planId
-        ? { aksiyonAd: '💰 Ödeme yap',
-            _hedef: `__modul:odeme:bekleyen:${encodeURIComponent(planId)}` }
-        : { aksiyonAd: 'Ödeme Merkezi\'nde aç', _hedef: '__modul:odeme:bekleyen' };
-    })()),
+    ...odemeHedefi(_u),
     // 🔗 Kayıt bir TEDARİKÇİ taşıyorsa cari ekstresine parametreli köprü.
     // Ad çıkarılamıyorsa aksiyon üretilmez → tek düğmeli eski hâl korunur
     // (işlevsiz düğme göstermeyiz).
     ...(cariEkstreAksiyonu({ kayit: _u, onKopru })
       ? {
         aksiyonlar: [
-          { ad: 'Ödeme Merkezi\'nde aç', birincil: true, onTikla: () => onKopru?.('__modul:odeme:bekleyen') },
+          // 🔴 CANLI HATA (2026-08-15): bu dal ESKİ parametresiz köprüyü sabit
+          // yazıyordu. Tedarikçisi olan HER kayıtta (Cekmece `aksiyonlar` varsa
+          // `aksiyonAd`ı göstermiyor) doğrudan iniş sessizce KAYBOLUYORDU —
+          // aynı hedef iki yerde ayrı ayrı kurulduğu için biri güncellendi,
+          // diğeri kaldı. Artık İKİSİ DE tek üreticiden (`odemeHedefi`) besleniyor.
+          {
+            ad: odemeHedefi(_u).aksiyonAd,
+            birincil: true,
+            onTikla: () => onKopru?.(odemeHedefi(_u)._hedef),
+          },
           cariEkstreAksiyonu({ kayit: _u, onKopru }),
         ],
       }

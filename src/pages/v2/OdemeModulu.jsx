@@ -16,6 +16,7 @@
 //   /ledger?ay=YYYY-MM         → ödeme geçmişi (kasa hareketleri)
 // ─────────────────────────────────────────────────────────────────────────────
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { api, fmt } from '../../utils/api';
 import { R, F, kartYuzey } from './tema';
 import { KpiSeridi, Tablo, Liste, Takvim, SecimCubugu, OnayModali, Serit } from './parcalar';
@@ -402,6 +403,26 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast, hede
   // kendi onayını ve meşgul-guard'ını taşır, otomatik ödeme YOKTUR.
   // 🔇 SESSİZ DÜŞME YASAK: kalem bulunamazsa (bu arada ödendi/ertelendi/değişti)
   // toast atılır ve normal liste gösterilir — boş ekranla susulmaz.
+  /** Köprüden gelen kimliği kuyruk satırıyla eşler — İKİ AD UZAYI birden.
+   *
+   * Kuyruk satırları tek tip DEĞİL (odeme_plani_api):
+   *   · gerçek plan satırı → `id` = odeme_plani.id, ayrıca kaynak_tablo/kaynak_id (:685)
+   *   · tutarı girilmemiş fatura → `id` = "fatura_<sgid>" (SADECE görüntü anahtarı,
+   *     plan değil) + `sabit_gider_id` (:766)
+   * Panel tarafı da tek tip değil (bkz. GenelModulu.odemeHedefi). Bu yüzden tek
+   * alana bakmak, kalem listede DURURKEN "bulunamadı" üretiyordu.
+   */
+  const hedefEslesir = (o, hedef) => {
+    if (hedef.startsWith('k~')) {
+      const [, tablo, kid] = hedef.split('~');
+      if (String(o.kaynak_tablo || '') !== tablo) return false;
+      return String(o.sabit_gider_id || '') === kid || String(o.kaynak_id || '') === kid;
+    }
+    return String(o.id || '') === hedef
+        || String(o.odeme_id || '') === hedef
+        || String(o.sabit_gider_id || '') === hedef;
+  };
+
   const hedefTuketildi = useRef(null);
   useEffect(() => {
     const hedef = String(hedefOdeme || '').trim();
@@ -414,9 +435,14 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast, hede
     // tekrar tekrar açılmasın.
     if (hedefTuketildi.current === hedef) return;
     hedefTuketildi.current = hedef;
-    const bulunan = satirlar.find((o) => String(o.id) === hedef);
+    const bulunan = satirlar.find((o) => hedefEslesir(o, hedef));
     if (!bulunan) {
-      onToast?.('Kalem bulunamadı — listeyi kontrol edin');
+      // 🔇 SESSİZ DÜŞME YASAĞI: hem sahibe görünür bildirim hem konsola TEŞHİS.
+      // Canlı hatada akış hiçbir iz bırakmadan bitiyordu; bir dahakinde
+      // "ne arandı, kaç satır vardı" konsoldan okunabilsin.
+      // eslint-disable-next-line no-console
+      console.warn('[ÖM] hedefli ödeme eşleşmedi', { hedef, satir_adedi: satirlar.length });
+      onToast?.('Bu kalem ödeme kuyruğunda bulunamadı — listeden seçin');
       return;
     }
     odemeyiAc(bulunan);
@@ -938,12 +964,36 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast, hede
         background: 'transparent', color: R.metin2, fontSize: 12.5, fontWeight: 600, fontFamily: 'inherit',
       }}>{calisiyor && birincil ? 'İşleniyor…' : ad}</button>
     );
-    return (
+    // ═══ 🎯 VIEWPORT ORTASI (2026-08-15, sahip: "modallar sayfanın ALT kısmında
+    // açılıyor, görmek için aşağı inmek zorundayız") ═══════════════════════════
+    //
+    // KÖK — kabuk zaten `position:fixed` + flex-center'dı; sorun konumlandırma
+    // KODUNDA değil, ATASINDAYDI: TasarimV2.jsx:2010-2013 tüm modül içeriğini
+    //   animation: 'v2yuksel …' (keyframes: transform: translateY(12px) → none)
+    // ile sarıyor. TRANSFORM UYGULANAN ELEMAN, `position:fixed` torunları için
+    // İÇEREN BLOK olur (CSS kuralı) → `inset:0` viewport'a değil, o uzun içerik
+    // kutusuna göre çözülüyordu. Modal da sayfanın ortasına, yani ekranın
+    // ALTINA düşüyordu. Sayfa ne kadar uzunsa o kadar aşağı.
+    //
+    // ÇÖZÜM: PORTAL ile `document.body`ye taşı — dönüştürülmüş ata zincirinden
+    // tamamen çıkar. Kabuğu "fixed yapmak" işe yaramazdı (zaten fixed'di);
+    // asıl mesele hangi ata zincirinde durduğuydu.
+    // (Aynı sebeple TasarimV2'nin kendi bildirim modalı doğru çalışıyor: o,
+    //  animasyonlu sarmalayıcının DIŞINDA, kabuk kökünde render ediliyor.)
+    //
+    // ⚠️ MODAL İÇERİĞİ DEĞİŞMEDİ — yalnız konumlandırma kabuğu ve montaj yeri.
+    // zIndex 140: çekmece (90) ve kabuk bildirimlerinin (130) ÜSTÜNDE.
+    return createPortal((
       <div onClick={(e) => { if (e.target === e.currentTarget) kapat(); }} style={{
-        position: 'fixed', inset: 0, zIndex: 90, background: 'rgba(10,6,2,.66)',
-        backdropFilter: 'blur(3px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+        position: 'fixed', inset: 0, zIndex: 140, background: 'rgba(10,6,2,.7)',
+        backdropFilter: 'blur(5px)', WebkitBackdropFilter: 'blur(5px)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+        animation: 'v2belir .14s ease both',
       }}>
-        <div style={{ ...kartYuzey, width: 540, maxWidth: '96vw', maxHeight: '92vh', overflowY: 'auto', padding: '24px 26px' }}>
+        <div onClick={(e) => e.stopPropagation()} style={{
+          ...kartYuzey, width: 540, maxWidth: '96vw', maxHeight: '92vh', overflowY: 'auto',
+          padding: '24px 26px', animation: 'v2buyu .2s cubic-bezier(.4,0,.2,1) both',
+        }}>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 6 }}>
             <div style={{ fontFamily: F.baslik, fontSize: 21, fontWeight: 600 }}>
               {modal.tip === 'ode' ? 'Ödemeyi Onayla'
@@ -1246,7 +1296,7 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast, hede
           )}
         </div>
       </div>
-    );
+    ), document.body);
   })();
 
   // ── 1) Bekleyen ────────────────────────────────────────────────────────────
