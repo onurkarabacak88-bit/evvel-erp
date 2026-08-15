@@ -736,6 +736,79 @@ class FaturaBaglaBody(BaseModel):
     fatura_id: str
 
 
+class FaturaBagGeriAlBody(BaseModel):
+    gerekce: str
+
+
+@router.post("/{talep_id}/fatura-bagla-geri-al")
+def belge_talep_fatura_bag_geri_al(talep_id: str, body: FaturaBagGeriAlBody):
+    """↩️ Yanlış kurulmuş fatura↔teslimat bağını ÇÖZER.
+
+    Canlı ders (2026-08-15): 8-10 Ağustos teslimatları 1 Ağustos faturalarına
+    bağlanmıştı; gerçek eşler 13 Ağustos'ta kesilen faturalardı — TUTAR YAKINLIĞI
+    yanılttı. Yanlış bağı düzeltecek uç yoktu.
+
+    ⚠️ BAĞLAMA ≠ KAPATMA gibi, GERİ-ALMA ≠ SİLME: fatura kaydına DOKUNULMAZ
+    (tedarikci_fatura satırı yerinde durur), yalnız bağ çözülür ve fatura tekrar
+    bağlanabilir hâle gelir. Geri alma İZ BIRAKIR: kapanis_aciklama'ya damga
+    eklenir (üstüne yazılmaz) — "bu bağ neden çözüldü" sonradan okunabilsin.
+    """
+    tid = (talep_id or "").strip()
+    gerekce = (body.gerekce or "").strip()
+    if not tid:
+        raise HTTPException(400, "talep_id zorunlu")
+    if len(gerekce) < 3:
+        raise HTTPException(400, "Gerekçe zorunlu — bağın neden yanlış olduğu yazılmalı")
+    with db() as (conn, cur):
+        _ensure(cur)
+        cur.execute(
+            """SELECT id, fatura_id, durum, kapanis_tipi, fatura_tutar_tl,
+                      COALESCE(kapanis_aciklama,'') AS kapanis_aciklama
+                 FROM belge_talep WHERE id=%s""", (tid,))
+        bt = cur.fetchone()
+        if not bt:
+            raise HTTPException(404, "Belge talep bulunamadı")
+        bt = dict(bt)
+        if not bt.get("fatura_id"):
+            raise HTTPException(409, "Bu teslimatta çözülecek fatura bağı yok.")
+        eski_fid = str(bt["fatura_id"])
+        # Damgada fatura NUMARASI dursun (id kısası son çare) — sonradan okuyan
+        # kişi hangi belgenin yanlış bağlandığını numarasından tanır.
+        cur.execute("SELECT COALESCE(fatura_no,'') AS fno FROM tedarikci_fatura WHERE id=%s",
+                    (eski_fid,))
+        _f = cur.fetchone()
+        etiket = (dict(_f).get("fno") if _f else "") or eski_fid[:8]
+        damga = (f"[BAĞ GERİ ALINDI {date.today().isoformat()}: "
+                 f"eski fatura {etiket} — {gerekce}]")
+        yeni_aciklama = f"{bt['kapanis_aciklama']} {damga}".strip()[:1000]
+        cur.execute(
+            """UPDATE belge_talep
+                  SET fatura_id=NULL, durum='bekliyor', kapanma_ts=NULL,
+                      kapanis_tipi=NULL, fatura_tutar_tl=NULL, tutar_fark_tl=NULL,
+                      kapanis_aciklama=%s
+                WHERE id=%s AND fatura_id IS NOT NULL""",
+            (yeni_aciklama, tid))
+        if cur.rowcount == 0:
+            # Bu sırada başkası çözmüş — sessizce "başarılı" deme.
+            raise HTTPException(409, "Bağ bu sırada başka bir yerden çözüldü — listeyi yenileyin.")
+        try:
+            from kasa_service import audit
+            audit(cur, 'belge_talep', tid, 'FATURA_BAG_GERI_AL',
+                  eski={"fatura_id": eski_fid, "durum": bt.get("durum"),
+                        "kapanis_tipi": bt.get("kapanis_tipi"),
+                        "fatura_tutar_tl": bt.get("fatura_tutar_tl")},
+                  yeni={"fatura_id": None, "durum": "bekliyor", "gerekce": gerekce})
+        except Exception as e:  # noqa: BLE001 — audit düşse de bağ çözülmüş kalır
+            logger.warning("fatura bag geri al audit atlandi: %s", str(e)[:120])
+        conn.commit()
+    return {"ok": True, "belge_talep_id": tid, "cozulen_fatura_id": eski_fid,
+            "durum": "bekliyor",
+            "not": "Bağ çözüldü. Fatura kaydı SİLİNMEDİ — tekrar bağlanabilir. "
+                   "Geri alma izi kapanış açıklamasına damgalandı."}
+
+
+# ⚠️ EŞLEŞTİRME KANITI TUTAR DEĞİL, KİMLİK + TARİH YÖNÜDÜR: fatura tarihi
+# teslimattan ÖNCEYSE şüphelen — 1 Ağu fatura / 8 Ağu teslimat vakası (2026-08-15).
 @router.post("/{talep_id}/fatura-bagla")
 def belge_talep_fatura_bagla(talep_id: str, body: FaturaBaglaBody):
     """Var olan bir faturayı açık teslimata BAĞLAR (dosya yüklemeden).
