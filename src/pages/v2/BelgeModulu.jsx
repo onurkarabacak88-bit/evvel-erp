@@ -1354,7 +1354,7 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast, cari
                           background: R.girinti, border: `1px solid ${R.cizgi3}`, fontSize: 12,
                         }}>
                           <span style={{ fontFamily: F.mono, color: R.not, flexShrink: 0 }}>
-                            {kisaTarih(t.teslim_tarihi)}
+                            {tarihKisa(t.teslim_tarihi)}
                           </span>
                           <span style={{ color: R.metin2 }}>{t.sube || 'şube —'}</span>
                           <span style={{ fontFamily: F.mono, fontWeight: 700, color: R.krem }}>
