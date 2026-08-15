@@ -83,6 +83,15 @@ export const IK = {
   klasor: '<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.7-.9L9.6 3.9A2 2 0 0 0 7.9 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>',
   anahtar: '<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76Z"/>',
   dosya: '<path d="M14.5 2.5H6.5a2 2 0 0 0-2 2v15a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7.5Z"/><path d="M14.5 2.5v5h5"/><path d="M9 13h6M9 16.5h6"/>',
+  // ── EK İKONLAR (2026-08-16, Bakış yeniden-düzeni) ──────────────────────────
+  // Karar alanında emoji kullanılıyordu (🔴 📅 🧠 ☀️ 🔔). Emoji platformdan
+  // platforma farklı çizilir, stroke kalınlığı/rengi tasarım diline uymaz.
+  // Aşağıdakiler AYNI lucide çizim dili (24x24, stroke 1.7) — mevcut anahtarların
+  // hiçbiri değişmedi, yalnız EKLENDİ (diğer modüller etkilenmez).
+  uyari: '<circle cx="12" cy="12" r="9.5"/><path d="M12 7.3v5.4"/><path d="M12 16.4h.01"/>',
+  takvim: '<rect x="3" y="4.5" width="18" height="17" rx="2.5"/><path d="M3 10h18"/><path d="M8 2.5v4M16 2.5v4"/>',
+  asagiOk: '<path d="m6 9.5 6 6 6-6"/>',
+  kule: '<path d="M12 2.5v19"/><path d="M12 5.5 20 8v3l-8-2.5Z"/><path d="M12 12 4 14.5v3L12 15Z"/>',
 };
 
 // ─── Modül ağacı ─────────────────────────────────────────────────────────────

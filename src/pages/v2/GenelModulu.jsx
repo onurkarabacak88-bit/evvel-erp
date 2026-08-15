@@ -21,12 +21,54 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import React, { useEffect, useState } from 'react';
 import { api, fmt } from '../../utils/api';
-import { R, F, kartYuzey } from './tema';
-import { KpiSeridi, Liste, Tablo, BosDurum, HataBandi } from './parcalar';
+import { R, F, kartYuzey, IK } from './tema';
+import { KpiSeridi, Liste, Tablo, BosDurum, HataBandi, Ikon } from './parcalar';
 import { kayitDosyasiYukle, belgeYukleyiciUret, cariEkstreAksiyonu } from './kayitDosyasi';
 
 const sayi = (v) => Number(v) || 0;
 const kisalt = (t, n = 88) => { const x = String(t ?? '').trim(); return x.length > n ? `${x.slice(0, n - 1)}…` : x; };
+/** Türkçe-I tuzağı: 'I'→'ı', 'İ'→'i'. Ekran metni küçültmesinde HEP bu. */
+const trKucuk = (s) => String(s || '').toLocaleLowerCase('tr');
+
+/** Sunucunun teknik `tip` kodu → sahibin dili.
+ *  Canlıda satır altında ham 'degisken' yazıyordu (motors.py:1411) — sahip
+ *  "degisken" diye bir gider tanımadı; görünen etiket Türkçeleştirilir.
+ *  Sözlükte olmayan tip HAM geçer (uydurma çeviri yok). */
+const TIP_ETIKET = { degisken: 'değişken gider', sabit: 'sabit gider' };
+const tipEtiket = (t) => {
+  const s = String(t ?? '').trim();
+  if (!s) return null;
+  return TIP_ETIKET[trKucuk(s)] || s;
+};
+
+// ── ŞUBE SÖZLÜĞÜ (Y3 — küçük kalemleri şube başlığı altında toplamak için) ───
+// ⚠️ KURAL: YANLIŞ GRUPLAMA > GRUPLAMAMA. Bu yüzden desen ANCHOR'lu (tam kelime)
+// ve yalnız adın İLK kelimesine bakılır — "Kira ödemesi, Zafer'in payı" gibi
+// metinlerde kelime geçse bile kayıt gruplanmaz, tekil kalır.
+// Türkçe-I tuzağına düşmemek için toLowerCase YOK: desenler ö/ğ/i alternatifli.
+const SUBE_SOZLUK = [
+  ['GAZZE', /^gazze$/i],
+  ['KÖYCEĞİZ', /^k[öo]yce[ğg][iı]z$/i],
+  ['ALSANCAK', /^alsancak$/i],
+  ['ZAFER', /^zafer$/i],
+  ['TEMA', /^tema$/i],
+];
+const AYIRAC_RE = /[\s:·\-–—,/()]+/;
+const subeSozlukten = (parca) => {
+  const t = String(parca || '').trim();
+  if (!t) return null;
+  for (const [ad, re] of SUBE_SOZLUK) if (re.test(t)) return ad;
+  return null;
+};
+/** Kaydın şubesi — ÖNCE gerçek alan, YOKSA adın ilk kelimesi, o da yoksa null.
+ *  null = "türetilemedi" → kayıt gruplanmaz (tekil satır olarak kalır). */
+const kayitSubesi = (u) => {
+  const alan = String(u?.sube ?? u?.sube_adi ?? u?.sube_ad ?? '').trim();
+  if (alan) return subeSozlukten(alan) || alan;   // alan varsa TÜRETME yok
+  const ham = String(u?.ad ?? u?.aciklama ?? '').trim();
+  const ilk = ham.split(AYIRAC_RE).filter(Boolean)[0] || '';
+  return subeSozlukten(ilk);
+};
 const AY_KISA = ['Oca', 'Şub', 'Mar', 'Nis', 'May', 'Haz', 'Tem', 'Ağu', 'Eyl', 'Eki', 'Kas', 'Ara'];
 const kisaGun = (iso) => {
   const m = String(iso || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
@@ -120,9 +162,145 @@ function Satir({ ad, deger, renk, alt }) {
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// BAKIŞ / KARAR ALANI — SUNUM PARÇALARI (2026-08-16 yeniden-düzen)
+//
+// ⚠️ Neden `parcalar.jsx`'e yazılmadılar: bunlar Bakış'a ÖZGÜ yerleşim
+// parçaları (katman akordeonu, şube grubu, iş kartı). Paylaşılan dosyaya
+// konsalar 14 modülün yüzeyini genişletirdi; oraya YALNIZ `Liste`'ye eklenen
+// additive `solgun` bayrağı gitti.
+// ⚠️ Hiçbiri VERİ HESAPLAMAZ — hazır sayıları çizerler.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Renk zeminli küçük ikon kutusu — emoji yerine tema IK seti. */
+function IkonRozet({ yol, renk, boyut = 15 }) {
+  return (
+    <span style={{
+      display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+      width: boyut + 12, height: boyut + 12, borderRadius: 9,
+      background: `${renk}1F`, color: renk,
+    }}>
+      <Ikon yol={yol} boyut={boyut} />
+    </span>
+  );
+}
+
+/** Aç/kapa göstergesi — dönen chevron (emoji ▾ değil, tema çizgisi). */
+function AcKapaOk({ acik, renk }) {
+  return (
+    <span style={{
+      display: 'flex', color: renk, flexShrink: 0,
+      transform: acik ? 'rotate(180deg)' : 'none', transition: 'transform .18s ease',
+    }}>
+      <Ikon yol={IK.asagiOk} boyut={14} />
+    </span>
+  );
+}
+
+/** Klavye + fare ile açılabilen başlık — `div role=button` tekrarını tek yere alır.
+ *  `acik` verilirse aria-expanded yazılır: aç/kapa durumu METİN olarak değil,
+ *  chevron + erişilebilirlik özniteliğiyle taşınır (ekranda 5 katman × "Aç"
+ *  kelimesi gereksiz gürültüydü — chevron zaten standart affordans). */
+const acilirBaslikOzellik = (onAc, acik, etiket) => ({
+  onClick: onAc,
+  tabIndex: 0,
+  role: 'button',
+  ...(acik == null ? {} : { 'aria-expanded': acik }),
+  ...(etiket ? { 'aria-label': etiket, title: etiket } : {}),
+  onKeyDown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onAc(); } },
+});
+
+/**
+ * KATMAN ÖZETİ — 5 katmanın her biri VARSAYILAN OLARAK TEK SATIR.
+ *
+ * 🔑 GÜVEN İLKESİ: kapalıyken hiçbir bilgi SAKLANMAZ. Sahip katmanı açmadan da
+ * ADET · TOPLAM · EN BÜYÜK KALEM · EN ESKİ GECİKME'yi görür; "aç" yalnız
+ * kalem kalem dökümü getirir. (Eski hâlde 9+3+8+1+1=22 kalem hep açıktı ve
+ * ekran 117 satırlık tek kaydırmaya dönüyordu.)
+ */
+function KatmanOzet({ baslik, renk, adet, toplam, enBuyukMetin, vadeMetni, not, acik, onAc, cocuk }) {
+  return (
+    <div style={{ ...kartYuzey, padding: '12px 14px', borderLeft: `3px solid ${renk}` }}>
+      <div
+        {...acilirBaslikOzellik(onAc, acik, `${baslik} — ${acik ? 'kapat' : 'kalemleri aç'}`)}
+        style={{ cursor: 'pointer', outline: 'none' }}
+      >
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+          <span style={{ width: 7, height: 7, borderRadius: 99, background: renk, flexShrink: 0, alignSelf: 'center' }} />
+          {/* Tipografik rütbe: bölüm başlığı 13 Fraunces */}
+          <span style={{ fontFamily: F.baslik, fontSize: 13, fontWeight: 600, lineHeight: 1.3, minWidth: 0 }}>{baslik}</span>
+          <span style={{
+            marginLeft: 'auto', whiteSpace: 'nowrap', fontFamily: F.mono,
+            fontSize: 13, fontWeight: 700, color: renk,
+          }}>
+            {toplam}
+          </span>
+        </div>
+        {/* Meta 11px + not2 → başlıkla YARIŞMAZ (Codex: sayaç başlığı bastırmasın) */}
+        <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8, marginTop: 5 }}>
+          <div style={{ fontSize: 11, color: R.not2, lineHeight: 1.45, minWidth: 0 }}>
+            {[`${adet} kalem`, enBuyukMetin, vadeMetni].filter(Boolean).join(' · ')}
+          </div>
+          <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+            <AcKapaOk acik={acik} renk={R.not3} />
+          </span>
+        </div>
+      </div>
+      {acik && (
+        <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${R.cizgi2}` }}>
+          {/* 'satıra tıkla' notu YALNIZ ilk açılan katmanda — 5 kez tekrarı gürültüydü */}
+          {not && <div style={{ fontSize: 10.5, color: R.not3, marginBottom: 8 }}>{not}</div>}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>{cocuk}</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * ŞUBE GRUBU — küçük kalemler ("ALSANCAK elektrik/su/genel") tek satırda.
+ * Grubun İÇİ ayrıca açılır; kalemler kaybolmaz, sadece bir kademe geriye gider.
+ */
+function SubeGrubu({ sube, adet, toplam, kelimeler, acik, onAc, cocuk }) {
+  return (
+    <div style={{ borderRadius: 12, background: R.girinti, border: `1px solid ${R.cizgi2}` }}>
+      <div
+        {...acilirBaslikOzellik(onAc, acik, `${sube} — ${acik ? 'kapat' : `${adet} kalemi aç`}`)}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px',
+          cursor: 'pointer', outline: 'none',
+        }}
+      >
+        <IkonRozet yol={IK.kahve} renk={R.bakir} boyut={13} />
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 12.5, fontWeight: 600, color: R.krem }}>
+            {sube} — {adet} kalem
+          </div>
+          {kelimeler && <div style={{ fontSize: 11, color: R.not2, marginTop: 2 }}>{kelimeler}</div>}
+        </div>
+        <span style={{
+          marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 7, flexShrink: 0,
+        }}>
+          <span style={{ fontFamily: F.mono, fontSize: 12.5, fontWeight: 700, color: R.metin2 }}>{toplam}</span>
+          <AcKapaOk acik={acik} renk={R.not3} />
+        </span>
+      </div>
+      {acik && (
+        <div style={{ padding: '0 10px 10px' }}>{cocuk}</div>
+      )}
+    </div>
+  );
+}
+
 export default function GenelModulu({ gorunum, onCekmece, onKopru }) {
   const [veri, setVeri] = useState(null);
   const [hata, setHata] = useState('');
+  // ⚠️ HOOK YERİ: aşağıda `if (!veri) return …` erken çıkışları var — bu iki
+  // state onların ÜSTÜNDE durmak zorunda (koşullu hook = React kuralı ihlali).
+  // Katman akordeonu ve şube grubu açıklıkları YALNIZ görünüm durumudur, veri
+  // değildir; yenilemede sıfırlanmaları da beklenen davranıştır.
+  const [acikKatman, setAcikKatman] = useState({});   // { katmanAnahtari: true }
+  const [acikGrup, setAcikGrup] = useState({});       // { 'katman|ŞUBE': true }
 
   const yukle = () => {
     setHata('');
@@ -197,7 +375,9 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru }) {
       id: u.id || `o-${i}`, _u: u,
       baslik: kisalt(sadeAd.baslik || 'Ödeme', 60),
       alt: [
-        u.tip ? String(u.tip) : null,
+        // Ham 'degisken' yerine "değişken gider" (Y5 dil turu) — sözlükte
+        // olmayan tip ham geçer, uydurma çeviri yapılmaz.
+        tipEtiket(u.tip),
         sadeAd.ek ? kisalt(sadeAd.ek, 46) : null,
         // 🔴 EVV-GENEL-N3: 3-yönlü — geçmiş (gecikti) · bugün · gelecek (N gün sonra).
         sayi(u.gun_farki) < 0 ? `${Math.abs(sayi(u.gun_farki))} gün gecikti`
@@ -280,8 +460,8 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru }) {
       { etiket: 'Gecikme', deger: sayi(_u.gun_farki) < 0 ? `${Math.abs(sayi(_u.gun_farki))} gün` : 'yok', renk: sayi(_u.gun_farki) < 0 ? R.kirmizi : R.yesil },
       {
         etiket: 'Tür',
-        deger: _u.tip ? String(_u.tip)
-          : ({ vadeli_alimlar: 'Vadeli alım', sabit_giderler: 'Sabit gider', kartlar: 'Kart ekstresi',
+        deger: tipEtiket(_u.tip)
+          || ({ vadeli_alimlar: 'Vadeli alım', sabit_giderler: 'Sabit gider', kartlar: 'Kart ekstresi',
                borc_envanteri: 'Kredi taksiti', cari_odeme: 'Cari ödeme', degisken: 'Değişken gider' }[_u.kaynak_tablo]
              || (_u.kart_id ? 'Kart ekstresi' : 'Ödeme planı')),
       },
@@ -354,39 +534,40 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru }) {
 
   // ════════════════════════ GÖRÜNÜM: KARAR ALANI ════════════════════════════
   if (gorunum === 'karar') {
-    // 🔵 (2026-08-14) İKİ DÜZELTME:
-    //  · Başlıkta yalnız ADET vardı → "3 kalem" ne kadar para bilinmiyordu; sayacın
-    //    yanına katmanın TUTAR TOPLAMI kondu (kaç kalem değil, ne kadar para).
-    //  · "satıra tıkla" notu 5 bölümde 5 kez tekrar ediyordu → yalnız ilkinde.
-    // Sıralama: kova içinde TUTAR büyükten küçüğe (gecikme günü zaten satırda yazılı,
-    // aynı kovadaki kalemler zaten aynı gecikme aralığında → ayıran şey paradır).
-    const bolum = (baslik, kayitlar, renk, notGoster = false) => {
-      const toplam = kayitlar.reduce((s, u) => s + odemeTutar(u), 0);
-      const sirali = [...kayitlar].sort((a, b) => odemeTutar(b) - odemeTutar(a));
-      return (
-        <Bolum
-          baslik={baslik}
-          renk={renk}
-          sayac={`${kayitlar.length} kalem · ${fmt(toplam)}`}
-          not={notGoster ? 'satıra tıkla → ödeme dosyası' : null}
-          cocuk={kayitlar.length === 0
-            ? <div style={{ fontSize: 12, color: R.not2 }}>Bu katmanda kayıt yok.</div>
-            : <Liste satirlar={sirali.map(odemeSatiri)} onAc={odemeCekmece} />}
-        />
-      );
-    };
+    // ─────────────────────────────────────────────────────────────────────────
+    // 🎨 SAF SUNUM YENİDEN-DÜZENİ (2026-08-16). Sahip: "amatör, düzensiz".
+    //
+    // ESKİ HÂL: 5 KPI + ilk-3-iş bandı + 5 katmanın TAMAMI açık düz liste →
+    // canlıda 117 metin satırlık tek kaydırma. Ekranda "ne yapmalıyım" ile
+    // "arşivde ne var" aynı görsel ağırlıktaydı.
+    //
+    // YENİ HÂL (veri/uç/davranış AYNEN korunur — yalnız yerleşim ve dil):
+    //   Y1 · 4'lü kompakt durum şeridi + iki kolon (sol %60 işler / sağ %36 risk)
+    //   Y2 · her katman VARSAYILAN tek "dürüst özet" satırı, yerinde açılır
+    //   Y3 · genişletilmiş listede küçük kalemler ŞUBE altında toplanır
+    //   Y4 · ilk-3-iş'te görünen kalem listede SOLGUN + etiketli (DÜŞÜRÜLMEZ)
+    //   Y5 · sadeOdemeAdi her yerde · emoji → IK ikonları · tipografik rütbe
+    //
+    // ⛔ DOKUNULMAYANLAR: triaj eşikleri (gK/gU/gB/gBug/gYak), odemeTutar
+    // fallback zinciri, odemeCekmece + odemeHedefi köprüsü, ilk-3-iş seçim
+    // kuralları. Bu blokta TEK BİR yeni sayı türetilmedi.
+    // ─────────────────────────────────────────────────────────────────────────
 
     // "48 saatlik yük": bugün (0) + yarın (1) vadesi olan kalemlerin toplamı.
     // Bugün kasadan çıkacak parayı planlarken yarını da görmek gerekir.
     const gYarin = odemeler.filter((u) => sayi(u.gun_farki) === 0 || sayi(u.gun_farki) === 1);
     const t48 = gYarin.reduce((s, u) => s + odemeTutar(u), 0);
     const gBugToplam = gBug.reduce((s, u) => s + odemeTutar(u), 0);
-    // Ödeme baskısı hiç yoksa 4 boş katman yerine tek net cümle gösterilir.
+    // Ödeme baskısı hiç yoksa katman yerine tek net cümle gösterilir.
     const baskiYok = (gK.length + gU.length + gB.length + gBug.length) === 0;
 
-    // ── ☀️ BUGÜN İLK 3 İŞ ────────────────────────────────────────────────────
+    // ── BUGÜN İLK 3 İŞ ───────────────────────────────────────────────────────
     // Sahip ekranı açtığında "önce neye bakayım?" sorusunun cevabı. Uydurma yok:
-    // üç madde de aynı veriden türer; madde üretecek veri yoksa bant hiç çizilmez.
+    // üç madde de aynı veriden türer; madde üretecek veri yoksa madde yazılmaz.
+    // 🔵 (2026-08-16) İKİ SUNUM EKİ — seçim kuralları AYNI:
+    //   · `ikonYol`: emoji (🔴📅🔔🧠) yerine tema IK seti
+    //   · `_u`: maddenin dayandığı KAYIT — aşağıda tekrar-soluklaştırma (Y4) ve
+    //     kart üstündeki doğrudan aksiyon adı bundan türer.
     const ilkUcIs = (() => {
       const isler = [];
       const gecikmisSirali = odemeler
@@ -396,15 +577,16 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru }) {
       if (enBuyuk) {
         const ad = sadeOdemeAdi(enBuyuk.ad || enBuyuk.aciklama || 'Ödeme');
         isler.push({
-          k: 'gecikmis', ikon: '🔴', renk: R.kirmizi,
+          k: 'gecikmis', ikonYol: IK.uyari, renk: R.kirmizi, _u: enBuyuk,
           metin: `${kisalt(ad.baslik, 38)} — ${fmt(odemeTutar(enBuyuk))}`,
           alt: `${Math.abs(sayi(enBuyuk.gun_farki))} gün gecikti · en büyük gecikmiş kalem`,
+          aksiyonAd: 'Ödeme dosyasını aç',
           onTikla: () => odemeCekmece({ _u: enBuyuk }),
         });
       }
       if (t48 > 0) {
         isler.push({
-          k: 'yuk48', ikon: '📅', renk: R.amber,
+          k: 'yuk48', ikonYol: IK.takvim, renk: R.amber,
           metin: `Bugün/yarın çıkacak: ${fmt(t48)}`,
           alt: `${gYarin.length} kalem · 48 saatlik nakit yükü`,
         });
@@ -412,121 +594,328 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru }) {
         const enYakin = [...gYak].sort((a, b) => sayi(a.gun_farki) - sayi(b.gun_farki))[0];
         const ad2 = sadeOdemeAdi(enYakin.ad || enYakin.aciklama || 'Ödeme');
         isler.push({
-          k: 'yuk48', ikon: '📅', renk: R.mavi,
+          k: 'yuk48', ikonYol: IK.takvim, renk: R.mavi, _u: enYakin,
           metin: `En yakın vade: ${kisalt(ad2.baslik, 32)} — ${fmt(odemeTutar(enYakin))}`,
           alt: `${sayi(enYakin.gun_farki)} gün sonra · bugün/yarın ödeme yok`,
+          aksiyonAd: 'Ödeme dosyasını aç',
           onTikla: () => odemeCekmece({ _u: enYakin }),
         });
       }
       if (onaylar.length > 0) {
         isler.push({
-          k: 'onay', ikon: '🔔', renk: R.amber,
+          k: 'onay', ikonYol: IK.onay, renk: R.amber,
           metin: `${onaylar.length} onay bekliyor`,
-          alt: 'karar verilmedikçe kayıt işlenmez → Onay Kuyruğu',
+          alt: 'karar verilmedikçe kayıt işlenmez',
+          aksiyonAd: 'Onay Kuyruğu\'na git',
           onTikla: () => onKopru?.('__modul:onaylar:kuyruk'),
         });
       } else if (oneriler.length > 0) {
         isler.push({
-          k: 'oneri', ikon: '🧠', renk: R.bakir,
+          k: 'oneri', ikonYol: IK.islemci, renk: R.bakir,
           metin: `Karar motorunda ${oneriler.length} öneri`,
-          alt: 'öneri-only · hüküm insanın → Motor & Bildirimler',
+          alt: 'öneri-only · hüküm insanın',
+          aksiyonAd: 'Motor & Bildirimler',
           onTikla: () => onKopru?.('__gorunum:bildirim'),
         });
       }
       return isler;
     })();
 
+    // Y4 — TEKRAR KURALI: ilk-3-iş'te GÖRÜNEN kaydın kimlikleri.
+    // ⚠️ Bu kayıtlar katman listesinden DÜŞÜRÜLMEZ; düşürülseydi katman
+    // sayacı/toplamı ile liste birbirini tutmaz, sahip "9 kalem" deyip 8 satır
+    // görürdü. Yalnız soluklaştırılıp "yukarıda gördün" diye etiketlenir.
+    const heroAnahtarlar = new Set(ilkUcIs.filter((x) => x._u).map((x) => kayitAnahtari(x._u)));
+    const katmanSatiri = (u, i) => {
+      const s = odemeSatiri(u, i);
+      if (!heroAnahtarlar.has(kayitAnahtari(u))) return s;
+      return { ...s, solgun: true, rozet: '↑ bugünün işlerinde', rozetRenk: R.bakir };
+    };
+
+    // ── Y3: ŞUBE GRUPLAMA ────────────────────────────────────────────────────
+    // EŞİK NEDEN 12.000 ₺: canlıda şube faturaları (elektrik/su/genel/internet)
+    // 1.500–9.000 ₺ bandında; kira ve tedarikçi faturaları 15.000 ₺ üstünde
+    // duruyor. 12.000 bu iki kümenin arasındaki boşluk — eşik ÜSTÜ hiçbir kalem
+    // gruba girmez, yani "büyük para" her zaman tek başına ve adıyla görünür.
+    // Eşiği yükseltmek gerçek karar kalemlerini gizler; düşürmek gruplamayı
+    // etkisizleştirir (ikisinin de bedeli asimetrik: gizlemek daha pahalı).
+    const GRUP_ESIK = 12000;
+    const gruplanabilir = (u) => {
+      const kt = String(u.kaynak_tablo || '');
+      // ⛔ Tedarikçi faturaları ASLA gruplanmaz — onlar KARAR kalemidir,
+      // "ALSANCAK — 2 fatura" diye toplanırsa kimin parası olduğu kaybolur.
+      if (kt === 'vadeli_alimlar') return false;
+      const kucukKaynak = kt === 'sabit_giderler' || kt === 'anlik_giderler'
+        || trKucuk(u.tip) === 'degisken';
+      return kucukKaynak && odemeTutar(u) < GRUP_ESIK && !!kayitSubesi(u);
+    };
+    /** Grubun içindekileri tarif eden 3 anahtar kelime (kategori → yoksa 2. kelime). */
+    const grupKelimeleri = (liste) => {
+      const kel = [];
+      liste.forEach((u) => {
+        const ham = String(u.kategori || '').trim()
+          || (String(u.ad || u.aciklama || '').trim().split(AYIRAC_RE).filter(Boolean)[1] || '');
+        const s = trKucuk(ham).trim();
+        if (s && !kel.includes(s)) kel.push(s);
+      });
+      return kel.slice(0, 3).join(' + ');
+    };
+    /** Kova → { gruplar, tekil }. Grup en az 2 kalemle kurulur (tek kalemlik
+     *  "grup" bir kademe fazla tıklama demektir, bilgi kazancı yoktur). */
+    const kovaGorunumu = (kayitlar) => {
+      const kutu = new Map();
+      const tekil = [];
+      kayitlar.forEach((u) => {
+        if (!gruplanabilir(u)) { tekil.push(u); return; }
+        const s = kayitSubesi(u);
+        if (!kutu.has(s)) kutu.set(s, []);
+        kutu.get(s).push(u);
+      });
+      const gruplar = [];
+      kutu.forEach((liste, sube) => {
+        if (liste.length < 2) { tekil.push(...liste); return; }
+        gruplar.push({
+          sube,
+          kayitlar: [...liste].sort((a, b) => odemeTutar(b) - odemeTutar(a)),
+          toplam: liste.reduce((s, u) => s + odemeTutar(u), 0),
+          kelimeler: grupKelimeleri(liste),
+        });
+      });
+      return {
+        gruplar: gruplar.sort((a, b) => b.toplam - a.toplam),
+        tekil: tekil.sort((a, b) => odemeTutar(b) - odemeTutar(a)),
+      };
+    };
+
+    // ── Y2: KATMAN ÖZETİ ─────────────────────────────────────────────────────
+    // Kapalı satır 4 gerçeği taşır: ADET · TOPLAM · EN BÜYÜK KALEM · VADE UCU.
+    const katmanOzeti = (kayitlar) => {
+      const toplam = kayitlar.reduce((s, u) => s + odemeTutar(u), 0);
+      const enBuyuk = kayitlar.reduce((a, b) => (odemeTutar(b) > odemeTutar(a) ? b : a));
+      const enBuyukAd = sadeOdemeAdi(enBuyuk.ad || enBuyuk.aciklama || 'Ödeme').baslik;
+      const gunler = kayitlar.map((u) => sayi(u.gun_farki));
+      const enEski = Math.min(...gunler);
+      const gelecek = gunler.filter((g) => g > 0);
+      return {
+        adet: kayitlar.length,
+        toplam: fmt(toplam),
+        enBuyukMetin: `en büyüğü ${kisalt(enBuyukAd, 26)} ${fmt(odemeTutar(enBuyuk))}`,
+        vadeMetni: enEski < 0 ? `en eskisi ${Math.abs(enEski)} gün`
+          : gelecek.length ? `en yakını ${Math.min(...gelecek)} gün sonra`
+            : 'hepsi bugün vadeli',
+      };
+    };
+
+    // Katman sırası klasik triajın kendisi. BOŞ KATMAN HİÇ ÇİZİLMEZ (eskiden
+    // "Bu katmanda kayıt yok" kutusu ekranı dolduruyordu).
+    const katmanlar = [
+      { anahtar: 'kritik', baslik: 'KRİTİK · 15+ gün gecikmiş', renk: R.kirmizi, kayitlar: gK },
+      { anahtar: 'uyari', baslik: 'UYARI · 8–14 gün', renk: R.amber, kayitlar: gU },
+      { anahtar: 'bilgi', baslik: 'BİLGİ · 0–7 gün', renk: R.mavi, kayitlar: gB },
+      { anahtar: 'bugun', baslik: 'BUGÜN vadesi gelen', renk: R.bakir, kayitlar: gBug },
+      { anahtar: 'yaklasan', baslik: 'YAKLAŞAN · gelecek günler', renk: R.krem, kayitlar: gYak },
+    ].filter((k) => k.kayitlar.length > 0);
+    // 'satıra tıkla' notu YALNIZ ilk AÇILAN katmanda bir kez (5 kez tekrarı gürültü).
+    const ilkAcikAnahtar = katmanlar.find((k) => acikKatman[k.anahtar])?.anahtar || null;
+
+    const katmanIcerigi = (anahtar, kayitlar) => {
+      const { gruplar, tekil } = kovaGorunumu(kayitlar);
+      return (
+        <>
+          {gruplar.map((g) => {
+            const gA = `${anahtar}|${g.sube}`;
+            return (
+              <SubeGrubu
+                key={gA}
+                sube={g.sube}
+                adet={g.kayitlar.length}
+                toplam={fmt(g.toplam)}
+                kelimeler={g.kelimeler}
+                acik={!!acikGrup[gA]}
+                onAc={() => setAcikGrup((s) => ({ ...s, [gA]: !s[gA] }))}
+                cocuk={<Liste satirlar={g.kayitlar.map(katmanSatiri)} onAc={odemeCekmece} />}
+              />
+            );
+          })}
+          {tekil.length > 0 && <Liste satirlar={tekil.map(katmanSatiri)} onAc={odemeCekmece} />}
+        </>
+      );
+    };
+
+    // ── Vadeli alım: KPI kartıydı, artık sağ kolonda köprü çipi (Y1) ─────────
+    // Hedef DOĞRULANDI: MODULLER'de odeme modülünün 'tedarikci' görünümü var
+    // (tema.js:206) ve o ekran "Bekleyen vade sözü" toplamını gösteriyor
+    // (OdemeModulu.jsx:2023) — yani çipin vaadi ile iniş yeri aynı sayı.
+    const vRenk = sayi(v?.geciken_adet) ? R.kirmizi : sayi(v?.bekleyen_adet) ? R.amber : R.yesil;
+    const vAlt = v
+      ? (sayi(v.geciken_adet)
+        ? `${sayi(v.geciken_adet)} sözün vadesi geçti · bekleyen ${fmt(sayi(v.toplam_bekleyen))}`
+        : `bekleyen ${fmt(sayi(v.toplam_bekleyen))} · bu ay ödenen ${fmt(sayi(v.toplam_odenen))}`)
+      : 'veri yok';
+
+    const bolumBasligi = (metin, not) => (
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 2 }}>
+        <span style={{
+          fontSize: 10.5, letterSpacing: '.9px', textTransform: 'uppercase',
+          color: R.not, fontWeight: 700,
+        }}>
+          {metin}
+        </span>
+        {not && <span style={{ marginLeft: 'auto', fontSize: 10.5, color: R.not3 }}>{not}</span>}
+      </div>
+    );
+
     return (
       <>
+        {/* Y1 — KOMPAKT DURUM ŞERİDİ: 5 → 4 kart. "Vadeli alım" buradan çıktı;
+            o ayrı bir EVREN (tedarikçi sözleri), yanındaki dört kart ise tek
+            para hikâyesi (kasada ne var → ne geçti → bugün ne çıkacak → ne kadar
+            dayanır). Beşinci kart o hikâyenin ritmini bozuyordu. */}
         <KpiSeridi kpiler={[
           { etiket: 'Kasa', deger: fmt(sayi(p.kasa)), alt: 'kanonik bakiye', renk: sayi(p.kasa) >= 0 ? R.yesil : R.kirmizi },
-          { etiket: 'Gecikmiş toplam', deger: fmt(gecikmisToplam), alt: `${gK.length + gU.length + gB.length} kalem`, renk: gecikmisToplam > 0 ? R.kirmizi : R.yesil },
+          { etiket: 'Gecikmiş', deger: fmt(gecikmisToplam), alt: `${gK.length + gU.length + gB.length} kalem`, renk: gecikmisToplam > 0 ? R.kirmizi : R.yesil },
           {
-            // 🔵 (2026-08-14): "Bugün vadesi" ADET sayıyordu ("3") — yanındaki tüm
-            // KPI'lar para gösterirken bu tek başına sayıydı, üstelik "3 kalem" bugün
-            // kasadan ne çıkacağını söylemiyordu. Değer = TUTAR, adet alta indi.
-            etiket: 'Bugün vadesi',
+            // 🔵 (2026-08-14): değer TUTAR, adet alta indi (yanındaki KPI'lar para
+            // gösterirken bu tek başına sayıydı).
+            etiket: 'Bugün + 48 saat',
             deger: fmt(gBugToplam),
             alt: `${gBug.length} kalem · 48 saat ${fmt(t48)}`,
             renk: gBugToplam > 0 ? R.amber : t48 > 0 ? R.mavi : R.yesil,
           },
-          { etiket: 'Kaç gün dayanır', deger: p.kac_gun_dayanir != null ? `${sayi(p.kac_gun_dayanir)} gün` : '—', alt: 'kasa / günlük yük', renk: p.kac_gun_dayanir == null ? R.not3 : sayi(p.kac_gun_dayanir) < 15 ? R.kirmizi : R.krem },
-          {
-            // ⚠️ /vadeli-alimlar/ozet ÇEKİLİYOR ama hiçbir yerde OKUNMUYORDU
-            // (satır 87'de state'e konup unutulmuş — ölü veri). Klasik Panel
-            // geciken_adet'i kırmızı rozet olarak kullanıyordu.
-            etiket: 'Vadeli alım',
-            deger: v ? String(sayi(v.bekleyen_adet)) : '—',
-            // Etiket "gecikmiş" üstteki plan-gecikmişiyle karışıyordu — bu sayı
-            // YALNIZ vadeli alım sözlerini sayar, ayrı evren olduğu yazılır.
-            alt: v
-              ? (sayi(v.geciken_adet)
-                ? `⚠ ${sayi(v.geciken_adet)} sözün vadesi geçti · bekleyen ${fmt(sayi(v.toplam_bekleyen))}`
-                : `bekleyen ${fmt(sayi(v.toplam_bekleyen))} · bu ay ödenen ${fmt(sayi(v.toplam_odenen))}`)
-              : 'veri yok',
-            renk: sayi(v?.geciken_adet) ? R.kirmizi : sayi(v?.bekleyen_adet) ? R.amber : R.yesil,
-          },
+          { etiket: 'Dayanıklılık', deger: p.kac_gun_dayanir != null ? `${sayi(p.kac_gun_dayanir)} gün` : '—', alt: 'kasa / günlük yük', renk: p.kac_gun_dayanir == null ? R.not3 : sayi(p.kac_gun_dayanir) < 15 ? R.kirmizi : R.krem },
         ]} />
 
-        {/* ☀️ Günün ilk üç işi — KPI şeridinin hemen altında, tek bakışta sıra */}
-        {ilkUcIs.length > 0 && (
-          <div style={{ ...kartYuzey, padding: '14px 18px', marginBottom: 14, borderLeft: `3px solid ${R.bakir}` }}>
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 10 }}>
-              <span style={{ fontFamily: F.baslik, fontSize: 15, fontWeight: 600 }}>☀️ Bugün ilk 3 iş</span>
-              <span style={{ fontSize: 11, color: R.not2, marginLeft: 'auto' }}>önem sırasına dizili</span>
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              {ilkUcIs.map((is, i) => (
-                <div
-                  key={is.k}
-                  onClick={is.onTikla}
-                  tabIndex={is.onTikla ? 0 : undefined}
-                  role={is.onTikla ? 'button' : undefined}
-                  onKeyDown={is.onTikla ? (e) => {
-                    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); is.onTikla(); }
-                  } : undefined}
-                  style={{
-                    display: 'flex', alignItems: 'flex-start', gap: 10, padding: '9px 12px',
-                    borderRadius: 10, background: R.girinti, border: `1px solid ${R.cizgi2}`,
-                    cursor: is.onTikla ? 'pointer' : 'default',
-                  }}
-                >
-                  <span style={{ fontFamily: F.mono, fontSize: 11.5, fontWeight: 700, color: R.not2, width: 14, flexShrink: 0 }}>{i + 1}</span>
-                  <span style={{ fontSize: 13, flexShrink: 0 }}>{is.ikon}</span>
-                  <div style={{ minWidth: 0 }}>
-                    <div style={{ fontSize: 13, fontWeight: 600, color: is.renk }}>{is.metin}</div>
-                    <div style={{ fontSize: 11, color: R.not2, marginTop: 2 }}>{is.alt}</div>
-                  </div>
-                  {is.onTikla && <span style={{ marginLeft: 'auto', fontSize: 10.5, color: R.not3, whiteSpace: 'nowrap' }}>dokun →</span>}
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
+        {/* Y1 — HİBRİT YERLEŞİM.
+            ⚠️ Inline-style'da media query yok; kolon kırılımı CSS FLEX-WRAP ile
+            çözülür (useState + resize dinleyicisi YOK — o hem gereksiz render
+            hem SSR/ilk-boya tutarsızlığı demek). minWidth'ler eşiği kurar:
+            425 + 300 + 16 = 741px içerik genişliği. v2 kabuğu 74px ikon rayı +
+            222px görünüm sütunu + 60px yatay dolgu yediği için bu ≈ 1097px
+            pencereye denk gelir → hedeflenen "≥1100px'te iki kolon". */}
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'flex-start' }}>
 
-        {/* Klasik panelin 4 katmanlı triajı — gecikme GÜNÜNE göre.
-            🟢 (2026-08-14) TEMİZ GÜN: dört katman da boşken üst üste 4 "kayıt yok"
-            kutusu çiziliyordu — sahip 4 boş kutuyu tarayıp "sorun yok mu?" diye
-            düşünüyordu. Baskı yoksa tek cümle söylenir. */}
-        {baskiYok ? (
-          <div style={{
-            ...kartYuzey, padding: '16px 20px', marginBottom: 14,
-            borderLeft: `3px solid ${R.yesil}`, fontSize: 13, lineHeight: 1.6, color: R.metin2,
-          }}>
-            <b style={{ color: R.yesil }}>✓ Bugün ödeme baskısı yok</b> — gecikmiş, bugün vadesi ve
-            7 gün içi kalem bulunmuyor.
+          {/* ── SOL: BUGÜNÜN İŞLERİ (hero) ─────────────────────────────────── */}
+          <div style={{ flex: '1 1 60%', minWidth: 425, display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {bolumBasligi('Bugünün işleri', ilkUcIs.length ? 'önem sırasına dizili' : null)}
+            <div style={{ ...kartYuzey, padding: '16px 18px', borderLeft: `3px solid ${R.bakir}` }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+                <IkonRozet yol={IK.pusula} renk={R.bakir} boyut={17} />
+                <span style={{ fontFamily: F.baslik, fontSize: 16, fontWeight: 600 }}>
+                  Bugün ilk {ilkUcIs.length || 3} iş
+                </span>
+              </div>
+              {ilkUcIs.length === 0 ? (
+                <div style={{ fontSize: 13, color: R.metin2, lineHeight: 1.6 }}>
+                  Bugün öne çıkan iş yok — gecikmiş kalem, 48 saatlik yük, bekleyen onay ve
+                  motor önerisi bulunmuyor.
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  {ilkUcIs.map((is, i) => (
+                    <div
+                      key={is.k}
+                      onClick={is.onTikla}
+                      tabIndex={is.onTikla ? 0 : undefined}
+                      role={is.onTikla ? 'button' : undefined}
+                      onKeyDown={is.onTikla ? (e) => {
+                        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); is.onTikla(); }
+                      } : undefined}
+                      style={{
+                        display: 'flex', alignItems: 'flex-start', gap: 12, padding: '13px 14px',
+                        borderRadius: 12, background: R.girinti,
+                        border: `1px solid ${R.cizgi2}`, borderLeft: `3px solid ${is.renk}`,
+                        cursor: is.onTikla ? 'pointer' : 'default',
+                      }}
+                    >
+                      <span style={{ fontFamily: F.mono, fontSize: 13, fontWeight: 700, color: R.not3, width: 15, flexShrink: 0, lineHeight: 1.5 }}>{i + 1}</span>
+                      <IkonRozet yol={is.ikonYol} renk={is.renk} boyut={15} />
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        {/* HERO tipografisi: 15,5px (katman satırlarının üstünde) */}
+                        <div style={{ fontSize: 15.5, fontWeight: 600, color: is.renk, lineHeight: 1.35 }}>{is.metin}</div>
+                        <div style={{ fontSize: 11.5, color: R.not2, marginTop: 4 }}>{is.alt}</div>
+                      </div>
+                      {/* Doğrudan aksiyon — "dokun →" jenerikti, nereye gittiği yazılır */}
+                      {is.onTikla && (
+                        <span style={{
+                          flexShrink: 0, alignSelf: 'center', padding: '6px 12px', borderRadius: 9,
+                          border: `1px solid ${R.cizgi3}`, background: R.cizgi, color: R.krem,
+                          fontSize: 11.5, fontWeight: 600, whiteSpace: 'nowrap',
+                        }}>
+                          {is.aksiyonAd || 'Aç'} →
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
-        ) : (
-          <>
-            {bolum('KRİTİK · 15+ gün gecikmiş', gK, R.kirmizi, true)}
-            {bolum('UYARI · 8–14 gün', gU, R.amber)}
-            {bolum('BİLGİ · 0–7 gün', gB, R.mavi)}
-            {bolum('BUGÜN vadesi gelen', gBug, R.bakir)}
-          </>
-        )}
-        {/* 🔴 EVV-GENEL-N3: gelecek (gun_farki>0) vadeler artık "bugün"e karışmıyor,
-            ayrı YAKLAŞAN kovasında görünür. Temiz günde de listelenir. */}
-        {gYak.length > 0 && bolum('YAKLAŞAN · gelecek günler', gYak, R.krem, baskiYok)}
+
+          {/* ── SAĞ: RİSK ÖZETİ (katman özet satırları + vadeli alım çipi) ──── */}
+          <div style={{ flex: '1 1 36%', minWidth: 300, display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {bolumBasligi('Risk özeti', null)}
+
+            {baskiYok && (
+              <div style={{
+                ...kartYuzey, padding: '13px 15px', borderLeft: `3px solid ${R.yesil}`,
+                display: 'flex', alignItems: 'flex-start', gap: 10,
+              }}>
+                <IkonRozet yol={IK.onay} renk={R.yesil} boyut={14} />
+                <div style={{ fontSize: 12.5, lineHeight: 1.55, color: R.metin2, minWidth: 0 }}>
+                  <b style={{ color: R.yesil }}>Bugün ödeme baskısı yok</b> — gecikmiş, bugün vadesi
+                  ve 7 gün içi kalem bulunmuyor.
+                </div>
+              </div>
+            )}
+
+            {katmanlar.map((k) => {
+              const o = katmanOzeti(k.kayitlar);
+              const acik = !!acikKatman[k.anahtar];
+              return (
+                <KatmanOzet
+                  key={k.anahtar}
+                  baslik={k.baslik}
+                  renk={k.renk}
+                  adet={o.adet}
+                  toplam={o.toplam}
+                  enBuyukMetin={o.enBuyukMetin}
+                  vadeMetni={o.vadeMetni}
+                  not={k.anahtar === ilkAcikAnahtar ? 'satıra tıkla → ödeme dosyası' : null}
+                  acik={acik}
+                  onAc={() => setAcikKatman((s) => ({ ...s, [k.anahtar]: !s[k.anahtar] }))}
+                  cocuk={acik ? katmanIcerigi(k.anahtar, k.kayitlar) : null}
+                />
+              );
+            })}
+
+            {/* Vadeli alım — KPI kartı değil, küçük köprü çipi */}
+            <div
+              {...(onKopru ? acilirBaslikOzellik(
+                () => onKopru('__modul:odeme:tedarikci'), null, 'Tedarikçi Bakiyesi ekranını aç',
+              ) : {})}
+              style={{
+                ...kartYuzey, padding: '11px 13px', borderLeft: `3px solid ${vRenk}`,
+                display: 'flex', alignItems: 'center', gap: 10,
+                cursor: onKopru ? 'pointer' : 'default', outline: 'none',
+              }}
+            >
+              <IkonRozet yol={IK.kule} renk={vRenk} boyut={13} />
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 12.5, fontWeight: 600, color: R.krem }}>
+                  Vadeli alım sözleri{v ? ` · ${sayi(v.bekleyen_adet)}` : ''}
+                </div>
+                {/* Ayrı evren olduğu açıkça yazılır — üstteki "Gecikmiş" KPI'ı
+                    ödeme PLANLARINI sayar, bu satır TEDARİKÇİ SÖZLERİNİ. */}
+                <div style={{ fontSize: 11, color: vRenk === R.yesil ? R.not2 : vRenk, marginTop: 2 }}>{vAlt}</div>
+              </div>
+              {onKopru && (
+                <span style={{ marginLeft: 'auto', flexShrink: 0, fontSize: 10.5, color: R.not3, whiteSpace: 'nowrap' }}>
+                  Tedarikçi Bakiyesi →
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
       </>
     );
   }

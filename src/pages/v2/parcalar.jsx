@@ -311,6 +311,11 @@ export function Liste({ satirlar, baslik, onAc, secilebilir, secili, onSec, onHe
                 : `linear-gradient(165deg, ${R.kart1}, ${R.kart2})`,
               border: `1px solid ${isaretli ? 'rgba(217,154,78,.38)' : 'rgba(243,233,220,.09)'}`,
               cursor: onAc ? 'pointer' : 'default',
+              // ➕ EKLENTİ (2026-08-16, Bakış yeniden-düzeni): `solgun` satırı
+              // SİLMEZ, soluklaştırır. "Bu kalemi zaten yukarıda gördün" demek
+              // için — listeden düşürmek toplamları/adetleri yalancı yapardı.
+              // Bayrağı KOYMAYAN modüller etkilenmez (undefined → opacity 1).
+              opacity: l.solgun ? 0.45 : 1,
             }}
           >
             <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 3, background: renk }} />
