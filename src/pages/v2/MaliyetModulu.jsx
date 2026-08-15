@@ -316,6 +316,22 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
           tedarikci: (m.tedarikci || '').trim() || null,
           notlar: (m.notlar || '').trim() || null,
         } });
+        // 📦 Koli içi adet AYRI UCA yazılır (kalem başına TEK kayıt tutan boyut
+        // tablosu; fiyat tablosu dönem-dönem satır tuttuğu için oraya konmadı).
+        // Boşsa hiç çağrılmaz → mevcut davranış birebir. Hata-yutar: çarpan
+        // yazılamazsa FİYAT KAYDI YAŞAR, sahibe ayrı uyarı düşer.
+        const koli = Number(String(m.koli_ici_adet ?? '').replace(',', '.'));
+        if (Number.isFinite(koli) && koli > 1) {
+          try {
+            await api('/ops/maliyet/acilis-birimi', { method: 'POST', body: {
+              kalem_kodu: kod, acilis_birim: (m.birim || 'adet').trim() || 'adet',
+              fatura_icerik: koli,
+              notlar: `koli içi adet: ${koli} (fiyat kartından girildi)`,
+            } });
+          } catch (e) {
+            onToast?.(`Fiyat kaydedildi ama koli içi adet yazılamadı: ${e?.message || ''}`);
+          }
+        }
         onToast?.('✓ Alış fiyatı kaydedildi');
       } else if (m.tip === 'fiyat-sil') {
         await api(`/ops/maliyet/alis-fiyat-sil/${m.fiyat.id}`, { method: 'DELETE' });
@@ -683,6 +699,22 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
               </div>
               <label style={mlEtiket}>Tedarikçi</label>
               <input value={fyModal.tedarikci} onChange={(e) => setFyModal((p) => ({ ...p, tedarikci: e.target.value }))} style={mlAlanStil} />
+              {/* 📦 AMBALAJ ÇARPANI (2026-08-15, OREO vakası) — BOŞ BIRAKILABİLİR.
+                  Yazılan fiyat HER ZAMAN açılış (adet) fiyatıdır; bu alan yalnız
+                  "fatura koliyle gelirse kaça bölünsün" bilgisidir ve AYRI uca
+                  (/ops/maliyet/acilis-birimi) yazılır — fiyat kartını değiştirmez. */}
+              <label style={mlEtiket}>Koli içi adet (opsiyonel)</label>
+              <input
+                inputMode="numeric"
+                placeholder="32 = koliyle gelen üründe koli içi adet"
+                value={fyModal.koli_ici_adet ?? ''}
+                onChange={(e) => setFyModal((p) => ({ ...p, koli_ici_adet: e.target.value }))}
+                style={mlAlanStil}
+              />
+              <div style={{ fontSize: 10.5, color: R.not2, lineHeight: 1.6, marginTop: -6, marginBottom: 8 }}>
+                Fatura koli fiyatı gelirse bu sayıya bölünüp kıyaslanır — “koli geldi”
+                sahte zam alarmı üretmez. Boş bırakırsan hiçbir şey değişmez.
+              </div>
               <label style={mlEtiket}>Not</label>
               <input value={fyModal.notlar} onChange={(e) => setFyModal((p) => ({ ...p, notlar: e.target.value }))} style={mlAlanStil} />
             </>

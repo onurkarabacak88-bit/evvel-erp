@@ -794,7 +794,11 @@ export default function TasarimV2({ onGit }) {
       return <TeshisModulu onCekmece={setCekmece} />;
     }
     if (mod === 'odeme') {
-      return <OdemeModulu gorunum={gorunum} onCekmece={setCekmece} onKopru={koprule} onToast={setToast} />;
+      // hedefOdeme: '__modul:odeme:bekleyen:<planId>' köprüsünün parametresi —
+      // belge:cari deseniyle AYNI (kopruParam genel çözümleyicisi zaten 4. parçayı
+      // ayrıştırıyor). Modül bunu TEK SEFER tüketip ilgili kalemin modalını açar.
+      return <OdemeModulu gorunum={gorunum} onCekmece={setCekmece} onKopru={koprule} onToast={setToast}
+        hedefOdeme={kopruParam?.modul === 'odeme' && kopruParam?.gorunum === 'bekleyen' ? kopruParam.deger : null} />;
     }
     if (mod === 'ops') {
       return (

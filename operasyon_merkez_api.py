@@ -16558,9 +16558,24 @@ def _fiyat_zam_alarmi_yaz(cur: Any, kalem: str, kalem_adi: Optional[str],
     try:
         if not onceki or onceki <= 0 or yeni is None or yeni <= 0:
             return
+        # 📦 AMBALAJ NORMALİZASYONU — KIYASTAN ÖNCE (2026-08-15, OREO vakası).
+        # Burada olması BİLİNÇLİ: bu fonksiyon zam alarmının TEK YAZICISIDIR, yani
+        # hem ana fiyat yazma yolu hem teslimat-fatura bağı yolu (belge_talep_api.
+        # _bag_zam_alarmi_yaz) buradan geçer. Normalizasyonu çağıranlara koymak
+        # iki kopya kural demekti; buraya koymak İKİSİNİ BİRDEN aşılar.
+        # ⚠️ Ana yolda fiyat zaten fatura_icerik'e bölünmüş olabilir; o durumda
+        # oran ~1'dir ve kural (oran/çarpan aralık dışı) devreye GİRMEZ — çift
+        # bölme olmaz.
+        _norm_not = ""
+        try:
+            yeni, _uygulandi, _norm_not = ambalaj_normalize_db(cur, kalem, onceki, yeni)
+        except Exception:  # noqa: BLE001 — normalize düşse eski davranış sürer
+            _norm_not = ""
         artis = (float(yeni) - float(onceki)) / float(onceki) * 100.0
         if artis < FIYAT_ZAM_ESIK_YUZDE:
             return
+        if _norm_not:
+            kalem_adi = f"{kalem_adi or kalem} {_norm_not}"
         cur.execute(
             """
             CREATE TABLE IF NOT EXISTS fiyat_zam_alarmi (
@@ -16615,6 +16630,68 @@ def _fatura_icerik(cur: Any, kalem: str) -> float:
         return v if v > 0 else 1.0
     except Exception:  # noqa: BLE001
         return 1.0
+
+
+# ═══════════ 📦 AMBALAJ ÇARPANI NORMALİZASYONU (2026-08-15) ═══════════════════
+# CANLI VAKA: OREO 228G kartı 4,75 ₺/adet; METRO faturası 149,78 ₺/KOLİ geldi
+# (koli 32'li) → sistem 4,75 ↔ 149,78 kıyaslayıp +%3.053 SAHTE ZAM yazdı.
+# İkinci vaka: Selpak dispenser havlu kartı 76,46 ₺/paket, fatura 917,50 ₺/koli
+# (12'li) → fiyat bandında %1100 sahte sapma (alarm hiç doğmamıştı, sapma
+# ekranda duruyordu).
+#
+# 🔑 ÇARPANIN EVİ: `urun_acilis_birimi.fatura_icerik` ("1 fatura birimi = kaç
+# açılış birimi"). YENİ KOLON AÇILMADI — bu tam olarak aynı kavramdır ve zaten
+# fiyat yazma yolunda kullanılıyor. `urun_alis_fiyat`a koymak yanlış olurdu:
+# o tablo fiyat DÖNEMLERİNİ tutar (kalem başına ÇOK satır), ambalaj bilgisi ise
+# kalem başına TEKTİR — her döneme kopyalamak kaçınılmaz olarak ayrışırdı.
+#
+# ⚠️ EŞİK NEDEN "±%10 KOMŞULUK" DEĞİL: ±%10 kuralı "koli fiyatı geldi AMA içinde
+# gerçek zam da var" vakasını kaçırıyor. Sayısal kanıt (çarpan 32, kart 4,75):
+#   fatura 190 ₺/koli → oran 40,0 → ±%10 bandı [28,8–35,2] DIŞINDA → normalize
+#   edilmez → +%3.900 sahte alarm. Oysa doğrusu 190/32 = 5,94 → +%25 GERÇEK zam.
+# Bu yüzden ölçüt "oran çarpana yakın mı" değil, "çarpana BÖLMEK makul bir birim
+# fiyat değişimi üretiyor mu"dur: bölme sonucu [-%50, +%100] aralığına düşüyorsa
+# fatura ambalaj fiyatıdır. Bu kural ±%10'un çözdüğü her vakayı da çözer, ayrıca
+# GERÇEK büyük zammı KAÇIRMAZ (ör. 6× zam → 6/32 = 0,19 → aralık dışı →
+# normalize edilmez → alarm doğar).
+AMBALAJ_ALT, AMBALAJ_UST = 0.5, 2.0   # normalize sonrası makul değişim aralığı
+
+
+def ambalaj_normalize(eski_fiyat, yeni_fiyat, carpan):
+    """📦 TEK TANIM — ambalaj (koli) fiyatını birim fiyata indirger.
+
+    Üç çağıran: (1) `_fiyat_zam_alarmi_yaz` — ana fiyat yazma yolu VE teslimat-
+    fatura bağı yolu (belge_talep_api) buradan geçer, (2) `fatura_api.
+    fiyat_bandi_ozet` kart sapması. Kural TEK YERDE; kopya yasak.
+
+    Dönüş: (kiyaslanacak_fiyat, uygulandi_mi, not_metni)
+    Çarpan yoksa/1 ise ya da oran ambalaja uymuyorsa GİRDİ AYNEN döner —
+    yani çarpansız kalemlerde davranış birebir eskisi (öneri-only, sessiz).
+    """
+    try:
+        n = float(carpan or 0)
+        e = float(eski_fiyat or 0)
+        y = float(yeni_fiyat or 0)
+    except (TypeError, ValueError):
+        return yeni_fiyat, False, ""
+    if n <= 1 or e <= 0 or y <= 0:
+        return yeni_fiyat, False, ""
+    oran = y / e
+    if not (AMBALAJ_ALT <= (oran / n) <= AMBALAJ_UST):
+        # Oran ambalaj çarpanıyla açıklanamıyor → GERÇEK fiyat değişimi olabilir.
+        # DOKUNMA (normalize etmek gerçek zammı gizlerdi).
+        return yeni_fiyat, False, ""
+    return round(y / n, 4), True, f"(koli {n:g}→adet normalize)"
+
+
+def ambalaj_normalize_db(cur: Any, kalem: str, eski_fiyat, yeni_fiyat):
+    """`ambalaj_normalize`in DB'den çarpan okuyan sarmalayıcısı (hata-yutar:
+    çarpan okunamazsa normalize YAPILMAZ, kıyas eskisi gibi sürer)."""
+    try:
+        carpan = _fatura_icerik(cur, kalem)
+    except Exception:  # noqa: BLE001
+        return yeni_fiyat, False, ""
+    return ambalaj_normalize(eski_fiyat, yeni_fiyat, carpan)
 
 
 def _kaydet_alis_fiyati(cur: Any, kalem: str, kalem_adi: Optional[str], birim: str,
@@ -16746,6 +16823,75 @@ def ops_acilis_birimi_kaydet(body: AcilisBirimiBody):
         conn.commit()
     return {"ok": True, "kalem_kodu": kalem, "fatura_icerik": body.fatura_icerik,
             "fiyat_duzeltildi": fiyat_id is not None, "fiyat_id": fiyat_id}
+
+
+# 📦 SAHİP TEYİTLİ AMBALAJ ÇARPANLARI (2026-08-15) — canlıda sahte alarm/sapma
+# üreten kalemler. Her satır SAHİBİN SÖZLÜ TEYİDİNE dayanır, tahmin DEĞİL:
+#   · OREO 228G  → koli 32'li (sahip teyidi; kart 4,75 ₺/adet, fatura 149,78/koli
+#                  → oran 31,53 ≈ 32; sahte alarm +%3.053 buradan doğmuştu)
+#   · SELPAK Z havlu → koli 12'li (sahip "SELPAK" dedi; kart 76,46 ₺/paket,
+#                  fatura 917,50/koli → oran TAM 12,0; ürün adında "12 li koli")
+# Kalem KODU yerine AD deseniyle aranır: kod tedarikçi/şubeye göre değişebiliyor,
+# ad ise kartın kendi alanında duruyor. Eşleşme bulunamazsa SESSİZ geçilir
+# (uydurma kalem kodu yazmak, yanlış ürünü koliye çevirirdi).
+_AMBALAJ_TOHUM = [
+    {"desen": "%OREO%228%", "icerik": 32, "birim": "adet",
+     "not": "koli 32'li — sahip teyidi 2026-08-15 (METRO faturası koli fiyatı)"},
+    {"desen": "%SELPAK%Z%HAVLU%", "icerik": 12, "birim": "paket",
+     "not": "koli 12'li — sahip teyidi 2026-08-15 (ürün adında '12 li koli')"},
+]
+
+
+@router.post("/maliyet/ambalaj-tohum")
+def ops_ambalaj_tohum():
+    """📦 Sahip teyitli ambalaj çarpanlarını işler — TEK SEFERLİK, İDEMPOTENT.
+
+    Neden uç: `urun_acilis_birimi` mekanizması backend'de vardı ama HİÇBİR ekran
+    onu yazmıyordu (denetim bulgusu) — bu yüzden OREO'nun çarpanı hiç girilmemiş,
+    varsayılan 1 kalmış ve koli fiyatı çıplak kıyaslanmıştı.
+
+    · İDEMPOTENT: `ON CONFLICT DO NOTHING` — ikinci çağrı hiçbir şey yazmaz ve
+      sahibin sonradan elle değiştirdiği katsayıyı EZMEZ.
+    · FİYAT KARTINA DOKUNMAZ: yalnız çarpan yazılır (`dogru_fiyat` yolu bilerek
+      kullanılmadı) — OREO'nun 4,75 ₺ adet fiyatı DOĞRUDUR, değişmemeli.
+    · Öneri-only: hiçbir alarm silinmez/kapatılmaz; bundan sonraki kıyaslar
+      normalize olur, geçmiş alarmlar sahibin "gördüm"üyle kapanır.
+    """
+    sonuc = {"islenen": [], "atlanan": [], "bulunamayan": []}
+    with db() as (conn, cur):
+        _acilis_birimi_ensure(cur)
+        for t in _AMBALAJ_TOHUM:
+            try:
+                cur.execute(
+                    """SELECT DISTINCT ON (kalem_kodu) kalem_kodu, kalem_adi
+                         FROM urun_alis_fiyat
+                        WHERE UPPER(kalem_adi) LIKE UPPER(%s)
+                        ORDER BY kalem_kodu, gecerli_baslangic DESC""", (t["desen"],))
+                kalemler = [dict(r) for r in (cur.fetchall() or [])]
+            except Exception as e:  # noqa: BLE001
+                logger.warning("ambalaj tohum arama hatasi (%s): %s", t["desen"], str(e)[:120])
+                kalemler = []
+            if not kalemler:
+                sonuc["bulunamayan"].append({"desen": t["desen"], "icerik": t["icerik"]})
+                continue
+            for k in kalemler:
+                cur.execute(
+                    """INSERT INTO urun_acilis_birimi
+                           (kalem_kodu, acilis_birim, fatura_icerik, notlar, guncelleme)
+                       VALUES (%s,%s,%s,%s,NOW())
+                       ON CONFLICT (kalem_kodu) DO NOTHING""",
+                    (k["kalem_kodu"], t["birim"], t["icerik"], t["not"]))
+                (sonuc["islenen"] if cur.rowcount else sonuc["atlanan"]).append({
+                    "kalem_kodu": k["kalem_kodu"], "kalem_adi": k.get("kalem_adi"),
+                    "fatura_icerik": t["icerik"],
+                })
+        conn.commit()
+    sonuc["not"] = (
+        "İdempotent: 'atlanan' = çarpanı ZATEN tanımlı (üstüne yazılmadı). "
+        "Fiyat kartlarına dokunulmadı. Bundan sonra koli fiyatlı faturalar zam "
+        "kıyasında ve fiyat bandında çarpana bölünerek karşılaştırılır."
+    )
+    return sonuc
 
 
 @router.get("/maliyet/fiyat-izleme")

@@ -6132,6 +6132,20 @@ def fiyat_bandi_ozet() -> dict:
                ORDER BY kalem_kodu, gecerli_baslangic DESC""")
         kartlar = {(r["kalem_kodu"], (r["birim"] or "adet").lower()): float(r["kart_fiyat"])
                    for r in cur.fetchall() or []}
+        # 📦 AMBALAJ ÇARPANLARI — TEK SORGUDA (kalem başına sorgu N+1 ederdi).
+        # Selpak vakası (2026-08-15): kart 76,46 ₺/paket, gözlem 917,50 ₺/koli
+        # (12'li) → kart_sapma %1100 görünüyordu. Zam alarmı hiç doğmamıştı,
+        # sapma yalnız BU ekranda duruyordu; o yüzden normalizasyon buraya da
+        # bağlandı (kural tek tanım: operasyon_merkez_api.ambalaj_normalize).
+        carpanlar = {}
+        try:
+            cur.execute("SELECT to_regclass('public.urun_acilis_birimi') AS t")
+            if (cur.fetchone() or {}).get("t"):
+                cur.execute("SELECT kalem_kodu, fatura_icerik::float AS i FROM urun_acilis_birimi")
+                carpanlar = {r["kalem_kodu"]: float(r["i"] or 1) for r in cur.fetchall() or []}
+        except Exception as _e:  # noqa: BLE001 — çarpan okunamazsa eski davranış
+            logger.warning("ambalaj carpanlari okunamadi (band eski kiyasla surer): %s", str(_e)[:120])
+            carpanlar = {}
 
     gruplar: dict = {}
     for s in satirlar:
@@ -6145,13 +6159,29 @@ def fiyat_bandi_ozet() -> dict:
         son = gl[-1]
         sapma = round((son["fiyat"] - med) / med * 100, 1) if med > 0 else None
         kart = kartlar.get((kod, birim))
-        kart_sapma = (round((son["fiyat"] - kart) / kart * 100, 1)
+        # 📦 AMBALAJ NORMALİZASYONU (Selpak vakası): gözlem KOLİ fiyatı, kart ADET
+        # fiyatı olabilir. Çarpan tanımlıysa ve oran ambalajla açıklanabiliyorsa
+        # gözlem çarpana bölünerek kıyaslanır. Kural TEK TANIM — buraya kopyalanmadı.
+        # ⚠️ YALNIZ kart kıyasını etkiler: `sapma_yuzde` (medyan sapması) gözlemlerin
+        # KENDİ arasındaki kıyastır, hepsi aynı birimdedir → ona DOKUNULMAZ.
+        kart_gozlem, kart_norm_not = son["fiyat"], ""
+        if kart and kart > 0:
+            try:
+                from operasyon_merkez_api import ambalaj_normalize
+                kart_gozlem, _u, kart_norm_not = ambalaj_normalize(
+                    kart, son["fiyat"], carpanlar.get(kod))
+            except Exception:  # noqa: BLE001 — normalize düşse eski kıyas sürer
+                kart_gozlem, kart_norm_not = son["fiyat"], ""
+        kart_sapma = (round((kart_gozlem - kart) / kart * 100, 1)
                       if kart and kart > 0 else None)
         b = {"kod": kod, "ad": son["ad"], "birim": birim, "gozlem": len(gl),
              "medyan": med, "aralik": [round(min(fiyatlar), 4), round(max(fiyatlar), 4)],
              "son_fiyat": son["fiyat"], "son_tarih": son["tarih"],
              "son_tedarikci": son.get("tedarikci"),
-             "sapma_yuzde": sapma, "kart_fiyat": kart, "kart_sapma_yuzde": kart_sapma}
+             "sapma_yuzde": sapma, "kart_fiyat": kart, "kart_sapma_yuzde": kart_sapma,
+             # Şeffaflık: kıyas neye göre yapıldı? (boşsa normalize UYGULANMADI)
+             "kart_kiyas_fiyat": (round(kart_gozlem, 4) if kart_norm_not else None),
+             "ambalaj_normalize": kart_norm_not or None}
         bantlar.append(b)
         if (sapma is not None and abs(sapma) >= 10) or \
            (kart_sapma is not None and abs(kart_sapma) >= 10):

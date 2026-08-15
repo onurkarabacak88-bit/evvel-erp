@@ -15,7 +15,7 @@
 //   /fatura/cari-ozet          → tedarikçi açık bakiyeleri
 //   /ledger?ay=YYYY-MM         → ödeme geçmişi (kasa hareketleri)
 // ─────────────────────────────────────────────────────────────────────────────
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { api, fmt } from '../../utils/api';
 import { R, F, kartYuzey } from './tema';
 import { KpiSeridi, Tablo, Liste, Takvim, SecimCubugu, OnayModali, Serit } from './parcalar';
@@ -84,7 +84,7 @@ const omEtiket = {
 const vadeliMi = (o) => String(o?.kaynak_tablo || '') === 'vadeli_alimlar' && !!o?.kaynak_id;
 const vadeliBaslik = (o) => `${o?.baslik || 'Vadeli alım'}`;
 
-export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
+export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast, hedefOdeme }) {
   const [yukleniyor, setYukleniyor] = useState(true);
   const [hata, setHata] = useState('');
   const [kuyruk, setKuyruk] = useState([]);      // 14 günlük pencere
@@ -392,6 +392,36 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
       kalanVade: isoEkle(o._tarih || bugun, 30), dosya: null,
     });
   };
+
+  // ═══ 🎯 HEDEFLİ ÖDEME (2026-08-15, sahip canlı gezinme) ═════════════════════
+  // Panel çekmecesindeki '💰 Ödeme yap' düğmesi artık plan kimliğini köprüye
+  // parametre olarak taşıyor ('__modul:odeme:bekleyen:<planId>'). Eskiden genel
+  // bekleyen listesine düşülüyor, sahip kalemi bir daha elle arıyordu.
+  //
+  // 🔒 ÖDEME YAPILMAZ — yalnız MEVCUT öde modalı açılır. ÖM tek kapıdır; modal
+  // kendi onayını ve meşgul-guard'ını taşır, otomatik ödeme YOKTUR.
+  // 🔇 SESSİZ DÜŞME YASAK: kalem bulunamazsa (bu arada ödendi/ertelendi/değişti)
+  // toast atılır ve normal liste gösterilir — boş ekranla susulmaz.
+  const hedefTuketildi = useRef(null);
+  useEffect(() => {
+    const hedef = String(hedefOdeme || '').trim();
+    // Görünümden çıkınca ya da hedef kalkınca tüketim sıfırlanır: sahip aynı
+    // kaleme tekrar köprülerse modal yeniden açılabilmeli.
+    if (!hedef || gorunum !== 'bekleyen') { hedefTuketildi.current = null; return; }
+    // Veri gelmeden "bulunamadı" hükmü verme — yükleme ≠ yokluk.
+    if (yukleniyor) return;
+    // TEK SEFERLİK: liste her tazelendiğinde (satirlar yeni referans) modal
+    // tekrar tekrar açılmasın.
+    if (hedefTuketildi.current === hedef) return;
+    hedefTuketildi.current = hedef;
+    const bulunan = satirlar.find((o) => String(o.id) === hedef);
+    if (!bulunan) {
+      onToast?.('Kalem bulunamadı — listeyi kontrol edin');
+      return;
+    }
+    odemeyiAc(bulunan);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hedefOdeme, gorunum, yukleniyor, satirlar]);
 
   const erteleyiAc = (o) => {
     setModal({ tip: 'ertele', satir: o, yeniTarih: isoEkle(o._tarih || bugun, 7) });

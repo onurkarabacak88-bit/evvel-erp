@@ -270,8 +270,25 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru }) {
       { ad: 'Asgari kalan', detay: 'ödenmesi gereken', tutar: fmt(sayi(_u.asgari_kalan ?? _u.asgari ?? _u.tutar)) },
     ],
     not: '🔒 Salt-okunur — ödeme Ödeme Merkezi\'nden yapılır.',
-    aksiyonAd: 'Ödeme Merkezi\'nde aç',
-    _hedef: '__modul:odeme:bekleyen',
+    // 💰 DOĞRUDAN ÖDEME KÖPRÜSÜ (2026-08-15, sahip canlı gezinme): düğme genel
+    // "bekleyen" listesine atıyordu, sahip kalemi bir daha elle arıyordu.
+    // Artık plan kimliği köprüye PARAMETRE olarak gider ve hedef ekran o kalemin
+    // ödeme modalını açar (ödeme YAPMAZ — ÖM tek kapı, onay modalı yerinde).
+    //
+    // ⚠️ VAAT EDEN METİN GERÇEĞİ YANSITMALI: kimlik yoksa (odeme_id ve id boş —
+    // değişken gider satırlarında odeme_id bilerek NULL, motors.py:1388) doğrudan
+    // iniş YAPILAMAZ; o vakada hem hedef hem AD eskisi gibi kalır. "Ödeme yap"
+    // deyip genel listeye düşürmek sahibi kandırmaktır.
+    ...((() => {
+      // kayitAnahtari'nın öncelik zinciriyle TUTARLI: odeme_id → id.
+      // Bileşik anahtar (3. basamak) burada KULLANILMAZ: o ekran-içi ayırt etme
+      // içindir, sunucudaki plan kimliği değildir — köprüde çözülemez.
+      const planId = String(_u.odeme_id || _u.id || '').trim();
+      return planId
+        ? { aksiyonAd: '💰 Ödeme yap',
+            _hedef: `__modul:odeme:bekleyen:${encodeURIComponent(planId)}` }
+        : { aksiyonAd: 'Ödeme Merkezi\'nde aç', _hedef: '__modul:odeme:bekleyen' };
+    })()),
     // 🔗 Kayıt bir TEDARİKÇİ taşıyorsa cari ekstresine parametreli köprü.
     // Ad çıkarılamıyorsa aksiyon üretilmez → tek düğmeli eski hâl korunur
     // (işlevsiz düğme göstermeyiz).
