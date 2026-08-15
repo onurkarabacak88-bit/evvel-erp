@@ -537,6 +537,22 @@ def _gece_yarisi_scheduler():
             except Exception as e:
                 logger.warning(f"⏰ Scheduler finansal duyu hatası: {e}")
 
+            # F5 (2026-08-15, sahip: "bu motor her gece kendi koşacak mı?" → EVET):
+            # TESLİMAT ↔ FATURA eşleşme taraması. Açık teslimatlar × bağlanmamış
+            # faturalar; yalnız YÜKSEK GÜVENLİ (karşılıklı-en-iyi + tarih yönü temiz
+            # + çakışmasız + kalem/tutar kanıtı) çiftler onay kuyruğuna ÖNERİ düşer.
+            # Yükleme-anı taramasıyla AYNI fonksiyon — iki kopya eşik yok.
+            # İDEMPOTENT: mükerrer engeli (bekleyen aynı-tip öneri + aynı çift daha
+            # önce sorulmuş) sayesinde her gece aynı öneri ÇOĞALMAZ.
+            try:
+                from belge_talep_api import teslimat_fatura_oneri_tara
+                _tf = teslimat_fatura_oneri_tara(kaynak="gece")
+                logger.info("⏰ Scheduler: teslimat↔fatura eşleşme önerisi "
+                            f"({_tf.get('yazilan')} yeni · {_tf.get('mukerrer_atlandi')} mükerrer "
+                            f"· {_tf.get('zayif_atlandi')} zayıf)")
+            except Exception as e:
+                logger.warning(f"⏰ Scheduler teslimat-fatura öneri hatası: {e}")
+
             # FAZ 1c+ (2026-07-06) — ayın 1'i: geçen ayın KDV pozisyonu dönem olayı (idempotent,
             # TAHMİNİ rozetli — beyanname değil). source_ref=YYYY-MM → ayda tek olay.
             if bugun.day == 1:
@@ -5880,7 +5896,14 @@ def _onayla_tx(cur, oid: str):
     GELIR_TURLERI = {'CIRO', 'CIRO_DUZELTME', 'DIS_KAYNAK', 'KASA_GIRIS', 'KASA_DUZELTME'}
     islem_turu = onay['islem_turu']
     KASA_FARK_TURLERI = {'KAPANIS_KASA_FARK', 'ACILIS_KASA_FARK'}
-    if islem_turu in GIDER_TURLERI:
+    # 🔗 PARASIZ ONAY TÜRLERİ (2026-08-15, F5): bunlar KASAYA HİÇ DOKUNMAZ —
+    # onay bir BAĞ kurar (fatura↔teslimat), para hareketi doğurmaz. Ayrı küme
+    # olmasının sebebi aşağıdaki "bilinmeyen işlem türü" uyarısıdır: meşru bir
+    # tür sahte uyarı üretmemeli (sahte alarm, alarm körlüğünün ilk adımıdır).
+    BAG_TURLERI = {'TESLIMAT_FATURA_ESLESME'}
+    if islem_turu in BAG_TURLERI:
+        signed_tutar = 0.0          # kasa yazımı YOK; aşağıdaki dal para geçirmez
+    elif islem_turu in GIDER_TURLERI:
         signed_tutar = -abs(tutar)
     elif islem_turu in GELIR_TURLERI:
         signed_tutar = abs(tutar)
@@ -6031,6 +6054,31 @@ def _onayla_tx(cur, oid: str):
                 """,
                 ("Onay kuyruğundan onaylandı (Merkez)", "Merkez (Onay Kuyruğu)", onay['kaynak_id']),
             )
+    elif islem_turu == 'TESLIMAT_FATURA_ESLESME':
+        # ── F5 · ÖNERİ ONAYI → FATURA ↔ TESLİMAT BAĞI (2026-08-15) ───────────
+        # Öneriyi yazan: belge_talep_api.teslimat_fatura_oneri_tara (yükleme anı
+        # + gece koşusu). Burada YALNIZ sahibin "evet"i uygulanır.
+        #
+        # ⚠️ PARA YOK: bu onay kasaya HİÇBİR ŞEY yazmaz — bağ kurmak ödeme değildir
+        # (fatura borcu zaten kendi hattından yürüyor). Bu yüzden dal `insert_kasa_hareketi`
+        # ÇAĞIRMAZ ve aşağıdaki genel `else` bloğuna DÜŞMEZ.
+        #
+        # ⚠️ HTTP ÇAĞRISI YOK: bağ, aynı transaction içinde iç fonksiyonla kurulur.
+        # Uç üzerinden çağrılsaydı bağ ayrı bir tx'te commit olur, onay burada
+        # düşerse "bağ kuruldu ama onay bekliyor" hayaleti kalırdı.
+        #
+        # ⚠️ Guard'lar AYNEN geçerli (tarih yönü / çoklu aday / zaten bağlı):
+        # fatura_bagla_uygula içinde dururlar. Öneri yazılırken de aynı eşikler
+        # uygulandığı için normalde tetiklenmezler; arada durum değiştiyse
+        # (fatura başkasına bağlandı) onay 4xx ile REDDEDİLİR — sessiz geçmez.
+        from belge_talep_api import fatura_bagla_uygula, _oneri_faturasini_coz
+        tid_bt = str(onay.get('kaynak_id') or '').strip()
+        fid_bt = _oneri_faturasini_coz(onay.get('aciklama'))
+        if not tid_bt or not fid_bt:
+            raise HTTPException(
+                400, "Eşleşme önerisi okunamadı — açıklamadaki [fatura:<id>] damgası yok. "
+                     "Bu öneri elle kapatılmalı; bağı Belge Merkezi'nden kurun.")
+        fatura_bagla_uygula(cur, tid_bt, fid_bt, onay_kaynagi='oneri-onayi')
     elif islem_turu in ("CIRO", "CIRO_DUZELTME"):
         # Ciro kaynak kaydı varsa satırı kilitleyerek eşzamanlı onay/yazım çakışmasını azalt.
         if (onay.get("kaynak_tablo") or "") == "ciro" and onay.get("kaynak_id"):

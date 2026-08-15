@@ -663,6 +663,27 @@ def _fatura_vade_regex(metin: str) -> Optional[str]:
 # faturayı main.vadeli_ekle (TEK YAZICI — birleştirme frenleri + odeme_plani
 # üretimi orada) üzerinden kuyruğa bağlar. İdempotency: tedarikci_fatura.
 # kuyruk_vadeli_id (lazy kolon) — bir fatura kuyruğa EN FAZLA bir kez girer.
+def _teslimat_eslesme_onerisi(fatura_idler, kaynak: str) -> None:
+    """F5 KÖPRÜSÜ — yüklenen faturaları açık teslimatlara karşı değerlendirir.
+
+    Bu dosya HİÇBİR EŞLEŞTİRME MANTIĞI TAŞIMAZ: motor belge_talep_api'de tek
+    yerde durur (yükleme-anı ve gece koşusu aynı fonksiyonu çağırır). Burada
+    yalnız çağrı vardır — hata-yutar, çünkü fatura yükleme kritik akıştır ve
+    öneri motoru düşse bile belge kaydı yaşamalıdır (öneri-only doktrini).
+    """
+    ids = [str(x) for x in (fatura_idler or []) if x]
+    if not ids:
+        return
+    try:
+        from belge_talep_api import teslimat_fatura_oneri_tara
+        ozet = teslimat_fatura_oneri_tara(fatura_idler=ids, kaynak=kaynak)
+        if ozet.get("yazilan"):
+            logger.info("teslimat-fatura onerisi yazildi (%s): %s adet",
+                        kaynak, ozet["yazilan"])
+    except Exception as e:  # noqa: BLE001 — yükleme akışı bozulmaz
+        logger.warning("teslimat-fatura oneri kopru hatasi (%s): %s", kaynak, str(e)[:150])
+
+
 def _fatura_kuyruk_uret(fatura_id: str) -> str:
     from datetime import date as _d, timedelta as _td
     try:
@@ -1215,6 +1236,9 @@ def _ocr_calistir_icerik(fatura_id: str) -> None:
         logger.info("fatura OCR tamam: %s (%d kalem)", fatura_id, kalem_say)
         # FAZ A: okunan fatura ödeme kuyruğuna bağlanır (hata-yutar, idempotent)
         _fatura_kuyruk_uret(fatura_id)
+        # F5: kimlik/tutar/kalemler ARTIK DOLU → teslimat eşleşmesi burada gerçek
+        # veriyle değerlendirilir (yükleme anındaki çağrı boş kayda bakıyordu).
+        _teslimat_eslesme_onerisi([fatura_id], "ocr-sonrasi")
     except Exception as e:
         logger.warning("fatura OCR hata %s: %s", fatura_id, e)
         # 🔧 LLM'SİZ YEDEK: PDF metni varsa tutar/tedarikçi KODLA çıkarılır —
@@ -1413,6 +1437,11 @@ async def fatura_yukle(
         conn.commit()
     # Asenkron OCR — şubeyi bekletmeden
     threading.Thread(target=_ocr_calistir, args=(fid,), daemon=True).start()
+    # ── F5 (2026-08-15): yüklenen fatura açık teslimatlara karşı değerlendirilir.
+    # ⚠️ Foto yolunda kimlik/tutar/kalem OCR'dan SONRA doluyor; bu çağrı çoğunlukla
+    # "veri yok" ile döner (zararsız, hata-yutar). Gerçek değerlendirme
+    # `_ocr_calistir_icerik` sonunda yapılır — ikisi de idempotent (mükerrer engeli).
+    _teslimat_eslesme_onerisi([fid], "yukle")
     return {"fatura_id": fid, "durum": "ocr_bekliyor", "uyari": uyari}
 
 
@@ -1536,6 +1565,11 @@ async def fatura_yukle_pdf(
     for fid in yeni_idler:
         if fid not in kod_tam_idler:
             threading.Thread(target=_ocr_calistir, args=(fid,), daemon=True).start()
+
+    # ── F5 (2026-08-15): PDF yolunda kimlik+tutar+kalemler ANINDA kodla okunuyor
+    # (kod_tam), yani öneri motoru burada GERÇEK veriyle çalışır. LLM'e giden
+    # kayıtlar için ikinci değerlendirme `_ocr_calistir_icerik` sonunda yapılır.
+    _teslimat_eslesme_onerisi(yeni_idler, "yukle-pdf")
 
     return {
         "toplam_fatura": len(faturalar),

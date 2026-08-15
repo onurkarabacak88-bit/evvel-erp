@@ -298,7 +298,7 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru }) {
     return {
       onCekmece, tip: 'ÖDEME KAYDI',
       kaynakTablo: tablo, kaynakId: kid,
-      kayitId: kayitAnahtari(_u), renkler: { kirmizi: R.kirmizi },
+      kayitId: kayitAnahtari(_u), renkler: { kirmizi: R.kirmizi, amber: R.amber },
     };
   };
 

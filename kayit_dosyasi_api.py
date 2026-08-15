@@ -89,15 +89,51 @@ def _kolon_toleransli(cur, sql: str, params) -> Optional[List[Dict[str, Any]]]:
 
 
 def _iz_satiri(kaynak: str, hid, tarih, tutar, aciklama, kanit: str) -> Dict[str, Any]:
-    """Tek iz düğümü. `_id` DEDUPE anahtarı (yanıtta kalır, FE görmezden gelir)."""
+    """Tek ÖDEME düğümü (yon='odeme'). `_id` DEDUPE anahtarı (FE görmezden gelir)."""
     return {
         "_id": f"{kaynak}:{hid}",
+        "yon": "odeme",
         "ad": f"{_tl(abs(float(tutar or 0)))} ödendi",
         "detay": f"{(aciklama or '').strip()[:60] or kaynak} · {KANIT_NEDEN.get(kanit, '')}",
         "zaman": str(tarih)[:10],
         "kanit": kanit,
         "kanal": kaynak,
         "tutar": abs(float(tutar or 0)),
+    }
+
+
+# ═════════════ ARTIŞ (BORÇ DOĞURAN) OLAYLAR — 2026-08-15 ═════════════════════
+# SAHİP TALİMATI: "izde ödemeleri VE artışları görmem daha uygun, tarih tarih."
+# Gerekçe: yalnız ödemeleri gösteren iz, borcun NEREDEN geldiğini anlatmıyordu —
+# "8.000 ₺ ödendi" satırının yanında "12.000 ₺ borç doğdu" yoksa kalan anlaşılmaz.
+# İz artık kaydın PARA HİKÂYESİDİR: doğuş (+) ve ödeme (−) aynı kronolojide.
+#
+# 🔒 DOKTRİN KORUNDU: artış satırları da YALNIZ KESİN BAĞDAN gelir (kaydın kendi
+# satırı / kendi planı / kendi ekstre penceresi). Fuzzy tahmin YOK.
+# ⚠️ ARTIŞ ÖDEME DEĞİLDİR: `odenen` toplamına GİRMEZ (bkz. `kayit_dosyasi` —
+# toplam yalnız yon='odeme' satırlarından alınır). Karıştırılırsa borç iki kez
+# ödenmiş görünür; bu, izin var oluş sebebini yok eder.
+ARTIS_NEDEN = {
+    "KAYIT_DOGUSU": "bu borç kaydın kendisiyle doğdu",
+    "PLAN_DOGUSU": "ödeme planı bu dönem için yükümlülük yazdı",
+    "BORDRO_TAHAKKUKU": "dönem bordrosu tahakkuk etti",
+    "KART_HARCAMASI": "bu ekstre döneminde karta yapılan harcama",
+}
+
+
+def _artis_satiri(kaynak: str, hid, tarih, tutar, ad: str, aciklama, kanit: str) -> Dict[str, Any]:
+    """Tek ARTIŞ düğümü (yon='artis'). Tutar '+' önekli — işaret BACKEND'de basılır,
+    FE'de mantık kurulmaz (FE yalnız `yon` alanına göre renk seçer)."""
+    t = abs(float(tutar or 0))
+    return {
+        "_id": f"artis:{kaynak}:{hid}",
+        "yon": "artis",
+        "ad": f"+{_tl(t)} {ad}".strip(),
+        "detay": f"{(aciklama or '').strip()[:60] or ad} · {ARTIS_NEDEN.get(kanit, '')}",
+        "zaman": str(tarih)[:10],
+        "kanit": kanit,
+        "kanal": kaynak,
+        "tutar": t,
     }
 
 
@@ -170,6 +206,35 @@ def _plan_bagi_iz(cur, tablo: str, kid: str) -> List[Dict[str, Any]]:
     return satir
 
 
+def _plan_dogus_iz(cur, tablo: str, kid: str) -> List[Dict[str, Any]]:
+    """Bu kaydın ödeme planı satırları = DÖNEM YÜKÜMLÜLÜĞÜNÜN DOĞUŞU (+).
+
+    'iptal' satırlar HARİÇ (aktif-filtre disiplini): iptal edilmiş bir plan borç
+    doğurmamıştır, izde durursa kalan şişer.
+    ⚠️ Tutar `odenecek_tutar`tır (borcun kendisi), `odenen_tutar` DEĞİL — ikincisi
+    ödeme tarafıdır ve zaten kasa/kart hareketinden geliyor (çift sayım olurdu).
+    """
+    # ⚠️ HATA-YUTAR (artışa özgü): artış bir ZENGİNLEŞTİRMEDİR, izin çekirdeği
+    # ÖDEMELERDİR. Tahakkuk sorgusu düşerse ödeme izini de yanına alıp ekranı
+    # "iz okunamadı"ya düşürmemeli — bu, düzelttiğimiz körlüğün geri gelmesi olurdu.
+    try:
+        satirlar = _kolon_toleransli(cur, """
+            SELECT id::text AS id, tarih, COALESCE(odenecek_tutar,0)::float AS tutar,
+                   aciklama, durum
+              FROM odeme_plani
+             WHERE kaynak_tablo=%s AND kaynak_id::text=%s
+               AND COALESCE(durum,'') <> 'iptal'
+             ORDER BY tarih DESC""", (tablo, str(kid)))
+    except Exception as e:  # noqa: BLE001
+        logger.warning("plan dogus izi atlandi %s/%s: %s", tablo, kid, str(e)[:120])
+        return []
+    if not satirlar:
+        return []
+    return [_artis_satiri("plan", r["id"], r["tarih"], r["tutar"], "yükümlülük doğdu",
+                          r.get("aciklama"), "PLAN_DOGUSU")
+            for r in satirlar if float(r.get("tutar") or 0) > 0]
+
+
 def _dedupe(izler: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Aynı hareket iki yoldan gelebilir (kaynak bağı + plan bağı) → teke indir.
     ÖNCELİK: KAYNAK_BAGI (daha doğrudan kanıt) plan bağını ezer."""
@@ -235,7 +300,26 @@ def _yuklenen_belgeler(cur, tablo: str, kid: str) -> List[Dict[str, Any]]:
 
 # ═══════════════════ TİP ADAPTÖRLERİ ═══════════════════
 def _iz_vadeli_alimlar(cur, kid):
-    return (_kasa_kaynak_iz(cur, ["vadeli_alimlar"], kid, "KAYNAK_BAGI")
+    # ARTIŞ: kaydın kendisi = borcun doğuşu (fatura/alım sisteme girdiği an).
+    # Plan doğuşu EKLENMEZ — vadeli alımda plan aynı borcun taksitidir, ikisini
+    # birden yazmak borcu iki kez doğurmuş gösterir (mükerrer artış tuzağı).
+    artis: List[Dict[str, Any]] = []
+    try:
+        cur.execute(
+            """SELECT id::text AS id, aciklama, COALESCE(tutar,0)::float AS tutar,
+                      COALESCE(vade_tarihi, olusturma::date) AS tarih, tedarikci
+                 FROM vadeli_alimlar WHERE id::text=%s""", (str(kid),))
+        r = cur.fetchone()
+        if r and float(dict(r).get("tutar") or 0) > 0:
+            d = dict(r)
+            artis.append(_artis_satiri(
+                "vadeli", d["id"], d["tarih"], d["tutar"], "borç doğdu",
+                f"{d.get('tedarikci') or ''} {d.get('aciklama') or ''}".strip(),
+                "KAYIT_DOGUSU"))
+    except Exception as e:  # noqa: BLE001 — artış düşse ÖDEME izi yaşamalı
+        logger.warning("vadeli artis izi atlandi %s: %s", kid, str(e)[:120])
+    return (artis
+            + _kasa_kaynak_iz(cur, ["vadeli_alimlar"], kid, "KAYNAK_BAGI")
             + _kart_kaynak_iz(cur, kid, "KAYNAK_BAGI", ["vadeli_alimlar"])
             + _plan_bagi_iz(cur, "vadeli_alimlar", kid))
 
@@ -275,8 +359,32 @@ def _belge_vadeli_alimlar(cur, kid):
 
 
 def _iz_borc_envanteri(cur, kid):
-    """main.py:9713-9720 borc_gecmis deseniyle AYNI kaynak (kasa kaynak bağı)."""
-    return (_kasa_kaynak_iz(cur, ["borc_envanteri"], kid, "KAYNAK_BAGI")
+    """main.py:9713-9720 borc_gecmis deseniyle AYNI kaynak (kasa kaynak bağı).
+
+    ARTIŞ: taksit tahakkuku ödeme planından okunur (plan satırı = o ayın
+    yükümlülüğü). Plan HİÇ YOKSA — yani tahakkuk kaynağı belirsizse — yalnız
+    KAYIT DOĞUŞU (kredinin toplam borcu) yazılır; uydurma taksit üretilmez.
+    """
+    plan_artis = _plan_dogus_iz(cur, "borc_envanteri", kid)
+    artis: List[Dict[str, Any]] = list(plan_artis)
+    if not plan_artis:
+        try:
+            cur.execute(
+                """SELECT id::text AS id, kurum, borc_turu,
+                          COALESCE(toplam_borc,0)::float AS tutar,
+                          COALESCE(baslangic_tarihi, olusturma::date) AS tarih
+                     FROM borc_envanteri WHERE id::text=%s""", (str(kid),))
+            r = cur.fetchone()
+            if r and float(dict(r).get("tutar") or 0) > 0:
+                d = dict(r)
+                artis.append(_artis_satiri(
+                    "borc", d["id"], d["tarih"], d["tutar"], "borç kaydı açıldı",
+                    f"{d.get('kurum') or ''} · {d.get('borc_turu') or ''}".strip(" ·"),
+                    "KAYIT_DOGUSU"))
+        except Exception as e:  # noqa: BLE001
+            logger.warning("borc artis izi atlandi %s: %s", kid, str(e)[:120])
+    return (artis
+            + _kasa_kaynak_iz(cur, ["borc_envanteri"], kid, "KAYNAK_BAGI")
             + _plan_bagi_iz(cur, "borc_envanteri", kid))
 
 
@@ -287,7 +395,11 @@ def _belge_borc_envanteri(cur, kid):
 
 def _iz_sabit_giderler(cur, kid):
     # ⚠️ İKİ ETİKET: kasa tarafında iki tablo adı da geçebiliyor (main.py:8353-8368).
-    return (_kasa_kaynak_iz(cur, ["sabit_giderler", "fatura_giderleri"], kid, "KAYNAK_BAGI")
+    # ARTIŞ: sabit giderde borç HER DÖNEM YENİDEN doğar → dönem planı satırları.
+    # (Kaydın kendisi bir şablondur, tek seferlik borç değildir; onu "borç doğdu"
+    #  diye yazmak aylık gideri tek seferlik borç gibi gösterirdi.)
+    return (_plan_dogus_iz(cur, "sabit_giderler", kid)
+            + _kasa_kaynak_iz(cur, ["sabit_giderler", "fatura_giderleri"], kid, "KAYNAK_BAGI")
             + _kart_kaynak_iz(cur, kid, "KAYNAK_BAGI")   # kart: etiket şart değil, kimlik şart
             + _plan_bagi_iz(cur, "sabit_giderler", kid))
 
@@ -345,8 +457,35 @@ def _belge_cari_odeme(cur, kid):
 
 
 def _iz_personel(cur, kid):
-    """Maaş ödemeleri: kasa kaynak_tablo='personel' (maas_service tek yazıcısı)."""
-    return (_kasa_kaynak_iz(cur, ["personel"], kid, "KAYNAK_BAGI")
+    """Maaş ödemeleri: kasa kaynak_tablo='personel' (maas_service tek yazıcısı).
+
+    ARTIŞ = BORDRO TAHAKKUKU: personel_aylik satırı o dönemin yükümlülüğüdür
+    (`_belge_personel` bunu zaten BİRİNCİL KAYIT sayıyor — aynı gerçek, izde
+    parasal olarak da görünsün). 'taslak' dönemler HARİÇ: henüz kesinleşmemiş
+    bir hesap borç doğurmaz (aktif-filtre disiplini).
+    ⚠️ Tarih: personel_aylik'te gün yok → dönemin 1'i kullanılır (kronoloji için
+    kanonik gün); uydurma değil, dönem çapasıdır.
+    """
+    artis: List[Dict[str, Any]] = []
+    try:
+        cur.execute(
+            """SELECT id::text AS id, yil, ay, durum,
+                      COALESCE(hesaplanan_net,0)::float AS net
+                 FROM personel_aylik
+                WHERE personel_id::text=%s AND COALESCE(durum,'') <> 'taslak'
+                ORDER BY yil DESC, ay DESC LIMIT 24""", (str(kid),))
+        for r in (cur.fetchall() or []):
+            d = dict(r)
+            if float(d.get("net") or 0) <= 0:
+                continue
+            artis.append(_artis_satiri(
+                "bordro", d["id"], f"{int(d['yil'])}-{int(d['ay']):02d}-01",
+                d["net"], f"{int(d['yil'])}-{int(d['ay']):02d} dönemi bordrosu",
+                f"durum: {d.get('durum') or '—'}", "BORDRO_TAHAKKUKU"))
+    except Exception as e:  # noqa: BLE001
+        logger.warning("bordro artis izi atlandi %s: %s", kid, str(e)[:120])
+    return (artis
+            + _kasa_kaynak_iz(cur, ["personel"], kid, "KAYNAK_BAGI")
             + _plan_bagi_iz(cur, "personel", kid))
 
 
@@ -392,8 +531,27 @@ def _iz_kartlar(cur, kid):
               AND COALESCE(durum,'aktif')='aktif'
               AND tarih >= %s::date AND tarih < %s::date
             ORDER BY tarih DESC""", (str(kid), kt, sonraki))
-    return [_iz_satiri("kart", r["id"], r["tarih"], r["tutar"], r["aciklama"], "KART_PENCERESI")
-            for r in (cur.fetchall() or [])]
+    izler = [_iz_satiri("kart", r["id"], r["tarih"], r["tutar"], r["aciklama"], "KART_PENCERESI")
+             for r in (cur.fetchall() or [])]
+    # ── ARTIŞ: AYNI PENCEREDEKİ HARCAMALAR (+) ───────────────────────────────
+    # Sahip: "izde ödemeleri VE artışları görmem daha uygun, tarih tarih."
+    # Kartta borcu büyüten şey harcamadır; yalnız ödemeleri göstermek "borç neden
+    # bu kadar?" sorusunu cevapsız bırakıyordu. PENCERE AYNI (kesim → sonraki
+    # kesim) — farklı pencere kullanmak "biri ödendi der, diğeri demez" çelişkisini
+    # doğurur (Ziraat vakası dersi, bu dosyanın kuruluş sebebi).
+    try:
+        cur.execute(
+            """SELECT id::text AS id, tarih, tutar, aciklama FROM kart_hareketleri
+                WHERE kart_id::text=%s AND islem_turu='HARCAMA'
+                  AND COALESCE(durum,'aktif')='aktif'
+                  AND tarih >= %s::date AND tarih < %s::date
+                ORDER BY tarih DESC""", (str(kid), kt, sonraki))
+        izler += [_artis_satiri("kart", r["id"], r["tarih"], r["tutar"], "harcama",
+                                r["aciklama"], "KART_HARCAMASI")
+                  for r in (cur.fetchall() or [])]
+    except Exception as e:  # noqa: BLE001 — harcama düşse ÖDEME izi yaşamalı
+        logger.warning("kart harcama artis izi atlandi %s: %s", kid, str(e)[:120])
+    return izler
 
 
 def _belge_kartlar(cur, kid):
@@ -481,17 +639,29 @@ def kayit_dosyasi(kaynak_tablo: str, kaynak_id: str):
         except Exception as e:  # noqa: BLE001
             logger.warning("kayit-dosyasi belge hatası %s/%s: %s", tablo, kid, e)
             belgeler, belge_hata = [], True
-        kirilim = _tutar_kirilimi(cur, tablo, kid, sum(x["tutar"] for x in iz))
+        # 🔴 ARTIŞ ÖDEME DEĞİLDİR (2026-08-15): `odenen` YALNIZ yon='odeme'
+        # satırlarından toplanır. Artışlar toplama girseydi borç doğar doğmaz
+        # "ödenmiş" görünür, `kalan` sıfırlanırdı — izin var oluş sebebi ölürdü.
+        odemeler = [x for x in iz if x.get("yon") != "artis"]
+        artislar = [x for x in iz if x.get("yon") == "artis"]
+        kirilim = _tutar_kirilimi(cur, tablo, kid, sum(x["tutar"] for x in odemeler))
 
     return {
         "kaynak_tablo": tablo, "kaynak_id": kid,
         "iz": iz, "iz_hata": iz_hata,
+        "odeme_adet": len(odemeler), "artis_adet": len(artislar),
+        "artis_toplam": round(sum(x["tutar"] for x in artislar), 2),
         "belgeler": belgeler, "belge_hata": belge_hata,
         # Kesin bağ yok ama fuzzy dedektif ÖNERİ üretebilir — ekran bunu söyleyebilsin.
         # (Dedektif motoru burada KURULMAZ; ayrı uç, ayrı sorumluluk.)
-        "aday_var_olabilir": (not iz) and (not iz_hata),
+        # ⚠️ ÖDEMESİZLİK ölçüsüdür: yalnız artış satırı olan kayıt "izi var" sayılıp
+        # dedektif önerisini susturmamalı (borç doğmuş ama ödeme yok = tam da
+        # dedektifin bakması gereken durum).
+        "aday_var_olabilir": (not odemeler) and (not iz_hata),
         **kirilim,
         "not": "Yalnız KESİN bağlar (kimlik/plan/kart penceresi) gösterilir. "
+               "İz iki yönlüdür: yon='artis' borcu DOĞURAN olay (+), yon='odeme' "
+               "borcu KAPATAN hareket (−); `odenen`/`kalan` yalnız ödemelerden hesaplanır. "
                "Tutar-tarih benzerliğine dayanan öneriler bu uçta YOKTUR — "
                "onlar dedektif taramasının işidir ve ayrı onay ister.",
     }

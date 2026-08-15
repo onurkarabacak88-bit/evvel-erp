@@ -57,12 +57,23 @@ const sayi = (v) => Number(v) || 0;
  * @param tip        çekmecenin `tip` alanı — merge'de tip de doğrulanır
  * @param kaynakTablo/kaynakId  KESİN ikili; ikisi de olmadan çağrılmaz
  * @param kayitId    bu çekmecenin benzersiz kimliği (`_kayitId` olarak yazılır)
- * @param renkler    { kirmizi } — tema renkleri modülden geçer (bu dosya temasız)
+ * @param renkler    { kirmizi, amber } — tema renkleri modülden geçer (bu dosya temasız)
  */
 export function kayitDosyasiYukle({ onCekmece, tip, kaynakTablo, kaynakId, kayitId, renkler = {} }) {
   if (!kayitTipiDestekli(kaynakTablo) || !kaynakId) return;
   const kirmizi = renkler.kirmizi || '#F87171';
+  const amber = renkler.amber || '#FBBF24';
   const beklenen = String(kayitId);
+
+  // 🔴 ARTIŞ SATIRI BOYAMA (2026-08-15, sahip: "izde ödemeleri VE artışları
+  // görmem daha uygun, tarih tarih").
+  // Backend her iz satırına `yon` ('artis' | 'odeme') basar; '+' öneki de ORADA
+  // metne gömülür. Burada YALNIZ görsel eşleme var — hangi satırın artış olduğuna
+  // FE karar VERMEZ (tutar işaretine/açıklamaya bakıp tahmin etmek, backend
+  // kuralı değişince sessizce yanlış boyardı). Backend renk gönderirse o kazanır.
+  const izBoya = (a) => (
+    a?.renk ? a : (a?.yon === 'artis' ? { ...a, renk: amber } : a)
+  );
 
   api(`/kayit-dosyasi?kaynak_tablo=${encodeURIComponent(kaynakTablo)}`
       + `&kaynak_id=${encodeURIComponent(kaynakId)}`)
@@ -86,11 +97,13 @@ export function kayitDosyasiYukle({ onCekmece, tip, kaynakTablo, kaynakId, kayit
         } else if (ham.length) {
           iz = [
             // Kısmi ödeme gerçektir: kalan varsa en başa bekleyen düğüm.
+            // ("Kalan bekliyor" TEPE DÜĞÜMÜ artışlar eklendikten sonra da kalır —
+            //  kalan yalnız ödemelerden hesaplanır, artışlar onu değiştirmez.)
             ...(sayi(d.kalan) > 0 ? [{
               ad: `Kalan ${fmt(sayi(d.kalan))}`,
               detay: 'bu kayıttan ödenmesi bekleniyor', bekliyor: true,
             }] : []),
-            ...ham,
+            ...ham.map(izBoya),
           ];
         } else {
           iz = [{

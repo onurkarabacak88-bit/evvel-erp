@@ -941,7 +941,7 @@ export function YukModulu({ gorunum, onCekmece, onKopru, onToast }) {
               const bagBilgi = {
                 onCekmece, tip: 'KREDİ DOSYASI',
                 kaynakTablo: 'borc_envanteri', kaynakId: k.id,
-                kayitId: k.id, renkler: { kirmizi: R.kirmizi },
+                kayitId: k.id, renkler: { kirmizi: R.kirmizi, amber: R.amber },
               };
               onCekmece?.({
                 tip: 'KREDİ DOSYASI',
@@ -1063,7 +1063,7 @@ export function YukModulu({ gorunum, onCekmece, onKopru, onToast }) {
             const bagBilgi = {
               onCekmece, tip: 'SABİT GİDER',
               kaynakTablo: 'sabit_giderler', kaynakId: g.id,
-              kayitId: g.id, renkler: { kirmizi: R.kirmizi },
+              kayitId: g.id, renkler: { kirmizi: R.kirmizi, amber: R.amber },
             };
             onCekmece?.({
               tip: 'SABİT GİDER',

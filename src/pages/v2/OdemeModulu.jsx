@@ -2183,7 +2183,7 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast }) {
             const bagBilgi = {
               onCekmece, tip: 'ÖDEME KAYDI',
               kaynakTablo: r.kaynak_tablo, kaynakId: r.kaynak_id,
-              kayitId: r.id, renkler: { kirmizi: R.kirmizi },
+              kayitId: r.id, renkler: { kirmizi: R.kirmizi, amber: R.amber },
             };
             onCekmece?.({
               tip: 'ÖDEME KAYDI',

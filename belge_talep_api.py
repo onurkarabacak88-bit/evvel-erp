@@ -105,18 +105,50 @@ def _teslim_parasal_deger(cur, kalemler: Any) -> Dict[str, Any]:
     if not isinstance(kalemler, list) or not kalemler:
         return sonuc
 
-    # Kalem anahtarlarını topla
-    kodlar, adlar = set(), set()
+    alis_map, katalog_map, katalog_ad_map = _kalem_fiyat_haritalari(cur, kalemler)
+
+    kaynaklar = set()
     for k in kalemler:
+        if not isinstance(k, dict):
+            continue
+        try:
+            adet = float(k.get("adet") or k.get("miktar") or 0)
+        except (TypeError, ValueError):
+            adet = 0.0
+        if adet <= 0:
+            continue
+        sonuc["kalem"] += 1
+        fiyat, kaynak = _kalem_birim_fiyat(k, alis_map, katalog_map, katalog_ad_map)
+        if fiyat > 0:
+            sonuc["tutar"] += adet * fiyat
+            kaynaklar.add(kaynak)
+        else:
+            sonuc["fiyatsiz"] += 1
+
+    sonuc["tutar"] = round(sonuc["tutar"], 2)
+    if len(kaynaklar) == 1:
+        sonuc["kaynak"] = kaynaklar.pop()
+    elif len(kaynaklar) > 1:
+        sonuc["kaynak"] = "kismi"
+    return sonuc
+
+
+def _kalem_fiyat_haritalari(cur, kalemler: Any):
+    """Sipariş kalemleri için FİYAT HARİTALARI — tek merkez (alis / katalog / katalog-ad).
+
+    `_teslim_parasal_deger` (beklenen borç) ve `_siparis_kalem_detay` (aday
+    motorunun kalem örtüşmesi) AYNI fiyat önceliğini kullanmak zorundadır; iki
+    kopya zamanla ayrışır (birinde düzeltilen tuzak diğerinde kalır).
+    Hata-yutar: fiyat okunamazsa BOŞ harita döner, çağıran kalem sayımını sürdürür.
+    """
+    kodlar = set()
+    for k in (kalemler if isinstance(kalemler, list) else []):
         if not isinstance(k, dict):
             continue
         for alan in ("kalem_kodu", "urun_id", "depo_stok_kalem_kodu"):
             v = str(k.get(alan) or "").strip()
             if v:
                 kodlar.add(v)
-        ad = str(k.get("urun_ad") or k.get("kalem_adi") or "").strip()
-        if ad:
-            adlar.add(ad.lower())
 
     alis_map: Dict[str, float] = {}
     katalog_map: Dict[str, float] = {}
@@ -158,45 +190,24 @@ def _teslim_parasal_deger(cur, kalemler: Any) -> Dict[str, Any]:
         # tüm teslimatları "kalemsiz" gösteriyordu — hata gizlenmiş oluyordu.
         logger.warning("teslim parasal deger fiyat okunamadi (kalem sayimi surer): %s", str(e)[:150])
         alis_map, katalog_map, katalog_ad_map = {}, {}, {}
+    return alis_map, katalog_map, katalog_ad_map
 
-    kaynaklar = set()
-    for k in kalemler:
-        if not isinstance(k, dict):
-            continue
-        try:
-            adet = float(k.get("adet") or k.get("miktar") or 0)
-        except (TypeError, ValueError):
-            adet = 0.0
-        if adet <= 0:
-            continue
-        sonuc["kalem"] += 1
-        fiyat, kaynak = 0.0, None
-        for alan in ("kalem_kodu", "urun_id", "depo_stok_kalem_kodu"):
-            v = str(k.get(alan) or "").strip()
-            if not v:
-                continue
-            if v in alis_map and alis_map[v] > 0:
-                fiyat, kaynak = alis_map[v], "alis"
-                break
-            if v in katalog_map and katalog_map[v] > 0:
-                fiyat, kaynak = katalog_map[v], "katalog"
-                break
-        if fiyat <= 0:
-            ad = str(k.get("urun_ad") or k.get("kalem_adi") or "").strip().lower()
-            if ad and katalog_ad_map.get(ad, 0) > 0:
-                fiyat, kaynak = katalog_ad_map[ad], "katalog"
-        if fiyat > 0:
-            sonuc["tutar"] += adet * fiyat
-            kaynaklar.add(kaynak)
-        else:
-            sonuc["fiyatsiz"] += 1
 
-    sonuc["tutar"] = round(sonuc["tutar"], 2)
-    if len(kaynaklar) == 1:
-        sonuc["kaynak"] = kaynaklar.pop()
-    elif len(kaynaklar) > 1:
-        sonuc["kaynak"] = "kismi"
-    return sonuc
+def _kalem_birim_fiyat(k: Dict[str, Any], alis_map, katalog_map, katalog_ad_map):
+    """Tek sipariş kaleminin birim fiyatı — anahtar sırası ürün-aç zinciriyle AYNI:
+    kalem_kodu → urun_id → depo_stok_kalem_kodu → normalize ad. (0.0, None) = fiyatsız."""
+    for alan in ("kalem_kodu", "urun_id", "depo_stok_kalem_kodu"):
+        v = str(k.get(alan) or "").strip()
+        if not v:
+            continue
+        if v in alis_map and alis_map[v] > 0:
+            return alis_map[v], "alis"
+        if v in katalog_map and katalog_map[v] > 0:
+            return katalog_map[v], "katalog"
+    ad = str(k.get("urun_ad") or k.get("kalem_adi") or "").strip().lower()
+    if ad and katalog_ad_map.get(ad, 0) > 0:
+        return katalog_ad_map[ad], "katalog"
+    return 0.0, None
 
 
 def belge_talep_olustur_izole(ts_id: str) -> None:
@@ -505,6 +516,342 @@ def _ad_norm(s: Optional[str]) -> str:
     return " ".join(w for w in t.split() if w and w not in cop and len(w) > 2)
 
 
+# ═══════════════ KALEM ÖRTÜŞMESİ (F4, 2026-08-15) ══════════════════════════
+# Sahip dersi (canlı vaka): 8 Ağu teslimatı 1 Ağu faturasına bağlandı çünkü
+# TUTAR yakındı. Gerçek kanıt tutar değil, MALIN KENDİSİDİR: "10 kg espresso
+# ısmarladık, faturada 10 kg espresso var mı?". Bu blok o kanıtı üretir.
+#
+# 🔒 DOKTRİN: kalem eşleşmesi EN GÜÇLÜ POZİTİF kanıttır; eşleşmeme NEGATİF
+# HÜKÜM DEĞİLDİR. OCR/LLM kalem okuması gürültülüdür (kalem hiç okunmamış,
+# yarım okunmuş, farklı adla yazılmış olabilir) — bir adayı "kalemi tutmadı"
+# diye ELEMEK sahte-kesinliktir. Eşleşmeme yalnız puanı/güveni düşürür.
+#
+# 💰 FİYAT SİNYALİ NEDEN `fiyat_zam_alarmi` TABLOSUNA YAZILMIYOR (bilinçli sapma,
+# 2026-08-15): o tablonun tek yazıcısı `operasyon_merkez_api._fiyat_zam_alarmi_yaz`
+# ve kendi doktrini nettir — "onaylı fiyattan tetiklenir, OCR'DAN DEĞİL
+# (öneri-only ilkesi korunur)". Buradaki fiyat farkı ise (a) HENÜZ ONAYLANMAMIŞ
+# bir aday faturadan, (b) doğruluğu kanıtlanmamış bir eşleşmeden çıkar. Yanlış
+# adaya bakıp alarm yazmak, sahibin "gerçek zam" listesini gürültüyle doldurur ve
+# geri alınamaz (tablo append-only). Ayrıca /gecmis-eslestir SALT-OKUR bir GET
+# ucudur; okuma ucundan yan-etki yazmak "kasa izi = tek gerçek" disiplinini bozar.
+# Fiyat farkı bu yüzden YALNIZ yanıt alanı olarak döner (`fiyat_degisimi`); bağ
+# ONAYLANDIĞINDA fiyat zaten mevcut fatura-onay hattından alarm motoruna düşer.
+_KALEM_COP = {
+    "kg", "gr", "gram", "lt", "ltr", "litre", "ml", "cl", "adet", "ad", "paket",
+    "pkt", "koli", "kutu", "cuval", "torba", "kavanoz", "sise", "kasa", "top",
+    "birim", "urun", "no", "lu", "li", "lik", "lik", "gm",
+}
+
+
+def _urun_norm(s: Optional[str]) -> str:
+    """Ürün adı normalizasyonu — Türkçe katlama + ölçü/ambalaj gürültüsü atma.
+
+    ⚠️ Türkçe-I tuzağı: 'İ'.lower() Python'da 'i̇' (birleşik) üretir; önce
+    büyük-İ elle katlanır, sonra küçültülür. (v2 devir notundaki trKucuk dersi.)
+    """
+    t = (s or "").replace("İ", "i").replace("I", "ı").lower()
+    for a, b in (("ı", "i"), ("ğ", "g"), ("ü", "u"), ("ş", "s"), ("ö", "o"),
+                 ("ç", "c"), ("â", "a"), ("î", "i"), ("û", "u")):
+        t = t.replace(a, b)
+    t = re.sub(r"[^a-z0-9 ]+", " ", t)
+    kel = []
+    for w in t.split():
+        if not w or w in _KALEM_COP:
+            continue
+        if w.isdigit():          # '10', '500' — ambalaj sayısı, ad değil
+            continue
+        if len(w) < 3:
+            continue
+        kel.append(w)
+    return " ".join(kel)
+
+
+def _kalem_benzerlik(a_norm: str, b_norm: str) -> float:
+    """0..1 ürün adı benzerliği (token kümesi). Kapsama = 1.0:
+    'ESPRESSO ÇEKİRDEK' ⊂ 'ESPRESSO ÇEKİRDEK KAHVE 10 KG' aynı maldır."""
+    A, B = set((a_norm or "").split()), set((b_norm or "").split())
+    if not A or not B:
+        return 0.0
+    ortak = A & B
+    if not ortak:
+        return 0.0
+    if A <= B or B <= A:
+        return 1.0
+    return len(ortak) / len(A | B)
+
+
+def _siparis_kalem_detay(cur, kalemler: Any) -> list:
+    """Teslimatın sipariş kalemleri → {ad, norm, kod, adet, birim_fiyat}.
+
+    Birim fiyat `_teslim_parasal_deger` ile AYNI merkezden (alis → katalog)
+    gelir; fiyat_degisimi karşılaştırmasının 'eski' tarafı budur."""
+    if not isinstance(kalemler, list) or not kalemler:
+        return []
+    try:
+        alis_map, katalog_map, katalog_ad_map = _kalem_fiyat_haritalari(cur, kalemler)
+    except Exception:  # noqa: BLE001 — fiyat düşse de kalem listesi üretilir
+        alis_map, katalog_map, katalog_ad_map = {}, {}, {}
+    cikti = []
+    for k in kalemler:
+        if not isinstance(k, dict):
+            continue
+        ad = str(k.get("urun_ad") or k.get("kalem_adi") or "").strip()
+        if not ad:
+            continue
+        try:
+            adet = float(k.get("adet") or k.get("miktar") or 0)
+        except (TypeError, ValueError):
+            adet = 0.0
+        try:
+            bf, _kaynak = _kalem_birim_fiyat(k, alis_map, katalog_map, katalog_ad_map)
+        except Exception:  # noqa: BLE001
+            bf, _kaynak = 0.0, None
+        cikti.append({
+            "ad": ad, "norm": _urun_norm(ad),
+            "kod": str(k.get("kalem_kodu") or "").strip() or None,
+            "adet": adet, "birim_fiyat": (float(bf) if bf else None),
+            "fiyat_kaynagi": _kaynak,
+        })
+    return cikti
+
+
+def _fatura_kalem_detay_toplu(cur, fatura_idler: list) -> Dict[str, list]:
+    """Faturaların OCR kalemleri → {fatura_id: [{ad, norm, kod, adet, birim_fiyat}]}.
+
+    KAYNAK SIRASI: (1) `tedarikci_fatura_kalem` — OCR sonrası normalize edilmiş
+    kanonik tablo, (2) yedek: `tedarikci_fatura.ocr_json->'kalemler'` (kalem
+    tablosuna yazım düşmüşse ham JSON hâlâ okunabilir).
+    Hata-yutar: okunamazsa BOŞ döner → 'ölçüm yok' (uyuşmazlık DEĞİL)."""
+    sonuc: Dict[str, list] = {}
+    if not fatura_idler:
+        return sonuc
+
+    def _ekle(fid: str, ad, kod, adet, bf):
+        ad = str(ad or "").strip()
+        if not ad:
+            return
+        try:
+            adet_f = float(adet or 0)
+        except (TypeError, ValueError):
+            adet_f = 0.0
+        try:
+            bf_f = float(bf) if bf not in (None, "") else None
+        except (TypeError, ValueError):
+            bf_f = None
+        sonuc.setdefault(fid, []).append({
+            "ad": ad, "norm": _urun_norm(ad),
+            "kod": (str(kod).strip() or None) if kod else None,
+            "adet": adet_f, "birim_fiyat": bf_f,
+        })
+
+    try:
+        cur.execute(
+            """SELECT fatura_id, ocr_ad, ocr_urun_kodu, adet, birim_fiyat
+                 FROM tedarikci_fatura_kalem
+                WHERE fatura_id = ANY(%s)
+                ORDER BY fatura_id, sira NULLS LAST""", (list(fatura_idler),))
+        for r in (cur.fetchall() or []):
+            d = dict(r)
+            _ekle(str(d["fatura_id"]), d.get("ocr_ad"), d.get("ocr_urun_kodu"),
+                  d.get("adet"), d.get("birim_fiyat"))
+    except Exception as e:  # noqa: BLE001
+        logger.warning("fatura kalem tablosu okunamadi (ocr_json yedegine dusuluyor): %s",
+                       str(e)[:120])
+
+    # Yedek: kalem tablosunda satırı olmayan faturalar için ham OCR JSON'u
+    eksik = [f for f in fatura_idler if not sonuc.get(f)]
+    if eksik:
+        try:
+            cur.execute(
+                "SELECT id::text AS id, ocr_json FROM tedarikci_fatura WHERE id = ANY(%s)",
+                (eksik,))
+            for r in (cur.fetchall() or []):
+                d = dict(r)
+                oj = d.get("ocr_json") or {}
+                if isinstance(oj, str):
+                    try:
+                        import json as _j
+                        oj = _j.loads(oj)
+                    except Exception:  # noqa: BLE001
+                        oj = {}
+                for k in (oj.get("kalemler") or []) if isinstance(oj, dict) else []:
+                    if isinstance(k, dict):
+                        _ekle(str(d["id"]), k.get("ad") or k.get("kalem_adi"),
+                              k.get("urun_kodu"), k.get("adet") or k.get("miktar"),
+                              k.get("birim_fiyat"))
+        except Exception as e:  # noqa: BLE001
+            logger.warning("ocr_json kalem yedegi okunamadi: %s", str(e)[:120])
+    return sonuc
+
+
+_KALEM_AD_ESIK = 0.5      # altı "aynı ürün" sayılmaz
+_MIKTAR_TOLERANS = 0.02   # %2 — birim yuvarlamaları tam eşleşmeyi bozmasın
+
+
+def _kalem_ortusmesi(sip: list, fat: list) -> Dict[str, Any]:
+    """Sipariş kalemleri ↔ fatura kalemleri örtüşmesi (greedy, her fatura satırı
+    en fazla BİR sipariş kalemine sayılır — bir satır iki kalemi birden kanıtlamaz).
+
+    Dönüş `olcum=False` → iki taraftan biri kalemsiz: BİLİNMİYOR (uyuşmuyor DEĞİL).
+    """
+    if not sip or not fat:
+        return {"olcum": False, "oran": None, "eslesen_adet": 0, "tam_eslesme": 0,
+                "siparis_kalem": len(sip or []), "fatura_kalem": len(fat or []),
+                "eslesen": [], "fiyat_degisimi": [],
+                "neden": ("sipariş kalemi okunamadı" if not sip else "fatura kalemi okunamadı")}
+
+    kullanilan, eslesen, fiyat_degisimi = set(), [], []
+    puan = 0.0
+    for s in sip:
+        en_i, en_b, en_f = -1, 0.0, None
+        for i, f in enumerate(fat):
+            if i in kullanilan:
+                continue
+            if s.get("kod") and f.get("kod") and str(s["kod"]) == str(f["kod"]):
+                b = 1.0
+            else:
+                b = _kalem_benzerlik(s.get("norm"), f.get("norm"))
+            if b > en_b:
+                en_i, en_b, en_f = i, b, f
+        if en_f is None or en_b < _KALEM_AD_ESIK:
+            continue
+        kullanilan.add(en_i)
+        s_adet, f_adet = float(s.get("adet") or 0), float(en_f.get("adet") or 0)
+        miktar_ayni = bool(
+            s_adet > 0 and f_adet > 0
+            and abs(s_adet - f_adet) <= max(0.01, s_adet * _MIKTAR_TOLERANS))
+        # Tam ürün+miktar = tam ağırlık; ad tuttu miktar tutmadı = kısmi
+        # (kısmi teslimat/iki partili fatura meşrudur, silinmez).
+        puan += en_b * (1.0 if miktar_ayni else 0.6)
+        eslesen.append({
+            "siparis_urun": s.get("ad"), "fatura_urun": en_f.get("ad"),
+            "siparis_adet": s_adet, "fatura_adet": f_adet,
+            "miktar_ayni": miktar_ayni, "ad_benzerlik": round(en_b, 2),
+        })
+        eski, yeni = s.get("birim_fiyat"), en_f.get("birim_fiyat")
+        if eski and yeni and float(eski) > 0:
+            eski_f, yeni_f = float(eski), float(yeni)
+            if abs(yeni_f - eski_f) > max(0.01, eski_f * 0.005):
+                fiyat_degisimi.append({
+                    "urun": en_f.get("ad") or s.get("ad"),
+                    "eski": round(eski_f, 4), "yeni": round(yeni_f, 4),
+                    "pct": round((yeni_f - eski_f) / eski_f * 100.0, 1),
+                    "eski_kaynak": s.get("fiyat_kaynagi"),
+                })
+    oran = min(1.0, puan / len(sip)) if sip else 0.0
+    return {
+        "olcum": True, "oran": round(oran, 3),
+        "eslesen_adet": len(eslesen),
+        "tam_eslesme": sum(1 for e in eslesen if e["miktar_ayni"]),
+        "siparis_kalem": len(sip), "fatura_kalem": len(fat),
+        "eslesen": eslesen[:12], "fiyat_degisimi": fiyat_degisimi[:12],
+        "neden": None,
+    }
+
+
+def eslestirme_verisi_topla(cur, bugun, gun: int = 120, fatura_idler: Optional[list] = None):
+    """Aday motorunun HAM VERİSİ — açık teslimatlar + bağlanmamış faturalar (+kalemler).
+
+    TEK TOPLAYICI: hem GET /gecmis-eslestir hem F5 öneri motoru (yükleme-anı ve
+    gece koşusu) buradan besleniyor — üç kopya sorgu zamanla ayrışırdı.
+    `fatura_idler` verilirse yalnız o faturalar değerlendirilir (yükleme-anı yolu).
+    Dönüş: (teslimatlar, faturalar, ham_faturalar, elenen_hizmet)
+    """
+    _ensure(cur)
+    cur.execute(
+        """SELECT id, ts_id, talep_id, tedarikci_ad, sube_adi,
+                  teslim_tarihi::text AS tarih,
+                  beklenen_tutar_tl::float AS beklenen,
+                  GREATEST(0,(CURRENT_DATE - COALESCE(teslim_tarihi, olusturma::date)))::int AS yas
+           FROM belge_talep
+           WHERE durum = 'bekliyor' AND fatura_id IS NULL
+           ORDER BY teslim_tarihi DESC NULLS LAST"""
+    )
+    teslimatlar = [dict(r) for r in (cur.fetchall() or [])]
+
+    # Henüz bir teslimata bağlanmamış faturalar.
+    # 'kopya' durumundakiler HARİÇ — aynı belgenin ikinci kaydı aday olmamalı.
+    if fatura_idler:
+        cur.execute(
+            """SELECT tf.id, tf.tedarikci_ad, tf.fatura_tarih::text AS tarih,
+                      COALESCE(tf.toplam_tutar,0)::float AS tutar,
+                      tf.siparis_talep_id, tf.durum, tf.belge_sinifi,
+                      COALESCE(tf.fatura_no,'') AS fatura_no
+               FROM tedarikci_fatura tf
+               WHERE tf.id = ANY(%s)
+                 AND COALESCE(tf.durum,'') <> 'kopya'
+                 AND NOT EXISTS (SELECT 1 FROM belge_talep b WHERE b.fatura_id = tf.id)
+               ORDER BY tf.fatura_tarih DESC NULLS LAST""",
+            (list(fatura_idler),),
+        )
+    else:
+        cur.execute(
+            """SELECT tf.id, tf.tedarikci_ad, tf.fatura_tarih::text AS tarih,
+                      COALESCE(tf.toplam_tutar,0)::float AS tutar,
+                      tf.siparis_talep_id, tf.durum, tf.belge_sinifi,
+                      COALESCE(tf.fatura_no,'') AS fatura_no
+               FROM tedarikci_fatura tf
+               WHERE COALESCE(tf.fatura_tarih, tf.olusturma::date) >= %s
+                 AND COALESCE(tf.durum,'') <> 'kopya'
+                 AND NOT EXISTS (SELECT 1 FROM belge_talep b WHERE b.fatura_id = tf.id)
+               ORDER BY tf.fatura_tarih DESC NULLS LAST""",
+            (bugun - timedelta(days=gun),),
+        )
+    ham_faturalar = [dict(r) for r in (cur.fetchall() or [])]
+
+    # ── 🏷 SINIF FRENİ (2026-08-08, sahip: "ürüne gelen faturayla elektrik
+    # faturası arasında fark var — sistem bunun farkında mı?").
+    # belge_talep kuyruğu SADECE mal teslimatıdır (toptanci_siparis'ten doğar).
+    # Bir elektrik/su/telekom faturası buraya aday OLAMAZ — adı tesadüfen
+    # tedarikçiye benzese bile. Damga yoksa ad heuristiğine düşülür (emniyet ağı).
+    try:
+        from fatura_api import tedarikci_sinif  # tek kaynak
+    except Exception:  # noqa: BLE001
+        tedarikci_sinif = lambda _a: "mal"  # noqa: E731 — fren çalışmazsa eski davranış
+    faturalar, elenen_hizmet = [], []
+    for f in ham_faturalar:
+        s = f.get("belge_sinifi") or tedarikci_sinif(f.get("tedarikci_ad"))
+        f["belge_sinifi"] = s
+        if s == "hizmet":
+            elenen_hizmet.append({
+                "fatura_id": f["id"], "tedarikci": f.get("tedarikci_ad"),
+                "tarih": f.get("tarih"), "tutar": f.get("tutar"),
+                "neden": "Gider/abonelik faturası — mal teslimatına bağlanamaz",
+            })
+            continue
+        faturalar.append(f)
+
+    # ── 📦 KALEM VERİSİ — çift döngüden ÖNCE, TEK SEFERDE ────────────────────
+    # (N×M sorgu tuzağı: kalemleri _puanla içinde çekmek 5×44 = 220 sorgu ederdi.)
+    for t in teslimatlar:
+        t["kalemler"] = []
+        try:
+            if t.get("ts_id"):
+                cur.execute("SELECT kalemler FROM toptanci_siparis WHERE id=%s", (t["ts_id"],))
+                _r = cur.fetchone()
+                if _r:
+                    _kl = dict(_r).get("kalemler") or []
+                    if isinstance(_kl, str):
+                        import json as _j
+                        try:
+                            _kl = _j.loads(_kl)
+                        except Exception:  # noqa: BLE001
+                            _kl = []
+                    t["kalemler"] = _siparis_kalem_detay(cur, _kl)
+        except Exception as e:  # noqa: BLE001 — kalem düşse motor eski hâline döner
+            logger.warning("siparis kalemi okunamadi (teslimat %s): %s", t.get("id"), str(e)[:120])
+            t["kalemler"] = []
+    try:
+        _fk = _fatura_kalem_detay_toplu(cur, [f["id"] for f in faturalar])
+    except Exception as e:  # noqa: BLE001
+        logger.warning("fatura kalemleri okunamadi: %s", str(e)[:120])
+        _fk = {}
+    for f in faturalar:
+        f["kalemler"] = _fk.get(str(f["id"])) or []
+
+    return teslimatlar, faturalar, ham_faturalar, elenen_hizmet
+
+
 @router.get("/gecmis-eslestir")
 def belge_talep_gecmis_eslestir(gun: int = 120):
     """GEÇMİŞE DÖNÜK FATURA ↔ TESLİMAT TARAMASI.
@@ -533,124 +880,189 @@ def belge_talep_gecmis_eslestir(gun: int = 120):
     except Exception:  # noqa: BLE001
         bugun = date.today()
     with db() as (_c, cur):
-        _ensure(cur)
-        cur.execute(
-            """SELECT id, ts_id, talep_id, tedarikci_ad, sube_adi,
-                      teslim_tarihi::text AS tarih,
-                      beklenen_tutar_tl::float AS beklenen,
-                      GREATEST(0,(CURRENT_DATE - COALESCE(teslim_tarihi, olusturma::date)))::int AS yas
-               FROM belge_talep
-               WHERE durum = 'bekliyor' AND fatura_id IS NULL
-               ORDER BY teslim_tarihi DESC NULLS LAST"""
-        )
-        teslimatlar = [dict(r) for r in (cur.fetchall() or [])]
+        teslimatlar, faturalar, ham_faturalar, elenen_hizmet = eslestirme_verisi_topla(
+            cur, bugun, gun)
+        kesin, havuz = eslesme_degerlendir(teslimatlar, faturalar)
 
-        # Henüz bir teslimata bağlanmamış faturalar.
-        # 'kopya' durumundakiler HARİÇ — aynı belgenin ikinci kaydı aday olmamalı.
-        cur.execute(
-            """SELECT tf.id, tf.tedarikci_ad, tf.fatura_tarih::text AS tarih,
-                      COALESCE(tf.toplam_tutar,0)::float AS tutar,
-                      tf.siparis_talep_id, tf.durum, tf.belge_sinifi
-               FROM tedarikci_fatura tf
-               WHERE COALESCE(tf.fatura_tarih, tf.olusturma::date) >= %s
-                 AND COALESCE(tf.durum,'') <> 'kopya'
-                 AND NOT EXISTS (SELECT 1 FROM belge_talep b WHERE b.fatura_id = tf.id)
-               ORDER BY tf.fatura_tarih DESC NULLS LAST""",
-            (bugun - timedelta(days=gun),),
-        )
-        ham_faturalar = [dict(r) for r in (cur.fetchall() or [])]
+    havuz.sort(key=lambda x: (not x["onerilen"], -x["puan"]))
+    onerilen = [c for c in havuz if c["onerilen"]]
+    return {
+        "uretildi": str(bugun), "pencere_gun": gun,
+        "acik_teslimat_adet": len(teslimatlar),
+        "bagsiz_fatura_adet": len(faturalar),
+        "taranan_fatura_adet": len(ham_faturalar),
+        "elenen_hizmet_adet": len(elenen_hizmet),
+        "elenen_hizmet": elenen_hizmet[:25],
+        "kesin_eslesme": kesin,
+        "onerilen_adet": len(onerilen),
+        "aday_eslesme": havuz[:60],
+        "puanlama": {
+            "ad_max": AD_PUAN, "kalem_max": KALEM_PUAN,
+            "tarih_max": TARIH_PUAN, "tutar_max": TUTAR_PUAN,
+            "esik": ESIK, "tarih_tavan_gun": TARIH_TAVAN, "tutar_tavan_pct": TUTAR_TAVAN * 100,
+            "aciklama": "KALEM = en güçlü kanıt (ısmarlanan ürün+miktar faturada var mı). "
+                        "Ad = ortak kelime / birleşim (Jaccard). Tarih = yakınlık eğrisi; "
+                        "fatura teslimattan ÖNCE kesilmişse (tarih_yonu_ihlali) puan ¼'e iner "
+                        "ama aday ELENMEZ. Tutar = EN ZAYIF bileşen (dünkü yanlış eşleşmenin "
+                        "sebebi tutar yakınlığıydı). Kalem/tutar okunamıyorsa NÖTR yarım puan "
+                        "(bilinmiyor ≠ uyuşmuyor). Eşik altı listeye girmez.",
+        },
+        "not": "Hiçbir bağ OTOMATİK kurulmaz. 'onerilen' = karşılıklı en iyi eşleşme "
+               "(teslimat bu faturayı, fatura da bu teslimatı en iyi eşi görüyor). "
+               "'cakisma' = fatura birden çok teslimata aday. "
+               "'kalem_ortusme' = hangi ürünler tuttu; 'fiyat_degisimi' = eşleşen kalemin "
+               "birim fiyat sapması (ÖNERİ — alarm tablosuna yazılmaz, bkz. fonksiyon notu). "
+               "Onay: POST /belge-talep/{id}/fatura-bagla",
+    }
 
-    # ── 🏷 SINIF FRENİ (2026-08-08, sahip: "ürüne gelen faturayla elektrik
-    # faturası arasında fark var — sistem bunun farkında mı?").
-    # belge_talep kuyruğu SADECE mal teslimatıdır (toptanci_siparis'ten doğar).
-    # Bir elektrik/su/telekom faturası buraya aday OLAMAZ — adı tesadüfen
-    # tedarikçiye benzese bile. Damga yoksa ad heuristiğine düşülür (emniyet ağı).
+
+# ══════════════ PUANLAMA ÇEKİRDEĞİ (0-100, deterministik, açıklanabilir) ══════
+# İlk sürüm kartezyen çarpım üretiyordu (5 teslimat × 44 fatura) ve aynı fatura
+# defalarca listeleniyordu; "hangisi doğru" belli olmuyordu. Kurgu dört ilkeye dayanır:
+#   1. Her (teslimat, fatura) çifti TEK KEZ puanlanır.
+#   2. Puan dört bileşenin toplamıdır; her bileşenin katkısı cevapta YAZILIR.
+#   3. Bir çift ancak KARŞILIKLI EN İYİ ise "önerilen" sayılır — teslimat bu
+#      faturayı, fatura da bu teslimatı en iyi eşi olarak görüyorsa.
+#   4. (F4, 2026-08-15) KANIT SIRALAMASI DEĞİŞTİ: en güçlü kanıt MALIN KENDİSİ
+#      (kalem örtüşmesi), en zayıf kanıt TUTAR'dır. Dünkü yanlış eşleşmenin tek
+#      sebebi tutar yakınlığıydı — 30 puanlık tutar bileşeni ad+tarihi eziyordu.
+AD_PUAN, KALEM_PUAN, TARIH_PUAN, TUTAR_PUAN = 30.0, 35.0, 25.0, 10.0
+ESIK = 35.0          # altı gürültü sayılır, listeye girmez
+TARIH_TAVAN = 30     # gün — bu kadar uzak çift zaten aynı sevkiyat olamaz
+TUTAR_TAVAN = 0.25   # %25 üstü fark: KALEM KANITI YOKSA eler, varsa yalnız 0 puan
+TARIH_YONU_CARPAN = 0.25   # fatura teslimattan önce kesilmiş → tarih puanı ¼
+
+
+def _cift_puanla(t, f):
+    """Tek (teslimat, fatura) çifti → aday satırı | None (eşik altı / eleme).
+
+    🔒 ELEME YALNIZ ÜÇ SEBEPLE: ortak tedarikçi kelimesi yok · tarih tavanı aşıldı ·
+    (tutar tavanı aşıldı VE kalem kanıtı yok). Kalem uyuşmazlığı ELEMEZ — OCR
+    gürültüsüne dayanarak "bu fatura o teslimatın değil" demek sahte-kesinliktir.
+    """
+    t_kel = set(_ad_norm(t.get("tedarikci_ad")).split())
+    f_kel = set(_ad_norm(f.get("tedarikci_ad")).split())
+    ortak = t_kel & f_kel
+    if not ortak:
+        return None
+    # 1) AD — Jaccard: ortak / birleşim (tek kelime tesadüfi eşleşmeyi şişirmesin)
+    birlesim = t_kel | f_kel
+    ad_oran = len(ortak) / len(birlesim) if birlesim else 0.0
+    ad_p = ad_oran * AD_PUAN
+
+    # 2) KALEM ÖRTÜŞMESİ — EN GÜÇLÜ POZİTİF KANIT
+    #    ölçüm yoksa (kalem okunamadı) NÖTR yarım puan: bilinmiyor ≠ uyuşmuyor.
     try:
-        from fatura_api import tedarikci_sinif  # tek kaynak
-    except Exception:  # noqa: BLE001
-        tedarikci_sinif = lambda _a: "mal"  # noqa: E731 — fren çalışmazsa eski davranış
-    faturalar, elenen_hizmet = [], []
-    for f in ham_faturalar:
-        s = f.get("belge_sinifi") or tedarikci_sinif(f.get("tedarikci_ad"))
-        f["belge_sinifi"] = s
-        if s == "hizmet":
-            elenen_hizmet.append({
-                "fatura_id": f["id"], "tedarikci": f.get("tedarikci_ad"),
-                "tarih": f.get("tarih"), "tutar": f.get("tutar"),
-                "neden": "Gider/abonelik faturası — mal teslimatına bağlanamaz",
-            })
-            continue
-        faturalar.append(f)
+        ko = _kalem_ortusmesi(t.get("kalemler") or [], f.get("kalemler") or [])
+    except Exception as _e:  # noqa: BLE001 — kalem motoru düşse aday motoru yaşar
+        logger.warning("kalem ortusmesi hesaplanamadi: %s", str(_e)[:120])
+        ko = {"olcum": False, "oran": None, "eslesen_adet": 0, "tam_eslesme": 0,
+              "siparis_kalem": 0, "fatura_kalem": 0, "eslesen": [], "fiyat_degisimi": [],
+              "neden": "kalem karşılaştırması hata verdi"}
+    if not ko.get("olcum"):
+        kalem_p = KALEM_PUAN * 0.5
+    else:
+        kalem_p = float(ko.get("oran") or 0.0) * KALEM_PUAN
 
-    # ── PUANLAMA (0-100, deterministik ve açıklanabilir) ──────────────────────
-    # İlk sürüm kartezyen çarpım üretiyordu (5 teslimat × 44 fatura) ve aynı
-    # fatura defalarca listeleniyordu; "hangisi doğru" belli olmuyordu.
-    # Yeni kurgu üç ilkeye dayanır:
-    #   1. Her (teslimat, fatura) çifti TEK KEZ puanlanır.
-    #   2. Puan üç bileşenin toplamıdır; her bileşenin katkısı cevapta YAZILIR.
-    #   3. Bir çift ancak KARŞILIKLI EN İYİ ise "önerilen" sayılır — teslimat bu
-    #      faturayı, fatura da bu teslimatı en iyi eşi olarak görüyorsa.
-    AD_PUAN, TARIH_PUAN, TUTAR_PUAN = 40.0, 30.0, 30.0
-    ESIK = 35.0          # altı gürültü sayılır, listeye girmez
-    TARIH_TAVAN = 30     # gün
-    TUTAR_TAVAN = 0.25   # %25 üstü fark eşleşmeyi öldürür
+    # 3) TARİH — yakınlık eğrisi; tavanı aşan çift elenir.
+    #    YÖN AYRI BİR ŞEYDİR: fatura teslimattan ÖNCE kesilmişse (1 gün tolerans)
+    #    o teslimatın faturası olma ihtimali düşer — ama aday ELENMEZ, işaretlenir
+    #    ve puanı ¼'e iner. (fatura-bagla guard'ı zaten ikinci kemer.)
+    gun_fark = None
+    tarih_yonu_ihlali = False
+    if t.get("tarih") and f.get("tarih"):
+        try:
+            _ft = date.fromisoformat(str(f["tarih"])[:10])
+            _tt = date.fromisoformat(str(t["tarih"])[:10])
+            gun_fark = abs((_ft - _tt).days)
+            tarih_yonu_ihlali = _ft < (_tt - timedelta(days=1))
+        except Exception:  # noqa: BLE001
+            gun_fark, tarih_yonu_ihlali = None, False
+    if gun_fark is not None and gun_fark > TARIH_TAVAN:
+        return None
+    tarih_p = ((max(0.0, 1 - (gun_fark / TARIH_TAVAN)) * TARIH_PUAN)
+               if gun_fark is not None else TARIH_PUAN * 0.5)
+    if tarih_yonu_ihlali:
+        tarih_p *= TARIH_YONU_CARPAN
 
-    def _puanla(t, f):
-        t_kel = set(_ad_norm(t.get("tedarikci_ad")).split())
-        f_kel = set(_ad_norm(f.get("tedarikci_ad")).split())
-        ortak = t_kel & f_kel
-        if not ortak:
-            return None
-        # 1) AD — Jaccard: ortak / birleşim (tek kelime tesadüfi eşleşmeyi şişirmesin)
-        birlesim = t_kel | f_kel
-        ad_oran = len(ortak) / len(birlesim) if birlesim else 0.0
-        ad_p = ad_oran * AD_PUAN
-
-        # 2) TARİH — yakınlık eğrisi; tavanı aşan çift elenir
-        gun_fark = None
-        if t.get("tarih") and f.get("tarih"):
-            try:
-                gun_fark = abs((date.fromisoformat(f["tarih"][:10])
-                                - date.fromisoformat(t["tarih"][:10])).days)
-            except Exception:  # noqa: BLE001
-                gun_fark = None
-        if gun_fark is not None and gun_fark > TARIH_TAVAN:
-            return None
-        tarih_p = (max(0.0, 1 - (gun_fark / TARIH_TAVAN)) * TARIH_PUAN) if gun_fark is not None else TARIH_PUAN * 0.5
-
-        # 3) TUTAR — beklenen yoksa NÖTR yarım puan (bilinmiyor ≠ uyuşmuyor)
-        bek, ftl = float(t.get("beklenen") or 0), float(f.get("tutar") or 0)
-        tutar_fark = round(ftl - bek, 2) if (bek and ftl) else None
-        if tutar_fark is not None and bek:
-            oran = abs(tutar_fark) / bek
-            if oran > TUTAR_TAVAN:
+    # 4) TUTAR — EN ZAYIF bileşen; beklenen yoksa NÖTR yarım puan
+    bek, ftl = float(t.get("beklenen") or 0), float(f.get("tutar") or 0)
+    tutar_fark = round(ftl - bek, 2) if (bek and ftl) else None
+    tutar_tavan_asildi = False
+    if tutar_fark is not None and bek:
+        oran = abs(tutar_fark) / bek
+        if oran > TUTAR_TAVAN:
+            # Kalem kanıtı VARSA eleme yok: kısmi teslimat / iki partili fatura
+            # meşrudur ve mal örtüşüyorsa tutar farkı tek başına hüküm veremez.
+            if not (ko.get("olcum") and ko.get("eslesen_adet")):
                 return None
-            tutar_p = max(0.0, 1 - (oran / TUTAR_TAVAN)) * TUTAR_PUAN
+            tutar_p, tutar_tavan_asildi = 0.0, True
         else:
-            tutar_p = TUTAR_PUAN * 0.5
+            tutar_p = max(0.0, 1 - (oran / TUTAR_TAVAN)) * TUTAR_PUAN
+    else:
+        tutar_p = TUTAR_PUAN * 0.5
 
-        puan = round(ad_p + tarih_p + tutar_p, 1)
-        if puan < ESIK:
-            return None
-        return {
-            "belge_talep_id": t["id"], "fatura_id": f["id"],
-            "tedarikci_teslimat": t.get("tedarikci_ad"), "tedarikci_fatura": f.get("tedarikci_ad"),
-            "sube_adi": t.get("sube_adi"), "teslim_yas_gun": t.get("yas"),
-            "teslim_tarihi": t.get("tarih"), "fatura_tarihi": f.get("tarih"),
-            "beklenen_tl": t.get("beklenen"), "fatura_tl": f.get("tutar"),
-            "tutar_fark_tl": tutar_fark, "gun_fark": gun_fark,
-            "ortak_kelime": sorted(ortak),
-            "puan": puan,
-            "puan_dokumu": {
-                "ad": round(ad_p, 1), "tarih": round(tarih_p, 1), "tutar": round(tutar_p, 1),
-                "ad_orani_pct": round(ad_oran * 100, 1),
-            },
-            "gerekce": (f"Ad ortak: {', '.join(sorted(ortak))} (%{ad_oran*100:.0f} örtüşme)"
-                        + (f" · {gun_fark} gün fark" if gun_fark is not None else " · tarih bilinmiyor")
-                        + (f" · tutar farkı {tutar_fark:+,.2f} ₺" if tutar_fark is not None
-                           else " · tutar karşılaştırılamadı")).replace(",", "."),
-        }
+    puan = round(ad_p + kalem_p + tarih_p + tutar_p, 1)
+    if puan < ESIK:
+        return None
 
+    kalem_ozet = (
+        f"{ko['tam_eslesme']}/{ko['siparis_kalem']} kalem tam (ürün+miktar)"
+        if ko.get("olcum") and ko.get("tam_eslesme")
+        else (f"{ko['eslesen_adet']}/{ko['siparis_kalem']} kalem adı tuttu, miktar farklı"
+              if ko.get("olcum") and ko.get("eslesen_adet")
+              else ("kalem örtüşmesi yok (fatura kalemleri farklı ürünler)"
+                    if ko.get("olcum") else f"kalem karşılaştırılamadı ({ko.get('neden')})"))
+    )
+    return {
+        "belge_talep_id": t["id"], "fatura_id": f["id"],
+        "tedarikci_teslimat": t.get("tedarikci_ad"), "tedarikci_fatura": f.get("tedarikci_ad"),
+        "fatura_no": f.get("fatura_no"),
+        "sube_adi": t.get("sube_adi"), "teslim_yas_gun": t.get("yas"),
+        "teslim_tarihi": t.get("tarih"), "fatura_tarihi": f.get("tarih"),
+        "beklenen_tl": t.get("beklenen"), "fatura_tl": f.get("tutar"),
+        "tutar_fark_tl": tutar_fark, "gun_fark": gun_fark,
+        "tarih_yonu_ihlali": tarih_yonu_ihlali,
+        "tutar_tavan_asildi": tutar_tavan_asildi,
+        "ortak_kelime": sorted(ortak),
+        "puan": puan,
+        "puan_dokumu": {
+            "ad": round(ad_p, 1), "kalem": round(kalem_p, 1),
+            "tarih": round(tarih_p, 1), "tutar": round(tutar_p, 1),
+            "ad_orani_pct": round(ad_oran * 100, 1),
+            "kalem_orani_pct": (round(float(ko.get("oran") or 0) * 100, 1)
+                                if ko.get("olcum") else None),
+        },
+        "kalem_ortusme": {
+            "olcum": bool(ko.get("olcum")), "oran": ko.get("oran"),
+            "tam_eslesme": ko.get("tam_eslesme"), "eslesen_adet": ko.get("eslesen_adet"),
+            "siparis_kalem": ko.get("siparis_kalem"), "fatura_kalem": ko.get("fatura_kalem"),
+            "eslesen": ko.get("eslesen"), "neden": ko.get("neden"),
+        },
+        # 💰 FİYAT SİNYALİ (öneri-only): eşleşen kalemin birim fiyatı sipariş
+        # tarafındaki (alış/katalog) fiyattan sapmışsa burada yazar.
+        # ⛔ fiyat_zam_alarmi tablosuna YAZILMAZ — bkz. modül başındaki not.
+        "fiyat_degisimi": ko.get("fiyat_degisimi") or [],
+        "gerekce": (f"Ad ortak: {', '.join(sorted(ortak))} (%{ad_oran*100:.0f} örtüşme)"
+                    + f" · {kalem_ozet}"
+                    + (f" · {gun_fark} gün fark" if gun_fark is not None else " · tarih bilinmiyor")
+                    + (" · ⚠ fatura teslimattan ÖNCE kesilmiş" if tarih_yonu_ihlali else "")
+                    + (f" · tutar farkı {tutar_fark:+,.2f} ₺" if tutar_fark is not None
+                       else " · tutar karşılaştırılamadı")).replace(",", "."),
+    }
+
+
+def eslesme_degerlendir(teslimatlar, faturalar):
+    """KESİN + ADAY değerlendirmesi — TEK ÇEKİRDEK.
+
+    GET /gecmis-eslestir (ekran), F5 yükleme-anı öneri motoru ve F5 gece koşusu
+    AYNI bu fonksiyonu çağırır. İki kopya mantık yasak: eşik bir yerde değişip
+    diğerinde kalırsa "ekran öneriyor ama kuyruk yazmıyor" çelişkisi doğar.
+
+    Dönüş: (kesin_eslesme_listesi, aday_havuzu). Havuz satırları `onerilen`,
+    `cakisma`, `guven`, `ne_yapmali` ile işaretlenmiştir. HÜKÜM YOK — hiçbir bağ
+    burada kurulmaz.
+    """
     # ── KESİN eşleşmeler (aynı sipariş talebi) — puanlamadan bağımsız ─────────
     kesin, kesin_talep, kesin_fatura = [], set(), set()
     for t in teslimatlar:
@@ -675,7 +1087,7 @@ def belge_talep_gecmis_eslestir(gun: int = 120):
         for f in faturalar:
             if f["id"] in kesin_fatura:
                 continue
-            p = _puanla(t, f)
+            p = _cift_puanla(t, f)
             if p:
                 havuz.append(p)
 
@@ -697,39 +1109,25 @@ def belge_talep_gecmis_eslestir(gun: int = 120):
                       and en_iyi_f.get(c["fatura_id"], {}).get("belge_talep_id") == c["belge_talep_id"])
         c["onerilen"] = bool(karsilikli)
         c["cakisma"] = fatura_aday_sayisi.get(c["fatura_id"], 0) > 1
-        c["guven"] = ("yüksek" if (karsilikli and c["puan"] >= 70)
-                      else "orta" if c["puan"] >= 55 else "düşük")
+        guven = ("yüksek" if (karsilikli and c["puan"] >= 70)
+                 else "orta" if c["puan"] >= 55 else "düşük")
+        # GÜVEN TAVANI: kalem ölçüldü ama HİÇ tutmadıysa ya da tarih yönü ters ise
+        # puan yüksek olsa bile "yüksek güven" DENMEZ (eleme değil, frenleme).
+        ko = c.get("kalem_ortusme") or {}
+        if ko.get("olcum") and not ko.get("eslesen_adet"):
+            guven = "düşük" if guven == "yüksek" else guven
+            c["guven_freni"] = "kalem örtüşmesi yok"
+        if c.get("tarih_yonu_ihlali"):
+            guven = "düşük"
+            c["guven_freni"] = "fatura teslimattan önce kesilmiş"
+        c["guven"] = guven
         c["ne_yapmali"] = (
             "Önerilen eşleşme — kontrol edip bağla" if karsilikli
             else "Alternatif aday; önce önerilen satıra bak"
         )
         if c["cakisma"]:
             c["ne_yapmali"] += " (bu fatura birden çok teslimata aday — tek birine bağlanabilir)"
-
-    havuz.sort(key=lambda x: (not x["onerilen"], -x["puan"]))
-    onerilen = [c for c in havuz if c["onerilen"]]
-    return {
-        "uretildi": str(bugun), "pencere_gun": gun,
-        "acik_teslimat_adet": len(teslimatlar),
-        "bagsiz_fatura_adet": len(faturalar),
-        "taranan_fatura_adet": len(ham_faturalar),
-        "elenen_hizmet_adet": len(elenen_hizmet),
-        "elenen_hizmet": elenen_hizmet[:25],
-        "kesin_eslesme": kesin,
-        "onerilen_adet": len(onerilen),
-        "aday_eslesme": havuz[:60],
-        "puanlama": {
-            "ad_max": AD_PUAN, "tarih_max": TARIH_PUAN, "tutar_max": TUTAR_PUAN,
-            "esik": ESIK, "tarih_tavan_gun": TARIH_TAVAN, "tutar_tavan_pct": TUTAR_TAVAN * 100,
-            "aciklama": "Ad = ortak kelime / birleşim (Jaccard). Tarih = yakınlık eğrisi, "
-                        "tavanı aşan çift elenir. Tutar = yüzde fark eğrisi; beklenen tutar "
-                        "yoksa NÖTR yarım puan (bilinmiyor ≠ uyuşmuyor). Eşik altı listeye girmez.",
-        },
-        "not": "Hiçbir bağ OTOMATİK kurulmaz. 'onerilen' = karşılıklı en iyi eşleşme "
-               "(teslimat bu faturayı, fatura da bu teslimatı en iyi eşi görüyor). "
-               "'cakisma' = fatura birden çok teslimata aday. "
-               "Onay: POST /belge-talep/{id}/fatura-bagla",
-    }
+    return kesin, havuz
 
 
 class FaturaBaglaBody(BaseModel):
@@ -822,129 +1220,292 @@ def belge_talep_fatura_bagla(talep_id: str, body: FaturaBaglaBody):
     Geçmişe dönük taramanın onay adımı. Yükleme akışıyla AYNI sonucu üretir:
     fatura_id damgası + durum 'pdf_geldi' + gerçek tutar + beklenen'e göre fark.
     Yeni fatura kaydı OLUŞTURMAZ — yalnız bağ kurar (mükerrer fatura riski yok).
+
+    İnce sarmalayıcı: bütün iş `fatura_bagla_uygula`'da — onay kuyruğu yolu
+    (TESLIMAT_FATURA_ESLESME onayı) AYNI fonksiyonu çağırır, HTTP üzerinden değil.
     """
+    return _fatura_bagla_http(talep_id, body)
+
+
+def _fatura_bagla_http(talep_id: str, body: FaturaBaglaBody):
     tid = (talep_id or "").strip()
     fid = (body.fatura_id or "").strip()
+    onay_kaynagi = (body.onay_kaynagi or "").strip().lower()
+    zorla = bool(body.override)
+    zorla_gerekce = (body.override_gerekce or "").strip()
+    with db() as (conn, cur):
+        sonuc = fatura_bagla_uygula(cur, tid, fid, onay_kaynagi, zorla, zorla_gerekce)
+        conn.commit()
+    return sonuc
+
+
+def fatura_bagla_uygula(cur, talep_id: str, fatura_id: str, onay_kaynagi: str,
+                        zorla: bool = False, zorla_gerekce: str = ""):
+    """Fatura ↔ teslimat bağını KURAR — tek yazıcı, COMMIT ETMEZ.
+
+    İki çağıran: (1) POST /{id}/fatura-bagla (sahip UI), (2) onay kuyruğundaki
+    TESLIMAT_FATURA_ESLESME önerisinin onaylanması (main.py `_onayla_tx`).
+    İkinci yol HTTP çağrısı YAPMAZ — aynı transaction içinde bu fonksiyona girer;
+    aksi hâlde onay ile bağ ayrı transaction'larda olur ve biri düşerse diğeri
+    yalnız kalır (yarım bağ / öksüz onay).
+
+    Commit ÇAĞIRANIN sorumluluğudur (onay yolu kendi tx'ini kapatır).
+    """
+    tid = (talep_id or "").strip()
+    fid = (fatura_id or "").strip()
     if not tid or not fid:
         raise HTTPException(400, "talep_id ve fatura_id zorunlu")
     # ── F3: HAM BIND KAPISI ──────────────────────────────────────────────────
     # Bağ kuran her çağrı NEYE DAYANDIĞINI beyan etmek zorunda. Dünkü yanlış
     # eşleşmede "kim, hangi kanıtla bağladı" sorusu cevapsızdı.
-    onay_kaynagi = (body.onay_kaynagi or "").strip().lower()
+    onay_kaynagi = (onay_kaynagi or "").strip().lower()
     if onay_kaynagi not in ("sahip-ui", "oneri-onayi", "override"):
         raise HTTPException(
             400, "Bağlama onay kaynağı olmadan yapılamaz "
                  "(onay_kaynagi: 'sahip-ui' | 'oneri-onayi' | 'override').")
-    zorla = bool(body.override)
-    zorla_gerekce = (body.override_gerekce or "").strip()
+    zorla = bool(zorla)
+    zorla_gerekce = (zorla_gerekce or "").strip()
     if zorla and len(zorla_gerekce) < 3:
         raise HTTPException(400, "override kullanıyorsanız override_gerekce zorunlu.")
-    with db() as (conn, cur):
-        _ensure(cur)
-        cur.execute(
-            """SELECT id, fatura_id, beklenen_tutar_tl, tedarikci_ad,
-                      teslim_tarihi::text AS teslim_tarihi,
-                      COALESCE(kapanis_aciklama,'') AS kapanis_aciklama
-                 FROM belge_talep WHERE id=%s""", (tid,))
-        bt = cur.fetchone()
-        if not bt:
-            raise HTTPException(404, "Belge talep bulunamadı")
-        bt = dict(bt)
-        if bt.get("fatura_id"):
-            raise HTTPException(409, "Bu teslimatın belgesi zaten bağlı.")
-        cur.execute(
-            """SELECT id, COALESCE(toplam_tutar,0)::float AS tutar,
-                      fatura_tarih::text AS fatura_tarih, COALESCE(fatura_no,'') AS fno
-                 FROM tedarikci_fatura WHERE id=%s""", (fid,))
-        f = cur.fetchone()
-        if not f:
-            raise HTTPException(404, "Fatura bulunamadı")
-        f = dict(f)
-        cur.execute("SELECT 1 FROM belge_talep WHERE fatura_id=%s", (fid,))
-        if cur.fetchone():
-            raise HTTPException(409, "Bu fatura başka bir teslimata bağlı.")
+    _ensure(cur)
+    cur.execute(
+        """SELECT id, fatura_id, beklenen_tutar_tl, tedarikci_ad,
+                  teslim_tarihi::text AS teslim_tarihi,
+                  COALESCE(kapanis_aciklama,'') AS kapanis_aciklama
+             FROM belge_talep WHERE id=%s""", (tid,))
+    bt = cur.fetchone()
+    if not bt:
+        raise HTTPException(404, "Belge talep bulunamadı")
+    bt = dict(bt)
+    if bt.get("fatura_id"):
+        raise HTTPException(409, "Bu teslimatın belgesi zaten bağlı.")
+    cur.execute(
+        """SELECT id, COALESCE(toplam_tutar,0)::float AS tutar,
+                  fatura_tarih::text AS fatura_tarih, COALESCE(fatura_no,'') AS fno
+             FROM tedarikci_fatura WHERE id=%s""", (fid,))
+    f = cur.fetchone()
+    if not f:
+        raise HTTPException(404, "Fatura bulunamadı")
+    f = dict(f)
+    cur.execute("SELECT 1 FROM belge_talep WHERE fatura_id=%s", (fid,))
+    if cur.fetchone():
+        raise HTTPException(409, "Bu fatura başka bir teslimata bağlı.")
 
-        # ── F2-a: TARİH YÖNÜ GUARD'I ────────────────────────────────────────
-        # Fatura teslimattan ÖNCE kesilmişse o teslimatın faturası olamaz.
-        # Canlı vaka (2026-08-15): 8-10 Ağu teslimatları 1 Ağu faturalarına
-        # bağlandı; gerçek eşler 13 Ağu'da kesilmişti — TUTAR YAKINLIĞI yanılttı.
-        # 1 gün tolerans: aynı gün/bir gün önce kesilip ertesi gün teslim meşru.
-        ft_s, tt_s = str(f.get("fatura_tarih") or ""), str(bt.get("teslim_tarihi") or "")
-        tarih_ihlali = False
-        if ft_s and tt_s:
-            try:
-                tarih_ihlali = date.fromisoformat(ft_s[:10]) < (
-                    date.fromisoformat(tt_s[:10]) - timedelta(days=1))
-            except Exception:  # noqa: BLE001 — tarih okunamazsa guard susar
-                tarih_ihlali = False
-        if tarih_ihlali and not zorla:
-            raise HTTPException(
-                422, f"Tarih yönü ters: fatura {ft_s[:10]} tarihli, teslimat {tt_s[:10]}. "
-                     f"Fatura teslimattan önce kesilmiş — bu teslimatın faturası olmayabilir. "
-                     f"Eminseniz override=true & override_gerekce ile zorlayabilirsiniz.")
-
-        # ── F2-b: ÇOKLU GÜÇLÜ ADAY GUARD'I ──────────────────────────────────
-        # Aynı tedarikçide, teslim tarihine ±7 gün ve tutarı %15 içinde olan
-        # BAĞLANMAMIŞ başka faturalar varsa seçim körlemesine yapılmasın.
-        # (Ağır aday motoru burada çağrılmaz — hafif, tek sorgu.)
-        rakipler = []
+    # ── F2-a: TARİH YÖNÜ GUARD'I ────────────────────────────────────────
+    # Fatura teslimattan ÖNCE kesilmişse o teslimatın faturası olamaz.
+    # Canlı vaka (2026-08-15): 8-10 Ağu teslimatları 1 Ağu faturalarına
+    # bağlandı; gerçek eşler 13 Ağu'da kesilmişti — TUTAR YAKINLIĞI yanılttı.
+    # 1 gün tolerans: aynı gün/bir gün önce kesilip ertesi gün teslim meşru.
+    ft_s, tt_s = str(f.get("fatura_tarih") or ""), str(bt.get("teslim_tarihi") or "")
+    tarih_ihlali = False
+    if ft_s and tt_s:
         try:
-            cur.execute(
-                """SELECT COALESCE(fatura_no,'') AS fno, fatura_tarih::text AS ft
-                     FROM tedarikci_fatura tf
-                    WHERE tf.id <> %s
-                      AND COALESCE(tf.durum,'') <> 'kopya'
-                      AND tf.tedarikci_ad IS NOT NULL AND %s IS NOT NULL
-                      AND UPPER(TRIM(tf.tedarikci_ad)) = UPPER(TRIM(%s))
-                      AND tf.fatura_tarih BETWEEN %s::date - 7 AND %s::date + 7
-                      AND COALESCE(tf.toplam_tutar,0) > 0
-                      AND ABS(COALESCE(tf.toplam_tutar,0) - %s) <= GREATEST(1, %s * 0.15)
-                      AND NOT EXISTS (SELECT 1 FROM belge_talep b WHERE b.fatura_id = tf.id)
-                    ORDER BY tf.fatura_tarih DESC LIMIT 5""",
-                (fid, bt.get("tedarikci_ad"), bt.get("tedarikci_ad"), tt_s or None, tt_s or None,
-                 float(bt.get("beklenen_tutar_tl") or 0), float(bt.get("beklenen_tutar_tl") or 0)))
-            rakipler = [dict(r) for r in (cur.fetchall() or [])]
-        except Exception as e:  # noqa: BLE001 — guard düşse bağ akışı yaşar
-            logger.warning("coklu aday guard atlandi: %s", str(e)[:120])
-            rakipler = []
-        if rakipler and not zorla:
-            _liste = ", ".join(f"{r['fno'] or '(no yok)'} ({str(r['ft'] or '')[:10]})"
-                               for r in rakipler[:3])
-            raise HTTPException(
-                422, f"Bu teslimat için başka güçlü aday(lar) var: {_liste}. "
-                     f"Yanlış eşleşme riski — doğru olduğundan eminseniz "
-                     f"override=true & override_gerekce ile zorlayabilirsiniz.")
+            tarih_ihlali = date.fromisoformat(ft_s[:10]) < (
+                date.fromisoformat(tt_s[:10]) - timedelta(days=1))
+        except Exception:  # noqa: BLE001 — tarih okunamazsa guard susar
+            tarih_ihlali = False
+    if tarih_ihlali and not zorla:
+        raise HTTPException(
+            422, f"Tarih yönü ters: fatura {ft_s[:10]} tarihli, teslimat {tt_s[:10]}. "
+                 f"Fatura teslimattan önce kesilmiş — bu teslimatın faturası olmayabilir. "
+                 f"Eminseniz override=true & override_gerekce ile zorlayabilirsiniz.")
 
-        ftl = float(f.get("tutar") or 0) or None
-        # Override kullanıldıysa NEDEN'i deftere damgala (iz kalıcı).
-        damga = ""
-        if zorla and (tarih_ihlali or rakipler):
-            damga = (f"[TARİH-YÖNÜ OVERRIDE: {zorla_gerekce}]" if tarih_ihlali
-                     else f"[ÇOKLU-ADAY OVERRIDE: {zorla_gerekce}]")
-        yeni_aciklama = f"{bt['kapanis_aciklama']} {damga}".strip()[:1000] if damga else None
+    # ── F2-b: ÇOKLU GÜÇLÜ ADAY GUARD'I ──────────────────────────────────
+    # Aynı tedarikçide, teslim tarihine ±7 gün ve tutarı %15 içinde olan
+    # BAĞLANMAMIŞ başka faturalar varsa seçim körlemesine yapılmasın.
+    # (Ağır aday motoru burada çağrılmaz — hafif, tek sorgu.)
+    rakipler = []
+    try:
         cur.execute(
-            """UPDATE belge_talep
-               SET durum='pdf_geldi', kapanma_ts=NOW(), fatura_id=%s, kapanis_tipi='fatura',
-                   fatura_tutar_tl = COALESCE(%s, fatura_tutar_tl),
-                   tutar_fark_tl = CASE WHEN %s IS NOT NULL AND beklenen_tutar_tl IS NOT NULL
-                                        THEN %s - beklenen_tutar_tl ELSE tutar_fark_tl END,
-                   kapanis_aciklama = COALESCE(%s, kapanis_aciklama)
-               WHERE id=%s""",
-            (fid, ftl, ftl, ftl, yeni_aciklama, tid),
-        )
-        if damga:
-            try:
-                from kasa_service import audit
-                audit(cur, 'belge_talep', tid, 'FATURA_BAG_OVERRIDE',
-                      eski={"tarih_ihlali": tarih_ihlali, "rakip_adet": len(rakipler)},
-                      yeni={"fatura_id": fid, "gerekce": zorla_gerekce,
-                            "onay_kaynagi": onay_kaynagi})
-            except Exception as e:  # noqa: BLE001
-                logger.warning("override audit atlandi: %s", str(e)[:120])
-        conn.commit()
+            """SELECT COALESCE(fatura_no,'') AS fno, fatura_tarih::text AS ft
+                 FROM tedarikci_fatura tf
+                WHERE tf.id <> %s
+                  AND COALESCE(tf.durum,'') <> 'kopya'
+                  AND tf.tedarikci_ad IS NOT NULL AND %s IS NOT NULL
+                  AND UPPER(TRIM(tf.tedarikci_ad)) = UPPER(TRIM(%s))
+                  AND tf.fatura_tarih BETWEEN %s::date - 7 AND %s::date + 7
+                  AND COALESCE(tf.toplam_tutar,0) > 0
+                  AND ABS(COALESCE(tf.toplam_tutar,0) - %s) <= GREATEST(1, %s * 0.15)
+                  AND NOT EXISTS (SELECT 1 FROM belge_talep b WHERE b.fatura_id = tf.id)
+                ORDER BY tf.fatura_tarih DESC LIMIT 5""",
+            (fid, bt.get("tedarikci_ad"), bt.get("tedarikci_ad"), tt_s or None, tt_s or None,
+             float(bt.get("beklenen_tutar_tl") or 0), float(bt.get("beklenen_tutar_tl") or 0)))
+        rakipler = [dict(r) for r in (cur.fetchall() or [])]
+    except Exception as e:  # noqa: BLE001 — guard düşse bağ akışı yaşar
+        logger.warning("coklu aday guard atlandi: %s", str(e)[:120])
+        rakipler = []
+    if rakipler and not zorla:
+        _liste = ", ".join(f"{r['fno'] or '(no yok)'} ({str(r['ft'] or '')[:10]})"
+                           for r in rakipler[:3])
+        raise HTTPException(
+            422, f"Bu teslimat için başka güçlü aday(lar) var: {_liste}. "
+                 f"Yanlış eşleşme riski — doğru olduğundan eminseniz "
+                 f"override=true & override_gerekce ile zorlayabilirsiniz.")
+
+    ftl = float(f.get("tutar") or 0) or None
+    # Override kullanıldıysa NEDEN'i deftere damgala (iz kalıcı).
+    damga = ""
+    if zorla and (tarih_ihlali or rakipler):
+        damga = (f"[TARİH-YÖNÜ OVERRIDE: {zorla_gerekce}]" if tarih_ihlali
+                 else f"[ÇOKLU-ADAY OVERRIDE: {zorla_gerekce}]")
+    yeni_aciklama = f"{bt['kapanis_aciklama']} {damga}".strip()[:1000] if damga else None
+    cur.execute(
+        """UPDATE belge_talep
+           SET durum='pdf_geldi', kapanma_ts=NOW(), fatura_id=%s, kapanis_tipi='fatura',
+               fatura_tutar_tl = COALESCE(%s, fatura_tutar_tl),
+               tutar_fark_tl = CASE WHEN %s IS NOT NULL AND beklenen_tutar_tl IS NOT NULL
+                                    THEN %s - beklenen_tutar_tl ELSE tutar_fark_tl END,
+               kapanis_aciklama = COALESCE(%s, kapanis_aciklama)
+           WHERE id=%s""",
+        (fid, ftl, ftl, ftl, yeni_aciklama, tid),
+    )
+    # 📜 APPEND-ONLY İZ: HER bağ, kaynağıyla birlikte deftere yazılır. Öneri
+    # onayından gelen bağ da (onay_kaynagi='oneri-onayi') "kim/neye dayanarak
+    # bağladı" sorusunu cevaplayabilmeli — yalnız override'ı damgalamak yetmez.
+    try:
+        from kasa_service import audit
+        audit(cur, 'belge_talep', tid,
+              'FATURA_BAG_OVERRIDE' if damga else 'FATURA_BAGLANDI',
+              eski={"tarih_ihlali": tarih_ihlali, "rakip_adet": len(rakipler)},
+              yeni={"fatura_id": fid, "onay_kaynagi": onay_kaynagi,
+                    "fatura_tutar_tl": ftl,
+                    **({"gerekce": zorla_gerekce} if damga else {})})
+    except Exception as e:  # noqa: BLE001 — audit düşse de bağ kurulmuş kalır
+        logger.warning("fatura bag audit atlandi: %s", str(e)[:120])
     return {"ok": True, "belge_talep_id": tid, "fatura_id": fid,
             "fatura_tutar_tl": ftl,
             "beklenen_tutar_tl": float(bt.get("beklenen_tutar_tl") or 0) or None}
+
+
+# ═══════════ F5 · YÜKSEK GÜVENLİ ÖNERİ → ONAY KUYRUĞU (2026-08-15) ═══════════
+# Sahip: "bu motor her gece kendi koşacak mı?" → EVET. İki tetik, TEK MANTIK:
+#   · YÜKLEME ANI — fatura okunur okunmaz (OCR biter bitmez) o faturaya bakılır
+#   · GECE KOŞUSU — tüm açık teslimatlar × bağlanmamış faturalar taranır
+# İkisi de `teslimat_fatura_oneri_tara`'yı çağırır; iki kopya eşik/mantık YASAK
+# (biri değişip diğeri kalırsa "gece öneriyor, yükleme önermiyor" çelişkisi doğar).
+#
+# 🔒 ÖNERİ-ONLY: burada HİÇBİR BAĞ KURULMAZ. Yalnız onay_kuyrugu'na bir satır
+# düşer; bağ ancak sahip onaylarsa (main.py `_onayla_tx` → fatura_bagla_uygula,
+# onay_kaynagi='oneri-onayi') kurulur. Reddedilirse HİÇBİR ŞEY olmaz.
+ONERI_ISLEM_TURU = "TESLIMAT_FATURA_ESLESME"
+ONERI_TUTAR_YAKINLIK = 0.10       # kalem kanıtı yoksa tutar bu kadar yakın olmalı
+
+
+def _oneri_damgasi(fatura_id: str) -> str:
+    """Açıklamaya gömülen fatura kimliği. onay_kuyrugu'nun kaynak_id'si TESLİMATtır
+    (kayıt dosyası oradan çözülüyor); faturayı taşıyacak ikinci kolon yok →
+    açıklamanın SONUNA damgalanır ve onay işleyicisi buradan okur."""
+    return f"[fatura:{fatura_id}]"
+
+
+def _oneri_faturasini_coz(aciklama: Optional[str]) -> Optional[str]:
+    """Onay açıklamasındaki [fatura:<id>] damgasını çözer. Yoksa None."""
+    m = re.search(r"\[fatura:([^\]]+)\]", str(aciklama or ""))
+    return m.group(1).strip() if m else None
+
+
+def teslimat_fatura_oneri_tara(fatura_idler: Optional[list] = None,
+                               kaynak: str = "gece", gun: int = 120) -> Dict[str, Any]:
+    """Yüksek güvenli teslimat↔fatura eşleşmelerini ONAY KUYRUĞUNA öneri yazar.
+
+    EŞİK (hepsi birden): karşılıklı-en-iyi · tarih yönü temiz · çakışmasız ·
+    (kalem eşleşmesi VAR **veya** tutar %10 içinde). Zayıf adaylar HİÇBİR
+    kuyruğa girmez — onay kuyruğu sahibin dikkatidir, gürültüyle doldurulamaz.
+
+    MÜKERRER ENGELİ (gece koşusu her gece aynı öneriyi ÇOĞALTMAMALI):
+      · aynı teslimat için BEKLEYEN aynı-tip öneri varsa → yazma
+      · aynı (teslimat, fatura) çifti için DAHA ÖNCE herhangi bir öneri
+        yazılmışsa (onaylanmış/reddedilmiş dâhil) → yazma. Reddedilmiş bir
+        eşleşmeyi her gece tekrar sormak "hayır" cevabına saygısızlıktır.
+
+    Hata-yutar: hiçbir istisna dışarı sızmaz (yükleme akışını ve gece zincirini
+    bozmaz). Dönüş özet sözlüğü — çağıran loglar.
+    """
+    ozet = {"kaynak": kaynak, "bakilan_aday": 0, "yazilan": 0,
+            "mukerrer_atlandi": 0, "zayif_atlandi": 0, "oneriler": [], "hata": None}
+    try:
+        try:
+            from tr_saat import bugun_tr
+            bugun = bugun_tr()
+        except Exception:  # noqa: BLE001
+            bugun = date.today()
+        from kasa_service import onay_ekle
+        with db() as (conn, cur):
+            teslimatlar, faturalar, _ham, _elenen = eslestirme_verisi_topla(
+                cur, bugun, gun, fatura_idler=fatura_idler)
+            if not teslimatlar or not faturalar:
+                return ozet
+            _kesin, havuz = eslesme_degerlendir(teslimatlar, faturalar)
+            for c in havuz:
+                if not c.get("onerilen"):
+                    continue
+                ozet["bakilan_aday"] += 1
+                ko = c.get("kalem_ortusme") or {}
+                kalem_kaniti = bool(ko.get("olcum") and ko.get("eslesen_adet"))
+                bek, ftl = float(c.get("beklenen_tl") or 0), float(c.get("fatura_tl") or 0)
+                tutar_yakin = bool(bek and ftl and abs(ftl - bek) / bek <= ONERI_TUTAR_YAKINLIK)
+                if (c.get("tarih_yonu_ihlali") or c.get("cakisma")
+                        or not (kalem_kaniti or tutar_yakin)):
+                    ozet["zayif_atlandi"] += 1
+                    continue
+
+                tid, fid = str(c["belge_talep_id"]), str(c["fatura_id"])
+                # ── MÜKERRER ENGELİ ──────────────────────────────────────────
+                cur.execute(
+                    """SELECT 1 FROM onay_kuyrugu
+                        WHERE islem_turu=%s AND kaynak_tablo='belge_talep'
+                          AND kaynak_id=%s
+                          AND (durum='bekliyor' OR aciklama LIKE %s)
+                        LIMIT 1""",
+                    (ONERI_ISLEM_TURU, tid, f"%{_oneri_damgasi(fid)}%"))
+                if cur.fetchone():
+                    ozet["mukerrer_atlandi"] += 1
+                    continue
+                # Fatura başka bir teslimatın bekleyen önerisinde mi? (iki teslimat
+                # aynı faturayı bekleyemez — onay sırasında ikincisi 409 alırdı.)
+                cur.execute(
+                    """SELECT 1 FROM onay_kuyrugu
+                        WHERE islem_turu=%s AND durum='bekliyor' AND aciklama LIKE %s
+                        LIMIT 1""",
+                    (ONERI_ISLEM_TURU, f"%{_oneri_damgasi(fid)}%"))
+                if cur.fetchone():
+                    ozet["mukerrer_atlandi"] += 1
+                    continue
+
+                kanit = []
+                if kalem_kaniti:
+                    _ilk = (ko.get("eslesen") or [{}])[0]
+                    kanit.append(
+                        f"kalem {(_ilk.get('fatura_urun') or _ilk.get('siparis_urun') or '')[:30]}"
+                        f" {ko.get('tam_eslesme') or 0}/{ko.get('siparis_kalem') or 0} tam")
+                if tutar_yakin:
+                    kanit.append(f"tutar %{abs(ftl - bek) / bek * 100:.1f} içinde")
+                kanit.append("tarih uyumlu")
+                fno = (c.get("fatura_no") or "").strip() or fid[:8]
+                aciklama = (
+                    f"Fatura {fno} ↔ {c.get('sube_adi') or '—'} "
+                    f"{str(c.get('teslim_tarihi') or '')[:10]} teslimatı — "
+                    f"kanıt: {' + '.join(kanit)} (puan {c['puan']}) {_oneri_damgasi(fid)}"
+                )[:500]
+                onay_ekle(cur, ONERI_ISLEM_TURU, "belge_talep", tid, aciklama,
+                          round(ftl or bek or 0.0, 2),
+                          str(c.get("fatura_tarihi") or c.get("teslim_tarihi")
+                              or bugun)[:10])
+                ozet["yazilan"] += 1
+                ozet["oneriler"].append({"belge_talep_id": tid, "fatura_id": fid,
+                                         "puan": c["puan"], "aciklama": aciklama})
+            conn.commit()
+    except Exception as e:  # noqa: BLE001 — öneri motoru hiçbir akışı bozmaz
+        ozet["hata"] = str(e)[:200]
+        logger.warning("teslimat-fatura oneri taramasi atlandi (%s): %s", kaynak, str(e)[:200])
+    return ozet
+
+
+@router.post("/oneri-tara")
+def belge_talep_oneri_tara_ucu(gun: int = 120):
+    """F5 öneri taramasını ELLE tetikler (gece koşusunun aynısı — teşhis/ilk kurulum).
+    Öneri-only: bağ kurmaz, yalnız onay kuyruğuna aday düşürür."""
+    return teslimat_fatura_oneri_tara(kaynak="elle", gun=gun)
 
 
 @router.get("/acik-teslimat")

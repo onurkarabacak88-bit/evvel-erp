@@ -595,7 +595,7 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
     const bagBilgi = {
       onCekmece, tip: 'KART DOSYASI',
       kaynakTablo: 'kartlar', kaynakId: k.id,
-      kayitId: k.id, renkler: { kirmizi: R.kirmizi },
+      kayitId: k.id, renkler: { kirmizi: R.kirmizi, amber: R.amber },
     };
     onCekmece?.({
     tip: 'KART DOSYASI',
