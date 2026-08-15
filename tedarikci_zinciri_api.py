@@ -169,8 +169,17 @@ def kimlik_oneriler(limit: int = 50):
             continue          # tek ad → ortaklık yok, öneri yok
         grup = sorted(adlar.keys())
         # Karar verilmiş mi? Grubun TAMAMI aynı kanoniğe bağlanmışsa düşür.
-        kanonikler = {karar_haritasi.get(_U(a)) for a in grup}
-        if len(kanonikler) == 1 and None not in kanonikler:
+        # 🔴 DÜŞÜRME DELİĞİ (2026-08-15, canlıda yakalandı): filtre her üyenin
+        # defterde ALIAS anahtarı olmasını arıyordu. Ama kanonik üye kendisi alias
+        # DEĞİLDİR (kimse "MEHMET ATALAY → MEHMET ATALAY" yazmaz) → .get() None
+        # dönüyor, grup "kararsız" sayılıyor ve karar verilmiş NPE/FEZ grupları
+        # önerilerde kalmaya devam ediyordu (sahip aynı soruyu tekrar görüyor).
+        # DOĞRUSU: her üyeyi ÇÖZ — alias bağı varsa onu kullan, yoksa üye zaten
+        # kendi kanoniğidir. Tüm üyeler AYNI kanoniğe çözülüyorsa grup kapanmıştır.
+        # Karar yoksa herkes kendine çözülür → N farklı değer → grup KALIR (doğru).
+        # 'ayir' sonrası bağ düştüğü için grup kendiliğinden geri gelir (doğru).
+        kanonikler = {_U(karar_haritasi.get(_U(a), a)) for a in grup}
+        if len(kanonikler) == 1:
             continue
         ornekler = []
         for a in grup:

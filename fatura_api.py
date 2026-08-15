@@ -1807,6 +1807,33 @@ def belge_merkezi_ozet(ay: str = ""):
         toptancilar = [dict(r) for r in cur.fetchall() or []]
         for t in toptancilar:
             t["toplam"] = float(t["toplam"])
+        # 📦 GRNI ROZETİ (2026-08-15): "teslim alındı, fatura gelmedi" sayısı
+        # toptancı çipinde görünsün — sahip tedarikçiyi SEÇMEDEN kayıtsız
+        # yükümlülüğü fark etsin. TEK GROUP BY (N+1 yok); eşleşme kuralı
+        # _faturasiz_teslimat_ozet ile AYNI (_odeme_eslesir, çift yön) →
+        # çip rozeti ile açılan bölüm aynı evreni sayar, ayrışmaz.
+        # Hata-yutar: bu blok düşerse rozet çıkmaz, belge merkezi ayakta kalır.
+        try:
+            cur.execute(
+                """SELECT COALESCE(NULLIF(TRIM(tedarikci_ad),''),'(tedarikçi belirsiz)') AS ad,
+                          COUNT(*)::int AS adet,
+                          ROUND(COALESCE(SUM(beklenen_tutar_tl),0)::numeric,2) AS tl
+                     FROM belge_talep
+                    WHERE durum='bekliyor' AND fatura_id IS NULL
+                    GROUP BY 1""")
+            _grni_satir = [dict(r) for r in (cur.fetchall() or [])]
+            for t in toptancilar:
+                _ad_t = t.get("toptanci") or ""
+                _adet, _tl = 0, 0.0
+                for g in _grni_satir:
+                    _ad_g = g["ad"] or ""
+                    if _odeme_eslesir(_ad_t, _ad_g) or _odeme_eslesir(_ad_g, _ad_t):
+                        _adet += int(g["adet"] or 0)
+                        _tl = round(_tl + float(g["tl"] or 0), 2)
+                t["faturasiz_teslimat_adet"] = _adet
+                t["faturasiz_teslimat_tl"] = _tl
+        except Exception as _e:  # noqa: BLE001
+            logger.warning("belge-merkezi GRNI rozeti atlandı (yutuldu): %s", str(_e)[:120])
         cur.execute(
             """SELECT id, tedarikci_ad, fatura_tarih::text AS tarih,
                       COALESCE(toplam_tutar,0)::float AS tutar, durum

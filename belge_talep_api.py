@@ -369,11 +369,20 @@ def _gelen_fatura_ipucu(cur, rows: list) -> None:
             return {w.strip(".,()") for w in _cari_katla(ad).split()
                     if len(w.strip(".,()")) >= 3 and w.strip(".,()") not in _JENERIK}
 
+        # 🔴 TÜKETİLMİŞ FATURA HAVUZA GİRMEZ (sahip 2026-08-15: "bir fatura
+        # yükleyince diğeri eksik görünmüyordu, iki teslimat olmasına rağmen").
+        # İpucu tedarikçi DÜZEYİNDE sayıyor; başka bir teslimata ZATEN bağlanmış
+        # fatura da sayılmaya devam ediyordu → tek fatura yüklenince aynı
+        # tedarikçinin TÜM açık teslimatları "gelen fatura var" görünüyordu.
+        # Bir fatura bir teslimatı kapatır: belge_talep.fatura_id'de kullanılmışsa
+        # başka teslimata ipucu OLAMAZ.
         cur.execute(
             """SELECT tedarikci_ad, fatura_tarih::text AS ft, olusturma
                FROM tedarikci_fatura
                WHERE durum IN ('ocr_tamam','okundu') AND COALESCE(toplam_tutar,0) > 0
-                 AND olusturma >= NOW() - INTERVAL '45 days'"""
+                 AND olusturma >= NOW() - INTERVAL '45 days'
+                 AND NOT EXISTS (SELECT 1 FROM belge_talep bt
+                                  WHERE bt.fatura_id = tedarikci_fatura.id)"""
         )
         faturalar = [dict(r) for r in (cur.fetchall() or [])]
         for d in rows:
@@ -391,6 +400,12 @@ def _gelen_fatura_ipucu(cur, rows: list) -> None:
                     adet += 1
             if adet:
                 d["gelen_fatura_adet"] = adet
+                # BAĞLAM: ipucu tedarikçi düzeyinde sayıldığı için "1 fatura"
+                # tek başına yanıltıcı — kaç açık teslimata karşı geldiği de
+                # yazılır. FE ileride "1 yeni fatura / 2 açık teslimat" diyebilir
+                # (bu tur FE değişikliği yok, alan hazır bekler).
+                d["gelen_fatura_toplam_acik"] = sum(
+                    1 for x in rows if tset & _tokenlar(x.get("tedarikci_ad")))
     except Exception as e:  # noqa: BLE001 — ipucu çökse liste yaşar
         logger.warning("gelen fatura ipucu atlandi: %s", str(e)[:120])
 

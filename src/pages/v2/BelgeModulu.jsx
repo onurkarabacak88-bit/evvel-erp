@@ -1229,6 +1229,22 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast, cari
                 }}
               >
                 {kisalt(t.toptanci, 24)}
+                {/* 📦 Fatura bekleyen teslimat rozeti (2026-08-15): tedarikçiyi
+                    SEÇMEDEN "burada kayıtsız yükümlülük var" görünsün. Salt
+                    görünürlük — tıklanabilir değil, çip zaten seçim yapıyor. */}
+                {sayi(t.faturasiz_teslimat_adet) > 0 && (
+                  <span
+                    title={`${sayi(t.faturasiz_teslimat_adet)} teslimat faturası bekliyor`
+                      + (sayi(t.faturasiz_teslimat_tl) > 0 ? ` · ${fmt(sayi(t.faturasiz_teslimat_tl))}` : '')}
+                    style={{
+                      marginLeft: 6, padding: '1px 6px', borderRadius: 99,
+                      fontSize: 10, fontWeight: 700,
+                      background: `${R.amber}22`, color: R.amber,
+                    }}
+                  >
+                    📦 {sayi(t.faturasiz_teslimat_adet)}
+                  </span>
+                )}
               </div>
             );
           })}
@@ -1279,6 +1295,98 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast, cari
                 </div>
               </div>
             )}
+
+            {/* ── 📦 FATURA BEKLEYEN TESLİMATLAR (sahip 2026-08-15: "şubeye teslim
+                edilmiş ama faturası gelmemiş olanlar da izlerde görünsün").
+                Yükümlülük VAR ama borç satırı YOK — bu yüzden devirle faturaların
+                arasına, defterin ÜSTÜNE oturur: sahip deftere bakmadan önce
+                "kayıtlı olmayan yükümlülüğüm ne kadar" görsün.
+                Backend zaten hesaplıyordu (cari-ekstre.faturasiz_teslimat),
+                v2 hiç render etmiyordu. Boşsa bölüm HİÇ çizilmez. */}
+            {(() => {
+              const gt = cari?.faturasiz_teslimat;
+              // HATA ≠ BOŞ: sunucu bu bloğu hesaplayamadıysa "teslimat yok" demek
+              // yanlış bilgidir — yükümlülük gizlenmiş olur.
+              if (gt?.hata) {
+                return (
+                  <div style={{
+                    ...kartYuzey, padding: '13px 16px', marginBottom: 14,
+                    borderLeft: `3px solid ${R.kirmizi}`, fontSize: 12.5, color: R.metin2,
+                  }}>
+                    ⚠ Fatura bekleyen teslimatlar okunamadı — bu &quot;teslimat yok&quot; DEĞİL,
+                    bilinmiyor. {String(gt.hata).slice(0, 120)}
+                  </div>
+                );
+              }
+              const satirlar = Array.isArray(gt?.satirlar) ? gt.satirlar : [];
+              if (!sayi(gt?.adet) || !satirlar.length) return null;   // boşsa çizme
+              const bilinmeyen = sayi(gt.tutari_bilinmeyen);
+              return (
+                <div style={{ ...kartYuzey, padding: '15px 18px', marginBottom: 14, borderLeft: `3px solid ${R.amber}` }}>
+                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 10 }}>
+                    <span style={{ fontFamily: F.baslik, fontSize: 14.5, fontWeight: 600 }}>
+                      📦 Fatura Bekleyen Teslimatlar
+                    </span>
+                    <span style={{ fontSize: 12, color: R.metin2 }}>
+                      {sayi(gt.adet)} teslimat · <b style={{ fontFamily: F.mono, color: R.amber }}>{fmt(sayi(gt.toplam_tl))}</b>
+                      {/* Dürüstlük notu: fiyatsız kalemler toplama giremez */}
+                      {bilinmeyen > 0 && (
+                        <span style={{ color: R.not2 }}> · {bilinmeyen} tutarı bilinmiyor</span>
+                      )}
+                    </span>
+                    {sayi(gt.en_eski_gun) > 0 && (
+                      <span style={{ fontSize: 11, color: R.not2, marginLeft: 'auto' }}>
+                        en eskisi {sayi(gt.en_eski_gun)} gün
+                      </span>
+                    )}
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {satirlar.map((t, i) => {
+                      const gun = sayi(t.bekleme_gun);
+                      const renk = gun >= 14 ? R.kirmizi : gun >= 7 ? R.amber : R.not2;
+                      // Teslim alınan ad kanonikten farklıysa göster (kimlik şeffaflığı)
+                      const alias = String(t.tedarikci_kaydi || '').trim();
+                      const farkli = alias && alias.toLocaleUpperCase('tr') !== String(cariSecim || '').toLocaleUpperCase('tr');
+                      return (
+                        <div key={`${t.teslim_tarihi}-${i}`} style={{
+                          display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+                          padding: '8px 12px', borderRadius: 10,
+                          background: R.girinti, border: `1px solid ${R.cizgi3}`, fontSize: 12,
+                        }}>
+                          <span style={{ fontFamily: F.mono, color: R.not, flexShrink: 0 }}>
+                            {kisaTarih(t.teslim_tarihi)}
+                          </span>
+                          <span style={{ color: R.metin2 }}>{t.sube || 'şube —'}</span>
+                          <span style={{ fontFamily: F.mono, fontWeight: 700, color: R.krem }}>
+                            {sayi(t.tutar) > 0 ? fmt(sayi(t.tutar)) : 'tutar yok'}
+                          </span>
+                          {sayi(t.fiyatsiz_kalem) > 0 && (
+                            <span style={{ fontSize: 10.5, color: R.not3 }}>
+                              {sayi(t.fiyatsiz_kalem)} kalem fiyatsız
+                            </span>
+                          )}
+                          <span style={{ color: renk, fontWeight: 600, marginLeft: 'auto', whiteSpace: 'nowrap' }}>
+                            ⏳ {gun} gündür fatura bekliyor
+                          </span>
+                          {farkli && (
+                            <span style={{ width: '100%', fontSize: 10.5, color: R.not3 }}>
+                              teslim alınan ad: {alias}
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {gt.ne_demek && (
+                    // Backend'in kendi cümlesi — sahibi ÇİFT SAYIM endişesinden
+                    // kurtarır ("bakiyeye dahil değil" açıklaması burada yaşar).
+                    <div style={{ fontSize: 10.5, color: R.not2, marginTop: 10, lineHeight: 1.6 }}>
+                      {gt.ne_demek}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
 
             {/* ── DEFTER — kanonik sıranın kalbi: borç / alacak / yürüyen bakiye.
                 Ekstre DEVİRLE başlar (açılış fişi); ödeme alacak sütununa yazılır
