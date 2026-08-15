@@ -21,6 +21,7 @@ import { api, fmt } from '../../utils/api';
 import { R, F, kartYuzey } from './tema';
 import { KpiSeridi, Tablo, Liste, OnayModali, SecimCubugu, BosDurum } from './parcalar';
 import { kayitDosyasiYukle, belgeYukleyiciUret } from './kayitDosyasi';
+import KimlikBirlestirme from './KimlikBirlestirme';
 
 const sayi = (v) => Number(v) || 0;
 const trSayi = (n, b = 1) => (Number(n) || 0).toFixed(b).replace('.', ',');
@@ -2379,6 +2380,16 @@ export function TanimModulu({ gorunum, onCekmece, onKopru, onToast }) {
   // BM-2 zinciri: sayac {tam, teslim_yok, belge_acik, fatura_yok, odeme_izi_yok}
   // + eksik_zincirler[{tedarikci_ad, siparis_tarihi, halkalar{...}, eksik}]
   const bm2 = zincirHam || null;
+
+  // ═══ KİMLİK BİRLEŞTİRME (ATALAY pilotu, 2026-08-15) ══════════════════════
+  // Aynı gerçek tedarikçi birden çok adla duruyor; bu görünüm KANITLI öneri
+  // sunar, sahip kararı append-only deftere yazılır.
+  // ⚠️ BİRLEŞTİRME ≠ MAHSUP: karar yalnız "aynı kişi" der, bakiye kapanmaz.
+  // Bileşen kendi dosyasında (ekran boyu); Bos/KucukModal bu dosyanın yerel
+  // yardımcıları olduğu için prop olarak geçilir (ikinci kopya kurmuyoruz).
+  if (gorunum === 'birlestir') {
+    return <KimlikBirlestirme onToast={onToast} Bos={Bos} KucukModal={KucukModal} />;
+  }
 
   if (gorunum === 'tedarikciler') {
     const kategoriler = [...new Set(tedarikciler.map(t => t.kategori).filter(Boolean))];

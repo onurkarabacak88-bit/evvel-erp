@@ -30,6 +30,24 @@ export const KAYIT_TIPLERI = [
 
 export const kayitTipiDestekli = (t) => KAYIT_TIPLERI.includes(String(t || ''));
 
+/**
+ * 🔗 "Cari ekstresi →" aksiyonu — kayıt bir TEDARİKÇİ taşıyorsa üretilir.
+ * Parametreli köprü: '__modul:belge:cari:<encodeURIComponent(ad)>' — hedef ekran
+ * (BelgeModulu 'cari') bu adı seçer. Ad listede yoksa SESSİZCE yanlış tedarikçiye
+ * düşmez; orada uyarı verilip otomatik seçime dönülür (köprü hedefi doğrulanır).
+ * Tedarikçi adı çıkarılamıyorsa null döner → düğme HİÇ çıkmaz.
+ */
+export function cariEkstreAksiyonu({ kayit, onKopru }) {
+  const ad = String(
+    kayit?.tedarikci || kayit?.tedarikci_ad || kayit?.toptanci || '',
+  ).trim();
+  if (!ad || !onKopru) return null;
+  return {
+    ad: 'Cari ekstresi →',
+    onTikla: () => onKopru(`__modul:belge:cari:${encodeURIComponent(ad)}`),
+  };
+}
+
 const sayi = (v) => Number(v) || 0;
 
 /**

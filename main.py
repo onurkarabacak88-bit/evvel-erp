@@ -99,6 +99,12 @@ try:
     app.include_router(kayit_dosyasi_router)
 except Exception as _e:  # noqa: BLE001
     logger.warning("kayit_dosyasi_api yüklenemedi: %s", _e)
+# 🔗 TEDARİKÇİ ZİNCİRİ (kimlik kararı + zaman çizgisi, 2026-08-15) — izole.
+try:
+    from tedarikci_zinciri_api import router as tedarikci_zinciri_router
+    app.include_router(tedarikci_zinciri_router)
+except Exception as _e:  # noqa: BLE001
+    logger.warning("tedarikci_zinciri_api yüklenemedi: %s", _e)
 app.include_router(evo_sync_router)
 app.include_router(kart_analiz_router)
 app.include_router(gorev_router)

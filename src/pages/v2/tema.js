@@ -281,6 +281,9 @@ export const MODULLER = [
   { id: 'tanim', blok: 'Kayıt & kurulum', ad: 'Tanımlar', kisa: 'Tanım', alt: 'Tedarikçi · TV menü', ikon: IK.klasor, gorunumler: [
     { id: 'tedarikciler', ad: 'Tedarikçiler' },
     { id: 'dosya', ad: 'Tedarikçi Sözleşmeleri', rozet: 'tedarikDosyasi', renk: '#FBBF24' },
+    // Kimlik birleştirme: aynı tedarikçinin farklı adlarını tek kimlikte toplama
+    // (öneri + append-only karar defteri). Tanımlar modülüne ait — bir KAYIT işi.
+    { id: 'birlestir', ad: 'Kimlik Birleştirme' },
     { id: 'tv', ad: 'TV Menü Yönetimi' },
   ]},
   { id: 'sistem', blok: 'Kayıt & kurulum', ad: 'Veri & Sistem', kisa: 'Sistem', alt: 'Import · teslim · temizlik', ikon: IK.anahtar, gorunumler: [

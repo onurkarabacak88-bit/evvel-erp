@@ -5018,6 +5018,31 @@ def tedarikci_eslestirme_haritasi() -> dict:
         h[(r["resmi_ad"] or "").strip().upper()] = deger
         if deger["kisa"]:
             h.setdefault(deger["kisa"].upper(), deger)
+    # ── KİMLİK KARAR DEFTERİ = EN GÜÇLÜ KATMAN (2026-08-15, ATALAY pilotu) ──
+    # Yukarıdaki eşleştirme tablosu ZAYIF kanıttır (elle/otomatik doldurulmuş).
+    # Sahip bir kimlik kararı verdiyse ("bunlar aynı tedarikçi") o karar üstündür
+    # ve haritayı EZER. Harita tek kaynak olduğu için Cari Ekstre, cari-ozet ve
+    # cari-ode BU KARARDAN otomatik birleşik okur — ikinci bir zincir/hesap
+    # kaynağı kurulmadı (yerleşim hükmü: iki hesap kaynağı kaçınılmaz ayrışır).
+    # Karar defteri boşsa harita bugünküyle BİREBİR AYNI → regresyon sıfır.
+    try:
+        from tedarikci_zinciri_api import _guncel_kararlar
+        with db() as (_, cur2):
+            for alias_u, kanonik in (_guncel_kararlar(cur2) or {}).items():
+                kanonik_u = kanonik.strip().upper()
+                mevcut = h.get(alias_u) or {}
+                h[alias_u] = {"kisa": kanonik, "sinif": mevcut.get("sinif"),
+                              "kaynak": "kimlik_karari"}
+                # 🔴 ÖNCELİK DELİĞİ (Codex P1): kanonik anahtar eskiden setdefault
+                # ile ekleniyordu → zayıf haritada kanonik adın KENDİSİ zaten
+                # anahtarsa eski değer yaşıyor, aynı grup içinde iki farklı çözüm
+                # doğuyordu (alias doğru yere, kanonik yazım eski/yanlış yere).
+                # Karar EN GÜÇLÜ KATMANDIR — istisnasız overwrite.
+                h[kanonik_u] = {"kisa": kanonik,
+                                "sinif": (h.get(kanonik_u) or {}).get("sinif"),
+                                "kaynak": "kimlik_karari"}
+    except Exception as e:  # noqa: BLE001 — kimlik katmanı düşerse eski davranış
+        logger.warning("kimlik karar katmani atlandi (yutuldu): %s", str(e)[:120])
     return h
 
 
@@ -6681,6 +6706,22 @@ def cari_ode(body: CariOdemeModel):
         raise HTTPException(400, "Kart ödemesinde kart seçimi zorunlu")
 
     tarih = (body.tarih or date.today().isoformat())[:10]
+    # ── KANONİK FARKINDALIK (2026-08-15, ATALAY pilotu) ──────────────────────
+    # Aynı gerçek tedarikçi sistemde birden çok adla durabiliyor. Kimlik karar
+    # defterinde ('birlestir') bir grubun üyesiyse FIFO havuzu TÜM aliasların
+    # açık faturalarını kapsar — en eski önce, alias fark etmeksizin.
+    # ⚠️ İKİNCİ ÖDEME YOLU AÇILMADI: aynı uç, aynı imza, aynı tek yazıcı
+    # (main.odeme_yap). Yalnız havuz genişliyor.
+    # ⚠️ Karar defteri BOŞSA davranış bugünküyle BİREBİR AYNI (regresyon sıfır).
+    # ⚠️ Açılış devri (cari_devir) bu havuza GİRMEZ: ödeme legacy devire
+    #    otomatik dağıtılmaz — devir kapsama kararı sahibindir.
+    # Burada AYRICA alias genişletmesi YAPILMAZ: cari_odenecekler → cari_ekstre →
+    # tedarikci_eslestirme_haritasi() zinciri kimlik kararını zaten okuyor, yani
+    # havuz kanonik grubun TÜM aliaslarını kapsayarak geliyor (FIFO da orada, en
+    # eski önce). İkinci bir genişletme mükerrer olurdu ve iki farklı "kimin
+    # faturası" tanımı doğururdu. Karar defteri boşsa davranış bugünküyle AYNI.
+    # ⚠️ Açılış devri (cari_devir) bu havuzda YOK — ödeme legacy devire otomatik
+    #    dağıtılmaz; devir kapsama kararı sahibindir (BİRLEŞTİRME ≠ MAHSUP).
     acik = cari_odenecekler(tedarikci=ted)["acik_faturalar"]
 
     # ── TAHSİS: elle mi, FIFO mu ──────────────────────────────────────────

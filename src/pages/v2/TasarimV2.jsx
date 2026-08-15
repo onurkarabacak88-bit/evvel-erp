@@ -148,6 +148,8 @@ export default function TasarimV2({ onGit }) {
   const [gorunum, setGorunum] = useState('bugun');
   const [donem, setDonem] = useState('gun');
   const [cekmece, setCekmece] = useState(null);
+  // Parametreli köprü yükü ('__modul:belge:cari:<ad>') — hedef ekran okur.
+  const [kopruParam, setKopruParam] = useState(null);
   const [toast, setToast] = useState('');
   // Komut paleti (yeni handoff): ⌘K / Ctrl+K / '/' ile 40 ekrana tek yerden erişim
   const [subeOps, setSubeOps] = useState(null);   // şube × sevkiyat trafiği
@@ -581,7 +583,21 @@ export default function TasarimV2({ onGit }) {
     // Modül-arası hedef: '__modul:para:girisi' → klasik sayfaya değil, v2'nin
     // kendi modül+görünümüne geçer (köprüleri v2-yerlisine çevirme turu).
     if (hedef.startsWith('__modul:')) {
-      const [, mid, gid] = hedef.split(':');
+      // 4. parça = PARAMETRE ('__modul:belge:cari:<encodeURIComponent(ad)>').
+      // Tedarikçi adı boşluk/nokta/& içerebilir → split(':') ile 4 parçaya
+      // ayırıp geri kalanı BİRLEŞTİRİYORUZ (ad içinde ':' olsa bile kaybolmasın),
+      // sonra decode. Parametre yoksa davranış eskisiyle birebir aynı.
+      const _p = hedef.split(':');
+      const mid = _p[1];
+      const gid = _p[2];
+      if (_p.length > 3) {
+        const _ham = _p.slice(3).join(':');
+        let _param = _ham;
+        try { _param = decodeURIComponent(_ham); } catch { _param = _ham; }
+        setKopruParam({ modul: mid, gorunum: gid, deger: _param });
+      } else {
+        setKopruParam(null);
+      }
       const m = MODULLER.find((x) => x.id === mid);
       if (m) {
         setMod(mid);
@@ -804,7 +820,8 @@ export default function TasarimV2({ onGit }) {
       return <DenetimModulu gorunum={gorunum} onCekmece={setCekmece} onKopru={koprule} onToast={setToast} onGorunum={setGorunum} />;
     }
     if (mod === 'belge') {
-      return <BelgeModulu gorunum={gorunum} onCekmece={setCekmece} onKopru={koprule} onToast={setToast} />;
+      return <BelgeModulu gorunum={gorunum} onCekmece={setCekmece} onKopru={koprule} onToast={setToast}
+        cariHedef={kopruParam?.modul === 'belge' && kopruParam?.gorunum === 'cari' ? kopruParam.deger : null} />;
     }
     // Küçük modüller (KucukModuller.jsx) — yeni blok gerektirmeyenler
     if (mod === 'onaylar') {

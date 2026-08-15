@@ -159,7 +159,7 @@ const fiBtn = {
   background: 'transparent', color: R.metin2,
 };
 
-export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast }) {
+export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast, cariHedef }) {
   const [merkez, setMerkez] = useState(null);
   const [merkezHata, setMerkezHata] = useState('');
   const [istek, setIstek] = useState(null);
@@ -386,14 +386,28 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast }) {
 
   const toptancilar = useMemo(() => (Array.isArray(merkez?.toptancilar) ? merkez.toptancilar : []), [merkez]);
 
-  // Cari görünümüne ilk girişte en büyük toptancıyı seç
+  // Cari görünümüne ilk girişte en büyük toptancıyı seç.
+  // 🔗 PARAMETRELİ KÖPRÜ (2026-08-15): başka ekrandan '__modul:belge:cari:<ad>'
+  // ile gelindiyse O tedarikçi seçilir. ⚠️ HEDEF DOĞRULANIR: gelen ad listede
+  // yoksa SESSİZCE yanlış tedarikçiye düşmek yerine uyarır ve otomatik seçime
+  // döner (bilinmeyen hedef sessizce yanlış ekrana düşmesin kuralı).
   useEffect(() => {
-    if (gorunum === 'cari' && !cariSecim && toptancilar.length) {
+    if (gorunum !== 'cari' || !toptancilar.length) return;
+    if (cariHedef) {
+      const es = toptancilar.find(
+        (t) => String(t.toptanci || '').toLocaleUpperCase('tr') === String(cariHedef).toLocaleUpperCase('tr'));
+      if (es) {
+        if (cariSecim !== es.toptanci) { setCariSecim(es.toptanci); cariYukle(es.toptanci); }
+        return;
+      }
+      onToast?.(`"${cariHedef}" cari listesinde bulunamadı — en büyük tedarikçi açıldı.`);
+    }
+    if (!cariSecim) {
       const ilk = toptancilar[0].toptanci;
       setCariSecim(ilk);
       cariYukle(ilk);
     }
-  }, [gorunum, cariSecim, toptancilar, cariYukle]);
+  }, [gorunum, cariSecim, toptancilar, cariYukle, cariHedef, onToast]);
 
   // ════════════════════════ GÖRÜNÜM: BELGE KAPSAMA ══════════════════════════
   // ── FAZ 7 MODALI ──────────────────────────────────────────────────────────

@@ -23,7 +23,7 @@ import React, { useEffect, useState } from 'react';
 import { api, fmt } from '../../utils/api';
 import { R, F, kartYuzey } from './tema';
 import { KpiSeridi, Liste, Tablo, BosDurum, HataBandi } from './parcalar';
-import { kayitDosyasiYukle, belgeYukleyiciUret } from './kayitDosyasi';
+import { kayitDosyasiYukle, belgeYukleyiciUret, cariEkstreAksiyonu } from './kayitDosyasi';
 
 const sayi = (v) => Number(v) || 0;
 const kisalt = (t, n = 88) => { const x = String(t ?? '').trim(); return x.length > n ? `${x.slice(0, n - 1)}…` : x; };
@@ -272,6 +272,17 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru }) {
     not: '🔒 Salt-okunur — ödeme Ödeme Merkezi\'nden yapılır.',
     aksiyonAd: 'Ödeme Merkezi\'nde aç',
     _hedef: '__modul:odeme:bekleyen',
+    // 🔗 Kayıt bir TEDARİKÇİ taşıyorsa cari ekstresine parametreli köprü.
+    // Ad çıkarılamıyorsa aksiyon üretilmez → tek düğmeli eski hâl korunur
+    // (işlevsiz düğme göstermeyiz).
+    ...(cariEkstreAksiyonu({ kayit: _u, onKopru })
+      ? {
+        aksiyonlar: [
+          { ad: 'Ödeme Merkezi\'nde aç', birincil: true, onTikla: () => onKopru?.('__modul:odeme:bekleyen') },
+          cariEkstreAksiyonu({ kayit: _u, onKopru }),
+        ],
+      }
+      : {}),
     ...ek,
   });
 
