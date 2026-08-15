@@ -734,6 +734,12 @@ def belge_talep_gecmis_eslestir(gun: int = 120):
 
 class FaturaBaglaBody(BaseModel):
     fatura_id: str
+    # 🔒 HAM BIND KAPISI (F3): bağlama ONAY KAYNAĞI olmadan yapılamaz. Dünkü
+    # yanlış eşleşme "kim/neye dayanarak bağladı" sorusunu cevapsız bırakmıştı.
+    onay_kaynagi: Optional[str] = None      # 'sahip-ui' | 'oneri-onayi' | 'override'
+    # 🚧 GUARD AŞMA (F2): tarih yönü / çoklu aday reddini bilerek geçmek için.
+    override: bool = False
+    override_gerekce: Optional[str] = None
 
 
 class FaturaBagGeriAlBody(BaseModel):
@@ -821,16 +827,35 @@ def belge_talep_fatura_bagla(talep_id: str, body: FaturaBaglaBody):
     fid = (body.fatura_id or "").strip()
     if not tid or not fid:
         raise HTTPException(400, "talep_id ve fatura_id zorunlu")
+    # ── F3: HAM BIND KAPISI ──────────────────────────────────────────────────
+    # Bağ kuran her çağrı NEYE DAYANDIĞINI beyan etmek zorunda. Dünkü yanlış
+    # eşleşmede "kim, hangi kanıtla bağladı" sorusu cevapsızdı.
+    onay_kaynagi = (body.onay_kaynagi or "").strip().lower()
+    if onay_kaynagi not in ("sahip-ui", "oneri-onayi", "override"):
+        raise HTTPException(
+            400, "Bağlama onay kaynağı olmadan yapılamaz "
+                 "(onay_kaynagi: 'sahip-ui' | 'oneri-onayi' | 'override').")
+    zorla = bool(body.override)
+    zorla_gerekce = (body.override_gerekce or "").strip()
+    if zorla and len(zorla_gerekce) < 3:
+        raise HTTPException(400, "override kullanıyorsanız override_gerekce zorunlu.")
     with db() as (conn, cur):
         _ensure(cur)
-        cur.execute("SELECT id, fatura_id, beklenen_tutar_tl FROM belge_talep WHERE id=%s", (tid,))
+        cur.execute(
+            """SELECT id, fatura_id, beklenen_tutar_tl, tedarikci_ad,
+                      teslim_tarihi::text AS teslim_tarihi,
+                      COALESCE(kapanis_aciklama,'') AS kapanis_aciklama
+                 FROM belge_talep WHERE id=%s""", (tid,))
         bt = cur.fetchone()
         if not bt:
             raise HTTPException(404, "Belge talep bulunamadı")
         bt = dict(bt)
         if bt.get("fatura_id"):
             raise HTTPException(409, "Bu teslimatın belgesi zaten bağlı.")
-        cur.execute("SELECT id, COALESCE(toplam_tutar,0)::float AS tutar FROM tedarikci_fatura WHERE id=%s", (fid,))
+        cur.execute(
+            """SELECT id, COALESCE(toplam_tutar,0)::float AS tutar,
+                      fatura_tarih::text AS fatura_tarih, COALESCE(fatura_no,'') AS fno
+                 FROM tedarikci_fatura WHERE id=%s""", (fid,))
         f = cur.fetchone()
         if not f:
             raise HTTPException(404, "Fatura bulunamadı")
@@ -838,16 +863,84 @@ def belge_talep_fatura_bagla(talep_id: str, body: FaturaBaglaBody):
         cur.execute("SELECT 1 FROM belge_talep WHERE fatura_id=%s", (fid,))
         if cur.fetchone():
             raise HTTPException(409, "Bu fatura başka bir teslimata bağlı.")
+
+        # ── F2-a: TARİH YÖNÜ GUARD'I ────────────────────────────────────────
+        # Fatura teslimattan ÖNCE kesilmişse o teslimatın faturası olamaz.
+        # Canlı vaka (2026-08-15): 8-10 Ağu teslimatları 1 Ağu faturalarına
+        # bağlandı; gerçek eşler 13 Ağu'da kesilmişti — TUTAR YAKINLIĞI yanılttı.
+        # 1 gün tolerans: aynı gün/bir gün önce kesilip ertesi gün teslim meşru.
+        ft_s, tt_s = str(f.get("fatura_tarih") or ""), str(bt.get("teslim_tarihi") or "")
+        tarih_ihlali = False
+        if ft_s and tt_s:
+            try:
+                tarih_ihlali = date.fromisoformat(ft_s[:10]) < (
+                    date.fromisoformat(tt_s[:10]) - timedelta(days=1))
+            except Exception:  # noqa: BLE001 — tarih okunamazsa guard susar
+                tarih_ihlali = False
+        if tarih_ihlali and not zorla:
+            raise HTTPException(
+                422, f"Tarih yönü ters: fatura {ft_s[:10]} tarihli, teslimat {tt_s[:10]}. "
+                     f"Fatura teslimattan önce kesilmiş — bu teslimatın faturası olmayabilir. "
+                     f"Eminseniz override=true & override_gerekce ile zorlayabilirsiniz.")
+
+        # ── F2-b: ÇOKLU GÜÇLÜ ADAY GUARD'I ──────────────────────────────────
+        # Aynı tedarikçide, teslim tarihine ±7 gün ve tutarı %15 içinde olan
+        # BAĞLANMAMIŞ başka faturalar varsa seçim körlemesine yapılmasın.
+        # (Ağır aday motoru burada çağrılmaz — hafif, tek sorgu.)
+        rakipler = []
+        try:
+            cur.execute(
+                """SELECT COALESCE(fatura_no,'') AS fno, fatura_tarih::text AS ft
+                     FROM tedarikci_fatura tf
+                    WHERE tf.id <> %s
+                      AND COALESCE(tf.durum,'') <> 'kopya'
+                      AND tf.tedarikci_ad IS NOT NULL AND %s IS NOT NULL
+                      AND UPPER(TRIM(tf.tedarikci_ad)) = UPPER(TRIM(%s))
+                      AND tf.fatura_tarih BETWEEN %s::date - 7 AND %s::date + 7
+                      AND COALESCE(tf.toplam_tutar,0) > 0
+                      AND ABS(COALESCE(tf.toplam_tutar,0) - %s) <= GREATEST(1, %s * 0.15)
+                      AND NOT EXISTS (SELECT 1 FROM belge_talep b WHERE b.fatura_id = tf.id)
+                    ORDER BY tf.fatura_tarih DESC LIMIT 5""",
+                (fid, bt.get("tedarikci_ad"), bt.get("tedarikci_ad"), tt_s or None, tt_s or None,
+                 float(bt.get("beklenen_tutar_tl") or 0), float(bt.get("beklenen_tutar_tl") or 0)))
+            rakipler = [dict(r) for r in (cur.fetchall() or [])]
+        except Exception as e:  # noqa: BLE001 — guard düşse bağ akışı yaşar
+            logger.warning("coklu aday guard atlandi: %s", str(e)[:120])
+            rakipler = []
+        if rakipler and not zorla:
+            _liste = ", ".join(f"{r['fno'] or '(no yok)'} ({str(r['ft'] or '')[:10]})"
+                               for r in rakipler[:3])
+            raise HTTPException(
+                422, f"Bu teslimat için başka güçlü aday(lar) var: {_liste}. "
+                     f"Yanlış eşleşme riski — doğru olduğundan eminseniz "
+                     f"override=true & override_gerekce ile zorlayabilirsiniz.")
+
         ftl = float(f.get("tutar") or 0) or None
+        # Override kullanıldıysa NEDEN'i deftere damgala (iz kalıcı).
+        damga = ""
+        if zorla and (tarih_ihlali or rakipler):
+            damga = (f"[TARİH-YÖNÜ OVERRIDE: {zorla_gerekce}]" if tarih_ihlali
+                     else f"[ÇOKLU-ADAY OVERRIDE: {zorla_gerekce}]")
+        yeni_aciklama = f"{bt['kapanis_aciklama']} {damga}".strip()[:1000] if damga else None
         cur.execute(
             """UPDATE belge_talep
                SET durum='pdf_geldi', kapanma_ts=NOW(), fatura_id=%s, kapanis_tipi='fatura',
                    fatura_tutar_tl = COALESCE(%s, fatura_tutar_tl),
                    tutar_fark_tl = CASE WHEN %s IS NOT NULL AND beklenen_tutar_tl IS NOT NULL
-                                        THEN %s - beklenen_tutar_tl ELSE tutar_fark_tl END
+                                        THEN %s - beklenen_tutar_tl ELSE tutar_fark_tl END,
+                   kapanis_aciklama = COALESCE(%s, kapanis_aciklama)
                WHERE id=%s""",
-            (fid, ftl, ftl, ftl, tid),
+            (fid, ftl, ftl, ftl, yeni_aciklama, tid),
         )
+        if damga:
+            try:
+                from kasa_service import audit
+                audit(cur, 'belge_talep', tid, 'FATURA_BAG_OVERRIDE',
+                      eski={"tarih_ihlali": tarih_ihlali, "rakip_adet": len(rakipler)},
+                      yeni={"fatura_id": fid, "gerekce": zorla_gerekce,
+                            "onay_kaynagi": onay_kaynagi})
+            except Exception as e:  # noqa: BLE001
+                logger.warning("override audit atlandi: %s", str(e)[:120])
         conn.commit()
     return {"ok": True, "belge_talep_id": tid, "fatura_id": fid,
             "fatura_tutar_tl": ftl,
