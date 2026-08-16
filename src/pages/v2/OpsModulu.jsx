@@ -686,10 +686,33 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
   const [ugVeri, setUgVeri] = useState(null);     // null=hiç aranmadı
   const [ugHata, setUgHata] = useState('');
   const [ugMesgul, setUgMesgul] = useState(false);
+  // 🗂 YAZDIKÇA ÖNERİ (sahip: "esp yazdığımda altta çıksın, tıklayınca tarihçe —
+  // Mehmet Atalay mantığı"). Katalog (depo stok kalemleri, ~140 ad) sekme ilk
+  // açıldığında BİR KEZ çekilir; süzme ekranda. Vanilya Şurup/Vanilya Toz
+  // karışıklığının aşısı: kullanıcı serbest metinle değil KATALOG ADIYLA arar.
+  // Katalog çekilemezse öneri çıkmaz ama serbest arama ÇALIŞMAYA DEVAM EDER
+  // ([] işaretlenir; boş katalog "öneri yok" demek, arama kapısı değil).
+  const [ugKatalog, setUgKatalog] = useState(null);
+  const [ugListeAcik, setUgListeAcik] = useState(false);
+  useEffect(() => {
+    if (gorunum === 'tedarik' && tsSekme === 'urungelis' && ugKatalog == null) {
+      api('/ops/maliyet/stok-kalemleri')
+        .then((d) => setUgKatalog(
+          (Array.isArray(d?.kalemler) ? d.kalemler : [])
+            .map((k) => ({ ad: String(k.kalem_adi || '').trim(), kod: String(k.kalem_kodu || '').trim() }))
+            .filter((k) => k.ad),
+        ))
+        .catch(() => setUgKatalog([]));
+    }
+  }, [gorunum, tsSekme, ugKatalog]);
+  // Türkçe-I tuzağı: 'I'.toLowerCase()='i' ASCII'de ama 'ESPRESSO'
+  // aramasında İ/ı ayrımı şaşar — tr-TR locale ile küçült.
+  const ugKucuk = (s) => String(s || '').toLocaleLowerCase('tr-TR');
   const ugAra = async (q) => {
     const s = String(q ?? ugSorgu).trim();
     if (s.length < 2) { onToast?.('Ürün adı en az 2 harf olmalı.'); return; }
     if (ugMesgul) return;
+    setUgListeAcik(false);
     setUgMesgul(true); setUgHata('');
     try {
       setUgVeri(await api(`/ops/urun-gelis-gecmisi?urun=${encodeURIComponent(s)}&gun=365`));
@@ -5820,18 +5843,56 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
           return (
             <>
               <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center' }}>
-                <input
-                  value={ugSorgu}
-                  onChange={(e) => setUgSorgu(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter') ugAra(); }}
-                  placeholder="Ürün adı yaz — ör. vanilya, süt, espresso…"
-                  aria-label="Ürün geliş geçmişi arama"
-                  style={{
-                    flex: '1 1 240px', maxWidth: 380, padding: '8px 12px', borderRadius: 10,
-                    border: `1px solid ${R.cizgi3}`, background: R.girinti, color: R.krem,
-                    fontSize: 12.5, fontFamily: 'inherit', outline: 'none',
-                  }}
-                />
+                <div style={{ position: 'relative', flex: '1 1 240px', maxWidth: 380 }}>
+                  <input
+                    value={ugSorgu}
+                    onChange={(e) => { setUgSorgu(e.target.value); setUgListeAcik(true); }}
+                    onKeyDown={(e) => { if (e.key === 'Enter') ugAra(); if (e.key === 'Escape') setUgListeAcik(false); }}
+                    placeholder="Ürün adı yaz — ör. esp, vanilya…"
+                    aria-label="Ürün geliş geçmişi arama"
+                    style={{
+                      width: '100%', boxSizing: 'border-box', padding: '8px 12px', borderRadius: 10,
+                      border: `1px solid ${R.cizgi3}`, background: R.girinti, color: R.krem,
+                      fontSize: 12.5, fontFamily: 'inherit', outline: 'none',
+                    }}
+                  />
+                  {/* 🗂 KATALOG ÖNERİLERİ — "esp" → Espresso; tıkla = o ürünün
+                      tarihçesi (Atalay cari dosyası deseninin ürün hâli).
+                      Serbest arama da yaşıyor: öneri seçmek zorunlu değil. */}
+                  {ugListeAcik && ugSorgu.trim().length >= 2 && Array.isArray(ugKatalog) && (() => {
+                    const q = ugKucuk(ugSorgu.trim());
+                    const esler = ugKatalog
+                      .filter((k) => ugKucuk(k.ad).includes(q) || (k.kod && ugKucuk(k.kod).includes(q)))
+                      .slice(0, 8);
+                    if (!esler.length) return null;
+                    return (
+                      <div role="listbox" aria-label="Ürün önerileri" style={{
+                        position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 30,
+                        marginTop: 4, borderRadius: 10, border: `1px solid ${R.cizgi3}`,
+                        background: R.zemin2 || R.girinti, boxShadow: '0 14px 30px rgba(0,0,0,.45)',
+                        overflow: 'hidden',
+                      }}>
+                        {esler.map((k) => (
+                          <div
+                            key={`${k.ad}|${k.kod}`}
+                            role="option"
+                            tabIndex={0}
+                            onClick={() => { setUgSorgu(k.ad); ugAra(k.ad); }}
+                            onKeyDown={(e) => { if (e.key === 'Enter') { setUgSorgu(k.ad); ugAra(k.ad); } }}
+                            style={{
+                              padding: '7px 12px', fontSize: 12.5, color: R.krem, cursor: 'pointer',
+                              borderBottom: `1px solid ${R.cizgi3}`, display: 'flex', gap: 8, alignItems: 'baseline',
+                            }}
+                          >
+                            <span style={{ fontWeight: 600 }}>{k.ad}</span>
+                            {k.kod && <span style={{ fontSize: 10.5, color: R.not3, fontFamily: F.mono }}>{k.kod}</span>}
+                            <span style={{ marginLeft: 'auto', fontSize: 10.5, color: R.not2 }}>tarihçeyi aç ›</span>
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })()}
+                </div>
                 <button
                   onClick={() => ugAra()}
                   disabled={ugMesgul}
