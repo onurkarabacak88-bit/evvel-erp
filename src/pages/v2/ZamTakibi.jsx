@@ -62,7 +62,7 @@ function Yukleniyor() {
   );
 }
 
-export default function ZamTakibi({ onToast }) {
+export default function ZamTakibi({ onToast, onSayac }) {
   const [alarmlar, setAlarmlar] = useState(null);
   const [alarmHata, setAlarmHata] = useState('');
   const [esik, setEsik] = useState(15);
@@ -72,11 +72,18 @@ export default function ZamTakibi({ onToast }) {
     setAlarmHata('');
     api('/ops/fiyat-zam-alarmlari?gun=180&limit=60')
       .then((d) => {
-        setAlarmlar(Array.isArray(d?.alarmlar) ? d.alarmlar : []);
+        const liste = Array.isArray(d?.alarmlar) ? d.alarmlar : [];
+        setAlarmlar(liste);
         if (d?.esik_yuzde) setEsik(sayi(d.esik_yuzde));
+        // Sekme rozeti EKRANLA BİRLİKTE nefes alır (sahip: "gördüm tıklanınca
+        // düşmüyordu"): her başarılı yüklemede — ilk açılış VE gördüm sonrası —
+        // incelenmemiş adet kabuğa bildirilir. HATA'da bildirilmez (catch'te
+        // çağrı yok): bilinmeyen durumda rozet son bilinen sayıda kalır,
+        // uydurma 0'a düşürülmez.
+        onSayac?.(liste.filter((a) => !a.goruldu).length);
       })
       .catch((e) => setAlarmHata(e?.message || 'Zam alarmları alınamadı'));
-  }, []);
+  }, [onSayac]);
   useEffect(() => { alarmYukle(); }, [alarmYukle]);
 
   // HATA ≠ BOŞ: alarm ucu düşerse "zam yok, tedarik sakin" DEMEK yasak —

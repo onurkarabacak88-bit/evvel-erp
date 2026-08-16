@@ -9,7 +9,7 @@
 // Not: bu kabuk mevcut açık-krem temayı DEĞİŞTİRMEZ — #tasarim-v2 rotasında ayrı
 // yaşar. Pilot onaylanırsa tema token'ları index.css'e taşınır.
 // ─────────────────────────────────────────────────────────────────────────────
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api, fmt, istekHatalari, istekHatalariniTemizle, istekHatasiDinle } from '../../utils/api';
 import { R, F, MODULLER, GUN_SONU_MODULLERI, TARIH_GEZGINI_EKRANLARI, kartYuzey } from './tema';
 import { Ikon, KpiSeridi, Hero, Liste, Tablo, Cekmece, Toast, KopruDurumu, HataBandi } from './parcalar';
@@ -521,6 +521,22 @@ export default function TasarimV2({ onGit }) {
     if (kritikSayi > 0) setRozetler(r => ({ ...r, genelAcik: String(kritikSayi) }));
   }, [panel, uyarilar]);
 
+  // 🔔 ZAM ROZETİ CANLI KANALI (2026-08-16, sahip: "gördüm tıklanınca
+  // düşmüyordu"). Rozet açılışta BİR KEZ sayılıyordu; Zam Takibi'nde "gördüm"
+  // denince liste yenileniyor ama sekme rozeti 9'da kalıyordu — ekran ile
+  // rozet çelişiyordu (ROZET ≠ EKRAN tuzağının canlı-güncelleme yüzü).
+  // ZamTakibi her başarılı yüklemede incelenmemiş adedi buraya bildirir;
+  // 0'a inince anahtar SİLİNİR (koy() 0'ı atladığı için eski sayı asılı
+  // kalırdı — silme bu yüzden açık).
+  const zamSayacGuncelle = useCallback((n) => {
+    setRozetler((r) => {
+      const y = { ...r };
+      if (Number(n) > 0) y.genelZam = String(n);
+      else delete y.genelZam;
+      return y;
+    });
+  }, []);
+
   const bugunOdemeToplam = bugunOdemeler.reduce((s, o) => s + sayi(o.tutar ?? o.kalan ?? o.tahmini_tutar), 0);
   // 📅 GECİKMİŞ / BUGÜN AYRIMI (2026-08-09, sahip: "bugün ödenecekler neden bu
   // kadar yüksek?"). Sebep: liste "vadesi bugün VE GEÇMİŞ" olanları birlikte
@@ -788,7 +804,7 @@ export default function TasarimV2({ onGit }) {
     if (mod === 'genel') {
       // onToast (2026-08-16): 'zam' görünümü "gördüm" işaretlemesi yapıyor —
       // yazma sonucunun geri bildirimi kabuğun toast'ından geçer.
-      return <GenelModulu gorunum={gorunum} onCekmece={setCekmece} onKopru={koprule} onToast={setToast} />;
+      return <GenelModulu gorunum={gorunum} onCekmece={setCekmece} onKopru={koprule} onToast={setToast} onZamSayac={zamSayacGuncelle} />;
     }
     if (mod === 'kart') {
       return <KartModulu gorunum={gorunum} onCekmece={setCekmece} onKopru={koprule} onToast={setToast} />;

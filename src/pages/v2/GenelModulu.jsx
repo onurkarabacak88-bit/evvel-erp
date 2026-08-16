@@ -532,7 +532,7 @@ function SubeGrubu({ sube, adet, toplam, kelimeler, acik, onAc, cocuk }) {
   );
 }
 
-export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast }) {
+export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZamSayac }) {
   const [veri, setVeri] = useState(null);
   const [hata, setHata] = useState('');
   // ⚠️ HOOK YERİ: aşağıda `if (!veri) return …` erken çıkışları var — bu iki
@@ -599,7 +599,7 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast }) {
   // yüklenene kadar "Genel bakış yükleniyor…" gösterir; /panel düşerse de
   // hiç açılmazdı. Bir ekranın başka bir ekranın verisine rehin olmaması için
   // dal buraya alındı. (Hook'ların hepsi yukarıda — koşullu hook yok.)
-  if (gorunum === 'zam') return <ZamTakibi onToast={onToast} />;
+  if (gorunum === 'zam') return <ZamTakibi onToast={onToast} onSayac={onZamSayac} />;
 
   if (hata && !veri) return <HataBandi mesaj={hata} onTekrar={yukle} />;
   if (!veri) {
