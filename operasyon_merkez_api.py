@@ -11148,6 +11148,114 @@ def ops_siparis_toptanci_listesi(
     }
 
 
+@router.get("/urun-gelis-gecmisi")
+def ops_urun_gelis_gecmisi(urun: str, gun: int = Query(365, ge=7, le=730), sube_id: Optional[str] = None):
+    """ÜRÜN GELİŞ TAKİBİ (2026-08-16, sahip: "vanilya milkshake toptancıdan geliş
+    tarihleri… bunu takip edebilecek bir sistem kurmalıyız").
+
+    Kaynak: toptanci_siparis (tedarikçiye giden gönderim + teslim_ts kabul anı).
+    ŞUBELER ARASI SEVKİYAT DAHİL DEĞİL — o ayrı akış (sevkiyat kulesi); burada
+    yalnız TOPTANCIDAN gelenler sayılır. Kalem eşleşmesi ad-içerir (LIKE);
+    miktar anahtarı kayıtlarda 'adet' ya da 'miktar' olabilir → ikisi de okunur.
+
+    Dönüş: gelisler (teslim alınmış, tarih desc) + bekleyenler (gönderildi,
+    teslim yok) + istatistik (adet, ilk/son geliş, ortalama aralık gün,
+    şube ve tedarikçi kırılımı). Ortalama aralık FARKLI GÜNLER üzerinden
+    hesaplanır (aynı güne iki teslim aralığı 0 gün diye ortalamayı ezmesin).
+    """
+    q = (urun or "").strip()
+    if len(q) < 2:
+        raise HTTPException(400, "urun zorunlu (en az 2 karakter)")
+    gun_i = max(7, min(730, int(gun or 365)))
+    sid = (sube_id or "").strip() or None
+    with db() as (conn, cur):
+        params: list = [gun_i, f"%{q.lower()}%"]
+        kos = ""
+        if sid:
+            kos = "AND ts.sube_id = %s"
+            params.append(sid)
+        cur.execute(
+            f"""
+            SELECT ts.id, ts.sube_id, COALESCE(s.ad, '—') AS sube_adi,
+                   COALESCE(ts.tedarikci_ad, '—') AS tedarikci_ad,
+                   ts.durum,
+                   (ts.teslim_ts AT TIME ZONE 'Europe/Istanbul') AS teslim_ts,
+                   (ts.olusturma AT TIME ZONE 'Europe/Istanbul') AS siparis_ts,
+                   k->>'urun_ad' AS urun_ad,
+                   COALESCE(NULLIF(k->>'adet',''), NULLIF(k->>'miktar','')) AS miktar,
+                   COALESCE(k->>'birim','') AS birim
+            FROM toptanci_siparis ts
+            CROSS JOIN LATERAL jsonb_array_elements(ts.kalemler) k
+            LEFT JOIN subeler s ON s.id = ts.sube_id
+            WHERE ts.durum <> 'iptal'
+              AND ts.olusturma >= now() - (%s * INTERVAL '1 day')
+              AND lower(coalesce(k->>'urun_ad','')) LIKE %s
+              {kos}
+            ORDER BY COALESCE(ts.teslim_ts, ts.olusturma) DESC
+            """,
+            params,
+        )
+        rows = [dict(r) for r in (cur.fetchall() or [])]
+
+    gelisler: List[Dict[str, Any]] = []
+    bekleyenler: List[Dict[str, Any]] = []
+    sube_kirilim: Dict[str, Dict[str, Any]] = {}
+    ted_kirilim: Dict[str, int] = {}
+    for d in rows:
+        kayit = {
+            "urun_ad": d.get("urun_ad"),
+            "miktar": d.get("miktar"),
+            "birim": d.get("birim") or "",
+            "sube": d.get("sube_adi"),
+            "tedarikci": d.get("tedarikci_ad"),
+            "siparis_ts": str(d.get("siparis_ts") or "")[:16].replace("T", " "),
+        }
+        ts_ = d.get("teslim_ts")
+        if ts_ is not None:
+            kayit["gelis_ts"] = str(ts_)[:16].replace("T", " ")
+            kayit["gelis_tarih"] = str(ts_)[:10]
+            gelisler.append(kayit)
+            sk = sube_kirilim.setdefault(str(d.get("sube_adi")), {"adet": 0, "son": ""})
+            sk["adet"] += 1
+            if kayit["gelis_tarih"] > sk["son"]:
+                sk["son"] = kayit["gelis_tarih"]
+            ted_kirilim[str(d.get("tedarikci_ad"))] = ted_kirilim.get(str(d.get("tedarikci_ad")), 0) + 1
+        else:
+            kayit["durum"] = str(d.get("durum") or "")
+            bekleyenler.append(kayit)
+
+    # Ortalama geliş aralığı — FARKLI teslim günleri üzerinden.
+    gunler = sorted({g["gelis_tarih"] for g in gelisler})
+    ort_aralik = None
+    if len(gunler) >= 2:
+        from datetime import date as _d
+        farklar = []
+        for a, b in zip(gunler, gunler[1:]):
+            try:
+                farklar.append((_d.fromisoformat(b) - _d.fromisoformat(a)).days)
+            except Exception:
+                pass
+        if farklar:
+            ort_aralik = round(sum(farklar) / len(farklar), 1)
+
+    return {
+        "sorgu": q,
+        "gun": gun_i,
+        "kaynak_notu": "toptancı sipariş/kabul kayıtları — şubeler arası sevkiyat DAHİL DEĞİL",
+        "gelisler": gelisler,
+        "bekleyenler": bekleyenler,
+        "istatistik": {
+            "gelis_adet": len(gelisler),
+            "farkli_gun": len(gunler),
+            "ilk_gelis": gunler[0] if gunler else None,
+            "son_gelis": gunler[-1] if gunler else None,
+            "ortalama_aralik_gun": ort_aralik,
+            "sube_kirilim": sube_kirilim,
+            "tedarikci_kirilim": ted_kirilim,
+        },
+    }
+
+
 @router.get("/toptanci-teslimler")
 def ops_toptanci_teslimler(gun: int = 30, sube_id: Optional[str] = None):
     """
