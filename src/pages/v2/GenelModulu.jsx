@@ -69,6 +69,72 @@ const kayitSubesi = (u) => {
   const ilk = ham.split(AYIRAC_RE).filter(Boolean)[0] || '';
   return subeSozlukten(ilk);
 };
+
+// ═══════════════════ ŞUBE IŞIKLARI (Sabah Kokpiti B1) ═══════════════════════
+// Sahip sabah ilk şunu soruyor: "dükkânlar açıldı mı, dün kapandı mı?"
+// Kaynak: /ops/kapanis-takip (bugün + dün) ve /subeler (sezon + açılış saati).
+//
+// ⚠️ RENK-KÖRÜ YEDEĞİ: her ışığın yanında İŞARET var (✓ / – / !) — karar
+// yalnız renge bağlı kalmaz.
+const ISIK = {
+  acik: { renk: R.yesil, isaret: '✓', ad: 'açık' },
+  kapandi: { renk: R.yesil, isaret: '✓', ad: 'gün kapandı' },
+  bekleniyor: { renk: R.amber, isaret: '–', ad: 'henüz açılmadı' },
+  gec: { renk: R.kirmizi, isaret: '!', ad: 'açılmadı · geç' },
+  sezon: { renk: R.not3, isaret: '–', ad: 'sezon kapalı' },
+  veriYok: { renk: R.not3, isaret: '?', ad: 'veri yok' },
+};
+/** Açılıştan sonra kaç dakika "hâlâ normal" sayılır (amber → kırmızı eşiği). */
+const GEC_TOLERANS_DK = 60;
+const VARSAYILAN_ACILIS_DK = 8 * 60;   // acilis_saati tanımsızsa 08:00
+
+/** "HH:MM" → dakika. Çözülemezse null (uydurma saat üretmeyiz). */
+const saatDakika = (s) => {
+  const m = String(s || '').match(/^(\d{1,2}):(\d{2})/);
+  if (!m) return null;
+  const sa = Number(m[1]); const dk = Number(m[2]);
+  if (sa > 23 || dk > 59) return null;
+  return sa * 60 + dk;
+};
+/** Şu anki İstanbul saati (dakika). Tarayıcı saat dilimi ne olursa olsun TR. */
+const trSimdiDk = (d = new Date()) => {
+  const p = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/Istanbul', hour: '2-digit', minute: '2-digit', hour12: false,
+  }).format(d);
+  return saatDakika(p) ?? 0;
+};
+
+/**
+ * Bir şubenin ışığı. SAF fonksiyon — test edilebilsin diye `simdiDk` dışarıdan.
+ * @param satir  bugünün /ops/kapanis-takip satırı (yoksa null)
+ * @param tanim  /subeler kaydı (yoksa null → sezon bilinmez, gri YAPILMAZ)
+ * @param dunSatir dünün satırı; `dunBilinmiyor` true ise dün hakkında HÜKÜM YOK
+ */
+const subeIsigi = ({ satir, tanim, dunSatir, dunBilinmiyor, simdiDk }) => {
+  if (tanim?.sezon_kapali) return { ...ISIK.sezon, anahtar: 'sezon', dunMetni: null };
+  // Dün kapanışı: bilinmiyorsa "eksik" DEME (sahte alarm) — "—" yaz.
+  const dunKapandi = dunBilinmiyor || !dunSatir ? null : !!dunSatir.kapanis_tamam;
+  const dunMetni = dunKapandi === null ? 'dün —'
+    : dunKapandi ? 'dün ✓' : 'dün kapanış ✗';
+
+  if (!satir) return { ...ISIK.veriYok, anahtar: 'veriYok', dunMetni };
+
+  let taban;
+  if (satir.kapanis_tamam) taban = { ...ISIK.kapandi, anahtar: 'kapandi' };
+  else if (satir.acildi) taban = { ...ISIK.acik, anahtar: 'acik' };
+  else {
+    const acilisDk = saatDakika(tanim?.acilis_saati) ?? VARSAYILAN_ACILIS_DK;
+    taban = simdiDk < acilisDk + GEC_TOLERANS_DK
+      ? { ...ISIK.bekleniyor, anahtar: 'bekleniyor' }
+      : { ...ISIK.gec, anahtar: 'gec' };
+  }
+  // Dün kapanışı EKSİKSE ışık kırmızıya çekilir (para/ciro izi eksik demektir),
+  // ama etiket bugünün durumunu söylemeye devam eder — iki gerçek de görünür.
+  if (dunKapandi === false) {
+    return { ...taban, renk: ISIK.gec.renk, isaret: '!', dunMetni, dunEksik: true };
+  }
+  return { ...taban, dunMetni };
+};
 const AY_KISA = ['Oca', 'Şub', 'Mar', 'Nis', 'May', 'Haz', 'Tem', 'Ağu', 'Eyl', 'Eki', 'Kas', 'Ara'];
 const kisaGun = (iso) => {
   const m = String(iso || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
@@ -210,48 +276,153 @@ const acilirBaslikOzellik = (onAc, acik, etiket) => ({
   onKeyDown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onAc(); } },
 });
 
-/**
- * KATMAN ÖZETİ — 5 katmanın her biri VARSAYILAN OLARAK TEK SATIR.
- *
- * 🔑 GÜVEN İLKESİ: kapalıyken hiçbir bilgi SAKLANMAZ. Sahip katmanı açmadan da
- * ADET · TOPLAM · EN BÜYÜK KALEM · EN ESKİ GECİKME'yi görür; "aç" yalnız
- * kalem kalem dökümü getirir. (Eski hâlde 9+3+8+1+1=22 kalem hep açıktı ve
- * ekran 117 satırlık tek kaydırmaya dönüyordu.)
- */
-function KatmanOzet({ baslik, renk, adet, toplam, enBuyukMetin, vadeMetni, not, acik, onAc, cocuk }) {
+// ═══════════════════ MOZAİK PARÇALARI (Sabah Kokpiti) ═══════════════════════
+// Sahip: "hâlâ alt alta sıralı ve rahatsız edici — DESEN kurmalıyız."
+// Bu yüzden her bant YATAY bir ızgaradır; hiçbir bant dikey liste değildir.
+// `Izgara` tek yerden yönetir: kartlar eşit yükseklikte (stretch), gap tutarlı.
+
+/** Bant başlığı — küçük, sessiz etiket (ŞUBELER / BUGÜN / PARA / KISA YOLLAR). */
+function Bant({ etiket, not, cocuk }) {
   return (
-    <div style={{ ...kartYuzey, padding: '12px 14px', borderLeft: `3px solid ${renk}` }}>
-      <div
-        {...acilirBaslikOzellik(onAc, acik, `${baslik} — ${acik ? 'kapat' : 'kalemleri aç'}`)}
-        style={{ cursor: 'pointer', outline: 'none' }}
-      >
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-          <span style={{ width: 7, height: 7, borderRadius: 99, background: renk, flexShrink: 0, alignSelf: 'center' }} />
-          {/* Tipografik rütbe: bölüm başlığı 13 Fraunces */}
-          <span style={{ fontFamily: F.baslik, fontSize: 13, fontWeight: 600, lineHeight: 1.3, minWidth: 0 }}>{baslik}</span>
-          <span style={{
-            marginLeft: 'auto', whiteSpace: 'nowrap', fontFamily: F.mono,
-            fontSize: 13, fontWeight: 700, color: renk,
-          }}>
-            {toplam}
-          </span>
-        </div>
-        {/* Meta 11px + not2 → başlıkla YARIŞMAZ (Codex: sayaç başlığı bastırmasın) */}
-        <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8, marginTop: 5 }}>
-          <div style={{ fontSize: 11, color: R.not2, lineHeight: 1.45, minWidth: 0 }}>
-            {[`${adet} kalem`, enBuyukMetin, vadeMetni].filter(Boolean).join(' · ')}
-          </div>
-          <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', flexShrink: 0 }}>
-            <AcKapaOk acik={acik} renk={R.not3} />
-          </span>
-        </div>
+    <section style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
+        <span style={{
+          fontSize: 10, letterSpacing: '1.1px', textTransform: 'uppercase',
+          color: R.not, fontWeight: 700,
+        }}>
+          {etiket}
+        </span>
+        {not && <span style={{ marginLeft: 'auto', fontSize: 10.5, color: R.not3 }}>{not}</span>}
       </div>
-      {acik && (
-        <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${R.cizgi2}` }}>
-          {/* 'satıra tıkla' notu YALNIZ ilk açılan katmanda — 5 kez tekrarı gürültüydü */}
-          {not && <div style={{ fontSize: 10.5, color: R.not3, marginBottom: 8 }}>{not}</div>}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>{cocuk}</div>
+      {cocuk}
+    </section>
+  );
+}
+
+/** Yatay kart ızgarası — `en` = kartın en dar hâli (auto-fit ile sarar). */
+function Izgara({ en, cocuk, gap = 10 }) {
+  return (
+    <div style={{
+      display: 'grid', gridTemplateColumns: `repeat(auto-fit,minmax(${en}px,1fr))`,
+      gap, alignItems: 'stretch',
+    }}>
+      {cocuk}
+    </div>
+  );
+}
+
+/**
+ * ŞUBE IŞIĞI — sabahın ilk sorusu: "bu dükkân açıldı mı?"
+ * TEK BAKIŞ KURALI: uzaktan okunan şey RENK + İŞARET; rakamlar mini satırda.
+ */
+function SubeIsigi({ ad, isik, ciroMetni }) {
+  return (
+    <div
+      title={`${ad} — ${isik.ad}${isik.dunEksik ? ' · dün kapanış eksik' : ''}`}
+      style={{
+        ...kartYuzey, padding: '11px 12px', borderRadius: 14,
+        borderTop: `3px solid ${isik.renk}`,
+        display: 'flex', flexDirection: 'column', gap: 7, minWidth: 0,
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+        {/* 11px ışık + renk-körü işareti — renge tek başına güvenilmez */}
+        <span style={{
+          width: 11, height: 11, borderRadius: 99, background: isik.renk, flexShrink: 0,
+          boxShadow: `0 0 0 3px ${isik.renk}22`,
+        }} />
+        <span style={{
+          fontFamily: F.baslik, fontSize: 13.5, fontWeight: 600, color: R.krem,
+          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0,
+        }}>
+          {ad}
+        </span>
+        <span style={{
+          marginLeft: 'auto', flexShrink: 0, fontFamily: F.mono, fontSize: 12,
+          fontWeight: 700, color: isik.renk,
+        }}>
+          {isik.isaret}
+        </span>
+      </div>
+      <div style={{ fontSize: 11, color: isik.renk, fontWeight: 600, lineHeight: 1.25 }}>{isik.ad}</div>
+      <div style={{ fontSize: 10.5, color: R.not2, lineHeight: 1.3 }}>
+        {[ciroMetni, isik.dunMetni].filter(Boolean).join(' · ')}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * KATMAN ÇİPİ — gecikme kovasının yatay özeti (eski dikey akordeon satırının
+ * mozaik karşılığı). Tıklayınca kalem listesi bandın ALTINDA yerinde açılır.
+ *
+ * 🔑 GÜVEN İLKESİ korunur: kapalıyken ADET · TOPLAM · EN ESKİ · EN BÜYÜK
+ * dördü de kartın üstünde durur — hiçbiri "aç"ın arkasına saklanmaz.
+ */
+function KatmanCipi({ baslik, renk, adet, toplam, enBuyukMetin, vadeMetni, acik, onAc }) {
+  return (
+    <div
+      {...acilirBaslikOzellik(onAc, acik, `${baslik} — ${acik ? 'kapat' : `${adet} kalemi aç`}`)}
+      style={{
+        ...kartYuzey, padding: '10px 12px', borderRadius: 14,
+        borderTop: `3px solid ${renk}`, cursor: 'pointer', outline: 'none',
+        display: 'flex', flexDirection: 'column', gap: 3, minWidth: 0,
+        ...(acik ? { boxShadow: `0 0 0 1px ${renk}66, 0 12px 28px rgba(0,0,0,.3)` } : null),
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <span style={{ fontSize: 10.5, fontWeight: 700, color: renk, letterSpacing: '.3px', minWidth: 0 }}>
+          {baslik}
+        </span>
+        <span style={{ marginLeft: 'auto', flexShrink: 0 }}><AcKapaOk acik={acik} renk={R.not3} /></span>
+      </div>
+      {/* Rütbe: çipin ana rakamı 17 mono — KPI'nın (22) altında, metnin üstünde */}
+      <div style={{ fontFamily: F.mono, fontSize: 17, fontWeight: 700, color: renk, lineHeight: 1.15 }}>
+        {toplam}
+      </div>
+      <div style={{ fontSize: 10.5, color: R.not2, lineHeight: 1.3 }}>
+        {[`${adet} kalem`, vadeMetni].filter(Boolean).join(' · ')}
+      </div>
+      <div style={{ fontSize: 10.5, color: R.not3, lineHeight: 1.3 }}>{enBuyukMetin}</div>
+    </div>
+  );
+}
+
+/** Kısa yol / iş çipi — yatay bant elemanı. `rozet` mevcut sayaçlardan gelir.
+ *  `buyuk` = BUGÜN bandının iş kartı (ikon kutusu + iki satır);
+ *  yalın hâl = KISA YOLLAR çipi (yalnız renk noktası — 6 çip tek satıra sığsın
+ *  diye ikon kutusu yok; nokta renk kodlamasını yine de taşır). */
+function Cip({ ikonYol, renk, baslik, alt, rozet, aksiyonAd, onTikla, buyuk }) {
+  return (
+    <div
+      {...(onTikla ? acilirBaslikOzellik(onTikla, null, aksiyonAd || baslik) : {})}
+      style={{
+        ...kartYuzey, borderRadius: 13, padding: buyuk ? '11px 13px' : '7px 11px',
+        borderLeft: `3px solid ${renk}`, cursor: onTikla ? 'pointer' : 'default',
+        outline: 'none', display: 'flex', alignItems: 'center', gap: buyuk ? 9 : 7, minWidth: 0,
+      }}
+    >
+      {buyuk && ikonYol && <IkonRozet yol={ikonYol} renk={renk} boyut={15} />}
+      {!buyuk && (
+        <span style={{ width: 6, height: 6, borderRadius: 99, background: renk, flexShrink: 0 }} />
+      )}
+      <div style={{ minWidth: 0 }}>
+        <div style={{
+          fontSize: buyuk ? 13.5 : 12, fontWeight: 600, color: buyuk ? renk : R.krem,
+          lineHeight: 1.3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: buyuk ? 'normal' : 'nowrap',
+        }}>
+          {baslik}
         </div>
+        {alt && <div style={{ fontSize: 10.5, color: R.not2, marginTop: 2, lineHeight: 1.3 }}>{alt}</div>}
+      </div>
+      {rozet != null && (
+        <span style={{
+          marginLeft: 'auto', flexShrink: 0, padding: '2px 8px', borderRadius: 99,
+          fontFamily: F.mono, fontSize: 10.5, fontWeight: 700,
+          background: `${renk}24`, color: renk,
+        }}>
+          {rozet}
+        </span>
       )}
     </div>
   );
@@ -315,13 +486,40 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru }) {
       // NAKİT KONUM (2026-08-08): "param şu an nerede?" — şube kasası / yolda /
       // banka duraklarının toplamı ile kasa defteri bakiyesini karşılaştırır.
       api('/ops/metrics/nakit-konum?gun=60').catch(() => null),
-    ]).then(([panel, uyarilar, onaylar, odenen, vadeli, nakit]) => {
+      // ☀️ SABAH KOKPİTİ (2026-08-16, sahip: "dükkânın açılıp açılmadığı gibi
+      // KISA YOLLARLA 2 dakikada inceleyeceği şeyler"). YENİ UÇ YAZILMADI —
+      // klasik Operasyon Merkezi'nin "📊 Kapanış Takip" sekmesini besleyen uç
+      // (operasyon_merkez_api.kapanis_takip:1952) şube başına AÇILIŞ + KAPANIŞ +
+      // CİRO'yu zaten döndürüyor.
+      // ⚠️ SENTİNEL: null yerine '__HATA__' — okuma düşerse "hiç şube yok"
+      // (sahte-yeşil) ile karışmasın; kartlar dürüstçe "veri yok" der.
+      api('/ops/kapanis-takip').catch(() => '__HATA__'),
+      // Şube tanımları: `sezon_kapali` (gri ışık) ve `acilis_saati` (erken/geç
+      // eşiği) YALNIZ burada var — kapanis-takip yalnız id+ad seçiyor.
+      api('/subeler').catch(() => null),
+    ]).then(([panel, uyarilar, onaylar, odenen, vadeli, nakit, kapanis, subeler]) => {
       // 🔴 P1 (2026-08-12, Genel denetimi) FAKE-GREEN: /panel DÜŞSE de setHata VE setVeri
       // ikisi de çalışıyordu → `hata && !veri` (98) veri dolu olduğu için banner GÖSTERMEZ,
       // panel={} ile "0/boş/yeşil" dashboard render ediyordu (kasa 0 yeşil vb). Panel
       // yoksa veri KURMA → HataBandi görünsün (kısmi money-read hatası gizlenmesin).
       if (!panel) { setHata('Panel verisi alınamadı — "0/boş" görünüm yanıltıcı olur, yenileyin.'); return; }
-      setVeri({ panel, uyarilar, onaylar, odenen, vadeli, nakit });
+      setVeri({ panel, uyarilar, onaylar, odenen, vadeli, nakit, kapanis, subeler, dun: null });
+
+      // ── DÜNÜN KAPANIŞI (zincirli ikinci okuma) ──────────────────────────
+      // ⚠️ "Dün"ü İSTEMCİDE HESAPLAMIYORUZ. Sunucunun İŞ GÜNÜ kavramı var
+      // (gece 02:00'a kadar önceki takvim günü — is_gunu_tr); tarayıcı saati
+      // ile hesaplarsak gece yarısı ile 02:00 arasında YANLIŞ GÜNÜ "dün" diye
+      // gösteririz. Bu yüzden dün = sunucunun döndürdüğü is_gunu_tr − 1.
+      const isGunu = kapanis && kapanis !== '__HATA__' ? String(kapanis.is_gunu_tr || '') : '';
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(isGunu)) return;
+      const d = new Date(`${isGunu}T12:00:00Z`);
+      d.setUTCDate(d.getUTCDate() - 1);
+      const dunIso = d.toISOString().slice(0, 10);
+      // Fonksiyonel merge: yanıt geç gelirse ve sahip bu arada yenilediyse
+      // eski cevabın yeni veriyi ezmemesi için state'in KENDİSİNE sorulur.
+      api(`/ops/kapanis-takip?tarih=${dunIso}`)
+        .then((x) => setVeri((s) => (s ? { ...s, dun: x } : s)))
+        .catch(() => setVeri((s) => (s ? { ...s, dun: '__HATA__' } : s)));
     }).catch((e) => setHata(e?.message || 'Veri alınamadı'));
   };
   useEffect(yukle, []);
@@ -715,8 +913,6 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru }) {
       { anahtar: 'bugun', baslik: 'BUGÜN vadesi gelen', renk: R.bakir, kayitlar: gBug },
       { anahtar: 'yaklasan', baslik: 'YAKLAŞAN · gelecek günler', renk: R.krem, kayitlar: gYak },
     ].filter((k) => k.kayitlar.length > 0);
-    // 'satıra tıkla' notu YALNIZ ilk AÇILAN katmanda bir kez (5 kez tekrarı gürültü).
-    const ilkAcikAnahtar = katmanlar.find((k) => acikKatman[k.anahtar])?.anahtar || null;
 
     const katmanIcerigi = (anahtar, kayitlar) => {
       const { gruplar, tekil } = kovaGorunumu(kayitlar);
@@ -753,24 +949,113 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru }) {
         : `bekleyen ${fmt(sayi(v.toplam_bekleyen))} · bu ay ödenen ${fmt(sayi(v.toplam_odenen))}`)
       : 'veri yok';
 
-    const bolumBasligi = (metin, not) => (
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 2 }}>
-        <span style={{
-          fontSize: 10.5, letterSpacing: '.9px', textTransform: 'uppercase',
-          color: R.not, fontWeight: 700,
-        }}>
-          {metin}
-        </span>
-        {not && <span style={{ marginLeft: 'auto', fontSize: 10.5, color: R.not3 }}>{not}</span>}
-      </div>
+    // ═════════ B1 — ŞUBE IŞIKLARI (sabahın ilk sorusu) ═══════════════════════
+    // Kaynaklar: /ops/kapanis-takip (bugün) · aynı uç ?tarih=dün · /subeler.
+    // Kart listesini /subeler SÜRÜKLER: sezon-kapalı şube kapanis-takip'te de
+    // görünür (aktif=TRUE) ama sezon bayrağı YALNIZ /subeler'de var; ikisi
+    // birleşmezse kapalı dükkân "açılmadı · geç" diye kırmızı yanardı.
+    const kapanisHam = veri.kapanis;
+    const kapanisHata = kapanisHam === '__HATA__' || !kapanisHam;
+    const bugunSatir = new Map(
+      (kapanisHata ? [] : (kapanisHam.satirlar || [])).map((r) => [String(r.sube_id), r]),
     );
+    const dunHam = veri.dun;
+    // 3 hâl AYRI: yükleniyor (null) · okuma düştü ('__HATA__') · geldi.
+    const dunBilinmiyor = !dunHam || dunHam === '__HATA__';
+    const dunSatir = new Map(
+      (dunBilinmiyor ? [] : (dunHam.satirlar || [])).map((r) => [String(r.sube_id), r]),
+    );
+    const subeTanim = Array.isArray(veri.subeler) ? veri.subeler : null;
+    const subeListesi = subeTanim
+      ? subeTanim.filter((s) => s.aktif !== false).map((s) => ({ id: String(s.id), ad: s.ad, tanim: s }))
+      // /subeler düştüyse kapanış satırlarına düşülür — sezon bilgisi olmadan
+      // (bilmediğimiz şeyi "sezon kapalı" diye boyamayız).
+      : (kapanisHata ? [] : (kapanisHam.satirlar || []).map((r) => ({ id: String(r.sube_id), ad: r.sube_adi, tanim: null })));
+    const simdiDk = trSimdiDk();
+    const subeKartlari = subeListesi.map((s) => {
+      const satir = bugunSatir.get(s.id) || null;
+      const isik = subeIsigi({
+        satir, tanim: s.tanim, dunSatir: dunSatir.get(s.id) || null, dunBilinmiyor, simdiDk,
+      });
+      // Bugünün cirosu: kapanış X / onaylı ciro / taslak — hiçbiri yoksa DÜRÜST "—".
+      const ciro = satir ? sayi(satir.ciro_tutar) : 0;
+      const ciroMetni = isik.anahtar === 'sezon' ? null
+        : ciro > 0 ? `bugün ${fmt(ciro)}` : 'bugün ciro —';
+      return { ...s, isik, ciroMetni };
+    });
+
+    // ═════════ B4 — KISA YOLLAR ═══════════════════════════════════════════════
+    // ⚠️ Hedeflerin HEPSİ tema.js MODULLER ağacından doğrulandı (aşağıdaki
+    // yorumlardaki satır numaraları o tanımın yeri). Rozetler YALNIZ Bakış'ın
+    // zaten okuduğu sayaçlardan gelir — rozet için yeni uç çağrılmadı; sayacı
+    // olmayan çip rozetsiz durur (uydurma rozet yok).
+    const kisaYollar = [
+      { k: 'odeme', ad: 'Ödeme Merkezi', ikon: IK.banknot, renk: R.bakir,
+        rozet: gK.length + gU.length + gB.length + gBug.length || null,
+        hedef: '__modul:odeme:bekleyen' },                       // tema.js:202
+      { k: 'onay', ad: 'Onay Kuyruğu', ikon: IK.onay, renk: R.amber,
+        rozet: onaylar.length || null, hedef: '__modul:onaylar:kuyruk' },  // tema.js:215
+      { k: 'cari', ad: 'Cari Ekstre', ikon: IK.dosya, renk: R.mavi,
+        rozet: null, hedef: '__modul:belge:cari' },               // tema.js:283
+      { k: 'zam', ad: 'Zam Takibi', ikon: IK.grafik, renk: R.amber,
+        rozet: null, hedef: '__modul:maliyet:zam' },              // tema.js:238
+      { k: 'kart', ad: 'Kart Dosyaları', ikon: IK.kart, renk: R.mavi,
+        rozet: null, hedef: '__modul:kart:kartlar' },             // tema.js:249
+      { k: 'defter', ad: 'İşlem Defteri', ikon: IK.klasor, renk: R.not2,
+        rozet: null, hedef: '__modul:rapor:defter' },             // tema.js:166
+    ];
+
+    // Açık katmanların detayı PARA bandının ALTINDA, yerinde açılır.
+    const acikKatmanlar = katmanlar.filter((k) => acikKatman[k.anahtar]);
 
     return (
-      <>
-        {/* Y1 — KOMPAKT DURUM ŞERİDİ: 5 → 4 kart. "Vadeli alım" buradan çıktı;
-            o ayrı bir EVREN (tedarikçi sözleri), yanındaki dört kart ise tek
-            para hikâyesi (kasada ne var → ne geçti → bugün ne çıkacak → ne kadar
-            dayanır). Beşinci kart o hikâyenin ritmini bozuyordu. */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+
+        {/* ═════════ BANT 1 — ŞUBELER ═══════════════════════════════════════
+            Sahip 2 dakikalık turunun İLK sorusu: "dükkânlar açıldı mı?"
+            Uzaktan okunan tek şey RENK; rakam mini satırda. */}
+        <Bant
+          etiket="Şubeler"
+          not={kapanisHata ? 'kapanış takibi okunamadı' : (dunBilinmiyor ? 'dün verisi bekleniyor' : null)}
+          cocuk={subeKartlari.length === 0 ? (
+            <div style={{ ...kartYuzey, padding: '13px 15px', fontSize: 12.5, color: R.metin2, borderLeft: `3px solid ${R.kirmizi}` }}>
+              Şube durumu alınamadı — açılış/kapanış ışıkları gösterilemiyor. Yenileyin.
+            </div>
+          ) : (
+            <Izgara en={150} cocuk={subeKartlari.map((s) => (
+              <SubeIsigi key={s.id} ad={s.ad} isik={s.isik} ciroMetni={s.ciroMetni} />
+            ))} />
+          )}
+        />
+
+        {/* ═════════ BANT 2 — BUGÜN ═════════════════════════════════════════
+            Y-dalgasındaki dikey "ilk 3 iş" listesi YATAY çip dizisine indi.
+            Seçim kuralları ve onTikla davranışları AYNEN korundu. */}
+        <Bant
+          etiket="Bugün"
+          not={ilkUcIs.length ? 'önem sırasına dizili' : null}
+          cocuk={ilkUcIs.length === 0 ? (
+            <div style={{ ...kartYuzey, padding: '11px 14px', fontSize: 12.5, color: R.metin2, borderLeft: `3px solid ${R.yesil}` }}>
+              Bugün öne çıkan iş yok — gecikmiş kalem, 48 saatlik yük, bekleyen onay ve motor önerisi bulunmuyor.
+            </div>
+          ) : (
+            <Izgara en={230} cocuk={ilkUcIs.map((is, i) => (
+              <Cip
+                key={is.k}
+                buyuk
+                ikonYol={is.ikonYol}
+                renk={is.renk}
+                baslik={is.metin}
+                alt={[`${i + 1}.`, is.alt, is.onTikla ? `${is.aksiyonAd} →` : null].filter(Boolean).join(' ')}
+                onTikla={is.onTikla}
+                aksiyonAd={is.aksiyonAd}
+              />
+            ))} />
+          )}
+        />
+
+        {/* ═════════ BANT 3 — PARA ═══════════════════════════════════════════ */}
+        <Bant etiket="Para" not={baskiYok ? 'ödeme baskısı yok' : null} cocuk={<>
         <KpiSeridi kpiler={[
           { etiket: 'Kasa', deger: fmt(sayi(p.kasa)), alt: 'kanonik bakiye', renk: sayi(p.kasa) >= 0 ? R.yesil : R.kirmizi },
           { etiket: 'Gecikmiş', deger: fmt(gecikmisToplam), alt: `${gK.length + gU.length + gB.length} kalem`, renk: gecikmisToplam > 0 ? R.kirmizi : R.yesil },
@@ -785,138 +1070,98 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru }) {
           { etiket: 'Dayanıklılık', deger: p.kac_gun_dayanir != null ? `${sayi(p.kac_gun_dayanir)} gün` : '—', alt: 'kasa / günlük yük', renk: p.kac_gun_dayanir == null ? R.not3 : sayi(p.kac_gun_dayanir) < 15 ? R.kirmizi : R.krem },
         ]} />
 
-        {/* Y1 — HİBRİT YERLEŞİM.
-            ⚠️ Inline-style'da media query yok; kolon kırılımı CSS FLEX-WRAP ile
-            çözülür (useState + resize dinleyicisi YOK — o hem gereksiz render
-            hem SSR/ilk-boya tutarsızlığı demek). minWidth'ler eşiği kurar:
-            425 + 300 + 16 = 741px içerik genişliği. v2 kabuğu 74px ikon rayı +
-            222px görünüm sütunu + 60px yatay dolgu yediği için bu ≈ 1097px
-            pencereye denk gelir → hedeflenen "≥1100px'te iki kolon". */}
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'flex-start' }}>
+        {/* Gecikme kovaları — dikey akordeon YERİNE yatay çip dizisi.
+            Boş kova hiç çizilmez; detay bandın ALTINDA yerinde açılır. */}
+        {katmanlar.length > 0 && (
+          <Izgara en={178} cocuk={katmanlar.map((k) => {
+            const o = katmanOzeti(k.kayitlar);
+            return (
+              <KatmanCipi
+                key={k.anahtar}
+                baslik={k.baslik}
+                renk={k.renk}
+                adet={o.adet}
+                toplam={o.toplam}
+                enBuyukMetin={o.enBuyukMetin}
+                vadeMetni={o.vadeMetni}
+                acik={!!acikKatman[k.anahtar]}
+                onAc={() => setAcikKatman((s) => ({ ...s, [k.anahtar]: !s[k.anahtar] }))}
+              />
+            );
+          })} />
+        )}
 
-          {/* ── SOL: BUGÜNÜN İŞLERİ (hero) ─────────────────────────────────── */}
-          <div style={{ flex: '1 1 60%', minWidth: 425, display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {bolumBasligi('Bugünün işleri', ilkUcIs.length ? 'önem sırasına dizili' : null)}
-            <div style={{ ...kartYuzey, padding: '16px 18px', borderLeft: `3px solid ${R.bakir}` }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
-                <IkonRozet yol={IK.pusula} renk={R.bakir} boyut={17} />
-                <span style={{ fontFamily: F.baslik, fontSize: 16, fontWeight: 600 }}>
-                  Bugün ilk {ilkUcIs.length || 3} iş
-                </span>
-              </div>
-              {ilkUcIs.length === 0 ? (
-                <div style={{ fontSize: 13, color: R.metin2, lineHeight: 1.6 }}>
-                  Bugün öne çıkan iş yok — gecikmiş kalem, 48 saatlik yük, bekleyen onay ve
-                  motor önerisi bulunmuyor.
-                </div>
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                  {ilkUcIs.map((is, i) => (
-                    <div
-                      key={is.k}
-                      onClick={is.onTikla}
-                      tabIndex={is.onTikla ? 0 : undefined}
-                      role={is.onTikla ? 'button' : undefined}
-                      onKeyDown={is.onTikla ? (e) => {
-                        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); is.onTikla(); }
-                      } : undefined}
-                      style={{
-                        display: 'flex', alignItems: 'flex-start', gap: 12, padding: '13px 14px',
-                        borderRadius: 12, background: R.girinti,
-                        border: `1px solid ${R.cizgi2}`, borderLeft: `3px solid ${is.renk}`,
-                        cursor: is.onTikla ? 'pointer' : 'default',
-                      }}
-                    >
-                      <span style={{ fontFamily: F.mono, fontSize: 13, fontWeight: 700, color: R.not3, width: 15, flexShrink: 0, lineHeight: 1.5 }}>{i + 1}</span>
-                      <IkonRozet yol={is.ikonYol} renk={is.renk} boyut={15} />
-                      <div style={{ minWidth: 0, flex: 1 }}>
-                        {/* HERO tipografisi: 15,5px (katman satırlarının üstünde) */}
-                        <div style={{ fontSize: 15.5, fontWeight: 600, color: is.renk, lineHeight: 1.35 }}>{is.metin}</div>
-                        <div style={{ fontSize: 11.5, color: R.not2, marginTop: 4 }}>{is.alt}</div>
-                      </div>
-                      {/* Doğrudan aksiyon — "dokun →" jenerikti, nereye gittiği yazılır */}
-                      {is.onTikla && (
-                        <span style={{
-                          flexShrink: 0, alignSelf: 'center', padding: '6px 12px', borderRadius: 9,
-                          border: `1px solid ${R.cizgi3}`, background: R.cizgi, color: R.krem,
-                          fontSize: 11.5, fontWeight: 600, whiteSpace: 'nowrap',
-                        }}>
-                          {is.aksiyonAd || 'Aç'} →
-                        </span>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
+        {baskiYok && (
+          <div style={{
+            ...kartYuzey, padding: '11px 14px', borderLeft: `3px solid ${R.yesil}`,
+            display: 'flex', alignItems: 'center', gap: 10,
+          }}>
+            <IkonRozet yol={IK.onay} renk={R.yesil} boyut={14} />
+            <div style={{ fontSize: 12.5, lineHeight: 1.5, color: R.metin2, minWidth: 0 }}>
+              <b style={{ color: R.yesil }}>Bugün ödeme baskısı yok</b> — gecikmiş, bugün vadesi ve 7 gün içi kalem bulunmuyor.
             </div>
           </div>
+        )}
 
-          {/* ── SAĞ: RİSK ÖZETİ (katman özet satırları + vadeli alım çipi) ──── */}
-          <div style={{ flex: '1 1 36%', minWidth: 300, display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {bolumBasligi('Risk özeti', null)}
-
-            {baskiYok && (
-              <div style={{
-                ...kartYuzey, padding: '13px 15px', borderLeft: `3px solid ${R.yesil}`,
-                display: 'flex', alignItems: 'flex-start', gap: 10,
-              }}>
-                <IkonRozet yol={IK.onay} renk={R.yesil} boyut={14} />
-                <div style={{ fontSize: 12.5, lineHeight: 1.55, color: R.metin2, minWidth: 0 }}>
-                  <b style={{ color: R.yesil }}>Bugün ödeme baskısı yok</b> — gecikmiş, bugün vadesi
-                  ve 7 gün içi kalem bulunmuyor.
-                </div>
-              </div>
-            )}
-
-            {katmanlar.map((k) => {
-              const o = katmanOzeti(k.kayitlar);
-              const acik = !!acikKatman[k.anahtar];
-              return (
-                <KatmanOzet
-                  key={k.anahtar}
-                  baslik={k.baslik}
-                  renk={k.renk}
-                  adet={o.adet}
-                  toplam={o.toplam}
-                  enBuyukMetin={o.enBuyukMetin}
-                  vadeMetni={o.vadeMetni}
-                  not={k.anahtar === ilkAcikAnahtar ? 'satıra tıkla → ödeme dosyası' : null}
-                  acik={acik}
-                  onAc={() => setAcikKatman((s) => ({ ...s, [k.anahtar]: !s[k.anahtar] }))}
-                  cocuk={acik ? katmanIcerigi(k.anahtar, k.kayitlar) : null}
-                />
-              );
-            })}
-
-            {/* Vadeli alım — KPI kartı değil, küçük köprü çipi */}
-            <div
-              {...(onKopru ? acilirBaslikOzellik(
-                () => onKopru('__modul:odeme:tedarikci'), null, 'Tedarikçi Bakiyesi ekranını aç',
-              ) : {})}
-              style={{
-                ...kartYuzey, padding: '11px 13px', borderLeft: `3px solid ${vRenk}`,
-                display: 'flex', alignItems: 'center', gap: 10,
-                cursor: onKopru ? 'pointer' : 'default', outline: 'none',
-              }}
-            >
-              <IkonRozet yol={IK.kule} renk={vRenk} boyut={13} />
-              <div style={{ minWidth: 0 }}>
-                <div style={{ fontSize: 12.5, fontWeight: 600, color: R.krem }}>
-                  Vadeli alım sözleri{v ? ` · ${sayi(v.bekleyen_adet)}` : ''}
-                </div>
-                {/* Ayrı evren olduğu açıkça yazılır — üstteki "Gecikmiş" KPI'ı
-                    ödeme PLANLARINI sayar, bu satır TEDARİKÇİ SÖZLERİNİ. */}
-                <div style={{ fontSize: 11, color: vRenk === R.yesil ? R.not2 : vRenk, marginTop: 2 }}>{vAlt}</div>
-              </div>
-              {onKopru && (
-                <span style={{ marginLeft: 'auto', flexShrink: 0, fontSize: 10.5, color: R.not3, whiteSpace: 'nowrap' }}>
-                  Tedarikçi Bakiyesi →
-                </span>
-              )}
-            </div>
-          </div>
+        {/* Vadeli alım — AYRI EVREN (tedarikçi sözleri), üstteki "Gecikmiş"
+            KPI'ı ödeme PLANLARINI sayar. Para bandında tek satırlık şerit:
+            KPI kartı olarak beşinci sütun olduğunda hikâyenin ritmini bozuyordu,
+            kısa yol çipi olduğunda ise tutarları kayboluyordu. */}
+        <div
+          {...(onKopru ? acilirBaslikOzellik(
+            () => onKopru('__modul:odeme:tedarikci'), null, 'Tedarikçi Bakiyesi ekranını aç',
+          ) : {})}
+          style={{
+            ...kartYuzey, borderRadius: 13, padding: '8px 12px', borderLeft: `3px solid ${vRenk}`,
+            display: 'flex', alignItems: 'center', gap: 9, flexWrap: 'wrap',
+            cursor: onKopru ? 'pointer' : 'default', outline: 'none',
+          }}
+        >
+          <span style={{ display: 'flex', color: vRenk, flexShrink: 0 }}><Ikon yol={IK.kule} boyut={13} /></span>
+          <span style={{ fontSize: 12, fontWeight: 600, color: R.krem }}>
+            Vadeli alım sözleri{v ? ` · ${sayi(v.bekleyen_adet)}` : ''}
+          </span>
+          <span style={{ fontSize: 10.5, color: vRenk === R.yesil ? R.not2 : vRenk }}>{vAlt}</span>
+          {onKopru && (
+            <span style={{ marginLeft: 'auto', flexShrink: 0, fontSize: 10.5, color: R.not3, whiteSpace: 'nowrap' }}>
+              Tedarikçi Bakiyesi →
+            </span>
+          )}
         </div>
-      </>
+
+        {/* Açılan kovaların kalem dökümü — mozaiğin ALTINDA, yerinde. */}
+        {acikKatmanlar.map((k, i) => (
+          <div key={`d-${k.anahtar}`} style={{ ...kartYuzey, padding: '12px 14px', borderLeft: `3px solid ${k.renk}` }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 10 }}>
+              <span style={{ fontFamily: F.baslik, fontSize: 13, fontWeight: 600, color: k.renk }}>{k.baslik}</span>
+              {/* 'satıra tıkla' notu YALNIZ ilk açılan dökümde (tekrarı gürültü) */}
+              {i === 0 && <span style={{ marginLeft: 'auto', fontSize: 10.5, color: R.not3 }}>satıra tıkla → ödeme dosyası</span>}
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {katmanIcerigi(k.anahtar, k.kayitlar)}
+            </div>
+          </div>
+        ))}
+        </>} />
+
+        {/* ═════════ BANT 4 — KISA YOLLAR ═══════════════════════════════════
+            Sahibin "nereye gideyim?" sorusu. Hedeflerin hepsi MODULLER
+            ağacından doğrulandı; rozetler mevcut sayaçlardan. */}
+        {/* en=150 · gap 9 → 1010px içerik genişliğinde 6 çip TEK SATIR.
+            İkinci satıra taşarsa 2 dakikalık tur kaydırmaya başlar. */}
+        <Bant etiket="Kısa yollar" not="sık gidilen ekranlar" cocuk={
+          <Izgara en={150} gap={9} cocuk={kisaYollar.map((y) => (
+            <Cip
+              key={y.k}
+              renk={y.renk}
+              baslik={y.ad}
+              rozet={y.rozet}
+              aksiyonAd={`${y.ad} ekranını aç`}
+              onTikla={onKopru ? () => onKopru(y.hedef) : null}
+            />
+          ))} />
+        } />
+      </div>
     );
   }
 
