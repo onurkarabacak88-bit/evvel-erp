@@ -32,26 +32,30 @@ export function sparkYol(degerler, en = 640, boy = 120) {
 }
 
 // ─── KPI şeridi ──────────────────────────────────────────────────────────────
-export function KpiSeridi({ kpiler }) {
+// ➕ EKLENTİ (2026-08-16): `sik` = SIKI mod. Bakış'ın "sabah kokpiti" mozaiği
+// tek ekrana sığmak zorunda (1366×720 kaydırmasız); orada şerit bir BANDIN
+// içinde durduğu için kendi alt boşluğunu da taşımamalı. Bayrağı VERMEYEN
+// 13 modül birebir eski ölçülerde kalır (varsayılanlar değişmedi).
+export function KpiSeridi({ kpiler, sik }) {
   if (!kpiler?.length) return null;
   return (
     <div style={{
       display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(178px,1fr))',
-      gap: 11, marginBottom: 16,
+      gap: sik ? 9 : 11, marginBottom: sik ? 0 : 16,
     }}>
       {kpiler.map((k, i) => (
-        <div key={i} style={{ ...kartYuzey, borderRadius: 15, padding: '14px 16px', boxShadow: '0 12px 28px rgba(0,0,0,.3)' }}>
-          <div style={{ fontSize: 10, letterSpacing: '.8px', textTransform: 'uppercase', color: R.not, fontWeight: 700 }}>
+        <div key={i} style={{ ...kartYuzey, borderRadius: 15, padding: sik ? '9px 14px' : '14px 16px', boxShadow: '0 12px 28px rgba(0,0,0,.3)' }}>
+          <div style={{ fontSize: 10, letterSpacing: '.8px', textTransform: 'uppercase', color: R.not, fontWeight: 700, lineHeight: sik ? 1.2 : 'normal' }}>
             {k.etiket}
           </div>
           <div style={{
-            whiteSpace: 'nowrap', fontFamily: F.mono, fontSize: 22, fontWeight: 700,
-            marginTop: 5, color: k.renk || R.krem,
+            whiteSpace: 'nowrap', fontFamily: F.mono, fontSize: sik ? 20 : 22, fontWeight: 700,
+            marginTop: sik ? 2 : 5, lineHeight: sik ? 1.15 : 'normal', color: k.renk || R.krem,
           }}>
             {k.deger}
           </div>
-          <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 10, marginTop: 3 }}>
-            <div style={{ fontSize: 11, color: R.not2 }}>{k.alt}</div>
+          <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 10, marginTop: sik ? 1 : 3 }}>
+            <div style={{ fontSize: 11, color: R.not2, lineHeight: sik ? 1.25 : 'normal' }}>{k.alt}</div>
             {/* ⚠️ Sparkline YALNIZ gerçek zaman serisi verilirse çizilir.
                 Blueprint "etiket+değerden seed'lenen sözde-rastgele seri"
                 öneriyor — o uydurma grafiktir, sahte sayı yasağını çiğner.

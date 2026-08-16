@@ -284,8 +284,8 @@ const acilirBaslikOzellik = (onAc, acik, etiket) => ({
 /** Bant başlığı — küçük, sessiz etiket (ŞUBELER / BUGÜN / PARA / KISA YOLLAR). */
 function Bant({ etiket, not, cocuk }) {
   return (
-    <section style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
+    <section style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, lineHeight: 1.1 }}>
         <span style={{
           fontSize: 10, letterSpacing: '1.1px', textTransform: 'uppercase',
           color: R.not, fontWeight: 700,
@@ -320,9 +320,9 @@ function SubeIsigi({ ad, isik, ciroMetni }) {
     <div
       title={`${ad} — ${isik.ad}${isik.dunEksik ? ' · dün kapanış eksik' : ''}`}
       style={{
-        ...kartYuzey, padding: '11px 12px', borderRadius: 14,
+        ...kartYuzey, padding: '9px 11px', borderRadius: 14,
         borderTop: `3px solid ${isik.renk}`,
-        display: 'flex', flexDirection: 'column', gap: 7, minWidth: 0,
+        display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0,
       }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
@@ -344,8 +344,8 @@ function SubeIsigi({ ad, isik, ciroMetni }) {
           {isik.isaret}
         </span>
       </div>
-      <div style={{ fontSize: 11, color: isik.renk, fontWeight: 600, lineHeight: 1.25 }}>{isik.ad}</div>
-      <div style={{ fontSize: 10.5, color: R.not2, lineHeight: 1.3 }}>
+      <div style={{ fontSize: 11, color: isik.renk, fontWeight: 600, lineHeight: 1.2 }}>{isik.ad}</div>
+      <div style={{ fontSize: 10.5, color: R.not2, lineHeight: 1.25 }}>
         {[ciroMetni, isik.dunMetni].filter(Boolean).join(' · ')}
       </div>
     </div>
@@ -362,28 +362,39 @@ function SubeIsigi({ ad, isik, ciroMetni }) {
 function KatmanCipi({ baslik, renk, adet, toplam, enBuyukMetin, vadeMetni, acik, onAc }) {
   return (
     <div
-      {...acilirBaslikOzellik(onAc, acik, `${baslik} — ${acik ? 'kapat' : `${adet} kalemi aç`}`)}
+      {...acilirBaslikOzellik(
+        onAc, acik,
+        // ⚠️ DÜRÜSTLÜK: "en büyük kalem" ekrandan kalktı ama KAYBOLMADI —
+        // hover/odak ipucunda ve çip açılınca listenin en üstünde duruyor
+        // (liste tutara göre sıralı). Çipte kalan üç gerçek: TOPLAM · ADET · YAŞ.
+        `${baslik} — ${enBuyukMetin} · ${acik ? 'kapat' : `${adet} kalemi aç`}`,
+      )}
       style={{
-        ...kartYuzey, padding: '10px 12px', borderRadius: 14,
+        ...kartYuzey, padding: '9px 12px', borderRadius: 14,
         borderTop: `3px solid ${renk}`, cursor: 'pointer', outline: 'none',
-        display: 'flex', flexDirection: 'column', gap: 3, minWidth: 0,
+        display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0,
         ...(acik ? { boxShadow: `0 0 0 1px ${renk}66, 0 12px 28px rgba(0,0,0,.3)` } : null),
       }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-        <span style={{ fontSize: 10.5, fontWeight: 700, color: renk, letterSpacing: '.3px', minWidth: 0 }}>
+        {/* Başlık TEK SATIR: uzun kova adı sarınca çip 2 kademe uzuyor ve
+            mozaik tek ekrandan taşıyordu. Tam metin ipucunda. */}
+        <span style={{
+          fontSize: 10.5, fontWeight: 700, color: renk, letterSpacing: '.3px',
+          minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          lineHeight: 1.25,
+        }}>
           {baslik}
         </span>
         <span style={{ marginLeft: 'auto', flexShrink: 0 }}><AcKapaOk acik={acik} renk={R.not3} /></span>
       </div>
-      {/* Rütbe: çipin ana rakamı 17 mono — KPI'nın (22) altında, metnin üstünde */}
-      <div style={{ fontFamily: F.mono, fontSize: 17, fontWeight: 700, color: renk, lineHeight: 1.15 }}>
+      {/* Rütbe: çipin ana rakamı 16 mono — KPI'nın (20) altında, metnin üstünde */}
+      <div style={{ fontFamily: F.mono, fontSize: 16, fontWeight: 700, color: renk, lineHeight: 1.15 }}>
         {toplam}
       </div>
-      <div style={{ fontSize: 10.5, color: R.not2, lineHeight: 1.3 }}>
+      <div style={{ fontSize: 10.5, color: R.not2, lineHeight: 1.25 }}>
         {[`${adet} kalem`, vadeMetni].filter(Boolean).join(' · ')}
       </div>
-      <div style={{ fontSize: 10.5, color: R.not3, lineHeight: 1.3 }}>{enBuyukMetin}</div>
     </div>
   );
 }
@@ -397,7 +408,7 @@ function Cip({ ikonYol, renk, baslik, alt, rozet, aksiyonAd, onTikla, buyuk }) {
     <div
       {...(onTikla ? acilirBaslikOzellik(onTikla, null, aksiyonAd || baslik) : {})}
       style={{
-        ...kartYuzey, borderRadius: 13, padding: buyuk ? '11px 13px' : '7px 11px',
+        ...kartYuzey, borderRadius: 13, padding: buyuk ? '9px 12px' : '6px 11px',
         borderLeft: `3px solid ${renk}`, cursor: onTikla ? 'pointer' : 'default',
         outline: 'none', display: 'flex', alignItems: 'center', gap: buyuk ? 9 : 7, minWidth: 0,
       }}
@@ -408,12 +419,12 @@ function Cip({ ikonYol, renk, baslik, alt, rozet, aksiyonAd, onTikla, buyuk }) {
       )}
       <div style={{ minWidth: 0 }}>
         <div style={{
-          fontSize: buyuk ? 13.5 : 12, fontWeight: 600, color: buyuk ? renk : R.krem,
-          lineHeight: 1.3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: buyuk ? 'normal' : 'nowrap',
+          fontSize: buyuk ? 13 : 12, fontWeight: 600, color: buyuk ? renk : R.krem,
+          lineHeight: 1.25, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: buyuk ? 'normal' : 'nowrap',
         }}>
           {baslik}
         </div>
-        {alt && <div style={{ fontSize: 10.5, color: R.not2, marginTop: 2, lineHeight: 1.3 }}>{alt}</div>}
+        {alt && <div style={{ fontSize: 10.5, color: R.not2, marginTop: 2, lineHeight: 1.25 }}>{alt}</div>}
       </div>
       {rozet != null && (
         <span style={{
@@ -1009,7 +1020,7 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru }) {
     const acikKatmanlar = katmanlar.filter((k) => acikKatman[k.anahtar]);
 
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
 
         {/* ═════════ BANT 1 — ŞUBELER ═══════════════════════════════════════
             Sahip 2 dakikalık turunun İLK sorusu: "dükkânlar açıldı mı?"
@@ -1046,7 +1057,9 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru }) {
                 ikonYol={is.ikonYol}
                 renk={is.renk}
                 baslik={is.metin}
-                alt={[`${i + 1}.`, is.alt, is.onTikla ? `${is.aksiyonAd} →` : null].filter(Boolean).join(' ')}
+                // Alt satır 2 satırı geçmesin diye gerekçe kırpılır (tam metin
+                // zaten tıklanınca açılan çekmecede). 3. satır = taşma demek.
+                alt={[`${i + 1}.`, kisalt(is.alt, 44), is.onTikla ? `${is.aksiyonAd} →` : null].filter(Boolean).join(' ')}
                 onTikla={is.onTikla}
                 aksiyonAd={is.aksiyonAd}
               />
@@ -1055,8 +1068,11 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru }) {
         />
 
         {/* ═════════ BANT 3 — PARA ═══════════════════════════════════════════ */}
-        <Bant etiket="Para" not={baskiYok ? 'ödeme baskısı yok' : null} cocuk={<>
-        <KpiSeridi kpiler={[
+        <Bant etiket="Para" not={baskiYok ? 'ödeme baskısı yok' : null} cocuk={
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
+        {/* `sik` — şerit bir BANDIN içinde; kendi alt boşluğunu taşımaz,
+            aralığı bandın flex gap'i verir (çift boşluk = boşa 16px). */}
+        <KpiSeridi sik kpiler={[
           { etiket: 'Kasa', deger: fmt(sayi(p.kasa)), alt: 'kanonik bakiye', renk: sayi(p.kasa) >= 0 ? R.yesil : R.kirmizi },
           { etiket: 'Gecikmiş', deger: fmt(gecikmisToplam), alt: `${gK.length + gU.length + gB.length} kalem`, renk: gecikmisToplam > 0 ? R.kirmizi : R.yesil },
           {
@@ -1112,7 +1128,7 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru }) {
             () => onKopru('__modul:odeme:tedarikci'), null, 'Tedarikçi Bakiyesi ekranını aç',
           ) : {})}
           style={{
-            ...kartYuzey, borderRadius: 13, padding: '8px 12px', borderLeft: `3px solid ${vRenk}`,
+            ...kartYuzey, borderRadius: 13, padding: '6px 11px', borderLeft: `3px solid ${vRenk}`,
             display: 'flex', alignItems: 'center', gap: 9, flexWrap: 'wrap',
             cursor: onKopru ? 'pointer' : 'default', outline: 'none',
           }}
@@ -1142,7 +1158,7 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru }) {
             </div>
           </div>
         ))}
-        </>} />
+        </div>} />
 
         {/* ═════════ BANT 4 — KISA YOLLAR ═══════════════════════════════════
             Sahibin "nereye gideyim?" sorusu. Hedeflerin hepsi MODULLER
