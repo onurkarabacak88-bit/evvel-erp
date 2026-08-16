@@ -17190,6 +17190,19 @@ def ops_depo_izleme():
                     "kalem başına son 40 satır (önceki → sonraki iz).")}
 
 
+def _fza_gecersiz_kolonlari(cur: Any) -> None:
+    """fiyat_zam_alarmi'na geçersizlik damgası kolonları (idempotent DDL).
+
+    GERİ-ALMA≠SİLME: yanlış doğmuş alarm (ör. ambalaj birim uyuşmazlığı —
+    koli fiyatı birim fiyatla kıyaslanınca %3.053 gibi hayalet artış) SİLİNMEZ;
+    gecersiz=TRUE + zorunlu neden ile damgalanır ve listeden/KPI'dan düşer.
+    'goruldu' bunu ÇÖZMEZ: görüldü kayıt listede kalır ve ortalama/en-sert
+    KPI'larını şişirmeye devam eder — geçersizlik ayrı bir hüküm.
+    """
+    cur.execute("ALTER TABLE fiyat_zam_alarmi ADD COLUMN IF NOT EXISTS gecersiz BOOLEAN NOT NULL DEFAULT FALSE")
+    cur.execute("ALTER TABLE fiyat_zam_alarmi ADD COLUMN IF NOT EXISTS gecersiz_neden TEXT")
+
+
 @router.get("/fiyat-zam-alarmlari")
 def ops_fiyat_zam_alarmlari(gun: int = 90, sadece_yeni: bool = False, limit: int = 100):
     """Eşik üstü fiyat artışları (onaylı fiyattan tetiklenir) — denetim sinyali listesi."""
@@ -17201,7 +17214,8 @@ def ops_fiyat_zam_alarmlari(gun: int = 90, sadece_yeni: bool = False, limit: int
             cur.execute("SELECT to_regclass('public.fiyat_zam_alarmi') AS t")
             if not (cur.fetchone() or {}).get("t"):
                 return {"alarmlar": [], "toplam": 0, "esik_yuzde": FIYAT_ZAM_ESIK_YUZDE}
-            kos = "olusturma >= NOW() - (%s * INTERVAL '1 day')"
+            _fza_gecersiz_kolonlari(cur)
+            kos = "NOT COALESCE(gecersiz, FALSE) AND olusturma >= NOW() - (%s * INTERVAL '1 day')"
             params: List[Any] = [gun_i]
             if sadece_yeni:
                 kos += " AND goruldu = FALSE"
@@ -17249,6 +17263,36 @@ def ops_fiyat_zam_gorduldu(body: FiyatZamGorulduBody):
         # dönüyordu — kullanıcı "İncelendi" toast'ı alıyor, kayıt işaretlenmemiş
         # kalıyordu. Hata açık; bulunamayan id 404.
         cur.execute("UPDATE fiyat_zam_alarmi SET goruldu=TRUE WHERE id=%s", (aid,))
+        if cur.rowcount == 0:
+            raise HTTPException(404, "Alarm kaydı bulunamadı — listeyi yenileyin")
+    return {"ok": True}
+
+
+class FiyatZamGecersizBody(BaseModel):
+    id: str
+    neden: str
+
+
+@router.post("/fiyat-zam-alarmlari/gecersiz")
+def ops_fiyat_zam_gecersiz(body: FiyatZamGecersizBody):
+    """Yanlış doğmuş alarmı damgalayarak düşürür (SİLMEZ — kayıt + neden kalır).
+
+    Kullanım: birim/ambalaj uyuşmazlığı gibi veri hatasından doğan alarm
+    (OREO 32'li koli vakası: 4,75→149,78 '%3.053' — koli çarpanıyla gerçek
+    değişim eşik altı). Neden zorunlu: iz olmadan hüküm yok.
+    """
+    aid = (body.id or "").strip()
+    neden = (body.neden or "").strip()
+    if not aid:
+        raise HTTPException(400, "id zorunlu")
+    if len(neden) < 5:
+        raise HTTPException(400, "neden zorunlu (en az 5 karakter) — geçersizlik gerekçesiz damgalanamaz")
+    with db() as (conn, cur):
+        _fza_gecersiz_kolonlari(cur)
+        cur.execute(
+            "UPDATE fiyat_zam_alarmi SET gecersiz=TRUE, gecersiz_neden=%s WHERE id=%s",
+            (neden, aid),
+        )
         if cur.rowcount == 0:
             raise HTTPException(404, "Alarm kaydı bulunamadı — listeyi yenileyin")
     return {"ok": True}
