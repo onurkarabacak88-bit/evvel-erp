@@ -699,7 +699,13 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
       api('/ops/maliyet/stok-kalemleri')
         .then((d) => setUgKatalog(
           (Array.isArray(d?.kalemler) ? d.kalemler : [])
-            .map((k) => ({ ad: String(k.kalem_adi || '').trim(), kod: String(k.kalem_kodu || '').trim() }))
+            .map((k) => {
+              // Katalogda kalem_kodu çoğunlukla UUID — ekranda gürültü.
+              // Yalnız İNSAN kodu göster (kısa, tire-siz "ESP01" gibi).
+              const hamKod = String(k.kalem_kodu || '').trim();
+              const insanKod = hamKod && hamKod.length <= 12 && !/^[0-9a-f-]{16,}$/i.test(hamKod) ? hamKod : '';
+              return { ad: String(k.kalem_adi || '').trim(), kod: insanKod };
+            })
             .filter((k) => k.ad),
         ))
         .catch(() => setUgKatalog([]));
