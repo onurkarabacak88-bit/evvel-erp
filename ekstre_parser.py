@@ -566,6 +566,9 @@ def parse_axess(raw: bytes) -> Dict[str, Any]:
             desc = re.sub(r"\([\d.,]+ TL\)\s*\d+/\d+\.taksit", "", rest)
             desc = re.sub(r"[\d,]+\.\d{2}", "", desc).replace("(-)", "").strip()
             desc = re.sub(r"\s{2,}", " ", desc).translate(_AXESS_DUZELT)[:60]
+            # Faiz satırı bölge sonundaki "Genel Toplam" başlığını yutup
+            # "… Faizi Genel" diye bozuk ad üretiyordu (canlı: 12 Ağu importu).
+            desc = re.sub(r"(Faizi?)\s+Genel$", r"\1", desc)
             if tutar is None or tutar == 0:
                 continue
             islemler.append({
@@ -580,13 +583,22 @@ def parse_axess(raw: bytes) -> Dict[str, Any]:
             })
 
     # Dönem faizini de işlem olarak ekle (FAIZ → kart borcuna yansısın)
+    # ⚠️ MÜKERRER FAİZ AŞISI (2026-08-17, Axess canlı vakası): işlem bölgesi
+    # taraması "Toplam Dönem Faizi 1.241,95" satırlarını ZATEN FAIZ olarak
+    # yakalıyor; bu blok aynı kalemi İKİNCİ kez ekliyordu → her Axess
+    # yüklemesinde faiz çift üretildi ve 12 Ağu importunda 50,43 karta ÇİFT
+    # yazıldı (okuma_denetimi 'toplam tutmuyor' diye bağırıyordu — kök buydu).
+    # Kural: aynı tutarlı FAIZ listede varsa buradan EKLENMEZ; bu blok yalnız
+    # satır taramasının KAÇIRDIĞI faizi tamamlar (asıl amacı da o).
+    _faiz_var = {round(float(i["tutar"] or 0), 2) for i in islemler if i["tip"] == "FAIZ"}
     for et, tut in re.findall(r"(Toplam Dönem Faizi|Otomatik Fatura Ödeme Faizi)\s*([\d,]+\.\d{2})", t):
         v = _ax_num(tut)
-        if v:
+        if v and round(v, 2) not in _faiz_var:
             islemler.append({
                 "tarih": kesim, "tutar": v, "tip": "FAIZ", "aciklama": et,
                 "kategori": "Faiz", "taksit": None, "taksit_anapara": None, "taksit_sayisi": None,
             })
+            _faiz_var.add(round(v, 2))
 
     return {
         "banka_format": "axess",
