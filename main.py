@@ -4059,6 +4059,7 @@ def kart_ekstre_arsiv():
     """Faz: kart × ay ekstre ARŞİVİ — her kart için tüm aylık ekstre snapshot'ları
     (kart_ekstre_donem). Her (kart, donem) ayrı satır; aylar birikir. Salt görünürlük."""
     with db() as (conn, cur):
+        _ekstre_belge_kolonlari(cur)
         cur.execute("""
             SELECT ked.kart_id::text AS kart_id,
                    k.kart_adi, k.banka, COALESCE(k.sahip,'İşletme') AS sahip,
@@ -4073,7 +4074,8 @@ def kart_ekstre_arsiv():
                    COALESCE(ked.donem_odeme,0)::float   AS donem_odeme,
                    COALESCE(ked.donem_faizi,0)::float   AS donem_faizi,
                    COALESCE(ked.kalan_taksit,0)::float  AS kalan_taksit,
-                   ked.kaynak
+                   ked.kaynak,
+                   (ked.belge_pdf IS NOT NULL) AS belge_var
             FROM kart_ekstre_donem ked
             JOIN kartlar k ON k.id = ked.kart_id
             ORDER BY k.kart_adi, ked.donem DESC
@@ -4098,6 +4100,10 @@ def kart_ekstre_arsiv():
                 "onceki_borc": r["onceki_borc"], "donem_harcama": r["donem_harcama"],
                 "donem_odeme": r["donem_odeme"], "donem_faizi": r["donem_faizi"],
                 "kalan_taksit": r["kalan_taksit"], "kaynak": r["kaynak"],
+                # PDF aslı arşivliyse indirme adresi — FE tıkla→aç bunu kullanır.
+                "belge_var": bool(r.get("belge_var")),
+                "belge_url": (f"/api/kartlar/ekstre-belge?kart_id={kid}&donem={str(r['donem'])[:10]}"
+                              if r.get("belge_var") else None),
             })
             grup["donem_adet"] += 1
             grup["toplam_faiz"] = round(grup["toplam_faiz"] + r["donem_faizi"], 2)
@@ -4323,7 +4329,8 @@ def kart_ekstre_yukle(dosya: UploadFile = File(...)):
         from ekstre_parser import is_axess, parse_axess
         if is_axess(raw):
             sonuc = parse_axess(raw)
-            return _ekstre_eslesme_mutabakat(sonuc)
+            sonuc = _ekstre_eslesme_mutabakat(sonuc)
+            return _ekstre_pdf_arsivle(sonuc, raw, dosya.filename or "ekstre.pdf")
     except HTTPException:
         raise
     except Exception:
@@ -4414,7 +4421,64 @@ def kart_ekstre_yukle(dosya: UploadFile = File(...)):
         except Exception:
             pass
 
-    return _ekstre_eslesme_mutabakat(sonuc)
+    sonuc = _ekstre_eslesme_mutabakat(sonuc)
+    return _ekstre_pdf_arsivle(sonuc, raw, dosya.filename or "ekstre.pdf")
+
+
+def _ekstre_belge_kolonlari(cur):
+    """kart_ekstre_donem'e PDF arşiv kolonları (idempotent DDL) — İz & Belge
+    doktrini: rakamlar yazılıyordu ama BELGENİN ASLI saklanmıyordu; 'Ağustos
+    ekstresini göster' dendiğinde sistem gösteremiyordu (2026-08-17, sahip)."""
+    cur.execute("ALTER TABLE kart_ekstre_donem ADD COLUMN IF NOT EXISTS belge_pdf BYTEA")
+    cur.execute("ALTER TABLE kart_ekstre_donem ADD COLUMN IF NOT EXISTS belge_ad TEXT")
+    cur.execute("ALTER TABLE kart_ekstre_donem ADD COLUMN IF NOT EXISTS belge_ts TIMESTAMPTZ")
+
+
+def _ekstre_pdf_arsivle(sonuc, raw: bytes, dosya_ad: str):
+    """Yüklenen ekstre PDF'inin ASLINI dönem kaydına iliştirir (kart+dönem tekil).
+    Kart eşleşmediyse ya da dönem yazılamadıysa sessizce False döner — arşiv
+    başarısızlığı yükleme/mutabakat sonucunu ASLA düşürmez (ana iş rakamlar)."""
+    kart = (sonuc or {}).get("eslesen_kart") or {}
+    kesim = (sonuc or {}).get("kesim_tarihi")
+    if not kart.get("id") or not kesim or not raw:
+        sonuc["belge_arsivlendi"] = False
+        return sonuc
+    try:
+        with db() as (conn, cur):
+            _ekstre_belge_kolonlari(cur)
+            cur.execute(
+                "UPDATE kart_ekstre_donem SET belge_pdf=%s, belge_ad=%s, belge_ts=NOW() "
+                "WHERE kart_id=%s AND donem=DATE_TRUNC('month', %s::date)",
+                (psycopg2.Binary(raw), (dosya_ad or "ekstre.pdf")[:200], kart["id"], kesim),
+            )
+            sonuc["belge_arsivlendi"] = cur.rowcount > 0
+    except Exception as _e:
+        sonuc["belge_arsivlendi"] = False
+        sonuc["belge_arsiv_hata"] = str(_e)[:120]
+    return sonuc
+
+
+@app.get("/api/kartlar/ekstre-belge")
+def kart_ekstre_belge(kart_id: str, donem: str):
+    """Arşivlenmiş ekstre PDF'inin aslını döner (kart + dönem YYYY-MM)."""
+    d = (donem or "").strip()[:10]
+    if len(d) == 7:
+        d += "-01"
+    with db() as (conn, cur):
+        _ekstre_belge_kolonlari(cur)
+        cur.execute(
+            "SELECT belge_pdf, belge_ad FROM kart_ekstre_donem "
+            "WHERE kart_id=%s AND donem=DATE_TRUNC('month', %s::date)",
+            (kart_id, d),
+        )
+        r = cur.fetchone()
+        if not r or not dict(r).get("belge_pdf"):
+            raise HTTPException(404, "Bu dönem için arşivlenmiş ekstre PDF'i yok — PDF yüklendiğinde otomatik arşivlenir")
+        r = dict(r)
+        from fastapi.responses import Response as _Resp
+        ad = (r.get("belge_ad") or "ekstre.pdf").replace('"', "")
+        return _Resp(content=bytes(r["belge_pdf"]), media_type="application/pdf",
+                     headers={"Content-Disposition": f'inline; filename="{ad}"'})
 
 
 def _ekstre_eslesme_mutabakat(sonuc):

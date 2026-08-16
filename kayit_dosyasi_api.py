@@ -555,19 +555,41 @@ def _iz_kartlar(cur, kid):
 
 
 def _belge_kartlar(cur, kid):
-    """Dönem ekstresi (main.py:4029 ekstre-arsiv verisinin kaynağı)."""
-    cur.execute(
-        """SELECT donem::text AS donem, kesim_tarihi, son_odeme_tarihi,
-                  COALESCE(donem_borcu,0)::float AS borc,
-                  COALESCE(asgari_tutar,0)::float AS asgari, kaynak
-             FROM kart_ekstre_donem WHERE kart_id::text=%s
-            ORDER BY donem DESC LIMIT 6""", (str(kid),))
+    """Dönem ekstresi (main.py:4029 ekstre-arsiv verisinin kaynağı).
+
+    belge_pdf kolonu 2026-08-17'de eklendi (İz&Belge: PDF ASLI da arşivlenir) —
+    kolon toleransı SAVEPOINT deseniyle: eski şemada sorgu düşerse belgesiz
+    sürüm çalışır (yutulan SQL hatası tx'i abort bırakır dersi)."""
+    try:
+        cur.execute("SAVEPOINT _bk")
+        cur.execute(
+            """SELECT donem::text AS donem, kesim_tarihi, son_odeme_tarihi,
+                      COALESCE(donem_borcu,0)::float AS borc,
+                      COALESCE(asgari_tutar,0)::float AS asgari, kaynak,
+                      (belge_pdf IS NOT NULL) AS belge_var
+                 FROM kart_ekstre_donem WHERE kart_id::text=%s
+                ORDER BY donem DESC LIMIT 6""", (str(kid),))
+        rows = [dict(r) for r in (cur.fetchall() or [])]
+        cur.execute("RELEASE SAVEPOINT _bk")
+    except Exception:
+        cur.execute("ROLLBACK TO SAVEPOINT _bk")
+        cur.execute(
+            """SELECT donem::text AS donem, kesim_tarihi, son_odeme_tarihi,
+                      COALESCE(donem_borcu,0)::float AS borc,
+                      COALESCE(asgari_tutar,0)::float AS asgari, kaynak
+                 FROM kart_ekstre_donem WHERE kart_id::text=%s
+                ORDER BY donem DESC LIMIT 6""", (str(kid),))
+        rows = [dict(r) for r in (cur.fetchall() or [])]
     return [{
         "tur": "EKSTRE", "ad": f"{str(r['donem'])[:7]} dönemi ekstresi",
         "detay": f"kesim {str(r['kesim_tarihi'])[:10]} · borç {_tl(r['borc'])} "
-                 f"· asgari {_tl(r['asgari'])}",
+                 f"· asgari {_tl(r['asgari'])}"
+                 + (" · 📄 PDF aslı arşivde" if r.get("belge_var") else ""),
         "rozet": "BANKA" if r.get("kaynak") == "import" else "HESAP",
-    } for r in (cur.fetchall() or [])]
+        # PDF aslı varsa tıkla→aç adresi (FE url'li belgeyi yeni sekmede açar)
+        "url": (f"/api/kartlar/ekstre-belge?kart_id={kid}&donem={str(r['donem'])[:10]}"
+                if r.get("belge_var") else None),
+    } for r in rows]
 
 
 _IZ = {
