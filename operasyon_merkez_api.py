@@ -13637,6 +13637,45 @@ def ops_v2_sube_depo_guncelle(body: SubeDepoGuncelle):
     return {"success": True, "sube_id": sube_id, "kalem_kodu": kalem_kodu, "giris_nedeni": neden, "alis_fiyati_tl": round(alis_fiyat, 2)}
 
 
+class SubeDepoMinStokBody(BaseModel):
+    kalem_adi: str
+    min_stok: int
+
+
+@router.post("/v2/sube-depo/min-stok")
+def ops_v2_sube_depo_min_stok(body: SubeDepoMinStokBody):
+    """YALNIZ min_stok eşiğini günceller (tüm şubelerde, ada göre).
+
+    kalem-tanimla ucu bu iş için KULLANILMAZ: o uç ON CONFLICT'te
+    alis_fiyati_tl'yi de EZER (mevcut fiyat 0'a düşerdi). Bu uç tek kolona
+    dokunur; stok adedi ve fiyat aynen kalır. İz: her şubeye defter satırı.
+    (2026-08-16, sahip: tozlarda 'son 1 kalınca' eşiği.)
+    """
+    ad = str(body.kalem_adi or "").strip()
+    if not ad:
+        raise HTTPException(400, "kalem_adi zorunlu")
+    m = int(body.min_stok)
+    if m < 0:
+        raise HTTPException(400, "min_stok negatif olamaz")
+    with db() as (conn, cur):
+        cur.execute(
+            """UPDATE sube_depo_stok SET min_stok=%s, guncelleme=NOW()
+               WHERE lower(btrim(kalem_adi)) = lower(btrim(%s))
+               RETURNING sube_id, kalem_kodu""",
+            (m, ad),
+        )
+        rows = [dict(r) for r in (cur.fetchall() or [])]
+        if not rows:
+            raise HTTPException(404, "Bu adla depo kalemi bulunamadı — katalog adını birebir yazın")
+        for r in rows:
+            operasyon_defter_ekle(
+                cur, str(r.get("sube_id") or ""), "SUBE_DEPO_KALEM_TANIM",
+                f"min_stok güncellendi — kalem={r.get('kalem_kodu')} ad={ad} min={m} (sahip talimatı)",
+                bildirim_saati=dt_now_tr().strftime("%H:%M:%S"),
+            )
+    return {"success": True, "kalem_adi": ad, "min_stok": m, "guncellenen_satir": len(rows)}
+
+
 @router.post("/v2/sube-depo/kalem-tanimla")
 def ops_v2_sube_depo_kalem_tanimla(body: SubeDepoKalemTanimBody):
     """Yeni depo kalemini tüm aktif şube depolarına tanımlar."""
