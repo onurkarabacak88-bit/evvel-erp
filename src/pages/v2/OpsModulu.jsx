@@ -677,6 +677,27 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
   const [siparisOneri, setSiparisOneri] = useState(null);   // /ops/siparis/oneri
   const [oneriKova, setOneriKova] = useState('acil');       // acil | yakin | fazla
   const [tsHata, setTsHata] = useState('');
+  // 🔎 ÜRÜN GELİŞ GEÇMİŞİ (2026-08-16, sahip: "vanilya milkshake geliş tarihleri…
+  // bunu takip edebilecek bir sistem kurmalıyız"). Yerleşim denetçisi hükmü:
+  // 'teslim' sekmesi (Toptancıdan gelen) aynı kavramın 14-günlük özeti — bu
+  // sekme onun ürün-bazlı derin arama hâli. Kaynak: /ops/urun-gelis-gecmisi
+  // (toptanci_siparis kabulleri; ŞUBELER ARASI SEVKİYAT DAHİL DEĞİL).
+  const [ugSorgu, setUgSorgu] = useState('');
+  const [ugVeri, setUgVeri] = useState(null);     // null=hiç aranmadı
+  const [ugHata, setUgHata] = useState('');
+  const [ugMesgul, setUgMesgul] = useState(false);
+  const ugAra = async (q) => {
+    const s = String(q ?? ugSorgu).trim();
+    if (s.length < 2) { onToast?.('Ürün adı en az 2 harf olmalı.'); return; }
+    if (ugMesgul) return;
+    setUgMesgul(true); setUgHata('');
+    try {
+      setUgVeri(await api(`/ops/urun-gelis-gecmisi?urun=${encodeURIComponent(s)}&gun=365`));
+    } catch (e) {
+      // HATA ≠ BOŞ: eski sonucu temizle ki bayat veri "cevap" gibi durmasın.
+      setUgVeri(null); setUgHata(e?.message || 'Geliş geçmişi alınamadı');
+    } finally { setUgMesgul(false); }
+  };
   // ── SAYIM ─────────────────────────────────────────────────────────────────
   const [sayim, setSayim] = useState(null);
   const [sayimIz, setSayimIz] = useState(null);
@@ -5522,6 +5543,7 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
       ...(oneriOzet ? [['oneri', `🛒 Sipariş önerisi (${sayi(oneriOzet.acil_kalem)} acil)`]] : []),
       ['giden', `🚚 Toptancıya giden (${gidenler.length})`],
       ['teslim', `📦 Toptancıdan gelen (${teslimSube.length})`],
+      ['urungelis', '🔎 Ürün geliş geçmişi'],
       ['notlar', `📝 Şube notları (${notlar.length})`],
       ['tahmin', `🔮 Stok tahmini (${tahminler.length})`],
       ['kpi', `📊 KPI değişimi (${kpilar.length})`],
@@ -5775,6 +5797,119 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
             }}
           />
         ) : <BosDurum metin="Son 14 günde toptancıdan teslim alımı kaydı yok." />)}
+
+        {tsSekme === 'urungelis' && (() => {
+          // "vanilya milkshake ne zaman geldi?" — ürün adıyla toptancı geliş kazısı.
+          const ist = ugVeri?.istatistik || null;
+          const gelisler = Array.isArray(ugVeri?.gelisler) ? ugVeri.gelisler : [];
+          const bekleyenler = Array.isArray(ugVeri?.bekleyenler) ? ugVeri.bekleyenler : [];
+          // Geç kaldı sinyali: son gelişten bu yana geçen gün, ortalama aralığın
+          // 1,5 katını aştıysa amber. 3'ten az farklı günle ortalama ZAYIF —
+          // sinyal üretilmez, "az veri" dürüstlüğü yazılır.
+          let gecikmeNotu = null;
+          if (ist?.son_gelis && ist?.ortalama_aralik_gun != null) {
+            const gecen = Math.floor((Date.now() - new Date(`${ist.son_gelis}T12:00:00+03:00`).getTime()) / 86400000);
+            if (sayi(ist.farkli_gun) < 3) {
+              gecikmeNotu = { renk: R.not, metin: `son gelişten bu yana ${gecen} gün · aralık ortalaması için veri az (${sayi(ist.farkli_gun)} gün)` };
+            } else if (gecen > ist.ortalama_aralik_gun * 1.5) {
+              gecikmeNotu = { renk: R.amber, metin: `⚠ son gelişten bu yana ${gecen} gün geçti — ortalama aralık ${ist.ortalama_aralik_gun} gün. Sipariş zamanı geçmiş olabilir.` };
+            } else {
+              gecikmeNotu = { renk: R.yesil, metin: `son gelişten bu yana ${gecen} gün · ortalama aralık ${ist.ortalama_aralik_gun} gün — ritim normal` };
+            }
+          }
+          return (
+            <>
+              <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+                <input
+                  value={ugSorgu}
+                  onChange={(e) => setUgSorgu(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') ugAra(); }}
+                  placeholder="Ürün adı yaz — ör. vanilya, süt, espresso…"
+                  aria-label="Ürün geliş geçmişi arama"
+                  style={{
+                    flex: '1 1 240px', maxWidth: 380, padding: '8px 12px', borderRadius: 10,
+                    border: `1px solid ${R.cizgi3}`, background: R.girinti, color: R.krem,
+                    fontSize: 12.5, fontFamily: 'inherit', outline: 'none',
+                  }}
+                />
+                <button
+                  onClick={() => ugAra()}
+                  disabled={ugMesgul}
+                  style={{
+                    padding: '8px 16px', borderRadius: 10, border: `1px solid ${R.bakir}`,
+                    background: 'rgba(217,154,78,.14)', color: R.bakir, fontSize: 12,
+                    fontWeight: 700, cursor: ugMesgul ? 'wait' : 'pointer', fontFamily: 'inherit',
+                  }}
+                >
+                  {ugMesgul ? 'Aranıyor…' : 'Geçmişi getir'}
+                </button>
+                <span style={{ fontSize: 10.5, color: R.not3 }}>
+                  son 365 gün · yalnız TOPTANCIDAN gelenler — şubeler arası sevkiyat sayılmaz
+                </span>
+              </div>
+
+              {ugHata && <HataBandi mesaj={ugHata} onTekrar={() => ugAra()} />}
+              {!ugHata && ugVeri == null && (
+                <BosDurum metin="Ürün adını yazıp Enter'a bas — toptancıdan geliş tarihleri, şube ve miktar dökümüyle burada listelenir." />
+              )}
+              {!ugHata && ugVeri != null && (
+                gelisler.length === 0 && bekleyenler.length === 0 ? (
+                  <BosDurum metin={`"${ugVeri.sorgu}" adıyla son 365 günde toptancı kaydı yok. Ürün sistemde başka adla geçiyor olabilir — daha kısa bir parça dene (ör. "vanil").`} />
+                ) : (
+                  <>
+                    <KpiSeridi kpiler={[
+                      { etiket: 'Geliş', deger: String(sayi(ist?.gelis_adet)), alt: `${sayi(ist?.farkli_gun)} farklı gün`, renk: R.krem },
+                      { etiket: 'Son geliş', deger: ist?.son_gelis ? tarihKisa(ist.son_gelis) : '—', alt: ist?.ilk_gelis ? `ilk: ${tarihKisa(ist.ilk_gelis)}` : '', renk: R.bakirAcik },
+                      { etiket: 'Ortalama aralık', deger: ist?.ortalama_aralik_gun != null ? `${ist.ortalama_aralik_gun} gün` : '—', alt: sayi(ist?.farkli_gun) < 3 ? 'az veri' : 'farklı günler arası', renk: R.mavi },
+                      { etiket: 'Bekleyen sipariş', deger: String(bekleyenler.length), alt: bekleyenler.length ? 'gönderildi · teslim yok' : 'yok', renk: bekleyenler.length ? R.amber : R.yesil },
+                    ]} />
+                    {gecikmeNotu && (
+                      <div style={{ ...kartYuzey, padding: '9px 13px', marginBottom: 12, fontSize: 12, color: gecikmeNotu.renk, borderLeft: `3px solid ${gecikmeNotu.renk}` }}>
+                        {gecikmeNotu.metin}
+                      </div>
+                    )}
+                    <Tablo
+                      baslik={`"${ugVeri.sorgu}" — toptancıdan gelişler`}
+                      not="kaynak: toptancı sipariş kabulleri (şubede görünür kabul)"
+                      kolonlar={[
+                        { ad: 'Geliş' }, { ad: 'Ürün' }, { ad: 'Miktar', sag: true },
+                        { ad: 'Şube' }, { ad: 'Toptancı' },
+                      ]}
+                      satirlar={gelisler.slice(0, 60).map((g, i) => ({
+                        id: `ug-${i}`,
+                        hucreler: [
+                          { v: String(g.gelis_ts || ''), mono: true, kalin: true },
+                          { v: g.urun_ad || '—' },
+                          { v: `${g.miktar ?? '—'}${g.birim ? ` ${g.birim}` : ''}`, mono: true, sag: true },
+                          { v: g.sube || '—' },
+                          { v: g.tedarikci || '—', renk: R.not },
+                        ],
+                      }))}
+                    />
+                    {gelisler.length > 60 && (
+                      <div style={{ fontSize: 10.5, color: R.not3, marginTop: 6 }}>listede ilk 60 geliş · toplam {gelisler.length}</div>
+                    )}
+                    {bekleyenler.length > 0 && (
+                      <Tablo
+                        baslik="Bekleyen siparişler (gönderildi, teslim kaydı yok)"
+                        kolonlar={[{ ad: 'Sipariş' }, { ad: 'Ürün' }, { ad: 'Şube' }, { ad: 'Toptancı' }]}
+                        satirlar={bekleyenler.slice(0, 20).map((b, i) => ({
+                          id: `ugb-${i}`,
+                          hucreler: [
+                            { v: String(b.siparis_ts || ''), mono: true },
+                            { v: b.urun_ad || '—' },
+                            { v: b.sube || '—' },
+                            { v: b.tedarikci || '—', renk: R.not },
+                          ],
+                        }))}
+                      />
+                    )}
+                  </>
+                )
+              )}
+            </>
+          );
+        })()}
 
         {tsSekme === 'notlar' && (notlar.length ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16 }}>

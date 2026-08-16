@@ -11178,7 +11178,7 @@ def ops_urun_gelis_gecmisi(urun: str, gun: int = Query(365, ge=7, le=730), sube_
             f"""
             SELECT ts.id, ts.sube_id, COALESCE(s.ad, '—') AS sube_adi,
                    COALESCE(ts.tedarikci_ad, '—') AS tedarikci_ad,
-                   ts.durum,
+                   ts.durum, COALESCE(ts.kaynak, 'sube') AS kaynak,
                    (ts.teslim_ts AT TIME ZONE 'Europe/Istanbul') AS teslim_ts,
                    (ts.olusturma AT TIME ZONE 'Europe/Istanbul') AS siparis_ts,
                    k->>'urun_ad' AS urun_ad,
@@ -11209,6 +11209,8 @@ def ops_urun_gelis_gecmisi(urun: str, gun: int = Query(365, ge=7, le=730), sube_
             "sube": d.get("sube_adi"),
             "tedarikci": d.get("tedarikci_ad"),
             "siparis_ts": str(d.get("siparis_ts") or "")[:16].replace("T", " "),
+            # sipariş kaynağı: 'sube' = şube ekranından, 'merkez' = patron/cep
+            "kaynak": str(d.get("kaynak") or "sube"),
         }
         ts_ = d.get("teslim_ts")
         if ts_ is not None:
