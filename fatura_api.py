@@ -3339,10 +3339,36 @@ def kart_borc_izi(gun: int = 365, min_bakiye: float = 100.0):
     hareketler = [h for h in _ham if (h.get("tarih") or "") >= EVVEL_SISTEM_BASLANGIC]
     devir_oncesi = [h for h in _ham if (h.get("tarih") or "") < EVVEL_SISTEM_BASLANGIC]
 
+    # 🔗 KİMLİK DEFTERİ ALIAS'LARI (2026-08-17, NAPOLES vakası): sahip
+    # "NAPOLES COFFEE ROAST = MEHMET ATALAY'ın işletmesi" dedi ve karar deftere
+    # yazıldı, ama bu motor yalnız CARİ ADI arıyordu → 300.000 ₺'lik iki kart
+    # çekimi "iz yok" sayılıyordu. Artık kanonik adın alias'ları da arama
+    # anahtarıdır. Defter okunamazsa (tablo yok/hata) motor eski davranışıyla
+    # sürer — alias yokluğu iz aramasını DURDURMAZ.
+    alias_harita: Dict[str, List[str]] = {}
+    try:
+        with db() as (_c2, cur2):
+            cur2.execute("""
+                SELECT DISTINCT ON (UPPER(alias_ad)) alias_ad, kanonik_ad, karar
+                  FROM tedarikci_kimlik_karar
+                 WHERE aktif = TRUE
+                 ORDER BY UPPER(alias_ad), karar_zamani DESC
+            """)
+            for r in (cur2.fetchall() or []):
+                r = dict(r)
+                if str(r.get("karar") or "").lower() != "birlestir":
+                    continue  # 'ayir' = alias geri alınmış
+                alias_harita.setdefault(_cari_katla(r.get("kanonik_ad") or ""), []).append(
+                    str(r.get("alias_ad") or ""))
+    except Exception:
+        alias_harita = {}
+
     izsiz = []
     for t in borclular:
         ted = t.get("tedarikci") or ""
         acik = round(float(t.get("hesaplanan_acik") or 0), 2)
+        # Bu cari için geçerli arama adları: kendi adı + kimlik defteri alias'ları
+        arama_adlari = [ted] + alias_harita.get(_cari_katla(ted), [])
         aday, onayli = [], []
         for h in hareketler:
             damga = (h.get("cari_tedarikci") or "").strip()
@@ -3352,7 +3378,7 @@ def kart_borc_izi(gun: int = 365, min_bakiye: float = 100.0):
                 if _cari_katla(damga) == _cari_katla(ted):  # sahip onayladı
                     onayli.append(h)
                 continue                                    # başka tedarikçiye damgalı
-            if _odeme_eslesir(ted, h.get("aciklama") or ""):
+            if any(_odeme_eslesir(ad, h.get("aciklama") or "") for ad in arama_adlari):
                 aday.append(h)
 
         def _kalem(h, kesin):
