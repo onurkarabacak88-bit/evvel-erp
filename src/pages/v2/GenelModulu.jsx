@@ -108,6 +108,13 @@ const saatDakika = (s) => {
   if (sa > 23 || dk > 59) return null;
   return sa * 60 + dk;
 };
+/** Sunucu zaman damgası ("2026-08-16 08:42:17…") → "08:42". Çözülemezse null
+ *  (uydurma saat üretmeyiz). acilis_ts sunucuda Europe/Istanbul'a çevrilmiş
+ *  gelir — burada dilim dönüşümü YAPILMAZ, yalnız metinden saat kesilir. */
+const tsSaat = (ts) => {
+  const m = String(ts || '').match(/[T ](\d{2}):(\d{2})/);
+  return m ? `${m[1]}:${m[2]}` : null;
+};
 /** Şu anki İstanbul saati (dakika). Tarayıcı saat dilimi ne olursa olsun TR. */
 const trSimdiDk = (d = new Date()) => {
   const p = new Intl.DateTimeFormat('en-GB', {
@@ -327,10 +334,10 @@ function Izgara({ en, cocuk, gap = 10 }) {
  * ŞUBE IŞIĞI — sabahın ilk sorusu: "bu dükkân açıldı mı?"
  * TEK BAKIŞ KURALI: uzaktan okunan şey RENK + İŞARET; rakamlar mini satırda.
  */
-function SubeIsigi({ ad, isik, ciroMetni }) {
+function SubeIsigi({ ad, isik, ciroMetni, acilisSaat }) {
   return (
     <div
-      title={`${ad} — ${isik.ad}${isik.dunEksik ? ' · dün kapanış eksik' : ''}`}
+      title={`${ad} — ${isik.ad}${acilisSaat ? ` · açılış ${acilisSaat}` : ''}${isik.dunEksik ? ' · dün kapanış eksik' : ''}`}
       style={{
         ...kartYuzey, padding: '9px 11px', borderRadius: 14,
         borderTop: `3px solid ${isik.renk}`,
@@ -356,7 +363,14 @@ function SubeIsigi({ ad, isik, ciroMetni }) {
           {isik.isaret}
         </span>
       </div>
-      <div style={{ fontSize: 11, color: isik.renk, fontWeight: 600, lineHeight: 1.2 }}>{isik.ad}</div>
+      {/* Açılış saati durum satırının YANINA yazılır (yeni satır değil):
+          kokpitin 720px tam-tek-ekran bütçesi kart yükseltilerek bozulmaz. */}
+      <div style={{ fontSize: 11, color: isik.renk, fontWeight: 600, lineHeight: 1.2 }}>
+        {isik.ad}
+        {acilisSaat && (
+          <span style={{ fontFamily: F.mono, fontWeight: 700 }}> · {acilisSaat}</span>
+        )}
+      </div>
       <div style={{ fontSize: 10.5, color: R.not2, lineHeight: 1.25 }}>
         {[ciroMetni, isik.dunMetni].filter(Boolean).join(' · ')}
       </div>
@@ -1026,7 +1040,11 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru }) {
       const ciro = satir ? sayi(satir.ciro_tutar) : 0;
       const ciroMetni = isik.anahtar === 'sezon' ? null
         : ciro > 0 ? `bugün ${fmt(ciro)}` : 'bugün ciro —';
-      return { ...s, isik, ciroMetni };
+      // Sahip isteği (2026-08-16): QR ile fiilen KAÇTA açıldığı görünsün.
+      // acilis_ts kapanis-takip'te zaten var (İstanbul saatine çevrili) —
+      // yeni uç yok. Saat çözülemezse hiç yazılmaz (uydurma yok).
+      const acilisSaat = satir ? tsSaat(satir.acilis_ts) : null;
+      return { ...s, isik, ciroMetni, acilisSaat };
     });
 
     // K1 — DÜNÜN TOPLAM CİROSU (ŞUBELER bandının sağ şeridi).
@@ -1090,7 +1108,7 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru }) {
                ikinci satır. Daha küçük bir taban 7 sütun açıp kartları
                okunmaz hâle getirirdi. */
             <Izgara en={158} cocuk={subeKartlari.map((s) => (
-              <SubeIsigi key={s.id} ad={s.ad} isik={s.isik} ciroMetni={s.ciroMetni} />
+              <SubeIsigi key={s.id} ad={s.ad} isik={s.isik} ciroMetni={s.ciroMetni} acilisSaat={s.acilisSaat} />
             ))} />
           )}
         />
