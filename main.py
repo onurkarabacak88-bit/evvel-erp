@@ -4439,8 +4439,21 @@ def _ekstre_eslesme_mutabakat(sonuc):
                      if (i.get("tip") or "").upper() == "ODEME")
         _bek_h = sonuc.get("donem_harcama")
         _bek_o = sonuc.get("donem_odeme")
+        # ⚖️ BAĞIMSIZ KIYAS (2026-08-17, Axess vakası): donem_harcama bazı
+        # parserlarda SATIRLARDAN türetilir (Axess) — satırı satırla kıyaslamak
+        # totolojiydi ve faiz dahil/haric farkı yüzünden Axess HEP "tutmuyor"
+        # diyordu. Başlıkta önceki borç + dönem borcu varsa muhasebe kimliği
+        # kullanılır: önceki − ödeme + harcama + faiz = dönem borcu. İki ucu
+        # da başlıktan (regex) gelir, satırlardan bağımsızdır — gerçek tie-out.
+        _borc_b = sonuc.get("donem_borcu")
+        _onceki_b = sonuc.get("onceki_borc")
+        _kiyas_kaynak = "donem_harcama"
+        if _borc_b is not None and _onceki_b is not None:
+            _bek_h = float(_borc_b) - float(_onceki_b) + _oku_o
+            _kiyas_kaynak = "borc_kimligi"
         _dn = {"okunan_harcama": round(_oku_h, 2), "okunan_odeme": round(_oku_o, 2),
-               "islem_adet": len(sonuc.get("islemler") or [])}
+               "islem_adet": len(sonuc.get("islemler") or []),
+               "kiyas_kaynak": _kiyas_kaynak}
         if _bek_h is not None:
             _fark = round(_oku_h - float(_bek_h), 2)
             _dn.update({"beklenen_harcama": round(float(_bek_h), 2), "harcama_farki": _fark,
