@@ -25,6 +25,9 @@ import { R, F, kartYuzey, IK } from './tema';
 import { KpiSeridi, Liste, Tablo, BosDurum, HataBandi, Ikon } from './parcalar';
 import { kayitDosyasiYukle, belgeYukleyiciUret, cariEkstreAksiyonu } from './kayitDosyasi';
 import { enKritikOneri } from './oneriGrup';
+// 📈 Zam Takibi ayrı dosyada: kendi verisini kendi çeker, Bakış'ın /panel
+// yüklemesini bekletmez (2026-08-16 taşıma turu).
+import ZamTakibi from './ZamTakibi';
 
 const sayi = (v) => Number(v) || 0;
 const kisalt = (t, n = 88) => { const x = String(t ?? '').trim(); return x.length > n ? `${x.slice(0, n - 1)}…` : x; };
@@ -430,9 +433,8 @@ function KatmanCipi({ baslik, renk, adet, toplam, enBuyukMetin, enBuyukKisa, vad
 }
 
 /** Kısa yol / iş çipi — yatay bant elemanı. `rozet` mevcut sayaçlardan gelir.
- *  `buyuk` = BUGÜN bandının iş kartı (ikon kutusu + iki satır);
- *  yalın hâl = KISA YOLLAR çipi (yalnız renk noktası — 6 çip tek satıra sığsın
- *  diye ikon kutusu yok; nokta renk kodlamasını yine de taşır). */
+ *  `buyuk` = BUGÜN bandının iş kartı (büyük ikon + iki satır + aksiyon metni);
+ *  yalın hâl = KISA YOLLAR çipi (13px ikon + rozet + '›' oku, tek satır). */
 function Cip({ ikonYol, renk, baslik, alt, rozet, aksiyonAd, onTikla, buyuk, birincil }) {
   return (
     <div
@@ -448,10 +450,16 @@ function Cip({ ikonYol, renk, baslik, alt, rozet, aksiyonAd, onTikla, buyuk, bir
         outline: 'none', display: 'flex', alignItems: 'center', gap: buyuk ? 9 : 7, minWidth: 0,
       }}
     >
+      {/* Z3 (sahip: "kısa yol çipleri pek kullanışlı değil"):
+          6px renk noktası ne olduğunu anlatmıyordu — küçük çipte de İKON var.
+          ⚠️ YÜKSEKLİK BÜTÇESİ KUTSAL: küçük çipte ZEMİNLİ kutu (IkonRozet)
+          kullanılMAZ — kutu 13+12=25px olup çipi 31→39px şişiriyordu (ölçüldü).
+          Çıplak 13px ikon metin satırından (16px) alçak kalır → çip 31px'te
+          sabit. Büyük (BUGÜN) kartlarında kutu duruyor, orada yer var. */}
       {buyuk && ikonYol && <IkonRozet yol={ikonYol} renk={renk} boyut={birincil ? 16 : 14} />}
-      {!buyuk && (
-        <span style={{ width: 6, height: 6, borderRadius: 99, background: renk, flexShrink: 0 }} />
-      )}
+      {!buyuk && (ikonYol
+        ? <span style={{ display: 'flex', color: renk, flexShrink: 0 }}><Ikon yol={ikonYol} boyut={13} /></span>
+        : <span style={{ width: 6, height: 6, borderRadius: 99, background: renk, flexShrink: 0 }} />)}
       <div style={{ minWidth: 0 }}>
         <div style={{
           // Rütbe: birincil iş 13,5 + kendi rengi · ikincil işler 12,5 + krem
@@ -472,6 +480,17 @@ function Cip({ ikonYol, renk, baslik, alt, rozet, aksiyonAd, onTikla, buyuk, bir
           background: `${renk}24`, color: renk,
         }}>
           {rozet}
+        </span>
+      )}
+      {/* Z3 — "buraya basılır" işareti. Rozetten SONRA, ince ve sessiz.
+          Yalnız küçük çipte: BUGÜN kartlarında zaten "… →" aksiyon metni var,
+          iki ok üst üste gürültü olurdu. Yükseklik etkisi yok (satır içi glif). */}
+      {!buyuk && onTikla && (
+        <span style={{
+          flexShrink: 0, fontSize: 12, lineHeight: 1, color: R.not2,
+          marginLeft: rozet != null ? 6 : 'auto',
+        }}>
+          ›
         </span>
       )}
     </div>
@@ -513,7 +532,7 @@ function SubeGrubu({ sube, adet, toplam, kelimeler, acik, onAc, cocuk }) {
   );
 }
 
-export default function GenelModulu({ gorunum, onCekmece, onKopru }) {
+export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast }) {
   const [veri, setVeri] = useState(null);
   const [hata, setHata] = useState('');
   // ⚠️ HOOK YERİ: aşağıda `if (!veri) return …` erken çıkışları var — bu iki
@@ -573,6 +592,14 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru }) {
     }).catch((e) => setHata(e?.message || 'Veri alınamadı'));
   };
   useEffect(yukle, []);
+
+  // ════════════════════════ GÖRÜNÜM: ZAM TAKİBİ ═════════════════════════════
+  // ⚠️ ERKEN ÇIKIŞLARIN ÜSTÜNDE — bilerek. Zam listesinin /panel ile HİÇBİR
+  // ilgisi yok (kendi ucunu kendi çeker). Aşağıya konsaydı sekme, /panel
+  // yüklenene kadar "Genel bakış yükleniyor…" gösterir; /panel düşerse de
+  // hiç açılmazdı. Bir ekranın başka bir ekranın verisine rehin olmaması için
+  // dal buraya alındı. (Hook'ların hepsi yukarıda — koşullu hook yok.)
+  if (gorunum === 'zam') return <ZamTakibi onToast={onToast} />;
 
   if (hata && !veri) return <HataBandi mesaj={hata} onTekrar={yukle} />;
   if (!veri) {
@@ -1077,8 +1104,9 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru }) {
         rozet: onaylar.length || null, hedef: '__modul:onaylar:kuyruk' },  // tema.js:215
       { k: 'cari', ad: 'Cari Ekstre', ikon: IK.dosya, renk: R.mavi,
         rozet: null, hedef: '__modul:belge:cari' },               // tema.js:283
-      { k: 'zam', ad: 'Zam Takibi', ikon: IK.grafik, renk: R.amber,
-        rozet: null, hedef: '__modul:maliyet:zam' },              // tema.js:238
+      // 📈 'Zam Takibi' çipi KALKTI (2026-08-16): artık Bakış'ın kendi ÜST
+      // SEKMESİ. Bulunduğun modülün sekmesine kısa yol koymak, rayda zaten
+      // duran bir kapıyı ikinci kez çizmek olurdu.
       { k: 'kart', ad: 'Kart Dosyaları', ikon: IK.kart, renk: R.mavi,
         rozet: null, hedef: '__modul:kart:kartlar' },             // tema.js:249
       { k: 'defter', ad: 'İşlem Defteri', ikon: IK.klasor, renk: R.not2,
@@ -1233,6 +1261,7 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru }) {
           <Izgara en={150} gap={9} cocuk={kisaYollar.map((y) => (
             <Cip
               key={y.k}
+              ikonYol={y.ikon}
               renk={y.renk}
               baslik={y.ad}
               rozet={y.rozet}

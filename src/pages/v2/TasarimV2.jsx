@@ -333,9 +333,18 @@ export default function TasarimV2({ onGit }) {
       .then(d => koy('opsDepoKritik', (d?.kalemler || [])
         .filter(k => Number(k.min_stok) > 0 && Number(k.toplam) < Number(k.min_stok)).length))
       .catch(() => {});
-    // Maliyet rozeti — incelenmemiş eşik-üstü fiyat artışları
-    api('/ops/fiyat-zam-alarmlari?gun=90&sadece_yeni=true&limit=50')
-      .then(d => koy('fiyatZinciri', Array.isArray(d?.alarmlar) ? d.alarmlar.length : 0))
+    // Zam Takibi rozeti — incelenmemiş eşik-üstü fiyat artışları.
+    // 🔁 (2026-08-16) Görünüm Kâr & Maliyet'ten Genel Bakış'a taşındı; rozet
+    // anahtarı 'fiyatZinciri' → 'genelZam' oldu (eski anahtarı tüketen satır
+    // kalktı, orada bıraksak hiçbir yerde yanmayan ölü sayaç olurdu).
+    // ⚠️ SORGU EKRANLA HİZALANDI: ekran gun=180&limit=60 çekip `!goruldu`
+    // sayıyor. Rozet gun=90&sadece_yeni ile sayarsa menüde "3", ekranda "5"
+    // yazar — bu dosyanın başındaki "ROZET ≠ EKRAN" tuzağının aynısı. Aynı
+    // uç, aynı parametre, aynı filtre → rozet ekranın sözünü tutar.
+    // HATA'da rozet YAZILMAZ (catch boş) — uydurma 0 basılmaz.
+    api('/ops/fiyat-zam-alarmlari?gun=180&limit=60')
+      .then(d => koy('genelZam', (Array.isArray(d?.alarmlar) ? d.alarmlar : [])
+        .filter(a => !a.goruldu).length))
       .catch(() => {});
     // Belge rozetleri — kapsama (faturasız harcama adedi), istek (açık istek),
     // mükerrer (şüpheli + işlenemeyen). belge-merkezi tek uçtan ikisi birden.
@@ -777,7 +786,9 @@ export default function TasarimV2({ onGit }) {
 
     // v2'ye yazılmış modüller
     if (mod === 'genel') {
-      return <GenelModulu gorunum={gorunum} onCekmece={setCekmece} onKopru={koprule} />;
+      // onToast (2026-08-16): 'zam' görünümü "gördüm" işaretlemesi yapıyor —
+      // yazma sonucunun geri bildirimi kabuğun toast'ından geçer.
+      return <GenelModulu gorunum={gorunum} onCekmece={setCekmece} onKopru={koprule} onToast={setToast} />;
     }
     if (mod === 'kart') {
       return <KartModulu gorunum={gorunum} onCekmece={setCekmece} onKopru={koprule} onToast={setToast} />;

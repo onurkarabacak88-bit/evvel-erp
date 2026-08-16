@@ -142,6 +142,12 @@ export const MODULLER = [
     // rozet HİÇ görünmüyordu. Tanım koda uyduruldu (kod tek gerçek).
     { id: 'karar', ad: 'Karar Alanı', rozet: 'genelAcik', renk: '#F87171' },
     { id: 'akis', ad: 'Para Akışı & Kasa' },
+    // 📈 ZAM TAKİBİ (2026-08-16, sahip: "Zam Takibi, Karar Alanı ve Para Akışı
+    // gibi YUKARIDA SEKME olarak dursun"). Kâr & Maliyet'ten BURAYA TAŞINDI —
+    // orada kopyası kalmadı, Fiyat Zinciri ekranında tek satır köprü var.
+    // Rozet de içerikle birlikte taşındı: eski 'fiyatZinciri' anahtarı ölürdü
+    // (tükettiği satır kalktı), yerine 'genelZam' — TasarimV2 aynı ucu okuyor.
+    { id: 'zam', ad: 'Zam Takibi', rozet: 'genelZam', renk: '#FBBF24' },
     { id: 'bildirim', ad: 'Motor & Bildirimler', rozet: 'genelBildirim', renk: '#FBBF24' },
   ]},
   { id: 'panel', blok: 'Karar', ad: 'Yönetim & Karar', kisa: 'Panel', alt: 'CFO görünümleri', ikon: IK.gosterge, gorunumler: [
@@ -236,15 +242,10 @@ export const MODULLER = [
     // fazla kullanım saptama tasarıma geldi (recete_api.kontrol motoru, öneri-only)
     { id: 'tuketim', ad: 'Tüketim Kontrolü', rozet: 'tuketimFark', renk: '#F87171' },
     { id: 'fiyat', ad: 'Fiyat Zinciri' },
-    // 📈 ZAM TAKİBİ (2026-08-15, sahip: "bu artışlar ayrı bir sekme gibi düşün" —
-    // canlıda 9 alarm doğdu: FEZ püre %26,8, ATALAY espresso %16,7).
-    // Alarm listesi 'Fiyat Zinciri'nden BURAYA TAŞINDI, KOPYALANMADI: orada
-    // yerine tek satır köprü kaldı, iki ekran aynı listeyi göstermiyor.
-    // 🔔 ROZET DE İÇERİKLE BİRLİKTE TAŞINDI: 'fiyatZinciri' sayacı
-    // (TasarimV2.jsx:337 besler) artık listenin DURDUĞU satırda yanar — rozetin
-    // bir sekmede, içeriğin başka sekmede olması sahibi yanlış yere götürürdü.
-    // Anahtar adı korundu (besleyici tarafta değişiklik gerekmesin).
-    { id: 'zam', ad: 'Zam Takibi', rozet: 'fiyatZinciri', renk: '#FBBF24' },
+    // 📈 'zam' BURADAN KALKTI (2026-08-16) → Genel Bakış modülüne taşındı
+    // (sahip: üst sekme olsun). Rozet de onunla gitti: 'fiyatZinciri' anahtarı
+    // artık üretilmiyor, yerini 'genelZam' aldı. Fiyat Zinciri ekranında listeye
+    // giden tek satır köprü duruyor (hedef '__modul:genel:zam').
     // ⚠️ AYRI GÖRÜNÜM — Marj Özeti'ne KARIŞTIRILMADI. Sunucunun kendi tanımı:
     // "İZOLE KDV Pozisyonu (P&L DIŞI)". KDV ne gelir ne giderdir, devlet adına
     // tahsil/ödemedir; P&L tablosuna katmak modeli bozar. Vergi de aynı yerde:
