@@ -24,11 +24,23 @@ import { api, fmt } from '../../utils/api';
 import { R, F, kartYuzey, IK } from './tema';
 import { KpiSeridi, Liste, Tablo, BosDurum, HataBandi, Ikon } from './parcalar';
 import { kayitDosyasiYukle, belgeYukleyiciUret, cariEkstreAksiyonu } from './kayitDosyasi';
+import { enKritikOneri } from './oneriGrup';
 
 const sayi = (v) => Number(v) || 0;
 const kisalt = (t, n = 88) => { const x = String(t ?? '').trim(); return x.length > n ? `${x.slice(0, n - 1)}…` : x; };
 /** Türkçe-I tuzağı: 'I'→'ı', 'İ'→'i'. Ekran metni küçültmesinde HEP bu. */
 const trKucuk = (s) => String(s || '').toLocaleLowerCase('tr');
+
+/** KISA PARA — dar çiplerde tek satıra sığsın diye: 33.250 ₺ → "33,3K ₺".
+ *  ⚠️ Yalnız DAR yüzeylerde kullanılır; KPI ve liste satırları tam rakamı
+ *  gösterir (yuvarlanmış rakam karşılaştırma için iyidir, mutabakat için değil). */
+const kisaPara = (v) => {
+  const n = sayi(v);
+  const m = Math.abs(n);
+  if (m >= 1e6) return `${(n / 1e6).toLocaleString('tr-TR', { maximumFractionDigits: 1 })}M ₺`;
+  if (m >= 1000) return `${(n / 1000).toLocaleString('tr-TR', { maximumFractionDigits: 1 })}K ₺`;
+  return `${Math.round(n).toLocaleString('tr-TR')} ₺`;
+};
 
 /** Sunucunun teknik `tip` kodu → sahibin dili.
  *  Canlıda satır altında ham 'degisken' yazıyordu (motors.py:1411) — sahip
@@ -359,14 +371,13 @@ function SubeIsigi({ ad, isik, ciroMetni }) {
  * 🔑 GÜVEN İLKESİ korunur: kapalıyken ADET · TOPLAM · EN ESKİ · EN BÜYÜK
  * dördü de kartın üstünde durur — hiçbiri "aç"ın arkasına saklanmaz.
  */
-function KatmanCipi({ baslik, renk, adet, toplam, enBuyukMetin, vadeMetni, acik, onAc }) {
+function KatmanCipi({ baslik, renk, adet, toplam, enBuyukMetin, enBuyukKisa, vadeKisa, acik, onAc }) {
   return (
     <div
       {...acilirBaslikOzellik(
         onAc, acik,
-        // ⚠️ DÜRÜSTLÜK: "en büyük kalem" ekrandan kalktı ama KAYBOLMADI —
-        // hover/odak ipucunda ve çip açılınca listenin en üstünde duruyor
-        // (liste tutara göre sıralı). Çipte kalan üç gerçek: TOPLAM · ADET · YAŞ.
+        // İpucu = TAM hâl (firma adıyla). Ekrandaki kısa hâl tutarı zaten
+        // gösteriyor; ipucu yalnız "hangi kalem" sorusunu cevaplar.
         `${baslik} — ${enBuyukMetin} · ${acik ? 'kapat' : `${adet} kalemi aç`}`,
       )}
       style={{
@@ -392,8 +403,13 @@ function KatmanCipi({ baslik, renk, adet, toplam, enBuyukMetin, vadeMetni, acik,
       <div style={{ fontFamily: F.mono, fontSize: 16, fontWeight: 700, color: renk, lineHeight: 1.15 }}>
         {toplam}
       </div>
-      <div style={{ fontSize: 10.5, color: R.not2, lineHeight: 1.25 }}>
-        {[`${adet} kalem`, vadeMetni].filter(Boolean).join(' · ')}
+      {/* TEK SATIR — sarmaz, sığmazsa kırpılır (tam metin ipucunda).
+          Üç gerçek de EKRANDA: adet · yaş · en büyük tutar. */}
+      <div style={{
+        fontSize: 10.5, color: R.not2, lineHeight: 1.25,
+        whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+      }}>
+        {[`${adet} kalem`, vadeKisa, enBuyukKisa].filter(Boolean).join(' · ')}
       </div>
     </div>
   );
@@ -403,23 +419,32 @@ function KatmanCipi({ baslik, renk, adet, toplam, enBuyukMetin, vadeMetni, acik,
  *  `buyuk` = BUGÜN bandının iş kartı (ikon kutusu + iki satır);
  *  yalın hâl = KISA YOLLAR çipi (yalnız renk noktası — 6 çip tek satıra sığsın
  *  diye ikon kutusu yok; nokta renk kodlamasını yine de taşır). */
-function Cip({ ikonYol, renk, baslik, alt, rozet, aksiyonAd, onTikla, buyuk }) {
+function Cip({ ikonYol, renk, baslik, alt, rozet, aksiyonAd, onTikla, buyuk, birincil }) {
   return (
     <div
       {...(onTikla ? acilirBaslikOzellik(onTikla, null, aksiyonAd || baslik) : {})}
       style={{
         ...kartYuzey, borderRadius: 13, padding: buyuk ? '9px 12px' : '6px 11px',
-        borderLeft: `3px solid ${renk}`, cursor: onTikla ? 'pointer' : 'default',
+        // K5 — "hepsi eşit" hissini kırar: günün 1 numaralı işi kalın kenar +
+        // renk halkasıyla öne çıkar, 2-3 nötr kalır. Yükseklik AYNI (ızgara
+        // stretch'te en uzun kartı takip ederdi → tek ekran bütçesi bozulmasın).
+        borderLeft: `${birincil ? 4 : 3}px solid ${renk}`,
+        ...(birincil ? { boxShadow: `0 0 0 1px ${renk}55, 0 12px 28px rgba(0,0,0,.3)` } : null),
+        cursor: onTikla ? 'pointer' : 'default',
         outline: 'none', display: 'flex', alignItems: 'center', gap: buyuk ? 9 : 7, minWidth: 0,
       }}
     >
-      {buyuk && ikonYol && <IkonRozet yol={ikonYol} renk={renk} boyut={15} />}
+      {buyuk && ikonYol && <IkonRozet yol={ikonYol} renk={renk} boyut={birincil ? 16 : 14} />}
       {!buyuk && (
         <span style={{ width: 6, height: 6, borderRadius: 99, background: renk, flexShrink: 0 }} />
       )}
       <div style={{ minWidth: 0 }}>
         <div style={{
-          fontSize: buyuk ? 13 : 12, fontWeight: 600, color: buyuk ? renk : R.krem,
+          // Rütbe: birincil iş 13,5 + kendi rengi · ikincil işler 12,5 + krem
+          // (nötr). Renk yalnız 1 numarada "bak buraya" der.
+          fontSize: birincil ? 13.5 : buyuk ? 12.5 : 12,
+          fontWeight: birincil ? 700 : 600,
+          color: birincil ? renk : R.krem,
           lineHeight: 1.25, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: buyuk ? 'normal' : 'nowrap',
         }}>
           {baslik}
@@ -908,10 +933,19 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru }) {
       return {
         adet: kayitlar.length,
         toplam: fmt(toplam),
+        // TAM hâl ipucunda (firma adı 26 karaktere kadar) …
         enBuyukMetin: `en büyüğü ${kisalt(enBuyukAd, 26)} ${fmt(odemeTutar(enBuyuk))}`,
+        // … KISA hâl EKRANDA (Codex kritiği: "en büyük"ü hover'a saklamak
+        // dürüstlük ilkesini çiğner — tutar görünür kalmalı).
+        enBuyukKisa: `en büyük ${kisaPara(odemeTutar(enBuyuk))}`,
         vadeMetni: enEski < 0 ? `en eskisi ${Math.abs(enEski)} gün`
           : gelecek.length ? `en yakını ${Math.min(...gelecek)} gün sonra`
             : 'hepsi bugün vadeli',
+        // Çip tek satırlık; gün bilgisi "68g" gibi kısalır (kovanın kendi
+        // başlığı zaten "15+ gün gecikmiş" diyor, birim belirsiz kalmaz).
+        vadeKisa: enEski < 0 ? `${Math.abs(enEski)}g`
+          : gelecek.length ? `+${Math.min(...gelecek)}g`
+            : 'bugün',
       };
     };
 
@@ -995,6 +1029,23 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru }) {
       return { ...s, isik, ciroMetni };
     });
 
+    // K1 — DÜNÜN TOPLAM CİROSU (ŞUBELER bandının sağ şeridi).
+    // Zincirli dün okumasından ZATEN elde; ek uç çağrılmaz.
+    // ⚠️ TREND YÜZDESİ YOK: /panel günlük ciro serisi döndürmüyor (motors.py
+    // panel sözlüğünde bu_ay_ciro var, dünkü/önceki-gün yok) — karşılaştırma
+    // günü olmadan "%+6" yazmak uydurma olurdu. Yalnız toplam gösterilir.
+    // Dün okuması düşmüş/gelmemişse şerit HİÇ ÇİZİLMEZ (0 ₺ demek yalan olur).
+    const dunCiroToplam = dunBilinmiyor ? null
+      : (dunHam.satirlar || []).reduce((s, r) => s + sayi(r.ciro_tutar), 0);
+    const subeNotu = kapanisHata ? 'kapanış takibi okunamadı'
+      : dunBilinmiyor ? 'dün verisi bekleniyor'
+        : dunCiroToplam > 0 ? (
+          <>
+            dün toplam{' '}
+            <b style={{ fontFamily: F.mono, color: R.metin2, fontWeight: 700 }}>{kisaPara(dunCiroToplam)}</b>
+          </>
+        ) : 'dün ciro girilmemiş';
+
     // ═════════ B4 — KISA YOLLAR ═══════════════════════════════════════════════
     // ⚠️ Hedeflerin HEPSİ tema.js MODULLER ağacından doğrulandı (aşağıdaki
     // yorumlardaki satır numaraları o tanımın yeri). Rozetler YALNIZ Bakış'ın
@@ -1027,13 +1078,18 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru }) {
             Uzaktan okunan tek şey RENK; rakam mini satırda. */}
         <Bant
           etiket="Şubeler"
-          not={kapanisHata ? 'kapanış takibi okunamadı' : (dunBilinmiyor ? 'dün verisi bekleniyor' : null)}
+          not={subeNotu}
           cocuk={subeKartlari.length === 0 ? (
             <div style={{ ...kartYuzey, padding: '13px 15px', fontSize: 12.5, color: R.metin2, borderLeft: `3px solid ${R.kirmizi}` }}>
               Şube durumu alınamadı — açılış/kapanış ışıkları gösterilemiyor. Yenileyin.
             </div>
           ) : (
-            <Izgara en={150} cocuk={subeKartlari.map((s) => (
+            /* K4 — en=158 · gap 10 → 1010px içerikte en fazla 6 sütun.
+               5 şubede auto-fit boş rayları toplar → 5 kart ≈ 194px tek satır;
+               6 şubede tam 160px (≥140 tabanı korunur); 7+ şubede zarif
+               ikinci satır. Daha küçük bir taban 7 sütun açıp kartları
+               okunmaz hâle getirirdi. */
+            <Izgara en={158} cocuk={subeKartlari.map((s) => (
               <SubeIsigi key={s.id} ad={s.ad} isik={s.isik} ciroMetni={s.ciroMetni} />
             ))} />
           )}
@@ -1054,6 +1110,8 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru }) {
               <Cip
                 key={is.k}
                 buyuk
+                // K5 — günün 1 numarası baskın; 2-3 nötr.
+                birincil={i === 0}
                 ikonYol={is.ikonYol}
                 renk={is.renk}
                 baslik={is.metin}
@@ -1099,7 +1157,8 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru }) {
                 adet={o.adet}
                 toplam={o.toplam}
                 enBuyukMetin={o.enBuyukMetin}
-                vadeMetni={o.vadeMetni}
+                enBuyukKisa={o.enBuyukKisa}
+                vadeKisa={o.vadeKisa}
                 acik={!!acikKatman[k.anahtar]}
                 onAc={() => setAcikKatman((s) => ({ ...s, [k.anahtar]: !s[k.anahtar] }))}
               />
@@ -1145,19 +1204,6 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru }) {
           )}
         </div>
 
-        {/* Açılan kovaların kalem dökümü — mozaiğin ALTINDA, yerinde. */}
-        {acikKatmanlar.map((k, i) => (
-          <div key={`d-${k.anahtar}`} style={{ ...kartYuzey, padding: '12px 14px', borderLeft: `3px solid ${k.renk}` }}>
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 10 }}>
-              <span style={{ fontFamily: F.baslik, fontSize: 13, fontWeight: 600, color: k.renk }}>{k.baslik}</span>
-              {/* 'satıra tıkla' notu YALNIZ ilk açılan dökümde (tekrarı gürültü) */}
-              {i === 0 && <span style={{ marginLeft: 'auto', fontSize: 10.5, color: R.not3 }}>satıra tıkla → ödeme dosyası</span>}
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {katmanIcerigi(k.anahtar, k.kayitlar)}
-            </div>
-          </div>
-        ))}
         </div>} />
 
         {/* ═════════ BANT 4 — KISA YOLLAR ═══════════════════════════════════
@@ -1177,6 +1223,32 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru }) {
             />
           ))} />
         } />
+
+        {/* ═════════ AÇILAN KOVANIN DÖKÜMÜ — MOZAİĞİN ALTINDA ════════════════
+            K3 — PANO SABİT: döküm 4 bandın ALTINA çizilir, aralarına DEĞİL.
+            İki kat koruma:
+              1) YER: hangi kova açılırsa açılsın ŞUBELER/BUGÜN/PARA/KISA YOLLAR
+                 hep aynı 4 bant yüksekliğinde kalır — hiçbiri fold'un altına
+                 itilmez (ölçüm: kapalı 482px, açıkken de ilk 482px aynı).
+              2) TAVAN: liste kendi içinde kaydırır (maxHeight 240) — 9 kalemlik
+                 bir kova 555px'lik kuyruk açıp sayfayı üç ekran uzatamaz.
+            Kova ile dökümü bağlayan iz: açık çipin renk halkası + dökümün
+            başlığında kovanın adının tekrarı. */}
+        {acikKatmanlar.map((k, i) => (
+          <div key={`d-${k.anahtar}`} style={{ ...kartYuzey, padding: '12px 14px', borderLeft: `3px solid ${k.renk}` }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 10 }}>
+              <span style={{ fontFamily: F.baslik, fontSize: 13, fontWeight: 600, color: k.renk }}>{k.baslik}</span>
+              {/* 'satıra tıkla' notu YALNIZ ilk açılan dökümde (tekrarı gürültü) */}
+              {i === 0 && <span style={{ marginLeft: 'auto', fontSize: 10.5, color: R.not3 }}>satıra tıkla → ödeme dosyası</span>}
+            </div>
+            <div style={{
+              display: 'flex', flexDirection: 'column', gap: 8,
+              maxHeight: 240, overflowY: 'auto', paddingRight: 4,
+            }}>
+              {katmanIcerigi(k.anahtar, k.kayitlar)}
+            </div>
+          </div>
+        ))}
       </div>
     );
   }
@@ -1371,74 +1443,23 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru }) {
   // ════════════════════════ GÖRÜNÜM: BİLDİRİMLER ════════════════════════════
   const ciroEksik = Array.isArray(p.ciro_eksik_gunler) ? p.ciro_eksik_gunler : [];
   const mesajlar = Array.isArray(p.merkez_mesajlar) ? p.merkez_mesajlar : [];
-  const oneriRenk = (o) => {
-    const r = String(o.renk || '').toUpperCase();
-    return r === 'KIRMIZI' ? R.kirmizi : r === 'TURUNCU' ? R.amber : r === 'SARI' ? R.amber : R.mavi;
-  };
 
-  // ── MOTOR ÖNERİLERİ: KRİTİK NAKİT GRUBU ───────────────────────────────────
-  // Motor, serbest nakde sığmayan HER kart için ayrı bir "NAKİT YETERSİZ" satırı
-  // üretiyor → aynı tek sebep (para yetmiyor) listede 5-6 kez tekrar edip diğer
-  // önerileri aşağı itiyordu. 2+ ise tek satırda birleştirilir, kartlar çekmecede.
-  const kritikNakit = oneriler.filter((o) => String(o.oneri_turu || '') === 'KRITIK_NAKIT');
-  const digerOneriler = oneriler.filter((o) => String(o.oneri_turu || '') !== 'KRITIK_NAKIT');
-  const oneriSatiri = (o, i) => ({
-    id: o.odeme_id || `on-${i}`, _o: o,
-    baslik: kisalt(o.baslik || o.oneri || 'Öneri', 80),
-    alt: kisalt(o.aciklama || o.detay || '', 100) || 'gerekçe yok',
-    tutar: sayi(o.tavsiye_tutar) ? fmt(sayi(o.tavsiye_tutar)) : '',
-    tier: oneriRenk(o) === R.kirmizi ? 'kritik' : oneriRenk(o) === R.amber ? 'uyari' : 'bilgi',
-  });
-  const kritikNakitKartlari = kritikNakit
-    .map((o) => o.kart_adi || o.banka)
-    .filter(Boolean);
-  const oneriSatirlari = [
-    ...(kritikNakit.length >= 2
-      ? [{
-          id: 'oneri-kritik-nakit-grubu', _grup: kritikNakit,
-          baslik: `⛔ NAKİT YETERSİZ — ${kritikNakit.length} kart`,
-          // ⚠️ Tutar YAZILMAZ: uç bu önerilerde tavsiye_tutar=0 gönderiyor, istenen
-          // tutar yalnız açıklama metninin içinde geçiyor — metinden para PARSE
-          // ETMEK yasak (biçim değişince sessizce yanlış rakam basar).
-          alt: kisalt(
-            `serbest nakit bu ödemelere yetmiyor${kritikNakitKartlari.length ? ` · kartlar: ${kritikNakitKartlari.join(', ')}` : ''}`,
-            110,
-          ),
-          tutar: '',
-          tier: 'kritik',
-        }]
-      : kritikNakit.map(oneriSatiri)),
-    ...digerOneriler.map(oneriSatiri),
-  ];
-
-  // ── 🔶 BUGÜN SENDEN KARAR BEKLEYENLER ─────────────────────────────────────
-  // Altta üç ayrı kutu var (motor / onay / bildirim); sahip günü görmek için
-  // üçünü de taramak zorundaydı. Bu şerit en fazla 3 maddede özetler; kutular
-  // olduğu gibi kalır (şerit özet, kutular kaynak).
-  const kritikBildirimler = [...uyarilar, ...mesajlar]
-    .filter((u) => String(u.seviye || '').toUpperCase() === 'KRITIK')
-    .sort((a, b) => String(b.tarih || '').localeCompare(String(a.tarih || '')));
-  const kararBekleyen = [];
-  if (onaylar.length > 0) {
-    kararBekleyen.push({
-      k: 'onay', ikon: '🔔', renk: R.amber,
-      metin: `${onaylar.length} onay kararın bekliyor`,
-      onTikla: () => onKopru?.('__modul:onaylar:kuyruk'),
-    });
-  }
-  if (kritikBildirimler.length > 0) {
-    const en = kritikBildirimler[0];
-    kararBekleyen.push({
-      k: 'bildirim', ikon: '⛔', renk: R.kirmizi,
-      metin: kisalt(en.aciklama || en.mesaj || en.baslik || 'Kritik bildirim', 60),
-    });
-  }
-  if (kritikNakit.length > 0) {
-    kararBekleyen.push({
-      k: 'motor', ikon: '🧠', renk: R.bakir,
-      metin: `Motor: ${kritikNakit.length} kritik öneri`,
-    });
-  }
+  // ── N2/N3 (2026-08-16): MOTOR ÖNERİLERİ ARTIK BURADA LİSTELENMİYOR ────────
+  //
+  // ⛔ N1 — "Bugün senden karar bekleyenler" şeridi KALDIRILDI: Kokpit'in BUGÜN
+  //    bandı aynı soruyu (bugün ne yapmalıyım) zaten cevaplıyordu; iki ayrı
+  //    "günlük öncelik" yüzeyi tutmak, ikisinin zamanla ayrışması demekti.
+  //    Onay sayısı kaybolmadı → aşağıdaki Onay merkezi bloğu + Kokpit'in
+  //    "Onay Kuyruğu" kısa yol rozeti taşıyor.
+  //
+  // 🧠 N2 — Karar motoru TAM LİSTESİ kalktı, yerine ÖZET KART geldi: bu sekme
+  //    "istisna & yönlendirme merkezi"dir, önerilerin KANONİK ekranı Strateji.
+  //    Aynı listeyi iki yerde tutmak "tek eylem tek yer" kuralını çiğniyordu
+  //    (ve akıbet işareti yalnız Strateji'de yazılabiliyor).
+  //
+  // 🔗 N3 — Kritik-nakit birleştirme mantığı ./oneriGrup'a taşındı; Strateji
+  //    ekranı (DenetimModulu) da oradan besleniyor. Buradaki yerel kopya silindi.
+  const enKritik = enKritikOneri(oneriler);
 
   return (
     <>
@@ -1449,75 +1470,52 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru }) {
         { etiket: 'Ciro eksiği', deger: String(ciroEksik.length), alt: ciroEksik.length ? 'gün girilmemiş' : 'eksik yok', renk: ciroEksik.length ? R.kirmizi : R.yesil },
       ]} />
 
-      {kararBekleyen.length > 0 && (
-        <div style={{ ...kartYuzey, padding: '13px 18px', marginBottom: 14, borderLeft: `3px solid ${R.amber}` }}>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 9 }}>
-            <span style={{ fontFamily: F.baslik, fontSize: 14.5, fontWeight: 600 }}>Bugün senden karar bekleyenler</span>
-            <span style={{ fontSize: 11, color: R.not2, marginLeft: 'auto' }}>aşağıdaki kutuların özeti</span>
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            {kararBekleyen.map((k) => (
-              <div
-                key={k.k}
-                onClick={k.onTikla}
-                tabIndex={k.onTikla ? 0 : undefined}
-                role={k.onTikla ? 'button' : undefined}
-                onKeyDown={k.onTikla ? (e) => {
-                  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); k.onTikla(); }
-                } : undefined}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px',
-                  borderRadius: 10, background: R.girinti, border: `1px solid ${R.cizgi2}`,
-                  cursor: k.onTikla ? 'pointer' : 'default',
-                }}
-              >
-                <span style={{ fontSize: 13, flexShrink: 0 }}>{k.ikon}</span>
-                <span style={{ fontSize: 12.5, fontWeight: 600, color: k.renk, minWidth: 0 }}>{k.metin}</span>
-                {k.onTikla && <span style={{ marginLeft: 'auto', fontSize: 10.5, color: R.not3, whiteSpace: 'nowrap' }}>dokun →</span>}
-              </div>
-            ))}
-          </div>
+      {/* N2 — KARAR MOTORU: tam liste değil ÖZET + kanonik ekrana yönlendirme.
+          Hedef DOĞRULANDI: tema.js:143 panel modülünde 'strateji' görünümü var. */}
+      <div
+        {...(onKopru ? acilirBaslikOzellik(
+          () => onKopru('__modul:panel:strateji'), null, 'Strateji Önerileri ekranını aç',
+        ) : {})}
+        style={{
+          ...kartYuzey, padding: '13px 18px', marginBottom: 14,
+          borderLeft: `3px solid ${oneriler.length ? R.bakir : R.yesil}`,
+          cursor: onKopru ? 'pointer' : 'default', outline: 'none',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: enKritik ? 8 : 0 }}>
+          <IkonRozet yol={IK.islemci} renk={oneriler.length ? R.bakir : R.yesil} boyut={14} />
+          <span style={{ fontFamily: F.baslik, fontSize: 14.5, fontWeight: 600 }}>
+            {oneriler.length ? `Karar motorunda ${oneriler.length} öneri` : 'Karar motoru bugün öneri üretmedi'}
+          </span>
+          <span style={{ fontSize: 11, color: R.not2 }}>öneri-only · hüküm insanın</span>
+          {onKopru && (
+            <span style={{ marginLeft: 'auto', fontSize: 10.5, color: R.not3, whiteSpace: 'nowrap' }}>
+              Strateji ekranında incele →
+            </span>
+          )}
         </div>
-      )}
-
-      <Bolum baslik="🧠 Karar motoru" sayac={oneriSatirlari.length} renk={R.bakir} not="öneri-only · hüküm insanın" cocuk={
-        oneriler.length === 0
-          ? <div style={{ fontSize: 12, color: R.not2 }}>Motor bugün öneri üretmedi.</div>
-          : <Liste
-              satirlar={oneriSatirlari}
-              onAc={({ _o, _grup }) => (_grup ? onCekmece?.({
-                tip: 'MOTOR ÖNERİSİ',
-                baslik: `⛔ Nakit yetersiz — ${_grup.length} kart`,
-                alt: 'aynı sebep, birden çok kart',
-                kpi: [
-                  { etiket: 'Etkilenen kart', deger: String(_grup.length), renk: R.kirmizi },
-                  { etiket: 'Öncelik', deger: 'kırmızı', renk: R.kirmizi },
-                ],
-                listeBaslik: 'Nakit yetmeyen kartlar',
-                satirlar: _grup.map((o, i) => ({
-                  ad: o.kart_adi || o.banka || `Kart ${i + 1}`,
-                  detay: o.banka || 'banka bilgisi yok',
-                  tutar: o.tarih ? String(o.tarih).slice(0, 10) : '—',
-                })),
-                not: 'Motor yalnız ÖNERİR — hüküm insanındır. Serbest nakit (zorunlu yükler ayrıldıktan sonra) bu ödemelere yetmiyor; hangisinin öne alınacağı sahip kararıdır.',
-                aksiyonAd: 'Strateji Önerileri\'ni aç',
-                _hedef: '__modul:panel:strateji',
-              }) : onCekmece?.({
-                tip: 'MOTOR ÖNERİSİ',
-                baslik: kisalt(_o.baslik || 'Öneri', 70),
-                alt: String(_o.renk || 'bilgi').toLowerCase(),
-                kpi: [
-                  { etiket: 'Tavsiye tutar', deger: sayi(_o.tavsiye_tutar) ? fmt(sayi(_o.tavsiye_tutar)) : '—' },
-                  { etiket: 'Öncelik', deger: String(_o.renk || '—').toLowerCase(), renk: oneriRenk(_o) },
-                ],
-                listeBaslik: 'Gerekçe',
-                satirlar: [{ ad: 'Motor gerekçesi', detay: 'neden önerildi', tutar: kisalt(_o.aciklama || '—', 80) }],
-                not: 'Motor yalnız ÖNERİR — hüküm insanındır. Uygulama Strateji Önerileri ekranında işaretlenir.',
-                aksiyonAd: 'Strateji Önerileri\'ni aç',
-                _hedef: '__modul:panel:strateji',
-              }))}
-            />
-      } />
+        {enKritik && (
+          <div style={{
+            display: 'flex', alignItems: 'flex-start', gap: 10, padding: '9px 12px',
+            borderRadius: 10, background: R.girinti, border: `1px solid ${R.cizgi2}`,
+          }}>
+            <span style={{
+              flexShrink: 0, fontSize: 10, letterSpacing: '.6px', textTransform: 'uppercase',
+              color: R.not3, fontWeight: 700, paddingTop: 2,
+            }}>
+              en kritiği
+            </span>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: 12.5, fontWeight: 600, color: R.kirmizi, lineHeight: 1.3 }}>
+                {kisalt(enKritik.baslik, 74)}
+              </div>
+              <div style={{ fontSize: 11, color: R.not2, marginTop: 2, lineHeight: 1.3 }}>
+                {kisalt(enKritik.alt, 104)}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
 
       <Bolum baslik="🔔 Onay merkezi" sayac={onaylar.length} renk={R.amber} not="KASA kayıtları hariç" cocuk={
         onaylar.length === 0

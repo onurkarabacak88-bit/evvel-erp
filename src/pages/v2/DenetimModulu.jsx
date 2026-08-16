@@ -16,6 +16,8 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api, fmt } from '../../utils/api';
 import { R, F, kartYuzey } from './tema';
 import { KpiSeridi, Liste, Tablo, BosDurum, HataBandi } from './parcalar';
+// N3 — kritik-nakit birleştirme TEK YERDEN (Bakış da aynı yardımcıyı kullanır).
+import { kritikNakitAyir, kritikNakitBaslik, kritikNakitAlt } from './oneriGrup';
 
 const sayi = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 const bugunISO = () => {
@@ -153,6 +155,9 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
   // Günlük not (işletme günlüğü — duyu dilekleriyle doğan akış)
   const [notForm, setNotForm] = useState(null);   // {baslik, tip, sube_id}
   const [notMesgul, setNotMesgul] = useState(false);
+  // N3 — Strateji'deki "NAKİT YETERSİZ" grubu açık mı (yalnız görünüm durumu).
+  // ⚠️ Hook, görünüm dallarının ÜSTÜNDE durmak zorunda (koşullu hook yasak).
+  const [nakitGrupAcik, setNakitGrupAcik] = useState(false);
   const [notSubeler, setNotSubeler] = useState([]);
   const [bagHata, setBagHata] = useState('');
   const [karne, setKarne] = useState(null);
@@ -1536,6 +1541,15 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
     if (stratejiHata) return <HataBandi mesaj={stratejiHata} onTekrar={stratejiYukle} />;
     if (!strateji) return <Yukleniyor />;
     const oneriler = Array.isArray(strateji.oneriler) ? strateji.oneriler : [];
+    // ── N3 (2026-08-16): KRİTİK NAKİT BİRLEŞTİRME ────────────────────────────
+    // Motor, serbest nakde sığmayan HER kart için ayrı "NAKİT YETERSİZ" satırı
+    // üretiyor → burada 5-6 kez tekrar edip gerçek stratejik önerileri aşağı
+    // itiyordu. Birleştirme mantığı Bakış'ta vardı ama önerilerin KANONİK
+    // ekranı BURASI; mantık ./oneriGrup'a taşındı, iki ekran da oradan besleniyor.
+    // Grup satırı AÇILABİLİR: tek tek kartların "Uyguladım" işareti kaybolmasın
+    // (akıbet defteri yalnız bu ekrandan yazılıyor).
+    const { grup: nakitGrup, diger: digerOneri, kartlar: nakitKartlar, birlesir } = kritikNakitAyir(oneriler);
+    const gosterilenOneriler = birlesir && !nakitGrupAcik ? digerOneri : [...nakitGrup, ...digerOneri];
     return (
       <>
         <KpiSeridi kpiler={[
@@ -1557,11 +1571,41 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
             öneriye göre değişir, uydurma rakam basılmaz — izi tutulur, etki insan
             notuyla/ileriki iterasyonla bağlanır. */}
         <OneriSeridi metin="Motor yalnız önerir — 'Uyguladım' işareti akıbet defterine yazılır; hangi önerinin hayata geçtiği artık ölçülüyor." />
+        {/* Aynı TEK sebebin (serbest nakit yetmiyor) N kart tekrarı — tek satır.
+            Tıklayınca kartlar listeye AÇILIR; kapatınca yine toplanır. */}
+        {birlesir && (
+          <div
+            onClick={() => setNakitGrupAcik((a) => !a)}
+            tabIndex={0}
+            role="button"
+            aria-expanded={nakitGrupAcik}
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setNakitGrupAcik((a) => !a); } }}
+            style={{
+              ...kartYuzey, padding: '11px 14px', marginBottom: 10, cursor: 'pointer', outline: 'none',
+              borderLeft: `3px solid ${R.kirmizi}`,
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 13, fontWeight: 700, color: R.kirmizi }}>{kritikNakitBaslik(nakitGrup)}</span>
+              <span style={{ marginLeft: 'auto', fontSize: 10.5, color: R.not3, whiteSpace: 'nowrap' }}>
+                {nakitGrupAcik ? 'kartları topla' : 'kartları aç'}
+              </span>
+            </div>
+            {/* ⚠️ TUTAR YOK: uç bu önerilerde tavsiye_tutar=0 gönderiyor; istenen
+                tutar yalnız açıklama metninde geçiyor, metinden para parse etmek
+                yasak (biçim değişince sessizce yanlış rakam basar). */}
+            <div style={{ fontSize: 11.5, color: R.not2, marginTop: 4, lineHeight: 1.4 }}>
+              {kritikNakitAlt(nakitKartlar)}
+            </div>
+          </div>
+        )}
         {oneriler.length === 0 ? (
           <BosDurum metin="Şu an açık strateji önerisi yok." />
+        ) : gosterilenOneriler.length === 0 ? (
+          <BosDurum metin="Tüm öneriler yukarıdaki nakit grubunda — açmak için satıra dokunun." />
         ) : (
           <Liste
-            satirlar={oneriler.map((o, i) => {
+            satirlar={gosterilenOneriler.map((o, i) => {
               const ham = String(o.baslik || o.oneri || o.aciklama || `oneri-${i}`);
               const ref = `strateji:${ham.toLowerCase().replace(/[^a-z0-9ğüşıöç]+/gi, '-').slice(0, 60)}`;
               const isaret = isaretliler[ref];
