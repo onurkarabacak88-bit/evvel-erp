@@ -4444,12 +4444,13 @@ def _ekstre_pdf_arsivle(sonuc, raw: bytes, dosya_ad: str):
         sonuc["belge_arsivlendi"] = False
         return sonuc
     try:
+        from psycopg2 import Binary as _PgBinary  # main.py'de modül-düzeyi psycopg2 yok
         with db() as (conn, cur):
             _ekstre_belge_kolonlari(cur)
             cur.execute(
                 "UPDATE kart_ekstre_donem SET belge_pdf=%s, belge_ad=%s, belge_ts=NOW() "
                 "WHERE kart_id=%s AND donem=DATE_TRUNC('month', %s::date)",
-                (psycopg2.Binary(raw), (dosya_ad or "ekstre.pdf")[:200], kart["id"], kesim),
+                (_PgBinary(raw), (dosya_ad or "ekstre.pdf")[:200], kart["id"], kesim),
             )
             sonuc["belge_arsivlendi"] = cur.rowcount > 0
     except Exception as _e:
