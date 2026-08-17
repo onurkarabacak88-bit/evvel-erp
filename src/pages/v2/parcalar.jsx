@@ -44,9 +44,30 @@ export function KpiSeridi({ kpiler, sik }) {
       gap: sik ? 9 : 11, marginBottom: sik ? 0 : 16,
     }}>
       {kpiler.map((k, i) => (
-        <div key={i} style={{ ...kartYuzey, borderRadius: 15, padding: sik ? '9px 14px' : '14px 16px', boxShadow: '0 12px 28px rgba(0,0,0,.3)' }}>
-          <div style={{ fontSize: 10, letterSpacing: '.8px', textTransform: 'uppercase', color: R.not, fontWeight: 700, lineHeight: sik ? 1.2 : 'normal' }}>
+        // 🖱️ TIKLANABİLİR KPI (2026-08-17, sahip: "kasaya tıkladığımda ayrımları
+        // görebilmeliyim"). `onTikla` VEREN kpi tıklanır; vermeyen hiç etkilenmez
+        // (undefined → eski davranış birebir). Klavye erişimi de açılır, yoksa
+        // fare olmadan ulaşılamayan bir bilgi kalırdı.
+        <div
+          key={i}
+          onClick={k.onTikla}
+          tabIndex={k.onTikla ? 0 : undefined}
+          role={k.onTikla ? 'button' : undefined}
+          onKeyDown={k.onTikla ? (e) => {
+            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); k.onTikla(); }
+          } : undefined}
+          className={k.onTikla ? 'v2-hover-kalk' : undefined}
+          style={{
+            ...kartYuzey, borderRadius: 15,
+            padding: sik ? '9px 14px' : '14px 16px',
+            boxShadow: '0 12px 28px rgba(0,0,0,.3)',
+            cursor: k.onTikla ? 'pointer' : 'default',
+          }}
+        >
+          <div style={{ fontSize: 10, letterSpacing: '.8px', textTransform: 'uppercase', color: R.not, fontWeight: 700, lineHeight: sik ? 1.2 : 'normal', display: 'flex', alignItems: 'center', gap: 5 }}>
             {k.etiket}
+            {/* Tıklanabilirliğin görünür işareti — yoksa kullanıcı bilgiyi arar */}
+            {k.onTikla && <span style={{ fontSize: 9, color: R.not2, letterSpacing: 0 }}>▸</span>}
           </div>
           <div style={{
             whiteSpace: 'nowrap', fontFamily: F.mono, fontSize: sik ? 20 : 22, fontWeight: 700,

@@ -807,6 +807,105 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
     kayitDosyasiYukle(bag);
   };
 
+  // ── 💰 KASA ÇEKMECESİ (2026-08-17) ───────────────────────────────────────
+  // Sahip: "merkez gösterimde TOPLAM kasayı görmeliyim ama :)) ve kasaya
+  // tıkladığımda AYRIMLARI görebilmeliyim."
+  // Kaynak /api/kasa-defteri — 2026-08-17'de tam bu ihtiyaç için açıldı:
+  // öncesinde kasayı uçtan uca okuyan uç YOKTU (/kasa sabit LIMIT 100), o
+  // yüzden hiçbir ekran kırılımı dürüstçe gösteremiyordu.
+  // ⛔ Burada HİÇBİR rakam yeniden hesaplanmaz — 17 farklı borç formülü
+  //    kusurunun kart tarafındaki dersi: gösterim kendi aritmetiğini kurmaz.
+  const SUBE_ADI = { 'sube-zafer': 'ZAFER', 'sube-tema': 'TEMA',
+    'sube-koycegiz': 'KÖYCEĞİZ', 'sube-alsancak': 'ALSANCAK',
+    '(atanmamış)': 'Merkez (şube dışı)' };
+
+  const kasaCekmecesiniAc = async () => {
+    // Önce iskeleti aç — veri gelene kadar boş ekran yerine "yükleniyor".
+    onCekmece?.({
+      tip: 'KASA', baslik: 'Kasa · toplam ve ayrımlar',
+      alt: 'yükleniyor…', satirlar: [],
+    });
+    try {
+      const [d, bm] = await Promise.all([
+        api('/kasa-defteri?boyut=1'),          // yalnız özet+kırılım lazım
+        api('/banka-mutabakat').catch(() => null),
+      ]);
+      const oz = d?.ozet || {};
+      const subeler = (d?.sube_kirilim || [])
+        .map((r) => ({
+          ad: SUBE_ADI[r.sube] || r.sube,
+          bakiye: sayi(r.giris) - sayi(r.cikis),
+          adet: sayi(r.adet),
+        }))
+        .sort((a, b) => b.bakiye - a.bakiye);
+
+      // Türler: en çok para hareketi olan 8 tür (çıkış ağırlıklı sıralı)
+      const turler = (d?.tur_kirilim || [])
+        .map((r) => ({ ad: r.islem_turu, cikis: sayi(r.cikis), giris: sayi(r.giris), adet: sayi(r.adet), subesiz: sayi(r.subesiz) }))
+        .sort((a, b) => (b.cikis + b.giris) - (a.cikis + a.giris))
+        .slice(0, 8);
+
+      const satirlar = [
+        ...subeler.map((s) => ({
+          ad: s.ad,
+          // ⚠️ Eksi bakiye gerçek hayatta olamaz (para yoksa ödeme yapılamaz) —
+          // sessiz geçilmez. Uyarı `detay`e yazılır çünkü çekmece satırı `rozet`
+          // alanını RENDER ETMİYOR (parcalar.jsx: yalnız ad/detay/tutar) —
+          // rozet olarak koysaydım işaret sessizce yok olurdu.
+          detay: s.bakiye < 0
+            ? `${s.adet} hareket · ⚠ eksi bakiye — kasa eksiye düşemez`
+            : `${s.adet} hareket`,
+          tutar: fmt(s.bakiye),
+        })),
+        { ad: '───────────', detay: '', tutar: '' },
+        ...turler.map((t) => ({
+          ad: t.ad,
+          detay: `${t.adet} hareket${t.subesiz ? ` · ${t.subesiz} tanesi şubesiz` : ''}`,
+          tutar: t.cikis > t.giris ? `−${fmt(t.cikis)}` : fmt(t.giris),
+        })),
+      ];
+
+      const kpi = [
+        { etiket: 'Toplam kasa', deger: fmt(sayi(oz.net)), renk: sayi(oz.net) >= 0 ? R.yesil : R.kirmizi },
+        { etiket: 'Giriş', deger: fmt(sayi(oz.giris)), renk: R.yesil },
+        { etiket: 'Çıkış', deger: fmt(sayi(oz.cikis)), renk: R.kirmizi },
+        {
+          etiket: 'Şubesiz hareket',
+          deger: String(sayi(oz.subesiz_adet)),
+          renk: sayi(oz.subesiz_adet) > 0 ? R.amber : R.yesil,
+        },
+      ];
+
+      // Teslim → banka akışı: ZATEN VAR OLAN /banka-mutabakat'tan okunur,
+      // burada yeniden kurulmaz. Uç düşerse bölüm sessizce kaybolmaz — not'ta
+      // neden görünmediği yazar (HATA ≠ BOŞ).
+      const akis = bm
+        ? `Teslim→banka (${bm.donem}): alınan ${fmt(sayi(bm.donem_teslim))} · `
+          + `bankaya yatan ${fmt(sayi(bm.donem_yatan))} · fark ${fmt(sayi(bm.donem_fark))}. `
+          + `Ödemelerin %${sayi(bm.siniflama_pct).toFixed(1)}'inde elden/havale yazıyor — `
+          + `kalanı «belirsiz», o yüzden elde nakit kesin hesaplanamıyor.`
+        : 'Teslim→banka akışı okunamadı (/banka-mutabakat yanıt vermedi).';
+
+      onCekmece?.({
+        tip: 'KASA',
+        baslik: 'Kasa · toplam ve ayrımlar',
+        alt: `${sayi(d?.toplam)} hareket · merkez = şube kasalarının toplamı`,
+        kpi,
+        listeBaslik: 'Kasa bazında · sonra işlem türü',
+        satirlar,
+        not: akis,
+      });
+    } catch (e) {
+      onCekmece?.({
+        tip: 'KASA', baslik: 'Kasa · toplam ve ayrımlar',
+        alt: 'ayrım alınamadı',
+        satirlar: [],
+        not: `Kırılım okunamadı: ${e?.message || 'bilinmeyen hata'}. `
+           + 'Rakam uydurulmadı — uç düzelince ayrım burada görünecek.',
+      });
+    }
+  };
+
   // ════════════════════════ GÖRÜNÜM: KARAR ALANI ════════════════════════════
   if (gorunum === 'karar') {
     // ─────────────────────────────────────────────────────────────────────────
@@ -1177,7 +1276,18 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
         {/* `sik` — şerit bir BANDIN içinde; kendi alt boşluğunu taşımaz,
             aralığı bandın flex gap'i verir (çift boşluk = boşa 16px). */}
         <KpiSeridi sik kpiler={[
-          { etiket: 'Kasa', deger: fmt(sayi(p.kasa)), alt: 'kanonik bakiye', renk: sayi(p.kasa) >= 0 ? R.yesil : R.kirmizi },
+          {
+            etiket: 'Kasa',
+            deger: fmt(sayi(p.kasa)),
+            // 🖱️ 2026-08-17, sahip: "merkez gösterimde TOPLAM kasayı görmeliyim
+            // ama :)) ve kasaya tıkladığımda AYRIMLARI görebilmeliyim".
+            // Değer = merkez toplamı (şube kasalarının toplamı); tıklayınca
+            // kırılım açılır. Kırılım /api/kasa-defteri'den CANLI gelir —
+            // burada hiçbir rakam yeniden hesaplanmaz (tek gerçek kaynak).
+            alt: 'tüm kasaların toplamı · ayrım için tıkla',
+            renk: sayi(p.kasa) >= 0 ? R.yesil : R.kirmizi,
+            onTikla: kasaCekmecesiniAc,
+          },
           { etiket: 'Gecikmiş', deger: fmt(gecikmisToplam), alt: `${gK.length + gU.length + gB.length} kalem`, renk: gecikmisToplam > 0 ? R.kirmizi : R.yesil },
           {
             // 🔵 (2026-08-14): değer TUTAR, adet alta indi (yanındaki KPI'lar para
