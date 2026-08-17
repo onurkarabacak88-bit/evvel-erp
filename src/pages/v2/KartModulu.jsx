@@ -391,6 +391,74 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
 
   const ktkKapat = () => { if (!ktkMesgul) { setKtkModal(null); setKtkPin(''); setKtkYazi(''); } };
 
+  // ─── 💳 KART ÖDEMESİ (2026-08-17, sahip: "kredi kartlarını kart alanından
+  // ödemesini nasıl yapacağız, sekme yok!") ───────────────────────────────────
+  // Eksik olan SEKME değil, ÖDEME AKSİYONUYDU: v2 Kartlar alanında borcu görüp
+  // ödeyecek yer yoktu, sadece Ödeme Merkezi'ne köprü vardı — o köprü de plan
+  // bazlı kuyruğa düşüyor, dönemi kapanmış ama PLANI OLMAYAN kart borcu orada
+  // hiç görünmüyordu. Yani sahip borcu görüyor ama ödeyemiyordu.
+  //
+  // "ÖDEME MERKEZİ TEK KAPI" doktriniyle ÇELİŞMEZ: tek kapı olan YAZMA UCUdur,
+  // ekranın yeri değil. Klasik tarafta sahip bunu 2026-07-27'de zaten böyle
+  // kurmuştu (components/KartAraOdeme.jsx) — Kartlar sayfası ve Ödeme Merkezi
+  // AYNI modalı, AYNI ucu kullanıyor. v2'ye hiç taşınmamış; burada aynı prensip:
+  //   İKİ GÖRÜNÜMDE AKSİYON, TEK YAZICI.
+  // TEK YAZICI: POST /kart-hareketleri (islem_turu=ODEME) → main.py:3771
+  //   · kart_hareketleri'ne ODEME yazar (kart borcu azalır)
+  //   · kasadan KART_ODEME hareketi düşer (izli — para nereden çıktı görünür)
+  //   · kart_plan_guncelle_tx ile ödeme planı kendini günceller
+  // ⛔ YENİ UÇ / YENİ BORÇ FORMÜLÜ YAZILMADI: borç k.toplam (sunucudan gelen
+  //    kart_bakiye_ozeti alanı) olduğu gibi tüketilir. 17 farklı borç formülü
+  //    kusuru tam bu yüzden doğmuştu — 18.'sini kurmuyoruz.
+  const [odemeModal, setOdemeModal] = useState(null);   // kartSatir öğesi
+  const [odemeTutar, setOdemeTutar] = useState('');
+  const [odemeNot, setOdemeNot] = useState('');
+  const [odemeMesgul, setOdemeMesgul] = useState(false);
+  const [odemeHata, setOdemeHata] = useState('');
+
+  const odemeAc = (k) => {
+    setOdemeModal(k);
+    setOdemeTutar('');
+    setOdemeNot('');
+    setOdemeHata('');
+  };
+  const odemeKapat = () => { if (!odemeMesgul) { setOdemeModal(null); setOdemeHata(''); } };
+
+  const odemeKaydet = async () => {
+    const k = odemeModal;
+    if (!k) return;
+    const n = Number(String(odemeTutar).replace(/\./g, '').replace(',', '.'));
+    if (!n || n <= 0) { setOdemeHata('Geçerli bir tutar girin'); return; }
+    // Borçtan fazlası FREN DEĞİL UYARI olamaz: fazla ödeme kart bakiyesini
+    // alacağa geçirir ve borç izini bozar. Sunucu bunu engellemiyor, ekran
+    // engelliyor (kuruş toleransı: sunucudaki yuvarlama farkı geçsin).
+    if (k.toplam > 0 && n > k.toplam + 0.01) {
+      setOdemeHata(`Tutar borçtan büyük olamaz — güncel borç ${fmt(k.toplam)}`);
+      return;
+    }
+    const aciklama = (odemeNot || '').trim() || `${k.ad} kart borcu ödemesi`;
+    setOdemeMesgul(true); setOdemeHata('');
+    try {
+      await api('/kart-hareketleri', { method: 'POST', body: {
+        kart_id: k.id,
+        tarih: new Date().toISOString().slice(0, 10),
+        islem_turu: 'ODEME',
+        tutar: n,
+        taksit_sayisi: 1,
+        faiz_tutari: 0,
+        ana_para: 0,
+        aciklama,          // ⚠️ sunucu 3 harften kısa açıklamayı 400 ile reddeder
+      }});
+      setOdemeModal(null);
+      onToast?.(`💳 ${k.ad} · ${fmt(n)} ödendi — kasadan düştü, kart borcu azaldı`);
+      yukle();
+    } catch (e) {
+      setOdemeHata(e?.message || 'Ödeme kaydedilemedi');
+    } finally {
+      setOdemeMesgul(false);
+    }
+  };
+
   const ktkUygula = async () => {
     const m = ktkModal;
     if (!m) return;
@@ -484,6 +552,96 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
               background: `${R.kirmizi}26`, color: R.kirmizi,
               opacity: ktkPin.length === 4 ? 1 : 0.45,
             }}>{ktkMesgul ? 'İşleniyor…' : T.buton}</button>
+          </div>
+        </div>
+      </div>
+    );
+  })();
+
+  // 💳 Kart ödeme kutusu — kartYuzey + R.* ile v2 dilinde (klasik modal CSS'i
+  // açık temadır, buraya taşınamaz; tasarımın devamı kuralı).
+  const odemeModalBlok = odemeModal && (() => {
+    const k = odemeModal;
+    const girilen = Number(String(odemeTutar).replace(/\./g, '').replace(',', '.')) || 0;
+    const kalanBorc = Math.max(0, k.toplam - girilen);
+    const kutuStil = {
+      width: '100%', boxSizing: 'border-box', padding: '10px 12px', borderRadius: 10,
+      border: `1px solid ${R.cizgi3}`, background: R.girinti, color: R.krem,
+      fontSize: 13, fontFamily: 'inherit', outline: 'none',
+    };
+    const hizli = (etiket, tutar) => (
+      <button key={etiket} disabled={!(tutar > 0)} onClick={() => setOdemeTutar(String(Math.round(tutar * 100) / 100).replace('.', ','))} style={{
+        padding: '7px 12px', borderRadius: 9, cursor: tutar > 0 ? 'pointer' : 'default',
+        border: `1px solid ${R.cizgi3}`, background: 'transparent',
+        color: tutar > 0 ? R.metin2 : R.not2, fontSize: 11.5, fontWeight: 600,
+        fontFamily: 'inherit', opacity: tutar > 0 ? 1 : 0.45,
+      }}>{etiket} · {fmt(tutar)}</button>
+    );
+    return (
+      <div onClick={(e) => { if (e.target === e.currentTarget) odemeKapat(); }} style={{
+        position: 'fixed', inset: 0, zIndex: 140, background: 'rgba(10,6,2,.75)',
+        backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+      }}>
+        <div style={{ ...kartYuzey, width: 470, maxWidth: '96vw', padding: '24px 26px' }}>
+          <div style={{ fontFamily: F.baslik, fontSize: 19, fontWeight: 600, marginBottom: 3, color: R.krem }}>
+            💳 {k.ad} — ödeme
+          </div>
+          <div style={{ fontSize: 12, color: R.not2, marginBottom: 14 }}>
+            Güncel borç <b style={{ color: R.krem }}>{fmt(k.toplam)}</b>
+            {k.asgari > 0 && <> · asgari {fmt(k.asgari)}{k.asgariKarsilandi ? ' (karşılandı)' : ''}</>}
+            {k.sonOdeme && <> · son ödeme {kisaTarih(k.sonOdeme)}</>}
+          </div>
+
+          {odemeHata && (
+            <div style={{
+              padding: '9px 12px', borderRadius: 9, marginBottom: 12, fontSize: 12,
+              background: `${R.kirmizi}18`, border: `1px solid ${R.kirmizi}44`, color: R.kirmizi,
+            }}>{odemeHata}</div>
+          )}
+
+          <label style={{ display: 'block', fontSize: 10.5, letterSpacing: '.7px', textTransform: 'uppercase', color: R.not2, fontWeight: 700, marginBottom: 5 }}>
+            Ödenecek tutar (₺)
+          </label>
+          <input inputMode="decimal" autoFocus value={odemeTutar} placeholder="0,00"
+            onChange={(e) => { setOdemeTutar(e.target.value); setOdemeHata(''); }}
+            onKeyDown={(e) => { if (e.key === 'Enter' && !odemeMesgul) odemeKaydet(); }}
+            style={kutuStil} />
+
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 9 }}>
+            {hizli('Tamamı', k.toplam)}
+            {k.asgari > 0 && hizli('Asgari', k.asgari)}
+            {hizli('Yarısı', k.toplam / 2)}
+          </div>
+
+          <label style={{ display: 'block', fontSize: 10.5, letterSpacing: '.7px', textTransform: 'uppercase', color: R.not2, fontWeight: 700, margin: '14px 0 5px' }}>
+            Açıklama (boş bırakılırsa kart adı yazılır)
+          </label>
+          <input value={odemeNot} placeholder={`${k.ad} kart borcu ödemesi`}
+            onChange={(e) => setOdemeNot(e.target.value)} style={kutuStil} />
+
+          <div style={{
+            marginTop: 14, padding: '10px 12px', borderRadius: 10,
+            background: R.girinti, border: `1px solid ${R.cizgi3}`,
+            fontSize: 11.5, color: R.not2, lineHeight: 1.65,
+          }}>
+            💵 Bu tutar <b style={{ color: R.metin2 }}>kasadan düşer</b> (KART_ODEME izi kalır) ve kart borcu anında azalır.
+            {girilen > 0 && (
+              <> Ödeme sonrası kalan borç: <b style={{ color: kalanBorc > 0 ? R.amber : R.yesil }}>{fmt(kalanBorc)}</b>.</>
+            )}
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 16 }}>
+            <button disabled={odemeMesgul} onClick={odemeKapat} style={{
+              padding: '10px 18px', borderRadius: 10, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+              background: 'transparent', color: R.metin2, fontSize: 12.5, fontWeight: 600, fontFamily: 'inherit',
+            }}>Vazgeç</button>
+            <button disabled={odemeMesgul || !(girilen > 0)} onClick={odemeKaydet} style={{
+              padding: '10px 20px', borderRadius: 10, border: 'none',
+              cursor: odemeMesgul || !(girilen > 0) ? 'default' : 'pointer',
+              background: 'linear-gradient(150deg, #E0A559, #AF6C29)', color: '#1C1309',
+              fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit',
+              opacity: odemeMesgul || !(girilen > 0) ? 0.45 : 1,
+            }}>{odemeMesgul ? 'Kaydediliyor…' : '💸 Ödemeyi kaydet'}</button>
           </div>
         </div>
       </div>
@@ -1213,7 +1371,9 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
               { ad: kartMesgul ? '…' : 'Eminim — pasife al', birincil: true, onTikla: () => !kartMesgul && kartPasife(k.id) },
               { ad: 'Vazgeç', onTikla: () => setKartPasifSor('') },
             ] : [
-              { ad: '✎ Düzenle', birincil: true, onTikla: () => kartFormAc(k) },
+              // Borcu olan kartta BİRİNCİL eylem ödemektir — bakmak değil.
+              ...(k.toplam > 0 ? [{ ad: '💳 Öde', birincil: true, onTikla: () => odemeAc(k) }] : []),
+              { ad: '✎ Düzenle', birincil: k.toplam <= 0, onTikla: () => kartFormAc(k) },
               { ad: 'Pasife al', onTikla: () => setKartPasifSor(String(k.id)) },
               // İSTİSNA işlemler — ikisi de işletme PIN'i ister
               { ad: 'Hareketleri sıfırla', onTikla: () => setKtkModal({ tip: 'ledger', kart: k }) },
@@ -1224,6 +1384,7 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
         />
 
         {ktkModalBlok}
+        {odemeModalBlok}
         {/* Tek seferlik temizlik — açılış devri öncesi; sıradan kullanım değil */}
         <div style={{ marginTop: 16, paddingTop: 12, borderTop: `1px solid ${R.cizgi3}` }}>
           <div style={{ fontSize: 11, color: R.not2, lineHeight: 1.6, marginBottom: 8 }}>
@@ -1793,7 +1954,11 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
               id: k.id, _k: k, tier: 'kritik',
               baslik: `${k.ad} · son ödeme geçti`,
               alt: `${gunMetni(k.gunKaldi)} · gecikme faizi işliyor`,
-              tutar: fmt(k.toplam), aksiyon: 'Ödemeye git', _hedef: '__modul:odeme:bekleyen',
+              // 🔧 2026-08-17: eskiden '__modul:odeme:bekleyen' köprüsüydü. O kuyruk
+              // PLAN bazlıdır (/odeme-plani/bugun); dönemi kapanmış ama planı
+              // olmayan kart borcu orada HİÇ görünmez — sahip "ödemeye git"e
+              // basıp boş listeye düşüyordu. Artık ödeme kutusu yerinde açılır.
+              tutar: fmt(k.toplam), aksiyon: '💳 Öde', _hedef: '__yerli:ode',
             };
             if (!k.ekstreVar) return {
               id: k.id, _k: k, tier: 'uyari',
@@ -1805,7 +1970,7 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
               id: k.id, _k: k, tier: 'kritik',
               baslik: `${k.ad} · son ödeme ${gunMetni(k.gunKaldi)}`,
               alt: `asgari ${fmt(k.asgari)} · tam ödeme ${fmt(k.toplam)}`,
-              tutar: fmt(k.toplam), aksiyon: 'Ödemeye git', _hedef: '__modul:odeme:bekleyen',
+              tutar: fmt(k.toplam), aksiyon: '💳 Öde', _hedef: '__yerli:ode',
             };
             return {
               id: k.id, _k: k, tier: k.durum === 'odendi' ? 'iyi' : 'bilgi',
@@ -1816,8 +1981,10 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
           })}
         onAc={(l) => (l._hedef === 'kart-yonetimi' ? kartAc(l._k)
           : l._hedef === '__yerli:ekstre' ? eksAc()
+          : l._hedef === '__yerli:ode' ? odemeAc(l._k)
           : onKopru?.(l._hedef))}
       />
+      {odemeModalBlok}
       {/* Kapsama denetimi bulgusu (2026-07-29): Ekstre Analizi (harcama dağılımı
           grafikleri + arşiv, klasik kart-analiz) v2'de karşılıksızdı — köprü açıldı. */}
       <div style={{ display: 'flex', gap: 9, marginTop: 2, marginBottom: 16 }}>
