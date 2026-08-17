@@ -4165,6 +4165,194 @@ def kart_ekstre_arsiv():
                 "veri_var": bool(kart_list)}
 
 
+@app.post("/api/kartlar/gercek-modeli-tasi")
+def kart_gercek_modeli_tasi(kuru: bool = True):
+    """📦 GEÇMİŞİ YENİ MODELE TAŞI (yol haritası ADIM 3/12, 2026-08-17).
+
+    Mevcut veriyi ADIM 2'de kurulan tablolara KOPYALAR. Eski tablolara HİÇ
+    dokunmaz — kart_hareketleri ve kart_ekstre_donem aynen kalır, sistem eskisi
+    gibi çalışmaya devam eder. Amaç: yeni modelin gerçek veriyle doğrulanabilmesi.
+
+    `kuru=true` (varsayılan): hiçbir şey yazmaz, ne taşınacağını SAYAR. Sahip
+    rakamları görüp onaylayınca `kuru=false` ile gerçek taşıma yapılır.
+
+    İDEMPOTANS: her kaydın kimliği ESKİ KİMLİĞİNDEN türetilir (kaynak_tur='legacy',
+    kaynak_id=eski id) ve tekil kısıtla korunur → uç iki kez çağrılsa da mükerrer
+    üretmez. Burada ON CONFLICT DO NOTHING MEŞRUDUR: kimlik içerik tahmini değil,
+    eski satırın gerçek kimliğidir (bugünkü hash tuzağının tersi).
+
+    TAŞINANLAR:
+      1. kart_ekstre_donem.belge_pdf → kart_belge          (sha256 tekil)
+      2. kart_ekstre_donem            → kart_donem          (kart+kesim tekil)
+      3. kart_ekstre_donem            → kart_okuma_surumu   (legacy başlık)
+      4. kart_hareketleri (DEVIR hariç) → kart_defter_kaydi
+      5. kart_hareketleri (DEVIR)      → kart_acilis_devri  (kavram ayrımı!)
+    """
+    import hashlib
+    sayac = {"belge": 0, "donem": 0, "surum": 0, "defter": 0, "acilis": 0,
+             "atlanan_belge": 0, "hata": []}
+    with db() as (conn, cur):
+        try:
+            from database import ensure_kart_gercek_modeli
+            ensure_kart_gercek_modeli(cur)
+        except Exception as e:
+            raise HTTPException(500, f"Yeni tablolar kurulamadı: {str(e)[:120]}")
+
+        # ── Kaynak: ekstre dönemleri (belge + dönem + okuma sürümü) ──────────
+        cur.execute("""
+            SELECT ked.id::text AS eski_id, ked.kart_id::text AS kart_id,
+                   ked.donem::text AS donem, ked.kesim_tarihi::text AS kesim,
+                   ked.son_odeme_tarihi::text AS son_odeme,
+                   ked.donem_borcu::float AS borc, ked.asgari_tutar::float AS asgari,
+                   ked.onceki_borc::float AS onceki, ked.donem_harcama::float AS harcama,
+                   ked.donem_odeme::float AS odeme, ked.donem_faizi::float AS faiz,
+                   ked.kalan_taksit_tutari::float AS kalan_taksit,
+                   ked.kullanilabilir_limit::float AS kull_limit,
+                   ked.kaynak, ked.belge_pdf, ked.belge_ad
+              FROM kart_ekstre_donem ked
+              JOIN kartlar k ON k.id = ked.kart_id
+             ORDER BY ked.kart_id, ked.donem
+        """)
+        donemler = [dict(r) for r in (cur.fetchall() or [])]
+
+        for d in donemler:
+            kesim = d.get("kesim") or (d.get("donem") or "")[:10]
+            if not kesim:
+                sayac["hata"].append(f"kesim yok: {d['eski_id'][:8]}")
+                continue
+
+            # 1) BELGE — PDF aslı varsa sha256 ile
+            belge_id = None
+            if d.get("belge_pdf"):
+                ham = bytes(d["belge_pdf"])
+                sha = hashlib.sha256(ham).hexdigest()
+                if not kuru:
+                    from psycopg2 import Binary as _B
+                    cur.execute(
+                        """INSERT INTO kart_belge (sha256, dosya_adi, boyut, pdf, yukleyen)
+                           VALUES (%s,%s,%s,%s,'legacy')
+                           ON CONFLICT (sha256) DO NOTHING RETURNING id::text""",
+                        (sha, d.get("belge_ad"), len(ham), _B(ham)))
+                    r = cur.fetchone()
+                    if r:
+                        belge_id = r["id"]; sayac["belge"] += 1
+                    else:
+                        cur.execute("SELECT id::text FROM kart_belge WHERE sha256=%s", (sha,))
+                        belge_id = (cur.fetchone() or {}).get("id")
+                        sayac["atlanan_belge"] += 1
+                else:
+                    sayac["belge"] += 1
+
+            # 2) DÖNEM — (kart, kesim) tekil
+            donem_id = None
+            if not kuru:
+                cur.execute(
+                    """INSERT INTO kart_donem (kart_id, kesim_tarihi, son_odeme_tarihi, durum)
+                       VALUES (%s,%s::date,%s::date,'kabul')
+                       ON CONFLICT (kart_id, kesim_tarihi) DO NOTHING RETURNING id::text""",
+                    (d["kart_id"], kesim, d.get("son_odeme")))
+                r = cur.fetchone()
+                if r:
+                    donem_id = r["id"]; sayac["donem"] += 1
+                else:
+                    cur.execute("SELECT id::text FROM kart_donem WHERE kart_id=%s AND kesim_tarihi=%s::date",
+                                (d["kart_id"], kesim))
+                    donem_id = (cur.fetchone() or {}).get("id")
+            else:
+                sayac["donem"] += 1
+
+            # 3) OKUMA SÜRÜMÜ — eski snapshot'ın başlığı (legacy, çapa bilinmiyor)
+            if belge_id and not kuru:
+                baslik = {k: d.get(k) for k in
+                          ("borc", "asgari", "onceki", "harcama", "odeme", "faiz",
+                           "kalan_taksit", "kull_limit")}
+                baslik["legacy_kaynak"] = d.get("kaynak")
+                cur.execute(
+                    """INSERT INTO kart_okuma_surumu
+                           (belge_id, okuyucu_surumu, baslik, capa_durumu)
+                       VALUES (%s, 'legacy/2026-08-17', %s::jsonb, 'bilinmiyor')
+                       ON CONFLICT (belge_id, okuyucu_surumu) DO NOTHING
+                       RETURNING id::text""",
+                    (belge_id, json.dumps(baslik, default=str)))
+                if cur.fetchone():
+                    sayac["surum"] += 1
+            elif belge_id:
+                sayac["surum"] += 1
+
+        # ── Kaynak: kart hareketleri ────────────────────────────────────────
+        cur.execute("""
+            SELECT h.id::text AS eski_id, h.kart_id::text AS kart_id,
+                   h.tarih::text AS tarih, h.islem_turu, h.tutar::float AS tutar,
+                   COALESCE(h.taksit_sayisi,1) AS taksit_sayisi,
+                   h.aciklama, h.harcama_tipi, h.baslangic_tarihi::text AS bas,
+                   h.durum
+              FROM kart_hareketleri h JOIN kartlar k ON k.id=h.kart_id
+             WHERE h.durum='aktif'
+             ORDER BY h.kart_id, h.tarih
+        """)
+        hareketler = [dict(r) for r in (cur.fetchall() or [])]
+
+        for h in hareketler:
+            if str(h["islem_turu"]).upper() == "DEVIR":
+                # 5) AÇILIŞ DEVRİ — kavram ayrımı: devir artık defter kaydı DEĞİL
+                if not kuru:
+                    cur.execute(
+                        """INSERT INTO kart_acilis_devri
+                               (kart_id, gecerlilik, tutar, dayanak, karar_veren)
+                           VALUES (%s,%s::date,%s,%s,'legacy')
+                           ON CONFLICT (kart_id, gecerlilik) DO NOTHING""",
+                        (h["kart_id"], h["tarih"], h["tutar"],
+                         f"legacy:{h['eski_id']} · {(h.get('aciklama') or '')[:80]}"))
+                    if cur.rowcount:
+                        sayac["acilis"] += 1
+                else:
+                    sayac["acilis"] += 1
+                continue
+
+            # 4) DEFTER KAYDI — kimlik ESKİ KİMLİKTEN (tekil kısıt korur)
+            if not kuru:
+                cur.execute(
+                    """INSERT INTO kart_defter_kaydi
+                           (kart_id, tarih, islem_turu, tutar, aciklama, harcama_tipi,
+                            kaynak_tur, kaynak_id)
+                       VALUES (%s,%s::date,%s,%s,%s,%s,'legacy',%s)
+                       ON CONFLICT (kaynak_tur, kaynak_id) DO NOTHING""",
+                    (h["kart_id"], h["tarih"], h["islem_turu"], h["tutar"],
+                     h.get("aciklama"), h.get("harcama_tipi"), h["eski_id"]))
+                if cur.rowcount:
+                    sayac["defter"] += 1
+            else:
+                sayac["defter"] += 1
+
+        # ── Doğrulama: taşınan toplamlar eski toplamlarla kuruş-eşit mi ──────
+        dogrulama = {}
+        if not kuru:
+            cur.execute("""
+                SELECT COALESCE(SUM(tutar),0)::float AS yeni FROM kart_defter_kaydi
+                 WHERE kaynak_tur='legacy'""")
+            yeni_top = float((cur.fetchone() or {}).get("yeni") or 0)
+            cur.execute("""
+                SELECT COALESCE(SUM(tutar),0)::float AS eski FROM kart_hareketleri
+                 WHERE durum='aktif' AND islem_turu <> 'DEVIR'""")
+            eski_top = float((cur.fetchone() or {}).get("eski") or 0)
+            dogrulama = {
+                "defter_eski_toplam": round(eski_top, 2),
+                "defter_yeni_toplam": round(yeni_top, 2),
+                "fark": round(yeni_top - eski_top, 2),
+                "kurus_esit": abs(yeni_top - eski_top) < 0.01,
+            }
+
+    return {
+        "kuru_kosu": kuru,
+        "kaynak": {"donem_adet": len(donemler), "hareket_adet": len(hareketler)},
+        "tasinan": sayac,
+        "dogrulama": dogrulama,
+        "not": ("KURU KOŞU — hiçbir şey yazılmadı, yalnız sayıldı. Gerçek taşıma için "
+                "?kuru=false" if kuru else
+                "Taşıma tamamlandı. Eski tablolara DOKUNULMADI; sistem eskisi gibi çalışıyor."),
+    }
+
+
 @app.get("/api/kartlar/bakiye-karsilastir")
 def kart_bakiye_karsilastir():
     """🧭 ESKİ-YENİ BAKİYE KARŞILAŞTIRMASI (yol haritası ADIM 4/12, 2026-08-17).
