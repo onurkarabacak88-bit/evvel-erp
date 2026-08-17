@@ -35,6 +35,12 @@ KASA_ETKISI_MAP = {
     # İkisi de kasa_etkisi=TRUE olmalı: biri etkisiz kalırsa toplam 848.714 ₺
     # kayar. Bu türler eklenmeden önce 144 teslim kaydı defterde İZSİZDİ.
     'KASA_TESLIM_CIKIS': True, 'KASA_TESLIM_GIRIS': True,
+    # 🤝 ŞUBELER ARASI BORÇ (2026-08-17, sahip: "para yetişmediği zaman şubeler
+    # birbirine borç veriyor, bunu da sistemde görmeli ve takip etmeliyim").
+    # Teslimle aynı desen: çift kayıt, TOPLAM KASA DEĞİŞMEZ (net 0). Dördü de
+    # kasa_etkisi=TRUE olmalı — biri etkisiz kalırsa toplam kayar.
+    'SUBE_BORC_VER': True, 'SUBE_BORC_AL': True,
+    'SUBE_BORC_GERI_VER': True, 'SUBE_BORC_GERI_AL': True,
     'KASA_GIRIS': True, 'KASA_DUZELTME': True, 'POS_KESINTI': True,
     'ONLINE_KESINTI': True, 'KISMI_ODE': True,
     'DEVIR': False,

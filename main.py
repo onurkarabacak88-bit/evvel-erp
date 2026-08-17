@@ -31,6 +31,7 @@ from operasyon_merkez_api import router as operasyon_merkez_router
 from sube_personel_api import router as sube_personel_router
 from banka_yatirim_api import router as banka_yatirim_router
 from kasa_teslim_api import router as kasa_teslim_router
+from sube_ici_borc_api import router as sube_ici_borc_router
 from isletmeci_api import router as isletmeci_router
 from abonelik_api import router as abonelik_router
 from tedarikci_api import router as tedarikci_router
@@ -88,6 +89,7 @@ app.include_router(operasyon_merkez_router)
 app.include_router(sube_personel_router)
 app.include_router(banka_yatirim_router)
 app.include_router(kasa_teslim_router)
+app.include_router(sube_ici_borc_router)
 app.include_router(isletmeci_router)
 app.include_router(abonelik_router)
 app.include_router(tedarikci_router)
