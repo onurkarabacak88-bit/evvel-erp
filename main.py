@@ -6551,6 +6551,14 @@ def odeme_plani_ekle(o: OdemePlani):
 class VadeliOdeModel(BaseModel):
     odeme_yontemi: str = 'nakit'  # 'nakit' veya 'kart'
     kart_id: Optional[str] = None
+    # 🏪 PARAYI HANGİ ŞUBE ÇIKARDI (2026-08-18, sahip: "hangisinin kasasında
+    # para varsa ondan ödüyordur"). Giderin SAHİBİ değil, ÖDEYENİ.
+    # Ödeyen ≠ giderin şubesi olduğunda otomatik şube borcu doğar
+    # (netleştirmeli — bkz. sube_ici_borc_api.capraz_odeme_borcu_kur).
+    # Boş bırakılırsa BİLİNMİYOR kalır; uydurma atama YAPILMAZ.
+    odeyen_sube_id: Optional[str] = None
+    # 'elden' | 'havale' — banka mutabakatını besler; boşsa belirsiz kalır.
+    nakit_yontemi: Optional[str] = None
 
 
 def _personel_maas_odeme_guard(cur, plan: dict) -> None:
@@ -6748,7 +6756,13 @@ def odeme_yap(oid: str, tutar: Optional[float] = None, body: VadeliOdeModel = Va
              (bugun if _tam_kapandi else plan.get('odeme_tarihi')),
              _toplam_odenen, oid))
 
-        ana_para_kismi = kasa_ve_faiz_odeme_plani_tam_odeme(cur, dict(plan), oid, odenen, bugun)
+        # 🏪 Ödeyen şube + nakit yöntemi TAŞINIR (2026-08-18). Boş gelirse eski
+        # davranış birebir sürer (BİLİNMİYOR) — uydurma atama yapılmaz.
+        ana_para_kismi = kasa_ve_faiz_odeme_plani_tam_odeme(
+            cur, dict(plan), oid, odenen, bugun,
+            odeme_yontemi=getattr(body, 'nakit_yontemi', None),
+            odeyen_sube_id=getattr(body, 'odeyen_sube_id', None),
+        )
 
         # Onay kuyruğunu kapat — PROD-PANEL-002 FIX: SADECE kaynak_id ile eşleşme tablo-arası
         # id çakışmasında yanlış onayları kapatabiliyordu. kaynak_tablo ile skopla + durum='bekliyor'
