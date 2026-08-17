@@ -684,15 +684,35 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
     const subeler = Array.isArray(rapor.subeler) ? rapor.subeler : [];
     const toplamAnomali = subeler.reduce((t, s) => t + sayi(s.anomali_sayisi), 0);
     const alarmli = subeler.filter((s) => s.alarm && s.alarm !== 'normal');
-    const uyumlu = subeler.filter((s) => s.ana_tani === 'UYUMLU');
+    // 🔴 P0 SAHTE-SAKİN AŞISI (2026-08-17, Zekâ alanı denetimi): sunucu TÜM
+    // şubeleri döndürüyor ve o gün hiç karar üretilmemişse ana_tani='UYUMLU',
+    // anomali=0, calistirildi=false yazıyor. Ekran `calistirildi`/`motor_aktif`
+    // alanlarını hiç okumadığı için MOTORU KOŞMAMIŞ şube "temiz gün" yeşili
+    // basıyordu. CANLI KANIT: Alsancak motoru 16 Haziran'dan beri kapalı
+    // (aktif=false) ama ekran "Uyumlu şube 4/4 · Bugün anomali 0 · 4 şube
+    // tarandı" diyordu. Bu, üç sorunun ORTAK kökü: kapalı motor temiz görünüyor →
+    // anomali 0 olduğu için işaretleme düğmesi hiç doğmuyor → karar defteri boş
+    // kalıyor → yanlış-alarm oranı ölçülemiyor. Aynı tuzak 'motorlar'
+    // görünümünde raporVar ile kapatılmıştı; burada açık kalmış.
+    // KURAL: ölçülmemiş şube ne temiz ne kirlidir — PAYDA DIŞI kalır ve
+    // "analiz edilmedi" diye görünür.
+    const olculdu = (s) => s.calistirildi !== false && s.motor_aktif !== false;
+    const olculen = subeler.filter(olculdu);
+    const olculmeyen = subeler.filter((s) => !olculdu(s));
+    const uyumlu = olculen.filter((s) => s.ana_tani === 'UYUMLU');
     const hamListe = Array.isArray(notlar?.notlar) ? notlar.notlar : [];
     const hamTipler = Array.isArray(notlar?.tipler) ? notlar.tipler : [];
     return (
       <>
         <KpiSeridi kpiler={[
-          { etiket: 'Bugün anomali', deger: String(toplamAnomali), alt: `${subeler.length} şube tarandı`, renk: toplamAnomali > 0 ? R.kirmizi : R.yesil },
+          // Payda artık ÖLÇÜLEN şube — "4 şube tarandı" derken 2'si hiç koşmamışsa yalan olur.
+          { etiket: 'Bugün anomali', deger: String(toplamAnomali),
+            alt: `${olculen.length} şube tarandı${olculmeyen.length ? ` · ${olculmeyen.length} analiz edilmedi` : ''}`,
+            renk: toplamAnomali > 0 ? R.kirmizi : (olculen.length ? R.yesil : R.amber) },
           { etiket: 'Alarmlı şube', deger: String(alarmli.length), alt: alarmli.map((s) => s.sube_ad).join(' · ') || 'yok', renk: alarmli.length > 0 ? R.kirmizi : R.yesil },
-          { etiket: 'Uyumlu şube', deger: `${uyumlu.length} / ${subeler.length}`, alt: 'ana tanı UYUMLU', renk: R.yesil },
+          { etiket: 'Uyumlu şube', deger: `${uyumlu.length} / ${olculen.length}`,
+            alt: olculmeyen.length ? `ölçülen içinde · ${olculmeyen.map((s) => s.sube_ad).join(', ')} hariç` : 'ana tanı UYUMLU',
+            renk: olculen.length ? R.yesil : R.not },
           { etiket: 'Tarih', deger: tarihKisa(rapor.tarih), alt: 'gece koşusu + gün içi' },
         ]} />
         {/* DUYU 3/6 — bulgu yaşam döngüsü: işaret defterinden türeyen ölçümler */}
@@ -769,13 +789,23 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
               const ref = `truth:${s.sube_id}:${String(s.tarih || rapor.tarih || '').slice(0, 10)}:${s.ana_tani || 'GENEL'}`;
               const isaret = isaretliler[ref];
               const bulgulu = sayi(s.anomali_sayisi) > 0;
+              // 🔴 P0: ölçülmemiş şube "temiz gün" DEMEZ — analiz edilmediğini söyler.
+              // Sunucu koşmamış şubeye de ana_tani='UYUMLU' yazıyor (kapalı motor,
+              // gece koşusu atlanmış gün); calistirildi/motor_aktif bunu ele veriyor.
+              const olculmedi = s.calistirildi === false || s.motor_aktif === false;
               return {
                 id: s.sube_id,
-                baslik: `${s.sube_ad} · ${s.ana_tani || '—'}`,
-                alt: kisalt(s.zeka_ozet || s.yorum_metni, 110)
-                  || (bulgulu ? `${sayi(s.anomali_sayisi)} anomali · ${sayi(s.toplam_karar)} karar` : 'temiz gün'),
-                tutar: bulgulu ? `${sayi(s.anomali_sayisi)} bulgu` : '',
-                tier: s.alarm && s.alarm !== 'normal' ? 'kritik' : bulgulu ? 'uyari' : 'iyi',
+                baslik: `${s.sube_ad} · ${olculmedi ? 'ANALİZ EDİLMEDİ' : (s.ana_tani || '—')}`,
+                alt: olculmedi
+                  ? (s.motor_aktif === false
+                      ? `motor kapalı${s.notu ? ` — ${kisalt(s.notu, 70)}` : ''} · bu şube için hüküm YOK`
+                      : 'gece koşusu bu şubede çalışmadı · hüküm YOK')
+                  : (kisalt(s.zeka_ozet || s.yorum_metni, 110)
+                     || (bulgulu ? `${sayi(s.anomali_sayisi)} anomali · ${sayi(s.toplam_karar)} karar` : 'temiz gün')),
+                tutar: olculmedi ? '—' : (bulgulu ? `${sayi(s.anomali_sayisi)} bulgu` : ''),
+                // 'iyi' (yeşil) YALNIZ gerçekten ölçülüp temiz çıkanda; ölçülmeyen nötr.
+                tier: olculmedi ? 'bilgi'
+                  : (s.alarm && s.alarm !== 'normal' ? 'kritik' : bulgulu ? 'uyari' : 'iyi'),
                 // Yaşam döngüsü işaretleri: yalnız bulgulu + henüz işaretsiz kartta
                 ...(bulgulu && !isaret ? {
                   aksiyonlar: [
