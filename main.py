@@ -2323,6 +2323,147 @@ def kasa_durumu():
         return {"guncel_bakiye": kasa, "hareketler": [dict(r) for r in cur.fetchall()]}
 
 
+@app.get("/api/kasa-defteri")
+def kasa_defteri(
+    tarih_baslangic: Optional[str] = None,
+    tarih_bitis: Optional[str] = None,
+    islem_turu: Optional[str] = None,
+    sube_id: Optional[str] = None,
+    sadece_etkisiz: bool = False,
+    sayfa: int = 1,
+    boyut: int = 500,
+):
+    """📖 KASA DEFTERİ — TAM, SAYFALANABİLİR, SALT-OKUR.
+
+    🔴 NEDEN AÇILDI (2026-08-17, sahip: "bu kasayı bugünün hareketleriyle
+    beraber baştan sona detaylı incelendin mi?"):
+    Kasayı UÇTAN UCA okumanın yolu YOKTU. Mevcut uçlar:
+      /kasa              → sabit LIMIT 100, sayfalama YOK
+      /kasa-detay        → yalnız islem_turu ÖZETİ (satır yok)
+      /kasa/sube-bazli   → yalnız şube ÖZETİ (satır yok)
+      /dis-kaynak        → tek türü, LIMIT 200
+    Yani ~570 hareketlik defterin son 100'ü dışına kimse bakamıyordu. Bir
+    bulguyu "özet rakamdan" doğrulamak, satırı görmeden hüküm vermektir; bu
+    denetimde tam o hataya düştüm (67 hareketlik kovanın 18'ini görüp
+    genelleme yaptım). Bu uç o gözü açar.
+
+    DOKTRİN:
+      · SALT-OKUR — hiçbir şey yazmaz, hiçbir şey düzeltmez
+      · SESSİZ ELEME YASAK — `toplam` filtreye uyan TÜM satır sayısıdır;
+        sayfa küçükse kaç satır dışarıda kaldığı `kalan` ile görünür
+      · HATA ≠ BOŞ — geçersiz tarih 400 döner, sessizce "hepsi" göstermez
+      · kasa_etkisi=FALSE satırlar da DÖNER (gizlenmez) ama toplamlarda
+        AYRI sayılır: defterde durur, bakiyeyi oynatmaz — ikisi karışırsa
+        "kasa tutmuyor" gibi sahte alarm doğar
+    """
+    import re as _re
+    for _ad, _v in (("tarih_baslangic", tarih_baslangic), ("tarih_bitis", tarih_bitis)):
+        if _v and not _re.match(r"^\d{4}-\d{2}-\d{2}$", _v.strip()):
+            raise HTTPException(400, f"{_ad} YYYY-AA-GG biçiminde olmalı")
+    sayfa = max(1, int(sayfa or 1))
+    boyut = max(1, min(2000, int(boyut or 500)))
+
+    kosul = ["durum='aktif'"]
+    par: list = []
+    if tarih_baslangic:
+        kosul.append("tarih >= %s::date"); par.append(tarih_baslangic.strip())
+    if tarih_bitis:
+        kosul.append("tarih <= %s::date"); par.append(tarih_bitis.strip())
+    if islem_turu:
+        # Virgülle çoklu tür: 'ANLIK_GIDER,BORC_TAKSIT'
+        turler = [t.strip().upper() for t in islem_turu.split(",") if t.strip()]
+        if turler:
+            kosul.append("UPPER(islem_turu) = ANY(%s)"); par.append(turler)
+    if sube_id:
+        s = sube_id.strip()
+        if s.upper() in ("(MERKEZ)", "ATANMAMIS", "ATANMAMIŞ", "NULL", "-"):
+            kosul.append("sube_id IS NULL")
+        else:
+            kosul.append("sube_id::text = %s"); par.append(s)
+    if sadece_etkisiz:
+        kosul.append("COALESCE(kasa_etkisi, TRUE) = FALSE")
+    nere = " AND ".join(kosul)
+
+    with db() as (conn, cur):
+        cur.execute(f"""
+            SELECT COUNT(*) AS n,
+                   COALESCE(SUM(CASE WHEN COALESCE(kasa_etkisi,TRUE) AND tutar > 0
+                                     THEN tutar ELSE 0 END), 0) AS giris,
+                   COALESCE(SUM(CASE WHEN COALESCE(kasa_etkisi,TRUE) AND tutar < 0
+                                     THEN ABS(tutar) ELSE 0 END), 0) AS cikis,
+                   COUNT(*) FILTER (WHERE COALESCE(kasa_etkisi,TRUE) = FALSE) AS etkisiz_adet,
+                   COALESCE(SUM(CASE WHEN COALESCE(kasa_etkisi,TRUE) = FALSE
+                                     THEN tutar ELSE 0 END), 0) AS etkisiz_toplam,
+                   COUNT(*) FILTER (WHERE sube_id IS NULL) AS subesiz_adet,
+                   COALESCE(SUM(CASE WHEN sube_id IS NULL AND COALESCE(kasa_etkisi,TRUE)
+                                     THEN tutar ELSE 0 END), 0) AS subesiz_net
+            FROM kasa_hareketleri WHERE {nere}
+        """, par)
+        o = dict(cur.fetchone() or {})
+        toplam = int(o.get("n") or 0)
+
+        cur.execute(f"""
+            SELECT id::text, tarih, islem_turu, tutar, aciklama, kaynak_tablo,
+                   kaynak_id::text, ref_type, kasa_etkisi, sube_id::text,
+                   odeme_yontemi, olusturma
+            FROM kasa_hareketleri WHERE {nere}
+            ORDER BY tarih DESC, olusturma DESC
+            LIMIT %s OFFSET %s
+        """, par + [boyut, (sayfa - 1) * boyut])
+        satirlar = [dict(r) for r in cur.fetchall()]
+
+        # Kırılımlar — filtrelenmiş küme için (özet ile satır AYNI kümeden gelsin)
+        cur.execute(f"""
+            SELECT islem_turu,
+                   COUNT(*) AS adet,
+                   COALESCE(SUM(CASE WHEN tutar > 0 THEN tutar ELSE 0 END), 0) AS giris,
+                   COALESCE(SUM(CASE WHEN tutar < 0 THEN ABS(tutar) ELSE 0 END), 0) AS cikis,
+                   COUNT(*) FILTER (WHERE sube_id IS NULL) AS subesiz
+            FROM kasa_hareketleri WHERE {nere}
+            GROUP BY islem_turu ORDER BY 4 DESC, 3 DESC
+        """, par)
+        tur_kirilim = [dict(r) for r in cur.fetchall()]
+
+        cur.execute(f"""
+            SELECT COALESCE(sube_id::text, '(atanmamış)') AS sube,
+                   COUNT(*) AS adet,
+                   COALESCE(SUM(CASE WHEN tutar > 0 THEN tutar ELSE 0 END), 0) AS giris,
+                   COALESCE(SUM(CASE WHEN tutar < 0 THEN ABS(tutar) ELSE 0 END), 0) AS cikis
+            FROM kasa_hareketleri WHERE {nere}
+            GROUP BY 1 ORDER BY 2 DESC
+        """, par)
+        sube_kirilim = [dict(r) for r in cur.fetchall()]
+
+    giris, cikis = float(o.get("giris") or 0), float(o.get("cikis") or 0)
+    return {
+        "filtre": {
+            "tarih_baslangic": tarih_baslangic, "tarih_bitis": tarih_bitis,
+            "islem_turu": islem_turu, "sube_id": sube_id,
+            "sadece_etkisiz": sadece_etkisiz, "sayfa": sayfa, "boyut": boyut,
+        },
+        "toplam": toplam,
+        "donen": len(satirlar),
+        "kalan": max(0, toplam - (sayfa - 1) * boyut - len(satirlar)),
+        "ozet": {
+            "giris": round(giris, 2),
+            "cikis": round(cikis, 2),
+            "net": round(giris - cikis, 2),
+            # Defterde duran ama bakiyeyi OYNATMAYAN satırlar (DEVIR, ODEME_PLANI…)
+            "kasa_etkisiz_adet": int(o.get("etkisiz_adet") or 0),
+            "kasa_etkisiz_toplam": round(float(o.get("etkisiz_toplam") or 0), 2),
+            # Şubesi çözülmemiş hareketler — "hangi kasadan çıktı" cevapsız
+            "subesiz_adet": int(o.get("subesiz_adet") or 0),
+            "subesiz_net": round(float(o.get("subesiz_net") or 0), 2),
+        },
+        "tur_kirilim": tur_kirilim,
+        "sube_kirilim": sube_kirilim,
+        "hareketler": satirlar,
+        "not": "Salt-okur kasa defteri. `net` yalnız kasa_etkisi=TRUE satırları "
+               "sayar; etkisiz satırlar ayrı raporlanır (gizlenmez). Filtresiz "
+               "çağrıda `net` = güncel kasa bakiyesi olmalıdır.",
+    }
+
+
 @app.post("/api/personel/sube-turet")
 def personel_sube_turet(kuru: int = 1):
     """👤 ŞUBESİ TANIMSIZ PERSONELİN ŞUBESİNİ İZİNDEN TÜRET.
