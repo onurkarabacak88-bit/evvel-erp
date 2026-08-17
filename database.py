@@ -805,6 +805,119 @@ def ensure_kasa_teslim_defterlesme(cur) -> None:
         logging.getLogger(__name__).warning("kasa teslim defterlesme atlandi: %s", str(e)[:160])
 
 
+def ensure_nakit_etki(cur) -> None:
+    """💵 FİZİKSEL NAKİT ETKİSİ — `tutar`ın yanına ikinci boyut.
+
+    🔴 SAHİP TEYİDİ (2026-08-18): "bankadan ödüyorum — KİRALAR ŞUBE
+    BANKALARINDAN, MAAŞLARDA BANKADAN."
+
+    Bu ayrım modeli netleştirdi: her şubenin bir BANKA HESABI var, ayrıca bir
+    ÇEKMECESİ (fiziksel nakit). Kira şubenin kendi bankasından çıkıyor — yani
+    şubenin PARA POZİSYONU doğru şekilde azalıyor, `sube_id` damgası DOĞRU.
+    Yanlış olan tek şey, o çıkışın ÇEKMECEYİ de boşaltmış gibi görünmesiydi.
+    Dolayısıyla pozisyon modeline (sahibin modeli) DOKUNULMAZ; eksik olan
+    yalnızca "çekmecede fiziksel olarak ne var" boyutuydu — bu fonksiyon onu
+    ekler.
+
+    SORUN (canlı ölçümle bulundu, 867 satırlık defter okunarak):
+    Şube kasaları imkânsız bakiyelere düşüyordu — KÖYCEĞİZ −26.408 ₺,
+    ALSANCAK −24.402 ₺. Sebep 4. bir izsiz akış DEĞİL; tek alanın iki işi
+    birden yapması:
+        `sube_id` hem "BU GİDER KİMİN?" (maliyet merkezi — kârlılık için doğru)
+                  hem "PARA HANGİ KASADAN ÇIKTI?" (nakit kaynağı) sayılıyordu.
+    Köyceğiz'in 43.500 ₺ kirası Köyceğiz'in gideridir (doğru) ama parası
+    Köyceğiz'in çekmecesinden ÇIKMAZ — sahip bankadan havale eder. Sistem tek
+    alan kullandığı için gideri şubeye yazmak şubenin kasasını da boşaltıyordu.
+    Etkilenen: SABIT_GIDER 251.783 + PERSONEL_MAAS 479.110 + FATURA_ODEMESI
+    12.838 = 743.731 ₺.
+
+    Aynı kusurun ikinci yüzü: ciro satırı `nakit + (pos−komisyon) +
+    (online−komisyon)` yazıyor. Cironun yalnız %24'ü gerçek nakit; kalan %76
+    doğrudan bankaya gider ama şube çekmecesine girmiş gibi duruyor.
+
+    ÇÖZÜM — TEK DEFTER, İKİ BOYUT (Codex'in "kanal" görüşüyle birleşti):
+        tutar       → PARA POZİSYONU etkisi. Sahibin modeli; DEĞİŞMEZ.
+        nakit_etki  → FİZİKSEL NAKİT etkisi. Çekmecede gerçekten ne oldu.
+    Toplam kasa hiç değişmez; "elde ne kadar nakit var" sorusu artık ayrı
+    boyuttan cevaplanır.
+
+    ⚠️ NULL = BİLİNMİYOR, 0 DEĞİL.
+    Codex'in uyarısı: "yanlış çıkarım, boş bırakmaktan tehlikelidir — sessizce
+    yanlış mutabakat üretir. null kabul edilebilir, görünmez yanlış edilemez."
+    Bu yüzden yalnız KESİN BİLDİĞİMİZ satırlar doldurulur; gerisi NULL kalır
+    ve raporlarda "bilinmiyor" olarak SAYILIR (gizlenmez).
+    """
+    try:
+        cur.execute("SAVEPOINT sp_nakit_etki")
+        cur.execute("ALTER TABLE kasa_hareketleri ADD COLUMN IF NOT EXISTS nakit_etki NUMERIC(14,2)")
+
+        # ── 1) BANKADAN ÖDENENLER → fiziksel nakit etkisi YOK ─────────────
+        # Sahip teyidi: kira, maaş, kredi taksidi, kart ödemesi hep bankadan.
+        # Bunlar şubenin GİDERİdir (sube_id kalır — kârlılık bozulmaz) ama
+        # şubenin ÇEKMECESİNDEN çıkmaz.
+        cur.execute("""
+            UPDATE kasa_hareketleri SET nakit_etki = 0
+             WHERE nakit_etki IS NULL
+               AND islem_turu IN ('SABIT_GIDER','PERSONEL_MAAS','FATURA_ODEMESI',
+                                  'BORC_TAKSIT','KART_ODEME','KART_FAIZ','VADELI_ODEME')
+        """)
+        _banka = cur.rowcount
+
+        # ── 2) CİRO → yalnız NAKİT kısmı çekmeceye girer ──────────────────
+        # Kaynak ciro tablosunda kırılım var: nakit / pos / online. POS ve
+        # online doğrudan bankaya gider, çekmeceye HİÇ girmez.
+        cur.execute("""
+            UPDATE kasa_hareketleri kh
+               SET nakit_etki = COALESCE(c.nakit, 0)
+              FROM ciro c
+             WHERE kh.nakit_etki IS NULL
+               AND kh.islem_turu = 'CIRO'
+               AND kh.kaynak_tablo = 'ciro'
+               AND kh.kaynak_id::text = c.id::text
+        """)
+        _ciro = cur.rowcount
+
+        # ── 3) TANIMI GEREĞİ NAKİT olan hareketler ────────────────────────
+        # Kasa teslimi ve şubeler arası borç fiziksel nakit taşımasıdır —
+        # tutarın tamamı çekmeceyi etkiler.
+        cur.execute("""
+            UPDATE kasa_hareketleri SET nakit_etki = tutar
+             WHERE nakit_etki IS NULL
+               AND islem_turu IN ('KASA_TESLIM_CIKIS','KASA_TESLIM_GIRIS',
+                                  'SUBE_BORC_VER','SUBE_BORC_AL',
+                                  'SUBE_BORC_GERI_VER','SUBE_BORC_GERI_AL',
+                                  'KAPANIS_KASA_FARK')
+        """)
+        _nakit = cur.rowcount
+
+        # ── 4) ÖDEME YÖNTEMİ AÇIKÇA YAZILMIŞ olanlar ──────────────────────
+        # 'elden' → çekmeceden çıktı · 'havale' → bankadan çıktı.
+        # 'nakit' varsayılanı BELİRSİZDİR, çıkarım yapılmaz (NULL kalır).
+        cur.execute("""
+            UPDATE kasa_hareketleri SET nakit_etki = tutar
+             WHERE nakit_etki IS NULL AND odeme_yontemi = 'elden'
+        """)
+        _elden = cur.rowcount
+        cur.execute("""
+            UPDATE kasa_hareketleri SET nakit_etki = 0
+             WHERE nakit_etki IS NULL AND odeme_yontemi = 'havale'
+        """)
+        _havale = cur.rowcount
+
+        cur.execute("RELEASE SAVEPOINT sp_nakit_etki")
+        if any((_banka, _ciro, _nakit, _elden, _havale)):
+            logging.getLogger(__name__).info(
+                "nakit_etki dolduruldu: banka=%s ciro=%s nakit=%s elden=%s havale=%s",
+                _banka, _ciro, _nakit, _elden, _havale)
+    except Exception as e:  # noqa: BLE001 — düşerse sistem eskisi gibi çalışır
+        try:
+            cur.execute("ROLLBACK TO SAVEPOINT sp_nakit_etki")
+            cur.execute("RELEASE SAVEPOINT sp_nakit_etki")
+        except Exception:  # noqa: BLE001
+            pass
+        logging.getLogger(__name__).warning("nakit_etki migrasyonu atlandi: %s", str(e)[:160])
+
+
 def ensure_kart_satici_kural(cur) -> None:
     """Şahsi/dükkan SATICI HAFIZASI: bir harcamayı sınıflandırınca o satıcı (örn.
     METRO) hatırlanır → sonraki aynı satıcı otomatik aynı tip önerilir. Bağımsız migration."""

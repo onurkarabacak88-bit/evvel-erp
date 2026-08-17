@@ -1162,6 +1162,16 @@ def startup():
             ensure_kasa_teslim_defterlesme(cur)
     except Exception as e:
         logger.warning("kasa teslim defterleşmesi (startup): %s", e)
+    # 💵 FİZİKSEL NAKİT BOYUTU (2026-08-18, sahip teyidi "kiralar şube
+    # bankalarından, maaşlarda bankadan"). `tutar` = para pozisyonu (sahibin
+    # modeli, DOKUNULMAZ) · `nakit_etki` = çekmecede gerçekten ne oldu.
+    # NULL = bilinmiyor (0 DEĞİL) — yanlış çıkarım boş bırakmaktan tehlikelidir.
+    try:
+        with db() as (conn, cur):
+            from database import ensure_nakit_etki
+            ensure_nakit_etki(cur)
+    except Exception as e:
+        logger.warning("nakit etki migrasyonu (startup): %s", e)
     try:
         with db() as (conn, cur):
             from gorev_api import _seed_sablonlar
@@ -2429,7 +2439,17 @@ def kasa_defteri(
                                      THEN tutar ELSE 0 END), 0) AS etkisiz_toplam,
                    COUNT(*) FILTER (WHERE sube_id IS NULL) AS subesiz_adet,
                    COALESCE(SUM(CASE WHEN sube_id IS NULL AND COALESCE(kasa_etkisi,TRUE)
-                                     THEN tutar ELSE 0 END), 0) AS subesiz_net
+                                     THEN tutar ELSE 0 END), 0) AS subesiz_net,
+                   -- 💵 FİZİKSEL NAKİT (2026-08-18): `tutar` para POZİSYONUdur
+                   -- (kart cirosu + banka ödemeleri dahil); `nakit_etki` ise
+                   -- çekmecede gerçekten ne olduğudur. NULL = BİLİNMİYOR ve
+                   -- ayrıca sayılır — 0 sayılsaydı "elde şu kadar nakit var"
+                   -- diye SESSİZ YANLIŞ üretirdik.
+                   COALESCE(SUM(CASE WHEN COALESCE(kasa_etkisi,TRUE)
+                                     THEN nakit_etki ELSE 0 END), 0) AS nakit_net,
+                   COUNT(*) FILTER (WHERE nakit_etki IS NULL) AS nakit_bilinmeyen_adet,
+                   COALESCE(SUM(CASE WHEN nakit_etki IS NULL AND COALESCE(kasa_etkisi,TRUE)
+                                     THEN ABS(tutar) ELSE 0 END), 0) AS nakit_bilinmeyen_tutar
             FROM kasa_hareketleri WHERE {nere}
         """, par)
         o = dict(cur.fetchone() or {})
@@ -2461,7 +2481,12 @@ def kasa_defteri(
             SELECT COALESCE(sube_id::text, '(atanmamış)') AS sube,
                    COUNT(*) AS adet,
                    COALESCE(SUM(CASE WHEN tutar > 0 THEN tutar ELSE 0 END), 0) AS giris,
-                   COALESCE(SUM(CASE WHEN tutar < 0 THEN ABS(tutar) ELSE 0 END), 0) AS cikis
+                   COALESCE(SUM(CASE WHEN tutar < 0 THEN ABS(tutar) ELSE 0 END), 0) AS cikis,
+                   -- Şube bazında ÇEKMECE (fiziksel nakit) — pozisyondan ayrı.
+                   -- Kira şubenin bankasından çıkar: pozisyonu düşürür ama
+                   -- çekmeceyi boşaltmaz. Bu sütun onu ayırır.
+                   COALESCE(SUM(nakit_etki), 0) AS nakit_net,
+                   COUNT(*) FILTER (WHERE nakit_etki IS NULL) AS nakit_bilinmeyen
             FROM kasa_hareketleri WHERE {nere}
             GROUP BY 1 ORDER BY 2 DESC
         """, par)
@@ -2487,6 +2512,13 @@ def kasa_defteri(
             # Şubesi çözülmemiş hareketler — "hangi kasadan çıktı" cevapsız
             "subesiz_adet": int(o.get("subesiz_adet") or 0),
             "subesiz_net": round(float(o.get("subesiz_net") or 0), 2),
+            # 💵 ÇEKMECE (fiziksel nakit) — `net`ten AYRI kavram:
+            #   net        = para POZİSYONU (kart cirosu + banka ödemeleri dahil)
+            #   nakit_net  = çekmecede gerçekten olan
+            # Aradaki fark modelin kendisidir, hata değildir.
+            "nakit_net": round(float(o.get("nakit_net") or 0), 2),
+            "nakit_bilinmeyen_adet": int(o.get("nakit_bilinmeyen_adet") or 0),
+            "nakit_bilinmeyen_tutar": round(float(o.get("nakit_bilinmeyen_tutar") or 0), 2),
         },
         "tur_kirilim": tur_kirilim,
         "sube_kirilim": sube_kirilim,
