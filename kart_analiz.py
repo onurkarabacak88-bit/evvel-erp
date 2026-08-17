@@ -195,6 +195,19 @@ def _parse_garanti(pages_text: List[str], kart_no: str, kart_sahibi: str) -> Lis
                 # Remove taksit calc "Ax6=B"
                 desc_parts = [p for p in desc_parts if not re.match(r'[\d.,]+x\d+=[\d.,]+', p)]
                 aciklama = ' '.join(desc_parts).strip()
+                # ⛔ BONUS/PUAN SATIRI FRENİ (2026-08-17, canlı Garanti vakası):
+                # Garanti ekstresinde işlem tablosunun üstünde BONUS hareketleri
+                # listelenir ("YAPI MARKET KAMPANYASI 500,00", "BONUS BEDAVA
+                # ALIŞVERİŞ 1.399,29", "MARKET EKSTRA BONUS 1.000,00"). Bu
+                # satırlarda Tutar(TL) sütunu BOŞ, değer BONUS sütunundadır —
+                # parser son sayıyı tutar sanıp SAHTE HARCAMA üretiyordu
+                # (15 Ağu ekstresinde 12 satır ≈ 13.800 ₺ hayalet borç).
+                # Worldcard'da aynı kusur 2026-08-10'da kapatılmıştı; Garanti'de
+                # açık kalmış. Ödeme satırları bu frenden ETKİLENMEZ (yukarıda
+                # ayrı dalda işlenir).
+                if re.search(r'(^|\s)(BONUS|BONUSLU|KAMPANYASI|KAMPANYA|BEDAVA ALIŞVER|EKSTRA BONUS|BONUS GERİ ALIM)',
+                             aciklama, re.I):
+                    continue
                 is_fee = bool(re.search(r'faiz|bsmv|kkdf|ücret|dönem', aciklama, re.I))
                 txns.append({
                     'tarih': tarih, 'aciklama': aciklama, 'tutar': tutar,
