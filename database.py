@@ -918,6 +918,94 @@ def ensure_nakit_etki(cur) -> None:
         logging.getLogger(__name__).warning("nakit_etki migrasyonu atlandi: %s", str(e)[:160])
 
 
+def ensure_maliyet_merkezi(cur) -> None:
+    """🏷️ MALİYET MERKEZİ ≠ ÖDEYEN — para çıkışının iki ayrı sorusu.
+
+    🔴 SAHİBİN OPERASYONEL GERÇEĞİ (2026-08-18):
+    "Ödemeleri çoğunlukta hangisinde para varsa ona aktararak topluyoruz.
+     Krediler ORTAK KASADAN ödeniyormuş gibi düşün. Araba kredisi Zafer'den
+     ödenir, katılım da Zafer'den ödenir, ama ALSANCAK kredisi bazen kasada
+     para yoksa GAZZE'den çekilir."
+    Yani "hangi şubeden ödenir" SABİT BİR KURAL DEĞİL — o gün para nerdeyse
+    oradan. Tek alan bunu taşıyamaz.
+
+    İKİ SORU, İKİ ALAN:
+        maliyet_merkezi_*  → bu gider/borç KİMİN?      (sabit, kârlılık için)
+        odeyen_sube_id     → bu ödemeyi KİM yaptı?     (her ödemede değişir)
+
+    ⚠️ CODEX DÜZELTMESİ — neden `sahip_sube` DEĞİL:
+    "5 kredi zaten şubeye ait değil; `sahip_sube` dersen YALAN SÖYLEMEYE
+     başlarsın." Gerçekten de: katılım evim (mortgage), KOÇ Finans Araç,
+     QNB (Fethi-Karaman), VAKIF ANNEM, YAPI KREDİ ANNEM — hiçbiri şube değil.
+    Bu yüzden maliyet merkezinin bir TİPİ var:
+        'sube'  → belirli bir şubenin (maliyet_merkezi_id = sube_id)
+        'ortak' → işletmenin geneli (araç, ortak krediler)
+        'sahis' → sahibin şahsi (mortgage, kişisel krediler)
+    Tip olmadan "araba kredisi hangi şubenin?" sorusuna zorla cevap üretilir
+    ve o cevap kalıcı olarak yanlış olur.
+
+    ⚠️ ÖDEYEN ≠ MALİYET MERKEZİ FARKI KAYITLI BORÇ DEĞİLDİR.
+    Codex: "varsayılan olarak TÜRETİLMİŞ net pozisyon olmalı, kayıtlı borç
+    değil. Aksi halde mevcut sube_ici_borc ile kavga eder, SAHTE ALACAK/BORÇ
+    ŞİŞMESİ üretir." Semantik sert ayrılır:
+        sube_ici_borc          = GERÇEK, kapanabilir borç (elle kaydedilir)
+        ödeyen−maliyet farkı   = ANALİTİK finansman dengesi (defterden türer)
+    Biri diğerini ASLA otomatik üretmez.
+
+    ⚠️ ALAN ADI GELECEĞE GÖRE SEÇİLDİ (Codex S6): "6 ay sonraki kusur şubeyi
+    fazla yüklemek olacak; banka mutabakatı derinleşince odeyen_sube yetmeyecek,
+    odeyen_HESAP isteyeceksin." Bu yüzden `odeyen_sube_id` adı `odeyen_hesap_id`
+    kardeşiyle yan yana yaşayabilecek şekilde seçildi.
+    """
+    try:
+        cur.execute("SAVEPOINT sp_mmerkez")
+        # Kasa hareketi: ödemenin iki boyutu
+        cur.execute("""ALTER TABLE kasa_hareketleri
+                       ADD COLUMN IF NOT EXISTS maliyet_merkezi_tipi TEXT""")
+        cur.execute("""ALTER TABLE kasa_hareketleri
+                       ADD COLUMN IF NOT EXISTS maliyet_merkezi_id TEXT""")
+        cur.execute("""ALTER TABLE kasa_hareketleri
+                       ADD COLUMN IF NOT EXISTS odeyen_sube_id TEXT""")
+        # Borç: maliyet merkezi SABİT + varsayılan ödeyen (form ön-dolgusu)
+        # Codex S4: "istatistiksel tahmin yalnız ÖNERİ olabilir, gerçek veri
+        # olamaz. Formu bununla ön-doldur, kullanıcı GÖRSÜN ve bir tıkla geçsin;
+        # görmeden otomatik commit etme."
+        cur.execute("""ALTER TABLE borc_envanteri
+                       ADD COLUMN IF NOT EXISTS maliyet_merkezi_tipi TEXT""")
+        cur.execute("""ALTER TABLE borc_envanteri
+                       ADD COLUMN IF NOT EXISTS maliyet_merkezi_id TEXT""")
+        cur.execute("""ALTER TABLE borc_envanteri
+                       ADD COLUMN IF NOT EXISTS varsayilan_odeyen_sube_id TEXT""")
+        # Kart: Codex S3 — kart ŞUBE DEĞİL, borç taşıyıcısıdır. Kart ödemesini
+        # tek şubeye yazmak KALICI VERİ KUSURU üretir ("burada eminim"). Bu
+        # yüzden karta maliyet merkezi KONMADI; yalnız varsayılan ödeyen var.
+        cur.execute("""ALTER TABLE kartlar
+                       ADD COLUMN IF NOT EXISTS varsayilan_odeyen_sube_id TEXT""")
+
+        # Geçmişe dokunulmaz (Codex S5): "geriye dönük ZORLA atama; kanıt yoksa
+        # bilinmiyor bırak. Yanlış atama türetilmiş finansman dengesini kirletir
+        # ve DOĞRUYMUŞ GİBİ konuşur." Yalnız mevcut sube_id'den TÜRETİLEBİLEN
+        # tek şey maliyet merkezidir (kira/maaş zaten şubeye damgalı) — o da
+        # yalnızca tipi 'sube' olarak işaretlenir, ödeyen BİLİNMİYOR kalır.
+        cur.execute("""
+            UPDATE kasa_hareketleri
+               SET maliyet_merkezi_tipi = 'sube', maliyet_merkezi_id = sube_id::text
+             WHERE maliyet_merkezi_tipi IS NULL AND sube_id IS NOT NULL
+        """)
+        _mm = cur.rowcount
+        cur.execute("RELEASE SAVEPOINT sp_mmerkez")
+        if _mm:
+            logging.getLogger(__name__).info(
+                "maliyet merkezi tureildi: %s hareket (odeyen BILINMIYOR birakildi)", _mm)
+    except Exception as e:  # noqa: BLE001
+        try:
+            cur.execute("ROLLBACK TO SAVEPOINT sp_mmerkez")
+            cur.execute("RELEASE SAVEPOINT sp_mmerkez")
+        except Exception:  # noqa: BLE001
+            pass
+        logging.getLogger(__name__).warning("maliyet merkezi migrasyonu atlandi: %s", str(e)[:160])
+
+
 def ensure_kart_satici_kural(cur) -> None:
     """Şahsi/dükkan SATICI HAFIZASI: bir harcamayı sınıflandırınca o satıcı (örn.
     METRO) hatırlanır → sonraki aynı satıcı otomatik aynı tip önerilir. Bağımsız migration."""

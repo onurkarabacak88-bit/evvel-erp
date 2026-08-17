@@ -1172,6 +1172,15 @@ def startup():
             ensure_nakit_etki(cur)
     except Exception as e:
         logger.warning("nakit etki migrasyonu (startup): %s", e)
+    # 🏷️ MALİYET MERKEZİ ≠ ÖDEYEN (2026-08-18, Codex denetimli). Sahip:
+    # "krediler ortak kasadan ödeniyormuş gibi düşün; Alsancak kredisi bazen
+    # Gazze'den çekilir". Salt EKLEME — kolonlar açılır, davranış değişmez.
+    try:
+        with db() as (conn, cur):
+            from database import ensure_maliyet_merkezi
+            ensure_maliyet_merkezi(cur)
+    except Exception as e:
+        logger.warning("maliyet merkezi migrasyonu (startup): %s", e)
     try:
         with db() as (conn, cur):
             from gorev_api import _seed_sablonlar
@@ -2364,6 +2373,143 @@ def kasa_durumu():
         cur.execute("""SELECT * FROM kasa_hareketleri WHERE durum='aktif'
             ORDER BY tarih DESC, olusturma DESC LIMIT 100""")
         return {"guncel_bakiye": kasa, "hareketler": [dict(r) for r in cur.fetchall()]}
+
+
+class MaliyetMerkeziBody(BaseModel):
+    maliyet_merkezi_tipi: str                       # 'sube' | 'ortak' | 'sahis'
+    maliyet_merkezi_id: Optional[str] = None        # tip='sube' ise sube_id
+    varsayilan_odeyen_sube_id: Optional[str] = None # form ön-dolgusu (öneri)
+
+
+@app.post("/api/borclar/{bid}/maliyet-merkezi")
+def borc_maliyet_merkezi(bid: str, b: MaliyetMerkeziBody):
+    """Kredinin MALİYET MERKEZİni işaretle (kimin borcu) + varsayılan ödeyeni.
+
+    🔴 Neden tip zorunlu (Codex): 10 kredinin 5'i şubeye ait DEĞİL —
+    katılım evim (mortgage), KOÇ Finans Araç, QNB (Fethi-Karaman), VAKIF ANNEM,
+    YAPI KREDİ ANNEM. Bunlara zorla şube atamak "yalan söylemeye başlamak"tır.
+    Tipler: 'sube' (belirli şube) · 'ortak' (işletme geneli) · 'sahis' (şahsi).
+
+    ⚠️ varsayilan_odeyen_sube_id yalnız ÖNERİdir — formu ön-doldurur, kullanıcı
+    GÖRÜR ve onaylar. Görmeden otomatik yazılmaz (Codex S4: "istatistiksel
+    tahmin yalnız öneri olabilir, gerçek veri olamaz").
+    """
+    tip = (b.maliyet_merkezi_tipi or "").strip().lower()
+    if tip not in ("sube", "ortak", "sahis"):
+        raise HTTPException(400, "maliyet_merkezi_tipi: sube | ortak | sahis olmalı")
+    mid = (b.maliyet_merkezi_id or "").strip() or None
+    if tip == "sube" and not mid:
+        raise HTTPException(400, "tip 'sube' ise maliyet_merkezi_id (şube) zorunlu")
+    if tip != "sube":
+        mid = None   # ortak/şahsi merkezde şube kimliği tutulmaz — uydurma yok
+    with db() as (conn, cur):
+        cur.execute("SELECT kurum FROM borc_envanteri WHERE id=%s", (bid,))
+        r = cur.fetchone()
+        if not r:
+            raise HTTPException(404, "Kredi bulunamadı")
+        if mid:
+            cur.execute("""SELECT 1 FROM subeler WHERE id::text=%s
+                             AND UPPER(COALESCE(ad,''))<>'MERKEZ'""", (mid,))
+            if not cur.fetchone():
+                raise HTTPException(404, f"Şube bulunamadı: {mid}")
+        ody = (b.varsayilan_odeyen_sube_id or "").strip() or None
+        if ody:
+            cur.execute("""SELECT 1 FROM subeler WHERE id::text=%s
+                             AND UPPER(COALESCE(ad,''))<>'MERKEZ'""", (ody,))
+            if not cur.fetchone():
+                raise HTTPException(404, f"Varsayılan ödeyen şube bulunamadı: {ody}")
+        cur.execute("""UPDATE borc_envanteri
+                          SET maliyet_merkezi_tipi=%s, maliyet_merkezi_id=%s,
+                              varsayilan_odeyen_sube_id=%s
+                        WHERE id=%s""", (tip, mid, ody, bid))
+        audit(cur, "borc_envanteri", bid, "UPDATE")
+    return {"success": True, "kurum": dict(r).get("kurum"),
+            "maliyet_merkezi_tipi": tip, "maliyet_merkezi_id": mid,
+            "varsayilan_odeyen_sube_id": ody}
+
+
+@app.get("/api/kasa/finansman-dengesi")
+def finansman_dengesi():
+    """💠 KİM KİMİ FİNANSE EDİYOR — defterden TÜRETİLİR, borç olarak YAZILMAZ.
+
+    🔴 SAHİP: "Alsancak kredisi bazen kasada para yoksa Gazze'den çekilir."
+    Yani ödemeyi yapan şube, giderin sahibi olmayabilir. Aradaki fark, bir
+    şubenin diğerini finanse ettiği anlamına gelir.
+
+    ⚠️ NEDEN "BORÇ" DEĞİL (Codex): "varsayılan olarak TÜRETİLMİŞ net pozisyon
+    olmalı, kayıtlı borç değil. Aksi halde mevcut sube_ici_borc ile kavga eder,
+    SAHTE ALACAK/BORÇ ŞİŞMESİ üretir." Sahip de zaten şubeler arasında gerçek
+    bir geri ödeme yapmıyor — "ortak kasa gibi düşün" diyor.
+    Semantik sert ayrılır ve biri diğerini ASLA otomatik üretmez:
+        /api/sube-ici-borc      → GERÇEK, kapanabilir borç (elle kaydedilir)
+        bu görünüm              → ANALİTİK denge (defterden çıkar, kapanmaz)
+
+    ⚠️ BİLİNMEYEN GİZLENMEZ: ödeyeni işaretlenmemiş hareketler ayrı sayılır.
+    Geçmiş 28 kredi + 21 kart ödemesine geriye dönük ödeyen ATANMADI (Codex S5:
+    "kanıt yoksa bilinmiyor bırak; yanlış atama dengeyi kirletir ve DOĞRUYMUŞ
+    GİBİ konuşur"). Bu yüzden denge şimdilik yalnız işaretli hareketleri sayar
+    ve kapsama oranını açıkça söyler.
+    """
+    with db() as (conn, cur):
+        cur.execute("""
+            SELECT COALESCE(kh.odeyen_sube_id, '') AS odeyen,
+                   COALESCE(kh.maliyet_merkezi_id, '') AS maliyet,
+                   COALESCE(kh.maliyet_merkezi_tipi, '') AS mtip,
+                   COUNT(*) AS adet,
+                   COALESCE(SUM(ABS(kh.tutar)), 0) AS tutar
+              FROM kasa_hareketleri kh
+             WHERE COALESCE(kh.durum,'aktif') = 'aktif'
+               AND COALESCE(kh.kasa_etkisi, TRUE) = TRUE
+               AND kh.tutar < 0
+               AND kh.odeyen_sube_id IS NOT NULL
+               AND kh.maliyet_merkezi_id IS NOT NULL
+               AND kh.odeyen_sube_id <> kh.maliyet_merkezi_id
+             GROUP BY 1,2,3
+        """)
+        capraz = [dict(r) for r in cur.fetchall()]
+        cur.execute("""
+            SELECT COUNT(*) FILTER (WHERE odeyen_sube_id IS NULL) AS odeyensiz,
+                   COUNT(*) AS toplam,
+                   COALESCE(SUM(ABS(tutar)) FILTER (WHERE odeyen_sube_id IS NULL), 0) AS odeyensiz_tutar
+              FROM kasa_hareketleri
+             WHERE COALESCE(durum,'aktif')='aktif' AND COALESCE(kasa_etkisi,TRUE)=TRUE
+               AND tutar < 0
+        """)
+        k = dict(cur.fetchone() or {})
+        cur.execute("SELECT id::text AS id, ad FROM subeler")
+        ad = {r["id"]: r["ad"] for r in cur.fetchall()}
+
+    net: Dict[str, float] = {}
+    for c in capraz:
+        o, m = c["odeyen"], c["maliyet"]
+        net[o] = round(net.get(o, 0.0) + float(c["tutar"]), 2)     # finanse EDEN
+        net[m] = round(net.get(m, 0.0) - float(c["tutar"]), 2)     # finanse EDİLEN
+    satir = [{"sube_id": s, "ad": ad.get(s, s),
+              "net": v, "rol": "finanse ediyor" if v > 0 else "finanse ediliyor"}
+             for s, v in sorted(net.items(), key=lambda kv: -kv[1]) if abs(v) > 0.01]
+
+    top = int(k.get("toplam") or 0)
+    ody = int(k.get("odeyensiz") or 0)
+    return {
+        "capraz_odemeler": [
+            {"odeyen_ad": ad.get(c["odeyen"], c["odeyen"]),
+             "maliyet_ad": ad.get(c["maliyet"], c["maliyet"]),
+             "maliyet_tipi": c["mtip"], "adet": int(c["adet"]),
+             "tutar": round(float(c["tutar"]), 2)}
+            for c in sorted(capraz, key=lambda x: -float(x["tutar"]))
+        ],
+        "net_denge": satir,
+        "kapsama": {
+            "cikis_hareketi": top,
+            "odeyeni_bilinmeyen": ody,
+            "odeyeni_bilinmeyen_tutar": round(float(k.get("odeyensiz_tutar") or 0), 2),
+            "kapsama_yuzde": round(100.0 * (top - ody) / top, 1) if top else 0.0,
+        },
+        "not": "Bu bir BORÇ DEĞİL, analitik finansman dengesidir — defterden türer, "
+               "kapanmaz, kimse kimseye geri ödeme yapmaz. Gerçek şube→şube borç için "
+               "/api/sube-ici-borc ayrıdır ve biri diğerini otomatik ÜRETMEZ. "
+               "Ödeyeni işaretlenmemiş hareketler bu dengeye GİRMEZ ve yukarıda sayılır.",
+    }
 
 
 @app.get("/api/kasa/sube-sessizlik")
