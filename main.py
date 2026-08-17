@@ -2388,12 +2388,38 @@ def sube_sessizlik(esik_gun: int = 3):
     ya kapanmıştır (o zaman giderleri de durmalı) ya da veri girişi kopmuştur.
     İkisi de sahibin bilmesi gereken şeydir.
 
-    ⛔ ÖNERİ-ONLY: hüküm vermez, hiçbir şey yazmaz. "Şu şube N gündür sessiz"
-       der; sebebini sahip söyler.
+    🔴 SAHİP DÜZELTMESİ (2026-08-18, alarm kurulduktan HEMEN sonra):
+    "Alsancak ve Köyceğiz ÖĞRENCİ BÖLGELERİNDE ve bundan dolayı ciro girmiyor,
+    yani SEZONLUK."
+    Yani bu iki şubede ciro yokluğu ARIZA DEĞİL, NORMAL. Alarm olduğu gibi
+    bırakılsaydı her yaz aylarca eyleme dönüşmeyen kırmızı yakardı — sahibin
+    uyarı bütçesi kuralının ("sürekli çıkan, eyleme dönüşmeyen uyarı YASAK")
+    tam ihlali. Duyu bu yüzden şubenin FAALİYET DURUMUnu tanır:
+        acik       → sessiz + giderli = KRİTİK (gerçek alarm)
+        sezon_disi → alarm YOK; onun yerine SEZON MALİYETİ raporlanır
+    Sezon dışı şubede asıl bilgi "ciro yok" değil, "kapalı dururken ne kadara
+    mal oluyor" — kira işlemeye devam eder ve bu gerçek bir karardır.
+    ⛔ ÖNERİ-ONLY: hüküm vermez, hiçbir şey yazmaz.
     """
     with db() as (conn, cur):
+        # Lazy migration — faaliyet durumu (acik | sezon_disi | kapali)
+        try:
+            cur.execute("SAVEPOINT sp_faaliyet")
+            cur.execute("""ALTER TABLE subeler ADD COLUMN IF NOT EXISTS
+                           faaliyet_durumu TEXT DEFAULT 'acik'""")
+            cur.execute("""ALTER TABLE subeler ADD COLUMN IF NOT EXISTS
+                           faaliyet_notu TEXT""")
+            cur.execute("RELEASE SAVEPOINT sp_faaliyet")
+        except Exception:  # noqa: BLE001
+            try:
+                cur.execute("ROLLBACK TO SAVEPOINT sp_faaliyet")
+                cur.execute("RELEASE SAVEPOINT sp_faaliyet")
+            except Exception:  # noqa: BLE001
+                pass
         cur.execute("""
             SELECT s.id::text AS sube_id, s.ad,
+                   COALESCE(s.faaliyet_durumu, 'acik') AS faaliyet_durumu,
+                   s.faaliyet_notu,
                    (SELECT MAX(c.tarih) FROM ciro c WHERE c.sube_id::text = s.id::text) AS son_ciro,
                    (SELECT COUNT(*) FROM ciro c WHERE c.sube_id::text = s.id::text) AS ciro_adet
               FROM subeler s
@@ -2423,33 +2449,86 @@ def sube_sessizlik(esik_gun: int = 3):
                 gun = int((cur.fetchone() or {}).get("g") or 0)
             sessiz = (gun is None) or (gun > esik_gun)
             giderli = int(g.get("adet") or 0) > 0
+            faaliyet = (s.get("faaliyet_durumu") or "acik").strip().lower()
+            gtut = round(float(g.get("toplam") or 0), 2)
+
+            if faaliyet == "sezon_disi":
+                # Sezon dışı şubede ciro yokluğu BEKLENEN durumdur → ALARM YOK.
+                # Buradaki değerli bilgi "kapalı dururken ne kadara mal oluyor".
+                durum = "sezon dışı"
+                yorum = (f"sezon dışı · {gun} gündür kapalı · bu sürede {gtut:,.2f} ₺ "
+                         f"sabit gider işledi (kapalı taşıma maliyeti)"
+                         if gun is not None else "sezon dışı")
+            elif faaliyet == "kapali":
+                durum = "kapalı"
+                yorum = (f"kapalı · bu sürede {gtut:,.2f} ₺ gider işledi — kapalı şubenin "
+                         "gideri sürüyorsa sebebi olmalı (kira sözleşmesi vb.)"
+                         if giderli else "kapalı, gideri de yok")
+            elif sessiz and giderli:
+                durum = "KRİTİK"
+                yorum = (f"{gun} gündür ciro girilmemiş ama bu sürede {int(g.get('adet') or 0)} "
+                         f"gider işlemiş ({gtut:,.2f} ₺) — şube açıksa ciro kaydı KOPMUŞ. "
+                         "Sezonluksa şubeyi «sezon dışı» işaretleyin, bu uyarı susar.")
+            elif sessiz:
+                durum = "sessiz"
+                yorum = f"{gun} gündür ciro yok, gideri de yok — kapanmış olabilir"
+            else:
+                durum = "akıyor"
+                yorum = "ciro akıyor"
+
             out.append({
                 "sube_id": s["sube_id"], "ad": s["ad"],
+                "faaliyet_durumu": faaliyet,
+                "faaliyet_notu": s.get("faaliyet_notu"),
                 "son_ciro": str(son) if son else None,
                 "ciro_adet": int(s.get("ciro_adet") or 0),
                 "sessiz_gun": gun,
                 "sonrasinda_gider_adet": int(g.get("adet") or 0),
-                "sonrasinda_gider_tutar": round(float(g.get("toplam") or 0), 2),
-                "durum": ("KRİTİK" if (sessiz and giderli) else "sessiz" if sessiz else "akıyor"),
-                "yorum": (
-                    f"{gun} gündür ciro girilmemiş ama bu sürede {int(g.get('adet') or 0)} gider "
-                    f"işlemiş ({float(g.get('toplam') or 0):,.2f} ₺) — şube açıksa ciro kaydı kopmuş, "
-                    "kapandıysa giderleri de durmalı"
-                ) if (sessiz and giderli) else (
-                    f"{gun} gündür ciro yok, gideri de yok — kapanmış olabilir" if sessiz
-                    else "ciro akıyor"
-                ),
+                "sonrasinda_gider_tutar": gtut,
+                "durum": durum,
+                "yorum": yorum,
             })
     kritik = [o for o in out if o["durum"] == "KRİTİK"]
+    sezon = [o for o in out if o["durum"] == "sezon dışı"]
     return {
         "esik_gun": esik_gun,
         "subeler": out,
         "kritik_adet": len(kritik),
         "kritik_toplam_gider": round(sum(o["sonrasinda_gider_tutar"] for o in kritik), 2),
-        "not": "Öneri-only duyu: eksik ciro SESSİZDİR — ekranda boşluk bırakmaz, "
-               "o şubeyi yapay zararda gösterir. Bu görünüm o sessizliği konuşturur; "
-               "hüküm vermez, hiçbir kayıt yazmaz.",
+        # Sezon dışı şubelerin KAPALI TAŞIMA MALİYETİ — alarm değil, karar verisi.
+        # "Bu şubeyi sezon boyunca kapalı tutmak bana kaça mal oluyor" sorusunun
+        # cevabı; kira sözleşmesi/devam kararı bunun üstünden verilir.
+        "sezon_disi_adet": len(sezon),
+        "sezon_disi_tasima_maliyeti": round(sum(o["sonrasinda_gider_tutar"] for o in sezon), 2),
+        "not": "Öneri-only duyu: eksik ciro SESSİZDİR — ekranda boşluk bırakmaz, o şubeyi "
+               "yapay zararda gösterir. SEZON DIŞI işaretli şube alarm ÜRETMEZ; onun yerine "
+               "kapalı taşıma maliyeti raporlanır. Hüküm vermez, hiçbir kayıt yazmaz.",
     }
+
+
+class SubeFaaliyetBody(BaseModel):
+    faaliyet_durumu: str          # 'acik' | 'sezon_disi' | 'kapali'
+    faaliyet_notu: Optional[str] = None
+
+
+@app.post("/api/subeler/{sid}/faaliyet-durumu")
+def sube_faaliyet_durumu(sid: str, b: SubeFaaliyetBody):
+    """Şubenin faaliyet durumunu işaretle — sessizlik duyusunun yalancı alarm
+    üretmemesi için (2026-08-18, sahip: "öğrenci bölgeleri, yani sezonluk")."""
+    d = (b.faaliyet_durumu or "").strip().lower()
+    if d not in ("acik", "sezon_disi", "kapali"):
+        raise HTTPException(400, "faaliyet_durumu: acik | sezon_disi | kapali olmalı")
+    with db() as (conn, cur):
+        cur.execute("""ALTER TABLE subeler ADD COLUMN IF NOT EXISTS faaliyet_durumu TEXT DEFAULT 'acik'""")
+        cur.execute("""ALTER TABLE subeler ADD COLUMN IF NOT EXISTS faaliyet_notu TEXT""")
+        cur.execute("SELECT ad FROM subeler WHERE id::text=%s", (sid,))
+        r = cur.fetchone()
+        if not r:
+            raise HTTPException(404, "Şube bulunamadı")
+        cur.execute("""UPDATE subeler SET faaliyet_durumu=%s, faaliyet_notu=%s
+                       WHERE id::text=%s""", (d, (b.faaliyet_notu or "").strip() or None, sid))
+        audit(cur, "subeler", sid, "UPDATE")
+    return {"success": True, "sube": dict(r).get("ad"), "faaliyet_durumu": d}
 
 
 @app.get("/api/kasa-defteri")
