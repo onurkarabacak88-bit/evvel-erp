@@ -1072,34 +1072,54 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru, onToast }) {
         ]} />
 
         {/* ── 🤝 ŞUBELER ARASI BORÇ ─────────────────────────────────────── */}
-        {subeBorc && (sayi(subeBorc.acik_adet) > 0 || borcForm) && (
+        {/* Sahip (2026-08-18): "ben bu şubelerin birbirine borçlanmalarını NET
+            ŞEKİLDE görebilmeliyim." Bölüm ARTIK HER ZAMAN görünür — kayıt
+            yokken de. Boşken gizlemek, "borç yok mu, ekran mı çalışmıyor?"
+            sorusunu cevapsız bırakıyordu (boş alanı doldur kuralı). */}
+        {subeBorc && (
           <div style={{ marginBottom: 14 }}>
-            {(subeBorc.net_pozisyon || []).length > 0 && (
+            {(subeBorc.net_pozisyon || []).length > 0 ? (
               <Tablo
-                baslik="Şubeler arası borç · net durum"
-                not="A→B ve B→A varsa netlenir — «kim kimi finanse ediyor» tek satırda görünür. Para hareketi kasa defterinde çift kayıttır; toplam kasa değişmez."
-                kolonlar={[{ ad: 'Alacaklı şube' }, { ad: 'Borçlu şube' }, { ad: 'Net tutar', sag: 1 }]}
+                baslik="🤝 Şubeler arası borç · KİM KİMİ FİNANSE EDİYOR"
+                not="A→B ve B→A varsa NETLENİR — yıl boyunca tek satırda birikir, karşı yönde ödeme gelince düşer. Kasa defterinde para zaten hareket etmiştir; bu satır o hareketin ANLAMIDIR."
+                kolonlar={[{ ad: 'Durum' }, { ad: 'Net tutar', sag: 1 }]}
                 satirlar={(subeBorc.net_pozisyon || []).map((n, i) => ({
                   id: `net-${i}`,
-                  hucreler: [
-                    { v: n.alacakli_ad || '—', kalin: true },
-                    { v: n.borclu_ad || '—', renk: R.metin2 },
-                    { v: n.tutar > 0 ? fmt(n.tutar) : (n.not || '0'), mono: n.tutar > 0, sag: true, kalin: true },
-                  ],
+                  hucreler: n.tutar > 0
+                    ? [
+                        { v: `${n.alacakli_ad} · ${n.borclu_ad}'ı finanse ediyor`, kalin: true },
+                        { v: fmt(n.tutar), mono: true, sag: true, kalin: true },
+                      ]
+                    : [
+                        { v: `${n.alacakli_ad} ↔ ${n.borclu_ad} · ${n.not || 'karşılıklı borçlar netleşti'}`, renk: R.not2 },
+                        { v: '0', mono: true, sag: true },
+                      ],
                 }))}
               />
+            ) : (
+              <div style={{
+                ...kartYuzey, padding: '16px 18px', borderRadius: 14,
+                fontSize: 12.5, color: R.not2, lineHeight: 1.65,
+              }}>
+                <b style={{ color: R.metin2 }}>🤝 Şubeler arası borç · açık kayıt yok</b><br />
+                Bir şube diğerinin gideri/kredisi için ödeme yaptığında borç <b>kendiliğinden</b> burada
+                birikir; karşı yönde ödeme gelince <b>netleşip düşer</b>. Elle de kaydedebilirsin —
+                yukarıdaki «Şubeler arası açık borç» kutusuna tıkla.
+              </div>
             )}
             {(subeBorc.kayitlar || []).filter((k) => k.durum === 'acik').length > 0 && (
               <Tablo
                 baslik="Açık borç kayıtları"
-                not="geri ödeme kaydedilene kadar açık kalır — GERİ ÖDEME ≠ PARA HAREKETİ, ikisi ayrı izlenir"
-                kolonlar={[{ ad: 'Tarih' }, { ad: 'Veren → Alan' }, { ad: 'Açıklama' }, { ad: 'Tutar', sag: 1 }]}
+                not="«otomatik» = bir şube diğerinin ödemesini yaptığı için kendiliğinden doğdu · «elle» = sen kaydettin. Aynı yöndeki ödemeler yeni satır AÇMAZ, mevcut satırı büyütür."
+                kolonlar={[{ ad: 'Tarih' }, { ad: 'Veren → Alan' }, { ad: 'Kaynak' }, { ad: 'Tutar', sag: 1 }]}
                 satirlar={(subeBorc.kayitlar || []).filter((k) => k.durum === 'acik').slice(0, 20).map((k) => ({
                   id: k.id,
                   hucreler: [
                     { v: tarihKisa(k.tarih), mono: true, renk: R.not },
                     { v: `${k.veren_ad || '—'} → ${k.alan_ad || '—'}`, kalin: true },
-                    { v: k.aciklama || '—', renk: R.metin2 },
+                    k.kaynak === 'otomatik'
+                      ? { v: 'otomatik', rozet: R.mavi }
+                      : { v: 'elle', rozet: R.bakir },
                     { v: fmt(sayi(k.tutar)), mono: true, sag: true, kalin: true },
                   ],
                 }))}
