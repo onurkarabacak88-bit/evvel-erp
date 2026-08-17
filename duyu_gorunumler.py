@@ -559,12 +559,38 @@ def odeme_mutabakat(gun: int = Query(60, ge=14, le=180)):
                     })
 
         # SAĞ: ödeme olayları (pencere payıyla geriden başla)
+        # 🔴 P0 İPTAL FİLTRESİ (2026-08-17, Zekâ alanı denetimi): supplier_payment_event
+        # tablosunda 'durum' kolonu YOK ve bu sorgu orijinal kaydın durumuna hiç
+        # bakmıyordu → İPTAL EDİLMİŞ ödeme, mutabakat ekranında hâlâ ÖDEME sayılıyor.
+        # CANLI KANIT: bugün 40 sahte puan kaydı + mükerrer ESHİM/KENTPLAZA iptal
+        # edildi; 60 günlük mutabakat listesi (54 kayıt) hâlâ METRO 30 ₺ (puan
+        # sızıntısı) ve ESHİM 20.400'ün ikinci kopyasını "ödeme" olarak gösteriyordu.
+        # Sonuç: "ödeme var ama bakiye düşüşü görülmedi" alarmı ŞİŞİYOR → gerçek
+        # boşluklar sahte alarmların arasında kayboluyor (alarm körlüğü).
+        # Çözüm: event'i ÜRETEN kayıt artık aktif değilse event de sayılmaz.
+        # Geriye dönük çalışır — mevcut kirli event'ler temizlik gerektirmeden elenir.
         cur.execute(
             """
-            SELECT id, tedarikci_ad, tutar::float AS tutar, tarih, kaynak, confidence
-            FROM supplier_payment_event
-            WHERE tarih >= %s
-            ORDER BY tarih
+            SELECT spe.id, spe.tedarikci_ad, spe.tutar::float AS tutar, spe.tarih,
+                   spe.kaynak, spe.confidence
+            FROM supplier_payment_event spe
+            WHERE spe.tarih >= %s
+              AND NOT EXISTS (
+                    SELECT 1 FROM kart_hareketleri kh
+                     WHERE spe.kaynak_tablo = 'kart_hareketleri'
+                       AND kh.id = spe.kaynak_id
+                       AND COALESCE(kh.durum,'aktif') <> 'aktif')
+              AND NOT EXISTS (
+                    SELECT 1 FROM anlik_giderler ag
+                     WHERE spe.kaynak_tablo = 'anlik_giderler'
+                       AND ag.id = spe.kaynak_id
+                       AND COALESCE(ag.durum,'aktif') <> 'aktif')
+              AND NOT EXISTS (
+                    SELECT 1 FROM vadeli_alimlar va
+                     WHERE spe.kaynak_tablo = 'vadeli_alimlar'
+                       AND va.id = spe.kaynak_id
+                       AND COALESCE(va.durum,'') = 'iptal')
+            ORDER BY spe.tarih
             """,
             (str(bas - timedelta(days=7)),),
         )
