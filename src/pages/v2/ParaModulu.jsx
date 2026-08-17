@@ -110,6 +110,12 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru, onToast }) {
   // v2-YERLİ (köprü kaldırma): filtre hapları + teslim alıcı yönetimi
   // (teslim kaydının KENDİSİ QR/şube akışında doğar — burada yazılmaz)
   const [teslimSube, setTeslimSube] = useState('');
+  // 🤝 ŞUBELER ARASI BORÇ (2026-08-17, sahip: "para yetişmediği zaman şubeler
+  // birbirine borç veriyor, bunu da sistemde görmeli ve takip etmeliyim").
+  // Kasa teslimiyle aynı ekranda durur — ikisi de şubeler arası para taşıması.
+  const [subeBorc, setSubeBorc] = useState(null);
+  const [borcForm, setBorcForm] = useState(null);   // {veren, alan, tutar, aciklama}
+  const [borcMesgul, setBorcMesgul] = useState(false);
   const [teslimTur, setTeslimTur] = useState('');
   const [aliciModal, setAliciModal] = useState(false);
   const [alicilar, setAlicilar] = useState(null);
@@ -363,6 +369,11 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru, onToast }) {
     api('/ops/para-yolda?gun=14')
       .then((d) => setParaYolda(d || {}))
       .catch(() => setParaYolda({}));
+    // 🤝 Şubeler arası borç (2026-08-17): hata-yutar — bu blok düşse kasa
+    // teslim ekranı çalışmaya devam eder (izole modül, izole yükleme).
+    api('/sube-ici-borc')
+      .then((d) => setSubeBorc(d || null))
+      .catch(() => setSubeBorc(null));
     bankaYukle();
   }, [subeler]);
 
@@ -1047,7 +1058,132 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru, onToast }) {
           { etiket: 'Bu ay ara teslim', deger: String(ara.length), alt: fmt(toplam(ara)) },
           { etiket: 'Bu ay gün sonu', deger: String(gunSonu.length), alt: fmt(toplam(gunSonu)) },
           { etiket: 'Bu ay toplam', deger: fmt(toplam(teslimler)), alt: `${teslimler.length} teslim kaydı` },
+          // 🤝 Şubeler arası açık borç — teslimle aynı aileden (şubeler arası
+          // para taşıması), o yüzden aynı şeritte durur.
+          {
+            etiket: 'Şubeler arası açık borç',
+            deger: subeBorc ? fmt(sayi(subeBorc.acik_toplam)) : '—',
+            alt: subeBorc
+              ? (subeBorc.acik_adet ? `${subeBorc.acik_adet} açık kayıt · kaydetmek için tıkla` : 'açık borç yok · kaydetmek için tıkla')
+              : 'okunamadı',
+            renk: !subeBorc ? R.not : sayi(subeBorc.acik_toplam) > 0 ? R.amber : R.yesil,
+            onTikla: () => setBorcForm({ veren: '', alan: '', tutar: '', aciklama: '' }),
+          },
         ]} />
+
+        {/* ── 🤝 ŞUBELER ARASI BORÇ ─────────────────────────────────────── */}
+        {subeBorc && (sayi(subeBorc.acik_adet) > 0 || borcForm) && (
+          <div style={{ marginBottom: 14 }}>
+            {(subeBorc.net_pozisyon || []).length > 0 && (
+              <Tablo
+                baslik="Şubeler arası borç · net durum"
+                not="A→B ve B→A varsa netlenir — «kim kimi finanse ediyor» tek satırda görünür. Para hareketi kasa defterinde çift kayıttır; toplam kasa değişmez."
+                kolonlar={[{ ad: 'Alacaklı şube' }, { ad: 'Borçlu şube' }, { ad: 'Net tutar', sag: 1 }]}
+                satirlar={(subeBorc.net_pozisyon || []).map((n, i) => ({
+                  id: `net-${i}`,
+                  hucreler: [
+                    { v: n.alacakli_ad || '—', kalin: true },
+                    { v: n.borclu_ad || '—', renk: R.metin2 },
+                    { v: n.tutar > 0 ? fmt(n.tutar) : (n.not || '0'), mono: n.tutar > 0, sag: true, kalin: true },
+                  ],
+                }))}
+              />
+            )}
+            {(subeBorc.kayitlar || []).filter((k) => k.durum === 'acik').length > 0 && (
+              <Tablo
+                baslik="Açık borç kayıtları"
+                not="geri ödeme kaydedilene kadar açık kalır — GERİ ÖDEME ≠ PARA HAREKETİ, ikisi ayrı izlenir"
+                kolonlar={[{ ad: 'Tarih' }, { ad: 'Veren → Alan' }, { ad: 'Açıklama' }, { ad: 'Tutar', sag: 1 }]}
+                satirlar={(subeBorc.kayitlar || []).filter((k) => k.durum === 'acik').slice(0, 20).map((k) => ({
+                  id: k.id,
+                  hucreler: [
+                    { v: tarihKisa(k.tarih), mono: true, renk: R.not },
+                    { v: `${k.veren_ad || '—'} → ${k.alan_ad || '—'}`, kalin: true },
+                    { v: k.aciklama || '—', renk: R.metin2 },
+                    { v: fmt(sayi(k.tutar)), mono: true, sag: true, kalin: true },
+                  ],
+                }))}
+              />
+            )}
+          </div>
+        )}
+
+        {borcForm && (() => {
+          const aktifSubeler = (subeler || []).filter((s) => s?.aktif !== false
+            && String(s?.id) !== 'sube-merkez' && String(s?.ad || '').toUpperCase() !== 'MERKEZ');
+          const kutu = {
+            width: '100%', boxSizing: 'border-box', padding: '9px 12px', borderRadius: 10,
+            border: `1px solid ${R.cizgi3}`, background: R.girinti, color: R.krem,
+            fontSize: 13, fontFamily: 'inherit', outline: 'none',
+          };
+          const kaydet = async () => {
+            const t = Number(String(borcForm.tutar).replace(/\./g, '').replace(',', '.'));
+            if (!borcForm.veren || !borcForm.alan) { onToast?.('Veren ve alan şubeyi seçin'); return; }
+            if (borcForm.veren === borcForm.alan) { onToast?.('Veren ve alan şube aynı olamaz'); return; }
+            if (!t || t <= 0) { onToast?.('Geçerli bir tutar girin'); return; }
+            if ((borcForm.aciklama || '').trim().length < 3) { onToast?.('Açıklama zorunlu — para hareketi adsız olamaz'); return; }
+            setBorcMesgul(true);
+            try {
+              const r = await api('/sube-ici-borc', { method: 'POST', body: {
+                veren_sube_id: borcForm.veren, alan_sube_id: borcForm.alan,
+                tutar: t, tarih: bugunISO(), aciklama: borcForm.aciklama.trim(),
+              }});
+              setBorcForm(null);
+              onToast?.(r?.mesaj || '🤝 Şube borcu kaydedildi');
+              teslimYukle();
+            } catch (e) { onToast?.(e?.message || 'Kaydedilemedi'); }
+            finally { setBorcMesgul(false); }
+          };
+          return (
+            <div onClick={(e) => { if (e.target === e.currentTarget && !borcMesgul) setBorcForm(null); }} style={{
+              position: 'fixed', inset: 0, zIndex: 140, background: 'rgba(10,6,2,.75)',
+              backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+            }}>
+              <div style={{ ...kartYuzey, width: 470, maxWidth: '96vw', padding: '24px 26px' }}>
+                <div style={{ fontFamily: F.baslik, fontSize: 19, fontWeight: 600, marginBottom: 4, color: R.krem }}>
+                  🤝 Şubeler arası borç
+                </div>
+                <div style={{ fontSize: 11.5, color: R.not2, marginBottom: 14, lineHeight: 1.6 }}>
+                  Para veren şubenin kasasından düşer, alan şubenin kasasına girer.
+                  <b style={{ color: R.metin2 }}> Toplam kasa değişmez.</b> Borç, geri ödeme kaydedilene kadar açık kalır.
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                  <div>
+                    <label style={{ display: 'block', fontSize: 10.5, letterSpacing: '.7px', textTransform: 'uppercase', color: R.not2, fontWeight: 700, marginBottom: 5 }}>Parayı veren</label>
+                    <select value={borcForm.veren} onChange={(e) => setBorcForm((f) => ({ ...f, veren: e.target.value }))} style={kutu}>
+                      <option value="">Seçin…</option>
+                      {aktifSubeler.map((s) => <option key={s.id} value={s.id}>{s.ad}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', fontSize: 10.5, letterSpacing: '.7px', textTransform: 'uppercase', color: R.not2, fontWeight: 700, marginBottom: 5 }}>Parayı alan</label>
+                    <select value={borcForm.alan} onChange={(e) => setBorcForm((f) => ({ ...f, alan: e.target.value }))} style={kutu}>
+                      <option value="">Seçin…</option>
+                      {aktifSubeler.filter((s) => String(s.id) !== borcForm.veren).map((s) => <option key={s.id} value={s.id}>{s.ad}</option>)}
+                    </select>
+                  </div>
+                </div>
+                <label style={{ display: 'block', fontSize: 10.5, letterSpacing: '.7px', textTransform: 'uppercase', color: R.not2, fontWeight: 700, margin: '12px 0 5px' }}>Tutar (₺)</label>
+                <input inputMode="decimal" value={borcForm.tutar} placeholder="0,00"
+                  onChange={(e) => setBorcForm((f) => ({ ...f, tutar: e.target.value }))} style={kutu} />
+                <label style={{ display: 'block', fontSize: 10.5, letterSpacing: '.7px', textTransform: 'uppercase', color: R.not2, fontWeight: 700, margin: '12px 0 5px' }}>Neden (zorunlu)</label>
+                <input value={borcForm.aciklama} placeholder="ör. maaş günü nakit yetmedi"
+                  onChange={(e) => setBorcForm((f) => ({ ...f, aciklama: e.target.value }))} style={kutu} />
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 16 }}>
+                  <button disabled={borcMesgul} onClick={() => setBorcForm(null)} style={{
+                    padding: '10px 18px', borderRadius: 10, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+                    background: 'transparent', color: R.metin2, fontSize: 12.5, fontWeight: 600, fontFamily: 'inherit',
+                  }}>Vazgeç</button>
+                  <button disabled={borcMesgul} onClick={kaydet} style={{
+                    padding: '10px 20px', borderRadius: 10, border: 'none', cursor: 'pointer',
+                    background: 'linear-gradient(150deg, #E0A559, #AF6C29)', color: '#1C1309',
+                    fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit', opacity: borcMesgul ? 0.45 : 1,
+                  }}>{borcMesgul ? 'Kaydediliyor…' : '🤝 Borcu kaydet'}</button>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
         {/* PARA YOLDA DUYUSU 2/6 (2026-07-29): "teslim bekleyen" artık uydurma
             değil TÜRETİLMİŞ veri — kapanış cevap_ts ↔ gun_sonu teslim eşlemesi. */}
         {paraYolda && sayi(paraYolda.kapanis_adet) > 0 && (
