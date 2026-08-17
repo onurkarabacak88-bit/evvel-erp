@@ -106,7 +106,17 @@ try:
 except Exception as _e:  # noqa: BLE001
     logger.warning("tedarikci_zinciri_api yüklenemedi: %s", _e)
 app.include_router(evo_sync_router)
-app.include_router(kart_analiz_router)
+# ⛔ KART-ANALİZ ROUTER'I DEVRE DIŞI (2026-08-17, kart alanı denetimi — sahip
+# talimatı "gereksiz kurulmuş yerleri devreden çıkar"). 4 ucu (parse-pdf,
+# kartlar-listesi, aktar, kaydet-son-dort-hane) FE'den HİÇ çağrılmıyordu
+# (grep: src/ içinde 0) ama /kart-analiz/aktar kart_hareketleri'ne KORUMASIZ
+# yazıyordu: islem_turu daima 'HARCAMA' (ödeme harcama olurdu), taksit_sayisi
+# yok (taksitli alım tek çekim), kaynak_tablo NULL (çift-yazma freni onları
+# 'elle kayıt' sanıp MEŞRU ekstre satırlarını yutardı), audit yok.
+# Ayrıca /kart-analiz/kartlar-listesi borcu 5. bir formülle (ödemeleri düşmeden)
+# hesaplıyordu. Kapı kapatıldı; DOSYA DURUYOR — main.py:4360 kart_analiz.parse_pdf
+# ekstre yüklemenin ANA motoru (import satırı 40'ta kalır).
+# app.include_router(kart_analiz_router)
 app.include_router(gorev_router)
 app.include_router(is_basvuru_router)
 app.include_router(ev_tasarim_router)
