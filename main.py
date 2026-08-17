@@ -1268,14 +1268,33 @@ KAYNAK_KASA_ISLEM_TURU = {
 def kasa_ve_faiz_odeme_plani_tam_odeme(
     cur, plan: dict, plan_id: str, odenen: float, tarih: str,
     anapara_aciklama: Optional[str] = None,
+    odeme_yontemi: Optional[str] = None,
 ) -> float:
     """
     Tam ödeme planı nakit: faiz düşümü + doğru kasa türü (SABIT_GIDER, BORC_TAKSIT, …).
     /ode, onay ODEME_PLANI ve /toplu-odeme aynı fonksiyonu kullanır — tutarsız/çift kasa riski azalır.
     anapara_aciklama: kasa satırı açıklaması (None ise plan.aciklama).
     Dönüş: borç envanteri için anapara kısmı.
+
+    💳 odeme_yontemi ('elden' | 'havale') — 2026-08-17, sahip: "şubelerin kasa
+    teslimlerini de bankaya akışını takip edebilirsin".
+    O AKIŞ ZATEN KURULU (`/api/banka-mutabakat`: teslim alınan − bankaya yatan −
+    ELDEN ödenen = elde nakit) AMA BESLENMİYOR: canlıda sınıflama oranı %11,5;
+    7.192.110 ₺ / 236 ödeme "belirsiz" kovasında. Yöntem bilinmeyince sistem
+    paranın ÇEKMECEDEN mi BANKADAN mı çıktığını bilemiyor ve elde nakit
+    −188.303 ₺ gibi imkânsız bir sonuç veriyor.
+    Bu parametre o boşluğu KAYNAKTA kapatır: her merkezî ödeme (BORC_TAKSIT,
+    PERSONEL_MAAS, SABIT_GIDER, FATURA_ODEMESI, VADELI_ODEME) yöntemini kasa
+    hareketine taşır. None geçilirse eski davranış birebir sürer (belirsiz) —
+    üç çağıran da kırılmaz.
     """
     odenen = float(odenen)
+    # Yöntem yalnız BİLİNEN iki değerden biri olabilir; başka bir şey gelirse
+    # None'a düşer. Uydurma etiket, banka mutabakatını sessizce yanlış yönde
+    # kaydırırdı (elde nakit hesabı doğrudan bu alandan türüyor).
+    _yontem = (odeme_yontemi or '').strip().lower() or None
+    if _yontem not in ('elden', 'havale', None):
+        _yontem = None
     faiz_kismi = 0.0
     if plan.get('kart_id'):
         cur.execute("""
@@ -1291,7 +1310,7 @@ def kasa_ve_faiz_odeme_plani_tam_odeme(
     if faiz_kismi > 0:
         insert_kasa_hareketi(cur, tarih, 'KART_FAIZ', -abs(faiz_kismi),
             f"Kart faiz ödemesi: {plan['aciklama']}", 'odeme_plani', plan_id,
-            f"{plan_id}_faiz", 'KART_FAIZ')
+            f"{plan_id}_faiz", 'KART_FAIZ', odeme_yontemi=_yontem)
         kalan_faiz_kapatilacak = faiz_kismi
         # FOR UPDATE: eş zamanlı iki ödeme isteğinde aynı faiz satırlarının
         # çakışmasını önler — satırlar bu transaction bitene kadar kilitlenir.
@@ -1350,11 +1369,12 @@ def kasa_ve_faiz_odeme_plani_tam_odeme(
             insert_kasa_hareketi(
                 cur, tarih, islem_t, -abs(ana_para_kismi), aciklama_ana,
                 kasa_kt, kasa_kid, plan_id, 'ODEME_PLANI', sube_id=_plan_sube,
+                odeme_yontemi=_yontem,
             )
         else:
             insert_kasa_hareketi(cur, tarih, islem_t, -abs(ana_para_kismi),
                 aciklama_ana, 'odeme_plani', plan_id, plan_id, 'ODEME_PLANI',
-                sube_id=_plan_sube)
+                sube_id=_plan_sube, odeme_yontemi=_yontem)
 
     # kart_borc() ODEME türündeki kart_hareketleri kaydına bakarak borcu düşürür.
     # Nakit ödeme kasaya gider ama kart borcu bu kayıt olmadan hiç azalmaz.
