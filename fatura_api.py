@@ -5185,6 +5185,15 @@ def cari_ozet() -> dict:
                    -- (FEZ vakası 2026-08-03; iki uç aynı eşleşme evreni kuralı)
                    AND (kaynak_id IS NULL OR COALESCE(kaynak_tablo,'') = 'ekstre_import')
                    AND COALESCE(harcama_tipi,'belirsiz') <> 'sahsi'
+                   -- 🔴 '(ilgisiz)' DAMGASI BURADA DA GEÇERLİ (2026-08-17, Atalay
+                   -- vakası): cari_ekstre damgayı okuyup satırı eliyordu (:5837)
+                   -- ama cari_ozet okumuyordu → sahip "bu çekim ödeme değil" dese
+                   -- bile BAKİYE düşmeye devam ediyordu; iki uç aynı damgaya
+                   -- farklı davranıyordu. Canlı: 27 Tem Atalay'a 100.000 elle
+                   -- ödeme girilmiş, AYNI ödemenin kart taksidi (QNBPAY 36.153,29)
+                   -- ikinci kez ödeme sayılıyordu (kart çekimi ödemenin
+                   -- FİNANSMANI, ayrı ödeme değil).
+                   AND COALESCE(cari_tedarikci,'') <> '(ilgisiz)'
                    AND tarih >= %s::date) x""",
             (kesit_6ay, kesit_6ay, kesit_6ay))
         odeme_izleri = [dict(r) for r in cur.fetchall() or []]
