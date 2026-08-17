@@ -1149,6 +1149,17 @@ def startup():
             ensure_kart_gercek_modeli(cur)
     except Exception as e:
         logger.warning("kart gerçek modeli migrasyonu (startup): %s", e)
+    # 💵 KASA TESLİM DEFTERLEŞMESİ + HAYALET MERKEZ KASASI (2026-08-17, sahip
+    # onayı "TAŞISIN VE 3 ÖNERİYİ DE KUR"). İki iş: (1) pasif 'sube-merkez'e
+    # damgalanmış hareketleri şubesizlik kovasına indir, (2) 144 teslim kaydını
+    # çift kayıtla deftere işle. TOPLAM KASAYI DEĞİŞTİRMEZ (net 0); yalnız
+    # şube/merkez dağılımı gerçeğe döner. İdempotent — her başlatmada güvenli.
+    try:
+        with db() as (conn, cur):
+            from database import ensure_kasa_teslim_defterlesme
+            ensure_kasa_teslim_defterlesme(cur)
+    except Exception as e:
+        logger.warning("kasa teslim defterleşmesi (startup): %s", e)
     try:
         with db() as (conn, cur):
             from gorev_api import _seed_sablonlar
@@ -2997,12 +3008,18 @@ def _sube_kanonik(cur, deger) -> Optional[str]:
     Çözülemezse None → 'Merkez / atanmamış' kovası; UYDURMA yapmaz.
     """
     v = str(deger or "").strip()
-    if not v or v.upper() in ("MERKEZ", "NONE", "NULL", "-"):
+    # 'MERKEZ' bir şube DEĞİL, şube yokluğudur → kovası NULL. 'sube-merkez'
+    # kimliği de aynı kapıya çıkar: subeler'de ad='MERKEZ' olan PASİF bir kayıt
+    # var ve buraya ID olarak gelirse hayalet kasa yeniden doğar (2026-08-17,
+    # canlıda 72 hareket / −1.840.501 ₺ bu yüzden birikmişti).
+    if not v or v.upper() in ("MERKEZ", "SUBE-MERKEZ", "NONE", "NULL", "-"):
         return None
     try:
         cur.execute(
             "SELECT id::text AS id FROM subeler "
-            "WHERE id::text=%s OR UPPER(ad)=UPPER(%s) LIMIT 1", (v, v))
+            "WHERE (id::text=%s OR UPPER(ad)=UPPER(%s)) "
+            "  AND id::text <> 'sube-merkez' AND UPPER(COALESCE(ad,'')) <> 'MERKEZ' "
+            "LIMIT 1", (v, v))
         r = cur.fetchone()
         return r["id"] if r else None
     except Exception:  # noqa: BLE001 — şube çözümü asla akışı kilitlemez
@@ -3895,6 +3912,12 @@ class KartHareket(BaseModel):
     aciklama: Optional[str] = None
     baslangic_tarihi: Optional[date] = None  # taksitli alımlar için
     harcama_tipi: Optional[str] = None       # 'isletme' | 'sahsi' | 'belirsiz'
+    # 🏪 HANGİ KASADAN ÇIKTI (2026-08-17, sahip: "çıkışlar yapılırken bu kasaları
+    # seçmedik çünkü öyle bir seçim gelmedi!"). Canlı defterde 21 kart ödemesinin
+    # 21'i, 28 kredi taksidinin 28'i ŞUBESİZDİ — 4.005.571 ₺ para çıkışı "hangi
+    # kasadan" sorusuna cevapsız kalıyordu. Boş bırakılırsa merkez kovası (NULL).
+    sube_id: Optional[str] = None
+    odeme_yontemi: Optional[str] = None      # 'elden' | 'havale' | 'nakit'
 
 @app.get("/api/kart-hareketleri")
 def kart_hareketleri(kart_id: Optional[str] = None, limit: int = 200):
@@ -3932,9 +3955,15 @@ def kart_hareket_ekle(h: KartHareket):
             (hid, h.kart_id, h.tarih, h.islem_turu, h.tutar,
              h.taksit_sayisi, faiz, ana, h.aciklama, bas_tarih, _htip))
         if h.islem_turu == 'ODEME':
+            # 🏪 ŞUBE + ÖDEME YÖNTEMİ TAŞINIR (2026-08-17): eskiden hiç
+            # geçilmiyordu, bu yüzden 21 kart ödemesinin 21'i şubesizdi.
+            # _sube_kanonik 'MERKEZ'i ve pasif şubeyi NULL'a indirir — uydurma
+            # yapmaz, çözemezse merkez kovasında durur (gizlenmez).
             insert_kasa_hareketi(cur, str(h.tarih), 'KART_ODEME', -abs(h.tutar),
                 h.aciklama or 'Kart ödemesi',
-                'kart_hareketleri', hid, hid, 'KART_ODEME')
+                'kart_hareketleri', hid, hid, 'KART_ODEME',
+                sube_id=_sube_kanonik(cur, h.sube_id),
+                odeme_yontemi=(h.odeme_yontemi or None))
         audit(cur, 'kart_hareketleri', hid, 'INSERT')
         if h.islem_turu in ('HARCAMA', 'ODEME', 'FAIZ'):
             kart_plan_guncelle_tx(cur)

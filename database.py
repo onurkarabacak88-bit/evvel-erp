@@ -682,6 +682,129 @@ def ensure_gider_kanonik(cur) -> None:
     """)
 
 
+def ensure_kasa_teslim_defterlesme(cur) -> None:
+    """💵 KASA TESLİMİNİ KASA DEFTERİNE İŞLE + HAYALET MERKEZ KASASINI KALDIR.
+
+    🔴 SAHİP ONAYI (2026-08-17): "TAŞISIN VE 3 ÖNERİYİ DE KUR"
+
+    BULGU (579 satırlık kasa defterinin TAMAMI okunarak doğrulandı):
+    Sistemde 144 kasa teslim kaydı var (848.714 ₺) — şubeler merkeze fiziksel
+    olarak nakit teslim etmiş. AMA kasa defterindeki 16 hareket türünün
+    HİÇBİRİ teslim/transfer değil. Teslim kendi tablosuna yazılıyor, kasa
+    defterinde para HİÇ YER DEĞİŞTİRMİYOR.
+
+    Sonuç zinciri:
+      1. Ciro şube kasasına girer                                    ✅
+      2. Şube parayı merkeze teslim eder → DEFTERDE İZ YOK           ❌
+      3. Merkez o parayla kredi/kart/maaş öder → merkez düşer        ✅
+      4. NET: şubeler zengin görünür, merkez eksiye gider
+    Canlı kanıt: ZAFER +1.929.523 ₺ (oysa 576.228 ₺'si teslim edilmiş),
+    merkez kovası eksiye gitmiş. Toplam kasa doğru, DAĞILIM yanlış.
+
+    Bu, İZ doktrininin ihlali: para fiziksel olarak taşındı, defterde iz
+    bırakmadı. Çözüm — her teslim için ÇİFT KAYIT:
+        KASA_TESLIM_CIKIS  şube kasasından  −tutar
+        KASA_TESLIM_GIRIS  merkez kovasına  +tutar   (sube_id = NULL)
+    Toplam kasa DEĞİŞMEZ (net 0); yalnız şube/merkez dağılımı gerçeğe döner.
+
+    İDEMPOTANS: anahtar teslim kaydının ID'sinden türer → migration her
+    başlatmada çalışsa da çift kayıt DOĞMAZ (ON CONFLICT DO NOTHING).
+
+    ⚠️ ELLE İPTAL EDİLMİŞ TESLİM: durum kolonu varsa yalnız aktif teslimler
+    işlenir; iptal edilmiş teslime hareket yazılmaz.
+    """
+    # ── 1) HAYALET MERKEZ KASASI → şubesizlik kovasına indir ──────────────
+    # 'MERKEZ' bir şube değil, şube YOKLUĞUdur. Pasif (aktif=false) 'sube-merkez'
+    # kaydına damgalanmış hareketler NULL'a çekilir. Toplam kasayı DEĞİŞTİRMEZ
+    # (yalnız sube_id kolonu değişir, tutar/durum/kasa_etkisi'ne DOKUNULMAZ).
+    # Damgayı yeniden vuran dolgu ensure_kanonik_* içinde kısırlaştırıldı;
+    # bu satır olmadan burada yaptığımız düzeltme her deploy'da geri alınırdı.
+    try:
+        cur.execute("SAVEPOINT sp_hayalet_merkez")
+        cur.execute("""
+            UPDATE kasa_hareketleri SET sube_id = NULL
+             WHERE sube_id::text = 'sube-merkez'
+        """)
+        _n = cur.rowcount
+        cur.execute("RELEASE SAVEPOINT sp_hayalet_merkez")
+        if _n:
+            logging.getLogger(__name__).info(
+                "hayalet MERKEZ kasasi sifirlandi: %s hareket sube_id=NULL", _n)
+    except Exception as e:  # noqa: BLE001
+        try:
+            cur.execute("ROLLBACK TO SAVEPOINT sp_hayalet_merkez")
+            cur.execute("RELEASE SAVEPOINT sp_hayalet_merkez")
+        except Exception:  # noqa: BLE001
+            pass
+        logging.getLogger(__name__).warning("hayalet MERKEZ normalizasyonu atlandi: %s", str(e)[:120])
+
+    # ── 2) TESLİMLERİ DEFTERE İŞLE (çift kayıt) ──────────────────────────
+    try:
+        cur.execute("SAVEPOINT sp_teslim_defter")
+        # durum kolonu her kurulumda olmayabilir — varsa aktif filtresi uygula
+        cur.execute("""
+            SELECT COUNT(*) AS n FROM information_schema.columns
+             WHERE table_name='kasa_teslim' AND column_name='durum'
+        """)
+        _durum_var = int((cur.fetchone() or {}).get("n") or 0) > 0
+        _durum_kosul = "AND COALESCE(t.durum,'aktif') = 'aktif'" if _durum_var else ""
+
+        # ÇIKIŞ: şube kasasından düşer
+        cur.execute(f"""
+            INSERT INTO kasa_hareketleri
+                (id, tarih, islem_turu, tutar, aciklama, kaynak_tablo, kaynak_id,
+                 ref_id, ref_type, kasa_etkisi, idempotency_key, sube_id, odeme_yontemi)
+            SELECT gen_random_uuid(), t.tarih, 'KASA_TESLIM_CIKIS',
+                   -ABS(t.tutar),
+                   'Kasa teslimi — şubeden merkeze: ' || COALESCE(t.teslim_eden_ad,'?')
+                     || ' → ' || COALESCE(t.teslim_alan_ad,'merkez'),
+                   'kasa_teslim', t.id::text, gen_random_uuid(), 'KASA_TESLIM',
+                   TRUE,
+                   -- İdempotans anahtarı: HASH DEĞİL, düz benzersiz metin.
+                   -- sha256() SQL fonksiyonu bu projede hiç kullanılmadı ve
+                   -- PostgreSQL sürümüne bağlı; patlarsa except onu yutar ve
+                   -- migration SESSİZCE hiçbir şey yapmaz (sahte yeşil).
+                   -- Anahtarın tek işi benzersizlik — okunabilir olması ayrıca
+                   -- teşhiste işe yarar.
+                   'v2|teslim|cikis|' || t.id::text,
+                   t.sube_id, 'elden'
+              FROM kasa_teslim t
+             WHERE t.sube_id IS NOT NULL AND ABS(COALESCE(t.tutar,0)) > 0 {_durum_kosul}
+            ON CONFLICT (idempotency_key) DO NOTHING
+        """)
+        _c = cur.rowcount
+        # GİRİŞ: merkez kovasına (sube_id NULL) eklenir
+        cur.execute(f"""
+            INSERT INTO kasa_hareketleri
+                (id, tarih, islem_turu, tutar, aciklama, kaynak_tablo, kaynak_id,
+                 ref_id, ref_type, kasa_etkisi, idempotency_key, sube_id, odeme_yontemi)
+            SELECT gen_random_uuid(), t.tarih, 'KASA_TESLIM_GIRIS',
+                   ABS(t.tutar),
+                   'Kasa teslimi — merkeze alındı: ' || COALESCE(s.ad,'şube')
+                     || ' (' || COALESCE(t.teslim_eden_ad,'?') || ')',
+                   'kasa_teslim', t.id::text, gen_random_uuid(), 'KASA_TESLIM',
+                   TRUE,
+                   'v2|teslim|giris|' || t.id::text,   -- bkz. yukarıdaki not
+                   NULL, 'elden'
+              FROM kasa_teslim t
+              LEFT JOIN subeler s ON s.id::text = t.sube_id::text
+             WHERE t.sube_id IS NOT NULL AND ABS(COALESCE(t.tutar,0)) > 0 {_durum_kosul}
+            ON CONFLICT (idempotency_key) DO NOTHING
+        """)
+        _g = cur.rowcount
+        cur.execute("RELEASE SAVEPOINT sp_teslim_defter")
+        if _c or _g:
+            logging.getLogger(__name__).info(
+                "kasa teslim defterlesme: %s cikis + %s giris hareketi yazildi", _c, _g)
+    except Exception as e:  # noqa: BLE001 — defterleşme düşse sistem eskisi gibi sürer
+        try:
+            cur.execute("ROLLBACK TO SAVEPOINT sp_teslim_defter")
+            cur.execute("RELEASE SAVEPOINT sp_teslim_defter")
+        except Exception:  # noqa: BLE001
+            pass
+        logging.getLogger(__name__).warning("kasa teslim defterlesme atlandi: %s", str(e)[:160])
+
+
 def ensure_kart_satici_kural(cur) -> None:
     """Şahsi/dükkan SATICI HAFIZASI: bir harcamayı sınıflandırınca o satıcı (örn.
     METRO) hatırlanır → sonraki aynı satıcı otomatik aynı tip önerilir. Bağımsız migration."""
@@ -3265,6 +3388,20 @@ def init_db():
                      WHERE kh.kaynak_tablo = %s
                        AND kh.kaynak_id::text = t.id::text
                        AND kh.sube_id IS NULL
+                       -- 🔴 'MERKEZ' BİR ŞUBE DEĞİLDİR (2026-08-17, sahip: "merkez
+                       -- kasa diye bir durum yok, bütün kasaların toplamı merkez
+                       -- kasa aslında; diğerleri şube kasası").
+                       -- BU SATIR OLMADAN NE OLUYORDU: yazma yolu 'MERKEZ' için
+                       -- doğru şekilde NULL yazıyor (_sube_kanonik), ama bu dolgu
+                       -- şube ADIYLA eşleştiriyor ve subeler'de ad='MERKEZ' olan
+                       -- PASİF (aktif=false) bir kayıt var → NULL'lar her deploy'da
+                       -- 'sube-merkez'e damgalanıyordu. Sonuç: 72 hareketlik,
+                       -- gerçek girişi olmayan HAYALET kasa; canlıda bakiye
+                       -- −1.840.501,49 ₺. Toplam kasayı bozmuyordu ama "hangi şube
+                       -- ne harcadı" sorusunu yanlış cevaplıyordu.
+                       -- Merkez = şubesizlik; kovası sube_id IS NULL'dır.
+                       AND s.id::text <> 'sube-merkez'
+                       AND UPPER(COALESCE(s.ad,'')) <> 'MERKEZ'
                 """, (_kt,))
                 _n = cur.rowcount
                 cur.execute("RELEASE SAVEPOINT sp_kasa_sube")

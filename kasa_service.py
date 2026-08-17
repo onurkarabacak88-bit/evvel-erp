@@ -29,6 +29,12 @@ KASA_ETKISI_MAP = {
     'PERSONEL_AVANS': True,  # avans_service — maaşın erken ödenen parçası (mahsup avans_service'te)
     'BORC_TAKSIT': True, 'FATURA_ODEMESI': True,
     'ODEME_PLANI': False, 'ODEME_IPTAL': False,
+    # 💵 KASA TESLİMİ (2026-08-17, sahip onayı): şubeden merkeze fiziksel nakit
+    # taşıma. ÇİFT KAYIT — çıkış şubeden düşer, giriş merkez kovasına (sube_id
+    # NULL) eklenir; TOPLAM KASA DEĞİŞMEZ (net 0), yalnız dağılım gerçeğe döner.
+    # İkisi de kasa_etkisi=TRUE olmalı: biri etkisiz kalırsa toplam 848.714 ₺
+    # kayar. Bu türler eklenmeden önce 144 teslim kaydı defterde İZSİZDİ.
+    'KASA_TESLIM_CIKIS': True, 'KASA_TESLIM_GIRIS': True,
     'KASA_GIRIS': True, 'KASA_DUZELTME': True, 'POS_KESINTI': True,
     'ONLINE_KESINTI': True, 'KISMI_ODE': True,
     'DEVIR': False,

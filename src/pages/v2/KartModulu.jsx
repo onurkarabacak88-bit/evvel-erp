@@ -415,11 +415,34 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
   const [odemeNot, setOdemeNot] = useState('');
   const [odemeMesgul, setOdemeMesgul] = useState(false);
   const [odemeHata, setOdemeHata] = useState('');
+  // 🏪 HANGİ KASADAN ÇIKTI (2026-08-17, sahip: "çıkışlar yapılırken bu kasaları
+  // seçmedik çünkü öyle bir seçim gelmedi!"). Canlı kasa defterinin TAMAMI
+  // (579 hareket) okundu: 21 kart ödemesinin 21'i, 28 kredi taksidinin 28'i
+  // şubesizdi — 4.005.571 ₺ çıkış "hangi kasadan" sorusuna cevapsız.
+  // Boş = merkez kovası (şubesizlik); uydurma şube atanmaz.
+  const [odemeSube, setOdemeSube] = useState('');
+  const [odemeYontem, setOdemeYontem] = useState('havale');
+  const [subeler, setSubeler] = useState([]);
+
+  useEffect(() => {
+    api('/subeler')
+      .then((d) => {
+        const l = Array.isArray(d) ? d : (d?.subeler || []);
+        // Pasif şubeler ve 'MERKEZ' kaydı kasa seçeneği DEĞİLDİR: merkez bir
+        // şube değil, şube yokluğudur (ayrı seçenek olarak aşağıda duruyor).
+        setSubeler(l.filter((s) => s?.aktif !== false
+          && String(s?.id) !== 'sube-merkez'
+          && trKucuk(s?.ad || '') !== 'merkez'));
+      })
+      .catch(() => setSubeler([]));
+  }, []);
 
   const odemeAc = (k) => {
     setOdemeModal(k);
     setOdemeTutar('');
     setOdemeNot('');
+    setOdemeSube('');
+    setOdemeYontem('havale');
     setOdemeHata('');
   };
   const odemeKapat = () => { if (!odemeMesgul) { setOdemeModal(null); setOdemeHata(''); } };
@@ -448,6 +471,8 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
         faiz_tutari: 0,
         ana_para: 0,
         aciklama,          // ⚠️ sunucu 3 harften kısa açıklamayı 400 ile reddeder
+        sube_id: odemeSube || null,      // boş = merkez kovası (şubesizlik)
+        odeme_yontemi: odemeYontem || null,
       }});
       setOdemeModal(null);
       onToast?.(`💳 ${k.ad} · ${fmt(n)} ödendi — kasadan düştü, kart borcu azaldı`);
@@ -613,6 +638,31 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
             {hizli('Yarısı', k.toplam / 2)}
           </div>
 
+          {/* 🏪 HANGİ KASADAN — sahip talebi. Bu seçim olmadığı için canlı
+              defterdeki 21 kart ödemesinin 21'i şubesiz kalmıştı. */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 14 }}>
+            <div>
+              <label style={{ display: 'block', fontSize: 10.5, letterSpacing: '.7px', textTransform: 'uppercase', color: R.not2, fontWeight: 700, marginBottom: 5 }}>
+                Hangi kasadan çıktı
+              </label>
+              <select value={odemeSube} onChange={(e) => setOdemeSube(e.target.value)} style={kutuStil}>
+                <option value="">Merkez (şube dışı)</option>
+                {subeler.map((s) => (
+                  <option key={s.id} value={s.id}>{s.ad}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label style={{ display: 'block', fontSize: 10.5, letterSpacing: '.7px', textTransform: 'uppercase', color: R.not2, fontWeight: 700, marginBottom: 5 }}>
+                Nasıl ödendi
+              </label>
+              <select value={odemeYontem} onChange={(e) => setOdemeYontem(e.target.value)} style={kutuStil}>
+                <option value="havale">Havale / EFT (bankadan)</option>
+                <option value="elden">Elden nakit</option>
+              </select>
+            </div>
+          </div>
+
           <label style={{ display: 'block', fontSize: 10.5, letterSpacing: '.7px', textTransform: 'uppercase', color: R.not2, fontWeight: 700, margin: '14px 0 5px' }}>
             Açıklama (boş bırakılırsa kart adı yazılır)
           </label>
@@ -624,7 +674,9 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
             background: R.girinti, border: `1px solid ${R.cizgi3}`,
             fontSize: 11.5, color: R.not2, lineHeight: 1.65,
           }}>
-            💵 Bu tutar <b style={{ color: R.metin2 }}>kasadan düşer</b> (KART_ODEME izi kalır) ve kart borcu anında azalır.
+            💵 Bu tutar <b style={{ color: R.metin2 }}>
+              {odemeSube ? `${(subeler.find((s) => String(s.id) === String(odemeSube))?.ad) || 'şube'} kasasından` : 'merkez kasasından'}
+            </b> düşer (KART_ODEME izi kalır) ve kart borcu anında azalır.
             {girilen > 0 && (
               <> Ödeme sonrası kalan borç: <b style={{ color: kalanBorc > 0 ? R.amber : R.yesil }}>{fmt(kalanBorc)}</b>.</>
             )}
