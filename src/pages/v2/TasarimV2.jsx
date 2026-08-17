@@ -260,7 +260,11 @@ export default function TasarimV2({ onGit }) {
     api('/odeme-plani/bugun?gun=0&personel=1')
       .then(d => koy('odemeBekleyen', Array.isArray(d) ? d.length : 0)).catch(() => {});
     api('/kartlar/borc-faiz-ozet')
-      .then(d => koy('ekstreEksik', Number(d?.bu_ay_eksik_ekstre) || 0)).catch(() => {});
+      // 🔴 ÖLÜ ROZET FIX (2026-08-17): alan DİZİ (kart adları) — Number([...])
+      // NaN üretiyordu, `|| 0` onu 0'a çeviriyordu → rozet HİÇ yanmadı.
+      // Bugün 5 kartın Ağustos ekstresi eksikken sol rayda uyarı yoktu.
+      .then(d => koy('ekstreEksik', Array.isArray(d?.bu_ay_eksik_ekstre)
+        ? d.bu_ay_eksik_ekstre.length : (Number(d?.bu_ay_eksik_ekstre) || 0))).catch(() => {});
     // Gecikmiş kart ≠ ekstresi eksik kart: burada son ödeme günü geçmiş ve
     // asgarisi karşılanmamış kartlar sayılır (kırmızı rozet = gerçekten acil).
     api('/kartlar')

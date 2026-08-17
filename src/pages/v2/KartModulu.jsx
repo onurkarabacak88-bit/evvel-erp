@@ -522,8 +522,20 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
     // ozet.bu_ay_ekstre_var TAKVİM AYINA bakar (13 Ağustos'ta 25 Temmuz kesimli
     // ekstre 'yok' sayılır → sahte amber); /kartlar.ekstre_gercek AKTİF DÖNGÜYE
     // bakar (kanonik). Kanonik alan ÖNCELİKLİ; yalnız o yoksa takvim-ayına düş.
-    const ekstreVar = k.ekstre_gercek != null ? !!k.ekstre_gercek
-      : (o.bu_ay_ekstre_var != null ? !!o.bu_ay_ekstre_var : false);
+    // 🔴 DÜZELTME (2026-08-17, kart denetimi): `ekstre_gercek` "AKTİF DÖNGÜ"
+    // sanılıyordu ama kaynağı (kart_ekstre_donem_override) istenen ay yoksa
+    // kartın EN SON ekstresine düşüyor → alan fiilen "HİÇ ekstre var mı"yı
+    // ölçüyor. Sonuç canlıda: 7/7 kart "yüklendi ✓" yeşili, oysa sunucunun
+    // kendi listesi 5 kartı EKSİK sayıyor (Garanti×2, ANNEM, HEPSİ BURADA,
+    // Ziraat). Sahte-yeşil ailesinin kart vakası: eksik ekstre görünmezse
+    // sahip yüklemeyi unutur, tüm borç tablosu bayat kalır.
+    // Yeni kural: sunucunun EKSİK LİSTESİ tek gerçek (kart adıyla eşleşme);
+    // liste yoksa takvim-ayı bayrağına, o da yoksa kanonik alana düşülür.
+    const eksikAdlar = Array.isArray(ozet?.bu_ay_eksik_ekstre) ? ozet.bu_ay_eksik_ekstre : null;
+    const ekstreVar = eksikAdlar
+      ? !eksikAdlar.some((ad) => String(ad).trim() === String(k.kart_adi || '').trim())
+      : (o.bu_ay_ekstre_var != null ? !!o.bu_ay_ekstre_var
+        : (k.ekstre_gercek != null ? !!k.ekstre_gercek : false));
     const limit = sayi(k.limit_tutar);
     const borc = sayi(k.guncel_borc);
     return {

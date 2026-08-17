@@ -3342,6 +3342,24 @@ def kartlar_listele():
                     # Gerçek ekstre kesim tarihinden sonraki hareketler (ödeme −, harcama +).
                     # _snap_kesim yoksa teorik _kesim_for_ov'a düşer (geriye dönük uyumlu).
                     _pencere = _snap_kesim or str(_kesim_for_ov)
+                    # 🔴 P0 DENKLEŞTİRME ÇİZGİSİ (2026-08-17, Ziraat vakası):
+                    # DEVİR yaması (manuel-ekstre/toplu-devir) kartın borcunu O ANKİ
+                    # ekstre rakamına eşitler — yani yama tarihine kadarki TÜM ödeme
+                    # ve harcamaları ZATEN İÇİNDE taşır. Yama kesimden SONRA
+                    # tarihliyse, aşağıdaki pencere o ödemeleri BİR KEZ DAHA düşüyordu.
+                    # CANLI KANIT: Ziraat 3696 — kesim 18 Tem, 20 Tem ödeme 182.275,
+                    # 25 Tem yama (borç 268.443'e eşitlendi = ödeme yamanın içinde),
+                    # 28 Tem ödeme 86.168 → ekran 0,35 ₺ + "asgari ödendi ✓" YEŞİL
+                    # gösteriyordu; gerçek borç 182.275,35 ₺ (sahte-yeşil ailesinin
+                    # en tehlikeli vakası: kart ödenmiş sanılır).
+                    # Kural: pencere = MAX(ekstre kesimi, son denkleştirme tarihi).
+                    cur.execute("""
+                        SELECT MAX(tarih)::text AS t FROM kart_hareketleri
+                        WHERE kart_id=%s AND durum='aktif' AND islem_turu='DEVIR'
+                    """, (k['id'],))
+                    _devir_ts = str((cur.fetchone() or {}).get('t') or '')[:10]
+                    if _devir_ts and _devir_ts > str(_pencere)[:10]:
+                        _pencere = _devir_ts
                     cur.execute("""
                         SELECT COALESCE(SUM(CASE WHEN islem_turu='ODEME' THEN -tutar ELSE tutar END), 0) AS d
                         FROM kart_hareketleri
@@ -3360,12 +3378,24 @@ def kartlar_listele():
             # bırakabiliyordu → asgari ödense bile kutucuk yeşile dönmüyordu.
             if _ekstre_gercek and _snap_kesim:
                 try:
+                    # Aynı denkleştirme çizgisi burada da geçerli (Ziraat vakası):
+                    # yamadan ÖNCEKİ ödemeler yamanın içinde eridiği için bu
+                    # ekstrenin asgarisine ikinci kez sayılamaz — yoksa kart
+                    # ödenmemişken "asgari karşılandı ✓" yeşili yanıyordu.
+                    _as_pencere = _snap_kesim
+                    cur.execute("""
+                        SELECT MAX(tarih)::text AS t FROM kart_hareketleri
+                        WHERE kart_id=%s AND durum='aktif' AND islem_turu='DEVIR'
+                    """, (k['id'],))
+                    _dts = str((cur.fetchone() or {}).get('t') or '')[:10]
+                    if _dts and _dts > str(_as_pencere)[:10]:
+                        _as_pencere = _dts
                     cur.execute("""
                         SELECT COALESCE(SUM(tutar), 0) AS odenen
                         FROM kart_hareketleri
                         WHERE kart_id=%s AND durum='aktif' AND islem_turu='ODEME'
                           AND tarih > %s::date
-                    """, (k['id'], _snap_kesim))
+                    """, (k['id'], _as_pencere))
                     bu_donem_odenen = float((cur.fetchone() or {}).get('odenen') or 0)
                 except Exception:
                     pass
