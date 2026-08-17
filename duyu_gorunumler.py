@@ -575,6 +575,14 @@ def odeme_mutabakat(gun: int = Query(60, ge=14, le=180)):
                    spe.kaynak, spe.confidence
             FROM supplier_payment_event spe
             WHERE spe.tarih >= %s
+              -- 🔴 GEÇERSİZ DAMGASI (2026-08-17): supplier_payment.py iki durumda
+              -- gecersiz=TRUE damgalıyor: (a) v1→v2 sürüm geçişi (:407), (b) ÇİFT
+              -- KANAL elemesi (:249) = "aynı para hem kart hem eşlenik anlık gider
+              -- satırında". (b) tam olarak bugünkü ATALAY sınıfıdır — kart çekimi
+              -- ödemenin FİNANSMANI, ayrı ödeme değil. Kanonik tüketici bu damgayı
+              -- okuyor (supplier_payment.py:451) ama bu duyu OKUMUYORDU → elenmiş
+              -- satırlar burada hâlâ "ödeme" sayılıyordu.
+              AND NOT COALESCE(spe.gecersiz, FALSE)
               AND NOT EXISTS (
                     SELECT 1 FROM kart_hareketleri kh
                      WHERE spe.kaynak_tablo = 'kart_hareketleri'
