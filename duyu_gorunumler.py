@@ -594,13 +594,53 @@ def odeme_mutabakat(gun: int = Query(60, ge=14, le=180)):
             """,
             (str(bas - timedelta(days=7)),),
         )
-        odemeler = []
+        _ham_odemeler = []
         for r in (cur.fetchall() or []):
             d = dict(r)
             d["_norm"] = _norm(d.get("tedarikci_ad"))
             d["tarih"] = str(d["tarih"])
             d["_kullanildi"] = False
-            odemeler.append(d)
+            _ham_odemeler.append(d)
+
+    # 🔴 P0 KANAL TEKİLLEŞTİRME (2026-08-17, Zekâ alanı denetimi):
+    # AYNI ödeme üç ayrı kanaldan (kart · nakit/anlık gider · vadeli alım) ÜÇ AYRI
+    # olay üretiyordu ve bu ekran hepsini AYRI ödeme sayıyordu. Canlı kanıt (60 gün):
+    #   SÜTAŞ 55.630,66 → vadeli(17 Haz) + kart(17 Haz) + kart(18 Haz)  = 3 kayıt
+    #   redbull 21.487,10 → vadeli + kart + kart                        = 3 kayıt
+    #   FEZ 80.000/20.000 → nakit + kart (25 Haz) ve yine (3 Tem)       = 4 kayıt
+    #   ATALAY 100.000  → kart(0.5) + nakit(0.6) + kart(1.0)            = 3 kayıt
+    # Sonuç: "ödeme var ama bakiye düşüşü görülmedi" listesi kendi kopyalarıyla
+    # şişiyor, GERÇEK boşluklar arasında kayboluyor (alarm körlüğünün ta kendisi).
+    # KURAL: aynı cari + tutar ±%1 (min 1 ₺) + tarih ±1 gün = TEK ödeme; en YÜKSEK
+    # güvenli kayıt temsilci olur, elenenlerin sayısı raporda `kanal_kopyasi_elenen`
+    # olarak GÖRÜNÜR (sessiz eleme yok — sahip kaç kopya elendiğini bilir).
+    # ⚠️ Bu ekran öneri-only'dir; hüküm vermez. Tekilleştirme yalnız GÖRÜNÜMdedir,
+    # hiçbir kayıt silinmez/değiştirilmez.
+    odemeler, _elenen = [], 0
+    for d in sorted(_ham_odemeler,
+                    key=lambda x: (-(x.get("confidence") or 0), x["tarih"])):
+        ikiz = None
+        for s in odemeler:
+            if s["_norm"] != d["_norm"]:
+                continue
+            tol = max(1.0, abs(float(s["tutar"])) * 0.01)
+            if abs(float(s["tutar"]) - float(d["tutar"])) > tol:
+                continue
+            try:
+                gun_fark = abs((date.fromisoformat(d["tarih"])
+                                - date.fromisoformat(s["tarih"])).days)
+            except Exception:
+                gun_fark = 99
+            if gun_fark <= 1:
+                ikiz = s
+                break
+        if ikiz is not None:
+            ikiz.setdefault("_kanallar", [ikiz.get("kaynak")])
+            ikiz["_kanallar"].append(d.get("kaynak"))
+            _elenen += 1
+            continue
+        odemeler.append(d)
+    odemeler.sort(key=lambda x: x["tarih"])
 
     # ADAY EŞLEŞTİRME — hüküm değil aday; kör noktalar bilinir (kısmi ödeme, çok-fatura-tek-ödeme)
     def _pencere_icinde(o, du, pay=0):
@@ -652,6 +692,10 @@ def odeme_mutabakat(gun: int = Query(60, ge=14, le=180)):
         "eslesen": eslesen,                      # 🟢 düşüş ↔ ödeme adayı (güvenle)
         "dusus_var_odeme_kaydi_yok": dusus_karsiliksiz,   # 🟡 gözlem — hüküm değil
         "odeme_var_dusus_gorulmedi": odeme_karsiliksiz,   # 🟡 bilgi — fatura zinciri eksik olabilir
+        # SESSİZ ELEME YASAK: kaç kayıt kanal kopyası sayılıp birleştirildi, sahip görsün.
+        "kanal_kopyasi_elenen": _elenen,
+        "ham_odeme_olayi": len(_ham_odemeler),
+        "tekil_odeme_olayi": len(odemeler),
         "not": "ADAY eşleştirme — kesin mutabakat DEĞİL. Bakiye düşüşü muhasebe sinyalidir "
                "(iade/iskonto/mahsup da düşürür); 'ödeme eksik' hükmü YOK. kayit_guveni<1 = "
                "ödeme kaydı fuzzy eşleşmiş (aday). Kör noktalar: kısmi ödeme, tek ödeme→çok "
