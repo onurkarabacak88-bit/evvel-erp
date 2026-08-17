@@ -236,9 +236,13 @@ def _bantlar_kur(baslik: Dict[str, Tuple[float, float]], sayfa_genisligi: float)
     return bantlar
 
 
-def _hucrelere_dagit(satir: List[Dict], bantlar: List[Tuple[str, float, float]]) -> Dict[str, List[str]]:
-    """Her kelimeyi en çok örtüştüğü banda atar."""
-    hucre: Dict[str, List[str]] = {k: [] for k, _, _ in bantlar}
+def _hucrelere_dagit(satir: List[Dict], bantlar: List[Tuple[str, float, float]]) -> Dict[str, List[Dict]]:
+    """Her kelimeyi en çok örtüştüğü banda atar (kelime NESNESİ döner, metin değil).
+
+    Koordinat aşağıda lazım: sağa dayalı sütunda doğru sayıyı seçmek için
+    kelimenin sağ kenarı bilinmeli (bkz. _tutar_sec).
+    """
+    hucre: Dict[str, List[Dict]] = {k: [] for k, _, _ in bantlar}
     for w in satir:
         en_iyi, en_ortusme = None, 0.0
         for kavram, sol, sag in bantlar:
@@ -248,8 +252,12 @@ def _hucrelere_dagit(satir: List[Dict], bantlar: List[Tuple[str, float, float]])
         if en_iyi is None:  # hiç örtüşme yok → merkeze en yakın bant
             merkez = (w["x0"] + w["x1"]) / 2.0
             en_iyi = min(bantlar, key=lambda b: min(abs(merkez - b[1]), abs(merkez - b[2])))[0]
-        hucre[en_iyi].append(w["text"])
+        hucre[en_iyi].append(w)
     return hucre
+
+
+def _metin(hucre: Dict[str, List[Dict]], kavram: str) -> str:
+    return " ".join(w["text"] for w in hucre.get(kavram, []))
 
 
 # ─── Tarih çözümü ────────────────────────────────────────────────────────────
@@ -311,12 +319,13 @@ def _taksit_coz(taksit_metni: str, aciklama: str) -> Dict[str, Any]:
     return sonuc
 
 
-def _aciklama_temizle(parcalar: List[str]) -> str:
+def _aciklama_temizle(hucre: Dict[str, List[Dict]], kavram: str) -> str:
     """Açıklama hücresinden taksit/hesap artığı token'ları atar."""
     atilacak = re.compile(
         r"^(bosluk|b(?:os){2,}luk|bboosslluukk)$|^[\d.]+,\d{2}[xX]\d+=|^\d{1,2}\.taksit$",
         re.I,
     )
+    parcalar = [w["text"] for w in hucre.get(kavram, [])]
     kalan = [p for p in parcalar if p and not atilacak.match(p)]
     metin = " ".join(kalan)
     # pdfplumber'ın harf ikizlemesi ('bboosslluukk') ve TL eki
@@ -369,6 +378,7 @@ def geometrik_oku(pdf_bytes: bytes, banka: str = "") -> Dict[str, Any]:
                 return tani
             odeme_isareti = _ODEME_ISARETI.get(banka, "+")
             bantlar: Optional[List[Tuple[str, float, float]]] = None
+            tutar_sag_hiza: Optional[float] = None
 
             for sayfa_no, sayfa in enumerate(pdf.pages, start=1):
                 try:
@@ -385,6 +395,9 @@ def geometrik_oku(pdf_bytes: bytes, banka: str = "") -> Dict[str, Any]:
                     yeni = _baslik_coz(satir) if len(satir) <= 16 else None
                     if yeni:
                         bantlar = _bantlar_kur(yeni, float(sayfa.width))
+                        # Sayısal sütunlar sağa dayalıdır → başlığın sağ kenarı
+                        # doğru sayıyı seçmenin çıpasıdır (bkz. _tutar_sec).
+                        tutar_sag_hiza = yeni["tutar"][1]
                         tani["sutun_bandi"][f"sayfa{sayfa_no}"] = [
                             {"kavram": k, "sol": round(s, 1), "sag": round(g, 1)}
                             for k, s, g in bantlar
@@ -394,10 +407,8 @@ def geometrik_oku(pdf_bytes: bytes, banka: str = "") -> Dict[str, Any]:
                         continue  # başlık daha görülmedi → tablo başlamadı
 
                     hucre = _hucrelere_dagit(satir, bantlar)
-                    tarih = _tarih_coz(" ".join(hucre.get("tarih", [])))
-                    tutar_token = _tutar_sec(hucre.get("tutar", []))
-                    if tutar_token:
-                        tutar_token = _komsu_isaret_uygula(satir, tutar_token)
+                    tarih = _tarih_coz(_metin(hucre, "tarih"))
+                    tutar_token = _tutar_sec(hucre.get("tutar", []), tutar_sag_hiza, satir)
 
                     if tarih and tutar_token:
                         tani["satirlar"].append(
@@ -408,8 +419,8 @@ def geometrik_oku(pdf_bytes: bytes, banka: str = "") -> Dict[str, Any]:
                         tani["tutarsiz"].append({
                             "sayfa": sayfa_no,
                             "tarih": tarih,
-                            "aciklama": _aciklama_temizle(hucre.get("aciklama", [])),
-                            "odul_hucresi": " ".join(hucre.get("odul", [])),
+                            "aciklama": _aciklama_temizle(hucre, "aciklama"),
+                            "odul_hucresi": _metin(hucre, "odul"),
                             "neden": "Tutar hücresi boş — ödül/kampanya satırı olabilir",
                         })
                     elif tutar_token and not tarih:
@@ -419,7 +430,7 @@ def geometrik_oku(pdf_bytes: bytes, banka: str = "") -> Dict[str, Any]:
                         coz = _tutar_coz(tutar_token)
                         tani["tarihsiz_tutarli"].append({
                             "sayfa": sayfa_no,
-                            "aciklama": _aciklama_temizle(hucre.get("aciklama", [])),
+                            "aciklama": _aciklama_temizle(hucre, "aciklama"),
                             "tutar": coz[0] if coz else None,
                         })
 
@@ -439,12 +450,12 @@ def geometrik_oku(pdf_bytes: bytes, banka: str = "") -> Dict[str, Any]:
         return tani
 
 
-def _tutar_sec(parcalar: List[str]) -> Optional[str]:
-    """Tutar hücresindeki tek parasal token'ı seçer.
+def _tutar_sec(kelimeler: List[Dict], sag_hiza: Optional[float] = None,
+               satir: Optional[List[Dict]] = None) -> Optional[str]:
+    """Tutar hücresindeki parasal token'ı seçer.
 
-    Hücreye 'TL' eki ya da 'bosluk' çöpü de düşebilir; kuruşu olan token
-    aranır. İki aday varsa (beklenmez) EN SAĞDAKİ değil ilk geçerli alınır ve
-    bu durum tutarsızlık olarak yukarıya taşınmaz — çapa yakalar.
+    Hücreye 'TL' eki ya da 'bosluk' çöpü de düşebilir; yalnız KURUŞU OLAN token
+    aday sayılır (puan/taksit sayısı kuruşsuzdur — ikinci savunma hattı).
 
     ⚠️ AYRIK İŞARET (2026-08-17, Enpara vakası): bazı ekstrelerde eksi işareti
     sayıdan AYRI bir kelime olarak gelir:
@@ -453,56 +464,51 @@ def _tutar_sec(parcalar: List[str]) -> Optional[str]:
     ÖDEME satırı HARCAMA yazılıyordu — Enpara ekstresinde 3 ödeme (≈45 K ₺)
     borç tarafına geçmişti. Bu yüzden ayrık işaret sayıya YAPIŞTIRILIR.
     """
-    bekleyen_isaret = ""
-    for p in parcalar:
-        t = p.strip()
-        if t in ("-", "+", "−", "–"):
-            bekleyen_isaret = "-" if t != "+" else "+"
-            continue
-        if _SAYI.match(t):
-            if bekleyen_isaret and not t.startswith(("+", "-")) and not t.endswith(("+", "-")):
-                return bekleyen_isaret + t
-            return t
-    return None
+    adaylar = [w for w in kelimeler if _SAYI.match(w["text"].strip())]
+    if not adaylar:
+        return None
+
+    # ⚠️ TAŞAN AÇIKLAMA TUZAĞI (2026-08-17, Ziraat vakası): sütun sınırı iki
+    # başlığın ORTA noktasıdır, ama bir sütunun İÇERİĞİ başlığından çok daha
+    # geniş olabilir ve komşunun bandına taşar. Ziraat "Sonradan Taksit"
+    # satırında açıklama şöyle yazılır:
+    #     "... 1. Taksit  9.810,38 TL İşlemin 1/4 Taksidi   2.452,60"
+    #                     └ işlemin TOPLAMI (açıklama içinde)   └ GERÇEK tutar
+    # 9.810,38@270-298 orta noktayı (276) geçtiği için tutar hücresine düşüyor
+    # ve ilk-eşleşen kuralı onu seçiyordu → 78 satırda 761.680 ₺ okundu, oysa
+    # ekstrenin dönem borcu 268.443 ₺. Yani borç ~3 KAT şişiyordu.
+    #
+    # ÇÖZÜM: sayısal sütunlar SAĞA DAYALIDIR — değerin sağ kenarı başlığın sağ
+    # kenarıyla hizalanır. Bu yüzden aday, sağ kenarı sütunun sağ hizasına EN
+    # YAKIN olan sayıdır. Ziraat'te 2.452,60@…-458 (başlık sağı 460) kazanır,
+    # 9.810,38@…-298 elenir.
+    if sag_hiza is not None:
+        adaylar.sort(key=lambda w: abs(w["x1"] - sag_hiza))
+    secilen = adaylar[0]
+
+    # Ayrık işaret: sayıdan hemen önce gelen tek başına '-' / '+'.
+    # ⚠️ Arama HÜCREDE DEĞİL SATIRDA yapılır: işaret sayıdan ~5 punto solda
+    # durur ve bu, komşu sütunun bandına düşecek kadar uzaktır. Enpara'da
+    # Taksit başlığı 458-486, Tutar başlığı 536-561 → sınır 511; '-'@503
+    # TAKSİT hücresine, '14.050,00'@508 TUTAR hücresine düşer. Hücreye bakan
+    # arama işareti bulamaz, ödeme HARCAMA yazılırdı (3 ödeme ≈ 30 K ₺ ters
+    # yöne). Geometri sütunu verir, işaret satırın kendisinden okunur.
+    t = secilen["text"].strip()
+    if not t.startswith(("+", "-")) and not t.endswith(("+", "-")):
+        for w in (satir or kelimeler):
+            if w["text"].strip() in _ISARETLER and 0 <= secilen["x0"] - w["x1"] <= 6.0:
+                return ("+" if w["text"].strip() == "+" else "-") + t
+    return t
 
 
 _ISARETLER = {"-", "+", "−", "–"}
 
 
-def _komsu_isaret_uygula(satir: List[Dict], tutar_token: str) -> str:
-    """Sayının SOLUNDAKİ ayrık işaret kelimesini sayıya yapıştırır.
-
-    ⚠️ SÜTUN SINIRI TUZAĞI (2026-08-17, Enpara): ayrık eksi işareti sayıdan
-    ~5 punto solda durur ve bu, komşu sütunun bandına düşecek kadar uzaktır:
-        Taksit başlığı 458-486 · Tutar başlığı 536-561 → sınır 511
-        '-'@503  → TAKSİT hücresi        '14.050,00'@508 → TUTAR hücresi
-    Yani hücre bazlı bakınca işaret KAYBOLUYOR ve ödeme, harcama sanılıyordu
-    (Enpara Temmuz ekstresinde 3 ödeme ≈ 45 K ₺ ters yöne yazılacaktı).
-    Çözüm: işaret aramasını hücreye değil SATIRA yaptır — geometri sütunu
-    verir, işaret satırın kendisinden okunur.
-    """
-    if tutar_token.startswith(("+", "-")) or tutar_token.endswith(("+", "-")):
-        return tutar_token
-    for i, w in enumerate(satir):
-        if w["text"].strip() != tutar_token:
-            continue
-        if i == 0:
-            break
-        onceki = satir[i - 1]
-        if onceki["text"].strip() not in _ISARETLER:
-            break
-        # İşaret sayıya YAKIN olmalı; uzaktaki bir tire açıklama çizgisidir
-        if w["x0"] - onceki["x1"] > 6.0:
-            break
-        return ("+" if onceki["text"].strip() == "+" else "-") + tutar_token
-    return tutar_token
-
-
-def _satir_kur(hucre: Dict[str, List[str]], tarih: str, tutar_token: str,
+def _satir_kur(hucre: Dict[str, List[Dict]], tarih: str, tutar_token: str,
                banka: str, odeme_isareti: str) -> Dict[str, Any]:
     tutar, isaret = _tutar_coz(tutar_token)  # type: ignore[misc]
-    aciklama = _aciklama_temizle(hucre.get("aciklama", []))
-    taksit = _taksit_coz(" ".join(hucre.get("taksit", [])), aciklama)
+    aciklama = _aciklama_temizle(hucre, "aciklama")
+    taksit = _taksit_coz(_metin(hucre, "taksit"), aciklama)
 
     ucret_mi = bool(_UCRET_METNI.search(aciklama))
     isaret_odeme = bool(isaret) and isaret == odeme_isareti
@@ -510,9 +516,10 @@ def _satir_kur(hucre: Dict[str, List[str]], tarih: str, tutar_token: str,
     odeme_mi = (isaret_odeme or metin_odeme) and not ucret_mi
 
     odul = None
-    for p in hucre.get("odul", []):
-        if _SAYI_GEVSEK.match(p.strip()):
-            c = _tutar_coz(p.strip())
+    for w in hucre.get("odul", []):
+        p = w["text"].strip()
+        if _SAYI_GEVSEK.match(p):
+            c = _tutar_coz(p)
             odul = c[0] if c else None
             break
 
@@ -528,7 +535,7 @@ def _satir_kur(hucre: Dict[str, List[str]], tarih: str, tutar_token: str,
         "taksit_no": taksit["taksit_no"],
         "taksit_sayisi": taksit["taksit_sayisi"],
         "taksit_toplam": taksit["taksit_toplam"],
-        "doviz_hucresi": " ".join(hucre.get("doviz", [])) or None,
+        "doviz_hucresi": _metin(hucre, "doviz") or None,
         "ham_tutar_token": tutar_token,
         "kaynak": "geometrik",
     }
