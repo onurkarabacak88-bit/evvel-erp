@@ -18,6 +18,13 @@ Kapsam:
 """
 
 from datetime import date, timedelta
+# 🔴 ZORUNLU (2026-08-17): kart_bakiye_ozeti imzası Optional/Dict/Any kullanıyor.
+# Bu satır olmadan modül, tip açıklamaları değerlendirilirken NameError veriyor →
+# uygulama HİÇ başlamıyor (canlı 502, ~12 dk kesinti). Yerel Python 3.14
+# açıklamaları geciktirdiği için `import finans_core` sessizce geçiyordu; sunucu
+# sürümü anında değerlendirdiği için orada patladı. DERS: yeni tip açıklaması
+# eklerken import'u AYNI düzenlemede ekle; py_compile bunu yakalamaz.
+from typing import Any, Dict, Optional
 
 from tr_saat import bugun_tr
 
