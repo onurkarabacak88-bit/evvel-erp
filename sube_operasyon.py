@@ -1476,6 +1476,14 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                 except Exception:
                     pass  # Teslim alıcı bulunamazsa sessiz geç
 
+            # 💵 Kapanış teslimini HEMEN deftere işle — bkz. kasa_teslim_api.py
+            # notu (başlangıç göçü tek başına yetmez; deploy olmadan izsiz kalır).
+            try:
+                from database import ensure_kasa_teslim_defterlesme
+                ensure_kasa_teslim_defterlesme(cur)
+            except Exception:  # noqa: BLE001 — kapanışı ASLA kilitlemez
+                pass
+
             from operasyon_defter import operasyon_defter_ekle
 
             defter_satir = (

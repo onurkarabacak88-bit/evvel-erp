@@ -173,6 +173,19 @@ def kasa_teslim_ekle(body: KasaTeslimBody):
         )
         audit(cur, "kasa_teslim", tid, "KASA_TESLIM")
 
+        # 💵 TESLİMİ HEMEN DEFTERE İŞLE (2026-08-18)
+        # Defterleşme (KASA_TESLIM_CIKIS/GIRIS çift kaydı) başlangıçta da
+        # çalışır AMA yalnız uygulama yeniden başlayınca. Bugün canlıda tam bu
+        # görüldü: iki yeni teslim (ZAFER 4.600 · TEMA 1.500) ancak deploy
+        # sonrası çift kayda döndü. Deploy olmayan bir haftada yeni teslimler
+        # defterde İZSİZ kalırdı — düzelttiğimiz kusurun aynısı geri gelirdi.
+        # İdempotent ve ucuz: yalnız eşi olmayan teslimleri işler.
+        try:
+            from database import ensure_kasa_teslim_defterlesme
+            ensure_kasa_teslim_defterlesme(cur)
+        except Exception:  # noqa: BLE001 — defterleşme teslim kaydını ASLA kilitlemez
+            pass
+
         from operasyon_defter import operasyon_defter_ekle
 
         saat = dt_now_tr().strftime("%H:%M:%S")

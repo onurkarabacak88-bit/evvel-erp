@@ -2509,6 +2509,13 @@ def sube_ara_kasa_teslim(sube_id: str, body: AraTeslimModel):
                 (body.aciklama or "").strip() or None,
             ),
         )
+        # 💵 Teslimi HEMEN deftere işle — bkz. kasa_teslim_api.py'deki not
+        # (başlangıç göçü tek başına yetmez; deploy olmadan yeni teslim izsiz kalır).
+        try:
+            from database import ensure_kasa_teslim_defterlesme
+            ensure_kasa_teslim_defterlesme(cur)
+        except Exception:  # noqa: BLE001 — teslim kaydını ASLA kilitlemez
+            pass
         from operasyon_defter import operasyon_defter_ekle
         from tr_saat import dt_now_tr
         saat = dt_now_tr().strftime("%H:%M:%S")
