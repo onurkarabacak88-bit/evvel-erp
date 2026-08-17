@@ -2366,6 +2366,92 @@ def kasa_durumu():
         return {"guncel_bakiye": kasa, "hareketler": [dict(r) for r in cur.fetchall()]}
 
 
+@app.get("/api/kasa/sube-sessizlik")
+def sube_sessizlik(esik_gun: int = 3):
+    """🔇 SESSİZ ŞUBE DUYUSU — gider üretiyor ama ciro girmiyor.
+
+    🔴 CANLI VAKA (2026-08-18, bu duyu tam bunu bulduktan sonra yazıldı):
+    KÖYCEĞİZ ve ALSANCAK'ın son ciro kaydı **19 Haziran 2026**. 60 gündür
+    ciro girilmemiş. AMA giderleri işlemeye devam ediyor:
+        3 Ağu  KÖYCEĞİZ KİRA        43.500 ₺
+        4 Ağu  POS DONANIM ÜCRETİ      949 ₺ (Köyceğiz) + 950 ₺ (Alsancak)
+    POS donanım ücreti ödeniyorsa cihaz aktiftir — yani şube büyük olasılıkla
+    satış yapıyor, sadece CİROSU SİSTEME GİRMİYOR.
+
+    Neden kimse fark etmedi: hiçbir ekran "bir şeyin OLMAMASINI" göstermiyordu.
+    Eksik ciro sessizdir — ekranda boşluk bırakmaz, alarm üretmez, sadece o
+    şubeyi yapay olarak zarar ediyor gösterir. Kasa çekmecesindeki imkânsız
+    −17.790 ₺ bunun tek görünür belirtisiydi ve onu da ancak defteri uçtan uca
+    okuyunca gördük.
+
+    Bu duyu o boşluğu KONUŞUR HALE getirir: gideri süren ama cirosu susan şube
+    ya kapanmıştır (o zaman giderleri de durmalı) ya da veri girişi kopmuştur.
+    İkisi de sahibin bilmesi gereken şeydir.
+
+    ⛔ ÖNERİ-ONLY: hüküm vermez, hiçbir şey yazmaz. "Şu şube N gündür sessiz"
+       der; sebebini sahip söyler.
+    """
+    with db() as (conn, cur):
+        cur.execute("""
+            SELECT s.id::text AS sube_id, s.ad,
+                   (SELECT MAX(c.tarih) FROM ciro c WHERE c.sube_id::text = s.id::text) AS son_ciro,
+                   (SELECT COUNT(*) FROM ciro c WHERE c.sube_id::text = s.id::text) AS ciro_adet
+              FROM subeler s
+             WHERE COALESCE(s.aktif, TRUE) = TRUE
+               AND UPPER(COALESCE(s.ad,'')) <> 'MERKEZ'
+             ORDER BY s.ad
+        """)
+        subeler = [dict(r) for r in cur.fetchall()]
+        out = []
+        for s in subeler:
+            son = s.get("son_ciro")
+            # Ciro sustuktan SONRA gider üretilmiş mi? Asıl sinyal bu:
+            # ciro yok + gider yok = kapanmış olabilir (sakin)
+            # ciro yok + gider VAR = ya kayıt kopuk ya kapanış yarım (alarm)
+            cur.execute("""
+                SELECT COUNT(*) AS adet, COALESCE(SUM(ABS(tutar)),0) AS toplam
+                  FROM kasa_hareketleri
+                 WHERE sube_id::text = %s AND tutar < 0
+                   AND COALESCE(durum,'aktif') = 'aktif'
+                   AND COALESCE(kasa_etkisi, TRUE) = TRUE
+                   AND (%s::date IS NULL OR tarih > %s::date)
+            """, (s["sube_id"], son, son))
+            g = dict(cur.fetchone() or {})
+            gun = None
+            if son:
+                cur.execute("SELECT (CURRENT_DATE - %s::date) AS g", (son,))
+                gun = int((cur.fetchone() or {}).get("g") or 0)
+            sessiz = (gun is None) or (gun > esik_gun)
+            giderli = int(g.get("adet") or 0) > 0
+            out.append({
+                "sube_id": s["sube_id"], "ad": s["ad"],
+                "son_ciro": str(son) if son else None,
+                "ciro_adet": int(s.get("ciro_adet") or 0),
+                "sessiz_gun": gun,
+                "sonrasinda_gider_adet": int(g.get("adet") or 0),
+                "sonrasinda_gider_tutar": round(float(g.get("toplam") or 0), 2),
+                "durum": ("KRİTİK" if (sessiz and giderli) else "sessiz" if sessiz else "akıyor"),
+                "yorum": (
+                    f"{gun} gündür ciro girilmemiş ama bu sürede {int(g.get('adet') or 0)} gider "
+                    f"işlemiş ({float(g.get('toplam') or 0):,.2f} ₺) — şube açıksa ciro kaydı kopmuş, "
+                    "kapandıysa giderleri de durmalı"
+                ) if (sessiz and giderli) else (
+                    f"{gun} gündür ciro yok, gideri de yok — kapanmış olabilir" if sessiz
+                    else "ciro akıyor"
+                ),
+            })
+    kritik = [o for o in out if o["durum"] == "KRİTİK"]
+    return {
+        "esik_gun": esik_gun,
+        "subeler": out,
+        "kritik_adet": len(kritik),
+        "kritik_toplam_gider": round(sum(o["sonrasinda_gider_tutar"] for o in kritik), 2),
+        "not": "Öneri-only duyu: eksik ciro SESSİZDİR — ekranda boşluk bırakmaz, "
+               "o şubeyi yapay zararda gösterir. Bu görünüm o sessizliği konuşturur; "
+               "hüküm vermez, hiçbir kayıt yazmaz.",
+    }
+
+
 @app.get("/api/kasa-defteri")
 def kasa_defteri(
     tarih_baslangic: Optional[str] = None,
