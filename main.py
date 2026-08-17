@@ -2376,9 +2376,16 @@ def kasa_durumu():
 
 
 class MaliyetMerkeziBody(BaseModel):
-    maliyet_merkezi_tipi: str                       # 'sube' | 'ortak' | 'sahis'
+    # ⚠️ İKİSİ BAĞIMSIZ ALAN — biri olmadan öteki set edilebilir.
+    # Sahip (2026-08-18): "katılım evim ve araç kredisi ZAFER'DEN ÖDENİYOR ...
+    # aslında anlattığım gibi hangisinin kasasında para varsa ondan ödüyordur!"
+    # Bu cümle KİMİN BORCU olduğunu değil, GENELDE KİMİN ÖDEDİĞİni söyler.
+    # Mortgage Zafer'den ödeniyor olması onu Zafer'in borcu YAPMAZ.
+    # Bu yüzden `maliyet_merkezi_tipi` artık zorunlu değil: sahip yalnız ödeyen
+    # bilgisini verdiyse maliyet merkezi BİLİNMİYOR kalır (uydurulmaz).
+    maliyet_merkezi_tipi: Optional[str] = None      # 'sube' | 'ortak' | 'sahis'
     maliyet_merkezi_id: Optional[str] = None        # tip='sube' ise sube_id
-    varsayilan_odeyen_sube_id: Optional[str] = None # form ön-dolgusu (öneri)
+    varsayilan_odeyen_sube_id: Optional[str] = None # form ön-dolgusu (yalnız ÖNERİ)
 
 
 @app.post("/api/borclar/{bid}/maliyet-merkezi")
@@ -2394,14 +2401,17 @@ def borc_maliyet_merkezi(bid: str, b: MaliyetMerkeziBody):
     GÖRÜR ve onaylar. Görmeden otomatik yazılmaz (Codex S4: "istatistiksel
     tahmin yalnız öneri olabilir, gerçek veri olamaz").
     """
-    tip = (b.maliyet_merkezi_tipi or "").strip().lower()
-    if tip not in ("sube", "ortak", "sahis"):
+    tip = (b.maliyet_merkezi_tipi or "").strip().lower() or None
+    if tip is not None and tip not in ("sube", "ortak", "sahis"):
         raise HTTPException(400, "maliyet_merkezi_tipi: sube | ortak | sahis olmalı")
     mid = (b.maliyet_merkezi_id or "").strip() or None
     if tip == "sube" and not mid:
         raise HTTPException(400, "tip 'sube' ise maliyet_merkezi_id (şube) zorunlu")
-    if tip != "sube":
+    if tip and tip != "sube":
         mid = None   # ortak/şahsi merkezde şube kimliği tutulmaz — uydurma yok
+    if tip is None and not (b.varsayilan_odeyen_sube_id or "").strip():
+        raise HTTPException(400, "En az biri gerekli: maliyet_merkezi_tipi veya "
+                                 "varsayilan_odeyen_sube_id")
     with db() as (conn, cur):
         cur.execute("SELECT kurum FROM borc_envanteri WHERE id=%s", (bid,))
         r = cur.fetchone()
@@ -2418,10 +2428,14 @@ def borc_maliyet_merkezi(bid: str, b: MaliyetMerkeziBody):
                              AND UPPER(COALESCE(ad,''))<>'MERKEZ'""", (ody,))
             if not cur.fetchone():
                 raise HTTPException(404, f"Varsayılan ödeyen şube bulunamadı: {ody}")
+        # COALESCE ile KISMİ güncelleme: verilmeyen alan mevcut değerini korur —
+        # "yalnız ödeyeni söyledim" diyen sahip, maliyet merkezini SIFIRLAMIŞ olmaz.
         cur.execute("""UPDATE borc_envanteri
-                          SET maliyet_merkezi_tipi=%s, maliyet_merkezi_id=%s,
-                              varsayilan_odeyen_sube_id=%s
-                        WHERE id=%s""", (tip, mid, ody, bid))
+                          SET maliyet_merkezi_tipi = COALESCE(%s, maliyet_merkezi_tipi),
+                              maliyet_merkezi_id   = CASE WHEN %s IS NULL
+                                                          THEN maliyet_merkezi_id ELSE %s END,
+                              varsayilan_odeyen_sube_id = COALESCE(%s, varsayilan_odeyen_sube_id)
+                        WHERE id=%s""", (tip, tip, mid, ody, bid))
         audit(cur, "borc_envanteri", bid, "UPDATE")
     return {"success": True, "kurum": dict(r).get("kurum"),
             "maliyet_merkezi_tipi": tip, "maliyet_merkezi_id": mid,
