@@ -515,6 +515,148 @@ def kart_ekstre_donem_override(cur, kart_id: str, kesim_tarihi: date):
     return borc, asg
 
 
+def kart_bakiye_ozeti(cur, kart_id: str, tarih: Optional[date] = None) -> Dict[str, Any]:
+    """🧭 KANONİK KART BAKİYE MODELİ (yol haritası ADIM 4/12, 2026-08-17).
+
+    NEDEN: Bugün kart borcu BEŞ ayrı yoldan hesaplanıyor ve sonuçlar çelişiyor —
+    17 Ağustos denetiminde OPET WORLD aynı anda /kartlar'da 508.023,92 ve
+    /kartlar/borc-faiz-ozet'te 190.218,39 gösterdi (317 K fark). Asıl tehlike
+    yanlış rakam değil, AYNI ADIN FARKLI ANLAM taşıması: KartModulu'nda
+    "Dönem borcu" başlıklı hücre üç ayrı kaynağa düşüyor.
+
+    ÇÖZÜM: Beş formül yerine DOKUZ AYRI İSİM. Hepsi meşru, hepsi farklı soru;
+    tek fark artık hangisinin ne olduğu YAZILI ve hepsi TEK yerden geliyor.
+
+      ekstre_borcu          bankanın son kabul edilen dönemde dediği
+      asgari_tutar          bankanın dediği asgari
+      kesim_sonrasi_delta   kesimden bugüne defter etkisi (ödeme −, harcama +)
+      anlik_borc            = ekstre_borcu + kesim_sonrasi_delta   ← EKRANDAKİ SAYI
+      defter_canli_bakiye   defterin kendi toplamı (bağımsız ikinci ölçüm)
+      gelecek_taksit_yuku   henüz ekstreye girmemiş taksitler
+      toplam_yukumluluk     = anlik_borc + gelecek_taksit_yuku
+      mutabakat_farki       = ekstre_borcu − defter(kesim anında)  ← GİZLENMEZ
+      bu_donem_odenen       bu ekstreye sayılan ödemeler
+
+    ⚠️ BU ADIM PARALEL ÜRETİMDİR: mevcut uçlar/ekranlar değişmedi, eski alanlar
+    duruyor. Tüketicilerin taşınması ADIM 9'dur. Şimdilik amaç TEK KAYNAK kurmak
+    ve eski-yeni farkını ölçebilmek (/api/kartlar/bakiye-karsilastir).
+
+    DENKLEŞTİRME ÇİZGİSİ: DEVİR yaması (manuel-ekstre/toplu-devir) kartın borcunu
+    o anki ekstreye eşitler; yani yama tarihine kadarki TÜM ödemeleri zaten
+    içerir. Yama kesimden SONRA tarihliyse kesim-sonrası penceresi o ödemeleri
+    ikinci kez düşerdi (Ziraat vakası: ekran 0,35 ₺ derken gerçek 182.275,35 ₺).
+    Bu yüzden pencere = MAX(kesim, son DEVİR tarihi).
+    """
+    bugun = tarih or date.today()
+
+    # ── 1) Kart tanımı ───────────────────────────────────────────────────────
+    cur.execute(
+        "SELECT id::text, kart_adi, limit_tutar, kesim_gunu, son_odeme_gunu, "
+        "COALESCE(asgari_oran,40) AS asgari_oran FROM kartlar WHERE id=%s",
+        (kart_id,),
+    )
+    k = cur.fetchone()
+    if not k:
+        return {"hata": "kart bulunamadı", "kart_id": kart_id}
+    k = dict(k)
+    limit = float(k.get("limit_tutar") or 0)
+
+    # ── 2) En son GERÇEK ekstre snapshot'ı ───────────────────────────────────
+    # ⚠️ Buradaki sorgu bilinçli olarak "son snapshot"a düşmez (kart_ekstre_donem_override
+    # bunu yapıyor ve 'bu ayın ekstresi var mı' sorusunu yanlış cevaplıyordu —
+    # 17 Ağu: ekran "0 kart eksik" derken sunucunun kendi listesi 5 kart sayıyordu).
+    # Burada AÇIKÇA "en son kesim" isteniyor ve tarihi de dönülüyor; çağıran
+    # bunun güncel olup olmadığına kendisi karar verir.
+    cur.execute(
+        """SELECT donem::text AS donem, kesim_tarihi::text AS kesim,
+                  son_odeme_tarihi::text AS son_odeme,
+                  donem_borcu::float AS borc, asgari_tutar::float AS asgari,
+                  kalan_taksit_tutari::float AS kalan_taksit,
+                  kullanilabilir_limit::float AS kull_limit, kaynak
+             FROM kart_ekstre_donem
+            WHERE kart_id=%s AND donem_borcu IS NOT NULL
+            ORDER BY donem DESC, olusturma DESC LIMIT 1""",
+        (kart_id,),
+    )
+    snap = cur.fetchone()
+    snap = dict(snap) if snap else None
+    ekstre_borcu = float(snap["borc"]) if snap else None
+    asgari_tutar = float(snap["asgari"]) if snap and snap.get("asgari") is not None else None
+    snap_kesim = (snap or {}).get("kesim")
+
+    # ── 3) Defterin kendi toplamı (bağımsız ikinci ölçüm) ────────────────────
+    defter_canli = kart_borc(cur, kart_id)
+
+    # ── 4) Denkleştirme çizgisi + kesim sonrası delta ────────────────────────
+    pencere = snap_kesim
+    cur.execute(
+        "SELECT MAX(tarih)::text AS t FROM kart_hareketleri "
+        "WHERE kart_id=%s AND durum='aktif' AND islem_turu='DEVIR'",
+        (kart_id,),
+    )
+    devir_ts = str((cur.fetchone() or {}).get("t") or "")[:10]
+    if devir_ts and (not pencere or devir_ts > str(pencere)[:10]):
+        pencere = devir_ts
+
+    kesim_sonrasi = 0.0
+    bu_donem_odenen = 0.0
+    if pencere:
+        cur.execute(
+            """SELECT COALESCE(SUM(CASE WHEN islem_turu='ODEME' THEN -tutar ELSE tutar END),0) AS d,
+                      COALESCE(SUM(CASE WHEN islem_turu='ODEME' THEN tutar ELSE 0 END),0) AS o
+                 FROM kart_hareketleri
+                WHERE kart_id=%s AND durum='aktif' AND islem_turu <> 'DEVIR'
+                  AND tarih > %s::date AND tarih <= %s::date""",
+            (kart_id, pencere, bugun),
+        )
+        r = dict(cur.fetchone() or {})
+        kesim_sonrasi = float(r.get("d") or 0)
+        bu_donem_odenen = float(r.get("o") or 0)
+
+    # ── 5) Anlık borç ────────────────────────────────────────────────────────
+    if ekstre_borcu is not None:
+        anlik_borc = ekstre_borcu + kesim_sonrasi
+    else:
+        anlik_borc = defter_canli          # ekstresiz kartta defter tek kaynak
+
+    # ── 6) Gelecek taksit yükü (dönem-sabit, snapshot'tan) ───────────────────
+    gelecek_taksit = None
+    if snap:
+        if snap.get("kalan_taksit") is not None:
+            gelecek_taksit = float(snap["kalan_taksit"])
+        elif snap.get("kull_limit") is not None and limit > 0:
+            gelecek_taksit = max(0.0, limit - float(snap["kull_limit"]) - (ekstre_borcu or 0))
+
+    # ── 7) Mutabakat farkı — GİZLENMEZ ───────────────────────────────────────
+    # Ekstre kesimi anındaki defter durumu ile bankanın dediği arasındaki fark.
+    # Sıfırdan sapıyorsa bu BİLGİDİR: ya eksik geçmiş, ya okuma hatası, ya banka
+    # farkı. Tek satırlık bir düzeltmeyle SİLİNMEZ (ADIM 10'da açık işlem olur).
+    mutabakat_farki = None
+    if ekstre_borcu is not None:
+        mutabakat_farki = round(ekstre_borcu - (defter_canli - kesim_sonrasi), 2)
+
+    return {
+        "kart_id": kart_id,
+        "kart_adi": k.get("kart_adi"),
+        "limit": round(limit, 2),
+        "ekstre_donem": (snap or {}).get("donem"),
+        "ekstre_kesim": snap_kesim,
+        "ekstre_son_odeme": (snap or {}).get("son_odeme"),
+        "ekstre_kaynak": (snap or {}).get("kaynak"),
+        "ekstre_borcu": round(ekstre_borcu, 2) if ekstre_borcu is not None else None,
+        "asgari_tutar": round(asgari_tutar, 2) if asgari_tutar is not None else None,
+        "kesim_sonrasi_delta": round(kesim_sonrasi, 2),
+        "anlik_borc": round(anlik_borc, 2),
+        "defter_canli_bakiye": round(defter_canli, 2),
+        "gelecek_taksit_yuku": round(gelecek_taksit, 2) if gelecek_taksit is not None else None,
+        "toplam_yukumluluk": round(anlik_borc + (gelecek_taksit or 0), 2),
+        "mutabakat_farki": mutabakat_farki,
+        "bu_donem_odenen": round(bu_donem_odenen, 2),
+        "denklestirme_cizgisi": pencere,
+        "olcum_tarihi": str(bugun),
+    }
+
+
 def kart_bu_ay_odenen(cur, kart_id: str) -> float:
     """
     Bu takvim ayında karta yansıyan toplam ödeme (kart_hareketleri ODEME, aktif).

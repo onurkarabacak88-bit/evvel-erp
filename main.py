@@ -68,6 +68,7 @@ from motors import (
 )
 from finans_core import (
     kart_borc, tum_kart_borclari, kasa_bakiyesi, kasa_bakiyesi_tarihte,
+    kart_bakiye_ozeti,          # 🧭 kanonik bakiye modeli (yol haritası ADIM 4/12)
     kart_ekstre, kart_ekstre_donem_override, kart_bu_ay_odenen, kart_faiz_tahmini,
     kart_asgari_orani,
     faiz_hesapla_ve_yaz, tum_kartlar_faiz_hesapla,
@@ -4162,6 +4163,92 @@ def kart_ekstre_arsiv():
         kart_list = sorted(kartlar.values(), key=lambda g: g["kart_adi"] or "")
         return {"kartlar": kart_list, "kart_adet": len(kart_list),
                 "veri_var": bool(kart_list)}
+
+
+@app.get("/api/kartlar/bakiye-karsilastir")
+def kart_bakiye_karsilastir():
+    """🧭 ESKİ-YENİ BAKİYE KARŞILAŞTIRMASI (yol haritası ADIM 4/12, 2026-08-17).
+
+    Kanonik modeli (finans_core.kart_bakiye_ozeti) bugünkü BEŞ ayrı yolla yan yana
+    koyar. Amaç: tüketicileri taşımadan ÖNCE farkı ölçmek — 17 Ağustos denetiminde
+    OPET WORLD aynı anda 508.023,92 ve 190.218,39 gösteriyordu.
+
+    SALT OKUR: hiçbir şey yazmaz, hiçbir davranışı değiştirmez. ADIM 9'da ekranlar
+    kanonik modele taşınırken bu uç "fark sıfır mı" kanıtı olarak kullanılacak.
+
+    Dönen her satırda `uyusuyor` alanı: kanonik anlık borç ile eski panel yolu
+    (borc-faiz-ozet → anlik_borc) 1 ₺ toleransında aynı mı?
+    """
+    satirlar = []
+    with db() as (conn, cur):
+        cur.execute("SELECT id::text FROM kartlar WHERE aktif=TRUE ORDER BY kart_adi")
+        kart_idler = [r["id"] for r in (cur.fetchall() or [])]
+
+        # Eski yol 1: kart_borc (defter, DEVİR dahil, takvim-payı taksit)
+        eski_defter = tum_kart_borclari(cur)
+
+        for kid in kart_idler:
+            yeni = kart_bakiye_ozeti(cur, kid)
+            if yeni.get("hata"):
+                satirlar.append({"kart_id": kid, "hata": yeni["hata"]})
+                continue
+
+            # Eski yol 2: kart_aktif_donem (bu ekstre / asgari üreten yol)
+            try:
+                aktif = kart_aktif_donem(cur, kid) or {}
+            except Exception as _e:
+                aktif = {"hata": str(_e)[:80]}
+
+            # Eski yol 3: snapshot override (son-snapshot'a düşen tuzaklı yol)
+            try:
+                ov_borc, ov_asgari = kart_ekstre_donem_override(
+                    cur, kid, _safe_date(yeni.get("ekstre_kesim")) or date.today())
+            except Exception:
+                ov_borc, ov_asgari = None, None
+
+            eski_defter_borc = round(float(eski_defter.get(kid) or 0), 2)
+            k_anlik = yeni.get("anlik_borc")
+            fark_defter = round(eski_defter_borc - float(yeni.get("defter_canli_bakiye") or 0), 2)
+
+            satirlar.append({
+                "kart_id": kid,
+                "kart_adi": yeni.get("kart_adi"),
+                # YENİ kanonik model
+                "kanonik": {
+                    "ekstre_borcu": yeni.get("ekstre_borcu"),
+                    "anlik_borc": k_anlik,
+                    "defter_canli_bakiye": yeni.get("defter_canli_bakiye"),
+                    "gelecek_taksit_yuku": yeni.get("gelecek_taksit_yuku"),
+                    "toplam_yukumluluk": yeni.get("toplam_yukumluluk"),
+                    "mutabakat_farki": yeni.get("mutabakat_farki"),
+                    "asgari_tutar": yeni.get("asgari_tutar"),
+                    "ekstre_donem": yeni.get("ekstre_donem"),
+                    "denklestirme_cizgisi": yeni.get("denklestirme_cizgisi"),
+                },
+                # ESKİ yollar
+                "eski": {
+                    "kart_borc_defter": eski_defter_borc,
+                    "aktif_donem_bu_ekstre": aktif.get("bu_ekstre"),
+                    "aktif_donem_asgari": aktif.get("asgari_odeme"),
+                    "snapshot_override_borc": round(ov_borc, 2) if ov_borc is not None else None,
+                    "snapshot_override_asgari": round(ov_asgari, 2) if ov_asgari is not None else None,
+                },
+                "fark_defter_yolu": fark_defter,
+                "defter_uyusuyor": abs(fark_defter) < 1.0,
+            })
+
+    uyusan = sum(1 for s in satirlar if s.get("defter_uyusuyor"))
+    sapan = [s["kart_adi"] for s in satirlar if s.get("defter_uyusuyor") is False]
+    return {
+        "kart_adet": len(satirlar),
+        "defter_uyusan": uyusan,
+        "defter_sapan": sapan,
+        "satirlar": satirlar,
+        "not": "Salt okur karşılaştırma (ADIM 4/12). kanonik.anlik_borc EKRANDA "
+               "gösterilmesi gereken sayıdır; kanonik.mutabakat_farki sıfırdan "
+               "sapıyorsa defter ile banka arasında açıklanması gereken bir fark var "
+               "— bu bilgidir, gizlenmez.",
+    }
 
 
 @app.get("/api/kartlar/borc-faiz-ozet")
