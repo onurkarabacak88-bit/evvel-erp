@@ -263,6 +263,130 @@ def borc_iptal(bid: str, b: IptalBody):
     return {"success": True, "mesaj": "Kayıt izli olarak iptal edildi, para geri alındı"}
 
 
+@router.get("/cekmece-sayim")
+def cekmece_sayim_liste():
+    """Fiziksel çekmece sayımları + defterle FARK — dairesel olmayan tek çapa.
+
+    Neden gerekli: kasanın "tuttuğunu" gösteren tüm hesaplar dairesel —
+    defter kendi kendini doğrular. Dış dünyadan gelen tek ölçüm ÇEKMECEDE
+    GERÇEKTEN NE OLDUĞUdur. (Codex: "en güçlü çapa fiziksel sayımdır";
+    ispat formülü `açılış sayımı + nakit giriş − nakit çıkış = kapanış sayımı`
+    ancak bir taraf defter dışından gelirse dairesellik kırılır.)
+
+    ⛔ SAYIM ≠ DÜZELTME. Fark otomatik kapatılmaz; kapatılsaydı farkı DOĞURAN
+    sebep (eksik ciro, kayıtsız gider) görünmez olurdu. Gözlem açıkta durur.
+    """
+    with db() as (conn, cur):
+        _sayim_tablo(cur)
+        cur.execute("""
+            SELECT c.*, s.ad AS sube_adi
+              FROM cekmece_sayim c
+              LEFT JOIN subeler s ON s.id::text = c.sube_id
+             ORDER BY c.tarih DESC, c.olusturma DESC
+             LIMIT 200
+        """)
+        kayitlar = []
+        for r in cur.fetchall():
+            d = dict(r)
+            for k in ("sayilan_tutar", "defter_nakit", "fark"):
+                if d.get(k) is not None:
+                    d[k] = float(d[k])
+            for k in ("tarih", "olusturma"):
+                if d.get(k):
+                    d[k] = str(d[k])
+            kayitlar.append(d)
+    return {
+        "kayitlar": kayitlar,
+        "acik_fark_adet": len([k for k in kayitlar if abs(k.get("fark") or 0) > 0.01]),
+        "acik_fark_toplam": round(sum(abs(k.get("fark") or 0) for k in kayitlar), 2),
+        "not": "Sayım bir GÖZLEMdir, düzeltme değildir. Fark açıkta durur ki "
+               "sebebi (eksik ciro / kayıtsız gider / kayıtsız devir) araştırılabilsin.",
+    }
+
+
+def _sayim_tablo(cur) -> None:
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS cekmece_sayim (
+            id            TEXT PRIMARY KEY,
+            sube_id       TEXT NOT NULL,
+            tarih         DATE NOT NULL,
+            sayilan_tutar NUMERIC(14,2) NOT NULL,
+            defter_nakit  NUMERIC(14,2),
+            fark          NUMERIC(14,2),
+            aciklama      TEXT,
+            olusturma     TIMESTAMPTZ DEFAULT NOW()
+        )
+    """)
+    cur.execute("""CREATE INDEX IF NOT EXISTS idx_cekmece_sayim_sube
+                   ON cekmece_sayim (sube_id, tarih DESC)""")
+
+
+class SayimBody(BaseModel):
+    sube_id: str
+    tarih: str
+    sayilan_tutar: float
+    aciklama: Optional[str] = None
+
+
+@router.post("/cekmece-sayim")
+def cekmece_sayim_ekle(b: SayimBody):
+    """Çekmecede fiziksel olarak sayılan nakdi kaydeder ve defterle KARŞILAŞTIRIR.
+
+    Defter tarafı `nakit_etki` toplamıdır — `tutar` DEĞİL. Çünkü `tutar` para
+    POZİSYONudur (kart cirosu + banka ödemeleri dahil); çekmecede fiziksel
+    olarak ne olduğunu yalnız `nakit_etki` söyler.
+    NULL nakit_etki'li hareketler AYRICA raporlanır: "bilinmeyen" satırlar
+    farkın bir kısmını açıklıyor olabilir, sessizce sıfır sayılmaz.
+    """
+    try:
+        sayilan = round(float(b.sayilan_tutar), 2)
+    except (TypeError, ValueError):
+        raise HTTPException(400, "Sayılan tutar sayı olmalı")
+    if sayilan < 0:
+        raise HTTPException(400, "Sayılan tutar negatif olamaz — çekmecede eksi para bulunmaz")
+
+    with db() as (conn, cur):
+        _sayim_tablo(cur)
+        sube = _sube_dogrula(cur, b.sube_id, "Sayılan")
+        cur.execute("""
+            SELECT COALESCE(SUM(nakit_etki), 0) AS defter,
+                   COUNT(*) FILTER (WHERE nakit_etki IS NULL) AS bilinmeyen_adet
+              FROM kasa_hareketleri
+             WHERE sube_id::text = %s
+               AND COALESCE(durum,'aktif') = 'aktif'
+               AND COALESCE(kasa_etkisi, TRUE) = TRUE
+               AND tarih <= %s::date
+        """, (sube["id"], b.tarih))
+        r = dict(cur.fetchone() or {})
+        defter = round(float(r.get("defter") or 0), 2)
+        bilinmeyen = int(r.get("bilinmeyen_adet") or 0)
+        fark = round(sayilan - defter, 2)
+
+        sid = str(uuid.uuid4())
+        cur.execute("""INSERT INTO cekmece_sayim
+            (id, sube_id, tarih, sayilan_tutar, defter_nakit, fark, aciklama)
+            VALUES (%s,%s,%s,%s,%s,%s,%s)""",
+            (sid, sube["id"], b.tarih, sayilan, defter, fark,
+             (b.aciklama or "").strip() or None))
+        audit(cur, "cekmece_sayim", sid, "INSERT")
+
+    yon = ("defter FAZLA gösteriyor — çekmecede olması gerekenden az para var "
+           "(kayıtsız çıkış olabilir)") if fark < 0 else (
+          "defter EKSİK gösteriyor — çekmecede olması gerekenden çok para var "
+          "(kayıtsız giriş / eksik ciro olabilir)") if fark > 0 else "defter ile birebir tutuyor"
+    return {
+        "id": sid, "success": True, "sube": sube["ad"],
+        "sayilan": sayilan, "defter_nakit": defter, "fark": fark,
+        "nakit_etkisi_bilinmeyen_hareket": bilinmeyen,
+        "yorum": yon,
+        "uyari": (f"{bilinmeyen} hareketin nakit etkisi BİLİNMİYOR — farkın bir kısmı "
+                  "bundan kaynaklanıyor olabilir; ödeme yöntemi (elden/havale) "
+                  "girildikçe fark netleşir.") if bilinmeyen else None,
+        "not": "Bu bir GÖZLEMdir. Fark otomatik kapatılmadı — kapatılsaydı sebebi "
+               "görünmez olurdu.",
+    }
+
+
 @router.get("")
 def borc_liste(durum: Optional[str] = None):
     """Açık borçlar + NET POZİSYON (kim kimi ne kadar finanse ediyor).
