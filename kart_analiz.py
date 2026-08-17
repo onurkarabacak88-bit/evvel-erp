@@ -349,6 +349,17 @@ def _parse_ziraat(pages_text: List[str], kart_no: str, kart_sahibi: str) -> List
             if tutar <= 0: continue
             # Clean description
             aciklama = re.sub(r'\b[A-Z]{2,3}\s*$', '', aciklama).strip()  # Remove city code
+            # ⛔ PUAN/KAZANIM SATIRI FRENİ (2026-08-17 kart denetimi): Garanti'de
+            # (bonus) ve Worldcard'da (worldpuan) yaşanan sahte-harcama sınıfının
+            # Ziraat karşılığı — "BANKKART LİRA KAZANIMI 250,00" gibi satırlarda
+            # Tutar sütunu BOŞtur, değer kazanım sütunundadır; regex ilk kuruşlu
+            # tokeni tutar sanıp sahte harcama üretir. Ziraat'te henüz patlamadı
+            # ama aynı desendir (denetim: "fren vakayı kapatır, SINIFI kapatmaz").
+            # Ödeme satırları etkilenmez (is_pay dalı bu frenin üstünde çözülür).
+            if not is_pay and re.search(
+                r'BANKKART\s+L[İIıi]RA|L[İIıi]RA\s+KAZAN|PUAN\s+KAZAN|KAZANIM|'
+                r'KAMPANYA|BONUS\s+(?:BEDAVA|MARKET|ET[İIıi]CARET)', aciklama, re.I):
+                continue
             is_fee = bool(re.search(r'faiz|bsmv|kkdf|[üu]cret|vergi', aciklama, re.I))
             txns.append({
                 'tarih': tarih, 'aciklama': aciklama, 'tutar': tutar,

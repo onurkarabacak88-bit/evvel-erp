@@ -4318,10 +4318,24 @@ def _satici_anahtar(aciklama: Optional[str]) -> Optional[str]:
 
 def _ekstre_txn_map(t: dict) -> dict:
     """kart_analiz işlem dict → birleşik ekstre işlem formatı (tip/tutar/tarih/kategori)."""
+    def _tr_kucuk(s: str) -> str:
+        """Türkçe-duyarlı küçültme: İ→i, I→i (aksan birleşmesi olmadan).
+        Python'un .lower()'ı 'İ' için 'i'+U+0307 üretir ve 'faiz' araması tutmaz."""
+        return (str(s or "").replace("İ", "i").replace("I", "i")
+                .replace("Ş", "ş").replace("Ğ", "ğ").replace("Ü", "ü")
+                .replace("Ö", "ö").replace("Ç", "ç").lower())
     odeme = bool(t.get("odeme_mi"))
     kat = (t.get("kategori") or "")
     acik = (t.get("aciklama") or "")
-    faiz = ("faiz" in kat.lower()) or ("faiz" in acik.lower()) or ("DÖNEM FAİZİ" in acik.upper())
+    # 🔴 TÜRKÇE-İ TUZAĞI (2026-08-17 kart denetimi): "DÖNEM FAİZİ".lower() Python'da
+    # 'faiz' ÜRETMEZ — büyük İ küçülünce 'i' + U+0307 (birleşen nokta) olur.
+    # Eski kod bunu yalnız tam "DÖNEM FAİZİ" metniyle kurtarıyordu; BÜYÜK HARFLE
+    # gelen "KREDİ FAİZİ · TAKSİT FAİZİ · GECİKME FAİZİ · LİMİT AŞIM FAİZİ ·
+    # NAKİT AVANS FAİZİ" satırları HARCAMA sayılıyordu. Sonuç zinciri: faiz
+    # işaretlenmeyince faiz_donemleri (aşağıda ~5350) boş kalır → motorun TAHMİNİ
+    # faizi iptal edilmez → aynı dönemde ÇİFT FAİZ. Çözüm: aksan-duyarsız kat.
+    _fk = _tr_kucuk(f"{kat} {acik}")
+    faiz = "faiz" in _fk
     tip = "ODEME" if odeme else ("FAIZ" if faiz else "HARCAMA")
     tks = t.get("taksit")
     tsay = None

@@ -285,7 +285,19 @@ def parse_garanti(text: str) -> Dict[str, Any]:
         # düşer → limit−borç'tan farklı). "nakit limitiniz" satırını ELE: kullan...limit
         # arasında 'nakit' geçen satır eşleşmez.
         "kullanilabilir_limit": _num(g(r"kullan\S*\s+limit\S*\s+([\d.,]+)\s*TL")),
-        "onceki_borc": None,
+        # 🔴 TIE-OUT ÇAPASI (2026-08-17 kart denetimi — asıl kök): Garanti, önceki
+        # borcu okumayan TEK formattı (worldcard/enpara/ziraat/axess hepsinde var).
+        # main.py okuma denetimi muhasebe kimliğini (önceki − ödeme + harcama =
+        # dönem borcu) kurabilmek için bu alana muhtaç; None olunca kıyas tabanı
+        # hiç kurulmuyor ve HER Garanti yüklemesi "doğrulanamadı" sarısı basıyordu
+        # → uyarı körlüğü → bonus/puan satırlarından doğan 13.800 ₺ hayalet borç
+        # 5 gün fark edilmeden canlıda kaldı. Ekstredeki satır:
+        #   "ÖNCEKİ DÖNEMDEN DEVİR EDİLEN TUTAR   262.240,11"
+        # Yedek kalıplar: "Geçen/Önceki Dönem Borcu". Bulunamazsa None (uydurma yok).
+        "onceki_borc": _num(
+            g(r"ÖNCEK[İI]\s+DÖNEMDEN\s+DEV[İI]R\s+ED[İI]LEN\s+TUTAR\s*:?\s*([\d.,]+)")
+            or g(r"(?:Geçen|Önceki)\s+Dönem\s+Borcu\s*:?\s*([\d.,]+)")
+        ),
         "donem_harcama": None,
         "donem_odeme": None,
         "kalan_taksit": None,
