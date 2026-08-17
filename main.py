@@ -1290,6 +1290,7 @@ def kasa_ve_faiz_odeme_plani_tam_odeme(
     cur, plan: dict, plan_id: str, odenen: float, tarih: str,
     anapara_aciklama: Optional[str] = None,
     odeme_yontemi: Optional[str] = None,
+    odeyen_sube_id: Optional[str] = None,
 ) -> float:
     """
     Tam ödeme planı nakit: faiz düşümü + doğru kasa türü (SABIT_GIDER, BORC_TAKSIT, …).
@@ -1396,6 +1397,23 @@ def kasa_ve_faiz_odeme_plani_tam_odeme(
             insert_kasa_hareketi(cur, tarih, islem_t, -abs(ana_para_kismi),
                 aciklama_ana, 'odeme_plani', plan_id, plan_id, 'ODEME_PLANI',
                 sube_id=_plan_sube, odeme_yontemi=_yontem)
+
+        # 🔁 ÇAPRAZ ÖDEME → OTOMATİK ŞUBE BORCU (sahip kararı 2026-08-18:
+        # "ödemesini yaparken BORÇ OLARAK DA YAZSIN ve bu iyi bir şey bence!")
+        # Parayı ÖDEYEN şube, giderin sahibi değilse (ör. Gazze, Alsancak'ın
+        # kredisini ödedi) aradaki ilişki görünür bir borca dönüşür.
+        # Şişme riski netleştirmeyle çözüldü — bkz. capraz_odeme_borcu_kur.
+        # HATA-YUTAR: borç kaydı düşse bile ÖDEME asla kilitlenmez.
+        _odeyen = (odeyen_sube_id or "").strip() or None
+        if _odeyen and _plan_sube and _odeyen != _plan_sube:
+            try:
+                from sube_ici_borc_api import capraz_odeme_borcu_kur
+                capraz_odeme_borcu_kur(
+                    cur, _odeyen, _plan_sube, ana_para_kismi, tarih,
+                    aciklama_ana or "ödeme", plan_id)
+            except Exception as _e:  # noqa: BLE001
+                logging.getLogger(__name__).warning(
+                    "capraz odeme borcu kurulamadi: %s", str(_e)[:120])
 
     # kart_borc() ODEME türündeki kart_hareketleri kaydına bakarak borcu düşürür.
     # Nakit ödeme kasaya gider ama kart borcu bu kayıt olmadan hiç azalmaz.

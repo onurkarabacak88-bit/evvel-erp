@@ -76,6 +76,90 @@ def _tablo(cur) -> None:
                    ON sube_ici_borc (durum, tarih DESC)""")
 
 
+def capraz_odeme_borcu_kur(cur, odeyen_sube: str, maliyet_sube: str, tutar: float,
+                           tarih: str, aciklama: str, kaynak_id: str) -> Optional[str]:
+    """🔁 ÇAPRAZ ÖDEME → OTOMATİK ŞUBE BORCU (sahip kararı 2026-08-18).
+
+    Sahip: "ödemesini yaparken BORÇ OLARAK DA YAZSIN ve bu iyi bir şey bence!"
+    Yani Gazze, Alsancak'ın kredisini ödediğinde bu yalnız analitik bir denge
+    değil, GÖRÜNÜR BİR BORÇ olsun.
+
+    ⚠️ CODEX'İN İTİRAZI VE NASIL KARŞILANDI:
+    Codex "otomatik borç üretme — sahte alacak/borç ŞİŞMESİ olur" demişti ve
+    haklıydı: her çapraz ödeme ayrı kayıt açsaydı bir yılda yüzlerce hiç
+    kapanmayan açık borç birikir, sayı anlamsızlaşırdı. Sahip yine de borç
+    olarak görmek istedi — kararı onun. Şişme riski MEKANİZMAYLA çözüldü:
+      1) ÇİFT YÖNLÜ NETLEŞTİRME: aynı şube çiftinde TERS yönde açık borç varsa
+         önce ondan düşülür. Gazze→Alsancak 30.000 varken Alsancak→Gazze 12.000
+         geldiğinde iki kayıt DEĞİL, tek kayıt 18.000'e iner.
+      2) TEK KAYIT: aynı yöndeki çapraz ödemeler yeni kayıt açmaz, mevcut
+         otomatik kaydın tutarını büyütür.
+      3) KAYNAK AYRIMI: `kaynak='otomatik'` — elle girilen gerçek borçlarla
+         (kaynak='elle') karışmaz; ikisi ayrı sayılabilir.
+
+    ⛔ KASA HAREKETİ YAZMAZ. Elle açılan şube borcu parayı taşır (çift kayıt);
+    burada para ZATEN ödemenin kendisiyle taşındı. İkisini aynı fonksiyona
+    bağlamak parayı İKİ KEZ hareket ettirirdi — bu, bugün kapattığımız
+    çift-sayım kusurlarının aynısı olurdu.
+
+    Dönüş: dokunulan borç kaydının id'si (netleşme tam kapattıysa None).
+    """
+    if not odeyen_sube or not maliyet_sube or odeyen_sube == maliyet_sube:
+        return None
+    try:
+        kalan = round(abs(float(tutar)), 2)
+    except (TypeError, ValueError):
+        return None
+    if kalan <= 0:
+        return None
+    _tablo(cur)
+    cur.execute("""ALTER TABLE sube_ici_borc ADD COLUMN IF NOT EXISTS
+                   kaynak TEXT NOT NULL DEFAULT 'elle'""")
+
+    # 1) TERS YÖNDE açık otomatik borç varsa önce ondan düş (netleştirme)
+    cur.execute("""SELECT id, tutar FROM sube_ici_borc
+                    WHERE durum='acik' AND kaynak='otomatik'
+                      AND veren_sube_id=%s AND alan_sube_id=%s
+                    ORDER BY tarih ASC FOR UPDATE""",
+                (maliyet_sube, odeyen_sube))
+    for r in cur.fetchall():
+        if kalan <= 0.009:
+            break
+        mevcut = float(dict(r)["tutar"])
+        dus = min(mevcut, kalan)
+        yeni = round(mevcut - dus, 2)
+        if yeni <= 0.009:
+            cur.execute("""UPDATE sube_ici_borc SET durum='kapandi',
+                             kapanma_tarihi=%s, kapanma_notu='Ters yönlü çapraz ödemeyle netleşti'
+                            WHERE id=%s""", (tarih, dict(r)["id"]))
+        else:
+            cur.execute("UPDATE sube_ici_borc SET tutar=%s WHERE id=%s", (yeni, dict(r)["id"]))
+        kalan = round(kalan - dus, 2)
+    if kalan <= 0.009:
+        return None   # tamamı netleşti — yeni borç doğmadı
+
+    # 2) AYNI YÖNDE açık otomatik kayıt varsa büyüt, yoksa aç (tek kayıt kuralı)
+    cur.execute("""SELECT id, tutar FROM sube_ici_borc
+                    WHERE durum='acik' AND kaynak='otomatik'
+                      AND veren_sube_id=%s AND alan_sube_id=%s
+                    ORDER BY tarih ASC LIMIT 1 FOR UPDATE""",
+                (odeyen_sube, maliyet_sube))
+    var = cur.fetchone()
+    if var:
+        bid = dict(var)["id"]
+        cur.execute("UPDATE sube_ici_borc SET tutar=%s, tarih=%s WHERE id=%s",
+                    (round(float(dict(var)["tutar"]) + kalan, 2), tarih, bid))
+    else:
+        bid = str(uuid.uuid4())
+        cur.execute("""INSERT INTO sube_ici_borc
+            (id, veren_sube_id, alan_sube_id, tutar, tarih, aciklama, durum, kaynak)
+            VALUES (%s,%s,%s,%s,%s,%s,'acik','otomatik')""",
+            (bid, odeyen_sube, maliyet_sube, kalan, tarih,
+             f"Çapraz ödeme (otomatik): {aciklama}"[:300]))
+    audit(cur, "sube_ici_borc", bid, "AUTO")
+    return bid
+
+
 def _sube_dogrula(cur, sid: str, rol: str) -> Dict[str, Any]:
     """Şube GERÇEKTEN var mı — uydurma kimlikle para taşınmaz.
 
