@@ -176,6 +176,17 @@ def _parse_garanti(pages_text: List[str], kart_no: str, kart_sahibi: str) -> Lis
                 tarih = _parse_tarih_tr(' '.join(parts[:3]))
                 if not tarih: continue
                 rest = ' '.join(parts[3:])
+                # 🔴 'bosluk' TEMİZLİĞİ (2026-08-17, Garanti Onur 3018 ekstresi):
+                # pdfplumber, tablodaki BOŞ hücreyi bazı satırlarda 'bosluk'
+                # kelimesiyle dolduruyor. Tutar seçimi son token'a baktığı için
+                # o satırların son token'ı 'bosluk' oluyor, sayı regexi tutmuyor
+                # ve SATIR SESSİZCE ATLANIYOR (continue).
+                # CANLI KANIT: 11 Ağu kesimli ekstrede iki taksitli satır kayboldu —
+                # ESER TİCARET 41.250,00 (3/4 taksit) + U.S. POLO 943,29 (5/6) =
+                # 42.193,29 ₺; okuma denetimi farkı −43.418,29 ile bunu ele verdi.
+                # Bu, bugün Garanti'de kapatılan bonus-sütunu kusurunun kardeşi:
+                # tutarın YERİ yapısal değil, son-token tahminine bağlı.
+                rest = re.sub(r'\bbosluk\b', ' ', rest, flags=re.I)
                 # Payment?
                 is_pay = rest.strip().endswith('+')
                 # Amount: last token
