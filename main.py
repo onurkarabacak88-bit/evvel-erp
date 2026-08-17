@@ -1138,6 +1138,16 @@ def startup():
             ensure_rapor_kapanis(cur)
     except Exception as e:
         logger.warning("rapor_kapanis migrasyonu (startup): %s", e)
+    # 🆕 KART GERÇEK MODELİ (yol haritası ADIM 2/12) — SAF EKLEME: tablolar
+    # kurulur ama hiçbir uç yazmaz/okumaz; bugünkü davranış birebir sürer.
+    # Doldurma ADIM 3, kullanım ADIM 6-7. Hata-yutar: kurulum düşse bile
+    # sistem eskisi gibi çalışmaya devam eder.
+    try:
+        with db() as (conn, cur):
+            from database import ensure_kart_gercek_modeli
+            ensure_kart_gercek_modeli(cur)
+    except Exception as e:
+        logger.warning("kart gerçek modeli migrasyonu (startup): %s", e)
     try:
         with db() as (conn, cur):
             from gorev_api import _seed_sablonlar

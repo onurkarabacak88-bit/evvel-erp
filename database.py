@@ -768,6 +768,206 @@ def ensure_kart_ekstre_donem(cur) -> None:
     )
 
 
+def ensure_kart_gercek_modeli(cur) -> None:
+    """🆕 KART GERÇEK MODELİ — yeni tablolar (YOL HARİTASI ADIM 2/12, 2026-08-17).
+
+    NEDEN: 17 Ağustos denetimi altı hata sınıfı buldu ve hepsinin kökü aynıydı —
+    belge gerçeği, ekstre gerçeği, defter gerçeği, taksit gerçeği ve düzeltme
+    gerçeği İKİ tabloya (kart_hareketleri + kart_ekstre_donem) sıkışmış, sonra
+    beş ayrı yerde farklı hesaplanıyordu. Okuyucu hataları bu çöküşün semptomu.
+
+    ⚠️ BU ADIM SAF EKLEMEDİR: hiçbir uç bu tablolara yazmaz, hiçbir ekran okumaz.
+    Sistem bu adımdan sonra da bugünkü davranışını aynen sürdürür. Tabloların
+    doldurulması ADIM 3 (geçmişi taşı), kullanılması ADIM 6-7'dir.
+
+    TASARIM İLKELERİ (Fable + Codex ortak):
+      · Kimlik İÇERİĞE değil SIRAYA bağlanır — aynı gün üç özdeş satır ÜÇ kayıttır.
+      · Okuma DEĞİŞMEZ, sürümlenir — okuyucu düzelince yeni sürüm kabul edilir,
+        eski kayıtlar fark motoruyla düzeltilir (bugün ON CONFLICT DO NOTHING
+        yüzünden yanlış satır kalıcı).
+      · Açılış devri ≠ Mutabakat düzeltmesi — ikisi ayrı tablo, ayrı yetki.
+      · Mutabakat farkı SİLİNMEZ, kaydedilir; import hatası devre emilemez.
+    """
+    # ── 1) BELGE — PDF aslı, içerik anahtarlı (aynı PDF iki kez = tek belge) ──
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS kart_belge (
+            id            TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+            sha256        TEXT NOT NULL UNIQUE,        -- doğal anahtar: içeriğin kendisi
+            dosya_adi     TEXT,
+            boyut         INT,
+            pdf           BYTEA NOT NULL,
+            yukleyen      TEXT,
+            olusturma     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    """)
+
+    # ── 2) OKUMA SÜRÜMÜ — bir belgenin bir okuyucu sürümüyle çıkarılmış hâli ──
+    #    Okuyucu düzelince YENİ sürüm doğar; eskisi tarih olarak durur.
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS kart_okuma_surumu (
+            id              TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+            belge_id        TEXT NOT NULL REFERENCES kart_belge(id) ON DELETE CASCADE,
+            okuyucu_surumu  TEXT NOT NULL,             -- ör. 'worldcard/2026-08-17'
+            banka_format    TEXT,
+            baslik          JSONB NOT NULL DEFAULT '{}'::jsonb,  -- son4·kesim·borç·önceki…
+            capa_durumu     TEXT NOT NULL DEFAULT 'bilinmiyor',  -- gecti|kaldi|bilinmiyor
+            capa_detay      JSONB,                     -- hangi denklem, ne kadar fark
+            olusturma       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            UNIQUE (belge_id, okuyucu_surumu)
+        )
+    """)
+
+    # ── 3) EKSTRE SATIRI — okumadaki her satır; KİMLİK = (sürüm, sıra) ────────
+    #    🔑 Bugünkü "aynı gün 3 özdeş satır → 1 kayıt" kusurunun panzehiri:
+    #    kimlik içerikten değil SIRA NUMARASINDAN gelir.
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS kart_ekstre_satiri (
+            id             TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+            surum_id       TEXT NOT NULL REFERENCES kart_okuma_surumu(id) ON DELETE CASCADE,
+            sira_no        INT  NOT NULL,
+            tarih          DATE,
+            aciklama       TEXT,
+            tutar          NUMERIC(14,2),
+            mali_sinif     TEXT,                        -- harcama|odeme|faiz|iade|puan
+            taksit_no      INT,                         -- bankanın beyanı: n
+            taksit_adedi   INT,                         -- bankanın beyanı: m
+            taksit_toplam  NUMERIC(14,2),
+            ham            JSONB,                       -- okunan ham veri (iz)
+            UNIQUE (surum_id, sira_no)
+        )
+    """)
+
+    # ── 4) EKSTRE DÖNEMİ — (kart, kesim) tekil; hangi sürüm geçerli onu tutar ─
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS kart_donem (
+            id                TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+            kart_id           TEXT NOT NULL REFERENCES kartlar(id),
+            kesim_tarihi      DATE NOT NULL,
+            son_odeme_tarihi  DATE,
+            kabul_surum_id    TEXT REFERENCES kart_okuma_surumu(id),
+            durum             TEXT NOT NULL DEFAULT 'acik',  -- acik|kabul|bekliyor
+            olusturma         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            UNIQUE (kart_id, kesim_tarihi)
+        )
+    """)
+
+    # ── 5) KABUL — hangi sürümün ne zaman/kim tarafından kabul edildiği (olay) ─
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS kart_kabul (
+            id          TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+            donem_id    TEXT NOT NULL REFERENCES kart_donem(id) ON DELETE CASCADE,
+            surum_id    TEXT NOT NULL REFERENCES kart_okuma_surumu(id),
+            karar_veren TEXT NOT NULL DEFAULT 'sahip',
+            gerekce     TEXT,
+            fark_ozeti  JSONB,                        -- önceki kabulle fark (ne gitti/geldi)
+            olusturma   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    """)
+
+    # ── 6) TAKSİT PLANI + 7) TAKSİT DİLİMİ — banka beyanı satır satır ─────────
+    #    Bugün taksit sırası TAKVİMDEN TAHMİN ediliyor (25.414 ₺ şişme vakası).
+    #    Hedefte sıra bankadan gelir ve her dilim kendi satırında yaşar.
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS kart_taksit_plani (
+            id              TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+            kart_id         TEXT NOT NULL REFERENCES kartlar(id),
+            aciklama        TEXT,
+            toplam_tutar    NUMERIC(14,2) NOT NULL,
+            taksit_adedi    INT NOT NULL,
+            ilk_donem       DATE,                      -- ilk taksidin ekstre dönemi
+            durum           TEXT NOT NULL DEFAULT 'aktif',  -- aktif|iptal|inceleme
+            kaynak_satir_id TEXT REFERENCES kart_ekstre_satiri(id),
+            olusturma       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS kart_taksit_dilimi (
+            id           TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+            plan_id      TEXT NOT NULL REFERENCES kart_taksit_plani(id) ON DELETE CASCADE,
+            taksit_no    INT NOT NULL,
+            donem        DATE NOT NULL,                -- hangi ekstre kesiminde
+            tutar        NUMERIC(14,2) NOT NULL,
+            durum        TEXT NOT NULL DEFAULT 'beklenen',  -- beklenen|gerceklesti|iptal
+            satir_id     TEXT REFERENCES kart_ekstre_satiri(id),  -- gerçekleştiği satır
+            UNIQUE (plan_id, taksit_no)
+        )
+    """)
+
+    # ── 8) AÇILIŞ DEVRİ — karta BİR KEZ; sistem başlangıç bakiyesi ───────────
+    #    Bugünkü tek mutable devir_<kart> satırından ayrılıyor.
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS kart_acilis_devri (
+            id           TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+            kart_id      TEXT NOT NULL REFERENCES kartlar(id),
+            gecerlilik   DATE NOT NULL,
+            tutar        NUMERIC(14,2) NOT NULL,
+            dayanak      TEXT NOT NULL,                -- hangi ekstre/beyan
+            karar_veren  TEXT NOT NULL DEFAULT 'sahip',
+            olusturma    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            UNIQUE (kart_id, gecerlilik)
+        )
+    """)
+
+    # ── 9) MUTABAKAT DÜZELTMESİ — fark SİLİNMEZ, gerekçeyle kaydedilir ───────
+    #    KURAL: yükleme/import bu tabloya YAZAMAZ. Yalnız sahip, ayrı akıştan.
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS kart_mutabakat_duzeltmesi (
+            id           TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+            kart_id      TEXT NOT NULL REFERENCES kartlar(id),
+            donem_id     TEXT REFERENCES kart_donem(id),
+            sapma_tutar  NUMERIC(14,2) NOT NULL,
+            neden_kodu   TEXT NOT NULL,                -- eksik_gecmis|okuma_hatasi|banka_farki
+            gerekce      TEXT NOT NULL,
+            kanit        TEXT,
+            karar_veren  TEXT NOT NULL DEFAULT 'sahip',
+            olusturma    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    """)
+
+    # ── 10) DEFTER KAYDI — borcu değiştiren olay; kaynağı TEKİL ──────────────
+    #    🔑 UNIQUE(kaynak_tur, kaynak_id): bir ekstre satırından EN FAZLA bir
+    #    defter kaydı doğar → çift yazım yapısal olarak imkânsız. Bugünkü
+    #    içerik-hash'li ON CONFLICT DO NOTHING deseninin yerini alır.
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS kart_defter_kaydi (
+            id           TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+            kart_id      TEXT NOT NULL REFERENCES kartlar(id),
+            tarih        DATE NOT NULL,
+            islem_turu   TEXT NOT NULL,                -- HARCAMA|ODEME|FAIZ|DEVIR|DUZELTME
+            tutar        NUMERIC(14,2) NOT NULL,
+            aciklama     TEXT,
+            harcama_tipi TEXT,                          -- isletme|sahsi|belirsiz
+            kaynak_tur   TEXT NOT NULL,                 -- ekstre_satiri|acilis|duzeltme|elle
+            kaynak_id    TEXT,
+            iptal_eden   TEXT REFERENCES kart_defter_kaydi(id),  -- ters kayıt (append-only)
+            olusturma    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            UNIQUE (kaynak_tur, kaynak_id)
+        )
+    """)
+
+    # ── 11) ÖDEME DAĞITIMI — "bu ödeme hangi ekstreye sayıldı" (bugün cevapsız) ─
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS kart_odeme_dagitimi (
+            id         TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+            odeme_id   TEXT NOT NULL REFERENCES kart_defter_kaydi(id) ON DELETE CASCADE,
+            donem_id   TEXT NOT NULL REFERENCES kart_donem(id),
+            tutar      NUMERIC(14,2) NOT NULL,
+            olusturma  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            UNIQUE (odeme_id, donem_id)
+        )
+    """)
+
+    # ── Erişim indeksleri ────────────────────────────────────────────────────
+    for sql in (
+        "CREATE INDEX IF NOT EXISTS idx_kart_donem_kart ON kart_donem (kart_id, kesim_tarihi DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_kart_satir_surum ON kart_ekstre_satiri (surum_id, sira_no)",
+        "CREATE INDEX IF NOT EXISTS idx_kart_defter_kart ON kart_defter_kaydi (kart_id, tarih DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_kart_dilim_donem ON kart_taksit_dilimi (donem, durum)",
+        "CREATE INDEX IF NOT EXISTS idx_kart_surum_belge ON kart_okuma_surumu (belge_id)",
+    ):
+        cur.execute(sql)
+
+
 def ensure_rapor_kapanis(cur) -> None:
     """Aylık rapor kapanış mührü tablosu (NRF dönem kapanışı). init_db tek
     transaction içinde geç hatayla geri sarılırsa kaybolmasın diye startup'ta
