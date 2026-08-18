@@ -665,8 +665,36 @@ def kart_bakiye_ozeti(cur, kart_id: str, tarih: Optional[date] = None) -> Dict[s
     # Sıfırdan sapıyorsa bu BİLGİDİR: ya eksik geçmiş, ya okuma hatası, ya banka
     # farkı. Tek satırlık bir düzeltmeyle SİLİNMEZ (ADIM 10'da açık işlem olur).
     mutabakat_farki = None
+    mutabakat_notu = None
     if ekstre_borcu is not None:
-        mutabakat_farki = round(ekstre_borcu - (defter_canli - kesim_sonrasi), 2)
+        # 🔴 CODEX HÜKMÜ (2026-08-18, kodu okuyarak): bu sayı bugünkü adıyla
+        # GÜVENİLİR DEĞİL. `pencere` yukarıda MAX(kesim, devir) oluyor; devir
+        # kesimden SONRAYSA bu formül "kesim anı"nı değil DENKLEŞTİRME ÇİZGİSİni
+        # ölçer. Üstelik `defter_canli` (kart_borc) CURRENT_DATE bazlı taksit
+        # mantığı kullanır — tarihe geri sarma zaten tam tarihsel değildir.
+        #
+        # ASIL KÖK (Codex kodda buldu): DEVİR satırları HAM VERİ DEĞİL.
+        # main.py:6414 ve 6821 `adj = donem_borcu - kart_borc(cur, kid)` hesaplayıp
+        # TEK SATIRLIK DEVİR yazıyor — yani o günkü formüle göre üretilmiş bir
+        # DENKLEŞTİRME YAMASI (balancing plug). Formül değişince yama bayatlıyor
+        # ve "mutabakat farkı" diye görünen şey aslında yamanın eskimişliği oluyor.
+        #
+        # BUGÜN YAPILAN EN GÜVENLİ HAMLE: devir kesimden sonraysa bu sayıyı
+        # ÜRETME. Yanlış bir sayı göstermektense "ölçülemiyor" demek doğrudur —
+        # çünkü bu sayıya bakıp bugün 5 kez tarihsel veriyi değiştirmeye
+        # kalkıştım ve 5'inde de yanlıştı.
+        # ⛔ anlik_borc penceresine DOKUNULMADI (Codex: "bunu bozma").
+        if devir_ts and snap_kesim and str(devir_ts)[:10] > str(snap_kesim)[:10]:
+            mutabakat_farki = None
+            mutabakat_notu = (
+                f"ÖLÇÜLEMİYOR — denkleştirme yaması ({devir_ts}) ekstre kesiminden "
+                f"({str(snap_kesim)[:10]}) SONRA tarihli. Bu durumda fark, defterin "
+                "bankayla uyuşmazlığını değil YAMANIN ESKİMİŞLİĞİNİ ölçer. "
+                "Gerçek ölçüm için /api/kartlar/devir-denetimi."
+            )
+        else:
+            mutabakat_farki = round(ekstre_borcu - (defter_canli - kesim_sonrasi), 2)
+            mutabakat_notu = None
 
     return {
         "kart_id": kart_id,
@@ -688,6 +716,8 @@ def kart_bakiye_ozeti(cur, kart_id: str, tarih: Optional[date] = None) -> Dict[s
         "gelecek_taksit_kaynak": gelecek_kaynak,
         "toplam_yukumluluk": round(anlik_borc + (gelecek_taksit or 0), 2),
         "mutabakat_farki": mutabakat_farki,
+        # Sayı üretilemediyse SEBEBİ (sessiz None yasak — HATA ≠ BOŞ)
+        "mutabakat_notu": mutabakat_notu,
         "bu_donem_odenen": round(bu_donem_odenen, 2),
         "denklestirme_cizgisi": pencere,
         "olcum_tarihi": str(bugun),

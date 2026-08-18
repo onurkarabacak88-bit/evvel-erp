@@ -2460,6 +2460,95 @@ def borc_maliyet_merkezi(bid: str, b: MaliyetMerkeziBody):
             "varsayilan_odeyen_sube_id": ody}
 
 
+@app.get("/api/kartlar/devir-denetimi")
+def kart_devir_denetimi():
+    """🔬 DEVİR YAMASI DENETİMİ — SALT OKUR, hiçbir şey yazmaz.
+
+    🔴 CODEX HÜKMÜ (2026-08-18, kodu okuyarak buldu):
+    Bu sistemdeki DEVİR satırları HAM VERİ DEĞİLDİR. main.py'de iki yerde
+    (`adj = donem_borcu - kart_borc(cur, kid)`) o günkü formüle göre hesaplanıp
+    TEK SATIRLIK DEVİR olarak yazılıyorlar — yani bir DENKLEŞTİRME YAMASI
+    (balancing plug). Formül ya da veri sonradan değişince yama BAYATLIYOR ve
+    "mutabakat farkı" diye görünen şey aslında yamanın eskimişliği oluyor.
+
+    Bugün bu tuzağa BEŞ KEZ düştüm: sentetik bir denkleştirme satırını kaynak
+    veri sanıp etrafındaki ham geçmişi oynatmaya kalktım (geçmiş ekstre aktar,
+    taksit dönüştür, devir öncesini sil, mutabakatı kesime sabitle...). Beşinde
+    de ölçüm durdurdu; biri canlıda bir kartın 0,00'ını bozdu ve geri alındı.
+
+    Bu rapor Codex'in koyduğu DURDURUCU KURALIN aracıdır:
+      «DEVİR/override/fallback içeren hiçbir sayıya bakıp tarihsel veriyi
+       DEĞİŞTİRME; önce o sayıyı ham HARCAMA/ODEME/FAIZ üzerinden bir İYİ ve
+       bir KÖTÜ kartta birebir yeniden üret. Üretemiyorsan bozuk olan veri
+       değil, TÜRETİLMİŞ KATMANDIR.»
+
+    Ölçülenler:
+      stored_devir   defterdeki DEVİR satır(lar)ının toplamı
+      expected_devir ekstre_borcu − devir günündeki non-DEVİR borç
+                     (yani "bugünkü kuralla yeniden hesaplansaydı ne olurdu")
+      sapma          stored − expected → YAMANIN BAYATLIK ÖLÇÜSÜ
+      same_day_net   devir günündeki diğer hareketlerin neti (sıra etkisi)
+    """
+    with db() as (conn, cur):
+        cur.execute("""SELECT id::text AS id, kart_adi FROM kartlar
+                        WHERE aktif=TRUE ORDER BY kart_adi""")
+        kartlar = [dict(r) for r in (cur.fetchall() or [])]
+        out = []
+        for k in kartlar:
+            kid = k["id"]
+            cur.execute("""SELECT MAX(tarih)::text AS t, COALESCE(SUM(tutar),0) AS s
+                             FROM kart_hareketleri
+                            WHERE kart_id=%s AND durum='aktif' AND islem_turu='DEVIR'""", (kid,))
+            dv = dict(cur.fetchone() or {})
+            devir_ts, stored = dv.get("t"), float(dv.get("s") or 0)
+            cur.execute("""SELECT kesim_tarihi::text AS kesim, donem_borcu
+                             FROM kart_ekstre_donem
+                            WHERE kart_id=%s AND donem_borcu IS NOT NULL
+                            ORDER BY donem DESC, olusturma DESC LIMIT 1""", (kid,))
+            sn = dict(cur.fetchone() or {})
+            kesim, eb = sn.get("kesim"), (float(sn["donem_borcu"]) if sn.get("donem_borcu") is not None else None)
+            satir = {"kart_id": kid, "kart_adi": k["kart_adi"],
+                     "kesim": kesim, "devir_tarihi": devir_ts,
+                     "stored_devir": round(stored, 2)}
+            if not devir_ts or eb is None:
+                satir.update({"expected_devir": None, "sapma": None, "same_day_net": None,
+                              "durum": "devir yok" if not devir_ts else "ekstre snapshot yok"})
+                out.append(satir); continue
+            # Devir GÜNÜNE kadarki (dahil) non-DEVİR borç — ham hareketlerden
+            cur.execute("""SELECT COALESCE(SUM(CASE WHEN islem_turu='ODEME' THEN -tutar
+                                                    ELSE tutar END),0) AS d
+                             FROM kart_hareketleri
+                            WHERE kart_id=%s AND durum='aktif' AND islem_turu<>'DEVIR'
+                              AND tarih <= %s::date""", (kid, devir_ts))
+            ham = float((cur.fetchone() or {}).get("d") or 0)
+            cur.execute("""SELECT COALESCE(SUM(CASE WHEN islem_turu='ODEME' THEN -tutar
+                                                    ELSE tutar END),0) AS d
+                             FROM kart_hareketleri
+                            WHERE kart_id=%s AND durum='aktif' AND islem_turu<>'DEVIR'
+                              AND tarih = %s::date""", (kid, devir_ts))
+            aynigun = float((cur.fetchone() or {}).get("d") or 0)
+            beklenen = round(eb - ham, 2)
+            sapma = round(stored - beklenen, 2)
+            satir.update({
+                "ekstre_borcu": eb, "devir_gunune_kadar_ham": round(ham, 2),
+                "expected_devir": beklenen, "sapma": sapma,
+                "same_day_net": round(aynigun, 2),
+                "devir_kesimden_sonra": bool(kesim and devir_ts > kesim),
+                "durum": ("YAMA GÜNCEL" if abs(sapma) < 1 else "YAMA BAYAT"),
+            })
+            out.append(satir)
+    bayat = [o for o in out if o.get("durum") == "YAMA BAYAT"]
+    return {
+        "kartlar": out,
+        "bayat_adet": len(bayat),
+        "bayat_toplam_sapma": round(sum(abs(o["sapma"]) for o in bayat), 2),
+        "not": "SALT OKUR — hiçbir şey yazılmadı. `sapma`, DEVİR yamasının bugünkü "
+               "kurala göre ne kadar eskidiğini ölçer. Bu rapor görülmeden hiçbir "
+               "geçmiş hareket silinmemeli, ekstre taşınmamalı, taksit dönüştürülmemeli, "
+               "DEVİR yeniden yazılmamalıdır (Codex durdurucu kuralı).",
+    }
+
+
 @app.get("/api/kartlar/taksit-plani")
 def kart_taksit_plani_listele(kart_id: Optional[str] = None):
     """📅 Aktif taksit planları + AY AY gelecek yük takvimi.
