@@ -5471,12 +5471,35 @@ def _ekstre_eslesme_mutabakat(sonuc, raw: Optional[bytes] = None):
             _g = _geo.geometrik_oku(raw)
             if _g.get("basarili"):
                 _gs = _g["satirlar"]
-                _gor = set(); _gtek = []
+                _gor = set(); _gded = []
                 for _x in _gs:   # aynı tablo bazı PDF'lerde 2. sayfada TEKRAR basılır
                     _k = (_x["tarih"], _x["aciklama"][:30], round(_x["tutar"], 2), _x["odeme_mi"])
                     if _k in _gor:
                         continue
-                    _gor.add(_k); _gtek.append(_x)
+                    _gor.add(_k); _gded.append(_x)
+                # 🪤 "MÜKERRER" SANILAN MEŞRU TEKRAR (2026-08-18, Enpara vakası):
+                # Tekilleştirme anahtarı (tarih, açıklama, tutar) — ama AYNI GÜN
+                # AYNI MARKETTEN İKİ KEZ alışveriş MEŞRUDUR ve bu anahtar onu
+                # yutar. Canlı kanıt: ŞOK-KARAMAN YAVUZ SULTAN 550,00 ₺ aynı gün
+                # iki kez; çapa tam −550,00 fark verdi. Ziraat'te ise tablo
+                # gerçekten 2. sayfada TEKRAR basılıyor (78→39) ve orada
+                # tekilleştirme ŞART.
+                # Hangisi doğru? SAYIYA DEĞİL ÇAPAYA sor: her iki kümeyi de
+                # ölç, ekstrenin kendi toplamına yakın olanı kullan.
+                if _bek_h is not None and len(_gded) != len(_gs):
+                    _h_ded = sum(x["tutar"] for x in _gded if not x.get("odeme_mi"))
+                    _h_ham = sum(x["tutar"] for x in _gs if not x.get("odeme_mi"))
+                    _o_ded = sum(x["tutar"] for x in _gded if x.get("odeme_mi"))
+                    _o_ham = sum(x["tutar"] for x in _gs if x.get("odeme_mi"))
+                    # beklenen harcama ödemeye bağlı (borç kimliği) → her küme
+                    # kendi ödemesiyle kıyaslanır
+                    _bek_ded = (float(_borc_b) - float(_onceki_b) + _o_ded
+                                if (_borc_b is not None and _onceki_b is not None) else float(_bek_h))
+                    _bek_ham = (float(_borc_b) - float(_onceki_b) + _o_ham
+                                if (_borc_b is not None and _onceki_b is not None) else float(_bek_h))
+                    _gtek = _gs if abs(_h_ham - _bek_ham) < abs(_h_ded - _bek_ded) - 0.01 else _gded
+                else:
+                    _gtek = _gded
                 _gh = round(sum(x["tutar"] for x in _gtek if not x.get("odeme_mi")), 2)
                 _go = round(sum(x["tutar"] for x in _gtek if x.get("odeme_mi")), 2)
                 # ⚖️ ADİL KIYAS — ELMA İLE ELMA (2026-08-18 canlı ölçüm dersi):
