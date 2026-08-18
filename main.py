@@ -2460,6 +2460,129 @@ def borc_maliyet_merkezi(bid: str, b: MaliyetMerkeziBody):
             "varsayilan_odeyen_sube_id": ody}
 
 
+class TaksitDonusumIslem(BaseModel):
+    tarih: str
+    dilim_tutari: float          # bu dönemin taksit tutarı (ekstredeki satır)
+    taksit_no: int
+    taksit_sayisi: int
+    alim_toplami: Optional[float] = None
+    satici: Optional[str] = None
+
+
+class TaksitDonusumBody(BaseModel):
+    kart_id: str
+    kesim_tarihi: str            # ekstrenin kesim tarihi (taksit takvimi buradan kurulur)
+    dilimler: List[TaksitDonusumIslem]
+    uygula: bool = False         # ⚠️ VARSAYILAN KURU ÇALIŞTIRMA
+
+
+@app.post("/api/kartlar/taksit-donustur")
+def kart_taksit_donustur(body: TaksitDonusumBody):
+    """📅 ADIM 8 — İçe aktarılmış TEK ÇEKİM satırını TAKSİTLİ alıma çevirir.
+
+    NEDEN GEREKLİ: ekstre "ESER TİCARET 3/4 · 41.250 ₺ (toplam 165.000)" diyor
+    ama içe aktarım bunu TEK ÇEKİM 41.250 olarak yazıyor. Sonuç: bu dönemin
+    borcu doğru, ama GELECEK TAKSİTLER sistemde yok. Canlı kanıt: bu kartta
+    taksitli hareket sayısı SIFIR, oysa ekstre 5 taksitli alım gösteriyor ve
+    87.890,59 ₺ gelecek yük taşıyor.
+
+    ⚠️ NEDEN YENİ KAYIT DEĞİL, DÖNÜŞTÜRME: satır zaten deftere yazıldı. Üstüne
+    bir de taksitli alım eklemek aynı alımı İKİ KEZ borçlandırırdı.
+
+    ⚠️ NEDEN VARSAYILAN KURU ÇALIŞTIRMA (uygula=False): borç motoru taksiti
+    KÜMÜLATİF sayar — `tutar/taksit_sayisi × geçen taksit adedi`. ESER'i
+    165.000/4 taksit + başlangıç Haziran diye yazarsam Ağustos'ta ÜÇ taksit
+    geçmiş sayılır (123.750 ₺) ve şu an KURUŞU KURUŞUNA tutan mutabakat
+    (fark 0,00) bozulur. Geçmiş iki taksit önceki ekstrelerde zaten borç
+    yazılmış olabilir. Bu yüzden uç önce NE OLACAĞINI hesaplar, borç etkisini
+    gösterir; sahip görüp onaylamadan HİÇBİR ŞEY YAZILMAZ.
+
+    Taksit takvimi: bu ekstre `taksit_no`'yu biller → başlangıç ayı =
+    kesim ayı − (taksit_no − 1).
+    """
+    from datetime import date as _d
+    try:
+        _kesim = _d.fromisoformat(str(body.kesim_tarihi)[:10])
+    except Exception:
+        raise HTTPException(400, "kesim_tarihi YYYY-AA-GG olmalı")
+
+    with db() as (conn, cur):
+        cur.execute("SELECT id, kart_adi FROM kartlar WHERE id=%s AND aktif=TRUE", (body.kart_id,))
+        _k = cur.fetchone()
+        if not _k:
+            raise HTTPException(404, "Kart bulunamadı")
+        _borc_once = kart_borc(cur, body.kart_id)
+
+        plan, atlanan = [], []
+        for d in body.dilimler:
+            no, adet = int(d.taksit_no or 0), int(d.taksit_sayisi or 0)
+            if not (1 <= no <= adet <= 60):
+                atlanan.append({"satici": d.satici, "neden": f"geçersiz taksit {no}/{adet}"})
+                continue
+            toplam = float(d.alim_toplami or 0) or round(float(d.dilim_tutari) * adet, 2)
+            # Başlangıç ayı: bu ekstre no'ıncı taksidi billiyor
+            _ay = _kesim.month - (no - 1)
+            _yil = _kesim.year
+            while _ay <= 0:
+                _ay += 12; _yil -= 1
+            _bas = _d(_yil, _ay, min(_kesim.day, 28))
+            # Deftere yazılmış TEK ÇEKİM satırını bul (bu dönemin dilimi)
+            cur.execute("""SELECT id, tutar, taksit_sayisi FROM kart_hareketleri
+                            WHERE kart_id=%s AND durum='aktif' AND islem_turu='HARCAMA'
+                              AND COALESCE(taksit_sayisi,1)=1
+                              AND ROUND(tutar::numeric,2)=ROUND(%s::numeric,2)
+                              AND tarih=%s::date LIMIT 1""",
+                        (body.kart_id, float(d.dilim_tutari), str(d.tarih)[:10]))
+            _r = cur.fetchone()
+            if not _r:
+                atlanan.append({"satici": d.satici,
+                                "neden": "defterde eşleşen tek-çekim satırı yok "
+                                         "(zaten dönüştürülmüş ya da hiç aktarılmamış)"})
+                continue
+            # Borç etkisi: motor kümülatif sayar → geçen taksit adedi = no
+            _yeni_katki = round(toplam / adet * no, 2)
+            plan.append({
+                "hareket_id": _r["id"], "satici": d.satici,
+                "eski_tutar": float(_r["tutar"]), "eski_katki": float(_r["tutar"]),
+                "yeni_tutar": toplam, "taksit": f"{no}/{adet}",
+                "baslangic": str(_bas), "yeni_katki": _yeni_katki,
+                "borc_degisimi": round(_yeni_katki - float(_r["tutar"]), 2),
+                "gelecek_yuk": round(toplam / adet * (adet - no), 2),
+            })
+
+        _fark = round(sum(p["borc_degisimi"] for p in plan), 2)
+        if not body.uygula:
+            return {
+                "kuru_calistirma": True, "kart": _k["kart_adi"],
+                "donusecek": len(plan), "atlanan": atlanan,
+                "plan": plan,
+                "borc_once": round(_borc_once, 2),
+                "borc_sonra_tahmini": round(_borc_once + _fark, 2),
+                "borc_degisimi": _fark,
+                "gelecek_yuk_kazanimi": round(sum(p["gelecek_yuk"] for p in plan), 2),
+                "uyari": ("⚠️ Bu dönüşüm kart borcunu DEĞİŞTİRİYOR. Motor taksiti kümülatif "
+                          "sayar; geçmiş taksitler önceki ekstrelerde zaten borç yazılmış "
+                          "olabilir — o zaman bu değişim ÇİFT SAYIM olur. Uygulamadan önce "
+                          "farkı doğrulayın." if abs(_fark) > 1.0 else
+                          "Borç değişmiyor — dönüşüm güvenli görünüyor."),
+                "not": "Hiçbir şey yazılmadı. Uygulamak için uygula=true gönderin.",
+            }
+
+        for p in plan:
+            cur.execute("""UPDATE kart_hareketleri
+                              SET tutar=%s, taksit_sayisi=%s, baslangic_tarihi=%s::date,
+                                  aciklama = COALESCE(aciklama,'') || %s
+                            WHERE id=%s""",
+                        (p["yeni_tutar"], int(p["taksit"].split("/")[1]), p["baslangic"],
+                         f" [taksit {p['taksit']} — ekstreden dönüştürüldü]", p["hareket_id"]))
+            audit(cur, "kart_hareketleri", p["hareket_id"], "TAKSIT_DONUSUM")
+        kart_plan_guncelle_tx(cur)
+        _borc_sonra = kart_borc(cur, body.kart_id)
+    return {"kuru_calistirma": False, "donusturulen": len(plan), "atlanan": atlanan,
+            "borc_once": round(_borc_once, 2), "borc_sonra": round(_borc_sonra, 2),
+            "borc_degisimi": round(_borc_sonra - _borc_once, 2), "plan": plan}
+
+
 @app.get("/api/kasa/finansman-dengesi")
 def finansman_dengesi():
     """💠 KİM KİMİ FİNANSE EDİYOR — defterden TÜRETİLİR, borç olarak YAZILMAZ.
