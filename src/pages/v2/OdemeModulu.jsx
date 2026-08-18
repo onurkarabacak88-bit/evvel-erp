@@ -91,6 +91,10 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast, hede
   const [kuyruk, setKuyruk] = useState([]);      // 14 günlük pencere
   const [kokpit, setKokpit] = useState(null);
   const [nakitAkis, setNakitAkis] = useState(null);
+  // 🏪 Ödeme yapan şube seçeneği (2026-08-18). Pasif ve 'MERKEZ' kayıtları
+  // listede YOK: merkez bir şube değil, şube yokluğudur — boş seçenek zaten
+  // merkezi temsil eder.
+  const [odemeSubeler, setOdemeSubeler] = useState([]);
   const [cari, setCari] = useState(null);
   const [vergi, setVergi] = useState(null);   // /duyu/vergi-takvim — yaklaşan vergi yükü
   const [izTarama, setIzTarama] = useState(null);  // /odeme-plani/gecikmis-iz-tarama
@@ -152,6 +156,13 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast, hede
         return api(`/personel-aylik/onay-kuyrugu?yil=${d.getFullYear()}&ay=${d.getMonth() + 1}`).catch(() => null); })(),
     ]).then(([k, ko, c, l, tg, vt, na, iz, cu, bok]) => {
       setBordroOnay(bok);
+      // 🏪 Ödeyen şube listesi — hata-yutar ve izole: düşerse ödeme ekranı
+      // çalışmaya devam eder, sadece seçici boş kalır (merkez varsayılanı).
+      api('/subeler')
+        .then((sl) => setOdemeSubeler((Array.isArray(sl) ? sl : (sl?.subeler || []))
+          .filter((s) => s?.aktif !== false && String(s?.id) !== 'sube-merkez'
+            && String(s?.ad || '').toUpperCase() !== 'MERKEZ')))
+        .catch(() => setOdemeSubeler([]));
       setVergi(vt);
       setNakitAkis(na);
       setIzTarama(iz);
@@ -387,8 +398,14 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast, hede
     }
     setModal({
       tip: 'ode', satir: o, mod: 'tam', yontem: 'nakit', kartId: '',
-      // tamTutar = plandaki tutar; DEĞİŞTİRİLİRSE /ode?tutar= ile gider
-      // (borç yine KAPANIR — kalan açan yol 'kismi').
+      // 🏪 PARAYI HANGİ ŞUBE ÇIKARDI (2026-08-18, sahip: "hangisinin kasasında
+      // para varsa ondan ödüyordur"). Giderin SAHİBİ değil, ÖDEYENİ.
+      // Kredinin varsayılan ödeyeni varsa ÖN-SEÇİLİ gelir ama sahip GÖRÜR ve
+      // değiştirebilir — görmeden otomatik yazılmaz (Codex: "istatistiksel
+      // tahmin yalnız öneri olabilir, gerçek veri olamaz").
+      // Ödeyen ≠ giderin şubesi olduğunda otomatik şube borcu doğar.
+      odeyenSube: o._varsayilanOdeyen || '',
+      nakitYontemi: 'havale',
       tamTutar: String(sayi(o._tutar)), kismiTutar: '',
       kalanVade: isoEkle(o._tarih || bugun, 30), dosya: null,
     });
@@ -493,7 +510,14 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast, hede
           const q = `?tutar=${encodeURIComponent(tamT)}`;
           const r = await api(`/odeme-plani/${o.id}/ode${q}`, {
             method: 'POST',
-            body: { odeme_yontemi: modal.yontem, kart_id: modal.yontem === 'kart' ? modal.kartId : null },
+            body: {
+              odeme_yontemi: modal.yontem, kart_id: modal.yontem === 'kart' ? modal.kartId : null,
+              // 🏪 Nakit ödemede "kim ödedi" + "elden mi havale mi" taşınır.
+              // Kartla ödemede anlamsız (para kasadan çıkmaz, karta yazılır) →
+              // gönderilmez ki sunucu yanlış kasaya damga vurmasın.
+              odeyen_sube_id: modal.yontem === 'kart' ? null : (modal.odeyenSube || null),
+              nakit_yontemi: modal.yontem === 'kart' ? null : (modal.nakitYontemi || null),
+            },
           });
           const nereye = modal.yontem === 'kart' ? 'karta yazıldı' : 'kasadan düşüldü';
           const ek = await dosyaNotu(modal.dosya);
@@ -793,6 +817,28 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast, hede
           <option value="">Kart seçin *</option>
           {kartListe.map((k) => <option key={k.id} value={k.id}>{k.kart_adi || k.banka}</option>)}
         </select>
+      )}
+      {/* 🏪 HANGİ KASADAN ÖDENDİ (2026-08-18, sahip: "hangisinin kasasında para
+          varsa ondan ödüyordur"). Giderin SAHİBİ değil, ÖDEYENİ.
+          Ödeyen ≠ giderin şubesi olduğunda şubeler arası borç KENDİLİĞİNDEN
+          doğar ve netleşir. Boş bırakılırsa BİLİNMİYOR kalır — uydurma atama
+          yapılmaz (Codex: "kanıt yoksa bilinmiyor bırak"). Kartla ödemede
+          gizlenir: para kasadan çıkmaz, karta yazılır. */}
+      {modal?.yontem !== 'kart' && (
+        <>
+          <select value={modal?.odeyenSube || ''} onChange={(e) => guncelle('odeyenSube', e.target.value)}
+            title="Parayı hangi şube çıkardı? Giderin sahibinden farklıysa şubeler arası borç doğar."
+            style={{ ...omAlanStil, width: 'auto', minWidth: 165 }}>
+            <option value="">Hangi kasadan? (merkez)</option>
+            {(odemeSubeler || []).map((s) => <option key={s.id} value={s.id}>{s.ad} kasası</option>)}
+          </select>
+          <select value={modal?.nakitYontemi || 'havale'} onChange={(e) => guncelle('nakitYontemi', e.target.value)}
+            title="Havale bankadan çıkar, elden nakit çekmeceden. Banka mutabakatı bu ayrımla çalışır."
+            style={{ ...omAlanStil, width: 'auto', minWidth: 140 }}>
+            <option value="havale">🏦 Havale / EFT</option>
+            <option value="elden">💵 Elden nakit</option>
+          </select>
+        </>
       )}
       {kaynakDurumu}
     </div>
