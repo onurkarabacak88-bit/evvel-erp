@@ -5479,7 +5479,24 @@ def _ekstre_eslesme_mutabakat(sonuc, raw: Optional[bytes] = None):
                     _gor.add(_k); _gtek.append(_x)
                 _gh = round(sum(x["tutar"] for x in _gtek if not x.get("odeme_mi")), 2)
                 _go = round(sum(x["tutar"] for x in _gtek if x.get("odeme_mi")), 2)
-                _gfark = round(_gh - float(_bek_h), 2) if _bek_h is not None else None
+                # ⚖️ ADİL KIYAS — ELMA İLE ELMA (2026-08-18 canlı ölçüm dersi):
+                # Ekstrede faiz kalemleri (DÖNEM FAİZİ, KKDF+BSMV, GEÇ ÖDEME
+                # FAİZİ, LİMİT AŞIM FAİZİ) TARİHSİZ satırlardır — tablonun içinde
+                # değil, başlık bloğunda dururlar. Metin yolu bunları ayrıca
+                # enjekte eder (garanti_faiz_enjekte / ziraat_faiz_finalize),
+                # geometrik okuyucu ise tarihsiz satırı işlem saymaz.
+                # Bu yüzden ham kıyas geometriği HAKSIZ YERE kaybettiriyordu:
+                #   Garanti: metin 180.606,82 · geo 159.627,36 · fark tam 20.979,46
+                #   = DÖNEM FAİZİ 15.722,62 + KKDF/BSMV 4.841,41 + GEÇ ÖDEME
+                #     287,93 + LİMİT AŞIM 127,50  → kuruşu kuruşuna faiz kalemleri
+                # Yani geometrik satırları DOĞRU okuyordu, sadece faiz onun işi
+                # değildi. Kıyasa aynı faizi ekliyoruz; okuyucular yalnız
+                # SATIR OKUMA becerisiyle yarışsın.
+                _enjekte_faiz = round(sum(
+                    abs(float(i.get("tutar") or 0)) for i in (sonuc.get("islemler") or [])
+                    if (i.get("tip") or "").upper() == "FAIZ"), 2)
+                _gh_kiyas = round(_gh + _enjekte_faiz, 2)
+                _gfark = round(_gh_kiyas - float(_bek_h), 2) if _bek_h is not None else None
                 _metin_fark = _dn.get("harcama_farki")
                 _kazanan = None
                 if _gfark is not None and _metin_fark is not None:
@@ -5487,11 +5504,17 @@ def _ekstre_eslesme_mutabakat(sonuc, raw: Optional[bytes] = None):
                         "metin" if abs(_metin_fark) < abs(_gfark) - 0.01 else "berabere")
                 sonuc["geometrik_okuma"] = {
                     "satir": len(_gtek), "ham_satir": len(_gs),
-                    "harcama": _gh, "odeme": _go, "harcama_farki": _gfark,
+                    "harcama": _gh, "odeme": _go,
+                    "enjekte_faiz": _enjekte_faiz,     # başlıktan gelen, satırda yok
+                    "kiyas_harcama": _gh_kiyas,        # satır + faiz = adil kıyas
+                    "harcama_farki": _gfark,
                     "tutarsiz_satir": len(_g.get("tutarsiz") or []),
                     "kazanan": _kazanan,
                     "not": "İkinci göz — şu an YALNIZ RAPORLAR, içe aktarımı değiştirmez. "
-                           "Tutarı sütun koordinatından okur; 'son sayı' tahmini yapmaz.",
+                           "Tutarı sütun koordinatından okur; 'son sayı' tahmini yapmaz. "
+                           "Kıyasa faiz eklenir çünkü faiz TARİHSİZ başlık satırıdır ve "
+                           "geometrik okuyucunun işi değildir — okuyucular yalnız SATIR "
+                           "OKUMA becerisiyle yarışsın.",
                 }
             else:
                 sonuc["geometrik_okuma"] = {"basarili": False, "neden": _g.get("neden")}
