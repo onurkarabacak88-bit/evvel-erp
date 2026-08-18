@@ -2590,12 +2590,18 @@ def kart_devir_denetimi():
             #                 = 483.977,07 = BANKA ✓ (yama GÜNCEL)
             #   ama eski formül "olması gereken 533.404,75" diyordu → tazeleseydim
             #   o kartın kuruşu kuruşuna tutan defterini 63.833 ₺ BOZACAKTIM.
-            cur.execute("""SELECT COALESCE(SUM(CASE WHEN islem_turu='ODEME' THEN -tutar
-                                                    ELSE tutar END),0) AS d
-                             FROM kart_hareketleri
-                            WHERE kart_id=%s AND durum='aktif' AND islem_turu<>'DEVIR'""",
-                        (kid,))
-            ham = float((cur.fetchone() or {}).get("d") or 0)
+            # 🔴 İKİNCİ FORMÜL DÜZELTMESİ (2026-08-18, canlı hasarla öğrenildi):
+            # Ham SUM(tutar) kullanıyordum. YANLIŞ — `kart_borc()` TAKSİT
+            # FARKINDALIDIR: taksitli alımı `tutar/adet × geçen taksit` sayar,
+            # ham toplam ise `tutar`ın TAMAMINI sayar. İkisi taksitli kartlarda
+            # ayrışır. Uyguladığımda Garanti Fethi ve OPET'in kuruşu kuruşuna
+            # tutan defterlerini bozdu (72.307 ve 91.991 ₺); eski değerler geri
+            # yüklendi, kalıcı hasar olmadı.
+            # DOĞRUSU sistemin KENDİ formülü: main.py'deki yama yazıcıları da
+            # `adj = donem_borcu - kart_borc(cur, kid)` kullanıyor. Denetim de
+            # aynı fonksiyonu kullanmalı, yoksa "olması gereken" uydurma olur.
+            # ⚠️ kart_borc DEVİR'i de içerir → ham = kart_borc − stored_devir
+            ham = float(kart_borc(cur, kid)) - stored
             cur.execute("""SELECT COALESCE(SUM(CASE WHEN islem_turu='ODEME' THEN -tutar
                                                     ELSE tutar END),0) AS d
                              FROM kart_hareketleri
