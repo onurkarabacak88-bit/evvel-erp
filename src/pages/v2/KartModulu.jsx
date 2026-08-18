@@ -763,9 +763,24 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
       id: String(k.id),
       ad: k.kart_adi || k.banka || 'Kart',
       sahip: k.sahip || 'İşletme',
-      donem: sayi(o.guncel_borc ?? k.donem_borcu ?? borc),
-      taksit: sayi(o.gelecek_taksit_anapara ?? k.gelecek_taksit_anapara),
-      toplam: sayi(o.toplam_borc_taksitli ?? k.toplam_borc_taksitli ?? borc),
+      // ── 🧭 ADIM 9: EKRAN ARTIK KANONİK MODELDEN BESLENİYOR ──────────────
+      // Bu üç satır bugüne kadar ÜÇ AYRI KAYNAĞA düşüyordu (borc-faiz-ozet →
+      // kartlar → defter). Aynı ad farklı anlam taşıyordu: 17 Ağustos'ta OPET
+      // aynı anda 508.023,92 ve 190.218,39 gösterdi. Kanonik model tam bunu
+      // çözmek için kuruldu; artık ekran ONDAN okuyor.
+      // ⚠️ ESKİ YOL EMNİYET AĞI OLARAK DURUYOR (?? zinciri): kanonik alan bir
+      // kartta üretilemezse (hata-yutar) ekran boş kalmaz, eski değere düşer.
+      // Canlı doğrulama: 7 kartın 6'sında eski ile kanonik BİREBİR aynı çıktı;
+      // tek sapma WORLD ANNEM'de 899 ₺ ve o da kanonik lehine (defter gerçeği).
+      donem: sayi(k.kanonik_ekstre_borcu ?? o.guncel_borc ?? k.donem_borcu ?? borc),
+      taksit: sayi(k.kanonik_gelecek_taksit ?? o.gelecek_taksit_anapara ?? k.gelecek_taksit_anapara),
+      toplam: sayi(k.kanonik_toplam_yukumluluk ?? o.toplam_borc_taksitli ?? k.toplam_borc_taksitli ?? borc),
+      // Rakamın KAYNAĞI: 'plan'=ölçüm · 'ekstre_alani'=bankanın yazdığı ·
+      // 'limit_cikarimi'=TAHMİN. Ekranda ayırt edilebilsin diye taşınıyor —
+      // tahmini ölçüm sanmak bugün 22.080 ₺'lik farkı gizlemişti.
+      taksitKaynak: k.kanonik_gelecek_taksit_kaynak || null,
+      mutabakatFarki: k.kanonik_mutabakat_farki,
+      mutabakatNotu: k.kanonik_mutabakat_notu || null,
       odenenFaiz: sayi(o.toplam_odenen_faiz),
       limit,
       // ⚠️ KULLANIM/KALAN LİMİT SUNUCUDAN GELİR — burada HESAPLANMAZ.
@@ -781,7 +796,9 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
         : (limit ? Math.min(100, (borc / limit) * 100) : 0),
       kullanimKaynak: k.limit_doluluk != null ? 'sunucu' : 'tahmin',
       // Anlık borç = ekstre dönem borcu + kesim sonrası hareketler (gerçek zamanlı)
-      anlikBorc: k.anlik_borc != null ? sayi(k.anlik_borc) : borc,
+      // 🧭 ADIM 9: anlık borç da kanonikten (eski alan emniyet ağı)
+      anlikBorc: k.kanonik_anlik_borc != null ? sayi(k.kanonik_anlik_borc)
+        : (k.anlik_borc != null ? sayi(k.anlik_borc) : borc),
       bankaLimit: k.kullanilabilir_limit != null ? sayi(k.kullanilabilir_limit) : null,
       // Ortak limit havuzu: kart formunda tanımlanabiliyordu ama SONUCU hiç
       // gösterilmiyordu — paylaşılan limitte kalan tek havuzdan hesaplanır.
@@ -877,7 +894,29 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
         tutar: fmt(k.buDonemOdenen),
       }] : []),
       { ad: 'Gelecek ekstre', detay: `tek çekim ${fmt(k.tekCekim)} + aylık taksit ${fmt(k.aylikTaksit)}`, tutar: fmt(k.gelecekEkstre) },
-      { ad: 'Gelecek taksit anaparası', detay: 'sonraki dönemlere yayılı', tutar: fmt(k.taksit) },
+      {
+        ad: 'Gelecek taksit anaparası',
+        // 🧭 KAYNAK GÖRÜNÜR (2026-08-19): bu rakam ya ÖLÇÜM ya TAHMİN.
+        // Ayrımı gizlemek 22.080,54 ₺'lik farkı görünmez kılmıştı — limit
+        // boşluğundan çıkarım 65.810,05 derken ekstreden okunan gerçek plan
+        // 87.890,59 çıktı. Artık hangisi olduğu ekranda yazıyor.
+        detay: k.taksitKaynak === 'plan'
+          ? 'ekstreden okunan taksit planı · ÖLÇÜM'
+          : k.taksitKaynak === 'ekstre_alani'
+            ? 'bankanın ekstrede yazdığı kalan taksit'
+            : k.taksitKaynak === 'limit_cikarimi'
+              ? 'limit boşluğundan çıkarım · TAHMİN (eksik gösterebilir)'
+              : 'sonraki dönemlere yayılı',
+        tutar: fmt(k.taksit),
+      },
+      // Defter ile banka tutmuyorsa GİZLENMEZ; ölçülemiyorsa sebebi yazılır.
+      ...(k.mutabakatFarki != null && Math.abs(k.mutabakatFarki) > 1 ? [{
+        ad: '⚠ Mutabakat farkı',
+        detay: 'bankanın dediği ile defterin dediği tutmuyor',
+        tutar: fmt(k.mutabakatFarki),
+      }] : k.mutabakatNotu ? [{
+        ad: 'Mutabakat', detay: String(k.mutabakatNotu).slice(0, 110), tutar: '—',
+      }] : []),
       // DEVREDEN: geçen dönem tam ödenmediği için taşınan yük. Faiz GERÇEKTEN
       // ödenen paradır (kart borcuna yazılır), anapara yalnızca ertelenmiştir.
       ...(k.devredenAnapara > 0 || k.devredenFaiz > 0 ? [{
