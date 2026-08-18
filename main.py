@@ -2460,6 +2460,102 @@ def borc_maliyet_merkezi(bid: str, b: MaliyetMerkeziBody):
             "varsayilan_odeyen_sube_id": ody}
 
 
+class TaksitPlanBody(BaseModel):
+    kart_id: str
+    kesim_tarihi: str
+    dilimler: List["TaksitDonusumIslem"]
+    uygula: bool = False
+
+
+@app.post("/api/kartlar/taksit-plani-kur")
+def kart_taksit_plani_kur(body: TaksitPlanBody):
+    """📅 ADIM 8 (GÜVENLİ YOL) — gelecek taksitleri PLANA yazar, DEFTERE DEĞİL.
+
+    🔴 NEDEN DÖNÜŞTÜRME DEĞİL: `/taksit-donustur` kuru çalıştırması ESER
+    TİCARET'te +82.500 ₺ borç artışı gösterdi. Sebep: borç motoru taksiti
+    KÜMÜLATİF sayar; geçmiş taksitler (Haziran 1/4, Temmuz 2/4) ise defterdeki
+    DEVİR satırının içinde ZATEN var. Dönüştürmek onları ikinci kez
+    borçlandırırdı ve şu an kuruşu kuruşuna tutan mutabakatı (0,00) bozardı.
+
+    ✅ DOĞRU MODEL: geçmişe DOKUNMA, geleceği AYRI TUT.
+    Kalan taksitler `kart_taksit_plani` + `kart_taksit_dilimi` tablolarına
+    yazılır (Adım 2'de tam bunun için kurulmuşlardı). Kart defteri hiç
+    değişmez → mutabakat bozulmaz; buna karşılık "önümüzdeki aylarda bu karttan
+    ne çıkacak" sorusu ilk kez cevaplanır.
+
+    Dilim durumu: bu dönem ve öncesi 'gerceklesti' (ekstrede zaten borç oldu),
+    sonrası 'beklenen'. Böylece plan geçmişi de taşır ama borç üretmez.
+
+    İdempotent: aynı kart + aynı açıklama + aynı toplam + aynı taksit adedi
+    için ikinci kez plan açılmaz.
+    """
+    from datetime import date as _d
+    try:
+        _kesim = _d.fromisoformat(str(body.kesim_tarihi)[:10])
+    except Exception:
+        raise HTTPException(400, "kesim_tarihi YYYY-AA-GG olmalı")
+    with db() as (conn, cur):
+        cur.execute("SELECT kart_adi FROM kartlar WHERE id=%s AND aktif=TRUE", (body.kart_id,))
+        _k = cur.fetchone()
+        if not _k:
+            raise HTTPException(404, "Kart bulunamadı")
+        from database import ensure_kart_gercek_modeli
+        ensure_kart_gercek_modeli(cur)
+
+        kurulan, atlanan, ozet = [], [], 0.0
+        for d in body.dilimler:
+            no, adet = int(d.taksit_no or 0), int(d.taksit_sayisi or 0)
+            if not (1 <= no <= adet <= 60):
+                atlanan.append({"satici": d.satici, "neden": f"geçersiz taksit {no}/{adet}"})
+                continue
+            dilim = round(abs(float(d.dilim_tutari)), 2)
+            toplam = round(float(d.alim_toplami or 0) or dilim * adet, 2)
+            ad = (d.satici or "Taksitli alım")[:120]
+            # İlk dönem = bu kesim − (no−1) ay
+            _ay, _yil = _kesim.month - (no - 1), _kesim.year
+            while _ay <= 0:
+                _ay += 12; _yil -= 1
+            ilk = _d(_yil, _ay, min(_kesim.day, 28))
+            cur.execute("""SELECT id FROM kart_taksit_plani
+                            WHERE kart_id=%s AND aciklama=%s AND durum='aktif'
+                              AND ROUND(toplam_tutar::numeric,2)=ROUND(%s::numeric,2)
+                              AND taksit_adedi=%s LIMIT 1""",
+                        (body.kart_id, ad, toplam, adet))
+            if cur.fetchone():
+                atlanan.append({"satici": ad, "neden": "bu plan zaten kurulu"})
+                continue
+            kalan = max(0, adet - no)
+            kurulan.append({"satici": ad, "toplam": toplam, "taksit": f"{no}/{adet}",
+                            "ilk_donem": str(ilk), "kalan_taksit": kalan,
+                            "kalan_tutar": round(kalan * dilim, 2)})
+            ozet += kalan * dilim
+            if not body.uygula:
+                continue
+            cur.execute("""INSERT INTO kart_taksit_plani
+                (kart_id, aciklama, toplam_tutar, taksit_adedi, ilk_donem, durum)
+                VALUES (%s,%s,%s,%s,%s,'aktif') RETURNING id""",
+                (body.kart_id, ad, toplam, adet, ilk))
+            pid = cur.fetchone()["id"]
+            for s in range(1, adet + 1):
+                _a, _y = ilk.month + (s - 1), ilk.year
+                while _a > 12:
+                    _a -= 12; _y += 1
+                cur.execute("""INSERT INTO kart_taksit_dilimi
+                    (plan_id, taksit_no, donem, tutar, durum)
+                    VALUES (%s,%s,%s,%s,%s) ON CONFLICT (plan_id, taksit_no) DO NOTHING""",
+                    (pid, s, _d(_y, _a, min(ilk.day, 28)), dilim,
+                     "gerceklesti" if s <= no else "beklenen"))
+            audit(cur, "kart_taksit_plani", pid, "INSERT")
+    return {
+        "kuru_calistirma": not body.uygula, "kart": _k["kart_adi"],
+        "plan": kurulan, "atlanan": atlanan,
+        "gelecek_taksit_yuku": round(ozet, 2),
+        "not": "Kart DEFTERİNE DOKUNULMADI — borç değişmez, mutabakat bozulmaz. "
+               "Bu plan yalnız «önümüzdeki aylarda ne çıkacak» sorusunu cevaplar."
+               + ("" if body.uygula else " Hiçbir şey yazılmadı; uygula=true gönderin."),
+    }
+
+
 class TaksitDonusumIslem(BaseModel):
     tarih: str
     dilim_tutari: float          # bu dönemin taksit tutarı (ekstredeki satır)
@@ -2467,6 +2563,9 @@ class TaksitDonusumIslem(BaseModel):
     taksit_sayisi: int
     alim_toplami: Optional[float] = None
     satici: Optional[str] = None
+
+
+TaksitPlanBody.model_rebuild()
 
 
 class TaksitDonusumBody(BaseModel):
