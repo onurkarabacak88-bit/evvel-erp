@@ -5944,6 +5944,57 @@ def _ekstre_eslesme_mutabakat(sonuc, raw: Optional[bytes] = None):
                         if not _eslesti:
                             isl["durum"] = "yeni"
                             yeni_adet += 1
+            # ── 🚧 DEVİR ÇİZGİSİ FRENİ (2026-08-18) ────────────────────────
+            # 🔴 BUGÜN BİZZAT YAPTIĞIM HATA: Haziran kesimli GEÇMİŞ ekstreyi
+            # aktardım ve kart borcunu 43.297,72 ₺ ŞİŞİRDİM. Sebep: Ağustos
+            # ekstresinin "önceki borç" satırı (505.617,25 ₺) Haziran ve
+            # Temmuz'un TÜM harcamalarını ZATEN İÇERİR. O ayların satırlarını
+            # ayrıca eklemek aynı parayı ikinci kez borçlandırır. Mutabakat
+            # 0,00'dan −43.297,72'ye düştü; 9 satırı izli iptal edip geri aldım.
+            #
+            # Bu, bugün ÜÇÜNCÜ kez görülen kalıp: TOPLU BİR RAKAMIN İÇİNDEKİ
+            # DETAYI AYRICA EKLEMEK. Diğer ikisini sistem yakaladı (toplu ödeme
+            # eşleşmesi · taksit çakışması); bunu YALNIZ İNSAN yakaladı — yani
+            # tarama eksikti. Bu fren o boşluğu kapatır.
+            #
+            # Kural: yüklenen ekstrenin kesimi, kartın EN SON mutabık döneminden
+            # ESKİYSE bu bir GEÇMİŞ ekstredir. Satırları zaten devir bakiyesinin
+            # içindedir → aktarım varsayılan olarak KAPALI gelir.
+            # ⛔ Ekstre yine de OKUNUR ve gösterilir: taksit zincirini görmek,
+            #    okuma denetimi yapmak, belge arşivlemek için değerlidir.
+            try:
+                cur.execute("""SELECT MAX(kesim_tarihi) AS son FROM kart_ekstre_donem
+                                WHERE kart_id=%s""", (kart["id"],))
+                _sn = dict(cur.fetchone() or {})
+                _son_kesim = _sn.get("son")
+                _bu_kesim = sonuc.get("kesim_tarihi")
+                if _son_kesim and _bu_kesim:
+                    _bk = date.fromisoformat(str(_bu_kesim)[:10])
+                    if _bk < _son_kesim:
+                        _gecmis = [i for i in sonuc.get("islemler", [])
+                                   if i.get("durum") == "yeni"]
+                        for _i in _gecmis:
+                            _i["durum"] = "devir_disi"
+                            _i["devir_not"] = (
+                                f"Bu ekstre {_bk} kesimli; sistemde {_son_kesim} kesimli "
+                                "daha yeni bir ekstre mutabık. Bu satır o ekstrenin "
+                                "«önceki borç» rakamının İÇİNDE zaten var — aktarılırsa "
+                                "aynı para iki kez borç yazar.")
+                        yeni_adet = max(0, yeni_adet - len(_gecmis))
+                        sonuc["devir_cizgisi_uyarisi"] = {
+                            "bu_kesim": str(_bk), "son_mutabik_kesim": str(_son_kesim),
+                            "kilitlenen_satir": len(_gecmis),
+                            "kilitlenen_tutar": round(sum(
+                                abs(float(i.get("tutar") or 0)) for i in _gecmis), 2),
+                            "mesaj": "🚧 GEÇMİŞ DÖNEM EKSTRESİ — satır aktarımı kapalı. "
+                                     "Daha yeni bir ekstre zaten mutabık; bu ayın harcamaları "
+                                     "onun «önceki borç» rakamının içinde. Ekstre yine de "
+                                     "okundu: taksit zinciri, okuma denetimi ve belge arşivi "
+                                     "için kullanılabilir.",
+                        }
+            except Exception as _de:  # noqa: BLE001
+                sonuc["devir_cizgisi_uyarisi"] = {"hata": str(_de)[:120]}
+
             # ── 🔗 TAKSİT ÇAKIŞMA TARAMASI (2026-08-18) ────────────────────
             # 🔴 NEDEN: bir taksitli alım HER AY ekstrede yeniden görünür
             # (ESER TİCARET: Haziran 1/4 · Temmuz 2/4 · Ağustos 3/4 — hep
