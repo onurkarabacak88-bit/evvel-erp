@@ -596,11 +596,6 @@ def kart_bakiye_ozeti(cur, kart_id: str, tarih: Optional[date] = None) -> Dict[s
 
     # ── 4) Denkleştirme çizgisi + kesim sonrası delta ────────────────────────
     pencere = snap_kesim
-    # 🔒 KESİM ÇİZGİSİ AYRI SAKLANIR (2026-08-18): aşağıda `pencere` DEVİR
-    # tarihine kaydırılabiliyor. O kaydırma `anlik_borc` için doğrudur ("şu an
-    # ne borçluyum") ama MUTABAKAT için yanlıştır — mutabakat "KESİM ANINDA
-    # banka ne dedi, defter ne dedi" sorusudur. Kaydırılmamış hali burada durur.
-    mutabakat_kesim = snap_kesim
     cur.execute(
         "SELECT MAX(tarih)::text AS t FROM kart_hareketleri "
         "WHERE kart_id=%s AND durum='aktif' AND islem_turu='DEVIR'",
@@ -671,38 +666,7 @@ def kart_bakiye_ozeti(cur, kart_id: str, tarih: Optional[date] = None) -> Dict[s
     # farkı. Tek satırlık bir düzeltmeyle SİLİNMEZ (ADIM 10'da açık işlem olur).
     mutabakat_farki = None
     if ekstre_borcu is not None:
-        # 🔴 TARİH HİZASIZLIĞI DÜZELTMESİ (2026-08-18, Codex denetimli)
-        # ESKİ HALİ: `defter_canli - kesim_sonrasi` idi. Ama `kesim_sonrasi`
-        # penceresi yukarıda DEVİR tarihine KAYDIRILIYOR (devir kesimden
-        # sonraysa) ve sorgu DEVİR hareketini DIŞLIYOR. Sonuç: banka rakamı
-        # KESİM anının, defter rakamı DEVİR anının fotoğrafı oluyordu.
-        #
-        # CANLI KANIT (HEPSİ BURADA WORLD): ekstre kesimi 14 Tem, devir 24 Tem.
-        # Sistem 202.787,26 ₺ "açık" gösteriyordu. Codex'in önerdiği tek ölçüm
-        # bunu ele verdi: ekstre_borcu − devir = 204.863,48; mutabakat farkıyla
-        # arasında yalnız 2.076,22 ₺ var. Yani "açık" eksik para DEĞİL, 14 Temmuz
-        # ekstresini 24 Temmuz defter durumuyla kıyaslamanın artığıydı.
-        #
-        # DOĞRUSU: mutabakat "KESİM ANI" sorusudur — o an banka ne diyordu,
-        # defter ne diyordu. Bu yüzden kesim sonrası ayıklama KESİM tarihinden
-        # yapılır ve DEVİR de (kesimden sonraysa) ayıklamaya DAHİL edilir.
-        # `anlik_borc` için devir-kaydırmalı pencere DOĞRUdur (o "şu an ne
-        # borçluyum" sorusudur) — ona DOKUNULMADI.
-        _mut_kesim_sonrasi = kesim_sonrasi
-        try:
-            _kesim_ref = str(mutabakat_kesim)[:10] if mutabakat_kesim else None
-        except Exception:  # noqa: BLE001
-            _kesim_ref = None
-        if _kesim_ref:
-            cur.execute(
-                """SELECT COALESCE(SUM(CASE WHEN islem_turu='ODEME' THEN -tutar ELSE tutar END),0) AS d
-                     FROM kart_hareketleri
-                    WHERE kart_id=%s AND durum='aktif'
-                      AND tarih > %s::date AND tarih <= %s::date""",
-                (kart_id, _kesim_ref, bugun),
-            )
-            _mut_kesim_sonrasi = float((cur.fetchone() or {}).get("d") or 0)
-        mutabakat_farki = round(ekstre_borcu - (defter_canli - _mut_kesim_sonrasi), 2)
+        mutabakat_farki = round(ekstre_borcu - (defter_canli - kesim_sonrasi), 2)
 
     return {
         "kart_id": kart_id,
