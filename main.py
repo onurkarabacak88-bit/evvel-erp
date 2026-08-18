@@ -5549,8 +5549,19 @@ def _ekstre_eslesme_mutabakat(sonuc, raw: Optional[bytes] = None):
                 # içe aktarılacak satırların çapası olmalı — yoksa "yeşil" başka
                 # bir kümeyi doğrular (sahte yeşil).
                 if _kazanan == "geometrik":
-                    _faiz_satir = [i for i in (sonuc.get("islemler") or [])
-                                   if (i.get("tip") or "").upper() == "FAIZ"]
+                    # 🪤 ÇİFT FAİZ TUZAĞI (2026-08-18, takas yolunda TEKRAR düştüm
+                    # ve canlı ölçümle yakaladım): metin yolunun FAİZ satırlarını
+                    # koşulsuz eklemek, faizi TABLODA tutan bankada çift sayım
+                    # üretiyor. Ziraat'te tam bu oldu: geo 107.749,59 (faiz dahil,
+                    # tarihli satırlar) + enjekte 8.878,24 = 116.627,83 → çapa
+                    # 0,00'dan +8.878,24'e kaydı.
+                    # KURAL: metin faizini YALNIZCA geometriğin kendi TARİHSİZ
+                    # faizi varsa ekle (_enjekte_faiz > 0). Sıfırsa geometrik
+                    # faizi zaten satır olarak okumuştur — _ekstre_txn_map onu
+                    # açıklamasından FAIZ tipine çevirir.
+                    _faiz_satir = ([i for i in (sonuc.get("islemler") or [])
+                                    if (i.get("tip") or "").upper() == "FAIZ"]
+                                   if _enjekte_faiz > 0.009 else [])
                     _yeni = [_ekstre_txn_map({
                         "tarih": x["tarih"], "tutar": x["tutar"],
                         "aciklama": x["aciklama"], "kategori": None,
