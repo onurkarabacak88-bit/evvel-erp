@@ -2581,11 +2581,20 @@ def kart_devir_denetimi():
                               "durum": "devir yok" if not devir_ts else "ekstre snapshot yok"})
                 out.append(satir); continue
             # Devir GÜNÜNE kadarki (dahil) non-DEVİR borç — ham hareketlerden
+            # 🔴 FORMÜL DÜZELTMESİ (2026-08-18, kuru çalıştırma yakaladı):
+            # Önce "devir GÜNÜNE KADARKİ ham borç" kullanıyordum. YANLIŞ —
+            # defter TÜM hareketleri toplar, devirden sonrakileri de. O yüzden
+            # yamanın doğru değeri `ekstre_borcu − TÜM ham hareketler`dir.
+            # Yanlış formül, ÇALIŞAN iki kartı bayat gösteriyordu:
+            #   Garanti Onur: ham(tümü) −113.261,15 + yama 597.238,22
+            #                 = 483.977,07 = BANKA ✓ (yama GÜNCEL)
+            #   ama eski formül "olması gereken 533.404,75" diyordu → tazeleseydim
+            #   o kartın kuruşu kuruşuna tutan defterini 63.833 ₺ BOZACAKTIM.
             cur.execute("""SELECT COALESCE(SUM(CASE WHEN islem_turu='ODEME' THEN -tutar
                                                     ELSE tutar END),0) AS d
                              FROM kart_hareketleri
-                            WHERE kart_id=%s AND durum='aktif' AND islem_turu<>'DEVIR'
-                              AND tarih <= %s::date""", (kid, devir_ts))
+                            WHERE kart_id=%s AND durum='aktif' AND islem_turu<>'DEVIR'""",
+                        (kid,))
             ham = float((cur.fetchone() or {}).get("d") or 0)
             cur.execute("""SELECT COALESCE(SUM(CASE WHEN islem_turu='ODEME' THEN -tutar
                                                     ELSE tutar END),0) AS d
