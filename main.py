@@ -7208,8 +7208,28 @@ def kart_ekstre_import(body: EkstreImportBody):
             logger.warning("ekstre sonrası AP rematch atlandı (yutuldu): %s", str(e)[:150])
             rematch = {"ok": False, "hata": str(e)[:120]}
 
+    # 🔄 DENKLEŞTİRME YAMASINI OTOMATİK TAZELE (2026-08-18, sahip: "yoksa 7/7
+    # birkaç gün sonra yine 3/7 olur").
+    # 🔴 NEDEN ZORUNLU: DEVİR yaması `banka borcu − kart_borc()` formülüyle
+    # yazılır. Her içe aktarım defteri büyütür ama yama SABİT kalır → aradaki
+    # fark hemen yeniden açılır. Bugün elle tazeleyip 7 kartın 7'sini
+    # bankayla kuruşu kuruşuna hizaladık; bu çağrı olmadan o kazanç BİR SONRAKİ
+    # AKTARIMDA kaybolurdu.
+    # Yalnız satır YAZILDIYSA çalışır (yazılmadıysa defter değişmemiştir).
+    # HATA-YUTAR: tazeleme düşse bile içe aktarım BOZULMAZ — para yazımı bitti.
+    devir_tazele = None
+    if yazilan:
+        try:
+            devir_tazele = kart_devir_tazele(DevirTazeleBody(kart_id=body.kart_id, uygula=True))
+            devir_tazele = {"tazelenen": devir_tazele.get("tazelenen"),
+                            "duzeltme": devir_tazele.get("toplam_duzeltme")}
+        except Exception as e:  # noqa: BLE001
+            logger.warning("ekstre sonrası devir tazeleme atlandı (yutuldu): %s", str(e)[:150])
+            devir_tazele = {"ok": False, "hata": str(e)[:120]}
+
     return {
         "yazilan": yazilan,
+        "devir_tazele": devir_tazele,
         "atlanan_veya_mevcut": atlanan,
         "atlanan_mevcut_adet": len(atlanan_mevcut),
         "atlanan_mevcut": atlanan_mevcut[:20],
