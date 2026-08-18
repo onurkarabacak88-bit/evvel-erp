@@ -312,10 +312,16 @@ def _taksit_coz(taksit_metni: str, aciklama: str) -> Dict[str, Any]:
         m = re.search(r"(\d{1,2})\s*\.\s*[Tt]aksit", havuz)
         if m:
             sonuc["taksit_no"] = int(m.group(1))
-        m = re.search(r"(?<![\d,.])(\d{1,2})\s*/\s*(\d{1,2})(?![\d,.])", havuz)
+        # ⛔ TARİH KALIBI ELENİR: "10/06/2026" veya "06/2026" gibi diziler taksit
+        # DEĞİLDİR. Önünde/arkasında bir '/' daha varsa bu bir tarihtir.
+        # Ayrıca taksit numarası toplamdan BÜYÜK olamaz (3/4 olur, 10/6 olmaz) —
+        # bu tek kural Enpara'daki 50 sahte taksidin hepsini elerdi.
+        m = re.search(r"(?<![\d,./])(\d{1,2})\s*/\s*(\d{1,2})(?![\d,.]|\s*/)", havuz)
         if m:
-            sonuc["taksit_no"] = sonuc["taksit_no"] or int(m.group(1))
-            sonuc["taksit_sayisi"] = sonuc["taksit_sayisi"] or int(m.group(2))
+            _no, _adet = int(m.group(1)), int(m.group(2))
+            if 1 <= _no <= _adet <= 60:
+                sonuc["taksit_no"] = sonuc["taksit_no"] or _no
+                sonuc["taksit_sayisi"] = sonuc["taksit_sayisi"] or _adet
     return sonuc
 
 
@@ -508,7 +514,21 @@ def _satir_kur(hucre: Dict[str, List[Dict]], tarih: str, tutar_token: str,
                banka: str, odeme_isareti: str) -> Dict[str, Any]:
     tutar, isaret = _tutar_coz(tutar_token)  # type: ignore[misc]
     aciklama = _aciklama_temizle(hucre, "aciklama")
-    taksit = _taksit_coz(_metin(hucre, "taksit"), aciklama)
+    # ⚠️ TAKSİT ETİKETİ KOMŞU SÜTUNA DÜŞEBİLİR (2026-08-18, Garanti vakası):
+    # "3.Taksit" etiketi x=383-407 aralığında; Taksit başlığı 303-370, Bonus
+    # başlığı 402-445 → sınır 386. Etiket sınırı aştığı için BONUS hücresine
+    # düşüyor ve taksit çözümü onu göremiyordu (ESER TİCARET "None/4" okundu,
+    # gerçeği 3/4). Sonuç: kaçıncı taksit olduğu bilinmiyor → biten taksit
+    # yeniden borç yazılabilir.
+    # Çözüm: taksit ARAMASI hücreye değil TÜM SATIRA yapılır. Risk yok —
+    # "3.Taksit" / "1/4 Taksidi" / "x4=" kalıpları tutar veya puanla karışmaz.
+    # ⛔ TARİH HÜCRESİ ARAMAYA GİRMEZ: "10/06/2026" tarihinden "10/6" taksiti
+    # üretiliyordu (Enpara'da 50 satırın 50'sine sahte taksit yazdı: 10/6, 13/6,
+    # 8/6...). Taksit etiketi tarih sütununda ASLA bulunmaz; o hücreyi dışarıda
+    # bırakmak hem doğru hem ucuz.
+    _satir_metni = " ".join(w["text"] for kavram in hucre if kavram != "tarih"
+                            for w in hucre[kavram])
+    taksit = _taksit_coz(_satir_metni, aciklama)
 
     ucret_mi = bool(_UCRET_METNI.search(aciklama))
     isaret_odeme = bool(isaret) and isaret == odeme_isareti

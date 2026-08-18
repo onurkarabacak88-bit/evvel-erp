@@ -5641,6 +5641,53 @@ def _ekstre_eslesme_mutabakat(sonuc, raw: Optional[bytes] = None):
                     sonuc["okuma_denetimi"] = _dn
                 else:
                     _dn["okuyucu"] = "metin"
+
+                # ── 📅 ADIM 8: TAKSİT DİLİMLERİ ─────────────────────────────
+                # Taksit bilgisi PRATİKTE YALNIZ geometrik okuyucuda var:
+                # ekstre_parser Garanti'de 0 taksit buluyor, geometrik 5 buluyor
+                # (ESER 3/4 · TRENDYOL 1/3 · MARTI 1/2 · BİZİM MERMER 1/3 ·
+                # U.S. POLO 5/6). Hangi okuyucu kazanırsa kazansın taksit bilgisi
+                # geometrikten alınır — tutarı kim okursa okusun, taksit sütunu
+                # geometrik okuyucunun gördüğü yerdir.
+                _tks = {}
+                for _x in _gtek:
+                    if _x.get("taksit_sayisi"):
+                        _tks[(_x["tarih"], round(_x["tutar"], 2))] = _x
+                _kalan_yuk = 0.0
+                _plan = []
+                for _i in (sonuc.get("islemler") or []):
+                    _m = _tks.get((_i.get("tarih"), round(abs(float(_i.get("tutar") or 0)), 2)))
+                    if not _m:
+                        continue
+                    _no, _adet = _m.get("taksit_no"), _m.get("taksit_sayisi")
+                    _i["taksit"] = f"{_no}/{_adet}" if _no else f"?/{_adet}"
+                    _i["taksit_sayisi"] = _adet
+                    _i["taksit_anapara"] = _m.get("taksit_toplam")
+                    # ⚠️ BİTMİŞ TAKSİT YENİDEN BORÇ YAZILMAZ: 3/4 demek "4
+                    # taksidin 3.'südür" — geriye YALNIZ 1 taksit kalmıştır.
+                    # Toplam tutarı yeniden yazmak alımı baştan borçlandırır;
+                    # bu, kart defterinde daha önce yaşanmış bir kusurdur.
+                    _kalan_adet = max(0, int(_adet) - int(_no)) if _no else 0
+                    _dilim = abs(float(_i.get("tutar") or 0))
+                    _kalan_yuk += _kalan_adet * _dilim
+                    _plan.append({
+                        "tarih": _i.get("tarih"), "satici": _i.get("aciklama"),
+                        "dilim_tutari": round(_dilim, 2),
+                        "taksit_no": _no, "taksit_sayisi": _adet,
+                        "kalan_taksit": _kalan_adet,
+                        "kalan_tutar": round(_kalan_adet * _dilim, 2),
+                        "alim_toplami": _m.get("taksit_toplam"),
+                    })
+                if _plan:
+                    sonuc["taksit_plani"] = {
+                        "satir": len(_plan),
+                        "gelecek_taksit_yuku": round(_kalan_yuk, 2),
+                        "dilimler": sorted(_plan, key=lambda p: -p["kalan_tutar"]),
+                        "not": "Bu dönemin dilimi ekstrede zaten borçtur; buradaki "
+                               "«kalan» GELECEK dönemlerde çıkacak yüktür. "
+                               "Bitmiş taksitler (n/n) kalan üretmez — alımı baştan "
+                               "borçlandırmak kart defterinde yaşanmış bir kusurdur.",
+                    }
             else:
                 sonuc["geometrik_okuma"] = {"basarili": False, "neden": _g.get("neden")}
         except Exception as _ge:  # noqa: BLE001 — ikinci göz ASLA yüklemeyi kilitlemez
