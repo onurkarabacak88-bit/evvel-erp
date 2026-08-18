@@ -5288,6 +5288,12 @@ def kart_bakiye_karsilastir():
                     "anlik_borc": k_anlik,
                     "defter_canli_bakiye": yeni.get("defter_canli_bakiye"),
                     "gelecek_taksit_yuku": yeni.get("gelecek_taksit_yuku"),
+                    # Rakamın NEREDEN geldiği (2026-08-18): plan=ÖLÇÜM ·
+                    # ekstre_alani=bankanın yazdığı · limit_cikarimi=TAHMİN.
+                    # Bu uç "fark sıfır mı" kanıtı olarak kullanılıyor; kaynağı
+                    # taşımazsa tahmini rakam ölçüm sanılır. Canlı örnek:
+                    # limit çıkarımı 65.810,05 derken ölçüm 87.890,59 çıktı.
+                    "gelecek_taksit_kaynak": yeni.get("gelecek_taksit_kaynak"),
                     "toplam_yukumluluk": yeni.get("toplam_yukumluluk"),
                     "mutabakat_farki": yeni.get("mutabakat_farki"),
                     "asgari_tutar": yeni.get("asgari_tutar"),
