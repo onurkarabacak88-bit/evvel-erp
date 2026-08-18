@@ -2337,6 +2337,64 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
                       PDF eksik/yanlış okunmuş olabilir; mutabakatı onaylamadan rakamları karşılaştır.
                     </div>
                   )}
+                  {/* 🛡️ ADIM 6 — DÖRT KORUMA TARAMASI EKRANA TAŞINDI (2026-08-18)
+                      Dördü de sunucuda kuruldu ve çalışıyordu ama YALNIZ API
+                      yanıtında duruyordu; sahip yüklerken göremiyordu. Görünmeyen
+                      koruma yarım korumadır — bugün dördüncüsünün eksikliği
+                      yüzünden 43.297,72 ₺'lik yanlış aktarım yapıldı ve ancak
+                      elle fark edildi. */}
+                  {eksSonuc.devir_cizgisi_uyarisi?.kilitlenen_satir > 0 && (
+                    <div style={{ padding: '11px 14px', borderRadius: 11, background: `${R.kirmizi}16`, border: `1px solid ${R.kirmizi}66`, fontSize: 12, color: R.metin2, marginBottom: 10, lineHeight: 1.6 }}>
+                      🚧 <b style={{ color: R.kirmizi }}>GEÇMİŞ DÖNEM EKSTRESİ — satır aktarımı kapalı</b><br />
+                      Bu ekstre <b>{kisaTarih(eksSonuc.devir_cizgisi_uyarisi.bu_kesim)}</b> kesimli;
+                      sistemde <b>{kisaTarih(eksSonuc.devir_cizgisi_uyarisi.son_mutabik_kesim)}</b> kesimli
+                      daha yeni bir ekstre zaten mutabık. Bu ayın harcamaları onun
+                      «önceki borç» rakamının <b>içinde</b> — aktarılırsa aynı para iki kez borç yazar.
+                      <div style={{ marginTop: 5, color: R.not2 }}>
+                        {eksSonuc.devir_cizgisi_uyarisi.kilitlenen_satir} satır ·
+                        {' '}{fmt(sayi(eksSonuc.devir_cizgisi_uyarisi.kilitlenen_tutar))} kilitlendi.
+                        Ekstre yine de okundu: taksit zinciri ve belge arşivi için kullanılabilir.
+                      </div>
+                    </div>
+                  )}
+                  {eksSonuc.toplu_eslesme_uyarisi?.grup?.length > 0 && (
+                    <div style={{ padding: '11px 14px', borderRadius: 11, background: `${R.kirmizi}14`, border: `1px solid ${R.kirmizi}55`, fontSize: 12, color: R.metin2, marginBottom: 10, lineHeight: 1.6 }}>
+                      🧮 <b style={{ color: R.kirmizi }}>Bölünmüş satırlar, sistemdeki TOPLU kayıtla eşleşiyor</b>
+                      {eksSonuc.toplu_eslesme_uyarisi.grup.map((g, gi) => (
+                        <div key={gi} style={{ marginTop: 4 }}>
+                          {g.satir} adet {trKucuk(g.tip)} satırının toplamı <b>{fmt(sayi(g.toplam))}</b>,
+                          sistemdeki {kisaTarih(g.sistem_tarih)} tarihli tek kayıtla aynı.
+                        </div>
+                      ))}
+                      <div style={{ marginTop: 5, color: R.not2 }}>Bunları aktarmayın — aynı para iki kez sayılır.</div>
+                    </div>
+                  )}
+                  {eksSonuc.taksit_cakisma_uyarisi?.adet > 0 && (
+                    <div style={{ padding: '11px 14px', borderRadius: 11, background: `${R.amber}14`, border: `1px solid ${R.amber}55`, fontSize: 12, color: R.metin2, marginBottom: 10, lineHeight: 1.6 }}>
+                      🔗 <b>{eksSonuc.taksit_cakisma_uyarisi.adet} satır</b>, defterdeki taksit planlarının
+                      bu aya düşen dilimi — motor onları <b>zaten billiyor</b>. Aktarılırsa aynı taksit
+                      iki kez borç yazar.
+                    </div>
+                  )}
+                  {eksSonuc.taksit_plani?.satir > 0 && (
+                    <div style={{ padding: '11px 14px', borderRadius: 11, background: R.girinti, border: `1px solid ${R.cizgi3}`, fontSize: 12, color: R.metin2, marginBottom: 10, lineHeight: 1.6 }}>
+                      📅 <b>{eksSonuc.taksit_plani.satir} taksitli alım</b> ·
+                      gelecek dönemlere düşen yük{' '}
+                      <b style={{ color: R.amber }}>{fmt(sayi(eksSonuc.taksit_plani.gelecek_taksit_yuku))}</b>
+                      <div style={{ marginTop: 5, color: R.not2, fontSize: 11.5 }}>
+                        {(eksSonuc.taksit_plani.dilimler || []).slice(0, 6).map((p, pi) => (
+                          <span key={pi}>{pi > 0 ? ' · ' : ''}{String(p.satici || '').slice(0, 18)} {p.taksit_no}/{p.taksit_sayisi}</span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {eksSonuc.okuma_denetimi?.okuyucu === 'geometrik' && (
+                    <div style={{ padding: '9px 13px', borderRadius: 11, background: `${R.yesil}12`, border: `1px solid ${R.yesil}44`, fontSize: 11.5, color: R.metin2, marginBottom: 10, lineHeight: 1.55 }}>
+                      📐 Satırlar <b>geometrik okuyucudan</b> alındı — ekstrenin kendi toplamına
+                      metin okuyucusundan daha yakın çıktı (tutar sütun koordinatından okundu,
+                      «son sayı» tahmini yapılmadı).
+                    </div>
+                  )}
                   {eksSonuc.donem_zaten_yuklendi && (
                     <div style={{ padding: '10px 14px', borderRadius: 11, background: `${R.amber}12`, border: `1px solid ${R.amber}55`, fontSize: 12, color: R.metin2, marginBottom: 10, lineHeight: 1.55 }}>
                       ℹ <b>{eksSonuc.donem_zaten_yuklendi.donem}</b> dönemi zaten yüklüydü
