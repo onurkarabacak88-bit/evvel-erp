@@ -423,6 +423,17 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
   const [odemeSube, setOdemeSube] = useState('');
   const [odemeYontem, setOdemeYontem] = useState('havale');
   const [subeler, setSubeler] = useState([]);
+  // 📅 Taksit planı — kart borcunun GÖRÜNMEYEN yarısı. Ekstre "bu ay ne
+  // ödeyeceksin" der; bu "önümüzdeki aylarda ne çıkacak" der. Borca DAHİL
+  // DEĞİL (henüz ekstreye girmediler) — bu ayrım ekranda da yazılı olmalı.
+  // Hata-yutar ve izole: uç düşerse kart ekranı çalışmaya devam eder.
+  const [taksitPlani, setTaksitPlani] = useState(null);
+
+  useEffect(() => {
+    api('/kartlar/taksit-plani')
+      .then((d) => setTaksitPlani(d || null))
+      .catch(() => setTaksitPlani(null));
+  }, []);
 
   useEffect(() => {
     api('/subeler')
@@ -1434,6 +1445,47 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
           }))}
           onAc={(l) => kartAc(l._k)}
         />
+
+        {/* ── 📅 TAKSİT TAKVİMİ (2026-08-18) ────────────────────────────
+            Kart borcunun görünmeyen yarısı. Bu rakamlar borca DAHİL DEĞİL —
+            henüz ekstreye girmediler — ama nakit planlaması için kritik:
+            canlı ölçümde Eylül'de 70.041,94 ₺ taksit çıkacağı ortaya çıktı ve
+            bu bilgi sistemde daha önce HİÇ yoktu. */}
+        {taksitPlani?.planlar?.length > 0 && (
+          <div style={{ marginTop: 18 }}>
+            <Tablo
+              baslik={`📅 Gelecek taksit yükü · ${fmt(sayi(taksitPlani.gelecek_toplam))}`}
+              not="Bu tutarlar kart BORCUNA DAHİL DEĞİLDİR — henüz ekstreye girmediler. Ekstre «bu ay ne ödeyeceksin» der; bu tablo «önümüzdeki aylarda ne çıkacak» der."
+              kolonlar={[{ ad: 'Alım' }, { ad: 'Taksit' }, { ad: 'Aylık dilim', sag: 1 }, { ad: 'Kalan', sag: 1 }]}
+              satirlar={taksitPlani.planlar.map((p) => ({
+                id: p.id,
+                hucreler: [
+                  { v: p.aciklama || '—', kalin: true },
+                  { v: `${p.odenen_taksit}/${p.taksit_adedi}`, renk: R.not },
+                  { v: fmt(sayi(p.dilim_tutari)), mono: true, sag: true },
+                  { v: fmt(sayi(p.kalan_tutar)), mono: true, sag: true, kalin: true },
+                ],
+              }))}
+            />
+            {(taksitPlani.takvim || []).length > 0 && (
+              <div style={{
+                ...kartYuzey, padding: '13px 16px', borderRadius: 13, marginTop: 9,
+                display: 'flex', gap: 18, flexWrap: 'wrap', alignItems: 'center',
+              }}>
+                <span style={{ fontSize: 11, letterSpacing: '.7px', textTransform: 'uppercase', color: R.not2, fontWeight: 700 }}>
+                  Ay ay çıkacak
+                </span>
+                {taksitPlani.takvim.map((t) => (
+                  <span key={t.ay} style={{ fontSize: 12.5, color: R.metin2 }}>
+                    {AY_KISA[Number(String(t.ay).slice(5, 7)) - 1]} {String(t.ay).slice(0, 4)}
+                    {' · '}
+                    <b style={{ fontFamily: F.mono, color: R.amber }}>{fmt(sayi(t.tutar))}</b>
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         {ktkModalBlok}
         {odemeModalBlok}
