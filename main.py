@@ -5821,6 +5821,50 @@ def _ekstre_eslesme_mutabakat(sonuc, raw: Optional[bytes] = None):
                         if not _eslesti:
                             isl["durum"] = "yeni"
                             yeni_adet += 1
+            # ── 🧮 ADIM 7: TOPLU EŞLEŞME (bölünmüş ↔ toplu) ────────────────
+            # 🔴 CANLI VAKA (2026-08-18, Garanti 3018): ekstre 22 Tem'de DÖRT
+            # ayrı ödeme gösteriyordu (100.000 + 15.247 + 38.000 + 49.000 =
+            # 202.247). Sistemde aynı para Ödeme Merkezi'nden TEK SATIR 202.247
+            # olarak kayıtlıydı. Satır-satır eşleme "4 satır = 1 kayıt" ilişkisini
+            # GÖREMEZ; dördü de "yeni" işaretlendi, aktarıldı ve ÖDEME ÇİFT
+            # SAYILDI — kart borcu 202.247 ₺ eksik göründü. Elle fark ettim.
+            # Bu tarama o boşluğu kapatır: aynı türden "yeni" satırların TOPLAMI
+            # sistemdeki eşleşmemiş bir kayda denk geliyorsa hepsi işaretlenir.
+            # ⛔ HÜKÜM VERMEZ, İÇE AKTARMAYI DURDURMAZ — uyarır. Kararı sahip verir
+            #    (meşru olabilir: aynı gün gerçekten 4 ayrı ödeme + ayrı bir kayıt).
+            try:
+                _toplu = []
+                for _tip in ("ODEME", "HARCAMA"):
+                    _yeniler = [i for i in sonuc.get("islemler", [])
+                                if i.get("durum") == "yeni" and i.get("tip") == _tip]
+                    if len(_yeniler) < 2:
+                        continue
+                    _top = round(sum(abs(float(i.get("tutar") or 0)) for i in _yeniler), 2)
+                    for _k, _adet in list(mevcut.items()):
+                        if _adet <= 0 or _k[2] != _tip:
+                            continue
+                        if abs(float(_k[1]) - _top) > 1.0:
+                            continue
+                        for _i in _yeniler:
+                            _i["durum"] = "toplu_eslesti"
+                            _i["toplu_not"] = (
+                                f"Bu satır tek başına sistemde yok, AMA {len(_yeniler)} "
+                                f"{_tip.lower()} satırının toplamı ({_top:,.2f} ₺) sistemdeki "
+                                f"{_k[0]} tarihli tek kayıtla birebir aynı. Aktarılırsa "
+                                "AYNI PARA İKİ KEZ sayılır.")
+                        _toplu.append({"tip": _tip, "satir": len(_yeniler), "toplam": _top,
+                                       "sistem_tarih": _k[0], "sistem_tutar": float(_k[1])})
+                        yeni_adet = max(0, yeni_adet - len(_yeniler))
+                        break
+                if _toplu:
+                    sonuc["toplu_eslesme_uyarisi"] = {
+                        "grup": _toplu,
+                        "mesaj": "⚠️ Bölünmüş ekstre satırları, sistemdeki TOPLU bir kayıtla "
+                                 "eşleşiyor. Bunları aktarmayın — aynı para iki kez sayılır. "
+                                 "Satır-satır fren bu ilişkiyi göremez, bu tarama görür.",
+                    }
+            except Exception as _te:  # noqa: BLE001 — tarama yüklemeyi ASLA kilitlemez
+                sonuc["toplu_eslesme_uyarisi"] = {"hata": str(_te)[:120]}
             sonuc["mutabakat"]["yeni_islem_adet"] = yeni_adet
 
             # ── BENZER GİDER UYARISI: "yeni" (eksik) HARCAMA kalemleri için, ±7 gün
