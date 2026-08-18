@@ -4375,13 +4375,33 @@ def kart_hareket_iptal(hid: str):
         eski = cur.fetchone()
         if not eski: raise HTTPException(404, "Kayıt bulunamadı veya zaten iptal edilmiş")
         cur.execute("UPDATE kart_hareketleri SET durum='iptal' WHERE id=%s", (hid,))
+        kasa_iptal = None
         if eski['islem_turu'] == 'ODEME':
-            iptal_kasa_hareketi(cur, hid, 'kart_hareketleri', 'KART_ODEME', 'KART_ODEME_IPTAL', 'Kart ödemesi iptali')
+            # 🔴 KİLİTLİ KAYIT KUSURU (2026-08-18, canlı yakalandı):
+            # Eskiden burada koşulsuz iptal_kasa_hareketi çağrılıyordu. O
+            # fonksiyon kasa kaydı BULAMAZSA Exception atar → istek 500 verir →
+            # kart hareketi de iptal olmaz. Sonuç: EKSTRE İMPORTUNDAN gelen bir
+            # ödeme satırı HİÇ İPTAL EDİLEMİYORDU (import kasaya yazmaz, docstring
+            # de bunu söyler). Canlı kanıt: Garanti 3018'e aktarılan 4 ödeme
+            # satırı silinemedi — "İptal edilecek kayıt bulunamadı — KART_ODEME".
+            # Yani yanlış aktarılmış bir ödeme defterde KALICI olarak sıkışıyordu.
+            # Doğrusu: kasa karşılığı VARSA iptal et, YOKSA bu bir hata değildir —
+            # kart tarafı yine de iptal olur ve durum yanıtta GÖRÜNÜR (sessiz geçme yok).
+            cur.execute("""SELECT 1 FROM kasa_hareketleri
+                            WHERE kaynak_id=%s AND islem_turu='KART_ODEME'
+                              AND kasa_etkisi=TRUE AND durum='aktif' LIMIT 1""", (hid,))
+            if cur.fetchone():
+                iptal_kasa_hareketi(cur, hid, 'kart_hareketleri', 'KART_ODEME',
+                                    'KART_ODEME_IPTAL', 'Kart ödemesi iptali')
+                kasa_iptal = "iptal edildi"
+            else:
+                kasa_iptal = ("kasa karşılığı yok — bu satır kasaya hiç yazmamıştı "
+                              "(ekstre importu kart borcuna yazar, kasaya dokunmaz)")
         # Ekstre import'tan otomatik açılmış eşlenik anlık gider varsa onu da iptal et
         if eski.get('kaynak_tablo') == 'ekstre_import' and eski['islem_turu'] == 'HARCAMA':
             cur.execute("UPDATE anlik_giderler SET durum='iptal' WHERE id=%s AND durum='aktif'", ("agk_" + hid,))
         audit(cur, 'kart_hareketleri', hid, 'IPTAL', eski=eski)
-    return {"success": True}
+    return {"success": True, "kasa_iptal": kasa_iptal}
 
 
 @app.post("/api/kart-hareketleri/{hid}/harcama-tipi")
