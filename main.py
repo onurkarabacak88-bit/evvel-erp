@@ -2460,6 +2460,78 @@ def borc_maliyet_merkezi(bid: str, b: MaliyetMerkeziBody):
             "varsayilan_odeyen_sube_id": ody}
 
 
+@app.get("/api/kartlar/taksit-plani")
+def kart_taksit_plani_listele(kart_id: Optional[str] = None):
+    """📅 Aktif taksit planları + AY AY gelecek yük takvimi.
+
+    Bu, kart borcunun GÖRÜNMEYEN yarısıdır: ekstre "bu ay ne ödeyeceksin"
+    der, bu görünüm "önümüzdeki aylarda ne çıkacak" der. Defterden AYRI
+    yaşar (borç üretmez) — bkz. /kartlar/taksit-plani-kur gerekçesi.
+    """
+    with db() as (conn, cur):
+        try:
+            cur.execute("SAVEPOINT sp_tp")
+            _k = " AND p.kart_id=%s" if kart_id else ""
+            _p = [kart_id] if kart_id else []
+            cur.execute(f"""
+                SELECT p.id, p.kart_id, k.kart_adi, p.aciklama, p.toplam_tutar,
+                       p.taksit_adedi, p.ilk_donem, p.durum
+                  FROM kart_taksit_plani p
+                  JOIN kartlar k ON k.id = p.kart_id
+                 WHERE p.durum='aktif'{_k}
+                 ORDER BY p.olusturma DESC
+            """, _p)
+            planlar = [dict(r) for r in (cur.fetchall() or [])]
+            if not planlar:
+                cur.execute("RELEASE SAVEPOINT sp_tp")
+                return {"planlar": [], "gelecek_toplam": 0.0, "takvim": [],
+                        "not": "Aktif taksit planı yok."}
+            cur.execute(f"""
+                SELECT d.plan_id, d.taksit_no, d.donem, d.tutar, d.durum
+                  FROM kart_taksit_dilimi d
+                  JOIN kart_taksit_plani p ON p.id = d.plan_id
+                 WHERE p.durum='aktif'{_k}
+                 ORDER BY d.donem, d.taksit_no
+            """, _p)
+            dilimler = [dict(r) for r in (cur.fetchall() or [])]
+            cur.execute("RELEASE SAVEPOINT sp_tp")
+        except Exception as e:  # noqa: BLE001 — tablo yoksa boş dön, sistem düşmesin
+            try:
+                cur.execute("ROLLBACK TO SAVEPOINT sp_tp"); cur.execute("RELEASE SAVEPOINT sp_tp")
+            except Exception:  # noqa: BLE001
+                pass
+            return {"planlar": [], "gelecek_toplam": 0.0, "takvim": [],
+                    "not": f"Taksit planı okunamadı: {str(e)[:100]}"}
+
+    _pd = {}
+    for d in dilimler:
+        _pd.setdefault(d["plan_id"], []).append(d)
+    out, takvim = [], {}
+    for p in planlar:
+        ds = _pd.get(p["id"], [])
+        bek = [d for d in ds if d["durum"] == "beklenen"]
+        for d in bek:
+            _ay = str(d["donem"])[:7]
+            takvim[_ay] = round(takvim.get(_ay, 0.0) + float(d["tutar"]), 2)
+        out.append({
+            "id": p["id"], "kart_adi": p["kart_adi"], "aciklama": p["aciklama"],
+            "toplam_tutar": float(p["toplam_tutar"]), "taksit_adedi": int(p["taksit_adedi"]),
+            "ilk_donem": str(p["ilk_donem"]) if p["ilk_donem"] else None,
+            "odenen_taksit": len(ds) - len(bek), "kalan_taksit": len(bek),
+            "kalan_tutar": round(sum(float(d["tutar"]) for d in bek), 2),
+            "dilim_tutari": round(float(p["toplam_tutar"]) / int(p["taksit_adedi"]), 2),
+        })
+    out.sort(key=lambda x: -x["kalan_tutar"])
+    return {
+        "planlar": out,
+        "gelecek_toplam": round(sum(o["kalan_tutar"] for o in out), 2),
+        "takvim": [{"ay": a, "tutar": t} for a, t in sorted(takvim.items())],
+        "not": "Bu tutarlar kart BORCUNA DAHİL DEĞİLDİR — henüz ekstreye girmediler. "
+               "Ekstre 'bu ay ne ödeyeceksin' der; bu görünüm 'önümüzdeki aylarda ne "
+               "çıkacak' der.",
+    }
+
+
 class TaksitPlanBody(BaseModel):
     kart_id: str
     kesim_tarihi: str
