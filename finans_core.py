@@ -627,12 +627,38 @@ def kart_bakiye_ozeti(cur, kart_id: str, tarih: Optional[date] = None) -> Dict[s
         anlik_borc = defter_canli          # ekstresiz kartta defter tek kaynak
 
     # ── 6) Gelecek taksit yükü (dönem-sabit, snapshot'tan) ───────────────────
+    # 🥇 ÖNCELİK 1 — ÖLÇÜLMÜŞ PLAN (2026-08-18). Ekstredeki taksit satırlarından
+    # kurulan gerçek plan varsa ONU kullan. Aşağıdaki iki yol TAHMİNdir:
+    #   · snap.kalan_taksit → bankanın yazdığı alan (her ekstrede yok)
+    #   · limit − kullanılabilir − borç → limit boşluğundan ÇIKARIM
+    # Canlı ölçüm farkı gösterdi: Garanti 3018'de limit-çıkarımı 65.810,05 ₺
+    # derken ekstreden okunan gerçek taksitler 87.890,59 ₺ çıktı (fark
+    # 22.080,54). Banka gelecek taksitlerin tamamını limitten bloke etmiyor —
+    # yani limit boşluğuna bakmak EKSİK gösteriyor.
+    # Bu, gün boyu tekrarlanan kalıbın bir örneği daha: ÇIKARIM ÖLÇÜMÜN YERİNİ
+    # TUTMAZ. Plan yoksa eski davranış birebir sürer.
     gelecek_taksit = None
-    if snap:
+    gelecek_kaynak = None
+    try:
+        cur.execute("""
+            SELECT COALESCE(SUM(d.tutar), 0) AS kalan
+              FROM kart_taksit_dilimi d
+              JOIN kart_taksit_plani p ON p.id = d.plan_id
+             WHERE p.kart_id = %s AND p.durum = 'aktif' AND d.durum = 'beklenen'
+        """, (kart_id,))
+        _pl = float((cur.fetchone() or {}).get("kalan") or 0)
+        if _pl > 0:
+            gelecek_taksit = round(_pl, 2)
+            gelecek_kaynak = "plan"      # ÖLÇÜM
+    except Exception:  # noqa: BLE001 — tablo yoksa eski yola düş
+        pass
+    if gelecek_taksit is None and snap:
         if snap.get("kalan_taksit") is not None:
             gelecek_taksit = float(snap["kalan_taksit"])
+            gelecek_kaynak = "ekstre_alani"
         elif snap.get("kull_limit") is not None and limit > 0:
             gelecek_taksit = max(0.0, limit - float(snap["kull_limit"]) - (ekstre_borcu or 0))
+            gelecek_kaynak = "limit_cikarimi"   # TAHMİN — en zayıf kaynak
 
     # ── 7) Mutabakat farkı — GİZLENMEZ ───────────────────────────────────────
     # Ekstre kesimi anındaki defter durumu ile bankanın dediği arasındaki fark.
@@ -656,6 +682,10 @@ def kart_bakiye_ozeti(cur, kart_id: str, tarih: Optional[date] = None) -> Dict[s
         "anlik_borc": round(anlik_borc, 2),
         "defter_canli_bakiye": round(defter_canli, 2),
         "gelecek_taksit_yuku": round(gelecek_taksit, 2) if gelecek_taksit is not None else None,
+        # Rakamın NEREDEN geldiği: plan=ÖLÇÜM · ekstre_alani=bankanın yazdığı ·
+        # limit_cikarimi=TAHMİN (en zayıf). Kaynağı gizlemek, tahmini ölçüm
+        # sanmaya yol açar — bugün tam bu yüzden 22.080,54 ₺ fark gözden kaçıyordu.
+        "gelecek_taksit_kaynak": gelecek_kaynak,
         "toplam_yukumluluk": round(anlik_borc + (gelecek_taksit or 0), 2),
         "mutabakat_farki": mutabakat_farki,
         "bu_donem_odenen": round(bu_donem_odenen, 2),
