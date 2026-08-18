@@ -5527,12 +5527,66 @@ def _ekstre_eslesme_mutabakat(sonuc, raw: Optional[bytes] = None):
                     "harcama_farki": _gfark,
                     "tutarsiz_satir": len(_g.get("tutarsiz") or []),
                     "kazanan": _kazanan,
-                    "not": "İkinci göz — şu an YALNIZ RAPORLAR, içe aktarımı değiştirmez. "
-                           "Tutarı sütun koordinatından okur; 'son sayı' tahmini yapmaz. "
-                           "Kıyasa faiz eklenir çünkü faiz TARİHSİZ başlık satırıdır ve "
-                           "geometrik okuyucunun işi değildir — okuyucular yalnız SATIR "
-                           "OKUMA becerisiyle yarışsın.",
+                    "not": "Çapa hakemliğinde ikinci göz. Kıyasa yalnız geometriğin "
+                           "KENDİ tarihsiz faizi eklenir — faizi tabloda tutan bankada "
+                           "eklenecek bir şey bulunmaz, düzeltme kendini sınırlar.",
                 }
+
+                # ── ⚖️ HAKEM KARAR VERİYOR (sahip onayı 2026-08-18: "EVET") ──
+                # Geometrik okuyucu ÇAPAYA DAHA YAKINSA satırlar ondan alınır.
+                # Canlı ölçüm (5 banka) bu kararı destekliyor:
+                #   Garanti 0,00 / 0,00 · Worldcard 0,00 / 0,00 · Enpara −550 / −550
+                #   ZİRAAT −91.030,16 / 0,00  ← metin 91 K KAÇIRIYOR
+                #   Axess: geometrik okuyamıyor (CID fontu) → devreye hiç girmez
+                #
+                # ⚠️ FAİZ KORUNUR: bu noktada sonuc["islemler"] içindeki FAIZ
+                # satırları BAŞLIKTAN enjekte edilmiştir (garanti_faiz_enjekte /
+                # ziraat_faiz_finalize) ve geometrik okuyucuda karşılığı YOKTUR.
+                # Ham takas yapılsaydı Garanti'de 20.979,46 ₺ faiz SESSİZCE
+                # düşerdi. Bu yüzden geometrik satırlar + mevcut FAİZ satırları
+                # birleştirilir.
+                # ⚠️ DENETİM YENİDEN HESAPLANIR: ekranda görünen çapa, GERÇEKTEN
+                # içe aktarılacak satırların çapası olmalı — yoksa "yeşil" başka
+                # bir kümeyi doğrular (sahte yeşil).
+                if _kazanan == "geometrik":
+                    _faiz_satir = [i for i in (sonuc.get("islemler") or [])
+                                   if (i.get("tip") or "").upper() == "FAIZ"]
+                    _yeni = [_ekstre_txn_map({
+                        "tarih": x["tarih"], "tutar": x["tutar"],
+                        "aciklama": x["aciklama"], "kategori": None,
+                        "odeme_mi": x.get("odeme_mi"),
+                        "taksit": (f"{x['taksit_no']}/{x['taksit_sayisi']}"
+                                   if x.get("taksit_no") and x.get("taksit_sayisi") else None),
+                        "taksit_anapara": x.get("taksit_toplam"),
+                    }) for x in _gtek]
+                    sonuc["islemler"] = _yeni + _faiz_satir
+                    # Çapayı YENİ kümeyle yeniden kur
+                    _oku_h2 = sum(abs(float(i.get("tutar") or 0)) for i in sonuc["islemler"]
+                                  if (i.get("tip") or "").upper() in ("HARCAMA", "FAIZ"))
+                    _oku_o2 = sum(abs(float(i.get("tutar") or 0)) for i in sonuc["islemler"]
+                                  if (i.get("tip") or "").upper() == "ODEME")
+                    _bek_h2 = (float(_borc_b) - float(_onceki_b) + _oku_o2
+                               if (_borc_b is not None and _onceki_b is not None) else _bek_h)
+                    _f2 = round(_oku_h2 - float(_bek_h2), 2) if _bek_h2 is not None else None
+                    _dn.update({
+                        "okunan_harcama": round(_oku_h2, 2), "okunan_odeme": round(_oku_o2, 2),
+                        "islem_adet": len(sonuc["islemler"]),
+                        "okuyucu": "geometrik",
+                        "okuyucu_gerekce": "Çapaya metin okuyucusundan DAHA YAKIN — "
+                                           "satırlar sütun koordinatından okundu.",
+                    })
+                    if _bek_h2 is not None:
+                        _dn.update({"beklenen_harcama": round(float(_bek_h2), 2),
+                                    "harcama_farki": _f2, "harcama_tutuyor": abs(_f2) <= 1.0})
+                    _h2 = [v for k, v in _dn.items() if k.endswith("_tutuyor")]
+                    _dn["saglam"] = bool(_h2) and all(_h2)
+                    _dn["mesaj"] = ("Okuma doğrulandı (geometrik okuyucu) — ekstrenin kendi "
+                                    "toplamıyla birebir." if _dn["saglam"] else
+                                    "Geometrik okuyucu seçildi ama çapa hâlâ tutmuyor — "
+                                    "içe aktarmadan önce satırları gözden geçirin.")
+                    sonuc["okuma_denetimi"] = _dn
+                else:
+                    _dn["okuyucu"] = "metin"
             else:
                 sonuc["geometrik_okuma"] = {"basarili": False, "neden": _g.get("neden")}
         except Exception as _ge:  # noqa: BLE001 — ikinci göz ASLA yüklemeyi kilitlemez
