@@ -5442,6 +5442,53 @@ def _ekstre_eslesme_mutabakat(sonuc):
                          if _hepsi else
                          "Ekstre başlığında kıyas toplamı yok — okuma doğrulanamadı."))
         sonuc["okuma_denetimi"] = _dn
+
+        # ── 📐 GEOMETRİK OKUYUCU — ÇAPA HAKEMLİĞİNDE İKİNCİ GÖZ (Adım 5) ──
+        # Metin okuyucusu tutarı "satırın son sayısı" tahminiyle bulur ve bu
+        # tahmin 2026-08-10..17 arasında ÜÇ canlı kusur üretti (Worldcard puan,
+        # Garanti bonus sütunu, 'bosluk' hücresi = 42.193 ₺ kayıp). Kökü tek:
+        # TUTARIN YERİ YAPISAL DEĞİL. Kanıt — aynı kavram iki bankada TERS
+        # yönde durur: Garanti'de puan sütunu tutarın SOLUNDA (x≈445), Worldcard'da
+        # SAĞINDA (x≈567). "Son sayıyı al" ikisinde aynı anda doğru olamaz.
+        # ekstre_geometri tutarı SÜTUN KOORDİNATINDAN okur.
+        #
+        # ⚖️ AMA SESSİZCE DEVRALMAZ. Hangi okuyucunun kazandığına ÇAPA karar
+        # verir: ekstrenin kendi başlık toplamına HANGİSİ DAHA YAKINSA o. Böylece
+        # yeni okuyucu bir bankada kötüyse eskisini bozmaz — "sahte yeşil yasak"
+        # doktrininin okuyucu tarafındaki karşılığı.
+        # Şimdilik yalnız RAPORLAR (islemler'i DEĞİŞTİRMEZ): önce canlı ekstrelerde
+        # kim kazanıyor görülecek, sonra hakem karar verici yapılacak.
+        try:
+            import ekstre_geometri as _geo
+            _g = _geo.geometrik_oku(raw)
+            if _g.get("basarili"):
+                _gs = _g["satirlar"]
+                _gor = set(); _gtek = []
+                for _x in _gs:   # aynı tablo bazı PDF'lerde 2. sayfada TEKRAR basılır
+                    _k = (_x["tarih"], _x["aciklama"][:30], round(_x["tutar"], 2), _x["odeme_mi"])
+                    if _k in _gor:
+                        continue
+                    _gor.add(_k); _gtek.append(_x)
+                _gh = round(sum(x["tutar"] for x in _gtek if not x.get("odeme_mi")), 2)
+                _go = round(sum(x["tutar"] for x in _gtek if x.get("odeme_mi")), 2)
+                _gfark = round(_gh - float(_bek_h), 2) if _bek_h is not None else None
+                _metin_fark = _dn.get("harcama_farki")
+                _kazanan = None
+                if _gfark is not None and _metin_fark is not None:
+                    _kazanan = "geometrik" if abs(_gfark) < abs(_metin_fark) - 0.01 else (
+                        "metin" if abs(_metin_fark) < abs(_gfark) - 0.01 else "berabere")
+                sonuc["geometrik_okuma"] = {
+                    "satir": len(_gtek), "ham_satir": len(_gs),
+                    "harcama": _gh, "odeme": _go, "harcama_farki": _gfark,
+                    "tutarsiz_satir": len(_g.get("tutarsiz") or []),
+                    "kazanan": _kazanan,
+                    "not": "İkinci göz — şu an YALNIZ RAPORLAR, içe aktarımı değiştirmez. "
+                           "Tutarı sütun koordinatından okur; 'son sayı' tahmini yapmaz.",
+                }
+            else:
+                sonuc["geometrik_okuma"] = {"basarili": False, "neden": _g.get("neden")}
+        except Exception as _ge:  # noqa: BLE001 — ikinci göz ASLA yüklemeyi kilitlemez
+            sonuc["geometrik_okuma"] = {"basarili": False, "neden": f"hata: {str(_ge)[:120]}"}
     except Exception as _e:
         sonuc["okuma_denetimi"] = {"saglam": None, "mesaj": f"Okuma denetimi çalışmadı: {_e}"}
 
