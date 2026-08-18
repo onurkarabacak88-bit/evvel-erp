@@ -5944,6 +5944,63 @@ def _ekstre_eslesme_mutabakat(sonuc, raw: Optional[bytes] = None):
                         if not _eslesti:
                             isl["durum"] = "yeni"
                             yeni_adet += 1
+            # ── 🔗 TAKSİT ÇAKIŞMA TARAMASI (2026-08-18) ────────────────────
+            # 🔴 NEDEN: bir taksitli alım HER AY ekstrede yeniden görünür
+            # (ESER TİCARET: Haziran 1/4 · Temmuz 2/4 · Ağustos 3/4 — hep
+            # 41.250 ₺). Aynı alımın dilimi. Eğer plan bir ekstreden kurulduysa
+            # (tutar=165.000, taksit_sayisi=4, başlangıç Haziran), motor o
+            # dilimi ZATEN billiyor. Sonraki ekstrenin dilim satırını AYRICA
+            # aktarmak aynı taksidi İKİ KEZ borçlandırır.
+            # Satır-satır eşleme bunu göremez: defterdeki kayıt 165.000, ekstre
+            # satırı 41.250 — tutarlar tutmaz, "yeni" sanılır.
+            # Bu tarama, aktif taksit planlarının BU DÖNEME düşen dilimini
+            # hesaplayıp ekstre satırıyla karşılaştırır.
+            try:
+                cur.execute("""SELECT tutar, taksit_sayisi,
+                                      COALESCE(baslangic_tarihi, tarih) AS bas, aciklama
+                                 FROM kart_hareketleri
+                                WHERE kart_id=%s AND durum='aktif'
+                                  AND islem_turu='HARCAMA' AND COALESCE(taksit_sayisi,1)>1""",
+                            (kart["id"],))
+                _planlar = [dict(r) for r in (cur.fetchall() or [])]
+                _cak = []
+                if _planlar:
+                    _kes = sonuc.get("kesim_tarihi")
+                    _kd = date.fromisoformat(str(_kes)[:10]) if _kes else None
+                    for _i in sonuc.get("islemler", []):
+                        if _i.get("durum") != "yeni" or _i.get("tip") != "HARCAMA":
+                            continue
+                        _tut = round(abs(float(_i.get("tutar") or 0)), 2)
+                        for _p in _planlar:
+                            _n = int(_p["taksit_sayisi"] or 1)
+                            _dilim = round(float(_p["tutar"]) / _n, 2)
+                            if abs(_dilim - _tut) > 1.0:
+                                continue
+                            # Bu ekstrenin ayı planın penceresinde mi?
+                            _b = _p["bas"]
+                            if _kd and _b:
+                                _idx = (_kd.year - _b.year) * 12 + (_kd.month - _b.month)
+                                if not (0 <= _idx < _n):
+                                    continue
+                            _i["durum"] = "taksit_kapsandi"
+                            _i["taksit_not"] = (
+                                f"Bu satır ({_tut:,.2f} ₺) defterdeki taksit planının "
+                                f"({float(_p['tutar']):,.2f} ₺ / {_n} taksit) bu aya düşen "
+                                "dilimidir — motor onu ZATEN billiyor. Aktarılırsa aynı "
+                                "taksit iki kez borç yazar.")
+                            _cak.append({"satir": _i.get("aciklama"), "dilim": _tut,
+                                         "plan_toplam": float(_p["tutar"]), "taksit": _n})
+                            yeni_adet = max(0, yeni_adet - 1)
+                            break
+                if _cak:
+                    sonuc["taksit_cakisma_uyarisi"] = {
+                        "adet": len(_cak), "satirlar": _cak,
+                        "mesaj": "⚠️ Bu satırlar defterdeki taksit planlarının dilimleri. "
+                                 "Aktarmayın — motor zaten billiyor.",
+                    }
+            except Exception as _ce:  # noqa: BLE001
+                sonuc["taksit_cakisma_uyarisi"] = {"hata": str(_ce)[:120]}
+
             # ── 🧮 ADIM 7: TOPLU EŞLEŞME (bölünmüş ↔ toplu) ────────────────
             # 🔴 CANLI VAKA (2026-08-18, Garanti 3018): ekstre 22 Tem'de DÖRT
             # ayrı ödeme gösteriyordu (100.000 + 15.247 + 38.000 + 49.000 =
