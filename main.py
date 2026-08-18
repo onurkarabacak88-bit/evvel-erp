@@ -5492,9 +5492,26 @@ def _ekstre_eslesme_mutabakat(sonuc, raw: Optional[bytes] = None):
                 # Yani geometrik satırları DOĞRU okuyordu, sadece faiz onun işi
                 # değildi. Kıyasa aynı faizi ekliyoruz; okuyucular yalnız
                 # SATIR OKUMA becerisiyle yarışsın.
+                # 🔬 DÜZELTME (2026-08-18, canlı ölçümle yakalandı): metin
+                # yolundaki TÜM faizi eklemek AŞIRI DÜZELTMEYDİ. Bankalar faizi
+                # farklı yerde tutuyor:
+                #   Worldcard/Ziraat/Enpara → faiz TARİHLİ tablo satırı; geometrik
+                #     onu ZATEN okuyor. Eklemek çift sayım oldu (World 0,00 → +14.087)
+                #   Garanti → faiz TARİHSİZ başlık satırı; geometrik okumuyor.
+                # Doğru ölçüt: yalnız GEOMETRİĞİN KENDİ tarihsiz satırlarındaki
+                # faizi ekle. Böylece her banka kendi yapısına göre adil kıyaslanır
+                # ve düzeltme kendi kendini sınırlar.
+                # ⛔ DEVİR satırı faiz DEĞİLDİR — "önceki dönemden devir edilen
+                #    tutar" eklenirse harcama borcun tamamı kadar şişerdi.
+                import re as _re_f
+                _faiz_dsn = _re_f.compile(
+                    r"faiz|bsmv|kkdf|ücret|ucret|aidat|gecikme|limit\s*aşım|limit\s*asim", _re_f.I)
+                _devir_dsn = _re_f.compile(r"devir|önceki\s*dönem|onceki\s*donem|geçen\s*dönem", _re_f.I)
                 _enjekte_faiz = round(sum(
-                    abs(float(i.get("tutar") or 0)) for i in (sonuc.get("islemler") or [])
-                    if (i.get("tip") or "").upper() == "FAIZ"), 2)
+                    abs(float(t.get("tutar") or 0))
+                    for t in (_g.get("tarihsiz_tutarli") or [])
+                    if _faiz_dsn.search(t.get("aciklama") or "")
+                    and not _devir_dsn.search(t.get("aciklama") or "")), 2)
                 _gh_kiyas = round(_gh + _enjekte_faiz, 2)
                 _gfark = round(_gh_kiyas - float(_bek_h), 2) if _bek_h is not None else None
                 _metin_fark = _dn.get("harcama_farki")
