@@ -2460,6 +2460,72 @@ def borc_maliyet_merkezi(bid: str, b: MaliyetMerkeziBody):
             "varsayilan_odeyen_sube_id": ody}
 
 
+class DevirTazeleBody(BaseModel):
+    kart_id: Optional[str] = None      # boş = tüm bayat kartlar
+    uygula: bool = False               # ⚠️ VARSAYILAN KURU ÇALIŞTIRMA
+
+
+@app.post("/api/kartlar/devir-tazele")
+def kart_devir_tazele(body: DevirTazeleBody):
+    """🔄 BAYAT DENKLEŞTİRME YAMASINI TAZELE — sistemin KENDİ mekanizması.
+
+    Codex'in kuralı gereği önce İKİ KARTTA HAM VERİDEN doğrulandı (2026-08-18):
+      Garanti Onur (iyi): ham −113.261,15 + yama 597.238,22 = 483.977,07 = BANKA ✓
+      WORLD ANNEM (kötü): ham  +41.567,98 + yama 139.842,02 = 181.410  ≠ 480.481 ✗
+    Yani mekanizma DOĞRU, yama 5 kartta ESKİMİŞ. Yama yazıldıktan sonra o karta
+    ekstre yüklendiyse ham geçmiş büyür ama yama sabit kalır → sapma.
+
+    Bu uç, sistemin zaten kullandığı formülü (`adj = donem_borcu − ham borç`)
+    yeniden çalıştırır. Yeni bir kavram İCAT ETMEZ; bayat yamayı günceller.
+
+    ⚠️ NE YAPMAZ: kayıp geçmişi geri getirmez. Yama bir ÖZETtir; tazelemek
+    defteri bankaya eşitler ama o 299 K'nın hangi harcamalardan geldiğini
+    söylemez. Gerçek geçmiş isteniyorsa eski ekstreler yüklenmeli.
+    ⛔ GERİ-ALMA ≠ SİLME: eski yama satırı iptal edilir (iz kalır), yerine
+    gerekçeli yenisi yazılır.
+    """
+    with db() as (conn, cur):
+        rapor = kart_devir_denetimi()["kartlar"]
+        hedef = [r for r in rapor
+                 if r.get("durum") == "YAMA BAYAT"
+                 and (not body.kart_id or r["kart_id"] == body.kart_id)]
+        plan, uygulanan = [], 0
+        for r in hedef:
+            eski, yeni = r["stored_devir"], r["expected_devir"]
+            plan.append({"kart": r["kart_adi"], "eski_devir": eski, "yeni_devir": yeni,
+                         "sapma": r["sapma"], "devir_tarihi": r["devir_tarihi"],
+                         "ekstre_borcu": r.get("ekstre_borcu")})
+            if not body.uygula:
+                continue
+            cur.execute("""UPDATE kart_hareketleri
+                              SET durum='iptal',
+                                  aciklama = COALESCE(aciklama,'') ||
+                                    ' [bayat yama — tazelendi 2026-08-18]'
+                            WHERE kart_id=%s AND durum='aktif' AND islem_turu='DEVIR'""",
+                        (r["kart_id"],))
+            hid = str(uuid.uuid4())
+            cur.execute("""INSERT INTO kart_hareketleri
+                (id, kart_id, tarih, islem_turu, tutar, taksit_sayisi, aciklama)
+                VALUES (%s,%s,%s::date,'DEVIR',%s,1,%s)""",
+                (hid, r["kart_id"], r["devir_tarihi"], yeni,
+                 f"Denkleştirme yaması (tazelendi) — eski {eski:,.2f} → {yeni:,.2f} "
+                 f"· sapma {r['sapma']:,.2f} · ekstre {r.get('ekstre_borcu')}"))
+            audit(cur, "kart_hareketleri", hid, "DEVIR_TAZELE")
+            uygulanan += 1
+        if body.uygula:
+            kart_plan_guncelle_tx(cur)
+    return {
+        "kuru_calistirma": not body.uygula,
+        "bayat_kart": len(hedef), "tazelenen": uygulanan, "plan": plan,
+        "toplam_duzeltme": round(sum(abs(p["sapma"]) for p in plan), 2),
+        "uyari": "Bu işlem defteri bankaya EŞİTLER ama kayıp geçmişi geri getirmez. "
+                 "Yama bir özettir; hangi harcamalardan geldiğini söylemez.",
+        "not": ("Hiçbir şey yazılmadı — uygulamak için uygula=true gönderin."
+                if not body.uygula else
+                "Eski yamalar İZLİ İPTAL edildi, yerlerine gerekçeli yenisi yazıldı."),
+    }
+
+
 @app.get("/api/kartlar/devir-denetimi")
 def kart_devir_denetimi():
     """🔬 DEVİR YAMASI DENETİMİ — SALT OKUR, hiçbir şey yazmaz.
