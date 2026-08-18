@@ -4438,7 +4438,38 @@ def kartlar_listele():
             # Toplam borç = anlık + gelecek taksit yükü. Taksit bilinmiyorsa (None) sadece
             # anlık (boş/None bırakma → frontend "Toplam Borç" hücresi eksik görünmesin).
             _toplam_taksitli = _anlik + (_gelecek_taksit or 0)
-            sonuc.append({**k,
+            # ── 🧭 ADIM 9: KANONİK ALANLAR LİSTEYE EKLENİYOR ──────────────
+            # Ekranlar bugüne kadar `guncel_borc` / `anlik_borc` / `donem_borcu`
+            # gibi BEŞ AYRI YOLDAN beslendi ve aynı ad farklı anlam taşıyordu
+            # (17 Ağu: OPET aynı anda 508.023,92 ve 190.218,39 gösterdi).
+            # Kanonik model (kart_bakiye_ozeti) 2026-08-17'de kuruldu ama
+            # PARALEL duruyordu — hiçbir ekran ondan beslenmiyordu.
+            # Burada aynı yanıta `kanonik_*` önekiyle ekleniyor: mevcut alanlar
+            # AYNEN duruyor (hiçbir ekran bozulmaz), tüketiciler tek tek
+            # taşındıkça eskiler emekliye ayrılabilir (Adım 11).
+            # HATA-YUTAR: kanonik hesap düşse liste yine döner — kart ekranı
+            # tek bir kartın hesabı yüzünden komple boş kalmasın.
+            _kan = {}
+            try:
+                _kb = kart_bakiye_ozeti(cur, str(k["id"]))
+                if _kb and not _kb.get("hata"):
+                    _kan = {
+                        "kanonik_ekstre_borcu": _kb.get("ekstre_borcu"),
+                        "kanonik_anlik_borc": _kb.get("anlik_borc"),
+                        "kanonik_defter_bakiye": _kb.get("defter_canli_bakiye"),
+                        "kanonik_gelecek_taksit": _kb.get("gelecek_taksit_yuku"),
+                        "kanonik_gelecek_taksit_kaynak": _kb.get("gelecek_taksit_kaynak"),
+                        "kanonik_toplam_yukumluluk": _kb.get("toplam_yukumluluk"),
+                        "kanonik_mutabakat_farki": _kb.get("mutabakat_farki"),
+                        "kanonik_mutabakat_notu": _kb.get("mutabakat_notu"),
+                        "kanonik_asgari": _kb.get("asgari_tutar"),
+                        "kanonik_denklestirme_cizgisi": _kb.get("denklestirme_cizgisi"),
+                    }
+            except Exception as _ke:  # noqa: BLE001
+                logger.warning("kanonik bakiye atlandi (%s): %s", k.get("kart_adi"), str(_ke)[:110])
+                _kan = {"kanonik_hata": str(_ke)[:120]}
+
+            sonuc.append({**k, **_kan,
                 "guncel_borc": borc,
                 # ANLIK borç = ekstre dönem borcu + kesim sonrası ödeme/kullanım (gerçek zamanlı).
                 # Ekstresiz kartta defter borcu (borc). Ana gösterilen rakam budur.
