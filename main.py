@@ -5235,7 +5235,7 @@ def kart_ekstre_yukle(dosya: UploadFile = File(...)):
         from ekstre_parser import is_axess, parse_axess
         if is_axess(raw):
             sonuc = parse_axess(raw)
-            sonuc = _ekstre_eslesme_mutabakat(sonuc)
+            sonuc = _ekstre_eslesme_mutabakat(sonuc, raw)
             return _ekstre_pdf_arsivle(sonuc, raw, dosya.filename or "ekstre.pdf")
     except HTTPException:
         raise
@@ -5327,7 +5327,7 @@ def kart_ekstre_yukle(dosya: UploadFile = File(...)):
         except Exception:
             pass
 
-    sonuc = _ekstre_eslesme_mutabakat(sonuc)
+    sonuc = _ekstre_eslesme_mutabakat(sonuc, raw)
     return _ekstre_pdf_arsivle(sonuc, raw, dosya.filename or "ekstre.pdf")
 
 
@@ -5388,9 +5388,15 @@ def kart_ekstre_belge(kart_id: str, donem: str):
                      headers={"Content-Disposition": f'inline; filename="{ad}"'})
 
 
-def _ekstre_eslesme_mutabakat(sonuc):
+def _ekstre_eslesme_mutabakat(sonuc, raw: Optional[bytes] = None):
     """Ekstre sonucu → kart eşleştir (son 4 hane) + mutabakat + faiz/snapshot/CFO yaz.
-    Hem normal (Worldcard/Enpara) hem Axess akışının ortak son adımı."""
+    Hem normal (Worldcard/Enpara) hem Axess akışının ortak son adımı.
+
+    raw: PDF ham baytları — GEOMETRİK İKİNCİ GÖZ için (2026-08-18). Verilmezse
+    ikinci göz atlanır ve bu durum yanıtta GEREKÇESİYLE görünür (sessiz atlama
+    yok). Eskiden bu fonksiyon `raw`u hiç almıyordu; geometrik blok onu
+    kullanmaya çalışınca NameError veriyor ve hata-yutar sayesinde sessizce
+    'hata' yazıyordu — canlıda 5 bankada da öyle görüldü."""
     sonuc["eslesen_kart"] = None
     sonuc["mutabakat"] = None
 
@@ -5459,6 +5465,8 @@ def _ekstre_eslesme_mutabakat(sonuc):
         # Şimdilik yalnız RAPORLAR (islemler'i DEĞİŞTİRMEZ): önce canlı ekstrelerde
         # kim kazanıyor görülecek, sonra hakem karar verici yapılacak.
         try:
+            if raw is None:
+                raise RuntimeError('PDF ham baytları bu akışta taşınmadı')
             import ekstre_geometri as _geo
             _g = _geo.geometrik_oku(raw)
             if _g.get("basarili"):
