@@ -602,7 +602,16 @@ def kart_bakiye_ozeti(cur, kart_id: str, tarih: Optional[date] = None) -> Dict[s
         (kart_id,),
     )
     devir_ts = str((cur.fetchone() or {}).get("t") or "")[:10]
-    if devir_ts and (not pencere or devir_ts > str(pencere)[:10]):
+    # ⛔ GELECEK TARİHLİ YAMA PENCEREYİ İLERİ ATAMAZ (2026-08-23, canlı yakalandı)
+    # Garanti Fethi'nin denkleştirme yaması 2026-08-25 tarihliydi — yani BUGÜNDEN
+    # SONRA. Pencere oraya kayınca 23 Ağustos'ta yapılan 386.000 ₺'lik ödeme
+    # "kesim sonrası" saymadı ve EKRANDA HİÇ GÖRÜNMEDİ: kart borcu ödeme
+    # yapılmamış gibi 264.031,15 ₺ duruyordu. Aynı gün Garanti Onur'a yapılan
+    # 280.000 ₺ ise doğru görünüyordu — çünkü onun yaması geçmiş tarihliydi.
+    # Sahip 386.000 ₺ ödeyip ekranda hiçbir şey değişmediğini görecekti.
+    # Kural: yama bir ÖZETTİR; henüz gelmemiş bir güne yazılmış özet, ÇOKTAN
+    # OLMUŞ bir hareketi yutamaz. Pencere bugünü aşamaz.
+    if devir_ts and devir_ts <= str(bugun)[:10] and (not pencere or devir_ts > str(pencere)[:10]):
         pencere = devir_ts
 
     kesim_sonrasi = 0.0
