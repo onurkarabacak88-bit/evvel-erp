@@ -318,6 +318,17 @@ export default function TasarimV2({ onGit }) {
     // sayıyordu. Uç zaten hazır sayaç gönderiyor (`gorulmemis`) → filtre kalktı.
     api('/teslim-bildirim/liste?gun=7')
       .then(d => koy('bilgiTeslim', Number(d?.gorulmemis) || 0)).catch(() => {});
+    // 🧮 MUTABAKAT ROZETİ (2026-08-19) — sapan dönem + mükerrer ödeme adayı.
+    // İkisi de "gerçekten karar bekleyen" sayıdır: sapan dönem defterde eksik/fazla
+    // satır demektir, mükerrer aday ise iki kapıdan girmiş olabilecek ödeme.
+    // Ölçüm dışı (geçmişi olmayan) dönemler zaten sunucuda toplama katılmıyor —
+    // rozet uyarı bütçesini boşa harcamaz.
+    Promise.all([
+      api('/kartlar/donem-mutabakati').catch(() => null),
+      api('/kartlar/mukerrer-odeme-adaylari').catch(() => null),
+    ]).then(([dm, mk]) => koy('kartMutabakat',
+      (Number(dm?.sapan_donem) || 0)
+      + ((mk?.ciftler || []).filter(c => c.supheye_guc !== 'DÜŞÜK').length))).catch(() => {});
     api('/kart-hareketleri?limit=200')
       .then(d => koy('hareketBelirsiz', (Array.isArray(d) ? d : [])
         .filter(h => h.islem_turu === 'HARCAMA' && (h.harcama_tipi || 'belirsiz') === 'belirsiz').length))

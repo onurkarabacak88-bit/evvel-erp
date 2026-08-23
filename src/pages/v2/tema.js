@@ -261,6 +261,11 @@ export const MODULLER = [
     { id: 'koc', ad: 'Borç Koçu' },
     { id: 'hareket', ad: 'Kart Hareketleri', rozet: 'hareketBelirsiz', renk: '#FBBF24' },
     { id: 'ekstre', ad: 'Ekstre Durumu', rozet: 'ekstreEksik', renk: '#FBBF24' },
+    // 🧮 2026-08-19 — kartın TEK dairesel-olmayan ölçümü. Eski mutabakat sayısı
+    // defterin toplamını bankanın toplamıyla kıyaslıyordu; ama defterdeki DEVİR
+    // satırı zaten o eşitliği kurmak için yazılmış bir yama. Bu ekran toplamı
+    // değil DEĞİŞİMİ kıyaslar, yamadan bağımsızdır.
+    { id: 'mutabakat', ad: 'Ekstre ↔ Defter Mutabakatı', rozet: 'kartMutabakat', renk: '#F87171' },
   ]},
   { id: 'borc', blok: 'Finans', ad: 'Finansal Sağlık', kisa: 'Sağlık', alt: 'BBE · ABEK · runway', ikon: IK.pusula, gorunumler: [
     { id: 'durum', ad: 'Bu Ay Batıyor Muyum?', rozet: 'borcDurum', renk: '#F87171' },

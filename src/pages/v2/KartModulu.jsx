@@ -101,6 +101,8 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
   const [kartlar, setKartlar] = useState([]);
   const [ozet, setOzet] = useState(null);
   const [harcama, setHarcama] = useState(null);
+  const [donemMut, setDonemMut] = useState(null);   // ekstre↔defter dönem mutabakatı
+  const [mukerrer, setMukerrer] = useState(null);   // mükerrer ödeme adayları (öneri-only)
   const [hareketler, setHareketler] = useState([]);
   const [koc, setKoc] = useState(null);
   // /kartlar/borc-projeksiyon — çok aylık GERÇEK faiz simülasyonu (çığ/kartopu)
@@ -292,7 +294,17 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
       api('/isletmeci').catch(() => null),
       api('/isletmeci/sahsi-kirilim?gun=365').catch(() => null),
       api('/isletmeci/sahsi-bekleyen?limit=400').catch(() => null),
-    ]).then(([k, o, h, hr, an, ar, sc, fe, ty, ab, abk, abe, ism, skir, sbek]) => {
+      // 🧮 DÖNEM MUTABAKATI + 🕵️ MÜKERRER ÖDEME (2026-08-19)
+      // Bu ikisi kartın İLK DAİRESEL-OLMAYAN ölçümü. Eski `mutabakat_farki`
+      // defterin TOPLAMINI bankanın TOPLAMIYLA kıyaslıyordu — ama defterdeki
+      // DEVİR satırı zaten defteri bankaya eşitlemek için yazılmış bir yama.
+      // Cevabı soruya yazıp sonra sormak gibiydi; 0,00'lar başarı değil,
+      // yamanın gölgesiydi. Bunlar DEĞİŞİMİ kıyaslar, toplamı değil.
+      api('/kartlar/donem-mutabakati').catch(() => null),
+      api('/kartlar/mukerrer-odeme-adaylari').catch(() => null),
+    ]).then(([k, o, h, hr, an, ar, sc, fe, ty, ab, abk, abe, ism, skir, sbek, dmt, mko]) => {
+      setDonemMut(dmt);
+      setMukerrer(mko);
       setIsletmeciler(ism?.isletmeciler || []);
       setSahsiKirilim(skir);
       setSahsiBekleyen(sbek);
@@ -1198,6 +1210,195 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
         <div style={{ fontFamily: F.baslik, fontSize: 18, fontWeight: 600 }}>Kayıtlı kart yok</div>
         <div style={{ fontSize: 13, color: R.not, marginTop: 8 }}>Kart tanımlayınca borç ve faiz takibi burada başlar.</div>
       </div>
+    );
+  }
+
+  // ── 0) EKSTRE ↔ DEFTER MUTABAKATI ─────────────────────────────────────────
+  // 🔴 NEDEN AYRI BİR EKRAN: Kart modülünde "mutabakat" diye gösterilen sayı
+  // bugüne kadar defterin TOPLAMINI bankanın TOPLAMIYLA kıyaslıyordu. O soru
+  // DAİRESELDİR — defterdeki DEVİR satırı zaten defteri bankaya eşitlemek için
+  // yazılmış bir yamadır. 7 kartın 6'sında görünen 0,00 bir başarı değil,
+  // yamanın gölgesiydi (WORLD ANNEM'de "fark" 3.903,00 çıktı ve kesim sonrası
+  // hareketlerin toplamıyla kuruşu kuruşuna aynıydı).
+  // Bu ekran BAŞKA bir soru sorar: iki ekstre arasında bankanın borcu ne kadar
+  // DEĞİŞTİ, defter aynı pencerede ne kadar DEĞİŞTİRDİ? Yama pencerenin dışında
+  // kaldığı (ve içine düşerse toplama katılmadığı) için ölçüm bağımsızdır.
+  if (gorunum === 'mutabakat') {
+    const kartlarM = donemMut?.kartlar || [];
+    const ciftler = mukerrer?.ciftler || [];
+    const supheli = ciftler.filter(c => c.supheye_guc !== 'DÜŞÜK');
+    const olculen = sayi(donemMut?.olculen_donem);
+    const sapan = sayi(donemMut?.sapan_donem);
+    const tutan = olculen - sapan;
+    const rozet = (durum) => {
+      const m = {
+        'TUTUYOR': { r: R.yesil, t: 'TUTUYOR' },
+        'DEFTER EKSİK': { r: R.kirmizi, t: 'DEFTER EKSİK' },
+        'DEFTER FAZLA': { r: R.amber, t: 'DEFTER FAZLA' },
+      }[durum] || { r: R.not2, t: durum };
+      return (
+        <span style={{
+          padding: '2px 8px', borderRadius: 999, fontSize: 10.5, fontWeight: 700,
+          background: `${m.r}1E`, color: m.r, border: `1px solid ${m.r}44`, whiteSpace: 'nowrap',
+        }}>{m.t}</span>
+      );
+    };
+    return (
+      <>
+        <KpiSeridi kpiler={[
+          { etiket: 'Ölçülen dönem', deger: String(olculen), alt: `${kartlarM.length} kart · geçmişi olmayan dönemler ölçüm dışı`, renk: R.krem },
+          { etiket: 'Tutan', deger: String(tutan), alt: 'banka değişimi = defter değişimi', renk: tutan ? R.yesil : R.not2 },
+          { etiket: 'Sapan', deger: String(sapan), alt: `toplam ${fmt(sayi(donemMut?.toplam_sapma))}`, renk: sapan ? R.kirmizi : R.yesil },
+          { etiket: 'Mükerrer ödeme adayı', deger: String(supheli.length), alt: supheli.length ? `${fmt(sayi(mukerrer?.supheli_toplam))} · karar sende` : 'şüpheli çift yok', renk: supheli.length ? R.amber : R.yesil },
+        ]} />
+
+        {/* NE ÖLÇÜLDÜĞÜ AÇIKÇA YAZILIR — sayının anlamı gizli kalmasın. */}
+        <div style={{ ...kartYuzey, padding: '13px 16px', marginBottom: 12, fontSize: 12.5, lineHeight: 1.7 }}>
+          <b style={{ color: R.krem, fontSize: 13 }}>🧮 Bu ekran neyi ölçüyor?</b>
+          <div style={{ color: R.metin2, marginTop: 6 }}>
+            İki ekstre arasında <b>bankanın borcu ne kadar değişti</b> ile <b>defterdeki
+            hareketlerin aynı pencerede ne kadar değiştirdiği</b> karşılaştırılır.
+            Toplamlar değil <b>değişim</b> kıyaslandığı için denkleştirme yaması
+            sonucu bozmaz — kartın <b>tek dairesel-olmayan ölçümü</b> budur.
+          </div>
+          <div style={{ color: R.not2, marginTop: 6, fontSize: 11.5 }}>
+            <b style={{ color: R.kirmizi }}>DEFTER EKSİK</b> = banka daha çok arttırmış, deftere girmemiş harcama ya da
+            iki kez yazılmış ödeme var. <b style={{ color: R.amber }}>DEFTER FAZLA</b> = defter fazladan yazmış.
+            Defterin ilk hareketinden önceki dönemler <b>“geçmiş yok”</b> sayılır ve
+            toplama girmez — yoksa hiç girilmemiş geçmiş, sahte açık gibi görünürdü.
+          </div>
+        </div>
+
+        {/* MÜKERRER ÖDEME ADAYLARI — ÖNERİ-ONLY, hiçbir şey silinmez */}
+        {supheli.length > 0 && (
+          <div style={{ ...kartYuzey, padding: '13px 16px', marginBottom: 12, fontSize: 12.5, lineHeight: 1.6, border: `1px solid ${R.amber}44` }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 8 }}>
+              <b style={{ color: R.krem, fontSize: 13 }}>🕵️ Mükerrer ödeme adayları</b>
+              <span style={{ color: R.not2, fontSize: 11.5 }}>
+                {supheli.length} çift · toplam {fmt(sayi(mukerrer?.supheli_toplam))}
+              </span>
+            </div>
+            <div style={{ color: R.metin2, marginBottom: 9 }}>
+              Aynı ödeme <b>iki kapıdan</b> girmiş olabilir: Ödeme Merkezi'nden
+              (“Kart borcu ödemesi” + kasa izi) ve ekstre içe aktarımından
+              (“ÖDEME-İNTERNET BANKACILIĞI”). İkisi de deftere yazılırsa borç
+              olduğundan düşük görünür. <b style={{ color: R.amber }}>Hiçbir kayıt silinmedi</b> —
+              gerçekten iki ayrı ödeme de olabilir, karar senin.
+            </div>
+            <div style={{ display: 'grid', gap: 7 }}>
+              {supheli.map((c) => (
+                <div key={`${c.a_id}|${c.b_id}`} style={{
+                  padding: '9px 11px', borderRadius: 9, background: R.kart2,
+                  border: `1px solid ${R.cizgi2}`,
+                }}>
+                  <div style={{ color: R.krem, fontWeight: 700, marginBottom: 4 }}>
+                    {c.kart_adi} <span style={{ color: R.amber, fontWeight: 600, fontSize: 11 }}>· şüphe {c.supheye_guc}</span>
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', gap: 8, alignItems: 'center' }}>
+                    {[[c.a_tarih, c.a_tutar, c.a_kaynak, c.a_aciklama], null, [c.b_tarih, c.b_tutar, c.b_kaynak, c.b_aciklama]].map((yan, i) => yan === null ? (
+                      <div key="ok" style={{ color: R.not2, fontSize: 16 }}>↔</div>
+                    ) : (
+                      <div key={i} style={{ fontSize: 11.5 }}>
+                        <div style={{ fontFamily: F.mono, color: R.metin, fontSize: 13 }}>{fmt(yan[1])}</div>
+                        <div style={{ color: R.not2 }}>{kisaTarih(yan[0])} · {yan[2] === 'ekstre_import' ? 'ekstreden' : 'sistemden'}</div>
+                        <div style={{ color: R.not2, fontSize: 10.5 }}>{String(yan[3] || '').slice(0, 42)}</div>
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ color: R.not2, fontSize: 11, marginTop: 5 }}>
+                    tutar farkı {fmt(c.tutar_farki)} · {c.gun_farki} gün arayla — {c.not}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div style={{ color: R.not2, fontSize: 11, marginTop: 8 }}>
+              Silmek gerekirse <b>Kart Hareketleri</b> ekranından izli iptal edilir —
+              kayıt yok olmaz, iptal edildiği görünür.
+            </div>
+          </div>
+        )}
+
+        {/* KART KART DÖNEM TABLOSU */}
+        {kartlarM.map((k) => (
+          <div key={k.kart_id} style={{ ...kartYuzey, padding: '13px 16px', marginBottom: 10, fontSize: 12.5 }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 8 }}>
+              <b style={{ color: R.krem, fontSize: 13 }}>{k.kart_adi}</b>
+              <span style={{ color: R.not2, fontSize: 11.5 }}>
+                {k.donem_sayisi} ekstre · defter başı {k.defter_basi ? kisaTarih(k.defter_basi) : '—'}
+              </span>
+              {rozet(k.durum)}
+            </div>
+            {!(k.donemler || []).length ? (
+              <div style={{ color: R.not2, fontSize: 11.5 }}>
+                Tek ekstre var — pencere kurulamıyor, ölçüm yapılamaz. İkinci ekstre
+                yüklenince bu kart da ölçülmeye başlar.
+              </div>
+            ) : (
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11.5 }}>
+                  <thead>
+                    <tr style={{ color: R.not2, textAlign: 'right' }}>
+                      <th style={{ textAlign: 'left', padding: '4px 6px', fontWeight: 600 }}>Dönem</th>
+                      <th style={{ padding: '4px 6px', fontWeight: 600 }}>Banka değişimi</th>
+                      <th style={{ padding: '4px 6px', fontWeight: 600 }}>Defter değişimi</th>
+                      <th style={{ padding: '4px 6px', fontWeight: 600 }}>Fark</th>
+                      <th style={{ textAlign: 'left', padding: '4px 6px', fontWeight: 600 }}>Durum</th>
+                    </tr>
+                  </thead>
+                  <tbody style={{ fontFamily: F.mono }}>
+                    {(k.donemler || []).map((d) => {
+                      const disi = String(d.durum || '').startsWith('GEÇMİŞ YOK');
+                      return (
+                        <tr key={d.donem} style={{ borderTop: `1px solid ${R.cizgi2}`, opacity: disi ? 0.5 : 1 }}>
+                          <td style={{ padding: '5px 6px', fontFamily: 'inherit' }}>
+                            {kisaTarih(d.donem)}
+                            <div style={{ color: R.not2, fontSize: 10 }}>
+                              {d.kesim_bas ? `${kisaTarih(d.kesim_bas)} → ${kisaTarih(d.kesim_bit)}` : ''}
+                            </div>
+                          </td>
+                          <td style={{ padding: '5px 6px', textAlign: 'right' }}>{fmt(d.banka_degisim)}</td>
+                          <td style={{ padding: '5px 6px', textAlign: 'right' }}>
+                            {fmt(d.defter_degisim)}
+                            {Math.abs(sayi(d.taksit_yayilim_etkisi)) > 1 && (
+                              <div style={{ color: R.not2, fontSize: 10 }}>
+                                taksit yayılımı {fmt(d.taksit_yayilim_etkisi)}
+                              </div>
+                            )}
+                          </td>
+                          <td style={{
+                            padding: '5px 6px', textAlign: 'right', fontWeight: 700,
+                            color: disi ? R.not2 : Math.abs(sayi(d.fark)) < 1 ? R.yesil : sayi(d.fark) > 0 ? R.kirmizi : R.amber,
+                          }}>{fmt(d.fark)}</td>
+                          <td style={{ padding: '5px 6px', fontFamily: 'inherit' }}>
+                            {disi ? (
+                              <span style={{ color: R.not2, fontSize: 10.5 }}>geçmiş yok — ölçüm dışı</span>
+                            ) : rozet(d.durum)}
+                            {d.capa_farki != null && Math.abs(sayi(d.capa_farki)) > 1 && (
+                              <div style={{ color: R.amber, fontSize: 10 }}>
+                                ekstre iç çapası {fmt(d.capa_farki)} sapıyor
+                              </div>
+                            )}
+                            {sayi(d.devir_pencerede) > 0 && (
+                              <div style={{ color: R.not2, fontSize: 10 }}>pencerede denkleştirme yaması var</div>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        ))}
+        {!kartlarM.length && (
+          <div style={{ ...kartYuzey, padding: '26px 20px', textAlign: 'center', color: R.not2, fontSize: 12.5 }}>
+            {donemMut === null
+              ? 'Mutabakat ölçümü alınamadı — uç yanıt vermedi. (Sahte yeşil göstermiyoruz.)'
+              : 'Henüz ölçülebilir kart yok.'}
+          </div>
+        )}
+      </>
     );
   }
 
