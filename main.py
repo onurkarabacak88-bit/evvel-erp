@@ -2526,6 +2526,93 @@ def kart_devir_tazele(body: DevirTazeleBody):
     }
 
 
+@app.get("/api/kartlar/mukerrer-odeme-adaylari")
+def kart_mukerrer_odeme_adaylari(gun: int = 7, tolerans: float = 250.0):
+    """🕵️ MÜKERRER KART ÖDEMESİ ADAYLARI — SALT OKUR, ÖNERİ-ONLY. Hiçbir şey silmez.
+
+    ── NEDEN ───────────────────────────────────────────────────────────────
+    Bir kart ödemesi sisteme İKİ AYRI KAPIDAN girebiliyor:
+      1) Ödeme Merkezi'nden yapılır → "Kart borcu ödemesi" + kasa izi
+      2) Ekstre içe aktarılır       → "ÖDEME-İNTERNET BANKACILIĞI" (kaynak_tablo='ekstre_import')
+    Aynı ödeme her iki kapıdan geçerse defter borcu OLDUĞUNDAN DÜŞÜK gösterir.
+
+    Canlı bulgu (2026-08-19, WORLD KART ANNEM) — dönem mutabakatı bunu ortaya
+    çıkardı: bankanın Ağustos değişimi +55.405,57 ₺ iken defter −118.008,39 ₺.
+    Pencerede iki şüpheli çift var:
+        13 Tem  −50.000,00 (ekstre)  ↔  13 Tem  −50.107,00 (sistem)
+        22 Tem −120.000,00 (ekstre)  ↔  24 Tem −120.107,00 (sistem)
+    Toplam 170.000 ₺ — dönemdeki 173.413,96 ₺'lik açığın neredeyse tamamı.
+    Aradaki 107 ₺'lik fark, satır-satır mükerrer freninin bu çiftleri
+    KAÇIRMASININ sebebi: fren birebir tutar arıyordu.
+
+    ── NE YAPMAZ ───────────────────────────────────────────────────────────
+    Hiçbir kaydı iptal ETMEZ. İki kayıt gerçekten iki ayrı ödeme olabilir
+    (aynı gün iki taksit yatırmak olağandır). Karar SAHİBİNDİR; bu uç sadece
+    kanıtı yan yana koyar. Silmek gerekirse zaten izli iptal yolu var
+    (DELETE /api/kart-hareketleri/{id}) — GERİ-ALMA ≠ SİLME.
+
+    Parametreler:
+      gun       kaç gün arayla düşen ödemeler çift sayılsın (varsayılan 7)
+      tolerans  tutar farkı bu ₺ değerinden küçükse "yakın" sayılır (250 ₺)
+    """
+    with db() as (conn, cur):
+        cur.execute("""
+            SELECT a.id AS a_id, b.id AS b_id, k.kart_adi,
+                   a.kart_id::text AS kart_id,
+                   a.tarih::text AS a_tarih, b.tarih::text AS b_tarih,
+                   a.tutar::float AS a_tutar, b.tutar::float AS b_tutar,
+                   a.aciklama AS a_aciklama, b.aciklama AS b_aciklama,
+                   COALESCE(a.kaynak_tablo,'') AS a_kaynak,
+                   COALESCE(b.kaynak_tablo,'') AS b_kaynak
+              FROM kart_hareketleri a
+              JOIN kart_hareketleri b
+                ON b.kart_id = a.kart_id
+               AND b.id > a.id
+               AND b.durum = 'aktif'
+               AND b.islem_turu = 'ODEME'
+               AND ABS(b.tarih - a.tarih) <= %s
+               AND ABS(b.tutar - a.tutar) <= %s
+              JOIN kartlar k ON k.id = a.kart_id
+             WHERE a.durum = 'aktif' AND a.islem_turu = 'ODEME'
+             ORDER BY k.kart_adi, a.tarih
+        """, (gun, tolerans))
+        ciftler = []
+        for r in (cur.fetchall() or []):
+            d = dict(r)
+            fark = round(abs(d["a_tutar"] - d["b_tutar"]), 2)
+            gun_farki = abs((datetime.strptime(d["b_tarih"], "%Y-%m-%d")
+                             - datetime.strptime(d["a_tarih"], "%Y-%m-%d")).days)
+            kaynaklar = {d["a_kaynak"], d["b_kaynak"]}
+            # 🔴 EN GÜÇLÜ KANIT: biri ekstreden, diğeri sistemden gelmişse aynı
+            # ödemenin iki kapıdan girmiş olma ihtimali yüksektir. İkisi de aynı
+            # kapıdansa büyük olasılıkla GERÇEKTEN iki ayrı ödemedir.
+            iki_kapi = ("ekstre_import" in kaynaklar) and (len(kaynaklar) > 1)
+            guc = ("YÜKSEK" if iki_kapi and fark < 1 else
+                   "ORTA" if iki_kapi else
+                   "DÜŞÜK")
+            ciftler.append({
+                **d, "tutar_farki": fark, "gun_farki": gun_farki,
+                "iki_farkli_kapi": iki_kapi, "supheye_guc": guc,
+                "toplam_etki": round(min(d["a_tutar"], d["b_tutar"]), 2),
+                "not": ("Biri ekstreden biri sistemden — aynı ödemenin iki kez "
+                        "girmiş olma ihtimali yüksek." if iki_kapi else
+                        "İkisi de aynı kapıdan — büyük olasılıkla iki ayrı ödeme."),
+            })
+        yuksek = [c for c in ciftler if c["supheye_guc"] in ("YÜKSEK", "ORTA")]
+        return {
+            "ciftler": ciftler,
+            "adet": len(ciftler),
+            "supheli_adet": len(yuksek),
+            "supheli_toplam": round(sum(c["toplam_etki"] for c in yuksek), 2),
+            "parametreler": {"gun": gun, "tolerans": tolerans},
+            "not": ("ÖNERİ-ONLY — hiçbir kayıt silinmedi. İki kayıt gerçekten iki "
+                    "ayrı ödeme olabilir; karar sahibindir. Doğrulamak için ilgili "
+                    "dönemin /api/kartlar/donem-mutabakati farkına bakın: mükerrer "
+                    "ödeme varsa fark POZİTİF (DEFTER EKSİK) çıkar ve büyüklüğü "
+                    "mükerrer tutara yakındır."),
+        }
+
+
 @app.get("/api/kartlar/donem-mutabakati")
 def kart_donem_mutabakati():
     """🧮 DÖNEM DEĞİŞİMİ MUTABAKATI — SALT OKUR. Kartın TEK dairesel-olmayan ölçümü.
