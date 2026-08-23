@@ -2719,12 +2719,24 @@ def kart_donem_mutabakati():
                 defter_degisim = float(dr.get("d") or 0)
                 cur.execute("""
                     SELECT COALESCE(SUM(CASE WHEN islem_turu='ODEME' THEN -tutar
-                                             ELSE tutar END),0)::float AS d
+                                             ELSE tutar END),0)::float AS d,
+                           COALESCE(SUM(CASE WHEN islem_turu='ODEME' THEN tutar
+                                             ELSE 0 END),0)::float AS o,
+                           COALESCE(SUM(CASE WHEN islem_turu='ODEME' THEN 0
+                                             ELSE tutar END),0)::float AS h
                       FROM kart_hareketleri
                      WHERE kart_id=%s AND durum='aktif' AND islem_turu <> 'DEVIR'
                        AND tarih > %s::date AND tarih <= %s::date
                 """, (kid, bas, bit))
-                defter_ham = float((cur.fetchone() or {}).get("d") or 0)
+                _hr = dict(cur.fetchone() or {})
+                defter_ham = float(_hr.get("d") or 0)
+                # 🔍 TARAF AYRIMI (2026-08-23) — "fark var" demek yetmiyor, İZ
+                # sürebilmek için farkın HANGİ TARAFTAN geldiği lazım. Harcama
+                # tarafında fark varsa deftere girmemiş bir HARCAMA; ödeme
+                # tarafındaysa girmemiş/fazla girmiş bir ÖDEME vardır. Bu ayrım
+                # olmadan 3.306 ₺'yi aramak samanlıkta iğne aramaktır.
+                defter_harcama = float(_hr.get("h") or 0)
+                defter_odeme = float(_hr.get("o") or 0)
                 cur.execute("""SELECT COUNT(*) AS n FROM kart_hareketleri
                                 WHERE kart_id=%s AND durum='aktif' AND islem_turu='DEVIR'
                                   AND tarih > %s::date AND tarih <= %s::date""",
@@ -2761,6 +2773,15 @@ def kart_donem_mutabakati():
                     "ekstre_ic_capa": capa,
                     "capa_farki": (None if capa is None else round(banka_degisim - capa, 2)),
                     "donem_faizi": simdi.get("faiz"),
+                    # taraf ayrımı — farkın hangi taraftan geldiğini gösterir
+                    "banka_harcama": simdi.get("harcama"),
+                    "defter_harcama": round(defter_harcama, 2),
+                    "harcama_farki": (None if simdi.get("harcama") is None
+                                      else round(float(simdi["harcama"]) - defter_harcama, 2)),
+                    "banka_odeme": simdi.get("odeme"),
+                    "defter_odeme": round(defter_odeme, 2),
+                    "odeme_farki": (None if simdi.get("odeme") is None
+                                    else round(float(simdi["odeme"]) - defter_odeme, 2)),
                     "devir_pencerede": devir_ic,
                     "defter_basi": defter_basi,
                     "durum": durum,
