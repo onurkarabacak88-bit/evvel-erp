@@ -2586,6 +2586,14 @@ def kart_donem_mutabakati():
                  ORDER BY donem, olusturma DESC
             """, (kid,))
             snaps = [dict(r) for r in (cur.fetchall() or [])]
+            # 🧱 GEÇMİŞ BARİYERİ — defter ne zaman başlıyor? Bu tarihten ÖNCEKİ
+            # dönemlerde "defter eksik" demek YANLIŞ ALARM olur: eksik olan
+            # hareket değil, o günlere ait KAYIT HİÇ GİRİLMEMİŞ. İki durumu
+            # ayırmadan sayı vermek, sahibi olmayan bir açığı kovalatır.
+            cur.execute("""SELECT MIN(tarih)::text AS t FROM kart_hareketleri
+                            WHERE kart_id=%s AND durum='aktif' AND islem_turu <> 'DEVIR'""",
+                        (kid,))
+            defter_basi = (cur.fetchone() or {}).get("t")
             if len(snaps) < 2:
                 out.append({"kart_id": kid, "kart_adi": k["kart_adi"],
                             "durum": "TEK DÖNEM — ölçülemez",
@@ -2600,16 +2608,36 @@ def kart_donem_mutabakati():
                                      "durum": "PENCERE KURULAMADI",
                                      "kesim_bas": bas, "kesim_bit": bit})
                     continue
+                # 💳 TAKSİT YAYILIMI — ilk ölçümdeki en büyük yöntem hatası.
+                # 12 taksitli 12.000 ₺'lik alışveriş ekstreye AY AY 1.000 ₺
+                # olarak düşer; defterde ise TEK satır 12.000 ₺ durur. Ham
+                # toplam alınırsa alışveriş ayında defter FAZLA, sonraki 11 ayda
+                # EKSİK görünür — ikisi de sahte. Bu yüzden her hareket, taksit
+                # sayısı kadar birer ay arayla PARÇALARA açılıp öyle toplanıyor.
+                # Ham toplam da yanında raporlanıyor (yöntem şeffaf kalsın).
+                cur.execute("""
+                    SELECT COALESCE(SUM(pay),0)::float AS d, COUNT(*) AS n
+                      FROM (
+                        SELECT (CASE WHEN h.islem_turu='ODEME' THEN -h.tutar ELSE h.tutar END)
+                               / GREATEST(COALESCE(h.taksit_sayisi,1),1) AS pay,
+                               (h.tarih + ((g.i-1) || ' month')::interval)::date AS vade
+                          FROM kart_hareketleri h
+                          CROSS JOIN LATERAL generate_series(
+                                 1, GREATEST(COALESCE(h.taksit_sayisi,1),1)) AS g(i)
+                         WHERE h.kart_id=%s AND h.durum='aktif' AND h.islem_turu <> 'DEVIR'
+                      ) t
+                     WHERE vade > %s::date AND vade <= %s::date
+                """, (kid, bas, bit))
+                dr = dict(cur.fetchone() or {})
+                defter_degisim = float(dr.get("d") or 0)
                 cur.execute("""
                     SELECT COALESCE(SUM(CASE WHEN islem_turu='ODEME' THEN -tutar
-                                             ELSE tutar END),0)::float AS d,
-                           COUNT(*) AS n
+                                             ELSE tutar END),0)::float AS d
                       FROM kart_hareketleri
                      WHERE kart_id=%s AND durum='aktif' AND islem_turu <> 'DEVIR'
                        AND tarih > %s::date AND tarih <= %s::date
                 """, (kid, bas, bit))
-                dr = dict(cur.fetchone() or {})
-                defter_degisim = float(dr.get("d") or 0)
+                defter_ham = float((cur.fetchone() or {}).get("d") or 0)
                 cur.execute("""SELECT COUNT(*) AS n FROM kart_hareketleri
                                 WHERE kart_id=%s AND durum='aktif' AND islem_turu='DEVIR'
                                   AND tarih > %s::date AND tarih <= %s::date""",
@@ -2617,31 +2645,51 @@ def kart_donem_mutabakati():
                 devir_ic = int((cur.fetchone() or {}).get("n") or 0)
                 banka_degisim = round(float(simdi["borc"]) - float(onceki["borc"]), 2)
                 fark = round(banka_degisim - defter_degisim, 2)
-                # Ekstrenin kendi iç çapası (banka kendi rakamıyla tutarlı mı)
+                # 🎯 EKSTRENİN KENDİ İÇ ÇAPASI — banka kendi rakamıyla tutarlı mı?
+                # İlk sürümde faiz AYRICA ekleniyordu ve çapa farkı tam olarak
+                # −faiz çıkıyordu (WORLD ANNEM Ağu: −14.087,01 = DÖNEM FAİZİ'nin
+                # kendisi). Bu, faizin `donem_harcama` İÇİNDE olduğunun kanıtı;
+                # ayrıca eklemek MÜKERRER sayımdı. Düzeltince çapa 0,00'a oturdu
+                # — yani ekstre okumaları BİRBİRİYLE TUTARLI. Faiz ayrı bilgi
+                # olarak taşınıyor ama çapaya İKİNCİ KEZ girmiyor.
                 capa = None
                 if simdi.get("harcama") is not None or simdi.get("odeme") is not None:
                     capa = round(float(simdi.get("harcama") or 0)
-                                 - float(simdi.get("odeme") or 0)
-                                 + float(simdi.get("faiz") or 0), 2)
+                                 - float(simdi.get("odeme") or 0), 2)
+                gecmis_yok = bool(defter_basi and bas < defter_basi)
+                if gecmis_yok:
+                    durum = "GEÇMİŞ YOK — ölçüm dışı"
+                elif abs(fark) < 1:
+                    durum = "TUTUYOR"
+                else:
+                    durum = "DEFTER EKSİK" if fark > 0 else "DEFTER FAZLA"
                 donemler.append({
                     "donem": simdi["donem"], "kesim_bas": bas, "kesim_bit": bit,
                     "banka_degisim": banka_degisim,
                     "defter_degisim": round(defter_degisim, 2),
+                    "defter_degisim_ham": round(defter_ham, 2),
+                    "taksit_yayilim_etkisi": round(defter_degisim - defter_ham, 2),
                     "hareket_adet": int(dr.get("n") or 0),
                     "fark": fark,
                     "ekstre_ic_capa": capa,
                     "capa_farki": (None if capa is None else round(banka_degisim - capa, 2)),
+                    "donem_faizi": simdi.get("faiz"),
                     "devir_pencerede": devir_ic,
-                    "durum": ("TUTUYOR" if abs(fark) < 1
-                              else ("DEFTER EKSİK" if fark > 0 else "DEFTER FAZLA")),
+                    "defter_basi": defter_basi,
+                    "durum": durum,
                 })
+                if gecmis_yok:
+                    continue
                 olculen += 1
                 if abs(fark) >= 1:
                     sapan += 1
                     toplam_sapma += abs(fark)
+            olculebilir = [d for d in donemler if d.get("durum") in ("TUTUYOR", "DEFTER EKSİK", "DEFTER FAZLA")]
             out.append({"kart_id": kid, "kart_adi": k["kart_adi"],
                         "donem_sayisi": len(snaps),
-                        "durum": ("TUTUYOR" if all(d.get("durum") == "TUTUYOR" for d in donemler)
+                        "defter_basi": defter_basi,
+                        "durum": ("ÖLÇÜLEBİLİR DÖNEM YOK" if not olculebilir
+                                  else "TUTUYOR" if all(d["durum"] == "TUTUYOR" for d in olculebilir)
                                   else "SAPMA VAR"),
                         "donemler": donemler})
         return {
