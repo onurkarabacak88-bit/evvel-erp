@@ -2526,6 +2526,136 @@ def kart_devir_tazele(body: DevirTazeleBody):
     }
 
 
+@app.get("/api/kartlar/donem-mutabakati")
+def kart_donem_mutabakati():
+    """🧮 DÖNEM DEĞİŞİMİ MUTABAKATI — SALT OKUR. Kartın TEK dairesel-olmayan ölçümü.
+
+    ── NEDEN BU UÇ VAR ─────────────────────────────────────────────────────
+    Bugüne kadarki `mutabakat_farki` şu soruyu soruyordu:
+        «defterin TOPLAMI, bankanın dediği TOPLAMA eşit mi?»
+    Bu soru DAİRESELDİR. Çünkü defterdeki DEVİR satırı zaten
+    `donem_borcu − kart_borc()` diye hesaplanıp yazılmış bir DENKLEŞTİRME
+    YAMASIDIR — yani defteri bankaya EŞİTLEMEK için konmuştur. Yamayı içeren
+    bir toplamı bankayla kıyaslamak, cevabı soruya yazıp sonra sormaktır.
+
+    Canlı kanıt (2026-08-19, WORLD KART ANNEM):
+      mutabakat_farki .......... 3.903,00 ₺  ← "defter tutmuyor" diye okunur
+      kesim SONRASI hareketler . 3.903,00 ₺  ← 4 otomatik internet talimatı
+    İkisi KURUŞU KURUŞUNA aynı. Çünkü yama, ekstre kesiminden SONRAKİ o dört
+    satırı da yutacak şekilde hesaplanmış. Yani o 3.903 ₺ bir uyuşmazlık
+    değil, YAMANIN GÖLGESİ. Aynı sebeple diğer kartların 0,00'ı da bir
+    başarı değil: yama zaten sıfırlıyor. Ölçüm boş çıkıyordu.
+
+    ── BU UCUN SORDUĞU SORU (dairesel DEĞİL) ───────────────────────────────
+        «Bankanın borcu iki ekstre arasında NE KADAR DEĞİŞTİ, defterdeki
+         hareketler aynı pencerede NE KADAR DEĞİŞTİRDİ?»
+    Yama pencerenin dışında kalır (tek seferlik ve eski tarihli), pencere
+    içine düşerse de DEVİR satırları toplama katılmaz + `devir_pencerede`
+    bayrağıyla bildirilir. Böylece ölçüm yamadan bağımsızlaşır.
+
+        banka_degisim  = donem_borcu(N) − donem_borcu(N−1)
+        defter_degisim = Σ(HARCAMA+FAİZ − ÖDEME),  kesim(N−1) < tarih ≤ kesim(N)
+        fark           = banka_degisim − defter_degisim
+        fark ≠ 0  →  o dönemde defterde EKSİK/FAZLA satır var (gerçek bulgu)
+
+    Ayrıca ekstrenin KENDİ İÇ ÇAPASI da ölçülür — banka kendi rakamlarıyla
+    tutarlı mı: (dönem harcaması − dönem ödemesi + dönem faizi) = değişim?
+    Bu ikisi ayrı ayrı bilgidir: `fark` defteri, `capa_farki` okumayı denetler.
+
+    ⚠️ Tek ekstresi olan kartta ölçüm YAPILAMAZ (pencere kurulamaz) — bu
+    durum GİZLENMEZ, "tek dönem" olarak raporlanır. HATA ≠ BOŞ.
+    """
+    with db() as (conn, cur):
+        cur.execute("""SELECT id::text AS id, kart_adi FROM kartlar
+                        WHERE aktif=TRUE ORDER BY kart_adi""")
+        kartlar = [dict(r) for r in (cur.fetchall() or [])]
+        out, olculen, sapan, toplam_sapma = [], 0, 0, 0.0
+        for k in kartlar:
+            kid = k["id"]
+            # Dönem başına TEK snapshot (aynı döneme birden çok içe aktarım
+            # olabiliyor — en SON yazılan geçerlidir).
+            cur.execute("""
+                SELECT DISTINCT ON (donem)
+                       donem::text AS donem, kesim_tarihi::text AS kesim,
+                       donem_borcu::float AS borc,
+                       donem_harcama::float AS harcama,
+                       donem_odeme::float  AS odeme,
+                       donem_faizi::float  AS faiz
+                  FROM kart_ekstre_donem
+                 WHERE kart_id=%s AND donem_borcu IS NOT NULL
+                 ORDER BY donem, olusturma DESC
+            """, (kid,))
+            snaps = [dict(r) for r in (cur.fetchall() or [])]
+            if len(snaps) < 2:
+                out.append({"kart_id": kid, "kart_adi": k["kart_adi"],
+                            "durum": "TEK DÖNEM — ölçülemez",
+                            "donem_sayisi": len(snaps), "donemler": []})
+                continue
+            donemler = []
+            for onceki, simdi in zip(snaps, snaps[1:]):
+                bas = onceki.get("kesim") or onceki.get("donem")
+                bit = simdi.get("kesim") or simdi.get("donem")
+                if not bas or not bit or bas >= bit:
+                    donemler.append({"donem": simdi["donem"],
+                                     "durum": "PENCERE KURULAMADI",
+                                     "kesim_bas": bas, "kesim_bit": bit})
+                    continue
+                cur.execute("""
+                    SELECT COALESCE(SUM(CASE WHEN islem_turu='ODEME' THEN -tutar
+                                             ELSE tutar END),0)::float AS d,
+                           COUNT(*) AS n
+                      FROM kart_hareketleri
+                     WHERE kart_id=%s AND durum='aktif' AND islem_turu <> 'DEVIR'
+                       AND tarih > %s::date AND tarih <= %s::date
+                """, (kid, bas, bit))
+                dr = dict(cur.fetchone() or {})
+                defter_degisim = float(dr.get("d") or 0)
+                cur.execute("""SELECT COUNT(*) AS n FROM kart_hareketleri
+                                WHERE kart_id=%s AND durum='aktif' AND islem_turu='DEVIR'
+                                  AND tarih > %s::date AND tarih <= %s::date""",
+                            (kid, bas, bit))
+                devir_ic = int((cur.fetchone() or {}).get("n") or 0)
+                banka_degisim = round(float(simdi["borc"]) - float(onceki["borc"]), 2)
+                fark = round(banka_degisim - defter_degisim, 2)
+                # Ekstrenin kendi iç çapası (banka kendi rakamıyla tutarlı mı)
+                capa = None
+                if simdi.get("harcama") is not None or simdi.get("odeme") is not None:
+                    capa = round(float(simdi.get("harcama") or 0)
+                                 - float(simdi.get("odeme") or 0)
+                                 + float(simdi.get("faiz") or 0), 2)
+                donemler.append({
+                    "donem": simdi["donem"], "kesim_bas": bas, "kesim_bit": bit,
+                    "banka_degisim": banka_degisim,
+                    "defter_degisim": round(defter_degisim, 2),
+                    "hareket_adet": int(dr.get("n") or 0),
+                    "fark": fark,
+                    "ekstre_ic_capa": capa,
+                    "capa_farki": (None if capa is None else round(banka_degisim - capa, 2)),
+                    "devir_pencerede": devir_ic,
+                    "durum": ("TUTUYOR" if abs(fark) < 1
+                              else ("DEFTER EKSİK" if fark > 0 else "DEFTER FAZLA")),
+                })
+                olculen += 1
+                if abs(fark) >= 1:
+                    sapan += 1
+                    toplam_sapma += abs(fark)
+            out.append({"kart_id": kid, "kart_adi": k["kart_adi"],
+                        "donem_sayisi": len(snaps),
+                        "durum": ("TUTUYOR" if all(d.get("durum") == "TUTUYOR" for d in donemler)
+                                  else "SAPMA VAR"),
+                        "donemler": donemler})
+        return {
+            "kartlar": out,
+            "olculen_donem": olculen,
+            "sapan_donem": sapan,
+            "toplam_sapma": round(toplam_sapma, 2),
+            "not": ("Bu ölçüm DEVİR yamasından bağımsızdır: iki ekstre arasındaki "
+                    "DEĞİŞİM kıyaslanır, TOPLAM değil. 'fark' sıfırdan sapıyorsa o "
+                    "dönemde deftere girmemiş (veya fazladan girmiş) hareket vardır. "
+                    "'capa_farki' ise bankanın kendi rakamlarının tutarlılığını ölçer."),
+        }
+
+
 @app.get("/api/kartlar/devir-denetimi")
 def kart_devir_denetimi():
     """🔬 DEVİR YAMASI DENETİMİ — SALT OKUR, hiçbir şey yazmaz.
