@@ -2609,6 +2609,8 @@ def kart_ekstre_satir_denetimi(kart_id: Optional[str] = None,
                    e.donem::text AS donem, e.kesim_tarihi::text AS kesim,
                    e.donem_harcama::float AS banka_harcama,
                    e.donem_odeme::float AS banka_odeme,
+                   e.donem_borcu::float AS donem_borcu,
+                   e.onceki_borc::float AS onceki_borc,
                    e.belge_pdf
               FROM kart_ekstre_donem e
               JOIN kartlar k ON k.id = e.kart_id
@@ -2707,7 +2709,22 @@ def kart_ekstre_satir_denetimi(kart_id: Optional[str] = None,
             _faiz_re = _re.compile(r"faiz|bsmv|kkdf|[uü]cret", _re.I)
             oku_h_faizsiz = round(sum(b["tutar"] for b in banka
                                       if b["tip"] != "ODEME" and not _faiz_re.search(b["aciklama"] or "")), 2)
+            # 🧮 BEYAN YOKSA BORÇ KİMLİĞİNDEN TÜRET (2026-08-24)
+            # Ziraat ve Garanti ekstreleri "dönem içi harcamalar" satırını
+            # BASMIYOR. Duyu bu yüzden 6 dönemi "OKUMA DOĞRULANAMIYOR" diye
+            # ölçüm dışı bırakıyordu — oysa ölçülemeyen şey yoktu, sadece hazır
+            # yazılmış bir toplam yoktu. Ekstrenin kendi kimliği zaten söylüyor:
+            #     dönem borcu = önceki borç − ödeme + harcama
+            # → harcama = dönem borcu − önceki borç + ödeme
+            # İçe aktarma yolundaki çapa bunu zaten böyle kuruyor ("borc_kimligi").
+            # Duyunun daha az bilgiyle çalışması için bir sebep yok; ölçüt aynı
+            # olmalı, yoksa iki uç aynı ekstre için iki farklı hüküm verir.
             bh = h.get("banka_harcama")
+            bh_kaynak = "banka beyanı"
+            if bh is None and h.get("donem_borcu") is not None and h.get("onceki_borc") is not None:
+                bh = round(float(h["donem_borcu"]) - float(h["onceki_borc"])
+                           + float(h.get("banka_odeme") or 0), 2)
+                bh_kaynak = "borç kimliğinden türetildi (banka dönem harcamasını yazmıyor)"
             oku_fark = None
             oku_yorum = None
             if bh is not None:
@@ -2796,7 +2813,7 @@ def kart_ekstre_satir_denetimi(kart_id: Optional[str] = None,
                 # okuma doğrulanamıyor. İkisi de "satır farkı" diye bağırsaydı duyu
                 # her ay 50+ sahte bulgu üretir, gerçek olanlar içinde kaybolurdu.
                 # Sıra: önce aletin sağlamlığı, sonra defterin doğruluğu.
-                "durum": ("OKUMA DOĞRULANAMIYOR — bankanın dönem harcaması yok"
+                "durum": ("OKUMA DOĞRULANAMIYOR — dönem harcaması ne yazılı ne türetilebilir"
                           if oku_fark is None else
                           "OKUMA ŞÜPHELİ — önce PDF okuması düzeltilmeli"
                           if abs(oku_fark) >= 1 else
@@ -2813,7 +2830,7 @@ def kart_ekstre_satir_denetimi(kart_id: Optional[str] = None,
                 "okuma_guveni": {
                     "pdf_okunan_harcama": oku_h,
                     "pdf_okunan_harcama_faizsiz": oku_h_faizsiz,
-                    "banka_beyan_harcama": bh,
+                    "banka_beyan_harcama": bh, "beyan_kaynagi": bh_kaynak,
                     "fark": oku_fark, "gelenek": oku_yorum,
                     "yorum": ("okuma tam — bankanın beyanıyla birebir"
                               if oku_fark is not None and abs(oku_fark) < 1
