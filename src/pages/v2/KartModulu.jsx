@@ -103,6 +103,7 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
   const [harcama, setHarcama] = useState(null);
   const [donemMut, setDonemMut] = useState(null);   // ekstre↔defter dönem mutabakatı
   const [mukerrer, setMukerrer] = useState(null);   // mükerrer ödeme adayları (öneri-only)
+  const [satirDen, setSatirDen] = useState(null);   // ekstre PDF ↔ defter satır denetimi
   const [hareketler, setHareketler] = useState([]);
   const [koc, setKoc] = useState(null);
   // /kartlar/borc-projeksiyon — çok aylık GERÇEK faiz simülasyonu (çığ/kartopu)
@@ -302,9 +303,15 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
       // yamanın gölgesiydi. Bunlar DEĞİŞİMİ kıyaslar, toplamı değil.
       api('/kartlar/donem-mutabakati').catch(() => null),
       api('/kartlar/mukerrer-odeme-adaylari').catch(() => null),
-    ]).then(([k, o, h, hr, an, ar, sc, fe, ty, ab, abk, abe, ism, skir, sbek, dmt, mko]) => {
+      // 🔬 SATIR DENETİMİ (2026-08-24) — arşivdeki PDF'i defterle satır satır
+      // kıyaslar. Elle yapıldığında WORLD ANNEM'in aylık ~3.306 ₺'lik açığını
+      // TEK SATIRA indirmişti (6 taksitli alım tek çekim sanılmış). PDF ayrıştırma
+      // ağır olduğu için son 12 dönemle sınırlı ve ayrı istekte.
+      api('/kartlar/ekstre-satir-denetimi?limit=12').catch(() => null),
+    ]).then(([k, o, h, hr, an, ar, sc, fe, ty, ab, abk, abe, ism, skir, sbek, dmt, mko, sdn]) => {
       setDonemMut(dmt);
       setMukerrer(mko);
+      setSatirDen(sdn);
       setIsletmeciler(ism?.isletmeciler || []);
       setSahsiKirilim(skir);
       setSahsiBekleyen(sbek);
@@ -1317,6 +1324,98 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
             </div>
           </div>
         )}
+
+        {/* ── 🔬 SATIR DENETİMİ — ARŞİVDEKİ PDF ↔ DEFTER ───────────────────
+            Dönem mutabakatı "X ₺ fark var" der ama hangi SATIR olduğunu
+            söyleyemez. Bu blok arşivdeki ekstre PDF'ini defterle satır satır
+            kıyaslar. Elle yapıldığında WORLD ANNEM'in aylık ~3.306 ₺'lik
+            açığını tek satıra indirmişti: 19.841,75 ₺'lik 6 taksitli alım
+            defterde TEK ÇEKİM 3.306,96 ₺ olarak duruyordu.
+            ⚠️ Önce ÖLÇÜM ALETİ denetlenir: PDF okunamıyorsa defter suçlanmaz. */}
+        {satirDen && (satirDen.donemler || []).length > 0 && (() => {
+          const dl = satirDen.donemler || [];
+          const gecerli = dl.filter(x => x.olcum_gecerli);
+          const kor = dl.filter(x => !x.olcum_gecerli);
+          const bulgulu = gecerli.filter(x => (x.pdf_eksik || []).length || (x.defter_fazla || []).length);
+          return (
+            <div style={{ ...kartYuzey, padding: '13px 16px', marginBottom: 12, fontSize: 12.5, lineHeight: 1.6 }}>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 8 }}>
+                <b style={{ color: R.krem, fontSize: 13 }}>🔬 Satır denetimi — ekstre PDF'i ↔ defter</b>
+                <span style={{ color: R.not2, fontSize: 11.5 }}>
+                  {gecerli.length} dönem ölçülebildi · {kor.length} dönem okunamadı · {bulgulu.length} dönemde satır farkı
+                </span>
+              </div>
+              <div style={{ color: R.metin2, marginBottom: 9 }}>
+                Arşivdeki ekstrenin <b>her satırı</b> defterle karşılaştırılır. Taksitli
+                satırda kıyas <b>taksit payı</b> üzerindendir — banka o ay neyi fatura
+                ettiyse o. Bir dönemde PDF okunamıyorsa <b style={{ color: R.amber }}>defter suçlanmaz</b>;
+                eksik olan ölçüm aletidir.
+              </div>
+              <div style={{ display: 'grid', gap: 6 }}>
+                {dl.map((x) => {
+                  const eksik = x.pdf_eksik || [];
+                  const fazla = x.defter_fazla || [];
+                  const yakin = x.yakin_eslesme || [];
+                  const renk = !x.olcum_gecerli ? R.not2
+                    : (eksik.length || fazla.length) ? R.kirmizi
+                      : yakin.length ? R.amber : R.yesil;
+                  return (
+                    <div key={`${x.kart_id}|${x.donem}`} style={{
+                      padding: '8px 11px', borderRadius: 9, background: R.kart2,
+                      border: `1px solid ${renk}33`,
+                    }}>
+                      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'baseline' }}>
+                        <b style={{ color: R.krem }}>{x.kart_adi}</b>
+                        <span style={{ color: R.not2, fontSize: 11.5 }}>{kisaTarih(x.donem)}</span>
+                        <span style={{
+                          padding: '1px 7px', borderRadius: 999, fontSize: 10,
+                          background: `${renk}1E`, color: renk, border: `1px solid ${renk}44`,
+                        }}>{x.durum}</span>
+                      </div>
+                      {!x.olcum_gecerli ? (
+                        <div style={{ color: R.not2, fontSize: 11, marginTop: 4 }}>
+                          {x.okuma_guveni?.banka_beyan_harcama == null
+                            ? 'Bankanın dönem harcaması kayıtlı değil — okuma doğrulanamıyor.'
+                            : `PDF'ten okunan ${fmt(x.okuma_guveni?.pdf_okunan_harcama)} · bankanın dediği ${fmt(x.okuma_guveni?.banka_beyan_harcama)} — aradaki ${fmt(x.okuma_guveni?.fark)} okuyucunun kaçırdığı kısım.`}
+                        </div>
+                      ) : (
+                        <>
+                          {eksik.map((e, i) => (
+                            <div key={`e${i}`} style={{ fontSize: 11.5, marginTop: 3, color: R.kirmizi }}>
+                              ▸ bankada var, defterde YOK — <b style={{ fontFamily: F.mono }}>{fmt(e.tutar)}</b>
+                              <span style={{ color: R.not2 }}> · {kisaTarih(e.tarih)} · {e.aciklama}
+                                {e.taksit ? ` · taksit ${e.taksit}` : ''}</span>
+                            </div>
+                          ))}
+                          {fazla.map((e, i) => (
+                            <div key={`f${i}`} style={{ fontSize: 11.5, marginTop: 3, color: R.amber }}>
+                              ▸ defterde var, banka o dönem fatura ETMEMİŞ — <b style={{ fontFamily: F.mono }}>{fmt(e.tutar)}</b>
+                              <span style={{ color: R.not2 }}> · {kisaTarih(e.tarih)} · {e.aciklama}
+                                {e.taksit_sayisi > 1 ? ` · ${e.taksit_no}/${e.taksit_sayisi}` : ''}</span>
+                            </div>
+                          ))}
+                          {yakin.length > 0 && (
+                            <div style={{ fontSize: 11, marginTop: 3, color: R.not2 }}>
+                              {yakin.length} kalem yakın eşleşti (kayıp yok, küçük sapma):
+                              {yakin.map((y, i) => (
+                                <span key={i}> {fmt(y.banka.tutar)}↔{fmt(y.defter.tutar)} ({fmt(y.tutar_farki)}, {y.gun_farki} gün){i < yakin.length - 1 ? ' ·' : ''}</span>
+                              ))}
+                            </div>
+                          )}
+                          {!eksik.length && !fazla.length && !yakin.length && (
+                            <div style={{ color: R.yesil, fontSize: 11, marginTop: 3 }}>
+                              Her satır tutuyor.
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })()}
 
         {/* KART KART DÖNEM TABLOSU */}
         {kartlarM.map((k) => (
