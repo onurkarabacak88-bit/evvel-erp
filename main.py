@@ -2611,6 +2611,7 @@ def kart_ekstre_satir_denetimi(kart_id: Optional[str] = None,
                    e.donem_odeme::float AS banka_odeme,
                    e.donem_borcu::float AS donem_borcu,
                    e.onceki_borc::float AS onceki_borc,
+                   e.donem_faizi::float AS donem_faizi,
                    e.belge_pdf
               FROM kart_ekstre_donem e
               JOIN kartlar k ON k.id = e.kart_id
@@ -2743,10 +2744,24 @@ def kart_ekstre_satir_denetimi(kart_id: Optional[str] = None,
             if bh is not None:
                 f1 = round(float(bh) - oku_h, 2)          # faiz dahil yorumu
                 f2 = round(float(bh) - oku_h_faizsiz, 2)  # faiz hariç yorumu
-                if abs(f2) < abs(f1):
-                    oku_fark, oku_yorum = f2, "banka dönem harcamasına FAİZİ KATMIYOR (Axess geleneği)"
-                else:
-                    oku_fark, oku_yorum = f1, "banka dönem harcamasına FAİZİ KATIYOR (Yapı Kredi geleneği)"
+                _adaylar = [(f1, "banka dönem harcamasına FAİZİ KATIYOR (Yapı Kredi geleneği)"),
+                            (f2, "banka dönem harcamasına FAİZİ KATMIYOR (Axess geleneği)")]
+                # 🍎 ELMA İLE ELMA — GARANTİ FAİZİ TARİHSİZ BASAR (2026-08-24)
+                # Garanti/Bonus ekstresinde DÖNEM FAİZİ, KKDF+BSMV, GEÇ ÖDEME ve
+                # LİMİT AŞIM faizleri tablonun İÇİNDE değil başlık bloğunda,
+                # TARİHSİZ satırlar olarak durur. Geometrik okuyucu tarihsiz satırı
+                # işlem saymaz (doğrusu da budur). Ama borç kimliğinden türetilen
+                # harcama faizi İÇERİR → okuma haksız yere "şüpheli" çıkıyordu;
+                # fark tam faiz kadardı: Garanti Onur 20.979,46 = 15.722,62 DÖNEM
+                # FAİZİ + 4.841,41 KKDF/BSMV + 287,93 GEÇ ÖDEME + 127,50 LİMİT AŞIM.
+                # Okuma satırları DOĞRUYDU; faiz onun işi değildi. Üçüncü aday:
+                # okunan satırlar + ekstrenin kendi beyan ettiği dönem faizi.
+                _df = h.get("donem_faizi")
+                if _df and abs(oku_h - oku_h_faizsiz) < 0.01:
+                    _adaylar.append((round(float(bh) - (oku_h + float(_df)), 2),
+                                     "okunan satırlar + ekstrenin beyan ettiği dönem faizi "
+                                     "(banka faizi TARİHSİZ basıyor — Garanti geleneği)"))
+                oku_fark, oku_yorum = min(_adaylar, key=lambda p: abs(p[0]))
 
             # ── 2) Defter kalemleri (o döneme düşen paylarıyla) ─────────────
             cur.execute("""SELECT id, tarih, islem_turu, tutar::float AS tutar,
