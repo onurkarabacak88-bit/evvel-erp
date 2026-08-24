@@ -362,9 +362,73 @@ def fatura_teslim_mutabakati(tedarikci: str = "", gun: int = 120,
                 sayac["faturalanmamis_teslim"] += 1
             sonuc.append(kayit)
 
+        # ── 4) DÖNEM MUTABAKATI — hüküm FATURADAN DÖNEME taşındı (2026-08-24)
+        # 🪤 Aynı tedarikçi aynı gün BİRKAÇ fatura kesince (ATALAY 6 Temmuz'da üç
+        # tane: 12 + 13 + 3 adet), siparişler "en yakın faturaya" gidiyor ve
+        # geri kalan faturalar "SİPARİŞSİZ GELEN MAL" görünüyordu. Ortada
+        # siparişsiz mal yoktu — ÖLÇÜ BİRİMİ YANLIŞTI.
+        # Kartlarda öğrenilen kural: tek satırı değil DÖNEMİ mutabık kıl.
+        # Burada dönem = aynı karşı tarafın, birbirine `pencere` günden yakın
+        # faturalarının oluşturduğu küme. Hüküm küme düzeyinde verilir.
+        gruplar: List[Dict] = []
+        _olculebilir = [x for x in sonuc if x.get("olcum_gecerli")]
+        _kullanildi = [False] * len(_olculebilir)
+        for i, a in enumerate(_olculebilir):
+            if _kullanildi[i]:
+                continue
+            kume = [a]
+            _kullanildi[i] = True
+            for j in range(i + 1, len(_olculebilir)):
+                b = _olculebilir[j]
+                if _kullanildi[j]:
+                    continue
+                if not (_ayirt_edici(a["tedarikci_ad"]) & _ayirt_edici(b["tedarikci_ad"])):
+                    continue
+                try:
+                    if abs(_gun_farki(a["tarih"], b["tarih"])) <= pen:
+                        kume.append(b)
+                        _kullanildi[j] = True
+                except Exception:  # noqa: BLE001
+                    continue
+            f_adet = round(sum(x["fatura_adet"] for x in kume), 2)
+            # aynı sipariş iki faturaya sayılmasın diye ts_id ile tekilleştir
+            _gorulen, t_adet, acik = set(), 0.0, []
+            for x in kume:
+                for s in (x.get("acik_siparisler") or []):
+                    if s["ts_id"] not in _gorulen:
+                        _gorulen.add(s["ts_id"]); acik.append(s)
+                t_adet += x["teslim_alinan_adet"]
+            t_adet = round(t_adet, 2)
+            fark = round(f_adet - t_adet, 2)
+            if abs(fark) <= 1:
+                durum, guc = "TUTUYOR — dönem faturası ile teslim alınan aynı", None
+            elif fark > 1 and acik:
+                durum, guc = "MAL GELDİ, SİPARİŞ KAPANMADI", "GÜÇLÜ"
+            elif fark > 1:
+                durum, guc = "SİPARİŞSİZ GELEN MAL — dönemde karşılığı yok", "ORTA"
+            else:
+                durum, guc = "FATURALANMAYAN TESLİM? — birim şüphesi", "ZAYIF"
+            gruplar.append({
+                "tedarikci_ad": a["tedarikci_ad"],
+                "donem_bas": min(x["tarih"] for x in kume),
+                "donem_bit": max(x["tarih"] for x in kume),
+                "fatura_adet_sayisi": len(kume),
+                "faturalar": [x["fatura_no"] for x in kume],
+                "fatura_tutari": round(sum(x["tutar"] or 0 for x in kume), 2),
+                "fatura_adet": f_adet, "teslim_alinan_adet": t_adet,
+                "adet_farki": fark, "durum": durum, "kanit_gucu": guc,
+                "acik_siparisler": acik,
+            })
+        gruplar.sort(key=lambda x: x["donem_bit"], reverse=True)
+        grup_ozet: Dict[str, int] = {}
+        for gg in gruplar:
+            _k = gg["durum"].split("—")[0].strip()
+            grup_ozet[_k] = grup_ozet.get(_k, 0) + 1
+
     return {
         "tedarikci": t or "(hepsi)", "gun": g, "pencere_gun": pen,
         "toplam": len(sonuc), "ozet": sayac,
+        "donem_sayisi": len(gruplar), "donem_ozet": grup_ozet, "donemler": gruplar,
         "olculebilen": sum(1 for x in sonuc if x.get("olcum_gecerli")),
         "olculemeyen": sayac["olculemez"] + sayac["sistem_oncesi"] + sayac["kanal_yok"],
         "mukerrer_fatura_kaydi": mukerrer,
