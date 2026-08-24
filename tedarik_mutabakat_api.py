@@ -278,6 +278,7 @@ def fatura_teslim_mutabakati(tedarikci: str = "", gun: int = 120,
                     "Aradaki %.0f adet, aşağıdaki %d açık siparişten geliyor — "
                     "tedarikçi göndermediği malı faturalamaz."
                     % (kayit["fatura_adet"], teslim_adet, fark, len(acik)))
+                kayit["kanit_gucu"] = "GÜÇLÜ"
                 kayit["eylem"] = "Şube bu siparişleri teslim-al ile kapatmalı."
                 sayac["kayit_kapanmamis"] += 1
             elif fark > 1:
@@ -286,8 +287,23 @@ def fatura_teslim_mutabakati(tedarikci: str = "", gun: int = 120,
                                   "açılmalı ya da sipariş penceresi genişletilmeli.")
                 sayac["siparissiz"] += 1
             else:
-                kayit["durum"] = "FATURALANMAYAN TESLİM — teslim alınan, faturadan fazla"
-                kayit["eylem"] = "Eksik fatura tedarikçiden istenmeli."
+                # ⚖️ KANIT GÜCÜ SİMETRİK DEĞİLDİR (2026-08-24) — bunu yazmak şart:
+                # FARK POZİTİFSE (fatura fazla) kanıt GÜÇLÜDÜR — tedarikçi
+                # göndermediği malı faturalamaz; demek ki mal geldi.
+                # FARK NEGATİFSE (teslim fazla) kanıt ZAYIFTIR — çünkü siparişin
+                # "adet"i ile faturanın "adet"i AYNI BİRİM OLMAYABİLİR: şube
+                # "Sade Maden Suyu ×240" (şişe) yazarken fatura "×10" (koli)
+                # yazabilir. Canlı örnek: 16 Haziran, teslim 336 / fatura 104.
+                # Bu yüzden burada "eksik fatura var" diye kesin hüküm VERİLMEZ;
+                # önce birim uyuşmazlığından şüphelenilir.
+                kayit["durum"] = "FATURALANMAYAN TESLİM? — teslim alınan, faturadan fazla"
+                kayit["kanit_gucu"] = "ZAYIF"
+                kayit["uyari"] = (
+                    "Sipariş adedi ile fatura adedi aynı birimde olmayabilir "
+                    "(koli ↔ şişe). Bu satır tek başına 'fatura eksik' demez; "
+                    "önce birimleri karşılaştırın.")
+                kayit["eylem"] = ("Birimler aynıysa eksik fatura tedarikçiden istenmeli; "
+                                  "değilse sipariş kalemine birim bilgisi eklenmeli.")
                 sayac["faturalanmamis_teslim"] += 1
             sonuc.append(kayit)
 
@@ -303,5 +319,8 @@ def fatura_teslim_mutabakati(tedarikci: str = "", gun: int = 120,
                 "dünyada farklı yazıldığı için ada dayanan ölçüm kırılır, adet kırılmaz. "
                 "Kalemleri okunmamış fatura ÖLÇÜLEMEZ sayılır ve toplamlara girmez — "
                 "kör aletle defter suçlanmaz. 'MAL GELDİ, SİPARİŞ KAPANMADI' bir "
-                "muhasebe hatası değil KAYIT eksiğidir: şube teslim-al ile kapatmalıdır."),
+                "muhasebe hatası değil KAYIT eksiğidir: şube teslim-al ile kapatmalıdır. "
+                "⚖️ KANIT GÜCÜ SİMETRİK DEĞİL: fatura FAZLAYSA kanıt güçlüdür (tedarikçi "
+                "göndermediğini faturalamaz); teslim fazlaysa ZAYIFTIR (sipariş adedi ile "
+                "fatura adedi aynı birimde olmayabilir — koli ↔ şişe)."),
     }
