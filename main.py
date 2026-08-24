@@ -2673,6 +2673,8 @@ def kart_donem_mutabakati():
                  ORDER BY donem, olusturma DESC
             """, (kid,))
             snaps = [dict(r) for r in (cur.fetchall() or [])]
+            cur.execute("SELECT COALESCE(kesim_gunu,1) AS kg FROM kartlar WHERE id=%s", (kid,))
+            _kg = int((cur.fetchone() or {}).get("kg") or 1)
             # 🧱 GEÇMİŞ BARİYERİ — defter ne zaman başlıyor? Bu tarihten ÖNCEKİ
             # dönemlerde "defter eksik" demek YANLIŞ ALARM olur: eksik olan
             # hareket değil, o günlere ait KAYIT HİÇ GİRİLMEMİŞ. İki durumu
@@ -2702,19 +2704,41 @@ def kart_donem_mutabakati():
                 # EKSİK görünür — ikisi de sahte. Bu yüzden her hareket, taksit
                 # sayısı kadar birer ay arayla PARÇALARA açılıp öyle toplanıyor.
                 # Ham toplam da yanında raporlanıyor (yöntem şeffaf kalsın).
+                # 🗓️ TAKSİT TAKVİMİ BANKANIN TAKVİMİDİR (2026-08-24, canlı ders)
+                # İlk sürüm taksitleri İŞLEM TARİHİ YILDÖNÜMÜNE koyuyordu
+                # (12 Şub → 12 Mar → 12 Nis…). Banka öyle yapmıyor: taksidi
+                # EKSTRE KESİMİNDE fatura ediyor. WORLD ANNEM'de 12 Şubat'ta
+                # yapılan 6 taksitli alım bankada Mart–Ağustos ekstrelerine
+                # düşerken benim modelim Şubat–Temmuz'a koyuyordu → Temmuz
+                # penceresine İKİ taksit sığdı, Ağustos'a HİÇ düşmedi. Kendi
+                # düzeltmemin sonucunu bozan şey buydu (Temmuz +3.305,96 iken
+                # −3.307,96'ya döndü — işaret değişimi model hatasının imzası).
+                # Doğrusu: 1. taksit, alımdan SONRAKİ ilk kesimde başlar.
+                # Tek çekimde davranış DEĞİŞMEZ (tarih neyse o) — patlama yüzeyi dar.
                 cur.execute("""
                     SELECT COALESCE(SUM(pay),0)::float AS d, COUNT(*) AS n
                       FROM (
                         SELECT (CASE WHEN h.islem_turu='ODEME' THEN -h.tutar ELSE h.tutar END)
                                / GREATEST(COALESCE(h.taksit_sayisi,1),1) AS pay,
-                               (h.tarih + ((g.i-1) || ' month')::interval)::date AS vade
+                               CASE
+                                 WHEN COALESCE(h.taksit_sayisi,1) <= 1 THEN h.tarih
+                                 ELSE (
+                                   CASE WHEN EXTRACT(DAY FROM h.tarih) <= %s
+                                        THEN date_trunc('month', h.tarih)::date
+                                        ELSE (date_trunc('month', h.tarih)
+                                              + INTERVAL '1 month')::date
+                                   END
+                                   + (%s - 1)
+                                   + ((g.i-1) || ' month')::interval
+                                 )::date
+                               END AS vade
                           FROM kart_hareketleri h
                           CROSS JOIN LATERAL generate_series(
                                  1, GREATEST(COALESCE(h.taksit_sayisi,1),1)) AS g(i)
                          WHERE h.kart_id=%s AND h.durum='aktif' AND h.islem_turu <> 'DEVIR'
                       ) t
                      WHERE vade > %s::date AND vade <= %s::date
-                """, (kid, bas, bit))
+                """, (_kg, _kg, kid, bas, bit))
                 dr = dict(cur.fetchone() or {})
                 defter_degisim = float(dr.get("d") or 0)
                 cur.execute("""
