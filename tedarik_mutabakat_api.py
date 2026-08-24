@@ -60,6 +60,10 @@ router = APIRouter(prefix="/api/tedarik-mutabakat", tags=["tedarik-mutabakat"])
 # sipariş karışır — 10 gün canlı FEZ/ATALAY ritmine göre seçildi (medyan 3-4 gün).
 VARSAYILAN_PENCERE = 10
 
+# Sistem bu tarihte açıldı; öncesinde SİPARİŞ KAYDI YOKTUR. Bu tarihten eski bir
+# faturaya "siparişsiz gelen mal" demek, olmayan bir defteri suçlamaktır.
+SISTEM_BASLANGIC = "2026-06-01"
+
 
 def _ad_adaylari(fatura_ad: str) -> List[str]:
     """Faturadaki resmî unvandan, sipariş tarafındaki KISA ada köprü kurar.
@@ -81,6 +85,14 @@ def _ad_adaylari(fatura_ad: str) -> List[str]:
         if len(kelime) > 1:
             adaylar.add(" ".join(kelime[:2]))
     return list(adaylar)
+
+
+def _gun_farki(a: str, b: str) -> int:
+    """İki 'YYYY-MM-DD' arasındaki gün farkı."""
+    from datetime import date as _d
+    ya, ma, ga = (int(x) for x in a[:10].split("-"))
+    yb, mb, gb = (int(x) for x in b[:10].split("-"))
+    return (_d(ya, ma, ga) - _d(yb, mb, gb)).days
 
 
 def _kalem_listesi(ham: Any) -> List[Dict]:
@@ -127,9 +139,88 @@ def fatura_teslim_mutabakati(tedarikci: str = "", gun: int = 120,
         )
         faturalar = [dict(r) for r in (cur.fetchall() or [])]
 
+        # ── 1) MÜKERRER FATURA KAYDI (2026-08-24 canlı) ────────────────────
+        # FEZ2026000001891 ve ...1703 `tedarikci_fatura`da İKİŞER KEZ duruyor:
+        # biri kalemleriyle, biri boş. Boş kopya "ÖLÇÜLEMEZ" diye rapora giriyor
+        # ve gerçek bir körlük varmış gibi görünüyordu. Aynı fatura no + aynı
+        # tutar = tek belgedir; ölçüme KALEMİ OLAN kopya girer, diğeri ayrı bir
+        # bulgu olarak GİZLENMEDEN raporlanır (sessiz eleme yasak).
+        _grup: Dict[Any, List[Dict]] = {}
+        for f in faturalar:
+            _grup.setdefault((f["fatura_no"], round(float(f["tutar"] or 0), 2)), []).append(f)
+        faturalar, mukerrer = [], []
+        for anahtar, grup in _grup.items():
+            grup.sort(key=lambda x: int(x["kalem_adet"] or 0), reverse=True)
+            faturalar.append(grup[0])
+            for k in grup[1:]:
+                mukerrer.append({"fatura_id": k["id"], "fatura_no": k["fatura_no"],
+                                 "tarih": k["tarih"], "tutar": k["tutar"],
+                                 "kalem_adet": int(k["kalem_adet"] or 0),
+                                 "ayni_belge": grup[0]["id"]})
+        faturalar.sort(key=lambda x: str(x["tarih"] or ""), reverse=True)
+
+        # ── 2) HER SİPARİŞ EN FAZLA BİR FATURAYA (2026-08-24 canlı) ────────
+        # İlk sürüm her faturanın ±pencere gününe düşen TÜM siparişleri
+        # sayıyordu. Aynı sipariş birden çok faturaya sayılınca 10 Ağustos
+        # faturası, 19 Ağustos'un teslimatlarını da üstlendi ve "FATURALANMAYAN
+        # TESLİM −84 adet" diye SAHTE bir bulgu üretti. Haziran'da fark −324'e
+        # kadar çıktı. Doğrusu: her sipariş, tarihçe EN YAKIN faturaya (pencere
+        # içinde) ait sayılır — atıf TEKİL olmalıdır, yoksa aynı mal iki kez
+        # ölçülür. (Kartlardaki "yinelenen sayfa" dersinin tedarik hâli.)
+        _siparisler: Dict[str, List[Dict]] = {}
+        if faturalar:
+            _tum_ad: set = set()
+            for f in faturalar:
+                _tum_ad.update(_ad_adaylari(f["tedarikci_ad"]))
+            cur.execute(
+                "SELECT ts.id, ts.olusturma, ts.teslim_ts, ts.kalemler, s.ad AS sube_adi, "
+                "       UPPER(COALESCE(ts.tedarikci_ad, td.ad, '')) AS ted_ad "
+                "  FROM toptanci_siparis ts "
+                "  LEFT JOIN tedarikciler td ON td.id = ts.tedarikci_id "
+                "  LEFT JOIN subeler s ON s.id = ts.sube_id "
+                " WHERE ts.olusturma >= CURRENT_DATE - %s "
+                "   AND (UPPER(COALESCE(ts.tedarikci_ad,'')) = ANY(%s) "
+                "        OR UPPER(COALESCE(td.ad,'')) = ANY(%s)) "
+                " ORDER BY ts.olusturma",
+                (g + pen, list(_tum_ad), list(_tum_ad)),
+            )
+            for r in (cur.fetchall() or []):
+                d = dict(r)
+                s_gun = str(d.get("olusturma") or "")[:10]
+                if not s_gun:
+                    continue
+                en_yakin, en_uzaklik = None, None
+                for f in faturalar:
+                    if not f["tarih"]:
+                        continue
+                    if str(f["tarih"]) < SISTEM_BASLANGIC:
+                        continue
+                    if (d.get("ted_ad") or "") not in _ad_adaylari(f["tedarikci_ad"]):
+                        continue   # aynı tedarikçi değil → aday olamaz
+                    try:
+                        uzak = abs((_gun_farki(s_gun, str(f["tarih"]))))
+                    except Exception:  # noqa: BLE001
+                        continue
+                    if uzak > pen:
+                        continue
+                    if en_uzaklik is None or uzak < en_uzaklik:
+                        en_yakin, en_uzaklik = f["id"], uzak
+                if not en_yakin:
+                    continue
+                kl = _kalem_listesi(d.get("kalemler"))
+                _siparisler.setdefault(en_yakin, []).append({
+                    "ts_id": d["id"], "sube_adi": d.get("sube_adi"),
+                    "siparis_ts": str(d.get("olusturma") or "")[:19],
+                    "teslim_alindi": bool(d.get("teslim_ts")),
+                    "adet": round(sum(float(k.get("adet") or 0) for k in kl), 2),
+                    "ozet": " · ".join(
+                        str(k.get("urun_ad") or k.get("ad") or "?") + " ×" + str(k.get("adet"))
+                        for k in kl[:4]),
+                })
+
         sonuc: List[Dict] = []
         sayac = {"tutuyor": 0, "kayit_kapanmamis": 0, "siparissiz": 0,
-                 "faturalanmamis_teslim": 0, "olculemez": 0}
+                 "faturalanmamis_teslim": 0, "olculemez": 0, "sistem_oncesi": 0}
         for f in faturalar:
             kayit: Dict[str, Any] = {
                 "fatura_id": f["id"], "fatura_no": f["fatura_no"], "tarih": f["tarih"],
@@ -150,32 +241,23 @@ def fatura_teslim_mutabakati(tedarikci: str = "", gun: int = 120,
                 sonuc.append(kayit)
                 continue
 
-            adaylar = _ad_adaylari(f["tedarikci_ad"])
-            cur.execute(
-                "SELECT ts.id, ts.olusturma, ts.teslim_ts, ts.kalemler, s.ad AS sube_adi "
-                "  FROM toptanci_siparis ts "
-                "  LEFT JOIN tedarikciler td ON td.id = ts.tedarikci_id "
-                "  LEFT JOIN subeler s ON s.id = ts.sube_id "
-                " WHERE ts.olusturma >= %s::date - %s "
-                "   AND ts.olusturma <= %s::date + %s "
-                "   AND (UPPER(COALESCE(ts.tedarikci_ad,'')) = ANY(%s) "
-                "        OR UPPER(COALESCE(td.ad,'')) = ANY(%s)) "
-                " ORDER BY ts.olusturma",
-                (f["tarih"], pen, f["tarih"], pen, adaylar, adaylar),
-            )
-            sip: List[Dict] = []
-            for r in (cur.fetchall() or []):
-                d = dict(r)
-                kl = _kalem_listesi(d.get("kalemler"))
-                sip.append({
-                    "ts_id": d["id"], "sube_adi": d.get("sube_adi"),
-                    "siparis_ts": str(d.get("olusturma") or "")[:19],
-                    "teslim_alindi": bool(d.get("teslim_ts")),
-                    "adet": round(sum(float(k.get("adet") or 0) for k in kl), 2),
-                    "ozet": " · ".join(
-                        str(k.get("urun_ad") or k.get("ad") or "?") + " ×" + str(k.get("adet"))
-                        for k in kl[:4]),
+            if str(f["tarih"] or "") < SISTEM_BASLANGIC:
+                # ⛔ OLMAYAN DEFTERİ SUÇLAMA (2026-08-24): ilk sürüm sistem
+                # açılmadan önceki 4 FEZ faturasını "SİPARİŞSİZ GELEN MAL" diye
+                # bulgu saydı. O tarihlerde sipariş kaydı DİYE BİR ŞEY YOKTU.
+                # Kartlardaki kuralın aynısı: ölçüm aletinin bulunmadığı dönem
+                # ölçülemez sayılır, hata sayılmaz.
+                kayit.update({
+                    "durum": "SİSTEM ÖNCESİ — sipariş kaydı yoktu, ölçülemez",
+                    "olcum_gecerli": False,
+                    "neden": ("Sistem %s'de açıldı; bu faturadan önce sipariş kaydı "
+                              "tutulmuyordu." % SISTEM_BASLANGIC),
                 })
+                sayac["sistem_oncesi"] += 1
+                sonuc.append(kayit)
+                continue
+
+            sip = _siparisler.get(f["id"], [])
             teslim_adet = round(sum(x["adet"] for x in sip if x["teslim_alindi"]), 2)
             acik = [x for x in sip if not x["teslim_alindi"]]
             fark = round(kayit["fatura_adet"] - teslim_adet, 2)
@@ -213,7 +295,9 @@ def fatura_teslim_mutabakati(tedarikci: str = "", gun: int = 120,
         "tedarikci": t or "(hepsi)", "gun": g, "pencere_gun": pen,
         "toplam": len(sonuc), "ozet": sayac,
         "olculebilen": sum(1 for x in sonuc if x.get("olcum_gecerli")),
-        "olculemeyen": sayac["olculemez"],
+        "olculemeyen": sayac["olculemez"] + sayac["sistem_oncesi"],
+        "mukerrer_fatura_kaydi": mukerrer,
+        "mukerrer_adet": len(mukerrer),
         "faturalar": sonuc,
         "not": ("ÖNERİ-ONLY — hiçbir kayıt yazılmadı. Çapa ADETTİR: ürün adları iki "
                 "dünyada farklı yazıldığı için ada dayanan ölçüm kırılır, adet kırılmaz. "
