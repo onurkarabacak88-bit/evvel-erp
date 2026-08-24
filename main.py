@@ -2757,7 +2757,14 @@ def kart_ekstre_satir_denetimi(kart_id: Optional[str] = None,
                 # Okuma satırları DOĞRUYDU; faiz onun işi değildi. Üçüncü aday:
                 # okunan satırlar + ekstrenin kendi beyan ettiği dönem faizi.
                 _df = h.get("donem_faizi")
-                if _df and abs(oku_h - oku_h_faizsiz) < 0.01:
+                # ⚠️ KOŞUL KOYMA TUZAĞI: ilk sürüm bu adayı yalnız "okumada HİÇ
+                # faiz satırı yoksa" öneriyordu. Garanti'de okuma az miktarda
+                # tarihli faiz de içeriyor (46,94 ₺) → koşul tutmadı, aday hiç
+                # denenmedi ve 3 dönem boş yere kör kaldı. Oysa formül doğruydu:
+                #   Garanti Onur Ağu: 180.606,82 − (159.627,36 + 20.979,46) = 0,00
+                # Aday DAİMA denenir; zaten üçü arasından çapaya en yakın olan
+                # seçiliyor — yanlış aday ancak daha iyi açıklıyorsa kazanır.
+                if _df:
                     _adaylar.append((round(float(bh) - (oku_h + float(_df)), 2),
                                      "okunan satırlar + ekstrenin beyan ettiği dönem faizi "
                                      "(banka faizi TARİHSİZ basıyor — Garanti geleneği)"))
