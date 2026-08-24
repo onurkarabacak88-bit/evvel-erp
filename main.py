@@ -2526,6 +2526,221 @@ def kart_devir_tazele(body: DevirTazeleBody):
     }
 
 
+def _tarih_d(v) -> date:
+    """'YYYY-MM-DD' / date / None → date. Çözülemezse 1970-01-01 (tarih
+    karşılaştırması eşleştirmeyi bozmasın; tutar zaten asıl anahtardır)."""
+    if isinstance(v, date):
+        return v
+    try:
+        return datetime.strptime(str(v)[:10], "%Y-%m-%d").date()
+    except (ValueError, TypeError):
+        return date(1970, 1, 1)
+
+
+def _satir_vade(tarih: date, taksit_sayisi: int, kesim_gunu: int, i: int) -> date:
+    """Bir hareketin i. taksidinin BANKA takvimindeki vade (ekstre kesimi) tarihi.
+
+    Tek çekimde tarih neyse odur. Taksitliyse 1. taksit alımdan SONRAKİ ilk
+    kesimde başlar, sonrakiler birer ay arayla (2026-08-24'te canlı öğrenildi —
+    bkz. donem-mutabakati'ndaki taksit takvimi notu).
+    """
+    if (taksit_sayisi or 1) <= 1:
+        return tarih
+    y, m = tarih.year, tarih.month
+    if tarih.day > kesim_gunu:
+        m += 1
+        if m > 12:
+            m, y = 1, y + 1
+    m += (i - 1)
+    y += (m - 1) // 12
+    m = (m - 1) % 12 + 1
+    import calendar as _cal
+    return date(y, m, min(kesim_gunu, _cal.monthrange(y, m)[1]))
+
+
+@app.get("/api/kartlar/ekstre-satir-denetimi")
+def kart_ekstre_satir_denetimi(kart_id: Optional[str] = None,
+                               donem: Optional[str] = None,
+                               limit: int = 8):
+    """🔬 EKSTRE ↔ DEFTER SATIR DENETİMİ — SALT OKUR. Arşivdeki PDF'i defterle KARŞILAŞTIRIR.
+
+    ── NEDEN ───────────────────────────────────────────────────────────────
+    Dönem mutabakatı "bu dönemde X ₺ fark var" diyebiliyor ama HANGİ SATIR
+    olduğunu söyleyemiyor. 2026-08-24'te WORLD ANNEM'in ≈3.306 ₺'lik aylık
+    açığını bulmak için arşivdeki PDF elle indirilip satır satır defterle
+    karşılaştırıldı. Çıkan şey tek satırdı:
+
+        12 Şubat 2026  HEPSIPAY *HEPSIBURADA  3.306,96
+        19.841,75 TL'lik işlemin 6 / 6 taksidi
+        → defterde: 3.306,96 ₺ · taksit_sayisi = 1   (6 taksitli alım TEK ÇEKİM sanılmış)
+
+    O elle yapılan iş BU UÇTUR. Artık her kart/dönem için kendi yapıyor.
+
+    ── NASIL ───────────────────────────────────────────────────────────────
+    1) Dönemin arşivlenmiş PDF'i okunur (kart_ekstre_donem.belge_pdf).
+    2) Bankanın O DÖNEME fatura ettiği satırlar çıkarılır. Taksitli satırda
+       bankanın yazdığı tutar TAKSİT TUTARIDIR; toplam ve taksit no alt
+       satırdan gelir — ikisi de taşınır.
+    3) Defterden aynı pencereye (önceki kesim, bu kesim] düşen kalemler
+       üretilir. Taksitli hareket, o döneme düşen TAKSİT PAYIYLA temsil edilir
+       (banka ne fatura ettiyse onunla kıyaslanabilsin diye).
+    4) Tutar+tip üzerinden eşleştirilir; eşleşmeyenler İKİ AYRI listede döner.
+
+    ⚠️ ÖNERİ-ONLY — hiçbir kayıt yazılmaz/silinmez. Eşleşmeme her zaman hata
+    değildir: aynı tutarda iki meşru satır, valör kayması, ya da bankanın
+    ayrıştırılamayan bir satırı olabilir. Bu yüzden `okuma_guveni` alanı var:
+    PDF'ten okunan satırların toplamı bankanın beyan ettiği dönem harcaması ile
+    tutmuyorsa OKUMA şüphelidir, defter değil — ve bu AÇIKÇA yazılır.
+    """
+    limit = max(1, min(24, int(limit or 8)))
+    with db() as (conn, cur):
+        _ekstre_belge_kolonlari(cur)
+        kos, par = ["belge_pdf IS NOT NULL", "donem_borcu IS NOT NULL"], []
+        if kart_id:
+            kos.append("kart_id=%s"); par.append(kart_id)
+        if donem:
+            d = donem.strip()[:10]
+            if len(d) == 7:
+                d += "-01"
+            kos.append("donem = DATE_TRUNC('month', %s::date)"); par.append(d)
+        cur.execute(f"""
+            SELECT e.kart_id::text AS kart_id, k.kart_adi,
+                   COALESCE(k.kesim_gunu,1) AS kesim_gunu,
+                   e.donem::text AS donem, e.kesim_tarihi::text AS kesim,
+                   e.donem_harcama::float AS banka_harcama,
+                   e.donem_odeme::float AS banka_odeme,
+                   e.belge_pdf
+              FROM kart_ekstre_donem e
+              JOIN kartlar k ON k.id = e.kart_id
+             WHERE {' AND '.join(kos)}
+             ORDER BY e.donem DESC LIMIT %s
+        """, (*par, limit))
+        hedefler = [dict(r) for r in (cur.fetchall() or [])]
+        if not hedefler:
+            return {"donemler": [], "adet": 0,
+                    "not": "Arşivde PDF'li dönem bulunamadı — denetim yapılamaz (HATA ≠ BOŞ)."}
+
+        try:
+            import kart_analiz
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(500, f"kart_analiz yüklenemedi: {str(e)[:120]}")
+
+        cikti, top_eksik, top_fazla = [], 0.0, 0.0
+        for h in hedefler:
+            kid, kg = h["kart_id"], int(h["kesim_gunu"] or 1)
+            bit = h.get("kesim")
+            # Önceki dönemin kesimi = pencerenin başı
+            cur.execute("""SELECT kesim_tarihi::text AS k FROM kart_ekstre_donem
+                            WHERE kart_id=%s AND donem < DATE_TRUNC('month', %s::date)
+                              AND kesim_tarihi IS NOT NULL
+                            ORDER BY donem DESC LIMIT 1""", (kid, h["donem"]))
+            bas = (cur.fetchone() or {}).get("k")
+            satir = {"kart_id": kid, "kart_adi": h["kart_adi"], "donem": h["donem"],
+                     "kesim_bas": bas, "kesim_bit": bit}
+            if not bas or not bit:
+                satir.update({"durum": "PENCERE KURULAMADI — önceki dönemin kesimi yok",
+                              "pdf_eksik": [], "defter_fazla": []})
+                cikti.append(satir); continue
+
+            # ── 1) PDF satırları ────────────────────────────────────────────
+            try:
+                txns = kart_analiz.parse_pdf(bytes(h["belge_pdf"])) or []
+            except Exception as e:  # noqa: BLE001
+                satir.update({"durum": f"PDF OKUNAMADI — {str(e)[:90]}",
+                              "pdf_eksik": [], "defter_fazla": []})
+                cikti.append(satir); continue
+            banka = []
+            for t in txns:
+                tu = abs(float(t.get("tutar") or 0))
+                if tu <= 0:
+                    continue
+                ac = str(t.get("aciklama") or "")
+                tip = "ODEME" if t.get("odeme_mi") else "HARCAMA"
+                tks = str(t.get("taksit") or "")
+                tsay = None
+                if "/" in tks:
+                    try:
+                        tsay = int(tks.split("/")[1])
+                    except (ValueError, IndexError):
+                        tsay = None
+                banka.append({"tarih": t.get("tarih"), "tutar": round(tu, 2), "tip": tip,
+                              "aciklama": ac[:60], "taksit": tks or None,
+                              "taksit_sayisi": tsay,
+                              "taksit_anapara": t.get("taksit_anapara")})
+            # OKUMA GÜVENİ — okunan satırlar bankanın beyanını tutuyor mu?
+            oku_h = round(sum(b["tutar"] for b in banka if b["tip"] != "ODEME"), 2)
+            bh = h.get("banka_harcama")
+            oku_fark = None if bh is None else round(float(bh) - oku_h, 2)
+
+            # ── 2) Defter kalemleri (o döneme düşen paylarıyla) ─────────────
+            cur.execute("""SELECT id, tarih, islem_turu, tutar::float AS tutar,
+                                  COALESCE(taksit_sayisi,1) AS ts, aciklama,
+                                  COALESCE(kaynak_tablo,'') AS kaynak
+                             FROM kart_hareketleri
+                            WHERE kart_id=%s AND durum='aktif' AND islem_turu <> 'DEVIR'
+                              AND tarih >= %s::date - 400""", (kid, bit))
+            defter = []
+            for r in (cur.fetchall() or []):
+                r = dict(r)
+                ts = max(1, int(r["ts"] or 1))
+                for i in range(1, ts + 1):
+                    v = _satir_vade(r["tarih"], ts, kg, i)
+                    if str(bas) < str(v) <= str(bit):
+                        defter.append({
+                            "id": r["id"], "tarih": str(r["tarih"])[:10],
+                            "tip": "ODEME" if r["islem_turu"] == "ODEME" else "HARCAMA",
+                            "tutar": round(float(r["tutar"]) / ts, 2),
+                            "toplam": round(float(r["tutar"]), 2), "taksit_sayisi": ts,
+                            "taksit_no": i, "aciklama": (r["aciklama"] or "")[:60],
+                            "kaynak": r["kaynak"] or "sistem",
+                        })
+
+            # ── 3) Eşleştirme — tutar+tip, tarihe en yakın olan ─────────────
+            kalan = list(defter)
+            pdf_eksik = []
+            for b in banka:
+                aday = [(abs((_tarih_d(b["tarih"]) - _tarih_d(d["tarih"])).days), j)
+                        for j, d in enumerate(kalan)
+                        if d["tip"] == b["tip"] and abs(d["tutar"] - b["tutar"]) <= 0.02]
+                if aday:
+                    aday.sort()
+                    kalan.pop(aday[0][1])
+                else:
+                    pdf_eksik.append(b)
+            eks_t = round(sum(x["tutar"] for x in pdf_eksik if x["tip"] != "ODEME")
+                          - sum(x["tutar"] for x in pdf_eksik if x["tip"] == "ODEME"), 2)
+            faz_t = round(sum(x["tutar"] for x in kalan if x["tip"] != "ODEME")
+                          - sum(x["tutar"] for x in kalan if x["tip"] == "ODEME"), 2)
+            top_eksik += abs(eks_t); top_fazla += abs(faz_t)
+            satir.update({
+                "durum": ("TUTUYOR" if not pdf_eksik and not kalan else "SATIR FARKI VAR"),
+                "pdf_satir": len(banka), "defter_kalem": len(defter),
+                "pdf_eksik": pdf_eksik,          # bankada var, defterde YOK
+                "defter_fazla": kalan,           # defterde var, bankada YOK
+                "pdf_eksik_tutar": eks_t, "defter_fazla_tutar": faz_t,
+                "okuma_guveni": {
+                    "pdf_okunan_harcama": oku_h, "banka_beyan_harcama": bh,
+                    "fark": oku_fark,
+                    "yorum": ("okuma tam — bankanın beyanıyla birebir"
+                              if oku_fark is not None and abs(oku_fark) < 1
+                              else "⚠ OKUMA ŞÜPHELİ — PDF'ten okunan satırlar bankanın "
+                                   "beyan ettiği dönem harcamasını tutmuyor; aşağıdaki "
+                                   "farklar DEFTERİ değil OKUMAYI gösteriyor olabilir"),
+                },
+            })
+            cikti.append(satir)
+        return {
+            "donemler": cikti, "adet": len(cikti),
+            "toplam_pdf_eksik": round(top_eksik, 2),
+            "toplam_defter_fazla": round(top_fazla, 2),
+            "not": ("ÖNERİ-ONLY — hiçbir kayıt yazılmadı. 'pdf_eksik' = banka fatura "
+                    "etmiş ama defterde yok; 'defter_fazla' = defterde var ama banka "
+                    "o dönem fatura etmemiş. Taksitli satırlarda kıyas TAKSİT PAYI "
+                    "üzerindendir (banka ne fatura ettiyse o). Bir dönemde "
+                    "okuma_guveni.fark sıfırdan sapıyorsa önce OKUMADAN şüphelenin."),
+        }
+
+
 @app.get("/api/kartlar/mukerrer-odeme-adaylari")
 def kart_mukerrer_odeme_adaylari(gun: int = 7, tolerans: float = 250.0):
     """🕵️ MÜKERRER KART ÖDEMESİ ADAYLARI — SALT OKUR, ÖNERİ-ONLY. Hiçbir şey silmez.
