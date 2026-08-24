@@ -64,6 +64,11 @@ VARSAYILAN_PENCERE = 10
 # faturaya "siparişsiz gelen mal" demek, olmayan bir defteri suçlamaktır.
 SISTEM_BASLANGIC = "2026-06-01"
 
+# Fatura kesildikten SONRA girilmiş sipariş kaydı için tanınan pay (gün).
+# Sıfır yapılırsa aynı gün geç kaydedilen siparişler kaybolur; büyütülürse
+# sonraki dönemin siparişi bu faturaya karışır. 1 gün ölçülü paydır.
+SONRA_TOLERANS = 1
+
 
 def _ad_adaylari(fatura_ad: str) -> List[str]:
     """Faturadaki resmî unvandan, sipariş tarafındaki KISA ada köprü kurar.
@@ -231,11 +236,21 @@ def fatura_teslim_mutabakati(tedarikci: str = "", gun: int = 120,
                             & _ayirt_edici(f["tedarikci_ad"])):
                         continue   # ortak ayırt edici kelime yok → aynı taraf değil
                     try:
-                        uzak = abs((_gun_farki(s_gun, str(f["tarih"]))))
+                        # ⏳ ZAMAN OKU TEK YÖNLÜ (2026-08-24, sahip uyarısı):
+                        # "FATURA TARİHİNDEN ÖNCESİNE BAK." Mal önce sipariş
+                        # edilir, SONRA faturalanır. İlk sürüm pencereyi iki
+                        # yönlü (±10 gün) kurmuştu ve 23 Ağustos siparişini
+                        # 20 Ağustos faturasına sayıyordu — henüz verilmemiş bir
+                        # sipariş, kesilmiş bir faturanın malını açıklayamaz.
+                        # Sapma = fatura günü − sipariş günü; NEGATİF olamaz.
+                        # SONRA_TOLERANS: aynı gün/ertesi gün girilen siparişler
+                        # (geç kaydedilmiş) kaybolmasın diye küçük bir pay.
+                        sapma = _gun_farki(str(f["tarih"]), s_gun)
                     except Exception:  # noqa: BLE001
                         continue
-                    if uzak > pen:
+                    if sapma < -SONRA_TOLERANS or sapma > pen:
                         continue
+                    uzak = abs(sapma)
                     if en_uzaklik is None or uzak < en_uzaklik:
                         en_yakin, en_uzaklik = f["id"], uzak
                 if not en_yakin:
@@ -448,4 +463,127 @@ def fatura_teslim_mutabakati(tedarikci: str = "", gun: int = 120,
                 "⚖️ KANIT GÜCÜ SİMETRİK DEĞİL: fatura FAZLAYSA kanıt güçlüdür (tedarikçi "
                 "göndermediğini faturalamaz); teslim fazlaysa ZAYIFTIR (sipariş adedi ile "
                 "fatura adedi aynı birimde olmayabilir — koli ↔ şişe)."),
+    }
+
+
+@router.get("/siparis-patlamasi")
+def siparis_patlamasi(gun: int = 200, saat: int = 6, en_az: int = 3):
+    """💥 AYNI ŞUBE + AYNI TEDARİKÇİ, KISA SÜREDE ART ARDA SİPARİŞ. SALT OKUR.
+
+    ── NEDEN (2026-08-24, sahip sorusu) ────────────────────────────────────
+    TEMA 19 Ağustos'ta FEZ'e ~1 saat içinde 9 sipariş yolladı; yalnız 1'i teslim
+    alındı, fatura hepsinin malını kapsıyordu. Sahip sordu: "Buna benzer,
+    şubelerden sipariş verilip yönlendirme yapılmış mı? FATURA TARİHİNDEN
+    ÖNCESİNE BAK."
+
+    Bu uç tam onu arar: aynı şubenin aynı tedarikçiye KISA SÜREDE (varsayılan
+    6 saat) verdiği ≥3 sipariş kümesini bulur ve kümenin kaçının teslim
+    alındığını söyler. Küme, sonrasında kesilen İLK FATURAYLA eşleştirilir —
+    çünkü zaman oku tek yönlüdür: mal önce sipariş edilir, sonra faturalanır.
+
+    ── NEDEN "PATLAMA" ŞÜPHELİ ─────────────────────────────────────────────
+    Tek bir alışveriş normalde TEK sipariştir. Dakikalar arayla açılan birden
+    çok sipariş genelde ya panelde tekrar denemedir ya da liste parça parça
+    girilmiştir. Sonuç aynı: mal tek seferde gelir, siparişlerin biri teslim
+    alınır, geri kalanı sonsuza dek "açık" kalır ve tedarik zinciri kirlenir.
+
+    ⚠️ ÖNERİ-ONLY. Patlama tek başına hata DEĞİLDİR — şube gerçekten üç ayrı
+    şey sipariş etmiş olabilir. Bu yüzden karar verilmez; yalnız TESLİM ORANI
+    ve sonraki fatura gösterilir, hüküm sahibindir.
+    """
+    g = max(1, min(730, int(gun or 200)))
+    pen_saat = max(1, min(72, int(saat or 6)))
+    esik = max(2, min(20, int(en_az or 3)))
+    with db() as (_, cur):
+        cur.execute(
+            "SELECT ts.id, ts.olusturma, ts.teslim_ts, ts.kalemler, "
+            "       COALESCE(ts.durum,'') AS durum, "
+            "       COALESCE(ts.sube_id,'') AS sube_id, s.ad AS sube_adi, "
+            "       UPPER(COALESCE(ts.tedarikci_ad, td.ad, '')) AS ted_ad "
+            "  FROM toptanci_siparis ts "
+            "  LEFT JOIN tedarikciler td ON td.id = ts.tedarikci_id "
+            "  LEFT JOIN subeler s ON s.id = ts.sube_id "
+            " WHERE ts.olusturma >= CURRENT_DATE - %s "
+            " ORDER BY ts.sube_id, ted_ad, ts.olusturma",
+            (g,),
+        )
+        satir = [dict(r) for r in (cur.fetchall() or [])]
+
+        kumeler: List[Dict] = []
+        i = 0
+        while i < len(satir):
+            a = satir[i]
+            kume = [a]
+            j = i + 1
+            while j < len(satir):
+                b = satir[j]
+                if (b["sube_id"] != a["sube_id"]) or (b["ted_ad"] != a["ted_ad"]):
+                    break
+                try:
+                    delta = (b["olusturma"] - kume[-1]["olusturma"]).total_seconds() / 3600.0
+                except Exception:  # noqa: BLE001
+                    break
+                if delta > pen_saat:
+                    break
+                kume.append(b); j += 1
+            if len(kume) >= esik:
+                kumeler.append(kume)
+            i = j if j > i + 1 else i + 1
+
+        sonuc: List[Dict] = []
+        for kume in kumeler:
+            bas = kume[0]["olusturma"]
+            son = kume[-1]["olusturma"]
+            teslim = [x for x in kume if x["teslim_ts"]]
+            iptal = [x for x in kume if x["durum"] == "iptal"]
+            acik = [x for x in kume if not x["teslim_ts"] and x["durum"] != "iptal"]
+            # ⏳ SONRAKİ FATURA — zaman oku tek yönlü: fatura kümeden SONRA gelir
+            fatura = None
+            cur.execute(
+                "SELECT f.fatura_no, f.fatura_tarih::text AS tarih, f.tedarikci_ad, "
+                "       COALESCE(f.toplam_tutar,0)::float AS tutar "
+                "  FROM tedarikci_fatura f "
+                " WHERE f.fatura_tarih >= %s::date AND f.fatura_tarih <= %s::date + 15 "
+                " ORDER BY f.fatura_tarih",
+                (str(bas)[:10], str(son)[:10]),
+            )
+            for c in (cur.fetchall() or []):
+                c = dict(c)
+                if _ayirt_edici(c["tedarikci_ad"] or "") & _ayirt_edici(kume[0]["ted_ad"]):
+                    fatura = c
+                    break
+            toplam_adet = 0.0
+            for x in kume:
+                toplam_adet += sum(float(k.get("adet") or 0)
+                                   for k in _kalem_listesi(x.get("kalemler")))
+            sonuc.append({
+                "sube_adi": kume[0]["sube_adi"], "tedarikci_ad": kume[0]["ted_ad"],
+                "ilk_siparis": str(bas)[:19], "son_siparis": str(son)[:19],
+                "sure_dakika": round((son - bas).total_seconds() / 60.0, 1),
+                "siparis_sayisi": len(kume), "toplam_adet": round(toplam_adet, 2),
+                "teslim_alinan": len(teslim), "iptal_edilen": len(iptal),
+                "hala_acik": len(acik),
+                "sonraki_fatura": fatura,
+                "siparisler": [{
+                    "ts_id": x["id"], "ts": str(x["olusturma"])[:19],
+                    "durum": ("teslim alındı" if x["teslim_ts"]
+                              else "iptal" if x["durum"] == "iptal" else "AÇIK"),
+                    "ozet": " · ".join(
+                        str(k.get("urun_ad") or k.get("ad") or "?") + " ×" + str(k.get("adet"))
+                        for k in _kalem_listesi(x.get("kalemler"))[:4]),
+                } for x in kume],
+            })
+        sonuc.sort(key=lambda x: (-x["hala_acik"], x["ilk_siparis"]), reverse=False)
+        sonuc.sort(key=lambda x: x["hala_acik"], reverse=True)
+    return {
+        "gun": g, "pencere_saat": pen_saat, "esik": esik,
+        "patlama_sayisi": len(sonuc),
+        "hala_acik_toplam": sum(x["hala_acik"] for x in sonuc),
+        "patlamalar": sonuc,
+        "not": ("ÖNERİ-ONLY. Aynı şube + aynı tedarikçi, %d saat içinde ≥%d sipariş. "
+                "Patlama TEK BAŞINA HATA DEĞİLDİR — şube gerçekten birkaç ayrı şey "
+                "sipariş etmiş olabilir. Şüpheyi doğuran, kümenin çoğunun TESLİM "
+                "ALINMAMASI ve sonrasında hepsini kapsayan tek fatura gelmesidir. "
+                "Zaman oku tek yönlü kuruldu: fatura kümeden SONRA aranır."
+                % (pen_saat, esik)),
     }
