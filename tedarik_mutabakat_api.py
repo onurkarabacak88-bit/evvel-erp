@@ -218,9 +218,24 @@ def fatura_teslim_mutabakati(tedarikci: str = "", gun: int = 120,
                         for k in kl[:4]),
                 })
 
+        # ── 3) SİPARİŞ KANALINI HİÇ KULLANMAYAN TEDARİKÇİ (2026-08-24) ─────
+        # 🔔 UYARI BÜTÇESİ: ilk sürüm 25 faturaya "SİPARİŞSİZ GELEN MAL" dedi.
+        # Bakınca çoğu matbaa, uydu servisi, enerji, ambalaj — yani şube panelinden
+        # SİPARİŞ VERİLMEYEN tedarikçiler. Onların faturasında sipariş aramak,
+        # olmayan bir kanalı yok diye suçlamaktır. 25 sahte alarm, aradaki 2
+        # gerçek bulguyu görünmez kılardı.
+        # Kural: bu tedarikçi hayatında HİÇ sipariş almadıysa, bu araç onu
+        # ÖLÇEMEZ. (Axess dersi: aletin kapsamadığı yer hata değil, kör noktadır.)
+        cur.execute(
+            "SELECT DISTINCT UPPER(COALESCE(ts.tedarikci_ad, td.ad, '')) AS ad "
+            "  FROM toptanci_siparis ts "
+            "  LEFT JOIN tedarikciler td ON td.id = ts.tedarikci_id"
+        )
+        _kanal_kullanan = {str(r["ad"] or "") for r in (cur.fetchall() or []) if r["ad"]}
+
         sonuc: List[Dict] = []
         sayac = {"tutuyor": 0, "kayit_kapanmamis": 0, "siparissiz": 0,
-                 "faturalanmamis_teslim": 0, "olculemez": 0, "sistem_oncesi": 0}
+                 "faturalanmamis_teslim": 0, "olculemez": 0, "sistem_oncesi": 0, "kanal_yok": 0}
         for f in faturalar:
             kayit: Dict[str, Any] = {
                 "fatura_id": f["id"], "fatura_no": f["fatura_no"], "tarih": f["tarih"],
@@ -254,6 +269,18 @@ def fatura_teslim_mutabakati(tedarikci: str = "", gun: int = 120,
                               "tutulmuyordu." % SISTEM_BASLANGIC),
                 })
                 sayac["sistem_oncesi"] += 1
+                sonuc.append(kayit)
+                continue
+
+            if not (set(_ad_adaylari(f["tedarikci_ad"])) & _kanal_kullanan):
+                kayit.update({
+                    "durum": "SİPARİŞ KANALI KULLANILMIYOR — bu araçla ölçülemez",
+                    "olcum_gecerli": False,
+                    "neden": ("Bu tedarikçiden şube paneli üzerinden HİÇ sipariş "
+                              "verilmemiş. Faturasında sipariş aramak, olmayan bir "
+                              "kanalı yok diye suçlamak olur."),
+                })
+                sayac["kanal_yok"] += 1
                 sonuc.append(kayit)
                 continue
 
@@ -311,7 +338,7 @@ def fatura_teslim_mutabakati(tedarikci: str = "", gun: int = 120,
         "tedarikci": t or "(hepsi)", "gun": g, "pencere_gun": pen,
         "toplam": len(sonuc), "ozet": sayac,
         "olculebilen": sum(1 for x in sonuc if x.get("olcum_gecerli")),
-        "olculemeyen": sayac["olculemez"] + sayac["sistem_oncesi"],
+        "olculemeyen": sayac["olculemez"] + sayac["sistem_oncesi"] + sayac["kanal_yok"],
         "mukerrer_fatura_kaydi": mukerrer,
         "mukerrer_adet": len(mukerrer),
         "faturalar": sonuc,
