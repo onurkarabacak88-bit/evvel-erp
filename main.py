@@ -7175,6 +7175,19 @@ def _ekstre_eslesme_mutabakat(sonuc, raw: Optional[bytes] = None):
                 )
                 if cur.rowcount == 0:
                     # R1b korumasi: ayni ay zaten ODENDIyse yeni bekleyen ekleme
+                    #
+                    # 🔴 EKSTRE YÜKLEMEYİ KOMPLE DURDURAN KUSUR (2026-08-24, canlı):
+                    # Ziraat'in Ağustos ekstresi HTTP 500 ile reddedildi —
+                    # "UniqueViolation: ux_odeme_plani_kart_donem (kart_id, referans_ay)".
+                    # Sebep: yukarıdaki UPDATE yalnız 'bekliyor'/'onay_bekliyor'
+                    # satırları tarıyor. O ay için plan satırı BAŞKA bir durumdaysa
+                    # (ör. kesimden ÖNCE ödenmiş 'odendi') UPDATE 0 satır bulur,
+                    # aşağıdaki NOT EXISTS de geçer ve INSERT tekil kısıtı çiğner.
+                    # Sonuç: sahip ekstresini sisteme HİÇ yükleyemiyordu — üstelik
+                    # hata mesajı bir SQL kısıt adıydı, ne yapacağını söylemiyordu.
+                    # ON CONFLICT DO NOTHING: o ay için zaten bir plan varsa ikincisi
+                    # açılmaz; ekstre yüklemesi bir plan satırı yüzünden ASLA durmaz.
+                    # (Plan zaten tek gerçek değil — kasa izinden türer.)
                     cur.execute(
                         """INSERT INTO odeme_plani
                             (id, kart_id, tarih, referans_ay, odenecek_tutar, asgari_tutar, aciklama, durum)
@@ -7182,7 +7195,8 @@ def _ekstre_eslesme_mutabakat(sonuc, raw: Optional[bytes] = None):
                            WHERE NOT EXISTS (SELECT 1 FROM odeme_plani
                                WHERE kart_id=%s AND durum='odendi'
                                  AND DATE_TRUNC('month',tarih)=DATE_TRUNC('month',%s::date)
-                                 AND COALESCE(odeme_tarihi, tarih) >= %s::date)""",
+                                 AND COALESCE(odeme_tarihi, tarih) >= %s::date)
+                           ON CONFLICT DO NOTHING""",
                         (str(uuid.uuid4()), kart["id"], sot, sot, (brc or asg), asg, acik,
                          kart["id"], sot, str(sonuc.get("kesim_tarihi") or sot)[:10]),
                     )
