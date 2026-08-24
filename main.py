@@ -2643,12 +2643,40 @@ def kart_ekstre_satir_denetimi(kart_id: Optional[str] = None,
                 cikti.append(satir); continue
 
             # ── 1) PDF satırları ────────────────────────────────────────────
+            # 📐 ÖNCE GEOMETRİK OKUYUCU (2026-08-24) — satır denetimi başlangıçta
+            # yalnız metin okuyucusunu (kart_analiz) kullanıyordu ve Ziraat'te
+            # 126.668,48 ₺'lik dönemin sadece 6.722,50 ₺'sini görüyordu; dönem
+            # "OKUMA DOĞRULANAMIYOR" diye ölçüm dışı kalıyordu. Ekstre içe
+            # aktarma yolu zaten geometrik okuyucuyu kullanıyor ve o çok daha
+            # sağlam (sütun koordinatından okur, yinelenen sayfayı atar).
+            # İki ayrı okuyucuyla ölçmek, iki ayrı gerçek üretmek demekti.
+            # Geometrik okuyamıyorsa (Axess/CID) metin yoluna DÜŞÜLÜR — orada
+            # da EBCDIC çözücü devrede.
+            _pdf_ham = bytes(h["belge_pdf"])
+            txns, _okuyucu = [], "metin"
             try:
-                txns = kart_analiz.parse_pdf(bytes(h["belge_pdf"])) or []
-            except Exception as e:  # noqa: BLE001
-                satir.update({"durum": f"PDF OKUNAMADI — {str(e)[:90]}",
-                              "pdf_eksik": [], "defter_fazla": []})
-                cikti.append(satir); continue
+                import ekstre_geometri as _geo2
+                _gr = _geo2.geometrik_oku(_pdf_ham)
+                if _gr.get("basarili") and _gr.get("satirlar"):
+                    _okuyucu = "geometrik"
+                    for _r in _gr["satirlar"]:
+                        txns.append({
+                            "tarih": _r.get("tarih"), "aciklama": _r.get("aciklama") or "",
+                            "tutar": _r.get("tutar"), "odeme_mi": _r.get("odeme_mi"),
+                            "taksit": (f"{_r.get('taksit_no')}/{_r.get('taksit_sayisi')}"
+                                       if _r.get("taksit_sayisi") else None),
+                            "taksit_anapara": _r.get("taksit_toplam"),
+                        })
+            except Exception as _e2:  # noqa: BLE001 — geometrik yol düşerse metin yolu var
+                logger.info("satır denetimi: geometrik okuma atlandı (%s)", str(_e2)[:90])
+            if not txns:
+                try:
+                    txns = kart_analiz.parse_pdf(_pdf_ham) or []
+                except Exception as e:  # noqa: BLE001
+                    satir.update({"durum": f"PDF OKUNAMADI — {str(e)[:90]}",
+                                  "pdf_eksik": [], "defter_fazla": []})
+                    cikti.append(satir); continue
+            satir["okuyucu"] = _okuyucu
             banka = []
             for t in txns:
                 tu = abs(float(t.get("tutar") or 0))

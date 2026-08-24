@@ -513,6 +513,23 @@ def parse_pdf(pdf_bytes: bytes) -> List[Dict]:
                 pages_text = [_coz]
     except Exception:  # noqa: BLE001 — kurtarma başarısızsa eski davranış korunur
         pass
+    # 📄 YİNELENEN SAYFAYI AT (2026-08-24, Ziraat vakası)
+    # Ziraat ekstresi işlem tablosunu İKİ KEZ basıyor (banka + müşteri nüshası).
+    # Eskiden bu, satır bazlı mükerrer elemeyle çözülüyordu — ama o eleme AYNI
+    # SAYFADAKİ meşru tekrarları da siliyordu: 31/07'de birbirinin AYNI iki GİB
+    # vergi ödemesi (1.569,25 ₺ × 2) tek satıra iniyor ve çapa tam o kadar
+    # sapıyordu. Sorun tekrar eden İŞLEM değil, tekrar eden SAYFAYDI.
+    # Doğrusu: sayfayı at, satıra dokunma.
+    _gorulen_sayfa, _tekil_sayfa = set(), []
+    for _pt in pages_text:
+        _imza = re.sub(r'\s+', ' ', _pt).strip()
+        if _imza and _imza in _gorulen_sayfa:
+            continue
+        _gorulen_sayfa.add(_imza)
+        _tekil_sayfa.append(_pt)
+    if len(_tekil_sayfa) < len(pages_text):
+        pages_text = _tekil_sayfa
+        full_text = '\n'.join(pages_text)
     banka = _detect_bank(full_text)
     kart_no, kart_sahibi = _extract_kart_meta(full_text)
     if banka == 'Enpara':      txns = _parse_enpara(pages_text, kart_no, kart_sahibi)
@@ -522,15 +539,17 @@ def parse_pdf(pdf_bytes: bytes) -> List[Dict]:
     elif banka == 'Axess':        txns = _parse_axess(full_text, kart_no, kart_sahibi)
     else:
         return []
-    # Dedup by tarih+aciklama+tutar
-    seen = set()
-    unique = []
-    for t in txns:
-        key = (t['tarih'], t['aciklama'][:30], round(t['tutar'], 2))
-        if key not in seen:
-            seen.add(key)
-            unique.append(t)
-    return unique
+    # 🔴 SATIR BAZLI MÜKERRER ELEME KALDIRILDI (2026-08-24)
+    # Eskiden (tarih, açıklama[:30], tutar) anahtarıyla eleniyordu. Amaç yinelenen
+    # SAYFAYI temizlemekti — ama bedeli MEŞRU TEKRARLARI silmekti:
+    #   Ziraat 31/07: birbirinin AYNI iki GİB vergi ödemesi (1.569,25 ₺ × 2)
+    #   → biri silindi, çapa tam o kadar saptı ve ekstre "okuma şüpheli" çıktı.
+    # Aynı gün, aynı satıcıdan, aynı tutarda iki alışveriş OLAĞANDIR (iki vergi
+    # kalemi, iki taksit, iki fatura). Kimliği açıklama+tutar değildir.
+    # Yinelenen sayfa artık YUKARIDA atılıyor; burada eleme YAPILMAZ.
+    # Mükerrerlik şüphesi ayrı bir DUYUnun işidir (mukerrer-odeme-adaylari) ve
+    # kararı sahibe bırakır — okuma aşamasında sessizce satır silinmez.
+    return txns
 
 # ─── Recurring tespiti ────────────────────────────────────────────────────────
 def _detect_recurring(txns: List[Dict]) -> Dict[str, Any]:

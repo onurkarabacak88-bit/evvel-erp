@@ -386,6 +386,16 @@ def geometrik_oku(pdf_bytes: bytes, banka: str = "") -> Dict[str, Any]:
             bantlar: Optional[List[Tuple[str, float, float]]] = None
             tutar_sag_hiza: Optional[float] = None
 
+            # 📄 YİNELENEN SAYFA — SAYFAYI AT, SATIRA DOKUNMA (2026-08-24)
+            # Ziraat ekstresi işlem tablosunu İKİ KEZ basıyor (banka + müşteri
+            # nüshası) → okuma tam İKİ KATI çıkıyordu (253.336,96 = 2 × 126.668,48).
+            # Bu bugüne dek çağıran tarafta SATIR bazlı tekilleştirmeyle
+            # kapatılıyordu; bedeli MEŞRU İKİZLERİ silmekti:
+            #   31/07'de birbirinin AYNI iki GİB vergi ödemesi (1.569,25 ₺ × 2)
+            #   → biri yutuldu, çapa tam o kadar saptı, ekstre "şüpheli" çıktı.
+            # Aynı gün aynı yerden aynı tutarda iki işlem OLAĞANDIR; kimlik
+            # tarih+açıklama+tutar DEĞİLDİR. Tekrar eden işlem değil SAYFAYDI.
+            _sayfa_imzasi: set = set()
             for sayfa_no, sayfa in enumerate(pdf.pages, start=1):
                 try:
                     kelimeler = sayfa.extract_words(keep_blank_chars=False)
@@ -394,6 +404,11 @@ def geometrik_oku(pdf_bytes: bytes, banka: str = "") -> Dict[str, Any]:
                 if not kelimeler:
                     tani["basliksiz_sayfa"].append(sayfa_no)
                     continue
+                _imza = hash(tuple((w.get("text") or "") for w in kelimeler))
+                if _imza in _sayfa_imzasi:
+                    tani.setdefault("yinelenen_sayfa", []).append(sayfa_no)
+                    continue
+                _sayfa_imzasi.add(_imza)
                 satirlar = _satirlara_bol(kelimeler)
 
                 for satir in satirlar:
