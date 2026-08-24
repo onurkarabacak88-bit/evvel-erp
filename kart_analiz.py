@@ -357,9 +357,28 @@ def _yk_gecis(pages_text: List[str], kart_no: str, kart_sahibi: str, kapili: boo
 # Ödeme satırı sonunda "(-)" taşır (borç azaltan).
 # Taksit bilgisi AYNI satırda parantez içindedir: "(2,209.99 TL) 6/6.taksit"
 _AX_SATIR = re.compile(r'^(\d{2}/\d{2}/\d{4})\s*(.+)$')
-_AX_TUTAR = re.compile(r'(\d{1,3}(?:,\d{3})*\.\d{2})\s*(\(-\))?\s*$')
+_AX_TUTAR_TOK = re.compile(r'\d{1,3}(?:,\d{3})*\.\d{2}')
 _AX_TAKSIT = re.compile(r'\((\d{1,3}(?:,\d{3})*\.\d{2})\s*TL\)\s*(\d+)\s*/\s*(\d+)\s*\.?\s*taksit', re.I)
-_AX_YALNIZ_TUTAR = re.compile(r'^\s*(\d{1,3}(?:,\d{3})*\.\d{2})\s*(\(-\))?\s*$')
+
+
+def _ax_tutar_bul(parca: str):
+    """Bir metin parçasındaki İLK tutar belirtecini döner → (tutar, eksi_mi, baslangic).
+
+    ⚠️ 'İLK' seçimi bilinçlidir — canlıda üç ayrı bozulma bunu gerektirdi
+    (2026-08-24, Axess Temmuz ekstresi):
+      · '86.160.01'      → tutar 86,16 + chip-para 0,01 BİTİŞİK yazılmış.
+                           Sondan okuyan bir kural 160,01 der: 73,85 ₺ fazla.
+      · '368.33368.33x1' → tutar iki kez + adet çarpanı yapışmış.
+      · '4.24(-)4.24(-)' → sütun mükerrer basılmış.
+    Üçünde de DOĞRU değer baştaki belirteçtir; sağdaki alan bir başka sütundur.
+    Eskiden satırın TAMAMEN tutardan ibaret olması aranıyordu; bu üç satır
+    hiç okunmadı ve dönem 739,99 ₺ eksik çıktı.
+    """
+    m = _AX_TUTAR_TOK.search(parca or "")
+    if not m:
+        return None
+    from axess_ebcdic import us_tutar
+    return us_tutar(m.group(0)), ('(-)' in (parca or "")[m.end():m.end() + 6]), m.start()
 
 
 def _parse_axess(metin: str, kart_no: str, kart_sahibi: str) -> List[Dict]:
@@ -384,25 +403,30 @@ def _parse_axess(metin: str, kart_no: str, kart_sahibi: str) -> List[Dict]:
         if tk:
             taksit_anapara = us_tutar(tk.group(1))
             taksit_no, taksit_adet = int(tk.group(2)), int(tk.group(3))
-            kalan = kalan[:tk.start()].strip()
+            # ⚠️ TAKSİT İŞARETİNDEN SONRASINI ATMA — dönemin taksit tutarı çoğu
+            # kez ORADA duruyor: "(3,999.00 TL) 4/4.taksit 999.75". İlk sürüm
+            # işaretten sonrasını kesiyordu ve o satır komple düşüyordu (999,75 ₺).
+            kalan = (kalan[:tk.start()] + ' ' + kalan[tk.end():]).strip()
 
         eksi = False
-        tm = _AX_TUTAR.search(kalan)
-        if tm:
-            tutar = us_tutar(tm.group(1))
-            eksi = bool(tm.group(2))
-            aciklama = kalan[:tm.start()].strip()
+        bul = _ax_tutar_bul(kalan)
+        if bul:
+            tutar, eksi, kes = bul
+            aciklama = kalan[:kes].strip()
         else:
-            # ⚠️ TUTAR ALT SATIRDA — bakmazsak harcama sessizce düşerdi.
+            # ⚠️ TUTAR ALT SATIRDA — açıklama uzunsa banka tutarı alt satıra
+            # taşıyor. Bakmazsak harcama SESSİZCE düşer.
             aciklama = kalan
             tutar = 0.0
-            for j in (i + 1, i + 2):
+            for j in (i + 1, i + 2, i + 3):
                 if j >= len(lines):
                     break
-                nx = _AX_YALNIZ_TUTAR.match(lines[j].strip())
-                if nx:
-                    tutar = us_tutar(nx.group(1))
-                    eksi = bool(nx.group(2))
+                nxt = lines[j].strip()
+                if _AX_SATIR.match(nxt):     # sonraki hareket başladı — dur
+                    break
+                nb = _ax_tutar_bul(nxt)
+                if nb:
+                    tutar, eksi, _ = nb
                     break
         if tutar <= 0:
             continue
