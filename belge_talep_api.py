@@ -2148,7 +2148,8 @@ def belge_talep_zincir_izi(tedarikci: str = "", gun: int = 120, sube: str = ""):
              ORDER BY ts.olusturma DESC
         """, tuple(par))
         satirlar = []
-        sayac = {"tam": 0, "teslim_yok": 0, "talep_yok": 0, "fatura_yok": 0, "bag_yok": 0}
+        sayac = {"tam": 0, "teslim_yok": 0, "talep_yok": 0, "fatura_yok": 0,
+                 "bag_yok": 0, "iptal": 0}
         for r in (cur.fetchall() or []):
             d = dict(r)
             kalemler = d.get("kalemler") or []
@@ -2164,7 +2165,16 @@ def belge_talep_zincir_izi(tedarikci: str = "", gun: int = 120, sube: str = ""):
             if isinstance(kalemler, list) and len(kalemler) > 4:
                 ozet += f" … (+{len(kalemler) - 4})"
 
-            if not d.get("teslim_ts"):
+            # ⛔ İPTAL EDİLEN SİPARİŞ BULGU DEĞİLDİR (2026-08-24)
+            # Sahip TEMA'nın 19 Ağustos'taki 8 hatalı siparişini iptal etti;
+            # kayıtlar durum='iptal' olarak DURUYOR (geri-alma ≠ silme) ama bu
+            # uç durumu okumadığı için hepsini hâlâ "TESLİM ALINMAMIŞ" diye
+            # bulgu sayıyordu. Kapatılan bir işi listede tutan duyu, sahibe
+            # "hiçbir şey değişmedi" der ve güvenilirliğini yitirir.
+            # İz KALIR (satır görünür), ama KOPUK HALKA sayılmaz.
+            if str(d.get("siparis_durum") or "") == "iptal":
+                kopuk = None; sayac["iptal"] = sayac.get("iptal", 0) + 1
+            elif not d.get("teslim_ts"):
                 kopuk = "TESLIM ALINMAMIS"; sayac["teslim_yok"] += 1
             elif not d.get("bt_id"):
                 kopuk = "BELGE TALEBI ACILMAMIS"; sayac["talep_yok"] += 1

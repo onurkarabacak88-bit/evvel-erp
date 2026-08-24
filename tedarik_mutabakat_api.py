@@ -207,6 +207,12 @@ def fatura_teslim_mutabakati(tedarikci: str = "", gun: int = 120,
                 "  LEFT JOIN tedarikciler td ON td.id = ts.tedarikci_id "
                 "  LEFT JOIN subeler s ON s.id = ts.sube_id "
                 " WHERE ts.olusturma >= CURRENT_DATE - %s "
+                # ⛔ İPTAL EDİLEN SİPARİŞ ÖLÇÜME GİRMEZ (2026-08-24): sahip
+                # TEMA'nın 8 hatalı 19 Ağustos siparişini iptal etti; kayıt
+                # durum='iptal' olarak DURUYOR ama artık ne "açık sipariş"tir
+                # ne de teslim sayılır. Okumayan bir ölçüm, kapatılan işi
+                # kapanmamış gösterir.
+                "   AND COALESCE(ts.durum,'') <> 'iptal' "
                 " ORDER BY ts.olusturma",
                 (g + pen,),
             )
