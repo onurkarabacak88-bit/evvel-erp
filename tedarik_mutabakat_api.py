@@ -87,6 +87,34 @@ def _ad_adaylari(fatura_ad: str) -> List[str]:
     return list(adaylar)
 
 
+# Firma adlarında HERKESTE geçen, bu yüzden KİMLİK TAŞIMAYAN kelimeler. Bunlarla
+# köprü kurmak "KONYA" yüzünden iki yabancı firmayı birleştirir.
+_JENERIK = {
+    "LIMITED", "LİMİTED", "LTD", "SIRKETI", "ŞİRKETİ", "STI", "ŞTİ", "ANONIM",
+    "ANONİM", "SANAYI", "SANAYİ", "TICARET", "TİCARET", "SAN", "TIC", "TİC",
+    "GIDA", "GİDA", "KAHVE", "ITHALAT", "İTHALAT", "IHRACAT", "İHRACAT", "VE",
+    "PAZARLAMA", "HIZMETLERI", "HİZMETLERİ", "URUNLERI", "ÜRÜNLERİ", "GRUP",
+    "KONYA", "ISTANBUL", "İSTANBUL", "MARKET", "TURIZM", "TURİZM", "ENERJI",
+    "ENERJİ", "KIMYA", "KİMYA", "AS", "A", "S", "INS", "İNŞ", "TEKNIK", "TEKNİK",
+}
+
+
+def _ayirt_edici(ad: str) -> set:
+    """Bir firma adındaki KİMLİK TAŞIYAN kelimeler (jenerikler atılmış).
+
+    ⚠️ ÜÇ KİMLİK TEK KARŞI TARAF (2026-08-24 canlı, Atalay pilotunun aynısı):
+    Faturalar "MEHMET ATALAY" adına, siparişler "ATALAY KAHVE" adına yazılmış.
+    İlk kelime üzerinden köprü kuran ilk sürüm bunları eşleştiremedi ve 7 ATALAY
+    faturasına "SİPARİŞSİZ GELEN MAL" dedi — oysa siparişleri vardı, sadece
+    başka bir adın altındaydı. Kimlik hatası, bulgu kılığına girmişti.
+    Doğrusu: ORTAK AYIRT EDİCİ KELİME üzerinden köprü kur ({ATALAY} kesişimi).
+    Jenerikler ("GIDA", "KAHVE", "LİMİTED", "KONYA") kimlik taşımaz; onlarla
+    köprü kurmak iki yabancı firmayı birleştirir.
+    """
+    return {w for w in re.split(r"[^A-ZÇĞİÖŞÜ0-9]+", (ad or "").upper())
+            if len(w) >= 3 and w not in _JENERIK}
+
+
 def _gun_farki(a: str, b: str) -> int:
     """İki 'YYYY-MM-DD' arasındaki gün farkı."""
     from datetime import date as _d
@@ -179,10 +207,8 @@ def fatura_teslim_mutabakati(tedarikci: str = "", gun: int = 120,
                 "  LEFT JOIN tedarikciler td ON td.id = ts.tedarikci_id "
                 "  LEFT JOIN subeler s ON s.id = ts.sube_id "
                 " WHERE ts.olusturma >= CURRENT_DATE - %s "
-                "   AND (UPPER(COALESCE(ts.tedarikci_ad,'')) = ANY(%s) "
-                "        OR UPPER(COALESCE(td.ad,'')) = ANY(%s)) "
                 " ORDER BY ts.olusturma",
-                (g + pen, list(_tum_ad), list(_tum_ad)),
+                (g + pen,),
             )
             for r in (cur.fetchall() or []):
                 d = dict(r)
@@ -195,8 +221,9 @@ def fatura_teslim_mutabakati(tedarikci: str = "", gun: int = 120,
                         continue
                     if str(f["tarih"]) < SISTEM_BASLANGIC:
                         continue
-                    if (d.get("ted_ad") or "") not in _ad_adaylari(f["tedarikci_ad"]):
-                        continue   # aynı tedarikçi değil → aday olamaz
+                    if not (_ayirt_edici(d.get("ted_ad") or "")
+                            & _ayirt_edici(f["tedarikci_ad"])):
+                        continue   # ortak ayırt edici kelime yok → aynı taraf değil
                     try:
                         uzak = abs((_gun_farki(s_gun, str(f["tarih"]))))
                     except Exception:  # noqa: BLE001
@@ -272,7 +299,8 @@ def fatura_teslim_mutabakati(tedarikci: str = "", gun: int = 120,
                 sonuc.append(kayit)
                 continue
 
-            if not (set(_ad_adaylari(f["tedarikci_ad"])) & _kanal_kullanan):
+            if not any(_ayirt_edici(f["tedarikci_ad"]) & _ayirt_edici(k)
+                       for k in _kanal_kullanan):
                 kayit.update({
                     "durum": "SİPARİŞ KANALI KULLANILMIYOR — bu araçla ölçülemez",
                     "olcum_gecerli": False,
