@@ -17,11 +17,12 @@ Kaldırmak: main.py'den router'ı çıkar + urun-sevk'teki tek tetik satırını
 """
 from __future__ import annotations
 
+import json
 import logging
 import re
 import threading
 import uuid
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
@@ -2079,3 +2080,141 @@ async def belge_talep_fatura_yukle(talep_id: str, dosya: UploadFile = File(...))
         threading.Thread(target=_ocr_calistir, args=(fid,), daemon=True).start()
 
     return {"ok": True, "durum": "pdf_geldi", "fatura_idler": fatura_idler, "ocr": len(ocr_calisacak)}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 🔗 TEDARİKÇİ ZİNCİR İZİ — SİPARİŞ → TESLİM → BELGE TALEBİ → FATURA
+# ═══════════════════════════════════════════════════════════════════════════
+@router.get("/zincir-izi")
+def belge_talep_zincir_izi(tedarikci: str = "", gun: int = 120, sube: str = ""):
+    """🔗 Bir tedarikçinin her siparişini UÇTAN UCA gösterir. SALT OKUR.
+
+    ── NEDEN ───────────────────────────────────────────────────────────────
+    Sahip 2026-08-24'te sordu: "FEZ'den ürün teslimi var ama ondan önce şube
+    panelinden sipariş var — şube siparişi KABUL ETMİŞ Mİ? FATURASI YÜKLENMİŞ Mİ?"
+    Sistem bu soruyu cevaplayamıyordu. Parçalar ayrı uçlardaydı:
+        sipariş  → /ops/siparis/toptanci-listesi (gönderimler)
+        teslim   → /ops/toptanci-teslimler
+        belge    → /belge-talep/bekleyen  ← YALNIZ durum='bekliyor' gösteriyor
+        fatura   → /fatura/ara
+    Yani KAPANMIŞ ya da HİÇ AÇILMAMIŞ bir belge talebinin akıbeti hiçbir uçtan
+    görünmüyordu. Üstelik belge talebi teslim-al akışında `except: pass` ile
+    açılıyor (teslimatı bozmasın diye — doğru karar); açılmazsa HİÇ İZ KALMIYOR.
+    "Bekleyen listesi boş" o yüzden iki ayrı şeyi birden anlatabiliyordu:
+    ya her şey kapandı, ya da hiç kayıt açılmadı. Bu, sahte yeşilin ta kendisi.
+
+    ── NE YAPAR ────────────────────────────────────────────────────────────
+    Her gönderim için zinciri kurar ve KOPTUĞU HALKAYI adıyla söyler:
+        siparis_ts → teslim_ts → belge_talep(durum) → fatura(no, tarih, tutar)
+    `kopuk_halka` alanı şunlardan biridir:
+        TESLIM ALINMAMIS        sipariş gitti, şube teslim almadı
+        BELGE TALEBI ACILMAMIS  teslim alındı ama fatura kovalama kaydı YOK
+        FATURA BEKLENIYOR       talep açık, fatura gelmedi
+        FATURA BAGLANMAMIS      talep kapandı ama hangi faturayla belli değil
+        (yok)                   zincir tam
+
+    ⚠️ ÖNERİ-ONLY — hiçbir kayıt yazılmaz. Kopuk halka her zaman hata değildir
+    (yeni sipariş henüz teslim edilmemiş olabilir); yaş günü birlikte verilir ki
+    "daha yeni" ile "unutulmuş" ayırt edilebilsin.
+    """
+    g = max(1, min(730, int(gun or 120)))
+    t = (tedarikci or "").strip()
+    with db() as (_, cur):
+        _ensure(cur)
+        kos = ["ts.olusturma >= NOW() - (%s || ' days')::interval"]
+        par: list = [g]
+        if t:
+            kos.append("(ts.tedarikci_ad ILIKE %s OR td.ad ILIKE %s)")
+            par += [f"%{t}%", f"%{t}%"]
+        if sube:
+            kos.append("(ts.sube_id = %s OR s.ad ILIKE %s)")
+            par += [sube, f"%{sube}%"]
+        cur.execute(f"""
+            SELECT ts.id AS ts_id, ts.talep_id, ts.olusturma AS siparis_ts,
+                   ts.teslim_ts, ts.durum AS siparis_durum, ts.kalemler,
+                   COALESCE(ts.tedarikci_ad, td.ad) AS tedarikci_ad,
+                   ts.tedarikci_id, s.ad AS sube_adi,
+                   bt.id AS bt_id, bt.durum AS bt_durum, bt.fatura_id,
+                   bt.kapanis_tipi, bt.kapanma_ts, bt.beklenen_tutar_tl::float AS beklenen_tutar,
+                   f.fatura_no, f.fatura_tarih::text AS fatura_tarih,
+                   COALESCE(f.toplam_tutar,0)::float AS fatura_tutar,
+                   f.tedarikci_ad AS fatura_tedarikci_ad
+              FROM toptanci_siparis ts
+              LEFT JOIN tedarikciler td ON td.id = ts.tedarikci_id
+              LEFT JOIN subeler s ON s.id = ts.sube_id
+              LEFT JOIN belge_talep bt ON bt.ts_id = ts.id
+              LEFT JOIN tedarikci_fatura f ON f.id = bt.fatura_id
+             WHERE {' AND '.join(kos)}
+             ORDER BY ts.olusturma DESC
+        """, tuple(par))
+        satirlar = []
+        sayac = {"tam": 0, "teslim_yok": 0, "talep_yok": 0, "fatura_yok": 0, "bag_yok": 0}
+        for r in (cur.fetchall() or []):
+            d = dict(r)
+            kalemler = d.get("kalemler") or []
+            if isinstance(kalemler, str):
+                try:
+                    kalemler = json.loads(kalemler)
+                except Exception:  # noqa: BLE001
+                    kalemler = []
+            ozet = " · ".join(
+                f"{(k.get('urun_ad') or k.get('ad') or '?')} ×{k.get('adet')}"
+                for k in (kalemler[:4] if isinstance(kalemler, list) else [])
+            )
+            if isinstance(kalemler, list) and len(kalemler) > 4:
+                ozet += f" … (+{len(kalemler) - 4})"
+
+            if not d.get("teslim_ts"):
+                kopuk = "TESLIM ALINMAMIS"; sayac["teslim_yok"] += 1
+            elif not d.get("bt_id"):
+                kopuk = "BELGE TALEBI ACILMAMIS"; sayac["talep_yok"] += 1
+            elif d.get("bt_durum") == "bekliyor":
+                kopuk = "FATURA BEKLENIYOR"; sayac["fatura_yok"] += 1
+            elif not d.get("fatura_id"):
+                kopuk = "FATURA BAGLANMAMIS"; sayac["bag_yok"] += 1
+            else:
+                kopuk = None; sayac["tam"] += 1
+
+            satirlar.append({
+                "ts_id": d["ts_id"], "talep_id": d.get("talep_id"),
+                "sube_adi": d.get("sube_adi"), "tedarikci_ad": d.get("tedarikci_ad"),
+                "siparis_ts": str(d.get("siparis_ts") or "")[:19],
+                "teslim_ts": str(d.get("teslim_ts") or "")[:19] or None,
+                "siparis_durum": d.get("siparis_durum"),
+                "kalem_ozeti": ozet or None,
+                "belge_talep_durum": d.get("bt_durum"),
+                "kapanis_tipi": d.get("kapanis_tipi"),
+                "kapanma_ts": str(d.get("kapanma_ts") or "")[:19] or None,
+                "beklenen_tutar": d.get("beklenen_tutar"),
+                "fatura_no": d.get("fatura_no"),
+                "fatura_tarih": d.get("fatura_tarih"),
+                "fatura_tutar": (d.get("fatura_tutar") or None),
+                "fatura_tedarikci_ad": d.get("fatura_tedarikci_ad"),
+                # ⚠️ KİMLİK ÇATLAĞI: teslimat tedarikçi KAYDINA (id) bağlıdır,
+                # fatura ise tedarikçi ADINA (metin). İkisi farklı yazılmışsa
+                # zincir "tam" görünür ama iki AYRI karşı tarafı anlatır.
+                "kimlik_uyari": (
+                    "teslimat '%s' adına, fatura '%s' adına — aynı karşı taraf mı?"
+                    % (d.get("tedarikci_ad"), d.get("fatura_tedarikci_ad"))
+                    if (d.get("fatura_tedarikci_ad") and d.get("tedarikci_ad")
+                        and str(d.get("tedarikci_ad")).upper()[:6]
+                        not in str(d.get("fatura_tedarikci_ad")).upper())
+                    else None),
+                "kopuk_halka": kopuk,
+                "yas_gun": None,
+            })
+        # yaş: zincirin KOPTUĞU andan bugüne
+        for x in satirlar:
+            capa = x["teslim_ts"] or x["siparis_ts"]
+            try:
+                x["yas_gun"] = (datetime.now() - datetime.strptime(capa[:10], "%Y-%m-%d")).days
+            except Exception:  # noqa: BLE001
+                x["yas_gun"] = None
+    return {
+        "tedarikci": t or "(hepsi)", "gun": g, "toplam": len(satirlar),
+        "ozet": sayac, "satirlar": satirlar,
+        "not": ("ÖNERİ-ONLY — hiçbir kayıt yazılmadı. 'kopuk_halka' zincirin nerede "
+                "durduğunu söyler; boşsa zincir tamdır. Kopuk halka her zaman hata "
+                "değildir (yeni sipariş henüz teslim edilmemiş olabilir) — bu yüzden "
+                "yaş_gun birlikte verilir: 'daha yeni' ile 'unutulmuş' ayrılabilsin."),
+    }
