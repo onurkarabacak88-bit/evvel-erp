@@ -2722,9 +2722,22 @@ def kart_ekstre_satir_denetimi(kart_id: Optional[str] = None,
             bh = h.get("banka_harcama")
             bh_kaynak = "banka beyanı"
             if bh is None and h.get("donem_borcu") is not None and h.get("onceki_borc") is not None:
-                bh = round(float(h["donem_borcu"]) - float(h["onceki_borc"])
-                           + float(h.get("banka_odeme") or 0), 2)
-                bh_kaynak = "borç kimliğinden türetildi (banka dönem harcamasını yazmıyor)"
+                # ⚠️ NULL = BİLİNMİYOR, SIFIR DEĞİL (2026-08-24, ilk sürümde düşülen tuzak)
+                # Ziraat'te dönem ÖDEMESİ de yazılı değil. İlk denemede `odeme or 0`
+                # yazıldı ve türetilen harcama −141.774,87 ₺ çıktı (negatif harcama!);
+                # duyu 266.544,30 ₺'lik sahte bir okuma hatası bildirdi. Ödeme
+                # bilinmiyorsa sıfır varsaymak, ekstrenin kimliğini bozar.
+                # Doğrusu: bankanın yazdığı ödeme yoksa OKUNAN ödemeyi kullan —
+                # içe aktarma yolundaki çapa da tam bunu yapıyor. Bu, harcama
+                # tarafını iki BASILI çıpayla (dönem borcu, önceki borç) sınar;
+                # ödeme tarafının doğruluğu varsayım olarak açıkça etikete yazılır.
+                _od = h.get("banka_odeme")
+                _od_kaynak = "bankanın yazdığı ödeme"
+                if _od is None:
+                    _od = round(sum(b["tutar"] for b in banka if b["tip"] == "ODEME"), 2)
+                    _od_kaynak = "okunan ödeme (banka ödemeyi de yazmıyor)"
+                bh = round(float(h["donem_borcu"]) - float(h["onceki_borc"]) + float(_od), 2)
+                bh_kaynak = f"borç kimliğinden türetildi · {_od_kaynak}"
             oku_fark = None
             oku_yorum = None
             if bh is not None:
