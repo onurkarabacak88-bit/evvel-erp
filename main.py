@@ -2668,9 +2668,27 @@ def kart_ekstre_satir_denetimi(kart_id: Optional[str] = None,
                               "taksit_sayisi": tsay,
                               "taksit_anapara": t.get("taksit_anapara")})
             # OKUMA GÜVENİ — okunan satırlar bankanın beyanını tutuyor mu?
+            # 🏦 BANKA GELENEĞİ FARKLI (2026-08-24, Axess açılınca görüldü):
+            # Yapı Kredi `dönem harcaması`na FAİZİ DE katıyor; Axess KATMIYOR.
+            # Tek yorumla ölçersek bankalardan biri hep "okuma şüpheli" çıkar —
+            # Axess'te tam 1.292,38 ₺ (dönem faizinin kendisi) sapıyordu ve
+            # okuma aslında KUSURSUZDU. O yüzden iki yorum da denenir, hangisi
+            # tutuyorsa o kabul edilir; hangisinin geçerli olduğu da yazılır.
+            import re as _re  # modül düzeyinde import yok — yerel al (NameError kalkanı)
             oku_h = round(sum(b["tutar"] for b in banka if b["tip"] != "ODEME"), 2)
+            _faiz_re = _re.compile(r"faiz|bsmv|kkdf|[uü]cret", _re.I)
+            oku_h_faizsiz = round(sum(b["tutar"] for b in banka
+                                      if b["tip"] != "ODEME" and not _faiz_re.search(b["aciklama"] or "")), 2)
             bh = h.get("banka_harcama")
-            oku_fark = None if bh is None else round(float(bh) - oku_h, 2)
+            oku_fark = None
+            oku_yorum = None
+            if bh is not None:
+                f1 = round(float(bh) - oku_h, 2)          # faiz dahil yorumu
+                f2 = round(float(bh) - oku_h_faizsiz, 2)  # faiz hariç yorumu
+                if abs(f2) < abs(f1):
+                    oku_fark, oku_yorum = f2, "banka dönem harcamasına FAİZİ KATMIYOR (Axess geleneği)"
+                else:
+                    oku_fark, oku_yorum = f1, "banka dönem harcamasına FAİZİ KATIYOR (Yapı Kredi geleneği)"
 
             # ── 2) Defter kalemleri (o döneme düşen paylarıyla) ─────────────
             cur.execute("""SELECT id, tarih, islem_turu, tutar::float AS tutar,
@@ -2765,8 +2783,10 @@ def kart_ekstre_satir_denetimi(kart_id: Optional[str] = None,
                 "yakin_adet": len(yakin),
                 "pdf_eksik_tutar": eks_t, "defter_fazla_tutar": faz_t,
                 "okuma_guveni": {
-                    "pdf_okunan_harcama": oku_h, "banka_beyan_harcama": bh,
-                    "fark": oku_fark,
+                    "pdf_okunan_harcama": oku_h,
+                    "pdf_okunan_harcama_faizsiz": oku_h_faizsiz,
+                    "banka_beyan_harcama": bh,
+                    "fark": oku_fark, "gelenek": oku_yorum,
                     "yorum": ("okuma tam — bankanın beyanıyla birebir"
                               if oku_fark is not None and abs(oku_fark) < 1
                               else "⚠ OKUMA ŞÜPHELİ — PDF'ten okunan satırlar bankanın "
@@ -3038,10 +3058,19 @@ def kart_donem_mutabakati():
                 # ayrıca eklemek MÜKERRER sayımdı. Düzeltince çapa 0,00'a oturdu
                 # — yani ekstre okumaları BİRBİRİYLE TUTARLI. Faiz ayrı bilgi
                 # olarak taşınıyor ama çapaya İKİNCİ KEZ girmiyor.
+                # 🏦 İKİ BANKA GELENEĞİ (2026-08-24, Axess açılınca ölçüldü):
+                # Yapı Kredi `dönem harcaması`na faizi KATIYOR, Axess KATMIYOR.
+                # Tek yorumla çapa kurulursa bankalardan biri hep sapık görünür
+                # (Axess'te tam dönem faizi kadar: 1.292,38 / 1.496,23).
+                # İki yorum da denenir, tutan kabul edilir.
                 capa = None
                 if simdi.get("harcama") is not None or simdi.get("odeme") is not None:
-                    capa = round(float(simdi.get("harcama") or 0)
-                                 - float(simdi.get("odeme") or 0), 2)
+                    _h = float(simdi.get("harcama") or 0)
+                    _o = float(simdi.get("odeme") or 0)
+                    _f = float(simdi.get("faiz") or 0)
+                    _c1 = round(_h - _o, 2)        # faiz zaten harcamanın içinde
+                    _c2 = round(_h - _o + _f, 2)   # faiz ayrı kalem
+                    capa = _c1 if abs(banka_degisim - _c1) <= abs(banka_degisim - _c2) else _c2
                 gecmis_yok = bool(defter_basi and bas < defter_basi)
                 if gecmis_yok:
                     durum = "GEÇMİŞ YOK — ölçüm dışı"

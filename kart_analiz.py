@@ -82,6 +82,8 @@ def _detect_bank(text: str) -> str:
     if 'garanti' in t or 'bonus' in t: return 'Garanti BBVA'
     if 'yapı kredi' in t or 'yapi kredi' in t or 'worldpuan' in t: return 'Yapı Kredi'
     if 'bankkart' in t or 'ziraat' in t: return 'Ziraat'
+    # Axess: EBCDIC kurtarmasından sonra başlıkta "Axess ... Hesap Özeti" olur.
+    if 'axess' in t or 'akbank' in t: return 'Axess'
     return 'Bilinmeyen'
 
 def _extract_kart_meta(text: str) -> Tuple[str, str]:
@@ -338,6 +340,93 @@ def _yk_gecis(pages_text: List[str], kart_no: str, kart_sahibi: str, kapili: boo
             txns.append(kayit)
     return txns
 
+# ─── AXESS / AKBANK parser ───────────────────────────────────────────────────
+# 🔓 2026-08-24 — Axess bugüne kadar HİÇ okunamıyordu. PDF metni ToUnicode'suz
+# Type3 fontlarla ve EBCDIC kodlarla yazılmış; çözümü axess_ebcdic.py'de
+# (oradaki başlık yorumu kök nedeni anlatır). Burada, çözülmüş metinden HAREKET
+# satırları çıkarılır.
+#
+# Axess satırının üç özelliği diğer bankalardan AYRIDIR:
+#   1) TARİH ile AÇIKLAMA BİTİŞİKTİR — "09/07/2026NTERNET b-Ödemeniz..."
+#      (Type3 yerleşiminde araya boşluk glifi konmuyor.)
+#   2) TUTAR bazen SONRAKİ SATIRDADIR — açıklama uzun olduğunda tutar alt
+#      satıra taşıyor. Sadece kendi satırına bakan bir okuyucu o harcamayı
+#      SESSİZCE DÜŞÜRÜR; bu yüzden bir satır ileriye bakılır.
+#   3) SAYI BİÇİMİ AMERİKANDIR — "2,250.00" = 2.250,00 ₺. Ortak TR çözücüye
+#      verilirse 2,25 ₺ olur: sessiz ve büyük hata.
+# Ödeme satırı sonunda "(-)" taşır (borç azaltan).
+# Taksit bilgisi AYNI satırda parantez içindedir: "(2,209.99 TL) 6/6.taksit"
+_AX_SATIR = re.compile(r'^(\d{2}/\d{2}/\d{4})\s*(.+)$')
+_AX_TUTAR = re.compile(r'(\d{1,3}(?:,\d{3})*\.\d{2})\s*(\(-\))?\s*$')
+_AX_TAKSIT = re.compile(r'\((\d{1,3}(?:,\d{3})*\.\d{2})\s*TL\)\s*(\d+)\s*/\s*(\d+)\s*\.?\s*taksit', re.I)
+_AX_YALNIZ_TUTAR = re.compile(r'^\s*(\d{1,3}(?:,\d{3})*\.\d{2})\s*(\(-\))?\s*$')
+
+
+def _parse_axess(metin: str, kart_no: str, kart_sahibi: str) -> List[Dict]:
+    from axess_ebcdic import us_tutar
+    lines = [l.rstrip() for l in metin.split('\n')]
+    txns: List[Dict] = []
+    for i, ln in enumerate(lines):
+        s = ln.strip()
+        m = _AX_SATIR.match(s)
+        if not m:
+            continue
+        tarih_ham, kalan = m.group(1), m.group(2).strip()
+        try:
+            g, ay, yil = tarih_ham.split('/')
+            tarih = f"{yil}-{ay}-{g}"
+        except ValueError:
+            continue
+
+        taksit_no = taksit_adet = None
+        taksit_anapara = None
+        tk = _AX_TAKSIT.search(kalan)
+        if tk:
+            taksit_anapara = us_tutar(tk.group(1))
+            taksit_no, taksit_adet = int(tk.group(2)), int(tk.group(3))
+            kalan = kalan[:tk.start()].strip()
+
+        eksi = False
+        tm = _AX_TUTAR.search(kalan)
+        if tm:
+            tutar = us_tutar(tm.group(1))
+            eksi = bool(tm.group(2))
+            aciklama = kalan[:tm.start()].strip()
+        else:
+            # ⚠️ TUTAR ALT SATIRDA — bakmazsak harcama sessizce düşerdi.
+            aciklama = kalan
+            tutar = 0.0
+            for j in (i + 1, i + 2):
+                if j >= len(lines):
+                    break
+                nx = _AX_YALNIZ_TUTAR.match(lines[j].strip())
+                if nx:
+                    tutar = us_tutar(nx.group(1))
+                    eksi = bool(nx.group(2))
+                    break
+        if tutar <= 0:
+            continue
+
+        aciklama = re.sub(r'\s{2,}', ' ', aciklama).strip(' -')
+        if not aciklama:
+            aciklama = 'Axess hareketi'
+        is_fee = bool(re.search(r'faiz|bsmv|kkdf|[uü]cret', aciklama, re.I))
+        # "(-)" = borç azaltan (ödeme/iade). Faiz satırı asla ödeme sayılmaz.
+        is_pay = (eksi or bool(re.search(r'ödemeniz|odemeniz|ödeme yapıldı', aciklama, re.I))) and not is_fee
+        kayit: Dict[str, Any] = {
+            'tarih': tarih, 'aciklama': aciklama[:120], 'tutar': tutar,
+            'banka': 'Axess', 'kart_no': kart_no, 'kart_sahibi': kart_sahibi,
+            'odeme_mi': is_pay,
+            'kategori': _enrich(aciklama, 'Ödeme' if is_pay else ''),
+        }
+        if taksit_adet:
+            kayit['taksit'] = f"{taksit_no}/{taksit_adet}"
+            kayit['taksit_sayisi'] = taksit_adet
+            kayit['taksit_anapara'] = taksit_anapara
+        txns.append(kayit)
+    return txns
+
+
 # ─── ZİRAAT parser ───────────────────────────────────────────────────────────
 _ZRT_LINE = re.compile(r'^(\d{2}/\d{2}/\d{4})\s+(.+?)\s+([\d.]+,\d{2})\+?\s*(?:[\d.]+,\d{2}\s*){0,2}([\d.,]*)$')
 
@@ -385,12 +474,28 @@ def parse_pdf(pdf_bytes: bytes) -> List[Dict]:
     with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
         pages_text = [p.extract_text() or '' for p in pdf.pages]
     full_text = '\n'.join(pages_text)
+    # 🔓 AXESS KURTARMA (2026-08-24) — bu PDF ToUnicode'suz Type3/EBCDIC ise
+    # normal çıkarım anlamsız gelir ve buraya kadar "Bilinmeyen banka" olarak
+    # düşerdi (canlıda 3 dönem boyunca 0 satır okundu). Çözülebiliyorsa metni
+    # ONUNLA değiştir. HATA-YUTAR: çözemezse eski yol aynen sürer.
+    try:
+        from axess_ebcdic import metin_coz, kanit_var
+        if 'axess' not in full_text.lower() and (
+                '(cid:' in full_text or len(full_text.strip()) < 200
+                or not re.search(r'\b(Hesap|Ekstre|Dönem|Kart)\b', full_text)):
+            _coz = metin_coz(pdf_bytes)
+            if _coz and kanit_var(_coz):
+                full_text = _coz
+                pages_text = [_coz]
+    except Exception:  # noqa: BLE001 — kurtarma başarısızsa eski davranış korunur
+        pass
     banka = _detect_bank(full_text)
     kart_no, kart_sahibi = _extract_kart_meta(full_text)
     if banka == 'Enpara':      txns = _parse_enpara(pages_text, kart_no, kart_sahibi)
     elif banka == 'Garanti BBVA': txns = _parse_garanti(pages_text, kart_no, kart_sahibi)
     elif banka == 'Yapı Kredi':   txns = _parse_yapikrdi(pages_text, kart_no, kart_sahibi)
     elif banka == 'Ziraat':       txns = _parse_ziraat(pages_text, kart_no, kart_sahibi)
+    elif banka == 'Axess':        txns = _parse_axess(full_text, kart_no, kart_sahibi)
     else:
         return []
     # Dedup by tarih+aciklama+tutar
