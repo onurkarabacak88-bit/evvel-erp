@@ -143,6 +143,14 @@ except Exception as _belge_talep_err:
     logging.getLogger(__name__).warning(
         f"belge_talep modulu yuklenemedi (izole, ana akis etkilenmez): {_belge_talep_err}"
     )
+# Tedarik Mutabakatı — İZOLE, SALT OKUR (fatura ↔ teslim adet çapası).
+try:
+    from tedarik_mutabakat_api import router as tedarik_mutabakat_router
+    app.include_router(tedarik_mutabakat_router)
+except Exception as _tedarik_mut_err:
+    logging.getLogger(__name__).warning(
+        f"tedarik_mutabakat modulu yuklenemedi (izole, ana akis etkilenmez): {_tedarik_mut_err}"
+    )
 # Fatura İstek Motoru (BM-4+4A) — İZOLE (ödenmiş ama faturasız ≥eşik ödemeler).
 try:
     from fatura_istek_api import router as fatura_istek_router
