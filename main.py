@@ -2737,11 +2737,27 @@ def kart_ekstre_satir_denetimi(kart_id: Optional[str] = None,
                           - sum(x["tutar"] for x in pdf_eksik if x["tip"] == "ODEME"), 2)
             faz_t = round(sum(x["tutar"] for x in kalan if x["tip"] != "ODEME")
                           - sum(x["tutar"] for x in kalan if x["tip"] == "ODEME"), 2)
-            top_eksik += abs(eks_t); top_fazla += abs(faz_t)
+            # Toplamlara YALNIZ ölçümü geçerli dönemler girer — okunamayan bir
+            # PDF'in "eksiği" para değil, körlüktür; toplayınca sahte açık olur.
+            if oku_fark is not None and abs(oku_fark) < 1:
+                top_eksik += abs(eks_t); top_fazla += abs(faz_t)
             satir.update({
-                "durum": ("SATIR FARKI VAR" if (pdf_eksik or kalan)
+                # 🎚️ DURUM SIRALAMASI — ÖLÇÜM ALETİ ÖNCE DENETLENİR (2026-08-24)
+                # Axess'te PDF'ten okunan harcama 0,00 çıkıyor (CID font) ve okuma
+                # farkı dönemin TAMAMI kadar. O hâlde "defterde 27 fazla kayıt var"
+                # demek defteri haksız yere suçlamaktır — eksik olan OKUMADIR.
+                # Garanti/Ziraat'te ise bankanın dönem harcaması snapshot'ta YOK;
+                # okuma doğrulanamıyor. İkisi de "satır farkı" diye bağırsaydı duyu
+                # her ay 50+ sahte bulgu üretir, gerçek olanlar içinde kaybolurdu.
+                # Sıra: önce aletin sağlamlığı, sonra defterin doğruluğu.
+                "durum": ("OKUMA DOĞRULANAMIYOR — bankanın dönem harcaması yok"
+                          if oku_fark is None else
+                          "OKUMA ŞÜPHELİ — önce PDF okuması düzeltilmeli"
+                          if abs(oku_fark) >= 1 else
+                          "SATIR FARKI VAR" if (pdf_eksik or kalan)
                           else "YALNIZ YAKIN SAPMA" if yakin
                           else "TUTUYOR"),
+                "olcum_gecerli": bool(oku_fark is not None and abs(oku_fark) < 1),
                 "pdf_satir": len(banka), "defter_kalem": len(defter),
                 "pdf_eksik": pdf_eksik,          # bankada var, defterde YOK
                 "defter_fazla": kalan,           # defterde var, bankada YOK
@@ -2763,6 +2779,8 @@ def kart_ekstre_satir_denetimi(kart_id: Optional[str] = None,
             "donemler": cikti, "adet": len(cikti),
             "toplam_pdf_eksik": round(top_eksik, 2),
             "toplam_defter_fazla": round(top_fazla, 2),
+            "olculebilen_donem": sum(1 for x in cikti if x.get("olcum_gecerli")),
+            "okunamayan_donem": sum(1 for x in cikti if not x.get("olcum_gecerli")),
             "not": ("ÖNERİ-ONLY — hiçbir kayıt yazılmadı. 'pdf_eksik' = banka fatura "
                     "etmiş ama defterde yok; 'defter_fazla' = defterde var ama banka "
                     "o dönem fatura etmemiş. Taksitli satırlarda kıyas TAKSİT PAYI "
