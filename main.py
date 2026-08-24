@@ -2707,16 +2707,46 @@ def kart_ekstre_satir_denetimi(kart_id: Optional[str] = None,
                     kalan.pop(aday[0][1])
                 else:
                     pdf_eksik.append(b)
+            # ── 3b) YAKIN EŞLEŞME — "eksik" ile "farklı yazılmış"ı ayır ────
+            # 🔔 UYARI BÜTÇESİ (2026-08-24): ilk sürüm, aynı ödemenin bankada
+            # 50.107/13 Tem, defterde 50.000/13 Tem yazıldığı durumu İKİ AYRI
+            # BULGU sayıyordu ("bankada var defterde yok" + "defterde var
+            # bankada yok"). Oysa ortada kayıp kayıt yok, KÜÇÜK BİR SAPMA var.
+            # Böyle çiftler her ay bağırsaydı duyu gürültüye dönerdi ve gerçek
+            # eksik kayıt aralarında kaybolurdu. Artık ayrı bir kovada, farkıyla
+            # birlikte raporlanıyor — GİZLENMİYOR ama ALARM da değil.
+            yakin = []
+            for b in list(pdf_eksik):
+                en, ei = None, None
+                for j, d in enumerate(kalan):
+                    if d["tip"] != b["tip"]:
+                        continue
+                    tf = abs(d["tutar"] - b["tutar"])
+                    gf = abs((_tarih_d(b["tarih"]) - _tarih_d(d["tarih"])).days)
+                    # tutarın %1'i veya 250 ₺ (hangisi küçükse gevşek olan) + 7 gün
+                    if tf <= max(1.0, min(250.0, b["tutar"] * 0.01)) and gf <= 7:
+                        if en is None or (tf, gf) < en:
+                            en, ei = (tf, gf), j
+                if ei is not None:
+                    d = kalan.pop(ei)
+                    pdf_eksik.remove(b)
+                    yakin.append({"banka": b, "defter": d,
+                                  "tutar_farki": round(b["tutar"] - d["tutar"], 2),
+                                  "gun_farki": abs((_tarih_d(b["tarih"]) - _tarih_d(d["tarih"])).days)})
             eks_t = round(sum(x["tutar"] for x in pdf_eksik if x["tip"] != "ODEME")
                           - sum(x["tutar"] for x in pdf_eksik if x["tip"] == "ODEME"), 2)
             faz_t = round(sum(x["tutar"] for x in kalan if x["tip"] != "ODEME")
                           - sum(x["tutar"] for x in kalan if x["tip"] == "ODEME"), 2)
             top_eksik += abs(eks_t); top_fazla += abs(faz_t)
             satir.update({
-                "durum": ("TUTUYOR" if not pdf_eksik and not kalan else "SATIR FARKI VAR"),
+                "durum": ("SATIR FARKI VAR" if (pdf_eksik or kalan)
+                          else "YALNIZ YAKIN SAPMA" if yakin
+                          else "TUTUYOR"),
                 "pdf_satir": len(banka), "defter_kalem": len(defter),
                 "pdf_eksik": pdf_eksik,          # bankada var, defterde YOK
                 "defter_fazla": kalan,           # defterde var, bankada YOK
+                "yakin_eslesme": yakin,          # aynı kalem, küçük sapmayla yazılmış
+                "yakin_adet": len(yakin),
                 "pdf_eksik_tutar": eks_t, "defter_fazla_tutar": faz_t,
                 "okuma_guveni": {
                     "pdf_okunan_harcama": oku_h, "banka_beyan_harcama": bh,
