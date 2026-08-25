@@ -259,6 +259,7 @@ def fatura_teslim_mutabakati(tedarikci: str = "", gun: int = 120,
                 " ORDER BY ts.olusturma",
                 (g + pen,),
             )
+            _iptal_kayit: Dict[str, List[Dict]] = {}
             for r in (cur.fetchall() or []):
                 d = dict(r)
                 s_gun = str(d.get("olusturma") or "")[:10]
@@ -318,6 +319,30 @@ def fatura_teslim_mutabakati(tedarikci: str = "", gun: int = 120,
             "  LEFT JOIN tedarikciler td ON td.id = ts.tedarikci_id"
         )
         _kanal_kullanan = {str(r["ad"] or "") for r in (cur.fetchall() or []) if r["ad"]}
+
+        # 🏷️ İPTAL EDİLEN SİPARİŞLER — sebebi ADIYLA söylemek için (2026-08-25)
+        # Sahip 19 hatalı siparişi iptal ettikten SONRA, o siparişlerin açıkladığı
+        # faturalar "SİPARİŞSİZ GELEN MAL" görünmeye başladı. Etiket yanıltıcı:
+        # ortada denetim boşluğu yok, sahibin KENDİ TEMİZLİK KARARININ izi var.
+        # Duyu "siparişsiz" derse sahip bunu kontrol arızası sanır ve kendi
+        # doğru kararını hata zanneder. Sebep adıyla söylenmeli.
+        _iptalli: Dict[str, List[Dict]] = {}
+        try:
+            cur.execute(
+                "SELECT ts.olusturma::date::text AS gun, "
+                "       UPPER(COALESCE(ts.tedarikci_ad, td.ad, '')) AS ted_ad, "
+                "       COALESCE(SUM(x.adet), 0) AS dummy "
+                "  FROM toptanci_siparis ts "
+                "  LEFT JOIN tedarikciler td ON td.id = ts.tedarikci_id "
+                "  LEFT JOIN LATERAL (SELECT 0 AS adet) x ON TRUE "
+                " WHERE COALESCE(ts.durum,'') = 'iptal' "
+                "   AND ts.olusturma >= CURRENT_DATE - %s "
+                " GROUP BY 1,2", (g + pen,))
+            for r in (cur.fetchall() or []):
+                r = dict(r)
+                _iptalli.setdefault(r["ted_ad"], []).append(r["gun"])
+        except Exception as _ei:  # noqa: BLE001
+            logger.info("iptal sipariş bağlamı okunamadı: %s", str(_ei)[:90])
 
         sonuc: List[Dict] = []
         sayac = {"tutuyor": 0, "kayit_kapanmamis": 0, "siparissiz": 0,
@@ -464,7 +489,23 @@ def fatura_teslim_mutabakati(tedarikci: str = "", gun: int = 120,
             elif fark > 1 and acik:
                 durum, guc = "MAL GELDİ, SİPARİŞ KAPANMADI", "GÜÇLÜ"
             elif fark > 1:
-                durum, guc = "SİPARİŞSİZ GELEN MAL — dönemde karşılığı yok", "ORTA"
+                _kim = _ayirt_edici(a["tedarikci_ad"])
+                _yakin = []
+                for _ad, _gns in _iptalli.items():
+                    if not (_ayirt_edici(_ad) & _kim):
+                        continue
+                    for _gn in _gns:
+                        try:
+                            if abs(_gun_farki(a["tarih"], _gn)) <= pen:
+                                _yakin.append(_gn)
+                        except Exception:  # noqa: BLE001
+                            continue
+                if _yakin:
+                    durum = ("SİPARİŞİ İPTAL EDİLDİ — mal geldi, sipariş kaydı "
+                             "sonradan iptal edilmiş (%s)" % ", ".join(sorted(set(_yakin))[:3]))
+                    guc = "BILGI"
+                else:
+                    durum, guc = "SİPARİŞSİZ GELEN MAL — dönemde karşılığı yok", "ORTA"
             else:
                 durum, guc = "FATURALANMAYAN TESLİM? — birim şüphesi", "ZAYIF"
             gruplar.append({
