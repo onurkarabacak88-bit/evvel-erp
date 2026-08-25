@@ -985,14 +985,26 @@ def ocr_kapsama(gun: int = 200):
             _cf = abs(float(r.get("capa_farki") or 0))
             _tol = max(5.0, abs(float(r["tutar"] or 0)) * 0.02)
             if _cf > _tol and not _kdv_uyum:
-                sayac["KALEM OKUMASI EKSİK"] = sayac.get("KALEM OKUMASI EKSİK", 0) + 1
+                # ⚖️ İKİ AYRI ARIZA, İKİ AYRI ÇARE (2026-08-25):
+                # belge > kalem → SATIR ATLANMIŞ (okuma eksik)
+                # kalem > belge → AYNI SATIR İKİ KEZ okunmuş ya da belge toplamı
+                #                 yanlış okunmuş. Bunu "eksik" diye adlandırmak
+                #                 yanlış yere baktırır: kimse olmayan satırı aramaz.
+                if _kalem > _belge:
+                    _sebep = "KALEM FAZLA OKUNMUŞ"
+                    _care = ("Okunan kalemler (%.2f ₺) belge toplamından (%.2f ₺) "
+                             "FAZLA — aynı satır iki kez okunmuş ya da belge toplamı "
+                             "yanlış okunmuş olabilir. Belgenin aslına bakılmalı."
+                             % (_kalem, _belge))
+                else:
+                    _sebep = "KALEM OKUMASI EKSİK"
+                    _care = ("Belge %.2f ₺, okunan kalemler %.2f ₺ — aradaki %.2f ₺ "
+                             "hiçbir KDV oranıyla açıklanmıyor, satır okunmamış. "
+                             "Gece kurtarması yeniden okuyacak."
+                             % (_belge, _kalem, _cf))
+                sayac[_sebep] = sayac.get(_sebep, 0) + 1
                 kalemsiz.append({**{k: v for k, v in r.items() if k != "kalem"},
-                                 "sebep": "KALEM OKUMASI EKSİK",
-                                 "care": ("Belge %.2f ₺, okunan kalemler %.2f ₺ — "
-                                          "aradaki %.2f ₺ hiçbir KDV oranıyla "
-                                          "açıklanmıyor, satır okunmamış. Gece "
-                                          "kurtarması yeniden okuyacak."
-                                          % (_belge, _kalem, _cf))})
+                                 "sebep": _sebep, "care": _care})
             continue
         if not r["foto_var"] and not r["metin_var"]:
             sebep, care = "BELGE YOK", "Faturanın PDF/foto aslı sisteme yüklenmeli."
