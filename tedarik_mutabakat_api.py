@@ -779,9 +779,29 @@ def ocr_kapsama(gun: int = 200):
         sayac[sebep] = sayac.get(sebep, 0) + 1
         kalemsiz.append({**{k: v for k, v in r.items() if k != "kalem"},
                          "sebep": sebep, "care": care})
+    # 🔎 KAYNAK KIRILIMI — "fotoğraf yolu çalışıyor mu?" sorusunun cevabı
+    # (2026-08-25): Bir faturanın kalemi yoksa suç okuyucuda mı yoksa o tek
+    # belgede mi? Ayrım şuradan çıkar: FOTOĞRAFTAN okunmuş kalemli fatura VAR MI
+    # ve EN SONU NE ZAMAN? Yoksa/eskiyse vision yolu topyekûn bozuktur —
+    # personel fatura fotoğrafı çektiği için bu sessiz kalırsa büyük kayıptır.
+    def _kaynak(r):
+        return ("pdf" if r["metin_var"] and not r["foto_var"]
+                else "foto" if r["foto_var"] and not r["metin_var"]
+                else "ikisi" if r["foto_var"] else "kaynak_yok")
+    kaynak_ozet: Dict[str, Dict[str, Any]] = {}
+    for r in rows:
+        k = _kaynak(r)
+        b = kaynak_ozet.setdefault(k, {"toplam": 0, "kalemli": 0, "son_kalemli_tarih": None})
+        b["toplam"] += 1
+        if int(r["kalem"] or 0) > 0:
+            b["kalemli"] += 1
+            t = str(r["tarih"] or "")
+            if t and (b["son_kalemli_tarih"] is None or t > b["son_kalemli_tarih"]):
+                b["son_kalemli_tarih"] = t
     return {
         "gun": g, "fatura_toplam": len(rows),
         "kalemli": sum(1 for r in rows if int(r["kalem"] or 0) > 0),
+        "kaynak_ozet": kaynak_ozet,
         "kalemsiz": len(kalemsiz), "sebep_kirilimi": sayac,
         "satirlar": kalemsiz,
         "not": ("SALT OKUR — hiçbir OCR tetiklenmedi. Her sebebin ÇARESİ AYRIDIR; "
