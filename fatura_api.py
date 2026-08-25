@@ -2220,10 +2220,30 @@ def ocr_yeniden_dene(limit: int = 25):
     lim = max(1, min(100, int(limit or 25)))
     with db() as (_, cur):
         _ensure_tablolar(cur)
+        # 🔴 TUTULMAYAN SÖZ (2026-08-25, canlı yakalandı)
+        # Kesik LLM cevabı kurtarıldığında faturaya şu not yazılıyor:
+        #   "LLM'siz yedek okudu; kalemler GECE TAMAMLANACAK"
+        # Ama bu sorgu `foto IS NOT NULL` şartı arıyordu ve PDF'ten gelen
+        # faturaların fotoğrafı YOK (yalnız kaynak_metin var). Sonuç: PDF
+        # kaynaklı faturalar gece kurtarmasına HİÇ girmiyordu; söz verilen
+        # tamamlama asla olmuyordu. Canlı örnek: FEZ2026000001579 (13.513,80 ₺,
+        # 6 Temmuz) — 50 gündür kalemsiz bekliyor.
+        # Ayrıca: "ocr_tamam" görünüp HİÇ KALEMİ OLMAYAN faturalar da alınır —
+        # tutar okunmuş ama kalem tablosu çıkarılamamıştır (canlı: MEHMET ATALAY
+        # 11.362,50). Onlar da sessizce ölçüm dışı kalıyordu.
+        # ⚠️ Kopya nüshalar HARİÇ — aslı zaten okunuyor, ikinci nüshayı okumak
+        # kotayı boşa harcar.
         cur.execute(
-            """SELECT id, ocr_hata FROM tedarikci_fatura
-               WHERE (durum IN ('ocr_hata','ocr_bekliyor') AND foto IS NOT NULL)
-                  OR (durum='ocr_tamam' AND ocr_json->>'yontem'='regex_yedek')
+            """SELECT id, ocr_hata FROM tedarikci_fatura f
+               WHERE COALESCE(durum,'') <> 'kopya'
+                 AND (foto IS NOT NULL OR COALESCE(kaynak_metin,'') <> '')
+                 AND (
+                       durum IN ('ocr_hata','ocr_bekliyor')
+                    OR (durum='ocr_tamam' AND ocr_json->>'yontem'='regex_yedek')
+                    OR (durum='ocr_tamam' AND NOT EXISTS (
+                          SELECT 1 FROM tedarikci_fatura_kalem k
+                           WHERE k.fatura_id = f.id))
+                 )
                ORDER BY olusturma DESC LIMIT %s""", (lim,))
         rows = [dict(r) for r in cur.fetchall() or []]
     hatalar = sorted({(r.get("ocr_hata") or "")[:160] for r in rows if r.get("ocr_hata")})

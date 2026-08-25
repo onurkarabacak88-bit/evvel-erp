@@ -153,7 +153,17 @@ def fatura_teslim_mutabakati(tedarikci: str = "", gun: int = 120,
     pen = max(1, min(45, int(pencere or VARSAYILAN_PENCERE)))
     t = (tedarikci or "").strip()
     with db() as (_, cur):
-        kos = ["f.fatura_tarih >= CURRENT_DATE - %s"]
+        # ⛔ KOPYA NÜSHA ÖLÇÜME GİRMEZ (2026-08-25)
+        # OCR kapsama teşhisi şunu gösterdi: kalemi olmayan 13 faturanın 12'si
+        # OCR hatası DEĞİL, sistemin zaten `durum='kopya'` diye işaretlediği
+        # İKİNCİ NÜSHA. Aslı okunmuş ve kalemleri var. Sistemin geri kalanı bu
+        # işareti her yerde süzüyor (fatura_api'de 8 ayrı sorguda), benim yeni
+        # ucum süzmüyordu → 9 fatura boş yere "ölçülemez" sayıldı ve "OCR'ı
+        # iyileştir" diye olmayan bir işi işaret etti.
+        # Ders (bugün ikinci kez): duyu, sistemin AÇIKÇA koyduğu durum
+        # işaretini okumazsa kendi körlüğünü başkasının hatası gibi gösterir.
+        kos = ["f.fatura_tarih >= CURRENT_DATE - %s",
+               "COALESCE(f.durum,'') <> 'kopya'"]
         par: List[Any] = [g]
         if t:
             kos.append("f.tedarikci_ad ILIKE %s")
@@ -744,6 +754,7 @@ def ocr_kapsama(gun: int = 200):
             "  FROM tedarikci_fatura f "
             "  LEFT JOIN tedarikci_fatura_kalem k ON k.fatura_id = f.id "
             " WHERE f.fatura_tarih >= CURRENT_DATE - %s "
+            "   AND COALESCE(f.durum,'') <> 'kopya' "   # ikinci nüsha OCR derdi değildir
             " GROUP BY f.id, f.tedarikci_ad, f.fatura_no, f.fatura_tarih, "
             "          f.toplam_tutar, f.durum, f.foto, f.kaynak_metin, f.ocr_hata "
             " ORDER BY f.fatura_tarih DESC", (g,))
