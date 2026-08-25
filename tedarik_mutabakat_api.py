@@ -2471,6 +2471,8 @@ def eksik_fatura_iste(gun: int = 200, kuru: int = 1):
             "teslim_adet": grp["teslim_alinan_adet"],
             "eksik_adet": abs(grp["adet_farki"]),
             "siparis_kalemleri": eksik,
+            "fatura_tutari": grp.get("fatura_tutari"),
+            "_ts": grp.get("tum_siparisler") or [],
             "kaynak_id": "tedarik|%s|%s" % (grp["tedarikci_ad"][:40], grp["donem_bit"]),
         })
 
@@ -2482,18 +2484,43 @@ def eksik_fatura_iste(gun: int = 200, kuru: int = 1):
                             "WHERE UPPER(ad) = ANY(%s) AND COALESCE(aktif,TRUE) LIMIT 1",
                             (_ad_adaylari(p["tedarikci_ad"]),))
                 _t = dict(cur.fetchone() or {})
+                # 💰 EKSİĞİN PARASAL BÜYÜKLÜĞÜ — Belge Merkezi istekleri TUTARA
+                # göre sıralıyor; tutarsız satır listenin dibinde kaybolur ve
+                # "en büyük eksik" hiç görünmez. Teslimatın beklenen değeri
+                # (belge_talep.beklenen_tutar_tl) ile faturalanan arasındaki
+                # fark, eksiğin makul tahminidir. ⚠️ TAHMİN OLDUĞU açıklamada
+                # yazılır — kesin bir borç rakamı gibi sunulmaz.
+                _tahmin = None
+                try:
+                    cur.execute(
+                        "SELECT COALESCE(SUM(bt.beklenen_tutar_tl),0)::float AS b "
+                        "  FROM belge_talep bt "
+                        " WHERE bt.ts_id = ANY(%s)",
+                        ([x.get("ts_id") for x in (p.get("_ts") or [])] or [""],))
+                    _bek = float(dict(cur.fetchone() or {}).get("b") or 0)
+                    if _bek > 0 and p.get("fatura_tutari"):
+                        _fark = _bek - float(p["fatura_tutari"])
+                        if _fark > 0:
+                            _tahmin = round(_fark, 2)
+                except Exception as _et2:  # noqa: BLE001
+                    logger.info("eksik tutar tahmini atlandı: %s", str(_et2)[:80])
                 _aciklama = ("Sipariş edilip teslim alınan ama faturada yer almayan "
                              "kalemler (%s dönemi, %.0f adet fark): %s"
                              % (p["donem"], p["eksik_adet"],
                                 " · ".join(p["siparis_kalemleri"][:12])))
+                if _tahmin:
+                    # ⚠️ TAHMİN OLDUĞU AÇIKÇA YAZILIR — kesin bir borç rakamı gibi
+                    # sunulursa tedarikçiye yanlış tutar söylenir ve güven kaybolur.
+                    _aciklama += (" · parasal büyüklük ≈ %.2f ₺ (TAHMİN: teslimatın "
+                                  "beklenen değeri eksi faturalanan)" % _tahmin)
                 cur.execute(
                     "INSERT INTO fatura_istek "
                     "(kaynak_tip, kaynak_id, tarih, tutar, aciklama, kanal_detay, "
                     " tedarikci_ad, tedarikci_tel, durum) "
-                    "VALUES ('tedarik_eksik', %s, %s::date, NULL, %s, 'tedarik zinciri', "
+                    "VALUES ('tedarik_eksik', %s, %s::date, %s, %s, 'tedarik zinciri', "
                     "        %s, %s, 'aday') "
                     "ON CONFLICT (kaynak_tip, kaynak_id) DO NOTHING",
-                    (p["kaynak_id"], p["donem"].split("..")[1], _aciklama,
+                    (p["kaynak_id"], p["donem"].split("..")[1], _tahmin, _aciklama,
                      p["tedarikci_ad"], _t.get("telefon")))
                 if cur.rowcount:
                     yazilan += 1
