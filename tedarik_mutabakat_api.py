@@ -1004,16 +1004,16 @@ def ocr_kapsama(gun: int = 200):
                 #                 yanlış yere baktırır: kimse olmayan satırı aramaz.
                 if _kalem > _belge:
                     _sebep = "KALEM FAZLA OKUNMUŞ"
-                    _care = ("Okunan kalemler (%.2f ₺) belge toplamından (%.2f ₺) "
+                    _care = ("Okunan kalemler (%s ₺) belge toplamından (%s ₺) "
                              "FAZLA — aynı satır iki kez okunmuş ya da belge toplamı "
                              "yanlış okunmuş olabilir. Belgenin aslına bakılmalı."
-                             % (_kalem, _belge))
+                             % (_tl(_kalem), _tl(_belge)))
                 else:
                     _sebep = "KALEM OKUMASI EKSİK"
-                    _care = ("Belge %.2f ₺, okunan kalemler %.2f ₺ — aradaki %.2f ₺ "
+                    _care = ("Belge %s ₺, okunan kalemler %s ₺ — aradaki %s ₺ "
                              "hiçbir KDV oranıyla açıklanmıyor, satır okunmamış. "
                              "Gece kurtarması yeniden okuyacak."
-                             % (_belge, _kalem, _cf))
+                             % (_tl(_belge), _tl(_kalem), _tl(_cf)))
                 sayac[_sebep] = sayac.get(_sebep, 0) + 1
                 kalemsiz.append({**{k: v for k, v in r.items() if k != "kalem"},
                                  "sebep": _sebep, "care": _care})
@@ -2243,6 +2243,21 @@ def birim_ata(body: BirimBody):
 # ═══════════════════════════════════════════════════════════════════════════
 # 🏢 ALIM KAYNAĞI — şube siparişi mi, MERKEZ alımı mı?
 # ═══════════════════════════════════════════════════════════════════════════
+def _tl(v) -> str:
+    """Türkçe para biçimi: 24600.22 → '24.600,22'.
+
+    ⚠️ Ekranda karışıklık yaratıyordu (canlı 2026-08-26): duyu mesajları
+    "%.2f" ile ham yazıyordu (24600.22) ama ekranın geri kalanı Türkçe
+    biçimdeydi (85.537 ₺). Aynı ekranda iki farklı sayı dili, okuyanı
+    "bu başka bir şey mi?" diye duraklatır.
+    """
+    try:
+        return ("{:,.2f}".format(float(v))
+                .replace(",", "").replace(".", ",").replace("", "."))
+    except (TypeError, ValueError):
+        return str(v)
+
+
 def _capa_kolonu(cur) -> None:
     """`kalem_capa_farki` kolonunu garanti eder.
 
