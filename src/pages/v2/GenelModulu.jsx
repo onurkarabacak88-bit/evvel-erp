@@ -30,6 +30,13 @@ import { enKritikOneri } from './oneriGrup';
 import ZamTakibi from './ZamTakibi';
 
 const sayi = (v) => Number(v) || 0;
+
+/** Ödeme tutarının TEK ERİŞİMCİSİ — fallback zinciri burada, başka yerde değil.
+ *  🔵 (2026-08-26) Bileşen içinden MODÜL seviyesine alındı: "değişim önceliği"
+ *  anlık görüntüsünü alan useEffect erken çıkışların ÜSTÜNDE çalışmak zorunda
+ *  (koşullu hook yasak), oraya da aynı zincir lazımdı. Kopyalanmadı — taşındı;
+ *  iki ayrı tutar okuması bir gün kaçınılmaz olarak ayrışırdı. */
+const odemeTutar = (u) => sayi(u.tutar ?? u.asgari_kalan ?? u.asgari);
 const kisalt = (t, n = 88) => { const x = String(t ?? '').trim(); return x.length > n ? `${x.slice(0, n - 1)}…` : x; };
 /** Türkçe-I tuzağı: 'I'→'ı', 'İ'→'i'. Ekran metni küçültmesinde HEP bu. */
 const trKucuk = (s) => String(s || '').toLocaleLowerCase('tr');
@@ -593,6 +600,90 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
   };
   useEffect(yukle, []);
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // 📉 DEĞİŞİM ÖNCELİĞİ (2026-08-26 BAKIŞ kurgusu · HAMLE 3)
+  // ══════════════════════════════════════════════════════════════════════════
+  // ── NEDEN ────────────────────────────────────────────────────────────────
+  // Sabit uyaran görünmez olur. "GECİKMİŞ 1.433.944 ₺" her sabah aynı rakamsa
+  // üçüncü günden sonra duvar kâğıdıdır — sahip ona bakmayı bırakır, sonra
+  // rakam gerçekten sıçradığında da fark etmez. Alışkanlaşmanın tek panzehri
+  // ENVANTER değil DEĞİŞİM anlatmaktır: "dünden beri +50.400 · 2 yeni kalem".
+  //
+  // ── NEDEN localStorage, NEDEN YENİ TABLO DEĞİL ───────────────────────────
+  // Bu bir KARŞILAŞTIRMA TABANI, bir kayıt değil. Sunucuya yazsaydık her açılış
+  // veri üretirdi (kayıt üretmeyen ekran kuralı) ve gece anlık görüntüsüyle
+  // ikinci bir gerçek doğardı. Tarayıcıda durur, kimseyi bağlamaz.
+  //
+  // ⚠️ TARİH SUNUCUDAN: "bugün"ü tarayıcı saatinden hesaplamak bu dosyada zaten
+  // yasak (sunucunun iş günü kavramı var — gece 02:00'a kadar önceki gün).
+  // is_gunu_tr okunamıyorsa DELTA HİÇ YAZILMAZ; yanlış günle kıyaslamaktansa
+  // hiç kıyaslamamak doğrudur.
+  //
+  // ⚠️ İKİ KAYIT TUTULUR ({bugun, onceki}) — tek kayıt tutsaydık aynı gün içinde
+  // sayfa yenilendiğinde taban "bugün" olur, delta 0,00 çıkar ve ekran
+  // "hiçbir şey değişmedi" YALANINI söylerdi (dairesel mutabakat tuzağı).
+  // ══════════════════════════════════════════════════════════════════════════
+  // 📊 ÖLÇÜM BAĞLANTISI — "bu ekran iş üretiyor mu?" (M1 · M2)
+  // ══════════════════════════════════════════════════════════════════════════
+  // Bir tasarım değişikliği "daha iyi oldu" diye İDDİA EDİLEMEZ, ölçülmesi
+  // gerekir. Ölçülen asıl şey: sahip açıp KAPATIYOR mu, yoksa BİR İŞ mi yapıyor?
+  //
+  // ⚠️ Kuyruk render sırasında hesaplanıyor (erken çıkışların altında), ölçüm
+  // kancası ise en üstte olmak zorunda (koşullu hook yasak). Köprü bir REF:
+  // render kuyruğu ref'e yazar, effect BOYAMA SONRASI okur. State kullanılsaydı
+  // her ölçüm bir yeniden-render doğururdu — ölçüm aleti ölçtüğü şeyi bozardı.
+  const kuyrukRef = React.useRef(null);
+  const oturumRef = React.useRef(null);
+  useEffect(() => {
+    if (!veri?.panel || gorunum !== 'karar') return undefined;
+    const k = kuyrukRef.current || { anahtar: [], sinif: [] };
+    let iptal = false;
+    api('/bakis-olcum/acilis', {
+      method: 'POST',
+      body: JSON.stringify({ gorunum, kuyruk: k.anahtar, kuyruk_sinif: k.sinif }),
+    })
+      .then((r) => { if (!iptal) oturumRef.current = r?.oturum_id || null; })
+      .catch(() => { /* ölçüm düşerse ekran çalışmaya devam eder */ });
+    return () => { iptal = true; };
+  }, [veri, gorunum]);
+
+  /** İlk ANLAMLI eylemi bildirir. Sonraki tıklamalar sessiz — "ilk eyleme süre"
+   *  ölçüyoruz; ikincisi ilkini ezseydi metrik sessizce başka şey ölçerdi. */
+  const olcumEylem = (tur) => {
+    const oid = oturumRef.current;
+    if (!oid) return;
+    oturumRef.current = null;
+    api('/bakis-olcum/eylem', { method: 'POST', body: JSON.stringify({ oturum_id: oid, tur }) })
+      .catch(() => { /* sessiz */ });
+  };
+
+  const [gecmisOzet, setGecmisOzet] = useState(null);
+  useEffect(() => {
+    if (!veri?.panel) return;
+    const kap = veri.kapanis;
+    const bugunIso = kap && kap !== '__HATA__' ? String(kap.is_gunu_tr || '') : '';
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(bugunIso)) return;   // gün bilinmiyor → delta yok
+    const od = Array.isArray(veri.panel.bugun_odemeler) ? veri.panel.bugun_odemeler : [];
+    const gec = od.filter((u) => sayi(u.gun_farki) < 0);
+    const nk = veri.nakit;
+    const anlik = {
+      tarih: bugunIso,
+      gecikmisTl: gec.reduce((s, u) => s + odemeTutar(u), 0),
+      gecikmisAdet: gec.length,
+      kritikAdet: od.filter((u) => sayi(u.gun_farki) <= -15).length,
+      mutTl: nk && nk !== '__HATA__' && nk.duraklar ? Math.abs(sayi(nk.mutabakatsiz_tl)) : null,
+    };
+    try {
+      const ham = localStorage.getItem('evvelBakisOzet');
+      const kayit = ham ? JSON.parse(ham) : null;
+      // Gün döndüyse dünkü "bugun" artık "onceki" olur.
+      let onceki = kayit?.onceki || null;
+      if (kayit?.bugun?.tarih && kayit.bugun.tarih !== bugunIso) onceki = kayit.bugun;
+      setGecmisOzet(onceki && onceki.tarih !== bugunIso ? onceki : null);
+      localStorage.setItem('evvelBakisOzet', JSON.stringify({ bugun: anlik, onceki }));
+    } catch { /* depolama kapalıysa delta yazılmaz — ekran çalışmaya devam eder */ }
+  }, [veri]);
+
   // ════════════════════════ GÖRÜNÜM: ZAM TAKİBİ ═════════════════════════════
   // ⚠️ ERKEN ÇIKIŞLARIN ÜSTÜNDE — bilerek. Zam listesinin /panel ile HİÇBİR
   // ilgisi yok (kendi ucunu kendi çeker). Aşağıya konsaydı sekme, /panel
@@ -635,7 +726,7 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
   // 7 kalemin toplamını gösteriyordu. Aynı erişimci → sayı ve toplam aynı evren.
   // 🔴 EVV-GENEL-N1: TEK erişimci — satır (139) ve çekmece (151) AYNI fallback zincirini
   // kullansın (eskiden çekmece `?? asgari`'yi atlıyordu → satırda para, çekmecede 0).
-  const odemeTutar = (u) => sayi(u.tutar ?? u.asgari_kalan ?? u.asgari);
+  // (odemeTutar modül seviyesine taşındı — dosyanın başına bak.)
   const gecikmisTutar = odemeTutar;
   const gecikmisToplam = odemeler
     .filter((u) => sayi(u.gun_farki) < 0)
@@ -1212,7 +1303,13 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
       : dunBilinmiyor ? 'dün verisi bekleniyor'
         : dunCiroToplam > 0 ? (
           <>
-            dün toplam{' '}
+            {/* 🔵 (2026-08-26) "dün" TEK BAŞINA BAĞLAMSIZ: rakamın hangi güne ait
+                olduğu söylenmeden 36,8K bir şey ifade etmiyor (pazartesi mi,
+                pazar mı?). Tarih ZATEN elde — dün okuması is_gunu_tr ile geldi.
+                ⚠️ Yüzde/trend YAZILMIYOR: /panel günlük ciro serisi döndürmüyor,
+                karşılaştırma günü olmadan "%+6" uydurma olurdu (mevcut karar
+                doğruydu, korundu). Yalnız GÜN ADI eklendi. */}
+            {dunHam?.is_gunu_tr ? `${kisaGun(dunHam.is_gunu_tr)} toplamı ` : 'dün toplam '}
             <b style={{ fontFamily: F.mono, color: R.metin2, fontWeight: 700 }}>{kisaPara(dunCiroToplam)}</b>
           </>
         ) : 'dün ciro girilmemiş';
@@ -1251,6 +1348,10 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
     // 33 kalemlik liste bir karar değil ENVANTERDİR; sahip her kalemde mikro
     // karar verip yorulur ve hiçbir şey yapmadan çıkar. Taşanlar sayılır ve
     // tam listeye köprülenir — gizlenmez.
+    // 📊 Kasa ayrımını açmak da anlamlı bir eylemdir — ölçüme bildirilir.
+    // (olcumEylem yalnız İLK çağrıda yazar; iki yerden çağrılması zararsız.)
+    const kasaAc = () => { olcumEylem('cekmece'); kasaCekmecesiniAc(); };
+
     const ciroEksikGunler = Array.isArray(p.ciro_eksik_gunler) ? p.ciro_eksik_gunler : [];
 
     // ══════════════════════════════════════════════════════════════════════════
@@ -1313,7 +1414,7 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
           metin: `${fmt(nakitDurum.mut)} nakit — yeri doğrulanmamış`,
           alt: `defterin %${nakitDurum.pay}'i · şube sayımı eskiyse fark büyür`,
           aksiyonAd: 'Kasa ayrımını aç',
-          onTikla: kasaCekmecesiniAc,
+          onTikla: kasaAc,
         });
       }
 
@@ -1357,6 +1458,16 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
     const kuyrukTasan = bugunKuyrugu.length - kuyrukGorunen.length;
     // Y4 kümesini doldur — yalnız EKRANDA GÖRÜNEN kayıtlar (yukarıdaki nota bak).
     kuyrukGorunen.forEach((x) => { if (x._u) heroAnahtarlar.add(kayitAnahtari(x._u)); });
+
+    // 📊 Kuyruğu ölçüm kancasına bildir (M3-M5: madde ömrü + kronikleşme).
+    // ⚠️ ANAHTAR KİMLİĞİ KALICI OLMALI: ödeme maddesinde kayıt kimliği kullanılır,
+    // yoksa aynı iş her gün "yeni madde" sayılır ve hiçbir şey kapanmış görünmez
+    // (ömür ölçümü sonsuza dek 0 gün çıkardı). Kaydı olmayan maddede tür anahtarı
+    // yeterlidir — o maddeler zaten türü başına tek tanedir.
+    kuyrukRef.current = {
+      anahtar: bugunKuyrugu.map((x) => (x._u ? `odeme|${kayitAnahtari(x._u)}` : x.k)),
+      sinif: bugunKuyrugu.map((x) => x.sinif),
+    };
 
     // ── "YAPACAK BİR ŞEY YOK" NE ZAMAN DENİR? ────────────────────────────────
     // Bu ekranın en zor tasarım kararı. İKİ koşul BİRDEN gerekir:
@@ -1464,7 +1575,9 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
                   // Alt satır 2 satırı geçmesin diye gerekçe kırpılır (tam metin
                   // zaten tıklanınca açılan çekmecede). 3. satır = taşma demek.
                   alt={[`${i + 1}.`, kisalt(is.alt, 44), is.onTikla ? `${is.aksiyonAd} →` : null].filter(Boolean).join(' ')}
-                  onTikla={is.onTikla}
+                  // 📊 Kuyruktan bir işe girmek EN ANLAMLI eylemdir — ekranın
+                  // var oluş sebebi tam olarak bu. M1/M2 buradan ölçülür.
+                  onTikla={is.onTikla ? () => { olcumEylem('kuyruk'); is.onTikla(); } : undefined}
                   aksiyonAd={is.aksiyonAd}
                 />
               ))} />
@@ -1515,15 +1628,40 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
             deger: fmt(nakitDurum.dogrulanmis),
             alt: `+ ${fmt(nakitDurum.mut)} yeri doğrulanmamış · ayrım için tıkla`,
             renk: R.krem,          // yeşil DEĞİL: doğrulanmamış pay varken "iyi" denmez
-            onTikla: kasaCekmecesiniAc,
+            onTikla: kasaAc,
           } : {
             etiket: 'Kasa',
             deger: fmt(sayi(p.kasa)),
             alt: 'tüm kasaların toplamı · ayrım için tıkla',
             renk: sayi(p.kasa) >= 0 ? R.yesil : R.kirmizi,
-            onTikla: kasaCekmecesiniAc,
+            onTikla: kasaAc,
           },
-          { etiket: 'Gecikmiş', deger: fmt(gecikmisToplam), alt: `${gK.length + gU.length + gB.length} kalem`, renk: gecikmisToplam > 0 ? R.kirmizi : R.yesil },
+          // 📉 GECİKMİŞ — rakamın yanında DEĞİŞİMİ de söyler (HAMLE 3).
+          // Taban `gecmisOzet` (önceki günün anlık görüntüsü); yoksa delta yok.
+          (() => {
+            const d = gecmisOzet ? {
+              tl: gecikmisToplam - sayi(gecmisOzet.gecikmisTl),
+              adet: (gK.length + gU.length + gB.length) - sayi(gecmisOzet.gecikmisAdet),
+            } : null;
+            // Sıfır değişim de bir bilgidir ("dünden beri değişmedi") ama YALNIZ
+            // gerçek bir taban varken — tek ölçümden "değişmedi" demek yalandır.
+            const metin = !d ? null
+              : (d.tl === 0 && d.adet === 0) ? `${gecmisOzet.tarih.slice(5)}'ten beri değişmedi`
+                : [
+                  `${gecmisOzet.tarih.slice(5)}'ten beri ${d.tl >= 0 ? '+' : '−'}${fmt(Math.abs(d.tl))}`,
+                  d.adet !== 0 ? `${d.adet > 0 ? '+' : '−'}${Math.abs(d.adet)} kalem` : null,
+                ].filter(Boolean).join(' · ');
+            return {
+              etiket: 'Gecikmiş',
+              deger: fmt(gecikmisToplam),
+              alt: `${gK.length + gU.length + gB.length} kalem`,
+              renk: gecikmisToplam > 0 ? R.kirmizi : R.yesil,
+              delta: metin,
+              // Büyüme kötü, küçülme iyi — renk yönü söyler.
+              deltaRenk: !d || (d.tl === 0 && d.adet === 0) ? R.not3
+                : d.tl > 0 ? R.kirmizi : R.yesil,
+            };
+          })(),
           {
             // 🔵 (2026-08-14): değer TUTAR, adet alta indi (yanındaki KPI'lar para
             // gösterirken bu tek başına sayıydı).

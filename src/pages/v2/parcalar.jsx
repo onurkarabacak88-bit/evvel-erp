@@ -75,6 +75,18 @@ export function KpiSeridi({ kpiler, sik }) {
           }}>
             {k.deger}
           </div>
+          {/* 📉 DEĞİŞİM SATIRI (2026-08-26) — "dünden beri +50.400 · 2 yeni kalem".
+              Envanter alışkanlık yapar, değişim yapmaz: sabit rakam üçüncü günden
+              sonra duvar kâğıdıdır. YALNIZ modül gerçek bir karşılaştırma tabanı
+              verirse çizilir; taban yoksa satır HİÇ ÇIKMAZ (uydurma delta yok). */}
+          {k.delta && (
+            <div style={{
+              fontSize: 10.5, marginTop: 2, lineHeight: 1.3,
+              color: k.deltaRenk || R.not2, fontFamily: F.mono,
+            }}>
+              {k.delta}
+            </div>
+          )}
           <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 10, marginTop: sik ? 1 : 3 }}>
             <div style={{ fontSize: 11, color: R.not2, lineHeight: sik ? 1.25 : 'normal' }}>{k.alt}</div>
             {/* ⚠️ Sparkline YALNIZ gerçek zaman serisi verilirse çizilir.

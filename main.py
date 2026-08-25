@@ -151,6 +151,15 @@ except Exception as _tedarik_mut_err:
     logging.getLogger(__name__).warning(
         f"tedarik_mutabakat modulu yuklenemedi (izole, ana akis etkilenmez): {_tedarik_mut_err}"
     )
+# BAKIŞ Ölçüm — İZOLE toplayıcı: "ekran iş üretiyor mu?" (M1-M5).
+# Kendi iki tablosuna yazar, başka hiçbir tabloya dokunmaz; tüm uçları hata yutar.
+try:
+    from bakis_olcum_api import router as bakis_olcum_router
+    app.include_router(bakis_olcum_router)
+except Exception as _bakis_olcum_err:
+    logging.getLogger(__name__).warning(
+        f"bakis_olcum modulu yuklenemedi (izole, ana akis etkilenmez): {_bakis_olcum_err}"
+    )
 # Fatura İstek Motoru (BM-4+4A) — İZOLE (ödenmiş ama faturasız ≥eşik ödemeler).
 try:
     from fatura_istek_api import router as fatura_istek_router
