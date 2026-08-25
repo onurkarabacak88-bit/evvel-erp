@@ -105,6 +105,30 @@ _JENERIK = {
 }
 
 
+def _kanonik_harita() -> Dict[str, str]:
+    """alias(UPPER) → kanonik ad. Kimlik karar defterinden okunur.
+
+    ⚠️ BİRLEŞTİRMENİN KARŞILIĞI BURADA ALINIR (2026-08-25): sahip SÜTAŞ'ın iki
+    adını birleştirdi ama ürün sözlüğü ve kalem köprüsü kimliği HAM ADDAN
+    kuruyordu; sonuç değişmedi ve "Yarım Yağlı Süt" köprüsü listede İKİ KEZ
+    kalmaya devam etti. Birleştirme bir defterde durur, ama okuyanlar o defteri
+    okumazsa hiçbir şey birleşmez.
+    HATA-YUTAR: defter yoksa boş harita döner, davranış eskisi gibi kalır.
+    """
+    try:
+        from tedarikci_zinciri_api import _guncel_kararlar
+        with db() as (_, c):
+            return dict(_guncel_kararlar(c) or {})
+    except Exception as e:  # noqa: BLE001
+        logger.warning("kanonik harita okunamadı (yutuldu): %s", str(e)[:120])
+        return {}
+
+
+def _kanonik_ad(ad: str, harita: Dict[str, str]) -> str:
+    """Bir tedarikçi adını karar defterindeki kanonik karşılığına çevirir."""
+    return harita.get((ad or "").upper(), ad or "")
+
+
 def _ayirt_edici(ad: str) -> set:
     """Bir firma adındaki KİMLİK TAŞIYAN kelimeler (jenerikler atılmış).
 
@@ -859,8 +883,10 @@ def urun_sozlugu(tedarikci: str = "", gun: int = 400, en_az: int = 1):
         satir = [dict(r) for r in (cur.fetchall() or [])]
 
     # Karşı taraf kimliği: ayırt edici kelimelerin birleşimi (FEZ/ATALAY/SÜTAŞ…)
+    _harita = _kanonik_harita()
+
     def _kimlik(ad: str) -> str:
-        a = _ayirt_edici(ad)
+        a = _ayirt_edici(_kanonik_ad(ad, _harita))
         return " ".join(sorted(a)) if a else (ad or "?").upper()[:20]
 
     def _urun_normal(ad: str) -> str:
@@ -1086,12 +1112,13 @@ def kalem_koprusu(tedarikci: str = "", gun: int = 400,
         siparisler = [dict(r) for r in (cur.fetchall() or [])]
 
     # ── Kanıt topla: sipariş fatura gününden ÖNCE (zaman oku tek yönlü)
+    _harita = _kanonik_harita()
     kanit: Dict[Any, Dict[str, Any]] = {}
     for f in faturalar:
         fkalem = fk.get(f["id"], [])
         if not fkalem:
             continue
-        kim = _ayirt_edici(f["tedarikci_ad"])
+        kim = _ayirt_edici(_kanonik_ad(f["tedarikci_ad"], _harita))
         ilgili: List[Dict] = []
         for s in siparisler:
             if not (_ayirt_edici(s["ted_ad"]) & kim):
