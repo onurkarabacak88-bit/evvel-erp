@@ -1368,6 +1368,23 @@ def kimlik_adaylari(gun: int = 400):
         for a in adkume:
             ad_tel[a.upper()] = tel
 
+    # 🔴 MEVCUT KARAR DEFTERİNİ OKU (2026-08-25, canlıda hata yaptıktan sonra)
+    # İlk sürüm sistemdeki KİMLİK KARAR DEFTERİNİ hiç okumuyordu. Sonuç: zaten
+    # birleştirilmiş grupları yeniden önerdi ve — daha kötüsü — YANLIŞ KANONİK
+    # seçti. "KONYA SUK" 17 Ağustos'ta BEYSU'ya, "APS GIDA" redbull'a bağlanmıştı;
+    # ben en çok faturası olan adı kanonik sanıp aralarına bir ad daha soktum ve
+    # ZİNCİR oluşturdum (alias → ara ad → gerçek kanonik). Okuma tarafı düz harita
+    # olduğu için iki hoplu zinciri çözemez; kimlik yine bölünmüş kalırdı.
+    # Ders (bugün üçüncü kez): duyu, sistemin AÇIKÇA yazdığı kararı okumazsa
+    # düzelttiğini sandığı şeyi bozar. Karar defteri VARSA kanonik ondan gelir.
+    _mevcut_kanonik: Dict[str, str] = {}
+    try:
+        from tedarikci_zinciri_api import _guncel_kararlar
+        with db() as (_, _c3):
+            _mevcut_kanonik = {k: v for k, v in (_guncel_kararlar(_c3) or {}).items()}
+    except Exception as _ekk:  # noqa: BLE001 — defter yoksa öneri yine üretilir
+        logger.warning("kimlik karar defteri okunamadı: %s", str(_ekk)[:120])
+
     kume: List[List[Dict]] = []
     kullanildi = [False] * len(adlar)
     for i, a in enumerate(adlar):
@@ -1395,6 +1412,14 @@ def kimlik_adaylari(gun: int = 400):
 
     oneriler = []
     for grup in kume:
+        # Grubun herhangi bir adı deftere bağlıysa KANONİK ORADAN gelir; ayrıca
+        # hepsi zaten aynı kanoniğe bağlıysa öneri ÜRETİLMEZ (iş bitmiş).
+        _bagli = {_mevcut_kanonik.get((x["ad"] or "").upper()) for x in grup}
+        _bagli.discard(None)
+        _defter_kanonik = (list(_bagli)[0] if len(_bagli) == 1 else None)
+        _hepsi_bagli = all(_mevcut_kanonik.get((x["ad"] or "").upper()) for x in grup)
+        if _hepsi_bagli and len(_bagli) == 1:
+            continue        # zaten birleşik — öneri gürültüsü üretme
         toplam_tok = set.intersection(*[_ayirt_edici(x["ad"]) for x in grup]) \
             if len(grup) > 1 else set()
         seriler = [set(s for s in (x["seriler"] or []) if s and len(s) == 3) for x in grup]
@@ -1424,7 +1449,10 @@ def kimlik_adaylari(gun: int = 400):
                               or _kapsama >= 0.8)
                  else "ORTA" if ortak_seri else "DUSUK")
         oneriler.append({
-            "onerilen_ad": max(grup, key=lambda x: x["fatura_adet"])["ad"],
+            "onerilen_ad": (_defter_kanonik
+                            or max(grup, key=lambda x: x["fatura_adet"])["ad"]),
+            "kanonik_kaynagi": ("karar defteri" if _defter_kanonik
+                                else "en çok faturalı ad (öneri)"),
             "adlar": [{"ad": x["ad"], "fatura_adet": x["fatura_adet"],
                        "toplam": round(x["toplam"], 2), "ilk": x["ilk"], "son": x["son"],
                        "seriler": sorted(s for s in (x["seriler"] or []) if s)}
