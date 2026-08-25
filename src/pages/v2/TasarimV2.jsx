@@ -2171,6 +2171,10 @@ export default function TasarimV2({ onGit }) {
           // 📎 Belge yükleme: modül geçerse Belgeler sekmesinde düğme çıkar.
           belgeYukle={cekmece?.belgeYukle}
           dosyaBilgi={cekmece?.dosyaBilgi}
+          // 🔙 Geri (2026-08-26): çekmece artık katmanlanabiliyor (satır bir kapı
+          // olabiliyor). Modül geri yolunu kendisi kurar — kabuk yığın tutmaz,
+          // çünkü hangi katmandan nereye dönüleceğini yalnız modül bilir.
+          geri={cekmece?.geri}
           aksiyonAd={cekmece?.aksiyonAd}
           onAksiyon={() => koprule(cekmece?._hedef)}
           // Çoklu aksiyon (modül kendi işini yapar): tıklayınca çekmece kapanır,

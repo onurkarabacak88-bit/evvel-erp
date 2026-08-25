@@ -930,6 +930,73 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
     'sube-koycegiz': 'KÖYCEĞİZ', 'sube-alsancak': 'ALSANCAK',
     '(atanmamış)': 'Merkez (şube dışı)' };
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // 🚪 KASA · İKİNCİ KATMAN (2026-08-26) — "şu satırın içinde ne var?"
+  // ══════════════════════════════════════════════════════════════════════════
+  // Çekmece bugüne dek ÇIKMAZ SOKAKTI: şube bakiyesini görüyordun ama o
+  // bakiyeyi oluşturan hareketleri göremiyordun. "ZAFER 12.065 ₺" bir cevap
+  // değil, bir SORUDUR — hangi hareketlerden oluştu?
+  //
+  // ⚠️ YALANCI KAPI KURULMADI: bu katman /api/kasa-defteri'nin ZATEN VAR OLAN
+  // `sube_id` ve `islem_turu` filtrelerini kullanır. Veri kaynağı olmayan bir
+  // satır kapı YAPILMAZ — tıklanıp boş açılan kapı, bugünkü dürüst çıkmaz
+  // sokaktan daha kötüdür.
+  //
+  // ⛔ HİÇBİR RAKAM YENİDEN HESAPLANMAZ: uç ne dönerse o yazılır.
+  const kasaDetayAc = async ({ baslik, sube_id, islem_turu, altBilgi, geriHedef }) => {
+    const sorgu = new URLSearchParams({ boyut: '120' });
+    if (sube_id) sorgu.set('sube_id', sube_id);
+    if (islem_turu) sorgu.set('islem_turu', islem_turu);
+    // Geri yolu ÇAĞIRANA aittir: aynı hareket listesine hem KASA çekmecesinden
+    // hem "param nerede?" çekmecesinden girilebiliyor. Sabit bir geri koysaydım
+    // kullanıcı girmediği kapıdan çıkardı.
+    const geri = geriHedef || { ad: 'Kasa · toplam ve ayrımlar', onTikla: () => kasaCekmecesiniAc() };
+    onCekmece?.({ tip: 'KASA HAREKETLERİ', baslik, alt: 'yükleniyor…', satirlar: [], geri });
+    try {
+      const d = await api(`/kasa-defteri?${sorgu.toString()}`);
+      const oz = d?.ozet || {};
+      const satirlar = (d?.satirlar || []).map((h) => ({
+        ad: kisalt(String(h.aciklama || h.islem_turu || '—'), 58),
+        // Kasayı OYNATMAYAN satır (DEVIR, ODEME_PLANI…) defterde durur ama
+        // bakiyeye girmez. Karışırsa "kasa tutmuyor" diye sahte alarm doğar —
+        // o yüzden satırın kendisinde SÖYLENİR.
+        detay: [
+          kisaGun(h.tarih),
+          h.islem_turu,
+          h.kasa_etkisi === false ? '⚠ kasayı oynatmaz' : null,
+        ].filter(Boolean).join(' · '),
+        tutar: fmt(sayi(h.tutar)),
+      }));
+      onCekmece?.({
+        tip: 'KASA HAREKETLERİ',
+        baslik,
+        // SESSİZ ELEME YASAK: kaç satır dışarıda kaldığı SÖYLENİR.
+        alt: [altBilgi, `${sayi(d?.toplam)} hareket`,
+          sayi(d?.kalan) > 0 ? `${sayi(d.kalan)} tanesi bu listede yok` : null,
+        ].filter(Boolean).join(' · '),
+        kpi: [
+          { etiket: 'Net', deger: fmt(sayi(oz.net)), renk: sayi(oz.net) >= 0 ? R.yesil : R.kirmizi },
+          { etiket: 'Giriş', deger: fmt(sayi(oz.giris)), renk: R.yesil },
+          { etiket: 'Çıkış', deger: fmt(sayi(oz.cikis)), renk: R.kirmizi },
+        ],
+        listeBaslik: 'Hareketler · yeniden eskiye',
+        satirlar,
+        not: sayi(oz.kasa_etkisiz_adet) > 0
+          ? `${sayi(oz.kasa_etkisiz_adet)} hareket defterde duruyor ama kasa bakiyesini `
+            + `oynatmıyor (toplam ${fmt(sayi(oz.kasa_etkisiz_toplam))}) — devir/plan kayıtları. `
+            + 'Net rakamına dahil değiller.'
+          : null,
+        geri,
+      });
+    } catch (e) {
+      onCekmece?.({
+        tip: 'KASA HAREKETLERİ', baslik, alt: 'hareketler alınamadı', satirlar: [],
+        not: `Okunamadı: ${e?.message || 'bilinmeyen hata'}. Rakam uydurulmadı.`,
+        geri,
+      });
+    }
+  };
+
   const kasaCekmecesiniAc = async () => {
     // Önce iskeleti aç — veri gelene kadar boş ekran yerine "yükleniyor".
     onCekmece?.({
@@ -945,6 +1012,10 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
       const subeler = (d?.sube_kirilim || [])
         .map((r) => ({
           ad: SUBE_ADI[r.sube] || r.sube,
+          // 🚪 Ham anahtar KORUNUR — ikinci katman /kasa-defteri'ye bunu geçer.
+          // Ekran adı ("ZAFER") ile filtre anahtarı ("sube-zafer") farklı şeyler;
+          // ekran adını filtreye yollamak sessizce BOŞ liste getirirdi.
+          anahtar: r.sube,
           bakiye: sayi(r.giris) - sayi(r.cikis),
           adet: sayi(r.adet),
         }))
@@ -967,12 +1038,24 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
             ? `${s.adet} hareket · ⚠ eksi bakiye — kasa eksiye düşemez`
             : `${s.adet} hareket`,
           tutar: fmt(s.bakiye),
+          // 🚪 KAPI: bu bakiyeyi oluşturan hareketler
+          onTikla: () => kasaDetayAc({
+            baslik: `${s.ad} · kasa hareketleri`,
+            sube_id: s.anahtar,
+            altBilgi: `bakiye ${fmt(s.bakiye)}`,
+          }),
         })),
         { ad: '───────────', detay: '', tutar: '' },
         ...turler.map((t) => ({
           ad: t.ad,
           detay: `${t.adet} hareket${t.subesiz ? ` · ${t.subesiz} tanesi şubesiz` : ''}`,
           tutar: t.cikis > t.giris ? `−${fmt(t.cikis)}` : fmt(t.giris),
+          // 🚪 KAPI: bu türdeki hareketler (tüm şubeler)
+          onTikla: () => kasaDetayAc({
+            baslik: `${t.ad} · kasa hareketleri`,
+            islem_turu: t.ad,
+            altBilgi: 'tüm şubeler',
+          }),
         })),
       ];
 
@@ -1846,31 +1929,60 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
         ['Bankada', sayi(du.bankada_tl), R.mavi, 'yatırım kayıtları'],
       ];
       const enBuyuk = Math.max(1, ...duraklar.map(([, v]) => Math.abs(v)));
+      // 🚪 ŞUBE ADI → KASA DEFTERİ ANAHTARI (ikinci katman için)
+      // ⚠️ /nakit-konum'un `sube_kasalari` satırlarında `sube_id` YOK — yalnız
+      // `sube_adi` var (uç şemasından doğrulandı). Kasa defteri ise ad değil
+      // ANAHTAR ile filtreliyor. O yüzden SUBE_ADI haritası tersine çevrilir;
+      // ad çözülemezse satır KAPI YAPILMAZ. Ekran adını filtreye yollamak
+      // sessizce BOŞ liste getirir — tıklanıp boş açılan kapı, bugünkü dürüst
+      // çıkmaz sokaktan daha kötüdür.
+      // ⚠️ trKucuk KULLANILDI, trBuyut DEĞİL: bu dosyada `trBuyut` TANIMLI DEĞİL
+      // (yalnız trKucuk var, satır 42). Yazarken varsaymıştım — derleme geçerdi,
+      // canlıda ReferenceError'a düşerdi. Dosyanın kendi kuralı: yardımcıyı
+      // kullanmadan önce O DOSYADA grep'le. Türkçe İ/ı tuzağı için küçültme de
+      // büyütme kadar iyi bir normalleştirmedir; önemli olan İKİ TARAFIN da
+      // aynı işlemden geçmesi.
+      const ADDAN_ANAHTAR = Object.fromEntries(
+        Object.entries(SUBE_ADI).map(([anahtar, ad]) => [trKucuk(ad), anahtar]),
+      );
+      const nakitCekmeceAc = () => onCekmece?.({
+        tip: 'NAKİT KONUM',
+        baslik: 'Param şu an nerede?',
+        alt: `son ${sayi(nk.pencere_gun)} gün · kayıt üretmez, konumu hesaplar`,
+        kpi: [
+          { etiket: 'Durakların toplamı', deger: fmt(sayi(du.duraklar_toplami_tl)), renk: R.bakirAcik },
+          { etiket: 'Kasa defteri', deger: fmt(sayi(nk.defter_bakiyesi_tl)) },
+          { etiket: 'Mutabakatsız', deger: fmt(mut), renk: Math.abs(mut) > 1 ? R.kirmizi : R.yesil },
+        ],
+        listeBaslik: 'Duraklar ve akış',
+        satirlar: [
+          ...duraklar.map(([ad, v, , alt]) => ({ ad, detay: alt, tutar: fmt(v) })),
+          { ad: '= Durakların toplamı', detay: 'konumu doğrulanmış nakit', tutar: fmt(sayi(du.duraklar_toplami_tl)) },
+          { ad: 'Kasa defteri bakiyesi', detay: 'kanonik kayıt', tutar: fmt(sayi(nk.defter_bakiyesi_tl)) },
+          { ad: '⚠ Mutabakatsız', detay: 'hangi durakta olduğu bilinmeyen', tutar: fmt(mut) },
+          { ad: 'Teslim alınan (toplam)', detay: `${sayi(nk.akis?.teslim_adet)} işlem`, tutar: fmt(sayi(nk.akis?.teslim_alinan_tum_tl)) },
+          { ad: 'Bankaya yatan (toplam)', detay: `${sayi(nk.akis?.banka_adet)} işlem`, tutar: fmt(sayi(nk.akis?.bankaya_yatan_tum_tl)) },
+          ...(nk.sube_kasalari || []).map((s) => {
+            const anahtar = ADDAN_ANAHTAR[trKucuk(String(s.sube_adi || ''))];
+            return {
+              ad: `${s.sube_adi} kasası`,
+              detay: `son kapanış ${s.son_kapanis}`,
+              tutar: fmt(sayi(s.kasada_tl)),
+              // Kapı YALNIZ anahtar çözülebildiyse açılır.
+              onTikla: anahtar ? () => kasaDetayAc({
+                baslik: `${s.sube_adi} · kasa hareketleri`,
+                sube_id: anahtar,
+                altBilgi: `son kapanışta ${fmt(sayi(s.kasada_tl))}`,
+                geriHedef: { ad: 'Param şu an nerede?', onTikla: () => nakitCekmeceAc() },
+              }) : undefined,
+            };
+          }),
+        ],
+        not: `${sag.esik || ''} · ${nk.not || ''}`,
+      });
       return (
         <div
-          onClick={() => onCekmece?.({
-            tip: 'NAKİT KONUM',
-            baslik: 'Param şu an nerede?',
-            alt: `son ${sayi(nk.pencere_gun)} gün · kayıt üretmez, konumu hesaplar`,
-            kpi: [
-              { etiket: 'Durakların toplamı', deger: fmt(sayi(du.duraklar_toplami_tl)), renk: R.bakirAcik },
-              { etiket: 'Kasa defteri', deger: fmt(sayi(nk.defter_bakiyesi_tl)) },
-              { etiket: 'Mutabakatsız', deger: fmt(mut), renk: Math.abs(mut) > 1 ? R.kirmizi : R.yesil },
-            ],
-            listeBaslik: 'Duraklar ve akış',
-            satirlar: [
-              ...duraklar.map(([ad, v, , alt]) => ({ ad, detay: alt, tutar: fmt(v) })),
-              { ad: '= Durakların toplamı', detay: 'konumu doğrulanmış nakit', tutar: fmt(sayi(du.duraklar_toplami_tl)) },
-              { ad: 'Kasa defteri bakiyesi', detay: 'kanonik kayıt', tutar: fmt(sayi(nk.defter_bakiyesi_tl)) },
-              { ad: '⚠ Mutabakatsız', detay: 'hangi durakta olduğu bilinmeyen', tutar: fmt(mut) },
-              { ad: 'Teslim alınan (toplam)', detay: `${sayi(nk.akis?.teslim_adet)} işlem`, tutar: fmt(sayi(nk.akis?.teslim_alinan_tum_tl)) },
-              { ad: 'Bankaya yatan (toplam)', detay: `${sayi(nk.akis?.banka_adet)} işlem`, tutar: fmt(sayi(nk.akis?.bankaya_yatan_tum_tl)) },
-              ...(nk.sube_kasalari || []).map((s) => ({
-                ad: `${s.sube_adi} kasası`, detay: `son kapanış ${s.son_kapanis}`, tutar: fmt(sayi(s.kasada_tl)),
-              })),
-            ],
-            not: `${sag.esik || ''} · ${nk.not || ''}`,
-          })}
+          onClick={nakitCekmeceAc}
           style={{ ...kartYuzey, padding: '15px 18px', marginBottom: 14, cursor: 'pointer', borderLeft: `3px solid ${renk}` }}
         >
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap', marginBottom: 11 }}>

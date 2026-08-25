@@ -1355,6 +1355,11 @@ export function Cekmece({
   acik, tip, baslik, alt, kpi, listeBaslik, satirlar, not,
   aksiyonAd, onAksiyon, aksiyonlar, onKapat,
   belgeler, iz, dosyaBilgi,
+  // 🔙 GERİ (2026-08-26) — { ad, onTikla }. Çekmece artık katmanlanabildiği için
+  // (satır bir kapı olabiliyor) geri dönecek bir yol ŞART: derinleşen kullanıcıyı
+  // "kapat"a mahkûm etmek, açtığı bağlamı da kapatmak demektir. Verilmezse
+  // düğme hiç çizilmez — mevcut çekmecelerin hepsi bugünkü gibi kalır.
+  geri,
   // 📎 BELGE YÜKLEME (sahip 2026-08-15: "belge alanına yükleme deseni de koy")
   // Modül bir fonksiyon geçerse Belgeler sekmesinin altında yükleme düğmesi çıkar.
   // Geçmezse hiç görünmez — yükleme yeri olmayan kayıtta boş düğme durmasın.
@@ -1386,6 +1391,22 @@ export function Cekmece({
         <div style={{ padding: '20px 22px 16px', borderBottom: `1px solid ${R.cizgi}` }}>
           <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
             <div style={{ minWidth: 0 }}>
+              {geri?.onTikla && (
+                <div
+                  onClick={geri.onTikla}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); geri.onTikla(); }
+                  }}
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 5, cursor: 'pointer',
+                    fontSize: 11.5, color: R.bakirAcik, marginBottom: 7,
+                  }}
+                >
+                  ‹ <span style={{ color: R.not2 }}>{geri.ad || 'geri'}</span>
+                </div>
+              )}
               <div style={{ fontSize: 10, letterSpacing: '1px', textTransform: 'uppercase', color: R.not2, fontWeight: 700 }}>
                 {tip}
               </div>
@@ -1596,12 +1617,47 @@ export function Cekmece({
                   // değerler nowrap kalır, uzun metin gelirse sarar. Böylece ileride
                   // başka modül uzun metin bassa da çekmece bir daha taşamaz.
                   const uzunTutar = String(s.tutar || '').length > 24;
+                  // ══════════════════════════════════════════════════════════
+                  // 🚪 SATIR BİR KAPI OLABİLİR (2026-08-26) — EKLEMELİ
+                  // ══════════════════════════════════════════════════════════
+                  // Çekmece bugüne dek TEK KATMANLI ve ÇIKMAZ SOKAKTI: aç, düz
+                  // listeyi oku, kapat. Oysa asıl güç "şu satırın içinde ne var"
+                  // sorusunu sorabilmek. Satır `onTikla` verirse artık kapıdır.
+                  //
+                  // ⚠️ TAMAMEN EKLEMELİ: `onTikla` VERMEYEN satır bugünkü hâliyle
+                  // birebir aynı çizilir (undefined → eski davranış). Sistemdeki
+                  // diğer 50+ çekmecenin hiçbiri etkilenmez.
+                  //
+                  // ⚠️ KLAVYE DE AÇILIR: yalnız fareyle ulaşılan bir bilgi,
+                  // olmayan bilgidir (KPI'da da aynı kural uygulanmıştı).
+                  const kapi = typeof s.onTikla === 'function';
                   return (
-                    <div key={i} style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
+                    <div
+                      key={i}
+                      onClick={s.onTikla}
+                      tabIndex={kapi ? 0 : undefined}
+                      role={kapi ? 'button' : undefined}
+                      onKeyDown={kapi ? (e) => {
+                        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); s.onTikla(); }
+                      } : undefined}
+                      className={kapi ? 'v2-hover-kalk' : undefined}
+                      style={{
+                        display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12,
+                        ...(kapi ? {
+                          cursor: 'pointer', borderRadius: 9, padding: '5px 8px', margin: '-5px -8px',
+                          border: `1px solid ${R.cizgi}`,
+                        } : null),
+                      }}
+                    >
                       {/* Hem ad hem detay sarabilir: boşluksuz uzun metin (fatura no,
                           referans, kesintisiz ad) hiçbir sütunda taşma üretemesin. */}
                       <div style={{ minWidth: 0 }}>
-                        <div style={{ fontSize: 12.5, fontWeight: 600, lineHeight: 1.35, overflowWrap: 'anywhere' }}>{s.ad}</div>
+                        <div style={{ fontSize: 12.5, fontWeight: 600, lineHeight: 1.35, overflowWrap: 'anywhere' }}>
+                          {s.ad}
+                          {/* Tıklanabilirliğin GÖRÜNÜR işareti — yoksa kullanıcı
+                              kapının varlığını ancak kazara keşfeder. */}
+                          {kapi && <span style={{ color: R.bakir, marginLeft: 6, fontSize: 11 }}>›</span>}
+                        </div>
                         <div style={{ fontSize: 11, color: R.not2, marginTop: 2, overflowWrap: 'anywhere' }}>{s.detay}</div>
                       </div>
                       <span style={{
