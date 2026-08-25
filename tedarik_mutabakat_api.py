@@ -946,6 +946,7 @@ def ocr_kapsama(gun: int = 200):
             "       (COALESCE(f.kaynak_metin,'') <> '') AS metin_var, "
             "       LEFT(COALESCE(f.ocr_hata,''), 160) AS ocr_hata, "
             "       COALESCE(f.belge_turu,'') AS belge_turu, "
+            "       COALESCE(f.kalem_capa_farki,0)::float AS capa_farki, "
             "       COUNT(k.id) AS kalem "
             "  FROM tedarikci_fatura f "
             "  LEFT JOIN tedarikci_fatura_kalem k ON k.fatura_id = f.id "
@@ -953,13 +954,26 @@ def ocr_kapsama(gun: int = 200):
             "   AND COALESCE(f.durum,'') <> 'kopya' "   # ikinci nüsha OCR derdi değildir
             " GROUP BY f.id, f.tedarikci_ad, f.fatura_no, f.fatura_tarih, "
             "          f.toplam_tutar, f.durum, f.foto, f.kaynak_metin, f.ocr_hata, "
-            "          f.belge_turu "
+            "          f.belge_turu, f.kalem_capa_farki "
             " ORDER BY f.fatura_tarih DESC", (g,))
         rows = [dict(r) for r in (cur.fetchall() or [])]
 
     kalemsiz, sayac = [], {}
     for r in rows:
         if int(r["kalem"] or 0) > 0:
+            # ⚓ KALEMİ VAR AMA EKSİK OLABİLİR: belge toplamı ile kalem toplamı
+            # tutmuyorsa satır okunmamıştır. Eskiden "kalemi var" diye tam
+            # sayılıyordu ve tedarik ölçümü bunu "KISMİ FATURA" sanıyordu —
+            # oysa fatura tamdı, OKUMA kısmiydi.
+            _cf = abs(float(r.get("capa_farki") or 0))
+            _tol = max(5.0, abs(float(r["tutar"] or 0)) * 0.02)
+            if _cf > _tol:
+                sayac["KALEM OKUMASI EKSİK"] = sayac.get("KALEM OKUMASI EKSİK", 0) + 1
+                kalemsiz.append({**{k: v for k, v in r.items() if k != "kalem"},
+                                 "sebep": "KALEM OKUMASI EKSİK",
+                                 "care": ("Belge toplamı ile okunan kalemlerin toplamı "
+                                          "%.2f ₺ farklı — satır okunmamış. Gece "
+                                          "kurtarması yeniden okuyacak." % _cf)})
             continue
         if not r["foto_var"] and not r["metin_var"]:
             sebep, care = "BELGE YOK", "Faturanın PDF/foto aslı sisteme yüklenmeli."

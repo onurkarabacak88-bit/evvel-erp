@@ -588,7 +588,54 @@ def _fatura_json_db_yaz(cur, fatura_id: str, j: Dict[str, Any]) -> int:
                 _eslesen, (1.0 if _eslesen else None),
             ),
         )
+    # ═══════════════════════════════════════════════════════════════════════
+    # ⚓ KALEM ÇAPASI — belgenin KENDİ TOPLAMI okumayı denetler (2026-08-25)
+    # ═══════════════════════════════════════════════════════════════════════
+    # KÖK SEBEP: kalem okuması hiçbir yerde doğrulanmıyordu. Vision model
+    # belgedeki 6 satırın 2'sini okuyup "tamam" diyor, sistem bunu tam sanıyor.
+    # Canlı kanıt (METRO 11 Ağustos): belge toplamı 24.600,22 ₺, okunan iki
+    # kalem 8.179,08 ₺ → 16.421,14 ₺'lik 4 kalem GÖRÜNMÜYORDU. Aynı belgede
+    # el yazısı karalamalar satırların üstündeydi; model onları atlamış.
+    # İkinci belge (10 Temmuz): 15.068,72 ₺ belge, 4.688,52 ₺ okunan.
+    #
+    # Bu eksik okuma SESSİZDİ ve yukarı doğru yanlış hüküm üretiyordu:
+    # tedarik mutabakatı "KISMİ FATURA" diyordu — oysa fatura tamdı, OKUMA
+    # kısmiydi. Semptomu (o iki belgeyi elle yeniden okutmak) düzeltmek üçüncü
+    # belgede aynı şeyi yaşatırdı.
+    #
+    # ÇÖZÜM — kartlardaki ekstre çapasının aynısı: BELGE KENDİ KENDİNİ DENETLER.
+    # Faturanın toplamı yazılıysa, kalemlerin toplamı ona EŞİT OLMALIDIR.
+    # Tutmuyorsa okuma EKSİKTİR ve bu AÇIKÇA kaydedilir; gece kurtarması da
+    # bu bayrağa bakarak belgeyi yeniden okur.
+    #
+    # ⚠️ Tolerans: KDV'li/KDV'siz karışıklığı ve kuruş yuvarlaması için %2 ya da
+    # 5 ₺ (hangisi büyükse). Dar tutulursa her fatura "eksik" görünür, geniş
+    # tutulursa gerçek eksik kaçar.
+    try:
+        _belge_toplam = _sayi(j.get("toplam_tutar"))
+        _kalem_toplam = sum((_sayi(k.get("satir_toplam")) or 0) for k in kalemler)
+        if _belge_toplam and _kalem_toplam and len(kalemler) > 0:
+            _fark = abs(float(_belge_toplam) - float(_kalem_toplam))
+            _tol = max(5.0, abs(float(_belge_toplam)) * 0.02)
+            cur.execute("ALTER TABLE tedarikci_fatura ADD COLUMN IF NOT EXISTS "
+                        "kalem_capa_farki NUMERIC(14,2)")
+            cur.execute("UPDATE tedarikci_fatura SET kalem_capa_farki=%s WHERE id=%s",
+                        (round(_belge_toplam - _kalem_toplam, 2), fatura_id))
+            if _fark > _tol:
+                logger.warning(
+                    "KALEM ÇAPASI TUTMADI %s: belge %.2f, kalemler %.2f (fark %.2f) "
+                    "— okuma eksik, gece yeniden denenecek",
+                    fatura_id, _belge_toplam, _kalem_toplam, _belge_toplam - _kalem_toplam)
+                cur.execute(
+                    "UPDATE tedarikci_fatura SET ocr_hata=%s WHERE id=%s",
+                    ("[kalem çapası tutmadı] belge %.2f ₺ ama okunan kalemler %.2f ₺ "
+                     "— %.2f ₺'lik satır okunmamış (%d kalem okundu)"
+                     % (_belge_toplam, _kalem_toplam, _belge_toplam - _kalem_toplam,
+                        len(kalemler)), fatura_id))
+    except Exception as _ec:  # noqa: BLE001 — çapa hesaplanamazsa yazma akışı bozulmaz
+        logger.warning("kalem çapası hesaplanamadı %s: %s", fatura_id, str(_ec)[:120])
     return len(kalemler)
+
 
 
 def _pdf_metin_sayfalar(pdf_bytes: bytes) -> List[str]:
@@ -2317,6 +2364,12 @@ def ocr_yeniden_dene(limit: int = 25):
                     OR (durum='ocr_tamam' AND NOT EXISTS (
                           SELECT 1 FROM tedarikci_fatura_kalem k
                            WHERE k.fatura_id = f.id))
+                    -- ⚓ KALEM ÇAPASI TUTMAYANLAR (2026-08-25): kalemleri VAR ama
+                    -- toplamları belge toplamını tutmuyor → satır okunmamış demektir.
+                    -- Eskiden "kalemi var" diye tam sayılıyor ve bir daha denenmiyordu.
+                    OR (COALESCE(kalem_capa_farki,0) <> 0
+                        AND ABS(COALESCE(kalem_capa_farki,0))
+                            > GREATEST(5, ABS(COALESCE(toplam_tutar,0)) * 0.02))
                  )
                ORDER BY olusturma DESC LIMIT %s""", (lim,))
         rows = [dict(r) for r in cur.fetchall() or []]
