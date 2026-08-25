@@ -711,3 +711,70 @@ def haftalik_ozet(hafta: int = 12):
 def haftalik_olc_simdi():
     """Ölçümü ELLE al ve deftere işle (scheduler'ı beklemeden)."""
     return {"success": True, "olcum": haftalik_olcum_al(yaz=True)}
+
+
+@router.get("/ocr-kapsama")
+def ocr_kapsama(gun: int = 200):
+    """🔬 KALEM KAPSAMA TEŞHİSİ — hangi fatura NEDEN kalem düzeyinde okunamıyor?
+
+    ── NEDEN (2026-08-25) ──────────────────────────────────────────────────
+    Fatura↔teslim mutabakatı 25 faturanın 9'unu "ölçülemez" saydı. "OCR'ı
+    iyileştir" demek kolay; ama NEYİN eksik olduğunu bilmeden dokunmak
+    körlemedir. Kartlarda Axess'i çözen şey de buydu: önce "PDF'ten 0 satır
+    okunuyor" tespiti, sonra sebep (EBCDIC), sonra çözüm.
+
+    Bir faturanın kalemi yoksa sebebi ŞUNLARDAN BİRİDİR ve hepsinin çaresi ayrı:
+      BELGE YOK          ne foto ne PDF metni var → okunacak bir şey yok
+      OCR HİÇ ÇALIŞMAMIŞ durum hâlâ 'ocr_bekliyor' → kuyrukta takılı
+      OCR HATA VERMİŞ    ocr_hata dolu → hata metni çözümü söyler
+      OCR BOŞ DÖNMÜŞ     durum 'ocr_tamam' ama kalem 0 → okuyucu okuyamamış
+      TUTAR DA YOK       toplam_tutar 0 → belge muhtemelen okunamaz halde
+
+    ⚠️ SALT OKUR. Hiçbir OCR tetiklenmez, hiçbir kayıt değişmez.
+    """
+    g = max(1, min(730, int(gun or 200)))
+    with db() as (_, cur):
+        cur.execute(
+            "SELECT f.id, f.tedarikci_ad, f.fatura_no, f.fatura_tarih::text AS tarih, "
+            "       COALESCE(f.toplam_tutar,0)::float AS tutar, f.durum, "
+            "       (f.foto IS NOT NULL) AS foto_var, "
+            "       (COALESCE(f.kaynak_metin,'') <> '') AS metin_var, "
+            "       LEFT(COALESCE(f.ocr_hata,''), 160) AS ocr_hata, "
+            "       COUNT(k.id) AS kalem "
+            "  FROM tedarikci_fatura f "
+            "  LEFT JOIN tedarikci_fatura_kalem k ON k.fatura_id = f.id "
+            " WHERE f.fatura_tarih >= CURRENT_DATE - %s "
+            " GROUP BY f.id, f.tedarikci_ad, f.fatura_no, f.fatura_tarih, "
+            "          f.toplam_tutar, f.durum, f.foto, f.kaynak_metin, f.ocr_hata "
+            " ORDER BY f.fatura_tarih DESC", (g,))
+        rows = [dict(r) for r in (cur.fetchall() or [])]
+
+    kalemsiz, sayac = [], {}
+    for r in rows:
+        if int(r["kalem"] or 0) > 0:
+            continue
+        if not r["foto_var"] and not r["metin_var"]:
+            sebep, care = "BELGE YOK", "Faturanın PDF/foto aslı sisteme yüklenmeli."
+        elif str(r["durum"] or "") == "ocr_bekliyor":
+            sebep, care = "OCR HİÇ ÇALIŞMAMIŞ", "Kuyrukta takılı — /api/fatura/ocr-takilanlari-dene"
+        elif (r["ocr_hata"] or "").strip():
+            sebep, care = "OCR HATA VERMİŞ", "Hata metni çözümü söyler; sebebe göre düzeltilir."
+        elif float(r["tutar"] or 0) <= 0:
+            sebep, care = "TUTAR DA OKUNAMAMIŞ", "Belge muhtemelen okunamaz halde (bulanık/eksik sayfa)."
+        else:
+            sebep, care = ("OCR BOŞ DÖNMÜŞ",
+                           "Tutar okundu ama kalem tablosu çıkarılamadı — "
+                           "kalem parser'ı bu fatura biçimini tanımıyor.")
+        sayac[sebep] = sayac.get(sebep, 0) + 1
+        kalemsiz.append({**{k: v for k, v in r.items() if k != "kalem"},
+                         "sebep": sebep, "care": care})
+    return {
+        "gun": g, "fatura_toplam": len(rows),
+        "kalemli": sum(1 for r in rows if int(r["kalem"] or 0) > 0),
+        "kalemsiz": len(kalemsiz), "sebep_kirilimi": sayac,
+        "satirlar": kalemsiz,
+        "not": ("SALT OKUR — hiçbir OCR tetiklenmedi. Her sebebin ÇARESİ AYRIDIR; "
+                "'OCR'ı iyileştir' tek bir iş değildir. Kalemsiz fatura kalem "
+                "düzeyinde ölçülemez ama TUTARI biliniyorsa borç zinciri sağlamdır — "
+                "eksik olan denetim derinliğidir, para değil."),
+    }
