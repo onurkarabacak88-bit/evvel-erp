@@ -809,3 +809,125 @@ def ocr_kapsama(gun: int = 200):
                 "düzeyinde ölçülemez ama TUTARI biliniyorsa borç zinciri sağlamdır — "
                 "eksik olan denetim derinliğidir, para değil."),
     }
+
+
+@router.get("/urun-sozlugu")
+def urun_sozlugu(tedarikci: str = "", gun: int = 400, en_az: int = 1):
+    """📖 TEDARİKÇİ ÜRÜN SÖZLÜĞÜ — okunmuş faturalardan ÖĞRENİLİR. SALT OKUR.
+
+    ── NEDEN (2026-08-25, sahip fikri) ─────────────────────────────────────
+    Sahip: "FEZ, MEHMET ATALAY, SÜTAŞ, su gibi tedarikçilerde kalemler sürekli
+    belli; kendi kodumuzu yazarsak LLM'e bağımlılığı azaltırız."
+    Doğru — ve zaten sistemin doktrini bu ("PDF okumasını kendi yapsın,
+    yapamadığını yapay zekâdan destek alsın", 2026-07-18).
+
+    ⚠️ AMA SINIRI BAŞTAN YAZALIM: kendi kodumuz FOTOĞRAFTAN METİN çıkaramaz —
+    o iş bir OCR motoru ister. Kendi kodun kazandığı yer BAŞKA ve daha değerli:
+    ZATEN OKUNMUŞ faturalardan tedarikçi bazlı ürün sözlüğü öğrenmek. Sözlük
+    olunca:
+      · bilinen kalem LLM'siz tanınır (determinizm + kota tasarrufu)
+      · birim fiyat bilindiği için satır toplamı DOĞRULANABİLİR
+      · sipariş adı ("Lime") ile fatura adı ("FO MİSKET LİMON…") arasına köprü
+        kurulur → mutabakat ADET düzeyinden KALEM düzeyine çıkar
+      · fiyat değişimi (zam) kendiliğinden görünür
+
+    Bu uç sözlüğün KENDİSİ ve aynı zamanda FİZİBİLİTE ÖLÇÜMÜDÜR: desen gerçekten
+    kararlı mı? `tekrar` sütunu 1'de yığılıyorsa öğrenilecek desen yok demektir
+    ve bu iş yapılmamalıdır. Ölçmeden inşa etmek, kartlarda kaçındığımız hatanın
+    ta kendisi olurdu.
+    """
+    g = max(1, min(730, int(gun or 400)))
+    esik = max(1, min(20, int(en_az or 1)))
+    t = (tedarikci or "").strip()
+    with db() as (_, cur):
+        kos = ["f.fatura_tarih >= CURRENT_DATE - %s", "COALESCE(f.durum,'') <> 'kopya'"]
+        par: List[Any] = [g]
+        if t:
+            kos.append("f.tedarikci_ad ILIKE %s")
+            par.append("%" + t + "%")
+        cur.execute(
+            "SELECT f.tedarikci_ad, k.ocr_ad, k.adet::float AS adet, "
+            "       k.birim_fiyat::float AS birim_fiyat, "
+            "       k.satir_toplam::float AS satir_toplam, "
+            "       f.fatura_tarih::text AS tarih, f.id AS fatura_id "
+            "  FROM tedarikci_fatura_kalem k "
+            "  JOIN tedarikci_fatura f ON f.id = k.fatura_id "
+            " WHERE " + " AND ".join(kos) +
+            "   AND COALESCE(k.ocr_ad,'') <> '' "
+            " ORDER BY f.fatura_tarih", tuple(par))
+        satir = [dict(r) for r in (cur.fetchall() or [])]
+
+    # Karşı taraf kimliği: ayırt edici kelimelerin birleşimi (FEZ/ATALAY/SÜTAŞ…)
+    def _kimlik(ad: str) -> str:
+        a = _ayirt_edici(ad)
+        return " ".join(sorted(a)) if a else (ad or "?").upper()[:20]
+
+    sozluk: Dict[str, Dict[str, Dict[str, Any]]] = {}
+    for s in satir:
+        kim = _kimlik(s["tedarikci_ad"])
+        ad = re.sub(r"\s+", " ", str(s["ocr_ad"] or "")).strip().upper()
+        b = sozluk.setdefault(kim, {}).setdefault(ad, {
+            "urun": str(s["ocr_ad"]).strip(), "tekrar": 0, "fatura": set(),
+            "adetler": [], "fiyatlar": [], "ilk": None, "son": None})
+        b["tekrar"] += 1
+        b["fatura"].add(s["fatura_id"])
+        if s["adet"]:
+            b["adetler"].append(float(s["adet"]))
+        bf = s["birim_fiyat"]
+        if not bf and s["satir_toplam"] and s["adet"]:
+            bf = float(s["satir_toplam"]) / float(s["adet"])   # türetilebiliyorsa türet
+        if bf:
+            b["fiyatlar"].append((s["tarih"], round(float(bf), 4)))
+        if b["ilk"] is None or (s["tarih"] and s["tarih"] < b["ilk"]):
+            b["ilk"] = s["tarih"]
+        if b["son"] is None or (s["tarih"] and s["tarih"] > b["son"]):
+            b["son"] = s["tarih"]
+
+    cikti, ozet = [], []
+    for kim, urunler in sozluk.items():
+        kalemler = []
+        for ad, b in urunler.items():
+            if b["tekrar"] < esik:
+                continue
+            fy = [p for _, p in b["fiyatlar"]]
+            zam = None
+            if len(fy) >= 2 and min(fy) > 0:
+                ilk_f = b["fiyatlar"][0][1]; son_f = b["fiyatlar"][-1][1]
+                if ilk_f > 0 and abs(son_f - ilk_f) / ilk_f > 0.005:
+                    zam = {"ilk": ilk_f, "son": son_f,
+                           "yuzde": round((son_f - ilk_f) / ilk_f * 100, 1)}
+            kalemler.append({
+                "urun": b["urun"], "tekrar": b["tekrar"],
+                "fatura_sayisi": len(b["fatura"]),
+                "tipik_adet": (max(set(b["adetler"]), key=b["adetler"].count)
+                               if b["adetler"] else None),
+                "son_birim_fiyat": (fy[-1] if fy else None),
+                "fiyat_min": (min(fy) if fy else None),
+                "fiyat_max": (max(fy) if fy else None),
+                "zam": zam, "ilk_gorulme": b["ilk"], "son_gorulme": b["son"],
+            })
+        if not kalemler:
+            continue
+        kalemler.sort(key=lambda x: -x["tekrar"])
+        tekrarli = sum(1 for k in kalemler if k["tekrar"] >= 2)
+        cikti.append({
+            "karsi_taraf": kim, "farkli_urun": len(kalemler),
+            "tekrar_eden_urun": tekrarli,
+            "kararlilik_yuzde": (round(tekrarli / len(kalemler) * 100, 1) if kalemler else 0),
+            "kalemler": kalemler,
+        })
+        ozet.append({"karsi_taraf": kim, "farkli_urun": len(kalemler),
+                     "tekrar_eden": tekrarli,
+                     "kararlilik_yuzde": (round(tekrarli / len(kalemler) * 100, 1)
+                                          if kalemler else 0)})
+    cikti.sort(key=lambda x: -x["farkli_urun"])
+    ozet.sort(key=lambda x: -x["farkli_urun"])
+    return {
+        "gun": g, "kalem_satiri": len(satir), "karsi_taraf_sayisi": len(cikti),
+        "ozet": ozet, "sozluk": cikti,
+        "not": ("SALT OKUR — öğrenilen sözlük, yazılmış bir kayıt değildir. "
+                "`kararlilik_yuzde` bu işin FİZİBİLİTESİDİR: bir tedarikçide "
+                "ürünlerin çoğu yalnız BİR kez görülmüşse öğrenilecek desen yoktur "
+                "ve o tedarikçi için kendi parser'ımızı yazmak boşa emektir. "
+                "Ölçmeden inşa etmek, kart tarafında kaçındığımız hatanın aynısı olur."),
+    }
