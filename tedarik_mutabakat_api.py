@@ -862,10 +862,26 @@ def urun_sozlugu(tedarikci: str = "", gun: int = 400, en_az: int = 1):
         a = _ayirt_edici(ad)
         return " ".join(sorted(a)) if a else (ad or "?").upper()[:20]
 
+    def _urun_normal(ad: str) -> str:
+        """Ürün adını sözlük anahtarına indirger.
+
+        ⚠️ KESİK AD İKİ ÜRÜN SANILIYORDU (2026-08-25 canlı): FEZ'de
+          "FO TOFFEE KARAMEL PROF.SOS (BAR SOS) 2500 GR"    → 680 ₺ (3 kez)
+          "FO TOFFEE KARAMEL PROF.SOS (BAR SOS) 2500 GR *"  → 860 ₺ (4 kez)
+        aynı ürün. OCR kimi faturada koli çarpanını ("*6") yazmış kimi yazmamış,
+        kimi de satır sonundan kesmiş. Ayrı sayılınca hem sözlük şişiyor hem
+        ZAM GÖRÜNMÜYOR — 680→860 aynı ürünün zammıyken iki farklı ürün gibi
+        duruyordu. Sondaki koli çarpanı ve noktalama atılır; ayrıca aşağıda
+        biri diğerinin ÖN EKİ olan adlar tek kayda katlanır.
+        """
+        t = re.sub(r"\s+", " ", (ad or "")).strip().upper()
+        t = re.sub(r"[\*\-,.;:]+\s*\d*\s*$", "", t).strip()   # sondaki "*6", "*", "."
+        return t
+
     sozluk: Dict[str, Dict[str, Dict[str, Any]]] = {}
     for s in satir:
         kim = _kimlik(s["tedarikci_ad"])
-        ad = re.sub(r"\s+", " ", str(s["ocr_ad"] or "")).strip().upper()
+        ad = _urun_normal(s["ocr_ad"])
         b = sozluk.setdefault(kim, {}).setdefault(ad, {
             "urun": str(s["ocr_ad"]).strip(), "tekrar": 0, "fatura": set(),
             "adetler": [], "fiyatlar": [], "ilk": None, "son": None})
@@ -882,6 +898,28 @@ def urun_sozlugu(tedarikci: str = "", gun: int = 400, en_az: int = 1):
             b["ilk"] = s["tarih"]
         if b["son"] is None or (s["tarih"] and s["tarih"] > b["son"]):
             b["son"] = s["tarih"]
+
+    # ÖN EK KATLAMA — "…2500 GR" ile "…2500 GR EKSTRA" ayrı ürün olabilir ama
+    # OCR kesmesi de aynı görünür. Ölçüt: kısa ad en az 18 karakterse ve uzun ad
+    # onunla BAŞLIYORSA aynı ürün sayılır (kesme, ürün adının ortasından olmaz).
+    for kim, urunler in list(sozluk.items()):
+        adlar = sorted(urunler.keys(), key=len)
+        for i, kisa in enumerate(adlar):
+            if kisa not in urunler or len(kisa) < 18:
+                continue
+            for uzun in adlar[i + 1:]:
+                if uzun in urunler and uzun != kisa and uzun.startswith(kisa):
+                    a, b = urunler[kisa], urunler.pop(uzun)
+                    a["tekrar"] += b["tekrar"]
+                    a["fatura"] |= b["fatura"]
+                    a["adetler"] += b["adetler"]
+                    a["fiyatlar"] += b["fiyatlar"]
+                    if b["ilk"] and (not a["ilk"] or b["ilk"] < a["ilk"]):
+                        a["ilk"] = b["ilk"]
+                    if b["son"] and (not a["son"] or b["son"] > a["son"]):
+                        a["son"] = b["son"]
+        for b in urunler.values():
+            b["fiyatlar"].sort(key=lambda p: p[0] or "")   # tarih sırası → zam doğru
 
     cikti, ozet = [], []
     for kim, urunler in sozluk.items():
