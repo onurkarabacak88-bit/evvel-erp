@@ -969,3 +969,206 @@ def urun_sozlugu(tedarikci: str = "", gun: int = 400, en_az: int = 1):
                 "ve o tedarikçi için kendi parser'ımızı yazmak boşa emektir. "
                 "Ölçmeden inşa etmek, kart tarafında kaçındığımız hatanın aynısı olur."),
     }
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 🌉 KALEM KÖPRÜSÜ — sipariş adı ↔ fatura adı
+# ═══════════════════════════════════════════════════════════════════════════
+_URUN_DOLGU = {
+    "FO", "AROMALI", "SURUP", "PROF", "SOS", "BAR", "ADET", "KOLI",
+    "GR", "ML", "KG", "LT", "MEYVELI", "ICECEK", "TOZU", "MILKSHAKE",
+    "PURE", "URUN", "TL", "PAKET",
+}
+
+
+def _tr_buyut(s: str) -> str:
+    """Türkçe-güvenli BÜYÜTME + aksan sadeleştirme.
+
+    ⚠️ Türkçe-I tuzağı (defterde kayıtlı): 'i'.upper() Python'da 'I' verir ama
+    Türkçede 'İ'dir. Karşılaştırmayı bozmamak için harfler tek bir sadeleştirilmiş
+    alfabeye indirgenir — 'İ' ile 'I', 'Ş' ile 'S' aynı sayılır.
+    """
+    t = (s or "").upper()
+    for a, b in (("İ", "I"), ("Ş", "S"), ("Ğ", "G"), ("Ü", "U"),
+                 ("Ö", "O"), ("Ç", "C"), ("Â", "A")):
+        t = t.replace(a, b)
+    return t
+
+
+def _urun_belirtec(ad: str) -> set:
+    """Ürün adından AYIRT EDİCİ kelimeler (dolgu sözcükleri atılmış).
+
+    "FO YEŞİL ELMA AROMALI ŞURUP 700 ML *6" → {YESIL, ELMA}
+    "Yeşil Elma"                             → {YESIL, ELMA}
+    Dolgular atılmazsa her şurup her şurupla eşleşir (hepsinde AROMALI ŞURUP var)
+    ve köprü çöpe döner.
+    """
+    t = _tr_buyut(ad)
+    dolgu = {_tr_buyut(x) for x in _URUN_DOLGU}
+    return {w for w in re.split(r"[^A-Z0-9]+", t)
+            if len(w) >= 3 and not w.isdigit() and w not in dolgu}
+
+
+@router.get("/kalem-koprusu")
+def kalem_koprusu(tedarikci: str = "", gun: int = 400,
+                  pencere: int = VARSAYILAN_PENCERE):
+    """🌉 SİPARİŞ ADI ↔ FATURA ADI köprüsü — veriden ÖĞRENİLİR. SALT OKUR, ÖNERİ-ONLY.
+
+    ── NEDEN (2026-08-25) ──────────────────────────────────────────────────
+    Fatura↔teslim mutabakatı bugüne dek yalnız ADET üzerinden konuşuyordu:
+    "42 adet fark var". Sahibin duymak istediği ise "HANGİ ÜRÜN eksik".
+    Engel şuydu: aynı ürün iki dünyada bambaşka yazılıyor —
+        sipariş : "Lime"      fatura : "FO MİSKET LİMON AROMALI ŞURUP 700 ML *6"
+    Ortak tek kelime bile yok; bu yüzden çapa ADET seçilmişti (doğru karardı).
+    Ürün sözlüğü öğrenildiğine göre artık köprü kurulabilir.
+
+    ── İKİ KANIT, BİRLİKTE ─────────────────────────────────────────────────
+    1) AD BENZERLİĞİ — birçok çift ortak kelime TAŞIR:
+         "Yeşil Elma" ↔ "FO YEŞİL ELMA AROMALI ŞURUP" → {YESIL, ELMA}
+       Dolgu sözcükleri (FO, AROMALI, ŞURUP, GR, ML…) atılır.
+    2) BİRLİKTE GÖRÜLME + ADET UYUMU — "Lime ↔ MİSKET LİMON" gibi hiç ortak
+       kelimesi olmayan çiftler ancak buradan çıkar: aynı dönemde ikisi de var
+       ve ADETLERİ tutuyorsa tesadüf değildir; birçok dönemde tekrarlıyorsa hiç
+       değildir.
+
+    Tek başına ad YANILTIR (çilek şurubu ↔ çilek püresi); tek başına adet de
+    YANILTIR (aynı dönemde iki kalem de ×12 olabilir). Güç ikisinin
+    BİRLEŞİMİNDEDİR — güven oradan üretilir ve gerekçesi açıkça yazılır.
+
+    ⚠️ ÖNERİ-ONLY: hiçbir eşleştirme kaydedilmez. Köprü yanlışsa üretilecek
+    "şu ürün eksik" cümlesi de yanlış olur; o yüzden hüküm sahibindir.
+    """
+    g = max(1, min(730, int(gun or 400)))
+    pen = max(1, min(45, int(pencere or VARSAYILAN_PENCERE)))
+    t = (tedarikci or "").strip()
+    with db() as (_, cur):
+        kos = ["f.fatura_tarih >= CURRENT_DATE - %s",
+               "COALESCE(f.durum,'') <> 'kopya'",
+               "f.fatura_tarih >= %s::date"]
+        par: List[Any] = [g, SISTEM_BASLANGIC]
+        if t:
+            kos.append("f.tedarikci_ad ILIKE %s")
+            par.append("%" + t + "%")
+        cur.execute(
+            "SELECT f.id, f.tedarikci_ad, f.fatura_tarih::text AS tarih "
+            "  FROM tedarikci_fatura f WHERE " + " AND ".join(kos) +
+            " ORDER BY f.fatura_tarih", tuple(par))
+        faturalar = [dict(r) for r in (cur.fetchall() or [])]
+        if not faturalar:
+            return {"tedarikci": t or "(hepsi)", "adet": 0, "koprular": [],
+                    "not": "Bu aralıkta ölçülebilir fatura yok (HATA ≠ BOŞ)."}
+
+        cur.execute(
+            "SELECT fatura_id, ocr_ad, adet::float AS adet "
+            "  FROM tedarikci_fatura_kalem "
+            " WHERE fatura_id = ANY(%s) AND COALESCE(ocr_ad,'') <> ''",
+            ([f["id"] for f in faturalar],))
+        fk: Dict[str, List[Dict]] = {}
+        for r in (cur.fetchall() or []):
+            r = dict(r)
+            fk.setdefault(r["fatura_id"], []).append(r)
+
+        cur.execute(
+            "SELECT ts.olusturma::date::text AS gun, ts.kalemler, "
+            "       UPPER(COALESCE(ts.tedarikci_ad, td.ad, '')) AS ted_ad "
+            "  FROM toptanci_siparis ts "
+            "  LEFT JOIN tedarikciler td ON td.id = ts.tedarikci_id "
+            " WHERE ts.olusturma >= CURRENT_DATE - %s "
+            "   AND COALESCE(ts.durum,'') <> 'iptal'", (g + pen,))
+        siparisler = [dict(r) for r in (cur.fetchall() or [])]
+
+    # ── Kanıt topla: sipariş fatura gününden ÖNCE (zaman oku tek yönlü)
+    kanit: Dict[Any, Dict[str, Any]] = {}
+    for f in faturalar:
+        fkalem = fk.get(f["id"], [])
+        if not fkalem:
+            continue
+        kim = _ayirt_edici(f["tedarikci_ad"])
+        ilgili: List[Dict] = []
+        for s in siparisler:
+            if not (_ayirt_edici(s["ted_ad"]) & kim):
+                continue
+            try:
+                sapma = _gun_farki(f["tarih"], s["gun"])
+            except Exception:  # noqa: BLE001
+                continue
+            if -SONRA_TOLERANS <= sapma <= pen:
+                ilgili.extend(_kalem_listesi(s.get("kalemler")))
+        if not ilgili:
+            continue
+        kim_ad = " ".join(sorted(kim)) or "?"
+        for sk in ilgili:
+            s_ad = str(sk.get("urun_ad") or sk.get("ad") or "").strip()
+            if not s_ad:
+                continue
+            s_adet = float(sk.get("adet") or 0)
+            for fkl in fkalem:
+                f_ad = str(fkl["ocr_ad"] or "").strip()
+                if not f_ad:
+                    continue
+                a = kanit.setdefault((kim_ad, s_ad, f_ad),
+                                     {"birlikte": 0, "adet_uyum": 0, "donemler": []})
+                a["birlikte"] += 1
+                if s_adet and abs(float(fkl["adet"] or 0) - s_adet) < 0.001:
+                    a["adet_uyum"] += 1
+                    a["donemler"].append(f["tarih"])
+
+    # ── Puanla: ad benzerliği %60 + adet uyumu %40
+    aday: Dict[Any, List[Dict]] = {}
+    for (kim_ad, s_ad, f_ad), k in kanit.items():
+        s_bel = _urun_belirtec(s_ad)
+        ort = s_bel & _urun_belirtec(f_ad)
+        ad_puan = (len(ort) / len(s_bel)) if s_bel else 0.0
+        uyum_oran = (k["adet_uyum"] / k["birlikte"]) if k["birlikte"] else 0.0
+        if ad_puan == 0 and k["adet_uyum"] < 2:
+            continue        # ne ad tutuyor ne yeterli adet kanıtı → aday değil
+        aday.setdefault((kim_ad, s_ad), []).append({
+            "fatura_urun": f_ad,
+            "puan": round(ad_puan * 0.6 + uyum_oran * 0.4, 3),
+            "ad_ortak": sorted(ort), "ad_puan": round(ad_puan, 2),
+            "adet_uyum": k["adet_uyum"], "birlikte": k["birlikte"],
+            "donemler": sorted(set(k["donemler"]))[:4],
+        })
+
+    koprular = []
+    for (kim_ad, s_ad), lst in aday.items():
+        lst.sort(key=lambda x: (-x["puan"], -x["adet_uyum"]))
+        en = lst[0]
+        ikinci = lst[1]["puan"] if len(lst) > 1 else 0.0
+        if en["ad_puan"] >= 0.5 and en["adet_uyum"] >= 1:
+            guven = "YUKSEK"
+            gerekce = "ad ortak (%s) + %d dönemde adet birebir tuttu" % (
+                ", ".join(en["ad_ortak"]) or "-", en["adet_uyum"])
+        elif en["ad_puan"] >= 0.5:
+            guven = "ORTA"
+            gerekce = "yalnız ad ortak (%s); adet kanıtı yok" % (
+                ", ".join(en["ad_ortak"]) or "-")
+        elif en["adet_uyum"] >= 3 and (en["puan"] - ikinci) > 0.05:
+            guven = "ORTA"
+            gerekce = ("ad hiç tutmuyor ama %d ayrı dönemde adet birebir aynı "
+                       "— Lime↔MİSKET LİMON kalıbı" % en["adet_uyum"])
+        else:
+            guven = "DUSUK"
+            gerekce = "zayıf kanıt — sahip onayı şart"
+        koprular.append({
+            "karsi_taraf": kim_ad, "siparis_urun": s_ad,
+            "fatura_urun": en["fatura_urun"], "guven": guven, "gerekce": gerekce,
+            "puan": en["puan"], "ikinci_aday_puan": round(ikinci, 3),
+            "ad_ortak": en["ad_ortak"], "adet_uyum": en["adet_uyum"],
+            "ornek_donem": en["donemler"], "rakip_sayisi": len(lst) - 1,
+        })
+    sira = {"YUKSEK": 0, "ORTA": 1, "DUSUK": 2}
+    koprular.sort(key=lambda x: (x["karsi_taraf"], sira[x["guven"]], -x["puan"]))
+    ozet: Dict[str, int] = {}
+    for k in koprular:
+        ozet[k["guven"]] = ozet.get(k["guven"], 0) + 1
+    return {
+        "tedarikci": t or "(hepsi)", "gun": g, "pencere_gun": pen,
+        "adet": len(koprular), "guven_ozeti": ozet, "koprular": koprular,
+        "not": ("ÖNERİ-ONLY — hiçbir eşleştirme KAYDEDİLMEDİ. Köprü iki kanıttan "
+                "üretilir: AD BENZERLİĞİ (dolgu sözcükleri atılmış ortak kelime) ve "
+                "BİRLİKTE GÖRÜLME + ADET UYUMU. Tek başına ad yanıltır (çilek şurubu "
+                "↔ çilek püresi); tek başına adet de yanıltır (aynı dönemde iki kalem "
+                "de ×12 olabilir). DÜŞÜK güvenli satır kullanılmadan önce sahip onayı "
+                "ister — köprü yanlışsa üretilecek 'şu ürün eksik' cümlesi de yanlış olur."),
+    }
