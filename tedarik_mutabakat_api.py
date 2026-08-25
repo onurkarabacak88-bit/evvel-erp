@@ -145,6 +145,56 @@ def _ayirt_edici(ad: str) -> set:
             if len(w) >= 3 and w not in _JENERIK}
 
 
+def _tedarikci_ritmi(cur, g: int) -> Dict[str, int]:
+    """Her tedarikçi için SİPARİŞ → TESLİM gecikmesini ölçer (gün, p90).
+
+    ⚠️ SABİT PENCERE YANLIŞ HÜKÜM ÜRETİYORDU (2026-08-25, METRO vakası):
+    Pencere herkes için 10 gündü. METRO'da sipariş 28 Temmuz'da veriliyor, mal
+    12 Ağustos'ta geliyor (15 gün), fatura 11 Ağustos'ta kesiliyor — yani sipariş
+    ile fatura arası 14 gün. 10 günlük pencere bunu göremeyip faturayı
+    "SİPARİŞSİZ GELEN MAL" ilan etti. Ortada eksik sipariş yoktu; ÖLÇEK YANLIŞTI.
+
+    Her tedarikçinin ritmi farklıdır: FEZ 1-2 günde teslim eder, METRO 15 günde.
+    Tek bir sayıyı herkese giydirmek, yavaş tedarikçiyi sürekli suçlu gösterir.
+    Bu yüzden pencere TEDARİKÇİNİN KENDİ GÖZLENEN RİTMİNDEN türetilir.
+
+    p90 seçildi: en yavaş tek teslimat pencereyi şişirmesin ama olağan
+    gecikmeler içeride kalsın. Gözlem yoksa varsayılana düşülür.
+    """
+    try:
+        cur.execute(
+            "SELECT UPPER(COALESCE(ts.tedarikci_ad, td.ad, '')) AS ad, "
+            "       EXTRACT(DAY FROM (ts.teslim_ts - ts.olusturma))::int AS gecikme "
+            "  FROM toptanci_siparis ts "
+            "  LEFT JOIN tedarikciler td ON td.id = ts.tedarikci_id "
+            " WHERE ts.teslim_ts IS NOT NULL AND COALESCE(ts.durum,'') <> 'iptal' "
+            "   AND ts.olusturma >= CURRENT_DATE - %s", (g + 60,))
+        ham: Dict[str, List[int]] = {}
+        for r in (cur.fetchall() or []):
+            r = dict(r)
+            gec = int(r["gecikme"] or 0)
+            if 0 <= gec <= 60 and r["ad"]:
+                ham.setdefault(r["ad"], []).append(gec)
+    except Exception as e:  # noqa: BLE001 — ritim okunamazsa varsayılan pencere
+        logger.warning("tedarikçi ritmi okunamadı (yutuldu): %s", str(e)[:120])
+        return {}
+    ritim: Dict[str, int] = {}
+    for ad, lst in ham.items():
+        lst.sort()
+        p90 = lst[min(len(lst) - 1, int(len(lst) * 0.9))]
+        ritim[ad] = p90
+    return ritim
+
+
+def _pencere_sec(ted_ad: str, ritim: Dict[str, int], taban: int) -> int:
+    """Bu tedarikçi için pencere: gözlenen ritim + fatura payı, tabanın altına inmez."""
+    en = taban
+    for ad, p90 in ritim.items():
+        if _ayirt_edici(ad) & _ayirt_edici(ted_ad):
+            en = max(en, p90 + 5)     # teslimden sonra fatura kesilmesi için pay
+    return min(45, en)
+
+
 def _gun_farki(a: str, b: str) -> int:
     """İki 'YYYY-MM-DD' arasındaki gün farkı."""
     from datetime import date as _d
@@ -238,6 +288,7 @@ def fatura_teslim_mutabakati(tedarikci: str = "", gun: int = 120,
         # kadar çıktı. Doğrusu: her sipariş, tarihçe EN YAKIN faturaya (pencere
         # içinde) ait sayılır — atıf TEKİL olmalıdır, yoksa aynı mal iki kez
         # ölçülür. (Kartlardaki "yinelenen sayfa" dersinin tedarik hâli.)
+        _ritim = _tedarikci_ritmi(cur, g)
         _siparisler: Dict[str, List[Dict]] = {}
         if faturalar:
             _tum_ad: set = set()
@@ -287,7 +338,10 @@ def fatura_teslim_mutabakati(tedarikci: str = "", gun: int = 120,
                         sapma = _gun_farki(str(f["tarih"]), s_gun)
                     except Exception:  # noqa: BLE001
                         continue
-                    if sapma < -SONRA_TOLERANS or sapma > pen:
+                    # Pencere TEDARİKÇİYE GÖRE: yavaş teslim eden tedarikçide
+                    # sipariş ile fatura arası doğal olarak uzundur.
+                    _pen_f = _pencere_sec(f["tedarikci_ad"], _ritim, pen)
+                    if sapma < -SONRA_TOLERANS or sapma > _pen_f:
                         continue
                     uzak = abs(sapma)
                     if en_uzaklik is None or uzak < en_uzaklik:
