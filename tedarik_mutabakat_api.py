@@ -228,6 +228,7 @@ def fatura_teslim_mutabakati(tedarikci: str = "", gun: int = 120,
     pen = max(1, min(45, int(pencere or VARSAYILAN_PENCERE)))
     t = (tedarikci or "").strip()
     with db() as (_, cur):
+        _alim_kaynagi_kolonu(cur)
         # ⛔ KOPYA NÜSHA ÖLÇÜME GİRMEZ (2026-08-25)
         # OCR kapsama teşhisi şunu gösterdi: kalemi olmayan 13 faturanın 12'si
         # OCR hatası DEĞİL, sistemin zaten `durum='kopya'` diye işaretlediği
@@ -249,12 +250,14 @@ def fatura_teslim_mutabakati(tedarikci: str = "", gun: int = 120,
         cur.execute(
             "SELECT f.id, f.tedarikci_ad, f.fatura_no, f.fatura_tarih::text AS tarih, "
             "       COALESCE(f.toplam_tutar,0)::float AS tutar, "
+            "       COALESCE(f.alim_kaynagi,'') AS alim_kaynagi, "
             "       COALESCE(SUM(k.adet),0)::float AS fatura_adet, "
             "       COUNT(k.id) AS kalem_adet "
             "  FROM tedarikci_fatura f "
             "  LEFT JOIN tedarikci_fatura_kalem k ON k.fatura_id = f.id "
             " WHERE " + " AND ".join(kos) +
-            " GROUP BY f.id, f.tedarikci_ad, f.fatura_no, f.fatura_tarih, f.toplam_tutar "
+            " GROUP BY f.id, f.tedarikci_ad, f.fatura_no, f.fatura_tarih, f.toplam_tutar, "
+            "          f.alim_kaynagi "
             " ORDER BY f.fatura_tarih DESC",
             tuple(par),
         )
@@ -430,6 +433,7 @@ def fatura_teslim_mutabakati(tedarikci: str = "", gun: int = 120,
             kayit: Dict[str, Any] = {
                 "fatura_id": f["id"], "fatura_no": f["fatura_no"], "tarih": f["tarih"],
                 "tedarikci_ad": f["tedarikci_ad"], "tutar": f["tutar"],
+                "alim_kaynagi": f.get("alim_kaynagi") or None,
                 "fatura_kalem": int(f["kalem_adet"] or 0),
                 "fatura_adet": round(float(f["fatura_adet"] or 0), 2),
             }
@@ -596,7 +600,13 @@ def fatura_teslim_mutabakati(tedarikci: str = "", gun: int = 120,
                                 _yakin.append(_gn)
                         except Exception:  # noqa: BLE001
                             continue
-                if _yakin:
+                _merkez = [x for x in kume if x.get("alim_kaynagi") == "merkez"]
+                if _merkez and len(_merkez) == len(kume):
+                    # 🏢 Sahip "bunu biz istedik" dedi — kontrol boşluğu YOK,
+                    # kayıt boşluğu var. Bulgu SİLİNMEZ, adı değişir.
+                    durum = ("MERKEZ ALIMI — sipariş paneli dışından, sahip onaylı")
+                    guc = "BILGI"
+                elif _yakin:
                     durum = ("SİPARİŞİ İPTAL EDİLDİ — mal geldi, sipariş kaydı "
                              "sonradan iptal edilmiş (%s)" % ", ".join(sorted(set(_yakin))[:3]))
                     guc = "BILGI"
@@ -2171,3 +2181,86 @@ def birim_ata(body: BirimBody):
         conn.commit()
     return {"ok": True, "urun_id": body.urun_id, "ad": dict(r)["ad"],
             "birim": b, "koli_adet": k}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 🏢 ALIM KAYNAĞI — şube siparişi mi, MERKEZ alımı mı?
+# ═══════════════════════════════════════════════════════════════════════════
+def _alim_kaynagi_kolonu(cur) -> None:
+    """`tedarikci_fatura.alim_kaynagi` — sube | merkez. Boş = bilinmiyor."""
+    cur.execute("ALTER TABLE tedarikci_fatura "
+                "ADD COLUMN IF NOT EXISTS alim_kaynagi TEXT")
+    cur.execute("ALTER TABLE tedarikci_fatura "
+                "ADD COLUMN IF NOT EXISTS alim_kaynagi_not TEXT")
+
+
+class AlimKaynagiBody(BaseModel):
+    alim_kaynagi: str                 # sube | merkez
+    gerekce: Optional[str] = None
+
+
+@router.post("/alim-kaynagi/{fatura_id}")
+def alim_kaynagi_ata(fatura_id: str, body: AlimKaynagiBody):
+    """🏢 Faturayı 'MERKEZ ALIMI' olarak damgalar — bulguyu İZLİ şekilde kapatır.
+
+    ── NEDEN (2026-08-25, sahip) ───────────────────────────────────────────
+    Sahip: "Bu siparişler merkez tarafından, yani BİZ istedik."
+    Duyu o faturalara "SİPARİŞSİZ GELEN MAL" diyordu — çünkü şube panelinde
+    sipariş kaydı yok. Ama eksik olan KONTROL değil, KAYIT: merkez telefonla /
+    doğrudan sipariş vermiş, sistem bunu görmemiş.
+
+    ⚠️ Bu ayrım yapılmazsa duyu, sahibin KENDİ meşru alımını sonsuza dek
+    "açıklanamayan mal" diye gösterir. Kapatılamayan alarm, bir süre sonra
+    hiç okunmayan alarmdır — ve o zaman gerçek bir kaçak da fark edilmez.
+
+    ⚠️ Damga BULGUYU SİLMEZ, ADINI DEĞİŞTİRİR: satır "MERKEZ ALIMI — sipariş
+    paneli dışından, sahip onaylı" olarak görünmeye devam eder. İz kalır ki
+    ileride "merkez ne kadar alım yapmış" sorusu da cevaplanabilsin.
+
+    💡 KALICI ÇÖZÜM: merkez alımları için sistemde zaten uç var —
+    POST /api/ops/siparis/merkez-siparis-olustur. Oradan girilirse bu damgaya
+    hiç gerek kalmaz ve zincir baştan tam kurulur.
+    """
+    k = (body.alim_kaynagi or "").strip().lower()
+    if k not in ("sube", "merkez"):
+        raise HTTPException(400, "alim_kaynagi: sube | merkez")
+    with db() as (conn, cur):
+        _alim_kaynagi_kolonu(cur)
+        cur.execute(
+            "UPDATE tedarikci_fatura SET alim_kaynagi=%s, alim_kaynagi_not=%s "
+            "WHERE id=%s RETURNING tedarikci_ad, fatura_no, fatura_tarih::text AS t, "
+            "                      COALESCE(toplam_tutar,0)::float AS tutar",
+            (k, (body.gerekce or "sahip beyanı")[:200], fatura_id))
+        r = cur.fetchone()
+        if not r:
+            raise HTTPException(404, "fatura bulunamadı")
+        conn.commit()
+    d = dict(r)
+    return {"ok": True, "fatura_id": fatura_id, "alim_kaynagi": k,
+            "tedarikci": d["tedarikci_ad"], "fatura_no": d["fatura_no"],
+            "tarih": d["t"], "tutar": d["tutar"],
+            "not": ("Damga bulguyu SİLMEZ, adını değiştirir — satır 'MERKEZ ALIMI' "
+                    "olarak görünmeye devam eder. Kalıcı çözüm: merkez alımlarını "
+                    "POST /api/ops/siparis/merkez-siparis-olustur ile sisteme girmek.")}
+
+
+@router.get("/merkez-alimlari")
+def merkez_alimlari(gun: int = 400):
+    """Merkez damgalı faturalar — "merkez ne kadar alım yaptı?" sorusunun cevabı."""
+    g = max(30, min(730, int(gun or 400)))
+    with db() as (_, cur):
+        _alim_kaynagi_kolonu(cur)
+        cur.execute(
+            "SELECT tedarikci_ad, fatura_no, fatura_tarih::text AS tarih, "
+            "       COALESCE(toplam_tutar,0)::float AS tutar, alim_kaynagi_not "
+            "  FROM tedarikci_fatura "
+            " WHERE alim_kaynagi='merkez' AND COALESCE(durum,'') <> 'kopya' "
+            "   AND fatura_tarih >= CURRENT_DATE - %s "
+            " ORDER BY fatura_tarih DESC", (g,))
+        rows = [dict(r) for r in (cur.fetchall() or [])]
+    return {"gun": g, "adet": len(rows),
+            "toplam_tutar": round(sum(r["tutar"] for r in rows), 2),
+            "faturalar": rows,
+            "not": ("Merkez alımı = şube paneli dışından, merkez tarafından yapılan "
+                    "alım. Bulgu değildir ama GÖRÜNÜR kalır: 'merkez ne kadar alım "
+                    "yapıyor' sorusu da bir denetim sorusudur.")}
