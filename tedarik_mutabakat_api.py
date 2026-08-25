@@ -939,6 +939,7 @@ def ocr_kapsama(gun: int = 200):
     """
     g = max(1, min(730, int(gun or 200)))
     with db() as (_, cur):
+        _capa_kolonu(cur)
         cur.execute(
             "SELECT f.id, f.tedarikci_ad, f.fatura_no, f.fatura_tarih::text AS tarih, "
             "       COALESCE(f.toplam_tutar,0)::float AS tutar, f.durum, "
@@ -2200,6 +2201,19 @@ def birim_ata(body: BirimBody):
 # ═══════════════════════════════════════════════════════════════════════════
 # 🏢 ALIM KAYNAĞI — şube siparişi mi, MERKEZ alımı mı?
 # ═══════════════════════════════════════════════════════════════════════════
+def _capa_kolonu(cur) -> None:
+    """`kalem_capa_farki` kolonunu garanti eder.
+
+    ⚠️ TEMBEL KOLON TUZAĞI (2026-08-25, canlıda 500 verdi): kolon yazma yolunda
+    (fatura_api._fatura_json_db_yaz) tembel yaratılıyor — yani ilk OCR yazana
+    kadar YOKTUR. Okuyucu onu hemen sorgulayınca "column does not exist" ile
+    patladı. Bir alanı OKUYAN taraf, o alanın VARLIĞINI de garanti etmelidir;
+    "birazdan yazılır" varsayımı ilk çağrıda çöker.
+    """
+    cur.execute("ALTER TABLE tedarikci_fatura ADD COLUMN IF NOT EXISTS "
+                "kalem_capa_farki NUMERIC(14,2)")
+
+
 def _alim_kaynagi_kolonu(cur) -> None:
     """`tedarikci_fatura.alim_kaynagi` — sube | merkez. Boş = bilinmiyor."""
     cur.execute("ALTER TABLE tedarikci_fatura "
