@@ -188,7 +188,10 @@ def fatura_teslim_mutabakati(tedarikci: str = "", gun: int = 120,
         # Ders (bugün ikinci kez): duyu, sistemin AÇIKÇA koyduğu durum
         # işaretini okumazsa kendi körlüğünü başkasının hatası gibi gösterir.
         kos = ["f.fatura_tarih >= CURRENT_DATE - %s",
-               "COALESCE(f.durum,'') <> 'kopya'"]
+               "COALESCE(f.durum,'') <> 'kopya'",
+               # ⛔ İRSALİYE FATURA DEĞİLDİR: fiyat taşımaz, borç doğurmaz.
+               # Ölçüme sokmak "0,00 fatura" diye sahte boşluk üretir.
+               "COALESCE(f.belge_turu,'fatura') <> 'irsaliye'"]
         par: List[Any] = [g]
         if t:
             kos.append("f.tedarikci_ad ILIKE %s")
@@ -775,13 +778,15 @@ def ocr_kapsama(gun: int = 200):
             "       (f.foto IS NOT NULL) AS foto_var, "
             "       (COALESCE(f.kaynak_metin,'') <> '') AS metin_var, "
             "       LEFT(COALESCE(f.ocr_hata,''), 160) AS ocr_hata, "
+            "       COALESCE(f.belge_turu,'') AS belge_turu, "
             "       COUNT(k.id) AS kalem "
             "  FROM tedarikci_fatura f "
             "  LEFT JOIN tedarikci_fatura_kalem k ON k.fatura_id = f.id "
             " WHERE f.fatura_tarih >= CURRENT_DATE - %s "
             "   AND COALESCE(f.durum,'') <> 'kopya' "   # ikinci nüsha OCR derdi değildir
             " GROUP BY f.id, f.tedarikci_ad, f.fatura_no, f.fatura_tarih, "
-            "          f.toplam_tutar, f.durum, f.foto, f.kaynak_metin, f.ocr_hata "
+            "          f.toplam_tutar, f.durum, f.foto, f.kaynak_metin, f.ocr_hata, "
+            "          f.belge_turu "
             " ORDER BY f.fatura_tarih DESC", (g,))
         rows = [dict(r) for r in (cur.fetchall() or [])]
 
@@ -795,6 +800,11 @@ def ocr_kapsama(gun: int = 200):
             sebep, care = "OCR HİÇ ÇALIŞMAMIŞ", "Kuyrukta takılı — /api/fatura/ocr-takilanlari-dene"
         elif (r["ocr_hata"] or "").strip():
             sebep, care = "OCR HATA VERMİŞ", "Hata metni çözümü söyler; sebebe göre düzeltilir."
+        elif str(r.get("belge_turu") or "") == "irsaliye":
+            # ✅ İRSALİYEDE FİYAT YOKTUR — 0,00 doğrudur, OCR arızası değildir.
+            # Bu satır olmadan teşhis her irsaliyeyi "okunamadı" diye suçluyordu.
+            sebep, care = ("İRSALİYE — kalem düzeyi ölçüm gerekmez",
+                           "Belge bir irsaliyedir; fiyat taşımaz. Faturası ayrıca aranır.")
         elif float(r["tutar"] or 0) <= 0:
             sebep, care = "TUTAR DA OKUNAMAMIŞ", "Belge muhtemelen okunamaz halde (bulanık/eksik sayfa)."
         else:
@@ -1760,4 +1770,104 @@ def belge_turu_teshisi(gun: int = 730):
                 "İrsaliyeyi tablodan ÇIKARMAK çözüm değildir — irsaliye teslimatın "
                 "kanıtıdır ve faturasıyla eşleşmesi gerekir. Doğru çözüm SİLMEK değil "
                 "TÜRÜNÜ BİLMEKTİR."),
+    }
+
+
+def _belge_turu_kolonu(cur) -> None:
+    """`tedarikci_fatura.belge_turu` — fatura / irsaliye / irsaliyeli_fatura.
+
+    ⚠️ Neden AYRI bir alan (2026-08-25): tabloda zaten `belge_sinifi` var ama o
+    MAL/HİZMET ayrımıdır — giderin niteliğini söyler. Belgenin TÜRÜ bambaşka bir
+    eksendir: elimizdeki kâğıt bir fatura mı, yoksa fiyat taşımayan bir irsaliye
+    mi? İkisini tek alana sıkıştırmak, iki soruyu birbirine karıştırır.
+    Boş bırakılanlar 'fatura' varsayılır — eski davranış korunur (regresyon yok).
+    """
+    cur.execute("ALTER TABLE tedarikci_fatura "
+                "ADD COLUMN IF NOT EXISTS belge_turu TEXT")
+    cur.execute("ALTER TABLE tedarikci_fatura "
+                "ADD COLUMN IF NOT EXISTS belge_turu_kaynak TEXT")
+
+
+class BelgeTuruBody(BaseModel):
+    belge_turu: str                      # fatura | irsaliye | irsaliyeli_fatura
+    gerekce: Optional[str] = None
+
+
+@router.post("/belge-turu/{fatura_id}")
+def belge_turu_ata(fatura_id: str, body: BelgeTuruBody):
+    """Tek belgenin türünü ELLE damgalar (sahip/aslı görülmüş kayıtlar için)."""
+    t = (body.belge_turu or "").strip().lower()
+    if t not in ("fatura", "irsaliye", "irsaliyeli_fatura"):
+        raise HTTPException(400, "belge_turu: fatura | irsaliye | irsaliyeli_fatura")
+    with db() as (conn, cur):
+        _belge_turu_kolonu(cur)
+        cur.execute(
+            "UPDATE tedarikci_fatura SET belge_turu=%s, belge_turu_kaynak=%s "
+            "WHERE id=%s RETURNING tedarikci_ad, fatura_no",
+            (t, "elle:" + ((body.gerekce or "")[:120] or "sahip"), fatura_id))
+        r = cur.fetchone()
+        if not r:
+            raise HTTPException(404, "fatura bulunamadı")
+        conn.commit()
+    return {"ok": True, "fatura_id": fatura_id, "belge_turu": t,
+            "tedarikci": dict(r)["tedarikci_ad"], "fatura_no": dict(r)["fatura_no"]}
+
+
+@router.post("/belge-turu-isle")
+def belge_turu_isle(gun: int = 730, kuru: int = 1):
+    """📄 Teşhisin bulduklarını `belge_turu` alanına İŞLER. Varsayılan KURU ÇALIŞTIRMA.
+
+    ── NE YAZAR ────────────────────────────────────────────────────────────
+      YÜKSEK (saf irsaliye)      → belge_turu='irsaliye'
+      BİLGİ  (irsaliyeli fatura) → belge_turu='irsaliyeli_fatura'
+      ORTA                       → DOKUNULMAZ
+
+    ⚠️ ORTA neden dokunulmaz: o kovada "fiyatı okunamamış FATURA" ile "saf
+    irsaliye" ayırt edilemiyor. Belirsizi damgalamak, belirsizliği kaybetmektir —
+    damga atıldıktan sonra kimse geri dönüp bakmaz. Onlar `belge-turu/{id}` ile
+    ELLE, aslına bakılarak damgalanır.
+
+    ⚠️ Zaten damgalı belgeye DOKUNULMAZ (elle konan damga otomatiği yener).
+    `kuru=1` iken hiçbir şey yazılmaz; ne yazılacağı listelenir.
+    """
+    g = max(30, min(1460, int(gun or 730)))
+    teshis = belge_turu_teshisi(gun=g)
+    plan = []
+    for r in teshis.get("satirlar", []):
+        if r["guven"] == "YUKSEK":
+            hedef = "irsaliye"
+        elif r["guven"] == "BILGI":
+            hedef = "irsaliyeli_fatura"
+        else:
+            continue                      # ORTA → belirsiz, elle damgalanır
+        plan.append({"fatura_id": r["fatura_id"], "belge_turu": hedef,
+                     "tedarikci_ad": r["tedarikci_ad"], "fatura_no": r["fatura_no"],
+                     "tarih": r["tarih"], "tutar": r["tutar"],
+                     "gerekce": r["gerekce"][:150]})
+    yazilan, atlanan = 0, []
+    if not int(kuru or 0):
+        with db() as (conn, cur):
+            _belge_turu_kolonu(cur)
+            for p in plan:
+                cur.execute(
+                    "UPDATE tedarikci_fatura SET belge_turu=%s, belge_turu_kaynak=%s "
+                    "WHERE id=%s AND belge_turu IS NULL",   # elle damga korunur
+                    (p["belge_turu"], "teshis", p["fatura_id"]))
+                if cur.rowcount:
+                    yazilan += 1
+                else:
+                    atlanan.append(p["fatura_id"])
+            conn.commit()
+    return {
+        "gun": g, "kuru_calistirma": bool(int(kuru or 0)),
+        "plan_adet": len(plan), "yazilan": yazilan,
+        "atlanan_zaten_damgali": len(atlanan), "plan": plan,
+        "belirsiz_elle_bekleyen": sum(1 for r in teshis.get("satirlar", [])
+                                      if r["guven"] == "ORTA"),
+        "not": ("ORTA kovadakiler BİLEREK damgalanmadı: orada 'fiyatı okunamamış "
+                "fatura' ile 'saf irsaliye' ayırt edilemiyor. Belirsizi damgalamak "
+                "belirsizliği KAYBETMEKTİR — damga atıldıktan sonra kimse geri dönüp "
+                "bakmaz. Onlar POST /belge-turu/{fatura_id} ile aslına bakılarak "
+                "elle damgalanmalı. Elle konan damga otomatik olanı yener ve "
+                "yeniden işlemede EZİLMEZ."),
     }
