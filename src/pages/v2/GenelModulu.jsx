@@ -634,8 +634,23 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
   // her ölçüm bir yeniden-render doğururdu — ölçüm aleti ölçtüğü şeyi bozardı.
   const kuyrukRef = React.useRef(null);
   const oturumRef = React.useRef(null);
+  const olculduRef = React.useRef(false);
   useEffect(() => {
-    if (!veri?.panel || gorunum !== 'karar') return undefined;
+    // ── ⚠️ ALETİN KENDİ KUSURU (canlıda yakalandı, düzeltildi) ──────────────
+    // İlk sürümde her BAKIŞ açılışı İKİ oturum yazıyordu: `veri` iki kez
+    // değişiyor (önce /panel demeti, sonra zincirli "dün" okuması) ve effect
+    // ikisinde de ateşleniyordu. Sonuç: M2'nin (boş çıkış oranı) PAYDASI
+    // şişerdi — sahip her seferinde iş yapsa bile oran "%50 boş çıkış" derdi.
+    // Ölçüm aleti önce kendini denetler; tek ziyaret = tek oturum.
+    if (gorunum !== 'karar') { olculduRef.current = false; return undefined; }
+    if (!veri?.panel || olculduRef.current) return undefined;
+    // ⚠️ DÜN OKUMASI BİTMEDEN ÖLÇME: kuyruğun "TEMA dün kapanmadı" maddesi dün
+    // verisine dayanır. Erken ölçseydik o madde kuyrukta HİÇ görünmemiş gibi
+    // kaydedilir, ömrü de isabeti de yanlış çıkardı. `dun` null iken bekleriz;
+    // kapanış okuması düşmüşse zincir hiç çalışmaz, o hâlde de ölçeriz
+    // (yoksa arıza günlerinde ölçüm tamamen susardı).
+    if (veri.dun === null && veri.kapanis !== '__HATA__') return undefined;
+    olculduRef.current = true;
     const k = kuyrukRef.current || { anahtar: [], sinif: [] };
     let iptal = false;
     // ⚠️ GÖVDE DÜZ NESNE VERİLİR, JSON.stringify EDİLMEZ: api() gövdeyi ZATEN
