@@ -644,6 +644,11 @@ def fatura_teslim_mutabakati(tedarikci: str = "", gun: int = 120,
                 "fatura_adet": f_adet, "teslim_alinan_adet": t_adet,
                 "adet_farki": fark, "durum": durum, "kanit_gucu": guc,
                 "birim_notu": _birim_notu, "acik_siparisler": acik,
+                # Fatura isteği mesajı KALEM KALEM yazılabilsin diye dönemin
+                # tüm sipariş kalemleri de taşınır ("eksik fatura var" demek
+                # tedarikçiye hiçbir şey anlatmaz).
+                "tum_siparisler": [s2 for x in kume
+                                   for s2 in (x.get("tum_siparisler") or [])],
             })
         gruplar.sort(key=lambda x: x["donem_bit"], reverse=True)
         grup_ozet: Dict[str, int] = {}
