@@ -999,7 +999,14 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
     // ⚠️ Bu kayıtlar katman listesinden DÜŞÜRÜLMEZ; düşürülseydi katman
     // sayacı/toplamı ile liste birbirini tutmaz, sahip "9 kalem" deyip 8 satır
     // görürdü. Yalnız soluklaştırılıp "yukarıda gördün" diye etiketlenir.
-    const heroAnahtarlar = new Set(ilkUcIs.filter((x) => x._u).map((x) => kayitAnahtari(x._u)));
+    // 🔵 (2026-08-26) Küme ARTIK BOŞ DOĞAR, kuyruk kurulunca doldurulur (aşağıda
+    // `kuyrukGorunen` tanımının hemen ardında). Sebep: madde kaynağı `ilkUcIs`
+    // değil artık BUGÜN KUYRUĞU ve kuyruk 5'te kesiliyor — eskisi gibi ilkUcIs'ten
+    // türetilseydi, kesilip EKRANDA GÖRÜNMEYEN bir kalem listede "↑ bugünün
+    // işlerinde" diye solgun etiketlenirdi. Sahip yukarı bakar, o kalemi bulamaz.
+    // Etiket yalnız GERÇEKTEN GÖRÜNEN kalem için doğrudur.
+    // (Set nesnesi değişmez, İÇERİĞİ dolar — `const` doğru.)
+    const heroAnahtarlar = new Set();
     const katmanSatiri = (u, i) => {
       const s = odemeSatiri(u, i);
       if (!heroAnahtarlar.has(kayitAnahtari(u))) return s;
@@ -1092,11 +1099,31 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
     // Katman sırası klasik triajın kendisi. BOŞ KATMAN HİÇ ÇİZİLMEZ (eskiden
     // "Bu katmanda kayıt yok" kutusu ekranı dolduruyordu).
     const katmanlar = [
+      // ══════════════════════════════════════════════════════════════════════
+      // 🎨 RENK RAMPASI (2026-08-26 BAKIŞ kurgusu) — sıcaktan soğuğa, aciliyetle
+      // ══════════════════════════════════════════════════════════════════════
+      // ESKİ HÂLİN KUSURU: "BİLGİ · 0–7 gün" MAVİYDİ — en büyük para, en sakin
+      // etiket. Canlı ölçüm: kritik 186.021 ₺ (kırmızı) · uyarı 169.205 ₺ (amber)
+      // · bu kova 1.078.718 ₺ (mavi). Yani gecikmiş borcun %75'i "BİLGİ" adıyla
+      // ve ekranın en sakin rengiyle duruyordu. "Bilgi" kelimesi "okumasan da
+      // olur" çerçevesi kurar; gecikmiş para hiçbir zaman bilgi değildir —
+      // TAZE bir borçtur ve tazeyken kapatmak en ucuzudur.
+      //
+      // ⚠️ Tek satırı amber yapmak YETMEZDİ: UYARI da amberdi, iki kova aynı
+      // renge düşüp ayrım bozulurdu. O yüzden RAMPANIN TAMAMI kuruldu —
+      // gecikmişler sıcak uçta üç ayrı kademe, gecikmemişler soğuk uçta:
+      //
+      //   GECİKMİŞ  15+ gün → kırmızı   (kronik)
+      //   GECİKMİŞ  8–14    → amber     (yerleşiyor)
+      //   GECİKMİŞ  0–7     → bakır     (taze — hâlâ sıcak, ama en düşük kademe)
+      //   ───────────────── gecikme çizgisi ─────────────────
+      //   BUGÜN vadeli      → krem      (geç değil, olağan iş)
+      //   YAKLAŞAN gelecek  → mavi      (sakin — mavinin DOĞRU yeri burası)
       { anahtar: 'kritik', baslik: 'KRİTİK · 15+ gün gecikmiş', renk: R.kirmizi, kayitlar: gK },
-      { anahtar: 'uyari', baslik: 'UYARI · 8–14 gün', renk: R.amber, kayitlar: gU },
-      { anahtar: 'bilgi', baslik: 'BİLGİ · 0–7 gün', renk: R.mavi, kayitlar: gB },
-      { anahtar: 'bugun', baslik: 'BUGÜN vadesi gelen', renk: R.bakir, kayitlar: gBug },
-      { anahtar: 'yaklasan', baslik: 'YAKLAŞAN · gelecek günler', renk: R.krem, kayitlar: gYak },
+      { anahtar: 'uyari', baslik: 'UYARI · 8–14 gün gecikmiş', renk: R.amber, kayitlar: gU },
+      { anahtar: 'bilgi', baslik: 'TAZE GECİKME · 0–7 gün — büyümeden kapat', renk: R.bakir, kayitlar: gB },
+      { anahtar: 'bugun', baslik: 'BUGÜN vadesi gelen', renk: R.krem, kayitlar: gBug },
+      { anahtar: 'yaklasan', baslik: 'YAKLAŞAN · henüz vadesi gelmedi', renk: R.mavi, kayitlar: gYak },
     ].filter((k) => k.kayitlar.length > 0);
 
     const katmanIcerigi = (anahtar, kayitlar) => {
@@ -1190,6 +1217,156 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
           </>
         ) : 'dün ciro girilmemiş';
 
+    // ══════════════════════════════════════════════════════════════════════════
+    // 🎯 BUGÜN KUYRUĞU (2026-08-26 BAKIŞ kurgusu) — liste değil KUYRUK
+    // ══════════════════════════════════════════════════════════════════════════
+    // ── NEDEN (kanıtlanmış kusur) ────────────────────────────────────────────
+    // `ilkUcIs` ÜÇ SABİT YUVADAN doluyordu: en büyük gecikmiş · 48 saatlik yük ·
+    // onay(ya da öneri). Canlıda bu 2 madde üretiyordu. Aynı ekranın altında ise
+    // 33 gecikmiş kalem, 78 günlük borç, 17 vadesi geçmiş söz, TEMA'nın
+    // girilmemiş cirosu ve 875.824 ₺'lik doğrulanmamış nakit duruyordu.
+    // Yani "BUGÜN" listesi eksik değil, YANLIŞ EŞİKLİYDİ: 2 maddelik liste
+    // 33 kalemlik gerçeğin yanında "iş bitti" yanılsaması veriyordu.
+    //
+    // Üç kaynak ekrana HİÇ ULAŞAMIYORDU:
+    //   · ciro eksiği  → `ciroEksik` satır ~1600'de tanımlı, bu görünüm satır
+    //     910'da return ediyor; Karar Alanı ona ERİŞEMİYORDU bile.
+    //   · dün kapanmayan şube → yalnız şube kartında minik "!" işareti.
+    //   · mutabakatsız nakit → `veri.nakit` satır 557'de ÇEKİLİYOR ama bu
+    //     görünümde HİÇ KULLANILMIYORDU (yalnız "akis" görünümü okuyordu).
+    //
+    // ── KURAL: 3 SINIF, TEK SIRA ─────────────────────────────────────────────
+    //   S1 ÖLÇÜM BOZUK    → en üstte. Çözülmeden ekranın KENDİ rakamları yalan
+    //                       söyler; ölçemediğini yönetemezsin.
+    //   S2 PARASAL SONUÇ  → ₺ büyüklüğüne göre.
+    //   S3 KARAR BEKLEYEN → onay / motor önerisi.
+    //
+    // ── KAPANMA: madde ELLE KAPATILMAZ, VERİDEN DÜŞER ────────────────────────
+    // Kapanış mührü basılınca, ciro girilince, ödeme kaydı oluşunca, sayım
+    // yapılınca madde kendiliğinden yok olur. "Kasa İzi = Tek Gerçek" kuralının
+    // aynısı. Kapanamayan madde bir tasarım hatasıdır — çünkü kapanamayan
+    // uyarı, bir süre sonra hiç okunmayan uyarıdır (uyarı bütçesi doktrini).
+    //
+    // ── TAVAN 5 ─────────────────────────────────────────────────────────────
+    // 33 kalemlik liste bir karar değil ENVANTERDİR; sahip her kalemde mikro
+    // karar verip yorulur ve hiçbir şey yapmadan çıkar. Taşanlar sayılır ve
+    // tam listeye köprülenir — gizlenmez.
+    const ciroEksikGunler = Array.isArray(p.ciro_eksik_gunler) ? p.ciro_eksik_gunler : [];
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // 💰 NAKİT DURUMU — TEK ERİŞİMCİ (hem KASA çıpası hem S1 maddesi buradan)
+    // ══════════════════════════════════════════════════════════════════════════
+    // Aynı hesabı iki yerde yapmak, iki yerin bir gün ayrışması demektir.
+    // `veri.nakit` satır ~557'de zaten çekiliyordu ama bu görünümde HİÇ
+    // kullanılmıyordu — yeni uç YOK, yalnız okunmayan veri okunuyor.
+    //
+    // ⚠️ EŞİK %10 NEDEN: kuruş farkı için her sabah alarm yazmak uyarı bütçesini
+    // yakar. Defterin onda birinden büyük fark artık "yuvarlama" değildir.
+    const nakitDurum = (() => {
+      const nk2 = veri.nakit;
+      if (!nk2 || nk2 === '__HATA__' || !nk2.duraklar) return { saglam: false };
+      const mut2 = Math.abs(sayi(nk2.mutabakatsiz_tl));
+      const defter2 = Math.abs(sayi(nk2.defter_bakiyesi_tl));
+      return {
+        saglam: true,
+        mut: mut2,
+        defter: defter2,
+        dogrulanmis: sayi(nk2.duraklar.duraklar_toplami_tl),
+        pay: defter2 > 0 ? Math.round((mut2 / defter2) * 100) : 0,
+        ciddiFark: defter2 > 0 && mut2 > defter2 * 0.10,
+      };
+    })();
+
+    const bugunKuyrugu = (() => {
+      const aday = [];
+
+      // ── S1 · ÖLÇÜM BOZUK ──────────────────────────────────────────────────
+      // (a) Dün kapanmayan şube: kapanış yoksa o günün cirosu/kasası ÖLÇÜLEMEZ.
+      // ⚠️ Köprü YOK — v2'de kapanış takibi modülü bulunmuyor (tema.js MODULLER
+      // ağacında karşılığı çözülemedi). Uydurma hedef sessizce yanlış ekrana
+      // düşürürdü; madde eylemsiz durur, bulgu yine de görünür.
+      const dunKapanmayan = subeKartlari.filter((s) => s.isik?.dunEksik);
+      if (dunKapanmayan.length > 0) {
+        aday.push({
+          sinif: 1, tl: 0, k: 's1_kapanis', ikonYol: IK.veriYok, renk: R.kirmizi,
+          metin: `${dunKapanmayan.map((s) => s.ad).join(' · ')} dün kapanmadı`,
+          alt: 'o günün cirosu ve kasası ölçülemiyor',
+        });
+      }
+      // (b) Ciro girilmemiş günler.
+      if (ciroEksikGunler.length > 0) {
+        aday.push({
+          sinif: 1, tl: 0, k: 's1_ciro', ikonYol: IK.veriYok, renk: R.kirmizi,
+          metin: `${ciroEksikGunler.length} gün ciro girilmemiş`,
+          alt: 'girilmeyen gün tüm ay rakamlarını eksik gösterir',
+          aksiyonAd: 'Ciro Girişi\'ne git',
+          onTikla: () => onKopru?.('__modul:para:girisi'),   // tema.js:209 doğrulandı
+        });
+      }
+      // (c) Konumu doğrulanmamış nakit — DEFTERİN ÖNEMLİ BİR PAYI ise.
+      // ⚠️ Her fark madde açmaz: kuruş farkı için her sabah iş yazmak uyarı
+      // bütçesini yakar. Eşik %10 — defterin onda biri kayıpsa bu artık
+      // "yuvarlama" değil, ölçüm sorunudur.
+      if (nakitDurum.ciddiFark) {
+        aday.push({
+          sinif: 1, tl: nakitDurum.mut, k: 's1_mutabakat', ikonYol: IK.banknot, renk: R.kirmizi,
+          metin: `${fmt(nakitDurum.mut)} nakit — yeri doğrulanmamış`,
+          alt: `defterin %${nakitDurum.pay}'i · şube sayımı eskiyse fark büyür`,
+          aksiyonAd: 'Kasa ayrımını aç',
+          onTikla: kasaCekmecesiniAc,
+        });
+      }
+
+      // ── S2 · PARASAL SONUÇ + S3 · KARAR BEKLEYEN ──────────────────────────
+      // Mevcut `ilkUcIs` üreticisi AYNEN korunur (seçim kuralları, odemeTutar
+      // zinciri, odemeCekmece köprüsü hiç değişmedi) — yalnız sınıfı damgalanır.
+      const SINIF = { gecikmis: 2, yuk48: 2, onay: 3, oneri: 3 };
+      ilkUcIs.forEach((is) => {
+        aday.push({ ...is, sinif: SINIF[is.k] ?? 3, tl: is._u ? odemeTutar(is._u) : 0 });
+      });
+
+      // ── S2b · MOTORUN EN KRİTİK ÖNERİSİ ───────────────────────────────────
+      // Bu cümle ("Faiz %51. Ertelersen 38.760 ₺ faiz ödersin") 4. görünümde
+      // duruyordu. Ertelemenin FİYATINI söyleyen tek yer orasıydı — oysa karar
+      // burada veriliyor. Kayıp çerçevesi eylem çağrısında kazanç çerçevesinden
+      // güçlü çalışır; cümle kuyruğa taşındı.
+      // ⚠️ Onay/öneri maddesi zaten eklendiyse tekrar yazılmaz.
+      // ⚠️ ALAN ADLARI oneriGrup.js'ten DOĞRULANDI: enKritikOneri {baslik, alt,
+      // grupMu, _o} döndürür — `tutar`/`gerekce` diye alan YOKTUR. (İlk yazımda
+      // varsayılmıştı; helper'ı kullanmadan önce dönüş şeklini oku kuralı.)
+      // Sıralama ₺ ile yapılamadığı için S2'nin dibine oturur (tl=0) — gecikmiş
+      // para her zaman önce gelir, öneri onun ardından.
+      const motorEnKritik = enKritikOneri(oneriler);
+      if (motorEnKritik && !aday.some((a) => a.k === 'oneri')) {
+        aday.push({
+          sinif: 2, tl: 0, k: 's2_motor',
+          ikonYol: IK.islemci, renk: R.bakir,
+          metin: kisalt(String(motorEnKritik.baslik || 'Karar motoru önerisi'), 44),
+          alt: kisalt(String(motorEnKritik.alt || 'öneri-only · hüküm insanın'), 60),
+          aksiyonAd: 'Motor & Bildirimler',
+          onTikla: () => onKopru?.('__gorunum:bildirim'),
+        });
+      }
+
+      // Sınıf önce, sınıf içinde ₺ büyüklüğü.
+      aday.sort((a, b) => a.sinif - b.sinif || b.tl - a.tl);
+      return aday;
+    })();
+
+    const kuyrukGorunen = bugunKuyrugu.slice(0, 5);
+    const kuyrukTasan = bugunKuyrugu.length - kuyrukGorunen.length;
+    // Y4 kümesini doldur — yalnız EKRANDA GÖRÜNEN kayıtlar (yukarıdaki nota bak).
+    kuyrukGorunen.forEach((x) => { if (x._u) heroAnahtarlar.add(kayitAnahtari(x._u)); });
+
+    // ── "YAPACAK BİR ŞEY YOK" NE ZAMAN DENİR? ────────────────────────────────
+    // Bu ekranın en zor tasarım kararı. İKİ koşul BİRDEN gerekir:
+    //   (1) hiçbir kaynak madde üretmemiş,
+    //   (2) hiçbir okuma DÜŞMEMİŞ.
+    // Uç düşmüşse "iş yok" demek YALANDIR (HATA ≠ BOŞ) — körlüğü huzur diye
+    // satmak, bu sistemin en temel yasağı. O yüzden okuma hatası varsa yeşil
+    // kutu yerine dürüst uyarı basılır.
+    const kuyrukOkumaHatasi = kapanisHata || dunBilinmiyor || veri.nakit === '__HATA__';
+
     // ═════════ B4 — KISA YOLLAR ═══════════════════════════════════════════════
     // ⚠️ Hedeflerin HEPSİ tema.js MODULLER ağacından doğrulandı (aşağıdaki
     // yorumlardaki satır numaraları o tanımın yeri). Rozetler YALNIZ Bakış'ın
@@ -1245,28 +1422,66 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
             Seçim kuralları ve onTikla davranışları AYNEN korundu. */}
         <Bant
           etiket="Bugün"
-          not={ilkUcIs.length ? 'önem sırasına dizili' : null}
-          cocuk={ilkUcIs.length === 0 ? (
-            <div style={{ ...kartYuzey, padding: '11px 14px', fontSize: 12.5, color: R.metin2, borderLeft: `3px solid ${R.yesil}` }}>
-              Bugün öne çıkan iş yok — gecikmiş kalem, 48 saatlik yük, bekleyen onay ve motor önerisi bulunmuyor.
-            </div>
+          not={kuyrukGorunen.length ? 'ölçüm önce · sonra para büyüklüğü' : null}
+          cocuk={kuyrukGorunen.length === 0 ? (
+            /* ── BOŞ HÂL: iki ayrı gerçek, iki ayrı kutu ────────────────────
+               Okuma düşmüşken "iş yok" demek körlüğü huzur diye satmaktır.
+               O yüzden önce OKUMA HATASI sorulur (HATA ≠ BOŞ). */
+            kuyrukOkumaHatasi ? (
+              <div style={{ ...kartYuzey, padding: '11px 14px', fontSize: 12.5, color: R.metin2, borderLeft: `3px solid ${R.kirmizi}` }}>
+                ⚠ Bugünün işleri çıkarılamadı — {[
+                  kapanisHata ? 'kapanış takibi' : null,
+                  dunBilinmiyor ? 'dün kapanışı' : null,
+                  veri.nakit === '__HATA__' ? 'nakit konumu' : null,
+                ].filter(Boolean).join(' · ')} okunamadı. <b>“İş yok” demiyoruz</b>; ölçemediğimiz için bilmiyoruz. Yenileyin.
+              </div>
+            ) : (
+              <div style={{ ...kartYuzey, padding: '11px 14px', fontSize: 12.5, color: R.metin2, borderLeft: `3px solid ${R.yesil}` }}>
+                Bugün seni bekleyen iş yok.
+                {/* İZLENEN EVRENİN BOYUTU: "boş"un "kör" olmadığının kanıtı.
+                    Sayı yazmazsak sahip haklı olarak "gerçekten baktın mı?"
+                    diye sorar — ve sormakta haklıdır. */}
+                {(gK.length + gU.length + gB.length + gBug.length + gYak.length) > 0 && (
+                  <span style={{ color: R.not2 }}>
+                    {' '}<b style={{ fontFamily: F.mono }}>{gK.length + gU.length + gB.length + gBug.length + gYak.length}</b> kalem izleniyor, hiçbiri gecikmemiş.
+                  </span>
+                )}
+              </div>
+            )
           ) : (
-            <Izgara en={230} cocuk={ilkUcIs.map((is, i) => (
-              <Cip
-                key={is.k}
-                buyuk
-                // K5 — günün 1 numarası baskın; 2-3 nötr.
-                birincil={i === 0}
-                ikonYol={is.ikonYol}
-                renk={is.renk}
-                baslik={is.metin}
-                // Alt satır 2 satırı geçmesin diye gerekçe kırpılır (tam metin
-                // zaten tıklanınca açılan çekmecede). 3. satır = taşma demek.
-                alt={[`${i + 1}.`, kisalt(is.alt, 44), is.onTikla ? `${is.aksiyonAd} →` : null].filter(Boolean).join(' ')}
-                onTikla={is.onTikla}
-                aksiyonAd={is.aksiyonAd}
-              />
-            ))} />
+            <>
+              <Izgara en={230} cocuk={kuyrukGorunen.map((is, i) => (
+                <Cip
+                  key={is.k}
+                  buyuk
+                  // K5 — günün 1 numarası baskın; gerisi nötr.
+                  // ⚠️ Kırmızı bütçesi: ön-dikkatsel işlemede aynı anda birden
+                  // çok kırmızı yarışırsa hiçbiri kazanmaz. Baskınlık TEK öğede.
+                  birincil={i === 0}
+                  ikonYol={is.ikonYol}
+                  renk={is.renk}
+                  baslik={is.metin}
+                  // Alt satır 2 satırı geçmesin diye gerekçe kırpılır (tam metin
+                  // zaten tıklanınca açılan çekmecede). 3. satır = taşma demek.
+                  alt={[`${i + 1}.`, kisalt(is.alt, 44), is.onTikla ? `${is.aksiyonAd} →` : null].filter(Boolean).join(' ')}
+                  onTikla={is.onTikla}
+                  aksiyonAd={is.aksiyonAd}
+                />
+              ))} />
+              {/* TAŞAN İŞLER GİZLENMEZ, SAYILIR. Sessiz kırpma "hepsi bu" diye
+                  okunur; kaç iş görülmediğini söylemek dürüstlüğün şartı. */}
+              {kuyrukTasan > 0 && (
+                <div
+                  onClick={() => onKopru?.('__modul:odeme:bekleyen')}
+                  style={{
+                    marginTop: 8, fontSize: 12, color: R.not2, cursor: onKopru ? 'pointer' : 'default',
+                  }}
+                >
+                  … ve <b style={{ color: R.metin2 }}>{kuyrukTasan} iş daha</b> — kuyruk ilk 5'i gösterir
+                  {onKopru ? <span style={{ color: R.bakir }}> · tam listeye git →</span> : null}
+                </div>
+              )}
+            </>
           )}
         />
 
@@ -1276,14 +1491,34 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
         {/* `sik` — şerit bir BANDIN içinde; kendi alt boşluğunu taşımaz,
             aralığı bandın flex gap'i verir (çift boşluk = boşa 16px). */}
         <KpiSeridi sik kpiler={[
-          {
+          // ══════════════════════════════════════════════════════════════════
+          // 💰 KASA — ÇİFT ÇIPA (2026-08-26 BAKIŞ kurgusu)
+          // ══════════════════════════════════════════════════════════════════
+          // ESKİ HÂL: 1.797.603 ₺ tek sayı ve YEŞİL. Bu ekranın ilk büyük
+          // parasal rakamıydı → sahip "param var" çıpası alıp sonraki tüm borç
+          // rakamlarını buna göre "karşılanabilir" okuyordu. Oysa o toplamın
+          // 875.824 ₺'sinin (yarısına yakını) HANGİ DURAKTA olduğu belli değil;
+          // doğrulanmamış parayı yeşille göstermek sahte-yeşil yasağının ta
+          // kendisidir. Uyarı 2. görünümde saklıydı, çıpa burada kuruluyordu.
+          //
+          // YENİ HÂL: çıpa DOĞRULANMIŞ para. Doğrulanmamış kısım kaybolmuyor —
+          // aynı kartta, alt satırda, kendi adıyla duruyor. Sahip iki gerçeği
+          // birden görüyor: elinde kesin ne var, ne kadarı soru işareti.
+          //
+          // ⚠️ Fark ciddi DEĞİLSE (≤%10) eski gösterim aynen korunur — küçük
+          // yuvarlama farkı için sahibi her sabah tedirgin etmek uyarı
+          // yorgunluğu üretir ve gerçek fark büyüdüğünde fark edilmez.
+          // 🖱️ 2026-08-17 sahip kuralı KORUNDU: tıklayınca ayrım açılır; kırılım
+          // /api/kasa-defteri'den CANLI gelir, burada rakam yeniden hesaplanmaz.
+          nakitDurum.ciddiFark ? {
+            etiket: 'Kasa · doğrulanmış',
+            deger: fmt(nakitDurum.dogrulanmis),
+            alt: `+ ${fmt(nakitDurum.mut)} yeri doğrulanmamış · ayrım için tıkla`,
+            renk: R.krem,          // yeşil DEĞİL: doğrulanmamış pay varken "iyi" denmez
+            onTikla: kasaCekmecesiniAc,
+          } : {
             etiket: 'Kasa',
             deger: fmt(sayi(p.kasa)),
-            // 🖱️ 2026-08-17, sahip: "merkez gösterimde TOPLAM kasayı görmeliyim
-            // ama :)) ve kasaya tıkladığımda AYRIMLARI görebilmeliyim".
-            // Değer = merkez toplamı (şube kasalarının toplamı); tıklayınca
-            // kırılım açılır. Kırılım /api/kasa-defteri'den CANLI gelir —
-            // burada hiçbir rakam yeniden hesaplanmaz (tek gerçek kaynak).
             alt: 'tüm kasaların toplamı · ayrım için tıkla',
             renk: sayi(p.kasa) >= 0 ? R.yesil : R.kirmizi,
             onTikla: kasaCekmecesiniAc,
@@ -1297,7 +1532,21 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
             alt: `${gBug.length} kalem · 48 saat ${fmt(t48)}`,
             renk: gBugToplam > 0 ? R.amber : t48 > 0 ? R.mavi : R.yesil,
           },
-          { etiket: 'Dayanıklılık', deger: p.kac_gun_dayanir != null ? `${sayi(p.kac_gun_dayanir)} gün` : '—', alt: 'kasa / günlük yük', renk: p.kac_gun_dayanir == null ? R.not3 : sayi(p.kac_gun_dayanir) < 15 ? R.kirmizi : R.krem },
+          {
+            etiket: 'Dayanıklılık',
+            deger: p.kac_gun_dayanir != null ? `${sayi(p.kac_gun_dayanir)} gün` : '—',
+            // ⚠️ DAYANAĞINI SÖYLER (2026-08-26): bu sayı kasa/günlük-yük'ten
+            // türüyor ve o "kasa" ŞİŞKİN olabilir — içinde yeri doğrulanmamış
+            // para varsa dayanıklılık da o kadar iyimserdir. Rakamı burada
+            // düzeltmiyoruz: "gösterim kendi aritmetiğini kurmaz" kuralı gereği
+            // doğrulanmış-kasa dayanıklılığı SUNUCUDA hesaplanmalı
+            // (motors.py · kac_gun_dayanir_dogrulanmis). O gelene kadar dürüst
+            // olan şey sayıyı uydurmak değil, DAYANAĞINI AÇIK YAZMAKTIR.
+            alt: nakitDurum.ciddiFark ? 'doğrulanmamış kasa üzerinden · iyimser' : 'kasa / günlük yük',
+            renk: p.kac_gun_dayanir == null ? R.not3
+              : sayi(p.kac_gun_dayanir) < 15 ? R.kirmizi
+                : nakitDurum.ciddiFark ? R.amber : R.krem,
+          },
         ]} />
 
         {/* Gecikme kovaları — dikey akordeon YERİNE yatay çip dizisi.
@@ -1471,8 +1720,17 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
             {sag.yolda_haftalik_ciro_pct != null && (
               <span style={{ fontSize: 11.5, color: renk, fontWeight: 700 }}>
                 {/* ⚠️ trSayi bu dosyada TANIMLI DEĞİL (bugün 8. helper tuzağı) —
-                    Math.round ile yazıldı. Kural: helper kullanmadan önce O DOSYADA grep. */}
-                yoldaki nakit = haftalık cironun %{Math.round(sayi(sag.yolda_haftalik_ciro_pct))}'i
+                    Math.round ile yazıldı. Kural: helper kullanmadan önce O DOSYADA grep.
+                    🔵 (2026-08-26 BAKIŞ kurgusu) %100 ÜSTÜ YÜZDE OKUNMUYOR: canlıda
+                    "%337'i" yazıyordu — sahip bunu oran sanıp "yoldaki para cironun
+                    üçte biri" diye okur. 100 üstünde insan dili KAT'tır. Eşik 200:
+                    %150 hâlâ yüzde olarak anlaşılır, %337 anlaşılmaz. */}
+                {(() => {
+                  const pct = sayi(sag.yolda_haftalik_ciro_pct);
+                  return pct >= 200
+                    ? `yoldaki nakit = haftalık cironun ${(pct / 100).toLocaleString('tr-TR', { maximumFractionDigits: 1 })} katı`
+                    : `yoldaki nakit = haftalık cironun %${Math.round(pct)}'i`;
+                })()}
               </span>
             )}
             <span style={{ fontSize: 11, color: R.not2, marginLeft: 'auto' }}>dokun → tam döküm</span>
@@ -1542,23 +1800,48 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
             <Satir ad="POS / kart" deger={fmt(sayi(p.bu_ay_pos))} alt={sayi(p.bu_ay_pos_kesinti) ? `kesinti ${fmt(sayi(p.bu_ay_pos_kesinti))}` : null} />
             <Satir ad="Online" deger={fmt(sayi(p.bu_ay_online))} alt={sayi(p.bu_ay_online_kesinti) ? `kesinti ${fmt(sayi(p.bu_ay_online_kesinti))}` : null} />
             <Satir ad="Dış kaynak geliri" deger={fmt(sayi(p.bu_ay_dis_kaynak))} renk={R.metin2} />
-            {/* Devir geçmiş aydan taşınan bakiyedir — bu ayın tahsilatı sanılıp
-                kanal toplamlarına eklenmesin diye açıkça yazılır. */}
-            <Satir ad="Devir" deger={fmt(sayi(p.bu_ay_devir))} renk={R.metin2} alt="geçmiş aydan devreden — bu ayın tahsilatı değil" />
+            {/* 🔵 (2026-08-26 BAKIŞ kurgusu) DEVİR AYRI TARAFA ÇEKİLDİ.
+                Eskiden not düşülmüştü ("bu ayın tahsilatı değil") ama satır hâlâ
+                kanal listesinin İÇİNDEYDİ ve 2.455.178 ₺ ile listenin en büyük
+                rakamıydı — göz devirle kanalları toplar, "bu ay 3,5 milyon tahsil
+                etmişiz" yanılsaması doğar. Uyarı yazısı, yerleşimin söylediğini
+                yenemez. Çözüm: önce KANAL TOPLAMI kapanır, devir çizginin altına
+                girintili yazılır. */}
+            <Satir
+              ad="= Kanal toplamı"
+              deger={fmt(sayi(p.bu_ay_nakit) + sayi(p.bu_ay_pos) + sayi(p.bu_ay_online) + sayi(p.bu_ay_dis_kaynak))}
+              alt="devir hariç — bu ayın gerçek tahsilatı"
+              renk={R.bakirAcik}
+            />
+            <div style={{ borderTop: `1px solid ${R.cizgi3}`, margin: '7px 0 2px' }} />
+            <div style={{ paddingLeft: 14 }}>
+              <Satir ad="Devir" deger={fmt(sayi(p.bu_ay_devir))} renk={R.not2} alt="geçmiş aydan devreden — bu ayın tahsilatı DEĞİL" />
+            </div>
           </>
         } />
 
-        <Bolum baslik="🔍 Kasa özeti" not="anlık dağılım" cocuk={
-          <>
-            {/* Alt yazı kod adıydı ("motors.guncel_kasa") — ekranda dosya/fonksiyon
-                adı durmaz; sahibin dilinde nereden geldiği yazılır. */}
-            <Satir ad="Kanonik kasa" deger={fmt(sayi(p.kasa))} renk={R.yesil} alt="kasa izi defteri · kanonik" />
-            <Satir ad="Anlık nakit" deger={fmt(sayi(p.anlik_nakit))} />
-            <Satir ad="Anlık kart" deger={fmt(sayi(p.anlik_kart))} />
-            <Satir ad="Genel nakit toplamı" deger={fmt(sayi(p.genel_nakit_toplam))} renk={R.metin2} />
-            <Satir ad="Genel kart toplamı" deger={fmt(sayi(p.genel_kart_toplam))} renk={R.metin2} />
-          </>
-        } />
+        {/* ══════════════════════════════════════════════════════════════════
+            🗑️ "KASA ÖZETİ" BLOĞU KALDIRILDI (2026-08-26, sahip onayıyla)
+            ══════════════════════════════════════════════════════════════════
+            Blok şu 5 satırı basıyordu:
+              Kanonik kasa 1.797.603 · Anlık nakit 53.025 · Anlık kart 0
+              · Genel nakit toplamı 631.218 · Genel kart toplamı 39.372
+
+            SEBEP — aynı ekranda ÜÇ FARKLI "nakit" rakamı vardı:
+              12.065 ₺  (şube kasalarında — son kapanış sayımı)
+              53.025 ₺  (anlık nakit)
+              631.218 ₺ (genel nakit toplamı)
+            Üçü de "nakit" diyordu, üçü farklı şeydi ve ekran hangisinin ne
+            olduğunu SÖYLEMİYORDU. Sahip için bu bilgi değil, gürültüdür:
+            "anlık" ile "genel"in farkını ekran anlatmıyor, sahibin dilinde
+            karşılığı yok. Bu satırlar dışsal bilişsel yükün en pahalı kalemiydi.
+
+            ⚠️ BU BİR GİZLEME DEĞİL — "boş alanı gizleme" kuralına aykırı değil:
+            alanlar BOŞ değildi, ANLAMSIZDI. Ve eşdeğeri daha iyi bir yerde
+            zaten var: kasa kırılımını KASA ÇEKMECESİ tanımlı ve satır düzeyinde
+            yapıyor; kanonik kasa rakamı da hemen üstteki "param nerede?"
+            mutabakat uyarısında ("Kasa defteri … diyor") görünmeye devam ediyor.
+            Yani hiçbir sayı kayboldu, sadece TANIMSIZ tekrarı kalktı. */}
 
         <Bolum baslik="✅ Bu ay ödenen sabit giderler" not="salt-okur" cocuk={
           (() => {
