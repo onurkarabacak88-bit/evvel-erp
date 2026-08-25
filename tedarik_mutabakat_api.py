@@ -1583,7 +1583,48 @@ def tarih_terslik(gun: int = 730, esik_gun: int = 30):
         # Gelecek tarihli olamaz — takas sonrası yüklemeden sonraysa aday değil
         if takas > yuk:
             continue
+        # 🔢 KARŞI KANIT: FATURA SIRA NUMARASI (2026-08-25, canlıda yanıldıktan sonra)
+        # İlk sürüm FEZ'in FZE2026000000057 faturasını "5 Ocak değil 1 Mayıs"
+        # diye işaretledi. Oysa FZE serisi tarihle BİREBİR artıyor:
+        #   05 Oca → 57 · 07 Şub → 635 · 11 Mar → 1.126 · 02 May → 2.166
+        # 57 numaralı fatura 1 Mayıs'ta kesilemez; o gün seri 2.100'lerdeydi.
+        # Kayıtlı tarih DOĞRUYDU. Yanılmanın sebebi: o fatura TOPLU GEÇMİŞ
+        # YÜKLEMESİYLE girmiş (17 Haziran) ve çapam "fatura yüklenmeden az önce
+        # kesilir" varsayıyordu — toplu yükleme bu varsayımı kırar.
+        # Kural: seri numarası tarih sırasını doğruluyorsa TAKAS REDDEDİLİR.
+        # Bir çapa yetmez; ikinci çapa ilkini denetler.
+        _seri_karsi = None
+        try:
+            import re as _re2
+            _m = _re2.match(r"([A-Za-z]{2,4})(\d{6,})", str(r["fatura_no"] or ""))
+            if _m:
+                _pre, _num = _m.group(1).upper(), int(_m.group(2))
+                _komsu = []
+                for o in rows:
+                    if o["id"] == r["id"]:
+                        continue
+                    _m2 = _re2.match(r"([A-Za-z]{2,4})(\d{6,})", str(o["fatura_no"] or ""))
+                    if not _m2 or _m2.group(1).upper() != _pre:
+                        continue
+                    if not (_ayirt_edici(o["tedarikci_ad"]) & _ayirt_edici(r["tedarikci_ad"])):
+                        continue
+                    _komsu.append((int(_m2.group(2)), str(o["tarih"])[:10]))
+                _alt = max([k for k in _komsu if k[0] < _num], default=None)
+                _ust = min([k for k in _komsu if k[0] > _num], default=None)
+                _kt, _tt = str(simdiki), str(takas)
+                _kayitli_uyar = ((not _alt or _alt[1] <= _kt) and (not _ust or _kt <= _ust[1]))
+                _takas_uyar = ((not _alt or _alt[1] <= _tt) and (not _ust or _tt <= _ust[1]))
+                if _komsu and _kayitli_uyar and not _takas_uyar:
+                    continue      # seri kayıtlı tarihi DOĞRULUYOR → takas reddedilir
+                if _komsu:
+                    _seri_karsi = {"onceki": _alt, "sonraki": _ust,
+                                   "kayitli_seriye_uyuyor": _kayitli_uyar,
+                                   "takas_seriye_uyuyor": _takas_uyar}
+        except Exception as _es:  # noqa: BLE001 — seri okunamazsa yalnız yükleme çapası
+            logger.info("seri karşı kanıtı atlandı: %s", str(_es)[:90])
+
         supheli.append({
+            "seri_kaniti": _seri_karsi,
             "fatura_id": r["id"], "tedarikci_ad": r["tedarikci_ad"],
             "fatura_no": r["fatura_no"], "tutar": r["tutar"], "durum": r["durum"],
             "kayitli_tarih": str(simdiki), "onerilen_tarih": str(takas),
