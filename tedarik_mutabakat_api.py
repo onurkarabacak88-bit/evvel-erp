@@ -2410,3 +2410,100 @@ def merkez_kayit_boslugu(gun: int = 120):
                 "o faturayı açıklayamaz. Mesele 'alarm sussun' değil ZİNCİRİN "
                 "KURULMASIDIR — damga bir çözüm değil, bir kayıttır."),
     }
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 📨 EKSİK FATURA İSTEĞİ — bulguyu DAMGALAMAK yetmez, İSTEMEK gerekir
+# ═══════════════════════════════════════════════════════════════════════════
+@router.post("/eksik-fatura-iste")
+def eksik_fatura_iste(gun: int = 200, kuru: int = 1):
+    """📨 "KISMİ FATURA" bulgularını FATURA İSTEĞİNE çevirir. Varsayılan KURU.
+
+    ── NEDEN (2026-08-25, sahip uyarısı) ───────────────────────────────────
+    Sahip: "Fatura eksik damgalıyorsun ama İSTEĞİ kurgulamamışsın!"
+    Haklıydı. Duyu "KISMİ FATURA — kalanı ayrı faturada olabilir" diyordu ve
+    orada duruyordu. Eksiği GÖRMEK ile eksiği İSTEMEK ayrı işlerdir; ikincisi
+    yapılmazsa bulgu bir rapor satırı olarak kalır ve fatura hiç gelmez.
+
+    ── NEDEN YENİ BİR SİSTEM KURULMADI ─────────────────────────────────────
+    Sistemde `fatura_istek` tablosu ZATEN var ve tam yaşam döngüsü kurulu:
+        aday → istek_gonderildi → fatura_geldi → kapandi
+    wa.me mesajı, tedarikçi gruplama, mesaj sayacı, kapanış — hepsi hazır.
+    İkinci bir istek sistemi kurmak iki ayrı "fatura bekleyenler" listesi
+    doğururdu ve ikisi kaçınılmaz olarak ayrışırdı. Bu uç, bulguları O
+    TABLOYA besler; `kaynak_tip='tedarik_eksik'` ile ayırt edilir ve mevcut
+    Belge Merkezi ekranında diğer istekler gibi görünür.
+
+    ── NE İSTENİR ──────────────────────────────────────────────────────────
+    Sipariş edilip TESLİM ALINAN ama faturada YER ALMAYAN kalemler. Mesaj
+    genel değil KALEM KALEM olur — "eksik fatura var" demek tedarikçiye hiçbir
+    şey anlatmaz; "Filtre Kahve 5, Redbull 72, Su 360" anlatır.
+
+    `kuru=1` (varsayılan): hiçbir şey yazılmaz, ne isteneceği listelenir.
+    """
+    g = max(30, min(730, int(gun or 200)))
+    mut = fatura_teslim_mutabakati(gun=g)
+    plan = []
+    for grp in mut.get("donemler", []):
+        if not str(grp.get("durum") or "").startswith("KISMİ FATURA"):
+            continue
+        # Faturada geçen kalem adları (kaba karşılaştırma için belirteç kümesi)
+        fat_bel = set()
+        for f in mut.get("faturalar", []):
+            if f.get("fatura_no") in (grp.get("faturalar") or []):
+                fat_bel |= _urun_belirtec(str(f.get("tedarikci_ad") or ""))
+        eksik = []
+        for s in (grp.get("tum_siparisler") or []):
+            for parca in (s.get("ozet") or "").split("·"):
+                parca = parca.strip()
+                if parca:
+                    eksik.append(parca)
+        plan.append({
+            "tedarikci_ad": grp["tedarikci_ad"],
+            "donem": "%s..%s" % (grp["donem_bas"], grp["donem_bit"]),
+            "faturalar": grp.get("faturalar"),
+            "fatura_adet": grp["fatura_adet"],
+            "teslim_adet": grp["teslim_alinan_adet"],
+            "eksik_adet": abs(grp["adet_farki"]),
+            "siparis_kalemleri": eksik,
+            "kaynak_id": "tedarik|%s|%s" % (grp["tedarikci_ad"][:40], grp["donem_bit"]),
+        })
+
+    yazilan, atlanan = 0, 0
+    if not int(kuru or 0) and plan:
+        with db() as (conn, cur):
+            for p in plan:
+                cur.execute("SELECT id, telefon FROM tedarikciler "
+                            "WHERE UPPER(ad) = ANY(%s) AND COALESCE(aktif,TRUE) LIMIT 1",
+                            (_ad_adaylari(p["tedarikci_ad"]),))
+                _t = dict(cur.fetchone() or {})
+                _aciklama = ("Sipariş edilip teslim alınan ama faturada yer almayan "
+                             "kalemler (%s dönemi, %.0f adet fark): %s"
+                             % (p["donem"], p["eksik_adet"],
+                                " · ".join(p["siparis_kalemleri"][:12])))
+                cur.execute(
+                    "INSERT INTO fatura_istek "
+                    "(kaynak_tip, kaynak_id, tarih, tutar, aciklama, kanal_detay, "
+                    " tedarikci_ad, tedarikci_tel, durum) "
+                    "VALUES ('tedarik_eksik', %s, %s::date, NULL, %s, 'tedarik zinciri', "
+                    "        %s, %s, 'aday') "
+                    "ON CONFLICT (kaynak_tip, kaynak_id) DO NOTHING",
+                    (p["kaynak_id"], p["donem"].split("..")[1], _aciklama,
+                     p["tedarikci_ad"], _t.get("telefon")))
+                if cur.rowcount:
+                    yazilan += 1
+                else:
+                    atlanan += 1
+            conn.commit()
+    return {
+        "gun": g, "kuru_calistirma": bool(int(kuru or 0)),
+        "plan_adet": len(plan), "yazilan": yazilan,
+        "atlanan_zaten_var": atlanan, "plan": plan,
+        "not": ("Eksiği GÖRMEK ile eksiği İSTEMEK ayrı işlerdir. Bu uç bulguları "
+                "MEVCUT `fatura_istek` tablosuna besler (kaynak_tip='tedarik_eksik') "
+                "— ikinci bir istek sistemi kurulmadı, çünkü iki ayrı 'fatura "
+                "bekleyenler' listesi kaçınılmaz olarak ayrışır. Kayıtlar Belge "
+                "Merkezi'nde diğer istekler gibi görünür; wa.me mesajı, tedarikçi "
+                "gruplama ve kapanış akışı ZATEN oradadır. Mesaj kalem kalem yazılır: "
+                "'eksik fatura var' tedarikçiye hiçbir şey anlatmaz."),
+    }
