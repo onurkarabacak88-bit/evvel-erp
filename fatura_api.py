@@ -2367,9 +2367,20 @@ def ocr_yeniden_dene(limit: int = 25):
                     -- ⚓ KALEM ÇAPASI TUTMAYANLAR (2026-08-25): kalemleri VAR ama
                     -- toplamları belge toplamını tutmuyor → satır okunmamış demektir.
                     -- Eskiden "kalemi var" diye tam sayılıyor ve bir daha denenmiyordu.
+                    -- ⚖️ KDV YORUMU HARIC TUTULUR: kalem toplami KDV-haric,
+                    -- belge toplami KDV-dahil yazilmis olabilir. O fark EKSIK
+                    -- SATIR DEGILDIR ve yeniden okumak kotayi bosa harcar.
+                    -- Oran 1,01 / 1,08 / 1,10 / 1,18 / 1,20'ye yakinsa atlanir.
                     OR (COALESCE(kalem_capa_farki,0) <> 0
                         AND ABS(COALESCE(kalem_capa_farki,0))
-                            > GREATEST(5, ABS(COALESCE(toplam_tutar,0)) * 0.02))
+                            > GREATEST(5, ABS(COALESCE(toplam_tutar,0)) * 0.02)
+                        AND NOT EXISTS (
+                            SELECT 1 FROM (VALUES (1.01),(1.08),(1.10),(1.18),(1.20)) v(r)
+                             WHERE COALESCE(toplam_tutar,0) - COALESCE(kalem_capa_farki,0) > 0
+                               AND ABS( COALESCE(toplam_tutar,0)
+                                        / NULLIF(COALESCE(toplam_tutar,0)
+                                                 - COALESCE(kalem_capa_farki,0), 0)
+                                        - v.r ) < 0.006))
                  )
                ORDER BY olusturma DESC LIMIT %s""", (lim,))
         rows = [dict(r) for r in cur.fetchall() or []]

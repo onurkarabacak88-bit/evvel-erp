@@ -966,15 +966,33 @@ def ocr_kapsama(gun: int = 200):
             # tutmuyorsa satır okunmamıştır. Eskiden "kalemi var" diye tam
             # sayılıyordu ve tedarik ölçümü bunu "KISMİ FATURA" sanıyordu —
             # oysa fatura tamdı, OKUMA kısmiydi.
+            # ⚖️ KDV YORUMU ÖNCE DENENİR (2026-08-25, ilk taramadan sonra)
+            # İlk sürüm 21 fatura işaretledi. Rakamlara bakınca çoğu EKSİK SATIR
+            # DEĞİL, KDV farkıydı: kalem toplamı KDV-HARİÇ, belge toplamı
+            # KDV-DAHİL yazılmış. ESHİM 20.400/17.000 = 1,20 → tam KDV %20;
+            # AKALIN 684/621,82 = 1,10 → KDV %10.
+            # Bu ayrım yapılmazsa 15+ sahte alarm, aradaki 3 GERÇEK eksik okumayı
+            # (METRO ×2, D-MARKET) gömer — bugün defalarca yaşadığımız kalıp.
+            _belge = abs(float(r["tutar"] or 0))
+            _kalem = _belge - float(r.get("capa_farki") or 0)
+            _kdv_uyum = False
+            if _kalem > 0:
+                _oran = _belge / _kalem
+                for _r2 in (1.01, 1.08, 1.10, 1.18, 1.20):
+                    if abs(_oran - _r2) < 0.006:      # ±%0,6 yuvarlama payı
+                        _kdv_uyum = True
+                        break
             _cf = abs(float(r.get("capa_farki") or 0))
             _tol = max(5.0, abs(float(r["tutar"] or 0)) * 0.02)
-            if _cf > _tol:
+            if _cf > _tol and not _kdv_uyum:
                 sayac["KALEM OKUMASI EKSİK"] = sayac.get("KALEM OKUMASI EKSİK", 0) + 1
                 kalemsiz.append({**{k: v for k, v in r.items() if k != "kalem"},
                                  "sebep": "KALEM OKUMASI EKSİK",
-                                 "care": ("Belge toplamı ile okunan kalemlerin toplamı "
-                                          "%.2f ₺ farklı — satır okunmamış. Gece "
-                                          "kurtarması yeniden okuyacak." % _cf)})
+                                 "care": ("Belge %.2f ₺, okunan kalemler %.2f ₺ — "
+                                          "aradaki %.2f ₺ hiçbir KDV oranıyla "
+                                          "açıklanmıyor, satır okunmamış. Gece "
+                                          "kurtarması yeniden okuyacak."
+                                          % (_belge, _kalem, _cf))})
             continue
         if not r["foto_var"] and not r["metin_var"]:
             sebep, care = "BELGE YOK", "Faturanın PDF/foto aslı sisteme yüklenmeli."
