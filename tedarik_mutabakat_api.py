@@ -587,3 +587,127 @@ def siparis_patlamasi(gun: int = 200, saat: int = 6, en_az: int = 3):
                 "Zaman oku tek yönlü kuruldu: fatura kümeden SONRA aranır."
                 % (pen_saat, esik)),
     }
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 📅 HAFTALIK ÖLÇÜM — "hatırlatma işe yaradı mı?" sorusunun RAKAMLA cevabı
+# ═══════════════════════════════════════════════════════════════════════════
+def _olcum_tablo(cur) -> None:
+    """İZOLE + APPEND-ONLY ölçüm defteri. Hiçbir mevcut tabloya dokunmaz."""
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS tedarik_haftalik_olcum (
+            id            TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+            olcum_tarihi  DATE NOT NULL,
+            acik_siparis  INT  NOT NULL DEFAULT 0,
+            en_eski_gun   INT,
+            patlama       INT  NOT NULL DEFAULT 0,
+            sube_kirilim  JSONB,
+            olculebilen   INT,
+            olculemeyen   INT,
+            mal_geldi_kapanmadi INT,
+            olusturma     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            UNIQUE (olcum_tarihi)
+        )
+    """)
+
+
+def haftalik_olcum_al(yaz: bool = False) -> Dict[str, Any]:
+    """Tedarik zincirinin O ANKİ sağlık rakamlarını üretir; `yaz=True` ise deftere işler.
+
+    ── NEDEN (2026-08-24) ──────────────────────────────────────────────────
+    11 açık sipariş temizlendi ve şubelere hatırlatma gönderildi. Ama liste
+    temizlemek ALIŞKANLIĞI değiştirmez — ZAFER aynı hatayı dört kez üst üste
+    yapmıştı. "Hatırlatma işe yaradı mı?" sorusunun tek dürüst cevabı RAKAMDIR.
+    Bu yüzden ölçüm HAFTALIK ve APPEND-ONLY saklanır: bugünkü sayı tek başına
+    bir şey söylemez, EĞİLİM söyler.
+
+    ⚠️ Bu fonksiyon yalnız kendi izole tablosuna yazar; başka hiçbir kayda
+    dokunmaz. Hata durumunda çağıran tarafın akışını bozmaz (scheduler yutar).
+    """
+    from datetime import date as _d
+    with db() as (_, cur):
+        cur.execute(
+            "SELECT ts.id, ts.olusturma::date::text AS gun, s.ad AS sube_adi, "
+            "       UPPER(COALESCE(ts.tedarikci_ad, td.ad, '')) AS ted_ad "
+            "  FROM toptanci_siparis ts "
+            "  LEFT JOIN tedarikciler td ON td.id = ts.tedarikci_id "
+            "  LEFT JOIN subeler s ON s.id = ts.sube_id "
+            " WHERE ts.teslim_ts IS NULL AND COALESCE(ts.durum,'') <> 'iptal' "
+            "   AND ts.olusturma >= CURRENT_DATE - 400"
+        )
+        acik = [dict(r) for r in (cur.fetchall() or [])]
+    bugun = _d.today()
+    yaslar = []
+    kirilim: Dict[str, int] = {}
+    for a in acik:
+        kirilim[a["sube_adi"] or "?"] = kirilim.get(a["sube_adi"] or "?", 0) + 1
+        try:
+            yaslar.append((bugun - _d.fromisoformat(a["gun"])).days)
+        except Exception:  # noqa: BLE001
+            pass
+    pat = siparis_patlamasi(gun=30)
+    mut = fatura_teslim_mutabakati(gun=60)
+    olcum = {
+        "olcum_tarihi": str(bugun),
+        "acik_siparis": len(acik),
+        "en_eski_gun": (max(yaslar) if yaslar else None),
+        "patlama": pat.get("patlama_sayisi", 0),
+        "sube_kirilim": kirilim,
+        "olculebilen": mut.get("olculebilen"),
+        "olculemeyen": mut.get("olculemeyen"),
+        "mal_geldi_kapanmadi": sum(
+            1 for x in mut.get("donemler", []) if x.get("kanit_gucu") == "GÜÇLÜ"),
+    }
+    if yaz:
+        with db() as (_, cur):
+            _olcum_tablo(cur)
+            cur.execute(
+                "INSERT INTO tedarik_haftalik_olcum "
+                "(olcum_tarihi, acik_siparis, en_eski_gun, patlama, sube_kirilim, "
+                " olculebilen, olculemeyen, mal_geldi_kapanmadi) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s) "
+                # Aynı gün iki kez çalışırsa (restart) ikinci kayıt açılmaz,
+                # GÜNCELLENİR — ölçüm defteri tekil kalır.
+                "ON CONFLICT (olcum_tarihi) DO UPDATE SET "
+                "  acik_siparis=EXCLUDED.acik_siparis, en_eski_gun=EXCLUDED.en_eski_gun, "
+                "  patlama=EXCLUDED.patlama, sube_kirilim=EXCLUDED.sube_kirilim, "
+                "  olculebilen=EXCLUDED.olculebilen, olculemeyen=EXCLUDED.olculemeyen, "
+                "  mal_geldi_kapanmadi=EXCLUDED.mal_geldi_kapanmadi",
+                (olcum["olcum_tarihi"], olcum["acik_siparis"], olcum["en_eski_gun"],
+                 olcum["patlama"], json.dumps(kirilim, ensure_ascii=False),
+                 olcum["olculebilen"], olcum["olculemeyen"], olcum["mal_geldi_kapanmadi"]),
+            )
+    return olcum
+
+
+@router.get("/haftalik-ozet")
+def haftalik_ozet(hafta: int = 12):
+    """📅 Tedarik zinciri sağlık eğilimi + bugünkü durum. SALT OKUR."""
+    h = max(2, min(52, int(hafta or 12)))
+    with db() as (_, cur):
+        _olcum_tablo(cur)
+        cur.execute(
+            "SELECT olcum_tarihi::text AS tarih, acik_siparis, en_eski_gun, patlama, "
+            "       sube_kirilim, olculebilen, olculemeyen, mal_geldi_kapanmadi "
+            "  FROM tedarik_haftalik_olcum ORDER BY olcum_tarihi DESC LIMIT %s", (h,))
+        gecmis = [dict(r) for r in (cur.fetchall() or [])]
+    simdi = haftalik_olcum_al(yaz=False)
+    yon = None
+    if gecmis:
+        onceki = gecmis[0]["acik_siparis"]
+        fark = simdi["acik_siparis"] - onceki
+        yon = ("İYİLEŞİYOR" if fark < 0 else "KÖTÜLEŞİYOR" if fark > 0 else "DEĞİŞMEDİ")
+        simdi["onceki_olcume_gore"] = fark
+    return {
+        "simdi": simdi, "yon": yon, "gecmis": gecmis, "olcum_sayisi": len(gecmis),
+        "not": ("Bugünkü sayı tek başına bir şey söylemez, EĞİLİM söyler. "
+                "2026-08-24'te 11 açık sipariş temizlenip şubelere hatırlatma "
+                "gönderildi; bu defter o hatırlatmanın işe yarayıp yaramadığını "
+                "rakamla gösterir. Ölçüm her pazartesi gece otomatik işlenir."),
+    }
+
+
+@router.post("/haftalik-olc")
+def haftalik_olc_simdi():
+    """Ölçümü ELLE al ve deftere işle (scheduler'ı beklemeden)."""
+    return {"success": True, "olcum": haftalik_olcum_al(yaz=True)}

@@ -466,6 +466,41 @@ def _gece_yarisi_scheduler():
             except Exception as e:
                 logger.error(f"⏰ Scheduler faiz hatası: {e}")
 
+            # 📅 HAFTALIK TEDARİK ÖLÇÜMÜ — her PAZARTESİ (2026-08-24)
+            # 11 açık sipariş temizlendi ve şubelere hatırlatma gönderildi. Ama
+            # liste temizlemek ALIŞKANLIĞI değiştirmez — ZAFER aynı hatayı dört
+            # kez üst üste yapmıştı. "Hatırlatma işe yaradı mı?" sorusunun tek
+            # dürüst cevabı RAKAMDIR ve tek ölçüm değil EĞİLİM gerektirir.
+            # İZOLE: kendi append-only tablosuna yazar, hata YUTULUR — gece
+            # akışının geri kalanını asla bozmaz.
+            if bugun.weekday() == 0:
+                try:
+                    from tedarik_mutabakat_api import haftalik_olcum_al
+                    _to = haftalik_olcum_al(yaz=True)
+                    logger.info("⏰ Scheduler: tedarik ölçümü — açık %s, patlama %s",
+                                _to.get("acik_siparis"), _to.get("patlama"))
+                    # Sahibin görmediği ölçüm ölçüm değildir: yalnız GÖRÜLECEK
+                    # bir şey varsa yaz (uyarı bütçesi — "0 açık" mesajı atmaz).
+                    if (_to.get("acik_siparis") or 0) > 0 or (_to.get("patlama") or 0) > 0:
+                        try:
+                            from whatsapp_bildirim import whatsapp_gonder
+                            _sat = " · ".join(f"{k} {v}" for k, v in
+                                              (_to.get("sube_kirilim") or {}).items())
+                            whatsapp_gonder(
+                                "📦 HAFTALIK TEDARİK ÖLÇÜMÜ\n\n"
+                                f"Teslim alınmamış sipariş: {_to.get('acik_siparis')}"
+                                + (f" (en eskisi {_to.get('en_eski_gun')} gün)"
+                                   if _to.get("en_eski_gun") else "")
+                                + (f"\nŞube: {_sat}" if _sat else "")
+                                + f"\nSipariş patlaması (son 30 gün): {_to.get('patlama')}"
+                                + f"\nMal geldi/sipariş kapanmadı: {_to.get('mal_geldi_kapanmadi')}"
+                                + "\n\nTeslim al yapılmazsa stok artmaz ve "
+                                  "tedarikçiden fatura istenmez.")
+                        except Exception as _ew:  # noqa: BLE001
+                            logger.warning("⏰ tedarik ölçümü WhatsApp atlandı: %s", str(_ew)[:120])
+                except Exception as _et:  # noqa: BLE001
+                    logger.warning("⏰ Scheduler tedarik ölçümü hatası (yutuldu): %s", str(_et)[:150])
+
             # Her gece — kasa anomali kontrolü
             try:
                 with db() as (conn, cur):
