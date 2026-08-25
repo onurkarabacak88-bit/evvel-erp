@@ -208,8 +208,17 @@ def _vision_ocr(foto: bytes, mime: str) -> Dict[str, Any]:
     from openai import OpenAI
     # LLM_BASE_URL doluysa OpenAI-uyumlu başka sağlayıcı (örn. Gemini ücretsiz
     # katman: generativelanguage.googleapis.com/v1beta/openai/) kullanılır
+    # ⏱️ ZAMAN AŞIMI ZORUNLU (2026-08-25, canlı teşhis)
+    # Eskiden istemci zaman aşımısız kuruluyordu. Takılan TEK bir HTTP isteği,
+    # OCR frenindeki (BoundedSemaphore(3)) yerini SONSUZA DEK tutuyor. Üç tanesi
+    # takılırsa OCR tüm sistemde durur — ne sonuç, ne hata, ne log. Canlı kanıt:
+    # MEHMET ATALAY NPE2026000000432 (2,4 MB foto) üç kez kuyruğa alındı, üçünde
+    # de hiçbir şey olmadı; ocr_json NULL, ocr_hata NULL, durum 'ocr_tamam'.
+    # Sessizce ölen bir motor, hata veren motordan tehlikelidir.
     client = OpenAI(api_key=api_key,
-                    base_url=(os.getenv("LLM_BASE_URL") or "").strip() or None)
+                    base_url=(os.getenv("LLM_BASE_URL") or "").strip() or None,
+                    timeout=float(os.getenv("OCR_TIMEOUT_SN", "120")),
+                    max_retries=1)
     b64 = base64.b64encode(foto).decode("ascii")
     resp = client.chat.completions.create(
         model=os.getenv("OPENAI_FATURA_MODEL", "gpt-4o"),  # fatura kritik → tam model
@@ -355,7 +364,9 @@ def _text_ocr(metin: str) -> Dict[str, Any]:
     # LLM_BASE_URL doluysa OpenAI-uyumlu başka sağlayıcı (örn. Gemini ücretsiz
     # katman: generativelanguage.googleapis.com/v1beta/openai/) kullanılır
     client = OpenAI(api_key=api_key,
-                    base_url=(os.getenv("LLM_BASE_URL") or "").strip() or None)
+                    base_url=(os.getenv("LLM_BASE_URL") or "").strip() or None,
+                    timeout=float(os.getenv("OCR_TIMEOUT_SN", "120")),
+                    max_retries=1)  # zaman aşımısız istemci OCR frenini kilitler
     govde = (metin or "").strip()[:12000]  # uzun faturada bağlamı sınırla
     son_hata: Optional[Exception] = None
     # ⏳ 3 deneme + ARTAN BEKLEME (2026-08-08): eski sürüm 2 denemeyi ART ARDA
@@ -1188,8 +1199,27 @@ def _pdf_kod_kalemler(pdf_bytes: bytes, fatura_no: Optional[str] = None) -> List
 def _ocr_calistir(fatura_id: str) -> None:
     """Arka plan iş parçacığı — kendi DB bağlantısı. Hiçbir hata fırlatmaz.
     _OCR_FRENI: aynı anda en çok 3 OCR (pool + LLM kota koruması)."""
-    with _OCR_FRENI:
+    # 🚦 KİLİTLENEMEYEN FREN (2026-08-25)
+    # `with _OCR_FRENI:` sonsuza dek bekler. Fren dolmuşsa iş SESSİZCE asılı
+    # kalır — sahip "OCR çalışmıyor" der, hiçbir kayıtta sebep yoktur.
+    # Doğrusu: belli süre bekle, alamazsan İZ BIRAK ve gece kurtarmasına devret.
+    # Kilitlenebilen bir fren, frensizlikten kötüdür.
+    if not _OCR_FRENI.acquire(timeout=float(os.getenv("OCR_FREN_BEKLE_SN", "300"))):
+        logger.warning("OCR freni dolu, sıraya bırakıldı: %s", fatura_id)
+        try:
+            with db() as (conn, cur):
+                cur.execute(
+                    "UPDATE tedarikci_fatura SET durum='ocr_bekliyor', ocr_hata=%s "
+                    "WHERE id=%s AND COALESCE(durum,'') <> 'kopya'",
+                    ("OCR sırası dolu — gece kurtarmasında yeniden denenecek", fatura_id))
+                conn.commit()
+        except Exception as _ef:  # noqa: BLE001
+            logger.warning("OCR fren izi yazılamadı %s: %s", fatura_id, str(_ef)[:120])
+        return
+    try:
         _ocr_calistir_icerik(fatura_id)
+    finally:
+        _OCR_FRENI.release()
 
 
 def _ocr_calistir_icerik(fatura_id: str) -> None:
