@@ -974,10 +974,17 @@ def urun_sozlugu(tedarikci: str = "", gun: int = 400, en_az: int = 1):
 # ═══════════════════════════════════════════════════════════════════════════
 # 🌉 KALEM KÖPRÜSÜ — sipariş adı ↔ fatura adı
 # ═══════════════════════════════════════════════════════════════════════════
+# ⚠️ DOLGU LİSTESİ DAR TUTULUR — BİÇİM KELİMESİ AYIRT EDİCİDİR (2026-08-25)
+# İlk sürümde "SOS", "TOZU", "PÜRE", "ŞURUP" da dolgu sayılıp atılmıştı. Sonuç:
+#   "Çikolata Sos" → "FO ÇİKOLATA AROMALI İÇECEK TOZU"   ❌ YANLIŞ, üstelik YÜKSEK güvenle
+# çünkü geriye yalnız {ÇİKOLATA} kaldı ve sos ile tozu ayıran kelime silinmişti.
+# Emin görünen yanlış cevap, kararsız görünen doğru cevaptan zararlıdır.
+# Bu katalogda ürünün BİÇİMİ (şurup / sos / toz / püre) tam da ayırt edici
+# eksendir. Dolguda YALNIZ gerçekten hiçbir şey ayırt etmeyenler kalır:
+# marka öneki, ölçü birimi, ambalaj sözcükleri.
 _URUN_DOLGU = {
-    "FO", "AROMALI", "SURUP", "PROF", "SOS", "BAR", "ADET", "KOLI",
-    "GR", "ML", "KG", "LT", "MEYVELI", "ICECEK", "TOZU", "MILKSHAKE",
-    "PURE", "URUN", "TL", "PAKET",
+    "FO", "AROMALI", "PROF", "BAR", "ADET", "KOLI",
+    "GR", "ML", "KG", "LT", "URUN", "TL", "PAKET",
 }
 
 
@@ -1157,6 +1164,20 @@ def kalem_koprusu(tedarikci: str = "", gun: int = 400,
             "ad_ortak": en["ad_ortak"], "adet_uyum": en["adet_uyum"],
             "ornek_donem": en["donemler"], "rakip_sayisi": len(lst) - 1,
         })
+    # ⚠️ ÇAKIŞMA UYARISI: bir fatura kalemine BİRDEN ÇOK sipariş kalemi
+    # bağlanıyorsa köprülerden en az biri yanlıştır. Canlı örnek: "Çikolata Sos"
+    # ile "Çikolata Toz" aynı ürüne bağlanmıştı. Sessizce en yükseği seçmek
+    # yanlışı gizler; ikisini de İŞARETLEYİP sahibe göstermek doğrudur.
+    _hedef: Dict[Any, int] = {}
+    for k in koprular:
+        _hedef[(k["karsi_taraf"], k["fatura_urun"])] =             _hedef.get((k["karsi_taraf"], k["fatura_urun"]), 0) + 1
+    for k in koprular:
+        if _hedef[(k["karsi_taraf"], k["fatura_urun"])] > 1:
+            k["cakisma"] = ("Bu fatura kalemine BAŞKA bir sipariş kalemi de "
+                            "bağlandı — en az biri yanlış, sahip ayırmalı.")
+            if k["guven"] == "YUKSEK":
+                k["guven"] = "ORTA"   # çakışan köprü 'yüksek güven' olamaz
+
     sira = {"YUKSEK": 0, "ORTA": 1, "DUSUK": 2}
     koprular.sort(key=lambda x: (x["karsi_taraf"], sira[x["guven"]], -x["puan"]))
     ozet: Dict[str, int] = {}
