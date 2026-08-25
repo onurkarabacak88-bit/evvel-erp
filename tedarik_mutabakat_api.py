@@ -852,6 +852,10 @@ def haftalik_olcum_al(yaz: bool = False) -> Dict[str, Any]:
             pass
     pat = siparis_patlamasi(gun=30)
     mut = fatura_teslim_mutabakati(gun=60)
+    try:
+        mkz = merkez_kayit_boslugu(gun=60)
+    except Exception:  # noqa: BLE001
+        mkz = {}
     olcum = {
         "olcum_tarihi": str(bugun),
         "acik_siparis": len(acik),
@@ -862,6 +866,9 @@ def haftalik_olcum_al(yaz: bool = False) -> Dict[str, Any]:
         "olculemeyen": mut.get("olculemeyen"),
         "mal_geldi_kapanmadi": sum(
             1 for x in mut.get("donemler", []) if x.get("kanit_gucu") == "GÜÇLÜ"),
+        # 🏢 Merkez alımı sistemden geçiyor mu? Damga geçmişi kapatır ama boşluğu
+        # kapatmaz; bu sayı artıyorsa akış kullanılmıyor demektir.
+        "merkez_sistemden_gecmeyen": mkz.get("sistemden_gecmeyen_alim"),
     }
     if yaz:
         with db() as (_, cur):
@@ -2340,3 +2347,66 @@ def merkez_alimlari(gun: int = 400):
             "not": ("Merkez alımı = şube paneli dışından, merkez tarafından yapılan "
                     "alım. Bulgu değildir ama GÖRÜNÜR kalır: 'merkez ne kadar alım "
                     "yapıyor' sorusu da bir denetim sorusudur.")}
+
+
+@router.get("/merkez-kayit-boslugu")
+def merkez_kayit_boslugu(gun: int = 120):
+    """🏢 SİSTEMDEN GEÇMEYEN MERKEZ ALIMLARI — boşluk tekrar açılmasın. SALT OKUR.
+
+    ── NEDEN (2026-08-25) ──────────────────────────────────────────────────
+    Sahip: "Bu siparişler merkez tarafından, yani BİZ istedik."
+    Sistemde merkez siparişi için TAM BİR AKIŞ ZATEN VAR — Cep ekranından
+    seçim yapılıyor, `merkez-siparis-olustur` kaydı açıyor ve WhatsApp mesajı
+    hazırlanıyor. Eksik olan MEKANİZMA DEĞİL, KULLANIM: o iki METRO alımı
+    telefonla/doğrudan verilmiş, sistem hiç görmemiş.
+
+    ⚠️ Geçmişi damgalamak (alim_kaynagi='merkez') o iki faturayı kapatır ama
+    BOŞLUĞU KAPATMAZ — üçüncüsü aynı şekilde girer. Şubelere hatırlatma
+    gönderdiğimizde öğrendiğimiz şeyin aynısı: liste temizlemek alışkanlığı
+    değiştirmez, ÖLÇÜM değiştirir.
+
+    Bu uç, merkez damgalı ama SİSTEMDE SİPARİŞ KAYDI OLMAYAN alımları sayar.
+    Sayı düşüyorsa akış kullanılmaya başlanmış; artıyorsa hatırlatma gerekiyor.
+
+    ── NEDEN ÖNEMLİ (damga bir çözüm değil, bir kayıt) ─────────────────────
+    Merkez alımı sistemden geçmezse şu üç şey KENDİLİĞİNDEN olmaz:
+      · şube "teslim al" ekranında o malı GÖRMEZ → stok artmaz
+      · belge talebi açılmaz → faturası kovalanmaz
+      · tedarik zinciri ölçümü o faturayı açıklayamaz
+    Yani mesele "alarm sussun" değil, ZİNCİRİN KURULMASIDIR.
+    """
+    g = max(30, min(730, int(gun or 120)))
+    with db() as (_, cur):
+        _alim_kaynagi_kolonu(cur)
+        cur.execute(
+            "SELECT f.id, f.tedarikci_ad, f.fatura_no, f.fatura_tarih::text AS tarih, "
+            "       COALESCE(f.toplam_tutar,0)::float AS tutar "
+            "  FROM tedarikci_fatura f "
+            " WHERE f.alim_kaynagi='merkez' AND COALESCE(f.durum,'') <> 'kopya' "
+            "   AND f.fatura_tarih >= CURRENT_DATE - %s "
+            " ORDER BY f.fatura_tarih DESC", (g,))
+        damgali = [dict(r) for r in (cur.fetchall() or [])]
+        cur.execute(
+            "SELECT COUNT(*) AS n, COALESCE(MAX(olusturma)::date::text,'') AS son "
+            "  FROM toptanci_siparis "
+            " WHERE COALESCE(kaynak,'') = 'merkez' "
+            "   AND olusturma >= CURRENT_DATE - %s", (g,))
+        sk = dict(cur.fetchone() or {})
+    kayitli = int(sk.get("n") or 0)
+    return {
+        "gun": g,
+        "sistemden_gecen_merkez_siparisi": kayitli,
+        "son_merkez_siparisi": sk.get("son") or None,
+        "sistemden_gecmeyen_alim": len(damgali),
+        "sistemden_gecmeyen_tutar": round(sum(x["tutar"] for x in damgali), 2),
+        "faturalar": damgali,
+        "durum": ("AKIŞ KULLANILIYOR" if kayitli > 0 and not damgali
+                  else "KISMEN" if kayitli > 0
+                  else "AKIŞ HİÇ KULLANILMIYOR"),
+        "not": ("Merkez siparişi için sistemde TAM AKIŞ var: Cep ekranı → "
+                "merkez-siparis-olustur → WhatsApp. Buradan geçmeyen alımda ÜÇ ŞEY "
+                "kendiliğinden OLMAZ: şube 'teslim al' ekranında malı görmez (stok "
+                "artmaz) · belge talebi açılmaz (fatura kovalanmaz) · tedarik ölçümü "
+                "o faturayı açıklayamaz. Mesele 'alarm sussun' değil ZİNCİRİN "
+                "KURULMASIDIR — damga bir çözüm değil, bir kayıttır."),
+    }
