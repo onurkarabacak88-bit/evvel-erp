@@ -2548,6 +2548,12 @@ export function TanimModulu({ gorunum, onCekmece, onKopru, onToast }) {
   // Bu ekran zaten "Teslimat Zinciri" — 5 halka görünümü onun ilk sekmesi.
   // Ölçümler İKİNCİ SEKME olarak girer; yeni ekran açmak ikinci bir "zincir"
   // ekranı doğururdu ve ikisi kaçınılmaz olarak ayrışırdı.
+  // Adet biçimlendirici — PARA DEĞİL. fmt() ₺ ekler; adet için yanlıştır.
+  const adetYaz = (v) => {
+    const n = Number(v);
+    return Number.isFinite(n) ? n.toLocaleString('tr-TR') : '—';
+  };
+
   const tmCubuk = (
     <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
       {[['halka', '🔗 5 Halka'], ['mutabakat', '⚖️ Tedarik Mutabakatı']].map(([k, ad]) => (
@@ -2654,9 +2660,14 @@ export function TanimModulu({ gorunum, onCekmece, onKopru, onToast }) {
                     }}>{d.kanit_gucu || 'TAM'}</span>
                   </div>
                   <div style={{ color: R.metin2, marginTop: 3 }}>{d.durum}</div>
+                  {/* 🐞 BİRİM TUZAĞI (canlı 2026-08-26): fmt() PARA biçimlendiricisi —
+                      adet değerlerine de "₺" ekliyor ve tutarda ÇİFT ₺ basıyordu
+                      ("fatura 168 ₺ adet · 85.537 ₺ ₺"). Adet ile para AYRI
+                      biçimlendirilir; sayıyı para gibi göstermek okuyanı yanıltır. */}
                   <div style={{ color: R.not2, fontSize: 11.5, marginTop: 3, fontFamily: F.mono }}>
-                    fatura {fmt(d.fatura_adet)} adet · teslim {fmt(d.teslim_alinan_adet)} adet · fark {fmt(d.adet_farki)}
-                    {d.fatura_tutari ? ` · ${fmt(d.fatura_tutari)} ₺` : ''}
+                    fatura {adetYaz(d.fatura_adet)} adet · teslim {adetYaz(d.teslim_alinan_adet)} adet
+                    {' '}· fark {adetYaz(d.adet_farki)} adet
+                    {d.fatura_tutari ? ` · ${fmt(d.fatura_tutari)}` : ''}
                   </div>
                   {d.birim_notu && (
                     <div style={{ color: R.not2, fontSize: 11, marginTop: 2 }}>↳ {d.birim_notu}</div>
