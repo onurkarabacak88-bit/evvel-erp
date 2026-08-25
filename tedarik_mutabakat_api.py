@@ -1511,3 +1511,97 @@ def kimlik_adaylari(gun: int = 400):
                 "iki firmanın borcunu birbirine karıştırır ve geri alması en zor "
                 "hatalardandır — bu yüzden hüküm sahibindir."),
     }
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 📅 TARİH TERSLİĞİ — gün ile ay yer değiştirmiş mi?
+# ═══════════════════════════════════════════════════════════════════════════
+@router.get("/tarih-terslik")
+def tarih_terslik(gun: int = 730, esik_gun: int = 30):
+    """📅 GÜN/AY TERS OKUNMUŞ FATURALARI bulur. SALT OKUR, ÖNERİ-ONLY.
+
+    ── NEDEN (2026-08-25) ──────────────────────────────────────────────────
+    DYK irsaliyesinin aslı açıldığında görüldü ki belgede `01-07-2026`
+    (1 Temmuz) yazan tarih sisteme `2026-01-07` (7 Ocak) diye girmiş —
+    **altı aylık kayma**. Belge Temmuz'a ait ama Ocak'ta duruyor.
+    Bu tek belgeye özgü olmayabilir; tarih kayması sessizdir çünkü tutar
+    doğrudur, tedarikçi doğrudur, yalnız DÖNEM yanlıştır. Cari yaşlandırma,
+    KDV dönemi ve "şu ay ne aldık" sorularının hepsi bundan zarar görür.
+
+    ── ÇAPA: YÜKLEME TARİHİ ────────────────────────────────────────────────
+    Belgeyi açmadan nasıl anlarız? Fatura sisteme yüklendiği tarih (olusturma)
+    bilinir ve fatura genelde yüklenmesinden KISA SÜRE ÖNCE kesilir. DYN
+    vakasında: fatura_tarih 7 Ocak, yükleme 2 Temmuz → arada 176 gün.
+    Gün ve ayı TAKAS edince 1 Temmuz çıkıyor → yüklemeye 1 gün. Takas,
+    tarihi yükleme gününe BELİRGİN ŞEKİLDE yaklaştırıyorsa şüphe güçlüdür.
+
+    ── TARAMA KOŞULU ───────────────────────────────────────────────────────
+    Yalnız gün ≤ 12 olan tarihler karışabilir (13 ve üstü ay olamaz).
+    Gün = ay ise takas anlamsızdır. Bu yüzden evren zaten dardır; her
+    "gün ≤ 12" tarihi şüpheli DEĞİLDİR — kanıt, takasın yaklaştırmasıdır.
+
+    ⚠️ ÖNERİ-ONLY: hiçbir tarih değiştirilmez. Tarih düzeltmek belgeyi başka
+    bir döneme taşır; yanlış düzeltme, düzeltmediğinden beterdir. Karar,
+    belgenin aslına bakan sahibindir.
+    """
+    g = max(30, min(1460, int(gun or 730)))
+    esik = max(5, min(180, int(esik_gun or 30)))
+    from datetime import date as _d
+    with db() as (_, cur):
+        cur.execute(
+            "SELECT f.id, f.tedarikci_ad, f.fatura_no, "
+            "       f.fatura_tarih::text AS tarih, f.olusturma::date::text AS yukleme, "
+            "       COALESCE(f.toplam_tutar,0)::float AS tutar, f.durum "
+            "  FROM tedarikci_fatura f "
+            " WHERE f.fatura_tarih IS NOT NULL "
+            "   AND f.fatura_tarih >= CURRENT_DATE - %s "
+            "   AND COALESCE(f.durum,'') <> 'kopya' "
+            " ORDER BY f.fatura_tarih DESC", (g,))
+        rows = [dict(r) for r in (cur.fetchall() or [])]
+
+    supheli, incelenen = [], 0
+    for r in rows:
+        try:
+            y, ay, gn = (int(x) for x in str(r["tarih"])[:10].split("-"))
+            yy, yay, ygn = (int(x) for x in str(r["yukleme"])[:10].split("-"))
+        except (ValueError, TypeError):
+            continue
+        if gn > 12 or gn == ay:
+            continue                     # takas imkânsız ya da anlamsız
+        incelenen += 1
+        try:
+            simdiki = _d(y, ay, gn)
+            takas = _d(y, gn, ay)        # gün ile ay yer değiştirdi
+            yuk = _d(yy, yay, ygn)
+        except ValueError:
+            continue
+        f_simdi = abs((yuk - simdiki).days)
+        f_takas = abs((yuk - takas).days)
+        # Takas yüklemeye BELİRGİN ölçüde yaklaştırıyorsa şüpheli
+        if f_simdi - f_takas < esik:
+            continue
+        # Gelecek tarihli olamaz — takas sonrası yüklemeden sonraysa aday değil
+        if takas > yuk:
+            continue
+        supheli.append({
+            "fatura_id": r["id"], "tedarikci_ad": r["tedarikci_ad"],
+            "fatura_no": r["fatura_no"], "tutar": r["tutar"], "durum": r["durum"],
+            "kayitli_tarih": str(simdiki), "onerilen_tarih": str(takas),
+            "yukleme_tarihi": str(yuk),
+            "yuklemeye_uzaklik_gun": {"kayitli": f_simdi, "takas": f_takas},
+            "kazanc_gun": f_simdi - f_takas,
+            "belge_url": "/api/fatura/%s/foto" % r["id"],
+        })
+    supheli.sort(key=lambda x: -x["kazanc_gun"])
+    return {
+        "gun": g, "esik_gun": esik,
+        "toplam_fatura": len(rows), "takasa_uygun": incelenen,
+        "supheli": len(supheli), "satirlar": supheli,
+        "not": ("ÖNERİ-ONLY — hiçbir tarih değiştirilmedi. Çapa YÜKLEME TARİHİDİR: "
+                "fatura genelde yüklenmesinden kısa süre önce kesilir. Bir tarih "
+                "yalnız 'gün ≤ 12' olduğu için şüpheli DEĞİLDİR; kanıt, gün ile ayı "
+                "takas etmenin tarihi yükleme gününe BELİRGİN ölçüde yaklaştırmasıdır. "
+                "Tarih düzeltmek belgeyi başka bir döneme taşır (cari yaşlandırma, KDV "
+                "dönemi); yanlış düzeltme düzeltmediğinden beterdir — her satır için "
+                "belgenin ASLINA bakılmalı, `belge_url` onu açar."),
+    }
