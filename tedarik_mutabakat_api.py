@@ -1966,3 +1966,146 @@ def belge_turu_isle(gun: int = 730, kuru: int = 1):
                 "elle damgalanmalı. Elle konan damga otomatik olanı yener ve "
                 "yeniden işlemede EZİLMEZ."),
     }
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 📦 BİRİM / KOLİ ADEDİ — "×72 kutu mu, koli mi?"
+# ═══════════════════════════════════════════════════════════════════════════
+_KOLI_DESEN = (
+    re.compile(r"\*\s*(\d{1,3})\s*$"),            # "... 700 ML *6"
+    re.compile(r"(\d{1,3})\s*[Xx]\s*(\d{1,3})\s*$"),  # "... 200 ML 4X6"
+    re.compile(r"\*\s*(\d{1,3})\b"),              # "... *6 ..."
+)
+
+
+def _birim_kolonu(cur) -> None:
+    """`siparis_urun.birim` + `koli_adet`. Boş = bilinmiyor (davranış değişmez)."""
+    cur.execute("ALTER TABLE siparis_urun ADD COLUMN IF NOT EXISTS birim TEXT")
+    cur.execute("ALTER TABLE siparis_urun ADD COLUMN IF NOT EXISTS koli_adet INT")
+    cur.execute("ALTER TABLE siparis_urun ADD COLUMN IF NOT EXISTS birim_kaynak TEXT")
+
+
+def _koli_coz(fatura_adi: str):
+    """Fatura ürün adından koli adedini çıkarır. Bulamazsa None.
+
+    Faturadaki ad zaten söylüyor: "FO VANİLYA AROMALI ŞURUP 700 ML *6" → 6,
+    "AVOYA SADE ÇEVİR AÇ KAPAK 200 ML 4X6" → 24 (4×6). Yeni veri toplamaya
+    gerek yok; ELİMİZDEKİ ad bu bilgiyi taşıyor.
+    """
+    t = (fatura_adi or "").strip()
+    m = _KOLI_DESEN[1].search(t)
+    if m:
+        try:
+            a, b = int(m.group(1)), int(m.group(2))
+            if 1 <= a <= 100 and 1 <= b <= 100:
+                return a * b
+        except ValueError:
+            pass
+    for dsn in (_KOLI_DESEN[0], _KOLI_DESEN[2]):
+        m = dsn.search(t)
+        if m:
+            try:
+                k = int(m.group(1))
+                if 2 <= k <= 100:
+                    return k
+            except ValueError:
+                continue
+    return None
+
+
+class BirimBody(BaseModel):
+    urun_id: str
+    birim: str = "adet"           # adet | koli | kg | lt
+    koli_adet: Optional[int] = None
+    gerekce: Optional[str] = None
+
+
+@router.get("/birim-onerileri")
+def birim_onerileri(gun: int = 400):
+    """📦 SİPARİŞ ÜRÜNÜ İÇİN KOLİ ADEDİ önerir — fatura adından öğrenilir. ÖNERİ-ONLY.
+
+    ── NEDEN (2026-08-25) ──────────────────────────────────────────────────
+    Fatura↔teslim mutabakatında iki dönem "FATURALANMAYAN TESLİM?" diye ZAYIF
+    kanıtla asılı kaldı çünkü sipariş ile fatura AYNI BİRİMDE konuşmuyor:
+        sipariş : "Redbull ×72"      (kutu)
+        fatura  : 126 adet           (koli)
+    Sayılar kıyaslanabilir değil; ölçüm hüküm veremiyor ve o alarm KAPANMIYOR.
+
+    ── KAYNAK: FATURANIN KENDİ ADI ─────────────────────────────────────────
+    Koli adedi zaten elimizde — faturadaki ürün adı söylüyor:
+        "FO VANİLYA AROMALI ŞURUP 700 ML *6"        → 6
+        "AVOYA SADE ÇEVİR AÇ KAPAK 200 ML 4X6"      → 24
+    Yeni veri toplamaya, personele soru sormaya gerek yok. Kalem köprüsü
+    sipariş adını fatura adına bağladığı için, koli adedi sipariş ürününe
+    taşınabilir.
+
+    ⚠️ ÖNERİ-ONLY: hiçbir ürün güncellenmez. Yanlış koli adedi, ölçümü
+    düzeltmez BOZAR — 72 kutuyu 6'ya bölüp 12 koli sanmak, gerçek bir farkı
+    gizler. Bu yüzden köprünün güveni de birlikte gösterilir; DÜŞÜK güvenli
+    köprüden gelen öneri kullanılmamalıdır.
+    """
+    g = max(30, min(730, int(gun or 400)))
+    kop = kalem_koprusu(gun=g)
+    with db() as (_, cur):
+        _birim_kolonu(cur)
+        cur.execute("SELECT id, ad, COALESCE(birim,'') AS birim, koli_adet "
+                    "FROM siparis_urun WHERE COALESCE(aktif,TRUE)")
+        urunler = {(_tr_buyut(r["ad"]) if r["ad"] else ""): dict(r)
+                   for r in (cur.fetchall() or [])}
+    oneri, atlanan = [], []
+    for k in kop.get("koprular", []):
+        koli = _koli_coz(k["fatura_urun"])
+        u = urunler.get(_tr_buyut(k["siparis_urun"]))
+        if not u:
+            atlanan.append({"siparis_urun": k["siparis_urun"],
+                            "neden": "sipariş ürünü kataloğda bulunamadı"})
+            continue
+        if koli is None:
+            atlanan.append({"siparis_urun": k["siparis_urun"],
+                            "neden": "fatura adında koli bilgisi yok (%s)"
+                                     % k["fatura_urun"][:40]})
+            continue
+        oneri.append({
+            "urun_id": u["id"], "siparis_urun": k["siparis_urun"],
+            "fatura_urun": k["fatura_urun"],
+            "onerilen_koli_adet": koli,
+            "mevcut_koli_adet": u.get("koli_adet"),
+            "kopru_guveni": k["guven"],
+            "kullanilabilir": k["guven"] in ("ONAYLI", "YUKSEK"),
+            "gerekce": "fatura adından çözüldü: %s" % k["fatura_urun"][:60],
+        })
+    oneri.sort(key=lambda x: (not x["kullanilabilir"], x["siparis_urun"]))
+    return {
+        "gun": g, "oneri": len(oneri),
+        "kullanilabilir": sum(1 for o in oneri if o["kullanilabilir"]),
+        "atlanan": len(atlanan), "oneriler": oneri, "atlananlar": atlanan[:20],
+        "not": ("ÖNERİ-ONLY — hiçbir ürün güncellenmedi. Koli adedi YENİ VERİ "
+                "DEĞİLDİR: faturanın kendi adında zaten yazıyor ('*6', '4X6'). "
+                "⚠️ Yanlış koli adedi ölçümü düzeltmez BOZAR — 72 kutuyu 6'ya bölüp "
+                "12 koli sanmak gerçek bir farkı GİZLER. Bu yüzden köprü güveni "
+                "birlikte gösterilir; DÜŞÜK güvenli köprüden gelen öneri "
+                "kullanılmamalıdır (`kullanilabilir` alanı bunu söyler)."),
+    }
+
+
+@router.post("/birim-ata")
+def birim_ata(body: BirimBody):
+    """Sahibin birim/koli kararını ürüne yazar (kaynakta damgalanır)."""
+    b = (body.birim or "adet").strip().lower()
+    if b not in ("adet", "koli", "kg", "lt", "paket"):
+        raise HTTPException(400, "birim: adet | koli | kg | lt | paket")
+    k = body.koli_adet
+    if k is not None and not (1 <= int(k) <= 1000):
+        raise HTTPException(400, "koli_adet 1-1000 arası olmalı")
+    with db() as (conn, cur):
+        _birim_kolonu(cur)
+        cur.execute(
+            "UPDATE siparis_urun SET birim=%s, koli_adet=%s, birim_kaynak=%s "
+            "WHERE id=%s RETURNING ad",
+            (b, k, "sahip:" + ((body.gerekce or "")[:100] or "onay"), body.urun_id))
+        r = cur.fetchone()
+        if not r:
+            raise HTTPException(404, "ürün bulunamadı")
+        conn.commit()
+    return {"ok": True, "urun_id": body.urun_id, "ad": dict(r)["ad"],
+            "birim": b, "koli_adet": k}
