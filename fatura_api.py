@@ -7032,3 +7032,73 @@ def cari_ode(body: CariOdemeModel):
             f"✓ {ted} — {tutar:,.0f} ₺ ödendi (kapatacak açık fatura yok, avans/belgesiz)"
         ),
     }
+
+
+@router.post("/{fatura_id}/tarih-duzelt")
+def fatura_tarih_duzelt(fatura_id: str, yeni_tarih: str, gerekce: str = ""):
+    """📅 GÜN/AY TERS OKUNMUŞ fatura tarihini düzeltir. İZLİ, DAR KAPILI.
+
+    ── NEDEN (2026-08-25) ──────────────────────────────────────────────────
+    DYK e-irsaliyesinin aslı açıldığında görüldü: belgede `01-07-2026`
+    (1 Temmuz) yazan tarih sisteme `2026-01-07` (7 Ocak) diye girmiş —
+    ALTI AYLIK KAYMA. Tarih kayması sessizdir: tutar doğru, tedarikçi doğru,
+    yalnız DÖNEM yanlıştır. Cari yaşlandırma, KDV dönemi ve "şu ay ne aldık"
+    sorularının hepsi bundan zarar görür.
+    Tarayıcı: GET /api/tedarik-mutabakat/tarih-terslik
+
+    ── NEDEN DAR KAPI ──────────────────────────────────────────────────────
+    Bu uç GENEL bir "tarihi değiştir" ucu DEĞİLDİR ve olmamalıdır. Yalnızca
+    gün ile ayın YER DEĞİŞTİRDİĞİ düzeltmeyi kabul eder. Serbest tarih
+    değiştirme, faturayı istenen döneme kaydırmanın kapısını açar — bir mali
+    sistemde açılabilecek en tehlikeli kapılardan biridir. Yeni tarih, eski
+    tarihin gün/ay takası değilse istek REDDEDİLİR.
+
+    ── İZ ──────────────────────────────────────────────────────────────────
+    Eski tarih SİLİNMEZ: audit kaydına ve ocr_hata notuna yazılır. Yanlış
+    düzeltildiyse geri dönülebilsin (geri-alma ≠ silme).
+    """
+    from datetime import datetime as _dt
+    y = (yeni_tarih or "").strip()[:10]
+    try:
+        yeni = _dt.strptime(y, "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(400, "yeni_tarih 'YYYY-AA-GG' olmalı")
+    with db() as (conn, cur):
+        _ensure_tablolar(cur)
+        cur.execute("SELECT fatura_tarih, tedarikci_ad, fatura_no, "
+                    "COALESCE(ocr_hata,'') AS not_ FROM tedarikci_fatura WHERE id=%s",
+                    (fatura_id,))
+        r = cur.fetchone()
+        if not r:
+            raise HTTPException(404, "fatura bulunamadı")
+        d = dict(r)
+        eski = d.get("fatura_tarih")
+        if not eski:
+            raise HTTPException(400, "faturanın mevcut tarihi yok — takas doğrulanamaz")
+        # ⛔ DAR KAPI: yalnız gün/ay takası kabul edilir
+        if not (yeni.year == eski.year and yeni.month == eski.day
+                and yeni.day == eski.month):
+            raise HTTPException(
+                400,
+                "Bu uç YALNIZ gün/ay takasını düzeltir. %s için beklenen: %04d-%02d-%02d. "
+                "Serbest tarih değişikliği bilerek engellenmiştir — faturayı istenen "
+                "döneme kaydırmanın kapısı açılmasın."
+                % (str(eski), eski.year, eski.day, eski.month))
+        _not = ("[tarih düzeltildi %s → %s · %s] " % (str(eski), str(yeni),
+                                                      (gerekce or "gerekçe yok")[:120]))
+        cur.execute(
+            "UPDATE tedarikci_fatura SET fatura_tarih=%s, ocr_hata=%s WHERE id=%s",
+            (yeni, (_not + d["not_"])[:480], fatura_id))
+        try:
+            from kasa_service import audit as _audit
+            _audit(cur, "tedarikci_fatura", fatura_id, "TARIH_DUZELT",
+                   eski={"fatura_tarih": str(eski)})
+        except Exception as e:  # noqa: BLE001 — audit yoksa düzeltme yine de izli (ocr_hata notu)
+            logger.warning("tarih düzeltme audit yazılamadı: %s", str(e)[:120])
+        conn.commit()
+    return {"ok": True, "fatura_id": fatura_id, "eski_tarih": str(eski),
+            "yeni_tarih": str(yeni), "tedarikci": d.get("tedarikci_ad"),
+            "fatura_no": d.get("fatura_no"),
+            "not": ("Eski tarih SİLİNMEDİ — audit kaydında ve belge notunda duruyor. "
+                    "Bu uç yalnız gün/ay takasını kabul eder; serbest tarih değişikliği "
+                    "bilerek engellidir.")}
