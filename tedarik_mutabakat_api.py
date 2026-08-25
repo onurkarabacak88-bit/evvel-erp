@@ -1646,3 +1646,107 @@ def tarih_terslik(gun: int = 730, esik_gun: int = 30):
                 "dönemi); yanlış düzeltme düzeltmediğinden beterdir — her satır için "
                 "belgenin ASLINA bakılmalı, `belge_url` onu açar."),
     }
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 📄 BELGE TÜRÜ — fatura mı, irsaliye mi?
+# ═══════════════════════════════════════════════════════════════════════════
+_IRSALIYE_IZ = (
+    "e-irsaliye", "e-i̇rsaliye", "irsaliye no", "i̇rsaliye no",
+    "irsaliye tarihi", "i̇rsaliye tarihi", "sevk tarihi", "irsaliye tipi",
+    "temelirsaliye", "sevk zamani", "sevk zamanı",
+)
+
+
+@router.get("/belge-turu-teshisi")
+def belge_turu_teshisi(gun: int = 730):
+    """📄 FATURA SANILAN İRSALİYELERİ bulur. SALT OKUR, ÖNERİ-ONLY.
+
+    ── NEDEN (2026-08-25, iki canlı vaka) ──────────────────────────────────
+    `tedarikci_fatura` tablosunda **belge TÜRÜ** alanı yok. Mevcut
+    `belge_sinifi` alanı mal/hizmet ayrımı yapar — bu bambaşka bir eksendir.
+    Sonuç: e-İRSALİYE'ler fatura sanılıp tabloya giriyor ve ZARARSIZ DEĞİL:
+
+      · DYK e-irsaliyesi (1 Tem 2026): tutar 0,00 → `ocr-kapsama` teşhisi
+        bunu "TUTAR DA OKUNAMAMIŞ" diye OCR arızası saydı. Oysa doğruydu:
+        İRSALİYEDE FİYAT SÜTUNU BOŞTUR.
+      · METRO G31 belgesi de e-irsaliye çıktı; serisi fatura serisinden
+        (27X) farklı olduğu için kimlik tarayıcısı "ayrı firma olabilir"
+        dedi. Seri farkının sebebi ayrı firma değil AYRI BELGE TÜRÜYDÜ.
+
+    Yani belge türünü bilmemek en az üç yerde yanlış hüküm üretiyor:
+    OCR teşhisi, kimlik eşleştirmesi ve fatura↔teslim mutabakatı.
+
+    ── KANIT ───────────────────────────────────────────────────────────────
+    1) BELGE METNİ — "e-İrsaliye", "İrsaliye No", "Sevk Tarihi" ibareleri
+       (OCR json'ında ya da kaynak metinde). En güçlü kanıt: belgenin kendi
+       başlığı.
+    2) TUTARSIZ KALEM — kalemleri var ama hepsinin satır toplamı 0,00.
+       İrsaliyede miktar vardır, fiyat yoktur. Bu, metin bulunamasa da
+       güçlü bir imzadır.
+    Yalnız 2'ye dayanan öneri ORTA güvenlidir: OCR fiyatları okuyamamış bir
+    FATURA da böyle görünür. Bu yüzden ikisi ayrı raporlanır.
+
+    ⚠️ ÖNERİ-ONLY: hiçbir kayıt değişmez. İrsaliyeyi tablodan çıkarmak da
+    ÇÖZÜM DEĞİLDİR — irsaliye teslimatın kanıtıdır ve faturasıyla eşleşmesi
+    gerekir (DYK örneği: aynı gün 147.276,00 ₺'lik faturası var). Doğru çözüm
+    onu SİLMEK değil TÜRÜNÜ BİLMEKTİR.
+    """
+    g = max(30, min(1460, int(gun or 730)))
+    with db() as (_, cur):
+        cur.execute(
+            "SELECT f.id, f.tedarikci_ad, f.fatura_no, f.fatura_tarih::text AS tarih, "
+            "       COALESCE(f.toplam_tutar,0)::float AS tutar, f.durum, "
+            "       LEFT(COALESCE(f.ocr_json::text,''), 4000) AS oj, "
+            "       LEFT(COALESCE(f.kaynak_metin,''), 4000) AS km, "
+            "       COUNT(k.id) AS kalem, "
+            "       COALESCE(SUM(COALESCE(k.satir_toplam,0)),0)::float AS kalem_toplam "
+            "  FROM tedarikci_fatura f "
+            "  LEFT JOIN tedarikci_fatura_kalem k ON k.fatura_id = f.id "
+            " WHERE f.fatura_tarih >= CURRENT_DATE - %s "
+            "   AND COALESCE(f.durum,'') <> 'kopya' "
+            " GROUP BY f.id, f.tedarikci_ad, f.fatura_no, f.fatura_tarih, "
+            "          f.toplam_tutar, f.durum, f.ocr_json, f.kaynak_metin "
+            " ORDER BY f.fatura_tarih DESC", (g,))
+        rows = [dict(r) for r in (cur.fetchall() or [])]
+
+    bulgu = []
+    for r in rows:
+        metin = ((r["oj"] or "") + " " + (r["km"] or "")).lower()
+        iz = [k for k in _IRSALIYE_IZ if k in metin]
+        kalem = int(r["kalem"] or 0)
+        fiyatsiz = (kalem > 0 and abs(float(r["kalem_toplam"] or 0)) < 0.01
+                    and abs(float(r["tutar"] or 0)) < 0.01)
+        if not iz and not fiyatsiz:
+            continue
+        if iz and fiyatsiz:
+            guven, gerekce = "YUKSEK", ("belge metninde irsaliye ibaresi (%s) + "
+                                        "kalemler var ama fiyat YOK" % ", ".join(iz[:2]))
+        elif iz:
+            guven, gerekce = "YUKSEK", ("belge metninde irsaliye ibaresi: %s"
+                                        % ", ".join(iz[:3]))
+        else:
+            guven, gerekce = "ORTA", ("kalemler var ama hepsinin fiyatı 0,00 — "
+                                      "irsaliye imzası; ancak fiyatları okunamamış "
+                                      "bir FATURA da böyle görünebilir")
+        bulgu.append({
+            "fatura_id": r["id"], "tedarikci_ad": r["tedarikci_ad"],
+            "fatura_no": r["fatura_no"], "tarih": r["tarih"], "tutar": r["tutar"],
+            "kalem_sayisi": kalem, "guven": guven, "gerekce": gerekce,
+            "belge_url": "/api/fatura/%s/foto" % r["id"],
+        })
+    ozet: Dict[str, int] = {}
+    for b in bulgu:
+        ozet[b["guven"]] = ozet.get(b["guven"], 0) + 1
+    return {
+        "gun": g, "taranan": len(rows), "irsaliye_adayi": len(bulgu),
+        "guven_ozeti": ozet, "satirlar": bulgu,
+        "not": ("ÖNERİ-ONLY — hiçbir kayıt değişmedi. `tedarikci_fatura` tablosunda "
+                "belge TÜRÜ alanı yok; `belge_sinifi` mal/hizmet ayrımıdır, tür ayrımı "
+                "DEĞİLDİR. Türü bilmemek en az üç yerde yanlış hüküm üretir: OCR "
+                "teşhisi (0,00 tutarı 'okunamadı' sanır), kimlik eşleştirmesi (irsaliye "
+                "serisini ayrı firma sanır) ve fatura↔teslim mutabakatı. "
+                "İrsaliyeyi tablodan ÇIKARMAK çözüm değildir — irsaliye teslimatın "
+                "kanıtıdır ve faturasıyla eşleşmesi gerekir. Doğru çözüm SİLMEK değil "
+                "TÜRÜNÜ BİLMEKTİR."),
+    }
