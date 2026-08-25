@@ -1719,12 +1719,21 @@ def belge_turu_teshisi(gun: int = 730):
                     and abs(float(r["tutar"] or 0)) < 0.01)
         if not iz and not fiyatsiz:
             continue
+        # ⚖️ "İRSALİYELİ FATURA" AYRIMI (2026-08-25, ilk taramadan sonra)
+        # İlk sürüm tutarı OLAN 7 belgeyi de "irsaliye" diye işaretledi
+        # (METRO 46.767,43 · SÜTAŞ 30.367,00 · DYK 126.679,02 …). Oysa Türkiye'de
+        # yaygın olan İRSALİYELİ FATURA'da sevk bilgisi faturanın ÜSTÜNDE durur;
+        # belge geçerli bir FATURADIR ve tutarı gerçektir. "İrsaliye ibaresi var"
+        # tek başına hüküm değildir — belirleyici olan TUTARIN OLMAMASIDIR.
+        # Bu ayrım yapılmazsa 7 sahte alarm, aradaki 3 gerçek boşluğu gömer.
         if iz and fiyatsiz:
-            guven, gerekce = "YUKSEK", ("belge metninde irsaliye ibaresi (%s) + "
-                                        "kalemler var ama fiyat YOK" % ", ".join(iz[:2]))
+            guven, gerekce = "YUKSEK", ("SAF İRSALİYE — belge metninde irsaliye "
+                                        "ibaresi (%s) VE hiç fiyat yok"
+                                        % ", ".join(iz[:2]))
         elif iz:
-            guven, gerekce = "YUKSEK", ("belge metninde irsaliye ibaresi: %s"
-                                        % ", ".join(iz[:3]))
+            guven, gerekce = "BILGI", ("İRSALİYELİ FATURA — sevk bilgisi taşıyor (%s) "
+                                       "ama TUTARI VAR; geçerli faturadır, düzeltme "
+                                       "gerekmez" % ", ".join(iz[:2]))
         else:
             guven, gerekce = "ORTA", ("kalemler var ama hepsinin fiyatı 0,00 — "
                                       "irsaliye imzası; ancak fiyatları okunamamış "
@@ -1739,7 +1748,9 @@ def belge_turu_teshisi(gun: int = 730):
     for b in bulgu:
         ozet[b["guven"]] = ozet.get(b["guven"], 0) + 1
     return {
-        "gun": g, "taranan": len(rows), "irsaliye_adayi": len(bulgu),
+        "gun": g, "taranan": len(rows),
+        "irsaliye_adayi": sum(1 for b in bulgu if b["guven"] != "BILGI"),
+        "irsaliyeli_fatura": sum(1 for b in bulgu if b["guven"] == "BILGI"),
         "guven_ozeti": ozet, "satirlar": bulgu,
         "not": ("ÖNERİ-ONLY — hiçbir kayıt değişmedi. `tedarikci_fatura` tablosunda "
                 "belge TÜRÜ alanı yok; `belge_sinifi` mal/hizmet ayrımıdır, tür ayrımı "
