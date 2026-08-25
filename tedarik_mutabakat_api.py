@@ -561,7 +561,25 @@ def fatura_teslim_mutabakati(tedarikci: str = "", gun: int = 120,
                 else:
                     durum, guc = "SİPARİŞSİZ GELEN MAL — dönemde karşılığı yok", "ORTA"
             else:
-                durum, guc = "FATURALANMAYAN TESLİM? — birim şüphesi", "ZAYIF"
+                # 🧩 KISMİ FATURA mı, BİRİM UYUŞMAZLIĞI mı? (2026-08-25)
+                # METRO 11 Ağustos: sipariş 10 kalem / 905 adet, fatura 2 kalem /
+                # 126 adet. Ortada birim sorunu YOK — fatura siparişin bir
+                # BÖLÜMÜNÜ kapsıyor (tedarikçi parça parça sevk/fatura ediyor).
+                # "Birim şüphesi" demek yanlış yere baktırır: sahip koli/adet
+                # ararken asıl mesele eksik kalan faturalardır.
+                # Ayırt edici: faturanın kalem ÇEŞİDİ siparişinkinden çok azsa
+                # kısmi faturadır; çeşit benzer ama sayılar tutmuyorsa birim.
+                _sip_cesit = 0
+                for _x in kume:
+                    for _s in (_x.get("acik_siparisler") or []):
+                        _sip_cesit = max(_sip_cesit, len((_s.get("ozet") or "").split("·")))
+                _fat_cesit = sum(x["fatura_kalem"] for x in kume)
+                if _fat_cesit and _sip_cesit and _fat_cesit < _sip_cesit:
+                    durum = ("KISMİ FATURA — sipariş %d çeşit, fatura %d çeşit; "
+                             "kalanı ayrı faturada olabilir" % (_sip_cesit, _fat_cesit))
+                    guc = "ZAYIF"
+                else:
+                    durum, guc = "FATURALANMAYAN TESLİM? — birim şüphesi", "ZAYIF"
             gruplar.append({
                 "tedarikci_ad": a["tedarikci_ad"],
                 "donem_bas": min(x["tarih"] for x in kume),
