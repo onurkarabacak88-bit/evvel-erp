@@ -2244,6 +2244,32 @@ export function TanimModulu({ gorunum, onCekmece, onKopru, onToast }) {
     ['/fatura/mutabakat-zinciri', null],
   ]);
   // v2-YERLİ tedarikçi CRUD (köprü kaldırma turu) — klasik uçlar aynen
+  // ── TEDARİK MUTABAKATI (2026-08-25) ─────────────────────────────────────
+  // Yerleşim hükmü: bu ekran ("Teslimat Zinciri") zaten bu konunun TEK ekranı.
+  // İkinci bir zincir ekranı AÇILMADI; ölçümler buraya SEKME olarak girer.
+  // TEMBEL YÜKLEME: uçlar PDF ayrıştırıp fatura tarıyor (ağır) — sekme
+  // açılmadan çağrılmaz, yoksa her Tanım ekranı açılışı yavaşlar.
+  const [tmSekme, setTmSekme] = useState('halka');
+  const [tm, setTm] = useState(null);
+  const [tmYukleniyor, setTmYukleniyor] = useState(false);
+  const [tmMesgul, setTmMesgul] = useState(false);
+  const tmYukle = useCallback(async () => {
+    setTmYukleniyor(true);
+    try {
+      const [mut, ocr, pat, haf, mkz] = await Promise.all([
+        api('/tedarik-mutabakat/fatura-teslim?gun=200').catch(() => null),
+        api('/tedarik-mutabakat/ocr-kapsama?gun=730').catch(() => null),
+        api('/tedarik-mutabakat/siparis-patlamasi?gun=200').catch(() => null),
+        api('/tedarik-mutabakat/haftalik-ozet').catch(() => null),
+        api('/tedarik-mutabakat/merkez-kayit-boslugu').catch(() => null),
+      ]);
+      setTm({ mut, ocr, pat, haf, mkz });
+    } finally { setTmYukleniyor(false); }
+  }, []);
+  useEffect(() => {
+    if (gorunum === 'zincir' && tmSekme === 'mutabakat' && !tm && !tmYukleniyor) tmYukle();
+  }, [gorunum, tmSekme, tm, tmYukleniyor, tmYukle]);
+
   const [tedForm, setTedForm] = useState(null);   // {duzenleId?, ad, kategori, telefon, aciklama}
   const [tedMesgul, setTedMesgul] = useState(false);
   const [tedPasifSor, setTedPasifSor] = useState('');
@@ -2518,6 +2544,181 @@ export function TanimModulu({ gorunum, onCekmece, onKopru, onToast }) {
   // sahte "Tüm zincirler kapalı" üretebilirdi) — değilse 3-halka yedeğe düşülür.
   // Gerçek sözleşmeye bağlı (diff-review 2. katman): sayac + siparis_adet birlikte
   // şart — kısmi truthy payload ({sayac:{}} gibi) BM-2 kolunu açamaz.
+  // ══ TEDARİK MUTABAKATI SEKMESİ (2026-08-25) ══════════════════════════════
+  // Bu ekran zaten "Teslimat Zinciri" — 5 halka görünümü onun ilk sekmesi.
+  // Ölçümler İKİNCİ SEKME olarak girer; yeni ekran açmak ikinci bir "zincir"
+  // ekranı doğururdu ve ikisi kaçınılmaz olarak ayrışırdı.
+  const tmCubuk = (
+    <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
+      {[['halka', '🔗 5 Halka'], ['mutabakat', '⚖️ Tedarik Mutabakatı']].map(([k, ad]) => (
+        <button key={k} onClick={() => setTmSekme(k)} style={{
+          padding: '7px 14px', borderRadius: 9, cursor: 'pointer', fontFamily: 'inherit',
+          fontSize: 12.5, fontWeight: 600,
+          border: `1px solid ${tmSekme === k ? R.bakir : R.cizgi3}`,
+          background: tmSekme === k ? `${R.bakir}22` : 'transparent',
+          color: tmSekme === k ? R.bakirAcik : R.metin2,
+        }}>{ad}</button>
+      ))}
+    </div>
+  );
+
+  if (gorunum === 'zincir' && tmSekme === 'mutabakat') {
+    const mut = tm?.mut, ocr = tm?.ocr, pat = tm?.pat, haf = tm?.haf, mkz = tm?.mkz;
+    const donemler = mut?.donemler || [];
+    const kismi = donemler.filter(d => String(d.durum || '').startsWith('KISMİ FATURA'));
+    const DURUM_RENK = (g) => (g === 'GÜÇLÜ' ? R.kirmizi : g === 'ORTA' ? R.amber
+      : g === 'ZAYIF' ? R.not2 : g === 'BILGI' ? R.mavi || R.not2 : R.yesil);
+
+    const faturaIste = async () => {
+      setTmMesgul(true);
+      try {
+        const r = await api('/tedarik-mutabakat/eksik-fatura-iste?gun=200&kuru=0', { method: 'POST' });
+        onToast?.(r?.yazilan
+          ? `${r.yazilan} fatura isteği açıldı — Belge Merkezi ▸ Fatura İstek`
+          : 'Yeni istek yok (hepsi zaten açık)');
+        await tmYukle();
+      } catch (e) { onToast?.(e?.message || 'İstek açılamadı'); }
+      finally { setTmMesgul(false); }
+    };
+
+    return (
+      <>
+        {tmCubuk}
+        {tmYukleniyor && <BosDurum baslik="Ölçülüyor…" aciklama="Faturalar ve siparişler karşılaştırılıyor." />}
+        {!tmYukleniyor && !tm && <BosDurum baslik="Ölçüm alınamadı" aciklama="Uçlar yanıt vermedi — sayfayı yenileyin." />}
+        {!tmYukleniyor && tm && (
+          <>
+            <KpiSeridi kpiler={[
+              {
+                etiket: 'Dönem mutabakatı',
+                deger: `${donemler.filter(d => String(d.durum || '').startsWith('TUTUYOR')).length} / ${donemler.length}`,
+                alt: 'fatura ile teslim alınan aynı',
+                renk: donemler.length && donemler.every(d => String(d.durum || '').startsWith('TUTUYOR')) ? R.yesil : R.krem,
+              },
+              {
+                etiket: 'Kısmi fatura',
+                deger: String(kismi.length),
+                alt: 'kalan faturalar bekleniyor',
+                renk: kismi.length ? R.amber : R.yesil,
+              },
+              {
+                etiket: 'Kalem okuması',
+                deger: String(ocr?.kalemsiz ?? '—'),
+                alt: `${ocr?.kalemli ?? 0} fatura tam okundu`,
+                renk: (ocr?.kalemsiz || 0) ? R.amber : R.yesil,
+              },
+              {
+                etiket: 'Merkez alımı',
+                deger: String(mkz?.sistemden_gecmeyen_alim ?? '—'),
+                alt: mkz?.durum || 'sistemden geçmeyen',
+                renk: (mkz?.sistemden_gecmeyen_alim || 0) ? R.amber : R.yesil,
+              },
+              {
+                etiket: 'Sipariş patlaması',
+                deger: String(pat?.patlama_sayisi ?? '—'),
+                alt: 'aynı şube+tedarikçi, kısa sürede',
+                renk: (pat?.hala_acik_toplam || 0) ? R.kirmizi : R.yesil,
+              },
+            ]} />
+
+            {/* EĞİLİM — tek ölçüm bir şey söylemez, eğilim söyler */}
+            {haf?.gecmis?.length > 0 && (
+              <div style={{ ...kartYuzey, padding: '11px 15px', marginBottom: 12, fontSize: 12.5 }}>
+                <b style={{ color: R.krem }}>📅 Haftalık eğilim</b>
+                <span style={{ color: R.not2, marginLeft: 10 }}>
+                  {haf.yon || '—'} · {haf.olcum_sayisi} ölçüm kayıtlı
+                </span>
+                <div style={{ color: R.metin2, marginTop: 6 }}>
+                  {haf.gecmis.slice(0, 6).map(g => (
+                    <span key={g.tarih} style={{ marginRight: 14, fontFamily: F.mono }}>
+                      {String(g.tarih).slice(5)} <b style={{ color: g.acik_siparis ? R.amber : R.yesil }}>{g.acik_siparis}</b>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* DÖNEMLER */}
+            <div style={{ display: 'grid', gap: 7, marginBottom: 12 }}>
+              {donemler.map((d, i) => (
+                <div key={i} style={{
+                  ...kartYuzey, padding: '9px 13px', fontSize: 12.5,
+                  border: `1px solid ${DURUM_RENK(d.kanit_gucu)}33`,
+                }}>
+                  <div style={{ display: 'flex', gap: 9, flexWrap: 'wrap', alignItems: 'baseline' }}>
+                    <b style={{ color: R.krem }}>{d.tedarikci_ad}</b>
+                    <span style={{ color: R.not2, fontSize: 11.5 }}>{d.donem_bas}…{d.donem_bit}</span>
+                    <span style={{
+                      padding: '1px 7px', borderRadius: 999, fontSize: 10,
+                      background: `${DURUM_RENK(d.kanit_gucu)}1E`, color: DURUM_RENK(d.kanit_gucu),
+                    }}>{d.kanit_gucu || 'TAM'}</span>
+                  </div>
+                  <div style={{ color: R.metin2, marginTop: 3 }}>{d.durum}</div>
+                  <div style={{ color: R.not2, fontSize: 11.5, marginTop: 3, fontFamily: F.mono }}>
+                    fatura {fmt(d.fatura_adet)} adet · teslim {fmt(d.teslim_alinan_adet)} adet · fark {fmt(d.adet_farki)}
+                    {d.fatura_tutari ? ` · ${fmt(d.fatura_tutari)} ₺` : ''}
+                  </div>
+                  {d.birim_notu && (
+                    <div style={{ color: R.not2, fontSize: 11, marginTop: 2 }}>↳ {d.birim_notu}</div>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            {/* EYLEM — eksiği görmek yetmez, İSTEMEK gerekir */}
+            {kismi.length > 0 && (
+              <div style={{ ...kartYuzey, padding: '13px 15px', marginBottom: 12 }}>
+                <b style={{ color: R.krem, fontSize: 13 }}>📨 Eksik faturayı iste</b>
+                <div style={{ color: R.metin2, fontSize: 12.5, marginTop: 5, lineHeight: 1.6 }}>
+                  {kismi.length} dönemde sipariş edilip teslim alınan ama faturada yer almayan
+                  kalem var. İstek <b>kalem kalem</b> yazılır — “eksik fatura var” demek
+                  tedarikçiye hiçbir şey anlatmaz.
+                </div>
+                <div style={{ display: 'flex', gap: 9, marginTop: 10, flexWrap: 'wrap' }}>
+                  <button disabled={tmMesgul} onClick={faturaIste} style={{
+                    padding: '8px 15px', borderRadius: 9, cursor: 'pointer', fontFamily: 'inherit',
+                    border: 'none', background: `${R.bakir}2E`, color: R.bakirAcik,
+                    fontSize: 12.5, fontWeight: 700,
+                  }}>{tmMesgul ? 'Açılıyor…' : 'İstek oluştur'}</button>
+                  {/* KÖPRÜ: kuyruk Belge Merkezi'nde — ikinci liste kurulmadı */}
+                  <button onClick={() => onKopru?.('__modul:belge:istek')} style={{
+                    padding: '8px 15px', borderRadius: 9, cursor: 'pointer', fontFamily: 'inherit',
+                    border: `1px solid ${R.cizgi3}`, background: 'transparent',
+                    color: R.metin2, fontSize: 12.5,
+                  }}>📩 Fatura İstek ekranına git</button>
+                </div>
+              </div>
+            )}
+
+            {/* KALEM OKUMASI — ölçüm aletinin kendi denetimi */}
+            {(ocr?.satirlar || []).length > 0 && (
+              <div style={{ ...kartYuzey, padding: '13px 15px', fontSize: 12.5 }}>
+                <b style={{ color: R.krem, fontSize: 13 }}>🔬 Kalem okuması</b>
+                <div style={{ color: R.not2, fontSize: 11.5, marginTop: 4 }}>
+                  Belgenin kendi toplamı okumayı denetler. Tutmuyorsa hüküm verilmez —
+                  önce okuma düzeltilir.
+                </div>
+                <div style={{ display: 'grid', gap: 5, marginTop: 8 }}>
+                  {(ocr.satirlar || []).map((r, i) => (
+                    <div key={i} style={{ color: R.metin2 }}>
+                      <span style={{
+                        padding: '1px 6px', borderRadius: 999, fontSize: 10, marginRight: 7,
+                        background: `${R.amber}1E`, color: R.amber,
+                      }}>{r.sebep}</span>
+                      <span style={{ color: R.not2, fontFamily: F.mono }}>{r.tarih}</span>{' '}
+                      {r.tedarikci_ad}
+                      <div style={{ color: R.not2, fontSize: 11, marginLeft: 4 }}>{r.care}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </>
+        )}
+      </>
+    );
+  }
+
   const bm2Saglam = !!bm2 && bm2.sayac != null && bm2.siparis_adet != null;
   if (gorunum === 'zincir' && bm2Saglam) {
     const sayac = bm2.sayac || {};
@@ -2534,6 +2735,7 @@ export function TanimModulu({ gorunum, onCekmece, onKopru, onToast }) {
     };
     return (
       <>
+        {tmCubuk}
         <KpiSeridi kpiler={[
           {
             etiket: 'Tam zincir',
