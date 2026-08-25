@@ -458,6 +458,11 @@ def fatura_teslim_mutabakati(tedarikci: str = "", gun: int = 120,
                 "olcum_gecerli": True, "pencere_gun": pen,
                 "siparis_sayisi": len(sip), "teslim_alinan_adet": teslim_adet,
                 "adet_farki": fark, "acik_siparisler": acik,
+                # ⚠️ Kalem ÇEŞİDİ kıyası için TÜM siparişler gerekir; yalnız
+                # açık olanlara bakmak teslim alınmış siparişi görmez ve
+                # "kısmi fatura" teşhisi hiç tetiklenmez (METRO 11 Ağustos'ta
+                # tam bu oldu: sipariş teslim alınmıştı, açık listesi boştu).
+                "tum_siparisler": sip,
             })
 
             if abs(fark) <= 1:
@@ -571,8 +576,10 @@ def fatura_teslim_mutabakati(tedarikci: str = "", gun: int = 120,
                 # kısmi faturadır; çeşit benzer ama sayılar tutmuyorsa birim.
                 _sip_cesit = 0
                 for _x in kume:
-                    for _s in (_x.get("acik_siparisler") or []):
-                        _sip_cesit = max(_sip_cesit, len((_s.get("ozet") or "").split("·")))
+                    for _s in (_x.get("tum_siparisler") or []):
+                        _oz = (_s.get("ozet") or "").strip()
+                        if _oz:
+                            _sip_cesit = max(_sip_cesit, len(_oz.split("·")))
                 _fat_cesit = sum(x["fatura_kalem"] for x in kume)
                 if _fat_cesit and _sip_cesit and _fat_cesit < _sip_cesit:
                     durum = ("KISMİ FATURA — sipariş %d çeşit, fatura %d çeşit; "
