@@ -1407,7 +1407,21 @@ def kimlik_adaylari(gun: int = 400):
             kanitlar.append("aynı fatura serisi (%s)" % ", ".join(sorted(ortak_seri)))
         if toplam_tok:
             kanitlar.append("ortak kelime (%s)" % ", ".join(sorted(toplam_tok)))
-        guven = ("YUKSEK" if len(kanitlar) >= 2 or "aynı telefon" in kanitlar
+        # 🔤 AD KAPSAMASI — kısaltma ile açılımı aynı firmadır (2026-08-25)
+        # SÜTAŞ ilk sürümde DÜŞÜK çıktı çünkü fatura serileri farklıydı (B10 vs
+        # S10) — oysa isimler BİREBİR aynı: "Sütaş Süt Ürünleri ANONİM ŞİRKETİ"
+        # ile "SÜTAŞ SÜT ÜRÜNLERİ A.Ş." Aynı firmanın iki bölgesi/şubesi farklı
+        # seri kesebilir; seri farkı "ayrı firma" demek DEĞİLDİR.
+        # Ölçüt: KISA adın ayırt edici kelimelerinin ne kadarı uzun adda da var?
+        # %80+ ise ad kanıtı tek başına güçlüdür. Bu, METRO'yu (%40) yükseltmez —
+        # orada gerçekten belirsizlik var ve öyle kalmalı.
+        _tok = [_ayirt_edici(x["ad"]) for x in grup]
+        _kisa = min(_tok, key=len) if _tok else set()
+        _kapsama = (len(set.intersection(*_tok)) / len(_kisa)) if (_kisa and len(_tok) > 1) else 0.0
+        if _kapsama >= 0.8:
+            kanitlar.append("ad neredeyse birebir (%%%d kapsama)" % round(_kapsama * 100))
+        guven = ("YUKSEK" if (len(kanitlar) >= 2 or "aynı telefon" in kanitlar
+                              or _kapsama >= 0.8)
                  else "ORTA" if ortak_seri else "DUSUK")
         oneriler.append({
             "onerilen_ad": max(grup, key=lambda x: x["fatura_adet"])["ad"],
