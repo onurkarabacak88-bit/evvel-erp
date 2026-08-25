@@ -1927,6 +1927,25 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
     // ödemem gerek" ise en alttaydı → sahip her sabah aşağı kaydırıyordu.
     return (
       <>
+        {/* ══════════════════════════════════════════════════════════════════
+            🔍 ROL: KANIT KATMANI (2026-08-26 kurgusu)
+            ══════════════════════════════════════════════════════════════════
+            Karar Alanı'nda para ÜÇ KATMANDA anlatılır:
+              K1 · 4 KPI (karar için — Karar Alanı)
+              K2 · bu görünüm (kanıt: para hangi durakta, baskı nereden geliyor)
+              K3 · çekmece (kayıt düzeyi döküm)
+            Bu görünüm "her sabah bakılan yer" değil, "şu rakam nereden geliyor?"
+            sorusunun cevabı. O yüzden 2 ekran uzunluğunda olması bir kusur
+            DEĞİL — kanıt katmanının uzun olması normaldir; kısa olması gereken
+            karar katmanıdır ve o tek ekrana sığdırıldı. */}
+        <div style={{
+          ...kartYuzey, padding: '10px 15px', marginBottom: 13, fontSize: 12,
+          color: R.not2, borderLeft: `3px solid ${R.mavi}`,
+        }}>
+          🔍 <b style={{ color: R.metin2 }}>Kanıt katmanı.</b>{' '}
+          Karar Alanı'ndaki para rakamlarının nereden geldiği burada açılır —
+          karar için değil, <b style={{ color: R.metin2 }}>doğrulama</b> için.
+        </div>
         {nakitHataBlok}
         {nakitBlok}
 
@@ -2061,6 +2080,28 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
 
   return (
     <>
+      {/* ══════════════════════════════════════════════════════════════════════
+          🗂️ ROL: İSTİSNA ARŞİVİ — GÜNLÜK İŞ YÜZEYİ DEĞİL (2026-08-26 kurgusu)
+          ══════════════════════════════════════════════════════════════════════
+          Bu görünüm İKİNCİ bir "bugün" yüzeyi olmuştu: motorun en kritik önerisi,
+          bekleyen onay ve ciro eksiği burada duruyordu — yani sahibin her sabah
+          İKİ ayrı yere bakması gerekiyordu ve hangisinin asıl olduğu belirsizdi.
+          İki "bugün" listesi olan bir sistemde ikisi de okunmaz.
+
+          Dört sayacın hepsi ARTIK KARAR ALANI'NDAKİ KUYRUĞA besleniyor:
+            · karar motoru  → S2 (en kritik öneri, faiz cümlesiyle)
+            · onay merkezi  → S3
+            · ciro eksiği   → S1
+            · bildirimler   → 48 saatlik yük üzerinden zaten kuyrukta
+          Buranın işi artık DERİNLİK: tam liste, geçmiş, gerekçe. */}
+      <div style={{
+        ...kartYuzey, padding: '10px 15px', marginBottom: 13, fontSize: 12,
+        color: R.not2, borderLeft: `3px solid ${R.bakir}`,
+      }}>
+        🗂️ <b style={{ color: R.metin2 }}>Tam liste ve gerekçeler burada.</b>{' '}
+        Günün işleri <b style={{ color: R.metin2 }}>Karar Alanı</b> sekmesindeki kuyrukta —
+        buradaki dört sayaç oraya besleniyor, ikinci bir “bugün” listesi tutulmuyor.
+      </div>
       <KpiSeridi kpiler={[
         { etiket: 'Karar motoru', deger: String(oneriler.length), alt: oneriler.length ? 'öneri bekliyor' : 'öneri yok', renk: oneriler.length ? R.bakir : R.yesil },
         { etiket: 'Onay merkezi', deger: String(onaylar.length), alt: onaylar.length ? 'karar bekliyor' : 'kuyruk boş', renk: onaylar.length ? R.amber : R.yesil },
