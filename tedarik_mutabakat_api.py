@@ -1417,7 +1417,15 @@ def kimlik_adaylari(gun: int = 400):
         _bagli = {_mevcut_kanonik.get((x["ad"] or "").upper()) for x in grup}
         _bagli.discard(None)
         _defter_kanonik = (list(_bagli)[0] if len(_bagli) == 1 else None)
-        _hepsi_bagli = all(_mevcut_kanonik.get((x["ad"] or "").upper()) for x in grup)
+        # ⚠️ KANONİK KENDİSİ ALIAS DEĞİLDİR: defter "A→A" satırı tutmaz (anlamsız
+        # döngü). Bu yüzden "hepsi bağlı mı?" sorusu, kanonik adın KENDİSİNİ de
+        # bağlı saymalıdır — yoksa onaylanmış her grup listede kalır ve sahip
+        # aynı işi bitmemiş sanır. (İlk sürümde FEZ/SÜTAŞ/ATALAY onaylandığı hâlde
+        # öneri listesinde duruyordu.)
+        _kan_u = (_defter_kanonik or "").upper()
+        _hepsi_bagli = all(
+            _mevcut_kanonik.get((x["ad"] or "").upper()) or (x["ad"] or "").upper() == _kan_u
+            for x in grup)
         if _hepsi_bagli and len(_bagli) == 1:
             continue        # zaten birleşik — öneri gürültüsü üretme
         toplam_tok = set.intersection(*[_ayirt_edici(x["ad"]) for x in grup]) \
