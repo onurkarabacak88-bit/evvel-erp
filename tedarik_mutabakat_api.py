@@ -1307,3 +1307,130 @@ def kalem_koprusu_kararlar():
     return {"adet": len(rows), "kararlar": rows,
             "not": ("Append-only: aynı çift için yeni karar eskisini silmez, "
                     "en yenisi geçerlidir ama ikisi de görünür (geri-alma ≠ silme).")}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 🪪 KİMLİK ADAYLARI — "aynı firma kaç ayrı adla kayıtlı?"
+# ═══════════════════════════════════════════════════════════════════════════
+@router.get("/kimlik-adaylari")
+def kimlik_adaylari(gun: int = 400):
+    """🪪 AYNI KARŞI TARAFIN FARKLI YAZIMLARINI bulur. SALT OKUR, ÖNERİ-ONLY.
+
+    ── NEDEN (2026-08-25) ──────────────────────────────────────────────────
+    Kalem köprüsü listesinde `Yarım Yağlı Süt → SÜT YARIM YAĞLI 1 L` köprüsü
+    İKİ KEZ çıktı. Sebep hata değil: SÜTAŞ sistemde iki ayrı adla kayıtlı
+    ("SÜTAŞ SÜT ÜRÜNLERİ A.Ş." ve "Sütaş Süt Ürünleri Anonim…"). Aynı dert
+    başka yerlerde de var: SUK/SUKİ, DYK/DYN, ALIŞ/ALIS GROSMARKET.
+
+    Kimlik parçalanması ÜÇ ayrı yerde zarar veriyor:
+      · ürün sözlüğü bölünüyor → kararlılık yüzdesi OLDUĞUNDAN DÜŞÜK görünüyor
+      · kalem köprüsü aynı satırı iki kez üretiyor
+      · cari bakiye iki ada dağılıyor → "bu firmaya ne kadar borcum var?"
+        sorusunun tek cevabı olmuyor
+
+    ── KANIT SIRALAMASI (güçlüden zayıfa) ──────────────────────────────────
+    1) AYNI TELEFON        → aynı karşı taraf (en güçlü; kişi/firma teki)
+    2) AYNI FATURA SERİSİ  → fatura no ön eki aynı (S10…, NPA…, FEZ…) — seri
+                             mükellefe özeldir, başkası aynı seriyi kesemez
+    3) ORTAK AYIRT EDİCİ KELİME → jenerikler atılmış kelime kesişimi
+    Yalnız 3'e dayanan öneri ZAYIFTIR: "KONYA SU" ile "KONYA SUK" ayrı firma
+    olabilir. Bu yüzden güven, kaç kanıtın örtüştüğüne göre verilir ve
+    HANGİ kanıt olduğu yazılır — sahip körlemesine onaylamasın.
+
+    ⚠️ ÖNERİ-ONLY: hiçbir kayıt birleştirilmez. Birleştirme, cari bakiyeyi
+    değiştiren bir işlemdir; yanlış birleştirme iki firmanın borcunu birbirine
+    karıştırır — bu geri alması en zor hatalardandır.
+    """
+    g = max(1, min(730, int(gun or 400)))
+    with db() as (_, cur):
+        cur.execute(
+            "SELECT COALESCE(f.tedarikci_ad,'') AS ad, COUNT(*) AS fatura_adet, "
+            "       COALESCE(SUM(f.toplam_tutar),0)::float AS toplam, "
+            "       MIN(f.fatura_tarih)::text AS ilk, MAX(f.fatura_tarih)::text AS son, "
+            "       ARRAY_AGG(DISTINCT LEFT(COALESCE(f.fatura_no,''), 3)) AS seriler "
+            "  FROM tedarikci_fatura f "
+            " WHERE f.fatura_tarih >= CURRENT_DATE - %s "
+            "   AND COALESCE(f.durum,'') <> 'kopya' "
+            "   AND COALESCE(f.tedarikci_ad,'') <> '' "
+            " GROUP BY f.tedarikci_ad ORDER BY COUNT(*) DESC", (g,))
+        adlar = [dict(r) for r in (cur.fetchall() or [])]
+        cur.execute("SELECT ad, COALESCE(telefon,'') AS tel FROM tedarikciler "
+                    "WHERE COALESCE(ad,'') <> ''")
+        kayit_tel = {}
+        for r in (cur.fetchall() or []):
+            r = dict(r)
+            if r["tel"]:
+                kayit_tel.setdefault(re.sub(r"\D", "", r["tel"])[-10:], set()).add(r["ad"])
+
+    # telefon → ad kümesi (aynı numara = aynı karşı taraf)
+    ad_tel = {}
+    for tel, adkume in kayit_tel.items():
+        for a in adkume:
+            ad_tel[a.upper()] = tel
+
+    kume: List[List[Dict]] = []
+    kullanildi = [False] * len(adlar)
+    for i, a in enumerate(adlar):
+        if kullanildi[i]:
+            continue
+        grup = [a]
+        kullanildi[i] = True
+        a_tok = _ayirt_edici(a["ad"])
+        a_seri = {s for s in (a["seriler"] or []) if s and len(s) == 3}
+        for j in range(i + 1, len(adlar)):
+            if kullanildi[j]:
+                continue
+            b = adlar[j]
+            ortak_tok = a_tok & _ayirt_edici(b["ad"])
+            ortak_seri = a_seri & {s for s in (b["seriler"] or []) if s and len(s) == 3}
+            ayni_tel = (ad_tel.get(a["ad"].upper()) and
+                        ad_tel.get(a["ad"].upper()) == ad_tel.get(b["ad"].upper()))
+            if ortak_tok or ortak_seri or ayni_tel:
+                grup.append(b)
+                kullanildi[j] = True
+                a_tok |= _ayirt_edici(b["ad"])
+                a_seri |= {s for s in (b["seriler"] or []) if s and len(s) == 3}
+        if len(grup) > 1:
+            kume.append(grup)
+
+    oneriler = []
+    for grup in kume:
+        toplam_tok = set.intersection(*[_ayirt_edici(x["ad"]) for x in grup]) \
+            if len(grup) > 1 else set()
+        seriler = [set(s for s in (x["seriler"] or []) if s and len(s) == 3) for x in grup]
+        ortak_seri = set.intersection(*seriler) if len(seriler) > 1 else set()
+        teller = {ad_tel.get(x["ad"].upper()) for x in grup} - {None}
+        kanitlar = []
+        if len(teller) == 1 and teller:
+            kanitlar.append("aynı telefon")
+        if ortak_seri:
+            kanitlar.append("aynı fatura serisi (%s)" % ", ".join(sorted(ortak_seri)))
+        if toplam_tok:
+            kanitlar.append("ortak kelime (%s)" % ", ".join(sorted(toplam_tok)))
+        guven = ("YUKSEK" if len(kanitlar) >= 2 or "aynı telefon" in kanitlar
+                 else "ORTA" if ortak_seri else "DUSUK")
+        oneriler.append({
+            "onerilen_ad": max(grup, key=lambda x: x["fatura_adet"])["ad"],
+            "adlar": [{"ad": x["ad"], "fatura_adet": x["fatura_adet"],
+                       "toplam": round(x["toplam"], 2), "ilk": x["ilk"], "son": x["son"],
+                       "seriler": sorted(s for s in (x["seriler"] or []) if s)}
+                      for x in grup],
+            "ad_sayisi": len(grup),
+            "toplam_fatura": sum(x["fatura_adet"] for x in grup),
+            "toplam_tutar": round(sum(x["toplam"] for x in grup), 2),
+            "guven": guven, "kanitlar": kanitlar,
+        })
+    oneriler.sort(key=lambda x: (-x["toplam_tutar"]))
+    ozet: Dict[str, int] = {}
+    for o in oneriler:
+        ozet[o["guven"]] = ozet.get(o["guven"], 0) + 1
+    return {
+        "gun": g, "farkli_ad": len(adlar), "birlesme_adayi": len(oneriler),
+        "guven_ozeti": ozet, "adaylar": oneriler,
+        "not": ("ÖNERİ-ONLY — hiçbir kayıt birleştirilmedi. Kanıt sırası: aynı "
+                "telefon > aynı fatura serisi > ortak kelime. YALNIZ ortak kelimeye "
+                "dayanan öneri ZAYIFTIR ('KONYA SU' ile 'KONYA SUK' ayrı firma "
+                "olabilir). Birleştirme cari bakiyeyi değiştirir; yanlış birleştirme "
+                "iki firmanın borcunu birbirine karıştırır ve geri alması en zor "
+                "hatalardandır — bu yüzden hüküm sahibindir."),
+    }
