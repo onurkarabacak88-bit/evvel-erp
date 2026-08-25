@@ -944,7 +944,12 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
   //
   // ⛔ HİÇBİR RAKAM YENİDEN HESAPLANMAZ: uç ne dönerse o yazılır.
   const kasaDetayAc = async ({ baslik, sube_id, islem_turu, altBilgi, geriHedef }) => {
-    const sorgu = new URLSearchParams({ boyut: '120' });
+    // BOYUT 300: canlıda ZAFER kasası 282 hareket — 120'de "162 tanesi bu
+    // listede yok" yazıyordu. Dürüsttü ama işe yaramıyordu: sahip yarısını
+    // göremediği bir listeyle hüküm veremez. 300 en kalabalık kasayı da
+    // kapsıyor; taşarsa kaç satırın dışarıda kaldığı YİNE yazılır (uç `kalan`
+    // döndürüyor — sessiz eleme yasak).
+    const sorgu = new URLSearchParams({ boyut: '300' });
     if (sube_id) sorgu.set('sube_id', sube_id);
     if (islem_turu) sorgu.set('islem_turu', islem_turu);
     // Geri yolu ÇAĞIRANA aittir: aynı hareket listesine hem KASA çekmecesinden
