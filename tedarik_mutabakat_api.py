@@ -2212,6 +2212,24 @@ def _capa_kolonu(cur) -> None:
     """
     cur.execute("ALTER TABLE tedarikci_fatura ADD COLUMN IF NOT EXISTS "
                 "kalem_capa_farki NUMERIC(14,2)")
+    # 🥚 TAVUK-YUMURTA KIRILIYOR (2026-08-25): bayrak yalnız OCR yazarken
+    # doluyordu, gece kurtarması ise bayrağa bakıyordu → mevcut faturalar
+    # hiçbir zaman yeniden okunmayacaktı. Yeni bir denetim kurulduğunda
+    # GEÇMİŞ de bir kez taranmalı; yoksa denetim yalnız bundan sonrası için
+    # çalışır ve elde duran hata sonsuza dek görünmez kalır.
+    # Yalnız NULL olanlar doldurulur — OCR'ın yazdığı değer EZİLMEZ.
+    cur.execute("""
+        UPDATE tedarikci_fatura f
+           SET kalem_capa_farki = ROUND(
+                 COALESCE(f.toplam_tutar,0)::numeric
+                 - COALESCE((SELECT SUM(COALESCE(k.satir_toplam,0))
+                               FROM tedarikci_fatura_kalem k
+                              WHERE k.fatura_id = f.id), 0)::numeric, 2)
+         WHERE f.kalem_capa_farki IS NULL
+           AND COALESCE(f.toplam_tutar,0) <> 0
+           AND EXISTS (SELECT 1 FROM tedarikci_fatura_kalem k2
+                        WHERE k2.fatura_id = f.id)
+    """)
 
 
 def _alim_kaynagi_kolonu(cur) -> None:
