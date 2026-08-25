@@ -46,9 +46,10 @@ from __future__ import annotations
 import json
 import logging
 import re
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
 from database import db
 
@@ -1168,17 +1169,49 @@ def kalem_koprusu(tedarikci: str = "", gun: int = 400,
     # bağlanıyorsa köprülerden en az biri yanlıştır. Canlı örnek: "Çikolata Sos"
     # ile "Çikolata Toz" aynı ürüne bağlanmıştı. Sessizce en yükseği seçmek
     # yanlışı gizler; ikisini de İŞARETLEYİP sahibe göstermek doğrudur.
+    # 🗂️ SAHİP KARARI TAHMİNE ÜSTÜNDÜR (2026-08-25)
+    # Sahip "toffeenut bar sosu karamel bar sosuyla AYNI" dedi. Yani iki sipariş
+    # adının tek fatura ürününe gitmesi HATA DEĞİL, meşru eş anlamlılık. Köprü
+    # her çağrıda veriden yeniden üretildiği için bu hüküm bir defterde durmalı;
+    # yoksa her hesaplamada aynı soru yeniden sorulur ve sahip aynı cevabı
+    # tekrar tekrar vermek zorunda kalır. Tahmin yenilenebilir, KARAR yenilenmez.
+    try:
+        with db() as (_, _c2):
+            _karar_tablo(_c2)
+            _c2.execute("SELECT karsi_taraf, siparis_urun, fatura_urun, karar "
+                        "FROM kalem_kopru_karari ORDER BY olusturma")
+            _kararlar = [dict(r) for r in (_c2.fetchall() or [])]
+    except Exception as _ek:  # noqa: BLE001 — defter okunamazsa köprü yine çalışır
+        logger.warning("köprü karar defteri okunamadı: %s", str(_ek)[:120])
+        _kararlar = []
+    _onayli, _retli = {}, set()
+    for r in _kararlar:                      # append-only → en yenisi kazanır
+        anah = (r["karsi_taraf"], r["siparis_urun"])
+        if r["karar"] == "onay":
+            _onayli[anah] = r["fatura_urun"]
+        else:
+            _retli.add((r["karsi_taraf"], r["siparis_urun"], r["fatura_urun"]))
+    for k in koprular:
+        anah = (k["karsi_taraf"], k["siparis_urun"])
+        if anah in _onayli:
+            k["fatura_urun"] = _onayli[anah]
+            k["guven"] = "ONAYLI"
+            k["gerekce"] = "sahip kararı — deftere yazılı, tahmine üstün"
+        elif (k["karsi_taraf"], k["siparis_urun"], k["fatura_urun"]) in _retli:
+            k["guven"] = "DUSUK"
+            k["gerekce"] = "sahip bu eşleşmeyi REDDETTİ — başka aday aranmalı"
+
     _hedef: Dict[Any, int] = {}
     for k in koprular:
         _hedef[(k["karsi_taraf"], k["fatura_urun"])] =             _hedef.get((k["karsi_taraf"], k["fatura_urun"]), 0) + 1
     for k in koprular:
-        if _hedef[(k["karsi_taraf"], k["fatura_urun"])] > 1:
+        if _hedef[(k["karsi_taraf"], k["fatura_urun"])] > 1 and k["guven"] != "ONAYLI":
             k["cakisma"] = ("Bu fatura kalemine BAŞKA bir sipariş kalemi de "
                             "bağlandı — en az biri yanlış, sahip ayırmalı.")
             if k["guven"] == "YUKSEK":
                 k["guven"] = "ORTA"   # çakışan köprü 'yüksek güven' olamaz
 
-    sira = {"YUKSEK": 0, "ORTA": 1, "DUSUK": 2}
+    sira = {"ONAYLI": 0, "YUKSEK": 1, "ORTA": 2, "DUSUK": 3}
     koprular.sort(key=lambda x: (x["karsi_taraf"], sira[x["guven"]], -x["puan"]))
     ozet: Dict[str, int] = {}
     for k in koprular:
@@ -1193,3 +1226,84 @@ def kalem_koprusu(tedarikci: str = "", gun: int = 400,
                 "de ×12 olabilir). DÜŞÜK güvenli satır kullanılmadan önce sahip onayı "
                 "ister — köprü yanlışsa üretilecek 'şu ürün eksik' cümlesi de yanlış olur."),
     }
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 🗂️ KÖPRÜ KARAR DEFTERİ — sahibin hükmü kalıcıdır
+# ═══════════════════════════════════════════════════════════════════════════
+def _karar_tablo(cur) -> None:
+    """İZOLE + APPEND-ONLY karar defteri.
+
+    ⚠️ Neden ayrı bir defter (2026-08-25): köprü her çağrıda veriden yeniden
+    ÜRETİLİR. Sahip bir kez "bu ikisi aynı ürün" dediğinde, o hüküm bir sonraki
+    hesaplamada KAYBOLMAMALIDIR. Tahmin her seferinde yeniden yapılabilir ama
+    KARAR yapılamaz — karar bir defterde durur.
+    Append-only: aynı çift için yeni karar eskisini SİLMEZ, üstüne yazılır ve
+    ikisi de görünür kalır (geri-alma ≠ silme).
+    """
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS kalem_kopru_karari (
+            id            TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+            karsi_taraf   TEXT NOT NULL,
+            siparis_urun  TEXT NOT NULL,
+            fatura_urun   TEXT NOT NULL,
+            karar         TEXT NOT NULL,          -- onay | ret
+            gerekce       TEXT,
+            veren         TEXT,
+            olusturma     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_kkk_taraf "
+                "ON kalem_kopru_karari (karsi_taraf, siparis_urun)")
+
+
+class KopruKarariBody(BaseModel):
+    karsi_taraf: str
+    siparis_urun: str
+    fatura_urun: str
+    karar: str = "onay"          # onay | ret
+    gerekce: Optional[str] = None
+    veren: Optional[str] = "sahip"
+
+
+@router.post("/kalem-koprusu/karar")
+def kalem_koprusu_karar(body: KopruKarariBody):
+    """Sahibin köprü hükmünü deftere yazar. Tahmin değil KARAR."""
+    k = (body.karar or "onay").strip().lower()
+    if k not in ("onay", "ret"):
+        raise HTTPException(400, "karar: onay | ret")
+    for alan, ad in ((body.karsi_taraf, "karsi_taraf"),
+                     (body.siparis_urun, "siparis_urun"),
+                     (body.fatura_urun, "fatura_urun")):
+        if not (alan or "").strip():
+            raise HTTPException(400, ad + " zorunlu")
+    with db() as (conn, cur):
+        _karar_tablo(cur)
+        cur.execute(
+            "INSERT INTO kalem_kopru_karari "
+            "(karsi_taraf, siparis_urun, fatura_urun, karar, gerekce, veren) "
+            "VALUES (%s,%s,%s,%s,%s,%s) RETURNING id",
+            (body.karsi_taraf.strip(), body.siparis_urun.strip(),
+             body.fatura_urun.strip(), k, (body.gerekce or None),
+             (body.veren or "sahip")),
+        )
+        yeni = dict(cur.fetchone() or {}).get("id")
+        conn.commit()
+    return {"success": True, "id": yeni, "karar": k,
+            "not": ("Karar deftere yazıldı. Köprü bir daha hesaplandığında bu "
+                    "hüküm tahmine üstün gelir ve güven 'ONAYLI' görünür.")}
+
+
+@router.get("/kalem-koprusu/kararlar")
+def kalem_koprusu_kararlar():
+    """Verilmiş tüm köprü kararları (en yeni önce). SALT OKUR."""
+    with db() as (_, cur):
+        _karar_tablo(cur)
+        cur.execute(
+            "SELECT karsi_taraf, siparis_urun, fatura_urun, karar, gerekce, veren, "
+            "       olusturma::text AS ts FROM kalem_kopru_karari "
+            " ORDER BY olusturma DESC")
+        rows = [dict(r) for r in (cur.fetchall() or [])]
+    return {"adet": len(rows), "kararlar": rows,
+            "not": ("Append-only: aynı çift için yeni karar eskisini silmez, "
+                    "en yenisi geçerlidir ama ikisi de görünür (geri-alma ≠ silme).")}
