@@ -289,6 +289,20 @@ def fatura_teslim_mutabakati(tedarikci: str = "", gun: int = 120,
         # içinde) ait sayılır — atıf TEKİL olmalıdır, yoksa aynı mal iki kez
         # ölçülür. (Kartlardaki "yinelenen sayfa" dersinin tedarik hâli.)
         _ritim = _tedarikci_ritmi(cur, g)
+        # 📦 KOLİ HARİTASI — sipariş adedi hangi birimde sayılmış?
+        # Şube aynı siparişte su için ŞİŞE, şurup için KOLİ sayabiliyor
+        # (FEZ 16 Haz: "Sade Maden Suyu ×240" = 10 koli × 24). Tek birim
+        # varsaymak o dönemi sonsuza dek "tutmuyor" gösterir.
+        _koli: Dict[str, int] = {}
+        try:
+            _birim_kolonu(cur)
+            cur.execute("SELECT ad, koli_adet FROM siparis_urun "
+                        "WHERE koli_adet IS NOT NULL AND koli_adet > 1")
+            for _r in (cur.fetchall() or []):
+                _r = dict(_r)
+                _koli[_tr_buyut(_r["ad"] or "")] = int(_r["koli_adet"])
+        except Exception as _ek2:  # noqa: BLE001 — koli yoksa ham sayım kullanılır
+            logger.info("koli haritası okunamadı: %s", str(_ek2)[:90])
         _siparisler: Dict[str, List[Dict]] = {}
         if faturalar:
             _tum_ad: set = set()
@@ -349,11 +363,22 @@ def fatura_teslim_mutabakati(tedarikci: str = "", gun: int = 120,
                 if not en_yakin:
                     continue
                 kl = _kalem_listesi(d.get("kalemler"))
+                # ⚖️ İKİ YORUM: ham sayım ve KOLİYE ÇEVRİLMİŞ sayım.
+                # Hangisinin doğru olduğuna burada karar VERİLMEZ; ikisi de
+                # taşınır, dönem hükmünde faturaya YAKIN OLAN seçilir.
+                # (Kart tarafındaki "iki banka geleneği" desenin aynısı.)
+                _ham = sum(float(k.get("adet") or 0) for k in kl)
+                _cev = 0.0
+                for _k in kl:
+                    _a = float(_k.get("adet") or 0)
+                    _kd = _koli.get(_tr_buyut(str(_k.get("urun_ad") or _k.get("ad") or "")))
+                    _cev += (_a / _kd) if (_kd and _a and _a % _kd == 0) else _a
                 _siparisler.setdefault(en_yakin, []).append({
                     "ts_id": d["id"], "sube_adi": d.get("sube_adi"),
                     "siparis_ts": str(d.get("olusturma") or "")[:19],
                     "teslim_alindi": bool(d.get("teslim_ts")),
-                    "adet": round(sum(float(k.get("adet") or 0) for k in kl), 2),
+                    "adet_koli_cevrimli": round(_cev, 2),
+                    "adet": round(_ham, 2),
                     "ozet": " · ".join(
                         str(k.get("urun_ad") or k.get("ad") or "?") + " ×" + str(k.get("adet"))
                         for k in kl[:4]),
@@ -542,7 +567,19 @@ def fatura_teslim_mutabakati(tedarikci: str = "", gun: int = 120,
                         _gorulen.add(s["ts_id"]); acik.append(s)
                 t_adet += x["teslim_alinan_adet"]
             t_adet = round(t_adet, 2)
+            _t_cev = round(sum(s2.get("adet_koli_cevrimli", s2["adet"])
+                               for x in kume
+                               for s2 in (x.get("tum_siparisler") or [])
+                               if s2.get("teslim_alindi")), 2)
             fark = round(f_adet - t_adet, 2)
+            _birim_notu = None
+            if abs(f_adet - _t_cev) < abs(fark) - 0.5:
+                # Koliye çevrilmiş sayım faturaya BELİRGİN daha yakın →
+                # şube o kalemleri şişe/kutu saymış, fatura koli yazmış.
+                _birim_notu = ("koli çevrimi uygulandı: ham %.0f → %.0f adet "
+                               "(şube şişe/kutu saymış, fatura koli yazmış)"
+                               % (t_adet, _t_cev))
+                t_adet, fark = _t_cev, round(f_adet - _t_cev, 2)
             if abs(fark) <= 1:
                 durum, guc = "TUTUYOR — dönem faturası ile teslim alınan aynı", None
             elif fark > 1 and acik:
@@ -596,7 +633,7 @@ def fatura_teslim_mutabakati(tedarikci: str = "", gun: int = 120,
                 "fatura_tutari": round(sum(x["tutar"] or 0 for x in kume), 2),
                 "fatura_adet": f_adet, "teslim_alinan_adet": t_adet,
                 "adet_farki": fark, "durum": durum, "kanit_gucu": guc,
-                "acik_siparisler": acik,
+                "birim_notu": _birim_notu, "acik_siparisler": acik,
             })
         gruplar.sort(key=lambda x: x["donem_bit"], reverse=True)
         grup_ozet: Dict[str, int] = {}
