@@ -638,9 +638,14 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
     if (!veri?.panel || gorunum !== 'karar') return undefined;
     const k = kuyrukRef.current || { anahtar: [], sinif: [] };
     let iptal = false;
+    // ⚠️ GÖVDE DÜZ NESNE VERİLİR, JSON.stringify EDİLMEZ: api() gövdeyi ZATEN
+    // kendisi çeviriyor (utils/api.js — `body: opts.body ? JSON.stringify(...)`).
+    // İki kez çevrilince sunucuya nesne değil METİN gider ve uç 422 döner.
+    // Canlıda tam olarak bu oldu; ölçüm sessizce hiç yazmadı — ölçüm aletinin
+    // kendi kendini denetlemesi bu yüzden şart (ucu ayrıca curl ile sınadık).
     api('/bakis-olcum/acilis', {
       method: 'POST',
-      body: JSON.stringify({ gorunum, kuyruk: k.anahtar, kuyruk_sinif: k.sinif }),
+      body: { gorunum, kuyruk: k.anahtar, kuyruk_sinif: k.sinif },
     })
       .then((r) => { if (!iptal) oturumRef.current = r?.oturum_id || null; })
       .catch(() => { /* ölçüm düşerse ekran çalışmaya devam eder */ });
@@ -653,7 +658,7 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
     const oid = oturumRef.current;
     if (!oid) return;
     oturumRef.current = null;
-    api('/bakis-olcum/eylem', { method: 'POST', body: JSON.stringify({ oturum_id: oid, tur }) })
+    api('/bakis-olcum/eylem', { method: 'POST', body: { oturum_id: oid, tur } })
       .catch(() => { /* sessiz */ });
   };
 
