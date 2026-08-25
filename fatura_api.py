@@ -200,6 +200,49 @@ _OCR_PROMPT = (
 )
 
 
+def _foto_kucult(foto: bytes, mime: str) -> tuple:
+    """Vision'a göndermeden ÖNCE büyük fotoğrafı küçültür. (foto, mime) döner.
+
+    ⚠️ ZAMAN AŞIMININ ASIL SEBEBİ (2026-08-25, Railway logundan teşhis):
+        WARNING | fatura OCR hata 318d5448-...: Request timed out.
+    MEHMET ATALAY NPE2026000000432'nin fotoğrafı 2,4 MB. Base64'e çevrilince
+    ~3,2 MB olarak isteğin İÇİNE gömülüyor; yükleme + model işleme 120 sn'yi
+    aşıyor ve istek düşüyor. Fatura 5 kez denendi, 5'inde de aynı yere çarptı.
+
+    Personelin telefonuyla çektiği fotoğraf 12 MP olabilir; OCR için gereken
+    çözünürlük bunun çok altındadır. Uzun kenar 2000 px'e indirilip JPEG q85
+    ile yeniden kodlanır — metin okunabilirliği korunur, boyut ~10 katı düşer.
+
+    ⚠️ DB'DEKİ ASIL FOTOĞRAFA DOKUNULMAZ; yalnız LLM'e giden kopya küçültülür.
+    Belge aslı kanıttır, sıkıştırılmış hâli değil.
+    HATA-YUTAR: Pillow yoksa/patlarsa özgün fotoğraf gönderilir (eski davranış).
+    """
+    try:
+        if len(foto) <= int(os.getenv("OCR_FOTO_ESIK_BAYT", "900000")):
+            return foto, mime
+        import io as _io
+        from PIL import Image  # noqa: PLC0415
+        im = Image.open(_io.BytesIO(foto))
+        if im.mode not in ("RGB", "L"):
+            im = im.convert("RGB")
+        uzun = int(os.getenv("OCR_FOTO_UZUN_KENAR", "2000"))
+        if max(im.size) > uzun:
+            oran = uzun / float(max(im.size))
+            im = im.resize((max(1, int(im.width * oran)), max(1, int(im.height * oran))),
+                           Image.LANCZOS)
+        tampon = _io.BytesIO()
+        im.save(tampon, format="JPEG", quality=85, optimize=True)
+        yeni = tampon.getvalue()
+        if len(yeni) >= len(foto):
+            return foto, mime          # küçülmediyse dokunma
+        logger.info("OCR fotoğrafı küçültüldü: %.1f MB → %.1f MB (%dx%d)",
+                    len(foto) / 1e6, len(yeni) / 1e6, im.width, im.height)
+        return yeni, "image/jpeg"
+    except Exception as e:  # noqa: BLE001 — küçültememek OCR'ı durdurmaz
+        logger.warning("foto küçültme atlandı (özgün gönderiliyor): %s", str(e)[:120])
+        return foto, mime
+
+
 def _vision_ocr(foto: bytes, mime: str) -> Dict[str, Any]:
     """Vision model ile faturadan yapılandırılmış JSON çıkarır. Hata → exception."""
     api_key = os.getenv("OPENAI_API_KEY")
@@ -219,6 +262,7 @@ def _vision_ocr(foto: bytes, mime: str) -> Dict[str, Any]:
                     base_url=(os.getenv("LLM_BASE_URL") or "").strip() or None,
                     timeout=float(os.getenv("OCR_TIMEOUT_SN", "120")),
                     max_retries=1)
+    foto, mime = _foto_kucult(foto, mime)
     b64 = base64.b64encode(foto).decode("ascii")
     resp = client.chat.completions.create(
         model=os.getenv("OPENAI_FATURA_MODEL", "gpt-4o"),  # fatura kritik → tam model
