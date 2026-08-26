@@ -1101,7 +1101,12 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
           <>
             {' '}Ayrıca <b style={{ fontFamily: F.mono, color: R.amber }}>{fmt(nakitDurum.mut)}</b>{' '}
             kayıtlarda görünüyor ama <b>yeri doğrulanmamış</b>
-            {nakitDurum.pay != null ? ` (defterin %${nakitDurum.pay}'i)` : ''}.
+            {/* ⚠️ (canlı) Sunucu 47.9 döndürüyordu, ekranda "%47.9'i" çıkıyordu:
+                NOKTA Türkçe değil (virgül olmalı) ve ek yanlış. Cümlede ondalık
+                hassasiyetin bir işi yok — bu bir BÜYÜKLÜK duygusu, ölçüm değil.
+                Tam sayıya yuvarlanır: "%48'i". Yuvarlama BİÇİMLENDİRMEDİR,
+                türetme değil: oranın kendisi sunucudan gelir. */}
+            {nakitDurum.pay != null ? ` (defterin %${Math.round(nakitDurum.pay)}'i)` : ''}.
           </>
         )}
         {sure && <> Bu parayla <b style={{ color: R.krem }}>{sure}</b> dayanırsın.</>}
