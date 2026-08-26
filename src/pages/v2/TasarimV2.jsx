@@ -2672,11 +2672,24 @@ export default function TasarimV2({ onGit }) {
                   paddingTop: 9, borderTop: `1px solid ${R.cizgi3}`, fontSize: 11,
                 }}>
                   <span style={{ color: R.not2, fontWeight: 700 }}>Zincir · son {sayi(subeFinans.gun_sayi) || 30} gün</span>
+                  {/* 🔴 CANLI DENETİM (2026-08-26) — İKİ TABAN, TEK EKRAN.
+                      Burası zincirin TOPLAM oranını (canlıda 1,3₺) manşet gibi
+                      yazıyordu; oysa aynı ekrandaki verim sinyali ve tablo
+                      renkleri artık ÇALIŞAN ŞUBE ORTANCASINA (4,4₺) göre
+                      ölçüyor. Sahip aynı ekranda iki farklı «zincir» görüyordu.
+                      Üstelik 1,3 rakamı yanıltıcı: MERKEZ'in 485.716 ₺ gideri
+                      var ve HİÇ cirosu yok — kapalı şubenin gideri, çalışan
+                      şubelerin verimini olduğundan kötü gösteriyor.
+                      İkisi de yazılır ve HANGİSİNİN NE OLDUĞU söylenir:
+                      toplam = «zincire giren her kuruş», ortanca = «tipik
+                      çalışan şube». Biri diğerinin yerine geçemez. */}
                   {cgo != null && (
                     <span style={{ color: R.metin2 }}>
-                      1₺ gider → <b style={{ fontFamily: F.mono, color: R.metin2 }}>{sayi(cgo).toFixed(1)}₺</b> ciro
-                      {/* Zincir TOPLAMI kendi referansıdır — kendine göre renk
-                          almak anlamsız olurdu; nötr yazılır. */}
+                      tümü dâhil <b style={{ fontFamily: F.mono, color: R.metin2 }}>{sayi(cgo).toFixed(1)}₺</b>
+                      {zincirOran != null && (
+                        <> · {zincirTaban.ad} <b style={{ fontFamily: F.mono, color: R.krem }}>{zincirOran.toFixed(1)}₺</b></>
+                      )}
+                      <span style={{ color: R.not3 }}> (1₺ gidere düşen ciro)</span>
                     </span>
                   )}
                   {oranlar.map(([ad, v, iyi, kotu]) => (
@@ -2739,6 +2752,14 @@ export default function TasarimV2({ onGit }) {
                 const f = finansOf(s.ad);
                 if (!f || (!f.gider && !f.ciro)) return { v: '—', sag: true, renk: R.not3, sira: -1 };
                 const oran = f.gider > 0 ? f.ciro / f.gider : null;
+                // 🔴 CANLI DENETİM (2026-08-26) — KENDİ GEREKÇEMLE ÇELİŞİYORDUM.
+                // Verim SİNYALİNİ cirosu sıfır şubeden kaldırırken gerekçem
+                // «kapalı dükkânın verimi kötü değil YOK'tur» idi. Ama TABLO
+                // aynı şubeye «1₺ → 0.0₺» yazıp KIRMIZI boyamaya devam
+                // ediyordu — yani ekran, kaldırdığım hükmü başka yerden
+                // veriyordu. Cirosu olmayan şubede oran hesaplanmaz: «ciro yok»
+                // yazılır, gider rakamı zaten üstte duruyor ve asıl soru odur.
+                const ciroVar = sayi(f.ciro) > 0;
                 return {
                   sira: f.gider, sag: true,
                   v: (
@@ -2750,9 +2771,11 @@ export default function TasarimV2({ onGit }) {
                         // Yani kontrast değil BOYUT sorunuydu. 10px, gerçek veri
                         // taşıyan bir hücre için küçük; 11'e çıkarıldı.
                         fontSize: 11, fontWeight: 700, whiteSpace: 'nowrap',
-                        color: oranRenk(oran),
+                        color: !ciroVar ? R.not3 : oranRenk(oran),
                       }}>
-                        {oran == null ? 'gider yok' : `1₺ → ${oran.toFixed(1)}₺ ciro`}
+                        {oran == null ? 'gider yok'
+                          : !ciroVar ? 'ciro yok — verim ölçülmez'
+                            : `1₺ → ${oran.toFixed(1)}₺ ciro`}
                       </span>
                     </span>
                   ),
@@ -2867,8 +2890,27 @@ export default function TasarimV2({ onGit }) {
       : (panel?.ciro_eksik_gunler || []);
 
     const kpiler = [
-      { etiket: 'Kritik', deger: riskSayi(kritik.length), alt: panelDustu ? (panelEksikAlan ? '⚠ panel eksik alan döndü' : '⚠ panel okunamadı') : 'bugün karar gerekiyor', renk: riskRenk(kritik.length && R.kirmizi, R.yesil) },
-      { etiket: 'Uyarı', deger: riskSayi(uyari.length), alt: panelDustu ? (panelEksikAlan ? '⚠ panel eksik alan döndü' : '⚠ panel okunamadı') : 'bu hafta içinde', renk: riskRenk(uyari.length && R.amber, R.yesil) },
+      // 🔴 CANLI DENETİM (2026-08-26) — KAPI TURU BURAYI ATLAMIŞTI.
+      // Bugün'de 10/10, Ay'da 4/4 KPI kapı aldı ama Riskler'de 5'ten yalnız
+      // 1'i (Gecikmiş yük) tıklanıyordu. «Kapısız KPI = ölü bilgi» kuralını
+      // koyup üç görünümün ikisinde uyguladım — yarım kalan düzeltme,
+      // düzeltilmiş görünen bir kusurdur (bu oturumda ÜÇÜNCÜ kez).
+      // ⚠️ Kritik/Uyarı önerileri açar (aynı kuyruk, Strateji tam listede),
+      // Onay kuyruğu ve Ciro eksik gün kendi ekranlarına gider.
+      {
+        etiket: 'Kritik', deger: riskSayi(kritik.length),
+        alt: panelDustu ? (panelEksikAlan ? '⚠ panel eksik alan döndü' : '⚠ panel okunamadı')
+          : (kritik.length ? 'bugün karar gerekiyor · listeye git' : 'bugün karar gerekiyor'),
+        renk: riskRenk(kritik.length && R.kirmizi, R.yesil),
+        onTikla: () => koprule('__modul:panel:strateji'),
+      },
+      {
+        etiket: 'Uyarı', deger: riskSayi(uyari.length),
+        alt: panelDustu ? (panelEksikAlan ? '⚠ panel eksik alan döndü' : '⚠ panel okunamadı')
+          : (uyari.length ? 'bu hafta içinde · listeye git' : 'bu hafta içinde'),
+        renk: riskRenk(uyari.length && R.amber, R.yesil),
+        onTikla: () => koprule('__modul:panel:strateji'),
+      },
       // 🐞 CANLI DENETİM (2026-08-03): 124 "bekleyen işlem" görünüyordu ama
       // Onay ekranı aynı kuyruğu 0 gösteriyordu — kuyruktaki KASA türü kayıtlar
       // onay değil kasa uyumsuzluğudur (Onay ekranındaki frontend filtreyle
@@ -2881,6 +2923,11 @@ export default function TasarimV2({ onGit }) {
           deger: String(gercekOnay),
           alt: kasaAdet ? `bekleyen onay · kasa hatası ${kasaAdet} ayrı sayılır` : 'bekleyen işlem',
           renk: gercekOnay ? R.amber : R.yesil,
+          // Kasa hatası varsa KANITI aç (173 kayıt gri alt yazıda gömülüydü);
+          // yoksa kuyruğun kendi ekranına git. Her hâlde bir kapı vardır.
+          onTikla: kasaAdet
+            ? () => kasaHatasiCekmece(onaylar.filter((o) => String(o.islem_turu || '').toUpperCase().includes('KASA')))
+            : () => koprule('__modul:onaylar:kuyruk'),
         };
       })(),
       // ⚠️ (2026-08-26, Fable) BİRİM BELİRSİZDİ ve KAYNAK FARKLIYDI: Bugün/Ay
@@ -2898,6 +2945,7 @@ export default function TasarimV2({ onGit }) {
         renk: eksikCiro?.eksik_gun_adet != null
           ? (sayi(eksikCiro.eksik_gun_adet) ? R.kirmizi : R.yesil)
           : riskRenk(eksikGunler.length && R.kirmizi, R.yesil),
+        onTikla: () => koprule('__modul:para:girisi'),
       },
       // 🔵 (2026-08-14) Riskler görünümü "kaç adet" sayıyordu ama PARANIN büyüklüğü
       // hiç görünmüyordu — 2 kalem 900 K ₺ ile 9 kalem 4 K ₺ aynı ağırlıkta duruyordu.
@@ -3153,16 +3201,29 @@ export default function TasarimV2({ onGit }) {
           <span style={{ fontSize: 10, letterSpacing: '.8px', textTransform: 'uppercase', color: R.not2, fontWeight: 700 }}>
             Kasa + banka
           </span>
+          {/* 🔴 CANLI DENETİM (2026-08-26) — EKRAN KENDİ İÇİNDE ÇELİŞİYORDU.
+              Kenar çubuğu «bugün ödenecek 1.433.944 ₺» derken panelin KPI'sı
+              aynı anda «Bugün vadesi gelen 0 ₺ · bugüne ait kalem yok» diyordu.
+              Sebep: burası HAM `bugunOdemeToplam`u basıyordu — o toplam
+              GECİKMİŞLERİ de içerir. Bu ayrım KPI'da 2026-08-09'da yapılmış,
+              ama kenar çubuğu ATLANMIŞTI: yarım kalan düzeltme, düzeltilmiş
+              görünen bir kusurdur. Sahibin her ekranda gördüğü tek sabit
+              rakam burası — yanlış etiketin en pahalı yeri.
+              Ayrıca renk SABİT YEŞİLDİ (bakiye ≥ 0 diye): panelin iki
+              ekranında yeterliliği yüke göre ölçüyoruz, üçüncü yerde
+              «pozitif = iyi» demek aynı sahte yeşil. Tek üretici çağrılır. */}
           <div style={{
             whiteSpace: 'nowrap', fontFamily: F.mono, fontSize: 17, fontWeight: 700,
-            color: kasaBanka >= 0 ? R.yesil : R.kirmizi,
+            color: kasaYeterlilikRengi(kasaBanka, sayi(panel?.yuk_30)),
           }}>
             {yukleniyor ? '…' : fmt(kasaBanka)}
           </div>
           <div style={{ fontSize: 10.5, color: R.not2, lineHeight: 1.5 }}>
-            {bugunOdemeToplam > 0
-              ? `bugün ödenecek ${fmt(bugunOdemeToplam)}`
-              : 'bugün vadesi gelen ödeme yok'}
+            {gecikmisToplam > 0
+              ? `gecikmiş ${fmt(gecikmisToplam)}${gercekBugunToplam > 0 ? ` · bugün ${fmt(gercekBugunToplam)}` : ''}`
+              : gercekBugunToplam > 0
+                ? `bugün ödenecek ${fmt(gercekBugunToplam)}`
+                : 'bugün vadesi gelen ödeme yok'}
           </div>
         </div>
       </div>
