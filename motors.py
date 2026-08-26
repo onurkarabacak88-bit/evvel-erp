@@ -1494,18 +1494,44 @@ def finans_ozet_motoru():
             (son7_bas, bugun),
         )
         girilen_tarihler = {r["t"] for r in cur.fetchall()}
+        # ══════════════════════════════════════════════════════════════════
+        # 🔵 İKİ KUSUR DÜZELTİLDİ (2026-08-26, BAKIŞ denetimi)
+        # ══════════════════════════════════════════════════════════════════
+        # KUSUR 1 — BUGÜN "EKSİK" SAYILIYORDU.
+        # Sistemin KENDİ YAZILI KURALI bunun tersini söylüyor; main.py'deki
+        # /ciro-eksik-gunler ucu aynen şöyle diyor:
+        #   "⚠️ BUGÜN ayrı raporlanır — gün bitmediği için 'eksik' demek erken."
+        # ve bugünü `bugun_bekleyen` diye AYRI bir kovaya koyuyor. Buradaki
+        # kopya o kuralı çiğniyordu: gün daha bitmemişken, şube akşam girecekken
+        # "ciro girilmemiş" alarmı üretiyordu. Canlı kanıt: 26 Ağustos saat
+        # 11:49'da bugün "kritik eksik" görünüyordu.
+        # ⚠️ Bilgi GİZLENMİYOR, DOĞRU ADLA ayrılıyor: bugün `bugun_ciro_bekleniyor`
+        # olarak döner. "Eksik" bir kusurdur, "bekleniyor" bir durumdur.
+        #
+        # KUSUR 2 — ŞİDDET TERSTİ.
+        # `kritik = days_ago <= 2` yani EN TAZE boşluk EN KRİTİK sayılıyordu.
+        # Bu hem sezgiye hem gerçeğe aykırı: 5 gündür girilmemiş bir gün, dünkü
+        # boşluktan daha kötüdür — çünkü aradan geçen her gün onu düzeltme
+        # fırsatı olmuş ve kullanılmamıştır. Üstelik boşluklar doğaları gereği
+        # hep son günlerde olduğu için "kritik" NEREDEYSE HER ZAMAN yanıyordu:
+        # her şey kritikse hiçbir şey kritik değildir (uyarı bütçesi).
+        # Yeni kural: 3 gün ve daha eski boşluk kritiktir — normal düzeltme
+        # döngüsü (ertesi gün girme) çalışmamış demektir.
         ciro_eksik_gunler = []
+        bugun_ciro_bekleniyor = bugun not in girilen_tarihler
         for i in range(7):
             g = son7_bas + timedelta(days=i)
             if g in girilen_tarihler:
                 continue
             days_ago = (bugun - g).days
+            if days_ago == 0:
+                continue  # gün bitmedi — "eksik" değil, "bekleniyor"
             ciro_eksik_gunler.append(
                 {
                     "tarih": str(g),
                     "gun_adi": g.strftime("%A"),
                     "days_ago": days_ago,
-                    "kritik": days_ago <= 2,  # son 3 gün
+                    "kritik": days_ago >= 3,  # düzeltme döngüsü çalışmamış
                 }
             )
 
@@ -1668,6 +1694,11 @@ def finans_ozet_motoru():
         'risk_gunu': risk_gunu,
         'risk_gunu_onerili': risk_gunu_onerili,
         'ciro_eksik_gunler': ciro_eksik_gunler,
+        # Bugün "eksik" DEĞİL, "bekleniyor" — gün bitmedi. Bilgi gizlenmiyor,
+        # doğru adla ayrı alanda duruyor (main.py /ciro-eksik-gunler ucundaki
+        # `bugun_bekleyen` kovasının aynısı). Ekran isterse gösterir ama
+        # ALARM ÜRETMEZ.
+        'bugun_ciro_bekleniyor': bugun_ciro_bekleniyor,
     }
     _FINANS_OZET_CACHE["ts"] = now
     _FINANS_OZET_CACHE["data"] = out
