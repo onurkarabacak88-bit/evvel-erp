@@ -25,15 +25,30 @@ export const R = {
   // metin
   krem: '#F3EADC',
   metin2: '#C4B5A2',
-  not: '#9B8A75',
-  // not2 de sistematik taramada bir kademe açıldı: kart yüzeyinde 3,75→4,17:1
-  // (hiyerarşi: not'tan soluk, not3'ten koyu kalır).
-  not2: '#93836E',
-  // ui-ux-pro-max kontrast denetimi (2026-08-14): #6E6052 kart yüzeyinde 2,53:1
-  // idi (WCAG 4,5:1 altı — küçük punto yardımcı metin okunmuyordu). Aynı ton
-  // ailesinde bir kademe açıldı: kartta 3,4:1 / zeminde 4,2:1. Hiyerarşi korunur
-  // (not2'den hâlâ soluk). Tam AA istenirse punto büyütme sahiple konuşulmalı.
-  not3: '#847460',
+  // ══════════════════════════════════════════════════════════════════════
+  // 👁️ YARDIMCI METİN MERDİVENİ — ÜÇÜ DE WCAG AA (2026-08-26, sahip onayı)
+  // ══════════════════════════════════════════════════════════════════════
+  // ÖNCEKİ HÂL — üçü de 4,5:1 eşiğinin çevresine sıkışmıştı:
+  //     not  #9B8A75 → 4,78   ·  not2 #93836E → 4,34  ·  not3 #847460 → 3,53
+  // Yani not2 ve not3 AA'nın ALTINDAYDI ve merdivenin toplam açıklığı 1,25
+  // kademeydi — üç ton neredeyse aynı görünüyordu, hem okunmuyor hem hiyerarşi
+  // kurmuyorlardı. 2026-08-14 denetimi bunu görmüş ama "punto büyütme sahiple
+  // konuşulmalı" diye BEKLETMİŞTİ.
+  //
+  // ⚠️ "PUNTO BÜYÜTMEK ÇÖZER" YANLIŞTI: WCAG'de büyük metin 24px (ya da 18,7px
+  // kalın) demektir; 12–13px'e çıkarmak eşiği 3:1'e indirmez, 4,5:1 kalır.
+  // Çözüm renk kademesiydi, punto değil.
+  //
+  // YENİ HÂL — aynı sıcak aile (hue 34°, doygunluk %25 KORUNDU, marka tonu
+  // kaymadı), merdiven bir kademe yukarı kaydırıldı ve aralıklar açıldı.
+  // Değerler kartın EN KOYU olmayan ucuna (#2A2015) göre ölçüldü — yani en
+  // kötü hâl. Alt uçta (#221809) hepsi daha da yüksek.
+  //     not  → 6,47:1   ·  not2 → 5,57:1   ·  not3 → 4,77:1
+  // Hiyerarşi korunur (not > not2 > not3) ve üçü de AA'yı geçer.
+  // ⚠️ Bu TÜM MODÜLLERİ etkiler — sahip onayıyla yapıldı.
+  not: '#B6A288',
+  not2: '#A8967E',
+  not3: '#9B8A74',
   // marka + durum
   bakir: '#D29A5B',
   bakirAcik: '#E5B27A',
