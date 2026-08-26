@@ -1828,8 +1828,13 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
               renk: gecikmisToplam > 0 ? R.kirmiziAcik : R.yesil,
               delta: metin,
               // Büyüme kötü, küçülme iyi — renk yönü söyler.
-              deltaRenk: !d || (d.tl === 0 && d.adet === 0) ? R.not3
-                : d.tl > 0 ? R.kirmizi : R.yesil,
+              // 👁️ "değişmedi" hâli R.not3 idi → 3,49:1 (AA altı). Sessiz olması
+              // gereken bir satır, ama OKUNAMAZ olması gereken değil. R.not
+              // (4,72:1). Not: R.not3'ün kendisi sistem genelinde AA altında —
+              // tema.js 2026-08-14'te bunu biliyor ve sahibe bırakmış; global
+              // token bu turda DEĞİŞTİRİLMEDİ (kapsam: yalnız BAKIŞ).
+              deltaRenk: !d || (d.tl === 0 && d.adet === 0) ? R.not
+                : d.tl > 0 ? R.kirmiziAcik : R.yesil,
             };
           })(),
           {
