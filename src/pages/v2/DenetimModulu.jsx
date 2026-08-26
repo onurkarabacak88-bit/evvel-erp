@@ -703,8 +703,54 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
     const uyumlu = olculen.filter((s) => s.ana_tani === 'UYUMLU');
     const hamListe = Array.isArray(notlar?.notlar) ? notlar.notlar : [];
     const hamTipler = Array.isArray(notlar?.tipler) ? notlar.tipler : [];
+    // 🔬 CANLI GEZİNTİ (2026-08-27) — MODÜLÜN EN ÖNEMLİ CÜMLESİ EKSİKTİ.
+    // Ekran «bugün anomali 0» diyordu ama asıl haber şuydu: MOTOR KOŞMADI.
+    // Canlı kanıt: 3 aktif şubenin son koşusu 25 Ağustos, bugün 27 — iki gece
+    // atlanmış; 2 şubede motor Haziran'dan beri kapalı.
+    // ⚠️ Bir denetim modülünün ilk söylemesi gereken şey, kendi ölçüm durumudur.
+    // «Bulgu yok» ile «bakmadım» aynı ekranda aynı sessizliğe düşerse, modül
+    // sahibi yanlış güvene sürükler — bu, alarm yorgunluğunun tersi ama aynı
+    // derecede tehlikeli hâli: ALARM KÖRLÜĞÜ.
+    // ⚠️ Bant yalnız GERÇEK bir gecikme varken çizilir (uyarı bütçesi):
+    // motor taze koştuysa hiç görünmez.
+    const motorDurumu = (() => {
+      const ds = Array.isArray(durum?.subeler) ? durum.subeler : [];
+      if (!ds.length) return null;
+      const bugunMs = Date.parse(`${bugunISO()}T00:00:00Z`);
+      const yas = (d) => {
+        const t = String(d || '').slice(0, 10);
+        return /^\d{4}-\d{2}-\d{2}$/.test(t)
+          ? Math.round((bugunMs - Date.parse(`${t}T00:00:00Z`)) / 86400000) : null;
+      };
+      const kapali = ds.filter((x) => x.aktif === false);
+      const aktifler = ds.filter((x) => x.aktif !== false);
+      const eskiler = aktifler.filter((x) => (yas(x.son_calisma) ?? 99) > 1);
+      const enEski = aktifler.reduce((m, x) => Math.max(m, yas(x.son_calisma) ?? 0), 0);
+      if (!kapali.length && !eskiler.length) return null;
+      return { kapali, eskiler, enEski, toplam: ds.length };
+    })();
+
     return (
       <>
+        {motorDurumu && (
+          <div style={{
+            ...kartYuzey, padding: '12px 17px', marginBottom: 13,
+            borderLeft: `3px solid ${R.amber}`, fontSize: 12.5, color: R.metin2, lineHeight: 1.65,
+          }}>
+            🔇 <b style={{ color: R.krem }}>Denetim motoru tam çalışmıyor</b> — aşağıdaki sayılar
+            «sorun yok» değil, <b>«bakılmadı»</b> anlamına gelebilir.
+            {motorDurumu.eskiler.length > 0 && (
+              <> {motorDurumu.eskiler.length} aktif şubede gece koşusu{' '}
+                <b style={{ color: R.krem }}>{motorDurumu.enEski} gündür</b> yapılmamış
+                ({motorDurumu.eskiler.map((x) => x.sube_ad).join(', ')}).</>
+            )}
+            {motorDurumu.kapali.length > 0 && (
+              <> {motorDurumu.kapali.length} şubede motor <b style={{ color: R.krem }}>kapalı</b>
+                {' '}({motorDurumu.kapali.map((x) => x.sube_ad).join(', ')}) — o şubeler için hüküm üretilmiyor.</>
+            )}
+            {' '}<span style={{ color: R.not3 }}>Koşu takvimi ve şube bazlı durum: Tanı Motorları sekmesi.</span>
+          </div>
+        )}
         <KpiSeridi kpiler={[
           // Payda artık ÖLÇÜLEN şube — "4 şube tarandı" derken 2'si hiç koşmamışsa yalan olur.
           { etiket: 'Bugün anomali', deger: String(toplamAnomali),
