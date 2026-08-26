@@ -108,8 +108,12 @@ const ISIK = {
   // sessiz bir durum ama SESSİZ ≠ OKUNAMAZ; "veri yok" ise hiç sessiz olmamalı
   // (bir okuma boşluğudur). R.not2'ye çıkarıldı — hâlâ en soluk kademe, ama
   // eşiğin üstünde. Hiyerarşi korunur, okunabilirlik kazanılır.
-  sezon: { renk: R.not2, isaret: '–', ad: 'sezon kapalı' },
-  veriYok: { renk: R.not2, isaret: '?', ad: 'veri yok' },
+  // ⚠️ R.not2 YETMEDİ: ölçümde 4,29:1 çıktı — hâlâ AA'nın 4,5 eşiğinin altında
+  // (tema.js'in kendi notu da "kart yüzeyinde 4,17:1" diyor). Bir kademe daha
+  // açık olan R.not kullanıldı (ölçüm: 4,72:1). Ders: token adının "soluk"
+  // olması eşiği geçtiği anlamına gelmiyor — ÖLÇMEK gerekiyor.
+  sezon: { renk: R.not, isaret: '–', ad: 'sezon kapalı' },
+  veriYok: { renk: R.not, isaret: '?', ad: 'veri yok' },
 };
 /** Açılıştan sonra kaç dakika "hâlâ normal" sayılır (amber → kırmızı eşiği). */
 const GEC_TOLERANS_DK = 60;
