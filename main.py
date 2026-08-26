@@ -151,6 +151,15 @@ except Exception as _tedarik_mut_err:
     logging.getLogger(__name__).warning(
         f"tedarik_mutabakat modulu yuklenemedi (izole, ana akis etkilenmez): {_tedarik_mut_err}"
     )
+# ARAMA — İZOLE, SALT OKUR: "şu belirli şeyi arıyorum" tek kapısı.
+# Fatura aramasını YENİDEN YAZMAZ, mevcut /api/fatura/ara'yı çağırır.
+try:
+    from arama_api import router as arama_router
+    app.include_router(arama_router)
+except Exception as _arama_err:
+    logging.getLogger(__name__).warning(
+        f"arama modulu yuklenemedi (izole, ana akis etkilenmez): {_arama_err}"
+    )
 # BAKIŞ Ölçüm — İZOLE toplayıcı: "ekran iş üretiyor mu?" (M1-M5).
 # Kendi iki tablosuna yazar, başka hiçbir tabloya dokunmaz; tüm uçları hata yutar.
 try:

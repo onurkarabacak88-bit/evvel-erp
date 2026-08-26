@@ -165,6 +165,33 @@ export default function TasarimV2({ onGit }) {
   const [paletQ, setPaletQ] = useState('');
   const [paletI, setPaletI] = useState(0);
   const paletRef = useRef(null);
+  // ══════════════════════════════════════════════════════════════════════════
+  // 🔎 KAYIT ARAMASI (2026-08-26, Codex bulunabilirlik bulgusu)
+  // ══════════════════════════════════════════════════════════════════════════
+  // Paletin kendi yer tutucusu ZATEN "Modül, ekran veya KAYIT ara…" diyordu —
+  // ama yalnız ekran arıyordu. Verilmemiş bir sözdü: sahip "FEZ" yazıp hiçbir
+  // şey bulamayınca aramanın çalışmadığını değil, VERİNİN OLMADIĞINI sanıyordu.
+  //
+  // ⚠️ İKİNCİ BİR ARAMA KUTUSU AÇILMADI. Sistemde tek arama yüzeyi bu palet;
+  // BAKIŞ'a ayrı bir kutu koymak iki ayrı "arama" doğururdu ve hangisinin neyi
+  // aradığı sorusu kalıcı olurdu. Aynı kutu, iki tür sonuç: EKRANLAR + KAYITLAR.
+  const [kayitlar, setKayitlar] = useState(null);   // null = henüz aranmadı
+  const [kayitAriyor, setKayitAriyor] = useState(false);
+  useEffect(() => {
+    const s = paletQ.trim();
+    if (!palet || s.length < 2) { setKayitlar(null); return undefined; }
+    // ⏳ Geciktirme: her harfte sorgu atmak hem sunucuyu hem sonucu yorar.
+    let iptal = false;
+    setKayitAriyor(true);
+    const z = setTimeout(() => {
+      api(`/ara?q=${encodeURIComponent(s)}&limit=5`)
+        .then((d) => { if (!iptal) setKayitlar(d); })
+        // HATA ≠ BOŞ: arama düşerse "sonuç yok" DEMEYİZ, düştüğünü söyleriz.
+        .catch((e) => { if (!iptal) setKayitlar({ _hata: e?.message || 'arama yapılamadı' }); })
+        .finally(() => { if (!iptal) setKayitAriyor(false); });
+    }, 260);
+    return () => { iptal = true; clearTimeout(z); setKayitAriyor(false); };
+  }, [paletQ, palet]);
   const [yukleniyor, setYukleniyor] = useState(true);
   const [hata, setHata] = useState('');
 
@@ -2290,11 +2317,15 @@ export default function TasarimV2({ onGit }) {
               </div>
 
               <div style={{ maxHeight: '46vh', overflowY: 'auto', overflowX: 'hidden', padding: 8 }}>
-                {sonuc.length === 0 ? (
+                {sonuc.length === 0 && !(kayitlar?.sonuclar || []).length ? (
                   <div style={{ padding: '32px 18px', textAlign: 'center' }}>
-                    <div style={{ fontFamily: F.baslik, fontSize: 15, color: R.metin2 }}>Eşleşen ekran yok</div>
+                    <div style={{ fontFamily: F.baslik, fontSize: 15, color: R.metin2 }}>
+                      {kayitAriyor ? 'Kayıtlarda aranıyor…' : 'Eşleşen ekran ya da kayıt yok'}
+                    </div>
                     <div style={{ fontSize: 12, color: R.not3, marginTop: 5 }}>
-                      «{paletQ}» için sonuç bulunamadı — modül adı ya da ekran adı deneyin
+                      {kayitAriyor
+                        ? `«${paletQ}» için fatura, ödeme, kasa, tedarikçi ve personel taranıyor`
+                        : `«${paletQ}» için sonuç bulunamadı — tedarikçi adı, fatura no ya da ekran adı deneyin`}
                     </div>
                   </div>
                 ) : sonuc.map((p, i) => {
@@ -2336,6 +2367,88 @@ export default function TasarimV2({ onGit }) {
                     </div>
                   );
                 })}
+
+                {/* ══════════════════════════════════════════════════════════
+                    🔎 KAYITLAR — ekranların ALTINDA, ayrı başlıkla
+                    ══════════════════════════════════════════════════════════
+                    Ekran sonuçları GEZİNME, kayıt sonuçları BULMA'dır; ikisi
+                    karışırsa hiçbiri okunmaz. Ok tuşları ekran listesinde
+                    kalır (mevcut davranış bozulmasın), kayıtlar tıklanır. */}
+                {kayitlar?._hata && (
+                  <div style={{
+                    margin: '10px 3px 4px', padding: '9px 11px', borderRadius: 8,
+                    background: 'rgba(248,113,113,.08)', border: `1px solid ${R.kirmizi}33`,
+                    fontSize: 11.5, color: R.metin2,
+                  }}>
+                    ⚠ Kayıt araması yapılamadı ({kayitlar._hata}). Aşağıda yalnız EKRAN
+                    sonuçları var — «sonuç yok» demek yanlış olurdu.
+                  </div>
+                )}
+                {(kayitlar?.sonuclar || []).length > 0 && (
+                  <>
+                    <div style={{
+                      display: 'flex', alignItems: 'baseline', gap: 8,
+                      padding: '12px 11px 5px', borderTop: `1px solid ${R.cizgi}`, marginTop: 8,
+                    }}>
+                      <span style={{
+                        fontSize: 9, fontWeight: 700, letterSpacing: '.6px',
+                        textTransform: 'uppercase', color: R.not2,
+                      }}>
+                        Kayıtlar
+                      </span>
+                      {/* SESSİZ ELEME YASAK: kaç bulundu, kaçı görünüyor. */}
+                      <span style={{ fontSize: 10.5, color: R.not3 }}>
+                        {kayitlar.bulunan > kayitlar.gosterilen
+                          ? `${kayitlar.bulunan} kayıt bulundu · ilk ${kayitlar.gosterilen} gösteriliyor`
+                          : `${kayitlar.gosterilen} kayıt`}
+                        {(kayitlar.dusen_kaynaklar || []).length > 0
+                          && ` · ⚠ okunamayan kaynak: ${kayitlar.dusen_kaynaklar.join(', ')}`}
+                      </span>
+                    </div>
+                    {kayitlar.sonuclar.map((s, i) => (
+                      <div
+                        key={`k${i}`}
+                        onClick={() => { setPalet(false); koprule(s.hedef); }}
+                        role="button"
+                        tabIndex={0}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault(); setPalet(false); koprule(s.hedef);
+                          }
+                        }}
+                        className="v2-hover-kalk"
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: 11, padding: '8px 11px',
+                          borderRadius: 8, cursor: 'pointer', outline: 'none',
+                        }}
+                      >
+                        <span style={{
+                          width: 74, flexShrink: 0, fontSize: 9, fontWeight: 700,
+                          letterSpacing: '.6px', textTransform: 'uppercase', color: R.not2,
+                        }}>
+                          {s.tur}
+                        </span>
+                        <span style={{ flex: 1, minWidth: 0 }}>
+                          <span style={{
+                            display: 'block', fontSize: 13, fontWeight: 600, color: R.krem,
+                            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                          }}>
+                            {s.baslik}
+                          </span>
+                          <span style={{ display: 'block', fontSize: 11, color: R.not2, marginTop: 2 }}>
+                            {[s.alt, s.tarih].filter(Boolean).join(' · ')}
+                          </span>
+                        </span>
+                        {s.tutar != null && (
+                          <span style={{ fontFamily: F.mono, fontSize: 12, color: R.metin2, flexShrink: 0 }}>
+                            {fmt(s.tutar)}
+                          </span>
+                        )}
+                        <span style={{ fontSize: 11, color: R.bakir, flexShrink: 0 }}>›</span>
+                      </div>
+                    ))}
+                  </>
+                )}
               </div>
 
               <div style={{
