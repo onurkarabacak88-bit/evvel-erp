@@ -651,8 +651,26 @@ def ops_kasiyer_karne(gun: int = 30, sube_id: Optional[str] = None):
     gun_sayi = max(1, min(365, int(gun or 30)))
     sid = (sube_id or "").strip() or None
     with db() as (conn, cur):
+        # ⚠️ TEMBEL KOLON GARANTİSİ: `kisi_id` personel_kimlik modülü tarafından
+        # lazy oluşturuluyor. O modül hiç çağrılmamışsa kolon YOK olur ve
+        # aşağıdaki sorgu PATLAR — okuyanın, okuduğu kolonu garanti etmesi
+        # gerekir (bu dosyadaki `_alim_kaynagi_kolonu` deseninin aynısı).
+        try:
+            cur.execute("ALTER TABLE personel ADD COLUMN IF NOT EXISTS kisi_id TEXT")
+        except Exception:  # noqa: BLE001 — kolon zaten varsa ya da yetki yoksa akış sürsün
+            pass
         q = """
-            SELECT s.personel_id,
+            -- 👤 KİŞİ BAZINDA TOPLA (2026-08-26) — çıkıp geri gelen personel
+            -- Sahip: "çıktı geri girdi." Böyle bir personelin `personel`
+            -- tablosunda İKİ satırı olur ve sinyaller ikisine dağılır; risk
+            -- profili İKİYE BÖLÜNÜR, aktif kişi olduğundan temiz görünür.
+            -- ⚠️ GEÇMİŞ KAYIT TAŞINMADI: bir denetim sistemi kendi denetim
+            -- satırlarını "rapor düzgün görünsün" diye yeniden yazmaz
+            -- (ev kuralı: GERİ-ALMA ≠ SİLME · damga bulguyu silmez).
+            -- Satır NE OLDUĞU konusunda doğru; yanlış olan HANGİ KİŞİ satırına
+            -- asıldığı — ve onu artık `kisi_id` cevaplıyor. KAYIT DEĞİL OKUMA
+            -- düzeltilir: hem geçmişe hem geleceğe çalışır, veri göçü gerekmez.
+            SELECT COALESCE(p.kisi_id, s.personel_id) AS personel_id,
                    COALESCE(p.ad_soyad, u.ad, s.personel_id) AS personel_ad,
                    COUNT(*) FILTER (WHERE s.sinyal_turu='SAYIM_OZENSIZLIK') AS ozensizlik,
                    COUNT(*) FILTER (WHERE s.sinyal_turu='KASA_GERCEK_ACIK') AS gercek_acik,
@@ -669,7 +687,7 @@ def ops_kasiyer_karne(gun: int = 30, sube_id: Optional[str] = None):
         if sid:
             q += " AND s.sube_id = %s"
             qp.append(sid)
-        q += " GROUP BY s.personel_id, personel_ad ORDER BY gercek_acik DESC, ham_kasa_fark DESC, ozensizlik DESC"
+        q += " GROUP BY COALESCE(p.kisi_id, s.personel_id), personel_ad ORDER BY gercek_acik DESC, ham_kasa_fark DESC, ozensizlik DESC"
         cur.execute(q, tuple(qp))
         karne = []
         for r in cur.fetchall():
