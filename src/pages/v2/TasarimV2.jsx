@@ -148,6 +148,12 @@ export default function TasarimV2({ onGit }) {
   const [gorunum, setGorunum] = useState('bugun');
   const [donem, setDonem] = useState('gun');
   const [cekmece, setCekmece] = useState(null);
+  // ⚠️ (3. tur, Codex) SAYAÇ YALNIZ YENİ İSTEKTE ARTIYORDU: sahip çekmeceyi
+  // Esc ile kapatırsa `guncelMi()` hâlâ true kalır ve geç dönen cevap KAPALI
+  // çekmeceyi geri açardı. Panelin «kendi kendine oynaması», güveni en hızlı
+  // bitiren şeydir. Kapanış da bir olaydır — sayacı o da artırır.
+  // ⚠️ `vadeIstekNo` AŞAĞIDA tanımlı ama sorun değil: bu fonksiyon yalnız
+  // kullanıcı etkileşiminde ÇAĞRILIR, tanım anında değil.
   // Parametreli köprü yükü ('__modul:belge:cari:<ad>') — hedef ekran okur.
   const [kopruParam, setKopruParam] = useState(null);
   const [toast, setToast] = useState('');
@@ -206,13 +212,15 @@ export default function TasarimV2({ onGit }) {
   const IKINCIL_UC_ADLARI = React.useMemo(() => ([
     'sevkiyat özeti', 'şube davranışı', 'şube skoru', 'haftalık kıyas', 'şube finans',
     'sevkiyat özeti (beklenmedik şekil)', 'şube davranışı (beklenmedik şekil)',
-    'şube skoru (beklenmedik şekil)',
+    'şube skoru (beklenmedik şekil)', 'haftalık kıyas (beklenmedik şekil)',
+    'şube finans (beklenmedik şekil)',
   ]), []);
   // Şube Karnesi ikincil uçlarından biri düştüyse işaretlenir; görünüme bir
   // sonraki girişte yeniden denenmesini sağlar (bkz. ikincil yükleme effect'i).
   const subeOpsDurum = useRef('bos');   // bos | yukleniyor | tamam | dustu
   // Vade yükü çekmecesi istek sayacı: geç dönen eski cevap yeni çekmeceyi ezmesin.
   const vadeIstekNo = useRef(0);
+  const cekmeceKapat = useCallback(() => { vadeIstekNo.current += 1; setCekmece(null); }, []);
   const [cirolar, setCirolar] = useState([]);
   const [subeler, setSubeler] = useState([]);
   const [onaylar, setOnaylar] = useState([]);
@@ -870,22 +878,42 @@ export default function TasarimV2({ onGit }) {
     // Sahip kararı (soru 4/9): HAFTALIK kıyas şeridi. Günlük ekran tek günü,
     // aylık karne bütün ayı gösterir — "hangi şube BU HAFTA düşüşte" sorusu
     // ikisinin arasında cevapsızdı.
+    // ⚠️ (3. tur, Codex) BU İKİ UÇ ŞEKİL KORUMASININ DIŞINDAYDI: `d || null`
+    // her nesneyi kabul ediyordu. Senaryo: ilk denemede uç düşer ve bantta
+    // görünür; ikinci denemede 200 ama ŞEKLİ BOZUK bir nesne döner → eski
+    // alarm silinir, `ikincilDustu` hiç çalışmaz, `hataVar` false kalır ve
+    // 'tamam' mührü basılır. Sahip «sorun çözüldü» sanır, oysa veri yok.
+    // Nesne uçları için de beklenen ALANIN varlığı aranır.
+    const ikincilNesne = (d, alan, ad) => {
+      if (d && typeof d === 'object' && d[alan] !== undefined) return d;
+      ikincilDustu(`${ad} (beklenmedik şekil)`);
+      return null;
+    };
     const i4 = api('/ops/haftalik-karsilastirma')
-      .then((d) => setSubeHafta(d || null))
+      .then((d) => setSubeHafta(ikincilNesne(d, 'subeler', 'haftalık kıyas')))
       .catch(() => { setSubeHafta(null); ikincilDustu('haftalık kıyas'); });
     // Sahip kararı (soru 5/9): şube başına GİDER + ciro/gider oranı.
     // Ciro bir ekranda, anlık gider başka ekrandaydı; "hangi şube pahalı
     // çalışıyor" sorusu hiçbir yerde cevaplanmıyordu.
     const i5 = api('/ops/metrics/finans-ozet?gun=30')
-      .then((d) => setSubeFinans(d || null))
+      .then((d) => setSubeFinans(ikincilNesne(d, 'ciro_gider_orani', 'şube finans')))
       .catch(() => { setSubeFinans(null); ikincilDustu('şube finans'); });
     // Beş uç da bittiğinde durumu MÜHÜRLE: hepsi geçtiyse 'tamam' (bir daha
     // okunmaz), biri düştüyse 'dustu' (görünüme tekrar girilince denenir).
     // ⚠️ İLK YAZDIĞIMDA `allSettled` içinde uçları YENİDEN çağırmıştım — beş
     // istek yerine ON istek gidiyordu. Sunucuyu boşuna dövmek, «dayanıklılık»
     // düzeltmesinin son isteyeceği şey. Artık YUKARIDAKİ SÖZLER beklenir.
+    // ⚠️ (3. tur, Codex) ÖLÜ KİLİT: `yukleniyor`dan çıkışın TEK yolu
+    // `allSettled` idi. Beş istekten biri hiç settle olmazsa (asılı bağlantı)
+    // ref sonsuza kadar `yukleniyor`da kalır; sahip görünümden çıkıp girse
+    // bile kapı geri döndürür — Şube Karnesi oturum boyunca toparlanamazdı.
+    // Yeni retry mantığının kendi ölü-kilit hâliydi. Bekçi köpeği kondu:
+    // 25 sn'de bitmezse durum `dustu` yazılır, yani «tekrar denenebilir».
+    let muhurlendi = false;
+    const muhurle = (durum) => { if (!muhurlendi) { muhurlendi = true; subeOpsDurum.current = durum; } };
+    const bekci = setTimeout(() => muhurle('dustu'), 25000);
     Promise.allSettled([i1, i2, i3, i4, i5])
-      .then(() => { subeOpsDurum.current = hataVar ? 'dustu' : 'tamam'; });
+      .then(() => { clearTimeout(bekci); muhurle(hataVar ? 'dustu' : 'tamam'); });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gorunum]);
 
@@ -919,7 +947,7 @@ export default function TasarimV2({ onGit }) {
       if (e.key === 'Escape') {
         if (palet) { setPalet(false); return; }
         if (yaziyor) { hedef.blur(); return; }
-        if (cekmece) { setCekmece(null); return; }
+        if (cekmece) { cekmeceKapat(); return; }
         return;
       }
       if (yaziyor || palet) return;
@@ -1867,9 +1895,15 @@ export default function TasarimV2({ onGit }) {
       {
         etiket: 'Günlük ortalama',
         deger: fmt(gunOrt),
+        // ⚠️ (3. tur) YANLIŞ SEBEP GÖSTERİLİYORDU: çapraz-ay korumasında da
+        // «kırpılmış listeden» yazıyordu, oysa sebep kırpılma değil BAKILAN
+        // AYIN farklı olması. Yanlış teşhis, doğru uyarıdan beterdir — sahip
+        // olmayan bir sorunu aramaya çıkar.
         alt: gunOrtSunucu != null
           ? `${kayitGunu} kayıtlı gün üzerinden`
-          : '⚠ istemci hesabı — kırpılmış listeden, olduğundan büyük olabilir',
+          : (!ayUyumlu
+            ? `⚠ ${d.ayOnEk} geçmiş ay — sunucu ortalaması yalnız bu ay için gelir, bu sayı kayıtlardan hesaplandı`
+            : '⚠ istemci hesabı — kırpılmış listeden, olduğundan büyük olabilir'),
         renk: gunOrtSunucu != null ? R.krem : R.amber,
         onTikla: () => koprule('__modul:rapor:aylik'),
       },
@@ -1947,10 +1981,21 @@ export default function TasarimV2({ onGit }) {
       && (ayNakitHam == null || ayPosHam == null || ayOnlineHam == null);
     const kanalOkunamadi = kanalSunucuYok || kanalKismiEksik || !ayUyumlu;
     const dagilim = [
-      { ad: 'Nakit', tutar: nakitTutar, renk: R.yesil, yok: ayNakitHam == null && !ayUyumlu },
+      // ⚠️ (3. tur) ASİMETRİ DÜZELTİLDİ: Nakit'in «yok» bayrağı İKİ koşula
+      // bağlıydı (`== null && !ayUyumlu`), POS/Online'ınki tekine. Sonuç:
+      // ay uyumluyken nakit alanı eksikse Nakit sessizce istemci toplamını
+      // gösteriyor, POS/Online ise «okunamadı» diyordu — aynı kartta iki
+      // farklı dürüstlük standardı. Üçü de aynı kuralı kullanır.
+      { ad: 'Nakit', tutar: nakitTutar, renk: R.yesil, yok: ayNakitHam == null },
       { ad: 'POS', tutar: ayPos, renk: R.bakir, yok: ayPosHam == null },
       { ad: 'Online', tutar: ayOnline, renk: R.mavi, yok: ayOnlineHam == null },
     ];
+    // ⚠️ (3. tur, Codex) GÖRSEL ORAN, UYARI METNİNİ EZİYORDU: bir kanal
+    // «okunamadı» iken bile çubuklar çiziliyordu. Nakit istemci toplamından
+    // dolu, POS/Online sıfır çubuklu görününce ilk bakışta «nakit hâkim»
+    // izlenimi doğuyordu — oysa oran hiç bilinmiyor. Oran görseli TAM VERİ
+    // ister; eksikse çubuk çizilmez, yalnız rakamlar ve uyarı kalır.
+    const cubukCiz = !kanalOkunamadi;
     const enBuyuk = Math.max(...dagilim.map(x => Math.abs(x.tutar)), 1);
 
     return (
@@ -1993,10 +2038,17 @@ export default function TasarimV2({ onGit }) {
               <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 16, opacity: (x.tutar === 0 && !x.yok) ? 0.62 : 1 }}>
                 <span style={{ width: 128, fontSize: 13, fontWeight: 600, flexShrink: 0 }}>{x.ad}</span>
                 <div style={{ flex: 1, height: 20, borderRadius: 6, background: R.cizgi2, overflow: 'hidden' }}>
-                  <div style={{
-                    height: '100%', borderRadius: 6,
-                    width: `${(Math.abs(x.tutar) / enBuyuk) * 100}%`, background: x.renk,
-                  }} />
+                  {cubukCiz ? (
+                    <div style={{
+                      height: '100%', borderRadius: 6,
+                      width: `${(Math.abs(x.tutar) / enBuyuk) * 100}%`, background: x.renk,
+                    }} />
+                  ) : (
+                    <div style={{
+                      height: '100%', display: 'flex', alignItems: 'center', paddingLeft: 8,
+                      fontSize: 10.5, color: R.not3, letterSpacing: '.4px',
+                    }}>oran çizilemez — kırılım eksik</div>
+                  )}
                 </div>
                 <span style={{
                   width: 140, textAlign: 'right', whiteSpace: 'nowrap',
@@ -2027,6 +2079,16 @@ export default function TasarimV2({ onGit }) {
             <div style={{ fontSize: 11.5, color: R.not2, marginTop: 13, paddingTop: 11, borderTop: `1px solid ${R.cizgi2}` }}>
               Nakit payı <b style={{ fontFamily: F.mono, color: R.krem }}>%{yuzde(nakitTutar, ayCiro).toFixed(0)}</b>
               {' · '}kart + online <b style={{ fontFamily: F.mono, color: R.krem }}>%{yuzde(ayPos + ayOnline, ayCiro).toFixed(0)}</b>
+            </div>
+          )}
+          {/* ⚠️ (3. tur) ayCiro 0 iken İKİ blok da çizilmiyordu: «neden yüzde
+              yok?» sorusunun cevabı hiçbir yerde yazmıyordu. Sessiz boşluk,
+              bilinçli susma ile veri eksikliğini ayırt ettirmez. */}
+          {ayCiro <= 0 && (
+            <div style={{ fontSize: 11.5, color: R.not2, marginTop: 13, paddingTop: 11, borderTop: `1px solid ${R.cizgi2}` }}>
+              Kanal payları <b style={{ color: R.not }}>hesaplanmadı</b> — {d.ayOnEk} için
+              ciro toplamı sıfır. Bu «hiç satış olmadı» ya da «ciro girilmedi» demek olabilir;
+              yukarıdaki eksik gün şeridi hangisi olduğunu söyler.
             </div>
           )}
           {ayCiro > 0 && kanalOkunamadi && (
@@ -2478,6 +2540,22 @@ export default function TasarimV2({ onGit }) {
       <>
         <KpiSeridi kpiler={kpiler} />
 
+        {/* ⚠️ (3. tur, Codex) TABAN KURULAMAYINCA EKRAN SUSUYORDU: çalışan şube
+            evreni boşsa `zincirTaban` null olur, verim sinyali hiç üretilmez ve
+            tabloda oran nötr renkte kalır — sahip bunu «verim sorunu yok» diye
+            okuyabilirdi. Oysa doğrusu «karşılaştıramadım». Sessizlik iyi haber
+            değildir; ölçemediğimizi SÖYLERİZ. */}
+        {zincirOran == null && subeKarne.length > 0 && (
+          <div style={{
+            ...kartYuzey, padding: '11px 18px', marginBottom: 14,
+            borderLeft: `3px solid ${R.not3}`, fontSize: 12, color: R.not2,
+          }}>
+            <b style={{ color: R.not }}>Gider verimi karşılaştırılamadı</b> — hem cirosu
+            hem gideri olan şube bulunamadı, taban kurulamadı. Aşağıdaki «1₺ → …₺ ciro»
+            değerleri renksizdir: <b style={{ color: R.not }}>«verim sorunu yok» demiyoruz,
+            «ölçemedik» diyoruz.</b>
+          </div>
+        )}
         {dikkatListesi.satirlar.length > 0 && (
           <div style={{ ...kartYuzey, padding: '13px 18px', marginBottom: 14, borderLeft: `3px solid ${R.amber}` }}>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 9 }}>
@@ -2735,7 +2813,15 @@ export default function TasarimV2({ onGit }) {
     // (ön-dikkat: renk ve büyük sayı, küçük uyarı metnini bastırır).
     // Artık: okunamadıysa renk YOK (nötr), sayı yerine "—", boş durum metni
     // "risk yok" değil "okunamadı" der.
-    const panelDustu = !panel;
+    // ⚠️ (3. tur, Codex) `!panel` YALNIZ TAM DÜŞMEYİ YAKALIYORDU: uç 200 dönüp
+    // `oneriler` / `ciro_eksik_gunler` alanlarını GÖNDERMEZSE `panel` truthy
+    // kalır, filtreler boş dizi üstünde çalışır, sayaçlar 0 olur ve «Açık risk
+    // yok» YEŞİL basılır. Yani sahte yeşili `null` için kapatmıştım ama
+    // «kısmi 200» için açık bırakmıştım — HATA ≠ BOŞ kuralının aynısı, bir
+    // katman içeride. Beklenen alanların VARLIĞI da aranır.
+    const panelEksikAlan = !!panel
+      && (panel.oneriler === undefined || panel.ciro_eksik_gunler === undefined);
+    const panelDustu = !panel || panelEksikAlan;
     const riskRenk = (kotu, iyi) => (panelDustu ? R.not3 : (kotu ? kotu : iyi));
     const riskSayi = (v) => (panelDustu ? '—' : String(v));
     const oneriler = panel?.oneriler || [];
@@ -2752,7 +2838,15 @@ export default function TasarimV2({ onGit }) {
     // ⚠️ Artık satırlar da KPI'nın okuduğu uçtan gelir ve ŞUBE ADI da yazar
     // (eski «her satırda jenerik Şube» sorunu da böylece kökten kapanır).
     // Uç düşerse panel listesine düşülür ama bu AÇIKÇA söylenir.
-    const eksikKaynakUc = Array.isArray(eksikCiro?.eksikler) && eksikCiro.eksikler.length > 0;
+    // 🔴 REGRESYON (2026-08-26, 3. tur) — BOŞ CEVAP «CEVAP YOK» SANILIYORDU
+    // Testi `... && length > 0` yazmıştım. Uç «bu pencerede eksik gün YOK»
+    // derse (boş dizi) bu koşul FALSE olur ve ekran ESKİ panel listesine
+    // düşerdi. Yani yetkili kaynak «temiz» derken ekran eski/geniş listeden
+    // eksik gün göstermeye devam ederdi — sahte alarm, üstelik en kötü türü:
+    // kapattığı işi geri getiren alarm.
+    // ⚠️ DOĞRU TEST VARLIK, UZUNLUK DEĞİL: dizi geldiyse yetkilidir; boş
+    // olması bir CEVAPTIR («eksik gün yok»), cevapsızlık değil.
+    const eksikKaynakUc = Array.isArray(eksikCiro?.eksikler);
     const eksikGunler = eksikKaynakUc
       ? (() => {
         // Şube-günü satırları GÜNE göre toplanır: sahip «hangi gün eksik»
@@ -2761,6 +2855,11 @@ export default function TasarimV2({ onGit }) {
         eksikCiro.eksikler.forEach((e) => {
           const t = String(e.tarih || '').slice(0, 10);
           if (!g[t]) g[t] = { tarih: t, days_ago: sayi(e.gun_once), subeler: [] };
+          // ⚠️ (3. tur) YAŞ İLK KAYDA MÜHÜRLENİYORDU: aynı tarihin farklı
+          // şubeleri farklı `gun_once` taşırsa ilk kayıt kazanıyordu. Tarih
+          // doğru, yaş etiketi yanlış olabilirdi. En BÜYÜK yaş alınır —
+          // «kaç gündür eksik» sorusunda en kötü hâl doğru cevaptır.
+          g[t].days_ago = Math.max(g[t].days_ago, sayi(e.gun_once));
           if (e.sube_adi) g[t].subeler.push(e.sube_adi);
         });
         return Object.values(g).sort((a2, b2) => b2.tarih.localeCompare(a2.tarih));
@@ -2768,8 +2867,8 @@ export default function TasarimV2({ onGit }) {
       : (panel?.ciro_eksik_gunler || []);
 
     const kpiler = [
-      { etiket: 'Kritik', deger: riskSayi(kritik.length), alt: panelDustu ? '⚠ panel okunamadı' : 'bugün karar gerekiyor', renk: riskRenk(kritik.length && R.kirmizi, R.yesil) },
-      { etiket: 'Uyarı', deger: riskSayi(uyari.length), alt: panelDustu ? '⚠ panel okunamadı' : 'bu hafta içinde', renk: riskRenk(uyari.length && R.amber, R.yesil) },
+      { etiket: 'Kritik', deger: riskSayi(kritik.length), alt: panelDustu ? (panelEksikAlan ? '⚠ panel eksik alan döndü' : '⚠ panel okunamadı') : 'bugün karar gerekiyor', renk: riskRenk(kritik.length && R.kirmizi, R.yesil) },
+      { etiket: 'Uyarı', deger: riskSayi(uyari.length), alt: panelDustu ? (panelEksikAlan ? '⚠ panel eksik alan döndü' : '⚠ panel okunamadı') : 'bu hafta içinde', renk: riskRenk(uyari.length && R.amber, R.yesil) },
       // 🐞 CANLI DENETİM (2026-08-03): 124 "bekleyen işlem" görünüyordu ama
       // Onay ekranı aynı kuyruğu 0 gösteriyordu — kuyruktaki KASA türü kayıtlar
       // onay değil kasa uyumsuzluğudur (Onay ekranındaki frontend filtreyle
@@ -2888,7 +2987,9 @@ export default function TasarimV2({ onGit }) {
             </div>
             <div style={{ fontSize: 13, color: R.not, marginTop: 8 }}>
               {panelDustu
-                ? 'Panel ucu yanıt vermedi — bu ekran «risk yok» demiyor, «bilmiyorum» diyor. Sayfayı yenileyin.'
+                ? (panelEksikAlan
+                  ? 'Panel yanıt verdi ama risk alanlarını GÖNDERMEDİ — bu ekran «risk yok» demiyor, «bilmiyorum» diyor.'
+                  : 'Panel ucu yanıt vermedi — bu ekran «risk yok» demiyor, «bilmiyorum» diyor. Sayfayı yenileyin.')
                 : 'Öneri kuyruğu ve ciro kayıtları temiz görünüyor.'}
             </div>
           </div>
@@ -3411,7 +3512,7 @@ export default function TasarimV2({ onGit }) {
             ...a,
             onTikla: () => { setCekmece(null); a.onTikla?.(); },
           }))}
-          onKapat={() => setCekmece(null)}
+          onKapat={cekmeceKapat}
         />
         {/* Yeni sipariş bilgi modalı — kadife dilinde, klasik hub bildiriminin karşılığı */}
         {siparisBildirim && (
