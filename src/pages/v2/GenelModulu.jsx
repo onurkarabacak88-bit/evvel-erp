@@ -1506,6 +1506,8 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
     // (olcumEylem yalnız İLK çağrıda yazar; iki yerden çağrılması zararsız.)
     const kasaAc = () => { olcumEylem('cekmece'); kasaCekmecesiniAc(); };
 
+    // Kuyruk tavanı tek yerde: 33 kalemlik liste karar değil envanterdir.
+    const KUYRUK_TAVAN = 5;
     const ciroEksikGunler = Array.isArray(p.ciro_eksik_gunler) ? p.ciro_eksik_gunler : [];
 
     // ══════════════════════════════════════════════════════════════════════════
@@ -1542,23 +1544,41 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
 
       // ── S1 · ÖLÇÜM BOZUK ──────────────────────────────────────────────────
       // (a) Dün kapanmayan şube: kapanış yoksa o günün cirosu/kasası ÖLÇÜLEMEZ.
-      // ⚠️ Köprü YOK — v2'de kapanış takibi modülü bulunmuyor (tema.js MODULLER
-      // ağacında karşılığı çözülemedi). Uydurma hedef sessizce yanlış ekrana
-      // düşürürdü; madde eylemsiz durur, bulgu yine de görünür.
+      //
+      // 🔗 KÖPRÜ BULUNDU (2026-08-26, Codex denetimi sonrası): önce "v2'de
+      // kapanış modülü yok" diye eylemsiz bırakmıştım — YANLIŞTI. Üst çubuktaki
+      // "Gün Sonu Takibi" düğmesi `__modul:ops:bar` hedefine gidiyor ve kendi
+      // ipucunda "Kapanış takibini açar" yazıyor (TasarimV2.jsx:2007-2019,
+      // tema.js:212 → ops/'bar' = "Bar Akışı · gün"). Yani köprü EKSİK değildi,
+      // BULUNAMAMIŞTI. Bu, kuyruğun en kritik maddesinin çıkmaz sokak olması
+      // demekti: sorunu gösterip çözüme götürmemek.
+      // ⚠️ `kayitAnahtari`ye benzer bir KALICI KİMLİK gerekiyor (aşağıya bak).
       const dunKapanmayan = subeKartlari.filter((s) => s.isik?.dunEksik);
       if (dunKapanmayan.length > 0) {
+        const adlar = dunKapanmayan.map((s) => s.ad);
         aday.push({
           sinif: 1, tl: 0, k: 's1_kapanis', ikonYol: IK.veriYok, renk: R.kirmizi,
-          metin: `${dunKapanmayan.map((s) => s.ad).join(' · ')} dün kapanmadı`,
+          // 🆔 Ölçüm kimliği İÇERİĞE bağlı: "s1_kapanis" tek başına kullanılsaydı
+          // ZAFER'in bugünkü boşluğu ile TEMA'nın geçen haftaki boşluğu AYNI
+          // madde sayılır, ömür ölçümü hiç kapanmaz görünürdü.
+          olcumId: `s1_kapanis|${adlar.slice().sort().join(',')}`,
+          metin: `${adlar.join(' · ')} dün kapanmadı`,
           alt: 'o günün cirosu ve kasası ölçülemiyor',
+          aksiyonAd: 'Kapanış takibini aç',
+          onTikla: () => onKopru?.('__modul:ops:bar'),
         });
       }
       // (b) Ciro girilmemiş günler.
       if (ciroEksikGunler.length > 0) {
+        // 🆔 Kimlik EN ESKİ eksik güne bağlı: aynı boşluk sürdükçe aynı madde
+        // (ömür gerçekten büyür), yeni bir gün eksilince yeni madde doğar.
+        const enEskiEksik = ciroEksikGunler
+          .map((g) => String(g.tarih || '')).filter(Boolean).sort()[0] || 'bilinmiyor';
         aday.push({
           sinif: 1, tl: 0, k: 's1_ciro', ikonYol: IK.veriYok, renk: R.kirmizi,
+          olcumId: `s1_ciro|${enEskiEksik}`,
           metin: `${ciroEksikGunler.length} gün ciro girilmemiş`,
-          alt: 'girilmeyen gün tüm ay rakamlarını eksik gösterir',
+          alt: `en eskisi ${kisaGun(enEskiEksik)} · girilmeyen gün tüm ay rakamlarını eksik gösterir`,
           aksiyonAd: 'Ciro Girişi\'ne git',
           onTikla: () => onKopru?.('__modul:para:girisi'),   // tema.js:209 doğrulandı
         });
@@ -1600,13 +1620,24 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
       const gunlukOrtCiro = gecenGun > 0
         ? sayi(p.bu_ay_ciro ?? p.bu_ay_sadece_ciro) / gecenGun
         : 0;
+      //
+      // ⚠️ EŞİK ARTIK ELEMİYOR, SIRALIYOR (2026-08-26, Codex bulgusu).
+      // ÖNCEKİ HÂL kusurluydu: eşiğin altındaki madde `return` ile kuyruktan
+      // TAMAMEN düşüyordu. `ilkUcIs` gecikmiş yuvasına YALNIZ "en büyük gecikmiş
+      // kalem"i koyuyor — yani tüm gecikmişler küçükse kuyrukta HİÇ gecikmiş
+      // madde görünmüyordu. "Elenen kalem kovada duruyor" demiştim ama sahip
+      // BUGÜNÜN İŞ LİSTESİNDE onu göremiyordu; kuyruk 5 doluyken bile değil,
+      // 2 maddelik boş kuyrukta bile.
+      // YENİ KURAL: eşiğin altındaki madde `zayif` damgası alır ve YALNIZ YER
+      // DARSA (kuyruk tavanı aşılırsa) düşer. Yer varken hiçbir gerçek iş
+      // gizlenmez — eşiğin amacı zaten "yer kapmasın"dı, "yok olsun" değil.
       const SINIF = { gecikmis: 2, yuk48: 2, onay: 3, oneri: 3 };
       ilkUcIs.forEach((is) => {
         const tl = is._u ? odemeTutar(is._u) : 0;
         // Yalnız "en büyük gecikmiş" maddesi eşiğe tabi: 48 saatlik yük ve
         // onay/öneri maddeleri para büyüklüğüyle değil ZAMANLA acildir.
-        if (is.k === 'gecikmis' && gunlukOrtCiro > 0 && tl > 0 && tl < gunlukOrtCiro) return;
-        aday.push({ ...is, sinif: SINIF[is.k] ?? 3, tl });
+        const zayif = is.k === 'gecikmis' && gunlukOrtCiro > 0 && tl > 0 && tl < gunlukOrtCiro;
+        aday.push({ ...is, sinif: SINIF[is.k] ?? 3, tl, zayif });
       });
 
       // ── S2b · MOTORUN EN KRİTİK ÖNERİSİ ───────────────────────────────────
@@ -1634,11 +1665,25 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
 
       // Sınıf önce, sınıf içinde ₺ büyüklüğü.
       aday.sort((a, b) => a.sinif - b.sinif || b.tl - a.tl);
+      // Eşik YALNIZ yer darsa devreye girer (yukarıdaki nota bak): tavanı
+      // aşmıyorsak zayıf madde de kalır, çünkü kimsenin yerini almıyor.
+      if (aday.length > KUYRUK_TAVAN) {
+        const zayifsiz = aday.filter((x) => !x.zayif);
+        if (zayifsiz.length >= KUYRUK_TAVAN) return zayifsiz;
+      }
       return aday;
     })();
 
-    const kuyrukGorunen = bugunKuyrugu.slice(0, 5);
+    const kuyrukGorunen = bugunKuyrugu.slice(0, KUYRUK_TAVAN);
     const kuyrukTasan = bugunKuyrugu.length - kuyrukGorunen.length;
+    // 🔗 TAŞAN İŞLERİN KÖPRÜSÜ SINIFA GÖRE (2026-08-26, Codex bulgusu):
+    // eskiden taşanların HEPSİ "Ödeme Merkezi"ne köprüleniyordu. Taşan madde
+    // bir ölçüm sorunu (S1) ya da bekleyen onay (S3) ise "tam liste" oraya
+    // gitmez — kullanıcı yanlış konteynıra düşer ve aradığını bulamaz.
+    // Kural: taşanların HEPSİ parasal (S2) ise Ödeme Merkezi'ne köprülenir;
+    // karışıksa köprü VERİLMEZ, bunun yerine taşan işlerin ADLARI yazılır.
+    const tasanlar = bugunKuyrugu.slice(KUYRUK_TAVAN);
+    const tasanHepsiParasal = tasanlar.length > 0 && tasanlar.every((x) => x.sinif === 2);
     // Y4 kümesini doldur — yalnız EKRANDA GÖRÜNEN kayıtlar (yukarıdaki nota bak).
     kuyrukGorunen.forEach((x) => { if (x._u) heroAnahtarlar.add(kayitAnahtari(x._u)); });
 
@@ -1647,8 +1692,13 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
     // yoksa aynı iş her gün "yeni madde" sayılır ve hiçbir şey kapanmış görünmez
     // (ömür ölçümü sonsuza dek 0 gün çıkardı). Kaydı olmayan maddede tür anahtarı
     // yeterlidir — o maddeler zaten türü başına tek tanedir.
+    // 🆔 (2026-08-26, Codex bulgusu) S1 maddeleri için `x.k` YETMİYORDU:
+    // "s1_ciro" her seferinde AYNI anahtar olduğu için bugünkü boşluk ile üç
+    // hafta önceki boşluk tek bir ömür hattında eriyordu — madde hiç kapanmamış
+    // gibi görünüyor, M3 (madde ömrü) yanlış çıkıyordu. Artık üreticiler
+    // İÇERİĞE bağlı `olcumId` veriyor (en eski eksik gün, şube adları).
     kuyrukRef.current = {
-      anahtar: bugunKuyrugu.map((x) => (x._u ? `odeme|${kayitAnahtari(x._u)}` : x.k)),
+      anahtar: bugunKuyrugu.map((x) => (x._u ? `odeme|${kayitAnahtari(x._u)}` : (x.olcumId || x.k))),
       sinif: bugunKuyrugu.map((x) => x.sinif),
     };
 
@@ -1768,13 +1818,23 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
                   okunur; kaç iş görülmediğini söylemek dürüstlüğün şartı. */}
               {kuyrukTasan > 0 && (
                 <div
-                  onClick={() => onKopru?.('__modul:odeme:bekleyen')}
+                  onClick={tasanHepsiParasal && onKopru ? () => onKopru('__modul:odeme:bekleyen') : undefined}
                   style={{
-                    marginTop: 8, fontSize: 12, color: R.not2, cursor: onKopru ? 'pointer' : 'default',
+                    marginTop: 8, fontSize: 12, color: R.not2,
+                    cursor: tasanHepsiParasal && onKopru ? 'pointer' : 'default',
                   }}
                 >
-                  … ve <b style={{ color: R.metin2 }}>{kuyrukTasan} iş daha</b> — kuyruk ilk 5'i gösterir
-                  {onKopru ? <span style={{ color: R.bakir }}> · tam listeye git →</span> : null}
+                  … ve <b style={{ color: R.metin2 }}>{kuyrukTasan} iş daha</b> — kuyruk ilk {KUYRUK_TAVAN}'i gösterir
+                  {tasanHepsiParasal && onKopru
+                    ? <span style={{ color: R.bakir }}> · tam listeye git →</span>
+                    : (
+                      /* Karışık taşmada köprü YOK ama iş GİZLENMEZ: adları
+                         yazılır, çünkü "Ödeme Merkezi"ne göndermek bir ölçüm
+                         sorununu ya da onayı orada aratmak olurdu. */
+                      <span style={{ color: R.not }}>
+                        {' '}· {tasanlar.map((x) => kisalt(x.metin, 26)).join(' · ')}
+                      </span>
+                    )}
                 </div>
               )}
             </>

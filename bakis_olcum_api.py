@@ -100,9 +100,14 @@ def acilis(body: AcilisBody):
             # damgası olduğu yerde kalır, ömrü oradan okunur.
             for i, a in enumerate(anahtarlar):
                 s = siniflar[i] if i < len(siniflar) else None
+                # ⚠️ `sinif` DE GÜNCELLENİR (2026-08-26, Codex bulgusu): eskiden
+                # yalnız son_gorulme tazeleniyordu. Bir madde sınıf değiştirirse
+                # (ör. bir ölçüm sorunu parasal sonuca dönüşürse) tabloda ESKİ
+                # sınıfta kalıyordu ve M5 (S1 isabeti) yanlış kovadan sayıyordu.
                 cur.execute(
                     "INSERT INTO bakis_kuyruk_izi (madde_anahtari, sinif) VALUES (%s,%s) "
-                    "ON CONFLICT (madde_anahtari) DO UPDATE SET son_gorulme = NOW()",
+                    "ON CONFLICT (madde_anahtari) DO UPDATE "
+                    "   SET son_gorulme = NOW(), sinif = COALESCE(EXCLUDED.sinif, bakis_kuyruk_izi.sinif)",
                     (a, s))
             conn.commit()
         return {"ok": True, "oturum_id": oid}
@@ -159,6 +164,12 @@ def ozet(gun: int = 30):
                 "       ) FILTER (WHERE ilk_eylem_ts IS NOT NULL) AS m1 "
                 "  FROM bakis_oturum WHERE acilis_ts >= NOW() - make_interval(days => %s)", (g,))
             o = dict(cur.fetchone() or {})
+            # ⚠️ PENCERE UYUŞMAZLIĞI DÜZELTİLDİ (2026-08-26, Codex bulgusu):
+            # `gun` filtresi YALNIZ M1/M2'ye uygulanıyordu; M3-M5 TÜM ZAMANLARIN
+            # tablosunu okuyordu. Yani "son 30 gün özeti" başlığı altında iki
+            # farklı veri ufku birleşiyordu. Bu, ekranın işe yarayıp yaramadığına
+            # dair ÜRÜN KARARINI yanlış aldırır — önce ekibi, sonra kullanıcıyı
+            # yanıltır. Artık aynı pencere: `ilk_gorulme >= NOW() - gun`.
             cur.execute(
                 "SELECT PERCENTILE_CONT(0.5) WITHIN GROUP ( "
                 "         ORDER BY EXTRACT(EPOCH FROM (son_gorulme - ilk_gorulme))/86400.0) AS m3, "
@@ -168,7 +179,8 @@ def ozet(gun: int = 30):
                 "       COUNT(*) FILTER (WHERE sinif = 1 AND son_gorulme < NOW() - INTERVAL '1 day' "
                 "                          AND son_gorulme - ilk_gorulme < INTERVAL '7 days') AS s1_hizli, "
                 "       COUNT(*) FILTER (WHERE sinif = 1 AND son_gorulme < NOW() - INTERVAL '1 day') AS s1_kapanan "
-                "  FROM bakis_kuyruk_izi")
+                "  FROM bakis_kuyruk_izi "
+                " WHERE ilk_gorulme >= NOW() - make_interval(days => %s)", (g,))
             k = dict(cur.fetchone() or {})
     except Exception as e:  # noqa: BLE001
         logger.warning("bakis-olcum ozet okunamadi: %s", str(e)[:160])
@@ -185,14 +197,24 @@ def ozet(gun: int = 30):
         "esik": ESIK,
         "M1_ilk_eyleme_sn": (round(float(o["m1"]), 1)
                              if yeterli and o.get("m1") is not None else None),
-        "M2_bos_cikis_orani": (round(bos * 100.0 / n, 1) if yeterli and n else None),
+        # ⚠️ ADI DEĞİŞTİ (2026-08-26, Codex bulgusu): "boş çıkış oranı" diyordu
+        # ama ölçtüğü şey "hiç EYLEM KAYDEDİLMEDİ". Sahip ekranı 5 dakika okuyup
+        # bir şey öğrenip çıkarsa bu da "boş çıkış" sayılıyordu. Kapanış olayı
+        # YOK; açık sekme, yenileme, bağlantı kopması hepsi aynı kovaya düşer.
+        # Metriğin adı ölçtüğünden fazlasını iddia etmemeli.
+        "M2_eylemsiz_oturum_orani": (round(bos * 100.0 / n, 1) if yeterli and n else None),
         "M3_madde_omru_gun": (round(float(k["m3"]), 1) if k.get("m3") is not None else None),
         "M4_kronik_madde": int(k.get("kronik") or 0),
         "M5_s1_isabet_orani": (round(int(k.get("s1_hizli") or 0) * 100.0 / s1k, 1)
                                if s1k else None),
-        "not": ("M2 ASIL METRİKTİR: ekran iş üretiyorsa 'açıp hiç dokunmadan çıkma' "
-                "oranı düşer. M1 hızı değil ERİŞİLEBİLİRLİĞİ ölçer — doğru iş üstte "
-                "duruyorsa süre kısalır. M5 düşükse 'ölçüm bozuk' maddeleri "
-                "kapanmıyor demektir: ya eşik yanlış ya eylem yolu yok. "
-                f"{ESIK} oturumdan az veride medyan YAZILMAZ (sahte kesinlik yasağı)."),
+        "not": ("M2 ASIL METRİKTİR ama SINIRI VAR: 'eylemsiz oturum' = ekranda hiçbir "
+                "işe girilmedi demektir, 'hiçbir şey öğrenmeden çıktı' demek DEĞİL. "
+                "Oturum kapanış olayı yok; açık sekme/yenileme de eylemsiz sayılır. "
+                "M1 hızı değil ERİŞİLEBİLİRLİĞİ ölçer — doğru iş üstte duruyorsa süre "
+                "kısalır. M3 gerçek yaşam süresi değil GÖRÜNÜRLÜK İZİ ömrüdür: madde "
+                "ancak ekran açıldığında damgalanır, sahip haftalarca açmazsa ömür "
+                "olduğundan kısa çıkar. M5 düşükse 'ölçüm bozuk' maddeleri kapanmıyor "
+                "demektir: ya eşik yanlış ya eylem yolu yok. Tüm metrikler AYNI "
+                f"pencereden ({{gun}} gün) okunur. {ESIK} oturumdan az veride medyan "
+                "YAZILMAZ (sahte kesinlik yasağı).").replace("{gun}", str(g)),
     }
