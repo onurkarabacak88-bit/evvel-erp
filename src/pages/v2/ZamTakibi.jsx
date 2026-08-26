@@ -109,10 +109,36 @@ export default function ZamTakibi({ onToast, onSayac }) {
       <KpiSeridi kpiler={[
         // 🗣️ (2026-08-26, Codex denetimi) "İncelenmemiş zam 0" ÇÖZÜLDÜ gibi
         // okunuyordu. Bu sayaç yalnız OKUNMAMIŞ kaydı sayar; zam duruyor.
-        { etiket: 'Okunmamış zam', deger: String(yeni.length), alt: `toplam ${alarmlar.length} · son 180 gün · okumak çözmek değildir`, renk: yeni.length > 0 ? R.kirmizi : R.yesil },
-        { etiket: 'Ortalama artış', deger: artislar.length ? pct(ortArtis) : '—', alt: `eşik %${esik} üstü kalemlerde`, renk: R.amber },
-        { etiket: 'En sert artış', deger: artislar.length ? pct(Math.max(...artislar)) : '—', alt: 'tek kalemde', renk: R.kirmizi },
-        { etiket: 'Tedarikçi', deger: String(tedarikciler.size), alt: 'zam yapan firma sayısı' },
+        // 🚪 CANLI GEZİNTİ (2026-08-26) — DÖRT KPI'NIN DÖRDÜ DE KAPISIZDI.
+        // «Ortalama artış %22,8» ve «En sert artış %34,6» tam anlamıyla ölü
+        // bilgiydi: sahip yüzdeyi görüyor ama HANGİ KALEM olduğunu soramıyordu.
+        // ⚠️ YENİ EKRAN/ÇEKMECE KURULMADI: kalemlerin tamamı zaten bu ekranın
+        // altındaki listede — yalnız «okunmamış» süzgeciyle gizleniyordu.
+        // Kapılar o süzgeci açar (`zamGecmis`), yani var olan kanıta götürür.
+        // Okunmamış KPI'sı ise ters yönde çalışır: süzgeci geri kapatır.
+        {
+          etiket: 'Okunmamış zam', deger: String(yeni.length),
+          alt: `toplam ${alarmlar.length} · son 180 gün · okumak çözmek değildir`,
+          renk: yeni.length > 0 ? R.kirmizi : R.yesil,
+          onTikla: () => setZamGecmis(false),
+        },
+        {
+          etiket: 'Ortalama artış', deger: artislar.length ? pct(ortArtis) : '—',
+          alt: artislar.length ? `eşik %${esik} üstü ${artislar.length} kalemde · listeye git` : `eşik %${esik} üstü kalemlerde`,
+          renk: R.amber,
+          onTikla: artislar.length ? () => setZamGecmis(true) : undefined,
+        },
+        {
+          etiket: 'En sert artış', deger: artislar.length ? pct(Math.max(...artislar)) : '—',
+          alt: artislar.length ? 'tek kalemde · listeye git' : 'tek kalemde',
+          renk: R.kirmizi,
+          onTikla: artislar.length ? () => setZamGecmis(true) : undefined,
+        },
+        {
+          etiket: 'Tedarikçi', deger: String(tedarikciler.size),
+          alt: tedarikciler.size ? 'zam yapan firma sayısı · listeye git' : 'zam yapan firma sayısı',
+          onTikla: tedarikciler.size ? () => setZamGecmis(true) : undefined,
+        },
       ]} />
 
       {alarmlar.length === 0 ? (
