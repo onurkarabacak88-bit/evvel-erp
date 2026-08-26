@@ -1085,6 +1085,10 @@ export default function TasarimV2({ onGit }) {
 
   function PanelBugun() {
     const d = veri;
+    // ⚠️ `gunDayanir` BURADA tanımlanır: dayaniklilikKpi onu kullanıyor ve
+    // const'lar TDZ'lidir — tüketiciden SONRA tanımlamak siyah ekran demek.
+    const gunDayanir = sayi(panel?.kac_gun_dayanir);
+
     // 📐 MANŞET SAYISI (2026-08-26): "kaç gün dayanır" bağlam şeridine düşmüştü,
     // oysa nakit sıkışık bir sahip için EN kritik metrik bu. Ayrı const'a alındı
     // ve manşete taşındı; "nakit payı / kart payı" ise bağlama indi — onlar
@@ -1151,7 +1155,6 @@ export default function TasarimV2({ onGit }) {
     // CFO HIZLI BAKIŞ (sahip 2026-07-29): klasik CFO panelin "tek bakışta" özeti —
     // kasa/serbest nakit/dayanma/yük/ay cirosu — v2 Bugün'e taşındı. Kaynak
     // alanlar birebir /api/panel (kasa = kanonik).
-    const gunDayanir = sayi(panel?.kac_gun_dayanir);
     const cfoKpiler = panel ? [
       // Ödeme tipi kırılımı KARAR değil BAĞLAM: günün cirosu zaten manşette.
       { etiket: 'Nakit', deger: fmt(d.gunNakit), alt: `payı %${yuzde(d.gunNakit, d.gunToplam).toFixed(0)}`, renk: R.krem },
