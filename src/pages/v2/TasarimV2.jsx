@@ -197,6 +197,7 @@ export default function TasarimV2({ onGit }) {
 
   const [panel, setPanel] = useState(null);
   const [eksikCiro, setEksikCiro] = useState(null);   // /ciro/eksik-gunler
+  const [nakitKonum, setNakitKonum] = useState(null); // /ops/metrics/nakit-konum
   const [cirolar, setCirolar] = useState([]);
   const [subeler, setSubeler] = useState([]);
   const [onaylar, setOnaylar] = useState([]);
@@ -218,13 +219,20 @@ export default function TasarimV2({ onGit }) {
       // için gösteriyor, neden?"). Ciro girilmeyince kayıt yok, kayıt yoksa
       // alarm da yok — "yokluğun alarmı" hiç kurulmamıştı.
       api('/ciro/eksik-gunler?gun=14').catch(() => null),
-    ]).then(([p, u, c, s, o, ec]) => {
+      // 💰 NAKİT KONUM — "kaç gün dayanır" DOĞRULANMIŞ alt ucu için.
+      // ⚠️ Panel tek sayı (23 gün) gösteriyordu; kardeş ekran BAKIŞ aynı metriği
+      // "12–23 gün" aralığı olarak veriyor (kasanın yarısına yakınının yeri
+      // doğrulanmamış). Aynı metrik, iki ekran, iki cevap = sahte kesinlik.
+      // İKİNCİ BİR HESAP KURULMADI: BAKIŞ'ın okuduğu UCUN AYNISI okunuyor.
+      api('/ops/metrics/nakit-konum?gun=60').catch(() => null),
+    ]).then(([p, u, c, s, o, ec, nk]) => {
       // 🔴 EVV-PANEL-N1 (2026-08-13 satır-satır denetim) FAKE-GREEN: /ciro catch `[]`
       // döndürdüğü için `!Array.isArray(c)` HİÇ true olmuyordu → `!p && false` = /panel
       // düşse de hata SET EDİLMİYOR, dashboard 0/boş render ediyordu. /panel kanonik
       // kaynak; düşerse açık hata (kart/KPI 0/yeşil yalanı gizlensin).
       if (!p) setHata('Panel verisi alınamadı — "0/boş" görünüm yanıltıcı olur, yenileyin.');
       setEksikCiro(ec);
+      setNakitKonum(nk);
       setPanel(p);
       setUyarilar(Array.isArray(u) ? u : (u?.uyarilar || []));
       setCirolar(Array.isArray(c) ? c : []);
@@ -597,8 +605,29 @@ export default function TasarimV2({ onGit }) {
   const _top = (l) => l.reduce((s, o) => s + sayi(o.tutar ?? o.kalan ?? o.tahmini_tutar), 0);
   const gecikmisToplam = _top(gecikmisOdemeler);
   const gercekBugunToplam = _top(gercekBugunOdemeler);
-  const enEskiGecikme = gecikmisOdemeler.reduce(
-    (m, o) => Math.max(m, sayi(o.gun_gecikme)), 0);
+  // ══════════════════════════════════════════════════════════════════════════
+  // 🔴 "en eskisi ? gün" — EKRANDA LİTERAL SORU İŞARETİ VARDI (2026-08-26)
+  // ══════════════════════════════════════════════════════════════════════════
+  // Eski hâl: `gun_gecikme` alanı gelmeyen kayıtlarda reduce 0 döndürüyor,
+  // gösterim de `enEskiGecikme || '?'` ile ekrana LİTERAL '?' basıyordu.
+  // Canlıda 1.433.944 ₺'lik en büyük ve en kırmızı KPI'nın altında
+  // "33 kalem · en eskisi ? gün" yazıyordu.
+  //
+  // ⚠️ Üstelik veri TÜRETİLEBİLİRDİ: `_vadeAl` vade tarihini zaten okuyor;
+  // gecikme = bugün − vade. Sunucu alanı yoksa tarihten hesaplanır.
+  // Hiçbiri yoksa '?' değil "ölçülemedi" denir — soru işareti bir cevap değil,
+  // cevap verememenin gizlenmiş hâlidir (HATA ≠ BOŞ).
+  const _gunFark = (iso) => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(iso || '')) return null;
+    const ms = new Date(`${_bugunISO}T00:00:00Z`) - new Date(`${iso}T00:00:00Z`);
+    const g = Math.round(ms / 86400000);
+    return Number.isFinite(g) && g >= 0 ? g : null;
+  };
+  const enEskiGecikme = gecikmisOdemeler.reduce((m, o) => {
+    const s = sayi(o.gun_gecikme);
+    const t = s > 0 ? s : _gunFark(_vadeAl(o));      // alan yoksa VADEDEN türet
+    return t != null && t > m ? t : m;
+  }, 0);
   // KASA = kanonik alan panel.kasa (motors.guncel_kasa — kasa izi tek gerçek).
   // Sahip yakaladı (2026-07-29): genel_nakit_toplam+genel_kart_toplam FARKLI bir
   // çift toplamdı (1.842.161) ve gerçek kasadan (2.533.389) sapıyordu — klasik
@@ -959,7 +988,7 @@ export default function TasarimV2({ onGit }) {
         ? {
           etiket: 'Gecikmiş ödeme',
           deger: fmt(gecikmisToplam),
-          alt: `${gecikmisOdemeler.length} kalem · en eskisi ${enEskiGecikme || '?'} gün`,
+          alt: `${gecikmisOdemeler.length} kalem · ${enEskiGecikme > 0 ? `en eskisi ${enEskiGecikme} gün` : 'yaş ölçülemedi'}`,
           renk: R.kirmizi,
         }
         : {
@@ -978,7 +1007,30 @@ export default function TasarimV2({ onGit }) {
       { etiket: 'Serbest nakit', deger: fmt(sayi(panel.serbest_nakit)), alt: 'zorunlu yük sonrası', renk: sayi(panel.serbest_nakit) >= 0 ? R.krem : R.kirmizi },
       // 🟡 (2026-08-12): gerçek "0 gün" (nakit bitti — en kritik alarm) truthy
       // kontrolde '—' oluyordu. null/undefined = ölçülemedi, 0 = gerçek alarm.
-      { etiket: 'Kaç gün dayanır', deger: panel?.kac_gun_dayanir != null ? `${trSayi(gunDayanir, 0)} gün` : '—', alt: 'ciro dursa bile', renk: gunDayanir >= 30 ? R.yesil : gunDayanir >= 10 ? R.amber : R.kirmizi },
+      // 📉 ARALIK (2026-08-26) — tek sayı SAHTE KESİNLİKTİ.
+      // "23 gün" kasanın DOĞRULANMAMIŞ toplamından türüyordu; kardeş ekran
+      // BAKIŞ aynı metriği "12–23 gün" gösteriyor. Nakit sıkışık bir sahip için
+      // en hayati metrikte iki ekranın iki cevap vermesi, en pahalı güven
+      // kaybıdır: sahip 23'e demir atar, gerçek 12 çıkarsa faturayı ekrana
+      // değil SİSTEME keser.
+      // ⚠️ Alt uç SUNUCUDAN gelir (nakit-konum · kac_gun_dayanir_dogrulanmis);
+      // burada bölme YAPILMAZ. Uç hesaplayamazsa tek sayıya düşülür.
+      (() => {
+        const altUc = nakitKonum && nakitKonum !== '__HATA__' && nakitKonum.mutabakatsiz_ciddi
+          ? (nakitKonum.kac_gun_dayanir_dogrulanmis ?? null) : null;
+        const aralikVar = altUc != null && gunDayanir > 0 && altUc < gunDayanir;
+        return {
+          etiket: 'Kaç gün dayanır',
+          deger: panel?.kac_gun_dayanir == null ? '—'
+            : aralikVar ? `${trSayi(altUc, 0)}–${trSayi(gunDayanir, 0)} gün`
+              : `${trSayi(gunDayanir, 0)} gün`,
+          alt: aralikVar ? 'alt uç: yalnız doğrulanmış nakit' : 'ciro dursa bile',
+          // Renk KÖTÜMSER uçtan okunur: aralığın üst ucuna göre yeşil demek,
+          // doğrulanmamış parayla rahatlamak olurdu.
+          renk: (() => { const k = aralikVar ? altUc : gunDayanir;
+            return k >= 30 ? R.yesil : k >= 10 ? R.amber : R.kirmizi; })(),
+        };
+      })(),
       // Gecikmiş ayrı KPI olduğunda bugünkü de görünsün — ikisi farklı iş:
       // gecikmiş "neden ödenmedi", bugünkü "bugün öde".
       ...(gecikmisToplam > 0 ? [{
@@ -1045,8 +1097,18 @@ export default function TasarimV2({ onGit }) {
               borderLeft: `3px solid ${renk}`,
             }}>
               <div style={{ display: 'flex', gap: 14, alignItems: 'baseline', flexWrap: 'wrap' }}>
+                {/* ⚠️ BİRİM AÇIKÇA YAZILIR (2026-08-26): burası "4 gün" diyordu
+                    ama sayılan şey ŞUBE×GÜN'dü (ZAFER 24 Ağu + TEMA 24 Ağu = 2).
+                    Takvimde 2 gün eksikti ve kardeş ekran BAKIŞ "2 gün" diyordu.
+                    Aynı sabah, aynı sahibe, iki farklı sayı. İkisi de doğruydu —
+                    yanlış olan HANGİSİNİN ne olduğunun söylenmemesiydi.
+                    Gün sayısı sunucudan gelir (`eksik_gun_adet`); gelmezse
+                    istemci TÜRETMEZ, yalnız şube×gün yazılır. */}
                 <span style={{ fontSize: 12.5, fontWeight: 700, color: renk }}>
-                  📅 Girilmemiş ciro — {sayi(eksikCiro.eksik_adet)} gün
+                  📅 Girilmemiş ciro —{' '}
+                  {eksikCiro.eksik_gun_adet != null
+                    ? `${sayi(eksikCiro.eksik_gun_adet)} gün · ${sayi(eksikCiro.eksik_adet)} şube-günü`
+                    : `${sayi(eksikCiro.eksik_adet)} şube-günü`}
                 </span>
                 <span style={{ fontSize: 12, color: R.metin2 }}>
                   {Object.entries(eksikCiro.eksik_sube_ozet || {})
@@ -1302,11 +1364,39 @@ export default function TasarimV2({ onGit }) {
     // UĞRATMADAN (onu 'Aktif şube' + 'En düşük ciro' KPI'ları paylaşıyor) tablo için
     // AYRI liste: finans kovasında olup ciroda olmayan giderli şubeleri 0-ciro satır
     // olarak ekle — en altta kalır (toplam 0).
+    // ══════════════════════════════════════════════════════════════════════
+    // 🔴 SEZON KAPALI / PASİF ŞUBE ARTIK ALARM ÜRETMEZ (2026-08-26)
+    // ══════════════════════════════════════════════════════════════════════
+    // CANLI KUSUR: "⚠ Dikkat isteyen şubeler" listesinde 4 satırın 3'ü YAPISAL
+    // YANLIŞ ALARMDI — KÖYCEĞİZ ve ALSANCAK `sezon_kapali=true`, MERKEZ ise
+    // `aktif=false`. Üçü de "ciro yok, 30g gider …" diye KIRMIZI yanıyordu.
+    //
+    // Kapalı bir dükkâna "ciro yok" demek KAPANAMAYAN alarmdır: sahip onu
+    // hiçbir şey yaparak susturamaz. Uyarı bütçesi doktrini bunu yasaklıyor —
+    // ve bedeli sadece o satır değil: yanındaki GERÇEK sinyal (ZAFER %50,4
+    // düşüş) de birlikte sönüyor. Yanlış alarm oranı %75 iken kullanıcı tüm
+    // listeye bakmayı bırakır.
+    //
+    // ⚠️ BİLGİ GİZLENMİYOR: şube karnesinde satır DURUYOR, yalnız ALARM
+    // üretmiyor ve durumu doğru adla söylüyor ("sezon kapalı" / "pasif").
+    // Kardeş ekran GenelModulu bu ayrımı zaten doğru yapıyordu (ISIK.sezon).
+    const subeDurumu = (ad) => {
+      const t = (subeler || []).find((x) => sadeles(x.ad) === sadeles(ad));
+      if (!t) return null;
+      if (t.sezon_kapali) return 'sezon';
+      if (t.aktif === false) return 'pasif';
+      return null;
+    };
     const subeKarne = (() => {
       const eldeki = new Set(d.subeAyListe.map((s) => sadeles(s.ad)));
       const eksik = Object.values(finansMap)
         .filter((f) => !eldeki.has(sadeles(f.ad)) && sayi(f.gider) > 0)
-        .map((f) => ({ ad: f.ad, toplam: 0, nakit: 0, kart: 0, gunSayisi: 0, pay: 0, _ciroYok: true }));
+        .map((f) => ({
+          ad: f.ad, toplam: 0, nakit: 0, kart: 0, gunSayisi: 0, pay: 0,
+          _ciroYok: true,
+          // 'sezon' | 'pasif' | null — alarm bastırma VE doğru etiket için.
+          _kapaliTur: subeDurumu(f.ad),
+        }));
       return [...d.subeAyListe, ...eksik];
     })();
 
@@ -1402,10 +1492,25 @@ export default function TasarimV2({ onGit }) {
         //     Önem = yakılan para (gider DESC).
         if (s._ciroYok) {
           const gider = sayi(f?.gider);
-          sinyaller.push({
-            ton: 'kirmizi', grup: 'ciroYok', sira: -gider,
-            metin: `ciro yok, 30g gider ${fmt(gider)}`,
-          });
+          // ⚠️ KAPALI ŞUBE ALARM ÜRETMEZ (bkz. subeKarne notu). Sezon kapalı ya
+          // da pasif bir şubede ciro OLMAMASI beklenen durumdur, bulgu değil.
+          // Gideri sürüyorsa bu ayrı ve GERÇEK bir sorudur — ama "ciro yok"
+          // diye değil, "kapalıyken gider" diye sorulur ve KIRMIZI değil
+          // AMBER'dir: acil değil, incelenecek.
+          if (s._kapaliTur) {
+            if (gider > 0) {
+              sinyaller.push({
+                ton: 'amber', grup: 'kapaliGider', sira: -gider,
+                metin: `${s._kapaliTur === 'sezon' ? 'sezon kapalı' : 'pasif'} ama 30g gider ${fmt(gider)}`,
+              });
+            }
+            // Gider de yoksa hiç sinyal yok — kapalı dükkân sessiz olmalı.
+          } else {
+            sinyaller.push({
+              ton: 'kirmizi', grup: 'ciroYok', sira: -gider,
+              metin: `ciro yok, 30g gider ${fmt(gider)}`,
+            });
+          }
         }
         // (b) Haftalık düşüş — ay bitmeden yakalanması gereken ritim kaybı.
         //     Önem = düşüşün sertliği (yüzde ASC; -22 önce, -6 sonra).
@@ -1586,7 +1691,9 @@ export default function TasarimV2({ onGit }) {
             id: s.ad,
             _s: s,
             hucreler: [
-              { v: s._ciroYok ? `${s.ad} · ciro yok` : s.ad, kalin: true, renk: s._ciroYok ? R.not2 : undefined },
+              { v: s._ciroYok
+                ? `${s.ad} · ${s._kapaliTur === 'sezon' ? 'sezon kapalı' : s._kapaliTur === 'pasif' ? 'pasif şube' : 'ciro yok'}`
+                : s.ad, kalin: true, renk: s._ciroYok ? R.not2 : undefined },
               { v: fmt(s.toplam), mono: true, sag: true },
               { v: fmt(s.nakit), mono: true, sag: true },
               { v: fmt(s.kart), mono: true, sag: true },
@@ -1685,7 +1792,7 @@ export default function TasarimV2({ onGit }) {
       ...(gecikmisToplam > 0 ? [{
         etiket: 'Gecikmiş yük',
         deger: fmt(gecikmisToplam),
-        alt: `${gecikmisOdemeler.length} kalem · en eskisi ${enEskiGecikme || '?'} gün`,
+        alt: `${gecikmisOdemeler.length} kalem · ${enEskiGecikme > 0 ? `en eskisi ${enEskiGecikme} gün` : 'yaş ölçülemedi'}`,
         renk: R.kirmizi,
       }] : []),
     ];

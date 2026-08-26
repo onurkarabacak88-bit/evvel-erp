@@ -13235,7 +13235,17 @@ def ciro_eksik_gunler(gun: int = 14):
     return {
         "pencere_gun": gun, "bugun": bugun.isoformat(),
         "aktif_sube": [s["ad"] for s in subeler],
-        "eksik_adet": len(eksikler),
+        # ⚠️ BİRİM AYRIMI (2026-08-26) — "4 gün mü, 2 gün mü?"
+        # `eksik_adet` ŞUBE×GÜN sayar (ZAFER 24 Ağu + TEMA 24 Ağu = 2 kayıt).
+        # Panel bunu "N gün" diye yazıyordu; takvimde ise 2 gün eksikti ve
+        # kardeş ekran (BAKIŞ, motors.ciro_eksik_gunler) GÜN sayıyordu.
+        # Aynı sabah aynı sahibe iki farklı sayı: 4 ve 2. Sahip iki ekrana
+        # birden güvenemezse hiçbirine güvenmez.
+        # Çözüm sayıyı değiştirmek DEĞİL, BİRİMİ ADLANDIRMAK: ikisi de doğru,
+        # ikisi de farklı şeyi ölçüyor. Artık ikisi de sunucudan gelir ve
+        # ekran hangisini yazdığını söyleyebilir.
+        "eksik_adet": len(eksikler),                                  # şube×gün
+        "eksik_gun_adet": len({e["tarih"] for e in eksikler}),        # takvim günü
         "eksik_sube_ozet": _sube_ozet,
         "eksikler": eksikler[:60],
         # Bugün henüz bitmedi — eksik DEĞİL, "bekleniyor"
