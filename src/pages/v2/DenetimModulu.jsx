@@ -525,7 +525,12 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(268px, 1fr))', gap: 10, marginBottom: 14 }}>
           {kovalar.map((k) => {
             const acik = k.kod === mmKova;
-            const renk = k.kritik ? R.kirmizi : k.adet ? R.amber : R.yesil;
+            // 🔴 (2026-08-27, Codex) `k.adet` NULL/eksik gelirse falsy → YEŞİL.
+            // «Bu kovada iş yok» ile «bu kovayı okuyamadım» aynı renge düşüyordu.
+            // Denetim ekranında bu, doğrudan alarm körlüğüdür.
+            const adetBilinmiyor = k.adet == null;
+            const renk = adetBilinmiyor ? R.not3
+              : k.kritik ? R.kirmizi : sayi(k.adet) ? R.amber : R.yesil;
             return (
               <div
                 key={k.kod}
@@ -543,8 +548,12 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
                 </div>
                 <div style={{ fontSize: 11, color: R.not2, lineHeight: 1.5, minHeight: 30 }}>{k.aciklama}</div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginTop: 8 }}>
-                  <span style={{ fontFamily: F.mono, fontSize: 12.5, color: sayi(k.tutar_tl) ? R.bakirAcik : R.not3 }}>
-                    {sayi(k.tutar_tl) ? fmt(sayi(k.tutar_tl)) : 'tutar bilinmiyor'}
+                  {/* 🔴 (2026-08-27, Codex) FALSY-SIFIR: gerçek 0 ₺ «tutar
+                      bilinmiyor» oluyordu. Sıfır bir cevaptır, cevapsızlık değil —
+                      «bu kovada para yok» ile «tutarı okuyamadım» ayrı şeylerdir
+                      ve para önceliklendirmesi tam bu ayrımla yapılır. */}
+                  <span style={{ fontFamily: F.mono, fontSize: 12.5, color: k.tutar_tl == null ? R.not3 : (sayi(k.tutar_tl) ? R.bakirAcik : R.not2) }}>
+                    {k.tutar_tl == null ? 'tutar okunamadı' : fmt(sayi(k.tutar_tl))}
                   </span>
                   <span style={{ fontSize: 10.5, color: R.not }}>{acik ? 'kapat ▲' : 'aç ▼'}</span>
                 </div>
@@ -660,7 +669,14 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
                     ...(s.yas != null ? [{ etiket: 'Yaş', deger: `${s.yas} gün`, renk: s.yas >= 15 ? R.kirmizi : R.amber }] : []),
                     { etiket: 'Aksiyon', deger: acikKova.aksiyon, renk: R.not },
                   ],
-                  listeBaslik: 'Kayıt ayrıntısı',
+                  // ⚠️ (2026-08-27, Codex) SESSİZ KIRPMA: ham alanlar 12'de
+                  // kesiliyordu ve kesildiği SÖYLENMİYORDU — «hangi veriye
+                  // bakıldı?» sorusunun cevabı eksik kalıyordu. Kanıt katmanının
+                  // yarısını göstermek, kanıtı göstermek değildir.
+                  listeBaslik: (() => {
+                    const n = Object.keys(s).filter((k) => k !== 'ne_yapmali').length;
+                    return n > 12 ? `Kayıt ayrıntısı · ${n} alandan ilk 12'si` : 'Kayıt ayrıntısı';
+                  })(),
                   // Ham alanları göster — hangi veriye bakıldığı gizlenmez
                   satirlar: Object.entries(s)
                     .filter(([k]) => k !== 'ne_yapmali')
@@ -672,8 +688,24 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
             />
           </>
         )}
-        {acikKova && !(acikKova.satirlar || []).length && (
-          <BosDurum baslik={acikKova.ad} aciklama="Bu kovada açık kalem yok — temiz." tamam />
+        {/* 🔴 (2026-08-27, Codex) NULL ile BOŞ AYNI SAYILIYORDU: `satirlar`
+            gelmezse de «açık kalem yok — temiz» yazıyordu. Kuyruk verisi
+            okunamadığında ekranın «temiz» demesi, denetim modülünün
+            yapabileceği en kötü şeydir. Adet ile liste ÇELİŞİYORSA da söylenir. */}
+        {acikKova && !Array.isArray(acikKova.satirlar) && (
+          <BosDurum
+            baslik={acikKova.ad}
+            aciklama="Bu kovanın kalem listesi okunamadı — «açık kalem yok» demiyoruz, «bilmiyoruz» diyoruz. Yenileyin."
+          />
+        )}
+        {acikKova && Array.isArray(acikKova.satirlar) && !acikKova.satirlar.length && (
+          <BosDurum
+            baslik={acikKova.ad}
+            aciklama={sayi(acikKova.adet) > 0
+              ? `Sayaç ${sayi(acikKova.adet)} kalem diyor ama liste boş geldi — iki kaynak çelişiyor, sayıya güvenmeyin.`
+              : 'Bu kovada açık kalem yok — temiz.'}
+            tamam={!(sayi(acikKova.adet) > 0)}
+          />
         )}
       </>
     );
@@ -684,7 +716,12 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
     if (!rapor) return <Yukleniyor />;
     const subeler = Array.isArray(rapor.subeler) ? rapor.subeler : [];
     const toplamAnomali = subeler.reduce((t, s) => t + sayi(s.anomali_sayisi), 0);
-    const alarmli = subeler.filter((s) => s.alarm && s.alarm !== 'normal');
+    // ⚠️ (2026-08-27, Codex) ALARM EVRENİ YANLIŞTI: liste TÜM şubelerden
+    // toplanıyordu. Ölçülmemiş bir şubenin yanıtta kalmış ESKİ `alarm` alanı
+    // bugünün alarmı gibi sayılabiliyordu. `olculdu()` guard'ını değere ve
+    // renge uygulayıp KAYNAK LİSTEYE uygulamamak, guard'ı yarım bırakmaktır.
+    // (Not: `olculdu` aşağıda tanımlı ama bu satır render'da değil, hesapta
+    // kullanılıyor — sıra için aşağı taşındı.)
     // 🔴 P0 SAHTE-SAKİN AŞISI (2026-08-17, Zekâ alanı denetimi): sunucu TÜM
     // şubeleri döndürüyor ve o gün hiç karar üretilmemişse ana_tani='UYUMLU',
     // anomali=0, calistirildi=false yazıyor. Ekran `calistirildi`/`motor_aktif`
@@ -700,6 +737,7 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
     const olculdu = (s) => s.calistirildi !== false && s.motor_aktif !== false;
     const olculen = subeler.filter(olculdu);
     const olculmeyen = subeler.filter((s) => !olculdu(s));
+    const alarmli = olculen.filter((s) => s.alarm && s.alarm !== 'normal');
     const uyumlu = olculen.filter((s) => s.ana_tani === 'UYUMLU');
     const hamListe = Array.isArray(notlar?.notlar) ? notlar.notlar : [];
     const hamTipler = Array.isArray(notlar?.tipler) ? notlar.tipler : [];
@@ -714,6 +752,13 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
     // ⚠️ Bant yalnız GERÇEK bir gecikme varken çizilir (uyarı bütçesi):
     // motor taze koştuysa hiç görünmez.
     const motorDurumu = (() => {
+      // ⚠️ (oto-tarama) ŞEKİL TUZAĞI: `durum` GELDİ ama `subeler` dizisi yoksa
+      // eski hâl sessizce `null` dönüp bandı HİÇ çizmiyordu — yani okuma
+      // bozulduğunda modül yine "sessiz sakin" görünüyordu. Bu dosyanın kendi
+      // yorumu (satır ~889) tam bu tuzağı anlatıyor; aynısına düşmüşüm.
+      if (durum && !Array.isArray(durum.subeler)) {
+        return { sekilBozuk: true, kapali: [], eskiler: [], enEski: null, toplam: 0 };
+      }
       const ds = Array.isArray(durum?.subeler) ? durum.subeler : [];
       if (!ds.length) return null;
       const bugunMs = Date.parse(`${bugunISO()}T00:00:00Z`);
@@ -724,10 +769,18 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
       };
       const kapali = ds.filter((x) => x.aktif === false);
       const aktifler = ds.filter((x) => x.aktif !== false);
-      const eskiler = aktifler.filter((x) => (yas(x.son_calisma) ?? 99) > 1);
-      const enEski = aktifler.reduce((m, x) => Math.max(m, yas(x.son_calisma) ?? 0), 0);
-      if (!kapali.length && !eskiler.length) return null;
-      return { kapali, eskiler, enEski, toplam: ds.length };
+      // ⚠️ (oto-tarama) İKİ FARKLI VARSAYIM AYNI ALANDA: `eskiler` tarihsiz
+      // şubeyi 99 gün sayıp listeye alıyordu ama `enEski` aynı şubeyi 0
+      // sayıyordu → bant "1 aktif şubede gece koşusu 0 GÜNDÜR yapılmamış"
+      // gibi anlamsız bir cümle üretebiliyordu. Tarihi olmayan şube AYRI
+      // sayılır: "koşu tarihi yok" der, gün sayısına karışmaz.
+      const tarihsiz = aktifler.filter((x) => yas(x.son_calisma) == null);
+      const tarihli = aktifler.filter((x) => yas(x.son_calisma) != null);
+      const eskiler = tarihli.filter((x) => yas(x.son_calisma) > 1);
+      const enEski = eskiler.length
+        ? eskiler.reduce((m, x) => Math.max(m, yas(x.son_calisma)), 0) : null;
+      if (!kapali.length && !eskiler.length && !tarihsiz.length) return null;
+      return { kapali, eskiler, tarihsiz, enEski, toplam: ds.length };
     })();
 
     return (
@@ -739,10 +792,19 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
           }}>
             🔇 <b style={{ color: R.krem }}>Denetim motoru tam çalışmıyor</b> — aşağıdaki sayılar
             «sorun yok» değil, <b>«bakılmadı»</b> anlamına gelebilir.
+            {motorDurumu.sekilBozuk && (
+              <> Motor durumu ucu <b style={{ color: R.krem }}>beklenmedik şekilde</b> yanıt verdi —
+                koşu takvimi okunamadı, aşağıdaki sayılar teyit edilemiyor.</>
+            )}
             {motorDurumu.eskiler.length > 0 && (
               <> {motorDurumu.eskiler.length} aktif şubede gece koşusu{' '}
                 <b style={{ color: R.krem }}>{motorDurumu.enEski} gündür</b> yapılmamış
                 ({motorDurumu.eskiler.map((x) => x.sube_ad).join(', ')}).</>
+            )}
+            {motorDurumu.tarihsiz?.length > 0 && (
+              <> {motorDurumu.tarihsiz.length} aktif şubede{' '}
+                <b style={{ color: R.krem }}>koşu tarihi hiç yok</b>
+                {' '}({motorDurumu.tarihsiz.map((x) => x.sube_ad).join(', ')}) — motor hiç çalışmamış olabilir.</>
             )}
             {motorDurumu.kapali.length > 0 && (
               <> {motorDurumu.kapali.length} şubede motor <b style={{ color: R.krem }}>kapalı</b>
@@ -917,26 +979,53 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
                 _s: s,
               };
             })}
-            onAc={({ _s }) => onCekmece?.({
-              tip: 'ŞUBE TANISI',
-              baslik: _s.sube_ad,
-              alt: `${_s.ana_tani || '—'} · ${tarihKisa(_s.tarih)}`,
-              kpi: [
-                { etiket: 'Anomali', deger: String(sayi(_s.anomali_sayisi)), renk: sayi(_s.anomali_sayisi) > 0 ? R.kirmizi : R.yesil },
-                { etiket: 'Karar', deger: String(sayi(_s.toplam_karar)) },
-                { etiket: 'Alarm', deger: _s.alarm || 'normal', renk: _s.alarm !== 'normal' ? R.kirmizi : R.yesil },
-                { etiket: 'Motor', deger: _s.motor_aktif ? 'aktif' : (_s.motor_mod || 'kapalı'), renk: _s.motor_aktif ? R.yesil : R.amber },
-              ],
-              listeBaslik: 'Boyut özeti',
-              satirlar: (Array.isArray(_s.boyut_ozet) ? _s.boyut_ozet : []).slice(0, 10).map((b, i) => ({
-                ad: typeof b === 'string' ? b : (b?.boyut || b?.ad || `boyut ${i + 1}`),
-                detay: typeof b === 'object' ? (b?.durum || '') : '',
-                tutar: typeof b === 'object' && b?.deger != null ? String(b.deger) : '',
-              })),
-              not: kisalt(_s.yorum_metni || _s.zeka_ozet, 300) || 'Bu gün için yorum üretilmedi.',
-              aksiyonAd: 'Akıllı Denetim ekranını aç',
-              _hedef: '__modul:denetim:motorlar',
-            })}
+            // 🔴 (2026-08-27, Codex) ÇEKMECE, LİSTENİN AKSİNİ SÖYLÜYORDU.
+            // Üstteki kart «ANALİZ EDİLMEDİ» diyor, satıra tıklayınca açılan
+            // çekmece aynı şube için «Anomali 0» YEŞİL ve «Alarm normal» YEŞİL
+            // basıyordu. Yani kanıtı açmak, sahibi SAKİNLEŞTİRİYORDU — bu tam
+            // olarak alarm körlüğü ve en kötü yerinde: kanıt katmanında.
+            // ⚠️ Ölçülmemiş şubede sayı GÖSTERİLMEZ ('—'), renk NÖTR kalır ve
+            // NEDEN ölçülmediği ilk satırda yazılır.
+            onAc={({ _s }) => {
+              const olcOK = _s.calistirildi !== false && _s.motor_aktif !== false;
+              return onCekmece?.({
+                tip: 'ŞUBE TANISI',
+                baslik: _s.sube_ad,
+                alt: olcOK ? `${_s.ana_tani || '—'} · ${tarihKisa(_s.tarih)}`
+                  : `ANALİZ EDİLMEDİ · ${tarihKisa(_s.tarih)}`,
+                kpi: [
+                  {
+                    etiket: 'Anomali',
+                    deger: olcOK ? String(sayi(_s.anomali_sayisi)) : '—',
+                    alt: olcOK ? undefined : 'motor bakmadı',
+                    renk: !olcOK ? R.not3 : (sayi(_s.anomali_sayisi) > 0 ? R.kirmizi : R.yesil),
+                  },
+                  { etiket: 'Karar', deger: olcOK ? String(sayi(_s.toplam_karar)) : '—', renk: olcOK ? undefined : R.not3 },
+                  {
+                    etiket: 'Alarm',
+                    deger: olcOK ? (_s.alarm || 'normal') : '—',
+                    alt: olcOK ? undefined : 'hüküm yok',
+                    renk: !olcOK ? R.not3 : (_s.alarm && _s.alarm !== 'normal' ? R.kirmizi : R.yesil),
+                  },
+                  { etiket: 'Motor', deger: _s.motor_aktif === false ? 'kapalı' : (_s.motor_mod || 'aktif'), renk: _s.motor_aktif === false ? R.amber : R.yesil },
+                ],
+                listeBaslik: (() => {
+                  const n = Array.isArray(_s.boyut_ozet) ? _s.boyut_ozet.length : 0;
+                  // ⚠️ (Codex) 10-tavan sessizdi.
+                  return n > 10 ? `Boyut özeti · ${n} boyuttan ilk 10'u` : 'Boyut özeti';
+                })(),
+                satirlar: (Array.isArray(_s.boyut_ozet) ? _s.boyut_ozet : []).slice(0, 10).map((b, i) => ({
+                  ad: typeof b === 'string' ? b : (b?.boyut || b?.ad || `boyut ${i + 1}`),
+                  detay: typeof b === 'object' ? (b?.durum || '') : '',
+                  tutar: typeof b === 'object' && b?.deger != null ? String(b.deger) : '',
+                })),
+                not: olcOK
+                  ? (kisalt(_s.yorum_metni || _s.zeka_ozet, 300) || 'Bu gün için yorum üretilmedi.')
+                  : `Bu şube için motor çalışmadı${_s.motor_aktif === false ? ' (motor kapalı)' : ''} — yukarıdaki «—» işaretleri «sorun yok» değil «bakılmadı» demektir. Koşu takvimi: Tanı Motorları sekmesi.`,
+                aksiyonAd: 'Tanı Motorları’nı aç',
+                _hedef: '__modul:denetim:motorlar',
+              });
+            }}
           />
         )}
         </>
@@ -1005,8 +1094,14 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
                   // ekranının kendisi «sorun yok» diyemez, ancak «bakmadım»
                   // diyebilir. Sahte sakinlik, denetimin en pahalı arızasıdır.
                   (() => {
-                    if (!raporVar) return { v: 'rapor yok', rozet: R.not3 };
+                    // ⚠️ (2026-08-27, Codex) SIRA YANLIŞTI: `raporVar` en başta
+                    // sorulunca, motor KAPALI olduğu için rapor üretilmeyen şube
+                    // «rapor yok» diye görünüyordu — SEBEBİ gizleniyordu. Sahip
+                    // «rapor gelmemiş, bekleyeyim» sanıyordu; oysa motor kapalı
+                    // olduğu sürece o rapor HİÇ gelmeyecek. Motor durumu, rapor
+                    // yokluğunun AÇIKLAMASIDIR; önce o sorulur.
                     if (s.aktif === false) return { v: 'motor kapalı · hüküm yok', rozet: R.not3 };
+                    if (!raporVar) return { v: 'rapor yok', rozet: R.not3 };
                     if (r.alarm && r.alarm !== 'normal') return { v: 'alarm', rozet: R.kirmizi };
                     if (bulgu > 0) return { v: 'izlemede', rozet: R.amber };
                     // Koşu ESKİYSE «temiz» demek, dünkü fotoğrafa bugün demektir.
@@ -1044,6 +1139,11 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
   if (gorunum === 'mutabakat') {
     if (mutHata) return <HataBandi mesaj={mutHata} onTekrar={mutYukle} />;
     if (!mutabakat) return <Yukleniyor />;
+    // ⚠️ (2026-08-27, Codex) NULL ile BOŞ AYNI SAYILIYORDU: dizi gelmezse
+    // sessizce `[]` oluyor, sonra ekran «iki yön de mutabık» ve «temiz»
+    // yazıyordu. Cevap gelmedi ile uyum var, aynı şey değildir.
+    const yonOkunamadi = !Array.isArray(mutabakat.dusus_var_odeme_kaydi_yok)
+      || !Array.isArray(mutabakat.odeme_var_dusus_gorulmedi);
     const dusumsuz = Array.isArray(mutabakat.dusus_var_odeme_kaydi_yok) ? mutabakat.dusus_var_odeme_kaydi_yok : [];
     const kayitsiz = Array.isArray(mutabakat.odeme_var_dusus_gorulmedi) ? mutabakat.odeme_var_dusus_gorulmedi : [];
     const eslesen = sayi(mutabakat.eslesen) || (Array.isArray(mutabakat.eslesen) ? mutabakat.eslesen.length : 0);
@@ -1064,7 +1164,11 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
       ad: kisalt(r.tedarikci_ad || 'tedarikçi', 44),
       // kayit_guveni < 1 → fuzzy eşleşmiş ADAY; kesin değil, ekranda söylenir
       detay: `${tarihKisa(r.tarih)} · ${r.kaynak || 'kayıt'}`
-        + (sayi(r.kayit_guveni) && sayi(r.kayit_guveni) < 1 ? ' · aday eşleşme' : ''),
+        // 🔴 (2026-08-27, Codex) FALSY-SIFIR: `sayi(x) && x < 1` deseni,
+        // güven 0 iken (EN ZAYIF aday) etiketi hiç basmıyordu — en şüpheli
+        // eşleşme, kesinmiş gibi okunuyordu. Güven alanı YOKSA etiket yok;
+        // VARSA ve 1'in altındaysa aday denir. 0 da bir güven değeridir.
+        + (r.kayit_guveni != null && sayi(r.kayit_guveni) < 1 ? ' · aday eşleşme' : ''),
       tutar: r.tutar != null ? fmt(sayi(r.tutar)) : '',
     });
     return (
@@ -1084,7 +1188,12 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
           { etiket: 'Kayıt var · düşüş yok', deger: String(kayitsiz.length), alt: 'ödememiz var, tedarikçi zincirinde erime görünmüyor (bilgi)', renk: kayitsiz.length > 0 ? R.amber : R.krem },
         ]} />
         <OneriSeridi metin="Bu ekran tedarikçi fatura-zinciri ↔ ödeme olayları ADAY eşleşmesidir (kasa mutabakatı değil). Bakiye düşüşü muhasebe sinyalidir — iade/iskonto da düşürür; hüküm yok." />
-        {acikFark === 0 ? (
+        {yonOkunamadi ? (
+          <BosDurum
+            baslik="Mutabakat okunamadı"
+            aciklama="İki yönden en az biri liste döndürmedi — bu ekran «mutabık» demiyor, «karşılaştıramadım» diyor. Yenileyin."
+          />
+        ) : acikFark === 0 ? (
           <BosDurum metin="İki yön de mutabık — ödeme kayıtları ile kasa düşüşleri örtüşüyor." />
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 12, marginBottom: 16 }}>
@@ -1226,12 +1335,32 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
                 {duyuKesit.satis && (Array.isArray(duyuKesit.satis.zimni_fiyat) || duyuKesit.satis.iade_fire) && (
                   <div style={{ padding: '11px 14px', borderRadius: 11, background: R.girinti }}>
                     <div style={{ fontSize: 10.5, color: R.not2, fontWeight: 700, letterSpacing: '.5px' }}>SATIŞ BÜTÜNLÜĞÜ</div>
-                    <div style={{ fontFamily: F.mono, fontSize: 17, fontWeight: 700, marginTop: 4, color: (duyuKesit.satis.zimni_fiyat || []).length ? R.amber : R.krem }}>
-                      {(duyuKesit.satis.zimni_fiyat || []).length}
-                    </div>
-                    <div style={{ fontSize: 10.5, color: R.not2, marginTop: 3, lineHeight: 1.45 }}>
-                      üründe zımni fiyat (ciro/adet) menüden sapıyor
-                    </div>
+                    {/* 🔴 (2026-08-27, Codex) KART iade_fire VARSA da açılıyor ama
+                        sayı YALNIZ `zimni_fiyat`ı sayıyordu: iade/fire sinyali
+                        dolu, zımni fiyat boşsa kart koca bir «0» gösteriyordu —
+                        sinyal var ama ekranda yokmuş gibi. İki sinyal AYRI
+                        sayılır ve hangisinin dolu olduğu yazılır. */}
+                    {(() => {
+                      const zf = Array.isArray(duyuKesit.satis.zimni_fiyat) ? duyuKesit.satis.zimni_fiyat.length : null;
+                      const ifH = duyuKesit.satis.iade_fire;
+                      const ifN = Array.isArray(ifH) ? ifH.length : (ifH != null ? sayi(ifH) : null);
+                      const varMi = (zf || 0) > 0 || (ifN || 0) > 0;
+                      return (
+                        <>
+                          <div style={{ fontFamily: F.mono, fontSize: 17, fontWeight: 700, marginTop: 4, color: varMi ? R.amber : R.krem }}>
+                            {zf == null && ifN == null ? '—' : `${zf ?? 0}${ifN != null ? ` + ${ifN}` : ''}`}
+                          </div>
+                          <div style={{ fontSize: 10.5, color: R.not2, marginTop: 3, lineHeight: 1.45 }}>
+                            {zf == null && ifN == null
+                              ? 'satış bütünlüğü okunamadı — «sapma yok» demiyoruz'
+                              : [
+                                zf != null ? `${zf} üründe zımni fiyat (ciro/adet) menüden sapıyor` : null,
+                                ifN != null ? `${ifN} iade/fire kaydı` : null,
+                              ].filter(Boolean).join(' · ')}
+                          </div>
+                        </>
+                      );
+                    })()}
                     <div style={{ fontSize: 10, color: R.not3, marginTop: 5 }}>
                       kampanya · ikram · yeni fiyat aynı izi bırakır — aday
                     </div>
@@ -1368,6 +1497,16 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
                   <span style={{ color: R.not3, fontSize: 11 }}> · ref {String(d.ref || '').slice(0, 8)}</span>
                 </div>
               ))}
+              {/* ⚠️ (2026-08-27, Codex) SESSİZ ELEME: liste 6'da kesiliyordu ama
+                  üstteki sayaç toplamı yazıyordu — sahip 6 görüp «hepsi bu»
+                  sanabilirdi. Gece sentezlerinde bu düzeltilmiş, dilek tarafı
+                  atlanmıştı. */}
+              {dilekler.length > 6 && (
+                <div style={{ fontSize: 11.5, color: R.not2, padding: '4px 2px' }}>
+                  … ve <b style={{ color: R.not }}>{dilekler.length - 6} dilek daha</b> onay bekliyor —
+                  liste en yenisinden 6'sını gösterir.
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -1437,6 +1576,15 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
                   </div>
                 );
               })}
+              {/* ⚠️ (2026-08-27, Codex) SESSİZ ELEME: bağ olayları 12'de
+                  kesiliyordu, taşma notu yoktu. Öğretmen defterinde eksik
+                  görülen bağ, hiç eğitilmeyen bağ demektir. */}
+              {bagOlaylar.length > 12 && (
+                <div style={{ fontSize: 11.5, color: R.not2, padding: '6px 2px 0' }}>
+                  … ve <b style={{ color: R.not }}>{bagOlaylar.length - 12} bağ olayı daha</b> —
+                  liste en yenisinden 12'sini gösterir.
+                </div>
+              )}
             </div>
             <div style={{ fontSize: 10.5, color: R.not3, marginTop: 9, fontStyle: 'italic' }}>
               T1 bağı sinyali KAPATMAZ; T2 "çocuk gelmedi" beklenti boşluğudur. Karar sonradan değiştirilebilir (upsert).
@@ -1482,7 +1630,12 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
     if (duyuHata) return <HataBandi mesaj={duyuHata} onTekrar={duyuYukle} />;
     if (!karne || sinaps == null) return <Yukleniyor />;
     const kurallar = Array.isArray(karne.karne) ? karne.karne : [];
-    const sinapsOlay = sayi(sinaps?.sinaps_olaylari) || (Array.isArray(sinaps?.sinaps_olaylari) ? sinaps.sinaps_olaylari.length : 0);
+    // ⚠️ (2026-08-27, Codex) NULL «0 OLAY»A DÖNÜYORDU: alan gelmezse sayı 0
+    // oluyor, kapı da açılmıyordu — sahibin «hangi birliktelikler oldu?»
+    // sorusuna hiçbir yol kalmıyordu. «Olay yok» ile «okunamadı» ayrılır.
+    const sinapsDizi = Array.isArray(sinaps?.sinaps_olaylari) ? sinaps.sinaps_olaylari : null;
+    const sinapsOkunamadi = sinapsDizi == null && sinaps?.sinaps_olaylari == null;
+    const sinapsOlay = sinapsDizi ? sinapsDizi.length : sayi(sinaps?.sinaps_olaylari);
     return (
       <>
         <KpiSeridi kpiler={[
@@ -1491,26 +1644,30 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
           // 🚪 96 olay ELDEYDİ (`sinaps.sinaps_olaylari` tam dizi) ama yalnız
           // sayılıp atılıyordu — sahip «hangi 96?» diye soramıyordu.
           {
-            etiket: 'Sinaps olayı', deger: String(sinapsOlay),
-            alt: `son ${sayi(sinaps?.kesit) || 14} gün · duyular arası${Array.isArray(sinaps?.sinaps_olaylari) && sinaps.sinaps_olaylari.length ? ' · dökümü aç' : ''}`,
-            onTikla: (Array.isArray(sinaps?.sinaps_olaylari) && sinaps.sinaps_olaylari.length)
+            etiket: 'Sinaps olayı',
+            deger: sinapsOkunamadi ? '—' : String(sinapsOlay),
+            renk: sinapsOkunamadi ? R.amber : undefined,
+            alt: sinapsOkunamadi
+              ? '⚠ okunamadı — «olay yok» demiyoruz'
+              : `son ${sayi(sinaps?.kesit) || 14} gün · duyular arası${sinapsDizi?.length ? ' · dökümü aç' : ''}`,
+            onTikla: (sinapsDizi && sinapsDizi.length)
               ? () => onCekmece?.({
                 tip: 'SİNAPS',
                 baslik: 'Duyular arası birliktelikler',
-                alt: `${sinaps.sinaps_olaylari.length} olay · son ${sayi(sinaps?.kesit) || 14} gün`,
+                alt: `${sinapsDizi.length} olay · son ${sayi(sinaps?.kesit) || 14} gün`,
                 kpi: [
-                  { etiket: 'Olay', deger: String(sinaps.sinaps_olaylari.length) },
-                  { etiket: 'Duyu', deger: String(new Set(sinaps.sinaps_olaylari.map((o) => o.duyu)).size), alt: 'ayrı kaynak' },
+                  { etiket: 'Olay', deger: String(sinapsDizi.length) },
+                  { etiket: 'Duyu', deger: String(new Set(sinapsDizi.map((o) => o.duyu)).size), alt: 'ayrı kaynak' },
                 ],
                 listeBaslik: 'Olaylar · yeniden eskiye',
-                satirlar: sinaps.sinaps_olaylari.slice(0, 60).map((o) => ({
+                satirlar: sinapsDizi.slice(0, 60).map((o) => ({
                   ad: String(o.signal_name || o.olay_tipi || '—').slice(0, 70),
                   detay: [o.duyu, o.entity_id, String(o.occurred_at || '').slice(0, 10)].filter(Boolean).join(' · '),
                   tutar: '',
                 })),
                 // ⚠️ SESSİZ ELEME YASAK: 60'tan fazlası varsa söylenir.
-                not: (sinaps.sinaps_olaylari.length > 60
-                  ? `Liste en yeni 60 olayı gösterir (${sinaps.sinaps_olaylari.length} olaydan). `
+                not: (sinapsDizi.length > 60
+                  ? `Liste en yeni 60 olayı gösterir (${sinapsDizi.length} olaydan). `
                   : '')
                   + (sinaps.not || 'Sinapslar duyuları birbirine bağlar: birliktelik kaydeder, hüküm vermez, alarm kapatmaz.'),
               })
@@ -1782,9 +1939,13 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
           // zorunlu yükü (kart asgari + kredi taksiti + sabit) düşülmüş hâli.
           {
             etiket: 'Kullanılabilir nakit',
-            deger: fmt(sayi(strateji.kullanilabilir_nakit)),
+            // 🔴 (2026-08-27, Codex) SAHTE YEŞİL: alan gelmezse `sayi(null)=0`
+            // → «0 ₺» ve YEŞİL. «Ölçemedim» ile «nakit dengede» karışıyordu ve
+            // sahip buna bakıp ÖDEME KARARI alabilirdi. Alan yoksa sayı yok.
+            deger: strateji.kullanilabilir_nakit == null ? '—' : fmt(sayi(strateji.kullanilabilir_nakit)),
             alt: 'kasa − bu ayın zorunlu yükü (asgari+taksit+sabit)',
-            renk: sayi(strateji.kullanilabilir_nakit) >= 0 ? R.yesil : R.kirmizi,
+            renk: strateji.kullanilabilir_nakit == null ? R.not3
+              : (sayi(strateji.kullanilabilir_nakit) >= 0 ? R.yesil : R.kirmizi),
           },
           { etiket: 'Öneri toplamı', deger: fmt(sayi(strateji.toplam_oneri_tutari)), alt: 'önerilen hareket tutarı' },
         ]} />
@@ -1829,7 +1990,18 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
           <Liste
             satirlar={gosterilenOneriler.map((o, i) => {
               const ham = String(o.baslik || o.oneri || o.aciklama || `oneri-${i}`);
-              const ref = `strateji:${ham.toLowerCase().replace(/[^a-z0-9ğüşıöç]+/gi, '-').slice(0, 60)}`;
+              // 🔴 (2026-08-27, Codex) KİMLİK ÇAKIŞMASI: ref YALNIZ başlıktan
+              // türüyordu. Aynı/benzer başlıklı iki öneri aynı ref'e düşüyor ve
+              // birine «uyguladım» demek DİĞERİNİ de etiketliyordu — karar
+              // defteri güvenilmez hale geliyordu. Ayırt edici alanlar varsa
+              // (ödeme kimliği, şube, tutar) ref'e KATILIR; yoksa sıra numarası
+              // son çare olarak eklenir ki iki satır asla aynı kimliği almasın.
+              const _refEk = [
+                o.odeme_id ? `o${o.odeme_id}` : null,
+                o.sube_id ? `s${o.sube_id}` : null,
+                (o.tavsiye_tutar != null || o.tutar != null) ? `t${Math.round(sayi(o.tavsiye_tutar ?? o.tutar))}` : null,
+              ].filter(Boolean).join(':') || `i${i}`;
+              const ref = `strateji:${ham.toLowerCase().replace(/[^a-z0-9ğüşıöç]+/gi, '-').slice(0, 60)}:${_refEk}`;
               const isaret = isaretliler[ref];
               return {
                 id: o.id || `o-${i}`,
