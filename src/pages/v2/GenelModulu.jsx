@@ -1038,6 +1038,77 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
     }
   };
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // 💰 PARA ÇIPASI — TEK CÜMLE, HER GÖRÜNÜMDE AYNI (2026-08-26, Codex teşhisi)
+  // ══════════════════════════════════════════════════════════════════════════
+  // Codex'in en ciddi bulgusu: "aynı finansal gerçek farklı yerlerde farklı soru
+  // gibi sunuluyor... bu çelişki teknik değil, BİLİŞSEL." Sahip aynı sabah dört
+  // ayrı çıpa görüyordu: Kasa · doğrulanmış kasa · durakların toplamı ·
+  // dayanıklılık aralığı. Dördü de DOĞRU, dördü de FARKLI soru cevaplıyor —
+  // ama hiçbiri "elimde ne var?" sorusunun TEK cevabı değil.
+  //
+  // Çözüm yeni bir rakam DEĞİL (beşinci çıpa olurdu): aynı üç gerçeği AYNI
+  // SÖZCÜKLERLE, AYNI SIRAYLA, her iki görünümde birden söylemek. Karar Alanı
+  // ve Para Akışı artık aynı cümleyi taşıyor; sahip nereye bakarsa baksın
+  // hikâye değişmiyor.
+  //
+  // ⚠️ Bu blok `karar` dalının içindeydi; iki görünümde de kullanılabilsin diye
+  // BİLEŞEN KAPSAMINA taşındı. Kopyalanmadı — kopya, iki ekranın bir gün
+  // ayrışması demekti ki düzeltmeye çalıştığımız kusurun ta kendisi.
+  const nakitDurum = (() => {
+    const nk2 = veri.nakit;
+    if (!nk2 || nk2 === '__HATA__' || !nk2.duraklar) return { saglam: false };
+    const mut2 = Math.abs(sayi(nk2.mutabakatsiz_tl));
+    const defter2 = Math.abs(sayi(nk2.defter_bakiyesi_tl));
+    return {
+      saglam: true,
+      mut: mut2,
+      defter: defter2,
+      dogrulanmis: sayi(nk2.duraklar.duraklar_toplami_tl),
+      // ⚖️ PAY ve EŞİK ARTIK SUNUCUDAN (2026-08-26, Codex denetimi):
+      // ikisi de burada hesaplanıyordu. Pay ekranda YAZILIYOR ("defterin
+      // %48'i"), eşik ise KASA kartının rengini ve kuyruğa madde girip
+      // girmeyeceğini belirliyordu — yani bir HÜKÜM istemcide veriliyordu.
+      // Sunucu hesaplayamazsa pay null kalır ve yazılmaz (uydurma oran yok).
+      pay: nk2.mutabakatsiz_pay_pct == null ? null : sayi(nk2.mutabakatsiz_pay_pct),
+      ciddiFark: !!nk2.mutabakatsiz_ciddi,
+      // 📉 Doğrulanmış dayanıklılık SUNUCUDAN gelir (operasyon_merkez_api ·
+      // kac_gun_dayanir_dogrulanmis). Burada BÖLME YAPILMAZ: "gösterim kendi
+      // aritmetiğini kurmaz". Uç hesaplayamazsa null döner ve aralık yazılmaz.
+      gunDogrulanmis: nk2.kac_gun_dayanir_dogrulanmis == null
+        ? null : sayi(nk2.kac_gun_dayanir_dogrulanmis),
+    };
+  })();
+
+  /** Para çıpası cümlesi — İKİ GÖRÜNÜMDE DE bire bir aynı metin.
+   *  Üç gerçek, hep bu sırayla: (1) kesin olan (2) belirsiz olan (3) süre.
+   *  ⚠️ Hiçbir rakam BURADA türetilmez; hepsi sunucudan gelir. Veri yoksa
+   *  cümle HİÇ çizilmez — yarım bir para cümlesi, hiç olmayandan kötüdür. */
+  const ParaCipasi = ({ ust }) => {
+    if (!nakitDurum.saglam) return null;
+    const gunUst = p?.kac_gun_dayanir != null ? sayi(p.kac_gun_dayanir) : null;
+    const alt = nakitDurum.ciddiFark ? nakitDurum.gunDogrulanmis : null;
+    const sure = gunUst == null ? null
+      : (alt != null && alt < gunUst) ? `${alt}–${gunUst} gün` : `${gunUst} gün`;
+    return (
+      <div style={{
+        ...kartYuzey, padding: '11px 16px', marginBottom: ust ? 0 : 13,
+        fontSize: 12.5, lineHeight: 1.65, color: R.metin2,
+        borderLeft: `3px solid ${nakitDurum.ciddiFark ? R.amber : R.yesil}`,
+      }}>
+        Elinde <b style={{ fontFamily: F.mono, color: R.krem }}>{fmt(nakitDurum.dogrulanmis)}</b> kesin para var.
+        {nakitDurum.ciddiFark && (
+          <>
+            {' '}Ayrıca <b style={{ fontFamily: F.mono, color: R.amber }}>{fmt(nakitDurum.mut)}</b>{' '}
+            kayıtlarda görünüyor ama <b>yeri doğrulanmamış</b>
+            {nakitDurum.pay != null ? ` (defterin %${nakitDurum.pay}'i)` : ''}.
+          </>
+        )}
+        {sure && <> Bu parayla <b style={{ color: R.krem }}>{sure}</b> dayanırsın.</>}
+      </div>
+    );
+  };
+
   const kasaCekmecesiniAc = async () => {
     // Önce iskeleti aç — veri gelene kadar boş ekran yerine "yükleniyor".
     onCekmece?.({
@@ -1519,30 +1590,6 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
     //
     // ⚠️ EŞİK %10 NEDEN: kuruş farkı için her sabah alarm yazmak uyarı bütçesini
     // yakar. Defterin onda birinden büyük fark artık "yuvarlama" değildir.
-    const nakitDurum = (() => {
-      const nk2 = veri.nakit;
-      if (!nk2 || nk2 === '__HATA__' || !nk2.duraklar) return { saglam: false };
-      const mut2 = Math.abs(sayi(nk2.mutabakatsiz_tl));
-      const defter2 = Math.abs(sayi(nk2.defter_bakiyesi_tl));
-      return {
-        saglam: true,
-        mut: mut2,
-        defter: defter2,
-        dogrulanmis: sayi(nk2.duraklar.duraklar_toplami_tl),
-        // ⚖️ PAY ve EŞİK ARTIK SUNUCUDAN (2026-08-26, Codex denetimi):
-        // ikisi de burada hesaplanıyordu. Pay ekranda YAZILIYOR ("defterin
-        // %48'i"), eşik ise KASA kartının rengini ve kuyruğa madde girip
-        // girmeyeceğini belirliyordu — yani bir HÜKÜM istemcide veriliyordu.
-        // Sunucu hesaplayamazsa pay null kalır ve yazılmaz (uydurma oran yok).
-        pay: nk2.mutabakatsiz_pay_pct == null ? null : sayi(nk2.mutabakatsiz_pay_pct),
-        ciddiFark: !!nk2.mutabakatsiz_ciddi,
-        // 📉 Doğrulanmış dayanıklılık SUNUCUDAN gelir (operasyon_merkez_api ·
-        // kac_gun_dayanir_dogrulanmis). Burada BÖLME YAPILMAZ: "gösterim kendi
-        // aritmetiğini kurmaz". Uç hesaplayamazsa null döner ve aralık yazılmaz.
-        gunDogrulanmis: nk2.kac_gun_dayanir_dogrulanmis == null
-          ? null : sayi(nk2.kac_gun_dayanir_dogrulanmis),
-      };
-    })();
 
     const bugunKuyrugu = (() => {
       const aday = [];
@@ -1853,6 +1900,10 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
         {/* ═════════ BANT 3 — PARA ═══════════════════════════════════════════ */}
         <Bant etiket="Para" not={baskiYok ? 'ödeme baskısı yok' : null} cocuk={
         <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
+        {/* 💰 PARA ÇIPASI — Para Akışı görünümündekiyle BİRE BİR AYNI cümle.
+            Dört ayrı çıpanın (kasa · doğrulanmış · duraklar · dayanıklılık)
+            önüne tek bir hikâye konur; rakamlar altta detaylanmaya devam eder. */}
+        <ParaCipasi ust />
         {/* `sik` — şerit bir BANDIN içinde; kendi alt boşluğunu taşımaz,
             aralığı bandın flex gap'i verir (çift boşluk = boşa 16px). */}
         <KpiSeridi sik kpiler={[
@@ -2246,6 +2297,10 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
           Karar Alanı'ndaki para rakamlarının nereden geldiği burada açılır —
           karar için değil, <b style={{ color: R.metin2 }}>doğrulama</b> için.
         </div>
+        {/* 💰 Karar Alanı'ndakiyle BİRE BİR AYNI cümle — bilinçli tekrar.
+            Sahip hangi görünümde olursa olsun para hikâyesi değişmez; altındaki
+            duraklar bloğu o hikâyenin KANITIDIR, alternatifi değil. */}
+        <ParaCipasi />
         {nakitHataBlok}
         {nakitBlok}
 
