@@ -1746,7 +1746,7 @@ export default function TasarimV2({ onGit }) {
               <div style={{
                 width: 44, flexShrink: 0, paddingTop: 9, marginTop: 3,
                 borderTop: `1px solid ${R.cizgi}`, fontSize: 7.5, fontWeight: 700,
-                letterSpacing: '.7px', textTransform: 'uppercase', color: '#5E5142',
+                letterSpacing: '.7px', textTransform: 'uppercase', color: R.not2,
                 textAlign: 'center', lineHeight: 1.25,
               }}>
                 {m.blok}
@@ -1969,7 +1969,12 @@ export default function TasarimV2({ onGit }) {
               <span style={{ flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                 Ara — modül, ekran
               </span>
-              <span style={{ fontFamily: F.mono, fontSize: 10, color: '#6E6052', flexShrink: 0 }}>⌘K</span>
+              {/* 👁️ (2026-08-26) ELLE YAZILMIŞ RENKTİ: '#6E6052'. Bu değer
+                  2026-08-14 kontrast denetiminde token'da (not3) düzeltilmişti
+                  ama BURADA literal olduğu için düzeltme hiç ulaşmadı — ölçümde
+                  2,93:1 çıktı (AA 4,5 altı). Token'a bağlandı.
+                  DERS: elle yazılan renk, tema düzeltmelerinin kör noktasıdır. */}
+              <span style={{ fontFamily: F.mono, fontSize: 10, color: R.not3, flexShrink: 0 }}>⌘K</span>
             </div>
 
             <button
@@ -2281,14 +2286,14 @@ export default function TasarimV2({ onGit }) {
                     color: R.krem, fontSize: 15, fontFamily: 'inherit',
                   }}
                 />
-                <span style={{ fontFamily: F.mono, fontSize: 10, color: '#6E6052', flexShrink: 0 }}>esc</span>
+                <span style={{ fontFamily: F.mono, fontSize: 10, color: R.not3, flexShrink: 0 }}>esc</span>
               </div>
 
               <div style={{ maxHeight: '46vh', overflowY: 'auto', overflowX: 'hidden', padding: 8 }}>
                 {sonuc.length === 0 ? (
                   <div style={{ padding: '32px 18px', textAlign: 'center' }}>
                     <div style={{ fontFamily: F.baslik, fontSize: 15, color: R.metin2 }}>Eşleşen ekran yok</div>
-                    <div style={{ fontSize: 12, color: '#6E6052', marginTop: 5 }}>
+                    <div style={{ fontSize: 12, color: R.not3, marginTop: 5 }}>
                       «{paletQ}» için sonuç bulunamadı — modül adı ya da ekran adı deneyin
                     </div>
                   </div>
@@ -2307,7 +2312,7 @@ export default function TasarimV2({ onGit }) {
                     >
                       <span style={{
                         width: 74, flexShrink: 0, fontSize: 9, fontWeight: 700, letterSpacing: '.6px',
-                        textTransform: 'uppercase', color: '#5E5142',
+                        textTransform: 'uppercase', color: R.not2,
                       }}>
                         {p.blok}
                       </span>
@@ -2325,7 +2330,7 @@ export default function TasarimV2({ onGit }) {
                           {p.rozet}
                         </span>
                       )}
-                      <span style={{ fontFamily: F.mono, fontSize: 10, color: '#6E6052', flexShrink: 0 }}>
+                      <span style={{ fontFamily: F.mono, fontSize: 10, color: R.not3, flexShrink: 0 }}>
                         {secili ? '↵' : ''}
                       </span>
                     </div>
@@ -2336,7 +2341,7 @@ export default function TasarimV2({ onGit }) {
               <div style={{
                 display: 'flex', alignItems: 'center', gap: 16, padding: '10px 18px',
                 borderTop: `1px solid ${R.cizgi3}`, background: 'rgba(18,12,7,.5)',
-                fontSize: 10.5, color: '#6E6052',
+                fontSize: 10.5, color: R.not3,
               }}>
                 <span>↑↓ gez</span><span>↵ aç</span><span>esc kapat</span>
                 <span style={{ marginLeft: 'auto' }}>{MODULLER.reduce((s, m) => s + m.gorunumler.length, 0)} ekran</span>

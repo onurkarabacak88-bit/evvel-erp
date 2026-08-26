@@ -1549,7 +1549,7 @@ export function Cekmece({
                             <div style={{ fontSize: 12.5, fontWeight: 600, color: a.bekliyor ? R.metin2 : R.krem }}>{a.ad}</div>
                             <div style={{ fontSize: 11, color: R.not2, marginTop: 2, lineHeight: 1.5 }}>{a.detay}</div>
                             {a.zaman && (
-                              <div style={{ fontFamily: F.mono, fontSize: 10, color: '#6E6052', marginTop: 3 }}>{a.zaman}</div>
+                              <div style={{ fontFamily: F.mono, fontSize: 10, color: R.not3, marginTop: 3 }}>{a.zaman}</div>
                             )}
                           </div>
                         </div>
