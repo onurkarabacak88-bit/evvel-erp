@@ -629,9 +629,18 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
       const dunIso = d.toISOString().slice(0, 10);
       // Fonksiyonel merge: yanıt geç gelirse ve sahip bu arada yenilediyse
       // eski cevabın yeni veriyi ezmemesi için state'in KENDİSİNE sorulur.
+      // 🔴 CANLI GEZİNTİ (2026-08-26) — ETİKET YANLIŞ GÜNÜ YAZIYORDU.
+      // Şerit "26 Ağu toplamı 43,9K ₺" diyordu ama o para 25 Ağustos'undu.
+      // Sebep: etiket, YANITIN `is_gunu_tr` alanından okunuyordu; oysa o alan
+      // hangi tarih istenirse istensin SUNUCUNUN BUGÜNÜNÜ döndürüyor
+      // (ölçtüm: ?tarih=25 → is_gunu_tr=26 · ?tarih=24 → is_gunu_tr=26).
+      // Üstelik hemen üstünde şube satırları "bugün ciro —" diyordu; ekran
+      // aynı karede hem "bugün 43,9K" hem "bugün ciro yok" diyordu.
+      // ⚠️ ETİKET, İSTENEN TARİHTEN gelir — yanıttan değil. Sunucudan gelen
+      // bir alanın ADI beklediğin şeyi söylüyor diye İÇERİĞİ de öyle sanma.
       api(`/ops/kapanis-takip?tarih=${dunIso}`)
-        .then((x) => setVeri((s) => (s ? { ...s, dun: x } : s)))
-        .catch(() => setVeri((s) => (s ? { ...s, dun: '__HATA__' } : s)));
+        .then((x) => setVeri((s) => (s ? { ...s, dun: x, dunTarih: dunIso } : s)))
+        .catch(() => setVeri((s) => (s ? { ...s, dun: '__HATA__', dunTarih: dunIso } : s)));
     }).catch((e) => setHata(e?.message || 'Veri alınamadı'));
   };
   useEffect(yukle, []);
@@ -1436,6 +1445,11 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
       { anahtar: 'bugun', baslik: 'BUGÜN vadesi gelen', renk: R.krem, kayitlar: gBug },
       { anahtar: 'yaklasan', baslik: 'YAKLAŞAN · henüz vadesi gelmedi', renk: R.mavi, kayitlar: gYak },
     ].filter((k) => k.kayitlar.length > 0);
+    // Gecikmiş KPI'sının kapısı bu dilimleri açar (gecikme çizgisinin ÜSTÜ:
+    // bugün vadeli ve yaklaşan kalemler gecikmiş değildir, onlar açılmaz).
+    const gecikmeDilimleri = katmanlar
+      .filter((k) => ['kritik', 'uyari', 'bilgi'].includes(k.anahtar))
+      .map((k) => k.anahtar);
 
     const katmanIcerigi = (anahtar, kayitlar) => {
       const { gruplar, tekil } = kovaGorunumu(kayitlar);
@@ -1539,7 +1553,10 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
                 ⚠️ Yüzde/trend YAZILMIYOR: /panel günlük ciro serisi döndürmüyor,
                 karşılaştırma günü olmadan "%+6" uydurma olurdu (mevcut karar
                 doğruydu, korundu). Yalnız GÜN ADI eklendi. */}
-            {dunHam?.is_gunu_tr ? `${kisaGun(dunHam.is_gunu_tr)} toplamı ` : 'dün toplam '}
+            {/* ⚠️ (2026-08-26) `dunHam.is_gunu_tr` DEĞİL: o alan yanıtta hep
+                sunucunun bugünü olarak geliyor. Etiket, veriyi İSTEDİĞİMİZ
+                tarihten türer — tek doğru kaynak odur. */}
+            {veri.dunTarih ? `${kisaGun(veri.dunTarih)} toplamı ` : 'dün toplam '}
             <b style={{ fontFamily: F.mono, color: R.metin2, fontWeight: 700 }}>{kisaPara(dunCiroToplam)}</b>
           </>
         ) : 'dün ciro girilmemiş';
@@ -1991,6 +2008,22 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
               // token bu turda DEĞİŞTİRİLMEDİ (kapsam: yalnız BAKIŞ).
               deltaRenk: !d || (d.tl === 0 && d.adet === 0) ? R.not
                 : d.tl > 0 ? R.kirmiziAcik : R.yesil,
+              // 🚪 CANLI GEZİNTİ (2026-08-26) — EKRANIN EN BÜYÜK KIRMIZI SAYISI
+              // KAPISIZDI. Panel'de aynı rakama kapı taktım, BAKIŞ atlandı;
+              // «kapısız KPI = ölü bilgi» kuralı burada da geçerli.
+              // ⚠️ İKİNCİ BİR ÇEKMECE KURULMADI: kırılım zaten hemen altta,
+              // üç tıklanabilir dilim çipinde yaşıyor. Kapı, onların HEPSİNİ
+              // birden açar (ikinci kez basınca kapatır). Aynı kanıtın iki evi
+              // olmaz — var olan evin kapısını göstermek yeter.
+              onTikla: gecikmeDilimleri.length ? () => {
+                olcumEylem('cekmece');
+                setAcikKatman((st) => {
+                  const hepsiAcik = gecikmeDilimleri.every((k) => st[k]);
+                  const y = { ...st };
+                  gecikmeDilimleri.forEach((k) => { y[k] = !hepsiAcik; });
+                  return y;
+                });
+              } : undefined,
             };
           })(),
           {
@@ -2000,6 +2033,17 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
             deger: fmt(gBugToplam),
             alt: `${gBug.length} kalem · 48 saat ${fmt(t48)}`,
             renk: gBugToplam > 0 ? R.amber : t48 > 0 ? R.mavi : R.yesil,
+            // 🚪 Kalem varsa kendi dilimini açar (kanıt yerinde); hiç kalem
+            // yoksa açacak bir şey yok — o zaman «ne zaman gelecek» sorusunun
+            // masası olan Vade Takvimi'ne köprülenir.
+            onTikla: () => {
+              olcumEylem('cekmece');
+              if (katmanlar.some((k) => k.anahtar === 'bugun')) {
+                setAcikKatman((st) => ({ ...st, bugun: !st.bugun }));
+              } else {
+                onKopru?.('__modul:odeme:takvim');
+              }
+            },
           },
           {
             etiket: 'Dayanıklılık',
@@ -2028,6 +2072,10 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
             renk: p.kac_gun_dayanir == null ? R.not
               : sayi(p.kac_gun_dayanir) < 15 ? R.kirmizi
                 : nakitDurum.ciddiFark ? R.amber : R.krem,
+            // 🚪 Bu sayının PAYDASI kasa; şişkinliği de oradan gelir. Kanıtı
+            // Kasa KPI'sıyla AYNI çekmecedir — ikinci bir «dayanıklılık
+            // dökümü» kurmak, aynı gerçeğin iki hesabını doğururdu.
+            onTikla: kasaAc,
           },
         ]} />
 
