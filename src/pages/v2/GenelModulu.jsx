@@ -2099,11 +2099,14 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
         {/* ═════════ BANT 4 — KISA YOLLAR ═══════════════════════════════════
             Sahibin "nereye gideyim?" sorusu. Hedeflerin hepsi MODULLER
             ağacından doğrulandı; rozetler mevcut sayaçlardan. */}
-        {/* en=150 · gap 9 → 1010px içerik genişliğinde 6 çip TEK SATIR.
-            İkinci satıra taşarsa 2 dakikalık tur kaydırmaya başlar. */}
-        <Bant etiket="Kısa yollar" not="sık gidilen ekranlar" cocuk={
-          {/* Çip başlığı SORU, alt satırı modülün gerçek adı — soruyla gelen
-              bulur, adı da öğrenir (öğrenilebilirlik kesilmez). */}
+        {/* en=168 · gap 9 → soru etiketleri sığsın diye 150'den açıldı; 1010px
+            içerikte 5 çip TEK SATIR kalır. İkinci satıra taşarsa 2 dakikalık
+            tur kaydırmaya başlar.
+            Çip başlığı SORU, alt satırı modülün gerçek adı — soruyla gelen
+            bulur, adı da öğrenir (öğrenilebilirlik kesilmez).
+            ⚠️ Bu yorum BANDIN DIŞINDA durur: `cocuk=` bir İFADE konumudur,
+            oraya JSX yorumu konulamaz — derleme kırılır (canlı ders). */}
+        <Bant etiket="Kısa yollar" not="soruyla git — modül adı altta" cocuk={
           <Izgara en={168} gap={9} cocuk={kisaYollar.map((y) => (
             <Cip
               key={y.k}
