@@ -257,19 +257,35 @@ def ara(q: str, limit: int = 6):
             ad = _ilk_var(k, ["ad_soyad", "ad", "isim"])
             if ad:
                 kimlik_p = "id" if "id" in k else None
+                # ⚠️ AKTİFLİK DE OKUNUR (2026-08-26, canlı doğrulamada çıktı):
+                # Kadro ekranı `/personel?aktif=true` çekiyor — AYRILMIŞ personeli
+                # HİÇ göstermiyor. Arama ise onları da buluyor. Ayrılmış birini
+                # kadroya köprüleyip "işaretledim" demek, ekranda olmayan bir
+                # satırı işaret etmektir: ödeme tarafında yaşadığımız tuzağın
+                # aynısı (arama doğru cevabı bulur, yanlış kapıya götürür).
+                # Çözüm: durumu SÖYLE, parametreyi yalnız aktifte yolla.
+                aktif_p = "aktif" if "aktif" in k else None
                 cur.execute(
                     f"SELECT {ad} AS baslik"
                     f"{f', {kimlik_p}::text AS kimlik' if kimlik_p else ', NULL AS kimlik'}"
+                    f"{f', {aktif_p} AS aktif' if aktif_p else ', NULL AS aktif'}"
                     f", COUNT(*) OVER () AS toplam "
                     f"  FROM personel WHERE COALESCE({ad}::text,'') ILIKE %s "
                     f" ORDER BY {ad} LIMIT %s", (kalip, lim))
                 rows = [dict(r) for r in (cur.fetchall() or [])]
                 for r in rows:
+                    _akt = r.get("aktif")
+                    _calisiyor = (_akt is None) or bool(_akt)
                     sonuclar.append({
                         "tur": "personel", "baslik": str(r.get("baslik") or "—")[:90],
-                        "alt": "personel", "tutar": None, "tarih": None,
-                        # Kadro ekranı ADLA da eşleşebilir; kimlik varsa o tercih edilir.
-                        "hedef": _hedef("personel", r.get("kimlik") or r.get("baslik")),
+                        # Sahip Kadro'da göremeyeceği birine tıklamadan ÖNCE bilsin.
+                        "alt": "personel" if _calisiyor else "personel · ayrılmış (kadroda görünmez)",
+                        "tutar": None, "tarih": None,
+                        # Kadro ekranı ADLA da eşleşebilir; kimlik varsa o tercih
+                        # edilir. AYRILMIŞTA PARAMETRE YOK: o satır kadroda hiç
+                        # çizilmiyor, işaretlenecek bir şey de yok.
+                        "hedef": (_hedef("personel", r.get("kimlik") or r.get("baslik"))
+                                  if _calisiyor else _hedef("personel")),
                     })
                 durum["personel"] = {"bulunan": int(rows[0]["toplam"]) if rows else 0,
                                      "gosterilen": len(rows)}
