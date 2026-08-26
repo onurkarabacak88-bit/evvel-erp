@@ -875,13 +875,45 @@ def kararlari_kaydet(cur, taniler: List[Tani], hatalar: Optional[List[str]] = No
 _RISK_SINYAL_MIN_GUVEN = 65.0
 
 
-def _personel_id_by_ad(cur, ad: Optional[str]) -> Optional[str]:
-    """Truth Motor'daki serbest-metin personel adını personel.id'ye eşler."""
+def _personel_id_by_ad(cur, ad: Optional[str], tarih: Optional[str] = None) -> Optional[str]:
+    """Truth Motor'daki serbest-metin personel adını personel.id'ye eşler.
+
+    ── 🔴 DÜZELTİLDİ (2026-08-26) — ÇIKIP GERİ GELEN PERSONEL ─────────────────
+    ESKİ HÂL:  SELECT id FROM personel WHERE ad_soyad ILIKE %s LIMIT 1
+    Sıralama YOK, aktiflik filtresi YOK. Aynı adda İKİ kayıt varsa (personel
+    çıkıp geri girdiyse) veritabanı hangisini verirse o alınıyordu.
+
+    CANLI KANIT: SILA AKBAY 10 Ağustos'ta yeniden başladı; 14 Ağustos tarihli
+    risk sinyalleri ve hipotez gözlemleri 26 MAYIS'TA KAPANMIŞ kayda yazılmış.
+    Sonuç: sinyal aktif kadroda görünmez, personel risk skoru eksik kalır —
+    ve bu SILA'ya özel değil, GERİ GELEN HER PERSONELDE tekrarlar.
+
+    DOĞRU CEVAP "aktif olanı seç" DEĞİL: 14 Ağustos'un sinyali, 14 Ağustos'ta
+    YÜRÜRLÜKTE OLAN döneme aittir. Geçmiş bir günü analiz ederken o günkü
+    dönem doğru cevaptır. Sıra:
+      1) dönemi o günü KAPSAYAN kayıt
+      2) aktif olan
+      3) en güncel başlangıç
+    `tarih` verilmezse 1. ölçüt devre dışı kalır ama 2-3 yine çalışır —
+    yani hiçbir çağrı eskisinden kötü olmaz.
+    """
     ad = (ad or "").strip()
     if not ad:
         return None
+    t = (tarih or None)
     try:
-        cur.execute("SELECT id FROM personel WHERE ad_soyad ILIKE %s LIMIT 1", (ad,))
+        cur.execute(
+            """SELECT id FROM personel
+                WHERE ad_soyad ILIKE %s
+                ORDER BY
+                  (CASE WHEN %s::date IS NOT NULL
+                         AND (baslangic_tarihi IS NULL OR baslangic_tarihi <= %s::date)
+                         AND (cikis_tarihi     IS NULL OR cikis_tarihi     >= %s::date)
+                        THEN 0 ELSE 1 END),
+                  (CASE WHEN COALESCE(aktif, TRUE) THEN 0 ELSE 1 END),
+                  baslangic_tarihi DESC NULLS LAST
+                LIMIT 1""",
+            (ad, t, t, t))
         r = cur.fetchone()
         return r["id"] if r else None
     except Exception:
@@ -995,7 +1027,8 @@ def personel_risk_sinyal_uret(cur, sube_id: str, tarih: str, taniler: List["Tani
         sabahci_ad = (t.detay or {}).get("sabahci_ad")
         ad = aksamci_ad or sabahci_ad
         sinyal_tarih = _previous_day(tarih) if aksamci_ad else tarih
-        pid = _personel_id_by_ad(cur, ad)
+        # Sinyal HANGİ GÜNE aitse o günkü dönem seçilir (bkz. fonksiyon notu).
+        pid = _personel_id_by_ad(cur, ad, sinyal_tarih)
         if not pid:
             continue
 
@@ -1022,7 +1055,7 @@ def personel_risk_sinyal_uret(cur, sube_id: str, tarih: str, taniler: List["Tani
             for _diger_ad in (t.detay or {}).get("aksamci_diger_adlar") or []:
                 if not _diger_ad or _diger_ad == aksamci_ad:
                     continue
-                _diger_pid = _personel_id_by_ad(cur, _diger_ad)
+                _diger_pid = _personel_id_by_ad(cur, _diger_ad, sinyal_tarih)
                 if not _diger_pid:
                     continue
                 _diger_agirlik = max(1, round(agirlik / 2))
@@ -1679,7 +1712,7 @@ def motor_calistir(cur, sube_id: str, tarih: str,
         # gecikme dk (sonra istenen eşikle yeniden değerlendirilebilir).
         if _gecikme is not None:
             _gec_dk = _gecikme["gecikme_dk"]
-            _sabah_pid = _personel_id_by_ad(cur, _gecikme.get("personel_ad")) \
+            _sabah_pid = _personel_id_by_ad(cur, _gecikme.get("personel_ad"), tarih) \
                 if _gecikme.get("personel_ad") else None
             hipotez_gozlem_kaydet(
                 cur, "gec_acilis", sube_id, tarih,
@@ -1703,7 +1736,7 @@ def motor_calistir(cur, sube_id: str, tarih: str,
                 if _t.boyut != "kasa" and _t.tani not in ("UYUMLU", "YETERSIZ_VERI"):
                     _t.detay["sabahci_gec_acilis"] = _gecikme
             if _gecikme.get("personel_ad"):
-                _pid = _personel_id_by_ad(cur, _gecikme["personel_ad"])
+                _pid = _personel_id_by_ad(cur, _gecikme["personel_ad"], tarih)
                 if _pid:
                     _agirlik_m = max(1, min(10, round(_gecikme["gecikme_dk"] / 10)))
                     _risk_sinyal_yaz(
