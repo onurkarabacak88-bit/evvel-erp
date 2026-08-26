@@ -153,8 +153,20 @@ def ara(q: str, limit: int = 6):
                 # (OdemeModulu.hedefEslesir). Kimlik yoksa parametre yollanmaz —
                 # eşleşmeyecek bir kimlik yollamak "bulunamadı" tostu doğurur.
                 kimlik_k = "id" if "id" in k else None
+                # ⚠️ DURUM DA OKUNUR (2026-08-26, canlı doğrulamada çıktı):
+                # "Bekleyen Ödemeler" ekranı SADECE bekleyenleri ve yalnız 14
+                # günlük pencereyi gösteriyor. Arama ise ÖDENMİŞ kayıtları da
+                # buluyor — ki "geçen ay FEZ'e ne ödedik" sorusunun cevabı tam
+                # olarak onlar. Ödenmiş bir kaydı bekleyen kuyruğuna köprülemek
+                # HİÇBİR ZAMAN eşleşmez ve sahibe "bulunamadı" tostu attırır:
+                # arama doğru cevabı bulup YANLIŞ KAPIYA götürmüş olur.
+                # Çözüm: durumuna göre kapı seç (bekliyor → kuyruk · ödendi →
+                # Ödeme Geçmişi). Ödenmişte parametre YOK — o ekranın tüketicisi
+                # yok, parametre yollamak "kayda götürdüm" yalanı olurdu.
+                durum_k = _ilk_var(k, ["durum", "odeme_durumu"])
                 cur.execute(
                     f"SELECT {ad} AS baslik"
+                    f"{f', {durum_k}::text AS durum' if durum_k else ', NULL AS durum'}"
                     f"{f', {kimlik_k}::text AS kimlik' if kimlik_k else ', NULL AS kimlik'}"
                     f"{f', {tutar_k} AS tutar' if tutar_k else ', NULL AS tutar'}"
                     f"{f', {tarih_k}::text AS tarih' if tarih_k else ', NULL AS tarih'}"
@@ -164,11 +176,18 @@ def ara(q: str, limit: int = 6):
                     tuple([kalip] * len(aramalar) + [lim]))
                 rows = [dict(r) for r in (cur.fetchall() or [])]
                 for r in rows:
+                    d = str(r.get("durum") or "").lower()
+                    bekliyor = d in ("", "bekliyor", "aktif", "planlandi")
                     sonuclar.append({
-                        "tur": "odeme", "baslik": str(r.get("baslik") or "—")[:90],
-                        "alt": "ödeme planı", "tutar": _tl(r.get("tutar")),
+                        "tur": "odeme",
+                        "baslik": str(r.get("baslik") or "—")[:90],
+                        # Sahip nereye gideceğini ÖNCEDEN bilsin: satırın kendisi
+                        # ödenmiş mi bekliyor mu söyler.
+                        "alt": "ödeme planı · bekliyor" if bekliyor else f"ödeme planı · {d or 'geçmiş'}",
+                        "tutar": _tl(r.get("tutar")),
                         "tarih": r.get("tarih"),
-                        "hedef": _hedef("odeme", r.get("kimlik")),
+                        "hedef": (_hedef("odeme", r.get("kimlik")) if bekliyor
+                                  else "__modul:odeme:gecmis"),   # tema.js:251
                     })
                 durum["odeme"] = {"bulunan": int(rows[0]["toplam"]) if rows else 0,
                                   "gosterilen": len(rows)}
