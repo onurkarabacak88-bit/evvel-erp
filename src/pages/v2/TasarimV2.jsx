@@ -973,6 +973,76 @@ export default function TasarimV2({ onGit }) {
     return <PanelRisk />;
   };
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // 🗄️ PANEL ÇEKMECELERİ (2026-08-26) — "her sayı bir sorudur"
+  // ══════════════════════════════════════════════════════════════════════════
+  // Panel modülünün TAMAMINDA 2 çekmece vardı (ikisi de ŞUBE) ve `belgeler`/`iz`
+  // sekmeleri hiç doldurulmuyordu. Oysa ekranın en büyük rakamları birer soru:
+  //   1.433.944 ₺ gecikmiş → hangi 33 kalem?      173 kasa hatası → hangileri?
+  // Shneiderman'ın üçlemesinde (genel → süz → talep üzerine detay) üçüncü ayak
+  // kopuktu: özet var, kanıt yok.
+  //
+  // ⚠️ VERİ KAYNAĞI OLMAYAN SATIR KAPI YAPILMADI. Aşağıdaki iki çekmece de
+  // ZATEN BELLEKTEKİ veriden kurulur (`gecikmisOdemeler`, `onaylar`) — yeni uç
+  // çağrılmadı. Kaynağı doğrulanmamış rakamlar (serbest nakit kırılımı,
+  // 7/30 gün yükü) BİLEREK kapı yapılmadı: tıklanıp boş açılan kapı, dürüst
+  // çıkmaz sokaktan kötüdür.
+  const gecikmisCekmece = () => {
+    const sirali = [...gecikmisOdemeler].sort(
+      (a, b) => sayi(b.tutar ?? b.kalan) - sayi(a.tutar ?? a.kalan));
+    setCekmece({
+      tip: 'GECİKMİŞ ÖDEME',
+      baslik: 'Gecikmiş ödemeler',
+      alt: `${gecikmisOdemeler.length} kalem · toplam ${fmt(gecikmisToplam)}`,
+      kpi: [
+        { etiket: 'Toplam', deger: fmt(gecikmisToplam), renk: R.kirmizi },
+        { etiket: 'Kalem', deger: String(gecikmisOdemeler.length) },
+        {
+          etiket: 'En eski',
+          deger: enEskiGecikme > 0 ? `${enEskiGecikme} gün` : '—',
+          renk: enEskiGecikme >= 30 ? R.kirmizi : R.amber,
+        },
+      ],
+      listeBaslik: 'Kalemler · büyükten küçüğe',
+      satirlar: sirali.map((o) => {
+        const g = sayi(o.gun_gecikme) || _gunFark(_vadeAl(o)) || 0;
+        return {
+          // ⚠️ `sadeOdemeAdi` GenelModulu'na ait, BU DOSYADA YOK — yazarken
+          // varsaymıştım, derleme geçer canlıda ReferenceError'a düşerdi.
+          // (Bu oturumda aynı tuzağa üçüncü kez yaklaşıldı: yardımcıyı
+          // kullanmadan önce O DOSYADA grep'le.) Ham alanlar kullanılıyor.
+          ad: String(o.ad || o.aciklama || o.islem_turu || 'Ödeme').slice(0, 80),
+          detay: [_vadeAl(o) ? `vade ${kisaGun(_vadeAl(o))}` : null,
+            g > 0 ? `${g} gün gecikti` : null].filter(Boolean).join(' · '),
+          tutar: fmt(sayi(o.tutar ?? o.kalan ?? o.tahmini_tutar)),
+        };
+      }),
+      not: 'Kalem düzeyi ödeme/erteleme Ödeme Merkezi’nde yapılır — bu çekmece salt okur.',
+      aksiyonAd: 'Ödeme Merkezi’nde aç',
+      _hedef: '__modul:odeme:bekleyen',
+    });
+  };
+
+  const kasaHatasiCekmece = (liste) => setCekmece({
+    tip: 'KASA HATASI',
+    baslik: 'Kasa uyumsuzlukları',
+    alt: `${liste.length} kayıt · onay kuyruğundan ayrılmış`,
+    kpi: [{ etiket: 'Kayıt', deger: String(liste.length), renk: R.amber }],
+    listeBaslik: 'Uyumsuzluklar · yeniden eskiye',
+    satirlar: liste.slice(0, 60).map((o) => ({
+      ad: String(o.aciklama || o.islem_turu || 'kasa kaydı').slice(0, 80),
+      detay: [o.sube_adi || o.sube_id, o.tarih ? kisaGun(o.tarih) : null]
+        .filter(Boolean).join(' · '),
+      tutar: o.tutar != null ? fmt(sayi(o.tutar)) : '',
+    })),
+    // SESSİZ ELEME YASAK: kaçının gösterildiği söylenir.
+    not: liste.length > 60
+      ? `İlk 60 kayıt gösteriliyor — ${liste.length - 60} tanesi listede yok. Tamamı Onay Kuyruğu’nda.`
+      : 'Kasa kayıtları onay kuyruğunda ayrı işlenir — bu çekmece salt okur.',
+    aksiyonAd: 'Onay Kuyruğu’na git',
+    _hedef: '__modul:onaylar:kuyruk',
+  });
+
   function PanelBugun() {
     const d = veri;
     const kpiler = [
@@ -990,6 +1060,11 @@ export default function TasarimV2({ onGit }) {
           deger: fmt(gecikmisToplam),
           alt: `${gecikmisOdemeler.length} kalem · ${enEskiGecikme > 0 ? `en eskisi ${enEskiGecikme} gün` : 'yaş ölçülemedi'}`,
           renk: R.kirmizi,
+          // 🗄️ ÇEKMECE (2026-08-26) — panelin EN BÜYÜK ve EN KIRMIZI sayısıydı
+          // ve HİÇBİR kanıtı yoktu. "1.433.944 ₺" bir cevap değil SORUDUR:
+          // hangi 33 kalem? Veri zaten bellekte (`gecikmisOdemeler`), yeni uç
+          // gerekmiyordu — eksik olan yalnız kapıydı.
+          onTikla: () => gecikmisCekmece(),
         }
         : {
           etiket: 'Bugün ödenecek',
@@ -1222,7 +1297,9 @@ export default function TasarimV2({ onGit }) {
     const gunOrt = d.gunSayisi ? ayCiro / d.gunSayisi : 0;
     // Onay sayacı: Riskler'deki KASA ayrımının aynısı (124 kasa hatası
     // burada da "onay bekleyen" diye görünüyordu).
-    const kasaHatasiAdet = onaylar.filter((o) => String(o.islem_turu || '').toUpperCase().includes('KASA')).length;
+    // 🗄️ Liste de tutulur (yalnız sayı değil): çekmece onu gösterecek.
+    const kasaHatalari = onaylar.filter((o) => String(o.islem_turu || '').toUpperCase().includes('KASA'));
+    const kasaHatasiAdet = kasaHatalari.length;
     const gercekOnay = onaylar.length - kasaHatasiAdet;
 
     const kpiler = [
@@ -1233,6 +1310,10 @@ export default function TasarimV2({ onGit }) {
         etiket: 'Onay bekleyen',
         deger: String(gercekOnay),
         alt: kasaHatasiAdet ? `kuyrukta · kasa hatası ${kasaHatasiAdet} ayrı` : 'kuyrukta',
+        // 🗄️ ÇEKMECE (2026-08-26): 173 kasa uyumsuzluğu bir KPI'nın GRİ ALT
+        // YAZISINDA gömülüydü. Bu ya önemli (o hâlde kanıtı açılmalı) ya değil
+        // (o hâlde alt yazıdan da çıkmalı); eski hâli ikisi de değildi.
+        onTikla: kasaHatasiAdet ? () => kasaHatasiCekmece(kasaHatalari) : undefined,
         renk: gercekOnay ? R.amber : R.yesil,
       },
       // 🔵 (2026-08-14) HAFTALIK TEMPO: ay toplamı ayın sonunda anlaşılır, gün
