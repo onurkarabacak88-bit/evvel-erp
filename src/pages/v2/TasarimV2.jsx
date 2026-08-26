@@ -2079,22 +2079,40 @@ export default function TasarimV2({ onGit }) {
     // göre boyanıyordu. Renk burada ön-dikkat işareti — aykırı bir şube bütün
     // şeridin anlamını kaydırabiliyordu.
     // Artık taban ŞUBE ORANLARININ MEDYANI: bir uç değer medyanı oynatamaz.
-    // ⚠️ Medyan 2'den az şubeyle anlamsızdır — o durumda eski toplam-orana
-    // düşülür (uydurma taban üretmemek için), 0 gider satırları elenir.
-    const zincirOran = (() => {
+    //
+    // 🔴🔴 AMA MEDYANIN İLK HÂLİ DAHA KÖTÜYDÜ — CANLI ÖLÇÜMLE YAKALANDI:
+    // Medyanı «gideri olan her şube» üzerinden aldım. Canlı veri:
+    //   ALSANCAK 0,00 · KÖYCEĞİZ 0,00 · MERKEZ 0,00 · ZAFER 4,03 · TEMA 4,85
+    // Ortanca = 0,00 → eşik 0,00 → HİÇBİR ŞUBE zayıf çıkamaz, hepsi «iyi».
+    // Yani tek uç değeri düzelteyim derken sinyalin TAMAMINI öldürmüştüm ve
+    // üstelik bu bir SAHTE YEŞİL üretiyordu.
+    // Sebep: cirosu SIFIR olan şube (kapalı/sezon) oran evrenine giriyordu.
+    // Kapalı dükkânın verimi «kötü» değil YOK'tur; tabanı o tanımlamamalı —
+    // zaten ciroYok/kapaliGider sinyalleri onu ayrıca yakalıyor.
+    //
+    // ⚠️ TABAN EVRENİ = GERÇEKTEN ÇALIŞAN ŞUBE (ciro > 0 VE gider > 0).
+    // ⚠️ 3'ten az çalışan şubede medyan zayıftır (2 örnekte medyan = ortalama),
+    //    o yüzden ortalamaya düşülür ve bu ETİKETTE söylenir. Hiç yoksa taban
+    //    NULL → renk nötr, hüküm yok (uydurma taban üretilmez).
+    const zincirTaban = (() => {
       const oranlar = Object.values(finansMap)
-        .filter((f) => sayi(f.gider) > 0)
+        .filter((f) => sayi(f.gider) > 0 && sayi(f.ciro) > 0)
         .map((f) => sayi(f.ciro) / sayi(f.gider))
         .sort((x, y) => x - y);
-      if (oranlar.length >= 2) {
-        const orta = Math.floor(oranlar.length / 2);
-        return oranlar.length % 2 ? oranlar[orta] : (oranlar[orta - 1] + oranlar[orta]) / 2;
+      if (!oranlar.length) return { deger: null, ad: 'taban yok' };
+      if (oranlar.length < 3) {
+        return {
+          deger: oranlar.reduce((t, x) => t + x, 0) / oranlar.length,
+          ad: `${oranlar.length} çalışan şube ortalaması`,
+        };
       }
-      const t = Object.values(finansMap).reduce(
-        (a2, f) => ({ ciro: a2.ciro + sayi(f.ciro), gider: a2.gider + sayi(f.gider) }),
-        { ciro: 0, gider: 0 });
-      return t.gider > 0 ? t.ciro / t.gider : null;
+      const orta = Math.floor(oranlar.length / 2);
+      return {
+        deger: oranlar.length % 2 ? oranlar[orta] : (oranlar[orta - 1] + oranlar[orta]) / 2,
+        ad: `${oranlar.length} çalışan şube ortancası`,
+      };
     })();
+    const zincirOran = zincirTaban.deger;
     /** Orana göre renk — zincir ortalamasına GÖRE. Taban yoksa nötr. */
     const oranRenk = (oran) => {
       if (oran == null || zincirOran == null) return R.not3;
@@ -2305,7 +2323,12 @@ export default function TasarimV2({ onGit }) {
         }
         // (d) Gider verimi — 1₺ gidere düşen ciro 5₺'nin altındaysa verim zayıf.
         //     Önem = oran (ASC; 1,2₺ önce, 4,8₺ sonra).
-        if (f && sayi(f.gider) > 0) {
+        // ⚠️ MÜKERRER SİNYAL ÖNLENDİ (2026-08-26): cirosu sıfır olan şube
+        // zaten `ciroYok`/`kapaliGider` ile — hem de DAHA DOĞRU sözcüklerle —
+        // işaretleniyor. Aynı şubeye bir de «verimi zayıf» demek, tek olayı
+        // iki alarm gibi göstermek olur (uyarı bütçesi). Verim sorusu ancak
+        // ÇALIŞAN şubeye sorulur; taban da onlardan kuruluyor.
+        if (f && sayi(f.gider) > 0 && sayi(f.ciro) > 0) {
           const oran = sayi(f.ciro) / sayi(f.gider);
           // ⚠️ Eşik MUTLAK 5 idi — zincir 1,3'te çalışırken HER şube bu
           // sinyali üretiyordu, yani sinyal hiçbir şey ayırt etmiyordu.
@@ -2315,7 +2338,10 @@ export default function TasarimV2({ onGit }) {
               ton: 'amber', grup: 'verim', sira: oran,
               // Etiket TABANIN NE OLDUĞUNU söyler: «zincir» dendiğinde sahip
               // toplamı anlıyordu, oysa taban artık şubelerin ORTANCASI.
-              metin: `1₺ gidere ${oran.toFixed(1)}₺ ciro · şube ortancası ${zincirOran.toFixed(1)}₺`,
+              // Etiket TABANIN NE OLDUĞUNU söyler — «zincir» dendiğinde sahip
+              // toplamı anlıyordu; taban artık çalışan şubelerin ortancası (ya
+              // da 3'ten azsa ortalaması) ve hangisi olduğu YAZILIR.
+              metin: `1₺ gidere ${oran.toFixed(1)}₺ ciro · ${zincirTaban.ad} ${zincirOran.toFixed(1)}₺`,
             });
           }
         }
