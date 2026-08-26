@@ -1222,7 +1222,7 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
         isler.push({
           k: 'oneri', ikonYol: IK.islemci, renk: R.bakir,
           metin: `Karar motorunda ${oneriler.length} öneri`,
-          alt: 'öneri-only · hüküm insanın',
+          alt: 'sistem önerir, kararı sen verirsin',
           aksiyonAd: 'Motor & Bildirimler',
           onTikla: () => onKopru?.('__gorunum:bildirim'),
         });
@@ -1529,8 +1529,13 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
         mut: mut2,
         defter: defter2,
         dogrulanmis: sayi(nk2.duraklar.duraklar_toplami_tl),
-        pay: defter2 > 0 ? Math.round((mut2 / defter2) * 100) : 0,
-        ciddiFark: defter2 > 0 && mut2 > defter2 * 0.10,
+        // ⚖️ PAY ve EŞİK ARTIK SUNUCUDAN (2026-08-26, Codex denetimi):
+        // ikisi de burada hesaplanıyordu. Pay ekranda YAZILIYOR ("defterin
+        // %48'i"), eşik ise KASA kartının rengini ve kuyruğa madde girip
+        // girmeyeceğini belirliyordu — yani bir HÜKÜM istemcide veriliyordu.
+        // Sunucu hesaplayamazsa pay null kalır ve yazılmaz (uydurma oran yok).
+        pay: nk2.mutabakatsiz_pay_pct == null ? null : sayi(nk2.mutabakatsiz_pay_pct),
+        ciddiFark: !!nk2.mutabakatsiz_ciddi,
         // 📉 Doğrulanmış dayanıklılık SUNUCUDAN gelir (operasyon_merkez_api ·
         // kac_gun_dayanir_dogrulanmis). Burada BÖLME YAPILMAZ: "gösterim kendi
         // aritmetiğini kurmaz". Uç hesaplayamazsa null döner ve aralık yazılmaz.
@@ -1591,7 +1596,11 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
         aday.push({
           sinif: 1, tl: nakitDurum.mut, k: 's1_mutabakat', ikonYol: IK.banknot, renk: R.kirmizi,
           metin: `${fmt(nakitDurum.mut)} nakit — yeri doğrulanmamış`,
-          alt: `defterin %${nakitDurum.pay}'i · şube sayımı eskiyse fark büyür`,
+          // Pay sunucudan gelmediyse HİÇ yazılmaz — uydurma oran yok.
+          alt: [
+            nakitDurum.pay != null ? `defterin %${nakitDurum.pay}'i` : null,
+            'şube sayımı eskiyse fark büyür',
+          ].filter(Boolean).join(' · '),
           aksiyonAd: 'Kasa ayrımını aç',
           onTikla: kasaAc,
         });
@@ -1611,15 +1620,15 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
       // duruyor. Eşik "gizleme" değil "öne çıkarmama" kuralıdır.
       // ⚠️ Ciro okunamıyorsa eşik UYGULANMAZ (0) — ölçemediğim bir kuralla
       // eleme yapmak, sessizce iş kaybetmektir.
-      // ⚠️ AYIN KAÇI OLDUĞU SUNUCUDAN: `is_gunu_tr` bu dosyada zaten doğrulanmış
-      // tek tarih kaynağı (tarayıcı saati yasak — sunucunun iş günü kavramı var).
-      // `p.bugun` diye bir alan VARSAYMADIM; olmayan alandan bölen üretmek
-      // sessizce yanlış eşik kurardı. Tarih okunamazsa eşik 0 = uygulanmaz.
-      const isGunuStr = !kapanisHata ? String(kapanisHam.is_gunu_tr || '') : '';
-      const gecenGun = /^\d{4}-\d{2}-\d{2}$/.test(isGunuStr) ? Number(isGunuStr.slice(8, 10)) : 0;
-      const gunlukOrtCiro = gecenGun > 0
-        ? sayi(p.bu_ay_ciro ?? p.bu_ay_sadece_ciro) / gecenGun
-        : 0;
+      // ⚠️ EŞİK TABANI ARTIK SUNUCUDAN (2026-08-26, Codex denetimi).
+      // Eskiden burada `bu_ay_ciro / ayın kaçıncı günü` hesaplanıyordu; Codex
+      // haklıydı, üç ayrı şekilde bozuktu: takvim günü (kapalı günler böleni
+      // şişirir) · ciro girilmemiş günler de bölene giriyordu (veri eksikliği
+      // eşiği küçültüp önemsiz kalemi öne çıkarıyordu) · ayın ilk günlerinde
+      // tek büyük gün ortalamayı şişirip anlamlı kalemi eliyordu.
+      // Sunucu artık SON 30 GÜNDE CİRO GİRİLMİŞ günlerin ortalamasını veriyor.
+      // Gelmezse eşik 0 = uygulanmaz (ölçemediğim kuralla eleme yapmam).
+      const gunlukOrtCiro = p.gunluk_ort_ciro != null ? sayi(p.gunluk_ort_ciro) : 0;
       //
       // ⚠️ EŞİK ARTIK ELEMİYOR, SIRALIYOR (2026-08-26, Codex bulgusu).
       // ÖNCEKİ HÂL kusurluydu: eşiğin altındaki madde `return` ile kuyruktan
@@ -1657,7 +1666,7 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
           sinif: 2, tl: 0, k: 's2_motor',
           ikonYol: IK.islemci, renk: R.bakir,
           metin: kisalt(String(motorEnKritik.baslik || 'Karar motoru önerisi'), 44),
-          alt: kisalt(String(motorEnKritik.alt || 'öneri-only · hüküm insanın'), 60),
+          alt: kisalt(String(motorEnKritik.alt || 'sistem önerir, kararı sen verirsin'), 60),
           aksiyonAd: 'Motor & Bildirimler',
           onTikla: () => onKopru?.('__gorunum:bildirim'),
         });
@@ -2072,7 +2081,11 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
   if (gorunum === 'akis') {
     const giris = sayi(p.bu_ay_nakit_giris);
     const cikis = sayi(p.bu_ay_nakit_cikis);
-    const net = p.bu_ay_net != null ? sayi(p.bu_ay_net) : giris - cikis;
+    // ⚠️ (2026-08-26, Codex denetimi) İSTEMCİ YEDEĞİ KALDIRILDI: eskiden alan
+    // yoksa `giris - cikis` hesaplanıyordu. `bu_ay_net` sunucuda ZATEN var
+    // (main.py panel özeti); yedek yalnız alan düştüğünde devreye girerdi ve
+    // tam o anda ikinci bir doğruluk kaynağı üretirdi. Alan yoksa "—" yazılır.
+    const net = p.bu_ay_net != null ? sayi(p.bu_ay_net) : null;
     // ── NAKİT KONUM: "param şu an nerede?" ───────────────────────────────────
     // Kasa bakiyesi tek sayıdır ama para tek yerde durmaz: şube kasasında,
     // yolda (teslim alınmış/bankaya girmemiş) ve bankada bekler. Durakların
@@ -2120,14 +2133,14 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
         kpi: [
           { etiket: 'Durakların toplamı', deger: fmt(sayi(du.duraklar_toplami_tl)), renk: R.bakirAcik },
           { etiket: 'Kasa defteri', deger: fmt(sayi(nk.defter_bakiyesi_tl)) },
-          { etiket: 'Mutabakatsız', deger: fmt(mut), renk: Math.abs(mut) > 1 ? R.kirmizi : R.yesil },
+          { etiket: 'Yeri bilinmeyen', deger: fmt(mut), renk: Math.abs(mut) > 1 ? R.kirmizi : R.yesil },
         ],
         listeBaslik: 'Duraklar ve akış',
         satirlar: [
           ...duraklar.map(([ad, v, , alt]) => ({ ad, detay: alt, tutar: fmt(v) })),
           { ad: '= Durakların toplamı', detay: 'konumu doğrulanmış nakit', tutar: fmt(sayi(du.duraklar_toplami_tl)) },
-          { ad: 'Kasa defteri bakiyesi', detay: 'kanonik kayıt', tutar: fmt(sayi(nk.defter_bakiyesi_tl)) },
-          { ad: '⚠ Mutabakatsız', detay: 'hangi durakta olduğu bilinmeyen', tutar: fmt(mut) },
+          { ad: 'Kasa defteri bakiyesi', detay: 'kasa defterinin kendi kaydı', tutar: fmt(sayi(nk.defter_bakiyesi_tl)) },
+          { ad: '⚠ Yeri bilinmeyen', detay: 'hangi durakta olduğu çözülmemiş', tutar: fmt(mut) },
           { ad: 'Teslim alınan (toplam)', detay: `${sayi(nk.akis?.teslim_adet)} işlem`, tutar: fmt(sayi(nk.akis?.teslim_alinan_tum_tl)) },
           { ad: 'Bankaya yatan (toplam)', detay: `${sayi(nk.akis?.banka_adet)} işlem`, tutar: fmt(sayi(nk.akis?.bankaya_yatan_tum_tl)) },
           ...(nk.sube_kasalari || []).map((s) => {
@@ -2151,6 +2164,13 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
       return (
         <div
           onClick={nakitCekmeceAc}
+          // ⌨️ (2026-08-26, Codex denetimi) Bu kart Para Akışı görünümünün ANA
+          // kapısıydı ve yalnız fareyle açılıyordu — düz div, tabIndex yok.
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); nakitCekmeceAc(); }
+          }}
           style={{ ...kartYuzey, padding: '15px 18px', marginBottom: 14, cursor: 'pointer', borderLeft: `3px solid ${renk}` }}
         >
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap', marginBottom: 11 }}>
@@ -2245,7 +2265,14 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
             etiket: 'Bu ay ciro', deger: fmt(sayi(p.bu_ay_ciro ?? p.bu_ay_sadece_ciro)), alt: 'sadece ciro', renk: R.krem },
           { etiket: 'Nakit giriş', deger: giris ? fmt(giris) : '—', alt: 'bu ay', renk: giris ? R.yesil : R.not },
           { etiket: 'Nakit çıkış', deger: cikis ? fmt(cikis) : '—', alt: 'bu ay', renk: cikis ? R.kirmizi : R.not },
-          { etiket: 'Net akış', deger: net ? fmt(net) : '—', alt: net >= 0 ? 'pozitif' : 'negatif', renk: net >= 0 ? R.yesil : R.kirmizi },
+          // ⚠️ `net === 0` GERÇEK BİR CEVAPTIR: eski koşul `net ? … : '—'` idi,
+          // yani tam denk bir ay "okunamadı" gibi görünürdü. null ile 0 ayrıldı.
+          {
+            etiket: 'Net akış',
+            deger: net != null ? fmt(net) : '—',
+            alt: net == null ? 'sunucudan gelmedi' : net >= 0 ? 'pozitif' : 'negatif',
+            renk: net == null ? R.not : net >= 0 ? R.yesil : R.kirmizi,
+          },
         ]} />
 
         {/* 🔵 (2026-08-12): başlık "para akışı" idi ama satırlar TAHSİLAT KANALLARI (ciro
@@ -2264,11 +2291,17 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
                 etmişiz" yanılsaması doğar. Uyarı yazısı, yerleşimin söylediğini
                 yenemez. Çözüm: önce KANAL TOPLAMI kapanır, devir çizginin altına
                 girintili yazılır. */}
+            {/* ⚠️ (2026-08-26, Codex denetimi) BU TOPLAM İSTEMCİDE HESAPLANIYORDU —
+                kendi eklediğim satırda "gösterim kendi aritmetiğini kurmaz"
+                doktrinini çiğnemişim. Artık sunucudan (`bu_ay_kanal_toplam`).
+                Alan gelmezse "—" yazılır; istemci TOPLAMAZ (HATA ≠ BOŞ). */}
             <Satir
               ad="= Kanal toplamı"
-              deger={fmt(sayi(p.bu_ay_nakit) + sayi(p.bu_ay_pos) + sayi(p.bu_ay_online) + sayi(p.bu_ay_dis_kaynak))}
-              alt="devir hariç — bu ayın gerçek tahsilatı"
-              renk={R.bakirAcik}
+              deger={p.bu_ay_kanal_toplam != null ? fmt(sayi(p.bu_ay_kanal_toplam)) : '—'}
+              alt={p.bu_ay_kanal_toplam != null
+                ? 'devir hariç — bu ayın gerçek tahsilatı'
+                : 'toplam sunucudan gelmedi — ekran kendi toplamını kurmaz'}
+              renk={p.bu_ay_kanal_toplam != null ? R.bakirAcik : R.not}
             />
             <div style={{ borderTop: `1px solid ${R.cizgi3}`, margin: '7px 0 2px' }} />
             <div style={{ paddingLeft: 14 }}>
@@ -2382,7 +2415,12 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
         Günün işleri <b style={{ color: R.metin2 }}>Karar Alanı</b> sekmesindeki kuyrukta —
         buradaki dört sayaç oraya besleniyor, ikinci bir “bugün” listesi tutulmuyor.
       </div>
-      <KpiSeridi kpiler={[
+      {/* 📉 (2026-08-26, Codex denetimi) ŞERİT `sik` OLDU: bu görünüm artık
+          arşiv rolünde ama dört BÜYÜK KPI kartıyla açılınca hâlâ "ikinci
+          kontrol paneli" hissi veriyordu — sahip sabah iki ayrı gösterge
+          tablosuna bakıyormuş gibi. Sayılar kalıyor (bilgi kaybı yok), görsel
+          rütbe düşüyor: burası günün panosu değil, dosyalığı. */}
+      <KpiSeridi sik kpiler={[
         { etiket: 'Karar motoru', deger: String(oneriler.length), alt: oneriler.length ? 'öneri bekliyor' : 'öneri yok', renk: oneriler.length ? R.bakir : R.yesil },
         { etiket: 'Onay merkezi', deger: String(onaylar.length), alt: onaylar.length ? 'karar bekliyor' : 'kuyruk boş', renk: onaylar.length ? R.amber : R.yesil },
         { etiket: 'Sistem bildirimi', deger: String(uyarilar.length), alt: 'uyarı defteri', renk: uyarilar.length ? R.amber : R.yesil },
@@ -2406,7 +2444,10 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
           <span style={{ fontFamily: F.baslik, fontSize: 14.5, fontWeight: 600 }}>
             {oneriler.length ? `Karar motorunda ${oneriler.length} öneri` : 'Karar motoru bugün öneri üretmedi'}
           </span>
-          <span style={{ fontSize: 11, color: R.not2 }}>öneri-only · hüküm insanın</span>
+          {/* 🗣️ (2026-08-26, Codex denetimi) "öneri-only · hüküm insanın" bir
+              DOKTRİN ADIYDI, sahibin cümlesi değil. Ekranda sistemin iç
+              sözlüğü durmaz; anlamı sahibin dilinde yazılır. */}
+          <span style={{ fontSize: 11, color: R.not2 }}>sistem önerir, kararı sen verirsin</span>
           {onKopru && (
             <span style={{ marginLeft: 'auto', fontSize: 10.5, color: R.not, whiteSpace: 'nowrap' }}>
               Strateji ekranında incele →

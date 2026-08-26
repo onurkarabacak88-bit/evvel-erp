@@ -1319,10 +1319,23 @@ function CekmeceSekme({ aktif, onSec }) {
       display: 'flex', gap: 3, margin: '14px 22px 0', padding: 3,
       borderRadius: 10, background: R.girinti, border: `1px solid ${R.cizgi}`,
     }}>
+      {/* ⌨️ KLAVYE ERİŞİMİ (2026-08-26, Codex denetimi): bu sekmeler düz <div
+          onClick> idi — tabIndex yok, role yok, onKeyDown yok. Yani çekmecenin
+          BELGELER ve İZ sekmelerine klavyeyle HİÇ ulaşılamıyordu. KPI'lara ve
+          çekmece satırlarına erişimi eklerken tam da kayıt dosyasının kanıt
+          sekmeleri atlanmıştı. Yalnız fareyle ulaşılan bilgi, olmayan bilgidir.
+          `role="tab"` + `aria-selected` ekran okuyucuya hangi sekmenin açık
+          olduğunu da söyler. */}
       {S.map(([id, ad]) => (
         <div
           key={id}
           onClick={() => onSec(id)}
+          role="tab"
+          aria-selected={aktif === id}
+          tabIndex={0}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSec(id); }
+          }}
           style={{
             flex: 1, textAlign: 'center', padding: '6px 10px', borderRadius: 7,
             fontSize: 11.5, fontWeight: 600, cursor: 'pointer',

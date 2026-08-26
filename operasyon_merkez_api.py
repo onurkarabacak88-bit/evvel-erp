@@ -15369,6 +15369,18 @@ def ops_metrics_nakit_konum(gun: int = Query(60, ge=7, le=365)):
         # kopyalansaydı iki dayanıklılık rakamı bir gün ayrışırdı.
         # Hesap düşerse alan None döner — sayı UYDURULMAZ (HATA ≠ BOŞ).
         "kac_gun_dayanir_dogrulanmis": _dogrulanmis_dayaniklilik(duraklar),
+        # ⚖️ MUTABAKATSIZLIĞIN PAYI + CİDDİYET EŞİĞİ (2026-08-26, Codex denetimi)
+        # Bu iki değer İSTEMCİDE hesaplanıyordu: pay ekranda "defterin %48'i"
+        # diye YAZILIYOR, eşik ise KASA kartının rengini ve kuyruğa madde girip
+        # girmeyeceğini belirliyordu. İkisi de "gösterim kendi aritmetiğini
+        # kurmaz" ihlaliydi — eşik UI'da yaşadığı için iki ekran farklı eşikle
+        # farklı hüküm verebilirdi.
+        # ⚠️ EŞİK %10: defterin onda biri konumsuzsa bu artık yuvarlama değil,
+        # ölçüm sorunudur. Defter 0 ise pay ANLAMSIZ → None (0 demek yanlış:
+        # "fark yok" ile "oran hesaplanamaz" ayrı şeylerdir).
+        "mutabakatsiz_pay_pct": (round(abs(mutabakatsiz) / abs(defter) * 100, 1)
+                                 if defter else None),
+        "mutabakatsiz_ciddi": bool(defter and abs(mutabakatsiz) > abs(defter) * 0.10),
         "akis": {
             "teslim_alinan_donem_tl": round(teslim_donem, 2), "teslim_adet": teslim_adet,
             "bankaya_yatan_donem_tl": round(banka_donem, 2), "banka_adet": banka_adet,

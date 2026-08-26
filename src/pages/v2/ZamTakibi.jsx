@@ -107,7 +107,9 @@ export default function ZamTakibi({ onToast, onSayac }) {
   return (
     <>
       <KpiSeridi kpiler={[
-        { etiket: 'İncelenmemiş zam', deger: String(yeni.length), alt: `toplam ${alarmlar.length} · son 180 gün`, renk: yeni.length > 0 ? R.kirmizi : R.yesil },
+        // 🗣️ (2026-08-26, Codex denetimi) "İncelenmemiş zam 0" ÇÖZÜLDÜ gibi
+        // okunuyordu. Bu sayaç yalnız OKUNMAMIŞ kaydı sayar; zam duruyor.
+        { etiket: 'Okunmamış zam', deger: String(yeni.length), alt: `toplam ${alarmlar.length} · son 180 gün · okumak çözmek değildir`, renk: yeni.length > 0 ? R.kirmizi : R.yesil },
         { etiket: 'Ortalama artış', deger: artislar.length ? pct(ortArtis) : '—', alt: `eşik %${esik} üstü kalemlerde`, renk: R.amber },
         { etiket: 'En sert artış', deger: artislar.length ? pct(Math.max(...artislar)) : '—', alt: 'tek kalemde', renk: R.kirmizi },
         { etiket: 'Tedarikçi', deger: String(tedarikciler.size), alt: 'zam yapan firma sayısı' },
@@ -128,8 +130,8 @@ export default function ZamTakibi({ onToast, onSayac }) {
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
               <span style={{ fontSize: 11, color: R.not2 }}>
                 {zamGecmis
-                  ? `${alarmlar.length} kayıt · incelenmişler dâhil`
-                  : `${yeni.length} incelenmemiş`}
+                  ? `${alarmlar.length} kayıt · okunmuşlar dâhil`
+                  : `${yeni.length} okunmamış`}
               </span>
               <button
                 onClick={() => setZamGecmis((v) => !v)}
@@ -148,7 +150,7 @@ export default function ZamTakibi({ onToast, onSayac }) {
             // Liste boş ama VERİ VAR: "zam yok" demek yanlış olurdu — hepsi
             // incelenmiş demektir. Boşluğun SEBEBİNİ söyle (boş alan kuralı).
             <div style={{ fontSize: 12.5, color: R.not2, lineHeight: 1.7, padding: '10px 2px' }}>
-              İncelenmemiş zam kalmadı — {alarmlar.length} kaydın hepsi işaretlenmiş.
+              Okunmamış zam kalmadı — {alarmlar.length} kaydın hepsi okundu. Zamlar duruyor; bu liste yalnız yeni olanı öne çıkarır.
               Geçmişi görmek için “geçmişi göster”e bas.
             </div>
           ) : (<>
@@ -183,10 +185,18 @@ export default function ZamTakibi({ onToast, onSayac }) {
                             onClick={async () => {
                               try {
                                 await api('/ops/fiyat-zam-alarmlari/goruldu', { method: 'POST', body: { id: a.id } });
-                                onToast?.('✓ İncelendi olarak işaretlendi');
+                                // 🗣️ (2026-08-26, Codex denetimi) Eski metin
+                                // "İncelendi olarak işaretlendi" idi ve ÇÖZÜLDÜ
+                                // gibi okunuyordu. Bu düğme yalnız GÖRÜLMÜŞLÜK
+                                // damgalar: zam duruyor, fiyat değişmiyor,
+                                // tedarikçiyle bir şey konuşulmuş olmuyor.
+                                // Alarm yönetiminde "susturma"yı "çözüm" diye
+                                // adlandırmak, kapanmamış işi kapanmış saymaktır.
+                                onToast?.('✓ Okundu olarak işaretlendi — zam duruyor, yalnız listeden düştü');
                                 alarmYukle();
                               } catch (e) { onToast?.(e?.message || 'İşaretlenemedi'); }
                             }}
+                            title="Yalnız 'okudum' demektir — zamı çözmez, fiyatı değiştirmez"
                             style={{
                               padding: '3px 11px', borderRadius: 99, border: `1px solid ${R.cizgi3}`,
                               background: R.girinti, color: R.metin2, fontSize: 10.5, fontWeight: 700,

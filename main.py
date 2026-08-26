@@ -2191,6 +2191,35 @@ def panel():
             ozet['bu_ay_pos_kesinti']    = float(breakdown['pos_kesinti'])
             ozet['bu_ay_online_kesinti'] = float(breakdown['online_kesinti'])
 
+            # 📏 GÜNLÜK ORTALAMA CİRO — "bu tutar bu işletme için büyük mü?"
+            # ⚠️ (2026-08-26, Codex denetimi) Bu taban İSTEMCİDE kuruluyordu:
+            # `bu_ay_ciro / ayın kaçıncı günü`. Üç ayrı şekilde bozuktu:
+            #   1) TAKVİM günü kullanıyordu — kapalı/tatil günler böleni şişirir,
+            #      ortalamayı olduğundan düşük gösterir.
+            #   2) Ciro GİRİLMEMİŞ günler de bölene giriyordu; veri eksikliği
+            #      eşiği küçültüp önemsiz kalemleri öne çıkarıyordu.
+            #   3) Ayın 1-3'ünde tek büyük gün ortalamayı aşırı şişirip anlamlı
+            #      kalemleri eliyordu.
+            # DOĞRU TABAN: son 30 günde CİRO GİRİLMİŞ günlerin ortalaması.
+            # Girilmemiş gün böleni büyütmez; ay başı/sonu dalgası 30 güne yayılır.
+            # Hiç ciro yoksa None döner — 0 demek "her şey büyüktür" demek olurdu.
+            cur.execute("""
+                SELECT AVG(gunluk)::float AS ort, COUNT(*) AS gun_adet
+                FROM (
+                    SELECT tarih,
+                           SUM(COALESCE(nakit,0)+COALESCE(pos,0)+COALESCE(online,0)) AS gunluk
+                      FROM ciro
+                     WHERE COALESCE(durum,'aktif')='aktif'
+                       AND tarih >= CURRENT_DATE - INTERVAL '30 days'
+                     GROUP BY tarih
+                    HAVING SUM(COALESCE(nakit,0)+COALESCE(pos,0)+COALESCE(online,0)) > 0
+                ) g
+            """)
+            _oc = dict(cur.fetchone() or {})
+            ozet['gunluk_ort_ciro'] = (round(float(_oc['ort']), 2)
+                                       if _oc.get('ort') is not None else None)
+            ozet['gunluk_ort_ciro_gun_adet'] = int(_oc.get('gun_adet') or 0)
+
             # 4) KART HAREKETLERİ — faiz + kart-kırılımları tek geçişte (eski 4 sorgu).
             #    NOT: kart_faizi orijinalinde durum şartı YOKTU — FILTER'larda birebir korunur.
             cur.execute("""
@@ -2301,6 +2330,21 @@ def panel():
             ozet['bu_ay_nakit_cikis'] = float(_kh['toplam_cikis'])
             ozet['bu_ay_nakit_giris'] = float(_kh['toplam_giris'])
             ozet['bu_ay_net'] = ozet['bu_ay_nakit_giris'] - ozet['bu_ay_nakit_cikis']
+
+            # 💼 KANAL TOPLAMI — "bu ayın GERÇEK tahsilatı" (devir HARİÇ)
+            # ⚠️ (2026-08-26, Codex denetimi) Bu toplam İSTEMCİDE hesaplanıyordu
+            # (GenelModulu.jsx tahsilat kanalları bloğu). "Gösterim kendi
+            # aritmetiğini kurmaz" doktrininin ihlaliydi: ekran bir rakam
+            # TÜRETİYORDU ve o rakamın ikinci bir doğruluk kaynağı oluyordu —
+            # kanal tanımı burada değişse ekran eski toplamı göstermeye devam
+            # ederdi. Tek kaynak: panel.
+            # ⚠️ DEVİR BİLEREK DIŞARIDA: geçmiş aydan devreden bakiye bu ayın
+            # tahsilatı değildir; toplama katılırsa "bu ay 3,5 milyon tahsil
+            # ettik" yanılsaması doğar.
+            ozet['bu_ay_kanal_toplam'] = (ozet.get('bu_ay_nakit', 0.0)
+                                          + ozet.get('bu_ay_pos', 0.0)
+                                          + ozet.get('bu_ay_online', 0.0)
+                                          + ozet.get('bu_ay_dis_kaynak', 0.0))
 
         return ozet
     except Exception as e:
