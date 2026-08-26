@@ -2275,17 +2275,39 @@ export function TanimModulu({ gorunum, onCekmece, onKopru, onToast }) {
   const [tm, setTm] = useState(null);
   const [tmYukleniyor, setTmYukleniyor] = useState(false);
   const [tmMesgul, setTmMesgul] = useState(false);
+  // ══════════════════════════════════════════════════════════════════════════
+  // 🔴 SESSİZ YALAN DÜZELTİLDİ (2026-08-26) — "arıza anında ekran huzur veriyordu"
+  // ══════════════════════════════════════════════════════════════════════════
+  // ESKİ HÂL: beş uç ayrı ayrı `.catch(() => null)` ile yakalanıyor, sonra
+  // `setTm({mut, ocr, ...})` yapılıyordu. `tm` HER ZAMAN dolu bir nesneydi —
+  // yani aşağıdaki koruma HİÇBİR ZAMAN çalışmıyordu:
+  //     {!tmYukleniyor && !tm && <BosDurum baslik="Ölçüm alınamadı" …/>}
+  // `/fatura-teslim` düştüğünde `donemler` boş kalıyor ve ekran şunu yazıyordu:
+  //     DÖNEM MUTABAKATI · 0 / 0 · "fatura ile teslim alınan aynı"
+  // Yani ARIZA ANINDA "her şey tutuyor" diyordu. HATA ≠ BOŞ doktrininin en
+  // pahalı ihlali: hasar, gerçeğe en çok ihtiyaç duyulan anda oluşuyor.
+  //
+  // YENİ HÂL: hangi ucun düştüğü ADIYLA saklanır (`_dusen`). Ekran bunu yazar
+  // ve düşen ucun beslediği KPI "0" değil "—" gösterir.
   const tmYukle = useCallback(async () => {
     setTmYukleniyor(true);
     try {
-      const [mut, ocr, pat, haf, mkz] = await Promise.all([
-        api('/tedarik-mutabakat/fatura-teslim?gun=200').catch(() => null),
-        api('/tedarik-mutabakat/ocr-kapsama?gun=730').catch(() => null),
-        api('/tedarik-mutabakat/siparis-patlamasi?gun=200').catch(() => null),
-        api('/tedarik-mutabakat/haftalik-ozet').catch(() => null),
-        api('/tedarik-mutabakat/merkez-kayit-boslugu').catch(() => null),
-      ]);
-      setTm({ mut, ocr, pat, haf, mkz });
+      const adlar = ['mut', 'ocr', 'pat', 'haf', 'mkz'];
+      const yollar = [
+        '/tedarik-mutabakat/fatura-teslim?gun=200',
+        '/tedarik-mutabakat/ocr-kapsama?gun=730',
+        '/tedarik-mutabakat/siparis-patlamasi?gun=200',
+        '/tedarik-mutabakat/haftalik-ozet',
+        '/tedarik-mutabakat/merkez-kayit-boslugu',
+      ];
+      const sonuc = await Promise.all(yollar.map((y) => api(y).catch(() => null)));
+      const paket = {};
+      const dusen = [];
+      adlar.forEach((a, i) => {
+        paket[a] = sonuc[i];
+        if (sonuc[i] == null) dusen.push(a);
+      });
+      setTm({ ...paket, _dusen: dusen });
     } finally { setTmYukleniyor(false); }
   }, []);
   useEffect(() => {
@@ -2614,14 +2636,36 @@ export function TanimModulu({ gorunum, onCekmece, onKopru, onToast }) {
         {tmCubuk}
         {tmYukleniyor && <BosDurum baslik="Ölçülüyor…" aciklama="Faturalar ve siparişler karşılaştırılıyor." />}
         {!tmYukleniyor && !tm && <BosDurum baslik="Ölçüm alınamadı" aciklama="Uçlar yanıt vermedi — sayfayı yenileyin." />}
+        {/* 🔴 DÜŞEN UÇ ADIYLA SÖYLENİR (2026-08-26). Eskiden hiçbir yerde
+            yazmıyordu: bir ölçüm okunamadığında ekran sessizce eksik sayı
+            gösteriyor, sahip onu tam sanıyordu. Kaç ölçümün konuşmadığını
+            bilmeden bu ekrana bakmak, körlüğü huzur diye okumaktır. */}
+        {!tmYukleniyor && (tm?._dusen || []).length > 0 && (
+          <div style={{
+            ...kartYuzey, padding: '11px 15px', marginBottom: 12, fontSize: 12.5,
+            color: R.metin2, borderLeft: `3px solid ${R.kirmizi}`, lineHeight: 1.6,
+          }}>
+            ⚠ <b style={{ color: R.krem }}>{tm._dusen.length} ölçüm okunamadı</b>{' '}
+            ({tm._dusen.map((a) => ({
+              mut: 'dönem mutabakatı', ocr: 'kalem okuması', pat: 'sipariş patlaması',
+              haf: 'haftalık eğilim', mkz: 'merkez alımı',
+            }[a] || a)).join(' · ')}). Aşağıdaki sayılar <b>eksik</b> — «0» görürsen
+            «sorun yok» demek değil, <b>ölçülemedi</b> demektir. Yenileyin.
+          </div>
+        )}
         {!tmYukleniyor && tm && (
           <>
             <KpiSeridi kpiler={[
               {
                 etiket: 'Dönem mutabakatı',
-                deger: `${donemler.filter(d => String(d.durum || '').startsWith('TUTUYOR')).length} / ${donemler.length}`,
-                alt: 'fatura ile teslim alınan aynı',
-                renk: donemler.length && donemler.every(d => String(d.durum || '').startsWith('TUTUYOR')) ? R.yesil : R.krem,
+                // 🔴 HATA ≠ BOŞ: uç düştüyse "0 / 0" YAZILMAZ. Sıfır bir ölçüm
+                // sonucudur; okunamayan bir şeyi sıfır diye göstermek yalandır.
+                deger: mut == null
+                  ? '—'
+                  : `${donemler.filter(d => String(d.durum || '').startsWith('TUTUYOR')).length} / ${donemler.length}`,
+                alt: mut == null ? 'ölçüm okunamadı' : 'fatura ile teslim alınan aynı',
+                renk: mut == null ? R.kirmizi
+                  : donemler.length && donemler.every(d => String(d.durum || '').startsWith('TUTUYOR')) ? R.yesil : R.krem,
               },
               {
                 etiket: 'Kısmi fatura',
