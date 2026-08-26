@@ -98,6 +98,21 @@ const kayitSubesi = (u) => {
 //
 // ⚠️ RENK-KÖRÜ YEDEĞİ: her ışığın yanında İŞARET var (✓ / – / !) — karar
 // yalnız renge bağlı kalmaz.
+// ══════════════════════════════════════════════════════════════════════════
+// 👁️ BU DOSYADA R.not3 ARTIK METİNDE KULLANILMAZ (2026-08-26)
+// ══════════════════════════════════════════════════════════════════════════
+// Ölçüm: R.not3 kart yüzeyinde 3,49:1 — WCAG AA'nın küçük metin için istediği
+// 4,5:1'in altında. tema.js bunu 2026-08-14'te ZATEN BİLİYOR ve not düşmüş:
+// "kartta 3,4:1 … Tam AA istenirse punto büyütme sahiple konuşulmalı."
+//
+// ⚠️ "Punto büyütme" bu sorunu ÇÖZMEZ: WCAG'de büyük metin 24px (ya da 18,7px
+// kalın) demektir. 12px'e çıkarmak eşiği 3:1'e indirmez — 4,5:1 ister. Bu
+// yüzden çözüm renk kademesidir, punto değil.
+//
+// KAPSAM: sahip "yalnız BAKIŞ" dedi. Global token DEĞİŞTİRİLMEDİ (tüm modüller
+// kullanıyor); bu dosyadaki METİN kullanımları R.not'a (4,72:1) alındı.
+// Ok ikonları (AcKapaOk) R.not3'te KALDI — onlar metin değil, UI bileşeni:
+// WCAG'de metin-dışı eşik 3:1 ve 3,49 onu geçiyor.
 const ISIK = {
   acik: { renk: R.yesil, isaret: '✓', ad: 'açık' },
   kapandi: { renk: R.yesil, isaret: '✓', ad: 'gün kapandı' },
@@ -330,7 +345,7 @@ function Bant({ etiket, not, cocuk }) {
         }}>
           {etiket}
         </span>
-        {not && <span style={{ marginLeft: 'auto', fontSize: 10.5, color: R.not3 }}>{not}</span>}
+        {not && <span style={{ marginLeft: 'auto', fontSize: 10.5, color: R.not }}>{not}</span>}
       </div>
       {cocuk}
     </section>
@@ -1869,7 +1884,7 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
                 ? 'alt uç: yalnız doğrulanmış nakit · üst uç: kasa defteri'
                 : 'doğrulanmamış kasa üzerinden · iyimser')
               : 'kasa / günlük yük',
-            renk: p.kac_gun_dayanir == null ? R.not3
+            renk: p.kac_gun_dayanir == null ? R.not
               : sayi(p.kac_gun_dayanir) < 15 ? R.kirmizi
                 : nakitDurum.ciddiFark ? R.amber : R.krem,
           },
@@ -1937,7 +1952,7 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
           </span>
           <span style={{ fontSize: 10.5, color: vRenk === R.yesil ? R.not2 : vRenk }}>{vAlt}</span>
           {onKopru && (
-            <span style={{ marginLeft: 'auto', flexShrink: 0, fontSize: 10.5, color: R.not3, whiteSpace: 'nowrap' }}>
+            <span style={{ marginLeft: 'auto', flexShrink: 0, fontSize: 10.5, color: R.not, whiteSpace: 'nowrap' }}>
               Tedarikçi Bakiyesi →
             </span>
           )}
@@ -1979,7 +1994,7 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 10 }}>
               <span style={{ fontFamily: F.baslik, fontSize: 13, fontWeight: 600, color: k.renk }}>{k.baslik}</span>
               {/* 'satıra tıkla' notu YALNIZ ilk açılan dökümde (tekrarı gürültü) */}
-              {i === 0 && <span style={{ marginLeft: 'auto', fontSize: 10.5, color: R.not3 }}>satıra tıkla → ödeme dosyası</span>}
+              {i === 0 && <span style={{ marginLeft: 'auto', fontSize: 10.5, color: R.not }}>satıra tıkla → ödeme dosyası</span>}
             </div>
             <div style={{
               display: 'flex', flexDirection: 'column', gap: 8,
@@ -2106,7 +2121,7 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
                   <div style={{ width: `${Math.min(100, (Math.abs(v) / enBuyuk) * 100)}%`, height: '100%', background: c, opacity: 0.75 }} />
                 </div>
                 <span style={{ fontSize: 12.5, fontFamily: F.mono, width: 104, textAlign: 'right', color: c }}>{fmt(v)}</span>
-                <span style={{ fontSize: 10.5, color: R.not3, width: 168 }}>{alt}</span>
+                <span style={{ fontSize: 10.5, color: R.not, width: 168 }}>{alt}</span>
               </div>
             ))}
           </div>
@@ -2333,7 +2348,7 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
           </span>
           <span style={{ fontSize: 11, color: R.not2 }}>öneri-only · hüküm insanın</span>
           {onKopru && (
-            <span style={{ marginLeft: 'auto', fontSize: 10.5, color: R.not3, whiteSpace: 'nowrap' }}>
+            <span style={{ marginLeft: 'auto', fontSize: 10.5, color: R.not, whiteSpace: 'nowrap' }}>
               Strateji ekranında incele →
             </span>
           )}
@@ -2345,7 +2360,7 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
           }}>
             <span style={{
               flexShrink: 0, fontSize: 10, letterSpacing: '.6px', textTransform: 'uppercase',
-              color: R.not3, fontWeight: 700, paddingTop: 2,
+              color: R.not, fontWeight: 700, paddingTop: 2,
             }}>
               en kritiği
             </span>
