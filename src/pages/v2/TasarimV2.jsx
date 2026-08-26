@@ -1529,15 +1529,33 @@ export default function TasarimV2({ onGit }) {
 
   function PanelSubeler() {
     const d = veri;
-    if (!d.subeAyListe.length) {
+    // ══════════════════════════════════════════════════════════════════════
+    // ⚠️ ERKEN ÇIKIŞ KÖRLÜK ÜRETİYORDU (2026-08-26, Codex bulgusu)
+    // ══════════════════════════════════════════════════════════════════════
+    // Eski hâl: `subeAyListe` boşsa ekran "Bu ay için ciro kaydı bulunamadı."
+    // deyip DURUYORDU. Ama bu görünümün asıl değeri tam da o durumda:
+    // CİROSU OLMAYAN ama GİDERİ SÜREN şubeler (`subeKarne` bunları finans
+    // verisinden ekliyor — MERKEZ 485.716 ₺ gibi). Erken çıkış onları da
+    // birlikte gizliyordu: "ciro yok" mesajı, "para yanmıyor" diye okunuyordu.
+    //
+    // ⚠️ Gerçekten HİÇBİR veri yoksa (ne ciro ne gider) mesaj kalır — ama o
+    // zaman da "kayıt yok" ile "okunamadı" ayrılır (HATA ≠ BOŞ).
+    // ⚠️ `finansMap` AŞAĞIDA tanımlı (TDZ) — bu oturumda üçüncü kez aynı tuzak.
+    // Ham kaynağı okuyoruz: `subeFinans` bir state (161. satır), her yerde hazır.
+    const giderliSubeVar = (subeFinans?.ciro_gider_orani || []).some((r) => sayi(r?.gider) > 0);
+    if (!d.subeAyListe.length && !giderliSubeVar) {
       return (
         <div style={{ ...kartYuzey, padding: '38px 30px', textAlign: 'center', color: R.not }}>
-          Bu ay için ciro kaydı bulunamadı.
+          {dusenUclar.length > 0
+            ? 'Şube verisi okunamadı — "kayıt yok" demek yanlış olurdu. Yenileyin.'
+            : 'Bu ay için ne ciro ne gider kaydı var.'}
         </div>
       );
     }
-    const enIyi = d.subeAyListe[0];
-    const enZayif = d.subeAyListe[d.subeAyListe.length - 1];
+    // Ciro yok ama gider varsa: liste boş olabilir, aşağıdaki kurgular
+    // `subeKarne` üzerinden giderli şubeleri yine de gösterir.
+    const enIyi = d.subeAyListe[0] || { ad: '—', toplam: 0, pay: 0 };
+    const enZayif = d.subeAyListe[d.subeAyListe.length - 1] || { ad: '—', toplam: 0, pay: 0 };
     const enBuyukPay = enIyi.pay || 1;
     /** Şube adına göre sevkiyat trafiği satırı (Kontrol Kulesi'nden gelen kolonlar). */
     // 🔵 EVV-PANEL-N3 (2026-08-13): opsOf `toLocaleLowerCase('tr')` kullanıyordu ama
@@ -2243,8 +2261,31 @@ export default function TasarimV2({ onGit }) {
             <div style={{ fontSize: 10.5, letterSpacing: '1px', textTransform: 'uppercase', color: R.not2, fontWeight: 700 }}>
               {modObj.ad}
             </div>
+            {/* ══════════════════════════════════════════════════════════════
+                📅 BAŞLIK NE GÖSTERDİĞİNİ SÖYLER (2026-08-26, Fable bulgusu)
+                ══════════════════════════════════════════════════════════════
+                Sekme adı `tema.js`de SABİT ("Bugün") ama içerik `odakGun`a
+                düşüyor: tarih gezgini geri alınmışsa ya da bugüne ait ciro
+                kaydı yoksa ekran SON VERİLİ GÜNÜ gösteriyor. Canlıda başlık
+                "Bugün" derken içerik 23 Ağustos'tu.
+
+                Başlığın yalan söylemesi en sinsi kusurdur: sahip dünün
+                rakamına bugünmüş gibi bakıp karar verir. İç etiketler
+                `gunEtiketi()` ile zaten düzeltiliyordu — düzeltilmeyen tek
+                yer en tepedeki başlıktı.
+
+                ⚠️ Yalnız PANEL'de ve yalnız gün odaklı görünümde ek yazılır;
+                Ay/Şube görünümünde gün kavramı yok, orada gürültü olurdu. */}
             <h1 style={{ fontFamily: F.baslik, fontSize: 23, fontWeight: 600, lineHeight: 1.2, marginTop: 3 }}>
               {gorunumObj.ad}
+              {mod === 'panel' && gorunum === 'bugun' && veri && !(!secilenGun && veri.odakBugunMu) && (
+                <span style={{ fontSize: 14, fontWeight: 600, color: R.amber, marginLeft: 9 }}>
+                  · {kisaGun(secilenGun || veri.odakGun)}
+                  <span style={{ color: R.not2, fontWeight: 400 }}>
+                    {secilenGun ? ' (geçmiş gün)' : ' (bugün kayıt yok)'}
+                  </span>
+                </span>
+              )}
             </h1>
           </div>
 
