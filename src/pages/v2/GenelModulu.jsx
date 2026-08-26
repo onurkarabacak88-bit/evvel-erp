@@ -1772,20 +1772,36 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
     // yorumlardaki satır numaraları o tanımın yeri). Rozetler YALNIZ Bakış'ın
     // zaten okuduğu sayaçlardan gelir — rozet için yeni uç çağrılmadı; sayacı
     // olmayan çip rozetsiz durur (uydurma rozet yok).
+    // ══════════════════════════════════════════════════════════════════════
+    // 🔎 KISA YOLLAR ARTIK SORU SORUYOR (2026-08-26, Codex bulunabilirlik bulgusu)
+    // ══════════════════════════════════════════════════════════════════════
+    // Codex: "'bugün ne yapmalıyım' akışı güçlü; 'şu spesifik şeyi arıyorum'
+    // akışı parçalı." Sahip aklında SORU ile geliyor ("geçen ay FEZ'e ne
+    // ödedik?"), ekranda ise SİSTEM ADI buluyordu ("Cari Ekstre"). Kişi, hangi
+    // sistem adının hangi soruyu cevapladığını bilmek zorunda kalıyordu — bu,
+    // bilgiyi bilene kolay, bilmeyene imkânsız yapan klasik kusur.
+    //
+    // Hedefler AYNI kaldı (hepsi daha önce doğrulanmıştı); değişen tek şey
+    // ETİKET: sistemin adı yerine sahibin sorusu. Modül adı alt satırda durur,
+    // yani öğrenme de kesilmez — soru bilinir, adı da öğrenilir.
+    //
+    // ⚠️ BU BİR ARAMA MOTORU DEĞİLDİR. "FEZ'e ne ödedik" sorusunun cevabı hâlâ
+    // Cari Ekstre'de aranır; bu blok yalnız DOĞRU KAPIYA götürür. Veri araması
+    // (tedarikçi/fatura/tutar üzerinden) ayrı bir yapıdır ve kurulmadı.
     const kisaYollar = [
-      { k: 'odeme', ad: 'Ödeme Merkezi', ikon: IK.banknot, renk: R.bakir,
+      { k: 'odeme', ad: 'Ne ödemem gerek?', altAd: 'Ödeme Merkezi', ikon: IK.banknot, renk: R.bakir,
         rozet: gK.length + gU.length + gB.length + gBug.length || null,
         hedef: '__modul:odeme:bekleyen' },                       // tema.js:202
-      { k: 'onay', ad: 'Onay Kuyruğu', ikon: IK.onay, renk: R.amber,
+      { k: 'onay', ad: 'Neyi onaylamam gerek?', altAd: 'Onay Kuyruğu', ikon: IK.onay, renk: R.amber,
         rozet: onaylar.length || null, hedef: '__modul:onaylar:kuyruk' },  // tema.js:215
-      { k: 'cari', ad: 'Cari Ekstre', ikon: IK.dosya, renk: R.mavi,
+      { k: 'cari', ad: 'Kime ne ödedik?', altAd: 'Cari Ekstre', ikon: IK.dosya, renk: R.mavi,
         rozet: null, hedef: '__modul:belge:cari' },               // tema.js:283
       // 📈 'Zam Takibi' çipi KALKTI (2026-08-16): artık Bakış'ın kendi ÜST
       // SEKMESİ. Bulunduğun modülün sekmesine kısa yol koymak, rayda zaten
       // duran bir kapıyı ikinci kez çizmek olurdu.
-      { k: 'kart', ad: 'Kart Dosyaları', ikon: IK.kart, renk: R.mavi,
+      { k: 'kart', ad: 'Kartta ne birikti?', altAd: 'Kart Dosyaları', ikon: IK.kart, renk: R.mavi,
         rozet: null, hedef: '__modul:kart:kartlar' },             // tema.js:249
-      { k: 'defter', ad: 'İşlem Defteri', ikon: IK.klasor, renk: R.not2,
+      { k: 'defter', ad: 'Bu kaydın izi nerede?', altAd: 'İşlem Defteri', ikon: IK.klasor, renk: R.not2,
         rozet: null, hedef: '__modul:rapor:defter' },             // tema.js:166
     ];
 
@@ -2086,14 +2102,17 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
         {/* en=150 · gap 9 → 1010px içerik genişliğinde 6 çip TEK SATIR.
             İkinci satıra taşarsa 2 dakikalık tur kaydırmaya başlar. */}
         <Bant etiket="Kısa yollar" not="sık gidilen ekranlar" cocuk={
-          <Izgara en={150} gap={9} cocuk={kisaYollar.map((y) => (
+          {/* Çip başlığı SORU, alt satırı modülün gerçek adı — soruyla gelen
+              bulur, adı da öğrenir (öğrenilebilirlik kesilmez). */}
+          <Izgara en={168} gap={9} cocuk={kisaYollar.map((y) => (
             <Cip
               key={y.k}
               ikonYol={y.ikon}
               renk={y.renk}
               baslik={y.ad}
+              alt={y.altAd}
               rozet={y.rozet}
-              aksiyonAd={`${y.ad} ekranını aç`}
+              aksiyonAd={`${y.altAd || y.ad} ekranını aç`}
               onTikla={onKopru ? () => onKopru(y.hedef) : null}
             />
           ))} />
