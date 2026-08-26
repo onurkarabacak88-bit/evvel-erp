@@ -198,6 +198,8 @@ export default function TasarimV2({ onGit }) {
   const [panel, setPanel] = useState(null);
   const [eksikCiro, setEksikCiro] = useState(null);   // /ciro/eksik-gunler
   const [nakitKonum, setNakitKonum] = useState(null); // /ops/metrics/nakit-konum
+  // Hangi uçlar okunamadı — 'boş' ile 'okunamadı' ayrımı için (Codex 2026-08-26)
+  const [dusenUclar, setDusenUclar] = useState([]);
   const [cirolar, setCirolar] = useState([]);
   const [subeler, setSubeler] = useState([]);
   const [onaylar, setOnaylar] = useState([]);
@@ -211,10 +213,14 @@ export default function TasarimV2({ onGit }) {
     setHata('');
     Promise.all([
       api('/panel').catch(() => null),
-      api('/uyarilar').catch(() => []),
-      api('/ciro?limit=600').catch(() => []),
-      api('/subeler').catch(() => []),
-      api('/onay-kuyrugu?durum=bekliyor&limit=400').catch(() => []),
+      // ⚠️ (2026-08-26, Codex) `catch(() => [])` SESSİZ SAKİNLİK üretiyordu:
+      // /onay-kuyrugu düşerse ekran "0 onay · 0 kasa hatası" diyor ve bu
+      // "sorun yok" diye okunuyor. Boş dizi ile OKUNAMADI ayrı şeylerdir.
+      // Sentinel `null` döner; tüketiciler bunu "—" ve uyarı olarak gösterir.
+      api('/uyarilar').catch(() => null),
+      api('/ciro?limit=600').catch(() => null),
+      api('/subeler').catch(() => null),
+      api('/onay-kuyrugu?durum=bekliyor&limit=400').catch(() => null),
       // 📅 EKSİK CİRO (2026-08-09 sahip: "panel bir şubenin cirosunu 8 Ağustos
       // için gösteriyor, neden?"). Ciro girilmeyince kayıt yok, kayıt yoksa
       // alarm da yok — "yokluğun alarmı" hiç kurulmamıştı.
@@ -234,6 +240,21 @@ export default function TasarimV2({ onGit }) {
       setEksikCiro(ec);
       setNakitKonum(nk);
       setPanel(p);
+      // ⚠️ DÜŞEN UÇ AYRICA TAŞINIR (2026-08-26, Codex bulgusu):
+      // setter'lar null'u [] yapıyor — bu doğru (aşağıdaki kod dizi bekliyor)
+      // ama TEK BAŞINA sessiz sakinlik üretiyordu: "0 onay" ile "okunamadı"
+      // aynı görünüyordu. Hangi ucun düştüğü ayrı tutulur ve EKRANDA YAZILIR.
+      // (Tedarik ekranında tam bu desen "arıza anında her şey tutuyor"
+      // yalanını üretmişti — aynı hata iki kez yapılmasın.)
+      setDusenUclar([
+        p == null ? 'panel' : null,
+        u == null ? 'uyarılar' : null,
+        c == null ? 'ciro' : null,
+        s == null ? 'şubeler' : null,
+        o == null ? 'onay kuyruğu' : null,
+        ec == null ? 'eksik ciro' : null,
+        nk == null ? 'nakit konum' : null,
+      ].filter(Boolean));
       setUyarilar(Array.isArray(u) ? u : (u?.uyarilar || []));
       setCirolar(Array.isArray(c) ? c : []);
       setSubeler(Array.isArray(s) ? s : []);
@@ -967,10 +988,29 @@ export default function TasarimV2({ onGit }) {
       return <KopruDurumu ad={gorunumObj.ad} onGit={() => koprule(gorunumObj.hedef)} />;
     }
 
-    if (gorunum === 'bugun') return <PanelBugun />;
-    if (gorunum === 'ay') return <PanelAy />;
-    if (gorunum === 'subeler') return <PanelSubeler />;
-    return <PanelRisk />;
+    // ⚠️ DÜŞEN UÇ BANDI (2026-08-26, Codex bulgusu) — panelin TÜM görünümlerinin
+    // üstünde durur. Bir okuma düşerse ekran hâlâ sayı gösteriyor ama o sayılar
+    // EKSİK; "0 onay · 0 kasa hatası" arıza anında "sorun yok" diye okunuyordu.
+    // Boş ile okunamadı ayrı şeylerdir ve fark SÖYLENMELİDİR.
+    const icerik = gorunum === 'bugun' ? <PanelBugun />
+      : gorunum === 'ay' ? <PanelAy />
+        : gorunum === 'subeler' ? <PanelSubeler />
+          : <PanelRisk />;
+    return (
+      <>
+        {dusenUclar.length > 0 && (
+          <div style={{
+            ...kartYuzey, padding: '11px 15px', marginBottom: 12, fontSize: 12.5,
+            color: R.metin2, borderLeft: `3px solid ${R.kirmizi}`, lineHeight: 1.6,
+          }}>
+            ⚠ <b style={{ color: R.krem }}>{dusenUclar.length} okuma alınamadı</b>{' '}
+            ({dusenUclar.join(' · ')}). Aşağıdaki sayılar <b>eksik</b> — «0» görürsen
+            «sorun yok» demek değil, <b>okunamadı</b> demektir. Yenileyin.
+          </div>
+        )}
+        {icerik}
+      </>
+    );
   };
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -1091,7 +1131,10 @@ export default function TasarimV2({ onGit }) {
       // ⚠️ Alt uç SUNUCUDAN gelir (nakit-konum · kac_gun_dayanir_dogrulanmis);
       // burada bölme YAPILMAZ. Uç hesaplayamazsa tek sayıya düşülür.
       (() => {
-        const altUc = nakitKonum && nakitKonum !== '__HATA__' && nakitKonum.mutabakatsiz_ciddi
+        // ⚠️ (Codex 2026-08-26) nakitKonum DÜŞERSE sessizce tek sayıya
+        // dönüyordu ve sahip onu KESİN sayı okuyordu. Okunamadı ≠ fark yok.
+        const nkOkunamadi = !nakitKonum || nakitKonum === '__HATA__';
+        const altUc = !nkOkunamadi && nakitKonum.mutabakatsiz_ciddi
           ? (nakitKonum.kac_gun_dayanir_dogrulanmis ?? null) : null;
         const aralikVar = altUc != null && gunDayanir > 0 && altUc < gunDayanir;
         return {
@@ -1099,7 +1142,9 @@ export default function TasarimV2({ onGit }) {
           deger: panel?.kac_gun_dayanir == null ? '—'
             : aralikVar ? `${trSayi(altUc, 0)}–${trSayi(gunDayanir, 0)} gün`
               : `${trSayi(gunDayanir, 0)} gün`,
-          alt: aralikVar ? 'alt uç: yalnız doğrulanmış nakit' : 'ciro dursa bile',
+          alt: aralikVar ? 'alt uç: yalnız doğrulanmış nakit'
+            : nkOkunamadi ? '⚠ doğrulama okunamadı — bu sayı iyimser olabilir'
+              : 'ciro dursa bile',
           // Renk KÖTÜMSER uçtan okunur: aralığın üst ucuna göre yeşil demek,
           // doğrulanmamış parayla rahatlamak olurdu.
           renk: (() => { const k = aralikVar ? altUc : gunDayanir;
@@ -1354,7 +1399,16 @@ export default function TasarimV2({ onGit }) {
             vardı, Ay'da yoktu — oysa yanılgının vurduğu rakam tam burada. */}
         {eksikCiro && sayi(eksikCiro.eksik_adet) > 0 && (
           <div style={{ ...kartYuzey, padding: '10px 16px', marginBottom: 12, borderLeft: `3px solid ${R.amber}`, fontSize: 12, color: R.metin2 }}>
-            📅 Bu ay <b style={{ color: R.krem }}>{sayi(eksikCiro.eksik_adet)} gün</b> ciro girilmemiş — ay toplamı o kadar eksik.
+            {/* ⚠️ (2026-08-26, Codex) BURASI ATLANMIŞTI: Bugün görünümünde birim
+                ayrımı yapıldı ama Ay Özeti hâlâ şube×günü "gün" diye yazıyordu —
+                yani düzeltme yarım kalmış, iki sekme arasında yeni bir ayrışma
+                doğmuştu. Aynı kural burada da. */}
+            📅 Bu ay{' '}
+            <b style={{ color: R.krem }}>
+              {eksikCiro.eksik_gun_adet != null
+                ? `${sayi(eksikCiro.eksik_gun_adet)} gün · ${sayi(eksikCiro.eksik_adet)} şube-günü`
+                : `${sayi(eksikCiro.eksik_adet)} şube-günü`}
+            </b>{' '}ciro girilmemiş — ay toplamı o kadar eksik.
           </div>
         )}
         <KpiSeridi kpiler={kpiler} />
@@ -1461,9 +1515,15 @@ export default function TasarimV2({ onGit }) {
     // ⚠️ BİLGİ GİZLENMİYOR: şube karnesinde satır DURUYOR, yalnız ALARM
     // üretmiyor ve durumu doğru adla söylüyor ("sezon kapalı" / "pasif").
     // Kardeş ekran GenelModulu bu ayrımı zaten doğru yapıyordu (ISIK.sezon).
+    // ⚠️ (Codex 2026-08-26) AD EŞLEŞMESİ KIRILGAN: `sadeles` küçük harf +
+    // Türkçe harf indirgemesi yapıyor ama boşluk/noktalama kırpmıyor. Şube adı
+    // biçimi değişirse eşleşme düşer, `_kapaliTur` null olur ve BASTIRILAN
+    // ALARM SESSİZCE GERİ GELİR — sezon kapalı dükkân yeniden kırmızı yanar.
+    // Karşılığı bulunamayan ad ayrıca işaretlenir ('bilinmiyor'); ekran onu
+    // "durumu çözülemedi" diye söyler, sessizce eski davranışa dönmez.
     const subeDurumu = (ad) => {
-      const t = (subeler || []).find((x) => sadeles(x.ad) === sadeles(ad));
-      if (!t) return null;
+      const t = (subeler || []).find((x) => sadeles(String(x.ad).trim()) === sadeles(String(ad).trim()));
+      if (!t) return 'bilinmiyor';
       if (t.sezon_kapali) return 'sezon';
       if (t.aktif === false) return 'pasif';
       return null;
@@ -1578,7 +1638,14 @@ export default function TasarimV2({ onGit }) {
           // Gideri sürüyorsa bu ayrı ve GERÇEK bir sorudur — ama "ciro yok"
           // diye değil, "kapalıyken gider" diye sorulur ve KIRMIZI değil
           // AMBER'dir: acil değil, incelenecek.
-          if (s._kapaliTur) {
+          if (s._kapaliTur === 'bilinmiyor') {
+            // Şube tanımı bulunamadı: kapalı MI açık MI bilmiyoruz. Ne alarm
+            // bastırılır ne "ciro yok" denir — bilinmezlik ADIYLA söylenir.
+            sinyaller.push({
+              ton: 'amber', grup: 'durumBilinmiyor', sira: -gider,
+              metin: `şube tanımı bulunamadı · 30g gider ${fmt(gider)}`,
+            });
+          } else if (s._kapaliTur) {
             if (gider > 0) {
               sinyaller.push({
                 ton: 'amber', grup: 'kapaliGider', sira: -gider,
@@ -1773,7 +1840,7 @@ export default function TasarimV2({ onGit }) {
             _s: s,
             hucreler: [
               { v: s._ciroYok
-                ? `${s.ad} · ${s._kapaliTur === 'sezon' ? 'sezon kapalı' : s._kapaliTur === 'pasif' ? 'pasif şube' : 'ciro yok'}`
+                ? `${s.ad} · ${s._kapaliTur === 'sezon' ? 'sezon kapalı' : s._kapaliTur === 'pasif' ? 'pasif şube' : s._kapaliTur === 'bilinmiyor' ? 'tanım bulunamadı' : 'ciro yok'}`
                 : s.ad, kalin: true, renk: s._ciroYok ? R.not2 : undefined },
               { v: fmt(s.toplam), mono: true, sag: true },
               { v: fmt(s.nakit), mono: true, sag: true },
