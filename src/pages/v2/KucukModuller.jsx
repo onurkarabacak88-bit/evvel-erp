@@ -1242,7 +1242,7 @@ export function YukModulu({ gorunum, onCekmece, onKopru, onToast }) {
 // ═════════════════════════════════════════════════════════════════════════════
 // 3) RAPOR & DEFTER — rapor.aylik / rapor.defter
 // ═════════════════════════════════════════════════════════════════════════════
-export function RaporModulu({ gorunum, onCekmece, onKopru, onToast }) {
+export function RaporModulu({ gorunum, onCekmece, onKopru, onToast, defterHedef }) {
   // ⚠️ TÜM useState'ler koşullu return'lerin ÜSTÜNDE — aşağıda erken return var,
   // hook sırası bozulursa ekran beyaza düşer (v2 boyunca tekrarlayan tuzak).
   // 🔴 (2026-08-14, sahip: "raporda sadece Ağustos'u görebiliyorum, ay ay bakamıyorum")
@@ -1250,6 +1250,26 @@ export function RaporModulu({ gorunum, onCekmece, onKopru, onToast }) {
   // defter hep içinde bulunulan ayı çekiyordu, geçmiş aya bakmanın yolu yoktu.
   // Backend /ledger `ay` parametresini zaten alıyordu; eksik olan yalnız seçiciydi.
   const [ay, setAy] = useState(() => isoBugun().slice(0, 7));
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // 🎯 ARAMADAN KAYDA GELİŞ — `__modul:rapor:defter:<TARİH>~<KİMLİK>`
+  // ══════════════════════════════════════════════════════════════════════════
+  // İşlem Defteri AY BAZLI çalışıyor ve arama kutusu yok. Yalnız kimlik
+  // yollansaydı ekran hangi ayı yükleyeceğini bilemez, kayıt hiç görünmezdi.
+  // Bu yüzden hedef İKİ parça: önce kaydın AYI açılır, sonra satır işaretlenir.
+  // ⚠️ TEK SEFERLİK: `defterTuketildi` olmadan liste her tazelendiğinde sahibin
+  // elle seçtiği ay ezilir ve kullanıcı kendi gezinmesini kaybeder.
+  const [defterVurgu, setDefterVurgu] = useState(null);
+  const defterTuketildi = useRef(null);
+  useEffect(() => {
+    const h = String(defterHedef || '').trim();
+    if (!h || gorunum !== 'defter') { defterTuketildi.current = null; return; }
+    if (defterTuketildi.current === h) return;
+    defterTuketildi.current = h;
+    const [tarih, kimlik] = h.split('~');
+    if (/^\d{4}-\d{2}-\d{2}$/.test(tarih || '')) setAy(String(tarih).slice(0, 7));
+    setDefterVurgu(kimlik || null);
+  }, [defterHedef, gorunum]);
   const [muhurAy, setMuhurAy] = useState(() => {
     // Varsayılan: GEÇEN ay — mühürlenen şey biten dönemdir, süren ay değil.
     const d = new Date();
@@ -1719,6 +1739,8 @@ export function RaporModulu({ gorunum, onCekmece, onKopru, onToast }) {
           ]}
           satirlar={satir.slice(0, 300).map(r => ({
             id: r.id, _r: r,
+            // Aramadan gelinen kayıt işaretlenir (Tablo `vurgu` alanı).
+            vurgu: defterVurgu != null && String(r.id) === String(defterVurgu),
             hucreler: [
               { v: kisaTarih(r.tarih), mono: true },
               { v: slugAd(r.islem_turu), rozet: sayi(r.tutar) >= 0 ? R.yesil : R.bakir },

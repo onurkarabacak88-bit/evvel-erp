@@ -66,11 +66,13 @@ HEDEF = {
 # var: Ödeme Merkezi (kalemi açar) ve Cari Ekstre (tedarikçiyi açar).
 #
 # ⚠️ PARAMETRE YALNIZ TÜKETİCİSİ OLAN HEDEFE EKLENİR. Tüketicisi olmayan
-# ekrana parametre yollamak sessizce yutulur ve "kayda götürdüm" YALANI
-# üretir — kasa hareketi ve personel bu yüzden parametresiz kalır.
+# ekrana parametre yollamak sessizce yutulur ve "kayda götürdüm" YALANI üretir.
+# Bu yüzden tüketiciler ÖNCE yazıldı, parametre SONRA açıldı:
+#   belge/arsiv → arsivHedef · odeme/bekleyen → hedefOdeme · belge/cari → cariHedef
+#   rapor/defter → defterHedef (TARİH~KİMLİK) · ekip/kadro → kadroHedef
 def _hedef(tur: str, deger: Optional[str] = None) -> str:
     t = HEDEF[tur]
-    if deger and tur in ("fatura", "odeme", "tedarikci"):
+    if deger and tur in ("fatura", "odeme", "tedarikci", "kasa", "personel"):
         return f"{t}:{quote(str(deger), safe='')}"
     return t
 
@@ -202,18 +204,22 @@ def ara(q: str, limit: int = 6):
             aramalar = [a for a in ("aciklama", "islem_turu") if a in k]
             if aramalar:
                 cur.execute(
-                    "SELECT COALESCE(aciklama, islem_turu) AS baslik, islem_turu, "
-                    "       tutar, tarih::text AS tarih, COUNT(*) OVER () AS toplam "
+                    "SELECT id::text AS kimlik, COALESCE(aciklama, islem_turu) AS baslik, "
+                    "       islem_turu, tutar, tarih::text AS tarih, COUNT(*) OVER () AS toplam "
                     f"  FROM kasa_hareketleri WHERE durum='aktif' AND ({_metin_kosulu(aramalar)}) "
                     "  ORDER BY tarih DESC LIMIT %s",
                     tuple([kalip] * len(aramalar) + [lim]))
                 rows = [dict(r) for r in (cur.fetchall() or [])]
                 for r in rows:
+                    # 🎯 İşlem Defteri AY BAZLI çalışıyor (arama kutusu yok) —
+                    # o yüzden hedef "TARİH~KİMLİK": ekran önce kaydın AYINI
+                    # açar, sonra o satırı işaretler. Yalnız kimlik yollasaydık
+                    # ekran hangi ayı yükleyeceğini bilemez ve kayıt görünmezdi.
                     sonuclar.append({
                         "tur": "kasa", "baslik": str(r.get("baslik") or "—")[:90],
                         "alt": f"kasa · {r.get('islem_turu') or '—'}",
                         "tutar": _tl(r.get("tutar")), "tarih": r.get("tarih"),
-                        "hedef": _hedef("kasa"),
+                        "hedef": _hedef("kasa", f"{r.get('tarih') or ''}~{r.get('kimlik') or ''}"),
                     })
                 durum["kasa"] = {"bulunan": int(rows[0]["toplam"]) if rows else 0,
                                  "gosterilen": len(rows)}
@@ -250,8 +256,11 @@ def ara(q: str, limit: int = 6):
             k = _kolonlar(cur, "personel")
             ad = _ilk_var(k, ["ad_soyad", "ad", "isim"])
             if ad:
+                kimlik_p = "id" if "id" in k else None
                 cur.execute(
-                    f"SELECT {ad} AS baslik, COUNT(*) OVER () AS toplam "
+                    f"SELECT {ad} AS baslik"
+                    f"{f', {kimlik_p}::text AS kimlik' if kimlik_p else ', NULL AS kimlik'}"
+                    f", COUNT(*) OVER () AS toplam "
                     f"  FROM personel WHERE COALESCE({ad}::text,'') ILIKE %s "
                     f" ORDER BY {ad} LIMIT %s", (kalip, lim))
                 rows = [dict(r) for r in (cur.fetchall() or [])]
@@ -259,7 +268,8 @@ def ara(q: str, limit: int = 6):
                     sonuclar.append({
                         "tur": "personel", "baslik": str(r.get("baslik") or "—")[:90],
                         "alt": "personel", "tutar": None, "tarih": None,
-                        "hedef": _hedef("personel"),
+                        # Kadro ekranı ADLA da eşleşebilir; kimlik varsa o tercih edilir.
+                        "hedef": _hedef("personel", r.get("kimlik") or r.get("baslik")),
                     })
                 durum["personel"] = {"bulunan": int(rows[0]["toplam"]) if rows else 0,
                                      "gosterilen": len(rows)}

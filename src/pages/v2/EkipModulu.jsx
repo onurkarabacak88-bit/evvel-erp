@@ -192,7 +192,7 @@ const BV_DURUM_AD = {
   bekliyor: 'Bekliyor', gorusme: 'Görüşme', olumlu: 'Olumlu', olumsuz: 'Olumsuz',
 };
 
-export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
+export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadroHedef }) {
   const [yukleniyor, setYukleniyor] = useState(true);
   const [hata, setHata] = useState('');
   const [personel, setPersonel] = useState([]);
@@ -2149,6 +2149,11 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast }) {
           ]}
           satirlar={satir.map(x => ({
             id: x.p.id, _p: x.p,
+            // 🎯 (2026-08-26) Aramadan gelinen personel işaretlenir.
+            // Kimlikle DE adla DA eşleşir: arama kimlik bulabildiyse onu
+            // yollar, bulamadıysa adı — ikisi de aynı satıra düşsün.
+            vurgu: !!kadroHedef && (String(x.p.id) === String(kadroHedef)
+              || String(x.p.ad_soyad || '').trim() === String(kadroHedef).trim()),
             hucreler: [
               { v: x.p.ad_soyad, kalin: true },
               { v: x.p.gorev || '—', renk: R.not },

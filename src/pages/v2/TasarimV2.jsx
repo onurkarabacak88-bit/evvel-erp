@@ -881,7 +881,9 @@ export default function TasarimV2({ onGit }) {
       );
     }
     if (mod === 'ekip') {
-      return <EkipModulu gorunum={gorunum} onCekmece={setCekmece} onKopru={koprule} onToast={setToast} />;
+      return <EkipModulu gorunum={gorunum} onCekmece={setCekmece} onKopru={koprule} onToast={setToast}
+        /* 🎯 Kayıt aramasından personel kimliği/adıyla geliş — kadro satırı işaretlenir. */
+        kadroHedef={kopruParam?.modul === 'ekip' && kopruParam?.gorunum === 'kadro' ? kopruParam.deger : null} />;
     }
     if (mod === 'borc') {
       return <BorcModulu gorunum={gorunum} onCekmece={setCekmece} onKopru={koprule} />;
@@ -910,7 +912,10 @@ export default function TasarimV2({ onGit }) {
       return <YukModulu gorunum={gorunum} onCekmece={setCekmece} onKopru={koprule} onToast={setToast} />;
     }
     if (mod === 'rapor') {
-      return <RaporModulu gorunum={gorunum} onCekmece={setCekmece} onKopru={koprule} onToast={setToast} />;
+      return <RaporModulu gorunum={gorunum} onCekmece={setCekmece} onKopru={koprule} onToast={setToast}
+        /* 🎯 Kayıt aramasından "<TARİH>~<KİMLİK>" ile geliş — defter kaydın
+           ayını açar ve satırı işaretler. */
+        defterHedef={kopruParam?.modul === 'rapor' && kopruParam?.gorunum === 'defter' ? kopruParam.deger : null} />;
     }
     if (mod === 'sistem') {
       return <SistemModulu gorunum={gorunum} onCekmece={setCekmece} onKopru={koprule} onToast={setToast} />;

@@ -662,7 +662,18 @@ export function Tablo({ baslik, not, kolonlar, satirlar, onSatir }) {
                 onKeyDown={onSatir ? (e) => {
                   if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSatir(s); }
                 } : undefined}
-                style={{ cursor: onSatir ? 'pointer' : 'default' }}
+                // 🎯 VURGU (2026-08-26) — aramadan gelen kaydı işaretler.
+                // Satır `vurgu: true` verirse bakır bir şeritle öne çıkar.
+                // Vermeyen satır bugünküyle birebir aynı çizilir (eklemeli).
+                // ⚠️ Renk TEK BAŞINA taşıyıcı değil: sol kenarda kalın bir
+                // çubuk da var — renk körü kullanıcı da kaydı bulabilsin.
+                style={{
+                  cursor: onSatir ? 'pointer' : 'default',
+                  ...(s.vurgu ? {
+                    background: `${R.bakir}1A`,
+                    boxShadow: `inset 3px 0 0 ${R.bakir}`,
+                  } : null),
+                }}
               >
                 {s.hucreler.map((h, hi) => (
                   <td key={hi} style={{
