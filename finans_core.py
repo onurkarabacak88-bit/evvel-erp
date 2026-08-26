@@ -1970,6 +1970,52 @@ def tum_kartlar_faiz_hesapla(cur, donem: str = None, lookback_months: int = 3) -
     return sonuclar
 
 
+def gunluk_nakit_yuku(cur) -> float:
+    """Günlük ortalama nakit yükü — dayanıklılık hesabının PAYDASI.
+
+    🔵 (2026-08-26) `kac_gun_dayanir` içinden AYRI FONKSİYONA çıkarıldı.
+    Davranış birebir aynı; amaç paydayı YENİDEN KULLANILABİLİR yapmak.
+
+    NEDEN: BAKIŞ ekranı "23 gün dayanır" diyordu ama bu rakam ŞİŞKİN kasadan
+    türüyordu — kasanın yarısına yakınının yeri doğrulanmamışken dayanıklılık da
+    o kadar iyimserdi. Dürüst hâli bir ARALIK: "12–23 gün". Alt ucu hesaplamak
+    için doğrulanmış nakdi AYNI paydaya bölmek gerekir.
+
+    ⚠️ Payda İSTEMCİDE hesaplanamaz ("gösterim kendi aritmetiğini kurmaz") ve
+    kopyalanamaz — kopyalansaydı iki dayanıklılık rakamı bir gün ayrışır,
+    hangisinin doğru olduğu sorusu ortaya çıkardı. Tek kaynak burasıdır.
+    """
+    # Son 30 günün günlük ortalama nakit çıkışı
+    cur.execute("""
+        SELECT COALESCE(AVG(gunluk), 0) AS ort
+        FROM (
+            SELECT tarih, SUM(ABS(tutar)) AS gunluk
+            FROM kasa_hareketleri
+            WHERE kasa_etkisi = true AND tutar < 0
+            AND tarih >= CURRENT_DATE - INTERVAL '30 days'
+            GROUP BY tarih
+        ) t
+    """)
+    gunluk_gecmis = float(cur.fetchone()['ort'] or 0)
+
+    # Önümüzdeki 30 günün günlük ortalama ödeme yükü
+    yuk = odeme_yuku(cur)
+    gunluk_gelecek = yuk["t30"] / 30.0 if yuk["t30"] > 0 else 0
+
+    # İkisinin ortalaması (aslında büyüğü — kötümser taraf)
+    return max(gunluk_gecmis, gunluk_gelecek, 1)
+
+
+def kac_gun_dayanir_tutarla(cur, tutar: float) -> int:
+    """VERİLEN tutar kaç gün dayanır — aynı payda, farklı pay.
+
+    Doğrulanmış nakit için kullanılır; `kac_gun_dayanir` ile TEK FARKI payın
+    kasa defteri yerine dışarıdan gelmesidir.
+    """
+    ort = gunluk_nakit_yuku(cur)
+    return min(int(float(tutar or 0) / ort) if ort > 0 else 999, 999)
+
+
 def kac_gun_dayanir(cur) -> int:
     """
     Mevcut kasanın kaç gün dayanacağı tahmini.

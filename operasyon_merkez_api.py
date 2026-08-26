@@ -15231,6 +15231,26 @@ def ops_maliyet_pnl_merdiven(gun: int = Query(30, ge=7, le=90)):
     }
 
 
+def _dogrulanmis_dayaniklilik(dogrulanmis_tl: float):
+    """Konumu DOĞRULANMIŞ nakit kaç gün dayanır — hesaplanamazsa None.
+
+    🔵 (2026-08-26) BAKIŞ kurgusu. Payda finans_core'un TEK kaynağından gelir
+    (`kac_gun_dayanir_tutarla`), böylece "23 gün" ile "12 gün" AYNI paydadan
+    çıkar; kopya bir formül olsaydı ikisi bir gün ayrışır ve hangisinin doğru
+    olduğu sorusu doğardı.
+
+    ⚠️ Hata hâlinde 0 DEĞİL None döner: 0 gün "yarın batıyorsun" demektir,
+    oysa gerçek "hesaplayamadım"dır. Sahte sayı üretmek yasak.
+    """
+    try:
+        from finans_core import kac_gun_dayanir_tutarla
+        with db() as (_c3, cur3):
+            return kac_gun_dayanir_tutarla(cur3, float(dogrulanmis_tl or 0))
+    except Exception as e:  # noqa: BLE001 — ana yanıt bundan etkilenmez
+        log.warning("dogrulanmis dayaniklilik hesaplanamadi: %s", str(e)[:120])
+        return None
+
+
 @router.get("/metrics/nakit-konum")
 def ops_metrics_nakit_konum(gun: int = Query(60, ge=7, le=365)):
     """NAKİT KONUM PANOSU — "param şu an NEREDE?"
@@ -15340,6 +15360,15 @@ def ops_metrics_nakit_konum(gun: int = Query(60, ge=7, le=365)):
         },
         "defter_bakiyesi_tl": round(defter, 2),
         "mutabakatsiz_tl": round(mutabakatsiz, 2),
+        # 📉 DOĞRULANMIŞ DAYANIKLILIK (2026-08-26, BAKIŞ kurgusu)
+        # BAKIŞ "23 gün dayanır" diyordu ama bu rakam ŞİŞKİN kasadan türüyordu:
+        # kasanın yarısına yakınının yeri doğrulanmamışken dayanıklılık da o
+        # kadar iyimserdi. Dürüst hâli bir ARALIK — "12–23 gün".
+        # ⚠️ ALT UÇ BURADA HESAPLANIR, İSTEMCİDE DEĞİL: "gösterim kendi
+        # aritmetiğini kurmaz". Payda finans_core'un TEK kaynağından gelir;
+        # kopyalansaydı iki dayanıklılık rakamı bir gün ayrışırdı.
+        # Hesap düşerse alan None döner — sayı UYDURULMAZ (HATA ≠ BOŞ).
+        "kac_gun_dayanir_dogrulanmis": _dogrulanmis_dayaniklilik(duraklar),
         "akis": {
             "teslim_alinan_donem_tl": round(teslim_donem, 2), "teslim_adet": teslim_adet,
             "bankaya_yatan_donem_tl": round(banka_donem, 2), "banka_adet": banka_adet,

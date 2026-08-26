@@ -395,7 +395,12 @@ function SubeIsigi({ ad, isik, ciroMetni, acilisSaat }) {
  * 🔑 GÜVEN İLKESİ korunur: kapalıyken ADET · TOPLAM · EN ESKİ · EN BÜYÜK
  * dördü de kartın üstünde durur — hiçbiri "aç"ın arkasına saklanmaz.
  */
-function KatmanCipi({ baslik, renk, adet, toplam, enBuyukMetin, enBuyukKisa, vadeKisa, acik, onAc }) {
+// `degisim` (2026-08-26): "bu hafta +2" — KRONİK ile AKUT'u ayırır.
+// 78 gündür duran 18 kalem ile bu hafta gelen 2 kalem AYNI ŞEY DEĞİLDİR:
+// birincisi yapılandırma kararı ister, ikincisi bugün ödeme kararı. Tek bir
+// "18 kalem" rakamı ikisini tek torbaya koyuyordu ve sahip her sabah aynı
+// kırmızıyı görüp duyarsızlaşıyordu. Karşılaştırma tabanı yoksa YAZILMAZ.
+function KatmanCipi({ baslik, renk, adet, toplam, enBuyukMetin, enBuyukKisa, vadeKisa, degisim, acik, onAc }) {
   return (
     <div
       {...acilirBaslikOzellik(
@@ -434,6 +439,7 @@ function KatmanCipi({ baslik, renk, adet, toplam, enBuyukMetin, enBuyukKisa, vad
         whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
       }}>
         {[`${adet} kalem`, vadeKisa, enBuyukKisa].filter(Boolean).join(' · ')}
+        {degisim && <span style={{ color: R.bakirAcik, fontWeight: 700 }}> · {degisim}</span>}
       </div>
     </div>
   );
@@ -1483,6 +1489,11 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
         dogrulanmis: sayi(nk2.duraklar.duraklar_toplami_tl),
         pay: defter2 > 0 ? Math.round((mut2 / defter2) * 100) : 0,
         ciddiFark: defter2 > 0 && mut2 > defter2 * 0.10,
+        // 📉 Doğrulanmış dayanıklılık SUNUCUDAN gelir (operasyon_merkez_api ·
+        // kac_gun_dayanir_dogrulanmis). Burada BÖLME YAPILMAZ: "gösterim kendi
+        // aritmetiğini kurmaz". Uç hesaplayamazsa null döner ve aralık yazılmaz.
+        gunDogrulanmis: nk2.kac_gun_dayanir_dogrulanmis == null
+          ? null : sayi(nk2.kac_gun_dayanir_dogrulanmis),
       };
     })();
 
@@ -1529,9 +1540,33 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
       // ── S2 · PARASAL SONUÇ + S3 · KARAR BEKLEYEN ──────────────────────────
       // Mevcut `ilkUcIs` üreticisi AYNEN korunur (seçim kuralları, odemeTutar
       // zinciri, odemeCekmece köprüsü hiç değişmedi) — yalnız sınıfı damgalanır.
+      //
+      // ── ⚖️ S2 EŞİĞİ: BİR GÜNLÜK ORTALAMA CİRO ────────────────────────────
+      // Kuyruğun tavanı 5. O beş yeri 800 ₺'lik bir gecikmiş kalem kapatırsa,
+      // arkasındaki gerçek iş görünmez olur. Eşik SABİT SAYI OLAMAZ: 10.000 ₺
+      // bu işletme için farklı, iki kat büyüdüğünde farklı anlam taşır. O yüzden
+      // işletmenin KENDİ ölçeğine bağlanır — bir günlük ortalama ciro.
+      //
+      // ⚠️ ELENEN KALEM KAYBOLMAZ: gecikme kovası çipinde ve Ödeme Merkezi'nde
+      // duruyor. Eşik "gizleme" değil "öne çıkarmama" kuralıdır.
+      // ⚠️ Ciro okunamıyorsa eşik UYGULANMAZ (0) — ölçemediğim bir kuralla
+      // eleme yapmak, sessizce iş kaybetmektir.
+      // ⚠️ AYIN KAÇI OLDUĞU SUNUCUDAN: `is_gunu_tr` bu dosyada zaten doğrulanmış
+      // tek tarih kaynağı (tarayıcı saati yasak — sunucunun iş günü kavramı var).
+      // `p.bugun` diye bir alan VARSAYMADIM; olmayan alandan bölen üretmek
+      // sessizce yanlış eşik kurardı. Tarih okunamazsa eşik 0 = uygulanmaz.
+      const isGunuStr = !kapanisHata ? String(kapanisHam.is_gunu_tr || '') : '';
+      const gecenGun = /^\d{4}-\d{2}-\d{2}$/.test(isGunuStr) ? Number(isGunuStr.slice(8, 10)) : 0;
+      const gunlukOrtCiro = gecenGun > 0
+        ? sayi(p.bu_ay_ciro ?? p.bu_ay_sadece_ciro) / gecenGun
+        : 0;
       const SINIF = { gecikmis: 2, yuk48: 2, onay: 3, oneri: 3 };
       ilkUcIs.forEach((is) => {
-        aday.push({ ...is, sinif: SINIF[is.k] ?? 3, tl: is._u ? odemeTutar(is._u) : 0 });
+        const tl = is._u ? odemeTutar(is._u) : 0;
+        // Yalnız "en büyük gecikmiş" maddesi eşiğe tabi: 48 saatlik yük ve
+        // onay/öneri maddeleri para büyüklüğüyle değil ZAMANLA acildir.
+        if (is.k === 'gecikmis' && gunlukOrtCiro > 0 && tl > 0 && tl < gunlukOrtCiro) return;
+        aday.push({ ...is, sinif: SINIF[is.k] ?? 3, tl });
       });
 
       // ── S2b · MOTORUN EN KRİTİK ÖNERİSİ ───────────────────────────────────
@@ -1780,7 +1815,16 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
           },
           {
             etiket: 'Dayanıklılık',
-            deger: p.kac_gun_dayanir != null ? `${sayi(p.kac_gun_dayanir)} gün` : '—',
+            // 📉 ARALIK (2026-08-26): tek sayı yerine "12–23 gün". Alt uç
+            // doğrulanmış nakitten, üst uç kasa defterinden — ikisi de AYNI
+            // paydadan (finans_core · gunluk_nakit_yuku). Aralık ancak iki uç da
+            // varken yazılır; sunucu alt ucu hesaplayamadıysa tek sayıya döner.
+            deger: (() => {
+              const ust = p.kac_gun_dayanir != null ? sayi(p.kac_gun_dayanir) : null;
+              if (ust == null) return '—';
+              const alt = nakitDurum.ciddiFark ? nakitDurum.gunDogrulanmis : null;
+              return alt != null && alt < ust ? `${alt}–${ust} gün` : `${ust} gün`;
+            })(),
             // ⚠️ DAYANAĞINI SÖYLER (2026-08-26): bu sayı kasa/günlük-yük'ten
             // türüyor ve o "kasa" ŞİŞKİN olabilir — içinde yeri doğrulanmamış
             // para varsa dayanıklılık da o kadar iyimserdir. Rakamı burada
@@ -1788,7 +1832,11 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
             // doğrulanmış-kasa dayanıklılığı SUNUCUDA hesaplanmalı
             // (motors.py · kac_gun_dayanir_dogrulanmis). O gelene kadar dürüst
             // olan şey sayıyı uydurmak değil, DAYANAĞINI AÇIK YAZMAKTIR.
-            alt: nakitDurum.ciddiFark ? 'doğrulanmamış kasa üzerinden · iyimser' : 'kasa / günlük yük',
+            alt: nakitDurum.ciddiFark
+              ? (nakitDurum.gunDogrulanmis != null
+                ? 'alt uç: yalnız doğrulanmış nakit · üst uç: kasa defteri'
+                : 'doğrulanmamış kasa üzerinden · iyimser')
+              : 'kasa / günlük yük',
             renk: p.kac_gun_dayanir == null ? R.not3
               : sayi(p.kac_gun_dayanir) < 15 ? R.kirmizi
                 : nakitDurum.ciddiFark ? R.amber : R.krem,
@@ -1810,6 +1858,14 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
                 enBuyukMetin={o.enBuyukMetin}
                 enBuyukKisa={o.enBuyukKisa}
                 vadeKisa={o.vadeKisa}
+                // KRONİK / AKUT AYRIMI — yalnız KRİTİK kovada ve yalnız gerçek
+                // bir karşılaştırma tabanı varken. Taban yoksa yazılmaz.
+                // (Kritik kova en pahalısı: 78 gündür duran kalemler burada.)
+                degisim={(() => {
+                  if (k.anahtar !== 'kritik' || !gecmisOzet) return null;
+                  const d = gK.length - sayi(gecmisOzet.kritikAdet);
+                  return d > 0 ? `yeni +${d}` : d < 0 ? `kapanan ${Math.abs(d)}` : null;
+                })()}
                 acik={!!acikKatman[k.anahtar]}
                 onAc={() => setAcikKatman((s) => ({ ...s, [k.anahtar]: !s[k.anahtar] }))}
               />
