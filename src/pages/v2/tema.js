@@ -40,6 +40,15 @@ export const R = {
   bakirKoyu: '#96602C',
   yesil: '#4ADE80',
   kirmizi: '#F87171',
+  // 👁️ (2026-08-26 BAKIŞ ölçümü) kirmizi kart yüzeyinde 5,70:1 — geçer, ama
+  // ekranın diğer büyük rakamları 9–13:1 bandında. Sonuç: EN ÖNEMLİ KÖTÜ HABER
+  // (gecikmiş borç toplamı) ekranın EN ZAYIF sinyaliydi; göz önce parlak olana,
+  // yani iyi habere düşüyordu. Kırmızı yerine daha açık bir kırmızı: aynı uyarı
+  // anlamı, hiyerarşiye uygun ağırlık (~9,5:1).
+  // ⚠️ YALNIZ üst düzey alarm rakamlarında kullanılır; şiddet skalasında
+  // (KRİTİK/UYARI/TAZE) `kirmizi` kalır — yoksa ölçeğin kademeleri birbirine
+  // yaklaşır ve skala okunmaz olur.
+  kirmiziAcik: '#FCA5A5',
   amber: '#FBBF24',
   mavi: '#60A5FA',
 };

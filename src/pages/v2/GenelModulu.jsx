@@ -103,8 +103,13 @@ const ISIK = {
   kapandi: { renk: R.yesil, isaret: '✓', ad: 'gün kapandı' },
   bekleniyor: { renk: R.amber, isaret: '–', ad: 'henüz açılmadı' },
   gec: { renk: R.kirmizi, isaret: '!', ad: 'açılmadı · geç' },
-  sezon: { renk: R.not3, isaret: '–', ad: 'sezon kapalı' },
-  veriYok: { renk: R.not3, isaret: '?', ad: 'veri yok' },
+  // 👁️ KONTRAST (2026-08-26 ölçümü): ikisi de R.not3 idi → kart yüzeyinde
+  // 3,49:1, WCAG AA'nın 4,5:1 eşiğinin ALTINDA. "Sezon kapalı" bilinçli olarak
+  // sessiz bir durum ama SESSİZ ≠ OKUNAMAZ; "veri yok" ise hiç sessiz olmamalı
+  // (bir okuma boşluğudur). R.not2'ye çıkarıldı — hâlâ en soluk kademe, ama
+  // eşiğin üstünde. Hiyerarşi korunur, okunabilirlik kazanılır.
+  sezon: { renk: R.not2, isaret: '–', ad: 'sezon kapalı' },
+  veriYok: { renk: R.not2, isaret: '?', ad: 'veri yok' },
 };
 /** Açılıştan sonra kaç dakika "hâlâ normal" sayılır (amber → kırmızı eşiği). */
 const GEC_TOLERANS_DK = 60;
@@ -381,7 +386,13 @@ function SubeIsigi({ ad, isik, ciroMetni, acilisSaat }) {
           <span style={{ fontFamily: F.mono, fontWeight: 700 }}> · {acilisSaat}</span>
         )}
       </div>
-      <div style={{ fontSize: 10.5, color: R.not2, lineHeight: 1.25 }}>
+      {/* 👁️ KONTRAST (2026-08-26 ölçümü): bu satır R.not2 ile 10,5px'ti →
+          kart yüzeyinde 4,29:1. WCAG AA küçük metin için 4,5:1 ister — ALTINDA
+          kalıyordu. Oysa satırın taşıdığı bilgi kritik: "bugün ciro —" ve
+          "dün kapanış ✗" ekranın en önemli iki eksiğini söylüyor ve canlıda
+          ekrandaki EN SÖNÜK metindi. Okunmayan uyarı, olmayan uyarıdır.
+          R.metin2'ye çıkarıldı (kartta ~9:1) ve punto 11'e alındı. */}
+      <div style={{ fontSize: 11, color: R.metin2, lineHeight: 1.25 }}>
         {[ciroMetni, isik.dunMetni].filter(Boolean).join(' · ')}
       </div>
     </div>
@@ -1359,7 +1370,17 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
     // Hedef DOĞRULANDI: MODULLER'de odeme modülünün 'tedarikci' görünümü var
     // (tema.js:206) ve o ekran "Bekleyen vade sözü" toplamını gösteriyor
     // (OdemeModulu.jsx:2023) — yani çipin vaadi ile iniş yeri aynı sayı.
-    const vRenk = sayi(v?.geciken_adet) ? R.kirmizi : sayi(v?.bekleyen_adet) ? R.amber : R.yesil;
+    // 🔴 KIRMIZI BÜTÇESİ (2026-08-26 ölçümü): ekranda 5 kırmızı öğe vardı.
+    // Ön-dikkatsel işlemede aynı anda yarışan kırmızıların hiçbiri kazanmaz —
+    // "hepsi acil" demek "hiçbiri acil değil" demektir.
+    // Beşin ikisi (KRİTİK etiketi + tutarı) aslında ALARM DEĞİL, ŞİDDET
+    // SKALASININ ucu: KRİTİK/UYARI/TAZE birlikte, bir ölçek olarak okunur.
+    // Geriye üç yarışan alarm kalıyordu: kuyruğun 1 numarası · GECİKMİŞ toplamı
+    // · bu satır. Bu satır 11px ve şeridin dibinde — üçü arasında en zayıf
+    // konumdaki o, ama kırmızısı en güçlü ikisiyle aynı. Amber'e alındı:
+    // vadesi geçmiş SÖZ, vadesi geçmiş PARADAN bir kademe aşağıdadır (söz
+    // henüz bir ödeme emri değil) ve zaten kendi köprüsü var.
+    const vRenk = sayi(v?.geciken_adet) ? R.amber : sayi(v?.bekleyen_adet) ? R.amber : R.yesil;
     const vAlt = v
       ? (sayi(v.geciken_adet)
         ? `${sayi(v.geciken_adet)} sözün vadesi geçti · bekleyen ${fmt(sayi(v.toplam_bekleyen))}`
@@ -1798,7 +1819,9 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
               etiket: 'Gecikmiş',
               deger: fmt(gecikmisToplam),
               alt: `${gK.length + gU.length + gB.length} kalem`,
-              renk: gecikmisToplam > 0 ? R.kirmizi : R.yesil,
+              // 👁️ kirmiziAcik: ölçümde bu rakam ekranın en sönük büyük sayısıydı
+              // (5,70:1; kasa 13,22:1) — en önemli kötü haber en zayıf sinyaldi.
+              renk: gecikmisToplam > 0 ? R.kirmiziAcik : R.yesil,
               delta: metin,
               // Büyüme kötü, küçülme iyi — renk yönü söyler.
               deltaRenk: !d || (d.tl === 0 && d.adet === 0) ? R.not3
