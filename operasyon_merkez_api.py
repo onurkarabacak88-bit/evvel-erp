@@ -11656,23 +11656,38 @@ def _ensure_bulgu_izi(cur):
         "CREATE INDEX IF NOT EXISTS idx_bulgu_izi_ref ON duyu_bulgu_izi (bulgu_ref, olusturma DESC)"
     )
     # DUYU 4/6 (öneri akıbeti): 'uygulandi' kararı eklendi — CHECK idempotent tazelenir
+    # ⚠️ 'ertelendi' EKLENDİ (2026-08-26): defter yalnız KABUL edilen öneriyi
+    # öğreniyordu. "Uyguladım" ve "yanlış alarm" vardı ama "gördüm, şimdi değil"
+    # YOKTU. Bu asimetri iki şeyi birden bozuyordu:
+    #   1) Öneri-only doktrini yarım kalıyordu — sistem önerir, insan karar
+    #      verir; ama kararın "hayır/sonra" hâli hiçbir yere yazılamıyordu.
+    #   2) Aynı öneri her sabah yeniden önüne geliyordu ve SUSTURULAMIYORDU —
+    #      kapanamayan alarm, uyarı bütçesi doktrininin ihlali.
+    # Yeni sistem KURULMADI: defter zaten append-only ve "son satır geçerli";
+    # ertelemenin ihtiyaç duyduğu şeklin tamamı hazırdı, eksik olan tek şey
+    # bu enum değeriydi.
     cur.execute("ALTER TABLE duyu_bulgu_izi DROP CONSTRAINT IF EXISTS duyu_bulgu_izi_karar_check")
     cur.execute(
         "ALTER TABLE duyu_bulgu_izi ADD CONSTRAINT duyu_bulgu_izi_karar_check "
-        "CHECK (karar IN ('goruldu','cozuldu','yanlis_alarm','uygulandi'))"
+        "CHECK (karar IN ('goruldu','cozuldu','yanlis_alarm','uygulandi','ertelendi'))"
     )
 
 
 @router.post("/bulgu-izi")
 def ops_bulgu_izi_yaz(body: dict = None):
     """İnsan kararı işareti (append-only): {bulgu_ref, karar, not_metin?}.
-    Karar: goruldu | cozuldu | yanlis_alarm. Silme/güncelleme YOK — fikir
-    değişirse yeni satır atılır, son satır geçerli sayılır."""
+    Karar: goruldu | cozuldu | yanlis_alarm | uygulandi | ertelendi.
+    Silme/güncelleme YOK — fikir değişirse yeni satır atılır, son satır geçerli.
+
+    ⚠️ 'ertelendi' bir SUSTURMA DEĞİL, bir KARAR kaydıdır: öneri kaybolmaz,
+    "sahip gördü ve şimdi değil dedi" bilgisi deftere yazılır. Sistemin
+    öğrenmesi için "hayır"lar da "evet"ler kadar gereklidir."""
     body = body or {}
     ref = str(body.get("bulgu_ref") or "").strip()
     karar = str(body.get("karar") or "").strip()
-    if not ref or karar not in ("goruldu", "cozuldu", "yanlis_alarm", "uygulandi"):
-        raise HTTPException(400, "bulgu_ref + karar (goruldu|cozuldu|yanlis_alarm|uygulandi) zorunlu")
+    if not ref or karar not in ("goruldu", "cozuldu", "yanlis_alarm", "uygulandi", "ertelendi"):
+        raise HTTPException(
+            400, "bulgu_ref + karar (goruldu|cozuldu|yanlis_alarm|uygulandi|ertelendi) zorunlu")
     notm = (str(body.get("not_metin") or "").strip() or None)
     with db() as (conn, cur):
         _ensure_bulgu_izi(cur)

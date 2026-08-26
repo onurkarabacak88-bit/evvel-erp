@@ -19,7 +19,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api, fmt } from '../../utils/api';
 import { R, F, kartYuzey } from './tema';
-import { KpiSeridi, Tablo, Liste, OnayModali, SecimCubugu, BosDurum } from './parcalar';
+import { KpiSeridi, Tablo, Liste, OnayModali, SecimCubugu, BosDurum, HataBandi } from './parcalar';
 import { kayitDosyasiYukle, belgeYukleyiciUret } from './kayitDosyasi';
 import KimlikBirlestirme from './KimlikBirlestirme';
 
@@ -1800,6 +1800,122 @@ export function RaporModulu({ gorunum, onCekmece, onKopru, onToast, defterHedef 
 // ═════════════════════════════════════════════════════════════════════════════
 // 4) VERİ & SİSTEM — sistem.excel / sistem.teslim / sistem.temizle
 // ═════════════════════════════════════════════════════════════════════════════
+/**
+ * 📊 EKRAN ÖLÇÜMÜ — "BAKIŞ iş üretiyor mu?" (2026-08-26)
+ *
+ * `GET /api/bakis-olcum/ozet` salt-okur; M1–M5. Bu ekranın TEK işi o ölçümü
+ * okunur kılmak. Hüküm vermez, öneri üretmez.
+ *
+ * ⚠️ M2 ASIL METRİKTİR ama SINIRI VAR: "eylemsiz oturum" = ekranda hiçbir işe
+ * girilmedi demektir, "hiçbir şey öğrenmeden çıktı" demek DEĞİL. Oturum kapanış
+ * olayı yok; açık sekme/yenileme de eylemsiz sayılır. Bu sınır ekranda YAZILIR —
+ * metriğin ölçtüğünden fazlasını iddia etmesi, ölçüm olmaktan çıkmasıdır.
+ */
+function EkranOlcumu({ onToast }) {
+  const [veri, setVeri] = useState(null);
+  const [hata, setHata] = useState('');
+  const [gun, setGun] = useState(30);
+
+  const yukle = useCallback((g) => {
+    setHata('');
+    setVeri(null);
+    api(`/bakis-olcum/ozet?gun=${g}`)
+      .then((d) => setVeri(d || null))
+      // HATA ≠ BOŞ: uç düşerse "veri yok" değil, okunamadı denir.
+      .catch((e) => setHata(e?.message || 'Ölçüm okunamadı'));
+  }, []);
+  useEffect(() => { yukle(gun); }, [gun, yukle]);
+
+  if (hata) return <HataBandi mesaj={hata} onTekrar={() => yukle(gun)} />;
+  if (!veri) {
+    return (
+      <div style={{ ...kartYuzey, padding: '38px 30px', textAlign: 'center', color: R.not, fontSize: 13 }}>
+        Ölçüm okunuyor…
+      </div>
+    );
+  }
+
+  const yeterli = !!veri.yeterli_veri;
+  const yaz = (v, ek = '') => (v == null ? '—' : `${v}${ek}`);
+
+  return (
+    <>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
+        {[7, 30, 90].map((g) => (
+          <button
+            key={g}
+            onClick={() => setGun(g)}
+            style={{
+              padding: '6px 14px', borderRadius: 9, cursor: 'pointer', fontFamily: 'inherit',
+              fontSize: 12, fontWeight: 700,
+              border: `1px solid ${gun === g ? R.bakir : R.cizgi3}`,
+              background: gun === g ? `${R.bakir}22` : 'transparent',
+              color: gun === g ? R.bakirAcik : R.metin2,
+            }}
+          >{g} gün</button>
+        ))}
+        <span style={{ fontSize: 11.5, color: R.not2, alignSelf: 'center', marginLeft: 'auto' }}>
+          {veri.oturum_sayisi} oturum kayıtlı
+        </span>
+      </div>
+
+      {/* ⚠️ SAHTE KESİNLİK YASAĞI görünür hâli: eşik altında medyan YAZILMAZ ve
+          NEDEN yazılmadığı söylenir. "Az veri" sessizce 0 diye gösterilemez. */}
+      {!yeterli && (
+        <div style={{
+          ...kartYuzey, padding: '11px 15px', marginBottom: 12, fontSize: 12.5,
+          color: R.metin2, borderLeft: `3px solid ${R.amber}`, lineHeight: 1.6,
+        }}>
+          ⚠ <b style={{ color: R.krem }}>Henüz yeterli veri yok</b> — {veri.oturum_sayisi} oturum
+          kayıtlı, eşik {veri.esik}. Medyanlar bu yüzden yazılmıyor: az örnekten
+          medyan çıkarmak ölçüm değil <b>gürültüdür</b>.
+        </div>
+      )}
+
+      <KpiSeridi kpiler={[
+        {
+          etiket: 'İlk anlamlı eyleme',
+          deger: yaz(veri.M1_ilk_eyleme_sn, ' sn'),
+          alt: 'medyan · açılıştan ilk işe',
+          renk: veri.M1_ilk_eyleme_sn == null ? R.not : R.krem,
+        },
+        {
+          etiket: 'Eylemsiz oturum',
+          deger: yaz(veri.M2_eylemsiz_oturum_orani, '%'),
+          alt: 'ASIL METRİK · düşmesi iyi',
+          renk: veri.M2_eylemsiz_oturum_orani == null ? R.not
+            : veri.M2_eylemsiz_oturum_orani >= 70 ? R.kirmizi
+              : veri.M2_eylemsiz_oturum_orani >= 40 ? R.amber : R.yesil,
+        },
+        {
+          etiket: 'Madde ömrü',
+          deger: yaz(veri.M3_madde_omru_gun, ' gün'),
+          alt: 'kuyruğa girişten veriyle düşüşe',
+          renk: R.krem,
+        },
+        {
+          etiket: 'Kronik madde',
+          deger: String(veri.M4_kronik_madde ?? 0),
+          alt: "7 günden uzun süredir kuyrukta",
+          renk: (veri.M4_kronik_madde || 0) > 0 ? R.amber : R.yesil,
+        },
+        {
+          etiket: 'Ölçüm işi isabeti',
+          deger: yaz(veri.M5_s1_isabet_orani, '%'),
+          alt: '“ölçüm bozuk” maddeleri 7 günde kapandı mı',
+          renk: veri.M5_s1_isabet_orani == null ? R.not
+            : veri.M5_s1_isabet_orani >= 60 ? R.yesil : R.amber,
+        },
+      ]} />
+
+      <div style={{ ...kartYuzey, padding: '14px 18px', fontSize: 12.5, color: R.metin2, lineHeight: 1.7 }}>
+        <b style={{ color: R.krem, fontSize: 13 }}>Bu sayılar ne söyler, ne söylemez</b>
+        <div style={{ marginTop: 7 }}>{veri.not}</div>
+      </div>
+    </>
+  );
+}
+
 export function SistemModulu({ gorunum, onCekmece, onKopru, onToast }) {
   // ── EXCEL IMPORT (2026-07-31) — iz defteri vardı, YÜKLEME yoktu ────────────
   // Uç multipart ister → api() JSON-only olduğu için ham fetch kullanılır
@@ -1889,6 +2005,23 @@ export function SistemModulu({ gorunum, onCekmece, onKopru, onToast }) {
       setTmzMesgul(false);
     }
   };
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // 📊 EKRAN ÖLÇÜMÜ (2026-08-26) — "BAKIŞ iş üretiyor mu?"
+  // ══════════════════════════════════════════════════════════════════════════
+  // `bakis_olcum_api` M1–M5'i topluyordu ve 24+ oturum verisi birikmişti ama
+  // OKUNACAK BİR EKRAN YOKTU — yalnız curl ile ulaşılabiliyordu. Bütün gün
+  // düzelttiğim kusurun aynısı (kapısı olmayan çekmece), bu sefer kendi
+  // yazdığım kodda. Üstelik daha kötüsü: bu ölçüm "ekran işe yarıyor mu?"
+  // sorusuna cevap vermek için kuruldu; ekranı olmadıkça o soru HİÇ
+  // cevaplanmayacaktı.
+  //
+  // ⚠️ SAHTE KESİNLİK YOK: uç eşik altında (10 oturum) medyan döndürmüyor,
+  // ekran da "yeterli veri yok" der — küçük örnekten medyan basmak ölçüm değil
+  // gürültüdür.
+  if (gorunum === 'olcum') {
+    return <EkranOlcumu onToast={onToast} />;
+  }
 
   if (gorunum === 'excel') {
     // DUYU 6/6 (2026-07-29): "Yükleme geçmişi kayıt altına alınmıyor" eksiği

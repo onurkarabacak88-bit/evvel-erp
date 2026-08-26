@@ -338,6 +338,11 @@ export const MODULLER = [
     { id: 'excel', ad: 'Excel Import' },
     { id: 'teslim', ad: 'Bilgi Teslim', rozet: 'bilgiTeslim', renk: '#60A5FA' },
     { id: 'temizle', ad: 'Veri Temizle' },
+    // 📊 EKRAN ÖLÇÜMÜ (2026-08-26) — "BAKIŞ iş üretiyor mu?"
+    // ⚠️ BAKIŞ'a 5. sekme olarak EKLENMEDİ: karar ekranını kendi ölçüm aletiyle
+    // kalabalıklaştırmak, ölçtüğü şeyi bozmak olurdu. Burası "sistem kendi
+    // hâlini raporlar" evi — ölçüm oraya ait.
+    { id: 'olcum', ad: 'Ekran Ölçümü' },
     // Emeklilik kapısı: klasik tasarım silinmedi, acil durumda buradan açılır.
     { id: 'klasik', ad: 'Klasik Tasarım' },
   ]},

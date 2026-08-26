@@ -198,7 +198,8 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
       .then(() => onToast?.(
         karar === 'cozuldu' ? '✓ Çözüldü olarak işaretlendi'
           : karar === 'uygulandi' ? '✓ Uygulandı — akıbet defterine yazıldı'
-            : '✗ Yanlış alarm olarak işaretlendi'))
+            : karar === 'ertelendi' ? '⏸ Ertelendi — öneri duruyor, kararın deftere yazıldı'
+              : '✗ Yanlış alarm olarak işaretlendi'))
       .catch(() => {
         setIsaretliler((p) => { const q = { ...p }; delete q[ref]; return q; });
         onToast?.('İşaret kaydedilemedi');
@@ -1648,9 +1649,28 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
                 tutar: o.tutar != null || o.tavsiye_tutar != null ? fmt(sayi(o.tutar ?? o.tavsiye_tutar)) : '',
                 tier: /KIRMIZI|kritik/i.test(String(o.renk || o.oncelik || '')) ? 'kritik'
                   : /TURUNCU|uyari/i.test(String(o.renk || o.oncelik || '')) ? 'uyari' : 'bilgi',
+                // ⚠️ (2026-08-26) DEFTER YALNIZ "EVET"İ ÖĞRENİYORDU.
+                // "Uyguladım" vardı, "gördüm ama şimdi değil" YOKTU. İki sonuç:
+                //   1) Öneri-only yarım kalıyordu — sistem önerir, insan karar
+                //      verir; ama kararın "sonra" hâli hiçbir yere yazılamıyordu.
+                //   2) Aynı öneri her sabah geri geliyor ve SUSTURULAMIYORDU.
+                // ⚠️ "Ertele" bir SUSTURMA DEĞİL, bir KARAR: öneri kaybolmaz,
+                // rozetle görünür kalır ve defterde izi olur. Sistemin öğrenmesi
+                // için "hayır"lar da "evet"ler kadar gerekli.
                 ...(isaret === 'uygulandi'
                   ? { rozet: 'uygulandı ✓', rozetRenk: R.yesil }
-                  : { aksiyonlar: [{ ad: '✓ Uyguladım', birincil: true, onTikla: () => bulguIsaretle(ref, 'uygulandi') }] }),
+                  : isaret === 'ertelendi'
+                    ? {
+                      rozet: 'ertelendi · şimdi değil',
+                      rozetRenk: R.not2,
+                      aksiyonlar: [{ ad: '✓ Uyguladım', birincil: true, onTikla: () => bulguIsaretle(ref, 'uygulandi') }],
+                    }
+                    : {
+                      aksiyonlar: [
+                        { ad: '✓ Uyguladım', birincil: true, onTikla: () => bulguIsaretle(ref, 'uygulandi') },
+                        { ad: 'Şimdi değil', onTikla: () => bulguIsaretle(ref, 'ertelendi') },
+                      ],
+                    }),
               };
             })}
             onAc={({ _o, _ref }) => onCekmece?.({
@@ -1661,7 +1681,13 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
                 { etiket: 'Tavsiye tutar', deger: (_o.tutar != null || _o.tavsiye_tutar != null) ? fmt(sayi(_o.tutar ?? _o.tavsiye_tutar)) : '—' },
                 { etiket: 'Öncelik', deger: String(_o.oncelik || _o.renk || 'normal').toLowerCase() },
                 { etiket: 'Tür', deger: String(_o.oneri_turu || '—').toLowerCase() },
-                { etiket: 'Akıbet', deger: isaretliler[_ref] === 'uygulandi' ? 'uygulandı' : 'bekliyor', renk: isaretliler[_ref] === 'uygulandi' ? R.yesil : R.amber },
+                {
+                  etiket: 'Akıbet',
+                  deger: isaretliler[_ref] === 'uygulandi' ? 'uygulandı'
+                    : isaretliler[_ref] === 'ertelendi' ? 'ertelendi' : 'bekliyor',
+                  renk: isaretliler[_ref] === 'uygulandi' ? R.yesil
+                    : isaretliler[_ref] === 'ertelendi' ? R.not2 : R.amber,
+                },
               ],
               listeBaslik: 'Gerekçe',
               satirlar: [
