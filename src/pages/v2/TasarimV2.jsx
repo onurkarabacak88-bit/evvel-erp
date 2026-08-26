@@ -1085,6 +1085,32 @@ export default function TasarimV2({ onGit }) {
 
   function PanelBugun() {
     const d = veri;
+    // 📐 MANŞET SAYISI (2026-08-26): "kaç gün dayanır" bağlam şeridine düşmüştü,
+    // oysa nakit sıkışık bir sahip için EN kritik metrik bu. Ayrı const'a alındı
+    // ve manşete taşındı; "nakit payı / kart payı" ise bağlama indi — onlar
+    // karar değil BAĞLAM (günün cirosu zaten manşette).
+    const dayaniklilikKpi = panel ? (() => {
+        // ⚠️ (Codex 2026-08-26) nakitKonum DÜŞERSE sessizce tek sayıya
+        // dönüyordu ve sahip onu KESİN sayı okuyordu. Okunamadı ≠ fark yok.
+        const nkOkunamadi = !nakitKonum || nakitKonum === '__HATA__';
+        const altUc = !nkOkunamadi && nakitKonum.mutabakatsiz_ciddi
+          ? (nakitKonum.kac_gun_dayanir_dogrulanmis ?? null) : null;
+        const aralikVar = altUc != null && gunDayanir > 0 && altUc < gunDayanir;
+        return {
+          etiket: 'Kaç gün dayanır',
+          deger: panel?.kac_gun_dayanir == null ? '—'
+            : aralikVar ? `${trSayi(altUc, 0)}–${trSayi(gunDayanir, 0)} gün`
+              : `${trSayi(gunDayanir, 0)} gün`,
+          alt: aralikVar ? 'alt uç: yalnız doğrulanmış nakit'
+            : nkOkunamadi ? '⚠ doğrulama okunamadı — bu sayı iyimser olabilir'
+              : 'ciro dursa bile',
+          // Renk KÖTÜMSER uçtan okunur: aralığın üst ucuna göre yeşil demek,
+          // doğrulanmamış parayla rahatlamak olurdu.
+          renk: (() => { const k = aralikVar ? altUc : gunDayanir;
+            return k >= 30 ? R.yesil : k >= 10 ? R.amber : R.kirmizi; })(),
+        };
+    })() : null;
+
     const kpiler = [
       // Sparkline: GERÇEK son 14 gün serisi (uydurma seed yok)
       // ETİKET TÜRETME (handoff zorunlu kuralı): geçmiş günde "Bugün" geçen her
@@ -1126,32 +1152,6 @@ export default function TasarimV2({ onGit }) {
     // kasa/serbest nakit/dayanma/yük/ay cirosu — v2 Bugün'e taşındı. Kaynak
     // alanlar birebir /api/panel (kasa = kanonik).
     const gunDayanir = sayi(panel?.kac_gun_dayanir);
-    // 📐 MANŞET SAYISI (2026-08-26): "kaç gün dayanır" bağlam şeridine düşmüştü,
-    // oysa nakit sıkışık bir sahip için EN kritik metrik bu. Ayrı const'a alındı
-    // ve manşete taşındı; "nakit payı / kart payı" ise bağlama indi — onlar
-    // karar değil BAĞLAM (günün cirosu zaten manşette).
-    const dayaniklilikKpi = panel ? (() => {
-        // ⚠️ (Codex 2026-08-26) nakitKonum DÜŞERSE sessizce tek sayıya
-        // dönüyordu ve sahip onu KESİN sayı okuyordu. Okunamadı ≠ fark yok.
-        const nkOkunamadi = !nakitKonum || nakitKonum === '__HATA__';
-        const altUc = !nkOkunamadi && nakitKonum.mutabakatsiz_ciddi
-          ? (nakitKonum.kac_gun_dayanir_dogrulanmis ?? null) : null;
-        const aralikVar = altUc != null && gunDayanir > 0 && altUc < gunDayanir;
-        return {
-          etiket: 'Kaç gün dayanır',
-          deger: panel?.kac_gun_dayanir == null ? '—'
-            : aralikVar ? `${trSayi(altUc, 0)}–${trSayi(gunDayanir, 0)} gün`
-              : `${trSayi(gunDayanir, 0)} gün`,
-          alt: aralikVar ? 'alt uç: yalnız doğrulanmış nakit'
-            : nkOkunamadi ? '⚠ doğrulama okunamadı — bu sayı iyimser olabilir'
-              : 'ciro dursa bile',
-          // Renk KÖTÜMSER uçtan okunur: aralığın üst ucuna göre yeşil demek,
-          // doğrulanmamış parayla rahatlamak olurdu.
-          renk: (() => { const k = aralikVar ? altUc : gunDayanir;
-            return k >= 30 ? R.yesil : k >= 10 ? R.amber : R.kirmizi; })(),
-        };
-    })() : null;
-
     const cfoKpiler = panel ? [
       // Ödeme tipi kırılımı KARAR değil BAĞLAM: günün cirosu zaten manşette.
       { etiket: 'Nakit', deger: fmt(d.gunNakit), alt: `payı %${yuzde(d.gunNakit, d.gunToplam).toFixed(0)}`, renk: R.krem },
