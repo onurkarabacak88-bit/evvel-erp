@@ -1090,8 +1090,7 @@ export default function TasarimV2({ onGit }) {
       // ETİKET TÜRETME (handoff zorunlu kuralı): geçmiş günde "Bugün" geçen her
       // etiket O GÜNÜN tarihine çevrilir — yoksa arayüz yalan söyler.
       { etiket: gunEtiketi('ciro'), deger: fmt(d.gunToplam), alt: `${d.subeGunListe.length} şube · ${kisaGun(d.odakGun)}`, seri: d.seri },
-      { etiket: 'Nakit', deger: fmt(d.gunNakit), alt: `payı %${yuzde(d.gunNakit, d.gunToplam).toFixed(0)}`, renk: R.krem },
-      { etiket: 'Kart + online', deger: fmt(d.gunKart), alt: `payı %${yuzde(d.gunKart, d.gunToplam).toFixed(0)}`, renk: R.krem },
+
       // Etiket artık YALAN SÖYLEMİYOR: gecikmiş ile bugün ayrı. Canlıda
       // "Bugün ödenecek 946.018 ₺" deniyordu ama bugüne ait hiç kalem yoktu.
       gecikmisToplam > 0
@@ -1112,25 +1111,26 @@ export default function TasarimV2({ onGit }) {
           alt: `${gercekBugunOdemeler.length} kalem · vadesi bugün`,
           renk: gercekBugunToplam > 0 ? R.amber : R.yesil,
         },
+      // Nakit sıkışık bir sahip için EN kritik metrik — manşette durur.
+      ...(dayaniklilikKpi ? [dayaniklilikKpi] : []),
+      // Gecikmiş ayrı KPI olduğunda bugünkü de görünsün — ikisi farklı iş:
+      // gecikmiş "neden ödenmedi", bugünkü "bugün öde".
+      ...(gecikmisToplam > 0 ? [{
+        etiket: 'Bugün vadesi gelen',
+        deger: fmt(gercekBugunToplam),
+        alt: gercekBugunOdemeler.length ? `${gercekBugunOdemeler.length} kalem` : 'bugüne ait kalem yok',
+        renk: gercekBugunToplam > 0 ? R.amber : R.yesil,
+      }] : []),
     ];
     // CFO HIZLI BAKIŞ (sahip 2026-07-29): klasik CFO panelin "tek bakışta" özeti —
     // kasa/serbest nakit/dayanma/yük/ay cirosu — v2 Bugün'e taşındı. Kaynak
     // alanlar birebir /api/panel (kasa = kanonik).
     const gunDayanir = sayi(panel?.kac_gun_dayanir);
-    const cfoKpiler = panel ? [
-      { etiket: 'Kasa', deger: fmt(sayi(panel.kasa)), alt: 'kanonik · kasa izi', renk: R.yesil },
-      { etiket: 'Serbest nakit', deger: fmt(sayi(panel.serbest_nakit)), alt: 'zorunlu yük sonrası', renk: sayi(panel.serbest_nakit) >= 0 ? R.krem : R.kirmizi },
-      // 🟡 (2026-08-12): gerçek "0 gün" (nakit bitti — en kritik alarm) truthy
-      // kontrolde '—' oluyordu. null/undefined = ölçülemedi, 0 = gerçek alarm.
-      // 📉 ARALIK (2026-08-26) — tek sayı SAHTE KESİNLİKTİ.
-      // "23 gün" kasanın DOĞRULANMAMIŞ toplamından türüyordu; kardeş ekran
-      // BAKIŞ aynı metriği "12–23 gün" gösteriyor. Nakit sıkışık bir sahip için
-      // en hayati metrikte iki ekranın iki cevap vermesi, en pahalı güven
-      // kaybıdır: sahip 23'e demir atar, gerçek 12 çıkarsa faturayı ekrana
-      // değil SİSTEME keser.
-      // ⚠️ Alt uç SUNUCUDAN gelir (nakit-konum · kac_gun_dayanir_dogrulanmis);
-      // burada bölme YAPILMAZ. Uç hesaplayamazsa tek sayıya düşülür.
-      (() => {
+    // 📐 MANŞET SAYISI (2026-08-26): "kaç gün dayanır" bağlam şeridine düşmüştü,
+    // oysa nakit sıkışık bir sahip için EN kritik metrik bu. Ayrı const'a alındı
+    // ve manşete taşındı; "nakit payı / kart payı" ise bağlama indi — onlar
+    // karar değil BAĞLAM (günün cirosu zaten manşette).
+    const dayaniklilikKpi = panel ? (() => {
         // ⚠️ (Codex 2026-08-26) nakitKonum DÜŞERSE sessizce tek sayıya
         // dönüyordu ve sahip onu KESİN sayı okuyordu. Okunamadı ≠ fark yok.
         const nkOkunamadi = !nakitKonum || nakitKonum === '__HATA__';
@@ -1150,17 +1150,24 @@ export default function TasarimV2({ onGit }) {
           renk: (() => { const k = aralikVar ? altUc : gunDayanir;
             return k >= 30 ? R.yesil : k >= 10 ? R.amber : R.kirmizi; })(),
         };
-      })(),
-      // Gecikmiş ayrı KPI olduğunda bugünkü de görünsün — ikisi farklı iş:
-      // gecikmiş "neden ödenmedi", bugünkü "bugün öde".
-      ...(gecikmisToplam > 0 ? [{
-        etiket: 'Bugün vadesi gelen',
-        deger: fmt(gercekBugunToplam),
-        alt: gercekBugunOdemeler.length
-          ? `${gercekBugunOdemeler.length} kalem`
-          : 'bugüne ait kalem yok',
-        renk: gercekBugunToplam > 0 ? R.amber : R.yesil,
-      }] : []),
+    })() : null;
+
+    const cfoKpiler = panel ? [
+      // Ödeme tipi kırılımı KARAR değil BAĞLAM: günün cirosu zaten manşette.
+      { etiket: 'Nakit', deger: fmt(d.gunNakit), alt: `payı %${yuzde(d.gunNakit, d.gunToplam).toFixed(0)}`, renk: R.krem },
+      { etiket: 'Kart + online', deger: fmt(d.gunKart), alt: `payı %${yuzde(d.gunKart, d.gunToplam).toFixed(0)}`, renk: R.krem },
+      { etiket: 'Kasa', deger: fmt(sayi(panel.kasa)), alt: 'kanonik · kasa izi', renk: R.yesil },
+      { etiket: 'Serbest nakit', deger: fmt(sayi(panel.serbest_nakit)), alt: 'zorunlu yük sonrası', renk: sayi(panel.serbest_nakit) >= 0 ? R.krem : R.kirmizi },
+      // 🟡 (2026-08-12): gerçek "0 gün" (nakit bitti — en kritik alarm) truthy
+      // kontrolde '—' oluyordu. null/undefined = ölçülemedi, 0 = gerçek alarm.
+      // 📉 ARALIK (2026-08-26) — tek sayı SAHTE KESİNLİKTİ.
+      // "23 gün" kasanın DOĞRULANMAMIŞ toplamından türüyordu; kardeş ekran
+      // BAKIŞ aynı metriği "12–23 gün" gösteriyor. Nakit sıkışık bir sahip için
+      // en hayati metrikte iki ekranın iki cevap vermesi, en pahalı güven
+      // kaybıdır: sahip 23'e demir atar, gerçek 12 çıkarsa faturayı ekrana
+      // değil SİSTEME keser.
+      // ⚠️ Alt uç SUNUCUDAN gelir (nakit-konum · kac_gun_dayanir_dogrulanmis);
+      // burada bölme YAPILMAZ. Uç hesaplayamazsa tek sayıya düşülür.
       { etiket: '7 gün yükü', deger: fmt(sayi(panel.yuk_7)), alt: 'vadesi gelen ödemeler' },
       { etiket: '30 gün yükü', deger: fmt(sayi(panel.yuk_30)), alt: 'aylık zorunlu çıkış' },
       // 🔵 (2026-08-14) 'Bu ay ciro' kartı KALDIRILDI: Bugün görünümü zaten 2 KPI
@@ -1197,7 +1204,18 @@ export default function TasarimV2({ onGit }) {
         _hedef: o.odeme_id ? '__modul:odeme:bekleyen' : '',
       })),
     ];
-    const oneriListe = tumOneriler.slice(0, 6);
+    // ══════════════════════════════════════════════════════════════════════
+    // 📌 ÖNERİ KUYRUĞU TEK EVE İNDİ (2026-08-26) — Bugün'de MANŞET, tam liste
+    //    Strateji'de
+    // ══════════════════════════════════════════════════════════════════════
+    // Aynı kuyruk ÜÇ yerde listeleniyordu: Bugün (ilk 6), Riskler (tamamı),
+    // Strateji Önerileri (kanonik ev). Aynı kararı üç ekranda görmek onu üç kez
+    // ertelemeye yarar: sahip her birinde "bunu zaten gördüm" der ve hiçbirinde
+    // karar vermez. Kardeş ekran BAKIŞ da aynı çözümü kullanıyor: kuyrukta
+    // YALNIZ en kritik öneri, gerisi kendi evinde.
+    //
+    // ⚠️ BİLGİ GİZLENMİYOR: kaç öneri olduğu ve nerede oldukları YAZILIR.
+    const oneriListe = tumOneriler.slice(0, 1);
 
     return (
       <>
@@ -1267,8 +1285,30 @@ export default function TasarimV2({ onGit }) {
           );
         })()}
 
+        {/* ══════════════════════════════════════════════════════════════════
+            📐 RÜTBE (2026-08-26) — 10 KPI aynı sesle bağırıyordu
+            ══════════════════════════════════════════════════════════════════
+            Ölçüm: Bugün görünümünde 12 büyük rakam vardı ve SEKİZİ tam aynı
+            puntoda (22px), aynı kontrastta. Ön-dikkatsel işlemede her şey
+            pop-out ise hiçbir şey pop-out değildir — göz hiyerarşi bulamıyor.
+            Üstelik en baskın öğe (44px) geçmiş bir günün cirosuydu; karar
+            açısından en önemsiz sayı görsel olarak en büyüğüydü.
+
+            ⚠️ HİÇBİR SAYI GİZLENMEDİ — yalnız RÜTBE verildi. Manşet şeridi
+            normal boyda (günün kararını taşıyan dört rakam), bağlam şeridi
+            `sik` (kompakt). Gizlemek bilgi kaybıdır; rütbelemek okumayı kurar. */}
         <KpiSeridi kpiler={kpiler} />
-        {cfoKpiler.length > 0 && <KpiSeridi kpiler={cfoKpiler} />}
+        {cfoKpiler.length > 0 && (
+          <>
+            <div style={{
+              fontSize: 10, letterSpacing: '.7px', textTransform: 'uppercase',
+              color: R.not2, fontWeight: 700, margin: '2px 2px 6px',
+            }}>
+              Bağlam · kasa ve yük
+            </div>
+            <KpiSeridi sik kpiler={cfoKpiler} />
+          </>
+        )}
         <Hero
           etiket={`${gunEtiketi('baslik')} · son 14 gün ritmi`}
           deger={fmt(d.gunToplam)}
@@ -1313,11 +1353,18 @@ export default function TasarimV2({ onGit }) {
           <>
             <Liste satirlar={oneriListe} onAc={(l) => koprule(l._hedef)} />
             {/* Kesme notu: liste sessizce kırpılmasın — kalanın nerede olduğu yazılır. */}
-            {tumOneriler.length > 6 && (
-              <div style={{ fontSize: 11, color: R.not2, padding: '8px 4px 0' }}>
-                ilk 6 / {tumOneriler.length} öneri · tamamı Riskler görünümünde
-              </div>
-            )}
+            <div
+              onClick={() => koprule('__modul:panel:strateji')}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); koprule('__modul:panel:strateji'); } }}
+              style={{ fontSize: 11.5, color: R.not2, padding: '8px 4px 0', cursor: 'pointer', outline: 'none' }}
+            >
+              {tumOneriler.length > 1
+                ? <>en kritik öneri gösteriliyor · <b style={{ color: R.metin2 }}>{tumOneriler.length - 1} öneri daha</b></>
+                : 'tek açık öneri'}
+              <span style={{ color: R.bakir }}> · Strateji Önerileri’ne git →</span>
+            </div>
           </>
         ) : (
           <div style={{ ...kartYuzey, padding: '28px 24px', textAlign: 'center', color: R.not, fontSize: 13 }}>
