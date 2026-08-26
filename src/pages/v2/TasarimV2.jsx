@@ -998,6 +998,22 @@ export default function TasarimV2({ onGit }) {
           : <PanelRisk />;
     return (
       <>
+        {/* ⚠️ KIRPILMA UYARISI PANEL GENELİNE ÇIKTI (2026-08-26, Codex bulgusu)
+            Eskiden yalnız Ay görünümünde vardı. Oysa `/ciro?limit=600` listesi
+            ÜÇ görünümü birden besliyor: Bugün (gün toplamı, nakit/kart kırılımı,
+            14 günlük seri), Şube Karnesi (şube payları, ay toplamı) ve Ay Özeti.
+            Uyarıyı tek görünüme hapsetmek, diğer ikisinde SESSİZ eksik sayım
+            demekti — sahip Bugün ekranında kırpılmış bir toplamı tam sanıyordu. */}
+        {veri?.ciroKirpildi && (
+          <div style={{
+            ...kartYuzey, padding: '10px 16px', marginBottom: 12,
+            borderLeft: `3px solid ${R.amber}`, fontSize: 12, color: R.metin2, lineHeight: 1.6,
+          }}>
+            ⚠ Ciro kaydı <b style={{ color: R.krem }}>600 satır tavanına</b> ulaştı —
+            gün toplamı, şube payları ve 14 günlük seri <b>eksik sayabilir</b>.
+            Ay cirosu ve günlük ortalama bundan etkilenmez (sunucudan gelir).
+          </div>
+        )}
         {dusenUclar.length > 0 && (
           <div style={{
             ...kartYuzey, padding: '11px 15px', marginBottom: 12, fontSize: 12.5,
@@ -1389,7 +1405,16 @@ export default function TasarimV2({ onGit }) {
     const ayOnline = sayi(panel?.bu_ay_online);
     // 🐞 K7 (canlı denetim): ortalama + "Ay cirosu" TEK KAYNAK (artık brüt bu_ay_ciro || d.ayToplam,
     // ikisi de brüt). Eskiden ortalama istemci d.ayToplam, ciro sunucu bu_ay_sadece_ciro'ydu → 694₺ drift.
-    const gunOrt = d.gunSayisi ? ayCiro / d.gunSayisi : 0;
+    // ⚠️ (2026-08-26, Codex) BÖLEN ARTIK SUNUCUDAN.
+    // Eski hâl: `ayCiro / d.gunSayisi` — bölen istemcide `/ciro?limit=600`
+    // listesinden sayılıyordu. 600 tavanına ulaşıldığında bölen EKSİK kalır ve
+    // ortalama OLDUĞUNDAN BÜYÜK çıkar; üstelik kırpılma uyarısı yalnız bu
+    // görünümdeydi. Kırpılmış listeden bölen saymak sessiz bir çarpıtmadır.
+    // Sunucu hem böleni hem sonucu veriyor; istemci BÖLMEZ.
+    // Alan gelmezse eski yola düşülür ama bu AÇIKÇA söylenir (alt yazıda).
+    const gunOrtSunucu = panel?.bu_ay_gunluk_ort != null ? sayi(panel.bu_ay_gunluk_ort) : null;
+    const kayitGunu = panel?.bu_ay_ciro_gun_adet != null ? sayi(panel.bu_ay_ciro_gun_adet) : d.gunSayisi;
+    const gunOrt = gunOrtSunucu != null ? gunOrtSunucu : (d.gunSayisi ? ayCiro / d.gunSayisi : 0);
     // Onay sayacı: Riskler'deki KASA ayrımının aynısı (124 kasa hatası
     // burada da "onay bekleyen" diye görünüyordu).
     // 🗄️ Liste de tutulur (yalnız sayı değil): çekmece onu gösterecek.
@@ -1398,8 +1423,15 @@ export default function TasarimV2({ onGit }) {
     const gercekOnay = onaylar.length - kasaHatasiAdet;
 
     const kpiler = [
-      { etiket: 'Ay cirosu', deger: fmt(ayCiro), alt: `${d.gunSayisi} gün kayıt · ${d.ayOnEk}` },
-      { etiket: 'Günlük ortalama', deger: fmt(gunOrt), alt: 'kayıtlı günler üzerinden', renk: R.krem },
+      { etiket: 'Ay cirosu', deger: fmt(ayCiro), alt: `${kayitGunu} gün kayıt · ${d.ayOnEk}` },
+      {
+        etiket: 'Günlük ortalama',
+        deger: fmt(gunOrt),
+        alt: gunOrtSunucu != null
+          ? `${kayitGunu} kayıtlı gün üzerinden`
+          : '⚠ istemci hesabı — kırpılmış listeden, olduğundan büyük olabilir',
+        renk: gunOrtSunucu != null ? R.krem : R.amber,
+      },
       { etiket: 'Kasa + banka', deger: fmt(kasaBanka), alt: 'anlık toplam', renk: kasaBanka > 0 ? R.yesil : R.kirmizi },
       {
         etiket: 'Onay bekleyen',
@@ -1437,13 +1469,6 @@ export default function TasarimV2({ onGit }) {
 
     return (
       <>
-        {/* 🔴 EVV-PANEL-N4: /ciro 600 satır tavanına ulaştıysa ay toplamı/şube kırılımı
-            eksik sayabilir — sessiz undercount yerine açık uyarı. */}
-        {d.ciroKirpildi && (
-          <div style={{ ...kartYuzey, padding: '10px 16px', marginBottom: 12, borderLeft: `3px solid ${R.amber}`, fontSize: 12, color: R.metin2 }}>
-            ⚠ Ciro kaydı 600 satır tavanına ulaştı — bu aydaki bazı günler toplama girmemiş olabilir. Aylık rakam kanonik değil, kırılım eksik olabilir.
-          </div>
-        )}
         {/* 🔵 (2026-08-14) Ay toplamının en büyük sessiz yanılgısı: girilmemiş gün
             SIFIR sayılır → ay toplamı o kadar eksik çıkar. Bugün görünümünde şerit
             vardı, Ay'da yoktu — oysa yanılgının vurduğu rakam tam burada. */}

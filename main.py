@@ -2238,6 +2238,26 @@ def panel():
                                        if _oc.get('ort') is not None else None)
             ozet['gunluk_ort_ciro_gun_adet'] = int(_oc.get('gun_adet') or 0)
 
+            # 📅 BU AYIN KAYIT GÜNÜ + GÜNLÜK ORTALAMASI
+            # ⚠️ (2026-08-26, Codex) Panel "Günlük ortalama"yı
+            # `bu_ay_ciro / d.gunSayisi` ile hesaplıyordu; BÖLEN istemcide
+            # `/ciro?limit=600` listesinden sayılıyordu. 600 tavanına
+            # ulaşıldığında bölen EKSİK kalıyor ve ortalama OLDUĞUNDAN BÜYÜK
+            # çıkıyordu — üstelik uyarı yalnız Ay görünümünde vardı.
+            # Kırpılmış listeden bölen saymak, sessiz bir çarpıtmadır.
+            # Hem bölen hem sonuç artık sunucudan gelir; istemci BÖLMEZ.
+            cur.execute("""
+                SELECT COUNT(DISTINCT tarih) AS gun_adet
+                  FROM ciro
+                 WHERE COALESCE(durum,'aktif')='aktif'
+                   AND tarih >= date_trunc('month', CURRENT_DATE)
+                   AND tarih <  date_trunc('month', CURRENT_DATE) + INTERVAL '1 month'
+            """)
+            _ag = int((dict(cur.fetchone() or {})).get('gun_adet') or 0)
+            ozet['bu_ay_ciro_gun_adet'] = _ag
+            ozet['bu_ay_gunluk_ort'] = (round(ozet.get('bu_ay_ciro', 0.0) / _ag, 2)
+                                        if _ag else None)
+
             # 4) KART HAREKETLERİ — faiz + kart-kırılımları tek geçişte (eski 4 sorgu).
             #    NOT: kart_faizi orijinalinde durum şartı YOKTU — FILTER'larda birebir korunur.
             cur.execute("""
