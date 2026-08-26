@@ -1099,6 +1099,57 @@ export default function TasarimV2({ onGit }) {
     _hedef: '__modul:onaylar:kuyruk',
   });
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // 🗄️ VADE YÜKÜ ÇEKMECESİ (2026-08-26) — "7/30 gün yükü hangi ödemeler?"
+  // ══════════════════════════════════════════════════════════════════════════
+  // ⚠️ KAYNAK DOĞRULANDI, TAHMİN EDİLMEDİ. İlk aday `/odeme-plani/bugun?gun=7`
+  // idi ama o uç 1.916.917 ₺ döndürüyor; KPI ise 575.186 ₺ diyor — çünkü uç
+  // GECİKMİŞLERİ de içeriyor. O kaynakla kapı yapsaydım çekmece KENDİ AÇILDIĞI
+  // SAYIYI YALANLARDI; bu, kapı olmamasından kötüdür.
+  // Canlı ölçümle doğru filtre bulundu: vade bugün..+N (gecikmiş hariç) →
+  //   +7  = 575.186 ✓   +30 = 875.186 ✓   (KPI'larla birebir)
+  const vadeYukuCekmece = async (gun) => {
+    const bugun = bugunISO();
+    const son = new Date(`${bugun}T00:00:00Z`);
+    son.setUTCDate(son.getUTCDate() + gun);
+    const sonISO = son.toISOString().slice(0, 10);
+    setCekmece({
+      tip: `${gun} GÜN YÜKÜ`, baslik: `${gun} günlük vade yükü`,
+      alt: 'yükleniyor…', satirlar: [],
+    });
+    try {
+      const ham = await api(`/odeme-plani/bugun?gun=${gun}`);
+      const liste = (Array.isArray(ham) ? ham : (ham?.odemeler || []))
+        .filter((o) => { const v = _vadeAl(o); return v && v >= bugun && v <= sonISO; })
+        .sort((a2, b2) => _vadeAl(a2).localeCompare(_vadeAl(b2)));
+      const toplam = liste.reduce((t, o) => t + sayi(o.tutar), 0);
+      setCekmece({
+        tip: `${gun} GÜN YÜKÜ`,
+        baslik: `${gun} günlük vade yükü`,
+        alt: `${liste.length} kalem · ${kisaGun(bugun)} → ${kisaGun(sonISO)}`,
+        kpi: [
+          { etiket: 'Toplam', deger: fmt(toplam), renk: R.amber },
+          { etiket: 'Kalem', deger: String(liste.length) },
+        ],
+        listeBaslik: 'Vadeye göre · yakından uzağa',
+        satirlar: liste.map((o) => ({
+          ad: String(o.baslik || o.ad || o.aciklama || 'Ödeme').slice(0, 80),
+          detay: `vade ${kisaGun(_vadeAl(o))}`,
+          tutar: fmt(sayi(o.tutar)),
+        })),
+        not: 'Gecikmişler bu listede YOK — onlar ayrı KPI’da. Bu liste yalnız vadesi henüz gelmemiş kalemler.',
+        aksiyonAd: 'Ödeme Merkezi’nde aç',
+        _hedef: '__modul:odeme:bekleyen',
+      });
+    } catch (e) {
+      setCekmece({
+        tip: `${gun} GÜN YÜKÜ`, baslik: `${gun} günlük vade yükü`,
+        alt: 'okunamadı', satirlar: [],
+        not: `Liste alınamadı: ${e?.message || 'bilinmeyen hata'}. Rakam uydurulmadı.`,
+      });
+    }
+  };
+
   function PanelBugun() {
     const d = veri;
     // ⚠️ `gunDayanir` BURADA tanımlanır: dayaniklilikKpi onu kullanıyor ve
@@ -1175,7 +1226,17 @@ export default function TasarimV2({ onGit }) {
       // Ödeme tipi kırılımı KARAR değil BAĞLAM: günün cirosu zaten manşette.
       { etiket: 'Nakit', deger: fmt(d.gunNakit), alt: `payı %${yuzde(d.gunNakit, d.gunToplam).toFixed(0)}`, renk: R.krem },
       { etiket: 'Kart + online', deger: fmt(d.gunKart), alt: `payı %${yuzde(d.gunKart, d.gunToplam).toFixed(0)}`, renk: R.krem },
-      { etiket: 'Kasa', deger: fmt(sayi(panel.kasa)), alt: 'kanonik · kasa izi', renk: R.yesil },
+      // 🔗 KASA: ikinci bir çekmece KURULMADI. Kasa ayrımının tam hâli (şube +
+      // işlem türü + banka mutabakatı + ikinci katman hareketler) BAKIŞ'ta
+      // zaten var; burada kopyası iki ayrı "kasa dökümü" doğurur ve ikisi bir
+      // gün ayrışır. Panel o tek gerçeğe KÖPRÜLER.
+      {
+        etiket: 'Kasa',
+        deger: fmt(sayi(panel.kasa)),
+        alt: 'kanonik · kasa izi · ayrım için tıkla',
+        renk: R.yesil,
+        onTikla: () => koprule('__modul:genel:akis'),   // tema.js:168 doğrulandı
+      },
       { etiket: 'Serbest nakit', deger: fmt(sayi(panel.serbest_nakit)), alt: 'zorunlu yük sonrası', renk: sayi(panel.serbest_nakit) >= 0 ? R.krem : R.kirmizi },
       // 🟡 (2026-08-12): gerçek "0 gün" (nakit bitti — en kritik alarm) truthy
       // kontrolde '—' oluyordu. null/undefined = ölçülemedi, 0 = gerçek alarm.
@@ -1187,8 +1248,8 @@ export default function TasarimV2({ onGit }) {
       // değil SİSTEME keser.
       // ⚠️ Alt uç SUNUCUDAN gelir (nakit-konum · kac_gun_dayanir_dogrulanmis);
       // burada bölme YAPILMAZ. Uç hesaplayamazsa tek sayıya düşülür.
-      { etiket: '7 gün yükü', deger: fmt(sayi(panel.yuk_7)), alt: 'vadesi gelen ödemeler' },
-      { etiket: '30 gün yükü', deger: fmt(sayi(panel.yuk_30)), alt: 'aylık zorunlu çıkış' },
+      { etiket: '7 gün yükü', deger: fmt(sayi(panel.yuk_7)), alt: 'vadesi gelen ödemeler', onTikla: () => vadeYukuCekmece(7) },
+      { etiket: '30 gün yükü', deger: fmt(sayi(panel.yuk_30)), alt: 'aylık zorunlu çıkış', onTikla: () => vadeYukuCekmece(30) },
       // 🔵 (2026-08-14) 'Bu ay ciro' kartı KALDIRILDI: Bugün görünümü zaten 2 KPI
       // şeridi + Hero taşıyor, en yoğun ekran burası. Aylık ciro Ay Özeti'nde
       // dağılım grafiği ve günlük ortalamayla birlikte daha zengin duruyor —
@@ -1276,13 +1337,28 @@ export default function TasarimV2({ onGit }) {
                 </span>
               </div>
               <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap', marginTop: 9 }}>
+                {/* 🚪 ÇİPLER ARTIK KAPI (2026-08-26) — eskiden ölü metindi.
+                    Bu şerit ekranın en üstünde durup "şu gün eksik" diyordu ama
+                    GİDECEK YER vermiyordu: sahip eksiği görüp Ciro Girişi'ni
+                    kendi bulmak zorundaydı. Göstermek yetmez, götürmek gerekir.
+                    Hedef `__modul:para:girisi` (tema.js:209) doğrulandı. */}
                 {ek.slice(0, 8).map((e) => (
-                  <span key={`${e.sube_id}${e.tarih}`} style={{
-                    padding: '4px 10px', borderRadius: 99, fontSize: 11.5,
-                    background: R.girinti, border: `1px solid ${R.cizgi3}`, color: R.metin2,
-                  }}>
+                  <span
+                    key={`${e.sube_id}${e.tarih}`}
+                    onClick={() => koprule('__modul:para:girisi')}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); koprule('__modul:para:girisi'); } }}
+                    title={`${e.sube_adi} · ${kisaGun(e.tarih)} — Ciro Girişi'ne git`}
+                    style={{
+                      padding: '4px 10px', borderRadius: 99, fontSize: 11.5, cursor: 'pointer',
+                      background: R.girinti, border: `1px solid ${R.cizgi3}`, color: R.metin2,
+                      outline: 'none',
+                    }}
+                  >
                     <b style={{ color: R.krem }}>{e.sube_adi}</b> · {kisaGun(e.tarih)}
                     <span style={{ color: R.not2 }}> ({e.gun_once} gün önce)</span>
+                    <span style={{ color: R.bakir, marginLeft: 5 }}>›</span>
                   </span>
                 ))}
                 {ek.length > 8 && (
