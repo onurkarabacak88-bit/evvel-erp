@@ -710,21 +710,71 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
           { etiket: 'Bugün anomali', deger: String(toplamAnomali),
             alt: `${olculen.length} şube tarandı${olculmeyen.length ? ` · ${olculmeyen.length} analiz edilmedi` : ''}`,
             renk: toplamAnomali > 0 ? R.kirmizi : (olculen.length ? R.yesil : R.amber) },
-          { etiket: 'Alarmlı şube', deger: String(alarmli.length), alt: alarmli.map((s) => s.sube_ad).join(' · ') || 'yok', renk: alarmli.length > 0 ? R.kirmizi : R.yesil },
+          // 🔴 CANLI GEZİNTİ (2026-08-27) — GUARD'I BU KPI'YA UYGULAMAYI ATLAMIŞIM.
+          // Kardeşi «Bugün anomali» ve «Uyumlu şube» `olculen.length` kapısını
+          // taşıyor ama burası taşımıyordu: HİÇBİR ŞUBE ÖLÇÜLMEMİŞKEN
+          // «Alarmlı şube 0 · yok» YEŞİL yazıyordu. Canlıda tam bu hâl vardı
+          // (5 şubenin 5'i «analiz edilmedi»). Ölçülmemiş evrende «alarm yok»
+          // demek, gözü kapalı «tehlike yok» demektir.
+          {
+            etiket: 'Alarmlı şube',
+            deger: olculen.length ? String(alarmli.length) : '—',
+            alt: alarmli.length ? alarmli.map((s) => s.sube_ad).join(' · ')
+              : (olculen.length ? 'yok' : '⚠ hiçbir şube ölçülmedi — «yok» denemez'),
+            renk: alarmli.length > 0 ? R.kirmizi : (olculen.length ? R.yesil : R.amber),
+          },
           { etiket: 'Uyumlu şube', deger: `${uyumlu.length} / ${olculen.length}`,
             alt: olculmeyen.length ? `ölçülen içinde · ${olculmeyen.map((s) => s.sube_ad).join(', ')} hariç` : 'ana tanı UYUMLU',
             renk: olculen.length ? R.yesil : R.not },
           { etiket: 'Tarih', deger: tarihKisa(rapor.tarih), alt: 'gece koşusu + gün içi' },
         ]} />
         {/* DUYU 3/6 — bulgu yaşam döngüsü: işaret defterinden türeyen ölçümler */}
-        {iziOzet && sayi(iziOzet.isaretli_bulgu) > 0 && (
-          <KpiSeridi kpiler={[
-            { etiket: 'Çözülen (30g)', deger: String(sayi(iziOzet.cozulen)), alt: 'insan işaretiyle', renk: R.yesil },
-            { etiket: 'Yanlış alarm', deger: String(sayi(iziOzet.yanlis_alarm)), alt: iziOzet.yanlis_alarm_orani_yuzde != null ? `oran %${iziOzet.yanlis_alarm_orani_yuzde}` : '—', renk: sayi(iziOzet.yanlis_alarm) > 0 ? R.amber : R.yesil },
-            { etiket: 'Ort. çözüm süresi', deger: iziOzet.ort_cozum_saat != null ? `${iziOzet.ort_cozum_saat} sa` : '—', alt: 'gece doğum varsayımıyla ≈' },
-            { etiket: 'İşaretli bulgu', deger: String(sayi(iziOzet.isaretli_bulgu)), alt: 'append-only defter' },
-          ]} />
-        )}
+        {/* 🚪 CANLI GEZİNTİ (2026-08-27) — KARAR DEFTERİ KPI'LARININ KANITI
+            EKRANDA YOKTU. Dört sayı da append-only defterden geliyor ama
+            defterin kendisi hiçbir yerde açılmıyordu: sahip «yanlış alarm 0»
+            görüyor, hangi kararların sayıldığını soramıyordu. Ölçülen şeyin
+            kendisi görünmezse, ölçüm bir iddiadır — kanıt değil.
+            ⚠️ YENİ UÇ ÇAĞRILMADI: `isaretli_refler` zaten bu yanıtın içinde
+            geliyordu, yalnız sayılıp atılıyordu. Eksik olan kapıydı. */}
+        {iziOzet && sayi(iziOzet.isaretli_bulgu) > 0 && (() => {
+          const refler = Array.isArray(iziOzet.isaretli_refler) ? iziOzet.isaretli_refler : [];
+          const kararAd = (k) => ({
+            uygulandi: 'uygulandı', cozuldu: 'çözüldü', yanlis_alarm: 'yanlış alarm',
+            ertelendi: 'ertelendi · şimdi değil', goruldu: 'görüldü',
+          }[k] || k || '—');
+          const kararRenk = (k) => ({
+            uygulandi: R.yesil, cozuldu: R.yesil, yanlis_alarm: R.amber, ertelendi: R.not2,
+          }[k] || R.not);
+          const defteriAc = () => onCekmece?.({
+            tip: 'KARAR DEFTERİ',
+            baslik: 'İnsan kararlarının izi',
+            alt: `${refler.length} kayıt · son ${sayi(iziOzet.kesit_gun) || 30} gün · append-only`,
+            kpi: [
+              { etiket: 'İşaretli bulgu', deger: String(sayi(iziOzet.isaretli_bulgu)) },
+              { etiket: 'Çözülen', deger: String(sayi(iziOzet.cozulen)), renk: R.yesil },
+              { etiket: 'Yanlış alarm', deger: String(sayi(iziOzet.yanlis_alarm)), renk: sayi(iziOzet.yanlis_alarm) > 0 ? R.amber : R.yesil },
+            ],
+            listeBaslik: 'Kararlar · en yeniden eskiye',
+            satirlar: refler.map((x) => ({
+              ad: String(x.ref || '—').slice(0, 70),
+              detay: kararAd(x.karar),
+              tutar: '',
+            })),
+            // ⚠️ Defter SİLİNMEZ: fikir değişirse yeni satır atılır, son satır
+            // geçerlidir. Bu çekmece salt okur — karar kartların üstünden verilir.
+            not: refler.length
+              ? 'Defter append-only: bir karar silinmez, fikir değişirse yeni satır atılır ve son satır geçerli olur. Bu çekmece salt okur; kararlar bulgu kartlarının üstündeki ✓/✗ ile verilir.'
+              : 'Bu kesitte işaretli karar yok — motorun isabeti ancak bulgulara ✓/✗ verildikçe ölçülebilir.',
+          });
+          return (
+            <KpiSeridi kpiler={[
+              { etiket: 'Çözülen (30g)', deger: String(sayi(iziOzet.cozulen)), alt: 'insan işaretiyle · deftere git', renk: R.yesil, onTikla: defteriAc },
+              { etiket: 'Yanlış alarm', deger: String(sayi(iziOzet.yanlis_alarm)), alt: iziOzet.yanlis_alarm_orani_yuzde != null ? `oran %${iziOzet.yanlis_alarm_orani_yuzde}` : 'oran ölçülemedi', renk: sayi(iziOzet.yanlis_alarm) > 0 ? R.amber : R.yesil, onTikla: defteriAc },
+              { etiket: 'Ort. çözüm süresi', deger: iziOzet.ort_cozum_saat != null ? `${iziOzet.ort_cozum_saat} sa` : '—', alt: 'gece doğum varsayımıyla ≈', onTikla: defteriAc },
+              { etiket: 'İşaretli bulgu', deger: String(sayi(iziOzet.isaretli_bulgu)), alt: 'append-only defter · aç', onTikla: defteriAc },
+            ]} />
+          );
+        })()}
         {/* ── İKİ KATMAN (sahip kararı 2026-07-30) ────────────────────────────
             Tasarım "tek varlık → tek ekran" diyor; bizim ilkemiz "ham veri
             kaybolmaz" diyor. İkisi de sağlanıyor: TEK ekran, İKİ katman.
@@ -896,15 +946,41 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
                   { v: s.mod || '—', renk: R.not },
                   { v: raporVar ? String(bulgu) : '—', mono: true, sag: true, kalin: bulgu > 0, renk: !raporVar ? R.not3 : bulgu > 1 ? R.kirmizi : bulgu === 1 ? R.amber : R.not },
                   { v: String(s.son_calisma || r.son_calisma || '—').slice(0, 16), mono: true, renk: R.not },
-                  !raporVar
-                    ? { v: 'rapor yok', rozet: R.not3 }
-                    : r.alarm && r.alarm !== 'normal'
-                      ? { v: 'alarm', rozet: R.kirmizi }
-                      : bulgu > 0 ? { v: 'izlemede', rozet: R.amber } : { v: 'temiz', rozet: R.yesil },
+                  // 🔴 CANLI GEZİNTİ (2026-08-27) — MOTORU KAPALI ŞUBEYE «TEMİZ» DENİYORDU.
+                  // Canlı kanıt: ALSANCAK motoru KAPALI, son koşu 16 Haziran
+                  // (2+ ay önce) — tablo yine de yeşil «temiz» basıyordu.
+                  // MERKEZ aynı (15 Haziran). Üstelik AKTİF motorların son
+                  // koşusu 25 Ağustos'tu ve bugün 27 — iki gecedir koşmamış
+                  // motorlar da «temiz» görünüyordu.
+                  // ⚠️ Bu tam olarak «Bugünkü Bulgular» görünümünde 2026-08-17'de
+                  // kapatılan kusurun aynısı (`olculdu()` guard'ı); TABLOYA
+                  // uygulanmamış — yarım kalan düzeltme.
+                  // KURAL: motor bakmadıysa şube ne temiz ne kirlidir. Denetim
+                  // ekranının kendisi «sorun yok» diyemez, ancak «bakmadım»
+                  // diyebilir. Sahte sakinlik, denetimin en pahalı arızasıdır.
+                  (() => {
+                    if (!raporVar) return { v: 'rapor yok', rozet: R.not3 };
+                    if (s.aktif === false) return { v: 'motor kapalı · hüküm yok', rozet: R.not3 };
+                    if (r.alarm && r.alarm !== 'normal') return { v: 'alarm', rozet: R.kirmizi };
+                    if (bulgu > 0) return { v: 'izlemede', rozet: R.amber };
+                    // Koşu ESKİYSE «temiz» demek, dünkü fotoğrafa bugün demektir.
+                    const kosu = String(s.son_calisma || r.son_calisma || '').slice(0, 10);
+                    const gunFark = /^\d{4}-\d{2}-\d{2}$/.test(kosu)
+                      ? Math.round((Date.parse(`${bugunISO()}T00:00:00Z`) - Date.parse(`${kosu}T00:00:00Z`)) / 86400000)
+                      : null;
+                    if (gunFark == null) return { v: 'koşu tarihi yok', rozet: R.not3 };
+                    if (gunFark > 1) return { v: `koşu ${gunFark} gün eski`, rozet: R.amber };
+                    return { v: 'temiz', rozet: R.yesil };
+                  })(),
                 ],
               };
             })}
-            onSatir={() => onKopru?.('__modul:denetim:motorlar')}
+            // 🔴 ÖLÜ KAPI (2026-08-27): tablo notu «satıra tıkla → bugünkü rapor»
+            // diyordu ama köprü `denetim:motorlar`a, yani BU EKRANIN KENDİSİNE
+            // gidiyordu — tıklama hiçbir şey yapmıyordu. Söz verilen ama
+            // açılmayan kapı, kapısı olmayandan daha kötüdür: sahip bir kez
+            // dener, çalışmadığını görür, bir daha hiçbir satıra tıklamaz.
+            onSatir={() => onKopru?.('__modul:denetim:anomali')}   // tema.js:188 doğrulandı
           />
         )}
       </>
@@ -1326,6 +1402,9 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
           <BosDurum metin="Henüz gece sentezi kaydı yok — beyin her gece gözlem anlatısı üretir." />
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 16 }}>
+            {/* ⚠️ SESSİZ ELEME (2026-08-27): liste 6'da kesiliyordu ve KPI
+                toplam sayıyı yazıyordu — 10 sentez varken sahip 6 görüp
+                «hepsi bu» sanabilirdi. Taşan aşağıda söyleniyor. */}
             {sentezler.slice(0, 6).map((k, i) => (
               <div key={i} style={{ ...kartYuzey, padding: '15px 18px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 7 }}>
@@ -1339,6 +1418,12 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
                 </div>
               </div>
             ))}
+            {sentezler.length > 6 && (
+              <div style={{ fontSize: 11.5, color: R.not2, padding: '2px 4px' }}>
+                … ve <b style={{ color: R.not }}>{sentezler.length - 6} sentez daha</b> —
+                liste en yeni 6'sını gösterir; sayacın tamamı üstteki KPI'da.
+              </div>
+            )}
           </div>
         )}
         <KopruButon ad="🧠 Bağları beyne sor (Duyu Ağı)" onTikla={() => onGorunum?.('duyu')} />
@@ -1357,9 +1442,69 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
         <KpiSeridi kpiler={[
           { etiket: 'İzlenen kural', deger: String(kurallar.length), alt: 'öğrenme defteri karnesi' },
           { etiket: 'Öğrenme', deger: karne.ogrenme_aktif ? 'aktif' : 'kapalı', alt: `n eşiği ${sayi(karne.n_esigi) || '—'}`, renk: karne.ogrenme_aktif ? R.yesil : R.amber },
-          { etiket: 'Sinaps olayı', deger: String(sinapsOlay), alt: `son ${sayi(sinaps?.kesit) || 14} gün · duyular arası` },
+          // 🚪 96 olay ELDEYDİ (`sinaps.sinaps_olaylari` tam dizi) ama yalnız
+          // sayılıp atılıyordu — sahip «hangi 96?» diye soramıyordu.
+          {
+            etiket: 'Sinaps olayı', deger: String(sinapsOlay),
+            alt: `son ${sayi(sinaps?.kesit) || 14} gün · duyular arası${Array.isArray(sinaps?.sinaps_olaylari) && sinaps.sinaps_olaylari.length ? ' · dökümü aç' : ''}`,
+            onTikla: (Array.isArray(sinaps?.sinaps_olaylari) && sinaps.sinaps_olaylari.length)
+              ? () => onCekmece?.({
+                tip: 'SİNAPS',
+                baslik: 'Duyular arası birliktelikler',
+                alt: `${sinaps.sinaps_olaylari.length} olay · son ${sayi(sinaps?.kesit) || 14} gün`,
+                kpi: [
+                  { etiket: 'Olay', deger: String(sinaps.sinaps_olaylari.length) },
+                  { etiket: 'Duyu', deger: String(new Set(sinaps.sinaps_olaylari.map((o) => o.duyu)).size), alt: 'ayrı kaynak' },
+                ],
+                listeBaslik: 'Olaylar · yeniden eskiye',
+                satirlar: sinaps.sinaps_olaylari.slice(0, 60).map((o) => ({
+                  ad: String(o.signal_name || o.olay_tipi || '—').slice(0, 70),
+                  detay: [o.duyu, o.entity_id, String(o.occurred_at || '').slice(0, 10)].filter(Boolean).join(' · '),
+                  tutar: '',
+                })),
+                // ⚠️ SESSİZ ELEME YASAK: 60'tan fazlası varsa söylenir.
+                not: (sinaps.sinaps_olaylari.length > 60
+                  ? `Liste en yeni 60 olayı gösterir (${sinaps.sinaps_olaylari.length} olaydan). `
+                  : '')
+                  + (sinaps.not || 'Sinapslar duyuları birbirine bağlar: birliktelik kaydeder, hüküm vermez, alarm kapatmaz.'),
+              })
+              : undefined,
+          },
           { etiket: 'Omurga', deger: 'tek gözlem', alt: 'çakışma hata değil ürün' },
         ]} />
+        {/* 🔬 CANLI GEZİNTİ (2026-08-27) — TABLO SIFIR AYRIM ÜRETİYORDU.
+            Canlıda 10 kuralın 10'u da «veri yetersiz · — · %0 · öğreniyor»
+            diyordu: 60 hücre, sıfır bilgi. Tufte'nin veri-mürekkep ölçütünde
+            bu tablo tamamen mürekkep; istisna-temelli raporlamada ise okunacak
+            hiçbir istisna yok. Sahip 10 satırı tarayıp aynı cümleyi 10 kez
+            okuyor ve şu soruyu cevapsız bırakıyor: «ne zaman işe yarayacak?»
+            ⚠️ TABLO KALDIRILMADI (ham veri kaybolmaz): üstüne DURUM CÜMLESİ
+            eklendi. Cümle tablonun söyleyemediğini söyler — eşiğe ne kadar
+            kaldı, hangi kural en ileride. Sessizlik yerine ilerleme. */}
+        {kurallar.length > 0 && (() => {
+          const esik = sayi(karne.n_esigi) || 30;
+          const etiketli = (k) => sayi(k.etiketli_n);
+          const olgun = kurallar.filter((k) => etiketli(k) >= esik);
+          const enIleri = [...kurallar].sort((a, b) => etiketli(b) - etiketli(a))[0];
+          const enIleriN = enIleri ? etiketli(enIleri) : 0;
+          if (olgun.length === kurallar.length) return null;   // hepsi olgunsa cümleye gerek yok
+          return (
+            <div style={{
+              ...kartYuzey, padding: '11px 16px', marginBottom: 12,
+              borderLeft: `3px solid ${R.not3}`, fontSize: 12.5, color: R.metin2, lineHeight: 1.6,
+            }}>
+              <b style={{ color: R.krem }}>{kurallar.length - olgun.length} kural henüz öğreniyor</b>
+              {olgun.length > 0 && <> · {olgun.length} kural olgunlaştı</>}
+              {' '}— karne ancak <b>{esik} etiketli gözlem</b> biriktikten sonra ayrım üretir.
+              {enIleri && enIleriN > 0
+                ? <> En ileride <b style={{ color: R.krem }}>{enIleri.kural_id}</b> ({enIleriN}/{esik});
+                    eşiğe <b>{Math.max(0, esik - enIleriN)}</b> gözlem kaldı.</>
+                : <> Henüz hiçbir kurala etiket düşmemiş — <b>işaret defteri boş</b>: motorun
+                    isabetini ölçmek için bulgulara ✓/✗ verilmesi gerekiyor.</>}
+              {' '}<span style={{ color: R.not3 }}>Aşağıdaki tablo ham hâliyle duruyor — sayı gizlenmiyor, yalnız anlamı yazılıyor.</span>
+            </div>
+          );
+        })()}
         {kurallar.length === 0 ? (
           <BosDurum metin="Kural karnesi boş — öğrenme defteri kurallar biriktikçe dolar." />
         ) : (
