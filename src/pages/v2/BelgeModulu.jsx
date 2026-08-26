@@ -12,7 +12,7 @@
 // KDV kanıtında motorun kendi ilkesi ekranda: KDV TUTARI HESAPLANMAZ — hüküm
 // muhasebecinin (sahte sayı yasağıyla birebir uyumlu).
 // ─────────────────────────────────────────────────────────────────────────────
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api, fmt } from '../../utils/api';
 import { R, F, kartYuzey } from './tema';
 import { KpiSeridi, Liste, Tablo, BosDurum, HataBandi } from './parcalar';
@@ -159,7 +159,7 @@ const fiBtn = {
   background: 'transparent', color: R.metin2,
 };
 
-export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast, cariHedef }) {
+export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast, cariHedef, arsivHedef }) {
   const [merkez, setMerkez] = useState(null);
   const [merkezHata, setMerkezHata] = useState('');
   const [istek, setIstek] = useState(null);
@@ -188,6 +188,32 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast, cari
   // Kapsama ekranındaki harcama listesi seçimi (faturasiz | kurumsal | beklenmez)
   const [kapsamaListe, setKapsamaListe] = useState('faturasiz');
   const [araniyor, setAraniyor] = useState(false);
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // 🎯 ARAMADAN KAYDA GELİŞ (2026-08-26) — `__modul:belge:arsiv:<fatura_no>`
+  // ══════════════════════════════════════════════════════════════════════════
+  // ⌘K kayıt araması bir faturaya tıklandığında buraya fatura NUMARASIYLA
+  // geliyor. Önceki hâlde köprü yalnız EKRANA götürüyordu ve sahip aradığı
+  // faturayı burada TEKRAR aramak zorundaydı — aramanın yarısı.
+  //
+  // ⚠️ Aynı `/fatura/ara` ucu kullanılır (ekranın kendi arama kutusuyla AYNI
+  // yol): ikinci bir okuma kurulsaydı aynı sorgu iki farklı sonuç verebilirdi.
+  // ⚠️ TEK SEFERLİK: `arsivTuketildi` olmadan liste her tazelendiğinde arama
+  // yeniden koşar ve sahibin elle yazdığı sorguyu ezerdi.
+  const arsivTuketildi = useRef(null);
+  useEffect(() => {
+    const h = String(arsivHedef || '').trim();
+    if (!h || gorunum !== 'arsiv') { arsivTuketildi.current = null; return; }
+    if (arsivTuketildi.current === h) return;
+    arsivTuketildi.current = h;
+    setArama(h);
+    setAraniyor(true);
+    api(`/fatura/ara?q=${encodeURIComponent(h)}`)
+      .then((d) => setAramaSonuc(Array.isArray(d) ? d : (d?.sonuclar || d?.satirlar || [])))
+      // HATA ≠ BOŞ: arama düşerse boş liste değil, sahibe haber.
+      .catch(() => { setAramaSonuc([]); onToast?.('Fatura araması yapılamadı — kutuya yazıp tekrar deneyin'); })
+      .finally(() => setAraniyor(false));
+  }, [arsivHedef, gorunum, onToast]);
 
   const merkezYukle = useCallback(() => {
     setMerkezHata('');

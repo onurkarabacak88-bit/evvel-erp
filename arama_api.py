@@ -35,6 +35,7 @@ from __future__ import annotations
 import logging
 import re
 from typing import Any, Dict, List, Optional, Set
+from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException
 
@@ -51,10 +52,27 @@ router = APIRouter(prefix="/api/ara", tags=["arama"])
 HEDEF = {
     "fatura": "__modul:belge:arsiv",
     "odeme": "__modul:odeme:bekleyen",
-    "tedarikci": "__modul:odeme:tedarikci",
+    "tedarikci": "__modul:belge:cari",
     "kasa": "__modul:rapor:defter",
     "personel": "__modul:ekip:kadro",
 }
+
+# ══════════════════════════════════════════════════════════════════════════
+# 🎯 KAYDA GÖTÜRME (2026-08-26) — "ekrana götürmek yetmez"
+# ══════════════════════════════════════════════════════════════════════════
+# İlk sürüm sonucu doğru EKRANA götürüyordu ama sahip orada kaydı TEKRAR
+# aramak zorundaydı — aramanın yarısı. Kabuk zaten 4. parçayı parametre olarak
+# çözüyor (`__modul:<modul>:<gorunum>:<deger>` → kopruParam) ve iki tüketici
+# var: Ödeme Merkezi (kalemi açar) ve Cari Ekstre (tedarikçiyi açar).
+#
+# ⚠️ PARAMETRE YALNIZ TÜKETİCİSİ OLAN HEDEFE EKLENİR. Tüketicisi olmayan
+# ekrana parametre yollamak sessizce yutulur ve "kayda götürdüm" YALANI
+# üretir — kasa hareketi ve personel bu yüzden parametresiz kalır.
+def _hedef(tur: str, deger: Optional[str] = None) -> str:
+    t = HEDEF[tur]
+    if deger and tur in ("fatura", "odeme", "tedarikci"):
+        return f"{t}:{quote(str(deger), safe='')}"
+    return t
 
 
 def _kolonlar(cur, tablo: str) -> Set[str]:
@@ -115,7 +133,7 @@ def ara(q: str, limit: int = 6):
                 "alt": "fatura",
                 "tutar": _tl(f.get("tutar")),
                 "tarih": f.get("tarih"),
-                "hedef": HEDEF["fatura"],
+                "hedef": _hedef("fatura", f.get("fatura_no")),
             })
         durum["fatura"] = {"bulunan": int(fr.get("adet") or 0), "gosterilen": min(lim, int(fr.get("adet") or 0))}
     except Exception as e:  # noqa: BLE001
@@ -130,8 +148,14 @@ def ara(q: str, limit: int = 6):
                 aramalar = [a for a in ("ad", "aciklama", "gider_adi") if a in k] or [ad]
                 tutar_k = _ilk_var(k, ["tutar", "odenecek_tutar", "asgari_tutar"])
                 tarih_k = _ilk_var(k, ["odeme_tarihi", "plan_tarihi", "tarih", "vade_tarihi"])
+                # 🎯 `id` KAYDA GÖTÜRMEK İÇİN: Ödeme Merkezi hedefi `o.id` /
+                # `o.odeme_id` / `o.sabit_gider_id` ile eşleştiriyor
+                # (OdemeModulu.hedefEslesir). Kimlik yoksa parametre yollanmaz —
+                # eşleşmeyecek bir kimlik yollamak "bulunamadı" tostu doğurur.
+                kimlik_k = "id" if "id" in k else None
                 cur.execute(
                     f"SELECT {ad} AS baslik"
+                    f"{f', {kimlik_k}::text AS kimlik' if kimlik_k else ', NULL AS kimlik'}"
                     f"{f', {tutar_k} AS tutar' if tutar_k else ', NULL AS tutar'}"
                     f"{f', {tarih_k}::text AS tarih' if tarih_k else ', NULL AS tarih'}"
                     f", COUNT(*) OVER () AS toplam "
@@ -143,7 +167,8 @@ def ara(q: str, limit: int = 6):
                     sonuclar.append({
                         "tur": "odeme", "baslik": str(r.get("baslik") or "—")[:90],
                         "alt": "ödeme planı", "tutar": _tl(r.get("tutar")),
-                        "tarih": r.get("tarih"), "hedef": HEDEF["odeme"],
+                        "tarih": r.get("tarih"),
+                        "hedef": _hedef("odeme", r.get("kimlik")),
                     })
                 durum["odeme"] = {"bulunan": int(rows[0]["toplam"]) if rows else 0,
                                   "gosterilen": len(rows)}
@@ -169,7 +194,7 @@ def ara(q: str, limit: int = 6):
                         "tur": "kasa", "baslik": str(r.get("baslik") or "—")[:90],
                         "alt": f"kasa · {r.get('islem_turu') or '—'}",
                         "tutar": _tl(r.get("tutar")), "tarih": r.get("tarih"),
-                        "hedef": HEDEF["kasa"],
+                        "hedef": _hedef("kasa"),
                     })
                 durum["kasa"] = {"bulunan": int(rows[0]["toplam"]) if rows else 0,
                                  "gosterilen": len(rows)}
@@ -192,7 +217,7 @@ def ara(q: str, limit: int = 6):
                     sonuclar.append({
                         "tur": "tedarikci", "baslik": str(r.get("ad") or "—")[:90],
                         "alt": "tedarikçi · cari bakiye", "tutar": None, "tarih": None,
-                        "hedef": HEDEF["tedarikci"],
+                        "hedef": _hedef("tedarikci", r.get("ad")),
                     })
                 durum["tedarikci"] = {"bulunan": int(rows[0]["toplam"]) if rows else 0,
                                       "gosterilen": len(rows)}
@@ -215,7 +240,7 @@ def ara(q: str, limit: int = 6):
                     sonuclar.append({
                         "tur": "personel", "baslik": str(r.get("baslik") or "—")[:90],
                         "alt": "personel", "tutar": None, "tarih": None,
-                        "hedef": HEDEF["personel"],
+                        "hedef": _hedef("personel"),
                     })
                 durum["personel"] = {"bulunan": int(rows[0]["toplam"]) if rows else 0,
                                      "gosterilen": len(rows)}

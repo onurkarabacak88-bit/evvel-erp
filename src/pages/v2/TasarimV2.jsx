@@ -894,7 +894,10 @@ export default function TasarimV2({ onGit }) {
     }
     if (mod === 'belge') {
       return <BelgeModulu gorunum={gorunum} onCekmece={setCekmece} onKopru={koprule} onToast={setToast}
-        cariHedef={kopruParam?.modul === 'belge' && kopruParam?.gorunum === 'cari' ? kopruParam.deger : null} />;
+        cariHedef={kopruParam?.modul === 'belge' && kopruParam?.gorunum === 'cari' ? kopruParam.deger : null}
+        /* 🎯 (2026-08-26) Kayıt aramasından fatura NUMARASIYLA geliş —
+           arşiv ekranı sorguyu doldurup çalıştırır, sahip yeniden aramaz. */
+        arsivHedef={kopruParam?.modul === 'belge' && kopruParam?.gorunum === 'arsiv' ? kopruParam.deger : null} />;
     }
     // Küçük modüller (KucukModuller.jsx) — yeni blok gerektirmeyenler
     if (mod === 'onaylar') {
