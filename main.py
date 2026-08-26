@@ -151,6 +151,15 @@ except Exception as _tedarik_mut_err:
     logging.getLogger(__name__).warning(
         f"tedarik_mutabakat modulu yuklenemedi (izole, ana akis etkilenmez): {_tedarik_mut_err}"
     )
+# PERSONEL KİMLİĞİ — İZOLE: "aynı kişi mi?" + "gerçekten ne zaman başladı?"
+# ÖNERİ-ONLY: hiçbir kaydı kendiliğinden birleştirmez/düzeltmez.
+try:
+    from personel_kimlik_api import router as personel_kimlik_router
+    app.include_router(personel_kimlik_router)
+except Exception as _pk_err:
+    logging.getLogger(__name__).warning(
+        f"personel_kimlik modulu yuklenemedi (izole, ana akis etkilenmez): {_pk_err}"
+    )
 # ARAMA — İZOLE, SALT OKUR: "şu belirli şeyi arıyorum" tek kapısı.
 # Fatura aramasını YENİDEN YAZMAZ, mevcut /api/fatura/ara'yı çağırır.
 try:
