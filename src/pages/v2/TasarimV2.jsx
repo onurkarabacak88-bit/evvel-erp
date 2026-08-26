@@ -200,9 +200,19 @@ export default function TasarimV2({ onGit }) {
   const [nakitKonum, setNakitKonum] = useState(null); // /ops/metrics/nakit-konum
   // Hangi uçlar okunamadı — 'boş' ile 'okunamadı' ayrımı için (Codex 2026-08-26)
   const [dusenUclar, setDusenUclar] = useState([]);
+  // Şube Karnesi'ni besleyen ikincil uçların bant adları — yeniden denemeden
+  // önce banttan SİLİNEBİLMESİ için tek yerde tanımlı (yoksa başarı sonrası
+  // eski arıza banttan hiç düşmezdi).
+  const IKINCIL_UC_ADLARI = React.useMemo(() => ([
+    'sevkiyat özeti', 'şube davranışı', 'şube skoru', 'haftalık kıyas', 'şube finans',
+    'sevkiyat özeti (beklenmedik şekil)', 'şube davranışı (beklenmedik şekil)',
+    'şube skoru (beklenmedik şekil)',
+  ]), []);
   // Şube Karnesi ikincil uçlarından biri düştüyse işaretlenir; görünüme bir
   // sonraki girişte yeniden denenmesini sağlar (bkz. ikincil yükleme effect'i).
-  const subeOpsDustu = useRef(false);
+  const subeOpsDurum = useRef('bos');   // bos | yukleniyor | tamam | dustu
+  // Vade yükü çekmecesi istek sayacı: geç dönen eski cevap yeni çekmeceyi ezmesin.
+  const vadeIstekNo = useRef(0);
   const [cirolar, setCirolar] = useState([]);
   const [subeler, setSubeler] = useState([]);
   const [onaylar, setOnaylar] = useState([]);
@@ -804,18 +814,46 @@ export default function TasarimV2({ onGit }) {
     // her girişte bir kez daha denenir. Düşen-uç bandı zaten dürüstlüğü
     // koruyordu; eksik olan TOPARLANMA şansıydı.
     if (gorunum !== 'subeler') return;
-    if (subeOps !== null && !subeOpsDustu.current) return;
-    subeOpsDustu.current = false;
+    // 🔴🔴 REGRESYON DÜZELTİLDİ (2026-08-26, Codex 2. tur) — SONSUZ İSTEK DÖNGÜSÜ
+    // Yeniden-deneme'yi `subeOps` state'ine bağlamıştım ve effect'in bağımlılığı
+    // da `[gorunum, subeOps]` idi. Uç düşünce:
+    //   catch → setSubeOps([]) → subeOps değişti → effect yeniden koştu →
+    //   «düştü» bayrağı açık olduğu için kapıdan geçti → 5 istek daha → catch →
+    //   setSubeOps([]) HER SEFERİNDE YENİ DİZİ (kimlik değişir) → sonsuz döngü.
+    // Uç ayaktayken görünmüyordu; tam ARIZA ANINDA, yani en kötü anda,
+    // sunucuyu istekle dövecekti. Kendi «dayanıklılık» düzeltmem, dayanıklılığı
+    // bozan tek şey olmuştu.
+    // ⚠️ ÇÖZÜM: tetik artık STATE DEĞİL — bağımlılık yalnız `[gorunum]`.
+    // Durum bir ref'te tutulur; yeniden deneme ancak görünümden ÇIKIP GİRİNCE
+    // olur (gorunum değişir). Aynı görünümde kendi kendini tetikleyemez.
+    if (subeOpsDurum.current === 'tamam' || subeOpsDurum.current === 'yukleniyor') return;
+    subeOpsDurum.current = 'yukleniyor';
+    // ⚠️ (Codex 2. tur) DÜŞEN AD TEMİZLENMİYORDU: `ikincilDustu` yalnız EKLİYOR,
+    // hiç silmiyordu. Yeniden deneme başarılı olsa bile bant eski arızayı
+    // göstermeye devam ediyordu — kapanamayan alarm, tam da düzeltmeye
+    // çalıştığımız şey. Her denemede bu grubun adları önce SİLİNİR.
+    setDusenUclar((o) => o.filter((x) => !IKINCIL_UC_ADLARI.includes(x)));
+    let hataVar = false;
     // ⚠️ İKİNCİL UÇLAR DA DÜŞEN-UÇ BANDINA GİRER (2026-08-26, Fable bulgusu):
     // `dusenUclar` yalnız açılıştaki 7 ana ucu izliyordu. Şube Karnesi'ni
     // besleyen bu beş uç düşerse tablo sessizce "—" ve boş kolon gösteriyordu;
     // sahip eksik karneyi TAM sanıyordu. Boş ile okunamadı ayrı şeylerdir.
     const ikincilDustu = (ad) => {
-      subeOpsDustu.current = true;   // → bir dahaki girişte yeniden dene
+      hataVar = true;
       setDusenUclar((o) => (o.includes(ad) ? o : [...o, ad]));
     };
-    api('/ops/siparis/sevkiyat-subeler-ozet')
-      .then((d) => setSubeOps(Array.isArray(d?.satirlar) ? d.satirlar : (Array.isArray(d) ? d : [])))
+    // ⚠️ (Codex 2. tur) İKİNCİL UÇLARDA ŞEKİL KORUMASI YOKTU: ana yükte
+    // `dizilesir` var ama burada `Array.isArray(x) ? x : []` deseni, ŞEKLİ
+    // bozuk 200 yanıtını sessizce boş listeye çeviriyordu — hem de `catch`
+    // çalışmadığı için düşen-uç bandına da girmeden. Aynı kural burada da.
+    const ikincilDizi = (d, yollar, ad) => {
+      for (const y of yollar) if (Array.isArray(d?.[y])) return d[y];
+      if (Array.isArray(d)) return d;
+      ikincilDustu(`${ad} (beklenmedik şekil)`);
+      return [];
+    };
+    const i1 = api('/ops/siparis/sevkiyat-subeler-ozet')
+      .then((d) => setSubeOps(ikincilDizi(d, ['satirlar'], 'sevkiyat özeti')))
       .catch(() => { setSubeOps([]); ikincilDustu('sevkiyat özeti'); });
     // ⚠️ `/v2/` ÖNEKLİ, yani v2 İÇİN YAZILMIŞ iki motor — ama hiç çağrılmıyordu.
     // Karne yalnız CİRO sıralaması gösteriyordu: "hangi şube çok satıyor".
@@ -823,25 +861,33 @@ export default function TasarimV2({ onGit }) {
     //   sube-davranis → son 30 günün kural ihlalleri (kural kural, puanıyla)
     //   sube-skor     → ayın toplam puanı + durum etiketi
     // Çok satan şube kural ihlalinde birinci olabilir; ikisi ayrı eksen.
-    api('/ops/v2/sube-davranis?gun=30')
-      .then((d) => setSubeDavranis(Array.isArray(d?.subeler) ? d.subeler : []))
+    const i2 = api('/ops/v2/sube-davranis?gun=30')
+      .then((d) => setSubeDavranis(ikincilDizi(d, ['subeler'], 'şube davranışı')))
       .catch(() => { setSubeDavranis([]); ikincilDustu('şube davranışı'); });
-    api('/ops/v2/sube-skor')
-      .then((d) => setSubeSkor(Array.isArray(d?.skorlar) ? d.skorlar : []))
+    const i3 = api('/ops/v2/sube-skor')
+      .then((d) => setSubeSkor(ikincilDizi(d, ['skorlar'], 'şube skoru')))
       .catch(() => { setSubeSkor([]); ikincilDustu('şube skoru'); });
     // Sahip kararı (soru 4/9): HAFTALIK kıyas şeridi. Günlük ekran tek günü,
     // aylık karne bütün ayı gösterir — "hangi şube BU HAFTA düşüşte" sorusu
     // ikisinin arasında cevapsızdı.
-    api('/ops/haftalik-karsilastirma')
+    const i4 = api('/ops/haftalik-karsilastirma')
       .then((d) => setSubeHafta(d || null))
       .catch(() => { setSubeHafta(null); ikincilDustu('haftalık kıyas'); });
     // Sahip kararı (soru 5/9): şube başına GİDER + ciro/gider oranı.
     // Ciro bir ekranda, anlık gider başka ekrandaydı; "hangi şube pahalı
     // çalışıyor" sorusu hiçbir yerde cevaplanmıyordu.
-    api('/ops/metrics/finans-ozet?gun=30')
+    const i5 = api('/ops/metrics/finans-ozet?gun=30')
       .then((d) => setSubeFinans(d || null))
       .catch(() => { setSubeFinans(null); ikincilDustu('şube finans'); });
-  }, [gorunum, subeOps]);
+    // Beş uç da bittiğinde durumu MÜHÜRLE: hepsi geçtiyse 'tamam' (bir daha
+    // okunmaz), biri düştüyse 'dustu' (görünüme tekrar girilince denenir).
+    // ⚠️ İLK YAZDIĞIMDA `allSettled` içinde uçları YENİDEN çağırmıştım — beş
+    // istek yerine ON istek gidiyordu. Sunucuyu boşuna dövmek, «dayanıklılık»
+    // düzeltmesinin son isteyeceği şey. Artık YUKARIDAKİ SÖZLER beklenir.
+    Promise.allSettled([i1, i2, i3, i4, i5])
+      .then(() => { subeOpsDurum.current = hataVar ? 'dustu' : 'tamam'; });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gorunum]);
 
   // ── İSTEK HATASI BANDI (yeni handoff: "veri yok" ≠ "sistem bozuk") ────────
   // api() düşen GET'leri deftere yazar; kabuk burada okuyup KANONİK hata bandını
@@ -1153,7 +1199,9 @@ export default function TasarimV2({ onGit }) {
           tutar: fmt(deger),
         };
       }),
-      not: 'Ciro kayıtları Gelir & Kasa ▸ Ciro Girişi ekranında düzenlenir — bu çekmece salt okur.',
+      not: (d.subeGunListe.length === 0
+        ? `⚠ ${kisaGun(d.odakGun)} için hiç ciro kaydı yok — bu «satış olmadı» demek değil, «kayıt girilmemiş» demektir. `
+        : '') + 'Ciro kayıtları Gelir & Kasa ▸ Ciro Girişi ekranında düzenlenir — bu çekmece salt okur.',
       aksiyonAd: 'Ciro Girişi’ni aç',
       _hedef: '__modul:para:girisi',
     });
@@ -1186,6 +1234,23 @@ export default function TasarimV2({ onGit }) {
     _hedef: '__modul:odeme:bekleyen',
   });
 
+  // 🔴 REGRESYON (2026-08-26, Codex 2. tur) — AYNI SORU, İKİ EKRAN, İKİ RENK
+  // «Kasa yeterli mi?» sorusunu Bugün'deki `Kasa` ile Ay'daki `Kasa + banka`
+  // ayrı ayrı yanıtlıyordu ve yük 0 iken AYRIŞIYORLARDI (biri nötr, diğeri
+  // bakiye ≤0 ise kırmızı). Aynı soruya iki ekranın iki renk vermesi, panelin
+  // en pahalı güven kaybıdır — dün BAKIŞ ile Panel arasında tam bunu
+  // düzeltmiştik, aynı hatayı panelin kendi içinde yaptım.
+  // ⚠️ TEK ÜRETİCİ: iki ekran da bu fonksiyonu çağırır, ayrışamazlar.
+  // Kural: yük varsa yeterlilik YÜKE göre; yük yoksa kıyas yapılamaz → nötr,
+  // ama NEGATİF bakiye her hâlde kırmızıdır (kıyas gerektirmez).
+  const kasaYeterlilikRengi = (tutar, yuk30) => {
+    if (tutar <= 0) return R.kirmizi;
+    if (!(yuk30 > 0)) return R.krem;
+    if (tutar >= yuk30) return R.yesil;
+    if (tutar >= yuk30 * 0.5) return R.amber;
+    return R.kirmizi;
+  };
+
   const gecikmisCekmece = () => {
     const sirali = [...gecikmisOdemeler].sort(
       (a, b) => sayi(b.tutar ?? b.kalan) - sayi(a.tutar ?? a.kalan));
@@ -1212,13 +1277,19 @@ export default function TasarimV2({ onGit }) {
           // (Bu oturumda aynı tuzağa üçüncü kez yaklaşıldı: yardımcıyı
           // kullanmadan önce O DOSYADA grep'le.) Ham alanlar kullanılıyor.
           ad: String(o.ad || o.aciklama || o.islem_turu || 'Ödeme').slice(0, 80),
+          // ⚠️ (Codex 2. tur) KAPISIZ SATIR SESSİZ KAYIPTI: kimliği olmayan
+          // kalem tıklanamıyor ama not «satıra dokun» diyordu. Hangi satırın
+          // neden açılmadığı YAZILIR; yoksa sahip onu «bozuk kayıt» sanır.
           detay: [_vadeAl(o) ? `vade ${kisaGun(_vadeAl(o))}` : null,
-            g > 0 ? `${g} gün gecikti` : null].filter(Boolean).join(' · '),
+            g > 0 ? `${g} gün gecikti` : null,
+            hedef ? null : 'kayıt kimliği yok — tek tek açılamıyor'].filter(Boolean).join(' · '),
           tutar: fmt(sayi(o.tutar ?? o.kalan ?? o.tahmini_tutar)),
           ...(hedef ? { onTikla: () => koprule(hedef) } : null),
         };
       }),
-      not: 'Satıra dokun → o kalemin ödeme ekranı açılır. Kalem düzeyi ödeme/erteleme Ödeme Merkezi’nde yapılır — bu çekmece salt okur.',
+      not: (sirali.some((o) => !_odemeKaydiHedefi(o))
+        ? '⚠ Bazı kalemlerin kayıt kimliği yok; onlar tek tek açılamıyor (satırda yazıyor). '
+        : '') + 'Satıra dokun → o kalemin ödeme ekranı açılır. Kalem düzeyi ödeme/erteleme Ödeme Merkezi’nde yapılır — bu çekmece salt okur.',
       aksiyonAd: 'Ödeme Merkezi’nde aç',
       _hedef: '__modul:odeme:bekleyen',
     });
@@ -1269,6 +1340,14 @@ export default function TasarimV2({ onGit }) {
   // Canlı ölçümle doğru filtre bulundu: vade bugün..+N (gecikmiş hariç) →
   //   +7  = 575.186 ✓   +30 = 875.186 ✓   (KPI'larla birebir)
   const vadeYukuCekmece = async (gun) => {
+    // 🔴 REGRESYON (2026-08-26, Codex 2. tur) — İSTEK YARIŞI
+    // Çekmece asenkron ama istek kimliği yoktu: sahip 7 gün → 30 gün diye hızlı
+    // basarsa (ya da çekmeceyi kapatırsa) GEÇ dönen eski istek yeni çekmeceyi
+    // eziyordu. Sonuç: başlıkta «30 GÜN YÜKÜ», içerikte 7 günün kalemleri —
+    // yani kanıt yanlış KPI'ya ait olurdu. Dün «kanıt görünür» diye açtığım
+    // kapı, kanıtı yanlış gösterebilecek hâlde açılmıştı.
+    const istekNo = ++vadeIstekNo.current;
+    const guncelMi = () => istekNo === vadeIstekNo.current;
     const bugun = bugunISO();
     const son = new Date(`${bugun}T00:00:00Z`);
     son.setUTCDate(son.getUTCDate() + gun);
@@ -1289,6 +1368,7 @@ export default function TasarimV2({ onGit }) {
       // olduğunu bilemez. Artık ÇAPA SUNUCU: KPI'nın rakamı gösterilir.
       // ⚠️ İstemci toplamı SİLİNMEDİ, hakem yapıldı: fark ₺1'i geçerse bu bir
       // ÖLÇÜM UYARISIDIR ve saklanmaz — sessiz uyum, uyum değildir.
+      if (!guncelMi()) return;   // sahip başka bir yüke geçti — eski cevap YAZILMAZ
       const listeToplam = liste.reduce((t, o) => t + sayi(o.tutar), 0);
       const sunucuToplam = sayi(gun === 7 ? panel?.yuk_7 : gun === 30 ? panel?.yuk_30 : null);
       const capaVar = sunucuToplam > 0;
@@ -1329,6 +1409,7 @@ export default function TasarimV2({ onGit }) {
         _hedef: '__modul:odeme:takvim',   // tema.js:203 doğrulandı
       });
     } catch (e) {
+      if (!guncelMi()) return;
       setCekmece({
         tip: `${gun} GÜN YÜKÜ`, baslik: `${gun} günlük vade yükü`,
         alt: 'okunamadı', satirlar: [],
@@ -1463,10 +1544,7 @@ export default function TasarimV2({ onGit }) {
         alt: sayi(panel.yuk_30) > 0
           ? `30 günlük yükün %${yuzde(sayi(panel.kasa), sayi(panel.yuk_30)).toFixed(0)}'i · ayrım için tıkla`
           : 'kanonik · kasa izi · ayrım için tıkla',
-        renk: sayi(panel.yuk_30) > 0
-          ? (sayi(panel.kasa) >= sayi(panel.yuk_30) ? R.yesil
-            : sayi(panel.kasa) >= sayi(panel.yuk_30) * 0.5 ? R.amber : R.kirmizi)
-          : R.krem,
+        renk: kasaYeterlilikRengi(sayi(panel.kasa), sayi(panel.yuk_30)),
         onTikla: () => koprule('__modul:genel:akis'),   // tema.js:168 doğrulandı
       },
       {
@@ -1742,10 +1820,24 @@ export default function TasarimV2({ onGit }) {
     // görünebiliyordu. Ay farklıysa sunucunun aylık alanları KULLANILMAZ:
     // istemcinin kendi seçili-ay toplamı gösterilir ve etiketle uyumlu kalır.
     const ayUyumlu = d.ayOnEk === bugunISO().slice(0, 7);
-    const ayCiro = (ayUyumlu ? sayi(panel?.bu_ay_ciro) : 0) || d.ayToplam;
-    const ayNakit = ayUyumlu ? sayi(panel?.bu_ay_nakit) : 0;
-    const ayPos = ayUyumlu ? sayi(panel?.bu_ay_pos) : 0;
-    const ayOnline = ayUyumlu ? sayi(panel?.bu_ay_online) : 0;
+    // 🔴 REGRESYON (2026-08-26, Codex 2. tur) — FALSY-SIFIR TUZAĞI
+    // `sayi(x) || yedek` deseni GERÇEK SIFIRI da «veri yok» sayar. Sunucu
+    // «bu ay ciro 0» ya da «bu ay nakit 0» derse yedek yola düşülüp BAŞKA bir
+    // sayı yazılıyordu. Sıfır bir cevaptır, cevapsızlık değildir.
+    // Ayrım artık `== null` ile yapılır: yedek yalnız ALAN YOKSA devreye girer.
+    const _ayAlan = (ad) => (ayUyumlu && panel?.[ad] != null ? sayi(panel[ad]) : null);
+    const ayCiroSunucu = _ayAlan('bu_ay_ciro');
+    const ayCiro = ayCiroSunucu != null ? ayCiroSunucu : d.ayToplam;
+    // ⚠️ KANAL BAŞINA «okunamadı» İZİ (Codex 2. tur P1): eskiden üç alanın
+    // HEPSİ birden eksikse uyarı çıkıyordu; TEK kanal düşerse `sayi(null)=0`
+    // ile gerçek sıfır gibi çiziliyordu ve sahip «POS bitti» diye okuyabilirdi.
+    // Artık her kanalın kendi «yok mu, sıfır mı» izi var.
+    const ayNakitHam = _ayAlan('bu_ay_nakit');
+    const ayPosHam = _ayAlan('bu_ay_pos');
+    const ayOnlineHam = _ayAlan('bu_ay_online');
+    const ayNakit = ayNakitHam ?? 0;
+    const ayPos = ayPosHam ?? 0;
+    const ayOnline = ayOnlineHam ?? 0;
     // 🐞 K7 (canlı denetim): ortalama + "Ay cirosu" TEK KAYNAK (artık brüt bu_ay_ciro || d.ayToplam,
     // ikisi de brüt). Eskiden ortalama istemci d.ayToplam, ciro sunucu bu_ay_sadece_ciro'ydu → 694₺ drift.
     // ⚠️ (2026-08-26, Codex) BÖLEN ARTIK SUNUCUDAN.
@@ -1755,8 +1847,8 @@ export default function TasarimV2({ onGit }) {
     // görünümdeydi. Kırpılmış listeden bölen saymak sessiz bir çarpıtmadır.
     // Sunucu hem böleni hem sonucu veriyor; istemci BÖLMEZ.
     // Alan gelmezse eski yola düşülür ama bu AÇIKÇA söylenir (alt yazıda).
-    const gunOrtSunucu = (ayUyumlu && panel?.bu_ay_gunluk_ort != null) ? sayi(panel.bu_ay_gunluk_ort) : null;
-    const kayitGunu = (ayUyumlu && panel?.bu_ay_ciro_gun_adet != null) ? sayi(panel.bu_ay_ciro_gun_adet) : d.gunSayisi;
+    const gunOrtSunucu = _ayAlan('bu_ay_gunluk_ort');
+    const kayitGunu = _ayAlan('bu_ay_ciro_gun_adet') ?? d.gunSayisi;
     // ⚠️ (2026-08-26) YEDEK YOL ETİKETİYLE AYRIŞIYORDU: altındaki yazı
     // «{kayitGunu} kayıtlı gün üzerinden» derken bölme `d.gunSayisi` ile
     // yapılıyordu. Sunucu `bu_ay_ciro_gun_adet` gönderip `bu_ay_gunluk_ort`
@@ -1792,10 +1884,7 @@ export default function TasarimV2({ onGit }) {
         // ⚠️ (2026-08-26, Codex) SAHTE YEŞİL: yalnız «bakiye pozitif» diye yeşil
         // yazıyordu; oysa 50.000 ₺ kasa, 900.000 ₺ aylık yükün karşısında iyi
         // haber değildir. Yeterlilik YÜKE GÖRE ölçülür.
-        renk: sayi(panel?.yuk_30) > 0
-          ? (kasaBanka >= sayi(panel.yuk_30) ? R.yesil
-            : kasaBanka >= sayi(panel.yuk_30) * 0.5 ? R.amber : R.kirmizi)
-          : (kasaBanka > 0 ? R.krem : R.kirmizi),
+        renk: kasaYeterlilikRengi(kasaBanka, sayi(panel?.yuk_30)),
         onTikla: () => koprule('__modul:genel:akis'),
       },
       {
@@ -1843,20 +1932,24 @@ export default function TasarimV2({ onGit }) {
     //     `filter(t !== 0)` de o satırı listeden atıyordu. "POS gerçekten sıfır"
     //     ile "POS okunamadı" AYIRT EDİLEMİYORDU. Artık 0 olan kanal SİLİNMEZ,
     //     çubuksuz ama görünür kalır ve neden 0 olduğu söylenir.
-    const nakitTutar = ayNakit || d.aySatir.reduce((s2, r) => s2 + r.nakit, 0);
+    const nakitTutar = ayNakitHam != null
+      ? ayNakitHam
+      : d.aySatir.reduce((s2, r) => s2 + r.nakit, 0);
     // ⚠️ İKİ AYRI «0» SEBEBİ VAR, İKİSİ DE SÖYLENİR:
     //   (a) uç kırılımı hiç göndermedi → okunamadı
     //   (b) bakılan ay içinde bulunulan ay DEĞİL → sunucunun aylık alanları o
     //       aya ait değil, bilerek kullanılmıyor (çapraz-ay koruması). İstemci
     //       verisinde nakit/kart var ama POS ile online AYRIŞMIYOR.
     // Bu ikisini «0 ₺» diye göstermek, ikisini de yalan yapardı.
-    const kanalSunucuYok = panel?.bu_ay_nakit == null && panel?.bu_ay_pos == null
-      && panel?.bu_ay_online == null;
-    const kanalOkunamadi = kanalSunucuYok || !ayUyumlu;
+    const kanalSunucuYok = ayNakitHam == null && ayPosHam == null && ayOnlineHam == null;
+    // Kısmi eksik de artık «okunamadı» sayılır: bir kanal bile yoksa dağılım tam değildir.
+    const kanalKismiEksik = !kanalSunucuYok
+      && (ayNakitHam == null || ayPosHam == null || ayOnlineHam == null);
+    const kanalOkunamadi = kanalSunucuYok || kanalKismiEksik || !ayUyumlu;
     const dagilim = [
-      { ad: 'Nakit', tutar: nakitTutar, renk: R.yesil },
-      { ad: 'POS', tutar: ayPos, renk: R.bakir },
-      { ad: 'Online', tutar: ayOnline, renk: R.mavi },
+      { ad: 'Nakit', tutar: nakitTutar, renk: R.yesil, yok: ayNakitHam == null && !ayUyumlu },
+      { ad: 'POS', tutar: ayPos, renk: R.bakir, yok: ayPosHam == null },
+      { ad: 'Online', tutar: ayOnline, renk: R.mavi, yok: ayOnlineHam == null },
     ];
     const enBuyuk = Math.max(...dagilim.map(x => Math.abs(x.tutar)), 1);
 
@@ -1893,7 +1986,11 @@ export default function TasarimV2({ onGit }) {
                 kalır ama satırı durur, çünkü «kanal yok» ile «kanal okunamadı»
                 aynı şey değildir ve kaybolan satır ikisini de gizliyordu. */}
             {dagilim.map((x, i) => (
-              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 16, opacity: x.tutar === 0 ? 0.62 : 1 }}>
+              // ⚠️ (Codex 2. tur) UYARI SOLDURULUYORDU: «okunamadı» satırı da
+              // opacity 0.62 ile bastırılıyordu — belirsizliği ön-dikkatte
+              // görünmez yapmak, tam tersini yapmak demek. Gerçek sıfır
+              // soluklaşır (sakin haber), OKUNAMADI soluklaşmaz.
+              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 16, opacity: (x.tutar === 0 && !x.yok) ? 0.62 : 1 }}>
                 <span style={{ width: 128, fontSize: 13, fontWeight: 600, flexShrink: 0 }}>{x.ad}</span>
                 <div style={{ flex: 1, height: 20, borderRadius: 6, background: R.cizgi2, overflow: 'hidden' }}>
                   <div style={{
@@ -1904,9 +2001,9 @@ export default function TasarimV2({ onGit }) {
                 <span style={{
                   width: 140, textAlign: 'right', whiteSpace: 'nowrap',
                   fontFamily: F.mono, fontSize: 13.5, fontWeight: 700,
-                  color: x.tutar === 0 ? R.not2 : x.renk,
+                  color: x.yok ? R.amber : x.tutar === 0 ? R.not2 : x.renk,
                 }}>
-                  {x.tutar === 0 ? (kanalOkunamadi ? 'okunamadı' : '0 ₺') : fmt(x.tutar)}
+                  {x.yok ? 'okunamadı' : x.tutar === 0 ? '0 ₺' : fmt(x.tutar)}
                 </span>
               </div>
             ))}
@@ -1922,10 +2019,20 @@ export default function TasarimV2({ onGit }) {
               <b>«bilmiyorum»</b> diyor.
             </div>
           )}
-          {ayCiro > 0 && (
+          {/* 🔴 REGRESYON (Codex 2. tur): bir satır üstte «bilmiyorum» derken
+              burada KESİN yüzde yazılıyordu — küçük amber uyarıyı büyük kesin
+              rakam eziyordu. Kırılım eksikse yüzde de YAZILMAZ; yarım veriden
+              tam oran türetmek, uyarıyı anlamsız kılar. */}
+          {ayCiro > 0 && !kanalOkunamadi && (
             <div style={{ fontSize: 11.5, color: R.not2, marginTop: 13, paddingTop: 11, borderTop: `1px solid ${R.cizgi2}` }}>
               Nakit payı <b style={{ fontFamily: F.mono, color: R.krem }}>%{yuzde(nakitTutar, ayCiro).toFixed(0)}</b>
               {' · '}kart + online <b style={{ fontFamily: F.mono, color: R.krem }}>%{yuzde(ayPos + ayOnline, ayCiro).toFixed(0)}</b>
+            </div>
+          )}
+          {ayCiro > 0 && kanalOkunamadi && (
+            <div style={{ fontSize: 11.5, color: R.not2, marginTop: 13, paddingTop: 11, borderTop: `1px solid ${R.cizgi2}` }}>
+              Kanal payları <b style={{ color: R.amber }}>hesaplanmadı</b> — kırılım eksikken
+              yüzde vermek, yukarıdaki uyarıyı yalanlamak olurdu.
             </div>
           )}
         </div>
@@ -2592,11 +2699,18 @@ export default function TasarimV2({ onGit }) {
                   sira: puan,
                   v: (
                     <span style={{ display: 'inline-flex', flexDirection: 'column', gap: 2 }}>
+                      {/* ⚠️ (Codex 2. tur) NORMAL İŞARETLENİYORDU: "temiz" satır da
+                          yeşil rozet taşıyordu. Zincir payı ve Kayıt kolonlarında
+                          istisna-temelli işaretlemeye geçtim ama BU KOLONU
+                          ATLAMIŞTIM — renk bütçesi yeniden her satıra yayılıyordu.
+                          Temiz şube artık sessiz düz metin; rozet yalnız CEZA
+                          varken çıkar. */}
                       <span style={{
-                        padding: '3px 9px', borderRadius: 99, fontSize: 10.5, fontWeight: 700,
+                        padding: puan > 0 ? '3px 9px' : 0, borderRadius: 99,
+                        fontSize: 10.5, fontWeight: puan > 0 ? 700 : 500,
                         alignSelf: 'flex-start', whiteSpace: 'nowrap',
-                        background: puan >= 20 ? `${R.kirmizi}22` : puan > 0 ? `${R.amber}22` : `${R.yesil}22`,
-                        color: puan >= 20 ? R.kirmizi : puan > 0 ? R.amber : R.yesil,
+                        background: puan >= 20 ? `${R.kirmizi}22` : puan > 0 ? `${R.amber}22` : 'transparent',
+                        color: puan >= 20 ? R.kirmizi : puan > 0 ? R.amber : R.not2,
                       }}>{durum || (puan > 0 ? `${puan} ceza` : 'temiz')}</span>
                       {ihlal ? (
                         <span style={{ fontSize: 11, color: R.not2 }}>{ihlal} kural · 30 gün</span>
@@ -2628,7 +2742,30 @@ export default function TasarimV2({ onGit }) {
     const kritik = oneriler.filter(o => o.renk === 'KIRMIZI');
     const uyari = oneriler.filter(o => o.renk === 'TURUNCU');
     const digerler = oneriler.filter(o => o.renk !== 'KIRMIZI' && o.renk !== 'TURUNCU');
-    const eksikGunler = panel?.ciro_eksik_gunler || [];
+    // 🔴 REGRESYON (2026-08-26, Codex 2. tur) — İKİ EVREN, TEK EKRAN
+    // «Ciro eksik gün» KPI'sını `eksikCiro` ucuna bağlamıştım (doğru: birim
+    // orada tanımlı), ama ALTTAKİ SATIRLAR hâlâ `panel.ciro_eksik_gunler`den
+    // çiziliyordu. İki uç aynı kavramı FARKLI kuralla sayıyor — canlı kanıt:
+    //   eksikCiro → 25 Ağu (ZAFER, TEMA) · bugünü saymaz · kapalı şubeyi saymaz
+    //   panel     → 24 Ağu + 25 Ağu · takvim günü · şube kırılımı YOK
+    // Sahip üstte bir sayı, altta başka günler görüyordu.
+    // ⚠️ Artık satırlar da KPI'nın okuduğu uçtan gelir ve ŞUBE ADI da yazar
+    // (eski «her satırda jenerik Şube» sorunu da böylece kökten kapanır).
+    // Uç düşerse panel listesine düşülür ama bu AÇIKÇA söylenir.
+    const eksikKaynakUc = Array.isArray(eksikCiro?.eksikler) && eksikCiro.eksikler.length > 0;
+    const eksikGunler = eksikKaynakUc
+      ? (() => {
+        // Şube-günü satırları GÜNE göre toplanır: sahip «hangi gün eksik»
+        // sorusunu sorar, şubeler o günün detayıdır.
+        const g = {};
+        eksikCiro.eksikler.forEach((e) => {
+          const t = String(e.tarih || '').slice(0, 10);
+          if (!g[t]) g[t] = { tarih: t, days_ago: sayi(e.gun_once), subeler: [] };
+          if (e.sube_adi) g[t].subeler.push(e.sube_adi);
+        });
+        return Object.values(g).sort((a2, b2) => b2.tarih.localeCompare(a2.tarih));
+      })()
+      : (panel?.ciro_eksik_gunler || []);
 
     const kpiler = [
       { etiket: 'Kritik', deger: riskSayi(kritik.length), alt: panelDustu ? '⚠ panel okunamadı' : 'bugün karar gerekiyor', renk: riskRenk(kritik.length && R.kirmizi, R.yesil) },
@@ -2656,7 +2793,8 @@ export default function TasarimV2({ onGit }) {
         etiket: 'Ciro eksik gün',
         deger: eksikCiro?.eksik_gun_adet != null ? String(sayi(eksikCiro.eksik_gun_adet))
           : (panelDustu ? '—' : String(eksikGunler.length)),
-        alt: eksikCiro?.eksik_adet != null ? `takvim günü · ${sayi(eksikCiro.eksik_adet)} şube-günü`
+        alt: eksikCiro?.eksik_adet != null
+          ? `takvim günü · ${sayi(eksikCiro.eksik_adet)} şube-günü${eksikKaynakUc ? '' : ' · liste ayrı kaynaktan'}`
           : (panelDustu ? '⚠ okunamadı' : 'takvim günü'),
         renk: eksikCiro?.eksik_gun_adet != null
           ? (sayi(eksikCiro.eksik_gun_adet) ? R.kirmizi : R.yesil)
@@ -2710,11 +2848,14 @@ export default function TasarimV2({ onGit }) {
       // "Şube" yazıyordu. Var olmayan alan yerine ucun verdiği bilgi gösterilir.
       ...eksikGunler.slice(0, 6).map((g, i) => ({
         id: `e-${i}`,
-        baslik: `${gunTr(g.gun_adi) || 'Gün'} · ${String(g.tarih || g).slice(0, 10)} cirosu girilmemiş`,
+        baslik: g.subeler?.length
+          ? `${String(g.tarih || '').slice(0, 10)} · ${g.subeler.join(', ')} cirosu girilmemiş`
+          : `${gunTr(g.gun_adi) || 'Gün'} · ${String(g.tarih || g).slice(0, 10)} cirosu girilmemiş`,
         alt: [
           'kâr ve kasa rakamları bu gün için eksik hesaplanır',
           sayi(g.days_ago) === 0 ? 'bugün' : `${sayi(g.days_ago)} gün önce`,
-        ].join(' · '),
+          eksikKaynakUc ? null : 'kaynak: panel listesi (şube kırılımı yok)',
+        ].filter(Boolean).join(' · '),
         tutar: '', tier: g.kritik ? 'kritik' : 'uyari', aksiyon: 'Ciro gir', _hedef: '__modul:para:girisi',
       })),
       // 🔴 (2026-08-26, Codex) TAŞAN SESSİZCE DÜŞÜYORDU: 6'dan fazla eksik gün
