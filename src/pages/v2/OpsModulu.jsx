@@ -2801,9 +2801,9 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     return (
       <>
         <KpiSeridi kpiler={[
-          { etiket: 'Sevkiyat uyumsuzluğu', deger: String(sevkSatir.length), alt: 'son 30 gün · kabul farkı', renk: sevkSatir.length ? R.amber : R.yesil },
-          { etiket: 'Kasa uyumsuzluğu', deger: String(acikKasa.length), alt: acikKasa.length ? 'açık kayıt' : 'temiz', renk: acikKasa.length ? R.kirmizi : R.yesil },
-          { etiket: 'Personel-vardiya', deger: String(acikPers.length), alt: acikPers.length ? 'açık kayıt' : 'temiz', renk: acikPers.length ? R.amber : R.yesil },
+          { onTikla: sevkSatir.length ? () => setUzAlt('sevkiyat') : undefined, etiket: 'Sevkiyat uyumsuzluğu', deger: String(sevkSatir.length), alt: 'son 30 gün · kabul farkı', renk: sevkSatir.length ? R.amber : R.yesil },
+          { onTikla: acikKasa.length ? () => setUzAlt('kasa') : undefined, etiket: 'Kasa uyumsuzluğu', deger: String(acikKasa.length), alt: acikKasa.length ? 'açık kayıt' : 'temiz', renk: acikKasa.length ? R.kirmizi : R.yesil },
+          { onTikla: acikPers.length ? () => setUzAlt('personel') : undefined, etiket: 'Personel-vardiya', deger: String(acikPers.length), alt: acikPers.length ? 'açık kayıt' : 'temiz', renk: acikPers.length ? R.amber : R.yesil },
           { etiket: 'Talep ↔ tahsis', deger: String(uzTahsis.length), alt: uzTahsis.length ? 'kalem uyuşmuyor' : 'temiz', renk: uzTahsis.length ? R.amber : R.yesil },
         ]} />
 
@@ -5608,10 +5608,25 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     return (
       <>
         <KpiSeridi kpiler={[
-          { etiket: 'Bekleyen uyumsuzluk', deger: String(sayi(dnUyumsuz?.gun_bekleyen)), alt: `${sayi(dnUyumsuz?.gun_toplam)} kayıt · ${sayi(dnUyumsuz?.gun_cozuldu)} çözüldü`, renk: sayi(dnUyumsuz?.gun_bekleyen) ? R.kirmizi : R.yesil },
-          { etiket: 'Fire bildirimi', deger: String(sayi(dnFire?.gun_toplam)), alt: `${sayi(dnFire?.toplam_adet_gun)} adet · ${tarihKisa(barTarih)}`, renk: sayi(dnFire?.gun_toplam) ? R.amber : R.yesil },
-          { etiket: 'Fişsiz gider', deger: String(fisListe.length), alt: 'son 7 gün · belge bekliyor', renk: fisListe.length ? R.amber : R.yesil },
+          { onTikla: () => setDnSekme('uyumsuz'), etiket: 'Bekleyen uyumsuzluk', deger: String(sayi(dnUyumsuz?.gun_bekleyen)), alt: `${sayi(dnUyumsuz?.gun_toplam)} kayıt · ${sayi(dnUyumsuz?.gun_cozuldu)} çözüldü`, renk: sayi(dnUyumsuz?.gun_bekleyen) ? R.kirmizi : R.yesil },
+          // 🚪 KPI -> kanıtını taşıyan SEKME. Veri zaten yüklü, hedef zaten
+          // var; eksik olan tek şey sahibin oraya gidebilmesiydi.
           {
+            etiket: 'Fire bildirimi',
+            deger: String(sayi(dnFire?.gun_toplam)),
+            alt: `${sayi(dnFire?.toplam_adet_gun)} adet · ${tarihKisa(barTarih)}`,
+            renk: sayi(dnFire?.gun_toplam) ? R.amber : R.yesil,
+            onTikla: fireKayit.length ? () => setDnSekme('fire') : undefined,
+          },
+          {
+            etiket: 'Fişsiz gider',
+            deger: String(fisListe.length),
+            alt: fisListe.length ? 'son 7 gün · belge bekliyor · aç' : 'son 7 gün · belge bekliyor',
+            renk: fisListe.length ? R.amber : R.yesil,
+            onTikla: fisListe.length ? () => setDnSekme('fis') : undefined,
+          },
+          {
+            onTikla: (kayipToplamAcik || kayipListe.length) ? () => setDnSekme('kayip') : undefined,
             etiket: 'Stok kaybı',
             deger: kayipToplamAcik ? String(kayipToplamAcik) : String(kayipListe.length),
             alt: kayipToplamAcik
@@ -6254,7 +6269,13 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
       <>
         <KpiSeridi kpiler={[
           { etiket: 'Teslim alan şube', deger: `${teslimSube.length} şube`, alt: `son ${sayi(tsTeslim?.gun) || 14} gün`, renk: R.krem },
-          { etiket: 'Şube notu', deger: String(notlar.length), alt: 'merkeze düşen kayıt', renk: notlar.length ? R.mavi : R.yesil },
+          {
+            etiket: 'Şube notu',
+            deger: String(notlar.length),
+            alt: notlar.length ? 'merkeze düşen kayıt · aç' : 'merkeze düşen kayıt',
+            renk: notlar.length ? R.mavi : R.yesil,
+            onTikla: notlar.length ? () => setTsSekme('notlar') : undefined,
+          },
           // ══════════════════════════════════════════════════════════════
           // 🔴 HİÇ ÇALIŞMAMIŞ BİR ALARM — 2026-08-27, canlı kanıt
           // ══════════════════════════════════════════════════════════════
@@ -6278,9 +6299,13 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
                 etiket: 'Tükenme riski',
                 deger: String(a),
                 alt: a
-                  ? `acil sipariş kalemi · ${fmt(sayi(oneriOzet.acil_tutar_tl))}`
+                  ? `${fmt(sayi(oneriOzet.acil_tutar_tl))} · listeyi aç`
                   : 'acil sipariş kalemi yok',
                 renk: a ? R.kirmizi : R.yesil,
+                // 🚪 Bu modülün en pahalı rakamıydı ve HİÇBİR YERE
+                // açılmıyordu: sahip "46 acil kalem" okuyup hangi ürün
+                // olduğunu göremiyordu. Kanıt zaten yüklü — bir sekme ötede.
+                onTikla: a ? () => { setTsSekme('oneri'); setOneriKova('acil'); } : undefined,
               };
             }
             return {
@@ -6290,7 +6315,13 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
               renk: R.not3,
             };
           })(),
-          { etiket: 'Kötüleşen KPI', deger: String(kotuKpi.length), alt: kotuKpi.length ? kotuKpi.map((k) => k.etiket).slice(0, 2).join(', ') : 'tümü iyi/nötr', renk: kotuKpi.length ? R.amber : R.yesil },
+          {
+            etiket: 'Kötüleşen KPI',
+            deger: String(kotuKpi.length),
+            alt: kotuKpi.length ? `${kotuKpi.map((k) => k.etiket).slice(0, 2).join(', ')} · aç` : 'tümü iyi/nötr',
+            renk: kotuKpi.length ? R.amber : R.yesil,
+            onTikla: kotuKpi.length ? () => setTsSekme('kpi') : undefined,
+          },
         ]} />
 
         <div style={{ display: 'flex', gap: 7, marginBottom: 14, flexWrap: 'wrap' }}>

@@ -1710,15 +1710,51 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
     return (
       <>
         <KpiSeridi kpiler={[
-          { etiket: 'İzlenen personel', deger: String(davranis.length), alt: 'son 45 gün davranış', renk: R.krem },
-          { etiket: 'Kritik geç kalma', deger: String(sayi(pdGec?.kritik_personel_sayisi)), alt: `${sayi(pdGec?.gecikme_toplam_adet)} gecikme · eşik ${sayi(pdGec?.kritik_dk)} dk`, renk: sayi(pdGec?.kritik_personel_sayisi) ? R.amber : R.yesil },
-          { etiket: 'En düşük puan', deger: enDusukPuan ? String(sayi(enDusukPuan.puan)) : '—', alt: enDusukPuan ? enDusukPuan.ad_soyad : 'veri yok', renk: enDusukPuan && sayi(enDusukPuan.puan) < 70 ? R.kirmizi : R.krem },
+          // 🚪 KAPILAR (BAKIŞ/PANEL bakış açısı, 2026-08-27):
+          // Bu modülde 69 KPI vardı ve HİÇBİRİ tıklanmıyordu. Rakamı görüp
+          // arkasındaki kişilere/olaylara gitmenin yolu yoktu — sahip
+          // "5 geç kalma" okuyup kimin, hangi gün geç kaldığını göremiyordu.
+          // ⚠️ SAHTE YEŞİL de burada kapandı: uç düşerse (`pdGec === null`)
+          // KPI yeşil "0" basıyordu; tablo dürüstçe "veri alınamadı" derken
+          // şerit "temiz" diyordu. Şeride bakan sahip tabloya hiç inmez.
+          {
+            etiket: 'İzlenen personel',
+            deger: String(davranis.length),
+            alt: davranis.length ? 'son 45 gün davranış · aç' : 'son 45 gün davranış',
+            renk: R.krem,
+            onTikla: davranis.length ? () => setPdSekme('davranis') : undefined,
+          },
+          {
+            etiket: 'Kritik geç kalma',
+            deger: pdGec == null ? '—' : String(sayi(pdGec?.kritik_personel_sayisi)),
+            alt: pdGec == null
+              ? '⚠ okunamadı — "gecikme yok" DEMEK DEĞİL'
+              : `${sayi(pdGec?.gecikme_toplam_adet)} gecikme · eşik ${sayi(pdGec?.kritik_dk)} dk`,
+            renk: pdGec == null ? R.not3 : (sayi(pdGec?.kritik_personel_sayisi) ? R.amber : R.yesil),
+            onTikla: gecSatir.length ? () => setPdSekme('gec') : undefined,
+          },
+          {
+            etiket: 'En düşük puan',
+            deger: enDusukPuan ? String(sayi(enDusukPuan.puan)) : '—',
+            // ⚠️ Payda küçükken yüzde yanıltır: 2 görevi olan yeni personel
+            // tek gecikmeyle manşete çıkar. Kaç görevden geldiği yazılıyor.
+            alt: enDusukPuan
+              ? `${enDusukPuan.ad_soyad}${enDusukPuan.gorev_sayisi != null ? ` · ${sayi(enDusukPuan.gorev_sayisi)} görev üzerinden` : ''}`
+              : 'veri yok',
+            renk: enDusukPuan && sayi(enDusukPuan.puan) < 70 ? R.kirmizi : R.krem,
+            onTikla: puanlar.length ? () => setPdSekme('puan') : undefined,
+          },
           // Takip listesi 0 iken ham olaylar VARSA yeşil "0" yalan olur (Codex):
           // alt metin ham olay sayısını da söyler, renk ona göre yumuşar.
           {
-            etiket: 'Kasa açığı olan', deger: String(kasaSatir.length),
-            alt: kasaOlaylar.length ? `takip eşiği üstü · ${kasaOlaylar.length} ham olay var` : 'son 30 gün',
-            renk: kasaSatir.length ? R.kirmizi : kasaOlaylar.length ? R.amber : R.yesil,
+            etiket: 'Kasa açığı olan',
+            deger: pdKasa == null ? '—' : String(kasaSatir.length),
+            alt: pdKasa == null
+              ? '⚠ okunamadı — "kasa açığı yok" DEMEK DEĞİL'
+              : (kasaOlaylar.length ? `takip eşiği üstü · ${kasaOlaylar.length} ham olay var` : 'son 30 gün'),
+            renk: pdKasa == null ? R.not3
+              : (kasaSatir.length ? R.kirmizi : kasaOlaylar.length ? R.amber : R.yesil),
+            onTikla: (kasaSatir.length || kasaOlaylar.length) ? () => setPdSekme('kasa') : undefined,
           },
         ]} />
 
