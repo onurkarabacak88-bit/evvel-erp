@@ -1492,6 +1492,19 @@ _OZSORGU_BANKASI = (
 
 
 
+@router.post("/kelime-defteri-temizle")
+def kelime_defteri_temizle():
+    """Öğretilmemesi gereken pencerelerin bağlarını defterden siler.
+    ⚠️ NEDEN VAR: defterin ilk canlı sürümü çekirdek pencereleri de
+    öğreniyordu ("tema" → B44 gibi anlamsız ama en sık tekrarlayacak bağ).
+    Kural düzeltildi ama ÖNCEDEN YAZILANLAR duruyor — kuralı değiştirip
+    geçmişi bırakmak, kuralı yarım değiştirmektir.
+    ⚠️ Yalnız KURAL DIŞI satırları siler; sahibin öğrettiği geçerli bağlara
+    dokunmaz (geri-alma ≠ silme değil; burada silinen şey zaten hatalı iz)."""
+    from zeka_kelime import temizle_ogretilmez
+    return temizle_ogretilmez()
+
+
 @router.get("/kelime-defteri")
 def kelime_defteri(limit: int = 60):
     """Sistem NE ÖĞRENDİ — salt-okur.

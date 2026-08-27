@@ -79,6 +79,10 @@ _AD_RISKI = re.compile(
     re.IGNORECASE,
 )
 
+# Her soruya koşulsuz eklenen çekirdek + içeriksiz meta pencereler.
+# Bunları öğrenmek defteri gürültüyle doldurur (bkz. `ogren` içindeki not).
+_OGRETILMEZ = {"B0", "BK", "B1", "B2", "B3", "B4", "B42", "B44"}
+
 _TABLO_HAZIR = False
 
 
@@ -152,8 +156,16 @@ def ogren(soru: str, cevap: str, olumlu: bool = True) -> Dict[str, int]:
     bs = atiflar(cevap)
     if not ks or not bs:
         return {"kelime": 0, "bag": 0}
-    # B0 (sohbet geçmişi) ve BK (katalog) öğretilmez — içerik taşımazlar
-    bs = [b for b in bs if b not in ("B0", "BK")]
+    # ⚠️ ÇEKİRDEK PENCERELER ÖĞRETİLMEZ (2026-08-27, canlı ölçüm dersi):
+    # B1/B2/B3/B4/B42/B44 HER SORUYA koşulsuz eklenir. Onları öğrenmek
+    # hiçbir şey öğretmez — zaten gelecekler. Ama öğretilirlerse HER kelime
+    # onlara bağlanır, ağırlıkları hızla tavan yapar ve defter "her kelime
+    # her şeyi açar" hâline gelir; yani düzeltmeye çalıştığımız
+    # fallback-hepsini-yükle sorununu defter üzerinden geri getirirdik.
+    # İlk canlı testte tam bu görüldü: "tema" kelimesi B44 (bugünün takvimi)
+    # ile öğrenilmişti — anlamsız ama en sık tekrarlayacak bağ.
+    # B0 (sohbet geçmişi) ve BK (katalog) da içerik taşımaz.
+    bs = [b for b in bs if b not in _OGRETILMEZ]
     if not bs:
         return {"kelime": 0, "bag": 0}
     n = 0
@@ -243,3 +255,23 @@ def defter_ozet(limit: int = 60) -> Dict:
         }
     except Exception as e:  # noqa: BLE001
         return {"__hata__": str(e)[:200]}
+
+
+def temizle_ogretilmez() -> Dict:
+    """Kural dışı (çekirdek/meta) pencere bağlarını defterden sil.
+    ⚠️ Kuralı değiştirip geçmişi bırakmak, kuralı yarım değiştirmektir."""
+    try:
+        with db() as (conn, cur):
+            _ensure(cur)
+            cur.execute(
+                "DELETE FROM beyin_kelime_defteri WHERE blok_id = ANY(%s)",
+                (sorted(_OGRETILMEZ),),
+            )
+            silinen = cur.rowcount or 0
+            conn.commit()
+            cur.execute("SELECT COUNT(*)::int AS n FROM beyin_kelime_defteri")
+            kalan = int(dict(cur.fetchone() or {}).get("n") or 0)
+        return {"ok": True, "silinen": silinen, "kalan": kalan,
+                "kural": sorted(_OGRETILMEZ)}
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "hata": str(e)[:200]}
