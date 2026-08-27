@@ -2191,57 +2191,44 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
         {hizSeridi}
         {ysModalBlok}
 
-        {/* Risk şeridi TEPEDE (desen 2) — blueprint'te olmayan gerçek aşama.
-            Her uyumsuz sipariş tıklanabilir kart: çekmecede kalemler + aşama metni. */}
+        {/* ══════════════════════════════════════════════════════════════
+            🔻 RİSK ŞERİDİ KÜÇÜLDÜ — "İKİNCİ BUGÜN LİSTESİ YOK" (BAKIŞ kuralı)
+            ══════════════════════════════════════════════════════════════
+            Bu şerit, kuyruk kurulmadan önce ekranın karar katmanıydı: uyumsuz
+            siparişler kırmızı kartlar hâlinde burada duruyordu. Kuyruk gelince
+            AYNI siparişler S1'de, yaşlarıyla ve sıralı olarak görünmeye
+            başladı — yani ekranda İKİ karar katmanı oluştu ve sahip hangisine
+            bakacağını bilemezdi. BAKIŞ'ta bu açıkça yasaklanmıştı: "Motor &
+            Bildirimler = istisna arşivi; ikinci 'bugün' listesi YOK."
+            ⚠️ Bilgi SİLİNMEDİ, ROLÜ değişti: şerit artık karar yeri değil,
+            toplam + geçiş. Kartlar kaldırıldı (kuyrukta zaten var, yaşıyla
+            birlikte); kalan tek şey sayı ve "hepsini incele" yolu.
+            ⚠️ KIRMIZI BÜTÇESİ: aynı sorun iki kez kırmızıyla bağırıyordu.
+            Kuyruk S1'i zaten kırmızı; burası artık amber (ikincil).
+            ⚠️ Kuyruğa girmeyen (tavanı aşan) uyumsuzluk varsa BURADA sayılır —
+            hiçbir kalem iki katmandan da düşmez. */}
         {uyumsuzlar.length > 0 && (
           <div style={{
-            ...kartYuzey, padding: '14px 18px', marginBottom: 14,
-            border: `1px solid ${R.kirmizi}55`,
+            ...kartYuzey, padding: '11px 16px', marginBottom: 14,
+            borderLeft: `3px solid ${R.amber}`,
+            display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
           }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 10 }}>
-              <span style={rozetHap(R.kirmizi)}>⚠ kabul uyumsuzluğu · {uyumsuzlar.length}</span>
-              {uyumsuzlar.length > 6 && (
-                <span style={{ fontSize: 11.5, color: R.not3, marginLeft: 8 }}>
-                  ilk 6 kart gösteriliyor · {uyumsuzlar.length - 6} sipariş daha var
-                </span>
-              )}
-              <span style={{ fontSize: 12, color: R.metin2, flex: 1 }}>
-                şube kabulü sevk edilenle uyuşmadı — merkez kararı gerekli
-              </span>
-              <button
-                onClick={() => onGorunum?.('denetim')}
-                style={{
-                  padding: '6px 13px', borderRadius: 9, border: `1px solid ${R.kirmizi}55`,
-                  background: `${R.kirmizi}18`, color: R.kirmizi, fontSize: 11.5, fontWeight: 700,
-                  fontFamily: 'inherit', cursor: 'pointer',
-                }}
-              >
-                Tümünü incele
-              </button>
-            </div>
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              {/* ⚠️ SESSİZ ELEME (Codex, 2026-08-27): şerit 6 kartta kesiliyor
-                  ve kesildiği söylenmiyordu. Bunlar merkez müdahalesi bekleyen
-                  siparişler — 7.'si görünmeyince aranmaz da. */}
-              {uyumsuzlar.slice(0, 6).map((s) => (
-                <div
-                  key={s.id}
-                  onClick={() => siparisAc(s)}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: 9, cursor: 'pointer',
-                    padding: '8px 13px', borderRadius: 11,
-                    border: `1px solid ${R.kirmizi}40`,
-                    background: 'linear-gradient(165deg, #2E1B12, #251409)',
-                  }}
-                >
-                  <span style={{ fontSize: 12.5, fontWeight: 700 }}>{s.sube_adi}</span>
-                  <span style={{ fontSize: 10.5, color: R.not2, fontFamily: F.mono }}>{tarihKisa(s.tarih)}</span>
-                  <span style={{ fontSize: 10.5, color: R.kirmizi }}>
-                    {(s.kalemler || []).length} kalem →
-                  </span>
-                </div>
-              ))}
-            </div>
+            <span style={{ fontSize: 12.5, color: R.krem }}>
+              <b>{uyumsuzlar.length}</b> kabul uyuşmazlığı — şube kabulü sevk edilenle uyuşmadı
+            </span>
+            <span style={{ fontSize: 11.5, color: R.not3 }}>
+              {kuyruk.filter((m) => m.sinif === 1).length > 0
+                ? `${kuyruk.filter((m) => m.sinif === 1).length} tanesi yukarıdaki kuyrukta`
+                : 'kuyrukta yer kalmadı — hepsi panoda'}
+            </span>
+            <button
+              onClick={() => onGorunum?.('denetim')}
+              style={{
+                marginLeft: 'auto', padding: '0 16px', minHeight: 40, borderRadius: 10,
+                border: `1px solid ${R.cizgi3}`, background: R.girinti,
+                color: R.not, fontSize: 11.5, fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer',
+              }}
+            >Merkez Denetim’de incele →</button>
           </div>
         )}
 
@@ -4602,7 +4589,7 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
               { ad: 'Zaman' }, { ad: 'Tür' }, { ad: 'Kalem' }, { ad: 'Şube' },
               { ad: 'Miktar', sag: 1 }, { ad: 'Önce → sonra', sag: 1 }, { ad: 'Kaynak' },
             ]}
-            not={'append-only defter — satırlar değiştirilemez'
+            not={'defter kaydı silinmez, değiştirilmez — yalnız üstüne yazılır'
               + (hrSatir.length > 60
                 ? ` · ⚠ ${hrSatir.length} hareketin ilk 60'ı gösteriliyor, ${hrSatir.length - 60} kayıt listede yok (defter eksik görünür)`
                 : '')}
@@ -5824,7 +5811,7 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
         {dnSekme === 'uyumsuz' && (uyumsuzListe.length ? (
           <Tablo
             baslik={`Ürün uyumsuzlukları · ${tarihKisa(barTarih)}`}
-            not={'formül → fark → çözüm; hüküm insanın (öneri-only)'
+            not={'formül → fark → çözüm; kararı sen verirsin'
               + (uyumsuzListe.length > 40
                 ? ` · ⚠ ${uyumsuzListe.length} kaydın ilk 40'ı gösteriliyor`
                 : '')}
@@ -6392,7 +6379,10 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
         )}
 
         <div style={{ fontSize: 11.5, color: R.not, marginTop: 12, marginBottom: 16, lineHeight: 1.55 }}>
-          ℹ Hepsi ÖNERİ-ONLY: bu ekran uyumsuzluğu GÖSTERİR, hüküm vermez.
+          {/* 🗣️ SİSTEM DİLİ (BAKIŞ hamlesi 6): "ÖNERİ-ONLY" bir mühendislik
+              terimi — sahip kod bilmez. BAKIŞ'ta bunu "sistem önerir, kararı
+              sen verirsin" diye çevirmiştik; aynı cümle burada da. */}
+          ℹ Sistem önerir, kararı sen verirsin: bu ekran uyumsuzluğu GÖSTERİR, karar vermez.
           Uzlaştırma/çözüm işaretleri ilgili guard'lı akışlarda yapılır.
         </div>
       </>

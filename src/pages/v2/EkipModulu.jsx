@@ -2181,7 +2181,7 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
         )}
 
         <div style={{ fontSize: 11.5, color: R.not, marginTop: 12, marginBottom: 16, lineHeight: 1.55 }}>
-          ℹ ÖNERİ-ONLY: bu ekran gözlem toplar, hüküm vermez. Puan maaşa/avansa bağlanmaz;
+          ℹ Sistem önerir, kararı sen verirsin: bu ekran gözlem toplar, kimse hakkında karar vermez. Puan maaşa/avansa bağlanmaz;
           disiplin kararı sahibin.
         </div>
       </>
@@ -4005,7 +4005,7 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
                   <b>{m.t.ad_soyad}</b> · {AY_KISA[ay - 1]} {yil} · toplam gecikme{' '}
                   <b style={{ color: R.amber }}>{trSayi(sayi(m.t.toplam_gecikme_dk), 0)} dk</b>.
                   Bu bir <b>yönetici kararıdır</b>: seçilen gün mevcut eksik güne <b>eklenir</b>,
-                  net maaş kanonik motorla yeniden hesaplanır. Onaylı bordro kilitliyse sunucu reddeder.
+                  net maaş maaş motoruyla (tek hesap merkezi) yeniden hesaplanır. Onaylı bordro kilitliyse sunucu reddeder.
                 </div>
                 <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
                   {[0.5, 1].map((g) => (
