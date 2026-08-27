@@ -5328,7 +5328,27 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     const kayipFazla = kayipHam.filter((x) => sayi(x.fazla) > 0);
     const kayipSube = Array.isArray(dnKayip?.sube_ozet) ? dnKayip.sube_ozet : [];
     const kayipPattern = Array.isArray(dnKayip?.haftalik_pattern) ? dnKayip.haftalik_pattern : [];
-    const kayipSurekli = Array.isArray(dnKayip?.surekli_acik_personel) ? dnKayip.surekli_acik_personel : [];
+    // ══════════════════════════════════════════════════════════════════════
+    // 🔴 OLMAYAN BİR KİŞİYİ SUÇLAMAK — 2026-08-27, canlı kanıt
+    // ══════════════════════════════════════════════════════════════════════
+    // Ekran "⚠ sürekli açık veren personel · 1 personel birden fazla günde
+    // açık veriyor · 1 kişi birden fazla şubede" diyordu. Ucu ölçtüm; o
+    // listede TEK kayıt vardı:
+    //     personel_id: null · personel_ad: "—" · toplam_acik: 2327
+    //     acik_kalem: 367 · risk_seviyesi: "yuksek" · cok_sube: true
+    // Yani personeli BELLİ OLMAYAN bütün kayıplar tek bir kovada toplanmış ve
+    // o kova "yüksek riskli bir kişi" gibi sunuluyordu. Ortada kişi YOK.
+    // ⚠️ Bu, eksik veriden üretilmiş bir SUÇLAMADIR. Sahip "Personel
+    // Denetimi'ne git" düğmesine basıp bir fail arar; bulamaz, ya da o gün
+    // orada olan birinden şüphelenir. Sistem kimseyi, kanıtı olmadan işaret
+    // etmez.
+    // ⚠️ Kayıt SİLİNMİYOR: 2327 birim açık gerçek ve önemli — ama bu bir
+    // "kim yaptı" bulgusu değil, "kim yaptığı KAYITLI DEĞİL" bulgusudur.
+    // İkisi ayrı ayrı gösteriliyor.
+    const _kayipHam = Array.isArray(dnKayip?.surekli_acik_personel) ? dnKayip.surekli_acik_personel : [];
+    const _kisiMi = (x) => !!(x && x.personel_id && String(x.personel_ad || '').trim() && String(x.personel_ad).trim() !== '—');
+    const kayipSurekli = _kayipHam.filter(_kisiMi);
+    const kayipAtanmamis = _kayipHam.filter((x) => !_kisiMi(x));
     const kayipCokSube = kayipSurekli.filter((p) => p.cok_sube).length;
     // ⚠️ ÖLÇÜLEMEYEN GÜN: açılış eventi olmayan kapanışlar. Bunlar "kayıp yok"
     // DEĞİL "ölçülemedi" demektir — sıfır gibi göstermek yanlış güven verir.
@@ -5550,7 +5570,34 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
               ],
             }))} />
           </>
-        ) : <BosDurum metin="Aktif güvenlik alarmı yok — şube girişlerinde anormallik görünmüyor. ✓" tamam />)}
+        ) : (
+          // ══════════════════════════════════════════════════════════════
+          // 🔴 ALARM KÖRLÜĞÜ — "bulgu yok" ile "hiç bakılmamış" aynı sessizlik
+          // ══════════════════════════════════════════════════════════════
+          // Boş durum "şube girişlerinde anormallik görünmüyor ✓" diyordu
+          // (yeşil onay). Ama uç iki ayrı sayı veriyor:
+          //     alarm_sayisi        = AKTİF alarm
+          //     toplam_alarm_kaydi  = BUGÜNE KADARKİ TÜM kayıt
+          // Canlı ölçüm: ikisi de 0. Aylardır PIN'le çalışan şube panelleri
+          // varken hiç kayıt oluşmamış olması, "hiç anormallik yaşanmadı"dan
+          // çok "dedektör hiç yazmamış" ihtimaline yakındır — ve ekran bu iki
+          // ihtimali AYNI yeşil onaya indirgiyordu.
+          // ⚠️ Sistem, ölçmediği şey için temiz kâğıdı VERMEZ.
+          sayi(mdAlarm?.toplam_alarm_kaydi) > 0
+            ? <BosDurum metin="Aktif güvenlik alarmı yok — şube girişlerinde anormallik görünmüyor. ✓" tamam />
+            : (
+              <BosDurum
+                baslik="Hiç güvenlik alarmı kaydı yok"
+                metin={'Aktif alarm yok — ama bugüne kadar HİÇ alarm kaydı da oluşmamış. '
+                  + 'Bu "anormallik yaşanmadı" anlamına gelebileceği gibi, alarmı üreten '
+                  + 'akışın hiç çalışmamış olması da mümkündür; ekran bu ikisini ayırt edemez. '
+                  + 'Şube panelinde PIN kilidi/hatalı PIN olayları eşiği aştığında kayıt doğar '
+                  + `(pencere ${sayi(mdAlarm?.limitler?.pencere_dk)} dk · kilit eşiği `
+                  + `${sayi(mdAlarm?.limitler?.pin_kilit_esik)} · hatalı PIN eşiği `
+                  + `${sayi(mdAlarm?.limitler?.pin_hatali_esik)}).`}
+              />
+            )
+        ))}
 
         {dnSekme === 'mesaj' && (
           <>
@@ -5836,6 +5883,21 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
                 Ekip ▸ Personel Denetimi'nde kalır (/ops/personel-davranis-analiz
                 orada zaten var). Burada YALNIZ sayı + köprü; aynı kişi listesini
                 iki ekrana basmak mükerrer yapı olurdu. */}
+            {/* KİŞİSİ BELLİ OLMAYAN AÇIK — suçlama değil, KAYIT EKSİĞİ bulgusu.
+                Ayrı kart, ayrı dil, ayrı renk: kimseyi işaret etmez. */}
+            {kayipAtanmamis.length > 0 && (
+              <div style={{
+                ...kartYuzey, padding: '13px 18px', marginBottom: 12, borderColor: `${R.amber}44`,
+                fontSize: 12, color: R.not, lineHeight: 1.7,
+              }}>
+                <span style={rozetHap(R.amber)}>◑ kişisi belirlenemeyen açık</span>{' '}
+                <b style={{ fontFamily: F.mono, color: R.krem }}>
+                  {kayipAtanmamis.reduce((a, x) => a + sayi(x.toplam_acik), 0)}
+                </b> birim açık, <b>hangi personelin vardiyasında oluştuğu kayıtlı değil</b>.
+                Bu bir kişi bulgusu <b>değildir</b> — kayıt eksiği bulgusudur; kimseyi işaret etmez.
+                Kişi bazlı inceleme ancak açılış/kapanış kaydında personel varken mümkün.
+              </div>
+            )}
             {kayipSurekli.length > 0 && (
               <div style={{
                 ...kartYuzey, padding: '13px 18px', marginBottom: 16, borderColor: `${R.kirmizi}44`,
