@@ -5959,7 +5959,41 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
         <KpiSeridi kpiler={[
           { etiket: 'Teslim alan şube', deger: `${teslimSube.length} şube`, alt: `son ${sayi(tsTeslim?.gun) || 14} gün`, renk: R.krem },
           { etiket: 'Şube notu', deger: String(notlar.length), alt: 'merkeze düşen kayıt', renk: notlar.length ? R.mavi : R.yesil },
-          { etiket: 'Tükenme riski', deger: String(kritikTahmin.length), alt: kritikTahmin.length ? '≤7 gün kalan · tükenmiş dahil' : 'kritik kalem yok', renk: kritikTahmin.length ? R.kirmizi : R.yesil },
+          // ══════════════════════════════════════════════════════════════
+          // 🔴 HİÇ ÇALIŞMAMIŞ BİR ALARM — 2026-08-27, canlı kanıt
+          // ══════════════════════════════════════════════════════════════
+          // "TÜKENME RİSKİ 0 · kritik kalem yok" YEŞİL yazıyordu. Ucu ölçtüm:
+          //   /ops/stok-tahmin → 30 tahmin, alanlar: urun_ad ·
+          //   ort_gunluk_tuketim · gozlem_gun · tahmin_7gun · trend
+          // `kalan_gun` diye bir alan YOK. Süzgeç `t.kalan_gun != null` olduğu
+          // için sonuç HER ZAMAN boş; bu KPI hiçbir zaman 0'dan başka bir şey
+          // gösteremezdi. Yani bir alarm değil, yeşil bir dekordu.
+          // Üstelik AYNI EKRAN "🛒 Sipariş önerisi (46 acil)" diyordu ve
+          // sipariş öneri ucu `acil_kalem: 46 · acil_tutar_tl: 47.198 ₺`
+          // döndürüyordu. Sahip "kritik kalem yok" okuyup 46 acil kalemi
+          // sipariş etmeden geçebilirdi.
+          // ⚠️ Ölçen kaynak zaten vardı: sipariş öneri motoru tedarik süresini
+          // ve hedef günü hesaba katıyor. KPI artık ONDAN okuyor.
+          // ⚠️ O da yoksa YEŞİL SIFIR YOK — "ölçülemedi" yazılır.
+          (() => {
+            if (oneriOzet && oneriOzet.acil_kalem != null) {
+              const a = sayi(oneriOzet.acil_kalem);
+              return {
+                etiket: 'Tükenme riski',
+                deger: String(a),
+                alt: a
+                  ? `acil sipariş kalemi · ${fmt(sayi(oneriOzet.acil_tutar_tl))}`
+                  : 'acil sipariş kalemi yok',
+                renk: a ? R.kirmizi : R.yesil,
+              };
+            }
+            return {
+              etiket: 'Tükenme riski',
+              deger: '—',
+              alt: '⚠ sipariş öneri motoru okunamadı — "risk yok" DEMEK DEĞİL',
+              renk: R.not3,
+            };
+          })(),
           { etiket: 'Kötüleşen KPI', deger: String(kotuKpi.length), alt: kotuKpi.length ? kotuKpi.map((k) => k.etiket).slice(0, 2).join(', ') : 'tümü iyi/nötr', renk: kotuKpi.length ? R.amber : R.yesil },
         ]} />
 
