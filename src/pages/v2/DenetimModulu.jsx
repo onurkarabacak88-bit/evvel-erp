@@ -143,6 +143,8 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
   // /duyu/yavru-etiket — Y4'ün ÖĞRETMEN kanalı. v2'de bağlar hiç listelenmiyordu;
   // ✓/✗ işareti olmadan kural ağırlıkları n eşiğine hiç ulaşamaz (öğrenme kör).
   const [bagOlaylar, setBagOlaylar] = useState(null);
+  const [zeka, setZeka] = useState(null);          // kod-kurulu yorum defteri
+  const [zekaAlan, setZekaAlan] = useState(null);  // duyu süzgeci (null = hepsi)
   const [etiketMesgul, setEtiketMesgul] = useState('');
   // ── YERLİ BEYİN SOHBETİ (köprü kaldırma turu, 2026-07-30) ─────────────────
   // Klasik DuyuPaneli'nin en değerli parçası: hafızalı sohbet (/beyin/sor) +
@@ -282,6 +284,14 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
     api('/duyu/yavru-kurallari?gun=7')
       .then((d) => setBagOlaylar(Array.isArray(d?.son_baglar) ? d.son_baglar : []))
       .catch(() => setBagOlaylar([]));
+    // 🧠 SİSTEMİN KENDİ ZEKÂSI — kod-kurulu yorum cümleleri.
+    // ⚠️ Bu uç ZATEN VARDI ve her gece 80 yorum üretiyordu; hiçbir ekran
+    // okumuyordu. Tek tüketicisi beynin B42 penceresiydi — beyin de LLM
+    // kotası dolduğu için susuyordu. Yani sistemin kendi zekâsı çalışıyor
+    // ama GÖRÜNMÜYORDU (bu oturumun tekrar eden kalıbı: yetenek var, kapı yok).
+    api('/duyu/bag-defteri')
+      .then((d) => setZeka(d && typeof d === 'object' ? d : '__HATA__'))
+      .catch(() => setZeka('__HATA__'));
   }, []);
 
   /**
@@ -1713,6 +1723,156 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
           </div>
         )}
 
+        {/* ══════════════════════════════════════════════════════════════
+            SISTEMIN KENDI ZEKASI — kod kurdu, yapay zeka DEGIL
+            ══════════════════════════════════════════════════════════════
+            Sahip: "yorumlama kabiliyeti olsun ama yapay zeka destegi ile
+            degil, kendi sistem yapay zekasiyla".
+            ⚠️ BU MOTOR ZATEN VARDI: /duyu/bag-defteri her gece duyulari
+            capraz okuyup Turkce yorum cumleleri uretiyor — canli olcum:
+            80 cumle, sifir LLM. Tek tuketicisi beynin B42 penceresiydi ve
+            beyin LLM kotasi doldugu icin susuyordu. Yani sistemin kendi
+            zekasi CALISIYOR ama hicbir ekranda GORUNMUYORDU.
+            ⚠️ HER CUMLE KANIT TASIR: `alanlar` hangi duyularin capraz
+            okundugunu, `guven` kanit gucunu soyler (hesap > gozlem > orta).
+            ⚠️ ONERI-ONLY: bu cumleler HUKUM DEGIL ADAYDIR — motorun kendi
+            notu da bunu yaziyor ve ekranda aynen gosterilir.
+            ══════════════════════════════════════════════════════════════ */}
+        {(() => {
+          if (zeka === '__HATA__') {
+            return (
+              <div style={{
+                ...kartYuzey, padding: '13px 17px', marginBottom: 14,
+                borderLeft: `3px solid ${R.amber}`, fontSize: 12.5, color: R.metin2,
+              }}>
+                ⚠ <b style={{ color: R.krem }}>Sistem zekâsı okunamadı</b> — bağ defteri ucu
+                yanıt vermedi. Bu «yorum yok» demek değil, «okuyamadım» demektir.
+              </div>
+            );
+          }
+          if (!zeka) return null;
+          const ham = Array.isArray(zeka.baglar) ? zeka.baglar : null;
+          if (!ham) return null;
+          const GUVEN_SIRA = { hesap: 0, gozlem: 1, orta: 2 };
+          const GUVEN_AD = {
+            hesap: 'hesaplanmış', gozlem: 'gözlem', orta: 'orta güven',
+          };
+          const GUVEN_RENK = { hesap: R.krem, gozlem: R.bakirAcik, orta: R.not2 };
+          // Duyu süzgeci: hangi alanlar konuşmuş
+          const alanSayac = {};
+          ham.forEach((b) => (Array.isArray(b.alanlar) ? b.alanlar : []).forEach((a2) => {
+            alanSayac[a2] = (alanSayac[a2] || 0) + 1;
+          }));
+          const alanlar = Object.entries(alanSayac).sort((x, y) => y[1] - x[1]);
+          const suzulmus = zekaAlan
+            ? ham.filter((b) => (Array.isArray(b.alanlar) ? b.alanlar : []).includes(zekaAlan))
+            : ham;
+          // Sıralama: kanıt gücü → yeniden eskiye
+          const sirali = [...suzulmus].sort((x, y) => (
+            (GUVEN_SIRA[x.guven] ?? 9) - (GUVEN_SIRA[y.guven] ?? 9)
+            || String(y.tarih || '').localeCompare(String(x.tarih || ''))
+          ));
+          const TAVAN = 25;
+          const hatalar = Array.isArray(zeka.kaynak_hatalari) ? zeka.kaynak_hatalari : [];
+          const gun = String(zeka.defter_gunu || '');
+          const bayat = gun && gun < bugunISO();
+          return (
+            <div style={{ ...kartYuzey, padding: '16px 18px', marginBottom: 14 }}>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 4 }}>
+                <span style={{ fontFamily: F.baslik, fontSize: 15, fontWeight: 600 }}>Sistemin kendi zekâsı</span>
+                <span style={{ fontSize: 11.5, color: R.not2 }}>
+                  {ham.length} yorum · kodun kurduğu · <b style={{ color: R.not }}>yapay zekâ kullanılmadı</b>
+                </span>
+                <span style={{ marginLeft: 'auto', fontSize: 11, color: bayat ? R.amber : R.not2 }}>
+                  {gun ? `defter günü ${tarihKisa(gun)}` : 'defter günü bilinmiyor'}
+                  {bayat ? ' · bugünkü hesap henüz yapılmadı' : ''}
+                </span>
+              </div>
+              <div style={{ fontSize: 11.5, color: R.not2, lineHeight: 1.6, marginBottom: 11 }}>
+                Bu cümleleri motor yazdı: duyuları çapraz okuyup <b style={{ color: R.not }}>hangi kaydın
+                hangisiyle çeliştiğini</b> söylüyor. Her satır bir <b>aday</b>dır — hüküm değil.
+              </div>
+              {/* ⚠️ KAYNAK HATASI GİZLENMEZ: hesap sırasında düşen duyu varsa
+                  yorumlar EKSİK demektir; sessizce tam sanılmamalı. */}
+              {hatalar.length > 0 && (
+                <div style={{
+                  fontSize: 11.5, color: R.amber, marginBottom: 10, padding: '7px 11px',
+                  borderRadius: 8, background: `${R.amber}14`,
+                }}>
+                  ⚠ Hesap sırasında <b>{hatalar.length} kaynak okunamadı</b> ({hatalar.slice(0, 4).join(' · ')})
+                  — aşağıdaki yorumlar eksik olabilir.
+                </div>
+              )}
+              {/* Duyu süzgeci — "hangi duyu konuştu" */}
+              {alanlar.length > 0 && (
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12 }}>
+                  <button
+                    type="button" onClick={() => setZekaAlan(null)}
+                    style={{
+                      padding: '4px 10px', borderRadius: 99, fontSize: 11, fontWeight: 700,
+                      cursor: 'pointer', fontFamily: 'inherit',
+                      border: `1px solid ${zekaAlan == null ? R.bakir : R.cizgi3}`,
+                      background: zekaAlan == null ? `${R.bakir}22` : 'transparent',
+                      color: zekaAlan == null ? R.bakirAcik : R.not2,
+                    }}
+                  >hepsi · {ham.length}</button>
+                  {alanlar.map(([a2, n]) => (
+                    <button
+                      key={a2} type="button"
+                      onClick={() => setZekaAlan(zekaAlan === a2 ? null : a2)}
+                      style={{
+                        padding: '4px 10px', borderRadius: 99, fontSize: 11, fontWeight: 700,
+                        cursor: 'pointer', fontFamily: 'inherit',
+                        border: `1px solid ${zekaAlan === a2 ? R.bakir : R.cizgi3}`,
+                        background: zekaAlan === a2 ? `${R.bakir}22` : 'transparent',
+                        color: zekaAlan === a2 ? R.bakirAcik : R.not2,
+                      }}
+                    >{a2} · {n}</button>
+                  ))}
+                </div>
+              )}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+                {sirali.slice(0, TAVAN).map((b, i2) => (
+                  <div key={i2} style={{
+                    padding: '9px 12px', borderRadius: 9, background: R.girinti,
+                    border: `1px solid ${R.cizgi3}`,
+                    borderLeft: `3px solid ${GUVEN_RENK[b.guven] || R.not3}`,
+                  }}>
+                    <div style={{ fontSize: 12.5, color: R.metin2, lineHeight: 1.6 }}>{b.cumle}</div>
+                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 5, alignItems: 'center' }}>
+                      <span style={{ fontSize: 10.5, color: GUVEN_RENK[b.guven] || R.not3, fontWeight: 700 }}>
+                        {GUVEN_AD[b.guven] || b.guven || 'güven yok'}
+                      </span>
+                      {(Array.isArray(b.alanlar) ? b.alanlar : []).map((a2) => (
+                        <span key={a2} style={{
+                          fontSize: 10, color: R.not2, padding: '1px 7px', borderRadius: 99,
+                          border: `1px solid ${R.cizgi3}`,
+                        }}>{a2}</span>
+                      ))}
+                      {b.tarih && <span style={{ fontSize: 10.5, color: R.not3 }}>{tarihKisa(b.tarih)}</span>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              {/* ⚠️ SESSİZ ELEME YASAK */}
+              {sirali.length > TAVAN && (
+                <div style={{ fontSize: 11.5, color: R.not2, marginTop: 9 }}>
+                  … ve <b style={{ color: R.not }}>{sirali.length - TAVAN} yorum daha</b> —
+                  liste kanıt gücü sırasıyla ilk {TAVAN}'ini gösterir
+                  {zekaAlan ? ` («${zekaAlan}» süzgeci açık)` : ''}.
+                </div>
+              )}
+              {sirali.length === 0 && (
+                <div style={{ fontSize: 12, color: R.not2 }}>
+                  {zekaAlan ? `«${zekaAlan}» duyusundan bu defterde yorum yok.` : 'Bu defterde yorum yok.'}
+                </div>
+              )}
+              <div style={{ fontSize: 10.5, color: R.not3, marginTop: 10, fontStyle: 'italic' }}>
+                {zeka.not || 'Kod kurdu, hüküm yok; her cümle gözlem ya da hazır hesaptır.'}
+              </div>
+            </div>
+          );
+        })()}
         {sentezler.length === 0 ? (
           <BosDurum metin="Henüz gece sentezi kaydı yok — beyin her gece gözlem anlatısı üretir." />
         ) : (
