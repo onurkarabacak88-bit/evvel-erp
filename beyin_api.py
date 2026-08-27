@@ -1306,6 +1306,35 @@ def _sor_calistir(soru: str, tip: str = "soru", ek_bloklar=None,
             red = red2
     if red and _oz_deneme:
         red = f"{red} (öz-düzeltme sonrası da)"
+    # ══════════════════════════════════════════════════════════════════════
+    # DETERMINISTIK BESTECI — beynin sesi kesilince KOD konusur
+    # ══════════════════════════════════════════════════════════════════════
+    # 27 Agustos 2026: Gemini kotasi doldu (429) ve sistemin TAMAMI sustu.
+    # Oysa alti katmandan ucu (algi · akil · getirme) kusursuz calisiyordu:
+    # 2.966 olay okunmus, 80 capraz yorum kurulmus, dogru pencereler
+    # secilmisti. Sadece KELIMEYE DOKECEK organ yoktu ve ELDE OLAN cevap
+    # cope gitti.
+    # ⚠️ Besteci LLM'in YERINE GECMEZ, YOKLUGUNDA konusur. LLM varken o
+    # konusur (akici); yokken burasi konusur (kuru ama DOGRU).
+    # ⚠️ YALNIZ "ses yok" halinde devreye girer. `_post_check` reddi (model
+    # konustu ama KURAL DELDI) besteciye DEVREDILMEZ — o red bir FRENDIR ve
+    # frenin etrafindan dolasilmaz. Karistirmak, guvenlik katmanini
+    # sessizce kapatmak olurdu.
+    if red and not cevap:
+        try:
+            from zeka_besteci import bestele as _bestele
+            _b = _bestele(soru, bloklar, sebep=llm_son_hata() or None)
+            if _b.get("yeterli"):
+                # ⚠️ ARSIVE DOGRU MODEL ADIYLA YAZILIR: sonradan "bu cevabi kim
+                # kurdu" sorusu sorulabilmeli (ogrenme ve denetim icin).
+                cevap, model, red = _b["cevap"], "besteci:kod", None
+        except Exception as _e:  # noqa: BLE001
+            logger.warning("besteci yutuldu: %s", str(_e)[:140])
+
+    # ⚠️ SIRA ONEMLI: besteci ARSIVDEN ONCE kosar. Ilk yazisimda arsivden
+    # SONRA kosuyordu ve kurdugu cevap deftere HIC yazilmiyordu — yani sahip
+    # onu 👍 ile begenemez, uslup rehberi ondan ogrenemezdi. Cevap uretip
+    # kaydetmemek, cevabi yarim uretmektir.
     izler = [{"id": bid, "baslik": baslik} for bid, baslik, _ in bloklar]
     gunluk_id = None
     try:
