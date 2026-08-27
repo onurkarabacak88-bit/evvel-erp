@@ -20,7 +20,7 @@
 // Yazma yolları: SADECE /ops/siparis/sevkiyat-guncelle (SevkiyatHazirlama.jsx
 // ile birebir aynı sözleşme + aynı kaynak kurallar). Başka yazma ucu yok.
 // ─────────────────────────────────────────────────────────────────────────────
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api, fmt } from '../../utils/api';
 import { R, F, kartYuzey } from './tema';
 import { KpiSeridi, Tablo, BosDurum, HataBandi, Liste } from './parcalar';
@@ -345,8 +345,22 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
       // uyumsuzluk / ciro fark) DÜŞERSE boş={}→"temiz/0" render edip çözülmemiş
       // uyumsuzlukları GİZLİYORDU. Kritik null → açık hata banner'ı (yenile), sahte
       // sakinlik yok. Yardımcı okumalar (sevkiyat paterni/tedarikçi) null tolere edilir.
-      if (ks == null || fd == null) {
-        setUzHata('Mutabakat verisi yüklenemedi (kasa uyumsuzluk / ciro fark defteri) — '
+      // ⚠️ YARIM GUARD KAPANDI (Codex, 2026-08-27 — bu projede 7. kez):
+      // Bir önceki tur kasa/ciro okumalarını banner'a çıkarmış ama SEVKİYAT
+      // UYUMSUZLUKLARI'nı "yardımcı okuma" sayıp `sv || {satirlar:[]}` ile
+      // sessizce boşaltıyordu. Oysa bu ekranın ADI Uzlaştırma; sevkiyat
+      // uyumsuzluğu listesi burada yardımcı değil, MASANIN KENDİSİDİR.
+      // Uç düşerse ekran "uyumsuzluk yok" der — çözülmemiş fark gizlenir.
+      // Aynı gerekçe tahsis akışı (`ak`) için de geçerli: talep≠tahsis
+      // satırları oradan türer; düşerse tahsis farkı yokmuş gibi görünür.
+      const _dusen = [
+        ks == null ? 'kasa uyumsuzluk' : null,
+        fd == null ? 'ciro fark defteri' : null,
+        sv == null ? 'sevkiyat uyumsuzlukları' : null,
+        ak == null ? 'sipariş/tahsis akışı' : null,
+      ].filter(Boolean);
+      if (_dusen.length) {
+        setUzHata(`Mutabakat verisi yüklenemedi (${_dusen.join(' · ')}) — `
                   + '"temiz" görünüm EKSİK olabilir, çözülmemiş uyumsuzluk gizlenmiş olabilir. Yenileyin.');
         return;
       }
@@ -695,6 +709,11 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
   const [ugKatalog, setUgKatalog] = useState(null);
   const [ugListeAcik, setUgListeAcik] = useState(false);
   useEffect(() => {
+    // ⚠️ Codex P1: katalog ilk hatada `[]` olarak önbelleğe alınıyor ve
+    // koşul `== null` olduğu için o oturumda BİR DAHA DENENMİYORDU. Geçici
+    // bir ağ hatası, kalıcı "öneri yok" ekranına dönüşüyordu (HATA ≠ BOŞ).
+    // Artık hata ayrı işaretlenir; boş katalog ile okunamayan katalog
+    // birbirine karışmaz ve yeniden denenebilir.
     if (gorunum === 'tedarik' && tsSekme === 'urungelis' && ugKatalog == null) {
       api('/ops/maliyet/stok-kalemleri')
         .then((d) => setUgKatalog(
@@ -802,7 +821,9 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
         method: 'POST',
         body: { talep_idler: idler, not_aciklama: (birlNot || '').trim() || null },
       });
-      onToast?.(`${sayi(r?.birlesik_talep_sayisi) || idler.length} sipariş tek siparişe indi — ${sayi(r?.kalem_sayisi)} kalem · yeni #${String(r?.yeni_talep_id || '').slice(-8)}`);
+      // ⚠️ falsy-zero: sunucu meşru 0 derse `||` bunu "yok" sanıp seçilen
+      // adedi yazıyordu — birleşmeyen işlem birleşmiş gibi bildiriliyordu.
+      onToast?.(`${r?.birlesik_talep_sayisi != null ? sayi(r.birlesik_talep_sayisi) : idler.length} sipariş tek siparişe indi — ${sayi(r?.kalem_sayisi)} kalem · yeni #${String(r?.yeni_talep_id || '').slice(-8)}`);
       birlTemizle();
       kuleYukle();
     } catch (e) {
@@ -812,14 +833,22 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     }
   };
 
+  // ⚠️ BAYAT CEVAP (Codex P0, 2026-08-27): tarih hızlı değiştirildiğinde
+  // ESKİ isteğin geç dönen cevabı YENİ tarihin ekranını eziyordu. Sahip
+  // "27 Ağustos" yazan ekranda 26 Ağustos'un rakamlarını görebilirdi — ve
+  // bunu anlamasının hiçbir yolu yoktu. Her yükleme bir sıra numarası alır;
+  // yalnız EN SON başlatılan yükleme state yazabilir.
+  const barIstekRef = useRef(0);
   const barYukle = useCallback((tarih) => {
     setBarHata('');
     const t = tarih || bugunYerelISO();
+    const _bilet = ++barIstekRef.current;
+    const _guncel = () => barIstekRef.current === _bilet;
     api(`/ops/acilis-kasa-takip?tarih=${t}`)
-      .then((d) => setAcilisTakip(d || {}))
+      .then((d) => { if (_guncel()) setAcilisTakip(d || {}); })
       .catch((e) => setBarHata(e?.message || ''));
     api(`/ops/kapanis-takip?tarih=${t}`)
-      .then((d) => setKapanisTakip(d || {}))
+      .then((d) => { if (_guncel()) setKapanisTakip(d || {}); })
       // 🔵 (2026-08-12) FAKE-GREEN: kapanış takip (kasa kapanış = para) DÜŞÜNCE {}'e
       // yutulup "denklem tutuyor/0" gibi render ediliyordu. Hata banner'ına yüzeye çıkar.
       .catch((e) => setBarHata(e?.message || 'Kapanış takip verisi yüklenemedi — yenileyin.'));
@@ -828,10 +857,10 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     // mi açıldı" der. Üç ayrı liste: geç açılan · açılış başlamış ama
     // TAMAMLANMAMIŞ · o gün hiç ACILIS kaydı OLUŞMAMIŞ (panel/motor çalışmamış).
     api(`/ops/gec-acilan-subeler?tarih=${t}`)
-      .then((d) => setGecAcilis(d || null))
+      .then((d) => { if (_guncel()) setGecAcilis(d || null); })
       .catch(() => setGecAcilis(null));
     api(`/ops/v2/urun-ac-akis?tarih=${t}`)
-      .then((d) => setUrunAcAkis(d || {}))
+      .then((d) => { if (_guncel()) setUrunAcAkis(d || {}); })
       .catch(() => setUrunAcAkis({}));
     // ⚠️ Bar özeti GÜN ODAKLI çekilir. İki sebep (ikisi de sunucu sözleşmesi):
     // 1) `gun` verilmezse uç evo_* alanlarını HİÇ doldurmaz (operasyon_merkez_api
@@ -842,6 +871,7 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     // O güne ait kayıt yoksa aylık listeye düşülür (eski davranış korunur).
     api(`/ops/bar-ozet?gun=${t}&year_month=${t.slice(0, 7)}&limit=60`)
       .then((d) => {
+        if (!_guncel()) return null;
         const s = Array.isArray(d?.satirlar) ? d.satirlar : [];
         if (s.length) { setBarOzet({ ...d, satirlar: s, gunluk: true }); return null; }
         return api('/ops/bar-ozet?limit=60').then((d2) => setBarOzet({
@@ -1549,14 +1579,29 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
         { v: `fark ${sayi(k.fark_adet)}`, rozet: R.kirmizi },
       ],
     }));
-    faturalar.forEach((f, i) => satirlar.push({
-      id: `n4${i}`, hucreler: [
-        { v: '④ Fatura' },
-        { v: tarihKisa(f.fatura_tarih || f.tarih), mono: true },
-        { v: `${f.fatura_no || '(no yok)'} · ${fmt(sayi(f.toplam_tutar || f.tutar))}` },
-        { v: f.durum || 'kayıtlı', rozet: R.yesil },
-      ],
-    }));
+    // ⚠️ YARIM SÜZGEÇ (Codex, 2026-08-27 — bu projede 7. kez):
+    // KPI `gecerliFatura` (iptal/taslak/reddedilmiş HARİÇ) üzerinden
+    // hesaplanıyordu, ama bu liste `faturalar`ın TAMAMINI dolaşıp her satırı
+    // YEŞİL basıyordu. Ekranda iptal edilmiş bir fatura, borcun işlendiğine
+    // dair kanıt gibi duruyordu. Süzgeci değere uygulayıp listeye
+    // uygulamamak, süzgeci yarım bırakmaktır.
+    // ⚠️ SATIR SİLİNMİYOR (ham veri kaybolmaz) — rengi ve etiketi doğru
+    // olanla değişiyor: geçersiz fatura artık kanıt gibi görünmüyor.
+    faturalar.forEach((f, i) => {
+      const _gecersiz = /(iptal|taslak|reddedild)/i.test(String(f.durum || ''));
+      satirlar.push({
+        id: `n4${i}`, hucreler: [
+          { v: '④ Fatura' },
+          { v: tarihKisa(f.fatura_tarih || f.tarih), mono: true },
+          {
+            v: `${f.fatura_no || '(no yok)'} · ${fmt(sayi(f.toplam_tutar != null ? f.toplam_tutar : f.tutar))}`
+              + (_gecersiz ? ' · borç kanıtı DEĞİL' : ''),
+            renk: _gecersiz ? R.not3 : undefined,
+          },
+          { v: f.durum || 'kayıtlı', rozet: _gecersiz ? R.not3 : R.yesil },
+        ],
+      });
+    });
     if (!gecerliFatura.length) {
       satirlar.push({
         id: 'n4x', hucreler: [
@@ -1609,7 +1654,12 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
           : { etiket: 'Hedef depo', deger: s.hedef_depo_sube_adi || 'atanmadı', renk: s.hedef_depo_sube_adi ? R.krem : R.amber },
       ],
       listeBaslik: z ? 'Talep kalemleri · merkez stok durumu' : 'Talep kalemleri',
-      satirlar: (s.kalemler || []).slice(0, 14).map((k) => {
+      // ⚠️ SESSİZ ELEME (Codex, 2026-08-27): kalem listesi 14'te kesiliyor ve
+      // kesildiği SÖYLENMİYORDU. Sahip "bütün kalemleri gördüm" sanıp eksik
+      // kanıtla karar veriyordu — 38 kalemlik siparişte 24 kalem görünmüyordu.
+      // (Taşan sayı listenin sonunda ayrı satır olarak yazılıyor.)
+      satirlar: [
+        ...(s.kalemler || []).slice(0, 14).map((k) => {
         const zk = zKalemMap[String(k?.urun_ad || '')] || null;
         // Karar için gereken üç sayı: şubede zaten var mı · merkezde ne kalır ·
         // barem altına düşer mi. Sunucu hesaplıyordu, ekran hiç göstermiyordu.
@@ -1636,7 +1686,14 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
           detay,
           tutar: `${sayi(k?.adet)} adet`,
         };
-      }),
+        }),
+        // Taşan kalem sayısı YAZILIR — görünmeyen kalem, aranmayan kalemdir.
+        ...((s.kalemler || []).length > 14 ? [{
+          ad: `… ve ${(s.kalemler || []).length - 14} kalem daha`,
+          detay: 'liste ilk 14 kalemi gösterir · tamamı sipariş kaydında',
+          tutar: '',
+        }] : []),
+      ],
       not: [
         // Davranış uyarısı: aynı şube kısa aralıkla tekrar istiyor olabilir
         z && Array.isArray(z.davranis_uyarilari) && z.davranis_uyarilari.length

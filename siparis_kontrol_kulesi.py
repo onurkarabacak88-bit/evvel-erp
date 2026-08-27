@@ -304,7 +304,26 @@ def siparis_kontrol_kulesi_yukle(
             st.sevkiyat_ts, st.sevkiyat_personel_ad,
             st.kabul_ts, st.kabul_personel_ad, st.kabul_durum AS kabul_durum_db,
             pk.telefon AS kabul_personel_tel,
-            ps.telefon AS sevk_personel_tel,
+            -- ══════════════════════════════════════════════════════════════
+            -- 🔴 MÜKERRER SİPARİŞ KARTI — 2026-08-27, canlı kanıt
+            -- ══════════════════════════════════════════════════════════════
+            -- Buradan önce `LEFT JOIN personel ps ON ps.ad_soyad =
+            -- st.sevkiyat_personel_ad` vardı: personel ADA göre bağlanıyordu.
+            -- Sistemde çıkıp geri gelen personelin İKİ kaydı olur (kasıtlı;
+            -- dönemler kişi kimliğiyle bağlanır, kayıtlar birleştirilmez).
+            -- Aynı adda iki kayıt olunca JOIN sipariş satırını İKİZLİYORDU.
+            -- Canlı kanıt: SILA AKBAY'ın 2 personel kaydı var (25 personel
+            -- içinde tek ikiz ad); onun sevk ettiği 2 sipariş kule listesinde
+            -- iki kez görünüyordu. Ekran "5 kabul uyumsuzluğu" derken aynı
+            -- ucun kendi özeti "3" diyordu — çelişki TEK YANITIN içindeydi.
+            -- Sahip için bedeli: olmayan iki işi kovalamak.
+            -- ⚠️ Bağ tamamen KALDIRILDI, skaler alt sorguya çevrildi: alt sorgu
+            -- LIMIT 1 ile TEK değer döner, satır sayısını asla değiştiremez.
+            -- Aktif kayıt önce gelir (telefon en güncel olan kayıttan alınır).
+            (SELECT p2.telefon FROM personel p2
+              WHERE p2.ad_soyad = st.sevkiyat_personel_ad
+              ORDER BY p2.aktif DESC NULLS LAST, p2.id
+              LIMIT 1) AS sevk_personel_tel,
             st.sevkiyat_durumu, st.sevkiyat_durum,
             COALESCE(st.hedef_depo_sube_id, st.sevkiyat_sube_id) AS hedef_depo_sube_id,
             dep.ad AS hedef_depo_sube_adi,
@@ -317,7 +336,8 @@ def siparis_kontrol_kulesi_yukle(
         JOIN subeler s ON s.id = st.sube_id
         LEFT JOIN subeler dep ON dep.id = COALESCE(st.hedef_depo_sube_id, st.sevkiyat_sube_id)
         LEFT JOIN personel pk ON pk.id = st.kabul_personel_id
-        LEFT JOIN personel ps ON ps.ad_soyad = st.sevkiyat_personel_ad
+        -- (ps bağı kaldırıldı — yukarıdaki skaler alt sorguya taşındı.
+        --  pk KİMLİK üzerinden bağlanır, ikizlenme üretemez.)
         WHERE {where}
         ORDER BY
             CASE st.durum
