@@ -384,6 +384,10 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
         fd == null ? 'ciro fark defteri' : null,
         sv == null ? 'sevkiyat uyumsuzlukları' : null,
         ak == null ? 'sipariş/tahsis akışı' : null,
+        // ⚠️ Fable: personel-vardiya da bu masanın ÇÖZÜLEBİLİR bir kalemi
+        // (uzUygula tip:'personel'). Onu "yardımcı okuma" sayıp sessizce
+        // boşaltmak, yarım guard'ın devamıydı.
+        pr == null ? 'personel-vardiya uyumsuzluğu' : null,
       ].filter(Boolean);
       if (_dusen.length) {
         setUzHata(`Mutabakat verisi yüklenemedi (${_dusen.join(' · ')}) — `
@@ -1661,8 +1665,17 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
       id: `n3${i}`, hucreler: [
         { v: '③ Kabul farkı' },
         { v: '—' },
-        { v: `${k.urun_ad || k.kalem_adi || '—'}: sevk ${sayi(k.sevk_adet)} / kabul ${sayi(k.kabul_adet)}` },
-        { v: `fark ${sayi(k.fark_adet)}`, rozet: R.kirmizi },
+        // ⚠️ Fable: burası ham alan okuyordu ve dosyanın geri kalanı için
+        // yazılmış null-dönen okuyucuları (uzSevkAdet/uzKabulAdet/uzFarkAdet)
+        // kullanmıyordu — "yanlış alan adı" kalıbına açık tek noktaydı.
+        // Artık aynı okuyucular: alan yoksa "0" değil "—" yazılır.
+        { v: `${k.urun_ad || k.kalem_adi || '—'}: sevk ${uzSevkAdet(k) ?? '—'} / kabul ${uzKabulAdet(k) ?? '—'}` },
+        (() => {
+          const f = uzFarkAdet(k);
+          return f == null
+            ? { v: 'fark ölçülemedi', rozet: R.not3 }
+            : { v: `fark ${f > 0 ? '+' : ''}${f}`, rozet: f === 0 ? R.not : R.kirmizi };
+        })(),
       ],
     }));
     // ⚠️ YARIM SÜZGEÇ (Codex, 2026-08-27 — bu projede 7. kez):
@@ -3089,7 +3102,8 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
         ) : (
           <Tablo
             baslik="Personel ↔ vardiya uyumsuzlukları"
-            not="satıra tıkla → çöz"
+            not={'satıra tıkla → çöz'
+              + (acikPers.length > 40 ? ` · ⚠ ${acikPers.length} kaydın ilk 40'ı gösteriliyor` : '')}
             kolonlar={[{ ad: 'Personel' }, { ad: 'Şube' }, { ad: 'Tarih' }, { ad: 'Sebep' }]}
             satirlar={acikPers.slice(0, 40).map((p, i) => ({
               id: p.id || `pv-${i}`, _p: p,
@@ -4108,6 +4122,12 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     if (!sayim) return <Yukleniyor />;
     const gorevler = Array.isArray(sayim.gorevler) ? sayim.gorevler : [];
     const farkli = gorevler.filter((g) => sayi(g.fark_sayisi) > 0);
+    // ⚠️ Fable: `/stok-sayim/duzeltme-iz` düşerse `setSayimIz(null)` sessizce
+    // yutuluyor, sonra `sayimIz || {}` yüzünden KPI "Ezilen kalem 0 · Karar
+    // 0/0" basıyordu — sakin renkte, ölçülmüş bir sıfır gibi. Sayım defteri
+    // okunamadığı gün "hiç düzeltme olmamış" görünüyordu. Depo görünümü bu
+    // ayrımı zaten doğru yapıyor ("—"); aynı disiplin buraya da geldi.
+    const izOkunamadi = sayimIz === null;
     const iz = sayimIz || {};
     return (
       <>
@@ -4120,18 +4140,18 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
           // zorundayız — yoksa büyüyen defterde aynı yanılgı geri gelir.
           {
             etiket: 'Ezilen kalem (iz)',
-            deger: String(sayi(iz.ezilen_kalem)),
-            alt: sayi(iz.toplam_iz) >= 1000
-              ? '⚠ 1000 kayıt penceresi doldu — gerçek toplam daha büyük olabilir'
-              : `onayla stok değişti · ${sayi(iz.toplam_iz)} iz kaydı içinde`,
-            renk: sayi(iz.ezilen_kalem) > 0 ? R.amber : R.krem,
+            deger: izOkunamadi ? '—' : String(sayi(iz.ezilen_kalem)),
+            alt: izOkunamadi ? '⚠ düzeltme izi okunamadı — "hiç düzeltme yok" DEMEK DEĞİL'
+              : (sayi(iz.toplam_iz) >= 1000
+                ? '⚠ 1000 kayıt penceresi doldu — gerçek toplam daha büyük olabilir'
+                : `onayla stok değişti · ${sayi(iz.toplam_iz)} iz kaydı içinde`),
+            renk: izOkunamadi ? R.not3 : (sayi(iz.ezilen_kalem) > 0 ? R.amber : R.krem),
           },
           {
             etiket: 'Karar dağılımı',
-            deger: `${sayi(iz.karar_sayim)} / ${sayi(iz.karar_sistem)}`,
-            alt: sayi(iz.toplam_iz) >= 1000
-              ? '⚠ pencere doldu — kısmi'
-              : 'sayım kabul / sistem korundu',
+            deger: izOkunamadi ? '—' : `${sayi(iz.karar_sayim)} / ${sayi(iz.karar_sistem)}`,
+            alt: izOkunamadi ? 'okunamadı'
+              : (sayi(iz.toplam_iz) >= 1000 ? '⚠ pencere doldu — kısmi' : 'sayım kabul / sistem korundu'),
           },
         ]} />
 
@@ -4344,7 +4364,27 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
               alt: hrTur.length ? 'sevk + ürün aç' : 'sevk + ürün aç · ekrandan sayıldı',
             };
           })(),
-          { etiket: 'Fire + sayım (3 gün)', deger: String(say((h) => ['fire', 'sayım'].includes(turCoz(h.hareket_turu).ad))), alt: 'düzeltme dahil', renk: say((h) => turCoz(h.hareket_turu).ad === 'fire') > 0 ? R.kirmizi : R.krem },
+          // ⚠️ Fable: bu KPI hâlâ istemcide, üstelik sunucudan `limit=150` ile
+          // gelen pencereden sayılıyordu. 3 günde 150'den çok hareket olursa
+          // FİRE sayısı sessizce eksik çıkar — fire doğrudan para kaybı
+          // sayacıdır. Komşu iki KPI sunucu kırılımını kullanıyor; bu da öyle.
+          (() => {
+            const sunucu = hrTur
+              .filter((t) => ['fire', 'sayım'].includes(turCoz(t.hareket_turu || t.tur).ad))
+              .reduce((a, t) => a + sayi(t.adet ?? t.kayit ?? t.sayi), 0);
+            const fireSunucu = hrTur
+              .filter((t) => turCoz(t.hareket_turu || t.tur).ad === 'fire')
+              .reduce((a, t) => a + sayi(t.adet ?? t.kayit ?? t.sayi), 0);
+            const varmi = hrTur.length > 0;
+            const deger = varmi ? sunucu : say((h) => ['fire', 'sayım'].includes(turCoz(h.hareket_turu).ad));
+            const fire = varmi ? fireSunucu : say((h) => turCoz(h.hareket_turu).ad === 'fire');
+            return {
+              etiket: 'Fire + sayım (3 gün)',
+              deger: String(deger),
+              alt: varmi ? 'düzeltme dahil' : 'düzeltme dahil · ekrandan sayıldı (150 kayıt penceresi)',
+              renk: fire > 0 ? R.kirmizi : R.krem,
+            };
+          })(),
         ]} />
 
         {/* ŞUBE KIRILIMI — sunucu hareket adedinin yanında MİKTAR toplamlarını
@@ -4502,6 +4542,19 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
             alt: arsivVeri.ozet ? `bekleyen ${sayi(arOzet.bekliyor)}` : 'özet okunamadı',
             renk: R.not,
           },
+          // ⚠️ Fable: özet histogramında DOLU ve KIRMIZI bir durum vardı —
+          // `kabul_uyusmazlik` (şube teslim aldı ama adet tutmadı = stok/para
+          // farkı) — ama manşette yoktu; ancak filtre çipine tıklayan bulurdu.
+          // "Gönderilmedi 0" yeşilini gören sahip, dolu olan uyuşmazlığı
+          // kaçırıyordu. En kırmızı sayı en görünür yerde durmalı.
+          {
+            etiket: 'Kabul uyuşmazlığı',
+            deger: arsivVeri.ozet ? String(sayi(arOzet.kabul_uyusmazlik)) : '—',
+            alt: !arsivVeri.ozet ? 'özet okunamadı'
+              : (sayi(arOzet.kabul_uyusmazlik) ? 'teslim alındı, adet tutmadı' : 'adet farkı yok'),
+            renk: !arsivVeri.ozet ? R.not3
+              : (sayi(arOzet.kabul_uyusmazlik) ? R.kirmizi : R.yesil),
+          },
         ]} />
 
         {/* filtre çubuğu: gün · durum · şube arama */}
@@ -4587,11 +4640,21 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
                   { etiket: 'Toplam adet', deger: String(sayi(_t.kalem_adet_toplam)) },
                 ],
                 listeBaslik: 'Kalemler',
-                satirlar: (_t.kalemler || []).slice(0, 30).map((k) => ({
-                  ad: k?.urun_ad || k?.kalem_adi || '—',
-                  detay: k?.birim ? String(k.birim) : '',
-                  tutar: `${sayi(k?.adet)} adet`,
-                })),
+                // ⚠️ Fable: KPI "Kalem: 45" derken liste 30'da kesiliyor ve
+                // "15 kalem gösterilmiyor" denmiyordu — dosyanın başka her
+                // tablosu taşmayı sayıyla söylerken tek istisna burasıydı.
+                satirlar: [
+                  ...(_t.kalemler || []).slice(0, 30).map((k) => ({
+                    ad: k?.urun_ad || k?.kalem_adi || '—',
+                    detay: k?.birim ? String(k.birim) : '',
+                    tutar: `${sayi(k?.adet)} adet`,
+                  })),
+                  ...((_t.kalemler || []).length > 30 ? [{
+                    ad: `… ve ${(_t.kalemler || []).length - 30} kalem daha`,
+                    detay: 'liste ilk 30 kalemi gösterir · tamamı sipariş kaydında',
+                    tutar: '',
+                  }] : []),
+                ],
                 not: _t.durum === 'gonderilmedi'
                   ? 'Bu sipariş GÖNDERİLMEDİ olarak kapanmış. "Kuyruğa al" onu Sipariş Akışı\'nın bekliyor kolonuna geri döndürür — yeni kayıt açmaz.'
                   : 'Arşiv salt-okurdur. Açık işler Sipariş Akışı kanbanında yönetilir.',
@@ -4606,7 +4669,8 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
         {arsivSekme === 'rapor' && (raporlar.length ? (
           <Tablo
             baslik="Depo sevkiyat raporları · tarihçe"
-            not="sevkiyat hazırlanırken yazılan rapor metinleri · satıra tıkla → tam metin"
+            not={'sevkiyat hazırlanırken yazılan rapor metinleri · satıra tıkla → tam metin'
+              + (raporlar.length > 60 ? ` · ⚠ ${raporlar.length} raporun ilk 60'ı gösteriliyor` : '')}
             kolonlar={[
               { ad: 'Rapor tarihi' }, { ad: 'Depo' }, { ad: 'Talep eden şube' },
               { ad: 'Personel' }, { ad: 'Durum' },
@@ -4934,10 +4998,16 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
                 const sev = SEVIYE[x.fark_seviye] || null;
                 // Renk SEVİYEYE göre: 5 TL fark kırmızı olmamalı (sunucu ±50'yi
                 // normal sayıyor, operasyon_kurallar.tolerans_seviyesi).
+                // ⚠️ Fable: yorum "5 TL kırmızı olmamalı" derken YEDEK DAL tam
+                // bunu yapıyordu — seviye alanı gelmezse tolerans bandı yok
+                // sayılıp her fark kırmızıya boyanıyordu. Yedek de aynı bandı
+                // uygular (±50 normal); band sunucudan gelmezse burada da
+                // uydurulmaz, yalnız tekrar edilir.
                 const farkRenk = fark == null ? R.not
                   : x.uyumsuzluk_cozuldu ? R.not2
                     : sev ? sev.renk
-                      : fark === 0 ? R.yesil : R.kirmizi;
+                      : Math.abs(fark) <= 50 ? R.yesil
+                        : Math.abs(fark) < 200 ? R.amber : R.kirmizi;
                 return {
                   id: x.sube_id || `a-${i}`,
                   hucreler: [
@@ -5188,7 +5258,7 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
                       etiket: 'Nakit Δ',
                       deger: d.gecerli ? tlIsaretli(d.deger) : '—',
                       renk: !d.gecerli || (d.kismi && !d.tam) ? R.metin2
-                        : Math.abs(d.deger) <= 0.5 ? R.yesil
+                        : Math.abs(d.deger) <= 50 ? R.yesil
                           : d.deger > 0 ? R.kirmizi : R.amber,
                     },
                     { etiket: 'Teslim', deger: tl(teslim), renk: teslim ? R.yesil : R.amber },
@@ -5224,7 +5294,8 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
         {barSekme === 'urunac' && (acAkis.length ? (
           <Tablo
             baslik={`Ürün-aç akışı · ${tarihKisa(barTarih)}`}
-            not={`${sayi(urunAcAkis?.toplam_islem)} işlem · ${sayi(urunAcAkis?.toplam_adet)} adet — bara verilen ürünler`}
+            not={`${sayi(urunAcAkis?.toplam_islem)} işlem · ${sayi(urunAcAkis?.toplam_adet)} adet — bara verilen ürünler`
+              + (acAkis.length > 60 ? ` · ⚠ ${acAkis.length} kaydın ilk 60'ı gösteriliyor` : '')}
             kolonlar={[{ ad: 'Şube' }, { ad: 'Saat' }, { ad: 'Personel' }, { ad: 'Ürün' }, { ad: 'Adet', sag: 1 }]}
             satirlar={acAkis.slice(0, 60).map((x, i) => ({
               id: x.id || `u-${i}`,
@@ -5414,8 +5485,13 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
                     alt: `${tarihKisa(x.tarih)}${x.acilis_ts ? ` · açılış ${saatKisa(x.acilis_ts)}` : ''} · kapanış ${kay ? kay.ad : (x.kapanis_var ? 'geçici' : 'yok')}`,
                     kpi: [
                       { etiket: 'Bardak (K+B+P)', deger: String(sayi(st.bardak_kucuk) + sayi(st.bardak_buyuk) + sayi(st.bardak_plastik)) },
-                      { etiket: 'Süt (L)', deger: String(sayi(st.sut_litre)) },
-                      { etiket: 'Pasta', deger: String(sayi(st.pasta_adet)) },
+                      // ⚠️ Fable: tabloda null↔0 ayrımı titizlikle yapılmışken
+                      // (satıra tıklanınca açılan) bu çekmecenin KPI'ları
+                      // `String(sayi(x))` diyordu: alan hiç yoksa da "0".
+                      // Tablo "—" derken çekmece "0" diyordu — düzeltilen
+                      // kusur bir kat içeride yeniden doğmuş.
+                      { etiket: 'Süt (L)', deger: st?.sut_litre == null ? '—' : String(sayi(st.sut_litre)) },
+                      { etiket: 'Pasta', deger: st?.pasta_adet == null ? '—' : String(sayi(st.pasta_adet)) },
                       {
                         etiket: 'Denetim',
                         deger: x.urun_ac_eksik_var ? 'ürün-aç eksik' : x.devir_uyumsuz_var ? 'devir farkı' : 'tutuyor',
@@ -5784,7 +5860,8 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
               }}>{mdMesgul ? 'Gönderiliyor…' : 'Mesajı gönder'}</button>
             </div>
             {mesajListe.length ? (
-              <Liste baslik={`Gönderilen mesajlar · ${okunmamisMesaj} okunmadı`}
+              <Liste baslik={`Gönderilen mesajlar · ${okunmamisMesaj} okunmadı`
+                + (mesajListe.length > 60 ? ` · ilk 60 gösteriliyor (${mesajListe.length - 60} daha)` : '')}
                 satirlar={mesajListe.slice(0, 60).map((m) => ({
                   baslik: `${m.sube_adi || '—'}${m.oncelik === 'kritik' ? ' · KRİTİK' : ''}`,
                   alt: `${kisalt(m.mesaj || '', 110)} — ${m.okundu ? `okundu · ${m.okuyan_ad || 'personel'} · ${tarihKisa(m.okundu_ts)}` : 'okunmadı'}`,
@@ -6588,7 +6665,8 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
                     )}
                     <Tablo
                       baslik={`"${ugVeri.sorgu}" — toptancıdan gelişler`}
-                      not="kaynak: toptancı sipariş kabulleri (şubede görünür kabul)"
+                      not={'kaynak: toptancı sipariş kabulleri (şubede görünür kabul)'
+                        + (gelisler.length > 60 ? ` · ⚠ ${gelisler.length} kaydın ilk 60'ı gösteriliyor` : '')}
                       kolonlar={[
                         { ad: 'Geliş' }, { ad: 'Ürün' }, { ad: 'Miktar', sag: true },
                         { ad: 'Şube' }, { ad: 'Toptancı' },
@@ -6631,6 +6709,11 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
 
         {tsSekme === 'notlar' && (notlar.length ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16 }}>
+            {notlar.length > 30 && (
+              <div style={{ fontSize: 11, color: R.not3, marginBottom: 8 }}>
+                ⚠ {notlar.length} notun ilk 30'u gösteriliyor ({notlar.length - 30} not listede yok)
+              </div>
+            )}
             {notlar.slice(0, 30).map((n, i) => {
               const sistemNotu = /^\[/.test(String(n.metin || ''));
               return (
