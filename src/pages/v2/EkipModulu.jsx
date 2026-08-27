@@ -21,7 +21,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api, fmt } from '../../utils/api';
 import { R, F, kartYuzey } from './tema';
-import { KpiSeridi, Tablo, Liste, VardiyaIzgara } from './parcalar';
+import { KpiSeridi, Tablo, Liste, VardiyaIzgara, HataBandi } from './parcalar';
 
 const sayi = (v) => Number(v) || 0;
 const trSayi = (n, b = 1) => (Number(n) || 0).toFixed(b).replace('.', ',');
@@ -295,7 +295,9 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
       // HATA≠BOŞ: personel ucu düşerse null (sentinel) — boş liste hata sayılmaz.
       api('/personel?aktif=true').catch(() => null),
       api(`/vardiya/v2/hafta-sube-tablo?pazartesi=${pazartesi}`).catch(() => null),
-      api(`/personel-aylik?yil=${donem.yil}&ay=${donem.ay}`).catch(() => []),
+      // HATA != BOŞ: bordro okunamazsa `[]` yazmak "bu ay maaş kaydı yok"
+      // hükmü kurar. Sentinel null; ekran "okunamadı" der (Codex P0).
+      api(`/personel-aylik?yil=${donem.yil}&ay=${donem.ay}`).catch(() => null),
       api('/avans/ozet').catch(() => null),
       api(`/gorev/ozet?tarih=${gorevTarih}`).catch(() => []),
       api(`/gorev/vardiya-takip?yil=${donem.yil}&ay=${donem.ay}`).catch(() => null),
@@ -324,10 +326,16 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
       setVardiyaDisi(Array.isArray(vd) ? vd : (vd?.kayitlar || []));
       setPersonel(Array.isArray(p) ? p : []);
       setHafta(h);
-      setBordro(b);
+      // Sentinel null -> ekran boş listeyle çalışır AMA "okunamadı" der.
+      setBordro(b == null ? [] : b);
+      setBordroHata(b == null ? 'Bordro okunamadı — "kayıt yok" DEMEK DEĞİL. Yenileyin.' : '');
       setAvans(av);
       setGorevOzet(Array.isArray(go) ? go : []);
-      setTakip(Array.isArray(vt) ? vt : (vt?.personeller || []));
+      // ⚠️ Fable: `vt` null iken `vt?.personeller || []` null'u [] yapıyordu
+      // → uç düşerse HERKES tertemiz görünüyordu (0 gecikme, 0 giriş-yok).
+      // "Devamsızlık yok" ile "okunamadı" bu modülde bir insanın karnesidir.
+      setTakip(vt == null ? [] : (Array.isArray(vt) ? vt : (vt?.personeller || [])));
+      setTakipHata(vt == null ? 'Vardiya takip okunamadı — "devamsızlık yok" DEMEK DEĞİL.' : '');
       setBasvurular(Array.isArray(bs) ? bs : (bs?.basvurular || []));
       setBasvuruOzet(bo);
       setPinler(Array.isArray(pin) ? pin : []);
@@ -680,12 +688,19 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
   // ── BORDRO YERLİ AKIŞ ──────────────────────────────────────────────────────
   const bAc = (tip, b) => {
     if (tip === 'gecmis') {
-      setBGecmis({ ad: b.ad_soyad, satirlar: null });
-      // Yarış koruması (Codex): iki kişinin geçmişi hızlı açılırsa geç dönen eski
-      // cevap yeni kişinin modalını ezmesin — modal hâlâ o kişideyse yaz.
+      // ⚠️ İKİZ PERSONEL TUZAĞI (Codex P0 + Fable P1, 2026-08-27):
+      // Yarış koruması `m.ad === b.ad_soyad` ile kuruluyordu. Bu sistemde
+      // çıkıp geri gelen personelin İKİ kaydı olur ve ikisi de AYNI ad_soyad'ı
+      // taşır (kasıtlı tasarım; dönemler kişi kimliğiyle bağlanır). İki dönem
+      // kaydının geçmişi art arda açılırsa guard ikisini aynı kişi sanar ve
+      // A kaydının geç dönen cevabı B kaydının modalına yazılabilirdi —
+      // sahip YANLIŞ DÖNEMİN maaş geçmişine bakar.
+      // Fetch zaten `personel_id` ile yapılıyordu; guard da öyle olmalıydı.
+      const pid = String(b.personel_id || '');
+      setBGecmis({ ad: b.ad_soyad, pid, satirlar: null });
       api(`/personel-aylik/${b.personel_id}/gecmis`)
-        .then((d) => setBGecmis((m) => (m && m.ad === b.ad_soyad ? { ad: b.ad_soyad, satirlar: Array.isArray(d) ? d : [] } : m)))
-        .catch(() => setBGecmis((m) => (m && m.ad === b.ad_soyad ? { ad: b.ad_soyad, satirlar: [] } : m)));
+        .then((d) => setBGecmis((m) => (m && m.pid === pid ? { ...m, satirlar: Array.isArray(d) ? d : [] } : m)))
+        .catch(() => setBGecmis((m) => (m && m.pid === pid ? { ...m, satirlar: [], hata: true } : m)));
       return;
     }
     setBModal({
@@ -1193,6 +1208,10 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
   // Dönem/gün değişince yalnız İLGİLİ uçlar tazelenir — tam ekran yükleme yok.
   // Yarış koruması (Codex): hızlı ‹› tıklamalarında eski ayın cevabı yeni ayı ezmesin.
   const donemIstekRef = useRef(0);
+  // "Okunamadı" ile "kayıt yok" ayrımı için iki bayrak — bu modülde bir
+  // boşluk, birinin maaşının eksik ödenmesi demektir.
+  const [bordroHata, setBordroHata] = useState('');
+  const [takipHata, setTakipHata] = useState('');
   const ayDegistir = (d) => {
     setDonem(({ yil: y0, ay: a0 }) => {
       let a = a0 + d; let y = y0;
@@ -1201,13 +1220,26 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
       if (y > buYil || (y === buYil && a > buAy)) return { yil: y0, ay: a0 }; // geleceğe gitme
       setDonemYukleniyor(true);
       const istek = ++donemIstekRef.current;
+      // ⚠️ BAYAT ONAY KUYRUGU (Fable P0, 2026-08-27): dönem değişince YALNIZ
+      // bordro ve vardiya-takip tazeleniyordu. Oysa `onayKuyrugu` da dönem
+      // parametreli bir uçtan geliyor ve yalnız ilk `yukle()`de çekiliyordu.
+      // Sonuç: sahip ‹ ile Temmuz'a döndüğünde tablo Temmuz'u gösterirken
+      // "temiz yığın / incelenecek" ayrımı hâlâ AĞUSTOS'un kuyruğuydu — ve o
+      // kuyruk tek tuşla TOPLU MAAŞ ONAYINI besliyor. Yanlış ayın "N temiz
+      // kayıt" rakamına bakıp onay verilebilirdi.
+      // ⚠️ HATA != BOŞ: bordro ucu düşerse `[]` yazmak "bu ay maaş kaydı yok"
+      // hükmü kurar — eksik ödeme kapısı. Artık null (sentinel) + uyarı.
       Promise.all([
-        api(`/personel-aylik?yil=${y}&ay=${a}`).catch(() => []),
+        api(`/personel-aylik?yil=${y}&ay=${a}`).catch(() => null),
         api(`/gorev/vardiya-takip?yil=${y}&ay=${a}`).catch(() => null),
-      ]).then(([b, vt]) => {
+        api(`/personel-aylik/onay-kuyrugu?yil=${y}&ay=${a}`).catch(() => null),
+      ]).then(([b, vt, ok]) => {
         if (istek !== donemIstekRef.current) return;
-        setBordro(b);
-        setTakip(Array.isArray(vt) ? vt : (vt?.personeller || []));
+        setBordro(b == null ? [] : b);
+        setBordroHata(b == null ? 'Bordro okunamadı — "kayıt yok" DEMEK DEĞİL. Yenileyin.' : '');
+        setTakip(vt == null ? [] : (Array.isArray(vt) ? vt : (vt?.personeller || [])));
+        setTakipHata(vt == null ? 'Vardiya takip okunamadı — "devamsızlık yok" DEMEK DEĞİL.' : '');
+        setOnayKuyrugu(ok);
         setDonemYukleniyor(false);
       });
       return { yil: y, ay: a };
@@ -3147,6 +3179,11 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
     const toplamFm = bordro.reduce((s, b) => s + sayi(b.fazla_mesai_saat), 0);
     return (
       <>
+      {/* ⚠️ Sentinel görünür olmalı: "okunamadı"yı sessiz bırakmak, onu
+          "kayıt yok"a çevirmekle aynı kapıya çıkar. */}
+      {bordroHata && (
+        <HataBandi mesaj={bordroHata} onTekrar={yukle} />
+      )}
         <DonemSecici
           etiket={`${AY_KISA[ay - 1]} ${yil}`}
           onGeri={() => ayDegistir(-1)}
@@ -3683,6 +3720,9 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
     const izinsizKisi = satir.filter((t) => sayi(t.haftalik_izin_kullanilmadi) > 0).length;
     return (
       <>
+      {takipHata && (
+        <HataBandi mesaj={takipHata} onTekrar={yukle} />
+      )}
         <DonemSecici
           etiket={`${AY_KISA[ay - 1]} ${yil}`}
           onGeri={() => ayDegistir(-1)}
