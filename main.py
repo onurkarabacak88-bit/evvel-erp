@@ -437,6 +437,97 @@ async def hata_yakala(request: Request, exc: Exception):
 
 
 # ── GECE YARISI SCHEDULER ──────────────────────────────────────
+def _akilli_denetim_telafi(gun_sayisi: int = 3, gecikme_sn: int = 90):
+    """AÇILIŞTA TELAFİ KOŞUSU — atlanan gecenin denetimini kalkışta tamamlar.
+
+    🔴 NEDEN VAR (2026-08-27, canlı bulgu):
+    Gece denetimi `_gece_yarisi_scheduler` içinde SÜREÇ-İÇİ bir uyku
+    döngüsüyle çalışıyor: `gece yarısına kadar uyu → uyan → sleep(30dk) →
+    motoru koştur → BİR SONRAKİ geceye kadar uyu`. Konteyner bu pencerede
+    yeniden başlarsa (deploy · Railway restart · uyku) o gecenin koşusu
+    TAMAMEN atlanır — döngü baştan başlayınca "bir sonraki gece yarısı"
+    yarını işaret eder ve BUGÜNÜ TELAFİ ETMEZ.
+    Canlı kanıt: 27 Ağustos'ta 3 aktif şubenin son koşusu 25 Ağustos'tu;
+    iki gece atlanmıştı ve ekran hepsine "temiz" diyordu.
+
+    ⚠️ ÖNERİ-ONLY İHLALİ DEĞİL: motor `read_only` modda çalışır ve yalnız
+    BULGU ÜRETİR — hiçbir kararı uygulamaz, hiçbir kaydı değiştirmez.
+    Doktrin sistemin KARAR VERMESİNİ yasaklar, BAKMASINI değil. Bakmayan
+    denetim, denetim değildir.
+
+    ⚠️ İDEMPOTENT: `truth_motor_kararlar` içinde (sube_id, tarih) çifti
+    varsa o gün ATLANIR — gecenin normal koşusu zaten aynı freni kullanıyor
+    (bkz. scheduler içindeki aynı SELECT). İki kez koşmak mükerrer bulgu
+    üretmez.
+
+    ⚠️ SINIRLI GERİYE DÖNÜŞ: en fazla `gun_sayisi` gün geriye bakar. Aylarca
+    geriye backfill YAPMAZ — motoru kapalı şube (`sube_aktif_mi` False)
+    zaten hiç işlenmez, o şubelerin boşluğu "motor kapalı" olarak kalır ve
+    ekranda öyle görünür (sahte doldurma yok).
+
+    ⚠️ KALKIŞI BEKLETMEZ: ayrı thread + `gecikme_sn` gecikme. Uygulama önce
+    istek karşılamaya başlar, DB havuzu açılışta dövülmez.
+    """
+    import time as _time
+    try:
+        _time.sleep(max(gecikme_sn, 5))
+        from tr_saat import bugun_tr as _bugun_tr
+        import truth_motor as _tm
+
+        if not _tm._global_aktif():
+            logger.info("🩺 Telafi koşusu atlandı — motor global olarak kapalı")
+            return
+
+        bugun = _bugun_tr()
+        # Motor "dün"ü işler: bugünden geriye gun_sayisi gün.
+        hedef_gunler = [str(bugun - timedelta(days=i)) for i in range(1, gun_sayisi + 1)]
+        kosan = 0
+        atlanan = 0
+        hata = 0
+        with db() as (conn, cur):
+            cur.execute("SELECT id::text AS id, ad FROM subeler WHERE aktif=TRUE")
+            subeler = cur.fetchall() or []
+            for sb in subeler:
+                sid = sb['id']
+                try:
+                    if not _tm.sube_aktif_mi(cur, sid):
+                        continue
+                except Exception:
+                    continue
+                for gun in hedef_gunler:
+                    try:
+                        cur.execute(
+                            "SELECT 1 FROM truth_motor_kararlar WHERE sube_id=%s AND tarih=%s::date LIMIT 1",
+                            (sid, gun),
+                        )
+                        if cur.fetchone():
+                            atlanan += 1
+                            continue
+                        veriler = _tm.veri_topla(cur, sid, gun)
+                        sonuc = _tm.motor_calistir(cur, sid, gun, veriler)
+                        if sonuc.get("calisti"):
+                            kosan += 1
+                            logger.info(f"🩺 Telafi koşusu: {sb.get('ad')} · {gun}")
+                    except Exception as e:
+                        hata += 1
+                        logger.warning(f"🩺 Telafi koşusu {sb.get('ad')} {gun}: {str(e)[:120]}")
+            conn.commit()
+
+        if kosan or hata:
+            logger.info(f"🩺 Telafi koşusu bitti — koşan {kosan} · atlanan {atlanan} · hata {hata}")
+        # ⚠️ KOŞTUĞUNU HER HÂLDE YAZ (çıktı üretmese bile): nabız, "motor
+        # çalışıyor mu?" sorusunun tek dürüst cevabıdır.
+        try:
+            from duyu_omurga import duyu_nabiz_yaz as _nabiz
+            _nabiz("denetim_telafi", durum=("hata" if hata else "basari"),
+                   taranan=(kosan + atlanan), uretilen=kosan, yutulan_hata=hata,
+                   not_metin=f"acilis telafisi · son {gun_sayisi} gun")
+        except Exception:
+            pass
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"🩺 Telafi koşusu yutuldu: {str(e)[:160]}")
+
+
 def _gece_yarisi_scheduler():
     """
     Her gece yarısı çalışır. Restart bağımlılığını kaldırır.
@@ -1320,6 +1411,16 @@ def startup():
     _scheduler_thread = threading.Thread(target=_gece_yarisi_scheduler, daemon=True)
     _scheduler_thread.start()
     logger.info("✅ Gece yarısı scheduler başlatıldı")
+
+    # 🩺 AÇILIŞTA TELAFİ KOŞUSU — atlanan gecenin denetimini tamamlar.
+    # (Gece scheduler'ı süreç-içi uyku döngüsü olduğu için her restart bir
+    #  geceyi düşürebiliyordu; bu thread o boşluğu kapatır.)
+    try:
+        _telafi_thread = threading.Thread(target=_akilli_denetim_telafi, daemon=True)
+        _telafi_thread.start()
+        logger.info("✅ Akıllı Denetim telafi koşusu kuyruğa alındı (90 sn sonra)")
+    except Exception as _e:
+        logger.warning(f"Telafi koşusu başlatılamadı: {_e}")
 
     # Kapanış hatırlatma scheduler (gün-içi 15 dk) — sorumluya ~1 saat kala WhatsApp
     try:

@@ -288,6 +288,7 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
   // otomatik etiketlemez, hiçbir kuralın ağırlığını değiştirmez. Yalnız
   // zincirin hangi halkasında kaç kayıt olduğunu yan yana koyar (öneri-only).
   const [etiketKirilim, setEtiketKirilim] = useState(null);
+  const [telafiMesgul, setTelafiMesgul] = useState(false);
   const duyuYukle = useCallback(() => {
     setDuyuHata('');
     api('/duyu/kural-karnesi')
@@ -833,6 +834,56 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
                 {' '}({motorDurumu.kapali.map((x) => x.sube_ad).join(', ')}) — o şubeler için hüküm üretilmiyor.</>
             )}
             {' '}<span style={{ color: R.not3 }}>Koşu takvimi ve şube bazlı durum: Tanı Motorları sekmesi.</span>
+            {/* 🩺 TELAFİ DÜĞMESİ (2026-08-27) — kontrol insanda kalsın.
+                Sunucu artık her açılışta atlanan geceyi kendi tamamlıyor
+                (main.py `_akilli_denetim_telafi`), ama sahip BEKLEMEK
+                ZORUNDA KALMASIN: eksik günü buradan da koşturabilir.
+                ⚠️ ÖNERİ-ONLY: bu düğme motoru BAKTIRIR, karar verdirmez —
+                motor read_only modda yalnız bulgu üretir.
+                ⚠️ İDEMPOTENT: o gün zaten işlenmişse sunucu atlar; iki kez
+                basmak mükerrer bulgu üretmez. */}
+            {motorDurumu.eskiler?.length > 0 && (
+              <div style={{ marginTop: 10 }}>
+                <button
+                  type="button"
+                  disabled={telafiMesgul}
+                  onClick={async () => {
+                    setTelafiMesgul(true);
+                    const hedefler = motorDurumu.eskiler;
+                    const bugunD = new Date(`${bugunISO()}T00:00:00Z`);
+                    const gunler = [1, 2, 3].map((i) => {
+                      const d = new Date(bugunD); d.setUTCDate(d.getUTCDate() - i);
+                      return d.toISOString().slice(0, 10);
+                    });
+                    let ok = 0; let hata = 0;
+                    for (const sb of hedefler) {
+                      for (const g of gunler) {
+                        try {
+                          // eslint-disable-next-line no-await-in-loop
+                          await api(`/ops/truth/calistir/${sb.sube_id}/${g}`, { method: 'POST' });
+                          ok += 1;
+                        } catch (_) { hata += 1; }
+                      }
+                    }
+                    setTelafiMesgul(false);
+                    // ⚠️ SONUÇ DÜRÜSTÇE SÖYLENİR: kaç koştu, kaç düştü.
+                    onToast?.(hata
+                      ? `Telafi: ${ok} koşu tamam, ${hata} düştü — Tanı Motorları'ndan son koşuyu kontrol edin`
+                      : `Telafi koşusu tamam (${ok} gün-şube) — sayfayı yenileyin`);
+                    truthYukle();
+                  }}
+                  style={{
+                    padding: '6px 13px', borderRadius: 8, cursor: telafiMesgul ? 'default' : 'pointer',
+                    border: `1px solid ${R.bakir}66`, background: 'transparent',
+                    color: R.bakirAcik, fontSize: 11.5, fontWeight: 700, fontFamily: 'inherit',
+                    opacity: telafiMesgul ? 0.55 : 1,
+                  }}
+                >{telafiMesgul ? 'koşuyor…' : '🩺 Eksik günleri şimdi koştur'}</button>
+                <span style={{ fontSize: 10.5, color: R.not3, marginLeft: 9 }}>
+                  motoru baktırır, karar verdirmez · aynı gün iki kez işlenmez
+                </span>
+              </div>
+            )}
           </div>
         )}
         <KpiSeridi kpiler={[
