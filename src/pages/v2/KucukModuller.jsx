@@ -1519,12 +1519,57 @@ export function RaporModulu({ gorunum, onCekmece, onKopru, onToast, defterHedef 
         )}
 
         {(kpiR.net_kar_marji != null || kpiR.runway_gun != null) && (
-          <KpiSeridi kpiler={[
+          <KpiSeridi kpiler={(() => {
+          // ══════════════════════════════════════════════════════════════
+          // 🚪 KAPILAR (2026-08-27) — kanıt EKRANDA YOKSA kapı, VARSA kapı yok
+          // ══════════════════════════════════════════════════════════════
+          // Bu sayfada 30'dan fazla rakam vardı ve hiçbiri tıklanmıyordu.
+          // Ama körlemesine kapı takmak da yanlış olurdu: "4 ay ciro"nun
+          // kanıtı hemen altındaki tablodur, oraya kapı takmak gürültüdür.
+          // Kural: bir rakamın DAYANAĞI aynı ekranda görünüyorsa kapı YOK.
+          //
+          // ⚠️ ORTAK ÇEKMECE, İKİ KPI: "Nakit marjı" ve "Gider/ciro" AYNI
+          // aritmetikten doğar (gelir kalemleri − gider kalemleri). İkisine
+          // ayrı çekmece kurmak aynı gerçeğin iki dökümünü doğururdu ve bir
+          // gün ayrışırlardı. Tek üretici, iki kapı.
+          const nakitOlusumuAc = () => onCekmece?.({
+            tip: 'NAKİT OLUŞUMU',
+            baslik: `Kasa ${sayi(ozetR.net_kasa_degisim) >= 0 ? 'nasıl arttı' : 'nasıl azaldı'}`,
+            alt: `${rapor?.donem_label || ''} · dönem fotoğrafı`,
+            kpi: [
+              { etiket: 'Giren', deger: fmt(sayi(ozetR.toplam_gelir)), renk: R.yesil },
+              { etiket: 'Çıkan', deger: fmt(sayi(ozetR.toplam_gider)), renk: R.kirmizi },
+              {
+                etiket: 'Net', deger: fmt(sayi(ozetR.net_kasa_degisim)),
+                renk: sayi(ozetR.net_kasa_degisim) >= 0 ? R.yesil : R.kirmizi,
+              },
+            ],
+            listeBaslik: 'Kalem kalem · büyükten küçüğe',
+            // ⚠️ SUNUCU SAYILARI AYNEN: bu çekmece hiçbirini yeniden
+            // hesaplamaz, yalnız yan yana dizer (gösterim kendi aritmetiğini
+            // kurmaz). "Net" bile sunucunun kendi alanıdır.
+            satirlar: [
+              { ad: 'Ciro', detay: 'şube satışları', tutar: fmt(sayi(ozetR.ciro_toplam)) },
+              { ad: 'Dış kaynak geliri', detay: 'satış dışı gelir', tutar: fmt(sayi(ozetR.dis_kaynak_toplam)) },
+              { ad: 'Kart ödemesi', detay: 'karta yapılan ödeme', tutar: `−${fmt(sayi(ozetR.kart_toplam))}` },
+              { ad: 'Borç taksiti', detay: 'kredi/borç anapara+faiz', tutar: `−${fmt(sayi(ozetR.borc_taksit_toplam))}` },
+              { ad: 'Personel maaş', detay: 'ödenen maaş', tutar: `−${fmt(sayi(ozetR.maas_toplam))}` },
+              { ad: 'Sabit gider', detay: 'kira · abonelik · düzenli', tutar: `−${fmt(sayi(ozetR.sabit_toplam))}` },
+              { ad: 'Anlık gider', detay: 'şube harcamaları', tutar: `−${fmt(sayi(ozetR.anlik_toplam))}` },
+            ].filter((r) => !/^−?0 ₺$/.test(String(r.tutar))),
+            // ⚠️ EN ÖNEMLİ CÜMLE: bu sayı KÂR DEĞİL. Kart ödemesi ve borç
+            // taksiti kasadan çıkar ama gider değildir (borç kapatır);
+            // ödenmemiş maaş gider olmuştur ama kasadan çıkmamıştır.
+            not: 'Bu bir NAKİT tablosudur, kâr tablosu değil: kart ödemesi ve borç taksiti kasadan çıkar ama gider değil (borç kapatır); tahakkuk edip ödenmemiş kalemler ise gider olmuştur ama burada görünmez. Gerçek kâr için Kâr & Maliyet ekranı.',
+            aksiyonAd: 'Kâr & Maliyet’i aç',
+            _hedef: '__modul:maliyet:ozet',
+          });
+          return [
             // ⚠️ "Net kâr marjı" DEĞİL: paydaki net_kar_zarar = kasa değişimi
             // (dış kaynak geliri dahil, ödenmemiş maaş hariç, borç anaparası gider).
             // Kâr marjı sanılıp menüye/fiyata karar verilirse yanlış olur.
-            { etiket: 'Nakit marjı (kasa)', deger: yuzde(kpiR.net_kar_marji), alt: 'kâr değil — gerçek kâr: Maliyet', renk: sayi(kpiR.net_kar_marji) >= 15 ? R.yesil : sayi(kpiR.net_kar_marji) >= 8 ? R.amber : R.kirmizi },
-            { etiket: 'Gider / ciro', deger: yuzde(kpiR.gider_ciro_orani), alt: 'ne kadarı gidere gitti', renk: sayi(kpiR.gider_ciro_orani) > 85 ? R.kirmizi : R.krem },
+            { etiket: 'Nakit marjı (kasa)', deger: yuzde(kpiR.net_kar_marji), alt: 'kâr değil · nasıl oluştu?', renk: sayi(kpiR.net_kar_marji) >= 15 ? R.yesil : sayi(kpiR.net_kar_marji) >= 8 ? R.amber : R.kirmizi, onTikla: nakitOlusumuAc },
+            { etiket: 'Gider / ciro', deger: yuzde(kpiR.gider_ciro_orani), alt: 'ne kadarı gidere gitti · dökümü aç', renk: sayi(kpiR.gider_ciro_orani) > 85 ? R.kirmizi : R.krem, onTikla: nakitOlusumuAc },
             // 🔴 SAHTE SIFIR (2026-08-27): ekran «POS kesintisi %0,0» yazıyordu.
             // Ama o ay POS cirosu 737.970 ₺ idi — bankanın komisyon almadığı
             // bir POS cirosu yoktur. Yani 0 bir ÖLÇÜM değil, ÖLÇÜLEMEMİŞ
@@ -1565,8 +1610,12 @@ export function RaporModulu({ gorunum, onCekmece, onKopru, onToast, defterHedef 
                 : 'hesaplanamadı',
               renk: kpiR.runway_gun == null ? R.not3
                 : sayi(kpiR.runway_gun) < 30 ? R.kirmizi : R.yesil,
+              // 🚪 Kapı EN KÖTÜMSER hâle götürür (BAKIŞ), en iyimsere değil:
+              // ödeme kararında yanılmanın ucuz yönü budur.
+              onTikla: () => onKopru?.('__modul:genel:karar'),
             },
-          ]} />
+          ];
+          })()} />
         )}
 
         {/* ⚠️ AYNI KELİME, FARKLI HESAP — sahip üç ekranda üç sayı görüyordu.
@@ -1600,7 +1649,18 @@ export function RaporModulu({ gorunum, onCekmece, onKopru, onToast, defterHedef 
               </div>
             )}
             <div style={{ fontSize: 10.5, color: R.not2, marginTop: 10 }}>
-              Çözüm masası: Ops ▸ Uzlaştırma. Buradaki sayılar dönem fotoğrafıdır, müdahale değildir.
+              {/* 🚪 METİN ZATEN MASAYI SÖYLÜYORDU, AMA GÖTÜRMÜYORDU.
+                  Adres veren ama kapı açmayan cümle, sahibi menüde arattırır. */}
+              Çözüm masası:{' '}
+              <button
+                type="button"
+                onClick={() => onKopru?.('__modul:ops:uzlastir')}
+                style={{
+                  background: 'none', border: 'none', padding: 0, font: 'inherit',
+                  color: R.bakirAcik, cursor: 'pointer', textDecoration: 'underline',
+                  textUnderlineOffset: 3,
+                }}
+              >Ops ▸ Uzlaştırma</button>. Buradaki sayılar dönem fotoğrafıdır, müdahale değildir.
             </div>
           </div>
         )}
@@ -1685,17 +1745,24 @@ export function RaporModulu({ gorunum, onCekmece, onKopru, onToast, defterHedef 
         <KpiSeridi kpiler={[
           { etiket: `${trend.length} ay ciro`, deger: fmt(toplamCiro), alt: `${trend[0].ay_kisa} – ${son.ay_kisa}` },
           { etiket: `${trend.length} ay net`, deger: fmt(toplamNet), alt: toplamGelir ? `ortalama marj %${trSayi((toplamNet / toplamGelir) * 100)}` : '—', renk: toplamNet >= 0 ? R.yesil : R.kirmizi },
+          // 🚪 KAPI = O AYA GİT. Yeni bir ekran açmaz, RAPORU o döneme
+          // taşır — "en zayıf ay Haziran" diyen bir sayının doğal devamı
+          // "peki Haziran'da ne oldu?" sorusudur ve cevabı bu sayfanın
+          // kendisidir. İkinci bir ay-detay ekranı kurmak, aynı raporun
+          // kopyasını doğururdu.
           {
             etiket: 'En iyi ay',
             deger: enIyi ? enIyi.ay_kisa : '—',
-            alt: enIyi ? `marj %${trSayi(marj(enIyi))} · tamamlanmış aylar` : 'henüz tamamlanmış ay yok',
+            alt: enIyi ? `marj %${trSayi(marj(enIyi))} · o aya git` : 'henüz tamamlanmış ay yok',
             renk: enIyi ? R.yesil : R.not3,
+            onTikla: enIyi ? () => setAy(String(enIyi.ay)) : undefined,
           },
           {
             etiket: 'En zayıf ay',
             deger: enZayif ? enZayif.ay_kisa : '—',
-            alt: enZayif ? `marj %${trSayi(marj(enZayif))} · tamamlanmış aylar` : 'henüz tamamlanmış ay yok',
+            alt: enZayif ? `marj %${trSayi(marj(enZayif))} · o aya git` : 'henüz tamamlanmış ay yok',
             renk: enZayif ? R.kirmizi : R.not3,
+            onTikla: enZayif ? () => setAy(String(enZayif.ay)) : undefined,
           },
         ]} />
         <Tablo
@@ -1830,6 +1897,51 @@ export function RaporModulu({ gorunum, onCekmece, onKopru, onToast, defterHedef 
     if (icTransfer <= 0 && iade <= 0) return null;   // ayrım yoksa bant çizilmez
     return { icTransfer, iade, disGelir };
   })();
+
+  // 🚪 "Çıkan 1.922.672 ₺" tek başına bir SORUDUR: neye gitti? Cevap 207
+  // satırın içinde dağınık duruyordu; kimse 207 satırı toplayarak okumaz.
+  // ⚠️ YENİ UÇ YOK: aynı satırlar işlem türüne göre gruplanıyor.
+  // ⚠️ İÇ TRANSFER İŞARETLENİR: gruplarda kasa teslimi de görünür ama
+  // "kendi cebin" diye etiketlenir — gizlenmez (ham veri kaybolmaz),
+  // yanlış okunmaz da.
+  const turDokumuAc = (yon) => {
+    const artiMi = yon === '+';
+    const grup = {};
+    satir.forEach((r) => {
+      const t = sayi(r.tutar);
+      if (artiMi ? t <= 0 : t >= 0) return;
+      const k = String(r.islem_turu || '—').toUpperCase();
+      if (!grup[k]) grup[k] = { adet: 0, tutar: 0 };
+      grup[k].adet += 1;
+      grup[k].tutar += Math.abs(t);
+    });
+    const liste = Object.entries(grup).sort((a, b) => b[1].tutar - a[1].tutar);
+    const toplam = liste.reduce((s2, [, v]) => s2 + v.tutar, 0);
+    onCekmece?.({
+      tip: artiMi ? 'GİREN DÖKÜMÜ' : 'ÇIKAN DÖKÜMÜ',
+      baslik: `${ayEtiket} · ${artiMi ? 'kasaya giren' : 'kasadan çıkan'}`,
+      alt: `${liste.length} işlem türü · ${satir.length} kayıt içinden`,
+      kpi: [
+        { etiket: 'Toplam', deger: fmt(toplam), renk: artiMi ? R.yesil : R.kirmizi },
+        { etiket: 'Tür', deger: String(liste.length) },
+      ],
+      listeBaslik: 'İşlem türüne göre · büyükten küçüğe',
+      satirlar: liste.map(([k, v]) => {
+        const icMi = k.includes('KASA_TESLIM');
+        const iadeMi = k.includes('IPTAL') || k.includes('IADE');
+        return {
+          ad: slugAd(k),
+          detay: [
+            `${v.adet} kayıt`,
+            icMi ? '⚠ kendi kasaların arası — gelir/gider değil' : null,
+            iadeMi ? '⚠ iptal/iade — negatif gider' : null,
+          ].filter(Boolean).join(' · '),
+          tutar: fmt(v.tutar),
+        };
+      }),
+      not: 'Aynı ayın defter satırları işlem türüne göre toplandı — yeni bir hesap yapılmadı. «Kendi kasaların arası» işaretli satırlar dışarıdan para girişi/çıkışı DEĞİLDİR.',
+    });
+  };
   return (
     <>
       {donemGezgini}
@@ -1839,9 +1951,13 @@ export function RaporModulu({ gorunum, onCekmece, onKopru, onToast, defterHedef 
         // onu GELİR diye okuyordu. Ne içerdiği alt yazıda duruyor.
         {
           etiket: 'Giren', deger: fmt(gelir), renk: R.yesil,
-          alt: defterAyrim ? 'kasa girişi · transfer + iade dâhil' : 'kasa girişi',
+          alt: defterAyrim ? 'kasa girişi · transfer + iade dâhil · dökümü aç' : 'kasa girişi · dökümü aç',
+          onTikla: () => turDokumuAc('+'),
         },
-        { etiket: 'Çıkan', deger: fmt(gider), alt: 'kasa çıkışı', renk: R.kirmizi },
+        {
+          etiket: 'Çıkan', deger: fmt(gider), alt: 'kasa çıkışı · dökümü aç', renk: R.kirmizi,
+          onTikla: () => turDokumuAc('-'),
+        },
         { etiket: 'Net', deger: fmt(gelir - gider), alt: ayEtiket, renk: gelir - gider >= 0 ? R.yesil : R.kirmizi },
         // 🎯 ASIL SAYI: dışarıdan gerçekten giren para. Sahip "bu ay ne
         // kazandım" diye sorduğunda cevabı budur; yukarıdaki "Giren" değil.
