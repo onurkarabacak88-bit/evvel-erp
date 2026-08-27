@@ -4065,6 +4065,12 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
 
         {/* ── VARDİYA DIŞI GİRİŞLER (bugün) ── */}
         {(() => {
+          // ⚠️ Fable: `vardiyaDisi` null (uç düştü / henüz gelmedi) iken de
+          // `[]`ye düşüp ekran YEŞİL "yok ✓" basıyordu. Aynı dosyadaki QR
+          // bloğu bu ayrımı doğru yapıyor (null = "yükleniyor…"); burada
+          // atlanmış. Şüphe üreten bir ekranda "yok ✓" demek, bakmadan
+          // aklamaktır.
+          const vdOkunamadi = vardiyaDisi == null;
           const kayitlar = Array.isArray(vardiyaDisi) ? vardiyaDisi : [];
           return (
             <div style={{
@@ -4078,13 +4084,18 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
                 </span>
                 <span style={{
                   fontSize: 12, fontWeight: 700,
-                  color: kayitlar.length ? R.amber : R.yesil,
+                  color: vdOkunamadi ? R.not3 : (kayitlar.length ? R.amber : R.yesil),
                 }}>
-                  {kayitlar.length ? `${kayitlar.length} kayıt` : 'yok ✓'}
+                  {vdOkunamadi ? 'okunamadı' : (kayitlar.length ? `${kayitlar.length} kayıt` : 'yok ✓')}
                 </span>
               </div>
               {kayitlar.length > 0 && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 11 }}>
+                  {kayitlar.length > 8 && (
+                    <div style={{ fontSize: 11, color: R.not3 }}>
+                      ⚠ {kayitlar.length} kaydın ilk 8'i gösteriliyor ({kayitlar.length - 8} kişi listede yok)
+                    </div>
+                  )}
                   {kayitlar.slice(0, 8).map((k, i) => (
                     <div key={i} style={{ display: 'flex', gap: 10, fontSize: 12, color: R.metin2, flexWrap: 'wrap' }}>
                       <span style={{ fontWeight: 700 }}>{k.ad_soyad || k.personel_ad || '—'}</span>
