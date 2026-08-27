@@ -1640,7 +1640,16 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
     // Sunucu ayrıca "sürekli riskli" kısa listesi gönderiyor (risk skoruna göre
     // sıralı) — v2 bunu hiç okumuyordu. Kritik rozetinin kaynağı budur.
     const surekliRiskli = Array.isArray(pdDavranis?.surekli_riskli_personel) ? pdDavranis.surekli_riskli_personel : [];
-    const riskliIdler = new Set(surekliRiskli.map((p) => String(p.personel_id)));
+    // ⚠️ KİMLİKSİZ KAYIT ROZET GİYEMEZ (Fable, 2026-08-27):
+    // Eskiden `new Set(...map(p => String(p.personel_id)))` idi. `personel_id`
+    // null ise `String(null)` HER İKİ tarafta da "null" üretir ve EŞLEŞİR —
+    // yani kişiye bağlanamayan bir kayıt "sürekli riskli" rozeti giyebilirdi.
+    // OPS modülünde tam bu kusur canlıda yakalandı (personeli belli olmayan
+    // tüm kayıplar tek kovada toplanıp "yüksek riskli kişi" gibi sunuluyordu).
+    // Kimliği olmayan satır artık eşleşemez.
+    const riskliIdler = new Set(
+      surekliRiskli.map((p) => p.personel_id).filter(Boolean).map(String),
+    );
     const puanlar = Array.isArray(pdPuan?.personeller) ? pdPuan.personeller : [];
     const gecSatir = Array.isArray(pdGec?.satirlar) ? pdGec.satirlar : [];
     // 🐞 ŞEKİL TUZAĞI (düzeltildi, A-2. tur): v2 `personeller`/`satirlar`
@@ -1721,10 +1730,45 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
           );
         })()}
 
+        {/* ══════════════════════════════════════════════════════════════
+            🔴 TEK TARAFLI SUÇLAMA — 2026-08-27, canlı ölçüm
+            ══════════════════════════════════════════════════════════════
+            Bu tablo "kasa farkı"nı AÇILIŞI YAPAN kişinin adının altına yazıyor
+            ve ondan bir risk skoru üretiyor. Ama bir açılış farkı iki ölçüm
+            ARASINDA doğar: dün akşamki kapanış sayımı ile bu sabahki açılış
+            sayımı. Yani en az iki kişiyi ilgilendirir.
+            Ucu ölçtüm: `/ops/acilis-kasa-takip` yanıtında `dunku_kapanis_personel`
+            alanı BOŞ geliyor — sistem kapatanı bilmiyor. Yani farkın ikinci
+            tarafı kayıtsızken, tamamı adı kayıtlı olan tek kişiye yazılıyor.
+            ⚠️ Bu, OPS'ta yakalanan "hayalet personel" kusurunun aynadaki hâli:
+            orada kimse bilinmediği için hayalet suçlanıyordu; burada bir kişi
+            bilindiği için TAMAMI ona yazılıyor.
+            ⚠️ Veri SİLİNMİYOR — gerçek ve önemli. Değişen: neyin kanıtlandığı
+            ile neyin kanıtlanmadığının YAZILMASI. */}
+        {pdSekme === 'davranis' && davranis.length > 0 && (
+          <div style={{
+            ...kartYuzey, padding: '12px 16px', marginBottom: 12,
+            borderLeft: `3px solid ${R.amber}`, fontSize: 12, color: R.not, lineHeight: 1.7,
+          }}>
+            ⚖ <b style={{ color: R.krem }}>Bu tablo tek başına kimseyi suçlamaz.</b> Açılış kasa
+            farkı, <b>dün akşamki kapanış sayımı ile bu sabahki açılış sayımı arasında</b> doğar —
+            en az iki kişiyi ilgilendirir. Sistemde <b>kapanışı yapan kişi kayıtlı değil</b>, bu
+            yüzden farkın tamamı adı kayıtlı olan tek kişinin (açanın) altında görünür.
+            {surekliRiskli.length > 0 && davranis.length > 0 && (
+              <> Ayrıca listedeki <b>{davranis.length} kişiden {surekliRiskli.length}'i</b> "sürekli
+                riskli" işaretli; bu oran yüksekse etiket kişiyi değil <b>ölçüm eşiğini</b> anlatıyor
+                olabilir.</>
+            )}
+            <div style={{ fontSize: 11, color: R.not3, marginTop: 6 }}>
+              Karar vermeden önce satıra tıklayıp olay dökümüne bakın; disiplin kararı sahibindir.
+            </div>
+          </div>
+        )}
         {pdSekme === 'davranis' && (davranis.length ? (
           <Tablo
             baslik="Davranış analizi · son 45 gün"
-            not="gözlem toplamı — hüküm değil; puan maaşa bağlanmaz · satıra tıkla → olay dökümü"
+            not={'gözlem toplamı — hüküm değil; puan maaşa bağlanmaz · satıra tıkla → olay dökümü'
+              + (davranis.length > 40 ? ` · ⚠ ${davranis.length} kişinin ilk 40'ı gösteriliyor` : '')}
             // 🐞 ŞEKİL TUZAĞI (düzeltildi): eski kolonlar `vardiya_sayisi`,
             // `gecikme_dk`, `kasa_fark` okuyordu — bu adlar BAŞKA uçlardan
             // (puan/geç/kasa) kopyalanmış, /ops/personel-davranis-analiz
@@ -1742,11 +1786,27 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
               const bardakAdet = sayi(x.bardak_dusuk_adet);
               const vardiyaEksik = sayi(x.vardiya_eksik_adet);
               const risk = sayi(x.davranis_risk_skoru);
-              const riskli = riskliIdler.has(String(x.personel_id));
+              // Kimliği olmayan satır rozet ALMAZ; ayrıca aşağıda "kişiye
+              // bağlanamadı" diye işaretlenir — silinmez, ama suçlanmaz.
+              const kimlikVar = !!x.personel_id;
+              // Listenin yarısından fazlası işaretliyse etiket ayırt edici değildir.
+              const riskliCogunluk = davranis.length > 0 && surekliRiskli.length / davranis.length > 0.5;
+              const riskli = kimlikVar && riskliIdler.has(String(x.personel_id));
               return {
                 id: x.personel_id || `d-${i}`,
                 hucreler: [
-                  { v: x.personel_ad || '—', kalin: true },
+                  kimlikVar
+                    ? { v: x.personel_ad || '—', kalin: true }
+                    : {
+                      v: (
+                        <span style={{ color: R.not2 }}>
+                          kişiye bağlanamayan olaylar
+                          <span style={{ fontSize: 10, color: R.not3, display: 'block' }}>
+                            personel kaydı yok — kimse işaret edilmiyor
+                          </span>
+                        </span>
+                      ),
+                    },
                   { v: x.sube_adi || '—', renk: R.not },
                   { v: String(sayi(x.acilis_sayisi)), mono: true, sag: true, renk: R.not },
                   farkAdet
@@ -1773,8 +1833,17 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
                     : { v: '—', sag: true, renk: R.not3, sira: 0 },
                   { v: vardiyaEksik ? String(vardiyaEksik) : '—', mono: true, sag: true, renk: vardiyaEksik ? R.amber : R.not3 },
                   { v: risk ? trSayi(risk) : '—', mono: true, sag: true, kalin: true, renk: riskli ? R.kirmizi : risk ? R.amber : R.not3, sira: risk },
+                  // ⚠️ ALARM BÜTÇESİ: canlı ölçümde 10 kişinin 8'i "sürekli
+                  // riskli" işaretliydi. %80 işaretlenen bir etiket kimseyi
+                  // ayırt etmez; sahip ya hepsini suçlar ya hiçbirini. Etiket
+                  // korunuyor (sunucunun hükmü) ama çoğunluk işaretliyse
+                  // rengi kırmızıdan ambere iniyor ve neden indiği yazılıyor.
                   riskli
-                    ? { v: 'sürekli riskli', rozet: R.kirmizi, sira: 2 }
+                    ? {
+                      v: riskliCogunluk ? 'işaretli (çoğunlukta)' : 'sürekli riskli',
+                      rozet: riskliCogunluk ? R.amber : R.kirmizi,
+                      sira: 2,
+                    }
                     : (farkAdet || bardakAdet || vardiyaEksik)
                       ? { v: 'izlemede', rozet: R.amber, sira: 1 }
                       : { v: 'normal', rozet: R.yesil, sira: 0 },
@@ -2001,8 +2070,13 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
                             </span>
                           ),
                         },
+                        // ⚠️ ALAN ADI "okundu" (Fable, 2026-08-27): birinin kaydı
+                        // GÖRMÜŞ olması demek. Ekran bunu "çözüldü" diye YEŞİL
+                        // basıyordu — yani fark kapanmış gibi. Sahip yeşili
+                        // görüp peşini bırakır; oysa belki yalnız bakılıp
+                        // geçilmiştir. Görmek çözmek değildir.
                         o.okundu
-                          ? { v: 'çözüldü', rozet: R.yesil, sira: 0 }
+                          ? { v: 'görüldü', rozet: R.mavi, sira: 0 }
                           : { v: 'açık', rozet: R.amber, sira: 1 },
                       ],
                     };
@@ -3165,7 +3239,10 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
                   {onayKuyrugu.incele.map((k) => (
                     <li key={k.personel_id} style={{ marginBottom: 3 }}>
                       <b style={{ color: R.krem }}>{k.ad_soyad}</b> · {fmt(k.hesaplanan_net)} —{' '}
-                      {k.anomaliler.filter((a) => a.seviye !== 'bilgi').map((a) => a.mesaj).join(' · ')}
+                      {/* ⚠️ Fable: `k.anomaliler` dizi gelmezse `undefined.filter`
+                          ile TÜM MAAŞ EKRANI beyazlanır. Bugün patlamıyor
+                          olabilir; ama patlarsa maaş gününde patlar. */}
+                      {(k.anomaliler || []).filter((a) => a.seviye !== 'bilgi').map((a) => a.mesaj).join(' · ')}
                     </li>
                   ))}
                 </ul>
