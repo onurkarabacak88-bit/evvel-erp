@@ -279,12 +279,34 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
   // Kural kütüphanesi tanımları (soru 8/9) — tıklamada bir kez çekilir, ref'te tutulur
   const kuralTanimRef = useRef(null);
 
+  // 🧠 ÖĞRENME HALKASI (2026-08-27) — duyular ile zekâyı BİRLEŞTİREN ölçüm.
+  // Sistemin altı halkası ayrı ayrı çalışıyordu ama hiçbir ekran zinciri
+  // BÜTÜN olarak göstermiyordu: duyu üretir → sinaps bağ kurar → insan
+  // etiketler → kural öğrenir → motor bulgu üretir → insan karar verir.
+  // Halka görünmediği için NEREDE koptuğu da görünmüyordu.
+  // ⚠️ Bu bir ÖLÇÜM katmanıdır, yeni bir karar mekanizması değil: hiçbir şeyi
+  // otomatik etiketlemez, hiçbir kuralın ağırlığını değiştirmez. Yalnız
+  // zincirin hangi halkasında kaç kayıt olduğunu yan yana koyar (öneri-only).
+  const [etiketKirilim, setEtiketKirilim] = useState(null);
   const duyuYukle = useCallback(() => {
     setDuyuHata('');
     api('/duyu/kural-karnesi')
       .then((d) => setKarne(d || {}))
       .catch((e) => setDuyuHata(e?.message || ''));
     api('/duyu/sinapsler?gun=14').then((d) => setSinaps(d || {})).catch(() => setSinaps({}));
+    // Halka için: omurga sayaçları + etiketlerin KAYNAK kırılımı.
+    // ⚠️ Hata-yutar: halka çizilemezse ekranın kalanı yaşar, ama halka
+    // "okunamadı" der — sessizce 0 göstermez.
+    api('/duyu/ozet').then((d) => setOzet(d || {})).catch(() => setOzet('__HATA__'));
+    api('/duyu/etiketler?limit=500')
+      .then((d) => {
+        const l = Array.isArray(d) ? d : (d?.etiketler || d?.satirlar || null);
+        if (!Array.isArray(l)) { setEtiketKirilim('__HATA__'); return; }
+        const m = {};
+        l.forEach((x) => { const k = String(x?.kaynak || 'bilinmiyor'); m[k] = (m[k] || 0) + 1; });
+        setEtiketKirilim({ toplam: l.length, kaynaklar: m });
+      })
+      .catch(() => setEtiketKirilim('__HATA__'));
   }, []);
 
   /**
@@ -1675,6 +1697,126 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
           },
           { etiket: 'Omurga', deger: 'tek gözlem', alt: 'çakışma hata değil ürün' },
         ]} />
+        {/* ==================================================================
+            OGRENME HALKASI - duyular ile zekayi BIRLESTIREN tek goruntu
+            ==================================================================
+            Sistemin halkalari ayri ayri calisiyordu ama hicbir ekran zinciri
+            BUTUN olarak gostermiyordu; halka gorunmeyince NEREDE koptugu da
+            gorunmuyordu. Canli olcum (27 Agu):
+              duyu 2.965 olay OK -> sinaps 287 bag OK -> ETIKET 163 var ama
+              kurala ULASAN 1 KOPUK -> 10 kuralin 10'u %0 KOPUK
+            Sebep tek satirlik: kural karnesi YALNIZ kaynak='bag_karari'
+            etiketini sayiyor; sahibin verdigi 96 onay + 61 red BASKA kanalda
+            duruyor. Ogretmen 157 kez konusmus, ogrenci birini duyuyor.
+            UYARI: BU BIR OLCUM KATMANIDIR - hicbir seyi otomatik etiketlemez,
+            hicbir agirligi degistirmez. Ne oldugunu SOYLER; karari sahip verir.
+            ================================================================== */}
+        {(() => {
+          const ozetOK = ozet && ozet !== '__HATA__';
+          const ekOK = etiketKirilim && etiketKirilim !== '__HATA__';
+          const kur = Array.isArray(karne?.karne) ? karne.karne : [];
+          const esik = sayi(karne?.n_esigi) || 30;
+          const bagT = kur.reduce((t, k) => t + sayi(k.bag_n), 0);
+          const olgun = kur.filter((k) => sayi(k.etiketli_n) >= esik).length;
+          const uyuyan = kur.filter((k) => sayi(k.bag_n) === 0).length;
+          const bagKarari = ekOK ? sayi(etiketKirilim.kaynaklar?.bag_karari) : null;
+          const etiketToplam = ekOK ? etiketKirilim.toplam
+            : (ozetOK ? sayi(ozet.etiket_sayisi) : null);
+          const adimlar = [
+            {
+              ad: 'Duyu uretimi',
+              baslik: 'DUYU URETIMI',
+              deger: ozetOK ? String(sayi(ozet.toplam_olay)) : '—',
+              alt: ozetOK
+                ? `${Array.isArray(ozet.son_gun_tipleri) ? ozet.son_gun_tipleri.length : 0} olay tipi`
+                : 'okunamadı',
+              kopuk: ozetOK ? sayi(ozet.toplam_olay) === 0 : false,
+            },
+            {
+              ad: 'Bag kurma',
+              baslik: 'BAĞ KURMA',
+              deger: String(bagT),
+              alt: uyuyan > 0
+                ? `${uyuyan}/${kur.length} kural hiç tetiklenmemiş`
+                : 'tüm kurallar tetikleniyor',
+              kopuk: bagT === 0 || (kur.length > 0 && uyuyan === kur.length),
+            },
+            {
+              ad: 'Etiket',
+              baslik: 'ETİKET (ÖĞRETMEN)',
+              deger: etiketToplam == null ? '—' : String(etiketToplam),
+              alt: bagKarari == null ? 'kaynak kırılımı okunamadı'
+                : `kurala ulaşan: ${bagKarari}`,
+              kopuk: bagKarari != null && etiketToplam != null && etiketToplam > 0 && bagKarari <= 1,
+            },
+            {
+              ad: 'Kural ogrenmesi',
+              baslik: 'KURAL ÖĞRENMESİ',
+              deger: `${olgun} / ${kur.length}`,
+              alt: `olgun kural · eşik ${esik} etiket`,
+              kopuk: kur.length > 0 && olgun === 0,
+            },
+          ];
+          const kopukSayi = adimlar.filter((a2) => a2.kopuk === true).length;
+          return (
+            <div style={{ ...kartYuzey, padding: '15px 18px', marginBottom: 14 }}>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 11 }}>
+                <span style={{ fontFamily: F.baslik, fontSize: 14.5, fontWeight: 600 }}>🧠 Öğrenme halkası</span>
+                <span style={{ fontSize: 11, color: R.not2 }}>duyu → bağ → etiket → kural · zincirin bütünü</span>
+                <span style={{ marginLeft: 'auto', fontSize: 11.5, color: kopukSayi ? R.amber : R.yesil, fontWeight: 700 }}>
+                  {kopukSayi ? `${kopukSayi} halka kopuk` : 'zincir tam'}
+                </span>
+              </div>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'stretch' }}>
+                {adimlar.map((a2, i2) => (
+                  <React.Fragment key={a2.ad}>
+                    {i2 > 0 && <div style={{ display: 'flex', alignItems: 'center', color: R.not3, fontSize: 15 }}>→</div>}
+                    <div style={{
+                      flex: '1 1 150px', minWidth: 138, padding: '10px 12px', borderRadius: 10,
+                      background: R.girinti,
+                      border: `1px solid ${a2.kopuk === true ? `${R.amber}66` : R.cizgi3}`,
+                    }}>
+                      <div style={{ fontSize: 10.5, color: R.not2, fontWeight: 700, letterSpacing: '.4px' }}>{a2.baslik}</div>
+                      <div style={{
+                        fontFamily: F.mono, fontSize: 18, fontWeight: 700, marginTop: 3,
+                        color: a2.kopuk === true ? R.amber : (a2.deger === '—' ? R.not3 : R.krem),
+                      }}>{a2.deger}</div>
+                      <div style={{ fontSize: 10.5, color: R.not2, marginTop: 2, lineHeight: 1.45 }}>{a2.alt}</div>
+                    </div>
+                  </React.Fragment>
+                ))}
+              </div>
+              {bagKarari != null && etiketToplam > 0 && bagKarari <= 1 && (
+                <div style={{ fontSize: 12, color: R.metin2, marginTop: 11, lineHeight: 1.65 }}>
+                  ⚠ <b style={{ color: R.krem }}>Öğretmen konuşuyor ama öğrenci duymuyor.</b> Defterde{' '}
+                  <b style={{ color: R.krem }}>{etiketToplam} etiket</b> var; kural karnesi bunların yalnız{' '}
+                  <b style={{ color: R.krem }}>{bagKarari}</b> tanesini sayıyor — çünkü karne yalnız{' '}
+                  <span style={{ fontFamily: F.mono }}>kaynak=bag_karari</span> etiketini okuyor.
+                  {ekOK && (
+                    <> Diğer kanallar:{' '}
+                      {Object.entries(etiketKirilim.kaynaklar)
+                        .filter(([k]) => k !== 'bag_karari')
+                        .sort((x, y) => y[1] - x[1]).slice(0, 4)
+                        .map(([k, n]) => `${n}× ${k}`).join(' · ')}.
+                    </>
+                  )}
+                  {' '}Bu bir <b>veri eksikliği değil, bağlantı eksikliği</b>: hüküm verilmiş,
+                  öğrenene iletilmemiş.
+                </div>
+              )}
+              {uyuyan > 0 && (
+                <div style={{ fontSize: 12, color: R.metin2, marginTop: 8, lineHeight: 1.65 }}>
+                  💤 <b style={{ color: R.krem }}>{uyuyan} kural hiç tetiklenmemiş</b> (bağ = 0) —
+                  bu kurallar için etiket toplamak anlamsız; önce üreten duyunun olay yayması gerekiyor.
+                  Etiketlemek, ateşlenmeyen kuralı öğretmez.
+                </div>
+              )}
+              <div style={{ fontSize: 10.5, color: R.not3, marginTop: 9, fontStyle: 'italic' }}>
+                Bu panel ÖLÇER, karar vermez: hiçbir etiketi otomatik atmaz, hiçbir kuralın ağırlığını değiştirmez.
+              </div>
+            </div>
+          );
+        })()}
         {/* 🔬 CANLI GEZİNTİ (2026-08-27) — TABLO SIFIR AYRIM ÜRETİYORDU.
             Canlıda 10 kuralın 10'u da «veri yetersiz · — · %0 · öğreniyor»
             diyordu: 60 hücre, sıfır bilgi. Tufte'nin veri-mürekkep ölçütünde
