@@ -2212,6 +2212,87 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
 
   // ── 1) Kadro ───────────────────────────────────────────────────────────────
   if (gorunum === 'kadro') {
+    // ══════════════════════════════════════════════════════════════════════
+    // 🧭 İŞ KUYRUĞU — "bugün ekiple ilgili ne yapmalıyım?"
+    // ══════════════════════════════════════════════════════════════════════
+    // BAKIŞ'ta 2026-08-26'da, OPS'ta 2026-08-27'de kurulan kurgunun EKİP
+    // karşılığı. Kök teşhis burada da aynı: bu modülde 8 sekme ve 69 rakam
+    // var; hepsi doğru ama sahibin "bugün ne yapmalıyım" sorusunun cevabı
+    // sekmelere DAĞILMIŞ durumda. Onay bekleyen bordro Maaş'ta, PIN'i olmayan
+    // personel PIN sekmesinde, okunmamış başvuru Başvurular'da — üçünü bir
+    // arada gören hiçbir ekran yok.
+    // ⚠️ SIRALAMA GEREKÇESİ: önce BİRİNİN PARASI bekliyor (bordro/avans),
+    // sonra KAYIT EKSİĞİ (PIN yoksa panele giremez, ücret yoksa bordro
+    // hesaplanamaz), en sonda OKUNMAMIŞ (başvuru — insan bekliyor ama
+    // parası/işi durmuyor).
+    // ⚠️ Madde ELLE KAPATILMAZ: onay verilince kayıt aşama değiştirir ve
+    // madde kendiliğinden düşer.
+    const ekipKuyruk = (() => {
+      const m = [];
+      // S1 · BİRİNİN PARASI BEKLİYOR
+      const bekleyenBordro = bordro.filter((b) => {
+        const a = asamaNorm(b.asama || b.durum);
+        return a === 'taslak' || a === 'onay_bekliyor' || a === 'tahmini';
+      });
+      if (bekleyenBordro.length) {
+        m.push({
+          sinif: 1, anahtar: `bordro|${donem.yil}-${donem.ay}`,
+          baslik: `${bekleyenBordro.length} bordro onay bekliyor`,
+          aciklama: 'onaylanmadan ödeme yapılamaz — maaş gecikir',
+          git: () => onKopru?.('__modul:ekip:maas'),
+        });
+      }
+      if (avans && sayi(avans.teslim_bekleyen_adet) > 0) {
+        m.push({
+          sinif: 1, anahtar: 'avans|teslim',
+          baslik: `${sayi(avans.teslim_bekleyen_adet)} avans onaylandı, parası verilmedi`,
+          aciklama: `${fmt(sayi(avans.teslim_bekleyen_tutar))} · kişi bekliyor`,
+          git: () => onKopru?.('__modul:ekip:maas'),
+        });
+      }
+      if (avans && sayi(avans.bekleyen_adet) > 0) {
+        m.push({
+          sinif: 1, anahtar: 'avans|onay',
+          baslik: `${sayi(avans.bekleyen_adet)} avans talebi onay bekliyor`,
+          aciklama: `${fmt(sayi(avans.bekleyen_tutar))} · QR ile istendi`,
+          git: () => onKopru?.('__modul:ekip:maas'),
+        });
+      }
+      // S2 · KAYIT EKSİĞİ — iş yapılamaz hâle getiriyor
+      const pinsiz = pinler.filter((x) => !x.panel_pin_tanimli);
+      if (pinsiz.length) {
+        m.push({
+          sinif: 2, anahtar: 'pin|eksik',
+          baslik: `${pinsiz.length} personelin panel PIN'i yok`,
+          aciklama: 'şube paneline giremez — açılış/kapanış yapamaz',
+          git: () => onKopru?.('__modul:ekip:pinqr'),
+        });
+      }
+      const ucretsiz = personel.filter((x) => !sayi(x.maas) && !sayi(x.saatlik_ucret));
+      if (ucretsiz.length) {
+        m.push({
+          sinif: 2, anahtar: 'ucret|tanimsiz',
+          baslik: `${ucretsiz.length} personelin ücreti tanımlı değil`,
+          aciklama: 'bordrosu hesaplanamaz — hakediş çıkmaz',
+          git: () => onKopru?.('__modul:ekip:kadro'),
+        });
+      }
+      // S3 · OKUNMAMIŞ — insan bekliyor
+      const okunmamis = sayi(basvuruOzet?.yeni);
+      if (okunmamis > 0) {
+        m.push({
+          sinif: 3, anahtar: 'basvuru|yeni',
+          baslik: `${okunmamis} başvuru okunmadı`,
+          aciklama: 'aday bekliyor — cevapsız kalan başvuru itibar kaybıdır',
+          git: () => onKopru?.('__modul:ekip:basvuru'),
+        });
+      }
+      return m.sort((a, b) => a.sinif - b.sinif);
+    })();
+    const EKIP_TAVAN = 5;
+    const ekipGorunen = ekipKuyruk.slice(0, EKIP_TAVAN);
+    const ekipTasan = ekipKuyruk.length - ekipGorunen.length;
+
     const satir = personel.map(p => {
       const t = takipMap[String(p.id)] || {};
       const kd = kidemAy(p.baslangic_tarihi);
@@ -2233,6 +2314,50 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
     const subesiz = personel.filter(p => !p.sube_id).length;
     return (
       <>
+        {/* 🧭 İŞ KUYRUĞU — ekranın İLK bloğu (hero-önce deseni).
+            Boşsa çizilmez: "yapılacak yok" kartı yer kaplar, iş üretmez. */}
+        {ekipGorunen.length > 0 && (
+          <div style={{ ...kartYuzey, padding: '15px 18px', marginBottom: 14 }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 11 }}>
+              <span style={{ fontFamily: F.baslik, fontSize: 15, fontWeight: 600 }}>🧭 Bugün ekiple ilgili ne yapmalıyım</span>
+              <span style={{ fontSize: 11.5, color: R.not2 }}>
+                {ekipKuyruk.length} iş · en acili üstte
+                {ekipTasan > 0 && ` · ${ekipTasan} tanesi sekmelerde`}
+              </span>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {ekipGorunen.map((m) => {
+                const renk = m.sinif === 1 ? R.kirmizi : m.sinif === 2 ? R.bakir : R.amber;
+                return (
+                  <div
+                    key={m.anahtar}
+                    onClick={m.git}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); m.git(); } }}
+                    className="v2-hover-kalk"
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer',
+                      padding: '11px 14px', borderRadius: 12, background: R.girinti,
+                      border: `1px solid ${R.cizgi}`, borderLeft: `3px solid ${renk}`,
+                    }}
+                  >
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 12.5, fontWeight: 700, color: R.krem }}>{m.baslik}</div>
+                      <div style={{ fontSize: 11.5, color: R.not2, marginTop: 2 }}>{m.aciklama}</div>
+                    </div>
+                    <span style={{ color: R.not3, fontSize: 13 }}>›</span>
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{ fontSize: 11, color: R.not3, marginTop: 9, lineHeight: 1.6 }}>
+              Bu liste elle kapatılmaz — onay verilince ya da kayıt tamamlanınca madde kendiliğinden düşer.
+              Sıralama: önce <b>birinin parası bekleyen</b>, sonra <b>kayıt eksiği</b>, en sonda <b>okunmamış</b>.
+            </div>
+          </div>
+        )}
+
         <KpiSeridi kpiler={[
           // ⚠️ ÇERÇEVELEME (tarama, 2026-08-28): bu sayı AKTİF personeli sayar
           // (6). Aynı şeridin sonundaki "₺/adam-saat" ise SON 30 GÜNDE ÇALIŞAN
