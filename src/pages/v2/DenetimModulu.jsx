@@ -1725,7 +1725,7 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
           const adimlar = [
             {
               ad: 'Duyu uretimi',
-              baslik: 'DUYU URETIMI',
+              baslik: 'DUYU ÜRETİMİ',
               deger: ozetOK ? String(sayi(ozet.toplam_olay)) : '—',
               alt: ozetOK
                 ? `${Array.isArray(ozet.son_gun_tipleri) ? ozet.son_gun_tipleri.length : 0} olay tipi`
