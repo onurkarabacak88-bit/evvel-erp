@@ -2143,8 +2143,40 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
       <>
         <KpiSeridi kpiler={[
           { etiket: 'Açık sipariş', deger: String(acik), alt: 'son 14 gün · tüm aşamalar' },
-          { etiket: 'Merkez kuyruğu', deger: String(sayi(ozet.bekliyor)), alt: 'depo yönlendirmesi bekliyor', renk: sayi(ozet.bekliyor) > 0 ? R.amber : R.krem },
-          { etiket: 'Depoda hazırlanan', deger: String(sayi(ozet.depoda)), alt: 'sevk bekliyor', renk: sayi(ozet.depoda) > 0 ? R.mavi : R.krem },
+          // ⚠️ MÜKERRER SAYI (bilişsel yük ölçümü, 2026-08-27): bu iki rakam
+          // aşağıdaki kanban kolon başlıklarında ZATEN aynen duruyor. Tek
+          // ekranda 70 sayı sayıldı; aynı sayıyı iki kez göstermek Tufte'nin
+          // "veri-mürekkep" savurganlığı ve boşuna bilişsel yük.
+          // ⚠️ SİLMEDİM — kaldırmak bilgi kaybı olurdu. Bunun yerine kanban'ın
+          // SÖYLEYEMEDİĞİ şeyi ekledim: EN ESKİ işin yaşı. Kuyruk tam da bunun
+          // önemli olduğunu gösterdi (14 gündür bekleyen bir karar vardı ve
+          // hiçbir yerde yazmıyordu). Aynı yer artık iki değil üç şey söylüyor.
+          (() => {
+            const enEski = satirlar.filter((x) => x.asama === 'bekliyor')
+              .map((x) => opsGunFarki(x.tarih, isGunuBugun()))
+              .filter((v) => v != null)
+              .sort((a, b) => b - a)[0];
+            return {
+              etiket: 'Merkez kuyruğu',
+              deger: String(sayi(ozet.bekliyor)),
+              alt: sayi(ozet.bekliyor) === 0 ? 'boş — yönlendirme beklemiyor'
+                : (enEski != null ? `depo yönlendirmesi bekliyor · en eskisi ${enEski} gün` : 'depo yönlendirmesi bekliyor'),
+              renk: sayi(ozet.bekliyor) > 0 ? R.amber : R.krem,
+            };
+          })(),
+          (() => {
+            const enEski = satirlar.filter((x) => x.asama === 'depoda')
+              .map((x) => opsGunFarki(x.tarih, isGunuBugun()))
+              .filter((v) => v != null)
+              .sort((a, b) => b - a)[0];
+            return {
+              etiket: 'Depoda hazırlanan',
+              deger: String(sayi(ozet.depoda)),
+              alt: sayi(ozet.depoda) === 0 ? 'boş — hazırlık beklemiyor'
+                : (enEski != null ? `sevk bekliyor · en eskisi ${enEski} gün` : 'sevk bekliyor'),
+              renk: sayi(ozet.depoda) > 0 ? R.mavi : R.krem,
+            };
+          })(),
           { etiket: 'Kabul uyumsuzluğu', deger: String(sayi(ozet.uyumsuzluk)), alt: sayi(ozet.uyumsuzluk) > 0 ? 'merkez müdahalesi gerekli' : 'temiz', renk: sayi(ozet.uyumsuzluk) > 0 ? R.kirmizi : R.yesil },
         ]} />
 
@@ -2461,6 +2493,42 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
               </div>
             );
           })}
+        </div>
+
+        {/* ══════════════════════════════════════════════════════════════
+            📌 GÜN KAPANIŞI — serial position (Murdock 1962)
+            ══════════════════════════════════════════════════════════════
+            Ölçtüm: bu ekran ham kanban kartıyla bitiyordu ("ZAFER · 14 Ağu ·
+            1 kalem · 120 adet"). Bir dizinin İLK ve SON ögesi hatırlanır,
+            ortası silinir. Ekranın ilk ögesi iş kuyruğu (iyi), son ögesi bir
+            kart yığınıydı — yani merkezin aklında kalan son şey bir veri
+            parçasıydı, bir cümle değil.
+            ⚠️ YENİ HESAP YOK: yalnız ekranda ZATEN olan sayılar tek cümlede
+            toplanıyor. */}
+        <div style={{
+          ...kartYuzey, padding: '14px 18px', marginTop: 14,
+          borderLeft: `3px solid ${kuyrukHam.length ? R.bakir : R.yesil}`,
+        }}>
+          <div style={{ fontSize: 11, letterSpacing: .8, color: R.not3, marginBottom: 6 }}>GÜN KAPANIŞI</div>
+          <div style={{ fontSize: 13.5, lineHeight: 1.75, color: R.krem }}>
+            Son 14 günde <b>{acik}</b> açık sipariş var.{' '}
+            {sayi(ozet.yolda) + sayi(ozet.toptanci_bekliyor) > 0 && (
+              <>Bunların <b>{sayi(ozet.yolda) + sayi(ozet.toptanci_bekliyor)}</b> tanesi yolda —{' '}
+                <b>şube kabulünü bekliyor</b>, top merkezde değil.{' '}</>
+            )}
+            {kuyrukHam.length > 0
+              ? <>Merkezin kararını bekleyen <b style={{ color: R.bakir }}>{kuyrukHam.length} iş</b> var;
+                  sırası yukarıdaki kuyrukta.</>
+              : <>Merkezde bekleyen iş <b style={{ color: R.yesil }}>yok</b>.</>}
+          </div>
+          {/* ⚠️ Bu ekranın ölçtüğü şeyin SINIRI: kanban "sipariş hangi
+              aşamada" der, "iş kimde" demez. Yolda bekleyen bir sipariş
+              merkezin işi değildir — bunu yazmak, merkezi olmayan bir işten
+              sorumlu hissettirmemek içindir. */}
+          <div style={{ fontSize: 11.5, color: R.not2, marginTop: 8, lineHeight: 1.7 }}>
+            Pano siparişin <b>hangi aşamada</b> olduğunu gösterir, <b>işin kimde</b> olduğunu değil:
+            “yolda” olan bir sipariş şubenin kabulünü bekler, merkezin yapacağı bir şey yoktur.
+          </div>
         </div>
 
         {/* ── YERLİ DEPO YÖNLENDİRME MODALI (köprü kaldırıldı) ── */}
