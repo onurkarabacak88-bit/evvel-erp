@@ -5428,10 +5428,28 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
                 // ⚠️ ALAN ADI TUZAĞI: adı `_tl` ama taşıdığı şey ADET (bardak,
                 // şişe). Bu yüzden para biçimi (fmt) UYGULANMIYOR — ₺ yazmak
                 // 19 adet sodayı 19 lira sanmaya yol açardı.
-                {
-                  v: `${sayi(x.beklenen_tl)} → ${sayi(x.gercek_tl)}`,
-                  mono: true, renk: R.not2,
-                },
+                // ⚠️ KENDİ KUSURUM (aynı gün): bu kanıt kolonunu eklerken
+                // `sayi(x.beklenen_tl) → sayi(x.gercek_tl)` yazmıştım. Ama o
+                // iki alan YALNIZ devir-farkı tipinde dolu; "karşılıksız açma"
+                // tipinde ikisi de null → sayi(null)=0 → ekran "0 → 0" diyordu.
+                // Yani farkı +10 olan bir satırın kanıtı "hiçbir şey olmamış"
+                // gibi görünüyordu — düzeltmeye çalıştığım falsy-zero'yu bu kez
+                // KENDİM ürettim.
+                // ⚠️ Boş alan gizlenmiyor, EŞDEĞERİNDEN türetiliyor: o tipte
+                // kanıt `detay_json` içinde (depoda ne vardı, ne istendi).
+                (() => {
+                  if (x.beklenen_tl != null && x.gercek_tl != null) {
+                    return { v: `${sayi(x.beklenen_tl)} → ${sayi(x.gercek_tl)}`, mono: true, renk: R.not2 };
+                  }
+                  const d = x.detay_json || {};
+                  if (d.mevcut_oncesi != null || d.istenen != null) {
+                    return {
+                      v: `depoda ${sayi(d.mevcut_oncesi)} · istenen ${sayi(d.istenen)}`,
+                      mono: true, renk: R.not2,
+                    };
+                  }
+                  return { v: '—', renk: R.not3 };
+                })(),
                 (() => {
                   const f = x.efektif_fark_tl != null ? x.efektif_fark_tl : x.fark_tl;
                   if (f == null) return { v: 'ölçülemedi', sag: true, renk: R.not3 };
