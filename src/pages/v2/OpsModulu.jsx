@@ -1958,6 +1958,11 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
           }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 10 }}>
               <span style={rozetHap(R.kirmizi)}>⚠ kabul uyumsuzluğu · {uyumsuzlar.length}</span>
+              {uyumsuzlar.length > 6 && (
+                <span style={{ fontSize: 11.5, color: R.not3, marginLeft: 8 }}>
+                  ilk 6 kart gösteriliyor · {uyumsuzlar.length - 6} sipariş daha var
+                </span>
+              )}
               <span style={{ fontSize: 12, color: R.metin2, flex: 1 }}>
                 şube kabulü sevk edilenle uyuşmadı — merkez kararı gerekli
               </span>
@@ -1973,6 +1978,9 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
               </button>
             </div>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              {/* ⚠️ SESSİZ ELEME (Codex, 2026-08-27): şerit 6 kartta kesiliyor
+                  ve kesildiği söylenmiyordu. Bunlar merkez müdahalesi bekleyen
+                  siparişler — 7.'si görünmeyince aranmaz da. */}
               {uyumsuzlar.slice(0, 6).map((s) => (
                 <div
                   key={s.id}
@@ -2681,7 +2689,27 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     const acikPers = persSatir.filter((p) => !/(cozuldu|çözüldü)/i.test(String(p.durum || '')));
     // 'acik' = henüz karar verilmemiş; yazılmış olanlar (gelire/gidere) kapanmış sayılır
     const farkSatir = Array.isArray(uzFark) ? uzFark : [];
-    const acikFark = farkSatir.filter((f) => !/(gelire_yazildi|gidere_yazildi|girilen_dogru|evo_dogru)/i.test(String(f.durum || '')));
+    // ══════════════════════════════════════════════════════════════════════
+    // 🔴 İŞ KUYRUĞU 5 KATINA ŞİŞMİŞTİ — 2026-08-27, canlı ölçüm
+    // ══════════════════════════════════════════════════════════════════════
+    // Sekme "Ciro farkı (54)" diyordu. Defteri ölçtüm — 57 kaydın dağılımı:
+    //   · durum='acik'                          11  ← GERÇEK İŞ (fark ölçülmüş)
+    //   · 'evo_kullaniliyor' + fark YOK         32  ← şube kapanış GİRMEMİŞ;
+    //        ortada bir fark yok ki uzlaştırılsın (girilen=NULL, fark=NULL —
+    //        ciro_taslak_api.py:608 bu satırı böyle yazıyor)
+    //   · 'evo_kullaniliyor' + fark VAR         11  ← Evo lehine KARARA BAĞLANMIŞ
+    //   · gelire_yazildi / evo_dogru             3  ← kapanmış
+    // Eski süzgeç yalnız son grubu eliyordu; 43 kaydı "açık iş" sayıyordu.
+    // ⚠️ ALARM BÜTÇESİ: 54 satırlık bir kuyruğa bakan insan hiçbirine bakmaz.
+    // Kuyruk gerçek işi göstermeli; diğerleri SİLİNMEZ, AYRI SAYILIR.
+    const acikFark = farkSatir.filter((f) => String(f.durum || '') === 'acik');
+    // Kapanış girilmemiş günler: bu bir "fark" değil, EKSİK KAYIT sinyalidir —
+    // ayrı bir iş, ayrı sayılır (gizlenmez).
+    const kapanissizFark = farkSatir.filter((f) => String(f.durum || '') === 'evo_kullaniliyor' && f.fark == null);
+    const cozulmusFark = farkSatir.filter((f) => {
+      const d = String(f.durum || '');
+      return d !== 'acik' && !(d === 'evo_kullaniliyor' && f.fark == null);
+    });
 
     const ALT = [
       ['sevkiyat', `🚚 Sevkiyat (${sevkSatir.length})`],
@@ -2847,11 +2875,14 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
         ) : (
           <Tablo
             baslik="Kasa uyumsuzlukları"
-            not="satıra tıkla → çöz · fark tazelemek için satırdaki yeniden hesapla"
             kolonlar={[
               { ad: 'Şube' }, { ad: 'Tarih' }, { ad: 'Fark', sag: true },
               { ad: 'Kişi deseni' }, { ad: 'Durum' }, { ad: '' },
             ]}
+            not={'satıra tıkla → çöz · fark tazelemek için satırdaki yeniden hesapla'
+              + (acikKasa.length > 40
+                ? ` · ⚠ ${acikKasa.length} açık uyumsuzluğun ilk 40'ı gösteriliyor (${acikKasa.length - 40} kayıt listede yok)`
+                : '')}
             satirlar={acikKasa.slice(0, 40).map((k, i) => {
               // personel_patern: AYNI KİŞİDE tekrar eden fark (son 30 gün).
               // Tek seferlik fark ile kronik desen aynı şey değil — sunucu
@@ -2891,7 +2922,10 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
           />
         ))}
 
-        {uzAlt === 'ciro' && (farkSatir.length ? (
+        {/* ⚠️ AYNI AD, İKİ HESAP (Codex, 2026-08-27): sekme sayacı `acikFark`,
+            gövde `farkSatir` kullanıyordu — sekme "(0)" derken içeride satır
+            olabiliyordu. İkisi artık AYNI kümeyi anlatıyor. */}
+        {uzAlt === 'ciro' && ((acikFark.length || kapanissizFark.length || cozulmusFark.length) ? (
           <>
             <div style={{ fontSize: 11.5, color: R.not2, lineHeight: 1.7, marginBottom: 12 }}>
               Kasaya girilen ciro ile Evo satışı tutmadığında buraya düşer.
@@ -2899,7 +2933,7 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
               (fazlaysa gelir, eksikse gider yazılır). Para yazma işlemi kasa
               defterine işlenir ve <b>geri alınamaz</b> — önce kararı ver.
             </div>
-            <Liste satirlar={farkSatir.slice(0, 60).map((f) => {
+            <Liste satirlar={acikFark.slice(0, 60).map((f) => {
               const fark = sayi(f.fark);
               const yazildi = /(gelire_yazildi|gidere_yazildi)/i.test(String(f.durum || ''));
               const kararli = /(girilen_dogru|evo_dogru)/i.test(String(f.durum || ''));
@@ -2928,6 +2962,31 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
                 aksiyonlar: eylemler.length ? eylemler : undefined,
               };
             })} />
+            {/* ⚠️ KUYRUKTAN ÇIKARILANLAR GİZLENMEZ, SAYILIR. Kuyruğu gerçek
+                işe indirmek, geri kalanı yok saymak değildir — biri "eksik
+                kayıt", diğeri "karara bağlanmış", ikisi de bilgidir. */}
+            {(kapanissizFark.length > 0 || cozulmusFark.length > 0 || acikFark.length > 60) && (
+              <div style={{
+                ...kartYuzey, padding: '12px 16px', marginTop: 10,
+                fontSize: 12, color: R.not2, lineHeight: 1.7,
+              }}>
+                {acikFark.length > 60 && (
+                  <div style={{ color: R.amber }}>
+                    ⚠ {acikFark.length} açık farkın ilk 60'ı listeleniyor — {acikFark.length - 60} kayıt listede yok.
+                  </div>
+                )}
+                {kapanissizFark.length > 0 && (
+                  <div>
+                    📭 <b style={{ color: R.not }}>{kapanissizFark.length} gün</b> için şube kapanış girmemiş;
+                    Evo satışı kullanılmış. Bunlar <b>fark değildir</b> (karşılaştırılacak ikinci sayı yok) —
+                    ayrı bir iş: eksik kapanış kaydı.
+                  </div>
+                )}
+                {cozulmusFark.length > 0 && (
+                  <div>✅ <b style={{ color: R.not }}>{cozulmusFark.length} kayıt</b> zaten karara bağlanmış — kuyrukta görünmez.</div>
+                )}
+              </div>
+            )}
           </>
         ) : <BosDurum metin="Ciro farkı yok — kasa ile Evo satışı örtüşüyor. ✓" tamam />)}
 
