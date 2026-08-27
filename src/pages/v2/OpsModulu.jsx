@@ -2009,6 +2009,63 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     const acik = ['bekliyor', 'depoda', 'yolda', 'toptanci_bekliyor', 'uyumsuzluk']
       .reduce((t, k) => t + sayi(ozet[k]), 0);
     const uyumsuzlar = satirlar.filter((s) => s.asama === 'uyumsuzluk');
+
+    // ══════════════════════════════════════════════════════════════════════
+    // 🧭 İŞ KUYRUĞU — "bugün merkezde ne yapmalıyım?"
+    // ══════════════════════════════════════════════════════════════════════
+    // BAKIŞ'ta 2026-08-26'da kurulan kurgunun aynısı. Kök teşhis orada da
+    // buydu: rakamlar yanlış değildi, RAKAMLAR İŞ ÜRETMİYORDU.
+    // Bu ekran bir kanban: dört kolon, üçü boş, yedi kart "yolda" duruyor.
+    // Sahibin sorusu "sipariş hangi aşamada" değil, "BUGÜN NE YAPMALIYIM".
+    // ⚠️ KANBAN KALDIRILMADI — rolü değişti: kuyruk kararı, kanban KANITI
+    //    taşır (BAKIŞ'ta Para Akışı'nın kanıt katmanına dönmesi gibi).
+    // ⚠️ MADDE ELLE KAPATILMAZ: burada "gördüm" düğmesi yok; iş bitince
+    //    kayıt aşama değiştirir ve madde kendiliğinden düşer.
+    // ⚠️ EŞİK ELEYEMEZ, SIRALAR: yaşça sıralanır; tavanı aşan KAYBOLMAZ,
+    //    sayılır ve kanban'da durur.
+    const _gunFarki = (t) => {
+      if (!t) return null;
+      const d = new Date(String(t).slice(0, 10) + 'T00:00:00Z');
+      if (Number.isNaN(d.getTime())) return null;
+      const b = new Date(isGunuBugun() + 'T00:00:00Z');
+      return Math.round((b - d) / 86400000);
+    };
+    const _madde = (x, sinif, baslik, aciklama) => ({
+      sinif, baslik, aciklama, _s: x,
+      yas: _gunFarki(x.tarih),
+      anahtar: `${sinif}|${x.id}`,
+    });
+    const kuyrukHam = [
+      // S1 — KARAR BEKLEYEN: merkez müdahalesi olmadan kendiliğinden çözülmez
+      ...satirlar.filter((x) => x.asama === 'uyumsuzluk').map((x) => _madde(
+        x, 1,
+        `${x.sube_adi || 'Şube'} · kabul uyuşmazlığı`,
+        'şube teslim aldı ama adet tutmadı — merkez kararı gerekiyor',
+      )),
+      // S2 — MERKEZDE İŞ BEKLEYEN: top sende
+      ...satirlar.filter((x) => x.asama === 'bekliyor').map((x) => _madde(
+        x, 2,
+        `${x.sube_adi || 'Şube'} · depoya yönlendirilmedi`,
+        `${sayi(x.kalem_sayisi)} kalem · merkez kuyruğunda`,
+      )),
+      ...satirlar.filter((x) => x.asama === 'depoda').map((x) => _madde(
+        x, 2,
+        `${x.sube_adi || 'Şube'} · depoda hazırlanıyor`,
+        `${sayi(x.kalem_sayisi)} kalem · sevk bekliyor`,
+      )),
+      // S3 — TAKILMIŞ: kimse bir şey yapmıyor ama zaman işliyor
+      ...satirlar
+        .filter((x) => ['yolda', 'toptanci_bekliyor'].includes(x.asama))
+        .filter((x) => (_gunFarki(x.tarih) ?? 0) >= 2)
+        .map((x) => _madde(
+          x, 3,
+          `${x.sube_adi || 'Şube'} · şube kabulü gecikti`,
+          `${_gunFarki(x.tarih)} gündür yolda · ${sayi(x.kalem_sayisi)} kalem`,
+        )),
+    ].sort((a, b) => (a.sinif - b.sinif) || ((b.yas ?? 0) - (a.yas ?? 0)));
+    const KUYRUK_TAVAN = 5;
+    const kuyruk = kuyrukHam.slice(0, KUYRUK_TAVAN);
+    const kuyrukTasan = kuyrukHam.length - kuyruk.length;
     const kolonlar = [
       { id: 'bekliyor', asamalar: ['bekliyor'], buton: '🏭 Depoya yönlendir', yerliYonlendir: true },
       { id: 'depoda', asamalar: ['depoda'], buton: 'Sevkiyatı hazırla →', gorunum: 'sevkiyat' },
@@ -2023,6 +2080,56 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
           { etiket: 'Depoda hazırlanan', deger: String(sayi(ozet.depoda)), alt: 'sevk bekliyor', renk: sayi(ozet.depoda) > 0 ? R.mavi : R.krem },
           { etiket: 'Kabul uyumsuzluğu', deger: String(sayi(ozet.uyumsuzluk)), alt: sayi(ozet.uyumsuzluk) > 0 ? 'merkez müdahalesi gerekli' : 'temiz', renk: sayi(ozet.uyumsuzluk) > 0 ? R.kirmizi : R.yesil },
         ]} />
+
+        {/* 🧭 İŞ KUYRUĞU — ekranın İLK bloğu (hero-önce deseni).
+            Boşsa gösterilmez: boş bir "yapılacak yok" kartı ekran yer kaplar,
+            iş üretmez. */}
+        {kuyruk.length > 0 && (
+          <div style={{ ...kartYuzey, padding: '15px 18px', marginBottom: 14 }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 11 }}>
+              <span style={{ fontFamily: F.baslik, fontSize: 15, fontWeight: 600 }}>🧭 Bugün merkezde ne yapmalıyım</span>
+              <span style={{ fontSize: 11.5, color: R.not2 }}>
+                {kuyrukHam.length} iş · en acili üstte
+                {kuyrukTasan > 0 && ` · ${kuyrukTasan} tanesi aşağıdaki panoda`}
+              </span>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {kuyruk.map((m) => {
+                const renk = m.sinif === 1 ? R.kirmizi : m.sinif === 2 ? R.bakir : R.amber;
+                return (
+                  <div
+                    key={m.anahtar}
+                    onClick={() => siparisAc(m._s)}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); siparisAc(m._s); } }}
+                    className="v2-hover-kalk"
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer',
+                      padding: '11px 14px', borderRadius: 12, background: R.girinti,
+                      border: `1px solid ${R.cizgi}`, borderLeft: `3px solid ${renk}`,
+                    }}
+                  >
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 12.5, fontWeight: 700, color: R.krem }}>{m.baslik}</div>
+                      <div style={{ fontSize: 11.5, color: R.not2, marginTop: 2 }}>{m.aciklama}</div>
+                    </div>
+                    {m.yas != null && (
+                      <span style={{ fontSize: 11, color: m.yas >= 3 ? R.amber : R.not3, fontFamily: F.mono }}>
+                        {m.yas === 0 ? 'bugün' : `${m.yas} gün`}
+                      </span>
+                    )}
+                    <span style={{ color: R.not3, fontSize: 13 }}>›</span>
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{ fontSize: 11, color: R.not3, marginTop: 9, lineHeight: 1.6 }}>
+              Bu liste elle kapatılmaz — iş bitince kayıt aşama değiştirir ve madde kendiliğinden düşer.
+              Aşağıdaki pano tüm siparişlerin <b>kanıt katmanıdır</b>; buradaki sıra <b>karardır</b>.
+            </div>
+          </div>
+        )}
 
         {/* Kontrol Kulesi birleşti (2026-07-30): hız duyusu akışın yanına geldi */}
         {hizSeridi}
