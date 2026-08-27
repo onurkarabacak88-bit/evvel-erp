@@ -1167,7 +1167,19 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     api('/stok-sayim/bekleyen-onay')
       .then((d) => setSayim(d || {}))
       .catch((e) => setSayimHata(e?.message || ''));
-    api('/stok-sayim/duzeltme-iz?limit=200')
+    // ══════════════════════════════════════════════════════════════════════
+    // 🔴 KPI'LAR İSTEK SINIRINI YANSITIYORDU — 2026-08-27, canlı ölçüm
+    // ══════════════════════════════════════════════════════════════════════
+    // Uç, özet sayılarını (ezilen_kalem · karar_sayim · degismeyen) İSTENEN
+    // PENCERE üzerinden hesaplıyor. limit=200 ile:
+    //     limit 200  → toplam_iz 200 · ezilen 112 · karar 200/0
+    //     limit 500  → toplam_iz 500 · ezilen 285 · karar 500/0
+    //     limit 1000 → toplam_iz 543 · ezilen 315 · karar 543/0   ← GERÇEK
+    // Yani ekrandaki "112 ezilen kalem" gerçekte 315'ti; "karar dağılımı
+    // 200/0" ise sadece istek limitinin kendisiydi. Bu, sessiz kırpmanın en
+    // zararlı hâli: gizlenen bir liste satırı değil, MANŞET RAKAMIN sessizce
+    // istek parametresine bağlı olması.
+    api('/stok-sayim/duzeltme-iz?limit=1000')
       .then((d) => setSayimIz(d || {}))
       .catch(() => setSayimIz(null));
   }, []);
@@ -4014,8 +4026,25 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
         <KpiSeridi kpiler={[
           { etiket: 'Onay bekleyen sayım', deger: String(gorevler.length), alt: 'sahip onayı gerekli', renk: gorevler.length > 0 ? R.amber : R.yesil },
           { etiket: 'Fark bulunan', deger: String(farkli.length), alt: 'sistemle uyuşmayan görev', renk: farkli.length > 0 ? R.kirmizi : R.krem },
-          { etiket: 'Ezilen kalem (iz)', deger: String(sayi(iz.ezilen_kalem)), alt: 'onayla stok değişti', renk: sayi(iz.ezilen_kalem) > 0 ? R.amber : R.krem },
-          { etiket: 'Karar dağılımı', deger: `${sayi(iz.karar_sayim)} / ${sayi(iz.karar_sistem)}`, alt: 'sayım kabul / sistem korundu' },
+          // ⚠️ DOYMA KONTROLÜ: sayılar pencere üzerinden hesaplandığı için,
+          // kayıt sayısı istenen limite DAYANDIYSA rakamlar tavana takılmış
+          // demektir ve toplam değil, pencere toplamıdır. Bunu söylemek
+          // zorundayız — yoksa büyüyen defterde aynı yanılgı geri gelir.
+          {
+            etiket: 'Ezilen kalem (iz)',
+            deger: String(sayi(iz.ezilen_kalem)),
+            alt: sayi(iz.toplam_iz) >= 1000
+              ? '⚠ 1000 kayıt penceresi doldu — gerçek toplam daha büyük olabilir'
+              : `onayla stok değişti · ${sayi(iz.toplam_iz)} iz kaydı içinde`,
+            renk: sayi(iz.ezilen_kalem) > 0 ? R.amber : R.krem,
+          },
+          {
+            etiket: 'Karar dağılımı',
+            deger: `${sayi(iz.karar_sayim)} / ${sayi(iz.karar_sistem)}`,
+            alt: sayi(iz.toplam_iz) >= 1000
+              ? '⚠ pencere doldu — kısmi'
+              : 'sayım kabul / sistem korundu',
+          },
         ]} />
 
         <div style={{
@@ -4343,29 +4372,39 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
       <>
         <KpiSeridi kpiler={[
           { etiket: 'Kayıt', deger: String(sayi(arsivVeri.toplam)), alt: `son ${sayi(arsivVeri.gun) || arsivGun} gün${arsivVeri.sube_arama ? ` · "${arsivVeri.sube_arama}"` : ''}` },
-          // ⚠️ SAHTE YEŞİL (Codex, 2026-08-27): `arsivVeri.ozet` gelmezse
-          // `arOzet` boş objeye düşüyor ve `sayi(undefined)=0` üzerinden
-          // "Gönderilmedi 0 · takılan yok" YEŞİL basılıyordu. Özet okunamadığı
-          // için 0 görünen ekran "takılan sipariş yok" diyor — gönderilmemiş
-          // sipariş demek, şubenin malsız kalması demektir.
+          // ══════════════════════════════════════════════════════════════
+          // ⚠️ KENDİ YANLIŞ DÜZELTMEMİ GERİ ALDIM — 2026-08-27
+          // ══════════════════════════════════════════════════════════════
+          // Codex burayı "sahte yeşil" diye işaretledi, ben de ÖLÇMEDEN kabul
+          // edip "alan yoksa ölçülemedi" yazdım. Sonra ucu ölçtüm:
+          //   /ops/siparis/gecmis → ozet = { teslim_edildi:16, iptal:2,
+          //                                  kabul_uyusmazlik:4, gonderildi:7 }
+          // Bu bir DURUM HİSTOGRAMI: anahtarlar durum adları. `gonderilmedi`
+          // anahtarının OLMAMASI "okunamadı" değil, "o durumda hiç kayıt yok"
+          // demektir — yani gerçekten 0. Benim düzeltmem gerçek bir sıfırı
+          // "ölçülemedi" diye gösteriyordu: düzeltmeye çalıştığım kusurun
+          // AYNADAKİ hâli (bu kez boş alanı yok saymak yerine, var olan bilgiyi
+          // yok saymak).
+          // ⚠️ DOĞRU AYRIM: ÖZETİN KENDİSİ yoksa "—" (okunamadı); özet varsa
+          // eksik anahtar 0'dır ve 0 yazılır.
           {
             etiket: 'Teslim edildi',
-            deger: arOzet.teslim_edildi == null ? '—' : String(sayi(arOzet.teslim_edildi)),
-            alt: arOzet.teslim_edildi == null ? 'özet okunamadı' : 'zincir kapandı',
-            renk: arOzet.teslim_edildi == null ? R.not3 : R.yesil,
+            deger: arsivVeri.ozet ? String(sayi(arOzet.teslim_edildi)) : '—',
+            alt: arsivVeri.ozet ? 'zincir kapandı' : 'özet okunamadı',
+            renk: arsivVeri.ozet ? R.yesil : R.not3,
           },
           {
             etiket: 'Gönderilmedi',
-            deger: arOzet.gonderilmedi == null ? '—' : String(sayi(arOzet.gonderilmedi)),
-            alt: arOzet.gonderilmedi == null ? '⚠ özet okunamadı — "takılan yok" DEMEK DEĞİL'
+            deger: arsivVeri.ozet ? String(sayi(arOzet.gonderilmedi)) : '—',
+            alt: !arsivVeri.ozet ? '⚠ özet okunamadı — "takılan yok" DEMEK DEĞİL'
               : (sayi(arOzet.gonderilmedi) ? 'kuyruğa geri alınabilir' : 'takılan yok'),
-            renk: arOzet.gonderilmedi == null ? R.not3
+            renk: !arsivVeri.ozet ? R.not3
               : (sayi(arOzet.gonderilmedi) ? R.kirmizi : R.yesil),
           },
           {
             etiket: 'İptal',
-            deger: arOzet.iptal == null ? '—' : String(sayi(arOzet.iptal)),
-            alt: arOzet.bekliyor == null ? 'özet okunamadı' : `bekleyen ${sayi(arOzet.bekliyor)}`,
+            deger: arsivVeri.ozet ? String(sayi(arOzet.iptal)) : '—',
+            alt: arsivVeri.ozet ? `bekleyen ${sayi(arOzet.bekliyor)}` : 'özet okunamadı',
             renk: R.not,
           },
         ]} />
