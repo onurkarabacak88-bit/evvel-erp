@@ -1416,9 +1416,18 @@ export function RaporModulu({ gorunum, onCekmece, onKopru, onToast, defterHedef 
         { ad: 'Net', detay: 'gelir − gider', tutar: fmt(sayi(t.net)) },
       ],
       not: 'Rakamlar kasa hareketlerinden gelir — kasa izi tek gerçek. Bu bir NAKİT tablosudur: kart ödemesi ve borç taksiti kasadan çıkar ama gider değildir.',
-      aksiyonAd: 'Bu ayın işlem defterini aç',
       // 🚪 GERÇEKTEN ÇALIŞAN kapı: defter görünümü `ay` state'ini KULLANIR.
-      _hedefFn: () => { setAy(String(t.ay)); onKopru?.('__modul:rapor:defter'); },
+      // ⚠️ KAPSAM DERSİ (2026-08-27): bunun için kabuğa `_hedefFn` diye YENİ
+      // bir sözleşme eklemiştim — oysa `aksiyonlar:[{ad,onTikla}]` ZATEN
+      // vardı ve tam bunu yapıyor (kabuk çekmeceyi kapatır, modül kendi
+      // işini görür). RAPOR'da çalışırken iki ortak dosyaya (parcalar.jsx,
+      // TasarimV2.jsx) dokunmuş oldum: tüm v2'yi riske atan, gereksiz bir
+      // genişleme. Var olan sözleşme yeterliyse yeni sözleşme kurulmaz.
+      aksiyonlar: [{
+        ad: 'Bu ayın işlem defterini aç',
+        birincil: true,
+        onTikla: () => { setAy(String(t.ay)); onKopru?.('__modul:rapor:defter'); },
+      }],
     });
     // ── DÖNEM MÜHRÜ — tek yönlü kapı, açma ucu YOK ──────────────────────────
     const muhurlu = !!muhurVeri?.muhur?.muhurlu;
