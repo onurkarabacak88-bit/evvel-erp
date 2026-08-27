@@ -355,6 +355,18 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
   const [kule, setKule] = useState(null);        // kontrol-kulesi cevabı
   // Kuyruk değişimi: dünkü kuyrukla bugünkünü karşılaştır (BAKIŞ hamlesi 3).
   const [kuyrukDegisim, setKuyrukDegisim] = useState(null);
+  // 📊 ÖLÇÜM (BAKIŞ hamlesi 7): kuyruk gerçekten iş ürettirdi mi, yoksa yeni
+  // bir duvar kâğıdı mı oldu? Bir tasarım değişikliği kendi başarısını ilan
+  // edemez. Oturum kimliği burada tutulur; ilk anlamlı eylemde bildirilir.
+  const olcumOturumRef = useRef(null);
+  const olcumEylemRef = useRef(false);
+  const olcumEylem = (tur) => {
+    if (olcumEylemRef.current || !olcumOturumRef.current) return;
+    olcumEylemRef.current = true;
+    // Hata yutar: ölçüm yazılamazsa ekran hiç etkilenmez.
+    api('/ops-olcum/eylem', { method: 'POST', body: { oturum_id: olcumOturumRef.current, tur } })
+      .catch(() => {});
+  };
   // talep_id → /ops/v2/bekleyen-siparisler zenginleştirmesi (uyarı + stok kararı)
   const [bekZengin, setBekZengin] = useState({});
   // Sipariş birleştirme (2026-07-31) — MEVCUT akış kanbanının 'bekliyor'
@@ -1092,7 +1104,23 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
       setKuyrukDegisim(null);   // taban yoksa uydurma delta YAZILMAZ
     }
     opsTabanYaz(bugunISO, simdi);
-  }, [kule]);
+
+    // 📊 Oturum açılışı: o anki kuyruğun anahtarlarını damgala. Yalnız akış
+    // görünümünde ve oturumda BİR KEZ — yenileme her seferinde yeni oturum
+    // sayılsaydı M2 (eylemsiz oran) paydası şişer, ekran haksız yere
+    // "kimse iş yapmıyor" görünürdü (BAKIŞ'ta yaşanan tuzak).
+    if (gorunum === 'akis' && olcumOturumRef.current == null) {
+      const k = opsKuyrukKur(kule.satirlar, bugunISO);
+      api('/ops-olcum/acilis', {
+        method: 'POST',
+        body: {
+          gorunum: 'akis',
+          kuyruk: k.map((m) => m.anahtar),
+          kuyruk_sinif: k.map((m) => m.sinif),
+        },
+      }).then((r) => { olcumOturumRef.current = r?.oturum_id || null; }).catch(() => {});
+    }
+  }, [kule, gorunum]);
 
   const denetimYukle = useCallback((tarih) => {
     setDnHata('');
@@ -2155,10 +2183,10 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
                 return (
                   <div
                     key={m.anahtar}
-                    onClick={() => siparisAc(m._s)}
+                    onClick={() => { olcumEylem('kuyruk'); siparisAc(m._s); }}
                     role="button"
                     tabIndex={0}
-                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); siparisAc(m._s); } }}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); olcumEylem('kuyruk'); siparisAc(m._s); } }}
                     className="v2-hover-kalk"
                     style={{
                       display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer',

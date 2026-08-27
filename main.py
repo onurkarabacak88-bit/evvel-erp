@@ -178,6 +178,17 @@ except Exception as _bakis_olcum_err:
     logging.getLogger(__name__).warning(
         f"bakis_olcum modulu yuklenemedi (izole, ana akis etkilenmez): {_bakis_olcum_err}"
     )
+# OPS ÖLÇÜM — "iş kuyruğu işe yarıyor mu?" (2026-08-27). AYRI modül, AYRI iki
+# tablo. bakis_olcum'a yazılmadı: onun ozet sorguları `gorunum`a göre süzmüyor,
+# OPS oturumları oraya girseydi BAKIŞ'ın M1-M5 medyanları iki farklı ekranın
+# davranışını tek kovada birleştirirdi (kapsam karışması).
+try:
+    from ops_olcum_api import router as ops_olcum_router
+    app.include_router(ops_olcum_router)
+except Exception as _ops_olcum_err:
+    logging.getLogger(__name__).warning(
+        f"ops_olcum modulu yuklenemedi (izole, ana akis etkilenmez): {_ops_olcum_err}"
+    )
 # Fatura İstek Motoru (BM-4+4A) — İZOLE (ödenmiş ama faturasız ≥eşik ödemeler).
 try:
     from fatura_istek_api import router as fatura_istek_router
