@@ -60,6 +60,66 @@ const isGunuBugun = () => {
 // Takvim günü ile iş günü ayrıştığı an (gece penceresi) — ekran bunu söyler.
 const isGunuKaymasiVar = () => isGunuBugun() !== bugunYerelISO();
 
+// ══════════════════════════════════════════════════════════════════════════
+// İŞ KUYRUĞU KURUCUSU — tek yordam, iki çağıran
+// ══════════════════════════════════════════════════════════════════════════
+// Hem ekran (sıralamayı çizmek için) hem de değişim ölçümü (dünle kıyaslamak
+// için) AYNI kuyruğu görmeli. İki yerde ayrı ayrı kurulsaydı bir gün ayrışır
+// ve "yeni gelen iş" sayısı ekrandakiyle tutmazdı.
+const opsGunFarki = (t, bugunISO) => {
+  if (!t) return null;
+  const d = new Date(String(t).slice(0, 10) + 'T00:00:00Z');
+  if (Number.isNaN(d.getTime())) return null;
+  return Math.round((new Date(bugunISO + 'T00:00:00Z') - d) / 86400000);
+};
+export const opsKuyrukKur = (satirlar, bugunISO) => {
+  const L = Array.isArray(satirlar) ? satirlar : [];
+  const say = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+  const m = (x, sinif, baslik, aciklama) => ({
+    sinif, baslik, aciklama, _s: x,
+    yas: opsGunFarki(x.tarih, bugunISO),
+    anahtar: `${sinif}|${x.id}`,
+  });
+  return [
+    ...L.filter((x) => x.asama === 'uyumsuzluk').map((x) => m(
+      x, 1, `${x.sube_adi || 'Şube'} · kabul uyuşmazlığı`,
+      'şube teslim aldı ama adet tutmadı — merkez kararı gerekiyor')),
+    ...L.filter((x) => x.asama === 'bekliyor').map((x) => m(
+      x, 2, `${x.sube_adi || 'Şube'} · depoya yönlendirilmedi`,
+      `${say(x.kalem_sayisi)} kalem · merkez kuyruğunda`)),
+    ...L.filter((x) => x.asama === 'depoda').map((x) => m(
+      x, 2, `${x.sube_adi || 'Şube'} · depoda hazırlanıyor`,
+      `${say(x.kalem_sayisi)} kalem · sevk bekliyor`)),
+    ...L.filter((x) => ['yolda', 'toptanci_bekliyor'].includes(x.asama))
+      .filter((x) => (opsGunFarki(x.tarih, bugunISO) ?? 0) >= 2)
+      .map((x) => m(
+        x, 3, `${x.sube_adi || 'Şube'} · şube kabulü gecikti`,
+        `${opsGunFarki(x.tarih, bugunISO)} gündür yolda · ${say(x.kalem_sayisi)} kalem`)),
+  ].sort((a, b) => (a.sinif - b.sinif) || ((b.yas ?? 0) - (a.yas ?? 0)));
+};
+
+// ── DEĞİŞİM TABANI ────────────────────────────────────────────────────────
+// ⚠️ İKİ KAYIT: {bugun, onceki}. Tek kayıt tutulsaydı aynı gün ikinci kez
+// açıldığında taban bugüne eşitlenir, delta 0 çıkar ve ekran "değişmedi"
+// YALANI söylerdi (BAKIŞ'ta yaşanan tuzak).
+const OPS_KUYRUK_ANAHTAR = 'evvelOpsKuyruk';
+const opsTabanOku = () => {
+  try {
+    const h = localStorage.getItem(OPS_KUYRUK_ANAHTAR);
+    return h ? JSON.parse(h) : null;
+  } catch { return null; }
+};
+const opsTabanYaz = (bugunISO, anahtarlar) => {
+  try {
+    const k = opsTabanOku();
+    if (k && k.bugun && k.bugun.tarih === bugunISO) return;   // aynı gün: kaydırma
+    localStorage.setItem(OPS_KUYRUK_ANAHTAR, JSON.stringify({
+      bugun: { tarih: bugunISO, anahtarlar },
+      onceki: k?.bugun || null,
+    }));
+  } catch { /* depolama kapalı olabilir — ölçüm yoksa ekran yine çalışır */ }
+};
+
 const AYLAR = ['Oca', 'Şub', 'Mar', 'Nis', 'May', 'Haz', 'Tem', 'Ağu', 'Eyl', 'Eki', 'Kas', 'Ara'];
 const trSayi = (n, b = 1) => (Number(n) || 0).toFixed(b).replace('.', ',');
 const gunEkleISO = (iso, n) => {
@@ -293,6 +353,8 @@ const kdKutuStil = (aktif) => ({
 export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGorunum }) {
   // ── SİPARİŞ AKIŞI + KULE ortak verisi ─────────────────────────────────────
   const [kule, setKule] = useState(null);        // kontrol-kulesi cevabı
+  // Kuyruk değişimi: dünkü kuyrukla bugünkünü karşılaştır (BAKIŞ hamlesi 3).
+  const [kuyrukDegisim, setKuyrukDegisim] = useState(null);
   // talep_id → /ops/v2/bekleyen-siparisler zenginleştirmesi (uyarı + stok kararı)
   const [bekZengin, setBekZengin] = useState({});
   // Sipariş birleştirme (2026-07-31) — MEVCUT akış kanbanının 'bekliyor'
@@ -1008,6 +1070,30 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
   // ezebilir. Denetim masasında tarihle rakamın ayrışması, barda olmasından
   // daha tehlikelidir. Aynı bilet mekanizması buraya da kuruldu.
   const dnIstekRef = useRef(0);
+  // ⚠️ Yazma RENDER'da değil EFFECT'te: StrictMode render'ı iki kez çalıştırır,
+  // taban iki kez kayar ve "dün" bir günde iki adım geriye giderdi.
+  useEffect(() => {
+    if (!kule) return;
+    const bugunISO = isGunuBugun();
+    const simdi = opsKuyrukKur(kule.satirlar, bugunISO).map((m) => m.anahtar);
+    const taban = opsTabanOku();
+    // Kıyas TABANI: bugünün kaydı varsa ONCEKI ile kıyasla (aynı gün ikinci
+    // açılışta kendisiyle kıyaslayıp "değişmedi" dememek için).
+    const kiyas = (taban?.bugun?.tarih === bugunISO ? taban?.onceki : taban?.bugun) || null;
+    if (kiyas && Array.isArray(kiyas.anahtarlar)) {
+      const eski = new Set(kiyas.anahtarlar);
+      const yeniSet = new Set(simdi);
+      setKuyrukDegisim({
+        tarih: kiyas.tarih,
+        yeni: simdi.filter((k) => !eski.has(k)).length,
+        kapanan: kiyas.anahtarlar.filter((k) => !yeniSet.has(k)).length,
+      });
+    } else {
+      setKuyrukDegisim(null);   // taban yoksa uydurma delta YAZILMAZ
+    }
+    opsTabanYaz(bugunISO, simdi);
+  }, [kule]);
+
   const denetimYukle = useCallback((tarih) => {
     setDnHata('');
     const t = tarih || isGunuBugun();
@@ -2013,56 +2099,9 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     // ══════════════════════════════════════════════════════════════════════
     // 🧭 İŞ KUYRUĞU — "bugün merkezde ne yapmalıyım?"
     // ══════════════════════════════════════════════════════════════════════
-    // BAKIŞ'ta 2026-08-26'da kurulan kurgunun aynısı. Kök teşhis orada da
-    // buydu: rakamlar yanlış değildi, RAKAMLAR İŞ ÜRETMİYORDU.
-    // Bu ekran bir kanban: dört kolon, üçü boş, yedi kart "yolda" duruyor.
-    // Sahibin sorusu "sipariş hangi aşamada" değil, "BUGÜN NE YAPMALIYIM".
-    // ⚠️ KANBAN KALDIRILMADI — rolü değişti: kuyruk kararı, kanban KANITI
-    //    taşır (BAKIŞ'ta Para Akışı'nın kanıt katmanına dönmesi gibi).
-    // ⚠️ MADDE ELLE KAPATILMAZ: burada "gördüm" düğmesi yok; iş bitince
-    //    kayıt aşama değiştirir ve madde kendiliğinden düşer.
-    // ⚠️ EŞİK ELEYEMEZ, SIRALAR: yaşça sıralanır; tavanı aşan KAYBOLMAZ,
-    //    sayılır ve kanban'da durur.
-    const _gunFarki = (t) => {
-      if (!t) return null;
-      const d = new Date(String(t).slice(0, 10) + 'T00:00:00Z');
-      if (Number.isNaN(d.getTime())) return null;
-      const b = new Date(isGunuBugun() + 'T00:00:00Z');
-      return Math.round((b - d) / 86400000);
-    };
-    const _madde = (x, sinif, baslik, aciklama) => ({
-      sinif, baslik, aciklama, _s: x,
-      yas: _gunFarki(x.tarih),
-      anahtar: `${sinif}|${x.id}`,
-    });
-    const kuyrukHam = [
-      // S1 — KARAR BEKLEYEN: merkez müdahalesi olmadan kendiliğinden çözülmez
-      ...satirlar.filter((x) => x.asama === 'uyumsuzluk').map((x) => _madde(
-        x, 1,
-        `${x.sube_adi || 'Şube'} · kabul uyuşmazlığı`,
-        'şube teslim aldı ama adet tutmadı — merkez kararı gerekiyor',
-      )),
-      // S2 — MERKEZDE İŞ BEKLEYEN: top sende
-      ...satirlar.filter((x) => x.asama === 'bekliyor').map((x) => _madde(
-        x, 2,
-        `${x.sube_adi || 'Şube'} · depoya yönlendirilmedi`,
-        `${sayi(x.kalem_sayisi)} kalem · merkez kuyruğunda`,
-      )),
-      ...satirlar.filter((x) => x.asama === 'depoda').map((x) => _madde(
-        x, 2,
-        `${x.sube_adi || 'Şube'} · depoda hazırlanıyor`,
-        `${sayi(x.kalem_sayisi)} kalem · sevk bekliyor`,
-      )),
-      // S3 — TAKILMIŞ: kimse bir şey yapmıyor ama zaman işliyor
-      ...satirlar
-        .filter((x) => ['yolda', 'toptanci_bekliyor'].includes(x.asama))
-        .filter((x) => (_gunFarki(x.tarih) ?? 0) >= 2)
-        .map((x) => _madde(
-          x, 3,
-          `${x.sube_adi || 'Şube'} · şube kabulü gecikti`,
-          `${_gunFarki(x.tarih)} gündür yolda · ${sayi(x.kalem_sayisi)} kalem`,
-        )),
-    ].sort((a, b) => (a.sinif - b.sinif) || ((b.yas ?? 0) - (a.yas ?? 0)));
+    // Kurulum modül seviyesinde (`opsKuyrukKur`) — değişim ölçümü de aynı
+    // yordamı çağırır, ikisi ayrışamaz.
+    const kuyrukHam = opsKuyrukKur(satirlar, isGunuBugun());
     const KUYRUK_TAVAN = 5;
     const kuyruk = kuyrukHam.slice(0, KUYRUK_TAVAN);
     const kuyrukTasan = kuyrukHam.length - kuyruk.length;
@@ -2092,6 +2131,23 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
                 {kuyrukHam.length} iş · en acili üstte
                 {kuyrukTasan > 0 && ` · ${kuyrukTasan} tanesi aşağıdaki panoda`}
               </span>
+              {/* ⚠️ DEĞİŞİM (BAKIŞ hamlesi 3): sabit rakam 3. günden sonra
+                  duvar kâğıdı olur. "Dün 10 iş vardı, bugün de 10" ile
+                  "3 kapandı 3 yenisi geldi" ÇOK farklı iki gerçek — ilkinde
+                  hiç çalışılmamış, ikincisinde çalışılmış ama iş akmaya devam
+                  ediyor. Taban yoksa uydurma delta yazılmaz. */}
+              {kuyrukDegisim && (kuyrukDegisim.yeni > 0 || kuyrukDegisim.kapanan > 0) && (
+                <span style={{ fontSize: 11.5, color: R.not3 }}>
+                  · {kuyrukDegisim.tarih}’ten beri{' '}
+                  {kuyrukDegisim.kapanan > 0 && (
+                    <b style={{ color: R.yesil }}>{kuyrukDegisim.kapanan} kapandı</b>
+                  )}
+                  {kuyrukDegisim.kapanan > 0 && kuyrukDegisim.yeni > 0 && ' · '}
+                  {kuyrukDegisim.yeni > 0 && (
+                    <b style={{ color: R.amber }}>{kuyrukDegisim.yeni} yeni</b>
+                  )}
+                </span>
+              )}
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {kuyruk.map((m) => {
