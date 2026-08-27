@@ -1356,6 +1356,13 @@ export function RaporModulu({ gorunum, onCekmece, onKopru, onToast, defterHedef 
     // değişken derlemede yakalanmaz — ekran ÇALIŞIRKEN beyazlanır. Bu dosyada
     // ekranı daha önce üç kez kıran sınıfın aynısı.
     const toplamGider = trend.reduce((s, t) => s + sayi(t.gider), 0);
+    // ⚠️ "Satış dışı giriş" = GELİR − CİRO. Bu iki sunucu alanının farkıdır,
+    // yeni bir hesap değil; ama ADI önemli: içinde hem dış kaynak (varlık
+    // satışı, borçlanma, aile desteği) hem de kasalar arası transfer vardır.
+    // "Dış kaynak" demek yanlış olurdu — canlı ölçümde Ağustos farkının
+    // 194.300 ₺'si iç transferdi.
+    const satisDisi = Math.max(0, toplamGelir - toplamCiro);
+    const satisPay = toplamGelir > 0 ? Math.round((toplamCiro / toplamGelir) * 100) : 0;
     const marj = (t) => (sayi(t.gelir) ? (sayi(t.net) / sayi(t.gelir)) * 100 : 0);
     // ══════════════════════════════════════════════════════════════════════
     // 🔴 DEVAM EDEN AY, BİTEN AYLARLA KIYASLANIYORDU — 2026-08-27
@@ -1877,14 +1884,59 @@ export function RaporModulu({ gorunum, onCekmece, onKopru, onToast, defterHedef 
           <div style={{ fontSize: 11, letterSpacing: .8, color: R.not3, marginBottom: 7 }}>
             DÖNEM KAPANIŞI
           </div>
+          {/* ══════════════════════════════════════════════════════════════
+              🔴 KENDİ CÜMLEM SAHİBİ YANILTIYORDU — 2026-08-27, canlı ölçüm
+              ══════════════════════════════════════════════════════════════
+              İlk hâli "kasaya 10.870.635 ₺ girdi … kasa 1.911.055 ₺ arttı"
+              diyordu. Canlı deftere bakınca Temmuz'un 6,37 M "geliri"nin
+              4,91 M'i DIS_KAYNAK çıktı; içinde:
+                · EV SATIŞI            3.880.000 ₺  (bir defalık varlık satışı)
+                · alınan borç (nakit+gümüş) 550.000 ₺  (BORÇ — gelir değil)
+                · aile desteği · kira    ~478.000 ₺
+              Yani "kasa arttı" cümlesi bir EV SATIŞININ üstünde duruyordu.
+              Sayfanın en akılda kalan yerine, işletmenin gerçeğinin TERSİNİ
+              yazmışım: nakit yakan bir işletme, kazanıyormuş gibi görünüyordu.
+              ⚠️ ETİKET TUZAĞI: `gelir − ciro` SADECE dış kaynak DEĞİLDİR;
+              kasalar arası transfer de içindedir (Ağu: 419.332 = 225.032 dış
+              kaynak + 194.300 iç transfer — canlı doğrulandı). Bu yüzden
+              "satış dışı giriş" deniyor, "dış kaynak" DENMİYOR.
+              ⚠️ Sunucunun sayısı değişmedi; yalnız İKİYE AYRILDI ve ayrımın
+              ne olduğu yazıldı. */}
           <div style={{ fontSize: 13.5, lineHeight: 1.75, color: R.krem }}>
-            Son <b>{trend.length}</b> ayda kasaya <b style={{ fontFamily: F.mono }}>{fmt(toplamGelir)}</b> girdi,{' '}
-            <b style={{ fontFamily: F.mono }}>{fmt(toplamGider)}</b> çıktı; kasa{' '}
+            Son <b>{trend.length}</b> ayda kasaya giren{' '}
+            <b style={{ fontFamily: F.mono }}>{fmt(toplamGelir)}</b>’nin{' '}
+            <b style={{ fontFamily: F.mono, color: R.krem }}>{fmt(toplamCiro)}</b>’si{' '}
+            <b>satıştan</b> ({satisPay}%), <b style={{ fontFamily: F.mono, color: R.amber }}>{fmt(satisDisi)}</b>’si{' '}
+            <b style={{ color: R.amber }}>satış dışından</b> geldi (%{100 - satisPay}).
+            Çıkan <b style={{ fontFamily: F.mono }}>{fmt(toplamGider)}</b>; kasa{' '}
             <b style={{ fontFamily: F.mono, color: toplamNet >= 0 ? R.yesil : R.kirmizi }}>
               {fmt(Math.abs(toplamNet))}
             </b> {toplamNet >= 0 ? 'arttı' : 'azaldı'}.
             {suranAy && <> {suranAy.ay_kisa} <b>henüz sürüyor</b>, bu yüzden karşılaştırmaya girmiyor.</>}
           </div>
+          {/* 🚨 ASIL CÜMLE: kasa artmış olabilir ama artıran şey işletme değilse
+              bu bir başarı değil, bir DESTEKTİR — ve destek biter. */}
+          {satisDisi > 0 && (
+            <div style={{
+              marginTop: 10, padding: '11px 14px', borderRadius: 10,
+              background: satisPay < 50 ? `${R.amber}14` : R.girinti,
+              border: `1px solid ${satisPay < 50 ? `${R.amber}44` : R.cizgi}`,
+              fontSize: 12.5, lineHeight: 1.7, color: satisPay < 50 ? R.amber : R.not,
+            }}>
+              {satisPay < 50
+                ? <>⚠ Kasaya girenin <b>yarısından fazlası satış dışı</b>. Satış dışı girişler
+                    varlık satışı, borçlanma, aile desteği ve kasalar arası transfer olabilir —
+                    bunlar <b>tekrar etmez</b>. İşletmenin kendi ayağı üstünde durup durmadığını
+                    yalnız <b>ciro</b> sütunu söyler.</>
+                : <>Kasaya girenin çoğu satıştan geliyor. Satış dışı giriş
+                    ({fmt(satisDisi)}) varlık satışı, borçlanma veya kasalar arası transfer
+                    içerebilir — tekrar edeceğini varsaymayın.</>}
+              <div style={{ marginTop: 6, fontSize: 11.5, color: R.not3 }}>
+                Satış dışı = tablodaki GELİR − CİRO. İçinde dış kaynak <b>ve</b> kasalar arası
+                transfer birlikte bulunur; ayrıntısı İşlem Defteri’ndedir.
+              </div>
+            </div>
+          )}
           {/* ⚠️ EN ÖNEMLİ CÜMLE SONDA: bu bir NAKİT tablosudur. Sahip sayfayı
               "zarar ediyorum" diye kapatmasın — çıkışın büyük kısmı borç
               kapatmaktır ve borç kapatmak gider değildir. */}
