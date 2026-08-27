@@ -736,6 +736,9 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
   // Boş katalog ("öneri yok") ile okunamayan katalog ("bakamadım") ayrı
   // durumlardır; tek bir `[]` ikisini de temsil edemez.
   const [ugKatalogHata, setUgKatalogHata] = useState('');
+  // Ciro farkı sekmesinde karara bağlanmış kayıtları göster/gizle — kuyruk
+  // sade kalsın ama "kararı geri al" yolu erişilebilir olsun.
+  const [fdCozulmusGoster, setFdCozulmusGoster] = useState(false);
   const [ugListeAcik, setUgListeAcik] = useState(false);
   useEffect(() => {
     // ══════════════════════════════════════════════════════════════════
@@ -3006,7 +3009,23 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
               (fazlaysa gelir, eksikse gider yazılır). Para yazma işlemi kasa
               defterine işlenir ve <b>geri alınamaz</b> — önce kararı ver.
             </div>
-            <Liste satirlar={acikFark.slice(0, 60).map((f) => {
+            {/* ⚠️ Fable: kuyruğu gerçek işe indirirken KARAR GERİ ALMA yolunu
+                kapatmışım. "Kararı geri al" eylemi yalnız karara bağlanmış
+                kayıtlarda üretiliyor, ama o kayıtlar listeye hiç girmediği için
+                o dala erişilemiyordu — sahip yanlış karar verdiyse bu ekrandan
+                DÖNEMİYORDU. Kuyruk disiplini korunuyor (varsayılan: yalnız açık
+                iş), geri alma yolu geri geldi: çözülmüşler istendiğinde açılır. */}
+            {cozulmusFark.length > 0 && (
+              <button
+                onClick={() => setFdCozulmusGoster((v) => !v)}
+                style={{
+                  marginBottom: 10, padding: '0 16px', minHeight: 40, borderRadius: 10,
+                  border: `1px solid ${R.cizgi3}`, background: fdCozulmusGoster ? R.girinti : 'transparent',
+                  color: R.not, fontSize: 11.5, fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer',
+                }}
+              >{fdCozulmusGoster ? '▾ karara bağlananları gizle' : `▸ karara bağlanan ${cozulmusFark.length} kaydı göster (kararı geri almak için)`}</button>
+            )}
+            <Liste satirlar={(fdCozulmusGoster ? [...acikFark, ...cozulmusFark] : acikFark).slice(0, 60).map((f) => {
               const fark = sayi(f.fark);
               const yazildi = /(gelire_yazildi|gidere_yazildi)/i.test(String(f.durum || ''));
               const kararli = /(girilen_dogru|evo_dogru)/i.test(String(f.durum || ''));
