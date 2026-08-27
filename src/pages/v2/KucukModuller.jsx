@@ -1352,6 +1352,10 @@ export function RaporModulu({ gorunum, onCekmece, onKopru, onToast, defterHedef 
     // 🔵 EVV-RAP-N2 (2026-08-13): satır marj'ı net/GELİR iken özet "ortalama marj"
     // net/CİRO kullanıyordu (gelir≠ciro ise KPI satırlarla uzlaşmıyordu). Aynı payda.
     const toplamGelir = trend.reduce((s, t) => s + sayi(t.gelir), 0);
+    // ⚠️ Dönem kapanışı cümlesi için: gelir vardı, gider YOKTU. Tanımsız
+    // değişken derlemede yakalanmaz — ekran ÇALIŞIRKEN beyazlanır. Bu dosyada
+    // ekranı daha önce üç kez kıran sınıfın aynısı.
+    const toplamGider = trend.reduce((s, t) => s + sayi(t.gider), 0);
     const marj = (t) => (sayi(t.gelir) ? (sayi(t.net) / sayi(t.gelir)) * 100 : 0);
     // ══════════════════════════════════════════════════════════════════════
     // 🔴 DEVAM EDEN AY, BİTEN AYLARLA KIYASLANIYORDU — 2026-08-27
@@ -1418,7 +1422,7 @@ export function RaporModulu({ gorunum, onCekmece, onKopru, onToast, defterHedef 
           <select value={muhurAy} disabled={muhurMesgul}
             onChange={(e) => { setMuhurOnay(null); setMuhurAy(e.target.value); }}
             style={{
-              padding: '6px 11px', borderRadius: 9, fontSize: 12, fontFamily: 'inherit',
+              padding: '0 13px', minHeight: 44, borderRadius: 10, fontSize: 12.5, fontFamily: 'inherit',
               border: `1px solid ${R.cizgi3}`, background: R.girinti, color: R.krem, outline: 'none',
             }}>
             {(aySecenek.includes(muhurAy) ? aySecenek : [muhurAy, ...aySecenek]).map((a) => (
@@ -1438,7 +1442,7 @@ export function RaporModulu({ gorunum, onCekmece, onKopru, onToast, defterHedef 
             </span>
           ) : !muhurOnay ? (
             <button onClick={() => setMuhurOnay({ ad: 'CFO' })} style={{
-              marginLeft: 'auto', padding: '7px 14px', borderRadius: 10, cursor: 'pointer',
+              marginLeft: 'auto', padding: '0 18px', minHeight: 44, borderRadius: 10, cursor: 'pointer',
               border: `1px solid ${R.bakir}55`, background: `${R.bakir}22`, color: R.bakir,
               fontSize: 11.5, fontWeight: 700, fontFamily: 'inherit',
             }}>🔒 Bu dönemi mühürle</button>
@@ -1485,11 +1489,11 @@ export function RaporModulu({ gorunum, onCekmece, onKopru, onToast, defterHedef 
                   }} />
               </div>
               <button disabled={muhurMesgul} onClick={() => setMuhurOnay(null)} style={{
-                padding: '9px 15px', borderRadius: 10, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+                padding: '0 18px', minHeight: 44, borderRadius: 10, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
                 background: 'transparent', color: R.metin2, fontSize: 12, fontWeight: 600, fontFamily: 'inherit',
               }}>Vazgeç</button>
               <button disabled={muhurMesgul} onClick={muhurle} style={{
-                padding: '9px 17px', borderRadius: 10, border: '1px solid rgba(220,38,38,.5)', cursor: 'pointer',
+                padding: '0 20px', minHeight: 44, borderRadius: 10, border: '1px solid rgba(220,38,38,.5)', cursor: 'pointer',
                 background: 'rgba(220,38,38,.2)', color: '#FCA5A5', fontSize: 12, fontWeight: 700, fontFamily: 'inherit',
               }}>{muhurMesgul ? 'Mühürleniyor…' : `🔒 Evet, ${muhurAy} dönemini mühürle`}</button>
             </div>
@@ -1741,7 +1745,7 @@ export function RaporModulu({ gorunum, onCekmece, onKopru, onToast, defterHedef 
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 11 }}>
               <span style={{ fontFamily: F.baslik, fontSize: 15, fontWeight: 600 }}>💧 Nakit hızı · 90 gün run-rate</span>
               <button onClick={() => onKopru?.('__modul:borc:projeksiyon')} style={{
-                marginLeft: 'auto', padding: '6px 13px', borderRadius: 9, cursor: 'pointer',
+                marginLeft: 'auto', padding: '0 16px', minHeight: 44, borderRadius: 10, cursor: 'pointer',
                 border: `1px solid ${R.cizgi3}`, background: 'transparent', color: R.metin2,
                 fontSize: 11, fontWeight: 600, fontFamily: 'inherit',
               }}>12 aylık eğri → Finansal Sağlık</button>
@@ -1863,6 +1867,42 @@ export function RaporModulu({ gorunum, onCekmece, onKopru, onToast, defterHedef 
           }))}
           onSatir={(row) => ayKirilimiAc(row._t)}
         />
+
+        {/* 📌 DÖNEM KAPANIŞI — serial position: son söz, akılda kalan söz.
+            Sayfa ham tabloyla bitiyordu; artık tek cümleyle bitiyor. */}
+        <div style={{
+          ...kartYuzey, padding: '15px 19px', marginTop: 14,
+          borderLeft: `3px solid ${toplamNet >= 0 ? R.yesil : R.bakir}`,
+        }}>
+          <div style={{ fontSize: 11, letterSpacing: .8, color: R.not3, marginBottom: 7 }}>
+            DÖNEM KAPANIŞI
+          </div>
+          <div style={{ fontSize: 13.5, lineHeight: 1.75, color: R.krem }}>
+            Son <b>{trend.length}</b> ayda kasaya <b style={{ fontFamily: F.mono }}>{fmt(toplamGelir)}</b> girdi,{' '}
+            <b style={{ fontFamily: F.mono }}>{fmt(toplamGider)}</b> çıktı; kasa{' '}
+            <b style={{ fontFamily: F.mono, color: toplamNet >= 0 ? R.yesil : R.kirmizi }}>
+              {fmt(Math.abs(toplamNet))}
+            </b> {toplamNet >= 0 ? 'arttı' : 'azaldı'}.
+            {suranAy && <> {suranAy.ay_kisa} <b>henüz sürüyor</b>, bu yüzden karşılaştırmaya girmiyor.</>}
+          </div>
+          {/* ⚠️ EN ÖNEMLİ CÜMLE SONDA: bu bir NAKİT tablosudur. Sahip sayfayı
+              "zarar ediyorum" diye kapatmasın — çıkışın büyük kısmı borç
+              kapatmaktır ve borç kapatmak gider değildir. */}
+          <div style={{ fontSize: 12, lineHeight: 1.7, color: R.not2, marginTop: 9 }}>
+            ⚠ Bu sayfa <b style={{ color: R.not }}>nakit</b> anlatır, kâr değil: kart ödemesi ve borç
+            taksiti kasadan çıkar ama <b style={{ color: R.not }}>gider değildir</b> (borç kapatır);
+            ödenmemiş kalemler ise gider olmuştur ama burada görünmez.
+            Kâr sorusunun cevabı <b style={{ color: R.not }}>Kâr &amp; Maliyet</b> ekranındadır.
+          </div>
+          <button
+            onClick={() => onKopru?.('__modul:maliyet:ozet')}
+            style={{
+              marginTop: 11, padding: '0 18px', minHeight: 44, borderRadius: 10,
+              border: `1px solid ${R.cizgi3}`, background: R.girinti, color: R.krem,
+              fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer',
+            }}
+          >Kâr &amp; Maliyet’i aç →</button>
+        </div>
       </>
     );
   }
@@ -1888,7 +1928,7 @@ export function RaporModulu({ gorunum, onCekmece, onKopru, onToast, defterHedef 
       onClick={() => aktif && setAy(hedef)}
       disabled={!aktif}
       style={{
-        padding: '6px 12px', borderRadius: 9, fontFamily: 'inherit', fontSize: 12, fontWeight: 700,
+        padding: '0 15px', minHeight: 44, borderRadius: 10, fontFamily: 'inherit', fontSize: 12.5, fontWeight: 700,
         border: `1px solid ${aktif ? R.cizgi3 : 'transparent'}`,
         background: aktif ? R.girinti : 'transparent',
         color: aktif ? R.krem : R.not3, cursor: aktif ? 'pointer' : 'default',
@@ -2208,7 +2248,7 @@ function EkranOlcumu({ onToast }) {
             key={g}
             onClick={() => setGun(g)}
             style={{
-              padding: '6px 14px', borderRadius: 9, cursor: 'pointer', fontFamily: 'inherit',
+              padding: '0 16px', minHeight: 44, borderRadius: 10, cursor: 'pointer', fontFamily: 'inherit',
               fontSize: 12, fontWeight: 700,
               border: `1px solid ${gun === g ? R.bakir : R.cizgi3}`,
               background: gun === g ? `${R.bakir}22` : 'transparent',
