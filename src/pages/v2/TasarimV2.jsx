@@ -3566,7 +3566,24 @@ export default function TasarimV2({ onGit }) {
           // çünkü hangi katmandan nereye dönüleceğini yalnız modül bilir.
           geri={cekmece?.geri}
           aksiyonAd={cekmece?.aksiyonAd}
-          onAksiyon={() => koprule(cekmece?._hedef)}
+          // 🚪 Aksiyon iki biçimde verilebilir:
+          //   `_hedef`   → köprü adresi (string) — kabuk çözer
+          //   `_hedefFn` → modülün kendi işi (fonksiyon) — modül çözer
+          // İkincisi gerekliydi: bazı hedefler yalnız adres değil, ÖNCE bir
+          // durum değişikliği ister (örn. "Haziran'ın defterini aç" = önce ay
+          // seç, sonra görünüme geç). Adres tek başına yanlış aya düşerdi.
+          // ⚠️ Sessiz ölüm önlendi: `aksiyonAd` verilip hiçbiri verilmediyse
+          // düğme HİÇ çizilmez — tıklanıp bir şey olmayan düğme, kapı
+          // olmamasından kötüdür.
+          // ⚠️ `_hedefFn` çekmeceyi KENDİSİ kapatmaz; kabuk kapatır. Yoksa
+          // sahip yeni görünüme geçer ama eski çekmece üstünde asılı kalırdı
+          // (`koprule` kendi yolunda zaten `setCekmece(null)` yapıyor).
+          onAksiyon={
+            typeof cekmece?._hedefFn === 'function'
+              ? () => { const f = cekmece._hedefFn; setCekmece(null); f(); }
+              : cekmece?._hedef ? () => koprule(cekmece._hedef)
+                : undefined
+          }
           // Çoklu aksiyon (modül kendi işini yapar): tıklayınca çekmece kapanır,
           // modülün açtığı form/onay öne gelsin.
           aksiyonlar={(cekmece?.aksiyonlar || []).map((a) => ({

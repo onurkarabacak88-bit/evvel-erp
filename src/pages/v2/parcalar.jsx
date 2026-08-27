@@ -1712,7 +1712,12 @@ export function Cekmece({
         </div>
 
         <div style={{ padding: '14px 22px', borderTop: `1px solid ${R.cizgi}`, display: 'flex', gap: 9 }}>
-          {aksiyonAd && !aksiyonlar?.length && (
+          {/* ⚠️ ÖLÜ DÜĞME YASAĞI (2026-08-27): düğme yalnız `aksiyonAd`a
+              bakılarak çiziliyordu — eli olmayan (onAksiyon'suz) bir çekmece
+              tıklanıp HİÇBİR ŞEY OLMAYAN bir düğme gösteriyordu. Bir kez
+              tıklayıp cevap alamayan insan, o ekrandaki bütün kapılara
+              güvenmeyi bırakır. Ad VE el, ikisi birden şart. */}
+          {aksiyonAd && typeof onAksiyon === 'function' && !aksiyonlar?.length && (
             <button onClick={onAksiyon} style={{
               flex: 1, padding: 10, borderRadius: 10, border: 'none',
               background: `linear-gradient(150deg, #E0A559, #AF6C29)`, color: '#1C1309',

@@ -1337,7 +1337,12 @@ export function RaporModulu({ gorunum, onCekmece, onKopru, onToast, defterHedef 
 
   if (gorunum === 'aylik') {
     // trend12 tek çağrıda 12 ay verir — ay ay 12 istek atmaya gerek yok.
-    const trend = (rapor?.trend12 || []).filter(t => sayi(t.ciro) > 0 || sayi(t.gider) > 0);
+    // ⚠️ SESSİZ ELEME (Codex 2026-08-27): ciro ve gideri sıfır olan ay
+    // atılıyordu ve atıldığı SÖYLENMİYORDU. Yalnız dış kaynak geliri veya
+    // düzeltme kaydı olan bir ay dönem anlatısından tümüyle düşerdi.
+    const trendHam = Array.isArray(rapor?.trend12) ? rapor.trend12 : [];
+    const trend = trendHam.filter(t => sayi(t.ciro) > 0 || sayi(t.gider) > 0);
+    const elenenAy = trendHam.length - trend.length;
     if (!trend.length) {
       return <Bos baslik="Aylık rapor verisi yok" aciklama="Ciro ve gider kaydı biriktikçe aylık karşılaştırma burada oluşur." aksiyon="Aylık raporu aç" onAksiyon={() => onKopru?.('__modul:rapor:aylik')} />;
     }
@@ -1366,6 +1371,38 @@ export function RaporModulu({ gorunum, onCekmece, onKopru, onToast, defterHedef 
     const yarisEvreni = bitenAylar.length ? bitenAylar : [];
     const enIyi = yarisEvreni.length ? yarisEvreni.reduce((a, b) => (marj(a) >= marj(b) ? a : b)) : null;
     const enZayif = yarisEvreni.length ? yarisEvreni.reduce((a, b) => (marj(a) <= marj(b) ? a : b)) : null;
+
+    // ══════════════════════════════════════════════════════════════════════
+    // 🔴 REGRESYON — AÇILMAYAN KAPI (Codex 2026-08-27, doğrulandı)
+    // ══════════════════════════════════════════════════════════════════════
+    // "En zayıf ay" KPI'sına `setAy(o ay)` kapısı takmıştım. Ama bu ekranın
+    // verisi `/rapor/aylik` → trend12'den gelir ve o uç AY PARAMETRESİ ALMAZ;
+    // `ay` state'i yalnız `/ledger` çağrısını etkiler. Sonuç: sahip "Haziran'a
+    // git"e basıyor, ekran ZERRE değişmiyordu.
+    // ⚠️ Açılmayan kapı, kapı olmamasından KÖTÜDÜR: tıklayan insan sistemin
+    // bozuk olduğunu düşünür ve bir daha hiçbir kapıya güvenmez.
+    // ⚠️ TEK ÜRETİCİ: tablo satırındaki "AY KIRILIMI" çekmecesi zaten vardı;
+    // ikinci bir ay-detayı kurmak aynı gerçeğin iki dökümünü doğururdu.
+    // Aynı fonksiyon iki yerden çağrılır.
+    const ayKirilimiAc = (t) => onCekmece?.({
+      tip: 'AY KIRILIMI',
+      baslik: `${t.ay_kisa} ${t.ay.slice(0, 4)}`,
+      alt: `net ${fmt(sayi(t.net))} · nakit marjı %${trSayi(marj(t))}`,
+      kpi: [
+        { etiket: 'Ciro', deger: fmt(sayi(t.ciro)) },
+        { etiket: 'Net', deger: fmt(sayi(t.net)), renk: sayi(t.net) >= 0 ? R.yesil : R.kirmizi },
+      ],
+      listeBaslik: 'Kalemler',
+      satirlar: [
+        { ad: 'Toplam gelir', detay: 'ciro + dış kaynak', tutar: fmt(sayi(t.gelir)) },
+        { ad: 'Toplam gider', detay: 'kasa çıkışları', tutar: fmt(sayi(t.gider)) },
+        { ad: 'Net', detay: 'gelir − gider', tutar: fmt(sayi(t.net)) },
+      ],
+      not: 'Rakamlar kasa hareketlerinden gelir — kasa izi tek gerçek. Bu bir NAKİT tablosudur: kart ödemesi ve borç taksiti kasadan çıkar ama gider değildir.',
+      aksiyonAd: 'Bu ayın işlem defterini aç',
+      // 🚪 GERÇEKTEN ÇALIŞAN kapı: defter görünümü `ay` state'ini KULLANIR.
+      _hedefFn: () => { setAy(String(t.ay)); onKopru?.('__modul:rapor:defter'); },
+    });
     // ── DÖNEM MÜHRÜ — tek yönlü kapı, açma ucu YOK ──────────────────────────
     const muhurlu = !!muhurVeri?.muhur?.muhurlu;
     const aySecenek = [...trend].slice(-13).reverse().map((t) => t.ay);
@@ -1549,14 +1586,30 @@ export function RaporModulu({ gorunum, onCekmece, onKopru, onToast, defterHedef 
             // hesaplamaz, yalnız yan yana dizer (gösterim kendi aritmetiğini
             // kurmaz). "Net" bile sunucunun kendi alanıdır.
             satirlar: [
-              { ad: 'Ciro', detay: 'şube satışları', tutar: fmt(sayi(ozetR.ciro_toplam)) },
-              { ad: 'Dış kaynak geliri', detay: 'satış dışı gelir', tutar: fmt(sayi(ozetR.dis_kaynak_toplam)) },
-              { ad: 'Kart ödemesi', detay: 'karta yapılan ödeme', tutar: `−${fmt(sayi(ozetR.kart_toplam))}` },
-              { ad: 'Borç taksiti', detay: 'kredi/borç anapara+faiz', tutar: `−${fmt(sayi(ozetR.borc_taksit_toplam))}` },
-              { ad: 'Personel maaş', detay: 'ödenen maaş', tutar: `−${fmt(sayi(ozetR.maas_toplam))}` },
-              { ad: 'Sabit gider', detay: 'kira · abonelik · düzenli', tutar: `−${fmt(sayi(ozetR.sabit_toplam))}` },
-              { ad: 'Anlık gider', detay: 'şube harcamaları', tutar: `−${fmt(sayi(ozetR.anlik_toplam))}` },
-            ].filter((r) => !/^−?0 ₺$/.test(String(r.tutar))),
+              ...[
+                ['ciro_toplam', 'Ciro', 'şube satışları', 1],
+                ['dis_kaynak_toplam', 'Dış kaynak geliri', 'satış dışı gelir', 1],
+                ['kart_toplam', 'Kart ödemesi', 'karta yapılan ödeme — GİDER DEĞİL, borç kapatır', -1],
+                ['borc_taksit_toplam', 'Borç taksiti', 'anapara+faiz — GİDER DEĞİL, borç kapatır', -1],
+                ['maas_toplam', 'Personel maaş', 'ödenen maaş', -1],
+                ['sabit_toplam', 'Sabit gider', 'kira · abonelik · düzenli', -1],
+                ['anlik_toplam', 'Anlık gider', 'şube harcamaları', -1],
+                ['fatura_toplam', 'Fatura ödemesi', 'tedarikçi faturası', -1],
+                ['vadeli_toplam', 'Vadeli alım ödemesi', 'vadeli borç', -1],
+              ].map(([alan, ad, detay, yon]) => (ozetR[alan] == null ? { tutar: null } : {
+                ad, detay,
+                tutar: `${yon < 0 ? '−' : ''}${fmt(sayi(ozetR[alan]))}`,
+              })),
+            // 🔴 KENDİ ÇELİŞKİM (aynı gün, 2026-08-27): burada sıfır olan
+            // kalemleri SESSİZCE eliyordum — oysa Ay dağılımında tam tersini
+            // yapıp "0 olan kanal SİLİNMEZ, çünkü «yok» ile «okunamadı» ayrı
+            // şeylerdir" diye yazmıştım. Aynı doktrin, aynı gün, zıt karar.
+            // ⚠️ Sıfır kalem GÖRÜNÜR kalır: "Fatura 0 ₺" bilgidir — o ay hiç
+            // fatura ödenmediğini söyler. Silinirse sahip o kalemin var
+            // olduğunu bile bilmez ve eksikliği fark edemez.
+            // ⚠️ Yalnız alanın KENDİSİ yoksa (sunucu göndermediyse) satır
+            // çizilmez — 0 ile yokluk hâlâ ayrı.
+            ].filter((r) => r.tutar != null),
             // ⚠️ EN ÖNEMLİ CÜMLE: bu sayı KÂR DEĞİL. Kart ödemesi ve borç
             // taksiti kasadan çıkar ama gider değildir (borç kapatır);
             // ödenmemiş maaş gider olmuştur ama kasadan çıkmamıştır.
@@ -1637,15 +1690,33 @@ export function RaporModulu({ gorunum, onCekmece, onKopru, onToast, defterHedef 
             <div style={{ display: 'flex', gap: 22, flexWrap: 'wrap', fontSize: 12.5, lineHeight: 1.7 }}>
               <span>Kasa açığı <b style={{ fontFamily: F.mono, color: sayi(den?.kasa?.acik_tl) > 0 ? R.kirmizi : R.yesil }}>{fmt(sayi(den?.kasa?.acik_tl))}</b>
                 <span style={{ color: R.not2 }}> · {sayi(den?.kasa?.acik_gun)} şube-gün</span></span>
-              <span>Kasa fazlası <b style={{ fontFamily: F.mono, color: sayi(den?.kasa?.fazla_tl) > 0 ? R.amber : R.yesil }}>{fmt(sayi(den?.kasa?.fazla_tl))}</b></span>
+              {/* 🔴 SAHTE YEŞİL (oto-tarama): alt nesne YOKSA `sayi(undefined)=0`
+                  → yeşil "0 ₺". "Fazla yok" ile "fazlayı ölçemedim" aynı
+                  görüntüye düşüyordu — bu modülün her yerinde kapattığım
+                  kusurun aynısı, burada açık kalmış. */}
+              <span>Kasa fazlası <b style={{
+                fontFamily: F.mono,
+                color: den?.kasa?.fazla_tl == null ? R.not3
+                  : (sayi(den.kasa.fazla_tl) > 0 ? R.amber : R.yesil),
+              }}>{den?.kasa?.fazla_tl == null ? 'ölçülemedi' : fmt(sayi(den.kasa.fazla_tl))}</b></span>
               <span>Fire <b style={{ fontFamily: F.mono }}>{sayi(den?.fire?.toplam_adet)}</b>
                 <span style={{ color: R.not2 }}> adet · {sayi(den?.fire?.toplam_bildirim)} bildirim</span></span>
-              <span>Sevkiyat uyumsuzluğu <b style={{ fontFamily: F.mono, color: sayi(den?.uyumsuzluk?.acik_adet) > 0 ? R.amber : R.yesil }}>{sayi(den?.uyumsuzluk?.acik_adet)}</b>
+              <span>Sevkiyat uyumsuzluğu <b style={{
+                fontFamily: F.mono,
+                color: den?.uyumsuzluk?.acik_adet == null ? R.not3
+                  : (sayi(den.uyumsuzluk.acik_adet) > 0 ? R.amber : R.yesil),
+              }}>{den?.uyumsuzluk?.acik_adet == null ? 'ölçülemedi' : sayi(den.uyumsuzluk.acik_adet)}</b>
                 <span style={{ color: R.not2 }}> açık · {sayi(den?.uyumsuzluk?.bekleyen_fark)} adet fark</span></span>
             </div>
             {Array.isArray(den?.fire?.sebepler) && den.fire.sebepler.length > 0 && (
               <div style={{ fontSize: 11.5, color: R.not2, marginTop: 10, lineHeight: 1.6 }}>
+                {/* ⚠️ SESSİZ ELEME (2026-08-27 oto-tarama): liste 6'da
+                    kesiliyordu ve kesildiği SÖYLENMİYORDU. Fire sebebi bir
+                    denetim ipucudur; görünmeyen 7. sebep aranmayan sebeptir. */}
                 Fire sebepleri: {den.fire.sebepler.slice(0, 6).map((s) => (typeof s === 'string' ? s : `${s?.sebep || '—'} (${sayi(s?.adet)})`)).join(' · ')}
+                {den.fire.sebepler.length > 6 && (
+                  <span style={{ color: R.not3 }}> · … ve {den.fire.sebepler.length - 6} sebep daha</span>
+                )}
               </div>
             )}
             <div style={{ fontSize: 10.5, color: R.not2, marginTop: 10 }}>
@@ -1744,7 +1815,7 @@ export function RaporModulu({ gorunum, onCekmece, onKopru, onToast, defterHedef 
         {raporBolumleri}
         <KpiSeridi kpiler={[
           { etiket: `${trend.length} ay ciro`, deger: fmt(toplamCiro), alt: `${trend[0].ay_kisa} – ${son.ay_kisa}` },
-          { etiket: `${trend.length} ay net`, deger: fmt(toplamNet), alt: toplamGelir ? `ortalama marj %${trSayi((toplamNet / toplamGelir) * 100)}` : '—', renk: toplamNet >= 0 ? R.yesil : R.kirmizi },
+          { etiket: `${trend.length} ay net`, deger: fmt(toplamNet), alt: toplamGelir ? `ortalama nakit marjı %${trSayi((toplamNet / toplamGelir) * 100)}` : '—', renk: toplamNet >= 0 ? R.yesil : R.kirmizi },
           // 🚪 KAPI = O AYA GİT. Yeni bir ekran açmaz, RAPORU o döneme
           // taşır — "en zayıf ay Haziran" diyen bir sayının doğal devamı
           // "peki Haziran'da ne oldu?" sorusudur ve cevabı bu sayfanın
@@ -1753,26 +1824,31 @@ export function RaporModulu({ gorunum, onCekmece, onKopru, onToast, defterHedef 
           {
             etiket: 'En iyi ay',
             deger: enIyi ? enIyi.ay_kisa : '—',
-            alt: enIyi ? `marj %${trSayi(marj(enIyi))} · o aya git` : 'henüz tamamlanmış ay yok',
+            alt: enIyi ? `marj %${trSayi(marj(enIyi))} · kırılımı aç` : 'henüz tamamlanmış ay yok',
             renk: enIyi ? R.yesil : R.not3,
-            onTikla: enIyi ? () => setAy(String(enIyi.ay)) : undefined,
+            onTikla: enIyi ? () => ayKirilimiAc(enIyi) : undefined,
           },
           {
             etiket: 'En zayıf ay',
             deger: enZayif ? enZayif.ay_kisa : '—',
-            alt: enZayif ? `marj %${trSayi(marj(enZayif))} · o aya git` : 'henüz tamamlanmış ay yok',
+            alt: enZayif ? `marj %${trSayi(marj(enZayif))} · kırılımı aç` : 'henüz tamamlanmış ay yok',
             renk: enZayif ? R.kirmizi : R.not3,
-            onTikla: enZayif ? () => setAy(String(enZayif.ay)) : undefined,
+            onTikla: enZayif ? () => ayKirilimiAc(enZayif) : undefined,
           },
         ]} />
         <Tablo
           baslik={`Aylık rapor · son ${trend.length} ay`}
-          not={suranAy
-            ? `satıra tıkla → ay kırılımı · ${suranAy.ay_kisa} SÜRÜYOR — en iyi/en zayıf yarışına girmez (yarım ay, tam aylarla kıyaslanmaz)`
-            : 'satıra tıkla → ay kırılımı'}
+          not={[
+            'satıra tıkla → ay kırılımı',
+            suranAy ? `${suranAy.ay_kisa} SÜRÜYOR — en iyi/en zayıf yarışına girmez (yarım ay, tam aylarla kıyaslanmaz)` : null,
+            elenenAy > 0 ? `${elenenAy} ay listede yok: o aylarda ciro ve gider kaydı sıfır` : null,
+          ].filter(Boolean).join(' · ')}
           kolonlar={[
             { ad: 'Ay' }, { ad: 'Ciro', sag: true }, { ad: 'Gelir', sag: true },
-            { ad: 'Gider', sag: true }, { ad: 'Net', sag: true }, { ad: 'Marj', sag: true },
+            // ⚠️ YARIM DÜZELTME KAPANDI: üstteki KPI "Nakit marjı (kasa)" diye
+            // düzeltilmişti ama tablo hâlâ çıplak "Marj" diyordu. Aynı ekranda
+            // iki ad, sahibin kafasında kârlılık ile nakit akışını birleştirir.
+            { ad: 'Gider', sag: true }, { ad: 'Net', sag: true }, { ad: 'Nakit marjı', sag: true },
           ]}
           satirlar={[...trend].reverse().map(t => ({
             id: t.ay, _t: t,
@@ -1785,27 +1861,7 @@ export function RaporModulu({ gorunum, onCekmece, onKopru, onToast, defterHedef 
               { v: `%${trSayi(marj(t))}`, mono: true, sag: true, renk: marj(t) >= 15 ? R.yesil : marj(t) >= 8 ? R.amber : R.kirmizi },
             ],
           }))}
-          onSatir={(row) => {
-            const t = row._t;
-            onCekmece?.({
-              tip: 'AY KIRILIMI',
-              baslik: `${t.ay_kisa} ${t.ay.slice(0, 4)}`,
-              alt: `net ${fmt(sayi(t.net))} · marj %${trSayi(marj(t))}`,
-              kpi: [
-                { etiket: 'Ciro', deger: fmt(sayi(t.ciro)) },
-                { etiket: 'Net', deger: fmt(sayi(t.net)), renk: sayi(t.net) >= 0 ? R.yesil : R.kirmizi },
-              ],
-              listeBaslik: 'Kalemler',
-              satirlar: [
-                { ad: 'Toplam gelir', detay: 'ciro + dış kaynak', tutar: fmt(sayi(t.gelir)) },
-                { ad: 'Toplam gider', detay: 'kasa çıkışları', tutar: fmt(sayi(t.gider)) },
-                { ad: 'Net', detay: 'gelir − gider', tutar: fmt(sayi(t.net)) },
-              ],
-              not: 'Rakamlar kasa hareketlerinden gelir — kasa izi tek gerçek.',
-              aksiyonAd: 'Aylık raporu aç',
-              _hedef: '__modul:rapor:aylik',
-            });
-          }}
+          onSatir={(row) => ayKirilimiAc(row._t)}
         />
       </>
     );
@@ -1855,8 +1911,26 @@ export function RaporModulu({ gorunum, onCekmece, onKopru, onToast, defterHedef 
       </div>
     </div>
   );
-  const gelir = sayi(ozet.toplam_gelir) || satir.filter(r => sayi(r.tutar) > 0).reduce((s, r) => s + sayi(r.tutar), 0);
-  const gider = sayi(ozet.toplam_gider) || satir.filter(r => sayi(r.tutar) < 0).reduce((s, r) => s + Math.abs(sayi(r.tutar)), 0);
+  // ══════════════════════════════════════════════════════════════════════
+  // 🔴 İKİ KUSUR TEK SATIRDA (Codex 2026-08-27, doğrulandı)
+  // ══════════════════════════════════════════════════════════════════════
+  // Eski hâli: `sayi(ozet.toplam_gelir) || <satırlardan yeniden topla>`
+  //  ① FALSY-ZERO: sunucu meşru şekilde 0 dediyse (o ay hiç giriş yok) `||`
+  //     bunu "yok" sanıp yedek hesaba düşüyordu. 0 bir CEVAPTIR, boşluk değil.
+  //  ② GÖSTERİM KENDİ ARİTMETİĞİNİ KURUYORDU: yedek hesap `satir` üzerinden
+  //     toplar, ama `satir` en fazla 300 kayıttır. 400 kayıtlı bir ayda ekran
+  //     KISMİ toplamı KESİN sayı gibi basardı — sahip mutabakatı yanlış
+  //     rakamla yapar ve farkı asla bulamaz.
+  // ⚠️ Yedek tamamen kaldırılmadı (alan gerçekten YOKSA ekran boş kalmasın),
+  //    ama artık yalnız `null/undefined` hâlinde devreye girer ve TÜRETİLDİĞİ
+  //    ekranda YAZILIR (aşağıdaki `toplamTuretildi` bandı).
+  const _gelirVar = ozet.toplam_gelir != null;
+  const _giderVar = ozet.toplam_gider != null;
+  const gelir = _gelirVar ? sayi(ozet.toplam_gelir)
+    : satir.filter(r => sayi(r.tutar) > 0).reduce((s, r) => s + sayi(r.tutar), 0);
+  const gider = _giderVar ? sayi(ozet.toplam_gider)
+    : satir.filter(r => sayi(r.tutar) < 0).reduce((s, r) => s + Math.abs(sayi(r.tutar)), 0);
+  const toplamTuretildi = (!_gelirVar || !_giderVar) && satir.length > 0;
 
   // ══════════════════════════════════════════════════════════════════════
   // 🔴 "GİREN" GELİR DEĞİLDİR — 2026-08-27 canlı ölçüm
@@ -2000,6 +2074,19 @@ export function RaporModulu({ gorunum, onCekmece, onKopru, onToast, defterHedef 
           denetim/mutabakat KISMİ defter üzerinde yapılıyordu. Tabloda 300'ü göster;
           fetch 300 tavanına ulaştıysa "defter eksik olabilir" uyar.
           (2026-08-14) Uyarı artık SEÇİLİ ayı söylüyor — "bu ay" gezgin varken belirsizdi. */}
+      {/* ⚠️ Sunucu toplamı yoksa ekran topluyor — ama bunu SÖYLÜYOR.
+          Türetilmiş sayı, kaynağı yazılmadıkça kanıt değildir. */}
+      {toplamTuretildi && (
+        <div style={{
+          padding: '10px 14px', borderRadius: 10, marginBottom: 12,
+          background: `${R.amber}14`, border: `1px solid ${R.amber}33`,
+          fontSize: 12, color: R.amber, lineHeight: 1.6,
+        }}>
+          ⚠ Giren/Çıkan toplamı sunucudan gelmedi; <b>ekrandaki {satir.length} kayıttan
+          toplandı</b>. Ay 300 kayıttan uzunsa bu toplam eksiktir — mutabakat için
+          kaynak rapora bakın.
+        </div>
+      )}
       {satir.length >= 300 && (
         <div style={{ ...kartYuzey, padding: '10px 16px', marginBottom: 12, borderLeft: `3px solid ${R.amber}`, fontSize: 12, color: R.metin2 }}>
           ⚠ {ayEtiket} ayında 300 kayıt tavanına ulaşıldı — işlem defteri EKSİK olabilir. Kayıt sayısı ve toplamlar o ayın tamamını yansıtmayabilir.
