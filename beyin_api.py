@@ -29,7 +29,7 @@ import logging
 from datetime import date
 import os
 import re
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -945,12 +945,31 @@ def llm_mevcut() -> bool:
     return bool(os.getenv("ANTHROPIC_API_KEY") or os.getenv("OPENAI_API_KEY"))
 
 
+# 🔴 (2026-08-27) TEŞHİS KAYBOLUYORDU: `_llm_cagir` başarısızlıkta ("", "")
+# döndürüyor ve çağıran taraf bunu tek bir metne indiriyordu:
+#   "LLM yanıtı alınamadı (anahtar yok / hata)"
+# Bu cümle üç ayrı dünyayı tek torbaya koyuyordu: (a) anahtar hiç yok,
+# (b) anahtar var ama sağlayıcı reddetti (yanlış model adı / kota / base_url),
+# (c) ağ zaman aşımı. Sahip hangisini düzelteceğini bilemiyordu — ekranda
+# "güvenli cevap üretilemedi · doğrulama başarısız" yazdığı için sorunu
+# BEYNİN TERBİYESİ sanıyordu, oysa beynin SESİ yoktu.
+# ⚠️ HATA ≠ BOŞ kuralının teşhis katmanındaki hâli: "cevap yok" demek yetmez,
+# NEDEN yok yazılmalı. Son sağlayıcı hatası burada saklanır ve dışa verilir.
+_SON_LLM_HATA: Dict[str, str] = {}
+
+
+def llm_son_hata() -> str:
+    """Son LLM denemesinin başarısızlık sebebi (sağlayıcı + kısa mesaj)."""
+    return _SON_LLM_HATA.get("mesaj", "")
+
+
 def _llm_cagir(system: str, kullanici: str, max_tokens: int = 900) -> Tuple[str, str]:
     """(cevap, model) — üçlü desen: YEREL model (varsa) → Anthropic → OpenAI.
     YEREL PRİZ (2026-07-08, 'konuşmayı sahiplenme' 2. aşama): YEREL_LLM_URL tanımlıysa
     (Ollama/OpenAI-uyumlu uç, örn. http://sunucu:11434/v1) önce KENDİ modelin denenir —
     internet/ödeme bağımsız ses telleri. Başarısızsa bulut devralır; frenler her durumda
     aynı (model-bağımsız mimari katman — terbiye ses teline bağlı değil)."""
+    _SON_LLM_HATA.pop("mesaj", None)
     yerel_url = (os.getenv("YEREL_LLM_URL") or "").strip()
     if yerel_url:
         try:
@@ -969,6 +988,7 @@ def _llm_cagir(system: str, kullanici: str, max_tokens: int = 900) -> Tuple[str,
                 return metin, f"yerel:{model}"
         except Exception as e:  # noqa: BLE001
             logger.warning("beyin YEREL model hatasi (buluta dusuluyor): %s", str(e)[:120])
+            _SON_LLM_HATA["mesaj"] = f"yerel model: {str(e)[:110]}"
     akey = os.getenv("ANTHROPIC_API_KEY")
     if akey:
         try:
@@ -984,6 +1004,7 @@ def _llm_cagir(system: str, kullanici: str, max_tokens: int = 900) -> Tuple[str,
                 return metin, model
         except Exception as e:  # noqa: BLE001
             logger.warning("beyin LLM hatasi (Anthropic): %s", str(e)[:150])
+            _SON_LLM_HATA["mesaj"] = f"Anthropic: {str(e)[:110]}"
     okey = os.getenv("OPENAI_API_KEY")
     if okey:
         try:
@@ -1004,6 +1025,7 @@ def _llm_cagir(system: str, kullanici: str, max_tokens: int = 900) -> Tuple[str,
                 return metin, model
         except Exception as e:  # noqa: BLE001
             logger.warning("beyin LLM hatasi (OpenAI): %s", str(e)[:150])
+            _SON_LLM_HATA["mesaj"] = f"OpenAI/uyumlu ({os.getenv('OPENAI_BEYIN_MODEL', 'gpt-4o')}): {str(e)[:100]}"
     return "", ""
 
 
@@ -1240,7 +1262,20 @@ def _sor_calistir(soru: str, tip: str = "soru", ek_bloklar=None,
                        flags=re.IGNORECASE).strip()
     red = None
     if not cevap:
-        red = "LLM yanıtı alınamadı (anahtar yok / hata)"
+        # ⚠️ ÜÇ AYRI DÜNYA, ÜÇ AYRI CÜMLE (bkz. _SON_LLM_HATA notu):
+        # anahtar yok / sağlayıcı reddetti / sebep bilinmiyor. Sahip hangisini
+        # düzelteceğini ancak böyle bilebilir.
+        _sebep = llm_son_hata()
+        if not llm_mevcut():
+            red = ("Beynin sesi yok: hiçbir LLM anahtarı tanımlı değil "
+                   "(ANTHROPIC_API_KEY / OPENAI_API_KEY / YEREL_LLM_URL). "
+                   "Duyular okundu ve hazırlandı — konuşacak model yok.")
+        elif _sebep:
+            red = (f"Beynin sesi yok: sağlayıcı yanıt vermedi — {_sebep}. "
+                   "Duyular okundu ve hazırlandı; sorun veri değil, model erişimi.")
+        else:
+            red = ("Beynin sesi yok: model boş yanıt döndü (sebep bilinmiyor). "
+                   "Duyular okundu ve hazırlandı.")
     else:
         red = _post_check(cevap, baglam_metni, soru)
     # ÖZ-DÜZELTME DÖNGÜSÜ (tek deneme): post-check reddettiyse red nedenini modele geri ver.
@@ -1433,6 +1468,17 @@ def ses_durumu():
             durum["yerel_canli_test"] = "HATA: " + str(e)[:200]
     else:
         durum["yerel_canli_test"] = "atlandi (URL tanimsiz)"
+    # 🔴 (2026-08-27) BU UÇ "anahtar var mı" diyordu ama "konuşabiliyor mu"
+    # demiyordu. Canlıda `openai_tanimli: true` görünürken beyin her soruda
+    # sessizce düşüyordu — anahtar VAR, sağlayıcı REDDEDİYORDU.
+    # Son gerçek deneme hatası ve hangi model adının istendiği artık burada:
+    # teşhis, "anahtar tanımlı mı" değil "ne dedi" sorusudur.
+    durum["son_llm_hata"] = llm_son_hata() or "(bu süreçte henüz deneme yok)"
+    durum["istenen_model"] = {
+        "openai_uyumlu": os.getenv("OPENAI_BEYIN_MODEL", "gpt-4o"),
+        "anthropic": os.getenv("ANTHROPIC_BEYIN_MODEL", "claude-3-5-haiku-20241022"),
+        "base_url": (os.getenv("LLM_BASE_URL") or "").strip() or "(varsayilan OpenAI)",
+    }
     return durum
 
 
