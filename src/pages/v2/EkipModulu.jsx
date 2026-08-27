@@ -1706,7 +1706,24 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
       ['gec', `⏰ Geç kalma (${gecSatir.length})`],
       ['kasa', `💵 Kasa açığı (${kasaSatir.length})`],
     ];
-    const enDusukPuan = puanlar.length ? puanlar.reduce((a, b) => (sayi(a.puan) <= sayi(b.puan) ? a : b)) : null;
+    // ══════════════════════════════════════════════════════════════════
+    // 🔴 HİÇ GÖREVİ OLMAYAN İNSAN "EN KÖTÜ" GÖRÜNÜYORDU — 2026-08-28
+    // ══════════════════════════════════════════════════════════════════
+    // Ekran "EN DÜŞÜK PUAN 0 · nisanur bolat" diyordu, kırmızıyla ve ADIYLA.
+    // Ucu ölçtüm: o kişinin `puan: null · tamam: 0 · gecikti: 0` — yani HİÇ
+    // GÖREV ALMAMIŞ. Diğer beş kişinin puanı 100 (7–40 görev üzerinden).
+    // `sayi(null) = 0` olduğu için hiç ölçülmemiş biri, en kötü performans
+    // gibi manşete çıkıyordu.
+    // ⚠️ Bu, eksik veriden üretilmiş bir SUÇLAMADIR — bu oturumda üçüncü kez
+    // (OPS'ta hayalet personel, EKİP'te tek taraflı kasa farkı, şimdi bu).
+    // Ölçülmemiş olmak kötü olmak değildir.
+    // ⚠️ Kişi listeden SİLİNMİYOR: puan sekmesinde durur ve "henüz görev yok"
+    // diye görünür. Yalnız "en düşük" yarışına girmez.
+    const puanOlculen = puanlar.filter((x) => x.puan != null && (sayi(x.tamam) + sayi(x.gecikti)) > 0);
+    const puanOlculmeyen = puanlar.length - puanOlculen.length;
+    const enDusukPuan = puanOlculen.length
+      ? puanOlculen.reduce((a, b) => (sayi(a.puan) <= sayi(b.puan) ? a : b))
+      : null;
     return (
       <>
         <KpiSeridi kpiler={[
@@ -1736,11 +1753,16 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
           {
             etiket: 'En düşük puan',
             deger: enDusukPuan ? String(sayi(enDusukPuan.puan)) : '—',
-            // ⚠️ Payda küçükken yüzde yanıltır: 2 görevi olan yeni personel
-            // tek gecikmeyle manşete çıkar. Kaç görevden geldiği yazılıyor.
+            // ⚠️ PAYDA YAZILIR: 2 görevi olan yeni personel tek gecikmeyle
+            // manşete çıkar. Alan adı ÖLÇÜLDÜ (tamam + gecikti) — daha önce
+            // `gorev_sayisi` diye TAHMİN etmiştim, o alan uçta yok ve düzeltme
+            // hiç görünmemişti.
             alt: enDusukPuan
-              ? `${enDusukPuan.ad_soyad}${enDusukPuan.gorev_sayisi != null ? ` · ${sayi(enDusukPuan.gorev_sayisi)} görev üzerinden` : ''}`
-              : 'veri yok',
+              ? `${enDusukPuan.ad_soyad} · ${sayi(enDusukPuan.tamam) + sayi(enDusukPuan.gecikti)} görev üzerinden`
+                + (puanOlculmeyen ? ` · ${puanOlculmeyen} kişi henüz görev almadı` : '')
+              : (puanOlculmeyen
+                ? `${puanOlculmeyen} kişinin henüz görevi yok — puan ölçülemez`
+                : 'veri yok'),
             renk: enDusukPuan && sayi(enDusukPuan.puan) < 70 ? R.kirmizi : R.krem,
             onTikla: puanlar.length ? () => setPdSekme('puan') : undefined,
           },
@@ -2212,7 +2234,12 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
     return (
       <>
         <KpiSeridi kpiler={[
-          { etiket: 'Toplam personel', deger: String(personel.length), alt: `${subeSayisi} şube${subesiz ? ` + ${subesiz} merkez` : ''}` },
+          // ⚠️ ÇERÇEVELEME (tarama, 2026-08-28): bu sayı AKTİF personeli sayar
+          // (6). Aynı şeridin sonundaki "₺/adam-saat" ise SON 30 GÜNDE ÇALIŞAN
+          // kişiyi sayar (9 — ay içinde ayrılanlar dâhil). İki farklı nüfus yan
+          // yana duruyor ve hangisinin ne olduğu yazmıyordu; okuyan "6 mı 9 mu"
+          // diye takılır. Sayılar doğru, ETİKETLER eksikti.
+          { etiket: 'Toplam personel', deger: String(personel.length), alt: `${subeSayisi} şube${subesiz ? ` + ${subesiz} merkez` : ''} · bugün aktif` },
           // Etiket dürüstlüğü (Codex): kd<1 takvim ayı değil "son ~30 gün" demek.
           { etiket: 'Yeni işe giren', deger: String(yeni), alt: yeni ? 'ilk ayında (son ~30 gün)' : 'yeni giriş yok', renk: yeni ? R.yesil : R.krem },
           { etiket: 'Fazla mesai riski', deger: String(satir.filter(x => x.fm > 8).length), alt: 'bu ay 8 saatten fazla', renk: satir.some(x => x.fm > 8) ? R.kirmizi : R.yesil },
@@ -2368,10 +2395,26 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
     return (
       <>
         <KpiSeridi kpiler={[
-          { etiket: 'Boş slot', deger: String(bosHucre), alt: bosHucre ? 'kimse atanmamış gün-şube' : 'hafta tam', renk: bosHucre ? R.amber : R.yesil },
+          // ⚠️ ÇERÇEVELEME (tarama, 2026-08-28): "Boş slot" = şube × 7 gün ve
+          // şu an şubelerin YARISI sezon kapalı. Kapalı bir şubenin günü
+          // "kimse atanmamış" diye sayılıyor ve amber yanıyor — doldurulması
+          // İMKÂNSIZ bir boşluk için uyarı üretiliyor. PANEL'de yakalanan
+          // "kapalı şubeye ciro yok alarmı" kusurunun aynısı.
+          // ⚠️ Sunucu bu tabloda `sezon_kapali` bayrağı GÖNDERMİYOR (alanlar:
+          // sube_id · sube_ad · gunler · toplam_atama) — kapalı şube burada
+          // AYIRT EDİLEMİYOR. Uydurma bir ayrım yapmak yerine ekran bunu
+          // SÖYLÜYOR; gerçek ayrım ancak uç bayrağı verirse yapılabilir.
+          {
+            etiket: 'Boş slot',
+            deger: String(bosHucre),
+            alt: bosHucre
+              ? `${subeler.length} şube × 7 gün içinde · sezon kapalı şubeler de sayılır`
+              : 'hafta tam',
+            renk: bosHucre ? R.amber : R.yesil,
+          },
           { etiket: 'Toplam atama', deger: String(atamaSayisi), alt: `${subeler.length} şube · 7 gün` },
           { etiket: 'Fazla mesai riski', deger: `${fazlaMesai} kişi`, alt: 'bu ay 8 saat üzeri', renk: fazlaMesai ? R.kirmizi : R.yesil },
-          { etiket: 'Doluluk', deger: toplamHucre ? `%${trSayi(((toplamHucre - bosHucre) / toplamHucre) * 100, 0)}` : '—', alt: 'gün-şube hücresi', renk: R.krem },
+          { etiket: 'Doluluk', deger: toplamHucre ? `%${trSayi(((toplamHucre - bosHucre) / toplamHucre) * 100, 0)}` : '—', alt: 'gün-şube hücresi · kapalı şubeler de paydada', renk: R.krem },
         ]} />
         <VardiyaIzgara
           baslik={`Vardiya planı · ${kisaTarih(pazartesi)} – ${kisaTarih(isoEkle(pazartesi, 6))}`}
@@ -4162,8 +4205,13 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
         <KpiSeridi kpiler={[
           { etiket: 'Yeni başvuru', deger: String(basvuruOzet?.yeni ?? yeni.length), alt: 'okunmamış', renk: (basvuruOzet?.yeni ?? yeni.length) ? R.yesil : R.krem },
           { etiket: 'Görüşme aşamasında', deger: String(gorusme.length), alt: gorusme.length ? 'planlandı' : 'yok', renk: R.mavi },
-          { etiket: 'Toplam başvuru', deger: String(bs.length), alt: 'arşivsiz kayıt' },
-          { etiket: 'Öncelikli', deger: String(bs.filter(b => sayi(b.oncelik) > 0).length), alt: 'işaretlenmiş', renk: R.amber },
+          // ⚠️ ÇERÇEVELEME: bu şeritte aynı havuzun DÖRT ayrı sayısı yan yana
+          // duruyor (yeni 25 · görüşmede 0 · toplam 111 · öncelikli 33) ve
+          // aralarındaki ilişki hiçbir yerde yazmıyor. 25+0+33 ≠ 111 olduğu
+          // için okuyan bunları toplamaya çalışıp tutturamaz. Bunlar TOPLANAN
+          // parçalar değil, AYNI havuzun farklı süzgeçleridir — bu yazıldı.
+          { etiket: 'Toplam başvuru', deger: String(bs.length), alt: 'arşivsiz kayıt · aşağıdakiler bunun alt kümeleri' },
+          { etiket: 'Öncelikli', deger: String(bs.filter(b => sayi(b.oncelik) > 0).length), alt: `${bs.length} kaydın içinde · işaretlenmiş`, renk: R.amber },
         ]} />
         {bs.length ? (
           <>
