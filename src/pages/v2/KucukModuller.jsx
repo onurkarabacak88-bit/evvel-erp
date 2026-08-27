@@ -2895,7 +2895,14 @@ export function SistemModulu({ gorunum, onCekmece, onKopru, onToast }) {
             aksiyonlar: [{ ad: '⚠ Sıfırlama kapısı', onTikla: () => { setTmzSonuc(''); setTmzForm({ tip: 'sifirla', onay: '' }); } }],
           },
         ]}
-        onAc={(l) => l._hedef && onKopru?.(l._hedef)}
+        // ⚠️ Bu listede "Sistem sıfırlama" satırının `_hedef`i YOK — kendi
+        // düğmesi var (`aksiyonlar`). Eskiden satır yine de tıklanabilir
+        // GÖRÜNÜYOR, tıklanınca `l._hedef &&` guard'ına takılıp sessizce
+        // yutuluyordu. Guard doğruydu ama YARIMDI: davranışı susturuyor,
+        // GÖRÜNTÜYÜ düzeltmiyordu. Artık satır tıklanabilir görünmüyor;
+        // eylem yalnız kendi düğmesinde.
+        satirAktif={(l) => !!l._hedef}
+        onAc={(l) => onKopru?.(l._hedef)}
       />
 
       {tmzSonuc && (

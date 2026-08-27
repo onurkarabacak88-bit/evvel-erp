@@ -293,7 +293,15 @@ function SecimKutusu({ isaretli, boyut = 18, onTikla }) {
   );
 }
 
-export function Liste({ satirlar, baslik, onAc, secilebilir, secili, onSec, onHepsi }) {
+// ⚠️ ÖLÜ SATIR YASAĞI (2026-08-27, sahip onayıyla ayrı iş):
+// `onAc` verildiğinde BÜTÜN satırlar `cursor:pointer` + `role="button"` +
+// klavye odaklı oluyordu — satırın gerçekten gidecek bir yeri olsun ya da
+// olmasın. Hedefi olmayan satır tıklanınca hiçbir şey olmuyordu; üstelik
+// ekran okuyucuya "düğme" diye tanıtılıyordu.
+// `satirAktif` opsiyoneldir: VERİLMEZSE davranış birebir eskisi gibidir
+// (çağıran yerlerin hiçbiri bozulmaz). Verildiğinde, yalnız o yordamın
+// "evet" dediği satır tıklanabilir görünür.
+export function Liste({ satirlar, baslik, onAc, satirAktif, secilebilir, secili, onSec, onHepsi }) {
   if (!satirlar?.length) return null;
   // Seçilebilir satır = kendi `secilemez` bayrağı olmayan satır
   const uygun = satirlar.filter((l) => !l.secilemez);
@@ -328,16 +336,18 @@ export function Liste({ satirlar, baslik, onAc, secilebilir, secili, onSec, onHe
       {satirlar.map((l, i) => {
         const renk = TIER_RENK[l.tier] || R.mavi;
         const isaretli = !!secili?.[l.id];
+        // Bu SATIR tıklanabilir mi? `satirAktif` yoksa eski davranış.
+        const acilir = !!onAc && (typeof satirAktif === 'function' ? !!satirAktif(l) : true);
         return (
           <div
             key={l.id || i}
-            onClick={() => onAc?.(l)}
+            onClick={acilir ? () => onAc(l) : undefined}
             className="v2-hover-kalk"
             // Klavye erişimi (ui-ux-pro-max sistematik tarama 2026-08-15): Liste
             // satırları da Tablo satırları gibi Tab+Enter ile açılır.
-            tabIndex={onAc ? 0 : undefined}
-            role={onAc ? 'button' : undefined}
-            onKeyDown={onAc ? (e) => {
+            tabIndex={acilir ? 0 : undefined}
+            role={acilir ? 'button' : undefined}
+            onKeyDown={acilir ? (e) => {
               if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onAc(l); }
             } : undefined}
             style={{
@@ -347,7 +357,7 @@ export function Liste({ satirlar, baslik, onAc, secilebilir, secili, onSec, onHe
                 ? `linear-gradient(165deg, rgba(217,154,78,.14), ${R.kart2})`
                 : `linear-gradient(165deg, ${R.kart1}, ${R.kart2})`,
               border: `1px solid ${isaretli ? 'rgba(217,154,78,.38)' : 'rgba(243,233,220,.09)'}`,
-              cursor: onAc ? 'pointer' : 'default',
+              cursor: acilir ? 'pointer' : 'default',
               // ➕ EKLENTİ (2026-08-16, Bakış yeniden-düzeni): `solgun` satırı
               // SİLMEZ, soluklaştırır. "Bu kalemi zaten yukarıda gördün" demek
               // için — listeden düşürmek toplamları/adetleri yalancı yapardı.
@@ -1712,7 +1722,14 @@ export function Cekmece({
         </div>
 
         <div style={{ padding: '14px 22px', borderTop: `1px solid ${R.cizgi}`, display: 'flex', gap: 9 }}>
-          {aksiyonAd && !aksiyonlar?.length && (
+          {/* ⚠️ ÖLÜ DÜĞME YASAĞI (2026-08-27, sahip onayıyla ayrı iş):
+              düğme yalnız `aksiyonAd`a bakılarak çiziliyordu. Eli olmayan
+              (onAksiyon'suz) bir çekmece, tıklanıp HİÇBİR ŞEY OLMAYAN bir
+              düğme gösteriyordu. Bir kez tıklayıp cevap alamayan insan o
+              ekrandaki bütün kapılara güvenmeyi bırakır — ölü düğmenin
+              maliyeti kendi işlevi değil, komşularının inandırıcılığıdır.
+              Ad VE el, ikisi birden şart. */}
+          {aksiyonAd && typeof onAksiyon === 'function' && !aksiyonlar?.length && (
             <button onClick={onAksiyon} style={{
               flex: 1, padding: 10, borderRadius: 10, border: 'none',
               background: `linear-gradient(150deg, #E0A559, #AF6C29)`, color: '#1C1309',
