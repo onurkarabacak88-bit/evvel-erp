@@ -921,6 +921,25 @@ def _blok_derle(soru: str, yonlendirme_ek: str = "") -> List[Tuple[str, str, str
         if any(_tr_katla(a) in s for a in anahtarlar):
             eslesen_var = True
             ekle(bid, baslik, uretici)
+    # 📖 KELİME DEFTERİ (2026-08-27) — sahibin KENDİ dilinden öğrenilmiş
+    # pencereler. Elle yazılmış 42 anahtar sahibin ev dilini (şube lakabı,
+    # "kaçak/devir/fire" gibi işletme argosu) kapsayamaz ve elle yazmakla
+    # bitmez. Defter bu boşluğu sahibin kendi sorularıyla doldurur.
+    # ⚠️ GENİŞLETİR, DARALTMAZ: elle yazılan anahtarlar HER ZAMAN geçerli;
+    # defter yalnız "şuna da bak" der. Kötü bir öğrenme cevabı BOZAMAZ,
+    # en fazla fazladan pencere açar (öneri-only'nin mimarideki karşılığı).
+    # ⚠️ Hata-yutar: defter okunamazsa seçici eski hâliyle çalışır.
+    try:
+        from zeka_kelime import onerilen_bloklar as _ogrenilen
+        _ogr = set(_ogrenilen(soru))
+        if _ogr:
+            for bid, baslik, _a, uretici in secici:
+                if bid in _ogr and not any(b[0] == bid for b in bloklar):
+                    eslesen_var = True
+                    ekle(bid, baslik, uretici)
+    except Exception as _e:  # noqa: BLE001
+        logger.warning("kelime defteri secici yutuldu: %s", str(_e)[:120])
+
     if not eslesen_var:  # fallback: geniş bağlam (Codex: boş dönme)
         for bid, baslik, _a, uretici in secici:
             ekle(bid, baslik, uretici)
@@ -1473,6 +1492,15 @@ _OZSORGU_BANKASI = (
 
 
 
+@router.get("/kelime-defteri")
+def kelime_defteri(limit: int = 60):
+    """Sistem NE ÖĞRENDİ — salt-okur.
+    ⚠️ ÖĞRENME GİZLİ OLMAZ: sahip neyi öğrettiğini görebilmeli, yoksa
+    davranış değişimi 'sistem kendi kafasına göre iş yapıyor' olur."""
+    from zeka_kelime import defter_ozet
+    return defter_ozet(limit=limit)
+
+
 @router.get("/ses-durumu")
 def ses_durumu():
     """TEŞHİS: hangi ses kanalları görünür + yerel kanalın CANLI tek-token denemesi.
@@ -1546,11 +1574,30 @@ def cevap_etiket(body: CevapEtiketBody):
         return {"ok": False, "hata": "karar iyi|kotu olmalı"}
     with db() as (_, cur):
         _ensure(cur)
-        cur.execute("UPDATE beyin_gunluk SET cevap_karari=%s WHERE id=%s RETURNING id",
-                    (karar, body.gunluk_id))
-        if not cur.fetchone():
+        cur.execute(
+            """UPDATE beyin_gunluk SET cevap_karari=%s WHERE id=%s
+               RETURNING soru, cevap""",
+            (karar, body.gunluk_id))
+        _r = cur.fetchone()
+        if not _r:
             return {"ok": False, "hata": "cevap bulunamadı"}
-    return {"ok": True, "gunluk_id": body.gunluk_id, "karar": karar}
+        _row = dict(_r)
+    # 📖 ÖĞRENME ANI — sahibin hükmü kelime defterine yazılır.
+    # ⚠️ ÖĞRENMENİN KANITI CEVABIN KENDİ ATIFLARIDIR: beyin her cümleye [B#]
+    # koymak zorunda (post-check doğruluyor). Cevap [B5] diyorsa o cevabı
+    # gerçekten B5 taşımıştır — tahmin değil, beyan.
+    # ⚠️ 👎 CEZALANDIRMAZ: sahip üslup/uzunluk yüzünden de beğenmemiş olabilir;
+    # bu PENCERE SEÇİMİNİN yanlış olduğunu KANITLAMAZ (kanıt gücü simetrik
+    # değildir). Red yalnız ağırlığı bir tık düşürür, asla silmez.
+    _ogrenme = {"kelime": 0, "bag": 0}
+    try:
+        from zeka_kelime import ogren as _ogren
+        _ogrenme = _ogren(str(_row.get("soru") or ""), str(_row.get("cevap") or ""),
+                          olumlu=(karar == "iyi"))
+    except Exception as _e:  # noqa: BLE001
+        logger.warning("kelime defteri ogrenme yutuldu: %s", str(_e)[:120])
+    return {"ok": True, "gunluk_id": body.gunluk_id, "karar": karar,
+            "ogrenildi": _ogrenme}
 
 
 def _olay_gudumlu_sorular(cur) -> list:
