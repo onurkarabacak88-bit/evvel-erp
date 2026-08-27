@@ -1879,7 +1879,15 @@ export function RaporModulu({ gorunum, onCekmece, onKopru, onToast, defterHedef 
             Sayfa ham tabloyla bitiyordu; artık tek cümleyle bitiyor. */}
         <div style={{
           ...kartYuzey, padding: '15px 19px', marginTop: 14,
-          borderLeft: `3px solid ${toplamNet >= 0 ? R.yesil : R.bakir}`,
+          // ⚠️ TASARIM DİLİ + SAHTE YEŞİL, TEK SATIRDA (2026-08-27):
+          //  ① Bu modüldeki HER sol şerit bakır/amber/kırmızıdır; yeşil şerit
+          //     yalnız benimkiydi. #4ADE80 espresso–krem–bakır kadife
+          //     paletinin dışına düşüyor, yama gibi duruyordu.
+          //  ② Daha kötüsü ANLAM: şerit "iyi" diyordu, hemen altındaki kendi
+          //     yazım "girenin yarısından fazlası satış dışı, bunlar tekrar
+          //     etmez" diyordu. Kasa artışı bir EV SATIŞIYLA taşınıyorsa o
+          //     artış yeşil değildir. Renk metinle çelişemez.
+          borderLeft: `3px solid ${satisPay < 50 ? R.amber : R.bakir}`,
         }}>
           <div style={{ fontSize: 11, letterSpacing: .8, color: R.not3, marginBottom: 7 }}>
             DÖNEM KAPANIŞI
@@ -2191,7 +2199,10 @@ export function RaporModulu({ gorunum, onCekmece, onKopru, onToast, defterHedef 
       {toplamTuretildi && (
         <div style={{
           padding: '10px 14px', borderRadius: 10, marginBottom: 12,
-          background: `${R.amber}14`, border: `1px solid ${R.amber}33`,
+          // ⚠️ Kenar alfası 33 idi — v2'nin tamamında tek örneği buydu
+          // (24 kez 44, 14 kez 55). Tek başına göze çarpmaz ama tasarım dili
+          // tam olarak böyle aşınır: her seferinde "bir tık farklı" bir değer.
+          background: `${R.amber}14`, border: `1px solid ${R.amber}44`,
           fontSize: 12, color: R.amber, lineHeight: 1.6,
         }}>
           ⚠ Giren/Çıkan toplamı sunucudan gelmedi; <b>ekrandaki {satir.length} kayıttan
