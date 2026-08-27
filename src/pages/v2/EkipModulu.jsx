@@ -2471,6 +2471,35 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
             düzenleme ve işten çıkış için satıra tıkla
           </span>
         </div>
+
+        {/* 📌 KADRO KAPANIŞI — serial position. Ekran ham tablo satırıyla
+            bitiyordu ("SILA AKBAY · BARİSTA · ZAFER · 0 ay · 57 sa · deneme").
+            ⚠️ YENİ HESAP YOK — ekrandaki sayılar tek cümlede.
+            ⚠️ EN ÖNEMLİ ÇERÇEVE: personel maliyeti sektör bandının ALTINDA
+            olmak otomatik "iyi" DEĞİLDİR. Az kişiyle çalışmak, fazla mesai
+            riski ve devir demektir; ucuzluk sanılıp geçilmemeli. */}
+        {personel.length > 0 && (
+          <div style={{
+            ...kartYuzey, padding: '14px 18px', marginTop: 14,
+            borderLeft: `3px solid ${R.bakir}`,
+          }}>
+            <div style={{ fontSize: 11, letterSpacing: .8, color: R.not3, marginBottom: 6 }}>KADRO KAPANIŞI</div>
+            <div style={{ fontSize: 13.5, lineHeight: 1.75, color: R.krem }}>
+              Bugün <b>{personel.length}</b> aktif personel var, <b>{subeSayisi}</b> şubede
+              {subesiz > 0 && <> (+{subesiz} merkez)</>}.
+              {yeni > 0 && <> <b>{yeni}</b> kişi ilk ayında.</>}
+              {satir.filter((x) => x.fm > 8).length > 0
+                ? <> <b style={{ color: R.kirmizi }}>{satir.filter((x) => x.fm > 8).length}</b> kişide
+                    fazla mesai riski var.</>
+                : <> Fazla mesai riski görünmüyor.</>}
+            </div>
+            <div style={{ fontSize: 11.5, color: R.not2, marginTop: 8, lineHeight: 1.7 }}>
+              ⚠ Personel maliyeti sektör bandının <b style={{ color: R.not }}>altında</b> olmak kendiliğinden
+              iyi haber değildir: az kişiyle çalışmak fazla mesai ve personel devri olarak geri döner.
+              Bandın altındaysanız “ucuz” değil, <b style={{ color: R.not }}>ince kadro</b> okuyun.
+            </div>
+          </div>
+        )}
         {personelModali}
       </>
     );
@@ -3796,6 +3825,41 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
             </div>
           </div>
         )}
+
+        {/* ══════════════════════════════════════════════════════════════
+            📌 AY KAPANIŞI — serial position (Murdock 1962)
+            ══════════════════════════════════════════════════════════════
+            Ölçtüm: bu ekran HAM BORDRO SATIRIYLA bitiyordu ("YAREN BEŞLİ
+            28.075 ₺ · 0,0 sa · 0 ₺ · 24.796 ₺ · taslak") ve üzerinde 62 sayı
+            taşıyordu. Bir dizinin ilk ve son ögesi hatırlanır; PARA ekranının
+            son sözü bir tablo hücresi olamaz.
+            ⚠️ YENİ HESAP YOK — ekranda zaten olan sunucu sayıları tek cümlede.
+            ⚠️ En önemli cümle sonda: bu rakam TAHMİNÎDİR. Onaydan sonra maaş
+            motoru yeniden hesaplar; buradaki sayıya bakıp ödeme sözü verilmez. */}
+        <div style={{
+          ...kartYuzey, padding: '14px 18px', marginTop: 14,
+          borderLeft: `3px solid ${bekleyen.length ? R.amber : R.yesil}`,
+        }}>
+          <div style={{ fontSize: 11, letterSpacing: .8, color: R.not3, marginBottom: 6 }}>AY KAPANIŞI</div>
+          <div style={{ fontSize: 13.5, lineHeight: 1.75, color: R.krem }}>
+            {AY_KISA[ay - 1]} {yil} bordrosu{' '}
+            <b style={{ fontFamily: F.mono }}>{fmt(toplamNet)}</b> · <b>{bordro.length}</b> kişi.{' '}
+            {/* ⚠️ `bekleyen` bir DİZİ (bordro.filter), sayı değil — ilk yazışta
+                `bekleyen > 0` yazmıştım; JS'te dizi karşılaştırması sessizce
+                yanlış sonuç verir ve ekrana dizi basılırdı. */}
+            {bekleyen.length > 0
+              ? <><b style={{ color: R.amber }}>{bekleyen.length} bordro hâlâ taslak</b> — onaylanmadan ödeme
+                  yapılamaz, maaş gecikir.</>
+              : <><b style={{ color: R.yesil }}>Tümü onaylanmış.</b></>}
+            {toplamAvans > 0 && <> Ayrıca <b style={{ fontFamily: F.mono }}>{fmt(toplamAvans)}</b> avans
+              bu ay maaştan düşülecek.</>}
+          </div>
+          <div style={{ fontSize: 11.5, color: R.not2, marginTop: 8, lineHeight: 1.7 }}>
+            ⚠ Buradaki tutarlar <b style={{ color: R.not }}>tahminîdir</b>: onaydan sonra maaş motoru
+            (tek hesap merkezi) yeniden hesaplar. Ödeme sözü bu ekrandaki sayıya bakılarak verilmez.
+          </div>
+        </div>
+
       </>
     );
   }
