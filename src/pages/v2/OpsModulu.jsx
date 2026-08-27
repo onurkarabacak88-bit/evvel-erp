@@ -34,6 +34,32 @@ const bugunYerelISO = () => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 };
 
+// ══════════════════════════════════════════════════════════════════════════
+// İŞ GÜNÜ ≠ TAKVİM GÜNÜ — 2026-08-27, sunucudan ölçüldü
+// ══════════════════════════════════════════════════════════════════════════
+// Bu ekranların "bugün"ü tarayıcı takviminden türüyordu. Ama sunucu iş gününü
+// 06:00'da başlatıyor: /ops/stok-kayip-analiz yanıtında `is_gunu_siniri_saat:
+// 6`. Yani gece 00:00–05:59 arasında takvim yeni güne geçmiş olsa da sistem
+// hâlâ ÖNCEKİ iş gününü sayıyor.
+// Sahip için sonucu: kapanış saatinde (bar gece kapanır) ekranı açtığında
+// bomboş bir "bugün" görür ve "kayıt gitmiş mi?" diye düşünür — oysa kayıtlar
+// hâlâ dünün gününde durmaktadır.
+// ⚠️ SINIR UYDURULMUYOR: sunucu söylediğinde onun değeri kullanılır
+// (`isGunuSiniriRef`), söylemediğinde 6 varsayılır ve bu ekranda YAZILIR.
+// ⚠️ `bugunYerelISO` OLDUĞU GİBİ DURUYOR — "takvim günü" gereken yerler var
+// (ileri gitmeyi durduran sınır gibi). İki kavram artık iki ayrı ad.
+let _IS_GUNU_SINIRI = 6;
+export const isGunuSiniriAyarla = (saat) => {
+  if (Number.isFinite(Number(saat))) _IS_GUNU_SINIRI = Number(saat);
+};
+const isGunuBugun = () => {
+  const d = new Date();
+  if (d.getHours() < _IS_GUNU_SINIRI) d.setDate(d.getDate() - 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+// Takvim günü ile iş günü ayrıştığı an (gece penceresi) — ekran bunu söyler.
+const isGunuKaymasiVar = () => isGunuBugun() !== bugunYerelISO();
+
 const AYLAR = ['Oca', 'Şub', 'Mar', 'Nis', 'May', 'Haz', 'Tem', 'Ağu', 'Eyl', 'Eki', 'Kas', 'Ara'];
 const trSayi = (n, b = 1) => (Number(n) || 0).toFixed(b).replace('.', ',');
 const gunEkleISO = (iso, n) => {
@@ -651,7 +677,7 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
   // Klasik Operasyon Merkezi'nin 5 sekmesi (açılış kasa takip · kapanış takip ·
   // ürün-aç akışı · kullanılan ürünler) tek kadife görünümde alt-sekmeli.
   const [barSekme, setBarSekme] = useState('acilis');
-  const [barTarih, setBarTarih] = useState(() => bugunYerelISO());
+  const [barTarih, setBarTarih] = useState(() => isGunuBugun());
   const [acilisTakip, setAcilisTakip] = useState(null);
   // /ops/gec-acilan-subeler — "saatinde mi açıldı" (kasa tuttu mu'dan AYRI soru)
   const [gecAcilis, setGecAcilis] = useState(null);
@@ -707,14 +733,25 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
   // Katalog çekilemezse öneri çıkmaz ama serbest arama ÇALIŞMAYA DEVAM EDER
   // ([] işaretlenir; boş katalog "öneri yok" demek, arama kapısı değil).
   const [ugKatalog, setUgKatalog] = useState(null);
+  // Boş katalog ("öneri yok") ile okunamayan katalog ("bakamadım") ayrı
+  // durumlardır; tek bir `[]` ikisini de temsil edemez.
+  const [ugKatalogHata, setUgKatalogHata] = useState('');
   const [ugListeAcik, setUgListeAcik] = useState(false);
   useEffect(() => {
-    // ⚠️ Codex P1: katalog ilk hatada `[]` olarak önbelleğe alınıyor ve
-    // koşul `== null` olduğu için o oturumda BİR DAHA DENENMİYORDU. Geçici
-    // bir ağ hatası, kalıcı "öneri yok" ekranına dönüşüyordu (HATA ≠ BOŞ).
-    // Artık hata ayrı işaretlenir; boş katalog ile okunamayan katalog
-    // birbirine karışmaz ve yeniden denenebilir.
-    if (gorunum === 'tedarik' && tsSekme === 'urungelis' && ugKatalog == null) {
+    // ══════════════════════════════════════════════════════════════════
+    // 🔴 YORUM DÜZELTMEYİ ANLATIYORDU, KOD ESKİ HÂLİNDEYDİ (Fable, 2026-08-27)
+    // ══════════════════════════════════════════════════════════════════
+    // Bir önceki turda buraya "artık hata ayrı işaretlenir, yeniden
+    // denenebilir" diye bir yorum yazdım — ama KODU DEĞİŞTİRMEDİM. Koşul
+    // hâlâ `ugKatalog == null`, catch hâlâ `setUgKatalog([])` idi. Yani
+    // geçici bir ağ hatası oturum boyu "öneri yok" ekranına dönüşmeye devam
+    // ediyordu ve yorum bunu KAPANMIŞ gösteriyordu.
+    // ⚠️ Bu, kusurların en aldatıcısıdır: sonraki denetçi (insan ya da makine)
+    // yorumu okuyup "burası halledilmiş" diye geçer. Kod yalan söylemez ama
+    // YORUM SÖYLEYEBİLİR.
+    // Şimdi gerçekten kuruldu: hata `ugKatalogHata` ile ayrı tutulur, boş
+    // katalog ile okunamayan katalog karışmaz, tekrar denenebilir.
+    if (gorunum === 'tedarik' && tsSekme === 'urungelis' && ugKatalog == null && !ugKatalogHata) {
       api('/ops/maliyet/stok-kalemleri')
         .then((d) => setUgKatalog(
           (Array.isArray(d?.kalemler) ? d.kalemler : [])
@@ -727,9 +764,9 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
             })
             .filter((k) => k.ad),
         ))
-        .catch(() => setUgKatalog([]));
+        .catch((e) => setUgKatalogHata(e?.message || 'Ürün kataloğu okunamadı'));
     }
-  }, [gorunum, tsSekme, ugKatalog]);
+  }, [gorunum, tsSekme, ugKatalog, ugKatalogHata]);
   // Türkçe-I tuzağı: 'I'.toLowerCase()='i' ASCII'de ama 'ESPRESSO'
   // aramasında İ/ı ayrımı şaşar — tr-TR locale ile küçült.
   const ugKucuk = (s) => String(s || '').toLocaleLowerCase('tr-TR');
@@ -861,27 +898,27 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
 
   const barYukle = useCallback((tarih) => {
     setBarHata('');
-    const t = tarih || bugunYerelISO();
+    const t = tarih || isGunuBugun();
     const _bilet = ++barIstekRef.current;
     const _guncel = () => barIstekRef.current === _bilet;
     api(`/ops/acilis-kasa-takip?tarih=${t}`)
       .then((d) => { if (_guncel()) setAcilisTakip(d || {}); })
-      .catch((e) => setBarHata(e?.message || ''));
+      .catch((e) => { if (_guncel()) setBarHata(e?.message || ''); });
     api(`/ops/kapanis-takip?tarih=${t}`)
       .then((d) => { if (_guncel()) setKapanisTakip(d || {}); })
       // 🔵 (2026-08-12) FAKE-GREEN: kapanış takip (kasa kapanış = para) DÜŞÜNCE {}'e
       // yutulup "denklem tutuyor/0" gibi render ediliyordu. Hata banner'ına yüzeye çıkar.
-      .catch((e) => setBarHata(e?.message || 'Kapanış takip verisi yüklenemedi — yenileyin.'));
+      .catch((e) => { if (_guncel()) setBarHata(e?.message || 'Kapanış takip verisi yüklenemedi — yenileyin.'); });
     // GEÇ AÇILAN ŞUBELER (/ops/gec-acilan-subeler) — v2 bu ucu HİÇ çağırmıyordu.
     // /ops/acilis-kasa-takip "açıldı mı + kasa tuttu mu" der; bu uç "SAATİNDE
     // mi açıldı" der. Üç ayrı liste: geç açılan · açılış başlamış ama
     // TAMAMLANMAMIŞ · o gün hiç ACILIS kaydı OLUŞMAMIŞ (panel/motor çalışmamış).
     api(`/ops/gec-acilan-subeler?tarih=${t}`)
       .then((d) => { if (_guncel()) setGecAcilis(d || null); })
-      .catch(() => setGecAcilis(null));
+      .catch(() => { if (_guncel()) setGecAcilis(null); });
     api(`/ops/v2/urun-ac-akis?tarih=${t}`)
       .then((d) => { if (_guncel()) setUrunAcAkis(d || {}); })
-      .catch(() => setUrunAcAkis({}));
+      .catch(() => { if (_guncel()) setUrunAcAkis({}); });
     // ⚠️ Bar özeti GÜN ODAKLI çekilir. İki sebep (ikisi de sunucu sözleşmesi):
     // 1) `gun` verilmezse uç evo_* alanlarını HİÇ doldurmaz (operasyon_merkez_api
     //    :4127 — Evo karşılaştırması yalnız tek-gün sorgusunda yapılır).
@@ -958,34 +995,48 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     });
   };
 
+  // ⚠️ Fable: bar görünümüne eklenen bayat-cevap koruması denetim görünümüne
+  // UYGULANMAMIŞTI. `denetimYukle(barTarih)` tarihle çağrılıyor; tarih hızlı
+  // değiştirilirse eski günün ürün-uyumsuzluk/fire cevabı yeni günün ekranını
+  // ezebilir. Denetim masasında tarihle rakamın ayrışması, barda olmasından
+  // daha tehlikelidir. Aynı bilet mekanizması buraya da kuruldu.
+  const dnIstekRef = useRef(0);
   const denetimYukle = useCallback((tarih) => {
     setDnHata('');
-    const t = tarih || bugunYerelISO();
+    const t = tarih || isGunuBugun();
+    const _bilet = ++dnIstekRef.current;
+    const _guncel = () => dnIstekRef.current === _bilet;
     api(`/ops/urun-uyumsuzluk?tarih=${t}`)
-      .then((d) => setDnUyumsuz(d || {}))
-      .catch((e) => setDnHata(e?.message || ''));
+      .then((d) => { if (_guncel()) setDnUyumsuz(d || {}); })
+      .catch((e) => { if (_guncel()) setDnHata(e?.message || ''); });
     api(`/ops/fire-bildirimler?tarih=${t}`)
-      .then((d) => setDnFire(d || {}))
-      .catch(() => setDnFire({}));
+      .then((d) => { if (_guncel()) setDnFire(d || {}); })
+      // ⚠️ HATA != BOŞ: fire okunamazsa "fire yok" DENMEZ.
+      .catch((e) => { if (_guncel()) { setDnFire(null); setDnHata((h) => h || (e?.message || 'Fire bildirimleri okunamadı')); } });
     api('/ops/gider-fis-bekleyen?gun=7')
-      .then((d) => setDnFis(d || {}))
-      .catch(() => setDnFis({}));
+      .then((d) => { if (_guncel()) setDnFis(d || {}); })
+      .catch((e) => { if (_guncel()) { setDnFis(null); setDnHata((h) => h || (e?.message || 'Gider fişi listesi okunamadı')); } });
     // ŞUBE OPERASYON KALİTESİ (/ops/metrics/sube-operasyon-kalite) — v2 bu ucu
     // HİÇ çağırmıyordu. Kontrol özeti "kontroller yapıldı mı" der; bu uç
     // VARDİYA DEVRİNİN ne kadar eksik tiklendiğini ölçer — ayrı bir kalite
     // boyutu. Sunucu ayrıca "veri yetersiz" durumunu açıkça bildiriyor.
     api('/ops/metrics/sube-operasyon-kalite?gun=30')
-      .then((d) => setOpKalite(d || null))
-      .catch(() => setOpKalite(null));
+      .then((d) => { if (_guncel()) setOpKalite(d || null); })
+      .catch(() => { if (_guncel()) setOpKalite(null); });
     // Personel metriklerinin şube kırılımı (soru 6/9)
     api('/ops/personel-metrik-sube?gun=30')
-      .then((d) => setOpPersonelSube(d || null))
-      .catch(() => setOpPersonelSube(null));
+      .then((d) => { if (_guncel()) setOpPersonelSube(d || null); })
+      .catch(() => { if (_guncel()) setOpPersonelSube(null); });
     api('/ops/kontrol-ozet')
-      .then((d) => setDnKontrol(d || {}))
-      .catch(() => setDnKontrol({}));
+      .then((d) => { if (_guncel()) setDnKontrol(d || {}); })
+      .catch((e) => { if (_guncel()) { setDnKontrol(null); setDnHata((h) => h || (e?.message || 'Kontrol özeti okunamadı')); } });
     api('/ops/stok-kayip-analiz?gun=45')
-      .then((d) => setDnKayip(d || {}))
+      .then((d) => {
+        // Sunucu iş günü sınırını KENDİSİ söylüyor — ekran onu varsaymaz,
+        // ondan öğrenir (kural iki yerde ayrı ayrı yaşamasın).
+        if (d && d.is_gunu_siniri_saat != null) isGunuSiniriAyarla(d.is_gunu_siniri_saat);
+        setDnKayip(d || {});
+      })
       .catch(() => setDnKayip({}));
   }, []);
 
@@ -1225,7 +1276,7 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
   const [ymTtl, setYmTtl] = useState(72);
   // Kapanış geri alma formu — İŞLETME PIN'i zorunlu (sunucu doğrular)
   const [kgSube, setKgSube] = useState('');
-  const [kgTarih, setKgTarih] = useState(bugunYerelISO());
+  const [kgTarih, setKgTarih] = useState(isGunuBugun());
   const [kgSebep, setKgSebep] = useState('');
   const [kgPin, setKgPin] = useState('');
 
@@ -2841,7 +2892,12 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
             })}
             onSatir={({ _r }) => setUzModal({
               tip: 'sevkiyat', kayit: _r,
-              adet: String(sayi(_r.kabul_adet ?? _r.kabul_edilen)),
+              // ⚠️ Fable: tablo Kabul sütununu `uzKabulAdet()` ile okurken,
+              // satıra tıklayınca açılan modalın ÖN DOLGUSU ham alanlardan
+              // okuyordu. Yardımcı zaten alan adı değişkenliği için var;
+              // baypas edilirse tablo "Kabul 7" derken modal "0" ile açılır
+              // ve sahip onaylarsa talep+tahsis 0'a eşitlenir.
+              adet: (() => { const k = uzKabulAdet(_r); return k == null ? '' : String(k); })(),
               notu: '',
             })}
           />
@@ -3080,7 +3136,20 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
                     <div style={{ fontSize: 12, color: R.not2, marginBottom: 14 }}>
                       Gönderilen <b style={{ fontFamily: F.mono }}>{gon == null ? 'ölçülemedi' : gon}</b> ·
                       Kabul <b style={{ fontFamily: F.mono }}>{kab}</b> ·
-                      Fark <b style={{ fontFamily: F.mono, color: R.amber }}>{gon - kab}</b>
+                      {/* ⚠️ KARARIN VERİLDİĞİ SATIR (Fable, 2026-08-27):
+                          burada `gon - kab` diye EKRAN KENDİ ARİTMETİĞİNİ
+                          kuruyordu. Üstelik bu turda `gon`/`kab`ı null
+                          dönebilir yaptığım için JS'te `null - 5 = -5` olup
+                          aynı satırda hem "Gönderilen ölçülemedi" hem
+                          "Fark −5" yazabiliyordu — uydurma bir rakamla
+                          uzlaşma kararı. Fark artık tablonun kullandığı
+                          TEK üreticiden (`uzFarkAdet`) geliyor. */}
+                      Fark <b style={{ fontFamily: F.mono, color: R.amber }}>{
+                        (() => {
+                          const f = uzFarkAdet(m.kayit);
+                          return f == null ? 'ölçülemedi' : (f > 0 ? `+${f}` : String(f));
+                        })()
+                      }</b>
                     </div>
                     <label style={opsEtiket}>Uzlaşma adedi</label>
                     <input value={m.adet} inputMode="numeric" autoFocus
@@ -4630,7 +4699,9 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     return (
       <>
         <KpiSeridi kpiler={[
-          { etiket: 'Açılan şube', deger: `${acilanSube} / ${acilisSatir.length}`, alt: barTarih === bugunYerelISO() ? 'bugün' : barTarih, renk: acilanSube === acilisSatir.length && acilisSatir.length ? R.yesil : R.amber },
+          // ⚠️ "bugün" etiketi artık İŞ GÜNÜNE göre; gece penceresindeyse
+          // takvimle iş gününün ayrıştığı SÖYLENİYOR.
+          { etiket: 'Açılan şube', deger: `${acilanSube} / ${acilisSatir.length}`, alt: barTarih === isGunuBugun() ? (isGunuKaymasiVar() ? 'bugün (iş günü — takvim yarını gösteriyor)' : 'bugün') : barTarih, renk: acilanSube === acilisSatir.length && acilisSatir.length ? R.yesil : R.amber },
           { etiket: 'Kapanan şube', deger: `${kapananSube} / ${kapanisSatir.length}`, alt: kapananSube < kapanisSatir.length ? 'kapanış bekleniyor' : 'tamamlandı', renk: kapananSube === kapanisSatir.length && kapanisSatir.length ? R.yesil : R.amber },
           // ══════════════════════════════════════════════════════════════
           // 🔴 SAHTE SAKİNLİK — canlı gözlem 2026-08-27
@@ -4676,14 +4747,25 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
               : taslakBekleyen ? `${taslakBekleyen} taslak onay bekliyor` : 'tamamlandı',
             renk: eksikCiro ? R.kirmizi : taslakBekleyen ? R.amber : R.yesil,
           },
-          {
-            etiket: 'Nakit Δ',
-            deger: kasaFarkli.length ? String(kasaFarkli.length) : '0',
-            alt: kasaFarkli.length
-              ? (kasaAcikToplam > 0 ? `${tl(kasaAcikToplam)} kasa açığı` : 'fark var, açık yok')
-              : kapananSube ? 'denklem tutuyor' : 'kapanış bekleniyor',
-            renk: kasaFarkli.length ? R.kirmizi : R.yesil,
-          },
+          // ⚠️ Fable: "Açılış farkı" kartında düzeltilen SAHTE SAKİNLİK'in
+          // kardeşi burada duruyordu. 4 şubenin 1'i kapanmışken bile fark
+          // yoksa kart YEŞİL "denklem tutuyor" diyordu; hiç kapanmamışken de
+          // yeşildi. Ölçülmemiş şube "tutuyor" sayılamaz — hiç tartılmamıştır.
+          (() => {
+            const kapanmayan = Math.max(0, kapanisSatir.length - kapananSube);
+            const temiz = !kasaFarkli.length && kapananSube > 0 && kapanmayan === 0;
+            return {
+              etiket: 'Nakit Δ',
+              deger: kasaFarkli.length ? String(kasaFarkli.length) : '0',
+              alt: [
+                kasaFarkli.length
+                  ? (kasaAcikToplam > 0 ? `${tl(kasaAcikToplam)} kasa açığı` : 'fark var, açık yok')
+                  : (kapananSube ? 'kapanan şubelerde denklem tutuyor' : 'hiçbir şube kapanmadı'),
+                kapanmayan ? `⚠ ${kapanmayan} şube henüz kapanmadı (${kapananSube}/${kapanisSatir.length})` : null,
+              ].filter(Boolean).join(' · '),
+              renk: kasaFarkli.length ? R.kirmizi : (temiz ? R.yesil : R.amber),
+            };
+          })(),
         ]} />
 
         {/* gün gezgini + alt sekmeler */}
@@ -5739,6 +5821,16 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
             ne kadar eksik tiklendiğini + not gönderme sıklığını + sipariş
             çevrim süresini ölçer. Sunucu "veri yetersiz" durumunu ayrıca
             bildiriyor — sıfır ile ölçülemedi karıştırılmasın. */}
+        {/* ⚠️ Fable: `opKalite` null ise bu sekme HİÇBİR ŞEY çizmiyordu — ne
+            hata, ne yükleniyor, ne boş durum. Sessiz beyaz alan, sahip için
+            "kontrol edilecek bir şey yok" diye okunur. Komşu "alarm" sekmesi
+            bu üç durumu doğru ayırıyordu; burada yoktu. */}
+        {dnSekme === 'kontrol' && !opKalite && (
+          dnHata
+            ? <HataBandi mesaj={dnHata} onTekrar={() => denetimYukle(barTarih)} />
+            : <BosDurum baslik="Kontrol özeti okunamadı"
+                metin="Şube operasyon kalitesi verisi gelmedi. Bu 'sorun yok' demek değildir — ölçüm alınamadı. Yenilemeyi deneyin." />
+        )}
         {dnSekme === 'kontrol' && opKalite && (() => {
           const vk = opKalite.veri_kalite || {};
           const vardiyaOran = opKalite.vardiya_eksik_oran;
@@ -6384,6 +6476,27 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
                   {/* 🗂 KATALOG ÖNERİLERİ — "esp" → Espresso; tıkla = o ürünün
                       tarihçesi (Atalay cari dosyası deseninin ürün hâli).
                       Serbest arama da yaşıyor: öneri seçmek zorunlu değil. */}
+                  {/* ⚠️ Yeni hata durumu SESSİZ KALMAZ: katalog okunamadıysa
+                      kullanıcı bunu görür ve tekrar deneyebilir. Aksi hâlde
+                      "öneri yok" sanmaya devam ederdi — düzeltmenin amacı tam
+                      da bu ayrımı görünür kılmaktı. */}
+                  {ugKatalogHata && (
+                    <div style={{
+                      marginTop: 8, padding: '9px 12px', borderRadius: 10,
+                      background: `${R.amber}14`, border: `1px solid ${R.amber}44`,
+                      fontSize: 11.5, color: R.amber, display: 'flex', gap: 10, alignItems: 'center',
+                    }}>
+                      <span>⚠ Ürün kataloğu okunamadı — bu "eşleşen ürün yok" demek DEĞİL.</span>
+                      <button
+                        onClick={() => setUgKatalogHata('')}
+                        style={{
+                          marginLeft: 'auto', padding: '0 14px', minHeight: 34, borderRadius: 9,
+                          border: `1px solid ${R.bakir}66`, background: 'rgba(217,154,78,.14)',
+                          color: R.bakirAcik, fontSize: 11.5, fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer',
+                        }}
+                      >Tekrar dene</button>
+                    </div>
+                  )}
                   {ugListeAcik && ugSorgu.trim().length >= 2 && Array.isArray(ugKatalog) && (() => {
                     const q = ugKucuk(ugSorgu.trim());
                     const esler = ugKatalog
