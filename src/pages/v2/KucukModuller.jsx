@@ -1348,8 +1348,24 @@ export function RaporModulu({ gorunum, onCekmece, onKopru, onToast, defterHedef 
     // net/CİRO kullanıyordu (gelir≠ciro ise KPI satırlarla uzlaşmıyordu). Aynı payda.
     const toplamGelir = trend.reduce((s, t) => s + sayi(t.gelir), 0);
     const marj = (t) => (sayi(t.gelir) ? (sayi(t.net) / sayi(t.gelir)) * 100 : 0);
-    const enIyi = trend.reduce((a, b) => (marj(a) >= marj(b) ? a : b));
-    const enZayif = trend.reduce((a, b) => (marj(a) <= marj(b) ? a : b));
+    // ══════════════════════════════════════════════════════════════════════
+    // 🔴 DEVAM EDEN AY, BİTEN AYLARLA KIYASLANIYORDU — 2026-08-27
+    // ══════════════════════════════════════════════════════════════════════
+    // Ekran "En zayıf ay: Ağu · marj %−39,5" diyordu. Ama Ağustos BİTMEMİŞTİ:
+    // ayın geliri henüz birikirken giderin büyük kalemleri (kart ödemesi
+    // 780.846, borç taksiti 440.893) çoktan çıkmıştı. Yarım ayın marjını tam
+    // ayların marjıyla yarıştırmak, bir koşucuyu yarı yolda tartmaktır.
+    // Sonuç sistematik ve tek yönlü bir yanlış alarmdı: içinde bulunulan ay
+    // NEREDEYSE HER ZAMAN "en zayıf" çıkar.
+    // ⚠️ AY GİZLENMİYOR: tabloda ve "N ay ciro" toplamında yerinde duruyor;
+    // yalnız EN İYİ / EN ZAYIF yarışına sokulmuyor ve bu SÖYLENİYOR.
+    // ⚠️ Tek tam ay bile yoksa yarış hiç kurulmaz (uydurma şampiyon yok).
+    const _buAyKisa = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
+    const bitenAylar = trend.filter((t) => String(t.ay || '') !== _buAyKisa);
+    const suranAy = trend.find((t) => String(t.ay || '') === _buAyKisa) || null;
+    const yarisEvreni = bitenAylar.length ? bitenAylar : [];
+    const enIyi = yarisEvreni.length ? yarisEvreni.reduce((a, b) => (marj(a) >= marj(b) ? a : b)) : null;
+    const enZayif = yarisEvreni.length ? yarisEvreni.reduce((a, b) => (marj(a) <= marj(b) ? a : b)) : null;
     // ── DÖNEM MÜHRÜ — tek yönlü kapı, açma ucu YOK ──────────────────────────
     const muhurlu = !!muhurVeri?.muhur?.muhurlu;
     const aySecenek = [...trend].slice(-13).reverse().map((t) => t.ay);
@@ -1509,11 +1525,61 @@ export function RaporModulu({ gorunum, onCekmece, onKopru, onToast, defterHedef 
             // Kâr marjı sanılıp menüye/fiyata karar verilirse yanlış olur.
             { etiket: 'Nakit marjı (kasa)', deger: yuzde(kpiR.net_kar_marji), alt: 'kâr değil — gerçek kâr: Maliyet', renk: sayi(kpiR.net_kar_marji) >= 15 ? R.yesil : sayi(kpiR.net_kar_marji) >= 8 ? R.amber : R.kirmizi },
             { etiket: 'Gider / ciro', deger: yuzde(kpiR.gider_ciro_orani), alt: 'ne kadarı gidere gitti', renk: sayi(kpiR.gider_ciro_orani) > 85 ? R.kirmizi : R.krem },
-            { etiket: 'POS kesintisi', deger: yuzde(kpiR.pos_yanan_orani), alt: sayi(kpiR.pos_kesinti_toplam) ? `${fmt(sayi(kpiR.pos_kesinti_toplam))} yandı` : 'bankaya giden pay', renk: R.amber },
-            { etiket: 'Kasa kaç gün dayanır', deger: kpiR.runway_gun != null ? `${sayi(kpiR.runway_gun)} gün` : '—', alt: `ay sonu kasa ${fmt(sayi(kpiR.bitis_kasa))}`, renk: sayi(kpiR.runway_gun) < 30 ? R.kirmizi : R.yesil },
+            // 🔴 SAHTE SIFIR (2026-08-27): ekran «POS kesintisi %0,0» yazıyordu.
+            // Ama o ay POS cirosu 737.970 ₺ idi — bankanın komisyon almadığı
+            // bir POS cirosu yoktur. Yani 0 bir ÖLÇÜM değil, ÖLÇÜLEMEMİŞ
+            // olmanın görüntüsüydü. Üstelik kardeş ekran (Şube Karnesi)
+            // aynı dönem için %1,2 diyordu — iki ekran, iki cevap.
+            // ⚠️ POS cirosu VARKEN kesinti 0 ise bu «komisyon yok» değil
+            // «kesinti kaydı girilmemiş» demektir; öyle yazılır (HATA ≠ BOŞ).
+            (() => {
+              const kesinti = sayi(kpiR.pos_kesinti_toplam);
+              const posCiro = sayi(ozetR.ciro_pos);
+              const olculemedi = kesinti <= 0 && posCiro > 0;
+              return {
+                etiket: 'POS kesintisi',
+                deger: olculemedi ? '—' : yuzde(kpiR.pos_yanan_orani),
+                alt: olculemedi
+                  ? `⚠ ${fmt(posCiro)} POS cirosu var, kesinti kaydı yok`
+                  : (kesinti ? `${fmt(kesinti)} yandı` : 'bankaya giden pay'),
+                renk: olculemedi ? R.not3 : R.amber,
+              };
+            })(),
+            // 🔴 ÜÇ EKRAN, ÜÇ CEVAP (2026-08-27 ölçümü):
+            //   RAPOR 26 gün · PANEL 24 gün · BAKIŞ 12–24 gün
+            // Üçü de "kaç gün dayanır" diyordu ama üçü farklı şey ölçüyordu:
+            //   RAPOR  = AY SONU kasa ÷ BU AYIN gider hızı (dönem fotoğrafı)
+            //   PANEL  = kasa defteri ÷ günlük yük (anlık)
+            //   BAKIŞ  = alt uç YALNIZ DOĞRULANMIŞ nakitten (kötümser çıpa)
+            // Sahip için hepsi aynı soruydu ve üç cevap güveni bitiriyordu.
+            // ⚠️ SAYI DEĞİŞTİRİLMEDİ — bu ekranın hesabı kendi bağlamında
+            // DOĞRU (dönem raporu ay hızını ölçer). Değişen şey: HANGİ HESAP
+            // olduğunun yazılması ve en kötümser çıpanın nerede olduğunun
+            // söylenmesi. Aynı kelimeye üç sayı verilecekse, hangisinin ne
+            // olduğu YAZILMAK ZORUNDADIR.
+            {
+              etiket: 'Kasa kaç gün dayanır',
+              deger: kpiR.runway_gun != null ? `${sayi(kpiR.runway_gun)} gün` : '—',
+              alt: kpiR.runway_gun != null
+                ? `bu ayın gider hızıyla · kasa ${fmt(sayi(kpiR.bitis_kasa))}`
+                : 'hesaplanamadı',
+              renk: kpiR.runway_gun == null ? R.not3
+                : sayi(kpiR.runway_gun) < 30 ? R.kirmizi : R.yesil,
+            },
           ]} />
         )}
 
+        {/* ⚠️ AYNI KELİME, FARKLI HESAP — sahip üç ekranda üç sayı görüyordu.
+            Gizlemek yerine FARKIN NE OLDUĞU yazılır; hangisine bakacağını
+            bilen sahip, üç sayıyı da doğru okur. */}
+        {kpiR?.runway_gun != null && (
+          <div style={{ fontSize: 11.5, color: R.not2, margin: '-6px 2px 12px', lineHeight: 1.6 }}>
+            ℹ «Kaç gün dayanır» burada <b style={{ color: R.not }}>dönem hesabıdır</b> (ay sonu kasa ÷ bu ayın
+            gider hızı). Anlık hâli Panel’de, en <b style={{ color: R.not }}>kötümser</b> hâli — yalnız doğrulanmış
+            nakitten — Bakış’tadır. Üçü farklı soruya cevap verir; ödeme kararında <b style={{ color: R.not }}>en
+            kötümser olanı</b> esas alın.
+          </div>
+        )}
         {(sayi(den?.kasa?.acik_tl) > 0 || sayi(den?.kasa?.fazla_tl) > 0 || sayi(den?.uyumsuzluk?.acik_adet) > 0 || sayi(den?.fire?.toplam_bildirim) > 0) && (
           <div style={{ ...kartYuzey, padding: '16px 19px', marginBottom: 14 }}>
             <div style={{ fontFamily: F.baslik, fontSize: 15, fontWeight: 600, marginBottom: 11 }}>
@@ -1619,12 +1685,24 @@ export function RaporModulu({ gorunum, onCekmece, onKopru, onToast, defterHedef 
         <KpiSeridi kpiler={[
           { etiket: `${trend.length} ay ciro`, deger: fmt(toplamCiro), alt: `${trend[0].ay_kisa} – ${son.ay_kisa}` },
           { etiket: `${trend.length} ay net`, deger: fmt(toplamNet), alt: toplamGelir ? `ortalama marj %${trSayi((toplamNet / toplamGelir) * 100)}` : '—', renk: toplamNet >= 0 ? R.yesil : R.kirmizi },
-          { etiket: 'En iyi ay', deger: enIyi.ay_kisa, alt: `marj %${trSayi(marj(enIyi))}`, renk: R.yesil },
-          { etiket: 'En zayıf ay', deger: enZayif.ay_kisa, alt: `marj %${trSayi(marj(enZayif))}`, renk: R.kirmizi },
+          {
+            etiket: 'En iyi ay',
+            deger: enIyi ? enIyi.ay_kisa : '—',
+            alt: enIyi ? `marj %${trSayi(marj(enIyi))} · tamamlanmış aylar` : 'henüz tamamlanmış ay yok',
+            renk: enIyi ? R.yesil : R.not3,
+          },
+          {
+            etiket: 'En zayıf ay',
+            deger: enZayif ? enZayif.ay_kisa : '—',
+            alt: enZayif ? `marj %${trSayi(marj(enZayif))} · tamamlanmış aylar` : 'henüz tamamlanmış ay yok',
+            renk: enZayif ? R.kirmizi : R.not3,
+          },
         ]} />
         <Tablo
           baslik={`Aylık rapor · son ${trend.length} ay`}
-          not="satıra tıkla → ay kırılımı"
+          not={suranAy
+            ? `satıra tıkla → ay kırılımı · ${suranAy.ay_kisa} SÜRÜYOR — en iyi/en zayıf yarışına girmez (yarım ay, tam aylarla kıyaslanmaz)`
+            : 'satıra tıkla → ay kırılımı'}
           kolonlar={[
             { ad: 'Ay' }, { ad: 'Ciro', sag: true }, { ad: 'Gelir', sag: true },
             { ad: 'Gider', sag: true }, { ad: 'Net', sag: true }, { ad: 'Marj', sag: true },
@@ -1712,15 +1790,96 @@ export function RaporModulu({ gorunum, onCekmece, onKopru, onToast, defterHedef 
   );
   const gelir = sayi(ozet.toplam_gelir) || satir.filter(r => sayi(r.tutar) > 0).reduce((s, r) => s + sayi(r.tutar), 0);
   const gider = sayi(ozet.toplam_gider) || satir.filter(r => sayi(r.tutar) < 0).reduce((s, r) => s + Math.abs(sayi(r.tutar)), 0);
+
+  // ══════════════════════════════════════════════════════════════════════
+  // 🔴 "GİREN" GELİR DEĞİLDİR — 2026-08-27 canlı ölçüm
+  // ══════════════════════════════════════════════════════════════════════
+  // Bu sekme "Giren 1.422.799 ₺" diyordu; komşu sekme (Aylık Rapor) aynı ay
+  // için "Gelir 1.378.549 ₺". Sahip iki sekmeyi yan yana açtığında hangisinin
+  // doğru olduğunu bilemiyordu. İkisi de DOĞRUYDU — farklı şeyi sayıyorlardı,
+  // ama ikisi de aynı kelimeyi ("giren/gelir") kullanıyordu.
+  //
+  // Ağustos 2026 dökümü (ölçüldü, uyduruk değil):
+  //   CIRO                 +959.217   ← gerçek satış
+  //   DIS_KAYNAK           +225.032   ← gerçek dış gelir
+  //   KASA_TESLIM_GIRIS    +194.300 ┐ şubeden merkeze
+  //   KASA_TESLIM_CIKIS    −194.300 ┘ AYNI PARA, iki kez sayılıyor
+  //   ANLIK_GIDER_IPTAL     +44.250   ← iptal edilen giderin geri dönüşü
+  //   → dışarıdan gerçekten giren = 959.217 + 225.032 = 1.184.249 ✓
+  //
+  // ⚠️ SATIR SİLİNMEDİ: defter HAM kayıttır, transfer de iptal de gerçek
+  // olaydır ve defterde durmalıdır (ham veri kaybolmaz). Değişen tek şey,
+  // toplamın NE OLDUĞUNUN söylenmesi.
+  // ⚠️ ÇİFT SAYIM (double counting) muhasebenin en klasik tuzağıdır: kendi
+  // cebinden kendi cebine geçen para hem "giren" hem "çıkan" olur ve ciroyu
+  // olduğundan büyük gösterir. 194.300 ₺ burada tam bunu yapıyordu.
+  const defterAyrim = (() => {
+    if (!satir.length) return null;
+    const tur = (r) => String(r.islem_turu || '').toUpperCase();
+    let icTransfer = 0;   // kendi kasaları arası — gelir DEĞİL
+    let iade = 0;         // iptal/iade — negatif gider, gelir DEĞİL
+    let disGelir = 0;     // gerçekten dışarıdan giren
+    satir.forEach((r) => {
+      const t = sayi(r.tutar);
+      if (t <= 0) return;
+      const k = tur(r);
+      if (k.includes('KASA_TESLIM')) icTransfer += t;
+      else if (k.includes('IPTAL') || k.includes('IADE')) iade += t;
+      else disGelir += t;
+    });
+    if (icTransfer <= 0 && iade <= 0) return null;   // ayrım yoksa bant çizilmez
+    return { icTransfer, iade, disGelir };
+  })();
   return (
     <>
       {donemGezgini}
       <KpiSeridi kpiler={[
         { etiket: 'Kayıt', deger: String(satir.length), alt: ayEtiket },
-        { etiket: 'Giren', deger: fmt(gelir), alt: 'kasa girişi', renk: R.yesil },
+        // ⚠️ ETİKET ARTIK YALAN SÖYLEMİYOR: "kasa girişi" doğruydu ama sahip
+        // onu GELİR diye okuyordu. Ne içerdiği alt yazıda duruyor.
+        {
+          etiket: 'Giren', deger: fmt(gelir), renk: R.yesil,
+          alt: defterAyrim ? 'kasa girişi · transfer + iade dâhil' : 'kasa girişi',
+        },
         { etiket: 'Çıkan', deger: fmt(gider), alt: 'kasa çıkışı', renk: R.kirmizi },
         { etiket: 'Net', deger: fmt(gelir - gider), alt: ayEtiket, renk: gelir - gider >= 0 ? R.yesil : R.kirmizi },
+        // 🎯 ASIL SAYI: dışarıdan gerçekten giren para. Sahip "bu ay ne
+        // kazandım" diye sorduğunda cevabı budur; yukarıdaki "Giren" değil.
+        ...(defterAyrim ? [{
+          etiket: 'Dışarıdan giren', deger: fmt(defterAyrim.disGelir),
+          alt: 'transfer ve iade hariç', renk: R.krem,
+        }] : []),
       ]} />
+      {/* 🧮 AYRIŞTIRMA — "Giren" niye "Gelir"den büyük?
+          Bu bant iki sekme arasındaki farkı SAHİBİN DİLİYLE kapatır; yoksa
+          sahip iki sayıyı görüp hangisine güveneceğini bilemez ve ikisine de
+          güvenmemeye başlar (en pahalı sonuç). */}
+      {defterAyrim && (
+        <div style={{
+          ...kartYuzey, padding: '13px 17px', marginBottom: 12,
+          borderLeft: `3px solid ${R.bakir}`, fontSize: 12.5, color: R.metin2, lineHeight: 1.7,
+        }}>
+          <b style={{ color: R.krem }}>«Giren» gelir değildir.</b> {ayEtiket} ayında kasaya giren{' '}
+          <b style={{ fontFamily: F.mono, color: R.krem }}>{fmt(gelir)}</b>’nin içinde:
+          <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', marginTop: 7 }}>
+            {defterAyrim.icTransfer > 0 && (
+              <span>🔄 <b style={{ fontFamily: F.mono, color: R.bakirAcik }}>{fmt(defterAyrim.icTransfer)}</b>
+                <span style={{ color: R.not2 }}> kendi kasaların arası transfer</span></span>
+            )}
+            {defterAyrim.iade > 0 && (
+              <span>↩ <b style={{ fontFamily: F.mono, color: R.bakirAcik }}>{fmt(defterAyrim.iade)}</b>
+                <span style={{ color: R.not2 }}> iptal edilen giderin geri dönüşü</span></span>
+            )}
+            <span>🎯 <b style={{ fontFamily: F.mono, color: R.krem }}>{fmt(defterAyrim.disGelir)}</b>
+              <span style={{ color: R.not2 }}> dışarıdan gerçekten giren</span></span>
+          </div>
+          <div style={{ fontSize: 11, color: R.not3, marginTop: 8 }}>
+            ⚠️ Kendi cebinden kendi cebine geçen para hem «giren» hem «çıkan» sayılır ve
+            ciroyu olduğundan büyük gösterir. Satırlar defterde duruyor — silinmedi, yalnız
+            toplamın ne olduğu yazıldı.
+          </div>
+        </div>
+      )}
       {/* 🔵 EVV-RAP-N3 (2026-08-13): /ledger limit=300 + tablo 150'ye kırpıyordu →
           denetim/mutabakat KISMİ defter üzerinde yapılıyordu. Tabloda 300'ü göster;
           fetch 300 tavanına ulaştıysa "defter eksik olabilir" uyar.
