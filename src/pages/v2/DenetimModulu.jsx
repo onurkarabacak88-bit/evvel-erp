@@ -170,11 +170,40 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
   const [topluSor, setTopluSor] = useState(false);
   const [topluMesgul, setTopluMesgul] = useState(false);
 
+  // 🔴 YAPISAL KUSUR (2026-08-27, canlı ölçüm) — "BUGÜNKÜ BULGULAR" HER GÜN BOŞ.
+  // Motor gün kapandıktan sonra "dün"ü işler; bugünün raporu gece koşusuna
+  // kadar VAR OLAMAZ. Ekran ise her açılışta `tarih=bugün` istiyordu ve
+  // "0 anomali · 5 analiz edilmedi" yazıyordu — modülün açılış sayfası
+  // yapısal olarak boştu ve arıza gibi görünüyordu.
+  // Canlı kanıt: 27 Ağu → 0/5 koşan · 26 Ağu → 3/5 koşan, 10 ANOMALİ
+  // · 25 Ağu → 4 anomali. Yani sahibin göremediği 14 gerçek bulgu vardı.
+  // ⚠️ ÇÖZÜM "bugünü gizlemek" DEĞİL: bugün gerçekten ölçülmediyse bu
+  // SÖYLENİR, ama ekran boş bırakılmaz — motorun SON TAM GÜNÜ gösterilir ve
+  // hangi güne bakıldığı açıkça yazılır (boş alanı doldur + hata ≠ boş).
+  // ⚠️ En fazla 3 gün geriye bakar; hiçbiri koşmamışsa bugünün boş raporu
+  // gösterilir ve "motor hiç koşmamış" hâli görünür kalır (sahte doldurma yok).
+  const [raporGun, setRaporGun] = useState(null);      // gösterilen gün (ISO)
+  const [raporBugunMu, setRaporBugunMu] = useState(true);
   const truthYukle = useCallback(() => {
     setTruthHata('');
-    api(`/ops/truth/gunluk-rapor?tarih=${bugunISO()}`)
-      .then((d) => setRapor(d || {}))
-      .catch((e) => setTruthHata(e?.message || ''));
+    const gunEkleISO = (iso, fark) => {
+      const d = new Date(`${iso}T00:00:00Z`);
+      d.setUTCDate(d.getUTCDate() + fark);
+      return d.toISOString().slice(0, 10);
+    };
+    const kosanVar = (d) => (Array.isArray(d?.subeler) ? d.subeler : [])
+      .some((x) => x.calistirildi !== false && x.motor_aktif !== false);
+    const dene = (iso, kalan) => api(`/ops/truth/gunluk-rapor?tarih=${iso}`)
+      .then((d) => {
+        if (kosanVar(d) || kalan <= 0) {
+          setRapor(d || {});
+          setRaporGun(iso);
+          setRaporBugunMu(iso === bugunISO());
+          return null;
+        }
+        return dene(gunEkleISO(iso, -1), kalan - 1);
+      });
+    dene(bugunISO(), 3).catch((e) => setTruthHata(e?.message || ''));
     api('/ops/truth/durum')
       .then((d) => setDurum(d || {}))
       // 🔴 EVV-DEN-N4 (2026-08-13) FAKE-GREEN: durum okuması DÜŞÜNCE {} olup motorlar
@@ -808,6 +837,20 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
 
     return (
       <>
+        {/* ⚠️ HANGİ GÜNE BAKIYORUZ — sayıdan ÖNCE söylenir. Ekranın adı
+            "Bugünkü Bulgular" ama motor gün kapanmadan bakamaz; bu ikisi
+            arasındaki farkı sahibin kafasında çözmesini beklemek yerine
+            ekran kendisi söyler. */}
+        {raporGun && !raporBugunMu && (
+          <div style={{
+            ...kartYuzey, padding: '11px 17px', marginBottom: 12,
+            borderLeft: `3px solid ${R.bakir}`, fontSize: 12.5, color: R.metin2, lineHeight: 1.6,
+          }}>
+            📅 <b style={{ color: R.krem }}>{tarihKisa(raporGun)} bulguları</b> gösteriliyor —
+            motor gün kapandıktan sonra bakar, bugünün raporu gece koşusunda oluşur.
+            <span style={{ color: R.not3 }}> Bu, «bugün sorun yok» demek değil; «bugün henüz bakılmadı» demek.</span>
+          </div>
+        )}
         {motorDurumu && (
           <div style={{
             ...kartYuzey, padding: '12px 17px', marginBottom: 13,
@@ -907,7 +950,12 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
           { etiket: 'Uyumlu şube', deger: `${uyumlu.length} / ${olculen.length}`,
             alt: olculmeyen.length ? `ölçülen içinde · ${olculmeyen.map((s) => s.sube_ad).join(', ')} hariç` : 'ana tanı UYUMLU',
             renk: olculen.length ? R.yesil : R.not },
-          { etiket: 'Tarih', deger: tarihKisa(rapor.tarih), alt: 'gece koşusu + gün içi' },
+          {
+            etiket: 'Tarih',
+            deger: tarihKisa(raporGun || rapor.tarih),
+            alt: raporBugunMu ? 'gece koşusu + gün içi' : 'motorun son tam günü',
+            renk: raporBugunMu ? undefined : R.bakirAcik,
+          },
         ]} />
         {/* DUYU 3/6 — bulgu yaşam döngüsü: işaret defterinden türeyen ölçümler */}
         {/* 🚪 CANLI GEZİNTİ (2026-08-27) — KARAR DEFTERİ KPI'LARININ KANITI
