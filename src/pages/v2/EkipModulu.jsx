@@ -3224,17 +3224,23 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
           { etiket: 'Avans mahsubu', deger: fmt(toplamAvans), alt: 'bu ay maaştan düşülecek', renk: R.krem },
           {
             etiket: 'Onay bekleyen avans',
-            deger: avansBekleyen ? String(avansBekleyen) : '—',
-            alt: avansBekleyen ? `${fmt(sayi(avans?.bekleyen_tutar))} · QR talebi` : 'bekleyen talep yok',
-            renk: avansBekleyen ? R.amber : R.yesil,
+            // ⚠️ Fable: `avans` null ise (uç düştü) sayaç 0 olup kart "bekleyen
+            // talep yok" diye YEŞİL yanıyordu. Onaylanmış ama parası verilmemiş
+            // bir avans görünmez olurdu. Uç düştüyse yeşil onay verilmez.
+            deger: avans == null ? '—' : String(avansBekleyen),
+            alt: avans == null ? '⚠ avans verisi okunamadı — "talep yok" DEMEK DEĞİL'
+              : (avansBekleyen ? `${fmt(sayi(avans?.bekleyen_tutar))} · QR talebi` : 'bekleyen talep yok'),
+            renk: avans == null ? R.not3 : (avansBekleyen ? R.amber : R.yesil),
           },
           {
             etiket: 'Teslim bekleyen',
-            deger: avansTeslimBekleyen ? String(avansTeslimBekleyen) : '—',
-            alt: avansTeslimBekleyen
-              ? `${fmt(sayi(avans?.teslim_bekleyen_tutar))} · onaylandı, para verilmedi`
-              : (sayi(avans?.bu_ay_odenen) ? `bu ay ${fmt(sayi(avans.bu_ay_odenen))} ödendi` : 'teslim bekleyen yok'),
-            renk: avansTeslimBekleyen ? R.kirmizi : R.yesil,
+            deger: avans == null ? '—' : String(avansTeslimBekleyen),
+            alt: avans == null
+              ? '⚠ avans verisi okunamadı — "teslim bekleyen yok" DEMEK DEĞİL'
+              : (avansTeslimBekleyen
+                ? `${fmt(sayi(avans?.teslim_bekleyen_tutar))} · onaylandı, para verilmedi`
+                : (sayi(avans?.bu_ay_odenen) ? `bu ay ${fmt(sayi(avans.bu_ay_odenen))} ödendi` : 'teslim bekleyen yok')),
+            renk: avans == null ? R.not3 : (avansTeslimBekleyen ? R.kirmizi : R.yesil),
           },
           { etiket: 'Fazla mesai', deger: `${trSayi(toplamFm, 0)} sa`, alt: 'bu ay toplam', renk: toplamFm > 0 ? R.kirmizi : R.krem },
         ]} />
@@ -3387,8 +3393,13 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
                   kalin: true,
                 },
                 { v: ucretMetni(b), mono: true, sag: true },
-                { v: b.fazla_mesai_saat ? `${trSayi(b.fazla_mesai_saat)} sa` : '—', mono: true, sag: true, renk: sayi(b.fazla_mesai_saat) > 8 ? R.kirmizi : R.krem },
-                { v: b.avans_mahsup ? fmt(b.avans_mahsup) : '—', mono: true, sag: true, renk: sayi(b.avans_mahsup) ? R.amber : R.not },
+                // ⚠️ FALSY-ZERO (Codex + Fable, 2026-08-27): bordroda 0 sa fazla
+                // mesai ve 0 ₺ avans MEŞRU değerlerdir — "temiz ay" demektir.
+                // `x ? ... : '—'` bunları "bilinmiyor"a çeviriyordu. Para
+                // ekranında ölçülmüş sıfır ile ölçülememiş olmak aynı
+                // görünemez; alan YOKSA "—", 0 ise "0".
+                { v: b.fazla_mesai_saat == null ? '—' : `${trSayi(b.fazla_mesai_saat)} sa`, mono: true, sag: true, renk: b.fazla_mesai_saat == null ? R.not3 : (sayi(b.fazla_mesai_saat) > 8 ? R.kirmizi : R.krem) },
+                { v: b.avans_mahsup == null ? '—' : fmt(b.avans_mahsup), mono: true, sag: true, renk: b.avans_mahsup == null ? R.not3 : (sayi(b.avans_mahsup) ? R.amber : R.not) },
                 { v: fmt(sayi(b.hesaplanan_net)), mono: true, sag: true, kalin: true },
                 { v: asamaAd(b.durum), rozet: ASAMA_RENK[b.durum] || ASAMA_RENK[asamaNorm(b.durum)] || R.amber },
               ],
@@ -3419,13 +3430,15 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
                     })(),
                     renk: String(b.saat_kaynagi || '').includes('varsayilan') ? R.amber : undefined,
                   },
-                  { etiket: 'Fazla mesai', deger: b.fazla_mesai_saat ? `${trSayi(b.fazla_mesai_saat)} sa` : '—', renk: sayi(b.fazla_mesai_saat) > 8 ? R.kirmizi : R.krem },
+                  { etiket: 'Fazla mesai', deger: b.fazla_mesai_saat == null ? '—' : `${trSayi(b.fazla_mesai_saat)} sa`, renk: b.fazla_mesai_saat == null ? R.not3 : (sayi(b.fazla_mesai_saat) > 8 ? R.kirmizi : R.krem) },
                 ],
                 listeBaslik: 'Kırılım',
                 satirlar: [
                   { ad: 'Avans mahsubu', detay: 'bu ay düşülen', tutar: fmt(sayi(b.avans_mahsup)) },
                   { ad: 'Mahsup devri', detay: 'sonraki aya taşan', tutar: fmt(sayi(b.mahsup_devir)) },
-                  { ad: 'Eksik gün', detay: 'devamsızlık', tutar: b.eksik_gun ? `${trSayi(b.eksik_gun, 0)} gün` : '—' },
+                  // 0 eksik gün = "hiç devamsızlık yok" — bu bir BULGUDUR,
+                  // veri yokluğu değil. Kişinin lehine olan bilgi gizlenemez.
+                  { ad: 'Eksik gün', detay: 'devamsızlık', tutar: b.eksik_gun == null ? '—' : `${trSayi(b.eksik_gun, 0)} gün` },
                   { ad: 'Manuel düzeltme', detay: b.not_aciklama || 'not yok', tutar: fmt(sayi(b.manuel_duzeltme)) },
                   // Ödeme planının KENDİ durumu — kayıt `durum`undan ayrı kavram
                   // (bordro onaylı olabilir ama para henüz çıkmamış olabilir).
@@ -3775,8 +3788,10 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
                   { v: t.ad_soyad, kalin: true },
                   { v: turAd(t.calisma_turu), renk: R.not },
                   { v: `${trSayi(t.toplam_planlanan_saat, 0)} sa`, mono: true, sag: true },
-                  { v: gec ? `${trSayi(gec, 0)} dk` : '—', mono: true, sag: true, renk: gec > 30 ? R.kirmizi : gec > 0 ? R.amber : R.not },
-                  { v: fm ? `${trSayi(fm)} sa` : '—', mono: true, sag: true, renk: fm > 8 ? R.kirmizi : R.krem },
+                  // ⚠️ 0 dk gecikme = TEMİZ KARNE. "—" ile göstermek kişinin
+                  // lehine olan kanıtı siler; sahip "ölçülmemiş" sanır.
+                  { v: t.toplam_gecikme_dk == null ? '—' : `${trSayi(gec, 0)} dk`, mono: true, sag: true, renk: t.toplam_gecikme_dk == null ? R.not3 : (gec > 30 ? R.kirmizi : gec > 0 ? R.amber : R.not) },
+                  { v: t.toplam_fazla_mesai_saat == null ? '—' : `${trSayi(fm)} sa`, mono: true, sag: true, renk: t.toplam_fazla_mesai_saat == null ? R.not3 : (fm > 8 ? R.kirmizi : R.krem) },
                   { v: netAl(t) > 0 ? fmt(netAl(t)) : '—', mono: true, sag: true, kalin: true, renk: R.bakirAcik },
                   haplar.length
                     ? {
@@ -4140,7 +4155,21 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
                   return gorunenSecili.length === gorunen.length ? [] : gorunen;
                 });
               }}
-              satirlar={bs.slice(0, 40).map(b => {
+              // ⚠️ SESSİZ ELEME — EN AĞIRI (Fable, 2026-08-27): liste 40'ta
+              // kesiliyor ve kesildiği HİÇBİR YERDE yazmıyordu. Kod içi not
+              // canlıda 96 başvuru olduğunu söylüyor — yani 56 aday görünmez.
+              // Bir adayın sessizce yok sayılması bu ekranın en ağır günahıdır:
+              // kişi başvurmuş, sistem almış, kimse görmemiş.
+              satirlar={(bs.length > 40 ? [{ _tasan: bs.length - 40 }] : []).concat(bs.slice(0, 40)).map(b => {
+                if (b._tasan) {
+                  return {
+                    id: 'bs-tasan',
+                    baslik: `⚠ ${bs.length} başvurudan ilk 40'ı gösteriliyor`,
+                    alt: `${b._tasan} başvuru listede yok — filtre daraltın ya da arşivi kullanın`,
+                    tutar: '', tier: 'uyari',
+                  };
+                }
+                return (() => {
                 const d = trKucuk(b.durum) || 'yeni';
                 const onc = sayi(b.oncelik);
                 return {
@@ -4155,6 +4184,7 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
                   tier: b.personel_id ? 'iyi' : d === 'yeni' ? 'uyari' : 'bilgi',
                   aksiyonlar: [{ ad: 'Yönet', onTikla: () => { bvGor(b); setBvModal({ tip: 'yonet', basvuru: b }); } }],
                 };
+                })();
               })}
               onAc={(r) => { bvGor(r?._b || r); setBvModal({ tip: 'yonet', basvuru: r?._b || r }); }}
             />
