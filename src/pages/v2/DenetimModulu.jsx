@@ -1745,8 +1745,10 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
               ad: 'Etiket',
               baslik: 'ETİKET (ÖĞRETMEN)',
               deger: etiketToplam == null ? '—' : String(etiketToplam),
+              // ⚠️ "kurala ulaşan" demek yanlıştı (bkz. aşağıdaki not): bu iki
+              // sayı aynı havuzun parçası değil, AYRI SORULARIN cevapları.
               alt: bagKarari == null ? 'kaynak kırılımı okunamadı'
-                : `kurala ulaşan: ${bagKarari}`,
+                : `bağ hükmü: ${bagKarari} · gerisi başka soruya ait`,
               kopuk: bagKarari != null && etiketToplam != null && etiketToplam > 0 && bagKarari <= 1,
             },
             {
@@ -1786,22 +1788,34 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
                   </React.Fragment>
                 ))}
               </div>
-              {bagKarari != null && etiketToplam > 0 && bagKarari <= 1 && (
+              {/* ⚠️ (2026-08-27) BU CÜMLE BİR KEZ YANLIŞ YAZILDI, DÜZELTİLDİ.
+                  Önce "öğretmen konuşuyor ama öğrenci duymuyor · bağlantı
+                  eksikliği" yazmıştım — yani 163 etiketin kurallara BAĞLANMASI
+                  gerektiğini ima ediyordu. Ölçtüm, YANILMIŞIM:
+                    onay/red etiketinin iliskili_ref'i  = onay_kuyrugu.id
+                    karnenin aradığı                    = duyu_olay.event_id
+                  İkisi FARKLI TABLODAN. Eşleşmemesi hata değil, DOĞRU:
+                  "bu gider meşru mu?" hükmü, "R4 kuralı bu iki olayı doğru mu
+                  bağladı?" sorusunun cevabı DEĞİLDİR. Bağlamak bir kategori
+                  hatası olurdu (doktrin 9: kanıt gücü simetrik değildir).
+                  GERÇEK durum: kural öğrenicisinin ÖĞRETMENİ YOK. */}
+              {bagKarari != null && etiketToplam > 0 && bagKarari <= 1 && bagT > 0 && (
                 <div style={{ fontSize: 12, color: R.metin2, marginTop: 11, lineHeight: 1.65 }}>
-                  ⚠ <b style={{ color: R.krem }}>Öğretmen konuşuyor ama öğrenci duymuyor.</b> Defterde{' '}
-                  <b style={{ color: R.krem }}>{etiketToplam} etiket</b> var; kural karnesi bunların yalnız{' '}
-                  <b style={{ color: R.krem }}>{bagKarari}</b> tanesini sayıyor — çünkü karne yalnız{' '}
-                  <span style={{ fontFamily: F.mono }}>kaynak=bag_karari</span> etiketini okuyor.
+                  ⚠ <b style={{ color: R.krem }}>Kural öğrenicisinin öğretmeni yok.</b> Defterdeki{' '}
+                  <b style={{ color: R.krem }}>{etiketToplam} etiket</b> başka bir soruya ait
                   {ekOK && (
-                    <> Diğer kanallar:{' '}
-                      {Object.entries(etiketKirilim.kaynaklar)
-                        .filter(([k]) => k !== 'bag_karari')
-                        .sort((x, y) => y[1] - x[1]).slice(0, 4)
-                        .map(([k, n]) => `${n}× ${k}`).join(' · ')}.
-                    </>
+                    <> ({Object.entries(etiketKirilim.kaynaklar)
+                      .filter(([k]) => k !== 'bag_karari')
+                      .sort((x, y) => y[1] - x[1]).slice(0, 3)
+                      .map(([k, n]) => `${n}× ${k}`).join(' · ')})</>
                   )}
-                  {' '}Bu bir <b>veri eksikliği değil, bağlantı eksikliği</b>: hüküm verilmiş,
-                  öğrenene iletilmemiş.
+                  {' '}— «bu kayıt meşru mu?» hükümleri. Kuralın sorduğu soru başka:
+                  «bu iki olayı <i>doğru mu</i> bağladım?». O soruya bugüne dek{' '}
+                  <b style={{ color: R.krem }}>{bagKarari}</b> kez cevap verilmiş,
+                  oysa <b style={{ color: R.krem }}>{bagT} bağ</b> kurulmuş.
+                  {' '}Bu bir bağlantı hatası <b>değil</b>: iki etiket farklı sorulara ait ve
+                  birbirinin yerine sayılamaz. Eksik olan, bağları değerlendiren öğretmen —
+                  Bağ Defteri’ndeki ✓/✗ işaretleri.
                 </div>
               )}
               {uyuyan > 0 && (
