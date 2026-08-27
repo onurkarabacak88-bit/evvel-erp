@@ -5403,15 +5403,45 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
         {dnSekme === 'uyumsuz' && (uyumsuzListe.length ? (
           <Tablo
             baslik={`Ürün uyumsuzlukları · ${tarihKisa(barTarih)}`}
-            not="formül → fark → çözüm; hüküm insanın (öneri-only)"
-            kolonlar={[{ ad: 'Şube' }, { ad: 'Tip' }, { ad: 'Ürün' }, { ad: 'Fark', sag: 1 }, { ad: 'Durum' }]}
+            not={'formül → fark → çözüm; hüküm insanın (öneri-only)'
+              + (uyumsuzListe.length > 40
+                ? ` · ⚠ ${uyumsuzListe.length} kaydın ilk 40'ı gösteriliyor`
+                : '')}
+            kolonlar={[{ ad: 'Şube' }, { ad: 'Tip' }, { ad: 'Ürün' }, { ad: 'Dün → bugün' }, { ad: 'Fark', sag: 1 }, { ad: 'Durum' }]}
             satirlar={uyumsuzListe.slice(0, 40).map((x, i) => ({
               id: x.id || `uy-${i}`,
               hucreler: [
                 { v: x.sube_adi || x.sube_ad || '—', kalin: true },
                 { v: String(x.tip || '—').replace(/_/g, ' ').toLowerCase(), renk: R.not },
                 { v: x.urun_ad || x.kalem_adi || '—' },
-                { v: String(sayi(x.fark ?? x.fark_adet)), mono: true, sag: true, kalin: true, renk: R.kirmizi },
+                // ══════════════════════════════════════════════════════════
+                // 🔴 FARK HEP 0 GÖRÜNÜYORDU — 2026-08-27, canlı kanıt
+                // ══════════════════════════════════════════════════════════
+                // Ekran `x.fark ?? x.fark_adet` okuyordu; sunucuda bu iki alan
+                // YOK. Gerçek alanlar: `efektif_fark_tl` (çözüm sonrası kalan)
+                // ve `fark_tl` (ham). İkisi de okunmayınca sayi(undefined)=0
+                // ve BÜTÜN uyumsuzluklar "Fark 0" görünüyordu.
+                // Canlı: Soda TEMA — dün kapanış 43, bugün açılış 24, Δ −19.
+                // Ekran bunu 0 diye gösteriyordu. Farkı sıfır olan bir
+                // uyumsuzluk, uyumsuzluk değildir: sahip listeye bakıp
+                // "hepsi sıfır, boş ver" der ve 19 birim kayıp görünmez.
+                // ⚠️ ALAN ADI TUZAĞI: adı `_tl` ama taşıdığı şey ADET (bardak,
+                // şişe). Bu yüzden para biçimi (fmt) UYGULANMIYOR — ₺ yazmak
+                // 19 adet sodayı 19 lira sanmaya yol açardı.
+                {
+                  v: `${sayi(x.beklenen_tl)} → ${sayi(x.gercek_tl)}`,
+                  mono: true, renk: R.not2,
+                },
+                (() => {
+                  const f = x.efektif_fark_tl != null ? x.efektif_fark_tl : x.fark_tl;
+                  if (f == null) return { v: 'ölçülemedi', sag: true, renk: R.not3 };
+                  const n = sayi(f);
+                  return {
+                    v: (n > 0 ? '+' : '') + String(n),
+                    mono: true, sag: true, kalin: true,
+                    renk: n === 0 ? R.not : R.kirmizi,
+                  };
+                })(),
                 x.cozuldu || x.durum === 'cozuldu'
                   ? { v: 'çözüldü', rozet: R.yesil }
                   : { v: 'bekliyor', rozet: R.amber },
