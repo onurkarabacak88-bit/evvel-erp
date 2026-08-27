@@ -4355,6 +4355,13 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
       teslim_edildi: { ad: 'teslim edildi', renk: R.yesil },
       iptal: { ad: 'iptal', renk: R.not3 },
       gonderilmedi: { ad: 'GÖNDERİLMEDİ', renk: R.kirmizi },
+      // ⚠️ DÜZ-DİL ETİKET (desen 7) — canlı gözlem 2026-08-27:
+      // Arşiv tablosunda durum sütunu `kabul_uyusmazlik` diye HAM VERİTABANI
+      // değeri gösteriyordu; komşu satırlar "gönderildi", "teslim edildi"
+      // derken. Haritada karşılığı olmayan durum, olduğu gibi ekrana düşüyor.
+      // Sahip kod okumaz: alt çizgili, Türkçe karaktersiz bir kelime ona
+      // sistemin bozuk olduğunu düşündürür.
+      kabul_uyusmazlik: { ad: 'kabul uyuşmazlığı', renk: R.kirmizi },
     };
     const filtrele = (g, d, a) => { arsivYukle(g, d, a); };
     const yenidenAc = async (talep) => {
