@@ -839,6 +839,26 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
   // bunu anlamasının hiçbir yolu yoktu. Her yükleme bir sıra numarası alır;
   // yalnız EN SON başlatılan yükleme state yazabilir.
   const barIstekRef = useRef(0);
+  // 🔢 SEVKİYAT UYUMSUZLUĞU — TEK OKUMA NOKTASI
+  // Alan adı sunucuda `sevk_adet`. Eski adlar emniyet ağı olarak duruyor ama
+  // ARTIK SESSİZ DEĞİL: hiçbiri yoksa null döner ve ekran "—" yazar (0 yazmaz).
+  // "Gönderilmedi" ile "okunamadı" aynı görüntüye düşemez.
+  const uzSevkAdet = (r) => {
+    const v = r?.sevk_adet ?? r?.gonderilen_adet ?? r?.gonderilen;
+    return v == null ? null : sayi(v);
+  };
+  const uzKabulAdet = (r) => {
+    const v = r?.kabul_adet ?? r?.kabul_edilen;
+    return v == null ? null : sayi(v);
+  };
+  // Fark SUNUCUNUN alanıdır; ekran kendi aritmetiğini kurmaz. Sunucu vermezse
+  // (ve iki uç da okunabiliyorsa) türetilir ve türetildiği belli olur.
+  const uzFarkAdet = (r) => {
+    if (r?.fark_adet != null) return sayi(r.fark_adet);
+    const g = uzSevkAdet(r); const k = uzKabulAdet(r);
+    return (g == null || k == null) ? null : g - k;
+  };
+
   const barYukle = useCallback((tarih) => {
     setBarHata('');
     const t = tarih || bugunYerelISO();
@@ -2753,20 +2773,24 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
         ) : (
           <Tablo
             baslik="Sevkiyat uyumsuzlukları · gönderilen ↔ kabul edilen"
-            not="satıra tıkla → uzlaştır"
             kolonlar={[{ ad: 'Şube' }, { ad: 'Kalem' }, { ad: 'Gönderilen', sag: true }, { ad: 'Kabul', sag: true }, { ad: 'Fark', sag: true }]}
+            not={sevkSatir.length > 40
+              ? `satıra tıkla → uzlaştır · ⚠ ${sevkSatir.length} uyumsuzluğun ilk 40'ı gösteriliyor (${sevkSatir.length - 40} satır listede yok)`
+              : 'satıra tıkla → uzlaştır'}
             satirlar={sevkSatir.slice(0, 40).map((r, i) => {
-              const gon = sayi(r.gonderilen_adet ?? r.gonderilen);
-              const kab = sayi(r.kabul_adet ?? r.kabul_edilen);
-              const fark = gon - kab;
+              const gon = uzSevkAdet(r);
+              const kab = uzKabulAdet(r);
+              const fark = uzFarkAdet(r);
               return {
                 id: r.stok_yolda_id || r.id || `sv-${i}`, _r: r,
                 hucreler: [
                   { v: r.sube_adi || r.hedef_sube_adi || '—', kalin: true },
                   { v: kisalt(r.kalem_adi || r.urun_adi || '—', 34) },
-                  { v: String(gon), mono: true, sag: true },
-                  { v: String(kab), mono: true, sag: true },
-                  { v: (fark > 0 ? '+' : '') + String(fark), mono: true, sag: true, kalin: true, renk: fark === 0 ? R.yesil : R.amber },
+                  { v: gon == null ? '—' : String(gon), mono: true, sag: true, renk: gon == null ? R.not3 : undefined },
+                  { v: kab == null ? '—' : String(kab), mono: true, sag: true, renk: kab == null ? R.not3 : undefined },
+                  fark == null
+                    ? { v: 'ölçülemedi', sag: true, renk: R.not3 }
+                    : { v: (fark > 0 ? '+' : '') + String(fark), mono: true, sag: true, kalin: true, renk: fark === 0 ? R.yesil : R.amber },
                 ],
               };
             })}
@@ -2950,8 +2974,11 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
             : sayfa === 'tarihce' ? 'Düzeltme tarihçesi'
             : { sevkiyat: 'Sevkiyat uzlaşması', kasa: 'Kasa uyumsuzluğunu çöz',
                 personel: 'Personel-vardiya uzlaşması', tahsis: 'Talep ↔ tahsis uzlaşması' }[m.tip];
-          const gon = sayi(m.kayit.gonderilen_adet ?? m.kayit.gonderilen);
-          const kab = sayi(m.kayit.kabul_adet ?? m.kayit.kabul_edilen);
+          // ⚠️ KARARIN VERİLDİĞİ YER: burada da yanlış alan okunuyordu, yani
+          // sahip "Gönderilen 0" görerek uzlaştırma yapıyordu. Tablo ile aynı
+          // yordam — ikisi bir daha ayrışamaz.
+          const gon = uzSevkAdet(m.kayit);
+          const kab = uzKabulAdet(m.kayit);
           return (
             <div onClick={(e) => { if (e.target === e.currentTarget && !kilit) setUzModal(null); }} style={{
               position: 'fixed', inset: 0, zIndex: 120, background: 'rgba(10,6,2,.7)',
@@ -2975,7 +3002,7 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
                       <b>{kisalt(m.kayit.kalem_adi || m.kayit.urun_adi || 'Kalem', 42)}</b>
                     </div>
                     <div style={{ fontSize: 12, color: R.not2, marginBottom: 14 }}>
-                      Gönderilen <b style={{ fontFamily: F.mono }}>{gon}</b> ·
+                      Gönderilen <b style={{ fontFamily: F.mono }}>{gon == null ? 'ölçülemedi' : gon}</b> ·
                       Kabul <b style={{ fontFamily: F.mono }}>{kab}</b> ·
                       Fark <b style={{ fontFamily: F.mono, color: R.amber }}>{gon - kab}</b>
                     </div>
