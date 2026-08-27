@@ -1008,12 +1008,20 @@ def _llm_cagir(system: str, kullanici: str, max_tokens: int = 900) -> Tuple[str,
         except Exception as e:  # noqa: BLE001
             logger.warning("beyin YEREL model hatasi (buluta dusuluyor): %s", str(e)[:120])
             _SON_LLM_HATA["mesaj"] = f"yerel model: {str(e)[:110]}"
+    # ⚠️ (2026-08-27) MODEL ADI BAYATTI: varsayılan `claude-3-5-haiku-20241022`
+    # idi — tarih damgalı, eski kuşak bir kimlik. Güncel karşılığı
+    # `claude-haiku-4-5`.
+    # ⚠️ TIER DEĞİŞTİRİLMEDİ, YALNIZ KİMLİK TAZELENDİ: projenin seçimi zaten
+    # "ucuz ve hızlı" idi; hangi modele para verileceği SAHİBİN kararıdır,
+    # benim değil. Daha güçlüsü isteniyorsa tek satır:
+    #     ANTHROPIC_BEYIN_MODEL=claude-sonnet-5   (orta)
+    #     ANTHROPIC_BEYIN_MODEL=claude-opus-5     (en iyi)
     akey = os.getenv("ANTHROPIC_API_KEY")
     if akey:
         try:
             import anthropic
             client = anthropic.Anthropic(api_key=akey)
-            model = os.getenv("ANTHROPIC_BEYIN_MODEL", "claude-3-5-haiku-20241022")
+            model = os.getenv("ANTHROPIC_BEYIN_MODEL", "claude-haiku-4-5")
             resp = client.messages.create(
                 model=model, max_tokens=max_tokens, system=system,
                 messages=[{"role": "user", "content": kullanici}],
@@ -1546,7 +1554,7 @@ def ses_durumu():
     durum["son_llm_hata"] = llm_son_hata() or "(bu süreçte henüz deneme yok)"
     durum["istenen_model"] = {
         "openai_uyumlu": os.getenv("OPENAI_BEYIN_MODEL", "gpt-4o"),
-        "anthropic": os.getenv("ANTHROPIC_BEYIN_MODEL", "claude-3-5-haiku-20241022"),
+        "anthropic": os.getenv("ANTHROPIC_BEYIN_MODEL", "claude-haiku-4-5"),
         "base_url": (os.getenv("LLM_BASE_URL") or "").strip() or "(varsayilan OpenAI)",
     }
     return durum
