@@ -2758,6 +2758,11 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
               </span>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {uzTedarikci.length > 8 && (
+                <div style={{ fontSize: 11, color: R.not3 }}>
+                  ⚠ {uzTedarikci.length} tedarikçinin ilk 8'i gösteriliyor ({uzTedarikci.length - 8} tanesi listede yok)
+                </div>
+              )}
               {uzTedarikci.slice(0, 8).map((t, i) => {
                 const patern = t.sonuc === 'tedarikci_paterni';
                 return (
@@ -3921,7 +3926,10 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
         ) : (
           <Tablo
             baslik={`Depo stok durumu · ${depoSube ? (subeler.find((s) => s.id === depoSube)?.ad || '') : 'tüm şubeler toplamı'}`}
-            not="satıra tıkla → şube kırılımı"
+            not={'satıra tıkla → şube kırılımı'
+              + (kalemler.length > 120
+                ? ` · ⚠ ${kalemler.length} kalemin ilk 120'si gösteriliyor, ${kalemler.length - 120} kalem listede yok`
+                : '')}
             kolonlar={[
               { ad: 'Kalem' }, { ad: 'Kategori' }, { ad: 'Mevcut', sag: 1 },
               { ad: 'Bağlı para', sag: 1 },
@@ -4141,11 +4149,14 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
         {Array.isArray(iz.ornekler) && iz.ornekler.length > 0 && (
           <Tablo
             baslik="Düzeltme izi — sayımın ezdiği son kalemler"
-            not="envanter_duzeltme defteri (salt-okur)"
             kolonlar={[
               { ad: 'Zaman' }, { ad: 'Kalem' }, { ad: 'Eski', sag: 1 },
               { ad: 'Sayılan', sag: 1 }, { ad: 'Yeni', sag: 1 }, { ad: 'Δ', sag: 1 }, { ad: 'Karar' },
             ]}
+            not={'envanter_duzeltme defteri (salt-okur)'
+              + ((iz.ornekler || []).length > 12
+                ? ` · ⚠ ${iz.ornekler.length} düzeltmenin ilk 12'si gösteriliyor, ${iz.ornekler.length - 12} kayıt listede yok`
+                : '')}
             satirlar={iz.ornekler.slice(0, 12).map((r, i) => {
               const delta = sayi(r.delta);
               return {
@@ -4243,6 +4254,11 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
         {/* TÜR DAĞILIMI — hangi hareket tipi kaç kez (sunucu sıralı gönderiyor) */}
         {hrTur.length > 0 && (
           <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap', marginBottom: 14 }}>
+            {hrTur.length > 8 && (
+              <span style={{ fontSize: 11, color: R.not3, alignSelf: 'center' }}>
+                ⚠ {hrTur.length} türün ilk 8'i · {hrTur.length - 8} tür daha var
+              </span>
+            )}
             {hrTur.slice(0, 8).map((t, i) => {
               const tc = turCoz(t.hareket_turu);
               return (
@@ -4401,7 +4417,10 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
         {arsivSekme === 'siparis' && (arSatir.length ? (
           <Tablo
             baslik={`Sipariş arşivi · son ${sayi(arsivVeri.gun) || arsivGun} gün`}
-            not="tüm durumlar dahil · satıra tıkla → kalem dökümü"
+            not={'tüm durumlar dahil · satıra tıkla → kalem dökümü'
+              + (arSatir.length > 120
+                ? ` · ⚠ ${arSatir.length} kaydın ilk 120'si gösteriliyor, ${arSatir.length - 120} sipariş listede yok`
+                : '')}
             kolonlar={[
               { ad: 'Tarih' }, { ad: 'Şube' }, { ad: 'Durum' },
               { ad: 'Kalem', sag: 1 }, { ad: 'Toplam adet', sag: 1 }, { ad: '' },
@@ -4567,14 +4586,41 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
         <KpiSeridi kpiler={[
           { etiket: 'Açılan şube', deger: `${acilanSube} / ${acilisSatir.length}`, alt: barTarih === bugunYerelISO() ? 'bugün' : barTarih, renk: acilanSube === acilisSatir.length && acilisSatir.length ? R.yesil : R.amber },
           { etiket: 'Kapanan şube', deger: `${kapananSube} / ${kapanisSatir.length}`, alt: kapananSube < kapanisSatir.length ? 'kapanış bekleniyor' : 'tamamlandı', renk: kapananSube === kapanisSatir.length && kapanisSatir.length ? R.yesil : R.amber },
-          {
-            etiket: 'Açılış farkı',
-            deger: String(farkUyariAdet),
-            alt: farkUyariAdet
-              ? `tolerans üstü${uyumsuzBekleyen ? ` · ${uyumsuzBekleyen} açık kayıt` : ''}${uyumsuzCozulen ? ` · ${uyumsuzCozulen} çözüldü` : ''}`
-              : 'devirle uyumlu (±50 tolerans)',
-            renk: farkUyariAdet ? R.kirmizi : R.yesil,
-          },
+          // ══════════════════════════════════════════════════════════════
+          // 🔴 SAHTE SAKİNLİK — canlı gözlem 2026-08-27
+          // ══════════════════════════════════════════════════════════════
+          // Ekran "AÇILIŞ FARKI 0 · devirle uyumlu" (YEŞİL) diyordu. Ama:
+          //  ① 4 şubenin YALNIZ 2'si ölçülmüştü (ALSANCAK ve KÖYCEĞİZ'de
+          //     açılış tamamlanmamış → sayılan yok, beklenen yok, fark yok).
+          //     Ölçülmemiş şube "uyumlu" sayılamaz; hiç tartılmamış demektir.
+          //  ② Hemen ALTINDAKİ bant "1 şubede açılış farkı kayda düşmüş ve
+          //     henüz çözülmemiş" diyordu. `uyumsuzBekleyen` yalnız
+          //     `farkUyariAdet > 0` iken alt yazıya giriyordu — yani AÇIK bir
+          //     uyumsuzluk varken üstteki kart yeşil kalıyordu.
+          // İkisi birden: sahip "sabah kasaları tuttu" diye ekranı kapatır.
+          (() => {
+            // ⚠️ Alan adları TAHMİN EDİLMEDİ, uçtan okundu (canlı):
+            // acilis_tamam · fark_tl · fark_seviye · uyumsuzluk_bekliyor.
+            // İlk yazışta `r.fark`/`r.sayilan` yazmıştım — o alanlar YOK;
+            // hepsi null çıkıp "4 şube ölçülmedi" diye kendi yanlış alarmımı
+            // üretecekti. Ölçülmüşlüğün kanıtı `acilis_tamam`tır.
+            const olculen = acilisSatir.filter((r) => r.acilis_tamam || r.fark_seviye != null).length;
+            const eksikOlcum = acilisSatir.length - olculen;
+            const acikVar = sayi(uyumsuzBekleyen) > 0;
+            const temiz = !farkUyariAdet && !acikVar && !eksikOlcum;
+            return {
+              etiket: 'Açılış farkı',
+              deger: String(farkUyariAdet),
+              alt: [
+                farkUyariAdet ? 'tolerans üstü' : (eksikOlcum ? 'ölçülen şubelerde tolerans içi' : 'devirle uyumlu (±50 tolerans)'),
+                eksikOlcum ? `⚠ ${eksikOlcum} şube henüz ölçülmedi (${olculen}/${acilisSatir.length})` : null,
+                acikVar ? `⚠ ${sayi(uyumsuzBekleyen)} açık kayıt çözülmedi` : null,
+                sayi(uyumsuzCozulen) ? `${sayi(uyumsuzCozulen)} çözüldü` : null,
+              ].filter(Boolean).join(' · '),
+              // Yeşil YALNIZ her şube ölçüldüyse ve açık kayıt yoksa.
+              renk: farkUyariAdet ? R.kirmizi : (temiz ? R.yesil : R.amber),
+            };
+          })(),
           { etiket: 'Teslim bekleyen', deger: String(teslimBekleyen.length), alt: 'kapandı ama kasa teslim edilmedi', renk: teslimBekleyen.length ? R.amber : R.yesil },
           {
             etiket: 'Ciro onayı',
@@ -4672,6 +4718,11 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
                     </span>
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                    {gecler.length > 6 && (
+                      <div style={{ fontSize: 11, color: R.not3 }}>
+                        ⚠ {gecler.length} kaydın ilk 6'sı gösteriliyor ({gecler.length - 6} tanesi listede yok)
+                      </div>
+                    )}
                     {gecler.slice(0, 6).map((g, i) => (
                       <div key={g.event_id || `gc-${i}`} style={{
                         display: 'flex', alignItems: 'center', gap: 10, fontSize: 11.5,
@@ -5057,6 +5108,13 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
                 <div style={{ fontSize: 11.5, color: R.amber, marginBottom: 10 }}>
                   ⚠ {tarihKisa(barTarih)} için bar kaydı yok — son günler gösteriliyor
                   (Evo karşılaştırması yalnız tek gün seçiliyken yapılır).
+                  {/* ⚠️ Codex: bu yedek listede ayrıca 8 kayıt sınırı vardı ve
+                      söylenmiyordu. Sahip hem GÜN değil AY verisine bakarken
+                      hem de kırpılmış bir listeye bakıyordu. */}
+                  {hepsi.length > 8 && (
+                    <> Ayrıca <b>{hepsi.length} kaydın ilk 8'i</b> gösteriliyor
+                      ({hepsi.length - 8} kayıt listede yok).</>
+                  )}
                 </div>
               )}
 
@@ -5143,9 +5201,15 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
                       { v: tarihKisa(x.tarih), mono: true, renk: R.not },
                       { v: kay.ad, rozet: kay.renk },
                       { v: `${sayi(st.bardak_kucuk)} / ${sayi(st.bardak_buyuk)} / ${sayi(st.bardak_plastik)}`, mono: true, sag: true },
-                      { v: sayi(st.sut_litre) ? String(sayi(st.sut_litre)) : '—', mono: true, sag: true },
-                      { v: sayi(st.su_adet) ? String(sayi(st.su_adet)) : '—', mono: true, sag: true },
-                      { v: sayi(st.pasta_adet) ? String(sayi(st.pasta_adet)) : '—', mono: true, sag: true },
+                      // ⚠️ falsy-zero (Codex): `sayi(x) ? x : '—'` GERÇEK 0
+                      // tüketimi "veri yok"a çeviriyordu. Oysa "o gün hiç süt
+                      // kullanılmadı" bir BULGUDUR — sayım yapılmadığıyla aynı
+                      // şey değildir. Alanın kendisi yoksa "—", 0 ise "0".
+                      // ⚠️ Dizi İÇİNDE JSX yorumu ({/* */}) geçersizdir; ilk
+                      // yazışta öyle yazıp derlemeyi kırmıştım.
+                      { v: st?.sut_litre == null ? '—' : String(sayi(st.sut_litre)), mono: true, sag: true, renk: st?.sut_litre == null ? R.not3 : undefined },
+                      { v: st?.su_adet == null ? '—' : String(sayi(st.su_adet)), mono: true, sag: true, renk: st?.su_adet == null ? R.not3 : undefined },
+                      { v: st?.pasta_adet == null ? '—' : String(sayi(st.pasta_adet)), mono: true, sag: true, renk: st?.pasta_adet == null ? R.not3 : undefined },
                       haplar.length
                         ? {
                           sira: haplar.length,
@@ -5570,8 +5634,14 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
                   <div style={{ fontFamily: F.mono, fontSize: 18, fontWeight: 700, marginTop: 4, color: yetersiz('siparis_cevrim_sure_gun') ? R.not3 : R.krem }}>
                     {deger(opKalite.siparis_cevrim_sure_gun, ' gün', 'siparis_cevrim_sure_gun')}
                   </div>
+                  {/* ⚠️ Codex: ana metrik "ölçülemedi" diyebiliyor ama alt satır
+                      `dongu` boş objeye düştüğünde yine de "0 bekliyor" yazıyordu.
+                      Ölçülemeyen şey 0 gibi görünemez — "bekleyen sipariş yok"
+                      cümlesi, şube malsız beklerken de kurulabilirdi. */}
                   <div style={{ fontSize: 10.5, color: R.not2, marginTop: 2 }}>
-                    talep → teslim · {sayi(dongu.teslim_bekleyen)} bekliyor
+                    talep → teslim · {dongu?.teslim_bekleyen == null
+                      ? <span style={{ color: R.not3 }}>bekleyen sayısı okunamadı</span>
+                      : `${sayi(dongu.teslim_bekleyen)} bekliyor`}
                   </div>
                 </div>
                 <div style={{ padding: '11px 14px', borderRadius: 11, background: R.girinti }}>
