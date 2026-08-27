@@ -3740,12 +3740,65 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
             alt: 'şube-kalem · mevcut sıfır',
             renk: !dOzet ? R.not3 : sayi(dOzet.sifir_kalem_sayisi) > 0 ? R.kirmizi : R.yesil,
           },
-          { etiket: 'Kritik kalem', deger: String(kritik.length), alt: 'bardak eşiği altında', renk: kritik.length > 0 ? R.kirmizi : R.not },
-          { etiket: 'Düşük kalem', deger: String(dusuk.length), alt: 'eşiğe yaklaşıyor', renk: dusuk.length > 0 ? R.amber : R.not },
+          // ══════════════════════════════════════════════════════════════
+          // 🔴 KRİTİK KALEM: SUNUCU 3 DİYORDU, EKRAN 0 YAZIYORDU
+          // ══════════════════════════════════════════════════════════════
+          // Canlı ölçüm (2026-08-27):
+          //   /ops/v2/depo-ozet  → kritik_kalem_sayisi = 3 · 4 şube · 157 ürün
+          //   /ops/depo-stok     → 134 kalem · 2 şube · min_stok tanımlı: 5
+          // Ekran ikinci uçtan KENDİ hesabını kuruyordu; 134 kalemin yalnız
+          // 5'inde eşik tanımlı olduğu için sonuç yapısal olarak 0'a yakındı.
+          // Yani "KRİTİK KALEM 0" bir ölçüm değil, ÖLÇEMEYİŞTİ — ve üç kritik
+          // kalem yeşil bir sıfırın arkasında görünmüyordu. Stok tükenmesi
+          // demek, satış kaybı demektir.
+          // ⚠️ Sunucunun sayısı esastır (gösterim kendi aritmetiğini kurmaz).
+          // Ekranın kendi hesabı kanıt olarak yanında durur; ikisi ayrışırsa
+          // AYRIŞTIĞI YAZILIR — sessizce birini seçmek yanlış olurdu.
+          (() => {
+            const sunucuKritik = dOzet?.kritik_kalem_sayisi;
+            const esikli = kalemler.filter((k) => sayi(k.min_stok) > 0).length;
+            const kapsamZayif = kalemler.length > 0 && esikli / kalemler.length < 0.5;
+            if (sunucuKritik == null) {
+              return {
+                etiket: 'Kritik kalem',
+                deger: kapsamZayif ? '—' : String(kritik.length),
+                alt: kapsamZayif
+                  ? `⚠ ölçülemedi · ${kalemler.length} kalemin ${esikli} tanesinde eşik var`
+                  : 'eşiğin altında',
+                renk: kapsamZayif ? R.not3 : (kritik.length > 0 ? R.kirmizi : R.not),
+              };
+            }
+            const ayristi = sayi(sunucuKritik) !== kritik.length;
+            return {
+              etiket: 'Kritik kalem',
+              deger: String(sayi(sunucuKritik)),
+              alt: ayristi
+                ? `tüm şubeler · bu tablo ${kritik.length} görüyor (${kalemler.length} kalemin ${esikli}'inde eşik var)`
+                : 'eşiğin altında',
+              renk: sayi(sunucuKritik) > 0 ? R.kirmizi : R.not,
+            };
+          })(),
+          // Düşük kalem yalnız EŞİĞİ OLAN kalemler için anlamlıdır; kapsam
+          // zayıfsa 0 "sorun yok" demek değildir, "bakamıyorum" demektir.
+          (() => {
+            const esikli = kalemler.filter((k) => sayi(k.min_stok) > 0).length;
+            const kapsamZayif = kalemler.length > 0 && esikli / kalemler.length < 0.5;
+            return {
+              etiket: 'Düşük kalem',
+              deger: kapsamZayif ? '—' : String(dusuk.length),
+              alt: kapsamZayif
+                ? `⚠ ${kalemler.length} kalemin yalnız ${esikli}'inde eşik tanımlı`
+                : 'eşiğe yaklaşıyor',
+              renk: kapsamZayif ? R.not3 : (dusuk.length > 0 ? R.amber : R.not),
+            };
+          })(),
           {
             etiket: 'Toplam kalem',
             deger: String(kalemler.length),
-            alt: 'stok kartı',
+            // ⚠️ KPI şeridindeki para/sıfır sayıları 4 ŞUBEYİ, bu tablo 2
+            // ŞUBEYİ anlatıyor (canlı ölçüm). Yan yana duran iki sayının
+            // farklı evrenleri varsa bu YAZILIR.
+            alt: `stok kartı · bu tablo ${(subeler || []).length || 0} şube`,
           },
           // Adet ≠ para: 10.000 bardak ile 20 kg çekirdek aynı "kalem" ama
           // farklı sermaye. Sunucu değeri hesaplıyordu, ekran hiç göstermiyordu.
@@ -3757,7 +3810,15 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
               : 'alış fiyatı × mevcut',
             renk: R.bakirAcik,
           },
-          { etiket: 'Kapsam', deger: depoSube ? (subeler.find((s) => s.id === depoSube)?.ad || 'şube') : 'Tüm şubeler', alt: 'aşağıdan değiştir' },
+          // ⚠️ "Tüm şubeler" YANILTICIYDI: bu tablonun ucu 2 şube döndürüyor
+          // (TEMA, ZAFER) ama üstteki para/sıfır sayıları 4 şubeyi kapsıyor.
+          // "Tümü" derken hangi tümü olduğu yazılmalı.
+          {
+            etiket: 'Kapsam',
+            deger: depoSube ? (subeler.find((s) => s.id === depoSube)?.ad || 'şube') : `${(subeler || []).length} şube`,
+            alt: depoSube ? 'aşağıdan değiştir'
+              : `stok kaydı olan şubeler${dOzet ? ' · üstteki para/sıfır tüm zinciri sayar' : ''}`,
+          },
         ]} />
 
         {/* ── STOK DEVİR HIZI: "param kaç gün depoda bekliyor" ────────────── */}
@@ -4130,8 +4191,31 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
       <>
         <KpiSeridi kpiler={[
           { etiket: 'Bugün kayıt', deger: String(bugunku.length), alt: 'stok hareketi' },
-          { etiket: 'Giriş (3 gün)', deger: String(say((h) => turCoz(h.hareket_turu).ad === 'giriş')), alt: 'teslim + kabul', renk: R.yesil },
-          { etiket: 'Çıkış (3 gün)', deger: String(say((h) => turCoz(h.hareket_turu).ad === 'çıkış')), alt: 'sevk + ürün aç' },
+          // ⚠️ Codex: hemen üstte sunucunun `tur_ozet` kırılımı DURUYOR ama
+          // KPI'lar istemcide `turCoz()` ile yeniden sayılıyordu. Sunucu yeni
+          // bir tür ekler ya da adlandırmayı değiştirirse KPI ile altındaki
+          // tür dağılımı FARKLI konuşur — aynı ekranda iki gerçek.
+          // Sunucu kırılımı varsa esas odur; yoksa istemci sayımı yedektir ve
+          // yedeğe düşüldüğü YAZILIR.
+          (() => {
+            const sunucu = hrTur.filter((t) => turCoz(t.hareket_turu || t.tur).ad === 'giriş')
+              .reduce((a, t) => a + sayi(t.adet ?? t.kayit ?? t.sayi), 0);
+            return {
+              etiket: 'Giriş (3 gün)',
+              deger: String(hrTur.length ? sunucu : say((h) => turCoz(h.hareket_turu).ad === 'giriş')),
+              alt: hrTur.length ? 'teslim + kabul' : 'teslim + kabul · ekrandan sayıldı',
+              renk: R.yesil,
+            };
+          })(),
+          (() => {
+            const sunucu = hrTur.filter((t) => turCoz(t.hareket_turu || t.tur).ad === 'çıkış')
+              .reduce((a, t) => a + sayi(t.adet ?? t.kayit ?? t.sayi), 0);
+            return {
+              etiket: 'Çıkış (3 gün)',
+              deger: String(hrTur.length ? sunucu : say((h) => turCoz(h.hareket_turu).ad === 'çıkış')),
+              alt: hrTur.length ? 'sevk + ürün aç' : 'sevk + ürün aç · ekrandan sayıldı',
+            };
+          })(),
           { etiket: 'Fire + sayım (3 gün)', deger: String(say((h) => ['fire', 'sayım'].includes(turCoz(h.hareket_turu).ad))), alt: 'düzeltme dahil', renk: say((h) => turCoz(h.hareket_turu).ad === 'fire') > 0 ? R.kirmizi : R.krem },
         ]} />
 
@@ -4178,11 +4262,14 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
         ) : (
           <Tablo
             baslik="Stok hareketi · son 3 gün"
-            not="append-only defter — satırlar değiştirilemez"
             kolonlar={[
               { ad: 'Zaman' }, { ad: 'Tür' }, { ad: 'Kalem' }, { ad: 'Şube' },
               { ad: 'Miktar', sag: 1 }, { ad: 'Önce → sonra', sag: 1 }, { ad: 'Kaynak' },
             ]}
+            not={'append-only defter — satırlar değiştirilemez'
+              + (hrSatir.length > 60
+                ? ` · ⚠ ${hrSatir.length} hareketin ilk 60'ı gösteriliyor, ${hrSatir.length - 60} kayıt listede yok (defter eksik görünür)`
+                : '')}
             satirlar={hrSatir.slice(0, 60).map((h, i) => {
               const tur = turCoz(h.hareket_turu);
               const m = sayi(h.miktar);
@@ -4240,14 +4327,31 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
       <>
         <KpiSeridi kpiler={[
           { etiket: 'Kayıt', deger: String(sayi(arsivVeri.toplam)), alt: `son ${sayi(arsivVeri.gun) || arsivGun} gün${arsivVeri.sube_arama ? ` · "${arsivVeri.sube_arama}"` : ''}` },
-          { etiket: 'Teslim edildi', deger: String(sayi(arOzet.teslim_edildi)), alt: 'zincir kapandı', renk: R.yesil },
+          // ⚠️ SAHTE YEŞİL (Codex, 2026-08-27): `arsivVeri.ozet` gelmezse
+          // `arOzet` boş objeye düşüyor ve `sayi(undefined)=0` üzerinden
+          // "Gönderilmedi 0 · takılan yok" YEŞİL basılıyordu. Özet okunamadığı
+          // için 0 görünen ekran "takılan sipariş yok" diyor — gönderilmemiş
+          // sipariş demek, şubenin malsız kalması demektir.
+          {
+            etiket: 'Teslim edildi',
+            deger: arOzet.teslim_edildi == null ? '—' : String(sayi(arOzet.teslim_edildi)),
+            alt: arOzet.teslim_edildi == null ? 'özet okunamadı' : 'zincir kapandı',
+            renk: arOzet.teslim_edildi == null ? R.not3 : R.yesil,
+          },
           {
             etiket: 'Gönderilmedi',
-            deger: String(sayi(arOzet.gonderilmedi)),
-            alt: sayi(arOzet.gonderilmedi) ? 'kuyruğa geri alınabilir' : 'takılan yok',
-            renk: sayi(arOzet.gonderilmedi) ? R.kirmizi : R.yesil,
+            deger: arOzet.gonderilmedi == null ? '—' : String(sayi(arOzet.gonderilmedi)),
+            alt: arOzet.gonderilmedi == null ? '⚠ özet okunamadı — "takılan yok" DEMEK DEĞİL'
+              : (sayi(arOzet.gonderilmedi) ? 'kuyruğa geri alınabilir' : 'takılan yok'),
+            renk: arOzet.gonderilmedi == null ? R.not3
+              : (sayi(arOzet.gonderilmedi) ? R.kirmizi : R.yesil),
           },
-          { etiket: 'İptal', deger: String(sayi(arOzet.iptal)), alt: `bekleyen ${sayi(arOzet.bekliyor)}`, renk: R.not },
+          {
+            etiket: 'İptal',
+            deger: arOzet.iptal == null ? '—' : String(sayi(arOzet.iptal)),
+            alt: arOzet.bekliyor == null ? 'özet okunamadı' : `bekleyen ${sayi(arOzet.bekliyor)}`,
+            renk: R.not,
+          },
         ]} />
 
         {/* filtre çubuğu: gün · durum · şube arama */}
@@ -5255,7 +5359,8 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
         {dnSekme === 'fire' && (fireKayit.length ? (
           <Tablo
             baslik="Fire bildirimleri"
-            not={sayi(dnFire?.gun_toplam) ? `${tarihKisa(barTarih)} günü` : 'bugün kayıt yok — son bildirimler'}
+            not={(sayi(dnFire?.gun_toplam) ? `${tarihKisa(barTarih)} günü` : 'bugün kayıt yok — son bildirimler')
+              + (fireKayit.length > 40 ? ` · ⚠ ${fireKayit.length} bildirimin ilk 40'ı gösteriliyor` : '')}
             kolonlar={[{ ad: 'Şube' }, { ad: 'Tarih' }, { ad: 'Ürün' }, { ad: 'Adet', sag: 1 }, { ad: 'Sebep' }]}
             satirlar={fireKayit.slice(0, 40).map((x, i) => ({
               id: x.id || `f-${i}`,
@@ -5315,7 +5420,18 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
               baslik: `${a.sube_adi || a.sube_id}${a.susturuldu ? ' · susturuldu' : ''}`,
               alt: a.mesaj || '—',
               tutar: a.seviye === 'kritik' ? 'KRİTİK' : 'uyarı',
-              tier: a.susturuldu ? 'iyi' : (a.seviye === 'kritik' ? 'kritik' : 'uyari'),
+              // ⚠️ SUSTURMA ÇÖZÜM DEĞİLDİR (Codex, 2026-08-27):
+              // Susturulan güvenlik alarmı 'iyi' (yeşil) boyanıyordu — yani
+              // "bu olay kapandı" gibi görünüyordu. Oysa susturmak yalnız
+              // alarm bütçesini yönetir; olay olduğu yerde durur. Güvenlik
+              // olayında bu ayrım hayatidir: sahip "hallolmuş" sanıp bir daha
+              // bakmaz. Susturulmuş alarm artık BİLGİ seviyesinde — kaybolmaz
+              // (susturma silme değildir), bağırmaz (susturulmuş olmasının
+              // anlamı budur), ama YEŞİLE DE DÖNMEZ (çözülmedi).
+              // ⚠️ Yeni bir renk jetonu UYDURULMADI: tema.js'te `notr` yok,
+              // olmayan tier sessizce maviye düşerdi. Var olan `bilgi` jetonu
+              // tam bu anlamı taşıyor — ortak dosyaya dokunmaya gerek yok.
+              tier: a.susturuldu ? 'bilgi' : (a.seviye === 'kritik' ? 'kritik' : 'uyari'),
               aksiyonlar: [
                 { ad: 'Okundu', onTikla: () => setMdModal({ tip: 'okundu', alarm: a, notu: '' }) },
                 { ad: 'Sustur', onTikla: () => setMdModal({ tip: 'sustur', alarm: a, notu: '', dk: 120 }) },
