@@ -1906,7 +1906,7 @@ export function RaporModulu({ gorunum, onCekmece, onKopru, onToast, defterHedef 
             Son <b>{trend.length}</b> ayda kasaya giren{' '}
             <b style={{ fontFamily: F.mono }}>{fmt(toplamGelir)}</b>’nin{' '}
             <b style={{ fontFamily: F.mono, color: R.krem }}>{fmt(toplamCiro)}</b>’si{' '}
-            <b>satıştan</b> ({satisPay}%), <b style={{ fontFamily: F.mono, color: R.amber }}>{fmt(satisDisi)}</b>’si{' '}
+            <b>satıştan</b> (%{satisPay}), <b style={{ fontFamily: F.mono, color: R.amber }}>{fmt(satisDisi)}</b>’si{' '}
             <b style={{ color: R.amber }}>satış dışından</b> geldi (%{100 - satisPay}).
             Çıkan <b style={{ fontFamily: F.mono }}>{fmt(toplamGider)}</b>; kasa{' '}
             <b style={{ fontFamily: F.mono, color: toplamNet >= 0 ? R.yesil : R.kirmizi }}>
@@ -2160,6 +2160,26 @@ export function RaporModulu({ gorunum, onCekmece, onKopru, onToast, defterHedef 
             ciroyu olduğundan büyük gösterir. Satırlar defterde duruyor — silinmedi, yalnız
             toplamın ne olduğu yazıldı.
           </div>
+          {/* ══════════════════════════════════════════════════════════════
+              AYNI AY, İKİ EKRAN, İKİ SAYI (2026-08-27 canlı ölçüm)
+              ══════════════════════════════════════════════════════════════
+              Haziran: Aylık Rapor GELİR 1.977.553 · İşlem Defteri GİREN
+              2.001.553. Fark tam 24.000 ₺ = `ozet.toplam_iptal`. Yani kural
+              şu: AYLIK GELİR = DEFTER GİREN − iptal/iade.
+              Kural doğru, ama HİÇBİR YERDE YAZMIYORDU. Şimdi bu iki ekran
+              arasında bir kapı olduğu için sahip birinden diğerine geçip
+              sayının değiştiğini GÖRECEK — açıklanmayan fark, sistemin
+              tamamına duyulan güveni bitirir.
+              ⚠️ Yeni hesap değil: iki sunucu alanının farkı yazılıyor. */}
+          {sayi(ozet.toplam_iptal) > 0 && (
+            <div style={{ fontSize: 11.5, color: R.not2, marginTop: 8, paddingTop: 8, borderTop: `1px solid ${R.cizgi}` }}>
+              ↔ <b style={{ color: R.not }}>Aylık Rapor</b> bu ayı{' '}
+              <b style={{ fontFamily: F.mono, color: R.not }}>{fmt(gelir - sayi(ozet.toplam_iptal))}</b> gösterir —
+              aynı sayının iptal/iade (<span style={{ fontFamily: F.mono }}>{fmt(sayi(ozet.toplam_iptal))}</span>)
+              düşülmüş hâli. İki ekran çelişmiyor; <b style={{ color: R.not }}>farklı soruya</b> cevap veriyor:
+              defter kasadan GEÇENİ, aylık rapor NET KALANI sayar.
+            </div>
+          )}
         </div>
       )}
       {/* 🔵 EVV-RAP-N3 (2026-08-13): /ledger limit=300 + tablo 150'ye kırpıyordu →
