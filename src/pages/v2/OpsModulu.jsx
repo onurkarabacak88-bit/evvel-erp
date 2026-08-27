@@ -3047,7 +3047,23 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     return (
       <>
         <KpiSeridi kpiler={[
-          { onTikla: sevkSatir.length ? () => setUzAlt('sevkiyat') : undefined, etiket: 'Sevkiyat uyumsuzluğu', deger: String(sevkSatir.length), alt: 'son 30 gün · kabul farkı', renk: sevkSatir.length ? R.amber : R.yesil },
+          // ⚠️ ÇERÇEVELEME (sistematik tarama, 2026-08-27): bu sayı KALEM
+          // satırı sayar (16), yanındaki "Kasa uyumsuzluğu" ise KAYIT sayar (1).
+          // Yan yana duran iki rakam farklı birimde olunca 16:1 gibi görünür;
+          // aynı birimde (sipariş) oran 4:1. En büyük sayı, birimi yüzünden
+          // olduğundan ağır bir çıpa kuruyordu. Sayı değişmedi — NEYİ saydığı
+          // ve kaç siparişe denk geldiği yazıldı.
+          {
+            onTikla: sevkSatir.length ? () => setUzAlt('sevkiyat') : undefined,
+            etiket: 'Sevkiyat uyumsuzluğu',
+            deger: String(sevkSatir.length),
+            alt: (() => {
+              const sip = new Set(sevkSatir.map((r) => r.siparis_talep_id).filter(Boolean)).size;
+              return sip ? `${sevkSatir.length} kalem · ${sip} siparişte · son 30 gün`
+                : 'son 30 gün · kabul farkı';
+            })(),
+            renk: sevkSatir.length ? R.amber : R.yesil,
+          },
           { onTikla: acikKasa.length ? () => setUzAlt('kasa') : undefined, etiket: 'Kasa uyumsuzluğu', deger: String(acikKasa.length), alt: acikKasa.length ? 'açık kayıt' : 'temiz', renk: acikKasa.length ? R.kirmizi : R.yesil },
           { onTikla: acikPers.length ? () => setUzAlt('personel') : undefined, etiket: 'Personel-vardiya', deger: String(acikPers.length), alt: acikPers.length ? 'açık kayıt' : 'temiz', renk: acikPers.length ? R.amber : R.yesil },
           { etiket: 'Talep ↔ tahsis', deger: String(uzTahsis.length), alt: uzTahsis.length ? 'kalem uyuşmuyor' : 'temiz', renk: uzTahsis.length ? R.amber : R.yesil },
@@ -4099,10 +4115,17 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
           // BOŞ kalır. Yani "kritik 0" ölçüm sonucu değil, TANIM GEREĞİ sıfırdı.
           // Stokta OLMAYAN kalem, azalan kalemden daha acildir; öne alındı.
           {
+            // ⚠️ ÇERÇEVELEME: bu ekranın EN BÜYÜK ve İLK sayısı, ama birimi
+            // ekrandaki başka hiçbir sayıyla aynı değil: 367 = ŞUBE×KALEM çifti,
+            // 4 şube üzerinden. Hemen yanındaki "Toplam kalem 134" ise 2 şubelik
+            // kalem KARTI. Okuyan "367 nasıl 134'ten büyük olur" diye takılır ya
+            // da — daha kötüsü — takılmaz ve yanlış bir büyüklük hissi taşır.
             etiket: 'Stokta yok',
             deger: dOzet ? String(sayi(dOzet.sifir_kalem_sayisi)) : '—',
             // 🔵 EVV-OPS3-C: dOzet yokken deger '—' ama renk yeşildi (bilinmeyen=temiz). Nötr.
-            alt: 'şube-kalem · mevcut sıfır',
+            alt: dOzet
+              ? `${sayi(dOzet.urun_sayisi)} ürün × tüm şubeler içinde · adet DEĞİL, şube-kalem çifti`
+              : 'şube-kalem · mevcut sıfır',
             renk: !dOzet ? R.not3 : sayi(dOzet.sifir_kalem_sayisi) > 0 ? R.kirmizi : R.yesil,
           },
           // ══════════════════════════════════════════════════════════════
@@ -4396,8 +4419,17 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
           {
             etiket: 'Karar dağılımı',
             deger: izOkunamadi ? '—' : `${sayi(iz.karar_sayim)} / ${sayi(iz.karar_sistem)}`,
+            // ⚠️ ÇERÇEVELEME: "543 / 0" nötr bir dağılım gibi sunuluyordu ama
+            // yüksek sesle bir şey söylüyor: 543 düzeltmenin HEPSİNDE sayım
+            // kabul edilmiş, sistemin kendi rakamı BİR KEZ BİLE korunmamış.
+            // Bu ya "sistem stoğu hep yanlış tutuyor" ya da "akışta 'sistemi
+            // koru' seçeneği fiilen kullanılmıyor" demektir. İkisi de bilgidir;
+            // nötr bir kesir olarak geçiştirilemez.
             alt: izOkunamadi ? 'okunamadı'
-              : (sayi(iz.toplam_iz) >= 1000 ? '⚠ pencere doldu — kısmi' : 'sayım kabul / sistem korundu'),
+              : (sayi(iz.toplam_iz) >= 1000 ? '⚠ pencere doldu — kısmi'
+                : (sayi(iz.karar_sayim) > 0 && sayi(iz.karar_sistem) === 0
+                  ? 'sayım kabul / sistem korundu — sistem hiç korunmadı'
+                  : 'sayım kabul / sistem korundu')),
           },
         ]} />
 
@@ -5872,11 +5904,25 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
             onTikla: fisListe.length ? () => setDnSekme('fis') : undefined,
           },
           {
+            // ⚠️ ÇERÇEVELEME: bu sayı FARKLI BİRİMLERİ topluyor. Canlı ölçüm:
+            // plastik bardak 623 + su 445 + SÜT 262 (litre) + redbull 253 +
+            // 14oz bardak 236 … 8 ayrı ürün tek "adet" başlığı altında.
+            // Bir bardak ile bir litre süt aynı ağırlıkta sayılıyor. Ekranın en
+            // büyük rakamı olduğu için çıpayı da o kuruyor.
+            // ⚠️ SAYIYI DEĞİŞTİRMEDİM (sunucunun toplamı) — neyin toplandığı
+            // yazıldı: "8 üründe" ve "birimler karışık".
             onTikla: (kayipToplamAcik || kayipListe.length) ? () => setDnSekme('kayip') : undefined,
             etiket: 'Stok kaybı',
             deger: kayipToplamAcik ? String(kayipToplamAcik) : String(kayipListe.length),
             alt: kayipToplamAcik
-              ? `adet açık · ${kayipListe.length} kalem-gün · 45 gün`
+              ? (() => {
+                const urunSayisi = new Set(
+                  (dnKayip?.haftalik_pattern || []).map((x) => x.urun_ad || x.urun).filter(Boolean),
+                ).size;
+                return urunSayisi > 1
+                  ? `${urunSayisi} üründe toplam · birimler karışık (bardak+litre+adet)`
+                  : `adet açık · ${kayipListe.length} kalem-gün · 45 gün`;
+              })()
               : (kayipOlculemeyen ? `${kayipOlculemeyen} gün ÖLÇÜLEMEDİ` : 'son 45 gün analizi'),
             renk: kayipVar ? R.amber : kayipOlculemeyen ? R.not : R.yesil,
           },
