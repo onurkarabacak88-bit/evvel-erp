@@ -138,6 +138,35 @@ const kidemAy = (bas) => {
  *  'onayli' bildiği için onaylanmış bordro TASLAK sayılıyordu: Öde/Kilit
  *  düğmeleri hiç görünmüyor, yerine tekrar Onayla+Sil sunuluyordu ve "Onay
  *  bekleyen" KPI'sı onaylıları da sayıyordu. 'tahmini' de (kayıtsız ay) sözlükte. */
+// ══════════════════════════════════════════════════════════════════════════
+// EKİP KUYRUĞU · DEĞİŞİM TABANI (BAKIŞ hamlesi 3)
+// ══════════════════════════════════════════════════════════════════════════
+// ⚠️ OPS'takinden FARKLI BİR ŞEKİL: OPS'ta kuyruk maddeleri tekil siparişti,
+// kimlik kıyası ("hangi iş kapandı") doğru cevabı veriyordu. EKİP'te maddeler
+// TOPLU ("6 bordro onay bekliyor"). Kimlik kıyası burada 6→2 değişimini
+// göremezdi — anahtar aynı kalır, sanki hiçbir şey olmamış gibi görünürdü.
+// O yüzden burada ADET kıyaslanıyor: "dün 6 bekliyordu, bugün 2 — 4 onaylandı".
+// ⚠️ İKİ KAYIT ({bugun, onceki}) kuralı aynen geçerli: tek kayıt tutulsaydı
+// aynı gün ikinci açılışta taban bugüne eşitlenir, delta 0 çıkar ve ekran
+// "değişmedi" yalanı söylerdi.
+const EKIP_KUYRUK_ANAHTAR = 'evvelEkipKuyruk';
+const ekipTabanOku = () => {
+  try {
+    const h = localStorage.getItem(EKIP_KUYRUK_ANAHTAR);
+    return h ? JSON.parse(h) : null;
+  } catch { return null; }
+};
+const ekipTabanYaz = (bugunISO, kalemler) => {
+  try {
+    const k = ekipTabanOku();
+    if (k && k.bugun && k.bugun.tarih === bugunISO) return;   // aynı gün: kaydırma yok
+    localStorage.setItem(EKIP_KUYRUK_ANAHTAR, JSON.stringify({
+      bugun: { tarih: bugunISO, kalemler },
+      onceki: k?.bugun || null,
+    }));
+  } catch { /* depolama kapalı olabilir — ölçüm yoksa ekran yine çalışır */ }
+};
+
 const ASAMA_RENK = { odendi: R.mavi, onayli: R.yesil, onaylandi: R.yesil, onay_bekliyor: R.amber, taslak: R.amber, tahmini: R.amber };
 // DB slug'ı ekranda ham gösterilmez (düz-dil kuralı): 'onaylandi' → 'onaylı'.
 const ASAMA_AD = { odendi: 'ödendi', onayli: 'onaylı', onaylandi: 'onaylı', onay_bekliyor: 'onay bekliyor', taslak: 'taslak', tahmini: 'tahminî' };
@@ -1211,7 +1240,79 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
   // "Okunamadı" ile "kayıt yok" ayrımı için iki bayrak — bu modülde bir
   // boşluk, birinin maaşının eksik ödenmesi demektir.
   const [bordroHata, setBordroHata] = useState('');
+  // Kuyruk değişimi: dünkü adetlerle bugünküleri karşılaştır (BAKIŞ hamlesi 3).
+  const [ekipDegisim, setEkipDegisim] = useState(null);
+  // 📊 ÖLÇÜM (BAKIŞ hamlesi 7): kuyruk iş ürettirdi mi? Bir tasarım değişikliği
+  // kendi başarısını ilan edemez. OPS ile AYNI modül kullanılıyor ama
+  // `ekran:'ekip'` ile — o modülün her sorgusu ekrana göre süzüyor, iki kuyruk
+  // tek medyanda birleşmiyor.
+  const ekipOlcumRef = useRef(null);
+  const ekipEylemRef = useRef(false);
+  const ekipOlcumEylem = (tur) => {
+    if (ekipEylemRef.current || !ekipOlcumRef.current) return;
+    ekipEylemRef.current = true;
+    api('/ops-olcum/eylem', { method: 'POST', body: { oturum_id: ekipOlcumRef.current, tur } })
+      .catch(() => {});
+  };
   const [takipHata, setTakipHata] = useState('');
+  // ⚠️ Yazma RENDER'da değil EFFECT'te: StrictMode render'ı iki kez çalıştırır,
+  // taban iki kez kayar ve "dün" bir günde iki adım geriye giderdi.
+  // ⚠️ `yukleniyor` bitene kadar ölçülmez: yarım yüklenmiş veriyle taban yazmak
+  // ertesi gün "6 iş kapandı" gibi UYDURMA bir iyileşme gösterirdi.
+  useEffect(() => {
+    if (yukleniyor) return;
+    const bugunISO = isoBugun();
+    const bekleyenBordroAdet = bordro.filter((b) => {
+      const a = asamaNorm(b.asama || b.durum);
+      return a === 'taslak' || a === 'onay_bekliyor' || a === 'tahmini';
+    }).length;
+    const kalemler = {
+      bordro: bekleyenBordroAdet,
+      avansTeslim: sayi(avans?.teslim_bekleyen_adet),
+      avansOnay: sayi(avans?.bekleyen_adet),
+      pinsiz: pinler.filter((x) => !x.panel_pin_tanimli).length,
+      basvuru: sayi(basvuruOzet?.yeni),
+    };
+    const taban = ekipTabanOku();
+    const kiyas = (taban?.bugun?.tarih === bugunISO ? taban?.onceki : taban?.bugun) || null;
+    if (kiyas && kiyas.kalemler) {
+      const fark = [];
+      const ADLAR = {
+        bordro: 'bordro onayı', avansTeslim: 'avans teslimi', avansOnay: 'avans onayı',
+        pinsiz: 'PIN eksiği', basvuru: 'okunmamış başvuru',
+      };
+      Object.keys(kalemler).forEach((k) => {
+        const eski = sayi(kiyas.kalemler[k]);
+        const yeniD = kalemler[k];
+        if (eski !== yeniD) fark.push({ ad: ADLAR[k] || k, eski, yeni: yeniD });
+      });
+      setEkipDegisim(fark.length ? { tarih: kiyas.tarih, fark } : null);
+    } else {
+      setEkipDegisim(null);   // taban yoksa uydurma delta YAZILMAZ
+    }
+    ekipTabanYaz(bugunISO, kalemler);
+
+    // 📊 Oturum açılışı — kadro görünümünde ve oturumda BİR KEZ. Yenileme her
+    // seferinde yeni oturum sayılsaydı M2 (eylemsiz oran) paydası şişer ve
+    // ekran haksız yere "kimse iş yapmıyor" görünürdü.
+    if (gorunum === 'kadro' && ekipOlcumRef.current == null) {
+      const anahtarlar = Object.keys(kalemler).filter((k) => sayi(kalemler[k]) > 0);
+      api('/ops-olcum/acilis', {
+        method: 'POST',
+        body: {
+          ekran: 'ekip',
+          gorunum: 'kadro',
+          kuyruk: anahtarlar.map((k) => `ekip|${k}`),
+          // S1 para · S2 kayıt eksiği · S3 okunmamış (kuyruktaki sınıflarla aynı)
+          kuyruk_sinif: anahtarlar.map((k) => (
+            ['bordro', 'avansTeslim', 'avansOnay'].includes(k) ? 1
+              : k === 'pinsiz' ? 2 : 3
+          )),
+        },
+      }).then((r) => { ekipOlcumRef.current = r?.oturum_id || null; }).catch(() => {});
+    }
+  }, [yukleniyor, bordro, avans, pinler, basvuruOzet, gorunum]);
+
   const ayDegistir = (d) => {
     setDonem(({ yil: y0, ay: a0 }) => {
       let a = a0 + d; let y = y0;
@@ -2324,6 +2425,25 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
                 {ekipKuyruk.length} iş · en acili üstte
                 {ekipTasan > 0 && ` · ${ekipTasan} tanesi sekmelerde`}
               </span>
+              {/* ⚠️ DEĞİŞİM (BAKIŞ hamlesi 3): sabit bir kuyruk 3. günden sonra
+                  duvar kâğıdı olur. "Dün de 6 bordro bekliyordu, bugün de 6" ile
+                  "4 onaylandı, 2 kaldı" aynı ekranı bambaşka iki habere çevirir.
+                  ⚠️ AZALMA yeşil, ARTIŞ amber: iş bitirmek iyi haberdir ve öyle
+                  görünmelidir. Taban yoksa uydurma delta yazılmaz. */}
+              {ekipDegisim && (
+                <span style={{ fontSize: 11.5, color: R.not3 }}>
+                  · {ekipDegisim.tarih}’ten beri{' '}
+                  {ekipDegisim.fark.slice(0, 2).map((f, i) => (
+                    <span key={f.ad}>
+                      {i > 0 && ' · '}
+                      <b style={{ color: f.yeni < f.eski ? R.yesil : R.amber }}>
+                        {f.ad} {f.eski}→{f.yeni}
+                      </b>
+                    </span>
+                  ))}
+                  {ekipDegisim.fark.length > 2 && ` · +${ekipDegisim.fark.length - 2} değişim`}
+                </span>
+              )}
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {ekipGorunen.map((m) => {
@@ -2331,10 +2451,10 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
                 return (
                   <div
                     key={m.anahtar}
-                    onClick={m.git}
+                    onClick={() => { ekipOlcumEylem('kuyruk'); m.git(); }}
                     role="button"
                     tabIndex={0}
-                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); m.git(); } }}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); ekipOlcumEylem('kuyruk'); m.git(); } }}
                     className="v2-hover-kalk"
                     style={{
                       display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer',

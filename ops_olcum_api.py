@@ -62,8 +62,14 @@ def _tablolar(cur) -> None:
             kuyruk_adet    INTEGER
         )
     """)
+    # ⚠️ `ekran` sütunu (2026-08-28): bu modül artık İKİ kuyruğa hizmet ediyor
+    # (OPS akış + EKİP kadro). Üçüncü kez neredeyse aynı dosyayı kopyalamak
+    # yerine tek modül genelleştirildi — AMA bu ancak SÜZGEÇ varsa doğrudur.
+    # `bakis_olcum_api`nin kusuru paylaşması değil, SÜZMEMESİYDİ: iki ekranın
+    # davranışı tek medyanda birleşiyordu. Burada her sorgu `ekran`a göre süzer.
+    cur.execute("ALTER TABLE ops_oturum ADD COLUMN IF NOT EXISTS ekran TEXT DEFAULT 'ops'")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_ops_oturum_ts "
-                "ON ops_oturum (acilis_ts DESC)")
+                "ON ops_oturum (ekran, acilis_ts DESC)")
     cur.execute("""
         CREATE TABLE IF NOT EXISTS ops_kuyruk_izi (
             madde_anahtari TEXT PRIMARY KEY,
@@ -72,9 +78,11 @@ def _tablolar(cur) -> None:
             son_gorulme    TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
     """)
+    cur.execute("ALTER TABLE ops_kuyruk_izi ADD COLUMN IF NOT EXISTS ekran TEXT DEFAULT 'ops'")
 
 
 class AcilisBody(BaseModel):
+    ekran: Optional[str] = "ops"          # ops | ekip — hangi kuyruğun ölçümü
     gorunum: Optional[str] = None
     kuyruk: Optional[List[str]] = None        # madde anahtarları
     kuyruk_sinif: Optional[List[int]] = None  # aynı sırayla sınıfları
@@ -88,9 +96,10 @@ def acilis(body: AcilisBody):
             _tablolar(cur)
             anahtarlar = [str(x)[:180] for x in (body.kuyruk or [])][:40]
             siniflar = list(body.kuyruk_sinif or [])
+            ekran = (body.ekran or "ops")[:20]
             cur.execute(
-                "INSERT INTO ops_oturum (gorunum, kuyruk_adet) VALUES (%s,%s) RETURNING id",
-                ((body.gorunum or "")[:40], len(anahtarlar)))
+                "INSERT INTO ops_oturum (ekran, gorunum, kuyruk_adet) VALUES (%s,%s,%s) RETURNING id",
+                (ekran, (body.gorunum or "")[:40], len(anahtarlar)))
             oid = int(dict(cur.fetchone() or {}).get("id") or 0)
             for i, a in enumerate(anahtarlar):
                 s = siniflar[i] if i < len(siniflar) else None
@@ -98,10 +107,10 @@ def acilis(body: AcilisBody):
                 # karar bekleyene dönerse) eski kovada kalmamalı — yoksa M5
                 # yanlış kovadan sayar (BAKIŞ'ta Codex'in yakaladığı kusur).
                 cur.execute(
-                    "INSERT INTO ops_kuyruk_izi (madde_anahtari, sinif) VALUES (%s,%s) "
+                    "INSERT INTO ops_kuyruk_izi (madde_anahtari, sinif, ekran) VALUES (%s,%s,%s) "
                     "ON CONFLICT (madde_anahtari) DO UPDATE "
                     "   SET son_gorulme = NOW(), sinif = COALESCE(EXCLUDED.sinif, ops_kuyruk_izi.sinif)",
-                    (a, s))
+                    (a, s, ekran))
             conn.commit()
         return {"ok": True, "oturum_id": oid}
     except Exception as e:  # noqa: BLE001 — ölçüm ekranı ASLA bozmaz
@@ -136,9 +145,15 @@ def eylem(body: EylemBody):
 
 
 @router.get("/ozet")
-def ozet(gun: int = 30):
-    """📊 Beş metrik — hepsi AYNI pencereden."""
+def ozet(gun: int = 30, ekran: str = "ops"):
+    """📊 Beş metrik — hepsi AYNI pencereden ve AYNI EKRANDAN.
+
+    ⚠️ `ekran` süzgeci ŞART: iki farklı kuyruğun oturumları tek medyanda
+    birleşirse metrik sessizce başka bir şeyi ölçmeye başlar. `bakis_olcum`un
+    kusuru paylaşması değil SÜZMEMESİYDİ; bu modül tam o yüzden ayrılmıştı.
+    """
     g = max(1, min(365, int(gun or 30)))
+    e = (ekran or "ops")[:20]
     try:
         with db() as (conn, cur):
             _tablolar(cur)
@@ -148,7 +163,8 @@ def ozet(gun: int = 30):
                 "       PERCENTILE_CONT(0.5) WITHIN GROUP ( "
                 "         ORDER BY EXTRACT(EPOCH FROM (ilk_eylem_ts - acilis_ts)) "
                 "       ) FILTER (WHERE ilk_eylem_ts IS NOT NULL) AS m1 "
-                "  FROM ops_oturum WHERE acilis_ts >= NOW() - make_interval(days => %s)", (g,))
+                "  FROM ops_oturum WHERE ekran = %s "
+                "   AND acilis_ts >= NOW() - make_interval(days => %s)", (e, g))
             o = dict(cur.fetchone() or {})
             # ⚠️ M3–M5 de AYNI pencereden okunur; farklı ufuk birleştirmek
             # "son 30 gün" diyen bir özeti sessizce yalancı yapar.
@@ -161,11 +177,12 @@ def ozet(gun: int = 30):
                 "                          AND (son_gorulme - ilk_gorulme) < INTERVAL '3 days') AS s1_hizli, "
                 "       COUNT(*) FILTER (WHERE sinif = 1 AND son_gorulme < NOW() - INTERVAL '1 day') AS s1_kapanan "
                 "  FROM ops_kuyruk_izi "
-                " WHERE ilk_gorulme >= NOW() - make_interval(days => %s)", (g,))
+                " WHERE ekran = %s "
+                "   AND ilk_gorulme >= NOW() - make_interval(days => %s)", (e, g))
             k = dict(cur.fetchone() or {})
     except Exception as e:  # noqa: BLE001
         logger.warning("ops-olcum ozet okunamadi: %s", str(e)[:160])
-        return {"gun": g, "hata": "ölçüm okunamadı", "oturum_sayisi": None}
+        return {"gun": g, "ekran": e, "hata": "ölçüm okunamadı", "oturum_sayisi": None}
 
     n = int(o.get("n") or 0)
     bos = int(o.get("bos") or 0)
@@ -173,6 +190,7 @@ def ozet(gun: int = 30):
     yeterli = n >= ESIK
     return {
         "gun": g,
+        "ekran": e,
         "oturum_sayisi": n,
         "yeterli_veri": yeterli,
         "esik": ESIK,
