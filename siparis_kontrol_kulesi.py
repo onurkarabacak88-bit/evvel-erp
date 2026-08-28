@@ -442,6 +442,43 @@ def siparis_kontrol_kulesi_yukle(
         _gonderilmis: set = set(_disp.keys())
         _hedef_map = _kalem_hedef.get(str(r.get("id") or ""), {})
         _depo_ad = str(r.get("hedef_depo_sube_adi") or "").strip() or "depo"
+
+        # ── 🏭 DEPOYA YÖNLENDİRİLMİŞ KALEMLER (kısmi bölme, 2026-08-29) ──────
+        # Kısmi depo yönlendirmesinden sonra `kalem_durumlari` her kalemin
+        # akıbetini taşıyor: seçilmeyenler `depo_disi: true`. Kule bunu
+        # OKUMUYORDU, sonuç üç kusur:
+        #   · depoya giden kalem hâlâ "kalan" görünüyor → modal onu TEKRAR
+        #     gönderebiliyordu (toptancı tarafında kapattığımız çift gönderim
+        #     freni depo tarafında yoktu)
+        #   · kalemin yanında hedefi yazmıyordu (yalnız toptancı + stok_yolda
+        #     okunuyordu; henüz sevk EDİLMEMİŞ depo ataması görünmüyordu)
+        #   · yönlendirilmemiş kalemler hiçbir yerde sayılmıyordu
+        # ⚠️ Yalnız hedef depo ATANMIŞSA anlamlı: `kalem_durumlari` başka
+        #    akışlarca da (merkez tahsis) doldurulabiliyor.
+        _depoya_gitmis: set = set()
+        if str(r.get("hedef_depo_sube_id") or "").strip():
+            _kd_raw = z.get("kalem_durumlari") or []
+            if isinstance(_kd_raw, str):
+                try:
+                    _kd_raw = json.loads(_kd_raw)
+                except Exception:
+                    _kd_raw = []
+            for _e in (_kd_raw if isinstance(_kd_raw, list) else []):
+                if not isinstance(_e, dict) or _e.get("depo_disi"):
+                    continue
+                if str(_e.get("durum") or "") == "merkez_iptal":
+                    continue
+                _en = str(_e.get("urun_ad") or "").strip().lower()
+                if _en:
+                    _depoya_gitmis.add(_en)
+                    # Hedef etiketi: henüz SEVK EDİLMEDİ, depoda hazırlanıyor.
+                    if _en not in _hedef_map:
+                        _hedef_map[_en] = {
+                            "tip": "depo", "ad": _depo_ad,
+                            "adet": int(_e.get("istenen_adet") or 0),
+                            "durum": "hazirlaniyor",
+                        }
+        _gonderilmis |= _depoya_gitmis
         for _y in (z.get("yolda") or []):
             if int((_y or {}).get("sevk_adet") or 0) > 0:
                 _yad = str((_y or {}).get("kalem_adi") or "").strip().lower()
@@ -516,6 +553,16 @@ def siparis_kontrol_kulesi_yukle(
             int((_it or {}).get("adet") or 0) for _it in _aktif
         )
         z["iptal_kalem_sayisi"] = len(z["iptal_kalem_adlari"])
+        # 🧭 HENÜZ HİÇBİR YERE YÖNLENDİRİLMEMİŞ kalemler (2026-08-29)
+        # Sahip: "siparişin sadece yönlendirdiklerim giderken gelen sipariş
+        # HÂLÂ AÇIKTA KALMALI." Kısmi yönlendirmeden sonra talebin `asama`sı
+        # 'depoda' oluyor ve sipariş merkez kuyruğundan düşüyordu — kalan
+        # kalemler görünmez kalıyordu (sessiz eleme). Bu sayı kuyruğun
+        # "iş bitmedi" demesini sağlar.
+        z["yonlendirilmemis_kalem_sayisi"] = len(z["kalan_kalemler"])
+        z["yonlendirilmemis_kalem_adlari"] = [
+            str((_it or {}).get("urun_ad") or "") for _it in z["kalan_kalemler"]
+        ]
         # Fren okunamadıysa satır bunu TAŞIR — ekran körlemesine göndermesin.
         if _dagitim_okunamadi:
             z["dagitim_okunamadi"] = True

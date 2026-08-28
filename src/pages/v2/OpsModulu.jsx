@@ -121,6 +121,20 @@ export const opsKuyrukKur = (satirlar, bugunISO) => {
     ...L.filter((x) => x.asama === 'depoda').map((x) => m(
       x, 2, `${x.sube_adi || 'Şube'} · depoda hazırlanıyor`,
       `${yuk(x)} · sevk bekliyor`)),
+    // ⚠️ KISMİ YÖNLENDİRME AÇIK UCU (sahip isteği + canlı deneme, 2026-08-29)
+    // "Siparişin sadece yönlendirdiklerim giderken gelen sipariş HÂLÂ AÇIKTA
+    // KALMALI." Kısmi yönlendirmeden sonra talebin aşaması 'depoda' oluyor ve
+    // sipariş merkez kuyruğundan DÜŞÜYORDU — yönlendirilmemiş kalemler
+    // görünmez kalıyordu. Bu madde aşamadan BAĞIMSIZ: kalan varsa iş bitmemiştir.
+    // ⚠️ 'bekliyor' aşaması hariç — orası zaten yukarıda S2'de sayılıyor,
+    //    yoksa aynı sipariş kuyrukta İKİ KEZ görünürdü.
+    ...L.filter((x) => x.asama !== 'bekliyor' && x.asama !== 'iptal'
+      && say(x.yonlendirilmemis_kalem_sayisi) > 0)
+      .map((x) => m(
+        x, 2, `${x.sube_adi || 'Şube'} · ${say(x.yonlendirilmemis_kalem_sayisi)} kalem yönlendirilmedi`,
+        `${(x.yonlendirilmemis_kalem_adlari || []).slice(0, 4).join(', ')}`
+        + `${(x.yonlendirilmemis_kalem_adlari || []).length > 4 ? ' …' : ''}`
+        + ` · siparişin kalanı hâlâ açık`)),
     // ⚠️ YANLIŞ TARAFI SUÇLAMA (canlı yürüyüşte yakalandı, 2026-08-28):
     // 'yolda' ile 'toptanci_bekliyor' AYNI cümleye konmuştu — ikisine birden
     // "şube kabulü gecikti · N gündür yolda" yazılıyordu. Oysa toptancı
