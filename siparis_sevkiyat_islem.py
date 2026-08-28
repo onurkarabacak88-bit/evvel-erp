@@ -82,6 +82,13 @@ def sevkiyat_kalem_durumlari_normalize(items: Any) -> Tuple[List[Dict[str, Any]]
         kk = str(raw.get("kalem_kodu") or "").strip()
         if kk:
             row_out["kalem_kodu"] = kk
+        # 🔀 Sevk dışı sebebi KAYITTA KALIR: rapor "depoda yok" ile "bu
+        # sevkiyata dahil değil"i ayırabilsin ve kalem_durumlari'na yazılınca
+        # bir sonraki açılışta ekran da sebebi bilsin. Taşınmazsa bilgi
+        # normalleştiricide ölürdü.
+        if raw.get("_sevk_disi_sebep"):
+            row_out["_sevk_disi_sebep"] = str(raw.get("_sevk_disi_sebep")).strip()
+            row_out["depo_disi"] = True
         # Tahsis alanları korunur (merkez_tahsis + sevkiyat aynı JSON'da)
         if raw.get("talep_adet") is not None:
             row_out["talep_adet"] = max(0, int(raw.get("talep_adet") or 0))
@@ -170,7 +177,25 @@ def build_depo_sevkiyat_rapor(
         tahsis_adet = int(d.get("tahsis_adet") or 0)
         if tahsis_adet > 0 and tahsis_adet < ist:
             tahsis_notu = f" [tahsis: {tahsis_adet}/{ist}]"
-        if dur == "yok":
+        # ⚠️ "DEPODA YOK" ≠ "BU SEVKİYATA DAHİL DEĞİL" (2026-08-29)
+        # Kısmi yönlendirmede seçilmeyen kalemler 'yok'a eşleniyor (sevk
+        # motoru başka değer kabul etmiyor). Rapor bunu ayırmazsa "depoda yok"
+        # yazıyor ve ŞUBEYE GİDİYOR: canlı denemede TEMA'da 10 adet Bahçe Nane
+        # varken rapor "depoda yok" dedi. Şube deponun boş olduğunu sanır,
+        # gereksiz toptancı siparişi verir. Sebep `_sevk_disi_sebep`te duruyor.
+        _sd = (d.get("_sevk_disi_sebep") or "").strip().lower()
+        if _sd:
+            _neden = {
+                "depoya_yonlendirilmedi": "merkez bu kalemi bu depoya yönlendirmedi",
+                "toptanciya_gitti": "toptancıya yollandı",
+                "merkez_iptal": "merkez iptal etti",
+            }.get(_sd, "bu sevkiyata dahil değil")
+            # ⚠️ `uyari` KURULMAZ: bu bir eksiklik değil, bilinçli bir karar.
+            satirlar.append(
+                f"• {ad}: istenen {ist} adet — bu sevkiyata dahil değil ({_neden})."
+                f"{tahsis_notu}"
+            )
+        elif dur == "yok":
             uyari = True
             satirlar.append(f"• {ad}: istenen {ist} adet — depoda yok, 0 gönderildi.{tahsis_notu}")
         elif dur == "kismi":

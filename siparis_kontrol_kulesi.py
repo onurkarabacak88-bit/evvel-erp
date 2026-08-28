@@ -466,7 +466,15 @@ def siparis_kontrol_kulesi_yukle(
             for _e in (_kd_raw if isinstance(_kd_raw, list) else []):
                 if not isinstance(_e, dict) or _e.get("depo_disi"):
                     continue
-                if str(_e.get("durum") or "") == "merkez_iptal":
+                _ed = str(_e.get("durum") or "").strip().lower()
+                if _ed == "merkez_iptal":
+                    continue
+                # ⚠️ 'yok' = DEPODA BULUNAMADI → kalem hâlâ ŞUBEYE LAZIM.
+                # "Depoya gitmiş" saymak onu kalandan düşürür ve merkez o
+                # kalemi başka bir kanaldan (toptancı) temin edemez —
+                # sipariş sessizce eksik kapanır. Depo bulamadıysa iş
+                # BİTMEMİŞTİR, kuyrukta kalmalı.
+                if _ed == "yok":
                     continue
                 _en = str(_e.get("urun_ad") or "").strip().lower()
                 if _en:
