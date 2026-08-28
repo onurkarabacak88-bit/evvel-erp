@@ -445,7 +445,13 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast, cari
 
   useEffect(() => {
     if (['kapsama', 'arsiv', 'uyarilar', 'kdv', 'cari'].includes(gorunum) && !merkez) merkezYukle();
-    if (gorunum === 'istek') istekYukle();
+    // ⚠️ KUYRUĞUN KENDİ SESSİZ ELEMESİ (kendi bulgum, canlı, 2026-08-28):
+    // `istek` yalnız İstek sekmesinde yükleniyordu; Kapsama'daki iş kuyruğu
+    // bu yüzden 14 bekleyen fatura isteğini (560.776 ₺ · 93.463 ₺ KDV riski)
+    // HİÇ GÖRMÜYORDU — üstelik o, listedeki en büyük kalemdi.
+    // Bir kuyruk "bugün ne yapmalıyım"ın TAM cevabı olduğunu iddia ediyorsa
+    // eksik olamaz. Kapsama açılırken bu uç da çekilir.
+    if (gorunum === 'istek' || gorunum === 'kapsama') istekYukle();
     if (gorunum === 'fiyat') bantYukle();
     // Görünüm değişince açık modal state'i temizlenir (Codex: sekme değiştirip
     // dönünce eski isteğe ait modal açık kalıyordu — yanlış kayda işlem tuzağı).
@@ -677,6 +683,9 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast, cari
           git: null,   // zaten bu ekranda — kapı yok (kanıt aynı ekranda)
         });
       }
+      // ⚠️ `istek` henüz gelmediyse (null) kuyruk bunu SÖYLER — sessizce
+      // eksik bir liste göstermek, listenin tamamlığı iddiasını yalanlar.
+      const istekBekleniyor = istek == null;
       const acikIstek = sayi(istek?.acik_adet);
       if (acikIstek > 0) {
         m.push({
@@ -709,6 +718,14 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast, cari
           baslik: `${fotoAdet} fotoğraf okunamadı`,
           aciklama: 'belge yüklendi ama metne çevrilemedi — arşivde aranamaz',
           git: () => onKopru?.('__modul:belge:uyarilar'),
+        });
+      }
+      if (istekBekleniyor) {
+        m.push({
+          sinif: 3, anahtar: 'istek|yukleniyor',
+          baslik: 'Fatura istekleri henüz okunmadı',
+          aciklama: 'bu liste tamamlanmadı — bekleyen istekler eklenecek',
+          git: () => onKopru?.('__modul:belge:istek'),
         });
       }
       return m.sort((a, b) => a.sinif - b.sinif);
