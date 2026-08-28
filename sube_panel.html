@@ -5002,7 +5002,7 @@
       <div class="sol-divider"></div>
       <div class="panel-title">Stok İşlemleri</div>
       <button class="sol-btn" id="solSevkBtn" onclick="solSekmeAc('sevk')">
-        <span class="ico">📦</span> Ürün Teslim Al
+        <span class="ico">📦</span> Tedarikçiden Gelen — Teslim Al
       </button>
       <button class="sol-btn" id="solDepoTeslimBtn" onclick="solSekmeAc('depoTeslim')" style="position:relative">
         <span class="ico">🚚</span> Depodan Gelen — Teslim Al
@@ -5276,7 +5276,12 @@
         </div>
       </div>
 
-      <!-- Ürün Teslim Al — tedarikçi / toptancı (sade akış) -->
+      <!-- Tedarikçiden Gelen — Teslim Al (toptancı/tedarikçi ayağı).
+           ⚠️ 2026-08-29: eski adı "Ürün Teslim Al" idi. Ad GENEL olduğu için
+           DEPO teslimatı da burada aranıyor, boş çıkıyor ve şube "çalışmıyor"
+           sanıyordu. Eşi "Depodan Gelen — Teslim Al" ile simetrik adlandırıldı.
+           Karışıklığın kanıtı: düzeltme akışının placeholder'ı zaten
+           "yanlışlıkla ... kullanıldı, aslında Depodan Gelen olmalıydı" diyor. -->
       <div class="sekme-icerik" id="tab-sevk">
         <div class="kart teslim-panel-tedarikci" style="padding-top:16px">
           <div id="sevkForm"></div>
@@ -8408,7 +8413,7 @@ async function renderSiparisPanel() {
   h += '<button class="sip-mini-btn" id="sipOzelToggleBtn">' + (siparisOzelExpanded ? 'Kapat' : 'Aç') + '</button>';
   h += '</div>';
   if (siparisOzelExpanded) {
-    h += '<p style="font-size:11px;color:var(--muted);margin:8px 0 10px 0;line-height:1.45">Listede yoksa buradan yazın (ör. pil). Merkez <strong>kataloga alırsa</strong> sipariş ve <strong>Ürün Teslim Al / Ürün Aç</strong> formlarında görünür. <strong>Tek sefer</strong> veya <strong>red</strong> kararı operasyon merkezinden verilir.</p>';
+    h += '<p style="font-size:11px;color:var(--muted);margin:8px 0 10px 0;line-height:1.45">Listede yoksa buradan yazın (ör. pil). Merkez <strong>kataloga alırsa</strong> sipariş ve <strong>Tedarikçiden Gelen — Teslim Al / Ürün Aç</strong> formlarında görünür. <strong>Tek sefer</strong> veya <strong>red</strong> kararı operasyon merkezinden verilir.</p>';
     h += '<div class="form-group"><label>Hedef kategori</label><select id="sipOzelKatSel">';
     data.forEach(function(k){ h += '<option value="'+escHtml(k.id)+'">'+escHtml(k.label||k.ad)+'</option>'; });
     h += '</select></div>';
@@ -10677,7 +10682,7 @@ var UrunTeslimAl = (function () {
     // ── Hero başlık (tam genişlik, yatay) ─────────────────────────────────
     h += '<div class="sv-hero">';
     h += '<span class="sv-hero-ico">📦</span>';
-    h += '<div><p class="sv-hero-baslik">Ürün Teslim Al</p>';
+    h += '<div><p class="sv-hero-baslik">Tedarikçiden Gelen — Teslim Al</p>';
     h += '<p class="sv-hero-alt">Toptancı / tedarikçiden gelen ürünleri sayın ve kaydedin</p></div>';
     h += '</div>';
 
@@ -12729,7 +12734,7 @@ function sevkGeriAlBaslat(defterId, ozet, parentModal) {
       '<p class="sv-pos-label" style="margin:0 0 4px">🔒 İşletme onayı — <strong>Merve Karabacak</strong> PIN</p>' +
       '<input id="sgaOnayPin" class="sv-pos-pin" maxlength="4" inputmode="numeric" type="password" autocomplete="one-time-code" placeholder="• • • •" style="margin-bottom:14px" />' +
       '<p class="sv-pos-label" style="margin:0 0 4px">Sebep (zorunlu)</p>' +
-      '<textarea id="sgaSebep" rows="2" placeholder="Örn: yanlışlıkla Ürün Teslim Al kullanıldı, aslında Depodan Gelen olmalıydı" style="margin-bottom:14px"></textarea>' +
+      '<textarea id="sgaSebep" rows="2" placeholder="Örn: yanlışlıkla Tedarikçiden Gelen kullanıldı, aslında Depodan Gelen olmalıydı" style="margin-bottom:14px"></textarea>' +
       '<div id="sgaMsg" style="font-size:12.5px;text-align:center;min-height:18px;margin-bottom:8px"></div>' +
       '<button type="button" id="sgaGonder" class="btn btn-danger" style="width:100%;min-height:46px;font-weight:800">↩ Geri Al ve Stoğu Düş</button>' +
     '</div>';
