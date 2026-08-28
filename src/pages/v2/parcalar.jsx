@@ -1681,6 +1681,13 @@ export function Cekmece({
                           cursor: 'pointer', borderRadius: 9, padding: '5px 8px', margin: '-5px -8px',
                           border: `1px solid ${R.cizgi}`,
                         } : null),
+                        // ➕ EKLEMELİ (2026-08-28): `solgun` satırı SİLMEZ,
+                        // soluklaştırır — `Liste` bileşeninde 2026-08-16'dan beri
+                        // olan kuralın çekmecedeki karşılığı. "Bu kalem artık
+                        // senin işin değil (yönlendirildi)" demek için; listeden
+                        // düşürmek adetleri ve kalem sayısını yalancı yapardı.
+                        // Bayrağı KOYMAYAN satır etkilenmez (undefined → 1).
+                        opacity: s.solgun ? 0.45 : 1,
                       }}
                     >
                       {/* Hem ad hem detay sarabilir: boşluksuz uzun metin (fatura no,
@@ -1701,6 +1708,27 @@ export function Cekmece({
                       }}>
                         {s.tutar}
                       </span>
+                      {/* ➕ EKLEMELİ (2026-08-28): SATIR AKSİYONU — { ad, ipucu,
+                          renk, onTikla }. Bugüne dek çekmece satırının tek
+                          eylemi "aç" idi; sipariş kalemini tek tek iptal etmek
+                          gibi SATIRA AİT eylemler yapılamıyordu.
+                          ⚠️ Satır kapıysa tıklama YUKARI SIZMAZ (stopPropagation)
+                          — yoksa iptale basınca çekmece de açılırdı. */}
+                      {typeof s.satirAksiyon?.onTikla === 'function' && (
+                        <button
+                          type="button"
+                          title={s.satirAksiyon.ipucu || s.satirAksiyon.ad || ''}
+                          aria-label={s.satirAksiyon.ipucu || s.satirAksiyon.ad || 'satır işlemi'}
+                          onClick={(e) => { e.stopPropagation(); s.satirAksiyon.onTikla(); }}
+                          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') e.stopPropagation(); }}
+                          style={{
+                            flexShrink: 0, marginLeft: 2, width: 24, height: 24, lineHeight: 1,
+                            borderRadius: 8, cursor: 'pointer', fontFamily: 'inherit', fontSize: 12,
+                            background: 'transparent', color: s.satirAksiyon.renk || R.not2,
+                            border: `1px solid ${R.cizgi3}`,
+                          }}
+                        >{s.satirAksiyon.ad || '×'}</button>
+                      )}
                     </div>
                   );
                 })}

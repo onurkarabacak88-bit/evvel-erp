@@ -771,6 +771,9 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
   const [yonForm, setYonForm] = useState(null);   // {sip, mod:'depo'|'toptanci', depo, talimat, tedarikciId, secili:Set, not}
   const [depolar, setDepolar] = useState([]);
   const [yonMesgul, setYonMesgul] = useState(false);
+  // ⛔ Kalem bazında merkez iptali — {sip, kalem, gerekce}
+  const [kalemIptal, setKalemIptal] = useState(null);
+  const [kalemIptalMesgul, setKalemIptalMesgul] = useState(false);
   const [tedarikciler, setTedarikciler] = useState([]);
   // ── BAR AKIŞI (ops-merkez P0 sekmeleri, 2026-07-30) ───────────────────────
   // Klasik Operasyon Merkezi'nin 5 sekmesi (açılış kasa takip · kapanış takip ·
@@ -1888,6 +1891,45 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     });
   };
 
+  // ══════════════════════════════════════════════════════════════════════
+  // ⛔ KALEM BAZINDA MERKEZ İPTALİ (sahip isteği, 2026-08-28)
+  // ══════════════════════════════════════════════════════════════════════
+  // "gelen siparişi kalem bazında merkez iptal de edebilmeli — esp çarpıya
+  // basınca iptal." ⚠️ Tek tıkla SESSİZCE iptal edilmez: şubenin istediği bir
+  // şeyi merkez geri çeviriyor, bu bir KARAR. Onay penceresi + gerekçe alanı.
+  const kalemIptalAc = (sip, kalem) => {
+    setKalemIptal({ sip, kalem, gerekce: '' });
+  };
+  const kalemIptalUygula = async () => {
+    const f = kalemIptal;
+    if (!f || kalemIptalMesgul) return;
+    setKalemIptalMesgul(true);
+    try {
+      const r = await api('/ops/siparis/kalem-iptal', {
+        method: 'POST',
+        body: {
+          talep_id: f.sip.id,
+          urun_ad: f.kalem?.urun_ad || null,
+          urun_id: f.kalem?.urun_id || null,
+          aciklama: (f.gerekce || '').trim() || null,
+        },
+      });
+      onToast?.(
+        r?.talep_iptal_edildi
+          ? `⛔ ${r.iptal_edilen} iptal edildi — kalem kalmadığı için sipariş de kapandı`
+          : `⛔ ${r?.iptal_edilen || 'Kalem'} iptal edildi · ${sayi(r?.kalan_aktif_kalem)} kalem devam ediyor`,
+      );
+      setKalemIptal(null);
+      kuleYukle();
+    } catch (e) {
+      // ⚠️ Hata YUTULMAZ: sunucu "zaten toptancıya yollanmış" diyorsa sahip
+      //    bunu görmeli — pencere açık kalır, karar sahipte.
+      onToast?.(e?.message || 'Kalem iptal edilemedi');
+    } finally {
+      setKalemIptalMesgul(false);
+    }
+  };
+
   const siparisAc = (s) => {
     const a = ASAMA[s.asama] || ASAMA.bekliyor;
     // Bekleyen sipariş zenginleştirmesi — yalnız 'bekliyor' aşamasında dolu olur
@@ -1940,6 +1982,30 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
       satirlar: [
         ...(s.kalemler || []).slice(0, 14).map((k) => {
         const zk = zKalemMap[String(k?.urun_ad || '')] || null;
+        // ── 🔀 KALEMİN HEDEFİ (sahip isteği, 2026-08-28) ──────────────────
+        // "listede o kalemin yanında yönlendirilen toptancı ya da depo
+        // yazmalı… seçtiğim kalem silikleşmeli". Kule artık her kaleme
+        // `yonlendirme: {tip, ad, adet}` yapıştırıyor.
+        const yon = k?.yonlendirme || null;
+        const iptalli = !!k?.iptal;
+        const yonMetin = iptalli
+          ? `⛔ merkez iptal etti${k?.iptal_aciklama ? ` · ${k.iptal_aciklama}` : ''}`
+          : yon
+            ? `${yon.tip === 'depo' ? '🏭' : yon.tip === 'karma' ? '⚠️' : '🚚'} ${yon.ad}${
+              sayi(yon.adet) ? ` · ${sayi(yon.adet)} adet` : ''}${
+              yon.tip === 'karma' ? ' — AYNI KALEM İKİ KANALDAN ÇIKMIŞ' : ''}`
+            : '';
+        // ── 📦 DEPODA KAÇ VAR (sahip isteği) ──────────────────────────────
+        // "her ürünün TEMA şubesinde ne kadar olduğu parantezde yazmalı —
+        // depodan sayıyı yollayabilecek miyim görmeliyim." Ürün adının
+        // yanında, özete tıklamadan.
+        // ⚠️ Depo adı UYDURULMAZ: sunucu `stok_depo_adi` vermezse parantez
+        //    hiç yazılmaz (yanlış deponun sayısı gösterilmez).
+        const depoAd = z?.stok_depo_adi || null;
+        const depoVar = zk && zk.hedef_depo_mevcut != null ? sayi(zk.hedef_depo_mevcut) : null;
+        const parantez = (depoAd && depoVar != null)
+          ? ` (${depoAd}: ${depoVar}${depoVar >= sayi(k?.adet) ? ' ✓' : ' ⚠ yetmez'})`
+          : '';
         // Karar için gereken üç sayı: şubede zaten var mı · merkezde ne kalır ·
         // barem altına düşer mi. Sunucu hesaplıyordu, ekran hiç göstermiyordu.
         // A-2. tur: sonuç cümlesinin ("X kalır") ARKASINDAKİ ham sayılar da
@@ -1961,9 +2027,23 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
           ].filter(Boolean).join(' · ')
           : (k?.birim ? String(k.birim) : '');
         return {
-          ad: k?.urun_ad || '—',
-          detay,
+          ad: `${k?.urun_ad || '—'}${parantez}`,
+          // Hedef varsa EN ÖNE gelir: "bu kalem artık nerede" sorusu, stok
+          // sayılarından önce cevaplanır.
+          detay: [yonMetin, detay].filter(Boolean).join(' · '),
           tutar: `${sayi(k?.adet)} adet`,
+          // Yönlendirilmiş/iptal edilmiş kalem SİLİNMEZ, soluklaşır.
+          solgun: !!(yon || iptalli),
+          // ⛔ KALEM İPTALİ — yalnız HENÜZ YÖNLENDİRİLMEMİŞ ve iptal
+          // edilmemiş kalemde. Yola çıkmış malı iptal düğmesi göstermek
+          // yapılamayacak bir söz vermektir (sunucu da reddeder).
+          ...((!yon && !iptalli && s.asama === 'bekliyor' && k?.urun_ad) ? {
+            satirAksiyon: {
+              ad: '×', renk: R.kirmizi,
+              ipucu: `${k.urun_ad} kalemini merkez olarak iptal et`,
+              onTikla: () => kalemIptalAc(s, k),
+            },
+          } : null),
         };
         }),
         // Taşan kalem sayısı YAZILIR — görünmeyen kalem, aranmayan kalemdir.
@@ -2622,6 +2702,62 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
             “yolda” olan bir sipariş şubenin kabulünü bekler, merkezin yapacağı bir şey yoktur.
           </div>
         </div>
+
+        {/* ── ⛔ KALEM İPTAL ONAYI ──────────────────────────────────────────
+            Şubenin istediği bir kalemi merkez geri çeviriyor: bu bir KARAR,
+            tek tık değil. Gerekçe isteğe bağlı ama SORULUR — sorulmayan
+            gerekçe hiç yazılmaz, sonra "bunu neden iptal etmişiz" denir. */}
+        {kalemIptal && (
+          <div
+            onClick={(e) => { if (e.target === e.currentTarget && !kalemIptalMesgul) setKalemIptal(null); }}
+            style={{
+              position: 'fixed', inset: 0, zIndex: 95, background: 'rgba(10,6,2,.7)',
+              backdropFilter: 'blur(3px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+            }}
+          >
+            <div style={{ ...kartYuzey, width: 430, maxWidth: '96vw', padding: '22px 24px' }}>
+              <div style={{ fontFamily: F.baslik, fontSize: 19, fontWeight: 600, marginBottom: 4 }}>
+                Kalemi iptal et
+              </div>
+              <div style={{ fontSize: 12.5, color: R.metin2, marginBottom: 14, lineHeight: 1.5 }}>
+                <b style={{ color: R.krem }}>{kalemIptal.kalem?.urun_ad}</b>
+                {sayi(kalemIptal.kalem?.adet) ? ` · ${sayi(kalemIptal.kalem.adet)} adet` : ''}
+                {' — '}{kalemIptal.sip?.sube_adi} istemişti.
+                <div style={{ color: R.not2, marginTop: 5 }}>
+                  Kalem <b>silinmez</b>, &ldquo;merkez iptal etti&rdquo; olarak işaretlenir ve listede
+                  soluk kalır — şube ne istediğini, siz neyi geri çevirdiğinizi görebilesiniz.
+                  Siparişin diğer kalemleri akmaya devam eder.
+                </div>
+              </div>
+              <label style={{ fontSize: 10.5, letterSpacing: '.7px', textTransform: 'uppercase', color: R.not2, fontWeight: 700, marginBottom: 6, display: 'block' }}>
+                Gerekçe (isteğe bağlı)
+              </label>
+              <input
+                value={kalemIptal.gerekce}
+                onChange={(e) => setKalemIptal((f) => ({ ...f, gerekce: e.target.value }))}
+                placeholder="ör. stokta yok · bu ay alınmayacak"
+                style={{
+                  width: '100%', boxSizing: 'border-box', padding: '9px 12px', borderRadius: 10,
+                  border: `1px solid ${R.cizgi3}`, background: R.girinti, color: R.krem,
+                  fontSize: 13, fontFamily: 'inherit', outline: 'none',
+                }}
+              />
+              <div style={{ display: 'flex', gap: 10, marginTop: 18, justifyContent: 'flex-end' }}>
+                <button disabled={kalemIptalMesgul} onClick={() => setKalemIptal(null)} style={{
+                  padding: '9px 16px', borderRadius: 10, fontSize: 12.5, fontWeight: 700,
+                  fontFamily: 'inherit', cursor: 'pointer', background: 'transparent',
+                  border: `1px solid ${R.cizgi3}`, color: R.metin2,
+                }}>Vazgeç</button>
+                <button disabled={kalemIptalMesgul} onClick={kalemIptalUygula} style={{
+                  padding: '9px 16px', borderRadius: 10, fontSize: 12.5, fontWeight: 700,
+                  fontFamily: 'inherit', cursor: kalemIptalMesgul ? 'default' : 'pointer',
+                  background: kalemIptalMesgul ? R.girinti : R.kirmizi,
+                  border: 'none', color: kalemIptalMesgul ? R.not : '#fff',
+                }}>{kalemIptalMesgul ? 'İptal ediliyor…' : 'Kalemi iptal et'}</button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* ── YERLİ DEPO YÖNLENDİRME MODALI (köprü kaldırıldı) ── */}
         {yonForm && (

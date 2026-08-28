@@ -360,11 +360,18 @@ def siparis_kontrol_kulesi_yukle(
     # gönderilen kalemler tekrar listede ÇIKMASIN (çift gönderim önlenir).
     _detay_ids = [r.get("id") for r in detay_rows if r.get("id")]
     _dagitilan: Dict[str, Dict[str, int]] = {}
+    # 🔀 KALEM HEDEFİ (sahip isteği, 2026-08-28): "listede o kalemin yanında
+    # yönlendirilen toptancı ya da depo yazmalı". Dağıtım haritası bugüne dek
+    # yalnız ADET topluyordu; TEDARİKÇİ ADI atılıyordu. Ekran "yollandı"
+    # diyebiliyor ama "KİME" diyemiyordu. Ad + durum + zaman burada toplanır.
+    _kalem_hedef: Dict[str, Dict[str, Dict[str, Any]]] = {}
     if _detay_ids:
         try:
             cur.execute(
-                "SELECT talep_id, kalemler FROM toptanci_siparis "
-                "WHERE talep_id = ANY(%s) AND durum <> 'iptal'",
+                "SELECT talep_id, kalemler, tedarikci_ad, durum, olusturma "
+                "FROM toptanci_siparis "
+                "WHERE talep_id = ANY(%s) AND durum <> 'iptal' "
+                "ORDER BY olusturma ASC NULLS LAST",
                 (_detay_ids,),
             )
             for _dr in cur.fetchall() or []:
@@ -377,12 +384,34 @@ def siparis_kontrol_kulesi_yukle(
                     except Exception:
                         _dkl = []
                 _m = _dagitilan.setdefault(_dtid, {})
+                _h = _kalem_hedef.setdefault(_dtid, {})
+                _ted = str(_d.get("tedarikci_ad") or "").strip() or "toptancı"
                 for _dk in _dkl:
                     _dad = str((_dk or {}).get("urun_ad") or "").strip().lower()
-                    if _dad:
-                        _m[_dad] = _m.get(_dad, 0) + int((_dk or {}).get("adet") or 0)
+                    if not _dad:
+                        continue
+                    _m[_dad] = _m.get(_dad, 0) + int((_dk or {}).get("adet") or 0)
+                    # Aynı kalem iki tedarikçiye çıkmışsa adlar BİRLEŞTİRİLİR;
+                    # biri yutulursa ekran eksik hedef gösterir.
+                    _mevcut = _h.get(_dad)
+                    if _mevcut and _mevcut.get("tip") == "toptanci":
+                        _adlar = _mevcut.get("adlar") or []
+                        if _ted not in _adlar:
+                            _adlar.append(_ted)
+                        _mevcut["adlar"] = _adlar
+                        _mevcut["ad"] = " + ".join(_adlar)
+                        _mevcut["adet"] = int(_mevcut.get("adet") or 0) + int((_dk or {}).get("adet") or 0)
+                    else:
+                        _h[_dad] = {
+                            "tip": "toptanci",
+                            "ad": _ted,
+                            "adlar": [_ted],
+                            "adet": int((_dk or {}).get("adet") or 0),
+                            "durum": str(_d.get("durum") or "") or None,
+                        }
         except Exception:
             _dagitilan = {}
+            _kalem_hedef = {}
 
     satirlar: List[Dict[str, Any]] = []
     for r in detay_rows:
@@ -397,11 +426,33 @@ def siparis_kontrol_kulesi_yukle(
         # ÇIKMAZ → çift gönderim önlenir. (Önceden yalnız toptancı düşülüyordu;
         # depo sevki eklendi — kısmi depo sevkinde gönderilen kalem kuyrukta kalmıyor.)
         _gonderilmis: set = set(_disp.keys())
+        _hedef_map = _kalem_hedef.get(str(r.get("id") or ""), {})
+        _depo_ad = str(r.get("hedef_depo_sube_adi") or "").strip() or "depo"
         for _y in (z.get("yolda") or []):
             if int((_y or {}).get("sevk_adet") or 0) > 0:
                 _yad = str((_y or {}).get("kalem_adi") or "").strip().lower()
                 if _yad:
                     _gonderilmis.add(_yad)
+                    # Depodan çıkmış kalem: hedefi DEPO. Toptancı kaydı varsa
+                    # üzerine YAZILMAZ — kalem iki kanaldan da çıkmışsa ikisi de
+                    # görünmeli (mükerrer gönderim ancak böyle fark edilir).
+                    _v = _hedef_map.get(_yad)
+                    if _v and _v.get("tip") == "toptanci":
+                        _v["tip"] = "karma"
+                        _v["ad"] = f"{_v.get('ad') or 'toptancı'} + {_depo_ad}"
+                    elif not _v:
+                        _hedef_map[_yad] = {
+                            "tip": "depo", "ad": _depo_ad,
+                            "adet": int((_y or {}).get("sevk_adet") or 0),
+                            "durum": str((_y or {}).get("durum") or "") or None,
+                        }
+        # Her kaleme kendi hedefini yapıştır (ad-anahtarlı; kimlik çatlağı
+        # riski kule genelinde zaten ad üzerinden — burada YENİ risk açılmıyor).
+        z["kalemler"] = [
+            (dict(_it, yonlendirme=_hedef_map.get(str(_it.get("urun_ad") or "").strip().lower()))
+             if isinstance(_it, dict) else _it)
+            for _it in (z.get("kalemler") or [])
+        ]
         if _gonderilmis:
             _kalan: List[Dict[str, Any]] = [
                 dict(_it)

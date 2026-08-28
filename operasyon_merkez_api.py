@@ -10010,6 +10010,144 @@ def ops_siparis_merkez_iptal(body: OpsSiparisMerkezIptalBody):
     return r
 
 
+class OpsSiparisKalemIptalBody(BaseModel):
+    talep_id: str
+    urun_ad: Optional[str] = None
+    urun_id: Optional[str] = None
+    aciklama: Optional[str] = None
+    yapan_ad: Optional[str] = None
+
+
+@router.post("/siparis/kalem-iptal")
+def ops_siparis_kalem_iptal(body: OpsSiparisKalemIptalBody):
+    """
+    🔀 KALEM BAZINDA MERKEZ İPTALİ (sahip isteği, 2026-08-28)
+
+    "Gelen siparişi kalem bazında merkez iptal de edebilmeli — esp çarpıya
+    basınca iptal." Bugüne dek iptal TALEP bazındaydı: şube 4 kalem istiyorsa
+    ya hepsi iptal ya hiçbiri. Merkez "bu ürünü göndermiyorum" diyemiyordu.
+
+    ⚠️ KALEM SİLİNMEZ: `iptal: true` + zaman + gerekçe ile İŞARETLENİR.
+       Silinseydi şube "ben bunu istemiştim" derken kayıt olmazdı; kalem
+       çeşidi/adet toplamları da geçmişe dönük değişirdi (iz bozulur).
+    ⚠️ ZATEN YOLLANMIŞ kalem iptal EDİLEMEZ: mal yola çıkmışsa iptal, kaydı
+       gerçekle çelişkiye sokar. Toptancıya çıkmış kalem reddedilir.
+    ⚠️ SON KALEM: hepsi iptal olduysa talebin kendisi merkez-iptale düşer —
+       yoksa boş bir sipariş kuyrukta sonsuza dek durur.
+    """
+    tid = (body.talep_id or "").strip()
+    hedef_ad = (body.urun_ad or "").strip()
+    hedef_id = (body.urun_id or "").strip()
+    if not tid or (not hedef_ad and not hedef_id):
+        raise HTTPException(400, "talep_id ve (urun_ad veya urun_id) zorunlu")
+    with db() as (conn, cur):
+        cur.execute(
+            "SELECT id, durum, kalemler FROM siparis_talep WHERE id=%s FOR UPDATE",
+            (tid,),
+        )
+        tr = cur.fetchone()
+        if not tr:
+            raise HTTPException(404, "Sipariş talebi bulunamadı")
+        t = dict(tr)
+        if str(t.get("durum") or "") in ("iptal", "teslim_edildi"):
+            raise HTTPException(409, "Talep kapanmış — kalem iptali yapılamaz")
+        kalemler = t.get("kalemler")
+        if isinstance(kalemler, str):
+            try:
+                kalemler = json.loads(kalemler)
+            except Exception:
+                kalemler = []
+        if not isinstance(kalemler, list):
+            kalemler = []
+
+        # Zaten toptancıya çıkmış ürün adları — iptal edilemez.
+        _cikmis: set = set()
+        try:
+            cur.execute(
+                "SELECT kalemler FROM toptanci_siparis "
+                "WHERE talep_id=%s AND durum <> 'iptal'",
+                (tid,),
+            )
+            for _tr2 in cur.fetchall() or []:
+                _tk = dict(_tr2).get("kalemler") or []
+                if isinstance(_tk, str):
+                    try:
+                        _tk = json.loads(_tk)
+                    except Exception:
+                        _tk = []
+                for _ti in _tk:
+                    _n = str((_ti or {}).get("urun_ad") or "").strip().lower()
+                    if _n:
+                        _cikmis.add(_n)
+        except Exception:
+            # Kontrol yapılamadıysa İPTAL ETME — sessizce izin vermek,
+            # yolda olan malı "iptal" göstermek demektir.
+            raise HTTPException(503, "Gönderim kontrolü yapılamadı — kalem iptali güvenli değil")
+
+        bulundu = None
+        yeni: List[Dict[str, Any]] = []
+        for k in kalemler:
+            if not isinstance(k, dict):
+                yeni.append(k)
+                continue
+            _kad = str(k.get("urun_ad") or "").strip()
+            _kid = str(k.get("urun_id") or "").strip()
+            _eslesti = (
+                (hedef_id and _kid and _kid == hedef_id)
+                or (hedef_ad and _kad and _kad.lower() == hedef_ad.lower())
+            )
+            if _eslesti and not k.get("iptal") and bulundu is None:
+                if _kad.lower() in _cikmis:
+                    raise HTTPException(
+                        409,
+                        f"'{_kad}' zaten toptancıya yollanmış — iptal edilemez. "
+                        "Önce toptancı gönderimini geri alın.",
+                    )
+                bulundu = _kad or _kid
+                k = dict(
+                    k,
+                    iptal=True,
+                    iptal_ts=datetime.now().isoformat(timespec="seconds"),
+                    iptal_aciklama=(body.aciklama or "").strip() or None,
+                    iptal_yapan=(body.yapan_ad or "").strip() or None,
+                )
+            yeni.append(k)
+        if bulundu is None:
+            raise HTTPException(404, "Kalem bulunamadı veya zaten iptal edilmiş")
+
+        kalan_aktif = [
+            k for k in yeni
+            if isinstance(k, dict) and not k.get("iptal")
+        ]
+        cur.execute(
+            "UPDATE siparis_talep SET kalemler=%s::jsonb WHERE id=%s",
+            (json.dumps(yeni, ensure_ascii=False), tid),
+        )
+        audit(cur, "siparis_talep", tid, "OPS_SIPARIS_KALEM_IPTAL")
+
+        talep_iptal = False
+        if not kalan_aktif:
+            # Aktif kalem kalmadı → talebin kendisi kapanmalı.
+            try:
+                siparis_talep_merkez_iptal(
+                    cur, tid,
+                    (body.aciklama or "Tüm kalemler tek tek iptal edildi"),
+                    body.yapan_ad,
+                )
+                talep_iptal = True
+            except ValueError:
+                # Talep merkez-iptale uygun aşamada değilse (depoda/yolda)
+                # kalem işareti yine de kalır; talep elle kapatılır.
+                talep_iptal = False
+    return {
+        "success": True,
+        "talep_id": tid,
+        "iptal_edilen": bulundu,
+        "kalan_aktif_kalem": len(kalan_aktif),
+        "talep_iptal_edildi": talep_iptal,
+    }
+
+
 @router.post("/siparis/akisi-iptal")
 def ops_siparis_akisi_iptal(body: OpsSiparisMerkezIptalBody):
     """
@@ -19953,13 +20091,29 @@ def ops_v2_urun_ac_akis(
 # ── Sipariş Kuyruğu: bekleyen siparişler + stok etki bilgisi ─────
 
 @router.get("/v2/bekleyen-siparisler")
-def ops_v2_bekleyen_siparisler(gun: int = Query(7, ge=1, le=30)):
+def ops_v2_bekleyen_siparisler(
+    gun: int = Query(7, ge=1, le=30),
+    aday_depo: Optional[str] = Query(
+        None,
+        description="Henüz hedef depo ATANMAMIŞ taleplerde stok hesabının "
+                    "yapılacağı ADAY depo şube id'si.",
+    ),
+):
     """
     Merkez paneli için bekleyen sipariş kuyruğu.
     Her sipariş için:
       - Şubenin deposunda bu ürün var mı? (sube_depo_stok)
       - Gönderirsek merkezde ne kalır? (merkez_stok_kart)
       - Davranış uyarısı tetiklendi mi? (sube_operasyon_uyari)
+
+    🔀 `aday_depo` (sahip isteği, 2026-08-28): "sipariş geldiğinde her ürünün
+    TEMA şubesinde ne kadar olduğu parantezde yazmalı — depodan sayıyı
+    yollayabilecek miyim görmeliyim." Hedef depo ATANANA KADAR
+    `hedef_depo_mevcut` null geliyordu, çünkü stok hesabı yalnız ATANMIŞ depo
+    için yapılıyordu. Yani karar verilmeden önce karar için gereken sayı yoktu.
+    Aday depo verilirse o depo üzerinden hesaplanır; hesabın HANGİ depodan
+    yapıldığı `stok_hesap_kaynagi` ile zaten dönüyor (yanlış depoya bakarak
+    karar verilmesin).
     """
     with db() as (conn, cur):
         cur.execute("""
@@ -19977,6 +20131,43 @@ def ops_v2_bekleyen_siparisler(gun: int = Query(7, ge=1, le=30)):
         """, (gun,))
         talepler = cur.fetchall() or []
         merkez_map = merkez_stok_kart_haritasi(cur)
+        # Şube id → ad. Ad UYDURULMAZ, tablodan okunur; bulunamayan id için
+        # None döner ve ekran sayıyı depo adı OLMADAN yazar (yanlış ad yazmaz).
+        _depo_ad_haritasi: Dict[str, str] = {}
+        try:
+            cur.execute("SELECT id, ad FROM subeler")
+            for _sr in cur.fetchall() or []:
+                _sd = dict(_sr)
+                _sid = str(_sd.get("id") or "").strip()
+                if _sid:
+                    _depo_ad_haritasi[_sid] = str(_sd.get("ad") or "").strip()
+        except Exception:
+            _depo_ad_haritasi = {}
+
+        # Aday depo verilmediyse: SON KULLANILAN depoyu bul. Uydurma değil,
+        # ÖLÇÜM — geçmiş atamaların çoğunluğu. Bulunamazsa aday YOK ve ekran
+        # eskisi gibi "hedef depo atanmadı" der (sahte sayı üretilmez).
+        _aday = (aday_depo or "").strip() or None
+        _aday_kaynak = "istek" if _aday else None
+        if not _aday:
+            try:
+                cur.execute(
+                    """
+                    SELECT COALESCE(hedef_depo_sube_id, sevkiyat_sube_id) AS d,
+                           COUNT(*) AS n
+                    FROM siparis_talep
+                    WHERE COALESCE(hedef_depo_sube_id, sevkiyat_sube_id) IS NOT NULL
+                      AND tarih >= CURRENT_DATE - INTERVAL '90 day'
+                    GROUP BY 1 ORDER BY n DESC LIMIT 1
+                    """
+                )
+                _ar = cur.fetchone()
+                if _ar:
+                    _aday = str(dict(_ar).get("d") or "").strip() or None
+                    _aday_kaynak = "gecmis" if _aday else None
+            except Exception:
+                _aday = None
+                _aday_kaynak = None
 
         sonuc = []
         for talep in talepler:
@@ -19991,7 +20182,12 @@ def ops_v2_bekleyen_siparisler(gun: int = Query(7, ge=1, le=30)):
             if not isinstance(kalemler, list):
                 kalemler = []
 
+            # Atanmış depo varsa O esastır; yoksa adaya düşülür. Aday, atanmışın
+            # yerine GEÇMEZ — yoksa ekran gerçekte kullanılmayacak bir deponun
+            # sayısını gösterir.
             hedef_v2 = str(talep.get("hedef_depo_sube_id") or "").strip() or None
+            if not hedef_v2:
+                hedef_v2 = _aday
             fl, davranis = _enrich_kalemler_ve_davranis(
                 cur,
                 sube_id=str(sube_id or ""),
@@ -20060,6 +20256,20 @@ def ops_v2_bekleyen_siparisler(gun: int = Query(7, ge=1, le=30)):
                 "hedef_depo_sube_id": fl.get("hedef_depo_sube_id"),
                 "operasyon_yonlendirme_talimati": talep.get("operasyon_yonlendirme_talimati"),
                 "tahsis_kaynak_depo_sube_id": talep.get("tahsis_kaynak_depo_sube_id"),
+                # Sayının HANGİ deponun sayısı olduğu ADIYLA döner — ekran
+                # "(TEMA: 12)" yazabilsin diye. Atanmış mı aday mı ayrımı da
+                # verilir: aday sayı bir TAHMİN değil ama bir KARAR da değil.
+                "stok_depo_adi": _depo_ad_haritasi.get(str(hedef_v2 or "")) or None,
+                "stok_depo_atanmis": bool(
+                    str(talep.get("hedef_depo_sube_id") or "").strip()
+                ),
+                # Aday nereden geldi: istek mi, gecmis olcumu mu. Ekran
+                # "TEMA (son sevkiyatlarin deposu)" diyebilsin diye.
+                "stok_depo_kaynagi": (
+                    "atanmis"
+                    if str(talep.get("hedef_depo_sube_id") or "").strip()
+                    else _aday_kaynak
+                ),
             }
             if cn_v2:
                 row_v2["cift_siparis_bilgi_notu"] = cn_v2
