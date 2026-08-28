@@ -1736,7 +1736,23 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
         (k) => (k?.urun_id || '') === (d?.urun_id || '') && (k?.urun_ad || '') === (d?.urun_ad || ''),
       );
       if (idx >= 0) {
-        next[idx] = {
+        // ── 🔀 SEVK DIŞI KALEM (kısmi yönlendirme, 2026-08-29) ─────────────
+        // Merkez siparişin yalnız bir kısmını depoya yolladıysa geri kalan
+        // kalemler `depo_disi` işaretiyle kayıtta DURUYOR (silinmiyor).
+        // Depo bunları TOPLAMAMALI: durum 'yok', adet 0, kilitli. Sebebi
+        // yazılır — depocu "bu neden 0" diye sormasın, merkeze telefon
+        // etmesin.
+        const sevkDisi = !!d?.depo_disi || ['depoya_yonlendirilmedi', 'toptanciya_gitti', 'merkez_iptal']
+          .includes(String(d?.durum || '').toLowerCase());
+        next[idx] = sevkDisi ? {
+          urun_id: d?.urun_id || null,
+          urun_ad: d?.urun_ad || null,
+          durum: 'yok',
+          gonderilen_adet: 0,
+          not_aciklama: d?.not_aciklama || '',
+          _sevkDisi: true,
+          _sevkDisiSebep: String(d?.durum || '').toLowerCase(),
+        } : {
           urun_id: d?.urun_id || null,
           urun_ad: d?.urun_ad || null,
           durum: d?.durum || 'var',
@@ -1762,7 +1778,11 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
       const adet = Math.max(0, Math.round(sayi(x.gonderilen_adet)));
       const durum = String(x.durum || '').toLowerCase();   // Codex: case-guard
       const gonderilir = durum === 'var' || durum === 'kismi';
-      return { ...x, gonderilen_adet: gonderilir ? adet : 0 };
+      // ⚠️ `_sevkDisi` / `_sevkDisiSebep` yalnız EKRAN içindir; gövdeye
+      //    sızarsa sunucu sözleşmesine yabancı alan gider.
+      const { _sevkDisi, _sevkDisiSebep, ...temiz } = x;
+      void _sevkDisi; void _sevkDisiSebep;
+      return { ...temiz, gonderilen_adet: gonderilir ? adet : 0 };
     });
     if (!payload.length) { onToast?.('En az bir kalem durumu seçin'); return; }
     const sevkVar = payload.some((x) => {
@@ -4407,6 +4427,19 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 13 }}>
                         {(t.kalemler || []).map((k, i) => {
                           const d = kd[i] || {};
+                          // ── 🔀 SEVK DIŞI KALEM (kısmi yönlendirme, 2026-08-29)
+                          // Merkez siparişin yalnız bir kısmını bu depoya
+                          // yolladıysa geri kalanlar kayıtta DURUR ama bu
+                          // sevkiyata dahil DEĞİLDİR. Depocu bunları toplamaz.
+                          // ⚠️ Satır GİZLENMEZ: gizlenirse depocu "sipariş
+                          //    küçülmüş" sanır ve merkeze telefon eder. Sebebi
+                          //    yazılıp giriş kilitlenir.
+                          const sevkDisi = !!d._sevkDisi;
+                          const sevkDisiMetin = d._sevkDisiSebep === 'toptanciya_gitti'
+                            ? 'toptancıya yollandı — bu sevkiyata dahil değil'
+                            : d._sevkDisiSebep === 'merkez_iptal'
+                              ? 'merkez iptal etti'
+                              : 'merkez bu kalemi depoya yönlendirmedi';
                           const secenek = [
                             { id: 'var', ad: 'Var', renk: R.yesil },
                             { id: 'kismi', ad: 'Kısmi', renk: R.amber },
@@ -4418,16 +4451,20 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
                               padding: '11px 13px', borderRadius: 12,
                               border: '1px solid rgba(243,233,220,.08)',
                               background: 'linear-gradient(165deg, #2C2116, #241A0E)',
+                              opacity: sevkDisi ? 0.5 : 1,
                             }}>
                               <div style={{ flex: 1, minWidth: 150 }}>
                                 <div style={{ fontSize: 13, fontWeight: 600 }}>{k?.urun_ad || '—'}</div>
-                                <div style={{ fontSize: 11, color: R.not2, marginTop: 2 }}>istenen {sayi(k?.adet)}</div>
+                                <div style={{ fontSize: 11, color: sevkDisi ? R.amber : R.not2, marginTop: 2 }}>
+                                  {sevkDisi ? `\u26d4 ${sevkDisiMetin}` : `istenen ${sayi(k?.adet)}`}
+                                </div>
                               </div>
                               <label style={{ fontSize: 10.5, color: R.not2, display: 'flex', flexDirection: 'column', gap: 3 }}>
                                 gönderilen
                                 <input
                                   type="number"
                                   min="0"
+                                  disabled={sevkDisi}
                                   value={d.gonderilen_adet ?? 0}
                                   onChange={(e) => setKd((p) => ({
                                     ...p,
@@ -4436,7 +4473,8 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
                                   style={{
                                     width: 76, padding: '6px 9px', borderRadius: 8,
                                     border: `1px solid ${R.cizgi3}`, background: R.girinti,
-                                    color: R.krem, fontFamily: F.mono, fontSize: 13, outline: 'none',
+                                    color: sevkDisi ? R.not3 : R.krem, fontFamily: F.mono, fontSize: 13,
+                                    outline: 'none', cursor: sevkDisi ? 'not-allowed' : 'auto',
                                   }}
                                 />
                               </label>
@@ -4446,7 +4484,7 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
                                   return (
                                     <div
                                       key={o.id}
-                                      onClick={() => setKd((p) => ({
+                                      onClick={sevkDisi ? undefined : () => setKd((p) => ({
                                         ...p,
                                         [i]: {
                                           ...p[i],

@@ -40,6 +40,20 @@ def sevkiyat_kalem_durumlari_normalize(items: Any) -> Tuple[List[Dict[str, Any]]
         dd = (raw.get("durum") or raw.get("sevkiyat_durum") or "").strip().lower()
         if dd.startswith("tahsis"):
             dd = "bekliyor"
+        # ── 🔀 KISMİ YÖNLENDİRME DURUMLARI (2026-08-29) ─────────────────────
+        # Merkez kısmi depo yönlendirmesi yapınca `kalem_durumlari` bu talebe
+        # ait AMA bu sevkiyata DAHİL OLMAYAN kalemleri de taşıyor:
+        #   depoya_yonlendirilmedi · toptanciya_gitti · merkez_iptal
+        # Depo ekranı kayıtları olduğu gibi geri gönderdiği için bu değerler
+        # buraya ulaşıyor ve 400 üretiyordu → BÖLÜNMÜŞ SİPARİŞ SEVK EDİLEMİYOR,
+        # dolayısıyla şube kabulü ve stok güncellemesi de hiç olmuyordu.
+        # ⚠️ "Bilinmeyeni sessizce yok say" YAPILMIYOR: yalnız bu ÜÇ bilinen
+        #    değer sevk-dışı ('yok', 0 adet) sayılır; başka bir değer hâlâ 400
+        #    alır — gerçek bozuk girdi gizlenmesin.
+        if dd in ("depoya_yonlendirilmedi", "toptanciya_gitti", "merkez_iptal"):
+            raw = dict(raw)
+            raw["_sevk_disi_sebep"] = dd
+            dd = "yok"
         if dd not in ("bekliyor", "var", "yok", "kismi"):
             raise HTTPException(400, "kalem durumları: bekliyor | var | yok | kismi")
         ist = max(0, int(raw.get("istenen_adet") or 0))
