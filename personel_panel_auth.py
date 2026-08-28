@@ -181,7 +181,12 @@ def dogrula_personel_panel_pin(cur: Any, personel_id: str, pin: str) -> Dict[str
     cur.execute(
         """
         SELECT id, ad_soyad, aktif, sube_id,
-               panel_pin_salt, panel_pin_hash, COALESCE(panel_yonetici, FALSE) AS panel_yonetici
+               panel_pin_salt, panel_pin_hash,
+               COALESCE(panel_yonetici, FALSE) AS panel_yonetici,
+               -- 🌅 Erken açılış izni (2026-08-29): açılış onayı 07:00
+               -- kuralından muaf mı. PIN doğrulaması zaten kişiyi çözüyor;
+               -- izni ayrı sorguyla aramak ikinci bir kaynak açardı.
+               COALESCE(erken_acilis_izni, FALSE) AS erken_acilis_izni
         FROM personel WHERE id=%s
         """,
         (personel_id,),
@@ -206,6 +211,7 @@ def dogrula_personel_panel_pin(cur: Any, personel_id: str, pin: str) -> Dict[str
         raise HTTPException(403, "PIN hatalı")
     panel_pin_basarili_temizle(cur, personel_id)
     u["yonetici"] = bool(u.get("panel_yonetici"))
+    u["erken_acilis_izni"] = bool(u.get("erken_acilis_izni"))
     return u
 
 

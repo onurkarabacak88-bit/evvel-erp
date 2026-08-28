@@ -9398,6 +9398,9 @@ def _personel_api_row(r: dict) -> dict:
     d.pop("panel_pin_hash", None)
     if "panel_yonetici" in d and d["panel_yonetici"] is not None:
         d["panel_yonetici"] = bool(d["panel_yonetici"])
+    # 🌅 Erken açılış izni (2026-08-29): ekran bu alanı okumazsa herkesi
+    # "07:00" gösterir ve verilen izin görünmez olurdu.
+    d["erken_acilis_izni"] = bool(d.get("erken_acilis_izni"))
     return d
 
 

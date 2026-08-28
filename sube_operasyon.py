@@ -709,11 +709,33 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                     "için merkez akışını kullanın.",
                 )
         if tip == "ACILIS":
+            # 🌅 07:00 KURALI + KİŞİYE ÖZEL MUAFİYET (sahip isteği, 2026-08-29)
+            # Kural herkes için AYNEN duruyor; yalnız `erken_acilis_izni`
+            # verilmiş kişi muaf. Burada yalnız bayrak OKUNUR; açılışın
+            # kendisi birkaç satır aşağıda PIN'le doğrulanıyor — kimlik
+            # bilmek tek başına şube açtırmaz.
             if not tr_acilis_tamam_saat_uygun_mu(simdi):
-                raise HTTPException(
-                    400,
-                    "Açılış onayı yalnızca 07:00 ve sonrasında yapılabilir.",
-                )
+                _izinli = False
+                _pid_erken = (body.personel_id or "").strip()
+                if _pid_erken:
+                    try:
+                        cur.execute(
+                            "SELECT COALESCE(erken_acilis_izni, FALSE) AS izin "
+                            "FROM personel WHERE id::text = %s AND aktif = TRUE",
+                            (_pid_erken,),
+                        )
+                        _ir = cur.fetchone()
+                        _izinli = bool(_ir and dict(_ir).get("izin"))
+                    except Exception:
+                        # fail-closed: hata kuralı gevşetmez
+                        _izinli = False
+                if not _izinli:
+                    raise HTTPException(
+                        400,
+                        "Açılış onayı yalnızca 07:00 ve sonrasında yapılabilir. "
+                        "(Erken açılış izni olan personel bu saatten önce de "
+                        "açabilir — izin merkezden verilir.)",
+                    )
             from personel_panel_auth import dogrula_personel_panel_pin
 
             if body.kasa_sayim is None or body.kasa_sayim < 0:

@@ -1010,6 +1010,81 @@ def merkez_personel_panel_yonetici(personel_id: str, body: PersonelPanelYonetici
     return {"success": True, "yonetici": yon}
 
 
+class PersonelErkenAcilisBody(MerkezPanelOnayBody):
+    izin: bool = True
+
+
+@router.put(
+    "/merkez/personel/{personel_id}/erken-acilis-izni",
+    dependencies=[Depends(merkez_mutasyon_korumasi)],
+)
+def merkez_personel_erken_acilis_izni(personel_id: str, body: PersonelErkenAcilisBody):
+    """
+    🌅 ERKEN AÇILIŞ İZNİ (sahip isteği, 2026-08-29)
+
+    Açılış onayı sistem genelinde 07:00'den önce yapılamaz
+    (`tr_saat.ACILIS_TAMAM_EN_ERKEN_SAAT`). Bu uç, TEK BİR KİŞİYİ bu
+    kuraldan muaf tutar.
+
+    ⚠️ `panel_yonetici`ye BİNDİRİLMEDİ: o alan görev onaylarını yönetiyor;
+       oraya bağlansaydı her yöneticiye sessizce erken açılış yetkisi
+       verilmiş olurdu.
+    ⚠️ Kural KALDIRILMIYOR, kişiye MUAFİYET veriliyor: izinsiz herkes için
+       07:00 aynen geçerli.
+    ⚠️ İz bırakır: audit + operasyon defteri — "bu şube neden 05:40'ta
+       açılmış" sorusunun cevabı kayıtta durur.
+    """
+    izin = bool(body.izin)
+    with db() as (conn, cur):
+        cur.execute(
+            "SELECT id, aktif, ad_soyad, sube_id FROM personel WHERE id=%s",
+            (personel_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(404, "Personel bulunamadı")
+        row = dict(row)
+        if izin and not row.get("aktif"):
+            raise HTTPException(400, "Pasif personele erken açılış izni verilemez")
+        hedef_ad = (row.get("ad_soyad") or "").strip() or "—"
+        sube_defter = (row.get("sube_id") or "").strip() or "sube-merkez"
+
+        # Panel yöneticisi varsa onay iste (panel_yonetici ucundaki desen).
+        n_yon = count_personel_panel_yonetici(cur)
+        onay_ad = ""
+        if n_yon >= 1:
+            _merkez_yonetici_onayla(cur, body)
+            oid = (body.onaylayan_personel_id or "").strip()
+            cur.execute("SELECT ad_soyad FROM personel WHERE id=%s", (oid,))
+            oa = cur.fetchone()
+            onay_ad = (dict(oa).get("ad_soyad") or "").strip() if oa else "—"
+
+        cur.execute(
+            "UPDATE personel SET erken_acilis_izni=%s WHERE id=%s",
+            (izin, personel_id),
+        )
+        audit(
+            cur, "personel", personel_id,
+            "ERKEN_ACILIS_IZNI" if izin else "ERKEN_ACILIS_IZNI_KALDIR",
+        )
+
+        from operasyon_defter import operasyon_defter_ekle
+
+        tr = _now_tr()
+        operasyon_defter_ekle(
+            cur,
+            sube_defter,
+            "ERKEN_ACILIS_IZNI",
+            f"Erken açılış izni={'evet' if izin else 'hayır'} — hedef={hedef_ad}"
+            + (f" — onaylayan={onay_ad}" if onay_ad else " — onaysız")
+            + " · 07:00 kuralı diğer personel için aynen geçerli",
+            personel_id=(body.onaylayan_personel_id or "").strip() or personel_id,
+            personel_ad=onay_ad or hedef_ad,
+            bildirim_saati=tr.strftime("%H:%M:%S"),
+        )
+    return {"success": True, "personel_id": personel_id, "ad_soyad": hedef_ad, "izin": izin}
+
+
 @router.post("/{sube_id}/acilis-geri-al")
 def sube_acilis_geri_al(sube_id: str, uygula: bool = False):
     """Bugünkü şube açılışını GERİ AL (test/yanlış açılış temizliği).
@@ -1101,14 +1176,40 @@ def sube_acilis_kaydet(sube_id: str, body: SubeAcilisModel = SubeAcilisModel()):
     tarih_sistem = simdi.strftime("%Y-%m-%d")
     saat_sistem = simdi.strftime("%H:%M:%S")
     sayimli = body.kasa_sayim is not None
-    if not tr_acilis_tamam_saat_uygun_mu(dt_now_tr_naive()):
-        raise HTTPException(
-            400,
-            "Açılış onayı yalnızca 07:00 ve sonrasında yapılabilir.",
-        )
 
     with db() as (conn, cur):
         _sube_getir(cur, sube_id)
+
+        # 🌅 07:00 KURALI + KİŞİYE ÖZEL MUAFİYET (sahip isteği, 2026-08-29)
+        # Kural herkes için AYNEN duruyor; yalnız `erken_acilis_izni` verilmiş
+        # kişi muaf. İzin PIN'e bağlı DEĞİL, kimliğe bağlı: burada yalnız
+        # bayrak OKUNUR, açılışın kendisi aşağıda PIN'le doğrulanır. Yani
+        # kimlik bilmek tek başına şube açtırmaz.
+        # ⚠️ Kontrol db bloğunun İÇİNE alındı: dışarıda cursor yoktu, izni
+        #    sorgulayacak yer yoktu.
+        if not tr_acilis_tamam_saat_uygun_mu(dt_now_tr_naive()):
+            _izinli = False
+            _pid = (getattr(body, "personel_id", "") or "").strip()
+            if _pid:
+                try:
+                    cur.execute(
+                        "SELECT COALESCE(erken_acilis_izni, FALSE) AS izin, ad_soyad "
+                        "FROM personel WHERE id=%s AND aktif = TRUE",
+                        (_pid,),
+                    )
+                    _ir = cur.fetchone()
+                    _izinli = bool(_ir and dict(_ir).get("izin"))
+                except Exception:
+                    # ⚠️ Sorgu düşerse İZİN VERİLMEZ (fail-closed): kuralı
+                    #    hatanın gevşetmesi, kuralı hiç koymamak demektir.
+                    _izinli = False
+            if not _izinli:
+                raise HTTPException(
+                    400,
+                    "Açılış onayı yalnızca 07:00 ve sonrasında yapılabilir. "
+                    "(Erken açılış izni olan personel bu saatten önce de açabilir — "
+                    "izin merkezden verilir.)",
+                )
 
         if sayimli:
             _sayimli_panel_acilis_dogrula(body)

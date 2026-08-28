@@ -2755,6 +2755,18 @@ def init_db():
                 IF NOT EXISTS (SELECT 1 FROM information_schema.columns
                     WHERE table_name='personel' AND column_name='telefon')
                 THEN ALTER TABLE personel ADD COLUMN telefon TEXT; END IF;
+                -- 🌅 ERKEN AÇILIŞ İZNİ (sahip isteği, 2026-08-29)
+                -- Açılış onayı sistem genelinde 07:00'den önce yapılamıyor
+                -- (tr_saat.ACILIS_TAMAM_EN_ERKEN_SAAT). Bazı kişilerin
+                -- şubeyi daha erken açması gerekiyor.
+                -- ⚠️ `panel_yonetici` alanına BİNDİRİLMEDİ: o alan görev
+                --    onaylarını yönetiyor; ona bağlasaydık her yöneticiye
+                --    sessizce erken açılış yetkisi verilmiş olurdu.
+                -- ⚠️ Varsayılan FALSE: kural herkes için AYNEN durur, yalnız
+                --    açıkça izin verilen kişi muaf olur.
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='personel' AND column_name='erken_acilis_izni')
+                THEN ALTER TABLE personel ADD COLUMN erken_acilis_izni BOOLEAN NOT NULL DEFAULT FALSE; END IF;
             END $$;
         """)
 

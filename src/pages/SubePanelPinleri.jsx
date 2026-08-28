@@ -108,6 +108,28 @@ export default function SubePanelPinleri() {
     }
   }
 
+  // 🌅 ERKEN AÇILIŞ İZNİ (sahip isteği, 2026-08-29)
+  // Açılış onayı sistem genelinde 07:00'den önce yapılamıyor. Bu anahtar
+  // TEK KİŞİYİ muaf tutar — kuralı kaldırmaz, izinsiz herkes için aynen sürer.
+  // ⚠️ Yönetici anahtarına BİNDİRİLMEDİ: o rol görev onaylarını yönetiyor.
+  async function erkenAcilisToggle(p, izin) {
+    if (!onayKontrol()) return;
+    try {
+      await api(
+        `/sube-panel/merkez/personel/${encodeURIComponent(p.id)}/erken-acilis-izni`,
+        { method: 'PUT', body: { izin, ...onayGovdesi() } }
+      );
+      toast(
+        izin
+          ? `${p.ad_soyad} artık 07:00'den önce açılış yapabilir`
+          : `${p.ad_soyad} için erken açılış izni kaldırıldı`,
+      );
+      load();
+    } catch (e) {
+      toast(e.message || 'İşlem başarısız', 'red');
+    }
+  }
+
   return (
     <div className="page" style={{ maxWidth: 920, margin: '0 auto', padding: '1rem' }}>
       <h1 style={{ marginBottom: 8 }}>Personel panel PIN</h1>
@@ -226,6 +248,9 @@ export default function SubePanelPinleri() {
                 <th style={{ padding: '8px 6px' }}>Şube (kayıt)</th>
                 <th style={{ padding: '8px 6px' }}>PIN</th>
                 <th style={{ padding: '8px 6px' }}>Yönetici</th>
+                <th style={{ padding: '8px 6px' }} title="Açılış onayı normalde 07:00’den önce yapılamaz">
+                  Açılış saati
+                </th>
                 <th style={{ padding: '8px 6px' }} />
               </tr>
             </thead>
@@ -242,6 +267,12 @@ export default function SubePanelPinleri() {
                     )}
                   </td>
                   <td style={{ padding: '10px 6px' }}>{p.yonetici ? 'Evet' : 'Hayır'}</td>
+                  {/* 🌅 Erken açılış: kural 07:00, bu kişi muaf mı */}
+                  <td style={{ padding: '10px 6px' }}>
+                    {p.erken_acilis_izni
+                      ? <span style={{ color: '#b45309', fontWeight: 600 }}>🌅 Muaf</span>
+                      : <span style={{ color: '#94a3b8' }}>07:00</span>}
+                  </td>
                   <td style={{ padding: '10px 6px', whiteSpace: 'nowrap' }}>
                     <button
                       type="button"
@@ -271,6 +302,17 @@ export default function SubePanelPinleri() {
                         Yönetici yap
                       </button>
                     )}
+                    <button
+                      type="button"
+                      className="btn btn-sm"
+                      style={{ marginLeft: 8 }}
+                      title={p.erken_acilis_izni
+                        ? '07:00 kuralı bu kişi için yeniden geçerli olsun'
+                        : 'Bu kişi 07:00’den önce de açılış yapabilsin'}
+                      onClick={() => erkenAcilisToggle(p, !p.erken_acilis_izni)}
+                    >
+                      {p.erken_acilis_izni ? 'Erken açılışı kapat' : '🌅 Erken açılış izni'}
+                    </button>
                   </td>
                 </tr>
               ))}
