@@ -1822,8 +1822,15 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
         });
         onToast?.('🚫 Akış iptal edildi — sevk edilen adetler depoya iade edildi');
       } else if (m.tip === 'geri-al') {
-        await api(`/ops/siparis/${encodeURIComponent(tid)}/toptanci-geri-al`, { method: 'POST' });
-        onToast?.('↩ Sipariş kuyruğa geri alındı');
+        // Uç 2026-08-29'da onarıldı: toptancı sipariş satırları artık
+        // GERÇEKTEN iptal ediliyor (önceden yalnız defter siliniyordu ve
+        // kulenin self-heal'i geri almayı ilk yenilemede bozuyordu).
+        // Yanıt hangi tedarikçinin geri alındığını söylüyor — yazılır.
+        const gr = await api(`/ops/siparis/${encodeURIComponent(tid)}/toptanci-geri-al`, { method: 'POST' });
+        const ted = Array.isArray(gr?.iptal_edilen_tedarikciler) ? gr.iptal_edilen_tedarikciler : [];
+        const kalanG = sayi(gr?.kalan_acik_gonderim);
+        onToast?.(`↩ Geri alındı${ted.length ? `: ${ted.join(', ')}` : ''}`
+          + (kalanG ? ` · ${kalanG} gönderim hâlâ açık` : ' · sipariş kuyruğa döndü'));
       } else if (m.tip === 'yeniden-ac') {
         await api(`/ops/siparis/gecmis/${encodeURIComponent(tid)}/yeniden-ac`, { method: 'POST' });
         onToast?.('🔄 Sipariş tekrar kuyruğa alındı');

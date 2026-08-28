@@ -10738,45 +10738,129 @@ def ops_siparis_toptanciya_yolla(body: OpsSiparisToptanciyaYollaBody):
 
 
 @router.post("/siparis/{talep_id}/toptanci-geri-al")
-def ops_siparis_toptanci_geri_al(talep_id: str):
-    """Toptancıya yönlendirilmiş siparişi geri alır → durum=bekliyor, kuyruga döner."""
+def ops_siparis_toptanci_geri_al(talep_id: str, toptanci_siparis_id: Optional[str] = None):
+    """
+    Toptancı gönderimini geri alır → kalemler merkez kuyruğuna döner.
+
+    🔧 ONARIM (Fable denetimi, 2026-08-29) — üç kusur birden vardı:
+
+    1. **Geri alma KENDİNİ İPTAL EDİYORDU.** Uç `toptanci_siparis` satırlarına
+       DOKUNMUYOR, yalnız `operasyon_defter`i siliyordu. Kule ise "dağıtılmış"
+       hesabını `toptanci_siparis WHERE durum <> 'iptal'`den türetiyor. Yani
+       geri alınan talep "tamamı dağıtılmış ama bekliyor" görünüyor ve kulenin
+       SELF-HEAL'i onu ilk yenilemede tekrar `gonderildi`ye çekiyordu.
+       → Satırlar artık gerçekten `durum='iptal'` yapılıyor.
+
+    2. **KISMİ GÖNDERİM GERİ ALINAMIYORDU.** Kapı
+       `sevkiyat_durumu == 'toptanciya_yonlendirildi'` istiyordu; kısmi
+       gönderimde bu alan DEĞİŞMİYOR (talep 'bekliyor' kalıyor) → her kısmi
+       yönlendirme 400 alıyordu. → Kapı artık "iptal edilecek bir toptancı
+       gönderimi VAR MI" diye soruyor.
+
+    3. **HEP-VEYA-HİÇTİ.** Bir talepte 5 tedarikçiye gönderim varken biri
+       yanlışsa hepsini geri almak gerekiyordu. → `toptanci_siparis_id`
+       verilirse YALNIZ o gönderim geri alınır.
+
+    ⚠️ TESLİM ALINMIŞ gönderim geri ALINMAZ: mal gelmişse "hiç gönderilmedi"
+       demek kaydı gerçekle çelişkiye sokar.
+    """
     tid = (talep_id or "").strip()
     if not tid:
         raise HTTPException(400, "talep_id zorunlu")
+    hedef_ts = (toptanci_siparis_id or "").strip() or None
     with db() as (conn, cur):
         cur.execute(
-            "SELECT id, durum, sevkiyat_durumu FROM siparis_talep WHERE id = %s",
+            "SELECT id, durum, sevkiyat_durumu FROM siparis_talep WHERE id = %s FOR UPDATE",
             (tid,),
         )
         row = cur.fetchone()
         if not row:
             raise HTTPException(404, "Sipariş bulunamadı")
-        sevk_dur = str(row.get("sevkiyat_durumu") or "").strip()
-        if sevk_dur != "toptanciya_yonlendirildi":
-            raise HTTPException(400, "Bu sipariş toptancıya yönlendirilmemiş — geri alınamaz")
+
+        # Geri alınabilir gönderimler: iptal olmamış VE teslim alınmamış.
+        _p: List[Any] = [tid]
+        _ek = ""
+        if hedef_ts:
+            _ek = " AND id = %s"
+            _p.append(hedef_ts)
         cur.execute(
-            """
-            UPDATE siparis_talep
-               SET durum            = 'bekliyor',
-                   sevkiyat_durumu  = 'bekliyor',
-                   sevkiyat_durum   = 'bekliyor',
-                   sevkiyat_notu    = NULL,
-                   sevkiyat_ts      = NULL
-             WHERE id = %s
-            """,
+            "SELECT id, tedarikci_ad, durum FROM toptanci_siparis "
+            "WHERE talep_id = %s AND durum <> 'iptal'" + _ek,
+            tuple(_p),
+        )
+        gonderimler = [dict(r) for r in (cur.fetchall() or [])]
+        if not gonderimler:
+            raise HTTPException(
+                400,
+                "Geri alınacak toptancı gönderimi yok — bu sipariş toptancıya "
+                "yönlendirilmemiş veya gönderim zaten iptal edilmiş.",
+            )
+        teslim = [g for g in gonderimler if str(g.get("durum") or "") == "teslim_alindi"]
+        if teslim:
+            raise HTTPException(
+                409,
+                "Teslim alınmış gönderim geri alınamaz: "
+                + ", ".join(str(g.get("tedarikci_ad") or "—") for g in teslim)
+                + ". Mal geldiyse kaydı 'hiç gönderilmedi' yapmak izi bozar.",
+            )
+
+        iptal_ids = [str(g["id"]) for g in gonderimler]
+        # ⛔ ASIL ONARIM: satırlar gerçekten iptal edilir, yoksa kule bunları
+        #    "dağıtılmış" saymaya devam eder ve self-heal geri almayı bozar.
+        cur.execute(
+            "UPDATE toptanci_siparis SET durum = 'iptal' WHERE id = ANY(%s)",
+            (iptal_ids,),
+        )
+
+        # Talebi kuyruğa döndür — YALNIZ başka açık gönderim kalmadıysa.
+        cur.execute(
+            "SELECT COUNT(*)::int AS n FROM toptanci_siparis "
+            "WHERE talep_id = %s AND durum <> 'iptal'",
             (tid,),
         )
-        # Toptancı defter kayıtlarını da temizle — listeden kalksın
-        cur.execute(
-            """
-            DELETE FROM operasyon_defter
-             WHERE etiket = 'SIPARIS_TOPTANCI_YONLENDIRME'
-               AND ref_event_id = %s
-            """,
-            (tid,),
-        )
+        kalan_gonderim = int((cur.fetchone() or {}).get("n") or 0)
+        if kalan_gonderim == 0:
+            cur.execute(
+                """
+                UPDATE siparis_talep
+                   SET durum            = 'bekliyor',
+                       sevkiyat_durumu  = 'bekliyor',
+                       sevkiyat_durum   = 'bekliyor',
+                       sevkiyat_notu    = NULL,
+                       sevkiyat_ts      = NULL
+                 WHERE id = %s
+                """,
+                (tid,),
+            )
+        else:
+            # Kısmi geri alma: talep zaten 'bekliyor' olabilir; durumu ZORLAMA.
+            # Diğer tedarikçiye giden kısım hâlâ yolda.
+            cur.execute(
+                "UPDATE siparis_talep SET durum = 'bekliyor' WHERE id = %s AND durum <> 'teslim_edildi'",
+                (tid,),
+            )
+
+        # Toptancı defter kayıtlarını da temizle — listeden kalksın.
+        # ⚠️ Tek gönderim geri alındıysa defter SİLİNMEZ: diğer gönderimlerin
+        #    izi duruyor, hepsini silmek onların kaydını da yok ederdi.
+        if kalan_gonderim == 0:
+            cur.execute(
+                """
+                DELETE FROM operasyon_defter
+                 WHERE etiket = 'SIPARIS_TOPTANCI_YONLENDIRME'
+                   AND ref_event_id = %s
+                """,
+                (tid,),
+            )
         audit(cur, "siparis_talep", tid, "OPS_SIPARIS_TOPTANCI_GERI_AL")
-    return {"ok": True, "talep_id": tid, "yeni_durum": "bekliyor"}
+    return {
+        "ok": True,
+        "talep_id": tid,
+        "iptal_edilen_gonderim": len(iptal_ids),
+        "iptal_edilen_tedarikciler": [str(g.get("tedarikci_ad") or "—") for g in gonderimler],
+        "kalan_acik_gonderim": kalan_gonderim,
+        "yeni_durum": "bekliyor",
+    }
 
 
 # ── ÖĞRENEN TOPTANCI ÖNERİSİ (Cep Sipariş Kulesi Faz 2) ─────────────────────

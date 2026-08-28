@@ -544,7 +544,13 @@ def siparis_kontrol_kulesi_yukle(
                 )
                 z["asama_metni"] = _asama_metni(z["asama"], "toptanciya_yonlendirildi")
             except Exception:
-                pass
+                # Sessiz kalmaz: self-heal bir talebin AŞAMASINI değiştiriyor.
+                # Düşerse talep kuyrukta "hayalet" kalır ve kimse nedenini
+                # bilmez. (2026-08-29)
+                logger.warning(
+                    "kule self-heal basarisiz — talep %s 'bekliyor' kaldi",
+                    str(r.get("id") or "?"),
+                )
 
         if asama and z["asama"] != asama:
             continue
