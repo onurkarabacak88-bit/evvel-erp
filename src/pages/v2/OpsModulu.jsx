@@ -2003,8 +2003,13 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
         //    hiç yazılmaz (yanlış deponun sayısı gösterilmez).
         const depoAd = z?.stok_depo_adi || null;
         const depoVar = zk && zk.hedef_depo_mevcut != null ? sayi(zk.hedef_depo_mevcut) : null;
-        const parantez = (depoAd && depoVar != null)
-          ? ` (${depoAd}: ${depoVar}${depoVar >= sayi(k?.adet) ? ' ✓' : ' ⚠ yetmez'})`
+        // "TEMA?" — soru işareti deponun henüz ATANMADIĞINI söyler. Aday
+        // deponun sayısını atanmış gibi göstermek sahte kesinliktir.
+        const depoEtiket = depoAd
+          ? `${depoAd}${z?.stok_depo_kaynagi && z.stok_depo_kaynagi !== 'atanmis' ? '?' : ''}`
+          : null;
+        const parantez = (depoEtiket && depoVar != null)
+          ? ` (${depoEtiket}: ${depoVar}${depoVar >= sayi(k?.adet) ? ' ✓' : ' ⚠ yetmez'})`
           : '';
         // Karar için gereken üç sayı: şubede zaten var mı · merkezde ne kalır ·
         // barem altına düşer mi. Sunucu hesaplıyordu, ekran hiç göstermiyordu.
@@ -2063,9 +2068,24 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
         // stok_hesap_kaynagi: yukarıdaki sayılar HANGİ depodan hesaplandı —
         // merkez mi, atanmış hedef depo mu. Yanlış depoya bakarak karar
         // verilmesin diye adıyla yazılır.
-        z?.stok_hesap_kaynagi
-          ? `Stok hesabı kaynağı: ${z.stok_hesap_kaynagi === 'hedef_depo' ? 'atanmış HEDEF DEPO' : z.stok_hesap_kaynagi === 'merkez' ? 'merkez depo' : z.stok_hesap_kaynagi}.`
-          : '',
+        // ⚠️ ADAY ≠ ATANMIŞ (2026-08-28, canlı doğrulamada kendi hatam):
+        // `aday_depo` eklendiğinde sunucu stok hesabını aday depo üzerinden
+        // yapıyor ve `stok_hesap_kaynagi='hedef_depo'` dönüyor. Ekran bunu
+        // "atanmış HEDEF DEPO" diye yazınca ATANMAMIŞ bir depoyu atanmış
+        // gibi gösteriyordu — sahte kesinlik. `stok_depo_kaynagi` ayrımı
+        // (atanmis | gecmis | istek) burada okunur.
+        (() => {
+          const kk = z?.stok_depo_kaynagi;
+          const ad = z?.stok_depo_adi;
+          if (kk === 'gecmis') {
+            return `Stok hesabı ${ad || 'aday depo'} üzerinden yapıldı — bu depo ATANMADI, `
+              + 'son sevkiyatların deposu olduğu için aday alındı.';
+          }
+          if (kk === 'istek') return `Stok hesabı seçtiğiniz ${ad || 'aday depo'} üzerinden yapıldı — henüz atanmadı.`;
+          if (kk === 'atanmis') return `Stok hesabı kaynağı: atanmış hedef depo${ad ? ` (${ad})` : ''}.`;
+          if (z?.stok_hesap_kaynagi === 'merkez' || z?.stok_hesap_kaynagi === 'merkez_kart') return 'Stok hesabı kaynağı: merkez depo.';
+          return z?.stok_hesap_kaynagi ? `Stok hesabı kaynağı: ${z.stok_hesap_kaynagi}.` : '';
+        })(),
         s.asama_metni,
         s.operasyon_yonlendirme_talimati ? `Talimat: ${s.operasyon_yonlendirme_talimati}` : '',
         s.asama === 'yolda' ? 'Teslim alma ŞUBEDE yapılır (görünür kabul) — masaüstünden teslim işaretlenmez.' : '',
