@@ -100,11 +100,22 @@ export const opsKuyrukKur = (satirlar, bugunISO) => {
     ...L.filter((x) => x.asama === 'depoda').map((x) => m(
       x, 2, `${x.sube_adi || 'Şube'} · depoda hazırlanıyor`,
       `${yuk(x)} · sevk bekliyor`)),
-    ...L.filter((x) => ['yolda', 'toptanci_bekliyor'].includes(x.asama))
+    // ⚠️ YANLIŞ TARAFI SUÇLAMA (canlı yürüyüşte yakalandı, 2026-08-28):
+    // 'yolda' ile 'toptanci_bekliyor' AYNI cümleye konmuştu — ikisine birden
+    // "şube kabulü gecikti · N gündür yolda" yazılıyordu. Oysa toptancı
+    // siparişi HİÇ YOLA ÇIKMAMIŞTIR: mal toptancıdan gelmemiştir, şubenin
+    // kabul edeceği bir şey yoktur. Sahip 10 gündür şubeyi suçlu sanıyordu.
+    // Canlı ölçüm: 7 sipariş 5–10 gündür toptancıda, 6'sı TEMA.
+    ...L.filter((x) => x.asama === 'yolda')
       .filter((x) => (opsGunFarki(x.tarih, bugunISO) ?? 0) >= 2)
       .map((x) => m(
         x, 3, `${x.sube_adi || 'Şube'} · şube kabulü gecikti`,
         `${opsGunFarki(x.tarih, bugunISO)} gündür yolda · ${yuk(x)}`)),
+    ...L.filter((x) => x.asama === 'toptanci_bekliyor')
+      .filter((x) => (opsGunFarki(x.tarih, bugunISO) ?? 0) >= 2)
+      .map((x) => m(
+        x, 3, `${x.sube_adi || 'Şube'} · toptancıdan mal gelmedi`,
+        `${opsGunFarki(x.tarih, bugunISO)} gündür toptancıda · ${yuk(x)} · şube değil TEDARİKÇİ bekleniyor`)),
   ].sort((a, b) => (a.sinif - b.sinif) || ((b.yas ?? 0) - (a.yas ?? 0)));
 };
 
@@ -1863,7 +1874,15 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     onCekmece?.({
       tip: 'SİPARİŞ',
       baslik: `${s.sube_adi || 'Şube'} · ${tarihKisa(s.tarih)}`,
-      alt: s.asama_metni || a.ad.toLowerCase(),
+      // 👤 SİPARİŞİ KİM İSTEDİ (sahip isteği, 2026-08-28): `personel_ad` uçtan
+      // ZATEN geliyordu ama hiçbir yerde yazılmıyordu. Sahip çekmeceyi açınca
+      // "bunu kim istedi" sorusunu soramıyor, siparişi sahipsiz bir kayıt
+      // olarak görüyordu. Şube adının hemen altına, aşamayla aynı satıra.
+      alt: [
+        s.asama_metni || a.ad.toLowerCase(),
+        s.personel_ad ? `isteyen: ${s.personel_ad}` : '',
+        saatKisa(s.olusturma) ? `saat ${saatKisa(s.olusturma)}` : '',
+      ].filter(Boolean).join(' · '),
       kpi: [
         { etiket: 'Aşama', deger: (a.ad || '').toLowerCase(), renk: a.renk },
         { etiket: 'Kalem çeşidi', deger: String((s.kalemler || []).length) },
@@ -1871,8 +1890,21 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
         z
           ? {
             etiket: 'Karar sinyali',
-            deger: z.gereksiz_var ? 'gereksiz?' : z.barem_risk_var ? 'barem riski' : z.stok_alarm_var ? 'stok alarmı' : 'temiz',
-            renk: z.gereksiz_var || z.barem_risk_var ? R.kirmizi : z.stok_alarm_var ? R.amber : R.yesil,
+            // ⚠️ ÖLÇÜLEMEDİ ≠ TEMİZ (canlı yürüyüşte yakalandı, 2026-08-28):
+            // merdiven yalnız üç riske bakıyor, hiçbiri çıkmayınca "temiz"
+            // YEŞİL yazıyordu. Oysa bugünkü ZAFER siparişinde sunucu
+            // `merkez_kayit_eksik_var: true` diyordu: 32 kalemin 32'sinde
+            // merkez stok kaydı YOK. Üç bayrak "false" çünkü kıyaslanacak
+            // stok yok — risk olmadığı için değil. Yeşil, tam da yönlendirme
+            // kararının verildiği yerde "kontrol ettim, sorun yok" diyordu.
+            // Ölçülemeyen durum artık kendi basamağında ve GRİ.
+            deger: z.gereksiz_var ? 'gereksiz?'
+              : z.barem_risk_var ? 'barem riski'
+                : z.stok_alarm_var ? 'stok alarmı'
+                  : z.merkez_kayit_eksik_var ? 'ölçülemedi' : 'temiz',
+            renk: z.gereksiz_var || z.barem_risk_var ? R.kirmizi
+              : z.stok_alarm_var ? R.amber
+                : z.merkez_kayit_eksik_var ? R.not2 : R.yesil,
           }
           : { etiket: 'Hedef depo', deger: s.hedef_depo_sube_adi || 'atanmadı', renk: s.hedef_depo_sube_adi ? R.krem : R.amber },
       ],
@@ -1933,9 +1965,29 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
         s.asama_metni,
         s.operasyon_yonlendirme_talimati ? `Talimat: ${s.operasyon_yonlendirme_talimati}` : '',
         s.asama === 'yolda' ? 'Teslim alma ŞUBEDE yapılır (görünür kabul) — masaüstünden teslim işaretlenmez.' : '',
-        s.asama === 'uyumsuzluk' && s.kabul_personel_ad
-          ? `Kabulü yapan: ${s.kabul_personel_ad}${saatKisa(s.kabul_ts) ? ` · ${saatKisa(s.kabul_ts)}` : ''}`
-          : '',
+        // 👤 KİŞİ ZİNCİRİ (sahip isteği, 2026-08-28): dört ad da uçtan geliyordu
+        // ama yalnız `kabul_personel_ad` ve yalnız UYUMSUZLUK aşamasında
+        // yazılıyordu. Yani sipariş normal aktığında hiçbir adımın sahibi
+        // görünmüyordu. ⚠️ Boş halka GİZLENMEZ, "—" ile yazılır: adım
+        // atlanmışsa bunu görmek de bilgidir (sessiz eleme yasak).
+        (() => {
+          const h = [
+            ['istedi', s.personel_ad, s.olusturma],
+            ['tahsis', s.tahsis_yapan_ad, s.tahsis_ts],
+            ['sevk', s.sevkiyat_personel_ad, s.sevkiyat_ts],
+            ['kabul', s.kabul_personel_ad, s.kabul_ts],
+          ];
+          // Zincir yalnız BAŞLAMIŞ adımlara kadar yazılır: henüz sırası
+          // gelmemiş adımı "—" ile göstermek eksiklik hissi üretir, oysa
+          // normaldir. Son dolu halkadan sonrası kesilir.
+          let son = -1;
+          h.forEach((x, i) => { if (x[1] || x[2]) son = i; });
+          if (son < 0) return '';
+          return `👤 ${h.slice(0, son + 1).map(([ad, kisi, ts]) => {
+            const sa = saatKisa(ts);
+            return `${ad}: ${kisi || '—'}${sa ? ` (${sa})` : ''}`;
+          }).join(' → ')}`;
+        })(),
       ].filter(Boolean).join(' · '),
       // AŞAMAYA GÖRE KAPI: ileri yön + GERİ yön (yaşam döngüsü)
       aksiyonlar: (() => {
@@ -2445,11 +2497,17 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
                           barem altına düşürür mü" sorusu cevaplanıyor. */}
                       {(() => {
                         const z = bekZengin[String(s.id)];
-                        if (!z || !z.uyari_var) return null;
+                        // ⚠️ `uyari_var` kapısı ölçülemeyen durumu ELİYORDU:
+                        // stok kaydı yoksa risk hesaplanamaz, uyari_var false
+                        // kalır ve kart HİÇBİR ŞEY göstermezdi — sahip kartın
+                        // sessizliğini "sorun yok" diye okuyordu. Kayıt eksiği
+                        // artık kapıyı kendi başına açar.
+                        if (!z || (!z.uyari_var && !z.merkez_kayit_eksik_var)) return null;
                         const haplar = [];
                         if (z.gereksiz_var) haplar.push({ ad: 'şubede zaten var', renk: R.kirmizi });
                         if (z.barem_risk_var) haplar.push({ ad: 'barem riski', renk: R.kirmizi });
                         if (z.stok_alarm_var) haplar.push({ ad: 'merkez stok alarmı', renk: R.amber });
+                        if (z.merkez_kayit_eksik_var) haplar.push({ ad: 'stok ölçülemedi', renk: R.not2 });
                         if ((z.davranis_uyarilari || []).length) haplar.push({ ad: 'davranış uyarısı', renk: R.amber });
                         if (!haplar.length) return null;
                         return (
