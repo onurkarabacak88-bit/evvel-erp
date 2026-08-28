@@ -1226,10 +1226,30 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
   }, []);
 
   const yonAc = (sip) => {
-    const kalemler = Array.isArray(sip?.kalemler) ? sip.kalemler : [];
+    // ⚠️ ÇİFT GÖNDERİM FRENİ (Fable denetimi + canlı yürüyüş, 2026-08-28)
+    // Sunucu `kalan_kalemler` alanını ZATEN hesaplıyor: hiçbir yere (ne
+    // toptancıya ne depoya) gitmemiş kalemler. Klasik kule bunu 6 yerde
+    // kullanıyordu; v2 HİÇBİR yerde kullanmıyordu ve modalı siparişin TÜM
+    // kalemleriyle açıyordu. Sonuç: aynı kalem ikinci kez seçilip başka bir
+    // toptancıya yollanabiliyordu — iki tedarikçi siparişi, iki WhatsApp,
+    // iki fatura. Modal artık yalnız KALANI açar.
+    // ⚠️ Kalan boşsa listeye düşülmez: `kalan_kalemler` hiç gelmiyorsa
+    //    (eski kayıt / uç değişimi) tüm kalemlere düşer — fren kaybolur ama
+    //    ekran çalışır. Gelmiş ve BOŞSA gönderilecek kalem yok demektir.
+    const _kalanVar = Array.isArray(sip?.kalan_kalemler);
+    const kalemler = _kalanVar ? sip.kalan_kalemler : (Array.isArray(sip?.kalemler) ? sip.kalemler : []);
+    if (_kalanVar && kalemler.length === 0) {
+      onToast?.('Bu siparişin tüm kalemleri zaten yönlendirilmiş — gönderilecek kalem kalmadı');
+      return;
+    }
     setYonForm({
       sip, mod: 'depo', depo: '', talimat: '',
       tedarikciId: '', not: '',
+      // ⚠️ `sip` yerine KALAN listesi taşınır: modal içindeki her yer
+      //    (seçim, yazdırma, gönderim) aynı listeyi görmeli — biri tüm
+      //    kalemleri, diğeri kalanı görürse indeksler kayar ve YANLIŞ KALEM
+      //    gönderilir.
+      kalemListe: kalemler,
       // varsayılan: tüm kalemler seçili (kısmi gönderim için tek tek kaldırılır)
       secili: kalemler.map((_, i) => i),
     });
@@ -1250,7 +1270,10 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     const f = yonForm;
     const ted = (tedarikciler || []).find((t) => String(t.id) === String(f?.tedarikciId));
     if (!ted) { onToast?.('Kayıtlı tedarikçi seçin'); return; }
-    const hamKalemler = Array.isArray(f.sip?.kalemler) ? f.sip.kalemler : [];
+    // ⚠️ Modalin TASIDIGI liste (kalan kalemler) — `f.sip.kalemler`
+    // okunursa indeksler kayar ve YANLIS KALEM gonderilir.
+    const hamKalemler = Array.isArray(f.kalemListe) ? f.kalemListe
+      : (Array.isArray(f.sip?.kalemler) ? f.sip.kalemler : []);
     const kalemler = hamKalemler.filter((_, i) => f.secili.includes(i));
     if (!kalemler.length) { onToast?.('En az bir kalem seçin'); return; }
     if (yonMesgul) return;   // 🔁 (2026-08-12) çift-tık: mükerrer tedarikçi siparişi/WhatsApp önle
@@ -1284,7 +1307,8 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
   const toptanciYazdir = () => {
     const f = yonForm;
     const ted = (tedarikciler || []).find((t) => String(t.id) === String(f?.tedarikciId));
-    const hamKalemler = Array.isArray(f.sip?.kalemler) ? f.sip.kalemler : [];
+    const hamKalemler = Array.isArray(f.kalemListe) ? f.kalemListe
+      : (Array.isArray(f.sip?.kalemler) ? f.sip.kalemler : []);
     const kalemler = hamKalemler.filter((_, i) => f.secili.includes(i));
     if (!kalemler.length) { onToast?.('Yazdırmak için en az bir kalem seçin'); return; }
     const satirlar = kalemler.map((k, i) =>
@@ -2618,7 +2642,23 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
               </div>
               <div style={{ fontSize: 12.5, color: R.metin2, marginBottom: 14 }}>
                 {yonForm.sip.sube_adi || '—'} · {tarihKisa(yonForm.sip.tarih)} · {(yonForm.sip.kalemler || []).length} kalem
+                {yonForm.sip.personel_ad ? ` · isteyen: ${yonForm.sip.personel_ad}` : ''}
               </div>
+              {/* 🔶 ZATEN YOLLANANI YAZ — modal artık yalnız KALANI gösteriyor.
+                  Bu satır olmadan liste sessizce kısalır ve sahip "sipariş
+                  küçülmüş" sanır. Ne kaldığı değil, NEYİN ÇIKTIĞI da yazılır. */}
+              {(yonForm.sip.dagitilan_kalem_adlari || []).length > 0 && (
+                <div style={{
+                  fontSize: 11.5, lineHeight: 1.5, marginBottom: 14, padding: '9px 12px',
+                  borderRadius: 10, background: 'rgba(217,154,78,.10)',
+                  border: `1px solid ${R.bakir}44`, color: R.metin2,
+                }}>
+                  🔶 <b>Zaten yollandı:</b> {(yonForm.sip.dagitilan_kalem_adlari || []).join(', ')}
+                  <div style={{ color: R.not2, marginTop: 3 }}>
+                    Bu kalemler aşağıdaki listede YOKTUR — aynı mal ikinci kez sipariş edilmesin diye çıkarıldı.
+                  </div>
+                </div>
+              )}
 
               {/* Mod anahtarı — klasik kulenin depo/toptancı ikilisi */}
               <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
@@ -2655,13 +2695,13 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
                   </select>
 
                   <label style={{ fontSize: 10.5, letterSpacing: '.7px', textTransform: 'uppercase', color: R.not2, fontWeight: 700, margin: '14px 0 6px', display: 'block' }}>
-                    Gönderilecek kalemler ({yonForm.secili.length}/{(yonForm.sip.kalemler || []).length})
+                    Gönderilecek kalemler ({yonForm.secili.length}/{(yonForm.kalemListe || yonForm.sip.kalemler || []).length})
                   </label>
                   <div style={{
                     maxHeight: 190, overflowY: 'auto', borderRadius: 11,
                     border: `1px solid ${R.cizgi3}`, background: R.girinti, padding: '8px 10px',
                   }}>
-                    {(yonForm.sip.kalemler || []).map((k, i) => {
+                    {(yonForm.kalemListe || yonForm.sip.kalemler || []).map((k, i) => {
                       const secili = yonForm.secili.includes(i);
                       return (
                         <div
@@ -2740,6 +2780,25 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
                 <option value="">Depo seçin…</option>
                 {depolar.map((d) => <option key={d.id} value={d.id}>{d.ad}</option>)}
               </select>
+              {/* ⚠️ DÜRÜST SINIR (2026-08-28): toptancı yönü kalem seçebiliyor,
+                  DEPO yönü seçemiyor — `/ops/siparis/sevkiyata-gonder` ucu
+                  kalem listesi almıyor, siparişin TAMAMINI depoya atıyor.
+                  Yukarıdaki "zaten yollandı" kutusu kalemleri listeden
+                  çıkardığı için sahip "onlar hariç gider" sanabilir. Sanmasın:
+                  sınır adıyla yazılıyor. (Kalem bazlı yönlendirme tasarımı
+                  Codex+Fable denetiminden geçti, kuruluşu bekliyor.) */}
+              {(yonForm.sip.dagitilan_kalem_adlari || []).length > 0 && (
+                <div style={{
+                  fontSize: 11.5, lineHeight: 1.5, marginTop: 10, padding: '9px 12px',
+                  borderRadius: 10, background: 'rgba(214,109,92,.10)',
+                  border: `1px solid ${R.kirmizi}44`, color: R.metin2,
+                }}>
+                  ⚠ <b>Depo yönlendirmesi şu an kalem seçemez:</b> siparişin
+                  TAMAMI seçilen depoya gider — yukarıda &ldquo;zaten yollandı&rdquo; yazan
+                  kalemler dâhil. Yalnız kalanları göndermek için önce toptancı
+                  sekmesini kullanın.
+                </div>
+              )}
 
               <label style={{ fontSize: 10.5, letterSpacing: '.7px', textTransform: 'uppercase', color: R.not2, fontWeight: 700, margin: '14px 0 6px', display: 'block' }}>
                 Operasyon talimatı (isteğe bağlı)
