@@ -654,6 +654,68 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast, cari
     const kh = Array.isArray(merkez.kurumsal_harcamalar) ? merkez.kurumsal_harcamalar : [];
     const bh = Array.isArray(merkez.belgesiz_harcamalar) ? merkez.belgesiz_harcamalar : [];
     // Üç liste aynı ekranda ama karışmaz: hangisine bakıldığı seçilir.
+    // ══════════════════════════════════════════════════════════════════════
+    // 🧭 İŞ KUYRUĞU — "bugün belge tarafında ne yapmalıyım?"
+    // ══════════════════════════════════════════════════════════════════════
+    // BAKIŞ (2026-08-26) · OPS (08-27) · EKİP (08-28) kurgusunun BELGE
+    // karşılığı. Kök teşhis aynı: 8 sekme, doğru rakamlar — ama "bugün ne
+    // yapmalıyım" cevabı sekmelere dağılmış. Faturasız harcama Kapsama'da,
+    // bekleyen istek İstek'te, şüpheli belge Uyarılar'da, okunamayan foto
+    // başka bir kutuda.
+    // ⚠️ SIRALAMA GEREKÇESİ — bu modülde sıra VERGİ RİSKİNE göre kurulur:
+    //   S1 · KDV/gider kanıtı kaybı riski (faturasız harcama, bekleyen istek)
+    //   S2 · Kayıt bütünlüğü (şüpheli/mükerrer belge, inceleme kuyruğu)
+    //   S3 · Teknik eksik (okunamayan foto — belge var, sistem okuyamadı)
+    // ⚠️ Madde ELLE KAPATILMAZ: fatura gelince kayıt düşer.
+    const belgeKuyruk = (() => {
+      const m = [];
+      if (faturasiz > 0) {
+        m.push({
+          sinif: 1, anahtar: 'kapsama|faturasiz',
+          baslik: `${fmt(faturasiz)} harcamanın faturası yok`,
+          aciklama: 'KDV indirimi + gider kanıtı kaybı riski',
+          git: null,   // zaten bu ekranda — kapı yok (kanıt aynı ekranda)
+        });
+      }
+      const acikIstek = sayi(istek?.acik_adet);
+      if (acikIstek > 0) {
+        m.push({
+          sinif: 1, anahtar: 'istek|acik',
+          baslik: `${acikIstek} tedarikçiden fatura bekleniyor`,
+          aciklama: `${fmt(sayi(istek?.acik_toplam))} · KDV riski ${fmt(sayi(istek?.kdv_riski))}`,
+          git: () => onKopru?.('__modul:belge:istek'),
+        });
+      }
+      // ⚠️ ALAN ADI TAHMİN EDİLMEDİ: ilk yazışta `merkez.uyarilar.supheli`
+      // yazmıştım — uçta `uyarilar` diye bir alan YOK (kök alanlar: ay ·
+      // kapsama · toptancilar · gun_gun · faturasiz_harcamalar ·
+      // kurumsal_harcamalar · belgesiz_harcamalar · fatura_arsivi ·
+      // fatura_istekleri · kdv_kanit · arsiv_depo · islenemeyen_foto).
+      // Şüpheli sayacı `kdv_kanit.supheli` altında; ekranın uyarılar görünümü
+      // de oradan okuyor (aynı üretici, iki yerde ayrışamaz).
+      const supheliAdet = sayi((merkez?.kdv_kanit || {}).supheli?.adet);
+      if (supheliAdet > 0) {
+        m.push({
+          sinif: 2, anahtar: 'uyari|supheli',
+          baslik: `${supheliAdet} belge şüpheli işaretli`,
+          aciklama: 'GİB damgası / mükerrer şüphesi — incelenmeli',
+          git: () => onKopru?.('__modul:belge:uyarilar'),
+        });
+      }
+      const fotoAdet = sayi((merkez?.islenemeyen_foto || {}).adet);
+      if (fotoAdet > 0) {
+        m.push({
+          sinif: 3, anahtar: 'foto|islenemeyen',
+          baslik: `${fotoAdet} fotoğraf okunamadı`,
+          aciklama: 'belge yüklendi ama metne çevrilemedi — arşivde aranamaz',
+          git: () => onKopru?.('__modul:belge:uyarilar'),
+        });
+      }
+      return m.sort((a, b) => a.sinif - b.sinif);
+    })();
+    const belgeGorunen = belgeKuyruk.slice(0, 5);
+    const belgeTasan = belgeKuyruk.length - belgeGorunen.length;
+
     const listeler = [
       ['faturasiz', `🔴 Faturasız (${fh.length})`, fh, 'Belge isteme adayı — faturası bulunamadı.'],
       ['kurumsal', `🔵 Kurumsal otomatik (${kh.length})`, kh, 'E-fatura kendiliğinden geliyor; ayrıca belge istenmez.'],
@@ -662,6 +724,52 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast, cari
     const aktifListe = listeler.find(([id]) => id === kapsamaListe) || listeler[0];
     return (
       <>
+        {/* 🧭 İŞ KUYRUĞU — ekranın İLK bloğu. Boşsa çizilmez. */}
+        {belgeGorunen.length > 0 && (
+          <div style={{ ...kartYuzey, padding: '15px 18px', marginBottom: 14 }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 11 }}>
+              <span style={{ fontFamily: F.baslik, fontSize: 15, fontWeight: 600 }}>🧭 Bugün belge tarafında ne yapmalıyım</span>
+              <span style={{ fontSize: 11.5, color: R.not2 }}>
+                {belgeKuyruk.length} iş · vergi riski en yüksek üstte
+                {belgeTasan > 0 && ` · ${belgeTasan} tanesi sekmelerde`}
+              </span>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {belgeGorunen.map((m) => {
+                const renk = m.sinif === 1 ? R.kirmizi : m.sinif === 2 ? R.bakir : R.amber;
+                const acilir = typeof m.git === 'function';
+                return (
+                  <div
+                    key={m.anahtar}
+                    onClick={acilir ? m.git : undefined}
+                    role={acilir ? 'button' : undefined}
+                    tabIndex={acilir ? 0 : undefined}
+                    onKeyDown={acilir ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); m.git(); } } : undefined}
+                    className={acilir ? 'v2-hover-kalk' : undefined}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 12,
+                      cursor: acilir ? 'pointer' : 'default',
+                      padding: '11px 14px', borderRadius: 12, background: R.girinti,
+                      border: `1px solid ${R.cizgi}`, borderLeft: `3px solid ${renk}`,
+                    }}
+                  >
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 12.5, fontWeight: 700, color: R.krem }}>{m.baslik}</div>
+                      <div style={{ fontSize: 11.5, color: R.not2, marginTop: 2 }}>{m.aciklama}</div>
+                    </div>
+                    {/* ⚠️ Kanıtı AYNI EKRANDA olan maddeye kapı takılmaz — ok işareti de
+                        konmaz; tıklanmayan bir ok, tıklanmayan bir kapıdır. */}
+                    {acilir && <span style={{ color: R.not3, fontSize: 13 }}>›</span>}
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{ fontSize: 11, color: R.not3, marginTop: 9, lineHeight: 1.6 }}>
+              Bu liste elle kapatılmaz — belge gelince kayıt düşer. Sıralama <b>vergi riskine</b> göre:
+              önce <b>KDV/gider kanıtı kaybı</b>, sonra <b>kayıt bütünlüğü</b>, en sonda <b>teknik eksik</b>.
+            </div>
+          </div>
+        )}
         <KpiSeridi kpiler={[
           // ⚠️ TABAN DÜZELTMESİ (2026-08-07 denetimi): kapsama oranı TÜM harcamayı
           // payda alıyordu. Belgesi zaten beklenmeyen kalemler (kurumsal otomatik
@@ -997,7 +1105,24 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast, cari
           { etiket: 'Bekleyen istek', deger: String(sayi(istek.acik_adet)), alt: 'teslim alındı, belge yok', renk: sayi(istek.acik_adet) > 0 ? R.amber : R.yesil },
           { etiket: 'Toplam açık', deger: fmt(sayi(istek.acik_toplam)), alt: 'KDV kanıtı bekliyor', renk: sayi(istek.acik_toplam) > 0 ? R.kirmizi : R.krem },
           { etiket: 'KDV riski', deger: fmt(sayi(istek.kdv_riski)), alt: 'belgesiz kısımda tahmini' },
-          { etiket: 'Oto-kapanış', deger: 'açık', alt: 'fatura gelince istek kapanır', renk: R.yesil },
+          // ⚠️ SABİT YEŞİL (Fable P1-5): bu kart hiçbir veriye bakmadan HER
+          // ZAMAN yeşil "açık" yazıyordu. Oto-kapanış motoru bozulsa, tarama
+          // hiç çalışmasa bile ekran "fatura gelince istek kapanır" güvencesi
+          // veriyordu. Bir sistemin çalıştığı iddiası VERİDEN gelmeli.
+          // ⚠️ Sunucu son tarama zamanını göndermiyorsa iddia YUMUŞATILIYOR:
+          // "açık" yerine "kurulu" — çalıştığı doğrulanmadı demek.
+          // ⚠️ UÇTA TARAMA ZAMANI YOK — canlı ölçüm: /fatura-istek/liste alanları
+          // acik_adet · acik_toplam · kdv_riski · en_buyuk · esik · gruplar ·
+          // belge_talep_bekleyen. Yani sistem oto-kapanışın ÇALIŞTIĞINI
+          // kanıtlayamıyor. "açık" demek bir çalışma iddiasıdır; "kurulu" demek
+          // yalnızca kurulu olduğunu söyler. Uydurma bir zaman damgası
+          // göstermek yerine bilinmediği yazılıyor.
+          {
+            etiket: 'Oto-kapanış',
+            deger: 'kurulu',
+            alt: 'fatura gelince istek kapanır — son çalıştığı doğrulanamıyor',
+            renk: R.krem,
+          },
         ]} />
 
         {fiModalBlok}
@@ -1305,13 +1430,15 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast, cari
           {
             etiket: 'İşlenemeyen foto',
             deger: String(islenemeyenAdet),
+            // ⚠️ SUNUCU ZATEN SINIFLIYOR: her fotoğrafta `hata_tipi` alanı var
+            // (canlı: hepsi "kota"). Ham metni regex'le tahmin etmek yerine
+            // sunucunun kendi sınıfı okunuyor — ekran kendi çıkarımını kurmaz.
             alt: (() => {
               if (!islenemeyenAdet) return 'hepsi okundu';
-              const h = String(sonHata || '');
-              if (/429|kota|quota|rate.?limit/i.test(h)) return 'okuma servisi kotası doldu — geçici, yeniden denenecek';
-              if (/timeout|zaman/i.test(h)) return 'okuma zaman aşımına uğradı — yeniden denenecek';
-              if (h) return 'fotoğraf okunamadı — yeniden denenecek';
-              return 'OCR okuyamadı';
+              const tip = String((islenemeyen[0] || {}).hata_tipi || '');
+              if (tip === 'kota') return 'okuma servisi kotası doldu — geçici, yeniden denenecek';
+              if (tip) return `okunamadı (${tip}) — yeniden denenecek`;
+              return sonHata ? 'fotoğraf okunamadı — yeniden denenecek' : 'OCR okuyamadı';
             })(),
             renk: islenemeyenAdet > 0 ? R.amber : R.krem,
           },
@@ -1675,6 +1802,14 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast, cari
                 kolonlar={[
                   { ad: 'Tarih' }, { ad: 'Belge no' }, { ad: 'Tutar', sag: 1 }, { ad: 'Bakiye (dahil)', sag: 1 },
                 ]}
+                // ⚠️ SESSİZ ELEME (Fable P1-3): 30'da kesiliyor ve kesildiği
+                // yazmıyordu. Üstteki KPI "45 fatura" derken tablo 30 satır
+                // gösterirse sahip "15 fatura kayıp mı?" der ya da — daha
+                // kötüsü — eksik listeye bakıp "bu fatura sistemde yok" hükmü
+                // verir. Bu modülde o hüküm vergi tarafında karar üretir.
+                not={faturalar.length > 30
+                  ? `⚠ ${faturalar.length} faturanın ilk 30'u gösteriliyor — ${faturalar.length - 30} kayıt listede yok`
+                  : undefined}
                 satirlar={faturalar.slice(0, 30).map((f, i) => ({
                   id: f.id || `f-${i}`,
                   _f: f,
@@ -1788,7 +1923,11 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast, cari
         ) : (
           <Tablo
             baslik="Fiyat bandı · son alış vs geçmiş aralık"
-            not="zam yakalanınca burada belirir — 3 zam bu bantla yakalandı"
+            // ⚠️ Fable P2-9: "3 zam bu bantla yakalandı" ELLE YAZILMIŞ bir
+            // başarı iddiasıydı — veriden gelmiyor, zamanla bayatlar ve yanlış
+            // güven verir. Kaldırıldı; yerine gerçek kırpma bilgisi (P2-8).
+            not={'zam yakalanınca burada belirir'
+              + (disi.length > 25 ? ` · ⚠ ${disi.length} kalemin ilk 25'i gösteriliyor` : '')}
             kolonlar={[
               { ad: 'Kalem' }, { ad: 'Son tedarikçi' }, { ad: 'Bant', sag: 1 }, { ad: 'Son alış', sag: 1 }, { ad: 'Sapma', sag: 1 }, { ad: 'Durum' },
             ]}
@@ -1842,7 +1981,15 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast, cari
       <>
         <KpiSeridi kpiler={uclu.map((u) => ({
           etiket: u.ad, deger: `${sayi(u.v?.adet)} belge`, alt: fmt(sayi(u.v?.toplam)), renk: sayi(u.v?.adet) > 0 ? u.renk : R.krem,
-        })).concat([{ etiket: 'Dönem', deger: kk.ay || merkez.ay || buAyISO(), alt: 'muhasebeye ay sonu' }])} />
+        // ⚠️ Fable P1-7: dönem etiketi `|| buAyISO()` ile TARAYICININ bugünkü
+        // ayına düşüyordu. Veriler geçen aya aitken paket "bu ay" etiketiyle
+        // görünürse muhasebeye YANLIŞ DÖNEM işaret edilir — KDV bağlamında
+        // dönem etiketi rakam kadar kritiktir. Ekran ay uydurmaz.
+        })).concat([{
+          etiket: 'Dönem',
+          deger: kk.ay || merkez.ay || '—',
+          alt: (kk.ay || merkez.ay) ? 'muhasebeye ay sonu' : '⚠ dönem bilgisi gelmedi — pakete güvenmeden önce yenileyin',
+        }])} />
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: 12, marginBottom: 14 }}>
           {uclu.map((u) => (
             <div key={u.ad} style={{ ...kartYuzey, padding: '17px 19px', border: sayi(u.v?.adet) > 0 ? `1px solid ${u.renk}44` : kartYuzey.border }}>
