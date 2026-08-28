@@ -10289,10 +10289,16 @@ export default function OperasyonMerkezi() {
                 <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
                   {['sabahci', 'ara_vardiya', 'kapanis'].map((vt) => (
                     <div key={vt} style={{ flex: '1 1 260px', minWidth: 240 }}>
+                      {/* ⛔ TANIMSIZ DEĞİŞKEN (2026-08-29): `tarih` prop'unda
+                          `tarih` yazıyordu ama bu blokta öyle bir değişken YOK
+                          — aynı blok tarihi `kapanisTakipTarih` adıyla tutuyor
+                          (bkz. ~9814'teki `bugunMu` hesabı). `vite build` bunu
+                          yakalamaz; şube seçilince bu JSX çizilir ve
+                          ReferenceError ile EKRAN BEYAZLANIRDI. */}
                       <GorevListesi
                         subeId={subeSecili}
                         vardiyaTip={vt}
-                        tarih={(tarih || isGunuIsoIstanbul()).trim()}
+                        tarih={(kapanisTakipTarih || isGunuIsoIstanbul()).trim()}
                         personelId={null}
                       />
                     </div>
@@ -14893,7 +14899,14 @@ export default function OperasyonMerkezi() {
                             {sip.stok_hesap_kaynagi === 'hedef_depo' ? '📊 Depo barem' : '📊 Barem risk'}
                           </span>
                         )}
-                        {sip.merkez_kayit_eksik_var && <span className="badge badge-yellow">❓ Kart eksik</span>}
+                        {/* ⚠️ Bayrak artık "hesabın yapıldığı KAYNAKTA kayıt
+                            yok" demek — hesap hedef depodan yapılıyorsa merkez
+                            kartını suçlamak yanlış yere baktırır. */}
+                        {sip.merkez_kayit_eksik_var && (
+                          <span className="badge badge-yellow">
+                            {sip.stok_hesap_kaynagi === 'hedef_depo' ? '❓ Depo kaydı eksik' : '❓ Merkez kartı eksik'}
+                          </span>
+                        )}
                         {sip.gereksiz_var    && <span className="badge" style={{ background: '#3a2a0a', color: '#e8a03d' }}>⚠️ Şubede var</span>}
                         {sip.uyari_var       && <span className="badge" style={{ background: '#2a1a3a', color: '#c084fc' }}>🚨 Davranış uyarısı</span>}
                         <button
@@ -15804,9 +15817,17 @@ export default function OperasyonMerkezi() {
                       throw new Error(typeof msg === 'string' ? msg : JSON.stringify(msg));
                     }
                     setTahsisCozModal(null);
-                    // Sayfayı yenile (mevcut yenile fonksiyonu varsa kullanılabilir)
-                    if (typeof yenile === 'function') yenile();
-                    else window.location.reload();
+                    // ⛔ ÖLÜ DAL (2026-08-29): burada
+                    // `if (typeof yenile === 'function') yenile();` yazıyordu
+                    // ama bu bileşende `yenile` diye bir şey YOK — hiç
+                    // tanımlanmamış. `typeof` tanımsız ada güvenlidir
+                    // (ReferenceError atmaz), bu yüzden çökmüyordu; koşul HER
+                    // ZAMAN false düşüp aşağıdaki reload çalışıyordu. Yani kod
+                    // "varsa hafif yenile" diye okunuyor ama fiilen hep tam
+                    // sayfa yeniliyordu. Yanıltıcı dal kaldırıldı; davranış
+                    // AYNI. (Hafif yenileme için önce bu listeyi besleyen
+                    // yükleyicinin bu kapsama taşınması gerekir.)
+                    window.location.reload();
                   } catch (err) {
                     alert('Uzlaşma kaydedilemedi: ' + (err.message || err));
                   } finally {

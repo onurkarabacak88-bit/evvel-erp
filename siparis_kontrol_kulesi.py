@@ -4,8 +4,11 @@ Sipariş Kontrol Kulesi — merkez operasyon görünürlüğü (pipeline + ürü
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
+
+logger = logging.getLogger(__name__)
 
 from sevkiyat_helpers import (
     SD_ST,
@@ -365,6 +368,7 @@ def siparis_kontrol_kulesi_yukle(
     # yalnız ADET topluyordu; TEDARİKÇİ ADI atılıyordu. Ekran "yollandı"
     # diyebiliyor ama "KİME" diyemiyordu. Ad + durum + zaman burada toplanır.
     _kalem_hedef: Dict[str, Dict[str, Dict[str, Any]]] = {}
+    _dagitim_okunamadi = False
     if _detay_ids:
         try:
             cur.execute(
@@ -412,6 +416,16 @@ def siparis_kontrol_kulesi_yukle(
         except Exception:
             _dagitilan = {}
             _kalem_hedef = {}
+            # ⚠️ SESSİZ SAKİNLİK (Fable denetimi, 2026-08-28): bu sorgu
+            # düşerse `kalan_kalemler` TÜM kalemlere döner — çift gönderim
+            # freni ve hedef etiketleri sessizce kaybolur, ekran hiçbir şey
+            # olmamış gibi görünür. Artık bayrakla dışarı çıkar: ekran
+            # "fren okunamadı" diyebilir, kullanıcı körlemesine göndermez.
+            _dagitim_okunamadi = True
+            logger.warning(
+                "kule: toptanci_siparis dagitim sorgusu dustu — "
+                "cift gonderim freni bu yanitta CALISMIYOR"
+            )
 
     satirlar: List[Dict[str, Any]] = []
     for r in detay_rows:
@@ -502,6 +516,9 @@ def siparis_kontrol_kulesi_yukle(
             int((_it or {}).get("adet") or 0) for _it in _aktif
         )
         z["iptal_kalem_sayisi"] = len(z["iptal_kalem_adlari"])
+        # Fren okunamadıysa satır bunu TAŞIR — ekran körlemesine göndermesin.
+        if _dagitim_okunamadi:
+            z["dagitim_okunamadi"] = True
 
         # ── SELF-HEAL: tüm ürünleri dağıtılmış ama hâlâ 'bekliyor' kalmış talep
         # (eski hatalı/miktar-bazlı gönderimden kalma) → 'gonderildi'ye çek. Böylece

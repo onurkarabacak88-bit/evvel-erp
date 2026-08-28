@@ -1307,8 +1307,14 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
       const tel = String(ted.telefon || '').replace(/\D/g, '');
       const waNot = r?.wa_basarili ? ' · WhatsApp gönderildi' : (tel ? '' : ' · telefon yok, WhatsApp gitmedi');
       const kalan = sayi(r?.kalan_adet);
+      // ⚠️ SUNUCU ELEDİYSE YAZ (Codex denetimi): sunucu artık gövdeyi talebe
+      // karşı doğruluyor ve "bu siparişte yok / iptal edilmiş / zaten
+      // yollanmış" kalemleri eliyor. Sessizce elenirse sahip "hepsini
+      // yolladım" sanır — bayat modalda tam da bu oluyordu.
+      const elenen = Array.isArray(r?.elenen_kalemler) ? r.elenen_kalemler : [];
       onToast?.(`🚚 ${ted.ad} — ${sayi(r?.toplam_adet)} adet yollandı${waNot}${
-        r?.tam_gonderildi === false ? ` · ${kalan} adet kuyrukta kaldı` : ''}`);
+        r?.tam_gonderildi === false ? ` · ${kalan} adet kuyrukta kaldı` : ''}${
+        elenen.length ? ` · ⚠ ${elenen.length} kalem elendi: ${elenen.join(', ')}` : ''}`);
       setYonForm(null);
       kuleYukle();
     } catch (e) {
@@ -2145,7 +2151,14 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
           ? `⚠ Davranış: ${z.davranis_uyarilari.map((u) => (typeof u === 'string' ? u : (u.mesaj || u.tip || ''))).filter(Boolean).join(' · ')}`
           : '',
         z?.gereksiz_var ? '⚠ Bazı kalemler şubenin kendi deposunda ZATEN VAR — sipariş gereksiz olabilir.' : '',
-        z?.merkez_kayit_eksik_var ? 'Bazı kalemlerin merkez stok kaydı yok — "gönderince ne kalır" hesaplanamadı.' : '',
+        // ⚠️ Bayrak "hesabın yapıldığı KAYNAKTA kayıt yok" demek. Hesap hedef
+        // depodan yapıldıysa "merkez kaydı yok" demek sahibi yanlış kaydı
+        // düzeltmeye gönderir.
+        z?.merkez_kayit_eksik_var
+          ? (z?.stok_hesap_kaynagi === 'hedef_depo'
+            ? `Bazı kalemlerin ${z?.stok_depo_adi || 'hedef depo'} stok kaydı yok — "gönderince ne kalır" hesaplanamadı.`
+            : 'Bazı kalemlerin merkez stok kaydı yok — "gönderince ne kalır" hesaplanamadı.')
+          : '',
         // stok_hesap_kaynagi: yukarıdaki sayılar HANGİ depodan hesaplandı —
         // merkez mi, atanmış hedef depo mu. Yanlış depoya bakarak karar
         // verilmesin diye adıyla yazılır.
@@ -2158,9 +2171,16 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
         (() => {
           const kk = z?.stok_depo_kaynagi;
           const ad = z?.stok_depo_adi;
-          if (kk === 'gecmis') {
+          // `gecmis` → şube bazlı ayrımdan sonra `gecmis_sube` / `gecmis_genel`
+          // oldu. Eski değer geriye uyum için hâlâ tanınır.
+          if (kk === 'gecmis_sube') {
             return `Stok hesabı ${ad || 'aday depo'} üzerinden yapıldı — bu depo ATANMADI, `
-              + 'son sevkiyatların deposu olduğu için aday alındı.';
+              + `${s.sube_adi || 'bu şube'} genelde oradan beslendiği için aday alındı.`;
+          }
+          if (kk === 'gecmis_genel' || kk === 'gecmis') {
+            return `Stok hesabı ${ad || 'aday depo'} üzerinden yapıldı — bu depo ATANMADI, `
+              + 'şirket genelinde en çok kullanılan depo olduğu için aday alındı '
+              + '(bu şubenin kendi geçmişi yok).';
           }
           if (kk === 'istek') return `Stok hesabı seçtiğiniz ${ad || 'aday depo'} üzerinden yapıldı — henüz atanmadı.`;
           if (kk === 'atanmis') return `Stok hesabı kaynağı: atanmış hedef depo${ad ? ` (${ad})` : ''}.`;
@@ -2884,6 +2904,21 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
               {/* 🔶 ZATEN YOLLANANI YAZ — modal artık yalnız KALANI gösteriyor.
                   Bu satır olmadan liste sessizce kısalır ve sahip "sipariş
                   küçülmüş" sanır. Ne kaldığı değil, NEYİN ÇIKTIĞI da yazılır. */}
+              {/* ⚠️ FREN OKUNAMADI (Fable denetimi, 2026-08-28): kule dağıtım
+                  sorgusu düşerse "zaten yollandı" listesi boş gelir ve çift
+                  gönderim freni SESSİZCE kaybolur — ekran hiçbir şey olmamış
+                  gibi görünürdü. Artık sunucu bayrak taşıyor, ekran söylüyor. */}
+              {yonForm.sip.dagitim_okunamadi && (
+                <div style={{
+                  fontSize: 11.5, lineHeight: 1.5, marginBottom: 14, padding: '9px 12px',
+                  borderRadius: 10, background: 'rgba(214,109,92,.12)',
+                  border: `1px solid ${R.kirmizi}55`, color: R.metin2,
+                }}>
+                  ⚠ <b>Çift gönderim freni çalışmıyor:</b> bu siparişin daha önce
+                  nereye yollandığı okunamadı. Aşağıdaki liste &ldquo;zaten yollandı&rdquo;
+                  kalemlerini eleyememiş olabilir — göndermeden önce sayfayı yenileyin.
+                </div>
+              )}
               {(yonForm.sip.dagitilan_kalem_adlari || []).length > 0 && (
                 <div style={{
                   fontSize: 11.5, lineHeight: 1.5, marginBottom: 14, padding: '9px 12px',

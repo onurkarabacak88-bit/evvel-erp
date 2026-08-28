@@ -6335,7 +6335,16 @@ def _hub_alarm_satirlari(cur: Any, *, ozet: Optional[Dict[str, Any]] = None, lim
         if fl.get("gereksiz_var"):
             parca.append("Şubede talep miktarı zaten depoda var (gereksiz talep riski)")
         if fl.get("merkez_kayit_eksik_var"):
-            parca.append("Bazı kalemler merkez stok kartında tanımsız")
+            # ⚠️ Bayrağın ANLAMI değişti (2026-08-28): artık "merkez kartında
+            # yok" değil, "HESABIN YAPILDIĞI KAYNAKTA kayıt yok" demek. Hesap
+            # hedef depodan yapılıyorsa merkez kartını suçlamak yanlış
+            # yönlendirir — sahip merkez kartını düzeltmeye çalışır, oysa
+            # eksik olan deponun kaydıdır.
+            parca.append(
+                "Bazı kalemler hedef deponun stok kaydında tanımsız"
+                if hesap_dep
+                else "Bazı kalemler merkez stok kartında tanımsız"
+            )
         if davranis:
             parca.append(f"{len(davranis)} davranış uyarısı")
         cn_hub = siparis_cift_gonderim_bilgi_notu(
@@ -10428,6 +10437,97 @@ def ops_siparis_toptanciya_yolla(body: OpsSiparisToptanciyaYollaBody):
         t = dict(tr)
         if str(t.get("durum") or "") not in ("bekliyor", "hazirlaniyor", "gonderildi"):
             raise HTTPException(409, "Talep toptancı yönlendirmesi için uygun durumda değil")
+
+        # ══════════════════════════════════════════════════════════════════
+        # 🛡️ SUNUCU DOĞRULAMASI (Codex denetimi, 2026-08-28)
+        # ══════════════════════════════════════════════════════════════════
+        # Uç, gelen `kalemler` gövdesini talebe karşı HİÇ doğrulamıyordu:
+        # istemci ne yollarsa o yollanıyordu. Fren yalnız ekrandaydı, yani
+        # BAYAT bir modal (başka oturum kalemi çoktan yollamışken açık kalmış
+        # pencere) aynı malı ikinci kez sipariş edebiliyordu. Ekrandaki
+        # kontrol UX'tir; OTORİTE burasıdır.
+        # Üç kural: (1) kalem bu talebe ait olmalı, (2) merkez iptal etmiş
+        # olmamalı, (3) zaten bir tedarikçiye/depoya çıkmış olmamalı.
+        _t_kalemler = t.get("kalemler")
+        if isinstance(_t_kalemler, str):
+            try:
+                _t_kalemler = json.loads(_t_kalemler)
+            except Exception:
+                _t_kalemler = []
+        if not isinstance(_t_kalemler, list):
+            _t_kalemler = []
+        _talep_adlari = {
+            str((_i or {}).get("urun_ad") or "").strip().lower()
+            for _i in _t_kalemler if isinstance(_i, dict)
+        } - {""}
+        _iptal_adlari = {
+            str((_i or {}).get("urun_ad") or "").strip().lower()
+            for _i in _t_kalemler if isinstance(_i, dict) and _i.get("iptal")
+        } - {""}
+
+        # Zaten çıkmış olanlar: toptancı + depo (stok_yolda).
+        # ⚠️ Sorgu düşerse İSTİSNA YUTULMAZ — sessizce "hiç çıkmamış"
+        #    varsaymak, aynı malı ikinci kez sipariş etmek demektir.
+        _cikmis_adlar: set = set()
+        try:
+            cur.execute(
+                "SELECT kalemler FROM toptanci_siparis "
+                "WHERE talep_id = %s AND durum <> 'iptal'",
+                (tid,),
+            )
+            for _cr in cur.fetchall() or []:
+                _ck = dict(_cr).get("kalemler") or []
+                if isinstance(_ck, str):
+                    try:
+                        _ck = json.loads(_ck)
+                    except Exception:
+                        _ck = []
+                for _ci in _ck:
+                    _cn = str((_ci or {}).get("urun_ad") or "").strip().lower()
+                    if _cn:
+                        _cikmis_adlar.add(_cn)
+            ensure_stok_yolda_columns(cur)
+            cur.execute(
+                # Kolon adı `siparis_talep_id` (database.py:4152) — şemadan.
+                "SELECT kalem_adi FROM stok_yolda "
+                "WHERE siparis_talep_id = %s AND COALESCE(sevk_adet, 0) > 0",
+                (tid,),
+            )
+            for _sr in cur.fetchall() or []:
+                _sn = str(dict(_sr).get("kalem_adi") or "").strip().lower()
+                if _sn:
+                    _cikmis_adlar.add(_sn)
+        except Exception as _e:
+            raise HTTPException(
+                503,
+                "Gönderim kontrolü yapılamadı — toptancıya yollama güvenli "
+                "değil (aynı mal iki kez sipariş edilebilir).",
+            ) from _e
+
+        _red: List[str] = []
+        _gecerli: List[Dict[str, Any]] = []
+        for _k in kalemler:
+            _n = str(_k.get("urun_ad") or "").strip().lower()
+            if _talep_adlari and _n not in _talep_adlari:
+                _red.append(f"{_k.get('urun_ad')} (bu siparişte yok)")
+            elif _n in _iptal_adlari:
+                _red.append(f"{_k.get('urun_ad')} (merkez iptal etti)")
+            elif _n in _cikmis_adlar:
+                _red.append(f"{_k.get('urun_ad')} (zaten yollanmış)")
+            else:
+                _gecerli.append(_k)
+        if not _gecerli:
+            raise HTTPException(
+                409,
+                "Yollanacak kalem kalmadı — " + ("; ".join(_red) if _red else "seçim boş")
+                + ". Ekranı yenileyip tekrar deneyin.",
+            )
+        # ⚠️ SESSİZ ELEME YASAK: elenen kalemler yanıtta ADIYLA döner; ekran
+        #    bunu kullanıcıya yazar. Sessizce atılsaydı sahip "hepsini
+        #    yolladım" sanırdı.
+        _elenen_adlar = list(_red)
+        kalemler = _gecerli
+
         defter_sube = str(t.get("sube_id") or "").strip() or _ops_sube_anchor(cur)
 
         # ── Tedarikçiyi çöz: id verilmişse DB'den ad+telefon al. WhatsApp ile
@@ -10628,6 +10728,8 @@ def ops_siparis_toptanciya_yolla(body: OpsSiparisToptanciyaYollaBody):
         "toplam_adet": sum(int(k.get("adet") or 0) for k in kalemler),
         "durum": ("gonderildi" if tam_gonderildi else "bekliyor"),
         "tam_gonderildi": tam_gonderildi,
+        # Sunucu doğrulamasının ELEDİĞİ kalemler adıyla + gerekçesiyle döner.
+        "elenen_kalemler": _elenen_adlar,
         "kalan_adet": kalan_adet,
         "sevkiyat_durumu": ("toptanciya_yonlendirildi" if tam_gonderildi else None),
         "wa_basarili": bool(wa_sonuc and wa_sonuc.get("basarili")),
@@ -20304,10 +20406,37 @@ def ops_v2_bekleyen_siparisler(
         # Aday depo verilmediyse: SON KULLANILAN depoyu bul. Uydurma değil,
         # ÖLÇÜM — geçmiş atamaların çoğunluğu. Bulunamazsa aday YOK ve ekran
         # eskisi gibi "hedef depo atanmadı" der (sahte sayı üretilmez).
-        _aday = (aday_depo or "").strip() or None
-        _aday_kaynak = "istek" if _aday else None
-        if not _aday:
+        # ⚠️ ŞUBE BAZLI (Codex denetimi, 2026-08-28): önceki sürüm ŞİRKET
+        #    GENELİ çoğunluğu alıyordu. Bir şube alışkanlıkla başka bir
+        #    depodan besleniyorsa ekran onun için YANLIŞ deponun sayısını
+        #    gösteriyordu. Önce o şubenin kendi geçmişi, yoksa genel.
+        # ⚠️ BERABERLİK DETERMİNİSTİK: `ORDER BY n DESC, d ASC` — ikinci
+        #    anahtar olmadan eşitlikte sonuç fiziksel satır sırasına göre
+        #    oynuyor, aynı ekran her yenilemede farklı depo gösterebiliyordu.
+        _aday_istek = (aday_depo or "").strip() or None
+        _sube_aday: Dict[str, str] = {}
+        _genel_aday: Optional[str] = None
+        if not _aday_istek:
             try:
+                cur.execute(
+                    """
+                    SELECT sube_id,
+                           COALESCE(hedef_depo_sube_id, sevkiyat_sube_id) AS d,
+                           COUNT(*) AS n
+                    FROM siparis_talep
+                    WHERE COALESCE(hedef_depo_sube_id, sevkiyat_sube_id) IS NOT NULL
+                      AND tarih >= CURRENT_DATE - INTERVAL '90 day'
+                    GROUP BY 1, 2
+                    ORDER BY sube_id, n DESC, d ASC
+                    """
+                )
+                for _ar in cur.fetchall() or []:
+                    _a = dict(_ar)
+                    _sid = str(_a.get("sube_id") or "").strip()
+                    _d = str(_a.get("d") or "").strip()
+                    # ORDER BY sayesinde her şubenin İLK satırı en çoğu
+                    if _sid and _d and _sid not in _sube_aday:
+                        _sube_aday[_sid] = _d
                 cur.execute(
                     """
                     SELECT COALESCE(hedef_depo_sube_id, sevkiyat_sube_id) AS d,
@@ -20315,16 +20444,15 @@ def ops_v2_bekleyen_siparisler(
                     FROM siparis_talep
                     WHERE COALESCE(hedef_depo_sube_id, sevkiyat_sube_id) IS NOT NULL
                       AND tarih >= CURRENT_DATE - INTERVAL '90 day'
-                    GROUP BY 1 ORDER BY n DESC LIMIT 1
+                    GROUP BY 1 ORDER BY n DESC, d ASC LIMIT 1
                     """
                 )
-                _ar = cur.fetchone()
-                if _ar:
-                    _aday = str(dict(_ar).get("d") or "").strip() or None
-                    _aday_kaynak = "gecmis" if _aday else None
+                _gr = cur.fetchone()
+                if _gr:
+                    _genel_aday = str(dict(_gr).get("d") or "").strip() or None
             except Exception:
-                _aday = None
-                _aday_kaynak = None
+                _sube_aday = {}
+                _genel_aday = None
 
         sonuc = []
         for talep in talepler:
@@ -20343,6 +20471,13 @@ def ops_v2_bekleyen_siparisler(
             # yerine GEÇMEZ — yoksa ekran gerçekte kullanılmayacak bir deponun
             # sayısını gösterir.
             hedef_v2 = str(talep.get("hedef_depo_sube_id") or "").strip() or None
+            # Aday sırası: istek > BU ŞUBENİN geçmişi > şirket geneli.
+            _aday = _aday_istek or _sube_aday.get(str(sube_id or "")) or _genel_aday
+            _aday_kaynak = (
+                "istek" if _aday_istek
+                else ("gecmis_sube" if _sube_aday.get(str(sube_id or ""))
+                      else ("gecmis_genel" if _genel_aday else None))
+            )
             if not hedef_v2:
                 hedef_v2 = _aday
             fl, davranis = _enrich_kalemler_ve_davranis(
