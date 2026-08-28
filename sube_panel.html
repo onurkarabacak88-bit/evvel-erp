@@ -5960,9 +5960,41 @@ function acilisTrSaatUygunMu() {
   return hour >= ACILIS_PANEL_MIN_SAAT;
 }
 
-function acilisSaatUyariMetni() {
-  if (acilisTrSaatUygunMu()) return '';
-  return 'Açılış onayı yalnızca 07:00 ve sonrasında yapılabilir (Türkiye saati).';
+/**
+ * 🌅 ERKEN AÇILIŞ İZNİ (sahip isteği, 2026-08-29)
+ * Arka uçta `personel.erken_acilis_izni` ile kişiye özel muafiyet var.
+ * Panel kendi 07:00 kontrolünü yapıyor ve muafiyeti BİLMİYORDU — izinli
+ * kişi sunucu izin verse bile butona basamıyordu.
+ * ⚠️ Kural KALDIRILMADI: izinsiz herkes için 07:00 aynen geçerli.
+ * ⚠️ Bu yalnız EKRAN kolaylığı; asıl kapı sunucuda (fail-closed).
+ */
+function acilisErkenIzinliMi(personelId) {
+  var pid = String(personelId || '').trim();
+  if (!pid) return false;
+  var liste = (lastData && lastData.panel_pin_kullanicilar) || lastPersonelSecim || [];
+  for (var i = 0; i < liste.length; i++) {
+    var p = liste[i] || {};
+    if (String(p.id || '') === pid) return !!p.erken_acilis_izni;
+  }
+  return false;
+}
+
+/** Bu kişi şu an açılış yapabilir mi (saat kuralı + kişisel muafiyet). */
+function acilisSaatUygunMuKisi(personelId) {
+  if (acilisTrSaatUygunMu()) return true;
+  return acilisErkenIzinliMi(personelId);
+}
+
+function acilisSaatUyariMetni(personelId) {
+  if (acilisSaatUygunMuKisi(personelId)) return '';
+  if (arguments.length && String(personelId || '').trim()) {
+    return 'Açılış onayı yalnızca 07:00 ve sonrasında yapılabilir (Türkiye saati). '
+      + 'Bu personelin erken açılış izni yok — izin merkezden verilir.';
+  }
+  // Kişi seçilmeden gösterilen genel bant: muafiyetten DE söz eder, yoksa
+  // izinli personel "yapılamaz" yazısını görüp vazgeçer.
+  return 'Açılış onayı yalnızca 07:00 ve sonrasında yapılabilir (Türkiye saati) — '
+    + 'erken açılış izni olan personel bu saatten önce de açabilir.';
 }
 
 function updateAcilisSaatUyariBanner() {
@@ -14055,8 +14087,8 @@ document.getElementById('opSubmit').onclick = async function(){
       if (!pidA) throw new Error('Personeli seçin');
       var pinA = inpVal('opAcilisPin').replace(/\D/g,'').slice(0,4);
       if (pinA.length!==4) throw new Error('4 haneli PIN girin');
-      if (!acilisTrSaatUygunMu()) {
-        if (err) err.textContent = acilisSaatUyariMetni();
+      if (!acilisSaatUygunMuKisi(pidA)) {
+        if (err) err.textContent = acilisSaatUyariMetni(pidA);
         btn.disabled = false;
         return;
       }
@@ -14197,8 +14229,8 @@ document.getElementById('acilisWizIleri').onclick = async function(){
     var pin = inpVal('awPin').replace(/\D/g,'').slice(0,4);
     if (!pid) throw new Error('Personel seçin');
     if (pin.length!==4) throw new Error('4 haneli PIN girin');
-    if (!acilisTrSaatUygunMu()) {
-      if (errEl) errEl.textContent = acilisSaatUyariMetni();
+    if (!acilisSaatUygunMuKisi(pid)) {
+      if (errEl) errEl.textContent = acilisSaatUyariMetni(pid);
       return;
     }
     btn.disabled = true;

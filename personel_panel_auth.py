@@ -226,7 +226,8 @@ def list_personel_panel_secim(cur: Any) -> List[Dict[str, Any]]:
     if sube_panel_test_pin_aktif():
         cur.execute(
             """
-            SELECT id, ad_soyad AS ad, COALESCE(panel_yonetici, FALSE) AS yonetici
+            SELECT id, ad_soyad AS ad, COALESCE(panel_yonetici, FALSE) AS yonetici,
+                   COALESCE(erken_acilis_izni, FALSE) AS erken_acilis_izni
             FROM personel
             WHERE aktif = TRUE
             ORDER BY ad_soyad
@@ -235,7 +236,8 @@ def list_personel_panel_secim(cur: Any) -> List[Dict[str, Any]]:
     else:
         cur.execute(
             """
-            SELECT id, ad_soyad AS ad, COALESCE(panel_yonetici, FALSE) AS yonetici
+            SELECT id, ad_soyad AS ad, COALESCE(panel_yonetici, FALSE) AS yonetici,
+                   COALESCE(erken_acilis_izni, FALSE) AS erken_acilis_izni
             FROM personel
             WHERE aktif = TRUE
               AND panel_pin_hash IS NOT NULL
@@ -248,6 +250,9 @@ def list_personel_panel_secim(cur: Any) -> List[Dict[str, Any]]:
     rows = [dict(x) for x in cur.fetchall()]
     for r in rows:
         r["yonetici"] = bool(r.get("yonetici"))
+        # Sube paneli 07:00 engelini ISTEMCIDE de uyguluyor; muafiyeti
+        # bilmezse izinli kisi butona basamiyor (sunucu izin verse bile).
+        r["erken_acilis_izni"] = bool(r.get("erken_acilis_izni"))
     return rows
 
 
