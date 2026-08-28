@@ -2028,9 +2028,16 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
         const detay = zk
           ? [
             zk.sube_zaten_var ? `⚠ şubede zaten ${sayi(zk.sube_depo_mevcut)} var` : '',
+            // ⚠️ Hesap DEPODAN yapıldıysa merkez kartının boş olması bir
+            // eksiklik değil, ilgisiz bir gerçektir: "TEMA'da 3" ile
+            // "merkez kaydı yok" yan yana durunca sahip hangisine
+            // bakacağını bilemiyordu. Merkez satırı yalnız merkez KAYNAKKEN
+            // yazılır. (Gerçek eksiklik zaten `merkez_kayit_eksik_var`
+            // notunda ve "kayıt yok" parantezinde duruyor.)
             zk.merkez_mevcut != null && sayi(zk.merkez_mevcut) >= 0
               ? `merkezde ${sayi(zk.merkez_mevcut)}${sayi(zk.merkez_rezerve) ? ` (${sayi(zk.merkez_rezerve)} rezerve)` : ''}${sayi(zk.merkez_min_stok) ? ` · min ${sayi(zk.merkez_min_stok)}` : ''}`
-              : (zk.merkez_mevcut != null && sayi(zk.merkez_mevcut) < 0 ? 'merkez kaydı yok' : ''),
+              : ((zk.merkez_mevcut != null && sayi(zk.merkez_mevcut) < 0 && zk.gonderim_kaynagi !== 'hedef_depo')
+                ? 'merkez kaydı yok' : ''),
             zk.hedef_depo_mevcut != null
               ? `${depoAd || 'hedef depo'}da ${sayi(zk.hedef_depo_mevcut)}${sayi(zk.hedef_depo_rezerve) ? ` (${sayi(zk.hedef_depo_rezerve)} rezerve)` : ''}${sayi(zk.hedef_depo_min_stok) ? ` · min ${sayi(zk.hedef_depo_min_stok)}` : ''}`
               : (depoKayitYok ? `${depoAd || 'hedef depo'}da bu ürünün kaydı yok` : ''),
