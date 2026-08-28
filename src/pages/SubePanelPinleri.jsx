@@ -185,9 +185,14 @@ export default function SubePanelPinleri() {
           }}
         >
           <h2 style={{ fontSize: 15, margin: '0 0 10px' }}>Panel yöneticisi onayı</h2>
+          {/* ⚠️ 2026-08-29: erken açılış izni de bu onaydan geçiyor ama metin
+              yalnız "PIN veya yönetici rolü" diyordu — kullanıcı bu bölümü
+              doldurması gerektiğini anlamıyor, düğmeye basıp geri dönüyordu. */}
           <p style={{ fontSize: 13, color: '#64748b', margin: '0 0 12px' }}>
-            En az bir yönetici tanımlıyken PIN veya yönetici rolü değişiklikleri için bir yöneticinin
-            kimliği ve PIN&apos;i gerekir.
+            En az bir yönetici tanımlıyken <b>PIN</b>, <b>yönetici rolü</b> ve
+            {' '}<b>erken açılış izni</b> değişiklikleri için bir yöneticinin kimliği ve
+            PIN&apos;i gerekir. <b>Önce bu iki alanı doldurun</b>, sonra alttaki listeden
+            işlemi yapın.
           </p>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'flex-end' }}>
             <label style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 200 }}>
