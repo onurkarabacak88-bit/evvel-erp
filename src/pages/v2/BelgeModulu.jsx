@@ -25,6 +25,32 @@ const tarihKisa = (iso) => {
   if (s.length < 10) return '—';
   return `${Number(s.slice(8, 10))} ${AYLAR[Number(s.slice(5, 7)) - 1] || ''}`;
 };
+// ══════════════════════════════════════════════════════════════════════════
+// BELGE KUYRUĞU · DEĞİŞİM TABANI (BAKIŞ hamlesi 3)
+// ══════════════════════════════════════════════════════════════════════════
+// EKİP'teki gibi ADET kıyası: maddeler toplu ("14 tedarikçiden fatura
+// bekleniyor"), kimlik kıyası 14→9 değişimini göremezdi.
+// ⚠️ İKİ KAYIT ({bugun, onceki}) kuralı: tek kayıt tutulsaydı aynı gün ikinci
+// açılışta taban bugüne eşitlenir, delta 0 çıkar, ekran "değişmedi" yalanı
+// söylerdi.
+const BELGE_KUYRUK_ANAHTAR = 'evvelBelgeKuyruk';
+const belgeTabanOku = () => {
+  try {
+    const h = localStorage.getItem(BELGE_KUYRUK_ANAHTAR);
+    return h ? JSON.parse(h) : null;
+  } catch { return null; }
+};
+const belgeTabanYaz = (bugunISO, kalemler) => {
+  try {
+    const k = belgeTabanOku();
+    if (k && k.bugun && k.bugun.tarih === bugunISO) return;
+    localStorage.setItem(BELGE_KUYRUK_ANAHTAR, JSON.stringify({
+      bugun: { tarih: bugunISO, kalemler },
+      onceki: k?.bugun || null,
+    }));
+  } catch { /* depolama kapalı olabilir */ }
+};
+
 const buAyISO = () => {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
@@ -185,6 +211,16 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast, cari
   const [bantHata, setBantHata] = useState('');
   const [cariSecim, setCariSecim] = useState('');
   const [cari, setCari] = useState(null);
+  // Kuyruk değişimi + ölçüm (BAKIŞ hamleleri 3 ve 7).
+  const [belgeDegisim, setBelgeDegisim] = useState(null);
+  const belgeOlcumRef = useRef(null);
+  const belgeEylemRef = useRef(false);
+  const belgeOlcumEylem = (tur) => {
+    if (belgeEylemRef.current || !belgeOlcumRef.current) return;
+    belgeEylemRef.current = true;
+    api('/ops-olcum/eylem', { method: 'POST', body: { oturum_id: belgeOlcumRef.current, tur } })
+      .catch(() => {});
+  };
   const [cariHata, setCariHata] = useState('');
   const [arama, setArama] = useState('');
   const [aramaSonuc, setAramaSonuc] = useState(null);
@@ -442,6 +478,56 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast, cari
       onToast?.(e?.message || 'İşlem başarısız');
     } finally { setFiMesgul(false); }
   };
+
+  // ⚠️ Ölçüm ve taban RENDER'da değil EFFECT'te, ve yalnız veri geldikten
+  // sonra: yarım veriyle taban yazmak ertesi gün UYDURMA bir iyileşme
+  // gösterirdi.
+  useEffect(() => {
+    if (gorunum !== 'kapsama' || !merkez) return;
+    const kk2 = merkez.kapsama || {};
+    const bugunISO = (() => {
+      const d = new Date();
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    })();
+    const kalemler = {
+      faturasiz: Math.round(sayi(kk2.faturasiz)),
+      acikIstek: sayi(istek?.acik_adet),
+      supheli: sayi((merkez.kdv_kanit || {}).supheli?.adet),
+      okunamayanFoto: sayi((merkez.islenemeyen_foto || {}).adet),
+    };
+    const taban = belgeTabanOku();
+    const kiyas = (taban?.bugun?.tarih === bugunISO ? taban?.onceki : taban?.bugun) || null;
+    if (kiyas && kiyas.kalemler) {
+      const ADLAR = {
+        faturasiz: 'faturasız harcama', acikIstek: 'bekleyen istek',
+        supheli: 'şüpheli belge', okunamayanFoto: 'okunamayan foto',
+      };
+      const fark = Object.keys(kalemler)
+        .filter((x) => sayi(kiyas.kalemler[x]) !== kalemler[x])
+        .map((x) => ({ ad: ADLAR[x] || x, eski: sayi(kiyas.kalemler[x]), yeni: kalemler[x] }));
+      setBelgeDegisim(fark.length ? { tarih: kiyas.tarih, fark } : null);
+    } else {
+      setBelgeDegisim(null);
+    }
+    belgeTabanYaz(bugunISO, kalemler);
+
+    // 📊 Oturum açılışı — BİR KEZ (yenileme M2 paydasını şişirmesin).
+    if (belgeOlcumRef.current == null) {
+      const anahtarlar = Object.keys(kalemler).filter((x) => kalemler[x] > 0);
+      api('/ops-olcum/acilis', {
+        method: 'POST',
+        body: {
+          ekran: 'belge',
+          gorunum: 'kapsama',
+          kuyruk: anahtarlar.map((x) => `belge|${x}`),
+          // S1 vergi riski · S2 kayıt bütünlüğü · S3 teknik eksik
+          kuyruk_sinif: anahtarlar.map((x) => (
+            ['faturasiz', 'acikIstek'].includes(x) ? 1 : x === 'supheli' ? 2 : 3
+          )),
+        },
+      }).then((r) => { belgeOlcumRef.current = r?.oturum_id || null; }).catch(() => {});
+    }
+  }, [gorunum, merkez, istek]);
 
   useEffect(() => {
     if (['kapsama', 'arsiv', 'uyarilar', 'kdv', 'cari'].includes(gorunum) && !merkez) merkezYukle();
@@ -750,6 +836,22 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast, cari
                 {belgeKuyruk.length} iş · vergi riski en yüksek üstte
                 {belgeTasan > 0 && ` · ${belgeTasan} tanesi sekmelerde`}
               </span>
+              {/* ⚠️ DEĞİŞİM: sabit kuyruk 3. günden sonra duvar kâğıdı olur.
+                  AZALMA yeşil (belge geldi), ARTIŞ amber (yeni belgesiz harcama). */}
+              {belgeDegisim && (
+                <span style={{ fontSize: 11.5, color: R.not3 }}>
+                  · {belgeDegisim.tarih}’ten beri{' '}
+                  {belgeDegisim.fark.slice(0, 2).map((f, i) => (
+                    <span key={f.ad}>
+                      {i > 0 && ' · '}
+                      <b style={{ color: f.yeni < f.eski ? R.yesil : R.amber }}>
+                        {f.ad} {f.eski}→{f.yeni}
+                      </b>
+                    </span>
+                  ))}
+                  {belgeDegisim.fark.length > 2 && ` · +${belgeDegisim.fark.length - 2} değişim`}
+                </span>
+              )}
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {belgeGorunen.map((m) => {
@@ -758,7 +860,7 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast, cari
                 return (
                   <div
                     key={m.anahtar}
-                    onClick={acilir ? m.git : undefined}
+                    onClick={acilir ? () => { belgeOlcumEylem('kuyruk'); m.git(); } : undefined}
                     role={acilir ? 'button' : undefined}
                     tabIndex={acilir ? 0 : undefined}
                     onKeyDown={acilir ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); m.git(); } } : undefined}
@@ -811,7 +913,8 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast, cari
               renk: R.yesil,
             }),
           { etiket: 'Faturalı', deger: fmt(faturali), alt: 'eşleşen + kurumsal otomatik', renk: R.yesil },
-          { etiket: 'Faturasız', deger: fmt(faturasiz), alt: 'belge isteme adayı', renk: faturasiz > 0 ? R.kirmizi : R.yesil },
+          // 🚪 KAPI: faturasız harcama, fatura isteme akışının girdisi.
+          { etiket: 'Faturasız', deger: fmt(faturasiz), onTikla: () => onKopru?.('__modul:belge:istek'), alt: 'belge isteme adayı · isteklere git', renk: faturasiz > 0 ? R.kirmizi : R.yesil },
           { etiket: 'Kart harcaması', deger: fmt(sayi(k.isletme_kart_harcamasi)), alt: `${merkez.ay || buAyISO()} · işletme` },
         ]} />
 
@@ -898,6 +1001,39 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast, cari
             />
           </>
         )}
+
+        {/* ══════════════════════════════════════════════════════════════
+            📌 BELGE KAPANIŞI — serial position (Murdock 1962)
+            ══════════════════════════════════════════════════════════════
+            Ekran ham harcama listesiyle bitiyordu. Bir dizinin ilk ve son
+            ögesi hatırlanır; VERGİ ekranının son sözü bir liste satırı olamaz.
+            ⚠️ YENİ HESAP YOK — ekranda zaten olan sunucu sayıları tek cümlede.
+            ⚠️ PAYDA YAZILIYOR (Fable P1-3): "%X" tek başına yanıltır; hangi
+            evren üzerinden olduğu görünmeliydi, görünmüyordu. */}
+        <div style={{
+          ...kartYuzey, padding: '14px 18px', marginTop: 14,
+          borderLeft: `3px solid ${faturasiz > 0 ? R.kirmizi : R.yesil}`,
+        }}>
+          <div style={{ fontSize: 11, letterSpacing: .8, color: R.not3, marginBottom: 6 }}>BELGE KAPANIŞI</div>
+          <div style={{ fontSize: 13.5, lineHeight: 1.75, color: R.krem }}>
+            {merkez.ay || buAyISO()} döneminde <b style={{ fontFamily: F.mono }}>{fmt(toplamHarcama)}</b> işletme
+            kartı harcaması var. Bunun{' '}
+            <b style={{ fontFamily: F.mono }}>{fmt(sayi(k.belge_bekleyen_taban))}</b>’si <b>belge bekliyor</b>;
+            {faturasiz > 0
+              ? <> bugüne kadar <b style={{ color: R.kirmizi, fontFamily: F.mono }}>{fmt(faturasiz)}</b>’sinin
+                  faturası bulunamadı.</>
+              : <> tamamının faturası bulundu.</>}
+          </div>
+          {/* ⚠️ EN ÖNEMLİ CÜMLE SONDA: bu bir kapsama ölçüsüdür, vergi hükmü
+              değil. Hangi belgenin indirilebileceğine muhasebeci karar verir —
+              ekran yalnız hangi harcamanın belgesiz kaldığını söyler. */}
+          <div style={{ fontSize: 11.5, color: R.not2, marginTop: 8, lineHeight: 1.7 }}>
+            ⚠ Bu oran <b style={{ color: R.not }}>belge kapsamasıdır, vergi hükmü değil</b>: faturası bulunan bir
+            harcamanın KDV’si indirilebilir olmayabilir. Neyin indirileceğine <b style={{ color: R.not }}>muhasebeci</b>{' '}
+            karar verir; bu ekran yalnız <b style={{ color: R.not }}>hangi harcamanın belgesiz kaldığını</b> söyler.
+          </div>
+        </div>
+
       </>
     );
   }
@@ -1922,7 +2058,26 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast, cari
             kart_sapma_yuzde; mutlakça büyüğü gösterilir, kaynağı yazılır. */}
         <KpiSeridi kpiler={[
           { etiket: 'İzlenen kalem', deger: String(sayi(bant.urun_adet)), alt: 'fatura fiyat geçmişi' },
-          { etiket: 'Bant dışı', deger: String(sayi(bant.band_disi_adet)), alt: 'medyana ya da maliyet kartına göre ≥%10', renk: sayi(bant.band_disi_adet) > 0 ? R.kirmizi : R.yesil },
+          // ⚠️ ALARM BÜTÇESİ (çerçeveleme taraması, 2026-08-28): canlıda
+          // izlenen 18 kalemin 11'i "bant dışı" işaretliydi — %61. Çoğunluğu
+          // işaretleyen bir etiket hiçbir şeyi ayırt etmez; sahip ya hepsini
+          // pahalı sanır ya hiçbirine bakmaz. (EKİP'te 10 kişinin 8'i "sürekli
+          // riskli" çıkan kusurun aynısı.)
+          // ⚠️ Sayı değişmedi — ORAN yazıldı ve çoğunluk işaretliyse renk
+          // kırmızıdan ambere iniyor: bu bir liste, alarm değil.
+          (() => {
+            const d = sayi(bant.band_disi_adet);
+            const t = sayi(bant.urun_adet);
+            const cogunluk = t > 0 && d / t > 0.5;
+            return {
+              etiket: 'Bant dışı',
+              deger: String(d),
+              alt: t > 0
+                ? `${t} izlenen kalemin ${d}'i · medyana ya da karta göre ≥%10`
+                : 'medyana ya da maliyet kartına göre ≥%10',
+              renk: !d ? R.yesil : (cogunluk ? R.amber : R.kirmizi),
+            };
+          })(),
           {
             etiket: 'En sert sapma',
             deger: disi.length
