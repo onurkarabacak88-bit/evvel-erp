@@ -1341,6 +1341,48 @@ def stok_yolda_insert_row(
 ) -> None:
     """stok_yolda satırı — kolon yoksa migrasyon dener, yine yoksa kolonsuz INSERT."""
     ensure_stok_yolda_columns(cur)
+    # ══════════════════════════════════════════════════════════════════════
+    # 🔑 KANONİK KİMLİK KAPISI (canlı denemede yakalandı, 2026-08-29)
+    # ══════════════════════════════════════════════════════════════════════
+    # `kalem_kodu` katalog ürünlerinde ÜRÜN UUID'sidir. Çağıran taraf
+    # `urun_id` göndermezse kod ürün ADINA düşüyor ("Espresso") ve şube
+    # kabulü o adla `sube_depo_stok`'a yazıyordu → katalogda HAYALET İKİZ
+    # kayıt. Canlı kanıt: ALSANCAK'ta iki Espresso satırı oluştu — biri
+    # UUID'li (kategori: kahve, gerçek), biri "Espresso" kodlu kategorisiz.
+    # Gelen mal yanlış kayda düştü; ürünün toplamı ikiye bölündü ve maliyet,
+    # reçete, sipariş önerisi hepsi eksik sayı görmeye başladı.
+    # ⚠️ Ad → kanonik UUID çözümü BURADA yapılır: tek geçit, tüm sevkler
+    #    buradan akıyor. Ekranların birinde unutulsa bile hayalet açılamaz.
+    # ⚠️ Çözülemezse kod OLDUĞU GİBİ bırakılır (kayıt kaybolmasın) ama
+    #    uyarı loglanır — sessizce yanlış yazmaktansa görünür kalsın.
+    try:
+        _kk = str(kalem_kodu or "").strip()
+        _ka = str(kalem_adi or "").strip()
+        # UUID biçiminde değilse (yani ad veya boş) kanoniğe çevirmeyi dene
+        if _ka and (not _kk or "-" not in _kk or len(_kk) < 30):
+            cur.execute(
+                """
+                SELECT id FROM siparis_urun
+                 WHERE LOWER(TRIM(ad)) = LOWER(TRIM(%s))
+                 ORDER BY (aktif IS TRUE) DESC NULLS LAST, id
+                 LIMIT 1
+                """,
+                (_ka,),
+            )
+            _cr = cur.fetchone()
+            _cid = (dict(_cr).get("id") if _cr else None) if _cr else None
+            if _cid:
+                kalem_kodu = str(_cid)
+            else:
+                logging.getLogger(__name__).warning(
+                    "stok_yolda: '%s' icin kanonik urun kimligi COZULEMEDI "
+                    "(kod='%s') - hayalet stok kaydi riski",
+                    _ka, _kk,
+                )
+    except Exception:
+        # Katalog tablosu farklıysa/erişilemezse akışı DURDURMA: sevk
+        # kaydının kaybolması, kimliğin zayıf kalmasından daha kötü.
+        logging.getLogger(__name__).warning("stok_yolda: kanonik kimlik cozumu atlandi")
     if stok_yolda_sevk_kaynak_col_exists(cur):
         cur.execute(
             """
@@ -5102,6 +5144,95 @@ $$;
             try: cur.execute("ROLLBACK TO SAVEPOINT sp_v4_duplike")
             except Exception: pass
             print(f"[MIGRATION WARN] depo_stok_duplike_temizlik_v4: {_mig_e}")
+
+        # ─── MIGRATION: depo_stok_hayalet_ad_temizlik_v6 ────────────────────
+        # v4 `norm_ad` ile eşleşenleri temizliyordu ("espresso"). Ama şube
+        # kabulü, çağıran taraf `urun_id` göndermediğinde stok satırını ürünün
+        # GÖRÜNEN ADIYLA açıyordu ("Espresso") — v4 bunu yakalamıyor.
+        # Canlı kanıt (2026-08-29): ALSANCAK'ta iki Espresso satırı oluştu —
+        # biri UUID'li (kategori kahve, gerçek), biri "Espresso" kodlu
+        # kategorisiz hayalet. Gelen mal hayalete düştü; ürünün toplamı ikiye
+        # bölündü ve maliyet/reçete/sipariş önerisi eksik sayı gördü.
+        # ⚠️ Adet KAYBOLMAZ: hayaletin adedi kanonik satıra EKLENİR, sonra
+        #    hayalet silinir. Mal fiziksel olarak geldi, sayı durmalı.
+        # ⚠️ Kaynak (stok_yolda) da kanoniğe çevrilir; yoksa aynı kayıt bir
+        #    sonraki okumada yine hayalet gibi görünür.
+        # (Tekrarını önleyen kapı `stok_yolda_insert_row`'da — bu göç geçmişi
+        #  temizler, kapı geleceği kapatır.)
+        cur.execute("SAVEPOINT sp_v6_hayalet_ad")
+        try:
+            cur.execute("""
+                SELECT 1 FROM finans_migration_log
+                WHERE ad='depo_stok_hayalet_ad_temizlik_v6' LIMIT 1
+            """)
+            if not cur.fetchone():
+                cur.execute("""
+                    SELECT sds.sube_id, sds.kalem_kodu AS ad_kod,
+                           COALESCE(sds.mevcut_adet, 0) AS mevcut_adet,
+                           su.id AS uuid_kod, su.ad AS urun_ad
+                    FROM sube_depo_stok sds
+                    JOIN siparis_urun su
+                      ON LOWER(TRIM(su.ad)) = LOWER(TRIM(sds.kalem_kodu))
+                    WHERE sds.kalem_kodu !~ '^[0-9a-f]{8}-[0-9a-f]{4}-'
+                """)
+                _v6_rows = cur.fetchall() or []
+                _v6_merge = 0
+                _v6_sil = 0
+                _v6_yolda = 0
+                for _r in _v6_rows:
+                    _sid = str(_r["sube_id"])
+                    _adk = str(_r["ad_kod"])
+                    _uuk = str(_r["uuid_kod"])
+                    _adet = int(_r["mevcut_adet"] or 0)
+                    if _adk == _uuk:
+                        continue
+                    cur.execute(
+                        "SELECT 1 FROM sube_depo_stok WHERE sube_id=%s AND kalem_kodu=%s",
+                        (_sid, _uuk),
+                    )
+                    if cur.fetchone():
+                        if _adet > 0:
+                            cur.execute("""
+                                UPDATE sube_depo_stok
+                                   SET mevcut_adet = COALESCE(mevcut_adet,0) + %s,
+                                       guncelleme = NOW()
+                                 WHERE sube_id=%s AND kalem_kodu=%s
+                            """, (_adet, _sid, _uuk))
+                            _v6_merge += 1
+                        cur.execute(
+                            "DELETE FROM sube_depo_stok WHERE sube_id=%s AND kalem_kodu=%s",
+                            (_sid, _adk),
+                        )
+                        _v6_sil += cur.rowcount
+                    else:
+                        # Kanonik satır yoksa hayaleti KANONİĞE ÇEVİR (silme:
+                        # adet kaybolurdu).
+                        cur.execute("""
+                            UPDATE sube_depo_stok
+                               SET kalem_kodu=%s, kalem_adi=%s, guncelleme=NOW()
+                             WHERE sube_id=%s AND kalem_kodu=%s
+                        """, (_uuk, _r["urun_ad"], _sid, _adk))
+                        _v6_sil += 0
+                    # Kaynak kayıt da düzeltilsin
+                    cur.execute("""
+                        UPDATE stok_yolda SET kalem_kodu=%s
+                         WHERE sube_id=%s AND kalem_kodu=%s
+                    """, (_uuk, _sid, _adk))
+                    _v6_yolda += cur.rowcount
+                cur.execute("""
+                    INSERT INTO finans_migration_log (ad, detay) VALUES (%s, %s::jsonb)
+                """, (
+                    'depo_stok_hayalet_ad_temizlik_v6',
+                    json.dumps({"merge": _v6_merge, "silinen": _v6_sil,
+                                "stok_yolda_duzeltilen": _v6_yolda}),
+                ))
+                print(f"[MIGRATION] depo_stok_hayalet_ad_temizlik_v6: "
+                      f"merge={_v6_merge}, silinen={_v6_sil}, yolda={_v6_yolda}")
+            cur.execute("RELEASE SAVEPOINT sp_v6_hayalet_ad")
+        except Exception as _mig_e:
+            try: cur.execute("ROLLBACK TO SAVEPOINT sp_v6_hayalet_ad")
+            except Exception: pass
+            print(f"[MIGRATION WARN] depo_stok_hayalet_ad_temizlik_v6: {_mig_e}")
 
         # ─── MIGRATION v5: siparis_urun.depo_stok_kalem_kodu = id (explicit UUID ataması) ──
         # depo_stok_kalem_kodu NULL olan tüm aktif ürünlere kendi UUID'lerini ata.
