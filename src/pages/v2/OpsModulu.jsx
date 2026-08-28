@@ -66,11 +66,20 @@ const isGunuKaymasiVar = () => isGunuBugun() !== bugunYerelISO();
 // Hem ekran (sıralamayı çizmek için) hem de değişim ölçümü (dünle kıyaslamak
 // için) AYNI kuyruğu görmeli. İki yerde ayrı ayrı kurulsaydı bir gün ayrışır
 // ve "yeni gelen iş" sayısı ekrandakiyle tutmazdı.
+// ⚠️ İKİ FARKLI "GÜN" (canlı yürüyüşte yakalandı, 2026-08-29)
+// Kuyruğun "bugün"ü İŞ GÜNÜdür: sabah 06:00'dan önce hâlâ dünün iş günündeyiz
+// (isGunuBugun). Siparişin `tarih` alanı ise TAKVİM günüdür. Gece 01:58'de
+// düşen bir sipariş bu yüzden "-1 gün" yaşında görünüyordu — ekranda anlamsız,
+// üstelik "bu iş daha doğmamış" gibi okunuyor.
+// Yaş 0'ın altına DÜŞMEZ: iş günü sınırının ötesinde gelen kayıt en fazla
+// "bugün"dür. (Sayıyı kırpmak veriyi bozmaz; iki farklı gün tanımının
+// kesiştiği yerdeki tek doğru gösterim budur.)
 const opsGunFarki = (t, bugunISO) => {
   if (!t) return null;
   const d = new Date(String(t).slice(0, 10) + 'T00:00:00Z');
   if (Number.isNaN(d.getTime())) return null;
-  return Math.round((new Date(bugunISO + 'T00:00:00Z') - d) / 86400000);
+  const fark = Math.round((new Date(bugunISO + 'T00:00:00Z') - d) / 86400000);
+  return fark < 0 ? 0 : fark;
 };
 export const opsKuyrukKur = (satirlar, bugunISO) => {
   const L = Array.isArray(satirlar) ? satirlar : [];
