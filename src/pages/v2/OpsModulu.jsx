@@ -2002,14 +2002,22 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
         // ⚠️ Depo adı UYDURULMAZ: sunucu `stok_depo_adi` vermezse parantez
         //    hiç yazılmaz (yanlış deponun sayısı gösterilmez).
         const depoAd = z?.stok_depo_adi || null;
+        const depoAdVarMi = !!depoAd;
+        // ⚠️ null = "o depoda bu ürünün KAYDI yok" (0 adet var DEĞİL).
+        //    Sunucu artık ikisini ayırıyor; ekran da ayırmalı.
         const depoVar = zk && zk.hedef_depo_mevcut != null ? sayi(zk.hedef_depo_mevcut) : null;
+        const depoKayitYok = !!(zk && zk.hedef_depo_mevcut == null && depoAdVarMi);
         // "TEMA?" — soru işareti deponun henüz ATANMADIĞINI söyler. Aday
         // deponun sayısını atanmış gibi göstermek sahte kesinliktir.
         const depoEtiket = depoAd
           ? `${depoAd}${z?.stok_depo_kaynagi && z.stok_depo_kaynagi !== 'atanmis' ? '?' : ''}`
           : null;
-        const parantez = (depoEtiket && depoVar != null)
-          ? ` (${depoEtiket}: ${depoVar}${depoVar >= sayi(k?.adet) ? ' ✓' : ' ⚠ yetmez'})`
+        const parantez = depoEtiket
+          ? (depoVar != null
+            ? ` (${depoEtiket}: ${depoVar}${depoVar >= sayi(k?.adet) ? ' ✓' : ' ⚠ yetmez'})`
+            // "kayıt yok" GİZLENMEZ: gizlenirse sahip sayının neden
+            // olmadığını değil, olduğunu sanır (boş alan = 0 hissi).
+            : (depoKayitYok ? ` (${depoEtiket}: kayıt yok)` : ''))
           : '';
         // Karar için gereken üç sayı: şubede zaten var mı · merkezde ne kalır ·
         // barem altına düşer mi. Sunucu hesaplıyordu, ekran hiç göstermiyordu.
@@ -2024,8 +2032,8 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
               ? `merkezde ${sayi(zk.merkez_mevcut)}${sayi(zk.merkez_rezerve) ? ` (${sayi(zk.merkez_rezerve)} rezerve)` : ''}${sayi(zk.merkez_min_stok) ? ` · min ${sayi(zk.merkez_min_stok)}` : ''}`
               : (zk.merkez_mevcut != null && sayi(zk.merkez_mevcut) < 0 ? 'merkez kaydı yok' : ''),
             zk.hedef_depo_mevcut != null
-              ? `hedef depoda ${sayi(zk.hedef_depo_mevcut)}${sayi(zk.hedef_depo_rezerve) ? ` (${sayi(zk.hedef_depo_rezerve)} rezerve)` : ''}${sayi(zk.hedef_depo_min_stok) ? ` · min ${sayi(zk.hedef_depo_min_stok)}` : ''}`
-              : '',
+              ? `${depoAd || 'hedef depo'}da ${sayi(zk.hedef_depo_mevcut)}${sayi(zk.hedef_depo_rezerve) ? ` (${sayi(zk.hedef_depo_rezerve)} rezerve)` : ''}${sayi(zk.hedef_depo_min_stok) ? ` · min ${sayi(zk.hedef_depo_min_stok)}` : ''}`
+              : (depoKayitYok ? `${depoAd || 'hedef depo'}da bu ürünün kaydı yok` : ''),
             zk.kalan_gonderince != null ? `gönderince ${sayi(zk.kalan_gonderince)} kalır` : '',
             zk.merkez_barem_risk ? '⚠ barem altına düşer' : '',
             zk.alarm_merkez ? '⚠ merkez alarmı' : '',

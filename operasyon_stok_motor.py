@@ -2015,13 +2015,34 @@ def enrich_siparis_kalemleri_stok_inplace(
     """
     if merkez_map is None:
         merkez_map = merkez_stok_kart_haritasi(cur)
+    # ── 🔑 ANAHTAR ZİNCİRİ (canlı ölçüm, 2026-08-28) ────────────────────────
+    # Depo stoğu (`sube_depo_stok.kalem_kodu`) katalog ürünlerinde ÜRÜN UUID'si
+    # ile anahtarlı — sahip sipariş kataloğu ile depo ürünlerini bu kimlik
+    # üzerinden birleştirmişti. Ama zincir `kalem_kodu → urun_ad` idi ve
+    # `urun_id`'ye HİÇ bakmıyordu. Sipariş kalemlerinde `kalem_kodu` boş
+    # geldiği için anahtar ürün ADINA ("Espresso") düşüyor, o da bir UUID
+    # anahtarıyla asla eşleşmiyordu.
+    # Canlı kanıt: ZAFER siparişinde 32 kalemin 32'si "merkez kaydı yok"
+    # diyordu; oysa TEMA'da 4 Espresso vardı. Ad eşleşmesi ZİNCİRDE KALIYOR
+    # (kodu/UUID'si olmayan eski kayıtlar için) ama artık SON sırada.
+    def _kalem_anahtarlari(it: Dict[str, Any]) -> List[str]:
+        return [
+            a for a in (
+                str(it.get("kalem_kodu") or "").strip(),
+                str(it.get("urun_id") or "").strip(),
+                str(it.get("urun_ad") or "").strip(),
+            ) if a
+        ]
+
     kodlar: List[str] = []
     for it in kalemler or []:
         if not isinstance(it, dict):
             continue
-        kc = str(it.get("kalem_kodu") or it.get("urun_ad") or "").strip()
-        if kc:
-            kodlar.append(kc)
+        # ⚠️ Anahtarların HEPSİ sorguya girer: hangisinin tuttuğunu önceden
+        #    bilemeyiz, biri atlanırsa kalem "kayıtsız" görünür.
+        for _a in _kalem_anahtarlari(it):
+            if _a not in kodlar:
+                kodlar.append(_a)
     sube_depo: Dict[str, int] = {}
     sid = (sube_id or "").strip()
     if sid and kodlar:
@@ -2065,9 +2086,19 @@ def enrich_siparis_kalemleri_stok_inplace(
     for it in kalemler or []:
         if not isinstance(it, dict):
             continue
-        kalem_kodu = str(it.get("kalem_kodu") or it.get("urun_ad") or "").strip()
+        _anahtarlar = _kalem_anahtarlari(it)
+        # Gösterim/geriye uyum için ilk anahtar; ARAMA tüm zincirle yapılır.
+        kalem_kodu = _anahtarlar[0] if _anahtarlar else ""
         istenen = max(0, int(it.get("adet") or 0))
-        mk = merkez_map.get(kalem_kodu) if kalem_kodu else None
+
+        def _ilk_bulunan(harita: Dict[str, Any]) -> Any:
+            """Zincirdeki İLK eşleşen anahtarın değeri (kod → uuid → ad)."""
+            for _a in _anahtarlar:
+                if _a in harita:
+                    return harita[_a]
+            return None
+
+        mk = _ilk_bulunan(merkez_map)
         if mk:
             merkez_mevcut = int(mk.get("mevcut_adet") or 0)
             merkez_rezerve = int(mk.get("rezerve_adet") or 0)
@@ -2076,18 +2107,35 @@ def enrich_siparis_kalemleri_stok_inplace(
             merkez_mevcut = -1
             merkez_rezerve = 0
             merkez_min = 0
-            if kalem_kodu and istenen > 0:
-                merkez_eksik = True
-        sube_dep = int(sube_depo.get(kalem_kodu, 0)) if kalem_kodu else 0
+            # ⚠️ Bayrak burada DEĞİL, gerçek kaynak belli olunca kurulur
+            # (aşağıda): hesap hedef depodan yapılıyorsa merkez kartının boş
+            # olması bir eksiklik değildir — "merkez kaydı yok, hesaplanamadı"
+            # demek yanlış olurdu, çünkü hesap YAPILDI.
+        _sd = _ilk_bulunan(sube_depo)
+        sube_dep = int(_sd) if _sd is not None else 0
 
-        dep_row = hedef_depo_map.get(kalem_kodu) if hid else None
+        dep_row = _ilk_bulunan(hedef_depo_map) if hid else None
         if hid:
-            kaynak_mevcut = int(dep_row["mevcut"]) if dep_row else 0
-            kaynak_min = int(dep_row["min"]) if dep_row else 0
-            kaynak_rezerve = int(dep_row.get("rezerve") or 0) if dep_row else 0
-            hedef_dep_m = kaynak_mevcut
-            hedef_min = kaynak_min
-            hedef_rezerve = kaynak_rezerve
+            # ⚠️ HATA ≠ BOŞ (canlı ölçüm, 2026-08-28): kayıt bulunamayınca
+            # `mevcut = 0` yazılıyordu. "Bu üründen depoda kayıt YOK" ile
+            # "depoda 0 adet VAR" aynı sayıya düşünce ekran hem "0 var"
+            # diyor hem de üstüne `alarm_merkez` üretiyordu — ÖLÇÜLMEMİŞ
+            # veriden UYDURULMUŞ SUÇLAMA. Merkez tarafında bu zaten -1 ile
+            # ayrılmıştı; hedef depo tarafında ayrılmamıştı.
+            if dep_row is None:
+                kaynak_mevcut = -1
+                kaynak_min = 0
+                kaynak_rezerve = 0
+                hedef_dep_m = None      # ekran "—" basar, "0" değil
+                hedef_min = None
+                hedef_rezerve = None
+            else:
+                kaynak_mevcut = int(dep_row["mevcut"])
+                kaynak_min = int(dep_row["min"])
+                kaynak_rezerve = int(dep_row.get("rezerve") or 0)
+                hedef_dep_m = kaynak_mevcut
+                hedef_min = kaynak_min
+                hedef_rezerve = kaynak_rezerve
         else:
             kaynak_mevcut = merkez_mevcut if mk else -1
             kaynak_min = merkez_min if mk else 0
@@ -2095,6 +2143,18 @@ def enrich_siparis_kalemleri_stok_inplace(
             hedef_dep_m = None
             hedef_min = None
             hedef_rezerve = None
+
+        # 🚩 KAYIT EKSİK bayrağı GERÇEK KAYNAĞA bağlanır: hesap hangi depodan
+        # yapıldıysa oranın kaydı yoksa eksiktir. Önceden her hâlükârda merkez
+        # kartına bakılıyordu; hedef depo atanmış siparişlerde merkez kartı boş
+        # olsa bile hesap depodan YAPILIYOR ve doğru çıkıyordu — ekran yine de
+        # "hesaplanamadı" diyordu.
+        if istenen > 0 and kalem_kodu:
+            if hid:
+                if dep_row is None:
+                    merkez_eksik = True
+            elif mk is None:
+                merkez_eksik = True
 
         kullanilabilir = (kaynak_mevcut - max(0, kaynak_rezerve)) if kaynak_mevcut >= 0 else None
         kalan = (kullanilabilir - istenen) if kullanilabilir is not None else None
@@ -2123,7 +2183,11 @@ def enrich_siparis_kalemleri_stok_inplace(
         it["merkez_barem_risk"] = merkez_barem_risk
         it["sube_depo_mevcut"] = sube_dep
         it["sube_zaten_var"] = sube_zaten_var
-        it["merkez_kayit_yok"] = mk is None and bool(kalem_kodu)
+        # Kalem bazında da GERÇEK KAYNAK: hesap depodan yapıldıysa deponun
+        # kaydı sorulur, merkez kartının değil.
+        it["merkez_kayit_yok"] = bool(kalem_kodu) and (
+            (dep_row is None) if hid else (mk is None)
+        )
         it["gonderim_kaynagi"] = "hedef_depo" if hid else "merkez_kart"
         if hid:
             it["hedef_depo_mevcut"] = hedef_dep_m
