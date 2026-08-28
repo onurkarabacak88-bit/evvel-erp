@@ -863,6 +863,29 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
     } finally { setPinMesgul(false); }
   };
 
+  // ── 🌅 ERKEN AÇILIŞ İZNİ (sahip isteği, 2026-08-29) ────────────────────────
+  // Açılış onayı sistem genelinde 07:00'den önce yapılamaz
+  // (tr_saat.ACILIS_TAMAM_EN_ERKEN_SAAT). Bu anahtar TEK KİŞİYİ muaf tutar;
+  // kuralı KALDIRMAZ — izinsiz herkes için 07:00 aynen sürer.
+  // ⚠️ `panel_yonetici` anahtarına bindirilmedi: o rol görev onaylarını
+  //    yönetiyor, oraya bağlansa her yöneticiye sessizce yetki verilirdi.
+  // ⚠️ Aynı yönetici onayından geçer (PIN ve rol değişimiyle aynı kapı).
+  const erkenAcilisDegistir = async (p, izin) => {
+    if (!pinOnayGecerli()) return;
+    setPinMesgul(true);
+    try {
+      await api(`/sube-panel/merkez/personel/${encodeURIComponent(p.id)}/erken-acilis-izni`, {
+        method: 'PUT', body: { izin, ...pinOnayGovde() },
+      });
+      onToast?.(izin
+        ? `🌅 ${p.ad || p.ad_soyad || 'Personel'} artık 07:00'den önce açılış yapabilir`
+        : `✓ ${p.ad || p.ad_soyad || 'Personel'} için erken açılış izni kaldırıldı`);
+      yukle();
+    } catch (e) {
+      onToast?.(e?.message || 'İşlem başarısız');
+    } finally { setPinMesgul(false); }
+  };
+
   const merkezKeyKaydet = () => {
     try {
       const v = (merkezKey || '').trim();
@@ -4714,8 +4737,13 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
       {pinler.length > 0 && (
         <Tablo
           baslik="Personel panel PIN'leri"
-          not="satıra tıkla → PIN ata / yönetici yetkisi · aynı PIN tüm şubelerde geçerli"
-          kolonlar={[{ ad: 'Ad soyad' }, { ad: 'Şube (kayıt)' }, { ad: 'PIN' }, { ad: 'Yönetici' }]}
+          not="satıra tıkla → PIN ata / yönetici yetkisi / erken açılış izni · aynı PIN tüm şubelerde geçerli"
+          kolonlar={[
+            { ad: 'Ad soyad' }, { ad: 'Şube (kayıt)' }, { ad: 'PIN' }, { ad: 'Yönetici' },
+            // 🌅 Açılış onayı normalde 07:00'den önce yapılamaz; bu sütun
+            //    kimin muaf olduğunu tek bakışta gösterir.
+            { ad: 'Açılış saati' },
+          ]}
           satirlar={pinler.map(p => ({
             id: p.id, _p: p,
             hucreler: [
@@ -4723,6 +4751,11 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
               { v: p.sube_adi || '—', renk: R.not },
               { v: p.panel_pin_tanimli ? 'tanımlı' : 'yok', rozet: p.panel_pin_tanimli ? R.yesil : R.amber },
               { v: p.yonetici ? 'yönetici' : '—', renk: p.yonetici ? R.mavi : R.not },
+              // 🌅 Açılış saati: kural 07:00, bu kişi muaf mı
+              {
+                v: p.erken_acilis_izni ? '🌅 muaf' : '07:00',
+                renk: p.erken_acilis_izni ? R.bakir : R.not3,
+              },
             ],
           }))}
           onSatir={({ _p }) => onCekmece?.({
@@ -4733,6 +4766,11 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
               { etiket: 'PIN', deger: _p.panel_pin_tanimli ? 'tanımlı' : 'yok', renk: _p.panel_pin_tanimli ? R.yesil : R.amber },
               { etiket: 'Yönetici', deger: _p.yonetici ? 'evet' : 'hayır', renk: _p.yonetici ? R.mavi : R.not },
               { etiket: 'Kayıt şubesi', deger: _p.sube_adi || '—' },
+              {
+                etiket: 'Açılış saati',
+                deger: _p.erken_acilis_izni ? '07:00 öncesi de açabilir' : '07:00 ve sonrası',
+                renk: _p.erken_acilis_izni ? R.bakir : R.not,
+              },
             ],
             listeBaslik: 'PIN neyi açar',
             satirlar: [
@@ -4740,10 +4778,17 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
               { ad: 'Kapanış onayı', detay: 'mühür adımı', tutar: 'PIN ister' },
               { ad: 'Vardiya devri', detay: 'kasa el değiştirme', tutar: 'PIN ister' },
             ],
-            not: 'PIN personele aittir, şubeye değil — personel hangi şubede çalışırsa çalışsın aynı PIN geçerlidir. Yönetici yetkisi cep override kapısını açar.',
+            not: 'PIN personele aittir, şubeye değil — personel hangi şubede çalışırsa çalışsın '
+              + 'aynı PIN geçerlidir. Yönetici yetkisi cep override kapısını açar. '
+              + '🌅 Erken açılış izni yalnız BU kişiyi 07:00 kuralından muaf tutar; '
+              + 'izinsiz herkes için kural aynen sürer ve açılışta PIN yine sorulur.',
             aksiyonlar: [
               { ad: _p.panel_pin_tanimli ? '🔑 PIN değiştir' : '🔑 PIN ata', birincil: true, onTikla: () => setPinModal({ id: _p.id, ad: _p.ad_soyad, pin: '' }) },
               { ad: _p.yonetici ? '↓ Yönetici yetkisini kaldır' : '↑ Yönetici yap', onTikla: () => yoneticiDegistir(_p, !_p.yonetici) },
+              {
+                ad: _p.erken_acilis_izni ? '🌅 Erken açılışı kapat' : '🌅 Erken açılış izni ver',
+                onTikla: () => erkenAcilisDegistir(_p, !_p.erken_acilis_izni),
+              },
             ],
           })}
         />

@@ -863,6 +863,10 @@ def merkez_personel_panel_pin_liste():
             """
             SELECT p.id, p.ad_soyad, p.sube_id, s.ad AS sube_adi, p.aktif,
                    COALESCE(p.panel_yonetici, FALSE) AS yonetici,
+                   -- 🌅 Erken açılış izni (2026-08-29): v2 EKİP · PIN sekmesi
+                   -- bu listeyi okuyor. Alan gelmezse sütun herkesi "07:00"
+                   -- gösterir ve verilen izin görünmez olur.
+                   COALESCE(p.erken_acilis_izni, FALSE) AS erken_acilis_izni,
                    (p.panel_pin_hash IS NOT NULL AND TRIM(COALESCE(p.panel_pin_hash,'')) <> '') AS panel_pin_tanimli
             FROM personel p
             LEFT JOIN subeler s ON s.id = p.sube_id
@@ -873,6 +877,7 @@ def merkez_personel_panel_pin_liste():
         rows = [dict(x) for x in cur.fetchall()]
         for r in rows:
             r["yonetici"] = bool(r.get("yonetici"))
+            r["erken_acilis_izni"] = bool(r.get("erken_acilis_izni"))
             r["panel_pin_tanimli"] = bool(r.get("panel_pin_tanimli"))
         return rows
 
