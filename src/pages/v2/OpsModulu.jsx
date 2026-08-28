@@ -80,21 +80,31 @@ export const opsKuyrukKur = (satirlar, bugunISO) => {
     yas: opsGunFarki(x.tarih, bugunISO),
     anahtar: `${sinif}|${x.id}`,
   });
+  // ⚠️ AYNI KELİME FARKLI ARİTMETİK (canlı yürüyüşte yakalandı, 2026-08-28):
+  // `kalem_sayisi` alanı KALEM ÇEŞİDİ DEĞİL, TOPLAM ADET'tir. Kuyruk bu alanı
+  // "kalem" diye yazınca aynı sipariş ekranda iki farklı sayıyla görünüyordu:
+  // kuyruk "1894 kalem", kanban/modal/çekmece "32 kalem · 1894 adet".
+  // Çeşit = kalemler dizisinin uzunluğu; adet = kalem_sayisi.
+  const cesit = (x) => (Array.isArray(x.kalemler) ? x.kalemler.length : null);
+  const yuk = (x) => {
+    const c = cesit(x);
+    return c != null ? `${c} kalem · ${say(x.kalem_sayisi)} adet` : `${say(x.kalem_sayisi)} adet`;
+  };
   return [
     ...L.filter((x) => x.asama === 'uyumsuzluk').map((x) => m(
       x, 1, `${x.sube_adi || 'Şube'} · kabul uyuşmazlığı`,
       'şube teslim aldı ama adet tutmadı — merkez kararı gerekiyor')),
     ...L.filter((x) => x.asama === 'bekliyor').map((x) => m(
       x, 2, `${x.sube_adi || 'Şube'} · depoya yönlendirilmedi`,
-      `${say(x.kalem_sayisi)} kalem · merkez kuyruğunda`)),
+      `${yuk(x)} · merkez kuyruğunda`)),
     ...L.filter((x) => x.asama === 'depoda').map((x) => m(
       x, 2, `${x.sube_adi || 'Şube'} · depoda hazırlanıyor`,
-      `${say(x.kalem_sayisi)} kalem · sevk bekliyor`)),
+      `${yuk(x)} · sevk bekliyor`)),
     ...L.filter((x) => ['yolda', 'toptanci_bekliyor'].includes(x.asama))
       .filter((x) => (opsGunFarki(x.tarih, bugunISO) ?? 0) >= 2)
       .map((x) => m(
         x, 3, `${x.sube_adi || 'Şube'} · şube kabulü gecikti`,
-        `${opsGunFarki(x.tarih, bugunISO)} gündür yolda · ${say(x.kalem_sayisi)} kalem`)),
+        `${opsGunFarki(x.tarih, bugunISO)} gündür yolda · ${yuk(x)}`)),
   ].sort((a, b) => (a.sinif - b.sinif) || ((b.yas ?? 0) - (a.yas ?? 0)));
 };
 
