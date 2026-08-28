@@ -62,6 +62,7 @@ from operasyon_stok_motor import (
     _stok_key_from_urun_ad,
     urun_ac_gorunen_ad,
     # disiplin motoru — sevkiyat adaptasyonu
+    OLAY_TAHSIS_KISMI,
     OLAY_TAHSIS_TAM,
     OLAY_SEVK_CIKTI,
     sevk_cikti_kaydet as _disiplin_sevk_cikti,
@@ -9168,6 +9169,13 @@ class OpsSiparisSevkiyataGonderBody(BaseModel):
     not_aciklama: Optional[str] = None
     # Dağıtım / öncelik talimatı — depo + talep şubesi panelinde gösterilir
     operasyon_yonlendirme_talimati: Optional[str] = None
+    # 🔀 KISMİ DEPO YÖNLENDİRME (sahip isteği, 2026-08-28)
+    # "şube 2 esp 4 filtre 10 süt 5 lime diyebilir; bazılarını toptancıya
+    # bazılarını depoya yönlendirmem gerek." Toptancı yönü bunu zaten
+    # yapıyordu (`kalemler` seçimi); depo yönü hep-veya-hiçti.
+    # None/verilmemiş = ESKİ DAVRANIŞ (tüm kalemler) — geriye uyum.
+    # İçerik: urun_id/urun_ad dizisi VEYA {urun_id|urun_ad} nesneleri.
+    kalemler: Optional[List[Any]] = None
 
 
 class OpsSiparisMerkezIptalBody(BaseModel):
@@ -9863,13 +9871,81 @@ def ops_siparis_sevkiyata_gonder(body: OpsSiparisSevkiyataGonderBody):
             kk = str(kd.get("kalem_kodu") or kd.get("urun_id") or "").strip()
             if kk:
                 tahsis_map[kk] = kd
+        # ══════════════════════════════════════════════════════════════════
+        # 🔀 KISMİ DEPO YÖNLENDİRME + ÇİFT GÖNDERİM FRENİ (2026-08-28)
+        # ══════════════════════════════════════════════════════════════════
+        # Üç ayrı eleme, üçü de AYRI gerekçeyle:
+        #   (a) SEÇİM — sahip bu sevkiyata hangi kalemleri koydu
+        #   (b) TOPTANCI — kalem zaten bir tedarikçiye çıkmışsa depoya da
+        #       çıkarsa aynı mal iki kanaldan gelir (fatura da ikilenir)
+        #   (c) İPTAL — merkez o kalemi zaten geri çevirmiş
+        # ⚠️ Elenen kalem SİLİNMEZ: kaydı kendi durumuyla kalır. Silinseydi
+        #    depo ekranı "sipariş küçülmüş" görür, kalem çeşidi/adet
+        #    toplamları geçmişe dönük değişirdi (iz bozulur).
+        # ⚠️ Elenen kaleme TAHSİS YAZILMAZ: depo onu toplamamalı.
+        _secili_anahtar: Optional[set] = None
+        if body.kalemler is not None:
+            _secili_anahtar = set()
+            for _sk in (body.kalemler or []):
+                if isinstance(_sk, dict):
+                    for _f in ("urun_id", "urun_ad", "ad", "kalem_kodu"):
+                        _v = str(_sk.get(_f) or "").strip()
+                        if _v:
+                            _secili_anahtar.add(_v.lower())
+                else:
+                    _v = str(_sk or "").strip()
+                    if _v:
+                        _secili_anahtar.add(_v.lower())
+
+        # Bu talep için toptancıya çıkmış ürün adları.
+        # ⚠️ Sorgu düşerse İSTİSNA YUTULMAZ: sessizce "hiç çıkmamış" varsaymak,
+        #    aynı malı ikinci kez göndermek demektir.
+        _toptanciya_giden: set = set()
+        try:
+            cur.execute(
+                "SELECT kalemler FROM toptanci_siparis "
+                "WHERE talep_id = %s AND durum <> 'iptal'",
+                (tid,),
+            )
+            for _tr in cur.fetchall() or []:
+                _tk = dict(_tr).get("kalemler") or []
+                if isinstance(_tk, str):
+                    try:
+                        _tk = json.loads(_tk)
+                    except Exception:
+                        _tk = []
+                for _ti in _tk:
+                    _tad = str((_ti or {}).get("urun_ad") or "").strip().lower()
+                    if _tad:
+                        _toptanciya_giden.add(_tad)
+        except Exception as _e:
+            raise HTTPException(
+                503,
+                "Toptancı gönderim kontrolü yapılamadı — depoya yönlendirme "
+                "güvenli değil (aynı mal iki kanaldan gelebilir).",
+            ) from _e
+
         kalem_durumlari: List[Dict[str, Any]] = []
+        _depoya_sayi = 0
+        _atlanan: Dict[str, int] = {"secilmedi": 0, "toptancida": 0, "iptal": 0}
         for k in kalemler:
             if not isinstance(k, dict):
                 continue
             istenen = _ops_int(k.get("adet") or k.get("istened_adet") or k.get("istenen_adet") or 0, 0)
             uid = (k.get("urun_id") or "").strip() or None
             uad = (k.get("urun_ad") or k.get("ad") or "").strip() or None
+            _ad_kucuk = (uad or "").lower()
+
+            _iptalli = bool(k.get("iptal"))
+            _toptancida = bool(_ad_kucuk and _ad_kucuk in _toptanciya_giden)
+            _secildi = True
+            if _secili_anahtar is not None:
+                _secildi = bool(
+                    (uid and str(uid).lower() in _secili_anahtar)
+                    or (_ad_kucuk and _ad_kucuk in _secili_anahtar)
+                )
+            _dahil = _secildi and not _toptancida and not _iptalli
+
             # Tahsis verisini urun_id ile bul (kalem_kodu = urun_id varsayımı)
             tahsis = tahsis_map.get(uid or "") if uid else {}
             tahsis_adet = int((tahsis or {}).get("tahsis_adet") or 0)
@@ -9879,21 +9955,49 @@ def ops_siparis_sevkiyata_gonder(body: OpsSiparisSevkiyataGonderBody):
                 "urun_ad": uad,
                 "istenen_adet": max(0, istenen),
                 "gonderilen_adet": 0,
-                "durum": "bekliyor",
+                "durum": "bekliyor" if _dahil else (
+                    "merkez_iptal" if _iptalli
+                    else "toptanciya_gitti" if _toptancida
+                    else "depoya_yonlendirilmedi"
+                ),
                 "not": None,
             }
-            # Tahsis bilgisi varsa ekle — depo hazırlık aşaması için referans
-            if tahsis_adet > 0:
-                entry["tahsis_adet"] = tahsis_adet
-                entry["tahsis_durum"] = tahsis_durum
+            if _dahil:
+                _depoya_sayi += 1
+                # Tahsis bilgisi varsa ekle — depo hazırlık aşaması için referans
+                if tahsis_adet > 0:
+                    entry["tahsis_adet"] = tahsis_adet
+                    entry["tahsis_durum"] = tahsis_durum
+            else:
+                entry["depo_disi"] = True
+                _atlanan[
+                    "iptal" if _iptalli else "toptancida" if _toptancida else "secilmedi"
+                ] += 1
             kalem_durumlari.append(entry)
+
+        if _depoya_sayi == 0:
+            raise HTTPException(
+                400,
+                "Depoya gidecek kalem kalmadı — seçilenlerin tamamı zaten "
+                "toptancıya yollanmış, iptal edilmiş veya hiç kalem seçilmemiş.",
+            )
         # Tahsis rezervi merkezde veya eski depoda kalmışken hedef şube değişiyorsa rezerveyi taşı (sevk çıkışı ile hizalı).
+        # ⚠️ Rezerv taşıma SEÇİME UYAR: depoya gitmeyen kalemin rezervi yeni
+        # hedef depoya taşınmamalı. Taşınsaydı toptancıdan gelecek mal için
+        # depoda rezerv tutulur, merkez stoğu boş yere kilitlenirdi.
+        _dahil_anahtar: set = {
+            str(e.get("urun_id") or "").strip()
+            for e in kalem_durumlari
+            if not e.get("depo_disi") and e.get("urun_id")
+        }
         tahsis_adet_map: Dict[str, int] = {}
         for kd in onceki_kd:
             if not isinstance(kd, dict):
                 continue
             kk = str(kd.get("kalem_kodu") or kd.get("urun_id") or "").strip()
             if not kk:
+                continue
+            if _dahil_anahtar and kk not in _dahil_anahtar:
                 continue
             ta = max(0, int(kd.get("tahsis_adet") or 0))
             if ta > 0:
@@ -9969,8 +10073,18 @@ def ops_siparis_sevkiyata_gonder(body: OpsSiparisSevkiyataGonderBody):
             if talep_sube_id:
                 operasyon_defter_ekle(
                     cur, talep_sube_id,
-                    OLAY_TAHSIS_TAM,
-                    json.dumps({"hedef_sube": sevk_sube_id, "kalem_sayisi": len(kalemler)},
+                    # Kısmi yönlendirmede olay TAHSIS_TAM DEĞİL: siparişin bir
+                    # kısmı depoya gitti, kalanı hâlâ açık. "TAM" yazmak
+                    # defterde siparişi kapanmış gösterirdi.
+                    # Ayrıca deftere DEPOYA GİDEN kalem sayısı yazılır —
+                    # len(kalemler) elenenleri de gönderilmiş gösteriyordu.
+                    (OLAY_TAHSIS_TAM if _depoya_sayi == len(kalem_durumlari)
+                     else OLAY_TAHSIS_KISMI),
+                    json.dumps({"hedef_sube": sevk_sube_id,
+                                "kalem_sayisi": _depoya_sayi,
+                                "talep_kalem_sayisi": len(kalem_durumlari),
+                                "kismi": _depoya_sayi < len(kalem_durumlari),
+                                "atlanan": _atlanan},
                                ensure_ascii=False),
                     ref_event_id=tid,
                 )
@@ -9981,6 +10095,12 @@ def ops_siparis_sevkiyata_gonder(body: OpsSiparisSevkiyataGonderBody):
         "talep_id": tid,
         "hedef_depo_sube_id": sevk_sube_id,
         "sevkiyat_sube_id": sevk_sube_id,
+        # SESSIZ ELEME YASAK: ne gonderildi, ne elendi, NEDEN elendi.
+        # Ekran bunu kullaniciya yazar; yazmasa bile kayit burada durur.
+        "depoya_giden_kalem": _depoya_sayi,
+        "talep_kalem_sayisi": len(kalem_durumlari),
+        "kismi": _depoya_sayi < len(kalem_durumlari),
+        "atlanan": _atlanan,
         "sevkiyat_durumu": "depoda_hazirlaniyor",
     }
 
@@ -10051,6 +10171,21 @@ def ops_siparis_kalem_iptal(body: OpsSiparisKalemIptalBody):
         t = dict(tr)
         if str(t.get("durum") or "") in ("iptal", "teslim_edildi"):
             raise HTTPException(409, "Talep kapanmış — kalem iptali yapılamaz")
+        # ⚠️ AŞAMA KAPISI (Codex + Fable denetimi, 2026-08-28): önceden yalnız
+        # `iptal`/`teslim_edildi` engelleniyordu. Talep 'hazirlaniyor' veya
+        # 'gonderildi' iken kalem iptali serbestti: kalem `kalemler` içinde
+        # iptal oluyor ama `kalem_durumlari` ve `stok_yolda` olduğu gibi
+        # kalıyordu → aktif kalemi kalmamış ama hâlâ depoda/yolda görünen
+        # tutarsız talep. Ekrandaki fren yalnız v2'deydi; uca başka bir yerden
+        # gelen istek o frenden geçmiyordu. Fren artık UÇTA.
+        _asama_durum = str(t.get("durum") or "").strip().lower()
+        if _asama_durum not in ("bekliyor", "onaylandi"):
+            raise HTTPException(
+                409,
+                f"Talep '{_asama_durum}' aşamasında — kalem iptali yalnız merkez "
+                "kuyruğundaki (henüz yönlendirilmemiş) siparişte yapılabilir. "
+                "Önce sevkiyat akışını geri alın.",
+            )
         kalemler = t.get("kalemler")
         if isinstance(kalemler, str):
             try:
@@ -10083,6 +10218,28 @@ def ops_siparis_kalem_iptal(body: OpsSiparisKalemIptalBody):
             # Kontrol yapılamadıysa İPTAL ETME — sessizce izin vermek,
             # yolda olan malı "iptal" göstermek demektir.
             raise HTTPException(503, "Gönderim kontrolü yapılamadı — kalem iptali güvenli değil")
+
+        # ⚠️ DEPODAN YOLA ÇIKMIŞ kalemler de iptal edilemez (Codex denetimi):
+        # uç yalnız `toptanci_siparis`e bakıyordu; docstring "mal yola çıkmışsa
+        # iptal edilemez" diyordu ama depo sevkini HİÇ kontrol etmiyordu.
+        try:
+            ensure_stok_yolda_columns(cur)
+            # ⚠️ Kolon adı `siparis_talep_id` (database.py:4152) — `talep_id`
+            #    DEĞİL. Ad tahmin edilmez, şemadan okunur.
+            cur.execute(
+                "SELECT kalem_adi FROM stok_yolda "
+                "WHERE siparis_talep_id = %s AND COALESCE(sevk_adet, 0) > 0",
+                (tid,),
+            )
+            for _yr in cur.fetchall() or []:
+                _yn = str(dict(_yr).get("kalem_adi") or "").strip().lower()
+                if _yn:
+                    _cikmis.add(_yn)
+        except Exception as _e:
+            raise HTTPException(
+                503,
+                "Depo sevk kontrolü yapılamadı — kalem iptali güvenli değil",
+            ) from _e
 
         bulundu = None
         yeni: List[Dict[str, Any]] = []
@@ -20367,6 +20524,13 @@ def ops_siparis_birlestir(body: OpsSiparisBirlestirBody):
 
             for k in kalemler_raw:
                 if not isinstance(k, dict):
+                    continue
+                # ⛔ MERKEZ İPTALİ BİRLEŞTİRMEDE DİRİLMEZ (Fable denetimi,
+                # 2026-08-28): birleştirme kalemleri yalnız `adet > 0` şartıyla
+                # kopyalıyordu; `iptal` bayrağını ne kontrol ediyor ne de yeni
+                # siparişe taşıyordu. Merkezin geri çevirdiği kalem, iki sipariş
+                # birleştirilince İŞARETSİZ ve CANLI olarak yeniden doğuyordu.
+                if k.get("iptal"):
                     continue
                 adet = max(0, int(k.get("adet") or k.get("istenen_adet") or 0))
                 if adet <= 0:

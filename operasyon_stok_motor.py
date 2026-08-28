@@ -2241,14 +2241,22 @@ def _sevkiyat_kalem_sablon_kalemlerden(kalemler: Any) -> List[Dict[str, Any]]:
         uid = (k.get("urun_id") or "").strip() or None
         uad = (k.get("urun_ad") or k.get("ad") or "").strip() or None
         kk = uid or ""
+        # ⛔ MERKEZ İPTALİ SEVK ŞABLONUNA GİRMEZ (Fable denetimi, 2026-08-28):
+        # şablon `iptal` bayrağını filtrelemiyordu, iptal edilen kalem depo
+        # hazırlık listesine giriyor ve depocu tarafından toplanıyordu.
+        # ⚠️ Kalem SİLİNMEZ, "merkez_iptal" durumuyla ve TAHSİSSİZ kalır:
+        #    depo ekranı onu toplamaz ama neyin neden düştüğü görünür.
+        _iptalli = bool(k.get("iptal"))
         row: Dict[str, Any] = {
             "urun_id": uid,
             "urun_ad": uad,
             "istenen_adet": istenen,
             "gonderilen_adet": 0,
-            "durum": "bekliyor",
+            "durum": "merkez_iptal" if _iptalli else "bekliyor",
             "not": None,
         }
+        if _iptalli:
+            row["depo_disi"] = True
         if kk:
             row["kalem_kodu"] = kk
         out.append(row)

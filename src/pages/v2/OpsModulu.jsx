@@ -85,10 +85,22 @@ export const opsKuyrukKur = (satirlar, bugunISO) => {
   // "kalem" diye yazınca aynı sipariş ekranda iki farklı sayıyla görünüyordu:
   // kuyruk "1894 kalem", kanban/modal/çekmece "32 kalem · 1894 adet".
   // Çeşit = kalemler dizisinin uzunluğu; adet = kalem_sayisi.
-  const cesit = (x) => (Array.isArray(x.kalemler) ? x.kalemler.length : null);
+  // ⛔ İPTAL EDİLEN KALEM SAYILMAZ (Codex + Fable denetimi, 2026-08-28):
+  // kuyruk "32 kalem" derken çekmecedeki toast "31 kalem devam ediyor"
+  // diyordu — aynı ekranda iki gerçek. Sunucu artık `aktif_kalem_cesidi` /
+  // `aktif_kalem_adedi` veriyor; gelmezse ham sayılara düşülür (eski kayıt).
+  const cesit = (x) => (
+    Number.isFinite(Number(x.aktif_kalem_cesidi)) ? Number(x.aktif_kalem_cesidi)
+      : (Array.isArray(x.kalemler) ? x.kalemler.length : null)
+  );
   const yuk = (x) => {
     const c = cesit(x);
-    return c != null ? `${c} kalem · ${say(x.kalem_sayisi)} adet` : `${say(x.kalem_sayisi)} adet`;
+    const a = Number.isFinite(Number(x.aktif_kalem_adedi))
+      ? Number(x.aktif_kalem_adedi) : say(x.kalem_sayisi);
+    const ip = say(x.iptal_kalem_sayisi);
+    // İptal SAYIYA girmez ama GÖRÜNÜR kalır (sessiz eleme yasak).
+    const ek = ip ? ` · ${ip} iptal` : '';
+    return c != null ? `${c} kalem · ${a} adet${ek}` : `${a} adet${ek}`;
   };
   return [
     ...L.filter((x) => x.asama === 'uyumsuzluk').map((x) => m(
@@ -1338,14 +1350,43 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
   };
 
   const yonKaydet = async () => {
-    if (!yonForm?.depo) { onToast?.('Önce hedef depo seçin'); return; }
+    const f = yonForm;
+    if (!f?.depo) { onToast?.('Önce hedef depo seçin'); return; }
+    // 🔀 KISMİ DEPO YÖNLENDİRME (2026-08-28): depo yönü artık kalem seçiyor.
+    // ⚠️ Modalın TAŞIDIĞI liste okunur (`kalemListe` = kalan kalemler);
+    //    `f.sip.kalemler` okunursa indeksler kayar ve YANLIŞ KALEM gider.
+    const ham = Array.isArray(f.kalemListe) ? f.kalemListe
+      : (Array.isArray(f.sip?.kalemler) ? f.sip.kalemler : []);
+    const secilenler = ham.filter((_, i) => f.secili.includes(i));
+    if (!secilenler.length) { onToast?.('En az bir kalem seçin'); return; }
+    if (yonMesgul) return;   // çift-tık: mükerrer sevkiyat kaydı önle
     setYonMesgul(true);
     try {
-      const body = { talep_id: yonForm.sip.id, hedef_depo_sube_id: yonForm.depo };
-      const tal = (yonForm.talimat || '').trim();
+      const body = {
+        talep_id: f.sip.id,
+        hedef_depo_sube_id: f.depo,
+        // Tümü seçiliyse alanı GÖNDERME: sunucu eski davranışa düşer
+        // (geriye uyum) ve gereksiz kısmi-yönlendirme kaydı üretilmez.
+        ...(secilenler.length < ham.length
+          ? { kalemler: secilenler.map((k) => ({ urun_id: k.urun_id, urun_ad: k.urun_ad })) }
+          : null),
+      };
+      const tal = (f.talimat || '').trim();
       if (tal) body.operasyon_yonlendirme_talimati = tal;
-      await api('/ops/siparis/sevkiyata-gonder', { method: 'POST', body });
-      onToast?.('🏭 Depoya yönlendirildi — merkez kuyruğundan çıktı');
+      const r = await api('/ops/siparis/sevkiyata-gonder', { method: 'POST', body });
+      // SESSİZ ELEME YASAK: kaç kalem gitti, kaçı NEDEN elendi — yazılır.
+      const at = r?.atlanan || {};
+      const elenen = [
+        sayi(at.toptancida) ? `${sayi(at.toptancida)} zaten toptancıda` : '',
+        sayi(at.iptal) ? `${sayi(at.iptal)} iptal` : '',
+        sayi(at.secilmedi) ? `${sayi(at.secilmedi)} seçilmedi` : '',
+      ].filter(Boolean).join(' · ');
+      onToast?.(
+        r?.kismi
+          ? `🏭 ${sayi(r.depoya_giden_kalem)}/${sayi(r.talep_kalem_sayisi)} kalem depoya gitti`
+            + (elenen ? ` — ${elenen}` : '')
+          : '🏭 Depoya yönlendirildi — merkez kuyruğundan çıktı',
+      );
       setYonForm(null);
       kuleYukle();
     } catch (e) {
@@ -1912,6 +1953,12 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
           urun_ad: f.kalem?.urun_ad || null,
           urun_id: f.kalem?.urun_id || null,
           aciklama: (f.gerekce || '').trim() || null,
+          // ⚠️ İMZASIZ İZ (Fable denetimi, 2026-08-28): uç `yapan_ad` kabul
+          // edip `iptal_yapan` alanına yazıyordu ama ekran bunu HİÇ
+          // göndermiyordu. Gerekçeyi soran modal "kim iptal etmiş"i
+          // kaydetmiyordu — sonra "bunu neden/kim iptal etmiş" sorusunun
+          // yarısı cevapsız kalıyordu.
+          yapan_ad: 'merkez (masaüstü)',
         },
       });
       onToast?.(
@@ -1951,8 +1998,18 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
       ].filter(Boolean).join(' · '),
       kpi: [
         { etiket: 'Aşama', deger: (a.ad || '').toLowerCase(), renk: a.renk },
-        { etiket: 'Kalem çeşidi', deger: String((s.kalemler || []).length) },
-        { etiket: 'Toplam adet', deger: String(sayi(s.kalem_sayisi)) },
+        // İptal edilenler sayıdan düşer ama alt satırda ADIYLA görünür.
+        {
+          etiket: 'Kalem çeşidi',
+          deger: String(Number.isFinite(Number(s.aktif_kalem_cesidi))
+            ? Number(s.aktif_kalem_cesidi) : (s.kalemler || []).length),
+          alt: sayi(s.iptal_kalem_sayisi) ? `${sayi(s.iptal_kalem_sayisi)} kalem iptal edildi` : undefined,
+        },
+        {
+          etiket: 'Toplam adet',
+          deger: String(Number.isFinite(Number(s.aktif_kalem_adedi))
+            ? Number(s.aktif_kalem_adedi) : sayi(s.kalem_sayisi)),
+        },
         z
           ? {
             etiket: 'Karar sinyali',
@@ -2012,9 +2069,18 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
         const depoEtiket = depoAd
           ? `${depoAd}${z?.stok_depo_kaynagi && z.stok_depo_kaynagi !== 'atanmis' ? '?' : ''}`
           : null;
+        // ⚠️ GÖSTERİM KENDİ ARİTMETİĞİNİ KURMAZ (Fable denetimi, 2026-08-28):
+        // ✓/"yetmez" kararı `depoVar >= adet` ile HAM MEVCUT üzerinden
+        // veriliyordu; rezerve edilmiş adet sayılmıyordu. Rezervli depoda
+        // "✓" yazıp sevkte tökezleyebilirdi. Sunucu `kalan_gonderince`'yi
+        // (mevcut − rezerve − istenen) zaten hesaplıyor; hakem O.
+        const _kalanGonderince = zk && zk.kalan_gonderince != null ? sayi(zk.kalan_gonderince) : null;
+        const yeterMi = _kalanGonderince != null
+          ? _kalanGonderince >= 0
+          : (depoVar != null ? depoVar >= sayi(k?.adet) : null);
         const parantez = depoEtiket
           ? (depoVar != null
-            ? ` (${depoEtiket}: ${depoVar}${depoVar >= sayi(k?.adet) ? ' ✓' : ' ⚠ yetmez'})`
+            ? ` (${depoEtiket}: ${depoVar}${yeterMi == null ? '' : (yeterMi ? ' ✓' : ' ⚠ yetmez')})`
             // "kayıt yok" GİZLENMEZ: gizlenirse sahip sayının neden
             // olmadığını değil, olduğunu sanır (boş alan = 0 hissi).
             : (depoKayitYok ? ` (${depoEtiket}: kayıt yok)` : ''))
@@ -2843,6 +2909,62 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
                 ))}
               </div>
 
+              {/* ══════════════════════════════════════════════════════════
+                  🔀 KALEM SEÇİMİ — ARTIK HER İKİ MODDA (2026-08-28)
+                  ══════════════════════════════════════════════════════════
+                  Bugüne dek seçim yalnız TOPTANCI modunda vardı; depo modu
+                  siparişin tamamını gönderiyordu. Sahip isteği: "aynı sipariş
+                  üzerinde o kalem toptancıya ya da depoya yönlendirilebilmeli".
+                  Uç (`sevkiyata-gonder`) artık `kalemler` alt kümesini kabul
+                  ediyor.
+                  ⚠️ Liste `kalemListe` (KALAN kalemler) üzerinden çizilir —
+                     `sip.kalemler` çizilirse indeksler kayar ve YANLIŞ KALEM
+                     gönderilir. */}
+              <label style={{ fontSize: 10.5, letterSpacing: '.7px', textTransform: 'uppercase', color: R.not2, fontWeight: 700, margin: '2px 0 6px', display: 'block' }}>
+                {yonForm.mod === 'depo' ? 'Depoya gidecek kalemler' : 'Toptancıya gidecek kalemler'}
+                {' '}({yonForm.secili.length}/{(yonForm.kalemListe || yonForm.sip.kalemler || []).length})
+              </label>
+              <div style={{
+                maxHeight: 190, overflowY: 'auto', borderRadius: 11,
+                border: `1px solid ${R.cizgi3}`, background: R.girinti, padding: '8px 10px', marginBottom: 14,
+              }}>
+                {/* Toplu seçim: 32 kalemlik siparişte tek tek tıklamak
+                    kullanılmaz bir iş yüküdür. */}
+                <div style={{ display: 'flex', gap: 12, padding: '2px 4px 7px', borderBottom: `1px solid ${R.cizgi}`, marginBottom: 5 }}>
+                  {[['Tümü', true], ['Hiçbiri', false]].map(([ad, hepsi]) => (
+                    <span
+                      key={String(ad)}
+                      onClick={() => setYonForm((f) => ({
+                        ...f,
+                        secili: hepsi ? (f.kalemListe || f.sip.kalemler || []).map((_, ix) => ix) : [],
+                      }))}
+                      style={{ fontSize: 11, fontWeight: 700, color: R.bakir, cursor: 'pointer' }}
+                    >{ad}</span>
+                  ))}
+                </div>
+                {(yonForm.kalemListe || yonForm.sip.kalemler || []).map((k, i) => {
+                  const secili = yonForm.secili.includes(i);
+                  return (
+                    <div
+                      key={i}
+                      onClick={() => setYonForm((f) => ({
+                        ...f,
+                        secili: secili ? f.secili.filter((x) => x !== i) : [...f.secili, i],
+                      }))}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 9, padding: '6px 4px',
+                        cursor: 'pointer', fontSize: 12.5,
+                        color: secili ? R.krem : R.not, opacity: secili ? 1 : 0.55,
+                      }}
+                    >
+                      <span style={{ color: secili ? R.yesil : R.not2, fontSize: 13 }}>{secili ? '✓' : '□'}</span>
+                      <span style={{ flex: 1 }}>{k.urun_ad || k.kalem_adi || '—'}</span>
+                      <span style={{ fontFamily: F.mono, fontWeight: 700 }}>× {sayi(k.adet)}</span>
+                    </div>
+                  );
+                })}
+              </div>
+
               {yonForm.mod === 'toptanci' ? (
                 <>
                   <label style={{ fontSize: 10.5, letterSpacing: '.7px', textTransform: 'uppercase', color: R.not2, fontWeight: 700, marginBottom: 6, display: 'block' }}>
@@ -2864,36 +2986,6 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
                       </option>
                     ))}
                   </select>
-
-                  <label style={{ fontSize: 10.5, letterSpacing: '.7px', textTransform: 'uppercase', color: R.not2, fontWeight: 700, margin: '14px 0 6px', display: 'block' }}>
-                    Gönderilecek kalemler ({yonForm.secili.length}/{(yonForm.kalemListe || yonForm.sip.kalemler || []).length})
-                  </label>
-                  <div style={{
-                    maxHeight: 190, overflowY: 'auto', borderRadius: 11,
-                    border: `1px solid ${R.cizgi3}`, background: R.girinti, padding: '8px 10px',
-                  }}>
-                    {(yonForm.kalemListe || yonForm.sip.kalemler || []).map((k, i) => {
-                      const secili = yonForm.secili.includes(i);
-                      return (
-                        <div
-                          key={i}
-                          onClick={() => setYonForm((f) => ({
-                            ...f,
-                            secili: secili ? f.secili.filter((x) => x !== i) : [...f.secili, i],
-                          }))}
-                          style={{
-                            display: 'flex', alignItems: 'center', gap: 9, padding: '6px 4px',
-                            cursor: 'pointer', fontSize: 12.5,
-                            color: secili ? R.krem : R.not, opacity: secili ? 1 : 0.55,
-                          }}
-                        >
-                          <span style={{ color: secili ? R.yesil : R.not2, fontSize: 13 }}>{secili ? '✓' : '□'}</span>
-                          <span style={{ flex: 1 }}>{k.urun_ad || k.kalem_adi || '—'}</span>
-                          <span style={{ fontFamily: F.mono, fontWeight: 700 }}>× {sayi(k.adet)}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
 
                   <label style={{ fontSize: 10.5, letterSpacing: '.7px', textTransform: 'uppercase', color: R.not2, fontWeight: 700, margin: '14px 0 6px', display: 'block' }}>
                     Sipariş notu (isteğe bağlı)

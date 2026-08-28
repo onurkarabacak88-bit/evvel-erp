@@ -15518,7 +15518,14 @@ export default function OperasyonMerkezi() {
                               <span style={{ fontSize: 10, color: 'var(--text3)', fontFamily: 'monospace', opacity: 0.5 }}>#{String(s.id || '').slice(-6)}</span>
                             </div>
                             <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }}>
-                              <span style={{ fontSize: 11, color: 'var(--text3)' }}>{s.kalem_sayisi} kalem</span>
+                              {/* ⚠️ `kalem_sayisi` KALEM ÇEŞİDİ DEĞİL, TOPLAM
+                                  ADET'tir (kule türetimi). "1894 kalem" yazıyordu;
+                                  aynı siparişin çekmecesi "32 kalem · 1894 adet"
+                                  diyor. v2'de 2026-08-28'de düzeltildi, klasik
+                                  ekranda kalmıştı. */}
+                              <span style={{ fontSize: 11, color: 'var(--text3)' }}>
+                                {Array.isArray(s.kalemler) ? `${s.kalemler.length} kalem · ` : ''}{s.kalem_sayisi} adet
+                              </span>
                               {kd === 'kabul_uyusmazlik' && <span className="badge badge-red" style={{ fontSize: 10 }}>Uyumsuzluk</span>}
                               {tamamlandi && kd !== 'kabul_uyusmazlik' && <span className="badge badge-green" style={{ fontSize: 10 }}>Tamamlandı</span>}
                               <span style={{ fontSize: 11, color: 'var(--text3)' }}>{acik ? '▲' : '▼'}</span>

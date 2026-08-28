@@ -453,16 +453,29 @@ def siparis_kontrol_kulesi_yukle(
              if isinstance(_it, dict) else _it)
             for _it in (z.get("kalemler") or [])
         ]
-        if _gonderilmis:
-            _kalan: List[Dict[str, Any]] = [
-                dict(_it)
-                for _it in (z.get("kalemler") or [])
-                if isinstance(_it, dict)
-                and str(_it.get("urun_ad") or "").strip().lower() not in _gonderilmis
-            ]
-            z["kalan_kalemler"] = _kalan
-        else:
-            z["kalan_kalemler"] = z.get("kalemler") or []
+        # ⛔ MERKEZ İPTALİ = KALAN DEĞİLDİR (Codex + Fable denetimi, 2026-08-28)
+        # `kalem-iptal` ucu kalemi `iptal: true` işaretliyordu ama kalan hesabı
+        # bu bayrağı GÖRMÜYORDU. Sonuç: merkezin "göndermiyorum" dediği kalem
+        # yönlendirme modalında listeleniyor, üstelik VARSAYILAN SEÇİLİ
+        # geliyordu — bir tık sonra toptancıya gerçekten yollanabiliyordu.
+        # İptal edilen kalem listede DURUR (soluk), ama GÖNDERİLECEKLER
+        # arasında olmaz.
+        _kalan: List[Dict[str, Any]] = [
+            dict(_it)
+            for _it in (z.get("kalemler") or [])
+            if isinstance(_it, dict)
+            and not _it.get("iptal")
+            and (not _gonderilmis
+                 or str(_it.get("urun_ad") or "").strip().lower() not in _gonderilmis)
+        ]
+        z["kalan_kalemler"] = _kalan
+        # İptal edilen kalem sayısı AYRICA raporlanır: liste sessizce kısalırsa
+        # sahip siparişin küçüldüğünü sanır (sessiz eleme yasak).
+        z["iptal_kalem_adlari"] = [
+            str((_it or {}).get("urun_ad") or "")
+            for _it in (z.get("kalemler") or [])
+            if isinstance(_it, dict) and _it.get("iptal")
+        ]
 
         # ── KISMİ TOPTANCI etiketi: bazı kalemler toptancıya yollandı AMA hepsi değil.
         # Sipariş takip aksi halde yanıltıcı "bekliyor" gösterir (yollanan kalem görünmez).
@@ -474,6 +487,21 @@ def siparis_kontrol_kulesi_yukle(
             and str((_it or {}).get("urun_ad") or "").strip().lower() in _disp_set
         ]
         z["kismi_toptanci"] = bool(_disp_set) and len(z["kalan_kalemler"]) > 0
+        # ── SAYILAR İPTALİ AYIRIR ─────────────────────────────────────────
+        # `kalem_sayisi` (toplam adet) ve kalem çeşidi bugüne dek iptal edilen
+        # kalemi de sayıyordu: iptal sonrası ekran "31 kalem devam ediyor"
+        # derken kuyruk hâlâ "32 kalem" diyordu — aynı ekranda iki gerçek.
+        # ⚠️ Ham sayılar DEĞİŞTİRİLMEZ (geçmiş kayıt bozulmaz); aktif sayılar
+        #    AYRI alanlarda verilir, ekran hangisini kullanacağını seçer.
+        _aktif = [
+            _it for _it in (z.get("kalemler") or [])
+            if isinstance(_it, dict) and not _it.get("iptal")
+        ]
+        z["aktif_kalem_cesidi"] = len(_aktif)
+        z["aktif_kalem_adedi"] = sum(
+            int((_it or {}).get("adet") or 0) for _it in _aktif
+        )
+        z["iptal_kalem_sayisi"] = len(z["iptal_kalem_adlari"])
 
         # ── SELF-HEAL: tüm ürünleri dağıtılmış ama hâlâ 'bekliyor' kalmış talep
         # (eski hatalı/miktar-bazlı gönderimden kalma) → 'gonderildi'ye çek. Böylece
