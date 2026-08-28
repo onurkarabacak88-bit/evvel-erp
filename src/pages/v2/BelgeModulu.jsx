@@ -173,6 +173,9 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast, cari
   const [talepForm, setTalepForm] = useState(null);     // {ad, tarih, not}
   const [kapatForm, setKapatForm] = useState(null);     // {t, tip, aciklama}
   const [talepMesgul, setTalepMesgul] = useState(false);
+  // WhatsApp onay penceresi — geri alınamaz dış eylem için kapı.
+  const [waOnay, setWaOnay] = useState(null);
+  const [waMesgul, setWaMesgul] = useState(false);
   // Açılış devri beyanı (sistem öncesi bakiye) — klasik BelgeMerkezi akışı
   const [devirForm, setDevirForm] = useState(null);   // {tedarikci, tutar, aciklama}
   const [devirMesgul, setDevirMesgul] = useState(false);
@@ -188,6 +191,10 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast, cari
   // Kapsama ekranındaki harcama listesi seçimi (faturasiz | kurumsal | beklenmez)
   const [kapsamaListe, setKapsamaListe] = useState('faturasiz');
   const [araniyor, setAraniyor] = useState(false);
+  // Arama hatası "sonuç yok"tan AYRI tutulur: bu modülde ikisini karıştırmak
+  // "belge bizde yok" cevabına yol açar.
+  const [aramaHata, setAramaHata] = useState('');
+  const aramaIstekRef = useRef(0);
 
   // ══════════════════════════════════════════════════════════════════════════
   // 🎯 ARAMADAN KAYDA GELİŞ (2026-08-26) — `__modul:belge:arsiv:<fatura_no>`
@@ -211,7 +218,12 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast, cari
     api(`/fatura/ara?q=${encodeURIComponent(h)}`)
       .then((d) => setAramaSonuc(Array.isArray(d) ? d : (d?.sonuclar || d?.satirlar || [])))
       // HATA ≠ BOŞ: arama düşerse boş liste değil, sahibe haber.
-      .catch(() => { setAramaSonuc([]); onToast?.('Fatura araması yapılamadı — kutuya yazıp tekrar deneyin'); })
+      .catch((e) => {
+        // Toast 3 saniyede uçar; KALICI ekran durumu da hata olmalı (Fable).
+        setAramaSonuc(null);
+        setAramaHata(e?.message || 'Fatura araması yapılamadı');
+        onToast?.('Fatura araması yapılamadı — kutuya yazıp tekrar deneyin');
+      })
       .finally(() => setAraniyor(false));
   }, [arsivHedef, gorunum, onToast]);
 
@@ -270,12 +282,43 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast, cari
     }
   };
 
+  // ══════════════════════════════════════════════════════════════════════
+  // 📤 GERİ ALINAMAZ DIŞ EYLEM — WhatsApp (Codex P1 + Fable P1-1)
+  // ══════════════════════════════════════════════════════════════════════
+  // Eskiden tıklandığı anda WhatsApp açılıyordu: onay yok, HEDEF NUMARA
+  // kullanıcıya gösterilmiyor, çift-tık freni yok, daha önce gönderilmiş
+  // olması dikkate alınmıyordu.
+  // ⚠️ Bu mesaj KARŞI TARAFA GİDER ve geri alınamaz. Yanlış tedarikçiye ya da
+  // aynı fatura için ikinci kez gitmesi sahibi ticari olarak mahcup eder.
+  // ⚠️ Mesaj izi `catch(() => {})` ile sessizce yutuluyordu: "gönderdik mi"
+  // sorusunun cevabı kaybolabiliyordu.
   const talepIste = (t) => {
-    const tel = String(t.tedarikci_tel || '').replace(/\D/g, '');
-    if (!tel) { onToast?.('📵 Telefon yok — Tanımlar ▸ Tedarikçiler\'den numara ekleyin'); return; }
-    const msg = `Merhaba 🙏 ${t.teslim_tarihi ? `${t.teslim_tarihi} tarihli ` : ''}teslimatın faturasını rica ederiz.`;
-    window.open(`https://wa.me/${tel.startsWith('90') ? tel : `90${tel}`}?text=${encodeURIComponent(msg)}`, '_blank');
-    api(`/belge-talep/${t.id}/mesaj-gonderildi`, { method: 'POST' }).then(talepYukle).catch(() => {});
+    const tel = String(t.tedarikci_tel || '').replace(/[^0-9]/g, '');
+    if (!tel) { onToast?.("📵 Telefon yok — Tanımlar ▸ Tedarikçiler'den numara ekleyin"); return; }
+    const tam = tel.startsWith('90') ? tel : ('90' + tel);
+    setWaOnay({
+      talep: t,
+      tel: tam,
+      tekrar: !!t.mesaj_gonderildi_ts,
+      msg: 'Merhaba 🙏 ' + (t.teslim_tarihi ? (t.teslim_tarihi + ' tarihli ') : '') + 'teslimatın faturasını rica ederiz.',
+    });
+  };
+
+  const waGonder = () => {
+    const m = waOnay;
+    if (!m || waMesgul) return;          // çift-tık freni
+    setWaMesgul(true);
+    try {
+      window.open('https://wa.me/' + m.tel + '?text=' + encodeURIComponent(m.msg), '_blank');
+      api('/belge-talep/' + m.talep.id + '/mesaj-gonderildi', { method: 'POST' })
+        .then(talepYukle)
+        // ⚠️ İz yazılamazsa SESSİZ KALMAZ: mesaj gitti ama kayıt düştü — sahip
+        // bunu bilmeli, yoksa "göndermedim" sanıp ikinci kez gönderir.
+        .catch(() => onToast?.('⚠ Mesaj açıldı ama "gönderildi" izi yazılamadı — listede işaretli görünmeyebilir'));
+    } finally {
+      setWaOnay(null);
+      setWaMesgul(false);
+    }
   };
 
   /** 📎 Fatura/belge yükle — PDF ise LLM kalem ayrıştırma, foto ise OCR yolu. */
@@ -437,6 +480,73 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast, cari
 
   // ════════════════════════ GÖRÜNÜM: BELGE KAPSAMA ══════════════════════════
   // ── FAZ 7 MODALI ──────────────────────────────────────────────────────────
+  // 📤 WhatsApp onay penceresi — geri alınamaz dış eylemin kapısı.
+  // Üç şey GÖRÜNÜR olmalı: KİME gidiyor (numara), NE yazıyor (mesajın kendisi),
+  // ve DAHA ÖNCE gönderilmiş mi. Üçü de eskiden görünmüyordu.
+  const waOnayBlok = waOnay && (
+    <div
+      onClick={(e) => { if (e.target === e.currentTarget && !waMesgul) setWaOnay(null); }}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 140, background: 'rgba(10,6,2,.72)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+      }}
+    >
+      <div style={{ ...kartYuzey, padding: '22px 24px', maxWidth: 460, width: '100%' }}>
+        <h3 style={{ fontFamily: F.baslik, fontSize: 18, fontWeight: 600, margin: '0 0 4px' }}>
+          WhatsApp mesajı gönderilsin mi?
+        </h3>
+        <div style={{ fontSize: 12, color: R.not2, marginBottom: 14, lineHeight: 1.7 }}>
+          Bu mesaj <b style={{ color: R.krem }}>karşı tarafa gider ve geri alınamaz</b>.
+        </div>
+        {waOnay.tekrar && (
+          <div style={{
+            padding: '10px 13px', borderRadius: 10, marginBottom: 12,
+            background: `${R.amber}14`, border: `1px solid ${R.amber}44`,
+            fontSize: 12, color: R.amber, lineHeight: 1.6,
+          }}>
+            ⚠ Bu istek için <b>daha önce mesaj gönderilmiş</b>. İkinci kez göndermek
+            tedarikçiyi rahatsız edebilir — emin misiniz?
+          </div>
+        )}
+        <div style={{ fontSize: 12, color: R.not, marginBottom: 4 }}>Kime:</div>
+        <div style={{
+          fontFamily: F.mono, fontSize: 15, fontWeight: 700, color: R.krem, marginBottom: 4,
+        }}>+{waOnay.tel}</div>
+        <div style={{ fontSize: 12, color: R.not2, marginBottom: 12 }}>
+          {waOnay.talep?.tedarikci_ad || waOnay.talep?.tedarikci || 'tedarikçi adı yok'}
+        </div>
+        <div style={{ fontSize: 12, color: R.not, marginBottom: 4 }}>Mesaj:</div>
+        <div style={{
+          padding: '10px 13px', borderRadius: 10, background: R.girinti,
+          border: `1px solid ${R.cizgi}`, fontSize: 12.5, color: R.metin2,
+          lineHeight: 1.6, marginBottom: 16,
+        }}>{waOnay.msg}</div>
+        <div style={{ display: 'flex', gap: 9 }}>
+          <button
+            onClick={() => setWaOnay(null)}
+            disabled={waMesgul}
+            style={{
+              flex: 1, padding: '0 16px', minHeight: 44, borderRadius: 10,
+              border: `1px solid ${R.cizgi3}`, background: 'transparent',
+              color: R.not, fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit',
+              cursor: waMesgul ? 'default' : 'pointer',
+            }}
+          >Vazgeç</button>
+          <button
+            onClick={waGonder}
+            disabled={waMesgul}
+            style={{
+              flex: 1, padding: '0 16px', minHeight: 44, borderRadius: 10, border: 'none',
+              background: 'linear-gradient(150deg, #E0A559, #AF6C29)', color: '#1C1309',
+              fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit',
+              cursor: waMesgul ? 'default' : 'pointer', opacity: waMesgul ? .6 : 1,
+            }}
+          >{waMesgul ? 'Açılıyor…' : (waOnay.tekrar ? 'Yine de gönder' : "WhatsApp'ta aç")}</button>
+        </div>
+      </div>
+    </div>
+  );
+
   const fiModalBlok = fiModal && (() => {
     const T = {
       'gonderildi': { baslik: 'Gönderildi olarak işaretle', tehlike: false, buton: 'İşaretle',
@@ -670,13 +780,38 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast, cari
   // ════════════════════════ GÖRÜNÜM: FATURA ARŞİVİ (FTS) ════════════════════
   if (gorunum === 'arsiv') {
     if (merkezHata) return <HataBandi mesaj={merkezHata} onTekrar={merkezYukle} />;
+    // ⚠️ YARIM GUARD KAPANDI (Fable P1-1): kapsama görünümüne 2026-08-12'de
+    // "boş payload" kalkanı konmuş ama KOMŞU arşiv görünümüne konmamıştı.
+    // Sunucu 200 dönüp boş gövde gönderirse `fatura_arsivi` alanı olmaz →
+    // ekran "Bu ay arşivlenmiş fatura yok" der ve tüm KPI'lar 0 gösterir.
+    // Bu modülde "veri gelmedi" ile "fatura yok" ayrımı kritik.
+    if (merkez && merkez.fatura_arsivi == null && merkez.kapsama == null) {
+      return <HataBandi
+        mesaj="Arşiv verisi gelmedi — 'bu ay fatura yok' YANILTICI olabilir, yenileyin."
+        onTekrar={merkezYukle} />;
+    }
     if (!merkez) return <Yukleniyor />;
     const arsiv = Array.isArray(merkez.fatura_arsivi) ? merkez.fatura_arsivi : [];
     const gosterilen = aramaSonuc != null ? aramaSonuc : arsiv;
     // GÜN GÜN kırılım — sahibin ilk isteğiydi ("toptancı toptancı, ay ay, GÜN GÜN
     // görebildiğim"), sunucu gönderiyordu, v2 hiç okumuyordu.
     const gunGun = Array.isArray(merkez.gun_gun) ? merkez.gun_gun : [];
-    const enBuyukGun = gunGun.reduce((m, g) => Math.max(m, sayi(g.tutar)), 0);
+    // ══════════════════════════════════════════════════════════════════════
+    // 🔴 GÜN GÜN GRAFİĞİ HER GÜN "0 BELGE · 0 ₺" GÖSTERİYORDU — 2026-08-28
+    // ══════════════════════════════════════════════════════════════════════
+    // Ekran `g.tutar` ve `g.adet` okuyordu; sunucuda bu adlar YOK.
+    // Gerçek alanlar (canlı ölçüm): gun · fatura_adet · fatura_toplam ·
+    // faturasiz_harcama.
+    //   20 Ağu → 3 belge · 99.294,55 ₺   (ekran: "0 belge · 0 ₺")
+    //   14 Ağu → 1 belge · 24.518,89 ₺   (ekran: "0 belge · 0 ₺")
+    // `sayi(undefined) = 0` olduğu için 14 günün TAMAMI boş görünüyordu ve
+    // üstteki cümle "14 günde belge geldi · en yoğun 0 ₺" diyordu — kendi
+    // içinde çelişen bir cümle: belge geldiyse en yoğun gün 0 ₺ olamaz.
+    // ⚠️ Bu, bu oturumda BEŞİNCİ kez çıkan "yanlış alan adı" kusuru.
+    // Alan adı tahmin edilmez, uçtan okunur.
+    const gunAdet = (g) => sayi(g.fatura_adet);
+    const gunTutar = (g) => sayi(g.fatura_toplam);
+    const enBuyukGun = gunGun.reduce((m, g) => Math.max(m, gunTutar(g)), 0);
     // Arşiv deposu (BM-0b): dosya sayısı + toplam boyut. Sunucu ≈500 MB üstünde
     // obje depoya taşıma uyarısını kendi metninde söylüyor.
     const depo = merkez.arsiv_depo || null;
@@ -684,13 +819,31 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast, cari
     const ara = async () => {
       const q = arama.trim();
       if (!q) { setAramaSonuc(null); return; }
+      // ══════════════════════════════════════════════════════════════════
+      // 🔴 ARAMA HATASI "BELGE YOK"A DÖNÜŞÜYORDU (Codex + Fable, aynı bulgu)
+      // ══════════════════════════════════════════════════════════════════
+      // `catch { setAramaSonuc([]) }` → ekran "Arama sonucu yok." diyordu.
+      // Bu modülün EN PAHALI karışıklığı tam burada gerçekleşiyordu:
+      // muhasebeci ya da müfettiş "şu faturanız var mı?" diye sorar, sahip
+      // arşivde arar, sunucu o an tökezler → ekran "yok" der. Belge ASLINDA
+      // ARŞİVDE DURUYOR ama sahip "yok" cevabını verir.
+      // ⚠️ Ayrıca YARIŞ KORUMASI (Fable P1-4): Enter tuşu `araniyor`a bakmadan
+      // tetikliyordu; iki istek havadayken geç dönen ekranda kalıyordu —
+      // "FEZ" yazan kutunun altında SÜTAŞ sonuçları durabilirdi.
+      const bilet = ++aramaIstekRef.current;
       setAraniyor(true);
+      setAramaHata('');
       try {
         const d = await api(`/fatura/ara?q=${encodeURIComponent(q)}`);
+        if (bilet !== aramaIstekRef.current) return;   // bayat cevap yazamaz
         const rows = Array.isArray(d) ? d : (d?.sonuclar || d?.satirlar || []);
         setAramaSonuc(rows);
-      } catch { setAramaSonuc([]); }
-      setAraniyor(false);
+      } catch (e) {
+        if (bilet !== aramaIstekRef.current) return;
+        setAramaSonuc(null);                            // "boş sonuç" DEĞİL
+        setAramaHata(e?.message || 'Arşiv araması yapılamadı');
+      }
+      if (bilet === aramaIstekRef.current) setAraniyor(false);
     };
     return (
       <>
@@ -751,7 +904,7 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast, cari
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               {gunGun.slice(0, 14).map((g, i) => {
-                const t = sayi(g.tutar);
+                const t = gunTutar(g);
                 const oranG = enBuyukGun > 0 ? (t / enBuyukGun) * 100 : 0;
                 return (
                   <div key={g.gun || i} style={{ display: 'flex', alignItems: 'center', gap: 11 }}>
@@ -766,7 +919,7 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast, cari
                       }} />
                     </span>
                     <span style={{ fontSize: 11, color: R.not2, width: 62, flexShrink: 0, textAlign: 'right' }}>
-                      {sayi(g.adet)} belge
+                      {gunAdet(g)} belge
                     </span>
                     <span style={{ fontFamily: F.mono, fontSize: 12, fontWeight: 700, width: 96, flexShrink: 0, textAlign: 'right' }}>
                       {fmt(t)}
@@ -796,7 +949,14 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast, cari
           </div>
         )}
 
-        {gosterilen.length === 0 ? (
+        {/* ⚠️ Hata, boş sonuçtan AYRI gösterilir — yoksa "aranamadı" sessizce
+            "belge yok" cevabına dönüşür ve sahip onu dışarıya söyler. */}
+        {aramaHata ? (
+          <HataBandi
+            mesaj={`${aramaHata} — bu "belge arşivde yok" DEMEK DEĞİL, arama yapılamadı.`}
+            onTekrar={() => { setAramaHata(''); ara(); }}
+          />
+        ) : gosterilen.length === 0 ? (
           <BosDurum metin={aramaSonuc != null ? 'Arama sonucu yok.' : 'Bu ay arşivlenmiş fatura yok.'} />
         ) : (
           <Tablo
@@ -841,6 +1001,7 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast, cari
         ]} />
 
         {fiModalBlok}
+        {waOnayBlok}
 
         {/* Faz 7: motor tetikleri — listeyi izlemek yetmiyor, besleyebilmek gerek */}
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
@@ -1132,7 +1293,28 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast, cari
         <KpiSeridi kpiler={[
           { etiket: 'Şüpheli belge', deger: String(sayi(supheli.adet)), alt: 'GİB damgası / mükerrer şüphesi', renk: sayi(supheli.adet) > 0 ? R.kirmizi : R.yesil },
           { etiket: 'İnceleme kuyruğu', deger: String(sayi(inceleme.adet)), alt: `no/VKN eksik · ${fmt(sayi(inceleme.toplam))}`, renk: sayi(inceleme.adet) > 0 ? R.amber : R.yesil },
-          { etiket: 'İşlenemeyen foto', deger: String(islenemeyenAdet), alt: sonHata ? kisalt(sonHata, 40) : 'OCR okuyamadı', renk: islenemeyenAdet > 0 ? R.amber : R.krem },
+          // ⚠️ HAM HATA METNİ EKRANA SIZIYORDU (canlı, 2026-08-28):
+          // alt yazı sunucunun `son_hata` alanını olduğu gibi basıyordu:
+          //   "[geçici, deneme 2/5] Error code: 429 - […"
+          // Sahip kod bilmez; "Error code: 429" ona hiçbir şey söylemez, yalnız
+          // sistemin bozuk olduğunu düşündürür. Üstelik 429 = OCR sağlayıcının
+          // KOTASI dolu demek — geçici bir durum, belgeyle ilgili bir kusur
+          // değil. Düz-dil etiket (desen 7) ihlali.
+          // ⚠️ Bilgi GİZLENMİYOR: ham metin çekmecede/`title`da kalır; manşette
+          // insan diline çevrilmiş hâli durur.
+          {
+            etiket: 'İşlenemeyen foto',
+            deger: String(islenemeyenAdet),
+            alt: (() => {
+              if (!islenemeyenAdet) return 'hepsi okundu';
+              const h = String(sonHata || '');
+              if (/429|kota|quota|rate.?limit/i.test(h)) return 'okuma servisi kotası doldu — geçici, yeniden denenecek';
+              if (/timeout|zaman/i.test(h)) return 'okuma zaman aşımına uğradı — yeniden denenecek';
+              if (h) return 'fotoğraf okunamadı — yeniden denenecek';
+              return 'OCR okuyamadı';
+            })(),
+            renk: islenemeyenAdet > 0 ? R.amber : R.krem,
+          },
           { etiket: 'Mükerrer freni', deger: '4 katman', alt: 'aynı belge iki kanaldan giremez', renk: R.yesil },
         ]} />
         <div style={{
