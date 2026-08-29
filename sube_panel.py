@@ -10,6 +10,7 @@ import json
 import os
 import pathlib
 import re
+import unicodedata
 import traceback
 import uuid
 from typing import Any, Dict, List, Optional, Set
@@ -167,7 +168,20 @@ def _x_extract_amounts(obj: dict) -> dict:
 
 
 def _norm_ad_tr(v: str) -> str:
-    s = (v or "").strip().lower()
+    # ⚠️ TÜRKÇE BÜYÜK İ TUZAĞI (Codex denetimi + test, 2026-08-30)
+    # Python'da "İ".lower() → "i" + U+0307 (birleşik nokta) üretir. Alttaki
+    # regex birleşik noktayı "_" yapıyordu:
+    #     "FİLTRE KAHVE" -> "fi_ltre_kahve"   (yanlış)
+    #     "Filtre Kahve" -> "filtre_kahve"    (doğru)
+    # Yani BÜYÜK İ içeren her üründe ad eşleşmesi sessizce kırılıyordu —
+    # "ÇİLEK ŞURUP", "FİLTRE KAHVE", "İÇİM"…
+    # Türkçe kurala göre önce büyük harfleri sabitliyoruz: İ→i, I→ı (ı da
+    # aşağıda i'ye düşüyor). Sonra kalan birleşik işaretler temizleniyor.
+    # ⚠️ Canlı ölçüm (2026-08-30): bu hatadan bozulmuş kayıt YOK
+    #    (ozel__ kodlu 0, "i_" desenli 0) — geçmiş göçü gerekmedi.
+    s = (v or "").strip().replace("İ", "i").replace("I", "ı").lower()
+    s = unicodedata.normalize("NFKD", s)
+    s = "".join(c for c in s if not unicodedata.combining(c))
     repl = (
         ("ğ", "g"),
         ("ü", "u"),

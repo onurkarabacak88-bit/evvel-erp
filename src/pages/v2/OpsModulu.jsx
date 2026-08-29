@@ -112,6 +112,15 @@ export const opsKuyrukKur = (satirlar, bugunISO) => {
     return c != null ? `${c} kalem · ${a} adet${ek}` : `${a} adet${ek}`;
   };
   return [
+    // 🚨 STOK HAREKETİ YAZILAMADI (Codex denetimi + canlı ölçüm, 2026-08-30)
+    // Sevkte kaynak stok satırı bulunamazsa sunucu uyarı yazıyordu ama bu
+    // uyarı HİÇBİR EKRANDA görünmüyordu (grep: 0 eşleşme). Sonucu ağır:
+    // kaynak depo düşmedi ama alıcı depo arttı → şirket genelinde stok
+    // ŞİŞİYOR ve kimse fark etmiyor. En üstte, çünkü para/stok bozuyor.
+    ...L.filter((x) => say(x.stok_alarm_sayisi) > 0).map((x) => m(
+      x, 1, `${x.sube_adi || 'Şube'} · stok hareketi yazılamadı`,
+      `${say(x.stok_alarm_sayisi)} uyarı · sevk edildi ama kaynak depodan DÜŞMEDİ — `
+      + 'stok şişmiş olabilir, kalem kodu uyuşmuyor')),
     ...L.filter((x) => x.asama === 'uyumsuzluk').map((x) => m(
       x, 1, `${x.sube_adi || 'Şube'} · kabul uyuşmazlığı`,
       'şube teslim aldı ama adet tutmadı — merkez kararı gerekiyor')),

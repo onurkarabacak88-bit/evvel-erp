@@ -376,6 +376,15 @@ def siparis_kontrol_kulesi_yukle(
     # ⏳ Henüz TESLİM ALINMAMIŞ toptancı gönderimi olan talepler.
     # Erken kapanma korumasında kullanılır (aşağıda).
     _bekleyen_toptanci: Dict[str, int] = {}
+    # ⚠️ SESSIZ ALARM (Codex denetimi + canli olcum, 2026-08-30)
+    # Sevkte kaynak stok satiri bulunamazsa kod `STOK_DUSME_HATASI`, adet
+    # yetmezse `HAYALET_STOK` uyarisi YAZIYOR — ama bu uyarilar HICBIR
+    # EKRANDA gorunmuyordu (grep: 0 eslesme). Sistem sorunu tespit edip
+    # sadakatle kaydediyor, sonra kimse gormuyor.
+    # Sonucu agir: kaynak depo dusmedi ama alici depo artti → sirket
+    # genelinde stok SISIYOR ve kimse fark etmiyor.
+    # Uyari artik siparisin KENDI satirinda tasinir; kuyruk gosterebilir.
+    _stok_alarm: Dict[str, int] = {}
     _dagitim_okunamadi = False
     if _detay_ids:
         try:
@@ -436,6 +445,30 @@ def siparis_kontrol_kulesi_yukle(
                 "kule: toptanci_siparis dagitim sorgusu dustu — "
                 "cift gonderim freni bu yanitta CALISMIYOR"
             )
+
+    # Cozulmemis stok alarmlarini talep bazinda topla (tek sorgu).
+    if _detay_ids:
+        try:
+            cur.execute(
+                """
+                SELECT siparis_talep_id, COUNT(*)::int AS n
+                  FROM sube_operasyon_uyari
+                 WHERE tip IN ('STOK_DUSME_HATASI', 'HAYALET_STOK')
+                   AND okundu IS NOT TRUE
+                   AND siparis_talep_id = ANY(%s)
+                 GROUP BY 1
+                """,
+                (_detay_ids,),
+            )
+            for _ar in cur.fetchall() or []:
+                _a = dict(_ar)
+                _sid = str(_a.get("siparis_talep_id") or "")
+                if _sid:
+                    _stok_alarm[_sid] = int(_a.get("n") or 0)
+        except Exception:
+            # Kolon/tablo farkliysa akis DURMAZ ama sessiz de kalmaz.
+            logger.warning("kule: stok alarm sayimi yapilamadi")
+            _stok_alarm = {}
 
     satirlar: List[Dict[str, Any]] = []
     for r in detay_rows:
@@ -604,6 +637,8 @@ def siparis_kontrol_kulesi_yukle(
             )
             z["kismi_kapanis"] = True
         z["bekleyen_toptanci_gonderim"] = _bek_top
+        # 🚨 Stok hareketi YAZILAMADI uyarisi — hicbir ekranda gorunmuyordu.
+        z["stok_alarm_sayisi"] = int(_stok_alarm.get(str(r.get("id") or "")) or 0)
         z["toptanci_zombi"] = bool(
             str(z.get("asama") or "") == ASAMA_TOPTANCI_BEKLIYOR
             and not _disp

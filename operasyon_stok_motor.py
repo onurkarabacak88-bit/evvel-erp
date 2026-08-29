@@ -3508,6 +3508,19 @@ def sube_kabul_kaydet(cur: Any, siparis_talep_id: str, sube_id: str,
 
         yolda_row = None
         if yolda_id_in and yolda_id_in in yolda_by_id:
+            # ⚠️ MUKERRER SATIR FRENI (Codex denetimi, 2026-08-30)
+            # `islenen_yolda` kontrolu YALNIZ kod eslesmesi dalinda vardi;
+            # `yolda_id` DOGRUDAN verildiginde atlaniyordu. Ayni payload'da
+            # ayni yolda_id iki kez gelirse ayni sevkiyat satiri iki kez
+            # islenip hedef depo IKI KEZ artiyordu.
+            # Ayri isteklerde koruma vardi (satir 'kabul_edildi' oluyor);
+            # AYNI istekte yoktu.
+            if yolda_id_in in islenen_yolda:
+                logging.getLogger(__name__).warning(
+                    "sube_kabul_kaydet: ayni istekte mukerrer yolda_id atlandi "
+                    "(talep=%s yolda_id=%s)", siparis_talep_id, yolda_id_in,
+                )
+                continue
             yolda_row = yolda_by_id[yolda_id_in]
         elif kalem_kodu_in:
             for yr in yolda_rows:

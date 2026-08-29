@@ -10468,12 +10468,15 @@ def ops_siparis_toptanciya_yolla(body: OpsSiparisToptanciyaYollaBody):
                 _t_kalemler = []
         if not isinstance(_t_kalemler, list):
             _t_kalemler = []
+        # ⚠️ Kiyas _norm_ad_tr ile (Codex denetimi, 2026-08-30): duz
+        # .lower() Turkce buyuk I'yi bozuyor ve ic bosluk farkini
+        # goremiyordu — "FILTRE  KAHVE" mesru kalemi elenebiliyordu.
         _talep_adlari = {
-            str((_i or {}).get("urun_ad") or "").strip().lower()
+            _norm_ad_tr(str((_i or {}).get("urun_ad") or ""))
             for _i in _t_kalemler if isinstance(_i, dict)
         } - {""}
         _iptal_adlari = {
-            str((_i or {}).get("urun_ad") or "").strip().lower()
+            _norm_ad_tr(str((_i or {}).get("urun_ad") or ""))
             for _i in _t_kalemler if isinstance(_i, dict) and _i.get("iptal")
         } - {""}
 
@@ -10495,7 +10498,7 @@ def ops_siparis_toptanciya_yolla(body: OpsSiparisToptanciyaYollaBody):
                     except Exception:
                         _ck = []
                 for _ci in _ck:
-                    _cn = str((_ci or {}).get("urun_ad") or "").strip().lower()
+                    _cn = _norm_ad_tr(str((_ci or {}).get("urun_ad") or ""))
                     if _cn:
                         _cikmis_adlar.add(_cn)
             ensure_stok_yolda_columns(cur)
@@ -10506,7 +10509,7 @@ def ops_siparis_toptanciya_yolla(body: OpsSiparisToptanciyaYollaBody):
                 (tid,),
             )
             for _sr in cur.fetchall() or []:
-                _sn = str(dict(_sr).get("kalem_adi") or "").strip().lower()
+                _sn = _norm_ad_tr(str(dict(_sr).get("kalem_adi") or ""))
                 if _sn:
                     _cikmis_adlar.add(_sn)
         except Exception as _e:
@@ -10519,7 +10522,7 @@ def ops_siparis_toptanciya_yolla(body: OpsSiparisToptanciyaYollaBody):
         _red: List[str] = []
         _gecerli: List[Dict[str, Any]] = []
         for _k in kalemler:
-            _n = str(_k.get("urun_ad") or "").strip().lower()
+            _n = _norm_ad_tr(str(_k.get("urun_ad") or ""))
             if _talep_adlari and _n not in _talep_adlari:
                 _red.append(f"{_k.get('urun_ad')} (bu siparişte yok)")
             elif _n in _iptal_adlari:
