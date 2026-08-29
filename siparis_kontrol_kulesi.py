@@ -567,6 +567,18 @@ def siparis_kontrol_kulesi_yukle(
         # 'depoda' oluyor ve sipariş merkez kuyruğundan düşüyordu — kalan
         # kalemler görünmez kalıyordu (sessiz eleme). Bu sayı kuyruğun
         # "iş bitmedi" demesini sağlar.
+        # 🧟 ZOMBİ TESPİTİ (canlı ölçüm, 2026-08-29)
+        # "Toptancıda bekliyor" diyen ama AKTİF gönderimi olmayan talep bir
+        # kilitlenmedir: şube bekleyen listesi yalnız 'gonderildi' kayıtları
+        # gösterdiği için kabul EDEMEZ, kimse kapatamaz, mutabakat asla
+        # tamamlanmaz. 8 siparişin 7'si bu hâldeydi ve 11 gün fark edilmedi.
+        # Doğuran delik kapatıldı + geçmiş göçle hizalandı; bu bayrak BAŞKA
+        # bir yol aynı durumu üretirse sessiz kalmasın diye duruyor.
+        z["toptanci_zombi"] = bool(
+            str(z.get("asama") or "") == ASAMA_TOPTANCI_BEKLIYOR
+            and not _disp
+            and not z.get("kabul_ts")
+        )
         z["yonlendirilmemis_kalem_sayisi"] = len(z["kalan_kalemler"])
         z["yonlendirilmemis_kalem_adlari"] = [
             str((_it or {}).get("urun_ad") or "") for _it in z["kalan_kalemler"]

@@ -5145,6 +5145,67 @@ $$;
             except Exception: pass
             print(f"[MIGRATION WARN] depo_stok_duplike_temizlik_v4: {_mig_e}")
 
+        # ─── MIGRATION: zombi_toptanci_talep_iyilestirme_v1 ─────────────────
+        # 🧟 Canlı ölçüm (2026-08-29): 8 "toptancı bekliyor" siparişinin 7'si
+        # KAPANMASI İMKÂNSIZ durumdaydı — en eskisi 11 günlük, 6'sı TEMA.
+        # Mekanizma: toptancı gönderimleri iptal edilmiş ama talep
+        # `durum='gonderildi'` / `sevkiyat_durumu='toptanciya_yonlendirildi'`
+        # olarak bırakılmış. Kilitlenme:
+        #   · merkez "toptancıda bekliyor" der — mal yolda sanılır
+        #   · şube bekleyen listesi yalnız 'gonderildi' kayıtları gösterir,
+        #     iptal olanı göstermez → ŞUBE KABUL EDEMEZ
+        #   · kimse kapatamaz → mutabakat asla tamamlanmaz
+        # (Doğuran delik `/siparis/toptanci-siparis/{id}/iptal` ucunda
+        #  kapatıldı: hiç teslim alınmadan tüm gönderimler iptal olursa talep
+        #  artık kuyruğa döner. Bu göç GEÇMİŞİ hizalar.)
+        # ⚠️ Talep İPTAL EDİLMEZ, KUYRUĞA DÖNER: şube o malı hâlâ istiyor.
+        #    Merkez yeniden yönlendirsin ya da bilerek iptal etsin — karar
+        #    sahibinde kalsın.
+        # ⚠️ KABUL EDİLMİŞ hiçbir şeye dokunulmaz: `kabul_ts` doluysa veya
+        #    aktif (iptal olmayan) gönderim varsa kayıt ES GEÇİLİR.
+        cur.execute("SAVEPOINT sp_zombi_toptanci")
+        try:
+            cur.execute("""
+                SELECT 1 FROM finans_migration_log
+                WHERE ad='zombi_toptanci_talep_iyilestirme_v1' LIMIT 1
+            """)
+            if not cur.fetchone():
+                cur.execute("""
+                    UPDATE siparis_talep t
+                       SET durum='bekliyor',
+                           sevkiyat_durumu='bekliyor',
+                           sevkiyat_durum='bekliyor',
+                           sevkiyat_ts=NULL
+                     WHERE t.durum NOT IN ('teslim_edildi','iptal')
+                       AND t.kabul_ts IS NULL
+                       AND COALESCE(t.sevkiyat_durumu,'') = 'toptanciya_yonlendirildi'
+                       AND EXISTS (
+                             SELECT 1 FROM toptanci_siparis s
+                              WHERE s.talep_id = t.id
+                           )
+                       AND NOT EXISTS (
+                             SELECT 1 FROM toptanci_siparis s2
+                              WHERE s2.talep_id = t.id AND s2.durum <> 'iptal'
+                           )
+                    RETURNING t.id
+                """)
+                _z_rows = cur.fetchall() or []
+                _z_ids = [str(dict(r).get("id")) for r in _z_rows]
+                cur.execute("""
+                    INSERT INTO finans_migration_log (ad, detay) VALUES (%s, %s::jsonb)
+                """, (
+                    'zombi_toptanci_talep_iyilestirme_v1',
+                    json.dumps({"kuyruga_donen": len(_z_ids), "talep_idler": _z_ids[:50]},
+                               ensure_ascii=False),
+                ))
+                print(f"[MIGRATION] zombi_toptanci_talep_iyilestirme_v1: "
+                      f"kuyruga_donen={len(_z_ids)}")
+            cur.execute("RELEASE SAVEPOINT sp_zombi_toptanci")
+        except Exception as _mig_e:
+            try: cur.execute("ROLLBACK TO SAVEPOINT sp_zombi_toptanci")
+            except Exception: pass
+            print(f"[MIGRATION WARN] zombi_toptanci_talep_iyilestirme_v1: {_mig_e}")
+
         # ─── MIGRATION: depo_stok_hayalet_ad_temizlik_v6 ────────────────────
         # v4 `norm_ad` ile eşleşenleri temizliyordu ("espresso"). Ama şube
         # kabulü, çağıran taraf `urun_id` göndermediğinde stok satırını ürünün

@@ -10979,6 +10979,7 @@ def ops_toptanci_siparis_iptal(ts_id: str):
     if not sid:
         raise HTTPException(400, "toptanci_siparis_id zorunlu")
     kapatildi = False
+    kuyruga_dondu = False
     with db() as (conn, cur):
         cur.execute("SELECT id, talep_id, durum FROM toptanci_siparis WHERE id=%s", (sid,))
         row = cur.fetchone()
@@ -11028,7 +11029,43 @@ def ops_toptanci_siparis_iptal(ts_id: str):
                             (tid,),
                         )
                         kapatildi = cur.rowcount > 0
-    return {"ok": True, "ts_id": sid, "durum": "iptal", "talep_tamamlandi": kapatildi}
+                    # ══════════════════════════════════════════════════════
+                    # 🧟 ZOMBİ TALEP ÖNLEME (canlı ölçüm, 2026-08-29)
+                    # ══════════════════════════════════════════════════════
+                    # Yukarıdaki dal `teslim > 0` istiyor: en az bir gönderim
+                    # TESLİM ALINMIŞ olmalı. Hiç teslim alınmadan TÜM
+                    # gönderimler iptal edilirse HİÇBİR dal çalışmıyordu ve
+                    # talep `durum='gonderildi'` / 'toptanciya_yonlendirildi'
+                    # olarak ASILI KALIYORDU. Sonuç bir kilitlenme:
+                    #   · merkez ekranı "toptancıda bekliyor" der (mal yolda sanılır)
+                    #   · şube bekleyen listesi yalnız 'gonderildi' kayıtları
+                    #     gösterir; iptal olanı göstermez → ŞUBE KABUL EDEMEZ
+                    #   · kimse kapatamaz → mutabakat asla tamamlanmaz
+                    # Canlı ölçüm: 8 "toptancı bekliyor" siparişinin 7'si bu
+                    # durumdaydı, en eskisi 11 günlük (6'sı TEMA).
+                    # ⚠️ Talep İPTAL EDİLMEZ, KUYRUĞA DÖNER: şube bu malı hâlâ
+                    #    istiyor. Merkez yeniden yönlendirebilsin veya bilerek
+                    #    iptal etsin — karar sahibinde kalsın.
+                    elif bekleyen == 0 and teslim == 0:
+                        cur.execute(
+                            """UPDATE siparis_talep
+                               SET durum='bekliyor',
+                                   sevkiyat_durumu='bekliyor',
+                                   sevkiyat_durum='bekliyor',
+                                   sevkiyat_ts=NULL
+                               WHERE id=%s AND durum NOT IN ('teslim_edildi','iptal')""",
+                            (tid,),
+                        )
+                        if cur.rowcount > 0:
+                            kuyruga_dondu = True
+                            audit(cur, "siparis_talep", tid,
+                                  "OPS_TALEP_KUYRUGA_DONDU_TOPTANCI_IPTAL")
+    return {
+        "ok": True, "ts_id": sid, "durum": "iptal",
+        "talep_tamamlandi": kapatildi,
+        # Ekran "iptal ettim, sipariş ne oldu" sorusunu sorabilsin diye.
+        "talep_kuyruga_dondu": kuyruga_dondu,
+    }
 
 
 # ── MERKEZ TEST SİPARİŞ TEMİZLİĞİ ────────────────────────────────────────────
