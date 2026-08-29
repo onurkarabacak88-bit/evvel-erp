@@ -9099,12 +9099,22 @@ function renderDepoKabulSection() {
       btn.disabled = true;
       btn.textContent = '⏳ Kaydediliyor…';
       try {
-        await api('/sube-panel/' + encodeURIComponent(SUBE_ID) + '/siparis-teslim-kabul', {
+        var _kb = await api('/sube-panel/' + encodeURIComponent(SUBE_ID) + '/siparis-teslim-kabul', {
           method: 'POST',
           body: { talep_id: tid, personel_id: pid, pin: pin, kabul: kabul },
         });
         siparisAkisCache = null;
-        setMsg(msgId, '✅ Teslim kabul kaydedildi!', 'msg-ok');
+        // 📦 KARSILANMAYAN MIKTAR (2026-08-30): sube 10 istemis, 3 gelmisse
+        // "teslim kabul edildi" demek yanlis bir tamamlanma hissi verirdi.
+        // Sunucu talebi kuyruga dondurduyse SUBE de bunu bilmeli — yoksa
+        // eksigin pesine dusmez, merkez de kimsenin beklemedigini sanir.
+        var _eksik = (_kb && _kb.karsilanmayan_kalem) || 0;
+        if (_kb && _kb.talep_kuyruga_dondu) {
+          setMsg(msgId, '✅ Gelenler kabul edildi — ancak ' + _eksik +
+            ' kalem hala eksik. Siparis KAPANMADI, merkez kuyruguna dondu.', 'msg-ok');
+        } else {
+          setMsg(msgId, '✅ Teslim kabul kaydedildi!', 'msg-ok');
+        }
         await refresh();
       } catch (e) {
         if (e.status === 429) handle429(document.getElementById(msgId), e);

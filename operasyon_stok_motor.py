@@ -3625,6 +3625,78 @@ def sube_kabul_kaydet(cur: Any, siparis_talep_id: str, sube_id: str,
     genel_olay = OLAY_KABUL_TAM if tam_mi else OLAY_KABUL_EKSIK
     sevk_durum = "teslim_edildi" if tam_mi else "kabul_uyusmazlik"
     yeni_talep_durum = sevk_durum
+
+    # ══════════════════════════════════════════════════════════════════════
+    # 📦 KARSILANMAYAN TALEP KAPANMAZ (Codex denetimi, 2026-08-30)
+    # ══════════════════════════════════════════════════════════════════════
+    # `tam_mi` kabul edileni SEVK EDILENLE kiyasliyor, ISTENENLE degil.
+    # Somut senaryo: sube 10 ister, depo 3 sevk eder, sube 3'u tam kabul
+    # eder -> tam_mi=True -> talep 'teslim_edildi'. Sube 10 istedi, 3 aldi,
+    # sistem "tamam" dedi. KALAN 7 UNUTULDU — ikinci sevk yolu da kapandi.
+    # Dogru davranis: karsilanmayan miktar varsa talep KUYRUGA doner ki
+    # merkez kalani yeniden yonlendirebilsin (kismi toptanci akisi zaten
+    # boyle davraniyor: operasyon_merkez_api.py kismi -> durum='bekliyor').
+    # ⚠️ Merkez IPTAL ettigi kalemler eksik SAYILMAZ — bilincli karardir.
+    # ⚠️ Toptanciya cikmis kalemler de eksik sayilmaz; onlar baska kanaldan
+    #    geliyor, kapanislari kendi akislarinda.
+    _eksik_kalan = 0
+    try:
+        cur.execute("SELECT kalemler FROM siparis_talep WHERE id=%s", (siparis_talep_id,))
+        _tr2 = cur.fetchone()
+        _istenen = (dict(_tr2).get("kalemler") if _tr2 else None) or []
+        if isinstance(_istenen, str):
+            _istenen = json.loads(_istenen)
+        # Bu talebe ait TUM kabul edilmis adetler (bu ve onceki sevkiyatlar)
+        cur.execute(
+            """
+            SELECT kalem_adi, COALESCE(SUM(kabul_adet), 0) AS n
+              FROM stok_yolda
+             WHERE siparis_talep_id = %s AND durum IN ('kabul_edildi', 'uzlasildi')
+             GROUP BY kalem_adi
+            """,
+            (siparis_talep_id,),
+        )
+        _gelen = {}
+        for _gr in cur.fetchall() or []:
+            _g = dict(_gr)
+            _gelen[str(_g.get("kalem_adi") or "").strip().lower()] = int(_g.get("n") or 0)
+        # Toptanciya cikmis adlar (baska kanaldan geliyor, eksik sayilmaz)
+        _toptancida = set()
+        cur.execute(
+            "SELECT kalemler FROM toptanci_siparis "
+            "WHERE talep_id = %s AND durum <> 'iptal'",
+            (siparis_talep_id,),
+        )
+        for _tr3 in cur.fetchall() or []:
+            _tk = dict(_tr3).get("kalemler") or []
+            if isinstance(_tk, str):
+                _tk = json.loads(_tk)
+            for _ti in (_tk or []):
+                _tn = str((_ti or {}).get("urun_ad") or "").strip().lower()
+                if _tn:
+                    _toptancida.add(_tn)
+        for _it in (_istenen or []):
+            if not isinstance(_it, dict) or _it.get("iptal"):
+                continue
+            _ad = str(_it.get("urun_ad") or "").strip().lower()
+            if not _ad or _ad in _toptancida:
+                continue
+            _ist_adet = max(0, int(_it.get("adet") or 0))
+            if _ist_adet > _gelen.get(_ad, 0):
+                _eksik_kalan += 1
+    except Exception:
+        # Hesap yapilamazsa ESKI davranisa dus (kapat) ama sessiz kalma:
+        # yanlislikla acik birakmak da kuyrugu kirletir.
+        logging.getLogger(__name__).warning(
+            "sube_kabul_kaydet: karsilanmayan miktar hesabi yapilamadi (talep=%s)",
+            siparis_talep_id,
+        )
+        _eksik_kalan = 0
+
+    if tam_mi and _eksik_kalan > 0:
+        # Gelen kadari kabul edildi ama TALEP karsilanmadi: kuyruga don.
+        yeni_talep_durum = "bekliyor"
+        sevk_durum = "bekliyor"
     cur.execute(
         """
         UPDATE siparis_talep
@@ -3647,7 +3719,15 @@ def sube_kabul_kaydet(cur: Any, siparis_talep_id: str, sube_id: str,
         )
     _disiplin_olay_yaz(cur, siparis_talep_id, sube_id, genel_olay,
                         yapan_id, yapan_ad, {"tam_mi": tam_mi})
-    return {"durum": genel_olay, "tam_mi": tam_mi, "uyumsuz_satirlar": uyumsuz_satirlar}
+    return {
+        "durum": genel_olay,
+        "tam_mi": tam_mi,
+        "uyumsuz_satirlar": uyumsuz_satirlar,
+        # 📦 Kac kalem HALA karsilanmadi (istenen > gelen). >0 ise talep
+        # kapanmadi, kuyruga dondu — ekran nedenini yazabilsin.
+        "karsilanmayan_kalem": _eksik_kalan,
+        "talep_kuyruga_dondu": bool(tam_mi and _eksik_kalan > 0),
+    }
 
 def gunluk_acilis_stok_sayim_map(cur: Any, sube_id: str) -> Dict[str, int]:
     """Bugün tamamlanmış ACILIS olayındaki depo sayımı (STOK_KEYS). Satır yoksa sıfır."""
