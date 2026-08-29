@@ -368,7 +368,14 @@ def siparis_sevkiyat_kalem_guncelle_execute(
                 personel_ad,
             )
         except ValueError as exc:
-            raise HTTPException(404, str(exc).strip() or "Sevkiyat çıkışı yapılamadı") from exc
+            # ⚠️ HEPSİ 404 DEĞİL (canlı test, 2026-08-30): çift sevk freni
+            # devreye girdiğinde de 404 dönüyordu. 404 "bulunamadı" demektir;
+            # oysa kayıt VAR, işlem ÇAKIŞIYOR. Yanlış kod istemciyi yanlış
+            # yola sokar (ekran "sipariş silinmiş" sanabilir).
+            # Çakışma/kural ihlali → 409, gerçek bulunamama → 404.
+            _m = str(exc).strip() or "Sevkiyat çıkışı yapılamadı"
+            _kod = 404 if "bulunamad" in _m.lower() else 409
+            raise HTTPException(_kod, _m) from exc
         yeni_durum = hesapla_yeni_sevkiyat_durumu(durumlar, bekleyen_var, kismi_var, gonderildi)
         _sevk_durum_yeni, _sevk_durum_eski = sevkiyat_durumu_guncelle_params(yeni_durum)
         eski_durum_karsilik = _sevk_durum_eski
