@@ -3114,6 +3114,43 @@ def siparis_talep_akisi_iptal(
     }
 
 
+def zorunlu_sayi(d: Dict[str, Any], anahtar: str, *, baglam: str,
+                 varsayilan: int = 0) -> int:
+    """Sözlükten sayı oku — ANAHTAR YOKSA SESSİZ KALMA.
+
+    ⚠️ BU OTURUMDA BEŞ KEZ AYNI HATA YAPILDI (2026-08-30):
+    bir yordam sözlük üretiyor, başka bir yordam o sözlükte OLMAYAN bir
+    anahtarı okuyor, `d.get("x") or 0` sessizce 0 döndürüyor ve ÜSTÜNE
+    KURULAN KURAL SESSİZCE DEVRE DIŞI KALIYOR.
+
+    Somut vaka: çift sevk freninin yeni kuralı "toplam sevk ISTENEN adedi
+    aşamaz" diyordu; ama sevk sözlüğü `istenen_adet` taşımıyordu. Fren onu
+    0 görüp `_ist <= 0` dalına düştü ve HER meşru ikinci partiyi reddetti.
+    Kod okuması bunu göstermedi — yalnız canlı test gösterdi.
+
+    Fark şu: `anahtar yok` ile `anahtar var ama 0` AYNI ŞEY DEĞİL.
+    Birincisi bir SÖZLEŞME İHLALİ (üreten taraf alanı koymamış), ikincisi
+    geçerli bir veri. `.get(x) or 0` ikisini birbirine karıştırıyor.
+
+    Bu yardımcı ikisini ayırır: anahtar yoksa uyarı loglar. Böylece bir
+    kural sessizce ölmez; günlükte adıyla görünür.
+    ⚠️ AKIŞI DURDURMAZ: varsayılana düşer. Amaç güvenliği kırmak değil,
+       körlüğü kırmak.
+    """
+    if anahtar not in d:
+        logging.getLogger(__name__).warning(
+            "SOZLESME EKSIGI: '%s' anahtari sozlukte YOK (baglam=%s) — "
+            "%s varsayildi; bu anahtara dayanan kural sessizce devre disi "
+            "kalmis olabilir. Mevcut anahtarlar: %s",
+            anahtar, baglam, varsayilan, sorted(d.keys())[:12],
+        )
+        return varsayilan
+    try:
+        return max(0, int(d.get(anahtar) or 0))
+    except (TypeError, ValueError):
+        return varsayilan
+
+
 def sevk_cikti_kaydet(cur: Any, siparis_talep_id: str,
                        sevk_kalemleri: List[Dict[str, Any]],
                        yapan_id: Optional[str] = None,
@@ -3214,7 +3251,9 @@ def sevk_cikti_kaydet(cur: Any, siparis_talep_id: str,
             if not _k or _k not in _yolda_toplam:
                 continue
             _yeni = max(0, int(_it.get("sevk_adet") or _it.get("adet") or 0))
-            _ist = max(0, int(_it.get("istenen_adet") or 0))
+            # 🛡️ Anahtar taşınmazsa SESSİZ KALMA: bu kural `istenen_adet`e
+            # dayanıyor; alan gelmezse fren her ikinci partiyi reddediyordu.
+            _ist = zorunlu_sayi(_it, "istenen_adet", baglam="cift_sevk_freni")
             _onceki = _yolda_toplam[_k]
             # Istenen bilinmiyorsa (0) eski korumaya dus: ikinci gonderim supheli.
             if _ist <= 0 or (_onceki + _yeni) > _ist:

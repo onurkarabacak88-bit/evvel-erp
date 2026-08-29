@@ -12576,6 +12576,55 @@ def ops_siparis_sevkiyat_listesi(
                 if not isinstance(v, list):
                     v = []
                 d[k] = v
+            # ══════════════════════════════════════════════════════════════
+            # 📉 KAYNAK DEPODA STOK VAR MI (canli olcum, 2026-08-30)
+            # ══════════════════════════════════════════════════════════════
+            # Olcum: 59 stok alarminin 55'i TEMA kaynakli. TEMA sistemde
+            # SIFIR gorunen mali fiziksel olarak gonderiyor (Redbull TEMA=0
+            # iken 72 adet sevk edilmis). Cikista dusulecek sey bulunamiyor,
+            # alici depo artiyor -> STOK SISIYOR.
+            # Kok neden kodda degil KAYITTA: TEMA'ya gelen mallarin GIRISI
+            # kaydedilmemis (7 zombi siparisin hepsi TEMA'ydi — mal geldi,
+            # kabul edilemedi, giris hic olusmadi).
+            # Bu blok ONLEYICI: depocu sevk etmeden ONCE "sistemde stok yok"
+            # uyarisini gorsun. Sevki ENGELLEMEZ — mal fiziksel olarak
+            # oradaysa gonderilmeli; ama korlemesine gonderilmemeli.
+            try:
+                _dsid = str(d.get("hedef_depo_sube_id") or "").strip()
+                _kodlar = []
+                for _it in (d.get("kalemler") or []):
+                    if not isinstance(_it, dict):
+                        continue
+                    for _c in (str(_it.get("kalem_kodu") or "").strip(),
+                               str(_it.get("urun_id") or "").strip(),
+                               str(_it.get("urun_ad") or "").strip()):
+                        if _c and _c not in _kodlar:
+                            _kodlar.append(_c)
+                _kaynak_stok = {}
+                if _dsid and _kodlar:
+                    cur.execute(
+                        "SELECT kalem_kodu, COALESCE(mevcut_adet, 0) AS m "
+                        "FROM sube_depo_stok WHERE sube_id = %s AND kalem_kodu = ANY(%s)",
+                        (_dsid, _kodlar),
+                    )
+                    for _sr in cur.fetchall() or []:
+                        _sd2 = dict(_sr)
+                        _kaynak_stok[str(_sd2.get("kalem_kodu") or "")] = int(_sd2.get("m") or 0)
+                for _it in (d.get("kalemler") or []):
+                    if not isinstance(_it, dict):
+                        continue
+                    _bulundu = None
+                    for _c in (str(_it.get("kalem_kodu") or "").strip(),
+                               str(_it.get("urun_id") or "").strip(),
+                               str(_it.get("urun_ad") or "").strip()):
+                        if _c and _c in _kaynak_stok:
+                            _bulundu = _kaynak_stok[_c]
+                            break
+                    # ⚠️ None = KAYIT YOK (0 adet var DEGIL) — ekran ayirsin.
+                    _it["kaynak_depo_mevcut"] = _bulundu
+                    _it["kaynak_depo_kayit_var"] = _bulundu is not None
+            except Exception:
+                logger.warning("sevkiyat-listesi: kaynak depo stok okumasi yapilamadi")
             rows.append(d)
     return {
         "satirlar": rows,

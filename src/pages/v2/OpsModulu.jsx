@@ -4532,6 +4532,28 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
                                 <div style={{ fontSize: 11, color: sevkDisi ? R.amber : R.not2, marginTop: 2 }}>
                                   {sevkDisi ? `\u26d4 ${sevkDisiMetin}` : `istenen ${sayi(k?.adet)}`}
                                 </div>
+                                {/* 📉 KAYNAK DEPODA STOK VAR MI (2026-08-30)
+                                    Canlı ölçüm: 59 stok alarmının 55'i TEMA
+                                    kaynaklı. TEMA sistemde SIFIR görünen malı
+                                    fiziksel olarak gönderiyor (Redbull TEMA=0
+                                    iken 72 adet sevk edilmiş); çıkışta
+                                    düşülemiyor, alıcı depo artıyor, STOK ŞİŞİYOR.
+                                    ⚠️ Sevki ENGELLEMEZ: mal fiziksel olarak
+                                       oradaysa gönderilmeli. Ama körlemesine
+                                       değil — depocu ne olacağını bilsin. */}
+                                {!sevkDisi && k?.kaynak_depo_kayit_var === false && (
+                                  <div style={{ fontSize: 10.5, color: R.kirmizi, marginTop: 3, lineHeight: 1.45 }}>
+                                    &#9888; Bu ürünün <b>sistemde stok kaydı yok</b> — gönderirsen
+                                    depodan düşülemez, stok şişer. Girişi kaydedilmemiş olabilir.
+                                  </div>
+                                )}
+                                {!sevkDisi && k?.kaynak_depo_kayit_var === true
+                                  && sayi(k?.kaynak_depo_mevcut) < sayi(d.gonderilen_adet) && (
+                                  <div style={{ fontSize: 10.5, color: R.amber, marginTop: 3, lineHeight: 1.45 }}>
+                                    &#9888; Sistemde <b>{sayi(k?.kaynak_depo_mevcut)}</b> görünüyor,
+                                    {' '}{sayi(d.gonderilen_adet)} göndermek üzeresin — fark düşülemez.
+                                  </div>
+                                )}
                               </div>
                               <label style={{ fontSize: 10.5, color: R.not2, display: 'flex', flexDirection: 'column', gap: 3 }}>
                                 gönderilen
