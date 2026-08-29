@@ -9962,6 +9962,12 @@ def ops_siparis_sevkiyata_gonder(body: OpsSiparisSevkiyataGonderBody):
             entry: Dict[str, Any] = {
                 "urun_id": uid,
                 "urun_ad": uad,
+                # 🔑 `kalem_kodu` YAZILIR (Fable denetimi, 2026-08-29):
+                # "aynı ürünü sürekli istiyor" davranış denetimi
+                # `kalem_durumlari @> [{"kalem_kodu": …}]` ile arıyor. Bu alan
+                # hiç yazılmadığı için denetim SESSİZCE HEP 0 sayıyordu —
+                # uyarı hiç düşmüyordu, kimse fark etmiyordu.
+                "kalem_kodu": uid or uad,
                 "istenen_adet": max(0, istenen),
                 "gonderilen_adet": 0,
                 "durum": "bekliyor" if _dahil else (
@@ -20591,7 +20597,14 @@ def ops_v2_bekleyen_siparisler(
                     "kalan_gonderince": it.get("kalan_gonderince"),
                     "alarm_merkez": bool(it.get("alarm_merkez")),
                     "merkez_barem_risk": bool(it.get("merkez_barem_risk")),
-                    "sube_depo_mevcut": int(it.get("sube_depo_mevcut") or 0),
+                    # ⚠️ `or 0` KULLANILMAZ: None = "şube deposunda kayıt yok"
+                    #    demek; 0'a çevirmek "0 adet var" iddiası olur ve
+                    #    motorda yapılan ayrımı burada geri bozardı.
+                    "sube_depo_mevcut": (
+                        int(it["sube_depo_mevcut"])
+                        if it.get("sube_depo_mevcut") is not None else None
+                    ),
+                    "sube_depo_kayit_var": bool(it.get("sube_depo_kayit_var")),
                     "sube_zaten_var": bool(it.get("sube_zaten_var")),
                     "gonderim_kaynagi": it.get("gonderim_kaynagi"),
                     "hedef_depo_mevcut": it.get("hedef_depo_mevcut"),

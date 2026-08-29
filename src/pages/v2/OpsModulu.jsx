@@ -2149,7 +2149,10 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
         // yapılır; onun sayıları da gösterilir.
         const detay = zk
           ? [
-            zk.sube_zaten_var ? `⚠ şubede zaten ${sayi(zk.sube_depo_mevcut)} var` : '',
+            // "şubede kayıt yok" ≠ "şubede 0 var". İkincisi ölçüm, birincisi
+            // ölçümsüzlük — karışırsa "gereksiz sipariş" uyarısı da yalancı olur.
+            zk.sube_zaten_var ? `⚠ şubede zaten ${sayi(zk.sube_depo_mevcut)} var`
+              : (zk.sube_depo_kayit_var === false ? 'şubede bu ürünün kaydı yok' : ''),
             // ⚠️ Hesap DEPODAN yapıldıysa merkez kartının boş olması bir
             // eksiklik değil, ilgisiz bir gerçektir: "TEMA'da 3" ile
             // "merkez kaydı yok" yan yana durunca sahip hangisine
@@ -3065,11 +3068,20 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
                     }}
                   >
                     <option value="">Kayıtlı tedarikçi seçin…</option>
-                    {tedarikciler.map((t) => (
-                      <option key={t.id} value={t.id}>
-                        {t.ad}{t.telefon ? '' : '  (telefon yok — WhatsApp gitmez)'}
-                      </option>
-                    ))}
+                    {/* ⚠️ EKRAN/SUNUCU ÇELİŞKİSİ KAPATILDI (2026-08-29):
+                        liste telefonsuz tedarikçiyi "(WhatsApp gitmez)" notuyla
+                        SEÇİLEBİLİR sunuyordu; sunucu ise 400 ile tamamen
+                        reddediyor ("önce numara ekleyin"). Ekran yapılamayacak
+                        bir şeye izin veriyor gibi görünüyordu. Artık seçilemez
+                        ve NEDENİ yazılı — sunucunun kuralı ekranda görünür. */}
+                    {tedarikciler.map((t) => {
+                      const telVar = !!String(t.telefon || '').replace(/\D/g, '');
+                      return (
+                        <option key={t.id} value={t.id} disabled={!telVar}>
+                          {t.ad}{telVar ? '' : '  — telefon yok, sipariş gönderilemez'}
+                        </option>
+                      );
+                    })}
                   </select>
 
                   <label style={{ fontSize: 10.5, letterSpacing: '.7px', textTransform: 'uppercase', color: R.not2, fontWeight: 700, margin: '14px 0 6px', display: 'block' }}>

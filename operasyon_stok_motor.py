@@ -1767,17 +1767,37 @@ def _kontrol_fazla_frekans(cur: Any, sube_id: str, siparis_talep_id: str,
         kalem_kodu = str(k.get("kalem_kodu") or k.get("urun_ad") or "").strip()
         if not kalem_kodu:
             continue
-        # kalem_durumlari JSONB içinde kalem_kodu geçen sipariş sayısını say
+        # ⚠️ ÜÇ ANAHTARLA ARA (Fable denetimi, 2026-08-29)
+        # Yalnız `kalem_kodu` aranıyordu; yönlendirme kayıtları o alanı hiç
+        # yazmadığı için bu denetim SESSİZCE HEP 0 sayıyordu — "aynı ürünü
+        # sürekli istiyor" uyarısı hiç düşmedi ve kimse fark etmedi.
+        # Alan artık yazılıyor (operasyon_merkez_api) ama GEÇMİŞ kayıtlarda
+        # yok; `urun_id` ve `urun_ad` ile de aranır. Ayrıca `kalemler`
+        # dizisine de bakılır: yönlendirilmemiş talepte `kalem_durumlari`
+        # hiç oluşmaz, o sipariş de sayılmalı.
+        _urun_id = str(k.get("urun_id") or "").strip()
+        _urun_ad = str(k.get("urun_ad") or "").strip()
+        _adaylar: List[str] = []
+        for _a in (kalem_kodu, _urun_id, _urun_ad):
+            if _a and _a not in _adaylar:
+                _adaylar.append(_a)
+        _kosullar = []
+        _params: List[Any] = [sube_id, FREKANS_GUN]
+        for _a in _adaylar:
+            for _alan in ("kalem_kodu", "urun_id", "urun_ad"):
+                _kosullar.append("kalem_durumlari @> %s::jsonb")
+                _params.append(json.dumps([{_alan: _a}]))
+                _kosullar.append("kalemler @> %s::jsonb")
+                _params.append(json.dumps([{_alan: _a}]))
         cur.execute(
             """
             SELECT COUNT(*) FROM siparis_talep
             WHERE sube_id = %s
               AND tarih >= CURRENT_DATE - (%s * INTERVAL '1 day')
               AND durum != 'iptal'
-              AND kalem_durumlari @> %s::jsonb
+              AND (""" + " OR ".join(_kosullar) + """)
             """,
-            (sube_id, FREKANS_GUN,
-             json.dumps([{"kalem_kodu": kalem_kodu}])),
+            tuple(_params),
         )
         sayi = int((cur.fetchone() or {}).get("count") or 0)
         if sayi >= FREKANS_ESIK:
@@ -2111,8 +2131,15 @@ def enrich_siparis_kalemleri_stok_inplace(
             # (aşağıda): hesap hedef depodan yapılıyorsa merkez kartının boş
             # olması bir eksiklik değildir — "merkez kaydı yok, hesaplanamadı"
             # demek yanlış olurdu, çünkü hesap YAPILDI.
+        # ⚠️ YARIM DÜZELTME KAPATILDI (Fable denetimi, 2026-08-29)
+        # "kayıt yok ≠ 0 var" ayrımı HEDEF DEPO tarafında yapılmıştı, ŞUBE
+        # deposunda yapılmamıştı: kayıt bulunamayınca 0 yazılıyor ve ekran
+        # "şubede 0 var" diyordu — oysa ÖLÇÜLMEMİŞTİ. Aynı kusurun kardeşi.
+        # `sube_zaten_var` (gereksiz sipariş uyarısı) da bu sayıdan türüyor;
+        # ölçülmemiş 0 üzerinden "gereksiz değil" demek sessiz bir iddiadır.
         _sd = _ilk_bulunan(sube_depo)
-        sube_dep = int(_sd) if _sd is not None else 0
+        sube_dep_kayit_var = _sd is not None
+        sube_dep = int(_sd) if sube_dep_kayit_var else 0
 
         dep_row = _ilk_bulunan(hedef_depo_map) if hid else None
         if hid:
@@ -2181,7 +2208,10 @@ def enrich_siparis_kalemleri_stok_inplace(
         it["kalan_gonderince"] = kalan
         it["alarm_merkez"] = alarm_merkez
         it["merkez_barem_risk"] = merkez_barem_risk
-        it["sube_depo_mevcut"] = sube_dep
+        # None = "şube deposunda bu ürünün KAYDI yok" (0 adet var DEĞİL).
+        # Ekran ikisini ayırabilsin diye ham sayı da, bayrak da veriliyor.
+        it["sube_depo_mevcut"] = sube_dep if sube_dep_kayit_var else None
+        it["sube_depo_kayit_var"] = sube_dep_kayit_var
         it["sube_zaten_var"] = sube_zaten_var
         # Kalem bazında da GERÇEK KAYNAK: hesap depodan yapıldıysa deponun
         # kaydı sorulur, merkez kartının değil.
@@ -3064,6 +3094,45 @@ def sevk_cikti_kaydet(cur: Any, siparis_talep_id: str,
     already_gonderildi = str(rd.get("durum") or "").strip() == "gonderildi"
     sube_id = str(rd.get("sube_id") or "")
     kaynak_depo = str(rd.get("kaynak_depo_sube_id") or "").strip() or None
+
+    # ══════════════════════════════════════════════════════════════════════
+    # 🔒 ÇİFT SEVK FRENİ (Fable denetimi, 2026-08-29)
+    # ══════════════════════════════════════════════════════════════════════
+    # `already_gonderildi` HESAPLANIYOR ama HİÇBİR YERDE KULLANILMIYORDU
+    # (dosyada tek geçtiği yer kendi atamasıydı). Sevk kapısı da yalnız
+    # 'teslim_edildi'yi kesiyordu. Sonuç: depocu "Yola çıkar"a iki kez
+    # basarsa STOK İKİ KEZ DÜŞÜYOR, `stok_yolda`'da mükerrer satır oluşuyor
+    # ve şube iki paket görüyor. Temizlemesi en pahalı hata sınıfı.
+    # ⚠️ Karar TALEP DURUMUNA değil, GERÇEK KAYDA bağlanır: bu talep için
+    #    zaten 'yolda' satırı varsa ikinci sevk reddedilir. Durum alanına
+    #    güvenmek, durumu başka bir akış değiştirdiğinde freni açardı.
+    # ⚠️ Kısmi sevke izin verilir: yalnız AYNI KALEM ikinci kez sevk
+    #    edilemez. Depo bir kalemi bugün, diğerini yarın gönderebilir.
+    _gonderilecek_kodlar = [
+        str(_it.get("kalem_kodu") or _it.get("urun_id") or "").strip()
+        for _it in (sevk_kalemleri or [])
+        if max(0, int(_it.get("sevk_adet") or _it.get("adet") or 0)) > 0
+    ]
+    _gonderilecek_kodlar = [k for k in _gonderilecek_kodlar if k]
+    if _gonderilecek_kodlar:
+        cur.execute(
+            """
+            SELECT kalem_adi FROM stok_yolda
+             WHERE siparis_talep_id = %s
+               AND durum = 'yolda'
+               AND COALESCE(sevk_adet, 0) > 0
+               AND kalem_kodu = ANY(%s)
+            """,
+            (siparis_talep_id, _gonderilecek_kodlar),
+        )
+        _zaten = [str(dict(r).get("kalem_adi") or "?") for r in (cur.fetchall() or [])]
+        if _zaten:
+            raise ValueError(
+                "Bu kalemler zaten yola çıkmış: " + ", ".join(_zaten)
+                + ". Ekranı yenileyin — ikinci gönderim stoğu ikinci kez düşürür."
+            )
+    if already_gonderildi and not _gonderilecek_kodlar:
+        raise ValueError("Bu talep zaten yola çıkmış — gönderilecek yeni kalem yok.")
 
     yolda_ids = []
     for item in sevk_kalemleri:
