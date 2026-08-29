@@ -146,11 +146,22 @@ def _sevk_kalem_satir(cur: Any, d: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         sevk_adet = 0
     if sevk_adet <= 0:
         return None
+    try:
+        _ist = max(0, int(d.get("istenen_adet") or 0))
+    except (TypeError, ValueError):
+        _ist = 0
     return {
         "kalem_kodu": kk,
         "kalem_adi": urun_ad or kk,
         "sevk_adet": sevk_adet,
         "urun_id": urun_id or None,
+        # ⚠️ TASINMAYAN ALAN (canli test, 2026-08-30): cift sevk freninin
+        # yeni kurali "toplam sevk ISTENEN adedi asamaz" diyor ama bu sozluk
+        # `istenen_adet` TASIMIYORDU. Fren onu 0 goruyor ve her ikinci partiyi
+        # reddediyordu — mesru kismi sevk (2+2 <= 6) bile engelleniyordu.
+        # Testte yakalandi: mesaj "zaten 2 yolda, simdi 2 daha" diyordu ama
+        # "istenen 6" yazmiyordu; eksik alanin imzasi buydu.
+        "istenen_adet": _ist,
     }
 
 
