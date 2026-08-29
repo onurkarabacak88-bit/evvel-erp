@@ -2111,12 +2111,37 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
           }
           : { etiket: 'Hedef depo', deger: s.hedef_depo_sube_adi || 'atanmadı', renk: s.hedef_depo_sube_adi ? R.krem : R.amber },
       ],
-      listeBaslik: z ? 'Talep kalemleri · merkez stok durumu' : 'Talep kalemleri',
+      listeBaslik: (s.stok_alarm_detay || []).length
+        ? 'STOK HAREKETİ YAZILAMAYAN KALEMLER'
+        : (z ? 'Talep kalemleri · merkez stok durumu' : 'Talep kalemleri'),
       // ⚠️ SESSİZ ELEME (Codex, 2026-08-27): kalem listesi 14'te kesiliyor ve
       // kesildiği SÖYLENMİYORDU. Sahip "bütün kalemleri gördüm" sanıp eksik
       // kanıtla karar veriyordu — 38 kalemlik siparişte 24 kalem görünmüyordu.
       // (Taşan sayı listenin sonunda ayrı satır olarak yazılıyor.)
       satirlar: [
+        // 🚨 STOK ALARMI EN ÜSTTE (2026-08-30): sevk edildi ama kaynak
+        // depodan DÜŞMEDİ. Bu satırlar üç ay boyunca hiçbir ekranda
+        // görünmedi; 26 siparişte 45 alarm birikmiş. Kalem listesinin
+        // üstünde, çünkü "hangi ürün kaç adet" sorusu diğer her şeyden
+        // önce gelir — stok sapmasının büyüklüğü buradan okunur.
+        ...(s.stok_alarm_detay || []).map((a) => ({
+          ad: `🚨 ${a.kalem_adi || a.kalem_kodu || 'ürün'}`,
+          detay: [
+            a.tip === 'HAYALET_STOK'
+              ? 'depoda yeterli adet yoktu — fark kadarı düşürülemedi'
+              : 'kaynak depoda stok satırı bulunamadı — hiç düşülmedi',
+            a.depo ? `depo: ${a.depo}` : '',
+            a.kalem_kodu ? `kod: ${a.kalem_kodu}` : '',
+            a.ts || '',
+          ].filter(Boolean).join(' · '),
+          tutar: a.adet != null ? `${sayi(a.adet)} adet` : '—',
+        })),
+        ...((s.stok_alarm_detay || []).length ? [{
+          ad: '— talep kalemleri —',
+          detay: 'yukarıdakiler stok hareketi yazılamayan kalemlerdir',
+          tutar: '',
+          solgun: true,
+        }] : []),
         ...(s.kalemler || []).slice(0, 14).map((k) => {
         const zk = zKalemMap[String(k?.urun_ad || '')] || null;
         // ── 🔀 KALEMİN HEDEFİ (sahip isteği, 2026-08-28) ──────────────────

@@ -384,7 +384,7 @@ def siparis_kontrol_kulesi_yukle(
     # Sonucu agir: kaynak depo dusmedi ama alici depo artti → sirket
     # genelinde stok SISIYOR ve kimse fark etmiyor.
     # Uyari artik siparisin KENDI satirinda tasinir; kuyruk gosterebilir.
-    _stok_alarm: Dict[str, int] = {}
+    _stok_alarm: Dict[str, List[Dict[str, Any]]] = {}
     _dagitim_okunamadi = False
     if _detay_ids:
         try:
@@ -451,20 +451,42 @@ def siparis_kontrol_kulesi_yukle(
         try:
             cur.execute(
                 """
-                SELECT siparis_talep_id, COUNT(*)::int AS n
+                SELECT siparis_talep_id, tip, kalem_kodu, mesaj, sube_id,
+                       detay, olusturma
                   FROM sube_operasyon_uyari
                  WHERE tip IN ('STOK_DUSME_HATASI', 'HAYALET_STOK')
                    AND okundu IS NOT TRUE
                    AND siparis_talep_id = ANY(%s)
-                 GROUP BY 1
+                 ORDER BY olusturma DESC NULLS LAST
                 """,
                 (_detay_ids,),
             )
             for _ar in cur.fetchall() or []:
                 _a = dict(_ar)
                 _sid = str(_a.get("siparis_talep_id") or "")
-                if _sid:
-                    _stok_alarm[_sid] = int(_a.get("n") or 0)
+                if not _sid:
+                    continue
+                # Detay JSON'undan sevk adedini cikar — "kac adet dusmedi"
+                # sorusunun cevabi orada. Yoksa None (uydurma sayi YAZILMAZ).
+                _dt = _a.get("detay")
+                if isinstance(_dt, str):
+                    try:
+                        _dt = json.loads(_dt)
+                    except Exception:
+                        _dt = {}
+                if not isinstance(_dt, dict):
+                    _dt = {}
+                _stok_alarm.setdefault(_sid, []).append({
+                    "tip": str(_a.get("tip") or ""),
+                    "kalem_kodu": str(_a.get("kalem_kodu") or "") or None,
+                    "kalem_adi": _dt.get("kalem_adi") or _dt.get("urun_ad"),
+                    "adet": _dt.get("sevk_adet"),
+                    "beklenen": _dt.get("beklenen"),
+                    "mevcut": _dt.get("mevcut"),
+                    "depo": str(_a.get("sube_id") or "") or None,
+                    "mesaj": str(_a.get("mesaj") or ""),
+                    "ts": str(_a.get("olusturma") or "")[:16],
+                })
         except Exception:
             # Kolon/tablo farkliysa akis DURMAZ ama sessiz de kalmaz.
             logger.warning("kule: stok alarm sayimi yapilamadi")
@@ -638,7 +660,11 @@ def siparis_kontrol_kulesi_yukle(
             z["kismi_kapanis"] = True
         z["bekleyen_toptanci_gonderim"] = _bek_top
         # 🚨 Stok hareketi YAZILAMADI uyarisi — hicbir ekranda gorunmuyordu.
-        z["stok_alarm_sayisi"] = int(_stok_alarm.get(str(r.get("id") or "")) or 0)
+        _sa = _stok_alarm.get(str(r.get("id") or "")) or []
+        z["stok_alarm_sayisi"] = len(_sa)
+        # Detay: hangi urun, kac adet, hangi depo. Sayi tek basina
+        # "ne kadar sapma var" sorusunu cevaplamiyordu.
+        z["stok_alarm_detay"] = _sa[:12]
         z["toptanci_zombi"] = bool(
             str(z.get("asama") or "") == ASAMA_TOPTANCI_BEKLIYOR
             and not _disp
