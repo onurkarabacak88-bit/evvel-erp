@@ -112,7 +112,8 @@ export const opsKuyrukKur = (satirlar, bugunISO) => {
     // ⚠️ Bu bir TOPLAM: farklı birimlerdeki kalemler toplanıyor (3 koli +
     //    5 kg = 8?). "adet" demek uydurma bir birim iddiasıdır — toplamın
     //    kendisi anlamlı ama BİRİMİ yok. Sayıyı yaz, birimi UYDURMA.
-    return c != null ? `${c} kalem · toplam ${a}${ek}` : `toplam ${a}${ek}`;
+    // Ev kurali: her sey ADET (bir paket pecete = 1 adet). Toplam anlamli.
+    return c != null ? `${c} kalem · ${a} adet${ek}` : `${a} adet${ek}`;
   };
   return [
     // 🚨 STOK HAREKETİ YAZILAMADI (Codex denetimi + canlı ölçüm, 2026-08-30)
@@ -422,7 +423,15 @@ const zamanKisa = (s) => (s ? String(s).slice(0, 16).replace('T', ' ') : '—');
 const miktarBirim = (adet, birim) => {
   const n = Number.isFinite(Number(adet)) ? Number(adet) : 0;
   const b = String(birim || '').trim();
-  return b ? `${n} ${b}` : `${n} (birim?)`;
+  // ⚠️ VARSAYILAN "adet" — ve bu bir VARSAYIM DEĞİL, SÖZLEŞME (sahip,
+  //    2026-08-30): "her birim sipariş verilirken de kullanımda iken de
+  //    ADET mantığına indirgendi; peçetenin bir paketi 1 adet."
+  //    İlk sürümüm birim boşken "(birim?)" yazıyordu — 133 ürünün hepsinde
+  //    çıkacaktı ve hiçbir şey söylemeyecekti. Uyarı bütçesini boşa
+  //    harcamak, uyarı vermemekten kötüdür.
+  //    `birim` alanı artık İSTİSNA içindir: bir ürün gerçekten kg/litre
+  //    ile sayılıyorsa orada yazar, aksi hâlde ev kuralı geçerlidir.
+  return b ? `${n} ${b}` : `${n} adet`;
 };
 
 const kdKutuStil = (aktif) => ({
@@ -2102,9 +2111,7 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
           alt: sayi(s.iptal_kalem_sayisi) ? `${sayi(s.iptal_kalem_sayisi)} kalem iptal edildi` : undefined,
         },
         {
-          // ⚠️ Farklı birimlerdeki kalemler toplanıyor (3 koli + 5 kg = 8?).
-          //    Etiket bunu saklamasın: "miktar toplamı" der, "adet" demez.
-          etiket: 'Miktar toplamı',
+          etiket: 'Toplam adet',
           deger: String(Number.isFinite(Number(s.aktif_kalem_adedi))
             ? Number(s.aktif_kalem_adedi) : sayi(s.kalem_sayisi)),
         },
@@ -4560,11 +4567,7 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
                                     ⚠️ Boşken "adet" VARSAYILMAZ — varsaymak
                                        yanlış birimi doğru gibi gösterirdi.
                                        Eksiklik adıyla yazılır. */}
-                                {!sevkDisi && !k?.birim && (
-                                  <div style={{ fontSize: 10.5, color: R.amber, marginTop: 3 }}>
-                                    &#9888; birim belirtilmemiş — koli mi adet mi belli değil
-                                  </div>
-                                )}
+
                                 {/* 📉 KAYNAK DEPODA STOK VAR MI (2026-08-30)
                                     Canlı ölçüm: 59 stok alarmının 55'i TEMA
                                     kaynaklı. TEMA sistemde SIFIR görünen malı
@@ -5546,7 +5549,7 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
                 satirlar: [
                   ...(_t.kalemler || []).slice(0, 30).map((k) => ({
                     ad: k?.urun_ad || k?.kalem_adi || '—',
-                    detay: k?.birim ? String(k.birim) : 'birim tanımsız',
+                    detay: k?.birim ? String(k.birim) : '',
                     tutar: miktarBirim(sayi(k?.adet), k?.birim),
                   })),
                   ...((_t.kalemler || []).length > 30 ? [{

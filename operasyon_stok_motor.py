@@ -3591,17 +3591,20 @@ def sube_kabul_kaydet(cur: Any, siparis_talep_id: str, sube_id: str,
         sevk_adet = int(yolda_row.get("sevk_adet") or 0)
         yolda_durum = "kabul_edildi" if sevk_adet == kabul_adet else "kabul_uyusmazlik"
         # ══════════════════════════════════════════════════════════════════
-        # 📏 BİRİM KARIŞIKLIĞI SEZGİSİ (canlı ölçüm, 2026-08-30)
+        # 📏 SAYIM ÖLÇEĞİ SEZGİSİ — paket mi tane mi (canlı ölçüm, 2026-08-30)
         # ══════════════════════════════════════════════════════════════════
         # b616c04f siparişinde 8 kalemde kabul, sevkten KAT KAT fazlaydı:
         #   plastik kapak sevk=5   kabul=500  (100×)
         #   14 oz kapak   sevk=3   kabul=150  (50×)
-        # Depo "5 koli" gönderiyor, şube "500 adet" sayıyor. Sistemde bu
-        # ikisini ayıran bir BİRİM alanı yoktu (bugün eklendi ama 133 ürünün
-        # birimi henüz boş — uydurulamaz, sahip dolduracak).
-        # Bu sezgi birim verisi BEKLEMEDEN çalışır: oran büyükse bu bir sayım
-        # hatası değil, ÖLÇÜ BİRİMİ farkıdır. 1150 adetlik şişme 13 gün açık
-        # kaldı; artık kendi adıyla kaydedilir.
+        # Sistemin KURALI: her şey ADET — sipariş de sevk de sayım da aynı
+        # ölçüyü kullanır ("32 adet tuvalet kâğıdı" dersin, öyle sayarsın;
+        # bir paket peçete = 1 adet). Sahip teyidi, 2026-08-30.
+        # Bu yüzden 100 kat fark bir ÇEVİRİ sorunu DEĞİL, gerçek bir
+        # tutarsızlıktır: ya sevk eksik girilmiş ya kabul yanlış sayılmış.
+        # Hangisi olduğunu kod BİLEMEZ — ikisini de yazar, karar insanda.
+        # ⚠️ Sebep UYDURULMAZ: "şube yanlış saymış" demek suçlamadır ve
+        #    yanlışsa depoyu aklar. İki ihtimal de adıyla yazılır.
+        # 1150 adetlik şişme 13 gün açık kaldı; artık kendi adıyla kaydedilir.
         # ⚠️ KABULÜ ENGELLEMEZ: şube ne saydıysa odur, öneri-only.
         # ⚠️ Eşik 5×: normal fire/fazla ±%20 dolayında olur; 5 kat fark
         #    sayım hatasıyla açıklanamaz.
@@ -3616,13 +3619,16 @@ def sube_kabul_kaydet(cur: Any, siparis_talep_id: str, sube_id: str,
                 "birim_supheli": True,
                 "kat": _kat,
                 "aciklama": (
-                    f"Kabul, sevkin {_kat} KATI — bu bir sayım hatası değil, "
-                    "ÖLÇÜ BİRİMİ farkı olabilir (depo koli, şube adet saymış). "
-                    "Ürünün birimini merkezden tanımlayın."
+                    f"Kabul, sevkin {_kat} KATI. Sipariş, sevk ve sayım aynı ADET "
+                    "ölçüsünü kullanır — bu fark normal bir fazla/eksik değil. "
+                    "İki ihtimal: sevk adedi eksik girilmiş VEYA kabul sayımı "
+                    "hatalı. Hangisi olduğunu belirleyin; aradaki fark kadar "
+                    "stok yoktan var olur."
                 ),
             })
             logging.getLogger(__name__).warning(
-                "BIRIM SUPHESI: talep=%s kalem=%s sevk=%s kabul=%s (%sx)",
+                "SAYIM OLCEGI SUPHESI (paket vs tane): talep=%s kalem=%s "
+                "sevk=%s kabul=%s (%sx)",
                 siparis_talep_id, kalem_adi, sevk_adet, kabul_adet, _kat,
             )
         cur.execute(
