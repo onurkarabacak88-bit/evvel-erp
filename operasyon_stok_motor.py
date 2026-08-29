@@ -3157,10 +3157,36 @@ def sevk_cikti_kaydet(cur: Any, siparis_talep_id: str,
         if max(0, int(_it.get("sevk_adet") or _it.get("adet") or 0)) > 0
     ]
     _gonderilecek_kodlar = [k for k in _gonderilecek_kodlar if k]
+    # ⚠️ AYNI ISTEK ICINDE MUKERRER SATIR (Codex denetimi, 2026-08-30)
+    # Fren yalnizca DB'de ONCEDEN duran 'yolda' satirlarina bakiyordu; ayni
+    # payload icindeki tekrarlari toplamiyordu. Ayni urun iki satirda
+    # gonderilen_adet=5 ile gelirse stok IKI KEZ dusuyor ve iki stok_yolda
+    # satiri aciliyordu. Kalemler kod bazinda BIRLESTIRILIR — toplam korunur,
+    # mukerrer islem olmaz.
+    _birlesik: Dict[str, Dict[str, Any]] = {}
+    for _it in (sevk_kalemleri or []):
+        _k = str(_it.get("kalem_kodu") or _it.get("urun_id") or "").strip()
+        _a = max(0, int(_it.get("sevk_adet") or _it.get("adet") or 0))
+        if not _k or _a <= 0:
+            continue
+        if _k in _birlesik:
+            _birlesik[_k]["sevk_adet"] = int(_birlesik[_k].get("sevk_adet") or 0) + _a
+        else:
+            _yeni = dict(_it)
+            _yeni["sevk_adet"] = _a
+            _birlesik[_k] = _yeni
+    if len(_birlesik) < len([1 for _it in (sevk_kalemleri or [])
+                             if max(0, int(_it.get("sevk_adet") or _it.get("adet") or 0)) > 0]):
+        logging.getLogger(__name__).warning(
+            "sevk_cikti_kaydet: ayni istekte mukerrer kalem satiri birlestirildi "
+            "(talep=%s)", siparis_talep_id,
+        )
+    sevk_kalemleri = list(_birlesik.values())
     if _gonderilecek_kodlar:
         cur.execute(
             """
-            SELECT kalem_adi FROM stok_yolda
+            SELECT kalem_kodu, kalem_adi, COALESCE(sevk_adet, 0) AS sevk_adet
+              FROM stok_yolda
              WHERE siparis_talep_id = %s
                AND durum = 'yolda'
                AND COALESCE(sevk_adet, 0) > 0
@@ -3168,11 +3194,40 @@ def sevk_cikti_kaydet(cur: Any, siparis_talep_id: str,
             """,
             (siparis_talep_id, _gonderilecek_kodlar),
         )
-        _zaten = [str(dict(r).get("kalem_adi") or "?") for r in (cur.fetchall() or [])]
-        if _zaten:
+        _zaten_rows = [dict(r) for r in (cur.fetchall() or [])]
+        # ⚠️ KURAL DUZELTILDI (Codex denetimi, 2026-08-30)
+        # Ilk hali "bu kalem icin 'yolda' satiri varsa REDDET" diyordu. Bu
+        # MESRU KISMI SEVKI de engelliyordu: bugun 3 adet cikti, yarin ayni
+        # kalemden 2 adet daha cikarilamiyordu (ilk parti hala yolda diye).
+        # Dogru degismez: TOPLAM SEVK, ISTENEN ADEDI ASAMAZ. Ikinci parti
+        # istenen sinirin altinda kaliyorsa MESRUDUR; asiyorsa ya cift tik
+        # ya hatadir.
+        _yolda_toplam: Dict[str, int] = {}
+        _yolda_ad: Dict[str, str] = {}
+        for _r in _zaten_rows:
+            _k = str(_r.get("kalem_kodu") or "")
+            _yolda_toplam[_k] = _yolda_toplam.get(_k, 0) + int(_r.get("sevk_adet") or 0)
+            _yolda_ad[_k] = str(_r.get("kalem_adi") or _k)
+        _asan: List[str] = []
+        for _it in (sevk_kalemleri or []):
+            _k = str(_it.get("kalem_kodu") or _it.get("urun_id") or "").strip()
+            if not _k or _k not in _yolda_toplam:
+                continue
+            _yeni = max(0, int(_it.get("sevk_adet") or _it.get("adet") or 0))
+            _ist = max(0, int(_it.get("istenen_adet") or 0))
+            _onceki = _yolda_toplam[_k]
+            # Istenen bilinmiyorsa (0) eski korumaya dus: ikinci gonderim supheli.
+            if _ist <= 0 or (_onceki + _yeni) > _ist:
+                _asan.append(
+                    f"{_yolda_ad.get(_k, _k)} (zaten {_onceki} yolda"
+                    + (f", istenen {_ist}" if _ist > 0 else "")
+                    + f", simdi {_yeni} daha)"
+                )
+        if _asan:
             raise ValueError(
-                "Bu kalemler zaten yola çıkmış: " + ", ".join(_zaten)
-                + ". Ekranı yenileyin — ikinci gönderim stoğu ikinci kez düşürür."
+                "Bu kalemlerde toplam sevk istenen adedi asiyor: "
+                + ", ".join(_asan)
+                + ". Ekrani yenileyin — ikinci gonderim stogu ikinci kez dusurur."
             )
     if already_gonderildi and not _gonderilecek_kodlar:
         raise ValueError("Bu talep zaten yola çıkmış — gönderilecek yeni kalem yok.")

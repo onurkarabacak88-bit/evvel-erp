@@ -373,6 +373,9 @@ def siparis_kontrol_kulesi_yukle(
     # yalnız ADET topluyordu; TEDARİKÇİ ADI atılıyordu. Ekran "yollandı"
     # diyebiliyor ama "KİME" diyemiyordu. Ad + durum + zaman burada toplanır.
     _kalem_hedef: Dict[str, Dict[str, Dict[str, Any]]] = {}
+    # ⏳ Henüz TESLİM ALINMAMIŞ toptancı gönderimi olan talepler.
+    # Erken kapanma korumasında kullanılır (aşağıda).
+    _bekleyen_toptanci: Dict[str, int] = {}
     _dagitim_okunamadi = False
     if _detay_ids:
         try:
@@ -394,6 +397,8 @@ def siparis_kontrol_kulesi_yukle(
                         _dkl = []
                 _m = _dagitilan.setdefault(_dtid, {})
                 _h = _kalem_hedef.setdefault(_dtid, {})
+                if str(_d.get("durum") or "").strip() == "gonderildi":
+                    _bekleyen_toptanci[_dtid] = _bekleyen_toptanci.get(_dtid, 0) + 1
                 _ted = str(_d.get("tedarikci_ad") or "").strip() or "toptancı"
                 for _dk in _dkl:
                     _dad = str((_dk or {}).get("urun_ad") or "").strip().lower()
@@ -579,6 +584,26 @@ def siparis_kontrol_kulesi_yukle(
         # tamamlanmaz. 8 siparişin 7'si bu hâldeydi ve 11 gün fark edilmedi.
         # Doğuran delik kapatıldı + geçmiş göçle hizalandı; bu bayrak BAŞKA
         # bir yol aynı durumu üretirse sessiz kalmasın diye duruyor.
+        # ══════════════════════════════════════════════════════════════════
+        # ⏳ ERKEN KAPANMA KORUMASI (Codex denetimi, 2026-08-30)
+        # ══════════════════════════════════════════════════════════════════
+        # `_kabul_durum_ozet` YALNIZ `stok_yolda`'ya bakar — yani DEPO ayağına.
+        # Hepsi kabul edilince 'kabul_tam' döner ve `siparis_asama_hesapla`
+        # bunu TEK BAŞINA "tamamlandı" sayar. Bölünmüş siparişte bu YANLIŞ:
+        # depo ayağı gelmiş olabilir ama toptancı ayağı hâlâ yolda.
+        # Sipariş "tamamlandı" görününce kimse peşine düşmez ve toptancıdan
+        # gelmeyen mal sessizce kaybolur — zombinin TERSİ, daha tehlikelisi.
+        # (Bölme özelliği kurulmadan önce bir sipariş tek kanaldan gidiyordu,
+        #  bu yüzden senaryo ulaşılamazdı. Özellik bunu ulaşılabilir kıldı.)
+        _bek_top = int(_bekleyen_toptanci.get(str(r.get("id") or "")) or 0)
+        if _bek_top > 0 and z.get("asama") == ASAMA_TAMAMLANDI:
+            z["asama"] = ASAMA_TOPTANCI_BEKLIYOR
+            z["asama_metni"] = (
+                f"Depo ayağı teslim alındı — {_bek_top} toptancı gönderimi "
+                "hâlâ bekleniyor"
+            )
+            z["kismi_kapanis"] = True
+        z["bekleyen_toptanci_gonderim"] = _bek_top
         z["toptanci_zombi"] = bool(
             str(z.get("asama") or "") == ASAMA_TOPTANCI_BEKLIYOR
             and not _disp

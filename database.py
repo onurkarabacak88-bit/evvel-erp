@@ -1358,8 +1358,20 @@ def stok_yolda_insert_row(
     try:
         _kk = str(kalem_kodu or "").strip()
         _ka = str(kalem_adi or "").strip()
-        # UUID biçiminde değilse (yani ad veya boş) kanoniğe çevirmeyi dene
-        if _ka and (not _kk or "-" not in _kk or len(_kk) < 30):
+        # ⚠️ KAPSAM DARALTILDI (Codex denetimi, 2026-08-30)
+        # İlk hâli "UUID değilse çevir" diyordu. Bu FAZLA GENİŞTİ: havuz
+        # kodları (su_adet, cookie_adet, bardak_kucuk…) ve slug kodlar
+        # (pasta_browni, laktozsuz_sut…) UUID DEĞİL ama DOĞRU kodlardır.
+        # Codex somut senaryo verdi: kalem_kodu='su_adet', kalem_adi='Su' →
+        # aynı adda katalog ürünü varsa kayıt su_adet yerine UUID'ye
+        # çevriliyordu. Bu red değil, SESSİZ KİMLİK DÖNÜŞÜMÜ — havuz
+        # muhasebesini bozardı.
+        # Artık YALNIZ gerçek hayalet vakası çevrilir:
+        #   · kod hiç yok, VEYA
+        #   · kod ürün ADININ kendisi (hayaletin imzası)
+        # Kodu olan hiçbir kayda DOKUNULMAZ.
+        _hayalet_vakasi = (not _kk) or (_kk.strip().lower() == _ka.strip().lower())
+        if _ka and _hayalet_vakasi and (not _kk or "-" not in _kk or len(_kk) < 30):
             cur.execute(
                 """
                 SELECT id FROM siparis_urun
