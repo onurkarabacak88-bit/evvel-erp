@@ -2151,6 +2151,12 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
           ? [
             // "şubede kayıt yok" ≠ "şubede 0 var". İkincisi ölçüm, birincisi
             // ölçümsüzlük — karışırsa "gereksiz sipariş" uyarısı da yalancı olur.
+            // 🪞 Kimlik belirsizliği EN ÖNE: aşağıdaki bütün sayılar
+            // ikisinden BİRİNİN sayısı, toplam değil. Sayıyı okumadan önce
+            // bunun bilinmesi gerekir.
+            zk.kimlik_belirsiz
+              ? '⚠ AYNI ADDA BİRDEN FAZLA ÜRÜN — aşağıdaki sayı bunlardan yalnız BİRİNE ait, toplam değil'
+              : '',
             zk.sube_zaten_var ? `⚠ şubede zaten ${sayi(zk.sube_depo_mevcut)} var`
               : (zk.sube_depo_kayit_var === false ? 'şubede bu ürünün kaydı yok' : ''),
             // ⚠️ Hesap DEPODAN yapıldıysa merkez kartının boş olması bir

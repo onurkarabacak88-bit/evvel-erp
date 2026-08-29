@@ -20642,6 +20642,9 @@ def ops_v2_bekleyen_siparisler(
                         if it.get("sube_depo_mevcut") is not None else None
                     ),
                     "sube_depo_kayit_var": bool(it.get("sube_depo_kayit_var")),
+                    # 🪞 Ad katalogda birden fazla urune denk geliyorsa okunan
+                    # sayi IKISINDEN BIRININ sayisidir, toplam DEGILDIR.
+                    "kimlik_belirsiz": bool(it.get("kimlik_belirsiz")),
                     "sube_zaten_var": bool(it.get("sube_zaten_var")),
                     "gonderim_kaynagi": it.get("gonderim_kaynagi"),
                     "hedef_depo_mevcut": it.get("hedef_depo_mevcut"),

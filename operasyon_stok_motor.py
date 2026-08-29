@@ -2054,6 +2054,44 @@ def enrich_siparis_kalemleri_stok_inplace(
             ) if a
         ]
 
+    # ══════════════════════════════════════════════════════════════════════
+    # 🪞 KİMLİK BELİRSİZLİĞİ TESPİTİ (canlı tarama, 2026-08-29)
+    # ══════════════════════════════════════════════════════════════════════
+    # Katalogda AYNI ADLA birden fazla ürün olabiliyor ve stok ikiye
+    # bölünüyor. Canlı kanıt: "Z Peçete" (Temizlik, 118 adet) ve "Z PEÇETE"
+    # (Sarf, 155 adet) — aynı mal, iki kayıt, toplam 273 ama hiçbir ekran
+    # 273 göstermiyor. Ad üzerinden eşleşen her okuma İKİSİNDEN BİRİNİ
+    # seçiyor; hangisi olduğu belli değil.
+    # ⚠️ BİRLEŞTİRME YAPILMAZ: "Cookie" şurup mu bisküvi mi, "Z Peçete" tek
+    #    ürün mü — bu iş kararıdır, sahibinde kalır. Burada yalnız
+    #    GÖRÜNÜR KILINIR: kararın verildiği ekranda uyarı çıkar.
+    _ad_listesi = [
+        str(it.get("urun_ad") or "").strip()
+        for it in (kalemler or []) if isinstance(it, dict) and str(it.get("urun_ad") or "").strip()
+    ]
+    _belirsiz_adlar: set = set()
+    if _ad_listesi:
+        try:
+            cur.execute(
+                """
+                SELECT LOWER(TRIM(ad)) AS ad_n, COUNT(*) AS n
+                  FROM siparis_urun
+                 WHERE LOWER(TRIM(ad)) = ANY(%s)
+                 GROUP BY 1 HAVING COUNT(*) > 1
+                """,
+                ([a.lower() for a in _ad_listesi],),
+            )
+            for _br in cur.fetchall() or []:
+                _bn = str(dict(_br).get("ad_n") or "").strip()
+                if _bn:
+                    _belirsiz_adlar.add(_bn)
+        except Exception:
+            # Tespit düşerse akış DURMAZ — ama sessiz de kalmaz.
+            logging.getLogger(__name__).warning(
+                "kimlik belirsizligi tespiti yapilamadi (stok okumasi etkilenmedi)"
+            )
+            _belirsiz_adlar = set()
+
     kodlar: List[str] = []
     for it in kalemler or []:
         if not isinstance(it, dict):
@@ -2213,6 +2251,11 @@ def enrich_siparis_kalemleri_stok_inplace(
         it["sube_depo_mevcut"] = sube_dep if sube_dep_kayit_var else None
         it["sube_depo_kayit_var"] = sube_dep_kayit_var
         it["sube_zaten_var"] = sube_zaten_var
+        # 🪞 Bu kalemin adı katalogda birden fazla ürüne denk geliyorsa: okunan
+        # sayı İKİSİNDEN BİRİNİN sayısıdır, toplam DEĞİLDİR.
+        it["kimlik_belirsiz"] = bool(
+            str(it.get("urun_ad") or "").strip().lower() in _belirsiz_adlar
+        )
         # Kalem bazında da GERÇEK KAYNAK: hesap depodan yapıldıysa deponun
         # kaydı sorulur, merkez kartının değil.
         it["merkez_kayit_yok"] = bool(kalem_kodu) and (
