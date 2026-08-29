@@ -1804,6 +1804,11 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
         method: 'POST',
         body: {
           talep_id: seciliTalep.id,
+          // 🔒 BAYAT PENCERE KİLİDİ: ekranı açtığımızda okuduğumuz sürüm.
+          // Bu arada merkez bir kalemi başka yere yönlendirdiyse sunucu 409
+          // döner ve kaydımız ALINMAZ — yoksa bayat dizi o kalemi geri ezer
+          // ve aynı mal iki kanaldan çıkardı.
+          kalem_surum: seciliTalep.kalem_surum,
           hedef_depo_sube_id: seciliTalep.hedef_depo_sube_id || seciliTalep.sevkiyat_sube_id,
           kalem_durumlari: payload,
           sevkiyat_notu: (notu || '').trim() || null,
@@ -1820,7 +1825,17 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
       setSeciliId('');
       sevkYukle();
     } catch (e) {
-      onToast?.(e?.message || 'Güncelleme başarısız');
+      // 🔒 BAYAT PENCERE: sunucu 409 döndüyse ekran eskimiş demektir.
+      // Sadece "başarısız" demek yetmez — kullanıcı ne yapacağını bilmeli
+      // ve ekran KENDİNİ TAZELEMELİ, yoksa aynı bayat veriyle tekrar dener.
+      const _msg = e?.message || 'Güncelleme başarısız';
+      if (/ekranı açtıktan sonra değişti|ekranı yenileyip/i.test(_msg)) {
+        onToast?.(`⚠ ${_msg}`);
+        sevkYukle();      // hazırlık listesi
+        kuleYukle();      // kule + kuyruk
+      } else {
+        onToast?.(_msg);
+      }
     } finally {
       setBusy(false);
     }

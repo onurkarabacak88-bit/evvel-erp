@@ -5145,6 +5145,30 @@ $$;
             except Exception: pass
             print(f"[MIGRATION WARN] depo_stok_duplike_temizlik_v4: {_mig_e}")
 
+        # ─── 🔒 BAYAT PENCERE KİLİDİ (iyimser eşzamanlılık) ─────────────────
+        # Fable denetimi: `kalem_durumlari` her yazmada TÜM DİZİ olarak
+        # ezilir (last-writer-wins). Somut senaryo:
+        #   1. Merkez böler: A→depo, B→bekliyor
+        #   2. Depocu hazırlık modalını AÇAR (diziyi hafızasına alır)
+        #   3. Merkez B'yi toptancıya yollar (dizi değişir)
+        #   4. Depocu KAYDEDER → bayat dizi B'yi "bekliyor"a GERİ EZER
+        #   5. Depo B'yi de sevk eder → aynı mal iki kanaldan gelir,
+        #      fatura ikilenir
+        # Çözüm: talep bir SÜRÜM taşır; `kalem_durumlari`'nı değiştiren her
+        # yazma sürümü artırır. Ekran okuduğu sürümü geri gönderir;
+        # tutmuyorsa yazma REDDEDİLİR ("ekranı yenileyin").
+        # ⚠️ Kilit sayının kendisinde değil, YAZMA ANINDA `FOR UPDATE` ile
+        #    okunan sürümde — iki istek aynı anda gelirse biri bekler,
+        #    sonra sürümü değişmiş bulur ve reddedilir.
+        cur.execute("""
+            DO $$ BEGIN
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='siparis_talep' AND column_name='kalem_surum')
+                THEN ALTER TABLE siparis_talep
+                     ADD COLUMN kalem_surum INT NOT NULL DEFAULT 0; END IF;
+            END $$;
+        """)
+
         # ─── MIGRATION: kimlik_birlestirme_sahip_karari_v1 ──────────────────
         # 🪞 Canlı tarama (2026-08-29) aynı adla iki kayıt bulmuştu; SAHİP
         # KARAR VERDİ (2026-08-30): "cookie şurup, Z Peçete aynı ürün".

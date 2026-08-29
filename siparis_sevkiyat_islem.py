@@ -255,8 +255,14 @@ def siparis_sevkiyat_kalem_guncelle_execute(
     personel_ad: Optional[str],
     gonderildi: bool,
     defter_sube_id: str,
+    beklenen_surum: Optional[int] = None,
 ) -> Dict[str, Any]:
-    """FOR UPDATE ile talebi kilitleyip kalem_durumlari ve sevkiyat alanlarını günceller."""
+    """FOR UPDATE ile talebi kilitleyip kalem_durumlari ve sevkiyat alanlarını günceller.
+
+    🔒 `beklenen_surum`: ekranın OKUDUĞU `kalem_surum`. Yazma anında kayıttaki
+    sürüm bundan farklıysa ekran BAYATTIR ve yazma reddedilir. None gelirse
+    (henüz güncellenmemiş istemci) kontrol atlanır — geriye uyum.
+    """
     tid = (talep_id or "").strip()
     sevk_sid = (hedef_depo_sube_id or "").strip()
     if not tid or not sevk_sid:
@@ -285,7 +291,7 @@ def siparis_sevkiyat_kalem_guncelle_execute(
         f"""
         SELECT id, sube_id, COALESCE(hedef_depo_sube_id, sevkiyat_sube_id) AS hedef_depo_sube_id,
                {SD_NOALIAS} AS sevkiyat_durumu,
-               durum
+               durum, COALESCE(kalem_surum, 0) AS kalem_surum
         FROM siparis_talep
         WHERE id=%s
         FOR UPDATE
@@ -296,6 +302,26 @@ def siparis_sevkiyat_kalem_guncelle_execute(
     if not r:
         raise HTTPException(404, "Sipariş talebi bulunamadı")
     row = dict(r)
+    # ══════════════════════════════════════════════════════════════════════
+    # 🔒 BAYAT PENCERE KİLİDİ (Fable denetimi, 2026-08-30)
+    # ══════════════════════════════════════════════════════════════════════
+    # `kalem_durumlari` her yazmada TÜM DİZİ olarak eziliyor. Depo ekranı
+    # modalı açtığı andaki diziyi hafızasında tutuyor; bu arada merkez bir
+    # kalemi toptancıya yollarsa, depocunun kaydı o kalemi "bekliyor"a GERİ
+    # EZİYOR ve depo onu da sevk ediyordu → aynı mal iki kanaldan, fatura
+    # ikileniyordu.
+    # Kontrol FOR UPDATE'ten SONRA: iki istek aynı anda gelirse biri bekler,
+    # sonra sürümü değişmiş bulur ve reddedilir. Sayının kendisinde değil,
+    # KİLİTLİ OKUMADA korunuyoruz.
+    if beklenen_surum is not None:
+        _mevcut_surum = int(row.get("kalem_surum") or 0)
+        if int(beklenen_surum) != _mevcut_surum:
+            raise HTTPException(
+                409,
+                "Bu sipariş siz ekranı açtıktan sonra değişti (merkez bir kalemi "
+                "başka yere yönlendirmiş olabilir). Kaydınız ALINMADI — ekranı "
+                "yenileyip tekrar deneyin.",
+            )
     if str(row.get("hedef_depo_sube_id") or "") != sevk_sid:
         raise HTTPException(409, "Talep farklı sevkiyat şubesine atanmış")
     mevcut_durum = str(row.get("durum") or "")
@@ -364,6 +390,8 @@ def siparis_sevkiyat_kalem_guncelle_execute(
             sevkiyat_durum=%s,
             durum=%s,
             kalem_durumlari=%s::jsonb,
+            -- 🔒 Bayat pencere kilidi
+            kalem_surum = COALESCE(kalem_surum, 0) + 1,
             sevkiyat_notu=COALESCE(%s, sevkiyat_notu),
             sevkiyat_notlari=COALESCE(%s, sevkiyat_notlari),
             sevkiyat_personel_ad=COALESCE(%s, sevkiyat_personel_ad),

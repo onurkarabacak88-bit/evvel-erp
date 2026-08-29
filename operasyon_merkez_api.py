@@ -9229,6 +9229,10 @@ class OpsSiparisSevkiyatGuncelleBody(BaseModel):
     personel_ad: Optional[str] = None
     pin: Optional[str] = None
     gonderildi: bool = False
+    # 🔒 BAYAT PENCERE KİLİDİ: ekranın OKUDUĞU `kalem_surum`. Yazma anında
+    # kayıttaki sürüm bundan farklıysa ekran bayattır ve yazma 409 alır.
+    # None gelirse (eski istemci) kontrol atlanır — geriye uyum.
+    kalem_surum: Optional[int] = None
 
 
 class OpsSevkiyatUyumsuzlukCozBody(BaseModel):
@@ -10050,6 +10054,8 @@ def ops_siparis_sevkiyata_gonder(body: OpsSiparisSevkiyataGonderBody):
                 sevkiyat_durumu='depoda_hazirlaniyor',
                 sevkiyat_durum='hazirlaniyor',
                 kalem_durumlari=%s::jsonb,
+                -- 🔒 Bayat pencere kilidi: kalem_durumlari degistigi icin surum artar
+                kalem_surum = COALESCE(kalem_surum, 0) + 1,
                 sevkiyat_notu=%s,
                 sevkiyat_notlari=%s,
                 operasyon_yonlendirme_talimati = COALESCE(NULLIF(TRIM(%s), ''), operasyon_yonlendirme_talimati),
@@ -12525,7 +12531,8 @@ def ops_siparis_sevkiyat_listesi(
                    ss.ad AS hedef_depo_sube_adi,
                    {SD_T} AS sevkiyat_durumu,
                    COALESCE(NULLIF(TRIM(t.sevkiyat_notu), ''), t.sevkiyat_notlari) AS sevkiyat_notu,
-                   t.kalem_durumlari, t.olusturma, t.sevkiyat_ts, t.sevkiyat_personel_ad
+                   t.kalem_durumlari, t.olusturma, t.sevkiyat_ts, t.sevkiyat_personel_ad,
+                   COALESCE(t.kalem_surum, 0) AS kalem_surum
             FROM siparis_talep t
             JOIN subeler s ON s.id = t.sube_id
             LEFT JOIN subeler ss ON ss.id = COALESCE(t.hedef_depo_sube_id, t.sevkiyat_sube_id)
@@ -13035,6 +13042,8 @@ def ops_siparis_talep_tahsis_uyumsuzluk_coz(body: OpsTalepTahsisUyumsuzlukCozBod
             UPDATE siparis_talep
             SET kalemler=%s::jsonb,
                 kalem_durumlari=%s::jsonb,
+                -- 🔒 Bayat pencere kilidi
+                kalem_surum = COALESCE(kalem_surum, 0) + 1,
                 guncelleme=NOW()
             WHERE id=%s
             """,
@@ -13102,6 +13111,7 @@ def ops_siparis_sevkiyat_guncelle(body: OpsSiparisSevkiyatGuncelleBody):
             personel_ad=(body.personel_ad or "").strip() or None,
             gonderildi=bool(body.gonderildi),
             defter_sube_id=defter_sube,
+            beklenen_surum=body.kalem_surum,
         )
 
 

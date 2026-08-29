@@ -213,6 +213,9 @@ def _satir_zenginlestir(cur: Any, row: Dict[str, Any],
         "tarih": str(row.get("tarih") or ""),
         "olusturma": str(row.get("olusturma") or ""),
         "durum": row.get("durum"),
+        # 🔒 Bayat pencere kilidi: ekran bunu okur, yazarken geri gönderir.
+        # Sözlüğe konmazsa SELECT'ten gelen değer burada ölürdü.
+        "kalem_surum": int(row.get("kalem_surum") or 0),
         "sevkiyat_durumu": sd,
         "asama": asama,
         "asama_metni": _asama_metni(asama, sd),
@@ -306,6 +309,8 @@ def siparis_kontrol_kulesi_yukle(
             st.tahsis_durum, st.tahsis_ts, st.tahsis_yapan_ad,
             st.sevkiyat_ts, st.sevkiyat_personel_ad,
             st.kabul_ts, st.kabul_personel_ad, st.kabul_durum AS kabul_durum_db,
+            -- 🔒 Bayat pencere kilidi: ekran okudugu surumu yazmada geri gonderir
+            COALESCE(st.kalem_surum, 0) AS kalem_surum,
             pk.telefon AS kabul_personel_tel,
             -- ══════════════════════════════════════════════════════════════
             -- 🔴 MÜKERRER SİPARİŞ KARTI — 2026-08-27, canlı kanıt

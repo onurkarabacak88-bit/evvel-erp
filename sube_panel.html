@@ -7500,6 +7500,11 @@ async function depWizSubmit(gonderildi) {
         personel_id: modalRes.personel_id,
         pin: modalRes.pin,
         kalemler: kalemler,
+        // 🔒 BAYAT PENCERE KİLİDİ: bu pencereyi açtığımızda okuduğumuz sürüm.
+        // Bu arada merkez bir kalemi başka yere yönlendirdiyse sunucu 409
+        // döner ve kaydımız ALINMAZ — yoksa elimizdeki eski liste o kalemi
+        // "bekliyor"a geri ezer ve depo onu da sevk ederdi.
+        kalem_surum: (_depWiz.kart && _depWiz.kart.kalem_surum),
         sevkiyat_notu: _depWiz.sevkNot || null,
         gonderildi: !!gonderildi,
       },
@@ -7511,7 +7516,18 @@ async function depWizSubmit(gonderildi) {
     await renderSiparisPanel();
     await siparisGonderSolBlokGuncelle(null);
   } catch(e) {
-    panelToast('❌ ' + (e.message || 'Hata'), 5000);
+    // 🔒 Bayat pencere: sunucu 409 dediyse elimizdeki liste eskimiş demektir.
+    // Sadece hata göstermek yetmez — pencereyi kapatıp TAZELEMELİ, yoksa
+    // depocu aynı eski listeyle tekrar dener ve yine reddedilir.
+    var _m = String((e && e.message) || 'Hata');
+    if (/ekranı açtıktan sonra değişti|yenileyip tekrar/i.test(_m)) {
+      panelToast('⚠ ' + _m, 9000);
+      try { depWizKapat(); } catch (_) {}
+      siparisAkisCache = null;
+      try { renderGonderilecekPanel(); } catch (_) {}
+    } else {
+      panelToast('❌ ' + _m, 5000);
+    }
   } finally {
     _depWiz.busy = false;
   }

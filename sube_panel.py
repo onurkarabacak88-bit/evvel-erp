@@ -77,6 +77,10 @@ class SubeDepoSevkiyatKalemSatir(BaseModel):
 
 
 class SubeDepoSevkiyatKaydetBody(BaseModel):
+    # 🔒 BAYAT PENCERE KİLİDİ: ekranın okuduğu `kalem_surum`. Yazma anında
+    # kayıttaki sürüm farklıysa 409 — depo, merkezin arada yaptığı
+    # yönlendirmeyi ezemez.
+    kalem_surum: Optional[int] = None
     talep_id: str
     personel_id: str
     pin: str
@@ -5008,6 +5012,7 @@ def sube_siparis_akisi(
                    hd.ad AS hedef_depo_adi,
                    t.kalemler,
                    t.kalem_durumlari,
+                   COALESCE(t.kalem_surum, 0) AS kalem_surum,
                    t.sevkiyat_ts,
                    t.depo_sevkiyat_rapor_metni,
                    t.depo_sevkiyat_rapor_ts,
@@ -5066,6 +5071,7 @@ def sube_siparis_akisi(
                        hd.ad AS hedef_depo_adi,
                        t.kalemler,
                        t.kalem_durumlari,
+                   COALESCE(t.kalem_surum, 0) AS kalem_surum,
                        t.sevkiyat_ts,
                        t.depo_sevkiyat_rapor_metni,
                        t.depo_sevkiyat_rapor_ts,
@@ -5120,6 +5126,7 @@ def sube_siparis_akisi(
                    ts.ad AS talep_sube_adi,
                    t.kalemler,
                    t.kalem_durumlari,
+                   COALESCE(t.kalem_surum, 0) AS kalem_surum,
                    COALESCE(NULLIF(TRIM(t.sevkiyat_notu), ''), t.sevkiyat_notlari) AS sevkiyat_notu,
                    t.sevkiyat_ts,
                    t.depo_sevkiyat_rapor_metni,
@@ -5369,6 +5376,7 @@ def sube_siparis_depo_sevkiyat_kaydet(sube_id: str, body: SubeDepoSevkiyatKaydet
             personel_ad=pad,
             gonderildi=bool(body.gonderildi),
             defter_sube_id=sube_id,
+            beklenen_surum=body.kalem_surum,
         )
 
 
