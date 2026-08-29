@@ -492,6 +492,26 @@ def siparis_kontrol_kulesi_yukle(
             logger.warning("kule: stok alarm sayimi yapilamadi")
             _stok_alarm = {}
 
+    # 📏 BİRİM HARİTASI (sahip: "bütün ürünler birim mantığında kullanılıyor")
+    # Çekmece üç yerde "adet" SABİT yazıyordu — koli gönderilen üründe bile.
+    # Bu, birim alanını eklerken kaçındığım varsayımın ta kendisiydi:
+    # "boşken adet varsayma" dedim ama ekran zaten adet varsayıyordu.
+    # ⚠️ Birim tanımsızsa None kalır; ekran "birim?" der, ADET DEMEZ.
+    _birim_harita: Dict[str, Any] = {}
+    try:
+        cur.execute("SELECT id, ad, birim, koli_ic_adet FROM siparis_urun")
+        for _br in cur.fetchall() or []:
+            _b = dict(_br)
+            _v = {"birim": _b.get("birim"), "koli_ic_adet": _b.get("koli_ic_adet")}
+            if _b.get("id"):
+                _birim_harita[str(_b["id"])] = _v
+            _adn = str(_b.get("ad") or "").strip().lower()
+            if _adn and _adn not in _birim_harita:
+                _birim_harita[_adn] = _v
+    except Exception:
+        logger.warning("kule: birim haritasi okunamadi — ekran 'birim?' gosterecek")
+        _birim_harita = {}
+
     satirlar: List[Dict[str, Any]] = []
     for r in detay_rows:
         z = _satir_zenginlestir(cur, r, yolda=detay_yolda.get(str(r.get("id") or ""), []))
@@ -572,8 +592,17 @@ def siparis_kontrol_kulesi_yukle(
                         }
         # Her kaleme kendi hedefini yapıştır (ad-anahtarlı; kimlik çatlağı
         # riski kule genelinde zaten ad üzerinden — burada YENİ risk açılmıyor).
+        def _birim_bul(_it2: Dict[str, Any]) -> Any:
+            for _c in (str(_it2.get("urun_id") or "").strip(),
+                       str(_it2.get("urun_ad") or "").strip().lower()):
+                if _c and _c in _birim_harita:
+                    return _birim_harita[_c]
+            return {}
         z["kalemler"] = [
-            (dict(_it, yonlendirme=_hedef_map.get(str(_it.get("urun_ad") or "").strip().lower()))
+            (dict(_it,
+                  yonlendirme=_hedef_map.get(str(_it.get("urun_ad") or "").strip().lower()),
+                  birim=_birim_bul(_it).get("birim"),
+                  koli_ic_adet=_birim_bul(_it).get("koli_ic_adet"))
              if isinstance(_it, dict) else _it)
             for _it in (z.get("kalemler") or [])
         ]

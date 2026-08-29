@@ -109,7 +109,10 @@ export const opsKuyrukKur = (satirlar, bugunISO) => {
     const ip = say(x.iptal_kalem_sayisi);
     // İptal SAYIYA girmez ama GÖRÜNÜR kalır (sessiz eleme yasak).
     const ek = ip ? ` · ${ip} iptal` : '';
-    return c != null ? `${c} kalem · ${a} adet${ek}` : `${a} adet${ek}`;
+    // ⚠️ Bu bir TOPLAM: farklı birimlerdeki kalemler toplanıyor (3 koli +
+    //    5 kg = 8?). "adet" demek uydurma bir birim iddiasıdır — toplamın
+    //    kendisi anlamlı ama BİRİMİ yok. Sayıyı yaz, birimi UYDURMA.
+    return c != null ? `${c} kalem · toplam ${a}${ek}` : `toplam ${a}${ek}`;
   };
   return [
     // 🚨 STOK HAREKETİ YAZILAMADI (Codex denetimi + canlı ölçüm, 2026-08-30)
@@ -408,6 +411,19 @@ const KD_SEBEP_AD = {
 };
 
 const zamanKisa = (s) => (s ? String(s).slice(0, 16).replace('T', ' ') : '—');
+
+// 📏 MİKTAR + BİRİM (sahip: "bütün ürünler birim mantığında kullanılıyor")
+// Çekmece üç yerde "adet" SABİT yazıyordu — 5 koli gönderilen üründe bile
+// "5 adet" diyordu. Birim alanını eklerken "boşken adet varsayma" dedim ama
+// ekran zaten adet varsayıyordu; asıl varsayım buradaydı.
+// ⚠️ Birim tanımsızsa "adet" DEĞİL, soru işareti: eksiklik görünsün.
+//    Canlı ölçüm: birim karışıklığı 1150 adetlik şişme üretti (sevk 5 /
+//    kabul 500). Yanlış birimi doğru göstermek, birimsizlikten kötüdür.
+const miktarBirim = (adet, birim) => {
+  const n = Number.isFinite(Number(adet)) ? Number(adet) : 0;
+  const b = String(birim || '').trim();
+  return b ? `${n} ${b}` : `${n} (birim?)`;
+};
 
 const kdKutuStil = (aktif) => ({
   ...opsAlanStil, marginBottom: 0, marginTop: 4,
@@ -2086,7 +2102,9 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
           alt: sayi(s.iptal_kalem_sayisi) ? `${sayi(s.iptal_kalem_sayisi)} kalem iptal edildi` : undefined,
         },
         {
-          etiket: 'Toplam adet',
+          // ⚠️ Farklı birimlerdeki kalemler toplanıyor (3 koli + 5 kg = 8?).
+          //    Etiket bunu saklamasın: "miktar toplamı" der, "adet" demez.
+          etiket: 'Miktar toplamı',
           deger: String(Number.isFinite(Number(s.aktif_kalem_adedi))
             ? Number(s.aktif_kalem_adedi) : sayi(s.kalem_sayisi)),
         },
@@ -2134,7 +2152,8 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
             a.kalem_kodu ? `kod: ${a.kalem_kodu}` : '',
             a.ts || '',
           ].filter(Boolean).join(' · '),
-          tutar: a.adet != null ? `${sayi(a.adet)} adet` : '—',
+          // Alarm kaydinda birim YOK — sayiyi yaz, birimi uydurma.
+          tutar: a.adet != null ? `${sayi(a.adet)}` : '—',
         })),
         ...((s.stok_alarm_detay || []).length ? [{
           ad: '— talep kalemleri —',
@@ -2231,7 +2250,7 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
           // Hedef varsa EN ÖNE gelir: "bu kalem artık nerede" sorusu, stok
           // sayılarından önce cevaplanır.
           detay: [yonMetin, detay].filter(Boolean).join(' · '),
-          tutar: `${sayi(k?.adet)} adet`,
+          tutar: miktarBirim(sayi(k?.adet), k?.birim),
           // Yönlendirilmiş/iptal edilmiş kalem SİLİNMEZ, soluklaşır.
           solgun: !!(yon || iptalli),
           // ⛔ KALEM İPTALİ — yalnız HENÜZ YÖNLENDİRİLMEMİŞ ve iptal
@@ -5527,8 +5546,8 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
                 satirlar: [
                   ...(_t.kalemler || []).slice(0, 30).map((k) => ({
                     ad: k?.urun_ad || k?.kalem_adi || '—',
-                    detay: k?.birim ? String(k.birim) : '',
-                    tutar: `${sayi(k?.adet)} adet`,
+                    detay: k?.birim ? String(k.birim) : 'birim tanımsız',
+                    tutar: miktarBirim(sayi(k?.adet), k?.birim),
                   })),
                   ...((_t.kalemler || []).length > 30 ? [{
                     ad: `… ve ${(_t.kalemler || []).length - 30} kalem daha`,
