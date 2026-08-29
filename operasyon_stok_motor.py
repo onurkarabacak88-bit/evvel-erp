@@ -3590,6 +3590,41 @@ def sube_kabul_kaydet(cur: Any, siparis_talep_id: str, sube_id: str,
         kalem_adi = str(yolda_row.get("kalem_adi") or kalem_adi_in or kalem_kodu).strip()
         sevk_adet = int(yolda_row.get("sevk_adet") or 0)
         yolda_durum = "kabul_edildi" if sevk_adet == kabul_adet else "kabul_uyusmazlik"
+        # ══════════════════════════════════════════════════════════════════
+        # 📏 BİRİM KARIŞIKLIĞI SEZGİSİ (canlı ölçüm, 2026-08-30)
+        # ══════════════════════════════════════════════════════════════════
+        # b616c04f siparişinde 8 kalemde kabul, sevkten KAT KAT fazlaydı:
+        #   plastik kapak sevk=5   kabul=500  (100×)
+        #   14 oz kapak   sevk=3   kabul=150  (50×)
+        # Depo "5 koli" gönderiyor, şube "500 adet" sayıyor. Sistemde bu
+        # ikisini ayıran bir BİRİM alanı yoktu (bugün eklendi ama 133 ürünün
+        # birimi henüz boş — uydurulamaz, sahip dolduracak).
+        # Bu sezgi birim verisi BEKLEMEDEN çalışır: oran büyükse bu bir sayım
+        # hatası değil, ÖLÇÜ BİRİMİ farkıdır. 1150 adetlik şişme 13 gün açık
+        # kaldı; artık kendi adıyla kaydedilir.
+        # ⚠️ KABULÜ ENGELLEMEZ: şube ne saydıysa odur, öneri-only.
+        # ⚠️ Eşik 5×: normal fire/fazla ±%20 dolayında olur; 5 kat fark
+        #    sayım hatasıyla açıklanamaz.
+        if sevk_adet > 0 and kabul_adet >= sevk_adet * 5:
+            _kat = round(kabul_adet / sevk_adet, 1)
+            uyumsuz_satirlar.append({
+                "kalem_kodu": kalem_kodu,
+                "kalem_adi": kalem_adi,
+                "sevk_adet": sevk_adet,
+                "kabul_adet": kabul_adet,
+                "fark_adet": kabul_adet - sevk_adet,
+                "birim_supheli": True,
+                "kat": _kat,
+                "aciklama": (
+                    f"Kabul, sevkin {_kat} KATI — bu bir sayım hatası değil, "
+                    "ÖLÇÜ BİRİMİ farkı olabilir (depo koli, şube adet saymış). "
+                    "Ürünün birimini merkezden tanımlayın."
+                ),
+            })
+            logging.getLogger(__name__).warning(
+                "BIRIM SUPHESI: talep=%s kalem=%s sevk=%s kabul=%s (%sx)",
+                siparis_talep_id, kalem_adi, sevk_adet, kabul_adet, _kat,
+            )
         cur.execute(
             "UPDATE stok_yolda SET durum=%s, kabul_ts=NOW(), kabul_adet=%s WHERE id=%s",
             (yolda_durum, kabul_adet, yolda_id),

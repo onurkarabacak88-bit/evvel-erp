@@ -8967,7 +8967,11 @@ def ops_siparis_katalog(tumunu_goster: bool = False):
         for k in kats:
             cur.execute(
                 """
-                SELECT id, ad, aktif, sira, birim_fiyat_tl, depo_stok_kalem_kodu, aciklama, dusum_modu
+                SELECT id, ad, aktif, sira, birim_fiyat_tl, depo_stok_kalem_kodu, aciklama, dusum_modu,
+                       -- 📏 Birim: bos ise ekran "birim belirtilmemis" der,
+                       -- sessizce "adet" VARSAYMAZ (koli/adet karisikligi
+                       -- 2026-08-30'da 495 adetlik sisme uretti).
+                       birim, koli_ic_adet
                 FROM siparis_urun
                 WHERE kategori_id=%s AND aktif=TRUE
                 ORDER BY sira ASC, ad ASC
@@ -12607,6 +12611,21 @@ def ops_siparis_sevkiyat_listesi(
                         "FROM sube_depo_stok WHERE sube_id = %s AND kalem_kodu = ANY(%s)",
                         (_dsid, _kodlar),
                     )
+                    _birim_map = {}
+                    try:
+                        # 📏 Kalemin birimi — depocu "3 ne?" diye sormasin.
+                        cur.execute(
+                            "SELECT id, ad, birim, koli_ic_adet FROM siparis_urun "
+                            "WHERE id = ANY(%s) OR LOWER(TRIM(ad)) = ANY(%s)",
+                            (_kodlar, [k.lower().strip() for k in _kodlar]),
+                        )
+                        for _br in cur.fetchall() or []:
+                            _b = dict(_br)
+                            for _key in (str(_b.get("id") or ""), str(_b.get("ad") or "").lower().strip()):
+                                if _key:
+                                    _birim_map[_key] = (_b.get("birim"), _b.get("koli_ic_adet"))
+                    except Exception:
+                        _birim_map = {}
                     for _sr in cur.fetchall() or []:
                         _sd2 = dict(_sr)
                         _kaynak_stok[str(_sd2.get("kalem_kodu") or "")] = int(_sd2.get("m") or 0)
@@ -12623,6 +12642,15 @@ def ops_siparis_sevkiyat_listesi(
                     # ⚠️ None = KAYIT YOK (0 adet var DEGIL) — ekran ayirsin.
                     _it["kaynak_depo_mevcut"] = _bulundu
                     _it["kaynak_depo_kayit_var"] = _bulundu is not None
+                    # 📏 Birim: BOS ise None kalir — ekran "birim
+                    # belirtilmemis" der, sessizce "adet" VARSAYMAZ.
+                    _bi = None
+                    for _c in (str(_it.get("urun_id") or "").strip(),
+                               str(_it.get("urun_ad") or "").lower().strip()):
+                        if _c and _c in _birim_map:
+                            _bi = _birim_map[_c]; break
+                    _it["birim"] = (_bi[0] if _bi else None) or None
+                    _it["koli_ic_adet"] = (_bi[1] if _bi else None) or None
             except Exception:
                 logger.warning("sevkiyat-listesi: kaynak depo stok okumasi yapilamadi")
             rows.append(d)

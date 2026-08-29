@@ -4530,8 +4530,22 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
                               <div style={{ flex: 1, minWidth: 150 }}>
                                 <div style={{ fontSize: 13, fontWeight: 600 }}>{k?.urun_ad || '—'}</div>
                                 <div style={{ fontSize: 11, color: sevkDisi ? R.amber : R.not2, marginTop: 2 }}>
-                                  {sevkDisi ? `\u26d4 ${sevkDisiMetin}` : `istenen ${sayi(k?.adet)}`}
+                                  {sevkDisi ? `\u26d4 ${sevkDisiMetin}`
+                                    : `istenen ${sayi(k?.adet)} ${k?.birim || ''}`.trim()}
                                 </div>
+                                {/* 📏 BİRİM BELİRTİLMEMİŞ (2026-08-30)
+                                    Canlı ölçüm: b616c04f'te plastik kapak
+                                    sevk=5 / kabul=500 (100×). Depo "5 koli"
+                                    gönderiyor, şube "500 adet" sayıyor;
+                                    sistemde ikisini ayıran alan YOKTU.
+                                    ⚠️ Boşken "adet" VARSAYILMAZ — varsaymak
+                                       yanlış birimi doğru gibi gösterirdi.
+                                       Eksiklik adıyla yazılır. */}
+                                {!sevkDisi && !k?.birim && (
+                                  <div style={{ fontSize: 10.5, color: R.amber, marginTop: 3 }}>
+                                    &#9888; birim belirtilmemiş — koli mi adet mi belli değil
+                                  </div>
+                                )}
                                 {/* 📉 KAYNAK DEPODA STOK VAR MI (2026-08-30)
                                     Canlı ölçüm: 59 stok alarmının 55'i TEMA
                                     kaynaklı. TEMA sistemde SIFIR görünen malı

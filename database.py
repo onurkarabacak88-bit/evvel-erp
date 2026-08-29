@@ -5157,6 +5157,29 @@ $$;
             except Exception: pass
             print(f"[MIGRATION WARN] depo_stok_duplike_temizlik_v4: {_mig_e}")
 
+        # ─── 📏 BİRİM (koli / adet / kg …) ──────────────────────────────────
+        # Canlı ölçüm (2026-08-30): b616c04f siparişinde 8 kalemde kabul,
+        # sevkten kat kat fazlaydı — plastik kapak sevk=5 / kabul=500 (100×),
+        # 14 oz kapak 3/150 (50×). Depo "5 koli" gönderiyor, şube "500 adet"
+        # sayıyor ve sistemde bu ikisini AYIRAN HİÇBİR ŞEY YOK.
+        # Sonuç: 495 adet yoktan var oluyor ve uyuşmazlık 13 gün açık kalıyor.
+        # (Bu, oturumun ilk gününde "depocunun elinde birim yok" diye not
+        #  edilen boşluğun faturası.)
+        # ⚠️ Alan BOŞ başlar: 133 ürünün birimi UYDURULAMAZ, sahip doldurur.
+        #    Boşken ekran "birim belirtilmemiş" der — sessizce "adet" VARSAYMAZ.
+        # ⚠️ `koli_ic_adet` çevrim için: 1 koli = kaç adet. Boşsa çevrim
+        #    YAPILMAZ; yanlış çevrim, birimsizlikten daha kötüdür.
+        cur.execute("""
+            DO $$ BEGIN
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='siparis_urun' AND column_name='birim')
+                THEN ALTER TABLE siparis_urun ADD COLUMN birim TEXT; END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name='siparis_urun' AND column_name='koli_ic_adet')
+                THEN ALTER TABLE siparis_urun ADD COLUMN koli_ic_adet INT; END IF;
+            END $$;
+        """)
+
         # ─── 🔒 BAYAT PENCERE KİLİDİ (iyimser eşzamanlılık) ─────────────────
         # Fable denetimi: `kalem_durumlari` her yazmada TÜM DİZİ olarak
         # ezilir (last-writer-wins). Somut senaryo:
