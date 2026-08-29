@@ -5145,6 +5145,82 @@ $$;
             except Exception: pass
             print(f"[MIGRATION WARN] depo_stok_duplike_temizlik_v4: {_mig_e}")
 
+        # ─── MIGRATION: kimlik_birlestirme_sahip_karari_v1 ──────────────────
+        # 🪞 Canlı tarama (2026-08-29) aynı adla iki kayıt bulmuştu; SAHİP
+        # KARAR VERDİ (2026-08-30): "cookie şurup, Z Peçete aynı ürün".
+        # Kod bu kararı kendi başına veremezdi — hangi ürünün hangisi olduğu
+        # iş bilgisi. Karar geldiği için uygulanıyor.
+        #
+        # (a) Z PEÇETE — katalogda iki ürün, stok bölünmüş:
+        #       e862ce5b… Temizlik  118 adet, 12 sipariş, son 2026-05-24
+        #       9eca1788… Sarf      155 adet,  3 sipariş, son 2026-07-08
+        #     SARF olan yaşatılır: daha GÜNCEL kullanılıyor (Tem > May) ve
+        #     daha çok stok tutuyor — Temizlik'ten Sarf'a geçilmiş görünüyor.
+        #     Temizlik kaydının stoğu Sarf'a EKLENİR, kendisi PASİFE alınır.
+        #     ⚠️ SİLİNMEZ: geçmiş siparişler o kimliği referans alıyor;
+        #        silmek eski kayıtları sahipsiz bırakırdı.
+        #
+        # (b) COOKIE — katalog ürünü (Şuruplar) stok 0 görünüyordu; gerçek
+        #     9 adet `cookie_adet` havuz kodundaydı. Sahip: aynı şurup.
+        #     Katalog ürünü havuz koduna BAĞLANIR (depo_stok_kalem_kodu).
+        _ZP_KAL = "9eca1788-3eb6-4601-b5e5-bd08b43be492"   # Sarf — yaşayan
+        _ZP_KAPAN = "e862ce5b-dfb5-4a08-9ef1-dfe0856e6464"  # Temizlik — pasif
+        _CK_URUN = "bfd970a2-3eb4-47cd-b422-a6ad62a55d1f"   # Cookie (şurup)
+        cur.execute("SAVEPOINT sp_kimlik_birlestirme")
+        try:
+            cur.execute("""
+                SELECT 1 FROM finans_migration_log
+                WHERE ad='kimlik_birlestirme_sahip_karari_v1' LIMIT 1
+            """)
+            if not cur.fetchone():
+                # (a1) Stok taşı: kapanan kaydın adedi yaşayana eklenir.
+                cur.execute("""
+                    INSERT INTO sube_depo_stok (sube_id, kalem_kodu, kalem_adi, mevcut_adet, guncelleme)
+                    SELECT k.sube_id, %s, 'Z PEÇETE', k.mevcut_adet, NOW()
+                      FROM sube_depo_stok k
+                     WHERE k.kalem_kodu = %s AND COALESCE(k.mevcut_adet,0) <> 0
+                    ON CONFLICT (sube_id, kalem_kodu) DO UPDATE
+                       SET mevcut_adet = COALESCE(sube_depo_stok.mevcut_adet,0)
+                                       + EXCLUDED.mevcut_adet,
+                           guncelleme = NOW()
+                """, (_ZP_KAL, _ZP_KAPAN))
+                _zp_tasinan = cur.rowcount
+                cur.execute("DELETE FROM sube_depo_stok WHERE kalem_kodu=%s", (_ZP_KAPAN,))
+                _zp_silinen = cur.rowcount
+                # (a2) Kapanan katalog ürünü PASİFE alınır (silinmez).
+                cur.execute(
+                    "UPDATE siparis_urun SET aktif=FALSE WHERE id=%s AND aktif IS TRUE",
+                    (_ZP_KAPAN,),
+                )
+                _zp_pasif = cur.rowcount
+                # (b) Cookie → havuz koduna bağla.
+                cur.execute(
+                    "UPDATE siparis_urun SET depo_stok_kalem_kodu='cookie_adet' "
+                    "WHERE id=%s AND depo_stok_kalem_kodu IS DISTINCT FROM 'cookie_adet'",
+                    (_CK_URUN,),
+                )
+                _ck = cur.rowcount
+                cur.execute("""
+                    INSERT INTO finans_migration_log (ad, detay) VALUES (%s, %s::jsonb)
+                """, (
+                    'kimlik_birlestirme_sahip_karari_v1',
+                    json.dumps({
+                        "z_pecete_tasinan_sube": _zp_tasinan,
+                        "z_pecete_silinen_satir": _zp_silinen,
+                        "z_pecete_pasife_alinan": _zp_pasif,
+                        "cookie_havuza_baglanan": _ck,
+                        "karar": "sahip 2026-08-30: cookie surup, z pecete ayni urun",
+                    }, ensure_ascii=False),
+                ))
+                print(f"[MIGRATION] kimlik_birlestirme_sahip_karari_v1: "
+                      f"zp_tasinan={_zp_tasinan} zp_silinen={_zp_silinen} "
+                      f"zp_pasif={_zp_pasif} cookie={_ck}")
+            cur.execute("RELEASE SAVEPOINT sp_kimlik_birlestirme")
+        except Exception as _mig_e:
+            try: cur.execute("ROLLBACK TO SAVEPOINT sp_kimlik_birlestirme")
+            except Exception: pass
+            print(f"[MIGRATION WARN] kimlik_birlestirme_sahip_karari_v1: {_mig_e}")
+
         # ─── MIGRATION: zombi_toptanci_talep_iyilestirme_v1 ─────────────────
         # 🧟 Canlı ölçüm (2026-08-29): 8 "toptancı bekliyor" siparişinin 7'si
         # KAPANMASI İMKÂNSIZ durumdaydı — en eskisi 11 günlük, 6'sı TEMA.
