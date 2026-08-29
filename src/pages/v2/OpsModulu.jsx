@@ -2506,7 +2506,14 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     const kolonlar = [
       { id: 'bekliyor', asamalar: ['bekliyor'], buton: '🏭 Depoya yönlendir', yerliYonlendir: true },
       { id: 'depoda', asamalar: ['depoda'], buton: 'Sevkiyatı hazırla →', gorunum: 'sevkiyat' },
-      { id: 'yolda', asamalar: ['yolda', 'toptanci_bekliyor'], bilgi: 'şube kabulü bekleniyor' },
+      // ⚠️ YARIM DÜZELTME TAMAMLANDI (2026-08-30): kuyruk cümlesi 493b447'de
+      // ayrılmıştı ama PANO hâlâ ikisini tek kolonda "şube kabulü bekleniyor"
+      // diye gösteriyordu. Toptancı siparişi HİÇ YOLA ÇIKMAMIŞTIR — şubenin
+      // kabul edeceği bir şey yoktur, beklenen TEDARİKÇİDİR. Aynı kusuru
+      // kuyrukta düzeltip panoda bırakmak, sahibin iki ekranda iki farklı
+      // gerçek görmesi demekti.
+      { id: 'yolda', asamalar: ['yolda'], bilgi: 'şube kabulü bekleniyor' },
+      { id: 'toptanci_bekliyor', asamalar: ['toptanci_bekliyor'], bilgi: 'tedarikçiden mal bekleniyor' },
       { id: 'tamamlandi', asamalar: ['tamamlandi'] },
     ];
     return (
