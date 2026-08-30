@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 
 from sevkiyat_helpers import (
     SD_ST,
+    ad_anahtar,
     sevkiyat_durumu_coz,
     sevkiyat_durumu_guncelle_params,
 )
@@ -410,7 +411,7 @@ def siparis_kontrol_kulesi_yukle(
                     _bekleyen_toptanci[_dtid] = _bekleyen_toptanci.get(_dtid, 0) + 1
                 _ted = str(_d.get("tedarikci_ad") or "").strip() or "toptancı"
                 for _dk in _dkl:
-                    _dad = str((_dk or {}).get("urun_ad") or "").strip().lower()
+                    _dad = ad_anahtar((_dk or {}).get("urun_ad"))
                     if not _dad:
                         continue
                     _m[_dad] = _m.get(_dad, 0) + int((_dk or {}).get("adet") or 0)
@@ -505,7 +506,7 @@ def siparis_kontrol_kulesi_yukle(
             _v = {"birim": _b.get("birim"), "koli_ic_adet": _b.get("koli_ic_adet")}
             if _b.get("id"):
                 _birim_harita[str(_b["id"])] = _v
-            _adn = str(_b.get("ad") or "").strip().lower()
+            _adn = ad_anahtar(_b.get("ad"))
             if _adn and _adn not in _birim_harita:
                 _birim_harita[_adn] = _v
     except Exception:
@@ -561,7 +562,7 @@ def siparis_kontrol_kulesi_yukle(
                 # BİTMEMİŞTİR, kuyrukta kalmalı.
                 if _ed == "yok":
                     continue
-                _en = str(_e.get("urun_ad") or "").strip().lower()
+                _en = ad_anahtar(_e.get("urun_ad"))
                 if _en:
                     _depoya_gitmis.add(_en)
                     # Hedef etiketi: henüz SEVK EDİLMEDİ, depoda hazırlanıyor.
@@ -574,7 +575,7 @@ def siparis_kontrol_kulesi_yukle(
         _gonderilmis |= _depoya_gitmis
         for _y in (z.get("yolda") or []):
             if int((_y or {}).get("sevk_adet") or 0) > 0:
-                _yad = str((_y or {}).get("kalem_adi") or "").strip().lower()
+                _yad = ad_anahtar((_y or {}).get("kalem_adi"))
                 if _yad:
                     _gonderilmis.add(_yad)
                     # Depodan çıkmış kalem: hedefi DEPO. Toptancı kaydı varsa
@@ -594,13 +595,13 @@ def siparis_kontrol_kulesi_yukle(
         # riski kule genelinde zaten ad üzerinden — burada YENİ risk açılmıyor).
         def _birim_bul(_it2: Dict[str, Any]) -> Any:
             for _c in (str(_it2.get("urun_id") or "").strip(),
-                       str(_it2.get("urun_ad") or "").strip().lower()):
+                       ad_anahtar(_it2.get("urun_ad"))):
                 if _c and _c in _birim_harita:
                     return _birim_harita[_c]
             return {}
         z["kalemler"] = [
             (dict(_it,
-                  yonlendirme=_hedef_map.get(str(_it.get("urun_ad") or "").strip().lower()),
+                  yonlendirme=_hedef_map.get(ad_anahtar(_it.get("urun_ad"))),
                   birim=_birim_bul(_it).get("birim"),
                   koli_ic_adet=_birim_bul(_it).get("koli_ic_adet"))
              if isinstance(_it, dict) else _it)
@@ -619,7 +620,7 @@ def siparis_kontrol_kulesi_yukle(
             if isinstance(_it, dict)
             and not _it.get("iptal")
             and (not _gonderilmis
-                 or str(_it.get("urun_ad") or "").strip().lower() not in _gonderilmis)
+                 or ad_anahtar(_it.get("urun_ad")) not in _gonderilmis)
         ]
         z["kalan_kalemler"] = _kalan
         # İptal edilen kalem sayısı AYRICA raporlanır: liste sessizce kısalırsa
@@ -637,7 +638,7 @@ def siparis_kontrol_kulesi_yukle(
             str((_it or {}).get("urun_ad") or "")
             for _it in (z.get("kalemler") or [])
             if isinstance(_it, dict)
-            and str((_it or {}).get("urun_ad") or "").strip().lower() in _disp_set
+            and ad_anahtar((_it or {}).get("urun_ad")) in _disp_set
         ]
         z["kismi_toptanci"] = bool(_disp_set) and len(z["kalan_kalemler"]) > 0
         # ── SAYILAR İPTALİ AYIRIR ─────────────────────────────────────────

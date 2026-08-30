@@ -43,6 +43,7 @@ from siparis_sevkiyat_islem import (
     siparis_sevkiyat_kalem_guncelle_execute,
 )
 from sevkiyat_helpers import (
+    ad_anahtar,
     sevkiyat_durumu_coz,
     sevkiyat_durumu_guncelle_params,
     SD_T,
@@ -179,21 +180,12 @@ def _norm_ad_tr(v: str) -> str:
     # aşağıda i'ye düşüyor). Sonra kalan birleşik işaretler temizleniyor.
     # ⚠️ Canlı ölçüm (2026-08-30): bu hatadan bozulmuş kayıt YOK
     #    (ozel__ kodlu 0, "i_" desenli 0) — geçmiş göçü gerekmedi.
-    s = (v or "").strip().replace("İ", "i").replace("I", "ı").lower()
-    s = unicodedata.normalize("NFKD", s)
-    s = "".join(c for c in s if not unicodedata.combining(c))
-    repl = (
-        ("ğ", "g"),
-        ("ü", "u"),
-        ("ş", "s"),
-        ("ı", "i"),
-        ("ö", "o"),
-        ("ç", "c"),
-    )
-    for a, b in repl:
-        s = s.replace(a, b)
-    s = re.sub(r"[^a-z0-9]+", "_", s).strip("_")
-    return s
+    # ⚠️ GÖVDE TAŞINDI (2026-08-31): asıl mantık artık sevkiyat_helpers.ad_anahtar.
+    # Neden: aynı normalleştirmenin İKİNCİ kopyası kontrol kulesinde de vardı.
+    # İki kopya zamanla ayrışır; ayrıştığı gün eşleşme sessizce kırılır ve
+    # "eşleşmedi" bir hata gibi değil, sadece "bulunamadı" gibi görünür.
+    # Bu ad korunuyor çünkü operasyon_merkez_api bunu içe aktarıyor.
+    return ad_anahtar(v)
 
 
 def _sube_getir(cur, sube_id: str) -> dict:

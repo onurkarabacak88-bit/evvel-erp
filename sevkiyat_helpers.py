@@ -22,7 +22,34 @@ KULLANIM:
 """
 from __future__ import annotations
 
+import re
+import unicodedata
 from typing import Optional, Tuple
+
+
+def ad_anahtar(v: Optional[str]) -> str:
+    """Ürün adını EŞLEŞTİRME ANAHTARINA çevirir — tek merkez.
+
+    ⚠️ NEDEN BURADA: aynı normalleştirme mantığı `sube_panel._norm_ad_tr`'de
+    de vardı. İki kopya zamanla ayrışır ve o gün eşleşme sessizce kırılır;
+    kırıldığı da fark edilmez çünkü "eşleşmedi" bir hata değil, sadece
+    "bulunamadı"dır. Tek kaynak: her iki taraf da buradan okur.
+
+    ⚠️ TÜRKÇE BÜYÜK İ: Python'da "İ".lower() → "i" + U+0307 (birleşik nokta)
+    üretir; regex o noktayı "_" yapar ve "FİLTRE" → "fi_ltre" olur.
+    Bu yüzden büyük harfler ÖNCE sabitlenir (İ→i, I→ı), sonra kalan
+    birleşik işaretler NFKD ile temizlenir.
+
+    ⚠️ Bu anahtar GÖSTERİM için değil, yalnız KIYAS için. Ekranda hep
+    ürünün kendi yazımı gösterilir.
+    """
+    s = (v or "").strip().replace("İ", "i").replace("I", "ı").lower()
+    s = unicodedata.normalize("NFKD", s)
+    s = "".join(c for c in s if not unicodedata.combining(c))
+    for _a, _b in (("ğ", "g"), ("ü", "u"), ("ş", "s"), ("ı", "i"),
+                   ("ö", "o"), ("ç", "c")):
+        s = s.replace(_a, _b)
+    return re.sub(r"[^a-z0-9]+", "_", s).strip("_")
 
 # Geçerli durum değerleri (referans — kontroller burada merkezileşir)
 SEVKIYAT_DURUMLAR = frozenset({
