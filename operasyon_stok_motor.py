@@ -2847,6 +2847,52 @@ def siparis_talep_merkez_iptal(
     if st not in ("bekliyor", "onaylandi"):
         raise ValueError(f"Merkez iptal yalnızca bekliyor/onaylandi için (durum={st or '—'})")
 
+    # ══════════════════════════════════════════════════════════════════════
+    # 🚚 AÇIK GÖNDERİMİ OLAN TALEP İPTAL EDİLEMEZ (2026-08-30)
+    # ══════════════════════════════════════════════════════════════════════
+    # Codex denetiminde "doğrulanamadı" kalan nokta; okundu ve delik GERÇEK:
+    # Durum kapısı yalnız 'bekliyor'/'onaylandi' istiyor. Ama KISMİ toptancı
+    # gönderiminde talep 'bekliyor' KALIYOR (operasyon_merkez_api, kısmi dal)
+    # ve kısmi karşılanan depo siparişi de artık 'bekliyor'a dönüyor.
+    # Yani: bir kalemi toptancıya yollanmış (tedarikçiye WhatsApp gitmiş)
+    # sipariş iptal edilebiliyordu. Tedarikçi malı yola çıkarır, mal gelir,
+    # sipariş iptal olduğu için şube KABUL EDEMEZ → sahipsiz mal + fatura.
+    # ⚠️ Otomatik iptal ETMİYORUZ: tedarikçiye söz verilmiş, mal yolda
+    #    olabilir. Bunu geri almak insan kararıdır — kod tek başına veremez.
+    #    Yol gösterilir: "önce gönderimi geri alın".
+    _acik: List[str] = []
+    try:
+        cur.execute(
+            "SELECT tedarikci_ad FROM toptanci_siparis "
+            "WHERE talep_id = %s AND durum = 'gonderildi'",
+            (aid,),
+        )
+        _acik += [f"toptancı: {str(dict(r).get('tedarikci_ad') or '—')}"
+                  for r in (cur.fetchall() or [])]
+        cur.execute(
+            "SELECT kalem_adi FROM stok_yolda "
+            "WHERE siparis_talep_id = %s AND durum = 'yolda' "
+            "  AND COALESCE(sevk_adet, 0) > 0",
+            (aid,),
+        )
+        _acik += [f"yolda: {str(dict(r).get('kalem_adi') or '—')}"
+                  for r in (cur.fetchall() or [])]
+    except Exception:
+        # ⚠️ Kontrol yapılamazsa İPTALE İZİN VERME (fail-closed): sessizce
+        #    izin vermek, yolda olan malı sahipsiz bırakmak demektir.
+        raise ValueError(
+            "Açık gönderim kontrolü yapılamadı — iptal güvenli değil, "
+            "tekrar deneyin."
+        )
+    if _acik:
+        raise ValueError(
+            "Bu siparişin AÇIK gönderimi var, iptal edilemez: "
+            + ", ".join(_acik[:6])
+            + (f" (+{len(_acik) - 6})" if len(_acik) > 6 else "")
+            + ". Mal yola çıkmış olabilir — önce gönderimi geri alın, "
+            "sonra iptal edin."
+        )
+
     sube_id = str(rd.get("sube_id") or "").strip()
     tl = _tahsis_sifir_listesi_kalemlerden(rd.get("kalemler"))
     if not tl:
