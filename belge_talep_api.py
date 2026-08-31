@@ -1277,6 +1277,28 @@ def _cift_puanla(t, f):
     }
 
 
+def _tarih_yonu_ihlali(fatura_tarih, teslim_tarih) -> bool:
+    """Fatura teslimattan ÖNCE mi kesilmiş? (TEK TANIM — iki yol da bunu çağırır)
+
+    Canlı vaka (2026-08-15): 8-10 Ağustos teslimatları 1 Ağustos faturalarına
+    bağlandı; gerçek eşler 13 Ağustos'ta kesilmişti — TUTAR YAKINLIĞI yanılttı.
+    1 gün tolerans: aynı gün ya da bir gün önce kesilip ertesi gün teslim meşru.
+
+    ⚠️ Kural neden burada: guard YALNIZ `/fatura-bagla` yolunda vardı;
+    `/fatura-yukle` yolu aynı kontrolü yapmadan talebi kapatıyordu
+    (Codex denetimi 2026-08-31). Kuralı ikinci kez yazmak yerine tek yere
+    aldım — iki kopya zamanla ayrışır ve bir yol korumasız kalır.
+    ⚠️ Tarih okunamıyorsa guard SUSAR: "bilinmiyor" ile "ihlal" aynı şey değil.
+    """
+    ft, tt = str(fatura_tarih or "")[:10], str(teslim_tarih or "")[:10]
+    if not ft or not tt:
+        return False
+    try:
+        return date.fromisoformat(ft) < (date.fromisoformat(tt) - timedelta(days=1))
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def eslesme_degerlendir(teslimatlar, faturalar):
     """KESİN + ADAY değerlendirmesi — TEK ÇEKİRDEK.
 
@@ -1521,18 +1543,8 @@ def fatura_bagla_uygula(cur, talep_id: str, fatura_id: str, onay_kaynagi: str,
         raise HTTPException(409, "Bu fatura başka bir teslimata bağlı.")
 
     # ── F2-a: TARİH YÖNÜ GUARD'I ────────────────────────────────────────
-    # Fatura teslimattan ÖNCE kesilmişse o teslimatın faturası olamaz.
-    # Canlı vaka (2026-08-15): 8-10 Ağu teslimatları 1 Ağu faturalarına
-    # bağlandı; gerçek eşler 13 Ağu'da kesilmişti — TUTAR YAKINLIĞI yanılttı.
-    # 1 gün tolerans: aynı gün/bir gün önce kesilip ertesi gün teslim meşru.
     ft_s, tt_s = str(f.get("fatura_tarih") or ""), str(bt.get("teslim_tarihi") or "")
-    tarih_ihlali = False
-    if ft_s and tt_s:
-        try:
-            tarih_ihlali = date.fromisoformat(ft_s[:10]) < (
-                date.fromisoformat(tt_s[:10]) - timedelta(days=1))
-        except Exception:  # noqa: BLE001 — tarih okunamazsa guard susar
-            tarih_ihlali = False
+    tarih_ihlali = _tarih_yonu_ihlali(ft_s, tt_s)
     if tarih_ihlali and not zorla:
         raise HTTPException(
             422, f"Tarih yönü ters: fatura {ft_s[:10]} tarihli, teslimat {tt_s[:10]}. "
@@ -2455,6 +2467,44 @@ async def belge_talep_fatura_yukle(talep_id: str, dosya: UploadFile = File(...))
         except Exception as _e_ft:  # noqa: BLE001
             logger.warning("fatura tutari okunamadi (kapanis surer): %s", str(_e_ft)[:120])
 
+        # ══════════════════════════════════════════════════════════════════
+        # 🗓️ TARİH YÖNÜ BURADA DA SORULUR (Codex denetimi, 2026-08-31)
+        # ══════════════════════════════════════════════════════════════════
+        # Bu yol faturayı bağlayıp talebi KAPATIYOR ama `/fatura-bagla`daki
+        # tarih guard'ını hiç çalıştırmıyordu. Sonuç: teslimattan ÖNCE kesilmiş
+        # bir fatura yüklendiğinde talep kapanıyor, açık kuyruktan düşüyor ve
+        # sahte yeşil oluşuyordu — üstelik yanlış faturaya bağlı olarak.
+        # Kural TEK YERDE (_tarih_yonu_ihlali); burada yalnız çağrılıyor.
+        # ⚠️ Yükleme REDDEDİLMEZ — belge sisteme girsin, kaybolmasın. Yalnız
+        #    KAPANIŞ yapılmaz: talep açık kalır, bağ kurulmaz, sebep döner.
+        #    Doğru fatura ise sahip /fatura-bagla ile (gerekçeli) zorlayabilir.
+        _ilk_fid = fatura_idler[0] if fatura_idler else None
+        _tarih_ters = False
+        if _ilk_fid:
+            try:
+                cur.execute(
+                    "SELECT fatura_tarih::text AS ft FROM tedarikci_fatura WHERE id=%s",
+                    (_ilk_fid,))
+                _fr = cur.fetchone()
+                cur.execute(
+                    "SELECT teslim_tarihi::text AS tt FROM belge_talep WHERE id=%s", (tid,))
+                _br = cur.fetchone()
+                _tarih_ters = _tarih_yonu_ihlali(
+                    (dict(_fr).get("ft") if _fr else None),
+                    (dict(_br).get("tt") if _br else None))
+            except Exception as _e_ty:  # noqa: BLE001
+                logger.warning("fatura-yukle tarih yonu okunamadi (kapanis surer): %s",
+                               str(_e_ty)[:120])
+        if _tarih_ters:
+            conn.commit()          # belge KAYDEDİLDİ; yalnız kapanış yapılmadı
+            return {
+                "ok": True, "kapandi": False, "fatura_idler": fatura_idler,
+                "uyari": "tarih_yonu_ters",
+                "not": ("Belge kaydedildi AMA teslimat KAPATILMADI: fatura, "
+                        "teslimattan önce kesilmiş görünüyor. Bu teslimatın "
+                        "faturası olmayabilir. Doğruysa Belge Merkezi'nden "
+                        "gerekçeli olarak bağlayın."),
+            }
         cur.execute(
             """UPDATE belge_talep
                SET durum='pdf_geldi', kapanma_ts=NOW(), fatura_id=%s, kapanis_tipi='fatura',
@@ -2463,7 +2513,7 @@ async def belge_talep_fatura_yukle(talep_id: str, dosya: UploadFile = File(...))
                        WHEN %s IS NOT NULL AND beklenen_tutar_tl IS NOT NULL
                        THEN %s - beklenen_tutar_tl ELSE tutar_fark_tl END
                WHERE id=%s""",
-            (fatura_idler[0] if fatura_idler else None,
+            (_ilk_fid,
              _fatura_tutar, _fatura_tutar, _fatura_tutar, tid),
         )
         conn.commit()
