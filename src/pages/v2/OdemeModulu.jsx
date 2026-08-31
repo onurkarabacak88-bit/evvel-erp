@@ -2023,6 +2023,16 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast, hede
 
   // ── 3) Tedarikçi Bakiyesi ──────────────────────────────────────────────────
   if (gorunum === 'tedarikci') {
+    // 🗓️ TEK VADE: gelecek ayın sonu (sahip kuralı 2026-08-31 — "ödeme
+    // geldiğinde kalanı otomatik diğer ayın sonuna atsın"). Sunucudaki
+    // _ay_sonu_gelecek() ile AYNI kural; tarih tek yerde üretilir gibi
+    // görünsün diye burada da aynı biçimde hesaplanıyor.
+    const odenecekVade = (() => {
+      const d = new Date();
+      // Gelecek ayın sonu = iki ay ileri ayın 0'ıncı günü
+      return new Date(d.getFullYear(), d.getMonth() + 2, 0)
+        .toISOString().slice(0, 10);
+    })();
     const ted = (cari?.tedarikciler || []).map(t => ({
       ad: t.tedarikci || '—',
       // 🔴 P1 (2026-08-13, Codex): Math.max(0,·) negatif açığı (fazla/peşin
@@ -2077,7 +2087,11 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast, hede
               { ad: 'Tedarikçi' }, { ad: 'Açık bakiye', sag: true },
               { ad: '📦 Faturasız', sag: true }, { ad: 'GERÇEK BORÇ', sag: true },
               { ad: 'Beyan', sag: true },
-              { ad: 'Fark', sag: true }, { ad: 'Kuyrukta', sag: true }, { ad: '6 ay hacim', sag: true }, { ad: 'Durum' },
+              // 🗓️ 'Kuyrukta' → 'Vade' (sahip kararı 2026-08-31): söz mantığı
+            // devre dışı. Ödenecek = açık bakiye, vade = gelecek ayın sonu.
+            // Söz kuyruğu sayısı satır detayında TANI olarak kalıyor —
+            // ekranın manşetinde İKİ borç rakamı yan yana durmayacak.
+            { ad: 'Fark', sag: true }, { ad: 'Vade', sag: true }, { ad: '6 ay hacim', sag: true }, { ad: 'Durum' },
             ]}
             satirlar={ted.map(t => {
               const uyumsuz = t.fark != null && Math.abs(t.fark) > Math.max(500, t.acik * 0.05);
@@ -2107,7 +2121,10 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast, hede
                   },
                   { v: t.beyan == null ? '—' : fmt(t.beyan), mono: true, sag: true },
                   { v: t.fark == null ? '—' : fmt(t.fark), mono: true, sag: true, renk: uyumsuz ? R.amber : R.not },
-                  { v: fmt(t.kuyruk), mono: true, sag: true },
+                  // Tek vade: gelecek ayın sonu. Borcu olmayan satırda tarih
+                  // göstermek gürültü — açık yoksa '—'.
+                  { v: t.acik > 0.01 ? kisaTarih(odenecekVade) : '—',
+                    mono: true, sag: true, renk: t.acik > 0.01 ? R.metin2 : R.not },
                   { v: fmt(t.hacim), mono: true, sag: true },
                   {
                     v: t.yalnizTeslimat ? '📦 faturası hiç gelmedi'
@@ -2130,10 +2147,14 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast, hede
                 baslik: t.ad,
                 alt: `6 ayda ${t.faturaAdet} fatura · son ${kisaTarih(t.sonFatura)}`,
                 kpi: [
-                  { etiket: 'Hesaplanan açık', deger: fmt(t.acik), renk: R.kirmizi },
+                  { etiket: 'Ödenecek (açık bakiye)', deger: fmt(t.acik), renk: R.kirmizi },
+                  { etiket: 'Vade', deger: kisaTarih(odenecekVade) },
                   { etiket: 'Tedarikçi beyanı', deger: t.beyan == null ? '—' : fmt(t.beyan) },
-                  { etiket: 'Kuyrukta', deger: fmt(t.kuyruk), renk: R.amber },
-                  { etiket: 'En yakın vade', deger: kisaTarih(t.enYakinVade) },
+                  // 🔎 TANI (manşet değil): eski söz defterindeki tutar. Ödenecek
+                  // rakamı buradan GELMİYOR; ikisi farklıysa söz defteri bayat
+                  // demektir. Sahip kararı 2026-08-31: söz mantığı devre dışı.
+                  { etiket: 'Eski söz defteri (tanı)', deger: fmt(t.kuyruk),
+                    renk: Math.abs(t.kuyruk - Math.max(0, t.acik)) > 1 ? R.amber : R.not },
                 ],
                 listeBaslik: '6 aylık hareket',
                 satirlar: [
