@@ -2261,16 +2261,67 @@ def birim_ata(body: BirimBody):
         raise HTTPException(400, "koli_adet 1-1000 arası olmalı")
     with db() as (conn, cur):
         _birim_kolonu(cur)
+        # ══════════════════════════════════════════════════════════════════
+        # 📦 AYNI BİLGİ İKİ KOLONDA — İKİSİNE DE YAZ (Fable denetimi, 2026-08-31)
+        # ══════════════════════════════════════════════════════════════════
+        # "1 koli kaç adet" bilgisi sistemde ÜÇ ayrı yerde tanımlı:
+        #   siparis_urun.koli_adet          → BU uç yazar, mutabakat çapası okur
+        #   siparis_urun.koli_ic_adet       → kule/sevk/katalog OKUR, kimse YAZMAZ
+        #   urun_acilis_birimi.fatura_icerik→ maliyet kartı yazar/okur
+        # Sonuç: sahip birim atıyor ama sipariş ve sevk ekranları o değeri
+        # HİÇ göremiyor (okudukları kolon ebediyen NULL). Aynı kavramın üç
+        # cevabı oluyor.
+        # ⚠️ Kolon BİRLEŞTİRİLMEDİ (okuyanları kırmamak için); ikisi de aynı
+        #    değerle yazılıyor — köprü. Kalıcı çözüm tek kolona inmek, ama o
+        #    ayrı bir göç işi ve okuyan 4 dosyayı birlikte değiştirmeyi ister.
+        cur.execute("ALTER TABLE siparis_urun ADD COLUMN IF NOT EXISTS koli_ic_adet INT")
         cur.execute(
-            "UPDATE siparis_urun SET birim=%s, koli_adet=%s, birim_kaynak=%s "
-            "WHERE id=%s RETURNING ad",
-            (b, k, "sahip:" + ((body.gerekce or "")[:100] or "onay"), body.urun_id))
+            "UPDATE siparis_urun SET birim=%s, koli_adet=%s, koli_ic_adet=%s, "
+            "birim_kaynak=%s WHERE id=%s RETURNING ad",
+            (b, k, k, "sahip:" + ((body.gerekce or "")[:100] or "onay"), body.urun_id))
         r = cur.fetchone()
         if not r:
             raise HTTPException(404, "ürün bulunamadı")
         conn.commit()
     return {"ok": True, "urun_id": body.urun_id, "ad": dict(r)["ad"],
             "birim": b, "koli_adet": k}
+
+
+@router.post("/koli-kolonu-hizala")
+def koli_kolonu_hizala(uygula: int = 0) -> dict:
+    """📦 Geçmişte atanmış koli bilgisini okunan kolona TAŞIR (bir kerelik köprü).
+
+    `/birim-ata` bugüne kadar yalnız `koli_adet`'e yazıyordu; sipariş/sevk
+    ekranları ise `koli_ic_adet`'i okuyor ve o kolon hiç yazılmadığı için
+    ebediyen NULL'dı. Bu uç, sahibin GEÇMİŞTE verdiği kararları da okunan
+    kolona kopyalar.
+
+    ⚠️ ÜZERİNE YAZMAZ: yalnız `koli_ic_adet IS NULL` satırlara dokunur.
+    ⚠️ `uygula=0` (varsayılan) SALT OKUR — kaç satır etkilenecek onu söyler.
+    """
+    with db() as (conn, cur):
+        cur.execute("ALTER TABLE siparis_urun ADD COLUMN IF NOT EXISTS koli_ic_adet INT")
+        cur.execute(
+            """SELECT id::text AS id, ad, koli_adet
+                 FROM siparis_urun
+                WHERE koli_adet IS NOT NULL AND koli_ic_adet IS NULL""")
+        aday = [dict(r) for r in (cur.fetchall() or [])]
+        yazilan = 0
+        if int(uygula or 0) and aday:
+            cur.execute(
+                """UPDATE siparis_urun SET koli_ic_adet = koli_adet
+                    WHERE koli_adet IS NOT NULL AND koli_ic_adet IS NULL""")
+            yazilan = cur.rowcount or 0
+            conn.commit()
+    return {
+        "uygulandi": bool(int(uygula or 0)),
+        "aday_adet": len(aday),
+        "yazilan": yazilan,
+        "adaylar": [{"ad": a["ad"], "koli_adet": a["koli_adet"]} for a in aday[:40]],
+        "not": ("Sahibin GEÇMİŞTE verdiği koli kararları, sipariş/sevk "
+                "ekranlarının okuduğu kolona kopyalanır. Üzerine yazılmaz "
+                "(yalnız boş olanlar). uygula=1 ile uygulanır."),
+    }
 
 
 # ═══════════════════════════════════════════════════════════════════════════

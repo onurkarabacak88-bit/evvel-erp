@@ -5350,14 +5350,21 @@ def sube_siparis_teslim_kabul(sube_id: str, body: SubeSiparisTeslimKabulBody):
                     "Paket henüz yola çıkmamış: depo sevk çıkışı yapılmadı. "
                     "Operasyon merkezi 'gönder' işlemini tamamlayana kadar bekleyin.",
                 )
-        sonuc = sube_kabul_kaydet(
-            cur,
-            tid,
-            sube_id,
-            [k.model_dump() for k in body.kabul],
-            pid_in,
-            yapan_ad,
-        )
+        # ⚠️ ValueError → 409 (ev kalıbı, bkz. siparis_sevkiyat_islem): motor
+        # kural ihlalini ValueError ile bildirir; yakalanmazsa 500 olur ve
+        # personel "sistem çöktü" sanır. Çakışma/kural ihlali 409'dur.
+        try:
+            sonuc = sube_kabul_kaydet(
+                cur,
+                tid,
+                sube_id,
+                [k.model_dump() for k in body.kabul],
+                pid_in,
+                yapan_ad,
+            )
+        except ValueError as _e_kabul:
+            _m = str(_e_kabul).strip() or "Kabul yapılamadı"
+            raise HTTPException(404 if "bulunamad" in _m.lower() else 409, _m) from _e_kabul
         conn.commit()
     return sonuc
 

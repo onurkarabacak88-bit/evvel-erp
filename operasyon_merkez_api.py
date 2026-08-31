@@ -8988,6 +8988,18 @@ def ops_siparis_katalog(tumunu_goster: bool = False):
                     "depo_stok_kalem_kodu": (str(x["depo_stok_kalem_kodu"]).strip() if x.get("depo_stok_kalem_kodu") else None),
                     "aciklama": (str(x["aciklama"]).strip() if x.get("aciklama") else None),
                     "dusum_modu": (str(x["dusum_modu"]).strip() if x.get("dusum_modu") else "acilinca"),
+                    # 📏 BİRİM YANITA KONUR (Fable denetimi, 2026-08-31)
+                    # Sorgu bu iki alanı SEÇİYOR ama yanıt sözlüğüne KOYMUYORDU —
+                    # yani sipariş ekranı ürünün biriminden hiç haberdar olmuyordu.
+                    # "5 koli mü 5 adet mi" sorusu sipariş GİRİŞİNDE sorulamayınca
+                    # hata en sona, kabul anına kalıyor (2026-08-30: sevk 5 →
+                    # kabul 500, 495 adetlik şişme).
+                    # ⚠️ Boş ise BOŞ döner; "adet" VARSAYILMAZ — ekran
+                    #    "birim belirtilmemiş" der. Uydurulmuş birim, birimsizden
+                    #    daha tehlikelidir.
+                    "birim": (str(x["birim"]).strip() if x.get("birim") else None),
+                    "koli_ic_adet": (int(x["koli_ic_adet"])
+                                     if x.get("koli_ic_adet") is not None else None),
                 }
                 for x in cur.fetchall()
             ]
@@ -10820,12 +10832,23 @@ def ops_siparis_toptanciya_yolla(body: OpsSiparisToptanciyaYollaBody):
                 (sevk_notu, json.dumps(merkez_agg, ensure_ascii=False), tid),
             )
         else:
-            # Kısmi: talep 'bekliyor' kalır (kuyrukta), sevkiyat_durumu DEĞİŞMEZ.
-            # Sadece N2 aggregate + not güncellenir; gönderilen kısım toptanci_siparis'te.
+            # ══════════════════════════════════════════════════════════════
+            # ⚠️ DEPO AYAĞI VARSA DURUM GERİ ÇEKİLMEZ (Codex denetimi, 2026-08-31)
+            # ══════════════════════════════════════════════════════════════
+            # Kısmi gönderimde talep KOŞULSUZ 'bekliyor'a çekiliyordu. Senaryo:
+            # B kalemi depoya yönlendirilmiş (talep 'hazirlaniyor'/'gonderildi'),
+            # sonra A kalemi toptancıya yollanıyor → talep 'bekliyor'a DÜŞÜYOR →
+            # B'nin paketi gelince şube kabulü REDDEDİYOR (kabul yalnız
+            # gonderildi/hazirlaniyor durumunda açık). Mal geldi, sisteme
+            # girilemedi — zombi.
+            # Doğrusu: kuyrukta tutmak için 'bekliyor'a çekme YALNIZ talep
+            # gerçekten beklemedeyse anlamlı. Depo ayağı ilerlemişse durum
+            # ONUN akışına aittir; toptancı kolu ona karışmaz.
+            # ⚠️ Not/aggregate her hâlükârda güncellenir — bilgi kaybolmaz.
             cur.execute(
                 """
                 UPDATE siparis_talep
-                SET durum = 'bekliyor',
+                SET durum = CASE WHEN durum = 'bekliyor' THEN 'bekliyor' ELSE durum END,
                     sevkiyat_notu = COALESCE(NULLIF(TRIM(%s), ''), sevkiyat_notu),
                     merkez_karar_kalemleri = %s::jsonb
                 WHERE id = %s

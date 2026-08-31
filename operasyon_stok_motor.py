@@ -3598,6 +3598,35 @@ def sube_kabul_kaydet(cur: Any, siparis_talep_id: str, sube_id: str,
     if mevcut and (mevcut.get("durum") or mevcut[0]) in ("teslim_edildi", "kabul_uyusmazlik", "uyumsuz_kabul"):
         return {"success": True, "idempotent": True, "mesaj": "Kabul zaten işlendi"}
 
+    # ══════════════════════════════════════════════════════════════════════
+    # 🏪 ŞUBE KİMLİĞİ ÖNCE DOĞRULANIR (Codex denetimi, 2026-08-31)
+    # ══════════════════════════════════════════════════════════════════════
+    # Aşağıdaki `stok_yolda` sorgusu ÇAĞIRANIN verdiği `sube_id` ile arıyor,
+    # talebin GERÇEK alıcı şubesiyle karşılaştırmıyordu. Yanlış şube kimliğiyle
+    # çağrılırsa satır bulunmaz → tam_mi=False → talep `kabul_uyusmazlik`'e
+    # düşer → ve üstteki idempotency kapısı bundan sonra DOĞRU kabulü de
+    # "zaten işlendi" diye reddeder. Sonuç: mal geldi, sisteme hiç giremedi.
+    # Zombi tam olarak böyle doğuyor.
+    # ⚠️ Kimlik uyuşmazlığında HİÇBİR ŞEY YAZILMAZ — talep temiz kalır.
+    try:
+        cur.execute("SELECT sube_id FROM siparis_talep WHERE id=%s", (siparis_talep_id,))
+        _tr_sube = cur.fetchone()
+        _gercek_sube = str((dict(_tr_sube).get("sube_id") if _tr_sube else "") or "")
+        if _gercek_sube and str(sube_id or "") and _gercek_sube != str(sube_id):
+            raise ValueError(
+                f"Bu talep başka şubeye ait (talep şubesi {_gercek_sube[:8]}…, "
+                f"kabul çağrısı {str(sube_id)[:8]}…). Kabul YAPILMADI — yanlış "
+                "şubeden kabul, talebi kilitler ve doğru kabul bir daha "
+                "işlenemez.")
+    except ValueError:
+        raise
+    except Exception as _e_sb:  # noqa: BLE001
+        # Doğrulama kurulamazsa kabul DURMAZ (mal geldi, akış bozulmasın) ama
+        # sessiz de kalmaz — yanlış-şube riski defterde iz bırakır.
+        logging.getLogger(__name__).warning(
+            "sube_kabul_kaydet: sube dogrulamasi yapilamadi (talep=%s): %s",
+            siparis_talep_id, str(_e_sb)[:150])
+
     cur.execute(
         """
         SELECT id, kalem_kodu, kalem_adi, sevk_adet

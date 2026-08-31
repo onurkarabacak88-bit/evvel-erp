@@ -201,11 +201,20 @@ def _satir_zenginlestir(cur: Any, row: Dict[str, Any],
     sd = sevkiyat_durumu_coz(row.get("sevkiyat_durumu"), row.get("sevkiyat_durum"))
     asama = siparis_asama_hesapla(row.get("durum"), sd, kabul_durum)
 
+    # ⚠️ AD TUZAĞI (Fable denetimi, 2026-08-31): burada `kalem_sayisi` TOPLAM
+    # ADET demek (sum), şube uçlarında ise ÇEŞİT demek (len). Aynı ad, iki
+    # aritmetik. Canlıda kuyruk "1894 kalem" yazmıştı — 1894 çeşit değil,
+    # 1894 adetti.
+    # Değeri DEĞİŞTİRMİYORUZ (mevcut ekranlar buna göre yazılmış ve yorumla
+    # korunmuş); bunun yerine alan KENDİNİ AÇIKLIYOR: yanında `kalem_cesidi`
+    # ve `kalem_sayisi_anlami` dönüyor. Yeni tüketici hangi sayıyı aldığını
+    # tahmin etmek zorunda kalmasın.
     kalem_sayisi = sum(
         max(0, int((it or {}).get("adet") or 0))
         for it in kalemler
         if isinstance(it, dict)
     )
+    kalem_cesidi = len([it for it in kalemler if isinstance(it, dict)])
 
     return {
         "id": tid,
@@ -238,7 +247,11 @@ def _satir_zenginlestir(cur: Any, row: Dict[str, Any],
         "kalemler": kalemler,
         "kalem_durumlari": kalem_durumlari,
         "yolda": yolda,
+        # ⚠️ Bu alan TOPLAM ADET'tir (şube uçlarında aynı ad ÇEŞİT demek).
+        #    Yanındaki iki alan belirsizliği bitirir — tahmin gerekmez.
         "kalem_sayisi": kalem_sayisi,
+        "kalem_sayisi_anlami": "toplam_adet",
+        "kalem_cesidi": kalem_cesidi,
         "son_olay": row.get("son_olay"),
         "son_olay_ts": str(row.get("son_olay_ts") or ""),
     }
