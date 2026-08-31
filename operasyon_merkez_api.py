@@ -11036,6 +11036,75 @@ def ops_siparis_toptanci_oneri(gun: int = Query(180, ge=7, le=730)):
     return {"oneriler": oneriler}
 
 
+class OpsUyusmazlikCozBody(BaseModel):
+    karar: str            # 'kapat' | 'yeniden_ac'
+    gerekce: str
+
+
+@router.post("/siparis/{talep_id}/kabul-uyusmazligi-coz")
+def ops_kabul_uyusmazligi_coz(talep_id: str, body: OpsUyusmazlikCozBody):
+    """🔓 `kabul_uyusmazlik`'ta KİLİTLENMİŞ talebi çözer.
+
+    ── NEDEN (Fable denetimi, 2026-08-31) ───────────────────────────────────
+    Şube "eksik geldi" diyerek teslim aldığında talep `kabul_uyusmazlik`
+    oluyor. Bu durumdan ÇIKARAN HİÇBİR KOD YOKTU:
+      · mevcut uzlaştırma ucu yalnız `stok_yolda` satırı üzerinden çalışır,
+        toptancı teslimi stok_yolda üretmez → o uç çağrılamıyor
+      · şube bekleyen listeleri `kabul_uyusmazlik`'ı DIŞLIYOR → arayüzden
+        erişilemiyor
+      · API'den ikinci teslim teorik mümkün ama stok döngüsü ikinci kez
+        çalışıp stoğu MÜKERRER artırıyor
+    Sonuç: kayıt sonsuza kadar kilitli. Girişi olan her durumun çıkışı olmalı.
+
+    İKİ ÇIKIŞ, İKİSİ DE GEREKÇELİ:
+      `kapat`       — eksik kabul edildi, iş bitti (durum='teslim_edildi')
+      `yeniden_ac`  — kalan sonra gelecek (durum='bekliyor', kuyruğa döner)
+
+    ⚠️ STOĞA DOKUNMAZ: mal hareketi zaten kabul anında yazıldı. Bu uç yalnız
+       TALEBİN durumunu çözer — ikinci kez stok artırmaz (mükerrer artışın
+       sebebi tam da "ikinci teslim" denemesiydi).
+    ⚠️ Gerekçe ZORUNLU ve açıklamaya EKLENİR (üzerine yazılmaz).
+    """
+    tid = (talep_id or "").strip()
+    karar = (body.karar or "").strip().lower()
+    gerekce = (body.gerekce or "").strip()
+    if karar not in ("kapat", "yeniden_ac"):
+        raise HTTPException(400, "karar: 'kapat' | 'yeniden_ac'")
+    if len(gerekce) < 3:
+        raise HTTPException(400, "Gerekçe zorunlu — uyuşmazlık sessizce kapanmaz.")
+    _yeni = "teslim_edildi" if karar == "kapat" else "bekliyor"
+    _damga = (f" [UYUŞMAZLIK ÇÖZÜLDÜ {date.today().isoformat()}: "
+              f"{'eksik kabul edildi' if karar == 'kapat' else 'kalan bekleniyor'}"
+              f" — {gerekce}]")
+    with db() as (conn, cur):
+        cur.execute(
+            "SELECT id, durum FROM siparis_talep WHERE id=%s FOR UPDATE", (tid,))
+        r = cur.fetchone()
+        if not r:
+            raise HTTPException(404, "Sipariş talebi bulunamadı")
+        _mev = str(dict(r).get("durum") or "")
+        if _mev != "kabul_uyusmazlik":
+            raise HTTPException(
+                409, f"Bu talep uyuşmazlıkta değil (durum: {_mev or '—'}).")
+        cur.execute(
+            """UPDATE siparis_talep
+                  SET durum=%s,
+                      sevkiyat_notu = COALESCE(sevkiyat_notu,'') || %s
+                WHERE id=%s AND durum='kabul_uyusmazlik'
+                RETURNING id""",
+            (_yeni, _damga, tid))
+        if not cur.fetchone():
+            raise HTTPException(409, "Talep bu arada değişti — tekrar deneyin.")
+        audit(cur, "siparis_talep", tid, "KABUL_UYUSMAZLIK_COZ",
+              yeni={"durum": _yeni, "gerekce": gerekce})
+        conn.commit()
+    return {
+        "ok": True, "talep_id": tid, "yeni_durum": _yeni,
+        "not": ("Eksik kabul edildi, talep kapandı." if karar == "kapat"
+                else "Talep kuyruğa döndü; kalan kalemler yeniden gönderilebilir."),
+    }
+
+
 class OpsToptanciTercihBody(BaseModel):
     urun_ad: str
     tedarikci_id: Optional[str] = None
@@ -11084,7 +11153,26 @@ def ops_toptanci_siparis_iptal(ts_id: str):
         if not row:
             raise HTTPException(404, "Toptancı siparişi bulunamadı")
         tid = str(dict(row).get("talep_id") or "")
-        if str(dict(row).get("durum") or "") != "iptal":
+        _mevcut = str(dict(row).get("durum") or "")
+        # ══════════════════════════════════════════════════════════════════
+        # 🛑 TESLİM ALINMIŞ GÖNDERİM İPTAL EDİLEMEZ (Fable denetimi, 2026-08-31)
+        # ══════════════════════════════════════════════════════════════════
+        # Bu uç durumu HİÇ kontrol etmiyordu. `teslim_alindi` bir gönderim
+        # iptal edilirse: mal şubede KALIR ama sipariş "hiç olmamış" sayılır,
+        # açılmış belge talebi ÖKSÜZ kalır (fatura sonsuza kadar beklenir) ve
+        # alttaki re-check talebi 'bekliyor'a döndürüp AYNI MALI ikinci kez
+        # sipariş edilebilir hâle getirir.
+        # Geri-alma ucunda (toptanci-geri-al) bu kontrol VARDI; burada yoktu —
+        # aynı işi yapan iki kapıdan biri korumasızdı.
+        # ⚠️ Yanlış girilmiş bir teslim önce TESLİMİ geri alınır, sonra iptal.
+        if _mevcut == "teslim_alindi":
+            raise HTTPException(
+                409,
+                "Bu gönderim TESLİM ALINMIŞ — iptal edilemez. Mal şubeye "
+                "girmiş durumda; iptal edilirse stok içeride kalır, fatura "
+                "takibi öksüz kalır ve aynı mal ikinci kez sipariş edilebilir. "
+                "Yanlış teslim girildiyse önce teslimi geri alın.")
+        if _mevcut != "iptal":
             cur.execute("UPDATE toptanci_siparis SET durum='iptal' WHERE id=%s", (sid,))
             audit(cur, "toptanci_siparis", sid, "OPS_TOPTANCI_SIPARIS_IPTAL")
 
