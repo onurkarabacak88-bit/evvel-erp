@@ -8608,12 +8608,21 @@ def odeme_yap(oid: str, tutar: Optional[float] = None, body: VadeliOdeModel = Va
                 raise HTTPException(400, f"Kart limiti yetersiz. Kalan: {kalan_limit:,.0f} ₺{_ipucu}")
             # Kart harcaması ekle — kasaya yazma
             hid = str(uuid.uuid4())
+            # ⚠️ KAYNAK SABİT YAZILIYORDU (Codex denetimi main.py:8593,
+            # 2026-09-01): kart dalı `cari_odeme` için de açıldı ama kart
+            # hareketi HÂLÂ 'vadeli_alimlar' diye ve "Vadeli alım: ..."
+            # açıklamasıyla kaydediliyordu. Kaynak-bazlı izleme/geri alma
+            # yanlış tabloda arar; rapor yanlış kanala yazar. Kaydın kaynağı
+            # TAHMİN EDİLMEZ, plandan okunur.
+            _kkaynak = str(plan.get('kaynak_tablo') or 'vadeli_alimlar')
+            _kbaslik = ("Cari ödeme" if _kkaynak == 'cari_odeme' else "Vadeli alım")
             cur.execute("""
                 INSERT INTO kart_hareketleri
                     (id, kart_id, tarih, islem_turu, tutar, taksit_sayisi, aciklama, kaynak_id, kaynak_tablo)
-                VALUES (%s, %s, %s, 'HARCAMA', %s, 1, %s, %s, 'vadeli_alimlar')
-            """, (hid, body.kart_id, bugun, odeme_tutari, f"Vadeli alım: {plan['aciklama']}",
-                   plan.get('kaynak_id')))
+                VALUES (%s, %s, %s, 'HARCAMA', %s, 1, %s, %s, %s)
+            """, (hid, body.kart_id, bugun, odeme_tutari,
+                  f"{_kbaslik}: {plan['aciklama']}",
+                  plan.get('kaynak_id'), _kkaynak))
             audit(cur, 'kart_hareketleri', hid, 'VADELI_KART')
             # Plan kapat — KISMİ ÖDEME destekli (2026-08-08): kartla borcun bir
             # kısmı ödenebilir; kalan varsa satır 'bekliyor' kalır ve söz açık
@@ -8631,7 +8640,12 @@ def odeme_yap(oid: str, tutar: Optional[float] = None, body: VadeliOdeModel = Va
                  (bugun if _kart_tam else plan.get('odeme_tarihi')), _kart_toplam, oid))
             cur.execute("""UPDATE onay_kuyrugu SET durum='onaylandi', onay_tarihi=NOW()
                 WHERE kaynak_id=%s AND durum NOT IN ('onaylandi','reddedildi')""", (oid,))
-            if _kart_tam and plan.get('kaynak_id'):
+            # ⚠️ YALNIZ VADELİ ALIMDA KAPAT (Codex denetimi main.py:8613):
+            # `vadeli_alim_kapat` kaynak ayırmadan çağrılıyordu. `cari_odeme`
+            # planında `kaynak_id` bir CARİ ÖDEME kimliğidir — o kimlikle
+            # vadeli tabloya gitmek ya hiçbir şey kapatmaz (sessiz yarım iş)
+            # ya da aynı kimliğe denk gelen ALAKASIZ bir vadeli kaydı kapatır.
+            if _kart_tam and plan.get('kaynak_id') and _kkaynak == 'vadeli_alimlar':
                 vadeli_alim_kapat(cur, plan['kaynak_id'], bugun)
             audit(cur, 'odeme_plani', oid, 'ODENDI_KART' if _kart_tam else 'KISMI_ODEME_KART')
             # Uyarı önbelleğini temizle — panelde uyarı hemen kalksın
