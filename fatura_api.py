@@ -1017,6 +1017,117 @@ def gece_ocr_takilanlari() -> dict:
 # 'odendi' işaretlenir (iz referansı notta). Tipik vaka: ödeme önce (17.06 vadeli
 # alım), fatura 23 gün sonra okundu → fren penceresi (−10g) izi göremedi, hayalet
 # söz doğdu, vadesi geçti, kokpit 'gecikmiş çıkış' diye şişirdi.
+def _ay_sonu_gelecek() -> str:
+    """SONRAKİ ayın son günü (sahip kuralı 2026-08-31: 'ödeme geldiğinde
+    kalanı otomatik diğer ayın sonuna atsın')."""
+    b = date.today()
+    # Gelecek ayın 1'i → bir gün geri = bu ayın sonu değil, GELECEK ayın sonu
+    # istendiği için iki ay ileri gidip bir gün geri alıyoruz.
+    y, a = b.year, b.month
+    a2 = a + 2
+    y2 = y + (a2 - 1) // 12
+    a2 = (a2 - 1) % 12 + 1
+    return (date(y2, a2, 1) - timedelta(days=1)).isoformat()
+
+
+_FATURA_NO_RE = re.compile(r"Fatura\s+([A-Za-z0-9]{8,})")
+
+
+@router.get("/cari-kuyruk-hizala-onizle")
+def cari_kuyruk_hizala_onizle(tedarikci: str = "") -> dict:
+    """🧮 KURU ÇALIŞTIRMA — kuyruğu cari gerçeğine hizala (SAHİP MODELİ).
+
+    ── SAHİP KURALI (2026-08-31) ────────────────────────────────────────────
+    "En eskiden sözü kapatarak gel, eskisini de açık bakiye olarak kur; söz
+    mantığını tamamen devre dışı bırak, ödeme geldiğinde otomatik diğer ayın
+    sonuna atsın."
+
+    Yani: tek tek söz eşleştirmesi YOK. Cari açık TEK GERÇEK; kuyruk ona
+    hizalanır. Fazlalık EN ESKİDEN kapatılır, sınırdaki söz BÖLÜNÜR ve kalan
+    açık bakiye olarak SONRAKİ AYIN SONUNA taşınır.
+
+    ── NEDEN BÖYLE ──────────────────────────────────────────────────────────
+    Kanıt-bazlı eşleştirme (her söze kendi ödemesi) canlıda neredeyse hiçbir
+    şey kapatmadı (FEZ 0 · BEYSU 0 · METRO 0 · ATALAY 0). Çünkü ödeme toplu
+    yapılıyor, söz tek tek duruyor — ikisi hiçbir zaman birebir tutmuyor.
+
+    ⚠️ TEK GÜVENLİK KAPISI: cari'nin GÖRMEDİĞİ borç kapatılamaz. BEYSU
+    vakası: 22.300 ₺'lik sözün içinde 23.03.2026 tarihli, arşive hiç
+    işlenmemiş bir fatura var; cari onu saymıyor (sistem öncesi, devir yok).
+    Kuyruğu cariye hizalamak o borcu SİLERDİ. Böyle sözler `cari_gormuyor`
+    olarak işaretlenir, KAPATILMAZ — önce devir/arşiv kararı gerekir.
+
+    ⚠️ SALT OKUR. Uygulamak için POST /cari-kuyruk-hizala.
+    """
+    ara = (tedarikci or "").strip()
+    if len(ara) < 3:
+        raise HTTPException(400, "tedarikci parametresi en az 3 karakter")
+    e = cari_ekstre(tedarikci=ara, tam_fatura=1)
+    hedef = round(max(0.0, float(e.get("hesaplanan_acik") or 0)), 2)
+    sozler = list(e.get("bekleyen_vadeler") or [])
+    sozler.sort(key=lambda s: (str(s.get("vade") or "9999-12-31"), str(s.get("id") or "")))
+    kuyruk = round(float(e.get("bekleyen_vade_toplam") or 0), 2)
+    fazla = round(kuyruk - hedef, 2)
+
+    # Cari'nin gördüğü fatura numaraları — sözün dayanağı burada var mı?
+    _cari_nolar = {str(f.get("fatura_no") or "").strip().upper()
+                   for f in (e.get("faturalar") or []) if f.get("fatura_no")}
+
+    kapanacak, bolunecek, korunan, engelli = [], None, [], []
+    kalan_fazla = fazla
+    for s in sozler:
+        t = round(float(s.get("tutar") or 0), 2)
+        ack = s.get("aciklama") or ""
+        if t <= 0:
+            continue
+        if kalan_fazla <= 0.01:
+            korunan.append({"tutar": t, "vade": s.get("vade"), "aciklama": ack[:70]})
+            continue
+        # 🛡️ Cari'nin görmediği fatura → dokunma
+        _nolar = {n.upper() for n in _FATURA_NO_RE.findall(ack)}
+        _gorunmeyen = sorted(n for n in _nolar if n not in _cari_nolar)
+        if _gorunmeyen:
+            engelli.append({"tutar": t, "vade": s.get("vade"), "aciklama": ack[:70],
+                            "cari_gormuyor": _gorunmeyen})
+            continue
+        if kalan_fazla >= t - 0.01:
+            kapanacak.append({"id": s["id"], "tutar": t, "vade": s.get("vade"),
+                              "aciklama": ack[:70]})
+            kalan_fazla = round(kalan_fazla - t, 2)
+        else:
+            bolunecek = {"id": s["id"], "eski_tutar": t,
+                         "kapanan": round(kalan_fazla, 2),
+                         "yeni_tutar": round(t - kalan_fazla, 2),
+                         "eski_vade": s.get("vade"), "yeni_vade": _ay_sonu_gelecek(),
+                         "aciklama": ack[:70]}
+            kalan_fazla = 0.0
+    return {
+        "tedarikci": ara,
+        "cari_acik_hedef": hedef,
+        "kuyruk_toplam": kuyruk,
+        "fazla": fazla,
+        "kapanacak_soz_adet": len(kapanacak),
+        "kapanacak_tutar": round(sum(k["tutar"] for k in kapanacak), 2),
+        "kapanacak": kapanacak,
+        "bolunecek": bolunecek,
+        "korunan_soz_adet": len(korunan),
+        # 👁️ Sessiz eleme yasak: dokunulmayanlar adıyla döner.
+        "engelli_soz_adet": len(engelli),
+        "engelli_tutar": round(sum(k["tutar"] for k in engelli), 2),
+        "engelli": engelli,
+        "yeni_vade": _ay_sonu_gelecek(),
+        "not": (
+            "SALT OKUR. Kuyruk cari gerçeğine hizalanır: fazlalık EN ESKİDEN "
+            "kapatılır, sınırdaki söz BÖLÜNÜR ve kalanı açık bakiye olarak "
+            f"{_ay_sonu_gelecek()} tarihine taşınır. "
+            + (f"{len(engelli)} söz KAPATILMADI çünkü dayandığı fatura cari "
+               "hesapta görünmüyor (sistem öncesi / arşive işlenmemiş) — "
+               "kapatmak gerçek borcu silerdi; önce devir veya arşiv kararı "
+               "gerekir." if engelli else "")
+        ),
+    }
+
+
 @router.get("/cari-tahsis-onizle")
 def cari_tahsis_onizle(tedarikci: str = "") -> dict:
     """🧮 KURU ÇALIŞTIRMA — zaten kayıtlı ödemeler kuyruğa tahsis edilse ne olurdu?
@@ -1121,6 +1232,105 @@ def cari_tahsis_onizle(tedarikci: str = "") -> dict:
             "Mart faturası). Kapanış durumu 'mahsup': kuyruğa da ödeme izine "
             "de girmez. Geri almak için söz durumu 'bekliyor' yapılır."
         ),
+    }
+
+
+class KuyrukHizalaBody(BaseModel):
+    tedarikci: str
+    gerekce: str
+
+
+@router.post("/cari-kuyruk-hizala")
+def cari_kuyruk_hizala(body: KuyrukHizalaBody) -> dict:
+    """✍️ Kuyruğu cari gerçeğine hizalar. Yeni nakit YAZMAZ.
+
+    Sahip modeli: en eskiden kapat · sınırdakini böl · kalanı SONRAKİ AYIN
+    SONUNA taşı. Kapanış durumu `mahsup` — kuyruğa da ödeme izine de girmez
+    (söz 'odendi' yapılsaydı ödeme izi sorgusu onu da sayar, aynı para
+    ikinci kez düşerdi).
+
+    ⚠️ Önizlemeyi TEKRAR hesaplar; ekranın hafızasına güvenilmez.
+    ⚠️ `cari_gormuyor` işaretli sözlere DOKUNULMAZ.
+    """
+    ted = (body.tedarikci or "").strip()
+    gerekce = (body.gerekce or "").strip()
+    if len(ted) < 3:
+        raise HTTPException(400, "tedarikci en az 3 karakter")
+    if len(gerekce) < 3:
+        raise HTTPException(400, "Gerekçe zorunlu — borç kaydı gerekçesiz değişmez.")
+    on = cari_kuyruk_hizala_onizle(tedarikci=ted)
+    hedefler = on.get("kapanacak") or []
+    bol = on.get("bolunecek")
+    if not hedefler and not bol:
+        return {"ok": True, "kapatilan": 0, "bolunen": 0,
+                "not": "Hizalanacak bir şey yok.", "onizleme": on}
+    damga = (f" [KUYRUK HİZALAMA {date.today().isoformat()}: cari açığa "
+             f"hizalandı — {gerekce}]")
+    kapatilan, bolunen = [], None
+    with db() as (conn, cur):
+        for h in hedefler:
+            cur.execute(
+                """UPDATE vadeli_alimlar
+                      SET durum='mahsup',
+                          aciklama = COALESCE(aciklama,'') || %s
+                    WHERE id=%s AND durum='bekliyor'
+                    RETURNING id""", (damga, h["id"]))
+            if not cur.fetchone():
+                continue
+            cur.execute(
+                """UPDATE odeme_plani
+                      SET durum='iptal',
+                          aciklama = COALESCE(aciklama,'') || %s
+                    WHERE kaynak_tablo='vadeli_alimlar' AND kaynak_id=%s
+                      AND durum IN ('bekliyor','onay_bekliyor')""",
+                (damga, str(h["id"])))
+            kapatilan.append(h)
+        if bol:
+            _b_damga = (f" [KISMİ KAPANIŞ {date.today().isoformat()}: "
+                        f"{bol['kapanan']:.2f} ₺ kapandı, kalan "
+                        f"{bol['yeni_tutar']:.2f} ₺ {bol['yeni_vade']} tarihine "
+                        f"taşındı — {gerekce}]")
+            cur.execute(
+                """UPDATE vadeli_alimlar
+                      SET tutar = %s, vade_tarihi = %s::date,
+                          aciklama = COALESCE(aciklama,'') || %s
+                    WHERE id=%s AND durum='bekliyor'
+                    RETURNING id""",
+                (bol["yeni_tutar"], bol["yeni_vade"], _b_damga, bol["id"]))
+            if cur.fetchone():
+                cur.execute(
+                    """UPDATE odeme_plani
+                          SET odenecek_tutar = %s, asgari_tutar = %s,
+                              tarih = %s::date,
+                              aciklama = COALESCE(aciklama,'') || %s
+                        WHERE kaynak_tablo='vadeli_alimlar' AND kaynak_id=%s
+                          AND durum IN ('bekliyor','onay_bekliyor')""",
+                    (bol["yeni_tutar"], bol["yeni_tutar"], bol["yeni_vade"],
+                     _b_damga, str(bol["id"])))
+                bolunen = bol
+        conn.commit()
+    for k in kapatilan:
+        try:
+            from duyu_omurga import duyu_olay_yaz
+            duyu_olay_yaz(
+                "cari_hizalama", "finans.ap.soz_cari_ile_hizalandi", str(k["id"]),
+                entity_scope="tedarikci", entity_id=ted[:60],
+                signal_name="Söz cari açığa hizalandı",
+                payload={"tutar": k["tutar"], "gerekce": gerekce})
+        except Exception:  # noqa: BLE001
+            pass
+    return {
+        "ok": True, "tedarikci": ted,
+        "kapatilan": len(kapatilan),
+        "kapatilan_tutar": round(sum(k["tutar"] for k in kapatilan), 2),
+        "bolunen": bolunen,
+        "dokunulmayan_engelli": on.get("engelli_soz_adet"),
+        "not": ("Sözler 'mahsup' olarak kapatıldı (kuyruktan düştü, ÖDEME "
+                "sayılmadı). Sınırdaki söz bölündü; kalanı açık bakiye olarak "
+                f"{on.get('yeni_vade')} tarihine taşındı. Kayıt SİLİNMEDİ — "
+                "açıklamalarda ne olduğu yazıyor. "
+                + (f"{on.get('engelli_soz_adet')} söze DOKUNULMADI (cari "
+                   "görmüyor)." if on.get("engelli_soz_adet") else "")),
     }
 
 
