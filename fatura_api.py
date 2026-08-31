@@ -1033,6 +1033,78 @@ def _ay_sonu_gelecek() -> str:
 _FATURA_NO_RE = re.compile(r"Fatura\s+([A-Za-z0-9]{8,})")
 
 
+@router.get("/odenecek-kuyruk")
+def odenecek_kuyruk(sadece_acik: int = 1) -> dict:
+    """💳 ÖDENECEKLER — cari açıktan TÜRETİLİR. Depolanan söz YOK.
+
+    ── SAHİP KURALI (2026-08-31) ────────────────────────────────────────────
+    "Basit Excel gibi çalışacak: borcu yazacak, ödemeyi düşecek. Söz mantığını
+    tamamen devre dışı bırak, ödeme geldiğinde otomatik diğer ayın sonuna
+    atsın."
+
+    Yani tek satır: **açık bakiye = devir + fatura − ödeme**, vadesi de
+    **gelecek ayın sonu**. Ödeme gelince bakiye düşer, kalan kendiliğinden
+    bir sonraki aya taşınır — taşıyacak ayrı bir kayıt YOK.
+
+    ── NEDEN BU UÇ VAR ──────────────────────────────────────────────────────
+    Sistemde İKİ borç defteri vardı: (1) cari hesap — yukarıdaki aritmetik,
+    canlıda 10/10 tedarikçide kuruşuna kadar tutuyor; (2) `vadeli_alimlar`
+    "söz" listesi — her faturaya ayrı vade kaydı. İkisi yapısal olarak
+    uyuşmuyor: cari'de açılış devri var ama sözü yok; sözlerde faturasız
+    kalemler var ama cari onları görmüyor. İkisini eşitleme denemelerinin
+    ÜÇÜ DE gerçek borç silmeye başladı (BEYSU 11.200 ₺ · BEYSU 8.400 ₺ ·
+    FEZ 15.099 ₺ — hepsi kuru çalıştırmada yakalandı).
+    Çözüm eşitlemek değil, İKİNCİ DEFTERİ KULLANMAMAK.
+
+    ⚠️ SALT OKUR — hiçbir kayıt yazmaz. Söz listesi silinmez, yalnız bu
+       görünüm ona bakmaz (eski kayıtlar arşiv olarak yerinde durur).
+    """
+    oz = cari_ozet()
+    vade = _ay_sonu_gelecek()
+    satirlar = []
+    for t in (oz.get("tedarikciler") or []):
+        acik = round(float(t.get("hesaplanan_acik") or 0), 2)
+        grni = round(float(t.get("faturasiz_teslimat_tl") or 0), 2)
+        if int(sadece_acik or 0) and acik <= 0.01 and grni <= 0.01:
+            continue
+        satirlar.append({
+            "tedarikci": t.get("tedarikci"),
+            "acik_bakiye": acik,
+            "vade": vade,
+            # 📦 Mal geldi faturası gelmedi — borç ama henüz belgesiz.
+            # AYRI gösterilir: ödenecek tutara karıştırmak "faturasızı ödedim"
+            # demek olurdu.
+            "faturasiz_teslimat": grni,
+            "devir": round(float(t.get("devir") or 0), 2),
+            "fatura_toplam": round(float(t.get("fatura_toplam_6ay") or 0), 2),
+            "odeme_toplam": round(float(t.get("odeme_izi_toplam_6ay") or 0), 2),
+            # Aritmetiği satırda GÖSTER: "neden bu rakam" sorusu ekranda cevaplansın.
+            "hesap": (f"{float(t.get('devir') or 0):.2f} devir "
+                      f"+ {float(t.get('fatura_toplam_6ay') or 0):.2f} fatura "
+                      f"− {float(t.get('odeme_izi_toplam_6ay') or 0):.2f} ödeme "
+                      f"= {acik:.2f}"),
+            "sinif": t.get("sinif"),
+        })
+    satirlar.sort(key=lambda x: -x["acik_bakiye"])
+    return {
+        "vade": vade,
+        "tedarikci_adet": len(satirlar),
+        "toplam_odenecek": round(sum(s["acik_bakiye"] for s in satirlar
+                                     if s["acik_bakiye"] > 0), 2),
+        "toplam_faturasiz_teslimat": round(
+            sum(s["faturasiz_teslimat"] for s in satirlar), 2),
+        "satirlar": satirlar,
+        "not": (
+            "Ödenecekler cari açıktan TÜRETİLİR — depolanan söz/vade kaydı "
+            f"yok. Vade tek: {vade} (gelecek ayın sonu). Ödeme yapılınca açık "
+            "bakiye düşer ve kalan kendiliğinden bir sonraki aya taşınır; "
+            "taşıyacak ayrı kayıt yoktur. Eksi bakiye = fazla ödeme/avans, "
+            "ödenecek toplamına GİRMEZ. 'Faturasız teslimat' ayrı sütundur: "
+            "borçtur ama belgesi yoktur, ödenecekle karıştırılmaz."
+        ),
+    }
+
+
 @router.get("/cari-kuyruk-hizala-onizle")
 def cari_kuyruk_hizala_onizle(tedarikci: str = "") -> dict:
     """🧮 KURU ÇALIŞTIRMA — kuyruğu cari gerçeğine hizala (SAHİP MODELİ).
