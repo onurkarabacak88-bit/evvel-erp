@@ -6389,7 +6389,29 @@ def cari_ozet() -> dict:
     ozet = []
     for g in gruplar.values():
         fl = _cari_zincir(g["faturalar"])
-        son6 = [f for f in fl if f["tarih"] >= kesit_6ay]
+        # 📜 AÇILIŞ DEVRİ ATAMASI — son6'dan ÖNCE yapılmalı, çünkü devir
+        # çizgisi elemesinin MEŞRU olup olmadığı devrin VARLIĞINA bağlı.
+        # Tek-atama semantiği korunur (ilk eşleşen grup alır; sıra değişmedi).
+        devir_top, _devir_atandi = 0.0, False
+        for dv in devirler:
+            if dv.get("_atandi"):
+                continue
+            if any(_odeme_eslesir(a, dv["tedarikci"]) for a in g_adlar) or \
+               any(_odeme_eslesir(dv["tedarikci"], a) for a in g_adlar):
+                dv["_atandi"] = True
+                _devir_atandi = True
+                devir_top = round(devir_top + float(dv["tutar"] or 0), 2)
+        # ⚠️ ELEME YALNIZ DEVRİ VARSA (canlı ölçüm METRO, 2026-09-01):
+        # Devir çizgisi öncesi faturaları elemenin GEREKÇESİ "o dönem zaten
+        # tek satırlık devirle temsil ediliyor"dur. Devri OLMAYAN tedarikçide
+        # bu gerekçe YOKTUR ve eleme ASİMETRİ üretir: eski fatura toplamdan
+        # düşer ama onu ödeyen (çizgi SONRASI tarihli) ödeme SAYILIR — borç
+        # olduğundan AZ görünür. METRO'da tam bu oldu: Nisan faturası
+        # 16.044,76 ₺ elendi, onu ödeyen 21 Tem tarihli kart çekimi sayıldı;
+        # gerçek açık 24.600,22 ₺ iken ekran 8.555,94 ₺ gösteriyordu.
+        # Aynı kural /cari-odenecekler'de de uygulanıyor — TEK doktrin.
+        son6 = (fl if not _devir_atandi
+                else [f for f in fl if f["tarih"] >= kesit_6ay])
         beyan, beyan_tarih = None, None
         for f in reversed(fl):
             if f.get("bakiye_dahil") is not None:
@@ -6429,15 +6451,10 @@ def cari_ozet() -> dict:
         odeme_top = round(sum(float(o["tutar"] or 0) for o in _grup_izler), 2)
         fat_top = round(sum(f["tutar"] for f in son6), 2)
         # 📜 AÇILIŞ DEVRİ (tek-atama): sahip beyanı pencere-öncesi gerçeği taşır;
-        # açık = devir + pencere içi fatura − ödeme izi. Devir yalnız TEK gruba.
-        devir_top = 0.0
-        for dv in devirler:
-            if dv.get("_atandi"):
-                continue
-            if any(_odeme_eslesir(a, dv["tedarikci"]) for a in g_adlar) or \
-               any(_odeme_eslesir(dv["tedarikci"], a) for a in g_adlar):
-                dv["_atandi"] = True
-                devir_top = round(devir_top + float(dv["tutar"] or 0), 2)
+        # açık = devir + fatura − ödeme izi. Devir yalnız TEK gruba.
+        # ⚠️ Atama YUKARIDA yapıldı (son6 kararı ona bağlı) — BURADA TEKRAR
+        #    ETME: ikinci tur `_atandi` bayrağı yüzünden 0 döndürür ve devri
+        #    olan tedarikçinin devrini SIFIRLARDI.
         hesaplanan_acik = round(devir_top + fat_top - odeme_top, 2)
         # 📦 GRNI — teslim alındı, fatura gelmedi (bakiyeye DAHİL DEĞİL)
         # ⚠️ TEKİLLEŞTİRME (2026-08-08 canlı ders): 'MEHMET ATALAY' ve 'Napolés'
@@ -6456,6 +6473,12 @@ def cari_ozet() -> dict:
         ozet.append({
             "tedarikci": g["tedarikci"], "vkn": g["vkn"],
             "devir": devir_top,
+            # Alan KENDİNİ AÇIKLAR: bu tedarikçide devir çizgisi elemesi
+            # uygulandı mı? Uygulanmadıysa sebep DEVİR YOKLUĞUDUR (eleme
+            # asimetri üretirdi) — okuyucu "neden bu kadar çok/az?" sorusunu
+            # yanıtın içinde bulsun.
+            "devir_kaydi_var": _devir_atandi,
+            "devir_oncesi_eleme_uygulandi": _devir_atandi,
             "fatura_adet_6ay": len(son6),
             "fatura_toplam_6ay": fat_top,
             "odeme_izi_toplam_6ay": odeme_top,
