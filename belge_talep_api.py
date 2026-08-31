@@ -1029,6 +1029,33 @@ def eslestirme_verisi_topla(cur, bugun, gun: int = 120, fatura_idler: Optional[l
     for f in faturalar:
         f["kalemler"] = _fk.get(str(f["id"])) or []
 
+    # ══════════════════════════════════════════════════════════════════════
+    # 🪪 SAHİBİN KİMLİK KARARI EŞLEŞTİRMEYE DE UYGULANIR (2026-08-31)
+    # ══════════════════════════════════════════════════════════════════════
+    # Bu modül kimlik karar defterini HİÇ okumuyordu (Fable denetimi). Sonuç:
+    # sahip "FEZ = FEZ KAHVE GIDA İTHALAT… LTD ŞTİ" dese bile eşleştirme
+    # motoru iki adı yabancı sayıyordu. İki ayrı zarar veriyordu:
+    #   · `_cift_puanla` ortak kelime yoksa çifti TAMAMEN eler — onaylanmış
+    #     bir kimlik bile kurtarmıyordu.
+    #   · Ortak kelime olsa bile ad benzerliği (Jaccard) düşük çıkıyordu:
+    #     "FEZ" ile 8 kelimelik unvanın kesişimi 1/8 → ad puanı neredeyse yok.
+    # Kanonik ada çevirince sahibin kararı eşleşmeyi GÜÇLENDİRİR — olması
+    # gereken buydu: onay, sistemin görüşünü değiştirmeli.
+    # ⚠️ Ham ad SİLİNMEZ: `tedarikci_ad` olduğu gibi kalır (ekranda ne yazıldığı
+    #    görünsün), kanonik AYRI alanda taşınır. Defter okunamazsa eski
+    #    davranış sürer — kimlik çözümü eşleştirmeyi DURDURMAZ.
+    try:
+        from tedarikci_zinciri_api import _guncel_kararlar
+        _kanon = _guncel_kararlar(cur) or {}
+        if _kanon:
+            for _r in list(teslimatlar) + list(faturalar):
+                _ham = (_r.get("tedarikci_ad") or "").strip()
+                if _ham:
+                    _r["tedarikci_kanonik"] = _kanon.get(_ham.upper()) or _ham
+    except Exception as _e_kim:  # noqa: BLE001
+        logger.warning("kimlik karar defteri eslestirmeye uygulanamadi: %s",
+                       str(_e_kim)[:150])
+
     return teslimatlar, faturalar, ham_faturalar, elenen_hizmet
 
 
@@ -1121,8 +1148,12 @@ def _cift_puanla(t, f):
     (tutar tavanı aşıldı VE kalem kanıtı yok). Kalem uyuşmazlığı ELEMEZ — OCR
     gürültüsüne dayanarak "bu fatura o teslimatın değil" demek sahte-kesinliktir.
     """
-    t_kel = set(_ad_norm(t.get("tedarikci_ad")).split())
-    f_kel = set(_ad_norm(f.get("tedarikci_ad")).split())
+    # 🪪 Sahip bu iki adı AYNI karşı taraf ilan ettiyse kıyas kanonik üzerinden
+    # yapılır (2026-08-31). Kanonik yoksa ham ada düşer — geriye uyum.
+    _t_ad = t.get("tedarikci_kanonik") or t.get("tedarikci_ad")
+    _f_ad = f.get("tedarikci_kanonik") or f.get("tedarikci_ad")
+    t_kel = set(_ad_norm(_t_ad).split())
+    f_kel = set(_ad_norm(_f_ad).split())
     ortak = t_kel & f_kel
     if not ortak:
         return None

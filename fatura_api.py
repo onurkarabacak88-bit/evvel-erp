@@ -6359,24 +6359,48 @@ def mutabakat_zinciri() -> dict:
             fatura_by_id = {str(dict(r)["id"]): dict(r) for r in cur.fetchall() or []}
         # Ödeme izi penceresi (3 kanal, türetilmişler hariç) — tek sorgu
         cur.execute(
-            """SELECT tarih::text AS tarih, tutar::float AS tutar FROM (
+            # 🏷️ TEDARİKÇİ METNİ DE OKUNUR (2026-08-31): eskiden yalnız
+            # tarih+tutar seçiliyordu ve eşleştirme tedarikçiye HİÇ bakmıyordu.
+            """SELECT tarih::text AS tarih, tutar::float AS tutar,
+                      COALESCE(metin,'') AS metin FROM (
                  -- ödeme tarihi ≠ vade tarihi; gelecek tarihli "ödendi" sayılmaz
-                 SELECT COALESCE(odeme_tarihi, vade_tarihi) AS tarih, tutar
+                 SELECT COALESCE(odeme_tarihi, vade_tarihi) AS tarih, tutar,
+                        COALESCE(tedarikci,'') || ' ' || COALESCE(aciklama,'') AS metin
                  FROM vadeli_alimlar
                  WHERE durum='odendi'
                    AND COALESCE(odeme_tarihi, vade_tarihi) >= CURRENT_DATE - 75
                    AND COALESCE(odeme_tarihi, vade_tarihi) <= CURRENT_DATE
                  UNION ALL
-                 SELECT tarih, tutar FROM anlik_giderler
+                 SELECT tarih, tutar, COALESCE(aciklama,'') AS metin
+                 FROM anlik_giderler
                  WHERE durum='aktif' AND kaynak_id IS NULL
                    AND tarih >= CURRENT_DATE - 75
                  UNION ALL
-                 SELECT tarih, tutar FROM kart_hareketleri
+                 SELECT tarih, tutar, COALESCE(aciklama,'') AS metin
+                 FROM kart_hareketleri
                  WHERE islem_turu='HARCAMA' AND durum='aktif' AND kaynak_id IS NULL
                    AND tarih >= CURRENT_DATE - 75) x""")
         odemeler = [dict(r) for r in cur.fetchall() or []]
 
-    def _odeme_izi(tutar: float, tarih: str) -> bool:
+    def _odeme_izi(tutar: float, tarih: str, ted_ad: str = "") -> Optional[bool]:
+        """Ödeme izi var mı? True/False/None.
+
+        ⚠️ ESKİDEN TEDARİKÇİYE HİÇ BAKMIYORDU (Codex denetimi, 2026-08-31):
+        yalnız tutar (±%2) ve tarih (±10 gün) kıyaslanıyordu. Aynı hafta iki
+        farklı tedarikçiye yakın tutarlı ödeme varsa BİRİ ÖTEKİNİN faturasını
+        "ödenmiş" gösteriyordu — ve tek ödeme birden çok zinciri birden TAM
+        yapabiliyordu. Para tarafında en pahalı yanlış budur.
+        Artık ödemenin metninde tedarikçinin AYIRT EDİCİ kelimesi de aranır.
+        ⚠️ Tedarikçi adı yoksa ya da ayırt edici kelimesi yoksa None döner:
+           "ödeme yok" DEMİYORUZ, "arayamadık" diyoruz. (HATA ≠ BOŞ)
+        """
+        _jen = {"gida", "kahve", "market", "grup", "ltd", "sti", "san", "tic",
+                "sanayi", "ticaret", "limited", "sirketi", "anonim", "as",
+                "ve", "a.s", "a.ş", "şirketi", "şti"}
+        _tok = [w for w in _cari_katla(ted_ad or "").replace(".", " ").split()
+                if len(w) >= 3 and w not in _jen]
+        if not _tok:
+            return None      # kimlik kurulamadı → ölçemedik
         for o in odemeler:
             if abs(o["tutar"] - tutar) > max(5.0, tutar * 0.02):
                 continue
@@ -6385,7 +6409,10 @@ def mutabakat_zinciri() -> dict:
                           - _d.fromisoformat(str(o["tarih"])[:10])).days)
             except Exception:  # noqa: BLE001
                 continue
-            if gf <= 10:
+            if gf > 10:
+                continue
+            _m = _cari_katla(o.get("metin") or "")
+            if any(w in _m for w in _tok):
                 return True
         return False
 
@@ -6428,7 +6455,8 @@ def mutabakat_zinciri() -> dict:
                 halka["bagli_fatura_kopya"] = True
             f0 = fl[0] if fl else None
             if f0 and f0["tutar"] > 0:
-                halka["odeme_izi"] = _odeme_izi(f0["tutar"], f0["tarih"])
+                halka["odeme_izi"] = _odeme_izi(
+                    f0["tutar"], f0["tarih"], s.get("tedarikci_ad") or "")
         if not halka["teslim"]:
             eksik = "teslim_yok"
         elif not halka["fatura"] and s.get("belge_durum") == "bekliyor":
