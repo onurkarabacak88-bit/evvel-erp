@@ -7232,6 +7232,20 @@ def cari_odenecekler(tedarikci: str = ""):
     # eski borçlar SONSUZA KADAR açık kalıyordu. FIFO'nun tam tersi.
     ekstre = cari_ekstre(tedarikci=ara, tam_fatura=1)
     faturalar = ekstre.get("faturalar") or []
+    # ══════════════════════════════════════════════════════════════════════
+    # 📜 DEVİR ÇİZGİSİ: sistem öncesi faturalar HAVUZA GİRMEZ (2026-08-31)
+    # ══════════════════════════════════════════════════════════════════════
+    # Sistem başlangıcından (EVVEL_SISTEM_BASLANGIC) önceki dönem TEK SATIRLIK
+    # açılış devriyle temsil edilir. O dönemin faturalarını bir de tek tek
+    # havuza koymak AYNI BORCU İKİ KEZ saymaktır.
+    # Canlı ölçüm: FEZ'de havuz 474.888 ₺ gösteriyordu; bunun 300.314 ₺'si
+    # sistem öncesi 14 faturaydı (biri 2022 tarihli) — oysa FEZ'in devri
+    # 32.391 ₺. Yani "ödenecekler" gerçeğin ~3,5 katıydı.
+    # ⚠️ SESSİZ ELEME YASAK: elenen tutar yanıtta adıyla döner.
+    _sinir = EVVEL_SISTEM_BASLANGIC
+    _devir_oncesi = [f for f in faturalar if str(f.get("tarih") or "") < _sinir]
+    if _devir_oncesi:
+        faturalar = [f for f in faturalar if str(f.get("tarih") or "") >= _sinir]
     with db() as (_, cur):
         _ensure_cari_odeme_tablolar(cur)
         ids = [f["id"] for f in faturalar if f.get("id")]
@@ -7252,7 +7266,20 @@ def cari_odenecekler(tedarikci: str = ""):
         "tedarikci": ara,
         "acik_faturalar": acik,
         "acik_toplam": round(sum(a["kalan"] for a in acik), 2),
-        "not": "FIFO: ödeme en eski faturadan kapatır. Elle dağıtım için tahsis listesi gönderin.",
+        # 📜 Devir çizgisinin dışında bırakılanlar GÖRÜNÜR kalır — "neden bu
+        # kadar az?" sorusunun cevabı yanıtın içinde olsun.
+        "devir_oncesi_elenen_adet": len(_devir_oncesi),
+        "devir_oncesi_elenen_tl": round(
+            sum(float(f.get("tutar") or 0) for f in _devir_oncesi), 2),
+        "devir_cizgisi": _sinir,
+        "not": (
+            "FIFO: ödeme en eski faturadan kapatır. Elle dağıtım için tahsis "
+            "listesi gönderin. "
+            + (f"{len(_devir_oncesi)} fatura {_sinir} ÖNCESİNE ait olduğu için "
+               "havuza alınmadı — o dönem açılış devriyle temsil edilir; "
+               "ikisini birden saymak aynı borcu iki kez yazardı."
+               if _devir_oncesi else "")
+        ),
     }
 
 
