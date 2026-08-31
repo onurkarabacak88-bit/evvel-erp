@@ -9190,6 +9190,13 @@ class OpsSiparisSevkiyataGonderBody(BaseModel):
     # None/verilmemiş = ESKİ DAVRANIŞ (tüm kalemler) — geriye uyum.
     # İçerik: urun_id/urun_ad dizisi VEYA {urun_id|urun_ad} nesneleri.
     kalemler: Optional[List[Any]] = None
+    # 🔒 BAYAT PENCERE KİLİDİ (Codex denetimi, 2026-08-31): ekranın OKUDUĞU
+    # `kalem_surum`. Bu uç `kalem_durumlari`yı BAŞTAN YAZIP sürümü artırıyordu
+    # ama beklenen sürümü hiç DOĞRULAMIYORDU — iki operatör aynı talebi açıp
+    # farklı seçimlerle gönderirse ikincisi birincinin depo kararlarını
+    # sessizce geri alıyordu (son yazan kazanır).
+    # None gelirse (eski istemci) kontrol atlanır — geriye uyum.
+    kalem_surum: Optional[int] = None
 
 
 class OpsSiparisMerkezIptalBody(BaseModel):
@@ -9849,6 +9856,7 @@ def ops_siparis_sevkiyata_gonder(body: OpsSiparisSevkiyataGonderBody):
             f"""
             SELECT id, sube_id, durum, kalemler, kalem_durumlari,
                    tahsis_kaynak_depo_sube_id,
+                   COALESCE(kalem_surum, 0) AS kalem_surum,
                    COALESCE(hedef_depo_sube_id, sevkiyat_sube_id) AS hedef_depo_sube_id,
                    {SD_NOALIAS} AS sevkiyat_durumu
             FROM siparis_talep
@@ -9861,6 +9869,18 @@ def ops_siparis_sevkiyata_gonder(body: OpsSiparisSevkiyataGonderBody):
         if not tr:
             raise HTTPException(404, "Sipariş talebi bulunamadı")
         t = dict(tr)
+        # 🔒 Kontrol FOR UPDATE'TEN SONRA: iki istek aynı anda gelirse biri
+        # bekler, sonra sürümü değişmiş bulur ve reddedilir. Korunma sayının
+        # kendisinde değil, KİLİTLİ OKUMADA. (Sevk ucunda aynı kalıp var.)
+        if body.kalem_surum is not None:
+            _mev_surum = int(t.get("kalem_surum") or 0)
+            if int(body.kalem_surum) != _mev_surum:
+                raise HTTPException(
+                    409,
+                    "Bu sipariş siz ekranı açtıktan sonra değişti (başka biri "
+                    "kalemleri yönlendirmiş olabilir). Kaydınız ALINMADI — "
+                    "ekranı yenileyip seçiminizi tekrar yapın.",
+                )
         if str(t.get("durum") or "") not in ("bekliyor", "hazirlaniyor", "gonderildi"):
             raise HTTPException(409, "Talep sevkiyat akışı için uygun durumda değil")
         kalemler = t.get("kalemler")

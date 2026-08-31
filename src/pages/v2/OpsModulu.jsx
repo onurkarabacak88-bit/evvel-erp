@@ -1433,6 +1433,11 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
         ...(secilenler.length < ham.length
           ? { kalemler: secilenler.map((k) => ({ urun_id: k.urun_id, urun_ad: k.urun_ad })) }
           : null),
+        // 🔒 BAYAT PENCERE KİLİDİ (2026-08-31): ekranın OKUDUĞU sürüm.
+        // Bu modal açıkken başkası kalemleri yönlendirirse yazma 409 alır ve
+        // onun kararını EZMEYİZ. Sürüm bilinmiyorsa gönderilmez — sunucu eski
+        // davranışa düşer (geriye uyum), sahte koruma iddia etmeyiz.
+        ...(f.sip?.kalem_surum != null ? { kalem_surum: f.sip.kalem_surum } : null),
       };
       const tal = (f.talimat || '').trim();
       if (tal) body.operasyon_yonlendirme_talimati = tal;
@@ -1453,7 +1458,16 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
       setYonForm(null);
       kuleYukle();
     } catch (e) {
-      onToast?.(e?.message || 'Yönlendirme başarısız');
+      // 409 = bayat pencere: modal açıkken başkası bu siparişi değiştirdi.
+      // Ekranı tazeleyip modalı kapatıyoruz — kullanıcı ESKİ listeye bakarak
+      // ikinci kez denemesin, yoksa aynı yanlışı tekrarlar.
+      if (e?.status === 409) {
+        onToast?.(e?.message || 'Sipariş bu arada değişti — liste tazelendi, tekrar seçin');
+        setYonForm(null);
+        kuleYukle();
+      } else {
+        onToast?.(e?.message || 'Yönlendirme başarısız');
+      }
     } finally {
       setYonMesgul(false);
     }
