@@ -6344,10 +6344,17 @@ def mutabakat_zinciri() -> dict:
         fatura_by_id: dict = {}
         if _bagli_idler:
             cur.execute(
+                # ⚠️ `kopya` FİLTRESİ YOK (bilinçli): bağ AÇIKÇA kurulmuş bir
+                # karardır — sistem o satırı seçmiş. Filtreyle elemek, var
+                # olan belgeyi "bulunamadı" göstermek olurdu (canlıda tam bunu
+                # yaptı: FEZ2026000001703 kopya damgalı ve bağlı).
+                # Bağın kopyaya kurulmuş olması AYRI bir sorundur; onu gizlemek
+                # yerine `bagli_fatura_kopya` bayrağıyla söylüyoruz.
                 """SELECT id, COALESCE(toplam_tutar,0)::float AS tutar,
-                          COALESCE(fatura_tarih, olusturma::date)::text AS tarih
+                          COALESCE(fatura_tarih, olusturma::date)::text AS tarih,
+                          COALESCE(durum,'') AS durum
                      FROM tedarikci_fatura
-                    WHERE id = ANY(%s) AND COALESCE(durum,'') <> 'kopya'""",
+                    WHERE id = ANY(%s)""",
                 (_bagli_idler,))
             fatura_by_id = {str(dict(r)["id"]): dict(r) for r in cur.fetchall() or []}
         # Ödeme izi penceresi (3 kanal, türetilmişler hariç) — tek sorgu
@@ -6392,11 +6399,13 @@ def mutabakat_zinciri() -> dict:
                  "belge": s.get("belge_durum") in ("pdf_geldi", "kapandi"),
                  "fatura": False, "odeme_izi": None}
         fl = fatura_map.get(s.get("talep_id")) or []
+        _kopya_bag = False
         if not fl and s.get("fatura_id"):
             # Asıl bağ: belge_talep.fatura_id → tedarikci_fatura.id
             _bf = fatura_by_id.get(str(s.get("fatura_id")))
             if _bf:
                 fl = [_bf]
+                _kopya_bag = (_bf.get("durum") == "kopya")
         # ══════════════════════════════════════════════════════════════════
         # 🚨 SAHTE YEŞİL KAPATILDI (Codex denetimi, 2026-08-31)
         # ══════════════════════════════════════════════════════════════════
@@ -6413,6 +6422,10 @@ def mutabakat_zinciri() -> dict:
         if _bag_var or fl:
             halka["fatura"] = True
             halka["fatura_kaydi_bulundu"] = bool(fl)
+            if _kopya_bag:
+                # Bağ var ve belge var, ama bağlandığı satır KOPYA damgalı.
+                # Zincir kopuk değil — ama bağ yanlış kağıda kurulmuş olabilir.
+                halka["bagli_fatura_kopya"] = True
             f0 = fl[0] if fl else None
             if f0 and f0["tutar"] > 0:
                 halka["odeme_izi"] = _odeme_izi(f0["tutar"], f0["tarih"])
