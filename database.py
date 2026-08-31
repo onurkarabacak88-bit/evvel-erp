@@ -3625,6 +3625,13 @@ def init_db():
                 ALTER TABLE siparis_talep ADD COLUMN IF NOT EXISTS kabul_ts TIMESTAMPTZ;
                 ALTER TABLE siparis_talep ADD COLUMN IF NOT EXISTS kabul_personel_id TEXT;
                 ALTER TABLE siparis_talep ADD COLUMN IF NOT EXISTS kabul_personel_ad TEXT;
+                -- 🔓 Uyusmazlik sonrasi YENIDEN ACILMA ani (2026-09-01).
+                -- Toptanci mukerrer-sevk freni bu damgayi okur: bu andan
+                -- ONCE teslim alinmis parti kalanin sevkini engellemez.
+                -- ⚠️ MERKEZI SEMADA OLMAK ZORUNDA: fren sorgusu bu kolona
+                --    JOIN'liyor; kolon yoksa sorgu duser ve fren 503 ile
+                --    TUM toptanci sevkini kilitler (fail-closed felaket).
+                ALTER TABLE siparis_talep ADD COLUMN IF NOT EXISTS yeniden_acilma_ts TIMESTAMPTZ;
             EXCEPTION WHEN others THEN NULL;
             END $$;
         """)

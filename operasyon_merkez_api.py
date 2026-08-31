@@ -10569,14 +10569,41 @@ def ops_siparis_toptanciya_yolla(body: OpsSiparisToptanciyaYollaBody):
         # sebebi doğru yazılsın: "zaten yollanmış" ile "depoya atanmış" farklı
         # şeylerdir ve kullanıcı ikincisinde depo atamasını geri alabilir.
         _depoya_atanmis: set = set()
+        # 🔓 Yeniden açılma damgası — AYRI ve KORUMALI okunur. JOIN kurmuyoruz:
+        # kolon henüz yoksa fren sorgusu düşer ve 503 ile TÜM toptancı sevkini
+        # kilitlerdi (korumak istediğimizden pahalı bir arıza). Okunamazsa
+        # damga None kalır ve fren ESKİ katılığında çalışır — güvenli yön.
+        _yeniden_acilma = None
+        try:
+            with savepoint(cur, "sp_yeniden_acilma_oku"):
+                cur.execute("SELECT yeniden_acilma_ts FROM siparis_talep WHERE id=%s",
+                            (tid,))
+                _yr = cur.fetchone()
+            _yeniden_acilma = (dict(_yr).get("yeniden_acilma_ts") if _yr else None)
+        except Exception as _e_yo:  # noqa: BLE001
+            logger.warning("yeniden_acilma_ts okunamadi (fren kati kalir): %s",
+                           str(_e_yo)[:120])
         try:
             cur.execute(
-                "SELECT kalemler FROM toptanci_siparis "
+                "SELECT kalemler, durum, teslim_ts FROM toptanci_siparis "
                 "WHERE talep_id = %s AND durum <> 'iptal'",
                 (tid,),
             )
             for _cr in cur.fetchall() or []:
-                _ck = dict(_cr).get("kalemler") or []
+                _crd = dict(_cr)
+                # 🔓 Yeniden açılıştan ÖNCE teslim alınmış parti, KALANIN
+                # sevkini engellemez — o parti zaten EKSİK geldiği için talep
+                # yeniden açıldı. YOLDA olan parti engellemeye devam eder
+                # (aynı mal iki kanaldan gelmesin).
+                if (_yeniden_acilma is not None
+                        and str(_crd.get("durum") or "") == "teslim_alindi"
+                        and _crd.get("teslim_ts") is not None):
+                    try:
+                        if _crd["teslim_ts"] < _yeniden_acilma:
+                            continue
+                    except TypeError:
+                        pass   # kıyas kurulamazsa KATI davran (engelle)
+                _ck = _crd.get("kalemler") or []
                 if isinstance(_ck, str):
                     try:
                         _ck = json.loads(_ck)
@@ -10879,18 +10906,41 @@ def ops_siparis_toptanciya_yolla(body: OpsSiparisToptanciyaYollaBody):
                 (sevk_notu, json.dumps(merkez_agg, ensure_ascii=False), tid),
             )
         audit(cur, "siparis_talep", tid, "OPS_SIPARIS_TOPTANCIYA_YOLLA")
+        # ⚠️ YANIT DB'NİN GERÇEĞİNİ SÖYLER (Codex denetimi :10865, 2026-09-01):
+        # `durum` bayraktan üretiliyordu ("tam gönderildiyse gonderildi, yoksa
+        # bekliyor"). Oysa kısmi gönderimde talep DEPO akışında kalabiliyor
+        # ('hazirlaniyor'/'gonderildi') — yanıt yine de 'bekliyor' diyordu ve
+        # yanıta bakan ekran satırı YANLIŞ duruma çekiyordu. Aynı soruya iki
+        # cevap: biri defterde, biri yanıtta. Defter olan doğrudur.
+        _gercek_durum, _gercek_sevk = None, None
+        try:
+            with savepoint(cur, "sp_toptanci_durum_geri_oku"):
+                cur.execute("SELECT durum, sevkiyat_durumu FROM siparis_talep "
+                            "WHERE id=%s", (tid,))
+                _gr = cur.fetchone()
+            if _gr:
+                _gr = dict(_gr)
+                _gercek_durum = str(_gr.get("durum") or "") or None
+                _gercek_sevk = _gr.get("sevkiyat_durumu")
+        except Exception as _e_gd:  # noqa: BLE001
+            logger.warning("toptanci yolla: durum geri okunamadi: %s", str(_e_gd)[:120])
     return {
         "success": True,
         "talep_id": tid,
         "toptanci_siparis_id": ts_id,
         "kalem_sayisi": len(kalemler),
         "toplam_adet": sum(int(k.get("adet") or 0) for k in kalemler),
-        "durum": ("gonderildi" if tam_gonderildi else "bekliyor"),
+        # Geri okunamadıysa eski türetime düşülür (yanıt boş kalmasın), ama
+        # kaynağı alan olarak GÖRÜNÜR: tüketici neye baktığını bilsin.
+        "durum": (_gercek_durum or ("gonderildi" if tam_gonderildi else "bekliyor")),
+        "durum_kaynagi": ("defter" if _gercek_durum else "turetim"),
         "tam_gonderildi": tam_gonderildi,
         # Sunucu doğrulamasının ELEDİĞİ kalemler adıyla + gerekçesiyle döner.
         "elenen_kalemler": _elenen_adlar,
         "kalan_adet": kalan_adet,
-        "sevkiyat_durumu": ("toptanciya_yonlendirildi" if tam_gonderildi else None),
+        "sevkiyat_durumu": (
+            _gercek_sevk if _gercek_durum
+            else ("toptanciya_yonlendirildi" if tam_gonderildi else None)),
         "wa_basarili": bool(wa_sonuc and wa_sonuc.get("basarili")),
         "wa_hata": (wa_sonuc.get("hata") if wa_sonuc else None),
     }
@@ -11141,6 +11191,23 @@ def ops_kabul_uyusmazligi_coz(talep_id: str, body: OpsUyusmazlikCozBody):
         if _mev != "kabul_uyusmazlik":
             raise HTTPException(
                 409, f"Bu talep uyuşmazlıkta değil (durum: {_mev or '—'}).")
+        # ⚠️ SÖZ TUTULABİLİR OLSUN (Codex denetimi :11107, 2026-09-01):
+        # 'yeniden_ac' yanıtı "kalan kalemler yeniden gönderilebilir" diyordu
+        # AMA toptancı freni o ürünü "(zaten yollanmış)" diye reddediyordu —
+        # eksik gelen malın kalanı hiçbir kanaldan sipariş edilemiyordu.
+        # Freni KALDIRMAK yanlış olurdu (asıl işi mükerrer sevki önlemek).
+        # Doğrusu: yeniden açılma ANINI damgala; fren yalnız BU andan ÖNCE
+        # teslim alınmış partiler için gevşesin. Yoldaki parti hâlâ engeller.
+        try:
+            with savepoint(cur, "sp_yeniden_ac_kolon"):
+                cur.execute("ALTER TABLE siparis_talep ADD COLUMN IF NOT EXISTS "
+                            "yeniden_acilma_ts TIMESTAMPTZ")
+                cur.execute(
+                    "UPDATE siparis_talep SET yeniden_acilma_ts = NOW() "
+                    " WHERE id=%s AND %s = 'bekliyor'", (tid, _yeni))
+        except Exception as _e_ya:  # noqa: BLE001
+            # Damga yazılamazsa iş DURMAZ; yalnız fren eski katılığında kalır.
+            logger.warning("yeniden_acilma damgasi yazilamadi: %s", str(_e_ya)[:120])
         cur.execute(
             """UPDATE siparis_talep
                   SET durum=%s,
@@ -11156,7 +11223,10 @@ def ops_kabul_uyusmazligi_coz(talep_id: str, body: OpsUyusmazlikCozBody):
     return {
         "ok": True, "talep_id": tid, "yeni_durum": _yeni,
         "not": ("Eksik kabul edildi, talep kapandı." if karar == "kapat"
-                else "Talep kuyruğa döndü; kalan kalemler yeniden gönderilebilir."),
+                else ("Talep kuyruğa döndü. Bu andan itibaren kalan kalemler "
+                      "yeniden gönderilebilir — daha önce TESLİM ALINMIŞ "
+                      "partiler artık engellemez. Hâlâ YOLDA olan parti varsa "
+                      "engellemeye devam eder (mal iki kez gelmesin).")),
     }
 
 

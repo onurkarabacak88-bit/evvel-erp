@@ -1444,9 +1444,22 @@ def _soz_yazma_kapisi(uc_adi: str, zorla: int = 0) -> None:
     SİLİNMEDİ, kapatıldı: tarihî temizlik için gerekebilir. `zorla=1` bilinçli
     açar (kayda geçer). Kapıyı kalıcı açmak için SOZ_DEFTERI_URETIMI_ACIK.
     """
+    # ⚠️ KAPIYI AÇACAK KİŞİYE — arkasındaki İKİ AÇIK KAPANMADI (Codex
+    #    denetimi 1326 ve 1395, 2026-09-01). Kapı kapalı olduğu için
+    #    düzeltilmediler; açılırsa ÖNCE bunlar düzeltilmeli:
+    #    1) `cari_tahsis_onizle` KANITI YALNIZ TUTAR YAKINLIĞINA dayanıyor —
+    #       tarih ve açıklama/tedarikçi doğrulaması yok. Aynı tedarikçide Mart
+    #       ve Ağustos'ta iki ayrı 10.000 ₺ söz varken yalnız Ağustos ödemesi
+    #       yapılmışsa FIFO en eski MART sözünü kapatır: gerçek açık borç
+    #       yanlış mahsup edilir.
+    #    2) `cari_kuyruk_hizala` önizlemeyi okuyup satırları KİLİTSİZ
+    #       güncelliyor. İki kullanıcı aynı tedarikçiyi eşzamanlı hizalarsa
+    #       aynı ödemenin etkisi İKİ KEZ harcanabilir (FOR UPDATE gerekir).
     if SOZ_DEFTERI_URETIMI_ACIK or int(zorla or 0):
         if not SOZ_DEFTERI_URETIMI_ACIK:
-            logger.warning("SOZ YAZMA KAPISI zorla acildi: %s", uc_adi)
+            logger.warning(
+                "SOZ YAZMA KAPISI zorla acildi: %s — DIKKAT: tutar-yalniz kanit "
+                "ve kilitsiz guncelleme acigi HALA MEVCUT", uc_adi)
         return
     raise HTTPException(
         409, f"'{uc_adi}' kapalı: söz/kuyruk defteri sahip kararıyla devre dışı "
