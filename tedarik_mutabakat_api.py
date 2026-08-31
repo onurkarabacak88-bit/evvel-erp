@@ -1615,13 +1615,41 @@ def kimlik_adaylari(gun: int = 400):
             "   AND COALESCE(f.tedarikci_ad,'') <> '' "
             " GROUP BY f.tedarikci_ad ORDER BY COUNT(*) DESC", (g,))
         adlar = [dict(r) for r in (cur.fetchall() or [])]
+        for _a in adlar:
+            _a["kaynak"] = "fatura"
         cur.execute("SELECT ad, COALESCE(telefon,'') AS tel FROM tedarikciler "
                     "WHERE COALESCE(ad,'') <> ''")
         kayit_tel = {}
+        _kayitli_adlar = []
         for r in (cur.fetchall() or []):
             r = dict(r)
+            _kayitli_adlar.append(r["ad"])
             if r["tel"]:
                 kayit_tel.setdefault(re.sub(r"\D", "", r["tel"])[-10:], set()).add(r["ad"])
+
+        # ══════════════════════════════════════════════════════════════════
+        # 🔗 SİPARİŞ TARAFI DA HAVUZA GİRER (canlı ölçüm, 2026-08-31)
+        # ══════════════════════════════════════════════════════════════════
+        # Bu uç aday havuzunu YALNIZ `tedarikci_fatura`'dan kuruyordu. Oysa
+        # kimlik çatlağı tam da İKİ TARAF ARASINDA: sipariş tarafı kısa adı
+        # kullanıyor ("FEZ", "METRO", "SÜTAŞ", "ATALAY KAHVE"), fatura tarafı
+        # resmi unvanı ("FEZ KAHVE GIDA İTHALAT… LTD ŞTİ").
+        # Ölçüm: sipariş tarafındaki adların yalnız %38'i fatura tarafıyla
+        # birebir tutuyor. Buna rağmen uç "birleşme adayı: 0" diyordu —
+        # çünkü eşleşmeyecek olan taraf havuzda HİÇ YOKTU. Bir şeyi
+        # aramadığı için bulamayana "temiz" demek SAHTE YEŞİLDİR.
+        # ⚠️ Öneri-only sözü değişmedi: hiçbir kayıt birleştirilmez.
+        # ⚠️ `kaynak` alanı satırda döner — sahip hangi adın nereden geldiğini
+        #    görmeden onaylamasın (kısa ad sipariş tarafının, unvan faturanın).
+        _mevcut_ad_u = {(x["ad"] or "").upper() for x in adlar}
+        for _kad in _kayitli_adlar:
+            if (_kad or "").upper() in _mevcut_ad_u:
+                continue
+            adlar.append({
+                "ad": _kad, "fatura_adet": 0, "toplam": 0.0,
+                "ilk": None, "son": None, "seriler": [],
+                "kaynak": "siparis",
+            })
 
     # telefon → ad kümesi (aynı numara = aynı karşı taraf)
     ad_tel = {}
@@ -1724,8 +1752,13 @@ def kimlik_adaylari(gun: int = 400):
                                 else "en çok faturalı ad (öneri)"),
             "adlar": [{"ad": x["ad"], "fatura_adet": x["fatura_adet"],
                        "toplam": round(x["toplam"], 2), "ilk": x["ilk"], "son": x["son"],
-                       "seriler": sorted(s for s in (x["seriler"] or []) if s)}
+                       "seriler": sorted(s for s in (x["seriler"] or []) if s),
+                       # Hangi taraftan geldiği GÖRÜNÜR olmalı: kısa ad genelde
+                       # sipariş tarafının, resmî unvan faturanın. Sahip bunu
+                       # görmeden onaylarsa neyi neye bağladığını bilemez.
+                       "kaynak": x.get("kaynak") or "fatura"}
                       for x in grup],
+            "iki_tarafli": len({(x.get("kaynak") or "fatura") for x in grup}) > 1,
             "ad_sayisi": len(grup),
             "toplam_fatura": sum(x["fatura_adet"] for x in grup),
             "toplam_tutar": round(sum(x["toplam"] for x in grup), 2),
