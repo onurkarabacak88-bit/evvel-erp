@@ -6328,6 +6328,28 @@ def mutabakat_zinciri() -> dict:
         fatura_map: dict = {}
         for r in cur.fetchall() or []:
             fatura_map.setdefault(r["siparis_talep_id"], []).append(dict(r))
+        # ══════════════════════════════════════════════════════════════════
+        # 🔗 ASIL BAĞ DA OKUNUR: belge_talep.fatura_id (2026-08-31)
+        # ══════════════════════════════════════════════════════════════════
+        # Yukarıdaki harita YALNIZ `siparis_talep_id` DOLU faturalardan
+        # kuruluyor. Canlı ölçüm: 15 faturanın 0'ında bu alan dolu —
+        # yani harita HER ZAMAN BOŞ ve bu uç faturayı hiçbir zaman
+        # bulamıyordu. Sistemin fiilen kullandığı bağ ise başka bir yerde:
+        # `belge_talep.fatura_id`. Onu okumayınca zincir ya "tam" (eski
+        # sahte yeşil) ya da "fatura kaydı bulunamadı" (yeni sahte alarm)
+        # diyordu — ikisi de yanlış, çünkü fatura ORADA duruyordu.
+        # ⚠️ TARİH PENCERESİ YOK: bağlı fatura eski olabilir; bağ zaten
+        #    kurulmuş bir gerçektir, pencere onu görünmez yapmamalı.
+        _bagli_idler = [str(x.get("fatura_id")) for x in siparisler if x.get("fatura_id")]
+        fatura_by_id: dict = {}
+        if _bagli_idler:
+            cur.execute(
+                """SELECT id, COALESCE(toplam_tutar,0)::float AS tutar,
+                          COALESCE(fatura_tarih, olusturma::date)::text AS tarih
+                     FROM tedarikci_fatura
+                    WHERE id = ANY(%s) AND COALESCE(durum,'') <> 'kopya'""",
+                (_bagli_idler,))
+            fatura_by_id = {str(dict(r)["id"]): dict(r) for r in cur.fetchall() or []}
         # Ödeme izi penceresi (3 kanal, türetilmişler hariç) — tek sorgu
         cur.execute(
             """SELECT tarih::text AS tarih, tutar::float AS tutar FROM (
@@ -6370,6 +6392,11 @@ def mutabakat_zinciri() -> dict:
                  "belge": s.get("belge_durum") in ("pdf_geldi", "kapandi"),
                  "fatura": False, "odeme_izi": None}
         fl = fatura_map.get(s.get("talep_id")) or []
+        if not fl and s.get("fatura_id"):
+            # Asıl bağ: belge_talep.fatura_id → tedarikci_fatura.id
+            _bf = fatura_by_id.get(str(s.get("fatura_id")))
+            if _bf:
+                fl = [_bf]
         # ══════════════════════════════════════════════════════════════════
         # 🚨 SAHTE YEŞİL KAPATILDI (Codex denetimi, 2026-08-31)
         # ══════════════════════════════════════════════════════════════════
