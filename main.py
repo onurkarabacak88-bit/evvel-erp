@@ -1465,7 +1465,26 @@ KAYNAK_KASA_ISLEM_TURU = {
     'personel': 'PERSONEL_MAAS',
     'vadeli_alimlar': 'VADELI_ODEME',
     'borc_envanteri': 'BORC_TAKSIT',
+    # 💳 CARİ ÖDEME (2026-08-31): tedarikçi cari hesabına ödeme. Haritada YOKTU
+    # ve yazma tarafı varsayılan olarak 'KART_ODEME' kullanıyordu — kasa
+    # defterine "karta borç ödedim" diye yazılıyordu, oysa tedarikçiye ödeme.
+    'cari_odeme': 'FATURA_ODEMESI',
 }
+
+# ⚠️ TEK VARSAYILAN (canlı hata, 2026-08-31): yazma tarafı bilinmeyen kaynakta
+# 'KART_ODEME', geri alma tarafı 'ODEME' varsayıyordu. İkisi UYUŞMAYINCA
+# `iptal_kasa_hareketi` kaydı BULAMIYOR ve iptal sessizce hiçbir şey yapmıyor —
+# para kasadan çıkmış görünmeye devam ediyor. Bu tam olarak kodun kendi
+# yorumunda uyardığı hata (bkz. odeme_plani_sil FIX O1), yeni bir kaynak
+# eklendiğinde tekrarladı. Artık iki taraf da BU sabiti kullanır.
+KASA_ISLEM_TURU_VARSAYILAN = 'ODEME'
+
+
+def kasa_islem_turu(kaynak_tablo: Optional[str]) -> str:
+    """kaynak_tablo → kasa işlem türü. Yazma ve İPTAL aynı yerden okur ki
+    ayrışmasınlar (ayrıştıkları gün iptal sessizce çalışmaz)."""
+    return KAYNAK_KASA_ISLEM_TURU.get(
+        (kaynak_tablo or ''), KASA_ISLEM_TURU_VARSAYILAN)
 
 
 def kasa_ve_faiz_odeme_plani_tam_odeme(
@@ -1544,7 +1563,7 @@ def kasa_ve_faiz_odeme_plani_tam_odeme(
     if ana_para_kismi > 0:
         aciklama_ana = anapara_aciklama if anapara_aciklama is not None else plan['aciklama']
         kaynak = plan.get('kaynak_tablo') or ''
-        islem_t = KAYNAK_KASA_ISLEM_TURU.get(kaynak, 'KART_ODEME')
+        islem_t = kasa_islem_turu(kaynak)   # iptal tarafiyla AYNI kaynak
         # 🏪 ŞUBE DAMGASI KAYNAKTA (2026-08-09): maaş/sabit gider ödemesi kasaya
         # şubesiz yazılıyordu; şube kârlılığı personel maliyeti OLMADAN
         # hesaplanıyordu (250.487 ₺ "atanmamış" kovasında birikmişti). Geçmiş
@@ -8509,8 +8528,16 @@ def odeme_yap(oid: str, tutar: Optional[float] = None, body: VadeliOdeModel = Va
         if _kalan_varsayilan <= 0:
             raise HTTPException(400, "Bu planın kalan borcu yok — zaten ödenmiş görünüyor")
 
-        # KART seçildiyse ve kaynak vadeli_alimlar ise kart akışına yönlendir
-        if body.odeme_yontemi == 'kart' and body.kart_id and plan.get('kaynak_tablo') == 'vadeli_alimlar':
+        # KART seçildiyse kart akışına yönlendir.
+        # ⚠️ ESKİDEN yalnız `kaynak_tablo='vadeli_alimlar'` planda açılıyordu
+        # (canlı hata, 2026-08-31): tedarikçi cari ödemesi (`cari_odeme`) kartla
+        # yapılmak istendiğinde bu şart tutmuyor, dal ATLANIYOR ve ödeme sessizce
+        # NAKİT yoluna düşüyordu. Sonuç: sahip "kartla ödedim" diyor, sistem
+        # "✓ ödendi" diyor, ama kart borcu ARTMIYOR ve kasadan 120.000 ₺ çıkmış
+        # görünüyordu. Kanal sessizce değişti, kimse fark etmedi.
+        # Kart seçimi KAYNAKTAN BAĞIMSIZ bir karardır: kart_id verildiyse kart.
+        if body.odeme_yontemi == 'kart' and body.kart_id and plan.get('kaynak_tablo') in (
+                'vadeli_alimlar', 'cari_odeme'):
             bugun = str(bugun_tr())
             odeme_tutari = tutar or _kalan_varsayilan
             # Kart validasyon — FOR UPDATE: eş zamanlı limit aşımını önler
@@ -8694,7 +8721,7 @@ def odeme_plani_sil(oid: str):
                 iptal_kasa_hareketi(cur, eski['kaynak_id'], 'vadeli_alimlar',
                     'VADELI_ODEME', 'VADELI_IPTAL', f"Ödeme iptali: {eski['aciklama']}")
             else:
-                islem = KAYNAK_KASA_ISLEM_TURU.get(kaynak, 'ODEME')
+                islem = kasa_islem_turu(kaynak)   # yazma tarafiyla AYNI kaynak
                 iptal_kasa_hareketi(cur, oid, 'odeme_plani', islem, islem + '_IPTAL',
                     f"Ödeme iptali: {eski['aciklama']}")
         audit(cur, 'odeme_plani', oid, 'IPTAL', eski=eski)
@@ -13833,7 +13860,7 @@ def kismi_odeme_yap(oid: str, body: KismiOdeModel):
 
         # 2. Kasaya sadece ödenen kadar yaz (nakit) VEYA kart harcamasına ekle (kart)
         kaynak = plan.get('kaynak_tablo') or ''
-        islem_t = KAYNAK_KASA_ISLEM_TURU.get(kaynak, 'KART_ODEME')
+        islem_t = kasa_islem_turu(kaynak)   # iptal tarafiyla AYNI kaynak
 
         if kaynak == 'vadeli_alimlar' and getattr(body, 'odeme_yontemi', 'nakit') == 'kart' and getattr(body, 'kart_id', None):
             # KART: kasaya yazma — kart harcamasına ekle
