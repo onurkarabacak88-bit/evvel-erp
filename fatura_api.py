@@ -1673,30 +1673,44 @@ def cari_ode_geri_al(body: CariOdemeGeriAlBody) -> dict:
         if not r:
             raise HTTPException(404, "Cari ödeme bulunamadı")
         o = dict(r)
-        if o.get("iptal"):
+        # ⚠️ YARIM KALMIŞ GERİ ALMA TAMAMLANABİLİR OLMALI (Codex denetimi
+        # :1614, 2026-09-01): adım 1-2 commit edildikten sonra adım 3 (plan +
+        # kasa izi) düşerse ödeme `iptal=TRUE` damgalı kalır ama KASA ÇIKIŞI
+        # aktif kalmaya devam eder. Eski davranışta ikinci çağrı "zaten geri
+        # alınmış" deyip DÜZELTME YOLUNU KAPATIYORDU — para kasadan çıkmış
+        # görünmeye sonsuza dek devam ederdi.
+        # Artık: damga varsa 1-2 ATLANIR, doğrudan 3'e geçilir (idempotent).
+        _yarim_tamamla = bool(o.get("iptal"))
+        if _yarim_tamamla and not str(o.get("plan_id") or "").strip():
+            # Plan yoksa yapacak 3. adım da yok — gerçekten bitmiş.
             raise HTTPException(409, "Bu ödeme zaten geri alınmış.")
-        # 1) Tahsisleri TERS KAYITLA sıfırla (silme yok)
-        cur.execute(
-            """SELECT fatura_id, fatura_no, fatura_tarih, kapatilan::float AS k
-                 FROM cari_odeme_tahsis WHERE odeme_id=%s""", (oid,))
-        _tah = [dict(x) for x in (cur.fetchall() or [])]
-        for t in _tah:
+        # ⚠️ Kapsam: koşullu blokta tanımlanan ad, aşağıda KOŞULSUZ okunuyor
+        # — hoist edilmezse yarım-tamamlama yolunda UnboundLocalError olur.
+        _tah: list = []
+        if not _yarim_tamamla:
+            # 1) Tahsisleri TERS KAYITLA sıfırla (silme yok)
             cur.execute(
-                """INSERT INTO cari_odeme_tahsis
-                     (id, odeme_id, fatura_id, fatura_no, fatura_tarih, kapatilan, otomatik)
-                   VALUES (%s,%s,%s,%s,%s,%s,FALSE)""",
-                (str(uuid.uuid4()), oid, t.get("fatura_id"), t.get("fatura_no"),
-                 t.get("fatura_tarih"), -float(t.get("k") or 0)))
-        # 2) Ödemeye iptal damgası
-        cur.execute(
-            """UPDATE cari_odeme
-                  SET iptal=TRUE, iptal_ts=NOW(),
-                      iptal_gerekce=%s
-                WHERE id=%s AND COALESCE(iptal,FALSE)=FALSE
-                RETURNING id""", (gerekce, oid))
-        if not cur.fetchone():
-            raise HTTPException(409, "Ödeme bu arada değişti — tekrar deneyin.")
-        conn.commit()
+                """SELECT fatura_id, fatura_no, fatura_tarih, kapatilan::float AS k
+                     FROM cari_odeme_tahsis WHERE odeme_id=%s""", (oid,))
+            _tah = [dict(x) for x in (cur.fetchall() or [])]
+            for t in _tah:
+                cur.execute(
+                    """INSERT INTO cari_odeme_tahsis
+                         (id, odeme_id, fatura_id, fatura_no, fatura_tarih,
+                          kapatilan, otomatik)
+                       VALUES (%s,%s,%s,%s,%s,%s,FALSE)""",
+                    (str(uuid.uuid4()), oid, t.get("fatura_id"), t.get("fatura_no"),
+                     t.get("fatura_tarih"), -float(t.get("k") or 0)))
+            # 2) Ödemeye iptal damgası
+            cur.execute(
+                """UPDATE cari_odeme
+                      SET iptal=TRUE, iptal_ts=NOW(),
+                          iptal_gerekce=%s
+                    WHERE id=%s AND COALESCE(iptal,FALSE)=FALSE
+                    RETURNING id""", (gerekce, oid))
+            if not cur.fetchone():
+                raise HTTPException(409, "Ödeme bu arada değişti — tekrar deneyin.")
+            conn.commit()
     # 3) Plan + kasa izi (mevcut kanonik iptal yolu)
     _plan_sonuc = None
     try:
@@ -1714,16 +1728,21 @@ def cari_ode_geri_al(body: CariOdemeGeriAlBody) -> dict:
             "hata": str(e)[:200],
             "not": ("Tahsisler ters kayıtla çözüldü ve ödeme iptal damgası aldı, "
                     "AMA ödeme planı/kasa izi geri alınamadı. Kasa hâlâ bu "
-                    "çıkışı gösteriyor — elle düzeltilmeli."),
+                    "çıkışı gösteriyor. AYNI UCU TEKRAR ÇAĞIRIN: yarım kalan "
+                    "adım tamamlanır (ilk iki adım tekrarlanmaz)."),
         }
     return {
         "ok": True, "odeme_id": oid, "tedarikci": o.get("tedarikci_ad"),
         "tutar": o.get("tutar"),
         "tahsis_ters_kayit": len(_tah),
         "plan_iptali": _plan_sonuc,
-        "not": ("Ödeme geri alındı: tahsisler ters kayıtla sıfırlandı, ödeme "
-                "iptal damgası aldı, plan ve kasa izi geri alındı. Hiçbir satır "
-                "silinmedi — geçmiş okunabilir."),
+        "yarim_tamamlandi": _yarim_tamamla,
+        "not": (("Yarım kalmış geri alma TAMAMLANDI: tahsisler ve iptal damgası "
+                 "zaten yazılmıştı, eksik olan plan/kasa izi şimdi geri alındı.")
+                if _yarim_tamamla else
+                ("Ödeme geri alındı: tahsisler ters kayıtla sıfırlandı, ödeme "
+                 "iptal damgası aldı, plan ve kasa izi geri alındı. Hiçbir satır "
+                 "silinmedi — geçmiş okunabilir.")),
     }
 
 
@@ -8119,10 +8138,22 @@ def cari_odenecekler(tedarikci: str = ""):
     # sistem öncesi 14 faturaydı (biri 2022 tarihli) — oysa FEZ'in devri
     # 32.391 ₺. Yani "ödenecekler" gerçeğin ~3,5 katıydı.
     # ⚠️ SESSİZ ELEME YASAK: elenen tutar yanıtta adıyla döner.
+    # ⚠️ ELEME YALNIZ DEVRİ VARSA (Codex denetimi :7952, 2026-09-01):
+    #    Gerekçe "o dönem zaten devirle temsil ediliyor". Devri OLMAYAN bir
+    #    tedarikçide bu gerekçe YOKTUR — orada eski fatura, borcun TEK kaydıdır.
+    #    Koşulsuz elemek gerçek açık borcu havuzdan tümden gizlerdi: ödeme
+    #    ekranı o borca tahsis yapamaz, borç sonsuza kadar açık kalırdı.
+    #    (BEYSU deseni: kuru çalıştırmada iki kez gerçek borç silmeye
+    #    kalkışılmıştı — aynı tuzağın okuma tarafındaki hâli.)
     _sinir = EVVEL_SISTEM_BASLANGIC
+    _devir_tl = float(ekstre.get("devir") or 0)
+    _devir_var = abs(_devir_tl) > 0.01
     _devir_oncesi = [f for f in faturalar if str(f.get("tarih") or "") < _sinir]
-    if _devir_oncesi:
+    if _devir_oncesi and _devir_var:
         faturalar = [f for f in faturalar if str(f.get("tarih") or "") >= _sinir]
+    elif _devir_oncesi:
+        # Devir yok → eleme YAPILMAZ; sebep yanıtta adıyla döner.
+        _devir_oncesi = []
     with db() as (_, cur):
         _ensure_cari_odeme_tablolar(cur)
         ids = [f["id"] for f in faturalar if f.get("id")]
@@ -8149,6 +8180,14 @@ def cari_odenecekler(tedarikci: str = ""):
         "devir_oncesi_elenen_tl": round(
             sum(float(f.get("tutar") or 0) for f in _devir_oncesi), 2),
         "devir_cizgisi": _sinir,
+        "devir_var": _devir_var,
+        "devir_oncesi_eleme_uygulandi": bool(_devir_var),
+        "devir_oncesi_eleme_notu": (
+            "Devir kayıtlı: sistem öncesi faturalar havuza girmez (aynı borcu "
+            "iki kez saymamak için)." if _devir_var else
+            "Bu tedarikçide AÇILIŞ DEVRİ YOK: sistem öncesi faturalar "
+            "ELENMEDİ, çünkü onları temsil eden bir devir satırı yok — "
+            "elenselerdi gerçek borç havuzdan tümden kaybolurdu."),
         "not": (
             "FIFO: ödeme en eski faturadan kapatır. Elle dağıtım için tahsis "
             "listesi gönderin. "

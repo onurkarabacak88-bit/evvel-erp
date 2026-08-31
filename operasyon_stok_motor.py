@@ -3695,24 +3695,52 @@ def sube_kabul_kaydet(cur: Any, siparis_talep_id: str, sube_id: str,
     # ⚠️ Kapasiteden FAZLASI atılmaz: artan miktar son satıra eklenir ve
     #    oradaki "kabul > sevk" freni onu askıya alır. Sessizce yutmak,
     #    şubenin saydığı sayıyı yok saymak olurdu.
+    def _kabul_anahtari(_it):
+        """Kalem kimligi (kalem_kodu, urun_id) — iki gecis de AYNI mantik."""
+        _kk = str(_it.get("kalem_kodu") or "").strip()
+        _uid = str(_it.get("urun_id") or "").strip()
+        _kad = str(_it.get("kalem_adi") or _it.get("urun_ad") or "").strip()
+        if _uid and not _kk:
+            _kk = depo_kalem_kodu_resolve(cur, _uid, _kad) or _uid
+        return _kk, _uid, _kad
+
     def _genislet(_kalemler):
         _tuketilen: Dict[str, int] = {}
         _cikti: List[Dict[str, Any]] = []
+        # ⚠️ ÖNCE SAY, SONRA DAĞIT (Codex denetimi :3675, 2026-09-01):
+        # Bölme mantığı payload'ı satır satır işliyordu ve ilk satır o ürünün
+        # TÜM açık sevkiyatlarını tüketiyordu. Şube aynı ürün için İKİ ayrı
+        # kabul satırı gönderdiğinde (5 + 5, iki ayrı 5'lik sevkiyata karşılık)
+        # ilk satır iki sevkiyata 5/0 diye bölünüyor, İKİNCİ satır aday
+        # bulamayıp "bulunamadı"ya düşüyordu: talep gereksiz yere
+        # `kabul_uyusmazlik` oluyor ve 5 adet deftere HİÇ girmiyordu.
+        # Kural: payload zaten satır satır ayrılmışsa BÖLME — bire bir eşle.
+        _satir_sayisi: Dict[str, int] = {}
+        for _it in (_kalemler or []):
+            if not isinstance(_it, dict) or str(_it.get("yolda_id") or "").strip():
+                continue
+            _k, _u, _ = _kabul_anahtari(_it)
+            _satir_sayisi[_k or _u] = _satir_sayisi.get(_k or _u, 0) + 1
         for _it in (_kalemler or []):
             if not isinstance(_it, dict):
                 continue
             if str(_it.get("yolda_id") or "").strip():
                 _cikti.append(_it)
                 continue
-            _kk = str(_it.get("kalem_kodu") or "").strip()
-            _uid = str(_it.get("urun_id") or "").strip()
-            _kad = str(_it.get("kalem_adi") or _it.get("urun_ad") or "").strip()
-            if _uid and not _kk:
-                _kk = depo_kalem_kodu_resolve(cur, _uid, _kad) or _uid
+            _kk, _uid, _kad = _kabul_anahtari(_it)
             _adaylar = [r for r in yolda_rows
                         if str(r.get("id") or "") not in _tuketilen
                         and (str(r.get("kalem_kodu") or "").strip() == _kk
                              or (_uid and str(r.get("kalem_kodu") or "").strip() == _uid))]
+            # Payload bu ürün için birden çok satır taşıyorsa, HER satır TEK
+            # sevkiyata eşlenir (FIFO) — bölme yok, tüketme yok.
+            if _satir_sayisi.get(_kk or _uid, 0) > 1 and _adaylar:
+                _rid = str(_adaylar[0].get("id") or "")
+                _tuketilen[_rid] = 1
+                _yeni = dict(_it)
+                _yeni["yolda_id"] = _rid
+                _cikti.append(_yeni)
+                continue
             if len(_adaylar) <= 1:
                 _cikti.append(_it)
                 if _adaylar:

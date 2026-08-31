@@ -368,11 +368,16 @@ def siparis_sevkiyat_kalem_guncelle_execute(
                 continue
             if _adt <= 0:
                 continue
+            # ⚠️ TOPLA, MAX ALMA (Codex denetimi :375, 2026-09-01):
+            # Aynı ürün talepte iki satırda geçebilir (3 + 5). `max` bunu 5
+            # sayardı — oysa istenen TOPLAM 8'dir. Tavan gerçek talebin
+            # ALTINA inince meşru sevk engellenir; fren yanlış yöne basar.
+            # Tek satırlı normal durumda toplam = tek değer (davranış aynı).
             for _key in (str(_k.get("urun_id") or "").strip(),
                          str(_k.get("kalem_kodu") or "").strip(),
                          ad_anahtar(_k.get("urun_ad"))):
                 if _key:
-                    _ist_map[_key] = max(_ist_map.get(_key, 0), _adt)
+                    _ist_map[_key] = _ist_map.get(_key, 0) + _adt
         if _ist_map:
             for _d in durumlar:
                 if not isinstance(_d, dict):

@@ -9934,24 +9934,38 @@ def ops_siparis_sevkiyata_gonder(body: OpsSiparisSevkiyataGonderBody):
         #    depo ekranı "sipariş küçülmüş" görür, kalem çeşidi/adet
         #    toplamları geçmişe dönük değişirdi (iz bozulur).
         # ⚠️ Elenen kaleme TAHSİS YAZILMAZ: depo onu toplamamalı.
-        _secili_anahtar: Optional[set] = None
+        # ⚠️ KİMLİK ve AD AYRI KÜMEDE (Codex denetimi :9941, 2026-09-01):
+        # Eskiden hepsi TEK kümedeydi ve kimlik alanlarına da `ad_anahtar`
+        # uygulanıyordu. `ad_anahtar` bir AD normalleştiricisidir — noktalama
+        # ve boşluğu alt çizgiye çevirir. Sonuç: istemci `kalem_kodu='A/B'`
+        # seçtiğinde küme "a_b" içerir; adı "A B" olan BAŞKA bir kalemin ad
+        # anahtarı da "a_b" olur ve o kalem de seçilmiş sayılıp sevkiyata
+        # girerdi — istemcinin seçmediği mal yola çıkardı.
+        # Kimlik kimlikle, ad adla karşılaştırılır.
+        _secili_kimlik: Optional[set] = None   # urun_id / kalem_kodu (ham)
+        _secili_ad: Optional[set] = None       # urun_ad / ad (ham + anahtar)
         if body.kalemler is not None:
-            _secili_anahtar = set()
+            _secili_kimlik, _secili_ad = set(), set()
             for _sk in (body.kalemler or []):
                 if isinstance(_sk, dict):
-                    for _f in ("urun_id", "urun_ad", "ad", "kalem_kodu"):
+                    for _f in ("urun_id", "kalem_kodu"):
                         _v = str(_sk.get(_f) or "").strip()
                         if _v:
-                            # Hem ham hem normalleştirilmiş biçim: küme UUID de
-                            # ad da taşıyor. İkisini birden koymak eşleşmeyi
-                            # genişletir, daraltmaz — seçim istemcinin niyetidir.
-                            _secili_anahtar.add(_v.lower())
-                            _secili_anahtar.add(ad_anahtar(_v))
+                            _secili_kimlik.add(_v.lower())
+                    for _f in ("urun_ad", "ad"):
+                        _v = str(_sk.get(_f) or "").strip()
+                        if _v:
+                            _secili_ad.add(_v.lower())
+                            _secili_ad.add(ad_anahtar(_v))
                 else:
+                    # Çıplak metin: kimlik mi ad mı BİLİNMİYOR — ikisine de
+                    # yazılır (eşleşmeyi genişletir, daraltmaz). Bilinmeyeni
+                    # dar yorumlamak, istemcinin seçtiği malı yollamamaktır.
                     _v = str(_sk or "").strip()
                     if _v:
-                        _secili_anahtar.add(_v.lower())
-                        _secili_anahtar.add(ad_anahtar(_v))
+                        _secili_kimlik.add(_v.lower())
+                        _secili_ad.add(_v.lower())
+                        _secili_ad.add(ad_anahtar(_v))
 
         # Bu talep için toptancıya çıkmış ürün adları.
         # ⚠️ Sorgu düşerse İSTİSNA YUTULMAZ: sessizce "hiç çıkmamış" varsaymak,
@@ -10001,11 +10015,11 @@ def ops_siparis_sevkiyata_gonder(body: OpsSiparisSevkiyataGonderBody):
             _iptalli = bool(k.get("iptal"))
             _toptancida = bool(_ad_key and _ad_key in _toptanciya_giden)
             _secildi = True
-            if _secili_anahtar is not None:
+            if _secili_kimlik is not None:
                 _secildi = bool(
-                    (uid and str(uid).lower() in _secili_anahtar)
-                    or (_ad_kucuk and _ad_kucuk in _secili_anahtar)
-                    or (_ad_key and _ad_key in _secili_anahtar)
+                    (uid and str(uid).lower() in _secili_kimlik)
+                    or (_ad_kucuk and _ad_kucuk in (_secili_ad or set()))
+                    or (_ad_key and _ad_key in (_secili_ad or set()))
                 )
             _dahil = _secildi and not _toptancida and not _iptalli
 
