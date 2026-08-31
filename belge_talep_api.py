@@ -2145,6 +2145,73 @@ def belge_talep_gerekce_ekle(talep_id: str, body: GerekceBody):
             "not": "Kapanış gerekçesi yazıldı; kayıt artık kopuk halka sayılmaz."}
 
 
+class KapanisGeriAlBody(BaseModel):
+    gerekce: str
+
+
+@router.post("/{talep_id}/kapanis-geri-al")
+def belge_talep_kapanis_geri_al(talep_id: str, body: KapanisGeriAlBody):
+    """↩️ FATURASIZ kapatılmış bir teslimatı YENİDEN AÇAR.
+
+    ── NEDEN (2026-08-31) ───────────────────────────────────────────────────
+    `fatura-bagla-geri-al` yalnız FATURA BAĞI olan kaydı çözer. Faturasız
+    (manuel/irsaliye) kapatılmış bir kaydı geri açacak yol YOKTU: `/kapat`
+    sadece `durum='bekliyor'` satırda çalışır. Yani "kapattım ama yanlış
+    kapattım" durumu tek yönlü bir kapıydı.
+    Bu önemli çünkü kapanış PARASAL: açık teslimat, faturasız borç (GRNI)
+    olarak cari bakiyede durur; kapanınca o tahakkuk DÜŞER. Canlı ölçüm
+    (2026-08-31): tek bir METRO kaydının kapanması GRNI'yi 75.092 ₺'den
+    42.578 ₺'ye indirdi. Geri dönüşü olmayan bir kapanış, geri dönüşü
+    olmayan bir bakiye değişikliği demekti.
+
+    ⚠️ İZ SİLİNMEZ: eski gerekçenin ÜSTÜNE yazılmaz, damga EKLENİR — kaydın
+       bir kez kapanıp yeniden açıldığı sonradan okunabilsin.
+    ⚠️ Fatura bağı olan kayıt buraya girmez; onun yolu `fatura-bagla-geri-al`.
+    """
+    tid = (talep_id or "").strip()
+    gerekce = (body.gerekce or "").strip()
+    if not tid:
+        raise HTTPException(400, "talep_id zorunlu")
+    if len(gerekce) < 3:
+        raise HTTPException(400, "Gerekçe zorunlu — kayıt neden yeniden açılıyor?")
+    with db() as (_, cur):
+        _ensure(cur)
+        cur.execute(
+            """SELECT id, durum, fatura_id, COALESCE(kapanis_aciklama,'') AS kap
+                 FROM belge_talep WHERE id=%s""", (tid,))
+        r = cur.fetchone()
+        if not r:
+            raise HTTPException(404, "Belge talep bulunamadı")
+        d = dict(r)
+        if str(d.get("durum") or "") == "bekliyor":
+            raise HTTPException(409, "Bu teslimat zaten açık.")
+        if d.get("fatura_id"):
+            raise HTTPException(
+                409, "Bu teslimatın faturası bağlı — önce "
+                     "/fatura-bagla-geri-al ile bağı çözün.")
+        damga = f"[YENİDEN AÇILDI {date.today().isoformat()}: {gerekce}]"
+        _yeni_kap = (d.get("kap") + " " + damga).strip() if d.get("kap") else damga
+        cur.execute(
+            """UPDATE belge_talep
+                  SET durum='bekliyor', kapanma_ts=NULL,
+                      kapanis_tipi=NULL, kapanis_aciklama=%s
+                WHERE id=%s AND durum <> 'bekliyor'
+                RETURNING ts_id, tedarikci_ad, beklenen_tutar_tl::float AS tutar""",
+            (_yeni_kap, tid),
+        )
+        g = cur.fetchone()
+    if not g:
+        raise HTTPException(409, "Yeniden açılamadı — kayıt bu arada değişmiş olabilir.")
+    g = dict(g)
+    return {
+        "ok": True, "durum": "bekliyor",
+        "tedarikci_ad": g.get("tedarikci_ad"),
+        "beklenen_tutar": g.get("tutar"),
+        "not": ("Teslimat yeniden açıldı; faturasız borç (GRNI) olarak cari "
+                "bakiyeye geri döndü ve fatura kuyruğunda görünür."),
+    }
+
+
 @router.post("/{talep_id}/fatura-yukle")
 async def belge_talep_fatura_yukle(talep_id: str, dosya: UploadFile = File(...)):
     """Toptancı WhatsApp'tan faturayı yolladı → sahip cep'ten yükler. Dosya mevcut FATURA
