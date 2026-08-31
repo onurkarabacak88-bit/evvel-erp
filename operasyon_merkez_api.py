@@ -10426,8 +10426,15 @@ def _kanonik_urun_id(cur, kalem_kodu, urun_ad):
             cur.execute("SELECT 1 FROM siparis_urun WHERE id::text=%s LIMIT 1", (kk,))
             if cur.fetchone():
                 return kk
-        except Exception:
-            pass
+        except Exception as _e_kk:  # noqa: BLE001
+            # ⚠️ HATA ≠ KATALOG-DIŞI (Codex denetimi, 2026-08-31)
+            # Eskiden `pass` idi: DB/kolon hatası "bu ürün katalogda yok" ile
+            # AYNI sonuca (None) düşüyordu. Sonuç sessiz ve pahalı — satır
+            # `urun_id=None` yazılır, sonraki kabulde kalem gerçek ürüne değil
+            # ad-fallback / `ozel__` yoluna sapar ve stok başka kimliğe girer.
+            logger.warning(
+                "_kanonik_urun_id: kalem_kodu sorgusu DUSTU (katalog-disi "
+                "SANILMASIN) kod=%s: %s", kk[:40], str(_e_kk)[:150])
     ad = str(urun_ad or "").strip()
     if ad:
         try:
@@ -10439,8 +10446,10 @@ def _kanonik_urun_id(cur, kalem_kodu, urun_ad):
             r = cur.fetchone()
             if r:
                 return str(dict(r)["id"])
-        except Exception:
-            pass
+        except Exception as _e_ad:  # noqa: BLE001
+            logger.warning(
+                "_kanonik_urun_id: ad sorgusu DUSTU (katalog-disi SANILMASIN) "
+                "ad=%s: %s", ad[:40], str(_e_ad)[:150])
     return None
 
 
