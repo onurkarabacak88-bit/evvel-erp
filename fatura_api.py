@@ -2757,11 +2757,31 @@ def _odeme_eslesir(ad: str, metin: str) -> bool:
                  if len(w.strip(".,()")) >= 3 and w.strip(".,()") not in _JENERIK]
     if not kelimeler:
         return False
+
+    # ══════════════════════════════════════════════════════════════════════
+    # 🔤 KELİME SINIRI ŞART (canlı bulgu, 2026-08-31)
+    # ══════════════════════════════════════════════════════════════════════
+    # Eşleşme düz alt-dize (`t1 not in m`) ile yapılıyordu. Türkçede kısa
+    # markalar başka kelimelerin İÇİNDE geçiyor ve tedarikçi ödemesi sanılıyor:
+    #     "AGİT"  ⊂  "gaz DAĞITIM"   (d-agit-im)
+    #     "AGİT"  ⊂  "duvar KAĞITLARI" (k-agit-lari)
+    # Canlı sonuç: AGİT SEFA YÜCEAY'ın cari hesabına ENERYA doğalgaz (1.990 ₺)
+    # ve MARTI duvar kâğıdı (10.000 ₺) ödemesi yazılmış; bakiye 3.303 ₺ borçlu
+    # yerine −13.091 ₺ ALACAKLI görünüyordu. Yani başka firmaların harcaması
+    # bu tedarikçinin borcunu kapatıyordu.
+    # ⚠️ Alt-dize eşleşmesi para tarafında YANLIŞ YÖNDE hata yapar: borcu
+    #    olduğundan küçük gösterir ve "ödenmiş" sanılır.
+    def _tam_kelime(tok: str) -> bool:
+        # `\b` yerine açık bakış: _cari_katla sonrası metin ASCII harf/rakam +
+        # noktalama karışımı; sınırı harf-rakam olmayan her şey sayıyoruz.
+        return re.search(r"(?<![a-z0-9])" + re.escape(tok) + r"(?![a-z0-9])",
+                         m) is not None
+
     t1 = kelimeler[0]
-    if t1 not in m:
+    if not _tam_kelime(t1):
         return False
     if t1 in _KISI_ADLARI:
-        return len(kelimeler) >= 2 and kelimeler[1] in m
+        return len(kelimeler) >= 2 and _tam_kelime(kelimeler[1])
     return True
 
 
