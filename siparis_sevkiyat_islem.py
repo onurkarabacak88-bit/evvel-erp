@@ -9,6 +9,7 @@ aynı çıkış deposunda izlenir).
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import HTTPException
@@ -18,11 +19,14 @@ from operasyon_defter import operasyon_defter_ekle
 from operasyon_stok_motor import depo_kalem_kodu_resolve, sevk_cikti_kaydet as _disiplin_sevk_cikti
 from tr_saat import dt_now_tr
 from sevkiyat_helpers import (
+    ad_anahtar,
     sevkiyat_durumu_coz,
     sevkiyat_durumu_sql_expr,
     sevkiyat_durumu_guncelle_params,
     SD_NOALIAS,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def sevkiyat_kalem_durumlari_normalize(items: Any) -> Tuple[List[Dict[str, Any]], bool, bool]:
@@ -302,7 +306,8 @@ def siparis_sevkiyat_kalem_guncelle_execute(
         f"""
         SELECT id, sube_id, COALESCE(hedef_depo_sube_id, sevkiyat_sube_id) AS hedef_depo_sube_id,
                {SD_NOALIAS} AS sevkiyat_durumu,
-               durum, COALESCE(kalem_surum, 0) AS kalem_surum
+               durum, COALESCE(kalem_surum, 0) AS kalem_surum,
+               kalemler
         FROM siparis_talep
         WHERE id=%s
         FOR UPDATE
@@ -335,6 +340,73 @@ def siparis_sevkiyat_kalem_guncelle_execute(
             )
     if str(row.get("hedef_depo_sube_id") or "") != sevk_sid:
         raise HTTPException(409, "Talep farklı sevkiyat şubesine atanmış")
+
+    # ══════════════════════════════════════════════════════════════════════
+    # 🧾 İSTENEN ADET SUNUCUDA DOĞRULANIR (Codex denetimi, 2026-08-31)
+    # ══════════════════════════════════════════════════════════════════════
+    # `istenen_adet` istemci gövdesinden geliyordu ve HİÇ doğrulanmıyordu.
+    # Bu sayı aşağıda çift-sevk freninin TAVANI olarak kullanılıyor
+    # (operasyon_stok_motor: toplam sevk <= istenen). Yani frenin sınırını
+    # frenlenecek olan taraf belirliyordu: talepte gerçekte 5 istenmişken
+    # gövde `istenen_adet=500` derse 500 sevk meşru sayılırdı.
+    # Tavan artık TALEBİN KENDİ KAYDINDAN okunur. Kilit zaten alınmış
+    # durumda (FOR UPDATE) — okuduğumuz değer yazma anıyla aynı.
+    # ⚠️ Kalem talepte bulunamazsa istemcinin sayısı KORUNUR ve loglanır:
+    #    burada sessizce 0'a düşürmek meşru bir sevki durdururdu ve
+    #    "bulunamadı"yı "istenmemiş" saymak olurdu (HATA ≠ BOŞ).
+    try:
+        _db_kalem = row.get("kalemler")
+        if isinstance(_db_kalem, str):
+            _db_kalem = json.loads(_db_kalem or "[]")
+        _ist_map: Dict[str, int] = {}
+        for _k in (_db_kalem or []):
+            if not isinstance(_k, dict):
+                continue
+            try:
+                _adt = int(_k.get("adet") or _k.get("istenen_adet") or 0)
+            except (TypeError, ValueError):
+                continue
+            if _adt <= 0:
+                continue
+            for _key in (str(_k.get("urun_id") or "").strip(),
+                         str(_k.get("kalem_kodu") or "").strip(),
+                         ad_anahtar(_k.get("urun_ad"))):
+                if _key:
+                    _ist_map[_key] = max(_ist_map.get(_key, 0), _adt)
+        if _ist_map:
+            for _d in durumlar:
+                if not isinstance(_d, dict):
+                    continue
+                _gercek = None
+                for _key in (str(_d.get("urun_id") or "").strip(),
+                             str(_d.get("kalem_kodu") or "").strip(),
+                             ad_anahtar(_d.get("urun_ad"))):
+                    if _key and _key in _ist_map:
+                        _gercek = _ist_map[_key]
+                        break
+                if _gercek is None:
+                    logger.warning(
+                        "sevk: kalem talepte bulunamadi, istemci adedi korundu "
+                        "(talep=%s kalem=%s istemci_istenen=%s)",
+                        tid, _d.get("urun_ad"), _d.get("istenen_adet"),
+                    )
+                    continue
+                if int(_d.get("istenen_adet") or 0) != _gercek:
+                    logger.warning(
+                        "sevk: istenen_adet duzeltildi (talep=%s kalem=%s "
+                        "istemci=%s gercek=%s)",
+                        tid, _d.get("urun_ad"), _d.get("istenen_adet"), _gercek,
+                    )
+                _d["istenen_adet"] = _gercek
+                # Gönderilen, istenen tavanını aşamaz — tavan artık gerçek.
+                if int(_d.get("gonderilen_adet") or 0) > _gercek and \
+                        str(_d.get("durum") or "") in ("var", "kismi"):
+                    _d["gonderilen_adet"] = _gercek
+    except Exception as _e_ist:  # noqa: BLE001
+        # Doğrulama kurulamadıysa SEVKİ DURDURMAYIZ ama sessiz de kalmayız:
+        # tavan istemciden gelmiş olur ve bu iz defterde durur.
+        logger.warning("istenen_adet dogrulamasi kurulamadi (talep=%s): %s",
+                       tid, str(_e_ist)[:200])
     mevcut_durum = str(row.get("durum") or "")
     if mevcut_durum == "teslim_edildi":
         raise HTTPException(409, "Talep zaten teslim edildi")

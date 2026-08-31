@@ -3345,8 +3345,19 @@ def sube_urun_sevk(sube_id: str, body: SubeSevkBody):
                 try:
                     from belge_talep_api import belge_talep_olustur_izole
                     belge_talep_olustur_izole(toptanci_siparis_id)
-                except Exception:
-                    pass
+                except Exception as _e_bt:  # noqa: BLE001
+                    # ⚠️ YUTMA KALIR, SESSİZLİK KALKAR (2026-08-31):
+                    # teslim-al akışı bozulmamalı — o söz duruyor. Ama
+                    # `pass` yazmak hatayı YOK sayıyordu: kayıt açılmıyor,
+                    # kimse fark etmiyor, mal "faturasız" kalıyordu.
+                    # Canlıda 7 gönderim tam böyle kayboldu.
+                    # Artık iz bırakılır; ayrıca telafi taraması bu gönderimi
+                    # aday olarak bulur (GET /api/belge-talep/telafi-adaylari).
+                    logger.warning(
+                        "belge talebi acilamadi (teslim-al etkilenmedi, "
+                        "telafi taramasinda gorunecek) ts=%s: %s",
+                        toptanci_siparis_id, str(_e_bt)[:200],
+                    )
 
             _yeni_durum = "kabul_uyusmazlik" if (teslim_durumu == "eksik_var") else "teslim_edildi"
             _kabul_durum = "kabul_uyusmazlik" if (teslim_durumu == "eksik_var") else "kabul_tam"

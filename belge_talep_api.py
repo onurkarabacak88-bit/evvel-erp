@@ -211,9 +211,16 @@ def _kalem_birim_fiyat(k: Dict[str, Any], alis_map, katalog_map, katalog_ad_map)
     return 0.0, None
 
 
-def belge_talep_olustur_izole(ts_id: str) -> None:
+def belge_talep_olustur_izole(ts_id: str, *, teslim_tarihi=None) -> None:
     """ŞUBE TESLİM ALINCA çağrılır (urun-sevk'ten). KENDİ transaction'ında çalışır;
-    HER hata YUTULUR — teslim-al akışını ASLA bozmaz. İdempotent (ts_id unique)."""
+    HER hata YUTULUR — teslim-al akışını ASLA bozmaz. İdempotent (ts_id unique).
+
+    ⚠️ teslim_tarihi (2026-08-31): normal akışta None → CURRENT_DATE doğrudur,
+    çünkü teslim ŞU AN alınıyor. TELAFİ taramasında ise teslimat geçmişte
+    olmuştur; oraya bugünü yazmak 75 günlük bir teslimatı "bugün geldi" diye
+    kaydeder ve yaş hesabını, dolayısıyla gecikme alarmını YALANLAR.
+    Telafi çağıranı gerçek `toptanci_siparis.teslim_ts` tarihini geçirir.
+    """
     tsid = str(ts_id or "").strip()
     if not tsid:
         return
@@ -251,11 +258,12 @@ def belge_talep_olustur_izole(ts_id: str) -> None:
                     (ts_id, talep_id, sube_id, sube_adi, tedarikci_id, tedarikci_ad,
                      tedarikci_tel, teslim_tarihi,
                      beklenen_tutar_tl, kalem_sayisi, fiyatsiz_kalem, tutar_kaynagi)
-                VALUES (%s,%s,%s,%s,%s,%s,%s, CURRENT_DATE, %s,%s,%s,%s)
+                VALUES (%s,%s,%s,%s,%s,%s,%s, COALESCE(%s::date, CURRENT_DATE), %s,%s,%s,%s)
                 ON CONFLICT (ts_id) DO NOTHING
                 """,
                 (tsid, t.get("talep_id"), t.get("sube_id"), t.get("sube_adi"),
                  t.get("tedarikci_id"), t.get("tedarikci_ad"), t.get("tedarikci_tel"),
+                 (teslim_tarihi or None),
                  (pd.get("tutar") or None), pd.get("kalem"), pd.get("fiyatsiz"), pd.get("kaynak")),
             )
     except Exception as e:  # noqa: BLE001 — bilerek yutuluyor (teslim-al bozulmasın)
@@ -273,6 +281,137 @@ def belge_talep_olustur_izole(ts_id: str) -> None:
         )
     except Exception:  # noqa: BLE001
         pass
+
+
+@router.get("/telafi-adaylari")
+def belge_talep_telafi_adaylari(gun: int = 400):
+    """🩹 TESLİM ALINMIŞ AMA BELGE TALEBİ HİÇ AÇILMAMIŞ gönderimler. SALT OKUR.
+
+    ── NEDEN (2026-08-31, canlı ölçüm + Codex/Fable denetimi) ────────────────
+    Belge talebini açan tek tetik `sube_panel` teslim-al ucundadır ve yalnız
+    gövdede `toptanci_siparis_id` DOLU gelirse çalışır. Bu tetiği kaçıran her
+    teslimat — motorun doğduğu 6 Temmuz 2026 öncesindekiler dahil — sistemde
+    "mal geldi ama fatura kimse kovalamıyor" olarak kalır.
+    Canlı ölçümde 7 gönderim tam bu halde bulundu (72-75 gün yaşında).
+    Telafi yolu OLMADIĞI için bu kayıtlar sonsuza kadar kopuk kalıyordu.
+
+    ⚠️ Bu uç SALT OKUR — hiçbir şey yazmaz. Yazan uç ayrıdır (`/telafi-uygula`)
+       ve ne yaptığını satır satır döndürür. Görmeden uygulamak yok.
+    ⚠️ VERİ UYDURMUYORUZ: teslimat gerçekten olmuş bir olaydır (durum
+       'teslim_alindi', teslim_ts dolu). Eksik olan, o olayın doğurması
+       gereken TAKİP KAYDIdır. Onu açmak kayıt uydurmak değil, zinciri
+       kurmaktır.
+    """
+    g = max(1, min(730, int(gun or 400)))
+    with db() as (_, cur):
+        _ensure(cur)
+        cur.execute(
+            """
+            SELECT ts.id, ts.talep_id, ts.tedarikci_ad, ts.sube_id,
+                   s.ad AS sube_adi,
+                   ts.teslim_ts, ts.durum,
+                   (CURRENT_DATE - ts.teslim_ts::date) AS yas_gun,
+                   ts.kalemler
+              FROM toptanci_siparis ts
+              LEFT JOIN subeler s ON s.id = ts.sube_id
+             WHERE ts.durum = 'teslim_alindi'
+               AND ts.teslim_ts IS NOT NULL
+               AND ts.teslim_ts >= CURRENT_DATE - %s
+               AND NOT EXISTS (SELECT 1 FROM belge_talep bt WHERE bt.ts_id = ts.id)
+             ORDER BY ts.teslim_ts ASC
+            """,
+            (g,),
+        )
+        satirlar = []
+        for r in (cur.fetchall() or []):
+            d = dict(r)
+            _kl = d.get("kalemler") or []
+            if isinstance(_kl, str):
+                try:
+                    _kl = json.loads(_kl)
+                except Exception:  # noqa: BLE001
+                    _kl = []
+            satirlar.append({
+                "ts_id": str(d.get("id") or ""),
+                "talep_id": str(d.get("talep_id") or ""),
+                "tedarikci_ad": d.get("tedarikci_ad"),
+                "sube_adi": d.get("sube_adi"),
+                "teslim_ts": str(d.get("teslim_ts") or ""),
+                "yas_gun": int(d.get("yas_gun") or 0),
+                "kalem_cesidi": len([x for x in _kl if isinstance(x, dict)]),
+                "kalem_ozeti": " · ".join(
+                    f"{x.get('urun_ad')} ×{x.get('adet')}"
+                    for x in _kl[:4] if isinstance(x, dict)
+                ),
+            })
+    return {
+        "gun": g,
+        "aday_adet": len(satirlar),
+        "en_eski_gun": max((s["yas_gun"] for s in satirlar), default=0),
+        "adaylar": satirlar,
+        "not": (
+            "Bu gönderimlerde mal TESLİM ALINMIŞ ama fatura takip kaydı hiç "
+            "açılmamış. Uygulamak için POST /api/belge-talep/telafi-uygula. "
+            "Kayıt, teslimatın GERÇEK tarihiyle açılır (bugünle değil) — yoksa "
+            "75 günlük bir gecikme 'bugün geldi' diye görünürdü."
+        ),
+    }
+
+
+@router.post("/telafi-uygula")
+def belge_talep_telafi_uygula(gun: int = 400, en_fazla: int = 100):
+    """🩹 Yukarıdaki adaylar için belge talebini AÇAR. İdempotent.
+
+    Her satır için ne yapıldığı ayrı ayrı döndürülür — toplu "başarılı" demez.
+    ⚠️ `belge_talep_olustur_izole` hata YUTAR (teslim-al akışını bozmamak için).
+       Bu yüzden burada açılıp açılmadığı SONRADAN ölçülür; motorun sözüne
+       değil, veritabanının haline bakılır. (SAHTE YEŞİL YASAK)
+    """
+    aday = belge_talep_telafi_adaylari(gun=gun).get("adaylar") or []
+    aday = aday[: max(1, min(500, int(en_fazla or 100)))]
+    sonuc = []
+    for a in aday:
+        tsid = a["ts_id"]
+        try:
+            belge_talep_olustur_izole(
+                tsid, teslim_tarihi=(a.get("teslim_ts") or "")[:10] or None,
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("telafi: olusturma cagrisi patladi ts=%s: %s", tsid, str(e)[:150])
+        # ÖLÇ: gerçekten açıldı mı?
+        try:
+            with db() as (_, c2):
+                c2.execute("SELECT 1 FROM belge_talep WHERE ts_id=%s", (tsid,))
+                acildi = bool(c2.fetchone())
+        except Exception as e2:  # noqa: BLE001
+            acildi = None
+            logger.warning("telafi: dogrulama okunamadi ts=%s: %s", tsid, str(e2)[:150])
+        sonuc.append({
+            "ts_id": tsid,
+            "tedarikci_ad": a.get("tedarikci_ad"),
+            "sube_adi": a.get("sube_adi"),
+            "yas_gun": a.get("yas_gun"),
+            "acildi": acildi,
+            "durum": ("acildi" if acildi else
+                      ("olculemedi" if acildi is None else "ACILAMADI")),
+        })
+    _ac = sum(1 for s in sonuc if s["durum"] == "acildi")
+    _hata = sum(1 for s in sonuc if s["durum"] == "ACILAMADI")
+    _olcusuz = sum(1 for s in sonuc if s["durum"] == "olculemedi")
+    return {
+        "denenen": len(sonuc),
+        "acilan": _ac,
+        "acilamayan": _hata,
+        "olculemeyen": _olcusuz,
+        "satirlar": sonuc,
+        "not": (
+            f"{_ac} takip kaydı açıldı. "
+            + (f"{_hata} kayıt AÇILAMADI — sebebi sunucu günlüğünde. " if _hata else "")
+            + (f"{_olcusuz} kaydın sonucu ÖLÇÜLEMEDİ (doğrulama sorgusu düştü). "
+               if _olcusuz else "")
+            + "Açılan kayıtlar artık fatura kuyruğunda görünür."
+        ),
+    }
 
 
 def _tedarikci_ritim_map(cur) -> dict:

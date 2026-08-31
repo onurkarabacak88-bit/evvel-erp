@@ -3681,16 +3681,59 @@ def sube_kabul_kaydet(cur: Any, siparis_talep_id: str, sube_id: str,
             "UPDATE stok_yolda SET durum=%s, kabul_ts=NOW(), kabul_adet=%s WHERE id=%s",
             (yolda_durum, kabul_adet, yolda_id),
         )
-        if kabul_adet > 0:
+        # ══════════════════════════════════════════════════════════════════
+        # ⚖️ TAVAN: DEFTERE SEVKTEN FAZLASI YAZILMAZ (Codex denetimi, 2026-08-31)
+        # ══════════════════════════════════════════════════════════════════
+        # Buradaki asimetri canlıda stok şişmesi üretiyordu:
+        #   kabul < sevk  → fark ASKIYA alınıyordu (doğru, alt satırdaki log)
+        #   kabul > sevk  → fazlalık SESSİZCE deftere yazılıyordu (yanlış)
+        # b616c04f'te sevk=5 iken kabul=500 girildi ve 495 adet YOKTAN var oldu;
+        # aynı siparişte 8 kalemde ~1150 adetlik şişme 13 gün görünmedi.
+        #
+        # Kural: deftere ancak KARŞILIĞI OLAN miktar girer. Depo çıkışı
+        # kanıtlanmış olaydır; onun üstü bir karşı-ayağı olmayan sayıdır.
+        # ⚠️ ŞUBENİN SAYIMI SİLİNMEZ: kabul_adet stok_yolda'ya olduğu gibi
+        #    yazılır (üstteki UPDATE) ve uyumsuzluk satırında görünür. Biz
+        #    yalnız DEFTERE yazılanı sınırlıyoruz — sayımı değil.
+        # ⚠️ Depo gerçekten fazla gönderdiyse çözüm sevk kaydının
+        #    DÜZELTİLMESİDİR; o düzeltme izli ve denetlenebilir bir işlemdir.
+        #    Sessizce stok yaratmak değildir.
+        _stoga_yazilan = kabul_adet
+        _askida_fazla = 0
+        if kabul_adet > sevk_adet:
+            _stoga_yazilan = max(0, sevk_adet)
+            _askida_fazla = kabul_adet - sevk_adet
+            uyumsuz_satirlar.append({
+                "kalem_kodu": kalem_kodu,
+                "kalem_adi": kalem_adi,
+                "sevk_adet": sevk_adet,
+                "kabul_adet": kabul_adet,
+                "fark_adet": kabul_adet - sevk_adet,
+                "stoga_yazilmayan": _askida_fazla,
+                "aciklama": (
+                    f"Sayılan {kabul_adet}, sevk edilen {sevk_adet}. Aradaki "
+                    f"{_askida_fazla} adet deftere YAZILMADI çünkü karşılığında "
+                    "bir depo çıkışı yok — yazılsaydı stok yoktan artardı. "
+                    "Sayım doğruysa sevk kaydı düzeltilmeli."
+                ),
+            })
+            tam_mi = False
+            logging.getLogger(__name__).warning(
+                "KABUL SEVKTEN FAZLA: talep=%s kalem=%s sevk=%s kabul=%s "
+                "deftere=%s askida=%s",
+                siparis_talep_id, kalem_adi, sevk_adet, kabul_adet,
+                _stoga_yazilan, _askida_fazla,
+            )
+        if _stoga_yazilan > 0:
             # Tek kanonik depo girişi: INSERT + hareket log + alarm temizle + DEFERRED
             # RECONCILIATION (bekleyen URUN_AC borcunu mahsup eder). Tedarikçi sevkiyle
             # AYNI motor → inter-şube kabul de artık tutarlı (eskiden depoyu fazla sayıyordu).
             sube_depo_stok_depo_giris_ekle(
-                cur, sube_id, kalem_kodu, kalem_adi, kabul_adet,
+                cur, sube_id, kalem_kodu, kalem_adi, _stoga_yazilan,
                 hareket_turu="SEVK_GIRIS", kaynak_tip="sevkiyat",
                 kaynak_id=yolda_id,  # çıkış ayağıyla AYNI kimlik → çift-ayak eşleşir
             )
-            if yolda_durum == "kabul_uyusmazlik":
+            if yolda_durum == "kabul_uyusmazlik" and kabul_adet < sevk_adet:
                 eksik = sevk_adet - kabul_adet
                 logger.info(
                     "sube_kabul: uyumsuzluk — stok kabul_adet kadar yazildi, "

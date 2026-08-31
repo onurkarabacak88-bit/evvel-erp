@@ -86,6 +86,7 @@ from kontrol_motoru import tum_subeler_kontrol, sube_kontrol_calistir
 from kontrol_motoru import kontrol_personel_risk_profili
 from finans_core import nakit_akis_tahmin_dogruluk
 from sevkiyat_helpers import (
+    ad_anahtar,
     sevkiyat_durumu_coz,
     sevkiyat_durumu_sql_expr,
     sevkiyat_durumu_guncelle_params,
@@ -9908,11 +9909,16 @@ def ops_siparis_sevkiyata_gonder(body: OpsSiparisSevkiyataGonderBody):
                     for _f in ("urun_id", "urun_ad", "ad", "kalem_kodu"):
                         _v = str(_sk.get(_f) or "").strip()
                         if _v:
+                            # Hem ham hem normalleştirilmiş biçim: küme UUID de
+                            # ad da taşıyor. İkisini birden koymak eşleşmeyi
+                            # genişletir, daraltmaz — seçim istemcinin niyetidir.
                             _secili_anahtar.add(_v.lower())
+                            _secili_anahtar.add(ad_anahtar(_v))
                 else:
                     _v = str(_sk or "").strip()
                     if _v:
                         _secili_anahtar.add(_v.lower())
+                        _secili_anahtar.add(ad_anahtar(_v))
 
         # Bu talep için toptancıya çıkmış ürün adları.
         # ⚠️ Sorgu düşerse İSTİSNA YUTULMAZ: sessizce "hiç çıkmamış" varsaymak,
@@ -9932,7 +9938,12 @@ def ops_siparis_sevkiyata_gonder(body: OpsSiparisSevkiyataGonderBody):
                     except Exception:
                         _tk = []
                 for _ti in _tk:
-                    _tad = str((_ti or {}).get("urun_ad") or "").strip().lower()
+                    # ⚠️ ÇİFT KANAL FRENİ — anahtar tek merkezden (2026-08-31).
+                    # Ham .lower() Türkçe büyük İ'yi ve çift boşluğu ayırıyordu:
+                    # talepte "FİLTRE  KAHVE", toptancı satırında "Filtre Kahve"
+                    # olduğunda fren KAÇIRIYOR ve aynı mal hem toptancıya hem
+                    # depoya gidiyordu (fatura da ikileniyordu).
+                    _tad = ad_anahtar((_ti or {}).get("urun_ad"))
                     if _tad:
                         _toptanciya_giden.add(_tad)
         except Exception as _e:
@@ -9952,14 +9963,16 @@ def ops_siparis_sevkiyata_gonder(body: OpsSiparisSevkiyataGonderBody):
             uid = (k.get("urun_id") or "").strip() or None
             uad = (k.get("urun_ad") or k.get("ad") or "").strip() or None
             _ad_kucuk = (uad or "").lower()
+            _ad_key = ad_anahtar(uad)  # frenle AYNI anahtar (yukarıdaki küme)
 
             _iptalli = bool(k.get("iptal"))
-            _toptancida = bool(_ad_kucuk and _ad_kucuk in _toptanciya_giden)
+            _toptancida = bool(_ad_key and _ad_key in _toptanciya_giden)
             _secildi = True
             if _secili_anahtar is not None:
                 _secildi = bool(
                     (uid and str(uid).lower() in _secili_anahtar)
                     or (_ad_kucuk and _ad_kucuk in _secili_anahtar)
+                    or (_ad_key and _ad_key in _secili_anahtar)
                 )
             _dahil = _secildi and not _toptancida and not _iptalli
 
@@ -10660,7 +10673,11 @@ def ops_siparis_toptanciya_yolla(body: OpsSiparisToptanciyaYollaBody):
                 _ad = str(_k.get("urun_ad") or "").strip()
                 if not _ad:
                     continue
-                _key = _ad.lower()
+                # ⚠️ Anahtar tek merkezden (2026-08-31): aşağıdaki _orig_map ile
+                # KIYASLANIYOR; ikisi aynı normalleştiriciyi kullanmazsa
+                # "FİLTRE KAHVE" ile "Filtre Kahve" ayrı ürün sanılır ve
+                # gönderilmiş kalem "kalan" görünür (ya da tersi).
+                _key = ad_anahtar(_ad)
                 if _key not in _agg:
                     _agg[_key] = {
                         "urun_ad": _ad,
@@ -10694,7 +10711,7 @@ def ops_siparis_toptanciya_yolla(body: OpsSiparisToptanciyaYollaBody):
             for _o in (_orig or []):
                 if not isinstance(_o, dict):
                     continue
-                _oad = str(_o.get("urun_ad") or "").strip().lower()
+                _oad = ad_anahtar(_o.get("urun_ad"))  # _agg ile AYNI anahtar
                 if _oad:
                     _orig_map[_oad] = _orig_map.get(_oad, 0) + max(0, int(_o.get("adet") or 0))
             _dispatched_set = set(_agg.keys())  # dağıtılmış ürün adları (lower)
@@ -10703,9 +10720,17 @@ def ops_siparis_toptanciya_yolla(body: OpsSiparisToptanciyaYollaBody):
             # N1'de hiç kalem yoksa (eski/boş talep) kalan'ı bilemeyiz → tam say.
             tam_gonderildi = (not _orig_map) or (len(_kalan_urunler) == 0)
         except Exception as _kalan_hata:
+            # ⚠️ YÖN DEĞİŞTİ (Codex denetimi, 2026-08-31): eskiden hata olunca
+            # tam_gonderildi=True'ya düşülüyordu ve talep KAPANIYORDU. Bu
+            # "güvenli" değil, en tehlikeli yöndü: hesap patladığında hangi
+            # kalemin yönlendirilmediğini BİLMİYORUZ demektir — o bilinmezliği
+            # "hepsi gönderildi" diye yorumlamak sahte yeşildir ve
+            # yönlendirilmemiş kalemler kuyruktan sessizce kaybolur.
+            # Artık AÇIK bırakıyoruz: açık talep görünür ve düzeltilebilir,
+            # yanlış kapanmış talep görünmez. (HATA ≠ BOŞ)
             log.exception("toptanciya-yolla kalan hesabı hatası talep=%s: %s", tid, _kalan_hata)
             kalan_adet = 0
-            tam_gonderildi = True
+            tam_gonderildi = False
 
         sevk_notu = notu
         if tedarikci_ad:
@@ -12606,11 +12631,23 @@ def ops_siparis_sevkiyat_listesi(
                             _kodlar.append(_c)
                 _kaynak_stok = {}
                 if _dsid and _kodlar:
+                    # ⚠️ SIRA HAYATİ (2026-08-31, Fable denetimi): stok sonucu ARAYA
+                    # başka sorgu girmeden HEMEN okunmalı. Aynı cursor'da ikinci
+                    # execute() birincinin sonucunu düşürür; önceki sürümde birim
+                    # sorgusu araya giriyordu ve alttaki fetchall() tükenmiş birim
+                    # sonucundan BOŞ liste alıyordu. Sonuç: _kaynak_stok HER ZAMAN
+                    # boş → sevk ekranı depoda 100 adet varken bile her kaleme
+                    # "sistemde stok kaydı yok, stok şişer" kırmızısı basıyordu.
+                    # Yani uyarı gerçeği değil, kendi hatasını gösteriyordu.
                     cur.execute(
                         "SELECT kalem_kodu, COALESCE(mevcut_adet, 0) AS m "
                         "FROM sube_depo_stok WHERE sube_id = %s AND kalem_kodu = ANY(%s)",
                         (_dsid, _kodlar),
                     )
+                    for _sr in cur.fetchall() or []:
+                        _sd2 = dict(_sr)
+                        _kaynak_stok[str(_sd2.get("kalem_kodu") or "")] = int(_sd2.get("m") or 0)
+
                     _birim_map = {}
                     try:
                         # 📏 Kalemin birimi — depocu "3 ne?" diye sormasin.
@@ -12626,9 +12663,6 @@ def ops_siparis_sevkiyat_listesi(
                                     _birim_map[_key] = (_b.get("birim"), _b.get("koli_ic_adet"))
                     except Exception:
                         _birim_map = {}
-                    for _sr in cur.fetchall() or []:
-                        _sd2 = dict(_sr)
-                        _kaynak_stok[str(_sd2.get("kalem_kodu") or "")] = int(_sd2.get("m") or 0)
                 for _it in (d.get("kalemler") or []):
                     if not isinstance(_it, dict):
                         continue
