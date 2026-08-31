@@ -2590,6 +2590,48 @@ def _cift_kanal_tekille(odemeler: List[dict], gun_tol: int = 3,
                            "eslesen_tutar": float(_sistem[_es].get("tutar") or 0),
                            "neden": "aynı ödeme sistem kaydında zaten sayılı — "
                                     "banka ekstresinin ham satırı ikinci kez saymaz"})
+
+    # ══════════════════════════════════════════════════════════════════════
+    # 🔎 GÜN PENCERESİ DIŞINDA KALAN ÇİFT-KANAL ŞÜPHESİ (canlı, 2026-08-31)
+    # ══════════════════════════════════════════════════════════════════════
+    # Yukarıdaki eleme `gun_tol` (3 gün) ile çalışır — kart çekimi ile sistem
+    # kaydının aynı anda doğduğu varsayımı. Ama VADELİ alımda ikisi haftalarca
+    # ayrı düşebiliyor. METRO'da ölçüldü:
+    #     10 Tem  kart          15.069,00
+    #     13 Ağu  vadeli_alim   15.068,72   ← kuruşuna kadar aynı, 34 gün arayla
+    # İkisi de ödeme izi sayılıyor ve borç olduğundan fazla kapanmış görünüyor
+    # (METRO'nun hesaplanan açığı bu yüzden EKSİ çıkıyor).
+    # ⚠️ ELEMİYORUZ: 34 gün arayla aynı tutar gerçekten iki ayrı ödeme de
+    #    olabilir. Tutar bu projede EN ZAYIF kanıttır; ona bakıp kayıt
+    #    düşürmek, düzeltmek değil bozmaktır. Yalnız İŞARETLİYORUZ —
+    #    karar sahibin. (ÖNERİ-ONLY)
+    _kalan_sistem = [s for i, s in enumerate(_sistem) if i not in _kullanildi]
+    for r in kalan:
+        if (r.get("kanal") or "") != "kart":
+            continue
+        tr = float(r.get("tutar") or 0)
+        if not tr:
+            continue
+        for s in _kalan_sistem:
+            ts = float(s.get("tutar") or 0)
+            if not ts or abs(tr - ts) > max(3.0, tr * oran_tol):
+                continue
+            try:
+                _g = abs((date.fromisoformat(str(r.get("tarih"))[:10])
+                          - date.fromisoformat(str(s.get("tarih"))[:10])).days)
+            except Exception:  # noqa: BLE001
+                _g = None
+            r["cift_kanal_suphesi"] = {
+                "eslesen": (s.get("aciklama") or "")[:70],
+                "eslesen_tutar": ts,
+                "eslesen_tarih": str(s.get("tarih") or "")[:10],
+                "gun_farki": _g,
+                "neden": ("Aynı tutar sistem kaydında da var ama tarihler "
+                          f"{_g if _g is not None else '?'} gün ayrı — otomatik "
+                          "elenmedi. İki ayrı ödeme mi, yoksa aynı ödemenin "
+                          "iki izi mi? Tutar tek başına kanıt değildir."),
+            }
+            break
     return kalan, elenen
 
 
@@ -6217,6 +6259,16 @@ def cari_ekstre(tedarikci: str = "", tam_fatura: int = 0):
         "mukerrer_elenen": _cift_elenen,
         "mukerrer_elenen_tl": round(
             sum(float(x.get("tutar") or 0) for x in _cift_elenen), 2),
+        # 🔎 ELENMEDİ ama ŞÜPHELİ: aynı tutar iki kanalda, tarihler uzak.
+        # Otomatik düşülmez (tutar en zayıf kanıt) — sahip görüp karar verir.
+        # Boş değilse "ödeme izi olduğundan fazla" olabilir demektir.
+        "cift_kanal_supheli": [
+            {"tarih": str(x.get("tarih") or "")[:10],
+             "tutar": float(x.get("tutar") or 0),
+             "aciklama": (x.get("aciklama") or "")[:70],
+             **x["cift_kanal_suphesi"]}
+            for x in odeme_adaylari if x.get("cift_kanal_suphesi")
+        ],
         "bekleyen_vadeler": bekleyen_vadeler,
         "bekleyen_vade_toplam": round(sum(v["tutar"] for v in bekleyen_vadeler), 2),
         "odeme_adaylari": odeme_adaylari,
