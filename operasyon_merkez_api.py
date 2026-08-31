@@ -22,7 +22,8 @@ from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel
 
-from database import db, ensure_stok_yolda_columns, stok_yolda_sevk_kaynak_col_exists
+from database import (db, savepoint, ensure_stok_yolda_columns,
+                      stok_yolda_sevk_kaynak_col_exists)
 from personel_maliyet import gunluk_personel_maliyeti
 from tr_saat import (
     bugun_tr,
@@ -10435,8 +10436,14 @@ def _kanonik_urun_id(cur, kalem_kodu, urun_ad):
     kk = str(kalem_kodu or "").strip()
     if kk:
         try:
-            cur.execute("SELECT 1 FROM siparis_urun WHERE id::text=%s LIMIT 1", (kk,))
-            if cur.fetchone():
+            # 🛟 SAVEPOINT (Codex denetimi :10441, 2026-09-01): hata yutulunca
+            # transaction zehirleniyordu — uyari basiliyor, sonra AYNI istekteki
+            # `INSERT toptanci_siparis` `current transaction is aborted` ile
+            # 500 veriyordu. Kok neden maskeleniyordu.
+            with savepoint(cur, "sp_kanonik_kod"):
+                cur.execute("SELECT 1 FROM siparis_urun WHERE id::text=%s LIMIT 1", (kk,))
+                _v = cur.fetchone()
+            if _v:
                 return kk
         except Exception as _e_kk:  # noqa: BLE001
             # ⚠️ HATA ≠ KATALOG-DIŞI (Codex denetimi, 2026-08-31)
@@ -10450,12 +10457,14 @@ def _kanonik_urun_id(cur, kalem_kodu, urun_ad):
     ad = str(urun_ad or "").strip()
     if ad:
         try:
-            cur.execute(
-                "SELECT id::text AS id FROM siparis_urun WHERE lower(btrim(ad))=lower(btrim(%s)) "
-                "ORDER BY (depo_stok_kalem_kodu IS NULL) DESC LIMIT 1",
-                (ad,),
-            )
-            r = cur.fetchone()
+            with savepoint(cur, "sp_kanonik_ad"):
+                cur.execute(
+                    "SELECT id::text AS id FROM siparis_urun "
+                    "WHERE lower(btrim(ad))=lower(btrim(%s)) "
+                    "ORDER BY (depo_stok_kalem_kodu IS NULL) DESC LIMIT 1",
+                    (ad,),
+                )
+                r = cur.fetchone()
             if r:
                 return str(dict(r)["id"])
         except Exception as _e_ad:  # noqa: BLE001

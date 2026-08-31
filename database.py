@@ -68,6 +68,51 @@ def _get_pool():
     return _pool
 
 
+import re as _re_sp
+
+
+@contextmanager
+def savepoint(cur, ad: str = "sp"):
+    """🛟 YUTULAN SQL HATASININ ZEHİRLEMESİNİ ÖNLER — tek merkez.
+
+    ⚠️ EN ÇOK TEKRARLAYAN KUSUR (2026-09-01, beş ayrı denetçi aynı gün
+    beş dosyada buldu; canlıda `mutabakat-zinciri` ucunu 500 yaptı):
+
+        try:
+            cur.execute(...)      # ← patlarsa
+        except Exception:
+            pass                  # ← hata SUSTURULUR ama...
+
+    PostgreSQL'de patlayan komut TÜM transaction'ı "aborted" yapar. Yutmak
+    hatayı susturur, ZARARI SUSTURMAZ: çağıranın BİR SONRAKİ sorgusu
+    `InFailedSqlTransaction` ile düşer. Sonuç en kötü tür hatadır — kendi
+    yerinde sessiz kalır, faturası bambaşka bir satırda kesilir ve teşhis
+    eden kişi yanlış yere bakar.
+
+    Kullanım (hata YUTULACAKSA bile):
+        try:
+            with savepoint(cur, "sema"):
+                cur.execute("ALTER TABLE ...")
+        except Exception:
+            ...   # transaction TEMİZ, devam edilebilir
+
+    Ad SQL'e gömüldüğü için kimlik karakterlerine daraltılır (enjeksiyon yok).
+    """
+    _ad = _re_sp.sub(r"[^a-zA-Z0-9_]", "", str(ad or "sp"))[:40] or "sp"
+    cur.execute(f"SAVEPOINT {_ad}")
+    try:
+        yield
+    except Exception:
+        try:
+            cur.execute(f"ROLLBACK TO SAVEPOINT {_ad}")
+            cur.execute(f"RELEASE SAVEPOINT {_ad}")
+        except Exception:  # noqa: BLE001 — bağlantı zaten gitmişse yapacak bir şey yok
+            pass
+        raise
+    else:
+        cur.execute(f"RELEASE SAVEPOINT {_ad}")
+
+
 @contextmanager
 def db():
     """

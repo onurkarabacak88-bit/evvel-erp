@@ -18,6 +18,40 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 logger = logging.getLogger(__name__)
 
 from tr_saat import bugun_tr, dt_coerce_naive_tr, dt_now_tr_naive
+# 🔤 TEK AD NORMALLEŞTİRİCİ — sube_panel ve kule ile AYNI fonksiyon.
+# Türkçe büyük-İ tuzağı: 'İÇECEK'.lower() içine U+0307 koyar, 'içecek' ile
+# eşleşmez. Ayrı bir kopya yazmak sapma üretir; kaynak tek olmalı.
+from sevkiyat_helpers import ad_anahtar
+# 🛟 Yutulan SQL hatası transaction'ı zehirler — tek merkez koruma.
+from database import savepoint
+
+
+def _uyari_birlestir(liste: list, kayit: dict) -> dict:
+    """🔕 UYARI BÜTÇESİ (Fable mantık denetimi B6, 2026-09-01).
+
+    Aynı kalem için İKİNCİ uyarı satırı AÇMAZ — mevcut satırı zenginleştirir.
+
+    Kabul=500 / sevk=5 vakasında tek fiziksel olay ÜÇ satır üretiyordu:
+    (1) 5× ölçek şüphesi, (2) tavan/deftere-yazılmayan, (3) genel fark.
+    Ekranda üç alarm görünüyordu; sahip üç ayrı sorun sanıyordu. Gürültü,
+    gerçek bir sapmayı görünmez yapar — uyarı bütçesi bu yüzden var.
+
+    Bilgi KAYBOLMAZ: alanlar birleşir, açıklamalar ' | ' ile eklenir.
+    """
+    _k = (str(kayit.get("kalem_kodu") or ""), str(kayit.get("kalem_adi") or ""))
+    for r in liste:
+        if (str(r.get("kalem_kodu") or ""), str(r.get("kalem_adi") or "")) != _k:
+            continue
+        for _kk, _vv in kayit.items():
+            if _kk == "aciklama" and _vv:
+                _eski = r.get("aciklama") or ""
+                if _vv not in _eski:
+                    r["aciklama"] = (_eski + " | " + _vv) if _eski else _vv
+            elif _kk not in r or r.get(_kk) in (None, "", 0, False):
+                r[_kk] = _vv
+        return r
+    liste.append(kayit)
+    return kayit
 
 # UUID formatı — sube_depo_stok.kalem_kodu olarak doğrudan siparis_urun.id kullanılır
 _UUID_RE = re.compile(
@@ -3609,8 +3643,15 @@ def sube_kabul_kaydet(cur: Any, siparis_talep_id: str, sube_id: str,
     # Zombi tam olarak böyle doğuyor.
     # ⚠️ Kimlik uyuşmazlığında HİÇBİR ŞEY YAZILMAZ — talep temiz kalır.
     try:
-        cur.execute("SELECT sube_id FROM siparis_talep WHERE id=%s", (siparis_talep_id,))
-        _tr_sube = cur.fetchone()
+        # ⚠️ SAVEPOINT ŞART (Codex denetimi :3612, 2026-09-01): buradaki
+        # "fail-open" niyeti (doğrulama kurulamazsa kabul DURMASIN) SQL hatası
+        # yutulunca GERÇEKLEŞMEZ — transaction zehirlenir ve hemen aşağıdaki
+        # `stok_yolda` sorgusu `InFailedSqlTransaction` ile patlar. Yani fren
+        # açık kalacağına TÜM kabul çöker; niyetin tam tersi.
+        with savepoint(cur, "sp_kabul_sube"):
+            cur.execute("SELECT sube_id FROM siparis_talep WHERE id=%s",
+                        (siparis_talep_id,))
+            _tr_sube = cur.fetchone()
         _gercek_sube = str((dict(_tr_sube).get("sube_id") if _tr_sube else "") or "")
         if _gercek_sube and str(sube_id or "") and _gercek_sube != str(sube_id):
             raise ValueError(
@@ -3785,7 +3826,7 @@ def sube_kabul_kaydet(cur: Any, siparis_talep_id: str, sube_id: str,
         #    sayım hatasıyla açıklanamaz.
         if sevk_adet > 0 and kabul_adet >= sevk_adet * 5:
             _kat = round(kabul_adet / sevk_adet, 1)
-            uyumsuz_satirlar.append({
+            _uyari_birlestir(uyumsuz_satirlar, {
                 "kalem_kodu": kalem_kodu,
                 "kalem_adi": kalem_adi,
                 "sevk_adet": sevk_adet,
@@ -3832,7 +3873,7 @@ def sube_kabul_kaydet(cur: Any, siparis_talep_id: str, sube_id: str,
         if kabul_adet > sevk_adet:
             _stoga_yazilan = max(0, sevk_adet)
             _askida_fazla = kabul_adet - sevk_adet
-            uyumsuz_satirlar.append({
+            _uyari_birlestir(uyumsuz_satirlar, {
                 "kalem_kodu": kalem_kodu,
                 "kalem_adi": kalem_adi,
                 "sevk_adet": sevk_adet,
@@ -3872,7 +3913,10 @@ def sube_kabul_kaydet(cur: Any, siparis_talep_id: str, sube_id: str,
         if sevk_adet != kabul_adet:
             tam_mi = False
             fark = sevk_adet - kabul_adet
-            uyumsuz_satirlar.append(
+            # Tek olay = tek satır: yukarıdaki tavan/ölçek satırları varsa bu
+            # kayıt ONLARA katılır, dördüncü bir alarm açmaz (B6).
+            _uyari_birlestir(
+                uyumsuz_satirlar,
                 {
                     "kalem_kodu": kalem_kodu,
                     "kalem_adi": kalem_adi,
@@ -3945,11 +3989,25 @@ def sube_kabul_kaydet(cur: Any, siparis_talep_id: str, sube_id: str,
         if isinstance(_istenen, str):
             _istenen = json.loads(_istenen)
         # Bu talebe ait TUM kabul edilmis adetler (bu ve onceki sevkiyatlar)
+        # ⚠️ 'kabul_uyusmazlik' DA SAYILIR (Fable mantik denetimi B4, 2026-09-01):
+        # kismi kabulde satir 'kabul_uyusmazlik' olur AMA mal deftere YAZILIR
+        # (yukarida _stoga_yazilan). Sayilmazsa: sube 10 ister, depo 10 sevk
+        # eder, sube 8 kabul eder -> defter +8, ama sistem "hic gelmedi, 10
+        # eksik" gorur -> merkez 10 DAHA yollar -> fiziksel cift sevk ve
+        # defter 18'e cikar. Iki freni (tavan + karsilanmayan-kapanmaz)
+        # birbirinin kor noktasindaydi.
+        # ⚠️ LEAST(kabul, sevk): tavan kurali geregi deftere sevkten fazlasi
+        # YAZILMAZ; sayac da deftere gireni sayar. Sube 500 saydi ama 5 sevk
+        # edildiyse talep ACIK KALIR — bu bilincli: cozulmemis bir uyusmazligi
+        # "karsilandi" sayip kapatmak, hatayi gorunmez yapardi.
         cur.execute(
             """
-            SELECT kalem_adi, COALESCE(SUM(kabul_adet), 0) AS n
+            SELECT kalem_adi,
+                   COALESCE(SUM(LEAST(COALESCE(kabul_adet,0),
+                                      COALESCE(sevk_adet,0))), 0) AS n
               FROM stok_yolda
-             WHERE siparis_talep_id = %s AND durum IN ('kabul_edildi', 'uzlasildi')
+             WHERE siparis_talep_id = %s
+               AND durum IN ('kabul_edildi', 'uzlasildi', 'kabul_uyusmazlik')
              GROUP BY kalem_adi
             """,
             (siparis_talep_id,),
@@ -3957,7 +4015,10 @@ def sube_kabul_kaydet(cur: Any, siparis_talep_id: str, sube_id: str,
         _gelen = {}
         for _gr in cur.fetchall() or []:
             _g = dict(_gr)
-            _gelen[str(_g.get("kalem_adi") or "").strip().lower()] = int(_g.get("n") or 0)
+            # ⚠️ ad_anahtar ŞART: .lower() Turkce'de 'İÇECEK' -> icine U+0307
+            # (birlesen nokta) koyar ve 'içecek' ile ASLA eslesmez; kalem
+            # "hic gelmedi" sayilir. Bugun kulede duzeltilen hatanin ikizi.
+            _gelen[ad_anahtar(_g.get("kalem_adi"))] = int(_g.get("n") or 0)
         # Toptanciya cikmis adlar (baska kanaldan geliyor, eksik sayilmaz)
         _toptancida = set()
         cur.execute(
@@ -3970,13 +4031,13 @@ def sube_kabul_kaydet(cur: Any, siparis_talep_id: str, sube_id: str,
             if isinstance(_tk, str):
                 _tk = json.loads(_tk)
             for _ti in (_tk or []):
-                _tn = str((_ti or {}).get("urun_ad") or "").strip().lower()
+                _tn = ad_anahtar((_ti or {}).get("urun_ad"))
                 if _tn:
                     _toptancida.add(_tn)
         for _it in (_istenen or []):
             if not isinstance(_it, dict) or _it.get("iptal"):
                 continue
-            _ad = str(_it.get("urun_ad") or "").strip().lower()
+            _ad = ad_anahtar(_it.get("urun_ad"))
             if not _ad or _ad in _toptancida:
                 continue
             _ist_adet = max(0, int(_it.get("adet") or 0))

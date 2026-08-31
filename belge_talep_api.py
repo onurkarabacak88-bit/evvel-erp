@@ -28,7 +28,7 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel
 
-from database import db
+from database import db, savepoint
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/belge-talep", tags=["belge-talep"])
@@ -85,8 +85,12 @@ def _ensure(cur) -> None:
     #    Katalog sorgusu kilitsizdir; indeks varsa hiç DDL denenmez.
     _indeks_var = False
     try:
-        cur.execute("SELECT to_regclass('public.belge_talep_fatura_tekil') AS x")
-        _indeks_var = bool((cur.fetchone() or {}).get("x"))
+        # ⚠️ SAVEPOINT ŞART (Codex denetimi :87, 2026-09-01): katalog sorgusu
+        # patlarsa "eski yola düştüm" sanılır ama transaction ZEHİRLENİR ve
+        # aynı istekteki sonraki ALTER/SELECT'ler de düşer.
+        with savepoint(cur, "sp_bt_katalog"):
+            cur.execute("SELECT to_regclass('public.belge_talep_fatura_tekil') AS x")
+            _indeks_var = bool((cur.fetchone() or {}).get("x"))
     except Exception:  # noqa: BLE001 — katalog okunamazsa eski yola düş
         _indeks_var = False
     try:
@@ -1059,7 +1063,11 @@ def eslestirme_verisi_topla(cur, bugun, gun: int = 120, fatura_idler: Optional[l
     #    davranış sürer — kimlik çözümü eşleştirmeyi DURDURMAZ.
     try:
         from tedarikci_zinciri_api import _guncel_kararlar
-        _kanon = _guncel_kararlar(cur) or {}
+        # ⚠️ SAVEPOINT ŞART (Codex denetimi :1060, 2026-09-01): defter sorgusu
+        # patlarsa "defter yoksa eski davranış sürer" SÖZÜ TUTULMAZ — aynı
+        # transaction'daki kalan eşleştirme sorguları da 500'e döner.
+        with savepoint(cur, "sp_bt_kimlik"):
+            _kanon = _guncel_kararlar(cur) or {}
         if _kanon:
             for _r in list(teslimatlar) + list(faturalar):
                 _ham = (_r.get("tedarikci_ad") or "").strip()

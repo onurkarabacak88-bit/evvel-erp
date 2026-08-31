@@ -31,7 +31,7 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 
-from database import db
+from database import db, savepoint
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/fatura", tags=["fatura-okuma"])
@@ -43,6 +43,39 @@ def fatura_modul_aktif() -> bool:
 
 
 _TABLOLAR_HAZIR = False
+
+# ══════════════════════════════════════════════════════════════════════════
+# 💳 ÖDEME İZİ EVRENİ — TEK TANIM (Fable mantık denetimi B5, 2026-09-01)
+# ══════════════════════════════════════════════════════════════════════════
+# "Bu fatura ödendi mi?" sorusu DÖRT ayrı yerde soruluyordu ve filtreler
+# AYRIŞMIŞTI — aynı soruya dört cevap:
+#
+#   kuyruk freni      : kaynak_id IS NULL            (ekstre YOK, '(ilgisiz)' YOK)
+#   self-heal         : kaynak_id FİLTRESİ YOK       (sistem kayıtları da iz sayılıyordu)
+#   mutabakat dökümü  : kaynak_id IS NULL            (ekstre YOK, '(ilgisiz)' YOK)
+#   cari_ozet/ekstre  : kaynak_id NULL veya ekstre_import + '(ilgisiz)' elenir  ← DOĞRUSU
+#
+# İki somut sonuç:
+#  • Sahip "bu çekim ödeme değil" deyip '(ilgisiz)' damgası vurduğu halde
+#    üç sorgu o çekimi HÂLÂ ödeme kanıtı sayıyordu (Atalay, 2026-08-17).
+#  • Banka ekstresinden gelen ödemeler (kaynak_id DOLU: eks_*) üç sorguda
+#    GÖRÜNMÜYORDU — cari "ödendi" derken zincir "ödeme izi yok" diyordu.
+#  • self-heal'de filtre hiç olmadığı için bir ödemenin KART TAKSİDİ ayrı bir
+#    ödeme sayılabiliyordu (redbull 21.482 ₺ çift düşme deseni).
+#
+# KURAL: ödeme izi evreni TEK yerde tanımlanır. Yeni bir tüketici kendi
+# SQL'ini yazmaz, bu sabiti kullanır.
+KART_ODEME_IZI_SARTI = (
+    "islem_turu='HARCAMA' AND COALESCE(durum,'aktif')='aktif' "
+    # ekstre_import istisnası: banka ekstresi kaynak_id DOLU yazar ama
+    # GERÇEK bir ödemedir — dışlanırsa ödeme görünmez olur.
+    "AND (kaynak_id IS NULL OR COALESCE(kaynak_tablo,'') = 'ekstre_import') "
+    # şahsi harcama tedarikçi ödemesi değildir
+    "AND COALESCE(harcama_tipi,'belirsiz') <> 'sahsi' "
+    # sahibin '(ilgisiz)' damgası HER sorguda geçerlidir — kararı bir yerde
+    # dinleyip başka yerde yok saymak, kararı yok saymaktır.
+    "AND COALESCE(cari_tedarikci,'') <> '(ilgisiz)'"
+)
 
 
 def _ensure_tablolar(cur) -> None:
@@ -847,9 +880,7 @@ def _fatura_kuyruk_uret(fatura_id: str) -> str:
                      SELECT 'kart_hareketleri', id::text, tarih, tutar,
                             COALESCE(aciklama,'')
                      FROM kart_hareketleri
-                     WHERE islem_turu='HARCAMA' AND durum='aktif'
-                       AND kaynak_id IS NULL
-                       AND COALESCE(harcama_tipi,'belirsiz') <> 'sahsi') x
+                     WHERE """ + KART_ODEME_IZI_SARTI + """) x
                    WHERE ABS(x.tutar - %s) <= GREATEST(5, %s * 0.02)
                      AND x.t BETWEEN %s::date - 10 AND %s::date + 90
                    LIMIT 20""",
@@ -904,10 +935,38 @@ def _fatura_kuyruk_uret(fatura_id: str) -> str:
         return "hata"
 
 
+# ── 🚪 SÖZ DEFTERİ ÜRETİM KAPISI ───────────────────────────────────────────
+# SAHİP KARARI (2026-08-31): "söz mantığını tamamen devre dışı bırak, ödeme
+# geldiğinde otomatik diğer ayın sonuna atsın" + "basit excel gibi çalışacak:
+# borcu yazacak, ödemeyi düşecek".
+#
+# Karar OKUMA tarafına uygulandı (ödenecekler artık cariden türetiliyor:
+# /odenecek-kuyruk), ama YAZMA tarafı çalışmaya devam ediyordu — Fable mantık
+# denetimi B2/B1 (2026-09-01) yakaladı. Sonuç: her yeni faturaya gece YENİ söz
+# doğuyor, kuyruk cariden yeniden sapıyor, `ap_mutabakat` her gece "kuyruk ≠
+# cari" alarmı basıyordu. Ölü defter KENDİNİ YENİDEN DOLDURUYORDU.
+#
+# ⚠️ Bu kapı YALNIZ faturadan OTOMATİK söz üretimini kapatır. `vadeli_alimlar`
+# tablosu genel amaçlıdır — sahibin ELLE girdiği vadeli alımlar DOKUNULMAZ.
+# Geri açmak için: False → True (tek satır). `zorla=1` ile uç yine çağrılabilir
+# (tarihî temizlik lazım olursa), ama gece zinciri kapıya uyar.
+SOZ_DEFTERI_URETIMI_ACIK = False
+
+
 @router.post("/kuyruk-tara")
-def fatura_kuyruk_tara(gun: int = 30):
+def fatura_kuyruk_tara(gun: int = 30, zorla: int = 0):
     """Retro + gece taraması: okunmuş ama kuyruğa bağlanmamış faturaları
-    ödeme kuyruğuna bağlar (idempotent — kuyruk_vadeli_id boş olanlar)."""
+    ödeme kuyruğuna bağlar (idempotent — kuyruk_vadeli_id boş olanlar).
+
+    ⚠️ SOZ_DEFTERI_URETIMI_ACIK=False iken hiçbir şey YAZMAZ (sahip kararı);
+    `zorla=1` bilinçli tekrar açar."""
+    if not SOZ_DEFTERI_URETIMI_ACIK and not int(zorla or 0):
+        return {"taranan": 0, "ozet": {}, "damga_temizlenen": 0,
+                "atlandi": "soz_uretimi_kapali",
+                "neden": ("Sahip kararı: söz/kuyruk defteri devre dışı; ödenecekler "
+                          "cariden türetiliyor (/odenecek-kuyruk). Otomatik söz "
+                          "üretimi kuyruğu cariden tekrar saptırırdı. Bilinçli "
+                          "çalıştırmak için zorla=1.")}
     g = max(1, min(int(gun or 30), 90))
     with db() as (_, cur):
         cur.execute("ALTER TABLE tedarikci_fatura ADD COLUMN IF NOT EXISTS "
@@ -1374,9 +1433,32 @@ class KuyrukHizalaBody(BaseModel):
     gerekce: str
 
 
+def _soz_yazma_kapisi(uc_adi: str, zorla: int = 0) -> None:
+    """🚪 Söz defterine YAZAN uçların ortak kapısı (Fable B7, 2026-09-01).
+
+    Bu uçlar sahip kararıyla modelin DIŞINDA kaldı (ödenecekler artık cariden
+    türetiliyor). Ama uçlar canlıydı: yanlışlıkla ya da eski bir ekrandan
+    çağrılırsa terk edilmiş defteri değiştirip 'mahsup' damgası basardı —
+    ve mahsup geri almak yakın zamana kadar mümkün DEĞİLDİ.
+
+    SİLİNMEDİ, kapatıldı: tarihî temizlik için gerekebilir. `zorla=1` bilinçli
+    açar (kayda geçer). Kapıyı kalıcı açmak için SOZ_DEFTERI_URETIMI_ACIK.
+    """
+    if SOZ_DEFTERI_URETIMI_ACIK or int(zorla or 0):
+        if not SOZ_DEFTERI_URETIMI_ACIK:
+            logger.warning("SOZ YAZMA KAPISI zorla acildi: %s", uc_adi)
+        return
+    raise HTTPException(
+        409, f"'{uc_adi}' kapalı: söz/kuyruk defteri sahip kararıyla devre dışı "
+             f"(ödenecekler cariden türetiliyor — /odenecek-kuyruk). Bu uç terk "
+             f"edilmiş deftere yazardı. Bilinçli çalıştırmak için zorla=1.")
+
+
 @router.post("/cari-kuyruk-hizala")
-def cari_kuyruk_hizala(body: KuyrukHizalaBody) -> dict:
+def cari_kuyruk_hizala(body: KuyrukHizalaBody, zorla: int = 0) -> dict:
     """✍️ Kuyruğu cari gerçeğine hizalar. Yeni nakit YAZMAZ.
+
+    ⚠️ 2026-09-01: KAPALI (söz defteri devre dışı) — `zorla=1` ile açılır.
 
     Sahip modeli: en eskiden kapat · sınırdakini böl · kalanı SONRAKİ AYIN
     SONUNA taşı. Kapanış durumu `mahsup` — kuyruğa da ödeme izine de girmez
@@ -1386,6 +1468,7 @@ def cari_kuyruk_hizala(body: KuyrukHizalaBody) -> dict:
     ⚠️ Önizlemeyi TEKRAR hesaplar; ekranın hafızasına güvenilmez.
     ⚠️ `cari_gormuyor` işaretli sözlere DOKUNULMAZ.
     """
+    _soz_yazma_kapisi("cari-kuyruk-hizala", zorla)
     ted = (body.tedarikci or "").strip()
     gerekce = (body.gerekce or "").strip()
     if len(ted) < 3:
@@ -1484,15 +1567,17 @@ class TahsisUygulaBody(BaseModel):
 
 
 @router.post("/cari-tahsis-uygula")
-def cari_tahsis_uygula(body: TahsisUygulaBody) -> dict:
+def cari_tahsis_uygula(body: TahsisUygulaBody, zorla: int = 0) -> dict:
     """✍️ Önizlemedeki sözleri 'mahsup' olarak kapatır. Yeni nakit YAZMAZ.
 
+    ⚠️ 2026-09-01: KAPALI (söz defteri devre dışı) — `zorla=1` ile açılır.
     ⚠️ Önizlemeyi TEKRAR hesaplar — arada bir şey değiştiyse ona göre davranır
        (ekranın hafızasına güvenilmez).
     ⚠️ İZ BIRAKIR: her sözün açıklamasına neden kapandığı yazılır ve bağlı
        ödeme planı satırı da kapatılır (yoksa kuyruk UI'da açık görünmeye
        devam ederdi — yarım iş).
     """
+    _soz_yazma_kapisi("cari-tahsis-uygula", zorla)
     ted = (body.tedarikci or "").strip()
     gerekce = (body.gerekce or "").strip()
     if len(ted) < 3:
@@ -1745,23 +1830,35 @@ def soz_yeniden_ac(vadeli_id: str, neden: str = ""):
     """🔓 BAKIM: yanlış kapanmış ödeme sözünü geri açar (sahip kararıyla).
     İlk vaka 2026-07-19 APS/Redbull: self-heal, sisteme yüklenmemiş Haziran
     faturasının ödemesini yeni R37 faturasının sözüne sayıp kapatmıştı —
-    sahip: 'en son gelen fatura borç'. Kasa hareketi YAZMAZ/SİLMEZ."""
+    sahip: 'en son gelen fatura borç'. Kasa hareketi YAZMAZ/SİLMEZ.
+
+    🚪 TEK YÖNLÜ KAPI KAPANDI (Fable mantık denetimi B3, 2026-09-01):
+    Kuyruk hizalamasında 'mahsup' damgası vurulan sözler HİÇBİR uçtan geri
+    açılamıyordu — bu uç yalnız 'odendi' açıyordu, düzenleme ucu yalnız
+    'bekliyor' kabul ediyordu. Yanlış bir mahsup ancak elle SQL ile
+    düzelirdi. Artık 'mahsup' da geri açılabilir; bağlı ödeme planı
+    satırları 'iptal' edilmiş olabileceğinden onlar da geri getirilir.
+    ⚠️ 'iptal' DURUMUNA DOKUNULMAZ: iptal ayrı bir karardır (silme niyeti),
+    mahsup ise bir hizalama işaretidir — ikisini aynı kapıdan geçirmek
+    sahibin sildiği kaydı diriltirdi."""
     n = f" [yeniden açıldı {date.today().isoformat()}: {(neden or 'sahip kararı')[:80]}]"
     with db() as (conn, cur):
         cur.execute(
             """UPDATE vadeli_alimlar
                SET durum='bekliyor', aciklama = COALESCE(aciklama,'') || %s
-               WHERE id=%s AND durum='odendi'""", (n, vadeli_id))
+               WHERE id=%s AND durum IN ('odendi','mahsup')""", (n, vadeli_id))
         acilan = cur.rowcount or 0
         cur.execute(
             """UPDATE odeme_plani
                SET durum='bekliyor', odenen_tutar=NULL,
                    aciklama = COALESCE(aciklama,'') || %s
                WHERE kaynak_tablo='vadeli_alimlar' AND kaynak_id=%s
-                 AND durum='odendi'""", (n, str(vadeli_id)))
+                 AND durum IN ('odendi','mahsup','iptal')""", (n, str(vadeli_id)))
         plan_acilan = cur.rowcount or 0
     if not acilan:
-        raise HTTPException(404, "Söz bulunamadı ya da zaten bekliyor")
+        raise HTTPException(
+            404, "Söz bulunamadı ya da zaten bekliyor "
+                 "('iptal' edilmiş söz bu uçtan açılmaz — iptal ayrı bir karardır)")
     logger.info("soz yeniden acildi: %s (%s)", vadeli_id, neden[:60])
     return {"ok": True, "acilan": acilan, "plan_acilan": plan_acilan}
 
@@ -3275,9 +3372,40 @@ def _cift_kanal_tekille(odemeler: List[dict], gun_tol: int = 3,
 
 
 def _cari_pencere_kesiti(gun: int = 180) -> str:
+    """⚠️ YALNIZ GÖSTERİM/LİSTE İÇİN. Bakiye hesabında KULLANILMAZ —
+    bunun için `_cari_bakiye_kesiti()` vardır. Sebep aşağıda."""
     from datetime import date as _d, timedelta as _td
     kesit = (_d.today() - _td(days=gun)).isoformat()
     return max(kesit, EVVEL_SISTEM_BASLANGIC)
+
+
+def _cari_bakiye_kesiti() -> str:
+    """📌 BAKİYE ÇIPASI — devir çizgisi. ASLA kaymaz.
+
+    🕰️ SAATLİ BOMBA (Fable mantık denetimi B2, 2026-09-01):
+    Bakiye aritmetiği `devir + pencere içi fatura − ödeme` idi ve pencere
+    `max(bugün−180g, 2026-06-01)` ile geliyordu. Bugün (2026-09-01) 180 gün
+    geriye gitmek devir çizgisinin ÖNCESİNE düşüyor, dolayısıyla `max` devir
+    çizgisini veriyor ve hesap DOĞRU çıkıyor. Ama **2026-11-28'den itibaren**
+    pencere başlangıcı devir çizgisini GEÇER:
+
+      • devir çizgisi SABİT kalır (sistem öncesinin tamamını temsil eder),
+      • Haziran-Ağustos faturaları toplamdan SESSİZCE düşer.
+
+    İki senaryo da borcu KÜÇÜK gösterir — tehlikeli yön:
+      1. Haziran'da kesilmiş, hâlâ ödenmemiş fatura → pencereden çıkar,
+         borç olduğundan az görünür.
+      2. Haziran faturası Aralık'ta ödenir → fatura pencere DIŞINDA (düşer),
+         ödeme pencere İÇİNDE (sayılır) → borç iki kat eksik görünür.
+
+    Ve o gün bunu yakalayabilecek ikinci defter (söz/kuyruk) sahip kararıyla
+    zaten itibarsızlaştırılmış olacak. Yani hata sessiz kalırdı.
+
+    KURAL: devir bir çizgidir, pencere değildir. Devirden BUGÜNE kadar olan
+    her şey hesaba girer — kayan pencere yok. Gösterim listeleri (son 6 ay)
+    kısaltabilir; HESAP kısaltamaz.
+    """
+    return EVVEL_SISTEM_BASLANGIC
 
 
 # 📜 AÇILIŞ DEVRİ (sahip 2026-07-18, DYK vakası: "fatura öncesinde de ödeme
@@ -3308,7 +3436,16 @@ def _cari_devir_semasi(cur) -> None:
         cur.execute("ALTER TABLE cari_devir ADD COLUMN IF NOT EXISTS aktif BOOLEAN DEFAULT TRUE")
         cur.execute("ALTER TABLE cari_devir ADD COLUMN IF NOT EXISTS iptal_ts TIMESTAMPTZ")
         cur.execute("ALTER TABLE cari_devir ADD COLUMN IF NOT EXISTS iptal_neden TEXT")
+        cur.execute("RELEASE SAVEPOINT sp_cari_devir_sema")
     except Exception as _e_sema:  # noqa: BLE001
+        # ⚠️ GERİ SARMA ŞART (Codex denetimi 3394, 2026-09-01): SAVEPOINT açıp
+        # hatayı yutmak YETMEZ — ROLLBACK TO yapılmazsa transaction zehirli
+        # kalır ve çağıranın sonraki sorgusu düşer. Yarım fren, fren değildir.
+        try:
+            cur.execute("ROLLBACK TO SAVEPOINT sp_cari_devir_sema")
+            cur.execute("RELEASE SAVEPOINT sp_cari_devir_sema")
+        except Exception:  # noqa: BLE001
+            pass
         logger.warning("cari_devir sema garantisi atlandi: %s", str(_e_sema)[:200])
 
 
@@ -3804,8 +3941,9 @@ def odeme_iz_bagi_tazele(kuru: int = 1):
                      UNION ALL
                      SELECT 'kart_hareketleri', id::text, tarih, tutar, COALESCE(aciklama,'')
                      FROM kart_hareketleri
-                     WHERE islem_turu='HARCAMA' AND durum='aktif'
-                       AND COALESCE(harcama_tipi,'belirsiz') <> 'sahsi') x
+                     -- ⚠️ Eskiden kaynak_id filtresi YOKTU: bir ödemenin KART
+                     -- TAKSİDİ ayrı bir ödeme sayılıp sözü haksız kapatıyordu.
+                     WHERE """ + KART_ODEME_IZI_SARTI + """) x
                    WHERE ABS(x.tutar - %s) <= GREATEST(5, %s * 0.02)
                      AND x.t BETWEEN %s::date - 10 AND %s::date + 90
                    ORDER BY x.t LIMIT 20""",
@@ -4839,8 +4977,7 @@ def odenmis_sayilan_denetimi():
                      UNION ALL
                      SELECT 'kart', tarih, tutar, COALESCE(aciklama,'')
                      FROM kart_hareketleri
-                     WHERE islem_turu='HARCAMA' AND durum='aktif' AND kaynak_id IS NULL
-                       AND COALESCE(harcama_tipi,'belirsiz') <> 'sahsi') x
+                     WHERE """ + KART_ODEME_IZI_SARTI + """) x
                    WHERE ABS(x.tutar - %s) <= GREATEST(5, %s * 0.02)
                      AND x.t BETWEEN %s::date - 10 AND %s::date + 90
                    ORDER BY x.t LIMIT 5""",
@@ -6055,8 +6192,11 @@ def tedarikci_eslestirme_haritasi() -> dict:
 
 def cari_ozet() -> dict:
     """Tüm tedarikçilerin cari özeti — beyin (B48) + bağ + UI. Salt-okur.
-    Pencere sistem başlangıcından önceye taşmaz (Haziran 2026 öncesi veri yok)."""
-    kesit_6ay = _cari_pencere_kesiti(180)
+    Pencere sistem başlangıcından önceye taşmaz (Haziran 2026 öncesi veri yok).
+
+    ⚠️ 2026-09-01: kesit artık KAYMAYAN devir çizgisi (_cari_bakiye_kesiti).
+    Gerekçe fonksiyonun docstring'inde — kayan pencere borcu küçük gösterirdi."""
+    kesit_6ay = _cari_bakiye_kesiti()
     with db() as (_, cur):
         _ensure_tablolar(cur)
         cur.execute(
@@ -6100,20 +6240,11 @@ def cari_ozet() -> dict:
                  UNION ALL
                  SELECT tarih, tutar, COALESCE(aciklama,''), 'kart'
                  FROM kart_hareketleri
-                 WHERE islem_turu='HARCAMA' AND durum='aktif'
-                   -- ekstre_import istisnası — cari_ekstre kanal-3 ile AYNI
-                   -- (FEZ vakası 2026-08-03; iki uç aynı eşleşme evreni kuralı)
-                   AND (kaynak_id IS NULL OR COALESCE(kaynak_tablo,'') = 'ekstre_import')
-                   AND COALESCE(harcama_tipi,'belirsiz') <> 'sahsi'
-                   -- 🔴 '(ilgisiz)' DAMGASI BURADA DA GEÇERLİ (2026-08-17, Atalay
-                   -- vakası): cari_ekstre damgayı okuyup satırı eliyordu (:5837)
-                   -- ama cari_ozet okumuyordu → sahip "bu çekim ödeme değil" dese
-                   -- bile BAKİYE düşmeye devam ediyordu; iki uç aynı damgaya
-                   -- farklı davranıyordu. Canlı: 27 Tem Atalay'a 100.000 elle
-                   -- ödeme girilmiş, AYNI ödemenin kart taksidi (QNBPAY 36.153,29)
-                   -- ikinci kez ödeme sayılıyordu (kart çekimi ödemenin
-                   -- FİNANSMANI, ayrı ödeme değil).
-                   AND COALESCE(cari_tedarikci,'') <> '(ilgisiz)'
+                 -- 🔗 TEK TANIM: KART_ODEME_IZI_SARTI (modül başı). Eskiden bu
+                 -- şartlar burada elle yazılıydı ve üç kardeş sorgu ondan
+                 -- SAPMIŞTI ('(ilgisiz)' damgası ve ekstre_import istisnası
+                 -- yalnız burada vardı). Vakalar sabitin yanında yazılı.
+                 WHERE """ + KART_ODEME_IZI_SARTI + """
                    AND tarih >= %s::date) x""",
             (kesit_6ay, kesit_6ay, kesit_6ay))
         odeme_izleri = [dict(r) for r in cur.fetchall() or []]
@@ -6427,6 +6558,11 @@ def cari_ozet() -> dict:
         "faturasiz_teslimat_adet": sum(x["faturasiz_teslimat_adet"] for x in ozet),
         "toplam_gercek_borc": round(sum(max(0.0, x["gercek_borc"]) for x in ozet), 2),
         "pencere_baslangic": kesit_6ay,
+        # Alan KENDİNİ AÇIKLAR: tüketici "6 ay mı, tamamı mı" diye tahmin
+        # etmek zorunda kalmasın (fatura_toplam_6ay adı tarihsel; değer artık
+        # devir çizgisinden BUGÜNE kadar olan TAMAMIDIR).
+        "pencere_anlami": "devir_cizgisinden_bugune_tamami",
+        "pencere_kayar_mi": False,
         "not": ("İKİ GÖZ: beyan_bakiye = TEDARİKÇİNİN fatura üstü beyanı (≈); "
                 "hesaplanan_acik = BİZİM taraf ≈ açılış devri + pencere içi fatura "
                 "toplamı − ödeme izi (3 kanal aday eşleşme). PENCERE Haziran 2026 "
@@ -6540,7 +6676,16 @@ def ap_mutabakat_uc():
 
 
 def gece_ap_mutabakat() -> dict:
-    """Gece zinciri halkası — hata-yutar."""
+    """Gece zinciri halkası — hata-yutar.
+
+    ⚠️ SÖZ DEFTERİ KAPALIYKEN KOŞMAZ (Fable B1, 2026-09-01): bu iş "kuyruk ↔
+    cari" farkını ölçer. Kuyruk sahip kararıyla TERK EDİLDİĞİNE göre fark
+    KALICIDIR ve her gece alarm basmak UYARI BÜTÇESİNİ boşa harcar — sahip
+    gerçek bir sapmayı bu gürültünün içinde kaçırır. Uç elle çağrılabilir
+    (tanı için duruyor); otomatik alarm susar."""
+    if not SOZ_DEFTERI_URETIMI_ACIK:
+        return {"atlandi": "soz_defteri_kapali",
+                "neden": "Kuyruk terk edildi; kuyruk↔cari farkı kalıcı, alarm değil."}
     try:
         return ap_mutabakat()
     except Exception as e:  # noqa: BLE001
@@ -6798,6 +6943,12 @@ def cari_ekstre(tedarikci: str = "", tam_fatura: int = 0):
                  SELECT 'kart', h.tarih::text, h.tutar::float, LEFT(COALESCE(h.aciklama,''),80),
                         h.cari_tedarikci
                  FROM kart_hareketleri h
+                 -- ⚠️ KART_ODEME_IZI_SARTI'na ÇEVİRMEYİN (bilinçli sapma):
+                 -- burada damga (cari_tedarikci) SEÇİLİYOR ve aşağıda
+                 -- _odeme_dahil() içinde HEM eleyici HEM bağlayıcı olarak
+                 -- kullanılıyor. SQL'de '(ilgisiz)' elenirse damga bilgisi
+                 -- kaybolur ve pozitif damga eşleşmesi de çalışmaz.
+                 -- Evren aynıdır; eleme yeri farklıdır.
                  WHERE h.islem_turu='HARCAMA' AND h.durum='aktif'
                    -- 🐞 FIX (2026-08-03, FEZ vakası): banka-ekstresi importu
                    -- kaynak_id DOLU yazar (id=eks_*) — IS NULL şartı TÜM banka
@@ -6909,7 +7060,9 @@ def cari_ekstre(tedarikci: str = "", tam_fatura: int = 0):
 
     # BİZİM TARAF HESABI: fatura(+) − ödeme izi(−); iz yoksa açık büyür.
     # Pencere sistem başlangıcından önceye TAŞMAZ (Haziran 2026 öncesi veri yok).
-    _kesit = _cari_pencere_kesiti(180)
+    # ⚠️ 2026-09-01: KAYMAYAN devir çizgisi — kayan pencere Kasım'dan itibaren
+    # Haziran faturalarını sessizce düşürüp borcu küçük gösterirdi (B2).
+    _kesit = _cari_bakiye_kesiti()
     fatura_toplam = round(sum(f["tutar"] for f in faturalar
                               if str(f["tarih"]) >= _kesit), 2)
     odeme_toplam = round(sum(o["tutar"] for o in odeme_adaylari

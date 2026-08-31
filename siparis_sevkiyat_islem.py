@@ -417,6 +417,12 @@ def siparis_sevkiyat_kalem_guncelle_execute(
     # uyumsuzluk sayısı UYARI olarak rapora ve yanıta işlenir — kanban risk
     # şeridi + duyu/bağ katmanı zaten takipte, uzlaştırma yine insanın işi.
     uyumsuz_sayi = 0
+    # ⚠️ KAPSAM (Codex denetimi :549, 2026-09-01): bu liste eskiden YALNIZ
+    # `gonderildi=True` dalinda taniniyordu ama yanit gövdesinde KOSULSUZ
+    # okunuyordu. Depocu sadece hazirlik/not guncelledigi anda (gonderildi
+    # False) talep UPDATE ediliyor, sonra yanit kurulurken UnboundLocalError
+    # -> 500. Kayit yazilmis ama personel "sistem coktu" goruyordu.
+    _stok_uyarilari: List[Dict[str, Any]] = []
     if bool(gonderildi):
         uyumsuz_sayi = _kaynak_depo_aktif_uyumsuzluk_sayisi(cur, sevk_sid, tid)
 
@@ -447,7 +453,6 @@ def siparis_sevkiyat_kalem_guncelle_execute(
         # hiçbir ekranda görünmüyordu — 3 ayda 26 siparişte 59 alarm birikti,
         # kimse görmedi. Sevki ENGELLEMİYORUZ (sahip kararı), ama depocu
         # "gönderildi" yanıtıyla birlikte neyin ters gittiğini de görüyor.
-        _stok_uyarilari: List[Dict[str, Any]] = []
         try:
             _disiplin_sevk_cikti(
                 cur,

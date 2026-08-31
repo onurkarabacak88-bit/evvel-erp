@@ -1487,6 +1487,27 @@ def kasa_islem_turu(kaynak_tablo: Optional[str]) -> str:
         (kaynak_tablo or ''), KASA_ISLEM_TURU_VARSAYILAN)
 
 
+def _kasa_iptal_turleri(cur, kaynak_id, yedek_tur: str) -> list:
+    """🔎 İPTAL EDİLECEK KASA TÜRÜNÜ TAHMİN ETME — DEFTERDEN OKU.
+
+    Yazma ve iptal tarafı türü AYRI AYRI türetince kaçınılmaz olarak sapıyor:
+    yazıldı KART_ODEME, arandı ODEME → ters kayıt hiç oluşmuyor ve para
+    kasadan çıkmış görünmeye devam ediyor (canlı: 120.000 ₺, 2026-08-31).
+    Haritayı düzeltmek YETMEZ — geçmişte farklı türle yazılmış satırlar da
+    geri alınabilmeli. Kaydın türü zaten defterde YAZILI.
+
+    Birden çok tür varsa hepsi döner (her biri ayrı ayrı iptal edilir).
+    Defterde aktif kayıt yoksa `yedek_tur` döner — o zaman hata mesajını
+    `iptal_kasa_hareketi` üretir, sessiz geçilmez.
+    """
+    cur.execute(
+        """SELECT DISTINCT islem_turu FROM kasa_hareketleri
+            WHERE kaynak_id=%s AND kasa_etkisi=true AND durum='aktif'""",
+        (str(kaynak_id),))
+    _t = [str(dict(r)["islem_turu"]) for r in (cur.fetchall() or [])]
+    return _t or [yedek_tur]
+
+
 def kasa_ve_faiz_odeme_plani_tam_odeme(
     cur, plan: dict, plan_id: str, odenen: float, tarih: str,
     anapara_aciklama: Optional[str] = None,
@@ -8714,12 +8735,26 @@ def odeme_plani_sil(oid: str):
             # fiilen deliniyordu). Artık kaynak_tablo'dan doğru işlem türü türetilir.
             kaynak = eski.get('kaynak_tablo') or ''
             if eski.get('kart_id'):
-                iptal_kasa_hareketi(cur, oid, 'odeme_plani', 'KART_ODEME', 'KART_ODEME_IPTAL',
-                    f"Ödeme iptali: {eski['aciklama']}")
+                # ⚠️ BU DAL DA TAHMİN EDİYORDU (Codex denetimi main.py:1480,
+                # 2026-09-01): 'KART_ODEME' sabiti aranıyordu, oysa yazma
+                # tarafı türü `kasa_islem_turu(kaynak_tablo)`dan üretiyor.
+                # kaynak_tablo boş bir kart-ekstre planında yazılan 'ODEME',
+                # aranan 'KART_ODEME' — iptal kaydı BULUNAMAZ ve para kasadan
+                # çıkmış görünmeye DEVAM EDER. Bugün `cari_odeme` için
+                # düzeltilen hatanın birebir ikizi. Kural her dalda aynı:
+                # TÜRÜ TAHMİN ETME, DEFTERDEN OKU.
+                for islem in _kasa_iptal_turleri(cur, oid, 'KART_ODEME'):
+                    iptal_kasa_hareketi(
+                        cur, oid, 'odeme_plani', islem, islem + '_IPTAL',
+                        f"Ödeme iptali: {eski['aciklama']}")
             elif kaynak == 'vadeli_alimlar' and eski.get('kaynak_id'):
                 # vadeli kasa kaydı kaynak_id=vadeli_id ile bağlı (plan_id değil)
-                iptal_kasa_hareketi(cur, eski['kaynak_id'], 'vadeli_alimlar',
-                    'VADELI_ODEME', 'VADELI_IPTAL', f"Ödeme iptali: {eski['aciklama']}")
+                for islem in _kasa_iptal_turleri(
+                        cur, eski['kaynak_id'], 'VADELI_ODEME'):
+                    iptal_kasa_hareketi(
+                        cur, eski['kaynak_id'], 'vadeli_alimlar',
+                        islem, islem + '_IPTAL',
+                        f"Ödeme iptali: {eski['aciklama']}")
             else:
                 # ══════════════════════════════════════════════════════════
                 # 🔎 TÜRÜ TAHMİN ETME — OKU (canlı hata, 2026-08-31)
@@ -8732,16 +8767,10 @@ def odeme_plani_sil(oid: str):
                 # farklı türle yazılmış satırlar da geri alınabilmeli.
                 # Kaydın türü zaten defterde YAZILI — tahmin etmek yerine
                 # okuyoruz. Birden çok tür varsa hepsi ayrı ayrı iptal edilir.
-                cur.execute(
-                    """SELECT DISTINCT islem_turu FROM kasa_hareketleri
-                        WHERE kaynak_id=%s AND kasa_etkisi=true AND durum='aktif'""",
-                    (oid,))
-                _turler = [str(dict(r)["islem_turu"]) for r in (cur.fetchall() or [])]
-                if not _turler:
-                    # Defterde aktif kayıt yoksa haritadan türet — eski davranış
-                    # (hata mesajı yine iptal_kasa_hareketi'nden gelir).
-                    _turler = [kasa_islem_turu(kaynak)]
-                for islem in _turler:
+                # Tek okuyucu: _kasa_iptal_turleri (üç dal da AYNI kuralı
+                # kullanır — aynı soru iki yerde ayrı hesaplanmaz).
+                for islem in _kasa_iptal_turleri(
+                        cur, oid, kasa_islem_turu(kaynak)):
                     iptal_kasa_hareketi(
                         cur, oid, 'odeme_plani', islem, islem + '_IPTAL',
                         f"Ödeme iptali: {eski['aciklama']}")
