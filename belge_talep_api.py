@@ -2412,6 +2412,11 @@ def belge_talep_zincir_izi(tedarikci: str = "", gun: int = 120, sube: str = ""):
                 "siparis_durum": d.get("siparis_durum"),
                 "kalem_ozeti": ozet or None,
                 "belge_talep_durum": d.get("bt_durum"),
+                # 🔑 Kayıt kimliği: rapor bir sorunu gösterip üzerinde işlem
+                # yapılacak kimliği vermezse bulgu EYLEME dönüşemez. Kapanmış
+                # kayıtları hiçbir liste ucu döndürmediği için bu alan olmadan
+                # "gerekçesiz kapanış" bulgusu düzeltilemiyordu.
+                "belge_talep_id": d.get("bt_id"),
                 "kapanis_tipi": d.get("kapanis_tipi"),
                 "kapanma_ts": str(d.get("kapanma_ts") or "")[:19] or None,
                 "beklenen_tutar": d.get("beklenen_tutar"),

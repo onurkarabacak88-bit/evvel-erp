@@ -1714,13 +1714,53 @@ def fatura_sil(fatura_id: str):
         raise HTTPException(400, "fatura_id zorunlu")
     with db() as (conn, cur):
         _ensure_tablolar(cur)
+        # ══════════════════════════════════════════════════════════════════
+        # 🔗 SARKIK BAĞ TEMİZLİĞİ (Fable + Codex denetimi, 2026-08-31)
+        # ══════════════════════════════════════════════════════════════════
+        # Fatura siliniyordu ama `belge_talep.fatura_id` DOLU kalıyordu.
+        # Zincir raporu "fatura_id var mı" diye baktığı için o teslimatı
+        # SONSUZA KADAR "zincir tam" sayıyordu — oysa bağlandığı fatura
+        # artık YOK. Yani silme işlemi, kapatılmamış bir işi kapalı
+        # gösteriyordu: sahte yeşilin en sinsi türü, çünkü kaynağı bir
+        # TEMİZLİK eylemi.
+        # Talep 'bekliyor'a döner: fatura gitti, beklenti geri geldi.
+        _cozulen = 0
+        try:
+            cur.execute(
+                """UPDATE belge_talep
+                      SET fatura_id=NULL, durum='bekliyor',
+                          kapanma_ts=NULL, kapanis_tipi=NULL,
+                          fatura_tutar_tl=NULL, tutar_fark_tl=NULL,
+                          kapanis_aciklama=CONCAT(
+                              COALESCE(kapanis_aciklama || ' | ', ''),
+                              'Bağlı fatura silindi (', %s, ') — talep yeniden açıldı.')
+                    WHERE fatura_id=%s
+                    RETURNING id""",
+                (fid, fid),
+            )
+            _cozulen = len(cur.fetchall() or [])
+        except Exception as _e_bag:  # noqa: BLE001
+            # Bağ çözülemezse SİLME DE YAPILMAZ: yarım iş, sarkık bağdan
+            # daha kötüdür (fatura yok, zincir hâlâ 'tam' der).
+            conn.rollback()
+            raise HTTPException(
+                503,
+                "Faturanın teslimat bağı çözülemedi — silme yapılmadı. "
+                "Yarım silme, olmayan bir faturayı 'bağlı' göstermeye devam ederdi.",
+            ) from _e_bag
         cur.execute("DELETE FROM tedarikci_fatura_kalem WHERE fatura_id=%s", (fid,))
         cur.execute("DELETE FROM tedarikci_fatura WHERE id=%s", (fid,))
         n = cur.rowcount or 0
+        if not n:
+            conn.rollback()
+            raise HTTPException(404, "Fatura bulunamadı")
         conn.commit()
-    if not n:
-        raise HTTPException(404, "Fatura bulunamadı")
-    return {"ok": True, "silinen": fid}
+    return {
+        "ok": True, "silinen": fid,
+        "cozulen_teslimat_bagi": _cozulen,
+        "not": (f"{_cozulen} teslimatın fatura bağı çözüldü ve talebi yeniden açıldı."
+                if _cozulen else "Bu faturaya bağlı teslimat yoktu."),
+    }
 
 
 def dosya_hash_kontrol(cur, raw: bytes):
