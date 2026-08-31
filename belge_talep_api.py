@@ -77,13 +77,26 @@ def _ensure(cur) -> None:
     #    "aborted" olur ve alttaki ALTER'lar da hata verir. try/except
     #    Python istisnasını yutar ama transaction'ı KURTARMAZ — bu ders
     #    daha önce maliyet motorunda alınmıştı.
+    # ⚠️ ÖNCE KATALOĞA BAK (canlı deadlock, 2026-08-31): `CREATE INDEX
+    #    IF NOT EXISTS` indeks ZATEN VARSA BİLE tabloda kilit almaya çalışır.
+    #    `_ensure` her istekte çalıştığı için eşzamanlı iki istek bu kilitte
+    #    kilitlenebiliyor — canlıda 4 paralel istekte
+    #    "DeadlockDetected ... LEFT JOIN tedarikci_fatura" 500'ü alındı.
+    #    Katalog sorgusu kilitsizdir; indeks varsa hiç DDL denenmez.
+    _indeks_var = False
     try:
-        cur.execute("SAVEPOINT sp_bt_fatura_tekil")
-        cur.execute(
-            "CREATE UNIQUE INDEX IF NOT EXISTS belge_talep_fatura_tekil "
-            "ON belge_talep (fatura_id) WHERE fatura_id IS NOT NULL"
-        )
-        cur.execute("RELEASE SAVEPOINT sp_bt_fatura_tekil")
+        cur.execute("SELECT to_regclass('public.belge_talep_fatura_tekil') AS x")
+        _indeks_var = bool((cur.fetchone() or {}).get("x"))
+    except Exception:  # noqa: BLE001 — katalog okunamazsa eski yola düş
+        _indeks_var = False
+    try:
+        if not _indeks_var:
+            cur.execute("SAVEPOINT sp_bt_fatura_tekil")
+            cur.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS belge_talep_fatura_tekil "
+                "ON belge_talep (fatura_id) WHERE fatura_id IS NOT NULL"
+            )
+            cur.execute("RELEASE SAVEPOINT sp_bt_fatura_tekil")
     except Exception as _e_ix:  # noqa: BLE001
         try:
             cur.execute("ROLLBACK TO SAVEPOINT sp_bt_fatura_tekil")
