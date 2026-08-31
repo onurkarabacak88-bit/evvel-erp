@@ -12128,6 +12128,70 @@ class VadeliGeriAlModel(BaseModel):
     aciklama: Optional[str] = None
 
 
+@app.get("/api/vadeli-alimlar/{vid}/iz-onizle")
+def vadeli_iz_onizle(vid: str):
+    """🔎 KURU ÇALIŞTIRMA — bir vadeli kaydının ARKASINDA hangi izler var?
+
+    Sahip kuralı: para değiştiren işlem ÖNCE kuru çalışır ve listesi okunur.
+    `odeme-geri-al` üç ize dokunur (kart · kasa · plan) ama hangisinin GERÇEK
+    olduğunu ancak bakarak anlarız:
+
+      • kasa izi VARSA  → geri alma parayı kasaya GERİ EKLER. Bu ancak o para
+        gerçekten çıkmadıysa doğrudur.
+      • kasa izi YOKSA  → kayıt yalnız KÂĞIT ÜSTÜNDE kapatılmıştır (tipik
+        örnek: gece self-heal'i bir nakit ödemeyi görüp sözü 'odendi'
+        işaretler). Geri almak hiçbir parayı hareket ettirmez.
+
+    SALT OKUR. Hiçbir satır değişmez.
+    """
+    with db() as (_, cur):
+        cur.execute("SELECT id, tedarikci, tutar::float AS tutar, durum, "
+                    "vade_tarihi::text AS vade, odeme_tarihi::text AS odeme_tarihi, "
+                    "COALESCE(aciklama,'') AS aciklama "
+                    "FROM vadeli_alimlar WHERE id=%s", (vid,))
+        v = cur.fetchone()
+        if not v:
+            raise HTTPException(404, "Vadeli alım bulunamadı")
+        v = dict(v)
+        cur.execute("""SELECT id, tarih::text AS tarih, tutar::float AS tutar,
+                              islem_turu, COALESCE(aciklama,'') AS aciklama
+                         FROM kart_hareketleri
+                        WHERE kaynak_tablo='vadeli_alimlar' AND kaynak_id=%s
+                          AND COALESCE(durum,'aktif')='aktif'""", (vid,))
+        kart = [dict(r) for r in cur.fetchall() or []]
+        cur.execute("""SELECT id, tarih::text AS tarih, tutar::float AS tutar,
+                              islem_turu, COALESCE(kasa_etkisi,TRUE) AS kasa_etkisi,
+                              COALESCE(aciklama,'') AS aciklama
+                         FROM kasa_hareketleri
+                        WHERE kaynak_id=%s AND COALESCE(durum,'aktif')='aktif'""",
+                    (vid,))
+        kasa = [dict(r) for r in cur.fetchall() or []]
+        cur.execute("""SELECT id, durum, odenecek_tutar::float AS odenecek,
+                              COALESCE(odenen_tutar,0)::float AS odenen
+                         FROM odeme_plani
+                        WHERE kaynak_tablo='vadeli_alimlar' AND kaynak_id=%s""",
+                    (vid,))
+        plan = [dict(r) for r in cur.fetchall() or []]
+    _kasa_etkili = [k for k in kasa if k.get("kasa_etkisi")]
+    return {
+        "vadeli": v,
+        "kart_izleri": kart,
+        "kasa_izleri": kasa,
+        "planlar": plan,
+        "kasa_etkili_iz_adet": len(_kasa_etkili),
+        "geri_alinirsa_kasaya_donecek_tl": round(
+            sum(abs(float(k.get("tutar") or 0)) for k in _kasa_etkili), 2),
+        "hukum": (
+            "KAGIT UZERINDE KAPANMIS — geri alma hicbir parayi hareket "
+            "ettirmez (kasa izi yok, kart izi yok)."
+            if not kart and not _kasa_etkili else
+            "GERCEK PARA IZI VAR — geri alma kasayi/kart borcunu DEGISTIRIR. "
+            "Once bu paranin gercekten cikip cikmadigini dogrulayin."),
+        "not": ("SALT OKUR. Geri almak icin: "
+                "POST /api/vadeli-alimlar/{vid}/odeme-geri-al {mod: 'iptal'|'bekliyor'}"),
+    }
+
+
 @app.post("/api/vadeli-alimlar/{vid}/odeme-geri-al")
 def vadeli_odeme_geri_al(vid: str, body: VadeliGeriAlModel):
     """ÖDENMİŞ vadeli alımı geri alır — çift kayıt / yanlış ödeme işareti düzeltmesi.
