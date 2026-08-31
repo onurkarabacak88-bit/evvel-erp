@@ -3290,7 +3290,11 @@ def _cari_pencere_kesiti(gun: int = 180) -> str:
 def _cari_devir_semasi(cur) -> None:
     """Yalnız TABLO/KOLON garantisi. Şema hatası yutulur (tablo zaten vardır,
     ya da eşzamanlı bir göç yazıyordur) — veri okumaz, karar üretmez."""
+    # ⚠️ SAVEPOINT ŞART (canlı 500 dersi, 2026-09-01): DDL hatası yutulsa bile
+    # Postgres transaction'ı "aborted" yapar ve ÇAĞIRANIN bir sonraki sorgusu
+    # düşer. Hata kendi yerinde sessiz kalır, faturası başka yerde kesilir.
     try:
+        cur.execute("SAVEPOINT sp_cari_devir_sema")
         cur.execute("""CREATE TABLE IF NOT EXISTS cari_devir (
                            id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
                            tedarikci TEXT NOT NULL UNIQUE,
@@ -7877,16 +7881,36 @@ def _ensure_cari_odeme_tablolar(cur) -> None:
 
 
 def _cari_kapatilan_toplam(cur, fatura_ids: list) -> dict:
-    """Fatura başına DAHA ÖNCE kapatılmış tutar (tahsis defterinden)."""
+    """Fatura başına DAHA ÖNCE kapatılmış tutar (tahsis defterinden).
+
+    ⚠️ SAVEPOINT ŞART (canlı 500, 2026-09-01): burada hata YUTULUYORDU ama
+    Postgres'te patlayan komut TÜM transaction'ı "aborted" yapar; çağıranın
+    bir sonraki sorgusu `InFailedSqlTransaction` ile düşer. `mutabakat_zinciri`
+    bu fonksiyonu kullanmaya başlayınca uç tamamen 500 verdi — yutulan hata
+    kendi yerinde sessiz kaldı, FATURASI başka yerde kesildi.
+    ⚠️ TİP: `cari_odeme_tahsis.fatura_id` UUID, çağıran ise TEXT id listesi
+    gönderiyor (belge_talep.fatura_id TEXT). Karşılaştırma iki tarafta da
+    ::text ile yapılır — yoksa tip hatası verir.
+    """
     if not fatura_ids:
         return {}
     try:
+        cur.execute("SAVEPOINT sp_cari_kapatilan")
         cur.execute(
-            "SELECT fatura_id, COALESCE(SUM(kapatilan),0)::float AS k "
-            "FROM cari_odeme_tahsis WHERE fatura_id = ANY(%s) GROUP BY fatura_id",
-            (fatura_ids,))
-        return {str(r["fatura_id"]): float(r["k"]) for r in cur.fetchall() or []}
-    except Exception:
+            "SELECT fatura_id::text AS fatura_id, COALESCE(SUM(kapatilan),0)::float AS k "
+            "FROM cari_odeme_tahsis WHERE fatura_id::text = ANY(%s) GROUP BY fatura_id",
+            ([str(x) for x in fatura_ids],))
+        _r = {str(r["fatura_id"]): float(r["k"]) for r in cur.fetchall() or []}
+        cur.execute("RELEASE SAVEPOINT sp_cari_kapatilan")
+        return _r
+    except Exception as _e_kap:  # noqa: BLE001
+        try:
+            cur.execute("ROLLBACK TO SAVEPOINT sp_cari_kapatilan")
+            cur.execute("RELEASE SAVEPOINT sp_cari_kapatilan")
+        except Exception:  # noqa: BLE001
+            pass
+        logger.warning("tahsis toplami okunamadi (heuristige dusulur): %s",
+                       str(_e_kap)[:150])
         return {}
 
 
