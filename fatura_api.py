@@ -2606,7 +2606,9 @@ def _cari_pencere_kesiti(gun: int = 180) -> str:
 # tutar > 0 = başlangıç itibarıyla tedarikçiye BORÇ; tutar < 0 = AVANS/alacak.
 # Kural=VERİ deseni: tablo, kod değil. Kasa-izi istisnası BİLİNÇLİ: sistem
 # öncesi ödemenin izi olamaz — bu yüzden beyan açıkça 'sahip beyanı' etiketlidir.
-def _cari_devirler(cur) -> list:
+def _cari_devir_semasi(cur) -> None:
+    """Yalnız TABLO/KOLON garantisi. Şema hatası yutulur (tablo zaten vardır,
+    ya da eşzamanlı bir göç yazıyordur) — veri okumaz, karar üretmez."""
     try:
         cur.execute("""CREATE TABLE IF NOT EXISTS cari_devir (
                            id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
@@ -2621,13 +2623,28 @@ def _cari_devirler(cur) -> list:
         cur.execute("ALTER TABLE cari_devir ADD COLUMN IF NOT EXISTS aktif BOOLEAN DEFAULT TRUE")
         cur.execute("ALTER TABLE cari_devir ADD COLUMN IF NOT EXISTS iptal_ts TIMESTAMPTZ")
         cur.execute("ALTER TABLE cari_devir ADD COLUMN IF NOT EXISTS iptal_neden TEXT")
-        cur.execute("""SELECT id, tedarikci, tutar::float AS tutar,
-                              COALESCE(aciklama,'') AS aciklama
-                       FROM cari_devir
-                       WHERE COALESCE(aktif, TRUE)""")
-        return [dict(r) for r in cur.fetchall() or []]
-    except Exception:  # noqa: BLE001
-        return []
+    except Exception as _e_sema:  # noqa: BLE001
+        logger.warning("cari_devir sema garantisi atlandi: %s", str(_e_sema)[:200])
+
+
+def _cari_devirler(cur) -> list:
+    """Aktif açılış devirleri. OKUMA HATASI YUTULMAZ.
+
+    ⚠️ ESKİ DAVRANIŞ TEHLİKELİYDİ (Codex denetimi, 2026-08-31): bütün gövde
+    tek bir `except: return []` içindeydi. Sorgu düştüğü an SIFIR devir
+    dönüyordu ve bu "devir yok" ile aynı şeye benziyordu. Sonuç: sahibin
+    100.000 ₺'lik açılış beyanı ekranda YOK olur, cari bakiye olduğundan
+    düşük — hatta sıfır/yeşil — görünürdü. Yani hata, en tehlikeli kılığa
+    giriyordu: temiz bir hesap kılığına.
+    Artık okuma hatası YUKARI ÇIKAR; çağıran ekran "ölçülemedi" der.
+    Bilinmeyen bir bakiye göstermemek, yanlış bir bakiye göstermekten iyidir.
+    """
+    _cari_devir_semasi(cur)
+    cur.execute("""SELECT id, tedarikci, tutar::float AS tutar,
+                          COALESCE(aciklama,'') AS aciklama
+                   FROM cari_devir
+                   WHERE COALESCE(aktif, TRUE)""")
+    return [dict(r) for r in cur.fetchall() or []]
 
 
 def _cari_katla(s: str) -> str:
@@ -5395,7 +5412,20 @@ def cari_ozet() -> dict:
                    AND tarih >= %s::date) x""",
             (kesit_6ay, kesit_6ay, kesit_6ay))
         odeme_izleri = [dict(r) for r in cur.fetchall() or []]
-        devirler = _cari_devirler(cur)  # 📜 sistem-öncesi açılış beyanları
+        # 📜 sistem-öncesi açılış beyanları — OKUNAMAZSA BAKİYE ÜRETİLMEZ.
+        # Devirsiz hesaplanan bakiye, devri olan tedarikçide olduğundan
+        # DÜŞÜK çıkar; "borcum yok" gibi görünen bir ekran, hata mesajından
+        # çok daha pahalıya mal olur.
+        try:
+            devirler = _cari_devirler(cur)
+        except Exception as _e_dev:  # noqa: BLE001
+            logger.exception("cari devir okunamadi: %s", str(_e_dev)[:200])
+            raise HTTPException(
+                503,
+                "Açılış devirleri okunamadı — cari bakiye hesaplanmadı. "
+                "Devri olan tedarikçilerde bakiye olduğundan DÜŞÜK çıkardı, "
+                "o yüzden yanlış rakam göstermek yerine durduk.",
+            ) from _e_dev
         # 📦 GRNI havuzu — AYNI bağlantıda (2026-08-08 havuz dersi: ayrı
         # `with db()` açmak bu ucun iki bağlantı tutmasına yol açıyordu;
         # panel açılışta ~13 uç çağırıyor, maxconn=15 → havuz tükeniyordu).
@@ -5803,7 +5833,14 @@ class CariDevirBody(BaseModel):
 @router.get("/cari-devir")
 def cari_devir_liste():
     with db() as (_, cur):
-        return {"devirler": _cari_devirler(cur)}
+        try:
+            return {"devirler": _cari_devirler(cur)}
+        except Exception as _e_dl:  # noqa: BLE001
+            # Boş liste dönmek "devir yok" demekti — oysa "okuyamadım".
+            logger.exception("cari devir listesi okunamadi: %s", str(_e_dl)[:200])
+            raise HTTPException(
+                503, "Açılış devirleri okunamadı. Boş liste göstermiyoruz: "
+                     "'devir yok' ile 'okuyamadım' aynı şey değil.") from _e_dl
 
 
 @router.post("/cari-devir")
@@ -5814,7 +5851,7 @@ def cari_devir_kaydet(body: CariDevirBody):
     if abs(body.tutar) > 10_000_000:
         raise HTTPException(400, "tutar makul aralık dışında")
     with db() as (conn, cur):
-        _cari_devirler(cur)  # tablo garanti
+        _cari_devir_semasi(cur)  # tablo garanti (veri okumaz)
         cur.execute(
             # ⚠️ aktif=TRUE ŞART (2026-08-08): iptal edilmiş bir devir varken aynı
             # tedarikçiye yeni devir girilirse ON CONFLICT satırı günceller ama
@@ -5844,7 +5881,7 @@ def cari_devir_sil(devir_id: str, neden: str = ""):
     Geri almak için POST /cari-devir/{id}/geri-al.
     """
     with db() as (conn, cur):
-        _cari_devirler(cur)          # kolonları garanti eder
+        _cari_devir_semasi(cur)      # kolonları garanti eder (veri okumaz)
         cur.execute(
             """UPDATE cari_devir
                  SET aktif=FALSE, iptal_ts=NOW(),
@@ -5863,7 +5900,7 @@ def cari_devir_sil(devir_id: str, neden: str = ""):
 def cari_devir_geri_al(devir_id: str):
     """İptal edilmiş açılış devrini yeniden yürürlüğe alır."""
     with db() as (conn, cur):
-        _cari_devirler(cur)
+        _cari_devir_semasi(cur)
         cur.execute(
             """UPDATE cari_devir
                  SET aktif=TRUE, iptal_ts=NULL, iptal_neden=NULL
@@ -5881,7 +5918,7 @@ def cari_devir_geri_al(devir_id: str):
 def cari_devir_iptaller():
     """İptal edilmiş açılış devirleri — kayıt silinmediği için görülebilir."""
     with db() as (_c, cur):
-        _cari_devirler(cur)
+        _cari_devir_semasi(cur)
         cur.execute(
             """SELECT id, tedarikci, tutar::float AS tutar,
                       COALESCE(aciklama,'') AS aciklama,
@@ -5937,9 +5974,15 @@ def _faturasiz_teslimat_ozet(cur, es_adlar) -> Dict[str, Any]:
 
 
 @router.get("/cari-ekstre")
-def cari_ekstre(tedarikci: str = ""):
+def cari_ekstre(tedarikci: str = "", tam_fatura: int = 0):
     """Tek tedarikçinin ekstresi: fatura zinciri + zincir farkları + bekleyen
-    vadeler + ödeme ADAYLARI (3 kanal metin eşleşmesi — öneri-only)."""
+    vadeler + ödeme ADAYLARI (3 kanal metin eşleşmesi — öneri-only).
+
+    ⚠️ `tam_fatura=1`: `faturalar` listesi KISALTILMADAN döner. Varsayılan 0'da
+    yalnız son 60 fatura döner — bu bir EKRAN kısaltmasıdır, veri değil.
+    Bir HESAP yapacaksan (FIFO tahsisi gibi) 1 geçmelisin; yoksa 60'tan eski
+    açık borçlar hesaba hiç girmez ve sonsuza kadar açık kalır.
+    """
     ara = (tedarikci or "").strip()
     if len(ara) < 3:
         raise HTTPException(400, "tedarikci parametresi (ad veya VKN) en az 3 karakter")
@@ -6050,7 +6093,15 @@ def cari_ekstre(tedarikci: str = ""):
         odeme_adaylari = [r for r in (dict(x) for x in cur.fetchall() or [])
                           if _odeme_dahil(r)]
         odeme_adaylari, _cift_elenen = _cift_kanal_tekille(odeme_adaylari)
-        _devirler = _cari_devirler(cur)
+        try:
+            _devirler = _cari_devirler(cur)
+        except Exception as _e_dev2:  # noqa: BLE001
+            logger.exception("cari devir okunamadi (ap): %s", str(_e_dev2)[:200])
+            raise HTTPException(
+                503,
+                "Açılış devirleri okunamadı — mutabakat hesaplanmadı. "
+                "Devirsiz kıyas, devri olan tedarikçide sahte fark üretirdi.",
+            ) from _e_dev2
         # 📦 GRNI özeti AYNI bağlantıda hesaplanır (havuz dersi 2026-08-08)
         _grni_ozet = _faturasiz_teslimat_ozet(cur, _es_adlar)
     # 📜 açılış devri — bu tedarikçiye eşleşen sahip beyanı (çift yön eşleşme)
@@ -6134,7 +6185,10 @@ def cari_ekstre(tedarikci: str = ""):
     return {
         "arama": ara,
         "fatura_adet": len(faturalar),
-        "faturalar": faturalar[-60:],
+        # ⚠️ Kısaltma EKRAN içindir; hesap yapan çağıran `tam_fatura=1` ister.
+        "faturalar": (faturalar if int(tam_fatura or 0) else faturalar[-60:]),
+        "fatura_listesi_kisaltildi": bool(
+            not int(tam_fatura or 0) and len(faturalar) > 60),
         "beyan_bakiye": (round(float(beyan), 2) if beyan is not None else None),
         "devir": devir, "devir_not": devir_not,
         "fatura_toplam_6ay": fatura_toplam,
@@ -6981,7 +7035,12 @@ def cari_odenecekler(tedarikci: str = ""):
     ara = (tedarikci or "").strip()
     if len(ara) < 3:
         raise HTTPException(400, "tedarikci parametresi en az 3 karakter")
-    ekstre = cari_ekstre(tedarikci=ara)
+    # ⚠️ TAM LİSTE ŞART (Codex denetimi, 2026-08-31): burası FIFO havuzunu
+    # kuruyor. Eskiden ekstrenin EKRAN kısaltmasını (son 60 fatura) olduğu
+    # gibi kullanıyordu; 80 faturalı bir tedarikçide en eski 20 açık borç
+    # havuza hiç girmiyor, ödeme daha yeni faturalara tahsis ediliyor ve o
+    # eski borçlar SONSUZA KADAR açık kalıyordu. FIFO'nun tam tersi.
+    ekstre = cari_ekstre(tedarikci=ara, tam_fatura=1)
     faturalar = ekstre.get("faturalar") or []
     with db() as (_, cur):
         _ensure_cari_odeme_tablolar(cur)

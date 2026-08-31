@@ -59,6 +59,40 @@ def _ensure(cur) -> None:
     cur.execute("CREATE INDEX IF NOT EXISTS idx_belge_talep_durum ON belge_talep (durum, olusturma DESC)")
     # Yüklenen faturanın izi (hangi tedarikci_fatura kaydı bu teslimatı kapattı)
     cur.execute("ALTER TABLE belge_talep ADD COLUMN IF NOT EXISTS fatura_id TEXT")
+    # ══════════════════════════════════════════════════════════════════════
+    # 🔒 BİR FATURA = BİR TESLİMAT (Codex denetimi, 2026-08-31)
+    # ══════════════════════════════════════════════════════════════════════
+    # Uygulama tarafında fren VARDI ("Bu fatura başka bir teslimata bağlı")
+    # ama KİLİTSİZ oku-sonra-yaz biçimindeydi: iki istek aynı anda gelirse
+    # ikisi de kontrolü geçip aynı faturayı iki teslimata bağlayabiliyordu.
+    # Sonuç sessiz olurdu — aynı borç iki kez tahakkuk eder, cari şişer ve
+    # hangi kaydın fazla olduğu sonradan ayırt edilemezdi.
+    # Yarışı uygulama katmanında değil, VERİTABANINDA bitiriyoruz.
+    # Kısmi indeks: fatura_id NULL olan satırlar (henüz bağlanmamış
+    # teslimatlar) sınırlanmaz — orada tekillik ARANMAZ.
+    # ⚠️ Hata yutulur: canlıda mükerrer varsa indeks kurulamaz. O hâlde
+    #    ölçüp temizlemek gerekir; kurulum akışını kilitlemek doğru olmaz.
+    #    (2026-08-31 ölçümü: 9 bağlı teslimat, mükerrer YOK.)
+    # ⚠️ SAVEPOINT ŞART: Postgres'te bir komut patlarsa TÜM transaction
+    #    "aborted" olur ve alttaki ALTER'lar da hata verir. try/except
+    #    Python istisnasını yutar ama transaction'ı KURTARMAZ — bu ders
+    #    daha önce maliyet motorunda alınmıştı.
+    try:
+        cur.execute("SAVEPOINT sp_bt_fatura_tekil")
+        cur.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS belge_talep_fatura_tekil "
+            "ON belge_talep (fatura_id) WHERE fatura_id IS NOT NULL"
+        )
+        cur.execute("RELEASE SAVEPOINT sp_bt_fatura_tekil")
+    except Exception as _e_ix:  # noqa: BLE001
+        try:
+            cur.execute("ROLLBACK TO SAVEPOINT sp_bt_fatura_tekil")
+            cur.execute("RELEASE SAVEPOINT sp_bt_fatura_tekil")
+        except Exception:  # noqa: BLE001
+            pass
+        logger.warning(
+            "belge_talep fatura tekillik indeksi kurulamadi (canlida mukerrer "
+            "bag olabilir — olcup temizleyin): %s", str(_e_ix)[:200])
     # AÇIK TESLİMAT DUYUSU (2026-07-06, tasarım: project_tedarik_belge_denetim_duyulari):
     # her teslimat OPEN doğar, ÜÇ kanıtla kapanır — fatura / irsaliye / manuel açıklama.
     # Önemli olan belge TÜRÜ değil, teslimatın sonsuza dek açık kalmaması. Kapanış kanıtı iz bırakır.
