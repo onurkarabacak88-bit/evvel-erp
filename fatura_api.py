@@ -1098,8 +1098,25 @@ def cari_kuyruk_hizala_onizle(tedarikci: str = "") -> dict:
                     "fazla söz kapatırdı. Önce şüphe karara bağlanmalı."),
         }
 
+    # ══════════════════════════════════════════════════════════════════════
+    # 💰 SÜRÜCÜ: ÖDEME TUTARI — "kuyruk fazlası" DEĞİL (kuru çalıştırma, 3. tur)
+    # ══════════════════════════════════════════════════════════════════════
+    # Toplam hizalama (kuyruk − cari) güvensiz çıktı: iki taraf YAPISAL olarak
+    # farklı ve fark ödemeden gelmiyor.
+    #   FEZ: kuyrukta faturası olmayan 47.489,59 ₺ söz var ("FEZ defteri
+    #        mutabakatı"); cari'de ise 32.391,03 ₺ açılış devri var ama
+    #        kuyrukta karşılığı yok. Toplamı eşitlemek bu iki farkı birbirine
+    #        kapatıp 70.000 ₺ ödenmişken 85.098,56 ₺ kapatıyordu → 15.098,56 ₺
+    #        gerçek borç silinirdi.
+    # Doğru sürücü ÖDEMENİN KENDİSİ: ne kadar para çıktıysa o kadar borç
+    # kapanır. Yapısal farklar AYRI kararlardır (devir kaydı / faturasız
+    # sözün belgelenmesi) ve burada sessizce yutulamaz.
+    _odenen = round(sum(float(o.get("tutar") or 0)
+                        for o in (e.get("odeme_adaylari") or [])), 2)
+    _yapisal_fark = round(fazla - _odenen, 2)
+
     kapanacak, bolunecek, korunan, engelli = [], None, [], []
-    kalan_fazla = fazla
+    kalan_fazla = _odenen
     for s in sozler:
         t = round(float(s.get("tutar") or 0), 2)
         ack = s.get("aciklama") or ""
@@ -1138,6 +1155,17 @@ def cari_kuyruk_hizala_onizle(tedarikci: str = "") -> dict:
         "cari_acik_hedef": hedef,
         "kuyruk_toplam": kuyruk,
         "fazla": fazla,
+        # 💰 Kapatmayı SÜRÜKLEYEN tutar (ödeme) ve yapısal fark AYRI gösterilir:
+        # ikisini tek "fazla" rakamında toplamak, ödenmemiş borcu ödenmiş
+        # göstermenin ta kendisiydi.
+        "odenen_tutar": _odenen,
+        "yapisal_fark": _yapisal_fark,
+        "yapisal_fark_aciklama": (
+            "Kuyruk ile cari arasındaki farkın ödemeyle AÇIKLANMAYAN kısmı. "
+            "Kaynağı: cari'de olup kuyrukta olmayan açılış devri, ve/veya "
+            "kuyrukta olup faturası bulunmayan söz. Bu fark ödeme DEĞİLDİR — "
+            "kapatmaya girmez; ayrı karar ister (devir kaydı / belgeleme)."
+        ) if abs(_yapisal_fark) > 1 else None,
         "kapanacak_soz_adet": len(kapanacak),
         "kapanacak_tutar": round(sum(k["tutar"] for k in kapanacak), 2),
         "kapanacak": kapanacak,
