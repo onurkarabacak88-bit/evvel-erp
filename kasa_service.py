@@ -131,7 +131,20 @@ KASA_IPTAL_MAP = {
     "KART_ODEME_IPTAL": False,
     "VADELI_IPTAL": False,
     "ODEME_IPTAL": False,
+    "FATURA_ODEMESI_IPTAL": False,
+    "SABIT_GIDER_IPTAL": False,
+    "PERSONEL_MAAS_IPTAL": False,
+    "BORC_TAKSIT_IPTAL": False,
 }
+
+# ⚠️ VARSAYILAN False (2026-08-31): eskiden `.get(iptal_turu, True)` idi.
+# Orijinal hareket zaten `durum='iptal'` yapılıyor ve toplamdan ÇIKIYOR; ters
+# kaydın da kasayı etkilemesi AYNI DÜZELTMEYİ İKİ KEZ uygular. Bu hata
+# 2026-08-09'da 7 tür için tek tek False yapılarak kapatılmıştı — ama
+# VARSAYILAN True kaldığı için haritaya girmeyen HER YENİ TÜR aynı hatayı
+# yeniden üretiyordu (bugün 'FATURA_ODEMESI' eklenince tam bu oldu).
+# Kural türden bağımsızdır: ters kayıt AUDİT İZİDİR, para hareketi değil.
+KASA_IPTAL_ETKISI_VARSAYILAN = False
 
 
 def iptal_kasa_hareketi(cur, kaynak_id, kaynak_tablo, islem_turu, iptal_turu, aciklama):
@@ -162,7 +175,7 @@ def iptal_kasa_hareketi(cur, kaynak_id, kaynak_tablo, islem_turu, iptal_turu, ac
         cur.execute("UPDATE kasa_hareketleri SET durum='iptal' WHERE id=%s", (m["id"],))
 
     net_tutar = sum(float(m["tutar"]) for m in mevcutlar)
-    _kasa_etkisi = KASA_IPTAL_MAP.get(iptal_turu, True)
+    _kasa_etkisi = KASA_IPTAL_MAP.get(iptal_turu, KASA_IPTAL_ETKISI_VARSAYILAN)
     # FIX A1 (2026-07-05) + O6 (2026-07-06): ters kayda OLAY-bazlı idempotency_key — anahtar
     # iptal edilen hareket ID setinden türer. Eşzamanlı çift istek aynı aktif seti görür → aynı
     # anahtar → tek ters kayıt (A1 korunur). Meşru yeni iptal döngüsünde (yeniden yazım sonrası)

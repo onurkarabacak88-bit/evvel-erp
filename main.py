@@ -8721,9 +8721,30 @@ def odeme_plani_sil(oid: str):
                 iptal_kasa_hareketi(cur, eski['kaynak_id'], 'vadeli_alimlar',
                     'VADELI_ODEME', 'VADELI_IPTAL', f"Ödeme iptali: {eski['aciklama']}")
             else:
-                islem = kasa_islem_turu(kaynak)   # yazma tarafiyla AYNI kaynak
-                iptal_kasa_hareketi(cur, oid, 'odeme_plani', islem, islem + '_IPTAL',
-                    f"Ödeme iptali: {eski['aciklama']}")
+                # ══════════════════════════════════════════════════════════
+                # 🔎 TÜRÜ TAHMİN ETME — OKU (canlı hata, 2026-08-31)
+                # ══════════════════════════════════════════════════════════
+                # Tür haritadan TÜRETİLİYORDU; kaynak haritada yoksa yazma
+                # tarafı bir varsayılan, iptal tarafı BAŞKA bir varsayılan
+                # kullanıyor ve iptal kaydı bulamıyordu ("cari_odeme" vakası:
+                # yazıldı KART_ODEME, arandı ODEME → 120.000 ₺ kasadan çıkmış
+                # görünmeye devam etti). Haritayı düzeltmek yetmez: GEÇMİŞTE
+                # farklı türle yazılmış satırlar da geri alınabilmeli.
+                # Kaydın türü zaten defterde YAZILI — tahmin etmek yerine
+                # okuyoruz. Birden çok tür varsa hepsi ayrı ayrı iptal edilir.
+                cur.execute(
+                    """SELECT DISTINCT islem_turu FROM kasa_hareketleri
+                        WHERE kaynak_id=%s AND kasa_etkisi=true AND durum='aktif'""",
+                    (oid,))
+                _turler = [str(dict(r)["islem_turu"]) for r in (cur.fetchall() or [])]
+                if not _turler:
+                    # Defterde aktif kayıt yoksa haritadan türet — eski davranış
+                    # (hata mesajı yine iptal_kasa_hareketi'nden gelir).
+                    _turler = [kasa_islem_turu(kaynak)]
+                for islem in _turler:
+                    iptal_kasa_hareketi(
+                        cur, oid, 'odeme_plani', islem, islem + '_IPTAL',
+                        f"Ödeme iptali: {eski['aciklama']}")
         audit(cur, 'odeme_plani', oid, 'IPTAL', eski=eski)
     return {"success": True}
 
