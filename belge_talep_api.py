@@ -1252,6 +1252,10 @@ def eslesme_degerlendir(teslimatlar, faturalar):
                str(t["talep_id"]) == str(f["siparis_talep_id"]):
                 kesin.append({
                     "belge_talep_id": t["id"], "fatura_id": f["id"],
+                    # Fatura NUMARASI taşınır: onay kuyruğunda sahip belgeyi
+                    # numarasından tanır, id kısasından değil (2026-08-31).
+                    "fatura_no": f.get("fatura_no"),
+                    "sube_adi": t.get("sube_adi"),
                     "tedarikci_teslimat": t.get("tedarikci_ad"), "tedarikci_fatura": f.get("tedarikci_ad"),
                     "teslim_tarihi": t.get("tarih"), "fatura_tarihi": f.get("tarih"),
                     "beklenen_tl": t.get("beklenen"), "fatura_tl": f.get("tutar"),
@@ -1807,6 +1811,64 @@ def teslimat_fatura_oneri_tara(fatura_idler: Optional[list] = None,
             if not teslimatlar or not faturalar:
                 return ozet
             _kesin, havuz = eslesme_degerlendir(teslimatlar, faturalar)
+
+            # ══════════════════════════════════════════════════════════════
+            # 🎯 KESİN EŞLEŞMELER DE KUYRUĞA YAZILIR (Codex denetimi, 2026-08-31)
+            # ══════════════════════════════════════════════════════════════
+            # `_kesin` ÜRETİLİYOR ama HİÇ KULLANILMIYORDU: motor yalnız `havuz`u
+            # dolaşıyordu. Yani sistemin EN GÜÇLÜ kanıtı — faturanın o teslimat
+            # için QR ile yüklenmiş olması (`siparis_talep_id` birebir aynı) —
+            # hiçbir şey üretmeyen tek kanıttı.
+            # Sonuç: personel doğru faturayı doğru teslimata okutuyor, OCR
+            # bitiyor ve HİÇBİR ŞEY OLMUYOR; belge talebi sonsuza kadar açık
+            # kalıyor. Canlı ölçüm (2026-08-31): 6 kayıt "FATURA BAĞLANMAMIŞ"
+            # halinde 26-72 gün beklemişti — bu yol onların en güçlü adayı.
+            # ⚠️ OTOMATİK BAĞLAMIYORUZ: bağ kurmak cari bakiyeyi etkiler ve
+            #    yanlış QR okutulmuş olabilir. Diğer önerilerle AYNI kapıdan
+            #    (onay kuyruğu) geçer — ama "KESİN" damgasıyla, tek tıkla
+            #    onaylanacak şekilde. ÖNERİ-ONLY doktrini korunur.
+            for k in (_kesin or []):
+                tid, fid = str(k.get("belge_talep_id") or ""), str(k.get("fatura_id") or "")
+                if not tid or not fid:
+                    continue
+                ozet["bakilan_aday"] += 1
+                # Aynı mükerrer frenleri — kesin diye kuyruğu çoğaltmaz.
+                cur.execute(
+                    """SELECT 1 FROM onay_kuyrugu
+                        WHERE islem_turu=%s AND kaynak_tablo='belge_talep'
+                          AND kaynak_id=%s
+                          AND (durum='bekliyor' OR aciklama LIKE %s)
+                        LIMIT 1""",
+                    (ONERI_ISLEM_TURU, tid, f"%{_oneri_damgasi(fid)}%"))
+                if cur.fetchone():
+                    ozet["mukerrer_atlandi"] += 1
+                    continue
+                cur.execute(
+                    """SELECT 1 FROM onay_kuyrugu
+                        WHERE islem_turu=%s AND durum='bekliyor' AND aciklama LIKE %s
+                        LIMIT 1""",
+                    (ONERI_ISLEM_TURU, f"%{_oneri_damgasi(fid)}%"))
+                if cur.fetchone():
+                    ozet["mukerrer_atlandi"] += 1
+                    continue
+                _ftl = float(k.get("fatura_tl") or 0)
+                _bek = float(k.get("beklenen_tl") or 0)
+                _fno = (k.get("fatura_no") or "").strip() or fid[:8]
+                _acik = (
+                    f"KESİN — Fatura {_fno} bu teslimat için okutulmuş "
+                    f"(sipariş talebi birebir aynı). {k.get('tedarikci_teslimat') or '—'} · "
+                    f"{str(k.get('teslim_tarihi') or '')[:10]} teslimatı. "
+                    f"Başka kanıt gerekmez. {_oneri_damgasi(fid)}"
+                )[:500]
+                onay_ekle(cur, ONERI_ISLEM_TURU, "belge_talep", tid, _acik,
+                          round(_ftl or _bek or 0.0, 2),
+                          str(k.get("fatura_tarihi") or k.get("teslim_tarihi") or bugun)[:10])
+                ozet["yazilan"] += 1
+                ozet.setdefault("kesin_yazilan", 0)
+                ozet["kesin_yazilan"] += 1
+                ozet["oneriler"].append({"belge_talep_id": tid, "fatura_id": fid,
+                                         "kesin": True, "aciklama": _acik})
+
             for c in havuz:
                 if not c.get("onerilen"):
                     continue
