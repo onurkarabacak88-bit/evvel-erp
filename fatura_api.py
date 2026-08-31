@@ -1548,6 +1548,100 @@ def cari_tahsis_uygula(body: TahsisUygulaBody) -> dict:
     }
 
 
+class CariOdemeGeriAlBody(BaseModel):
+    odeme_id: str
+    gerekce: str
+
+
+@router.post("/cari-ode-geri-al")
+def cari_ode_geri_al(body: CariOdemeGeriAlBody) -> dict:
+    """↩️ Yanlış girilmiş cari ödemeyi GERİ ALIR. Hiçbir satır SİLMEZ.
+
+    ── NEDEN (canlı vaka, 2026-08-31) ───────────────────────────────────────
+    `/cari-ode` üç yere yazar: `odeme_plani` (+kasa izi), `cari_odeme` ve
+    `cari_odeme_tahsis`. Geri alma yolu YOKTU. Yanlış kanaldan (kart yerine
+    nakit) yazılan iki ödeme canlıda kaldı ve tek tek temizlenemedi.
+    Her girişin çıkışı olmalı — özellikle PARA girişinin.
+
+    ÜÇ AYAK BİRDEN:
+      1) `cari_odeme_tahsis` APPEND-ONLY'dir → satır silinmez, aynı tutarın
+         NEGATİFİ yazılır (toplam netleşir, iz kalır).
+      2) `cari_odeme` iptal damgası alır (kayıt yerinde durur).
+      3) `odeme_plani` + kasa izi mevcut iptal yolundan geri alınır
+         (DELETE /api/odeme-plani/{id} — kaydın TÜRÜNÜ defterden okur).
+    ⚠️ Üçü ayrı ayrı yapılırsa yarım kalır: tahsis silinmeden plan iptal
+       edilirse faturalar "ödenmiş" görünmeye devam eder.
+    """
+    oid = (body.odeme_id or "").strip()
+    gerekce = (body.gerekce or "").strip()
+    if not oid:
+        raise HTTPException(400, "odeme_id zorunlu")
+    if len(gerekce) < 3:
+        raise HTTPException(400, "Gerekçe zorunlu — para kaydı gerekçesiz geri alınmaz.")
+    with db() as (conn, cur):
+        _ensure_cari_odeme_tablolar(cur)
+        cur.execute(
+            """SELECT id, tedarikci_ad, tutar::float AS tutar, plan_id,
+                      COALESCE(iptal, FALSE) AS iptal
+                 FROM cari_odeme WHERE id=%s""", (oid,))
+        r = cur.fetchone()
+        if not r:
+            raise HTTPException(404, "Cari ödeme bulunamadı")
+        o = dict(r)
+        if o.get("iptal"):
+            raise HTTPException(409, "Bu ödeme zaten geri alınmış.")
+        # 1) Tahsisleri TERS KAYITLA sıfırla (silme yok)
+        cur.execute(
+            """SELECT fatura_id, fatura_no, fatura_tarih, kapatilan::float AS k
+                 FROM cari_odeme_tahsis WHERE odeme_id=%s""", (oid,))
+        _tah = [dict(x) for x in (cur.fetchall() or [])]
+        for t in _tah:
+            cur.execute(
+                """INSERT INTO cari_odeme_tahsis
+                     (id, odeme_id, fatura_id, fatura_no, fatura_tarih, kapatilan, otomatik)
+                   VALUES (%s,%s,%s,%s,%s,%s,FALSE)""",
+                (str(uuid.uuid4()), oid, t.get("fatura_id"), t.get("fatura_no"),
+                 t.get("fatura_tarih"), -float(t.get("k") or 0)))
+        # 2) Ödemeye iptal damgası
+        cur.execute(
+            """UPDATE cari_odeme
+                  SET iptal=TRUE, iptal_ts=NOW(),
+                      iptal_gerekce=%s
+                WHERE id=%s AND COALESCE(iptal,FALSE)=FALSE
+                RETURNING id""", (gerekce, oid))
+        if not cur.fetchone():
+            raise HTTPException(409, "Ödeme bu arada değişti — tekrar deneyin.")
+        conn.commit()
+    # 3) Plan + kasa izi (mevcut kanonik iptal yolu)
+    _plan_sonuc = None
+    try:
+        from main import odeme_plani_sil
+        if o.get("plan_id"):
+            _plan_sonuc = odeme_plani_sil(str(o["plan_id"]))
+    except Exception as e:  # noqa: BLE001
+        # ⚠️ Yarım kalma GÖRÜNÜR olur: tahsis çözüldü ama kasa izi durabilir.
+        logger.exception("cari ode geri al: plan iptali dustu (%s): %s",
+                         o.get("plan_id"), str(e)[:200])
+        return {
+            "ok": False, "odeme_id": oid,
+            "tahsis_ters_kayit": len(_tah),
+            "plan_iptali": "BASARISIZ",
+            "hata": str(e)[:200],
+            "not": ("Tahsisler ters kayıtla çözüldü ve ödeme iptal damgası aldı, "
+                    "AMA ödeme planı/kasa izi geri alınamadı. Kasa hâlâ bu "
+                    "çıkışı gösteriyor — elle düzeltilmeli."),
+        }
+    return {
+        "ok": True, "odeme_id": oid, "tedarikci": o.get("tedarikci_ad"),
+        "tutar": o.get("tutar"),
+        "tahsis_ters_kayit": len(_tah),
+        "plan_iptali": _plan_sonuc,
+        "not": ("Ödeme geri alındı: tahsisler ters kayıtla sıfırlandı, ödeme "
+                "iptal damgası aldı, plan ve kasa izi geri alındı. Hiçbir satır "
+                "silinmedi — geçmiş okunabilir."),
+    }
+
+
 @router.post("/ap-selfheal")
 def ap_selfheal() -> dict:
     kapatilan, incelenen = [], 0
@@ -6287,9 +6381,29 @@ def cari_ozet() -> dict:
             hedef["son_fatura"] = x["son_fatura"]
         if x.get("en_yakin_vade") and (not hedef.get("en_yakin_vade") or str(x["en_yakin_vade"]) < str(hedef["en_yakin_vade"])):
             hedef["en_yakin_vade"] = x["en_yakin_vade"]
-        if x.get("beyan_bakiye") is not None and hedef.get("beyan_bakiye") is None:
-            hedef["beyan_bakiye"] = x["beyan_bakiye"]
-            hedef["beyan_tarihi"] = x.get("beyan_tarihi")
+        if x.get("beyan_bakiye") is not None:
+            # 🧾 BEYAN BİRLEŞMEDE (Codex denetimi, 2026-08-31)
+            # İlk beyanı alıp geçiyorduk ve `beyan_hesap_farki`'yi YENİDEN
+            # HESAPLAMIYORDUK: birleşik satır 150k açık gösterirken fark hâlâ
+            # birleşme ÖNCESİ 100k'ya göre kalıyordu — sahip iki uyumsuz sayıya
+            # bakıyordu. Ayrıca birden çok aliasın beyanı varsa hangisinin
+            # alındığı görünmüyordu.
+            # ⚠️ BEYANLARI TOPLAMIYORUZ: aynı karşı tarafa iki ayrı adla
+            #    verilmiş beyan, aynı bakiyenin iki ifadesi OLABİLİR; toplamak
+            #    borcu ikiye katlardı. İlk beyan korunur, çokluk İŞARETLENİR.
+            if hedef.get("beyan_bakiye") is None:
+                hedef["beyan_bakiye"] = x["beyan_bakiye"]
+                hedef["beyan_tarihi"] = x.get("beyan_tarihi")
+                hedef["beyan_kaynak_ad"] = x.get("tedarikci")
+            else:
+                hedef["beyan_coklu"] = True
+                hedef.setdefault("beyan_diger", []).append(
+                    {"ad": x.get("tedarikci"), "beyan": x.get("beyan_bakiye")})
+    # 🔁 Birleşme BİTTİKTEN sonra farkı YENİDEN türet — toplanan açığa göre.
+    for _b in yeni_ozet:
+        if _b.get("beyan_bakiye") is not None:
+            _b["beyan_hesap_farki"] = round(
+                float(_b["beyan_bakiye"]) - float(_b.get("hesaplanan_acik") or 0), 2)
     ozet = yeni_ozet
     ozet.sort(key=lambda x: -(max(abs(x["beyan_bakiye"] or 0),
                                   abs(x["hesaplanan_acik"])) + x["bekleyen_vade_toplam"]))
@@ -6953,7 +7067,14 @@ def mutabakat_zinciri() -> dict:
                  UNION ALL
                  SELECT tarih, tutar, COALESCE(aciklama,'') AS metin
                  FROM kart_hareketleri
-                 WHERE islem_turu='HARCAMA' AND durum='aktif' AND kaynak_id IS NULL
+                 WHERE islem_turu='HARCAMA' AND durum='aktif'
+                   -- 🏦 EKSTRE İSTİSNASI — cari uçlarıyla AYNI (Codex, 2026-08-31)
+                   -- Banka ekstresi importu `kaynak_id` DOLU yazar (id=eks_*).
+                   -- Buradaki `kaynak_id IS NULL` şartı TÜM banka ödemelerini
+                   -- zincirden gizliyordu: cari "ödendi" görürken zincir aynı
+                   -- faturaya "ödeme izi yok" diyordu. İki uç FARKLI ödeme
+                   -- evreni kullanıyordu — aynı soruya iki cevap.
+                   AND (kaynak_id IS NULL OR COALESCE(kaynak_tablo,'') = 'ekstre_import')
                    AND tarih >= CURRENT_DATE - 75) x""")
         odemeler = [dict(r) for r in cur.fetchall() or []]
 
@@ -7744,6 +7865,10 @@ def _ensure_cari_odeme_tablolar(cur) -> None:
                 otomatik BOOLEAN DEFAULT TRUE,
                 olusturma TIMESTAMP DEFAULT NOW()
             )""")
+        # ↩️ GERİ ALMA İZİ (2026-08-31): ödeme SİLİNMEZ, iptal damgası alır.
+        cur.execute("ALTER TABLE cari_odeme ADD COLUMN IF NOT EXISTS iptal BOOLEAN DEFAULT FALSE")
+        cur.execute("ALTER TABLE cari_odeme ADD COLUMN IF NOT EXISTS iptal_ts TIMESTAMP")
+        cur.execute("ALTER TABLE cari_odeme ADD COLUMN IF NOT EXISTS iptal_gerekce TEXT")
         cur.execute("CREATE INDEX IF NOT EXISTS ix_cari_odeme_ted ON cari_odeme (tedarikci_ad)")
         cur.execute("CREATE INDEX IF NOT EXISTS ix_cari_tahsis_odeme ON cari_odeme_tahsis (odeme_id)")
         cur.execute("CREATE INDEX IF NOT EXISTS ix_cari_tahsis_fatura ON cari_odeme_tahsis (fatura_id)")
