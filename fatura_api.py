@@ -2031,7 +2031,15 @@ def belge_merkezi_ozet(ay: str = ""):
             logger.warning("belge-merkezi GRNI rozeti atlandı (yutuldu): %s", str(_e)[:120])
         cur.execute(
             """SELECT id, tedarikci_ad, fatura_tarih::text AS tarih,
-                      COALESCE(toplam_tutar,0)::float AS tutar, durum
+                      COALESCE(toplam_tutar,0)::float AS tutar, durum,
+                      fatura_no,
+                      -- 🎯 Bu fatura BİR TESLİMAT İÇİN mi okutuldu?
+                      -- (QR/şube yolu `siparis_talep_id` damgalar; merkezden
+                      -- toplu yüklenen PDF'te bu alan boş kalır.) Alan yanıtta
+                      -- HİÇ dönmüyordu; "kaç fatura kesin bağa sahip" sorusu
+                      -- hiçbir ekrandan ÖLÇÜLEMİYORDU. Ölçülemeyen şey
+                      -- yönetilemez. (2026-08-31)
+                      (siparis_talep_id IS NOT NULL) AS teslimata_okutuldu
                FROM tedarikci_fatura
                WHERE TO_CHAR(COALESCE(fatura_tarih, olusturma::date),'YYYY-MM') = %s
                  AND COALESCE(durum,'') <> 'kopya'
@@ -2207,6 +2215,12 @@ def belge_merkezi_ozet(ay: str = ""):
         "kurumsal_harcamalar": kurumsal[:40],
         "belgesiz_harcamalar": belgesiz[:40],
         "fatura_arsivi": faturalar[:60],
+        # 🎯 QR/şube yolundan gelen fatura oranı: kesin eşleşme ancak bu
+        # damgayla kurulabilir. Düşükse merkez toplu yükleme baskındır ve
+        # fatura↔teslimat bağı TAHMİNE kalıyor demektir.
+        "teslimata_okutulan_adet": sum(
+            1 for x in faturalar if x.get("teslimata_okutuldu")),
+        "fatura_arsivi_toplam": len(faturalar),
         "fatura_istekleri": fatura_istekleri,
         "kdv_kanit": kdv_kanit,
         "arsiv_depo": arsiv_depo,
