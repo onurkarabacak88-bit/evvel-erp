@@ -96,7 +96,40 @@ def _guncel_kararlar(cur) -> Dict[str, str]:
     for r in (cur.fetchall() or []):
         if (r["karar"] or "") == "birlestir":
             harita[_U(r["alias_ad"])] = _ad(r["kanonik_ad"])
-    return harita
+
+    # ══════════════════════════════════════════════════════════════════════
+    # 🔗 ZİNCİR DÜZLEŞTİRME (Codex denetimi, 2026-08-31)
+    # ══════════════════════════════════════════════════════════════════════
+    # Harita TEK HOP'tu: sahip önce "MEHMET ATALAY → ATALAY KAHVE", sonra
+    # "ATALAY KAHVE → ATALAY" derse, MEHMET ATALAY son kanoniğe HİÇ ulaşmıyor
+    # ve kimlik bölünmüş kalıyordu. Okuma tarafı düz harita olduğu için iki
+    # hoplu zinciri çözemez — sahip iki kararı da vermiş olmasına rağmen
+    # bakiye hâlâ iki parça görünürdü. Karar defteri append-only olduğundan
+    # bu zincir zamanla KENDİLİĞİNDEN oluşur.
+    # ⚠️ DÖNGÜ KORUMASI şart: A→B ve B→A yazılmışsa (yanlış ama mümkün)
+    #    düzleştirme sonsuza kadar dönerdi. Döngü görülünce olduğu yerde
+    #    durulur ve LOGLANIR — sessizce yanlış kanonik seçmek yerine.
+    _duz: Dict[str, str] = {}
+    for _alias in harita:
+        _gorulen = {_alias}
+        _hedef = harita[_alias]
+        _adim = 0
+        while _adim < 20:
+            _u = _U(_hedef)
+            if _u not in harita or _u in _gorulen:
+                break
+            _gorulen.add(_u)
+            _hedef = harita[_u]
+            _adim += 1
+        else:
+            logger.warning(
+                "kimlik zinciri 20 adimda cozulemedi, oldugu yerde birakildi: %s",
+                _alias)
+        if _U(_hedef) in _gorulen and _U(_hedef) != _U(harita[_alias]):
+            logger.warning("kimlik zincirinde DONGU: %s -> %s (durduruldu)",
+                           _alias, _hedef)
+        _duz[_alias] = _hedef
+    return _duz
 
 
 def _aliaslari_coz(cur, ad: str) -> List[str]:

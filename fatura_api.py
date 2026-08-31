@@ -6361,14 +6361,31 @@ def mutabakat_zinciri() -> dict:
         return False
 
     zincirler, sayac = [], {"tam": 0, "teslim_yok": 0, "belge_acik": 0,
-                            "fatura_yok": 0, "odeme_izi_yok": 0}
+                            "fatura_yok": 0, "odeme_izi_yok": 0,
+                            # ⚠️ YENİ (Codex denetimi, 2026-08-31): ölçülemeyen
+                            # halka artık "tam"a karışmıyor, kendi adıyla sayılıyor.
+                            "fatura_kaydi_bulunamadi": 0, "odeme_izi_olculemedi": 0}
     for s in siparisler:
         halka = {"siparis": True, "teslim": bool(s["teslim_var"] or s["belge_durum"]),
                  "belge": s.get("belge_durum") in ("pdf_geldi", "kapandi"),
                  "fatura": False, "odeme_izi": None}
         fl = fatura_map.get(s.get("talep_id")) or []
-        if s.get("fatura_id") or fl:
+        # ══════════════════════════════════════════════════════════════════
+        # 🚨 SAHTE YEŞİL KAPATILDI (Codex denetimi, 2026-08-31)
+        # ══════════════════════════════════════════════════════════════════
+        # Eskiden `if s.get("fatura_id") or fl:` fatura halkasını True yapıyordu.
+        # `fatura_id` DOLU ama gerçek fatura satırı bulunamadığında (pencere
+        # dışında kalmış ya da silinmiş) `fl` boş kalıyor, `f0` None oluyor ve
+        # `odeme_izi` None'da kalıyordu. Alttaki kontrol `is False` aradığı
+        # için None oradan geçiyor ve zincir "TAM" sayılıyordu.
+        # Yani: faturası bulunamayan ve ödeme izi hiç ölçülmemiş bir zincir,
+        # tamamlanmış zincirle AYNI yeşile boyanıyordu.
+        # Artık ölçülemeyen halka kendi adıyla anılır. (HATA ≠ BOŞ)
+        _bag_var = bool(s.get("fatura_id"))
+        _kayit_yok = bool(_bag_var and not fl)
+        if _bag_var or fl:
             halka["fatura"] = True
+            halka["fatura_kaydi_bulundu"] = bool(fl)
             f0 = fl[0] if fl else None
             if f0 and f0["tutar"] > 0:
                 halka["odeme_izi"] = _odeme_izi(f0["tutar"], f0["tarih"])
@@ -6378,8 +6395,15 @@ def mutabakat_zinciri() -> dict:
             eksik = "belge_acik"
         elif not halka["fatura"]:
             eksik = "fatura_yok"
+        elif _kayit_yok:
+            # Bağ var ama belge yok: "bağlı" demek "var" demek değildir.
+            eksik = "fatura_kaydi_bulunamadi"
         elif halka["odeme_izi"] is False:
             eksik = "odeme_izi_yok"
+        elif halka["odeme_izi"] is None:
+            # Tutar okunamadı / fatura satırı tutarsız → izi ARAYAMADIK.
+            # "Aramadım" ile "aradım bulamadım" ayrı şeylerdir.
+            eksik = "odeme_izi_olculemedi"
         else:
             eksik = None
             sayac["tam"] += 1
