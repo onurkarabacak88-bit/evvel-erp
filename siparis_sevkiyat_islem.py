@@ -442,6 +442,12 @@ def siparis_sevkiyat_kalem_guncelle_execute(
                 400,
                 "Yola çıkarmak için en az bir kalemde «var/kısmi» ve gönderilen adet girin.",
             )
+        # 📣 Stok uyarıları ANINDA görünür olsun (Codex denetimi, 2026-08-31).
+        # STOK_DUSME_HATASI ve HAYALET_STOK zaten tabloya yazılıyordu ama
+        # hiçbir ekranda görünmüyordu — 3 ayda 26 siparişte 59 alarm birikti,
+        # kimse görmedi. Sevki ENGELLEMİYORUZ (sahip kararı), ama depocu
+        # "gönderildi" yanıtıyla birlikte neyin ters gittiğini de görüyor.
+        _stok_uyarilari: List[Dict[str, Any]] = []
         try:
             _disiplin_sevk_cikti(
                 cur,
@@ -449,6 +455,7 @@ def siparis_sevkiyat_kalem_guncelle_execute(
                 sevk_kalemleri,
                 None,
                 personel_ad,
+                uyarilar=_stok_uyarilari,
             )
         except ValueError as exc:
             # ⚠️ HEPSİ 404 DEĞİL (canlı test, 2026-08-30): çift sevk freni
@@ -537,4 +544,8 @@ def siparis_sevkiyat_kalem_guncelle_execute(
         # Sinyal (kapı değil): depoda çözülmemiş kabul uyumsuzluğu sayısı —
         # sevk engellenmez, arayüz uyarı gösterebilir.
         "uyumsuzluk_uyarisi": uyumsuz_sayi,
+        # 📣 Bu sevkiyatta stok defteriyle ilgili ters giden ne varsa BURADA.
+        # Boş liste "temiz" demektir; dolu liste ekranda gösterilmelidir.
+        "stok_uyarilari": _stok_uyarilari,
+        "stok_uyari_sayisi": len(_stok_uyarilari),
     }

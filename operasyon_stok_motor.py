@@ -3200,9 +3200,19 @@ def zorunlu_sayi(d: Dict[str, Any], anahtar: str, *, baglam: str,
 def sevk_cikti_kaydet(cur: Any, siparis_talep_id: str,
                        sevk_kalemleri: List[Dict[str, Any]],
                        yapan_id: Optional[str] = None,
-                       yapan_ad: Optional[str] = None) -> List[str]:
+                       yapan_ad: Optional[str] = None,
+                       uyarilar: Optional[List[Dict[str, Any]]] = None) -> List[str]:
     """Hedef depo şubesinden çıkış: şube deposu düşer; atanmazsa merkez_stok_kart düşer.
-    stok_yolda oluşur (alıcı şube), siparis_talep 'gonderildi' olur."""
+    stok_yolda oluşur (alıcı şube), siparis_talep 'gonderildi' olur.
+
+    ⚠️ `uyarilar`: verilirse, stok düşülemeyen / hayalet stok üreten kalemler
+    BU LİSTEYE eklenir. Neden gerekti (2026-08-31): bu iki durum zaten
+    `sube_operasyon_uyari` tablosuna yazılıyordu ama HİÇBİR EKRANDA
+    görünmüyordu — 3 ayda 26 siparişte 59 alarm birikti ve kimse görmedi.
+    Sevki engellemek SAHİP KARARIYLA yasak (o karar duruyor); engellemenin
+    alternatifi sessizlik değil, ANINDA GÖRÜNÜRLÜKTÜR. Depocu ekranı
+    "gönderildi" derken aynı anda "ama 3 kalemde stok düşülemedi" de demeli.
+    """
     cur.execute(
         """
         SELECT sube_id,
@@ -3390,6 +3400,17 @@ def sevk_cikti_kaydet(cur: Any, siparis_talep_id: str,
                     "stok DUSULMEDI! siparis=%s depo=%s kalem_kodu=%s sevk_adet=%s",
                     siparis_talep_id, kaynak_depo, kalem_kodu, sevk_adet,
                 )
+                if uyarilar is not None:
+                    uyarilar.append({
+                        "tip": "STOK_DUSME_HATASI",
+                        "seviye": "uyari",
+                        "kalem_kodu": kalem_kodu,
+                        "kalem_adi": item.get("urun_ad") or item.get("kalem_adi"),
+                        "sevk_adet": sevk_adet,
+                        "mesaj": ("Bu kalem için depo stok satırı bulunamadı — "
+                                  "stok DÜŞÜLMEDİ. Mal yola çıktı ama kaynak "
+                                  "depo azalmadı; sayım şişmiş görünecek."),
+                    })
                 # Uyarı kaydı oluştur (ops ekibi görebilsin) — SAVEPOINT ile transaction zehirlenmesin
                 try:
                     cur.execute("SAVEPOINT sp_stok_dusme_uyari")
@@ -3434,6 +3455,19 @@ def sevk_cikti_kaydet(cur: Any, siparis_talep_id: str,
                         _hayalet, siparis_talep_id, kaynak_depo, dusulecek_kod,
                         _mevcut_before, sevk_adet,
                     )
+                    if uyarilar is not None:
+                        uyarilar.append({
+                            "tip": "HAYALET_STOK",
+                            "seviye": "kritik",
+                            "kalem_kodu": dusulecek_kod,
+                            "kalem_adi": item.get("urun_ad") or item.get("kalem_adi"),
+                            "mevcut": _mevcut_before,
+                            "sevk_adet": sevk_adet,
+                            "hayalet_adet": _hayalet,
+                            "mesaj": (f"Depoda {_mevcut_before} vardı, {sevk_adet} "
+                                      f"gönderildi — {_hayalet} adet karşılıksız. "
+                                      "Alıcı şubede stok yoktan artacak."),
+                        })
                     try:
                         cur.execute("SAVEPOINT sp_hayalet_stok")
                         cur.execute(
@@ -3576,6 +3610,72 @@ def sube_kabul_kaydet(cur: Any, siparis_talep_id: str, sube_id: str,
     yolda_rows = [dict(r) for r in (cur.fetchall() or [])]
     yolda_by_id = {str(r.get("id") or ""): r for r in yolda_rows if str(r.get("id") or "")}
     islenen_yolda: set = set()
+
+    # ══════════════════════════════════════════════════════════════════════
+    # 📦 KABUL, SEVKİYATLARA SIRAYLA DAĞITILIR (Codex denetimi, 2026-08-31)
+    # ══════════════════════════════════════════════════════════════════════
+    # `yolda_id` zorunlu değil; şube yalnız "X üründen 10 aldım" diyebiliyor.
+    # Aynı talepte aynı ürün için İKİ sevkiyat varsa (5 + 5) bu 10 adet
+    # ESKİDEN tek satıra yapışıyordu: ilk satır 10 kabul edilmiş sayılıyor,
+    # ikinci 5'lik satır AÇIK kalıyor ve sonradan tekrar kabul edilerek
+    # toplam 15'e şişiyordu.
+    # Çözüm: kod eşleşmesinde kalem, sevkiyat satırlarına en eskiden
+    # başlayarak BÖLÜNÜR (FIFO). Ana döngü değişmez — her alt-kalem yine
+    # tek satıra karşılık gelir; bu yüzden değişiklik dar ve okunur.
+    # ⚠️ Kapasiteden FAZLASI atılmaz: artan miktar son satıra eklenir ve
+    #    oradaki "kabul > sevk" freni onu askıya alır. Sessizce yutmak,
+    #    şubenin saydığı sayıyı yok saymak olurdu.
+    def _genislet(_kalemler):
+        _tuketilen: Dict[str, int] = {}
+        _cikti: List[Dict[str, Any]] = []
+        for _it in (_kalemler or []):
+            if not isinstance(_it, dict):
+                continue
+            if str(_it.get("yolda_id") or "").strip():
+                _cikti.append(_it)
+                continue
+            _kk = str(_it.get("kalem_kodu") or "").strip()
+            _uid = str(_it.get("urun_id") or "").strip()
+            _kad = str(_it.get("kalem_adi") or _it.get("urun_ad") or "").strip()
+            if _uid and not _kk:
+                _kk = depo_kalem_kodu_resolve(cur, _uid, _kad) or _uid
+            _adaylar = [r for r in yolda_rows
+                        if str(r.get("id") or "") not in _tuketilen
+                        and (str(r.get("kalem_kodu") or "").strip() == _kk
+                             or (_uid and str(r.get("kalem_kodu") or "").strip() == _uid))]
+            if len(_adaylar) <= 1:
+                _cikti.append(_it)
+                if _adaylar:
+                    _tuketilen[str(_adaylar[0].get("id") or "")] = 1
+                continue
+            try:
+                _kalan = max(0, int(_it.get("kabul_adet") or _it.get("adet") or 0))
+            except (TypeError, ValueError):
+                _kalan = 0
+            for _i, _r in enumerate(_adaylar):
+                _rid = str(_r.get("id") or "")
+                _tuketilen[_rid] = 1
+                _kap = max(0, int(_r.get("sevk_adet") or 0))
+                _pay = _kalan if _i == len(_adaylar) - 1 else min(_kalan, _kap)
+                _kalan -= _pay
+                _yeni = dict(_it)
+                _yeni["yolda_id"] = _rid
+                _yeni["kabul_adet"] = _pay
+                _yeni.pop("adet", None)   # tek doğru alan kalsın
+                _cikti.append(_yeni)
+            logger.info(
+                "kabul dagitildi: talep=%s kalem=%s %s sevkiyata bolundu",
+                siparis_talep_id, _kad or _kk, len(_adaylar),
+            )
+        return _cikti
+
+    try:
+        kabul_kalemleri = _genislet(kabul_kalemleri)
+    except Exception as _e_gen:  # noqa: BLE001
+        # Dağıtım kurulamazsa ESKİ davranışa düşülür (tek satıra yapışır) —
+        # kabul akışı durmasın. Tavan freni yine şişmeyi engeller.
+        logging.getLogger(__name__).warning(
+            "kabul dagitimi kurulamadi (talep=%s): %s", siparis_talep_id, str(_e_gen)[:200])
 
     tam_mi = True
     uyumsuz_satirlar: List[Dict[str, Any]] = []

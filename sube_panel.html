@@ -5930,7 +5930,9 @@ function panelToast(msg, durationMs) {
   var dur = durationMs || 4000;
   var el = document.createElement('div');
   el.textContent = msg;
-  el.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#1e293b;color:#f1f5f9;padding:12px 22px;border-radius:10px;font-size:14px;font-weight:600;z-index:9999;box-shadow:0 4px 18px rgba(0,0,0,.45);pointer-events:none;opacity:1;transition:opacity .4s';
+  // white-space:pre-line → textContent içindeki satır sonları GÖRÜNÜR.
+  // Çok kalemli stok uyarısı tek satıra ezilmesin (2026-08-31).
+  el.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#1e293b;color:#f1f5f9;padding:12px 22px;border-radius:10px;font-size:14px;font-weight:600;z-index:9999;box-shadow:0 4px 18px rgba(0,0,0,.45);pointer-events:none;opacity:1;transition:opacity .4s;white-space:pre-line;max-width:min(520px,92vw);text-align:left';
   document.body.appendChild(el);
   setTimeout(function () {
     el.style.opacity = '0';
@@ -7999,7 +8001,7 @@ function wireDepSevkiyatHandlers(depoHazirlik) {
         setMsg(msgId, 'İşlem iptal edildi.', 'msg-warn');
         return;
       }
-      await api('/sube-panel/' + encodeURIComponent(SUBE_ID) + '/siparis-depo-sevkiyat-kaydet', {
+      var sevkYanit = await api('/sube-panel/' + encodeURIComponent(SUBE_ID) + '/siparis-depo-sevkiyat-kaydet', {
         method: 'POST',
         body: {
           talep_id: tid,
@@ -8014,6 +8016,19 @@ function wireDepSevkiyatHandlers(depoHazirlik) {
         panelToast('✅ Yola çıkarıldı — talep şubesinde «Depodan Gelen» açıldı.', 6000);
       } else {
         panelToast('✅ Hazırlık kaydedildi (stok çıkmadı).', 4500);
+      }
+      // 📣 STOK UYARILARI GÖRÜNÜR (2026-08-31, Codex denetimi)
+      // «Stok düşülemedi» ve «hayalet stok» sunucuda kaydediliyordu ama
+      // HİÇBİR EKRANA ulaşmıyordu — 3 ayda 59 alarm birikti, kimse görmedi.
+      // Sevk engellenmiyor (sahip kararı); ama depocu gönderdiği anda
+      // neyin ters gittiğini öğreniyor, bir ay sonra değil.
+      var stokUy = (sevkYanit && sevkYanit.stok_uyarilari) || [];
+      if (stokUy.length) {
+        var satirlar = stokUy.slice(0, 4).map(function (u) {
+          return '• ' + (u.kalem_adi || u.kalem_kodu || '?') + ' — ' + (u.mesaj || u.tip);
+        }).join('\n');
+        if (stokUy.length > 4) satirlar += '\n• … (+' + (stokUy.length - 4) + ' kalem daha)';
+        panelToast('⚠️ STOK DEFTERİ UYARISI (' + stokUy.length + ' kalem)\n' + satirlar, 14000);
       }
       siparisAkisCache = null;
       await renderGonderilecekPanel();
