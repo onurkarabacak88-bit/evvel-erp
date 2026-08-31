@@ -1041,20 +1041,14 @@ def cari_tahsis_onizle(tedarikci: str = "") -> dict:
         raise HTTPException(400, "tedarikci parametresi en az 3 karakter")
     e = cari_ekstre(tedarikci=ara, tam_fatura=1)
     acik_cari = round(float(e.get("hesaplanan_acik") or 0), 2)
-    _es_adlar = [ara] + list(e.get("resmi_adlar") or [])
-    with db() as (_, cur):
-        cur.execute(
-            """SELECT id, tedarikci, aciklama, tutar::float AS tutar,
-                      vade_tarihi::text AS vade
-                 FROM vadeli_alimlar
-                WHERE durum='bekliyor'
-                ORDER BY vade_tarihi ASC NULLS LAST, id ASC""")
-        tum = [dict(r) for r in cur.fetchall() or []]
-    sozler = [s for s in tum
-              if any(_odeme_eslesir(a, f"{s.get('tedarikci') or ''} "
-                                       f"{s.get('aciklama') or ''}")
-                     for a in _es_adlar if a)]
-    kuyruk = round(sum(float(s["tutar"] or 0) for s in sozler), 2)
+    # ⚠️ SÖZ LİSTESİ EKSTRENİN KENDİSİNDEN (2026-08-31): burada ikinci bir
+    # "bu söz kimin" tanımı YAZILMAZ. İlk sürümde yazmıştım ve redbull'un
+    # sözlerini kaçırdı — çünkü ekstre `_es_es` ile eşleştirme haritasını
+    # okuyor ("redbull" = "APS GIDA ENERJİ…"), benim tanımım okumuyordu.
+    # Sonuç: kuyruk 70.353 ₺ iken önizleme 0 gösteriyordu (sahte sakinlik).
+    sozler = list(e.get("bekleyen_vadeler") or [])
+    sozler.sort(key=lambda s: (str(s.get("vade") or "9999-12-31"), str(s.get("id") or "")))
+    kuyruk = round(float(e.get("bekleyen_vade_toplam") or 0), 2)
     # Kuyruk gerçek açıktan NE KADAR fazla? Fazlalık = kuyruğa işlenmemiş ödeme.
     fazla = round(kuyruk - max(0.0, acik_cari), 2)
     kapanacak, kalan_fazla = [], fazla
@@ -6248,11 +6242,18 @@ def cari_ekstre(tedarikci: str = "", tam_fatura: int = 0):
         # _odeme_eslesir (soyadı-zorunlu) süzer. P1-2: LIMIT 60 + alt-sınırsız
         # geçmiş kesiliyordu — pencere sistem başlangıcı, toplam TAM sayılır.
         cur.execute(
-            """SELECT tutar::float AS tutar, vade_tarihi::text AS vade,
+            # 🔑 `id` de dönüyor (2026-08-31): tahsis önizlemesi bu listeyi
+            # KULLANIR. Kimlik olmadan "hangi sözü kapatacağız" sorusu
+            # cevaplanamaz ve ikinci bir söz-tedarikçi tanımı yazmak gerekirdi
+            # — ki o tanım burada `_es_es` (eşleştirme haritası) kullanırken
+            # ötekinde kullanmayıp redbull'un sözlerini KAÇIRDI. Aynı metrik
+            # iki yerde ayrı hesaplanmaz.
+            """SELECT id, tutar::float AS tutar, vade_tarihi::text AS vade,
                       COALESCE(tedarikci,'') AS ted, aciklama
                FROM vadeli_alimlar WHERE durum='bekliyor' ORDER BY vade_tarihi""")
         bekleyen_vadeler = [
-            {"tutar": r["tutar"], "vade": r["vade"], "aciklama": r["aciklama"]}
+            {"id": r["id"], "tutar": r["tutar"], "vade": r["vade"],
+             "aciklama": r["aciklama"]}
             for r in (dict(x) for x in cur.fetchall() or [])
             if _es_es(f"{r['ted']} {r['aciklama'] or ''}")
             or any(_odeme_eslesir(r["ted"], a) for a in _es_adlar)]  # ters yön: 'ATALAY KAHVE' sözü ↔ 'MEHMET ATALAY'
