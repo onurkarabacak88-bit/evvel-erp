@@ -7455,3 +7455,28 @@ def fatura_tarih_duzelt(fatura_id: str, yeni_tarih: str, gerekce: str = ""):
             "not": ("Eski tarih SİLİNMEDİ — audit kaydında ve belge notunda duruyor. "
                     "Bu uç yalnız gün/ay takasını kabul eder; serbest tarih değişikliği "
                     "bilerek engellidir.")}
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 🚦 ROTA GÖLGELENMESİ ÖNLEMİ (canlı bulgu, 2026-08-31)
+# ══════════════════════════════════════════════════════════════════════════
+# FastAPI/Starlette rotaları KAYIT SIRASINA göre eşleştirir. Bu dosyada
+# `GET /{fatura_id}` (bir fatura getir) dosyanın ortasında tanımlı; ondan
+# SONRA tanımlanan her STATİK GET yolu onun içine düşüyordu.
+# Canlı kanıt: `GET /api/fatura/cari-odenecekler` çağrısı
+#     {"detail":"Fatura bulunamadı"}
+# döndürüyordu — yani FIFO "ödenecekler" ucu HİÇ ERİŞİLEMİYORDU. Uç vardı,
+# kodu doğruydu, testi geçiyordu; sadece ona hiç ulaşılamıyordu. Bu sessiz
+# bir arıza: 404 "böyle bir şey yok" gibi okunur, "yanlış kapı" gibi değil.
+#
+# Tek tek sıra düzeltmek yerine sınıfı kapatıyoruz: parametreli yollar EN
+# SONA alınır. Sıralama KARARLI (stable) — aynı gruptaki yolların birbirine
+# göre sırası korunur, böylece `/{fatura_id}/foto` yine `/{fatura_id}`den
+# önce kalır.
+# ⚠️ Bu satır kaldırılırsa, dosyanın sonuna eklenen her yeni statik uç
+#    sessizce ölür.
+try:
+    router.routes.sort(key=lambda _r: 1 if "{" in getattr(_r, "path", "") else 0)
+except Exception as _e_rota:  # noqa: BLE001 — sıralama kurulamazsa uygulama yaşamalı
+    logger.warning("rota sıralaması uygulanamadı (statik uçlar gölgelenebilir): %s",
+                   str(_e_rota)[:150])
