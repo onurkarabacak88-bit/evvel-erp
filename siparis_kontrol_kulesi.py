@@ -514,6 +514,10 @@ def siparis_kontrol_kulesi_yukle(
         _birim_harita = {}
 
     satirlar: List[Dict[str, Any]] = []
+    # Bu okuma sırasında KAÇ talebin durumu kendiliğinden düzeltildi.
+    # Okuma ucunun yazması doktrine aykırıdır; kaldırmak da zombi talepleri
+    # geri getirir. Ortası: yapılan işi SAYIP RAPORLAMAK.
+    _self_heal_sayisi = 0
     for r in detay_rows:
         z = _satir_zenginlestir(cur, r, yolda=detay_yolda.get(str(r.get("id") or ""), []))
         # kalan_kalemler: hiç gönderilmemiş ÜRÜNLER (kalem bazında coverage).
@@ -725,12 +729,26 @@ def siparis_kontrol_kulesi_yukle(
                     """,
                     (str(r.get("id") or ""),),
                 )
-                z["durum"] = "gonderildi"
-                z["sevkiyat_durumu"] = "toptanciya_yonlendirildi"
-                z["asama"] = siparis_asama_hesapla(
-                    "gonderildi", "toptanciya_yonlendirildi", z.get("kabul_durum")
-                )
-                z["asama_metni"] = _asama_metni(z["asama"], "toptanciya_yonlendirildi")
+                # ⚠️ RAPOR, YAZMANIN SONUCUNU İZLER (Codex denetimi, 2026-08-31)
+                # Eskiden bu satırlar KOŞULSUZ çalışıyordu: UPDATE hiçbir satırı
+                # etkilemese bile ekrana "gonderildi" yazılıyordu. WHERE'de
+                # `durum='bekliyor'` koşulu var; arada başkası durumu
+                # değiştirdiyse güncelleme 0 satır eder ve ekran, veritabanında
+                # OLMAYAN bir durumu gösterirdi. Yenilenince geri dönerdi ve
+                # kimse neden değiştiğini anlamazdı.
+                # Artık yalnız gerçekten yazıldıysa rapor edilir.
+                if (cur.rowcount or 0) > 0:
+                    z["durum"] = "gonderildi"
+                    z["sevkiyat_durumu"] = "toptanciya_yonlendirildi"
+                    z["asama"] = siparis_asama_hesapla(
+                        "gonderildi", "toptanciya_yonlendirildi", z.get("kabul_durum")
+                    )
+                    z["asama_metni"] = _asama_metni(z["asama"], "toptanciya_yonlendirildi")
+                    # 👁️ Sessiz düzeltme YOK: okuma ucu bir kaydı değiştirdiyse
+                    # bunu SÖYLER. Aksi halde sahip, sipariş durumunun kendi
+                    # kendine değiştiğini görür ve nedenini hiçbir yerde bulamaz.
+                    z["kendi_duzeldi"] = True
+                    _self_heal_sayisi += 1
             except Exception:
                 # Sessiz kalmaz: self-heal bir talebin AŞAMASINI değiştiriyor.
                 # Düşerse talep kuyrukta "hayalet" kalır ve kimse nedenini
@@ -754,6 +772,10 @@ def siparis_kontrol_kulesi_yukle(
         "acik_toplam": acik_toplam,
         "ozet": ozet,
         "satirlar": satirlar,
+        # 👁️ Bu okuma sırasında kaç talep kendiliğinden düzeltildi (self-heal).
+        # 0'dan büyükse arayüz bunu söylemelidir: sipariş durumunun kullanıcı
+        # dokunmadan değişmesi, açıklanmadığı sürece güveni bozar.
+        "kendi_duzelen_sayisi": _self_heal_sayisi,
     }
 
 

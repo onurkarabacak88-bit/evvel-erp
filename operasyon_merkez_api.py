@@ -10501,6 +10501,10 @@ def ops_siparis_toptanciya_yolla(body: OpsSiparisToptanciyaYollaBody):
         # ⚠️ Sorgu düşerse İSTİSNA YUTULMAZ — sessizce "hiç çıkmamış"
         #    varsaymak, aynı malı ikinci kez sipariş etmek demektir.
         _cikmis_adlar: set = set()
+        # Depoya atanmış ama henüz yola çıkmamışlar AYRI tutulur — reddetme
+        # sebebi doğru yazılsın: "zaten yollanmış" ile "depoya atanmış" farklı
+        # şeylerdir ve kullanıcı ikincisinde depo atamasını geri alabilir.
+        _depoya_atanmis: set = set()
         try:
             cur.execute(
                 "SELECT kalemler FROM toptanci_siparis "
@@ -10529,6 +10533,37 @@ def ops_siparis_toptanciya_yolla(body: OpsSiparisToptanciyaYollaBody):
                 _sn = _norm_ad_tr(str(dict(_sr).get("kalem_adi") or ""))
                 if _sn:
                     _cikmis_adlar.add(_sn)
+            # ══════════════════════════════════════════════════════════════
+            # 🚧 DEPOYA ATANMIŞ AMA HENÜZ YOLA ÇIKMAMIŞ KALEM (Codex, 2026-08-31)
+            # ══════════════════════════════════════════════════════════════
+            # `stok_yolda` satırı ancak «Yola çıkar» basılınca doğar. Merkez bir
+            # kalemi depoya yönlendirip depocu henüz hazırlık aşamasındayken o
+            # kalem hiçbir kontrolde "çıkmış" görünmüyordu — aynı kalem AYNI
+            # ANDA toptancıya da yollanabiliyordu. Sonuç: mal iki kanaldan
+            # gelir, iki fatura doğar, stok iki kez artar.
+            # Depo atamasının izi `siparis_talep.kalem_durumlari`dır; oradaki
+            # üç değer sevk DIŞIDIR ve engellemez:
+            #   depoya_yonlendirilmedi · toptanciya_gitti · merkez_iptal
+            cur.execute(
+                "SELECT kalem_durumlari FROM siparis_talep WHERE id = %s", (tid,))
+            _kd_row = cur.fetchone()
+            _kd = (dict(_kd_row).get("kalem_durumlari") if _kd_row else None) or []
+            if isinstance(_kd, str):
+                try:
+                    _kd = json.loads(_kd)
+                except Exception:  # noqa: BLE001
+                    _kd = []
+            _SEVK_DISI = {"depoya_yonlendirilmedi", "toptanciya_gitti", "merkez_iptal"}
+            for _ki in (_kd or []):
+                if not isinstance(_ki, dict):
+                    continue
+                _kdur = str(_ki.get("durum") or "").strip().lower()
+                _ksebep = str(_ki.get("_sevk_disi_sebep") or "").strip().lower()
+                if _kdur in _SEVK_DISI or _ksebep in _SEVK_DISI:
+                    continue
+                _kn = _norm_ad_tr(str(_ki.get("urun_ad") or ""))
+                if _kn and _kn not in _cikmis_adlar:
+                    _depoya_atanmis.add(_kn)
         except Exception as _e:
             raise HTTPException(
                 503,
@@ -10546,6 +10581,11 @@ def ops_siparis_toptanciya_yolla(body: OpsSiparisToptanciyaYollaBody):
                 _red.append(f"{_k.get('urun_ad')} (merkez iptal etti)")
             elif _n in _cikmis_adlar:
                 _red.append(f"{_k.get('urun_ad')} (zaten yollanmış)")
+            elif _n in _depoya_atanmis:
+                _red.append(
+                    f"{_k.get('urun_ad')} (depoya atanmış, henüz yola çıkmadı — "
+                    "toptancıya da yollanırsa mal iki kanaldan gelir; önce depo "
+                    "atamasını geri alın)")
             else:
                 _gecerli.append(_k)
         if not _gecerli:
