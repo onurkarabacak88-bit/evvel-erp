@@ -1017,6 +1017,143 @@ def gece_ocr_takilanlari() -> dict:
 # 'odendi' işaretlenir (iz referansı notta). Tipik vaka: ödeme önce (17.06 vadeli
 # alım), fatura 23 gün sonra okundu → fren penceresi (−10g) izi göremedi, hayalet
 # söz doğdu, vadesi geçti, kokpit 'gecikmiş çıkış' diye şişirdi.
+@router.get("/cari-tahsis-onizle")
+def cari_tahsis_onizle(tedarikci: str = "") -> dict:
+    """🧮 KURU ÇALIŞTIRMA — zaten kayıtlı ödemeler kuyruğa tahsis edilse ne olurdu?
+
+    ── NEDEN (canlı ölçüm, 2026-08-31) ──────────────────────────────────────
+    Ödemeler cari bakiyeden DÜŞÜYOR (10/10 tedarikçide aritmetik tutuyor) ama
+    ödeme KUYRUĞUNDAKİ sözleri kapatmıyor. Sonuç: kuyruk gerçekte olmayan
+    borcu taşıyor — FEZ 222.064 ₺ gösteriyor, gerçek açık 136.965 ₺.
+    Sebep: "bu ödeme hangi borçları kapatır" ekranı rota gölgelenmesi yüzünden
+    çalışmıyordu; ödemeler kuyruğa bağlanmadan girildi.
+
+    ⚠️ `/cari-ode` bu işi YAPAMAZ: o YENİ bir ödeme kaydı yazar. Para zaten
+       çıkmış olduğu için aynı çıkış iki kez görünürdü.
+    ⚠️ Söz `durum='odendi'` yapılamaz: ödeme izi sorgusu tam da o değeri
+       okuyor; söz bir de "ödeme" sayılır ve cari İKİNCİ kez düşerdi.
+       Bu yüzden kapanış durumu `mahsup` — kuyruğa da ödeme izine de girmez.
+
+    ⚠️ SALT OKUR. Hiçbir kayıt değişmez. Uygulamak için /cari-tahsis-uygula.
+    """
+    ara = (tedarikci or "").strip()
+    if len(ara) < 3:
+        raise HTTPException(400, "tedarikci parametresi en az 3 karakter")
+    e = cari_ekstre(tedarikci=ara, tam_fatura=1)
+    acik_cari = round(float(e.get("hesaplanan_acik") or 0), 2)
+    _es_adlar = [ara] + list(e.get("resmi_adlar") or [])
+    with db() as (_, cur):
+        cur.execute(
+            """SELECT id, tedarikci, aciklama, tutar::float AS tutar,
+                      vade_tarihi::text AS vade
+                 FROM vadeli_alimlar
+                WHERE durum='bekliyor'
+                ORDER BY vade_tarihi ASC NULLS LAST, id ASC""")
+        tum = [dict(r) for r in cur.fetchall() or []]
+    sozler = [s for s in tum
+              if any(_odeme_eslesir(a, f"{s.get('tedarikci') or ''} "
+                                       f"{s.get('aciklama') or ''}")
+                     for a in _es_adlar if a)]
+    kuyruk = round(sum(float(s["tutar"] or 0) for s in sozler), 2)
+    # Kuyruk gerçek açıktan NE KADAR fazla? Fazlalık = kuyruğa işlenmemiş ödeme.
+    fazla = round(kuyruk - max(0.0, acik_cari), 2)
+    kapanacak, kalan_fazla = [], fazla
+    for s in sozler:                       # FIFO — en eski vade önce
+        t = round(float(s["tutar"] or 0), 2)
+        if t <= 0 or kalan_fazla < t - 0.01:
+            continue
+        kapanacak.append({"id": s["id"], "tutar": t, "vade": s.get("vade"),
+                          "aciklama": (s.get("aciklama") or "")[:70]})
+        kalan_fazla = round(kalan_fazla - t, 2)
+    return {
+        "tedarikci": ara,
+        "cari_acik": acik_cari,
+        "kuyruk_toplam": kuyruk,
+        "kuyrukta_fazla": fazla,
+        "kapanacak_soz_adet": len(kapanacak),
+        "kapanacak_tutar": round(sum(k["tutar"] for k in kapanacak), 2),
+        "kapanamayan_artik": round(kalan_fazla, 2),
+        "kapanacak": kapanacak,
+        "not": (
+            "SALT OKUR — hiçbir kayıt değişmedi. Yalnız TAM karşılanan sözler "
+            "kapatılır; artık kalırsa o söz BÖLÜNMESİ gerektiği için elde "
+            "bırakılır (yarım kapanış kapanış değildir). Kapanış durumu "
+            "'mahsup': kuyruğa da ödeme izine de girmez, böylece aynı para "
+            "ikinci kez düşmez. Geri almak için söz durumu 'bekliyor' yapılır."
+        ),
+    }
+
+
+class TahsisUygulaBody(BaseModel):
+    tedarikci: str
+    gerekce: str
+
+
+@router.post("/cari-tahsis-uygula")
+def cari_tahsis_uygula(body: TahsisUygulaBody) -> dict:
+    """✍️ Önizlemedeki sözleri 'mahsup' olarak kapatır. Yeni nakit YAZMAZ.
+
+    ⚠️ Önizlemeyi TEKRAR hesaplar — arada bir şey değiştiyse ona göre davranır
+       (ekranın hafızasına güvenilmez).
+    ⚠️ İZ BIRAKIR: her sözün açıklamasına neden kapandığı yazılır ve bağlı
+       ödeme planı satırı da kapatılır (yoksa kuyruk UI'da açık görünmeye
+       devam ederdi — yarım iş).
+    """
+    ted = (body.tedarikci or "").strip()
+    gerekce = (body.gerekce or "").strip()
+    if len(ted) < 3:
+        raise HTTPException(400, "tedarikci en az 3 karakter")
+    if len(gerekce) < 3:
+        raise HTTPException(400, "Gerekçe zorunlu — borç kaydı gerekçesiz kapanmaz.")
+    on = cari_tahsis_onizle(tedarikci=ted)
+    hedef = on.get("kapanacak") or []
+    if not hedef:
+        return {"ok": True, "kapatilan": 0, "not": "Kapatılacak söz yok.",
+                "onizleme": on}
+    damga = (f" [MAHSUP {date.today().isoformat()}: mevcut ödemeyle kapatıldı — "
+             f"{gerekce}]")
+    kapatilan = []
+    with db() as (conn, cur):
+        for h in hedef:
+            cur.execute(
+                """UPDATE vadeli_alimlar
+                      SET durum='mahsup',
+                          aciklama = COALESCE(aciklama,'') || %s
+                    WHERE id=%s AND durum='bekliyor'
+                    RETURNING id""", (damga, h["id"]))
+            if not cur.fetchone():
+                continue          # arada değişmiş — sessizce atlanır, sayılmaz
+            cur.execute(
+                """UPDATE odeme_plani
+                      SET durum='iptal',
+                          aciklama = COALESCE(aciklama,'') || %s
+                    WHERE kaynak_tablo='vadeli_alimlar' AND kaynak_id=%s
+                      AND durum IN ('bekliyor','onay_bekliyor')""",
+                (damga, str(h["id"])))
+            kapatilan.append(h)
+        conn.commit()
+    for k in kapatilan:
+        try:
+            from duyu_omurga import duyu_olay_yaz
+            duyu_olay_yaz(
+                "cari_tahsis", "finans.ap.soz_mahsup_edildi", str(k["id"]),
+                entity_scope="tedarikci", entity_id=ted[:60],
+                signal_name="Söz mevcut ödemeyle mahsup edildi",
+                payload={"tutar": k["tutar"], "gerekce": gerekce})
+        except Exception:  # noqa: BLE001
+            pass
+    return {
+        "ok": True, "tedarikci": ted,
+        "kapatilan": len(kapatilan),
+        "kapatilan_tutar": round(sum(k["tutar"] for k in kapatilan), 2),
+        "atlanan": len(hedef) - len(kapatilan),
+        "satirlar": kapatilan,
+        "not": ("Sözler 'mahsup' olarak kapatıldı — kuyruktan düştü, ÖDEME "
+                "olarak SAYILMADI (aynı para ikinci kez düşmesin). Kayıtlar "
+                "silinmedi; açıklamalarında neden kapandıkları yazıyor."),
+    }
+
+
 @router.post("/ap-selfheal")
 def ap_selfheal() -> dict:
     kapatilan, incelenen = [], 0
