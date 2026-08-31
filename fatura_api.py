@@ -1073,6 +1073,31 @@ def cari_kuyruk_hizala_onizle(tedarikci: str = "") -> dict:
     _cari_nolar = {str(f.get("fatura_no") or "").strip().upper()
                    for f in (e.get("faturalar") or []) if f.get("fatura_no")}
 
+    # ══════════════════════════════════════════════════════════════════════
+    # 🛑 HEDEF GÜVENİLİR Mİ? (kuru çalıştırma bulgusu, 2026-08-31)
+    # ══════════════════════════════════════════════════════════════════════
+    # Hizalama, cari açığı DOĞRU varsayar. Tedarikçide çözülmemiş çift-kanal
+    # şüphesi varsa (aynı tutar iki kanalda) cari açık OLDUĞUNDAN KÜÇÜK'tür ve
+    # hizalama gereğinden fazla söz kapatır.
+    # METRO: cari −6.512,78 görünüyor ama içinde 15.068,72 ₺ iki kez sayılmış
+    # (kart 10 Tem + sistem 13 Ağu). Bu hedefe hizalamak 24.600 ₺'lik sözü
+    # HAKSIZ kapatırdı. Şüphe çözülene kadar hizalama YAPILMAZ.
+    _suphe = list(e.get("cift_kanal_supheli") or [])
+    if _suphe:
+        return {
+            "tedarikci": ara, "cari_acik_hedef": hedef, "kuyruk_toplam": kuyruk,
+            "fazla": fazla, "kapanacak_soz_adet": 0, "kapanacak_tutar": 0.0,
+            "kapanacak": [], "bolunecek": None, "korunan_soz_adet": len(sozler),
+            "engelli_soz_adet": 0, "engelli_tutar": 0.0, "engelli": [],
+            "hizalama_durduruldu": "cift_kanal_suphesi",
+            "cift_kanal_supheli": _suphe,
+            "yeni_vade": _ay_sonu_gelecek(),
+            "not": ("HİZALAMA YAPILMADI — bu tedarikçide çözülmemiş çift-kanal "
+                    "ödeme şüphesi var (aynı tutar iki kanalda). Cari açık "
+                    "olduğundan KÜÇÜK görünüyor; bu hedefe hizalamak gereğinden "
+                    "fazla söz kapatırdı. Önce şüphe karara bağlanmalı."),
+        }
+
     kapanacak, bolunecek, korunan, engelli = [], None, [], []
     kalan_fazla = fazla
     for s in sozler:
@@ -1083,12 +1108,19 @@ def cari_kuyruk_hizala_onizle(tedarikci: str = "") -> dict:
         if kalan_fazla <= 0.01:
             korunan.append({"tutar": t, "vade": s.get("vade"), "aciklama": ack[:70]})
             continue
-        # 🛡️ Cari'nin görmediği fatura → dokunma
+        # 🛡️ Cari'nin görmediği fatura → dokunma VE FAZLALIĞI ORADA DURDUR.
+        # ⚠️ İlk sürüm `continue` ile bir SONRAKİ söze atlıyordu ve fazlalığı
+        #    onun üzerinde harcıyordu. BEYSU'da tam bunu yaptı: en eski söz
+        #    (22.300 ₺) korumaya takıldı, kod atlayıp 8.400 ₺'lik GERÇEKTEN
+        #    AÇIK borcu kapatmayı önerdi. Yani yanlış borcu siliyordu.
+        #    Fazlalık büyük olasılıkla ENGELLENEN sözün kendisine aittir;
+        #    FIFO'da bir halka çözülemiyorsa arkası da çözülemez.
         _nolar = {n.upper() for n in _FATURA_NO_RE.findall(ack)}
         _gorunmeyen = sorted(n for n in _nolar if n not in _cari_nolar)
         if _gorunmeyen:
             engelli.append({"tutar": t, "vade": s.get("vade"), "aciklama": ack[:70],
                             "cari_gormuyor": _gorunmeyen})
+            kalan_fazla = 0.0        # FIFO kırıldı — ileri atlama YOK
             continue
         if kalan_fazla >= t - 0.01:
             kapanacak.append({"id": s["id"], "tutar": t, "vade": s.get("vade"),
@@ -1123,7 +1155,9 @@ def cari_kuyruk_hizala_onizle(tedarikci: str = "") -> dict:
             + (f"{len(engelli)} söz KAPATILMADI çünkü dayandığı fatura cari "
                "hesapta görünmüyor (sistem öncesi / arşive işlenmemiş) — "
                "kapatmak gerçek borcu silerdi; önce devir veya arşiv kararı "
-               "gerekir." if engelli else "")
+               "gerekir. Bir söz engellendiğinde FIFO orada DURUR: arkasındaki "
+               "sözlere atlanmaz, yoksa fazlalık yanlış borcun üstünde "
+               "harcanırdı." if engelli else "")
         ),
     }
 
@@ -1259,11 +1293,21 @@ def cari_kuyruk_hizala(body: KuyrukHizalaBody) -> dict:
     if len(gerekce) < 3:
         raise HTTPException(400, "Gerekçe zorunlu — borç kaydı gerekçesiz değişmez.")
     on = cari_kuyruk_hizala_onizle(tedarikci=ted)
+    # 🛑 Önizleme durduysa SEBEBİ SÖYLE — "yapacak bir şey yok" demek,
+    # "yapmayı reddettim"i gizlemek olurdu.
+    if on.get("hizalama_durduruldu"):
+        raise HTTPException(
+            409,
+            "Hizalama yapılmadı: " + str(on.get("not") or on["hizalama_durduruldu"]))
     hedefler = on.get("kapanacak") or []
     bol = on.get("bolunecek")
     if not hedefler and not bol:
         return {"ok": True, "kapatilan": 0, "bolunen": 0,
-                "not": "Hizalanacak bir şey yok.", "onizleme": on}
+                "not": ("Hizalanacak bir şey yok."
+                        + (f" ({on.get('engelli_soz_adet')} söz cari "
+                           "görmediği için engelli.)"
+                           if on.get("engelli_soz_adet") else "")),
+                "onizleme": on}
     damga = (f" [KUYRUK HİZALAMA {date.today().isoformat()}: cari açığa "
              f"hizalandı — {gerekce}]")
     kapatilan, bolunen = [], None
